@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<style>
+  @page {
+    size: A4;
+    margin: 17mm 16mm 19mm;
+    @bottom-center { content: counter(page) " / " counter(pages);
+      font-family: "Microsoft JhengHei"; font-size: 8.5pt; color: #9aa0a8; }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft JhengHei", sans-serif; color: #1c1c1e;
+    font-size: 10.5pt; line-height: 1.62; }
+  .accent { color: #007aff; }
+
+  /* ── 封面區 ── */
+  .hero { border-bottom: 2.5pt solid #007aff; padding-bottom: 9pt; margin-bottom: 10pt; }
+  .hero .kicker { font-size: 9.5pt; font-weight: bold; color: #007aff;
+    letter-spacing: 2pt; margin-bottom: 6pt; }
+  h1 { font-size: 24pt; font-weight: bold; letter-spacing: .5pt; margin-bottom: 5pt; }
+  .hero .oneliner { font-size: 11.5pt; color: #3c3c43; line-height: 1.7; }
+  .hero .meta { font-size: 8.5pt; color: #9aa0a8; margin-top: 5pt; }
+
+  /* ── 數據摘要條 ── */
+  .statbar { width: 100%; border-collapse: collapse; margin: 2pt 0 10pt;
+    table-layout: fixed; }
+  .statbar td { background: #f2f6fc; border-radius: 6pt; padding: 7pt 6pt 6pt;
+    text-align: center; }
+  .statbar td + td { border-left: 6pt solid #fff; }
+  .statbar .n { font-size: 16pt; font-weight: bold; color: #007aff; line-height: 1.25; }
+  .statbar .l { font-size: 8.5pt; color: #5a6470; margin-top: 2pt; }
+
+  h2 { font-size: 14.5pt; font-weight: bold; margin: 9pt 0 6pt;
+    padding-left: 9pt; border-left: 4pt solid #007aff; }
+  h2 .en { font-size: 9pt; color: #9aa0a8; font-weight: normal; margin-left: 6pt; }
+  p { margin-bottom: 7pt; text-align: justify; }
+  .avoid-break { page-break-inside: avoid; }
+  .page-break { page-break-before: always; }
+
+  /* ── 流程圖 ── */
+  .flow { margin: 8pt 0 4pt; }
+  .fstage { page-break-inside: avoid; }
+  .fbox { border: 1.2pt solid #c9d6e8; border-left: 4pt solid #007aff;
+    border-radius: 6pt; padding: 6.5pt 11pt; background: #fbfcfe; }
+  .fbox .ftitle { font-weight: bold; font-size: 11pt; }
+  .fbox .ftitle .num { display: inline-block; background: #007aff; color: #fff;
+    border-radius: 50%; width: 14pt; height: 14pt; line-height: 14pt;
+    text-align: center; font-size: 9pt; margin-right: 6pt; }
+  .fbox .fdesc { font-size: 9pt; color: #5a6470; margin-top: 2pt; }
+  .fbox .ftool { font-size: 8pt; color: #9aa0a8; font-family: "Microsoft JhengHei"; }
+  .farrow { text-align: center; padding: 1pt 0; }
+  .farrow .line { width: 0; height: 6pt; border-left: 1.2pt solid #9bb8dd; margin: 0 auto; }
+  .farrow .tri { width: 0; height: 0; margin: 0 auto;
+    border-left: 4pt solid transparent; border-right: 4pt solid transparent;
+    border-top: 5pt solid #9bb8dd; }
+  .farrow .note { font-size: 8pt; color: #007aff; font-weight: bold; margin: 1pt 0; }
+  .fsrc { border: 1.2pt dashed #b8c4d4; border-radius: 6pt; padding: 7pt 12pt;
+    background: #fff; text-align: center; font-size: 9.5pt; color: #5a6470; }
+  .fsrc b { color: #1c1c1e; }
+
+  /* ── 表格 ── */
+  table.tbl { width: 100%; border-collapse: collapse; margin: 5pt 0 8pt; font-size: 9.5pt; }
+  table.tbl th { background: #007aff; color: #fff; font-weight: bold;
+    padding: 4pt 8pt; text-align: left; }
+  table.tbl td { padding: 4.5pt 8pt; border-bottom: .7pt solid #e2e8f0; vertical-align: top; }
+  table.tbl tr:nth-child(even) td { background: #f7fafd; }
+
+  /* ── 亮點卡 ── */
+  .hl { border-left: 3pt solid #34c759; background: #f4faf5; border-radius: 0 6pt 6pt 0;
+    padding: 5pt 10pt; margin-bottom: 5pt; page-break-inside: avoid; }
+  .hl b { display: block; margin-bottom: 1pt; }
+  .hl span { font-size: 9.5pt; color: #3c3c43; line-height: 1.5; }
+
+  ul.clean { margin: 0 0 8pt 14pt; }
+  ul.clean li { margin-bottom: 4pt; }
+  .small { font-size: 9pt; color: #5a6470; }
+  code { font-family: "Consolas", "Microsoft JhengHei", monospace; font-size: 9pt;
+    background: #eef2f7; padding: 0 3pt; border-radius: 3pt; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════ 第 1 頁：總覽 + 流程圖 ═══════════ -->
+<div class="hero">
+  <div class="kicker">REPORT-MARK 專案介紹</div>
+  <h1>研報智慧檢索系統</h1>
+  <div class="oneliner">把散落在資料夾裡的 <b>1.5 萬份</b>券商研究報告（PDF／DOCX），
+  變成一個能用<b>自然語言提問</b>、按<b>市場與標的篩選</b>、一鍵閱讀原文的智慧檢索庫。</div>
+  <div class="meta">文件日期：2026 年 6 月 10 日</div>
+</div>
+
+<table class="statbar">
+  <tr>
+    <td><div class="n">15,866</div><div class="l">原始研報檔案</div></td>
+    <td><div class="n">15,445</div><div class="l">去重後候選研報</div></td>
+    <td><div class="n">5 維</div><div class="l">AI 自動標籤</div></td>
+    <td><div class="n">1024 維</div><div class="l">語意向量檢索</div></td>
+  </tr>
+</table>
+
+<p>過去要在上萬份研報中找特定主題，只能靠檔名猜測與逐份翻閱。本系統把全文抽取、AI 判讀分類、語意向量化串成全自動管線，以網頁提供全辦公室使用——查資料從數小時縮短到數秒。</p>
+
+<h2>處理管線總覽<span class="en">Pipeline Overview</span></h2>
+
+<div class="flow">
+  <div class="fsrc"><b>研報自動匯入/</b> 資料夾 — 15,866 份券商研報原始檔（PDF / DOCX）</div>
+
+  <div class="farrow"><div class="line"></div><div class="tri"></div></div>
+
+  <div class="fstage">
+    <div class="fbox">
+      <div class="ftitle"><span class="num">1</span>文字抽取 <span class="ftool">extract_all.py</span></div>
+      <div class="fdesc">多進程平行抽取全文＋檔名解析（券商、日期、股號）；以檔案內容雜湊（file_hash）去重，
+      自動排除行政文件與無文字層的掃描檔。</div>
+    </div>
+  </div>
+
+  <div class="farrow"><div class="note">15,445 篇候選研報（全文 JSONL）</div><div class="line"></div><div class="tri"></div></div>
+
+  <div class="fstage">
+    <div class="fbox">
+      <div class="ftitle"><span class="num">2</span>AI 標籤分類 <span class="ftool">tag_all_cli.py × Claude</span></div>
+      <div class="fdesc">每篇報告交給 Claude AI 判讀檔名＋內文，輸出五維結構化標籤：
+      市場、商品類型、個股／期貨關聯、具體標的代碼，並判斷「是否真的是研報」當守門員。</div>
+    </div>
+  </div>
+
+  <div class="farrow"><div class="note">每篇一個標籤 JSON（可續傳、可稽核）</div><div class="line"></div><div class="tri"></div></div>
+
+  <div class="fstage">
+    <div class="fbox">
+      <div class="ftitle"><span class="num">3</span>向量化導入 <span class="ftool">ingest_all.py × BGE-M3</span></div>
+      <div class="fdesc">全文切成約 600 字的語意塊（段落優先、80 字重疊），每塊以 BGE-M3 模型
+      轉成 1024 維向量，連同全文與標籤寫入 PostgreSQL（pgvector + HNSW 索引）。</div>
+    </div>
+  </div>
+
+  <div class="farrow"><div class="note">研報資料庫：報告 metadata ＋ 全文 ＋ 語意向量</div><div class="line"></div><div class="tri"></div></div>
+
+  <div class="fstage">
+    <div class="fbox" style="border-left-color:#34c759">
+      <div class="ftitle"><span class="num" style="background:#34c759">4</span>語意檢索網頁 <span class="ftool">FastAPI + pgvector</span></div>
+      <div class="fdesc">輸入問題 → 即時轉向量 → 找出語意最接近的報告片段，按報告分組呈現；
+      支援瀏覽全部、市場／商品／標的篩選、內嵌 PDF 原文閱讀。辦公室同仁經區網直接使用。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 第 2 頁：階段詳解 ═══════════ -->
+<div class="page-break"></div>
+
+<h2>各階段詳解<span class="en">Stage Details</span></h2>
+
+<p><b>① 文字抽取</b>——以多進程平行處理上萬份檔案，約一小時完成全量。
+每個檔案以內容雜湊（file_hash）作為全管線的唯一身分證：重複檔案自動去重、
+後續每一階段都以它作為續傳與比對的鍵。抽取同時從檔名解析出來源券商、報告日期、
+股票代號等 metadata，行政文件（對帳單、通知書）與掃描檔在此階段即被排除。</p>
+
+<p><b>② AI 標籤分類</b>——一萬五千篇報告靠人工分類並不可行。系統將每篇報告的檔名與內文摘錄
+交給 Claude AI 判讀，輸出下表的結構化標籤。並行多工處理，每小時可分類約 1,600 篇；
+失敗自動重試並記錄，重跑時自動跳過已完成者。</p>
+
+<div class="avoid-break">
+<table class="tbl">
+  <tr><th style="width:22%">標籤維度</th><th>內容</th></tr>
+  <tr><td><b>市場</b></td><td>台股、美股、港股、陸股、外匯、台指期、總經、全球、加密貨幣——九選一</td></tr>
+  <tr><td><b>商品類型</b></td><td>股票、指數、期貨、選擇權、ETF、債券、外匯、原物料、加密（可複選）</td></tr>
+  <tr><td><b>標的關聯</b></td><td>是否涉及個股／是否涉及期貨（布林值，供快速篩選）</td></tr>
+  <tr><td><b>具體標的</b></td><td>個股代碼清單（如 2330、2454）、期貨商品名清單（如台指期、電子期）</td></tr>
+  <tr><td><b>守門判斷</b></td><td>is_research：是否為真正的研究報告（行銷文宣、純數據表會被擋下）＋信心分數</td></tr>
+</table>
+</div>
+
+<p class="small">標籤品質經過驗證：樣本批次 74 篇由人工全量稽核，<b>零錯標</b>，
+含多個邊界案例（如「個股報告但提及期貨避險」）皆判讀正確。</p>
+
+<p><b>③ 向量化導入</b>——通過守門的報告全文切成約 600 字的語意塊，切點優先落在段落邊界、
+相鄰塊保留 80 字重疊，避免關鍵語意被攔腰切斷。每塊文字經 BGE-M3 嵌入模型轉成
+1024 維語意向量，寫入 PostgreSQL；向量欄位建 HNSW 索引，使「在數十萬向量中找最近鄰」
+能在毫秒級完成。<b>每導入一篇、網頁立即可搜尋到一篇</b>，不需等待全量完成。</p>
+
+<p><b>④ 語意檢索網頁</b>——後端常駐嵌入模型，查詢流程為：使用者的問題 → 轉成查詢向量 →
+pgvector 以餘弦相似度找出最接近的內文片段 → 按報告分組、依相關度排序呈現卡片。</p>
+
+<div class="avoid-break">
+<table class="tbl">
+  <tr><th style="width:28%">網頁功能</th><th>說明</th></tr>
+  <tr><td>語意搜尋</td><td>輸入自然語言問題，顯示相關報告與命中片段（含相關度分數、關鍵詞標亮）</td></tr>
+  <tr><td>預設瀏覽模式</td><td>不輸入關鍵字即列出全部已導入報告，依日期新到舊，分頁載入</td></tr>
+  <tr><td>三組篩選器</td><td>市場（含各分類數量）、商品類型、個股／期貨——搜尋與瀏覽模式皆適用</td></tr>
+  <tr><td>查看完整報告</td><td>點擊卡片按鈕，原始 PDF 直接內嵌於彈窗中閱讀，亦可下載</td></tr>
+  <tr><td>區網共享</td><td>同仁瀏覽器開啟 http://192.168.1.128:8097 即可使用，無需安裝任何軟體</td></tr>
+</table>
+</div>
+
+<!-- ═══════════ 第 3 頁：亮點 + 架構 + 進度 ═══════════ -->
+<div class="page-break"></div>
+
+<h2>設計亮點<span class="en">Design Highlights</span></h2>
+
+<div class="hl"><b>語意搜尋，而非關鍵字搜尋</b>
+<span>問「AI 伺服器散熱需求」能找到談「液冷、均熱片、3D VC」的報告——
+即使全文從未出現你輸入的字眼。向量檢索比對的是「意思」，不是字面。</span></div>
+
+<div class="hl"><b>全管線可中斷、可續傳</b>
+<span>每階段都以 file_hash 為鍵、失敗有日誌；中斷後重跑自動跳過已完成部分。
+實際運轉中曾兩次遇到 AI 額度限制，皆於額度恢復後無痛續跑，已完成的工作零損失。</span></div>
+
+<div class="hl"><b>AI 當分類員，人類只做抽查</b>
+<span>1.5 萬篇人工分類約需數百小時；AI 逐篇判讀僅需數小時，搭配樣本人工稽核
+（74 篇零錯標）確保品質。守門維度同時把非研報雜訊擋在資料庫之外。</span></div>
+
+<div class="hl"><b>增量上線，邊處理邊可用</b>
+<span>標籤與導入皆為逐篇完成、逐篇生效——系統不需「全部跑完」才能使用，
+網頁上的報告數量每小時持續增長。</span></div>
+
+<h2>技術架構<span class="en">Tech Stack</span></h2>
+
+<table class="tbl">
+  <tr><th style="width:28%">層面</th><th>技術選擇</th></tr>
+  <tr><td>文件解析</td><td>Python 多進程管線（PDF／DOCX 全文抽取＋檔名 metadata 解析）</td></tr>
+  <tr><td>AI 分類</td><td>Claude（Haiku 模型），結構化 JSON 輸出，多執行緒並行＋自動重試</td></tr>
+  <tr><td>嵌入模型</td><td>BGE-M3（多語言、1024 維 dense 向量），本機 CPU 運算、模型常駐記憶體</td></tr>
+  <tr><td>資料庫</td><td>PostgreSQL 16 + pgvector 擴充，HNSW 向量索引（Docker 容器）</td></tr>
+  <tr><td>後端 API</td><td>FastAPI（非同步），檢索／瀏覽／統計／原文服務端點</td></tr>
+  <tr><td>前端</td><td>單頁網頁（原生 JS），卡片式結果、即時篩選、PDF 內嵌彈窗</td></tr>
+  <tr><td>部署</td><td>WSL2 + Docker；經連接埠轉發與防火牆設定開放辦公室區網存取</td></tr>
+</table>
+
+<h2>目前進度<span class="en">Status — 2026.06.10</span></h2>
+
+<table class="tbl">
+  <tr><th style="width:28%">階段</th><th style="width:44%">狀態</th><th>數量</th></tr>
+  <tr><td>① 文字抽取</td><td>✔ 全量完成</td><td>15,445 篇候選</td></tr>
+  <tr><td>② AI 標籤</td><td>進行中（52.5%）</td><td>8,113 篇完成，其中 7,408 篇確認為研報</td></tr>
+  <tr><td>③ 向量導入</td><td>背景執行中</td><td>已入庫持續增長</td></tr>
+  <tr><td>④ 檢索網頁</td><td>✔ 已上線</td><td>區網開放使用中</td></tr>
+</table>
+
+<p class="small">標籤與導入完成後，全庫約 7,400＋ 篇可檢索研報；後續可擴充 GPU 加速、新報告自動入庫與 AI 摘要。</p>
+
+</body>
+</html>

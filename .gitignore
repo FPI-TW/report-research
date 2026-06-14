@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+data/extracted/
+data/tags/
+data/*.json
+研報自動匯入/
+.uv/
+.playwright-mcp/
+*.png
+
+# runtime logs / locks / tag backups（執行期產生，非原始碼）
+data/*.log
+data/*.lock
+data/tags.bak.*/
+
+# 自動產生 / 一次性 artifact（claude-mem 記憶傾印、舊的無障礙樹快照）
+AGENTS.md
+search-after.yml

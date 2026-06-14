@@ -1,0 +1,25 @@
+[project]
+name = "report-mark"
+version = "0.1.0"
+description = "研報市場標籤分類 + pgvector 語意檢索（原型）"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "pgvector>=0.3",
+    "pypdf>=4.2",
+    "python-docx>=1.1",
+    "FlagEmbedding>=1.2",
+    "fastapi>=0.136.3",
+    "uvicorn>=0.48.0",
+]
+
+[tool.uv]
+# CPU-only torch；避免抓 CUDA 輪子
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

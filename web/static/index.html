@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>廷豐研報</title>
+<style>
+  :root {
+    --blue: #007aff;
+    --blue-press: #0062cc;
+    --blue-soft: #007aff1f;
+    --bg: #f2f2f7;
+    --bg-grad-1: #f7f8fa;
+    --bg-grad-2: #eceef3;
+    --card: #ffffff;
+    --side: #ffffffcc;
+    --label: #1c1c1e;
+    --label-2: #3c3c4399;
+    --label-3: #3c3c434d;
+    --sep: #3c3c431f;
+    --fill: #78788014;
+    --mark: #ffd60a59;
+    --radius-md: 16px;
+    --radius-sm: 11px;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+    --sidebar-w: 296px;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+                 "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100dvh; color: var(--label);
+    background: radial-gradient(120% 80% at 50% -10%, var(--bg-grad-1) 0%, var(--bg-grad-2) 60%, var(--bg) 100%);
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    font-size: 15px; line-height: 1.5; letter-spacing: .006em;
+  }
+
+  /* ───── shell: two-pane grid ───── */
+  .app { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
+
+  .sidebar {
+    position: sticky; top: 0; align-self: start;
+    height: 100dvh; overflow-y: auto; scrollbar-width: thin;
+    padding: max(env(safe-area-inset-top), 26px) 22px 24px;
+    background: var(--side);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-right: .5px solid var(--sep);
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  h1 { margin: 0; font-size: 25px; font-weight: 700; letter-spacing: -.022em; }
+  h1 .accent { color: var(--blue); }
+  .brand { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .nav-links { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .monitor-link { display: inline-flex; align-items: center; gap: 6px; flex: none;
+    font-size: 13px; font-weight: 600; color: var(--blue); background: var(--blue-soft);
+    padding: 6px 12px; border-radius: 100px; text-decoration: none; white-space: nowrap;
+    transition: transform .12s, background .2s; }
+  .monitor-link:hover { background: #007aff2e; }
+  .monitor-link:active { transform: scale(.96); }
+  .monitor-link svg { flex: none; }
+
+  .stats { display: flex; gap: 7px; flex-wrap: wrap; }
+  .pill { font-size: 12px; font-weight: 600; color: var(--label-2);
+    background: var(--fill); padding: 5px 11px; border-radius: 100px; white-space: nowrap; }
+  .pill b { color: var(--label); font-weight: 700; }
+
+  .search { display: flex; flex-direction: column; gap: 9px; }
+  .search-box {
+    display: flex; align-items: center; gap: 9px; background: var(--card);
+    border-radius: var(--radius-sm); padding: 0 12px; height: 46px;
+    box-shadow: var(--shadow); transition: box-shadow .25s;
+  }
+  .search-box:focus-within { box-shadow: 0 0 0 4px var(--blue-soft), var(--shadow); }
+  .search-box svg { flex: none; color: var(--label-3); }
+  #q { border: none; outline: none; background: transparent; flex: 1; min-width: 0;
+    font-size: 16px; color: var(--label); font-family: inherit; }
+  #q::placeholder { color: var(--label-3); }
+  .clear { border: none; background: var(--label-3); color: #fff; width: 19px; height: 19px;
+    border-radius: 50%; font-size: 12px; line-height: 19px; cursor: pointer; flex: none;
+    display: none; padding: 0; }
+  .clear.show { display: block; }
+  .go { border: none; background: var(--blue); color: #fff; font-size: 15px; font-weight: 600;
+    font-family: inherit; height: 42px; width: 100%; border-radius: var(--radius-sm);
+    cursor: pointer; transition: transform .12s, background .2s; }
+  .go:hover { background: var(--blue-press); }
+  .go:active { transform: scale(.97); }
+
+  .filters-label { font-size: 12px; font-weight: 700; color: var(--label-3);
+    letter-spacing: .04em; padding: 2px 2px 0; text-transform: none; }
+  .filters { display: flex; flex-direction: column; gap: 2px; }
+  .filter { display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 9px 11px; border: none; border-radius: 10px; background: transparent;
+    font-size: 14px; font-weight: 600; font-family: inherit; color: var(--label);
+    cursor: pointer; text-align: left; transition: background .18s, color .18s, transform .12s; }
+  .filter:hover { background: var(--fill); }
+  .filter:active { transform: scale(.98); }
+  .filter.on { background: var(--blue-soft); color: var(--blue); }
+  .filter .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .filter .nm { flex: 1; }
+  .filter .ct { font-size: 12px; font-weight: 600; color: var(--label-3);
+    font-variant-numeric: tabular-nums; }
+  .filter.on .ct { color: var(--blue); }
+
+  /* ───── content ───── */
+  .content { padding: 32px 30px 64px; }
+  .content-inner { max-width: 100%; }
+  .meta-line { font-size: 13px; font-weight: 600; color: var(--label-2);
+    margin: 2px 2px 18px; letter-spacing: .01em; display: none; }
+  .meta-line.show { display: block; }
+
+  /* 結果：自適應卡片網格（寬螢幕兩欄，窄螢幕自動收回單欄） */
+  #results { display: grid; align-items: start; gap: 13px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 392px), 1fr)); }
+  #results .state, #results > .sk:first-child:last-child { grid-column: 1 / -1; }
+  .state { grid-column: 1 / -1; }
+
+  .card { background: var(--card); border-radius: var(--radius-md); padding: 17px 19px;
+    box-shadow: var(--shadow);
+    opacity: 0; transform: translateY(14px) scale(.99);
+    animation: rise .5s cubic-bezier(.22,1,.36,1) forwards;
+    transition: box-shadow .25s, transform .2s; }
+  .card:hover { transform: translateY(-1px);
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 14px 34px rgba(0,0,0,.09); }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+  .card-top { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+  .badge { font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+    color: #fff; flex: none; letter-spacing: .01em; }
+  .fname { font-size: 15.5px; font-weight: 600; color: var(--label); letter-spacing: -.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .rank { font-size: 12px; color: var(--label-3); font-weight: 600; flex: none;
+    font-variant-numeric: tabular-nums; }
+  .info { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 9px; margin: 0 0 13px;
+    font-size: 12.5px; color: var(--label-2); }
+  .info span { display: inline-flex; align-items: center; gap: 4px; }
+  .info .dot { color: var(--label-3); margin: 0 1px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 13px; }
+  .itag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+    color: var(--ic); background: color-mix(in srgb, var(--ic) 14%, transparent);
+    letter-spacing: .01em; }
+  .subj { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+    color: var(--label-2); background: var(--fill); letter-spacing: .01em; }
+  .passages { display: flex; flex-direction: column; gap: 11px; }
+  .passage { font-size: 14px; line-height: 1.62; color: var(--label-2); letter-spacing: .008em;
+    padding-left: 12px; border-left: 2px solid var(--sep); }
+  .passage.hidden { display: none; }
+  .passage .pscore { font-size: 11px; font-weight: 700; color: var(--blue);
+    font-variant-numeric: tabular-nums; margin-right: 6px; letter-spacing: 0; }
+  mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1px; }
+  .more { margin-top: 10px; border: none; background: var(--fill); color: var(--blue);
+    font-size: 13px; font-weight: 600; font-family: inherit; padding: 7px 13px;
+    border-radius: 100px; cursor: pointer; transition: transform .12s; }
+  .more:active { transform: scale(.95); }
+  .card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .full-report { margin-top: 10px; border: none; background: var(--blue); color: #fff;
+    font-size: 13px; font-weight: 600; font-family: inherit; padding: 7px 14px;
+    border-radius: 100px; cursor: pointer; transition: transform .12s, opacity .12s; }
+  .full-report:hover { opacity: .9; }
+  .full-report:active { transform: scale(.95); }
+  /* 完整報告 modal */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45);
+    display: none; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: var(--bg); width: min(1000px, 100%); height: 90vh;
+    border-radius: 16px; display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,.3); }
+  .modal-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px;
+    border-bottom: 1px solid var(--sep); }
+  .modal-head .m-title { flex: 1; min-width: 0; }
+  .modal-head .m-name { font-size: 15px; font-weight: 700; color: var(--label-1);
+    line-height: 1.4; word-break: break-all; }
+  .modal-head .m-meta { font-size: 12px; color: var(--label-3); margin-top: 5px;
+    display: flex; flex-wrap: wrap; gap: 4px 9px; align-items: center; }
+  .modal-close { border: none; background: var(--fill); color: var(--label-2);
+    width: 30px; height: 30px; border-radius: 50%; cursor: pointer; flex: none;
+    font-size: 17px; line-height: 1; }
+  .modal-body { flex: 1; min-height: 0; display: flex; overflow: hidden; background: #525659; }
+  .pdf-frame { width: 100%; height: 100%; border: 0; }
+  .modal-fallback { margin: auto; padding: 40px 24px; text-align: center;
+    font-size: 14px; color: var(--label-3); background: var(--bg); }
+  .modal-foot { padding: 13px 20px; border-top: 1px solid var(--sep);
+    display: flex; justify-content: flex-end; }
+  .modal-foot a { font-size: 13px; font-weight: 600; color: var(--blue); text-decoration: none;
+    padding: 7px 14px; border-radius: 100px; background: var(--fill); }
+  .score-row { display: flex; align-items: center; gap: 10px; margin-top: 13px; }
+  .score-track { flex: 1; height: 6px; border-radius: 100px; background: var(--fill); overflow: hidden; }
+  .score-fill { height: 100%; border-radius: 100px; background: var(--blue);
+    width: 0; transition: width .9s cubic-bezier(.22,1,.36,1); }
+  .score-num { font-size: 12px; font-weight: 700; color: var(--label-2);
+    font-variant-numeric: tabular-nums; flex: none; }
+
+  .sk { background: var(--card); border-radius: var(--radius-md); padding: 16px 18px;
+    box-shadow: var(--shadow); }
+  .sk-line { height: 12px; border-radius: 6px; margin: 8px 0;
+    background: linear-gradient(90deg, #ececf0 25%, #f5f5f8 37%, #ececf0 63%);
+    background-size: 400% 100%; animation: shimmer 1.3s ease infinite; }
+  @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+  .state { text-align: center; padding: 64px 24px; color: var(--label-3); }
+  .state .big { font-size: 34px; margin-bottom: 10px; }
+  .state .msg { font-size: 15px; color: var(--label-2); }
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+  .ex { font-size: 13px; font-weight: 500; color: var(--blue);
+    background: var(--blue-soft); padding: 7px 13px; border-radius: 100px; cursor: pointer;
+    transition: transform .15s; }
+  .ex:active { transform: scale(.93); }
+
+  /* ───── mobile: collapse to single column ───── */
+  @media (max-width: 880px) {
+    .app { display: block; }
+    .sidebar { position: sticky; top: 0; height: auto; overflow: visible;
+      flex-direction: column; gap: 13px; z-index: 30;
+      padding: max(env(safe-area-inset-top), 14px) 16px 12px; }
+    .topbar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px 12px; }
+    .brand { flex: 1 1 100%; }
+    h1 { font-size: 22px; white-space: nowrap; }
+    .search { flex-direction: row; }
+    .go { width: auto; flex: none; padding: 0 18px; height: 46px; }
+    .filters-label { display: none; }
+    .filters { flex-direction: row; overflow-x: auto; gap: 8px; scrollbar-width: none;
+      margin: 0 -16px; padding: 0 16px 2px; }
+    .filters::-webkit-scrollbar { display: none; }
+    .filter { width: auto; flex: none; background: var(--card); border: .5px solid var(--sep);
+      border-radius: 100px; padding: 8px 14px; }
+    .filter.on { background: var(--blue); color: #fff; border-color: transparent; }
+    .filter.on .ct { color: #ffffffcc; }
+    .filter .dot { display: none; }
+    .content { padding: 16px 16px 50px; }
+    .card { padding: 14px 15px; }
+  }
+  @media (min-width: 881px) {
+    .topbar { display: contents; }
+    /* 窄側欄：標題獨佔一行、按鈕列移到其下方左對齊，避免擠到標題換行 */
+    .brand { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .nav-links { width: 100%; justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="topbar">
+        <div class="brand">
+          <h1>廷豐<span class="accent">研報</span></h1>
+          <span class="nav-links">
+            <a class="monitor-link" href="/help" title="使用說明">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5a2 2 0 0 1 2-2h11v16H6a2 2 0 0 0-2 2z"/><path d="M9 7h5M9 11h5"/></svg>
+              使用說明
+            </a>
+            <a class="monitor-link" href="/monitor" title="導入監控">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 6 4-13L16 12h5"/></svg>
+              導入監控
+            </a>
+          </span>
+        </div>
+        <div class="stats" id="stats"></div>
+      </div>
+      <div class="search">
+        <div class="search-box">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
+          <input id="q" placeholder="輸入查詢…" autocomplete="off" />
+          <button class="clear" id="clear" aria-label="清除">✕</button>
+        </div>
+        <button class="go" id="go">搜尋</button>
+      </div>
+      <div class="filters-label">市場</div>
+      <nav class="filters" id="chips"></nav>
+      <div class="filters-label">商品類型</div>
+      <nav class="filters" id="instrChips"></nav>
+      <div class="filters-label">標的</div>
+      <nav class="filters" id="subjToggles"></nav>
+      <div class="filters-label">報告類型</div>
+      <nav class="filters" id="typeChips"></nav>
+      <div class="filters-label">排序</div>
+      <nav class="filters" id="sortChips"></nav>
+    </aside>
+
+    <main class="content">
+      <div class="content-inner">
+        <div class="meta-line" id="meta"></div>
+        <div id="results"></div>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div class="m-title">
+          <div class="m-name" id="modalName"></div>
+          <div class="m-meta" id="modalMeta"></div>
+        </div>
+        <button class="modal-close" id="modalClose" aria-label="關閉">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot" id="modalFoot"></div>
+    </div>
+  </div>
+
+<script>
+// 市場標籤對齊 findb 代碼；顯示中文名 + 配色
+const MARKET_META = {
+  TW:{label:"台股",color:"#34c759"}, US:{label:"美股",color:"#007aff"},
+  HK:{label:"港股",color:"#ff9500"}, CN:{label:"陸股",color:"#ff3b30"},
+  FX:{label:"外匯",color:"#00c7be"}, WTX:{label:"台指期",color:"#af52de"},
+  MACRO:{label:"總經",color:"#ff2d55"}, GLOBAL:{label:"全球",color:"#5856d6"},
+  CRYPTO:{label:"加密",color:"#a2845e"}
+};
+const mLabel = c => (MARKET_META[c] && MARKET_META[c].label) || c || "—";
+const mColor = c => (MARKET_META[c] && MARKET_META[c].color) || "#8e8e93";
+
+// 商品類型詞表：中文 label + 配色（對齊 tagging.py INSTRUMENT_DISPLAY）
+const INSTRUMENT_META = {
+  equity:{label:"股票",color:"#0a84ff"}, index:{label:"指數",color:"#5e5ce6"},
+  futures:{label:"期貨",color:"#ff9f0a"}, options:{label:"選擇權",color:"#bf5af2"},
+  etf:{label:"ETF",color:"#30d158"}, bond:{label:"債券",color:"#0bb8c4"},
+  fx:{label:"外匯",color:"#00c7be"}, commodity:{label:"原物料",color:"#ac8e68"},
+  crypto:{label:"加密",color:"#e0a400"}
+};
+const iLabel = c => (INSTRUMENT_META[c] && INSTRUMENT_META[c].label) || c || "—";
+const iColor = c => (INSTRUMENT_META[c] && INSTRUMENT_META[c].color) || "#8e8e93";
+let activeMarket = "全部";
+let activeInstrument = "全部";
+let relStock = false;
+let relFutures = false;
+let activeType = "全部";
+let activeSort = "date_desc";   // 初值對齊首屏瀏覽預設，避免載入時 chip 自跳
+let lastQuery = "";
+
+const $ = s => document.querySelector(s);
+const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function buildTerms(q) {
+  const terms = new Set();
+  q.split(/\s+/).forEach(tok => {
+    const t = tok.trim();
+    if (!t) return;
+    if (/[一-鿿]/.test(t)) {
+      if (t.length === 1) terms.add(t);
+      for (let i = 0; i < t.length - 1; i++) terms.add(t.slice(i, i + 2));
+    } else if (t.length >= 2) terms.add(t);
+  });
+  return [...terms].sort((a, b) => b.length - a.length);
+}
+function highlight(textRaw, terms) {
+  let h = esc(textRaw);
+  if (!terms.length) return h;
+  const re = new RegExp("(" + terms.map(escRe).join("|") + ")", "gi");
+  return h.replace(re, "<mark>$1</mark>");
+}
+
+async function loadStats() {
+  try {
+    const d = await (await fetch("/api/stats")).json();
+    $("#stats").innerHTML =
+      `<span class="pill"><b>${d.total_reports}</b> 篇</span>` +
+      `<span class="pill"><b>${d.total_chunks.toLocaleString()}</b> 片段</span>`;
+    buildChips(d.markets, d.total_reports);
+    buildInstrumentChips(d.instrument_types || [], d.total_reports);
+    buildSubjectToggles();
+    buildTypeChips(d.report_types || [], d.total_reports);
+  } catch (e) { $("#stats").innerHTML = `<span class="pill">後端未連線</span>`; }
+}
+function buildChips(markets, total) {
+  const all = [{ market: "全部", count: total }, ...markets];
+  $("#chips").innerHTML = all.map(m => {
+    const isAll = m.market === "全部";
+    const dot = isAll ? "" : `<span class="dot" style="background:${mColor(m.market)}"></span>`;
+    const nm = isAll ? "全部" : mLabel(m.market);
+    return `<button class="filter${m.market === activeMarket ? " on" : ""}" data-m="${m.market}">
+      ${dot}<span class="nm">${nm}</span><span class="ct">${m.count}</span></button>`;
+  }).join("");
+  $("#chips").querySelectorAll(".filter").forEach(c => c.onclick = () => {
+    activeMarket = c.dataset.m;
+    $("#chips").querySelectorAll(".filter").forEach(x => x.classList.toggle("on", x === c));
+    $("#q").value.trim() ? run() : loadBrowse();
+  });
+}
+function buildInstrumentChips(types, total) {
+  const all = [{ type: "全部", count: total }, ...types];
+  $("#instrChips").innerHTML = all.map(m => {
+    const isAll = m.type === "全部";
+    const dot = isAll ? "" : `<span class="dot" style="background:${iColor(m.type)}"></span>`;
+    const nm = isAll ? "全部" : iLabel(m.type);
+    return `<button class="filter${m.type === activeInstrument ? " on" : ""}" data-i="${m.type}">
+      ${dot}<span class="nm">${nm}</span><span class="ct">${m.count}</span></button>`;
+  }).join("");
+  $("#instrChips").querySelectorAll(".filter").forEach(c => c.onclick = () => {
+    activeInstrument = c.dataset.i;
+    $("#instrChips").querySelectorAll(".filter").forEach(x => x.classList.toggle("on", x === c));
+    $("#q").value.trim() ? run() : loadBrowse();
+  });
+}
+function buildSubjectToggles() {
+  const defs = [{ key: "stock", label: "個股" }, { key: "futures", label: "期貨" }];
+  $("#subjToggles").innerHTML = defs.map(d =>
+    `<button class="filter${(d.key === "stock" ? relStock : relFutures) ? " on" : ""}" data-s="${d.key}">
+      <span class="nm">${d.label}</span></button>`).join("");
+  $("#subjToggles").querySelectorAll(".filter").forEach(c => c.onclick = () => {
+    const on = c.classList.toggle("on");
+    if (c.dataset.s === "stock") relStock = on; else relFutures = on;
+    $("#q").value.trim() ? run() : loadBrowse();
+  });
+}
+
+// 報告類型詞表多為中文（雙週報/週報/月報/速報/策略/評析/報告）；英文者補中文顯示
+const REPORT_TYPE_LABEL = { snapshot: "快照", memo: "備忘" };
+const tLabel = t => REPORT_TYPE_LABEL[t] || t || "—";
+function buildTypeChips(types, total) {
+  const all = [{ type: "全部", count: total }, ...types];
+  $("#typeChips").innerHTML = all.map(m => {
+    const nm = m.type === "全部" ? "全部" : tLabel(m.type);
+    return `<button class="filter${m.type === activeType ? " on" : ""}" data-rt="${esc(String(m.type))}">
+      <span class="nm">${esc(nm)}</span><span class="ct">${m.count}</span></button>`;
+  }).join("");
+  $("#typeChips").querySelectorAll(".filter").forEach(c => c.onclick = () => {
+    activeType = c.dataset.rt;
+    $("#typeChips").querySelectorAll(".filter").forEach(x => x.classList.toggle("on", x === c));
+    $("#q").value.trim() ? run() : loadBrowse();
+  });
+}
+
+// 排序 chips：模式相依（search 多一個「相關度」）。若 activeSort 不在當前模式集合
+// （只有 search 的 relevance → 切到 browse 會發生）就 reset 成該模式預設後再渲染。
+function buildSortChips(mode) {
+  const opts = mode === "search"
+    ? [["relevance", "相關度"], ["date_desc", "日期新→舊"], ["date_asc", "日期舊→新"]]
+    : [["date_desc", "日期新→舊"], ["date_asc", "日期舊→新"]];
+  if (!opts.some(([v]) => v === activeSort)) activeSort = opts[0][0];
+  $("#sortChips").innerHTML = opts.map(([v, label]) =>
+    `<button class="filter${v === activeSort ? " on" : ""}" data-sort="${v}">
+      <span class="nm">${label}</span></button>`).join("");
+  $("#sortChips").querySelectorAll(".filter").forEach(c => c.onclick = () => {
+    activeSort = c.dataset.sort;
+    $("#sortChips").querySelectorAll(".filter").forEach(x => x.classList.toggle("on", x === c));
+    $("#q").value.trim() ? run() : loadBrowse();
+  });
+}
+
+function skeleton() {
+  $("#meta").classList.remove("show");
+  $("#results").innerHTML = Array.from({ length: 4 }, () =>
+    `<div class="sk"><div class="sk-line" style="width:40%"></div>
+     <div class="sk-line" style="width:92%"></div><div class="sk-line" style="width:76%"></div></div>`).join("");
+}
+function fmtDate(d) { return d ? d.replace(/-/g, "/") : null; }
+
+// 標的徽章：base（個股/期貨）+ 標的清單。內嵌最多 3 個，超過顯示「首項 等 N<unit>」，完整清單放 title。
+function subjTag(base, targets, unit) {
+  const t = (targets || []).filter(Boolean);
+  if (!t.length) return `<span class="subj">${base}</span>`;
+  const full = t.join("、");
+  const shown = (unit && t.length > 3) ? `${t[0]} 等 ${t.length}${unit}` : full;
+  const title = t.length > 3 ? ` title="${esc(full)}"` : "";
+  return `<span class="subj"${title}>${base} · ${esc(shown)}</span>`;
+}
+
+function render(data) {
+  const results = data.results || [];
+  const terms = buildTerms(data.query);
+  $("#meta").classList.add("show");
+  $("#meta").textContent = `「${data.query}」${data.market ? " · " + mLabel(data.market) : ""} — ${results.length} 篇相關研報`;
+  if (!results.length) {
+    $("#results").innerHTML = `<div class="state"><div class="big">🫧</div><div class="msg">找不到相關片段，換個說法試試</div></div>`;
+    return;
+  }
+  $("#results").innerHTML = results.map((r, i) => {
+    const c = mColor(r.market);
+    const pct = Math.max(4, Math.min(100, Math.round(r.best_score * 100)));
+    const info = [];
+    if (r.source) info.push(`<span>${esc(r.source)}</span>`);
+    if (r.report_date) info.push(`<span>${fmtDate(r.report_date)}</span>`);
+    if (r.report_type) info.push(`<span>${esc(r.report_type)}</span>`);
+    info.push(`<span>${r.match_count} 命中片段</span>`);
+    const itags = (r.instrument_types || []).map(t =>
+      `<span class="itag" style="--ic:${iColor(t)}">${iLabel(t)}</span>`).join("");
+    const subj = [];
+    if (r.relates_stock) subj.push(subjTag("個股", r.stock_targets, "檔"));
+    if (r.relates_futures) subj.push(subjTag("期貨", r.futures_targets, ""));
+    const tagRow = (itags || subj.length)
+      ? `<div class="tags">${itags}${subj.join("")}</div>` : "";
+    const passHtml = r.passages.map((p, pi) =>
+      `<div class="passage${pi > 0 ? " hidden" : ""}">
+         <span class="pscore">${Math.round(p.score * 100)}%</span>${highlight(p.content.slice(0, 300), terms)}…
+       </div>`).join("");
+    const moreBtn = r.passages.length > 1
+      ? `<button class="more" data-card="${i}">顯示其他 ${r.passages.length - 1} 段片段</button>` : "";
+    return `<div class="card" style="animation-delay:${i * 55}ms" data-card="${i}">
+      <div class="card-top">
+        <span class="badge" style="background:${c}">${mLabel(r.market)}</span>
+        <span class="fname">${esc(r.file_name)}</span>
+        <span class="rank">#${r.rank}</span>
+      </div>
+      <div class="info">${info.join('<span class="dot">·</span>')}</div>
+      ${tagRow}
+      <div class="passages">${passHtml}</div>
+      <div class="card-actions">${moreBtn}<button class="full-report" data-report-id="${esc(r.report_id)}">查看完整報告</button></div>
+      <div class="score-row">
+        <div class="score-track"><div class="score-fill" data-w="${pct}"></div></div>
+        <span class="score-num">${pct}%</span>
+      </div>
+    </div>`;
+  }).join("");
+
+  document.querySelectorAll(".more").forEach(btn => btn.onclick = () => {
+    const card = document.querySelector(`.card[data-card="${btn.dataset.card}"]`);
+    card.querySelectorAll(".passage.hidden").forEach(p => p.classList.remove("hidden"));
+    btn.remove();
+  });
+  document.querySelectorAll(".full-report").forEach(btn =>
+    btn.onclick = () => openFull(btn.dataset.reportId));
+  requestAnimationFrame(() =>
+    document.querySelectorAll(".score-fill").forEach(f => f.style.width = f.dataset.w + "%"));
+}
+
+// ── 瀏覽模式：無關鍵字時列出全部已導入報告（日期新→舊，分頁）──
+const BROWSE_PAGE = 50;
+let browseOffset = 0;
+
+function browseCard(r, i) {
+  const c = mColor(r.market);
+  const info = [];
+  if (r.source) info.push(`<span>${esc(r.source)}</span>`);
+  if (r.report_date) info.push(`<span>${fmtDate(r.report_date)}</span>`);
+  if (r.report_type) info.push(`<span>${esc(r.report_type)}</span>`);
+  const itags = (r.instrument_types || []).map(t =>
+    `<span class="itag" style="--ic:${iColor(t)}">${iLabel(t)}</span>`).join("");
+  const subj = [];
+  if (r.relates_stock) subj.push(subjTag("個股", r.stock_targets, "檔"));
+  if (r.relates_futures) subj.push(subjTag("期貨", r.futures_targets, ""));
+  const tagRow = (itags || subj.length)
+    ? `<div class="tags">${itags}${subj.join("")}</div>` : "";
+  return `<div class="card" style="animation-delay:${Math.min(i, 10) * 45}ms">
+    <div class="card-top">
+      <span class="badge" style="background:${c}">${mLabel(r.market)}</span>
+      <span class="fname" title="${esc(r.file_name)}">${esc(r.file_name)}</span>
+    </div>
+    ${info.length ? `<div class="info">${info.join('<span class="dot">·</span>')}</div>` : ""}
+    ${tagRow}
+    <div class="card-actions"><button class="full-report" data-report-id="${esc(r.report_id)}">查看完整報告</button></div>
+  </div>`;
+}
+
+function bindFullReport(root) {
+  root.querySelectorAll(".full-report").forEach(btn =>
+    btn.onclick = () => openFull(btn.dataset.reportId));
+}
+
+async function loadBrowse(append = false) {
+  if (!append) { browseOffset = 0; skeleton(); }
+  buildSortChips("browse");   // 先渲染（含 relevance→date_desc 的 reset），URL 才用到校正後的值
+  const my = ++reqId;
+  try {
+    let url = `/api/reports?limit=${BROWSE_PAGE}&offset=${browseOffset}`;
+    if (activeMarket !== "全部") url += `&market=${encodeURIComponent(activeMarket)}`;
+    if (activeInstrument !== "全部") url += `&instrument_type=${encodeURIComponent(activeInstrument)}`;
+    if (relStock) url += "&relates_stock=true";
+    if (relFutures) url += "&relates_futures=true";
+    if (activeType !== "全部") url += `&report_type=${encodeURIComponent(activeType)}`;
+    url += `&sort=${activeSort}`;
+    const data = await (await fetch(url)).json();
+    if (my !== reqId) return;
+    renderBrowse(data, append);
+  } catch (e) {
+    if (my === reqId) $("#results").innerHTML =
+      `<div class="state"><div class="big">⚠️</div><div class="msg">載入失敗：${e}</div></div>`;
+  }
+}
+
+function renderBrowse(data, append) {
+  const items = data.items || [];
+  $("#meta").classList.add("show");
+  const sortLabel = activeSort === "date_asc" ? "依日期舊到新" : "依日期新到舊";
+  $("#meta").textContent = `已導入 ${data.total} 篇報告 — ${sortLabel}`;
+  if (!data.total) {
+    $("#results").innerHTML = `<div class="state"><div class="big">🫧</div><div class="msg">這個篩選條件下沒有報告</div></div>`;
+    return;
+  }
+  const html = items.map((r, i) => browseCard(r, i)).join("");
+  const wrap = $("#loadMoreWrap");
+  if (append && wrap) {
+    wrap.remove();
+    $("#results").insertAdjacentHTML("beforeend", html);
+  } else {
+    $("#results").innerHTML = html;
+  }
+  browseOffset += items.length;
+  if (browseOffset < data.total) {
+    $("#results").insertAdjacentHTML("beforeend",
+      `<div id="loadMoreWrap" style="grid-column:1/-1;text-align:center;padding:6px 0 2px">
+         <button class="more" id="loadMore">載入更多（還有 ${(data.total - browseOffset).toLocaleString()} 篇）</button>
+       </div>`);
+    $("#loadMore").onclick = () => loadBrowse(true);
+  }
+  bindFullReport(document.querySelector("#results"));
+}
+
+let reqId = 0;
+async function run() {
+  const q = $("#q").value.trim();
+  if (!q) return;
+  lastQuery = q;
+  const my = ++reqId;
+  skeleton();
+  buildSortChips("search");
+  try {
+    let url = `/api/search?q=${encodeURIComponent(q)}&k=12&passages=4`;
+    if (activeMarket !== "全部") url += `&market=${encodeURIComponent(activeMarket)}`;
+    if (activeInstrument !== "全部") url += `&instrument_type=${encodeURIComponent(activeInstrument)}`;
+    if (relStock) url += "&relates_stock=true";
+    if (relFutures) url += "&relates_futures=true";
+    if (activeType !== "全部") url += `&report_type=${encodeURIComponent(activeType)}`;
+    url += `&sort=${activeSort}`;
+    const data = await (await fetch(url)).json();
+    if (my === reqId) render(data);
+  } catch (e) {
+    if (my === reqId) $("#results").innerHTML =
+      `<div class="state"><div class="big">⚠️</div><div class="msg">查詢失敗：${e}</div></div>`;
+  }
+}
+
+function toggleClear() { $("#clear").classList.toggle("show", !!$("#q").value); }
+
+let debounceT;
+$("#q").addEventListener("input", () => {
+  toggleClear();
+  clearTimeout(debounceT);
+  const v = $("#q").value.trim();
+  if (!v) { if (lastQuery) { lastQuery = ""; loadBrowse(); } return; }
+  if (v.length < 2) return;
+  debounceT = setTimeout(() => { if (v !== lastQuery) run(); }, 450);
+});
+$("#q").addEventListener("keydown", e => { if (e.key === "Enter") { clearTimeout(debounceT); run(); } });
+$("#go").onclick = () => { clearTimeout(debounceT); run(); };
+$("#clear").onclick = () => { $("#q").value = ""; toggleClear(); lastQuery = ""; $("#q").focus(); loadBrowse(); };
+
+// ── 完整報告 modal ──
+async function openFull(id) {
+  const back = $("#modalBackdrop");
+  $("#modalName").textContent = "載入中…";
+  $("#modalMeta").innerHTML = "";
+  $("#modalBody").textContent = "";
+  $("#modalFoot").innerHTML = "";
+  back.classList.add("open");
+  try {
+    const d = await (await fetch(`/api/report/${id}/full`)).json();
+    const meta = [];
+    if (d.market) meta.push(`<span class="badge" style="background:${mColor(d.market)}">${mLabel(d.market)}</span>`);
+    if (d.source) meta.push(`<span>${esc(d.source)}</span>`);
+    if (d.report_date) meta.push(`<span>${fmtDate(d.report_date)}</span>`);
+    if (d.report_type) meta.push(`<span>${esc(d.report_type)}</span>`);
+    $("#modalName").textContent = d.file_name || "";
+    $("#modalMeta").innerHTML = meta.join('<span class="dot">·</span>');
+    const fileUrl = `/api/report/${id}/file`;
+    const isPdf = (d.file_name || "").toLowerCase().endsWith(".pdf");
+    if (d.has_file && isPdf) {
+      $("#modalBody").innerHTML = `<iframe class="pdf-frame" src="${fileUrl}" title="完整報告"></iframe>`;
+      $("#modalFoot").innerHTML = `<a href="${fileUrl}" target="_blank" rel="noopener">在新分頁開啟</a>`;
+    } else if (d.has_file) {
+      const ext = (d.file_name.split(".").pop() || "").toUpperCase();
+      $("#modalBody").innerHTML = `<div class="modal-fallback">此檔為 ${esc(ext)} 文件，無法內嵌預覽，請下載查看。</div>`;
+      $("#modalFoot").innerHTML = `<a href="${fileUrl}" target="_blank" rel="noopener">下載原始檔</a>`;
+    } else {
+      $("#modalBody").innerHTML = `<div class="modal-fallback">找不到原始檔。</div>`;
+      $("#modalFoot").innerHTML = "";
+    }
+  } catch (e) {
+    $("#modalBody").innerHTML = `<div class="modal-fallback">載入失敗：${esc(String(e))}</div>`;
+  }
+}
+function closeFull() { $("#modalBackdrop").classList.remove("open"); $("#modalBody").innerHTML = ""; }
+$("#modalClose").onclick = closeFull;
+$("#modalBackdrop").addEventListener("click", e => { if (e.target === e.currentTarget) closeFull(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeFull(); });
+
+loadStats();
+loadBrowse();
+</script>
+</body>
+</html>

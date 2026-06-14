@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>廷豐研報 · 導入監控</title>
+<style>
+  :root {
+    --blue: #007aff;
+    --green: #34c759;
+    --amber: #ff9f0a;
+    --red: #ff3b30;
+    --bg: #f2f2f7;
+    --bg-grad-1: #f7f8fa;
+    --bg-grad-2: #eceef3;
+    --card: #ffffff;
+    --label: #1c1c1e;
+    --label-2: #3c3c4399;
+    --label-3: #3c3c434d;
+    --sep: #3c3c431f;
+    --fill: #78788014;
+    --track: #7878801f;
+    --radius: 16px;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+                 "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100dvh; color: var(--label);
+    background: radial-gradient(120% 80% at 50% -10%, var(--bg-grad-1) 0%, var(--bg-grad-2) 60%, var(--bg) 100%);
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    font-size: 15px; line-height: 1.5; letter-spacing: .006em;
+  }
+  .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 40px 28px 72px; }
+
+  /* ── header ── */
+  header { display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 16px; margin-bottom: 30px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 27px; font-weight: 700; letter-spacing: -.022em; }
+  .sub { margin: 5px 0 0; font-size: 13px; font-weight: 600; color: var(--label-2);
+    letter-spacing: .01em; }
+  .back { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600;
+    color: var(--blue); text-decoration: none; margin-bottom: 7px; }
+  .back:hover { text-decoration: underline; }
+  .back svg { flex: none; }
+  .live { display: inline-flex; align-items: center; gap: 8px; font-size: 13px;
+    font-weight: 700; color: var(--label-2); letter-spacing: .02em; }
+  .live .lab { color: var(--green); }
+  .live.stale .lab { color: var(--amber); }
+  .live .clock { color: var(--label-2); font-weight: 600; }
+  .ldot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+  .live.stale .ldot { background: var(--amber); }
+
+  /* ── metric tiles ── */
+  .tiles { display: grid; gap: 13px; margin-bottom: 13px;
+    grid-template-columns: repeat(auto-fit, minmax(208px, 1fr)); }
+  .tile { background: var(--card); border-radius: var(--radius); padding: 18px 20px 17px;
+    box-shadow: var(--shadow); }
+  .tile .k { font-size: 12px; font-weight: 700; color: var(--label-3);
+    letter-spacing: .05em; margin-bottom: 9px; }
+  .tile .v { font-size: 34px; font-weight: 600; letter-spacing: -.02em; line-height: 1.05; }
+  .tile .v small { font-size: 17px; font-weight: 600; color: var(--label-3); margin-left: 2px; }
+  .tile .d { font-size: 12.5px; font-weight: 600; color: var(--label-2); margin-top: 7px;
+    min-height: 16px; }
+  .tile .d b { color: var(--blue); font-weight: 700; }
+
+  /* ── panels ── */
+  .panel { background: var(--card); border-radius: var(--radius); padding: 19px 21px;
+    box-shadow: var(--shadow); margin-bottom: 13px; }
+  .panel.split { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  @media (max-width: 680px) { .panel.split { grid-template-columns: 1fr; } }
+  .panel.split > div { padding: 1px 0; }
+  .panel.split > div + div { border-left: .5px solid var(--sep); padding-left: 22px; margin-left: 22px; }
+  @media (max-width: 680px) {
+    .panel.split > div + div { border-left: 0; padding-left: 0; margin-left: 0;
+      border-top: .5px solid var(--sep); padding-top: 17px; margin-top: 17px; } }
+
+  .ptitle { font-size: 12px; font-weight: 700; color: var(--label-3);
+    letter-spacing: .05em; margin-bottom: 13px; }
+  .pmain { display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    margin-bottom: 11px; }
+  .pmain .big { font-size: 22px; font-weight: 600; letter-spacing: -.015em; }
+  .pmain .side { font-size: 13px; font-weight: 600; color: var(--label-2); }
+  .pmain .side b { color: var(--label); }
+  .pmain .side .err { color: var(--red); }
+
+  /* progress bar */
+  .bar { height: 9px; border-radius: 100px; background: var(--track); overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0%; border-radius: 100px;
+    background: var(--blue); transition: width .6s cubic-bezier(.22,1,.36,1); }
+  /* 不定式（導入中、無明確總量）：細條來回滑動 */
+  .bar.indet > i { width: 34% !important; background: var(--blue);
+    transition: none; opacity: .9; }
+  .bar.idle > i { background: var(--label-3); }
+
+  /* ── pipelines ── */
+  .pipes { display: flex; gap: 26px; flex-wrap: wrap; }
+  .pipe { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; }
+  .pdot { width: 10px; height: 10px; border-radius: 50%; background: var(--label-3); flex: none; }
+  .pipe.on .pdot { background: var(--green); }
+  .pipe.off { color: var(--label-2); }
+  .pipe .st { font-size: 12px; font-weight: 600; color: var(--label-3); }
+  .pipe.on .st { color: var(--green); }
+
+  /* ── markets ── */
+  .mkts { display: flex; flex-direction: column; gap: 9px; }
+  .mrow { display: grid; grid-template-columns: 52px 1fr 56px; align-items: center; gap: 11px; }
+  .mrow .mc { font-size: 12.5px; font-weight: 700; color: var(--label); letter-spacing: .01em; }
+  .mrow .mbar { height: 7px; border-radius: 100px; background: var(--track); overflow: hidden; }
+  .mrow .mbar > i { display: block; height: 100%; width: 0%; border-radius: 100px;
+    background: var(--blue); transition: width .6s cubic-bezier(.22,1,.36,1); }
+  .mrow .mn { font-size: 12.5px; font-weight: 600; color: var(--label-2); text-align: right; }
+
+  footer { margin-top: 18px; font-size: 12px; font-weight: 600; color: var(--label-3);
+    letter-spacing: .01em; line-height: 1.7; }
+  footer .o { color: var(--label-2); }
+
+  /* ── motion（可被 reduced-motion 關閉）── */
+  @media (prefers-reduced-motion: no-preference) {
+    .ldot { animation: breathe 2.4s ease-in-out infinite; }
+    .pipe.on .pdot { animation: breathe 2.4s ease-in-out infinite; }
+    .bar.indet > i { animation: slide 1.5s ease-in-out infinite; }
+  }
+  @keyframes breathe { 0%,100% { opacity: 1; transform: scale(1); }
+    50% { opacity: .35; transform: scale(.82); } }
+  @keyframes slide { 0% { margin-left: -34%; } 100% { margin-left: 100%; } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <a class="back" href="/"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>廷豐研報</a>
+        <h1>研報導入監控</h1>
+        <p class="sub" id="sub">連線中…</p>
+      </div>
+      <div class="live" id="live">
+        <span class="ldot"></span><span class="lab">LIVE</span>
+        <span class="clock num" id="clock">--:--:--</span>
+      </div>
+    </header>
+
+    <div class="tiles">
+      <div class="tile"><div class="k">已導入報告</div><div class="v num" id="t-reports">—</div><div class="d" id="t-reports-d"></div></div>
+      <div class="tile"><div class="k">總片段 CHUNKS</div><div class="v num" id="t-chunks">—</div><div class="d" id="t-chunks-d"></div></div>
+      <div class="tile"><div class="k">標註進度</div><div class="v num" id="t-tagpct">—<small>%</small></div><div class="d" id="t-tagpct-d"></div></div>
+      <div class="tile"><div class="k">導入速率</div><div class="v num" id="t-rate">—<small>篇/分</small></div><div class="d" id="t-rate-d"></div></div>
+    </div>
+
+    <div class="panel split">
+      <div>
+        <div class="ptitle">標註 TAGGING</div>
+        <div class="pmain">
+          <span class="big num" id="tag-done">—</span>
+          <span class="side">／ <b class="num" id="tag-total">—</b>　未標 <span class="err num" id="tag-fail">0</span></span>
+        </div>
+        <div class="bar"><i id="tag-bar"></i></div>
+      </div>
+      <div>
+        <div class="ptitle">導入 INGEST</div>
+        <div class="pmain">
+          <span class="big num" id="ing-rate">—<small style="font-size:13px;color:var(--label-3)"> 篇/分</small></span>
+          <span class="side">本輪 <b class="num" id="ing-run">0</b>　失敗 <span class="err num" id="ing-fail">0</span></span>
+        </div>
+        <div class="bar idle" id="ing-barwrap"><i id="ing-bar"></i></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ptitle">管線 PIPELINES</div>
+      <div class="pipes">
+        <span class="pipe" id="pipe-web"><span class="pdot"></span>網頁<span class="st">—</span></span>
+        <span class="pipe" id="pipe-ingest"><span class="pdot"></span>導入<span class="st">—</span></span>
+        <span class="pipe" id="pipe-tag"><span class="pdot"></span>標註<span class="st">—</span></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ptitle">市場分佈 MARKETS</div>
+      <div class="mkts" id="mkts"><div class="sub">—</div></div>
+    </div>
+
+    <footer>
+      <div>更新於 <span class="num" id="f-ts">—</span> · 自動每 2 秒刷新 · 資料源 <span class="num">/api/progress</span></div>
+      <div class="o" id="f-orch"></div>
+    </footer>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const POLL = 2000;
+  const nf = (n) => (n == null ? "—" : Math.round(Number(n)).toLocaleString("en-US"));
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // 平滑數字跳動（tabular-nums 無位移）
+  const shown = {};
+  function tween(el, to, fmt = nf) {
+    if (to == null) { el.firstChild ? el.firstChild.nodeValue = "—" : el.textContent = "—"; return; }
+    const id = el.id, from = shown[id] ?? to;
+    if (reduce || from === to) { shown[id] = to; setText(el, fmt(to)); return; }
+    const t0 = performance.now(), dur = 600;
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      const e = 1 - Math.pow(1 - p, 3);
+      setText(el, fmt(from + (to - from) * e));
+      if (p < 1) requestAnimationFrame(step); else shown[id] = to;
+    };
+    requestAnimationFrame(step);
+  }
+  // 只改第一個文字節點，保留 <small> 單位
+  function setText(el, s) {
+    if (el.firstChild && el.firstChild.nodeType === 3) el.firstChild.nodeValue = s;
+    else el.textContent = s;
+  }
+
+  // 速率：自開頁以來的平均（穩定、不抖動）
+  let base = null;
+  function rate(reports, chunks) {
+    const now = performance.now();
+    if (!base) { base = { reports, chunks, t: now }; return { rpm: null, cps: null }; }
+    const dt = (now - base.t) / 1000;
+    if (dt < 8) return { rpm: lastRate.rpm, cps: lastRate.cps }; // 開頁初期先不顯示
+    return { rpm: (reports - base.reports) / dt * 60, cps: (chunks - base.chunks) / dt };
+  }
+  let lastRate = { rpm: null, cps: null };
+
+  function clock() {
+    const d = new Date();
+    $("clock").textContent = d.toTimeString().slice(0, 8);
+  }
+  setInterval(clock, 1000); clock();
+
+  function setLive(ok) {
+    const el = $("live");
+    el.classList.toggle("stale", !ok);
+    el.querySelector(".lab").textContent = ok ? "LIVE" : "重連中";
+  }
+
+  function pipe(id, on) {
+    const el = $(id);
+    el.classList.toggle("on", !!on);
+    el.classList.toggle("off", !on);
+    el.querySelector(".st").textContent = on ? "執行中" : "已停止";
+  }
+
+  function renderMarkets(markets) {
+    const box = $("mkts");
+    if (!markets || !markets.length) { box.innerHTML = '<div class="sub">—</div>'; return; }
+    const max = Math.max(...markets.map(m => m.count)) || 1;
+    // 重用既有 row（避免重建導致動畫重置）
+    const have = new Map([...box.querySelectorAll(".mrow")].map(r => [r.dataset.m, r]));
+    markets.forEach(m => {
+      let row = have.get(m.market);
+      if (!row) {
+        row = document.createElement("div");
+        row.className = "mrow"; row.dataset.m = m.market;
+        row.innerHTML = `<span class="mc">${m.market ?? "—"}</span><span class="mbar"><i></i></span><span class="mn num">0</span>`;
+        box.appendChild(row);
+      }
+      row.querySelector("i").style.width = (m.count / max * 100).toFixed(1) + "%";
+      tweenEl(row.querySelector(".mn"), m.count);
+      have.delete(m.market);
+    });
+    have.forEach(r => r.remove());
+    // 依數量排序（DOM 順序）
+    [...box.querySelectorAll(".mrow")]
+      .sort((a, b) => (+b.querySelector(".mn").textContent.replace(/,/g, "")) - (+a.querySelector(".mn").textContent.replace(/,/g, "")))
+      .forEach(r => box.appendChild(r));
+  }
+  function tweenEl(el, to) { // 給沒有固定 id 的元素
+    const from = +(el.dataset.v ?? to);
+    el.dataset.v = to;
+    if (reduce || from === to) { el.textContent = nf(to); return; }
+    const t0 = performance.now();
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / 600), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = nf(Math.round(from + (to - from) * e));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  async function tick() {
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch("/api/progress", { signal: ctrl.signal, cache: "no-store" });
+      clearTimeout(to);
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+      setLive(true);
+
+      // tiles
+      tween($("t-reports"), d.db.reports);
+      tween($("t-chunks"), d.db.chunks);
+      const tag = d.tagging;
+      tween($("t-tagpct"), tag ? tag.pct : null, (v) => v.toFixed(2));
+      $("t-tagpct-d").innerHTML = tag ? `已標註 <b class="num">${nf(tag.done)}</b> / ${nf(tag.total)}` : "";
+      $("t-reports-d").innerHTML = `${d.db.markets?.length || 0} 個市場`;
+      $("t-chunks-d").textContent = "向量片段總數";
+
+      // rate
+      const rt = rate(d.db.reports, d.db.chunks);
+      lastRate = rt;
+      tween($("t-rate"), rt.rpm == null ? null : Math.round(rt.rpm * 10) / 10, (v) => v.toFixed(1));
+      $("t-rate-d").innerHTML = rt.cps == null ? "計算中…" : `<b class="num">${rt.cps.toFixed(1)}</b> 片段/秒`;
+      tween($("ing-rate"), rt.rpm == null ? null : Math.round(rt.rpm * 10) / 10, (v) => v.toFixed(1));
+
+      // tagging panel
+      if (tag) {
+        tween($("tag-done"), tag.done);
+        $("tag-total").textContent = nf(tag.total);
+        $("tag-fail").textContent = nf(tag.fail);
+        $("tag-bar").style.width = tag.pct + "%";
+      }
+      // ingest panel
+      const ing = d.ingest || {};
+      tween($("ing-run"), ing.ingested ?? 0);
+      $("ing-fail").textContent = nf(ing.fail ?? 0);
+      const ingestOn = d.pipelines?.ingest;
+      const bw = $("ing-barwrap");
+      bw.classList.toggle("indet", !!ingestOn);
+      bw.classList.toggle("idle", !ingestOn);
+      if (!ingestOn) $("ing-bar").style.width = "100%";
+
+      // pipelines
+      pipe("pipe-web", d.pipelines?.web);
+      pipe("pipe-ingest", d.pipelines?.ingest);
+      pipe("pipe-tag", d.pipelines?.tag);
+
+      renderMarkets(d.db.markets);
+
+      // sub + footer
+      const alive = ["web", "ingest", "tag"].filter(k => d.pipelines?.[k]).length;
+      $("sub").textContent = `${nf(d.db.reports)} 篇已導入 · ${alive}/3 條管線執行中`;
+      $("f-ts").textContent = d.ts || "—";
+      $("f-orch").textContent = d.orchestrator ? "編排器：" + d.orchestrator : "";
+    } catch (e) {
+      setLive(false);
+    } finally {
+      setTimeout(tick, POLL);
+    }
+  }
+  tick();
+})();
+</script>
+</body>
+</html>

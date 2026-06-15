@@ -36,6 +36,25 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 logger = logging.getLogger(__name__)
 
 
+def _static_page(name: str) -> FileResponse:
+    """回傳 HTML 殼，並標記 no-cache（瀏覽器每次重新向伺服器取用，改版後同事免強制重整即見新版）。
+
+    註：route-level 的 FileResponse 不會對 If-None-Match/If-Modified-Since 做 304 短路，
+    每次都回 200 全量 body（HTML 約數十 KB，區網成本可忽略）。/static 下的 css/js 由
+    _NoCacheStatic（StaticFiles）服務，才有條件式 304 重新驗證。
+    """
+    return FileResponse(STATIC_DIR / name, headers={"Cache-Control": "no-cache"})
+
+
+class _NoCacheStatic(StaticFiles):
+    """/static 下的 css/js/圖片同樣以 no-cache 重新驗證，確保 tokens.css / utils.js 改版不卡舊版。"""
+
+    async def get_response(self, path, scope):  # type: ignore[override]
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 async def _warmup_embeddings() -> None:
     await asyncio.to_thread(embed_texts, ["warmup"])
 
@@ -306,12 +325,12 @@ async def progress():
 
 @app.get("/monitor")
 async def monitor():
-    return FileResponse(STATIC_DIR / "monitor.html")
+    return _static_page("monitor.html")
 
 
 @app.get("/help")
 async def help_page():
-    return FileResponse(STATIC_DIR / "help.html")
+    return _static_page("help.html")
 
 
 @app.get("/api/markets")
@@ -496,7 +515,7 @@ async def report_file(report_id: str):
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return _static_page("index.html")
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", _NoCacheStatic(directory=STATIC_DIR), name="static")

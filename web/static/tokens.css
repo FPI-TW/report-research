@@ -1,0 +1,20 @@
+/*
+ * 廷豐研報 共用設計 token（三頁共用：index / help / monitor）。
+ * 以 <link> 在各頁 inline <style> 之前載入，頁面可在自己的 :root 覆寫或追加頁面專屬 token。
+ * 只放「跨頁一致」的色票、陰影與字體；頁面專屬（--sidebar-w、--radius-md 等）仍留在各頁。
+ */
+:root {
+  --blue: #007aff;
+  --bg: #f2f2f7;
+  --bg-grad-1: #f7f8fa;
+  --bg-grad-2: #eceef3;
+  --card: #ffffff;
+  --label: #1c1c1e;
+  --label-2: #3c3c43bf;  /* 0.75 alpha ≈ 5:1 對比，達 WCAG AA 正文 */
+  --label-3: #3c3c4399;  /* 0.6 alpha，由 0.3 提高以改善次要文字可讀性 */
+  --sep: #3c3c431f;
+  --fill: #78788014;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px rgba(0, 0, 0, .06);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+               "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+}

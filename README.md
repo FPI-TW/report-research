@@ -60,7 +60,9 @@ app/services/
   chunk.py       段落邊界分塊（600 字 / 80 重疊）
   embed.py       BGE-M3 dense 1024 維（CPU，單例延遲載入）
   tagging.py     findb 市場代碼 + Claude 標註指令 + tag 解析（MARKETS/MARKET_DISPLAY/LEGACY_TO_FINDB）
-  store.py       file_hash 去重 upsert + cosine 分組檢索
+  store.py       file_hash 去重 upsert + 雙路（dense／字面）召回查詢
+  textnorm.py    查詢/內容正規化（NFKC、去空白、小寫）供字面比對
+  retrieval.py   混合檢索編排：dense＋字面召回 → 去重 → tier 融合排序
   db.py          async SQLAlchemy 引擎（env REPORT_MARK_DB_URL）
 
 scripts/
@@ -75,15 +77,17 @@ workflows/
   tag_reports.workflow.js Claude 分批 fan-out 市場標註
 
 web/
-  server.py               FastAPI（BGE-M3 常駐）/api/stats /api/markets /api/search
+  server.py               FastAPI（BGE-M3 常駐）/api/stats /api/markets /api/search /api/reports /api/report/{id}
   static/index.html       iOS 風格查詢介面（雙欄、卡片網格、高亮、即打即查）
 ```
 
 ## 查詢網頁
 
-iOS 風格、雙欄側邊版面（手機收單欄）。結果**依報告分組**：每篇顯示市場標籤、券商來源、報告日期、命中片段數、相關度 %，查詢關鍵字高亮、可展開更多片段。左側市場 chips 可過濾。
+iOS 風格、雙欄側邊版面（手機收單欄）。結果**依報告分組**：每篇顯示市場標籤、商品類型、標的、券商來源、報告日期、命中片段數、相關度 %，查詢關鍵字高亮、可展開片段，並可「查看完整報告」內嵌原始 PDF。
 
-API：`/api/stats`、`/api/markets`、`/api/search?q=&market=&k=&passages=`（詳見 [docs/WORKFLOW.md](docs/WORKFLOW.md#web-api)）。
+左側可篩選**市場 / 商品類型 / 標的（個股·期貨）/ 報告類型**（皆單選），並切換**排序**：搜尋＝相關度（預設）/ 日期新→舊 / 日期舊→新；瀏覽＝日期新→舊（預設）/ 日期舊→新。
+
+API：`/api/stats`、`/api/markets`、`/api/search`、`/api/reports`（瀏覽）、`/api/report/{id}/full`、`/api/report/{id}/file`（詳見 [docs/WORKFLOW.md](docs/WORKFLOW.md#web-api)）。
 
 ## 環境
 

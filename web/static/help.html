@@ -136,7 +136,7 @@
         <li><a href="#start">開始使用（網址）</a></li>
         <li><a href="#home">首頁：瀏覽所有報告</a></li>
         <li><a href="#search">搜尋報告</a></li>
-        <li><a href="#filter">用篩選縮小範圍</a></li>
+        <li><a href="#filter">用篩選與排序整理結果</a></li>
         <li><a href="#card">看懂一張結果卡片</a></li>
         <li><a href="#full">查看完整報告（原始 PDF）</a></li>
         <li><a href="#monitor">導入監控頁（進階）</a></li>
@@ -159,7 +159,7 @@
 
     <section id="home">
       <h2><span class="no">2</span>首頁：瀏覽所有報告</h2>
-      <p>還沒輸入查詢時，畫面會依<strong>日期新到舊</strong>列出目前所有已導入的報告。左側欄位顯示總篇數，以及各市場、各商品類型的報告數量。</p>
+      <p>還沒輸入查詢時，畫面會<strong>預設依日期新到舊</strong>列出目前所有已導入的報告（可用左側「排序」切換新舊）。左側欄位顯示總篇數，以及各市場、各商品類型的報告數量。</p>
       <figure>
         <img src="/static/help/01-home.png" alt="首頁瀏覽模式" />
         <figcaption>首頁：左側為品牌、搜尋框與篩選；右側依日期列出報告卡片</figcaption>
@@ -181,14 +181,23 @@
     </section>
 
     <section id="filter">
-      <h2><span class="no">4</span>用篩選縮小範圍</h2>
+      <h2><span class="no">4</span>用篩選與排序整理結果</h2>
       <p>左側的篩選可單獨使用，也可與搜尋並用（先選好篩選再搜尋，或先搜尋再點篩選）。每個項目後面的數字是該分類的報告數：</p>
       <ul class="bul">
         <li><strong>市場</strong>：<span class="tag-inline">台股</span> <span class="tag-inline">總經</span> <span class="tag-inline">全球</span> <span class="tag-inline">美股</span> <span class="tag-inline">陸股</span> <span class="tag-inline">台指期</span> <span class="tag-inline">外匯</span> 等，點一下只看該市場。</li>
         <li><strong>商品類型</strong>：股票、指數、債券、原物料、ETF… 報告實際提到的金融商品。</li>
         <li><strong>標的</strong>：可切換「對選股有參考」或「對期貨／指數部位有參考」的報告。</li>
+        <li><strong>報告類型</strong>：速報、週報、策略、雙週報… 報告的類別（依檔名判定），點一下只看該類型。</li>
       </ul>
       <div class="note">想取消篩選，再點一次同一個項目，或點「全部」即可回到不限。</div>
+
+      <h3>排序</h3>
+      <p>左側最下方的<strong>「排序」</strong>可調整結果的排列方式：</p>
+      <ul class="bul">
+        <li><strong>搜尋時</strong>：<span class="tag-inline">相關度</span>（預設）、<span class="tag-inline">日期新→舊</span>、<span class="tag-inline">日期舊→新</span>。</li>
+        <li><strong>瀏覽時</strong>（還沒輸入查詢）：<span class="tag-inline">日期新→舊</span>（預設）、<span class="tag-inline">日期舊→新</span>。</li>
+      </ul>
+      <div class="note">用日期排序搜尋時，是把<b>最相關的幾篇</b>再依日期排列；仍以相關度決定哪些報告出現，不是整個資料庫的日期排序。</div>
     </section>
 
     <section id="card">
@@ -206,7 +215,7 @@
       </figure>
       <ol class="annot-legend">
         <li><span class="n">1</span><span><b>市場徽章</b>：報告涵蓋的主要市場（彩色，本例「台股」）；完整 9 種見下方。</span></li>
-        <li><span class="n">2</span><span><b>檔名</b>：原始報告檔名。最右側的「#1」是這次搜尋的<b>相關度排名</b>。</span></li>
+        <li><span class="n">2</span><span><b>檔名</b>：原始報告檔名。最右側的「#1」是這次結果的<b>排名</b>（預設依相關度；若改用日期排序則為顯示順序）。</span></li>
         <li><span class="n">3</span><span><b>來源／日期／命中片段數</b>：券商來源、報告日期、報告類型（如「速報」），與本篇命中你查詢的<b>段落數</b>。</span></li>
         <li><span class="n">4</span><span><b>商品類型標籤</b>：報告提到的金融商品（本例「股票」）；完整清單見下方。</span></li>
         <li><span class="n">5</span><span><b>標的標籤</b>：對選股／期貨是否有參考，常附<b>代碼</b>（本例「個股 · 8299」）。</span></li>

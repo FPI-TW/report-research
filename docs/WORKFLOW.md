@@ -2,7 +2,7 @@
 
 研報市場標籤分類 + 向量檢索系統的端到端運作說明。
 
-系統把 `研報自動匯入/` 內的券商研究報告，經過 **抽樣 → 抽文字 → Claude 市場標註 → 切塊嵌入 → pgvector 入庫 → 語意檢索**，產出可依市場過濾的語意搜尋服務。市場標籤對齊 [findb](../../findb) 的市場代碼。
+系統把 `研報自動匯入/` 內的券商研究報告，經過 **抽樣 → 抽文字 → Claude 市場標註 → 切塊嵌入 → pgvector 入庫 → 語意檢索**，產出可依 **市場／商品類型／標的／報告類型** 過濾並排序的語意搜尋服務。市場標籤對齊 [findb](../../findb) 的市場代碼。
 
 ---
 
@@ -136,12 +136,15 @@ findb 無「債券」「原物料」獨立市場 → 歸到最接近者（債券
 
 | 端點 | 說明 |
 |------|------|
-| `GET /api/stats` | 總篇數、總片段數、各市場代碼篇數 |
+| `GET /api/stats` | 總篇數、總片段數，各市場代碼／商品類型／報告類型的篇數 |
 | `GET /api/markets` | findb 市場代碼清單 |
-| `GET /api/search?q=&market=&k=&passages=` | 語意檢索，結果**依報告分組**：每篇回傳 best_score、命中片段數、券商/日期/類型 metadata、清理後（去除 PDF 雜亂排版）的片段 |
+| `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`k`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、清理後（去除 PDF 雜亂排版）的片段 |
+| `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁 |
+| `GET /api/report/{id}/full` | 單篇 metadata 與原始檔狀態（供前端完整報告 modal）|
+| `GET /api/report/{id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|
 | `GET /` | iOS 風格單頁前端 |
 
-前端特性：雙欄側邊版面（手機收單欄）、自適應卡片網格、同篇研報合併、查詢關鍵字高亮、可展開片段、即打即查（debounce 450ms）、骨架載入。
+前端特性：雙欄側邊版面（手機收單欄）、市場／商品類型／標的／報告類型篩選與排序切換、自適應卡片網格、同篇研報合併、查詢關鍵字高亮、可展開片段、「查看完整報告」內嵌 PDF、即打即查（debounce 450ms）、骨架載入。
 
 ---
 

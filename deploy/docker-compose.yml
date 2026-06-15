@@ -1,0 +1,21 @@
+# 廷豐研報 對外存取邊緣：nginx 反向代理 + cloudflared 隧道
+# 用法：先 `make edge-passwd` 設定 Basic Auth，填好 deploy/.env 的 TUNNEL_TOKEN，再 `make up-edge`
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./secrets:/etc/nginx/secrets:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # 不對 host 發佈任何埠；僅 compose 網路內供 cloudflared 取用
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    depends_on:
+      - nginx

@@ -11,8 +11,9 @@ MARKET ?=
 EDGE_COMPOSE ?= deploy/docker-compose.yml
 EDGE_USER ?= tingfeng
 
-# Docker 二進位自動偵測：原生 Linux 用 docker；WSL + Docker Desktop（無 unix socket）退回 docker.exe
-DOCKER := $(shell docker info >/dev/null 2>&1 && echo docker || echo docker.exe)
+# Docker 二進位自動偵測：可連到 daemon 的 docker 優先；否則若有 docker.exe（WSL+Docker Desktop）就用它；
+# 都沒有時退回 docker，讓指令自己回報真正的 daemon 錯誤（而非 docker.exe: command not found）。
+DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command -v docker.exe >/dev/null 2>&1; then echo docker.exe; else echo docker; fi)
 COMPOSE := $(DOCKER) compose
 # docker.exe 的 -v 掛載需 Windows 路徑（C:/...）；原生 docker 用一般路徑
 ifeq ($(DOCKER),docker.exe)
@@ -106,6 +107,7 @@ edge-passwd:  ## 設定/更換對外 Basic Auth 共用密碼（覆蓋舊密碼�
 up-edge:  ## 啟動對外邊緣（nginx + cloudflared）
 	@test -f deploy/secrets/.htpasswd || { echo "缺少 deploy/secrets/.htpasswd，請先執行 make edge-passwd"; exit 1; }
 	@test -f deploy/.env || { echo "缺少 deploy/.env，請複製 deploy/.env.example 並填入 TUNNEL_TOKEN"; exit 1; }
+	@grep -qE '^TUNNEL_TOKEN=[^[:space:]]' deploy/.env || { echo "deploy/.env 的 TUNNEL_TOKEN 是空的，請填入 Cloudflare 隧道 token"; exit 1; }
 	$(COMPOSE) -f $(EDGE_COMPOSE) up -d
 
 down-edge:  ## 關閉對外邊緣

@@ -4,26 +4,15 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>廷豐研報 · 導入監控</title>
+<link rel="stylesheet" href="/static/tokens.css" />
 <style>
+  /* 共用色票/字體見 tokens.css；此處僅頁面專屬 token */
   :root {
-    --blue: #007aff;
     --green: #34c759;
     --amber: #ff9f0a;
     --red: #ff3b30;
-    --bg: #f2f2f7;
-    --bg-grad-1: #f7f8fa;
-    --bg-grad-2: #eceef3;
-    --card: #ffffff;
-    --label: #1c1c1e;
-    --label-2: #3c3c4399;
-    --label-3: #3c3c434d;
-    --sep: #3c3c431f;
-    --fill: #78788014;
     --track: #7878801f;
     --radius: 16px;
-    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
-                 "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -115,7 +104,8 @@
     background: var(--blue); transition: width .6s cubic-bezier(.22,1,.36,1); }
   .mrow .mn { font-size: 12.5px; font-weight: 600; color: var(--label-2); text-align: right; }
 
-  footer { margin-top: 18px; font-size: 12px; font-weight: 600; color: var(--label-3);
+  footer { margin-top: 24px; padding-top: 16px; border-top: .5px solid var(--sep);
+    font-size: 12px; font-weight: 600; color: var(--label-3);
     letter-spacing: .01em; line-height: 1.7; }
   footer .o { color: var(--label-2); }
 
@@ -157,7 +147,7 @@
         <div class="ptitle">標註 TAGGING</div>
         <div class="pmain">
           <span class="big num" id="tag-done">—</span>
-          <span class="side">／ <b class="num" id="tag-total">—</b>　未標 <span class="err num" id="tag-fail">0</span></span>
+          <span class="side">／ <b class="num" id="tag-total">—</b>　<span title="尚未完成標註的報告數">未標</span> <span class="err num" id="tag-fail">0</span></span>
         </div>
         <div class="bar"><i id="tag-bar"></i></div>
       </div>
@@ -182,7 +172,7 @@
 
     <div class="panel">
       <div class="ptitle">市場分佈 MARKETS</div>
-      <div class="mkts" id="mkts"><div class="sub">—</div></div>
+      <div class="mkts" id="mkts"><div class="mrow"><span class="mc">—</span></div></div>
     </div>
 
     <footer>
@@ -191,6 +181,7 @@
     </footer>
   </div>
 
+<script src="/static/utils.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -251,7 +242,7 @@
 
   function renderMarkets(markets) {
     const box = $("mkts");
-    if (!markets || !markets.length) { box.innerHTML = '<div class="sub">—</div>'; return; }
+    if (!markets || !markets.length) { box.innerHTML = '<div class="mrow"><span class="mc">—</span></div>'; return; }
     const max = Math.max(...markets.map(m => m.count)) || 1;
     // 重用既有 row（避免重建導致動畫重置）
     const have = new Map([...box.querySelectorAll(".mrow")].map(r => [r.dataset.m, r]));
@@ -260,7 +251,7 @@
       if (!row) {
         row = document.createElement("div");
         row.className = "mrow"; row.dataset.m = m.market;
-        row.innerHTML = `<span class="mc">${m.market ?? "—"}</span><span class="mbar"><i></i></span><span class="mn num">0</span>`;
+        row.innerHTML = html`<span class="mc">${m.market ?? "—"}</span><span class="mbar"><i></i></span><span class="mn num">0</span>`;
         box.appendChild(row);
       }
       row.querySelector("i").style.width = (m.count / max * 100).toFixed(1) + "%";
@@ -288,12 +279,7 @@
 
   async function tick() {
     try {
-      const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), 6000);
-      const r = await fetch("/api/progress", { signal: ctrl.signal, cache: "no-store" });
-      clearTimeout(to);
-      if (!r.ok) throw new Error(r.status);
-      const d = await r.json();
+      const d = await fetchJSON("/api/progress", { ms: 6000, cache: "no-store" });
       setLive(true);
 
       // tiles

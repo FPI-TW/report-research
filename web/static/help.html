@@ -4,23 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>廷豐研報 · 使用說明</title>
+<link rel="stylesheet" href="/static/tokens.css" />
 <style>
+  /* 共用色票/字體見 tokens.css；此處僅頁面專屬 token */
   :root {
-    --blue: #007aff;
-    --bg: #f2f2f7;
-    --bg-grad-1: #f7f8fa;
-    --bg-grad-2: #eceef3;
-    --card: #ffffff;
-    --label: #1c1c1e;
-    --label-2: #3c3c4399;
-    --label-3: #3c3c434d;
-    --sep: #3c3c431f;
-    --fill: #78788014;
     --blue-soft: #007aff1f;
     --radius: 16px;
-    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
-                 "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -178,6 +167,7 @@
         <img src="/static/help/02-results.png" alt="搜尋結果" />
         <figcaption>搜尋「AI 伺服器散熱」的結果：每張卡片附最相關段落，關鍵詞以黃底標示</figcaption>
       </figure>
+      <div class="note">搜尋會回傳<b>最相關的前 12 篇</b>研報（非整個資料庫）；想更精準就多加關鍵字縮小範圍。卡片上的<b>百分比</b>是「該篇<b>最相關片段</b>與查詢的相似度」，不是整篇報告的相關度。</div>
     </section>
 
     <section id="filter">
@@ -198,6 +188,16 @@
         <li><strong>瀏覽時</strong>（還沒輸入查詢）：<span class="tag-inline">日期新→舊</span>（預設）、<span class="tag-inline">日期舊→新</span>。</li>
       </ul>
       <div class="note">用日期排序搜尋時，是把<b>最相關的幾篇</b>再依日期排列；仍以相關度決定哪些報告出現，不是整個資料庫的日期排序。</div>
+
+      <h3>檢視方式</h3>
+      <p>結果上方的<strong>檢視切換</strong>可改變報告的呈現方式（瀏覽與搜尋都適用），切換時<strong>不會重新查詢</strong>：</p>
+      <ul class="bul">
+        <li><span class="tag-inline">卡片</span>（預設）：每篇一張卡片，搜尋時附最相關段落與相關度。</li>
+        <li><span class="tag-inline">列表</span>：一列一篇，密度高，適合一次掃過很多篇。</li>
+        <li><span class="tag-inline">表格</span>：以欄位排列（名稱／市場／類型／日期／來源／標的），點<strong>欄位標題</strong>可排序。</li>
+        <li><span class="tag-inline">分組</span>：依<strong>市場／報告類型／日期(月)</strong>分組，每組附篇數，可用「分組依據」切換。</li>
+      </ul>
+      <div class="note">表格的<b>欄位排序</b>與<b>分組</b>只作用於<b>目前已載入</b>的報告；瀏覽很多篇時，先點「載入更多」再排序／分組。系統會<b>記住</b>你慣用的檢視方式。</div>
     </section>
 
     <section id="card">
@@ -285,6 +285,7 @@
         <li><strong>市場分佈</strong>長條圖，與<strong>三條背景管線</strong>（網頁／導入／標註）是否執行中。</li>
         <li>每 2 秒自動刷新，數字會持續跳動。</li>
       </ul>
+      <div class="note">畫面上的「<b>—</b>」代表<b>資料載入中或暫無數值</b>，連上後會自動帶入。</div>
       <figure>
         <img src="/static/help/04-monitor.png" alt="導入監控頁" />
         <figcaption>導入監控頁：即時掌握報告導入與標註進度</figcaption>

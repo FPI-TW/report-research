@@ -35,15 +35,15 @@ deps:  ## 安裝相依套件
 	uv sync
 
 db:  ## 起 pgvector 容器（已存在則啟動）
-	docker start $(DB_CONTAINER) 2>/dev/null || \
-	docker run -d --name $(DB_CONTAINER) \
+	$(DOCKER) start $(DB_CONTAINER) 2>/dev/null || \
+	$(DOCKER) run -d --name $(DB_CONTAINER) \
 	  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=$(DB_NAME) \
 	  -p $(DB_PORT):5432 -v report-mark-pgdata:/var/lib/postgresql/data \
 	  pgvector/pgvector:pg16
 
 schema: db  ## 套用 DB schema（vector 擴充 + 表 + HNSW 索引）
-	@for i in $$(seq 1 30); do docker exec $(DB_CONTAINER) pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
-	docker exec -i $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) < db/schema.sql
+	@for i in $$(seq 1 30); do $(DOCKER) exec $(DB_CONTAINER) pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
+	$(DOCKER) exec -i $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) < db/schema.sql
 
 setup: deps schema  ## 一次完成基礎建設（deps + db + schema）
 
@@ -72,7 +72,7 @@ ingest-lowio:  ## ⑤b 離線全量導入：關 fsync 降 I/O（僅限「沒對�
 	bash scripts/ingest_lowio.sh
 
 restore-durability:  ## 還原 Postgres 耐久性設定（ingest-lowio 異常中斷時的保險）
-	docker exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
+	$(DOCKER) exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
 	  -c "ALTER SYSTEM RESET fsync;" \
 	  -c "ALTER SYSTEM RESET full_page_writes;" \
 	  -c "ALTER SYSTEM RESET synchronous_commit;" \
@@ -92,7 +92,7 @@ search:  ## CLI 檢索（用法：make search Q="查詢" MARKET=TW）
 	uv run python scripts/search.py "$(Q)" $(if $(MARKET),--market $(MARKET),)
 
 stats:  ## 看 DB 市場分佈與筆數
-	@docker exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
+	@$(DOCKER) exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
 	  -c "select market, count(*) reports from research.research_report group by market order by 2 desc;" \
 	  -c "select count(*) chunks from research.report_chunk;"
 
@@ -118,7 +118,7 @@ edge-logs:  ## 跟看對外邊緣日誌
 pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟
 
 reset-db:  ## 清空 canonical 與向量表（保留 schema）
-	docker exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
+	$(DOCKER) exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
 	  -c "TRUNCATE research.report_chunk, research.research_report CASCADE;"
 
 clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）

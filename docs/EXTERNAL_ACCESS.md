@@ -75,7 +75,8 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 | 啟動邊緣 | `make up-edge` |
 | 關閉邊緣 | `make down-edge` |
 | 看日誌 | `make edge-logs` |
-| 換共用密碼 | `make edge-passwd`（改完 `make down-edge && make up-edge`，或 `docker compose -f deploy/docker-compose.yml restart nginx`） |
+| 換共用密碼 | `make edge-passwd`（改 `.htpasswd` 即時生效；如要保險可 `make edge-reload`） |
+| 重啟 nginx | `make edge-reload` |
 
 重開機後：邊緣的兩個容器（nginx + cloudflared）為 `restart: unless-stopped`，Docker 會自動拉起，**無需重設 portproxy**。但檢索服務 `make serve` 是 host 上的原生 uvicorn 程序、**不是容器，不會自動復活**——重開機後必須手動重跑 `make serve`，否則外網會一直回 502。若想免手動，可考慮把 `make serve` 掛到 process manager（如 WSL 的 systemd、或開機腳本）常駐。
 
@@ -90,7 +91,7 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 | 症狀 | 可能原因 / 處置 |
 |------|----------------|
 | 外網開站一直 502 | host uvicorn 沒在跑 → `make serve`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在） |
-| 一直跳帳密、輸入正確仍進不去 | htpasswd 沒設或帳號不符 → 重跑 `make edge-passwd`，並 `docker compose -f deploy/docker-compose.yml restart nginx` |
+| 一直跳帳密、輸入正確仍進不去 | htpasswd 沒設或帳號不符 → 重跑 `make edge-passwd`，必要時 `make edge-reload` |
 | 開站回 500（非 401） | `deploy/secrets/.htpasswd` 不存在就啟動了 → 先 `make edge-passwd` 再 `make up-edge`（`up-edge` 已內建此守門） |
 | `make edge-logs` 看不到 tunnel 連線 | token 錯/沒填 → 檢查 `deploy/.env`；Cloudflare 儀表板確認隧道狀態為 HEALTHY |
 | 外網打不開但 LAN 正常 | Cloudflare Public Hostname 的 Service 是否設成 `http://nginx:80`；DNS 記錄是否由隧道自動建立 |

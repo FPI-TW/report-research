@@ -24,7 +24,7 @@ endif
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align normalize serve search \
         stats reset-db clean-data pipeline \
-        edge-passwd up-edge down-edge edge-logs
+        edge-passwd up-edge down-edge edge-logs edge-reload
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -113,6 +113,9 @@ down-edge:  ## 關閉對外邊緣
 
 edge-logs:  ## 跟看對外邊緣日誌
 	$(COMPOSE) -f $(EDGE_COMPOSE) logs -f --tail=100
+
+edge-reload:  ## 重啟 nginx（換密碼後保險用；多數情況改 .htpasswd 即時生效不需重啟）
+	$(COMPOSE) -f $(EDGE_COMPOSE) restart nginx
 
 # ───── 維運 ─────
 pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟

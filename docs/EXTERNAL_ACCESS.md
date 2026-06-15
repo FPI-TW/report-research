@@ -77,7 +77,7 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 | 看日誌 | `make edge-logs` |
 | 換共用密碼 | `make edge-passwd`（改完 `make down-edge && make up-edge`，或 `docker compose -f deploy/docker-compose.yml restart nginx`） |
 
-重開機後：兩容器為 `restart: unless-stopped` 會自動回復；只要 `make serve` 也在跑，外網即恢復，**無需重設 portproxy**。
+重開機後：邊緣的兩個容器（nginx + cloudflared）為 `restart: unless-stopped`，Docker 會自動拉起，**無需重設 portproxy**。但檢索服務 `make serve` 是 host 上的原生 uvicorn 程序、**不是容器，不會自動復活**——重開機後必須手動重跑 `make serve`，否則外網會一直回 502。若想免手動，可考慮把 `make serve` 掛到 process manager（如 WSL 的 systemd、或開機腳本）常駐。
 
 ## 安全備註
 

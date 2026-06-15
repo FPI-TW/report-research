@@ -2,7 +2,7 @@
 # 用法：先 `make edge-passwd` 設定 Basic Auth，填好 deploy/.env 的 TUNNEL_TOKEN，再 `make up-edge`
 services:
   nginx:
-    image: nginx:alpine
+    image: nginx:1.31-alpine  # 釘穩定 minor，可重現；bump 時改這裡
     restart: unless-stopped
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -12,7 +12,7 @@ services:
     # 不對 host 發佈任何埠；僅 compose 網路內供 cloudflared 取用
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:latest  # 刻意留 latest：確保與 Cloudflare 邊緣相容（太舊的連接器會被拒連）
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:

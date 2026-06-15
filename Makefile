@@ -11,6 +11,16 @@ MARKET ?=
 EDGE_COMPOSE ?= deploy/docker-compose.yml
 EDGE_USER ?= tingfeng
 
+# Docker 二進位自動偵測：原生 Linux 用 docker；WSL + Docker Desktop（無 unix socket）退回 docker.exe
+DOCKER := $(shell docker info >/dev/null 2>&1 && echo docker || echo docker.exe)
+COMPOSE := $(DOCKER) compose
+# docker.exe 的 -v 掛載需 Windows 路徑（C:/...）；原生 docker 用一般路徑
+ifeq ($(DOCKER),docker.exe)
+SECRETS_MOUNT := $(shell wslpath -m "$(CURDIR)/deploy/secrets")
+else
+SECRETS_MOUNT := $(CURDIR)/deploy/secrets
+endif
+
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align normalize serve search \
         stats reset-db clean-data pipeline \
@@ -90,19 +100,19 @@ stats:  ## 看 DB 市場分佈與筆數
 edge-passwd:  ## 設定/更換對外 Basic Auth 共用密碼（覆蓋舊密碼；需互動終端輸入兩次）
 	@test -t 0 || { echo "edge-passwd 需在互動終端執行（stdin 必須是 TTY）"; exit 1; }
 	@mkdir -p deploy/secrets
-	docker run --rm -it -v "$(CURDIR)/deploy/secrets:/secrets" httpd:alpine \
+	$(DOCKER) run --rm -it -v "$(SECRETS_MOUNT):/secrets" httpd:alpine \
 	  htpasswd -B -c /secrets/.htpasswd $(EDGE_USER)
 
 up-edge:  ## 啟動對外邊緣（nginx + cloudflared）
 	@test -f deploy/secrets/.htpasswd || { echo "缺少 deploy/secrets/.htpasswd，請先執行 make edge-passwd"; exit 1; }
 	@test -f deploy/.env || { echo "缺少 deploy/.env，請複製 deploy/.env.example 並填入 TUNNEL_TOKEN"; exit 1; }
-	docker compose -f $(EDGE_COMPOSE) up -d
+	$(COMPOSE) -f $(EDGE_COMPOSE) up -d
 
 down-edge:  ## 關閉對外邊緣
-	docker compose -f $(EDGE_COMPOSE) down
+	$(COMPOSE) -f $(EDGE_COMPOSE) down
 
 edge-logs:  ## 跟看對外邊緣日誌
-	docker compose -f $(EDGE_COMPOSE) logs -f --tail=100
+	$(COMPOSE) -f $(EDGE_COMPOSE) logs -f --tail=100
 
 # ───── 維運 ─────
 pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟

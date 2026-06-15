@@ -8,10 +8,13 @@ DB_NAME ?= research
 DB_PORT ?= 5436
 Q ?= AI 伺服器散熱需求
 MARKET ?=
+EDGE_COMPOSE ?= deploy/docker-compose.yml
+EDGE_USER ?= tingfeng
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align normalize serve search \
-        stats reset-db clean-data pipeline
+        stats reset-db clean-data pipeline \
+        edge-passwd up-edge down-edge edge-logs
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -82,6 +85,24 @@ stats:  ## 看 DB 市場分佈與筆數
 	@docker exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
 	  -c "select market, count(*) reports from research.research_report group by market order by 2 desc;" \
 	  -c "select count(*) chunks from research.report_chunk;"
+
+# ───── 對外存取（Cloudflare Tunnel + nginx）─────
+edge-passwd:  ## 設定/更換對外 Basic Auth 共用密碼（覆蓋舊密碼；需互動終端輸入兩次）
+	@test -t 0 || { echo "edge-passwd 需在互動終端執行（stdin 必須是 TTY）"; exit 1; }
+	@mkdir -p deploy/secrets
+	docker run --rm -it -v "$(CURDIR)/deploy/secrets:/secrets" httpd:alpine \
+	  htpasswd -B -c /secrets/.htpasswd $(EDGE_USER)
+
+up-edge:  ## 啟動對外邊緣（nginx + cloudflared）
+	@test -f deploy/secrets/.htpasswd || { echo "缺少 deploy/secrets/.htpasswd，請先執行 make edge-passwd"; exit 1; }
+	@test -f deploy/.env || { echo "缺少 deploy/.env，請複製 deploy/.env.example 並填入 TUNNEL_TOKEN"; exit 1; }
+	docker compose -f $(EDGE_COMPOSE) up -d
+
+down-edge:  ## 關閉對外邊緣
+	docker compose -f $(EDGE_COMPOSE) down
+
+edge-logs:  ## 跟看對外邊緣日誌
+	docker compose -f $(EDGE_COMPOSE) logs -f --tail=100
 
 # ───── 維運 ─────
 pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟

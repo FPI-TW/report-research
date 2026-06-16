@@ -147,6 +147,20 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(r.status_code, 303)
         self.assertIn("error=locked", r.headers["location"])
 
+    def test_authed_request_refreshes_cookie(self):
+        # 每次通過認證的回應都應重新簽發 session cookie(滑動到期)
+        client = _client()
+        client.post("/login", data={"username": "tester", "password": "testpass"})
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(auth.COOKIE_NAME, r.cookies)
+
+    def test_unauthed_static_is_gated(self):
+        # /static 不在白名單:未登入直接取 /static/index.html 應被擋(防繞過 route 門檻)
+        r = _client().get("/static/index.html")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.headers["location"], "/login")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,8 @@ os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 from web import auth  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from web.server import app  # noqa: E402
 
 
 class TokenTests(unittest.TestCase):
@@ -85,6 +87,65 @@ class RateLimitTests(unittest.TestCase):
         self.assertTrue(auth.is_locked(ip, start))
         # 視窗過後(全部老化)→ 解鎖
         self.assertFalse(auth.is_locked(ip, start + auth.FAIL_WINDOW + 1))
+
+
+def _client():
+    return TestClient(app, follow_redirects=False)
+
+
+class AuthFlowTests(unittest.TestCase):
+    def setUp(self):
+        auth._FAILS.clear()
+
+    def tearDown(self):
+        auth._FAILS.clear()
+
+    def test_unauthed_html_redirects_to_login(self):
+        r = _client().get("/")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.headers["location"], "/login")
+
+    def test_unauthed_api_returns_401(self):
+        r = _client().get("/api/stats")
+        self.assertEqual(r.status_code, 401)
+
+    def test_login_page_served_without_auth(self):
+        r = _client().get("/login")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('name="username"', r.text)
+        self.assertIn('name="password"', r.text)
+
+    def test_wrong_credentials_redirect_with_error(self):
+        r = _client().post("/login", data={"username": "tester", "password": "bad"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("error=1", r.headers["location"])
+        self.assertNotIn(auth.COOKIE_NAME, r.cookies)
+
+    def test_correct_credentials_set_cookie_and_grant_access(self):
+        client = _client()
+        r = client.post("/login", data={"username": "tester", "password": "testpass"})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.headers["location"], "/")
+        self.assertIn(auth.COOKIE_NAME, r.cookies)
+        r2 = client.get("/")
+        self.assertEqual(r2.status_code, 200)
+
+    def test_logout_clears_session(self):
+        client = _client()
+        client.post("/login", data={"username": "tester", "password": "testpass"})
+        client.get("/")
+        client.post("/logout")
+        r = client.get("/")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.headers["location"], "/login")
+
+    def test_lockout_after_repeated_failures(self):
+        client = _client()
+        for _ in range(auth.MAX_FAILS):
+            client.post("/login", data={"username": "tester", "password": "bad"})
+        r = client.post("/login", data={"username": "tester", "password": "bad"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("error=locked", r.headers["location"])
 
 
 if __name__ == "__main__":

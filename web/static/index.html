@@ -49,6 +49,8 @@
   .monitor-link:hover { background: #007aff2e; }
   .monitor-link:active { transform: scale(.96); }
   .monitor-link svg { flex: none; }
+  .logout-form { margin: 0; display: inline-flex; }
+  .logout-btn { border: none; cursor: pointer; font-family: inherit; }
 
   .stats { display: flex; gap: 7px; flex-wrap: wrap; }
   .stats:empty { display: none; }   /* 平常不顯示篇數/片段；僅後端未連線時才占位 */
@@ -358,6 +360,13 @@
                    stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 6 4-13L16 12h5"/></svg>
               導入監控
             </a>
+            <form class="logout-form" method="post" action="/logout">
+              <button class="monitor-link logout-btn" type="submit" title="登出">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+                登出
+              </button>
+            </form>
           </span>
         </div>
         <div class="stats" id="stats"></div>

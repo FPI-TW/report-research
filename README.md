@@ -46,8 +46,12 @@ uv run python scripts/ingest_all.py              # 串流切塊＋嵌入入庫�
 # 或一鍵編排（標註＋導入並行、可中斷續跑）：
 bash scripts/resume_corpus.sh
 
-# 查詢
-uv run uvicorn web.server:app --host 0.0.0.0 --port 8097   # → http://localhost:8097
+# 查詢網頁（需登入；首次先設共用帳密，未設則 fail-closed 拒啟）
+cp .env.example .env          # 編輯填入 REPORT_MARK_ACCESS_USERNAME / _PASSWORD / _SESSION_SECRET
+make serve                    # 載入 .env 並啟動 → http://localhost:8097
+#   注意：make serve 無 --reload，改了程式碼要「重啟」才生效（靜態 HTML 即時生效）
+
+# CLI 檢索（免登入）
 uv run python scripts/search.py "AI 伺服器散熱需求"
 uv run python scripts/search.py "利率與殖利率" --market MACRO
 ```
@@ -106,6 +110,8 @@ web/
 
 ## 查詢網頁
 
+> **需登入**：全站以單一**共用帳號＋密碼**把關（由環境變數設定，見[快速開始](#快速開始)）。未登入自動導向 `/login`，右上可登出；session 以簽章 cookie 維持 7 天（滑動到期）。外網部署見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md)。
+
 iOS 風格、雙欄側邊版面（手機收單欄）。結果**依報告分組**：每篇顯示市場標籤、商品類型、標的、券商來源、報告日期、命中片段數、相關度 %，以及**2-3 句中文摘要**（卡片/列表預設兩行、點擊展開；表格模式於名稱 hover 顯示）讓你不必開全文就能掌握大意，查詢關鍵字高亮、可展開片段，並可「查看完整報告」內嵌原始 PDF（彈窗頂部亦顯示摘要）。摘要由 `make summaries` 離線生成。
 
 左側可篩選**市場 / 商品類型 / 標的（個股·期貨）/ 報告類型**（皆單選），並切換**排序**：搜尋＝相關度（預設）/ 日期新→舊 / 日期舊→新；瀏覽＝日期新→舊（預設）/ 日期舊→新。
@@ -120,3 +126,4 @@ API：`/api/stats`、`/api/markets`、`/api/search`、`/api/reports`（瀏覽）
 | 向量 DB | `pgvector/pgvector:pg16`，容器 `report-mark-postgres`，host port 5436 |
 | 嵌入 | BGE-M3 dense 1024 維（CPU）|
 | Web | uvicorn，port 8097 |
+| 登入 | 共用帳密，env `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（未設則 fail-closed 拒啟）＋ `REPORT_MARK_SESSION_SECRET`；`make serve` 載入 repo 根 `.env` |

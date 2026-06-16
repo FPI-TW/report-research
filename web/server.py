@@ -12,12 +12,13 @@ import logging
 import os
 import re
 import sys
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -31,6 +32,7 @@ from app.services.retrieval import hybrid_search  # noqa: E402
 from app.services.store import list_reports  # noqa: E402
 from app.services.tagging import MARKETS  # noqa: E402
 from app.services.textnorm import clean_text  # noqa: E402
+from web import auth  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 logger = logging.getLogger(__name__)
@@ -86,6 +88,25 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
+
+# ───── 認證閘門(deny-by-default;白名單僅 /login)─────
+_AUTH_ALLOWLIST = {"/login"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if path in _AUTH_ALLOWLIST:
+        return await call_next(request)
+    now = int(time.time())
+    if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), now):
+        response = await call_next(request)
+        if path != "/logout":  # 登出會清 cookie,勿在此又刷新蓋回
+            auth.set_session_cookie(response, now)
+        return response
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "未登入"}, status_code=401)
+    return RedirectResponse("/login", status_code=302)
 
 
 class Passage(BaseModel):
@@ -537,6 +558,39 @@ async def report_file(report_id: str):
         filename=name,
         content_disposition_type="inline" if is_pdf else "attachment",
     )
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), int(time.time())):
+        return RedirectResponse("/", status_code=302)
+    return _static_page("login.html")
+
+
+@app.post("/login")
+async def login_submit(
+    request: Request,
+    username: str = Form(""),
+    password: str = Form(""),
+):
+    now = int(time.time())
+    ip = auth.client_ip(request)
+    if auth.is_locked(ip, now):
+        return RedirectResponse("/login?error=locked", status_code=303)
+    if auth.check_credentials(username, password):
+        auth.reset(ip)
+        resp = RedirectResponse("/", status_code=303)
+        auth.set_session_cookie(resp, now)
+        return resp
+    auth.record_failure(ip, now)
+    return RedirectResponse("/login?error=1", status_code=303)
+
+
+@app.post("/logout")
+async def logout():
+    resp = RedirectResponse("/login", status_code=303)
+    auth.clear_session_cookie(resp)
+    return resp
 
 
 @app.get("/")

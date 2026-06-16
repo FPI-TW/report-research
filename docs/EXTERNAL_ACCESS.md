@@ -98,5 +98,6 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 | 外網開站一直 502 | host uvicorn 沒在跑 → `make serve`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在） |
 | 一直回登入頁、輸入正確仍進不去 | session cookie 沒被接受(瀏覽器擋第三方/封鎖 cookie),或 `REPORT_MARK_SESSION_SECRET` 每次重啟都變(請在 `.env` 固定一組) |
 | App 啟動即報錯退出 | 未設 `REPORT_MARK_ACCESS_USERNAME` / `_ACCESS_PASSWORD`(fail-closed)→ 補進 `.env` 再 `make serve` |
+| 改了程式卻沒生效（看到新 UI 卻無登入頁 / 登出按 404）| `make serve` 無 `--reload`：靜態 HTML 即時生效，但路由/中介層在**啟動時**載入；舊 uvicorn 程序還在跑 → `pkill -f "uvicorn web.server"` 後重啟 `make serve` |
 | `make edge-logs` 看不到 tunnel 連線 | token 錯/沒填 → 檢查 `deploy/.env`；Cloudflare 儀表板確認隧道狀態為 HEALTHY |
 | 外網打不開但 LAN 正常 | Cloudflare Public Hostname 的 Service 是否設成 `http://nginx:80`；DNS 記錄是否由隧道自動建立 |

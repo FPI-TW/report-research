@@ -9,23 +9,16 @@ DB_PORT ?= 5436
 Q ?= AI 伺服器散熱需求
 MARKET ?=
 EDGE_COMPOSE ?= deploy/docker-compose.yml
-EDGE_USER ?= tingfeng
 
 # Docker 二進位自動偵測：可連到 daemon 的 docker 優先；否則若有 docker.exe（WSL+Docker Desktop）就用它；
 # 都沒有時退回 docker，讓指令自己回報真正的 daemon 錯誤（而非 docker.exe: command not found）。
 DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command -v docker.exe >/dev/null 2>&1; then echo docker.exe; else echo docker; fi)
 COMPOSE := $(DOCKER) compose
-# docker.exe 的 -v 掛載需 Windows 路徑（C:/...）；原生 docker 用一般路徑
-ifeq ($(DOCKER),docker.exe)
-SECRETS_MOUNT := $(shell wslpath -m "$(CURDIR)/deploy/secrets")
-else
-SECRETS_MOUNT := $(CURDIR)/deploy/secrets
-endif
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align normalize serve search \
         stats reset-db clean-data pipeline \
-        edge-passwd up-edge down-edge edge-logs edge-reload
+        up-edge down-edge edge-logs edge-reload
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -87,7 +80,8 @@ normalize:  ## 一次性清理 chunk content（CJK 空白）+ ANALYZE（冪等�
 
 # ───── 檢索 ─────
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
-	uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	  uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
 
 search:  ## CLI 檢索（用法：make search Q="查詢" MARKET=TW）
 	uv run python scripts/search.py "$(Q)" $(if $(MARKET),--market $(MARKET),)
@@ -98,14 +92,7 @@ stats:  ## 看 DB 市場分佈與筆數
 	  -c "select count(*) chunks from research.report_chunk;"
 
 # ───── 對外存取（Cloudflare Tunnel + nginx）─────
-edge-passwd:  ## 設定/更換對外 Basic Auth 共用密碼（覆蓋舊密碼；需互動終端輸入兩次）
-	@test -t 0 || { echo "edge-passwd 需在互動終端執行（stdin 必須是 TTY）"; exit 1; }
-	@mkdir -p deploy/secrets
-	$(DOCKER) run --rm -it -v "$(SECRETS_MOUNT):/secrets" httpd:alpine \
-	  htpasswd -B -c /secrets/.htpasswd $(EDGE_USER)
-
 up-edge:  ## 啟動對外邊緣（nginx + cloudflared）
-	@test -f deploy/secrets/.htpasswd || { echo "缺少 deploy/secrets/.htpasswd，請先執行 make edge-passwd"; exit 1; }
 	@test -f deploy/.env || { echo "缺少 deploy/.env，請複製 deploy/.env.example 並填入 TUNNEL_TOKEN"; exit 1; }
 	@grep -qE '^TUNNEL_TOKEN=[^[:space:]]' deploy/.env || { echo "deploy/.env 的 TUNNEL_TOKEN 是空的，請填入 Cloudflare 隧道 token"; exit 1; }
 	$(COMPOSE) -f $(EDGE_COMPOSE) up -d
@@ -116,7 +103,7 @@ down-edge:  ## 關閉對外邊緣
 edge-logs:  ## 跟看對外邊緣日誌
 	$(COMPOSE) -f $(EDGE_COMPOSE) logs -f --tail=100
 
-edge-reload:  ## 重啟 nginx（換密碼後保險用；多數情況改 .htpasswd 即時生效不需重啟）
+edge-reload:  ## 重啟 nginx（更新設定後使用）
 	$(COMPOSE) -f $(EDGE_COMPOSE) restart nginx
 
 # ───── 維運 ─────

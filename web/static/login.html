@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登入 · 廷豐研報</title>
+<style>
+  :root {
+    --blue: #007aff;
+    --bg-grad-1: #f7f8fa;
+    --bg-grad-2: #eceef3;
+    --card: #fff;
+    --label: #1c1c1e;
+    --label-3: #3c3c4399;
+    --sep: #3c3c431f;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex;
+    align-items: center; justify-content: center;
+    background: linear-gradient(160deg, var(--bg-grad-1), var(--bg-grad-2));
+    color: var(--label);
+  }
+  .card {
+    width: 100%; max-width: 360px; margin: 24px;
+    background: var(--card); border-radius: 16px; padding: 32px 28px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  }
+  h1 { margin: 0 0 4px; font-size: 24px; }
+  h1 .accent { color: var(--blue); }
+  .sub { margin: 0 0 20px; font-size: 13px; color: var(--label-3); }
+  label { display: block; font-size: 13px; margin: 14px 0 6px; }
+  input {
+    width: 100%; padding: 11px 12px; font-size: 15px;
+    border: 1px solid var(--sep); border-radius: 10px; background: #fff;
+  }
+  input:focus { outline: 2px solid var(--blue); outline-offset: 0; border-color: transparent; }
+  button {
+    width: 100%; margin-top: 22px; padding: 12px; font-size: 15px;
+    font-weight: 600; color: #fff; background: var(--blue);
+    border: none; border-radius: 10px; cursor: pointer;
+  }
+  button:hover { filter: brightness(.96); }
+  .error {
+    display: none; margin-top: 16px; padding: 10px 12px; font-size: 13px;
+    color: #b00020; background: #b000200f; border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>廷豐<span class="accent">研報</span></h1>
+    <p class="sub">請登入以使用研究報告檢索</p>
+    <form method="post" action="/login" autocomplete="on">
+      <label for="username">帳號</label>
+      <input id="username" name="username" type="text" autocomplete="username" autofocus required>
+      <label for="password">密碼</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">登入</button>
+    </form>
+    <p class="error" id="error"></p>
+  </main>
+  <script>
+    var p = new URLSearchParams(location.search);
+    if (p.has("error")) {
+      var el = document.getElementById("error");
+      el.textContent = p.get("error") === "locked"
+        ? "嘗試次數過多,請稍後再試。"
+        : "帳號或密碼錯誤。";
+      el.style.display = "block";
+    }
+  </script>
+</body>
+</html>

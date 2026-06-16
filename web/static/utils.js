@@ -42,6 +42,7 @@ async function fetchJSON(url, opts = {}) {
     const init = { signal: ctrl.signal };
     if (cache) init.cache = cache;
     const r = await fetch(url, init);
+    if (r.status === 401) { window.location.href = "/login"; throw new Error("unauthorized"); }
     if (!r.ok) throw new Error("HTTP " + r.status);
     return await r.json();
   } finally {

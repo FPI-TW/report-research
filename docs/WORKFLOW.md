@@ -112,7 +112,7 @@ flowchart TD
 
 ### 檢索 — 兩種介面
 - **CLI** `scripts/search.py`：嵌入查詢 → cosine top-k，可加 `--market <findb 代碼>` 過濾
-- **網頁** `web/server.py` + `web/static/index.html`：FastAPI 後端在啟動時把 BGE-M3 常駐記憶體，前端查詢介面支援多維篩選與排序（見 [Web API](#web-api)）
+- **網頁** `web/server.py` + `web/static/index.html`：FastAPI 後端在啟動時把 BGE-M3 常駐記憶體，前端查詢介面支援多維篩選與排序（見 [Web API](#web-api)）。**全站需登入**（共用帳密，env 設定；未登入導向 `/login`，可登出）——認證細節見 `web/auth.py` 與 [docs/EXTERNAL_ACCESS.md](EXTERNAL_ACCESS.md)
 
 ---
 
@@ -164,6 +164,10 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/report/{id}/full` | 單篇 metadata 與原始檔狀態（供前端完整報告 modal）|
 | `GET /api/report/{id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|
 | `GET /` | iOS 風格單頁前端 |
+| `GET`/`POST /login` | 登入頁與登入提交（共用帳密；**唯一免登入端點**）|
+| `POST /logout` | 清除 session cookie 並導回 `/login` |
+
+> **認證**：除 `/login` 外所有端點皆需登入（deny-by-default 中介層）。未帶有效 session cookie 時 `/api/*` 回 **401**、其餘導向 **`/login`**；`/static/*` 也受保護。憑證為單一共用帳密（env `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD`，fail-closed），cookie 以 `REPORT_MARK_SESSION_SECRET` 簽章、7 天滑動到期，並對登入失敗做每 IP 限流。
 
 前端特性：雙欄側邊版面（手機收單欄）、市場／商品類型／標的／報告類型篩選與排序切換、自適應卡片網格、同篇研報合併、查詢關鍵字高亮、可展開片段、「查看完整報告」內嵌 PDF、即打即查（debounce 450ms）、骨架載入。
 
@@ -188,8 +192,8 @@ uv run python scripts/ingest_all.py              # 串流切塊＋嵌入入庫�
 bash scripts/resume_corpus.sh
 #   離線大量導入降 I/O（DB 未對外服務時）：make ingest-lowio
 
-# 啟動查詢網頁
-uv run uvicorn web.server:app --host 0.0.0.0 --port 8097   # → http://localhost:8097
+# 啟動查詢網頁（需登入；首次先 cp .env.example .env 填帳密，未設則 fail-closed 拒啟）
+make serve   # 載入 repo 根 .env 啟動 → http://localhost:8097（無 --reload，改碼後須重啟才生效）
 
 # CLI 檢索
 uv run python scripts/search.py "AI 伺服器散熱需求"
@@ -210,7 +214,8 @@ uv run python scripts/search.py "利率與殖利率" --market MACRO
 | 嵌入模型 | BGE-M3 dense，1024 維，CPU（首次 lazy-load 下載 ~2-4GB）|
 | 標註 | `tag_all_cli.py` 需 `claude` CLI（`--model claude-haiku-4-5`，預設 8 worker 執行緒）|
 | 抽文字 | `extract_all.py` 用 multiprocessing（預設 16 worker）|
-| Web 服務 | uvicorn，port **8097** |
+| Web 服務 | uvicorn，port **8097**（`make serve`，無 `--reload`，改碼後須重啟）|
+| 登入 | 共用帳密 env `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（fail-closed）＋簽章金鑰 `REPORT_MARK_SESSION_SECRET`；由 `make serve` 載入 repo 根 `.env`（已 gitignore）|
 
 > 此機 `docker compose` 子指令不可用，故用 `docker run` 起單一容器。背景編排（`resume_corpus.sh`）以 setsid/nohup 方式長跑。
 
@@ -232,6 +237,9 @@ uv run python scripts/search.py "利率與殖利率" --market MACRO
 | 症狀 | 檢查 |
 |------|------|
 | 查詢很慢 / 第一次卡住 | BGE-M3 首次下載 ~2-4GB；server 啟動時已暖機，看 uvicorn log |
+| 改了程式/前端卻沒生效 | `make serve` 無 `--reload`：靜態 HTML 即時生效，但路由/中介層在**啟動時**載入 → 須**重啟** `make serve` 才載入新碼（常見誤判：看到新 UI 卻打到舊路由）|
+| App 啟動即報錯退出 | 未設 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（fail-closed）→ 補進 `.env` 再 `make serve` |
+| 一直回登入頁 / 登出按 404 | 多半是舊程序還在跑（未重啟，見上）；或 `REPORT_MARK_SESSION_SECRET` 每次重啟變動（請在 `.env` 固定一組）|
 | `/api/stats` 連不上 | 容器是否運行 `docker ps`；port 5436 是否被佔 |
 | 入庫筆數偏少 | 看 `ingest_all.py` summary 的各類 skip（admin/scanned/untagged/non_research/exists）|
 | 標註有缺漏 | 抽查 `data/tags/<hash>.json`；看 `data/tag_failures.log`；`tag_all_cli.py` 可直接重跑（冪等續標）|

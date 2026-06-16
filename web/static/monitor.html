@@ -140,6 +140,7 @@
       <div class="tile"><div class="k">總片段 CHUNKS</div><div class="v num" id="t-chunks">—</div><div class="d" id="t-chunks-d"></div></div>
       <div class="tile"><div class="k">標註進度</div><div class="v num" id="t-tagpct">—<small>%</small></div><div class="d" id="t-tagpct-d"></div></div>
       <div class="tile"><div class="k">導入速率</div><div class="v num" id="t-rate">—<small>篇/分</small></div><div class="d" id="t-rate-d"></div></div>
+      <div class="tile"><div class="k">摘要進度</div><div class="v num" id="t-sumpct">—<small>%</small></div><div class="d" id="t-sumpct-d"></div></div>
     </div>
 
     <div class="panel split">
@@ -162,11 +163,21 @@
     </div>
 
     <div class="panel">
+      <div class="ptitle">摘要 SUMMARY</div>
+      <div class="pmain">
+        <span class="big num" id="sum-done">—</span>
+        <span class="side">／ <b class="num" id="sum-total">—</b>　<span title="尚未生成摘要的報告數">未生成</span> <span class="num" id="sum-remain">0</span></span>
+      </div>
+      <div class="bar" id="sum-barwrap"><i id="sum-bar"></i></div>
+    </div>
+
+    <div class="panel">
       <div class="ptitle">管線 PIPELINES</div>
       <div class="pipes">
         <span class="pipe" id="pipe-web"><span class="pdot"></span>網頁<span class="st">—</span></span>
         <span class="pipe" id="pipe-ingest"><span class="pdot"></span>導入<span class="st">—</span></span>
         <span class="pipe" id="pipe-tag"><span class="pdot"></span>標註<span class="st">—</span></span>
+        <span class="pipe" id="pipe-sum"><span class="pdot"></span>摘要<span class="st">—</span></span>
       </div>
     </div>
 
@@ -315,16 +326,28 @@
       bw.classList.toggle("idle", !ingestOn);
       if (!ingestOn) $("ing-bar").style.width = "100%";
 
+      // summary panel + tile
+      const sum = d.summary;
+      if (sum) {
+        tween($("t-sumpct"), sum.pct, (v) => v.toFixed(2));
+        $("t-sumpct-d").innerHTML = `已生成 <b class="num">${nf(sum.done)}</b> / ${nf(sum.total)}`;
+        tween($("sum-done"), sum.done);
+        $("sum-total").textContent = nf(sum.total);
+        $("sum-remain").textContent = nf(sum.remaining);
+        $("sum-bar").style.width = sum.pct + "%";
+      }
+
       // pipelines
       pipe("pipe-web", d.pipelines?.web);
       pipe("pipe-ingest", d.pipelines?.ingest);
       pipe("pipe-tag", d.pipelines?.tag);
+      pipe("pipe-sum", d.pipelines?.summaries);
 
       renderMarkets(d.db.markets);
 
       // sub + footer
-      const alive = ["web", "ingest", "tag"].filter(k => d.pipelines?.[k]).length;
-      $("sub").textContent = `${nf(d.db.reports)} 篇已導入 · ${alive}/3 條管線執行中`;
+      const alive = ["web", "ingest", "tag", "summaries"].filter(k => d.pipelines?.[k]).length;
+      $("sub").textContent = `${nf(d.db.reports)} 篇已導入 · ${alive}/4 條管線執行中`;
       $("f-ts").textContent = d.ts || "—";
       $("f-orch").textContent = d.orchestrator ? "編排器：" + d.orchestrator : "";
     } catch (e) {

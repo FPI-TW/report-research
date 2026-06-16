@@ -96,6 +96,7 @@ scripts/  ── 抽樣原型 / 工具
   run_ingest.py           抽樣切塊 → 嵌入 → upsert
   normalize_chunks.py     內容正規化 → content_norm（供字面比對）
   backfill_full_text.py   回填 full_text 欄
+  generate_summaries.py   為缺摘要的報告生成 2-3 句中文摘要（Sonnet，補 summary IS NULL，冪等可續傳）→ make summaries
   align_findb_markets.py  中文標籤 → findb 代碼（一次性、冪等）
   search.py               CLI 語意檢索（可 --market 過濾）
 
@@ -111,7 +112,7 @@ web/
 
 > **需登入**：全站以單一**共用帳號＋密碼**把關（由環境變數設定，見[快速開始](#快速開始)）。未登入自動導向 `/login`，右上可登出；session 以簽章 cookie 維持 7 天（滑動到期）。外網部署見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md)。
 
-iOS 風格、雙欄側邊版面（手機收單欄）。結果**依報告分組**：每篇顯示市場標籤、商品類型、標的、券商來源、報告日期、命中片段數、相關度 %，查詢關鍵字高亮、可展開片段，並可「查看完整報告」內嵌原始 PDF。
+iOS 風格、雙欄側邊版面（手機收單欄）。結果**依報告分組**：每篇顯示市場標籤、商品類型、標的、券商來源、報告日期、命中片段數、相關度 %，以及**2-3 句中文摘要**（卡片/列表預設兩行、點擊展開；表格模式於名稱 hover 顯示）讓你不必開全文就能掌握大意，查詢關鍵字高亮、可展開片段，並可「查看完整報告」內嵌原始 PDF（彈窗頂部亦顯示摘要）。摘要由 `make summaries` 離線生成。
 
 左側可篩選**市場 / 商品類型 / 標的（個股·期貨）/ 報告類型**（皆單選），並切換**排序**：搜尋＝相關度（預設）/ 日期新→舊 / 日期舊→新；瀏覽＝日期新→舊（預設）/ 日期舊→新。
 

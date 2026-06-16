@@ -137,6 +137,12 @@
     letter-spacing: .01em; }
   .subj { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
     color: var(--label-2); background: var(--fill); letter-spacing: .01em; }
+  .summary { font-size: 13px; line-height: 1.55; color: var(--label-2);
+    margin: 0 0 13px; cursor: pointer; }
+  .row-summary { font-size: 12px; line-height: 1.5; color: var(--label-2); cursor: pointer; }
+  .summary.clamp, .row-summary.clamp { display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2; overflow: hidden; }
+  .summary.expanded, .row-summary.expanded { -webkit-line-clamp: unset; }
   .passages { display: flex; flex-direction: column; gap: 11px; }
   .passage { font-size: 14px; line-height: 1.62; color: var(--label-2); letter-spacing: .008em;
     padding-left: 12px; border-left: 2px solid var(--sep); }
@@ -168,6 +174,9 @@
     line-height: 1.4; word-break: break-all; }
   .modal-head .m-meta { font-size: 12px; color: var(--label-3); margin-top: 5px;
     display: flex; flex-wrap: wrap; gap: 4px 9px; align-items: center; }
+  .modal-summary { padding: 12px 20px; border-bottom: 1px solid var(--sep);
+    font-size: 13.5px; line-height: 1.6; color: var(--label-2); background: var(--card); }
+  .modal-summary[hidden] { display: none; }
   .modal-close { border: none; background: var(--fill); color: var(--label-2);
     width: 30px; height: 30px; border-radius: 50%; cursor: pointer; flex: none;
     font-size: 17px; line-height: 1; }
@@ -436,6 +445,7 @@
         </div>
         <button class="modal-close" id="modalClose" aria-label="關閉">✕</button>
       </div>
+      <div class="modal-summary" id="modalSummary" hidden></div>
       <div class="modal-body" id="modalBody"></div>
       <div class="modal-foot" id="modalFoot"></div>
     </div>
@@ -712,6 +722,12 @@ function tagRowHtml(r) {
   return html`<div class="tags">${itags}${subj}</div>`;
 }
 
+// ── 摘要（卡片/列表共用，純文字無 emoji；點擊展開/收合，見 bindResultEvents）──
+function summaryHtml(r, cls) {
+  if (!r.summary) return raw("");
+  return html`<span class="${cls} clamp" title="點擊展開／收合">${r.summary}</span>`;
+}
+
 // ── 卡片（grid）：search 顯示排名/片段/相關度條；browse 為精簡版 ──
 function gridCard(r, mode, i) {
   const c = mColor(r.market);
@@ -747,6 +763,7 @@ function gridCard(r, mode, i) {
     </div>
     ${info.length ? html`<div class="info">${joinHtml(info, '<span class="dot">·</span>')}</div>` : raw("")}
     ${tagRow}
+    ${summaryHtml(r, "summary")}
     ${body}
     <div class="card-actions">${actions}</div>
     ${score}
@@ -768,6 +785,7 @@ function listRow(r, mode) {
     <span class="row-main">
       <span class="row-name">${r.file_name}</span>
       <span class="row-meta">${joinHtml(meta, '<span class="dot">·</span>')}</span>
+      ${summaryHtml(r, "row-summary")}
       ${tagRowHtml(r)}
     </span>
     ${scorePill}
@@ -821,7 +839,7 @@ function tableHtml(rows, mode) {
   });
   const body = sortedRows(rows).map(r => {
     const cells = [
-      html`<td class="t-name" title="${r.file_name}">${r.file_name}</td>`,
+      html`<td class="t-name" title="${r.summary ? r.file_name + "\n\n" + r.summary : r.file_name}">${r.file_name}</td>`,
       html`<td><span class="badge" style="background:${mColor(r.market)}">${mLabel(r.market)}</span></td>`,
       html`<td>${r.report_type ? tLabel(r.report_type) : "—"}</td>`,
       html`<td class="t-date">${r.report_date ? fmtDate(r.report_date) : "—"}</td>`,
@@ -926,6 +944,10 @@ function bindResultEvents() {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFull(el.dataset.reportId); }
       };
     }
+  });
+  // 摘要點擊展開/收合；stopPropagation 避免在可點整列的 list/group 觸發開啟報告
+  root.querySelectorAll(".summary, .row-summary").forEach(el => {
+    el.onclick = e => { e.stopPropagation(); el.classList.toggle("expanded"); };
   });
   root.querySelectorAll(".more[data-card]").forEach(btn => btn.onclick = () => {
     const card = root.querySelector(`.card[data-card="${btn.dataset.card}"]`);
@@ -1066,6 +1088,8 @@ async function openFull(id) {
   const back = $("#modalBackdrop");
   $("#modalName").textContent = "載入中…";
   $("#modalMeta").innerHTML = "";
+  const msum = $("#modalSummary");
+  msum.textContent = ""; msum.hidden = true;
   $("#modalBody").textContent = "";
   $("#modalFoot").innerHTML = "";
   lastFocused = document.activeElement;       // 記住觸發按鈕，關閉時還原焦點
@@ -1082,6 +1106,7 @@ async function openFull(id) {
     if (d.report_type) meta.push(html`<span>${d.report_type}</span>`);
     $("#modalName").textContent = d.file_name || "";
     $("#modalMeta").innerHTML = meta.join('<span class="dot">·</span>');
+    if (d.summary) { msum.textContent = d.summary; msum.hidden = false; }
     const fileUrl = `/api/report/${id}/file`;
     const isPdf = (d.file_name || "").toLowerCase().endsWith(".pdf");
     if (d.has_file && isPdf) {

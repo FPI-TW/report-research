@@ -31,6 +31,10 @@ class TokenTests(unittest.TestCase):
         self.assertFalse(auth.verify_token("", 1_000_000))
         self.assertFalse(auth.verify_token(None, 1_000_000))
 
+    def test_non_ascii_signature_segment_rejected(self):
+        # 簽章段含非 ASCII 不應崩潰,應視為無效
+        self.assertFalse(auth.verify_token("1000000.café", 999))
+
 
 class CredentialTests(unittest.TestCase):
     def test_correct_credentials_accepted(self):
@@ -44,6 +48,10 @@ class CredentialTests(unittest.TestCase):
 
     def test_empty_credentials_rejected(self):
         self.assertFalse(auth.check_credentials("", ""))
+
+    def test_non_ascii_credentials_rejected(self):
+        # 含中文/非 ASCII 的帳密不應崩潰,應回 False
+        self.assertFalse(auth.check_credentials("使用者", "密碼"))
 
 
 class RateLimitTests(unittest.TestCase):

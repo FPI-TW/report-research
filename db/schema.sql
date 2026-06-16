@@ -53,6 +53,7 @@ ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS relates_futures  b
 ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS stock_targets    text[];  -- 個股標的代碼清單 ["2330","2303"]
 ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS futures_targets  text[];  -- 期貨商品（小詞表）["台指期"]
 ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS full_text        text;    -- 報告全文（供「查看完整報告」）
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS summary          text;    -- 報告摘要（2-3 句，供卡片/列表/modal 預覽）
 
 CREATE INDEX IF NOT EXISTS idx_research_report_instr
     ON research.research_report USING gin (instrument_types);

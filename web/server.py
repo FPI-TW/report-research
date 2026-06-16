@@ -100,6 +100,7 @@ class ReportResult(BaseModel):
     file_name: str
     market: str | None
     source: str | None
+    summary: str | None
     report_date: str | None
     report_type: str | None
     instrument_types: list[str] | None
@@ -123,6 +124,7 @@ class ReportListItem(BaseModel):
     file_name: str
     market: str | None
     source: str | None
+    summary: str | None
     report_date: str | None
     report_type: str | None
     instrument_types: list[str] | None
@@ -289,6 +291,7 @@ def _gather_runtime() -> dict:
             "web": True,
             "ingest": _proc_alive("ingest_all.py"),
             "tag": _proc_alive("tag_all_cli.py"),
+            "summaries": _proc_alive("generate_summaries.py"),
         },
         "orchestrator": _orchestrator_last(),
     }
@@ -311,13 +314,31 @@ async def progress():
                 )
             )
         ).all()
+        # 摘要進度直接由 DB 計數（精確、重啟後仍正確，免解析 log）；
+        # total 須與 generate_summaries.py 的候選條件一致
+        s_done, s_total = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE summary IS NOT NULL), count(*) "
+                    "FROM research.research_report "
+                    "WHERE full_text IS NOT NULL AND is_research IS NOT FALSE"
+                )
+            )
+        ).first()
     runtime = await asyncio.to_thread(_gather_runtime)
+    s_done, s_total = int(s_done), int(s_total)
     return {
         "ts": datetime.now().strftime("%H:%M:%S"),
         "db": {
             "reports": reports,
             "chunks": chunks,
             "markets": [{"market": m, "count": c} for m, c in rows],
+        },
+        "summary": {
+            "done": s_done,
+            "total": s_total,
+            "remaining": max(0, s_total - s_done),
+            "pct": round(s_done / s_total * 100, 2) if s_total else 0.0,
         },
         **runtime,
     }
@@ -371,6 +392,7 @@ async def reports(
             file_name=fn,
             market=m,
             source=source_display(src),
+            summary=summary,
             report_date=rdate.isoformat() if rdate else None,
             report_type=rtype,
             instrument_types=list(itypes) if itypes else None,
@@ -381,7 +403,7 @@ async def reports(
         )
         for (
             rid, fn, m, src, rdate, rtype, itypes, rstock, rfut,
-            stargets, ftargets,
+            stargets, ftargets, summary,
         ) in rows
     ]
     return ReportListResponse(total=total, offset=offset, items=items)
@@ -420,7 +442,7 @@ async def search(
     grouped: dict[str, ReportResult] = {}
     for _tier, score, row in scored:
         (
-            _chunk_id, rid, fn, m, src, rdate, rtype, itypes, rstock, rfut,
+            _chunk_id, rid, fn, m, src, summary, rdate, rtype, itypes, rstock, rfut,
             stargets, ftargets, cidx, content, _dist,
         ) = row
         rr = grouped.get(rid)
@@ -431,6 +453,7 @@ async def search(
                 file_name=fn,
                 market=m,
                 source=source_display(src),
+                summary=summary,
                 report_date=rdate.isoformat() if rdate else None,
                 report_type=rtype,
                 instrument_types=list(itypes) if itypes else None,
@@ -468,7 +491,7 @@ async def _fetch_report(session, report_id: str):
         await session.execute(
             text(
                 "SELECT file_name, market, source, report_date, report_type, "
-                "file_path, full_text FROM research.research_report WHERE id = :id"
+                "file_path, full_text, summary FROM research.research_report WHERE id = :id"
             ),
             {"id": report_id},
         )
@@ -482,12 +505,15 @@ async def _fetch_report(session, report_id: str):
 async def report_full(report_id: str):
     """回傳單篇報告的 metadata 與原始檔狀態（供前端 modal 內嵌 PDF）。"""
     async with SessionFactory() as session:
-        fn, m, src, rdate, rtype, fpath, _ = await _fetch_report(session, report_id)
+        fn, m, src, rdate, rtype, fpath, _, summary = await _fetch_report(
+            session, report_id
+        )
     return {
         "report_id": report_id,
         "file_name": fn,
         "market": m,
         "source": source_display(src),
+        "summary": summary,
         "report_date": rdate.isoformat() if rdate else None,
         "report_type": rtype,
         "has_file": bool(fpath) and os.path.isfile(fpath),

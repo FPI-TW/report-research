@@ -176,6 +176,9 @@ if not _USERNAME or not _PASSWORD:
         "REPORT_MARK_ACCESS_USERNAME 與 REPORT_MARK_ACCESS_PASSWORD 必須設定(fail-closed)"
     )
 
+_USERNAME_B = _USERNAME.encode()
+_PASSWORD_B = _PASSWORD.encode()
+
 _SECRET = os.environ.get("REPORT_MARK_SESSION_SECRET", "")
 if not _SECRET:
     _SECRET = secrets.token_hex(32)
@@ -202,15 +205,17 @@ def verify_token(token: str | None, now: int) -> bool:
         exp = int(exp_str)
     except (ValueError, AttributeError):
         return False
-    if not hmac.compare_digest(sig, _sign(exp_str)):
+    if not hmac.compare_digest(sig.encode(), _sign(exp_str).encode()):
         return False
     return exp > now
 
 
 def check_credentials(username: str, password: str) -> bool:
-    """常數時間比對帳號與密碼(先各算再 AND,不短路,避免時序側信道)。"""
-    u_ok = hmac.compare_digest(username or "", _USERNAME)
-    p_ok = hmac.compare_digest(password or "", _PASSWORD)
+    """常數時間比對帳號與密碼(先各算再 AND,不短路,避免時序側信道)。
+    以 bytes 比對:compare_digest 對含非 ASCII 的 str 會丟 TypeError,
+    統一編碼成 bytes,讓中文/任意字元帳密一律安全比對而非崩潰。"""
+    u_ok = hmac.compare_digest((username or "").encode(), _USERNAME_B)
+    p_ok = hmac.compare_digest((password or "").encode(), _PASSWORD_B)
     return u_ok and p_ok
 
 

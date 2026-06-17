@@ -1,0 +1,25 @@
+/*
+ * 廷豐研報 前端模組：單一狀態物件（使用者意圖＋結果快取）＋ 檢視常數。
+ * ESM 單例：所有 import 取得同一個 state 參照，跨模組讀寫一致。
+ */
+
+// ── 單一狀態物件：使用者意圖（可分享/可還原）＋ 目前結果快取，集中管理避免多處走樣 ──
+export const VIEWS = ["grid", "list", "table", "group"];
+export const GROUPS = ["market", "report_type", "month"];
+export const state = {
+  // 篩選 / 排序 / 檢視意圖
+  market: "全部", instrument: "全部", relStock: false, relFutures: false,
+  type: "全部",
+  sort: "date_desc",            // 初值對齊首屏瀏覽預設，避免載入時 chip 自跳
+  view: "grid", group: "market",
+  tableSort: { key: null, dir: "asc" },
+  lastQuery: "",
+  // 目前結果快取：切換檢視時免重打 API（search: results；browse: 累積 items）
+  rows: [], mode: "browse", terms: [], total: 0, offset: 0,
+  // 非同步請求序號：search / browse 各自獨立，最新者勝（避免兩流互相干擾）
+  searchReq: 0, browseReq: 0,
+};
+try { const v = localStorage.getItem("rm_view"); if (VIEWS.includes(v)) state.view = v; } catch (e) {}
+
+// ── 瀏覽模式：無關鍵字時列出全部已導入報告（日期新→舊，分頁）──
+export const BROWSE_PAGE = 50;

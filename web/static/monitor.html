@@ -193,8 +193,8 @@
     </footer>
   </div>
 
-<script src="/static/utils.js"></script>
-<script>
+<script type="module">
+import { html, fetchJSON } from "/static/utils.js";
 (() => {
   const $ = (id) => document.getElementById(id);
   const POLL = 2000;

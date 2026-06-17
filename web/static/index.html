@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>廷豐研報</title>
+<meta name="description" content="廷豐研報：研究報告語意檢索與瀏覽，依市場／商品類型／標的快速找到相關研報。" />
+<meta name="theme-color" content="#f7f8fa" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%23007aff'/><text x='32' y='45' font-size='38' text-anchor='middle' fill='white' font-family='PingFang TC,Microsoft JhengHei,sans-serif'>研</text></svg>" />
 <link rel="stylesheet" href="/static/tokens.css" />
 <style>
   /* 共用色票/字體見 tokens.css；此處僅頁面專屬 token */
@@ -101,14 +104,15 @@
 
   /* ───── content ───── */
   .content { padding: 32px 30px 64px; }
-  .content-inner { max-width: 100%; }
+  /* 寬螢幕收斂內容寬度，避免卡片過寬、中文長句一行字數過多難回掃 */
+  .content-inner { max-width: 1480px; margin-inline: auto; }
   .meta-line { font-size: 13px; font-weight: 600; color: var(--label-2);
     margin: 2px 2px 18px; letter-spacing: .01em; display: none; }
   .meta-line.show { display: block; }
 
   /* 結果：自適應卡片網格（寬螢幕兩欄，窄螢幕自動收回單欄） */
   #results { display: grid; align-items: start; gap: 13px;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 392px), 1fr)); }
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); }
   #results .state, #results > .sk:first-child:last-child { grid-column: 1 / -1; }
   .state { grid-column: 1 / -1; }
 
@@ -137,6 +141,12 @@
     letter-spacing: .01em; }
   .subj { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
     color: var(--label-2); background: var(--fill); letter-spacing: .01em; }
+  .summary { font-size: 13px; line-height: 1.55; color: var(--label-2);
+    margin: 0 0 13px; cursor: pointer; }
+  .row-summary { font-size: 12px; line-height: 1.5; color: var(--label-2); cursor: pointer; }
+  .summary.clamp, .row-summary.clamp { display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2; overflow: hidden; }
+  .summary.expanded, .row-summary.expanded { -webkit-line-clamp: unset; }
   .passages { display: flex; flex-direction: column; gap: 11px; }
   .passage { font-size: 14px; line-height: 1.62; color: var(--label-2); letter-spacing: .008em;
     padding-left: 12px; border-left: 2px solid var(--sep); }
@@ -158,16 +168,26 @@
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45);
     display: none; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
   .modal-backdrop.open { display: flex; }
-  .modal { background: var(--bg); width: min(1000px, 100%); height: 90vh;
+  .modal { background: var(--bg); width: min(1000px, 100%); height: 90dvh;
     border-radius: 16px; display: flex; flex-direction: column; overflow: hidden;
     box-shadow: 0 24px 60px rgba(0,0,0,.3); }
+  /* PDF 載入中覆蓋層（iframe 數 MB，內網下要數秒；避免整片深灰無回饋） */
+  .pdf-wrap { position: relative; width: 100%; height: 100%; }
+  .pdf-loading { position: absolute; inset: 0; display: flex; gap: 10px;
+    align-items: center; justify-content: center; color: #fff; font-size: 14px; }
+  .pdf-loading .spin { width: 18px; height: 18px; border-radius: 50%;
+    border: 2px solid #ffffff66; border-top-color: #fff; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .modal-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px;
     border-bottom: 1px solid var(--sep); }
   .modal-head .m-title { flex: 1; min-width: 0; }
-  .modal-head .m-name { font-size: 15px; font-weight: 700; color: var(--label);
+  .modal-head .m-name { margin: 0; font-size: 15px; font-weight: 700; color: var(--label);
     line-height: 1.4; word-break: break-all; }
   .modal-head .m-meta { font-size: 12px; color: var(--label-3); margin-top: 5px;
     display: flex; flex-wrap: wrap; gap: 4px 9px; align-items: center; }
+  .modal-summary { padding: 12px 20px; border-bottom: 1px solid var(--sep);
+    font-size: 13.5px; line-height: 1.6; color: var(--label-2); background: var(--card); }
+  .modal-summary[hidden] { display: none; }
   .modal-close { border: none; background: var(--fill); color: var(--label-2);
     width: 30px; height: 30px; border-radius: 50%; cursor: pointer; flex: none;
     font-size: 17px; line-height: 1; }
@@ -341,9 +361,55 @@
     .view-switch button { transition: none; }
   }
   :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  /* ───── 跳至結果（鍵盤使用者免 Tab 穿整個側欄）───── */
+  .skip-link { position: absolute; left: 8px; top: -48px; z-index: 60;
+    background: var(--blue); color: #fff; font-weight: 600; font-size: 13px;
+    padding: 9px 14px; border-radius: 10px; text-decoration: none;
+    transition: top .15s; }
+  .skip-link:focus { top: 8px; }
+
+  /* ───── 常駐「清除篩選」（套用篩選時隨時可一鍵還原）───── */
+  .clear-filters { border: none; background: var(--fill); color: var(--label-2);
+    font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    padding: 6px 12px; border-radius: 100px; display: inline-flex; align-items: center; gap: 5px; }
+  .clear-filters[hidden] { display: none; }
+  .clear-filters:hover { background: #78788024; color: var(--label); }
+  .clear-filters::before { content: "✕"; font-size: 10px; }
+
+  /* ───── 摘要展開鈕（僅實際溢出時由 JS 加上；鍵盤可用）───── */
+  .sum-toggle { border: none; background: none; color: var(--blue); cursor: pointer;
+    font-family: inherit; font-size: 12px; font-weight: 600; padding: 2px 0; margin: 1px 0 2px; }
+  .row .sum-toggle { margin: 0; }
+  .sum-toggle:hover { text-decoration: underline; }
+
+  /* ───── 瀏覽模式整卡可點（與列表一致；密度更高、CTA 不再搶眼）───── */
+  .card.card-click { cursor: pointer; }
+  .card.card-click:active { transform: scale(.997); }
+
+  /* ───── 平板／半螢幕：縮窄側欄讓第二欄卡片出得來 ───── */
+  @media (min-width: 881px) and (max-width: 1040px) {
+    :root { --sidebar-w: 232px; }
+  }
+
+  /* ───── 手機補強：側欄不黏（消除與 sticky 表頭/分組標題重疊）、全螢幕 modal ───── */
+  @media (max-width: 880px) {
+    .sidebar { position: static; }
+    .modal-backdrop { padding: 0; }
+    .modal { width: 100%; height: 100dvh; border-radius: 0; }
+  }
+
+  /* ───── 觸控裝置：放大過小的點擊目標到 ~44px ───── */
+  @media (pointer: coarse) {
+    .clear { width: 26px; height: 26px; line-height: 26px; font-size: 13px; }
+    .modal-close { width: 40px; height: 40px; font-size: 18px; }
+    .view-switch button { padding: 11px 14px; }
+    .filter { padding: 11px 14px; }
+  }
 </style>
 </head>
 <body>
+  <a class="skip-link" href="#results">跳至結果</a>
   <div class="app">
     <aside class="sidebar">
       <div class="topbar">
@@ -420,6 +486,7 @@
               <option value="month">日期(月)</option>
             </select>
           </div>
+          <button class="clear-filters" id="clearFilters" type="button" hidden>清除篩選</button>
           <div class="view-note" id="viewNote" aria-live="polite"></div>
         </div>
         <div id="results" role="region" aria-label="研報結果"></div>
@@ -428,14 +495,15 @@
   </div>
 
   <div class="modal-backdrop" id="modalBackdrop">
-    <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalName">
       <div class="modal-head">
         <div class="m-title">
-          <div class="m-name" id="modalName"></div>
+          <h2 class="m-name" id="modalName"></h2>
           <div class="m-meta" id="modalMeta"></div>
         </div>
         <button class="modal-close" id="modalClose" aria-label="關閉">✕</button>
       </div>
+      <div class="modal-summary" id="modalSummary" hidden></div>
       <div class="modal-body" id="modalBody"></div>
       <div class="modal-foot" id="modalFoot"></div>
     </div>
@@ -513,16 +581,21 @@ function restoreFromURL() {
   if (q) { $("#q").value = q; toggleClear(); }
   return !!q;
 }
-// 手機收摺鈕：顯示目前生效的篩選數，收起時也看得出有沒有套用篩選
-function updateFilterToggle() {
-  const t = $("#filterToggle");
-  if (!t) return;
+// 目前生效的篩選維度數（手機收摺鈕與常駐「清除篩選」共用）
+function activeFilterCount() {
   let n = 0;
   if (state.market !== "全部") n++;
   if (state.instrument !== "全部") n++;
   if (state.relStock) n++;
   if (state.relFutures) n++;
   if (state.type !== "全部") n++;
+  return n;
+}
+// 手機收摺鈕：顯示目前生效的篩選數，收起時也看得出有沒有套用篩選
+function updateFilterToggle() {
+  const t = $("#filterToggle");
+  if (!t) return;
+  const n = activeFilterCount();
   t.textContent = n ? `篩選與排序 · ${n}` : "篩選與排序";
 }
 // 一鍵清除所有篩選（供無結果補救用），同步 chip 視覺與 aria
@@ -651,6 +724,7 @@ function skeleton() {
   $("#meta").classList.remove("show");
   $("#resultsBar").hidden = true;
   $("#results").className = "";
+  $("#results").setAttribute("aria-busy", "true");   // 讀屏：宣告結果區載入中
   $("#results").innerHTML = Array.from({ length: 4 }, () =>
     `<div class="sk"><div class="sk-line" style="width:40%"></div>
      <div class="sk-line" style="width:92%"></div><div class="sk-line" style="width:76%"></div></div>`).join("");
@@ -682,7 +756,7 @@ function render(data) {
     $("#results").className = "";
     const hasFilters = state.market !== "全部" || state.instrument !== "全部"
       || state.type !== "全部" || state.relStock || state.relFutures;
-    $("#results").innerHTML = html`<div class="state"><div class="big">🫧</div>
+    $("#results").innerHTML = html`<div class="state"><div class="big" aria-hidden="true">🫧</div>
       <div class="msg">找不到「${data.query}」的相關研報，換個說法或關鍵字試試</div>
       <div class="examples">
         ${hasFilters ? html`<button class="ex" id="emptyClear" type="button">清除篩選再試</button>` : raw("")}
@@ -712,6 +786,12 @@ function tagRowHtml(r) {
   return html`<div class="tags">${itags}${subj}</div>`;
 }
 
+// ── 摘要（卡片/列表共用，純文字無 emoji；點擊展開/收合，見 bindResultEvents）──
+function summaryHtml(r, cls) {
+  if (!r.summary) return raw("");
+  return html`<span class="${cls} clamp">${r.summary}</span>`;
+}
+
 // ── 卡片（grid）：search 顯示排名/片段/相關度條；browse 為精簡版 ──
 function gridCard(r, mode, i) {
   const c = mColor(r.market);
@@ -722,7 +802,9 @@ function gridCard(r, mode, i) {
   if (mode === "search") info.push(html`<span>${r.match_count} 命中片段</span>`);
   const tagRow = tagRowHtml(r);
   let body = raw(""), score = raw(""), rank = raw("");
-  let actions = html`<button class="full-report" data-report-id="${r.report_id}">查看完整報告</button>`;
+  // 瀏覽模式整卡可點（不放按鈕，密度更高）；搜尋模式卡片非整卡可點，保留明確 CTA
+  let actions = mode === "browse" ? raw("")
+    : html`<button class="full-report" data-report-id="${r.report_id}">查看完整報告</button>`;
   if (mode === "search") {
     rank = html`<span class="rank">#${r.rank}</span>`;
     const pct = Math.max(4, Math.min(100, Math.round(r.best_score * 100)));
@@ -739,7 +821,8 @@ function gridCard(r, mode, i) {
         <span class="score-num">${pct}%</span>
       </div>`;
   }
-  return html`<div class="card" style="animation-delay:${Math.min(i, 12) * 45}ms" data-card="${i}">
+  const browseAttr = mode === "browse" ? html` data-report-id="${r.report_id}"` : raw("");
+  return html`<div class="card${mode === "browse" ? " card-click" : ""}" style="animation-delay:${Math.min(i, 12) * 45}ms" data-card="${i}"${browseAttr}>
     <div class="card-top">
       <span class="badge" style="background:${c}">${mLabel(r.market)}</span>
       <span class="fname" title="${r.file_name}">${r.file_name}</span>
@@ -747,8 +830,9 @@ function gridCard(r, mode, i) {
     </div>
     ${info.length ? html`<div class="info">${joinHtml(info, '<span class="dot">·</span>')}</div>` : raw("")}
     ${tagRow}
+    ${summaryHtml(r, "summary")}
     ${body}
-    <div class="card-actions">${actions}</div>
+    ${mode === "search" ? html`<div class="card-actions">${actions}</div>` : raw("")}
     ${score}
   </div>`;
 }
@@ -768,6 +852,7 @@ function listRow(r, mode) {
     <span class="row-main">
       <span class="row-name">${r.file_name}</span>
       <span class="row-meta">${joinHtml(meta, '<span class="dot">·</span>')}</span>
+      ${summaryHtml(r, "row-summary")}
       ${tagRowHtml(r)}
     </span>
     ${scorePill}
@@ -821,7 +906,7 @@ function tableHtml(rows, mode) {
   });
   const body = sortedRows(rows).map(r => {
     const cells = [
-      html`<td class="t-name" title="${r.file_name}">${r.file_name}</td>`,
+      html`<td class="t-name" title="${r.summary ? r.file_name + "\n\n" + r.summary : r.file_name}">${r.file_name}</td>`,
       html`<td><span class="badge" style="background:${mColor(r.market)}">${mLabel(r.market)}</span></td>`,
       html`<td>${r.report_type ? tLabel(r.report_type) : "—"}</td>`,
       html`<td class="t-date">${r.report_date ? fmtDate(r.report_date) : "—"}</td>`,
@@ -885,6 +970,8 @@ function paintResults(animate = true) {
   root.innerHTML = html;
   appendLoadMore();
   bindResultEvents();
+  root.removeAttribute("aria-busy");
+  markClampable();   // 量測摘要是否真的溢出兩行，溢出才掛「展開」鈕
   if (state.view === "grid" && state.mode === "search") {
     const set = () => $$(".score-fill").forEach(f => f.style.width = f.dataset.w + "%");
     animate ? requestAnimationFrame(set) : set();
@@ -898,6 +985,8 @@ function updateViewBar() {
     b.tabIndex = on ? 0 : -1;
   });
   $("#groupByWrap").hidden = state.view !== "group";
+  const cf = $("#clearFilters");
+  if (cf) { const n = activeFilterCount(); cf.hidden = !n; cf.textContent = n ? `清除篩選 · ${n}` : "清除篩選"; }
   let note = "";
   if ((state.view === "table" || state.view === "group")
       && state.mode === "browse" && state.offset < state.total) {
@@ -919,7 +1008,8 @@ function bindResultEvents() {
   const root = $("#results");
   root.querySelectorAll("[data-report-id]").forEach(el => {
     el.onclick = () => openFull(el.dataset.reportId);
-    if (el.matches(".row, tr[data-report-id]")) {
+    // 整列（list/group）、表格列、與瀏覽模式整卡都可用鍵盤開啟
+    if (el.matches(".row, tr[data-report-id], .card.card-click")) {
       el.tabIndex = 0;
       el.setAttribute("role", "button");
       el.onkeydown = e => {
@@ -938,11 +1028,39 @@ function bindResultEvents() {
     e.target.textContent = "載入中…";   // 防連點重複請求 + 即時回饋
     loadBrowse(true);
   };
-  root.querySelectorAll("th[data-sort-key]").forEach(th => th.onclick = () => {
-    const key = th.dataset.sortKey;
-    if (state.tableSort.key === key) state.tableSort.dir = state.tableSort.dir === "asc" ? "desc" : "asc";
-    else { state.tableSort.key = key; state.tableSort.dir = "asc"; }
-    paintResults(false);
+  // 表頭排序：滑鼠 + 鍵盤皆可（aria-sort 已標示，補上實際可操作性）
+  root.querySelectorAll("th[data-sort-key]").forEach(th => {
+    th.tabIndex = 0;
+    th.setAttribute("role", "button");
+    const doSort = () => {
+      const key = th.dataset.sortKey;
+      if (state.tableSort.key === key) state.tableSort.dir = state.tableSort.dir === "asc" ? "desc" : "asc";
+      else { state.tableSort.key = key; state.tableSort.dir = "asc"; }
+      paintResults(false);
+    };
+    th.onclick = doSort;
+    th.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); doSort(); } };
+  });
+}
+
+// 量測每則摘要是否真的被截斷（>2 行）；溢出才掛上鍵盤可用的「展開」鈕，
+// 避免對只有一兩行的摘要顯示假的展開提示。每次 paint 後重跑（DOM 已重建）。
+function markClampable() {
+  $$("#results .summary, #results .row-summary").forEach(el => {
+    if (el.scrollHeight <= el.clientHeight + 1) return;   // 沒溢出 → 不需要展開鈕
+    el.classList.add("clampable");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sum-toggle";
+    btn.textContent = "展開";
+    btn.setAttribute("aria-expanded", "false");
+    btn.onclick = e => {
+      e.stopPropagation();   // 在可點整列/整卡時不觸發開啟報告
+      const open = el.classList.toggle("expanded");
+      btn.textContent = open ? "收合" : "展開";
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    el.insertAdjacentElement("afterend", btn);
   });
 }
 
@@ -990,7 +1108,7 @@ async function loadBrowse(append = false) {
       $("#results").className = "";
       const hasFilters = state.market !== "全部" || state.instrument !== "全部"
         || state.type !== "全部" || state.relStock || state.relFutures;
-      $("#results").innerHTML = html`<div class="state"><div class="big">🫧</div>
+      $("#results").innerHTML = html`<div class="state"><div class="big" aria-hidden="true">🫧</div>
         <div class="msg">這個篩選條件下沒有報告</div>
         ${hasFilters ? html`<div class="examples"><button class="ex" id="browseClear" type="button">清除篩選</button></div>` : raw("")}</div>`;
       const bc = $("#browseClear");
@@ -1002,8 +1120,12 @@ async function loadBrowse(append = false) {
     if (my !== state.browseReq) return;
     // 載入更多失敗：保留已顯示的結果，只還原按鈕讓使用者重試（不可清空整頁）
     if (append) { restoreLoadMore("載入更多（載入失敗，點擊重試）"); return; }
-    $("#results").innerHTML =
-      `<div class="state"><div class="big">⚠️</div><div class="msg">載入逾時或失敗，請稍後再試</div></div>`;
+    $("#results").className = "";
+    $("#results").removeAttribute("aria-busy");
+    $("#results").innerHTML = html`<div class="state"><div class="big" aria-hidden="true">⚠️</div>
+      <div class="msg">載入逾時或失敗，請稍後再試</div>
+      <div class="examples"><button class="ex" id="retryBrowse" type="button">重試</button></div></div>`;
+    const rb = $("#retryBrowse"); if (rb) rb.onclick = () => loadBrowse();
   }
 }
 
@@ -1027,8 +1149,14 @@ async function run() {
     // 最新的 search 才套用；若查詢已被清空，代表意圖切回瀏覽 → 放棄這次 search 結果
     if (my === state.searchReq && $("#q").value.trim()) render(data);
   } catch (e) {
-    if (my === state.searchReq) $("#results").innerHTML =
-      `<div class="state"><div class="big">⚠️</div><div class="msg">查詢逾時或失敗，請稍後再試</div></div>`;
+    if (my === state.searchReq) {
+      $("#results").className = "";
+      $("#results").removeAttribute("aria-busy");
+      $("#results").innerHTML = html`<div class="state"><div class="big" aria-hidden="true">⚠️</div>
+        <div class="msg">查詢逾時或失敗，請稍後再試</div>
+        <div class="examples"><button class="ex" id="retrySearch" type="button">重試</button></div></div>`;
+      const rb = $("#retrySearch"); if (rb) rb.onclick = () => run();
+    }
   }
 }
 
@@ -1066,6 +1194,8 @@ async function openFull(id) {
   const back = $("#modalBackdrop");
   $("#modalName").textContent = "載入中…";
   $("#modalMeta").innerHTML = "";
+  const msum = $("#modalSummary");
+  msum.textContent = ""; msum.hidden = true;
   $("#modalBody").textContent = "";
   $("#modalFoot").innerHTML = "";
   lastFocused = document.activeElement;       // 記住觸發按鈕，關閉時還原焦點
@@ -1082,10 +1212,18 @@ async function openFull(id) {
     if (d.report_type) meta.push(html`<span>${d.report_type}</span>`);
     $("#modalName").textContent = d.file_name || "";
     $("#modalMeta").innerHTML = meta.join('<span class="dot">·</span>');
+    if (d.summary) { msum.textContent = d.summary; msum.hidden = false; }
     const fileUrl = `/api/report/${id}/file`;
     const isPdf = (d.file_name || "").toLowerCase().endsWith(".pdf");
     if (d.has_file && isPdf) {
-      $("#modalBody").innerHTML = html`<iframe class="pdf-frame" src="${fileUrl}" title="完整報告"></iframe>`;
+      // PDF 常數 MB，內網下要數秒；先顯示載入中覆蓋層，iframe load 後移除，避免整片深灰無回饋
+      $("#modalBody").innerHTML = html`<div class="pdf-wrap">
+          <div class="pdf-loading" id="pdfLoading"><span class="spin"></span>報告載入中…</div>
+          <iframe class="pdf-frame" src="${fileUrl}" title="完整報告"></iframe>
+        </div>`;
+      const frame = $("#modalBody iframe"), ld = $("#pdfLoading");
+      frame.onload = () => { if (ld) ld.remove(); };
+      frame.onerror = () => { if (ld) ld.textContent = "無法預覽，請改用下方「在新分頁開啟」"; };
       $("#modalFoot").innerHTML = html`<a href="${fileUrl}" target="_blank" rel="noopener">在新分頁開啟</a>`;
     } else if (d.has_file) {
       const ext = (d.file_name.split(".").pop() || "").toUpperCase();
@@ -1096,7 +1234,8 @@ async function openFull(id) {
       $("#modalFoot").innerHTML = "";
     }
   } catch (e) {
-    $("#modalBody").innerHTML = html`<div class="modal-fallback">載入失敗：${String(e)}</div>`;
+    $("#modalName").textContent = "載入失敗";
+    $("#modalBody").innerHTML = `<div class="modal-fallback">報告載入失敗，請稍後再試或重新整理頁面。</div>`;
   }
 }
 function closeFull() {
@@ -1109,12 +1248,18 @@ function closeFull() {
 }
 $("#modalClose").onclick = closeFull;
 $("#modalBackdrop").addEventListener("click", e => { if (e.target === e.currentTarget) closeFull(); });
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeFull(); });
+// Escape 僅在 modal 開啟時才關閉，避免攔截頁面其他 Escape 用途
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && $("#modalBackdrop").classList.contains("open")) closeFull();
+});
 
 $("#filterToggle").onclick = () => {
   const open = $("#filterGroups").classList.toggle("open");
   $("#filterToggle").setAttribute("aria-expanded", open ? "true" : "false");
 };
+// 常駐「清除篩選」：套用篩選時隨時可一鍵還原（不必篩到 0 筆才出現）
+const clearFiltersBtn = $("#clearFilters");
+if (clearFiltersBtn) clearFiltersBtn.onclick = () => { resetFilters(); rerun(); };
 
 // 篩選 chip 的 aria-pressed 與 .on 視覺狀態同步（事件委派，撐過 innerHTML 重建）
 function syncPressed(sel) {

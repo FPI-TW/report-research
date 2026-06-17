@@ -50,9 +50,22 @@ class StreamParseTests(unittest.TestCase):
         self.assertIsNone(llm.extract_text_delta("not json"))
         self.assertIsNone(llm.extract_text_delta(""))
 
+    def test_non_dict_stream_json_ignored(self):
+        self.assertIsNone(llm.extract_text_delta('"just text"'))
+        self.assertIsNone(llm.extract_text_delta('["array"]'))
+        self.assertIsNone(llm.extract_text_delta('{"type":"stream_event","event":"oops"}'))
+        self.assertIsNone(
+            llm.extract_text_delta(
+                '{"type":"stream_event","event":{"type":"content_block_delta","delta":"oops"}}'
+            )
+        )
+
     def test_result_line(self):
         self.assertTrue(llm.is_result_line('{"type":"result","subtype":"success"}'))
         self.assertFalse(llm.is_result_line('{"type":"stream_event"}'))
+
+    def test_non_dict_result_line_ignored(self):
+        self.assertFalse(llm.is_result_line("123"))
 
 
 class BuildContextTests(unittest.TestCase):

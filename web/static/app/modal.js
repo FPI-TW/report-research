@@ -30,16 +30,17 @@ export async function openFull(id) {
   document.addEventListener("keydown", trapTab);
   try {
     const d = await fetchJSON(`/api/report/${id}/full`);
+    const fileName = d.file_name || "";
     const meta = [];
     if (d.market) meta.push(html`<span class="badge" style="background:${mColor(d.market)}">${mLabel(d.market)}</span>`);
     if (d.source) meta.push(html`<span>${d.source}</span>`);
     if (d.report_date) meta.push(html`<span>${fmtDate(d.report_date)}</span>`);
     if (d.report_type) meta.push(html`<span>${d.report_type}</span>`);
-    $("#modalName").textContent = d.file_name || "";
+    $("#modalName").textContent = fileName;
     $("#modalMeta").innerHTML = meta.join('<span class="dot">·</span>');
     if (d.summary) { msum.textContent = d.summary; msum.hidden = false; }
     const fileUrl = `/api/report/${id}/file`;
-    const isPdf = (d.file_name || "").toLowerCase().endsWith(".pdf");
+    const isPdf = fileName.toLowerCase().endsWith(".pdf");
     if (d.has_file && isPdf) {
       // PDF 常數 MB，內網下要數秒；先顯示載入中覆蓋層，iframe load 後移除，避免整片深灰無回饋
       $("#modalBody").innerHTML = html`<div class="pdf-wrap">
@@ -51,8 +52,9 @@ export async function openFull(id) {
       frame.onerror = () => { if (ld) ld.textContent = "無法預覽，請改用下方「在新分頁開啟」"; };
       $("#modalFoot").innerHTML = html`<a href="${fileUrl}" target="_blank" rel="noopener">在新分頁開啟</a>`;
     } else if (d.has_file) {
-      const ext = (d.file_name.split(".").pop() || "").toUpperCase();
-      $("#modalBody").innerHTML = html`<div class="modal-fallback">此檔為 ${ext} 文件，無法內嵌預覽，請下載查看。</div>`;
+      const ext = (fileName.split(".").pop() || "").toUpperCase();
+      const fileTypeLabel = ext ? `${ext} 文件` : "此文件";
+      $("#modalBody").innerHTML = html`<div class="modal-fallback">${fileTypeLabel} 無法內嵌預覽，請下載查看。</div>`;
       $("#modalFoot").innerHTML = html`<a href="${fileUrl}" target="_blank" rel="noopener">下載原始檔</a>`;
     } else {
       $("#modalBody").innerHTML = `<div class="modal-fallback">找不到原始檔。</div>`;

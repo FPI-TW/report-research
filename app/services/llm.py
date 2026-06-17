@@ -32,12 +32,18 @@ def extract_text_delta(line: str) -> str | None:
         obj = json.loads(line)
     except (ValueError, TypeError):
         return None
+    if not isinstance(obj, dict):
+        return None
     if obj.get("type") != "stream_event":
         return None
-    ev = obj.get("event") or {}
+    ev = obj.get("event")
+    if not isinstance(ev, dict):
+        return None
     if ev.get("type") != "content_block_delta":
         return None
-    delta = ev.get("delta") or {}
+    delta = ev.get("delta")
+    if not isinstance(delta, dict):
+        return None
     if delta.get("type") != "text_delta":
         return None
     text = delta.get("text")
@@ -50,9 +56,10 @@ def is_result_line(line: str) -> bool:
     if not line:
         return False
     try:
-        return json.loads(line).get("type") == "result"
+        obj = json.loads(line)
     except (ValueError, TypeError):
         return False
+    return isinstance(obj, dict) and obj.get("type") == "result"
 
 
 async def stream_completion(

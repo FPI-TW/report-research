@@ -72,3 +72,16 @@ ALTER TABLE research.report_chunk ADD COLUMN IF NOT EXISTS content_norm text
 
 CREATE INDEX IF NOT EXISTS idx_report_chunk_content_trgm
     ON research.report_chunk USING gin (content_norm gin_trgm_ops);
+
+-- 問答記錄（Phase 1 RAG）：每次 /api/ask 寫一列，供稽核/分析（冪等建表）
+CREATE TABLE IF NOT EXISTS research.qa_log (
+    id               uuid PRIMARY KEY,
+    question         text NOT NULL,
+    answer           text,
+    cited_report_ids uuid[],                        -- 回答實際引用的報告 id
+    filters          jsonb,                         -- 提問時套用的市場/商品/類型等篩選
+    latency_ms       int,
+    created_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_qa_log_created_at
+    ON research.qa_log (created_at DESC);

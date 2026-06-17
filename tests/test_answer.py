@@ -1,7 +1,7 @@
 # tests/test_answer.py
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -164,6 +164,38 @@ class OffTopicTests(unittest.TestCase):
             (0, 0.55, make_row("r2", "乙.pdf", "TW", "內容。", distance=0.45)),
         ]
         self.assertFalse(is_off_topic(scored, min_relevance=0.45))
+
+
+class RecencyTests(unittest.TestCase):
+    NOW = datetime(2026, 6, 17, tzinfo=timezone.utc)
+
+    def test_newer_report_ranked_first_when_relevance_close(self):
+        # 同 tier、相關度接近：較新者（2026-06-10）應排在較舊者（2026-01-01）之前
+        scored = [
+            (0, 0.80, make_row("old", "舊.pdf", "TW", "AI 伺服器需求強。", date(2026, 1, 1))),
+            (0, 0.78, make_row("new", "新.pdf", "TW", "AI 伺服器需求強。", date(2026, 6, 10))),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        self.assertEqual([s.report_id for s in sources], ["new", "old"])
+        self.assertEqual(sources[0].report_id, "new")  # 較新拿 [1]
+
+    def test_recency_does_not_override_tier(self):
+        # 字面強命中的舊篇（tier2）仍勝過弱相關的新篇（tier0）
+        scored = [
+            (2, 0.70, make_row("strong_old", "強舊.pdf", "TW", "先進封裝。", date(2025, 1, 1))),
+            (0, 0.95, make_row("weak_new", "弱新.pdf", "TW", "先進封裝。", date(2026, 6, 17))),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        self.assertEqual(sources[0].report_id, "strong_old")
+
+    def test_missing_date_treated_as_oldest(self):
+        # 無日期者 recency_factor=0；同 tier 下有近日期者勝出
+        scored = [
+            (0, 0.80, make_row("nodate", "無日期.pdf", "TW", "內容。", None)),
+            (0, 0.79, make_row("dated", "有日期.pdf", "TW", "內容。", date(2026, 6, 15))),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        self.assertEqual(sources[0].report_id, "dated")
 
 
 if __name__ == "__main__":

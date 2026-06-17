@@ -70,14 +70,14 @@ def is_off_topic(
     best_tier = scored[0][0]  # scored 已依 (tier, fused) 排序，首列即最高 tier
     if best_tier >= 1:
         return False
-    best_dense = max(1.0 - float(row[-1]) for _tier, _fused, row in scored)
+    best_dense = max(1.0 - float(row[_DIST]) for _tier, _fused, row in scored)
     return best_dense < min_relevance
 
 
 _CITE_RE = re.compile(r"\[(\d+)\]")
 
 # hybrid_search 回傳 row 的欄位位置（見 store._meta_columns + distance；server.py:473 對應解包）
-_RID, _FNAME, _MARKET, _RDATE, _CONTENT = 1, 2, 3, 6, 14
+_RID, _FNAME, _MARKET, _RDATE, _CONTENT, _DIST = 1, 2, 3, 6, 14, -1
 
 
 def _as_date(value: object) -> date | None:
@@ -97,7 +97,7 @@ def _as_date(value: object) -> date | None:
 
 
 def _recency_factor(report_date: object, now_date: date, half_life_days: float) -> float:
-    """新近度因子 ∈ (0,1]：今天=1.0、半衰期前=0.5；無日期視為 0。"""
+    """新近度因子 ∈ [0,1]：今天=1.0、半衰期前=0.5；無日期視為 0。"""
     d = _as_date(report_date)
     if d is None:
         return 0.0

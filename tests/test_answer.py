@@ -13,18 +13,19 @@ from app.services.answer import (  # noqa: E402
     build_context,
     build_user_prompt,
     cited_report_ids,
+    is_off_topic,
 )
 
 
-def make_row(report_id, file_name, market, content, report_date=None):
-    """造一列符合 hybrid_search 回傳結構的 row（只填 build_context 會讀的位置）。"""
+def make_row(report_id, file_name, market, content, report_date=None, distance=0.1):
+    """造一列符合 hybrid_search 回傳結構的 row（只填會被讀到的位置）。"""
     row = [None] * 16
     row[1] = report_id  # _RID
     row[2] = file_name  # _FNAME
     row[3] = market  # _MARKET
     row[6] = report_date  # _RDATE
     row[14] = content  # _CONTENT
-    row[15] = 0.1  # distance
+    row[15] = distance  # distance（row[-1]）
     return tuple(row)
 
 
@@ -135,6 +136,34 @@ class PromptAndCitationTests(unittest.TestCase):
             Source(2, "r2", "乙.pdf", "US", None),
         ]
         self.assertEqual(cited_report_ids("[2][1][2]", sources), ["r1", "r2"])
+
+
+class OffTopicTests(unittest.TestCase):
+    def test_empty_scored_is_off_topic(self):
+        self.assertTrue(is_off_topic([]))
+
+    def test_lexical_hit_never_off_topic(self):
+        # tier>=1（字面命中）即視為在領域內，縱使 dense 很低
+        scored = [(1, 0.20, make_row("r1", "甲.pdf", "TW", "內容。", distance=0.95))]
+        self.assertFalse(is_off_topic(scored, min_relevance=0.45))
+
+    def test_high_dense_not_off_topic(self):
+        # tier0 但最相似塊 cosine=0.6 >= 門檻
+        scored = [(0, 0.60, make_row("r1", "甲.pdf", "TW", "內容。", distance=0.40))]
+        self.assertFalse(is_off_topic(scored, min_relevance=0.45))
+
+    def test_low_dense_is_off_topic(self):
+        # tier0 且最相似塊 cosine=0.30 < 門檻
+        scored = [(0, 0.30, make_row("r1", "甲.pdf", "TW", "內容。", distance=0.70))]
+        self.assertTrue(is_off_topic(scored, min_relevance=0.45))
+
+    def test_uses_max_dense_across_candidates(self):
+        # 取全候選最相似塊：第二列 cosine=0.55 >= 門檻 → 非離題
+        scored = [
+            (0, 0.30, make_row("r1", "甲.pdf", "TW", "內容。", distance=0.70)),
+            (0, 0.55, make_row("r2", "乙.pdf", "TW", "內容。", distance=0.45)),
+        ]
+        self.assertFalse(is_off_topic(scored, min_relevance=0.45))
 
 
 if __name__ == "__main__":

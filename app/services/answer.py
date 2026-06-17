@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 import uuid
@@ -40,6 +41,33 @@ SYSTEM_PROMPT = (
 )
 
 NO_CONTEXT_MESSAGE = "在目前的研報語料中找不到與此問題相關的內容。"
+
+MIN_RELEVANCE = float(os.getenv("ASK_MIN_RELEVANCE", "0.45"))
+
+OFF_TOPIC_MESSAGE = (
+    "這個問題與廷豐研報的語料無關，請改問與研報內容相關的問題"
+    "（例如特定市場、個股、期貨或總經主題）。"
+)
+
+
+def is_off_topic(
+    scored: list[tuple[int, float, tuple]],
+    *,
+    min_relevance: float = MIN_RELEVANCE,
+) -> bool:
+    """判定問題是否離題（與研報語料無關）。
+
+    規則：字面命中（best_tier>=1）一律視為在領域內；否則取全候選最相似塊的
+    cosine，低於 min_relevance 才判離題。scored 為空亦視為離題。
+    """
+    if not scored:
+        return True
+    best_tier = scored[0][0]  # scored 已依 (tier, fused) 排序，首列即最高 tier
+    if best_tier >= 1:
+        return False
+    best_dense = max(1.0 - float(row[-1]) for _tier, _fused, row in scored)
+    return best_dense < min_relevance
+
 
 _CITE_RE = re.compile(r"\[(\d+)\]")
 

@@ -11,10 +11,16 @@
   --card: #ffffff;
   --label: #1c1c1e;
   --label-2: #3c3c43bf;  /* 0.75 alpha ≈ 5:1 對比，達 WCAG AA 正文 */
-  --label-3: #3c3c4399;  /* 0.6 alpha，由 0.3 提高以改善次要文字可讀性 */
+  --label-3: #717176;    /* 次要文字 ~4.85:1，達 WCAG AA（原 #3c3c4399 僅 3.4:1，不足） */
   --sep: #3c3c431f;
   --fill: #78788014;
+  --green: #34c759;      /* 跨頁語義狀態色：monitor tiles / help 台股圖例 / 成功態，統一於此 */
+  --amber: #ff9f0a;
+  --red: #ff3b30;
   --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px rgba(0, 0, 0, .06);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
                "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
 }
+
+/* 全站一致的鍵盤焦點環（四頁共用；個別頁可再加強） */
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }

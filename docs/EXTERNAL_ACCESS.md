@@ -56,6 +56,24 @@ cp .env.example .env
 ```
 
 > `make serve` 會自動載入 `.env`。未設帳密時 App 會 fail-closed 拒絕啟動。
+> 安全限制：**非本機 localhost 的明文 HTTP 不會建立登入 session**；同事請走 `https://research.<你的網域>` 這條受保護入口。
+
+### 3b) 信任反向代理來源 IP（外網必做）
+
+App 以「連線來源 IP 是否為信任代理」決定要不要採信 nginx 帶來的 `X-Forwarded-Proto: https`。經 Cloudflare 進來的請求路徑是 `nginx → host.docker.internal:8097 → uvicorn`，**uvicorn 看到的來源 IP 是 Docker Desktop → WSL host 的閘道**（通常 `172.x.x.1`），**不在預設信任的 loopback 內**。若不設定，外網（即使走 HTTPS）登入會被擋並顯示「**此登入只接受 HTTPS 或本機 localhost，請改走受保護入口**」。
+
+```bash
+# 1) 先啟動 serve，從 uvicorn access log 找出 nginx 進來的來源 IP
+make serve                       # log 在 data/serve_edge.log，找形如 "172.x.x.1:port - GET /login" 的來源
+# 2) 在 repo 根 .env 設定（把 172.20.48.1 換成你實際看到的閘道 IP）
+#    REPORT_MARK_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128,172.20.48.1/32
+# 3) 重啟 serve 生效（auth 在啟動時讀此設定，不重啟不生效）
+```
+
+> ⚠️ 此閘道 IP 可能隨 WSL／Windows 重開機變動；重開機後若外網又出現該訊息，重查 IP 更新此設定再重啟 serve。
+> 驗證：從 nginx 容器走真實代理路徑打一次假帳密 —
+> `docker compose -f deploy/docker-compose.yml exec nginx wget -S --post-data='username=x&password=y' -O /dev/null http://127.0.0.1/login`
+> 導向 `/login?error=1` ＝信任已通（僅帳密錯）；`/login?error=insecure` ＝仍未信任，回頭檢查上面的 CIDR。
 
 ### 4) 啟動邊緣
 
@@ -96,6 +114,8 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 | 症狀 | 可能原因 / 處置 |
 |------|----------------|
 | 外網開站一直 502 | host uvicorn 沒在跑 → `make serve`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在） |
+| 內網直接打 `http://<LAN-IP>:8097` 一直回登入頁 | 這是刻意的：非 localhost 的明文 HTTP 不接受登入 session → 請改走 Cloudflare HTTPS 網址；只有本機開發可用 `http://localhost:8097` |
+| 外網（HTTPS）登入顯示「只接受 HTTPS 或本機 localhost」 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` 未含 nginx 進來的來源 IP（Docker→WSL 閘道，~`172.x.x.1`）→ App 不採信 `X-Forwarded-Proto: https`。見「3b) 信任反向代理」加入該 IP 後重啟 `make serve`。重開機後 IP 可能變，需重查 `data/serve_edge.log` |
 | 一直回登入頁、輸入正確仍進不去 | session cookie 沒被接受(瀏覽器擋第三方/封鎖 cookie),或 `REPORT_MARK_SESSION_SECRET` 每次重啟都變(請在 `.env` 固定一組) |
 | App 啟動即報錯退出 | 未設 `REPORT_MARK_ACCESS_USERNAME` / `_ACCESS_PASSWORD`(fail-closed)→ 補進 `.env` 再 `make serve` |
 | 改了程式卻沒生效（看到新 UI 卻無登入頁 / 登出按 404）| `make serve` 無 `--reload`：靜態 HTML 即時生效，但路由/中介層在**啟動時**載入；舊 uvicorn 程序還在跑 → `pkill -f "uvicorn web.server"` 後重啟 `make serve` |

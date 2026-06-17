@@ -49,6 +49,7 @@ bash scripts/resume_corpus.sh
 # 查詢網頁（需登入；首次先設共用帳密，未設則 fail-closed 拒啟）
 cp .env.example .env          # 編輯填入 REPORT_MARK_ACCESS_USERNAME / _PASSWORD / _SESSION_SECRET
 make serve                    # 載入 .env 並啟動 → http://localhost:8097
+#   本機 localhost 可直接登入；其他裝置請走受保護的 HTTPS 入口
 #   注意：make serve 無 --reload，改了程式碼要「重啟」才生效（靜態 HTML 即時生效）
 
 # CLI 檢索（免登入）

@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import logging
 import os
 import secrets
@@ -36,6 +37,27 @@ _SECRET = os.environ.get("REPORT_MARK_SESSION_SECRET", "")
 if not _SECRET:
     _SECRET = secrets.token_hex(32)
     logger.warning("REPORT_MARK_SESSION_SECRET 未設定,已隨機產生(重啟將登出所有人)")
+
+_TRUSTED_PROXY_CIDRS = os.environ.get(
+    "REPORT_MARK_TRUSTED_PROXY_CIDRS",
+    "127.0.0.1/32,::1/128",
+)
+
+
+def _parse_networks(raw: str) -> tuple[ipaddress._BaseNetwork, ...]:
+    networks = []
+    for part in raw.split(","):
+        cidr = part.strip()
+        if not cidr:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            logger.warning("忽略無效的 REPORT_MARK_TRUSTED_PROXY_CIDRS: %s", cidr)
+    return tuple(networks)
+
+
+_TRUSTED_PROXY_NETWORKS = _parse_networks(_TRUSTED_PROXY_CIDRS)
 
 
 def _sign(msg: str) -> str:
@@ -72,14 +94,14 @@ def check_credentials(username: str, password: str) -> bool:
     return u_ok and p_ok
 
 
-def set_session_cookie(response, now: int) -> None:
+def set_session_cookie(response, now: int, *, secure: bool) -> None:
     response.set_cookie(
         COOKIE_NAME,
         issue_token(now),
         max_age=SESSION_TTL,
         httponly=True,
         samesite="lax",
-        secure=False,  # LAN 走 HTTP;外網經 Cloudflare 仍是 HTTPS 加密傳輸
+        secure=secure,
         path="/",
     )
 
@@ -118,6 +140,49 @@ def reset(ip: str) -> None:
 def client_ip(request) -> str:
     """真實來源 IP:nginx 以 X-Real-IP 帶入還原後 IP;LAN 直連則用連線位址。
     外部無法偽造 X-Real-IP(nginx 以 $remote_addr 覆寫)。"""
-    return request.headers.get("x-real-ip") or (
-        request.client.host if request.client else "unknown"
-    )
+    peer = request.client.host if request.client else "unknown"
+    forwarded = request.headers.get("x-real-ip")
+    if forwarded and _is_trusted_proxy(peer):
+        return forwarded
+    return peer
+
+
+def _is_trusted_proxy(host: str | None) -> bool:
+    if not host:
+        return False
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return host == "localhost"
+    return any(addr in network for network in _TRUSTED_PROXY_NETWORKS)
+
+
+def _host_is_local(host: str | None) -> bool:
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def request_is_secure(request) -> bool:
+    if request.url.scheme == "https":
+        return True
+    peer = request.client.host if request.client else None
+    if not _is_trusted_proxy(peer):
+        return False
+    proto = request.headers.get("x-forwarded-proto", "")
+    return proto.lower() == "https"
+
+
+def allow_insecure_local(request) -> bool:
+    host = request.url.hostname
+    peer = request.client.host if request.client else None
+    return _host_is_local(host) or _host_is_local(peer)
+
+
+def login_allowed(request) -> bool:
+    return request_is_secure(request) or allow_insecure_local(request)

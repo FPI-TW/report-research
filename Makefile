@@ -78,10 +78,12 @@ align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 normalize:  ## 一次性清理 chunk content（CJK 空白）+ ANALYZE（冪等）
 	uv run python scripts/normalize_chunks.py
 
+summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續傳，補 summary IS NULL）
+	uv run python scripts/generate_summaries.py
+
 # ───── 檢索 ─────
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
-	@set -a; [ -f .env ] && . ./.env; set +a; \
-	  uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
+	uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
 
 search:  ## CLI 檢索（用法：make search Q="查詢" MARKET=TW）
 	uv run python scripts/search.py "$(Q)" $(if $(MARKET),--market $(MARKET),)

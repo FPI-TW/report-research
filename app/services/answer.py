@@ -44,7 +44,9 @@ SYSTEM_PROMPT = (
 
 NO_CONTEXT_MESSAGE = "在目前的研報語料中找不到與此問題相關的內容。"
 
-MIN_RELEVANCE = float(os.getenv("ASK_MIN_RELEVANCE", "0.45"))
+# 0.58：對真實語料實測校準（2026-06-18）。離題題 max_dense 落在 0.45–0.49
+# （BGE-M3 中文語意地板），領域內題落在 0.68–0.72；取兩群中點，兩側各留 ~0.10 餘裕。
+MIN_RELEVANCE = float(os.getenv("ASK_MIN_RELEVANCE", "0.58"))
 
 RECENCY_WEIGHT = float(os.getenv("ASK_RECENCY_WEIGHT", "0.06"))
 RECENCY_HALF_LIFE_DAYS = float(os.getenv("ASK_RECENCY_HALF_LIFE_DAYS", "180"))

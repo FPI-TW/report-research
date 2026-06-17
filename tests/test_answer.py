@@ -198,5 +198,96 @@ class RecencyTests(unittest.TestCase):
         self.assertEqual(sources[0].report_id, "dated")
 
 
+class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_off_topic_skips_llm(self):
+        from app.services import answer as ans
+
+        called = {"llm": False}
+
+        async def fake_search(*a, **k):
+            # tier0 + 低 cosine（distance 0.70 → dense 0.30）→ 離題
+            return [(0, 0.30, make_row("r1", "x.pdf", "TW", "完全不相關內容。", distance=0.70))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            called["llm"] = True
+            if False:  # 讓函式成為 async generator 但永不 yield
+                yield ""
+
+        class _FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, *a, **k):
+                return None
+
+            async def commit(self):
+                return None
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion, ans.SessionFactory)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        try:
+            events = [e async for e in ans.answer_question("今天天氣如何？")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion, ans.SessionFactory) = orig
+
+        kinds = [k for k, _ in events]
+        self.assertEqual(kinds, ["sources", "token", "done"])
+        self.assertEqual(events[0][1], [])  # 離題不顯示任何來源
+        self.assertEqual(events[1][1], ans.OFF_TOPIC_MESSAGE)
+        self.assertEqual(events[2][1], {"cited": []})
+        self.assertFalse(called["llm"])  # 未呼叫 LLM
+
+    async def test_on_topic_calls_llm(self):
+        from app.services import answer as ans
+
+        async def fake_search(*a, **k):
+            # tier1（字面命中）→ 非離題，應進入 LLM 串流
+            return [(1, 0.85, make_row("r1", "x.pdf", "TW", "台積電先進封裝。", date(2026, 6, 1), distance=0.20))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        class _FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, *a, **k):
+                return None
+
+            async def commit(self):
+                return None
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion, ans.SessionFactory)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        try:
+            events = [e async for e in ans.answer_question("台積電封裝如何？")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion, ans.SessionFactory) = orig
+
+        kinds = [k for k, _ in events]
+        self.assertEqual(kinds[0], "sources")
+        self.assertTrue(len(events[0][1]) >= 1)  # 有來源
+        self.assertIn(("token", "答案[1]"), events)
+        self.assertEqual(events[-1], ("done", {"cited": ["r1"]}))
+
+
 if __name__ == "__main__":
     unittest.main()

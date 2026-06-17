@@ -273,6 +273,17 @@ async def answer_question(
     qvec = await asyncio.to_thread(embed_query_cached, question)
     async with SessionFactory() as session:  # 短連線：檢索完即釋放，不橫跨 LLM 串流
         scored = await hybrid_search(session, question, qvec, k=k, **filters)
+
+    if is_off_topic(scored):  # 離題：直接拒答，不跑 LLM（順帶省 ~100s 延遲）
+        yield ("sources", [])
+        yield ("token", OFF_TOPIC_MESSAGE)
+        await _log_qa(
+            question, OFF_TOPIC_MESSAGE, [], filters,
+            int((time.monotonic() - started) * 1000),
+        )
+        yield ("done", {"cited": []})
+        return
+
     sources, context = build_context(scored)
 
     yield ("sources", [asdict(s) for s in sources])

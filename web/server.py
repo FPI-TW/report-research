@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import glob as _glob
+import json
 import logging
 import os
 import re
@@ -18,7 +19,12 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -29,6 +35,7 @@ from web.env_loader import load_env_file  # noqa: E402
 
 load_env_file(Path(__file__).resolve().parents[1] / ".env")
 
+from app.services.answer import answer_question  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.filename import source_display  # noqa: E402
@@ -146,6 +153,16 @@ class SearchResponse(BaseModel):
     query: str
     market: str | None
     results: list[ReportResult]
+
+
+class AskRequest(BaseModel):
+    question: str
+    market: str | None = None
+    instrument_type: str | None = None
+    relates_stock: bool | None = None
+    relates_futures: bool | None = None
+    report_type: str | None = None
+    k: int = 8
 
 
 class ReportListItem(BaseModel):
@@ -513,6 +530,59 @@ async def search(
     for i, rr in enumerate(results, 1):
         rr.rank = i
     return SearchResponse(query=q, market=mkt, results=results)
+
+
+# ───── RAG 問答（Phase 1）：SSE 串流 ─────
+# 每次提問會 spawn 一個 claude CLI 子程序（CPU-bound 機器），限制同時數避免區網多人同問雪崩。
+_ASK_SEMAPHORE = asyncio.Semaphore(3)
+
+
+def _sse(event: str, data: object) -> str:
+    """組一個 SSE 事件框（event + json data）。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/ask")
+async def ask(req: AskRequest):
+    """RAG 問答：檢索 → 串流回答（帶 [n] 行內引用）。回 text/event-stream。
+
+    事件序：sources（引用清單）→ 多筆 token（文字片段）→ done（實際引用的報告 id）。
+    """
+    question = (req.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question 不可為空")
+    mkt = req.market if req.market and req.market != "全部" else None
+    instr = (
+        req.instrument_type
+        if req.instrument_type and req.instrument_type != "全部"
+        else None
+    )
+    rtype = req.report_type if req.report_type and req.report_type != "全部" else None
+    filters = dict(
+        market=mkt,
+        instrument_type=instr,
+        relates_stock=req.relates_stock or None,
+        relates_futures=req.relates_futures or None,
+        report_type=rtype,
+    )
+    k = max(1, min(req.k, 20))
+
+    async def gen():
+        async with _ASK_SEMAPHORE:
+            try:
+                async for event, payload in answer_question(
+                    question, k=k, filters=filters
+                ):
+                    yield _sse(event, payload)
+            except Exception:
+                logger.exception("ask failed")
+                yield _sse("error", {"detail": "問答服務發生錯誤"})
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 async def _fetch_report(session, report_id: str):

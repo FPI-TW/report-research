@@ -14,14 +14,22 @@ import { skeleton, render, paintResults, restoreLoadMore } from "/static/app/ren
 // 篩選/排序變動後，依目前是否有查詢決定重跑搜尋或瀏覽（集中一處，新增維度免到處改）
 export function rerun() { $("#q").value.trim() ? run() : loadBrowse(); }
 
-export async function loadStats() {
+export function renderStats(d) {
+  buildChips(d.markets, d.total_reports);
+  buildInstrumentChips(d.instrument_types || [], d.total_reports);
+  buildSubjectToggles();
+  buildTypeChips(d.report_types || [], d.total_reports);
+}
+
+export async function loadStats(apply = true) {
   try {
     const d = await fetchJSON("/api/stats");
-    buildChips(d.markets, d.total_reports);
-    buildInstrumentChips(d.instrument_types || [], d.total_reports);
-    buildSubjectToggles();
-    buildTypeChips(d.report_types || [], d.total_reports);
-  } catch (e) { $("#stats").innerHTML = `<span class="pill">後端未連線</span>`; }
+    if (apply) renderStats(d);
+    return d;
+  } catch (e) {
+    $("#stats").innerHTML = `<span class="pill">後端未連線</span>`;
+    return null;
+  }
 }
 
 export async function loadBrowse(append = false) {
@@ -69,7 +77,7 @@ export async function loadBrowse(append = false) {
     }
     paintResults(!append);   // 全量重繪快取結果；append 時不重播進場動畫
   } catch (e) {
-    if (my !== state.browseReq) return;
+    if (my !== state.browseReq || $("#q").value.trim()) return;
     // 載入更多失敗：保留已顯示的結果，只還原按鈕讓使用者重試（不可清空整頁）
     if (append) { restoreLoadMore("載入更多（載入失敗，點擊重試）"); return; }
     $("#results").className = "";
@@ -101,7 +109,7 @@ export async function run() {
     // 最新的 search 才套用；若查詢已被清空，代表意圖切回瀏覽 → 放棄這次 search 結果
     if (my === state.searchReq && $("#q").value.trim()) render(data);
   } catch (e) {
-    if (my === state.searchReq) {
+    if (my === state.searchReq && $("#q").value.trim()) {
       $("#results").className = "";
       $("#results").removeAttribute("aria-busy");
       $("#results").innerHTML = html`<div class="state"><div class="big" aria-hidden="true">⚠️</div>

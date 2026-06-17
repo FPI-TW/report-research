@@ -9,7 +9,8 @@ import { syncURL, restoreFromURL } from "/static/app/url.js";
 import { paintResults, updateViewBar } from "/static/app/render.js";
 import { closeFull } from "/static/app/modal.js";
 import { initSearch } from "/static/app/search.js";
-import { loadStats, run, loadBrowse, rerun } from "/static/app/api.js";
+import { initAsk } from "/static/app/ask.js";
+import { loadStats, renderStats, run, loadBrowse, rerun } from "/static/app/api.js";
 
 // ── 搜尋框互動（debounce / Enter / 清除 / 例子）──
 initSearch();
@@ -56,8 +57,51 @@ $("#groupBy").onchange = () => {
   if (state.rows.length && state.view === "group") paintResults(false);
 };
 
+// ── 頂層模式切換（檢索 / 問答）：問答用主區獨立的大型提問框；篩選作為共用範圍 ──
+initAsk();
+function applyMode(mode) {
+  state.uiMode = mode;
+  $$(".mode-switch button").forEach(b => {
+    const on = b.dataset.mode === mode;
+    b.setAttribute("aria-checked", on ? "true" : "false");
+    b.tabIndex = on ? 0 : -1;
+  });
+  const ask = mode === "ask";
+  document.body.classList.toggle("ask-mode", ask);   // 觸發聊天式滿版版面（CSS）
+  // 問答時：收起側欄搜尋框與範例、隱藏檢索結果區；顯示主區提問面板並聚焦輸入框
+  $(".search").hidden = ask;
+  $("#examples").hidden = ask;
+  $("#askPanel").hidden = !ask;
+  $("#results").hidden = ask;
+  if (ask) {
+    $("#resultsBar").hidden = true;
+    $("#meta").classList.remove("show");
+    $("#askInput").focus();
+  } else {   // 切回檢索：依目前狀態還原結果區（有快取重繪、有查詢重搜、否則瀏覽）
+    if (state.rows.length) paintResults(false);
+    else if ($("#q").value.trim()) run();
+    else loadBrowse();
+  }
+}
+$$(".mode-switch button").forEach(b => b.onclick = () => {
+  if (state.uiMode !== b.dataset.mode) applyMode(b.dataset.mode);
+});
+$(".mode-switch").addEventListener("keydown", e => {   // radiogroup 方向鍵切換
+  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+  e.preventDefault();
+  const next = state.uiMode === "ask" ? "retrieval" : "ask";
+  applyMode(next);
+  $(`.mode-switch button[data-mode="${next}"]`).focus();
+});
+
 // ── 啟動序列 ──
-loadStats();
-const hadQuery = restoreFromURL();   // 從 URL 還原狀態（可分享／可重整）
-$("#groupBy").value = state.group;        // 反映還原後的分組依據
-if (hadQuery) run(); else loadBrowse();
+async function bootstrap() {
+  // 先拿 stats，再驗證 URL 還原值，避免非法參數先滲進第一個 browse/search request。
+  const stats = await loadStats(false);
+  const hadQuery = restoreFromURL(stats);
+  if (stats) renderStats(stats);
+  $("#groupBy").value = state.group;   // 反映還原後的分組依據
+  if (hadQuery) run(); else loadBrowse();
+}
+
+bootstrap();

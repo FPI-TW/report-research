@@ -13,7 +13,6 @@ from app.services.answer import (  # noqa: E402
     build_context,
     build_user_prompt,
     cited_report_ids,
-    is_off_topic,
 )
 
 
@@ -138,34 +137,6 @@ class PromptAndCitationTests(unittest.TestCase):
         self.assertEqual(cited_report_ids("[2][1][2]", sources), ["r1", "r2"])
 
 
-class OffTopicTests(unittest.TestCase):
-    def test_empty_scored_is_off_topic(self):
-        self.assertTrue(is_off_topic([]))
-
-    def test_lexical_hit_never_off_topic(self):
-        # tier>=1（字面命中）即視為在領域內，縱使 dense 很低
-        scored = [(1, 0.20, make_row("r1", "甲.pdf", "TW", "內容。", distance=0.95))]
-        self.assertFalse(is_off_topic(scored, min_relevance=0.45))
-
-    def test_high_dense_not_off_topic(self):
-        # tier0 但最相似塊 cosine=0.6 >= 門檻
-        scored = [(0, 0.60, make_row("r1", "甲.pdf", "TW", "內容。", distance=0.40))]
-        self.assertFalse(is_off_topic(scored, min_relevance=0.45))
-
-    def test_low_dense_is_off_topic(self):
-        # tier0 且最相似塊 cosine=0.30 < 門檻
-        scored = [(0, 0.30, make_row("r1", "甲.pdf", "TW", "內容。", distance=0.70))]
-        self.assertTrue(is_off_topic(scored, min_relevance=0.45))
-
-    def test_uses_max_dense_across_candidates(self):
-        # 取全候選最相似塊：第二列 cosine=0.55 >= 門檻 → 非離題
-        scored = [
-            (0, 0.30, make_row("r1", "甲.pdf", "TW", "內容。", distance=0.70)),
-            (0, 0.55, make_row("r2", "乙.pdf", "TW", "內容。", distance=0.45)),
-        ]
-        self.assertFalse(is_off_topic(scored, min_relevance=0.45))
-
-
 class RecencyTests(unittest.TestCase):
     NOW = datetime(2026, 6, 17, tzinfo=timezone.utc)
 
@@ -198,95 +169,102 @@ class RecencyTests(unittest.TestCase):
         self.assertEqual(sources[0].report_id, "dated")
 
 
+class _FakeSession:
+    """假 async session：滿足 answer_question 的檢索/寫 log 連線，不碰真實 DB。"""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, *a, **k):
+        return None
+
+    async def commit(self):
+        return None
+
+
 class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
-    async def test_off_topic_skips_llm(self):
-        from app.services import answer as ans
+    """離題判定改由 classify_intent（看意圖）決定，與 scored 分數無關。"""
 
-        called = {"llm": False}
-
+    def _patch(self, ans, *, in_domain, called):
         async def fake_search(*a, **k):
-            # tier0 + 低 cosine（distance 0.70 → dense 0.30）→ 離題
-            return [(0, 0.30, make_row("r1", "x.pdf", "TW", "完全不相關內容。", distance=0.70))]
+            return [
+                (0, 0.60, make_row("r1", "x.pdf", "TW", "可口可樂財報。", date(2026, 6, 1), distance=0.40))
+            ]
 
         def fake_embed(q):
             return [0.0]
 
         async def fake_stream(*a, **k):
             called["llm"] = True
-            if False:  # 讓函式成為 async generator 但永不 yield
-                yield ""
+            yield "答案[1]"
 
-        class _FakeSession:
-            async def __aenter__(self):
-                return self
+        async def fake_intent(question, **k):
+            called["intent"] = True
+            return in_domain
 
-            async def __aexit__(self, *a):
-                return False
-
-            async def execute(self, *a, **k):
-                return None
-
-            async def commit(self):
-                return None
-
-        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion, ans.SessionFactory)
+        orig = (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+        )
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        return orig
+
+    @staticmethod
+    def _restore(ans, orig):
+        (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+        ) = orig
+
+    async def test_off_topic_intent_skips_llm(self):
+        # 意圖判定為離題（即使檢索分數不低）→ 拒答、空來源、不跑主 LLM
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, in_domain=False, called=called)
         try:
-            events = [e async for e in ans.answer_question("今天天氣如何？")]
+            events = [e async for e in ans.answer_question("我想喝飲料推薦給我")]
         finally:
-            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion, ans.SessionFactory) = orig
+            self._restore(ans, orig)
 
         kinds = [k for k, _ in events]
         self.assertEqual(kinds, ["sources", "token", "done"])
         self.assertEqual(events[0][1], [])  # 離題不顯示任何來源
         self.assertEqual(events[1][1], ans.OFF_TOPIC_MESSAGE)
         self.assertEqual(events[2][1], {"cited": []})
-        self.assertFalse(called["llm"])  # 未呼叫 LLM
+        self.assertTrue(called["intent"])  # 有跑意圖判定
+        self.assertFalse(called["llm"])  # 未跑主 LLM
 
-    async def test_on_topic_calls_llm(self):
+    async def test_on_topic_intent_calls_llm(self):
+        # 意圖判定為在領域 → 正常檢索 + 串流回答 + 引用
         from app.services import answer as ans
 
-        async def fake_search(*a, **k):
-            # tier1（字面命中）→ 非離題，應進入 LLM 串流
-            return [(1, 0.85, make_row("r1", "x.pdf", "TW", "台積電先進封裝。", date(2026, 6, 1), distance=0.20))]
-
-        def fake_embed(q):
-            return [0.0]
-
-        async def fake_stream(*a, **k):
-            yield "答案[1]"
-
-        class _FakeSession:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *a):
-                return False
-
-            async def execute(self, *a, **k):
-                return None
-
-            async def commit(self):
-                return None
-
-        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion, ans.SessionFactory)
-        ans.hybrid_search = fake_search
-        ans.embed_query_cached = fake_embed
-        ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, in_domain=True, called=called)
         try:
-            events = [e async for e in ans.answer_question("台積電封裝如何？")]
+            events = [e async for e in ans.answer_question("可口可樂的投資評級如何")]
         finally:
-            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion, ans.SessionFactory) = orig
+            self._restore(ans, orig)
 
         kinds = [k for k, _ in events]
         self.assertEqual(kinds[0], "sources")
         self.assertTrue(len(events[0][1]) >= 1)  # 有來源
         self.assertIn(("token", "答案[1]"), events)
         self.assertEqual(events[-1], ("done", {"cited": ["r1"]}))
+        self.assertTrue(called["llm"])  # 有跑主 LLM
 
 
 if __name__ == "__main__":

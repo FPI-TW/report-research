@@ -23,6 +23,7 @@ from sqlalchemy import text
 
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
+from app.services.intent import classify_intent
 from app.services.llm import DEFAULT_MODEL, stream_completion
 from app.services.retrieval import hybrid_search
 from app.services.textnorm import clean_text
@@ -44,10 +45,6 @@ SYSTEM_PROMPT = (
 
 NO_CONTEXT_MESSAGE = "在目前的研報語料中找不到與此問題相關的內容。"
 
-# 0.58：對真實語料實測校準（2026-06-18）。離題題 max_dense 落在 0.45–0.49
-# （BGE-M3 中文語意地板），領域內題落在 0.68–0.72；取兩群中點，兩側各留 ~0.10 餘裕。
-MIN_RELEVANCE = float(os.getenv("ASK_MIN_RELEVANCE", "0.58"))
-
 RECENCY_WEIGHT = float(os.getenv("ASK_RECENCY_WEIGHT", "0.06"))
 RECENCY_HALF_LIFE_DAYS = float(os.getenv("ASK_RECENCY_HALF_LIFE_DAYS", "180"))
 
@@ -57,29 +54,10 @@ OFF_TOPIC_MESSAGE = (
 )
 
 
-def is_off_topic(
-    scored: list[tuple[int, float, tuple]],
-    *,
-    min_relevance: float = MIN_RELEVANCE,
-) -> bool:
-    """判定問題是否離題（與研報語料無關）。
-
-    規則：字面命中（best_tier>=1）一律視為在領域內；否則取全候選最相似塊的
-    cosine，低於 min_relevance 才判離題。scored 為空亦視為離題。
-    """
-    if not scored:
-        return True
-    best_tier = scored[0][0]  # scored 已依 (tier, fused) 排序，首列即最高 tier
-    if best_tier >= 1:
-        return False
-    best_dense = max(1.0 - float(row[_DIST]) for _tier, _fused, row in scored)
-    return best_dense < min_relevance
-
-
 _CITE_RE = re.compile(r"\[(\d+)\]")
 
 # hybrid_search 回傳 row 的欄位位置（見 store._meta_columns + distance；server.py:473 對應解包）
-_RID, _FNAME, _MARKET, _RDATE, _CONTENT, _DIST = 1, 2, 3, 6, 14, -1
+_RID, _FNAME, _MARKET, _RDATE, _CONTENT = 1, 2, 3, 6, 14
 
 
 def _as_date(value: object) -> date | None:
@@ -272,11 +250,18 @@ async def answer_question(
     filters = filters or {}
     started = time.monotonic()
 
-    qvec = await asyncio.to_thread(embed_query_cached, question)
-    async with SessionFactory() as session:  # 短連線：檢索完即釋放，不橫跨 LLM 串流
-        scored = await hybrid_search(session, question, qvec, k=k, **filters)
+    # 意圖判定與檢索並行：把 Haiku 判斷的延遲藏在 embedding/檢索的時間裡
+    intent_task = asyncio.create_task(classify_intent(question))
+    try:
+        qvec = await asyncio.to_thread(embed_query_cached, question)
+        async with SessionFactory() as session:  # 短連線：檢索完即釋放，不橫跨 LLM 串流
+            scored = await hybrid_search(session, question, qvec, k=k, **filters)
+        in_domain = await intent_task
+    except BaseException:
+        intent_task.cancel()  # 取消未完成的判斷子程序，避免遺留
+        raise
 
-    if is_off_topic(scored):  # 離題：直接拒答，不跑 LLM（順帶省 ~100s 延遲）
+    if not in_domain:  # 離題：直接拒答，不跑主 LLM（順帶省 ~100s 延遲）
         yield ("sources", [])
         yield ("token", OFF_TOPIC_MESSAGE)
         await _log_qa(

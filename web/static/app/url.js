@@ -3,8 +3,16 @@
  */
 import { $ } from "/static/app/dom.js";
 import { state, VIEWS, GROUPS } from "/static/app/state.js";
+import { MARKET_META, INSTRUMENT_META } from "/static/app/meta.js";
 import { updateFilterToggle } from "/static/app/chips.js";
 import { toggleClear } from "/static/app/search.js";
+
+const SEARCH_SORTS = ["relevance", "date_desc", "date_asc"];
+const BROWSE_SORTS = ["date_desc", "date_asc"];
+
+function pickAllowed(value, allowed, fallback) {
+  return value && allowed.includes(value) ? value : fallback;
+}
 
 export function syncURL() {
   const p = new URLSearchParams();
@@ -22,17 +30,23 @@ export function syncURL() {
   history.replaceState(null, "", qs ? "?" + qs : location.pathname);
   updateFilterToggle();
 }
-export function restoreFromURL() {
+export function restoreFromURL(stats) {
   const p = new URLSearchParams(location.search);
-  if (p.get("market")) state.market = p.get("market");
-  if (p.get("instrument")) state.instrument = p.get("instrument");
+  const q = (p.get("q") || "").trim();
+  const markets = stats?.markets?.map(m => m.market).filter(Boolean) || Object.keys(MARKET_META);
+  const instruments = stats?.instrument_types?.map(t => t.type).filter(Boolean) || Object.keys(INSTRUMENT_META);
+  const reportTypes = stats?.report_types?.map(t => t.type).filter(Boolean) || [];
+  const sorts = q ? SEARCH_SORTS : BROWSE_SORTS;
+  const defaultSort = q ? SEARCH_SORTS[0] : BROWSE_SORTS[0];
+
+  state.market = pickAllowed(p.get("market"), markets, "全部");
+  state.instrument = pickAllowed(p.get("instrument"), instruments, "全部");
   state.relStock = p.get("stock") === "1";
   state.relFutures = p.get("futures") === "1";
-  if (p.get("type")) state.type = p.get("type");
-  if (p.get("sort")) state.sort = p.get("sort");
+  state.type = pickAllowed(p.get("type"), reportTypes, "全部");
+  state.sort = pickAllowed(p.get("sort"), sorts, defaultSort);
   if (VIEWS.includes(p.get("view"))) state.view = p.get("view");
   if (GROUPS.includes(p.get("group"))) state.group = p.get("group");
-  const q = p.get("q");
   if (q) { $("#q").value = q; toggleClear(); }
   return !!q;
 }

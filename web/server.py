@@ -25,6 +25,10 @@ from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from web.env_loader import load_env_file  # noqa: E402
+
+load_env_file(Path(__file__).resolve().parents[1] / ".env")
+
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.filename import source_display  # noqa: E402
@@ -102,7 +106,11 @@ async def require_login(request: Request, call_next):
     if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), now):
         response = await call_next(request)
         if path != "/logout":  # 登出會清 cookie,勿在此又刷新蓋回
-            auth.set_session_cookie(response, now)
+            auth.set_session_cookie(
+                response,
+                now,
+                secure=auth.request_is_secure(request),
+            )
         return response
     if path.startswith("/api/"):
         return JSONResponse({"detail": "未登入"}, status_code=401)
@@ -573,6 +581,8 @@ async def login_submit(
     username: str = Form(""),
     password: str = Form(""),
 ):
+    if not auth.login_allowed(request):
+        return RedirectResponse("/login?error=insecure", status_code=303)
     now = int(time.time())
     ip = auth.client_ip(request)
     if auth.is_locked(ip, now):
@@ -580,7 +590,7 @@ async def login_submit(
     if auth.check_credentials(username, password):
         auth.reset(ip)
         resp = RedirectResponse("/", status_code=303)
-        auth.set_session_cookie(resp, now)
+        auth.set_session_cookie(resp, now, secure=auth.request_is_secure(request))
         return resp
     auth.record_failure(ip, now)
     return RedirectResponse("/login?error=1", status_code=303)

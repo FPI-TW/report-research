@@ -193,7 +193,7 @@ bash scripts/resume_corpus.sh
 #   離線大量導入降 I/O（DB 未對外服務時）：make ingest-lowio
 
 # 啟動查詢網頁（需登入；首次先 cp .env.example .env 填帳密，未設則 fail-closed 拒啟）
-make serve   # 載入 repo 根 .env 啟動 → http://localhost:8097（無 --reload，改碼後須重啟才生效）
+make serve   # 載入 repo 根 .env 啟動 → http://localhost:8097（本機 localhost 可直接登入；無 --reload，改碼後須重啟才生效）
 
 # CLI 檢索
 uv run python scripts/search.py "AI 伺服器散熱需求"
@@ -215,7 +215,7 @@ uv run python scripts/search.py "利率與殖利率" --market MACRO
 | 標註 | `tag_all_cli.py` 需 `claude` CLI（`--model claude-haiku-4-5`，預設 8 worker 執行緒）|
 | 抽文字 | `extract_all.py` 用 multiprocessing（預設 16 worker）|
 | Web 服務 | uvicorn，port **8097**（`make serve`，無 `--reload`，改碼後須重啟）|
-| 登入 | 共用帳密 env `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（fail-closed）＋簽章金鑰 `REPORT_MARK_SESSION_SECRET`；由 `make serve` 載入 repo 根 `.env`（已 gitignore）|
+| 登入 | 共用帳密 env `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（fail-closed）＋簽章金鑰 `REPORT_MARK_SESSION_SECRET`；由 `make serve` 載入 repo 根 `.env`（已 gitignore）。本機 `localhost` 可直連，其他裝置請走 HTTPS 入口 |
 
 > 此機 `docker compose` 子指令不可用，故用 `docker run` 起單一容器。背景編排（`resume_corpus.sh`）以 setsid/nohup 方式長跑。
 

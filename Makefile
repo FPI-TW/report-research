@@ -83,8 +83,7 @@ summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等
 
 # ───── 檢索 ─────
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
-	@set -a; [ -f .env ] && . ./.env; set +a; \
-	  uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
+	uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
 
 search:  ## CLI 檢索（用法：make search Q="查詢" MARKET=TW）
 	uv run python scripts/search.py "$(Q)" $(if $(MARKET),--market $(MARKET),)

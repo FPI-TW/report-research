@@ -1,6 +1,7 @@
 # tests/test_auth.py
 import os
 import unittest
+from types import SimpleNamespace
 
 # web.auth 匯入時即讀取共用帳密(fail-closed),故須在匯入前設好測試用值。
 os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
@@ -90,7 +91,45 @@ class RateLimitTests(unittest.TestCase):
 
 
 def _client():
-    return TestClient(app, follow_redirects=False)
+    return TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
+
+
+def _client_for(base_url: str):
+    return TestClient(app, follow_redirects=False, base_url=base_url)
+
+
+class ClientIpTests(unittest.TestCase):
+    def test_direct_client_ignores_spoofed_x_real_ip(self):
+        req = SimpleNamespace(
+            headers={"x-real-ip": "8.8.8.8"},
+            client=SimpleNamespace(host="192.168.1.50"),
+        )
+        self.assertEqual(auth.client_ip(req), "192.168.1.50")
+
+    def test_loopback_proxy_can_supply_x_real_ip(self):
+        req = SimpleNamespace(
+            headers={"x-real-ip": "8.8.8.8"},
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        self.assertEqual(auth.client_ip(req), "8.8.8.8")
+
+
+class RequestSecurityTests(unittest.TestCase):
+    def test_untrusted_forwarded_proto_does_not_mark_request_secure(self):
+        req = SimpleNamespace(
+            url=SimpleNamespace(scheme="http"),
+            headers={"x-forwarded-proto": "https"},
+            client=SimpleNamespace(host="192.168.1.50"),
+        )
+        self.assertFalse(auth.request_is_secure(req))
+
+    def test_trusted_loopback_forwarded_proto_marks_request_secure(self):
+        req = SimpleNamespace(
+            url=SimpleNamespace(scheme="http"),
+            headers={"x-forwarded-proto": "https"},
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        self.assertTrue(auth.request_is_secure(req))
 
 
 class AuthFlowTests(unittest.TestCase):
@@ -146,6 +185,29 @@ class AuthFlowTests(unittest.TestCase):
         r = client.post("/login", data={"username": "tester", "password": "bad"})
         self.assertEqual(r.status_code, 303)
         self.assertIn("error=locked", r.headers["location"])
+
+    def test_https_login_sets_secure_cookie(self):
+        client = _client_for("https://research.example.com")
+        r = client.post("/login", data={"username": "tester", "password": "testpass"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("Secure", r.headers["set-cookie"])
+
+    def test_plain_http_non_loopback_login_rejected(self):
+        client = _client_for("http://research.office")
+        r = client.post("/login", data={"username": "tester", "password": "testpass"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("error=insecure", r.headers["location"])
+        self.assertNotIn(auth.COOKIE_NAME, r.cookies)
+
+    def test_spoofed_forwarded_proto_does_not_bypass_http_login_block(self):
+        client = _client_for("http://research.office")
+        r = client.post(
+            "/login",
+            data={"username": "tester", "password": "testpass"},
+            headers={"x-forwarded-proto": "https"},
+        )
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("error=insecure", r.headers["location"])
 
     def test_authed_request_refreshes_cookie(self):
         # 每次通過認證的回應都應重新簽發 session cookie(滑動到期)

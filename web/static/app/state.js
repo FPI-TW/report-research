@@ -14,10 +14,12 @@ export const state = {
   view: "grid", group: "market",
   tableSort: { key: null, dir: "asc" },
   lastQuery: "",
+  // 頂層模式：retrieval（檢索：瀏覽/搜尋）｜ ask（問答）。與下方結果快取用的 mode 區隔。
+  uiMode: "retrieval",
   // 目前結果快取：切換檢視時免重打 API（search: results；browse: 累積 items）
   rows: [], mode: "browse", terms: [], total: 0, offset: 0,
-  // 非同步請求序號：search / browse 各自獨立，最新者勝（避免兩流互相干擾）
-  searchReq: 0, browseReq: 0,
+  // 非同步請求序號：search / browse / ask 各自獨立，最新者勝（避免互相干擾）
+  searchReq: 0, browseReq: 0, askReq: 0,
 };
 try { const v = localStorage.getItem("rm_view"); if (VIEWS.includes(v)) state.view = v; } catch (e) {}
 

@@ -62,19 +62,8 @@ def is_result_line(line: str) -> bool:
     return isinstance(obj, dict) and obj.get("type") == "result"
 
 
-async def stream_completion(
-    prompt: str,
-    *,
-    model: str = DEFAULT_MODEL,
-    system: str | None = None,
-    timeout: float = 120.0,
-) -> AsyncIterator[str]:
-    """串流呼叫 claude CLI，逐段 yield 回答文字。
-
-    prompt 經 stdin 餵入（避開 argv 單參數 128KB 上限 + NUL byte 問題）。
-    逾時則 kill 子程序並結束串流（已 yield 的內容保留）。
-    """
-    prompt = prompt.replace("\x00", "")
+def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
+    """組 claude CLI headless 串流指令；allow_web 時加 WebSearch 內建工具。"""
     cmd = [
         "claude",
         "-p",
@@ -87,8 +76,29 @@ async def stream_completion(
         "--verbose",
         "--include-partial-messages",
     ]
+    if allow_web:
+        cmd += ["--allowedTools", "WebSearch"]
     if system:
         cmd += ["--system-prompt", system.replace("\x00", "")]
+    return cmd
+
+
+async def stream_completion(
+    prompt: str,
+    *,
+    model: str = DEFAULT_MODEL,
+    system: str | None = None,
+    timeout: float = 120.0,
+    allow_web: bool = False,
+) -> AsyncIterator[str]:
+    """串流呼叫 claude CLI，逐段 yield 回答文字。
+
+    prompt 經 stdin 餵入（避開 argv 單參數 128KB 上限 + NUL byte 問題）。
+    allow_web 為真時開放內建 WebSearch 工具（供回答補充即時/外部資料）。
+    逾時則 kill 子程序並結束串流（已 yield 的內容保留）。
+    """
+    prompt = prompt.replace("\x00", "")
+    cmd = _build_cmd(model, system, allow_web)
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,

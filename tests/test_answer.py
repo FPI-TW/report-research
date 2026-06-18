@@ -278,5 +278,25 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await record_feedback("any-id", ""))
 
 
+class BuildCmdTests(unittest.TestCase):
+    def test_web_flag_adds_allowed_tools(self):
+        cmd = llm._build_cmd("m", None, True)
+        self.assertIn("--allowedTools", cmd)
+        self.assertEqual(cmd[cmd.index("--allowedTools") + 1], "WebSearch")
+
+    def test_no_web_flag_by_default(self):
+        cmd = llm._build_cmd("m", None, False)
+        self.assertNotIn("--allowedTools", cmd)
+
+    def test_system_prompt_included_when_given(self):
+        self.assertIn("--system-prompt", llm._build_cmd("m", "你是助理", False))
+        self.assertNotIn("--system-prompt", llm._build_cmd("m", None, False))
+
+    def test_core_flags_present(self):
+        cmd = llm._build_cmd("claude-sonnet-4-6", None, False)
+        for flag in ("claude", "-p", "--model", "stream-json", "--include-partial-messages"):
+            self.assertIn(flag, cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -515,6 +515,18 @@
   /* 引用來源清單（預設收合，點「資料來源」才展開）*/
   .ask-sources { display: none; flex-direction: column; gap: 8px; margin-top: 8px; }
   .ask-sources.open { display: flex; }
+  /* 外部（網路）來源卡 */
+  .ask-ext { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: var(--card); border: .5px solid var(--sep); border-radius: var(--radius-sm);
+    padding: 10px 13px; text-decoration: none; color: var(--label); }
+  .ask-ext:hover { background: var(--fill); }
+  .ask-ext-badge { flex: none; font-size: 11px; font-weight: 700; color: var(--amber);
+    border: .5px solid var(--amber); border-radius: 5px; padding: 1px 6px; }
+  .ask-ext-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  .ask-ext-title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ask-ext-url { font-size: 12px; color: var(--label-3); }
+  .ask-ext-go { flex: none; color: var(--label-3); }
+  .ask-ext-go svg { width: 15px; height: 15px; display: block; }
   .ask-src-title { font-size: 12px; font-weight: 700; color: var(--label-3); letter-spacing: .04em; }
   .ask-src { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
     background: var(--card); border: .5px solid var(--sep); border-radius: var(--radius-sm);
@@ -663,6 +675,7 @@
               <div class="ask-msg-bot" id="askAnswer" aria-live="polite" hidden></div>
               <div class="ask-actions" id="askActions" hidden></div>
               <div class="ask-sources" id="askSources"></div>
+              <div class="ask-sources ask-ext-list" id="askExtSources"></div>
             </div>
           </div>
           <div class="ask-composer">

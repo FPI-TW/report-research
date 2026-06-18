@@ -11,6 +11,7 @@ import { openFull } from "/static/app/modal.js";
 import { renderMarkdown } from "/static/app/markdown.js";
 
 let sources = [];   // 最近一次提問的來源清單（供 [n] 對應 report_id 與來源卡片）
+let extSources = [];   // 最近一次提問的外部（網路）來源
 
 // SSE frame（event:/data: 兩行）→ { event, data }
 function parseFrame(frame) {
@@ -43,6 +44,24 @@ function paintSources(srcs) {
   el.querySelectorAll(".ask-src").forEach(b => b.onclick = () => openFull(b.dataset.id));
 }
 
+function safeHttp(u) { return typeof u === "string" && /^https?:\/\//i.test(u); }
+function domainOf(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return u; } }
+
+function paintExtSources(srcs) {
+  const el = $("#askExtSources");
+  const list = (srcs || []).filter(s => safeHttp(s.url));
+  if (!list.length) { el.innerHTML = ""; return; }
+  el.innerHTML = html`<div class="ask-src-title">外部參考</div>` + list.map(s => html`
+    <a class="ask-ext" href="${s.url}" target="_blank" rel="noopener noreferrer">
+      <span class="ask-ext-badge">網路</span>
+      <span class="ask-ext-main">
+        <span class="ask-ext-title">${s.title || s.url}</span>
+        <span class="ask-ext-url">${domainOf(s.url)}</span>
+      </span>
+      <span class="ask-ext-go">${raw(SVG.ext)}</span>
+    </a>`).join("");
+}
+
 function thinking() {
   $("#askAnswer").innerHTML =
     `<span class="ask-thinking"><span class="spin"></span>檢索研報並思考中…</span>`;
@@ -66,6 +85,7 @@ const SVG = {
   down: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.7a2 2 0 0 0-2 1.7l-1.4 9a2 2 0 0 0 2 2.3zm7-13h2.7A2.3 2.3 0 0 1 22 4v7a2.3 2.3 0 0 1-2.3 2H17"/></svg>`,
   copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
   chev: `<svg class="ask-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>`,
+  ext: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
 };
 
 // 重設動作列 + 收合來源（每次新提問）
@@ -73,10 +93,12 @@ function resetActions() {
   const a = $("#askActions");
   a.innerHTML = ""; a.hidden = true;
   $("#askSources").classList.remove("open");
+  $("#askExtSources").classList.remove("open");
+  $("#askExtSources").innerHTML = "";
 }
 
 // 回答完成後的 ChatGPT 式動作列：讚/倒讚/複製 +（有來源時）資料來源切換
-function paintActions(qaId, answerText, srcCount) {
+function paintActions(qaId, answerText, srcCount, extCount) {
   const el = $("#askActions");
   const srcBtn = srcCount
     ? html`<button class="ask-act ask-act-src" data-act="sources" type="button"
@@ -84,10 +106,16 @@ function paintActions(qaId, answerText, srcCount) {
         ${raw(SVG.chev)}資料來源 <span class="ask-act-count">${String(srcCount)}</span>
       </button>`
     : raw("");
+  const extBtn = extCount
+    ? html`<button class="ask-act ask-act-extsrc" data-act="ext" type="button"
+        aria-expanded="false" aria-controls="askExtSources">
+        ${raw(SVG.chev)}外部參考 <span class="ask-act-count">${String(extCount)}</span>
+      </button>`
+    : raw("");
   el.innerHTML = html`<button class="ask-act" data-act="like" type="button" title="有幫助" aria-label="讚">${raw(SVG.up)}</button>
     <button class="ask-act" data-act="dislike" type="button" title="沒幫助" aria-label="倒讚">${raw(SVG.down)}</button>
     <button class="ask-act" data-act="copy" type="button" title="複製回答" aria-label="複製回答">${raw(SVG.copy)}</button>
-    ${srcBtn}`;
+    ${srcBtn}${extBtn}`;
   el.hidden = false;
   el.querySelectorAll(".ask-act").forEach(b => {
     b.onclick = () => onAction(b, qaId, answerText, el);
@@ -99,6 +127,7 @@ function onAction(btn, qaId, answerText, bar) {
   if (act === "like" || act === "dislike") sendFeedback(qaId, act, bar, btn);
   else if (act === "copy") copyText(answerText, btn);
   else if (act === "sources") toggleSources(btn);
+  else if (act === "ext") toggleExt(btn);
 }
 
 async function sendFeedback(qaId, value, bar, btn) {
@@ -131,6 +160,13 @@ function fallbackCopy(text, ok) {   // 非安全脈絡（http LAN）的後備複
 
 function toggleSources(btn) {
   const open = $("#askSources").classList.toggle("open");
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  btn.classList.toggle("on", open);
+  if (open && nearBottom()) toBottom();
+}
+
+function toggleExt(btn) {
+  const open = $("#askExtSources").classList.toggle("open");
   btn.setAttribute("aria-expanded", open ? "true" : "false");
   btn.classList.toggle("on", open);
   if (open && nearBottom()) toBottom();
@@ -187,7 +223,9 @@ export async function askQuestion() {
   $("#askAnswer").hidden = false;
   input.value = ""; autoGrow(input);
   sources = [];
+  extSources = [];
   paintSources([]);
+  paintExtSources([]);
   resetActions();
   thinking();
   toBottom();
@@ -226,6 +264,9 @@ export async function askQuestion() {
         if (evt.event === "sources") {
           sources = evt.data || [];
           paintSources(sources);
+        } else if (evt.event === "ext_sources") {
+          extSources = evt.data || [];
+          paintExtSources(extSources);
         } else if (evt.event === "token") {
           started = true;
           answer += evt.data;
@@ -247,7 +288,7 @@ export async function askQuestion() {
     if (my === state.askReq) {
       if (!notice) paintAnswer(answer, false);   // 收尾：去掉游標（離題卡不可被覆寫）
       if (!started) fail("沒有取得回答，請稍後再試。");
-      else if (!notice) paintActions(qaId, answer, sources.length);  // 動作列（離題卡不顯示）
+      else if (!notice) paintActions(qaId, answer, sources.length, extSources.length);  // 動作列（離題卡不顯示）
     }
   } catch (e) {
     if (my === state.askReq) fail("查詢逾時或失敗，請稍後再試。");

@@ -128,8 +128,9 @@
         <li><a href="#start">開始使用（網址）</a></li>
         <li><a href="#home">首頁：瀏覽所有報告</a></li>
         <li><a href="#search">搜尋報告</a></li>
+        <li><a href="#ask">問答模式（向 AI 提問）</a></li>
         <li><a href="#filter">用篩選與排序整理結果</a></li>
-        <li><a href="#card">看懂一張結果卡片</a></li>
+        <li><a href="#result">看懂一筆結果</a></li>
         <li><a href="#full">查看完整報告（原始 PDF）</a></li>
         <li><a href="#monitor">導入監控頁（進階）</a></li>
       </ol>
@@ -154,13 +155,13 @@
       <p>還沒輸入查詢時，畫面會<strong>預設依日期新到舊</strong>列出目前所有已導入的報告（可用左側「排序」切換新舊）。左側欄位顯示總篇數，以及各市場、各商品類型的報告數量。</p>
       <figure>
         <img src="/static/help/01-home.png" alt="首頁瀏覽模式" />
-        <figcaption>首頁：左側為品牌、搜尋框與篩選；右側依日期列出報告卡片</figcaption>
+        <figcaption>首頁：左側為品牌與篩選／排序；右側上方為搜尋框與檢視切換，下方依日期列出報告</figcaption>
       </figure>
     </section>
 
     <section id="search">
       <h2><span class="no">3</span>搜尋報告</h2>
-      <p>在左上角的<strong>搜尋框</strong>輸入你想找的主題，按 <strong>Enter</strong> 或點<strong>「搜尋」</strong>：</p>
+      <p>在頁面<strong>上方的搜尋框</strong>輸入你想找的主題，按 <strong>Enter</strong> 即可（也會邊打邊自動查詢）：</p>
       <ul class="bul">
         <li>可輸入主題、公司、事件，例如：「AI 伺服器散熱」、「台積電 先進封裝」、「美國 升息」。</li>
         <li>採<strong>語意 ＋ 關鍵字混合檢索</strong>：用字不必和報告完全相同，也能找到語意相關的報告。</li>
@@ -168,13 +169,25 @@
       </ul>
       <figure>
         <img src="/static/help/02-results.png" alt="搜尋結果" />
-        <figcaption>搜尋「AI 伺服器散熱」的結果：每張卡片附最相關段落，關鍵詞以黃底標示</figcaption>
+        <figcaption>搜尋「AI 伺服器散熱」的結果：每筆附最相關段落，關鍵詞以黃底標示</figcaption>
       </figure>
-      <div class="note">搜尋會回傳<b>最相關的前 12 篇</b>研報（非整個資料庫）；想更精準就多加關鍵字縮小範圍。卡片上的<b>百分比</b>是「該篇<b>最相關片段</b>與查詢的相似度」，不是整篇報告的相關度。</div>
+      <div class="note">搜尋會回傳<b>最相關的前 12 篇</b>研報（非整個資料庫）；想更精準就多加關鍵字縮小範圍。結果上的<b>百分比</b>是「該篇<b>最相關片段</b>與查詢的相似度」，不是整篇報告的相關度。</div>
+    </section>
+
+    <section id="ask">
+      <h2><span class="no">4</span>問答模式（向 AI 提問）</h2>
+      <p>左側上方有<strong>「檢索／問答」切換</strong>。切到<strong>問答</strong>後，可用自然語言提問，系統會檢索相關研報、由 AI 整理出帶<strong>引用來源</strong>的回答：</p>
+      <ul class="bul">
+        <li>在下方輸入框打字、按 <strong>Enter</strong> 送出，回答會逐字串流出現。</li>
+        <li>回答下方可展開<strong>「資料來源」</strong>，點任一來源即可開啟原始報告。</li>
+        <li>可對回答按<strong>讚／倒讚</strong>，或<strong>複製</strong>。</li>
+        <li>左側會列出<strong>歷史問答</strong>，點一下可重看；滑到該筆右側的<strong>垃圾桶</strong>圖示可刪除（會再確認）。</li>
+      </ul>
+      <div class="note">問答以<b>整個語料庫</b>為範圍（不受左側檢索篩選影響）。若問題與研報內容無關，系統會婉拒並說明原因。</div>
     </section>
 
     <section id="filter">
-      <h2><span class="no">4</span>用篩選與排序整理結果</h2>
+      <h2><span class="no">5</span>用篩選與排序整理結果</h2>
       <p>左側的篩選可單獨使用，也可與搜尋並用（先選好篩選再搜尋，或先搜尋再點篩選）。每個項目後面的數字是該分類的報告數：</p>
       <ul class="bul">
         <li><strong>市場</strong>：<span class="tag-inline">台股</span> <span class="tag-inline">總經</span> <span class="tag-inline">全球</span> <span class="tag-inline">美股</span> <span class="tag-inline">陸股</span> <span class="tag-inline">台指期</span> <span class="tag-inline">外匯</span> 等，點一下只看該市場。</li>
@@ -193,21 +206,19 @@
       <div class="note">用日期排序搜尋時，是把<b>最相關的幾篇</b>再依日期排列；仍以相關度決定哪些報告出現，不是整個資料庫的日期排序。</div>
 
       <h3>檢視方式</h3>
-      <p>結果上方的<strong>檢視切換</strong>可改變報告的呈現方式（瀏覽與搜尋都適用），切換時<strong>不會重新查詢</strong>：</p>
+      <p>結果<strong>右上角</strong>有兩個<strong>檢視切換</strong>圖示，可改變報告呈現方式（瀏覽與搜尋都適用），切換時<strong>不會重新查詢</strong>：</p>
       <ul class="bul">
-        <li><span class="tag-inline">卡片</span>（預設）：每篇一張卡片，搜尋時附最相關段落與相關度。</li>
-        <li><span class="tag-inline">列表</span>：一列一篇，密度高，適合一次掃過很多篇。</li>
+        <li><span class="tag-inline">列表</span>（預設）：依<strong>市場／報告類型／日期(月)</strong>分組，每組附篇數；一列一篇、附<strong>完整摘要</strong>。右上的<strong>「分組依據」</strong>可切換分組方式。</li>
         <li><span class="tag-inline">表格</span>：以欄位排列（名稱／市場／類型／日期／來源／標的），點<strong>欄位標題</strong>可排序。</li>
-        <li><span class="tag-inline">分組</span>：依<strong>市場／報告類型／日期(月)</strong>分組，每組附篇數，可用「分組依據」切換。</li>
       </ul>
-      <div class="note">表格的<b>欄位排序</b>與<b>分組</b>只作用於<b>目前已載入</b>的報告；瀏覽很多篇時，先點「載入更多」再排序／分組。系統會<b>記住</b>你慣用的檢視方式。</div>
+      <div class="note">分組與表格的<b>欄位排序</b>只作用於<b>目前已載入</b>的報告；瀏覽很多篇時，先點「載入更多」再排序／分組。系統會<b>記住</b>你慣用的檢視方式。</div>
     </section>
 
-    <section id="card">
-      <h2><span class="no">5</span>看懂一張結果卡片</h2>
-      <p>下圖標出一張卡片上的各種資訊，數字對照下方說明：</p>
+    <section id="result">
+      <h2><span class="no">6</span>看懂一筆結果</h2>
+      <p>每一筆結果都會顯示以下資訊（下圖為示意；列表與表格的排版略有不同，資訊相同）：</p>
       <figure class="annot">
-        <img src="/static/help/card-anatomy.png" alt="結果卡片各部位標註" />
+        <img src="/static/help/card-anatomy.png" alt="一筆結果的各部位標註" />
         <span class="pin" style="top:11%;left:5%">1</span>
         <span class="pin" style="top:11%;left:27%">2</span>
         <span class="pin" style="top:20%;left:15%">3</span>
@@ -223,7 +234,7 @@
         <li><span class="n">4</span><span><b>商品類型標籤</b>：報告提到的金融商品（本例「股票」）；完整清單見下方。</span></li>
         <li><span class="n">5</span><span><b>標的標籤</b>：對選股／期貨是否有參考，常附<b>代碼</b>（本例「個股 · 8299」）。</span></li>
         <li><span class="n">6</span><span><b>命中片段＋相關度</b>：與查詢最相關的段落；最前面的<b>百分比</b>是該段相關度，關鍵詞以黃底標示。</span></li>
-        <li><span class="n">7</span><span><b>查看完整報告</b>：點開直接內嵌原始 PDF（見第 6 節）。</span></li>
+        <li><span class="n">7</span><span><b>開啟完整報告</b>：點任一筆結果即可彈出視窗、直接內嵌原始 PDF（見第 7 節）。</span></li>
       </ol>
 
       <h3>市場徽章（每篇一個）</h3>
@@ -264,12 +275,12 @@
         <div class="sb-head"><span class="subj">期貨</span><span>對<b>期貨／指數部位</b>有參考價值</span></div>
         <div class="sb-eg">常附期貨商品，例如 <span class="subj">期貨 · 台指期</span>。詞表：台指期／小型台指／電子期／金融期／個股期貨。</div>
       </div>
-      <div class="note">一張卡片可能同時有<b>市場徽章 ＋ 多個商品類型 ＋ 標的標籤</b>；商品類型與標的若報告沒明確提及就不會出現。</div>
+      <div class="note">一筆結果可能同時有<b>市場徽章 ＋ 多個商品類型 ＋ 標的標籤</b>；商品類型與標的若報告沒明確提及就不會出現。</div>
     </section>
 
     <section id="full">
-      <h2><span class="no">6</span>查看完整報告（原始 PDF）</h2>
-      <p>點卡片上的<strong>「查看完整報告」</strong>，會彈出視窗直接<strong>內嵌原始 PDF</strong>，不必另外下載就能讀：</p>
+      <h2><span class="no">7</span>查看完整報告（原始 PDF）</h2>
+      <p>點<strong>任一筆結果</strong>（列表的整列或表格的整列；問答則點回答下方的來源），會彈出視窗直接<strong>內嵌原始 PDF</strong>，不必另外下載就能讀：</p>
       <ul class="bul">
         <li>可上下捲動閱讀；用 PDF 工具列可<strong>放大、下載、列印</strong>。</li>
         <li>點視窗外的灰色區域或右上<strong>關閉鈕</strong>，即可回到搜尋結果。</li>
@@ -281,7 +292,7 @@
     </section>
 
     <section id="monitor">
-      <h2><span class="no">7</span>導入監控頁（進階）</h2>
+      <h2><span class="no">8</span>導入監控頁（進階）</h2>
       <p><strong>「導入監控」</strong>按鈕主要給<strong>管理者</strong>查看資料導入狀況（一般使用者用不到）：</p>
       <ul class="bul">
         <li><strong>已導入報告數、總片段、標註進度</strong>等即時數字。</li>

@@ -1,4 +1,4 @@
-# 廷豐研報 — 研報市場標籤分類 + 向量檢索
+# 廷豐智能研報 — 研報市場標籤分類 + 向量檢索 + RAG 問答
 
 把 `研報自動匯入/` 內的券商研究報告：**標上市場標籤 → 全文切塊嵌入 → 存入 pgvector → 語意檢索**。市場標籤對齊 [findb](../findb) 的市場代碼，標籤由 Claude 讀 PDF 判定。
 
@@ -105,19 +105,23 @@ workflows/
   tag_reports.workflow.js Claude 分批 fan-out 市場標註
 
 web/
-  server.py               FastAPI（BGE-M3 常駐）/api/stats /api/markets /api/search /api/reports /api/report/{id}
-  static/index.html       iOS 風格查詢介面（雙欄、卡片網格、高亮、即打即查）
+  server.py               FastAPI（BGE-M3 常駐）/api/stats /api/markets /api/search /api/reports /api/report/{id} /api/ask /api/history
+  static/index.html       查詢介面（雙欄、檢索＋問答、列表/表格檢視、高亮、即打即查）
 ```
 
 ## 查詢網頁
 
 > **需登入**：全站以單一**共用帳號＋密碼**把關（由環境變數設定，見[快速開始](#快速開始)）。未登入自動導向 `/login`，右上可登出；session 以簽章 cookie 維持 7 天（滑動到期）。外網部署見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md)。
 
-iOS 風格、雙欄側邊版面（手機收單欄）。結果**依報告分組**：每篇顯示市場標籤、商品類型、標的、券商來源、報告日期、命中片段數、相關度 %，以及**2-3 句中文摘要**（卡片/列表預設兩行、點擊展開；表格模式於名稱 hover 顯示）讓你不必開全文就能掌握大意，查詢關鍵字高亮、可展開片段，並可「查看完整報告」內嵌原始 PDF（彈窗頂部亦顯示摘要）。摘要由 `make summaries` 離線生成。
+雙欄側邊版面（手機收單欄），頂部有**檢索／問答**切換。
+
+**檢索**：搜尋框在內容區上方，結果預設以**列表**（依市場／報告類型／日期(月)分組，右上可切「分組依據」）呈現，也可切**表格**（右上角圖示切換）。每筆顯示市場標籤、商品類型、標的、券商來源、報告日期、命中片段數、相關度 %，以及**2-3 句中文摘要**（列表完整顯示；表格於名稱 hover 顯示）讓你不必開全文就能掌握大意；查詢關鍵字高亮，點任一筆即**內嵌原始 PDF**（彈窗頂部亦顯示摘要）。摘要由 `make summaries` 離線生成。
+
+**問答**：以自然語言提問，RAG 檢索＋串流回答、附**引用來源**（可點開原始報告），側欄保留**歷史問答**（可重看／刪除）。
 
 左側可篩選**市場 / 商品類型 / 標的（個股·期貨）/ 報告類型**（皆單選），並切換**排序**：搜尋＝相關度（預設）/ 日期新→舊 / 日期舊→新；瀏覽＝日期新→舊（預設）/ 日期舊→新。
 
-API：`/api/stats`、`/api/markets`、`/api/search`、`/api/reports`（瀏覽）、`/api/report/{id}/full`、`/api/report/{id}/file`（詳見 [docs/WORKFLOW.md](docs/WORKFLOW.md#web-api)）。
+API：`/api/stats`、`/api/markets`、`/api/search`、`/api/reports`（瀏覽）、`/api/report/{id}/full`、`/api/report/{id}/file`、`/api/ask`（RAG 問答，SSE 串流）、`/api/history`（問答歷史；`DELETE /api/history/{qa_id}` 刪除單筆）、`/api/feedback`（讚／倒讚）（詳見 [docs/WORKFLOW.md](docs/WORKFLOW.md#web-api)）。
 
 ## 環境
 

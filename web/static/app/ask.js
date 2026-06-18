@@ -62,6 +62,57 @@ function paintExtSources(srcs) {
     </a>`).join("");
 }
 
+async function openHistory() {
+  const drawer = $("#askHistDrawer");
+  const list = $("#askHistList");
+  drawer.hidden = false;
+  list.innerHTML = `<div class="ask-hist-empty">載入中…</div>`;
+  try {
+    const resp = await fetch("/api/history?limit=50");
+    if (resp.status === 401) { window.location.href = "/login"; return; }
+    if (!resp.ok) throw new Error("bad");
+    renderHistory(await resp.json());
+  } catch (e) {
+    list.innerHTML = `<div class="ask-hist-empty">載入失敗，請稍後再試。</div>`;
+  }
+}
+function closeHistory() { $("#askHistDrawer").hidden = true; }
+
+function renderHistory(items) {
+  const list = $("#askHistList");
+  if (!items.length) { list.innerHTML = `<div class="ask-hist-empty">尚無歷史問答</div>`; return; }
+  list.innerHTML = items.map((it, i) => html`<button class="ask-hist-item" type="button" data-i="${String(i)}">
+      <span class="ask-hist-q">${it.question}</span>
+      <span class="ask-hist-meta">
+        ${it.created_at ? html`<span class="ask-hist-date">${fmtDate((it.created_at || "").slice(0, 10))}</span>` : raw("")}
+        ${it.feedback === "like" ? html`<span class="ask-hist-fb like">讚</span>`
+          : it.feedback === "dislike" ? html`<span class="ask-hist-fb dislike">倒讚</span>` : raw("")}
+      </span>
+    </button>`).join("");
+  list.querySelectorAll(".ask-hist-item").forEach(b =>
+    b.onclick = () => loadHistoryItem(items[parseInt(b.dataset.i, 10)]));
+}
+
+// 唯讀重現一筆歷史問答（沿用既有渲染；不重打 /api/ask）
+function loadHistoryItem(it) {
+  closeHistory();
+  $("#askEmpty").hidden = true;
+  $("#askQuestion").hidden = false; $("#askQuestion").textContent = it.question;
+  $("#askAnswer").hidden = false;
+  sources = it.sources || [];
+  extSources = [];
+  paintSources(sources);
+  paintExtSources([]);
+  paintAnswer(it.answer || "", false);
+  paintActions(it.id, it.answer || "", sources.length, 0);
+  if (it.feedback) {   // 預先高亮當時回饋（可改）
+    const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
+    const btn = document.querySelector("#askActions " + sel);
+    if (btn) btn.classList.add("on");
+  }
+  toBottom();
+}
+
 function thinking() {
   $("#askAnswer").innerHTML =
     `<span class="ask-thinking"><span class="spin"></span>檢索研報並思考中…</span>`;
@@ -221,6 +272,13 @@ export function initAsk() {
     if ((e.key === "Enter" || e.key === " ") && e.target.classList?.contains("cite")) {
       e.preventDefault(); openCite(e.target);
     }
+  });
+
+  $("#askHistBtn").onclick = openHistory;
+  $("#askHistClose").onclick = closeHistory;
+  $("#askHistBackdrop").onclick = closeHistory;
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !$("#askHistDrawer").hidden) closeHistory();
   });
 }
 

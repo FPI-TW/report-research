@@ -486,6 +486,40 @@
     border: 2px solid var(--sep); border-top-color: var(--blue); animation: spin .8s linear infinite; }
   .ask-searching-inline { display: flex; margin-top: 10px; }   /* 串流中途搜尋的臨時指示 */
 
+  /* 歷史鈕（composer 左側）*/
+  .ask-hist-btn { flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 42px; height: 42px; border: none; border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--fill); color: var(--label-2); }
+  .ask-hist-btn:hover { background: #78788022; color: var(--label); }
+  .ask-hist-btn svg { width: 19px; height: 19px; }
+
+  /* 歷史抽層（右側覆蓋）*/
+  .ask-hist-drawer { position: fixed; inset: 0; z-index: 50; }
+  .ask-hist-drawer[hidden] { display: none; }
+  .ask-hist-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.28); }
+  .ask-hist-panel { position: absolute; top: 0; right: 0; height: 100dvh; width: min(420px, 92vw);
+    background: var(--card); box-shadow: -8px 0 30px rgba(0,0,0,.12); display: flex; flex-direction: column;
+    padding: max(env(safe-area-inset-top), 16px) 16px 16px; }
+  .ask-hist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .ask-hist-title { font-size: 17px; font-weight: 700; color: var(--label); }
+  .ask-hist-close { border: none; background: none; cursor: pointer; color: var(--label-3);
+    width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; }
+  .ask-hist-close:hover { background: var(--fill); color: var(--label); }
+  .ask-hist-close svg { width: 18px; height: 18px; }
+  .ask-hist-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .ask-hist-empty { color: var(--label-3); font-size: 14px; text-align: center; padding: 28px 0; }
+  .ask-hist-item { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left;
+    background: var(--fill); border: none; border-radius: 11px; padding: 12px 14px; cursor: pointer;
+    font-family: inherit; color: var(--label); }
+  .ask-hist-item:hover { background: #78788022; }
+  .ask-hist-q { font-size: 14.5px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .ask-hist-meta { display: flex; align-items: center; gap: 8px; }
+  .ask-hist-date { font-size: 12px; color: var(--label-3); }
+  .ask-hist-fb { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; }
+  .ask-hist-fb.like { color: var(--blue); background: var(--blue-soft); }
+  .ask-hist-fb.dislike { color: var(--red); background: #ff3b301f; }
+
   /* 離題拒答提示卡（取代一般答案泡泡）*/
   .ask-notice { display: flex; align-items: flex-start; gap: 11px; padding: 13px 15px;
     background: var(--fill); border: .5px solid var(--sep); border-left: 3px solid var(--amber);
@@ -682,10 +716,25 @@
           </div>
           <div class="ask-composer">
             <div class="ask-composer-inner">
+              <button class="ask-hist-btn" id="askHistBtn" type="button" title="歷史問答" aria-label="歷史問答">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg>
+              </button>
               <textarea id="askInput" class="ask-input" rows="1"
                 placeholder="輸入你的問題…" aria-label="輸入問題"></textarea>
               <button class="ask-go" id="askGo" type="button">提問</button>
             </div>
+          </div>
+          <div class="ask-hist-drawer" id="askHistDrawer" hidden>
+            <div class="ask-hist-backdrop" id="askHistBackdrop"></div>
+            <aside class="ask-hist-panel" role="dialog" aria-modal="true" aria-label="歷史問答">
+              <div class="ask-hist-head">
+                <span class="ask-hist-title">歷史問答</span>
+                <button class="ask-hist-close" id="askHistClose" type="button" aria-label="關閉歷史">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <div class="ask-hist-list" id="askHistList"></div>
+            </aside>
           </div>
         </div>
       </div>

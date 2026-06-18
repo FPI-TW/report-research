@@ -86,7 +86,7 @@
     border-radius: 6px; color: var(--label-2); background: var(--fill); white-space: nowrap; }
 
   /* 標註圖（數字 pin + 圖例） */
-  .annot { position: relative; display: block; max-width: 600px; margin: 14px auto 6px; }
+  .annot { position: relative; display: block; max-width: 100%; margin: 14px auto 6px; }
   .annot img { width: 100%; display: block; border-radius: 12px;
     border: .5px solid var(--sep); box-shadow: var(--shadow); }
   .pin { position: absolute; transform: translate(-50%, -50%); width: 22px; height: 22px;
@@ -177,6 +177,10 @@
     <section id="ask">
       <h2><span class="no">4</span>問答模式（向 AI 提問）</h2>
       <p>左側上方有<strong>「檢索／問答」切換</strong>。切到<strong>問答</strong>後，可用自然語言提問，系統會檢索相關研報、由 AI 整理出帶<strong>引用來源</strong>的回答：</p>
+      <figure>
+        <img src="/static/help/05-ask.png" alt="問答模式畫面" />
+        <figcaption>問答模式：左側為歷史問答，主區為帶引用來源的串流回答，下方為提問輸入框</figcaption>
+      </figure>
       <ul class="bul">
         <li>在下方輸入框打字、按 <strong>Enter</strong> 送出，回答會逐字串流出現。</li>
         <li>回答下方可展開<strong>「資料來源」</strong>，點任一來源即可開啟原始報告。</li>
@@ -216,10 +220,16 @@
 
     <section id="result">
       <h2><span class="no">6</span>看懂一筆結果</h2>
-      <p>每一筆結果都會顯示以下資訊（下圖為<strong>搜尋結果</strong>的一筆，列表檢視；表格為相同資訊的欄位排版）：</p>
-      <figure>
-        <img src="/static/help/card-anatomy.png" alt="搜尋結果一筆（含命中片段）的各部位" />
-        <figcaption>搜尋結果的一筆（列表）：市場徽章、檔名、來源／命中數、標籤、命中片段（黃底高亮）與相似度 %</figcaption>
+      <p>下圖為一筆<strong>搜尋結果</strong>（列表檢視），圖上數字對照下方說明（表格檢視為相同資訊的欄位排版）：</p>
+      <figure class="annot">
+        <img src="/static/help/card-anatomy.png" alt="搜尋結果一筆（含命中片段）的各部位標註" />
+        <span class="pin" style="top:12%;left:4%">1</span>
+        <span class="pin" style="top:12%;left:20%">2</span>
+        <span class="pin" style="top:24%;left:6%">3</span>
+        <span class="pin" style="top:35%;left:8%">4</span>
+        <span class="pin" style="top:35%;left:19%">5</span>
+        <span class="pin" style="top:60%;left:42%">6</span>
+        <span class="pin" style="top:11%;left:97%">7</span>
       </figure>
       <ol class="annot-legend">
         <li><span class="n">1</span><span><b>市場徽章</b>：報告涵蓋的主要市場（彩色，本例「台股」）；完整 9 種見下方。</span></li>
@@ -282,7 +292,7 @@
       </ul>
       <figure>
         <img src="/static/help/03-fullreport.png" alt="查看完整報告 modal" />
-        <figcaption>「查看完整報告」會內嵌原始券商 PDF，直接在頁面上閱讀</figcaption>
+        <figcaption>點任一筆結果，會內嵌原始券商 PDF，直接在頁面上閱讀</figcaption>
       </figure>
     </section>
 
@@ -290,8 +300,8 @@
       <h2><span class="no">8</span>導入監控頁（進階）</h2>
       <p><strong>「導入監控」</strong>按鈕主要給<strong>管理者</strong>查看資料導入狀況（一般使用者用不到）：</p>
       <ul class="bul">
-        <li><strong>已導入報告數、總片段、標註進度</strong>等即時數字。</li>
-        <li><strong>市場分佈</strong>長條圖，與<strong>三條背景管線</strong>（網頁／導入／標註）是否執行中。</li>
+        <li><strong>已導入報告數、總片段、標註進度、摘要進度</strong>等即時數字。</li>
+        <li><strong>市場分佈</strong>長條圖，與<strong>四條背景管線</strong>（網頁／導入／標註／摘要）是否執行中。</li>
         <li>每 2 秒自動刷新，數字會持續跳動。</li>
       </ul>
       <div class="note">畫面上的「<b>—</b>」代表<b>資料載入中或暫無數值</b>，連上後會自動帶入。</div>

@@ -13,6 +13,7 @@ from app.services.answer import (  # noqa: E402
     build_context,
     build_user_prompt,
     cited_report_ids,
+    split_external_sources,
 )
 
 
@@ -296,6 +297,36 @@ class BuildCmdTests(unittest.TestCase):
         cmd = llm._build_cmd("claude-sonnet-4-6", None, False)
         for flag in ("claude", "-p", "--model", "stream-json", "--include-partial-messages"):
             self.assertIn(flag, cmd)
+
+
+class SplitExternalSourcesTests(unittest.TestCase):
+    def test_no_sentinel_returns_text_and_empty(self):
+        body, ext = split_external_sources("純研報答案[1]。")
+        self.assertEqual(body, "純研報答案[1]。")
+        self.assertEqual(ext, [])
+
+    def test_parses_sentinel_block(self):
+        text = (
+            "答案內容（網路）。[1]\n\n"
+            "[EXT_SOURCES]\n"
+            "- 標題A | https://a.com/x\n"
+            "- 標題B | http://b.com\n"
+        )
+        body, ext = split_external_sources(text)
+        self.assertEqual(body, "答案內容（網路）。[1]")  # sentinel 前、尾端空白修整
+        self.assertEqual(ext, [
+            {"title": "標題A", "url": "https://a.com/x"},
+            {"title": "標題B", "url": "http://b.com"},
+        ])
+
+    def test_skips_malformed_and_non_http(self):
+        text = "答案。\n[EXT_SOURCES]\n- 沒有管線的壞行\n- 標題 | ftp://x\n- 好的 | https://ok.com\n"
+        body, ext = split_external_sources(text)
+        self.assertEqual(ext, [{"title": "好的", "url": "https://ok.com"}])
+
+    def test_empty_title_falls_back_to_url(self):
+        body, ext = split_external_sources("答案。\n[EXT_SOURCES]\n-  | https://a.com\n")
+        self.assertEqual(ext, [{"title": "https://a.com", "url": "https://a.com"}])
 
 
 if __name__ == "__main__":

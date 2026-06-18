@@ -53,6 +53,33 @@ OFF_TOPIC_MESSAGE = (
     "（例如特定市場、個股、期貨或總經主題）。"
 )
 
+ASK_ENABLE_WEB = os.getenv("ASK_ENABLE_WEB", "1") not in ("0", "false", "False", "")
+
+EXT_SENTINEL = "[EXT_SOURCES]"  # 模型在答案末尾以此標記外部來源區塊
+
+
+def split_external_sources(text: str) -> tuple[str, list[dict]]:
+    """以 EXT_SENTINEL 切出 (body, 外部來源清單)。
+
+    sentinel 之後每行 `- 標題 | 網址`：缺 `|` 或網址非 http(s) 一律跳過；
+    標題空則以網址替代。無 sentinel → (原文, [])。
+    """
+    idx = text.find(EXT_SENTINEL)
+    if idx == -1:
+        return text, []
+    body = text[:idx].rstrip()
+    sources: list[dict] = []
+    for line in text[idx + len(EXT_SENTINEL):].splitlines():
+        line = line.strip()
+        if line.startswith("-"):
+            line = line[1:].strip()
+        if "|" not in line:
+            continue
+        title, url = (p.strip() for p in line.split("|", 1))
+        if url.startswith("http://") or url.startswith("https://"):
+            sources.append({"title": title or url, "url": url})
+    return body, sources
+
 
 _CITE_RE = re.compile(r"\[(\d+)\]")
 

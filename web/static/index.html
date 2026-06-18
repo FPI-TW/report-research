@@ -148,8 +148,9 @@
   .summary.expanded, .row-summary.expanded { -webkit-line-clamp: unset; }
   .passages { display: flex; flex-direction: column; gap: 11px; }
   .passage { font-size: 14px; line-height: 1.62; color: var(--label-2); letter-spacing: .008em;
-    padding-left: 12px; border-left: 2px solid var(--sep); }
-  .passage.hidden { display: none; }
+    padding-left: 12px; border-left: 2px solid var(--sep); opacity: 1;
+    transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out), display var(--dur-2) allow-discrete; }
+  .passage.hidden { display: none; opacity: 0; transform: translateY(-4px); }
   .passage .pscore { font-size: 11px; font-weight: 700; color: var(--blue);
     font-variant-numeric: tabular-nums; margin-right: 6px; letter-spacing: 0; }
   mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1px; }

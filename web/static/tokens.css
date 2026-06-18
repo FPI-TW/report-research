@@ -18,9 +18,20 @@
   --amber: #ff9f0a;
   --red: #ff3b30;
   --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px rgba(0, 0, 0, .06);
+  /* 全站動畫 token（進退場過渡共用；reduced-motion 時於檔案底部統一歸零）*/
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
                "Segoe UI", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
 }
 
 /* 全站一致的鍵盤焦點環（四頁共用；個別頁可再加強） */
 :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* 尊重系統「減少動態效果」：把動畫時長歸零，所有以 token 計時的過渡/動畫自動失效 */
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-1: 0.01ms; --dur-2: 0.01ms; --dur-3: 0.01ms; }
+}

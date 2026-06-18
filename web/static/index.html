@@ -350,6 +350,10 @@
     .brand { flex-direction: column; align-items: flex-start; gap: 10px; }
     .nav-links { width: 100%; justify-content: flex-start; }
   }
+  /* ───── 進退場過渡動畫（共用 keyframe / helper class）───── */
+  @keyframes fade-rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .anim-enter { animation: fade-rise-in var(--dur-2) var(--ease-out); }
+
   /* 尊重系統「減少動態效果」偏好 */
   @media (prefers-reduced-motion: reduce) {
     .card { animation: none !important; opacity: 1; transform: none; }
@@ -358,6 +362,7 @@
     .go, .more, .ex, .full-report, .filter, .monitor-link, .card { transition: none; }
     .row { transition: none; }
     .view-switch button { transition: none; }
+    .anim-enter { animation: none; }
   }
   :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 

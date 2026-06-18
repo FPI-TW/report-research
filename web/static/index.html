@@ -328,9 +328,9 @@
     .filter-toggle::after { content: "▾"; color: var(--label-3); font-size: 12px; }
     .filter-toggle[aria-expanded="true"]::after { content: "▴"; }
     .filter-groups { display: flex; flex-direction: column; gap: 12px;
-      max-height: 0; opacity: 0; overflow: hidden;
-      transition: max-height var(--dur-2) var(--ease-out), opacity var(--dur-2); }
-    .filter-groups.open { max-height: 1200px; opacity: 1; }
+      max-height: 0; opacity: 0; overflow: hidden; visibility: hidden;
+      transition: max-height var(--dur-2) var(--ease-out), opacity var(--dur-2), visibility var(--dur-2); }
+    .filter-groups.open { max-height: 1200px; opacity: 1; visibility: visible; }
     /* 收摺面板內保留精簡分類標題，避免 chip 列失去脈絡 */
     .filters-label { display: block; font-size: 11px; font-weight: 700;
       color: var(--label-3); letter-spacing: .04em; padding: 0; margin: 4px 2px 0; }
@@ -577,9 +577,9 @@
 
   /* 引用來源清單（預設收合，點「資料來源」才展開）*/
   .ask-sources { display: flex; flex-direction: column; gap: 8px; margin-top: 0;
-    max-height: 0; opacity: 0; overflow: hidden;
-    transition: max-height var(--dur-2) var(--ease-out), opacity var(--dur-2), margin-top var(--dur-2); }
-  .ask-sources.open { max-height: 1500px; opacity: 1; margin-top: 8px; }
+    max-height: 0; opacity: 0; overflow: hidden; visibility: hidden;
+    transition: max-height var(--dur-2) var(--ease-out), opacity var(--dur-2), margin-top var(--dur-2), visibility var(--dur-2); }
+  .ask-sources.open { max-height: 1500px; opacity: 1; margin-top: 8px; visibility: visible; }
   /* 外部（網路）來源卡 */
   .ask-ext { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
     background: var(--card); border: .5px solid var(--sep); border-radius: var(--radius-sm);

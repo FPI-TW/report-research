@@ -154,6 +154,17 @@ export function listRow(r, mode) {
   if (mode === "search") meta.push(`${r.match_count} 命中`);
   const scorePill = mode === "search"
     ? html`<span class="row-score">${Math.round((r.best_score || 0) * 100)}%</span>` : raw("");
+  // 搜尋模式：顯示命中片段（首段顯示、其餘收合；關鍵詞黃底高亮）。瀏覽模式無片段。
+  let passages = raw("");
+  if (mode === "search" && (r.passages || []).length) {
+    const passHtml = r.passages.map((p, pi) =>
+      html`<div class="passage${pi > 0 ? " hidden" : ""}">
+         <span class="pscore">${Math.round(p.score * 100)}%</span>${raw(highlight(p.content.slice(0, 300), state.terms))}…
+       </div>`);
+    const moreBtn = r.passages.length > 1
+      ? html`<button class="row-more" type="button">顯示其他 ${r.passages.length - 1} 段片段</button>` : raw("");
+    passages = html`<div class="passages">${passHtml}${moreBtn}</div>`;
+  }
   return html`<div class="row" data-report-id="${r.report_id}" title="${r.file_name}">
     <span class="badge" style="background:${c}">${mLabel(r.market)}</span>
     <span class="row-main">
@@ -161,6 +172,7 @@ export function listRow(r, mode) {
       <span class="row-meta">${joinHtml(meta, '<span class="dot">·</span>')}</span>
       ${summaryHtml(r, "row-summary")}
       ${tagRowHtml(r)}
+      ${passages}
     </span>
     ${scorePill}
   </div>`;
@@ -319,9 +331,9 @@ export function bindResultEvents() {
       };
     }
   });
-  root.querySelectorAll(".more[data-card]").forEach(btn => btn.onclick = () => {
-    const card = root.querySelector(`.card[data-card="${btn.dataset.card}"]`);
-    card.querySelectorAll(".passage.hidden").forEach(p => p.classList.remove("hidden"));
+  root.querySelectorAll(".row-more").forEach(btn => btn.onclick = e => {
+    e.stopPropagation();   // 整列可點開報告，展開片段時別觸發開啟
+    btn.closest(".row").querySelectorAll(".passage.hidden").forEach(p => p.classList.remove("hidden"));
     btn.remove();
   });
   const lm = $("#loadMore");

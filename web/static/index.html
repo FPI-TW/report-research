@@ -294,7 +294,7 @@
   #results.no-rise .score-fill { transition: none; }
 
   /* 緊湊列表 / 分組列 */
-  .row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  .row { display: flex; align-items: flex-start; gap: 11px; width: 100%; text-align: left;
     background: var(--card); border: none; border-radius: var(--radius-sm);
     box-shadow: var(--shadow); padding: 11px 14px; margin-bottom: 8px; cursor: pointer;
     font-family: inherit; color: var(--label); transition: box-shadow .2s, transform .12s; }
@@ -310,6 +310,12 @@
   .row .tags { margin: 2px 0 0; }
   .row-score { font-size: 12px; font-weight: 700; color: var(--brand); flex: none;
     font-variant-numeric: tabular-nums; }
+  /* 搜尋命中片段（列表列）：略縮小配合列表密度；整列可點，片段/「更多」鈕另處理事件 */
+  .row .passages { margin-top: 5px; gap: 7px; }
+  .row .passage { font-size: 13px; line-height: 1.55; }
+  .row-more { align-self: flex-start; border: none; background: none; color: var(--brand);
+    cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; padding: 4px 0 0; }
+  .row-more:hover { text-decoration: underline; }
 
   /* 表格 */
   .rtable { width: 100%; border-collapse: collapse; background: var(--card);

@@ -31,16 +31,26 @@
 ```
 **降級集中化**：於 `tokens.css` 的 `@media (prefers-reduced-motion: reduce)` 將 `--dur-1/2/3` 設為 `0.01ms`。所有以 token 表示時長的過渡自動歸零，毋須各頁維護降級清單（各頁既有的 reduced-motion 區塊保留，新動畫一律改用 token）。
 
-## 二、兩種進退場機制
+## 二、四種進退場機制（規劃階段依實際 markup 細化）
 
-### A. 覆蓋層／開關（modal、抽屜、模式切換）
+> 原設計擬以 `grid-template-rows: 0fr→1fr` 做高度展開，但讀 markup 後發現：篩選面板桌機為 `display:contents`、且面板/來源清單皆為「多個並列子節點（含 flex gap）」或「JS 動態渲染的兄弟節點」，grid-rows 需額外包一層 wrapper 才能收合，會破壞桌機版面並牽動渲染 JS。故改用下列零 wrapper、零渲染 JS 改動的機制：
+
+### A. 覆蓋層開關（modal、歷史抽屜）— `@starting-style` + `allow-discrete`
 - 對元素設 `transition: opacity var(--dur-3) var(--ease-out), transform var(--dur-3) var(--ease-out), display var(--dur-3) allow-discrete;`
 - 進場初始態以 `@starting-style { ... }` 定義（如 `opacity:0; transform: translateY(8px) scale(.98)`）。
 - 退場由 `allow-discrete` 讓 `display:none` 延到動畫結束才套用。
 
-### B. 「展開」型面板（篩選面板、來源清單、更多片段、摘要列）
-- 外層 `display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-2) var(--ease-out), opacity var(--dur-2);`，內層 `min-height: 0; overflow: hidden;`。
-- 展開時切到 `grid-template-rows: 1fr` + `opacity: 1` → 真正的高度補間，無需 JS 量測高度。
+### B. 容器整段收合（手機篩選面板、來源／外部來源清單）— `max-height` + `opacity`
+- 容器本身 `overflow:hidden; max-height:0; opacity:0; transition: max-height var(--dur-2) var(--ease-out), opacity var(--dur-2);`，`.open` 時 `max-height: <足夠上限>; opacity:1`。
+- 整個容器收合 → 內部 flex gap 被 `overflow:hidden` 裁掉，不殘留間距；無需 wrapper、不動渲染 JS。上限取保守值（內容有界：篩選 5 段、來源 ≤ ~12 卡）。
+
+### C. 逐項揭露（卡片內「顯示更多片段」）— `display` + `allow-discrete` 淡入
+- `.passage { transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out), display var(--dur-2) allow-discrete; }`
+- `.passage.hidden { display:none; opacity:0; transform: translateY(-4px); }`；移除 `.hidden` 即淡入（元素早已在 DOM、具前一計算樣式，毋須 `@starting-style`，亦不會在首次渲染時與卡片 rise 重複觸發）。
+
+### D. JS 重繪／模式切換 — 一次性 keyframe class `.anim-enter`
+- `@keyframes fade-rise-in { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform:none; } }`；`.anim-enter { animation: fade-rise-in var(--dur-2) var(--ease-out); }`
+- JS 重繪後對目標區加 `.anim-enter`、`animationend` 後移除（重播前先 remove + 強制 reflow）。用於：檢視切換、表頭排序、分組依據變更、模式切換時「出現的那一側」。退場側維持瞬間隱藏（避免兩側同時佔位造成 reflow 跳動）。
 
 ## 三、逐物件規格
 
@@ -48,27 +58,32 @@
 |---|---|---|---|---|
 | 報告 modal 背景 `#modalBackdrop` | `.open` display 切換 | A | 淡入／淡出 | dur-3 |
 | 報告 modal 面板 `.modal` | 隨背景出現 | A | `translateY(8px) scale(.98)`→正常＋淡入；**手機版自底部上滑（sheet：`translateY(100%)`→0）** | dur-3 |
-| modal 摘要列 `#modalSummary` | `hidden` | B | 高度展開＋淡入 | dur-2 |
-| 手機篩選面板 `#filterGroups` | `.open` display 切換 | B（僅手機斷點） | 高度展開＋淡入 | dur-2 |
-| 來源／外部來源展開 `#askSources`/`#askExtSources` | `.open` | B | 高度展開＋淡入（chevron 旋轉已有） | dur-2 |
-| 問答歷史抽屜 `#askHistDrawer` ＋ `.ask-hist-backdrop` | `hidden` | A | 抽屜自右滑入（`translateX(100%)`→0）＋背景淡入 | dur-3 |
-| 著陸 ↔ 聊天 `#askEmpty`/`#askQuestion`/`#askAnswer` | `hidden` | A | 交叉淡入＋輸入框輕微位移 | dur-3 |
-| 搜尋 ↔ 問答模式 `.search`/`#examples`/`#askPanel`/`#results` | `hidden`＋`body.ask-mode` | A | 交叉淡入（由 `body.ask-mode` 驅動可見性） | dur-3 |
-| 檢視切換（卡/列/表/組） | JS 重繪硬換 | JS＋CSS | `#results` 加 `view-enter` 觸發交叉淡入；既有逐項 `rise` 保留 | dur-2 |
-| 清除篩選鈕 `.clear-filters` | `hidden` | A | 淡入縮放出現／消失 | dur-1 |
-| `#resultsBar` | `hidden` | A | 淡入 | dur-1 |
-| 顯示更多片段 `.passage.hidden` | display 切換 | B | 高度展開 | dur-2 |
+| modal 摘要列 `#modalSummary` | `hidden` 屬性 → 改 `.show` class | A（純淡入） | 淡入（單一元素，不做高度補間以免加 wrapper） | dur-2 |
+| 手機篩選面板 `#filterGroups` | `.open`（僅手機斷點） | B | max-height＋淡入展開／收合 | dur-2 |
+| 來源／外部來源展開 `#askSources`/`#askExtSources` | `.open` | B | max-height＋淡入（chevron 旋轉已有） | dur-2 |
+| 問答歷史抽屜 `#askHistDrawer` ＋ `.ask-hist-backdrop` | `hidden` 屬性 → 改 `.open` class | A | 抽屜自右滑入（`translateX(100%)`→0）＋背景淡入；關閉時反向滑出 | dur-3 |
+| 顯示更多片段 `.passage.hidden` | `.hidden`（display:none） | C | 揭露時淡入＋輕微下滑 | dur-2 |
+| 檢視切換（卡/列/表/組） | JS 重繪硬換 | D | 重繪後 `#results` 加 `.anim-enter` 交叉淡入；既有逐項 `rise` 不受影響 | dur-2 |
+| 表頭排序／分組依據變更 | JS 重繪硬換 | D | 同上，重繪區 `.anim-enter` | dur-2 |
+| 搜尋 ↔ 問答模式 | `hidden`＋`body.ask-mode` | D | 對「出現的那一側」(askPanel／results) 加 `.anim-enter`；隱藏側維持瞬間（沿用既有 `hidden`） | dur-2 |
+| 清除篩選鈕 `.clear-filters` | `hidden` 屬性 → 改 `.show` class | A | scale(.9)→1＋淡入出現／消失 | dur-1 |
+
+**刻意不單獨處理（避免過度工程／牽動過多 JS）**：
+- `#resultsBar`：與結果同時出現，卡片 `rise` 已提供動態，折入結果進場，不另加動畫。
+- 著陸 ↔ 聊天（`#askEmpty`/`#askQuestion`/`#askAnswer` 子狀態）：進入問答模式時 `askPanel` 的 `.anim-enter` 已涵蓋整體出現感，且 `thinking()` spinner 提供載入動態；不再逐元素處理。
 
 ## 四、JS 最小改動
 
-1. **少數 `hidden` 屬性 → `.open`（或等效 class）**，讓 CSS 能接管動畫；僅改可見性寫法，不改邏輯：
-   - `#askHistDrawer`（`ask.js` `openHistory`/`closeHistory`）
-   - 著陸↔聊天的 `#askEmpty`/`#askQuestion`/`#askAnswer`（`ask.js`）
-   - `#modalSummary`（`modal.js`）
-   - 清除篩選鈕、`#resultsBar`（`api.js` 等）
-   - 搜尋↔問答可見性：優先改由 `body.ask-mode` 在 CSS 控制 `.search`/`#examples`/`#askPanel`/`#results` 的 opacity/display（A 機制），移除對應 `hidden=` 行（`main.js`）。
-   - 註：保留 `hidden` 作為「語意上不可見」時，需確認 CSS 對該元素另設 `display` 並以 `allow-discrete` 參與動畫；為避免 `[hidden]{display:none}` 與自訂 `display` 的特異度衝突，本設計一律改用 class。
-2. **檢視切換／結果重繪**：`render.js` 重繪 `#results` 後加 `view-enter` class，`animationend` 後移除（或下次重繪前清除），觸發整區交叉淡入。其餘全在 CSS。
+1. **少數 `hidden` 屬性 → class**（`[hidden]{display:none}` 特異度低，會與自訂 `display` 衝突，故凡需動畫者一律改用 class，僅改可見性寫法、不改邏輯）：
+   - `#askHistDrawer`：`ask.js` `openHistory`/`closeHistory` 改用 `classList.add/remove("open")`；Escape 判斷 `!drawer.hidden` → `drawer.classList.contains("open")`；HTML 移除 `hidden`。
+   - `#modalSummary`：`modal.js` `msum.hidden = true/false` → `msum.classList.toggle("show", …)`；HTML 移除 `hidden`、CSS 移除 `.modal-summary[hidden]` 規則。
+   - `#clearFilters`：`render.js` `updateViewBar()` 的 `cf.hidden = !n` → `cf.classList.toggle("show", !!n)`；HTML 移除 `hidden`。
+2. **一次性進場 helper**（共用）：新增 `animEnter(el)`（remove class → 強制 reflow → add class → `animationend` once 移除），匯出供下列呼叫：
+   - 檢視切換：`main.js` view-switch onclick，`paintResults(false)` 後 `animEnter($("#results"))`。
+   - 分組依據：`main.js` `#groupBy` onchange，重繪後 `animEnter($("#results"))`。
+   - 表頭排序：`render.js` `doSort()`，`paintResults(false)` 後 `animEnter($("#results"))`。
+   - 模式切換：`main.js` `applyMode()`，進入問答 `animEnter($("#askPanel"))`；切回檢索（重繪後）`animEnter($("#results"))`。隱藏側仍用既有 `hidden`（瞬間）。
+3. 其餘（modal 開關、抽屜滑動、篩選/來源展開、更多片段揭露）**全在 CSS**，JS 維持既有 class 切換不動。
 
 ## 五、驗證
 

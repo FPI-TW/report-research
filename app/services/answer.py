@@ -263,7 +263,7 @@ async def answer_question(
 
     if not in_domain:  # 離題：直接拒答，不跑主 LLM（順帶省 ~100s 延遲）
         yield ("sources", [])
-        yield ("token", OFF_TOPIC_MESSAGE)
+        yield ("notice", OFF_TOPIC_MESSAGE)  # 專用事件：前端以提示卡渲染，非一般答案
         await _log_qa(
             question, OFF_TOPIC_MESSAGE, [], filters,
             int((time.monotonic() - started) * 1000),

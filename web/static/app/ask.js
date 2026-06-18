@@ -49,6 +49,17 @@ function thinking() {
 }
 function fail(msg) { $("#askAnswer").textContent = msg; }
 
+// 離題拒答：以提示卡渲染（非一般答案泡泡）
+function paintNotice(msg) {
+  $("#askAnswer").innerHTML = html`<div class="ask-notice">
+      <span class="ask-notice-icon" aria-hidden="true">i</span>
+      <div class="ask-notice-main">
+        <div class="ask-notice-title">無法回答此問題</div>
+        <div class="ask-notice-body">${msg}</div>
+      </div>
+    </div>`;
+}
+
 // textarea 隨內容增高（上限交給 CSS max-height + overflow）
 function autoGrow(el) {
   el.style.height = "auto";
@@ -105,6 +116,7 @@ export async function askQuestion() {
   toBottom();
   let answer = "";
   let started = false;
+  let notice = false;
   try {
     const resp = await fetch("/api/ask", {
       method: "POST",
@@ -142,6 +154,10 @@ export async function askQuestion() {
           const stick = nearBottom();
           paintAnswer(answer, true);
           if (stick) toBottom();
+        } else if (evt.event === "notice") {
+          notice = true; started = true;    // 離題提示卡：跳過收尾的 paintAnswer
+          paintNotice(evt.data);
+          toBottom();
         } else if (evt.event === "error") {
           fail("問答服務發生錯誤，請稍後再試。");
           return;
@@ -149,7 +165,7 @@ export async function askQuestion() {
       }
     }
     if (my === state.askReq) {
-      paintAnswer(answer, false);   // 收尾：去掉游標
+      if (!notice) paintAnswer(answer, false);   // 收尾：去掉游標（離題卡不可被覆寫）
       if (!started) fail("沒有取得回答，請稍後再試。");
     }
   } catch (e) {

@@ -485,6 +485,17 @@
   .ask-thinking .spin { width: 16px; height: 16px; border-radius: 50%;
     border: 2px solid var(--sep); border-top-color: var(--blue); animation: spin .8s linear infinite; }
 
+  /* 離題拒答提示卡（取代一般答案泡泡）*/
+  .ask-notice { display: flex; align-items: flex-start; gap: 11px; padding: 13px 15px;
+    background: var(--fill); border: .5px solid var(--sep); border-left: 3px solid var(--amber);
+    border-radius: 12px; }
+  .ask-notice-icon { flex: none; width: 19px; height: 19px; margin-top: 1px; border-radius: 50%;
+    background: var(--amber); color: #fff; display: grid; place-items: center;
+    font: italic 700 12px/1 ui-serif, Georgia, "Times New Roman", serif; }
+  .ask-notice-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .ask-notice-title { font-size: 14.5px; font-weight: 700; color: var(--label); }
+  .ask-notice-body { font-size: 14px; line-height: 1.7; color: var(--label-2); }
+
   /* 引用來源清單（接在回答之後）*/
   .ask-sources { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
   .ask-sources:empty { display: none; }

@@ -241,7 +241,7 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             self._restore(ans, orig)
 
         kinds = [k for k, _ in events]
-        self.assertEqual(kinds, ["sources", "token", "done"])
+        self.assertEqual(kinds, ["sources", "notice", "done"])  # notice：前端以提示卡渲染
         self.assertEqual(events[0][1], [])  # 離題不顯示任何來源
         self.assertEqual(events[1][1], ans.OFF_TOPIC_MESSAGE)
         self.assertEqual(events[2][1], {"cited": []})

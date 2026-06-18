@@ -510,7 +510,8 @@
   .ask-act-src { margin-left: auto; }            /* 資料來源推到最右側 */
   .ask-act-count { color: var(--label-3); font-variant-numeric: tabular-nums; }
   .ask-chevron { transition: transform .15s ease; }
-  .ask-act-src[aria-expanded="true"] .ask-chevron { transform: rotate(90deg); }
+  .ask-act-src[aria-expanded="true"] .ask-chevron,
+  .ask-act-extsrc[aria-expanded="true"] .ask-chevron { transform: rotate(90deg); }
 
   /* 引用來源清單（預設收合，點「資料來源」才展開）*/
   .ask-sources { display: none; flex-direction: column; gap: 8px; margin-top: 8px; }

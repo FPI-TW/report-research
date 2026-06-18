@@ -265,7 +265,7 @@ export async function askQuestion() {
           sources = evt.data || [];
           paintSources(sources);
         } else if (evt.event === "ext_sources") {
-          extSources = evt.data || [];
+          extSources = (evt.data || []).filter(s => s && safeHttp(s.url));
           paintExtSources(extSources);
         } else if (evt.event === "token") {
           started = true;

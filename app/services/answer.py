@@ -238,11 +238,16 @@ def cited_report_ids(answer: str, sources: list[Source]) -> list[str]:
 
 
 def history_item(row) -> dict:
-    """qa_log 一列 (id, question, answer, created_at, feedback, sources) → 前端用 dict。
+    """qa_log 一列 → 前端用 dict。
 
-    sources 為 None（舊列）時回 []；created_at 轉 ISO 字串。
+    相容舊列（無 ext_sources）與新列；sources/ext_sources 為 None 時回 []。
+    created_at 轉 ISO 字串。
     """
-    id_, question, answer, created_at, feedback, sources = row
+    if len(row) >= 7:
+        id_, question, answer, created_at, feedback, sources, ext_sources = row[:7]
+    else:
+        id_, question, answer, created_at, feedback, sources = row[:6]
+        ext_sources = None
     created = created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
     return {
         "id": str(id_),
@@ -251,6 +256,7 @@ def history_item(row) -> dict:
         "created_at": created,
         "feedback": feedback,
         "sources": sources or [],
+        "ext_sources": ext_sources or [],
     }
 
 
@@ -261,20 +267,22 @@ async def _log_qa(
     filters: dict,
     latency_ms: int,
     sources: list[dict],
+    ext_sources: list[dict] | None = None,
 ) -> str:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
     回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
-    sources 為當時完整來源（含編號），供歷史重現可點 [n]。
+    sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
     """
     qa_id = str(uuid.uuid4())
+    ext_sources = ext_sources or []
     try:
         async with SessionFactory() as session:
             await session.execute(
                 text(
                     "INSERT INTO research.qa_log "
-                    "(id, question, answer, cited_report_ids, filters, latency_ms, sources) "
-                    "VALUES (:id, :q, :a, :cited, :filters, :lat, :sources)"
+                    "(id, question, answer, cited_report_ids, filters, latency_ms, sources, ext_sources) "
+                    "VALUES (:id, :q, :a, :cited, :filters, :lat, :sources, :ext_sources)"
                 ),
                 {
                     "id": qa_id,
@@ -284,6 +292,7 @@ async def _log_qa(
                     "filters": json.dumps(filters, ensure_ascii=False),  # jsonb
                     "lat": latency_ms,
                     "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
+                    "ext_sources": json.dumps(ext_sources, ensure_ascii=False),  # jsonb
                 },
             )
             await session.commit()
@@ -358,7 +367,7 @@ async def answer_question(
         yield ("notice", OFF_TOPIC_MESSAGE)  # 專用事件：前端以提示卡渲染，非一般答案
         await _log_qa(
             question, OFF_TOPIC_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000), []
+            int((time.monotonic() - started) * 1000), [], []
         )
         yield ("done", {"cited": []})
         return
@@ -371,7 +380,7 @@ async def answer_question(
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
             question, NO_CONTEXT_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000), []
+            int((time.monotonic() - started) * 1000), [], []
         )
         yield ("done", {"cited": [], "qa_id": qa_id})
         return
@@ -412,6 +421,6 @@ async def answer_question(
     yield ("ext_sources", ext_sources)
     qa_id = await _log_qa(
         question, body, cited, filters,
-        int((time.monotonic() - started) * 1000), [asdict(s) for s in sources]
+        int((time.monotonic() - started) * 1000), [asdict(s) for s in sources], ext_sources
     )
     yield ("done", {"cited": cited, "qa_id": qa_id})

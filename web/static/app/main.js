@@ -41,6 +41,7 @@ $$(".view-switch button").forEach(b => b.onclick = () => {
   if (state.view === b.dataset.view) return;
   // 依分頁前後決定平移方向：往右分頁→新面板從右滑入，往左→從左
   const dir = VIEWS.indexOf(b.dataset.view) > VIEWS.indexOf(state.view) ? "right" : "left";
+  groupDd?.close(false);   // 切離列表時收起自訂下拉，避免回切後殘留展開狀態
   state.view = b.dataset.view;
   try { localStorage.setItem("rm_view", state.view); } catch (e) {}
   syncURL();
@@ -75,6 +76,7 @@ function applyMode(mode) {
     b.tabIndex = on ? 0 : -1;
   });
   const ask = mode === "ask";
+  if (ask) groupDd?.close(false);   // 問答模式會隱藏頂部工具列，先關掉下拉避免殘留開啟態
   document.body.classList.toggle("ask-mode", ask);   // 觸發聊天式滿版版面（CSS）
   // 問答時：收起側欄搜尋框與範例、隱藏檢索結果區；顯示主區提問面板並聚焦輸入框
   $(".search").hidden = ask;

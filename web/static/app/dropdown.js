@@ -2,7 +2,8 @@
  * 廷豐研報 前端模組：輕量自訂下拉（取代原生 <select>，讓展開的選項清單也能完整客製樣式）。
  * 結構：.gb-select > .gb-trigger(button[aria-haspopup=listbox]) + .gb-menu(ul[role=listbox] > li.gb-opt[role=option])
  * 行為：點選 / Esc / 點外 關閉；Enter·Space·方向鍵·Home·End 鍵盤操作；ARIA 狀態同步。
- * initDropdown(rootSelector, { value, onChange }) → { setValue(v) }（setValue 只更新 UI，不觸發 onChange）。
+ * initDropdown(rootSelector, { value, onChange }) → { setValue(v), close(focusBack?) }
+ * （setValue 只更新 UI，不觸發 onChange）。
  */
 import { $ } from "/static/app/dom.js";
 
@@ -28,12 +29,14 @@ export function initDropdown(rootSel, { value, onChange } = {}) {
     if (fire && onChange) onChange(v);
   }
   function open() {
+    if (isOpen) return;
     isOpen = true;
     menu.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
     (opts.find((o) => o.dataset.value === current) || opts[0])?.focus({ preventScroll: true });
   }
   function close(focusBack = true) {
+    if (!isOpen && menu.hidden) return;
     isOpen = false;
     menu.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
@@ -60,5 +63,8 @@ export function initDropdown(rootSel, { value, onChange } = {}) {
   document.addEventListener("click", (e) => { if (isOpen && !root.contains(e.target)) close(false); });
 
   paint();   // 初始顯示文字＋aria（不觸發 onChange）
-  return { setValue: (v) => setValue(v, false) };
+  return {
+    setValue: (v) => setValue(v, false),
+    close: (focusBack = true) => close(focusBack),
+  };
 }

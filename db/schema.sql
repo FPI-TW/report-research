@@ -89,3 +89,5 @@ CREATE INDEX IF NOT EXISTS idx_qa_log_created_at
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS feedback text;
 -- 當時完整來源（含編號），供歷史重現可點 [n]（冪等補欄）
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS sources jsonb;
+-- 當時外部參考（網搜結果），供歷史重現保留「外部參考」區塊（冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS ext_sources jsonb;

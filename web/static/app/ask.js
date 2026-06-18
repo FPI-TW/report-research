@@ -13,6 +13,7 @@ import { renderMarkdown } from "/static/app/markdown.js";
 
 let sources = [];   // 最近一次提問的來源清單（供 [n] 對應 report_id 與來源卡片）
 let extSources = [];   // 最近一次提問的外部（網路）來源
+let currentAskCtrl = null;   // 進行中的 /api/ask 請求；切歷史/重新提問時主動取消
 
 // SSE frame（event:/data: 兩行）→ { event, data }
 function parseFrame(frame) {
@@ -61,6 +62,15 @@ function paintExtSources(srcs) {
       </span>
       <span class="ask-ext-go">${raw(SVG.ext)}</span>
     </a>`).join("");
+}
+
+function cancelActiveAsk({ bumpReq = false } = {}) {
+  if (bumpReq) state.askReq += 1;   // 讓既有 reader 的 latest-wins 判斷立刻失效
+  if (currentAskCtrl) {
+    currentAskCtrl.abort();
+    currentAskCtrl = null;
+  }
+  $("#askGo").disabled = false;
 }
 
 // 載入側欄歷史問答清單（問答模式常駐，取代原右側抽層）。
@@ -127,16 +137,17 @@ async function deleteHistoryItem(it, btn) {
 
 // 唯讀重現一筆歷史問答（沿用既有渲染；不重打 /api/ask）
 function loadHistoryItem(it) {
+  cancelActiveAsk({ bumpReq: true });   // 停掉舊串流，避免後續 token 覆寫歷史內容
   $("#askPanel").classList.remove("landing");   // 重現歷史 → 非著陸狀態
   $("#askEmpty").hidden = true;
   $("#askQuestion").hidden = false; $("#askQuestion").textContent = it.question;
   $("#askAnswer").hidden = false;
   sources = it.sources || [];
-  extSources = [];
+  extSources = it.ext_sources || [];
   paintSources(sources);
-  paintExtSources([]);
+  paintExtSources(extSources);
   paintAnswer(it.answer || "", false);
-  paintActions(it.id, it.answer || "", sources.length, 0);
+  paintActions(it.id, it.answer || "", sources.length, extSources.length);
   if (it.feedback) {   // 預先高亮當時回饋（可改）
     const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
     const btn = document.querySelector("#askActions " + sel);
@@ -314,8 +325,9 @@ export async function askQuestion() {
   const input = $("#askInput");
   const q = input.value.trim();
   if (!q) return;
+  cancelActiveAsk({ bumpReq: true });
   $("#askPanel").classList.remove("landing");   // 進入對話 → 輸入置底的聊天版面
-  const my = ++state.askReq;   // 最新者勝
+  const my = state.askReq;   // cancelActiveAsk 已先 bump；此請求拿到新的序號
   $("#askGo").disabled = true;
   $("#askEmpty").hidden = true;
   $("#askQuestion").hidden = false;
@@ -333,12 +345,14 @@ export async function askQuestion() {
   let started = false;
   let notice = false;
   let qaId = null;
+  currentAskCtrl = new AbortController();
   try {
     const resp = await fetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // 問答一律檢索全語料：不帶側欄篩選（問答模式側欄已改為歷史清單）
       body: JSON.stringify({ question: q }),
+      signal: currentAskCtrl.signal,
     });
     if (resp.status === 401) { window.location.href = "/login"; return; }
     if (!resp.ok || !resp.body) throw new Error("bad response");
@@ -390,6 +404,7 @@ export async function askQuestion() {
   } catch (e) {
     if (my === state.askReq) fail("查詢逾時或失敗，請稍後再試。");
   } finally {
+    if (my === state.askReq) currentAskCtrl = null;
     if (my === state.askReq) $("#askGo").disabled = false;
   }
 }

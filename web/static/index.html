@@ -598,6 +598,15 @@
   .ask-go:active { transform: scale(.96); }
   .ask-go:disabled { opacity: .55; cursor: default; }
 
+  /* 著陸狀態（尚未提問）：問候語 + 輸入框整組垂直置中、移除底部白色列（像 ChatGPT/Gemini）。
+     送出第一題或載入歷史後移除 .landing → 回到對話可捲 + 輸入置底的聊天版面。 */
+  #askPanel.landing { justify-content: center; }
+  #askPanel.landing .ask-thread { flex: 0 0 auto; overflow: visible; padding-bottom: 4px; }
+  #askPanel.landing .ask-empty { padding: 0 16px 16px; }
+  #askPanel.landing .ask-empty-title { font-size: 26px; }
+  #askPanel.landing .ask-composer { border-top: none; background: transparent;
+    backdrop-filter: none; -webkit-backdrop-filter: none; padding-top: 0; }
+
   /* 手機：不強制滿版高度，改為輸入列 sticky 置底 */
   @media (max-width: 880px) {
     body.ask-mode .content { height: auto; }
@@ -606,6 +615,7 @@
     .ask-thread { overflow: visible; padding: 16px; }
     .ask-composer { position: sticky; bottom: 0;
       padding: 10px 14px max(env(safe-area-inset-bottom), 10px); }
+    #askPanel.landing .ask-composer { position: static; }   /* 著陸狀態不黏底 */
   }
 </style>
 </head>

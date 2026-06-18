@@ -96,6 +96,7 @@ function renderHistory(items) {
 // 唯讀重現一筆歷史問答（沿用既有渲染；不重打 /api/ask）
 function loadHistoryItem(it) {
   closeHistory();
+  $("#askPanel").classList.remove("landing");   // 重現歷史 → 非著陸狀態
   $("#askEmpty").hidden = true;
   $("#askQuestion").hidden = false; $("#askQuestion").textContent = it.question;
   $("#askAnswer").hidden = false;
@@ -280,12 +281,14 @@ export function initAsk() {
   document.addEventListener("keydown", e => {
     if (e.key === "Escape" && !$("#askHistDrawer").hidden) closeHistory();
   });
+  $("#askPanel").classList.add("landing");   // 初始：輸入框置中、無底部白色列
 }
 
 export async function askQuestion() {
   const input = $("#askInput");
   const q = input.value.trim();
   if (!q) return;
+  $("#askPanel").classList.remove("landing");   // 進入對話 → 輸入置底的聊天版面
   const my = ++state.askReq;   // 最新者勝
   $("#askGo").disabled = true;
   $("#askEmpty").hidden = true;

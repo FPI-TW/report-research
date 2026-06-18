@@ -311,6 +311,23 @@ async def record_feedback(qa_id: str, value: str) -> bool:
         return False
 
 
+async def delete_qa(qa_id: str) -> bool:
+    """刪除一列 research.qa_log（使用者清除單筆歷史問答）。
+
+    成功刪除一列回 True；查無此列、qa_id 非合法 UUID 或 DB 異常皆回 False。
+    """
+    try:
+        async with SessionFactory() as session:
+            result = await session.execute(
+                text("DELETE FROM research.qa_log WHERE id = :id"),
+                {"id": qa_id},
+            )
+            await session.commit()
+        return getattr(result, "rowcount", 0) == 1
+    except Exception:
+        return False
+
+
 async def answer_question(
     question: str,
     *,

@@ -38,6 +38,7 @@ load_env_file(Path(__file__).resolve().parents[1] / ".env")
 from app.services.answer import (  # noqa: E402
     OFF_TOPIC_MESSAGE,
     answer_question,
+    delete_qa,
     history_item,
     record_feedback,
 )
@@ -620,6 +621,13 @@ async def history(limit: int = Query(50, ge=1, le=200)):
             )
         ).all()
     return [history_item(tuple(r)) for r in rows]
+
+
+@app.delete("/api/history/{qa_id}")
+async def delete_history(qa_id: str):
+    """刪除單筆問答歷史（使用者清除側欄某一列）。回 {"ok": bool}。"""
+    ok = await delete_qa(qa_id)
+    return {"ok": ok}
 
 
 async def _fetch_report(session, report_id: str):

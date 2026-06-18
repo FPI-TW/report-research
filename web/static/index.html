@@ -496,9 +496,25 @@
   .ask-notice-title { font-size: 14.5px; font-weight: 700; color: var(--label); }
   .ask-notice-body { font-size: 14px; line-height: 1.7; color: var(--label-2); }
 
-  /* 引用來源清單（接在回答之後）*/
-  .ask-sources { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-  .ask-sources:empty { display: none; }
+  /* 回答動作列（ChatGPT 式）：讚/倒讚/複製 + 資料來源切換 */
+  .ask-actions { display: flex; align-items: center; gap: 3px; margin-top: 9px; }
+  .ask-actions[hidden] { display: none; }
+  .ask-act { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px;
+    background: none; border: none; border-radius: 7px; cursor: pointer; color: var(--label-3);
+    font-family: inherit; font-size: 13px; transition: background .12s, color .12s; }
+  .ask-act:hover { background: var(--fill); color: var(--label-2); }
+  .ask-act svg { width: 16px; height: 16px; display: block; }
+  .ask-act.on { color: var(--blue); }
+  .ask-act[data-act="dislike"].on { color: var(--red); }
+  .ask-act.copied { color: var(--green); }
+  .ask-act-src { margin-left: auto; }            /* 資料來源推到最右側 */
+  .ask-act-count { color: var(--label-3); font-variant-numeric: tabular-nums; }
+  .ask-chevron { transition: transform .15s ease; }
+  .ask-act-src[aria-expanded="true"] .ask-chevron { transform: rotate(90deg); }
+
+  /* 引用來源清單（預設收合，點「資料來源」才展開）*/
+  .ask-sources { display: none; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .ask-sources.open { display: flex; }
   .ask-src-title { font-size: 12px; font-weight: 700; color: var(--label-3); letter-spacing: .04em; }
   .ask-src { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
     background: var(--card); border: .5px solid var(--sep); border-radius: var(--radius-sm);
@@ -645,6 +661,7 @@
               </div>
               <div class="ask-msg-user" id="askQuestion" hidden></div>
               <div class="ask-msg-bot" id="askAnswer" aria-live="polite" hidden></div>
+              <div class="ask-actions" id="askActions" hidden></div>
               <div class="ask-sources" id="askSources"></div>
             </div>
           </div>

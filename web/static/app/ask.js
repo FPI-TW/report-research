@@ -60,6 +60,82 @@ function paintNotice(msg) {
     </div>`;
 }
 
+// 動作列圖示（inline SVG，非 emoji）
+const SVG = {
+  up: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.3a2 2 0 0 0 2-1.7l1.4-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>`,
+  down: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.7a2 2 0 0 0-2 1.7l-1.4 9a2 2 0 0 0 2 2.3zm7-13h2.7A2.3 2.3 0 0 1 22 4v7a2.3 2.3 0 0 1-2.3 2H17"/></svg>`,
+  copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  chev: `<svg class="ask-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>`,
+};
+
+// 重設動作列 + 收合來源（每次新提問）
+function resetActions() {
+  const a = $("#askActions");
+  a.innerHTML = ""; a.hidden = true;
+  $("#askSources").classList.remove("open");
+}
+
+// 回答完成後的 ChatGPT 式動作列：讚/倒讚/複製 +（有來源時）資料來源切換
+function paintActions(qaId, answerText, srcCount) {
+  const el = $("#askActions");
+  const srcBtn = srcCount
+    ? html`<button class="ask-act ask-act-src" data-act="sources" type="button"
+        aria-expanded="false" aria-controls="askSources">
+        ${raw(SVG.chev)}資料來源 <span class="ask-act-count">${String(srcCount)}</span>
+      </button>`
+    : raw("");
+  el.innerHTML = html`<button class="ask-act" data-act="like" type="button" title="有幫助" aria-label="讚">${raw(SVG.up)}</button>
+    <button class="ask-act" data-act="dislike" type="button" title="沒幫助" aria-label="倒讚">${raw(SVG.down)}</button>
+    <button class="ask-act" data-act="copy" type="button" title="複製回答" aria-label="複製回答">${raw(SVG.copy)}</button>
+    ${srcBtn}`;
+  el.hidden = false;
+  el.querySelectorAll(".ask-act").forEach(b => {
+    b.onclick = () => onAction(b, qaId, answerText, el);
+  });
+}
+
+function onAction(btn, qaId, answerText, bar) {
+  const act = btn.dataset.act;
+  if (act === "like" || act === "dislike") sendFeedback(qaId, act, bar, btn);
+  else if (act === "copy") copyText(answerText, btn);
+  else if (act === "sources") toggleSources(btn);
+}
+
+async function sendFeedback(qaId, value, bar, btn) {
+  if (!qaId) return;
+  // 讚/倒讚互斥：點選者亮起、另一者熄滅
+  bar.querySelectorAll("[data-act='like'],[data-act='dislike']")
+    .forEach(b => b.classList.toggle("on", b === btn));
+  try {
+    await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ qa_id: qaId, value }),
+    });
+  } catch (e) { /* 回饋失敗不打擾使用者 */ }
+}
+
+function copyText(text, btn) {
+  const ok = () => { btn.classList.add("copied"); setTimeout(() => btn.classList.remove("copied"), 1200); };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(ok).catch(() => fallbackCopy(text, ok));
+  } else { fallbackCopy(text, ok); }
+}
+function fallbackCopy(text, ok) {   // 非安全脈絡（http LAN）的後備複製
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand("copy"); ok(); } catch (e) { /* ignore */ }
+  document.body.removeChild(ta);
+}
+
+function toggleSources(btn) {
+  const open = $("#askSources").classList.toggle("open");
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  btn.classList.toggle("on", open);
+  if (open && nearBottom()) toBottom();
+}
+
 // textarea 隨內容增高（上限交給 CSS max-height + overflow）
 function autoGrow(el) {
   el.style.height = "auto";
@@ -112,11 +188,13 @@ export async function askQuestion() {
   input.value = ""; autoGrow(input);
   sources = [];
   paintSources([]);
+  resetActions();
   thinking();
   toBottom();
   let answer = "";
   let started = false;
   let notice = false;
+  let qaId = null;
   try {
     const resp = await fetch("/api/ask", {
       method: "POST",
@@ -158,6 +236,8 @@ export async function askQuestion() {
           notice = true; started = true;    // 離題提示卡：跳過收尾的 paintAnswer
           paintNotice(evt.data);
           toBottom();
+        } else if (evt.event === "done") {
+          qaId = (evt.data && evt.data.qa_id) || null;   // 供回饋掛載
         } else if (evt.event === "error") {
           fail("問答服務發生錯誤，請稍後再試。");
           return;
@@ -167,6 +247,7 @@ export async function askQuestion() {
     if (my === state.askReq) {
       if (!notice) paintAnswer(answer, false);   // 收尾：去掉游標（離題卡不可被覆寫）
       if (!started) fail("沒有取得回答，請稍後再試。");
+      else if (!notice) paintActions(qaId, answer, sources.length);  // 動作列（離題卡不顯示）
     }
   } catch (e) {
     if (my === state.askReq) fail("查詢逾時或失敗，請稍後再試。");

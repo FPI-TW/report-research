@@ -212,8 +212,12 @@ async def _log_qa(
     cited: list[str],
     filters: dict,
     latency_ms: int,
-) -> None:
-    """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。"""
+) -> str:
+    """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
+
+    回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
+    """
+    qa_id = str(uuid.uuid4())
     try:
         async with SessionFactory() as session:
             await session.execute(
@@ -223,7 +227,7 @@ async def _log_qa(
                     "VALUES (:id, :q, :a, :cited, :filters, :lat)"
                 ),
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": qa_id,
                     "q": question,
                     "a": answer,
                     "cited": cited,  # uuid[]：asyncpg 由欄位型別推斷，傳 list[str]
@@ -234,6 +238,26 @@ async def _log_qa(
             await session.commit()
     except Exception:
         pass
+    return qa_id
+
+
+async def record_feedback(qa_id: str, value: str) -> bool:
+    """記錄使用者對某次回答的讚/倒讚到 research.qa_log.feedback。
+
+    value 限 'like'/'dislike'；其餘回 False。寫入失敗（含 DB 異常）回 False。
+    """
+    if value not in ("like", "dislike"):
+        return False
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text("UPDATE research.qa_log SET feedback = :v WHERE id = :id"),
+                {"v": value, "id": qa_id},
+            )
+            await session.commit()
+        return True
+    except Exception:
+        return False
 
 
 async def answer_question(
@@ -277,11 +301,11 @@ async def answer_question(
 
     if not context:
         yield ("token", NO_CONTEXT_MESSAGE)
-        await _log_qa(
+        qa_id = await _log_qa(
             question, NO_CONTEXT_MESSAGE, [], filters,
             int((time.monotonic() - started) * 1000),
         )
-        yield ("done", {"cited": []})
+        yield ("done", {"cited": [], "qa_id": qa_id})
         return
 
     user_prompt = build_user_prompt(question, context)
@@ -292,8 +316,8 @@ async def answer_question(
 
     answer = "".join(parts)
     cited = cited_report_ids(answer, sources)
-    await _log_qa(
+    qa_id = await _log_qa(
         question, answer, cited, filters,
         int((time.monotonic() - started) * 1000),
     )
-    yield ("done", {"cited": cited})
+    yield ("done", {"cited": cited, "qa_id": qa_id})

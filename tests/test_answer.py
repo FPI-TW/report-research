@@ -263,8 +263,19 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kinds[0], "sources")
         self.assertTrue(len(events[0][1]) >= 1)  # 有來源
         self.assertIn(("token", "答案[1]"), events)
-        self.assertEqual(events[-1], ("done", {"cited": ["r1"]}))
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(events[-1][1]["cited"], ["r1"])
+        self.assertIn("qa_id", events[-1][1])  # done 帶 qa_id 供前端掛回饋
         self.assertTrue(called["llm"])  # 有跑主 LLM
+
+
+class FeedbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invalid_value_rejected_without_db(self):
+        # 非 like/dislike 一律 False，且不觸碰 DB（純驗證分支）
+        from app.services.answer import record_feedback
+
+        self.assertFalse(await record_feedback("any-id", "love"))
+        self.assertFalse(await record_feedback("any-id", ""))
 
 
 if __name__ == "__main__":

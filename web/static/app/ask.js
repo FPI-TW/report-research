@@ -11,6 +11,7 @@ import { openFull } from "/static/app/modal.js";
 import { renderMarkdown } from "/static/app/markdown.js";
 
 let sources = [];   // 最近一次提問的來源清單（供 [n] 對應 report_id 與來源卡片）
+let extSources = [];   // 最近一次提問的外部（網路）來源
 
 // SSE frame（event:/data: 兩行）→ { event, data }
 function parseFrame(frame) {
@@ -43,11 +44,198 @@ function paintSources(srcs) {
   el.querySelectorAll(".ask-src").forEach(b => b.onclick = () => openFull(b.dataset.id));
 }
 
+function safeHttp(u) { return typeof u === "string" && /^https?:\/\//i.test(u); }
+function domainOf(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return u; } }
+
+function paintExtSources(srcs) {
+  const el = $("#askExtSources");
+  const list = (srcs || []).filter(s => safeHttp(s.url));
+  if (!list.length) { el.innerHTML = ""; return; }
+  el.innerHTML = html`<div class="ask-src-title">外部參考</div>` + list.map(s => html`
+    <a class="ask-ext" href="${s.url}" target="_blank" rel="noopener noreferrer">
+      <span class="ask-ext-badge">網路</span>
+      <span class="ask-ext-main">
+        <span class="ask-ext-title">${s.title || s.url}</span>
+        <span class="ask-ext-url">${domainOf(s.url)}</span>
+      </span>
+      <span class="ask-ext-go">${raw(SVG.ext)}</span>
+    </a>`).join("");
+}
+
+async function openHistory() {
+  const drawer = $("#askHistDrawer");
+  const list = $("#askHistList");
+  drawer.hidden = false;
+  list.innerHTML = `<div class="ask-hist-empty">載入中…</div>`;
+  try {
+    const resp = await fetch("/api/history?limit=50");
+    if (resp.status === 401) { window.location.href = "/login"; return; }
+    if (!resp.ok) throw new Error("bad");
+    renderHistory(await resp.json());
+  } catch (e) {
+    list.innerHTML = `<div class="ask-hist-empty">載入失敗，請稍後再試。</div>`;
+  }
+}
+function closeHistory() { $("#askHistDrawer").hidden = true; }
+
+function renderHistory(items) {
+  const list = $("#askHistList");
+  if (!items.length) { list.innerHTML = `<div class="ask-hist-empty">尚無歷史問答</div>`; return; }
+  list.innerHTML = items.map((it, i) => html`<button class="ask-hist-item" type="button" data-i="${String(i)}">
+      <span class="ask-hist-q">${it.question}</span>
+      <span class="ask-hist-meta">
+        ${it.created_at ? html`<span class="ask-hist-date">${fmtDate((it.created_at || "").slice(0, 10))}</span>` : raw("")}
+        ${it.feedback === "like" ? html`<span class="ask-hist-fb like">讚</span>`
+          : it.feedback === "dislike" ? html`<span class="ask-hist-fb dislike">倒讚</span>` : raw("")}
+      </span>
+    </button>`).join("");
+  list.querySelectorAll(".ask-hist-item").forEach(b =>
+    b.onclick = () => loadHistoryItem(items[parseInt(b.dataset.i, 10)]));
+}
+
+// 唯讀重現一筆歷史問答（沿用既有渲染；不重打 /api/ask）
+function loadHistoryItem(it) {
+  closeHistory();
+  $("#askPanel").classList.remove("landing");   // 重現歷史 → 非著陸狀態
+  $("#askEmpty").hidden = true;
+  $("#askQuestion").hidden = false; $("#askQuestion").textContent = it.question;
+  $("#askAnswer").hidden = false;
+  sources = it.sources || [];
+  extSources = [];
+  paintSources(sources);
+  paintExtSources([]);
+  paintAnswer(it.answer || "", false);
+  paintActions(it.id, it.answer || "", sources.length, 0);
+  if (it.feedback) {   // 預先高亮當時回饋（可改）
+    const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
+    const btn = document.querySelector("#askActions " + sel);
+    if (btn) btn.classList.add("on");
+  }
+  toBottom();
+}
+
 function thinking() {
   $("#askAnswer").innerHTML =
     `<span class="ask-thinking"><span class="spin"></span>檢索研報並思考中…</span>`;
 }
+// 模型開始上網搜尋時顯示「正在搜尋網路…」。
+// 思考階段（尚無答案）→ 取代指示文字；已在串流答案中途搜尋 → 在末尾附一個臨時指示
+//（下一個 token 的 paintAnswer 會重繪而自動清掉）。
+function searchingWeb() {
+  const el = $("#askAnswer");
+  if (el.querySelector(".ask-thinking") && !el.querySelector(".ask-searching-inline")) {
+    el.innerHTML = `<span class="ask-thinking"><span class="spin"></span>正在搜尋網路補充最新資料…</span>`;
+  } else if (!el.querySelector(".ask-searching-inline")) {
+    el.insertAdjacentHTML("beforeend",
+      `<span class="ask-thinking ask-searching-inline"><span class="spin"></span>正在搜尋網路補充最新資料…</span>`);
+    if (nearBottom()) toBottom();
+  }
+}
 function fail(msg) { $("#askAnswer").textContent = msg; }
+
+// 離題拒答：以提示卡渲染（非一般答案泡泡）
+function paintNotice(msg) {
+  $("#askAnswer").innerHTML = html`<div class="ask-notice">
+      <span class="ask-notice-icon" aria-hidden="true">i</span>
+      <div class="ask-notice-main">
+        <div class="ask-notice-title">無法回答此問題</div>
+        <div class="ask-notice-body">${msg}</div>
+      </div>
+    </div>`;
+}
+
+// 動作列圖示（inline SVG，非 emoji）
+const SVG = {
+  up: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.3a2 2 0 0 0 2-1.7l1.4-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>`,
+  down: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.7a2 2 0 0 0-2 1.7l-1.4 9a2 2 0 0 0 2 2.3zm7-13h2.7A2.3 2.3 0 0 1 22 4v7a2.3 2.3 0 0 1-2.3 2H17"/></svg>`,
+  copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  chev: `<svg class="ask-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>`,
+  ext: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
+};
+
+// 重設動作列 + 收合來源（每次新提問）
+function resetActions() {
+  const a = $("#askActions");
+  a.innerHTML = ""; a.hidden = true;
+  $("#askSources").classList.remove("open");
+  $("#askExtSources").classList.remove("open");
+  $("#askExtSources").innerHTML = "";
+}
+
+// 回答完成後的 ChatGPT 式動作列：讚/倒讚/複製 +（有來源時）資料來源切換
+function paintActions(qaId, answerText, srcCount, extCount) {
+  const el = $("#askActions");
+  const srcBtn = srcCount
+    ? html`<button class="ask-act ask-act-src" data-act="sources" type="button"
+        aria-expanded="false" aria-controls="askSources">
+        ${raw(SVG.chev)}資料來源 <span class="ask-act-count">${String(srcCount)}</span>
+      </button>`
+    : raw("");
+  const extBtn = extCount
+    ? html`<button class="ask-act ask-act-extsrc" data-act="ext" type="button"
+        aria-expanded="false" aria-controls="askExtSources">
+        ${raw(SVG.chev)}外部參考 <span class="ask-act-count">${String(extCount)}</span>
+      </button>`
+    : raw("");
+  el.innerHTML = html`<button class="ask-act" data-act="like" type="button" title="有幫助" aria-label="讚">${raw(SVG.up)}</button>
+    <button class="ask-act" data-act="dislike" type="button" title="沒幫助" aria-label="倒讚">${raw(SVG.down)}</button>
+    <button class="ask-act" data-act="copy" type="button" title="複製回答" aria-label="複製回答">${raw(SVG.copy)}</button>
+    ${srcBtn}${extBtn}`;
+  el.hidden = false;
+  el.querySelectorAll(".ask-act").forEach(b => {
+    b.onclick = () => onAction(b, qaId, answerText, el);
+  });
+}
+
+function onAction(btn, qaId, answerText, bar) {
+  const act = btn.dataset.act;
+  if (act === "like" || act === "dislike") sendFeedback(qaId, act, bar, btn);
+  else if (act === "copy") copyText(answerText, btn);
+  else if (act === "sources") toggleSources(btn);
+  else if (act === "ext") toggleExt(btn);
+}
+
+async function sendFeedback(qaId, value, bar, btn) {
+  if (!qaId) return;
+  // 讚/倒讚互斥：點選者亮起、另一者熄滅
+  bar.querySelectorAll("[data-act='like'],[data-act='dislike']")
+    .forEach(b => b.classList.toggle("on", b === btn));
+  try {
+    await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ qa_id: qaId, value }),
+    });
+  } catch (e) { /* 回饋失敗不打擾使用者 */ }
+}
+
+function copyText(text, btn) {
+  const ok = () => { btn.classList.add("copied"); setTimeout(() => btn.classList.remove("copied"), 1200); };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(ok).catch(() => fallbackCopy(text, ok));
+  } else { fallbackCopy(text, ok); }
+}
+function fallbackCopy(text, ok) {   // 非安全脈絡（http LAN）的後備複製
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand("copy"); ok(); } catch (e) { /* ignore */ }
+  document.body.removeChild(ta);
+}
+
+function toggleSources(btn) {
+  const open = $("#askSources").classList.toggle("open");
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  btn.classList.toggle("on", open);
+  if (open && nearBottom()) toBottom();
+}
+
+function toggleExt(btn) {
+  const open = $("#askExtSources").classList.toggle("open");
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  btn.classList.toggle("on", open);
+  if (open && nearBottom()) toBottom();
+}
 
 // textarea 隨內容增高（上限交給 CSS max-height + overflow）
 function autoGrow(el) {
@@ -86,12 +274,21 @@ export function initAsk() {
       e.preventDefault(); openCite(e.target);
     }
   });
+
+  $("#askHistBtn").onclick = openHistory;
+  $("#askHistClose").onclick = closeHistory;
+  $("#askHistBackdrop").onclick = closeHistory;
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !$("#askHistDrawer").hidden) closeHistory();
+  });
+  $("#askPanel").classList.add("landing");   // 初始：輸入框置中、無底部白色列
 }
 
 export async function askQuestion() {
   const input = $("#askInput");
   const q = input.value.trim();
   if (!q) return;
+  $("#askPanel").classList.remove("landing");   // 進入對話 → 輸入置底的聊天版面
   const my = ++state.askReq;   // 最新者勝
   $("#askGo").disabled = true;
   $("#askEmpty").hidden = true;
@@ -100,11 +297,16 @@ export async function askQuestion() {
   $("#askAnswer").hidden = false;
   input.value = ""; autoGrow(input);
   sources = [];
+  extSources = [];
   paintSources([]);
+  paintExtSources([]);
+  resetActions();
   thinking();
   toBottom();
   let answer = "";
   let started = false;
+  let notice = false;
+  let qaId = null;
   try {
     const resp = await fetch("/api/ask", {
       method: "POST",
@@ -136,12 +338,23 @@ export async function askQuestion() {
         if (evt.event === "sources") {
           sources = evt.data || [];
           paintSources(sources);
+        } else if (evt.event === "status") {
+          if (evt.data === "searching_web") searchingWeb();
+        } else if (evt.event === "ext_sources") {
+          extSources = (evt.data || []).filter(s => s && safeHttp(s.url));
+          paintExtSources(extSources);
         } else if (evt.event === "token") {
           started = true;
           answer += evt.data;
           const stick = nearBottom();
           paintAnswer(answer, true);
           if (stick) toBottom();
+        } else if (evt.event === "notice") {
+          notice = true; started = true;    // 離題提示卡：跳過收尾的 paintAnswer
+          paintNotice(evt.data);
+          toBottom();
+        } else if (evt.event === "done") {
+          qaId = (evt.data && evt.data.qa_id) || null;   // 供回饋掛載
         } else if (evt.event === "error") {
           fail("問答服務發生錯誤，請稍後再試。");
           return;
@@ -149,8 +362,9 @@ export async function askQuestion() {
       }
     }
     if (my === state.askReq) {
-      paintAnswer(answer, false);   // 收尾：去掉游標
+      if (!notice) paintAnswer(answer, false);   // 收尾：去掉游標（離題卡不可被覆寫）
       if (!started) fail("沒有取得回答，請稍後再試。");
+      else if (!notice) paintActions(qaId, answer, sources.length, extSources.length);  // 動作列（離題卡不顯示）
     }
   } catch (e) {
     if (my === state.askReq) fail("查詢逾時或失敗，請稍後再試。");

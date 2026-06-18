@@ -85,3 +85,7 @@ CREATE TABLE IF NOT EXISTS research.qa_log (
 );
 CREATE INDEX IF NOT EXISTS idx_qa_log_created_at
     ON research.qa_log (created_at DESC);
+-- 使用者對回答的回饋：'like' / 'dislike' / NULL（供日後調整答題品質；冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS feedback text;
+-- 當時完整來源（含編號），供歷史重現可點 [n]（冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS sources jsonb;

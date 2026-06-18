@@ -67,7 +67,6 @@
     border-radius: var(--radius-sm); padding: 0 12px; height: 46px;
     box-shadow: var(--shadow); transition: box-shadow .25s;
   }
-  .search-box:focus-within { box-shadow: 0 0 0 4px var(--blue-soft), var(--shadow); }
   .search-box svg { flex: none; color: var(--label-3); }
   #q { border: none; outline: none; background: transparent; flex: 1; min-width: 0;
     font-size: 16px; color: var(--label); font-family: inherit; }
@@ -484,10 +483,85 @@
   .ask-thinking { display: inline-flex; align-items: center; gap: 9px; color: var(--label-3); font-size: 14px; }
   .ask-thinking .spin { width: 16px; height: 16px; border-radius: 50%;
     border: 2px solid var(--sep); border-top-color: var(--blue); animation: spin .8s linear infinite; }
+  .ask-searching-inline { display: flex; margin-top: 10px; }   /* 串流中途搜尋的臨時指示 */
 
-  /* 引用來源清單（接在回答之後）*/
-  .ask-sources { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-  .ask-sources:empty { display: none; }
+  /* 歷史鈕（composer 左側）*/
+  .ask-hist-btn { flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; border: none; border-radius: 50%; cursor: pointer;
+    background: var(--fill); color: var(--label-2); transition: background .12s, color .12s; }
+  .ask-hist-btn:hover { background: #78788022; color: var(--label); }
+  .ask-hist-btn svg { width: 18px; height: 18px; }
+
+  /* 歷史抽層（右側覆蓋）*/
+  .ask-hist-drawer { position: fixed; inset: 0; z-index: 50; }
+  .ask-hist-drawer[hidden] { display: none; }
+  .ask-hist-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.28); }
+  .ask-hist-panel { position: absolute; top: 0; right: 0; height: 100dvh; width: min(420px, 92vw);
+    background: var(--card); box-shadow: -8px 0 30px rgba(0,0,0,.12); display: flex; flex-direction: column;
+    padding: max(env(safe-area-inset-top), 16px) 16px 16px; }
+  .ask-hist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .ask-hist-title { font-size: 17px; font-weight: 700; color: var(--label); }
+  .ask-hist-close { border: none; background: none; cursor: pointer; color: var(--label-3);
+    width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; }
+  .ask-hist-close:hover { background: var(--fill); color: var(--label); }
+  .ask-hist-close svg { width: 18px; height: 18px; }
+  .ask-hist-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .ask-hist-empty { color: var(--label-3); font-size: 14px; text-align: center; padding: 28px 0; }
+  .ask-hist-item { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left;
+    background: var(--fill); border: none; border-radius: 11px; padding: 12px 14px; cursor: pointer;
+    font-family: inherit; color: var(--label); }
+  .ask-hist-item:hover { background: #78788022; }
+  .ask-hist-q { font-size: 14.5px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .ask-hist-meta { display: flex; align-items: center; gap: 8px; }
+  .ask-hist-date { font-size: 12px; color: var(--label-3); }
+  .ask-hist-fb { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; }
+  .ask-hist-fb.like { color: var(--blue); background: var(--blue-soft); }
+  .ask-hist-fb.dislike { color: var(--red); background: #ff3b301f; }
+
+  /* 離題拒答提示卡（取代一般答案泡泡）*/
+  .ask-notice { display: flex; align-items: flex-start; gap: 11px; padding: 13px 15px;
+    background: var(--fill); border: .5px solid var(--sep); border-left: 3px solid var(--amber);
+    border-radius: 12px; }
+  .ask-notice-icon { flex: none; width: 19px; height: 19px; margin-top: 1px; border-radius: 50%;
+    background: var(--amber); color: #fff; display: grid; place-items: center;
+    font: italic 700 12px/1 ui-serif, Georgia, "Times New Roman", serif; }
+  .ask-notice-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .ask-notice-title { font-size: 14.5px; font-weight: 700; color: var(--label); }
+  .ask-notice-body { font-size: 14px; line-height: 1.7; color: var(--label-2); }
+
+  /* 回答動作列（ChatGPT 式）：讚/倒讚/複製 + 資料來源切換 */
+  .ask-actions { display: flex; align-items: center; gap: 3px; margin-top: 9px; }
+  .ask-actions[hidden] { display: none; }
+  .ask-act { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px;
+    background: none; border: none; border-radius: 7px; cursor: pointer; color: var(--label-3);
+    font-family: inherit; font-size: 13px; transition: background .12s, color .12s; }
+  .ask-act:hover { background: var(--fill); color: var(--label-2); }
+  .ask-act svg { width: 16px; height: 16px; display: block; }
+  .ask-act.on { color: var(--blue); }
+  .ask-act[data-act="dislike"].on { color: var(--red); }
+  .ask-act.copied { color: var(--green); }
+  .ask-act-src { margin-left: auto; }            /* 資料來源推到最右側 */
+  .ask-act-count { color: var(--label-3); font-variant-numeric: tabular-nums; }
+  .ask-chevron { transition: transform .15s ease; }
+  .ask-act-src[aria-expanded="true"] .ask-chevron,
+  .ask-act-extsrc[aria-expanded="true"] .ask-chevron { transform: rotate(90deg); }
+
+  /* 引用來源清單（預設收合，點「資料來源」才展開）*/
+  .ask-sources { display: none; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .ask-sources.open { display: flex; }
+  /* 外部（網路）來源卡 */
+  .ask-ext { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: var(--card); border: .5px solid var(--sep); border-radius: var(--radius-sm);
+    padding: 10px 13px; text-decoration: none; color: var(--label); }
+  .ask-ext:hover { background: var(--fill); }
+  .ask-ext-badge { flex: none; font-size: 11px; font-weight: 700; color: var(--amber);
+    border: .5px solid var(--amber); border-radius: 5px; padding: 1px 6px; }
+  .ask-ext-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  .ask-ext-title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ask-ext-url { font-size: 12px; color: var(--label-3); }
+  .ask-ext-go { flex: none; color: var(--label-3); }
+  .ask-ext-go svg { width: 15px; height: 15px; display: block; }
   .ask-src-title { font-size: 12px; font-weight: 700; color: var(--label-3); letter-spacing: .04em; }
   .ask-src { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
     background: var(--card); border: .5px solid var(--sep); border-radius: var(--radius-sm);
@@ -505,23 +579,30 @@
   .ask-src-date { font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; }
 
   /* ───── 置底輸入列（composer）───── */
-  .ask-composer { border-top: .5px solid var(--sep); background: var(--side);
-    backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
-    padding: 14px 24px max(env(safe-area-inset-bottom), 14px); }
-  .ask-composer-inner { max-width: 820px; margin: 0 auto; display: flex; align-items: flex-end; gap: 9px;
-    background: var(--card); border-radius: var(--radius-md); box-shadow: var(--shadow);
-    padding: 6px 6px 6px 16px; transition: box-shadow .25s; }
-  .ask-composer-inner:focus-within { box-shadow: 0 0 0 4px var(--blue-soft), var(--shadow); }
+  .ask-composer { padding: 14px 24px max(env(safe-area-inset-bottom), 14px); }
+  .ask-composer-inner { max-width: 820px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px;
+    background: var(--card); border-radius: 26px; box-shadow: var(--shadow);
+    padding: 6px 6px 6px 8px; transition: box-shadow .25s; }
   .ask-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; resize: none;
     font-family: inherit; font-size: 16px; line-height: 1.6; color: var(--label);
     max-height: 200px; overflow-y: auto; padding: 9px 0; }
   .ask-input::placeholder { color: var(--label-2); }
-  .ask-go { border: none; background: var(--blue); color: #fff; font-size: 15px; font-weight: 600;
-    font-family: inherit; height: 40px; padding: 0 22px; border-radius: 10px; cursor: pointer;
-    flex: none; transition: transform .12s, background .2s, opacity .2s; }
+  .ask-go { border: none; background: var(--blue); color: #fff;
+    font-family: inherit; width: 40px; height: 40px; padding: 0; border-radius: 50%; cursor: pointer;
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    transition: transform .12s, background .2s, opacity .2s; }
+  .ask-go svg { width: 19px; height: 19px; }
   .ask-go:hover { background: var(--blue-press); }
-  .ask-go:active { transform: scale(.96); }
+  .ask-go:active { transform: scale(.92); }
   .ask-go:disabled { opacity: .55; cursor: default; }
+
+  /* 著陸狀態（尚未提問）：問候語 + 輸入框整組垂直置中、移除底部白色列（像 ChatGPT/Gemini）。
+     送出第一題或載入歷史後移除 .landing → 回到對話可捲 + 輸入置底的聊天版面。 */
+  #askPanel.landing { justify-content: center; }
+  #askPanel.landing .ask-thread { flex: 0 0 auto; overflow: visible; padding-bottom: 4px; }
+  #askPanel.landing .ask-empty { padding: 0 16px 16px; }
+  #askPanel.landing .ask-empty-title { font-size: 26px; }
+  #askPanel.landing .ask-composer { padding-top: 0; }
 
   /* 手機：不強制滿版高度，改為輸入列 sticky 置底 */
   @media (max-width: 880px) {
@@ -531,6 +612,7 @@
     .ask-thread { overflow: visible; padding: 16px; }
     .ask-composer { position: sticky; bottom: 0;
       padding: 10px 14px max(env(safe-area-inset-bottom), 10px); }
+    #askPanel.landing .ask-composer { position: static; }   /* 著陸狀態不黏底 */
   }
 </style>
 </head>
@@ -634,15 +716,34 @@
               </div>
               <div class="ask-msg-user" id="askQuestion" hidden></div>
               <div class="ask-msg-bot" id="askAnswer" aria-live="polite" hidden></div>
+              <div class="ask-actions" id="askActions" hidden></div>
               <div class="ask-sources" id="askSources"></div>
+              <div class="ask-sources ask-ext-list" id="askExtSources"></div>
             </div>
           </div>
           <div class="ask-composer">
             <div class="ask-composer-inner">
+              <button class="ask-hist-btn" id="askHistBtn" type="button" title="歷史問答" aria-label="歷史問答">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg>
+              </button>
               <textarea id="askInput" class="ask-input" rows="1"
                 placeholder="輸入你的問題…" aria-label="輸入問題"></textarea>
-              <button class="ask-go" id="askGo" type="button">提問</button>
+              <button class="ask-go" id="askGo" type="button" title="送出" aria-label="送出">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>
+              </button>
             </div>
+          </div>
+          <div class="ask-hist-drawer" id="askHistDrawer" hidden>
+            <div class="ask-hist-backdrop" id="askHistBackdrop"></div>
+            <aside class="ask-hist-panel" role="dialog" aria-modal="true" aria-label="歷史問答">
+              <div class="ask-hist-head">
+                <span class="ask-hist-title">歷史問答</span>
+                <button class="ask-hist-close" id="askHistClose" type="button" aria-label="關閉歷史">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <div class="ask-hist-list" id="askHistList"></div>
+            </aside>
           </div>
         </div>
       </div>

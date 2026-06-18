@@ -19,6 +19,10 @@ from collections.abc import AsyncIterator
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
+# 串流中表示「模型開始呼叫 WebSearch」的控制標記（NUL 包夾，模型文字不可能等於它）。
+# stream_completion 偵測到 WebSearch 工具起點時 yield 此值，供上層顯示「正在搜尋網路」。
+SEARCH_EVENT = "\x00WEBSEARCH\x00"
+
 
 def extract_text_delta(line: str) -> str | None:
     """從一行 stream-json NDJSON 取出文字 delta；非文字事件回 None。
@@ -62,19 +66,30 @@ def is_result_line(line: str) -> bool:
     return isinstance(obj, dict) and obj.get("type") == "result"
 
 
-async def stream_completion(
-    prompt: str,
-    *,
-    model: str = DEFAULT_MODEL,
-    system: str | None = None,
-    timeout: float = 120.0,
-) -> AsyncIterator[str]:
-    """串流呼叫 claude CLI，逐段 yield 回答文字。
+def is_web_search_start(line: str) -> bool:
+    """偵測 WebSearch 工具被呼叫的起點：content_block_start 內 tool_use name=WebSearch。"""
+    line = line.strip()
+    if not line:
+        return False
+    try:
+        obj = json.loads(line)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(obj, dict) or obj.get("type") != "stream_event":
+        return False
+    ev = obj.get("event")
+    if not isinstance(ev, dict) or ev.get("type") != "content_block_start":
+        return False
+    cb = ev.get("content_block")
+    return (
+        isinstance(cb, dict)
+        and cb.get("type") == "tool_use"
+        and cb.get("name") == "WebSearch"
+    )
 
-    prompt 經 stdin 餵入（避開 argv 單參數 128KB 上限 + NUL byte 問題）。
-    逾時則 kill 子程序並結束串流（已 yield 的內容保留）。
-    """
-    prompt = prompt.replace("\x00", "")
+
+def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
+    """組 claude CLI headless 串流指令；allow_web 時加 WebSearch 內建工具。"""
     cmd = [
         "claude",
         "-p",
@@ -87,8 +102,29 @@ async def stream_completion(
         "--verbose",
         "--include-partial-messages",
     ]
+    if allow_web:
+        cmd += ["--allowedTools", "WebSearch"]
     if system:
         cmd += ["--system-prompt", system.replace("\x00", "")]
+    return cmd
+
+
+async def stream_completion(
+    prompt: str,
+    *,
+    model: str = DEFAULT_MODEL,
+    system: str | None = None,
+    timeout: float = 120.0,
+    allow_web: bool = False,
+) -> AsyncIterator[str]:
+    """串流呼叫 claude CLI，逐段 yield 回答文字。
+
+    prompt 經 stdin 餵入（避開 argv 單參數 128KB 上限 + NUL byte 問題）。
+    allow_web 為真時開放內建 WebSearch 工具（供回答補充即時/外部資料）。
+    逾時則 kill 子程序並結束串流（已 yield 的內容保留）。
+    """
+    prompt = prompt.replace("\x00", "")
+    cmd = _build_cmd(model, system, allow_web)
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -108,6 +144,8 @@ async def stream_completion(
             text = extract_text_delta(line)
             if text:
                 yield text
+            elif is_web_search_start(line):
+                yield SEARCH_EVENT  # 上層據此顯示「正在搜尋網路」
             elif is_result_line(line):
                 break
 

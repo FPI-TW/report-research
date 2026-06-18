@@ -35,7 +35,12 @@ from web.env_loader import load_env_file  # noqa: E402
 
 load_env_file(Path(__file__).resolve().parents[1] / ".env")
 
-from app.services.answer import answer_question  # noqa: E402
+from app.services.answer import (  # noqa: E402
+    OFF_TOPIC_MESSAGE,
+    answer_question,
+    history_item,
+    record_feedback,
+)
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.filename import source_display  # noqa: E402
@@ -163,6 +168,11 @@ class AskRequest(BaseModel):
     relates_futures: bool | None = None
     report_type: str | None = None
     k: int = 8
+
+
+class FeedbackRequest(BaseModel):
+    qa_id: str
+    value: str  # 'like' | 'dislike'
 
 
 class ReportListItem(BaseModel):
@@ -583,6 +593,33 @@ async def ask(req: AskRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/feedback")
+async def feedback(req: FeedbackRequest):
+    """記錄使用者對某次回答的讚/倒讚（qa_id 來自 /api/ask 的 done 事件）。"""
+    if req.value not in ("like", "dislike"):
+        raise HTTPException(status_code=400, detail="value 必須是 like 或 dislike")
+    ok = await record_feedback(req.qa_id, req.value)
+    return {"ok": ok}
+
+
+@app.get("/api/history")
+async def history(limit: int = Query(50, ge=1, le=200)):
+    """最近的問答歷史（排除離題拒答）；唯讀，供前端「歷史」抽層。"""
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, question, answer, created_at, feedback, sources "
+                    "FROM research.qa_log "
+                    "WHERE answer IS DISTINCT FROM :offtopic "
+                    "ORDER BY created_at DESC LIMIT :limit"
+                ),
+                {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+            )
+        ).all()
+    return [history_item(tuple(r)) for r in rows]
 
 
 async def _fetch_report(session, report_id: str):

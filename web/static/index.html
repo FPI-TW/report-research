@@ -488,10 +488,10 @@
 
   /* 歷史鈕（composer 左側）*/
   .ask-hist-btn { flex: none; display: inline-flex; align-items: center; justify-content: center;
-    width: 42px; height: 42px; border: none; border-radius: var(--radius-sm); cursor: pointer;
-    background: var(--fill); color: var(--label-2); }
+    width: 40px; height: 40px; border: none; border-radius: 50%; cursor: pointer;
+    background: var(--fill); color: var(--label-2); transition: background .12s, color .12s; }
   .ask-hist-btn:hover { background: #78788022; color: var(--label); }
-  .ask-hist-btn svg { width: 19px; height: 19px; }
+  .ask-hist-btn svg { width: 18px; height: 18px; }
 
   /* 歷史抽層（右側覆蓋）*/
   .ask-hist-drawer { position: fixed; inset: 0; z-index: 50; }
@@ -583,19 +583,21 @@
   .ask-composer { border-top: .5px solid var(--sep); background: var(--side);
     backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
     padding: 14px 24px max(env(safe-area-inset-bottom), 14px); }
-  .ask-composer-inner { max-width: 820px; margin: 0 auto; display: flex; align-items: flex-end; gap: 9px;
-    background: var(--card); border-radius: var(--radius-md); box-shadow: var(--shadow);
-    padding: 6px 6px 6px 16px; transition: box-shadow .25s; }
+  .ask-composer-inner { max-width: 820px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px;
+    background: var(--card); border-radius: 26px; box-shadow: var(--shadow);
+    padding: 6px 6px 6px 8px; transition: box-shadow .25s; }
   .ask-composer-inner:focus-within { box-shadow: 0 0 0 4px var(--blue-soft), var(--shadow); }
   .ask-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; resize: none;
     font-family: inherit; font-size: 16px; line-height: 1.6; color: var(--label);
     max-height: 200px; overflow-y: auto; padding: 9px 0; }
   .ask-input::placeholder { color: var(--label-2); }
-  .ask-go { border: none; background: var(--blue); color: #fff; font-size: 15px; font-weight: 600;
-    font-family: inherit; height: 40px; padding: 0 22px; border-radius: 10px; cursor: pointer;
-    flex: none; transition: transform .12s, background .2s, opacity .2s; }
+  .ask-go { border: none; background: var(--blue); color: #fff;
+    font-family: inherit; width: 40px; height: 40px; padding: 0; border-radius: 50%; cursor: pointer;
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    transition: transform .12s, background .2s, opacity .2s; }
+  .ask-go svg { width: 19px; height: 19px; }
   .ask-go:hover { background: var(--blue-press); }
-  .ask-go:active { transform: scale(.96); }
+  .ask-go:active { transform: scale(.92); }
   .ask-go:disabled { opacity: .55; cursor: default; }
 
   /* 著陸狀態（尚未提問）：問候語 + 輸入框整組垂直置中、移除底部白色列（像 ChatGPT/Gemini）。
@@ -731,7 +733,9 @@
               </button>
               <textarea id="askInput" class="ask-input" rows="1"
                 placeholder="輸入你的問題…" aria-label="輸入問題"></textarea>
-              <button class="ask-go" id="askGo" type="button">提問</button>
+              <button class="ask-go" id="askGo" type="button" title="送出" aria-label="送出">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg>
+              </button>
             </div>
           </div>
           <div class="ask-hist-drawer" id="askHistDrawer" hidden>

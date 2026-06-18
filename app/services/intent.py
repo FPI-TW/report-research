@@ -12,6 +12,7 @@ fail-open：判定失敗/逾時/空回應一律視為在領域內（回 True）�
 from __future__ import annotations
 
 import os
+import re
 
 from app.services.llm import stream_completion
 
@@ -38,12 +39,15 @@ def parse_intent(text: str) -> bool:
     判斷器被要求只輸出 IN 或 OUT；無法判讀時 fail-open 回 True。
     """
     v = text.strip().upper()
-    if v.startswith("OUT"):
+    if v == "OUT":
         return False
-    if v.startswith("IN"):
+    if v == "IN":
         return True
-    # 寬鬆兜底：明確含 OUT 而不含 IN 才判離題；其餘一律放行
-    if "OUT" in v and "IN" not in v:
+    tokens = re.findall(r"[A-Z]+", v)
+    has_out = "OUT" in tokens
+    has_in = "IN" in tokens
+    # 寬鬆兜底：只有明確的獨立 OUT token、且沒有 IN token 才判離題
+    if has_out and not has_in:
         return False
     return True
 

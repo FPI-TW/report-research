@@ -11,6 +11,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.services import llm  # noqa: E402
 from app.services.answer import (  # noqa: E402
     Source,
+    _recency_factor,
     build_context,
     build_user_prompt,
     cited_report_ids,
@@ -170,6 +171,11 @@ class RecencyTests(unittest.TestCase):
         ]
         sources, _ = build_context(scored, now=self.NOW)
         self.assertEqual(sources[0].report_id, "dated")
+
+    def test_non_positive_half_life_does_not_crash(self):
+        self.assertEqual(_recency_factor(date(2026, 6, 17), self.NOW.date(), 0), 1.0)
+        self.assertEqual(_recency_factor(date(2026, 6, 17), self.NOW.date(), -1), 1.0)
+        self.assertEqual(_recency_factor(None, self.NOW.date(), 0), 0.0)
 
 
 class _FakeSession:
@@ -420,6 +426,34 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(await record_feedback("any-id", "love"))
         self.assertFalse(await record_feedback("any-id", ""))
+
+    async def test_missing_row_reports_failure(self):
+        from app.services import answer as ans
+
+        class Result:
+            rowcount = 0
+
+        class Sess:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, *a, **k):
+                return Result()
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: Sess()
+        try:
+            ok = await ans.record_feedback("missing-id", "like")
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertFalse(ok)
 
 
 class BuildCmdTests(unittest.TestCase):

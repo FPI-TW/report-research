@@ -32,6 +32,11 @@ class ParseIntentTests(unittest.TestCase):
         self.assertTrue(parse_intent("我不確定"))
         self.assertTrue(parse_intent(""))
 
+    def test_malformed_or_ambiguous_tokens_fail_open(self):
+        # 非標準輸出不應因字首/子字串命中而誤判離題
+        self.assertTrue(parse_intent("OUTAGE"))
+        self.assertTrue(parse_intent("OUT IN"))
+
     def test_contains_out_without_in(self):
         self.assertFalse(parse_intent("結論：OUT"))
 

@@ -110,6 +110,8 @@ def _recency_factor(report_date: object, now_date: date, half_life_days: float) 
     d = _as_date(report_date)
     if d is None:
         return 0.0
+    if half_life_days <= 0:
+        return 1.0
     age = (now_date - d).days
     if age < 0:
         age = 0
@@ -299,12 +301,12 @@ async def record_feedback(qa_id: str, value: str) -> bool:
         return False
     try:
         async with SessionFactory() as session:
-            await session.execute(
+            result = await session.execute(
                 text("UPDATE research.qa_log SET feedback = :v WHERE id = :id"),
                 {"v": value, "id": qa_id},
             )
             await session.commit()
-        return True
+        return getattr(result, "rowcount", 0) == 1
     except Exception:
         return False
 

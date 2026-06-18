@@ -66,11 +66,18 @@ function thinking() {
   $("#askAnswer").innerHTML =
     `<span class="ask-thinking"><span class="spin"></span>檢索研報並思考中…</span>`;
 }
-// 模型開始上網搜尋時，把思考指示換成「正在搜尋網路…」（僅在尚未出現答案 token 時）
+// 模型開始上網搜尋時顯示「正在搜尋網路…」。
+// 思考階段（尚無答案）→ 取代指示文字；已在串流答案中途搜尋 → 在末尾附一個臨時指示
+//（下一個 token 的 paintAnswer 會重繪而自動清掉）。
 function searchingWeb() {
   const el = $("#askAnswer");
-  if (!el.querySelector(".ask-thinking")) return;
-  el.innerHTML = `<span class="ask-thinking"><span class="spin"></span>正在搜尋網路補充最新資料…</span>`;
+  if (el.querySelector(".ask-thinking") && !el.querySelector(".ask-searching-inline")) {
+    el.innerHTML = `<span class="ask-thinking"><span class="spin"></span>正在搜尋網路補充最新資料…</span>`;
+  } else if (!el.querySelector(".ask-searching-inline")) {
+    el.insertAdjacentHTML("beforeend",
+      `<span class="ask-thinking ask-searching-inline"><span class="spin"></span>正在搜尋網路補充最新資料…</span>`);
+    if (nearBottom()) toBottom();
+  }
 }
 function fail(msg) { $("#askAnswer").textContent = msg; }
 

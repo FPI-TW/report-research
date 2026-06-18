@@ -5,7 +5,7 @@
 
 // ── 單一狀態物件：使用者意圖（可分享/可還原）＋ 目前結果快取，集中管理避免多處走樣 ──
 export const VIEWS = ["group", "table"];   // 視覺順序：列表（group，預設）→ 表格；group 仍依分組渲染
-export const GROUPS = ["market", "report_type", "month"];
+export const GROUPS = ["month", "market"];   // 分類方式：日期(月，預設)／市場（報告類型已移除）
 export const state = {
   // 篩選 / 排序 / 檢視意圖
   market: "全部", instrument: "全部", relStock: false, relFutures: false,

@@ -284,6 +284,9 @@
   .group-by-wrap select { font-family: inherit; font-size: 13px; font-weight: 600;
     color: var(--label); background: var(--card); border: .5px solid var(--sep);
     border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  /* 移除選取下拉時的外框環；改以邊框變色作低調焦點提示 */
+  .group-by-wrap select:focus, .group-by-wrap select:focus-visible {
+    outline: none; border-color: var(--brand); }
   .view-note { font-size: 12px; color: var(--label-3); flex: 1 1 100%; }
   .view-note:empty { display: none; }
 
@@ -760,9 +763,8 @@
             <div class="group-by-wrap" id="groupByWrap" hidden>
               <label for="groupBy">分類方式</label>
               <select id="groupBy" aria-label="分類方式">
-                <option value="market">市場</option>
-                <option value="report_type">報告類型</option>
                 <option value="month" selected>日期(月)</option>
+                <option value="market">市場</option>
               </select>
             </div>
             <div class="view-switch" role="radiogroup" aria-label="檢視方式">

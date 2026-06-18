@@ -506,12 +506,21 @@
   .ask-hist-btn svg { width: 18px; height: 18px; }
 
   /* 歷史抽層（右側覆蓋）*/
-  .ask-hist-drawer { position: fixed; inset: 0; z-index: 50; }
-  .ask-hist-drawer[hidden] { display: none; }
-  .ask-hist-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.28); }
+  .ask-hist-drawer { position: fixed; inset: 0; z-index: 50; display: none;
+    transition: display var(--dur-3) allow-discrete; }
+  .ask-hist-drawer.open { display: block; }
+  .ask-hist-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.28);
+    opacity: 0; transition: opacity var(--dur-3) var(--ease-out); }
+  .ask-hist-drawer.open .ask-hist-backdrop { opacity: 1; }
   .ask-hist-panel { position: absolute; top: 0; right: 0; height: 100dvh; width: min(420px, 92vw);
     background: var(--card); box-shadow: -8px 0 30px rgba(0,0,0,.12); display: flex; flex-direction: column;
-    padding: max(env(safe-area-inset-top), 16px) 16px 16px; }
+    padding: max(env(safe-area-inset-top), 16px) 16px 16px;
+    transform: translateX(100%); transition: transform var(--dur-3) var(--ease-out); }
+  .ask-hist-drawer.open .ask-hist-panel { transform: none; }
+  @starting-style {
+    .ask-hist-drawer.open .ask-hist-backdrop { opacity: 0; }
+    .ask-hist-drawer.open .ask-hist-panel { transform: translateX(100%); }
+  }
   .ask-hist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   .ask-hist-title { font-size: 17px; font-weight: 700; color: var(--label); }
   .ask-hist-close { border: none; background: none; cursor: pointer; color: var(--label-3);
@@ -746,7 +755,7 @@
               </button>
             </div>
           </div>
-          <div class="ask-hist-drawer" id="askHistDrawer" hidden>
+          <div class="ask-hist-drawer" id="askHistDrawer">
             <div class="ask-hist-backdrop" id="askHistBackdrop"></div>
             <aside class="ask-hist-panel" role="dialog" aria-modal="true" aria-label="歷史問答">
               <div class="ask-hist-head">

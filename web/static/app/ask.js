@@ -65,7 +65,7 @@ function paintExtSources(srcs) {
 async function openHistory() {
   const drawer = $("#askHistDrawer");
   const list = $("#askHistList");
-  drawer.hidden = false;
+  drawer.classList.add("open");
   list.innerHTML = `<div class="ask-hist-empty">載入中…</div>`;
   try {
     const resp = await fetch("/api/history?limit=50");
@@ -76,7 +76,7 @@ async function openHistory() {
     list.innerHTML = `<div class="ask-hist-empty">載入失敗，請稍後再試。</div>`;
   }
 }
-function closeHistory() { $("#askHistDrawer").hidden = true; }
+function closeHistory() { $("#askHistDrawer").classList.remove("open"); }
 
 function renderHistory(items) {
   const list = $("#askHistList");
@@ -279,7 +279,7 @@ export function initAsk() {
   $("#askHistClose").onclick = closeHistory;
   $("#askHistBackdrop").onclick = closeHistory;
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape" && !$("#askHistDrawer").hidden) closeHistory();
+    if (e.key === "Escape" && $("#askHistDrawer").classList.contains("open")) closeHistory();
   });
   $("#askPanel").classList.add("landing");   // 初始：輸入框置中、無底部白色列
 }

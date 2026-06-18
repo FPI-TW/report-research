@@ -32,11 +32,18 @@ export function highlight(textRaw, terms) {
 export function skeleton() {
   $("#meta").classList.remove("show");
   $("#resultsBar").hidden = true;
-  $("#results").className = "";
+  // 沿用目前檢視的佈局（列表/表格皆 block），避免回到預設卡片網格 → 列狀骨架
+  $("#results").className = "mode-" + (state.view || "group");
   $("#results").setAttribute("aria-busy", "true");   // 讀屏：宣告結果區載入中
-  $("#results").innerHTML = Array.from({ length: 4 }, () =>
-    `<div class="sk"><div class="sk-line" style="width:40%"></div>
-     <div class="sk-line" style="width:92%"></div><div class="sk-line" style="width:76%"></div></div>`).join("");
+  $("#results").innerHTML = Array.from({ length: 6 }, () =>
+    `<div class="sk-row" aria-hidden="true">
+       <span class="sk-badge"></span>
+       <span class="sk-main">
+         <span class="sk-line" style="width:44%"></span>
+         <span class="sk-line sk-sm" style="width:28%"></span>
+         <span class="sk-line" style="width:86%"></span>
+       </span>
+     </div>`).join("");
 }
 
 // 標的徽章：base（個股/期貨）+ 標的清單。內嵌最多 3 個，超過顯示「首項 等 N<unit>」，完整清單放 title。

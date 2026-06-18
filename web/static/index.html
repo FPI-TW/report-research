@@ -244,10 +244,15 @@
   .score-num { font-size: 12px; font-weight: 700; color: var(--label-2);
     font-variant-numeric: tabular-nums; flex: none; }
 
-  .sk { background: var(--card); border-radius: var(--radius-md); padding: 16px 18px;
-    box-shadow: var(--shadow); }
-  .sk-line { height: 12px; border-radius: 6px; margin: 8px 0;
-    background: linear-gradient(90deg, #ececf0 25%, #f5f5f8 37%, #ececf0 63%);
+  /* 載入骨架：列狀（對齊列表檢視的 .row），非卡片網格 */
+  .sk-row { display: flex; align-items: flex-start; gap: 11px; width: 100%;
+    background: var(--card); border-radius: var(--radius-sm); box-shadow: var(--shadow);
+    padding: 13px 14px; margin-bottom: 8px; }
+  .sk-badge { width: 42px; height: 22px; border-radius: 6px; flex: none; }
+  .sk-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; padding-top: 1px; }
+  .sk-line { height: 12px; border-radius: 6px; }
+  .sk-line.sk-sm { height: 9px; }
+  .sk-line, .sk-badge { background: linear-gradient(90deg, #ececf0 25%, #f5f5f8 37%, #ececf0 63%);
     background-size: 400% 100%; animation: shimmer 1.3s ease infinite; }
   @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 
@@ -443,7 +448,7 @@
   @media (prefers-reduced-motion: reduce) {
     .card { animation: none !important; opacity: 1; transform: none; }
     .score-fill { transition: none; }
-    .sk-line { animation: none; }
+    .sk-line, .sk-badge { animation: none; }
     .go, .more, .ex, .full-report, .filter, .monitor-link, .card { transition: none; }
     .row { transition: none; }
     .view-switch button { transition: none; }

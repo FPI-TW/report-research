@@ -31,7 +31,7 @@ export function initDropdown(rootSel, { value, onChange } = {}) {
     isOpen = true;
     menu.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
-    (opts.find((o) => o.dataset.value === current) || opts[0])?.focus();
+    (opts.find((o) => o.dataset.value === current) || opts[0])?.focus({ preventScroll: true });
   }
   function close(focusBack = true) {
     isOpen = false;
@@ -48,10 +48,10 @@ export function initDropdown(rootSel, { value, onChange } = {}) {
     o.addEventListener("click", () => { setValue(o.dataset.value); close(); });
     o.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setValue(o.dataset.value); close(); }
-      else if (e.key === "ArrowDown") { e.preventDefault(); opts[(i + 1) % opts.length].focus(); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); opts[(i - 1 + opts.length) % opts.length].focus(); }
-      else if (e.key === "Home") { e.preventDefault(); opts[0].focus(); }
-      else if (e.key === "End") { e.preventDefault(); opts[opts.length - 1].focus(); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); opts[(i + 1) % opts.length].focus({ preventScroll: true }); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); opts[(i - 1 + opts.length) % opts.length].focus({ preventScroll: true }); }
+      else if (e.key === "Home") { e.preventDefault(); opts[0].focus({ preventScroll: true }); }
+      else if (e.key === "End") { e.preventDefault(); opts[opts.length - 1].focus({ preventScroll: true }); }
       else if (e.key === "Escape") { e.preventDefault(); close(); }
       else if (e.key === "Tab") { close(false); }   // Tab 走出時關閉但不搶焦點
     });

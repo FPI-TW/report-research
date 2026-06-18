@@ -298,10 +298,11 @@
   .gb-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
     min-width: max(100%, 132px); margin: 0; padding: 5px; list-style: none;
     background: var(--card); border: .5px solid var(--sep); border-radius: 12px;
-    box-shadow: var(--shadow); transform-origin: top right;
-    animation: gb-menu-in var(--dur-2) var(--ease-out); }
+    box-shadow: var(--shadow);
+    animation: gb-menu-in var(--dur-1) var(--ease-out); }
   .gb-menu[hidden] { display: none; }
-  @keyframes gb-menu-in { from { opacity: 0; transform: scale(.97) translateY(-5px); } }
+  /* 純淡入、無位移（避免展開時選單「滑落定位」的位移感）*/
+  @keyframes gb-menu-in { from { opacity: 0; } }
   .gb-opt { display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 7px;
     padding: 8px 16px 8px 8px; border-radius: 8px; cursor: pointer; white-space: nowrap;
     font-size: 13px; font-weight: 600; color: var(--label); }

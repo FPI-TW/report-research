@@ -351,6 +351,65 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         ext = [p for k, p in events if k == "ext_sources"]
         self.assertEqual(ext[0], [{"title": "標題", "url": "https://x.com"}])
 
+    async def test_emits_status_when_web_search_starts(self):
+        # 模型開始搜尋（stream 吐 SEARCH_EVENT 標記）→ 發一次 ("status","searching_web")，標記不外洩
+        from app.services import answer as ans
+        from app.services.llm import SEARCH_EVENT
+
+        async def fake_search(*a, **k):
+            return [(1, 0.85, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), distance=0.2))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            yield SEARCH_EVENT          # 模型開始上網
+            yield "答案[1]。"
+
+        async def fake_intent(q, **k):
+            return True
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+                ans.SessionFactory, ans.classify_intent)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        try:
+            events = [e async for e in ans.answer_question("問題")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+             ans.SessionFactory, ans.classify_intent) = orig
+
+        self.assertIn(("status", "searching_web"), events)
+        self.assertEqual(sum(1 for k, _ in events if k == "status"), 1)  # 只發一次
+        body = "".join(p for k, p in events if k == "token")
+        self.assertNotIn(SEARCH_EVENT, body)     # 控制標記不外洩到正文
+        self.assertIn("答案[1]。", body)
+
+
+class WebSearchDetectTests(unittest.TestCase):
+    def test_detects_websearch_tool_use(self):
+        line = ('{"type":"stream_event","event":{"type":"content_block_start",'
+                '"content_block":{"type":"tool_use","name":"WebSearch","input":{}}}}')
+        self.assertTrue(llm.is_web_search_start(line))
+
+    def test_other_tool_not_detected(self):
+        line = ('{"type":"stream_event","event":{"type":"content_block_start",'
+                '"content_block":{"type":"tool_use","name":"ToolSearch","input":{}}}}')
+        self.assertFalse(llm.is_web_search_start(line))
+
+    def test_text_thinking_and_malformed_not_detected(self):
+        self.assertFalse(llm.is_web_search_start(
+            '{"type":"stream_event","event":{"type":"content_block_start",'
+            '"content_block":{"type":"text","text":""}}}'))
+        self.assertFalse(llm.is_web_search_start(
+            '{"type":"stream_event","event":{"type":"content_block_delta",'
+            '"delta":{"type":"text_delta","text":"hi"}}}'))
+        self.assertFalse(llm.is_web_search_start("not json"))
+        self.assertFalse(llm.is_web_search_start(""))
+
 
 class FeedbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_value_rejected_without_db(self):

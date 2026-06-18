@@ -24,7 +24,7 @@ from sqlalchemy import text
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
 from app.services.intent import classify_intent
-from app.services.llm import DEFAULT_MODEL, stream_completion
+from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.retrieval import hybrid_search
 from app.services.textnorm import clean_text
 
@@ -342,9 +342,15 @@ async def answer_question(
     buf = ""           # 尚未送出的 body 緩衝（保留尾段以攔截跨 chunk 的 sentinel）
     hold = len(EXT_SENTINEL)
     sentinel_found = False
+    searching_sent = False
     async for chunk in stream_completion(
         user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
     ):
+        if chunk == SEARCH_EVENT:          # 模型開始上網搜尋：通知前端（只發一次）
+            if not searching_sent:
+                searching_sent = True
+                yield ("status", "searching_web")
+            continue
         raw_parts.append(chunk)
         if sentinel_found:
             continue                       # sentinel 之後只收集（給 split），不送前端

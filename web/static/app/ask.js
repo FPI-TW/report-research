@@ -66,6 +66,12 @@ function thinking() {
   $("#askAnswer").innerHTML =
     `<span class="ask-thinking"><span class="spin"></span>檢索研報並思考中…</span>`;
 }
+// 模型開始上網搜尋時，把思考指示換成「正在搜尋網路…」（僅在尚未出現答案 token 時）
+function searchingWeb() {
+  const el = $("#askAnswer");
+  if (!el.querySelector(".ask-thinking")) return;
+  el.innerHTML = `<span class="ask-thinking"><span class="spin"></span>正在搜尋網路補充最新資料…</span>`;
+}
 function fail(msg) { $("#askAnswer").textContent = msg; }
 
 // 離題拒答：以提示卡渲染（非一般答案泡泡）
@@ -264,6 +270,8 @@ export async function askQuestion() {
         if (evt.event === "sources") {
           sources = evt.data || [];
           paintSources(sources);
+        } else if (evt.event === "status") {
+          if (evt.data === "searching_web") searchingWeb();
         } else if (evt.event === "ext_sources") {
           extSources = (evt.data || []).filter(s => s && safeHttp(s.url));
           paintExtSources(extSources);

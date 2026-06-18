@@ -1,4 +1,5 @@
 # tests/test_answer.py
+import json
 import sys
 import unittest
 from datetime import date, datetime, timezone
@@ -468,6 +469,37 @@ class SplitExternalSourcesTests(unittest.TestCase):
     def test_empty_title_falls_back_to_url(self):
         body, ext = split_external_sources("答案。\n[EXT_SOURCES]\n-  | https://a.com\n")
         self.assertEqual(ext, [{"title": "https://a.com", "url": "https://a.com"}])
+
+
+class LogQaSourcesTests(unittest.IsolatedAsyncioTestCase):
+    async def test_log_qa_inserts_sources_json(self):
+        from app.services import answer as ans
+
+        captured = {}
+
+        class Sess:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, stmt, params=None):
+                captured.update(params or {})
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: Sess()
+        try:
+            qid = await ans._log_qa("q", "a", [], {}, 5, [{"n": 1, "report_id": "r1"}])
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertTrue(qid)
+        self.assertIn("sources", captured)
+        self.assertEqual(json.loads(captured["sources"]), [{"n": 1, "report_id": "r1"}])
 
 
 if __name__ == "__main__":

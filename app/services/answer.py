@@ -241,10 +241,12 @@ async def _log_qa(
     cited: list[str],
     filters: dict,
     latency_ms: int,
+    sources: list[dict],
 ) -> str:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
     回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
+    sources 為當時完整來源（含編號），供歷史重現可點 [n]。
     """
     qa_id = str(uuid.uuid4())
     try:
@@ -252,8 +254,8 @@ async def _log_qa(
             await session.execute(
                 text(
                     "INSERT INTO research.qa_log "
-                    "(id, question, answer, cited_report_ids, filters, latency_ms) "
-                    "VALUES (:id, :q, :a, :cited, :filters, :lat)"
+                    "(id, question, answer, cited_report_ids, filters, latency_ms, sources) "
+                    "VALUES (:id, :q, :a, :cited, :filters, :lat, :sources)"
                 ),
                 {
                     "id": qa_id,
@@ -262,6 +264,7 @@ async def _log_qa(
                     "cited": cited,  # uuid[]：asyncpg 由欄位型別推斷，傳 list[str]
                     "filters": json.dumps(filters, ensure_ascii=False),  # jsonb
                     "lat": latency_ms,
+                    "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
                 },
             )
             await session.commit()
@@ -319,7 +322,7 @@ async def answer_question(
         yield ("notice", OFF_TOPIC_MESSAGE)  # 專用事件：前端以提示卡渲染，非一般答案
         await _log_qa(
             question, OFF_TOPIC_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000),
+            int((time.monotonic() - started) * 1000), []
         )
         yield ("done", {"cited": []})
         return
@@ -332,7 +335,7 @@ async def answer_question(
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
             question, NO_CONTEXT_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000),
+            int((time.monotonic() - started) * 1000), []
         )
         yield ("done", {"cited": [], "qa_id": qa_id})
         return
@@ -373,6 +376,6 @@ async def answer_question(
     yield ("ext_sources", ext_sources)
     qa_id = await _log_qa(
         question, body, cited, filters,
-        int((time.monotonic() - started) * 1000),
+        int((time.monotonic() - started) * 1000), [asdict(s) for s in sources]
     )
     yield ("done", {"cited": cited, "qa_id": qa_id})

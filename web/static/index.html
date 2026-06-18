@@ -21,19 +21,9 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; }
-  /* 永遠保留頁面捲軸（overflow-y:scroll），切到問答（整頁改為 100dvh 內部捲動）時
-     版面寬度維持不變、不會因捲軸出現/消失而橫向位移。
-     關鍵：捲軸 track 設為「透明」→ 預留的捲軸區顯示 root 的頁面漸層、而非白色 track；
-     scrollbar-gutter 在無捲軸時會露出白色 track，故改用此法。thumb 為淡灰。 */
-  html { overflow-y: scroll;
-    background: radial-gradient(120% 80% at 50% -10%, var(--bg-grad-1) 0%, var(--bg-grad-2) 60%, var(--bg) 100%);
-    scrollbar-color: rgba(120, 120, 128, .45) transparent; }
-  html::-webkit-scrollbar { width: 14px; }
-  html::-webkit-scrollbar-track { background: transparent; }
-  html::-webkit-scrollbar-thumb { background: rgba(120, 120, 128, .4);
-    border-radius: 10px; border: 4px solid transparent; background-clip: padding-box; }
   body {
     min-height: 100dvh; color: var(--label);
+    background: radial-gradient(120% 80% at 50% -10%, var(--bg-grad-1) 0%, var(--bg-grad-2) 60%, var(--bg) 100%);
     -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
     font-size: 15px; line-height: 1.5; letter-spacing: .006em;
   }

@@ -11,6 +11,7 @@ import { closeFull } from "/static/app/modal.js";
 import { initSearch } from "/static/app/search.js";
 import { initAsk, loadAskHistory } from "/static/app/ask.js";
 import { loadStats, renderStats, run, loadBrowse, rerun } from "/static/app/api.js";
+import { initDropdown } from "/static/app/dropdown.js";
 
 // ── 搜尋框互動（debounce / Enter / 清除 / 例子）──
 initSearch();
@@ -54,11 +55,15 @@ $(".view-switch").addEventListener("keydown", e => {   // radiogroup 方向鍵�
   const btn = $(`.view-switch button[data-view="${VIEWS[next]}"]`);
   btn.click(); btn.focus();
 });
-$("#groupBy").onchange = () => {
-  state.group = $("#groupBy").value;
-  syncURL();
-  if (state.rows.length && state.view === "group") { paintResults(false); animEnter($("#results")); }
-};
+// 分類方式：自訂下拉（取代原生 select，選項清單可完整客製樣式）
+const groupDd = initDropdown("#groupBy", {
+  value: state.group,
+  onChange: (v) => {
+    state.group = v;
+    syncURL();
+    if (state.rows.length && state.view === "group") { paintResults(false); animEnter($("#results")); }
+  },
+});
 
 // ── 頂層模式切換（檢索 / 問答）：問答用主區獨立的大型提問框；篩選作為共用範圍 ──
 initAsk();
@@ -104,7 +109,7 @@ async function bootstrap() {
   const stats = await loadStats(false);
   const hadQuery = restoreFromURL(stats);
   if (stats) renderStats(stats);
-  $("#groupBy").value = state.group;   // 反映還原後的分組依據
+  groupDd?.setValue(state.group);   // 反映（URL/localStorage）還原後的分組依據
   if (hadQuery) run(); else loadBrowse();
 }
 

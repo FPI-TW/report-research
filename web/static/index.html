@@ -281,19 +281,34 @@
   .group-by-wrap { display: inline-flex; align-items: center; gap: 6px;
     font-size: 13px; font-weight: 600; color: var(--label-2); }
   .group-by-wrap[hidden] { display: none; }
-  /* 分類方式下拉：去原生外觀＋自訂 chevron，沿用網頁圓角膠囊風格（呼應搜尋框）*/
-  .group-by-wrap select { appearance: none; -webkit-appearance: none;
-    font-family: inherit; font-size: 13px; font-weight: 600; color: var(--label);
-    background-color: var(--card);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23717176' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right 11px center; background-size: 13px;
-    border: .5px solid var(--sep); border-radius: 100px;
-    padding: 7px 32px 7px 14px; cursor: pointer;
-    transition: border-color .15s, box-shadow .15s; }
-  .group-by-wrap select:hover { border-color: var(--label-3); }
-  /* 焦點不用外框環，改邊框轉品牌金（低調，延續上一輪「拿掉外框」）*/
-  .group-by-wrap select:focus, .group-by-wrap select:focus-visible {
-    outline: none; border-color: var(--brand); }
+  .gb-label { color: var(--label-2); white-space: nowrap; }
+  /* ───── 自訂下拉（分類方式）：trigger 膠囊 + 完整客製選項清單 ───── */
+  .gb-select { position: relative; }
+  .gb-trigger { display: inline-flex; align-items: center; gap: 6px; font-family: inherit;
+    font-size: 13px; font-weight: 600; color: var(--label); background: var(--card);
+    border: .5px solid var(--sep); border-radius: 100px; padding: 7px 12px 7px 14px;
+    cursor: pointer; transition: border-color .15s; }
+  .gb-trigger:hover { border-color: var(--label-3); }
+  .gb-trigger:focus, .gb-trigger:focus-visible,
+  .gb-trigger[aria-expanded="true"] { outline: none; border-color: var(--brand); }
+  .gb-chev { width: 14px; height: 14px; color: var(--label-3); flex: none;
+    transition: transform var(--dur-2) var(--ease-out); }
+  .gb-trigger[aria-expanded="true"] .gb-chev { transform: rotate(180deg); }
+  /* 選項清單：卡片底＋圓角＋陰影，進場淡入縮放 */
+  .gb-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+    min-width: max(100%, 132px); margin: 0; padding: 5px; list-style: none;
+    background: var(--card); border: .5px solid var(--sep); border-radius: 12px;
+    box-shadow: var(--shadow); transform-origin: top right;
+    animation: gb-menu-in var(--dur-2) var(--ease-out); }
+  .gb-menu[hidden] { display: none; }
+  @keyframes gb-menu-in { from { opacity: 0; transform: scale(.97) translateY(-5px); } }
+  .gb-opt { display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 7px;
+    padding: 8px 16px 8px 8px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+    font-size: 13px; font-weight: 600; color: var(--label); }
+  .gb-opt::before { content: ""; width: 16px; height: 16px; background: no-repeat center / 14px; }
+  .gb-opt:hover, .gb-opt:focus, .gb-opt:focus-visible { outline: none; background: var(--fill); }
+  .gb-opt[aria-selected="true"] { color: var(--brand); }
+  .gb-opt[aria-selected="true"]::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ae7415' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E"); }
   .view-note { font-size: 12px; color: var(--label-3); flex: 1 1 100%; }
   .view-note:empty { display: none; }
 
@@ -768,11 +783,18 @@
           </div>
           <div class="top-tools">
             <div class="group-by-wrap" id="groupByWrap" hidden>
-              <label for="groupBy">分類方式</label>
-              <select id="groupBy" aria-label="分類方式">
-                <option value="month" selected>日期(月)</option>
-                <option value="market">市場</option>
-              </select>
+              <span class="gb-label" id="groupByLabel">分類方式</span>
+              <div class="gb-select" id="groupBy">
+                <button class="gb-trigger" type="button" aria-haspopup="listbox" aria-expanded="false"
+                        aria-controls="groupByMenu" aria-labelledby="groupByLabel">
+                  <span class="gb-value"></span>
+                  <svg class="gb-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <ul class="gb-menu" id="groupByMenu" role="listbox" aria-label="分類方式" hidden>
+                  <li class="gb-opt" role="option" data-value="month" tabindex="-1">日期(月)</li>
+                  <li class="gb-opt" role="option" data-value="market" tabindex="-1">市場</li>
+                </ul>
+              </div>
             </div>
             <div class="view-switch" role="radiogroup" aria-label="檢視方式">
               <button type="button" role="radio" data-view="group" aria-checked="true" aria-label="列表檢視" title="列表">

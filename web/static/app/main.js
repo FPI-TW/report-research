@@ -2,15 +2,16 @@
  * 廷豐研報 檢索頁 進入點（composition root）：組裝各模組、綁定全域事件、啟動序列。
  * type="module" 為 deferred，於 HTML 解析完成後執行，所有 import 求值完畢後才跑下方程式碼。
  */
-import { $, $$ } from "/static/app/dom.js";
+import { $, $$, animEnter, animSlide } from "/static/app/dom.js";
 import { state, VIEWS } from "/static/app/state.js";
 import { resetFilters, syncPressed } from "/static/app/chips.js";
 import { syncURL, restoreFromURL } from "/static/app/url.js";
 import { paintResults, updateViewBar } from "/static/app/render.js";
 import { closeFull } from "/static/app/modal.js";
 import { initSearch } from "/static/app/search.js";
-import { initAsk } from "/static/app/ask.js";
+import { initAsk, loadAskHistory } from "/static/app/ask.js";
 import { loadStats, renderStats, run, loadBrowse, rerun } from "/static/app/api.js";
+import { initDropdown } from "/static/app/dropdown.js";
 
 // ── 搜尋框互動（debounce / Enter / 清除 / 例子）──
 initSearch();
@@ -38,10 +39,14 @@ if (clearFiltersBtn) clearFiltersBtn.onclick = () => { resetFilters(); rerun(); 
 // ── 檢視切換（卡片／列表／表格／分組）：切換不重打 API，只重繪快取結果 ──
 $$(".view-switch button").forEach(b => b.onclick = () => {
   if (state.view === b.dataset.view) return;
+  // 依分頁前後決定平移方向：往右分頁→新面板從右滑入，往左→從左
+  const dir = VIEWS.indexOf(b.dataset.view) > VIEWS.indexOf(state.view) ? "right" : "left";
+  groupDd?.close(false);   // 切離列表時收起自訂下拉，避免回切後殘留展開狀態
   state.view = b.dataset.view;
   try { localStorage.setItem("rm_view", state.view); } catch (e) {}
   syncURL();
-  state.rows.length ? paintResults(false) : updateViewBar();
+  if (state.rows.length) { paintResults(false); animSlide($("#results"), dir); }
+  else updateViewBar();
 });
 $(".view-switch").addEventListener("keydown", e => {   // radiogroup 方向鍵切換
   if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
@@ -51,11 +56,15 @@ $(".view-switch").addEventListener("keydown", e => {   // radiogroup 方向鍵�
   const btn = $(`.view-switch button[data-view="${VIEWS[next]}"]`);
   btn.click(); btn.focus();
 });
-$("#groupBy").onchange = () => {
-  state.group = $("#groupBy").value;
-  syncURL();
-  if (state.rows.length && state.view === "group") paintResults(false);
-};
+// 分類方式：自訂下拉（取代原生 select，選項清單可完整客製樣式）
+const groupDd = initDropdown("#groupBy", {
+  value: state.group,
+  onChange: (v) => {
+    state.group = v;
+    syncURL();
+    if (state.rows.length && state.view === "group") { paintResults(false); animEnter($("#results")); }
+  },
+});
 
 // ── 頂層模式切換（檢索 / 問答）：問答用主區獨立的大型提問框；篩選作為共用範圍 ──
 initAsk();
@@ -67,18 +76,20 @@ function applyMode(mode) {
     b.tabIndex = on ? 0 : -1;
   });
   const ask = mode === "ask";
+  if (ask) groupDd?.close(false);   // 問答模式會隱藏頂部工具列，先關掉下拉避免殘留開啟態
   document.body.classList.toggle("ask-mode", ask);   // 觸發聊天式滿版版面（CSS）
   // 問答時：收起側欄搜尋框與範例、隱藏檢索結果區；顯示主區提問面板並聚焦輸入框
   $(".search").hidden = ask;
-  $("#examples").hidden = ask;
   $("#askPanel").hidden = !ask;
   $("#results").hidden = ask;
   if (ask) {
     $("#resultsBar").hidden = true;
     $("#meta").classList.remove("show");
+    animSlide($("#askPanel"), "right");   // 問答為右分頁 → 新面板從右側平移進場
+    loadAskHistory();   // 側欄改顯示歷史問答（取代篩選 chips）
     $("#askInput").focus();
   } else {   // 切回檢索：依目前狀態還原結果區（有快取重繪、有查詢重搜、否則瀏覽）
-    if (state.rows.length) paintResults(false);
+    if (state.rows.length) { paintResults(false); animSlide($("#results"), "left"); }   // 檢索為左分頁 → 從左側
     else if ($("#q").value.trim()) run();
     else loadBrowse();
   }
@@ -100,7 +111,7 @@ async function bootstrap() {
   const stats = await loadStats(false);
   const hadQuery = restoreFromURL(stats);
   if (stats) renderStats(stats);
-  $("#groupBy").value = state.group;   // 反映還原後的分組依據
+  groupDd?.setValue(state.group);   // 反映（URL/localStorage）還原後的分組依據
   if (hadQuery) run(); else loadBrowse();
 }
 

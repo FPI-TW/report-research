@@ -224,5 +224,57 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(r.headers["location"], "/login")
 
 
+class HistoryDeleteApiTests(unittest.TestCase):
+    def _authed_client(self):
+        client = _client()
+        r = client.post("/login", data={"username": "tester", "password": "testpass"})
+        self.assertEqual(r.status_code, 303)
+        return client
+
+    def test_delete_history_endpoint(self):
+        import web.server as server
+
+        seen = {}
+
+        async def fake_delete_qa(qa_id: str):
+            seen["qa_id"] = qa_id
+            return True
+
+        orig = server.delete_qa
+        server.delete_qa = fake_delete_qa
+        try:
+            client = self._authed_client()
+            qa_id = "11111111-1111-1111-1111-111111111111"
+            r = client.delete(f"/api/history/{qa_id}")
+        finally:
+            server.delete_qa = orig
+
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"ok": True})
+        self.assertEqual(seen["qa_id"], qa_id)
+
+    def test_post_delete_history_alias(self):
+        import web.server as server
+
+        seen = {}
+
+        async def fake_delete_qa(qa_id: str):
+            seen["qa_id"] = qa_id
+            return True
+
+        orig = server.delete_qa
+        server.delete_qa = fake_delete_qa
+        try:
+            client = self._authed_client()
+            qa_id = "22222222-2222-2222-2222-222222222222"
+            r = client.post(f"/api/history/{qa_id}/delete")
+        finally:
+            server.delete_qa = orig
+
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"ok": True})
+        self.assertEqual(seen["qa_id"], qa_id)
+
+
 if __name__ == "__main__":
     unittest.main()

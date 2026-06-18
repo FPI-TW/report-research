@@ -507,7 +507,7 @@ class SplitExternalSourcesTests(unittest.TestCase):
 
 
 class LogQaSourcesTests(unittest.IsolatedAsyncioTestCase):
-    async def test_log_qa_inserts_sources_json(self):
+    async def test_log_qa_inserts_sources_and_ext_sources_json(self):
         from app.services import answer as ans
 
         captured = {}
@@ -528,20 +528,35 @@ class LogQaSourcesTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            qid = await ans._log_qa("q", "a", [], {}, 5, [{"n": 1, "report_id": "r1"}])
+            qid = await ans._log_qa(
+                "q",
+                "a",
+                [],
+                {},
+                5,
+                [{"n": 1, "report_id": "r1"}],
+                [{"title": "外部", "url": "https://x.com"}],
+            )
         finally:
             ans.SessionFactory = orig
 
         self.assertTrue(qid)
         self.assertIn("sources", captured)
+        self.assertIn("ext_sources", captured)
         self.assertEqual(json.loads(captured["sources"]), [{"n": 1, "report_id": "r1"}])
+        self.assertEqual(
+            json.loads(captured["ext_sources"]),
+            [{"title": "外部", "url": "https://x.com"}],
+        )
 
 
 class HistoryItemTests(unittest.TestCase):
-    def test_maps_row_with_sources(self):
+    def test_maps_row_with_sources_and_ext_sources(self):
         d = date(2026, 6, 18)
         row = ("11111111-1111-1111-1111-111111111111", "台積電?", "答案[1]",
-               d, "like", [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}])
+               d, "like",
+               [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}],
+               [{"title": "外部", "url": "https://x.com"}])
         out = history_item(row)
         self.assertEqual(out["id"], "11111111-1111-1111-1111-111111111111")
         self.assertEqual(out["question"], "台積電?")
@@ -549,12 +564,20 @@ class HistoryItemTests(unittest.TestCase):
         self.assertEqual(out["created_at"], "2026-06-18")
         self.assertEqual(out["feedback"], "like")
         self.assertEqual(out["sources"], [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}])
+        self.assertEqual(out["ext_sources"], [{"title": "外部", "url": "https://x.com"}])
 
-    def test_null_sources_becomes_empty_list(self):
-        row = ("id2", "q", "a", date(2026, 6, 1), None, None)
+    def test_null_sources_and_ext_sources_become_empty_list(self):
+        row = ("id2", "q", "a", date(2026, 6, 1), None, None, None)
         out = history_item(row)
         self.assertEqual(out["sources"], [])
+        self.assertEqual(out["ext_sources"], [])
         self.assertIsNone(out["feedback"])
+
+    def test_old_row_without_ext_sources_still_works(self):
+        row = ("id3", "q", "a", date(2026, 6, 1), None, None)
+        out = history_item(row)
+        self.assertEqual(out["sources"], [])
+        self.assertEqual(out["ext_sources"], [])
 
 
 if __name__ == "__main__":

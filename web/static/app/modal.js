@@ -20,7 +20,7 @@ export async function openFull(id) {
   $("#modalName").textContent = "載入中…";
   $("#modalMeta").innerHTML = "";
   const msum = $("#modalSummary");
-  msum.textContent = ""; msum.hidden = true;
+  msum.textContent = ""; msum.classList.remove("show");
   $("#modalBody").textContent = "";
   $("#modalFoot").innerHTML = "";
   lastFocused = document.activeElement;       // 記住觸發按鈕，關閉時還原焦點
@@ -38,7 +38,7 @@ export async function openFull(id) {
     if (d.report_type) meta.push(html`<span>${d.report_type}</span>`);
     $("#modalName").textContent = fileName;
     $("#modalMeta").innerHTML = meta.join('<span class="dot">·</span>');
-    if (d.summary) { msum.textContent = d.summary; msum.hidden = false; }
+    if (d.summary) { msum.textContent = d.summary; msum.classList.add("show"); }
     const fileUrl = `/api/report/${id}/file`;
     const isPdf = fileName.toLowerCase().endsWith(".pdf");
     if (d.has_file && isPdf) {

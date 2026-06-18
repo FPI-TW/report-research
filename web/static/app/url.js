@@ -24,8 +24,8 @@ export function syncURL() {
   if (state.relFutures) p.set("futures", "1");
   if (state.type !== "全部") p.set("type", state.type);
   if (state.sort) p.set("sort", state.sort);
-  if (state.view !== "grid") p.set("view", state.view);
-  if (state.view === "group" && state.group !== "market") p.set("group", state.group);
+  if (state.view !== "group") p.set("view", state.view);
+  if (state.view === "group" && state.group !== "month") p.set("group", state.group);
   const qs = p.toString();
   history.replaceState(null, "", qs ? "?" + qs : location.pathname);
   updateFilterToggle();

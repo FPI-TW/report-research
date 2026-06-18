@@ -1,7 +1,7 @@
 /*
  * 廷豐研報 前端模組：結果渲染（卡片/列表/表格/分組）＋ 結果區事件綁定。
  */
-import { $, $$ } from "/static/app/dom.js";
+import { $, $$, animEnter } from "/static/app/dom.js";
 import { esc, escRe, html, raw, joinHtml } from "/static/utils.js";
 import { mLabel, mColor, iLabel, iColor, tLabel, fmtDate } from "/static/app/meta.js";
 import { state } from "/static/app/state.js";
@@ -32,11 +32,18 @@ export function highlight(textRaw, terms) {
 export function skeleton() {
   $("#meta").classList.remove("show");
   $("#resultsBar").hidden = true;
-  $("#results").className = "";
+  // 沿用目前檢視的佈局（列表/表格皆 block），避免回到預設卡片網格 → 列狀骨架
+  $("#results").className = "mode-" + (state.view || "group");
   $("#results").setAttribute("aria-busy", "true");   // 讀屏：宣告結果區載入中
-  $("#results").innerHTML = Array.from({ length: 4 }, () =>
-    `<div class="sk"><div class="sk-line" style="width:40%"></div>
-     <div class="sk-line" style="width:92%"></div><div class="sk-line" style="width:76%"></div></div>`).join("");
+  $("#results").innerHTML = Array.from({ length: 6 }, () =>
+    `<div class="sk-row" aria-hidden="true">
+       <span class="sk-badge"></span>
+       <span class="sk-main">
+         <span class="sk-line" style="width:44%"></span>
+         <span class="sk-line sk-sm" style="width:28%"></span>
+         <span class="sk-line" style="width:86%"></span>
+       </span>
+     </div>`).join("");
 }
 
 // 標的徽章：base（個股/期貨）+ 標的清單。內嵌最多 3 個，超過顯示「首項 等 N<unit>」，完整清單放 title。
@@ -94,7 +101,9 @@ export function tagRowHtml(r) {
 // ── 摘要（卡片/列表共用，純文字無 emoji；點擊展開/收合，見 bindResultEvents）──
 export function summaryHtml(r, cls) {
   if (!r.summary) return raw("");
-  return html`<span class="${cls} clamp">${r.summary}</span>`;
+  // 列表（row-summary）完整顯示、不截斷也不掛展開鈕；其餘（卡片）維持兩行截斷
+  const clamp = cls === "row-summary" ? "" : " clamp";
+  return html`<span class="${cls}${clamp}">${r.summary}</span>`;
 }
 
 // ── 卡片（grid）：search 顯示排名/片段/相關度條；browse 為精簡版 ──
@@ -152,6 +161,17 @@ export function listRow(r, mode) {
   if (mode === "search") meta.push(`${r.match_count} 命中`);
   const scorePill = mode === "search"
     ? html`<span class="row-score">${Math.round((r.best_score || 0) * 100)}%</span>` : raw("");
+  // 搜尋模式：顯示命中片段（首段顯示、其餘收合；關鍵詞黃底高亮）。瀏覽模式無片段。
+  let passages = raw("");
+  if (mode === "search" && (r.passages || []).length) {
+    const passHtml = r.passages.map((p, pi) =>
+      html`<div class="passage${pi > 0 ? " hidden" : ""}">
+         <span class="pscore">${Math.round(p.score * 100)}%</span>${raw(highlight(p.content.slice(0, 300), state.terms))}…
+       </div>`);
+    const moreBtn = r.passages.length > 1
+      ? html`<button class="row-more" type="button">顯示其他 ${r.passages.length - 1} 段片段</button>` : raw("");
+    passages = html`<div class="passages">${passHtml}${moreBtn}</div>`;
+  }
   return html`<div class="row" data-report-id="${r.report_id}" title="${r.file_name}">
     <span class="badge" style="background:${c}">${mLabel(r.market)}</span>
     <span class="row-main">
@@ -159,6 +179,7 @@ export function listRow(r, mode) {
       <span class="row-meta">${joinHtml(meta, '<span class="dot">·</span>')}</span>
       ${summaryHtml(r, "row-summary")}
       ${tagRowHtml(r)}
+      ${passages}
     </span>
     ${scorePill}
   </div>`;
@@ -238,7 +259,7 @@ export function groupLabel(key, by) {
   if (key === "—") return "未分類";
   if (by === "market") return mLabel(key);
   if (by === "report_type") return tLabel(key);
-  if (by === "month") return key.replace("-", "/");
+  if (by === "month") { const [y, m] = key.split("-"); return `${y} 年 ${+m} 月`; }
   return key;
 }
 export function groupedHtml(rows, mode, by) {
@@ -265,8 +286,7 @@ export function groupedHtml(rows, mode, by) {
 export function paintResults(animate = true) {
   const root = $("#results");
   root.className = "mode-" + state.view + (animate ? "" : " no-rise");
-  $("#resultsBar").hidden = false;
-  updateViewBar();
+  updateViewBar();   // 內含結果列（清除篩選）顯示與否
   let html;
   if (state.view === "table") html = tableHtml(state.rows, state.mode);
   else if (state.view === "group") html = groupedHtml(state.rows, state.mode, state.group);
@@ -290,14 +310,10 @@ export function updateViewBar() {
     b.tabIndex = on ? 0 : -1;
   });
   $("#groupByWrap").hidden = state.view !== "group";
+  const n = activeFilterCount();
   const cf = $("#clearFilters");
-  if (cf) { const n = activeFilterCount(); cf.hidden = !n; cf.textContent = n ? `清除篩選 · ${n}` : "清除篩選"; }
-  let note = "";
-  if ((state.view === "table" || state.view === "group")
-      && state.mode === "browse" && state.offset < state.total) {
-    note = `排序／分組僅套用已載入的 ${state.rows.length} 筆（共 ${state.total.toLocaleString()} 筆，可「載入更多」）`;
-  }
-  $("#viewNote").textContent = note;
+  if (cf) { cf.classList.toggle("show", !!n); cf.textContent = n ? `清除篩選 · ${n}` : "清除篩選"; }
+  $("#resultsBar").hidden = !n;   // 結果列僅剩「清除篩選」：有篩選才顯示，避免無篩選時留空白列
 }
 
 export function appendLoadMore() {
@@ -322,9 +338,9 @@ export function bindResultEvents() {
       };
     }
   });
-  root.querySelectorAll(".more[data-card]").forEach(btn => btn.onclick = () => {
-    const card = root.querySelector(`.card[data-card="${btn.dataset.card}"]`);
-    card.querySelectorAll(".passage.hidden").forEach(p => p.classList.remove("hidden"));
+  root.querySelectorAll(".row-more").forEach(btn => btn.onclick = e => {
+    e.stopPropagation();   // 整列可點開報告，展開片段時別觸發開啟
+    btn.closest(".row").querySelectorAll(".passage.hidden").forEach(p => p.classList.remove("hidden"));
     btn.remove();
   });
   const lm = $("#loadMore");
@@ -342,6 +358,7 @@ export function bindResultEvents() {
       if (state.tableSort.key === key) state.tableSort.dir = state.tableSort.dir === "asc" ? "desc" : "asc";
       else { state.tableSort.key = key; state.tableSort.dir = "asc"; }
       paintResults(false);
+      animEnter($("#results"));
     };
     th.onclick = doSort;
     th.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); doSort(); } };
@@ -351,7 +368,7 @@ export function bindResultEvents() {
 // 量測每則摘要是否真的被截斷（>2 行）；溢出才掛上鍵盤可用的「展開」鈕，
 // 避免對只有一兩行的摘要顯示假的展開提示。每次 paint 後重跑（DOM 已重建）。
 export function markClampable() {
-  $$("#results .summary, #results .row-summary").forEach(el => {
+  $$("#results .summary").forEach(el => {   // 列表(row-summary)已完整顯示，不掛展開鈕
     if (el.scrollHeight <= el.clientHeight + 1) return;   // 沒溢出 → 不需要展開鈕
     el.classList.add("clampable");
     const btn = document.createElement("button");

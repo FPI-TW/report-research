@@ -163,13 +163,16 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁 |
 | `GET /api/report/{id}/full` | 單篇 metadata 與原始檔狀態（供前端完整報告 modal）|
 | `GET /api/report/{id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|
-| `GET /` | iOS 風格單頁前端 |
+| `POST /api/ask` | RAG 問答：SSE 串流回答，行內 `[n]` 引用對應來源報告；寫入 `qa_log`。以整個語料庫為範圍 |
+| `GET /api/history` | 最近的問答歷史（供側欄歷史清單）。`DELETE /api/history/{qa_id}` 刪除單筆 |
+| `POST /api/feedback` | 記錄使用者對某次回答的讚／倒讚（`qa_id` + `value`）|
+| `GET /` | 單頁前端（檢索／問答兩種模式）|
 | `GET`/`POST /login` | 登入頁與登入提交（共用帳密；**唯一免登入端點**）|
 | `POST /logout` | 清除 session cookie 並導回 `/login` |
 
 > **認證**：除 `/login` 外所有端點皆需登入（deny-by-default 中介層）。未帶有效 session cookie 時 `/api/*` 回 **401**、其餘導向 **`/login`**；`/static/*` 也受保護。憑證為單一共用帳密（env `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD`，fail-closed），cookie 以 `REPORT_MARK_SESSION_SECRET` 簽章、7 天滑動到期，並對登入失敗做每 IP 限流。
 
-前端特性：雙欄側邊版面（手機收單欄）、市場／商品類型／標的／報告類型篩選與排序切換、自適應卡片網格、同篇研報合併、查詢關鍵字高亮、可展開片段、「查看完整報告」內嵌 PDF、即打即查（debounce 450ms）、骨架載入。
+前端特性：雙欄側邊版面（手機收單欄）、頂部**檢索／問答**模式切換。檢索結果預設**列表**（依市場／報告類型／日期(月)分組，右上可切「分組依據」），可切**表格**（右上角圖示）；市場／商品類型／標的／報告類型篩選與排序、同篇研報合併、搜尋時列表顯示命中片段＋關鍵字黃底高亮（可展開更多）、點任一筆「內嵌完整報告 PDF」、即打即查（debounce 450ms）、骨架載入。問答模式：RAG 串流回答＋可點引用來源、側欄歷史問答（可重看／刪除）。
 
 ---
 

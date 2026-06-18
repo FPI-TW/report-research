@@ -38,6 +38,7 @@ load_env_file(Path(__file__).resolve().parents[1] / ".env")
 from app.services.answer import (  # noqa: E402
     OFF_TOPIC_MESSAGE,
     answer_question,
+    delete_qa,
     history_item,
     record_feedback,
 )
@@ -611,7 +612,7 @@ async def history(limit: int = Query(50, ge=1, le=200)):
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, answer, created_at, feedback, sources "
+                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources "
                     "FROM research.qa_log "
                     "WHERE answer IS DISTINCT FROM :offtopic "
                     "ORDER BY created_at DESC LIMIT :limit"
@@ -620,6 +621,23 @@ async def history(limit: int = Query(50, ge=1, le=200)):
             )
         ).all()
     return [history_item(tuple(r)) for r in rows]
+
+
+@app.delete("/api/history/{qa_id}")
+async def delete_history(qa_id: str):
+    """刪除單筆問答歷史（使用者清除側欄某一列）。回 {"ok": bool}。"""
+    ok = await delete_qa(qa_id)
+    return {"ok": ok}
+
+
+@app.post("/api/history/{qa_id}/delete")
+async def delete_history_post(qa_id: str):
+    """相容性刪除路由。
+
+    某些外部代理/邊緣環境對 DELETE 支援不穩時，前端可回退到 POST alias。
+    """
+    ok = await delete_qa(qa_id)
+    return {"ok": ok}
 
 
 async def _fetch_report(session, report_id: str):

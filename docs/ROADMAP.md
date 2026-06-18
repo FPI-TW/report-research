@@ -44,6 +44,8 @@ Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3
 
 **里程碑 M1**:`/api/ask` 串流回答且引用可連回原始 PDF;每日簡報可產出並快取。
 
+> **狀態(2026-06)**:RAG 問答(`answer.py`)、`/api/ask`(SSE)、`qa_log`、`/api/history`(含單筆刪除)、`/api/feedback` 與前端問答模式(歷史問答清單／引用來源／讚倒讚)已上線;**每日簡報(`brief.py`／`brief.html`)尚未實作**。
+
 ---
 
 ## Phase 2 — 結構化訊號 + findb 整合(方向 B)

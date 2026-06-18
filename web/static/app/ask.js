@@ -8,10 +8,12 @@ import { html, raw } from "/static/utils.js";
 import { state } from "/static/app/state.js";
 import { mLabel, mColor, fmtDate } from "/static/app/meta.js";
 import { openFull } from "/static/app/modal.js";
+import { confirmDialog } from "/static/app/confirm.js";
 import { renderMarkdown } from "/static/app/markdown.js";
 
 let sources = [];   // 最近一次提問的來源清單（供 [n] 對應 report_id 與來源卡片）
 let extSources = [];   // 最近一次提問的外部（網路）來源
+let currentAskCtrl = null;   // 進行中的 /api/ask 請求；切歷史/重新提問時主動取消
 
 // SSE frame（event:/data: 兩行）→ { event, data }
 function parseFrame(frame) {
@@ -62,50 +64,90 @@ function paintExtSources(srcs) {
     </a>`).join("");
 }
 
-async function openHistory() {
-  const drawer = $("#askHistDrawer");
+function cancelActiveAsk({ bumpReq = false } = {}) {
+  if (bumpReq) state.askReq += 1;   // 讓既有 reader 的 latest-wins 判斷立刻失效
+  if (currentAskCtrl) {
+    currentAskCtrl.abort();
+    currentAskCtrl = null;
+  }
+  $("#askGo").disabled = false;
+}
+
+// 載入側欄歷史問答清單（問答模式常駐，取代原右側抽層）。
+// 首次載入才顯示「載入中…」，提問後的刷新沿用既有清單避免閃爍。
+export async function loadAskHistory() {
   const list = $("#askHistList");
-  drawer.hidden = false;
-  list.innerHTML = `<div class="ask-hist-empty">載入中…</div>`;
+  if (!list) return;
+  if (!list.children.length) list.innerHTML = `<div class="ask-hist-empty">載入中…</div>`;
   try {
     const resp = await fetch("/api/history?limit=50");
     if (resp.status === 401) { window.location.href = "/login"; return; }
     if (!resp.ok) throw new Error("bad");
     renderHistory(await resp.json());
   } catch (e) {
-    list.innerHTML = `<div class="ask-hist-empty">載入失敗，請稍後再試。</div>`;
+    if (!list.children.length || list.querySelector(".ask-hist-empty"))
+      list.innerHTML = `<div class="ask-hist-empty">載入失敗，請稍後再試。</div>`;
   }
 }
-function closeHistory() { $("#askHistDrawer").hidden = true; }
 
 function renderHistory(items) {
   const list = $("#askHistList");
   if (!items.length) { list.innerHTML = `<div class="ask-hist-empty">尚無歷史問答</div>`; return; }
-  list.innerHTML = items.map((it, i) => html`<button class="ask-hist-item" type="button" data-i="${String(i)}">
-      <span class="ask-hist-q">${it.question}</span>
-      <span class="ask-hist-meta">
-        ${it.created_at ? html`<span class="ask-hist-date">${fmtDate((it.created_at || "").slice(0, 10))}</span>` : raw("")}
-        ${it.feedback === "like" ? html`<span class="ask-hist-fb like">讚</span>`
-          : it.feedback === "dislike" ? html`<span class="ask-hist-fb dislike">倒讚</span>` : raw("")}
-      </span>
-    </button>`).join("");
-  list.querySelectorAll(".ask-hist-item").forEach(b =>
+  // ChatGPT/Gemini 式單行項目：只顯示問題（單行截斷），完整問題放 title 供懸停查看；右上疊刪除鈕（button 不能巢狀）
+  list.innerHTML = items.map((it, i) => html`<div class="ask-hist-item">
+      <button class="ask-hist-open" type="button" data-i="${String(i)}" title="${it.question}">
+        <span class="ask-hist-q">${it.question}</span>
+      </button>
+      <button class="ask-hist-del" type="button" data-i="${String(i)}" aria-label="刪除此問答" title="刪除此問答">${raw(SVG.trash)}</button>
+    </div>`).join("");
+  list.querySelectorAll(".ask-hist-open").forEach(b =>
     b.onclick = () => loadHistoryItem(items[parseInt(b.dataset.i, 10)]));
+  list.querySelectorAll(".ask-hist-del").forEach(b =>
+    b.onclick = () => deleteHistoryItem(items[parseInt(b.dataset.i, 10)], b));
+}
+
+// 刪除單筆歷史問答：優先走 DELETE；若代理/舊邊緣對 DELETE 回 404/405，
+// 自動回退到 POST alias，成功則即時移除該列；清空回空狀態。
+async function deleteHistoryItem(it, btn) {
+  if (!it || !it.id || btn.disabled) return;
+  const ok = await confirmDialog({
+    title: "刪除此問答？",
+    body: "將永久移除這筆歷史問答，無法復原。",
+    confirmLabel: "刪除",
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  try {
+    const path = `/api/history/${encodeURIComponent(it.id)}`;
+    let resp = await fetch(path, { method: "DELETE" });
+    if (resp.status === 404 || resp.status === 405) {
+      resp = await fetch(`${path}/delete`, { method: "POST" });
+    }
+    if (resp.status === 401) { window.location.href = "/login"; return; }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) throw new Error("bad");
+    btn.closest(".ask-hist-item")?.remove();
+    const list = $("#askHistList");
+    if (list && !list.children.length)
+      list.innerHTML = `<div class="ask-hist-empty">尚無歷史問答</div>`;
+  } catch (e) {
+    btn.disabled = false;   // 失敗：復原可再試（不打擾使用者）
+  }
 }
 
 // 唯讀重現一筆歷史問答（沿用既有渲染；不重打 /api/ask）
 function loadHistoryItem(it) {
-  closeHistory();
+  cancelActiveAsk({ bumpReq: true });   // 停掉舊串流，避免後續 token 覆寫歷史內容
   $("#askPanel").classList.remove("landing");   // 重現歷史 → 非著陸狀態
   $("#askEmpty").hidden = true;
   $("#askQuestion").hidden = false; $("#askQuestion").textContent = it.question;
   $("#askAnswer").hidden = false;
   sources = it.sources || [];
-  extSources = [];
+  extSources = it.ext_sources || [];
   paintSources(sources);
-  paintExtSources([]);
+  paintExtSources(extSources);
   paintAnswer(it.answer || "", false);
-  paintActions(it.id, it.answer || "", sources.length, 0);
+  paintActions(it.id, it.answer || "", sources.length, extSources.length);
   if (it.feedback) {   // 預先高亮當時回饋（可改）
     const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
     const btn = document.querySelector("#askActions " + sel);
@@ -151,6 +193,7 @@ const SVG = {
   copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
   chev: `<svg class="ask-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>`,
   ext: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
+  trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
 };
 
 // 重設動作列 + 收合來源（每次新提問）
@@ -275,12 +318,6 @@ export function initAsk() {
     }
   });
 
-  $("#askHistBtn").onclick = openHistory;
-  $("#askHistClose").onclick = closeHistory;
-  $("#askHistBackdrop").onclick = closeHistory;
-  document.addEventListener("keydown", e => {
-    if (e.key === "Escape" && !$("#askHistDrawer").hidden) closeHistory();
-  });
   $("#askPanel").classList.add("landing");   // 初始：輸入框置中、無底部白色列
 }
 
@@ -288,8 +325,9 @@ export async function askQuestion() {
   const input = $("#askInput");
   const q = input.value.trim();
   if (!q) return;
+  cancelActiveAsk({ bumpReq: true });
   $("#askPanel").classList.remove("landing");   // 進入對話 → 輸入置底的聊天版面
-  const my = ++state.askReq;   // 最新者勝
+  const my = state.askReq;   // cancelActiveAsk 已先 bump；此請求拿到新的序號
   $("#askGo").disabled = true;
   $("#askEmpty").hidden = true;
   $("#askQuestion").hidden = false;
@@ -307,18 +345,14 @@ export async function askQuestion() {
   let started = false;
   let notice = false;
   let qaId = null;
+  currentAskCtrl = new AbortController();
   try {
     const resp = await fetch("/api/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question: q,
-        market: state.market !== "全部" ? state.market : null,
-        instrument_type: state.instrument !== "全部" ? state.instrument : null,
-        relates_stock: state.relStock || null,
-        relates_futures: state.relFutures || null,
-        report_type: state.type !== "全部" ? state.type : null,
-      }),
+      // 問答一律檢索全語料：不帶側欄篩選（問答模式側欄已改為歷史清單）
+      body: JSON.stringify({ question: q }),
+      signal: currentAskCtrl.signal,
     });
     if (resp.status === 401) { window.location.href = "/login"; return; }
     if (!resp.ok || !resp.body) throw new Error("bad response");
@@ -365,10 +399,12 @@ export async function askQuestion() {
       if (!notice) paintAnswer(answer, false);   // 收尾：去掉游標（離題卡不可被覆寫）
       if (!started) fail("沒有取得回答，請稍後再試。");
       else if (!notice) paintActions(qaId, answer, sources.length, extSources.length);  // 動作列（離題卡不顯示）
+      loadAskHistory();   // 新問答已寫入 qa_log → 刷新側欄歷史清單
     }
   } catch (e) {
     if (my === state.askReq) fail("查詢逾時或失敗，請稍後再試。");
   } finally {
+    if (my === state.askReq) currentAskCtrl = null;
     if (my === state.askReq) $("#askGo").disabled = false;
   }
 }

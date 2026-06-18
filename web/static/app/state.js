@@ -4,14 +4,14 @@
  */
 
 // ── 單一狀態物件：使用者意圖（可分享/可還原）＋ 目前結果快取，集中管理避免多處走樣 ──
-export const VIEWS = ["table", "group"];   // group 顯示名稱為「列表」（仍依市場等分組渲染）
+export const VIEWS = ["group", "table"];   // 視覺順序：列表（group，預設）→ 表格；group 仍依分組渲染
 export const GROUPS = ["market", "report_type", "month"];
 export const state = {
   // 篩選 / 排序 / 檢視意圖
   market: "全部", instrument: "全部", relStock: false, relFutures: false,
   type: "全部",
   sort: "date_desc",            // 初值對齊首屏瀏覽預設，避免載入時 chip 自跳
-  view: "group", group: "market",   // 預設「列表」（分組）；卡片/列表(平鋪) 已移除
+  view: "group", group: "month",   // 預設「列表」檢視、分組依據預設「日期(月)」
   tableSort: { key: null, dir: "asc" },
   lastQuery: "",
   // 頂層模式：retrieval（檢索：瀏覽/搜尋）｜ ask（問答）。與下方結果快取用的 mode 區隔。

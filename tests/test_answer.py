@@ -308,8 +308,48 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         ext = [p for k, p in events if k == "ext_sources"]
         self.assertEqual(len(ext), 1)
         self.assertEqual(ext[0], [{"title": "標題", "url": "https://x.com"}])
+        self.assertEqual([k for k, _ in events][0], "sources")  # 事件序起點
+        self.assertEqual(events[-2][0], "ext_sources")          # ext_sources 緊鄰 done 之前
         self.assertEqual(events[-1][0], "done")
         self.assertEqual(events[-1][1]["cited"], ["r1"])
+
+    async def test_sentinel_split_across_chunks_not_leaked(self):
+        # sentinel 被拆在兩個 chunk（"[EXT_" + "SOURCES]"）：hold 尾段須仍攔截、不外洩
+        from app.services import answer as ans
+
+        async def fake_search(*a, **k):
+            return [(1, 0.85, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), distance=0.2))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            for ch in ["前段答案[1]。\n[EXT_", "SOURCES]\n- 標題 | https://x.com\n"]:
+                yield ch
+
+        async def fake_intent(q, **k):
+            return True
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+                ans.SessionFactory, ans.classify_intent)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        try:
+            events = [e async for e in ans.answer_question("問題")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+             ans.SessionFactory, ans.classify_intent) = orig
+
+        body = "".join(p for k, p in events if k == "token")
+        self.assertIn("前段答案[1]。", body)
+        self.assertNotIn("[EXT_SOURCES]", body)        # 跨 chunk 仍不外洩
+        self.assertNotIn("[EXT_", body)                # 半截 sentinel 也不外洩
+        self.assertNotIn("https://x.com", body)
+        ext = [p for k, p in events if k == "ext_sources"]
+        self.assertEqual(ext[0], [{"title": "標題", "url": "https://x.com"}])
 
 
 class FeedbackTests(unittest.IsolatedAsyncioTestCase):

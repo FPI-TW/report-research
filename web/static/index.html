@@ -24,11 +24,12 @@
   /* 預留捲軸槽：切到問答（整頁改為 100dvh 內部捲動、頁面捲軸消失）時，
      版面寬度維持不變，避免內容因捲軸出現/消失而橫向位移。
      scrollbar-gutter 需搭配非 visible 的 overflow 才會生效，故同時設 overflow-y:auto
-     （槽位恆預留、捲軸僅在內容溢出時才出現）。 */
-  html { overflow-y: auto; scrollbar-gutter: stable; }
+     （槽位恆預留、捲軸僅在內容溢出時才出現）。
+     背景置於 root：root 背景會鋪滿整個 canvas（含預留的捲軸槽），槽位才不會露出白邊。 */
+  html { overflow-y: auto; scrollbar-gutter: stable;
+    background: radial-gradient(120% 80% at 50% -10%, var(--bg-grad-1) 0%, var(--bg-grad-2) 60%, var(--bg) 100%); }
   body {
     min-height: 100dvh; color: var(--label);
-    background: radial-gradient(120% 80% at 50% -10%, var(--bg-grad-1) 0%, var(--bg-grad-2) 60%, var(--bg) 100%);
     -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
     font-size: 15px; line-height: 1.5; letter-spacing: .006em;
   }

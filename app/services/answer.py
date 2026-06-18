@@ -235,6 +235,23 @@ def cited_report_ids(answer: str, sources: list[Source]) -> list[str]:
     return [s.report_id for s in sources if s.n in nums]
 
 
+def history_item(row) -> dict:
+    """qa_log 一列 (id, question, answer, created_at, feedback, sources) → 前端用 dict。
+
+    sources 為 None（舊列）時回 []；created_at 轉 ISO 字串。
+    """
+    id_, question, answer, created_at, feedback, sources = row
+    created = created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
+    return {
+        "id": str(id_),
+        "question": question,
+        "answer": answer,
+        "created_at": created,
+        "feedback": feedback,
+        "sources": sources or [],
+    }
+
+
 async def _log_qa(
     question: str,
     answer: str,

@@ -14,6 +14,7 @@ from app.services.answer import (  # noqa: E402
     build_context,
     build_user_prompt,
     cited_report_ids,
+    history_item,
     split_external_sources,
 )
 
@@ -500,6 +501,26 @@ class LogQaSourcesTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(qid)
         self.assertIn("sources", captured)
         self.assertEqual(json.loads(captured["sources"]), [{"n": 1, "report_id": "r1"}])
+
+
+class HistoryItemTests(unittest.TestCase):
+    def test_maps_row_with_sources(self):
+        d = date(2026, 6, 18)
+        row = ("11111111-1111-1111-1111-111111111111", "台積電?", "答案[1]",
+               d, "like", [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}])
+        out = history_item(row)
+        self.assertEqual(out["id"], "11111111-1111-1111-1111-111111111111")
+        self.assertEqual(out["question"], "台積電?")
+        self.assertEqual(out["answer"], "答案[1]")
+        self.assertEqual(out["created_at"], "2026-06-18")
+        self.assertEqual(out["feedback"], "like")
+        self.assertEqual(out["sources"], [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}])
+
+    def test_null_sources_becomes_empty_list(self):
+        row = ("id2", "q", "a", date(2026, 6, 1), None, None)
+        out = history_item(row)
+        self.assertEqual(out["sources"], [])
+        self.assertIsNone(out["feedback"])
 
 
 if __name__ == "__main__":

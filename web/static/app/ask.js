@@ -96,7 +96,8 @@ function renderHistory(items) {
     b.onclick = () => deleteHistoryItem(items[parseInt(b.dataset.i, 10)], b));
 }
 
-// 刪除單筆歷史問答：呼叫 DELETE /api/history/{id}，成功則即時移除該列；清空回空狀態。
+// 刪除單筆歷史問答：優先走 DELETE；若代理/舊邊緣對 DELETE 回 404/405，
+// 自動回退到 POST alias，成功則即時移除該列；清空回空狀態。
 async function deleteHistoryItem(it, btn) {
   if (!it || !it.id || btn.disabled) return;
   const ok = await confirmDialog({
@@ -107,7 +108,11 @@ async function deleteHistoryItem(it, btn) {
   if (!ok) return;
   btn.disabled = true;
   try {
-    const resp = await fetch(`/api/history/${encodeURIComponent(it.id)}`, { method: "DELETE" });
+    const path = `/api/history/${encodeURIComponent(it.id)}`;
+    let resp = await fetch(path, { method: "DELETE" });
+    if (resp.status === 404 || resp.status === 405) {
+      resp = await fetch(`${path}/delete`, { method: "POST" });
+    }
     if (resp.status === 401) { window.location.href = "/login"; return; }
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.ok) throw new Error("bad");

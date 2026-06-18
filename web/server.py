@@ -630,6 +630,16 @@ async def delete_history(qa_id: str):
     return {"ok": ok}
 
 
+@app.post("/api/history/{qa_id}/delete")
+async def delete_history_post(qa_id: str):
+    """相容性刪除路由。
+
+    某些外部代理/邊緣環境對 DELETE 支援不穩時，前端可回退到 POST alias。
+    """
+    ok = await delete_qa(qa_id)
+    return {"ok": ok}
+
+
 async def _fetch_report(session, report_id: str):
     row = (
         await session.execute(

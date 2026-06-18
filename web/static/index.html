@@ -385,8 +385,11 @@
   /* ───── 常駐「清除篩選」（套用篩選時隨時可一鍵還原）───── */
   .clear-filters { border: none; background: var(--fill); color: var(--label-2);
     font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
-    padding: 6px 12px; border-radius: 100px; display: inline-flex; align-items: center; gap: 5px; }
-  .clear-filters[hidden] { display: none; }
+    padding: 6px 12px; border-radius: 100px; display: none; align-items: center; gap: 5px;
+    opacity: 0; transform: scale(.9);
+    transition: opacity var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out), display var(--dur-1) allow-discrete; }
+  .clear-filters.show { display: inline-flex; opacity: 1; transform: none; }
+  @starting-style { .clear-filters.show { opacity: 0; transform: scale(.9); } }
   .clear-filters:hover { background: #78788024; color: var(--label); }
   .clear-filters::before { content: "✕"; font-size: 10px; }
 
@@ -725,7 +728,7 @@
               <option value="month">日期(月)</option>
             </select>
           </div>
-          <button class="clear-filters" id="clearFilters" type="button" hidden>清除篩選</button>
+          <button class="clear-filters" id="clearFilters" type="button">清除篩選</button>
           <div class="view-note" id="viewNote" aria-live="polite"></div>
         </div>
         <div id="results" role="region" aria-label="研報結果"></div>

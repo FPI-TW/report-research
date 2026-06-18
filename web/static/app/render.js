@@ -1,7 +1,7 @@
 /*
  * 廷豐研報 前端模組：結果渲染（卡片/列表/表格/分組）＋ 結果區事件綁定。
  */
-import { $, $$ } from "/static/app/dom.js";
+import { $, $$, animEnter } from "/static/app/dom.js";
 import { esc, escRe, html, raw, joinHtml } from "/static/utils.js";
 import { mLabel, mColor, iLabel, iColor, tLabel, fmtDate } from "/static/app/meta.js";
 import { state } from "/static/app/state.js";
@@ -291,7 +291,7 @@ export function updateViewBar() {
   });
   $("#groupByWrap").hidden = state.view !== "group";
   const cf = $("#clearFilters");
-  if (cf) { const n = activeFilterCount(); cf.hidden = !n; cf.textContent = n ? `清除篩選 · ${n}` : "清除篩選"; }
+  if (cf) { const n = activeFilterCount(); cf.classList.toggle("show", !!n); cf.textContent = n ? `清除篩選 · ${n}` : "清除篩選"; }
   let note = "";
   if ((state.view === "table" || state.view === "group")
       && state.mode === "browse" && state.offset < state.total) {
@@ -342,6 +342,7 @@ export function bindResultEvents() {
       if (state.tableSort.key === key) state.tableSort.dir = state.tableSort.dir === "asc" ? "desc" : "asc";
       else { state.tableSort.key = key; state.tableSort.dir = "asc"; }
       paintResults(false);
+      animEnter($("#results"));
     };
     th.onclick = doSort;
     th.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); doSort(); } };

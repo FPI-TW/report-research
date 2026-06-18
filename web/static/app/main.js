@@ -2,7 +2,7 @@
  * 廷豐研報 檢索頁 進入點（composition root）：組裝各模組、綁定全域事件、啟動序列。
  * type="module" 為 deferred，於 HTML 解析完成後執行，所有 import 求值完畢後才跑下方程式碼。
  */
-import { $, $$ } from "/static/app/dom.js";
+import { $, $$, animEnter } from "/static/app/dom.js";
 import { state, VIEWS } from "/static/app/state.js";
 import { resetFilters, syncPressed } from "/static/app/chips.js";
 import { syncURL, restoreFromURL } from "/static/app/url.js";
@@ -41,7 +41,8 @@ $$(".view-switch button").forEach(b => b.onclick = () => {
   state.view = b.dataset.view;
   try { localStorage.setItem("rm_view", state.view); } catch (e) {}
   syncURL();
-  state.rows.length ? paintResults(false) : updateViewBar();
+  if (state.rows.length) { paintResults(false); animEnter($("#results")); }
+  else updateViewBar();
 });
 $(".view-switch").addEventListener("keydown", e => {   // radiogroup 方向鍵切換
   if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
@@ -54,7 +55,7 @@ $(".view-switch").addEventListener("keydown", e => {   // radiogroup 方向鍵�
 $("#groupBy").onchange = () => {
   state.group = $("#groupBy").value;
   syncURL();
-  if (state.rows.length && state.view === "group") paintResults(false);
+  if (state.rows.length && state.view === "group") { paintResults(false); animEnter($("#results")); }
 };
 
 // ── 頂層模式切換（檢索 / 問答）：問答用主區獨立的大型提問框；篩選作為共用範圍 ──
@@ -76,9 +77,10 @@ function applyMode(mode) {
   if (ask) {
     $("#resultsBar").hidden = true;
     $("#meta").classList.remove("show");
+    animEnter($("#askPanel"));
     $("#askInput").focus();
   } else {   // 切回檢索：依目前狀態還原結果區（有快取重繪、有查詢重搜、否則瀏覽）
-    if (state.rows.length) paintResults(false);
+    if (state.rows.length) { paintResults(false); animEnter($("#results")); }
     else if ($("#q").value.trim()) run();
     else loadBrowse();
   }

@@ -270,6 +270,48 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(called["llm"])  # 有跑主 LLM
 
 
+class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
+    async def test_body_excludes_sentinel_and_emits_ext_sources(self):
+        from app.services import answer as ans
+
+        async def fake_search(*a, **k):
+            return [(1, 0.85, make_row("r1", "x.pdf", "TW", "台積電先進封裝。", date(2026, 6, 1), distance=0.2))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            for ch in ["前段答案[1]。", "（網路）補充。", "\n[EXT_SOURCES]\n- 標題 | https://x.com\n"]:
+                yield ch
+
+        async def fake_intent(q, **k):
+            return True
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+                ans.SessionFactory, ans.classify_intent)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        try:
+            events = [e async for e in ans.answer_question("台積電封裝")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+             ans.SessionFactory, ans.classify_intent) = orig
+
+        body = "".join(p for k, p in events if k == "token")
+        self.assertIn("前段答案[1]。", body)
+        self.assertIn("（網路）補充。", body)
+        self.assertNotIn("[EXT_SOURCES]", body)        # sentinel 不外洩
+        self.assertNotIn("https://x.com", body)        # 來源不混進正文
+        ext = [p for k, p in events if k == "ext_sources"]
+        self.assertEqual(len(ext), 1)
+        self.assertEqual(ext[0], [{"title": "標題", "url": "https://x.com"}])
+        self.assertEqual(events[-1][0], "done")
+        self.assertEqual(events[-1][1]["cited"], ["r1"])
+
+
 class FeedbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_value_rejected_without_db(self):
         # 非 like/dislike 一律 False，且不觸碰 DB（純驗證分支）

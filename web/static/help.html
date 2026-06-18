@@ -165,11 +165,11 @@
       <ul class="bul">
         <li>可輸入主題、公司、事件，例如：「AI 伺服器散熱」、「台積電 先進封裝」、「美國 升息」。</li>
         <li>採<strong>語意 ＋ 關鍵字混合檢索</strong>：用字不必和報告完全相同，也能找到語意相關的報告。</li>
-        <li>命中的關鍵詞會以<strong>黃底</strong>標示，並列出報告中最相關的<strong>段落</strong>，方便快速判斷。</li>
+        <li>結果依<strong>相關度</strong>排序，每筆右側的<strong>百分比</strong>是該篇最相關片段與查詢的相似度，並標出<strong>命中片段數</strong>，方便快速判斷。</li>
       </ul>
       <figure>
         <img src="/static/help/02-results.png" alt="搜尋結果" />
-        <figcaption>搜尋「AI 伺服器散熱」的結果：每筆附最相關段落，關鍵詞以黃底標示</figcaption>
+        <figcaption>搜尋「AI 伺服器散熱」的結果：依相關度排序，每筆右側顯示相似度 %</figcaption>
       </figure>
       <div class="note">搜尋會回傳<b>最相關的前 12 篇</b>研報（非整個資料庫）；想更精準就多加關鍵字縮小範圍。結果上的<b>百分比</b>是「該篇<b>最相關片段</b>與查詢的相似度」，不是整篇報告的相關度。</div>
     </section>
@@ -217,25 +217,20 @@
     <section id="result">
       <h2><span class="no">6</span>看懂一筆結果</h2>
       <p>每一筆結果都會顯示以下資訊（下圖為示意；列表與表格的排版略有不同，資訊相同）：</p>
-      <figure class="annot">
-        <img src="/static/help/card-anatomy.png" alt="一筆結果的各部位標註" />
-        <span class="pin" style="top:11%;left:5%">1</span>
-        <span class="pin" style="top:11%;left:27%">2</span>
-        <span class="pin" style="top:20%;left:15%">3</span>
-        <span class="pin" style="top:31%;left:6%">4</span>
-        <span class="pin" style="top:31%;left:22%">5</span>
-        <span class="pin" style="top:43%;left:6%">6</span>
-        <span class="pin" style="top:85%;left:24%">7</span>
+      <figure>
+        <img src="/static/help/card-anatomy.png" alt="一筆結果（列表列）的各部位" />
+        <figcaption>一筆結果（列表）的各部位，由左到右；表格檢視為相同資訊的欄位排版</figcaption>
       </figure>
       <ol class="annot-legend">
         <li><span class="n">1</span><span><b>市場徽章</b>：報告涵蓋的主要市場（彩色，本例「台股」）；完整 9 種見下方。</span></li>
-        <li><span class="n">2</span><span><b>檔名</b>：原始報告檔名。最右側的「#1」是這次結果的<b>排名</b>（預設依相關度；若改用日期排序則為顯示順序）。</span></li>
-        <li><span class="n">3</span><span><b>來源／日期／命中片段數</b>：券商來源、報告日期、報告類型（如「速報」），與本篇命中你查詢的<b>段落數</b>。</span></li>
-        <li><span class="n">4</span><span><b>商品類型標籤</b>：報告提到的金融商品（本例「股票」）；完整清單見下方。</span></li>
-        <li><span class="n">5</span><span><b>標的標籤</b>：對選股／期貨是否有參考，常附<b>代碼</b>（本例「個股 · 8299」）。</span></li>
-        <li><span class="n">6</span><span><b>命中片段＋相關度</b>：與查詢最相關的段落；最前面的<b>百分比</b>是該段相關度，關鍵詞以黃底標示。</span></li>
-        <li><span class="n">7</span><span><b>開啟完整報告</b>：點任一筆結果即可彈出視窗、直接內嵌原始 PDF（見第 7 節）。</span></li>
+        <li><span class="n">2</span><span><b>檔名</b>：原始報告檔名。</span></li>
+        <li><span class="n">3</span><span><b>來源／日期／命中片段數</b>：券商來源、報告日期，與（搜尋時）本篇命中你查詢的<b>段落數</b>。</span></li>
+        <li><span class="n">4</span><span><b>商品類型標籤</b>：報告提到的金融商品（本例「股票・指數・期貨…」）；完整清單見下方。</span></li>
+        <li><span class="n">5</span><span><b>標的標籤</b>：對選股／期貨是否有參考，常附<b>代碼</b>（本例「個股 · 2330 等 8 檔」）。</span></li>
+        <li><span class="n">6</span><span><b>相關度</b>：搜尋時，最右側的<b>百分比</b>是該篇最相關片段與查詢的相似度。</span></li>
+        <li><span class="n">7</span><span><b>摘要</b>：若該報告有 2-3 句中文摘要，會顯示在標的標籤下方並<b>完整顯示</b>（表格檢視則於名稱 hover 顯示）。</span></li>
       </ol>
+      <div class="note">點<b>整列</b>即可開啟完整報告（內嵌原始 PDF，見第 7 節）。</div>
 
       <h3>市場徽章（每篇一個）</h3>
       <p>代表報告涵蓋的「主要市場」，以彩色標籤呈現：</p>

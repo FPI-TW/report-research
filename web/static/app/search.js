@@ -18,10 +18,5 @@ export function initSearch() {
     debounceT = setTimeout(() => { if (v !== state.lastQuery) run(); }, 450);
   });
   $("#q").addEventListener("keydown", e => { if (e.key === "Enter") { clearTimeout(debounceT); run(); } });
-  $("#go").onclick = () => { clearTimeout(debounceT); run(); };
   $("#clear").onclick = () => { $("#q").value = ""; toggleClear(); state.lastQuery = ""; $("#q").focus(); loadBrowse(); };
-  document.querySelectorAll("#examples .ex").forEach(b => b.onclick = () => {
-    clearTimeout(debounceT);   // 與 #go/Enter 一致，避免 debounce timer 觸發冗餘查詢
-    $("#q").value = b.textContent; toggleClear(); run();
-  });
 }

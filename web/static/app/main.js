@@ -2,14 +2,14 @@
  * 廷豐研報 檢索頁 進入點（composition root）：組裝各模組、綁定全域事件、啟動序列。
  * type="module" 為 deferred，於 HTML 解析完成後執行，所有 import 求值完畢後才跑下方程式碼。
  */
-import { $, $$, animEnter } from "/static/app/dom.js";
+import { $, $$, animEnter, animSlide } from "/static/app/dom.js";
 import { state, VIEWS } from "/static/app/state.js";
 import { resetFilters, syncPressed } from "/static/app/chips.js";
 import { syncURL, restoreFromURL } from "/static/app/url.js";
 import { paintResults, updateViewBar } from "/static/app/render.js";
 import { closeFull } from "/static/app/modal.js";
 import { initSearch } from "/static/app/search.js";
-import { initAsk } from "/static/app/ask.js";
+import { initAsk, loadAskHistory } from "/static/app/ask.js";
 import { loadStats, renderStats, run, loadBrowse, rerun } from "/static/app/api.js";
 
 // ── 搜尋框互動（debounce / Enter / 清除 / 例子）──
@@ -38,10 +38,12 @@ if (clearFiltersBtn) clearFiltersBtn.onclick = () => { resetFilters(); rerun(); 
 // ── 檢視切換（卡片／列表／表格／分組）：切換不重打 API，只重繪快取結果 ──
 $$(".view-switch button").forEach(b => b.onclick = () => {
   if (state.view === b.dataset.view) return;
+  // 依分頁前後決定平移方向：往右分頁→新面板從右滑入，往左→從左
+  const dir = VIEWS.indexOf(b.dataset.view) > VIEWS.indexOf(state.view) ? "right" : "left";
   state.view = b.dataset.view;
   try { localStorage.setItem("rm_view", state.view); } catch (e) {}
   syncURL();
-  if (state.rows.length) { paintResults(false); animEnter($("#results")); }
+  if (state.rows.length) { paintResults(false); animSlide($("#results"), dir); }
   else updateViewBar();
 });
 $(".view-switch").addEventListener("keydown", e => {   // radiogroup 方向鍵切換
@@ -71,16 +73,16 @@ function applyMode(mode) {
   document.body.classList.toggle("ask-mode", ask);   // 觸發聊天式滿版版面（CSS）
   // 問答時：收起側欄搜尋框與範例、隱藏檢索結果區；顯示主區提問面板並聚焦輸入框
   $(".search").hidden = ask;
-  $("#examples").hidden = ask;
   $("#askPanel").hidden = !ask;
   $("#results").hidden = ask;
   if (ask) {
     $("#resultsBar").hidden = true;
     $("#meta").classList.remove("show");
-    animEnter($("#askPanel"));
+    animSlide($("#askPanel"), "right");   // 問答為右分頁 → 新面板從右側平移進場
+    loadAskHistory();   // 側欄改顯示歷史問答（取代篩選 chips）
     $("#askInput").focus();
   } else {   // 切回檢索：依目前狀態還原結果區（有快取重繪、有查詢重搜、否則瀏覽）
-    if (state.rows.length) { paintResults(false); animEnter($("#results")); }
+    if (state.rows.length) { paintResults(false); animSlide($("#results"), "left"); }   // 檢索為左分頁 → 從左側
     else if ($("#q").value.trim()) run();
     else loadBrowse();
   }

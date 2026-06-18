@@ -13,3 +13,14 @@ export function animEnter(el) {
   el.classList.add("anim-enter");
   el.addEventListener("animationend", () => el.classList.remove("anim-enter"), { once: true });
 }
+
+// 方向性「平移進場」：dir = "left" | "right"，新面板從該側滑入＋淡入（檢索↔問答、檢視切換）。
+// 同 animEnter 的重播手法；水平溢出由 .content 的 overflow-x:clip 裁掉，避免白邊/橫移。
+export function animSlide(el, dir) {
+  if (!el) return;
+  const cls = dir === "left" ? "slide-from-left" : "slide-from-right";
+  el.classList.remove("slide-from-left", "slide-from-right");
+  void el.offsetWidth;
+  el.classList.add(cls);
+  el.addEventListener("animationend", () => el.classList.remove(cls), { once: true });
+}

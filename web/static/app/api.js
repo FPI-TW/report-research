@@ -60,9 +60,7 @@ export async function loadBrowse(append = false) {
     state.rows = append ? state.rows.concat(data.items || []) : (data.items || []);
     state.total = data.total || 0;
     state.offset = state.rows.length;
-    $("#meta").classList.add("show");
-    const sortLabel = state.sort === "date_asc" ? "依日期舊到新" : "依日期新到舊";
-    $("#meta").textContent = `已導入 ${state.total} 篇報告 — ${sortLabel}`;
+    $("#meta").classList.remove("show");   // 瀏覽不顯示「已導入 N 篇」說明（依使用者要求移除）
     if (!state.total) {
       $("#resultsBar").hidden = true;
       $("#results").className = "";

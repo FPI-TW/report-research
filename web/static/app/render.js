@@ -94,7 +94,9 @@ export function tagRowHtml(r) {
 // ── 摘要（卡片/列表共用，純文字無 emoji；點擊展開/收合，見 bindResultEvents）──
 export function summaryHtml(r, cls) {
   if (!r.summary) return raw("");
-  return html`<span class="${cls} clamp">${r.summary}</span>`;
+  // 列表（row-summary）完整顯示、不截斷也不掛展開鈕；其餘（卡片）維持兩行截斷
+  const clamp = cls === "row-summary" ? "" : " clamp";
+  return html`<span class="${cls}${clamp}">${r.summary}</span>`;
 }
 
 // ── 卡片（grid）：search 顯示排名/片段/相關度條；browse 為精簡版 ──
@@ -238,7 +240,7 @@ export function groupLabel(key, by) {
   if (key === "—") return "未分類";
   if (by === "market") return mLabel(key);
   if (by === "report_type") return tLabel(key);
-  if (by === "month") return key.replace("-", "/");
+  if (by === "month") { const [y, m] = key.split("-"); return `${y} 年 ${+m} 月`; }
   return key;
 }
 export function groupedHtml(rows, mode, by) {
@@ -265,8 +267,7 @@ export function groupedHtml(rows, mode, by) {
 export function paintResults(animate = true) {
   const root = $("#results");
   root.className = "mode-" + state.view + (animate ? "" : " no-rise");
-  $("#resultsBar").hidden = false;
-  updateViewBar();
+  updateViewBar();   // 內含結果列（清除篩選）顯示與否
   let html;
   if (state.view === "table") html = tableHtml(state.rows, state.mode);
   else if (state.view === "group") html = groupedHtml(state.rows, state.mode, state.group);
@@ -290,14 +291,10 @@ export function updateViewBar() {
     b.tabIndex = on ? 0 : -1;
   });
   $("#groupByWrap").hidden = state.view !== "group";
+  const n = activeFilterCount();
   const cf = $("#clearFilters");
-  if (cf) { const n = activeFilterCount(); cf.classList.toggle("show", !!n); cf.textContent = n ? `清除篩選 · ${n}` : "清除篩選"; }
-  let note = "";
-  if ((state.view === "table" || state.view === "group")
-      && state.mode === "browse" && state.offset < state.total) {
-    note = `排序／分組僅套用已載入的 ${state.rows.length} 筆（共 ${state.total.toLocaleString()} 筆，可「載入更多」）`;
-  }
-  $("#viewNote").textContent = note;
+  if (cf) { cf.classList.toggle("show", !!n); cf.textContent = n ? `清除篩選 · ${n}` : "清除篩選"; }
+  $("#resultsBar").hidden = !n;   // 結果列僅剩「清除篩選」：有篩選才顯示，避免無篩選時留空白列
 }
 
 export function appendLoadMore() {
@@ -352,7 +349,7 @@ export function bindResultEvents() {
 // 量測每則摘要是否真的被截斷（>2 行）；溢出才掛上鍵盤可用的「展開」鈕，
 // 避免對只有一兩行的摘要顯示假的展開提示。每次 paint 後重跑（DOM 已重建）。
 export function markClampable() {
-  $$("#results .summary, #results .row-summary").forEach(el => {
+  $$("#results .summary").forEach(el => {   // 列表(row-summary)已完整顯示，不掛展開鈕
     if (el.scrollHeight <= el.clientHeight + 1) return;   // 沒溢出 → 不需要展開鈕
     el.classList.add("clampable");
     const btn = document.createElement("button");

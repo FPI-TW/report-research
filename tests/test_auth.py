@@ -153,6 +153,8 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn('name="username"', r.text)
         self.assertIn('name="password"', r.text)
+        self.assertNotIn("請登入以使用研究報告檢索", r.text)
+        self.assertIn('class="brand-row"', r.text)
 
     def test_wrong_credentials_redirect_with_error(self):
         r = _client().post("/login", data={"username": "tester", "password": "bad"})
@@ -216,6 +218,13 @@ class AuthFlowTests(unittest.TestCase):
         r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn(auth.COOKIE_NAME, r.cookies)
+
+    def test_authed_homepage_uses_static_avatar_image(self):
+        client = _client()
+        client.post("/login", data={"username": "tester", "password": "testpass"})
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('src="/static/img/avatar.jpg"', r.text)
 
     def test_unauthed_static_is_gated(self):
         # /static 不在白名單:未登入直接取 /static/index.html 應被擋(防繞過 route 門檻)

@@ -206,7 +206,7 @@ async function deleteConversationItem(id, btn) {
     const path = `/api/conversations/${encodeURIComponent(id)}`;
     let resp = await fetch(path, { method: "DELETE" });
     if (resp.status === 404 || resp.status === 405) resp = await fetch(`${path}/delete`, { method: "POST" });
-    if (resp.status === 401) { window.location.href = "/login"; return; }
+    if (resp.status === 401) { btn.disabled = false; window.location.href = "/login"; return; }
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.ok) throw new Error("bad");
     btn.closest(".ask-hist-item")?.remove();
@@ -394,7 +394,7 @@ export async function askQuestion() {
       if (!notice) paintAnswer(turn, false);   // 收尾：去掉游標（離題卡不可被覆寫）
       if (!started) fail(turn, "沒有取得回答，請稍後再試。");
       else if (!notice) paintActions(turn);   // 動作列（離題卡不顯示）
-      loadAskHistory().then(() => markActive());   // 刷新側欄對話清單後高亮當前對話
+      loadAskHistory();   // 刷新側欄對話清單（renderHistory 內已呼叫 markActive）
     }
   } catch (e) {
     if (my === state.askReq) fail(turn, "查詢逾時或失敗，請稍後再試。");

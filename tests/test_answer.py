@@ -464,6 +464,20 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         )
         i_token = next(i for i, (k, _) in enumerate(events) if k == "token")
         self.assertLess(i_gen, i_token)  # generating 在第一個 token 之前
+        i_reading = next(
+            i
+            for i, (k, p) in enumerate(events)
+            if k == "status" and isinstance(p, dict) and p.get("stage") == "reading"
+        )
+        self.assertLess(i_reading, i_gen)  # 事件序：reading → generating → token
+        self.assertEqual(
+            sum(
+                1
+                for k, p in events
+                if k == "status" and isinstance(p, dict) and p.get("stage") == "generating"
+            ),
+            1,
+        )  # generating 只發一次
         self.assertIsInstance(events[i_gen][1]["thinking_ms"], int)
         self.assertEqual(events[-1][0], "done")
         self.assertIsInstance(events[-1][1]["thinking_ms"], int)  # done 帶 thinking_ms

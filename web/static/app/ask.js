@@ -468,7 +468,7 @@ export async function askQuestion() {
       loadAskHistory();   // 刷新側欄對話清單（renderHistory 內已呼叫 markActive）
     }
   } catch (e) {
-    if (my === state.askReq) fail(turn, "查詢逾時或失敗，請稍後再試。");
+    if (my === state.askReq) { clearProcess(turn); fail(turn, "查詢逾時或失敗，請稍後再試。"); }
   } finally {
     if (my === state.askReq) currentAskCtrl = null;
     if (my === state.askReq) $("#askGo").disabled = false;

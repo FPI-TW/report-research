@@ -239,13 +239,6 @@ const SVG = {
   trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
 };
 
-// 重設動作列 + 收合來源（每次新提問，作用於指定 turn）
-function resetActions(turn) {
-  turn.actionsEl.innerHTML = ""; turn.actionsEl.hidden = true;
-  turn.srcEl.classList.remove("open");
-  turn.extEl.classList.remove("open"); turn.extEl.innerHTML = "";
-}
-
 // 回答完成後的 ChatGPT 式動作列：讚/倒讚/複製 +（有來源時）資料來源切換
 function paintActions(turn) {
   const el = turn.actionsEl;
@@ -350,7 +343,7 @@ export async function askQuestion() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // 問答一律檢索全語料：不帶側欄篩選（問答模式側欄已改為歷史清單）
-      body: JSON.stringify({ question: q }),   // Task 8 會補 conversation_id
+      body: JSON.stringify(conversationId ? { question: q, conversation_id: conversationId } : { question: q }),
       signal: currentAskCtrl.signal,
     });
     if (resp.status === 401) { window.location.href = "/login"; return; }

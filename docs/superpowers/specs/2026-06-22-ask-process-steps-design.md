@@ -101,3 +101,72 @@
 
 - `answer.py` 屬後端，部署後需重啟 web 服務（`report-mark-web.service`）才生效。
 - 前端為靜態檔，`/static` no-cache，部署即時生效。
+
+---
+
+## 增補（2026-06-22）：標題改「已思考 XX 秒」計時呈現
+
+延續上述步驟面板，調整其**呈現主體**：把可收折標題「處理過程」升級成 ChatGPT/Claude 式的耗時計時器，步驟清單收進面板內。已與使用者確認。
+
+### 呈現（已選定）
+
+- **預設收合**（即時輪也收合，與原本「即時輪預設展開」相反）。
+- **處理中**：標題顯示 `思考中 N 秒…`，前綴 spinner，每秒跳動。
+- **思考結束**（答案開始串流時）：標題凍結成 `已思考 XX 秒`，前綴打勾，可點開看 5 步驟明細。
+- 面板內 5 步驟（理解問題／找到 N 篇／閱讀整理／搜尋網路／生成回答）邏輯不變；收合時隱藏，展開時顯示即時狀態。
+
+### 秒數量測語意（已確認）
+
+「已思考」＝**`answer_question` 開始 → 第一個 token（答案開始串流）**，於答案開始輸出時凍結。即 ChatGPT「Thought for Xs」語意：量「出字前等了多久」，**不含**逐字輸出答案的時間。
+
+> 既有 `qa_log.latency_ms` 是**總耗時**（含整段串流，於寫 log 時量測），語意不同，**不挪用**；另立獨立的 `thinking_ms`。
+
+### 單一真實來源（即時＝歷史一致）
+
+使用者要求「全部一致」。實作為單一真實來源：
+
+- 後端量測 `thinking_ms`，於**第一個 token 邊界**以事件 `("status", {"stage": "generating", "thinking_ms": N})` 帶給前端 → 即時顯示用此權威值；前端的「思考中 N 秒…」僅為動畫佔位。
+- 同一 `thinking_ms` 寫入 `qa_log` → 歷史回看讀同一值。
+- 即時與歷史顯示同一個後端量得的數字，避免新舊輪呈現不一致。
+
+### 後端改動（增補）
+
+- `db/schema.sql`：`research.qa_log` 新增 `thinking_ms int`（nullable）。因 `CREATE TABLE IF NOT EXISTS` 不會修改既有表，另補一行冪等 `ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS thinking_ms int;`，使 `make schema` 對既有 DB 也加得了欄。
+- `app/services/answer.py::answer_question`：
+  - 主串流路徑：第一個 `("token", …)` 之前 emit `("status", {"stage": "generating", "thinking_ms": int((time.monotonic()-started)*1000)})`（以 flag 確保只發一次；token 有多個 yield 點）。
+  - 無脈絡路徑：在 `NO_CONTEXT_MESSAGE` token 之前同樣 emit `generating` + `thinking_ms`。
+  - 離題路徑：無 token，`thinking_ms` 量到拒答點，放進 `done` payload 與 `qa_log`。
+  - `done` payload 一律帶 `thinking_ms`（離題校正與後備用）。
+- `_log_qa`：新增 `thinking_ms` 參數，與既有 `latency_ms` 並存寫入 INSERT。
+- `history_item` / `get_conversation`：SELECT 與回傳 dict 加入 `thinking_ms`（相容舊列：缺欄或 NULL 回 `None`）。
+
+事件序（正常路徑，更新後）：
+`understanding → sources → retrieved(count) → reading → [searching_web?] → generating(thinking_ms) → token… → ext_sources → done(thinking_ms)`
+
+### 前端改動（增補）
+
+檔案：`web/static/app/ask.js` 與 ask 區 CSS（index.html 內嵌 style）。
+
+- 標題列改為 `chevron + 狀態圖示（spinner/勾）+ 計時文字`；`renderProcess` 即時輪預設 `expanded=false`。
+- 送出時起 `setInterval`（id 存於 `turn.timer`），標題顯示「思考中 N 秒…」。
+- 收到 `generating`：停 interval，標題凍結為「已思考 {round(thinking_ms/1000)} 秒」+ 勾、點亮「生成回答」。第一個 `token` 與 `notice` 作為後備凍結點（取先到者；無 `thinking_ms` 時用 client 計值，`done.thinking_ms` 再校正）。
+- `done`：以 `thinking_ms` 校正標題權威值；標完成所有顯示中步驟。
+- `finishProcess` / `clearProcess` / `fail` / `cancelActiveAsk` 都要 `clearInterval(turn.timer)`，避免計時器洩漏。
+- 歷史 `staticProcess`：`createTurn`/`loadConversation` 取 `it.thinking_ms`；有值 → 標題「已思考 X 秒」；**舊列 NULL** → 退回中性標題（顯示「處理過程」、無秒數，仍可展開步驟）。
+
+### 邊界（增補）
+
+- **離題**：無 token，計時器於 `notice` 凍結（client 值），`done.thinking_ms` 校正。
+- **無脈絡**：`NO_CONTEXT` 前 emit `generating`，照常凍結。
+- **錯誤／逾時**：清 interval，面板維持現有處理。
+- **舊歷史列**：`thinking_ms` 為 NULL，歷史標題退回無秒數的中性呈現（可接受的漸進退化；新問答起累積真值）。
+
+### 測試（增補）
+
+- 後端：擴充 `tests/test_answer.py`，斷言正常路徑出現 `("status", {"stage": "generating", "thinking_ms": <int>})`、`done` 帶 `thinking_ms`，且涵蓋離題與無脈絡路徑；沿用既有 unittest + async + mock `stream_completion`。
+- 前端：無自動化框架，Playwright 手動驗即時跳動、凍結時機、收合、歷史重建（含舊列無秒數退化）。
+
+### 部署備註（增補）
+
+- schema 變更：部署需跑 `make schema`（冪等加欄）再重啟 `report-mark-web.service`。
+- 前端靜態檔即時生效。

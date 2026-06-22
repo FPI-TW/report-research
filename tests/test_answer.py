@@ -1316,5 +1316,22 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(called["llm"])  # 未跑主 LLM
 
 
+class HistoryItemThinkingTests(unittest.TestCase):
+    def test_history_item_includes_thinking_ms(self):
+        from app.services.answer import history_item
+
+        row = ("id1", "q", "a", "2026-06-22T00:00:00+00:00", None, [], [], 1234)
+        item = history_item(row)
+        self.assertEqual(item["thinking_ms"], 1234)
+
+    def test_history_item_thinking_ms_none_for_old_rows(self):
+        from app.services.answer import history_item
+
+        # 舊列（7 欄，無 thinking_ms）→ 回 None，不報錯
+        row = ("id1", "q", "a", "2026-06-22T00:00:00+00:00", None, [], [])
+        item = history_item(row)
+        self.assertIsNone(item["thinking_ms"])
+
+
 if __name__ == "__main__":
     unittest.main()

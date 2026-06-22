@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS research.qa_log (
     cited_report_ids uuid[],                        -- 回答實際引用的報告 id
     filters          jsonb,                         -- 提問時套用的市場/商品/類型等篩選
     latency_ms       int,
+    thinking_ms      int,                           -- 思考時間：開始→第一個 token（毫秒）
     created_at       timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_qa_log_created_at
@@ -95,3 +96,5 @@ ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS ext_sources jsonb;
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS conversation_id uuid;
 CREATE INDEX IF NOT EXISTS idx_qa_log_conversation
     ON research.qa_log ((COALESCE(conversation_id, id)), created_at);
+-- 思考時間：開始→第一個 token（毫秒），供歷史顯示（冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS thinking_ms int;

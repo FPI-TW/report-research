@@ -271,10 +271,23 @@ def cited_report_ids(answer: str, sources: list[Source]) -> list[str]:
 def history_item(row) -> dict:
     """qa_log 一列 → 前端用 dict。
 
-    相容舊列（無 ext_sources）與新列；sources/ext_sources 為 None 時回 []。
+    相容舊列（6 欄無 ext_sources、7 欄無 thinking_ms）與新列（8 欄）。
+    sources/ext_sources 為 None 時回 []；thinking_ms 缺欄回 None。
     created_at 轉 ISO 字串；離題拒答額外標記 is_offtopic，供前端重播時維持 notice 呈現。
     """
-    if len(row) >= 7:
+    thinking_ms = None
+    if len(row) >= 8:
+        (
+            id_,
+            question,
+            answer,
+            created_at,
+            feedback,
+            sources,
+            ext_sources,
+            thinking_ms,
+        ) = row[:8]
+    elif len(row) >= 7:
         id_, question, answer, created_at, feedback, sources, ext_sources = row[:7]
     else:
         id_, question, answer, created_at, feedback, sources = row[:6]
@@ -289,6 +302,7 @@ def history_item(row) -> dict:
         "sources": sources or [],
         "ext_sources": ext_sources or [],
         "is_offtopic": answer == OFF_TOPIC_MESSAGE,
+        "thinking_ms": thinking_ms,
     }
 
 
@@ -417,7 +431,7 @@ async def get_conversation(conversation_id: str) -> list[dict]:
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources "
+                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
                     "FROM research.qa_log "
                     "WHERE COALESCE(conversation_id, id) = :cid "
                     "ORDER BY created_at ASC"

@@ -106,14 +106,19 @@
 
 ## 增補（2026-06-22）：標題改「已思考 XX 秒」計時呈現
 
-延續上述步驟面板，調整其**呈現主體**：把可收折標題「處理過程」升級成 ChatGPT/Claude 式的耗時計時器，步驟清單收進面板內。已與使用者確認。
+延續上述步驟面板，調整其**呈現主體**：把可收折標題「處理過程」升級成 ChatGPT 式的**動態思考列**（處理中切換「正在思考 ↔ 目前動作」，結束後結算耗時）。已與使用者確認。
 
-### 呈現（已選定）
+### 呈現（已選定，2026-06-22 調整）
+
+採 ChatGPT 式「動態思考列」：
 
 - **預設收合**（即時輪也收合，與原本「即時輪預設展開」相反）。
-- **處理中**：標題顯示 `思考中 N 秒…`，前綴 spinner，每秒跳動。
-- **思考結束**（答案開始串流時）：標題凍結成 `已思考 XX 秒`，前綴打勾，可點開看 5 步驟明細。
-- 面板內 5 步驟（理解問題／找到 N 篇／閱讀整理／搜尋網路／生成回答）邏輯不變；收合時隱藏，展開時顯示即時狀態。
+- **處理中**：
+  - 一開始標題顯示「正在思考」（前綴 spinner）。
+  - 每當有實際動作（找到 N 篇研報／閱讀整理／搜尋網路…），標題**直接切成該動作文字**，短暫顯示後**再切回「正在思考」**（baseline）。
+  - 處理中**不顯示秒數**（與 ChatGPT 一致，僅結束後才結算）。
+- **思考結束**（答案開始串流，收到 `generating`）：標題凍結成「已思考 XX 秒」，前綴打勾。
+- **點開**：展開面板看「思考執行了哪些動作」＝既有 5 步驟清單（理解問題／找到 N 篇／閱讀整理／搜尋網路／生成回答，含完成勾選）。收合時隱藏，展開時顯示即時狀態。
 
 ### 秒數量測語意（已確認）
 
@@ -143,15 +148,18 @@
 事件序（正常路徑，更新後）：
 `understanding → sources → retrieved(count) → reading → [searching_web?] → generating(thinking_ms) → token… → ext_sources → done(thinking_ms)`
 
-### 前端改動（增補）
+### 前端改動（增補，2026-06-22 調整）
 
 檔案：`web/static/app/ask.js` 與 ask 區 CSS（index.html 內嵌 style）。
 
-- 標題列改為 `chevron + 狀態圖示（spinner/勾）+ 計時文字`；`renderProcess` 即時輪預設 `expanded=false`。
-- 送出時起 `setInterval`（id 存於 `turn.timer`），標題顯示「思考中 N 秒…」。
-- 收到 `generating`：停 interval，標題凍結為「已思考 {round(thinking_ms/1000)} 秒」+ 勾、點亮「生成回答」。第一個 `token` 與 `notice` 作為後備凍結點（取先到者；無 `thinking_ms` 時用 client 計值，`done.thinking_ms` 再校正）。
+- 標題列改為 `chevron + 狀態圖示（spinner/勾）+ 動態標籤`；`renderProcess` 即時輪預設 `expanded=false`。
+- **動態標籤狀態機（不用秒數計時器）**：
+  - 送出時 baseline 標籤＝「正在思考」。
+  - `onStatus` 收到動作事件時，把標題設成該動作標籤（沿用步驟標籤：`retrieved`→「找到 N 篇相關研報」、`reading`→「閱讀重點、整理回答」、`searching_web`→「搜尋網路補充」），同時 `clearTimeout` 既有、設一個短延遲（約 1.8s）後**還原為「正在思考」**；`understanding` 維持 baseline。
+  - 期間面板內步驟仍照常 `setStep`（展開即見即時狀態）。
+- 收到 `generating`：清掉還原 timeout，標題凍結為「已思考 {round(thinking_ms/1000)} 秒」+ 勾、點亮「生成回答」。第一個 `token` 與 `notice` 作為後備凍結點（取先到者；無 `thinking_ms` 時 `done.thinking_ms` 校正，仍無則顯「已思考」無秒）。
 - `done`：以 `thinking_ms` 校正標題權威值；標完成所有顯示中步驟。
-- `finishProcess` / `clearProcess` / `fail` / `cancelActiveAsk` 都要 `clearInterval(turn.timer)`，避免計時器洩漏。
+- 還原 timeout id 存 `turn.labelTimer`；`finishProcess` / `clearProcess` / `fail` / `cancelActiveAsk` 都要 `clearTimeout`，避免殘留還原蓋掉凍結標題。
 - 歷史 `staticProcess`：`createTurn`/`loadConversation` 取 `it.thinking_ms`；有值 → 標題「已思考 X 秒」；**舊列 NULL** → 退回中性標題（顯示「處理過程」、無秒數，仍可展開步驟）。
 
 ### 邊界（增補）

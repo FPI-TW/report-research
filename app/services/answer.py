@@ -597,10 +597,10 @@ async def answer_question(
     searching_sent = False
     thinking_ms: int | None = None
 
-    def _emit_token(piece: str) -> list[tuple[str, object]]:
+    def _emit_token(piece: str) -> list[tuple[str, str | dict]]:
         """首個 token 前補發 generating(thinking_ms)，回傳要 yield 的事件序。"""
         nonlocal thinking_ms
-        out: list[tuple[str, object]] = []
+        out: list[tuple[str, str | dict]] = []
         if thinking_ms is None:
             thinking_ms = int((time.monotonic() - started) * 1000)
             out.append(

@@ -110,6 +110,7 @@ function paintExtSources(turn) {
 
 function cancelActiveAsk({ bumpReq = false } = {}) {
   if (bumpReq) state.askReq += 1;   // 讓既有 reader 的 latest-wins 判斷立刻失效
+  turns.forEach(t => clearTimeout(t.labelTimer));   // 清掉所有輪的待還原計時器，避免切換對話後殘留觸發
   if (currentAskCtrl) {
     currentAskCtrl.abort();
     currentAskCtrl = null;
@@ -527,7 +528,7 @@ export async function askQuestion() {
         else if (evt.event === "ext_sources") { turn.extSources = (evt.data || []).filter(s => s && safeHttp(s.url)); paintExtSources(turn); }
         else if (evt.event === "token") { if (!started) { startGenerating(turn); if (!turn.thinkingFrozen) freezeHead(turn, null); started = true; } turn.answer += evt.data; const stick = nearBottom(); paintAnswer(turn, true); if (stick) toBottom(); }
         else if (evt.event === "notice") { notice = true; started = true; clearProcess(turn); paintNotice(turn, evt.data); toBottom(); }
-        else if (evt.event === "done") { turn.qaId = (evt.data && evt.data.qa_id) || null; if (evt.data && evt.data.conversation_id) conversationId = evt.data.conversation_id; finishProcess(turn); }
+        else if (evt.event === "done") { turn.qaId = (evt.data && evt.data.qa_id) || null; if (evt.data && evt.data.conversation_id) conversationId = evt.data.conversation_id; if (evt.data && typeof evt.data.thinking_ms === "number") freezeHead(turn, evt.data.thinking_ms); finishProcess(turn); }
         else if (evt.event === "error") { clearProcess(turn); fail(turn, "問答服務發生錯誤，請稍後再試。"); return; }
       }
     }

@@ -1332,6 +1332,15 @@ class HistoryItemThinkingTests(unittest.TestCase):
         item = history_item(row)
         self.assertIsNone(item["thinking_ms"])
 
+    def test_history_item_thinking_ms_none_for_legacy_6col_rows(self):
+        from app.services.answer import history_item
+
+        # 最舊列（6 欄，無 ext_sources、無 thinking_ms）→ 兩者皆安全預設
+        row = ("id1", "q", "a", "2026-06-22T00:00:00+00:00", None, [])
+        item = history_item(row)
+        self.assertIsNone(item["thinking_ms"])
+        self.assertEqual(item["ext_sources"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

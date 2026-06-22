@@ -23,7 +23,7 @@ from sqlalchemy import text
 
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
-from app.services.intent import classify_intent
+from app.services.intent import classify_intent, condense_and_classify
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.retrieval import hybrid_search
 from app.services.textnorm import clean_text
@@ -33,6 +33,10 @@ MAX_REPORTS = 6
 MAX_PASSAGES_PER_REPORT = 2
 MAX_CONTEXT_CHARS = 6000
 RETRIEVAL_K = 8
+
+# 多輪對話脈絡：帶進 prompt 的近輪數與舊答案截斷長度（控 prompt 大小/延遲）
+MAX_HISTORY_TURNS = 3
+MAX_HISTORY_ANSWER_CHARS = 600
 
 SYSTEM_PROMPT = (
     "你是「廷豐研報」的研究問答助理。回答以使用者提供的『參考片段』（研報）為主，並遵守：\n"
@@ -222,9 +226,35 @@ def build_context(
     return sources, "\n\n".join(blocks)
 
 
-def build_user_prompt(question: str, context: str) -> str:
+def build_history_block(
+    turns: list[tuple[str, str]],
+    *,
+    max_turns: int = MAX_HISTORY_TURNS,
+    max_answer_chars: int = MAX_HISTORY_ANSWER_CHARS,
+) -> str:
+    """把近輪 (question, answer)（由舊到新）整理成『先前對話』文字；空 turns → ""。
+
+    只保留最近 max_turns 輪；舊答案截斷至 max_answer_chars 字控 prompt 大小。
+    """
+    if not turns:
+        return ""
+    recent = turns[-max_turns:]
+    lines: list[str] = []
+    for i, (q, a) in enumerate(recent, 1):
+        a = (a or "").strip()
+        if len(a) > max_answer_chars:
+            a = a[:max_answer_chars] + "…"
+        lines.append(f"Q{i}: {q}\nA{i}: {a}")
+    return "\n".join(lines)
+
+
+def build_user_prompt(question: str, context: str, history_block: str = "") -> str:
+    head = ""
+    if history_block:
+        head = "先前對話（供理解脈絡，不是新問題）：\n" + history_block + "\n\n"
     return (
-        "參考片段：\n"
+        head
+        + "參考片段：\n"
         f"{context}\n\n"
         f"問題：{question}\n\n"
         "請依規則作答，並在論點句末標註對應的來源編號。"
@@ -241,7 +271,7 @@ def history_item(row) -> dict:
     """qa_log 一列 → 前端用 dict。
 
     相容舊列（無 ext_sources）與新列；sources/ext_sources 為 None 時回 []。
-    created_at 轉 ISO 字串。
+    created_at 轉 ISO 字串；離題拒答額外標記 is_offtopic，供前端重播時維持 notice 呈現。
     """
     if len(row) >= 7:
         id_, question, answer, created_at, feedback, sources, ext_sources = row[:7]
@@ -257,6 +287,7 @@ def history_item(row) -> dict:
         "feedback": feedback,
         "sources": sources or [],
         "ext_sources": ext_sources or [],
+        "is_offtopic": answer == OFF_TOPIC_MESSAGE,
     }
 
 
@@ -268,11 +299,14 @@ async def _log_qa(
     latency_ms: int,
     sources: list[dict],
     ext_sources: list[dict] | None = None,
+    *,
+    conversation_id: str | None = None,
 ) -> str:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
     回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
     sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
+    conversation_id 將多輪問答歸為同一串。
     """
     qa_id = str(uuid.uuid4())
     ext_sources = ext_sources or []
@@ -281,8 +315,10 @@ async def _log_qa(
             await session.execute(
                 text(
                     "INSERT INTO research.qa_log "
-                    "(id, question, answer, cited_report_ids, filters, latency_ms, sources, ext_sources) "
-                    "VALUES (:id, :q, :a, :cited, :filters, :lat, :sources, :ext_sources)"
+                    "(id, question, answer, cited_report_ids, filters, latency_ms, "
+                    "sources, ext_sources, conversation_id) "
+                    "VALUES (:id, :q, :a, :cited, :filters, :lat, "
+                    ":sources, :ext_sources, :conv)"
                 ),
                 {
                     "id": qa_id,
@@ -293,12 +329,111 @@ async def _log_qa(
                     "lat": latency_ms,
                     "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
                     "ext_sources": json.dumps(ext_sources, ensure_ascii=False),  # jsonb
+                    "conv": conversation_id,
                 },
             )
             await session.commit()
     except Exception:
         pass
     return qa_id
+
+
+async def load_recent_turns(
+    conversation_id: str, *, limit: int = MAX_HISTORY_TURNS
+) -> list[tuple[str, str]]:
+    """取該對話最近 limit 輪 (question, answer)，回傳由舊到新；排除離題列。
+
+    以 COALESCE(conversation_id, id) 分組，相容舊 NULL 列（其自身 id 即對話 id）。
+    任何 DB 錯誤 → 回 []（fail-open，不擋作答）。
+    """
+    try:
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT question, answer FROM research.qa_log "
+                        "WHERE COALESCE(conversation_id, id) = :cid "
+                        "AND answer IS DISTINCT FROM :offtopic "
+                        "ORDER BY created_at DESC LIMIT :limit"
+                    ),
+                    {"cid": conversation_id, "offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+                )
+            ).all()
+        return [(q, a) for q, a in reversed(rows)]
+    except Exception:
+        return []
+
+
+async def list_conversations(limit: int = 50) -> list[dict]:
+    """對話串清單：每串 {conversation_id, title, last_at, turn_count}。
+
+    分組鍵 COALESCE(conversation_id, id)；標題取最早的非離題問題；
+    只顯示至少含一輪非離題回答的對話；
+    依該串最新時間由新到舊。
+    """
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT conv_id, title, last_at, turn_count FROM ("
+                    "  SELECT COALESCE(conversation_id, id) AS conv_id,"
+                    "         (array_agg(question ORDER BY created_at) "
+                    "             FILTER (WHERE answer IS DISTINCT FROM :offtopic))[1] AS title,"
+                    "         max(created_at) AS last_at,"
+                    "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic) AS turn_count"
+                    "  FROM research.qa_log"
+                    "  GROUP BY COALESCE(conversation_id, id)"
+                    ") g WHERE turn_count > 0 "
+                    "ORDER BY last_at DESC LIMIT :limit"
+                ),
+                {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+            )
+        ).all()
+    out: list[dict] = []
+    for conv_id, title, last_at, turn_count in rows:
+        out.append(
+            {
+                "conversation_id": str(conv_id),
+                "title": title,
+                "last_at": last_at.isoformat() if hasattr(last_at, "isoformat") else last_at,
+                "turn_count": int(turn_count),
+            }
+        )
+    return out
+
+
+async def get_conversation(conversation_id: str) -> list[dict]:
+    """該對話全部輪次（history_item 格式），由舊到新，供重開重現與續問。"""
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources "
+                    "FROM research.qa_log "
+                    "WHERE COALESCE(conversation_id, id) = :cid "
+                    "ORDER BY created_at ASC"
+                ),
+                {"cid": conversation_id},
+            )
+        ).all()
+    return [history_item(tuple(r)) for r in rows]
+
+
+async def delete_conversation(conversation_id: str) -> bool:
+    """刪整個對話串；刪到 ≥1 列回 True，查無或 DB 異常回 False。"""
+    try:
+        async with SessionFactory() as session:
+            result = await session.execute(
+                text(
+                    "DELETE FROM research.qa_log "
+                    "WHERE COALESCE(conversation_id, id) = :cid"
+                ),
+                {"cid": conversation_id},
+            )
+            await session.commit()
+        return getattr(result, "rowcount", 0) > 0
+    except Exception:
+        return False
 
 
 async def record_feedback(qa_id: str, value: str) -> bool:
@@ -343,65 +478,79 @@ async def answer_question(
     k: int = RETRIEVAL_K,
     filters: dict | None = None,
     model: str = DEFAULT_MODEL,
+    conversation_id: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
-    """產生 ("sources"|"token"|"done", payload) 事件序列。
+    """產生 ("sources"|"status"|"token"|"notice"|"ext_sources"|"done", payload) 事件序列。
 
-    先回 sources（供前端立即畫引用），再逐段回 token，最後 done。
+    首輪（未帶 conversation_id）：意圖判定與檢索並行（省延遲）。
+    續問（帶 conversation_id）：先載近輪歷史，一次 Haiku 改寫追問為獨立查詢並判定意圖，
+    再以改寫後查詢檢索；先前對話內嵌進 prompt。所有 done 事件回傳 conversation_id。
     """
     filters = filters or {}
     started = time.monotonic()
+    conv_id = conversation_id or str(uuid.uuid4())
 
-    # 意圖判定與檢索並行：把 Haiku 判斷的延遲藏在 embedding/檢索的時間裡
-    intent_task = asyncio.create_task(classify_intent(question))
-    try:
-        qvec = await asyncio.to_thread(embed_query_cached, question)
-        async with SessionFactory() as session:  # 短連線：檢索完即釋放，不橫跨 LLM 串流
-            scored = await hybrid_search(session, question, qvec, k=k, **filters)
-        in_domain = await intent_task
-    except BaseException:
-        intent_task.cancel()  # 取消未完成的判斷子程序，避免遺留
-        raise
+    # 僅「續問」才載歷史；首輪無歷史，維持並行意圖判定
+    turns = await load_recent_turns(conv_id) if conversation_id else []
+    history_block = build_history_block(turns)
 
-    if not in_domain:  # 離題：直接拒答，不跑主 LLM（順帶省 ~100s 延遲）
+    if turns:
+        standalone_query, in_domain = await condense_and_classify(history_block, question)
+        qvec = await asyncio.to_thread(embed_query_cached, standalone_query)
+        async with SessionFactory() as session:  # 短連線：檢索完即釋放
+            scored = await hybrid_search(session, standalone_query, qvec, k=k, **filters)
+    else:
+        intent_task = asyncio.create_task(classify_intent(question))
+        try:
+            qvec = await asyncio.to_thread(embed_query_cached, question)
+            async with SessionFactory() as session:
+                scored = await hybrid_search(session, question, qvec, k=k, **filters)
+            in_domain = await intent_task
+        except BaseException:
+            intent_task.cancel()
+            raise
+
+    if not in_domain:  # 離題：拒答、不跑主 LLM
         yield ("sources", [])
-        yield ("notice", OFF_TOPIC_MESSAGE)  # 專用事件：前端以提示卡渲染，非一般答案
+        yield ("notice", OFF_TOPIC_MESSAGE)
         await _log_qa(
             question, OFF_TOPIC_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000), [], []
+            int((time.monotonic() - started) * 1000), [], [],
+            conversation_id=conv_id,
         )
-        yield ("done", {"cited": []})
+        yield ("done", {"cited": [], "conversation_id": conv_id})
         return
 
     sources, context = build_context(scored)
-
     yield ("sources", [asdict(s) for s in sources])
 
     if not context:
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
             question, NO_CONTEXT_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000), [], []
+            int((time.monotonic() - started) * 1000), [], [],
+            conversation_id=conv_id,
         )
-        yield ("done", {"cited": [], "qa_id": qa_id})
+        yield ("done", {"cited": [], "qa_id": qa_id, "conversation_id": conv_id})
         return
 
-    user_prompt = build_user_prompt(question, context)
+    user_prompt = build_user_prompt(question, context, history_block)
     raw_parts: list[str] = []
-    buf = ""           # 尚未送出的 body 緩衝（保留尾段以攔截跨 chunk 的 sentinel）
+    buf = ""
     hold = len(EXT_SENTINEL)
     sentinel_found = False
     searching_sent = False
     async for chunk in stream_completion(
         user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
     ):
-        if chunk == SEARCH_EVENT:          # 模型開始上網搜尋：通知前端（只發一次）
+        if chunk == SEARCH_EVENT:
             if not searching_sent:
                 searching_sent = True
                 yield ("status", "searching_web")
             continue
         raw_parts.append(chunk)
         if sentinel_found:
-            continue                       # sentinel 之後只收集（給 split），不送前端
+            continue
         buf += chunk
         idx = buf.find(EXT_SENTINEL)
         if idx != -1:
@@ -410,7 +559,7 @@ async def answer_question(
             sentinel_found = True
             buf = ""
         elif len(buf) > hold:
-            yield ("token", buf[:-hold])   # 留尾段 hold 字元，避免送半截 sentinel
+            yield ("token", buf[:-hold])
             buf = buf[-hold:]
     if not sentinel_found and buf:
         yield ("token", buf)
@@ -421,6 +570,8 @@ async def answer_question(
     yield ("ext_sources", ext_sources)
     qa_id = await _log_qa(
         question, body, cited, filters,
-        int((time.monotonic() - started) * 1000), [asdict(s) for s in sources], ext_sources
+        int((time.monotonic() - started) * 1000),
+        [asdict(s) for s in sources], ext_sources,
+        conversation_id=conv_id,
     )
-    yield ("done", {"cited": cited, "qa_id": qa_id})
+    yield ("done", {"cited": cited, "qa_id": qa_id, "conversation_id": conv_id})

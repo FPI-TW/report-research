@@ -13,6 +13,7 @@ from app.services.answer import (  # noqa: E402
     Source,
     _recency_factor,
     build_context,
+    build_history_block,
     build_user_prompt,
     cited_report_ids,
     history_item,
@@ -141,6 +142,41 @@ class PromptAndCitationTests(unittest.TestCase):
         self.assertEqual(cited_report_ids("[2][1][2]", sources), ["r1", "r2"])
 
 
+class HistoryBlockTests(unittest.TestCase):
+    def test_empty_turns_returns_empty_string(self):
+        self.assertEqual(build_history_block([]), "")
+
+    def test_formats_turns_oldest_first(self):
+        block = build_history_block([("台積電?", "看好[1]"), ("那聯電?", "中立[1]")])
+        self.assertIn("Q1: 台積電?", block)
+        self.assertIn("A1: 看好[1]", block)
+        self.assertIn("Q2: 那聯電?", block)
+
+    def test_keeps_only_recent_max_turns(self):
+        turns = [("q1", "a1"), ("q2", "a2"), ("q3", "a3"), ("q4", "a4")]
+        block = build_history_block(turns, max_turns=3)
+        self.assertNotIn("q1", block)      # 最舊一輪被丟
+        self.assertIn("q4", block)
+
+    def test_truncates_long_answer(self):
+        block = build_history_block([("q", "x" * 1000)], max_answer_chars=600)
+        self.assertIn("…", block)
+        self.assertLess(len(block), 700)
+
+
+class PromptWithHistoryTests(unittest.TestCase):
+    def test_history_block_prepended_when_present(self):
+        p = build_user_prompt("新問題", "[1] 報告甲\n內容", "Q1: 舊問\nA1: 舊答")
+        self.assertIn("先前對話", p)
+        self.assertIn("Q1: 舊問", p)
+        self.assertIn("問題：新問題", p)
+
+    def test_no_history_section_when_empty(self):
+        p = build_user_prompt("新問題", "[1] 報告甲\n內容", "")
+        self.assertNotIn("先前對話", p)
+        self.assertIn("問題：新問題", p)
+
+
 class RecencyTests(unittest.TestCase):
     NOW = datetime(2026, 6, 17, tzinfo=timezone.utc)
 
@@ -214,18 +250,29 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             called["intent"] = True
             return in_domain
 
+        async def fake_condense(history_text, question, **k):
+            called["condense"] = True
+            return (question, in_domain)
+
+        async def fake_load(conversation_id, **k):
+            return []
+
         orig = (
             ans.hybrid_search,
             ans.embed_query_cached,
             ans.stream_completion,
             ans.SessionFactory,
             ans.classify_intent,
+            ans.condense_and_classify,
+            ans.load_recent_turns,
         )
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
         return orig
 
     @staticmethod
@@ -236,6 +283,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             ans.SessionFactory,
             ans.classify_intent,
+            ans.condense_and_classify,
+            ans.load_recent_turns,
         ) = orig
 
     async def test_off_topic_intent_skips_llm(self):
@@ -253,7 +302,9 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kinds, ["sources", "notice", "done"])  # notice：前端以提示卡渲染
         self.assertEqual(events[0][1], [])  # 離題不顯示任何來源
         self.assertEqual(events[1][1], ans.OFF_TOPIC_MESSAGE)
-        self.assertEqual(events[2][1], {"cited": []})
+        self.assertEqual(events[2][0], "done")
+        self.assertEqual(events[2][1]["cited"], [])
+        self.assertIn("conversation_id", events[2][1])
         self.assertTrue(called["intent"])  # 有跑意圖判定
         self.assertFalse(called["llm"])  # 未跑主 LLM
 
@@ -275,6 +326,7 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1][0], "done")
         self.assertEqual(events[-1][1]["cited"], ["r1"])
         self.assertIn("qa_id", events[-1][1])  # done 帶 qa_id 供前端掛回饋
+        self.assertIn("conversation_id", events[-1][1])
         self.assertTrue(called["llm"])  # 有跑主 LLM
 
 
@@ -295,18 +347,28 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         async def fake_intent(q, **k):
             return True
 
+        async def fake_load(*a, **k):
+            return []
+
+        async def fake_condense(*a, **k):
+            return (a[1] if len(a) > 1 else "", True)
+
         orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent)
+                ans.SessionFactory, ans.classify_intent,
+                ans.condense_and_classify, ans.load_recent_turns)
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
         try:
             events = [e async for e in ans.answer_question("台積電封裝")]
         finally:
             (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent) = orig
+             ans.SessionFactory, ans.classify_intent,
+             ans.condense_and_classify, ans.load_recent_turns) = orig
 
         body = "".join(p for k, p in events if k == "token")
         self.assertIn("前段答案[1]。", body)
@@ -338,18 +400,28 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         async def fake_intent(q, **k):
             return True
 
+        async def fake_load(*a, **k):
+            return []
+
+        async def fake_condense(*a, **k):
+            return (a[1] if len(a) > 1 else "", True)
+
         orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent)
+                ans.SessionFactory, ans.classify_intent,
+                ans.condense_and_classify, ans.load_recent_turns)
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
         try:
             events = [e async for e in ans.answer_question("問題")]
         finally:
             (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent) = orig
+             ans.SessionFactory, ans.classify_intent,
+             ans.condense_and_classify, ans.load_recent_turns) = orig
 
         body = "".join(p for k, p in events if k == "token")
         self.assertIn("前段答案[1]。", body)
@@ -377,18 +449,28 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         async def fake_intent(q, **k):
             return True
 
+        async def fake_load(*a, **k):
+            return []
+
+        async def fake_condense(*a, **k):
+            return (a[1] if len(a) > 1 else "", True)
+
         orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent)
+                ans.SessionFactory, ans.classify_intent,
+                ans.condense_and_classify, ans.load_recent_turns)
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
         try:
             events = [e async for e in ans.answer_question("問題")]
         finally:
             (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent) = orig
+             ans.SessionFactory, ans.classify_intent,
+             ans.condense_and_classify, ans.load_recent_turns) = orig
 
         self.assertIn(("status", "searching_web"), events)
         self.assertEqual(sum(1 for k, _ in events if k == "status"), 1)  # 只發一次
@@ -578,6 +660,332 @@ class HistoryItemTests(unittest.TestCase):
         out = history_item(row)
         self.assertEqual(out["sources"], [])
         self.assertEqual(out["ext_sources"], [])
+
+    def test_marks_offtopic_rows_for_frontend_notice_rendering(self):
+        from app.services import answer as ans
+
+        row = ("id4", "q", ans.OFF_TOPIC_MESSAGE, date(2026, 6, 1), None, None, None)
+        out = history_item(row)
+        self.assertTrue(out["is_offtopic"])
+
+
+class _RowsResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _RowsSession:
+    """假 session：execute 回固定列（供 load_recent_turns/get_conversation 測試）。"""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, *a, **k):
+        return _RowsResult(self._rows)
+
+    async def commit(self):
+        return None
+
+
+class _CaptureRowsSession(_RowsSession):
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.statement_text = None
+        self.params = None
+
+    async def execute(self, statement, params=None):
+        self.statement_text = getattr(statement, "text", str(statement))
+        self.params = params
+        return _RowsResult(self._rows)
+
+
+class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_oldest_first(self):
+        from app.services import answer as ans
+        # DB 以 created_at DESC 回（新→舊）；函式須反轉成舊→新
+        rows = [("新問", "新答"), ("舊問", "舊答")]
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _RowsSession(rows)
+        try:
+            turns = await ans.load_recent_turns("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(turns, [("舊問", "舊答"), ("新問", "新答")])
+
+    async def test_db_error_returns_empty(self):
+        from app.services import answer as ans
+
+        class Boom:
+            def __call__(self):
+                raise RuntimeError("db down")
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = Boom()
+        try:
+            turns = await ans.load_recent_turns("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(turns, [])
+
+
+class GetConversationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maps_rows_via_history_item(self):
+        from app.services import answer as ans
+        from datetime import date
+        rows = [
+            ("id1", "Q1", "A1", date(2026, 6, 1), None, None, None),
+            ("id2", "Q2", "A2", date(2026, 6, 2), "like", None, None),
+        ]
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _RowsSession(rows)
+        try:
+            out = await ans.get_conversation("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual([t["question"] for t in out], ["Q1", "Q2"])
+        self.assertEqual(out[1]["feedback"], "like")
+
+
+class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rowcount_zero_is_false(self):
+        from app.services import answer as ans
+
+        class Res:
+            rowcount = 0
+
+        class Sess:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, *a, **k):
+                return Res()
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: Sess()
+        try:
+            ok = await ans.delete_conversation("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertFalse(ok)
+
+
+class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maps_grouped_rows(self):
+        from app.services import answer as ans
+        from datetime import datetime, timezone
+
+        last = datetime(2026, 6, 22, 3, 0, tzinfo=timezone.utc)
+        # outer SELECT 回 (conv_id, title, last_at, turn_count)
+        rows = [("c1", "第一題", last, 2)]
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _RowsSession(rows)
+        try:
+            out = await ans.list_conversations()
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(out[0]["conversation_id"], "c1")
+        self.assertEqual(out[0]["title"], "第一題")
+        self.assertEqual(out[0]["turn_count"], 2)
+        self.assertEqual(out[0]["last_at"], last.isoformat())
+
+    async def test_sql_uses_first_non_offtopic_question_and_turn_count_filter(self):
+        from app.services import answer as ans
+        from datetime import datetime, timezone
+
+        last = datetime(2026, 6, 22, 3, 0, tzinfo=timezone.utc)
+        session = _CaptureRowsSession([("c1", "第二題", last, 1)])
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: session
+        try:
+            await ans.list_conversations()
+        finally:
+            ans.SessionFactory = orig
+
+        sql = " ".join((session.statement_text or "").split())
+        self.assertIn(
+            "(array_agg(question ORDER BY created_at) FILTER (WHERE answer IS DISTINCT FROM :offtopic))[1] AS title",
+            sql,
+        )
+        self.assertIn("WHERE turn_count > 0", sql)
+        self.assertNotIn("first_answer IS DISTINCT FROM :offtopic", sql)
+
+
+class ConversationStaticContractTests(unittest.TestCase):
+    def test_history_replay_preserves_offtopic_notice_branch(self):
+        js = (REPO_ROOT / "web/static/app/ask.js").read_text(encoding="utf-8")
+        normalized = " ".join(js.split())
+        self.assertRegex(
+            normalized,
+            r'if \(it\.is_offtopic\) \{ paintNotice\(turn, it\.answer \|\| ""\); \} else \{',
+        )
+        self.assertIn("paintAnswer(turn, false); paintActions(turn);", normalized)
+
+    def test_schema_uses_expression_index_for_conversation_lookup(self):
+        schema = (REPO_ROOT / "db/schema.sql").read_text(encoding="utf-8")
+        self.assertRegex(
+            " ".join(schema.split()),
+            r"CREATE INDEX IF NOT EXISTS idx_qa_log_conversation ON research\.qa_log \(\(COALESCE\(conversation_id, id\)\), created_at\);",
+        )
+
+
+class FollowUpTests(unittest.IsolatedAsyncioTestCase):
+    async def test_followup_uses_condensed_query_for_retrieval(self):
+        from app.services import answer as ans
+
+        seen = {}
+
+        async def fake_load(conversation_id, **k):
+            return [("台積電前景?", "看好[1]")]
+
+        async def fake_condense(history_text, question, **k):
+            return ("台積電 2026 先進封裝 展望", True)
+
+        async def fake_search(session, query, qvec, **k):
+            seen["query"] = query
+            return [(1, 0.9, make_row("r1", "x.pdf", "TW", "封裝內容。", date(2026, 6, 1), 0.1))]
+
+        def fake_embed(q):
+            seen["embed"] = q
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_intent(q, **k):
+            raise AssertionError("續問不應呼叫 classify_intent")
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+                ans.SessionFactory, ans.classify_intent,
+                ans.condense_and_classify, ans.load_recent_turns)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
+        try:
+            events = [e async for e in ans.answer_question("那它的封裝呢?", conversation_id="c1")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+             ans.SessionFactory, ans.classify_intent,
+             ans.condense_and_classify, ans.load_recent_turns) = orig
+
+        self.assertEqual(seen["query"], "台積電 2026 先進封裝 展望")  # 用改寫後查詢檢索
+        self.assertEqual(seen["embed"], "台積電 2026 先進封裝 展望")
+        self.assertEqual(events[-1][1]["conversation_id"], "c1")     # 沿用傳入對話 id
+
+    async def test_followup_passes_history_block_to_prompt(self):
+        from app.services import answer as ans
+
+        seen = {}
+
+        async def fake_load(conversation_id, **k):
+            return [("台積電前景?", "看好[1]")]
+
+        async def fake_condense(history_text, question, **k):
+            return ("台積電 先進封裝 展望", True)
+
+        async def fake_search(session, query, qvec, **k):
+            return [(1, 0.9, make_row("r1", "x.pdf", "TW", "封裝內容。", date(2026, 6, 1), 0.1))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_intent(q, **k):
+            return True
+
+        orig_bup = ans.build_user_prompt
+
+        def spy_bup(question, context, history_block=""):
+            seen["history_block"] = history_block
+            return orig_bup(question, context, history_block)
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+                ans.SessionFactory, ans.classify_intent,
+                ans.condense_and_classify, ans.load_recent_turns, ans.build_user_prompt)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
+        ans.build_user_prompt = spy_bup
+        try:
+            _ = [e async for e in ans.answer_question("那它的封裝呢?", conversation_id="c1")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+             ans.SessionFactory, ans.classify_intent,
+             ans.condense_and_classify, ans.load_recent_turns, ans.build_user_prompt) = orig
+
+        self.assertIn("history_block", seen)
+        self.assertIn("台積電前景?", seen["history_block"])   # 先前對話確實內嵌進 prompt
+
+    async def test_followup_offtopic_skips_llm(self):
+        from app.services import answer as ans
+
+        called = {"llm": False}
+
+        async def fake_load(conversation_id, **k):
+            return [("台積電前景?", "看好[1]")]
+
+        async def fake_condense(history_text, question, **k):
+            return ("幫我寫一首詩", False)   # 改寫後判定離題
+
+        async def fake_search(session, query, qvec, **k):
+            return [(1, 0.5, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), 0.4))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            called["llm"] = True
+            yield "不該被呼叫"
+
+        async def fake_intent(q, **k):
+            raise AssertionError("續問不應呼叫 classify_intent")
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+                ans.SessionFactory, ans.classify_intent,
+                ans.condense_and_classify, ans.load_recent_turns)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
+        try:
+            events = [e async for e in ans.answer_question("再來一首?", conversation_id="c1")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+             ans.SessionFactory, ans.classify_intent,
+             ans.condense_and_classify, ans.load_recent_turns) = orig
+
+        kinds = [k for k, _ in events]
+        self.assertEqual(kinds, ["sources", "notice", "done"])   # 離題提示卡
+        self.assertEqual(events[1][1], ans.OFF_TOPIC_MESSAGE)
+        self.assertEqual(events[-1][1]["conversation_id"], "c1")
+        self.assertFalse(called["llm"])   # 未跑主 LLM
 
 
 if __name__ == "__main__":

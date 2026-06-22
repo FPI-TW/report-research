@@ -38,8 +38,11 @@ load_env_file(Path(__file__).resolve().parents[1] / ".env")
 from app.services.answer import (  # noqa: E402
     OFF_TOPIC_MESSAGE,
     answer_question,
+    delete_conversation,
     delete_qa,
+    get_conversation,
     history_item,
+    list_conversations,
     record_feedback,
 )
 from app.services.db import SessionFactory  # noqa: E402
@@ -163,6 +166,7 @@ class SearchResponse(BaseModel):
 
 class AskRequest(BaseModel):
     question: str
+    conversation_id: str | None = None
     market: str | None = None
     instrument_type: str | None = None
     relates_stock: bool | None = None
@@ -583,7 +587,7 @@ async def ask(req: AskRequest):
         async with _ASK_SEMAPHORE:
             try:
                 async for event, payload in answer_question(
-                    question, k=k, filters=filters
+                    question, k=k, filters=filters, conversation_id=req.conversation_id
                 ):
                     yield _sse(event, payload)
             except Exception:
@@ -638,6 +642,32 @@ async def delete_history_post(qa_id: str):
     某些外部代理/邊緣環境對 DELETE 支援不穩時，前端可回退到 POST alias。
     """
     ok = await delete_qa(qa_id)
+    return {"ok": ok}
+
+
+@app.get("/api/conversations")
+async def conversations(limit: int = Query(50, ge=1, le=200)):
+    """對話串清單（首題非離題者）；唯讀，供側欄。"""
+    return await list_conversations(limit)
+
+
+@app.get("/api/conversations/{conversation_id}")
+async def conversation_detail(conversation_id: str):
+    """單一對話全部輪次（由舊到新），供重開重現與續問。"""
+    return await get_conversation(conversation_id)
+
+
+@app.delete("/api/conversations/{conversation_id}")
+async def conversation_delete(conversation_id: str):
+    """刪整個對話串。回 {"ok": bool}。"""
+    ok = await delete_conversation(conversation_id)
+    return {"ok": ok}
+
+
+@app.post("/api/conversations/{conversation_id}/delete")
+async def conversation_delete_post(conversation_id: str):
+    """相容性刪除路由（某些代理/邊緣對 DELETE 不穩時前端回退）。"""
+    ok = await delete_conversation(conversation_id)
     return {"ok": ok}
 
 

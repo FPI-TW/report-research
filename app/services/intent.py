@@ -71,3 +71,59 @@ async def classify_intent(
         return parse_intent(text)
     except Exception:
         return True
+
+
+CONDENSE_MODEL = os.getenv("ASK_CONDENSE_MODEL", INTENT_MODEL)
+CONDENSE_TIMEOUT = float(os.getenv("ASK_CONDENSE_TIMEOUT", "20"))
+
+CONDENSE_SYSTEM_PROMPT = (
+    "你是「廷豐研報」投資問答系統的前置處理器。根據『先前對話』，把使用者的"
+    "『追問』改寫成一個語意完整、可獨立檢索的問題：補齊代名詞與省略的主語"
+    "（例如把「它」「那檔」「上述」還原為具體公司／標的／主題）。同時判斷"
+    "改寫後的問題是否屬於『可由投資研究報告回答的金融／市場／個股／總經／期貨提問』。\n"
+    "嚴格只輸出兩行，不要任何其他文字或標點說明：\n"
+    "QUERY: <改寫後可獨立檢索的完整問題>\n"
+    "INTENT: IN 或 OUT"
+)
+
+
+def parse_condense(text: str) -> tuple[str | None, bool]:
+    """解析改寫器輸出 → (standalone_query 或 None, in_domain)。
+
+    取 `QUERY:` 行為改寫後查詢（空則 None，由呼叫端退回原問題）；
+    `INTENT:` 行交 parse_intent 判定（缺此行 → fail-open True）。
+    """
+    query: str | None = None
+    in_domain = True
+    for line in text.splitlines():
+        s = line.strip()
+        upper = s.upper()
+        if upper.startswith("QUERY:"):
+            query = s[len("QUERY:"):].strip() or None
+        elif upper.startswith("INTENT:"):
+            in_domain = parse_intent(s[len("INTENT:"):])
+    return query, in_domain
+
+
+async def condense_and_classify(
+    history_text: str,
+    question: str,
+    *,
+    model: str = CONDENSE_MODEL,
+    timeout: float = CONDENSE_TIMEOUT,
+) -> tuple[str, bool]:
+    """一次 Haiku 呼叫：把追問改寫成獨立查詢並判定意圖 → (standalone_query, in_domain)。
+
+    任何錯誤／逾時／空回應／解析不到查詢 → fail-open，回 (原始 question, True)。
+    """
+    prompt = f"先前對話：\n{history_text}\n\n追問：{question}"
+    try:
+        parts: list[str] = []
+        async for chunk in stream_completion(
+            prompt, model=model, system=CONDENSE_SYSTEM_PROMPT, timeout=timeout
+        ):
+            parts.append(chunk)
+        query, in_domain = parse_condense("".join(parts))
+        return (query or question, in_domain)
+    except Exception:
+        return (question, True)

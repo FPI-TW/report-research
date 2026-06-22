@@ -719,5 +719,25 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ok)
 
 
+class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maps_grouped_rows(self):
+        from app.services import answer as ans
+        from datetime import datetime, timezone
+
+        last = datetime(2026, 6, 22, 3, 0, tzinfo=timezone.utc)
+        # outer SELECT 回 (conv_id, title, last_at, turn_count)
+        rows = [("c1", "第一題", last, 2)]
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _RowsSession(rows)
+        try:
+            out = await ans.list_conversations()
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(out[0]["conversation_id"], "c1")
+        self.assertEqual(out[0]["title"], "第一題")
+        self.assertEqual(out[0]["turn_count"], 2)
+        self.assertEqual(out[0]["last_at"], last.isoformat())
+
+
 if __name__ == "__main__":
     unittest.main()

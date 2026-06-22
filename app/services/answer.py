@@ -378,7 +378,7 @@ async def list_conversations(limit: int = 50) -> list[dict]:
                     "         (array_agg(question ORDER BY created_at))[1] AS title,"
                     "         (array_agg(answer ORDER BY created_at))[1] AS first_answer,"
                     "         max(created_at) AS last_at,"
-                    "         count(*) AS turn_count"
+                    "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic) AS turn_count"
                     "  FROM research.qa_log"
                     "  GROUP BY COALESCE(conversation_id, id)"
                     ") g WHERE first_answer IS DISTINCT FROM :offtopic "

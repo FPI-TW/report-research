@@ -164,10 +164,10 @@
 
 ### 邊界（增補）
 
-- **離題**：無 token，計時器於 `notice` 凍結（client 值），`done.thinking_ms` 校正。
-- **無脈絡**：`NO_CONTEXT` 前 emit `generating`，照常凍結。
-- **錯誤／逾時**：清 interval，面板維持現有處理。
-- **舊歷史列**：`thinking_ms` 為 NULL，歷史標題退回無秒數的中性呈現（可接受的漸進退化；新問答起累積真值）。
+- **離題**：維持現有 `clearProcess`（`notice` 抵達即移除面板，不顯「已思考」）；處理中只短暫顯示「正在思考」後被拒答卡取代。`thinking_ms` 仍量到拒答點並寫入 `qa_log` 與 `done`（一致性／分析用，前端不顯）。
+- **無脈絡**：`NO_CONTEXT` token 前 emit `generating`（帶 `thinking_ms`），標題照常凍結為「已思考 X 秒」。
+- **錯誤／逾時**：`clearProcess`／`fail` 時 `clearTimeout(turn.labelTimer)`，面板維持現有處理。
+- **舊歷史列**：`thinking_ms` 為 NULL，歷史標題退回中性「處理過程」（無秒數，可接受的漸進退化；新問答起累積真值）。
 
 ### 測試（增補）
 

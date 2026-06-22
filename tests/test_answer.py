@@ -13,6 +13,7 @@ from app.services.answer import (  # noqa: E402
     Source,
     _recency_factor,
     build_context,
+    build_history_block,
     build_user_prompt,
     cited_report_ids,
     history_item,
@@ -139,6 +140,41 @@ class PromptAndCitationTests(unittest.TestCase):
             Source(2, "r2", "乙.pdf", "US", None),
         ]
         self.assertEqual(cited_report_ids("[2][1][2]", sources), ["r1", "r2"])
+
+
+class HistoryBlockTests(unittest.TestCase):
+    def test_empty_turns_returns_empty_string(self):
+        self.assertEqual(build_history_block([]), "")
+
+    def test_formats_turns_oldest_first(self):
+        block = build_history_block([("台積電?", "看好[1]"), ("那聯電?", "中立[1]")])
+        self.assertIn("Q1: 台積電?", block)
+        self.assertIn("A1: 看好[1]", block)
+        self.assertIn("Q2: 那聯電?", block)
+
+    def test_keeps_only_recent_max_turns(self):
+        turns = [("q1", "a1"), ("q2", "a2"), ("q3", "a3"), ("q4", "a4")]
+        block = build_history_block(turns, max_turns=3)
+        self.assertNotIn("q1", block)      # 最舊一輪被丟
+        self.assertIn("q4", block)
+
+    def test_truncates_long_answer(self):
+        block = build_history_block([("q", "x" * 1000)], max_answer_chars=600)
+        self.assertIn("…", block)
+        self.assertLess(len(block), 700)
+
+
+class PromptWithHistoryTests(unittest.TestCase):
+    def test_history_block_prepended_when_present(self):
+        p = build_user_prompt("新問題", "[1] 報告甲\n內容", "Q1: 舊問\nA1: 舊答")
+        self.assertIn("先前對話", p)
+        self.assertIn("Q1: 舊問", p)
+        self.assertIn("問題：新問題", p)
+
+    def test_no_history_section_when_empty(self):
+        p = build_user_prompt("新問題", "[1] 報告甲\n內容", "")
+        self.assertNotIn("先前對話", p)
+        self.assertIn("問題：新問題", p)
 
 
 class RecencyTests(unittest.TestCase):

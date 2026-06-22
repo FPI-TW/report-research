@@ -34,6 +34,10 @@ MAX_PASSAGES_PER_REPORT = 2
 MAX_CONTEXT_CHARS = 6000
 RETRIEVAL_K = 8
 
+# 多輪對話脈絡：帶進 prompt 的近輪數與舊答案截斷長度（控 prompt 大小/延遲）
+MAX_HISTORY_TURNS = 3
+MAX_HISTORY_ANSWER_CHARS = 600
+
 SYSTEM_PROMPT = (
     "你是「廷豐研報」的研究問答助理。回答以使用者提供的『參考片段』（研報）為主，並遵守：\n"
     "1. 以參考片段為主要依據；片段不足、可能過時、或問題需要即時資料時，可用網路搜尋補充。兩者都查不到時，明說「找不到相關資料」，不要臆測。\n"
@@ -222,9 +226,35 @@ def build_context(
     return sources, "\n\n".join(blocks)
 
 
-def build_user_prompt(question: str, context: str) -> str:
+def build_history_block(
+    turns: list[tuple[str, str]],
+    *,
+    max_turns: int = MAX_HISTORY_TURNS,
+    max_answer_chars: int = MAX_HISTORY_ANSWER_CHARS,
+) -> str:
+    """把近輪 (question, answer)（由舊到新）整理成『先前對話』文字；空 turns → ""。
+
+    只保留最近 max_turns 輪；舊答案截斷至 max_answer_chars 字控 prompt 大小。
+    """
+    if not turns:
+        return ""
+    recent = turns[-max_turns:]
+    lines: list[str] = []
+    for i, (q, a) in enumerate(recent, 1):
+        a = (a or "").strip()
+        if len(a) > max_answer_chars:
+            a = a[:max_answer_chars] + "…"
+        lines.append(f"Q{i}: {q}\nA{i}: {a}")
+    return "\n".join(lines)
+
+
+def build_user_prompt(question: str, context: str, history_block: str = "") -> str:
+    head = ""
+    if history_block:
+        head = "先前對話（供理解脈絡，不是新問題）：\n" + history_block + "\n\n"
     return (
-        "參考片段：\n"
+        head
+        + "參考片段：\n"
         f"{context}\n\n"
         f"問題：{question}\n\n"
         "請依規則作答，並在論點句末標註對應的來源編號。"

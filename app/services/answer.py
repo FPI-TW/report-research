@@ -271,7 +271,7 @@ def history_item(row) -> dict:
     """qa_log 一列 → 前端用 dict。
 
     相容舊列（無 ext_sources）與新列；sources/ext_sources 為 None 時回 []。
-    created_at 轉 ISO 字串。
+    created_at 轉 ISO 字串；離題拒答額外標記 is_offtopic，供前端重播時維持 notice 呈現。
     """
     if len(row) >= 7:
         id_, question, answer, created_at, feedback, sources, ext_sources = row[:7]
@@ -287,6 +287,7 @@ def history_item(row) -> dict:
         "feedback": feedback,
         "sources": sources or [],
         "ext_sources": ext_sources or [],
+        "is_offtopic": answer == OFF_TOPIC_MESSAGE,
     }
 
 
@@ -366,7 +367,8 @@ async def load_recent_turns(
 async def list_conversations(limit: int = 50) -> list[dict]:
     """對話串清單：每串 {conversation_id, title, last_at, turn_count}。
 
-    分組鍵 COALESCE(conversation_id, id)；標題取最早一題；首題離題者排除；
+    分組鍵 COALESCE(conversation_id, id)；標題取最早的非離題問題；
+    只顯示至少含一輪非離題回答的對話；
     依該串最新時間由新到舊。
     """
     async with SessionFactory() as session:
@@ -375,13 +377,13 @@ async def list_conversations(limit: int = 50) -> list[dict]:
                 text(
                     "SELECT conv_id, title, last_at, turn_count FROM ("
                     "  SELECT COALESCE(conversation_id, id) AS conv_id,"
-                    "         (array_agg(question ORDER BY created_at))[1] AS title,"
-                    "         (array_agg(answer ORDER BY created_at))[1] AS first_answer,"
+                    "         (array_agg(question ORDER BY created_at) "
+                    "             FILTER (WHERE answer IS DISTINCT FROM :offtopic))[1] AS title,"
                     "         max(created_at) AS last_at,"
                     "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic) AS turn_count"
                     "  FROM research.qa_log"
                     "  GROUP BY COALESCE(conversation_id, id)"
-                    ") g WHERE first_answer IS DISTINCT FROM :offtopic "
+                    ") g WHERE turn_count > 0 "
                     "ORDER BY last_at DESC LIMIT :limit"
                 ),
                 {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},

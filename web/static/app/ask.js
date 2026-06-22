@@ -170,11 +170,16 @@ async function loadConversation(id) {
       turn.extSources = it.ext_sources || [];
       turn.qaId = it.id;
       turn.answer = it.answer || "";
-      paintSources(turn); paintExtSources(turn); paintAnswer(turn, false); paintActions(turn);
-      if (it.feedback) {
-        const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
-        const btn = turn.actionsEl.querySelector(sel);
-        if (btn) btn.classList.add("on");
+      paintSources(turn); paintExtSources(turn);
+      if (it.is_offtopic) {
+        paintNotice(turn, it.answer || "");
+      } else {
+        paintAnswer(turn, false); paintActions(turn);
+        if (it.feedback) {
+          const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
+          const btn = turn.actionsEl.querySelector(sel);
+          if (btn) btn.classList.add("on");
+        }
       }
     }
     markActive();

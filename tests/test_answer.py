@@ -661,6 +661,13 @@ class HistoryItemTests(unittest.TestCase):
         self.assertEqual(out["sources"], [])
         self.assertEqual(out["ext_sources"], [])
 
+    def test_marks_offtopic_rows_for_frontend_notice_rendering(self):
+        from app.services import answer as ans
+
+        row = ("id4", "q", ans.OFF_TOPIC_MESSAGE, date(2026, 6, 1), None, None, None)
+        out = history_item(row)
+        self.assertTrue(out["is_offtopic"])
+
 
 class _RowsResult:
     def __init__(self, rows):
@@ -687,6 +694,18 @@ class _RowsSession:
 
     async def commit(self):
         return None
+
+
+class _CaptureRowsSession(_RowsSession):
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.statement_text = None
+        self.params = None
+
+    async def execute(self, statement, params=None):
+        self.statement_text = getattr(statement, "text", str(statement))
+        self.params = params
+        return _RowsResult(self._rows)
 
 
 class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
@@ -783,6 +802,45 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out[0]["title"], "第一題")
         self.assertEqual(out[0]["turn_count"], 2)
         self.assertEqual(out[0]["last_at"], last.isoformat())
+
+    async def test_sql_uses_first_non_offtopic_question_and_turn_count_filter(self):
+        from app.services import answer as ans
+        from datetime import datetime, timezone
+
+        last = datetime(2026, 6, 22, 3, 0, tzinfo=timezone.utc)
+        session = _CaptureRowsSession([("c1", "第二題", last, 1)])
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: session
+        try:
+            await ans.list_conversations()
+        finally:
+            ans.SessionFactory = orig
+
+        sql = " ".join((session.statement_text or "").split())
+        self.assertIn(
+            "(array_agg(question ORDER BY created_at) FILTER (WHERE answer IS DISTINCT FROM :offtopic))[1] AS title",
+            sql,
+        )
+        self.assertIn("WHERE turn_count > 0", sql)
+        self.assertNotIn("first_answer IS DISTINCT FROM :offtopic", sql)
+
+
+class ConversationStaticContractTests(unittest.TestCase):
+    def test_history_replay_preserves_offtopic_notice_branch(self):
+        js = (REPO_ROOT / "web/static/app/ask.js").read_text(encoding="utf-8")
+        normalized = " ".join(js.split())
+        self.assertRegex(
+            normalized,
+            r'if \(it\.is_offtopic\) \{ paintNotice\(turn, it\.answer \|\| ""\); \} else \{',
+        )
+        self.assertIn("paintAnswer(turn, false); paintActions(turn);", normalized)
+
+    def test_schema_uses_expression_index_for_conversation_lookup(self):
+        schema = (REPO_ROOT / "db/schema.sql").read_text(encoding="utf-8")
+        self.assertRegex(
+            " ".join(schema.split()),
+            r"CREATE INDEX IF NOT EXISTS idx_qa_log_conversation ON research\.qa_log \(\(COALESCE\(conversation_id, id\)\), created_at\);",
+        )
 
 
 class FollowUpTests(unittest.IsolatedAsyncioTestCase):

@@ -275,10 +275,22 @@ function renderProcess(turn, { expanded = true } = {}) {
     </div>`;
   turn.processEl.querySelector('.ask-step[data-step="web"]').hidden = true;
   const head = turn.processEl.querySelector(".ask-process-head");
+  const steps = turn.processEl.querySelector(".ask-process-steps");
+  steps.hidden = !expanded;
+  steps.setAttribute("aria-hidden", expanded ? "false" : "true");
   head.onclick = () => {
     const box = turn.processEl.querySelector(".ask-process");
-    const open = box.classList.toggle("open");
-    head.setAttribute("aria-expanded", open ? "true" : "false");
+    const opening = !box.classList.contains("open");
+    if (opening) {
+      steps.hidden = false;
+      steps.setAttribute("aria-hidden", "false");
+      box.classList.add("open");
+    } else {
+      box.classList.remove("open");
+      steps.hidden = true;
+      steps.setAttribute("aria-hidden", "true");
+    }
+    head.setAttribute("aria-expanded", opening ? "true" : "false");
   };
 }
 

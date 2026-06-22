@@ -1,7 +1,7 @@
 # 問答多輪對話（Conversational RAG）設計
 
 - 日期：2026-06-22
-- 狀態：設計確認，待產出實作計畫
+- 狀態：已實作（後端單元測試全綠＋真實 DB SQL 驗證＋整支審查通過；live LLM 端到端待服務重啟後驗證）
 - 影響檔案：`app/services/answer.py`、`app/services/intent.py`、`app/services/llm.py`(微調)、`web/server.py`、`web/static/app/ask.js`、`web/static/index.html`、相關 CSS、`db/schema.sql`
 
 ## 1. 目標與動機

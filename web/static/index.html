@@ -735,6 +735,9 @@
   .ask-go:active { transform: scale(.92); }
   .ask-go:disabled { opacity: .55; cursor: default; }
 
+  .ask-turn { display: flex; flex-direction: column; }
+  .ask-turn + .ask-turn { margin-top: 18px; }
+
   /* 著陸狀態（尚未提問）：問候語 + 輸入框整組垂直置中、移除底部白色列（像 ChatGPT/Gemini）。
      送出第一題或載入歷史後移除 .landing → 回到對話可捲 + 輸入置底的聊天版面。 */
   #askPanel.landing { justify-content: center; }
@@ -863,7 +866,7 @@
         <div id="results" role="region" aria-label="研報結果"></div>
         <div class="ask-panel" id="askPanel" hidden>
           <div class="ask-thread" id="askThread">
-            <div class="ask-thread-inner">
+            <div class="ask-thread-inner" id="askThreadInner">
               <div class="ask-empty" id="askEmpty">
                 <div class="ask-empty-title">向廷豐智能體提問</div>
                 <div class="ask-empty-sub">輸入想問的問題，回答會引用並可點開原始報告。</div>
@@ -873,11 +876,6 @@
                   <button class="ex" type="button">美國升息的影響</button>
                 </div>
               </div>
-              <div class="ask-msg-user" id="askQuestion" hidden></div>
-              <div class="ask-msg-bot" id="askAnswer" aria-live="polite" hidden></div>
-              <div class="ask-actions" id="askActions" hidden></div>
-              <div class="ask-sources" id="askSources"></div>
-              <div class="ask-sources ask-ext-list" id="askExtSources"></div>
             </div>
           </div>
           <div class="ask-composer">

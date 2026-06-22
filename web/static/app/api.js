@@ -19,6 +19,16 @@ export function renderStats(d) {
   buildInstrumentChips(d.instrument_types || [], d.total_reports);
   buildSubjectToggles();
   buildTypeChips(d.report_types || [], d.total_reports);
+  renderAccount(d.username);
+}
+
+// 側欄底部帳號區：填入共用帳號名稱與頭像首字（後端拿不到時退回 HTML 既有占位）。
+function renderAccount(username) {
+  const name = (username || "").trim() || "使用者";
+  const nameEl = $("#accountName");
+  if (nameEl) nameEl.textContent = name;
+  const avatarEl = $("#accountAvatar");
+  if (avatarEl) avatarEl.textContent = (Array.from(name)[0] || "?").toUpperCase();
 }
 
 export async function loadStats(apply = true) {

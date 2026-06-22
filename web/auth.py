@@ -33,6 +33,10 @@ if not _USERNAME or not _PASSWORD:
 _USERNAME_B = _USERNAME.encode()
 _PASSWORD_B = _PASSWORD.encode()
 
+# 共用帳號名稱（公開常數）：供前端在側欄底部顯示「目前登入帳號」。
+# 本專案為單一共用帳號，session cookie 不帶個別身分，故此值對所有人相同。
+ACCESS_USERNAME = _USERNAME
+
 _SECRET = os.environ.get("REPORT_MARK_SESSION_SECRET", "")
 if not _SECRET:
     _SECRET = secrets.token_hex(32)

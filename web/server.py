@@ -240,6 +240,7 @@ async def stats():
         "markets": [{"market": m, "count": c} for m, c in rows],
         "instrument_types": [{"type": t, "count": c} for t, c in instr_rows],
         "report_types": [{"type": t, "count": c} for t, c in type_rows],
+        "username": auth.ACCESS_USERNAME,
     }
 
 

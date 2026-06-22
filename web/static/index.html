@@ -33,15 +33,21 @@
 
   .sidebar {
     position: sticky; top: 0; align-self: start;
-    height: 100dvh; overflow-y: auto; scrollbar-width: thin;
-    /* 永遠保留捲軸槽：避免檢索(篩選長→有捲軸)↔問答(歷史內捲→無捲軸)切換時
-       側欄內容寬度跳動，導致 width:100% 的 mode-switch 按鈕忽大忽小 */
-    scrollbar-gutter: stable;
-    padding: max(env(safe-area-inset-top), 26px) 22px 24px;
+    height: 100dvh; overflow: hidden;
     background: var(--side);
     backdrop-filter: saturate(180%) blur(20px);
     -webkit-backdrop-filter: saturate(180%) blur(20px);
     border-right: .5px solid var(--sep);
+    display: flex; flex-direction: column;
+  }
+  /* 中段捲動區：以 flex:1 吃掉「帳號 footer」以外的剩餘高度，整個側欄只有這裡會捲動，
+     讓帳號區永遠釘在最底（取代舊版 margin-top:auto + sticky 的脆弱混合做法）。 */
+  .sidebar-scroll {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin;
+    /* 永遠保留捲軸槽：避免檢索(篩選長→有捲軸)↔問答(歷史內捲→無捲軸)切換時
+       側欄內容寬度跳動，導致 width:100% 的 mode-switch 按鈕忽大忽小 */
+    scrollbar-gutter: stable;
+    padding: max(env(safe-area-inset-top), 26px) 22px 20px;
     display: flex; flex-direction: column; gap: 20px;
   }
   h1 { margin: 0; font-size: 25px; font-weight: 700; letter-spacing: -.022em; }
@@ -57,8 +63,35 @@
   .monitor-link:hover { background: #ae74152e; }
   .monitor-link:active { transform: scale(.96); }
   .monitor-link svg { flex: none; }
-  .logout-form { margin: 0; display: inline-flex; }
-  .logout-btn { border: none; cursor: pointer; font-family: inherit; }
+  /* 側欄底部帳號區（仿 ChatGPT/Claude）：頭像＋共用帳號名稱＋登出，釘在側欄最底。 */
+  .account {
+    flex: none;                       /* 固定高度 footer，永遠釘在側欄最底；不參與中段捲動 */
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 22px max(env(safe-area-inset-bottom), 14px);
+    background: var(--side);          /* 玻璃模糊由 .sidebar 外殼統一提供，毋須在此重套 */
+    border-top: .5px solid var(--sep);
+  }
+  .account-avatar {
+    flex: none; width: 32px; height: 32px; border-radius: 100px;
+    display: grid; place-items: center;
+    background: var(--brand-soft); color: var(--brand);
+    font-size: 14px; font-weight: 700; line-height: 1;
+  }
+  .account-name {
+    flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: var(--label);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .logout-form { margin: 0; display: inline-flex; flex: none; }
+  .logout-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 100px;
+    border: none; cursor: pointer; background: transparent;
+    color: var(--label-2); font-family: inherit;
+    transition: background .2s, color .2s, transform .12s;
+  }
+  .logout-btn:hover { background: var(--fill); color: var(--label); }
+  .logout-btn:active { transform: scale(.94); }
+  .logout-btn svg { flex: none; }
 
   .stats { display: flex; gap: 7px; flex-wrap: wrap; }
   .stats:empty { display: none; }   /* 平常不顯示篇數/片段；僅後端未連線時才占位 */
@@ -262,7 +295,8 @@
   .examples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
   .ex { font-size: 13px; font-weight: 500; color: var(--brand);
     background: var(--brand-soft); padding: 7px 13px; border-radius: 100px; cursor: pointer;
-    border: none; font-family: inherit; transition: transform .15s; }
+    border: none; font-family: inherit; transition: transform .15s, background .2s; }
+  .ex:hover { background: #ae74152e; }   /* 比照 .monitor-link/.cite 的 brand-soft 藥丸 hover */
   .ex:active { transform: scale(.93); }
 
   /* ───── 結果列工具列 + 檢視切換 ───── */
@@ -391,6 +425,11 @@
     .sidebar { position: sticky; top: 0; height: auto; overflow: visible;
       flex-direction: column; gap: 13px; z-index: 30;
       padding: max(env(safe-area-inset-top), 14px) 16px 12px; }
+    /* 手機：捲動區攤平回正常流，子層直接套用側欄 16px 內距與 13px gap（取代桌機的 flex 捲動區）*/
+    .sidebar-scroll { display: contents; }
+    /* 手機：側欄回正常流（非 sticky 釘底），帳號區對齊 16px 內距全寬，順排在側欄末端 */
+    .account { position: static; margin: 0 -16px -12px;
+      padding: 12px 16px max(env(safe-area-inset-bottom), 12px); }
     .topbar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px 12px; }
     .brand { flex: 1 1 100%; }
     h1 { font-size: 22px; white-space: nowrap; }
@@ -724,6 +763,7 @@
   <a class="skip-link" href="#results">跳至結果</a>
   <div class="app">
     <aside class="sidebar">
+      <div class="sidebar-scroll">
       <div class="topbar">
         <div class="brand">
           <div class="brand-mark">
@@ -741,13 +781,6 @@
                    stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 6 4-13L16 12h5"/></svg>
               導入監控
             </a>
-            <form class="logout-form" method="post" action="/logout">
-              <button class="monitor-link logout-btn" type="submit" title="登出">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
-                登出
-              </button>
-            </form>
           </span>
         </div>
         <div class="stats" id="stats"></div>
@@ -773,6 +806,17 @@
       <div class="ask-hist-side" id="askHistSide">
         <div class="filters-label">歷史紀錄</div>
         <div class="ask-hist-list" id="askHistList"></div>
+      </div>
+      </div>
+      <div class="account">
+        <div class="account-avatar" id="accountAvatar" aria-hidden="true">使</div>
+        <div class="account-name" id="accountName" title="目前登入帳號">使用者</div>
+        <form class="logout-form" method="post" action="/logout">
+          <button class="logout-btn" type="submit" title="登出" aria-label="登出">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+          </button>
+        </form>
       </div>
     </aside>
 

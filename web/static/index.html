@@ -653,6 +653,11 @@
   .ask-step[data-state="done"] .ask-step-ico { color: var(--brand); }
   .ask-step-spin { box-sizing: border-box; width: 16px; height: 16px; border-radius: 50%;
     border: 2px solid var(--sep); border-top-color: var(--brand); animation: spin .8s linear infinite; }
+  .ask-process-head .ask-proc-ico { flex: none; width: 16px; height: 16px; display: grid; place-items: center; }
+  .ask-process-head .ask-proc-ico svg { width: 16px; height: 16px; display: block; }
+  .ask-process-head .ask-proc-ico .ask-step-spin { width: 14px; height: 14px; }
+  .ask-process-head.is-done { color: var(--label-2); }
+  .ask-process-head.is-done .ask-proc-ico { color: var(--brand); }
 
   /* 歷史問答：問答模式側欄常駐清單（取代檢索篩選 chips）*/
   .ask-hist-side { display: none; flex-direction: column; gap: 9px; flex: 1; min-height: 0; }

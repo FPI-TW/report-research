@@ -616,5 +616,108 @@ class HistoryItemTests(unittest.TestCase):
         self.assertEqual(out["ext_sources"], [])
 
 
+class _RowsResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _RowsSession:
+    """假 session：execute 回固定列（供 load_recent_turns/get_conversation 測試）。"""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, *a, **k):
+        return _RowsResult(self._rows)
+
+    async def commit(self):
+        return None
+
+
+class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_oldest_first(self):
+        from app.services import answer as ans
+        # DB 以 created_at DESC 回（新→舊）；函式須反轉成舊→新
+        rows = [("新問", "新答"), ("舊問", "舊答")]
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _RowsSession(rows)
+        try:
+            turns = await ans.load_recent_turns("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(turns, [("舊問", "舊答"), ("新問", "新答")])
+
+    async def test_db_error_returns_empty(self):
+        from app.services import answer as ans
+
+        class Boom:
+            def __call__(self):
+                raise RuntimeError("db down")
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = Boom()
+        try:
+            turns = await ans.load_recent_turns("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(turns, [])
+
+
+class GetConversationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maps_rows_via_history_item(self):
+        from app.services import answer as ans
+        from datetime import date
+        rows = [
+            ("id1", "Q1", "A1", date(2026, 6, 1), None, None, None),
+            ("id2", "Q2", "A2", date(2026, 6, 2), "like", None, None),
+        ]
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _RowsSession(rows)
+        try:
+            out = await ans.get_conversation("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual([t["question"] for t in out], ["Q1", "Q2"])
+        self.assertEqual(out[1]["feedback"], "like")
+
+
+class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rowcount_zero_is_false(self):
+        from app.services import answer as ans
+
+        class Res:
+            rowcount = 0
+
+        class Sess:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, *a, **k):
+                return Res()
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: Sess()
+        try:
+            ok = await ans.delete_conversation("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertFalse(ok)
+
+
 if __name__ == "__main__":
     unittest.main()

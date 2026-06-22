@@ -298,11 +298,14 @@ async def _log_qa(
     latency_ms: int,
     sources: list[dict],
     ext_sources: list[dict] | None = None,
+    *,
+    conversation_id: str | None = None,
 ) -> str:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
     回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
     sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
+    conversation_id 將多輪問答歸為同一串。
     """
     qa_id = str(uuid.uuid4())
     ext_sources = ext_sources or []
@@ -311,8 +314,10 @@ async def _log_qa(
             await session.execute(
                 text(
                     "INSERT INTO research.qa_log "
-                    "(id, question, answer, cited_report_ids, filters, latency_ms, sources, ext_sources) "
-                    "VALUES (:id, :q, :a, :cited, :filters, :lat, :sources, :ext_sources)"
+                    "(id, question, answer, cited_report_ids, filters, latency_ms, "
+                    "sources, ext_sources, conversation_id) "
+                    "VALUES (:id, :q, :a, :cited, :filters, :lat, "
+                    ":sources, :ext_sources, :conv)"
                 ),
                 {
                     "id": qa_id,
@@ -323,12 +328,110 @@ async def _log_qa(
                     "lat": latency_ms,
                     "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
                     "ext_sources": json.dumps(ext_sources, ensure_ascii=False),  # jsonb
+                    "conv": conversation_id,
                 },
             )
             await session.commit()
     except Exception:
         pass
     return qa_id
+
+
+async def load_recent_turns(
+    conversation_id: str, *, limit: int = MAX_HISTORY_TURNS
+) -> list[tuple[str, str]]:
+    """取該對話最近 limit 輪 (question, answer)，回傳由舊到新；排除離題列。
+
+    以 COALESCE(conversation_id, id) 分組，相容舊 NULL 列（其自身 id 即對話 id）。
+    任何 DB 錯誤 → 回 []（fail-open，不擋作答）。
+    """
+    try:
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT question, answer FROM research.qa_log "
+                        "WHERE COALESCE(conversation_id, id) = :cid "
+                        "AND answer IS DISTINCT FROM :offtopic "
+                        "ORDER BY created_at DESC LIMIT :limit"
+                    ),
+                    {"cid": conversation_id, "offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+                )
+            ).all()
+        return [(q, a) for q, a in reversed(rows)]
+    except Exception:
+        return []
+
+
+async def list_conversations(limit: int = 50) -> list[dict]:
+    """對話串清單：每串 {conversation_id, title, last_at, turn_count}。
+
+    分組鍵 COALESCE(conversation_id, id)；標題取最早一題；首題離題者排除；
+    依該串最新時間由新到舊。
+    """
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT conv_id, title, last_at, turn_count FROM ("
+                    "  SELECT COALESCE(conversation_id, id) AS conv_id,"
+                    "         (array_agg(question ORDER BY created_at))[1] AS title,"
+                    "         (array_agg(answer ORDER BY created_at))[1] AS first_answer,"
+                    "         max(created_at) AS last_at,"
+                    "         count(*) AS turn_count"
+                    "  FROM research.qa_log"
+                    "  GROUP BY COALESCE(conversation_id, id)"
+                    ") g WHERE first_answer IS DISTINCT FROM :offtopic "
+                    "ORDER BY last_at DESC LIMIT :limit"
+                ),
+                {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+            )
+        ).all()
+    out: list[dict] = []
+    for conv_id, title, last_at, turn_count in rows:
+        out.append(
+            {
+                "conversation_id": str(conv_id),
+                "title": title,
+                "last_at": last_at.isoformat() if hasattr(last_at, "isoformat") else last_at,
+                "turn_count": int(turn_count),
+            }
+        )
+    return out
+
+
+async def get_conversation(conversation_id: str) -> list[dict]:
+    """該對話全部輪次（history_item 格式），由舊到新，供重開重現與續問。"""
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources "
+                    "FROM research.qa_log "
+                    "WHERE COALESCE(conversation_id, id) = :cid "
+                    "ORDER BY created_at ASC"
+                ),
+                {"cid": conversation_id},
+            )
+        ).all()
+    return [history_item(tuple(r)) for r in rows]
+
+
+async def delete_conversation(conversation_id: str) -> bool:
+    """刪整個對話串；刪到 ≥1 列回 True，查無或 DB 異常回 False。"""
+    try:
+        async with SessionFactory() as session:
+            result = await session.execute(
+                text(
+                    "DELETE FROM research.qa_log "
+                    "WHERE COALESCE(conversation_id, id) = :cid"
+                ),
+                {"cid": conversation_id},
+            )
+            await session.commit()
+        return getattr(result, "rowcount", 0) > 0
+    except Exception:
+        return False
 
 
 async def record_feedback(qa_id: str, value: str) -> bool:

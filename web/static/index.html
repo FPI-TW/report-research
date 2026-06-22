@@ -587,7 +587,7 @@
   /* 使用者問題氣泡（右側）*/
   .ask-msg-user { align-self: flex-end; max-width: 86%; background: var(--brand); color: #fff;
     font-size: 15px; line-height: 1.55; padding: 10px 15px; border-radius: 16px 16px 4px 16px;
-    white-space: pre-wrap; word-break: break-word; margin-bottom: 14px; }
+    white-space: pre-wrap; word-break: break-word; margin-bottom: 24px; }
   .ask-msg-user[hidden] { display: none; }
 
   /* 助理回答（左側、全寬 prose，仿 GPT/Claude）*/
@@ -743,7 +743,7 @@
   .ask-go:disabled { opacity: .55; cursor: default; }
 
   .ask-turn { display: flex; flex-direction: column; }
-  .ask-turn + .ask-turn { margin-top: 18px; }
+  .ask-turn + .ask-turn { margin-top: 32px; }
 
   /* 著陸狀態（尚未提問）：問候語 + 輸入框整組垂直置中、移除底部白色列（像 ChatGPT/Gemini）。
      送出第一題或載入歷史後移除 .landing → 回到對話可捲 + 輸入置底的聊天版面。 */

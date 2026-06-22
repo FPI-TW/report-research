@@ -114,14 +114,14 @@ function cancelActiveAsk({ bumpReq = false } = {}) {
   $("#askGo").disabled = false;
 }
 
-// 載入側欄歷史問答清單（問答模式常駐，取代原右側抽層）。
+// 載入側欄對話串清單（問答模式常駐，取代原右側抽層）。
 // 首次載入才顯示「載入中…」，提問後的刷新沿用既有清單避免閃爍。
 export async function loadAskHistory() {
   const list = $("#askHistList");
   if (!list) return;
   if (!list.children.length) list.innerHTML = `<div class="ask-hist-empty">載入中…</div>`;
   try {
-    const resp = await fetch("/api/history?limit=50");
+    const resp = await fetch("/api/conversations?limit=50");
     if (resp.status === 401) { window.location.href = "/login"; return; }
     if (!resp.ok) throw new Error("bad");
     renderHistory(await resp.json());
@@ -133,70 +133,87 @@ export async function loadAskHistory() {
 
 function renderHistory(items) {
   const list = $("#askHistList");
-  if (!items.length) { list.innerHTML = `<div class="ask-hist-empty">尚無歷史問答</div>`; return; }
-  // ChatGPT/Gemini 式單行項目：只顯示問題（單行截斷），完整問題放 title 供懸停查看；右上疊刪除鈕（button 不能巢狀）
-  list.innerHTML = items.map((it, i) => html`<div class="ask-hist-item">
-      <button class="ask-hist-open" type="button" data-i="${String(i)}" title="${it.question}">
-        <span class="ask-hist-q">${it.question}</span>
+  if (!items.length) { list.innerHTML = `<div class="ask-hist-empty">尚無歷史對話</div>`; return; }
+  list.innerHTML = items.map(it => html`<div class="ask-hist-item" data-id="${it.conversation_id}">
+      <button class="ask-hist-open" type="button" data-id="${it.conversation_id}" title="${it.title}">
+        <span class="ask-hist-q">${it.title}</span>
       </button>
-      <button class="ask-hist-del" type="button" data-i="${String(i)}" aria-label="刪除此問答" title="刪除此問答">${raw(SVG.trash)}</button>
+      <button class="ask-hist-del" type="button" data-id="${it.conversation_id}" aria-label="刪除此對話" title="刪除此對話">${raw(SVG.trash)}</button>
     </div>`).join("");
   list.querySelectorAll(".ask-hist-open").forEach(b =>
-    b.onclick = () => loadHistoryItem(items[parseInt(b.dataset.i, 10)]));
+    b.onclick = () => loadConversation(b.dataset.id));
   list.querySelectorAll(".ask-hist-del").forEach(b =>
-    b.onclick = () => deleteHistoryItem(items[parseInt(b.dataset.i, 10)], b));
+    b.onclick = () => deleteConversationItem(b.dataset.id, b));
+  markActive();
 }
 
-// 刪除單筆歷史問答：優先走 DELETE；若代理/舊邊緣對 DELETE 回 404/405，
-// 自動回退到 POST alias，成功則即時移除該列；清空回空狀態。
-async function deleteHistoryItem(it, btn) {
-  if (!it || !it.id || btn.disabled) return;
+function markActive() {
+  document.querySelectorAll("#askHistList .ask-hist-item").forEach(el =>
+    el.classList.toggle("active", el.dataset.id === conversationId));
+}
+
+async function loadConversation(id) {
+  cancelActiveAsk({ bumpReq: true });
+  try {
+    const resp = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+    if (resp.status === 401) { window.location.href = "/login"; return; }
+    if (!resp.ok) throw new Error("bad");
+    const items = await resp.json();
+    $("#askPanel").classList.remove("landing");
+    $("#askEmpty").hidden = true;
+    $("#askThreadInner").querySelectorAll(".ask-turn").forEach(n => n.remove());
+    turns = [];
+    conversationId = id;   // 接上此對話，輸入框續問即同串
+    for (const it of items) {
+      const turn = createTurn(it.question);
+      turn.sources = it.sources || [];
+      turn.extSources = it.ext_sources || [];
+      turn.qaId = it.id;
+      turn.answer = it.answer || "";
+      paintSources(turn); paintExtSources(turn); paintAnswer(turn, false); paintActions(turn);
+      if (it.feedback) {
+        const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
+        const btn = turn.actionsEl.querySelector(sel);
+        if (btn) btn.classList.add("on");
+      }
+    }
+    markActive();
+    toBottom();
+  } catch (e) { /* 載入失敗不破壞現況 */ }
+}
+
+function newConversation() {
+  cancelActiveAsk({ bumpReq: true });
+  conversationId = null;
+  turns = [];
+  $("#askThreadInner").querySelectorAll(".ask-turn").forEach(n => n.remove());
+  $("#askEmpty").hidden = false;
+  $("#askPanel").classList.add("landing");
+  markActive();
+  $("#askInput").focus();
+}
+
+async function deleteConversationItem(id, btn) {
+  if (!id || btn.disabled) return;
   const ok = await confirmDialog({
-    title: "刪除此問答？",
-    body: "將永久移除這筆歷史問答，無法復原。",
+    title: "刪除此對話？",
+    body: "將永久移除整個對話串，無法復原。",
     confirmLabel: "刪除",
   });
   if (!ok) return;
   btn.disabled = true;
   try {
-    const path = `/api/history/${encodeURIComponent(it.id)}`;
+    const path = `/api/conversations/${encodeURIComponent(id)}`;
     let resp = await fetch(path, { method: "DELETE" });
-    if (resp.status === 404 || resp.status === 405) {
-      resp = await fetch(`${path}/delete`, { method: "POST" });
-    }
+    if (resp.status === 404 || resp.status === 405) resp = await fetch(`${path}/delete`, { method: "POST" });
     if (resp.status === 401) { window.location.href = "/login"; return; }
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.ok) throw new Error("bad");
     btn.closest(".ask-hist-item")?.remove();
+    if (id === conversationId) newConversation();    // 刪到當前對話 → 回到新對話
     const list = $("#askHistList");
-    if (list && !list.children.length)
-      list.innerHTML = `<div class="ask-hist-empty">尚無歷史問答</div>`;
-  } catch (e) {
-    btn.disabled = false;   // 失敗：復原可再試（不打擾使用者）
-  }
-}
-
-// 唯讀重現一筆歷史問答（清掉現有 turns、建一個 turn 灌入歷史內容）
-// Task 9 會由對話載入取代；此版本先讓它不引用已移除的單元素
-function loadHistoryItem(it) {
-  cancelActiveAsk({ bumpReq: true });
-  $("#askPanel").classList.remove("landing");
-  $("#askEmpty").hidden = true;
-  $("#askThreadInner").querySelectorAll(".ask-turn").forEach(n => n.remove());
-  turns = [];
-  const turn = createTurn(it.question);
-  turn.sources = it.sources || [];
-  turn.extSources = it.ext_sources || [];
-  turn.qaId = it.id;
-  turn.answer = it.answer || "";
-  paintSources(turn); paintExtSources(turn); paintAnswer(turn, false);
-  paintActions(turn);
-  if (it.feedback) {
-    const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
-    const btn = turn.actionsEl.querySelector(sel);
-    if (btn) btn.classList.add("on");
-  }
-  toBottom();
+    if (list && !list.children.length) list.innerHTML = `<div class="ask-hist-empty">尚無歷史對話</div>`;
+  } catch (e) { btn.disabled = false; }
 }
 
 function thinking(turn) {
@@ -320,6 +337,9 @@ export function initAsk() {
   });
   // cite 點擊綁定已移至 createTurn（每輪各自掛載，避免跨輪 sources 混用）
 
+  const nb = $("#askNew");
+  if (nb) nb.onclick = () => newConversation();
+
   $("#askPanel").classList.add("landing");   // 初始：輸入框置中、無底部白色列
 }
 
@@ -374,7 +394,7 @@ export async function askQuestion() {
       if (!notice) paintAnswer(turn, false);   // 收尾：去掉游標（離題卡不可被覆寫）
       if (!started) fail(turn, "沒有取得回答，請稍後再試。");
       else if (!notice) paintActions(turn);   // 動作列（離題卡不顯示）
-      loadAskHistory();   // 新問答已寫入 qa_log → 刷新側欄歷史清單
+      loadAskHistory().then(() => markActive());   // 刷新側欄對話清單後高亮當前對話
     }
   } catch (e) {
     if (my === state.askReq) fail(turn, "查詢逾時或失敗，請稍後再試。");

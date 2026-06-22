@@ -655,6 +655,13 @@
   .ask-hist-del:hover { background: #ff3b301f; color: var(--red); }
   .ask-hist-item:hover .ask-hist-del, .ask-hist-del:focus-visible { opacity: 1; }
   @media (hover: none) { .ask-hist-del { opacity: 1; } }
+  .ask-hist-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ask-new { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--brand);
+    background: var(--brand-soft, #ae74151f); border: none; border-radius: 8px; padding: 5px 9px; cursor: pointer;
+    transition: background .2s; }
+  .ask-new:hover { background: #ae74152e; }
+  .ask-new svg { width: 15px; height: 15px; }
+  .ask-hist-item.active { background: #78788022; }
 
   /* 離題拒答提示卡（取代一般答案泡泡）*/
   .ask-notice { display: flex; align-items: flex-start; gap: 11px; padding: 13px 15px;
@@ -807,7 +814,13 @@
         <nav class="filters" id="sortChips" aria-labelledby="lbl-sort"></nav>
       </div>
       <div class="ask-hist-side" id="askHistSide">
-        <div class="filters-label">歷史紀錄</div>
+        <div class="ask-hist-head">
+          <span class="filters-label">歷史對話</span>
+          <button class="ask-new" id="askNew" type="button" title="開新對話" aria-label="開新對話">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            新對話
+          </button>
+        </div>
         <div class="ask-hist-list" id="askHistList"></div>
       </div>
       </div>

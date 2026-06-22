@@ -95,7 +95,10 @@ async def main(limit: int | None, batch_size: int) -> None:
                     continue
 
                 try:
-                    chunks = chunk_text(clean_extracted(rec.get("text", "")))
+                    # full_text 走原始文字（不經 clean_extracted），需單獨剝除 NUL，
+                    # 否則含 \x00 的 PDF 會在 upsert 時拋 UTF8 編碼錯誤而永久失敗。
+                    raw_text = (rec.get("text") or "").replace("\x00", "")
+                    chunks = chunk_text(clean_extracted(raw_text))
                     if not chunks:
                         stats["skip_scanned"] += 1
                         continue
@@ -118,7 +121,7 @@ async def main(limit: int | None, batch_size: int) -> None:
                         relates_futures=tag.relates_futures,
                         stock_targets=tag.stock_targets,
                         futures_targets=tag.futures_targets,
-                        full_text=rec.get("text"),
+                        full_text=raw_text,
                     )
                     await upsert_report(session, report, chunks, embeddings)
                 except Exception as e:  # noqa: BLE001 — 長跑不因單筆中斷

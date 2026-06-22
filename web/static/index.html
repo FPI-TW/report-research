@@ -641,6 +641,7 @@
     transition: max-height var(--dur-2) var(--ease-out), opacity var(--dur-2), margin-top var(--dur-2), visibility var(--dur-2); }
   .ask-process.open .ask-process-steps { max-height: 320px; opacity: 1; margin-top: 4px; visibility: visible; }
   .ask-step { display: flex; align-items: center; gap: 9px; padding: 3px 8px; font-size: 13.5px; color: var(--label-3); }
+  .ask-step[hidden] { display: none; }   /* author display:flex 會蓋過 UA [hidden]，須顯式還原隱藏 */
   .ask-step[data-state="active"] { color: var(--label); }
   .ask-step[data-state="done"] { color: var(--label-2); }
   .ask-step-ico { flex: none; width: 16px; height: 16px; display: grid; place-items: center; }

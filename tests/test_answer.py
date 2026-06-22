@@ -832,6 +832,103 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["embed"], "台積電 2026 先進封裝 展望")
         self.assertEqual(events[-1][1]["conversation_id"], "c1")     # 沿用傳入對話 id
 
+    async def test_followup_passes_history_block_to_prompt(self):
+        from app.services import answer as ans
+
+        seen = {}
+
+        async def fake_load(conversation_id, **k):
+            return [("台積電前景?", "看好[1]")]
+
+        async def fake_condense(history_text, question, **k):
+            return ("台積電 先進封裝 展望", True)
+
+        async def fake_search(session, query, qvec, **k):
+            return [(1, 0.9, make_row("r1", "x.pdf", "TW", "封裝內容。", date(2026, 6, 1), 0.1))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_intent(q, **k):
+            return True
+
+        orig_bup = ans.build_user_prompt
+
+        def spy_bup(question, context, history_block=""):
+            seen["history_block"] = history_block
+            return orig_bup(question, context, history_block)
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+                ans.SessionFactory, ans.classify_intent,
+                ans.condense_and_classify, ans.load_recent_turns, ans.build_user_prompt)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
+        ans.build_user_prompt = spy_bup
+        try:
+            _ = [e async for e in ans.answer_question("那它的封裝呢?", conversation_id="c1")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+             ans.SessionFactory, ans.classify_intent,
+             ans.condense_and_classify, ans.load_recent_turns, ans.build_user_prompt) = orig
+
+        self.assertIn("history_block", seen)
+        self.assertIn("台積電前景?", seen["history_block"])   # 先前對話確實內嵌進 prompt
+
+    async def test_followup_offtopic_skips_llm(self):
+        from app.services import answer as ans
+
+        called = {"llm": False}
+
+        async def fake_load(conversation_id, **k):
+            return [("台積電前景?", "看好[1]")]
+
+        async def fake_condense(history_text, question, **k):
+            return ("幫我寫一首詩", False)   # 改寫後判定離題
+
+        async def fake_search(session, query, qvec, **k):
+            return [(1, 0.5, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), 0.4))]
+
+        def fake_embed(q):
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            called["llm"] = True
+            yield "不該被呼叫"
+
+        async def fake_intent(q, **k):
+            raise AssertionError("續問不應呼叫 classify_intent")
+
+        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+                ans.SessionFactory, ans.classify_intent,
+                ans.condense_and_classify, ans.load_recent_turns)
+        ans.hybrid_search = fake_search
+        ans.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans.condense_and_classify = fake_condense
+        ans.load_recent_turns = fake_load
+        try:
+            events = [e async for e in ans.answer_question("再來一首?", conversation_id="c1")]
+        finally:
+            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
+             ans.SessionFactory, ans.classify_intent,
+             ans.condense_and_classify, ans.load_recent_turns) = orig
+
+        kinds = [k for k, _ in events]
+        self.assertEqual(kinds, ["sources", "notice", "done"])   # 離題提示卡
+        self.assertEqual(events[1][1], ans.OFF_TOPIC_MESSAGE)
+        self.assertEqual(events[-1][1]["conversation_id"], "c1")
+        self.assertFalse(called["llm"])   # 未跑主 LLM
+
 
 if __name__ == "__main__":
     unittest.main()

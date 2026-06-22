@@ -302,6 +302,7 @@ async def _log_qa(
     ext_sources: list[dict] | None = None,
     *,
     conversation_id: str | None = None,
+    thinking_ms: int | None = None,
 ) -> str:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
@@ -317,9 +318,9 @@ async def _log_qa(
                 text(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
-                    "sources, ext_sources, conversation_id) "
+                    "sources, ext_sources, conversation_id, thinking_ms) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
-                    ":sources, :ext_sources, :conv)"
+                    ":sources, :ext_sources, :conv, :think)"
                 ),
                 {
                     "id": qa_id,
@@ -331,6 +332,7 @@ async def _log_qa(
                     "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
                     "ext_sources": json.dumps(ext_sources, ensure_ascii=False),  # jsonb
                     "conv": conversation_id,
+                    "think": thinking_ms,
                 },
             )
             await session.commit()
@@ -525,17 +527,22 @@ async def answer_question(
     if not in_domain:  # 離題：拒答、不跑主 LLM
         yield ("sources", [])
         yield ("notice", OFF_TOPIC_MESSAGE)
+        thinking_ms = int((time.monotonic() - started) * 1000)
         await _log_qa(
             question,
             OFF_TOPIC_MESSAGE,
             [],
             filters,
-            int((time.monotonic() - started) * 1000),
+            thinking_ms,
             [],
             [],
             conversation_id=conv_id,
+            thinking_ms=thinking_ms,
         )
-        yield ("done", {"cited": [], "conversation_id": conv_id})
+        yield (
+            "done",
+            {"cited": [], "conversation_id": conv_id, "thinking_ms": thinking_ms},
+        )
         return
 
     sources, context = build_context(scored)
@@ -543,18 +550,29 @@ async def answer_question(
     yield ("status", {"stage": "retrieved", "count": len(sources)})  # 步驟2：找到 N 篇
 
     if not context:
+        thinking_ms = int((time.monotonic() - started) * 1000)
+        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
             question,
             NO_CONTEXT_MESSAGE,
             [],
             filters,
-            int((time.monotonic() - started) * 1000),
+            thinking_ms,
             [],
             [],
             conversation_id=conv_id,
+            thinking_ms=thinking_ms,
         )
-        yield ("done", {"cited": [], "qa_id": qa_id, "conversation_id": conv_id})
+        yield (
+            "done",
+            {
+                "cited": [],
+                "qa_id": qa_id,
+                "conversation_id": conv_id,
+                "thinking_ms": thinking_ms,
+            },
+        )
         return
 
     user_prompt = build_user_prompt(question, context, history_block)
@@ -563,6 +581,20 @@ async def answer_question(
     hold = len(EXT_SENTINEL)
     sentinel_found = False
     searching_sent = False
+    thinking_ms: int | None = None
+
+    def _emit_token(piece: str) -> list[tuple[str, object]]:
+        """首個 token 前補發 generating(thinking_ms)，回傳要 yield 的事件序。"""
+        nonlocal thinking_ms
+        out: list[tuple[str, object]] = []
+        if thinking_ms is None:
+            thinking_ms = int((time.monotonic() - started) * 1000)
+            out.append(
+                ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+            )
+        out.append(("token", piece))
+        return out
+
     yield ("status", {"stage": "reading"})  # 步驟3：閱讀重點、整理回答
     async for chunk in stream_completion(
         user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
@@ -579,14 +611,17 @@ async def answer_question(
         idx = buf.find(EXT_SENTINEL)
         if idx != -1:
             if buf[:idx]:
-                yield ("token", buf[:idx])
+                for ev in _emit_token(buf[:idx]):
+                    yield ev
             sentinel_found = True
             buf = ""
         elif len(buf) > hold:
-            yield ("token", buf[:-hold])
+            for ev in _emit_token(buf[:-hold]):
+                yield ev
             buf = buf[-hold:]
     if not sentinel_found and buf:
-        yield ("token", buf)
+        for ev in _emit_token(buf):
+            yield ev
 
     raw = "".join(raw_parts)
     body, ext_sources = split_external_sources(raw)
@@ -601,5 +636,14 @@ async def answer_question(
         [asdict(s) for s in sources],
         ext_sources,
         conversation_id=conv_id,
+        thinking_ms=thinking_ms,
     )
-    yield ("done", {"cited": cited, "qa_id": qa_id, "conversation_id": conv_id})
+    yield (
+        "done",
+        {
+            "cited": cited,
+            "qa_id": qa_id,
+            "conversation_id": conv_id,
+            "thinking_ms": thinking_ms,
+        },
+    )

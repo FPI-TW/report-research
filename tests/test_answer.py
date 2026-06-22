@@ -397,12 +397,18 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             self._restore(ans, orig)
 
         kinds = [k for k, _ in events]
-        self.assertEqual(kinds, ["status", "sources", "status", "token", "done"])
+        self.assertEqual(
+            kinds, ["status", "sources", "status", "status", "token", "done"]
+        )
         self.assertEqual(events[0], ("status", {"stage": "understanding"}))
         self.assertEqual(events[2], ("status", {"stage": "retrieved", "count": 0}))
         # 無脈絡路徑不得發 reading
         self.assertNotIn(("status", {"stage": "reading"}), events)
-        self.assertEqual(events[3], ("token", ans.NO_CONTEXT_MESSAGE))
+        # NO_CONTEXT token 前補發 generating，帶 thinking_ms
+        self.assertEqual(events[3][0], "status")
+        self.assertEqual(events[3][1]["stage"], "generating")
+        self.assertIn("thinking_ms", events[3][1])
+        self.assertEqual(events[4], ("token", ans.NO_CONTEXT_MESSAGE))
         self.assertFalse(called["llm"])  # 未跑主 LLM
 
     async def test_emits_process_status_steps(self):
@@ -439,6 +445,28 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(0, i_retrieved)
         self.assertLess(i_retrieved, i_reading)
         self.assertLess(i_reading, i_token)
+
+    async def test_emits_generating_with_thinking_ms(self):
+        # 正常路徑：第一個 token 前發 generating 帶 int thinking_ms；done 亦帶 thinking_ms
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, in_domain=True, called=called)
+        try:
+            events = [e async for e in ans.answer_question("可口可樂的投資評級如何")]
+        finally:
+            self._restore(ans, orig)
+
+        i_gen = next(
+            i
+            for i, (k, p) in enumerate(events)
+            if k == "status" and isinstance(p, dict) and p.get("stage") == "generating"
+        )
+        i_token = next(i for i, (k, _) in enumerate(events) if k == "token")
+        self.assertLess(i_gen, i_token)  # generating 在第一個 token 之前
+        self.assertIsInstance(events[i_gen][1]["thinking_ms"], int)
+        self.assertEqual(events[-1][0], "done")
+        self.assertIsInstance(events[-1][1]["thinking_ms"], int)  # done 帶 thinking_ms
 
 
 class AnswerWebTests(unittest.IsolatedAsyncioTestCase):

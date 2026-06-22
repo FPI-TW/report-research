@@ -380,6 +380,31 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("conversation_id", events[-1][1])
         self.assertTrue(called["llm"])  # 有跑主 LLM
 
+    async def test_no_context_emits_retrieved_zero_without_reading(self):
+        # 在領域但檢索無結果 → 無脈絡：retrieved(count=0)、不發 reading、回 NO_CONTEXT，且不跑主 LLM
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, in_domain=True, called=called)
+
+        async def empty_search(*a, **k):
+            return []
+
+        ans.hybrid_search = empty_search  # 覆寫 _patch 的單列 fake_search
+        try:
+            events = [e async for e in ans.answer_question("某個查不到的冷門問題")]
+        finally:
+            self._restore(ans, orig)
+
+        kinds = [k for k, _ in events]
+        self.assertEqual(kinds, ["status", "sources", "status", "token", "done"])
+        self.assertEqual(events[0], ("status", {"stage": "understanding"}))
+        self.assertEqual(events[2], ("status", {"stage": "retrieved", "count": 0}))
+        # 無脈絡路徑不得發 reading
+        self.assertNotIn(("status", {"stage": "reading"}), events)
+        self.assertEqual(events[3], ("token", ans.NO_CONTEXT_MESSAGE))
+        self.assertFalse(called["llm"])  # 未跑主 LLM
+
     async def test_emits_process_status_steps(self):
         # 在領域問題：事件序須含 understanding(開頭) → retrieved(count) → reading(token 前)
         from app.services import answer as ans

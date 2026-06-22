@@ -75,7 +75,10 @@
     flex: none; width: 32px; height: 32px; border-radius: 100px;
     display: grid; place-items: center;
     background: var(--brand-soft); color: var(--brand);
-    font-size: 14px; font-weight: 700; line-height: 1;
+    overflow: hidden;
+  }
+  .account-avatar img {
+    display: block; width: 100%; height: 100%; object-fit: cover;
   }
   .account-name {
     flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 600; color: var(--label);
@@ -825,7 +828,9 @@
       </div>
       </div>
       <div class="account">
-        <div class="account-avatar" id="accountAvatar" aria-hidden="true">使</div>
+        <div class="account-avatar" id="accountAvatar" aria-hidden="true">
+          <img src="/static/img/avatar.jpg" alt="" width="32" height="32" />
+        </div>
         <div class="account-name" id="accountName" title="目前登入帳號">使用者</div>
         <form class="logout-form" method="post" action="/logout">
           <button class="logout-btn" type="submit" title="登出" aria-label="登出">

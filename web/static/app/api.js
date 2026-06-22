@@ -22,13 +22,11 @@ export function renderStats(d) {
   renderAccount(d.username);
 }
 
-// 側欄底部帳號區：填入共用帳號名稱與頭像首字（後端拿不到時退回 HTML 既有占位）。
+// 側欄底部帳號區：填入共用帳號名稱；頭貼固定由 HTML 輸出的靜態圖片承擔。
 function renderAccount(username) {
   const name = (username || "").trim() || "使用者";
   const nameEl = $("#accountName");
   if (nameEl) nameEl.textContent = name;
-  const avatarEl = $("#accountAvatar");
-  if (avatarEl) avatarEl.textContent = (Array.from(name)[0] || "?").toUpperCase();
 }
 
 export async function loadStats(apply = true) {

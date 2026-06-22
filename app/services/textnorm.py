@@ -23,6 +23,9 @@ def clean_text(s: str) -> str:
 
 def clean_extracted(s: str) -> str:
     """入庫前清理：逐段移除 CJK 間空白，保留段落邊界（chunk_text 依 \\n\\n 切段）。"""
+    # NUL（\x00）是 Postgres text/UTF8 不合法位元組（部分 GS/KGI PDF 帶私用區字符會夾帶），
+    # 入庫前一律剝除，否則 upsert chunk 會拋 CharacterNotInRepertoireError 而永久失敗。
+    s = s.replace("\x00", "")
     paras = _RE_PARA.split(s)
     return "\n\n".join(
         _RE_WS.sub(" ", _RE_CJK_GAP.sub("", p)).strip() for p in paras if p.strip()

@@ -91,3 +91,7 @@ ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS feedback text;
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS sources jsonb;
 -- 當時外部參考（網搜結果），供歷史重現保留「外部參考」區塊（冪等補欄）
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS ext_sources jsonb;
+-- 多輪對話：同一對話的多列共用此 id；NULL（舊列）視為各自獨立的單題對話（冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS conversation_id uuid;
+CREATE INDEX IF NOT EXISTS idx_qa_log_conversation
+    ON research.qa_log (conversation_id, created_at);

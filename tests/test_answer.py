@@ -58,7 +58,9 @@ class StreamParseTests(unittest.TestCase):
     def test_non_dict_stream_json_ignored(self):
         self.assertIsNone(llm.extract_text_delta('"just text"'))
         self.assertIsNone(llm.extract_text_delta('["array"]'))
-        self.assertIsNone(llm.extract_text_delta('{"type":"stream_event","event":"oops"}'))
+        self.assertIsNone(
+            llm.extract_text_delta('{"type":"stream_event","event":"oops"}')
+        )
         self.assertIsNone(
             llm.extract_text_delta(
                 '{"type":"stream_event","event":{"type":"content_block_delta","delta":"oops"}}'
@@ -76,7 +78,17 @@ class StreamParseTests(unittest.TestCase):
 class BuildContextTests(unittest.TestCase):
     def test_numbers_reports_in_order(self):
         scored = [
-            (2, 0.9, make_row("r1", "甲報告.pdf", "TW", "台積電先進封裝需求強勁。", date(2026, 6, 1))),
+            (
+                2,
+                0.9,
+                make_row(
+                    "r1",
+                    "甲報告.pdf",
+                    "TW",
+                    "台積電先進封裝需求強勁。",
+                    date(2026, 6, 1),
+                ),
+            ),
             (1, 0.8, make_row("r2", "乙報告.pdf", "US", "美國升息影響評估。")),
         ]
         sources, context = build_context(scored)
@@ -100,7 +112,8 @@ class BuildContextTests(unittest.TestCase):
 
     def test_max_reports_limit(self):
         scored = [
-            (0, 0.5, make_row(f"r{i}", f"{i}.pdf", "TW", f"內容{i}。")) for i in range(10)
+            (0, 0.5, make_row(f"r{i}", f"{i}.pdf", "TW", f"內容{i}。"))
+            for i in range(10)
         ]
         sources, _ = build_context(scored, max_reports=3)
         self.assertEqual(len(sources), 3)
@@ -155,7 +168,7 @@ class HistoryBlockTests(unittest.TestCase):
     def test_keeps_only_recent_max_turns(self):
         turns = [("q1", "a1"), ("q2", "a2"), ("q3", "a3"), ("q4", "a4")]
         block = build_history_block(turns, max_turns=3)
-        self.assertNotIn("q1", block)      # 最舊一輪被丟
+        self.assertNotIn("q1", block)  # 最舊一輪被丟
         self.assertIn("q4", block)
 
     def test_truncates_long_answer(self):
@@ -183,8 +196,16 @@ class RecencyTests(unittest.TestCase):
     def test_newer_report_ranked_first_when_relevance_close(self):
         # 同 tier、相關度接近：較新者（2026-06-10）應排在較舊者（2026-01-01）之前
         scored = [
-            (0, 0.80, make_row("old", "舊.pdf", "TW", "AI 伺服器需求強。", date(2026, 1, 1))),
-            (0, 0.78, make_row("new", "新.pdf", "TW", "AI 伺服器需求強。", date(2026, 6, 10))),
+            (
+                0,
+                0.80,
+                make_row("old", "舊.pdf", "TW", "AI 伺服器需求強。", date(2026, 1, 1)),
+            ),
+            (
+                0,
+                0.78,
+                make_row("new", "新.pdf", "TW", "AI 伺服器需求強。", date(2026, 6, 10)),
+            ),
         ]
         sources, _ = build_context(scored, now=self.NOW)
         self.assertEqual([s.report_id for s in sources], ["new", "old"])
@@ -193,8 +214,18 @@ class RecencyTests(unittest.TestCase):
     def test_recency_does_not_override_tier(self):
         # 字面強命中的舊篇（tier2）仍勝過弱相關的新篇（tier0）
         scored = [
-            (2, 0.70, make_row("strong_old", "強舊.pdf", "TW", "先進封裝。", date(2025, 1, 1))),
-            (0, 0.95, make_row("weak_new", "弱新.pdf", "TW", "先進封裝。", date(2026, 6, 17))),
+            (
+                2,
+                0.70,
+                make_row(
+                    "strong_old", "強舊.pdf", "TW", "先進封裝。", date(2025, 1, 1)
+                ),
+            ),
+            (
+                0,
+                0.95,
+                make_row("weak_new", "弱新.pdf", "TW", "先進封裝。", date(2026, 6, 17)),
+            ),
         ]
         sources, _ = build_context(scored, now=self.NOW)
         self.assertEqual(sources[0].report_id, "strong_old")
@@ -203,7 +234,11 @@ class RecencyTests(unittest.TestCase):
         # 無日期者 recency_factor=0；同 tier 下有近日期者勝出
         scored = [
             (0, 0.80, make_row("nodate", "無日期.pdf", "TW", "內容。", None)),
-            (0, 0.79, make_row("dated", "有日期.pdf", "TW", "內容。", date(2026, 6, 15))),
+            (
+                0,
+                0.79,
+                make_row("dated", "有日期.pdf", "TW", "內容。", date(2026, 6, 15)),
+            ),
         ]
         sources, _ = build_context(scored, now=self.NOW)
         self.assertEqual(sources[0].report_id, "dated")
@@ -236,7 +271,18 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
     def _patch(self, ans, *, in_domain, called):
         async def fake_search(*a, **k):
             return [
-                (0, 0.60, make_row("r1", "x.pdf", "TW", "可口可樂財報。", date(2026, 6, 1), distance=0.40))
+                (
+                    0,
+                    0.60,
+                    make_row(
+                        "r1",
+                        "x.pdf",
+                        "TW",
+                        "可口可樂財報。",
+                        date(2026, 6, 1),
+                        distance=0.40,
+                    ),
+                )
             ]
 
         def fake_embed(q):
@@ -299,12 +345,15 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             self._restore(ans, orig)
 
         kinds = [k for k, _ in events]
-        self.assertEqual(kinds, ["sources", "notice", "done"])  # notice：前端以提示卡渲染
-        self.assertEqual(events[0][1], [])  # 離題不顯示任何來源
-        self.assertEqual(events[1][1], ans.OFF_TOPIC_MESSAGE)
-        self.assertEqual(events[2][0], "done")
-        self.assertEqual(events[2][1]["cited"], [])
-        self.assertIn("conversation_id", events[2][1])
+        self.assertEqual(
+            kinds, ["status", "sources", "notice", "done"]
+        )  # 開頭多 understanding
+        self.assertEqual(events[0], ("status", {"stage": "understanding"}))
+        self.assertEqual(events[1][1], [])  # 離題不顯示任何來源
+        self.assertEqual(events[2][1], ans.OFF_TOPIC_MESSAGE)
+        self.assertEqual(events[3][0], "done")
+        self.assertEqual(events[3][1]["cited"], [])
+        self.assertIn("conversation_id", events[3][1])
         self.assertTrue(called["intent"])  # 有跑意圖判定
         self.assertFalse(called["llm"])  # 未跑主 LLM
 
@@ -320,8 +369,10 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             self._restore(ans, orig)
 
         kinds = [k for k, _ in events]
-        self.assertEqual(kinds[0], "sources")
-        self.assertTrue(len(events[0][1]) >= 1)  # 有來源
+        self.assertEqual(kinds[0], "status")  # 開頭為 understanding status
+        self.assertIn("sources", kinds)
+        srcs = next(p for k, p in events if k == "sources")
+        self.assertTrue(len(srcs) >= 1)  # 有來源
         self.assertIn(("token", "答案[1]"), events)
         self.assertEqual(events[-1][0], "done")
         self.assertEqual(events[-1][1]["cited"], ["r1"])
@@ -329,19 +380,71 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("conversation_id", events[-1][1])
         self.assertTrue(called["llm"])  # 有跑主 LLM
 
+    async def test_emits_process_status_steps(self):
+        # 在領域問題：事件序須含 understanding(開頭) → retrieved(count) → reading(token 前)
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, in_domain=True, called=called)
+        try:
+            events = [e async for e in ans.answer_question("可口可樂的投資評級如何")]
+        finally:
+            self._restore(ans, orig)
+
+        # 第一個事件即 understanding（在檢索/來源之前）
+        self.assertEqual(events[0], ("status", {"stage": "understanding"}))
+
+        statuses = [p for k, p in events if k == "status"]
+        # retrieved 帶實際來源數（fake_search 回 1 列）
+        self.assertIn({"stage": "retrieved", "count": 1}, statuses)
+        self.assertIn({"stage": "reading"}, statuses)
+
+        # 順序：understanding(0) < retrieved < reading < 第一個 token
+        i_retrieved = next(
+            i
+            for i, (k, p) in enumerate(events)
+            if k == "status" and p.get("stage") == "retrieved"
+        )
+        i_reading = next(
+            i
+            for i, (k, p) in enumerate(events)
+            if k == "status" and p.get("stage") == "reading"
+        )
+        i_token = next(i for i, (k, _) in enumerate(events) if k == "token")
+        self.assertLess(0, i_retrieved)
+        self.assertLess(i_retrieved, i_reading)
+        self.assertLess(i_reading, i_token)
+
 
 class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
     async def test_body_excludes_sentinel_and_emits_ext_sources(self):
         from app.services import answer as ans
 
         async def fake_search(*a, **k):
-            return [(1, 0.85, make_row("r1", "x.pdf", "TW", "台積電先進封裝。", date(2026, 6, 1), distance=0.2))]
+            return [
+                (
+                    1,
+                    0.85,
+                    make_row(
+                        "r1",
+                        "x.pdf",
+                        "TW",
+                        "台積電先進封裝。",
+                        date(2026, 6, 1),
+                        distance=0.2,
+                    ),
+                )
+            ]
 
         def fake_embed(q):
             return [0.0]
 
         async def fake_stream(*a, **k):
-            for ch in ["前段答案[1]。", "（網路）補充。", "\n[EXT_SOURCES]\n- 標題 | https://x.com\n"]:
+            for ch in [
+                "前段答案[1]。",
+                "（網路）補充。",
+                "\n[EXT_SOURCES]\n- 標題 | https://x.com\n",
+            ]:
                 yield ch
 
         async def fake_intent(q, **k):
@@ -353,9 +456,15 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         async def fake_condense(*a, **k):
             return (a[1] if len(a) > 1 else "", True)
 
-        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent,
-                ans.condense_and_classify, ans.load_recent_turns)
+        orig = (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+            ans.condense_and_classify,
+            ans.load_recent_turns,
+        )
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
@@ -366,20 +475,28 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         try:
             events = [e async for e in ans.answer_question("台積電封裝")]
         finally:
-            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent,
-             ans.condense_and_classify, ans.load_recent_turns) = orig
+            (
+                ans.hybrid_search,
+                ans.embed_query_cached,
+                ans.stream_completion,
+                ans.SessionFactory,
+                ans.classify_intent,
+                ans.condense_and_classify,
+                ans.load_recent_turns,
+            ) = orig
 
         body = "".join(p for k, p in events if k == "token")
         self.assertIn("前段答案[1]。", body)
         self.assertIn("（網路）補充。", body)
-        self.assertNotIn("[EXT_SOURCES]", body)        # sentinel 不外洩
-        self.assertNotIn("https://x.com", body)        # 來源不混進正文
+        self.assertNotIn("[EXT_SOURCES]", body)  # sentinel 不外洩
+        self.assertNotIn("https://x.com", body)  # 來源不混進正文
         ext = [p for k, p in events if k == "ext_sources"]
         self.assertEqual(len(ext), 1)
         self.assertEqual(ext[0], [{"title": "標題", "url": "https://x.com"}])
-        self.assertEqual([k for k, _ in events][0], "sources")  # 事件序起點
-        self.assertEqual(events[-2][0], "ext_sources")          # ext_sources 緊鄰 done 之前
+        self.assertEqual(
+            [k for k, _ in events][0], "status"
+        )  # 事件序起點＝understanding
+        self.assertEqual(events[-2][0], "ext_sources")  # ext_sources 緊鄰 done 之前
         self.assertEqual(events[-1][0], "done")
         self.assertEqual(events[-1][1]["cited"], ["r1"])
 
@@ -388,7 +505,15 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         from app.services import answer as ans
 
         async def fake_search(*a, **k):
-            return [(1, 0.85, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), distance=0.2))]
+            return [
+                (
+                    1,
+                    0.85,
+                    make_row(
+                        "r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), distance=0.2
+                    ),
+                )
+            ]
 
         def fake_embed(q):
             return [0.0]
@@ -406,9 +531,15 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         async def fake_condense(*a, **k):
             return (a[1] if len(a) > 1 else "", True)
 
-        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent,
-                ans.condense_and_classify, ans.load_recent_turns)
+        orig = (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+            ans.condense_and_classify,
+            ans.load_recent_turns,
+        )
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
@@ -419,14 +550,20 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         try:
             events = [e async for e in ans.answer_question("問題")]
         finally:
-            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent,
-             ans.condense_and_classify, ans.load_recent_turns) = orig
+            (
+                ans.hybrid_search,
+                ans.embed_query_cached,
+                ans.stream_completion,
+                ans.SessionFactory,
+                ans.classify_intent,
+                ans.condense_and_classify,
+                ans.load_recent_turns,
+            ) = orig
 
         body = "".join(p for k, p in events if k == "token")
         self.assertIn("前段答案[1]。", body)
-        self.assertNotIn("[EXT_SOURCES]", body)        # 跨 chunk 仍不外洩
-        self.assertNotIn("[EXT_", body)                # 半截 sentinel 也不外洩
+        self.assertNotIn("[EXT_SOURCES]", body)  # 跨 chunk 仍不外洩
+        self.assertNotIn("[EXT_", body)  # 半截 sentinel 也不外洩
         self.assertNotIn("https://x.com", body)
         ext = [p for k, p in events if k == "ext_sources"]
         self.assertEqual(ext[0], [{"title": "標題", "url": "https://x.com"}])
@@ -437,13 +574,21 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         from app.services.llm import SEARCH_EVENT
 
         async def fake_search(*a, **k):
-            return [(1, 0.85, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), distance=0.2))]
+            return [
+                (
+                    1,
+                    0.85,
+                    make_row(
+                        "r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), distance=0.2
+                    ),
+                )
+            ]
 
         def fake_embed(q):
             return [0.0]
 
         async def fake_stream(*a, **k):
-            yield SEARCH_EVENT          # 模型開始上網
+            yield SEARCH_EVENT  # 模型開始上網
             yield "答案[1]。"
 
         async def fake_intent(q, **k):
@@ -455,9 +600,15 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         async def fake_condense(*a, **k):
             return (a[1] if len(a) > 1 else "", True)
 
-        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent,
-                ans.condense_and_classify, ans.load_recent_turns)
+        orig = (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+            ans.condense_and_classify,
+            ans.load_recent_turns,
+        )
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
@@ -468,35 +619,58 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         try:
             events = [e async for e in ans.answer_question("問題")]
         finally:
-            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent,
-             ans.condense_and_classify, ans.load_recent_turns) = orig
+            (
+                ans.hybrid_search,
+                ans.embed_query_cached,
+                ans.stream_completion,
+                ans.SessionFactory,
+                ans.classify_intent,
+                ans.condense_and_classify,
+                ans.load_recent_turns,
+            ) = orig
 
-        self.assertIn(("status", "searching_web"), events)
-        self.assertEqual(sum(1 for k, _ in events if k == "status"), 1)  # 只發一次
+        self.assertIn(("status", {"stage": "searching_web"}), events)
+        self.assertEqual(
+            sum(
+                1
+                for k, p in events
+                if k == "status" and p.get("stage") == "searching_web"
+            ),
+            1,
+        )  # 只發一次
         body = "".join(p for k, p in events if k == "token")
-        self.assertNotIn(SEARCH_EVENT, body)     # 控制標記不外洩到正文
+        self.assertNotIn(SEARCH_EVENT, body)  # 控制標記不外洩到正文
         self.assertIn("答案[1]。", body)
 
 
 class WebSearchDetectTests(unittest.TestCase):
     def test_detects_websearch_tool_use(self):
-        line = ('{"type":"stream_event","event":{"type":"content_block_start",'
-                '"content_block":{"type":"tool_use","name":"WebSearch","input":{}}}}')
+        line = (
+            '{"type":"stream_event","event":{"type":"content_block_start",'
+            '"content_block":{"type":"tool_use","name":"WebSearch","input":{}}}}'
+        )
         self.assertTrue(llm.is_web_search_start(line))
 
     def test_other_tool_not_detected(self):
-        line = ('{"type":"stream_event","event":{"type":"content_block_start",'
-                '"content_block":{"type":"tool_use","name":"ToolSearch","input":{}}}}')
+        line = (
+            '{"type":"stream_event","event":{"type":"content_block_start",'
+            '"content_block":{"type":"tool_use","name":"ToolSearch","input":{}}}}'
+        )
         self.assertFalse(llm.is_web_search_start(line))
 
     def test_text_thinking_and_malformed_not_detected(self):
-        self.assertFalse(llm.is_web_search_start(
-            '{"type":"stream_event","event":{"type":"content_block_start",'
-            '"content_block":{"type":"text","text":""}}}'))
-        self.assertFalse(llm.is_web_search_start(
-            '{"type":"stream_event","event":{"type":"content_block_delta",'
-            '"delta":{"type":"text_delta","text":"hi"}}}'))
+        self.assertFalse(
+            llm.is_web_search_start(
+                '{"type":"stream_event","event":{"type":"content_block_start",'
+                '"content_block":{"type":"text","text":""}}}'
+            )
+        )
+        self.assertFalse(
+            llm.is_web_search_start(
+                '{"type":"stream_event","event":{"type":"content_block_delta",'
+                '"delta":{"type":"text_delta","text":"hi"}}}'
+            )
+        )
         self.assertFalse(llm.is_web_search_start("not json"))
         self.assertFalse(llm.is_web_search_start(""))
 
@@ -554,7 +728,13 @@ class BuildCmdTests(unittest.TestCase):
 
     def test_core_flags_present(self):
         cmd = llm._build_cmd("claude-sonnet-4-6", None, False)
-        for flag in ("claude", "-p", "--model", "stream-json", "--include-partial-messages"):
+        for flag in (
+            "claude",
+            "-p",
+            "--model",
+            "stream-json",
+            "--include-partial-messages",
+        ):
             self.assertIn(flag, cmd)
 
 
@@ -573,10 +753,13 @@ class SplitExternalSourcesTests(unittest.TestCase):
         )
         body, ext = split_external_sources(text)
         self.assertEqual(body, "答案內容（網路）。[1]")  # sentinel 前、尾端空白修整
-        self.assertEqual(ext, [
-            {"title": "標題A", "url": "https://a.com/x"},
-            {"title": "標題B", "url": "http://b.com"},
-        ])
+        self.assertEqual(
+            ext,
+            [
+                {"title": "標題A", "url": "https://a.com/x"},
+                {"title": "標題B", "url": "http://b.com"},
+            ],
+        )
 
     def test_skips_malformed_and_non_http(self):
         text = "答案。\n[EXT_SOURCES]\n- 沒有管線的壞行\n- 標題 | ftp://x\n- 好的 | https://ok.com\n"
@@ -584,7 +767,9 @@ class SplitExternalSourcesTests(unittest.TestCase):
         self.assertEqual(ext, [{"title": "好的", "url": "https://ok.com"}])
 
     def test_empty_title_falls_back_to_url(self):
-        body, ext = split_external_sources("答案。\n[EXT_SOURCES]\n-  | https://a.com\n")
+        body, ext = split_external_sources(
+            "答案。\n[EXT_SOURCES]\n-  | https://a.com\n"
+        )
         self.assertEqual(ext, [{"title": "https://a.com", "url": "https://a.com"}])
 
 
@@ -635,18 +820,27 @@ class LogQaSourcesTests(unittest.IsolatedAsyncioTestCase):
 class HistoryItemTests(unittest.TestCase):
     def test_maps_row_with_sources_and_ext_sources(self):
         d = date(2026, 6, 18)
-        row = ("11111111-1111-1111-1111-111111111111", "台積電?", "答案[1]",
-               d, "like",
-               [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}],
-               [{"title": "外部", "url": "https://x.com"}])
+        row = (
+            "11111111-1111-1111-1111-111111111111",
+            "台積電?",
+            "答案[1]",
+            d,
+            "like",
+            [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}],
+            [{"title": "外部", "url": "https://x.com"}],
+        )
         out = history_item(row)
         self.assertEqual(out["id"], "11111111-1111-1111-1111-111111111111")
         self.assertEqual(out["question"], "台積電?")
         self.assertEqual(out["answer"], "答案[1]")
         self.assertEqual(out["created_at"], "2026-06-18")
         self.assertEqual(out["feedback"], "like")
-        self.assertEqual(out["sources"], [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}])
-        self.assertEqual(out["ext_sources"], [{"title": "外部", "url": "https://x.com"}])
+        self.assertEqual(
+            out["sources"], [{"n": 1, "report_id": "r1", "file_name": "甲.pdf"}]
+        )
+        self.assertEqual(
+            out["ext_sources"], [{"title": "外部", "url": "https://x.com"}]
+        )
 
     def test_null_sources_and_ext_sources_become_empty_list(self):
         row = ("id2", "q", "a", date(2026, 6, 1), None, None, None)
@@ -711,6 +905,7 @@ class _CaptureRowsSession(_RowsSession):
 class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
     async def test_returns_oldest_first(self):
         from app.services import answer as ans
+
         # DB 以 created_at DESC 回（新→舊）；函式須反轉成舊→新
         rows = [("新問", "新答"), ("舊問", "舊答")]
         orig = ans.SessionFactory
@@ -741,6 +936,7 @@ class GetConversationTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_rows_via_history_item(self):
         from app.services import answer as ans
         from datetime import date
+
         rows = [
             ("id1", "Q1", "A1", date(2026, 6, 1), None, None, None),
             ("id2", "Q2", "A2", date(2026, 6, 2), "like", None, None),
@@ -857,7 +1053,13 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_search(session, query, qvec, **k):
             seen["query"] = query
-            return [(1, 0.9, make_row("r1", "x.pdf", "TW", "封裝內容。", date(2026, 6, 1), 0.1))]
+            return [
+                (
+                    1,
+                    0.9,
+                    make_row("r1", "x.pdf", "TW", "封裝內容。", date(2026, 6, 1), 0.1),
+                )
+            ]
 
         def fake_embed(q):
             seen["embed"] = q
@@ -869,9 +1071,15 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         async def fake_intent(q, **k):
             raise AssertionError("續問不應呼叫 classify_intent")
 
-        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent,
-                ans.condense_and_classify, ans.load_recent_turns)
+        orig = (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+            ans.condense_and_classify,
+            ans.load_recent_turns,
+        )
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
@@ -880,15 +1088,26 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
         try:
-            events = [e async for e in ans.answer_question("那它的封裝呢?", conversation_id="c1")]
+            events = [
+                e
+                async for e in ans.answer_question(
+                    "那它的封裝呢?", conversation_id="c1"
+                )
+            ]
         finally:
-            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent,
-             ans.condense_and_classify, ans.load_recent_turns) = orig
+            (
+                ans.hybrid_search,
+                ans.embed_query_cached,
+                ans.stream_completion,
+                ans.SessionFactory,
+                ans.classify_intent,
+                ans.condense_and_classify,
+                ans.load_recent_turns,
+            ) = orig
 
         self.assertEqual(seen["query"], "台積電 2026 先進封裝 展望")  # 用改寫後查詢檢索
         self.assertEqual(seen["embed"], "台積電 2026 先進封裝 展望")
-        self.assertEqual(events[-1][1]["conversation_id"], "c1")     # 沿用傳入對話 id
+        self.assertEqual(events[-1][1]["conversation_id"], "c1")  # 沿用傳入對話 id
 
     async def test_followup_passes_history_block_to_prompt(self):
         from app.services import answer as ans
@@ -902,7 +1121,13 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             return ("台積電 先進封裝 展望", True)
 
         async def fake_search(session, query, qvec, **k):
-            return [(1, 0.9, make_row("r1", "x.pdf", "TW", "封裝內容。", date(2026, 6, 1), 0.1))]
+            return [
+                (
+                    1,
+                    0.9,
+                    make_row("r1", "x.pdf", "TW", "封裝內容。", date(2026, 6, 1), 0.1),
+                )
+            ]
 
         def fake_embed(q):
             return [0.0]
@@ -919,9 +1144,16 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             seen["history_block"] = history_block
             return orig_bup(question, context, history_block)
 
-        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent,
-                ans.condense_and_classify, ans.load_recent_turns, ans.build_user_prompt)
+        orig = (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+            ans.condense_and_classify,
+            ans.load_recent_turns,
+            ans.build_user_prompt,
+        )
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
@@ -931,14 +1163,26 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         ans.load_recent_turns = fake_load
         ans.build_user_prompt = spy_bup
         try:
-            _ = [e async for e in ans.answer_question("那它的封裝呢?", conversation_id="c1")]
+            _ = [
+                e
+                async for e in ans.answer_question(
+                    "那它的封裝呢?", conversation_id="c1"
+                )
+            ]
         finally:
-            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent,
-             ans.condense_and_classify, ans.load_recent_turns, ans.build_user_prompt) = orig
+            (
+                ans.hybrid_search,
+                ans.embed_query_cached,
+                ans.stream_completion,
+                ans.SessionFactory,
+                ans.classify_intent,
+                ans.condense_and_classify,
+                ans.load_recent_turns,
+                ans.build_user_prompt,
+            ) = orig
 
         self.assertIn("history_block", seen)
-        self.assertIn("台積電前景?", seen["history_block"])   # 先前對話確實內嵌進 prompt
+        self.assertIn("台積電前景?", seen["history_block"])  # 先前對話確實內嵌進 prompt
 
     async def test_followup_offtopic_skips_llm(self):
         from app.services import answer as ans
@@ -949,10 +1193,12 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             return [("台積電前景?", "看好[1]")]
 
         async def fake_condense(history_text, question, **k):
-            return ("幫我寫一首詩", False)   # 改寫後判定離題
+            return ("幫我寫一首詩", False)  # 改寫後判定離題
 
         async def fake_search(session, query, qvec, **k):
-            return [(1, 0.5, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), 0.4))]
+            return [
+                (1, 0.5, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), 0.4))
+            ]
 
         def fake_embed(q):
             return [0.0]
@@ -964,9 +1210,15 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         async def fake_intent(q, **k):
             raise AssertionError("續問不應呼叫 classify_intent")
 
-        orig = (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-                ans.SessionFactory, ans.classify_intent,
-                ans.condense_and_classify, ans.load_recent_turns)
+        orig = (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+            ans.condense_and_classify,
+            ans.load_recent_turns,
+        )
         ans.hybrid_search = fake_search
         ans.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
@@ -975,17 +1227,26 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
         try:
-            events = [e async for e in ans.answer_question("再來一首?", conversation_id="c1")]
+            events = [
+                e async for e in ans.answer_question("再來一首?", conversation_id="c1")
+            ]
         finally:
-            (ans.hybrid_search, ans.embed_query_cached, ans.stream_completion,
-             ans.SessionFactory, ans.classify_intent,
-             ans.condense_and_classify, ans.load_recent_turns) = orig
+            (
+                ans.hybrid_search,
+                ans.embed_query_cached,
+                ans.stream_completion,
+                ans.SessionFactory,
+                ans.classify_intent,
+                ans.condense_and_classify,
+                ans.load_recent_turns,
+            ) = orig
 
         kinds = [k for k, _ in events]
-        self.assertEqual(kinds, ["sources", "notice", "done"])   # 離題提示卡
-        self.assertEqual(events[1][1], ans.OFF_TOPIC_MESSAGE)
+        self.assertEqual(kinds, ["status", "sources", "notice", "done"])  # 離題提示卡
+        self.assertEqual(events[0], ("status", {"stage": "understanding"}))
+        self.assertEqual(events[2][1], ans.OFF_TOPIC_MESSAGE)
         self.assertEqual(events[-1][1]["conversation_id"], "c1")
-        self.assertFalse(called["llm"])   # 未跑主 LLM
+        self.assertFalse(called["llm"])  # 未跑主 LLM
 
 
 if __name__ == "__main__":

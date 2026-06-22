@@ -75,7 +75,7 @@ def split_external_sources(text: str) -> tuple[str, list[dict]]:
         return text, []
     body = text[:idx].rstrip()
     sources: list[dict] = []
-    for line in text[idx + len(EXT_SENTINEL):].splitlines():
+    for line in text[idx + len(EXT_SENTINEL) :].splitlines():
         line = line.strip()
         if line.startswith("-"):
             line = line[1:].strip()
@@ -109,7 +109,9 @@ def _as_date(value: object) -> date | None:
     return None
 
 
-def _recency_factor(report_date: object, now_date: date, half_life_days: float) -> float:
+def _recency_factor(
+    report_date: object, now_date: date, half_life_days: float
+) -> float:
     """新近度因子 ∈ [0,1]：今天=1.0、半衰期前=0.5；無日期視為 0。"""
     d = _as_date(report_date)
     if d is None:
@@ -253,8 +255,7 @@ def build_user_prompt(question: str, context: str, history_block: str = "") -> s
     if history_block:
         head = "先前對話（供理解脈絡，不是新問題）：\n" + history_block + "\n\n"
     return (
-        head
-        + "參考片段：\n"
+        head + "參考片段：\n"
         f"{context}\n\n"
         f"問題：{question}\n\n"
         "請依規則作答，並在論點句末標註對應的來源編號。"
@@ -356,7 +357,11 @@ async def load_recent_turns(
                         "AND answer IS DISTINCT FROM :offtopic "
                         "ORDER BY created_at DESC LIMIT :limit"
                     ),
-                    {"cid": conversation_id, "offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+                    {
+                        "cid": conversation_id,
+                        "offtopic": OFF_TOPIC_MESSAGE,
+                        "limit": limit,
+                    },
                 )
             ).all()
         return [(q, a) for q, a in reversed(rows)]
@@ -395,7 +400,9 @@ async def list_conversations(limit: int = 50) -> list[dict]:
             {
                 "conversation_id": str(conv_id),
                 "title": title,
-                "last_at": last_at.isoformat() if hasattr(last_at, "isoformat") else last_at,
+                "last_at": (
+                    last_at.isoformat() if hasattr(last_at, "isoformat") else last_at
+                ),
                 "turn_count": int(turn_count),
             }
         )
@@ -489,16 +496,21 @@ async def answer_question(
     filters = filters or {}
     started = time.monotonic()
     conv_id = conversation_id or str(uuid.uuid4())
+    yield ("status", {"stage": "understanding"})  # 步驟1：理解問題（含意圖判定/改寫）
 
     # 僅「續問」才載歷史；首輪無歷史，維持並行意圖判定
     turns = await load_recent_turns(conv_id) if conversation_id else []
     history_block = build_history_block(turns)
 
     if turns:
-        standalone_query, in_domain = await condense_and_classify(history_block, question)
+        standalone_query, in_domain = await condense_and_classify(
+            history_block, question
+        )
         qvec = await asyncio.to_thread(embed_query_cached, standalone_query)
         async with SessionFactory() as session:  # 短連線：檢索完即釋放
-            scored = await hybrid_search(session, standalone_query, qvec, k=k, **filters)
+            scored = await hybrid_search(
+                session, standalone_query, qvec, k=k, **filters
+            )
     else:
         intent_task = asyncio.create_task(classify_intent(question))
         try:
@@ -514,8 +526,13 @@ async def answer_question(
         yield ("sources", [])
         yield ("notice", OFF_TOPIC_MESSAGE)
         await _log_qa(
-            question, OFF_TOPIC_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000), [], [],
+            question,
+            OFF_TOPIC_MESSAGE,
+            [],
+            filters,
+            int((time.monotonic() - started) * 1000),
+            [],
+            [],
             conversation_id=conv_id,
         )
         yield ("done", {"cited": [], "conversation_id": conv_id})
@@ -523,12 +540,18 @@ async def answer_question(
 
     sources, context = build_context(scored)
     yield ("sources", [asdict(s) for s in sources])
+    yield ("status", {"stage": "retrieved", "count": len(sources)})  # 步驟2：找到 N 篇
 
     if not context:
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
-            question, NO_CONTEXT_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000), [], [],
+            question,
+            NO_CONTEXT_MESSAGE,
+            [],
+            filters,
+            int((time.monotonic() - started) * 1000),
+            [],
+            [],
             conversation_id=conv_id,
         )
         yield ("done", {"cited": [], "qa_id": qa_id, "conversation_id": conv_id})
@@ -540,13 +563,14 @@ async def answer_question(
     hold = len(EXT_SENTINEL)
     sentinel_found = False
     searching_sent = False
+    yield ("status", {"stage": "reading"})  # 步驟3：閱讀重點、整理回答
     async for chunk in stream_completion(
         user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
     ):
         if chunk == SEARCH_EVENT:
             if not searching_sent:
                 searching_sent = True
-                yield ("status", "searching_web")
+                yield ("status", {"stage": "searching_web"})  # 步驟4：搜尋網路補充
             continue
         raw_parts.append(chunk)
         if sentinel_found:
@@ -569,9 +593,13 @@ async def answer_question(
     cited = cited_report_ids(body, sources)
     yield ("ext_sources", ext_sources)
     qa_id = await _log_qa(
-        question, body, cited, filters,
+        question,
+        body,
+        cited,
+        filters,
         int((time.monotonic() - started) * 1000),
-        [asdict(s) for s in sources], ext_sources,
+        [asdict(s) for s in sources],
+        ext_sources,
         conversation_id=conv_id,
     )
     yield ("done", {"cited": cited, "qa_id": qa_id, "conversation_id": conv_id})

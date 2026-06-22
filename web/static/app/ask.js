@@ -177,6 +177,7 @@ async function loadConversation(id) {
         paintNotice(turn, it.answer || "");
       } else {
         paintAnswer(turn, false); paintActions(turn);
+        staticProcess(turn);
         if (it.feedback) {
           const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
           const btn = turn.actionsEl.querySelector(sel);
@@ -324,6 +325,16 @@ function finishProcess(turn) {
   turn.processEl.querySelectorAll(".ask-step:not([hidden])").forEach(li => {
     if (li.dataset.state !== "done") setStep(turn, li.dataset.step, "done");
   });
+}
+
+// 歷史重建：以既有 sources/ext_sources 還原靜態步驟面板（預設收合）
+function staticProcess(turn) {
+  renderProcess(turn, { expanded: false });
+  setStep(turn, "understand", "done");
+  setStep(turn, "retrieved", "done", `找到 ${turn.sources.length} 篇相關研報`);
+  setStep(turn, "reading", "done");
+  if (turn.extSources.length) setStep(turn, "web", "done");
+  setStep(turn, "generate", "done");
 }
 
 // 回答完成後的 ChatGPT 式動作列：讚/倒讚/複製 +（有來源時）資料來源切換

@@ -157,7 +157,7 @@
   - 送出時 baseline 標籤＝「正在思考」。
   - `onStatus` 收到動作事件時，把標題設成該動作標籤（沿用步驟標籤：`retrieved`→「找到 N 篇相關研報」、`reading`→「閱讀重點、整理回答」、`searching_web`→「搜尋網路補充」），同時 `clearTimeout` 既有、設一個短延遲（約 1.8s）後**還原為「正在思考」**；`understanding` 維持 baseline。
   - 期間面板內步驟仍照常 `setStep`（展開即見即時狀態）。
-- 收到 `generating`：清掉還原 timeout，標題凍結為「已思考 {round(thinking_ms/1000)} 秒」+ 勾、點亮「生成回答」。第一個 `token` 與 `notice` 作為後備凍結點（取先到者；無 `thinking_ms` 時 `done.thinking_ms` 校正，仍無則顯「已思考」無秒）。
+- 收到 `generating`：清掉還原 timeout，標題凍結為「已思考 {round(thinking_ms/1000)} 秒」+ 勾、點亮「生成回答」。第一個 `token` 與 `notice` 作為後備凍結點（取先到者；無 `thinking_ms` 時 `done.thinking_ms` 校正）。`freezeHead` 後端未給 `thinking_ms` 時，以前端計時（`turn.startedAt` 送出→凍結）回退，確保即時路徑一律顯示「已思考 X 秒」；連起算點都沒有（理論上不發生）才顯純「已思考」。
 - `done`：以 `thinking_ms` 校正標題權威值；標完成所有顯示中步驟。
 - 還原 timeout id 存 `turn.labelTimer`；`finishProcess` / `clearProcess` / `fail` / `cancelActiveAsk` 都要 `clearTimeout`，避免殘留還原蓋掉凍結標題。
 - 歷史 `staticProcess`：`createTurn`/`loadConversation` 取 `it.thinking_ms`；有值 → 標題「已思考 X 秒」；**舊列 NULL** → 退回中性標題（顯示「處理過程」、無秒數，仍可展開步驟）。

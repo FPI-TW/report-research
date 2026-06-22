@@ -46,7 +46,7 @@ function createTurn(question) {
   inner.appendChild(node);
   const turn = {
     q: question, answer: "", sources: [], extSources: [], qaId: null,
-    labelTimer: null, thinkingFrozen: false, thinkingMs: null,
+    labelTimer: null, thinkingFrozen: false, thinkingMs: null, startedAt: null,
     node,
     answerEl: node.querySelector(".ask-msg-bot"),
     processEl: node.querySelector(".ask-process-host"),
@@ -323,11 +323,15 @@ function flashHead(turn, label) {
     if (!turn.thinkingFrozen) setHead(turn, "active", "正在思考");
   }, 1800);
 }
-// 思考結束：凍結為「已思考 X 秒」（無 ms 回退「已思考」）
+// 思考結束：凍結為「已思考 X 秒」。後端有給 thinking_ms 用其權威值；
+// 沒給則以前端計時（送出→凍結）回退，確保即時路徑一律顯示秒數。
 function freezeHead(turn, ms) {
   turn.thinkingFrozen = true;
   clearTimeout(turn.labelTimer);
-  setHead(turn, "done", thinkingLabel(ms) || "已思考");
+  const elapsed = (typeof ms === "number")
+    ? ms
+    : (turn.startedAt != null ? performance.now() - turn.startedAt : null);
+  setHead(turn, "done", thinkingLabel(elapsed) || "已思考");
 }
 
 // 設定步驟狀態；label 非 null 時改寫文字。state: pending|active|done
@@ -495,6 +499,7 @@ export async function askQuestion() {
   $("#askGo").disabled = true;
   input.value = ""; autoGrow(input);
   const turn = createTurn(q);
+  turn.startedAt = performance.now();   // 思考計時起點（後端未給 thinking_ms 時的前端回退基準）
   renderProcess(turn);
   setStep(turn, "understand", "active");
   toBottom();

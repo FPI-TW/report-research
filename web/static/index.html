@@ -647,7 +647,7 @@
   .ask-step-ico { flex: none; width: 16px; height: 16px; display: grid; place-items: center; }
   .ask-step-ico svg { width: 16px; height: 16px; display: block; }
   .ask-step[data-state="done"] .ask-step-ico { color: var(--brand); }
-  .ask-step-spin { width: 14px; height: 14px; border-radius: 50%;
+  .ask-step-spin { box-sizing: border-box; width: 16px; height: 16px; border-radius: 50%;
     border: 2px solid var(--sep); border-top-color: var(--brand); animation: spin .8s linear infinite; }
 
   /* 歷史問答：問答模式側欄常駐清單（取代檢索篩選 chips）*/

@@ -48,7 +48,13 @@ from app.services.answer import (  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.filename import source_display  # noqa: E402
-from app.services.retrieval import hybrid_search  # noqa: E402
+from app.services.retrieval import (  # noqa: E402
+    DENSE_SCAN_SEARCH,
+    LEX_CAP_SEARCH,
+    LEX_LIMIT_SEARCH,
+    hybrid_search,
+    rank_reports,
+)
 from app.services.store import list_reports  # noqa: E402
 from app.services.tagging import MARKETS  # noqa: E402
 from app.services.textnorm import clean_text  # noqa: E402
@@ -165,6 +171,7 @@ class ReportResult(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     market: str | None
+    total: int
     results: list[ReportResult]
 
 
@@ -519,7 +526,8 @@ async def search(
     relates_futures: bool | None = Query(None),
     report_type: str | None = Query(None),
     sort: str = Query("relevance"),  # relevance | date_desc | date_asc
-    k: int = Query(10, ge=1, le=30),  # 回傳的「報告」數
+    limit: int = Query(50, ge=1, le=100),  # 回傳的「報告」頁大小
+    offset: int = Query(0, ge=0),
     passages: int = Query(3, ge=1, le=6),  # 每篇保留的命中片段數
 ):
     mkt = market if market and market != "全部" else None
@@ -531,60 +539,57 @@ async def search(
             session,
             q,
             qvec,
-            k=k,
             market=mkt,
             instrument_type=instr,
             relates_stock=relates_stock or None,
             relates_futures=relates_futures or None,
             report_type=rtype,
+            # 不傳 k：dense_scan 已覆蓋掃描深度（檢索分頁用固定深召回），k 僅問答路徑用
+            dense_scan=DENSE_SCAN_SEARCH,
+            lex_limit=LEX_LIMIT_SEARCH,
+            lex_cap=LEX_CAP_SEARCH,
+            lex_per_report=True,
         )
 
-    # 依報告分組；列已按 (tier, fused) 由高到低，故每篇首次出現即其最佳片段
-    grouped: dict[str, ReportResult] = {}
-    for _tier, score, row in scored:
+    # 分組成「全部」召回報告 → 依 sort 排序 → 取 total → 切當頁
+    ranked = rank_reports(scored, sort=sort)
+    total = len(ranked)
+    page = ranked[offset : offset + limit]
+
+    results: list[ReportResult] = []
+    for i, g in enumerate(page, start=offset + 1):  # 全域 rank，跨頁不重號
         (
-            _chunk_id, rid, fn, m, src, summary, rdate, rtype, itypes, rstock, rfut,
-            stargets, ftargets, cidx, content, _dist,
-        ) = row
-        rr = grouped.get(rid)
-        if rr is None:
-            rr = ReportResult(
-                rank=0,
+            _chunk_id, rid, fn, m, src, summary, rdate, rtype_, itypes, rstock, rfut,
+            stargets, ftargets, _cidx, _content, _dist,
+        ) = g.meta_row
+        ps: list[Passage] = []
+        for sc, prow in g.passages[:passages]:
+            cleaned = clean_text(prow[-2])  # content = row[-2]
+            if cleaned:
+                ps.append(
+                    Passage(score=sc, chunk_index=int(prow[-3]), content=cleaned)
+                )  # chunk_index = row[-3]
+        results.append(
+            ReportResult(
+                rank=i,
                 report_id=rid,
                 file_name=fn,
                 market=m,
                 source=source_display(src),
                 summary=summary,
                 report_date=rdate.isoformat() if rdate else None,
-                report_type=rtype,
+                report_type=rtype_,
                 instrument_types=list(itypes) if itypes else None,
                 relates_stock=rstock,
                 relates_futures=rfut,
                 stock_targets=list(stargets) if stargets else None,
                 futures_targets=list(ftargets) if ftargets else None,
-                best_score=score,
-                match_count=0,
-                passages=[],
+                best_score=g.best_score,
+                match_count=g.match_count,
+                passages=ps,
             )
-            grouped[rid] = rr
-        rr.match_count += 1
-        if len(rr.passages) < passages:
-            cleaned = clean_text(content)
-            if cleaned:
-                rr.passages.append(
-                    Passage(score=score, chunk_index=int(cidx), content=cleaned)
-                )
-
-    # 先取「最相關」的前 k 篇（召回有損，故須在截斷後才重排）；日期排序的語意
-    # 是「最相關 k 篇之中再依日期排」，非全庫日期排序。relevance 維持原順序。
-    results = list(grouped.values())[:k]
-    if sort == "date_desc":
-        results.sort(key=lambda r: r.report_date or "", reverse=True)  # None 殿後
-    elif sort == "date_asc":
-        results.sort(key=lambda r: r.report_date or "9999-99-99")  # None 殿後
-    for i, rr in enumerate(results, 1):
-        rr.rank = i
-    return SearchResponse(query=q, market=mkt, results=results)
+        )
+    return SearchResponse(query=q, market=mkt, total=total, results=results)
 
 
 # ───── RAG 問答（Phase 1）：SSE 串流 ─────

@@ -3,7 +3,7 @@
  */
 import { $ } from "/static/app/dom.js";
 import { fetchJSON, html, raw } from "/static/utils.js";
-import { state, BROWSE_PAGE } from "/static/app/state.js";
+import { state, BROWSE_PAGE, SEARCH_PAGE } from "/static/app/state.js";
 import {
   buildChips, buildInstrumentChips, buildSubjectToggles, buildTypeChips,
   buildSortChips, resetFilters,
@@ -95,16 +95,15 @@ export async function loadBrowse(append = false) {
   }
 }
 
-export async function run() {
+export async function run(append = false) {
   const q = $("#q").value.trim();
   if (!q) return;
   state.lastQuery = q;
   const my = ++state.searchReq;
-  skeleton();
-  buildSortChips("search");
-  syncURL();
+  if (!append) { state.offset = 0; skeleton(); buildSortChips("search"); syncURL(); }
   try {
-    let url = `/api/search?q=${encodeURIComponent(q)}&k=12&passages=4`;
+    const off = append ? state.offset : 0;
+    let url = `/api/search?q=${encodeURIComponent(q)}&limit=${SEARCH_PAGE}&offset=${off}&passages=4`;
     if (state.market !== "全部") url += `&market=${encodeURIComponent(state.market)}`;
     if (state.instrument !== "全部") url += `&instrument_type=${encodeURIComponent(state.instrument)}`;
     if (state.relStock) url += "&relates_stock=true";
@@ -112,16 +111,24 @@ export async function run() {
     if (state.type !== "全部") url += `&report_type=${encodeURIComponent(state.type)}`;
     url += `&sort=${state.sort}`;
     const data = await fetchJSON(url);
-    // 最新的 search 才套用；若查詢已被清空，代表意圖切回瀏覽 → 放棄這次 search 結果
-    if (my === state.searchReq && $("#q").value.trim()) render(data);
-  } catch (e) {
-    if (my === state.searchReq && $("#q").value.trim()) {
-      $("#results").className = "";
-      $("#results").removeAttribute("aria-busy");
-      $("#results").innerHTML = html`<div class="state"><div class="big" aria-hidden="true">⚠️</div>
-        <div class="msg">查詢逾時或失敗，請稍後再試</div>
-        <div class="examples"><button class="ex" id="retrySearch" type="button">重試</button></div></div>`;
-      const rb = $("#retrySearch"); if (rb) rb.onclick = () => run();
+    // 最新的 search 才套用；若查詢已被清空，代表意圖切回瀏覽 → 放棄這次結果
+    if (my !== state.searchReq || !$("#q").value.trim()) { if (append) restoreLoadMore(); return; }
+    if (append) {
+      state.rows = state.rows.concat(data.results || []);
+      state.total = data.total || 0;
+      state.offset = state.rows.length;
+      paintResults(false);   // 不重播進場動畫
+    } else {
+      render(data);          // 首頁：render 內設定 rows/total/offset/meta 並繪製
     }
+  } catch (e) {
+    if (my !== state.searchReq || !$("#q").value.trim()) return;
+    if (append) { restoreLoadMore("載入更多（載入失敗，點擊重試）"); return; }
+    $("#results").className = "";
+    $("#results").removeAttribute("aria-busy");
+    $("#results").innerHTML = html`<div class="state"><div class="big" aria-hidden="true">⚠️</div>
+      <div class="msg">查詢逾時或失敗，請稍後再試</div>
+      <div class="examples"><button class="ex" id="retrySearch" type="button">重試</button></div></div>`;
+    const rb = $("#retrySearch"); if (rb) rb.onclick = () => run();
   }
 }

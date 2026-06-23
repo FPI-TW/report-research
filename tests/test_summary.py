@@ -1,12 +1,17 @@
 # tests/test_summary.py
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from generate_summaries import MAX_SUMMARY_CHARS, parse_summary  # noqa: E402
+from generate_summaries import (  # noqa: E402
+    MAX_SUMMARY_CHARS,
+    parse_summary,
+    read_hashes_file,
+)
 
 
 class ParseSummaryTests(unittest.TestCase):
@@ -47,6 +52,20 @@ class ParseSummaryTests(unittest.TestCase):
     def test_truncates_overlong(self):
         out = parse_summary('{"summary": "' + "字" * 1000 + '"}')
         self.assertEqual(len(out), MAX_SUMMARY_CHARS)
+
+
+class ReadHashesFileTests(unittest.TestCase):
+    def test_reads_and_strips_blank_lines(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "h.txt"
+            p.write_text("aaa\n\n  bbb \n\nccc\n", encoding="utf-8")
+            self.assertEqual(read_hashes_file(str(p)), ["aaa", "bbb", "ccc"])
+
+    def test_empty_file_returns_empty_list(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "h.txt"
+            p.write_text("", encoding="utf-8")
+            self.assertEqual(read_hashes_file(str(p)), [])
 
 
 if __name__ == "__main__":

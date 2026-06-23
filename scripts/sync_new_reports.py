@@ -23,7 +23,7 @@ SRC_LOCAL = ROOT / "研報自動匯入"
 TAGS_DIR = ROOT / "data" / "tags"
 ALL_JSONL = ROOT / "data" / "extracted" / "all.jsonl"
 FAIL_LOG = ROOT / "data" / "sync_failures.log"
-INGESTED_MARKER = ROOT / "data" / ".sync_last_ingested"
+INGESTED_HASHES_FILE = ROOT / "data" / ".sync_last_hashes"
 EXTS = {".pdf", ".docx", ".doc"}
 
 
@@ -131,11 +131,15 @@ def _append_all_jsonl(rec: dict) -> None:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-def write_ingested_marker(path: Path, n: int) -> None:
-    """把本輪 ingested 篇數原子寫入標記檔，供殼層 gate 摘要步驟（每輪覆寫）。"""
+def write_ingested_hashes(path: Path, hashes: list[str]) -> None:
+    """把本輪成功入庫的 file_hash 清單原子寫入標記檔（每行一個，每輪覆寫）。
+
+    供殼層 gate 摘要步驟，並讓摘要只針對本輪新研報、不掃歷史 NULL 積壓。
+    空清單寫成 0-byte 檔，殼層 `[ -s file ]` 會視為「無新研報」而跳過。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.parent / (path.name + ".tmp")
-    tmp.write_text(str(int(n)), encoding="utf-8")
+    tmp.write_text("\n".join(hashes), encoding="utf-8")
     tmp.rename(path)
 
 
@@ -181,6 +185,7 @@ async def _run(args) -> None:
             "fail",
         )
     }
+    ingested_hashes: list[str] = []
     t0 = time.time()
 
     async with SessionFactory() as session:
@@ -271,6 +276,7 @@ async def _run(args) -> None:
 
             stats["ingested"] += 1
             stats["chunks"] += len(chunks)
+            ingested_hashes.append(res.file_hash)
             print(f"  [{tag.market}] {path.name[:55]} ({len(chunks)} chunks)", flush=True)
 
         if stats["ingested"] and not args.dry_run:
@@ -278,7 +284,7 @@ async def _run(args) -> None:
             await session.commit()
 
     if not args.dry_run:
-        write_ingested_marker(INGESTED_MARKER, stats["ingested"])
+        write_ingested_hashes(INGESTED_HASHES_FILE, ingested_hashes)
 
     print("\n=== sync summary ===", flush=True)
     for k, v in stats.items():

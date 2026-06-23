@@ -241,3 +241,15 @@ EOF
 **Placeholder scan：** 無 TBD/TODO；所有 code step 皆給完整程式碼與指令。
 
 **Type consistency：** `write_ingested_marker(path: Path, n: int)` 與 `INGESTED_MARKER` 在 Task 1 定義、Task 2 以檔案路徑（`data/.sync_last_ingested`）間接消費，名稱一致。
+
+---
+
+## 修訂（2026-06-23，PR #25 合併前）
+
+依使用者要求把「處理範圍」由**補全表 `summary IS NULL`**改為**只補本輪新匯入的 file_hash**（控制定時流程 token 消耗；歷史積壓改手動 `make summaries` 補）。落地差異（以最終 spec 為準）：
+
+- `sync_new_reports.py`：`INGESTED_MARKER`(整數計數) → `INGESTED_HASHES_FILE`(`data/.sync_last_hashes`，每行一個 file_hash)；`write_ingested_marker(path,n)` → `write_ingested_hashes(path, hashes)`（空清單寫 0-byte 檔）；`_run()` 收集 `ingested_hashes` 並寫入。
+- `generate_summaries.py`：新增純函式 `read_hashes_file(path)` 與 `fetch_candidates(limit, hashes=None)` 的 `AND file_hash = ANY(:hashes)` 範圍化；新增 CLI `--hashes-file`（不給＝原行為，補全表 NULL）。
+- `sync_new_reports.sh`：gate 改 `[ -s data/.sync_last_hashes ]`，呼叫帶 `--hashes-file`。
+- 測試：`tests/test_sync_summary_marker.py` → `tests/test_sync_ingested_hashes.py`（驗 `write_ingested_hashes`）；`tests/test_summary.py` 加 `read_hashes_file` 測試。
+- 整合煙霧：`--hashes-file <bogus>` 對 live DB 走 `ANY(:hashes)` 回 0 候選、不呼叫 Sonnet。

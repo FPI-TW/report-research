@@ -77,6 +77,9 @@
   .pmain .side { font-size: 13px; font-weight: 600; color: var(--label-2); }
   .pmain .side b { color: var(--label); }
   .pmain .side .err { color: var(--red); }
+  /* 進度條下方的次要說明行（如摘要速率 + ETA） */
+  .psub { margin-top: 11px; font-size: 12.5px; font-weight: 600; color: var(--label-2);
+    letter-spacing: .01em; }
 
   /* progress bar */
   .bar { height: 9px; border-radius: 100px; background: var(--track); overflow: hidden; }
@@ -179,6 +182,7 @@
         <span class="side">／ <b class="num" id="sum-total">—</b>　<span title="尚未生成摘要的報告數">未生成</span> <span class="num" id="sum-remain">0</span></span>
       </div>
       <div class="bar" id="sum-barwrap"><i id="sum-bar"></i></div>
+      <div class="psub num" id="sum-rate">速率 計算中…</div>
     </div>
 
     <div class="panel">
@@ -204,6 +208,7 @@
 
 <script type="module">
 import { html, fetchJSON } from "/static/utils.js";
+import { summaryRateText } from "/static/app/eta.js";
 (() => {
   const $ = (id) => document.getElementById(id);
   const POLL = 2000;
@@ -247,16 +252,20 @@ import { html, fetchJSON } from "/static/utils.js";
     el.innerHTML = html`<span class="orch-pill ${stateClass}">${label}</span><span class="orch-raw" title="${raw}">${raw}</span>`;
   }
 
-  // 速率：自開頁以來的平均（穩定、不抖動）
+  // 速率：自開頁以來的平均（穩定、不抖動）。spm＝摘要/分，沿用同一基準快照。
   let base = null;
-  function rate(reports, chunks) {
+  function rate(reports, chunks, sumDone) {
     const now = performance.now();
-    if (!base) { base = { reports, chunks, t: now }; return { rpm: null, cps: null }; }
+    if (!base) { base = { reports, chunks, sum: sumDone ?? 0, t: now }; return { rpm: null, cps: null, spm: null }; }
     const dt = (now - base.t) / 1000;
-    if (dt < 8) return { rpm: lastRate.rpm, cps: lastRate.cps }; // 開頁初期先不顯示
-    return { rpm: (reports - base.reports) / dt * 60, cps: (chunks - base.chunks) / dt };
+    if (dt < 8) return lastRate; // 開頁初期先不顯示
+    return {
+      rpm: (reports - base.reports) / dt * 60,
+      cps: (chunks - base.chunks) / dt,
+      spm: sumDone == null ? null : (sumDone - base.sum) / dt * 60,
+    };
   }
-  let lastRate = { rpm: null, cps: null };
+  let lastRate = { rpm: null, cps: null, spm: null };
 
   function clock() {
     const d = new Date();
@@ -329,7 +338,7 @@ import { html, fetchJSON } from "/static/utils.js";
       $("t-chunks-d").textContent = "向量片段總數";
 
       // rate
-      const rt = rate(d.db.reports, d.db.chunks);
+      const rt = rate(d.db.reports, d.db.chunks, d.summary ? d.summary.done : null);
       lastRate = rt;
       tween($("t-rate"), rt.rpm == null ? null : Math.round(rt.rpm * 10) / 10, (v) => v.toFixed(1));
       $("t-rate-d").innerHTML = rt.cps == null ? "計算中…" : `<b class="num">${rt.cps.toFixed(1)}</b> 片段/秒`;
@@ -361,6 +370,7 @@ import { html, fetchJSON } from "/static/utils.js";
         $("sum-total").textContent = nf(sum.total);
         $("sum-remain").textContent = nf(sum.remaining);
         $("sum-bar").style.width = sum.pct + "%";
+        $("sum-rate").textContent = summaryRateText(sum.remaining, rt.spm);
       }
 
       // pipelines

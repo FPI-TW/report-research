@@ -17,7 +17,7 @@
   - 重點：該憑證是 Windows「網域密碼」型，**無法取回明文** → 因此 Linux `mount.cifs`（需明文密碼）不可行；改走 **drvfs**，透過 Windows redirector 自動沿用此快取憑證、**免明文密碼**。
 - **去重很穩**：`file_hash` = 檔案內容 SHA-256（`app/services/extract.py:file_sha256`）。DB 以 `file_hash` 去重 upsert（`app/services/store.py`），同檔重複/改名都會被跳過。
 - **匯入成本**：嵌入 BGE-M3 為 CPU-bound（~3 篇/分，10 核全滿），與線上服務搶 CPU 時可能短暫 502。
-- **工具盤點**：`rsync` 3.2.7 有；drvfs 為 WSL 內建檔案系統（`/mnt/c` 即 drvfs，UNC 掛載同型）；DB 預設 DSN `postgresql+asyncpg://postgres:postgres@localhost:5436/research`（可由 `DATABASE_URL` 覆寫）。
+- **工具盤點**：`rsync` 3.2.7 有；drvfs 為 WSL 內建檔案系統（`/mnt/c` 即 drvfs，UNC 掛載同型）；DB 預設 DSN `postgresql+asyncpg://postgres:postgres@localhost:5436/research`（可由 `REPORT_MARK_DB_URL` 覆寫）。
 
 ## 設計決策（已與使用者確認）
 

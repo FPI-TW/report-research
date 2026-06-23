@@ -14,7 +14,7 @@
 - 去重鍵＝檔案內容 SHA-256（`app/services/extract.py:file_sha256`），DB 以 `file_hash` upsert（`app/services/store.py`）。
 - 標註模型固定 `claude-haiku-4-5`；呼叫 `claude` CLI 前一律 `prompt.replace("\x00","")`、`cwd="/tmp"`、timeout 150s（沿用 `scripts/tag_all_cli.py` 慣例）。
 - `full_text` 走原始文字並 `replace("\x00","")`（避免含 NUL 的 PDF upsert 時 UTF8 編碼錯誤永久失敗）。
-- DB 預設 DSN `postgresql+asyncpg://postgres:postgres@localhost:5436/research`（`DATABASE_URL` 可覆寫）；不要硬編其他連線字串。
+- DB 預設 DSN `postgresql+asyncpg://postgres:postgres@localhost:5436/research`（`REPORT_MARK_DB_URL` 可覆寫）；不要硬編其他連線字串。
 - drvfs 掛載選項固定 `ro,uid=1000,gid=1000`；掛載點 `/mnt/nas-research`；本地同步目的地 `研報自動匯入/`（專案根）。
 - 不更動既有檔（`extract_all.py`/`tag_all_cli.py`/`ingest_all.py`/`run_ingest.py`/`web/`/線上服務）；只新增檔 + 在 `Makefile` 末尾新增一個目標。
 - commit 用 Conventional Commits（中文標題）；`uv run black`/`ruff` 執行檔在本機可能缺，缺則略過格式化步驟、改以人工對齊風格；測試一律 `uv run pytest`。

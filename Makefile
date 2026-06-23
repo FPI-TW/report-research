@@ -18,7 +18,8 @@ COMPOSE := $(DOCKER) compose
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align normalize serve search \
         stats reset-db clean-data pipeline \
-        up-edge down-edge edge-logs edge-reload
+        up-edge down-edge edge-logs edge-reload \
+        sync-once
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -117,3 +118,6 @@ reset-db:  ## 清空 canonical 與向量表（保留 schema）
 
 clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）
 	rm -rf data/extracted data/tags data/*.json
+
+sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync）
+	bash scripts/sync_new_reports.sh

@@ -1,0 +1,14 @@
+[Unit]
+Description=廷豐智能研報 NAS 增量同步匯入（drvfs + rsync + 增量 ingest）
+After=network-online.target report-mark-web.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=%h
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -lc 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; exec "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/sync_new_reports.sh"'
+TimeoutStartSec=7200

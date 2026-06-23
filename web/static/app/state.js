@@ -25,5 +25,3 @@ try { const v = localStorage.getItem("rm_view"); if (VIEWS.includes(v)) state.vi
 
 // ── 瀏覽模式：無關鍵字時列出全部已導入報告（日期新→舊，分頁）──
 export const BROWSE_PAGE = 50;
-// ── 搜尋模式：每頁報告數（與瀏覽分頁同步、各自獨立）──
-export const SEARCH_PAGE = 50;

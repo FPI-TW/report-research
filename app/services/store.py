@@ -71,7 +71,18 @@ async def upsert_report(
         {"id": report_id, **report.__dict__},
     )
 
+    chunk_rows = []
     for idx, (content, emb) in enumerate(zip(chunks, embeddings)):
+        chunk_rows.append(
+            {
+                "id": str(uuid.uuid4()),
+                "report_id": report_id,
+                "chunk_index": idx,
+                "content": content,
+                "embedding": _vec_literal(emb),
+            }
+        )
+    if chunk_rows:
         await session.execute(
             text(
                 """
@@ -82,13 +93,7 @@ async def upsert_report(
                      CAST(:embedding AS vector))
                 """
             ),
-            {
-                "id": str(uuid.uuid4()),
-                "report_id": report_id,
-                "chunk_index": idx,
-                "content": content,
-                "embedding": _vec_literal(emb),
-            },
+            chunk_rows,
         )
 
     await session.commit()

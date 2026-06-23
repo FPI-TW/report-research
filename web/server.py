@@ -26,7 +26,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -61,6 +61,10 @@ from web import auth  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 logger = logging.getLogger(__name__)
+SEARCH_QUERY_MAX_CHARS = 500
+ASK_QUESTION_MAX_CHARS = 2000
+DB_STATS_CACHE_TTL_SECONDS = 5.0
+_DB_STATS_CACHE: dict[str, object] = {"data": None, "expires_at": 0.0}
 
 
 def _static_page(name: str) -> FileResponse:
@@ -171,7 +175,7 @@ class SearchResponse(BaseModel):
 
 
 class AskRequest(BaseModel):
-    question: str
+    question: str = Field(..., max_length=ASK_QUESTION_MAX_CHARS)
     conversation_id: str | None = None
     market: str | None = None
     instrument_type: str | None = None
@@ -207,8 +211,7 @@ class ReportListResponse(BaseModel):
     items: list[ReportListItem]
 
 
-@app.get("/api/stats")
-async def stats():
+async def _fetch_db_stats_snapshot() -> dict:
     async with SessionFactory() as session:
         total_reports = (
             await session.execute(text("SELECT count(*) FROM research.research_report"))
@@ -244,12 +247,47 @@ async def stats():
                 )
             )
         ).all()
+        s_done, s_total = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE summary IS NOT NULL), count(*) "
+                    "FROM research.research_report "
+                    "WHERE full_text IS NOT NULL AND is_research IS NOT FALSE"
+                )
+            )
+        ).first()
     return {
         "total_reports": total_reports,
         "total_chunks": total_chunks,
         "markets": [{"market": m, "count": c} for m, c in rows],
         "instrument_types": [{"type": t, "count": c} for t, c in instr_rows],
         "report_types": [{"type": t, "count": c} for t, c in type_rows],
+        "summary_done": int(s_done),
+        "summary_total": int(s_total),
+    }
+
+
+async def _db_stats_snapshot() -> dict:
+    now = time.monotonic()
+    cached = _DB_STATS_CACHE.get("data")
+    expires_at = float(_DB_STATS_CACHE.get("expires_at", 0.0) or 0.0)
+    if cached is not None and now < expires_at:
+        return cached  # type: ignore[return-value]
+    data = await _fetch_db_stats_snapshot()
+    _DB_STATS_CACHE["data"] = data
+    _DB_STATS_CACHE["expires_at"] = now + DB_STATS_CACHE_TTL_SECONDS
+    return data
+
+
+@app.get("/api/stats")
+async def stats():
+    snapshot = await _db_stats_snapshot()
+    return {
+        "total_reports": snapshot["total_reports"],
+        "total_chunks": snapshot["total_chunks"],
+        "markets": snapshot["markets"],
+        "instrument_types": snapshot["instrument_types"],
+        "report_types": snapshot["report_types"],
         "username": auth.ACCESS_USERNAME,
     }
 
@@ -258,6 +296,10 @@ async def stats():
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 _TAG_RE = re.compile(r"(\d+)/(\d+)\s+ok\+skip=(\d+)\s+fail=(\d+)")
 _ING_RE = re.compile(r"ingested=(\d+)\s+chunks=(\d+)\s+fail=(\d+)")
+_ORCH_RE = re.compile(
+    r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+===\s+resume\s+"
+    r"(?P<state>start|done)(?:\s+\(pid=(?P<pid>\d+)\))?\s+===$"
+)
 
 
 def _latest_log(pattern: str) -> Path | None:
@@ -350,6 +392,27 @@ def _orchestrator_last() -> str | None:
     return lines[-1] if lines else None
 
 
+def _parse_orchestrator_entry(line: str | None) -> dict | None:
+    raw = (line or "").strip()
+    if not raw:
+        return None
+    m = _ORCH_RE.match(raw)
+    if m:
+        state = m.group("state")
+        return {
+            "raw": raw,
+            "timestamp": m.group("ts"),
+            "status": "running" if state == "start" else "done",
+            "label": "編排器執行中" if state == "start" else "編排器已完成",
+        }
+    return {
+        "raw": raw,
+        "timestamp": None,
+        "status": "unknown",
+        "label": "編排器狀態",
+    }
+
+
 def _gather_runtime() -> dict:
     """同步蒐集（log 解析 + /proc 掃描），於 to_thread 中執行不阻塞事件迴圈。"""
     return {
@@ -361,46 +424,22 @@ def _gather_runtime() -> dict:
             "tag": _proc_alive("tag_all_cli.py"),
             "summaries": _proc_alive("generate_summaries.py"),
         },
-        "orchestrator": _orchestrator_last(),
+        "orchestrator": _parse_orchestrator_entry(_orchestrator_last()),
     }
 
 
 @app.get("/api/progress")
 async def progress():
-    async with SessionFactory() as session:
-        reports = (
-            await session.execute(text("SELECT count(*) FROM research.research_report"))
-        ).scalar_one()
-        chunks = (
-            await session.execute(text("SELECT count(*) FROM research.report_chunk"))
-        ).scalar_one()
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT market, count(*) c FROM research.research_report "
-                    "GROUP BY market ORDER BY c DESC"
-                )
-            )
-        ).all()
-        # 摘要進度直接由 DB 計數（精確、重啟後仍正確，免解析 log）；
-        # total 須與 generate_summaries.py 的候選條件一致
-        s_done, s_total = (
-            await session.execute(
-                text(
-                    "SELECT count(*) FILTER (WHERE summary IS NOT NULL), count(*) "
-                    "FROM research.research_report "
-                    "WHERE full_text IS NOT NULL AND is_research IS NOT FALSE"
-                )
-            )
-        ).first()
+    snapshot = await _db_stats_snapshot()
     runtime = await asyncio.to_thread(_gather_runtime)
-    s_done, s_total = int(s_done), int(s_total)
+    s_done = int(snapshot["summary_done"])
+    s_total = int(snapshot["summary_total"])
     return {
         "ts": datetime.now().strftime("%H:%M:%S"),
         "db": {
-            "reports": reports,
-            "chunks": chunks,
-            "markets": [{"market": m, "count": c} for m, c in rows],
+            "reports": snapshot["total_reports"],
+            "chunks": snapshot["total_chunks"],
+            "markets": snapshot["markets"],
         },
         "summary": {
             "done": s_done,
@@ -479,7 +518,7 @@ async def reports(
 
 @app.get("/api/search", response_model=SearchResponse)
 async def search(
-    q: str = Query(..., min_length=1),
+    q: str = Query(..., min_length=1, max_length=SEARCH_QUERY_MAX_CHARS),
     market: str | None = Query(None),
     instrument_type: str | None = Query(None),
     relates_stock: bool | None = Query(None),

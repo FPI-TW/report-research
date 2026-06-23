@@ -61,12 +61,12 @@ export function render(data) {
   state.mode = "search";
   state.terms = buildTerms(data.query);
   state.tableSort = { key: null, dir: "asc" };
-  state.total = data.total || 0;
-  state.offset = state.rows.length;
   $("#meta").classList.add("show");
   const mkt = data.market ? " · " + mLabel(data.market) : "";
-  $("#meta").textContent = `「${data.query}」${mkt} — 找到 ${state.total} 篇研報`;
-  if (!state.total) {
+  const capped = state.rows.length >= 12;   // k=12，達上限代表只取最相關的前幾篇
+  $("#meta").textContent = `「${data.query}」${mkt} — 最相關的 ${state.rows.length} 篇研報`
+    + (capped ? "（已達顯示上限，可加關鍵字縮小範圍）" : "");
+  if (!state.rows.length) {
     $("#resultsBar").hidden = true;
     $("#results").className = "";
     const hasFilters = state.market !== "全部" || state.instrument !== "全部"
@@ -317,7 +317,7 @@ export function updateViewBar() {
 }
 
 export function appendLoadMore() {
-  if (state.offset >= state.total) return;   // search/browse 皆可載入更多
+  if (state.mode !== "browse" || state.offset >= state.total) return;
   $("#results").insertAdjacentHTML("beforeend",
     `<div id="loadMoreWrap" class="load-more-wrap">
        <button class="more" id="loadMore">載入更多（還有 ${(state.total - state.offset).toLocaleString()} 篇）</button>
@@ -347,7 +347,7 @@ export function bindResultEvents() {
   if (lm) lm.onclick = e => {
     e.target.disabled = true;
     e.target.textContent = "載入中…";   // 防連點重複請求 + 即時回饋
-    state.mode === "search" ? run(true) : loadBrowse(true);
+    loadBrowse(true);
   };
   // 表頭排序：滑鼠 + 鍵盤皆可（aria-sort 已標示，補上實際可操作性）
   root.querySelectorAll("th[data-sort-key]").forEach(th => {

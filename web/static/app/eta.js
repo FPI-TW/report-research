@@ -19,3 +19,16 @@ export function rateText(remaining, rate, unit) {
   const eta = mins < 90 ? `~${Math.round(mins)} 分` : `~${(mins / 60).toFixed(1)} 時`;
   return `${line} · 預估剩餘 ${eta}`;
 }
+
+/*
+ * ingestRateText(rpm, cps)：導入 INGEST 面板底部速率行。導入無已知總量，故不給 ETA；
+ * 第二段改放每秒片段數（cps），與摘要／標註「速率 · 預估剩餘」的兩段結構對齊。
+ *   - rpm 為 null（暖機）→「速率 計算中…」
+ *   - cps 為 null        →「速率 X.X 篇/分」（只顯示速率）
+ *   - 其餘               →「速率 X.X 篇/分 · Y.Y 片段/秒」
+ */
+export function ingestRateText(rpm, cps) {
+  if (rpm == null) return "速率 計算中…";
+  const line = `速率 ${rpm.toFixed(1)} 篇/分`;
+  return cps == null ? line : `${line} · ${cps.toFixed(1)} 片段/秒`;
+}

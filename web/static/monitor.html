@@ -152,7 +152,6 @@
       <div class="tile"><div class="k">已導入報告</div><div class="v num" id="t-reports">—</div><div class="d" id="t-reports-d"></div></div>
       <div class="tile"><div class="k">總片段 CHUNKS</div><div class="v num" id="t-chunks">—</div><div class="d" id="t-chunks-d"></div></div>
       <div class="tile"><div class="k">標註進度</div><div class="v num" id="t-tagpct">—<small>%</small></div><div class="d" id="t-tagpct-d"></div></div>
-      <div class="tile"><div class="k">導入速率</div><div class="v num" id="t-rate">—<small>篇/分</small></div><div class="d" id="t-rate-d"></div></div>
       <div class="tile"><div class="k">摘要進度</div><div class="v num" id="t-sumpct">—<small>%</small></div><div class="d" id="t-sumpct-d"></div></div>
     </div>
 
@@ -169,10 +168,11 @@
       <div>
         <div class="ptitle">導入 INGEST</div>
         <div class="pmain">
-          <span class="big num" id="ing-rate">—<small style="font-size:13px;color:var(--label-3)"> 篇/分</small></span>
-          <span class="side">本輪 <b class="num" id="ing-run">0</b>　失敗 <span class="err num" id="ing-fail">0</span></span>
+          <span class="big num" id="ing-run">—</span>
+          <span class="side"><span title="本輪導入的報告數">本輪導入</span>　失敗 <span class="err num" id="ing-fail">0</span></span>
         </div>
         <div class="bar idle" id="ing-barwrap"><i id="ing-bar"></i></div>
+        <div class="psub num" id="ing-rate">速率 計算中…</div>
       </div>
     </div>
 
@@ -209,7 +209,7 @@
 
 <script type="module">
 import { html, fetchJSON } from "/static/utils.js";
-import { rateText } from "/static/app/eta.js";
+import { rateText, ingestRateText } from "/static/app/eta.js";
 (() => {
   const $ = (id) => document.getElementById(id);
   const POLL = 2000;
@@ -342,12 +342,9 @@ import { rateText } from "/static/app/eta.js";
       $("t-reports-d").innerHTML = `${d.db.markets?.length || 0} 個市場`;
       $("t-chunks-d").textContent = "向量片段總數";
 
-      // rate
+      // rate（導入速率現於 INGEST 面板底部顯示，見下方 ingest panel）
       const rt = rate(d.db.reports, d.db.chunks, d.summary ? d.summary.done : null, tag ? tag.done : null);
       lastRate = rt;
-      tween($("t-rate"), rt.rpm == null ? null : Math.round(rt.rpm * 10) / 10, (v) => v.toFixed(1));
-      $("t-rate-d").innerHTML = rt.cps == null ? "計算中…" : `<b class="num">${rt.cps.toFixed(1)}</b> 片段/秒`;
-      tween($("ing-rate"), rt.rpm == null ? null : Math.round(rt.rpm * 10) / 10, (v) => v.toFixed(1));
 
       // tagging panel
       if (tag) {
@@ -357,10 +354,11 @@ import { rateText } from "/static/app/eta.js";
         $("tag-bar").style.width = tag.pct + "%";
         $("tag-rate").textContent = rateText(tag.fail, rt.tpm, "標註"); // tag.fail＝未標＝剩餘
       }
-      // ingest panel
+      // ingest panel（大字＝本輪導入數，底部 psub 顯示導入速率）
       const ing = d.ingest || {};
       tween($("ing-run"), ing.ingested ?? 0);
       $("ing-fail").textContent = nf(ing.fail ?? 0);
+      $("ing-rate").textContent = ingestRateText(rt.rpm, rt.cps);
       const ingestOn = d.pipelines?.ingest;
       const bw = $("ing-barwrap");
       bw.classList.toggle("indet", !!ingestOn);

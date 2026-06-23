@@ -6,7 +6,7 @@
  * 特別是暖機 null、未增長（0.0 不給 ETA）、已完成、大值換「時」與 90 分邊界。
  * unit 由呼叫端帶入（摘要／標註共用同一格式器）。
  */
-import { rateText } from "./eta.js";
+import { rateText, ingestRateText } from "./eta.js";
 
 let pass = 0;
 const fails = [];
@@ -42,6 +42,17 @@ eq("boundary-under-90", rateText(89, 1, "標註"), "速率 1.0 標註/分 · 預
 
 // 邊界（= 90）：90 / 1 = 90 分 → 非 < 90，改用「時」(1.5 時)
 eq("boundary-at-90", rateText(90, 1, "摘要"), "速率 1.0 摘要/分 · 預估剩餘 ~1.5 時");
+
+// ── ingestRateText(rpm, cps)：導入面板底部速率行（無總量→無 ETA，第二段為片段/秒）──
+// 暖機：rpm 為 null（cps 無關）
+eq("ing-warmup", ingestRateText(null, null), "速率 計算中…");
+eq("ing-warmup-with-cps", ingestRateText(null, 6.1), "速率 計算中…");
+// 一般值：兩段（篇/分 · 片段/秒）
+eq("ing-normal", ingestRateText(4.2, 6.1), "速率 4.2 篇/分 · 6.1 片段/秒");
+// 缺 cps（null）：只顯示速率
+eq("ing-no-cps", ingestRateText(4.2, null), "速率 4.2 篇/分");
+// 未跑：rpm/cps 皆 0 → 0.0（誠實顯示，不隱藏）
+eq("ing-idle", ingestRateText(0, 0), "速率 0.0 篇/分 · 0.0 片段/秒");
 
 if (fails.length) {
   for (const f of fails) {

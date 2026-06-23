@@ -56,6 +56,7 @@ async def hybrid_search(
     lex_limit: Optional[int] = None,
     lex_cap: Optional[int] = None,
     lex_per_report: bool = False,
+    lex_unlimited: bool = False,
 ) -> list[tuple[int, float, tuple]]:
     """雙路召回 + 去重 + 融合排序。
 
@@ -75,11 +76,14 @@ async def hybrid_search(
     lex_rows = []
     if terms:
         patterns = ["%" + t.translate(_LIKE_ESC) + "%" for t in terms]
+        lex_row_limit = None if lex_unlimited else (
+            lex_limit if lex_limit is not None else LEX_LIMIT
+        )
         lex_rows = await search_chunks_lexical(
             session,
             query_embedding,
             patterns,
-            limit=lex_limit if lex_limit is not None else LEX_LIMIT,
+            limit=lex_row_limit,
             cap=lex_cap if lex_cap is not None else LEX_CAP,
             per_report=lex_per_report,
             **filters,

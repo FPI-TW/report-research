@@ -51,7 +51,6 @@ from app.services.filename import source_display  # noqa: E402
 from app.services.retrieval import (  # noqa: E402
     DENSE_SCAN_SEARCH,
     LEX_CAP_SEARCH,
-    LEX_LIMIT_SEARCH,
     hybrid_search,
     rank_reports,
 )
@@ -505,11 +504,11 @@ async def search(
             relates_stock=relates_stock or None,
             relates_futures=relates_futures or None,
             report_type=rtype,
-            # 不傳 k：dense_scan 已覆蓋掃描深度（檢索分頁用固定深召回），k 僅問答路徑用
+            # 不傳 k：dense_scan 已覆蓋掃描深度；lexical 改由 cap 控候選，不再截斷最終報告數
             dense_scan=DENSE_SCAN_SEARCH,
-            lex_limit=LEX_LIMIT_SEARCH,
             lex_cap=LEX_CAP_SEARCH,
             lex_per_report=True,
+            lex_unlimited=True,
         )
 
     # 分組成「全部」召回報告 → 依 sort 排序 → 取 total → 切當頁

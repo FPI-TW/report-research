@@ -22,9 +22,19 @@ class LexicalSqlTests(unittest.TestCase):
 
     def test_per_report_uses_distinct_on(self):
         sql = _lexical_sql(1, [], per_report=True)
-        self.assertIn("DISTINCT ON (c.report_id)", sql)
+        self.assertIn("DISTINCT ON (", sql)
         # DISTINCT ON 需以 report_id 起首排序，再依向量距離取最近 chunk
         self.assertIn("ORDER BY c.report_id", sql)
+
+    def test_per_report_reranks_candidates_before_distinct(self):
+        sql = _lexical_sql(1, [], per_report=True)
+        self.assertIn("WITH lex_base AS MATERIALIZED", sql)
+        self.assertIn("SELECT DISTINCT ON (", sql)
+        self.assertLess(sql.index("LIMIT :cap"), sql.index("DISTINCT ON ("))
+
+    def test_per_report_can_skip_final_limit(self):
+        sql = _lexical_sql(1, [], per_report=True, limit=None)
+        self.assertNotIn("LIMIT :limit", sql)
 
     def test_no_extra_conds_still_has_pattern_cond(self):
         sql = _lexical_sql(1, [], per_report=False)

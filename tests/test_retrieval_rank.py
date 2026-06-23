@@ -94,5 +94,34 @@ class RankReportsTests(unittest.TestCase):
         self.assertEqual(self.ids(rank_reports(s, sort="relevance")), ["B2", "B1"])
 
 
+class HybridSearchConfigTests(unittest.IsolatedAsyncioTestCase):
+    async def test_lex_unlimited_forwards_none_limit_to_lexical_search(self):
+        from app.services import retrieval as ret
+
+        seen = {}
+
+        async def fake_dense(*a, **k):
+            return []
+
+        async def fake_lex(*a, **k):
+            seen.update(k)
+            return []
+
+        orig = (ret.search_chunks_meta, ret.search_chunks_lexical)
+        ret.search_chunks_meta = fake_dense
+        ret.search_chunks_lexical = fake_lex
+        try:
+            await ret.hybrid_search(
+                object(),
+                "台積電",
+                [0.0],
+                lex_unlimited=True,
+            )
+        finally:
+            ret.search_chunks_meta, ret.search_chunks_lexical = orig
+
+        self.assertIsNone(seen["limit"])
+
+
 if __name__ == "__main__":
     unittest.main()

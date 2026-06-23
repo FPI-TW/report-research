@@ -75,7 +75,7 @@ def split_external_sources(text: str) -> tuple[str, list[dict]]:
         return text, []
     body = text[:idx].rstrip()
     sources: list[dict] = []
-    for line in text[idx + len(EXT_SENTINEL):].splitlines():
+    for line in text[idx + len(EXT_SENTINEL) :].splitlines():
         line = line.strip()
         if line.startswith("-"):
             line = line[1:].strip()
@@ -109,7 +109,9 @@ def _as_date(value: object) -> date | None:
     return None
 
 
-def _recency_factor(report_date: object, now_date: date, half_life_days: float) -> float:
+def _recency_factor(
+    report_date: object, now_date: date, half_life_days: float
+) -> float:
     """新近度因子 ∈ [0,1]：今天=1.0、半衰期前=0.5；無日期視為 0。"""
     d = _as_date(report_date)
     if d is None:
@@ -253,8 +255,7 @@ def build_user_prompt(question: str, context: str, history_block: str = "") -> s
     if history_block:
         head = "先前對話（供理解脈絡，不是新問題）：\n" + history_block + "\n\n"
     return (
-        head
-        + "參考片段：\n"
+        head + "參考片段：\n"
         f"{context}\n\n"
         f"問題：{question}\n\n"
         "請依規則作答，並在論點句末標註對應的來源編號。"
@@ -270,10 +271,23 @@ def cited_report_ids(answer: str, sources: list[Source]) -> list[str]:
 def history_item(row) -> dict:
     """qa_log 一列 → 前端用 dict。
 
-    相容舊列（無 ext_sources）與新列；sources/ext_sources 為 None 時回 []。
+    相容舊列（6 欄無 ext_sources、7 欄無 thinking_ms）與新列（8 欄）。
+    sources/ext_sources 為 None 時回 []；thinking_ms 缺欄回 None。
     created_at 轉 ISO 字串；離題拒答額外標記 is_offtopic，供前端重播時維持 notice 呈現。
     """
-    if len(row) >= 7:
+    thinking_ms = None
+    if len(row) >= 8:
+        (
+            id_,
+            question,
+            answer,
+            created_at,
+            feedback,
+            sources,
+            ext_sources,
+            thinking_ms,
+        ) = row[:8]
+    elif len(row) >= 7:
         id_, question, answer, created_at, feedback, sources, ext_sources = row[:7]
     else:
         id_, question, answer, created_at, feedback, sources = row[:6]
@@ -288,6 +302,7 @@ def history_item(row) -> dict:
         "sources": sources or [],
         "ext_sources": ext_sources or [],
         "is_offtopic": answer == OFF_TOPIC_MESSAGE,
+        "thinking_ms": thinking_ms,
     }
 
 
@@ -301,6 +316,7 @@ async def _log_qa(
     ext_sources: list[dict] | None = None,
     *,
     conversation_id: str | None = None,
+    thinking_ms: int | None = None,
 ) -> str:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
@@ -316,9 +332,9 @@ async def _log_qa(
                 text(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
-                    "sources, ext_sources, conversation_id) "
+                    "sources, ext_sources, conversation_id, thinking_ms) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
-                    ":sources, :ext_sources, :conv)"
+                    ":sources, :ext_sources, :conv, :think)"
                 ),
                 {
                     "id": qa_id,
@@ -330,6 +346,7 @@ async def _log_qa(
                     "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
                     "ext_sources": json.dumps(ext_sources, ensure_ascii=False),  # jsonb
                     "conv": conversation_id,
+                    "think": thinking_ms,
                 },
             )
             await session.commit()
@@ -356,7 +373,11 @@ async def load_recent_turns(
                         "AND answer IS DISTINCT FROM :offtopic "
                         "ORDER BY created_at DESC LIMIT :limit"
                     ),
-                    {"cid": conversation_id, "offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+                    {
+                        "cid": conversation_id,
+                        "offtopic": OFF_TOPIC_MESSAGE,
+                        "limit": limit,
+                    },
                 )
             ).all()
         return [(q, a) for q, a in reversed(rows)]
@@ -395,7 +416,9 @@ async def list_conversations(limit: int = 50) -> list[dict]:
             {
                 "conversation_id": str(conv_id),
                 "title": title,
-                "last_at": last_at.isoformat() if hasattr(last_at, "isoformat") else last_at,
+                "last_at": (
+                    last_at.isoformat() if hasattr(last_at, "isoformat") else last_at
+                ),
                 "turn_count": int(turn_count),
             }
         )
@@ -408,7 +431,7 @@ async def get_conversation(conversation_id: str) -> list[dict]:
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources "
+                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
                     "FROM research.qa_log "
                     "WHERE COALESCE(conversation_id, id) = :cid "
                     "ORDER BY created_at ASC"
@@ -489,16 +512,21 @@ async def answer_question(
     filters = filters or {}
     started = time.monotonic()
     conv_id = conversation_id or str(uuid.uuid4())
+    yield ("status", {"stage": "understanding"})  # 步驟1：理解問題（含意圖判定/改寫）
 
     # 僅「續問」才載歷史；首輪無歷史，維持並行意圖判定
     turns = await load_recent_turns(conv_id) if conversation_id else []
     history_block = build_history_block(turns)
 
     if turns:
-        standalone_query, in_domain = await condense_and_classify(history_block, question)
+        standalone_query, in_domain = await condense_and_classify(
+            history_block, question
+        )
         qvec = await asyncio.to_thread(embed_query_cached, standalone_query)
         async with SessionFactory() as session:  # 短連線：檢索完即釋放
-            scored = await hybrid_search(session, standalone_query, qvec, k=k, **filters)
+            scored = await hybrid_search(
+                session, standalone_query, qvec, k=k, **filters
+            )
     else:
         intent_task = asyncio.create_task(classify_intent(question))
         try:
@@ -513,25 +541,52 @@ async def answer_question(
     if not in_domain:  # 離題：拒答、不跑主 LLM
         yield ("sources", [])
         yield ("notice", OFF_TOPIC_MESSAGE)
+        thinking_ms = int((time.monotonic() - started) * 1000)
         await _log_qa(
-            question, OFF_TOPIC_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000), [], [],
+            question,
+            OFF_TOPIC_MESSAGE,
+            [],
+            filters,
+            thinking_ms,
+            [],
+            [],
             conversation_id=conv_id,
+            thinking_ms=thinking_ms,
         )
-        yield ("done", {"cited": [], "conversation_id": conv_id})
+        yield (
+            "done",
+            {"cited": [], "conversation_id": conv_id, "thinking_ms": thinking_ms},
+        )
         return
 
     sources, context = build_context(scored)
     yield ("sources", [asdict(s) for s in sources])
+    yield ("status", {"stage": "retrieved", "count": len(sources)})  # 步驟2：找到 N 篇
 
     if not context:
+        thinking_ms = int((time.monotonic() - started) * 1000)
+        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
-            question, NO_CONTEXT_MESSAGE, [], filters,
-            int((time.monotonic() - started) * 1000), [], [],
+            question,
+            NO_CONTEXT_MESSAGE,
+            [],
+            filters,
+            thinking_ms,
+            [],
+            [],
             conversation_id=conv_id,
+            thinking_ms=thinking_ms,
         )
-        yield ("done", {"cited": [], "qa_id": qa_id, "conversation_id": conv_id})
+        yield (
+            "done",
+            {
+                "cited": [],
+                "qa_id": qa_id,
+                "conversation_id": conv_id,
+                "thinking_ms": thinking_ms,
+            },
+        )
         return
 
     user_prompt = build_user_prompt(question, context, history_block)
@@ -540,13 +595,28 @@ async def answer_question(
     hold = len(EXT_SENTINEL)
     sentinel_found = False
     searching_sent = False
+    thinking_ms: int | None = None
+
+    def _emit_token(piece: str) -> list[tuple[str, str | dict]]:
+        """首個 token 前補發 generating(thinking_ms)，回傳要 yield 的事件序。"""
+        nonlocal thinking_ms
+        out: list[tuple[str, str | dict]] = []
+        if thinking_ms is None:
+            thinking_ms = int((time.monotonic() - started) * 1000)
+            out.append(
+                ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+            )
+        out.append(("token", piece))
+        return out
+
+    yield ("status", {"stage": "reading"})  # 步驟3：閱讀重點、整理回答
     async for chunk in stream_completion(
         user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
     ):
         if chunk == SEARCH_EVENT:
             if not searching_sent:
                 searching_sent = True
-                yield ("status", "searching_web")
+                yield ("status", {"stage": "searching_web"})  # 步驟4：搜尋網路補充
             continue
         raw_parts.append(chunk)
         if sentinel_found:
@@ -555,23 +625,39 @@ async def answer_question(
         idx = buf.find(EXT_SENTINEL)
         if idx != -1:
             if buf[:idx]:
-                yield ("token", buf[:idx])
+                for ev in _emit_token(buf[:idx]):
+                    yield ev
             sentinel_found = True
             buf = ""
         elif len(buf) > hold:
-            yield ("token", buf[:-hold])
+            for ev in _emit_token(buf[:-hold]):
+                yield ev
             buf = buf[-hold:]
     if not sentinel_found and buf:
-        yield ("token", buf)
+        for ev in _emit_token(buf):
+            yield ev
 
     raw = "".join(raw_parts)
     body, ext_sources = split_external_sources(raw)
     cited = cited_report_ids(body, sources)
     yield ("ext_sources", ext_sources)
     qa_id = await _log_qa(
-        question, body, cited, filters,
+        question,
+        body,
+        cited,
+        filters,
         int((time.monotonic() - started) * 1000),
-        [asdict(s) for s in sources], ext_sources,
+        [asdict(s) for s in sources],
+        ext_sources,
         conversation_id=conv_id,
+        thinking_ms=thinking_ms,
     )
-    yield ("done", {"cited": cited, "qa_id": qa_id, "conversation_id": conv_id})
+    yield (
+        "done",
+        {
+            "cited": cited,
+            "qa_id": qa_id,
+            "conversation_id": conv_id,
+            "thinking_ms": thinking_ms,
+        },
+    )

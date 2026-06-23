@@ -37,6 +37,7 @@ function createTurn(question) {
   node.className = "ask-turn";
   node.innerHTML = html`
     <div class="ask-msg-user"></div>
+    <div class="ask-process-host"></div>
     <div class="ask-msg-bot" aria-live="polite"></div>
     <div class="ask-actions" hidden></div>
     <div class="ask-sources"></div>
@@ -45,8 +46,10 @@ function createTurn(question) {
   inner.appendChild(node);
   const turn = {
     q: question, answer: "", sources: [], extSources: [], qaId: null,
+    labelTimer: null, thinkingFrozen: false, thinkingMs: null, startedAt: null,
     node,
     answerEl: node.querySelector(".ask-msg-bot"),
+    processEl: node.querySelector(".ask-process-host"),
     actionsEl: node.querySelector(".ask-actions"),
     srcEl: node.querySelectorAll(".ask-sources")[0],
     extEl: node.querySelector(".ask-ext-list"),
@@ -107,6 +110,7 @@ function paintExtSources(turn) {
 
 function cancelActiveAsk({ bumpReq = false } = {}) {
   if (bumpReq) state.askReq += 1;   // 讓既有 reader 的 latest-wins 判斷立刻失效
+  turns.forEach(t => clearTimeout(t.labelTimer));   // 清掉所有輪的待還原計時器，避免切換對話後殘留觸發
   if (currentAskCtrl) {
     currentAskCtrl.abort();
     currentAskCtrl = null;
@@ -170,11 +174,13 @@ async function loadConversation(id) {
       turn.extSources = it.ext_sources || [];
       turn.qaId = it.id;
       turn.answer = it.answer || "";
+      turn.thinkingMs = (typeof it.thinking_ms === "number") ? it.thinking_ms : null;
       paintSources(turn); paintExtSources(turn);
       if (it.is_offtopic) {
         paintNotice(turn, it.answer || "");
       } else {
         paintAnswer(turn, false); paintActions(turn);
+        staticProcess(turn);
         if (it.feedback) {
           const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
           const btn = turn.actionsEl.querySelector(sel);
@@ -221,23 +227,6 @@ async function deleteConversationItem(id, btn) {
   } catch (e) { btn.disabled = false; }
 }
 
-function thinking(turn) {
-  turn.answerEl.innerHTML =
-    `<span class="ask-thinking"><span class="spin"></span>檢索研報並思考中…</span>`;
-}
-// 模型開始上網搜尋時顯示「正在搜尋網路…」。
-// 思考階段（尚無答案）→ 取代指示文字；已在串流答案中途搜尋 → 在末尾附一個臨時指示
-//（下一個 token 的 paintAnswer 會重繪而自動清掉）。
-function searchingWeb(turn) {
-  const el = turn.answerEl;
-  if (el.querySelector(".ask-thinking") && !el.querySelector(".ask-searching-inline")) {
-    el.innerHTML = `<span class="ask-thinking"><span class="spin"></span>正在搜尋網路補充最新資料…</span>`;
-  } else if (!el.querySelector(".ask-searching-inline")) {
-    el.insertAdjacentHTML("beforeend",
-      `<span class="ask-thinking ask-searching-inline"><span class="spin"></span>正在搜尋網路補充最新資料…</span>`);
-    if (nearBottom()) toBottom();
-  }
-}
 function fail(turn, msg) { turn.answerEl.textContent = msg; }
 
 // 離題拒答：以提示卡渲染（非一般答案泡泡）
@@ -260,6 +249,157 @@ const SVG = {
   ext: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
   trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
 };
+
+// ───── 處理過程步驟面板（顯示系統實際在做什麼；非模型推理）─────
+const PROC_STEPS = [
+  { key: "understand", label: "理解問題" },
+  { key: "retrieved",  label: "檢索研報" },          // 完成時改寫成「找到 N 篇相關研報」
+  { key: "reading",    label: "閱讀重點、整理回答" },
+  { key: "web",        label: "搜尋網路補充" },        // 條件性：觸發網路搜尋才顯示
+  { key: "generate",   label: "生成回答" },
+];
+const PROC_ICO = {
+  pending: `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
+  active: `<span class="ask-step-spin" aria-hidden="true"></span>`,
+  done: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3.5 8.5 6.5 11.5 12.5 5"/></svg>`,
+};
+
+// 建面板：expanded 控制預設展開（即時與歷史皆預設收合）。標題列為動態思考列。web 步驟初始隱藏。
+function renderProcess(turn, { expanded = false } = {}) {
+  const items = PROC_STEPS.map(s => html`<li class="ask-step" data-step="${s.key}" data-state="pending">
+      <span class="ask-step-ico">${raw(PROC_ICO.pending)}</span>
+      <span class="ask-step-label">${s.label}</span>
+    </li>`).join("");
+  turn.processEl.innerHTML = html`<div class="ask-process${expanded ? " open" : ""}">
+      <button class="ask-process-head" type="button" aria-expanded="${expanded ? "true" : "false"}">
+        ${raw(SVG.chev)}
+        <span class="ask-proc-ico">${raw(PROC_ICO.active)}</span>
+        <span class="ask-proc-label">正在思考</span>
+      </button>
+      <ol class="ask-process-steps">${raw(items)}</ol>
+    </div>`;
+  turn.processEl.querySelector('.ask-step[data-step="web"]').hidden = true;
+  const head = turn.processEl.querySelector(".ask-process-head");
+  const steps = turn.processEl.querySelector(".ask-process-steps");
+  steps.hidden = !expanded;
+  steps.setAttribute("aria-hidden", expanded ? "false" : "true");
+  head.onclick = () => {
+    const box = turn.processEl.querySelector(".ask-process");
+    const opening = !box.classList.contains("open");
+    if (opening) {
+      steps.hidden = false;
+      steps.setAttribute("aria-hidden", "false");
+      box.classList.add("open");
+    } else {
+      box.classList.remove("open");
+      steps.hidden = true;
+      steps.setAttribute("aria-hidden", "true");
+    }
+    head.setAttribute("aria-expanded", opening ? "true" : "false");
+  };
+}
+
+// ── 標題列（動態思考列）助手 ──
+// state: active 顯示 spinner、done 顯示打勾；label 為標題文字
+function setHead(turn, state, label) {
+  const head = turn.processEl.querySelector(".ask-process-head");
+  if (!head) return;
+  head.querySelector(".ask-proc-ico").innerHTML = PROC_ICO[state];
+  head.querySelector(".ask-proc-label").textContent = label;
+  head.classList.toggle("is-done", state === "done");
+}
+// 思考耗時標籤；ms 無效回 null（至少顯示 1 秒，避免「0 秒」）
+function thinkingLabel(ms) {
+  return (typeof ms === "number" && ms >= 0)
+    ? `已思考 ${Math.max(1, Math.round(ms / 1000))} 秒`
+    : null;
+}
+// 顯示動作標籤後，短暫（1.8s）還原為「正在思考」（凍結後不再還原）
+function flashHead(turn, label) {
+  if (turn.thinkingFrozen) return;
+  setHead(turn, "active", label);
+  clearTimeout(turn.labelTimer);
+  turn.labelTimer = setTimeout(() => {
+    if (!turn.thinkingFrozen) setHead(turn, "active", "正在思考");
+  }, 1800);
+}
+// 思考結束：凍結為「已思考 X 秒」。後端有給 thinking_ms 用其權威值；
+// 沒給則以前端計時（送出→凍結）回退，確保即時路徑一律顯示秒數。
+function freezeHead(turn, ms) {
+  turn.thinkingFrozen = true;
+  clearTimeout(turn.labelTimer);
+  const elapsed = (typeof ms === "number")
+    ? ms
+    : (turn.startedAt != null ? performance.now() - turn.startedAt : null);
+  setHead(turn, "done", thinkingLabel(elapsed) || "已思考");
+}
+
+// 設定步驟狀態；label 非 null 時改寫文字。state: pending|active|done
+function setStep(turn, key, state, label) {
+  const li = turn.processEl.querySelector(`.ask-step[data-step="${key}"]`);
+  if (!li) return;
+  li.hidden = false;
+  li.dataset.state = state;
+  li.querySelector(".ask-step-ico").innerHTML = PROC_ICO[state];
+  if (label != null) li.querySelector(".ask-step-label").textContent = label;
+}
+function clearProcess(turn) { clearTimeout(turn.labelTimer); turn.processEl.innerHTML = ""; }
+
+// status 事件 → 推進步驟＋驅動標題動態標籤（payload 為 {stage,...} 物件）
+function onStatus(turn, data) {
+  const stage = data && typeof data === "object" ? data.stage : data;
+  if (stage === "understanding") {
+    setStep(turn, "understand", "active");
+    // 標題維持 baseline「正在思考」
+  } else if (stage === "retrieved") {
+    const label = `找到 ${Number(data.count) || 0} 篇相關研報`;
+    setStep(turn, "understand", "done");
+    setStep(turn, "retrieved", "done", label);
+    setStep(turn, "reading", "active");
+    flashHead(turn, label);
+  } else if (stage === "reading") {
+    setStep(turn, "reading", "active");
+    // reading 緊接 retrieved，不另閃標題（避免蓋掉「找到 N 篇」）
+  } else if (stage === "searching_web") {
+    setStep(turn, "reading", "done");
+    setStep(turn, "web", "active");
+    flashHead(turn, "搜尋網路補充");
+  } else if (stage === "generating") {
+    startGenerating(turn);
+    freezeHead(turn, data && typeof data === "object" ? data.thinking_ms : null);
+  }
+}
+
+// 第一個 token 抵達：前面步驟收尾、點亮「生成回答」
+function startGenerating(turn) {
+  setStep(turn, "understand", "done");
+  setStep(turn, "retrieved", "done");
+  setStep(turn, "reading", "done");
+  const web = turn.processEl.querySelector('.ask-step[data-step="web"]');
+  if (web && !web.hidden) setStep(turn, "web", "done");
+  setStep(turn, "generate", "active");
+}
+
+// done：把所有顯示中的步驟標完成（標題已於 generating 凍結）
+function finishProcess(turn) {
+  clearTimeout(turn.labelTimer);
+  turn.processEl.querySelectorAll(".ask-step:not([hidden])").forEach(li => {
+    if (li.dataset.state !== "done") setStep(turn, li.dataset.step, "done");
+  });
+}
+
+// 歷史重建：以既有 sources/ext_sources/thinking_ms 還原靜態面板（預設收合）
+function staticProcess(turn) {
+  renderProcess(turn, { expanded: false });
+  turn.thinkingFrozen = true;
+  // 有 thinking_ms → 「已思考 X 秒」；舊列無值 → 中性「處理過程」
+  setHead(turn, "done", thinkingLabel(turn.thinkingMs) || "處理過程");
+  setStep(turn, "understand", "done");
+  setStep(turn, "retrieved", "done", `找到 ${turn.sources.length} 篇相關研報`);
+  setStep(turn, "reading", "done");
+  if (turn.extSources.length) setStep(turn, "web", "done");
+  setStep(turn, "generate", "done");
+}
 
 // 回答完成後的 ChatGPT 式動作列：讚/倒讚/複製 +（有來源時）資料來源切換
 function paintActions(turn) {
@@ -359,7 +499,9 @@ export async function askQuestion() {
   $("#askGo").disabled = true;
   input.value = ""; autoGrow(input);
   const turn = createTurn(q);
-  thinking(turn);
+  turn.startedAt = performance.now();   // 思考計時起點（後端未給 thinking_ms 時的前端回退基準）
+  renderProcess(turn);
+  setStep(turn, "understand", "active");
   toBottom();
   let started = false, notice = false;
   currentAskCtrl = new AbortController();
@@ -387,22 +529,22 @@ export async function askQuestion() {
         buf = buf.slice(idx + 2);
         if (!evt) continue;
         if (evt.event === "sources") { turn.sources = evt.data || []; paintSources(turn); }
-        else if (evt.event === "status") { if (evt.data === "searching_web") searchingWeb(turn); }
+        else if (evt.event === "status") { onStatus(turn, evt.data); }
         else if (evt.event === "ext_sources") { turn.extSources = (evt.data || []).filter(s => s && safeHttp(s.url)); paintExtSources(turn); }
-        else if (evt.event === "token") { started = true; turn.answer += evt.data; const stick = nearBottom(); paintAnswer(turn, true); if (stick) toBottom(); }
-        else if (evt.event === "notice") { notice = true; started = true; paintNotice(turn, evt.data); toBottom(); }
-        else if (evt.event === "done") { turn.qaId = (evt.data && evt.data.qa_id) || null; if (evt.data && evt.data.conversation_id) conversationId = evt.data.conversation_id; }
-        else if (evt.event === "error") { fail(turn, "問答服務發生錯誤，請稍後再試。"); return; }
+        else if (evt.event === "token") { if (!started) { startGenerating(turn); if (!turn.thinkingFrozen) freezeHead(turn, null); started = true; } turn.answer += evt.data; const stick = nearBottom(); paintAnswer(turn, true); if (stick) toBottom(); }
+        else if (evt.event === "notice") { notice = true; started = true; clearProcess(turn); paintNotice(turn, evt.data); toBottom(); }
+        else if (evt.event === "done") { turn.qaId = (evt.data && evt.data.qa_id) || null; if (evt.data && evt.data.conversation_id) conversationId = evt.data.conversation_id; if (evt.data && typeof evt.data.thinking_ms === "number") freezeHead(turn, evt.data.thinking_ms); finishProcess(turn); }
+        else if (evt.event === "error") { clearProcess(turn); fail(turn, "問答服務發生錯誤，請稍後再試。"); return; }
       }
     }
     if (my === state.askReq) {
       if (!notice) paintAnswer(turn, false);   // 收尾：去掉游標（離題卡不可被覆寫）
-      if (!started) fail(turn, "沒有取得回答，請稍後再試。");
+      if (!started) { clearProcess(turn); fail(turn, "沒有取得回答，請稍後再試。"); }
       else if (!notice) paintActions(turn);   // 動作列（離題卡不顯示）
       loadAskHistory();   // 刷新側欄對話清單（renderHistory 內已呼叫 markActive）
     }
   } catch (e) {
-    if (my === state.askReq) fail(turn, "查詢逾時或失敗，請稍後再試。");
+    if (my === state.askReq) { clearProcess(turn); fail(turn, "查詢逾時或失敗，請稍後再試。"); }
   } finally {
     if (my === state.askReq) currentAskCtrl = null;
     if (my === state.askReq) $("#askGo").disabled = false;

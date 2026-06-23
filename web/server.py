@@ -617,7 +617,7 @@ async def history(limit: int = Query(50, ge=1, le=200)):
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources "
+                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
                     "FROM research.qa_log "
                     "WHERE answer IS DISTINCT FROM :offtopic "
                     "ORDER BY created_at DESC LIMIT :limit"

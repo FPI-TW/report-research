@@ -23,6 +23,7 @@ SRC_LOCAL = ROOT / "研報自動匯入"
 TAGS_DIR = ROOT / "data" / "tags"
 ALL_JSONL = ROOT / "data" / "extracted" / "all.jsonl"
 FAIL_LOG = ROOT / "data" / "sync_failures.log"
+INGESTED_MARKER = ROOT / "data" / ".sync_last_ingested"
 EXTS = {".pdf", ".docx", ".doc"}
 
 
@@ -128,6 +129,14 @@ def _append_all_jsonl(rec: dict) -> None:
     ALL_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with open(ALL_JSONL, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def write_ingested_marker(path: Path, n: int) -> None:
+    """把本輪 ingested 篇數原子寫入標記檔，供殼層 gate 摘要步驟（每輪覆寫）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / (path.name + ".tmp")
+    tmp.write_text(str(int(n)), encoding="utf-8")
+    tmp.rename(path)
 
 
 def _iter_targets(args) -> list[Path]:
@@ -267,6 +276,9 @@ async def _run(args) -> None:
         if stats["ingested"] and not args.dry_run:
             await session.execute(sql_text("ANALYZE research.report_chunk"))
             await session.commit()
+
+    if not args.dry_run:
+        write_ingested_marker(INGESTED_MARKER, stats["ingested"])
 
     print("\n=== sync summary ===", flush=True)
     for k, v in stats.items():

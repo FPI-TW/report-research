@@ -108,7 +108,16 @@
   footer { margin-top: 24px; padding-top: 16px; border-top: .5px solid var(--sep);
     font-size: 12px; font-weight: 600; color: var(--label-3);
     letter-spacing: .01em; line-height: 1.7; }
-  footer .o { color: var(--label-2); }
+  footer .o { color: var(--label-2); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 18px; }
+  .orch-pill { display: inline-flex; align-items: center; min-height: 22px; padding: 0 10px;
+    border-radius: 999px; font-size: 11.5px; font-weight: 800; letter-spacing: .02em;
+    background: var(--fill); color: var(--label-2); }
+  .orch-pill.done { background: color-mix(in srgb, var(--green) 14%, white); color: #19713a; }
+  .orch-pill.running { background: color-mix(in srgb, var(--amber) 14%, white); color: #9a5d00; }
+  .orch-pill.unknown { background: var(--fill); color: var(--label-2); }
+  .orch-sep { color: var(--label-3); }
+  .orch-ts { color: var(--label-2); }
+  .orch-raw { color: var(--label-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(100%, 520px); }
 
   /* ── motion（可被 reduced-motion 關閉）── */
   @media (prefers-reduced-motion: no-preference) {
@@ -220,6 +229,22 @@ import { html, fetchJSON } from "/static/utils.js";
   function setText(el, s) {
     if (el.firstChild && el.firstChild.nodeType === 3) el.firstChild.nodeValue = s;
     else el.textContent = s;
+  }
+
+  function renderOrchestrator(orchestrator) {
+    const el = $("f-orch");
+    if (!el) return;
+    if (!orchestrator) { el.innerHTML = ""; return; }
+    const label = (orchestrator.label || "編排器狀態").trim();
+    const status = (orchestrator.status || "unknown").trim();
+    const ts = typeof orchestrator.timestamp === "string" ? orchestrator.timestamp.trim() : "";
+    const raw = typeof orchestrator.raw === "string" ? orchestrator.raw.trim() : "";
+    const stateClass = ["done", "running"].includes(status) ? status : "unknown";
+    if (ts) {
+      el.innerHTML = html`<span class="orch-pill ${stateClass}">${label}</span><span class="orch-sep" aria-hidden="true">·</span><span class="orch-ts num">${ts}</span>`;
+      return;
+    }
+    el.innerHTML = html`<span class="orch-pill ${stateClass}">${label}</span><span class="orch-raw" title="${raw}">${raw}</span>`;
   }
 
   // 速率：自開頁以來的平均（穩定、不抖動）
@@ -350,7 +375,7 @@ import { html, fetchJSON } from "/static/utils.js";
       const alive = ["web", "ingest", "tag", "summaries"].filter(k => d.pipelines?.[k]).length;
       $("sub").textContent = `${nf(d.db.reports)} 篇已導入 · ${alive}/4 條管線執行中`;
       $("f-ts").textContent = d.ts || "—";
-      $("f-orch").textContent = d.orchestrator ? "編排器：" + d.orchestrator : "";
+      renderOrchestrator(d.orchestrator);
     } catch (e) {
       setLive(false);
     } finally {

@@ -89,6 +89,34 @@ class RateLimitTests(unittest.TestCase):
         # 視窗過後(全部老化)→ 解鎖
         self.assertFalse(auth.is_locked(ip, start + auth.FAIL_WINDOW + 1))
 
+    def test_record_failure_prunes_globally_stale_ips(self):
+        now = 2_000_000
+        auth._FAILS.update(
+            {
+                "10.0.0.1": [now - auth.FAIL_WINDOW - 10],
+                "10.0.0.2": [now - auth.FAIL_WINDOW - 20],
+            }
+        )
+
+        auth.record_failure("10.0.0.9", now)
+
+        self.assertEqual(set(auth._FAILS), {"10.0.0.9"})
+
+    def test_record_failure_caps_total_tracked_ips(self):
+        now = 2_000_000
+        orig_limit = getattr(auth, "MAX_TRACKED_IPS", None)
+        try:
+            auth.MAX_TRACKED_IPS = 8
+            for i in range(9):
+                auth.record_failure(f"10.0.0.{i}", now + i)
+        finally:
+            if orig_limit is None:
+                delattr(auth, "MAX_TRACKED_IPS")
+            else:
+                auth.MAX_TRACKED_IPS = orig_limit
+
+        self.assertLessEqual(len(auth._FAILS), 8)
+
 
 def _client():
     return TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
@@ -261,6 +289,49 @@ class HistoryDeleteApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"ok": True})
         self.assertEqual(seen["qa_id"], qa_id)
+
+
+class InputLimitTests(unittest.TestCase):
+    def _authed_client(self):
+        client = _client()
+        r = client.post("/login", data={"username": "tester", "password": "testpass"})
+        self.assertEqual(r.status_code, 303)
+        return client
+
+    def test_search_rejects_overlong_query(self):
+        import web.server as server
+
+        async def fake_hybrid_search(*_a, **_k):
+            return []
+
+        orig_embed = server.embed_query_cached
+        orig_search = server.hybrid_search
+        server.embed_query_cached = lambda _q: [0.0]
+        server.hybrid_search = fake_hybrid_search
+        try:
+            client = self._authed_client()
+            r = client.get("/api/search", params={"q": "x" * 5001})
+        finally:
+            server.embed_query_cached = orig_embed
+            server.hybrid_search = orig_search
+
+        self.assertEqual(r.status_code, 422)
+
+    def test_ask_rejects_overlong_question(self):
+        import web.server as server
+
+        async def fake_answer_question(*_a, **_k):
+            yield ("done", {"cited": []})
+
+        orig_answer_question = server.answer_question
+        server.answer_question = fake_answer_question
+        try:
+            client = self._authed_client()
+            r = client.post("/api/ask", json={"question": "x" * 5001})
+        finally:
+            server.answer_question = orig_answer_question
+
+        self.assertEqual(r.status_code, 422)
 
     def test_post_delete_history_alias(self):
         import web.server as server

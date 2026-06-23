@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# 以快取憑證 drvfs 唯讀掛載 NAS 共享。冪等：已掛則直接成功。
+# 部署到 /usr/local/sbin/mount-nas-research（root:root 0755），搭配 sudoers NOPASSWD。
+set -eu
+mountpoint -q /mnt/nas-research && exit 0
+exec mount -t drvfs '\\192.168.1.100\投資研究處' /mnt/nas-research -o ro,uid=1000,gid=1000

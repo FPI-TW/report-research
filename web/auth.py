@@ -22,6 +22,7 @@ COOKIE_NAME = "tf_session"
 SESSION_TTL = 7 * 24 * 3600  # 7 天;滑動到期由 middleware 每次回應刷新
 MAX_FAILS = 5                # 視窗內允許的最大登入失敗次數
 FAIL_WINDOW = 300            # 失敗計數視窗(秒)
+MAX_TRACKED_IPS = max(1, int(os.environ.get("REPORT_MARK_MAX_TRACKED_FAIL_IPS", "4096")))
 
 _USERNAME = os.environ.get("REPORT_MARK_ACCESS_USERNAME", "")
 _PASSWORD = os.environ.get("REPORT_MARK_ACCESS_PASSWORD", "")
@@ -116,8 +117,6 @@ def clear_session_cookie(response) -> None:
 
 # ───── 每 IP 失敗限流(in-memory,重啟即重置)─────
 _FAILS: dict[str, list[int]] = {}
-
-
 def _prune(ip: str, now: int) -> list[int]:
     fails = [t for t in _FAILS.get(ip, []) if t > now - FAIL_WINDOW]
     if fails:
@@ -127,14 +126,28 @@ def _prune(ip: str, now: int) -> list[int]:
     return fails
 
 
+def _sweep_all(now: int) -> None:
+    stale = [ip for ip in list(_FAILS) if not _prune(ip, now)]
+    for ip in stale:
+        _FAILS.pop(ip, None)
+    overflow = len(_FAILS) - MAX_TRACKED_IPS
+    if overflow <= 0:
+        return
+    # 若短時間冒出大量新 IP，保留最近有失敗紀錄者，其餘淘汰，避免 dict 無界成長。
+    oldest = sorted(_FAILS.items(), key=lambda item: item[1][-1])[:overflow]
+    for ip, _fails in oldest:
+        _FAILS.pop(ip, None)
 def is_locked(ip: str, now: int) -> bool:
     return len(_prune(ip, now)) >= MAX_FAILS
 
 
 def record_failure(ip: str, now: int) -> None:
+    _sweep_all(now)
     fails = _prune(ip, now)
     fails.append(now)
     _FAILS[ip] = fails
+    if len(_FAILS) > MAX_TRACKED_IPS:
+        _sweep_all(now)
 
 
 def reset(ip: str) -> None:

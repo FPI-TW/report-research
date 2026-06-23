@@ -16,6 +16,7 @@ class LexicalSqlTests(unittest.TestCase):
         self.assertIn("c.content_norm LIKE :t0", sql)
         self.assertIn("c.content_norm LIKE :t1", sql)
         self.assertIn("r.market = :market", sql)
+        self.assertLess(sql.index("c.content_norm LIKE :t0"), sql.index("r.market = :market"))
         self.assertIn("LIMIT :cap", sql)
         self.assertIn("LIMIT :limit", sql)
 

@@ -290,13 +290,13 @@ def _lexical_sql(num_patterns: int, extra_conds: list[str], per_report: bool) ->
     else:
         cte_select = "SELECT c.id, c.report_id, c.chunk_index, c.content, c.embedding"
         cte_order = ""
+    cte_order_line = f"\n            {cte_order}" if cte_order else ""
     return f"""
         WITH lex AS MATERIALIZED (
             {cte_select}
             FROM research.report_chunk c
             JOIN research.research_report r ON r.id = c.report_id
-            WHERE {where}
-            {cte_order}
+            WHERE {where}{cte_order_line}
             LIMIT :cap
         )
         SELECT {_meta_columns("l")},

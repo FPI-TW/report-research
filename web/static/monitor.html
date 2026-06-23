@@ -164,6 +164,7 @@
           <span class="side">／ <b class="num" id="tag-total">—</b>　<span title="尚未完成標註的報告數">未標</span> <span class="err num" id="tag-fail">0</span></span>
         </div>
         <div class="bar"><i id="tag-bar"></i></div>
+        <div class="psub num" id="tag-rate">速率 計算中…</div>
       </div>
       <div>
         <div class="ptitle">導入 INGEST</div>
@@ -208,7 +209,7 @@
 
 <script type="module">
 import { html, fetchJSON } from "/static/utils.js";
-import { summaryRateText } from "/static/app/eta.js";
+import { rateText } from "/static/app/eta.js";
 (() => {
   const $ = (id) => document.getElementById(id);
   const POLL = 2000;
@@ -252,20 +253,24 @@ import { summaryRateText } from "/static/app/eta.js";
     el.innerHTML = html`<span class="orch-pill ${stateClass}">${label}</span><span class="orch-raw" title="${raw}">${raw}</span>`;
   }
 
-  // 速率：自開頁以來的平均（穩定、不抖動）。spm＝摘要/分，沿用同一基準快照。
+  // 速率：自開頁以來的平均（穩定、不抖動）。spm＝摘要/分、tpm＝標註/分，沿用同一基準快照。
   let base = null;
-  function rate(reports, chunks, sumDone) {
+  function rate(reports, chunks, sumDone, tagDone) {
     const now = performance.now();
-    if (!base) { base = { reports, chunks, sum: sumDone ?? 0, t: now }; return { rpm: null, cps: null, spm: null }; }
+    if (!base) {
+      base = { reports, chunks, sum: sumDone ?? 0, tag: tagDone ?? 0, t: now };
+      return { rpm: null, cps: null, spm: null, tpm: null };
+    }
     const dt = (now - base.t) / 1000;
     if (dt < 8) return lastRate; // 開頁初期先不顯示
     return {
       rpm: (reports - base.reports) / dt * 60,
       cps: (chunks - base.chunks) / dt,
       spm: sumDone == null ? null : (sumDone - base.sum) / dt * 60,
+      tpm: tagDone == null ? null : (tagDone - base.tag) / dt * 60,
     };
   }
-  let lastRate = { rpm: null, cps: null, spm: null };
+  let lastRate = { rpm: null, cps: null, spm: null, tpm: null };
 
   function clock() {
     const d = new Date();
@@ -338,7 +343,7 @@ import { summaryRateText } from "/static/app/eta.js";
       $("t-chunks-d").textContent = "向量片段總數";
 
       // rate
-      const rt = rate(d.db.reports, d.db.chunks, d.summary ? d.summary.done : null);
+      const rt = rate(d.db.reports, d.db.chunks, d.summary ? d.summary.done : null, tag ? tag.done : null);
       lastRate = rt;
       tween($("t-rate"), rt.rpm == null ? null : Math.round(rt.rpm * 10) / 10, (v) => v.toFixed(1));
       $("t-rate-d").innerHTML = rt.cps == null ? "計算中…" : `<b class="num">${rt.cps.toFixed(1)}</b> 片段/秒`;
@@ -350,6 +355,7 @@ import { summaryRateText } from "/static/app/eta.js";
         $("tag-total").textContent = nf(tag.total);
         $("tag-fail").textContent = nf(tag.fail);
         $("tag-bar").style.width = tag.pct + "%";
+        $("tag-rate").textContent = rateText(tag.fail, rt.tpm, "標註"); // tag.fail＝未標＝剩餘
       }
       // ingest panel
       const ing = d.ingest || {};
@@ -370,7 +376,7 @@ import { summaryRateText } from "/static/app/eta.js";
         $("sum-total").textContent = nf(sum.total);
         $("sum-remain").textContent = nf(sum.remaining);
         $("sum-bar").style.width = sum.pct + "%";
-        $("sum-rate").textContent = summaryRateText(sum.remaining, rt.spm);
+        $("sum-rate").textContent = rateText(sum.remaining, rt.spm, "摘要");
       }
 
       // pipelines

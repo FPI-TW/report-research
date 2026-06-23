@@ -13,6 +13,18 @@ sudo install -m 0440 deploy/systemd/report-mark-sync.sudoers /etc/sudoers.d/repo
 sudo visudo -c        # 驗證 sudoers 語法
 ```
 
+## 前置：部署環境檔（把主機專屬路徑留在本機）
+
+```bash
+sudo install -m 0644 deploy/systemd/report-mark-sync.env.example /etc/default/report-mark-sync
+sudoedit /etc/default/report-mark-sync
+```
+
+至少確認兩個值：
+
+- `REPORT_MARK_ROOT`：本機 repo 根目錄。
+- `SYNC_PATH_EXTRA`：讓 service 找得到 `claude` / `uv` 的額外 bin 目錄。
+
 ## 實測 drvfs 掛載（關鍵：確認免密碼讀得到）
 
 ```bash
@@ -33,6 +45,8 @@ ls "/mnt/nas-research/02.研究資源/研報自動匯入" | head
 sudo install -m 0644 deploy/systemd/report-mark-sync.service \
   deploy/systemd/report-mark-sync.timer /etc/systemd/system/
 sudo systemctl daemon-reload
+sudo systemd-analyze verify /etc/systemd/system/report-mark-sync.service \
+  /etc/systemd/system/report-mark-sync.timer
 sudo systemctl enable --now report-mark-sync.timer
 systemctl list-timers report-mark-sync.timer
 ```
@@ -53,3 +67,5 @@ make stats            # 確認 reports 篇數有隨新檔增加
 - 單檔失敗：見 data/sync_failures.log；修因後可 `make sync-once` 或
   `uv run python scripts/sync_new_reports.py --all-local` 全本地對 DB 補漏。
 - claude CLI 找不到：確認 service 的 PATH drop-in 含 node bin 目錄。
+- service 啟不來：先看 `/etc/default/report-mark-sync` 的 `REPORT_MARK_ROOT` 與
+  `SYNC_PATH_EXTRA` 是否指到實機正確路徑。

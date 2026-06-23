@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=oneshot
 User=kashionz
 Group=kashionz
-Environment=HOME=/home/kashionz
-Environment=PATH=/home/kashionz/.nvm/versions/node/v24.15.0/bin:/home/kashionz/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-WorkingDirectory=/mnt/c/Users/User/Desktop/Project/report-mark
-ExecStart=/usr/bin/bash scripts/sync_new_reports.sh
+Environment=HOME=%h
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -lc 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; exec "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/sync_new_reports.sh"'
 TimeoutStartSec=7200

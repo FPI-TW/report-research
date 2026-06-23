@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # 排程同步殼：掛載檢查 → rsync NAS→本地（擷取 delta）→ 增量匯入。
 # 設計給 systemd oneshot；nice/ionice 降優先序，PID lock 防重疊。
-set -uo pipefail
-cd /mnt/c/Users/User/Desktop/Project/report-mark
+set -euo pipefail
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$ROOT"
 
 MOUNT=/mnt/nas-research
 SRC="$MOUNT/02.研究資源/研報自動匯入/"
@@ -11,10 +14,18 @@ DATE=$(date +%Y%m%d)
 LOG="data/sync_run_${DATE}.log"
 DELTA="data/sync_delta_$(date +%Y%m%d_%H%M%S).txt"
 LOCK="data/.sync_new_reports.lock"
-UV=/home/kashionz/.local/bin/uv
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 mkdir -p data
+
+UV="${UV:-}"
+if [ -z "$UV" ]; then
+  UV=$(command -v uv || true)
+fi
+if [ -z "$UV" ]; then
+  log "找不到 uv；請確認 PATH 或以環境變數 UV 指定路徑"
+  exit 1
+fi
 
 # 防重入：上一輪仍在跑就跳過
 if [ -e "$LOCK" ] && kill -0 "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null; then

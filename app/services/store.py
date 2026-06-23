@@ -279,13 +279,69 @@ async def search_chunks_meta(
     return rows.all()
 
 
+def _lexical_sql(
+    num_patterns: int,
+    extra_conds: list[str],
+    per_report: bool,
+    limit: Optional[int] = 200,
+) -> str:
+    """組 lexical 召回 SQL。per_report=True 時每報告只取最近距離 chunk（DISTINCT ON）。
+
+    per_report=False 時結構與原查詢完全一致（問答路徑沿用，不可變更語意）。
+    """
+    conds = [f"c.content_norm LIKE :t{i}" for i in range(num_patterns)] + extra_conds
+    where = " AND ".join(conds)
+    final_limit = "\n        LIMIT :limit" if limit is not None else ""
+    if per_report:
+        return f"""
+        WITH lex_base AS MATERIALIZED (
+            SELECT c.id, c.report_id, c.chunk_index, c.content, c.embedding
+            FROM research.report_chunk c
+            JOIN research.research_report r ON r.id = c.report_id
+            WHERE {where}
+            LIMIT :cap
+        ),
+        lex_ranked AS MATERIALIZED (
+            SELECT c.id, c.report_id, c.chunk_index, c.content, c.embedding,
+                   c.embedding <=> CAST(:q AS vector) AS distance
+            FROM lex_base c
+        ),
+        lex AS MATERIALIZED (
+            SELECT DISTINCT ON (c.report_id)
+                   c.id, c.report_id, c.chunk_index, c.content, c.embedding, c.distance
+            FROM lex_ranked c
+            ORDER BY c.report_id, c.distance
+        )
+        SELECT {_meta_columns("l")},
+               l.distance
+        FROM lex l
+        JOIN research.research_report r ON r.id = l.report_id
+        ORDER BY l.distance{final_limit}
+    """
+    return f"""
+        WITH lex AS MATERIALIZED (
+            SELECT c.id, c.report_id, c.chunk_index, c.content, c.embedding
+            FROM research.report_chunk c
+            JOIN research.research_report r ON r.id = c.report_id
+            WHERE {where}
+            LIMIT :cap
+        )
+        SELECT {_meta_columns("l")},
+               l.embedding <=> CAST(:q AS vector) AS distance
+        FROM lex l
+        JOIN research.research_report r ON r.id = l.report_id
+        ORDER BY distance{final_limit}
+    """
+
+
 async def search_chunks_lexical(
     session: AsyncSession,
     query_embedding: list[float],
     term_patterns: list[str],
-    limit: int = 200,
+    limit: Optional[int] = 200,
     cap: int = 2000,
     *,
+    per_report: bool = False,
     market: Optional[str] = None,
     instrument_type: Optional[str] = None,
     relates_stock: Optional[bool] = None,
@@ -296,30 +352,20 @@ async def search_chunks_lexical(
 
     回傳列結構與 search_chunks_meta 相同。MATERIALIZED CTE 先過濾（走 trgm GIN
     索引），再對最多 cap 列算精確距離，避免 planner 因 ORDER BY 走 HNSW。
+
+    per_report=True 時，每篇報告只回最近的 chunk（DISTINCT ON c.report_id）；
+    `limit=None` 可省略最終 lexical 報告數上限；預設 False＝現況，不變動語意。
     """
     if not term_patterns:
         return []
-    params: dict = {"q": _vec_literal(query_embedding), "limit": limit, "cap": cap}
-    conds = [f"c.content_norm LIKE :t{i}" for i in range(len(term_patterns))]
+    params: dict = {"q": _vec_literal(query_embedding), "cap": cap}
+    if limit is not None:
+        params["limit"] = limit
     for i, pat in enumerate(term_patterns):
         params[f"t{i}"] = pat
-    conds += _meta_filters(
+    extra = _meta_filters(
         params, market, instrument_type, relates_stock, relates_futures, report_type
     )
-    sql = f"""
-        WITH lex AS MATERIALIZED (
-            SELECT c.id, c.report_id, c.chunk_index, c.content, c.embedding
-            FROM research.report_chunk c
-            JOIN research.research_report r ON r.id = c.report_id
-            WHERE {" AND ".join(conds)}
-            LIMIT :cap
-        )
-        SELECT {_meta_columns("l")},
-               l.embedding <=> CAST(:q AS vector) AS distance
-        FROM lex l
-        JOIN research.research_report r ON r.id = l.report_id
-        ORDER BY distance
-        LIMIT :limit
-    """
+    sql = _lexical_sql(len(term_patterns), extra, per_report, limit=limit)
     rows = await session.execute(text(sql), params)
     return rows.all()

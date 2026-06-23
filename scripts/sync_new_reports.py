@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 SRC_LOCAL = ROOT / "研報自動匯入"
 TAGS_DIR = ROOT / "data" / "tags"
 ALL_JSONL = ROOT / "data" / "extracted" / "all.jsonl"
@@ -141,7 +142,6 @@ def _iter_targets(args) -> list[Path]:
 
 async def _run(args) -> None:
     import time
-    from datetime import date
 
     from sqlalchemy import text as sql_text
 

@@ -62,5 +62,16 @@ IMPORT_RC=$?
 log "匯入結束 rc=$IMPORT_RC"
 if [ "$IMPORT_RC" -ne 0 ]; then log "匯入失敗（保留 delta 供排查）→ 結束"; exit 1; fi
 
+# 4) 本次有新研報入庫才補摘要（best-effort：失敗只記 log，不擋 sync）
+INGESTED=$(cat data/.sync_last_ingested 2>/dev/null || echo 0)
+if [ "${INGESTED:-0}" -gt 0 ]; then
+  log "本次新增 ${INGESTED} 篇 → 生成摘要（Sonnet，補 summary IS NULL）"
+  nice -n 19 ionice -c3 "$UV" run python scripts/generate_summaries.py \
+    ${SYNC_SUMMARY_WORKERS:+--workers "$SYNC_SUMMARY_WORKERS"} >>"$LOG" 2>&1 \
+    || log "摘要生成非零退出（best-effort，已略過）"
+else
+  log "本次無新研報入庫 → 跳過摘要"
+fi
+
 rm -f "$DELTA"
 log "=== sync done ==="

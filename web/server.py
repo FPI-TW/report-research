@@ -505,6 +505,7 @@ async def search(
             relates_stock=relates_stock or None,
             relates_futures=relates_futures or None,
             report_type=rtype,
+            # 不傳 k：dense_scan 已覆蓋掃描深度（檢索分頁用固定深召回），k 僅問答路徑用
             dense_scan=DENSE_SCAN_SEARCH,
             lex_limit=LEX_LIMIT_SEARCH,
             lex_cap=LEX_CAP_SEARCH,

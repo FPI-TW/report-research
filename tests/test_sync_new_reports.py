@@ -26,6 +26,12 @@ def test_parse_rsync_delta_dedupes_preserving_order():
     assert out == [Path("/d/x.pdf"), Path("/d/y.PDF")]
 
 
+def test_parse_rsync_delta_dedupes_case_insensitively():
+    # 來源為大小寫不敏感檔系統；同檔不同大小寫應視為同一檔，保留首次出現的原始路徑
+    out = snr.parse_rsync_delta(["x.PDF", "x.pdf"], Path("/d"))
+    assert out == [Path("/d/x.PDF")]
+
+
 def test_skip_before_tag_priority_order():
     assert snr.skip_before_tag(True, False, False) == "skip_admin"
     assert snr.skip_before_tag(False, True, False) == "skip_scanned"

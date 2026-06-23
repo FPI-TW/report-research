@@ -40,9 +40,10 @@ def parse_rsync_delta(
             continue
         if Path(name).suffix.lower() not in exts:
             continue
-        if name in seen:
+        key = name.lower()
+        if key in seen:
             continue
-        seen.add(name)
+        seen.add(key)
         out.append(dst_root / name)
     return out
 

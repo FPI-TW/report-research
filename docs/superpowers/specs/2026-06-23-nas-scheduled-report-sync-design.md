@@ -13,15 +13,16 @@
 
 - **本機即正式機**：這台 WSL 跑 systemd，`report-mark-web.service`（uvicorn `web.server:app`，BGE-M3 常駐 :8097）為線上服務；systemd timer 機制可用。服務以 `User=kashionz` 純 Linux-native 啟動，不依賴 Windows interop。
 - **共享尚未掛載**：WSL 目前只掛 C 槽（`/mnt/c`）。本地 `研報自動匯入/`（15G、16002 檔）是當初批次匯入的本地副本，非 NAS 即時鏡像。
-- **網路可達、只缺認證**：NAS 192.168.1.100 ping 通、SMB 445 通，本機 Windows 192.168.1.128 同網段；`Test-Path` 共享為 False、`net use` 無連線 → 需一次性建立可重用認證。
+- **網路可達、憑證已存在**：NAS 192.168.1.100 ping 通、SMB 445 通，本機 Windows 192.168.1.128 同網段（WORKGROUP，非網域）。Windows 憑證管理員**已存一筆** `Domain:target=192.168.1.100`、使用者「Jacky Yeh」的密碼（當初複製 15G 即用它）。實測以該快取憑證 `Test-Path` 共享 → **可達、16007 檔**，含當日新研報。
+  - 重點：該憑證是 Windows「網域密碼」型，**無法取回明文** → 因此 Linux `mount.cifs`（需明文密碼）不可行；改走 **drvfs**，透過 Windows redirector 自動沿用此快取憑證、**免明文密碼**。
 - **去重很穩**：`file_hash` = 檔案內容 SHA-256（`app/services/extract.py:file_sha256`）。DB 以 `file_hash` 去重 upsert（`app/services/store.py`），同檔重複/改名都會被跳過。
 - **匯入成本**：嵌入 BGE-M3 為 CPU-bound（~3 篇/分，10 核全滿），與線上服務搶 CPU 時可能短暫 502。
-- **工具盤點**：`rsync` 3.2.7 有；`cifs-utils` 未裝（需一次性 `apt install`）；DB 預設 DSN `postgresql+asyncpg://postgres:postgres@localhost:5436/research`（可由 `DATABASE_URL` 覆寫）。
+- **工具盤點**：`rsync` 3.2.7 有；drvfs 為 WSL 內建檔案系統（`/mnt/c` 即 drvfs，UNC 掛載同型）；DB 預設 DSN `postgresql+asyncpg://postgres:postgres@localhost:5436/research`（可由 `DATABASE_URL` 覆寫）。
 
 ## 設計決策（已與使用者確認）
 
 1. **存取方式**：先把 NAS 新檔同步到本地 `研報自動匯入/`，再對本地新檔跑管線（不直接讀網路磁碟）。
-2. **同步機制**：Linux **cifs 唯讀掛載 + rsync**（不走 Windows robocopy/interop）。
+2. **同步機制**：**drvfs 唯讀掛載 + rsync**。drvfs 經 Windows redirector 自動沿用 Credential Manager 既有快取憑證 → **免明文密碼**（解決「沒有 NAS 帳密」的卡點，且 cifs 因密碼不可取回而不可行）。
 3. **排程頻率**：每隔幾小時（預設 **每 3 小時**，`OnCalendar` 可調）。
 4. **架構**：增量腳本 + systemd timer（oneshot），每次跑才載入 BGE-M3、跑完釋放；以 `nice`/`ionice` 降優先序，避免長期佔第二份模型記憶體。
 
@@ -37,7 +38,7 @@ report-mark-sync.timer  (OnCalendar：每 3 小時)
   └─ report-mark-sync.service  (Type=oneshot；nice -n 19 + ionice -c3)
        scripts/sync_new_reports.sh  ── 編排殼
          1. PID lock（上一輪未完則跳過本輪，不重疊）
-         2. 確保 cifs 掛載存在（systemd mount unit 已掛則略過；未掛則嘗試掛）
+         2. 確保 drvfs 掛載存在（systemd mount unit 已掛則略過；未掛則嘗試掛）
          3. rsync NAS→本地 研報自動匯入/，--out-format 擷取「本次新傳檔案清單」
             → 寫入 data/sync_delta_<ts>.txt
          4. uv run python scripts/sync_new_reports.py --delta data/sync_delta_<ts>.txt
@@ -69,21 +70,23 @@ report-mark-sync.timer  (OnCalendar：每 3 小時)
 | `scripts/sync_new_reports.sh` | 編排殼：PID lock + nice/ionice + 掛載檢查 + rsync 擷取 delta + 呼叫處理器 + log。 |
 | `deploy/systemd/report-mark-sync.service` | oneshot；`User=kashionz`、PATH drop-in（含 `claude`/`uv`/node）、WorkingDirectory 專案根、`ExecStart` 跑 `.sh`。 |
 | `deploy/systemd/report-mark-sync.timer` | `OnCalendar=*-*-* 00/3:00:00`（每 3 小時）、`Persistent=true`（錯過補跑）。 |
-| `deploy/systemd/mnt-nas-research.mount` | cifs 唯讀掛載 NAS 共享 → 本地掛載點；`x-systemd` 自動掛載；憑證走 `credentials=` 檔。 |
+| `deploy/systemd/mnt-nas\x2dresearch.mount` | drvfs 唯讀掛載 NAS 共享 → `/mnt/nas-research`；`Type=drvfs`、`Options=ro,uid=1000,gid=1000`；憑證由 Windows redirector 自動沿用快取憑證（無 `credentials=` 檔）。 |
 | `Makefile` 目標 | `sync-once`（手動跑一次同步，便於測試/補跑）。 |
-| `docs/` 部署說明 | cifs-utils 安裝、憑證檔建立、systemd 安裝啟用步驟、維運排錯。 |
+| `docs/` 部署說明 | drvfs 掛載驗證、systemd 安裝啟用步驟、快取憑證維運排錯。 |
 
-### 掛載點與憑證（一次性前置，需使用者提供 NAS 帳密）
+### 掛載點與憑證（免明文密碼，沿用 Windows 快取憑證）
 
 - 掛載點：`/mnt/nas-research`（唯讀）。本地同步目的地仍為專案內 `研報自動匯入/`。
-- 憑證檔：`/etc/report-mark-nas.cred`，`root:root 0600`，內容：
+- drvfs 掛載指令（root）：
   ```
-  username=<NAS 帳號>
-  password=<NAS 密碼>
-  domain=<選填工作群組/網域>
+  mount -t drvfs '\\192.168.1.100\投資研究處' /mnt/nas-research -o ro,uid=1000,gid=1000
   ```
-- cifs 掛載選項：`ro,credentials=/etc/report-mark-nas.cred,iocharset=utf8,uid=kashionz,gid=kashionz,vers=3.0`（CJK 路徑需 `iocharset=utf8`；`vers` 視 NAS 實際 SMB 版本微調）。
-- 一次性：`sudo apt install cifs-utils`。
+  目標子夾即 `/mnt/nas-research/02.研究資源/研報自動匯入`。
+- **憑證**：不需明文密碼、不需憑證檔。drvfs 經 Windows SMB redirector 存取 UNC，自動沿用 Credential Manager 既有「Jacky Yeh」快取憑證。
+- **權限/自動掛載（二選一）**：
+  - (建議) systemd `.mount` unit（`Type=drvfs`）：systemd 以 root 掛載，timer 服務 `Requires=` 它 → 開機/觸發時自動拉起，無需 sudoers。
+  - (替代) orchestration `.sh` 內 `mountpoint -q /mnt/nas-research || sudo mount ...`，搭配一條 `kashionz ALL=(root) NOPASSWD: /usr/bin/mount -t drvfs \\\\192.168.1.100\\投資研究處 /mnt/nas-research *` sudoers 規則。
+- **部署時需實測一次**：drvfs UNC 掛載由 systemd（root/PID1）觸發時是否正常（本機探勘時 sudo 被擋無法預驗）。若 systemd 觸發掛載異常，退回「替代」方案或由 orchestration 在使用者 session 內掛載。
 
 ## 錯誤處理 / 維運
 
@@ -93,7 +96,7 @@ report-mark-sync.timer  (OnCalendar：每 3 小時)
 - **NUL 位元組**：沿用既有處理——`full_text` 走 `raw_text.replace("\x00","")`，tag prompt 也剝 NUL（避免 PDF 抽出文字含 `\x00` 永久失敗）。
 - **重疊防護**：PID lock（沿用 `resume_corpus.sh` 的 `kill -0` 檢查模式）。
 - **資源干擾**：`nice -n 19` + `ionice -c3`；增量量小 → CPU 飽和時間短；嵌入 `--batch-size` 可調。
-- **開機自復原**：cifs mount unit 與 timer 由 systemd 自動拉起，無需手動（不像舊 portproxy）。
+- **開機自復原**：drvfs mount unit 與 timer 由 systemd 自動拉起，無需手動（不像舊 portproxy）。
 - **claude CLI 前置**：service 帶 PATH drop-in 確保 `claude` 可被 systemd 環境找到（沿用過往 systemd 無 PATH 導致問答壞掉的教訓）。
 
 ## 測試策略
@@ -114,8 +117,10 @@ report-mark-sync.timer  (OnCalendar：每 3 小時)
 
 ## 部署步驟（落地時）
 
-1. `sudo apt install cifs-utils`
-2. 建立 `/etc/report-mark-nas.cred`（600，填 NAS 帳密）。
-3. 安裝三個 systemd unit → `systemctl daemon-reload` → `enable --now` mount 與 timer。
-4. `make sync-once` 手動驗證一次（先確認掛載 + rsync delta + 入庫）。
+1. 安裝三個 systemd unit（`.mount` / `.service` / `.timer`）→ `sudo systemctl daemon-reload`。
+2. 實測 drvfs 掛載：`sudo systemctl start mnt-nas\x2dresearch.mount` → `ls /mnt/nas-research/02.研究資源/研報自動匯入 | head`，確認免密碼讀得到。
+3. `sudo systemctl enable --now mnt-nas\x2dresearch.mount report-mark-sync.timer`。
+4. `make sync-once` 手動驗證一次（掛載 → rsync delta → 入庫）。
 5. 觀察首次 timer 觸發 log（`data/sync_run_*.log`）。
+
+> 無 NAS 明文密碼也可落地：全程沿用 Windows 已快取的「Jacky Yeh」憑證；唯一前提是該憑證在 Credential Manager 內持續有效（被清除或改密時需重新在 Windows 端連線一次以重存）。

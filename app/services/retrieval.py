@@ -46,12 +46,16 @@ async def hybrid_search(
     q: str,
     query_embedding: list[float],
     *,
-    k: int,
+    k: int = 10,
     market: Optional[str] = None,
     instrument_type: Optional[str] = None,
     relates_stock: Optional[bool] = None,
     relates_futures: Optional[bool] = None,
     report_type: Optional[str] = None,
+    dense_scan: Optional[int] = None,
+    lex_limit: Optional[int] = None,
+    lex_cap: Optional[int] = None,
+    lex_per_report: bool = False,
 ) -> list[tuple[int, float, tuple]]:
     """雙路召回 + 去重 + 融合排序。
 
@@ -66,14 +70,19 @@ async def hybrid_search(
         relates_futures=relates_futures,
         report_type=report_type,
     )
-    dense_rows = await search_chunks_meta(
-        session, query_embedding, scan=max(DENSE_SCAN_MIN, k * 8), **filters
-    )
+    scan = dense_scan if dense_scan is not None else max(DENSE_SCAN_MIN, k * 8)
+    dense_rows = await search_chunks_meta(session, query_embedding, scan=scan, **filters)
     lex_rows = []
     if terms:
         patterns = ["%" + t.translate(_LIKE_ESC) + "%" for t in terms]
         lex_rows = await search_chunks_lexical(
-            session, query_embedding, patterns, limit=LEX_LIMIT, cap=LEX_CAP, **filters
+            session,
+            query_embedding,
+            patterns,
+            limit=lex_limit if lex_limit is not None else LEX_LIMIT,
+            cap=lex_cap if lex_cap is not None else LEX_CAP,
+            per_report=lex_per_report,
+            **filters,
         )
 
     seen: set[str] = set()

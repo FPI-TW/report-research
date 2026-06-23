@@ -14,12 +14,13 @@ LOCK="data/.sync_new_reports.lock"
 UV=/home/kashionz/.local/bin/uv
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+mkdir -p data
 
 # 防重入：上一輪仍在跑就跳過
 if [ -e "$LOCK" ] && kill -0 "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null; then
   log "已有 sync 在跑（lock=$(cat "$LOCK")），本次跳過"; exit 0
 fi
-echo $$ > "$LOCK"
+echo "$$" > "$LOCK"
 trap 'rm -f "$LOCK"' EXIT
 
 log "=== sync start (pid=$$) ==="
@@ -46,7 +47,9 @@ if [ "$RC" -ne 0 ]; then log "rsync 失敗 → 結束"; exit 1; fi
 # 3) 增量匯入（nice/ionice 降優先序，勿搶線上服務）
 log "增量匯入 delta…"
 nice -n 19 ionice -c3 "$UV" run python scripts/sync_new_reports.py --delta "$DELTA" >>"$LOG" 2>&1
-log "匯入結束 rc=$?"
+IMPORT_RC=$?
+log "匯入結束 rc=$IMPORT_RC"
+if [ "$IMPORT_RC" -ne 0 ]; then log "匯入失敗（保留 delta 供排查）→ 結束"; exit 1; fi
 
 rm -f "$DELTA"
 log "=== sync done ==="

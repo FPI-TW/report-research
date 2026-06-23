@@ -11,6 +11,7 @@ tier 是硬保證：字面全中永遠排在純語意命中之前，不靠 bonus
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,3 +99,82 @@ async def hybrid_search(
 
     scored.sort(key=lambda s: (s[0], s[1]), reverse=True)
     return scored
+
+
+BAND_WIDTH = 0.05
+# 檢索分頁專用召回深度（與問答路徑的 k*8 脫鉤；見 hybrid_search 選用參數）
+DENSE_SCAN_SEARCH = 600
+LEX_LIMIT_SEARCH = 1000
+LEX_CAP_SEARCH = 8000
+
+
+@dataclass
+class RankedReport:
+    """一篇報告的聚合結果：代表性 tier/分數取最佳 chunk，passages 依 chunk 順序累積。"""
+
+    report_id: str
+    tier: int
+    best_score: float
+    report_date: object  # datetime.date | None
+    meta_row: tuple
+    passages: list = field(default_factory=list)  # list[tuple[float, tuple]]
+    match_count: int = 0
+
+
+def _date_ordinal(d) -> int:
+    """日期 → 序數；None → 0（在反向排序中最小，故殿後）。"""
+    return d.toordinal() if d is not None else 0
+
+
+def rank_reports(scored, *, sort: str = "relevance") -> list[RankedReport]:
+    """把 (tier, fused, row) chunk 清單分組成報告並排序。
+
+    scored 已依 (tier, fused) 由高到低排序，故每篇首見 chunk 即其最佳 tier/分數。
+    - relevance：(tier, band, 日期, fused) 由高到低——相關度分層內最新優先（band=0.05）。
+    - date_desc：全召回報告依日期新→舊（None 殿後）。
+    - date_asc：全召回報告依日期舊→新（None 殿後）。
+    report_id 作為最終 tiebreak，確保分頁切片穩定、不跨頁重複。
+    """
+    groups: dict[str, RankedReport] = {}
+    for tier, fused, row in scored:
+        rid = row[1]
+        g = groups.get(rid)
+        if g is None:
+            g = RankedReport(
+                report_id=rid,
+                tier=tier,
+                best_score=fused,
+                report_date=row[6],
+                meta_row=row,
+            )
+            groups[rid] = g
+        g.match_count += 1
+        g.passages.append((fused, row))
+
+    reports = list(groups.values())
+    if sort == "date_desc":
+        reports.sort(
+            key=lambda g: (_date_ordinal(g.report_date), g.best_score, g.report_id),
+            reverse=True,
+        )
+    elif sort == "date_asc":
+        reports.sort(
+            key=lambda g: (
+                g.report_date is None,  # False(0) 在前、None(True=1) 殿後
+                _date_ordinal(g.report_date),
+                -g.best_score,
+                g.report_id,
+            )
+        )
+    else:  # relevance：相關度分層內最新優先
+        reports.sort(
+            key=lambda g: (
+                g.tier,
+                int(g.best_score / BAND_WIDTH + 1e-9),  # +eps 避開浮點邊界誤判
+                _date_ordinal(g.report_date),
+                g.best_score,
+                g.report_id,
+            ),
+            reverse=True,
+        )
+    return reports

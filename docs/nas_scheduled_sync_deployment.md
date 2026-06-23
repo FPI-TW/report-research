@@ -25,9 +25,13 @@ ls "/mnt/nas-research/02.研究資源/研報自動匯入" | head
 
 ## 安裝排程單元
 
+> 以下指令皆從專案根目錄執行（路徑為相對 `deploy/systemd/...`）。
+> 用 `install -m 0644` 而非 `cp`：避免把 WSL/drvfs 繼承的 world-writable/executable
+> 權限位帶進 `/etc/systemd/system/`（unit 檔應為 0644）。
+
 ```bash
-sudo cp deploy/systemd/report-mark-sync.service deploy/systemd/report-mark-sync.timer \
-  /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/report-mark-sync.service \
+  deploy/systemd/report-mark-sync.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-sync.timer
 systemctl list-timers report-mark-sync.timer

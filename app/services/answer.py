@@ -32,9 +32,9 @@ from app.services.textnorm import clean_text
 logger = logging.getLogger(__name__)
 
 # 脈絡規模：取前 N 篇、每篇至多 M 段、總字數上限（控延遲與 prompt 大小）。env 化便於壓測調參。
-MAX_REPORTS = int(os.getenv("ASK_MAX_REPORTS", "6"))
+MAX_REPORTS = int(os.getenv("ASK_MAX_REPORTS", "8"))
 MAX_PASSAGES_PER_REPORT = int(os.getenv("ASK_MAX_PASSAGES", "3"))
-MAX_CONTEXT_CHARS = int(os.getenv("ASK_MAX_CONTEXT_CHARS", "7000"))
+MAX_CONTEXT_CHARS = int(os.getenv("ASK_MAX_CONTEXT_CHARS", "9000"))
 RETRIEVAL_K = int(os.getenv("ASK_RETRIEVAL_K", "8"))
 # 問答路徑專用的 dense 召回深度：顯式傳給 hybrid_search（不改其預設），多掃最近鄰、
 # 降低「漏研報」；檢索頁走自己的參數，完全不受影響。

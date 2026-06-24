@@ -103,6 +103,82 @@ class ScaleUpDefaultsTests(unittest.TestCase):
         self.assertIn("綜合多篇研報", SYSTEM_PROMPT)
 
 
+class RelevanceFloorTests(unittest.TestCase):
+    NOW = datetime(2026, 6, 24, tzinfo=timezone.utc)
+    D = date(2026, 6, 20)  # 近期，factor 高，不觸發既有極舊截斷
+
+    def test_tier0_below_floor_excluded_beyond_min(self):
+        scored = [
+            (0, 0.70, make_row("r1", "1.pdf", "TW", "強1", self.D)),
+            (0, 0.69, make_row("r2", "2.pdf", "TW", "強2", self.D)),
+            (0, 0.68, make_row("r3", "3.pdf", "TW", "強3", self.D)),
+            (0, 0.50, make_row("r4", "4.pdf", "TW", "弱4", self.D)),  # < floor
+            (0, 0.45, make_row("r5", "5.pdf", "TW", "弱5", self.D)),  # < floor
+        ]
+        sources, _ = build_context(
+            scored, now=self.NOW, min_reports=3, relevance_floor=0.62
+        )
+        self.assertEqual([s.report_id for s in sources], ["r1", "r2", "r3"])
+
+    def test_min_reports_guaranteed_even_below_floor(self):
+        scored = [
+            (0, 0.50, make_row("r1", "1.pdf", "TW", "弱1", self.D)),
+            (0, 0.48, make_row("r2", "2.pdf", "TW", "弱2", self.D)),
+            (0, 0.45, make_row("r3", "3.pdf", "TW", "弱3", self.D)),
+        ]
+        sources, _ = build_context(
+            scored, now=self.NOW, min_reports=2, relevance_floor=0.62
+        )
+        self.assertEqual([s.report_id for s in sources], ["r1", "r2"])
+
+    def test_tier1_below_floor_kept(self):
+        scored = [
+            (1, 0.40, make_row("r4", "4.pdf", "TW", "字面命中低分", self.D)),
+            (0, 0.40, make_row("r5", "5.pdf", "TW", "純語意低分", self.D)),
+        ]
+        sources, _ = build_context(
+            scored, now=self.NOW, min_reports=0, relevance_floor=0.62
+        )
+        self.assertEqual([s.report_id for s in sources], ["r4"])
+
+
+class StaleCapTests(unittest.TestCase):
+    NOW = datetime(2026, 6, 24, tzinfo=timezone.utc)
+    RECENT = date(2026, 6, 20)        # 4 天：新
+    OLD = date(2025, 11, 15)          # ~221 天：過舊(>180)但非極舊(factor>0.1，不被既有截斷丟)
+
+    def test_old_reports_capped(self):
+        scored = [
+            (0, 0.70, make_row("f1", "f1.pdf", "TW", "新1", self.RECENT)),
+            (0, 0.69, make_row("f2", "f2.pdf", "TW", "新2", self.RECENT)),
+            (0, 0.68, make_row("o1", "o1.pdf", "TW", "舊1", self.OLD)),
+            (0, 0.67, make_row("o2", "o2.pdf", "TW", "舊2", self.OLD)),
+            (0, 0.66, make_row("o3", "o3.pdf", "TW", "舊3", self.OLD)),
+            (0, 0.67, make_row("o4", "o4.pdf", "TW", "舊4", self.OLD)),
+        ]
+        sources, _ = build_context(
+            scored, now=self.NOW, min_reports=0, relevance_floor=0.0,
+            stale_age_days=180, max_stale=2,
+        )
+        ids = [s.report_id for s in sources]
+        self.assertEqual(len([i for i in ids if i.startswith("o")]), 2)
+        self.assertIn("f1", ids)
+        self.assertIn("f2", ids)
+
+    def test_min_reports_exempt_from_stale_cap(self):
+        scored = [
+            (0, 0.70, make_row("o1", "o1.pdf", "TW", "舊1", self.OLD)),
+            (0, 0.69, make_row("o2", "o2.pdf", "TW", "舊2", self.OLD)),
+            (0, 0.68, make_row("o3", "o3.pdf", "TW", "舊3", self.OLD)),
+            (0, 0.67, make_row("o4", "o4.pdf", "TW", "舊4", self.OLD)),
+        ]
+        sources, _ = build_context(
+            scored, now=self.NOW, min_reports=3, relevance_floor=0.0,
+            stale_age_days=180, max_stale=1,
+        )
+        self.assertEqual([s.report_id for s in sources], ["o1", "o2", "o3"])
+
+
 class BuildContextTests(unittest.TestCase):
     def test_numbers_reports_in_order(self):
         scored = [

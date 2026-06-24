@@ -73,6 +73,16 @@ ASK_FRESH_FACTOR = float(os.getenv("ASK_FRESH_FACTOR", "0.5"))  # ~半衰期內�
 ASK_STALE_FACTOR = float(os.getenv("ASK_STALE_FACTOR", "0.1"))  # ~300 天以上
 ASK_MIN_FRESH_BEFORE_CUTOFF = int(os.getenv("ASK_MIN_FRESH_BEFORE_CUTOFF", "2"))
 
+# 相關度下限（tier 感知，寧缺勿濫）：純語意(tier 0)研報的 best_fused 最低門檻；
+# tier≥1（字面命中）一律放行。fused 分數壓縮，故此為「弱命中防護」非精準切刀。
+ASK_RELEVANCE_FLOOR = float(os.getenv("ASK_RELEVANCE_FLOOR", "0.62"))
+# 保底篇數：前 N 篇不受相關度/過舊閘限制，避免邊界但合理的問題被餓死。
+ASK_MIN_REPORTS = int(os.getenv("ASK_MIN_REPORTS", "3"))
+# 過舊篇數上限：脈絡中「年齡 > STALE_AGE_DAYS 天」的研報最多 MAX_STALE 篇，
+# 把多出的槽留給較新的相關研報（與既有極舊軟截斷並存互補）。
+ASK_STALE_AGE_DAYS = int(os.getenv("ASK_STALE_AGE_DAYS", "180"))
+ASK_MAX_STALE_REPORTS = int(os.getenv("ASK_MAX_STALE_REPORTS", "4"))
+
 OFF_TOPIC_MESSAGE = (
     "這個問題與廷豐研報的語料無關，請改問與研報內容相關的問題"
     "（例如特定市場、個股、期貨或總經主題）。"
@@ -195,6 +205,10 @@ def build_context(
     max_chars: int = MAX_CONTEXT_CHARS,
     now: datetime | None = None,
     half_life_days: float = RECENCY_HALF_LIFE_DAYS,
+    min_reports: int = ASK_MIN_REPORTS,
+    relevance_floor: float = ASK_RELEVANCE_FLOOR,
+    stale_age_days: int = ASK_STALE_AGE_DAYS,
+    max_stale: int = ASK_MAX_STALE_REPORTS,
 ) -> tuple[list[Source], str]:
     """把檢索結果整理成『來源清單 + 帶編號的脈絡文字』，並強烈偏好較新的報告。
 
@@ -258,11 +272,24 @@ def build_context(
     blocks: list[str] = []
     total = 0
     n = 0
+    stale_used = 0
     for rid, info in reports:
         if n >= max_reports:
             break
         if cutoff_active and factors[rid] < ASK_STALE_FACTOR:
-            continue  # 有足夠新資料 → 跳過過舊報告
+            continue  # 既有極舊軟截斷：有足夠新資料 → 跳過極舊報告
+        rdate_d = _as_date(info["report_date"])
+        is_stale = (
+            rdate_d is not None and (now_date - rdate_d).days > stale_age_days
+        )
+        # 保底 min_reports 篇不受相關度/過舊閘限制（避免邊界但合理的問題被餓死）
+        if n >= min_reports:
+            # 相關度下限（tier 感知）：字面命中(tier≥1)放行，純語意需 fused≥門檻
+            if info["best_tier"] < 1 and info["best_fused"] < relevance_floor:
+                continue
+            # 過舊配額：年齡 > stale_age_days 的研報最多 max_stale 篇
+            if is_stale and stale_used >= max_stale:
+                continue
         kept: list[str] = []
         for content in info["passages"]:
             if total and total + len(content) > max_chars:
@@ -272,6 +299,8 @@ def build_context(
         if not kept:
             continue
         n += 1
+        if is_stale:
+            stale_used += 1
         rdate = info["report_date"]
         rdate_s = rdate.isoformat() if hasattr(rdate, "isoformat") else (rdate or None)
         sources.append(

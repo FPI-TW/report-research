@@ -175,3 +175,116 @@ def resolve_filters(q: str, today: date) -> OverviewFilters:
     if not (stock_code or f.source or f.market or f.instrument_type):
         f.stock_name = _extract_stock_name(q)
     return f
+
+
+@dataclass
+class CorpusOverview:
+    total: int
+    date_min: date | None
+    date_max: date | None
+    by_market: list[tuple[str, int]] = field(default_factory=list)
+    by_instrument: list[tuple[str, int]] = field(default_factory=list)
+    by_source: list[tuple[str, int]] = field(default_factory=list)
+    by_report_type: list[tuple[str, int]] = field(default_factory=list)
+    top_stocks: list[tuple[str, int]] = field(default_factory=list)
+    samples: list[tuple[str, str, str | None, object]] = field(default_factory=list)
+    filters: OverviewFilters | None = None
+
+
+def _build_where(f: OverviewFilters) -> tuple[str, dict]:
+    """OverviewFilters → (WHERE 片段, params)，欄位皆以別名 r 限定。"""
+    conds = ["r.is_research = true"]
+    params: dict = {}
+    if f.source:
+        conds.append("r.source = :source")
+        params["source"] = f.source
+    if f.market:
+        conds.append("r.market = :market")
+        params["market"] = f.market
+    if f.instrument_type:
+        conds.append("r.instrument_types @> ARRAY[:it]::text[]")
+        params["it"] = f.instrument_type
+    if f.date_from:
+        conds.append("r.report_date >= :date_from")
+        params["date_from"] = f.date_from
+    if f.date_to:
+        conds.append("r.report_date <= :date_to")
+        params["date_to"] = f.date_to
+    if f.stock_code:
+        conds.append("(r.stock_code = :sc OR :sc = ANY(r.stock_targets))")
+        params["sc"] = f.stock_code
+    if f.stock_name:
+        conds.append("r.company_name ILIKE :sname")
+        params["sname"] = f"%{f.stock_name}%"
+    return " AND ".join(conds), params
+
+
+async def aggregate_facets(
+    session: AsyncSession, f: OverviewFilters, *, sample_k: int = 5
+) -> CorpusOverview:
+    """對 research.research_report 跑分面聚合（WHERE = is_research + 解析到的條件）。"""
+    where, params = _build_where(f)
+    base = f"FROM research.research_report r WHERE {where}"
+
+    totals = (
+        await session.execute(
+            text(f"SELECT count(*), min(r.report_date), max(r.report_date) {base}"),
+            params,
+        )
+    ).first()
+    total = int(totals[0]) if totals else 0
+
+    async def grouped(expr: str, extra_from: str = "") -> list[tuple[str, int]]:
+        rows = (
+            await session.execute(
+                text(
+                    f"SELECT {expr} AS k, count(*) AS n "
+                    f"FROM research.research_report r{extra_from} WHERE {where} "
+                    f"GROUP BY k ORDER BY n DESC, k"
+                ),
+                params,
+            )
+        ).all()
+        return [(str(k), int(n)) for k, n in rows if k is not None]
+
+    by_market = await grouped("r.market")
+    by_instrument = await grouped("it", extra_from=", unnest(r.instrument_types) it")
+    # 始終執行查詢（保持 execute 呼叫順序固定），但 f.source 已設時回傳 [] 避免重複
+    _by_source_raw = await grouped("r.source")
+    by_source = [] if f.source else _by_source_raw
+    by_report_type = await grouped("COALESCE(NULLIF(r.report_type, ''), '(未標註)')")
+    top_stocks_rows = (
+        await session.execute(
+            text(
+                "SELECT st AS k, count(*) AS n "
+                "FROM research.research_report r, unnest(r.stock_targets) st "
+                f"WHERE {where} GROUP BY st ORDER BY n DESC, st LIMIT 10"
+            ),
+            params,
+        )
+    ).all()
+    top_stocks = [(str(k), int(n)) for k, n in top_stocks_rows]
+
+    sample_rows = (
+        await session.execute(
+            text(
+                "SELECT r.id::text, r.file_name, r.market, r.report_date "
+                f"{base} ORDER BY r.report_date DESC NULLS LAST LIMIT :k"
+            ),
+            {**params, "k": sample_k},
+        )
+    ).all()
+    samples = [(rid, fn, mk, rd) for rid, fn, mk, rd in sample_rows]
+
+    return CorpusOverview(
+        total=total,
+        date_min=totals[1] if totals else None,
+        date_max=totals[2] if totals else None,
+        by_market=by_market,
+        by_instrument=by_instrument,
+        by_source=by_source,
+        by_report_type=by_report_type,
+        top_stocks=top_stocks,
+        samples=samples,
+        filters=f,
+    )

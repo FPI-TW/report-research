@@ -154,6 +154,11 @@ class PromptAndCitationTests(unittest.TestCase):
         ]
         self.assertEqual(cited_report_ids("[2][1][2]", sources), ["r1", "r2"])
 
+    def test_user_prompt_mentions_recency_preference(self):
+        # user_prompt 應引導模型優先採用較新研報（呼應「以最新研報為主」）
+        p = build_user_prompt("台積電?", "[1] 報告：甲.pdf\n內容。")
+        self.assertIn("新近度", p)
+
 
 class HistoryBlockTests(unittest.TestCase):
     def test_empty_turns_returns_empty_string(self):
@@ -243,10 +248,157 @@ class RecencyTests(unittest.TestCase):
         sources, _ = build_context(scored, now=self.NOW)
         self.assertEqual(sources[0].report_id, "dated")
 
+    def test_recency_beats_relevance_within_band(self):
+        # 同 tier、相關度落在同一 band（0.86 與 0.78）：較新者勝——
+        # 新近度是「層內」主排序維度，不再只是會被 fused 差距蓋過的微小加分。
+        scored = [
+            (0, 0.86, make_row("old", "舊.pdf", "TW", "記憶體報價。", date(2025, 6, 17))),
+            (0, 0.78, make_row("new", "新.pdf", "TW", "記憶體報價。", date(2026, 6, 10))),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        self.assertEqual(sources[0].report_id, "new")
+
+    def test_relevance_beats_recency_across_band(self):
+        # 相關度差距跨越 band（0.95 vs 0.60）：高相關的舊篇仍勝——
+        # 守住「不為了新而漏掉強相關研報」，新近度不會過度反轉相關度。
+        scored = [
+            (
+                0,
+                0.95,
+                make_row("strong_old", "強舊.pdf", "TW", "記憶體報價。", date(2025, 6, 17)),
+            ),
+            (
+                0,
+                0.60,
+                make_row("weak_new", "弱新.pdf", "TW", "記憶體報價。", date(2026, 6, 16)),
+            ),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        self.assertEqual(sources[0].report_id, "strong_old")
+
     def test_non_positive_half_life_does_not_crash(self):
         self.assertEqual(_recency_factor(date(2026, 6, 17), self.NOW.date(), 0), 1.0)
         self.assertEqual(_recency_factor(date(2026, 6, 17), self.NOW.date(), -1), 1.0)
         self.assertEqual(_recency_factor(None, self.NOW.date(), 0), 0.0)
+
+
+class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
+    """問答路徑顯式傳 dense_scan 給 hybrid_search（擴召回、不改共用函式預設）。"""
+
+    async def test_dense_scan_forwarded_from_ask_path(self):
+        from app.services import answer as ans
+
+        captured: dict = {}
+
+        async def recording_search(session, q, qvec, **k):
+            captured.update(k)
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_intent(question, **k):
+            return True
+
+        orig = (
+            ans.hybrid_search,
+            ans.embed_query_cached,
+            ans.stream_completion,
+            ans.SessionFactory,
+            ans.classify_intent,
+        )
+        ans.hybrid_search = recording_search
+        ans.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        try:
+            _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            (
+                ans.hybrid_search,
+                ans.embed_query_cached,
+                ans.stream_completion,
+                ans.SessionFactory,
+                ans.classify_intent,
+            ) = orig
+
+        self.assertEqual(captured.get("dense_scan"), ans.ASK_DENSE_SCAN)
+
+
+class StageTimerTests(unittest.TestCase):
+    def test_records_intervals_and_total(self):
+        from app.services.answer import _StageTimer
+
+        ticks = iter([100.0, 100.5, 101.2, 102.0])  # init, embed, retrieve, total
+        t = _StageTimer(clock=lambda: next(ticks))
+        t.mark("embed")
+        t.mark("retrieve")
+        self.assertEqual(t.stages["embed"], 500)
+        self.assertEqual(t.stages["retrieve"], 700)
+        self.assertEqual(t.total_ms(), 2000)
+
+    def test_stage_str_lists_stages(self):
+        from app.services.answer import _StageTimer
+
+        ticks = iter([0.0, 0.1, 0.2])
+        t = _StageTimer(clock=lambda: next(ticks))
+        t.mark("embed")
+        s = t.stage_str()
+        self.assertIn("embed=100", s)
+
+
+class SourceLatestTests(unittest.TestCase):
+    NOW = datetime(2026, 6, 17, tzinfo=timezone.utc)
+
+    def test_newest_source_flagged_latest(self):
+        # 日期最新的來源被標 is_latest（即使它因 tier 而非排在 [1]）
+        scored = [
+            (2, 0.90, make_row("a", "a.pdf", "TW", "封裝。", date(2025, 1, 1))),
+            (0, 0.80, make_row("b", "b.pdf", "TW", "封裝。", date(2026, 6, 10))),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        by_id = {s.report_id: s for s in sources}
+        self.assertTrue(by_id["b"].is_latest)
+        self.assertFalse(by_id["a"].is_latest)
+
+    def test_no_dates_no_latest(self):
+        scored = [
+            (0, 0.5, make_row("a", "a.pdf", "TW", "x。")),
+            (0, 0.4, make_row("b", "b.pdf", "TW", "y。")),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        self.assertFalse(any(s.is_latest for s in sources))
+
+
+class StaleCutoffTests(unittest.TestCase):
+    NOW = datetime(2026, 6, 17, tzinfo=timezone.utc)
+
+    def test_stale_excluded_when_enough_fresh(self):
+        # 有 ≥2 篇夠新（90 天內）→ 排除過舊報告（強烈偏好最新）
+        scored = [
+            (0, 0.80, make_row("f1", "新1.pdf", "TW", "記憶體報價。", date(2026, 6, 10))),
+            (0, 0.80, make_row("f2", "新2.pdf", "TW", "記憶體報價。", date(2026, 6, 1))),
+            (0, 0.80, make_row("s1", "舊.pdf", "TW", "記憶體報價。", date(2024, 1, 1))),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        rids = [s.report_id for s in sources]
+        self.assertIn("f1", rids)
+        self.assertIn("f2", rids)
+        self.assertNotIn("s1", rids)  # 過舊者被截斷
+
+    def test_stale_kept_when_few_fresh(self):
+        # 僅 1 篇夠新 → 不截斷（fail-open）：歷史性問題仍保留舊研報，不漏
+        scored = [
+            (0, 0.80, make_row("f1", "新.pdf", "TW", "記憶體報價。", date(2026, 6, 10))),
+            (0, 0.80, make_row("s1", "舊1.pdf", "TW", "記憶體報價。", date(2024, 1, 1))),
+            (0, 0.80, make_row("s2", "舊2.pdf", "TW", "記憶體報價。", date(2023, 6, 1))),
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        rids = [s.report_id for s in sources]
+        self.assertEqual(len(rids), 3)
+        self.assertIn("s1", rids)
+        self.assertIn("s2", rids)
 
 
 class _FakeSession:

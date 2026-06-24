@@ -87,6 +87,7 @@ function paintSources(turn) {
       <span class="ask-src-main">
         <span class="ask-src-name">${s.file_name}</span>
         ${s.report_date ? html`<span class="ask-src-date">${fmtDate(s.report_date)}</span>` : raw("")}
+        ${s.is_latest ? html`<span class="ask-src-latest">最新</span>` : raw("")}
       </span>
     </button>`).join("");
   el.innerHTML = html`<div class="ask-src-title">引用來源</div>` + rows;
@@ -229,15 +230,23 @@ async function deleteConversationItem(id, btn) {
 
 function fail(turn, msg) { turn.answerEl.textContent = msg; }
 
-// 離題拒答：以提示卡渲染（非一般答案泡泡）
+// 離題拒答：以提示卡渲染（非一般答案泡泡），並給「換個說法重新提問」出口
 function paintNotice(turn, msg) {
   turn.answerEl.innerHTML = html`<div class="ask-notice">
       <span class="ask-notice-icon" aria-hidden="true">i</span>
       <div class="ask-notice-main">
         <div class="ask-notice-title">無法回答此問題</div>
         <div class="ask-notice-body">${msg}</div>
+        <button class="ask-notice-retry" type="button">換個說法重新提問</button>
       </div>
     </div>`;
+  const retry = turn.answerEl.querySelector(".ask-notice-retry");
+  if (retry) retry.onclick = () => {
+    const input = $("#askInput");
+    input.value = turn.q || "";  // 回填原問題，讓使用者改寫；不自動送出
+    autoGrow(input);
+    input.focus();
+  };
 }
 
 // 動作列圖示（inline SVG，非 emoji）

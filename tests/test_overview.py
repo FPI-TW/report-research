@@ -72,7 +72,12 @@ class ResolveFiltersTests(unittest.TestCase):
         self.assertIn("市場=台股", labels)
 
 
-from app.services.overview import CorpusOverview, aggregate_facets  # noqa: E402
+from app.services.overview import (  # noqa: E402
+    CorpusOverview,
+    aggregate_facets,
+    format_facts,
+    render_overview_text,
+)
 
 
 class _FakeResult:
@@ -139,3 +144,37 @@ class AggregateFacetsTests(unittest.IsolatedAsyncioTestCase):
         ov = await aggregate_facets(_QueuedSession(results), OverviewFilters())
         self.assertEqual(ov.by_source[0], ("yuanta", 500))
         self.assertEqual(ov.by_report_type[0], ("(未標註)", 880))
+
+
+def _sample_overview():
+    return CorpusOverview(
+        total=734,
+        date_min=date(2021, 3, 1),
+        date_max=date(2026, 6, 20),
+        by_market=[("TW", 700), ("US", 20)],
+        by_instrument=[("equity", 690), ("index", 300)],
+        by_source=[],
+        by_report_type=[("(未標註)", 732), ("速報", 1)],
+        top_stocks=[("2330", 120)],
+        samples=[("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20))],
+        filters=OverviewFilters(source="yuanta"),
+    )
+
+
+class FormatFactsTests(unittest.TestCase):
+    def test_facts_contain_numbers_and_labels(self):
+        txt = format_facts(_sample_overview())
+        self.assertIn("734", txt)
+        self.assertIn("台股", txt)        # 市場代碼轉中文
+        self.assertIn("(未標註)", txt)     # 稀疏 report_type 桶
+        self.assertIn("元大", txt)         # 已套用條件顯示
+
+    def test_render_text_has_total_and_sample_citation(self):
+        txt = render_overview_text(_sample_overview())
+        self.assertIn("734", txt)
+        self.assertIn("[1]", txt)          # 樣本帶編號供點閱
+
+    def test_zero_total_handled(self):
+        ov = CorpusOverview(total=0, date_min=None, date_max=None,
+                            filters=OverviewFilters(source="yuanta"))
+        self.assertIn("找不到", render_overview_text(ov))

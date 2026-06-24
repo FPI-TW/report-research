@@ -286,3 +286,79 @@ async def aggregate_facets(
         samples=samples,
         filters=f,
     )
+
+
+OVERVIEW_SYSTEM_PROMPT = (
+    "你是「廷豐研報」的研究問答助理，正在回答一個『語料總覽/統計』問題。\n"
+    "下方『分面統計』是系統對符合條件的全部研報，由資料庫精確算出的數字。請遵守：\n"
+    "1. 只能引用『分面統計』提供的數字與清單，嚴禁自行臆測或捏造任何數量。\n"
+    "2. 一律用繁體中文、條理清楚作答；針對使用者的問法（例如問『種類』）回應。\n"
+    "3. 若使用者問的是『報告種類』而統計顯示多數為『(未標註)』，請誠實說明此欄位"
+    "多數研報未標註，並改用『市場/商品類型/個股』等實際有標到的維度說明語料涵蓋範圍。\n"
+    "4. 結尾可提示使用者可至檢索頁套用相同條件查看全部研報。\n"
+    "5. 樣本研報已附編號，可在對應句末標註 [1]、[2]。"
+)
+
+
+def _fmt_pairs(pairs: list[tuple[str, int]], label_map: dict[str, str] | None) -> str:
+    parts = []
+    for k, n in pairs:
+        name = label_map.get(k, k) if label_map else k
+        parts.append(f"{name} {n}")
+    return "、".join(parts) if parts else "（無）"
+
+
+def format_facts(ov: CorpusOverview) -> str:
+    """把 CorpusOverview 序列化成給 LLM 的『分面統計』事實區塊。"""
+    f = ov.filters or OverviewFilters()
+    lines = ["【分面統計】"]
+    cond = "、".join(f.applied_labels()) or "（全語料）"
+    lines.append(f"已套用條件：{cond}")
+    lines.append(f"總篇數：{ov.total}")
+    if ov.date_min or ov.date_max:
+        lo = ov.date_min.isoformat() if ov.date_min else "?"
+        hi = ov.date_max.isoformat() if ov.date_max else "?"
+        lines.append(f"日期範圍：{lo} ~ {hi}")
+    lines.append(f"按市場：{_fmt_pairs(ov.by_market, MARKET_DISPLAY)}")
+    lines.append(f"按商品類型：{_fmt_pairs(ov.by_instrument, INSTRUMENT_DISPLAY)}")
+    if ov.by_source:
+        lines.append(
+            "按券商：" + _fmt_pairs(
+                [(source_display(k) or k, n) for k, n in ov.by_source], None
+            )
+        )
+    lines.append(f"按報告種類：{_fmt_pairs(ov.by_report_type, None)}")
+    if ov.top_stocks:
+        lines.append(f"熱門個股標的：{_fmt_pairs(ov.top_stocks, None)}")
+    if ov.samples:
+        lines.append("最新樣本研報：")
+        for i, (_rid, fn, _mk, rd) in enumerate(ov.samples, 1):
+            ds = rd.isoformat() if hasattr(rd, "isoformat") else (rd or "")
+            lines.append(f"[{i}] {fn}{f'（{ds}）' if ds else ''}")
+    return "\n".join(lines)
+
+
+def render_overview_text(ov: CorpusOverview) -> str:
+    """LLM 潤飾失敗時的確定性模板答案（保證有答案、不阻斷）。"""
+    f = ov.filters or OverviewFilters()
+    cond = "、".join(f.applied_labels()) or "全語料"
+    if ov.total == 0:
+        return f"在研報語料中找不到符合條件（{cond}）的研報。"
+    parts = [f"符合條件（{cond}）的研報共 {ov.total} 篇。"]
+    if ov.date_min or ov.date_max:
+        lo = ov.date_min.isoformat() if ov.date_min else "?"
+        hi = ov.date_max.isoformat() if ov.date_max else "?"
+        parts.append(f"日期範圍 {lo} ~ {hi}。")
+    if ov.by_market:
+        parts.append("按市場：" + _fmt_pairs(ov.by_market, MARKET_DISPLAY) + "。")
+    if ov.by_instrument:
+        parts.append("按商品類型：" + _fmt_pairs(ov.by_instrument, INSTRUMENT_DISPLAY) + "。")
+    untagged = dict(ov.by_report_type).get("(未標註)", 0)
+    if untagged and untagged >= ov.total * 0.5:
+        parts.append("（多數研報未標註『報告種類』欄位，故改以市場/商品類型維度呈現。）")
+    if ov.samples:
+        parts.append("最新樣本：")
+        for i, (_rid, fn, _mk, rd) in enumerate(ov.samples, 1):
+            ds = rd.isoformat() if hasattr(rd, "isoformat") else (rd or "")
+            parts.append(f"[{i}] {fn}{f'（{ds}）' if ds else ''}")
+    return "\n".join(parts)

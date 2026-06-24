@@ -8,7 +8,7 @@ CorpusOverview；format_facts()/render_overview_text() 序列化。本模組不�
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
 from sqlalchemy import text
@@ -68,7 +68,7 @@ _NAME_STOPWORDS: tuple[str, ...] = (
     + tuple(_INSTRUMENT_SYNONYMS)
     + tuple(k for k in _SOURCE_LOOKUP)
     + ("研報", "報告", "研究", "給我", "我", "想", "請", "幫我", "關於",
-       "相關", "這", "那", "的", "新", "出過", "出", "有", "最近", "今年",
+       "相關", "這", "那", "的", "最新", "出過", "出", "有", "最近", "今年",
        "去年", "本週", "這週", "一覽")
 )
 
@@ -78,6 +78,9 @@ class OverviewFilters:
     source: str | None = None
     market: str | None = None
     instrument_type: str | None = None
+    report_type: str | None = None
+    relates_stock: bool | None = None
+    relates_futures: bool | None = None
     date_from: date | None = None
     date_to: date | None = None
     stock_code: str | None = None
@@ -88,6 +91,7 @@ class OverviewFilters:
             v is not None
             for v in (
                 self.source, self.market, self.instrument_type,
+                self.report_type, self.relates_stock, self.relates_futures,
                 self.date_from, self.date_to, self.stock_code, self.stock_name,
             )
         )
@@ -101,6 +105,12 @@ class OverviewFilters:
             out.append(f"市場={MARKET_DISPLAY.get(self.market, self.market)}")
         if self.instrument_type:
             out.append(f"商品類型={INSTRUMENT_DISPLAY.get(self.instrument_type, self.instrument_type)}")
+        if self.report_type:
+            out.append(f"報告種類={self.report_type}")
+        if self.relates_stock:
+            out.append("個股相關=true")
+        if self.relates_futures:
+            out.append("期貨相關=true")
         if self.date_from or self.date_to:
             lo = self.date_from.isoformat() if self.date_from else "…"
             hi = self.date_to.isoformat() if self.date_to else "…"
@@ -156,12 +166,32 @@ def _extract_stock_name(q: str) -> str | None:
     return max(runs, key=len)
 
 
+def merge_request_filters(base: OverviewFilters, filters: dict) -> OverviewFilters:
+    """把 ask request 的顯式 filters 套進 overview 條件。
+
+    與主 RAG 路徑一致，呼叫端已給的 request filter 視為最終 scope；
+    query 解析出的 overview filters 僅補足未顯式指定的維度。
+    """
+    return replace(
+        base,
+        market=filters.get("market") or base.market,
+        instrument_type=filters.get("instrument_type") or base.instrument_type,
+        report_type=filters.get("report_type") or base.report_type,
+        relates_stock=filters.get("relates_stock")
+        if filters.get("relates_stock") is not None
+        else base.relates_stock,
+        relates_futures=filters.get("relates_futures")
+        if filters.get("relates_futures") is not None
+        else base.relates_futures,
+    )
+
+
 def resolve_filters(q: str, today: date) -> OverviewFilters:
     """中文條件 → 結構化過濾（確定性對應；解析不到的維度留空）。"""
     s = norm_for_match(q)
     date_from, date_to = _resolve_dates(s, today)
     # 4 位數字 = 個股代碼，但緊跟「年」的（如「2025年」）是年份字面，非代碼。
-    m = re.search(r"(?<!\d)(\d{4})(?!\d)(?!年)", q)
+    m = re.search(r"(?<!\d)(\d{4})(?!\d)(?!\s*年)", q)
     stock_code = m.group(1) if m else None
     f = OverviewFilters(
         source=_match_longest(s, _SOURCE_LOOKUP),
@@ -171,8 +201,9 @@ def resolve_filters(q: str, today: date) -> OverviewFilters:
         date_to=date_to,
         stock_code=stock_code,
     )
-    # 個股中文名：僅在沒有代碼/券商/市場/商品類型命中時才嘗試殘餘抽取（保守，避免誤抓）
-    if not (stock_code or f.source or f.market or f.instrument_type):
+    # 個股中文名需允許與券商/市場/商品類型並存，否則多條件查詢會丟失公司過濾。
+    # 僅在已有明確 stock_code 時跳過，避免同時落兩個互斥個股條件。
+    if not stock_code:
         f.stock_name = _extract_stock_name(q)
     return f
 
@@ -204,6 +235,13 @@ def _build_where(f: OverviewFilters) -> tuple[str, dict]:
     if f.instrument_type:
         conds.append("r.instrument_types @> ARRAY[:it]::text[]")
         params["it"] = f.instrument_type
+    if f.report_type:
+        conds.append("r.report_type = :report_type")
+        params["report_type"] = f.report_type
+    if f.relates_stock:
+        conds.append("r.relates_stock = true")
+    if f.relates_futures:
+        conds.append("r.relates_futures = true")
     if f.date_from:
         conds.append("r.report_date >= :date_from")
         params["date_from"] = f.date_from

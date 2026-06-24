@@ -55,12 +55,26 @@ class ResolveFiltersTests(unittest.TestCase):
         self.assertIsNone(f.stock_code)
         self.assertEqual((f.date_from, f.date_to), (date(2025, 1, 1), date(2025, 12, 31)))
 
+    def test_year_literal_with_space_not_stock_code(self):
+        f = self._r("2025 年有哪些台股研報")
+        self.assertIsNone(f.stock_code)
+        self.assertEqual((f.date_from, f.date_to), (date(2025, 1, 1), date(2025, 12, 31)))
+
     def test_stock_code(self):
         self.assertEqual(self._r("2330 有哪些研報").stock_code, "2330")
 
     def test_stock_name_residual(self):
         f = self._r("給我所有台積電的研報")
         self.assertEqual(f.stock_name, "台積電")
+
+    def test_stock_name_can_coexist_with_market(self):
+        f = self._r("台股台積電有哪些研報")
+        self.assertEqual(f.market, "TW")
+        self.assertEqual(f.stock_name, "台積電")
+
+    def test_stock_name_not_broken_by_new_prefix(self):
+        f = self._r("新光金有哪些研報")
+        self.assertEqual(f.stock_name, "新光金")
 
     def test_no_filter(self):
         self.assertFalse(self._r("列出所有天氣種類").any())
@@ -186,10 +200,10 @@ from app.services import answer as ans  # noqa: E402
 
 
 class AnswerQuestionOverviewBranchTests(unittest.TestCase):
-    def _drive(self, question):
+    def _drive(self, question, **kwargs):
         async def run():
             events = []
-            async for ev in ans.answer_question(question):
+            async for ev in ans.answer_question(question, **kwargs):
                 events.append(ev)
             return events
 
@@ -239,6 +253,97 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             self.assertEqual(called["hybrid"], 0)  # 沒走 RAG 檢索
             text_joined = "".join(p for k, p in events if k == "token" and isinstance(p, str))
             self.assertIn("734", text_joined)
+        finally:
+            (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
+             ans._log_qa, ans.SessionFactory) = orig
+
+    def test_overview_prompt_uses_standalone_query(self):
+        orig = (
+            ans.hybrid_search,
+            ans.aggregate_facets,
+            ans.stream_completion,
+            ans._log_qa,
+            ans.SessionFactory,
+            ans.load_recent_turns,
+            ans.condense_and_classify,
+        )
+        try:
+            self._patch_common()
+            captured = {}
+
+            async def fake_stream(prompt, **k):
+                captured["prompt"] = prompt
+                yield "元大共有 734 篇研報。[1]"
+
+            async def fake_load_recent_turns(_conv_id):
+                return [("前一題", "前一答")]
+
+            async def fake_condense(_history, _question):
+                return "元大有哪些報告種類", True
+
+            ans.stream_completion = fake_stream
+            ans.load_recent_turns = fake_load_recent_turns
+            ans.condense_and_classify = fake_condense
+
+            self._drive("那元大呢？", conversation_id="conv-1")
+            self.assertIn("問題：元大有哪些報告種類", captured["prompt"])
+            self.assertNotIn("問題：那元大呢？", captured["prompt"])
+        finally:
+            (
+                ans.hybrid_search,
+                ans.aggregate_facets,
+                ans.stream_completion,
+                ans._log_qa,
+                ans.SessionFactory,
+                ans.load_recent_turns,
+                ans.condense_and_classify,
+            ) = orig
+
+    def test_overview_merges_request_filters_before_aggregation(self):
+        orig = (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
+                ans._log_qa, ans.SessionFactory)
+        try:
+            self._patch_common()
+            seen = {}
+
+            async def fake_agg(session, f, **k):
+                seen["filters"] = f
+                return CorpusOverview(
+                    total=12, date_min=date(2026, 1, 1), date_max=date(2026, 6, 20),
+                    by_market=[("US", 12)], by_instrument=[("equity", 12)],
+                    by_source=[], by_report_type=[("策略", 12)],
+                    top_stocks=[("2330", 3)],
+                    samples=[("rid1", "樣本.pdf", "US", date(2026, 6, 20))],
+                    filters=f,
+                )
+
+            ans.aggregate_facets = fake_agg
+            self._drive(
+                "給我所有元大的報告種類",
+                filters={"market": "US", "report_type": "策略", "relates_stock": True},
+            )
+            self.assertEqual(seen["filters"].source, "yuanta")
+            self.assertEqual(seen["filters"].market, "US")
+            self.assertEqual(seen["filters"].report_type, "策略")
+            self.assertTrue(seen["filters"].relates_stock)
+        finally:
+            (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
+             ans._log_qa, ans.SessionFactory) = orig
+
+    def test_overview_partial_stream_failure_propagates(self):
+        orig = (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
+                ans._log_qa, ans.SessionFactory)
+        try:
+            self._patch_common()
+
+            async def fake_stream(*a, **k):
+                yield "半句答案"
+                raise RuntimeError("stream failed")
+
+            ans.stream_completion = fake_stream
+
+            with self.assertRaises(RuntimeError):
+                self._drive("給我所有元大的報告種類")
         finally:
             (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
              ans._log_qa, ans.SessionFactory) = orig

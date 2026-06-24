@@ -31,6 +31,7 @@ from app.services.overview import (
     aggregate_facets,
     detect_overview,
     format_facts,
+    merge_request_filters,
     render_overview_text,
     resolve_filters,
 )
@@ -585,6 +586,7 @@ async def delete_qa(qa_id: str) -> bool:
 
 async def _answer_overview(
     question: str,
+    prompt_query: str,
     ov_filters,
     filters: dict,
     *,
@@ -593,8 +595,9 @@ async def _answer_overview(
     started: float,
 ) -> AsyncIterator[tuple[str, object]]:
     """總覽路徑：分面聚合 → LLM 用算好的數字潤飾 → 失敗退回模板。事件序列同主路徑。"""
+    scoped_filters = merge_request_filters(ov_filters, filters)
     async with SessionFactory() as session:  # 短連線：聚合完即釋放
-        overview = await aggregate_facets(session, ov_filters)
+        overview = await aggregate_facets(session, scoped_filters)
 
     if overview.total == 0:
         msg = render_overview_text(overview)  # 「找不到…」
@@ -619,11 +622,12 @@ async def _answer_overview(
     yield ("status", {"stage": "retrieved", "count": overview.total})
 
     facts = format_facts(overview)
-    user_prompt = f"{facts}\n\n問題：{question}\n\n請依規則作答。"
+    user_prompt = f"{facts}\n\n問題：{prompt_query}\n\n請依規則作答。"
     thinking_ms = int((time.monotonic() - started) * 1000)
     yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
 
     raw_parts: list[str] = []
+    emitted_token = False
     try:
         async for chunk in stream_completion(
             user_prompt, model=model, system=OVERVIEW_SYSTEM_PROMPT, allow_web=False
@@ -631,8 +635,11 @@ async def _answer_overview(
             if chunk == SEARCH_EVENT:
                 continue
             raw_parts.append(chunk)
+            emitted_token = True
             yield ("token", chunk)
     except Exception:
+        if emitted_token:
+            raise
         raw_parts = []  # 串流異常 → 退回模板
 
     body = "".join(raw_parts).strip()
@@ -696,6 +703,7 @@ async def answer_question(
             try:
                 async for ev in _answer_overview(
                     question,
+                    standalone_query,
                     ov_filters,
                     filters,
                     conv_id=conv_id,

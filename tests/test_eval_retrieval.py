@@ -1,5 +1,6 @@
 # tests/test_eval_retrieval.py
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -141,10 +142,13 @@ class LoadQuerysetTests(unittest.TestCase):
         ) as f:
             json.dump(data, f, ensure_ascii=False)
             path = f.name
-        loaded = ev.load_queryset(path)
-        self.assertEqual(loaded["as_of"], "2026-06-24")
-        self.assertEqual(len(loaded["cases"]), 1)
-        self.assertEqual(loaded["cases"][0]["id"], "c1")
+        try:
+            loaded = ev.load_queryset(path)
+            self.assertEqual(loaded["as_of"], "2026-06-24")
+            self.assertEqual(len(loaded["cases"]), 1)
+            self.assertEqual(loaded["cases"][0]["id"], "c1")
+        finally:
+            os.unlink(path)
 
 
 class _FakeSession:

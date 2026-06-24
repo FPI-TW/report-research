@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "as_of": "2026-06-24",
+  "_note": "離線檢索評估標註集。expect 以關鍵字+日期條件描述（非寫死 report_id，對語料重 ingest 穩健）。any_keywords 比對來源報告的『檔名+片段內容』正規化後 substring；recency.max_age_days 用於判定是否至少引用到一篇夠新的報告。修改後用 scripts/eval_retrieval.py 重跑。",
+  "cases": [
+    {
+      "id": "tsmc-outlook",
+      "query": "台積電最新的營運展望如何",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["台積電"], "min_hits": 1, "recency": { "max_age_days": 60 } }
+    },
+    {
+      "id": "taiex-trend",
+      "query": "台股大盤近期走勢與展望",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["台股", "大盤", "加權指數"], "min_hits": 1, "recency": { "max_age_days": 45 } }
+    },
+    {
+      "id": "ai-server-supply",
+      "query": "AI 伺服器供應鏈近期表現怎麼樣",
+      "expect": { "any_keywords": ["AI伺服器", "伺服器"], "min_hits": 1, "recency": { "max_age_days": 90 } }
+    },
+    {
+      "id": "cowos-packaging",
+      "query": "CoWoS 與先進封裝的進展",
+      "expect": { "any_keywords": ["CoWoS", "先進封裝"], "min_hits": 1, "recency": { "max_age_days": 120 } }
+    },
+    {
+      "id": "txf-futures",
+      "query": "台指期近期盤勢與多空看法",
+      "filters": { "market": "WTX" },
+      "expect": { "any_keywords": ["台指期", "期貨"], "min_hits": 1, "recency": { "max_age_days": 45 } }
+    },
+    {
+      "id": "options-flow",
+      "query": "選擇權盤後分析與籌碼",
+      "filters": { "market": "WTX" },
+      "expect": { "any_keywords": ["選擇權"], "min_hits": 1, "recency": { "max_age_days": 60 } }
+    },
+    {
+      "id": "fomc-rate",
+      "query": "FOMC 會議結果對市場的影響",
+      "filters": { "market": "MACRO" },
+      "expect": { "any_keywords": ["FOMC", "聯準會", "利率"], "min_hits": 1, "recency": { "max_age_days": 120 } }
+    },
+    {
+      "id": "rate-cut-expectation",
+      "query": "市場對降息的最新預期",
+      "expect": { "any_keywords": ["降息"], "min_hits": 1, "recency": { "max_age_days": 120 } }
+    },
+    {
+      "id": "inflation-cpi",
+      "query": "美國通膨與 CPI 數據的解讀",
+      "filters": { "market": "MACRO" },
+      "expect": { "any_keywords": ["通膨", "CPI"], "min_hits": 1, "recency": { "max_age_days": 150 } }
+    },
+    {
+      "id": "nvidia-outlook",
+      "query": "輝達 NVIDIA 的財報與展望",
+      "expect": { "any_keywords": ["輝達", "NVIDIA"], "min_hits": 1, "recency": { "max_age_days": 120 } }
+    },
+    {
+      "id": "memory-prices",
+      "query": "記憶體報價的近期走勢",
+      "expect": { "any_keywords": ["記憶體"], "min_hits": 1, "recency": { "max_age_days": 90 } }
+    },
+    {
+      "id": "wistron-server",
+      "query": "緯創在 AI 伺服器的布局與訂單",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["緯創"], "min_hits": 1, "recency": { "max_age_days": 120 } }
+    },
+    {
+      "id": "mediatek-outlook",
+      "query": "聯發科的營運與成長動能",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["聯發科"], "min_hits": 1, "recency": { "max_age_days": 120 } }
+    },
+    {
+      "id": "bitcoin-view",
+      "query": "比特幣與加密貨幣的市場看法",
+      "expect": { "any_keywords": ["比特幣", "加密"], "min_hits": 1, "recency": { "max_age_days": 180 } }
+    }
+  ]
+}

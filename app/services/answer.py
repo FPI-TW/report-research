@@ -686,29 +686,36 @@ async def answer_question(
         standalone_query, in_domain = question, None
 
     # 總覽分支：枚舉/聚合題改走全語料分面統計（純規則判定，零 LLM、零向量檢索）。
-    # 需解析到 ≥1 金融條件才改道——此門檻本身即離題保護，否則回退既有 RAG。
-    # fail-open：聚合在第一個 yield 之前拋例外（produced 仍為 False）則落回 RAG。
-    ov_filters = resolve_filters(
-        standalone_query, datetime.now(timezone.utc).date()
-    )
-    if detect_overview(standalone_query) and ov_filters.any():
-        try:
+    # 先用較便宜的 detect_overview 當閘門，命中才解析條件——避免每題都跑 resolve_filters。
+    # 需解析到 ≥1 金融條件才改道（此門檻即離題保護）；否則回退既有 RAG。
+    if detect_overview(standalone_query):
+        ov_filters = resolve_filters(
+            standalone_query, datetime.now(timezone.utc).date()
+        )
+        if ov_filters.any():
             produced = False
-            async for ev in _answer_overview(
-                question,
-                ov_filters,
-                filters,
-                conv_id=conv_id,
-                model=model,
-                started=started,
-            ):
-                produced = True
-                yield ev
-            if produced:
-                return
-        except Exception:
-            logger.exception("overview path failed; falling back to RAG")
-            # 落到下方 RAG 路徑（不 return）
+            try:
+                async for ev in _answer_overview(
+                    question,
+                    ov_filters,
+                    filters,
+                    conv_id=conv_id,
+                    model=model,
+                    started=started,
+                ):
+                    produced = True
+                    yield ev
+                if produced:
+                    return
+            except Exception:
+                # 已 yield 過事件再拋例外無法乾淨回退（會重發 sources 汙染 SSE）→ 直接上拋；
+                # 僅「尚未 yield」（produced 為 False，例如 aggregate_facets 拋錯）才 fail-open 回退 RAG。
+                if produced:
+                    logger.exception("overview path failed mid-stream; cannot fall back")
+                    raise
+                logger.exception(
+                    "overview path failed before any output; falling back to RAG"
+                )
 
     # 既有 RAG 路徑
     if turns:

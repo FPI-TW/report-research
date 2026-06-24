@@ -278,7 +278,7 @@ def build_context(
                 continue
         kept: list[str] = []
         for content in info["passages"]:
-            if total and total + len(content) > max_chars:
+            if total + len(content) > max_chars:
                 continue
             kept.append(content)
             total += len(content)

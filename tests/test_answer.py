@@ -231,6 +231,16 @@ class BuildContextTests(unittest.TestCase):
         self.assertEqual([s.report_id for s in sources], ["r2"])
         self.assertIn("[1] 報告：乙.pdf", context)
 
+    def test_first_passage_respects_max_chars_budget(self):
+        scored = [
+            (0, 0.5, make_row("r1", "甲.pdf", "TW", "超" * 10)),
+            (0, 0.4, make_row("r2", "乙.pdf", "TW", "短內容")),
+        ]
+        sources, context = build_context(scored, max_chars=6)
+        self.assertEqual([s.report_id for s in sources], ["r2"])
+        self.assertNotIn("甲.pdf", context)
+        self.assertIn("乙.pdf", context)
+
     def test_no_results(self):
         sources, context = build_context([])
         self.assertEqual(sources, [])

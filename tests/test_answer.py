@@ -100,7 +100,7 @@ class ScaleUpDefaultsTests(unittest.TestCase):
 
     def test_system_prompt_encourages_synthesis(self):
         from app.services.answer import SYSTEM_PROMPT
-        self.assertIn("綜合多篇研報", SYSTEM_PROMPT)
+        self.assertIn("綜合多篇研報、彼此佐證", SYSTEM_PROMPT)
 
 
 class RelevanceFloorTests(unittest.TestCase):

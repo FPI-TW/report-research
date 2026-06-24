@@ -27,7 +27,6 @@ from app.services.embed import embed_query_cached
 from app.services.intent import classify_intent, condense_and_classify
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.overview import (
-    CorpusOverview,
     OVERVIEW_SYSTEM_PROMPT,
     aggregate_facets,
     detect_overview,

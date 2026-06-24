@@ -178,3 +178,67 @@ class FormatFactsTests(unittest.TestCase):
         ov = CorpusOverview(total=0, date_min=None, date_max=None,
                             filters=OverviewFilters(source="yuanta"))
         self.assertIn("找不到", render_overview_text(ov))
+
+
+import asyncio  # noqa: E402
+
+from app.services import answer as ans  # noqa: E402
+
+
+class AnswerQuestionOverviewBranchTests(unittest.TestCase):
+    def _drive(self, question):
+        async def run():
+            events = []
+            async for ev in ans.answer_question(question):
+                events.append(ev)
+            return events
+
+        return asyncio.run(run())
+
+    def _patch_common(self):
+        called = {"hybrid": 0}
+
+        async def fake_hybrid(*a, **k):
+            called["hybrid"] += 1
+            return []
+
+        async def fake_agg(session, f, **k):
+            return CorpusOverview(
+                total=734, date_min=date(2021, 3, 1), date_max=date(2026, 6, 20),
+                by_market=[("TW", 700)], by_instrument=[("equity", 690)],
+                by_source=[], by_report_type=[("(未標註)", 732)],
+                top_stocks=[("2330", 120)],
+                samples=[("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20))],
+                filters=OverviewFilters(source="yuanta"),
+            )
+
+        async def fake_stream(*a, **k):
+            yield "元大"
+            yield "共有 734 篇研報。[1]"
+
+        async def fake_log(*a, **k):
+            return "qa-id"
+
+        ans.hybrid_search = fake_hybrid
+        ans.aggregate_facets = fake_agg
+        ans.stream_completion = fake_stream
+        ans._log_qa = fake_log
+        ans.SessionFactory = lambda: _QueuedSession([])
+        return called
+
+    def test_overview_question_takes_overview_path(self):
+        orig = (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
+                ans._log_qa, ans.SessionFactory)
+        try:
+            called = self._patch_common()
+            events = self._drive("給我所有元大的報告種類")
+            kinds = [e[0] for e in events]
+            self.assertIn("sources", kinds)
+            self.assertIn("token", kinds)
+            self.assertEqual(kinds[-1], "done")
+            self.assertEqual(called["hybrid"], 0)  # 沒走 RAG 檢索
+            text_joined = "".join(p for k, p in events if k == "token" and isinstance(p, str))
+            self.assertIn("734", text_joined)
+        finally:
+            (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
+             ans._log_qa, ans.SessionFactory) = orig

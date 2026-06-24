@@ -26,6 +26,15 @@ from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
 from app.services.intent import classify_intent, condense_and_classify
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
+from app.services.overview import (
+    CorpusOverview,
+    OVERVIEW_SYSTEM_PROMPT,
+    aggregate_facets,
+    detect_overview,
+    format_facts,
+    render_overview_text,
+    resolve_filters,
+)
 from app.services.retrieval import hybrid_search
 from app.services.textnorm import clean_text
 
@@ -575,6 +584,74 @@ async def delete_qa(qa_id: str) -> bool:
         return False
 
 
+async def _answer_overview(
+    question: str,
+    ov_filters,
+    filters: dict,
+    *,
+    conv_id: str,
+    model: str,
+    started: float,
+) -> AsyncIterator[tuple[str, object]]:
+    """總覽路徑：分面聚合 → LLM 用算好的數字潤飾 → 失敗退回模板。事件序列同主路徑。"""
+    async with SessionFactory() as session:  # 短連線：聚合完即釋放
+        overview = await aggregate_facets(session, ov_filters)
+
+    if overview.total == 0:
+        msg = render_overview_text(overview)  # 「找不到…」
+        yield ("sources", [])
+        thinking_ms = int((time.monotonic() - started) * 1000)
+        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+        yield ("token", msg)
+        qa_id = await _log_qa(
+            question, msg, [], dict(filters, path="overview"), thinking_ms, [], [],
+            conversation_id=conv_id, thinking_ms=thinking_ms,
+        )
+        yield ("done", {"cited": [], "qa_id": qa_id,
+                        "conversation_id": conv_id, "thinking_ms": thinking_ms})
+        return
+
+    sources = [
+        Source(n=i, report_id=rid, file_name=fn, market=mk,
+               report_date=rd.isoformat() if hasattr(rd, "isoformat") else rd)
+        for i, (rid, fn, mk, rd) in enumerate(overview.samples, 1)
+    ]
+    yield ("sources", [asdict(s) for s in sources])
+    yield ("status", {"stage": "retrieved", "count": overview.total})
+
+    facts = format_facts(overview)
+    user_prompt = f"{facts}\n\n問題：{question}\n\n請依規則作答。"
+    thinking_ms = int((time.monotonic() - started) * 1000)
+    yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+
+    raw_parts: list[str] = []
+    try:
+        async for chunk in stream_completion(
+            user_prompt, model=model, system=OVERVIEW_SYSTEM_PROMPT, allow_web=False
+        ):
+            if chunk == SEARCH_EVENT:
+                continue
+            raw_parts.append(chunk)
+            yield ("token", chunk)
+    except Exception:
+        raw_parts = []  # 串流異常 → 退回模板
+
+    body = "".join(raw_parts).strip()
+    if not body:
+        body = render_overview_text(overview)
+        yield ("token", body)
+
+    cited = cited_report_ids(body, sources)
+    qa_id = await _log_qa(
+        question, body, cited, dict(filters, path="overview"),
+        int((time.monotonic() - started) * 1000),
+        [asdict(s) for s in sources], [],
+        conversation_id=conv_id, thinking_ms=thinking_ms,
+    )
+    yield ("done", {"cited": cited, "qa_id": qa_id,
+                    "conversation_id": conv_id, "thinking_ms": thinking_ms})
+
+
 async def answer_question(
     question: str,
     *,
@@ -599,11 +676,42 @@ async def answer_question(
     turns = await load_recent_turns(conv_id) if conversation_id else []
     history_block = build_history_block(turns)
 
+    # 多輪需先 condense 取得獨立查詢；首輪直接用原問題（意圖判定仍延後並行）
     if turns:
         standalone_query, in_domain = await condense_and_classify(
             history_block, question
         )
         timer.mark("condense")
+    else:
+        standalone_query, in_domain = question, None
+
+    # 總覽分支：枚舉/聚合題改走全語料分面統計（純規則判定，零 LLM、零向量檢索）。
+    # 需解析到 ≥1 金融條件才改道——此門檻本身即離題保護，否則回退既有 RAG。
+    # fail-open：聚合在第一個 yield 之前拋例外（produced 仍為 False）則落回 RAG。
+    ov_filters = resolve_filters(
+        standalone_query, datetime.now(timezone.utc).date()
+    )
+    if detect_overview(standalone_query) and ov_filters.any():
+        try:
+            produced = False
+            async for ev in _answer_overview(
+                question,
+                ov_filters,
+                filters,
+                conv_id=conv_id,
+                model=model,
+                started=started,
+            ):
+                produced = True
+                yield ev
+            if produced:
+                return
+        except Exception:
+            logger.exception("overview path failed; falling back to RAG")
+            # 落到下方 RAG 路徑（不 return）
+
+    # 既有 RAG 路徑
+    if turns:
         qvec = await asyncio.to_thread(embed_query_cached, standalone_query)
         timer.mark("embed")
         async with SessionFactory() as session:  # 短連線：檢索完即釋放

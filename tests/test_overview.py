@@ -107,11 +107,11 @@ class _QueuedSession:
 
 class AggregateFacetsTests(unittest.IsolatedAsyncioTestCase):
     async def test_packs_rows_into_overview(self):
+        # f.source 已設 → by_source 查詢被短路跳過，僅 6 次 execute
         results = [
             _FakeResult([(734, date(2021, 3, 1), date(2026, 6, 20))]),  # totals
             _FakeResult([("TW", 700), ("US", 20), ("MACRO", 14)]),      # by_market
             _FakeResult([("equity", 690), ("index", 300)]),             # by_instrument
-            _FakeResult([("yuanta", 734)]),                             # by_source
             _FakeResult([("(未標註)", 732), ("速報", 1), ("策略", 1)]),  # by_report_type
             _FakeResult([("2330", 120), ("2317", 80)]),                # top_stocks
             _FakeResult([("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20))]),  # samples
@@ -123,4 +123,19 @@ class AggregateFacetsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ov.by_market[0], ("TW", 700))
         self.assertEqual(ov.by_report_type[0], ("(未標註)", 732))
         self.assertEqual(ov.samples[0][1], "元大-台積電.pdf")
+        self.assertEqual(ov.by_source, [])
         self.assertIs(ov.filters, f)
+
+    async def test_by_source_populated_when_no_source_filter(self):
+        results = [
+            _FakeResult([(900, date(2021, 1, 1), date(2026, 6, 20))]),       # totals
+            _FakeResult([("TW", 800), ("US", 100)]),                          # by_market
+            _FakeResult([("equity", 850)]),                                   # by_instrument
+            _FakeResult([("yuanta", 500), ("kgi", 400)]),                     # by_source (runs: no source filter)
+            _FakeResult([("(未標註)", 880)]),                                  # by_report_type
+            _FakeResult([("2330", 200)]),                                     # top_stocks
+            _FakeResult([("rid9", "報告.pdf", "TW", date(2026, 6, 20))]),     # samples
+        ]
+        ov = await aggregate_facets(_QueuedSession(results), OverviewFilters())
+        self.assertEqual(ov.by_source[0], ("yuanta", 500))
+        self.assertEqual(ov.by_report_type[0], ("(未標註)", 880))

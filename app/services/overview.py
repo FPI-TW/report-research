@@ -249,9 +249,7 @@ async def aggregate_facets(
 
     by_market = await grouped("r.market")
     by_instrument = await grouped("it", extra_from=", unnest(r.instrument_types) it")
-    # 始終執行查詢（保持 execute 呼叫順序固定），但 f.source 已設時回傳 [] 避免重複
-    _by_source_raw = await grouped("r.source")
-    by_source = [] if f.source else _by_source_raw
+    by_source = [] if f.source else await grouped("r.source")
     by_report_type = await grouped("COALESCE(NULLIF(r.report_type, ''), '(未標註)')")
     top_stocks_rows = (
         await session.execute(
@@ -263,7 +261,7 @@ async def aggregate_facets(
             params,
         )
     ).all()
-    top_stocks = [(str(k), int(n)) for k, n in top_stocks_rows]
+    top_stocks = [(str(k), int(n)) for k, n in top_stocks_rows if k is not None]
 
     sample_rows = (
         await session.execute(

@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -138,9 +140,19 @@ def write_ingested_hashes(path: Path, hashes: list[str]) -> None:
     空清單寫成 0-byte 檔，殼層 `[ -s file ]` 會視為「無新研報」而跳過。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.parent / (path.name + ".tmp")
-    tmp.write_text("\n".join(hashes), encoding="utf-8")
-    tmp.rename(path)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f"{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(hashes))
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def _iter_targets(args) -> list[Path]:

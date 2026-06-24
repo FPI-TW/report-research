@@ -21,9 +21,10 @@
 
 ## 範圍
 
-- 動三個檔：`scripts/sync_new_reports.py`（小改）、`scripts/sync_new_reports.sh`（接步驟）、
+- 動四個檔：`scripts/sync_new_reports.py`（寫本輪 hash 標記）、
+  `scripts/generate_summaries.py`（加 `--hashes-file` 範圍化）、
+  `scripts/sync_new_reports.sh`（接摘要步驟）、
   `deploy/systemd/report-mark-sync.env.example`（加可選 env 註解）。
-- **不動** `generate_summaries.py`（已冪等、newest-first、只補 NULL、失敗自記 log）。
 - **不動** 標籤流程、timer/service unit。
 
 ## 決策（已與使用者確認）

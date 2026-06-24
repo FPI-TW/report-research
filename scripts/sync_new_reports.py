@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -23,6 +25,7 @@ SRC_LOCAL = ROOT / "研報自動匯入"
 TAGS_DIR = ROOT / "data" / "tags"
 ALL_JSONL = ROOT / "data" / "extracted" / "all.jsonl"
 FAIL_LOG = ROOT / "data" / "sync_failures.log"
+INGESTED_HASHES_FILE = ROOT / "data" / ".sync_last_hashes"
 EXTS = {".pdf", ".docx", ".doc"}
 
 
@@ -130,6 +133,28 @@ def _append_all_jsonl(rec: dict) -> None:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+def write_ingested_hashes(path: Path, hashes: list[str]) -> None:
+    """把本輪成功入庫的 file_hash 清單原子寫入標記檔（每行一個，每輪覆寫）。
+
+    供殼層 gate 摘要步驟，並讓摘要只針對本輪新研報、不掃歷史 NULL 積壓。
+    空清單寫成 0-byte 檔，殼層 `[ -s file ]` 會視為「無新研報」而跳過。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f"{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(hashes))
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
 def _iter_targets(args) -> list[Path]:
     """依參數取得待處理檔清單：--all-local 掃整個本地夾；否則解析 delta 檔。"""
     if args.all_local:
@@ -172,6 +197,7 @@ async def _run(args) -> None:
             "fail",
         )
     }
+    ingested_hashes: list[str] = []
     t0 = time.time()
 
     async with SessionFactory() as session:
@@ -262,11 +288,15 @@ async def _run(args) -> None:
 
             stats["ingested"] += 1
             stats["chunks"] += len(chunks)
+            ingested_hashes.append(res.file_hash)
             print(f"  [{tag.market}] {path.name[:55]} ({len(chunks)} chunks)", flush=True)
 
         if stats["ingested"] and not args.dry_run:
             await session.execute(sql_text("ANALYZE research.report_chunk"))
             await session.commit()
+
+    if not args.dry_run:
+        write_ingested_hashes(INGESTED_HASHES_FILE, ingested_hashes)
 
     print("\n=== sync summary ===", flush=True)
     for k, v in stats.items():

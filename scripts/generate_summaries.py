@@ -140,25 +140,53 @@ async def summarize_one(
         print(f"  {_done}/{total}  ok={_ok}  fail={_fail}", flush=True)
 
 
-async def fetch_candidates(limit: Optional[int]) -> list[tuple[str, str, str]]:
+def read_hashes_file(path: str) -> list[str]:
+    """讀殼層寫的 file_hash 清單（每行一個），去除空白行與前後空白。"""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return [h.strip() for h in lines if h.strip()]
+
+
+async def fetch_candidates(
+    limit: Optional[int], hashes: Optional[list[str]] = None
+) -> list[tuple[str, str, str]]:
+    """挑待補摘要的列：summary IS NULL 的研究報告。
+
+    hashes 為 None（預設）＝掃全表所有 NULL（手動補積壓 make summaries）。
+    hashes 為清單＝只補這批 file_hash（定時匯入只針對本輪新研報，避免掃積壓）；
+    空清單代表本輪無新研報，直接回空、不查 DB。
+    """
     sql = (
         "SELECT id::text, file_name, full_text "
         "FROM research.research_report "
         "WHERE summary IS NULL AND full_text IS NOT NULL AND is_research IS NOT FALSE "
-        "ORDER BY report_date DESC NULLS LAST, file_name"
     )
+    params: dict = {}
+    if hashes is not None:
+        if not hashes:
+            return []
+        sql += "AND file_hash = ANY(:hashes) "
+        params["hashes"] = hashes
+    sql += "ORDER BY report_date DESC NULLS LAST, file_name"
     if limit:
         sql += " LIMIT :limit"
+        params["limit"] = limit
     async with SessionFactory() as session:
-        rows = await session.execute(text(sql), {"limit": limit} if limit else {})
+        rows = await session.execute(text(sql), params)
         return [(r[0], r[1], r[2]) for r in rows.all()]
 
 
-async def main(workers: int, limit: Optional[int], excerpt: int) -> None:
+async def main(
+    workers: int, limit: Optional[int], excerpt: int, hashes_file: Optional[str] = None
+) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
-    cands = await fetch_candidates(limit)
+    hashes = read_hashes_file(hashes_file) if hashes_file else None
+    scope = f"本輪 {len(hashes)} 篇" if hashes is not None else "全表 NULL"
+    cands = await fetch_candidates(limit, hashes)
     total = len(cands)
-    print(f"candidates: {total} | workers: {workers} | model: {MODEL}", flush=True)
+    print(
+        f"candidates: {total} | scope: {scope} | workers: {workers} | model: {MODEL}",
+        flush=True,
+    )
     if not total:
         print("nothing to do（皆已有摘要）", flush=True)
         return
@@ -174,5 +202,10 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--excerpt", type=int, default=12000)
+    ap.add_argument(
+        "--hashes-file",
+        default=None,
+        help="只補此檔列出的 file_hash（每行一個）；不給＝補全表所有 summary IS NULL",
+    )
     args = ap.parse_args()
-    asyncio.run(main(args.workers, args.limit, args.excerpt))
+    asyncio.run(main(args.workers, args.limit, args.excerpt, args.hashes_file))

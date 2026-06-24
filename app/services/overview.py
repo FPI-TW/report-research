@@ -88,7 +88,7 @@ class OverviewFilters:
             v is not None
             for v in (
                 self.source, self.market, self.instrument_type,
-                self.date_from, self.stock_code, self.stock_name,
+                self.date_from, self.date_to, self.stock_code, self.stock_name,
             )
         )
 
@@ -142,11 +142,14 @@ def _resolve_dates(s_norm: str, today: date) -> tuple[date | None, date | None]:
 
 
 def _extract_stock_name(q: str) -> str | None:
-    """剝除各維度表面詞後，取最長的 CJK 殘餘段（2~8 字）當公司名候選。"""
+    """剝除各維度表面詞後，取最長的 CJK 殘餘段（3~8 字）當公司名候選。"""
     residual = q
     for w in sorted(_NAME_STOPWORDS, key=len, reverse=True):
         if re.search(r"[一-鿿]", w):  # 只剝中文停用詞，英文交給其他維度
             residual = residual.replace(w, " ")
+    # v1 取精確優先於召回：殘餘段下限 3 字。2 字常見名詞（如「天氣」）若被誤判成
+    # 公司過濾，比漏掉 2 字真實公司名更糟（後者會自然回退 RAG）。鴻海/台泥這類
+    # 2 字股名是已知的 best-effort v1 限制。
     runs = re.findall(r"[一-鿿]{3,8}", residual)
     if not runs:
         return None
@@ -157,7 +160,8 @@ def resolve_filters(q: str, today: date) -> OverviewFilters:
     """中文條件 → 結構化過濾（確定性對應；解析不到的維度留空）。"""
     s = norm_for_match(q)
     date_from, date_to = _resolve_dates(s, today)
-    m = re.search(r"(?<!\d)(\d{4})(?!\d)", q)
+    # 4 位數字 = 個股代碼，但緊跟「年」的（如「2025年」）是年份字面，非代碼。
+    m = re.search(r"(?<!\d)(\d{4})(?!\d)(?!年)", q)
     stock_code = m.group(1) if m else None
     f = OverviewFilters(
         source=_match_longest(s, _SOURCE_LOOKUP),

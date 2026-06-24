@@ -50,6 +50,11 @@ class ResolveFiltersTests(unittest.TestCase):
         f = self._r("2025年有哪些台股研報")
         self.assertEqual((f.date_from, f.date_to), (date(2025, 1, 1), date(2025, 12, 31)))
 
+    def test_year_literal_not_stock_code(self):
+        f = self._r("2025年有哪些台股研報")
+        self.assertIsNone(f.stock_code)
+        self.assertEqual((f.date_from, f.date_to), (date(2025, 1, 1), date(2025, 12, 31)))
+
     def test_stock_code(self):
         self.assertEqual(self._r("2330 有哪些研報").stock_code, "2330")
 

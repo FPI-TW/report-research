@@ -75,6 +75,34 @@ class StreamParseTests(unittest.TestCase):
         self.assertFalse(llm.is_result_line("123"))
 
 
+class ScaleUpDefaultsTests(unittest.TestCase):
+    NOW = datetime(2026, 6, 24, tzinfo=timezone.utc)
+    D = date(2026, 6, 20)  # 近期，避免新近度截斷干擾
+
+    def test_default_max_reports_is_15(self):
+        scored = [
+            (0, 0.70, make_row(f"r{i}", f"{i}.pdf", "TW", f"內容{i}", self.D))
+            for i in range(20)
+        ]
+        sources, _ = build_context(scored, now=self.NOW)
+        self.assertEqual(len(sources), 15)
+
+    def test_default_max_passages_is_4(self):
+        scored = [
+            (0, 0.70, make_row("r1", "甲.pdf", "TW", f"第{i}段內容", self.D))
+            for i in range(6)  # 同一報告 6 段
+        ]
+        sources, context = build_context(scored, now=self.NOW)
+        self.assertEqual(len(sources), 1)
+        self.assertIn("第0段內容", context)
+        self.assertIn("第3段內容", context)
+        self.assertNotIn("第4段內容", context)  # 受預設 max_passages=4 限制
+
+    def test_system_prompt_encourages_synthesis(self):
+        from app.services.answer import SYSTEM_PROMPT
+        self.assertIn("綜合多篇研報", SYSTEM_PROMPT)
+
+
 class BuildContextTests(unittest.TestCase):
     def test_numbers_reports_in_order(self):
         scored = [

@@ -61,12 +61,21 @@ for _code, _disp in SOURCE_DISPLAY.items():
     _SOURCE_LOOKUP[norm_for_match(_disp)] = _code
     _SOURCE_LOOKUP[norm_for_match(_code)] = _code
 
+# 維度表面名詞（指「某個維度」本身而非其值，如「市場/商品/分類」）與狀態填充詞。
+# 必須剝除，否則「目前市場」「市場分類」這類泛化片段會殘留成 ≥3 字 CJK 段，被
+# _extract_stock_name 誤判為公司名 → 套成空的 company_name 過濾 → 枚舉題回「找不到」。
+_DIMENSION_NOUNS: tuple[str, ...] = (
+    "市場", "商品", "券商", "來源", "標的", "分類", "類別", "面向", "維度",
+    "目前", "現在", "現況", "概況", "近期", "整體", "全部的",
+)
+
 # 解析個股中文名時，先剝除的非個股詞（提示詞 + 各維度表面詞 + 常見填充詞）
 _NAME_STOPWORDS: tuple[str, ...] = (
     _OVERVIEW_CUES
     + tuple(_MARKET_SYNONYMS)
     + tuple(_INSTRUMENT_SYNONYMS)
     + tuple(k for k in _SOURCE_LOOKUP)
+    + _DIMENSION_NOUNS
     + ("研報", "報告", "研究", "給我", "我", "想", "請", "幫我", "關於",
        "相關", "這", "那", "的", "最新", "出過", "出", "有", "最近", "今年",
        "去年", "本週", "這週", "一覽")

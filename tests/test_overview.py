@@ -79,6 +79,20 @@ class ResolveFiltersTests(unittest.TestCase):
     def test_no_filter(self):
         self.assertFalse(self._r("列出所有天氣種類").any())
 
+    def test_generic_market_phrase_not_stock_name(self):
+        # 「目前市場」是維度/填充詞而非公司名；不可被當個股過濾（否則枚舉題回空）
+        f = self._r("目前市場報告有哪些分類")
+        self.assertIsNone(f.stock_name)
+        self.assertFalse(f.any())
+
+    def test_dimension_noun_phrase_not_stock_name(self):
+        # 「市場分類」同理：純維度名詞片段不該變成個股條件
+        self.assertIsNone(self._r("目前有哪些市場分類").stock_name)
+
+    def test_real_company_still_extracted_with_dimension_words(self):
+        # 修正不可誤傷真實公司名（即使句中含維度詞）
+        self.assertEqual(self._r("台積電有哪些報告").stock_name, "台積電")
+
     def test_applied_labels(self):
         f = self._r("元大台股最近一週有哪些研報")
         labels = f.applied_labels()

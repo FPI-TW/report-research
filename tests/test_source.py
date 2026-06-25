@@ -120,6 +120,54 @@ class ExtractSourceFromTextTests(unittest.TestCase):
         self.assertIsNone(self._s(None))
 
 
+class IssuerVariantTests(unittest.TestCase):
+    """補長尾發行機構指紋：新增本土券商與既有券商的自我指稱變體（皆自我指稱、非提及）。"""
+
+    def _s(self, text):
+        return extract_source_from_text(text)
+
+    def test_concord_by_disclaimer(self):
+        # 康和投顧個股報告頁尾自稱「以上資料為康和投顧所提供」
+        self.assertEqual(self._s("以上資料為康和投顧所提供,不得轉寄"), "concord")
+
+    def test_huanan_by_copyright(self):
+        # 華南 Memo 著作權自稱
+        txt = "投資人應自行負責。本研究報告的著作權為華南投顧所有，嚴禁抄襲、引用、對外傳送或轉載。"
+        self.assertEqual(self._s(txt), "huanan")
+
+    def test_fubon_sec_by_header(self):
+        # 福邦投顧（福邦證券，非富邦金）股市早報報頭自稱
+        self.assertEqual(self._s("福邦投顧 股市投資早報 2026/1/13 Grand Fortune Securities"), "fubon_sec")
+
+    def test_masterlink_by_chart_credit_variant(self):
+        # 元富中國經濟系列圖表自我標註「資料來源：…元富整理」
+        self.assertEqual(self._s("中國GDP年增5.4% 資料來源：Wind、元富整理"), "masterlink")
+
+    def test_mega_international_consulting_variant(self):
+        txt = "不做任何保證 兆豐國際證券投資顧問股份有限公司獨立經營管理 台北"
+        self.assertEqual(self._s(txt), "mega")
+
+    def test_yuanta_by_trust_credit(self):
+        self.assertEqual(self._s("投資黃金 資料來源：彭博資訊，元大投信整理，2025"), "yuanta")
+
+    def test_president_by_trust_credit(self):
+        self.assertEqual(self._s("資料來源：Factset，並經統一投信整理。"), "president")
+
+    def test_union_federal_not_attributed(self):
+        # 「聯邦快遞」=FedEx、「聯邦資金利率」=Fed funds，皆非券商，不得誤標
+        self.assertIsNone(self._s("Nike(NKE) 聯邦快遞(FDX) 12/20 (五)"))
+        self.assertIsNone(self._s("FOMC 以10:2通過維持利率不變，聯邦資金利率維持在 3.5%"))
+
+    def test_new_broker_display_names(self):
+        self.assertEqual(source_display("concord"), "康和")
+        self.assertEqual(source_display("huanan"), "華南")
+        self.assertEqual(source_display("fubon_sec"), "福邦")
+
+    def test_ctbc_filename_token_maps_to_citic(self):
+        # 中信證券（CTBC）個股報告檔名帶 -CTBC<6碼>
+        self.assertEqual(parse_filename("群翊(6664,UG,B)-CTBC250724.pdf").source, "citic")
+
+
 class NewBrokerMappingTests(unittest.TestCase):
     def test_masterlink_display_name(self):
         self.assertEqual(source_display("masterlink"), "元富")

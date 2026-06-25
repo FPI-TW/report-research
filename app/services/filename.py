@@ -30,6 +30,7 @@ BROKER_MAP: dict[str, str] = {
     "JEF": "jefferies",
     "ALETHEIA": "aletheia",
     "中信": "citic",
+    "CTBC": "citic",  # 中信證券（CTBC）個股報告檔名帶 -CTBC<日期>（拉丁，詞邊界比對）
     "群益": "capital",
     "國泰": "cathay",
     "凱基": "kgi",
@@ -75,6 +76,9 @@ SOURCE_DISPLAY: dict[str, str] = {
     "first": "第一金",
     "ibf": "國票",
     "hongyuan": "宏遠",
+    "concord": "康和",
+    "huanan": "華南",
+    "fubon_sec": "福邦",
 }
 
 
@@ -260,22 +264,29 @@ def parse_filename(file_name: str) -> FilenameMeta:
 # 股份有限公司」「元大期貨法人總經講座」，而非「X投顧」。這些仍是發行者自我指稱（非裸公司名
 # 提及），且映射到與「X投顧」相同的母券商，故同樣安全；最早指紋優先規則保證報頭自稱勝過內文
 # 提及。實測補回 375 篇 NULL，且修正 2 篇被檔名「MS」誤命中「MSCI」而錯標 morgan_stanley 者。
+# 部分指紋亦含發行機構的「投信」（基金）關係企業自我標註（「X投信整理」）與圖表自我標註
+# 「資料來源：…X整理」，皆為發行者自我指稱、映射同一品牌；新增本土券商 concord（康和）／
+# huanan（華南）／fubon_sec（福邦證券，非富邦金）只用「X投顧」自稱形式，因其裸名（康和證券
+# 6016／華南金 2880）為上市公司，放進檔名 token 會 subject-company 誤判（同 [[宏遠／華南]] 教訓）。
 CONTENT_SIGNATURES_CJK: list[tuple[str, list[str]]] = [
     ("kgi", ["凱基投顧", "kgisia", "kgi凱基", "凱基期貨", "凱基金融控股", "凱基金控"]),
-    ("masterlink", ["元富投顧", "masterlink", "元富期貨"]),
+    ("masterlink", ["元富投顧", "masterlink", "元富期貨", "元富整理"]),
     ("sinopac", ["永豐晨訊", "永豐證券投資顧問", "永豐金證券投資顧問", "永豐投顧", "永豐期貨"]),
     ("capital", ["群益投顧", "群益證券投資顧問", "群益期貨"]),
     ("cathay", ["國泰證券投資顧問", "國泰綜合證券股份", "國泰期貨"]),
     ("fubon", ["富邦投顧", "富邦期貨"]),
-    ("mega", ["兆豐證券投資顧問", "兆豐投顧", "兆豐期貨"]),
-    ("president", ["統一投顧", "統一綜合證券股份", "統一期貨"]),
+    ("mega", ["兆豐證券投資顧問", "兆豐投顧", "兆豐期貨", "兆豐國際證券投資顧問"]),
+    ("president", ["統一投顧", "統一綜合證券股份", "統一期貨", "統一投信"]),
     ("jihsun", ["日盛投顧", "日盛證券投資顧問", "日盛期貨"]),
     ("first", ["第一金投顧", "第一金證券投資顧問", "第一金期貨"]),
     ("ibf", ["國票證券投資顧問", "國票投顧", "國票期貨"]),
     ("citic", ["中信投顧", "中國信託綜合證券股份", "中信期貨"]),
-    ("yuanta", ["元大投顧", "元大期貨"]),
+    ("yuanta", ["元大投顧", "元大期貨", "元大投信"]),
     ("hongyuan", ["宏遠投顧"]),
     ("haitong", ["海通國際"]),
+    ("concord", ["康和投顧"]),
+    ("huanan", ["華南投顧"]),
+    ("fubon_sec", ["福邦投顧"]),
 ]
 CONTENT_SIGNATURES_LATIN: list[tuple[str, list[str]]] = [
     ("morgan_stanley", ["morgan stanley"]),

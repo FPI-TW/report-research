@@ -86,6 +86,30 @@ class ExtractSourceFromTextTests(unittest.TestCase):
         txt = "國際金融市場焦點 " + "y" * 3300 + " 資料來源：Bloomberg、元大投顧 交易量"
         self.assertEqual(self._s(txt), "yuanta")
 
+    # --- 期貨／金控子公司：發行機構自我指稱（「X期貨」「X金融控股」非僅「X投顧」）---
+    def test_kgi_by_futures_arm(self):
+        # CFTC 籌碼快報／債券雙週報由凱基期貨發行，自稱「凱基期貨」而非「凱基投顧」
+        txt = (
+            "重要聲明: 本簡報由凱基期貨股份有限公司編製，所載資料、意見及預測"
+            "乃根據本公司認為可靠之資料來源。資料來源：CFTC 美國商品期貨交易委員會"
+        )
+        self.assertEqual(self._s(txt), "kgi")
+
+    def test_kgi_by_holding_company(self):
+        # 線上講座／海外債簡報自稱「凱基金融控股公司(「凱基金控」)」
+        txt = "本簡報由凱基金融控股公司(「凱基金控」)所編制，所載之資料、意見及預測"
+        self.assertEqual(self._s(txt), "kgi")
+
+    def test_sinopac_by_futures_arm(self):
+        # 永豐期貨專題報導／台指期盤後快訊自稱「永豐期貨股份有限公司」
+        txt = "中國經濟轉好 銅價有望再迎大多頭 永豐期貨股份有限公司│台北市重慶南路一段2號"
+        self.assertEqual(self._s(txt), "sinopac")
+
+    def test_yuanta_by_futures_arm(self):
+        # 元大期貨法人總經講座
+        txt = "市場展望與操作工具分享 2025/6/19 2025年 元大期貨法人總經講座 川普政策搖擺"
+        self.assertEqual(self._s(txt), "yuanta")
+
     # --- 無指紋 / 空輸入 ---
     def test_no_signal_returns_none(self):
         txt = "崇越(5434) – 20241230座談會摘要 預估2025年營收逐季成長，全年目標630億元。"

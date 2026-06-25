@@ -34,6 +34,8 @@ BROKER_MAP: dict[str, str] = {
     "國泰": "cathay",
     "凱基": "kgi",
     "元大": "yuanta",
+    "元富": "masterlink",
+    "宏遠": "hongyuan",
     "富邦": "fubon",
     "永豐": "sinopac",
     "兆豐": "mega",
@@ -64,6 +66,7 @@ SOURCE_DISPLAY: dict[str, str] = {
     "cathay": "國泰",
     "kgi": "凱基",
     "yuanta": "元大",
+    "masterlink": "元富",
     "fubon": "富邦",
     "sinopac": "永豐",
     "mega": "兆豐",
@@ -71,6 +74,7 @@ SOURCE_DISPLAY: dict[str, str] = {
     "jihsun": "日盛",
     "first": "第一金",
     "ibf": "國票",
+    "hongyuan": "宏遠",
 }
 
 
@@ -224,3 +228,128 @@ def parse_filename(file_name: str) -> FilenameMeta:
     meta.report_date = _parse_date(stem)
     meta.report_type = _detect_report_type(stem)
     return meta
+
+
+# ── 內文券商來源偵測 ──────────────────────────────────────────────────────────
+# 語料中約 67% 研報檔名不帶券商 token（如 daily story_/Takeaway_/速報/國際金融市場焦點），
+# 但內文一定載明發行機構。以高精度「發行機構指紋」補 source。
+#
+# 關鍵：指紋只用「發行者自我指稱」形式——自有研究網站 URL、著作權／免責聲明、圖表
+# 「資料來源：…投顧」自我標註，以及機構簡稱「X投顧」。**不可**用裸券商公司名「X證券」，
+# 因彙整型研報（如凱基 Taiwan daily/daily story）常「提及」競爭對手主辦的法說會
+# （「參加國票綜合證券舉辦之法說會」「永豐金證券…」），裸名會誤判（曾使 161 篇凱基研報
+# 被誤標為對手）。發行者指稱自己用「投顧」，提及他人主辦則用「證券」——以此切分。
+#
+# 偵測採「最早指紋優先」：發行機構自我指稱位於報頭（char≈0），他人提及在內文深處，
+# 故位置最前者即為發行者。CJK＋本土自有 URL 同視窗（4000，含前數頁圖表標註）；外資
+# 拉丁指紋只掃表頭（2500）且詞邊界比對（避免 'ubs' 命中 'substrates'），且僅在無本土
+# 發行機構指紋時才採（保護本土晨報「提及」外資估值的情形）。指紋字串一律小寫存放
+# （比對前整段轉小寫；CJK 不受 lower() 影響）。
+CONTENT_SIGNATURES_CJK: list[tuple[str, list[str]]] = [
+    ("kgi", ["凱基投顧", "kgisia", "kgi凱基"]),
+    ("masterlink", ["元富投顧", "masterlink"]),
+    ("sinopac", ["永豐晨訊", "永豐證券投資顧問", "永豐金證券投資顧問", "永豐投顧"]),
+    ("capital", ["群益投顧", "群益證券投資顧問"]),
+    ("cathay", ["國泰證券投資顧問", "國泰綜合證券股份"]),
+    ("fubon", ["富邦投顧"]),
+    ("mega", ["兆豐證券投資顧問", "兆豐投顧"]),
+    ("president", ["統一投顧", "統一綜合證券股份"]),
+    ("jihsun", ["日盛投顧", "日盛證券投資顧問"]),
+    ("first", ["第一金投顧", "第一金證券投資顧問"]),
+    ("ibf", ["國票證券投資顧問", "國票投顧"]),
+    ("citic", ["中信投顧", "中國信託綜合證券股份"]),
+    ("yuanta", ["元大投顧"]),
+    ("hongyuan", ["宏遠投顧"]),
+    ("haitong", ["海通國際"]),
+]
+CONTENT_SIGNATURES_LATIN: list[tuple[str, list[str]]] = [
+    ("morgan_stanley", ["morgan stanley"]),
+    ("goldman_sachs", ["goldman sachs"]),
+    ("jpmorgan", ["j.p. morgan", "jpmorgan"]),
+    ("ubs", ["ubs ag", "ubs securities", "ubs limited"]),
+    ("nomura", ["nomura"]),
+    ("macquarie", ["macquarie"]),
+    ("daiwa", ["daiwa"]),
+    ("clsa", ["clsa"]),
+    ("citi", ["citigroup", "citi research", "citivelocity"]),
+    ("bofa", ["bofa securities", "merrill lynch", "bofaml"]),
+    ("hsbc", ["hsbc"]),
+    ("jefferies", ["jefferies"]),
+]
+_LATIN_SIG_RE: list[tuple[str, list[re.Pattern[str]]]] = [
+    (
+        name,
+        [re.compile(r"(?<![a-z])" + re.escape(m) + r"(?![a-z])") for m in markers],
+    )
+    for name, markers in CONTENT_SIGNATURES_LATIN
+]
+
+# 本土發行機構指紋掃前 4000 字（含前數頁圖表自我標註）；外資拉丁只掃前 2500 字（防提及）。
+CJK_SIG_WINDOW = 4000
+LATIN_SIG_WINDOW = 2500
+
+
+def _detect_issuer(full_text: str, window: int) -> Optional[str]:
+    """本土發行機構指紋（含自有 URL），最早出現者勝（報頭＝發行者，內文深處＝提及）。"""
+    head = full_text[:window].lower()
+    best: Optional[str] = None
+    best_pos = len(head) + 1
+    for name, markers in CONTENT_SIGNATURES_CJK:
+        for mk in markers:
+            i = head.find(mk)
+            if 0 <= i < best_pos:
+                best_pos, best = i, name
+    return best
+
+
+def _detect_foreign(full_text: str, window: int) -> Optional[str]:
+    """外資券商指紋：表頭限定 + 詞邊界比對（避免內文提及與子字串誤判）。"""
+    head = full_text[:window].lower()
+    best: Optional[str] = None
+    best_pos = len(head) + 1
+    for name, patterns in _LATIN_SIG_RE:
+        for pattern in patterns:
+            if (m := pattern.search(head)) and m.start() < best_pos:
+                best_pos, best = m.start(), name
+    return best
+
+
+def extract_source_from_text(
+    full_text: Optional[str],
+    *,
+    cjk_window: int = CJK_SIG_WINDOW,
+    latin_window: int = LATIN_SIG_WINDOW,
+) -> Optional[str]:
+    """從報告內文偵測發行券商（正規化 source 名），無高精度指紋則回 None。
+
+    與 parse_filename().source 互補：檔名沒帶券商時的補法。本土發行機構指紋（最早出現者）
+    優先於外資（拉丁）提及。只用發行者自我指稱形式，故安全。
+    """
+    if not full_text:
+        return None
+    return _detect_issuer(full_text, cjk_window) or _detect_foreign(
+        full_text, latin_window
+    )
+
+
+def resolve_source(
+    file_name: str,
+    full_text: Optional[str],
+    *,
+    cjk_window: int = CJK_SIG_WINDOW,
+    latin_window: int = LATIN_SIG_WINDOW,
+) -> Optional[str]:
+    """決定一篇研報的來源券商（backfill / sync / 校正共用的單一真相）。
+
+    優先序：本土發行機構內文指紋 → 檔名券商 token → 外資內文指紋 → None。
+    本土發行機構指紋（著作權／投顧自稱／自有 URL）置於檔名之前，是為了校正檔名把
+    「標的公司」誤當券商的情形（如「2882國泰金…-報告.pdf」實為元富投顧發行 →
+    檔名解析成 cathay，內文指紋正確判為 masterlink）。
+    """
+    issuer = _detect_issuer(full_text or "", cjk_window)
+    if issuer:
+        return issuer
+    fn = parse_filename(file_name).source
+    if fn:
+        return fn
+    return _detect_foreign(full_text or "", latin_window)

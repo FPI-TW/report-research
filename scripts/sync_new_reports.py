@@ -195,7 +195,7 @@ async def _run(args) -> None:
     from app.services.embed import embed_texts
 
     from app.services.extract import extract_text
-    from app.services.filename import parse_filename
+    from app.services.filename import parse_filename, resolve_source
     from app.services.store import ReportRow, report_exists, upsert_report
     from app.services.tagging import load_tag
     from app.services.textnorm import clean_extracted
@@ -239,6 +239,9 @@ async def _run(args) -> None:
             report_date = fallback_report_date_from_mtime(
                 meta.report_date, path, created_at=None
             )
+            # 來源券商：本土發行機構內文指紋 → 檔名 token → 外資內文指紋（見 resolve_source）。
+            # 內文指紋置於檔名前，可校正檔名把標的公司誤當券商（語料約 67% 檔名亦不帶券商）。
+            source = resolve_source(path.name, res.text)
             exists = await report_exists(session, res.file_hash)
             reason = skip_before_tag(meta.is_admin, res.scanned, exists)
             if reason:
@@ -274,7 +277,7 @@ async def _run(args) -> None:
                     confidence=tag.confidence,
                     stock_code=meta.stock_code,
                     company_name=meta.company_name,
-                    source=meta.source,
+                    source=source,
                     report_date=report_date,
                     report_type=meta.report_type,
                     language=res.language,
@@ -298,7 +301,7 @@ async def _run(args) -> None:
                         "is_admin": meta.is_admin,
                         "stock_code": meta.stock_code,
                         "company_name": meta.company_name,
-                        "source": meta.source,
+                        "source": source,
                         "report_date": (
                             report_date.isoformat() if report_date else None
                         ),

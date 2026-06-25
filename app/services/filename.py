@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -101,7 +102,12 @@ RE_NAME_CODE = re.compile(r"([一-鿿]{2,10})\s*\((\d{4})\)")        # 鴻海(23
 RE_CODE_NAME = re.compile(r"^(\d{4})\s*([一-鿿]{2,10})")            # 1102亞泥
 RE_CODE_TT = re.compile(r"^(\d{4})\s+TT\b", re.IGNORECASE)                  # 1216 TT
 RE_SOURCE_DATE = re.compile(r"-([A-Z]{2,8})(\d{8})")                        # -MS20240314
-RE_DATE8 = re.compile(r"(20\d{2})(\d{2})(\d{2})")
+
+# 檔名日期（依信心序）。年份明確者才在此決定；只有 MMDD / 6 位數歧義者回 None，
+# 交由檔案 mtime 補（見 mtime_report_date()／backfill／sync）。
+RE_YMD = re.compile(r"(?<!\d)(20\d{2})[._\-/]?(\d{2})[._\-/]?(\d{2})(?!\d)")  # 2025_05_04 / 20250504 / 2025-05-04
+RE_MDY8 = re.compile(r"(?<!\d)(\d{2})(\d{2})(20\d{2})(?!\d)")                # 03252025（MMDDYYYY）
+RE_D6 = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)")                    # 240510 / 093024（6 位數）
 
 
 @dataclass
@@ -116,14 +122,57 @@ class FilenameMeta:
     matched_patterns: list[str] = field(default_factory=list)
 
 
-def _parse_date8(text: str) -> Optional[date]:
-    m = RE_DATE8.search(text)
-    if not m:
-        return None
+def _valid_ymd(y: int, m: int, d: int) -> bool:
+    """是否為合法西元日期（月 1–12、日不超過該月天數）。"""
+    if not (1 <= m <= 12):
+        return False
     try:
-        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    except ValueError:
+        return 1 <= d <= calendar.monthrange(y, m)[1]
+    except (ValueError, IndexError):
+        return False
+
+
+def _parse_date(stem: str) -> Optional[date]:
+    """從檔名抽出版日；僅在年份明確時回日期，否則 None（歧義交內文補）。
+
+    依信心序：YYYY[_-]MM[_-]DD（錨定 20XX，避開股票代碼前綴）→ MMDDYYYY →
+    6 位數（YYMMDD/MMDDYY，唯一可解者採用，兩解皆有效視為歧義回 None）。
+    """
+    for m in RE_YMD.finditer(stem):
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if _valid_ymd(y, mo, d):
+            return date(y, mo, d)
+    for m in RE_MDY8.finditer(stem):
+        mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if _valid_ymd(y, mo, d):
+            return date(y, mo, d)
+    for m in RE_D6.finditer(stem):
+        a, b, c = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        # YYMMDD 與 MMDDYY 兩解；同一天（去重後僅一個）不算歧義。
+        cands = {(2000 + a, b, c), (2000 + c, a, b)}
+        valid = [t for t in cands if _valid_ymd(*t)]
+        if len(valid) == 1:
+            return date(*valid[0])
+    return None
+
+
+def mtime_report_date(
+    mtime: Optional[date],
+    created_at: Optional[date],
+    *,
+    copy_tolerance_days: int = 2,
+) -> Optional[date]:
+    """以檔案 mtime 推定出版日（檔名無日期時的全覆蓋補法，實測中位數僅差 1 天）。
+
+    防呆：mtime 與 created_at（匯入時間）相差 ≤copy_tolerance_days 天時，視為「批次複製
+    當下的時間戳」而非真實出版日 → 回 None（保守留空＝視為舊，避免把舊報告誤標成全新）。
+    created_at 為 None（如即時匯入、無參照）時直接採用 mtime。
+    """
+    if mtime is None:
         return None
+    if created_at is not None and abs((mtime - created_at).days) <= copy_tolerance_days:
+        return None
+    return mtime
 
 
 def _detect_report_type(text: str) -> Optional[str]:
@@ -172,6 +221,6 @@ def parse_filename(file_name: str) -> FilenameMeta:
                 meta.matched_patterns.append("BROKER_TOKEN")
                 break
 
-    meta.report_date = _parse_date8(stem)
+    meta.report_date = _parse_date(stem)
     meta.report_type = _detect_report_type(stem)
     return meta

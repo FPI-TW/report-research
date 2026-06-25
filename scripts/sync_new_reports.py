@@ -173,8 +173,10 @@ async def _run(args) -> None:
     from app.services.chunk import chunk_text
     from app.services.db import SessionFactory
     from app.services.embed import embed_texts
+    from datetime import date
+
     from app.services.extract import extract_text
-    from app.services.filename import parse_filename
+    from app.services.filename import mtime_report_date, parse_filename
     from app.services.store import ReportRow, report_exists, upsert_report
     from app.services.tagging import load_tag
     from app.services.textnorm import clean_extracted
@@ -213,6 +215,16 @@ async def _run(args) -> None:
                 continue
 
             meta = parse_filename(path.name)
+            # 出版日：檔名有明確日期則用之；否則以檔案 mtime 補（rsync 保留 NAS 原始 mtime，
+            # 實測與真實出版日中位數僅差 1 天）。防呆排除「mtime≈今天」的複製時間戳。
+            report_date = meta.report_date
+            if report_date is None:
+                try:
+                    report_date = mtime_report_date(
+                        date.fromtimestamp(path.stat().st_mtime), date.today()
+                    )
+                except OSError:
+                    report_date = None
             exists = await report_exists(session, res.file_hash)
             reason = skip_before_tag(meta.is_admin, res.scanned, exists)
             if reason:
@@ -249,7 +261,7 @@ async def _run(args) -> None:
                     stock_code=meta.stock_code,
                     company_name=meta.company_name,
                     source=meta.source,
-                    report_date=meta.report_date,
+                    report_date=report_date,
                     report_type=meta.report_type,
                     language=res.language,
                     instrument_types=tag.instrument_types,
@@ -274,7 +286,7 @@ async def _run(args) -> None:
                         "company_name": meta.company_name,
                         "source": meta.source,
                         "report_date": (
-                            meta.report_date.isoformat() if meta.report_date else None
+                            report_date.isoformat() if report_date else None
                         ),
                         "report_type": meta.report_type,
                     }

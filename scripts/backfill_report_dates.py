@@ -93,7 +93,7 @@ async def pass_filename(dry_run: bool) -> int:
 async def pass_mtime(dry_run: bool, batch: int) -> int:
     """階段 2：剩餘 NULL 者用 file_path 的 mtime 補（防呆排除批次複製時間）。"""
     resolved = skipped_copy = no_file = 0
-    last_id = ""
+    last_id: str | None = None
     samples: list[str] = []
     async with SessionFactory() as session:
         while True:
@@ -102,7 +102,8 @@ async def pass_mtime(dry_run: bool, batch: int) -> int:
                     text(
                         "SELECT id::text, file_name, file_path, created_at "
                         "FROM research.research_report "
-                        "WHERE report_date IS NULL AND id::text > :last "
+                        "WHERE report_date IS NULL "
+                        "AND (:last IS NULL OR id > CAST(:last AS uuid)) "
                         "ORDER BY id LIMIT :lim"
                     ),
                     {"last": last_id, "lim": batch},

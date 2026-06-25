@@ -16,6 +16,7 @@ import argparse
 import os
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -165,6 +166,25 @@ def _iter_targets(args) -> list[Path]:
     return parse_rsync_delta(lines, SRC_LOCAL)
 
 
+def fallback_report_date_from_mtime(
+    report_date: date | None,
+    path: Path,
+    *,
+    created_at: date | None,
+) -> date | None:
+    """report_date 缺值時以 mtime 補；live sync 無可靠 copy-time 參照時直接信任 mtime。"""
+    if report_date is not None:
+        return report_date
+    try:
+        mtime = date.fromtimestamp(path.stat().st_mtime)
+    except OSError:
+        return None
+
+    from app.services.filename import mtime_report_date
+
+    return mtime_report_date(mtime, created_at)
+
+
 async def _run(args) -> None:
     import time
 
@@ -173,10 +193,9 @@ async def _run(args) -> None:
     from app.services.chunk import chunk_text
     from app.services.db import SessionFactory
     from app.services.embed import embed_texts
-    from datetime import date
 
     from app.services.extract import extract_text
-    from app.services.filename import mtime_report_date, parse_filename
+    from app.services.filename import parse_filename
     from app.services.store import ReportRow, report_exists, upsert_report
     from app.services.tagging import load_tag
     from app.services.textnorm import clean_extracted
@@ -215,16 +234,11 @@ async def _run(args) -> None:
                 continue
 
             meta = parse_filename(path.name)
-            # 出版日：檔名有明確日期則用之；否則以檔案 mtime 補（rsync 保留 NAS 原始 mtime，
-            # 實測與真實出版日中位數僅差 1 天）。防呆排除「mtime≈今天」的複製時間戳。
-            report_date = meta.report_date
-            if report_date is None:
-                try:
-                    report_date = mtime_report_date(
-                        date.fromtimestamp(path.stat().st_mtime), date.today()
-                    )
-                except OSError:
-                    report_date = None
+            # live sync 沒有可信的「複製發生時間」參照；若 rsync 已保留 NAS 原始 mtime，
+            # 這裡應直接信任 mtime，避免今天/近兩天的新報告再度被留成 NULL。
+            report_date = fallback_report_date_from_mtime(
+                meta.report_date, path, created_at=None
+            )
             exists = await report_exists(session, res.file_hash)
             reason = skip_before_tag(meta.is_admin, res.scanned, exists)
             if reason:

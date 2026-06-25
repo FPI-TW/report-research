@@ -63,6 +63,10 @@ class ExtractSourceFromTextTests(unittest.TestCase):
         txt = "Global Research UBS Securities Asia Limited equity strategy note"
         self.assertEqual(self._s(txt), "ubs")
 
+    def test_foreign_earliest_header_match_wins(self):
+        txt = "Global Research Goldman Sachs Asia focus list; later cites Morgan Stanley estimates"
+        self.assertEqual(self._s(txt), "goldman_sachs")
+
     # --- 排序：本土發行機構（CJK）優先於外資「提及」 ---
     def test_local_issuer_wins_over_foreign_mention(self):
         # 元大投顧自家投資早報內文提及 Morgan Stanley 的預估，來源仍應是 yuanta
@@ -102,6 +106,9 @@ class NewBrokerMappingTests(unittest.TestCase):
     def test_yuanfu_filename_token_maps_to_masterlink(self):
         # 檔名帶「元富」應解析為 masterlink（與內文指紋一致）
         self.assertEqual(parse_filename("元富投顧0801每日股市彙報.pdf").source, "masterlink")
+
+    def test_hongyuan_filename_token_maps_to_hongyuan(self):
+        self.assertEqual(parse_filename("宏遠投顧晨報_20240625.pdf").source, "hongyuan")
 
 
 if __name__ == "__main__":

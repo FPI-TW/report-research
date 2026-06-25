@@ -51,7 +51,7 @@ async def run(reconcile: bool, dry_run: bool, batch: int) -> None:
     pairs: collections.Counter = collections.Counter()
     src_counter: collections.Counter = collections.Counter()
     samples: list[str] = []
-    last_id = ""
+    last_id: str | None = None
     async with SessionFactory() as session:
         while True:
             rows = (
@@ -60,7 +60,8 @@ async def run(reconcile: bool, dry_run: bool, batch: int) -> None:
                         "SELECT id::text, file_name, coalesce(source, ''), "
                         "left(full_text, :win) "
                         "FROM research.research_report "
-                        f"{where}{' AND' if where else 'WHERE'} id::text > :last "
+                        f"{where}{' AND' if where else 'WHERE'} "
+                        "(:last IS NULL OR id > CAST(:last AS uuid)) "
                         "ORDER BY id LIMIT :lim"
                     ),
                     {"win": CJK_SIG_WINDOW, "last": last_id, "lim": batch},

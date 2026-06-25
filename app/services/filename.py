@@ -35,6 +35,7 @@ BROKER_MAP: dict[str, str] = {
     "凱基": "kgi",
     "元大": "yuanta",
     "元富": "masterlink",
+    "宏遠": "hongyuan",
     "富邦": "fubon",
     "永豐": "sinopac",
     "兆豐": "mega",
@@ -304,10 +305,13 @@ def _detect_issuer(full_text: str, window: int) -> Optional[str]:
 def _detect_foreign(full_text: str, window: int) -> Optional[str]:
     """外資券商指紋：表頭限定 + 詞邊界比對（避免內文提及與子字串誤判）。"""
     head = full_text[:window].lower()
+    best: Optional[str] = None
+    best_pos = len(head) + 1
     for name, patterns in _LATIN_SIG_RE:
-        if any(p.search(head) for p in patterns):
-            return name
-    return None
+        for pattern in patterns:
+            if (m := pattern.search(head)) and m.start() < best_pos:
+                best_pos, best = m.start(), name
+    return best
 
 
 def extract_source_from_text(

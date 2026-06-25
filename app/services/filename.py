@@ -220,7 +220,17 @@ def parse_filename(file_name: str) -> FilenameMeta:
 
     if meta.source is None:
         for token, name in BROKER_MAP.items():
-            if token in stem:
+            # 拉丁券商代碼（MS/GS/DW…）以詞邊界比對，避免子字串誤判：裸 "MS" 會命中
+            # "MSCI"/"MSFT"/"EMS"/"Memory" 等（曾使多篇研報被錯標 morgan_stanley）。
+            # 外資代碼的精確錨點是上方 RE_SOURCE_DATE（-MS20240314）；此處保留 -MS-/-MS<6碼>
+            # 等詞邊界形式。CJK 券商名為多字、distinctive，維持子字串比對。
+            if token.isascii():
+                hit = re.search(
+                    rf"(?<![A-Za-z]){re.escape(token)}(?![A-Za-z])", stem
+                )
+            else:
+                hit = token in stem
+            if hit:
                 meta.source = name
                 meta.matched_patterns.append("BROKER_TOKEN")
                 break

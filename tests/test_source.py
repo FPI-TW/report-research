@@ -134,6 +134,29 @@ class NewBrokerMappingTests(unittest.TestCase):
     def test_hongyuan_filename_token_maps_to_hongyuan(self):
         self.assertEqual(parse_filename("宏遠投顧晨報_20240625.pdf").source, "hongyuan")
 
+    # --- 拉丁券商代碼以詞邊界比對：'MS' 不得命中 'MSCI'/'MSFT'/'EMS' 等子字串 ---
+    def test_ms_substring_in_ems_not_morgan_stanley(self):
+        # 「EMS」含 MS 子字串，但非 Morgan Stanley；無其他券商 → source 應為 None
+        self.assertIsNone(parse_filename("中國股市-EMS產業 20240930.pdf").source)
+
+    def test_ms_substring_in_msft_falls_through_to_cjk_token(self):
+        # 「MSFT」含 MS，但檔名實帶「元富」CJK 券商 → 應解析為 masterlink（非被 MS 劫走）
+        self.assertEqual(
+            parse_filename("元富投顧國際重要財報簡評 0502 -- MSFT.pdf").source, "masterlink"
+        )
+
+    def test_ms_substring_in_msci_not_morgan_stanley(self):
+        self.assertIsNone(parse_filename("台股-MSCI季度調整展望與預測.pdf").source)
+
+    def test_ms_word_boundary_real_token_still_matches(self):
+        # 真 Morgan Stanley 檔名（-MS- / -MS<6碼>）詞邊界仍命中
+        self.assertEqual(parse_filename("5274 信驊-MS-0326.pdf").source, "morgan_stanley")
+        self.assertEqual(parse_filename("金像電(2368)-MS241212.pdf").source, "morgan_stanley")
+
+    def test_source_date_anchor_still_matches_ms(self):
+        # 錨定式 -MS<8碼> 路徑不受影響
+        self.assertEqual(parse_filename("鴻海(2317)-MS20240314.pdf").source, "morgan_stanley")
+
 
 if __name__ == "__main__":
     unittest.main()

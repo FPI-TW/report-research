@@ -16,6 +16,7 @@ import argparse
 import os
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -165,6 +166,25 @@ def _iter_targets(args) -> list[Path]:
     return parse_rsync_delta(lines, SRC_LOCAL)
 
 
+def fallback_report_date_from_mtime(
+    report_date: date | None,
+    path: Path,
+    *,
+    created_at: date | None,
+) -> date | None:
+    """report_date 缺值時以 mtime 補；live sync 無可靠 copy-time 參照時直接信任 mtime。"""
+    if report_date is not None:
+        return report_date
+    try:
+        mtime = date.fromtimestamp(path.stat().st_mtime)
+    except OSError:
+        return None
+
+    from app.services.filename import mtime_report_date
+
+    return mtime_report_date(mtime, created_at)
+
+
 async def _run(args) -> None:
     import time
 
@@ -173,6 +193,7 @@ async def _run(args) -> None:
     from app.services.chunk import chunk_text
     from app.services.db import SessionFactory
     from app.services.embed import embed_texts
+
     from app.services.extract import extract_text
     from app.services.filename import parse_filename
     from app.services.store import ReportRow, report_exists, upsert_report
@@ -213,6 +234,11 @@ async def _run(args) -> None:
                 continue
 
             meta = parse_filename(path.name)
+            # live sync 沒有可信的「複製發生時間」參照；若 rsync 已保留 NAS 原始 mtime，
+            # 這裡應直接信任 mtime，避免今天/近兩天的新報告再度被留成 NULL。
+            report_date = fallback_report_date_from_mtime(
+                meta.report_date, path, created_at=None
+            )
             exists = await report_exists(session, res.file_hash)
             reason = skip_before_tag(meta.is_admin, res.scanned, exists)
             if reason:
@@ -249,7 +275,7 @@ async def _run(args) -> None:
                     stock_code=meta.stock_code,
                     company_name=meta.company_name,
                     source=meta.source,
-                    report_date=meta.report_date,
+                    report_date=report_date,
                     report_type=meta.report_type,
                     language=res.language,
                     instrument_types=tag.instrument_types,
@@ -274,7 +300,7 @@ async def _run(args) -> None:
                         "company_name": meta.company_name,
                         "source": meta.source,
                         "report_date": (
-                            meta.report_date.isoformat() if meta.report_date else None
+                            report_date.isoformat() if report_date else None
                         ),
                         "report_type": meta.report_type,
                     }

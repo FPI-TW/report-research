@@ -36,6 +36,10 @@ REPORT_DEEP_K = int(os.getenv("REPORT_DEEP_K", "30"))
 REPORT_MAX_REPORTS = int(os.getenv("REPORT_MAX_REPORTS", "25"))
 REPORT_MAX_PASSAGES = int(os.getenv("REPORT_MAX_PASSAGES", "6"))
 REPORT_MAX_CONTEXT_CHARS = int(os.getenv("REPORT_MAX_CONTEXT_CHARS", "40000"))
+# 研報為長輸出（多段結構化），生成時間遠長於 Q&A 短答。沿用 stream_completion 的 120s
+# 預設會在 120s 被靜默截斷（_run_attempt 逾時但 streamed_any→直接 return），研報寫到
+# 一半就結束。故顯式拉長逾時（可由 env 調整）。
+REPORT_TIMEOUT = float(os.getenv("REPORT_TIMEOUT", "300"))
 REPORTS_DIR = os.getenv("REPORTS_DIR", "data/reports")
 # 研報專用 dense 召回深度（沿用問答路徑值，多掃最近鄰降漏報）
 ASK_DENSE_SCAN = int(os.getenv("ASK_DENSE_SCAN", "400"))
@@ -165,7 +169,11 @@ async def generate_report(
     yield ("status", {"stage": "writing"})
     parts: list[str] = []
     async for chunk in stream_completion(
-        prompt, model=model, system=REPORT_SYSTEM_PROMPT, allow_web=REPORT_ENABLE_WEB
+        prompt,
+        model=model,
+        system=REPORT_SYSTEM_PROMPT,
+        allow_web=REPORT_ENABLE_WEB,
+        timeout=REPORT_TIMEOUT,
     ):
         if chunk == SEARCH_EVENT:
             continue

@@ -760,6 +760,29 @@
   .ask-src-latest { align-self: flex-start; font-size: 10.5px; font-weight: 700; color: var(--green);
     border: .5px solid var(--green); border-radius: 5px; padding: 0 5px; letter-spacing: .04em; }
 
+  /* ───── 研報建議卡 + 生成流程 + 完成卡 ───── */
+  .ask-report-host { margin: 6px 0 0; }
+  .ask-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--sep); border-radius: 12px;
+    background: var(--fill); }
+  .ask-offer-text { color: var(--label); font-size: 14px; }
+  .ask-offer-btns { display: inline-flex; gap: 8px; margin-left: auto; }
+  .ask-offer-yes, .ask-report-dl { display: inline-flex; align-items: center; gap: 5px;
+    height: 32px; padding: 0 12px; border-radius: 8px; border: none; cursor: pointer;
+    background: var(--brand); color: #fff; font-size: 13px; text-decoration: none; }
+  .ask-offer-yes svg, .ask-report-ico svg { width: 15px; height: 15px; }
+  .ask-offer-no { height: 32px; padding: 0 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--sep); background: transparent; color: var(--label-2); font-size: 13px; }
+  .ask-report { padding: 10px 12px; border: 1px solid var(--sep); border-radius: 12px; background: var(--fill); }
+  .ask-report-head { display: flex; align-items: center; gap: 8px; color: var(--label-2); font-size: 13px; }
+  .ask-report-preview { margin-top: 8px; max-height: 320px; overflow: auto;
+    font-size: 13px; color: var(--label); }
+  .ask-report-fail { display: flex; align-items: center; gap: 10px; }
+  .ask-report-done { display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--brand); border-radius: 12px; background: var(--fill); }
+  .ask-report-ico { color: var(--brand); display: inline-flex; }
+  .ask-report-title { flex: 1; color: var(--label); font-size: 14px; font-weight: 600; }
+
   /* ───── 置底輸入列（composer）───── */
   .ask-composer { padding: 14px 24px max(env(safe-area-inset-bottom), 14px); }
   .ask-composer-inner { max-width: 820px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px;

@@ -500,6 +500,7 @@ async function startReport(turn, title) {
 
 // 完成：顯示標題 + 下載 PDF（歷史重現也走這支）
 function renderReportResult(turn, data) {
+  if (!data || !data.download_url) { reportFailed(turn, (data && data.title) || "", "研報下載連結遺失，請重新產生"); return; }
   turn.reportDone = true;
   turn.reportEl.innerHTML = html`<div class="ask-report-done">
       <span class="ask-report-ico">${raw(SVG.doc)}</span>

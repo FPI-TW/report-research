@@ -674,6 +674,10 @@ async def report(req: ReportRequest):
     question = (req.question or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="question 不可為空")
+    if req.qa_id is not None and not _valid_uuid(req.qa_id):
+        raise HTTPException(status_code=400, detail="qa_id 格式不正確")
+    if req.conversation_id is not None and not _valid_uuid(req.conversation_id):
+        raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
 
     async def gen():
         async with _REPORT_SEMAPHORE:

@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 data/extracted/
 data/tags/
+data/reports/
 data/*.json
 研報自動匯入/
 .uv/

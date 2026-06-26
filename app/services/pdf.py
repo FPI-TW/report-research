@@ -18,6 +18,7 @@ from app.services.chart import render_chart_svg
 logger = logging.getLogger(__name__)
 
 _CHART_RE = re.compile(r"```chart\s*\n(.*?)\n```", re.DOTALL)
+_TITLE_RE = re.compile(r"(?m)^#\s+(.+)$")
 
 BRAND_NAME = "廷豐智能研報"
 BRAND_GOLD = "#AE7415"
@@ -59,6 +60,28 @@ def _document_html(title: str, body_html: str, meta: dict) -> str:
         f"{body_html}"
         "</body></html>"
     )
+
+
+def split_report(markdown_text: str) -> tuple[str, list[tuple[str, str]]]:
+    """丟棄第一個 `# 標題` 之前的所有文字（含流程旁白），再依 `## ` 切章節。
+
+    回 (title, [(section_name, body_md), …])。無 `# ` 標題回 ("", [])，交由
+    呼叫端走簡版。標題與第一個 `## ` 間的遊離前言一併丟棄。
+    """
+    text = markdown_text or ""
+    m = _TITLE_RE.search(text)
+    if not m:
+        return "", []
+    title = m.group(1).strip()
+    rest = text[m.end():]
+    parts = re.split(r"(?m)^##\s+", rest)
+    sections: list[tuple[str, str]] = []
+    for p in parts[1:]:  # parts[0] = 標題與首個 ## 間（前言）→ 丟
+        nl = p.find("\n")
+        name = (p[:nl] if nl >= 0 else p).strip()
+        body = (p[nl + 1:] if nl >= 0 else "").strip()
+        sections.append((name, body))
+    return title, sections
 
 
 def inject_charts(markdown_text: str) -> str:

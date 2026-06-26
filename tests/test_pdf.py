@@ -67,3 +67,35 @@ class RenderReportPdfTests(unittest.TestCase):
         pdf = render_report_pdf(md, title="測試", meta={"date": "2026-06-26"})
         self.assertEqual(pdf[:4], b"%PDF")
         self.assertGreater(len(pdf), 1000)
+
+
+class SplitReportTests(unittest.TestCase):
+    def test_drops_preamble_before_title(self):
+        from app.services.pdf import split_report
+
+        md = (
+            "好的，現在我來進行多面向的網路搜尋，補充材料行業的全面資料。"
+            "已取得足夠的網路資料，現在整合所有參考片段與搜尋結果，撰寫完整深度研報。\n\n"
+            "# 材料行業深度研報\n\n## 執行摘要\n\n摘要內文[1]。\n\n"
+            "## 關鍵發現\n\n1. 發現一[1]。\n\n## 重點分析\n\n分析內文[1]。\n"
+        )
+        title, sections = split_report(md)
+        self.assertEqual(title, "材料行業深度研報")
+        self.assertEqual([name for name, _ in sections], ["執行摘要", "關鍵發現", "重點分析"])
+        joined = "\n".join(b for _, b in sections)
+        self.assertNotIn("好的，現在我來", joined)
+        self.assertNotIn("好的，現在我來", title)
+        self.assertIn("摘要內文[1]。", sections[0][1])
+
+    def test_no_title_returns_empty(self):
+        from app.services.pdf import split_report
+
+        title, sections = split_report("找不到相關資料。")
+        self.assertEqual(title, "")
+        self.assertEqual(sections, [])
+
+    def test_empty_input_safe(self):
+        from app.services.pdf import split_report
+
+        self.assertEqual(split_report(""), ("", []))
+        self.assertEqual(split_report(None), ("", []))

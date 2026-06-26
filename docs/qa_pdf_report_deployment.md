@@ -38,6 +38,7 @@ make schema
 | `REPORT_MAX_REPORTS` | 25 | 研報脈絡最多篇數 |
 | `REPORT_MAX_PASSAGES` | 6 | 每篇最多段數 |
 | `REPORT_MAX_CONTEXT_CHARS` | 40000 | 脈絡總字數上限 |
+| `REPORT_TIMEOUT` | 300 | 研報生成 LLM 串流逾時（秒）。深報為長輸出（實測常 ~200s），**勿低於 ~240**，否則會在逾時被靜默截斷（研報寫到一半就結束）。題材極廣可再調高。 |
 | `REPORT_MIN_CITED` | 3 | 建議出研報的最低引用篇數 |
 | `REPORT_SEMAPHORE` | 1 | 同時生成數（重任務，預設序列化） |
 | `REPORTS_DIR` | `data/reports` | PDF 落地目錄（需可寫；建議與資料卷同盤、納入備份） |

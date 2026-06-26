@@ -49,6 +49,22 @@ check("no-double-break", renderMarkdown("文字。\n\n## 標題", 0), ["<p>文�
 // 護欄：程式碼圍欄內的「中文。# 註解」不被改動
 check("code-fence-untouched", renderMarkdown("```\n價。# 這是註解\n```", 0), ["<pre><code>價。# 這是註解</code></pre>"], ["<h1>"]);
 
+// chart 圍欄 → 佔位（不洩漏 JSON）
+check(
+  "chart 圍欄 → 佔位（不洩漏 JSON）",
+  renderMarkdown('```chart\n{"type":"bar","title":"各廠營收","x":["A"],"series":[{"name":"營收","values":[10]}]}\n```'),
+  ["（圖表：各廠營收）"],
+  ['"type"', "values", "<pre>"]
+);
+
+// chart 圍欄 JSON 不完整（串流中）→ 仍佔位不洩漏
+check(
+  "chart 圍欄 JSON 不完整（串流中）→ 仍佔位不洩漏",
+  renderMarkdown('```chart\n{"type":"bar","title":"半成'),
+  ["（圖表"],
+  ['"type"', "<pre>"]
+);
+
 // 回歸：粗體 / 行內碼 / 引用 chip / 清單 / 分隔線 / 表格
 check(
   "regression-basics",

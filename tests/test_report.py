@@ -276,6 +276,12 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("error", kinds)
         self.assertEqual(kinds[-1], "done")
 
+    async def test_system_prompt_has_chart_rule(self):
+        """REPORT_SYSTEM_PROMPT 含圖表指令：適時輸出 ```chart、數據不得杜撰。"""
+        p = rpt.REPORT_SYSTEM_PROMPT
+        self.assertIn("```chart", p)
+        self.assertIn("不得杜撰", p)
+
     async def test_system_prompt_allows_web_and_external_refs(self):
         """REPORT_SYSTEM_PROMPT 立場已改：允許網搜補充、要求外部參考段與（網路）標註。"""
         p = rpt.REPORT_SYSTEM_PROMPT
@@ -285,6 +291,12 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("僅根據", p)  # 舊「僅根據參考片段」立場已移除
         # 廣度語意：不只看片段多寡，也看是否僅涵蓋局部面向
         self.assertIn("面向", p)
+
+    async def test_system_prompt_forbids_preamble(self):
+        """REPORT_SYSTEM_PROMPT 要求首字即 # 標題、不要流程旁白前言。"""
+        p = rpt.REPORT_SYSTEM_PROMPT
+        self.assertIn("第一個字元", p)
+        self.assertIn("前言", p)
 
     async def test_status_resets_to_writing_after_search(self):
         """SEARCH_EVENT 後應重設回 writing 狀態，不讓「搜尋網路補充…」卡住整個撰寫段。"""
@@ -325,6 +337,51 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         i = stages.index("searching_web")
         self.assertIn("writing", stages[i + 1:])  # 搜尋後重設回 writing
         self.assertLess(stages.index("searching_web"), stages.index("rendering"))
+
+    async def test_persisted_markdown_strips_preamble(self):
+        """串流首段為流程旁白時，持久化（與渲染）的 markdown 應已去旁白，首字即 # 標題。"""
+        captured = {}
+
+        async def fake_search(session, q, qvec, **k):
+            return []
+
+        async def fake_stream(*a, **k):
+            yield "好的，現在我來進行網路搜尋補充材料行業資料。"
+            yield "已取得資料，現在整合所有片段撰寫研報。\n\n"
+            yield "# 材料行業深度研報\n\n## 執行摘要\n\n內文[1]。"
+
+        async def fake_persist(report_id, qa_id, conv, question, title, markdown, *a, **k):
+            captured["markdown"] = markdown
+
+        def fake_render(md, **k):
+            captured["rendered"] = md
+            return b"%PDF-1.4 fake"
+
+        orig = (
+            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.hybrid_search = fake_search
+        rpt.embed_query_cached = lambda q: [0.0]
+        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = fake_render
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            _ = [e async for e in rpt.generate_report("分析材料行業")]
+        finally:
+            (
+                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        self.assertTrue(captured["markdown"].startswith("# 材料行業深度研報"))
+        self.assertNotIn("好的，現在我來", captured["markdown"])
+        self.assertNotIn("好的，現在我來", captured["rendered"])
 
     async def test_empty_context_without_web_emits_error(self):
         """空脈絡 + 網搜關 → 仍回 error（守住舊行為）。"""

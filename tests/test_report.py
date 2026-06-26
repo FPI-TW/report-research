@@ -292,6 +292,12 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         # 廣度語意：不只看片段多寡，也看是否僅涵蓋局部面向
         self.assertIn("面向", p)
 
+    async def test_system_prompt_forbids_preamble(self):
+        """REPORT_SYSTEM_PROMPT 要求首字即 # 標題、不要流程旁白前言。"""
+        p = rpt.REPORT_SYSTEM_PROMPT
+        self.assertIn("第一個字元", p)
+        self.assertIn("前言", p)
+
     async def test_status_resets_to_writing_after_search(self):
         """SEARCH_EVENT 後應重設回 writing 狀態，不讓「搜尋網路補充…」卡住整個撰寫段。"""
 

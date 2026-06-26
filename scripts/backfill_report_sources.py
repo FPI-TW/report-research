@@ -31,7 +31,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text  # noqa: E402
 
 from app.services.db import SessionFactory  # noqa: E402
-from app.services.filename import CJK_SIG_WINDOW, resolve_source  # noqa: E402
+from app.services.filename import (  # noqa: E402
+    CJK_SIG_WINDOW,
+    _detect_issuer,
+    resolve_source,
+)
 
 
 async def _update(session, rid: str, src: str, *, override: bool) -> int:
@@ -61,7 +65,7 @@ async def run(reconcile: bool, dry_run: bool, batch: int) -> None:
                         "left(full_text, :win) "
                         "FROM research.research_report "
                         f"{where}{' AND' if where else 'WHERE'} "
-                        "(:last IS NULL OR id > CAST(:last AS uuid)) "
+                        "(CAST(:last AS uuid) IS NULL OR id > CAST(:last AS uuid)) "
                         "ORDER BY id LIMIT :lim"
                     ),
                     {"win": CJK_SIG_WINDOW, "last": last_id, "lim": batch},
@@ -75,8 +79,15 @@ async def run(reconcile: bool, dry_run: bool, batch: int) -> None:
                 if not new or new == cur:
                     continue
                 is_fill = cur == ""
-                if not is_fill and not reconcile:
-                    continue  # 補洞模式不覆蓋既有
+                if not is_fill:
+                    if not reconcile:
+                        continue  # 補洞模式不覆蓋既有
+                    # reconcile：只用高精度「本土發行機構內文指紋」校正既有標籤，不以檔名
+                    # token 或外資「提及」覆蓋。外資指紋會被內文涵蓋的個股/數據表誤命中
+                    # （如 UBS 報告涵蓋 Citigroup(C) → 不可改成 citi；台新晨報列高盛/大摩
+                    # 美股指數 → 不可改成 goldman/morgan）。NULL 補洞仍用完整 resolve_source。
+                    if _detect_issuer(ft or "", CJK_SIG_WINDOW) != new:
+                        continue
                 if not dry_run:
                     await _update(session, rid, new, override=reconcile)
                 if is_fill:

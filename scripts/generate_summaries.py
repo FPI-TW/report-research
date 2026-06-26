@@ -5,7 +5,11 @@
 - 冪等可續傳：只挑 summary IS NULL 者；重跑天然跳過已補的
 - 並發用 asyncio.Semaphore 控制同時的 CLI 呼叫數；失敗重試，壞檔記 data/summary_failures.log
 
-用法：uv run python scripts/generate_summaries.py [--workers 6] [--limit N] [--excerpt 12000]
+用法：uv run python scripts/generate_summaries.py [--workers 2] [--limit N] [--excerpt 12000]
+
+注意：每篇都會冷啟動一個 `claude -p` agent；workers 越高、同時冷啟動越多，磁碟
+小檔 I/O（使用時間%）越容易被頂滿。預設壓到 2，並用 --setting-sources '' 略過
+全域 settings/hooks/plugins 以降低每次冷啟動的 I/O。
 """
 
 from __future__ import annotations
@@ -84,13 +88,23 @@ def parse_summary(raw: str) -> Optional[str]:
     return cleaned[:MAX_SUMMARY_CHARS]
 
 
-def call_cli(prompt: str, timeout: int = 180) -> Optional[str]:
+def build_cli_args(prompt: str) -> list[str]:
+    """組 `claude -p` 的 argv。
+
+    `--setting-sources ""`＝不載入任何 settings 來源（user/project/local），
+    連帶略過全域 hooks/plugins/CLAUDE.md。摘要只是單次補全、不需這些，而每次
+    冷啟動載入它們正是磁碟小檔 I/O 的主因（實測加此 flag 後 page fault 降約 74%）。
+    """
     # 去掉 NUL：部分 PDF 抽出的文字含 \x00，POSIX argv 不可含 NUL，否則 subprocess 直接拋
     prompt = prompt.replace("\x00", "")
+    return ["claude", "-p", prompt, "--model", MODEL, "--setting-sources", ""]
+
+
+def call_cli(prompt: str, timeout: int = 180) -> Optional[str]:
     try:
         # cwd 設 /tmp 避免載入專案 CLAUDE.md 拖慢每次呼叫
         r = subprocess.run(
-            ["claude", "-p", prompt, "--model", MODEL],
+            build_cli_args(prompt),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -199,7 +213,7 @@ async def main(
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--excerpt", type=int, default=12000)
     ap.add_argument(

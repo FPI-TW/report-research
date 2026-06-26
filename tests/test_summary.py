@@ -9,6 +9,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from generate_summaries import (  # noqa: E402
     MAX_SUMMARY_CHARS,
+    MODEL,
+    build_cli_args,
     parse_summary,
     read_hashes_file,
 )
@@ -66,6 +68,27 @@ class ReadHashesFileTests(unittest.TestCase):
             p = Path(d) / "h.txt"
             p.write_text("", encoding="utf-8")
             self.assertEqual(read_hashes_file(str(p)), [])
+
+
+class BuildCliArgsTests(unittest.TestCase):
+    def test_isolates_settings_to_cut_coldstart_io(self):
+        # 每次 claude -p 冷啟動會載入全域 settings/hooks/plugins，是磁碟小檔 I/O 的主因；
+        # 帶 --setting-sources ''（空＝不載入任何來源）可砍掉這段。
+        args = build_cli_args("hello")
+        self.assertIn("--setting-sources", args)
+        i = args.index("--setting-sources")
+        self.assertEqual(args[i + 1], "")
+
+    def test_passes_prompt_and_model(self):
+        args = build_cli_args("hello world")
+        self.assertEqual(args[:3], ["claude", "-p", "hello world"])
+        self.assertIn("--model", args)
+        self.assertEqual(args[args.index("--model") + 1], MODEL)
+
+    def test_strips_nul_from_prompt(self):
+        # POSIX argv 不可含 NUL（部分 PDF 抽出的文字含 \x00），否則 subprocess 直接拋
+        args = build_cli_args("ab\x00cd")
+        self.assertEqual(args[2], "abcd")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,6 @@ from __future__ import annotations
 import html as _html
 
 import markdown as _md
-from weasyprint import HTML
 
 BRAND_NAME = "廷豐智能研報"
 BRAND_GOLD = "#AE7415"
@@ -57,4 +56,8 @@ def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
         extensions=["tables", "fenced_code", "sane_lists"],
     )
     doc = _document_html(title, body_html, meta or {})
+    # 延遲 import：weasyprint 載入重（cffi/pango/fontconfig ~3s），不在模組頂層匯入，
+    # 以免 `import web.server`（經 report→pdf）開機就吃這秒數（會拖垮匯入逾時測試）。
+    from weasyprint import HTML
+
     return HTML(string=doc).write_pdf()

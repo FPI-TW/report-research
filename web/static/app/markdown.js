@@ -103,11 +103,18 @@ export function renderMarkdown(md, maxCite = 0) {
     const line = lines[i];
 
     if (/^```/.test(line.trim())) {           // 程式碼區塊
+      const lang = line.trim().slice(3).trim();
       const buf = [];
       i++;
       while (i < N && !/^```/.test(lines[i].trim())) buf.push(lines[i++]);
       i++;                                     // 跳過結束的 ```
-      out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>");
+      if (lang === "chart") {                  // 圖表規格：live 預覽顯示佔位，PDF 才出真圖
+        let title = "";
+        try { title = String(JSON.parse(buf.join("\n")).title || ""); } catch { /* 串流中 JSON 未完 */ }
+        out.push('<p class="md-chart-ph">（圖表' + (title ? "：" + esc(title) : "") + "）</p>");
+      } else {
+        out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>");
+      }
       continue;
     }
     if (!line.trim()) { i++; continue; }       // 空行

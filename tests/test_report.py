@@ -113,18 +113,155 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["timeout"], rpt.REPORT_TIMEOUT)
         self.assertGreater(rpt.REPORT_TIMEOUT, 120.0)
 
-    async def test_empty_context_emits_error(self):
+    async def test_enables_web_by_default(self):
+        """REPORT_ENABLE_WEB 預設開，且以 allow_web=True 呼叫 stream_completion。"""
+        self.assertTrue(rpt.REPORT_ENABLE_WEB)
+
         async def fake_search(session, q, qvec, **k):
             return []
 
-        orig = (rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context, rpt.SessionFactory)
+        captured = {}
+
+        async def fake_stream(*a, **k):
+            captured["allow_web"] = k.get("allow_web")
+            yield "## 執行摘要\n重點[1]"
+
+        async def fake_persist(*a, **k):
+            return None
+
+        orig = (
+            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.hybrid_search = fake_search
+        rpt.embed_query_cached = lambda q: [0.0]
+        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            _ = [e async for e in rpt.generate_report("分析材料行業")]
+        finally:
+            (
+                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        self.assertIs(captured.get("allow_web"), True)
+
+    async def test_search_event_emits_searching_web_status(self):
+        """串流中出現 SEARCH_EVENT → 事件序含 status searching_web（只發一次）。"""
+
+        async def fake_search(session, q, qvec, **k):
+            return []
+
+        async def fake_stream(*a, **k):
+            yield rpt.SEARCH_EVENT
+            yield "## 執行摘要\n重點[1]（網路）"
+            yield rpt.SEARCH_EVENT
+
+        async def fake_persist(*a, **k):
+            return None
+
+        orig = (
+            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.hybrid_search = fake_search
+        rpt.embed_query_cached = lambda q: [0.0]
+        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            events = [e async for e in rpt.generate_report("分析材料行業")]
+        finally:
+            (
+                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        statuses = [p.get("stage") for (k, p) in events if k == "status"]
+        self.assertEqual(statuses.count("searching_web"), 1)
+        # SEARCH_EVENT 不可被當成研報內文 token
+        tokens = "".join(p for (k, p) in events if k == "token")
+        self.assertNotIn(rpt.SEARCH_EVENT, tokens)
+
+    async def test_empty_context_with_web_proceeds(self):
+        """空脈絡 + 網搜開 → 不回 error，照常生成到 done（由模型上網補）。"""
+
+        async def fake_search(session, q, qvec, **k):
+            return []
+
+        async def fake_stream(*a, **k):
+            yield "## 執行摘要\n全由網路整理[1]（網路）"
+
+        async def fake_persist(*a, **k):
+            return None
+
+        orig = (
+            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
+        )
+        rpt.hybrid_search = fake_search
+        rpt.embed_query_cached = lambda q: [0.0]
+        rpt.build_context = lambda scored, **k: ([], "")
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        rpt.REPORT_ENABLE_WEB = True
+        try:
+            events = [e async for e in rpt.generate_report("分析材料行業")]
+        finally:
+            (
+                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
+            ) = orig
+
+        kinds = [e[0] for e in events]
+        self.assertNotIn("error", kinds)
+        self.assertEqual(kinds[-1], "done")
+
+    async def test_system_prompt_allows_web_and_external_refs(self):
+        """REPORT_SYSTEM_PROMPT 立場已改：允許網搜補充、要求外部參考段與（網路）標註。"""
+        p = rpt.REPORT_SYSTEM_PROMPT
+        self.assertIn("網路搜尋", p)
+        self.assertIn("外部參考（網路）", p)
+        self.assertIn("（網路）", p)
+        self.assertNotIn("僅根據", p)  # 舊「僅根據參考片段」立場已移除
+
+    async def test_empty_context_without_web_emits_error(self):
+        """空脈絡 + 網搜關 → 仍回 error（守住舊行為）。"""
+        async def fake_search(session, q, qvec, **k):
+            return []
+
+        orig = (
+            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
+        )
         rpt.hybrid_search = fake_search
         rpt.embed_query_cached = lambda q: [0.0]
         rpt.build_context = lambda scored, **k: ([], "")
         rpt.SessionFactory = lambda: _FakeSession()
+        rpt.REPORT_ENABLE_WEB = False
         try:
             events = [e async for e in rpt.generate_report("隨便問")]
         finally:
-            (rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context, rpt.SessionFactory) = orig
+            (
+                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
+            ) = orig
 
         self.assertEqual(events[-1][0], "error")

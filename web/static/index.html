@@ -420,6 +420,37 @@
     padding: 2px 9px; border-radius: 100px; font-variant-numeric: tabular-nums; }
   .group-ct::after { content: " 篇"; font-weight: 600; color: var(--label-3); }
 
+  /* 市場分組「索引頁」：列出各市場與篇數，點選後 drill-in 進該市場清單 */
+  .mkt-index { display: flex; flex-direction: column; gap: 8px; }
+  .mkt-hint { font-size: 12.5px; color: var(--label-3); margin: 2px 1px 4px; }
+  .mkt-item { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+    background: var(--card); border: none; border-radius: var(--radius-sm);
+    box-shadow: var(--shadow); padding: 13px 15px; cursor: pointer;
+    font-family: inherit; color: var(--label); transition: box-shadow .2s, transform .12s; }
+  .mkt-item:hover { transform: translateY(-1px);
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 10px 24px rgba(0,0,0,.08); }
+  .mkt-item:active { transform: scale(.997); }
+  .mkt-item .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .mkt-name { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: var(--label);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mkt-ct { font-size: 12px; font-weight: 700; color: var(--label-2); background: var(--fill);
+    padding: 2px 9px; border-radius: 100px; font-variant-numeric: tabular-nums; flex: none; }
+  .mkt-ct::after { content: " 篇"; font-weight: 600; color: var(--label-3); }
+  .mkt-go { font-size: 17px; font-weight: 700; color: var(--label-3); flex: none; line-height: 1; }
+
+  /* drill-in 返回列：[← 市場分類]  ● 台股  N 篇 */
+  .drill-head { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; }
+  .drill-back { border: .5px solid var(--sep); background: var(--card); color: var(--brand);
+    cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600;
+    padding: 6px 12px; border-radius: 100px; box-shadow: var(--shadow); }
+  .drill-back:hover { background: var(--fill); }
+  .drill-head .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .drill-head .group-name { font-size: 14px; font-weight: 700; color: var(--label); }
+  .drill-head .group-ct { font-size: 12px; font-weight: 700; color: var(--label-2);
+    background: var(--fill); padding: 2px 9px; border-radius: 100px;
+    font-variant-numeric: tabular-nums; }
+  .drill-head .group-ct::after { content: " 篇"; font-weight: 600; color: var(--label-3); }
+
   .load-more-wrap { grid-column: 1 / -1; text-align: center; padding: 8px 0 2px; }
 
   /* ───── mobile: collapse to single column ───── */
@@ -756,8 +787,10 @@
   .ask-src-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
   .ask-src-name { font-size: 14px; font-weight: 600; color: var(--label);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 日期＋「最新」徽章同一列：徽章緊接日期右側 */
+  .ask-src-meta { display: flex; align-items: center; gap: 7px; min-width: 0; }
   .ask-src-date { font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; }
-  .ask-src-latest { align-self: flex-start; font-size: 10.5px; font-weight: 700; color: var(--green);
+  .ask-src-latest { flex: none; font-size: 10.5px; font-weight: 700; color: var(--green);
     border: .5px solid var(--green); border-radius: 5px; padding: 0 5px; letter-spacing: .04em; }
 
   /* ───── 研報建議卡 + 生成流程 + 完成卡 ───── */

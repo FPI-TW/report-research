@@ -4,7 +4,7 @@
 import { $, $$, animEnter } from "/static/app/dom.js";
 import { esc, escRe, html, raw, joinHtml } from "/static/utils.js";
 import { mLabel, mColor, iLabel, iColor, tLabel, fmtDate } from "/static/app/meta.js";
-import { state } from "/static/app/state.js";
+import { state, groupViewMode } from "/static/app/state.js";
 import { resetFilters, activeFilterCount } from "/static/app/chips.js";
 import { run, loadBrowse } from "/static/app/api.js";
 import { toggleClear } from "/static/app/search.js";
@@ -282,18 +282,50 @@ export function groupedHtml(rows, mode, by) {
   }));
 }
 
+// ── 市場分組「索引頁」：列出各市場與全量篇數，點選後 drill-in 進該市場清單。──
+// 篇數取自 /api/stats（全量、依篇數多→少），與側欄市場 chip 同源；故為全語料計數，不隨關鍵字縮放。
+export function marketIndexHtml() {
+  const mkts = (state.marketStats || []).filter(m => m.market);
+  if (!mkts.length) return groupedHtml(state.rows, state.mode, "market");   // 無 stats 時退回一般分組，避免空白
+  const items = mkts.map(m => html`<button class="mkt-item" type="button" data-mkt="${m.market}">
+      <span class="dot" style="background:${mColor(m.market)}"></span>
+      <span class="mkt-name">${mLabel(m.market)}</span>
+      <span class="mkt-ct">${(m.count || 0).toLocaleString()}</span>
+      <span class="mkt-go" aria-hidden="true">›</span>
+    </button>`);
+  return html`<div class="mkt-index">
+    <p class="mkt-hint">選擇市場分類，檢視該市場的研報</p>
+    ${joinHtml(items)}
+  </div>`;
+}
+
+// ── drill-in：只看單一市場的清單（扁平列表）＋ 返回索引列。篇數用 state.total（反映目前關鍵字/篩選後的真實筆數）。──
+export function drillHtml(rows, mode, market) {
+  const head = html`<div class="drill-head">
+    <button class="drill-back" type="button">← 市場分類</button>
+    <span class="dot" style="background:${mColor(market)}"></span>
+    <span class="group-name">${mLabel(market)}</span>
+    <span class="group-ct">${(state.total || 0).toLocaleString()}</span>
+  </div>`;
+  return joinHtml([head, joinHtml(rows.map(r => listRow(r, mode)))]);
+}
+
 // ── 依目前 state.view 繪製快取結果；切換檢視不重打 API ──
 export function paintResults(animate = true) {
   const root = $("#results");
   root.className = "mode-" + state.view + (animate ? "" : " no-rise");
   updateViewBar();   // 內含結果列（清除篩選）顯示與否
+  // 市場分組依目前狀態分流：全部→索引、某市場→該市場清單(drill)、其餘→一般分組
+  const gMode = state.view === "group" ? groupViewMode(state.group, state.market) : null;
   let html;
   if (state.view === "table") html = tableHtml(state.rows, state.mode);
+  else if (gMode === "index") html = marketIndexHtml();
+  else if (gMode === "drill") html = drillHtml(state.rows, state.mode, state.market);
   else if (state.view === "group") html = groupedHtml(state.rows, state.mode, state.group);
   else if (state.view === "list") html = state.rows.map(r => listRow(r, state.mode)).join("");
   else html = state.rows.map((r, i) => gridCard(r, state.mode, i)).join("");
   root.innerHTML = html;
-  appendLoadMore();
+  if (gMode !== "index") appendLoadMore();   // 索引頁非清單、無「載入更多」（全域分頁對索引無意義）
   bindResultEvents();
   root.removeAttribute("aria-busy");
   markClampable();   // 量測摘要是否真的溢出兩行，溢出才掛「展開」鈕
@@ -349,6 +381,12 @@ export function bindResultEvents() {
     e.target.textContent = "載入中…";   // 防連點重複請求 + 即時回饋
     state.mode === "search" ? run(true) : loadBrowse(true);
   };
+  // 市場索引：點某市場＝套用該市場篩選並 drill-in（沿用側欄市場 chip 的點擊處理，確保狀態同步）
+  root.querySelectorAll(".mkt-item").forEach(el => el.onclick = () =>
+    document.querySelector(`#chips .filter[data-m="${el.dataset.mkt}"]`)?.click());
+  // drill-in 返回：清掉市場篩選＝回到市場索引（同樣借側欄「全部」chip）
+  const back = root.querySelector(".drill-back");
+  if (back) back.onclick = () => document.querySelector('#chips .filter[data-m="全部"]')?.click();
   // 表頭排序：滑鼠 + 鍵盤皆可（aria-sort 已標示，補上實際可操作性）
   root.querySelectorAll("th[data-sort-key]").forEach(th => {
     th.tabIndex = 0;

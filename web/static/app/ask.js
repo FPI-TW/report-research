@@ -81,15 +81,21 @@ function paintSources(turn) {
   const el = turn.srcEl;
   const srcs = turn.sources;
   if (!srcs.length) { el.innerHTML = ""; return; }
-  const rows = srcs.map(s => html`<button class="ask-src" type="button" data-id="${s.report_id}">
+  const rows = srcs.map(s => {
+    // 日期與「最新」徽章同列：徽章緊接在日期後面（原本徽章另起一行在日期下方）
+    const date = s.report_date ? html`<span class="ask-src-date">${fmtDate(s.report_date)}</span>` : raw("");
+    const latest = s.is_latest ? html`<span class="ask-src-latest">最新</span>` : raw("");
+    const meta = (s.report_date || s.is_latest)
+      ? html`<span class="ask-src-meta">${date}${latest}</span>` : raw("");
+    return html`<button class="ask-src" type="button" data-id="${s.report_id}">
       <span class="ask-src-n">${String(s.n)}</span>
       <span class="badge" style="background:${mColor(s.market)}">${mLabel(s.market)}</span>
       <span class="ask-src-main">
         <span class="ask-src-name">${s.file_name}</span>
-        ${s.report_date ? html`<span class="ask-src-date">${fmtDate(s.report_date)}</span>` : raw("")}
-        ${s.is_latest ? html`<span class="ask-src-latest">最新</span>` : raw("")}
+        ${meta}
       </span>
-    </button>`).join("");
+    </button>`;
+  }).join("");
   el.innerHTML = html`<div class="ask-src-title">引用來源</div>` + rows;
   el.querySelectorAll(".ask-src").forEach(b => b.onclick = () => openFull(b.dataset.id));
 }

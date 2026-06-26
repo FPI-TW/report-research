@@ -15,6 +15,7 @@ import { skeleton, render, paintResults, restoreLoadMore } from "/static/app/ren
 export function rerun() { $("#q").value.trim() ? run() : loadBrowse(); }
 
 export function renderStats(d) {
+  state.marketStats = d.markets || [];   // 供「市場分組」索引頁顯示各市場全量篇數
   buildChips(d.markets, d.total_reports);
   buildInstrumentChips(d.instrument_types || [], d.total_reports);
   buildSubjectToggles();

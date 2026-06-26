@@ -276,6 +276,12 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("error", kinds)
         self.assertEqual(kinds[-1], "done")
 
+    async def test_system_prompt_has_chart_rule(self):
+        """REPORT_SYSTEM_PROMPT 含圖表指令：適時輸出 ```chart、數據不得杜撰。"""
+        p = rpt.REPORT_SYSTEM_PROMPT
+        self.assertIn("```chart", p)
+        self.assertIn("不得杜撰", p)
+
     async def test_system_prompt_allows_web_and_external_refs(self):
         """REPORT_SYSTEM_PROMPT 立場已改：允許網搜補充、要求外部參考段與（網路）標註。"""
         p = rpt.REPORT_SYSTEM_PROMPT

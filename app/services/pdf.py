@@ -7,8 +7,17 @@ CJK：WeasyPrint 透過系統 fontconfig 取字型，部署機需裝 Noto Sans C
 from __future__ import annotations
 
 import html as _html
+import json
+import logging
+import re
 
 import markdown as _md
+
+from app.services.chart import render_chart_svg
+
+logger = logging.getLogger(__name__)
+
+_CHART_RE = re.compile(r"```chart\s*\n(.*?)\n```", re.DOTALL)
 
 BRAND_NAME = "廷豐智能研報"
 BRAND_GOLD = "#AE7415"
@@ -32,6 +41,9 @@ th, td { border: 1px solid #ddd; padding: 5px 8px; font-size: 10pt; }
 th { background: #faf3e6; }
 code { background: #f5f5f5; padding: 1px 4px; border-radius: 3px; font-size: 10pt; }
 a { color: %(gold)s; text-decoration: none; }
+figure.chart { margin: 14px 0; text-align: center; page-break-inside: avoid; }
+figure.chart svg { max-width: 100%%; height: auto; }
+figcaption { font-size: 9pt; color: #888; margin-top: 4px; }
 """ % {"gold": BRAND_GOLD}
 
 
@@ -49,10 +61,33 @@ def _document_html(title: str, body_html: str, meta: dict) -> str:
     )
 
 
+def inject_charts(markdown_text: str) -> str:
+    """把 markdown 內的 ```chart 區塊換成 <figure><svg>…</figure>；壞規格/數據缺則移除該塊。"""
+
+    def _repl(m: "re.Match[str]") -> str:
+        try:
+            spec = json.loads(m.group(1))
+        except (ValueError, TypeError):
+            logger.warning("chart spec JSON 解析失敗，略過")
+            return ""
+        svg = render_chart_svg(spec)
+        if not svg:
+            logger.warning("chart 規格無效或數據缺，略過")
+            return ""
+        title = _html.escape(str(spec.get("title") or ""))
+        src = str(spec.get("source") or "").strip()
+        cap = f"{title}（來源 {_html.escape(src)}）" if (title and src) else title
+        figcap = f"<figcaption>{cap}</figcaption>" if cap else ""
+        return f'\n\n<figure class="chart">{svg}{figcap}</figure>\n\n'
+
+    return _CHART_RE.sub(_repl, markdown_text or "")
+
+
 def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
     """markdown → HTML → WeasyPrint PDF。回 PDF bytes（以 b'%PDF' 開頭）。"""
+    prepared = inject_charts(markdown_text or "")
     body_html = _md.markdown(
-        markdown_text or "",
+        prepared,
         extensions=["tables", "fenced_code", "sane_lists"],
     )
     doc = _document_html(title, body_html, meta or {})

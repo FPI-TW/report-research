@@ -1268,18 +1268,25 @@ class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
 class GetConversationTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_rows_via_history_item(self):
         from app.services import answer as ans
+        import app.services.report as rpt
         from datetime import date
 
         rows = [
             ("id1", "Q1", "A1", date(2026, 6, 1), None, None, None),
             ("id2", "Q2", "A2", date(2026, 6, 2), "like", None, None),
         ]
-        orig = ans.SessionFactory
+        async def _no_reports(cid):
+            return {}
+
+        orig_sf = ans.SessionFactory
+        orig_rfc = rpt.reports_for_conversation
         ans.SessionFactory = lambda: _RowsSession(rows)
+        rpt.reports_for_conversation = _no_reports  # no-op: no reports in this test
         try:
             out = await ans.get_conversation("c1")
         finally:
-            ans.SessionFactory = orig
+            ans.SessionFactory = orig_sf
+            rpt.reports_for_conversation = orig_rfc
         self.assertEqual([t["question"] for t in out], ["Q1", "Q2"])
         self.assertEqual(out[1]["feedback"], "like")
 

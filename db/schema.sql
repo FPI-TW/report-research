@@ -98,3 +98,21 @@ CREATE INDEX IF NOT EXISTS idx_qa_log_conversation
     ON research.qa_log ((COALESCE(conversation_id, id)), created_at);
 -- 思考時間：開始→第一個 token（毫秒），供歷史顯示（冪等補欄）
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS thinking_ms int;
+
+-- 生成的深度研報（隨對話輪次保存；markdown 為真相來源，PDF 可由其重建）
+CREATE TABLE IF NOT EXISTS research.report_doc (
+    id              uuid PRIMARY KEY,
+    qa_id           uuid,            -- 產生此研報的問答輪次（research.qa_log.id）
+    conversation_id uuid,            -- 所屬對話串（對齊 qa_log 的 COALESCE 分組鍵）
+    question        text NOT NULL,
+    title           text,
+    markdown        text NOT NULL,   -- 研報原始 markdown（真相來源）
+    pdf_path        text,            -- 已渲染 PDF 檔位置（遺失時由 markdown 重建）
+    sources         jsonb,           -- 當時引用來源（含編號，供卡片重現）
+    thinking_ms     int,
+    created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_report_doc_qa
+    ON research.report_doc (qa_id);
+CREATE INDEX IF NOT EXISTS idx_report_doc_conversation
+    ON research.report_doc (conversation_id, created_at);

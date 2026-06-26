@@ -40,6 +40,7 @@ function createTurn(question) {
     <div class="ask-process-host"></div>
     <div class="ask-msg-bot" aria-live="polite"></div>
     <div class="ask-actions" hidden></div>
+    <div class="ask-report-host"></div>
     <div class="ask-sources"></div>
     <div class="ask-sources ask-ext-list"></div>`;
   node.querySelector(".ask-msg-user").textContent = question;
@@ -51,6 +52,8 @@ function createTurn(question) {
     answerEl: node.querySelector(".ask-msg-bot"),
     processEl: node.querySelector(".ask-process-host"),
     actionsEl: node.querySelector(".ask-actions"),
+    reportEl: node.querySelector(".ask-report-host"),
+    reportDone: false,
     srcEl: node.querySelectorAll(".ask-sources")[0],
     extEl: node.querySelector(".ask-ext-list"),
   };
@@ -116,6 +119,7 @@ function cancelActiveAsk({ bumpReq = false } = {}) {
     currentAskCtrl.abort();
     currentAskCtrl = null;
   }
+  if (currentReportCtrl) { currentReportCtrl.abort(); currentReportCtrl = null; }
   $("#askGo").disabled = false;
 }
 
@@ -182,6 +186,9 @@ async function loadConversation(id) {
       } else {
         paintAnswer(turn, false); paintActions(turn);
         staticProcess(turn);
+        if (it.reports && it.reports.length) {
+          renderReportResult(turn, it.reports[it.reports.length - 1]);
+        }
         if (it.feedback) {
           const sel = it.feedback === "like" ? "[data-act='like']" : "[data-act='dislike']";
           const btn = turn.actionsEl.querySelector(sel);
@@ -257,6 +264,7 @@ const SVG = {
   chev: `<svg class="ask-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>`,
   ext: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`,
   trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
+  doc: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>`,
 };
 
 // ───── 處理過程步驟面板（顯示系統實際在做什麼；非模型推理）─────
@@ -410,6 +418,106 @@ function staticProcess(turn) {
   setStep(turn, "generate", "done");
 }
 
+const REPORT_STAGE = {
+  retrieving: "深度檢索研報中…",
+  writing: "撰寫研報中…",
+  rendering: "排版 PDF 中…",
+};
+let currentReportCtrl = null;   // 進行中的 /api/report 請求；切歷史/新對話時取消
+
+// done 帶 offer_report 時，於該輪渲染對話式建議卡（要／不用）
+function maybeOfferReport(turn, title) {
+  if (turn.reportDone) return;
+  const host = turn.reportEl;
+  if (!host) return;
+  host.innerHTML = html`<div class="ask-offer">
+      <span class="ask-offer-text">要不要我幫你整理成一份完整 PDF 研報？</span>
+      <span class="ask-offer-btns">
+        <button class="ask-offer-yes" type="button">${raw(SVG.doc)}要，幫我產生</button>
+        <button class="ask-offer-no" type="button">不用</button>
+      </span>
+    </div>`;
+  host.querySelector(".ask-offer-yes").onclick = () => startReport(turn, title);
+  host.querySelector(".ask-offer-no").onclick = () => { host.innerHTML = ""; };
+}
+
+// 點「要」→ POST /api/report 串流生成；即時預覽撰寫中的 markdown；完成顯示下載卡
+async function startReport(turn, title) {
+  const host = turn.reportEl;
+  host.innerHTML = html`<div class="ask-report">
+      <div class="ask-report-head">
+        <span class="ask-step-spin" aria-hidden="true"></span>
+        <span class="ask-report-status">準備生成研報…</span>
+      </div>
+      <div class="ask-report-preview" aria-live="polite"></div>
+    </div>`;
+  const statusEl = host.querySelector(".ask-report-status");
+  const prevEl = host.querySelector(".ask-report-preview");
+  if (currentReportCtrl) currentReportCtrl.abort();
+  currentReportCtrl = new AbortController();
+  let md = "";
+  try {
+    const resp = await fetch("/api/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: turn.q, conversation_id: conversationId, qa_id: turn.qaId }),
+      signal: currentReportCtrl.signal,
+    });
+    if (resp.status === 401) { window.location.href = "/login"; return; }
+    if (!resp.ok || !resp.body) throw new Error("bad");
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const evt = parseFrame(buf.slice(0, idx));
+        buf = buf.slice(idx + 2);
+        if (!evt) continue;
+        if (evt.event === "status") {
+          statusEl.textContent = REPORT_STAGE[evt.data && evt.data.stage] || "生成中…";
+        } else if (evt.event === "token") {
+          md += evt.data; prevEl.innerHTML = renderMarkdown(md, 0);
+          if (nearBottom()) toBottom();
+        } else if (evt.event === "done") {
+          renderReportResult(turn, evt.data); return;
+        } else if (evt.event === "error") {
+          reportFailed(turn, title, (evt.data && evt.data.detail) || "研報生成失敗"); return;
+        }
+      }
+    }
+    reportFailed(turn, title, "研報生成未完成");
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+    reportFailed(turn, title, "研報生成失敗，請重試");
+  } finally {
+    currentReportCtrl = null;
+  }
+}
+
+// 完成：顯示標題 + 下載 PDF（歷史重現也走這支）
+function renderReportResult(turn, data) {
+  if (!data || !data.download_url) { reportFailed(turn, (data && data.title) || "", "研報下載連結遺失，請重新產生"); return; }
+  turn.reportDone = true;
+  turn.reportEl.innerHTML = html`<div class="ask-report-done">
+      <span class="ask-report-ico">${raw(SVG.doc)}</span>
+      <span class="ask-report-title">${data.title || "深度研報"}</span>
+      <a class="ask-report-dl" href="${data.download_url}" download>下載 PDF</a>
+    </div>`;
+}
+
+// 失敗：訊息 + 重試
+function reportFailed(turn, title, msg) {
+  turn.reportEl.innerHTML = html`<div class="ask-report ask-report-fail">
+      <span class="ask-report-status">${msg}</span>
+      <button class="ask-offer-yes" type="button">重試</button>
+    </div>`;
+  turn.reportEl.querySelector("button").onclick = () => startReport(turn, title);
+}
+
 // 回答完成後的 ChatGPT 式動作列：讚/倒讚/複製 +（有來源時）資料來源切換
 function paintActions(turn) {
   const el = turn.actionsEl;
@@ -542,7 +650,7 @@ export async function askQuestion() {
         else if (evt.event === "ext_sources") { turn.extSources = (evt.data || []).filter(s => s && safeHttp(s.url)); paintExtSources(turn); }
         else if (evt.event === "token") { if (!started) { startGenerating(turn); if (!turn.thinkingFrozen) freezeHead(turn, null); started = true; } turn.answer += evt.data; const stick = nearBottom(); paintAnswer(turn, true); if (stick) toBottom(); }
         else if (evt.event === "notice") { notice = true; started = true; clearProcess(turn); paintNotice(turn, evt.data); toBottom(); }
-        else if (evt.event === "done") { turn.qaId = (evt.data && evt.data.qa_id) || null; if (evt.data && evt.data.conversation_id) conversationId = evt.data.conversation_id; if (evt.data && typeof evt.data.thinking_ms === "number") freezeHead(turn, evt.data.thinking_ms); finishProcess(turn); }
+        else if (evt.event === "done") { turn.qaId = (evt.data && evt.data.qa_id) || null; if (evt.data && evt.data.conversation_id) conversationId = evt.data.conversation_id; if (evt.data && typeof evt.data.thinking_ms === "number") freezeHead(turn, evt.data.thinking_ms); finishProcess(turn); if (evt.data && evt.data.offer_report) maybeOfferReport(turn, evt.data.report_title); }
         else if (evt.event === "error") { clearProcess(turn); fail(turn, "問答服務發生錯誤，請稍後再試。"); return; }
       }
     }

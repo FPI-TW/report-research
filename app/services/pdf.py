@@ -22,6 +22,19 @@ _TITLE_RE = re.compile(r"(?m)^#\s+(.+)$")
 
 BRAND_NAME = "廷豐智能研報"
 BRAND_GOLD = "#AE7415"
+_GOLD_SOFT = "#faf6ee"
+_GOLD_LINE = "#ecdcc0"
+
+# 章節名 → slug（決定樣式）；未知名 → "sec" 預設樣式，安全降級
+_SECT_SLUG = {
+    "執行摘要": "exec",
+    "關鍵發現": "findings",
+    "重點分析": "analysis",
+    "風險與展望": "outlook",
+    "引用來源": "refs",
+    "外部參考（網路）": "extrefs",
+}
+_FANCY_MIN_SECTIONS = 3
 
 _PAGE_CSS = """
 @page {
@@ -51,15 +64,87 @@ figcaption { font-size: 9pt; color: #888; margin-top: 4px; }
 def _document_html(title: str, body_html: str, meta: dict) -> str:
     date = _html.escape(str(meta.get("date") or ""))
     return (
-        "<!doctype html><html><head><meta charset='utf-8'>"
+        '<!doctype html><html><head><meta charset="utf-8">'
         f"<style>{_PAGE_CSS}</style></head><body>"
-        "<div class='brand-bar'>"
-        f"<div class='brand-name'>{_html.escape(BRAND_NAME)}</div>"
-        f"<div class='brand-meta'>研究報告　生成日期 {date}</div>"
+        '<div class="brand-bar">'
+        f'<div class="brand-name">{_html.escape(BRAND_NAME)}</div>'
+        f'<div class="brand-meta">研究報告　生成日期 {date}</div>'
         "</div>"
         f"{body_html}"
         "</body></html>"
     )
+
+
+_FANCY_CSS = (
+    """
+@page { size: A4; margin: 20mm 18mm 18mm 18mm;
+  @bottom-center { content: "$BRAND$　·　" counter(page) " / " counter(pages);
+    font-size: 8.5pt; color: #aaa; } }
+@page:first { margin: 0; @bottom-center { content: none; } }
+body { font-family: "Noto Sans CJK TC","Noto Sans CJK SC","Noto Sans TC",sans-serif;
+  color: #222; font-size: 10.5pt; line-height: 1.75; }
+
+/* 封面 */
+.cover { page-break-after: always; height: 100vh; padding: 40mm 24mm;
+  box-sizing: border-box; position: relative;
+  background: linear-gradient(180deg,#fffdf9 0%,#fbf4e8 100%); }
+.cover-brand { color: $GOLD$; font-size: 15pt; font-weight: 700; letter-spacing: 2px; }
+.cover-rule { height: 3px; width: 56px; background: $GOLD$; margin: 10px 0 0; }
+.cover-mid { position: absolute; top: 42%; left: 24mm; right: 24mm; }
+.cover-kicker { color: $GOLD$; font-size: 11pt; letter-spacing: 4px; margin-bottom: 10px; }
+.cover-title { font-size: 30pt; line-height: 1.3; color: #1a1a1a; margin: 0; font-weight: 700; }
+.cover-date { color: #888; font-size: 11pt; margin-top: 18px; }
+.cover-foot { position: absolute; bottom: 26mm; left: 24mm; color: #b9a06f;
+  font-size: 9pt; letter-spacing: 1px; }
+
+/* 目錄 */
+.toc { page-break-after: always; padding-top: 6mm; }
+.toc-h { color: $GOLD$; font-size: 16pt; font-weight: 700; border-bottom: 2px solid $GOLD$;
+  padding-bottom: 6px; margin-bottom: 14px; }
+.toc ol { list-style: none; counter-reset: toc; padding: 0; }
+.toc li { counter-increment: toc; margin: 9px 0; font-size: 11.5pt; }
+.toc a { color: #333; text-decoration: none; }
+.toc a::before { content: counter(toc,decimal-leading-zero) "　"; color: $GOLD$; font-weight: 700; }
+.toc a::after { content: leader('·') target-counter(attr(href), page); color: #aaa; }
+
+/* 章節 */
+section[id] { margin-top: 16px; }
+h2 { font-size: 14.5pt; color: $GOLD$; margin: 18px 0 10px; padding-bottom: 4px;
+  border-bottom: 1.5px solid $LINE$; }
+.s-body p { margin: 7px 0; text-align: justify; }
+h3 { font-size: 11.5pt; color: #333; margin: 12px 0 5px; }
+a { color: $GOLD$; text-decoration: none; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+th,td { border: 1px solid #ddd; padding: 5px 8px; font-size: 9.5pt; }
+th { background: $SOFT$; }
+
+/* 執行摘要：淡金底色框 */
+.s-exec .s-body { background: $SOFT$; border: 1px solid $LINE$;
+  border-left: 4px solid $GOLD$; border-radius: 8px; padding: 12px 16px; }
+
+/* 關鍵發現：卡片＋編號徽章 */
+.s-findings ol { list-style: none; counter-reset: f; padding: 0; }
+.s-findings li { counter-increment: f; position: relative; background: #fff;
+  border: 1px solid $LINE$; border-radius: 8px; padding: 11px 14px 11px 46px;
+  margin: 9px 0; box-shadow: 0 1px 0 rgba(0,0,0,0.03); page-break-inside: avoid; }
+.s-findings li::before { content: counter(f); position: absolute; left: 12px; top: 11px;
+  width: 24px; height: 24px; background: $GOLD$; color: #fff; border-radius: 50%;
+  font-size: 11pt; font-weight: 700; text-align: center; line-height: 24px; }
+
+/* 圖表 */
+figure.chart { margin: 14px 0; text-align: center; page-break-inside: avoid; }
+figure.chart svg { max-width: 100%; height: auto; }
+figcaption { font-size: 9pt; color: #888; margin-top: 4px; }
+
+/* 引用來源 */
+.s-refs .s-body p { font-size: 9.5pt; color: #555; margin: 4px 0;
+  padding-left: 10px; border-left: 2px solid $LINE$; }
+"""
+    .replace("$BRAND$", BRAND_NAME)
+    .replace("$GOLD$", BRAND_GOLD)
+    .replace("$SOFT$", _GOLD_SOFT)
+    .replace("$LINE$", _GOLD_LINE)
+)
 
 
 def split_report(markdown_text: str) -> tuple[str, list[tuple[str, str]]]:
@@ -106,14 +191,58 @@ def inject_charts(markdown_text: str) -> str:
     return _CHART_RE.sub(_repl, markdown_text or "")
 
 
+def _render_fancy(title: str, sections: list[tuple[str, str]], meta: dict) -> str:
+    date = _html.escape(str(meta.get("date") or ""))
+    cover = (
+        '<section class="cover">'
+        f'<div class="cover-brand">{_html.escape(BRAND_NAME)}</div>'
+        '<div class="cover-rule"></div>'
+        '<div class="cover-mid">'
+        '<div class="cover-kicker">深度研究報告</div>'
+        f'<h1 class="cover-title">{_html.escape(title)}</h1>'
+        f'<div class="cover-date">生成日期 {date}</div>'
+        "</div>"
+        f'<div class="cover-foot">{_html.escape(BRAND_NAME)}　·　AI 輔助研究分析</div>'
+        "</section>"
+    )
+    toc_items = "".join(
+        f'<li><a href="#sec-{i}">{_html.escape(name)}</a></li>'
+        for i, (name, _) in enumerate(sections)
+    )
+    toc = f'<nav class="toc"><div class="toc-h">目錄</div><ol>{toc_items}</ol></nav>'
+    body_parts = []
+    for i, (name, body) in enumerate(sections):
+        slug = _SECT_SLUG.get(name, "sec")
+        body_html = _md.markdown(
+            inject_charts(body), extensions=["tables", "fenced_code", "sane_lists"]
+        )
+        body_parts.append(
+            f'<section class="s-{slug}" id="sec-{i}">'
+            f"<h2>{_html.escape(name)}</h2>"
+            f'<div class="s-body">{body_html}</div>'
+            "</section>"
+        )
+    body = "".join(body_parts)
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<style>{_FANCY_CSS}</style></head><body>{cover}{toc}{body}</body></html>"
+    )
+
+
+def _build_document(markdown_text: str, *, title: str, meta: dict) -> str:
+    """依內容選版型：完整研報走 fancy（封面/目錄/章節），退化輸入回退簡版。回完整 HTML。"""
+    md = markdown_text or ""
+    parsed_title, sections = split_report(md)
+    if parsed_title and len(sections) >= _FANCY_MIN_SECTIONS:
+        return _render_fancy(parsed_title or title, sections, meta or {})
+    prepared = inject_charts(md)
+    body_html = _md.markdown(prepared, extensions=["tables", "fenced_code", "sane_lists"])
+    return _document_html(title, body_html, meta or {})
+
+
 def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
     """markdown → HTML → WeasyPrint PDF。回 PDF bytes（以 b'%PDF' 開頭）。"""
-    prepared = inject_charts(markdown_text or "")
-    body_html = _md.markdown(
-        prepared,
-        extensions=["tables", "fenced_code", "sane_lists"],
-    )
-    doc = _document_html(title, body_html, meta or {})
+    doc = _build_document(markdown_text, title=title, meta=meta or {})
     # 延遲 import：weasyprint 載入重（cffi/pango/fontconfig ~3s），不在模組頂層匯入，
     # 以免 `import web.server`（經 report→pdf）開機就吃這秒數（會拖垮匯入逾時測試）。
     from weasyprint import HTML

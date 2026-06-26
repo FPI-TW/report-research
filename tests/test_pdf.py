@@ -99,3 +99,59 @@ class SplitReportTests(unittest.TestCase):
 
         self.assertEqual(split_report(""), ("", []))
         self.assertEqual(split_report(None), ("", []))
+
+    def test_title_but_no_sections(self):
+        from app.services.pdf import split_report
+        title, sections = split_report("# 只有標題\n\n一些正文但無 ## 章節。")
+        self.assertEqual(title, "只有標題")
+        self.assertEqual(sections, [])
+
+
+class FancyLayoutTests(unittest.TestCase):
+    DEEP_MD = (
+        "# 台灣半導體產業營收與成長分析\n\n"
+        "## 執行摘要\n\n產業在 AI 驅動下高速成長[1]。\n\n"
+        "## 關鍵發現\n\n1. 台積電規模斷層式領先[1]。\n\n2. 月營收逼近兆元[1]。\n\n"
+        "## 重點分析\n\n分析內文[1]。\n\n"
+        "## 風險與展望\n\n關注高基期效應[1]。\n\n"
+        "## 引用來源\n\n[1] 永豐金證券，《半導體產業月報》，2026-06-01\n"
+    )
+
+    def test_deep_report_uses_fancy_layout(self):
+        from app.services.pdf import _build_document
+
+        html = _build_document(self.DEEP_MD, title="後備標題", meta={"date": "2026-06-26"})
+        self.assertIn('class="cover"', html)
+        self.assertIn('class="toc"', html)
+        self.assertIn('id="sec-0"', html)
+        self.assertIn("台灣半導體產業營收與成長分析", html)  # 用 markdown 內標題，非後備
+        self.assertNotIn('class="brand-bar"', html)
+
+    def test_section_slugs_applied(self):
+        from app.services.pdf import _build_document
+
+        html = _build_document(self.DEEP_MD, title="x", meta={})
+        self.assertIn('class="s-exec"', html)
+        self.assertIn('class="s-findings"', html)
+        self.assertIn('class="s-refs"', html)
+
+    def test_degenerate_uses_simple_layout(self):
+        from app.services.pdf import _build_document
+
+        html = _build_document("# 標題\n\n## 執行摘要\n\n只有一段[1]。", title="x", meta={})
+        self.assertIn('class="brand-bar"', html)
+        self.assertNotIn('class="cover"', html)
+
+    def test_no_title_uses_simple_layout(self):
+        from app.services.pdf import _build_document
+
+        html = _build_document("找不到相關資料。", title="x", meta={})
+        self.assertIn('class="brand-bar"', html)
+        self.assertNotIn('class="cover"', html)
+
+    def test_fancy_renders_to_pdf(self):
+        from app.services.pdf import render_report_pdf
+
+        pdf = render_report_pdf(self.DEEP_MD, title="x", meta={"date": "2026-06-26"})
+        self.assertEqual(pdf[:4], b"%PDF")
+        self.assertGreater(len(pdf), 1000)

@@ -25,7 +25,7 @@ from app.services.answer import build_context
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
 from app.services.llm import SEARCH_EVENT, stream_completion
-from app.services.pdf import render_report_pdf
+from app.services.pdf import render_report_pdf, strip_preamble
 from app.services.report_gate import suggested_title
 from app.services.retrieval import hybrid_search
 
@@ -145,7 +145,7 @@ async def fetch_report_doc(report_id: str) -> dict | None:
         row = (
             await session.execute(
                 text(
-                    "SELECT id, title, markdown, pdf_path, question "
+                    "SELECT id, title, markdown, pdf_path, question, created_at "
                     "FROM research.report_doc WHERE id = :id"
                 ),
                 {"id": report_id},
@@ -153,9 +153,15 @@ async def fetch_report_doc(report_id: str) -> dict | None:
         ).first()
     if row is None:
         return None
+    created_at = row[5]
+    date = (
+        created_at.date().isoformat()
+        if hasattr(created_at, "date")
+        else (str(created_at)[:10] if created_at else "")
+    )
     return {
         "report_id": str(row[0]), "title": row[1], "markdown": row[2],
-        "pdf_path": row[3], "question": row[4],
+        "pdf_path": row[3], "question": row[4], "date": date,
     }
 
 
@@ -237,7 +243,8 @@ async def generate_report(
             yield ("status", {"stage": "writing"})
         parts.append(chunk)
         yield ("token", chunk)
-    markdown = "".join(parts).strip()
+    # 根因去旁白：丟棄標題前的流程旁白，讓持久化 markdown 與全文檢視都乾淨（不僅 PDF）。
+    markdown = strip_preamble("".join(parts).strip())
 
     yield ("status", {"stage": "rendering"})
     thinking_ms = int((time.monotonic() - started) * 1000)

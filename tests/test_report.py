@@ -338,6 +338,51 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("writing", stages[i + 1:])  # 搜尋後重設回 writing
         self.assertLess(stages.index("searching_web"), stages.index("rendering"))
 
+    async def test_persisted_markdown_strips_preamble(self):
+        """串流首段為流程旁白時，持久化（與渲染）的 markdown 應已去旁白，首字即 # 標題。"""
+        captured = {}
+
+        async def fake_search(session, q, qvec, **k):
+            return []
+
+        async def fake_stream(*a, **k):
+            yield "好的，現在我來進行網路搜尋補充材料行業資料。"
+            yield "已取得資料，現在整合所有片段撰寫研報。\n\n"
+            yield "# 材料行業深度研報\n\n## 執行摘要\n\n內文[1]。"
+
+        async def fake_persist(report_id, qa_id, conv, question, title, markdown, *a, **k):
+            captured["markdown"] = markdown
+
+        def fake_render(md, **k):
+            captured["rendered"] = md
+            return b"%PDF-1.4 fake"
+
+        orig = (
+            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.hybrid_search = fake_search
+        rpt.embed_query_cached = lambda q: [0.0]
+        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = fake_render
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            _ = [e async for e in rpt.generate_report("分析材料行業")]
+        finally:
+            (
+                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        self.assertTrue(captured["markdown"].startswith("# 材料行業深度研報"))
+        self.assertNotIn("好的，現在我來", captured["markdown"])
+        self.assertNotIn("好的，現在我來", captured["rendered"])
+
     async def test_empty_context_without_web_emits_error(self):
         """空脈絡 + 網搜關 → 仍回 error（守住舊行為）。"""
         async def fake_search(session, q, qvec, **k):

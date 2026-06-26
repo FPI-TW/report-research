@@ -169,6 +169,17 @@ def split_report(markdown_text: str) -> tuple[str, list[tuple[str, str]]]:
     return title, sections
 
 
+def strip_preamble(markdown_text: str) -> str:
+    """丟棄第一個 `# 標題` 之前的所有文字（流程旁白）；無 `# ` 標題則原樣回傳。
+
+    用於串流組裝後的根因去旁白：持久化與全文檢視都拿到乾淨 markdown，不僅 PDF。
+    無標題時（如「找不到相關資料」）無可靠錨點，原樣回傳由 prompt 規則把關。
+    """
+    text = markdown_text or ""
+    m = _TITLE_RE.search(text)
+    return text[m.start():] if m else text
+
+
 def inject_charts(markdown_text: str) -> str:
     """把 markdown 內的 ```chart 區塊換成 <figure><svg>…</figure>；壞規格/數據缺則移除該塊。"""
 

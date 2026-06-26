@@ -155,3 +155,36 @@ class FancyLayoutTests(unittest.TestCase):
         pdf = render_report_pdf(self.DEEP_MD, title="x", meta={"date": "2026-06-26"})
         self.assertEqual(pdf[:4], b"%PDF")
         self.assertGreater(len(pdf), 1000)
+
+
+class StripPreambleTests(unittest.TestCase):
+    def test_drops_text_before_title(self):
+        from app.services.pdf import strip_preamble
+
+        md = (
+            "好的，現在我來進行多面向的網路搜尋，補充材料行業資料。已取得足夠資料，"
+            "現在整合所有參考片段與搜尋結果，撰寫完整深度研報。\n\n"
+            "# 材料行業深度研報\n\n## 執行摘要\n\n內文[1]。\n"
+        )
+        out = strip_preamble(md)
+        self.assertTrue(out.startswith("# 材料行業深度研報"))
+        self.assertNotIn("好的，現在我來", out)
+        self.assertIn("## 執行摘要", out)
+
+    def test_no_title_unchanged(self):
+        from app.services.pdf import strip_preamble
+
+        md = "找不到與本主題相關的研報資料。"
+        self.assertEqual(strip_preamble(md), md)
+
+    def test_no_preamble_unchanged(self):
+        from app.services.pdf import strip_preamble
+
+        md = "# 標題\n\n## 執行摘要\n\n內文。"
+        self.assertEqual(strip_preamble(md), md)
+
+    def test_empty_safe(self):
+        from app.services.pdf import strip_preamble
+
+        self.assertEqual(strip_preamble(""), "")
+        self.assertEqual(strip_preamble(None), "")

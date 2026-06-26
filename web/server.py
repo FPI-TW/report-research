@@ -710,7 +710,7 @@ async def report_doc_pdf(report_id: str):
     if not path or not os.path.isfile(path):
         pdf_bytes = await asyncio.to_thread(
             render_report_pdf, doc["markdown"], title=doc["title"],
-            meta={"question": doc.get("question")},
+            meta={"date": doc.get("date") or "", "question": doc.get("question")},
         )
         path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
     return FileResponse(

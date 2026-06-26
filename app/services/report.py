@@ -38,8 +38,9 @@ REPORT_MAX_PASSAGES = int(os.getenv("REPORT_MAX_PASSAGES", "6"))
 REPORT_MAX_CONTEXT_CHARS = int(os.getenv("REPORT_MAX_CONTEXT_CHARS", "40000"))
 # 研報為長輸出（多段結構化），生成時間遠長於 Q&A 短答。沿用 stream_completion 的 120s
 # 預設會在 120s 被靜默截斷（_run_attempt 逾時但 streamed_any→直接 return），研報寫到
-# 一半就結束。故顯式拉長逾時（可由 env 調整）。
-REPORT_TIMEOUT = float(os.getenv("REPORT_TIMEOUT", "300"))
+# 一半就結束。故顯式拉長逾時（可由 env 調整）。網搜深報＋圖表使輸出更長、更易逼近上限，
+# live 實測純文字深報 ~200s、網搜深報常逼近/超過 300s，故預設拉到 600s。
+REPORT_TIMEOUT = float(os.getenv("REPORT_TIMEOUT", "600"))
 REPORTS_DIR = os.getenv("REPORTS_DIR", "data/reports")
 # 研報專用 dense 召回深度（沿用問答路徑值，多掃最近鄰降漏報）
 ASK_DENSE_SCAN = int(os.getenv("ASK_DENSE_SCAN", "400"))

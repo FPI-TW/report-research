@@ -426,6 +426,7 @@ function staticProcess(turn) {
 
 const REPORT_STAGE = {
   retrieving: "深度檢索研報中…",
+  searching_web: "搜尋網路補充…",
   writing: "撰寫研報中…",
   rendering: "排版 PDF 中…",
 };

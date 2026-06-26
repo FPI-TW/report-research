@@ -44,27 +44,35 @@ def _esc(s) -> str:
     return _html.escape(str(s))
 
 
-def _ymax(series: list) -> float:
-    m = max((max(s["values"]) for s in series), default=0)
-    return m * 1.15 if m > 0 else 1.0
+def _yrange(series: list) -> tuple[float, float]:
+    """回 (lo, hi) y 軸範圍，恆含 0（零基線），支援負值。"""
+    allv = [v for s in series for v in s["values"]]
+    lo = min(0.0, min(allv))
+    hi = max(0.0, max(allv))
+    span = (hi - lo) or 1.0
+    hi += span * 0.12  # 頂部留白給數值標籤
+    if lo < 0:
+        lo -= span * 0.12  # 有負值時底部也留白
+    return lo, hi
 
 
-def _axes(ymax: float) -> str:
+def _ymap(v: float, lo: float, hi: float) -> float:
+    """數值 → SVG y 座標（lo 在底、hi 在頂）。"""
+    return _BASE_Y - _PLOT_H * (v - lo) / (hi - lo)
+
+
+def _axes(lo: float, hi: float) -> str:
+    zero_y = _ymap(0.0, lo, hi)
     out = [
         f'<line x1="{_PAD_L}" y1="{_PAD_T}" x2="{_PAD_L}" y2="{_BASE_Y}" stroke="#ccc"/>',
-        f'<line x1="{_PAD_L}" y1="{_BASE_Y}" x2="{_W - _PAD_R}" y2="{_BASE_Y}" stroke="#ccc"/>',
+        f'<line x1="{_PAD_L}" y1="{zero_y:.1f}" x2="{_W - _PAD_R}" y2="{zero_y:.1f}" stroke="#ccc"/>',
     ]
-    for i in range(3):
-        frac = i / 2.0
-        y = _BASE_Y - _PLOT_H * frac
+    for val in (lo, 0.0, hi):
+        y = _ymap(val, lo, hi)
         out.append(
             f'<text x="{_PAD_L - 8}" y="{y + 4:.1f}" text-anchor="end" font-size="10" '
-            f'fill="#888">{ymax * frac:.0f}</text>'
+            f'fill="#888">{val:.0f}</text>'
         )
-        if i:
-            out.append(
-                f'<line x1="{_PAD_L}" y1="{y:.1f}" x2="{_W - _PAD_R}" y2="{y:.1f}" stroke="#eee"/>'
-            )
     return "".join(out)
 
 
@@ -97,27 +105,30 @@ def _legend(series: list) -> str:
 
 def _bar(spec: dict) -> str:
     x, series = spec["x"], spec["series"]
-    ymax = _ymax(series)
+    lo, hi = _yrange(series)
+    zero_y = _ymap(0.0, lo, hi)
     n, ns = len(x), len(series)
     step = _PLOT_W / n
     group_w = step * 0.7
     bar_w = group_w / ns
-    out = [_axes(ymax), _x_labels(x)]
+    out = [_axes(lo, hi), _x_labels(x)]
     for si, s in enumerate(series):
         c = _PALETTE[si % len(_PALETTE)]
         vals = s["values"]
         for i in range(min(n, len(vals))):
             v = vals[i]
-            h = _PLOT_H * (v / ymax) if ymax else 0
+            yv = _ymap(v, lo, hi)
+            top = min(zero_y, yv)
+            h = abs(yv - zero_y)
             gx = _PAD_L + step * i + (step - group_w) / 2
             bx = gx + bar_w * si
-            by = _BASE_Y - h
             out.append(
-                f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bar_w:.1f}" height="{h:.1f}" fill="{c}"/>'
+                f'<rect x="{bx:.1f}" y="{top:.1f}" width="{bar_w:.1f}" height="{h:.1f}" fill="{c}"/>'
             )
             if ns == 1:
+                ty = top - 4 if v >= 0 else top + h + 10
                 out.append(
-                    f'<text x="{bx + bar_w / 2:.1f}" y="{by - 4:.1f}" text-anchor="middle" '
+                    f'<text x="{bx + bar_w / 2:.1f}" y="{ty:.1f}" text-anchor="middle" '
                     f'font-size="9" fill="#555">{v:g}</text>'
                 )
     out.append(_legend(series))
@@ -126,17 +137,17 @@ def _bar(spec: dict) -> str:
 
 def _line(spec: dict) -> str:
     x, series = spec["x"], spec["series"]
-    ymax = _ymax(series)
+    lo, hi = _yrange(series)
     n = len(x)
     step = _PLOT_W / n
-    out = [_axes(ymax), _x_labels(x)]
+    out = [_axes(lo, hi), _x_labels(x)]
     for si, s in enumerate(series):
         c = _PALETTE[si % len(_PALETTE)]
         vals = s["values"]
         pts = []
         for i in range(min(n, len(vals))):
             cx = _PAD_L + step * (i + 0.5)
-            cy = _BASE_Y - _PLOT_H * (vals[i] / ymax if ymax else 0)
+            cy = _ymap(vals[i], lo, hi)
             pts.append((cx, cy))
         out.append(
             f'<polyline fill="none" stroke="{c}" stroke-width="2" '
@@ -152,11 +163,21 @@ def _pie(spec: dict) -> str:
     x = spec["x"]
     vals = spec["series"][0]["values"]
     n = min(len(x), len(vals))
+    if any(v < 0 for v in vals[:n]):
+        return ""  # 圓餅為組成佔比，負值無意義 → 略過
     total = sum(vals[:n])
     if total <= 0:
         return ""
     cx, cy = _PAD_L + _PLOT_W / 2, _PAD_T + _PLOT_H / 2
     r = min(_PLOT_W, _PLOT_H) / 2.2
+    if n == 1:  # 單一 100% → 整圓（退化弧線不可見）
+        c0 = _PALETTE[0]
+        return (
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{c0}"/>'
+            f'<rect x="{_W - _PAD_R - 110}" y="{_PAD_T}" width="10" height="10" fill="{c0}"/>'
+            f'<text x="{_W - _PAD_R - 96}" y="{_PAD_T + 9}" font-size="10" fill="#555">'
+            f'{_esc(x[0])} 100%</text>'
+        )
     out = []
     ang = -math.pi / 2
     for i in range(n):

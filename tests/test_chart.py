@@ -60,6 +60,34 @@ class RenderChartSvgTests(unittest.TestCase):
         self.assertEqual(render_chart_svg({"type": "bar", "x": ["a"], "series": [{"values": ["x"]}]}), "")
         self.assertEqual(render_chart_svg("not a dict"), "")
 
+    def test_bar_negative_values_no_invalid_height(self):
+        spec = {"type": "bar", "title": "YoY 變動",
+                "x": ["Q1", "Q2", "Q3"],
+                "series": [{"name": "YoY", "values": [10, -5, 8]}]}
+        svg = render_chart_svg(spec)
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertEqual(svg.count("<rect"), 3)
+        self.assertNotIn('height="-', svg)  # 無負高度（無效 SVG）
+
+    def test_line_negative_stays_on_canvas(self):
+        spec = {"type": "line", "title": "淨利率",
+                "x": ["a", "b", "c"],
+                "series": [{"name": "s", "values": [5, -3, 2]}]}
+        svg = render_chart_svg(spec)
+        self.assertIn("<polyline", svg)
+        self.assertNotIn('cy="-', svg)  # 點不出界（無負 y）
+
+    def test_pie_negative_value_returns_empty(self):
+        spec = {"type": "pie", "title": "x",
+                "x": ["A", "B"], "series": [{"name": "s", "values": [50, -10]}]}
+        self.assertEqual(render_chart_svg(spec), "")
+
+    def test_pie_single_slice_is_circle(self):
+        spec = {"type": "pie", "title": "獨佔",
+                "x": ["A"], "series": [{"name": "s", "values": [100]}]}
+        svg = render_chart_svg(spec)
+        self.assertIn("<circle", svg)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -102,7 +102,7 @@ const REPORT_STAGE = {
 
 ### 不需變更
 
-- `pdf.py`：外部參考是模型寫的 markdown 段，照常 markdown→PDF；URL 由 WeasyPrint 成連結。
+- `pdf.py`：外部參考是模型寫的 markdown 段，照常 markdown→PDF；prompt 規則 5 要求 `[標題](網址)` 語法，core python-markdown 轉 `<a href>`，WeasyPrint 渲染為可點連結（舊的「標題 | 網址」純文字格式不產生連結）。
 - 持久化／端點／schema：外部來源已在 `markdown` 內，隨 `report_doc` 一起存、可由 markdown 重建 PDF。
 - Q&A 路徑、`[EXT_SOURCES]` sentinel 機制：完全不動。
 

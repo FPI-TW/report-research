@@ -242,6 +242,46 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("（網路）", p)
         self.assertNotIn("僅根據", p)  # 舊「僅根據參考片段」立場已移除
 
+    async def test_status_resets_to_writing_after_search(self):
+        """SEARCH_EVENT 後應重設回 writing 狀態，不讓「搜尋網路補充…」卡住整個撰寫段。"""
+
+        async def fake_search(session, q, qvec, **k):
+            return []
+
+        async def fake_stream(*a, **k):
+            yield rpt.SEARCH_EVENT
+            yield "## 執行摘要\n內容[1]（網路）"
+
+        async def fake_persist(*a, **k):
+            return None
+
+        orig = (
+            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.hybrid_search = fake_search
+        rpt.embed_query_cached = lambda q: [0.0]
+        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            events = [e async for e in rpt.generate_report("分析材料行業")]
+        finally:
+            (
+                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        stages = [p["stage"] for (k, p) in events if k == "status"]
+        i = stages.index("searching_web")
+        self.assertIn("writing", stages[i + 1:])  # 搜尋後重設回 writing
+        self.assertLess(stages.index("searching_web"), stages.index("rendering"))
+
     async def test_empty_context_without_web_emits_error(self):
         """空脈絡 + 網搜關 → 仍回 error（守住舊行為）。"""
         async def fake_search(session, q, qvec, **k):

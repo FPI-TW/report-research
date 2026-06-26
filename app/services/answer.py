@@ -35,6 +35,7 @@ from app.services.overview import (
     render_overview_text,
     resolve_filters,
 )
+from app.services.report_gate import should_offer_report
 from app.services.retrieval import hybrid_search
 from app.services.textnorm import clean_text
 
@@ -557,7 +558,13 @@ async def get_conversation(conversation_id: str) -> list[dict]:
                 {"cid": conversation_id},
             )
         ).all()
-    return [history_item(tuple(r)) for r in rows]
+    items = [history_item(tuple(r)) for r in rows]
+    from app.services.report import reports_for_conversation  # 延遲 import：避免與 report.py 循環
+
+    reports_by_qa = await reports_for_conversation(conversation_id)
+    for it in items:
+        it["reports"] = reports_by_qa.get(str(it.get("id")), [])
+    return items
 
 
 async def delete_conversation(conversation_id: str) -> bool:
@@ -899,6 +906,7 @@ async def answer_question(
         timer.total_ms(),
         thinking_ms,
     )
+    offer_report, report_title = should_offer_report(question, cited, body)
     yield (
         "done",
         {
@@ -906,5 +914,7 @@ async def answer_question(
             "qa_id": qa_id,
             "conversation_id": conv_id,
             "thinking_ms": thinking_ms,
+            "offer_report": offer_report,
+            "report_title": report_title,
         },
     )

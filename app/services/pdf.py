@@ -224,7 +224,7 @@ def _render_fancy(title: str, sections: list[tuple[str, str]], meta: dict) -> st
         )
     body = "".join(body_parts)
     return (
-        "<!doctype html><html><head><meta charset='utf-8'>"
+        '<!doctype html><html><head><meta charset="utf-8">'
         f"<style>{_FANCY_CSS}</style></head><body>{cover}{toc}{body}</body></html>"
     )
 
@@ -234,7 +234,7 @@ def _build_document(markdown_text: str, *, title: str, meta: dict) -> str:
     md = markdown_text or ""
     parsed_title, sections = split_report(md)
     if parsed_title and len(sections) >= _FANCY_MIN_SECTIONS:
-        return _render_fancy(parsed_title or title, sections, meta or {})
+        return _render_fancy(parsed_title, sections, meta or {})
     prepared = inject_charts(md)
     body_html = _md.markdown(prepared, extensions=["tables", "fenced_code", "sane_lists"])
     return _document_html(title, body_html, meta or {})

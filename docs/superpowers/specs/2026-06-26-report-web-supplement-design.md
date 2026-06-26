@@ -11,7 +11,7 @@ Q&A 路徑（`ASK_ENABLE_WEB` 預設開）早已有完整網搜補充機制（pr
 
 ## 設計決策（已與使用者拍板）
 
-1. **觸發 = LLM 自我判斷**：開放網搜＋prompt 明訂「以片段為主，片段不足／可能過時／需即時資料時才上網補充」，由模型自我把關。與 Q&A 一致、最穩健（語料薄的主題模型自然會搜），不另做脆弱的「不足偵測」閘門。
+1. **觸發 = LLM 自我判斷 ＋ 薄涵蓋 nudge**（見文末「後續調整」）：開放網搜＋prompt 明訂「以片段為主，片段不足／僅涵蓋局部面向／可能過時／需即時資料時才上網補充」，由模型自我把關；**並**在命中研報數少於門檻時於 prompt 注入明確上網指令（補純 LLM 自我判斷對「部分命中」偏保守的盲點）。與 Q&A 一致。
 2. **網源標示 = 行內＋外部參考清單**：網路論點句末標「（網路）」，研報末段新增「## 外部參考（網路）」逐條列「標題 | 網址」。透明可查證，符合研報可信度。
 3. **預設全站開啟**：`REPORT_ENABLE_WEB` 預設 `0`→`1`（仍可 env 關）。
 4. **網源直接寫進研報 markdown**（非走 Q&A 的 `[EXT_SOURCES]` sentinel 解析）：研報是自足的 markdown 文件，讓模型把外部參考寫成正常 markdown 段，產出即可直接渲染進 PDF、隨 `report_doc.markdown` 持久化——無需 sentinel 解析、無需 `ext_sources` 事件。
@@ -121,5 +121,17 @@ const REPORT_STAGE = {
 
 ## 範圍與非目標
 
-- **非目標**：脆弱的「語料不足」數值閘門（改由 LLM 自我把關）；研報的 `ext_sources` 事件／前端外部參考卡（網源直接進 PDF markdown 即可）；Q&A 路徑任何調整。
+- **非目標**：研報的 `ext_sources` 事件／前端外部參考卡（網源直接進 PDF markdown 即可）；Q&A 路徑任何調整。（原列「不做數值閘門」於後續調整改採薄涵蓋 nudge——見文末。）
 - **不動**：檢索頁、瀏覽、總覽、Q&A、PDF 渲染、schema、端點、`report_gate`。
+
+## 後續調整（2026-06-26）：薄涵蓋 nudge
+
+**動機**：上述「純 LLM 自我判斷」經 live 驗證（真實 DB＋claude CLI）暴露盲點——語料**部分命中**的主題（使用者舉的「材料行業」命中 3 篇）模型在「以片段為主」立場下判「足夠」而**不搜網**，未達使用者訴求。WebSearch 機制本身已證可觸發（隔離探針 5×SEARCH_EVENT），問題純在模型對「薄但非空」的覆蓋偏保守。使用者據此**逆轉原決策**，要求補上盲點。
+
+**設計**：在原「LLM 自我判斷」上疊加決定性 nudge：
+
+- 新增 `REPORT_THIN_COVERAGE`（env，預設 8）。`generate_report` 在 `build_context` 後計命中研報數 `len(sources)`；`coverage_directive(n, web_enabled, threshold)` 純函式：網搜開且 `n < threshold` 時回明確上網指令（`n == 0` 用「以網路搜尋為主」、`0 < n < threshold` 用「僅找到 N 篇…請主動以網路搜尋補充」），由 `build_report_prompt(..., coverage_note)` 注入 user prompt。`n ≥ threshold`（充分涵蓋，如台積電達上限 25）不注入，避免無謂延遲。
+- 系統 prompt 規則 1 補「廣度」語意：不只看片段多寡，也看是否「僅涵蓋主題的局部面向」，並把「可用網路搜尋補充」強化為「應主動以網路搜尋補充」。
+- **邊界誠實**：CLI 無法強制工具呼叫，故為「高度促使」而非 100% 強制；live 探針證實明確祈使指令可靠觸發 WebSearch。
+
+**驗證**：材料行業主題重跑 → 事件序 `retrieving→writing→searching_web→writing→rendering`、（網路）標註＋「## 外部參考（網路）」15 條可點連結、7376 字（修正前 3200 字無網搜）。`tests/test_report.py` 加 `coverage_directive`／`build_report_prompt`／薄涵蓋整合 nudge 共 9 測試。

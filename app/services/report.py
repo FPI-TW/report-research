@@ -44,11 +44,15 @@ REPORTS_DIR = os.getenv("REPORTS_DIR", "data/reports")
 # 研報專用 dense 召回深度（沿用問答路徑值，多掃最近鄰降漏報）
 ASK_DENSE_SCAN = int(os.getenv("ASK_DENSE_SCAN", "400"))
 REPORT_ENABLE_WEB = os.getenv("REPORT_ENABLE_WEB", "1") not in ("0", "false", "False", "")
+# 薄涵蓋門檻：命中研報數 < 此值時，視為語料涵蓋不足，於 prompt 明確要求模型主動上網補充。
+# 純 LLM 自我判斷對「薄但非空」的覆蓋偏保守（少數片段即當足夠），故加此決定性 nudge。
+REPORT_THIN_COVERAGE = int(os.getenv("REPORT_THIN_COVERAGE", "8"))
 
 REPORT_SYSTEM_PROMPT = (
     "你是「廷豐智能研報」的研究分析師，負責把研報片段（必要時佐以網路資料）彙整成一份"
     "結構完整、可交付的深度研究報告。請遵守：\n"
-    "1. 以提供的『參考片段』為主要依據；片段不足、可能過時、或需即時資料時，可用網路搜尋補充。"
+    "1. 以提供的『參考片段』為主要依據；當片段不足、僅涵蓋主題的局部面向、可能過時、"
+    "或需即時資料時，應主動以網路搜尋補充缺漏的面向與最新資料。"
     "兩者都查不到時明說「找不到相關資料」，不臆測、不杜撰數據。\n"
     "2. 一律繁體中文，輸出 Markdown，結構固定：\n"
     "   # （研報標題）\n   ## 執行摘要\n   ## 關鍵發現\n   ## 重點分析\n"
@@ -61,12 +65,41 @@ REPORT_SYSTEM_PROMPT = (
 )
 
 
-def build_report_prompt(question: str, context: str, title: str) -> str:
-    return (
-        f"請以下列參考片段，為主題「{question}」撰寫一份深度研究報告，"
-        f"建議標題：「{title}」。\n\n參考片段：\n{context}\n\n"
-        "請依系統指示的固定結構，輸出完整的 Markdown 研報。"
-    )
+def coverage_directive(
+    n_reports: int, *, web_enabled: bool, threshold: int = REPORT_THIN_COVERAGE
+) -> str:
+    """語料涵蓋不足且網搜開啟時，回要求模型主動上網補充的明確指令；否則回空字串。
+
+    純 LLM 自我判斷的盲點：找到少數命中片段就當「足夠」而不搜網。以命中研報數為決定性
+    訊號——數量為 0 時要求以網路為主、少於門檻時要求主動補充缺漏面向。
+    """
+    if not web_enabled:
+        return ""
+    if n_reports <= 0:
+        return (
+            "注意：目前語料中找不到與本主題相關的研報。"
+            "請以網路搜尋為主，查證最新且全面的公開資料後撰寫本研報，並依系統指示標註網路來源。"
+        )
+    if n_reports < threshold:
+        return (
+            f"注意：目前語料僅找到 {n_reports} 篇相關研報，對本主題的涵蓋可能不足。"
+            "請主動以網路搜尋補充最新且更全面的資料（尤其是語料未涵蓋的面向），"
+            "並依系統指示標註網路來源。"
+        )
+    return ""
+
+
+def build_report_prompt(
+    question: str, context: str, title: str, coverage_note: str = ""
+) -> str:
+    parts = [
+        f"請以下列參考片段，為主題「{question}」撰寫一份深度研究報告，建議標題：「{title}」。",
+        f"參考片段：\n{context}",
+    ]
+    if coverage_note:
+        parts.append(coverage_note)
+    parts.append("請依系統指示的固定結構，輸出完整的 Markdown 研報。")
+    return "\n\n".join(parts)
 
 
 def write_report_pdf(report_id: str, pdf_bytes: bytes) -> str:
@@ -168,7 +201,9 @@ async def generate_report(
         return
 
     title = suggested_title(question)
-    prompt = build_report_prompt(question, context, title)
+    # 薄涵蓋偵測：命中研報數少時，明確要求模型主動上網補充（補純 LLM 自我判斷的盲點）。
+    note = coverage_directive(len(sources), web_enabled=REPORT_ENABLE_WEB)
+    prompt = build_report_prompt(question, context, title, note)
 
     yield ("status", {"stage": "writing"})
     parts: list[str] = []

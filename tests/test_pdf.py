@@ -188,3 +188,95 @@ class StripPreambleTests(unittest.TestCase):
 
         self.assertEqual(strip_preamble(""), "")
         self.assertEqual(strip_preamble(None), "")
+
+
+class InjectKpiTests(unittest.TestCase):
+    def test_kpi_block_becomes_strip(self):
+        from app.services.pdf import inject_kpi
+
+        md = (
+            "前言。\n\n```kpi\n"
+            '{"items":[{"label":"營收年增","value":"+30.2%","change":"YoY","dir":"up"},'
+            '{"label":"毛利率","value":"62.0%"}],"source":"[1]"}\n```\n\n結語。'
+        )
+        out = inject_kpi(md)
+        self.assertIn('class="kpi-strip"', out)
+        self.assertIn('class="kpi-value"', out)
+        self.assertIn("+30.2%", out)
+        self.assertIn("營收年增", out)
+        self.assertIn('class="kpi-change up"', out)
+        self.assertIn("來源 [1]", out)
+        self.assertNotIn("```kpi", out)
+        self.assertIn("前言。", out)
+        self.assertIn("結語。", out)
+
+    def test_bad_kpi_block_dropped(self):
+        from app.services.pdf import inject_kpi
+
+        self.assertNotIn("kpi-strip", inject_kpi("a\n\n```kpi\n{壞}\n```\n\nb"))
+        self.assertNotIn("kpi-strip", inject_kpi('a\n\n```kpi\n{"items":[]}\n```\n\nb'))
+
+    def test_no_kpi_unchanged(self):
+        from app.services.pdf import inject_kpi
+
+        md = "## 標題\n\n一般內文[1]。"
+        self.assertEqual(inject_kpi(md), md)
+
+
+class CiteBadgesTests(unittest.TestCase):
+    def test_single_and_multi(self):
+        from app.services.pdf import cite_badges
+
+        self.assertEqual(cite_badges("成長[1]。"), '成長<sup class="cite">1</sup>。')
+        self.assertIn('<sup class="cite">1,2</sup>', cite_badges("見[1,2]"))
+
+    def test_non_citation_untouched(self):
+        from app.services.pdf import cite_badges
+
+        self.assertEqual(cite_badges("陣列 a[i] 與文字"), "陣列 a[i] 與文字")
+
+
+class NormalizeRefsTests(unittest.TestCase):
+    def test_consecutive_refs_split(self):
+        from app.services.pdf import _normalize_refs
+
+        out = _normalize_refs("[1] 甲\n[2] 乙\n[3] 丙")
+        self.assertEqual(out, "[1] 甲\n\n[2] 乙\n\n[3] 丙")
+
+    def test_already_spaced_idempotent(self):
+        from app.services.pdf import _normalize_refs
+
+        out = _normalize_refs("[1] 甲\n\n[2] 乙")
+        self.assertEqual(out, "[1] 甲\n\n[2] 乙")
+
+
+class ContentPipelineTests(unittest.TestCase):
+    MD = (
+        "# 台積電 2026 展望\n\n"
+        "## 執行摘要\n\n結論[1]。\n\n"
+        "```kpi\n{\"items\":[{\"label\":\"營收年增\",\"value\":\"+30.2%\",\"dir\":\"up\"}],\"source\":\"[1]\"}\n```\n\n"
+        "> 關鍵觀點一句[1]。\n\n"
+        "## 關鍵發現\n\n1. 發現[1]。\n\n"
+        "## 重點分析\n\n分析[1]。\n\n"
+        "## 風險與展望\n\n風險[1]。\n\n"
+        "## 引用來源\n\n[1] 統一證券，《報告》，2026-06-19\n[2] 群益投顧，《月報》，2026-06-04\n"
+    )
+
+    def test_fancy_pipeline_html(self):
+        from app.services.pdf import _build_document
+
+        html = _build_document(self.MD, title="x", meta={"date": "2026-06-28"})
+        self.assertIn('class="kpi-strip"', html)            # KPI 注入
+        self.assertIn("<blockquote>", html)                 # callout
+        self.assertIn('<sup class="cite">1</sup>', html)    # 內文徽章
+        # 引用來源段：[1] 維持純文字（不轉徽章），且兩條各自成段
+        self.assertIn("[1] 統一證券", html)
+        self.assertIn("[2] 群益投顧", html)
+        self.assertNotIn('<sup class="cite">1</sup> 統一證券', html)
+
+    def test_fancy_pipeline_renders_pdf(self):
+        from app.services.pdf import render_report_pdf
+
+        pdf = render_report_pdf(self.MD, title="x", meta={"date": "2026-06-28"})
+        self.assertEqual(pdf[:4], b"%PDF")
+        self.assertGreater(len(pdf), 1000)

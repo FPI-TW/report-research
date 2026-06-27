@@ -112,6 +112,8 @@ export function renderMarkdown(md, maxCite = 0) {
         let title = "";
         try { title = String(JSON.parse(buf.join("\n")).title || ""); } catch { /* 串流中 JSON 未完 */ }
         out.push('<p class="md-chart-ph">（圖表' + (title ? "：" + esc(title) : "") + "）</p>");
+      } else if (lang === "kpi") {             // 數據亮點：live 預覽顯示佔位，PDF 才出卡片
+        out.push('<p class="md-chart-ph">（重點數據）</p>');
       } else {
         out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>");
       }

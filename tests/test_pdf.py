@@ -207,6 +207,11 @@ class InjectKpiTests(unittest.TestCase):
         self.assertIn('class="kpi-change up"', out)
         self.assertIn("來源 [1]", out)
         self.assertNotIn("```kpi", out)
+        # dir=down → 紅色 class
+        down = inject_kpi(
+            '```kpi\n{"items":[{"label":"記憶體","value":"-9%","change":"YoY","dir":"down"}]}\n```'
+        )
+        self.assertIn('class="kpi-change down"', down)
         self.assertIn("前言。", out)
         self.assertIn("結語。", out)
 
@@ -229,6 +234,8 @@ class CiteBadgesTests(unittest.TestCase):
 
         self.assertEqual(cite_badges("成長[1]。"), '成長<sup class="cite">1</sup>。')
         self.assertIn('<sup class="cite">1,2</sup>', cite_badges("見[1,2]"))
+        self.assertIn('<sup class="cite">1，2</sup>', cite_badges("見[1，2]"))  # 全形逗號
+        self.assertIn('<sup class="cite">1、3</sup>', cite_badges("見[1、3]"))  # 頓號
 
     def test_non_citation_untouched(self):
         from app.services.pdf import cite_badges

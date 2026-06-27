@@ -140,10 +140,6 @@ figure.chart { margin: 14px 0; text-align: center; page-break-inside: avoid; }
 figure.chart svg { max-width: 100%; height: auto; }
 figcaption { font-size: 9pt; color: #888; margin-top: 4px; }
 
-/* 引用來源 */
-.s-refs .s-body p { font-size: 9.5pt; color: #555; margin: 4px 0;
-  padding-left: 10px; border-left: 2px solid $LINE$; }
-
 /* 子標題層次（覆蓋既有 h3） */
 h3 { font-size: 12pt; color: #9c6a16; font-weight: 700; margin: 15px 0 6px; }
 h4 { font-size: 10.5pt; color: #555; font-weight: 700; margin: 11px 0 4px; }
@@ -177,7 +173,7 @@ tbody tr:nth-child(even) { background: $SOFT$; }
 td, th { border: 1px solid $LINE$; padding: 6px 10px; font-size: 9.5pt; }
 tbody td:first-child { font-weight: 700; color: #333; }
 
-/* 引用來源：懸掛縮排（覆蓋既有 .s-refs .s-body p） */
+/* 引用來源：懸掛縮排 */
 .s-refs .s-body p { padding-left: 1.9em; text-indent: -1.9em; border-left: none;
   font-size: 9.5pt; color: #555; margin: 5px 0; }
 

@@ -37,6 +37,15 @@ class InjectChartsTests(unittest.TestCase):
         self.assertIn("前言。", out)
         self.assertIn("結語。", out)
 
+    def test_non_object_chart_spec_does_not_crash(self):
+        """合法 JSON 但非物件（裸陣列/字串）→ 移除塊，不丟例外。"""
+        from app.services.pdf import inject_charts
+
+        for bad in ('```chart\n[1,2,3]\n```', '```chart\n"x"\n```'):
+            out = inject_charts(bad)
+            self.assertNotIn("<svg", out)
+            self.assertNotIn("```chart", out)
+
     def test_no_chart_block_unchanged(self):
         from app.services.pdf import inject_charts
 
@@ -220,6 +229,21 @@ class InjectKpiTests(unittest.TestCase):
 
         self.assertNotIn("kpi-strip", inject_kpi("a\n\n```kpi\n{壞}\n```\n\nb"))
         self.assertNotIn("kpi-strip", inject_kpi('a\n\n```kpi\n{"items":[]}\n```\n\nb'))
+
+    def test_malformed_kpi_shapes_do_not_crash(self):
+        """合法 JSON 但形狀錯（裸陣列/非物件 items/非物件項）→ 移除塊，不丟例外。"""
+        from app.services.pdf import inject_kpi
+
+        for bad in (
+            '```kpi\n[{"label":"x","value":"1"}]\n```',   # 裸陣列
+            '```kpi\n{"items":["foo","bar"]}\n```',        # items 內非物件
+            '```kpi\n{"items":[123,456]}\n```',            # items 內數字
+            '```kpi\n"just a string"\n```',                # spec 非物件
+            '```kpi\n{"items":"notalist"}\n```',           # items 非陣列
+        ):
+            out = inject_kpi(bad)  # 不應丟例外
+            self.assertNotIn("kpi-strip", out)
+            self.assertNotIn("```kpi", out)
 
     def test_no_kpi_unchanged(self):
         from app.services.pdf import inject_kpi

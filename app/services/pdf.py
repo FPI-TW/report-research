@@ -232,6 +232,9 @@ def inject_charts(markdown_text: str) -> str:
         except (ValueError, TypeError):
             logger.warning("chart spec JSON 解析失敗，略過")
             return ""
+        if not isinstance(spec, dict):
+            logger.warning("chart spec 非物件，略過")
+            return ""
         svg = render_chart_svg(spec)
         if not svg:
             logger.warning("chart 規格無效或數據缺，略過")
@@ -251,15 +254,17 @@ def inject_kpi(markdown_text: str) -> str:
     def _repl(m: "re.Match[str]") -> str:
         try:
             spec = json.loads(m.group(1))
-            items = spec.get("items") or []
         except (ValueError, TypeError):
             logger.warning("kpi spec JSON 解析失敗，略過")
             return ""
-        if not items:
-            logger.warning("kpi 無 items，略過")
+        items = spec.get("items") if isinstance(spec, dict) else None
+        if not isinstance(items, list):
+            logger.warning("kpi 規格無效（缺 items 陣列），略過")
             return ""
         cells = []
         for it in items:
+            if not isinstance(it, dict):  # 形狀漂移（裸值/陣列）→ 跳過該項，不崩潰
+                continue
             val = _html.escape(str(it.get("value", "")))
             lab = _html.escape(str(it.get("label", "")))
             chg = str(it.get("change", "")).strip()
@@ -273,6 +278,9 @@ def inject_kpi(markdown_text: str) -> str:
                 f'<div class="kpi"><div class="kpi-value">{val}</div>'
                 f'<div class="kpi-label">{lab}</div>{chg_html}</div>'
             )
+        if not cells:
+            logger.warning("kpi 無有效 items，略過")
+            return ""
         src = str(spec.get("source", "")).strip()
         src_html = (
             f'<div class="kpi-src">來源 {_html.escape(src)}</div>' if src else ""

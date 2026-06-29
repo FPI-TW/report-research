@@ -18,6 +18,7 @@ import uuid as _uuidlib
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import (
@@ -127,6 +128,17 @@ app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
 _AUTH_ALLOWLIST = {"/login"}
 
 
+def _safe_next(raw: str | None) -> str:
+    """只接受同源相對路徑：必須以單一 '/' 開頭，拒絕 //、/\\、schema URL。否則回 '/'。"""
+    if not raw or not raw.startswith("/"):
+        return "/"
+    if raw.startswith("//") or raw.startswith("/\\"):
+        return "/"
+    if "://" in raw:
+        return "/"
+    return raw
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
@@ -144,7 +156,12 @@ async def require_login(request: Request, call_next):
         return response
     if path.startswith("/api/"):
         return JSONResponse({"detail": "未登入"}, status_code=401)
-    return RedirectResponse("/login", status_code=302)
+    if path.startswith("/app/"):
+        nxt = _safe_next(request.url.path + ("?" + request.url.query if request.url.query else ""))
+        target = "/login" if nxt == "/" else "/login?next=" + quote(nxt, safe="")
+    else:
+        target = "/login"
+    return RedirectResponse(target, status_code=302)
 
 
 class Passage(BaseModel):
@@ -846,8 +863,9 @@ async def report_file(report_id: str):
 
 @app.get("/login")
 async def login_page(request: Request):
+    nxt = _safe_next(request.query_params.get("next"))
     if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), int(time.time())):
-        return RedirectResponse("/", status_code=302)
+        return RedirectResponse(nxt, status_code=302)
     return _static_page("login.html")
 
 
@@ -856,20 +874,23 @@ async def login_submit(
     request: Request,
     username: str = Form(""),
     password: str = Form(""),
+    next: str = Form(""),
 ):
+    nxt = _safe_next(next)
+    err_q = "&next=" + quote(nxt, safe="") if nxt != "/" else ""
     if not auth.login_allowed(request):
-        return RedirectResponse("/login?error=insecure", status_code=303)
+        return RedirectResponse(f"/login?error=insecure{err_q}", status_code=303)
     now = int(time.time())
     ip = auth.client_ip(request)
     if auth.is_locked(ip, now):
-        return RedirectResponse("/login?error=locked", status_code=303)
+        return RedirectResponse(f"/login?error=locked{err_q}", status_code=303)
     if auth.check_credentials(username, password):
         auth.reset(ip)
-        resp = RedirectResponse("/", status_code=303)
+        resp = RedirectResponse(nxt, status_code=303)
         auth.set_session_cookie(resp, now, secure=auth.request_is_secure(request))
         return resp
     auth.record_failure(ip, now)
-    return RedirectResponse("/login?error=1", status_code=303)
+    return RedirectResponse(f"/login?error=1{err_q}", status_code=303)
 
 
 @app.post("/logout")

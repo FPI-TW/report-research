@@ -1,8 +1,8 @@
 # report-mark 運作流程
 
-研報市場標籤分類 + 向量檢索系統的端到端運作說明。
+研報市場標籤分類、向量檢索、RAG 問答與深度研報生成系統的端到端運作說明。
 
-系統把 `研報自動匯入/` 內的券商研究報告，經過 **抽文字 → Claude 多維標註 → 切塊嵌入 → pgvector 入庫 → 語意檢索**，產出可依 **市場／商品類型／標的／報告類型** 過濾並排序的語意搜尋服務。市場標籤對齊 [findb](../../findb) 的市場代碼。
+系統把 `研報自動匯入/` 內的券商研究報告，經過 **抽文字 → Claude 多維標註 → 切塊嵌入 → pgvector 入庫 → 語意檢索 / RAG 問答 / 深度研報 PDF**，產出可依 **市場／商品類型／標的／報告類型** 過濾並排序的研究助理服務。市場標籤對齊 [findb](../../findb) 的市場代碼。
 
 > 有兩條路徑共用同一套處理：**全量生產**（現行主路徑，`extract_all → tag_all_cli → ingest_all`，可一鍵編排續跑）與 **抽樣原型**（小規模驗證，`select_sample → extract_batch → make_worklist → tag_reports.workflow → run_ingest`）。
 
@@ -24,7 +24,7 @@ flowchart TD
       IN["ingest_all.py<br/>chunk.py + embed.py + store.py"]
     end
 
-    DB[("pgvector / PostgreSQL 16<br/>schema research<br/>research_report + report_chunk")]
+    DB[("pgvector / PostgreSQL 16<br/>schema research<br/>research_report + report_chunk<br/>qa_log + report_doc")]
 
     SRC --> EX
     EX -->|"data/extracted/all.jsonl"| TG
@@ -35,9 +35,11 @@ flowchart TD
     ORC["resume_corpus.sh<br/>標註＋導入並行、可續跑"] -.-> TG
     ORC -.-> IN
 
-    DB --> WEB["web/server.py (FastAPI)<br/>BGE-M3 常駐 + 多維篩選/排序"]
+    DB --> WEB["web/server.py (FastAPI)<br/>BGE-M3 常駐 + auth + API composition"]
     DB --> CLI["search.py (CLI)"]
-    WEB --> UI["web/static/index.html<br/>查詢介面"]
+    WEB --> UI["web/static/index.html + app/*.js<br/>檢索 / 問答 / 對話歷史 / PDF 下載"]
+    WEB --> QA["answer.py<br/>RAG 問答 + qa_log"]
+    WEB --> RP["report.py + pdf.py<br/>深度研報生成 + report_doc"]
 ```
 
 **耦合鍵**：`file_hash`（SHA256）貫穿所有階段，讓 Python（確定性處理）與 Claude（語意標註）兩端解耦，並支援 checkpoint-resume。
@@ -63,14 +65,18 @@ flowchart TD
 |----|------|------|
 | 來源 | `研報自動匯入/` | 原始 PDF/docx（唯讀，不更動）|
 | 中繼產物 | `data/` | 抽出文字 JSONL（`all.jsonl`／`sample.jsonl`）、工作清單、tag JSON、執行 log |
-| Canonical | `research.research_report` | 每篇一列：市場/商品類型/標的等標籤 ＋ 檔名 metadata ＋ `full_text` |
+| Canonical | `research.research_report` | 每篇一列：市場/商品類型/標的等標籤 ＋ 檔名 metadata ＋ `full_text` ＋ `summary` |
 | 向量 | `research.report_chunk` | 全文切塊 ＋ `vector(1024)`（HNSW cosine）＋ `content_norm`（pg_trgm 字面比對）|
+| 問答紀錄 | `research.qa_log` | 每輪 Q&A 的 question/answer、來源、外部參考、conversation、回饋與延遲 |
+| 生成研報 | `research.report_doc` | 深度研報 Markdown 真相來源、PDF 路徑、來源清單與對話/問答關聯 |
 
-**`research.research_report` 欄位**：`id`、`file_hash`(唯一)、`file_name`/`file_path`、`market`、`is_research`、`confidence`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`、`language`、`instrument_types[]`、`relates_stock`、`relates_futures`、`stock_targets[]`、`futures_targets[]`、`full_text`、`created_at`。
+**`research.research_report` 欄位**：`id`、`file_hash`(唯一)、`file_name`/`file_path`、`market`、`is_research`、`confidence`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`、`language`、`instrument_types[]`、`relates_stock`、`relates_futures`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`created_at`。
 
 **`research.report_chunk` 欄位**：`id`、`report_id`(FK)、`chunk_index`、`content`、`embedding vector(1024)`、`content_norm`（`GENERATED STORED`：NFKC→去空白→小寫，對齊 `textnorm.norm_for_match()`）。
 
-**索引**：`report_chunk.embedding` HNSW(cosine)、`content_norm` GIN(trgm)；`research_report` 的 `market` btree、`instrument_types`/`stock_targets`/`futures_targets` GIN。DB schema 定義於 [`db/schema.sql`](../db/schema.sql)（DDL 皆 `IF NOT EXISTS`，可冪等套用於既有庫）。
+**互動表**：`qa_log` 以 `COALESCE(conversation_id, id)` 分組支援舊單題與新對話串；`report_doc` 用 `markdown` 作真相來源，PDF 檔遺失時可由 Markdown 即時重建。
+
+**索引**：`report_chunk.embedding` HNSW(cosine)、`content_norm` GIN(trgm)；`research_report` 的 `market` btree、`instrument_types`/`stock_targets`/`futures_targets` GIN；`qa_log` 依建立時間與對話分組索引；`report_doc` 依 `qa_id` 與 `conversation_id` 索引。DB schema 定義於 [`db/schema.sql`](../db/schema.sql)（DDL 皆 `IF NOT EXISTS`，可冪等套用於既有庫）。
 
 ---
 
@@ -110,9 +116,13 @@ flowchart TD
 - **`scripts/backfill_full_text.py`**：由 `sample.jsonl` 回填 `research_report.full_text`（欄位後加時補；僅抽樣路徑）。
 - **`scripts/align_findb_markets.py`**：把既有中文市場標籤確定性重映射為 findb 代碼（同改 `data/tags/*.json` 與 DB），冪等、不需重跑 Claude。
 
-### 檢索 — 兩種介面
+### 檢索、問答與深度研報
 - **CLI** `scripts/search.py`：嵌入查詢 → cosine top-k，可加 `--market <findb 代碼>` 過濾
-- **網頁** `web/server.py` + `web/static/index.html`：FastAPI 後端在啟動時把 BGE-M3 常駐記憶體，前端查詢介面支援多維篩選與排序（見 [Web API](#web-api)）。**全站需登入**（共用帳密，env 設定；未登入導向 `/login`，可登出）——認證細節見 `web/auth.py` 與 [docs/EXTERNAL_ACCESS.md](EXTERNAL_ACCESS.md)
+- **Web 檢索** `web/server.py` + `web/static/app/*.js`：FastAPI 啟動時背景暖機 BGE-M3，`/api/search` 走 dense + pg_trgm 字面召回、報告層聚合、tier/band/日期排序；`/api/reports` 提供無關鍵字瀏覽與分頁。
+- **RAG 問答** `app/services/answer.py`：`embed_query_cached → hybrid_search → build_context → stream_completion → qa_log`。來源以 `[n]` 編號，支援多輪對話、語料總覽問題、離題拒答、外部網搜來源、讚倒讚與對話刪除。
+- **深度研報** `app/services/report.py` + `app/services/pdf.py`：`/api/report` 以較深召回與較大 context 生成 Markdown 研報，必要時主動網搜補覆蓋，渲染成品牌化 PDF，並把 Markdown/PDF/source 寫入 `report_doc`。
+
+**全站需登入**（共用帳密，env 設定；未登入導向 `/login`，可登出）——認證細節見 `web/auth.py` 與 [docs/EXTERNAL_ACCESS.md](EXTERNAL_ACCESS.md)。
 
 ---
 
@@ -158,21 +168,27 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | 端點 | 說明 |
 |------|------|
 | `GET /api/stats` | 總篇數、總片段數，各市場代碼／商品類型／報告類型的篇數 |
+| `GET /api/progress` | 供 `/monitor` 使用的 ingestion、tagging、summary、DB 與背景程序進度 |
 | `GET /api/markets` | findb 市場代碼清單 |
-| `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`k`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、清理後（去除 PDF 雜亂排版）的片段 |
+| `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`limit`、`offset`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、摘要與清理後片段 |
 | `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁 |
 | `GET /api/report/{id}/full` | 單篇 metadata 與原始檔狀態（供前端完整報告 modal）|
 | `GET /api/report/{id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|
-| `POST /api/ask` | RAG 問答：SSE 串流回答，行內 `[n]` 引用對應來源報告；寫入 `qa_log`。以整個語料庫為範圍 |
-| `GET /api/history` | 最近的問答歷史（供側欄歷史清單）。`DELETE /api/history/{qa_id}` 刪除單筆 |
+| `POST /api/ask` | RAG 問答：SSE 串流 `sources` / `token` / `done` / `error`，行內 `[n]` 引用對應來源報告；支援 `conversation_id` 與篩選，寫入 `qa_log` |
+| `POST /api/report` | 深度研報生成：SSE 串流 retrieval/writing/searching/rendering 狀態、來源、token 與 done payload |
+| `GET /api/report-doc/{report_id}/pdf` | 下載生成研報 PDF；PDF 遺失時由 persisted Markdown 即時重建 |
+| `GET /api/history` | 最近的問答歷史（舊單題清單）。`DELETE /api/history/{qa_id}` 或 POST alias 刪除單筆 |
+| `GET /api/conversations` | 對話串清單；`GET /api/conversations/{id}` 取回全部輪次；DELETE/POST alias 刪除整串 |
 | `POST /api/feedback` | 記錄使用者對某次回答的讚／倒讚（`qa_id` + `value`）|
+| `GET /monitor` | 背景管線與資料庫監控頁 |
+| `GET /help` | 使用說明頁 |
 | `GET /` | 單頁前端（檢索／問答兩種模式）|
 | `GET`/`POST /login` | 登入頁與登入提交（共用帳密；**唯一免登入端點**）|
 | `POST /logout` | 清除 session cookie 並導回 `/login` |
 
 > **認證**：除 `/login` 外所有端點皆需登入（deny-by-default 中介層）。未帶有效 session cookie 時 `/api/*` 回 **401**、其餘導向 **`/login`**；`/static/*` 也受保護。憑證為單一共用帳密（env `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD`，fail-closed），cookie 以 `REPORT_MARK_SESSION_SECRET` 簽章、7 天滑動到期，並對登入失敗做每 IP 限流。
 
-前端特性：雙欄側邊版面（手機收單欄）、頂部**檢索／問答**模式切換。檢索結果預設**列表**（依市場／報告類型／日期(月)分組，右上可切「分組依據」），可切**表格**（右上角圖示）；市場／商品類型／標的／報告類型篩選與排序、同篇研報合併、搜尋時列表顯示命中片段＋關鍵字黃底高亮（可展開更多）、點任一筆「內嵌完整報告 PDF」、即打即查（debounce 450ms）、骨架載入。問答模式：RAG 串流回答＋可點引用來源、側欄歷史問答（可重看／刪除）。
+前端特性：雙欄側邊版面（手機收單欄）、頂部**檢索／問答**模式切換。檢索結果預設**列表**（依市場／報告類型／日期(月)分組，右上可切「分組依據」），可切**表格**（右上角圖示）；市場／商品類型／標的／報告類型篩選與排序、同篇研報合併、搜尋時列表顯示命中片段＋關鍵字黃底高亮（可展開更多）、點任一筆「內嵌完整報告 PDF」、即打即查（debounce 450ms）、骨架載入。問答模式：RAG 串流回答＋可點引用來源、處理過程面板、側欄對話歷史（可重看／續問／刪除）、外部參考、讚倒讚、複製答案，以及深度研報 PDF 生成與下載卡片。
 
 ---
 

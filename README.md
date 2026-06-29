@@ -1,6 +1,6 @@
-# 廷豐智能研報 — 研報市場標籤分類 + 向量檢索 + RAG 問答
+# 廷豐智能研報 — 研報市場標籤分類 + 向量檢索 + RAG 問答 + 深度研報
 
-把 `研報自動匯入/` 內的券商研究報告：**標上市場標籤 → 全文切塊嵌入 → 存入 pgvector → 語意檢索**。市場標籤對齊 [findb](../findb) 的市場代碼，標籤由 Claude 讀 PDF 判定。
+把 `研報自動匯入/` 內的券商研究報告：**抽文字與檔名 metadata → Claude 多維標註 → 全文切塊嵌入 → 存入 pgvector → 語意檢索 / RAG 問答 / 深度研報 PDF**。市場標籤對齊 [findb](../findb) 的市場代碼，標籤由 Claude 讀報告文字判定。
 
 > 完整的端到端運作流程、流程圖、逐階段 I/O、擴展與排錯，見 **[docs/WORKFLOW.md](docs/WORKFLOW.md)**。
 
@@ -17,7 +17,7 @@
   └─③ ingest_all.py     串流切塊＋BGE-M3 嵌入＋去重 upsert           → pgvector (research schema)
        └─ resume_corpus.sh  一鍵編排：標註＋導入並行、鎖檔防重入、可中斷續跑
        └─ ingest_lowio.sh   離線大量導入暫關 Postgres durability 降 I/O（結束自動還原）
-       └─ web/server.py + static/index.html  查詢網頁   ／   search.py  CLI 檢索
+       └─ web/server.py + static/app/*.js  檢索 / 問答 / 對話歷史 / 深度研報 PDF   ／   search.py  CLI 檢索
 ```
 
 **抽樣原型（小規模驗證用）**
@@ -70,7 +70,7 @@ findb 無「債券」「原物料」獨立市場 → 歸到最接近者：**債�
 ## 專案結構
 
 ```
-research/                          ← 資料庫 schema：research_report + report_chunk（HNSW cosine）
+research/                          ← 資料庫 schema：research_report + report_chunk + qa_log + report_doc
 db/schema.sql
 
 app/services/
@@ -81,7 +81,15 @@ app/services/
   tagging.py     findb 市場代碼 + 商品類型/標的詞表 + 多維標註指令 + tag JSON 解析（市場/商品類型/關聯/標的）
   store.py       file_hash 去重 upsert + 雙路（dense／字面）召回查詢
   textnorm.py    查詢/內容正規化（NFKC、去空白、小寫）供字面比對
-  retrieval.py   混合檢索編排：dense＋字面召回 → 去重 → tier 融合排序
+  retrieval.py   混合檢索編排：dense＋字面召回 → 去重 → tier/band 融合排序
+  intent.py      問答意圖判定與多輪續問壓縮
+  overview.py    語料庫總覽問題偵測、facet 聚合與文字化
+  answer.py      RAG 問答：檢索、來源編號、串流回答、qa_log、對話歷史
+  report.py      深度研報生成：深度檢索、長文串流、PDF 持久化
+  report_gate.py 問答後是否提示生成深度研報、建議標題
+  pdf.py         Markdown → 品牌化 HTML/PDF（WeasyPrint），支援圖表與 KPI 區塊
+  chart.py       ```chart JSON → SVG 圖表渲染
+  llm.py         Claude CLI 串流包裝，支援網搜事件
   db.py          async SQLAlchemy 引擎（env REPORT_MARK_DB_URL）
 
 scripts/  ── 全量生產
@@ -100,13 +108,19 @@ scripts/  ── 抽樣原型 / 工具
   generate_summaries.py   為缺摘要的報告生成 2-3 句中文摘要（Sonnet，補 summary IS NULL，冪等可續傳）→ make summaries
   align_findb_markets.py  中文標籤 → findb 代碼（一次性、冪等）
   search.py               CLI 語意檢索（可 --market 過濾）
+  eval_retrieval.py        離線 retrieval queryset 評估（hit rate / recency）
+  analyze_qa_log.py        問答延遲、引用新近度與回饋分析
 
 workflows/
   tag_reports.workflow.js Claude 分批 fan-out 市場標註
 
 web/
-  server.py               FastAPI（BGE-M3 常駐）/api/stats /api/markets /api/search /api/reports /api/report/{id} /api/ask /api/history
+  auth.py                 共用帳密、簽章 session cookie、登入限流、localhost HTTP 例外
+  env_loader.py           輕量 .env 載入器（make serve 啟動時讀 repo 根目錄）
+  server.py               FastAPI 組裝層：auth、檢索、問答、對話、深度研報、監控與靜態頁
   static/index.html       查詢介面（雙欄、檢索＋問答、列表/表格檢視、高亮、即打即查）
+  static/app/*.js         原生 ES module 前端：api/search/render/ask/modal/state 等模組
+  static/monitor.html     ingestion、summary、DB 與背景程序監控頁
 ```
 
 ## 查詢網頁
@@ -117,11 +131,11 @@ web/
 
 **檢索**：搜尋框在內容區上方，結果預設以**列表**（依市場／報告類型／日期(月)分組，右上可切「分組依據」）呈現，也可切**表格**（右上角圖示切換）。每筆顯示市場標籤、商品類型、標的、券商來源、報告日期、命中片段數、相關度 %，以及**2-3 句中文摘要**（列表完整顯示；表格於名稱 hover 顯示）讓你不必開全文就能掌握大意；**搜尋時**列表還會列出最相關的**命中片段**並將關鍵字**黃底高亮**（可展開更多片段）；點任一筆即**內嵌原始 PDF**（彈窗頂部亦顯示摘要）。摘要由 `make summaries` 離線生成。
 
-**問答**：以自然語言提問，RAG 檢索＋串流回答、附**引用來源**（可點開原始報告），側欄保留**歷史問答**（可重看／刪除）。
+**問答**：以自然語言提問，RAG 檢索＋串流回答、附**引用來源**（可點開原始報告），側欄保留**對話歷史**（可重看、續問、刪除）。回答可在涵蓋足夠時提示生成**深度研報**，由 `/api/report` 進行深度檢索、長文串流、Markdown 持久化與 PDF 下載。
 
 左側可篩選**市場 / 商品類型 / 標的（個股·期貨）/ 報告類型**（皆單選），並切換**排序**：搜尋＝相關度（預設）/ 日期新→舊 / 日期舊→新；瀏覽＝日期新→舊（預設）/ 日期舊→新。
 
-API：`/api/stats`、`/api/markets`、`/api/search`、`/api/reports`（瀏覽）、`/api/report/{id}/full`、`/api/report/{id}/file`、`/api/ask`（RAG 問答，SSE 串流）、`/api/history`（問答歷史；`DELETE /api/history/{qa_id}` 刪除單筆）、`/api/feedback`（讚／倒讚）（詳見 [docs/WORKFLOW.md](docs/WORKFLOW.md#web-api)）。
+API：`/api/stats`、`/api/progress`、`/api/markets`、`/api/search`、`/api/reports`（瀏覽）、`/api/report/{id}/full`、`/api/report/{id}/file`、`/api/ask`（RAG 問答，SSE 串流）、`/api/report`（深度研報生成，SSE 串流）、`/api/report-doc/{id}/pdf`、`/api/conversations`、`/api/history`、`/api/feedback`（詳見 [docs/WORKFLOW.md](docs/WORKFLOW.md#web-api)）。
 
 ## 環境
 

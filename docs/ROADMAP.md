@@ -31,20 +31,23 @@ Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3
 
 ---
 
-## Phase 1 — 智慧問答 / 簡報(方向 A)
+## Phase 1 — 智慧問答 / 深度研報 / 簡報(方向 A)
 
-**目標**:從「找報告」升級為「回答 + 摘要」。最快展現語料價值。
+**目標**:從「找報告」升級為「回答 + 摘要 + 可下載研究報告」。最快展現語料價值。
 
 | 項目 | 交付物 |
 |------|--------|
 | RAG 問答服務 | `app/services/answer.py`(重用 `hybrid_search`,回答帶行內引用 → PDF) |
-| 問答端點 | `POST /api/ask`(SSE 串流,掛認證,寫 `qa_log`) |
+| 問答端點 | `POST /api/ask`(SSE 串流,掛認證,寫 `qa_log`,支援多輪對話) |
+| 對話歷史 | `/api/conversations` + `qa_log.conversation_id`(重開、續問、刪整串) |
+| 深度研報 | `app/services/report.py` + `/api/report`(深度檢索、長文串流、必要時網搜補覆蓋) |
+| PDF 產出 | `app/services/pdf.py` + `research.report_doc`(Markdown 持久化、PDF 可重建) |
 | 每日簡報 | `app/services/brief.py` + `scripts/daily_brief.py`(可排程) |
-| 前端 | index.html 加「問答」模式;新增 `brief.html` |
+| 前端 | index.html 加「問答」模式、對話側欄、處理過程、引用來源、深度研報下載卡;新增 `brief.html` |
 
-**里程碑 M1**:`/api/ask` 串流回答且引用可連回原始 PDF;每日簡報可產出並快取。
+**里程碑 M1**:`/api/ask` 串流回答且引用可連回原始 PDF;`/api/report` 可產出 PDF 深度研報;每日簡報可產出並快取。
 
-> **狀態(2026-06)**:RAG 問答(`answer.py`)、`/api/ask`(SSE)、`qa_log`、`/api/history`(含單筆刪除)、`/api/feedback` 與前端問答模式(歷史問答清單／引用來源／讚倒讚)已上線;**每日簡報(`brief.py`／`brief.html`)尚未實作**。
+> **狀態(2026-06)**:RAG 問答(`answer.py`)、`/api/ask`(SSE)、`qa_log`、`/api/conversations`、`/api/history`、`/api/feedback`、深度研報生成(`report.py`)、PDF 渲染(`pdf.py`)、`report_doc` 與前端問答模式(對話歷史／引用來源／處理過程／讚倒讚／深度研報下載)已上線;**每日簡報(`brief.py`／`brief.html`)尚未實作**。
 
 ---
 

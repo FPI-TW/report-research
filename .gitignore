@@ -18,8 +18,7 @@ data/*.lock
 data/sync_delta_*.txt
 data/tags.bak.*/
 
-# 自動產生 / 一次性 artifact（claude-mem 記憶傾印、舊的無障礙樹快照）
-AGENTS.md
+# 自動產生 / 一次性 artifact（舊的無障礙樹快照）
 search-after.yml
 
 # 對外存取邊緣的秘密（隧道 token / Basic Auth 帳密）

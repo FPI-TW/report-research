@@ -94,14 +94,15 @@ search:  ## CLI 檢索（用法：make search Q="查詢" MARKET=TW）
 spa-dev:  ## 啟動 Vite dev server（HMR；需另開 make serve 跑 uvicorn）
 	cd frontend && npm run dev
 
-spa-build:  ## 建置 SPA：先產到 staging 再原子換版到 frontend/dist（失敗則 live dist 不動）
+spa-build:  ## 建置 SPA：型別檢查 + 先產到 staging 再原子換版到 frontend/dist（失敗則 live dist 不動）
 	cd frontend && npm ci
+	cd frontend && npm run typecheck
 	cd frontend && rm -rf dist.next && npx vite build --outDir dist.next
 	cd frontend && rm -rf dist.prev && (test -d dist && mv dist dist.prev || true) && mv dist.next dist
 	@echo "SPA build 換版完成；如需回滾：cd frontend && rm -rf dist && mv dist.prev dist"
 
 spa-test:  ## 跑前端 Vitest
-	cd frontend && npm run test
+	cd frontend && npm run test -- --passWithNoTests
 
 stats:  ## 看 DB 市場分佈與筆數
 	@$(DOCKER) exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \

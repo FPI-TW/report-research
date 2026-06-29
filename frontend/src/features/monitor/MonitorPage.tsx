@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Badge, Card, Group, Progress, SimpleGrid, Stack, Text, Title } from '@mantine/core'
 import { getProgress } from '../../lib/api'
@@ -44,6 +44,13 @@ function Tile({
 }
 
 export default function MonitorPage() {
+  // 在地每秒時鐘（平價 §6.3：與舊 monitor.html setInterval(clock,1000) 等效）
+  const [now, setNow] = useState(() => new Date().toTimeString().slice(0, 8))
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date().toTimeString().slice(0, 8)), 1000)
+    return () => clearInterval(id)
+  }, [])
+
   const { data, isError } = useQuery({
     queryKey: ['progress'],
     queryFn: getProgress,
@@ -76,9 +83,14 @@ export default function MonitorPage() {
     <Stack gap="md">
       <Group justify="space-between">
         <Title order={2}>研報導入監控</Title>
-        <Badge color={isError ? 'red' : 'gold'} variant={isError ? 'light' : 'filled'}>
-          {isError ? '重連中' : 'LIVE'}
-        </Badge>
+        <Group gap="xs">
+          <Text size="sm" c="dimmed" ff="monospace">
+            {now}
+          </Text>
+          <Badge color={isError ? 'red' : 'gold'} variant={isError ? 'light' : 'filled'}>
+            {isError ? '重連中' : 'LIVE'}
+          </Badge>
+        </Group>
       </Group>
 
       <SimpleGrid cols={{ base: 2, sm: 4 }}>

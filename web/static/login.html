@@ -68,6 +68,7 @@
       <input id="username" name="username" type="text" autocomplete="username" autofocus required>
       <label for="password">密碼</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <input type="hidden" name="next" id="next-field" />
       <button type="submit">登入</button>
     </form>
     <p class="error" id="error"></p>
@@ -83,6 +84,8 @@
         : "帳號或密碼錯誤。";
       el.style.display = "block";
     }
+    var nx = p.get("next");
+    if (nx) document.getElementById("next-field").value = nx;
   </script>
 </body>
 </html>

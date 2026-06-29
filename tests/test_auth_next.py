@@ -19,6 +19,10 @@ def test_safe_next_rejects_open_redirects():
     assert _safe_next(None) == "/"
     # CRLF injection guard
     assert _safe_next("/app/foo\r\nX-Injected: 1") == "/"
+    # 其餘 C0 控制字元 / DEL 一律拒絕（縱深防禦）
+    assert _safe_next("/app\tfoo") == "/"
+    assert _safe_next("/app\x00foo") == "/"
+    assert _safe_next("/app\x7ffoo") == "/"
     # javascript: scheme guard
     assert _safe_next("javascript:alert(1)") == "/"
 

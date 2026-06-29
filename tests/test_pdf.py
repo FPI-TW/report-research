@@ -37,6 +37,15 @@ class InjectChartsTests(unittest.TestCase):
         self.assertIn("前言。", out)
         self.assertIn("結語。", out)
 
+    def test_non_object_chart_spec_does_not_crash(self):
+        """合法 JSON 但非物件（裸陣列/字串）→ 移除塊，不丟例外。"""
+        from app.services.pdf import inject_charts
+
+        for bad in ('```chart\n[1,2,3]\n```', '```chart\n"x"\n```'):
+            out = inject_charts(bad)
+            self.assertNotIn("<svg", out)
+            self.assertNotIn("```chart", out)
+
     def test_no_chart_block_unchanged(self):
         from app.services.pdf import inject_charts
 
@@ -188,3 +197,150 @@ class StripPreambleTests(unittest.TestCase):
 
         self.assertEqual(strip_preamble(""), "")
         self.assertEqual(strip_preamble(None), "")
+
+
+class InjectKpiTests(unittest.TestCase):
+    def test_kpi_block_becomes_strip(self):
+        from app.services.pdf import inject_kpi
+
+        md = (
+            "前言。\n\n```kpi\n"
+            '{"items":[{"label":"營收年增","value":"+30.2%","change":"YoY","dir":"up","source":"[1]"},'
+            '{"label":"毛利率","value":"62.0%","source":"（網路）"}]}\n```\n\n結語。'
+        )
+        out = inject_kpi(md)
+        self.assertIn('class="kpi-strip"', out)
+        self.assertIn('class="kpi-value"', out)
+        self.assertIn("+30.2%", out)
+        self.assertIn("營收年增", out)
+        self.assertIn('class="kpi-change up"', out)
+        self.assertIn("來源 [1]", out)
+        self.assertIn("來源 （網路）", out)
+        self.assertNotIn("```kpi", out)
+        # dir=down → 紅色 class
+        down = inject_kpi(
+            '```kpi\n{"items":[{"label":"記憶體","value":"-9%","change":"YoY","dir":"down"}]}\n```'
+        )
+        self.assertIn('class="kpi-change down"', down)
+        self.assertIn("前言。", out)
+        self.assertIn("結語。", out)
+
+    def test_bad_kpi_block_dropped(self):
+        from app.services.pdf import inject_kpi
+
+        for md in (
+            "a\n\n```kpi\n{壞}\n```\n\nb",
+            'a\n\n```kpi\n{"items":[]}\n```\n\nb',
+        ):
+            out = inject_kpi(md)
+            self.assertNotIn("kpi-strip", out)
+            self.assertNotIn("```kpi", out)
+            self.assertIn("a", out)
+            self.assertIn("b", out)
+
+    def test_kpi_renders_at_most_five_cards(self):
+        from app.services.pdf import inject_kpi
+
+        items = ",".join(
+            f'{{"label":"L{i}","value":"{i}","source":"[{i}]"}}' for i in range(1, 8)
+        )
+        out = inject_kpi(f'```kpi\n{{"items":[{items}]}}\n```')
+        self.assertEqual(out.count('class="kpi"'), 5)
+        self.assertIn("L5", out)
+        self.assertNotIn("L6", out)
+
+    def test_malformed_kpi_shapes_do_not_crash(self):
+        """合法 JSON 但形狀錯（裸陣列/非物件 items/非物件項）→ 移除塊，不丟例外。"""
+        from app.services.pdf import inject_kpi
+
+        for bad in (
+            '```kpi\n[{"label":"x","value":"1"}]\n```',   # 裸陣列
+            '```kpi\n{"items":["foo","bar"]}\n```',        # items 內非物件
+            '```kpi\n{"items":[123,456]}\n```',            # items 內數字
+            '```kpi\n"just a string"\n```',                # spec 非物件
+            '```kpi\n{"items":"notalist"}\n```',           # items 非陣列
+        ):
+            out = inject_kpi(bad)  # 不應丟例外
+            self.assertNotIn("kpi-strip", out)
+            self.assertNotIn("```kpi", out)
+
+    def test_no_kpi_unchanged(self):
+        from app.services.pdf import inject_kpi
+
+        md = "## 標題\n\n一般內文[1]。"
+        self.assertEqual(inject_kpi(md), md)
+
+
+class CiteBadgesTests(unittest.TestCase):
+    def test_single_and_multi(self):
+        from app.services.pdf import cite_badges
+
+        self.assertEqual(cite_badges("成長[1]。"), '成長<sup class="cite">1</sup>。')
+        self.assertIn('<sup class="cite">1,2</sup>', cite_badges("見[1,2]"))
+        self.assertIn('<sup class="cite">1，2</sup>', cite_badges("見[1，2]"))  # 全形逗號
+        self.assertIn('<sup class="cite">1、3</sup>', cite_badges("見[1、3]"))  # 頓號
+
+    def test_non_citation_untouched(self):
+        from app.services.pdf import cite_badges
+
+        self.assertEqual(cite_badges("陣列 a[i] 與文字"), "陣列 a[i] 與文字")
+
+    def test_code_and_pre_blocks_are_untouched(self):
+        from app.services.pdf import cite_badges
+
+        html = "<p>結論[1]</p><p><code>x[2]</code></p><pre><code>y[3]</code></pre>"
+        out = cite_badges(html)
+        self.assertIn('<sup class="cite">1</sup>', out)
+        self.assertIn("<code>x[2]</code>", out)
+        self.assertIn("<pre><code>y[3]</code></pre>", out)
+
+
+class NormalizeRefsTests(unittest.TestCase):
+    def test_consecutive_refs_split(self):
+        from app.services.pdf import _normalize_refs
+
+        out = _normalize_refs("[1] 甲\n[2] 乙\n[3] 丙")
+        self.assertEqual(out, "[1] 甲\n\n[2] 乙\n\n[3] 丙")
+
+    def test_already_spaced_idempotent(self):
+        from app.services.pdf import _normalize_refs
+
+        out = _normalize_refs("[1] 甲\n\n[2] 乙")
+        self.assertEqual(out, "[1] 甲\n\n[2] 乙")
+
+
+class ContentPipelineTests(unittest.TestCase):
+    MD = (
+        "# 台積電 2026 展望\n\n"
+        "## 執行摘要\n\n結論[1]。\n\n"
+        "```kpi\n{\"items\":[{\"label\":\"營收年增\",\"value\":\"+30.2%\",\"dir\":\"up\"}],\"source\":\"[1]\"}\n```\n\n"
+        "> 關鍵觀點一句[1]。\n\n"
+        "## 關鍵發現\n\n1. 發現[1]。\n\n"
+        "## 重點分析\n\n分析[1]。\n\n"
+        "## 風險與展望\n\n風險[1]。\n\n"
+        "## 引用來源\n\n[1] 統一證券，《報告》，2026-06-19\n[2] 群益投顧，《月報》，2026-06-04\n"
+    )
+
+    def test_fancy_pipeline_html(self):
+        from app.services.pdf import _build_document
+
+        html = _build_document(self.MD, title="x", meta={"date": "2026-06-28"})
+        self.assertIn('class="kpi-strip"', html)            # KPI 注入
+        self.assertIn("<blockquote>", html)                 # callout
+        self.assertIn('<sup class="cite">1</sup>', html)    # 內文徽章
+        self.assertIn("<code>範例[1]</code>", _build_document(
+            self.MD.replace("分析[1]。", "分析[1]。`範例[1]`"),
+            title="x",
+            meta={"date": "2026-06-28"},
+        ))
+        # 引用來源段：[1] 維持純文字（不轉徽章），且兩條各自成段
+        self.assertIn("[1] 統一證券", html)
+        self.assertIn("[2] 群益投顧", html)
+        self.assertNotIn('<sup class="cite">1</sup> 統一證券', html)
+
+    def test_fancy_pipeline_renders_pdf(self):
+        from app.services.pdf import render_report_pdf
+
+        pdf = render_report_pdf(self.MD, title="x", meta={"date": "2026-06-28"})
+        self.assertEqual(pdf[:4], b"%PDF")
+        self.assertGreater(len(pdf), 1000)

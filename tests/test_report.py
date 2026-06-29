@@ -298,6 +298,18 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("第一個字元", p)
         self.assertIn("前言", p)
 
+    async def test_system_prompt_has_kpi_and_callout(self):
+        """REPORT_SYSTEM_PROMPT 含 KPI 卡片與引言 callout 規則。"""
+        p = rpt.REPORT_SYSTEM_PROMPT
+        self.assertIn("```kpi", p)
+        self.assertIn("3–5 個可比較", p)
+        self.assertIn('"items"', p)
+        self.assertIn('"source"', p)
+        self.assertIn("每個 item", p)
+        self.assertIn("單一研報編號或網路來源", p)
+        self.assertIn("引言", p)
+        self.assertIn("不得杜撰", p)  # KPI 沿用嚴格接地措辭
+
     async def test_status_resets_to_writing_after_search(self):
         """SEARCH_EVENT 後應重設回 writing 狀態，不讓「搜尋網路補充…」卡住整個撰寫段。"""
 

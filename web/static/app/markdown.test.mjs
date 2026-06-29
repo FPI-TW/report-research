@@ -65,6 +65,14 @@ check(
   ['"type"', "<pre>"]
 );
 
+// kpi 圍欄 → 佔位（不洩漏 JSON）
+check(
+  "kpi block becomes placeholder",
+  renderMarkdown('```kpi\n{"items":[{"label":"營收","value":"+30%"}]}\n```'),
+  ["（重點數據）"],
+  ['"items"', "```kpi"]
+);
+
 // 回歸：粗體 / 行內碼 / 引用 chip / 清單 / 分隔線 / 表格
 check(
   "regression-basics",

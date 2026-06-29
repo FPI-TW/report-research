@@ -10,6 +10,7 @@ import html as _html
 import json
 import logging
 import re
+from html.parser import HTMLParser
 
 import markdown as _md
 
@@ -18,6 +19,9 @@ from app.services.chart import render_chart_svg
 logger = logging.getLogger(__name__)
 
 _CHART_RE = re.compile(r"```chart\s*\n(.*?)\n```", re.DOTALL)
+_KPI_RE = re.compile(r"```kpi\s*\n(.*?)\n```", re.DOTALL)
+_CITE_RE = re.compile(r"\[(\d+(?:\s*[,，、]\s*\d+)*)\]")
+_REF_NL_RE = re.compile(r"\n+(\[\d+\])")
 _TITLE_RE = re.compile(r"(?m)^#\s+(.+)$")
 
 BRAND_NAME = "廷豐智能研報"
@@ -34,6 +38,7 @@ _SECT_SLUG = {
     "引用來源": "refs",
     "外部參考（網路）": "extrefs",
 }
+_NO_CITE_SLUGS = {"refs", "extrefs"}
 _FANCY_MIN_SECTIONS = 3
 
 _PAGE_CSS = """
@@ -136,9 +141,48 @@ figure.chart { margin: 14px 0; text-align: center; page-break-inside: avoid; }
 figure.chart svg { max-width: 100%; height: auto; }
 figcaption { font-size: 9pt; color: #888; margin-top: 4px; }
 
-/* 引用來源 */
-.s-refs .s-body p { font-size: 9.5pt; color: #555; margin: 4px 0;
-  padding-left: 10px; border-left: 2px solid $LINE$; }
+/* 子標題層次（覆蓋既有 h3） */
+h3 { font-size: 12pt; color: #9c6a16; font-weight: 700; margin: 15px 0 6px; }
+h4 { font-size: 10.5pt; color: #555; font-weight: 700; margin: 11px 0 4px; }
+
+/* 引用標號：上標金色小徽章 */
+sup.cite { color: $GOLD$; font-size: 0.68em; font-weight: 700;
+  vertical-align: super; padding: 0 0.5px; letter-spacing: 0.5px; }
+
+/* 重點引言 callout */
+.s-body blockquote { margin: 11px 0; padding: 10px 15px; background: $SOFT$;
+  border-left: 4px solid $GOLD$; border-radius: 0 7px 7px 0; color: #4a4138; }
+.s-body blockquote p { margin: 3px 0; font-size: 10.5pt; }
+
+/* 數據亮點卡片 */
+.kpi-strip { display: table; width: 100%; border-spacing: 8px 0; margin: 14px 0;
+  table-layout: fixed; }
+.kpi { display: table-cell; background: #fffdf9; border: 1px solid $LINE$;
+  border-top: 3px solid $GOLD$; border-radius: 9px; padding: 11px 8px;
+  text-align: center; page-break-inside: avoid; vertical-align: top; }
+.kpi-value { font-size: 18pt; font-weight: 700; color: #1a1a1a; line-height: 1.15; }
+.kpi-label { font-size: 8.5pt; color: #888; margin-top: 4px; line-height: 1.3; }
+.kpi-change { font-size: 8.5pt; margin-top: 3px; font-weight: 700; }
+.kpi-change.up { color: #4f9268; }
+.kpi-change.down { color: #b5573f; }
+.kpi-src { font-size: 8pt; color: #aaa; text-align: right; margin: 2px 4px 0; }
+
+/* 表格美化（覆蓋既有 table 規則） */
+table { border-collapse: collapse; width: 100%; margin: 11px 0; }
+thead th { background: $GOLD$; color: #fff; font-weight: 700; font-size: 9.5pt; }
+tbody tr:nth-child(even) { background: $SOFT$; }
+td, th { border: 1px solid $LINE$; padding: 6px 10px; font-size: 9.5pt; }
+tbody td:first-child { font-weight: 700; color: #333; }
+
+/* 引用來源：懸掛縮排 */
+.s-refs .s-body p { padding-left: 1.9em; text-indent: -1.9em; border-left: none;
+  font-size: 9.5pt; color: #555; margin: 5px 0; }
+
+/* 外部參考：清單分層 */
+.s-extrefs .s-body ul { list-style: none; padding: 0; }
+.s-extrefs .s-body li { padding: 5px 0 5px 14px; border-left: 2px solid $LINE$;
+  margin: 6px 0; }
+.s-extrefs .s-body a { font-size: 10pt; }
 """
     .replace("$BRAND$", BRAND_NAME)
     .replace("$GOLD$", BRAND_GOLD)
@@ -189,6 +233,9 @@ def inject_charts(markdown_text: str) -> str:
         except (ValueError, TypeError):
             logger.warning("chart spec JSON 解析失敗，略過")
             return ""
+        if not isinstance(spec, dict):
+            logger.warning("chart spec 非物件，略過")
+            return ""
         svg = render_chart_svg(spec)
         if not svg:
             logger.warning("chart 規格無效或數據缺，略過")
@@ -200,6 +247,116 @@ def inject_charts(markdown_text: str) -> str:
         return f'\n\n<figure class="chart">{svg}{figcap}</figure>\n\n'
 
     return _CHART_RE.sub(_repl, markdown_text or "")
+
+
+def inject_kpi(markdown_text: str) -> str:
+    """把 ```kpi 區塊換成一排數據亮點卡片；壞 JSON 或 items 空則移除＋warning。"""
+
+    def _repl(m: "re.Match[str]") -> str:
+        try:
+            spec = json.loads(m.group(1))
+        except (ValueError, TypeError):
+            logger.warning("kpi spec JSON 解析失敗，略過")
+            return ""
+        items = spec.get("items") if isinstance(spec, dict) else None
+        if not isinstance(items, list):
+            logger.warning("kpi 規格無效（缺 items 陣列），略過")
+            return ""
+        valid_items = [
+            it
+            for it in items
+            if isinstance(it, dict)  # 形狀漂移（裸值/陣列）→ 跳過該項，不崩潰
+        ]
+        if len(valid_items) > 5:
+            logger.warning("kpi items 超過 5 筆，僅渲染前 5 筆")
+            valid_items = valid_items[:5]
+        block_src = str(spec.get("source", "")).strip()
+        cells = []
+        for it in valid_items:
+            val = _html.escape(str(it.get("value", "")))
+            lab = _html.escape(str(it.get("label", "")))
+            chg = str(it.get("change", "")).strip()
+            direction = str(it.get("dir", "")).strip()
+            direction = direction if direction in ("up", "down") else ""
+            chg_html = (
+                f'<div class="kpi-change {direction}">{_html.escape(chg)}</div>'
+                if chg
+                else ""
+            )
+            src = str(it.get("source") or block_src).strip()
+            src_html = (
+                f'<div class="kpi-src">來源 {_html.escape(src)}</div>' if src else ""
+            )
+            cells.append(
+                f'<div class="kpi"><div class="kpi-value">{val}</div>'
+                f'<div class="kpi-label">{lab}</div>{chg_html}{src_html}</div>'
+            )
+        if not cells:
+            logger.warning("kpi 無有效 items，略過")
+            return ""
+        return f'\n\n<div class="kpi-strip">{"".join(cells)}</div>\n\n'
+
+    return _KPI_RE.sub(_repl, markdown_text or "")
+
+
+class _CiteBadgeHTMLParser(HTMLParser):
+    """把文字節點中的引用標號換成徽章，保留 code/pre 等 verbatim HTML。"""
+
+    _SKIP_TAGS = {"code", "pre"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        self.parts.append(self.get_starttag_text() or f"<{tag}>")
+        if tag.lower() in self._SKIP_TAGS:
+            self._skip_depth += 1
+
+    def handle_startendtag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        self.parts.append(self.get_starttag_text() or f"<{tag} />")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in self._SKIP_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+        self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            self.parts.append(data)
+            return
+        self.parts.append(
+            _CITE_RE.sub(lambda m: f'<sup class="cite">{m.group(1)}</sup>', data)
+        )
+
+    def handle_entityref(self, name: str) -> None:
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self.parts.append(f"&#{name};")
+
+    def handle_comment(self, data: str) -> None:
+        self.parts.append(f"<!--{data}-->")
+
+    def handle_decl(self, decl: str) -> None:
+        self.parts.append(f"<!{decl}>")
+
+    def result(self) -> str:
+        return "".join(self.parts)
+
+
+def cite_badges(html: str) -> str:
+    """把內文的引用標號 [n]、[n,m] 換成上標金色小徽章（不動其他括號）。"""
+    parser = _CiteBadgeHTMLParser()
+    parser.feed(html or "")
+    parser.close()
+    return parser.result()
+
+
+def _normalize_refs(body: str) -> str:
+    """引用來源：確保每個 [n] 起新段落，不靠模型空行也能一條一行。"""
+    return _REF_NL_RE.sub(r"\n\n\1", (body or "").strip())
 
 
 def _render_fancy(title: str, sections: list[tuple[str, str]], meta: dict) -> str:
@@ -224,9 +381,14 @@ def _render_fancy(title: str, sections: list[tuple[str, str]], meta: dict) -> st
     body_parts = []
     for i, (name, body) in enumerate(sections):
         slug = _SECT_SLUG.get(name, "sec")
+        prepared = inject_kpi(inject_charts(body))
+        if slug == "refs":
+            prepared = _normalize_refs(prepared)
         body_html = _md.markdown(
-            inject_charts(body), extensions=["tables", "fenced_code", "sane_lists"]
+            prepared, extensions=["tables", "fenced_code", "sane_lists"]
         )
+        if slug not in _NO_CITE_SLUGS:
+            body_html = cite_badges(body_html)
         body_parts.append(
             f'<section class="s-{slug}" id="sec-{i}">'
             f"<h2>{_html.escape(name)}</h2>"

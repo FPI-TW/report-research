@@ -17,6 +17,8 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 # web.auth is fail-closed: raise RuntimeError if these are unset at import time.
+# These defaults are applied before any test module is imported, so per-module
+# setdefault() calls (e.g. in test_auth.py) intentionally defer to these values.
 os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
 os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
-os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789abc")
+os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")

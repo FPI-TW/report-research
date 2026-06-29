@@ -11,8 +11,8 @@ def _auth_cookies() -> dict[str, str]:
 
 
 def test_app_deeplink_serves_spa_shell_when_authed():
-    client = TestClient(app)
-    resp = client.get("/app/monitor", cookies=_auth_cookies())
+    client = TestClient(app, cookies=_auth_cookies())
+    resp = client.get("/app/monitor")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert resp.headers.get("cache-control") == "no-cache"

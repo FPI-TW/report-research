@@ -30,7 +30,7 @@
 
 ### 本 spec 目標（Phase 0/1）
 1. 站起 Vite + React 19 + TypeScript 的 SPA 骨架，掛在 `/app` 子路徑，與現有 vanilla 頁共存。
-2. 由 FastAPI 服務 SPA shell（catch-all）與雜湊資產，沿用既有 `tf_session` 認證，**不改認證白名單、不改 systemd unit**。
+2. 由 FastAPI 服務 SPA shell（catch-all）與雜湊資產，沿用既有 `tf_session` 認證與 deny-by-default 白名單；**不改 session 機制、不改認證白名單、不改 systemd unit**，僅補最小的登入 return-to-origin glue。
 3. 建立會被後續每頁複用的共用地基層：typed API client、Zod schema/型別、Mantine 主題（映射既有金色品牌）、已測純函式移植管線、app shell。
 4. 把 **monitor** 端到端遷進 SPA 並達平價，證明整條管線（build → 服務 → 認證 → API → 渲染 → make/systemd 部署）。
 5. 建立 Vitest 測試骨架與 Playwright 平價驗證法。
@@ -39,7 +39,7 @@
 - browse / search / 檢視/分組 / ask / report / help / login 的遷移。
 - 任何新頁（圖表/儀表板、表單/後台 CRUD）。
 - 把 `/` 切到 SPA、退役 vanilla、刪 `web/static`。
-- 任何後端**業務邏輯**或 schema 變動（`app/**`、`db/**`、既有 `/api/*` 行為一律不動）。唯一允許的後端改動是 §4.3 在 `web/server.py` **新增服務 SPA 的靜態路由**（catch-all shell + 雜湊資產掛載），純服務、無業務邏輯。
+- 任何後端**業務邏輯**或 schema 變動（`app/**`、`db/**`、既有 `/api/*` 行為一律不動）。唯一允許的後端改動是 §4.3 / §7 在 `web/server.py` 與登入流程新增：**服務 SPA 的靜態路由**（catch-all shell + 雜湊資產掛載）以及 **return-to-origin glue**（`next` 透傳／驗證／成功後返回）；純服務與認證流程 glue code，無業務邏輯。
 
 ---
 
@@ -97,14 +97,14 @@ report-mark/
    │  ├─ App.tsx              # 路由表 / layout / 404
    │  ├─ theme.ts             # Mantine 主題（映射 tokens.css 品牌）
    │  ├─ lib/
-   │  │  ├─ api.ts            # typed fetch client（401→/login、SSE helper 介面）
+   │  │  ├─ api.ts            # typed fetch client（401→/login?next=...、SSE helper 介面）
    │  │  ├─ schemas.ts        # Zod schema + z.infer 型別
    │  │  └─ eta.ts            # 由 web/static/app/eta.js 移植
    │  ├─ features/monitor/    # monitor 切片（元件 + hooks）
    │  └─ test/setup.ts        # jest-dom/vitest 註冊
-   └─ dist/                   # vite build 產物（gitignore），FastAPI 服務此處
+   └─ dist/                   # 現行服務中的 SPA 產物（gitignore；由 staging build 完成後原子換版）
 ```
-`frontend/node_modules` 與 `frontend/dist` 一律 gitignore。
+`frontend/node_modules`、`frontend/dist` 與 staging 目錄（例：`frontend/dist.next`）一律 gitignore。
 
 ### 4.2 過渡期共存：SPA 掛 `/app` 子路徑
 - Vite `base: '/app/'`（**尾斜線必要**）、React Router `basename: '/app'`（**無尾斜線**）。兩者不一致是子路徑掛載最常見的故障。
@@ -112,14 +112,16 @@ report-mark/
 - `createBrowserRouter` 實例建在**模組層（render 樹之外）**，勿放進 component / useState，否則 re-render 會丟失 router 狀態。
 - 達平價後：把舊 `GET /monitor` 改 **redirect 到 `/app/monitor`**；舊 `monitor.html` 留到正式退役。終局再把 basename 改 `/`、退役 vanilla。
 
-### 4.3 FastAPI 服務 SPA（沿用既有認證，零後端邏輯變動）
-在 `web/server.py` 新增（僅服務靜態與 shell，無業務邏輯）：
+### 4.3 FastAPI 服務 SPA（沿用既有認證，零業務邏輯變動）
+在 `web/server.py` 與既有登入流程補上（僅服務靜態、shell 與 auth glue，無業務邏輯）：
 - **雜湊資產** `GET /app/assets/*`：Vite 內容雜湊檔名 → `StaticFiles` 掛載，長快取 `immutable`。
 - **SPA shell** catch-all `GET /app/{path:path}` → 回 `frontend/dist/index.html`，`Cache-Control: no-cache`（新 build 即時生效＋支援 client 深連結）。註冊順序須在既有具體路由之後、避免吃掉它們。
 - **認證**：既有 deny-by-default 中介層（`web/auth.py` + middleware）白名單只有 `/login`，故 `/app/*` 與其資產**自動需要 `tf_session` cookie**（與今天 `/static` 同模式）。
-  - 瀏覽器深連 `/app/monitor` 無 cookie → 中介層伺服器端導向 `/login` → 登入後返回。
-  - mid-session fetch 拿 401 → 由 client 端 `api.ts` 導向 `/login`（§7）。
-  - **白名單不需改動**——低風險點。
+  - 瀏覽器深連 `/app/monitor` 無 cookie → 中介層伺服器端導向 `/login?next=/app/monitor`。
+  - `GET /login` 若已登入且帶合法 `next`，直接導回該路徑；無 `next` 時維持回 `/`。
+  - `POST /login` 成功後導回合法 `next`；`next` 僅接受**同源相對路徑**（必須以 `/` 開頭，拒絕 `//...`、schema URL、跨站 URL），避免 open redirect。
+  - mid-session fetch 拿 401 → 由 client 端 `api.ts` 導向 `/login?next=<目前 SPA 路徑>`（§7）。
+  - **白名單不需改動**；本 spec 允許的 auth 改動只限這層 return-to-origin glue。
 
 ### 4.4 開發迴圈（HMR）
 - 新 `make spa-dev`：跑 Vite dev server，`server.proxy` 把 `/api`、`/login`、`/logout` 轉發到 uvicorn:8097。開發時同時跑 `make serve`（uvicorn）＋ `make spa-dev`（Vite）。同源 proxy ⇒ cookie 正常；localhost 走 http 由 `allow_insecure_local` 允許。
@@ -136,7 +138,7 @@ report-mark/
 
 | 單元 | 職責 | 介面 / 備註 |
 |---|---|---|
-| `lib/api.ts` | typed fetch 包裝：同源自動帶 cookie、**401→`window.location='/login'`**、回傳型別化資料；定義 SSE helper 介面（本切片不用，先留型別供 ask/report 後續用） | 全站唯一 API 出口 |
+| `lib/api.ts` | typed fetch 包裝：同源自動帶 cookie、**401→`/login?next=<current>`**、回傳型別化資料；定義 SSE helper 介面（本切片不用，先留型別供 ask/report 後續用） | 全站唯一 API 出口 |
 | `lib/schemas.ts` | Zod schema 同時做 runtime 驗證 ＋ 產 TS 型別（`z.infer`）；本切片先定 `progressSchema → ProgressResponse` | 確立「每端點一 schema」模式 |
 | `theme.ts` | Mantine 主題（§4.5） | 視覺貼近金色品牌的單一真相源 |
 | `lib/eta.ts` | 由 `web/static/app/eta.js` 原樣移植 `rateText` / `ingestRateText` → TS | 證明「已測純函式直接移植」管線 |
@@ -157,7 +159,7 @@ report-mark/
 `progressSchema`（Zod）對齊此形狀；解析失敗即顯示錯誤態（§7）。
 
 ### 6.2 資料流與元件
-- **抓取**：`useQuery({ queryKey:['progress'], queryFn: api.getProgress, refetchInterval: 2000 })` → `ProgressResponse`。輪詢交給 Query，取代手寫 `setInterval` 取資料。
+- **抓取**：`useQuery({ queryKey:['progress'], queryFn: api.getProgress, refetchInterval: 2000, refetchIntervalInBackground: true, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false })` → `ProgressResponse`。輪詢交給 Query，但**明確關掉**會改變舊 monitor 節奏/失敗語意的預設行為，維持「每 2 秒一輪；本輪失敗就等下一輪」。
 - **開頁平均速率**：`useMonitorRate` hook，以 `useRef` 存「首個樣本基線」，按現有 `monitor.html` `rate()` 邏輯算 spm/tpm（與現行**位元等價**），餵給移植來的 `rateText` / `ingestRateText`。獨立單元測試。
 - **元件**（Mantine 主題化，對位現有版面）：
   - 頂部 tiles：已導入報告 / 總片段 / 標註% / 摘要%（含 `useTween` 數字動畫）。
@@ -173,19 +175,19 @@ report-mark/
 2. `rateText` / `ingestRateText` 輸出與舊頁**逐字相同**（純函式移植＋移植測試保證）。
 3. clock 走、LIVE 隨 fetch 成功/失敗切換。
 4. 視覺貼近現有金色品牌。
-5. **0 console error**（Playwright 比對，沿用現有 monitor 驗證法）。
-6. session 過期（401）會導去 `/login`。
+5. **0 console error**（Playwright 平價劇本驗證；cutover 前再與舊 `/monitor` 對照）。
+6. session 過期（401）會導去 `/login?next=<當前 SPA 路徑>`，登入後回原頁。
 
-達標後 `/monitor` redirect 到 `/app/monitor`，舊 `monitor.html` 留到正式退役。
+達標後 `/monitor` redirect 到 `/app/monitor`，舊 `monitor.html` 留到正式退役。舊 `/monitor` 對照僅是 **cutover 前平價驗證**；redirect 啟用後，常駐驗證目標改為 `/app/monitor`。
 
 ---
 
 ## 7. 錯誤處理（跨切面，本 spec 一併立好慣例）
 
-- **session 過期 / 401**：`api.ts` 攔 401 → `window.location='/login'`。深連無 cookie 走伺服器端導向；mid-session fetch 走 client 端導向，兩路皆覆蓋。
-- **網路錯誤**：TanStack Query 預設退避重試；每路由 React error boundary；monitor 保留上次良好值＋LIVE 熄。
+- **session 過期 / 401**：`api.ts` 攔 401 → `/login?next=<current>`。深連無 cookie 走伺服器端導向；mid-session fetch 走 client 端導向，兩路皆覆蓋，登入成功後回原頁。
+- **網路錯誤**：monitor 這條 query **明確設 `retry:false`**，維持舊頁「本輪失敗→下一個 2 秒週期再試」語意；保留上次良好值＋LIVE 熄。其餘頁面日後可另依需求決定是否啟用 Query retry/backoff。
 - **API 形狀漂移**：Zod `parse` 失敗即拋型別化錯誤、記錄並顯示錯誤態，而非默默渲染壞資料——呼應後端「逐層守門」防禦姿態。
-- **build 失敗**：`make spa-build` 大聲失敗；`restart` 只在 build 成功後執行，故失敗時正式環境續服舊 dist。回滾＝保留前一份 dist 或 git revert 後重 build。
+- **build 失敗**：`make spa-build` **不得直接在 live `frontend/dist` 原地 build**；必須先建到 staging 目錄，再以同檔案系統的**原子換版**機制把新產物切到 `frontend/dist`（可用 release dir + symlink，或等價方案）。因此 build 失敗時 live `dist` 保持不動；`restart` 只在換版成功後執行。回滾＝切回前一版 release／symlink，或 git revert 後重 build。
 - **SPA 404**：未知 `/app/*` 路由由 React Router catch-all → SPA 內 404 頁。
 - **（前瞻硬約束）** 日後遷 ask/report 時，務必沿用 `ask.js` 既有串流強健語意（result/assistant fallback、只對 API 529 重試、逾時若已串出文字則 fail-open）。TanStack Query 不原生支援 SSE：採 `experimental_streamedQuery`（包 `AsyncIterable`）或以 `queryClient.setQueryData` 手動推進 cache，連線本身仍自管。本切片不碰，列為後續 spec 約束。
 
@@ -197,7 +199,7 @@ report-mark/
   - `vitest.config.ts` 復用 `@vitejs/plugin-react`、`environment:'jsdom'`、`setupFiles:'./src/test/setup.ts'`、`globals:true`。
   - `src/test/setup.ts` 匯入 `@testing-library/jest-dom/vitest`。
   - tsconfig `types: ["vitest/globals","@testing-library/jest-dom"]`。
-- **Playwright 平價**：登入後載 `/app/monitor`，斷言 ~4 秒內 2 次 `/api/progress` 請求、tiles 填值、clock 走、**0 console error**，與舊 `/monitor` 對照。沿用現有 Playwright 慣例（`/app` 在 auth 後，須先登入；測試憑證讀 repo 根 `.env`）。
+- **Playwright 平價**：建立 monitor parity 劇本：登入後載 `/app/monitor`，斷言 ~4 秒內 2 次 `/api/progress` 請求、tiles 填值、clock 走、**0 console error**；cutover 前再與舊 `/monitor` 做一次對照。redirect 啟用後，常駐 E2E 僅跑 `/app/monitor`。沿用本 repo 既有 Playwright 驗證慣例（`/app` 在 auth 後，須先登入；測試憑證讀 repo 根 `.env`）。
 - 既有 `node --test web/static/app/*.test.mjs` 維持綠燈到 vanilla 退役。
 - 新 make 目標：`make spa-test`（`vitest run`）、`make spa-e2e`（選用）。ESLint 限作用於 `frontend/`。
 
@@ -206,7 +208,7 @@ report-mark/
 ## 9. 部署
 
 - **開發**：`make serve`（uvicorn）＋ `make spa-dev`（Vite HMR）。
-- **正式**：`git pull` → `make spa-build`（`vite build` → `frontend/dist`）→ `sudo systemctl restart report-mark-web.service`。
+- **正式**：`git pull` → `make spa-build`（`vite build` 先產到 staging，成功後原子換版 `frontend/dist`）→ `sudo systemctl restart report-mark-web.service`。
 - systemd unit **不變**（仍 uvicorn 靜態服 dist）。Node 22 LTS 在機器上一次性安裝；build 由部署者登入 shell 跑（PATH 有 node），**不經 systemd**，故無需像 `claude` CLI 那樣加 systemd PATH drop-in。
 - 資產雜湊 `immutable` 長快取；shell `no-cache`。無 CDN。
 

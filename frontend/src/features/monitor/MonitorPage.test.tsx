@@ -10,13 +10,14 @@ afterEach(() => vi.restoreAllMocks())
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  const utils = render(
     <MantineProvider theme={theme}>
       <QueryClientProvider client={qc}>
         <MonitorPage />
       </QueryClientProvider>
     </MantineProvider>,
   )
+  return { ...utils, qc }
 }
 
 test('渲染進度數據與 LIVE 標記', async () => {
@@ -29,9 +30,11 @@ test('渲染進度數據與 LIVE 標記', async () => {
     pipelines: { web: true, ingest: false, tag: false, summaries: true },
     orchestrator: undefined,
   })
-  renderPage()
+  const { qc, unmount } = renderPage()
   expect(await screen.findByText('研報導入監控')).toBeInTheDocument()
   expect(await screen.findByText('LIVE')).toBeInTheDocument()
   expect(await screen.findByText(/標註 TAGGING/)).toBeInTheDocument()
   expect(await screen.findByText('TW')).toBeInTheDocument()
+  unmount()
+  qc.clear()
 })

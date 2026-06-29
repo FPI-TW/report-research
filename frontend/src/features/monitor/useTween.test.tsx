@@ -8,6 +8,8 @@ beforeEach(() => {
   )
 })
 
+afterEach(() => vi.unstubAllGlobals())
+
 test('reduced-motion 下直接回終值', () => {
   const { result } = renderHook(() => useTween(1234))
   expect(result.current).toBe(1234)

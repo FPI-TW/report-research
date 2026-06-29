@@ -36,6 +36,7 @@ export function useTween(value: number | null): number | null {
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)
+  // deps: 僅 value；reduce 由系統媒體狀態決定、非 render 觸發，刻意不列入
   }, [value])
 
   return shown

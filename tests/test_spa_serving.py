@@ -24,3 +24,10 @@ def test_app_shell_requires_auth():
     resp = client.get("/app/monitor", follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("/login")
+
+
+def test_legacy_monitor_redirects_to_spa():
+    client = TestClient(app)
+    resp = client.get("/monitor", cookies=_auth_cookies(), follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/app/monitor"

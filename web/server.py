@@ -477,7 +477,8 @@ async def progress():
 
 @app.get("/monitor")
 async def monitor():
-    return _static_page("monitor.html")
+    # cutover：監控頁已遷至 SPA；舊 monitor.html 保留檔案，僅不再由此服務。
+    return RedirectResponse("/app/monitor", status_code=307)
 
 
 @app.get("/help")

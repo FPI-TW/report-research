@@ -92,6 +92,15 @@ class _NoCacheStatic(StaticFiles):
         return resp
 
 
+class _ImmutableStatic(StaticFiles):
+    """Vite 內容雜湊資產（/app/assets/*）長快取：hash 變則 URL 變，故可 immutable。"""
+
+    async def get_response(self, path, scope):  # type: ignore[override]
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
 async def _warmup_embeddings() -> None:
     await asyncio.to_thread(embed_texts, ["warmup"])
 
@@ -911,7 +920,7 @@ async def index():
 # ───── SPA（/app 子路徑；shell + 雜湊資產，純服務無業務邏輯）─────
 app.mount(
     "/app/assets",
-    _NoCacheStatic(directory=SPA_DIST / "assets", check_dir=False),
+    _ImmutableStatic(directory=SPA_DIST / "assets", check_dir=False),
     name="spa-assets",
 )
 

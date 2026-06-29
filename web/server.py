@@ -64,6 +64,7 @@ from app.services.pdf import render_report_pdf  # noqa: E402
 from app.services.report import fetch_report_doc, generate_report, write_report_pdf  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+SPA_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 logger = logging.getLogger(__name__)
 SEARCH_QUERY_MAX_CHARS = 500
 ASK_QUESTION_MAX_CHARS = 2000
@@ -881,6 +882,23 @@ async def logout():
 @app.get("/")
 async def index():
     return _static_page("index.html")
+
+
+# ───── SPA（/app 子路徑；shell + 雜湊資產，純服務無業務邏輯）─────
+app.mount(
+    "/app/assets",
+    _NoCacheStatic(directory=SPA_DIST / "assets", check_dir=False),
+    name="spa-assets",
+)
+
+
+@app.get("/app/{spa_path:path}")
+async def spa_shell(spa_path: str):
+    """SPA shell：所有 /app/* 深連結回同一份 index.html，交給 client 端路由。"""
+    index = SPA_DIST / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=503, detail="SPA 尚未建置（make spa-build）")
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", _NoCacheStatic(directory=STATIC_DIR), name="static")

@@ -30,9 +30,11 @@ export function useTween(value: number | null): number | null {
     const step = (t: number) => {
       const p = Math.min(1, (t - t0) / 600)
       const e = 1 - Math.pow(1 - p, 3)
-      setShown(start + (value - start) * e)
+      const cur = start + (value - start) * e
+      // 每幀同步基準：中途換值/卸載時，下次動畫以最新可見值起跳，避免過時基準（p=1 時 cur===value）
+      from.current = cur
+      setShown(cur)
       if (p < 1) raf = requestAnimationFrame(step)
-      else from.current = value
     }
     raf = requestAnimationFrame(step)
     return () => cancelAnimationFrame(raf)

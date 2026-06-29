@@ -1,13 +1,15 @@
 import type { ReactNode } from 'react'
 import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
-import { AppShell, Container, Title, Text } from '@mantine/core'
+import { AppShell, Container, Title, Text, VisuallyHidden } from '@mantine/core'
 import MonitorPage from './features/monitor/MonitorPage'
 
 function Layout({ children }: { children: ReactNode }) {
   return (
     <AppShell padding="md">
       <AppShell.Main>
+        {/* 全站唯一 h1（視覺隱藏）：確保每頁有正常的 h1→h2 標題梯級 */}
+        <VisuallyHidden component="h1">廷豐智能研報</VisuallyHidden>
         <Container size="lg">{children}</Container>
       </AppShell.Main>
     </AppShell>

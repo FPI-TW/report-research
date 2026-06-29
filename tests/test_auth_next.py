@@ -17,6 +17,10 @@ def test_safe_next_rejects_open_redirects():
     assert _safe_next("https://evil.com") == "/"
     assert _safe_next("evil") == "/"
     assert _safe_next(None) == "/"
+    # CRLF injection guard
+    assert _safe_next("/app/foo\r\nX-Injected: 1") == "/"
+    # javascript: scheme guard
+    assert _safe_next("javascript:alert(1)") == "/"
 
 
 def test_unauthed_app_deeplink_redirects_with_next():
@@ -49,3 +53,16 @@ def test_login_post_ignores_evil_next(monkeypatch):
         follow_redirects=False,
     )
     assert resp.headers["location"] == "/"
+
+
+def test_authed_login_get_honors_safe_next(monkeypatch):
+    monkeypatch.setattr(auth, "verify_token", lambda token, now: True)
+    client = TestClient(app)
+    # valid same-origin next: should redirect there
+    resp = client.get("/login?next=/app/monitor", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/app/monitor"
+    # evil next: should redirect to /
+    resp2 = client.get("/login?next=https://evil.com", follow_redirects=False)
+    assert resp2.status_code == 302
+    assert resp2.headers["location"] == "/"

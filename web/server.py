@@ -129,12 +129,14 @@ _AUTH_ALLOWLIST = {"/login"}
 
 
 def _safe_next(raw: str | None) -> str:
-    """只接受同源相對路徑：必須以單一 '/' 開頭，拒絕 //、/\\、schema URL。否則回 '/'。"""
+    """只接受同源相對路徑：必須以單一 '/' 開頭，拒絕 //、/\\、schema URL、CRLF。否則回 '/'。"""
     if not raw or not raw.startswith("/"):
         return "/"
     if raw.startswith("//") or raw.startswith("/\\"):
         return "/"
     if "://" in raw:
+        return "/"
+    if "\r" in raw or "\n" in raw:
         return "/"
     return raw
 

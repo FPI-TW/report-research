@@ -18,7 +18,7 @@ export interface RateBase {
   t: number
 }
 
-export const NULL_RATE: MonitorRate = { rpm: null, cps: null, spm: null, tpm: null }
+export const NULL_RATE: MonitorRate = Object.freeze({ rpm: null, cps: null, spm: null, tpm: null })
 
 // 與 web/static/app/monitor.html rate() 等價：開頁以來平均；首次建 base，dt<8 沿用上次。
 export function nextRate(

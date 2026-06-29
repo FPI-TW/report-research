@@ -17,7 +17,7 @@ export function redirectToLogin(): void {
 }
 
 export async function getJSON<T>(path: string, schema: ZodType<T>, init?: RequestInit): Promise<T> {
-  const resp = await fetch(path, { credentials: 'same-origin', ...init })
+  const resp = await fetch(path, { ...init, credentials: 'same-origin' })
   if (resp.status === 401) {
     redirectToLogin()
     throw new ApiError(401, '未登入')

@@ -2,7 +2,10 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import { ApiError, getJSON } from './api'
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 test('getJSON 解析並回傳型別化資料', async () => {
   vi.stubGlobal(

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { AppShell, Container, Title, Text } from '@mantine/core'
+import MonitorPage from './features/monitor/MonitorPage'
 
 function Layout({ children }: { children: ReactNode }) {
   return (
@@ -31,10 +32,10 @@ function NotFound() {
 }
 
 // router 建在模組層（render 樹之外），basename 無尾斜線。
-// eslint-disable-next-line react-refresh/only-export-components
-export const router = createBrowserRouter(
+const router = createBrowserRouter(
   [
     { path: '/', element: <Home /> },
+    { path: '/monitor', element: <Layout><MonitorPage /></Layout> },
     { path: '*', element: <NotFound /> },
   ],
   { basename: '/app' },

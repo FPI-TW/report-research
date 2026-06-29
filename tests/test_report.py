@@ -302,6 +302,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         """REPORT_SYSTEM_PROMPT 含 KPI 卡片與引言 callout 規則。"""
         p = rpt.REPORT_SYSTEM_PROMPT
         self.assertIn("```kpi", p)
+        self.assertIn("3–5 個可比較", p)
+        self.assertIn('"items"', p)
+        self.assertIn('"source"', p)
+        self.assertIn("每個 item", p)
+        self.assertIn("單一研報編號或網路來源", p)
         self.assertIn("引言", p)
         self.assertIn("不得杜撰", p)  # KPI 沿用嚴格接地措辭
 

@@ -8,6 +8,7 @@ data/*.json
 研報自動匯入/
 .uv/
 .playwright-mcp/
+.playwright-cli/
 *.png
 # 但保留說明頁截圖（屬 UI 資產、被 help.html 引用，需入版控；其餘 png 仍忽略）
 !web/static/help/*.png
@@ -15,6 +16,9 @@ data/*.json
 # runtime logs / locks / tag backups（執行期產生，非原始碼）
 data/*.log
 data/*.lock
+data/*.pid
+data/.*.pid
+data/.sync_last_hashes
 data/sync_delta_*.txt
 data/tags.bak.*/
 

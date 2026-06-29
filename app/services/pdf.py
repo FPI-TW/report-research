@@ -10,6 +10,7 @@ import html as _html
 import json
 import logging
 import re
+from html.parser import HTMLParser
 
 import markdown as _md
 
@@ -261,38 +262,96 @@ def inject_kpi(markdown_text: str) -> str:
         if not isinstance(items, list):
             logger.warning("kpi 規格無效（缺 items 陣列），略過")
             return ""
+        valid_items = [
+            it
+            for it in items
+            if isinstance(it, dict)  # 形狀漂移（裸值/陣列）→ 跳過該項，不崩潰
+        ]
+        if len(valid_items) > 5:
+            logger.warning("kpi items 超過 5 筆，僅渲染前 5 筆")
+            valid_items = valid_items[:5]
+        block_src = str(spec.get("source", "")).strip()
         cells = []
-        for it in items:
-            if not isinstance(it, dict):  # 形狀漂移（裸值/陣列）→ 跳過該項，不崩潰
-                continue
+        for it in valid_items:
             val = _html.escape(str(it.get("value", "")))
             lab = _html.escape(str(it.get("label", "")))
             chg = str(it.get("change", "")).strip()
             direction = str(it.get("dir", "")).strip()
+            direction = direction if direction in ("up", "down") else ""
             chg_html = (
-                f'<div class="kpi-change {_html.escape(direction)}">{_html.escape(chg)}</div>'
+                f'<div class="kpi-change {direction}">{_html.escape(chg)}</div>'
                 if chg
                 else ""
             )
+            src = str(it.get("source") or block_src).strip()
+            src_html = (
+                f'<div class="kpi-src">來源 {_html.escape(src)}</div>' if src else ""
+            )
             cells.append(
                 f'<div class="kpi"><div class="kpi-value">{val}</div>'
-                f'<div class="kpi-label">{lab}</div>{chg_html}</div>'
+                f'<div class="kpi-label">{lab}</div>{chg_html}{src_html}</div>'
             )
         if not cells:
             logger.warning("kpi 無有效 items，略過")
             return ""
-        src = str(spec.get("source", "")).strip()
-        src_html = (
-            f'<div class="kpi-src">來源 {_html.escape(src)}</div>' if src else ""
-        )
-        return f'\n\n<div class="kpi-strip">{"".join(cells)}</div>{src_html}\n\n'
+        return f'\n\n<div class="kpi-strip">{"".join(cells)}</div>\n\n'
 
     return _KPI_RE.sub(_repl, markdown_text or "")
 
 
+class _CiteBadgeHTMLParser(HTMLParser):
+    """把文字節點中的引用標號換成徽章，保留 code/pre 等 verbatim HTML。"""
+
+    _SKIP_TAGS = {"code", "pre"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        self.parts.append(self.get_starttag_text() or f"<{tag}>")
+        if tag.lower() in self._SKIP_TAGS:
+            self._skip_depth += 1
+
+    def handle_startendtag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        self.parts.append(self.get_starttag_text() or f"<{tag} />")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in self._SKIP_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+        self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            self.parts.append(data)
+            return
+        self.parts.append(
+            _CITE_RE.sub(lambda m: f'<sup class="cite">{m.group(1)}</sup>', data)
+        )
+
+    def handle_entityref(self, name: str) -> None:
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self.parts.append(f"&#{name};")
+
+    def handle_comment(self, data: str) -> None:
+        self.parts.append(f"<!--{data}-->")
+
+    def handle_decl(self, decl: str) -> None:
+        self.parts.append(f"<!{decl}>")
+
+    def result(self) -> str:
+        return "".join(self.parts)
+
+
 def cite_badges(html: str) -> str:
     """把內文的引用標號 [n]、[n,m] 換成上標金色小徽章（不動其他括號）。"""
-    return _CITE_RE.sub(lambda m: f'<sup class="cite">{m.group(1)}</sup>', html or "")
+    parser = _CiteBadgeHTMLParser()
+    parser.feed(html or "")
+    parser.close()
+    return parser.result()
 
 
 def _normalize_refs(body: str) -> str:

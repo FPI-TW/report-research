@@ -205,8 +205,8 @@ class InjectKpiTests(unittest.TestCase):
 
         md = (
             "前言。\n\n```kpi\n"
-            '{"items":[{"label":"營收年增","value":"+30.2%","change":"YoY","dir":"up"},'
-            '{"label":"毛利率","value":"62.0%"}],"source":"[1]"}\n```\n\n結語。'
+            '{"items":[{"label":"營收年增","value":"+30.2%","change":"YoY","dir":"up","source":"[1]"},'
+            '{"label":"毛利率","value":"62.0%","source":"（網路）"}]}\n```\n\n結語。'
         )
         out = inject_kpi(md)
         self.assertIn('class="kpi-strip"', out)
@@ -215,6 +215,7 @@ class InjectKpiTests(unittest.TestCase):
         self.assertIn("營收年增", out)
         self.assertIn('class="kpi-change up"', out)
         self.assertIn("來源 [1]", out)
+        self.assertIn("來源 （網路）", out)
         self.assertNotIn("```kpi", out)
         # dir=down → 紅色 class
         down = inject_kpi(
@@ -227,8 +228,26 @@ class InjectKpiTests(unittest.TestCase):
     def test_bad_kpi_block_dropped(self):
         from app.services.pdf import inject_kpi
 
-        self.assertNotIn("kpi-strip", inject_kpi("a\n\n```kpi\n{壞}\n```\n\nb"))
-        self.assertNotIn("kpi-strip", inject_kpi('a\n\n```kpi\n{"items":[]}\n```\n\nb'))
+        for md in (
+            "a\n\n```kpi\n{壞}\n```\n\nb",
+            'a\n\n```kpi\n{"items":[]}\n```\n\nb',
+        ):
+            out = inject_kpi(md)
+            self.assertNotIn("kpi-strip", out)
+            self.assertNotIn("```kpi", out)
+            self.assertIn("a", out)
+            self.assertIn("b", out)
+
+    def test_kpi_renders_at_most_five_cards(self):
+        from app.services.pdf import inject_kpi
+
+        items = ",".join(
+            f'{{"label":"L{i}","value":"{i}","source":"[{i}]"}}' for i in range(1, 8)
+        )
+        out = inject_kpi(f'```kpi\n{{"items":[{items}]}}\n```')
+        self.assertEqual(out.count('class="kpi"'), 5)
+        self.assertIn("L5", out)
+        self.assertNotIn("L6", out)
 
     def test_malformed_kpi_shapes_do_not_crash(self):
         """合法 JSON 但形狀錯（裸陣列/非物件 items/非物件項）→ 移除塊，不丟例外。"""
@@ -266,6 +285,15 @@ class CiteBadgesTests(unittest.TestCase):
 
         self.assertEqual(cite_badges("陣列 a[i] 與文字"), "陣列 a[i] 與文字")
 
+    def test_code_and_pre_blocks_are_untouched(self):
+        from app.services.pdf import cite_badges
+
+        html = "<p>結論[1]</p><p><code>x[2]</code></p><pre><code>y[3]</code></pre>"
+        out = cite_badges(html)
+        self.assertIn('<sup class="cite">1</sup>', out)
+        self.assertIn("<code>x[2]</code>", out)
+        self.assertIn("<pre><code>y[3]</code></pre>", out)
+
 
 class NormalizeRefsTests(unittest.TestCase):
     def test_consecutive_refs_split(self):
@@ -300,6 +328,11 @@ class ContentPipelineTests(unittest.TestCase):
         self.assertIn('class="kpi-strip"', html)            # KPI 注入
         self.assertIn("<blockquote>", html)                 # callout
         self.assertIn('<sup class="cite">1</sup>', html)    # 內文徽章
+        self.assertIn("<code>範例[1]</code>", _build_document(
+            self.MD.replace("分析[1]。", "分析[1]。`範例[1]`"),
+            title="x",
+            meta={"date": "2026-06-28"},
+        ))
         # 引用來源段：[1] 維持純文字（不轉徽章），且兩條各自成段
         self.assertIn("[1] 統一證券", html)
         self.assertIn("[2] 群益投顧", html)

@@ -16,6 +16,12 @@
 - 測試表頭沿用 `sys.path.insert(0, str(REPO_ROOT))`，`uv run pytest`；前端 `.test.mjs` 以 `node <file>` 跑。
 - 只 `git add` 明確路徑（工作樹有未追蹤 `data/`、`.playwright-cli/`）；commit 用中文 Conventional Commits（`feat(report): …`），不加 Co-Authored-By。
 
+## Review Revisions
+
+- KPI schema 以 per-item `source` 為準：`{"items":[{"label":"...","value":"...","change":"...","dir":"up|down","source":"[n] 或 （網路）"}]}`。舊版 block-level `source` 只作向後相容 fallback。
+- `inject_kpi()` 最多渲染前 5 張卡；超過時 warning 並截斷，避免 A4 版面溢出。
+- `cite_badges()` 只處理非 `refs/extrefs` 章節中的一般文字節點，且必須跳過 `<code>`/`<pre>` 等 verbatim HTML。
+
 ---
 
 ### Task 1: pdf.py 渲染管線（KPI／徽章／來源分條）＋新 CSS

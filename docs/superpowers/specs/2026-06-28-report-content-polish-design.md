@@ -41,14 +41,13 @@ body_md
 - **LLM 輸出格式**（fenced，比照 ```chart）：
   ```
   ```kpi
-  {"items":[{"label":"2026 營收年增","value":"+30.2%","change":"YoY","dir":"up"},…],"source":"[1]"}
+  {"items":[{"label":"2026 營收年增","value":"+30.2%","change":"YoY","dir":"up","source":"[1]"},…]}
   ```
   ```
-  - `items`：每張卡 `{label, value, change?, dir?}`。`dir ∈ {"up","down"}` 決定 change 顏色（綠／紅，支援負向/衰退）；省略則中性灰。
-  - `source`：來源編號字串，顯示於右下「來源 [n]」。
-- **`inject_kpi(markdown_text) -> str`**（pdf.py，比照 inject_charts）：解析 JSON → `<div class="kpi-strip"><div class="kpi">…</div>…</div>`；JSON 壞或 `items` 空 → 移除該塊＋`logger.warning`。所有文字 `html.escape`。卡片數不限制（CSS table-cell 自適應），但 prompt 引導 3–5 張。
+  - `items`：每張卡 `{label, value, change?, dir?, source}`。`dir ∈ {"up","down"}` 決定 change 顏色（綠／紅，支援負向/衰退）；省略則中性灰。`source` 為單一來源（`[n]` 或 `（網路）`），顯示於卡片內。
+- **`inject_kpi(markdown_text) -> str`**（pdf.py，比照 inject_charts）：解析 JSON → `<div class="kpi-strip"><div class="kpi">…</div>…</div>`；JSON 壞或 `items` 空 → 移除該塊＋`logger.warning`。所有文字 `html.escape`。renderer 最多渲染前 5 張卡，超出時 warning 並截斷。
 - **版面**：`.kpi-strip` 用 `display:table; table-layout:fixed`（WeasyPrint 穩定，避免 flex 邊角）；`.kpi` 為 `table-cell`、金色上框、淡底、圓角、`page-break-inside:avoid`。
-- **prompt 規則**：在執行摘要或重點分析開頭，若有 3–5 個可比較關鍵指標，可用 ```kpi 輸出；數字必須來自參考片段或網路、可對應、標 source；無可靠數據則不用。
+- **prompt 規則**：在執行摘要或重點分析開頭，若有 3–5 個可比較關鍵指標，可用 ```kpi 輸出；每個 item 的數字必須對應單一研報編號或網路來源，不得混用或杜撰；無可靠數據則不用。
 
 ### 2. 重點 callout 引言框
 
@@ -58,7 +57,7 @@ body_md
 ### 3. 內文排版精修
 
 - **子標題**：`h3`（12pt 金棕 `#9c6a16` 粗體）、`h4`（10.5pt 灰粗體）。模型既有 `###`/`####` 與「4.1」散文標題沿用。
-- **引用標號徽章**：`cite_badges(html)` 以 `re.compile(r"\[(\d+(?:\s*[,，、]\s*\d+)*)\]")` 把 `[1]`、`[1,2]`、`[1、2]` 換成 `<sup class="cite">…</sup>`（金色上標小字）。**在 markdown 渲染後**套用，且**只對 slug ∉ {refs, extrefs}** 的章節（引用來源/外部參考的 `[n]` 是清單標籤、URL 也含括號，需排除）。
+- **引用標號徽章**：`cite_badges(html)` 以 `re.compile(r"\[(\d+(?:\s*[,，、]\s*\d+)*)\]")` 把 `[1]`、`[1,2]`、`[1、2]` 換成 `<sup class="cite">…</sup>`（金色上標小字）。**在 markdown 渲染後**套用，且**只對 slug ∉ {refs, extrefs}** 的章節；處理時跳過 `<code>`/`<pre>` 等 verbatim HTML，避免範例程式碼被改寫。
 - **引用來源懸掛縮排**：`.s-refs .s-body p { padding-left:1.9em; text-indent:-1.9em }`；並以 **`_normalize_refs(body)`** 在渲染前確保每個 `^\[\d+\]` 起新段落（`re.sub` 在非段落起始的 `[n]` 前插空行），不靠模型空行也能一條一行。
 - **外部參考清單**：`.s-extrefs .s-body ul` 去項目符號、每項左金細線、連結金色。
 
@@ -72,21 +71,21 @@ body_md
 
 ## 錯誤處理
 
-- `inject_kpi` 壞 JSON／空 items → 移除塊＋warning（同 inject_charts）。
-- `cite_badges`、`_normalize_refs` 對空字串安全；正則僅命中數字括號，不動其他內容。
+- `inject_kpi` 壞 JSON／空 items → 移除塊＋warning（同 inject_charts）；超過 5 張卡 → 只渲染前 5 張。
+- `cite_badges`、`_normalize_refs` 對空字串安全；正則僅命中數字括號，且不改寫 code/pre。
 - 簡版退化路徑（無標題/章節<3）不套以上處理，行為不變。
 
 ## 測試
 
 `tests/test_pdf.py`（沿用 `sys.path.insert`、`uv run pytest`）：
-- `inject_kpi`：正常 → `kpi-strip`＋每張 `kpi-value`/`kpi-label`／`dir` class／來源；壞 JSON/空 items → 移除＋無 `kpi-strip`；無 ```kpi → 原樣。
-- `cite_badges`：`[1]`/`[1,2]` → `<sup class="cite">`；無數字括號不動。
+- `inject_kpi`：正常 → `kpi-strip`＋每張 `kpi-value`/`kpi-label`／`dir` class／item source；壞 JSON/空 items → 移除＋無 `kpi-strip`；超過 5 張截斷；無 ```kpi → 原樣。
+- `cite_badges`：`[1]`/`[1,2]` → `<sup class="cite">`；無數字括號不動；code/pre 內 `[n]` 不改寫。
 - `_normalize_refs`：連續 `[n]` 行 → 各自成段。
 - 整合 `render_report_pdf`：含 KPI/表格/引言/徽章的 fancy 研報仍回 `b"%PDF"`；引用來源段的 `[n]` **不**變徽章。
 - 既有 inject_charts／版型／簡版測試不回歸。
 - 視覺驗證（手動）：`uv run --with pymupdf python` 出 PDF→PNG 目視四項。
 
-`tests/test_report.py`：`REPORT_SYSTEM_PROMPT` 含 KPI（```kpi、3–5、不得杜撰）與 callout（`>` 引言）規則子串；既有 prompt 斷言不回歸。
+`tests/test_report.py`：`REPORT_SYSTEM_PROMPT` 含 KPI（```kpi、items/source schema、3–5、每 item 單一來源、不得杜撰）與 callout（`>` 引言）規則子串；既有 prompt 斷言不回歸。
 
 `web/static/app/markdown.test.mjs`：```kpi → 佔位「（重點數據）」；既有 chart 佔位不回歸。
 

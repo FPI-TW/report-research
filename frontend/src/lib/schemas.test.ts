@@ -18,3 +18,28 @@ test('progressSchema 容許缺 runtime 欄位（tagging/ingest/orchestrator）',
   const minimal = { ts: '14:00:00', db: { reports: 1, chunks: 2, markets: [] }, summary: { done: 0, total: 0, remaining: 0, pct: 0 } }
   expect(progressSchema.parse(minimal).tagging).toBeUndefined()
 })
+
+test('progressSchema 接受 null runtime 欄位（idle/全新部署狀態）', () => {
+  const idle = {
+    ts: '14:00:00',
+    db: { reports: 5, chunks: 100, markets: [] },
+    summary: { done: 0, total: 0, remaining: 0, pct: 0 },
+    tagging: null,
+    ingest: null,
+    pipelines: null,
+    orchestrator: null,
+  }
+  const result = progressSchema.safeParse(idle)
+  expect(result.success).toBe(true)
+})
+
+test('progressSchema 接受 orchestrator 含 timestamp:null', () => {
+  const payload = {
+    ts: '14:00:00',
+    db: { reports: 1, chunks: 2, markets: [] },
+    summary: { done: 0, total: 0, remaining: 0, pct: 0 },
+    orchestrator: { label: '測試', status: 'idle', timestamp: null, raw: '' },
+  }
+  const result = progressSchema.safeParse(payload)
+  expect(result.success).toBe(true)
+})

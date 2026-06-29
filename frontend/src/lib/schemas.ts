@@ -17,20 +17,20 @@ export const progressSchema = z.object({
   }),
   tagging: z
     .object({ pct: z.number(), done: z.number(), total: z.number(), fail: z.number() })
-    .optional(),
-  ingest: z.object({ ingested: z.number(), fail: z.number() }).optional(),
+    .nullish(),
+  ingest: z.object({ ingested: z.number(), fail: z.number() }).nullish(),
   pipelines: z
     .object({ web: z.boolean(), ingest: z.boolean(), tag: z.boolean(), summaries: z.boolean() })
     .partial()
-    .optional(),
+    .nullish(),
   orchestrator: z
     .object({
-      label: z.string().optional(),
-      status: z.string().optional(),
-      timestamp: z.string().optional(),
-      raw: z.string().optional(),
+      label: z.string().nullish(),
+      status: z.string().nullish(),
+      timestamp: z.string().nullish(),
+      raw: z.string().nullish(),
     })
-    .optional(),
+    .nullish(),
 })
 
 export type ProgressResponse = z.infer<typeof progressSchema>

@@ -38,3 +38,24 @@ test('渲染進度數據與 LIVE 標記', async () => {
   unmount()
   qc.clear()
 })
+
+test('idle 狀態（null runtime 欄位）正常渲染、不進入 error/重連中', async () => {
+  vi.spyOn(api, 'getProgress').mockResolvedValue({
+    ts: '00:00:00',
+    db: { reports: 42, chunks: 500, markets: [] },
+    summary: { done: 0, total: 0, remaining: 0, pct: 0 },
+    tagging: null,
+    ingest: null,
+    pipelines: null,
+    orchestrator: null,
+  })
+  const { qc, unmount } = renderPage()
+  expect(await screen.findByText('研報導入監控')).toBeInTheDocument()
+  // 應顯示 LIVE，不進入重連中
+  expect(await screen.findByText('LIVE')).toBeInTheDocument()
+  expect(screen.queryByText('重連中')).toBeNull()
+  // db.reports 應顯示具體值 42
+  expect(await screen.findByText('42')).toBeInTheDocument()
+  unmount()
+  qc.clear()
+})

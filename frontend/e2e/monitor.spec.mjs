@@ -31,4 +31,11 @@ test('/app/monitor 平價：登入 → 輪詢 → 0 console error', async ({ pag
   await page.waitForTimeout(4500)
   expect(calls).toBeGreaterThanOrEqual(2)
   expect(errors).toEqual([])
+
+  // 至少一個 tile 顯示具體數值（非「—」）；全「—」表示頁面炸掉
+  const firstNumericTile = page.getByText(/^\d[\d,]*$/).first()
+  await expect(firstNumericTile).toBeVisible({ timeout: 3000 })
+  const tileVal = await firstNumericTile.textContent()
+  expect(tileVal).toMatch(/[\d,]+/)
+  expect(tileVal).not.toBe('—')
 })

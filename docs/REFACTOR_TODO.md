@@ -58,6 +58,7 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 - **消費端點**（後端不動）：`/api/stats`、`/api/reports`、`/api/search`、`/api/markets`
 - **重點**：卡片/列表/表格/分組 4 檢視 + 關鍵字高亮 + 分頁載入更多；URL 可分享連結；視覺平價對照舊頁
 - **依賴**：無（可獨立於 Phase 3）
+- **進度（2026-06-30）**：拆兩增量交付。**Phase 2a 已完成**（分支 feat/frontend-phase2a-browse-search，SDD 10 任務）：搜尋 + 月份分組預設 + drill-in 機制 + 載入更多分頁 + URL 可分享 + 可複用篩選側欄 + 最小研報詳情 modal，掛載 `/app/search`（**未 cutover**，舊 `/` 保留）；MarketIndex/DrillView 已建但 2a 不暴露。**Phase 2b 待辦**：表格檢視 + 關鍵字高亮 + 分組切換器（卡片/列表/表格/分組）+ CJK bigram 詞元 + 平價達標後 cutover 退役舊頁。
 
 ### Phase 3 — ask 串流問答　[風險 高｜最高難度區]
 - **遷移模組**：`ask.js`(676，SSE+多輪狀態) / `markdown.js`(172) / `modal.js`(75) / `confirm.js`(52)

@@ -19,8 +19,9 @@ export function SearchBar({ value, onSubmit, onClear }: SearchBarProps) {
   const [text, setText] = useState(value)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 外部 value 改變時同步（例如 URL 狀態 reset）
+  // 外部 value 改變時同步（例如 URL 狀態 reset）。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setText(value)
   }, [value])
 

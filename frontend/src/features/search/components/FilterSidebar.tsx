@@ -8,6 +8,7 @@ import { mLabel, mColor, iLabel, iColor, tLabel, SORT_LABELS } from './meta'
 // ── activeFilterCount ─────────────────────────────────────────────────────────
 // 計算生效中的非預設篩選維度數（市場/商品類型/個股/期貨/類型）。
 // 供手機收摺鈕、清除篩選等共用。
+// eslint-disable-next-line react-refresh/only-export-components
 export function activeFilterCount(filters: Filters): number {
   let n = 0
   if (filters.market !== '全部') n++

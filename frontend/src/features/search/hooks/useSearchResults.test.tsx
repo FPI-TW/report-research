@@ -42,6 +42,8 @@ afterEach(() => {
 
 test('browse 模式攤平 items 並算 hasMore', async () => {
   vi.spyOn(api, 'getReports').mockResolvedValue({ total: 80, offset: 0, items: [BROWSE_ITEM] })
+  // spy but do not expect to be called; guard against accidental network requests
+  vi.spyOn(api, 'getSearch').mockResolvedValue({ query: '', market: null, total: 0, results: [] })
 
   const { result } = renderHook(() => useSearchResults(DEFAULT_FILTERS), {
     wrapper: makeWrapper(),
@@ -53,7 +55,7 @@ test('browse 模式攤平 items 並算 hasMore', async () => {
   expect(result.current.hasMore).toBe(true) // 1 < 80
   expect(result.current.isError).toBe(false)
   expect(result.current.isFetchingNextPage).toBe(false)
-  expect(api.getSearch).not.toHaveBeenCalled
+  expect(api.getSearch).not.toHaveBeenCalled()
 })
 
 test('search 模式使用 getSearch 並正規化結果', async () => {

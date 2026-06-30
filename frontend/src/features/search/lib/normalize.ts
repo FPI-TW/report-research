@@ -1,5 +1,4 @@
-import type { Passage } from '../schemas'
-import type { ReportItem, ReportResult } from '../schemas'
+import type { Passage, ReportItem, ReportResult } from '../schemas'
 
 export interface Row extends ReportItem {
   rank?: number

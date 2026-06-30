@@ -8,7 +8,7 @@ interface ResultsMetaProps {
 }
 
 export function ResultsMeta({ mode, q, market, total }: ResultsMetaProps) {
-  const marketLabel = market === '全部' ? '全部' : mLabel(market)
+  const marketLabel = mLabel(market) // mLabel('全部') 即回 '全部'
 
   if (mode === 'search') {
     return (

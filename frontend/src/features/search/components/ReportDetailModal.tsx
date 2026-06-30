@@ -37,7 +37,6 @@ export function ReportDetailModal({ reportId, onClose }: ReportDetailModalProps)
     if (!reportId) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setData(null)
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(null)
       return
     }

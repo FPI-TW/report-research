@@ -42,7 +42,7 @@ export function ResultsView({
   }
   if (gMode === 'drill') {
     return (
-      <DrillView rows={rows} market={market} mode={mode} onOpen={onOpen} total={total} />
+      <DrillView rows={rows} market={market} mode={mode} onOpen={onOpen} total={total} terms={terms} />
     )
   }
   // grouped (default — group='month', or group='market' with no market selected)

@@ -128,3 +128,29 @@ test('(c) 點擊載入更多觸發第 2 頁請求', async () => {
   unmount()
   qc.clear()
 })
+
+// ── (d) 切換檢視為呈現狀態：不重打 API（2b 招牌不變式）─────────────────────
+test('(d) 切到表格檢視不觸發額外 API 呼叫', async () => {
+  vi.spyOn(api, 'getStats').mockResolvedValue(STATS)
+  const mockGetReports = vi
+    .spyOn(api, 'getReports')
+    .mockResolvedValue({ total: 1, offset: 0, items: [BASE_ITEM] })
+  const mockGetSearch = vi.spyOn(api, 'getSearch')
+
+  const { qc, unmount } = renderPage()
+
+  // browse 模式打一次 getReports
+  await screen.findAllByTestId('result-card')
+  expect(mockGetReports).toHaveBeenCalledTimes(1)
+
+  // 切到表格檢視（view/group 不進 useSearchResults query key）
+  fireEvent.click(screen.getByRole('radio', { name: '表格' }))
+  await screen.findByText('報告名稱') // TableView 已渲染
+
+  // 切檢視只重畫、不重抓
+  expect(mockGetReports).toHaveBeenCalledTimes(1)
+  expect(mockGetSearch).not.toHaveBeenCalled()
+
+  unmount()
+  qc.clear()
+})

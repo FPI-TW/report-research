@@ -30,4 +30,21 @@ describe('historyToTurn', () => {
     expect(t.phase).toBe('notice')
     expect(t.notice).toBe('無法回答')
   })
+  test('historyToTurn 過濾非 http(s) ext_sources，保留 http(s) 來源', () => {
+    const t = historyToTurn(
+      {
+        id: 'q3',
+        question: 'Q',
+        ext_sources: [
+          { url: 'https://ok.com', title: 'OK' },
+          { url: 'javascript:alert(1)', title: 'Bad' },
+          { url: 'http://also-ok.com', title: 'Also OK' },
+          { url: 'data:text/html,<h1>bad</h1>', title: 'Data' },
+        ],
+      },
+      'h2',
+    )
+    expect(t.extSources).toHaveLength(2)
+    expect(t.extSources.map((s) => s.url)).toEqual(['https://ok.com', 'http://also-ok.com'])
+  })
 })

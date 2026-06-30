@@ -34,7 +34,7 @@ export function AskComposer({ onSend, disabled, examples = [] }: AskComposerProp
         disabled={disabled}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
+          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault()
             submit()
           }

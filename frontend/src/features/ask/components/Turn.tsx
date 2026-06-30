@@ -6,6 +6,8 @@ import { sendFeedback } from '../api'
 import { mColor, mLabel, fmtDate } from '../../search/components/meta'
 import styles from './AskPage.module.css'
 
+const HTTP = /^https?:\/\//i
+
 interface TurnProps {
   turn: TurnState
   onCite: (reportId: string) => void
@@ -118,19 +120,26 @@ export function Turn({ turn, onCite, onFeedback }: TurnProps) {
       {/* 外部來源（toggle 控制，預設收合，notice 時不顯示） */}
       {extOpen && turn.extSources.length > 0 && !isNotice && (
         <div className={styles.ext} data-testid="ask-ext">
-          {turn.extSources.map((s) => (
-            <a
-              key={s.url}
-              className={styles.extLink}
-              href={s.url}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <span className={styles.extBadge}>網路</span>
-              <span>{s.title || s.url}</span>
-              <span className={styles.extDomain}>{getDomain(s.url)}</span>
-            </a>
-          ))}
+          {turn.extSources.map((s) =>
+            HTTP.test(s.url) ? (
+              <a
+                key={s.url}
+                className={styles.extLink}
+                href={s.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span className={styles.extBadge}>網路</span>
+                <span>{s.title || s.url}</span>
+                <span className={styles.extDomain}>{getDomain(s.url)}</span>
+              </a>
+            ) : (
+              <span key={s.url} className={styles.extLink}>
+                <span className={styles.extBadge}>網路</span>
+                <span>{s.title || s.url}</span>
+              </span>
+            ),
+          )}
         </div>
       )}
 

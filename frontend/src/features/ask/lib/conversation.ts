@@ -1,6 +1,8 @@
 import type { ExtSource, SourceItem } from './sseEvents'
 import type { HistoryItem } from '../schemas'
 
+const HTTP = /^https?:\/\//i
+
 export type TurnPhase = 'streaming' | 'done' | 'notice' | 'error'
 
 export interface TurnState {
@@ -56,7 +58,7 @@ export function historyToTurn(item: HistoryItem, id: string): TurnState {
     q: item.question,
     answer: item.answer ?? '',
     sources: (item.sources ?? []) as SourceItem[],
-    extSources: (item.ext_sources ?? []) as ExtSource[],
+    extSources: (item.ext_sources ?? []).filter((s) => HTTP.test(s.url)) as ExtSource[],
     qaId: item.id,
     thinkingMs: typeof item.thinking_ms === 'number' ? item.thinking_ms : null,
     feedback: fb,

@@ -103,4 +103,31 @@ describe('Turn', () => {
     fireEvent.click(screen.getByRole('button', { name: '讚' }))
     expect(api.sendFeedback).toHaveBeenCalledTimes(1)
   })
+
+  test('非 http(s) ext url 不產生 <a> 錨點，僅以文字顯示 title', () => {
+    wrap(
+      doneTurn({
+        extSources: [{ url: 'javascript:alert(1)', title: 'Dangerous' }],
+      }),
+    )
+    // 展開外部參考區塊
+    fireEvent.click(screen.getByTestId('ask-ext-toggle'))
+    const ext = screen.getByTestId('ask-ext')
+    // 不應有指向危險 url 的 <a>
+    expect(ext.querySelector('a[href="javascript:alert(1)"]')).toBeNull()
+    // 但 title 文字應顯示
+    expect(ext).toHaveTextContent('Dangerous')
+  })
+
+  test('http(s) ext url 正常渲染為 <a> 錨點', () => {
+    wrap(
+      doneTurn({
+        extSources: [{ url: 'https://example.com', title: 'Safe Link' }],
+      }),
+    )
+    fireEvent.click(screen.getByTestId('ask-ext-toggle'))
+    const ext = screen.getByTestId('ask-ext')
+    expect(ext.querySelector('a[href="https://example.com"]')).not.toBeNull()
+    expect(ext).toHaveTextContent('Safe Link')
+  })
 })

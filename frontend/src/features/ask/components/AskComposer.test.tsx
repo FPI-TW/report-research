@@ -34,4 +34,26 @@ describe('AskComposer', () => {
     fireEvent.click(screen.getByTestId('ask-send'))
     expect(onSend).not.toHaveBeenCalled()
   })
+
+  test('IME 組字中 Enter（isComposing=true）不送出', () => {
+    const onSend = vi.fn()
+    wrap({ onSend })
+    const ta = screen.getByTestId('ask-input')
+    fireEvent.change(ta, { target: { value: '你好' } })
+    fireEvent.keyDown(ta, { key: 'Enter', isComposing: true })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  test('IME 組字結束後一般 Enter 正常送出', () => {
+    const onSend = vi.fn()
+    wrap({ onSend })
+    const ta = screen.getByTestId('ask-input')
+    fireEvent.change(ta, { target: { value: '你好' } })
+    // 組字中不送
+    fireEvent.keyDown(ta, { key: 'Enter', isComposing: true })
+    expect(onSend).not.toHaveBeenCalled()
+    // 組字結束後正常送
+    fireEvent.keyDown(ta, { key: 'Enter', isComposing: false })
+    expect(onSend).toHaveBeenCalledWith('你好')
+  })
 })

@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { ResultsView } from './ResultsView'
 import { GroupedList } from './GroupedList'
-import { MarketIndex } from './MarketIndex'
+import { DrillView } from './DrillView'
 import { LoadMore } from './LoadMore'
 import { ResultsMeta } from './ResultsMeta'
 import { EmptyState, ErrorState } from './states'
@@ -43,16 +43,25 @@ const usRow: Row = {
   futures_targets: null,
 }
 
-// ── ResultsView: grouped ──────────────────────────────────────────────────────
+const NO_MARKETS: { market: string; count: number }[] = []
+const TW_US_MARKETS = [
+  { market: 'TW', count: 2 },
+  { market: 'US', count: 1 },
+]
+
+// ── ResultsView: grouped (view='group', group='month') ───────────────────────
 
 test('ResultsView grouped 顯示分組標題與卡片', () => {
   const rows = [twRow, usRow]
   wrap(
     <ResultsView
-      view="grouped"
+      view="group"
       group="month"
       rows={rows}
       mode="browse"
+      terms={[]}
+      total={2}
+      markets={NO_MARKETS}
       onOpen={() => {}}
       onPickMarket={() => {}}
     />,
@@ -65,10 +74,13 @@ test('ResultsView grouped 依月份分組顯示標題', () => {
   const rows = [twRow, usRow]
   wrap(
     <ResultsView
-      view="grouped"
+      view="group"
       group="month"
       rows={rows}
       mode="browse"
+      terms={[]}
+      total={2}
+      markets={NO_MARKETS}
       onOpen={() => {}}
       onPickMarket={() => {}}
     />,
@@ -77,35 +89,20 @@ test('ResultsView grouped 依月份分組顯示標題', () => {
   expect(screen.getByText('2026 年 5 月')).toBeInTheDocument()
 })
 
-test('ResultsView grouped by market 顯示市場標題', () => {
-  const rows = [twRow, usRow]
-  wrap(
-    <ResultsView
-      view="grouped"
-      group="market"
-      rows={rows}
-      mode="browse"
-      onOpen={() => {}}
-      onPickMarket={() => {}}
-    />,
-  )
-  // market labels as group headers
-  const headers = screen.getAllByTestId('group-header')
-  const texts = headers.map((h) => h.textContent ?? '')
-  expect(texts.some((t) => t.includes('台股'))).toBe(true)
-  expect(texts.some((t) => t.includes('美股'))).toBe(true)
-})
-
-// ── ResultsView: index ────────────────────────────────────────────────────────
+// ── ResultsView: index (view='group', group='market', market='全部') ──────────
 
 test('ResultsView index 渲染市場清單', () => {
   const rows = [twRow, usRow]
   wrap(
     <ResultsView
-      view="index"
+      view="group"
       group="market"
+      market="全部"
       rows={rows}
       mode="browse"
+      terms={[]}
+      total={2}
+      markets={TW_US_MARKETS}
       onOpen={() => {}}
       onPickMarket={() => {}}
     />,
@@ -118,10 +115,14 @@ test('ResultsView index 點擊市場呼叫 onPickMarket', () => {
   const rows = [twRow, usRow]
   wrap(
     <ResultsView
-      view="index"
+      view="group"
       group="market"
+      market="全部"
       rows={rows}
       mode="browse"
+      terms={[]}
+      total={2}
+      markets={TW_US_MARKETS}
       onOpen={() => {}}
       onPickMarket={onPickMarket}
     />,
@@ -134,19 +135,22 @@ test('ResultsView index 點擊市場呼叫 onPickMarket', () => {
   expect(onPickMarket).toHaveBeenCalledWith('TW')
 })
 
-// ── ResultsView: drill ────────────────────────────────────────────────────────
+// ── ResultsView: drill (view='group', group='market', market='TW') ────────────
 
 test('ResultsView drill 渲染市場標頭', () => {
   const rows = [twRow]
   wrap(
     <ResultsView
-      view="drill"
-      group="month"
+      view="group"
+      group="market"
+      market="TW"
       rows={rows}
       mode="browse"
+      terms={[]}
+      total={1}
+      markets={NO_MARKETS}
       onOpen={() => {}}
       onPickMarket={() => {}}
-      market="TW"
     />,
   )
   expect(screen.getByTestId('drill-view')).toBeInTheDocument()
@@ -159,16 +163,54 @@ test('ResultsView drill 顯示該市場的卡片', () => {
   const rows = [twRow]
   wrap(
     <ResultsView
-      view="drill"
-      group="month"
+      view="group"
+      group="market"
+      market="TW"
       rows={rows}
       mode="browse"
+      terms={[]}
+      total={1}
+      markets={NO_MARKETS}
       onOpen={() => {}}
       onPickMarket={() => {}}
-      market="TW"
     />,
   )
   expect(screen.getByText('f1')).toBeInTheDocument()
+})
+
+// ── ResultsView: table ────────────────────────────────────────────────────────
+
+test('view=table 渲染 TableView（顯示欄位標頭）', () => {
+  const rows = [twRow, usRow]
+  wrap(
+    <ResultsView
+      view="table"
+      group="month"
+      rows={rows}
+      mode="browse"
+      terms={[]}
+      total={2}
+      markets={NO_MARKETS}
+      onOpen={vi.fn()}
+      onPickMarket={vi.fn()}
+    />,
+  )
+  expect(screen.getByText('報告名稱')).toBeInTheDocument()
+})
+
+// ── DrillView: 標頭顯 total ───────────────────────────────────────────────────
+
+test('DrillView 標頭顯示總篇數', () => {
+  wrap(
+    <DrillView
+      rows={[]}
+      market="TW"
+      mode="search"
+      total={123}
+      onOpen={() => {}}
+    />,
+  )
+  expect(screen.getByTestId('drill-header').textContent).toContain('123')
 })
 
 // ── GroupedList 空鍵 ──────────────────────────────────────────────────────────
@@ -182,30 +224,21 @@ test('GroupedList 無 report_date 群組顯示「未分類」', () => {
   expect(headers.some((h) => h.textContent?.includes('未分類'))).toBe(true)
 })
 
-// ── MarketIndex ───────────────────────────────────────────────────────────────
-
-test('MarketIndex 顯示市場名稱與篇數', () => {
-  const rows = [twRow, twRow, usRow]
-  wrap(<MarketIndex rows={rows} onPickMarket={() => {}} />)
-  expect(screen.getByText('台股')).toBeInTheDocument()
-  expect(screen.getByText('美股')).toBeInTheDocument()
-})
-
 // ── LoadMore ──────────────────────────────────────────────────────────────────
 
 test('LoadMore hasMore=false 不渲染按鈕', () => {
-  wrap(<LoadMore hasMore={false} loading={false} onMore={() => {}} />)
+  wrap(<LoadMore hasMore={false} loading={false} onMore={() => {}} remaining={0} />)
   expect(screen.queryByTestId('load-more-btn')).toBeNull()
   expect(screen.queryByTestId('load-more-wrap')).toBeNull()
 })
 
 test('LoadMore hasMore=true 顯示按鈕', () => {
-  wrap(<LoadMore hasMore={true} loading={false} onMore={() => {}} />)
-  expect(screen.getByTestId('load-more-btn')).toHaveTextContent('載入更多')
+  wrap(<LoadMore hasMore={true} loading={false} onMore={() => {}} remaining={0} />)
+  expect(screen.getByTestId('load-more-btn')).toBeInTheDocument()
 })
 
 test('LoadMore loading=true 按鈕 disabled 且文字改變', () => {
-  wrap(<LoadMore hasMore={true} loading={true} onMore={() => {}} />)
+  wrap(<LoadMore hasMore={true} loading={true} onMore={() => {}} remaining={42} />)
   const btn = screen.getByTestId('load-more-btn')
   expect(btn).toBeDisabled()
   expect(btn).toHaveTextContent('載入中…')
@@ -213,9 +246,14 @@ test('LoadMore loading=true 按鈕 disabled 且文字改變', () => {
 
 test('LoadMore 點擊觸發 onMore', () => {
   const onMore = vi.fn()
-  wrap(<LoadMore hasMore={true} loading={false} onMore={onMore} />)
+  wrap(<LoadMore hasMore={true} loading={false} onMore={onMore} remaining={5} />)
   screen.getByTestId('load-more-btn').click()
   expect(onMore).toHaveBeenCalled()
+})
+
+test('LoadMore 顯示剩餘篇數', () => {
+  wrap(<LoadMore hasMore={true} loading={false} remaining={42} onMore={() => {}} />)
+  expect(screen.getByTestId('load-more-btn').textContent).toContain('還有 42')
 })
 
 // ── ResultsMeta ───────────────────────────────────────────────────────────────

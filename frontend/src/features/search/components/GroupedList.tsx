@@ -9,6 +9,7 @@ interface GroupedListProps {
   group: 'month' | 'market'
   mode: 'browse' | 'search'
   onOpen: (id: string) => void
+  terms?: string[]
 }
 
 function groupLabel(key: string, group: 'month' | 'market'): string {
@@ -23,7 +24,7 @@ function groupLabel(key: string, group: 'month' | 'market'): string {
   return key
 }
 
-export function GroupedList({ rows, group, mode, onOpen }: GroupedListProps) {
+export function GroupedList({ rows, group, mode, onOpen, terms = [] }: GroupedListProps) {
   const sorted = useMemo(() => {
     const groups = groupRows(rows, group)
     return group === 'month'
@@ -55,7 +56,7 @@ export function GroupedList({ rows, group, mode, onOpen }: GroupedListProps) {
           </div>
           <div>
             {groupedRows.map((row) => (
-              <ResultCard key={row.report_id} row={row} mode={mode} onOpen={onOpen} />
+              <ResultCard key={row.report_id} row={row} mode={mode} onOpen={onOpen} terms={terms} />
             ))}
           </div>
         </section>

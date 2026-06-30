@@ -1,15 +1,18 @@
-import React from 'react'
+import React, { useState } from 'react'
 import type { Row } from '../lib/normalize'
 import { mLabel, mColor, iLabel, fmtDate, tLabel } from './meta'
+import { Highlight } from './Highlight'
 
 interface ResultCardProps {
   row: Row
   mode: 'browse' | 'search'
   onOpen: (id: string) => void
+  terms?: string[]
 }
 
-export function ResultCard({ row, mode, onOpen }: ResultCardProps) {
+export const ResultCard = React.memo(function ResultCard({ row, mode, onOpen, terms = [] }: ResultCardProps) {
   const color = mColor(row.market ?? '')
+  const [expanded, setExpanded] = useState(false)
 
   // Info row: source · date · type · (search: matchCount)
   const infoParts: string[] = []
@@ -18,8 +21,9 @@ export function ResultCard({ row, mode, onOpen }: ResultCardProps) {
   if (dateStr) infoParts.push(dateStr)
   if (row.report_type) infoParts.push(tLabel(row.report_type))
 
-  const passage = (row.passages ?? [])[0]
-  const firstPassage = passage ? passage.content.slice(0, 300) : null
+  const passages = row.passages ?? []
+  const firstPassage = passages[0] ? passages[0].content.slice(0, 300) : null
+  const extraPassages = passages.slice(1)
 
   const scorePct = mode === 'search'
     ? Math.max(4, Math.min(100, Math.round((row.bestScore ?? 0) * 100)))
@@ -107,7 +111,7 @@ export function ResultCard({ row, mode, onOpen }: ResultCardProps) {
         <div style={{ fontSize: 13, color: '#495057', marginTop: 6 }}>{row.summary}</div>
       )}
 
-      {/* Search-mode extras: relevance bar + first passage */}
+      {/* Search-mode extras: relevance bar + passages with highlight */}
       {mode === 'search' && (
         <>
           {row.bestScore != null && (
@@ -139,9 +143,40 @@ export function ResultCard({ row, mode, onOpen }: ResultCardProps) {
                 borderRadius: 4,
               }}
             >
-              {firstPassage}
+              <Highlight text={firstPassage} terms={terms} />
             </div>
           )}
+          {extraPassages.length > 0 && !expanded && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
+              style={{
+                marginTop: 4,
+                background: 'none',
+                border: 'none',
+                color: '#868e96',
+                fontSize: 12,
+                cursor: 'pointer',
+                padding: '2px 0',
+              }}
+            >
+              顯示其他 {extraPassages.length} 段片段
+            </button>
+          )}
+          {expanded && extraPassages.map((p, i) => (
+            <div
+              key={p.chunk_index ?? i}
+              style={{
+                fontSize: 12,
+                color: '#495057',
+                marginTop: 4,
+                background: '#f8f9fa',
+                padding: '4px 8px',
+                borderRadius: 4,
+              }}
+            >
+              <Highlight text={p.content.slice(0, 300)} terms={terms} />
+            </div>
+          ))}
         </>
       )}
     </>
@@ -161,4 +196,4 @@ export function ResultCard({ row, mode, onOpen }: ResultCardProps) {
       {cardContent}
     </div>
   )
-}
+})

@@ -3,9 +3,10 @@ interface LoadMoreProps {
   loading: boolean
   error?: string | null
   onMore: () => void
+  remaining: number
 }
 
-export function LoadMore({ hasMore, loading, error = null, onMore }: LoadMoreProps) {
+export function LoadMore({ hasMore, loading, error = null, onMore, remaining }: LoadMoreProps) {
   if (!hasMore) return null
 
   return (
@@ -36,7 +37,11 @@ export function LoadMore({ hasMore, loading, error = null, onMore }: LoadMorePro
           fontSize: 14,
         }}
       >
-        {loading ? '載入中…' : error ? '重試載入更多' : '載入更多'}
+        {loading
+          ? '載入中…'
+          : error
+            ? '重試載入更多'
+            : `載入更多（還有 ${remaining.toLocaleString()} 篇）`}
       </button>
     </div>
   )

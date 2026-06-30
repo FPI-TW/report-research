@@ -1,5 +1,5 @@
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { ResultCard } from './ResultCard'
 import type { Row } from '../lib/normalize'
@@ -157,4 +157,42 @@ test('info row: 來源 · 日期 · 類型', () => {
   expect(screen.getByText('元富')).toBeInTheDocument()
   expect(screen.getByText('2026/06/01')).toBeInTheDocument()
   expect(screen.getByText('法說會')).toBeInTheDocument()
+})
+
+// ── Task 10: 高亮 + 多段展開 + React.memo ────────────────────────────────────
+
+test('search: 片段關鍵詞以 <mark> 高亮', () => {
+  const row: Row = {
+    ...baseRow, matchCount: 1, rank: 1, bestScore: 0.9,
+    passages: [{ score: 0.9, chunk_index: 0, content: '台積電 2nm 量產' }],
+  }
+  const { container } = wrap(<ResultCard row={row} mode="search" terms={['台積']} onOpen={vi.fn()} />)
+  expect(container.querySelector('[data-testid="passage-text"] mark')?.textContent).toBe('台積')
+})
+
+test('search: 多段顯示「顯示其他 N 段」並可展開', () => {
+  const row: Row = {
+    ...baseRow, matchCount: 2, rank: 1, bestScore: 0.9,
+    passages: [
+      { score: 0.9, chunk_index: 0, content: '第一段' },
+      { score: 0.7, chunk_index: 1, content: '第二段' },
+    ],
+  }
+  wrap(<ResultCard row={row} mode="search" terms={[]} onOpen={vi.fn()} />)
+  fireEvent.click(screen.getByText(/顯示其他 1 段/))
+  expect(screen.getByText('第二段')).toBeInTheDocument()
+})
+
+test('展開按鈕不觸發整卡 onOpen', () => {
+  const onOpen = vi.fn()
+  const row: Row = {
+    ...baseRow, matchCount: 2, rank: 1, bestScore: 0.9,
+    passages: [
+      { score: 0.9, chunk_index: 0, content: '第一段' },
+      { score: 0.7, chunk_index: 1, content: '第二段' },
+    ],
+  }
+  wrap(<ResultCard row={row} mode="search" terms={[]} onOpen={onOpen} />)
+  fireEvent.click(screen.getByText(/顯示其他 1 段/))
+  expect(onOpen).not.toHaveBeenCalled()
 })

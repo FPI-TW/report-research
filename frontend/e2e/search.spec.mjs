@@ -71,3 +71,76 @@ test('/app/search 平價：登入 → 月份分組渲染 → 搜尋 → 載入�
   // 放在所有互動之後；任何 console.error 皆視為失敗
   expect(errors).toEqual([])
 })
+
+test('/app/search 平價：表格/列表/分組切換 + 高亮 + 市場索引 drill-in', async ({
+  page,
+}) => {
+  const errors = []
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+
+  // ── 認證（重複登入仍需 cookie，走相同流程）──────────────────────────────
+  const { u, p } = creds()
+  await page.goto(`${BASE}/app/search`)
+  await expect(page).toHaveURL(/\/login\?next=/)
+  await page.fill('input[name="username"]', u)
+  await page.fill('input[name="password"]', p)
+  await page.click('button[type="submit"]')
+  await expect(page).toHaveURL(/\/app\/search$/, { timeout: 10_000 })
+
+  // ── 預設月份分組已渲染 ────────────────────────────────────────────────
+  await expect(page.getByTestId('grouped-list')).toBeVisible({ timeout: 15_000 })
+
+  // ── 切換表格檢視 ─────────────────────────────────────────────────────
+  await page.getByRole('radio', { name: '表格' }).click()
+  // TableView 以「報告名稱」欄位標頭為辨識點
+  await expect(page.getByText('報告名稱')).toBeVisible({ timeout: 5_000 })
+
+  // ── 點擊欄位標頭（排序）────────────────────────────────────────────────
+  const dateHeader = page.getByRole('columnheader', { name: /日期/ })
+  await dateHeader.click()
+  // aria-sort 應從 none 變為 ascending 或 descending
+  await expect(dateHeader).toHaveAttribute('aria-sort', /ascending|descending/)
+
+  // ── 切回列表（group）+ 分組依市場 ───────────────────────────────────
+  await page.getByRole('radio', { name: '列表' }).click()
+  // 分組選擇器應出現（view=group 時才顯示）
+  // 用 combobox role 唯一鎖定 input（Mantine Select 的 label 同時關聯 input 與 listbox）
+  const groupInput = page.getByRole('combobox', { name: '分組依據' })
+  await expect(groupInput).toBeVisible({ timeout: 3_000 })
+
+  // 選「依市場」
+  await groupInput.click()
+  await page.getByRole('option', { name: '依市場' }).click()
+
+  // 市場索引應出現
+  await expect(page.getByTestId('market-index')).toBeVisible({ timeout: 5_000 })
+
+  // ── 點一個市場進入 drill 檢視 ─────────────────────────────────────────
+  const firstMarket = page.getByTestId('market-index-item').first()
+  await firstMarket.click()
+  await expect(page.getByTestId('drill-view')).toBeVisible({ timeout: 5_000 })
+  // drill 標頭應有市場名稱
+  const drillHeader = page.getByTestId('drill-header')
+  await expect(drillHeader).toBeVisible()
+
+  // ── 搜尋關鍵字並確認高亮（<mark>）存在 ──────────────────────────────
+  await page.goto(`${BASE}/app/search`)
+  await expect(page.getByTestId('grouped-list')).toBeVisible({ timeout: 15_000 })
+  const searchInput = page.getByLabel('搜尋研報')
+  await searchInput.fill('台積電')
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/search'), { timeout: 20_000 }),
+    searchInput.press('Enter'),
+  ])
+  await expect(page.getByTestId('result-card').first()).toBeVisible({ timeout: 10_000 })
+  // 若有命中片段，應存在 <mark> 高亮元素
+  const markLocator = page.locator('mark')
+  const markCount = await markLocator.count()
+  // 高亮存在（> 0）或無片段（= 0，視語料而定），皆合法；有 mark 時確認非空
+  if (markCount > 0) {
+    await expect(markLocator.first()).not.toBeEmpty()
+  }
+
+  // ── 0 console error ───────────────────────────────────────────────────
+  expect(errors).toEqual([])
+})

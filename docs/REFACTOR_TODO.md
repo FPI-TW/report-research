@@ -64,12 +64,14 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 - **更新（2026-06-30，2b 最終審查）**：opus 整支審查 **Ready-to-merge（0 Critical）**；173 vitest + build + eslint + live e2e（:8098）2 passed 全綠。審查後補：SearchPage「切檢視不重抓」回歸測試、drill+search 片段高亮透傳。
 - **Phase 2c 清單（cutover 增量，含 2b 審查延後 Minor）**：cutover 把 `/` 導向 `/app/search`（如 monitor，需 :8097 後端先對齊現行 main）；market 分組經表格往返遺失（持久化 group 或文件化接受）；檢視工具列改恆顯（空/載入也可切）；a11y 批次（表格列 role/aria-label、展開鈕 aria-expanded、ViewSwitch 鈕 type=button）；TableView 空 market 顯 '—' 對齊。
 
-### Phase 3 — ask 串流問答　[風險 高｜最高難度區]
+### Phase 3 — ask 串流問答　[風險 高｜最高難度區]　✅ 已完成（PR #44）
 - **遷移模組**：`ask.js`(676，SSE+多輪狀態) / `markdown.js`(172) / `modal.js`(75) / `confirm.js`(52)
 - **消費端點**：`/api/ask`(SSE) / `/api/history` / `/api/conversations`(`/{id}`) / `/api/feedback` + 各 delete 端點
 - **重點**：SSE 自解 + abort、多輪 `conversation_id` 快取、引用 `[n]` 綁定、歷史側欄、切換對話中止進行中串流、markdown 安全渲染
 - **硬約束**：見 A5「SSE 整合手法」；策略＝先移植不重構、保 vanilla 為對照、寫 e2e 驗事件序
 - **依賴**：Phase 2（共用側欄/篩選面板）
+- **交付（2026-07-01，PR #44，off main 89a0d8e）**：SDD 12 任務 + 逐任務審查 + opus 整支審查（Merge after fixes→已修）；新增 `/app/ask`（**未 cutover**，後端零變動、無 schema）。雙重 latest-wins、XSS 安全 markdown（無 `dangerouslySetInnerHTML`、外部連結 http-only 串流/重播兩路徑一致）、多輪 condense、live e2e（:8098）綠。
+- **Phase 3c 待辦（cutover/polish，承最終審查 Minor）**：cutover `/`→`/app/ask`（需 :8097 對齊現行 main）；`markdown.tsx` module-level `keySeq` 改局部閉包（每 token 全量 remount 隱患）；e2e Step 4 來源無命中時 soft-assert 讓 skip 可見；`openConversation`/`onClose` 用 `useCallback`；Sidebar 空清單/active class 測試；補各 hook 邊界測試（401 redirect、catch 錯誤訊息等，見 `.superpowers/sdd/progress.md` Minor 累積）。
 
 ### Phase 4 — 深度研報 report　[風險 中高]
 - **範圍**：問答區「生成深度研報」面板 + report SSE + PDF 下載 + 報告 modal；report_gate（問答後是否建議報告）

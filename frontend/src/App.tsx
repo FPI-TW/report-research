@@ -5,6 +5,7 @@ import { AppShell, Container, Loader, Title, Text, VisuallyHidden } from '@manti
 
 const MonitorPage = lazy(() => import('./features/monitor/MonitorPage'))
 const SearchPage = lazy(() => import('./features/search/SearchPage'))
+const AskPage = lazy(() => import('./features/ask/AskPage'))
 
 function Layout({ children }: { children: ReactNode }) {
   return (
@@ -59,6 +60,16 @@ const router = createBrowserRouter(
         <Layout>
           <Suspense fallback={<RouteFallback />}>
             <SearchPage />
+          </Suspense>
+        </Layout>
+      ),
+    },
+    {
+      path: '/ask',
+      element: (
+        <Layout>
+          <Suspense fallback={<RouteFallback />}>
+            <AskPage />
           </Suspense>
         </Layout>
       ),

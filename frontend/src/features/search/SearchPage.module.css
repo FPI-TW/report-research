@@ -1,0 +1,65 @@
+/* ── Page shell: two-column grid (sidebar | main) ──────────────────────────── */
+.page {
+  display: grid;
+  grid-template-areas:
+    "search search"
+    "sidebar main";
+  grid-template-columns: 220px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.searchBarWrap {
+  grid-area: search;
+}
+
+.sidebar {
+  grid-area: sidebar;
+  position: sticky;
+  top: 16px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #f1f3f5;
+  border-radius: 8px;
+}
+
+.main {
+  grid-area: main;
+  min-width: 0; /* prevent grid blowout */
+}
+
+/* ── Meta row (result count / query info) ──────────────────────────────────── */
+.meta {
+  margin-bottom: 8px;
+}
+
+/* ── Results region ─────────────────────────────────────────────────────────── */
+.resultsWrap {
+  border: 1px solid #f1f3f5;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* ── Loading centred indicator ──────────────────────────────────────────────── */
+.loadingWrap {
+  display: flex;
+  justify-content: center;
+  padding: 60px 0;
+}
+
+/* ── Responsive: collapse sidebar above main on narrow viewports ─────────────── */
+@media (max-width: 640px) {
+  .page {
+    grid-template-areas:
+      "search"
+      "sidebar"
+      "main";
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+  }
+}

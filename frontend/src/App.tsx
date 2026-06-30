@@ -1,8 +1,10 @@
-import type { ReactNode } from 'react'
+import { Suspense, lazy, type ReactNode } from 'react'
 import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
-import { AppShell, Container, Title, Text } from '@mantine/core'
-import MonitorPage from './features/monitor/MonitorPage'
+import { AppShell, Container, Loader, Title, Text } from '@mantine/core'
+
+const MonitorPage = lazy(() => import('./features/monitor/MonitorPage'))
+const SearchPage = lazy(() => import('./features/search/SearchPage'))
 
 function Layout({ children }: { children: ReactNode }) {
   return (
@@ -31,11 +33,34 @@ function NotFound() {
   )
 }
 
+function RouteFallback() {
+  return <Loader />
+}
+
 // router 建在模組層（render 樹之外），basename 無尾斜線。
 const router = createBrowserRouter(
   [
     { path: '/', element: <Home /> },
-    { path: '/monitor', element: <Layout><MonitorPage /></Layout> },
+    {
+      path: '/monitor',
+      element: (
+        <Layout>
+          <Suspense fallback={<RouteFallback />}>
+            <MonitorPage />
+          </Suspense>
+        </Layout>
+      ),
+    },
+    {
+      path: '/search',
+      element: (
+        <Layout>
+          <Suspense fallback={<RouteFallback />}>
+            <SearchPage />
+          </Suspense>
+        </Layout>
+      ),
+    },
     { path: '*', element: <NotFound /> },
   ],
   { basename: '/app' },

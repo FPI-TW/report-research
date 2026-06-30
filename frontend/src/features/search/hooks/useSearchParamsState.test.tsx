@@ -1,15 +1,25 @@
 import React from 'react'
+import { test, expect, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { useSearchParamsState } from './useSearchParamsState'
 import { DEFAULT_FILTERS } from '../lib/filters'
+import type { Allowlists } from '../lib/filters'
 
-const allow = { markets: ['TW', 'US'], instruments: ['equity', 'futures'], types: ['daily', 'weekly'] }
+const allow: Allowlists = {
+  markets: ['TW', 'US'],
+  instruments: ['equity', 'futures'],
+  types: ['daily', 'weekly'],
+}
 
 const wrap = (initial: string) =>
   ({ children }: { children: React.ReactNode }) => (
     <MemoryRouter initialEntries={[initial]}>{children}</MemoryRouter>
   )
+
+beforeEach(() => localStorage.clear())
+
+// ── 既有 filters 測試 ──────────────────────────────────────────────────────────
 
 test('由 URL 還原並可寫回', () => {
   const { result } = renderHook(() => useSearchParamsState(allow), {
@@ -47,4 +57,53 @@ test('setFilters 寫入多個欄位', () => {
   )
   expect(result.current.filters.q).toBe('semiconductor')
   expect(result.current.filters.market).toBe('US')
+})
+
+// ── viewState 測試 ──────────────────────────────────────────────────────────────
+
+test('預設 viewState 為 group/month', () => {
+  const { result } = renderHook(() => useSearchParamsState(allow), {
+    wrapper: wrap('/search'),
+  })
+  expect(result.current.viewState).toEqual({ view: 'group', group: 'month' })
+})
+
+test('URL view=table 還原', () => {
+  const { result } = renderHook(() => useSearchParamsState(allow), {
+    wrapper: wrap('/search?view=table'),
+  })
+  expect(result.current.viewState.view).toBe('table')
+})
+
+test('setViewState 保留既有 filters（q）', () => {
+  const { result } = renderHook(() => useSearchParamsState(allow), {
+    wrapper: wrap('/search?q=ai'),
+  })
+  act(() => result.current.setViewState({ view: 'table', group: 'month' }))
+  expect(result.current.filters.q).toBe('ai')
+  expect(result.current.viewState.view).toBe('table')
+})
+
+test('setFilters 保留既有 view', () => {
+  const { result } = renderHook(() => useSearchParamsState(allow), {
+    wrapper: wrap('/search?view=table'),
+  })
+  act(() => result.current.setFilters({ ...result.current.filters, q: 'x' }))
+  expect(result.current.viewState.view).toBe('table')
+})
+
+test('setViewState 寫 localStorage rm_view', () => {
+  const { result } = renderHook(() => useSearchParamsState(allow), {
+    wrapper: wrap('/search'),
+  })
+  act(() => result.current.setViewState({ view: 'table', group: 'month' }))
+  expect(localStorage.getItem('rm_view')).toBe('table')
+})
+
+test('URL 無 view 時用 localStorage', () => {
+  localStorage.setItem('rm_view', 'table')
+  const { result } = renderHook(() => useSearchParamsState(allow), {
+    wrapper: wrap('/search'),
+  })
+  expect(result.current.viewState.view).toBe('table')
 })

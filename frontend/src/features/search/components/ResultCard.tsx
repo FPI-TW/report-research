@@ -147,28 +147,16 @@ export function ResultCard({ row, mode, onOpen }: ResultCardProps) {
     </>
   )
 
-  if (mode === 'browse') {
-    return (
-      <div
-        data-testid="result-card"
-        data-report-id={row.report_id}
-        role="button"
-        tabIndex={0}
-        onClick={handleClick}
-        onKeyDown={handleKeyDown}
-        style={{ cursor: 'pointer', padding: '10px 12px', borderBottom: '1px solid #f1f3f5' }}
-      >
-        {cardContent}
-      </div>
-    )
-  }
-
-  // search mode — not whole-card clickable
+  // 整卡可點開最小詳情 modal（browse 與 search 一致，對齊 live `/` 的 openFull 平價）
   return (
     <div
       data-testid="result-card"
       data-report-id={row.report_id}
-      style={{ padding: '10px 12px', borderBottom: '1px solid #f1f3f5' }}
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      style={{ cursor: 'pointer', padding: '10px 12px', borderBottom: '1px solid #f1f3f5' }}
     >
       {cardContent}
     </div>

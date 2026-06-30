@@ -127,11 +127,23 @@ test('search: 片段內容不含 HTML 標籤（無 dangerouslySetInnerHTML）', 
   expect(passageEl.textContent).toContain('正常文字')
 })
 
-test('search: 整卡不可點（無整卡 role=button）', () => {
+test('search: 整卡點擊觸發 onOpen 帶 report_id（對齊 live，modal 可達）', () => {
+  const onOpen = vi.fn()
   const row: Row = { ...baseRow, matchCount: 3, rank: 1, bestScore: 0.8 }
-  wrap(<ResultCard row={row} mode="search" onOpen={vi.fn()} />)
+  wrap(<ResultCard row={row} mode="search" onOpen={onOpen} />)
   const card = screen.getByTestId('result-card')
-  expect(card).not.toHaveAttribute('role', 'button')
+  expect(card).toHaveAttribute('role', 'button')
+  card.click()
+  expect(onOpen).toHaveBeenCalledWith('r1')
+})
+
+test('search: Enter 鍵觸發 onOpen', () => {
+  const onOpen = vi.fn()
+  const row: Row = { ...baseRow, matchCount: 3, rank: 1, bestScore: 0.8 }
+  wrap(<ResultCard row={row} mode="search" onOpen={onOpen} />)
+  const card = screen.getByTestId('result-card')
+  card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(onOpen).toHaveBeenCalledWith('r1')
 })
 
 test('browse: 無摘要時不渲染摘要區', () => {

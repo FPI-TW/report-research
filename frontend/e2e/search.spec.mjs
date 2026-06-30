@@ -104,7 +104,8 @@ test('/app/search 平價：表格/列表/分組切換 + 高亮 + 市場索引 dr
   // ── 切回列表（group）+ 分組依市場 ───────────────────────────────────
   await page.getByRole('radio', { name: '列表' }).click()
   // 分組選擇器應出現（view=group 時才顯示）
-  const groupInput = page.getByLabel('分組依據', { exact: true })
+  // 用 combobox role 唯一鎖定 input（Mantine Select 的 label 同時關聯 input 與 listbox）
+  const groupInput = page.getByRole('combobox', { name: '分組依據' })
   await expect(groupInput).toBeVisible({ timeout: 3_000 })
 
   // 選「依市場」

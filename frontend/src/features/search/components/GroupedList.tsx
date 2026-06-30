@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { Row } from '../lib/normalize'
 import { groupRows } from '../lib/grouping'
 import { mLabel } from './meta'
@@ -23,13 +24,12 @@ function groupLabel(key: string, group: 'month' | 'market'): string {
 }
 
 export function GroupedList({ rows, group, mode, onOpen }: GroupedListProps) {
-  const groups = groupRows(rows, group)
-
-  // Sort: month desc by key, market by group size desc
-  const sorted =
-    group === 'month'
+  const sorted = useMemo(() => {
+    const groups = groupRows(rows, group)
+    return group === 'month'
       ? [...groups].sort((a, b) => String(b.key).localeCompare(String(a.key)))
       : [...groups].sort((a, b) => b.rows.length - a.rows.length)
+  }, [rows, group])
 
   return (
     <div data-testid="grouped-list">

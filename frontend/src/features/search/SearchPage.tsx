@@ -58,7 +58,8 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
     total,
     mode,
     isLoading,
-    isError,
+    isBlockingError,
+    loadMoreError,
     hasMore,
     fetchNextPage,
     isFetchingNextPage,
@@ -93,7 +94,7 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
           <ResultsMeta mode={mode} q={filters.q} market={filters.market} total={total} />
         </div>
 
-        {isError ? (
+        {isBlockingError ? (
           <ErrorState onRetry={() => void refetch()} />
         ) : isLoading ? (
           <div className={styles.loadingWrap}>
@@ -117,6 +118,7 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
         <LoadMore
           hasMore={hasMore}
           loading={isFetchingNextPage}
+          error={loadMoreError}
           onMore={() => void fetchNextPage()}
         />
       </main>

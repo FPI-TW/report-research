@@ -16,7 +16,7 @@
 - **禁止** `dangerouslySetInnerHTML` 注入未轉義內容；文字以純節點渲染。
 - **不 cutover**：舊 `/` 不動，`/app/search` 為平行頁。
 - 路徑前綴：所有新檔在 `frontend/src/features/search/`，route 改 `frontend/src/App.tsx`。
-- 測試指令本分支用 `cd frontend && npx vitest run src`（本分支由 main 開，暫無 Part A 的 vitest `include` 設定，須以 `src` 範圍避開 Playwright `e2e/` 收集）。每個 logic 任務結束跑該指令；最終跑 `npm run build`（tsc + vite）。
+- 測試指令本分支用 `rtk npm --prefix frontend run test -- src`（本分支由 main 開，暫無 Part A 的 vitest `include` 設定，須以 `src` 範圍避開 Playwright `e2e/` 收集）。每個 logic 任務結束跑該指令；最終跑 `rtk npm --prefix frontend run build`（tsc + vite）。
 - commit 訊息用 Conventional Commits + 繁中 scope，結尾加 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`。
 - 視覺：結果區（卡片/分組/索引/drill）**逐像素對齊** live；bespoke CSS 從 `web/static/index.html` inline `<style>` 萃取到 `SearchPage.module.css`。
 
@@ -31,7 +31,7 @@ frontend/src/features/search/
   lib/
     filters.ts          # Filters 型別、預設、URL<->Filters 映射、白名單驗證
     normalize.ts        # normalizeRow: ReportListItem|ReportResult -> Row
-    grouping.ts         # groupViewMode / groupRows / groupKey / groupLabel
+    grouping.ts         # groupViewMode / groupRows / groupKey（label 留元件層計算）
     terms.ts            # buildTerms（2a 建好供 2b 高亮用）
     *.test.ts           # 各純函式測試
   hooks/
@@ -114,7 +114,7 @@ test('searchSchema 含 passages 與 rank/best_score', () => {
 })
 ```
 
-- [ ] **Step 2: 跑測試確認失敗** — `cd frontend && npx vitest run src/features/search/schemas.test.ts` → FAIL（模組不存在）
+- [ ] **Step 2: 跑測試確認失敗** — `rtk npm --prefix frontend run test -- src/features/search/schemas.test.ts` → FAIL（模組不存在）
 
 - [ ] **Step 3: 實作 `schemas.ts`**
 
@@ -122,11 +122,11 @@ test('searchSchema 含 passages 與 rank/best_score', () => {
 import { z } from 'zod'
 
 export const statsSchema = z.object({
-  total_reports: z.number(),
-  total_chunks: z.number(),
-  markets: z.array(z.object({ market: z.string(), count: z.number() })),
-  instrument_types: z.array(z.object({ type: z.string(), count: z.number() })),
-  report_types: z.array(z.object({ type: z.string(), count: z.number() })),
+  total_reports: z.number().int().nonnegative(),
+  total_chunks: z.number().int().nonnegative(),
+  markets: z.array(z.object({ market: z.string(), count: z.number().int().nonnegative() })),
+  instrument_types: z.array(z.object({ type: z.string(), count: z.number().int().nonnegative() })),
+  report_types: z.array(z.object({ type: z.string(), count: z.number().int().nonnegative() })),
   username: z.string().nullish(),
 })
 export type StatsResponse = z.infer<typeof statsSchema>
@@ -148,22 +148,22 @@ export const reportItemSchema = z.object({
 export type ReportItem = z.infer<typeof reportItemSchema>
 
 export const reportsSchema = z.object({
-  total: z.number(),
-  offset: z.number(),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
   items: z.array(reportItemSchema),
 })
 export type ReportsResponse = z.infer<typeof reportsSchema>
 
 export const passageSchema = z.object({
   score: z.number(),
-  chunk_index: z.number(),
+  chunk_index: z.number().int().nonnegative(),
   content: z.string(),
 })
 
 export const reportResultSchema = reportItemSchema.extend({
-  rank: z.number(),
+  rank: z.number().int().positive(),
   best_score: z.number(),
-  match_count: z.number(),
+  match_count: z.number().int().nonnegative(),
   passages: z.array(passageSchema),
 })
 export type ReportResult = z.infer<typeof reportResultSchema>
@@ -177,7 +177,7 @@ export const searchSchema = z.object({
 export type SearchResponse = z.infer<typeof searchSchema>
 ```
 
-- [ ] **Step 4: 跑測試確認通過** — `cd frontend && npx vitest run src/features/search/schemas.test.ts` → PASS
+- [ ] **Step 4: 跑測試確認通過** — `rtk npm --prefix frontend run test -- src/features/search/schemas.test.ts` → PASS
 - [ ] **Step 5: commit** — `git add frontend/src/features/search/schemas.ts frontend/src/features/search/schemas.test.ts && git commit`（`feat(frontend): Phase2a Zod schema 與型別`）
 
 ---
@@ -221,7 +221,7 @@ test('buildQuery 略過 undefined/全部，bool→1', () => {
   expect(p.get('relates_stock')).toBe('true')
 ```
 
-- [ ] **Step 2: 跑測試確認失敗** — `npx vitest run src/features/search/api.test.ts` → FAIL
+- [ ] **Step 2: 跑測試確認失敗** — `rtk npm --prefix frontend run test -- src/features/search/api.test.ts` → FAIL
 - [ ] **Step 3: 實作 `api.ts`**
 
 ```ts
@@ -401,7 +401,7 @@ export const normalizeResult = (r: ReportResult): Row => {
 - Produces (`grouping.ts`):
   - `type GroupView = 'grouped' | 'index' | 'drill'`
   - `groupViewMode(group: 'month'|'market', market: string): GroupView`（market≠全部 & group=market → drill；group=market & market=全部 → index；否則 grouped）
-  - `groupKey(row: Row, group: 'month'|'market'): string`、`groupLabel(key, group): string`
+  - `groupKey(row: Row, group: 'month'|'market'): string`
   - `groupRows(rows: Row[], group): { key: string; label: string; rows: Row[] }[]`（保序）
 - Produces (`terms.ts`): `buildTerms(q: string): string[]`（對齊 render.js buildTerms：去空白/標點分詞、去重、長度過濾）
 
@@ -662,7 +662,7 @@ import SearchPage from './features/search/SearchPage'
 ```
 
 - [ ] **Step 4: 萃取 bespoke CSS** → `SearchPage.module.css`，逐區對照 `index.html` 規則套上元件 className，跑本機 `npm run dev` 目視對齊（或留 Task 10 Playwright 對照）。
-- [ ] **Step 5: 跑全部單元測試 + build** — `cd frontend && npx vitest run src && npm run build` → 全綠
+- [ ] **Step 5: 跑全部單元測試 + build** — `rtk npm --prefix frontend run test -- src` + `rtk npm --prefix frontend run build` → 全綠
 - [ ] **Step 6: commit**（`feat(frontend): Phase2a SearchPage 組合與 /app/search 路由`）
 
 ---
@@ -675,7 +675,7 @@ import SearchPage from './features/search/SearchPage'
 
 - [ ] **Step 1: 寫 e2e 劇本** — 登入 → `/app/search` → 預設分組渲染 → 點市場 chip → drill → 搜尋關鍵字 → 結果更新 → 載入更多 → 0 console error；URL 帶 q/market 可分享（reload 還原）。對照舊 `/` 視覺/行為。跑 `:8098`（不擾 `:8097`）。
 - [ ] **Step 2: 本機起分支 server + build SPA**，跑 Playwright（`MONITOR_BASE_URL`/對應 env 指 `:8098`）→ 0 error、平價。
-- [ ] **Step 3: 最終驗證** — `npx vitest run src` 全綠、`npm run build` 綠、eslint 0（`node ./node_modules/eslint/bin/eslint.js .`）。
+- [ ] **Step 3: 最終驗證** — `rtk npm --prefix frontend run test -- src` 全綠、`rtk npm --prefix frontend run build` 綠、eslint 0（`rtk node ./frontend/node_modules/eslint/bin/eslint.js frontend`）。
 - [ ] **Step 4: commit**（`test(frontend): Phase2a 檢索頁平價 e2e`）+ 更新 `docs/REFACTOR_TODO.md` Phase 2 進度註記。
 
 ---

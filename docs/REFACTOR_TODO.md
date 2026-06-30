@@ -22,7 +22,7 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 - [ ] **test_spa_serving 解除對 dist 硬耦合** — `tests/test_spa_serving.py` 讀 gitignored `frontend/dist`，clean checkout 無 build 會 503 偽紅；dist 缺時 `pytest.skip`。[小]
 
 ### A2. Build / 設定
-- [ ] **spa-build 納入 tsc --noEmit** — `Makefile`（spa-build 目標）直呼 `npx vite build` 跳過型別檢查；改 `cd frontend && npm run build`（= `tsc --noEmit && vite build`）讓本機與部署門檻一致。[中]
+- [ ] **spa-build 納入 tsc --noEmit** — `Makefile`（spa-build 目標）直呼 `npx vite build` 跳過型別檢查；改 `rtk npm --prefix frontend run build`（= `tsc --noEmit && vite build`）讓本機與部署門檻一致。[中]
 - [ ] **make spa-test 加 `--passWithNoTests`** — 無測試檔時 exit 1（已不發生，但讓目標可無條件呼叫）。[小]
 - [ ] **dist.prev 加入 .gitignore** — `frontend/.gitignore` 已列 `dist`/`dist.next`，漏 `dist.prev`（原子換版備份）。[小]
 - [ ] **engines.node 強制** — `frontend/package.json` engines 僅宣告未強制；加 `.npmrc engine-strict=true` 或 spa-build 前置 Node 版本檢查（底線 Node 22.22+）。[小]
@@ -59,7 +59,7 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 - **重點**：卡片/列表/表格/分組 4 檢視 + 關鍵字高亮 + 分頁載入更多；URL 可分享連結；視覺平價對照舊頁
 - **依賴**：無（可獨立於 Phase 3）
 - **進度（2026-06-30）**：拆兩增量交付。**Phase 2a 已完成**（分支 feat/frontend-phase2a-browse-search，SDD 10 任務 + opus 整支審查 Ready-to-merge）：搜尋 + 月份分組預設 + drill-in 機制 + 載入更多分頁 + URL 可分享 + 可複用篩選側欄 + 結果卡片可點開最小研報詳情 modal，掛載 `/app/search`（**未 cutover**，舊 `/` 保留）；MarketIndex/DrillView 已建但 2a 不暴露。**Phase 2b 待辦**：表格檢視 + 關鍵字高亮 + 分組切換器（卡片/列表/表格/分組）+ CJK bigram 詞元 + 平價達標後 cutover 退役舊頁。
-- **Phase 2b 平價清單（2a 最終審查延後項，接 group=market / cutover 前必收）**：(1) `MarketIndex` 改吃 `/api/stats` 全語料各市場 count（現用已載入頁 ≤50 筆會不準）；(2) `DrillView` 標頭補總篇數（對齊 vanilla `state.total`）；(3) `LoadMore` 補「還有 N 篇」；(4) 大清單效能：memo 化 `rows` + `React.memo(ResultCard)`；(5) 未分類群 sentinel 對齊 vanilla `'—'`（現 `''`，排序位置微異）。
+- **Phase 2b 平價清單（2a 最終審查延後項，接 group=market / cutover 前必收）**：(1) `MarketIndex` 改吃 `/api/stats` 全語料各市場 count（現用已載入頁 ≤50 筆會不準）；(2) `DrillView` 標頭補總篇數（對齊 vanilla `state.total`）；(3) `LoadMore` 補「還有 N 篇」提示文案；(4) 大清單效能：memo 化 `rows` + `React.memo(ResultCard)`；(5) 未分類群 sentinel 對齊 vanilla `'—'`（現 `''`，排序位置微異）。
 
 ### Phase 3 — ask 串流問答　[風險 高｜最高難度區]
 - **遷移模組**：`ask.js`(676，SSE+多輪狀態) / `markdown.js`(172) / `modal.js`(75) / `confirm.js`(52)
@@ -86,7 +86,7 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 
 ## 驗證與使用方式
 
-- **Part A**：每項可獨立小 PR（多單檔）。改 `frontend/**` 免重啟（`_NoCacheStatic`/build 後即生效），改 `web/server.py` 需 restart。前端改動跑 `cd frontend && npm run build && npx vitest run`；後端改動跑 `uv run pytest -q`。
+- **Part A**：每項可獨立小 PR（多單檔）。改 `frontend/**` 免重啟（`_NoCacheStatic`/build 後即生效），改 `web/server.py` 需 restart。前端改動跑 `rtk npm --prefix frontend run build` 與 `rtk npm --prefix frontend run test`；後端改動跑 `rtk uv run pytest -q`。
 - **Part B**：每個 Phase 完成走 live 平價——不擾動正式 `:8097` systemd，於 `127.0.0.1:8098` 跑分支 server + Playwright MCP 真瀏覽器驗（login → 渲染 → 0 console error → 與舊頁視覺/行為平價），再做 cutover redirect。
 
 > 後端/全棧 Roadmap 軌（每日簡報、結構化訊號、findb 整合、MCP/REST）見 `docs/ROADMAP.md`，各自獨立規劃，不在本文件範圍。

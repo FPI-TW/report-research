@@ -128,3 +128,26 @@ test('(c) 點擊載入更多觸發第 2 頁請求', async () => {
   unmount()
   qc.clear()
 })
+
+test('(d) 載入更多失敗時保留既有結果，改顯示 inline retry', async () => {
+  vi.spyOn(api, 'getStats').mockResolvedValue(STATS)
+  const mockGetReports = vi
+    .spyOn(api, 'getReports')
+    .mockResolvedValueOnce({ total: 100, offset: 0, items: [BASE_ITEM] })
+    .mockRejectedValueOnce(new Error('page 2 failed'))
+
+  const { qc, unmount } = renderPage()
+
+  expect(await screen.findAllByTestId('result-card')).toHaveLength(1)
+
+  fireEvent.click(await screen.findByTestId('load-more-btn'))
+  await waitFor(() => expect(mockGetReports).toHaveBeenCalledTimes(2))
+
+  await waitFor(() => expect(screen.getAllByTestId('result-card')).toHaveLength(1))
+  expect(screen.queryByTestId('error-state')).toBeNull()
+  expect(screen.getByTestId('load-more-inline-error')).toHaveTextContent('載入更多失敗')
+  expect(screen.getByTestId('load-more-btn')).toHaveTextContent('重試載入更多')
+
+  unmount()
+  qc.clear()
+})

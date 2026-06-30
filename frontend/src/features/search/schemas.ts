@@ -38,6 +38,7 @@ export const passageSchema = z.object({
   chunk_index: z.number(),
   content: z.string(),
 })
+export type Passage = z.infer<typeof passageSchema>
 
 export const reportResultSchema = reportItemSchema.extend({
   rank: z.number(),

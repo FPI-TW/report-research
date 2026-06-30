@@ -87,3 +87,187 @@ export function inline(text: string, maxCite: number, onCite?: (n: number) => vo
   }
   return out
 }
+
+// ─── 區塊渲染（Task 4） ────────────────────────────────────────────────────
+
+/**
+ * normalize: 修正黏行 ATX 標題（CJK 句末後緊接 ## 未換行）。
+ * 僅在 ``` 圍欄之外處理，避免改動程式碼區塊內容。
+ * 護欄：前字限定 CJK／句末標點，標題標記要求井號後接空白或 CJK，
+ *        故 C# / F# / #1 / #2 不受影響。
+ */
+function normalize(mdSrc: string): string {
+  return mdSrc
+    .split(/(```[\s\S]*?```)/g)
+    .map((seg, idx) =>
+      idx % 2 === 1
+        ? seg
+        : seg.replace(
+            /([一-鿿。！？：；、，）】」』.!?:;])[ \t]*(#{1,6}(?:[ \t]+|(?=[一-鿿]))\S)/g,
+            '$1\n$2',
+          ),
+    )
+    .join('')
+}
+
+function splitRow(line: string): string[] {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim())
+}
+
+function isBlockStart(line: string): boolean {
+  return (
+    /^```/.test(line.trim()) ||
+    /^#{1,6}(?:[ \t]+|(?=[一-鿿]))/.test(line) ||
+    /^\s*[-*•]\s+/.test(line) ||
+    /^\s*\d+[.)]\s+/.test(line) ||
+    /^\s*>\s?/.test(line) ||
+    /^\s*([-*_])\1{2,}\s*$/.test(line)
+  )
+}
+
+/** 把 inline 結果依「\n」切成多段、段間插 <br/>（對齊 vanilla 段落 .replace(/\n/g,'<br>')）。 */
+function withBreaks(text: string, maxCite: number, onCite?: (n: number) => void): ReactNode[] {
+  const lines = text.split('\n')
+  const out: ReactNode[] = []
+  lines.forEach((ln, i) => {
+    if (i > 0) out.push(<br key={k()} />)
+    out.push(...inline(ln, maxCite, onCite))
+  })
+  return out
+}
+
+export function renderMarkdown(mdSrc: string, maxCite = 0, onCite?: (n: number) => void): ReactNode[] {
+  const lines = normalize(String(mdSrc == null ? '' : mdSrc).replace(/\r\n?/g, '\n')).split('\n')
+  const out: ReactNode[] = []
+  const N = lines.length
+  let i = 0
+  while (i < N) {
+    const line = lines[i]
+
+    if (/^```/.test(line.trim())) {
+      const lang = line.trim().slice(3).trim()
+      const buf: string[] = []
+      i++
+      while (i < N && !/^```/.test(lines[i].trim())) buf.push(lines[i++])
+      i++
+      if (lang === 'chart') {
+        let title = ''
+        try {
+          title = String((JSON.parse(buf.join('\n')) as { title?: unknown }).title || '')
+        } catch {
+          /* 串流中 JSON 未完 */
+        }
+        out.push(
+          <p key={k()} className="md-chart-ph">
+            {title ? `（圖表：${title}）` : '（圖表）'}
+          </p>,
+        )
+      } else if (lang === 'kpi') {
+        out.push(
+          <p key={k()} className="md-chart-ph">
+            （重點數據）
+          </p>,
+        )
+      } else {
+        out.push(
+          <pre key={k()}>
+            <code>{buf.join('\n')}</code>
+          </pre>,
+        )
+      }
+      continue
+    }
+
+    if (!line.trim()) {
+      i++
+      continue
+    }
+
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
+      out.push(<hr key={k()} />)
+      i++
+      continue
+    }
+
+    const h = line.match(/^(#{1,6})(?:[ \t]+|(?=[一-鿿]))(\S.*)$/)
+    if (h) {
+      const lvl = Math.min(h[1].length, 4)
+      const Tag = `h${lvl}` as 'h1' | 'h2' | 'h3' | 'h4'
+      out.push(<Tag key={k()}>{inline(h[2].trim(), maxCite, onCite)}</Tag>)
+      i++
+      continue
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const buf: string[] = []
+      while (i < N && /^\s*>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''))
+      out.push(<blockquote key={k()}>{inline(buf.join(' '), maxCite, onCite)}</blockquote>)
+      continue
+    }
+
+    if (
+      line.includes('|') &&
+      i + 1 < N &&
+      lines[i + 1].includes('-') &&
+      /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1])
+    ) {
+      const header = splitRow(line)
+      i += 2
+      const rows: string[][] = []
+      while (i < N && lines[i].trim() && lines[i].includes('|')) rows.push(splitRow(lines[i++]))
+      out.push(
+        <table key={k()} className="md-table">
+          <thead>
+            <tr>
+              {header.map((c, j) => (
+                <th key={j}>{inline(c, maxCite, onCite)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, ri) => (
+              <tr key={ri}>
+                {header.map((_, j) => (
+                  <td key={j}>{inline(r[j] || '', maxCite, onCite)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>,
+      )
+      continue
+    }
+
+    if (/^\s*[-*•]\s+/.test(line)) {
+      const buf: string[] = []
+      while (i < N && /^\s*[-*•]\s+/.test(lines[i])) buf.push(lines[i++].replace(/^\s*[-*•]\s+/, ''))
+      out.push(
+        <ul key={k()}>
+          {buf.map((it, li) => (
+            <li key={li}>{inline(it, maxCite, onCite)}</li>
+          ))}
+        </ul>,
+      )
+      continue
+    }
+
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      const buf: string[] = []
+      while (i < N && /^\s*\d+[.)]\s+/.test(lines[i])) buf.push(lines[i++].replace(/^\s*\d+[.)]\s+/, ''))
+      out.push(
+        <ol key={k()}>
+          {buf.map((it, li) => (
+            <li key={li}>{inline(it, maxCite, onCite)}</li>
+          ))}
+        </ol>,
+      )
+      continue
+    }
+
+    const buf = [line]
+    i++
+    while (i < N && lines[i].trim() && !isBlockStart(lines[i])) buf.push(lines[i++])
+    out.push(<p key={k()}>{withBreaks(buf.join('\n'), maxCite, onCite)}</p>)
+  }
+  return out
+}

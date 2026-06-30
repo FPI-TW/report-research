@@ -1,10 +1,13 @@
 import { describe, expect, test, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Fragment, createElement } from 'react'
-import { inline } from './markdown'
+import { inline, renderMarkdown } from './markdown'
 
 const html = (nodes: ReturnType<typeof inline>) =>
   renderToStaticMarkup(createElement(Fragment, null, ...nodes))
+
+const md = (s: string, maxCite = 0) =>
+  renderToStaticMarkup(createElement(Fragment, null, ...renderMarkdown(s, maxCite)))
 
 describe('inline', () => {
   test('純文字原樣（React 自動 escape）', () => {
@@ -39,5 +42,38 @@ describe('inline', () => {
     )
     chip?.props.onClick?.()
     expect(onCite).toHaveBeenCalledWith(2)
+  })
+})
+
+describe('renderMarkdown', () => {
+  test('h1~h6 夾到 h4', () => {
+    expect(md('# 一')).toBe('<h1>一</h1>')
+    expect(md('##### 五')).toBe('<h4>五</h4>')
+  })
+  test('黏行 ATX 標題前補換行（CJK 句末後）', () => {
+    expect(md('收盤價。## 緯創')).toBe('<p>收盤價。</p><h2>緯創</h2>')
+  })
+  test('C# 與 #1 不被誤切/誤判標題', () => {
+    expect(md('用 C# 開發')).toBe('<p>用 C# 開發</p>')
+    expect(md('#1 名')).toBe('<p>#1 名</p>')
+  })
+  test('無序與有序清單', () => {
+    expect(md('- a\n- b')).toBe('<ul><li>a</li><li>b</li></ul>')
+    expect(md('1. a\n2. b')).toBe('<ol><li>a</li><li>b</li></ol>')
+  })
+  test('引用、分隔線、表格', () => {
+    expect(md('> 引言')).toBe('<blockquote>引言</blockquote>')
+    expect(md('---')).toBe('<hr/>')
+    expect(md('| A | B |\n|---|---|\n| 1 | 2 |')).toContain('<table class="md-table">')
+  })
+  test('一般程式碼區塊跳脫', () => {
+    expect(md('```\na<b\n```')).toBe('<pre><code>a&lt;b</code></pre>')
+  })
+  test('chart/kpi 圍欄顯示佔位（live 預覽）', () => {
+    expect(md('```chart\n{"title":"營收"}\n```')).toBe('<p class="md-chart-ph">（圖表：營收）</p>')
+    expect(md('```kpi\n{}\n```')).toBe('<p class="md-chart-ph">（重點數據）</p>')
+  })
+  test('段落內換行轉 <br>', () => {
+    expect(md('一\n二')).toBe('<p>一<br/>二</p>')
   })
 })

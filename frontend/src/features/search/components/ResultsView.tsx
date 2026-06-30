@@ -1,17 +1,21 @@
 import type { Row } from '../lib/normalize'
-import type { GroupView } from '../lib/grouping'
+import { groupViewMode } from '../lib/grouping'
 import { MarketIndex } from './MarketIndex'
 import { DrillView } from './DrillView'
 import { GroupedList } from './GroupedList'
+import { TableView } from './TableView'
 
 interface ResultsViewProps {
-  view: GroupView
+  view: 'group' | 'table'
   rows: Row[]
   group: 'month' | 'market'
   mode: 'browse' | 'search'
+  terms: string[]
+  total: number
+  markets: { market: string; count: number }[]
   onOpen: (id: string) => void
   onPickMarket: (market: string) => void
-  /** Only used when view === 'drill' */
+  /** Current market filter — drives index vs drill sub-view */
   market?: string
 }
 
@@ -20,16 +24,27 @@ export function ResultsView({
   rows,
   group,
   mode,
+  terms,
+  total,
+  markets,
   onOpen,
   onPickMarket,
-  market = '',
+  market = '全部',
 }: ResultsViewProps) {
-  if (view === 'index') {
-    return <MarketIndex rows={rows} onPickMarket={onPickMarket} />
+  if (view === 'table') {
+    return <TableView rows={rows} mode={mode} onOpen={onOpen} />
   }
-  if (view === 'drill') {
-    return <DrillView rows={rows} market={market} mode={mode} onOpen={onOpen} />
+
+  const gMode = groupViewMode(group, market)
+
+  if (gMode === 'index') {
+    return <MarketIndex markets={markets} onPickMarket={onPickMarket} />
   }
-  // grouped (default)
-  return <GroupedList rows={rows} group={group} mode={mode} onOpen={onOpen} />
+  if (gMode === 'drill') {
+    return (
+      <DrillView rows={rows} market={market} mode={mode} onOpen={onOpen} total={total} />
+    )
+  }
+  // grouped (default — group='month', or group='market' with no market selected)
+  return <GroupedList rows={rows} group={group} mode={mode} onOpen={onOpen} terms={terms} />
 }

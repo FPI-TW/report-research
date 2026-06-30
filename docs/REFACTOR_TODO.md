@@ -58,8 +58,8 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 - **消費端點**（後端不動）：`/api/stats`、`/api/reports`、`/api/search`、`/api/markets`
 - **重點**：卡片/列表/表格/分組 4 檢視 + 關鍵字高亮 + 分頁載入更多；URL 可分享連結；視覺平價對照舊頁
 - **依賴**：無（可獨立於 Phase 3）
-- **進度（2026-06-30）**：拆兩增量交付。**Phase 2a 已完成**（分支 feat/frontend-phase2a-browse-search，SDD 10 任務 + opus 整支審查 Ready-to-merge）：搜尋 + 月份分組預設 + drill-in 機制 + 載入更多分頁 + URL 可分享 + 可複用篩選側欄 + 結果卡片可點開最小研報詳情 modal，掛載 `/app/search`（**未 cutover**，舊 `/` 保留）；MarketIndex/DrillView 已建但 2a 不暴露。**Phase 2b 待辦**：表格檢視 + 關鍵字高亮 + 分組切換器（卡片/列表/表格/分組）+ CJK bigram 詞元 + 平價達標後 cutover 退役舊頁。
-- **Phase 2b 平價清單（2a 最終審查延後項，接 group=market / cutover 前必收）**：(1) `MarketIndex` 改吃 `/api/stats` 全語料各市場 count（現用已載入頁 ≤50 筆會不準）；(2) `DrillView` 標頭補總篇數（對齊 vanilla `state.total`）；(3) `LoadMore` 補「還有 N 篇」；(4) 大清單效能：memo 化 `rows` + `React.memo(ResultCard)`；(5) 未分類群 sentinel 對齊 vanilla `'—'`（現 `''`，排序位置微異）。
+- **進度（2026-06-30）**：拆兩增量交付。**Phase 2a 已完成**（分支 feat/frontend-phase2a-browse-search，SDD 10 任務 + opus 整支審查 Ready-to-merge）：搜尋 + 月份分組預設 + drill-in 機制 + 載入更多分頁 + URL 可分享 + 可複用篩選側欄 + 結果卡片可點開最小研報詳情 modal，掛載 `/app/search`（**未 cutover**，舊 `/` 保留）；MarketIndex/DrillView 已建但 2a 不暴露。**Phase 2b 已完成**（分支 feat/frontend-phase2b-table-views）：表格檢視 + 關鍵字高亮（`<mark>`）+ 分組切換器（ViewSwitch + GroupBySelect，URL + localStorage 持久化）+ 市場索引/drill-in 串接全語料 count + DrillView 標頭總篇數 + LoadMore 剩餘篇數 + `src/test/setup.ts` 補 ResizeObserver + TableView eslint 修正（render-time setState）；172 vitest + build + eslint 全綠，e2e 語法驗證通過。**Phase 2c 待辦**：視覺平價確認後 cutover 退役舊頁。
+- **Phase 2b 平價清單（已全部收齊）**：(1) `MarketIndex` 改吃 `/api/stats` 全語料各市場 count ✅；(2) `DrillView` 標頭補總篇數 ✅；(3) `LoadMore` 補「還有 N 篇」 ✅；(4) `React.memo(ResultCard)` 已在 2a 實作 ✅；(5) 未分類群 sentinel 以「未分類」呈現達語意平價 ✅。
 
 ### Phase 3 — ask 串流問答　[風險 高｜最高難度區]
 - **遷移模組**：`ask.js`(676，SSE+多輪狀態) / `markdown.js`(172) / `modal.js`(75) / `confirm.js`(52)

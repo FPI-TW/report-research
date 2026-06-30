@@ -7,10 +7,11 @@ interface DrillViewProps {
   market: string
   mode: 'browse' | 'search'
   onOpen: (id: string) => void
+  total: number
 }
 
 // DrillView always sub-groups by month.
-export function DrillView({ rows, market, mode, onOpen }: DrillViewProps) {
+export function DrillView({ rows, market, mode, onOpen, total }: DrillViewProps) {
   const color = mColor(market)
 
   return (
@@ -38,6 +39,7 @@ export function DrillView({ rows, market, mode, onOpen }: DrillViewProps) {
           }}
         />
         <span style={{ fontWeight: 600 }}>{mLabel(market)}</span>
+        <span style={{ color: '#868e96', fontSize: 13 }}>{total.toLocaleString()}</span>
       </div>
       <GroupedList rows={rows} group="month" mode={mode} onOpen={onOpen} />
     </div>

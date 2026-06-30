@@ -6,6 +6,7 @@ import type { StatsResponse } from './schemas'
 import { useSearchParamsState } from './hooks/useSearchParamsState'
 import { useSearchResults } from './hooks/useSearchResults'
 import { groupViewMode } from './lib/grouping'
+import { buildTerms } from './lib/terms'
 import { DEFAULT_FILTERS, type Allowlists } from './lib/filters'
 import { SearchBar } from './components/SearchBar'
 import { FilterSidebar } from './components/FilterSidebar'
@@ -13,6 +14,8 @@ import { ResultsMeta } from './components/ResultsMeta'
 import { ResultsView } from './components/ResultsView'
 import { LoadMore } from './components/LoadMore'
 import { ReportDetailModal } from './components/ReportDetailModal'
+import { ViewSwitch } from './components/ViewSwitch'
+import { GroupBySelect } from './components/GroupBySelect'
 import { EmptyState, ErrorState } from './components/states'
 import styles from './SearchPage.module.css'
 
@@ -51,7 +54,7 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
     [stats],
   )
 
-  const { filters, setFilters } = useSearchParamsState(allow)
+  const { filters, viewState, setFilters, setViewState } = useSearchParamsState(allow)
 
   const {
     rows,
@@ -65,9 +68,18 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
     refetch,
   } = useSearchResults(filters)
 
-  // Phase 2a: month grouping only. groupViewMode('month', *) always returns 'grouped'.
-  const group = 'month' as const
-  const view = groupViewMode(group, filters.market)
+  // Top-level view: 'group' | 'table' — from viewState (URL + localStorage)
+  const topView = viewState.view
+
+  // Sub-view for conditional rendering (e.g. hide LoadMore on index)
+  const subView =
+    topView === 'table' ? 'table' : groupViewMode(viewState.group, filters.market)
+
+  // Highlight terms derived from the search query
+  const terms = useMemo(() => buildTerms(filters.q), [filters.q])
+
+  // Full-corpus market counts from /api/stats (not from current page results)
+  const markets = stats.markets
 
   const [modalId, setModalId] = useState<string | null>(null)
 
@@ -102,23 +114,47 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
         ) : rows.length === 0 ? (
           <EmptyState onReset={() => setFilters(DEFAULT_FILTERS)} />
         ) : (
-          <div className={styles.resultsWrap}>
-            <ResultsView
-              view={view}
-              rows={rows}
-              group={group}
-              mode={mode}
-              onOpen={setModalId}
-              onPickMarket={(m) => setFilters({ ...filters, market: m })}
-            />
-          </div>
+          <>
+            {/* ── View toolbar ──────────────────────────────────────── */}
+            <div className={styles.viewToolbar}>
+              <ViewSwitch
+                value={topView}
+                onChange={(v) => setViewState({ ...viewState, view: v })}
+              />
+              {topView === 'group' && (
+                <GroupBySelect
+                  value={viewState.group}
+                  onChange={(g) => setViewState({ ...viewState, group: g })}
+                />
+              )}
+            </div>
+
+            <div className={styles.resultsWrap}>
+              <ResultsView
+                view={topView}
+                group={viewState.group}
+                rows={rows}
+                mode={mode}
+                terms={terms}
+                total={total}
+                markets={markets}
+                onOpen={setModalId}
+                onPickMarket={(m) => setFilters({ ...filters, market: m })}
+                market={filters.market}
+              />
+            </div>
+          </>
         )}
 
-        <LoadMore
-          hasMore={hasMore}
-          loading={isFetchingNextPage}
-          onMore={() => void fetchNextPage()}
-        />
+        {/* LoadMore: hidden in market-index sub-view (no pagination on index) */}
+        {subView !== 'index' && (
+          <LoadMore
+            hasMore={hasMore}
+            loading={isFetchingNextPage}
+            onMore={() => void fetchNextPage()}
+            remaining={Math.max(0, total - rows.length)}
+          />
+        )}
       </main>
 
       {/* ── Detail modal ──────────────────────────────────────────────── */}

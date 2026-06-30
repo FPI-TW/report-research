@@ -49,6 +49,15 @@
   padding: 60px 0;
 }
 
+/* ── View toolbar (ViewSwitch + GroupBySelect) ──────────────────────────────── */
+.viewToolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 2px 10px;
+}
+
 /* ── Responsive: collapse sidebar above main on narrow viewports ─────────────── */
 @media (max-width: 640px) {
   .page {
@@ -62,4 +71,88 @@
   .sidebar {
     position: static;
   }
+}
+
+/* ── Global bespoke styles: view-switch, rtable, mark highlight ──────────────── */
+/* These classes are used by ViewSwitch.tsx (.view-switch) and TableView.tsx      */
+/* (.rtable) without CSS Module scoping, so they must be declared globally.       */
+
+:global(.view-switch) {
+  position: relative;
+  display: inline-flex;
+  background: #f1f3f5;
+  border-radius: 10px;
+  padding: 3px;
+}
+
+:global(.view-switch) button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  color: #868e96;
+  padding: 7px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.18s;
+}
+
+:global(.view-switch) button:hover {
+  color: #495057;
+}
+
+:global(.view-switch) button[aria-checked='true'] {
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  color: #212529;
+}
+
+:global(.rtable) {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+}
+
+:global(.rtable) th,
+:global(.rtable) td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 0.5px solid #e9ecef;
+}
+
+:global(.rtable) thead th {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 1;
+  font-size: 12px;
+  font-weight: 700;
+  color: #868e96;
+  white-space: nowrap;
+}
+
+:global(.rtable) tbody tr {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+:global(.rtable) tbody tr:hover {
+  background: #f8f9fa;
+}
+
+:global(.rtable) tbody tr:last-child td {
+  border-bottom: none;
+}
+
+:global(mark) {
+  background: #fff3bf;
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
 }

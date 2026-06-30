@@ -2,9 +2,10 @@ interface LoadMoreProps {
   hasMore: boolean
   loading: boolean
   onMore: () => void
+  remaining: number
 }
 
-export function LoadMore({ hasMore, loading, onMore }: LoadMoreProps) {
+export function LoadMore({ hasMore, loading, onMore, remaining }: LoadMoreProps) {
   if (!hasMore) return null
 
   return (
@@ -27,7 +28,7 @@ export function LoadMore({ hasMore, loading, onMore }: LoadMoreProps) {
           fontSize: 14,
         }}
       >
-        {loading ? '載入中…' : '載入更多'}
+        {loading ? '載入中…' : `載入更多（還有 ${remaining.toLocaleString()} 篇）`}
       </button>
     </div>
   )

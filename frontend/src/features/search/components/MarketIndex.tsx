@@ -1,30 +1,19 @@
-import type { Row } from '../lib/normalize'
 import { mLabel, mColor } from './meta'
 
 interface MarketIndexProps {
-  rows: Row[]
+  markets: { market: string; count: number }[]
   onPickMarket: (market: string) => void
 }
 
-export function MarketIndex({ rows, onPickMarket }: MarketIndexProps) {
-  // Aggregate by market
-  const counts = new Map<string, number>()
-  for (const row of rows) {
-    const m = row.market ?? ''
-    counts.set(m, (counts.get(m) ?? 0) + 1)
-  }
-
-  // Sort by count desc
-  const entries = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
-
+export function MarketIndex({ markets, onPickMarket }: MarketIndexProps) {
   return (
     <div data-testid="market-index">
       <p style={{ padding: '6px 12px', fontSize: 13, color: '#868e96', margin: 0 }}>
         選擇市場分類，檢視該市場的研報
       </p>
-      {entries.map(([market, count]) => (
+      {markets.filter((m) => m.market).map(({ market, count }) => (
         <button
-          key={market || '__empty__'}
+          key={market}
           type="button"
           data-testid="market-index-item"
           data-market={market}

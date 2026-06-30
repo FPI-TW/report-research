@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { Row } from '../lib/normalize'
 import { sortedRows, nextTableSort } from '../lib/tableSort'
@@ -37,9 +37,13 @@ export function TableView({ rows, mode, onOpen }: TableViewProps) {
   const [sort, setSort] = useState<TableSort>({ key: null, dir: 'asc' })
 
   // rows 參照變更時重置排序（對齊 vanilla 行為）
-  useEffect(() => {
+  // 使用「render 期間 setState」模式（React 文件建議替代 useEffect+setState）。
+  // rows 參照改變時立即重置，避免 useEffect 造成的雙次渲染。
+  const [trackedRows, setTrackedRows] = useState(rows)
+  if (rows !== trackedRows) {
+    setTrackedRows(rows)
     setSort({ key: null, dir: 'asc' })
-  }, [rows])
+  }
 
   const cols = mode === 'search' ? SEARCH_COLS : BASE_COLS
   const sorted = sortedRows(rows, sort)

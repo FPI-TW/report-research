@@ -22,6 +22,8 @@ function getDomain(url: string): string {
 
 export function Turn({ turn, onCite, onFeedback }: TurnProps) {
   const [fb, setFb] = useState<'like' | 'dislike' | null>(turn.feedback)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [extOpen, setExtOpen] = useState(false)
 
   const onCiteN = (n: number) => {
     const s = turn.sources.find((x) => x.n === n)
@@ -30,6 +32,7 @@ export function Turn({ turn, onCite, onFeedback }: TurnProps) {
 
   const feedback = (v: 'like' | 'dislike') => {
     if (!turn.qaId) return
+    if (v === fb) return // dedup：已選相同值不重送
     setFb(v)
     if (onFeedback) onFeedback(turn.qaId, v)
     else void sendFeedback(turn.qaId, v)
@@ -87,8 +90,8 @@ export function Turn({ turn, onCite, onFeedback }: TurnProps) {
         </div>
       )}
 
-      {/* 來源清單（notice 時不顯示） */}
-      {turn.sources.length > 0 && !isNotice && (
+      {/* 來源清單（toggle 控制，預設收合，notice 時不顯示） */}
+      {sourcesOpen && turn.sources.length > 0 && !isNotice && (
         <div className={styles.sources} data-testid="ask-sources">
           {turn.sources.map((s) => (
             <button
@@ -112,12 +115,12 @@ export function Turn({ turn, onCite, onFeedback }: TurnProps) {
         </div>
       )}
 
-      {/* 外部來源（notice 時不顯示） */}
-      {turn.extSources.length > 0 && !isNotice && (
+      {/* 外部來源（toggle 控制，預設收合，notice 時不顯示） */}
+      {extOpen && turn.extSources.length > 0 && !isNotice && (
         <div className={styles.ext} data-testid="ask-ext">
-          {turn.extSources.map((s, i) => (
+          {turn.extSources.map((s) => (
             <a
-              key={i}
+              key={s.url}
               className={styles.extLink}
               href={s.url}
               target="_blank"
@@ -131,7 +134,7 @@ export function Turn({ turn, onCite, onFeedback }: TurnProps) {
         </div>
       )}
 
-      {/* 動作列：done 且非 notice 時顯示 */}
+      {/* 動作列：done 且非 notice 時顯示；含可折疊的來源/外部參考切換鈕 */}
       {isDone && !isNotice && (
         <div className={styles.actions}>
           <button
@@ -155,6 +158,28 @@ export function Turn({ turn, onCite, onFeedback }: TurnProps) {
           <button type="button" aria-label="複製回答" onClick={copy}>
             複製
           </button>
+          {turn.sources.length > 0 && (
+            <button
+              type="button"
+              data-testid="ask-sources-toggle"
+              aria-expanded={sourcesOpen ? 'true' : 'false'}
+              className={sourcesOpen ? styles.on : undefined}
+              onClick={() => setSourcesOpen((o) => !o)}
+            >
+              資料來源 <span className={styles.actCount}>{turn.sources.length}</span>
+            </button>
+          )}
+          {turn.extSources.length > 0 && (
+            <button
+              type="button"
+              data-testid="ask-ext-toggle"
+              aria-expanded={extOpen ? 'true' : 'false'}
+              className={extOpen ? styles.on : undefined}
+              onClick={() => setExtOpen((o) => !o)}
+            >
+              外部參考 <span className={styles.actCount}>{turn.extSources.length}</span>
+            </button>
+          )}
         </div>
       )}
     </div>

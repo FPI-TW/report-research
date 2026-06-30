@@ -60,6 +60,14 @@ test('browse: Enter 鍵觸發 onOpen', () => {
   expect(onOpen).toHaveBeenCalledWith('r1')
 })
 
+test('browse: Space 鍵觸發 onOpen', () => {
+  const onOpen = vi.fn()
+  wrap(<ResultCard row={baseRow} mode="browse" onOpen={onOpen} />)
+  const card = screen.getByTestId('result-card')
+  card.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+  expect(onOpen).toHaveBeenCalledWith('r1')
+})
+
 test('browse: 不渲染命中片段資訊', () => {
   const row: Row = { ...baseRow, matchCount: 5, rank: 1, bestScore: 0.9 }
   wrap(<ResultCard row={row} mode="browse" onOpen={vi.fn()} />)

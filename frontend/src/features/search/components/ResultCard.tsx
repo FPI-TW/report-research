@@ -110,21 +110,23 @@ export function ResultCard({ row, mode, onOpen }: ResultCardProps) {
       {/* Search-mode extras: relevance bar + first passage */}
       {mode === 'search' && (
         <>
-          <div
-            data-testid="score-bar-track"
-            style={{
-              marginTop: 6,
-              background: '#e9ecef',
-              borderRadius: 2,
-              height: 4,
-              overflow: 'hidden',
-            }}
-          >
+          {row.bestScore != null && (
             <div
-              data-testid="score-bar-fill"
-              style={{ width: `${scorePct}%`, background: '#228be6', height: '100%' }}
-            />
-          </div>
+              data-testid="score-bar-track"
+              style={{
+                marginTop: 6,
+                background: '#e9ecef',
+                borderRadius: 2,
+                height: 4,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                data-testid="score-bar-fill"
+                style={{ width: `${scorePct}%`, background: '#228be6', height: '100%' }}
+              />
+            </div>
+          )}
           {firstPassage && (
             <div
               data-testid="passage-text"

@@ -6,11 +6,11 @@ import { GroupedList } from './GroupedList'
 interface DrillViewProps {
   rows: Row[]
   market: string
-  group: 'month' | 'market'
   mode: 'browse' | 'search'
   onOpen: (id: string) => void
 }
 
+// DrillView always sub-groups by month.
 export function DrillView({ rows, market, mode, onOpen }: DrillViewProps) {
   const color = mColor(market)
 

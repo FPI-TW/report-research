@@ -29,7 +29,7 @@ export function ResultsView({
     return <MarketIndex rows={rows} onPickMarket={onPickMarket} />
   }
   if (view === 'drill') {
-    return <DrillView rows={rows} market={market} group={group} mode={mode} onOpen={onOpen} />
+    return <DrillView rows={rows} market={market} mode={mode} onOpen={onOpen} />
   }
   // grouped (default)
   return <GroupedList rows={rows} group={group} mode={mode} onOpen={onOpen} />

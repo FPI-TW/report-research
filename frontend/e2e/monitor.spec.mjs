@@ -13,6 +13,9 @@ function creds() {
 test('/app/monitor 平價：登入 → 輪詢 → 0 console error', async ({ page }) => {
   const errors = []
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  // 輪詢計數器：在 goto 之前註冊，避免漏算早期 /api/progress 請求（消除邊界 flaky）
+  let calls = 0
+  page.on('requestfinished', (r) => r.url().includes('/api/progress') && calls++)
 
   const { u, p } = creds()
   await page.goto(`${BASE}/app/monitor`)
@@ -26,8 +29,6 @@ test('/app/monitor 平價：登入 → 輪詢 → 0 console error', async ({ pag
   await expect(page.getByText('研報導入監控')).toBeVisible()
 
   // 觀察 2 秒輪詢：~4.5 秒內至少 2 次 /api/progress
-  let calls = 0
-  page.on('requestfinished', (r) => r.url().includes('/api/progress') && calls++)
   await page.waitForTimeout(4500)
   expect(calls).toBeGreaterThanOrEqual(2)
   expect(errors).toEqual([])

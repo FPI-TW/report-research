@@ -12,7 +12,14 @@ def _auth_cookies() -> dict[str, str]:
     return {auth.COOKIE_NAME: auth.issue_token(int(time.time()))}
 
 
+def _require_spa_dist() -> None:
+    """clean checkout 未跑 make spa-build 時 dist 不存在，shell 端點會 503；跳過而非偽紅。"""
+    if not (SPA_DIST / "index.html").is_file():
+        pytest.skip("frontend/dist/index.html 不存在，需先執行 make spa-build")
+
+
 def test_app_deeplink_serves_spa_shell_when_authed():
+    _require_spa_dist()
     client = TestClient(app, cookies=_auth_cookies())
     resp = client.get("/app/monitor")
     assert resp.status_code == 200
@@ -29,8 +36,8 @@ def test_app_shell_requires_auth():
 
 
 def test_legacy_monitor_redirects_to_spa():
-    client = TestClient(app)
-    resp = client.get("/monitor", cookies=_auth_cookies(), follow_redirects=False)
+    client = TestClient(app, cookies=_auth_cookies())
+    resp = client.get("/monitor", follow_redirects=False)
     assert resp.status_code == 307
     assert resp.headers["location"] == "/app/monitor"
 
@@ -52,6 +59,7 @@ def test_spa_assets_have_immutable_cache():
 
 
 def test_spa_shell_cache_is_no_cache():
+    _require_spa_dist()
     client = TestClient(app, cookies=_auth_cookies())
     resp = client.get("/app/monitor")
     assert resp.status_code == 200

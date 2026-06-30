@@ -51,6 +51,7 @@ export function useSearchResults(filters: Filters) {
     isError: q.isError,
     hasMore: Boolean(q.hasNextPage),
     fetchNextPage: q.fetchNextPage,
+    isFetchingNextPage: q.isFetchingNextPage,
     refetch: q.refetch,
   }
 }

@@ -1,4 +1,3 @@
-import React from 'react'
 import type { Row } from '../lib/normalize'
 import { groupRows } from '../lib/grouping'
 import { mLabel } from './meta'

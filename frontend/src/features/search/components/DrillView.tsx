@@ -1,4 +1,3 @@
-import React from 'react'
 import type { Row } from '../lib/normalize'
 import { mLabel, mColor } from './meta'
 import { GroupedList } from './GroupedList'

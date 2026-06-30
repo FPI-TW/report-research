@@ -1,5 +1,3 @@
-import React from 'react'
-
 // ── EmptyState ────────────────────────────────────────────────────────────────
 interface EmptyStateProps {
   onReset: () => void

@@ -52,6 +52,7 @@ test('browse 模式攤平 items 並算 hasMore', async () => {
   expect(result.current.total).toBe(80)
   expect(result.current.hasMore).toBe(true) // 1 < 80
   expect(result.current.isError).toBe(false)
+  expect(result.current.isFetchingNextPage).toBe(false)
   expect(api.getSearch).not.toHaveBeenCalled
 })
 

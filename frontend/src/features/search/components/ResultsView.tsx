@@ -1,4 +1,3 @@
-import React from 'react'
 import type { Row } from '../lib/normalize'
 import type { GroupView } from '../lib/grouping'
 import { MarketIndex } from './MarketIndex'

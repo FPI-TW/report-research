@@ -1,4 +1,3 @@
-import React from 'react'
 import { mLabel } from './meta'
 
 interface ResultsMetaProps {

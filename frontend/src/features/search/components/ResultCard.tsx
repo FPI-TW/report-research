@@ -123,7 +123,7 @@ export function ResultCard({ row, mode, onOpen }: ResultCardProps) {
             >
               <div
                 data-testid="score-bar-fill"
-                style={{ width: `${scorePct}%`, background: '#228be6', height: '100%' }}
+                style={{ width: `${scorePct}%`, background: '#ae7415', height: '100%' }}
               />
             </div>
           )}

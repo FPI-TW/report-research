@@ -3,6 +3,7 @@ import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { AppShell, Container, Title, Text } from '@mantine/core'
 import MonitorPage from './features/monitor/MonitorPage'
+import SearchPage from './features/search/SearchPage'
 
 function Layout({ children }: { children: ReactNode }) {
   return (
@@ -36,6 +37,7 @@ const router = createBrowserRouter(
   [
     { path: '/', element: <Home /> },
     { path: '/monitor', element: <Layout><MonitorPage /></Layout> },
+    { path: '/search', element: <Layout><SearchPage /></Layout> },
     { path: '*', element: <NotFound /> },
   ],
   { basename: '/app' },

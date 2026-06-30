@@ -18,9 +18,22 @@ interface SearchBarProps {
 export function SearchBar({ value, onSubmit, onClear }: SearchBarProps) {
   const [text, setText] = useState(value)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const submitRef = useRef(onSubmit)
+
+  const clearDebounce = () => {
+    if (debounceRef.current != null) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    submitRef.current = onSubmit
+  }, [onSubmit])
 
   // 外部 value 改變時同步（例如 URL 狀態 reset）。
   useEffect(() => {
+    clearDebounce()
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setText(value)
   }, [value])
@@ -28,35 +41,29 @@ export function SearchBar({ value, onSubmit, onClear }: SearchBarProps) {
   // 卸載時清除 debounce
   useEffect(() => {
     return () => {
-      if (debounceRef.current != null) clearTimeout(debounceRef.current)
+      clearDebounce()
     }
   }, [])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value
     setText(next)
-    if (debounceRef.current != null) clearTimeout(debounceRef.current)
+    clearDebounce()
     debounceRef.current = setTimeout(() => {
-      onSubmit(next)
+      submitRef.current(next)
     }, 450)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      if (debounceRef.current != null) {
-        clearTimeout(debounceRef.current)
-        debounceRef.current = null
-      }
+      clearDebounce()
       // 直接讀 DOM 值，避免 React state 更新非同步時取到舊值
-      onSubmit((e.target as HTMLInputElement).value)
+      submitRef.current((e.target as HTMLInputElement).value)
     }
   }
 
   const handleClear = () => {
-    if (debounceRef.current != null) {
-      clearTimeout(debounceRef.current)
-      debounceRef.current = null
-    }
+    clearDebounce()
     setText('')
     onClear()
   }

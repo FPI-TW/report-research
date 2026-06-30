@@ -49,6 +49,8 @@ export function useSearchResults(filters: Filters) {
     mode,
     isLoading: q.isLoading,
     isError: q.isError,
+    isBlockingError: q.isError && rows.length === 0,
+    loadMoreError: q.isFetchNextPageError ? '載入更多失敗，請重試' : null,
     hasMore: Boolean(q.hasNextPage),
     fetchNextPage: q.fetchNextPage,
     isFetchingNextPage: q.isFetchingNextPage,

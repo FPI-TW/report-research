@@ -51,7 +51,7 @@ export default function MonitorPage() {
     return () => clearInterval(id)
   }, [])
 
-  const { data, isError } = useQuery({
+  const { data, isError, isPending } = useQuery({
     queryKey: ['progress'],
     queryFn: getProgress,
     refetchInterval: 2000,
@@ -78,6 +78,9 @@ export default function MonitorPage() {
   const tag = data?.tagging
   const sum = data?.summary
   const ing = data?.ingest
+  const orch = data?.orchestrator
+  // 首次載入、尚無資料：顯示「連線中」灰標而非 LIVE（避免暗示已有資料）
+  const connecting = isPending
 
   return (
     <Stack gap="md">
@@ -87,8 +90,11 @@ export default function MonitorPage() {
           <Text size="sm" c="dimmed" ff="monospace">
             {now}
           </Text>
-          <Badge color={isError ? 'red' : 'gold'} variant={isError ? 'light' : 'filled'}>
-            {isError ? '重連中' : 'LIVE'}
+          <Badge
+            color={isError ? 'red' : connecting ? 'gray' : 'gold'}
+            variant={isError || connecting ? 'light' : 'filled'}
+          >
+            {isError ? '重連中' : connecting ? '連線中' : 'LIVE'}
           </Badge>
         </Group>
       </Group>
@@ -122,7 +128,16 @@ export default function MonitorPage() {
               未標 {nf(tag.fail)}
             </Text>
           </Group>
-          <Progress value={tag.pct} color="gold" mt="xs" />
+          <Progress
+            value={tag.pct}
+            color="gold"
+            mt="xs"
+            role="progressbar"
+            aria-label="標註進度"
+            aria-valuenow={Math.round(tag.pct)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          />
           <Text size="xs" c="dimmed" mt={4}>
             {rateText(tag.fail, rate.tpm, '標註')}
           </Text>
@@ -149,7 +164,16 @@ export default function MonitorPage() {
               未生成 {nf(sum.remaining)}
             </Text>
           </Group>
-          <Progress value={sum.pct} color="gold" mt="xs" />
+          <Progress
+            value={sum.pct}
+            color="gold"
+            mt="xs"
+            role="progressbar"
+            aria-label="摘要進度"
+            aria-valuenow={Math.round(sum.pct)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          />
           <Text size="xs" c="dimmed" mt={4}>
             {rateText(sum.remaining, rate.spm, '摘要')}
           </Text>
@@ -185,9 +209,33 @@ export default function MonitorPage() {
         </Stack>
       </Card>
 
-      <Text size="xs" c="dimmed">
-        更新於 {data?.ts ?? '—'} · 每 2 秒刷新 · 資料源 /api/progress
-      </Text>
+      <Stack gap={6}>
+        <Text size="xs" c="dimmed">
+          更新於 {data?.ts ?? '—'} · 每 2 秒刷新 · 資料源 /api/progress
+        </Text>
+        {orch ? (
+          <Group gap="xs" align="center">
+            <Badge
+              color={
+                orch.status === 'done' ? 'green' : orch.status === 'running' ? 'yellow' : 'gray'
+              }
+              variant="light"
+              radius="xl"
+            >
+              {orch.label ?? '編排器狀態'}
+            </Badge>
+            {orch.timestamp ? (
+              <Text size="xs" c="dimmed" ff="monospace">
+                {orch.timestamp}
+              </Text>
+            ) : orch.raw ? (
+              <Text size="xs" c="dimmed" lineClamp={1} style={{ maxWidth: 520 }}>
+                {orch.raw}
+              </Text>
+            ) : null}
+          </Group>
+        ) : null}
+      </Stack>
     </Stack>
   )
 }

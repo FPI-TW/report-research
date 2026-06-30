@@ -15,31 +15,32 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 均為技術債/規範落差、**無新功能**，每項多為單檔小修，可各自獨立小 PR。優先序建議：A1 測試 + A2(tsc) → A3 a11y → A4 正確性 → A5 決策（Phase 2 啟動前鎖定）。嚴重度：[中] / [小]。
 
 ### A1. 測試補強
-- [ ] **useTween 補 normal-motion 動畫測試** — `frontend/src/features/monitor/useTween.test.tsx` 只測 reduced-motion/null 快速路徑，600ms easing 的 RAF `step` 遞迴完全未測（假覆蓋）。補 `matchMedia=false` + fake timers 驗 `start→value` 收斂。[中]
-- [ ] **useMonitorRate 補測試檔** — `frontend/src/features/monitor/useMonitorRate.ts` 無對應測試。驗：sample=null 不觸發 effect、sample 參照變更算速率、NULL_RATE 初值→逐次更新。[中]
-- [ ] **MonitorPage.test 補非同步/輪詢/clock 驗證** — `frontend/src/features/monitor/MonitorPage.test.tsx` 僅驗 mock 後渲染；補 `waitFor`/`act` 驗 pending→success、輪詢呼叫、在地 clock 啟動。[小]
-- [ ] **e2e 監聽器提前註冊** — `frontend/e2e/monitor.spec.mjs` 的 `requestfinished` 監聽器註冊在 `toBeVisible()` 之後（邊界 flaky）；移到 `page.goto()` 之前。[小]
-- [ ] **test_spa_serving 解除對 dist 硬耦合** — `tests/test_spa_serving.py` 讀 gitignored `frontend/dist`，clean checkout 無 build 會 503 偽紅；dist 缺時 `pytest.skip`。[小]
+- [x] **useTween 補 normal-motion 動畫測試** — `frontend/src/features/monitor/useTween.test.tsx` 只測 reduced-motion/null 快速路徑，600ms easing 的 RAF `step` 遞迴完全未測（假覆蓋）。補 `matchMedia=false` + fake timers 驗 `start→value` 收斂。[中]
+- [x] **useMonitorRate 補測試檔** — `frontend/src/features/monitor/useMonitorRate.ts` 無對應測試。驗：sample=null 不觸發 effect、sample 參照變更算速率、NULL_RATE 初值→逐次更新。[中]
+- [x] **MonitorPage.test 補非同步/輪詢/clock 驗證** — `frontend/src/features/monitor/MonitorPage.test.tsx` 僅驗 mock 後渲染；補 `waitFor`/`act` 驗 pending→success、輪詢呼叫、在地 clock 啟動。[小]
+- [x] **e2e 監聽器提前註冊** — `frontend/e2e/monitor.spec.mjs` 的 `requestfinished` 監聽器註冊在 `toBeVisible()` 之後（邊界 flaky）；移到 `page.goto()` 之前。[小]
+- [x] **test_spa_serving 解除對 dist 硬耦合** — `tests/test_spa_serving.py` 讀 gitignored `frontend/dist`，clean checkout 無 build 會 503 偽紅；dist 缺時 `pytest.skip`。[小]
 
 ### A2. Build / 設定
-- [ ] **spa-build 納入 tsc --noEmit** — `Makefile`（spa-build 目標）直呼 `npx vite build` 跳過型別檢查；改 `cd frontend && npm run build`（= `tsc --noEmit && vite build`）讓本機與部署門檻一致。[中]
-- [ ] **make spa-test 加 `--passWithNoTests`** — 無測試檔時 exit 1（已不發生，但讓目標可無條件呼叫）。[小]
-- [ ] **dist.prev 加入 .gitignore** — `frontend/.gitignore` 已列 `dist`/`dist.next`，漏 `dist.prev`（原子換版備份）。[小]
-- [ ] **engines.node 強制** — `frontend/package.json` engines 僅宣告未強制；加 `.npmrc engine-strict=true` 或 spa-build 前置 Node 版本檢查（底線 Node 22.22+）。[小]
+- [x] **spa-build 納入 tsc --noEmit** — `Makefile`（spa-build 目標）直呼 `npx vite build` 跳過型別檢查；改 `rtk npm --prefix frontend run build`（= `tsc --noEmit && vite build`）讓本機與部署門檻一致。[中]
+- [x] **make spa-test 加 `--passWithNoTests`** — 無測試檔時 exit 1（已不發生，但讓目標可無條件呼叫）。[小]
+- [x] **dist.prev 加入 .gitignore** — `frontend/.gitignore` 已列 `dist`/`dist.next`，漏 `dist.prev`（原子換版備份）。[小]
+- [x] **engines.node 強制** — `frontend/package.json` engines 僅宣告未強制；加 `.npmrc engine-strict=true` 或 spa-build 前置 Node 版本檢查（底線 Node 22.22+）。[小]
+- [x] **Vitest include 範圍（本批附帶修正）** — `frontend/vitest.config.ts` 無 `include`，預設 glob 收進 Playwright `e2e/*.spec.mjs` 致 suite 失敗；限定 `src/**`。[小]
 - [ ] **spa-build 換版視窗** — `Makefile` 兩個 `mv` 間 `dist` 短暫不存在（微秒 503 視窗）；如要零視窗改 symlink 切換，否則於 spec 明確記錄為可接受取捨。[小]
 - [ ] **版本鏈記錄** — `@eslint/js@10.0.1` vs `eslint@10.6.0` 為獨立版號（非 bug）；`typescript-eslint <6.1.0` 對 TS 有上限。於 CONTRIBUTING/README 標注版本鏈，升 TS 前查相容。[小/doc]
 - [ ] **未用相依的保留/精簡決策** — Phase 0/1 預裝但未用：`react-hook-form`/`@hookform/resolvers`/`@mantine/form`/`@tanstack/react-query-devtools`（spec §3 已列、spec-sanctioned）。Phase 2/3 會用到，建議保留；若要精簡可延到對應 phase 再裝。[小/decision]
 
 ### A3. a11y / UX
-- [ ] **補全站 h1** — `frontend/src/App.tsx`（Home `:20`、NotFound `:29`）與 `MonitorPage.tsx:85` 全用 h2/h3、無 h1。於 Layout 加 `<h1 className="sr-only">廷豐智能研報</h1>` 或將 MonitorPage 改 `order={1}`，確保單一 h1 + 正常梯級。[小]
-- [ ] **Progress 條補 aria-label** — `frontend/src/features/monitor/MonitorPage.tsx:125/152`（標註/摘要進度）的 Mantine Progress 無 accessible name；加 `aria-label`。[小]
-- [ ] **LIVE 徽章初次 pending 態** — `MonitorPage.tsx:90` 為 `isError?'重連中':'LIVE'`，首次 loading 即顯 LIVE（暗示已有資料）；改 `isLoading && !data ? 連線中(灰) : ...`，對照舊 `monitor.html` 初始態。[小]
+- [x] **補全站 h1** — `frontend/src/App.tsx`（Home `:20`、NotFound `:29`）與 `MonitorPage.tsx:85` 全用 h2/h3、無 h1。於 Layout 加 `<h1 className="sr-only">廷豐智能研報</h1>` 或將 MonitorPage 改 `order={1}`，確保單一 h1 + 正常梯級。[小]
+- [x] **Progress 條補 aria-label** — `frontend/src/features/monitor/MonitorPage.tsx:125/152`（標註/摘要進度）的 Mantine Progress 無 accessible name；加 `aria-label`。[小]
+- [x] **LIVE 徽章初次 pending 態** — `MonitorPage.tsx:90` 為 `isError?'重連中':'LIVE'`，首次 loading 即顯 LIVE（暗示已有資料）；改 `isLoading && !data ? 連線中(灰) : ...`，對照舊 `monitor.html` 初始態。[小]
 
 ### A4. 正確性 / 健壯性
-- [ ] **footer 渲染 orchestrator pill** — spec §6.2 列 orchestrator pill，`frontend/src/lib/schemas.ts` 已解析 `orchestrator` 卻未在 footer 渲染狀態；補條件渲染（承 M1 的 null 守門）。[小]
-- [ ] **useTween `from.current` 過時基準** — `frontend/src/features/monitor/useTween.ts` 的 `from.current` 僅動畫完成時同步，中途換值/卸載會以過時基準起跳；目前 2s 輪詢/600ms 動畫不觸發，屬潛在脆弱。[小]
-- [ ] **_safe_next 收斂控制字元** — `web/server.py` `_safe_next` 目前僅濾 `\r`/`\n`，其餘 C0 控制字元靠下游 Starlette `quote()` 兜底；改 `any(ord(c) < 0x20 ...)` 讓白名單自身完備（縱深防禦）。[小]
-- [ ] **cutover 測試 per-request cookies 棄用** — `tests/test_spa_serving.py::test_legacy_monitor_redirects_to_spa` 用 per-request `cookies=`（deprecation warning）；改 `TestClient(app, cookies=_auth_cookies())` 實例式（與 Task 3 修法一致）。[小]
+- [x] **footer 渲染 orchestrator pill** — spec §6.2 列 orchestrator pill，`frontend/src/lib/schemas.ts` 已解析 `orchestrator` 卻未在 footer 渲染狀態；補條件渲染（承 M1 的 null 守門）。[小]
+- [x] **useTween `from.current` 過時基準** — `frontend/src/features/monitor/useTween.ts` 的 `from.current` 僅動畫完成時同步，中途換值/卸載會以過時基準起跳；目前 2s 輪詢/600ms 動畫不觸發，屬潛在脆弱。[小]
+- [x] **_safe_next 收斂控制字元** — `web/server.py` `_safe_next` 目前僅濾 `\r`/`\n`，其餘 C0 控制字元靠下游 Starlette `quote()` 兜底；改 `any(ord(c) < 0x20 ...)` 讓白名單自身完備（縱深防禦）。[小]
+- [x] **cutover 測試 per-request cookies 棄用** — `tests/test_spa_serving.py::test_legacy_monitor_redirects_to_spa` 用 per-request `cookies=`（deprecation warning）；改 `TestClient(app, cookies=_auth_cookies())` 實例式（與 Task 3 修法一致）。[小]
 
 ### A5. 遷移前需鎖定的架構決策
 - [ ] **共用純函式統一策略** — `frontend/src/lib/eta.ts`、`features/monitor/rate.ts` 已移植自 `web/static/app/eta.js`。Phase 2+ 前明確：哪些純函式進 `frontend/lib/`、vanilla 版何時刪、是否 monorepo shared（目前直接 copy 可行）。
@@ -88,7 +89,7 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 
 ## 驗證與使用方式
 
-- **Part A**：每項可獨立小 PR（多單檔）。改 `frontend/**` 免重啟（`_NoCacheStatic`/build 後即生效），改 `web/server.py` 需 restart。前端改動跑 `cd frontend && npm run build && npx vitest run`；後端改動跑 `uv run pytest -q`。
+- **Part A**：每項可獨立小 PR（多單檔）。改 `frontend/**` 免重啟（`_NoCacheStatic`/build 後即生效），改 `web/server.py` 需 restart。前端改動跑 `rtk npm --prefix frontend run build` 與 `rtk npm --prefix frontend run test`；後端改動跑 `rtk uv run pytest -q`。
 - **Part B**：每個 Phase 完成走 live 平價——不擾動正式 `:8097` systemd，於 `127.0.0.1:8098` 跑分支 server + Playwright MCP 真瀏覽器驗（login → 渲染 → 0 console error → 與舊頁視覺/行為平價），再做 cutover redirect。
 
 > 後端/全棧 Roadmap 軌（每日簡報、結構化訊號、findb 整合、MCP/REST）見 `docs/ROADMAP.md`，各自獨立規劃，不在本文件範圍。

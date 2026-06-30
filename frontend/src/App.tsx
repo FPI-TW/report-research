@@ -1,14 +1,17 @@
-import type { ReactNode } from 'react'
+import { Suspense, lazy, type ReactNode } from 'react'
 import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
-import { AppShell, Container, Title, Text } from '@mantine/core'
-import MonitorPage from './features/monitor/MonitorPage'
-import SearchPage from './features/search/SearchPage'
+import { AppShell, Container, Loader, Title, Text, VisuallyHidden } from '@mantine/core'
+
+const MonitorPage = lazy(() => import('./features/monitor/MonitorPage'))
+const SearchPage = lazy(() => import('./features/search/SearchPage'))
 
 function Layout({ children }: { children: ReactNode }) {
   return (
     <AppShell padding="md">
       <AppShell.Main>
+        {/* 全站唯一 h1（視覺隱藏）：確保每頁有正常的 h1→h2 標題梯級 */}
+        <VisuallyHidden component="h1">廷豐智能研報</VisuallyHidden>
         <Container size="lg">{children}</Container>
       </AppShell.Main>
     </AppShell>
@@ -32,12 +35,34 @@ function NotFound() {
   )
 }
 
+function RouteFallback() {
+  return <Loader />
+}
+
 // router 建在模組層（render 樹之外），basename 無尾斜線。
 const router = createBrowserRouter(
   [
     { path: '/', element: <Home /> },
-    { path: '/monitor', element: <Layout><MonitorPage /></Layout> },
-    { path: '/search', element: <Layout><SearchPage /></Layout> },
+    {
+      path: '/monitor',
+      element: (
+        <Layout>
+          <Suspense fallback={<RouteFallback />}>
+            <MonitorPage />
+          </Suspense>
+        </Layout>
+      ),
+    },
+    {
+      path: '/search',
+      element: (
+        <Layout>
+          <Suspense fallback={<RouteFallback />}>
+            <SearchPage />
+          </Suspense>
+        </Layout>
+      ),
+    },
     { path: '*', element: <NotFound /> },
   ],
   { basename: '/app' },

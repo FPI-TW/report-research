@@ -52,6 +52,9 @@ function renderPage(url = '/search') {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  // viewState persists to localStorage (rm_view); clear it so view-switch in one
+  // test (e.g. 表格) does not leak into the next test's initial render.
+  localStorage.clear()
 })
 
 // ── (a) Results render after load ──────────────────────────────────────────────
@@ -150,6 +153,30 @@ test('(d) 切到表格檢視不觸發額外 API 呼叫', async () => {
   // 切檢視只重畫、不重抓
   expect(mockGetReports).toHaveBeenCalledTimes(1)
   expect(mockGetSearch).not.toHaveBeenCalled()
+
+  unmount()
+  qc.clear()
+})
+
+// ── (e) 載入更多失敗時保留既有結果，改顯示 inline retry ─────────────────────
+test('(e) 載入更多失敗時保留既有結果，改顯示 inline retry', async () => {
+  vi.spyOn(api, 'getStats').mockResolvedValue(STATS)
+  const mockGetReports = vi
+    .spyOn(api, 'getReports')
+    .mockResolvedValueOnce({ total: 100, offset: 0, items: [BASE_ITEM] })
+    .mockRejectedValueOnce(new Error('page 2 failed'))
+
+  const { qc, unmount } = renderPage()
+
+  expect(await screen.findAllByTestId('result-card')).toHaveLength(1)
+
+  fireEvent.click(await screen.findByTestId('load-more-btn'))
+  await waitFor(() => expect(mockGetReports).toHaveBeenCalledTimes(2))
+
+  await waitFor(() => expect(screen.getAllByTestId('result-card')).toHaveLength(1))
+  expect(screen.queryByTestId('error-state')).toBeNull()
+  expect(screen.getByTestId('load-more-inline-error')).toHaveTextContent('載入更多失敗')
+  expect(screen.getByTestId('load-more-btn')).toHaveTextContent('重試載入更多')
 
   unmount()
   qc.clear()

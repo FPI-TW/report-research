@@ -1,11 +1,12 @@
 interface LoadMoreProps {
   hasMore: boolean
   loading: boolean
+  error?: string | null
   onMore: () => void
   remaining: number
 }
 
-export function LoadMore({ hasMore, loading, onMore, remaining }: LoadMoreProps) {
+export function LoadMore({ hasMore, loading, error = null, onMore, remaining }: LoadMoreProps) {
   if (!hasMore) return null
 
   return (
@@ -13,6 +14,14 @@ export function LoadMore({ hasMore, loading, onMore, remaining }: LoadMoreProps)
       data-testid="load-more-wrap"
       style={{ padding: '12px', textAlign: 'center' }}
     >
+      {error ? (
+        <div
+          data-testid="load-more-inline-error"
+          style={{ color: '#fa5252', fontSize: 13, marginBottom: 8 }}
+        >
+          載入更多失敗，請重試
+        </div>
+      ) : null}
       <button
         type="button"
         data-testid="load-more-btn"
@@ -28,7 +37,11 @@ export function LoadMore({ hasMore, loading, onMore, remaining }: LoadMoreProps)
           fontSize: 14,
         }}
       >
-        {loading ? '載入中…' : `載入更多（還有 ${remaining.toLocaleString()} 篇）`}
+        {loading
+          ? '載入中…'
+          : error
+            ? '重試載入更多'
+            : `載入更多（還有 ${remaining.toLocaleString()} 篇）`}
       </button>
     </div>
   )

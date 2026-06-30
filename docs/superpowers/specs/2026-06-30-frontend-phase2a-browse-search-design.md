@@ -78,7 +78,7 @@ PR #40 完成 SPA 地基（Vite + React 19 + TS + Mantine + TanStack Query + Zod
 
 ### 4.3 純函式 lib（`frontend/src/features/search/lib/`，皆附 Vitest）
 - `groupViewMode(group, market)` — 對齊舊 `state.test.mjs`：`group=market` 且 `market=全部` → `index`；`group=market` 且指定市場 → `drill`；`group=month` 或其他 → `grouped`。
-- `groupRows` / `groupKey` / `groupLabel`（月份、市場分組）。
+- `groupRows` / `groupKey`（月份、市場分組；label 由元件/`meta` 層計算）。
 - `normalizeRow`（browse item / search result → 統一 `Row`）。
 - `buildTerms`（查詢字串 → 詞，供 2b 高亮；2a 先建好不渲染）。
 
@@ -138,7 +138,7 @@ PR #40 完成 SPA 地基（Vite + React 19 + TS + Mantine + TanStack Query + Zod
 
 - **Vitest**：Zod schema 解析 / 純函式（`groupViewMode` 對齊 `state.test.mjs`、group/sort/normalize）/ 元件（搜尋送出、載入更多、URL 同步、drill 切換）。
 - **Playwright**：`/app/search` 與 `/` 平價劇本（登入→渲染→分組→drill→載入更多→0 console error），跑非正式 `:8098` 不擾動正式 `:8097`。
-- 執行：`cd frontend && npx vitest run src` + `npm run build`。
+- 執行：`rtk npm --prefix frontend run test -- src` + `rtk npm --prefix frontend run build`。
   （本分支由 main 開，暫無 Part A 的 `vitest include` 設定 → 測試以 `vitest run src` 範圍避開 Playwright `e2e/` 收集；PR #41 合併後 rebase 即恢復 `npm run test`。）
 
 ---

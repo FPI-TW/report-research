@@ -43,6 +43,46 @@ test('多次連續輸入只觸發一次 onSubmit（最後一次值）', () => {
   expect(onSubmit).toHaveBeenCalledWith('ABC')
 })
 
+test('debounce 期間若 onSubmit 已更新，應呼叫最新 handler', () => {
+  const oldSubmit = vi.fn()
+  const newSubmit = vi.fn()
+  const { rerender } = wrap(<SearchBar value="" onSubmit={oldSubmit} onClear={vi.fn()} />)
+  const input = screen.getByRole('textbox')
+
+  fireEvent.change(input, { target: { value: '台積電' } })
+
+  rerender(
+    <MantineProvider>
+      <SearchBar value="" onSubmit={newSubmit} onClear={vi.fn()} />
+    </MantineProvider>,
+  )
+
+  vi.advanceTimersByTime(450)
+
+  expect(oldSubmit).not.toHaveBeenCalled()
+  expect(newSubmit).toHaveBeenCalledTimes(1)
+  expect(newSubmit).toHaveBeenCalledWith('台積電')
+})
+
+test('外部 value 變更同步時應取消 pending debounce，避免回寫舊查詢', () => {
+  const onSubmit = vi.fn()
+  const { rerender } = wrap(<SearchBar value="" onSubmit={onSubmit} onClear={vi.fn()} />)
+  const input = screen.getByRole('textbox')
+
+  fireEvent.change(input, { target: { value: '舊查詢' } })
+
+  rerender(
+    <MantineProvider>
+      <SearchBar value="新查詢" onSubmit={onSubmit} onClear={vi.fn()} />
+    </MantineProvider>,
+  )
+
+  vi.advanceTimersByTime(450)
+
+  expect(onSubmit).not.toHaveBeenCalled()
+  expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('新查詢')
+})
+
 // ── Enter ─────────────────────────────────────────────────────────────────────
 
 test('Enter 立即觸發 onSubmit 並取消 debounce', () => {

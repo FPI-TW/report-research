@@ -95,7 +95,11 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
 
         {isError ? (
           <ErrorState onRetry={() => void refetch()} />
-        ) : !isLoading && rows.length === 0 ? (
+        ) : isLoading ? (
+          <div className={styles.loadingWrap}>
+            <Loader />
+          </div>
+        ) : rows.length === 0 ? (
           <EmptyState onReset={() => setFilters(DEFAULT_FILTERS)} />
         ) : (
           <div className={styles.resultsWrap}>

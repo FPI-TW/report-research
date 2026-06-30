@@ -26,6 +26,9 @@ async function login(page) {
 }
 
 test('ask：提問串流 + 來源 + 多輪', async ({ page }) => {
+  // 兩輪 Haiku 串流各約 30-100s（含思考、追問另含 condense），遠超 Playwright 預設 30s 全域 test timeout；
+  // 無 playwright.config 故在此明確放寬，覆蓋「等第一輪結束 + 2× 150s 答案等待 + 多輪 + poll」的總時長。
+  test.setTimeout(540_000)
   const errors = []
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 
@@ -47,8 +50,8 @@ test('ask：提問串流 + 來源 + 多輪', async ({ page }) => {
   await page.getByTestId('ask-send').click()
   await respPromise
 
-  // 串流答案（ask-answer data-testid）出現且有內容（最多等 90s 含思考時間）
-  await expect(page.getByTestId('ask-answer').first()).not.toBeEmpty({ timeout: 90_000 })
+  // 串流答案（ask-answer data-testid）出現且有內容（含思考時間；Haiku 串流實測 ~30-100s，留 150s 餘裕）
+  await expect(page.getByTestId('ask-answer').first()).not.toBeEmpty({ timeout: 150_000 })
 
   // ── Step 4: 來源（條件式）────────────────────────────────────────────────
   // 等動作列出現（代表串流完成）
@@ -61,6 +64,9 @@ test('ask：提問串流 + 來源 + 多輪', async ({ page }) => {
   }
 
   // ── Step 5: 多輪：第二輪追問 ─────────────────────────────────────────────
+  // 追問前必須等第一輪串流「完全結束」：AskComposer 在 streaming 時 disabled，
+  // 而 Step 3 僅等到首個 token 渲染（此時仍在串流）。輸入框重新可編輯 = streaming=false。
+  await expect(page.getByTestId('ask-input')).toBeEnabled({ timeout: 150_000 })
   await page.getByTestId('ask-input').fill('請進一步說明其中的風險因素')
   const resp2 = page.waitForResponse(
     (r) => r.url().includes('/api/ask'),
@@ -68,8 +74,17 @@ test('ask：提問串流 + 來源 + 多輪', async ({ page }) => {
   )
   await page.getByTestId('ask-send').click()
   await resp2
-  // 現在應有兩個 ask-answer（第一輪 + 第二輪）
-  await expect(page.getByTestId('ask-answer').nth(1)).not.toBeEmpty({ timeout: 90_000 })
+  // 第二輪問題泡泡應出現（多輪：同一對話內第二輪獨立渲染）
+  await expect(page.getByTestId('ask-q')).toHaveCount(2)
+  // 第二輪「回應」可能是正常答案（第二個 ask-answer 非空）或離題/無語料卡（ask-notice）——
+  // 追問經多輪 condense_and_classify 由後端判定，分類非確定性；前端只需正確渲染其中一種。
+  // 故斷言：第二輪產生了非空回應（答案或 notice），以 toPass 輪詢兜住串流延遲。
+  await expect(async () => {
+    const ans2 = page.getByTestId('ask-answer').nth(1)
+    const ans2Text = (await ans2.count()) > 0 ? (await ans2.textContent()) || '' : ''
+    const noticeCount = await page.getByTestId('ask-notice').count()
+    expect(ans2Text.length > 0 || noticeCount > 0).toBe(true)
+  }).toPass({ timeout: 150_000 })
 
   // ── Step 6: 歷史側欄 ─────────────────────────────────────────────────────
   // 完成後側欄應出現至少一筆歷史項目（對話在後端 done 後 refresh 寫入）

@@ -18,6 +18,14 @@ function stageLabel(stage: ReportStage | null): string {
   return REPORT_STAGE[stage] ?? '生成中…'
 }
 
+/** 後端固定回傳同源相對路徑（/api/report-doc/{id}/pdf），僅允許 http(s) 絕對網址或同源根相對路徑，
+ * 防禦性阻擋 javascript:/data: 等危險 scheme（縱使目前後端不會產生，作為深度防禦）。 */
+const SAFE_DOWNLOAD_URL = /^(?:https?:\/\/|\/)/
+
+function isSafeDownloadUrl(url: string): boolean {
+  return SAFE_DOWNLOAD_URL.test(url)
+}
+
 interface ReportPanelProps {
   turn: TurnState
   report: ReportState
@@ -131,6 +139,7 @@ function ReportDoneCard({
   downloadUrl: string
   onOpenFull: () => void
 }): JSX.Element {
+  const safe = isSafeDownloadUrl(downloadUrl)
   return (
     <Card withBorder radius="md" p="md" data-testid="report-done">
       <Stack gap="sm">
@@ -138,9 +147,15 @@ function ReportDoneCard({
           {title}
         </Text>
         <Group gap="sm">
-          <Anchor href={downloadUrl} download data-testid="report-download">
-            下載 PDF
-          </Anchor>
+          {safe ? (
+            <Anchor href={downloadUrl} download data-testid="report-download">
+              下載 PDF
+            </Anchor>
+          ) : (
+            <Button data-testid="report-download" size="xs" variant="default" disabled>
+              下載 PDF（連結不安全）
+            </Button>
+          )}
           <Button data-testid="report-viewfull" size="xs" variant="light" onClick={onOpenFull}>
             查看全文
           </Button>

@@ -124,6 +124,52 @@ describe('ReportPanel', () => {
     expect(onOpenFull).toHaveBeenCalledWith('r9')
   })
 
+  test('phase done 且 download_url 為安全同源相對路徑 → report-download 有正常可下載 href', () => {
+    const turn = emptyTurn('t1', '台積電?')
+    const report: ReportState = {
+      turnId: 't1',
+      phase: 'done',
+      stage: null,
+      markdown: '',
+      done: { report_id: 'r1', title: '台積電深度研報', download_url: '/api/report-doc/r1/pdf' },
+      error: null,
+    }
+    wrap(turn, report)
+
+    const link = screen.getByTestId('report-download')
+    expect(link).toHaveAttribute('href', '/api/report-doc/r1/pdf')
+    expect(link).toHaveAttribute('download')
+  })
+
+  test('phase done 且 download_url 為危險 scheme（javascript:）→ 不渲染危險 href（改為停用控制項）', () => {
+    const turn = emptyTurn('t1', '台積電?')
+    const report: ReportState = {
+      turnId: 't1',
+      phase: 'done',
+      stage: null,
+      markdown: '',
+      done: { report_id: 'r1', title: '台積電深度研報', download_url: 'javascript:alert(1)' },
+      error: null,
+    }
+    wrap(turn, report)
+
+    const control = screen.getByTestId('report-download')
+    expect(control).not.toHaveAttribute('href')
+    expect(control).toBeDisabled()
+  })
+
+  test('turn.reports 歷史資料含危險 download_url → 歷史重播卡片（共用 ReportDoneCard）同樣不渲染危險 href', () => {
+    const turn: TurnState = {
+      ...emptyTurn('t1', '台積電?'),
+      reports: [{ report_id: 'r9', title: '歷史研報', download_url: 'javascript:alert(1)', created_at: null }],
+    }
+    wrap(turn, IDLE_REPORT)
+
+    const control = screen.getByTestId('report-download')
+    expect(control).not.toHaveAttribute('href')
+    expect(control).toBeDisabled()
+  })
+
   test('report.turnId !== turn.id → 不渲染 generating/done（非本輪），offer/history 才適用', () => {
     const turn = { ...emptyTurn('t1', '台積電?'), offerReport: true }
     const report: ReportState = {

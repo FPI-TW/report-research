@@ -18,7 +18,7 @@ export default function AskPage() {
   const convos = useConversations()
   const reportStream = useReportStream()
   const { refresh: refreshConvos } = convos
-  const { conversationId, streaming, turns, send, loadConversation, newConversation } = ask
+  const { conversationId, streaming, turns, send, loadConversation, newConversation, appendTurnReport } = ask
   const { report, start: startReport, cancel: cancelReport } = reportStream
   const [modalId, setModalId] = useState<string | null>(null)
   const [fullReportId, setFullReportId] = useState<string | null>(null)
@@ -29,6 +29,19 @@ export default function AskPage() {
     if (wasStreaming.current && !streaming) refreshConvos()
     wasStreaming.current = streaming
   }, [streaming, refreshConvos])
+
+  // 研報完成後持久化到該輪的 turn.reports，讓 ReportPanel 的歷史重播分支（優先序 1）
+  // 永久保留完成卡片，不受共享 live report 狀態後續轉移到別輪影響（appendTurnReport 內建去重冪等）。
+  useEffect(() => {
+    if (report.phase === 'done' && report.done && report.turnId) {
+      appendTurnReport(report.turnId, {
+        report_id: report.done.report_id,
+        title: report.done.title,
+        download_url: report.done.download_url,
+        created_at: null,
+      })
+    }
+  }, [report.phase, report.done, report.turnId, appendTurnReport])
 
   const openConversation = useCallback(
     async (id: string) => {

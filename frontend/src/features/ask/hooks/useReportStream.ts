@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { streamReport } from '../lib/sse'
 import type { ReportStage, ReportDone } from '../lib/reportEvents'
 
@@ -84,6 +84,11 @@ export function useReportStream(): UseReportStream {
     },
     [cancel],
   )
+
+  // 卸載時中止飛行中的研報串流（例如切頁離開 AskPage），避免請求繼續跑到完成、
+  // setState 淪為無效的 no-op（元件已不存在）。不遞增 seqRef：元件本身已卸載，
+  // 不需要讓後續更新失效，單純釋放底層連線即可。
+  useEffect(() => () => ctrlRef.current?.abort(), [])
 
   return { report, start, cancel }
 }

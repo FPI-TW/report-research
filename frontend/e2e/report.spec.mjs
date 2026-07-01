@@ -39,7 +39,9 @@ test('report：問答觸發深度研報 offer → 生成 → 下載 → 全文�
   // 深度研報生成（檢索+撰寫+PDF 排版）比單純問答慢得多，且 offer 是否出現由後端
   // report_gate 決定（非確定性）。無 playwright.config，全域 test timeout 需在此明確放寬，
   // 覆蓋「等答案完成 + offer 判定 + 生成 + 下載/全文」的總時長。
-  test.setTimeout(600_000)
+  // 控制端實測完整研報端到端 ~298s（claude CLI 思考時間致首個 token 遲至 184s 才出現），
+  // 故報告完成等待與整體測試逾時都需放寬（540s / 900s）。
+  test.setTimeout(900_000)
   const errors = []
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 
@@ -79,7 +81,7 @@ test('report：問答觸發深度研報 offer → 生成 → 下載 → 全文�
   // ── Step 5: 接受 offer → 等待生成中 → 等待完成（放寬 timeout）────────────
   await page.getByTestId('report-offer-yes').click()
   await expect(page.getByTestId('report-generating')).toBeVisible({ timeout: 180_000 })
-  await expect(page.getByTestId('report-done')).toBeVisible({ timeout: 300_000 })
+  await expect(page.getByTestId('report-done')).toBeVisible({ timeout: 540_000 })
 
   // ── Step 6: 下載連結 ─────────────────────────────────────────────────────
   await expect(page.getByTestId('report-download')).toHaveAttribute(

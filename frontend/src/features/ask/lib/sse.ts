@@ -1,4 +1,5 @@
 import type { AskEvent } from './sseEvents'
+import type { ReportEvent } from './reportEvents'
 import { ApiError, redirectToLogin } from '../../../lib/api'
 
 /** SSE frame（event:/data: 行）→ 型別化事件；無 data 或壞 JSON 回 null。 */
@@ -17,12 +18,13 @@ export function parseFrame(frame: string): AskEvent | null {
   }
 }
 
-/**
- * POST /api/ask（text/event-stream），以 fetch reader 手解 SSE，yield 型別化事件。
- * 連線/abort 由呼叫端透過 signal 管理。401 → 導向登入並拋；非 OK/無 body → 拋。
- */
-export async function* streamAsk(body: object, signal: AbortSignal): AsyncGenerator<AskEvent> {
-  const resp = await fetch('/api/ask', {
+/** POST + text/event-stream 通用 fetch-reader；依 \n\n 切幀 → parseFrame → yield。 */
+export async function* readSSE(
+  url: string,
+  body: object,
+  signal: AbortSignal,
+): AsyncGenerator<AskEvent> {
+  const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -48,4 +50,14 @@ export async function* streamAsk(body: object, signal: AbortSignal): AsyncGenera
       if (evt) yield evt
     }
   }
+}
+
+/** POST /api/ask（text/event-stream），yield 型別化 ask 事件。 */
+export async function* streamAsk(body: object, signal: AbortSignal): AsyncGenerator<AskEvent> {
+  yield* readSSE('/api/ask', body, signal)
+}
+
+/** POST /api/report（text/event-stream），yield 型別化 report 事件。 */
+export async function* streamReport(body: object, signal: AbortSignal): AsyncGenerator<ReportEvent> {
+  yield* readSSE('/api/report', body, signal) as AsyncGenerator<ReportEvent>
 }

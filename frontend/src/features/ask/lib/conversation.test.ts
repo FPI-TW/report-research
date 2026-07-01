@@ -47,4 +47,29 @@ describe('historyToTurn', () => {
     expect(t.extSources).toHaveLength(2)
     expect(t.extSources.map((s) => s.url)).toEqual(['https://ok.com', 'http://also-ok.com'])
   })
+
+  test('historyToTurn 映射 reports（歷史研報陣列原樣保留）', () => {
+    const t = historyToTurn(
+      {
+        id: 'q4',
+        question: 'Q',
+        answer: 'A',
+        reports: [{ report_id: 'r1', title: '深度研報', download_url: '/api/report-doc/r1/pdf', created_at: null }],
+      },
+      'h3',
+    )
+    expect(t.reports).toEqual([
+      { report_id: 'r1', title: '深度研報', download_url: '/api/report-doc/r1/pdf', created_at: null },
+    ])
+  })
+
+  test('historyToTurn 無 reports 欄位 → turn.reports 為 undefined', () => {
+    const t = historyToTurn({ id: 'q5', question: 'Q', answer: 'A' }, 'h4')
+    expect(t.reports).toBeUndefined()
+  })
+
+  test('historyToTurn reports 為 null → turn.reports 為 undefined（非 [null] 或 [] ）', () => {
+    const t = historyToTurn({ id: 'q6', question: 'Q', answer: 'A', reports: null }, 'h5')
+    expect(t.reports).toBeUndefined()
+  })
 })

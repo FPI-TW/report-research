@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { streamAsk } from '../lib/sse'
 import { buildAskBody, emptyTurn, historyToTurn, type TurnState } from '../lib/conversation'
-import type { HistoryItem } from '../schemas'
+import type { HistoryItem, ReportSummary } from '../schemas'
 
 const HTTP = /^https?:\/\//i
 
@@ -12,6 +12,7 @@ export interface UseAskStream {
   send: (question: string) => void
   loadConversation: (items: HistoryItem[], id: string) => void
   newConversation: () => void
+  appendTurnReport: (turnId: string, summary: ReportSummary) => void
 }
 
 export function useAskStream(): UseAskStream {
@@ -113,7 +114,9 @@ export function useAskStream(): UseAskStream {
       cancelActive()
       setStreaming(false)
       setConversationId(id)
-      setTurns(items.map((it, i) => historyToTurn(it, `h${i}`)))
+      // id 用 qa_log 的 it.id（全域唯一）而非位置索引：位置式 h0/h1... 會在不同對話間重複，
+      // 導致 key={t.id} 不重掛載（dismissed 洩漏）且 ReportPanel 的 report.turnId===turn.id 誤配到別的對話。
+      setTurns(items.map((it) => historyToTurn(it, `h${it.id}`)))
     },
     [cancelActive],
   )
@@ -125,5 +128,19 @@ export function useAskStream(): UseAskStream {
     setTurns([])
   }, [cancelActive])
 
-  return { turns, conversationId, streaming, send, loadConversation, newConversation }
+  // 將完成的研報結果附加到指定輪次，使其脫離共享 live report 狀態的生命週期
+  // （見 useReportStream：第二份研報開始會 cancel() 重置共享狀態並轉移 turnId，
+  // 若不落地到該輪自己的 reports，前一輪的完成卡片會消失退化回 offer）。
+  // 以 report_id 去重，effect 重跑（如嚴格模式雙呼叫）不會重複附加。
+  const appendTurnReport = useCallback((turnId: string, summary: ReportSummary) => {
+    setTurns((prev) =>
+      prev.map((t) =>
+        t.id === turnId && !(t.reports ?? []).some((r) => r.report_id === summary.report_id)
+          ? { ...t, reports: [...(t.reports ?? []), summary] }
+          : t,
+      ),
+    )
+  }, [])
+
+  return { turns, conversationId, streaming, send, loadConversation, newConversation, appendTurnReport }
 }

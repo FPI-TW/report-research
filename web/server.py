@@ -915,7 +915,9 @@ async def logout():
 
 @app.get("/")
 async def index():
-    return _static_page("index.html")
+    # cutover：首頁已遷至 SPA（搜尋/問答/研報同在 /app，導覽相連）；舊 index.html 保留檔案，
+    # 僅不再由此服務（對齊 /monitor → /app/monitor）。落地目標＝檢索頁。
+    return RedirectResponse("/app/search", status_code=307)
 
 
 # ───── SPA（/app 子路徑；shell + 雜湊資產，純服務無業務邏輯）─────

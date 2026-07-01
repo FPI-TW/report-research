@@ -1,39 +1,30 @@
-import { Suspense, lazy, type ReactNode } from 'react'
-import { createBrowserRouter } from 'react-router'
+import { Suspense, lazy } from 'react'
+import { createBrowserRouter, Navigate, Outlet } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
-import { AppShell, Container, Loader, Title, Text, VisuallyHidden } from '@mantine/core'
+import { AppShell, Loader, Title, VisuallyHidden } from '@mantine/core'
+import { AppNav } from './components/AppNav'
 
 const MonitorPage = lazy(() => import('./features/monitor/MonitorPage'))
 const SearchPage = lazy(() => import('./features/search/SearchPage'))
 const AskPage = lazy(() => import('./features/ask/AskPage'))
 
-function Layout({ children }: { children: ReactNode }) {
+function RootLayout() {
   return (
-    <AppShell padding="md">
+    <AppShell header={{ height: 56 }} padding="md">
+      <AppShell.Header>
+        <AppNav />
+      </AppShell.Header>
       <AppShell.Main>
         {/* 全站唯一 h1（視覺隱藏）：確保每頁有正常的 h1→h2 標題梯級 */}
         <VisuallyHidden component="h1">廷豐智能研報</VisuallyHidden>
-        <Container size="lg">{children}</Container>
+        <Outlet />
       </AppShell.Main>
     </AppShell>
   )
 }
 
-function Home() {
-  return (
-    <Layout>
-      <Title order={2}>廷豐智能研報</Title>
-      <Text c="dimmed">SPA 地基已就緒。</Text>
-    </Layout>
-  )
-}
-
 function NotFound() {
-  return (
-    <Layout>
-      <Title order={3}>找不到頁面</Title>
-    </Layout>
-  )
+  return <Title order={3}>找不到頁面</Title>
 }
 
 function RouteFallback() {
@@ -41,43 +32,42 @@ function RouteFallback() {
 }
 
 // router 建在模組層（render 樹之外），basename 無尾斜線。
-const router = createBrowserRouter(
-  [
-    { path: '/', element: <Home /> },
-    {
-      path: '/monitor',
-      element: (
-        <Layout>
+// eslint-disable-next-line react-refresh/only-export-components
+export const routes = [
+  {
+    element: <RootLayout />,
+    children: [
+      { path: '/', element: <Navigate to="/search" replace /> },
+      {
+        path: '/monitor',
+        element: (
           <Suspense fallback={<RouteFallback />}>
             <MonitorPage />
           </Suspense>
-        </Layout>
-      ),
-    },
-    {
-      path: '/search',
-      element: (
-        <Layout>
+        ),
+      },
+      {
+        path: '/search',
+        element: (
           <Suspense fallback={<RouteFallback />}>
             <SearchPage />
           </Suspense>
-        </Layout>
-      ),
-    },
-    {
-      path: '/ask',
-      element: (
-        <Layout>
+        ),
+      },
+      {
+        path: '/ask',
+        element: (
           <Suspense fallback={<RouteFallback />}>
             <AskPage />
           </Suspense>
-        </Layout>
-      ),
-    },
-    { path: '*', element: <NotFound /> },
-  ],
-  { basename: '/app' },
-)
+        ),
+      },
+      { path: '*', element: <NotFound /> },
+    ],
+  },
+]
+
+const router = createBrowserRouter(routes, { basename: '/app' })
 
 export default function App() {
   return <RouterProvider router={router} />

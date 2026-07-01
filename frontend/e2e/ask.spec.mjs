@@ -54,13 +54,17 @@ test('ask：提問串流 + 來源 + 多輪', async ({ page }) => {
   await expect(page.getByTestId('ask-answer').first()).not.toBeEmpty({ timeout: 150_000 })
 
   // ── Step 4: 來源（條件式）────────────────────────────────────────────────
-  // 等動作列出現（代表串流完成）
+  // LLM 是否真的命中可引用來源仍有非決定性，因此「來源 toggle 完全沒出現」可接受；
+  // 但一旦 toggle 已出現，Turn 元件契約就是 sources.length > 0 且展開後應看得到 ask-src。
+  // 若此時沒有任何 ask-src，代表前端 UI / 狀態同步出了問題，測試必須失敗而不能略過。
   const actionsBar = page.getByTestId('ask-sources-toggle')
   const actionsVisible = await actionsBar.isVisible({ timeout: 5_000 }).catch(() => false)
   if (actionsVisible) {
     // 展開來源清單確認至少一筆來源
     await actionsBar.click()
     await expect(page.getByTestId('ask-src').first()).toBeVisible({ timeout: 5_000 })
+  } else {
+    console.log('[ask e2e] no sources surfaced — skipping source assertions')
   }
 
   // ── Step 5: 多輪：第二輪追問 ─────────────────────────────────────────────

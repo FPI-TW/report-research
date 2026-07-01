@@ -53,25 +53,16 @@ test('ask：提問串流 + 來源 + 多輪', async ({ page }) => {
   // 串流答案（ask-answer data-testid）出現且有內容（含思考時間；Haiku 串流實測 ~30-100s，留 150s 餘裕）
   await expect(page.getByTestId('ask-answer').first()).not.toBeEmpty({ timeout: 150_000 })
 
-  // ── Step 4: 來源（條件式，軟性斷言）──────────────────────────────────────
-  // 等動作列出現（代表串流完成）。真實 LLM 答案是否命中 [n] 來源具非決定性
-  // （例如答案被判為 notice 時，來源清單改由 !isNotice 另行 gate，即使
-  // toggle 因 sources.length>0 而出現，展開後也可能一筆都不顯示）。
-  // 因此沒命中來源時記錄可見的 skip 訊息並讓測試繼續，不因此中斷整支 e2e；
-  // 但一旦來源清單真的展開出至少一筆，仍需正確顯示——這條斷言不放寬。
+  // ── Step 4: 來源（條件式）────────────────────────────────────────────────
+  // LLM 是否真的命中可引用來源仍有非決定性，因此「來源 toggle 完全沒出現」可接受；
+  // 但一旦 toggle 已出現，Turn 元件契約就是 sources.length > 0 且展開後應看得到 ask-src。
+  // 若此時沒有任何 ask-src，代表前端 UI / 狀態同步出了問題，測試必須失敗而不能略過。
   const actionsBar = page.getByTestId('ask-sources-toggle')
   const actionsVisible = await actionsBar.isVisible({ timeout: 5_000 }).catch(() => false)
   if (actionsVisible) {
     // 展開來源清單確認至少一筆來源
     await actionsBar.click()
-    const hasSource = await page
-      .getByTestId('ask-src')
-      .first()
-      .isVisible({ timeout: 5_000 })
-      .catch(() => false)
-    if (!hasSource) {
-      console.log('[ask e2e] no sources surfaced — skipping source assertions')
-    }
+    await expect(page.getByTestId('ask-src').first()).toBeVisible({ timeout: 5_000 })
   } else {
     console.log('[ask e2e] no sources surfaced — skipping source assertions')
   }

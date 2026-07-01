@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "5.4.0",
-    "@mantine/charts": "^9.4.1",
+    "@mantine/charts": "9.4.1",
     "@mantine/core": "9.4.1",
     "@mantine/form": "9.4.1",
     "@mantine/hooks": "9.4.1",
@@ -24,7 +24,7 @@
     "react-dom": "19.2.7",
     "react-hook-form": "7.80.0",
     "react-router": "8.0.1",
-    "recharts": "^3.9.1",
+    "recharts": "3.9.1",
     "zod": "4.4.3"
   },
   "devDependencies": {

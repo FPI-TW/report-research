@@ -8,10 +8,11 @@ const PALETTE = ['blue.6', 'teal.6', 'orange.6', 'grape.6', 'red.6', 'cyan.6']
 /**
  * 研報圖表元件。對齊 app/services/chart.py 語意：
  * - pie 遇任一負值 → 拒繪（回傳 null）
- * - series 為空、或 bar/line 的 x 為空 → 回傳 null
+ * - series 為空、或 x 為空（不分 bar/line/pie）→ 回傳 null
  */
 export function ReportChart({ block }: { block: ChartBlock }): JSX.Element | null {
   if (block.series.length === 0) return null
+  if (block.x.length === 0) return null
 
   if (block.type === 'pie') {
     const values = block.series[0]?.values ?? []
@@ -31,12 +32,10 @@ export function ReportChart({ block }: { block: ChartBlock }): JSX.Element | nul
     )
   }
 
-  if (block.x.length === 0) return null
-
   const data = block.x.map((xv, i) => {
     const row: Record<string, string | number> = { x: String(xv) }
     block.series.forEach((s) => {
-      row[s.name] = s.values[i]
+      row[s.name] = s.values[i] ?? 0
     })
     return row
   })

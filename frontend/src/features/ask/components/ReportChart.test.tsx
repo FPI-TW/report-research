@@ -104,6 +104,18 @@ describe('ReportChart', () => {
     expect(screen.queryByTestId('report-chart')).toBeNull()
   })
 
+  test('pie 的 x 為空 → 回傳 null（不應渲染空的 DonutChart）', () => {
+    wrap({
+      type: 'pie',
+      title: '市占率',
+      x: [],
+      series: [{ name: 'a', values: [] }],
+      unit: null,
+      source: null,
+    })
+    expect(screen.queryByTestId('report-chart')).toBeNull()
+  })
+
   test('有 title → 顯示標題文字', () => {
     wrap({
       type: 'bar',

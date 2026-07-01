@@ -183,6 +183,30 @@ test('search: 多段顯示「顯示其他 N 段」並可展開', () => {
   expect(screen.getByText('第二段')).toBeInTheDocument()
 })
 
+test('展開按鈕 aria-expanded 隨狀態翻轉（可及性）', () => {
+  const row: Row = {
+    ...baseRow, matchCount: 2, rank: 1, bestScore: 0.9,
+    passages: [
+      { score: 0.9, chunk_index: 0, content: '第一段' },
+      { score: 0.7, chunk_index: 1, content: '第二段' },
+    ],
+  }
+  wrap(<ResultCard row={row} mode="search" terms={[]} onOpen={vi.fn()} />)
+  const toggle = screen.getByText(/顯示其他 1 段/)
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(toggle).toHaveAttribute('type', 'button')
+  const controlsId = toggle.getAttribute('aria-controls')
+  expect(controlsId).toBeTruthy()
+
+  fireEvent.click(toggle)
+
+  // 同一顆按鈕（收合），aria-expanded 應翻為 true，且指向的內容確實存在
+  const collapseBtn = screen.getByText('收合')
+  expect(collapseBtn).toBe(toggle)
+  expect(collapseBtn).toHaveAttribute('aria-expanded', 'true')
+  expect(document.getElementById(controlsId!)).toBeInTheDocument()
+})
+
 test('展開按鈕不觸發整卡 onOpen', () => {
   const onOpen = vi.fn()
   const row: Row = {

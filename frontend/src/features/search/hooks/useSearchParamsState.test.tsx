@@ -107,3 +107,27 @@ test('URL 無 view 時用 localStorage', () => {
   })
   expect(result.current.viewState.view).toBe('table')
 })
+
+// ── Phase 2c 迴歸測試：group 選擇需在 view 切換間保留 ────────────────────────
+
+test('group 選擇在 grouped→table→grouped 切換中保留', () => {
+  const { result } = renderHook(() => useSearchParamsState(allow), {
+    wrapper: wrap('/search'),
+  })
+
+  // 依市場分組
+  act(() => result.current.setViewState({ view: 'group', group: 'market' }))
+  expect(result.current.viewState).toEqual({ view: 'group', group: 'market' })
+
+  // 切到表格檢視（模擬 SearchPage 的 onChange：保留既有 viewState.group）
+  act(() =>
+    result.current.setViewState({ ...result.current.viewState, view: 'table' }),
+  )
+  expect(result.current.viewState.view).toBe('table')
+
+  // 切回列表檢視——分組依據應仍是「market」，而非退回預設「month」
+  act(() =>
+    result.current.setViewState({ ...result.current.viewState, view: 'group' }),
+  )
+  expect(result.current.viewState).toEqual({ view: 'group', group: 'market' })
+})

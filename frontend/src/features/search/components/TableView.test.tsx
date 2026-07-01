@@ -50,3 +50,23 @@ test('表頭有 aria-sort', () => {
   fireEvent.click(screen.getByText('報告名稱'))
   expect(screen.getByText(/報告名稱/).closest('th')).toHaveAttribute('aria-sort', 'ascending')
 })
+
+// ── Phase 2c a11y/空值 ────────────────────────────────────────────────────────
+
+test('列有 aria-label 為報告名稱（可及性）', () => {
+  wrap(<TableView rows={rows} mode="browse" onOpen={vi.fn()} />)
+  const bodyRows = screen.getAllByRole('row').slice(1)
+  expect(bodyRows[0]).toHaveAttribute('aria-label', 'Zebra')
+  expect(bodyRows[1]).toHaveAttribute('aria-label', 'Apple')
+})
+
+test('市場為空時渲染「—」而非空白', () => {
+  const rowsWithEmptyMarket: Row[] = [
+    { report_id: 'c', file_name: 'NoMarket', market: null, report_date: '2026-02-01' } as Row,
+  ]
+  wrap(<TableView rows={rowsWithEmptyMarket} mode="browse" onOpen={vi.fn()} />)
+  const bodyRow = screen.getAllByRole('row')[1]
+  // 市場欄＝第 2 個儲存格（第 1 個為報告名稱）
+  const marketCell = within(bodyRow).getAllByRole('cell')[1]
+  expect(marketCell).toHaveTextContent('—')
+})

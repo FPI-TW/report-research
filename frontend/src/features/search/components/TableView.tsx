@@ -83,7 +83,7 @@ export function TableView({ rows, mode, onOpen }: TableViewProps) {
       case 'name':
         return row.file_name || '—'
       case 'market':
-        return mLabel(row.market ?? '')
+        return row.market ? mLabel(row.market) : '—'
       case 'type':
         return tLabel(row.report_type ?? '') || '—'
       case 'date':
@@ -128,6 +128,7 @@ export function TableView({ rows, mode, onOpen }: TableViewProps) {
           <tr
             key={row.report_id}
             data-report-id={row.report_id}
+            aria-label={row.file_name || undefined}
             tabIndex={0}
             onClick={() => handleRowClick(row.report_id)}
             onKeyDown={(e) => handleRowKeyDown(e, row.report_id)}

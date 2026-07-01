@@ -17,3 +17,9 @@ test('點表格觸發 onChange("table")', () => {
   fireEvent.click(screen.getByRole('radio', { name: '表格' }))
   expect(onChange).toHaveBeenCalledWith('table')
 })
+
+test('按鈕皆為 type="button"（避免誤觸表單送出）', () => {
+  wrap(<ViewSwitch value="group" onChange={vi.fn()} />)
+  expect(screen.getByRole('radio', { name: '列表' })).toHaveAttribute('type', 'button')
+  expect(screen.getByRole('radio', { name: '表格' })).toHaveAttribute('type', 'button')
+})

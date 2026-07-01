@@ -48,13 +48,15 @@ test('group 檢視 + market 分組輸出 group', () => {
   expect(viewStateToParams({ view: 'group', group: 'market' })).toEqual([['group', 'market']])
 })
 
-test('table 檢視時 group 不輸出（即使非 month）', () => {
-  expect(viewStateToParams({ view: 'table', group: 'market' })).toEqual([['view', 'table']])
+test('table 檢視時 group 仍輸出（跨檢視保留分組選擇，Phase 2c 修正）', () => {
+  expect(viewStateToParams({ view: 'table', group: 'market' })).toEqual([
+    ['view', 'table'],
+    ['group', 'market'],
+  ])
 })
 
 test('paramsToViewState 還原合法值', () => {
   const sp = new URLSearchParams('view=table&group=market')
-  // table 檢視 group 仍解析（記憶使用者偏好），但 viewStateToParams 在 table 時不輸出
   expect(paramsToViewState(sp)).toEqual({ view: 'table', group: 'market' })
 })
 

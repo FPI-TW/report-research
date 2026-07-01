@@ -1,4 +1,5 @@
 import type { AskEvent } from './sseEvents'
+import type { ReportEvent } from './reportEvents'
 import { ApiError, redirectToLogin } from '../../../lib/api'
 
 /** SSE frame（event:/data: 行）→ 型別化事件；無 data 或壞 JSON 回 null。 */
@@ -54,4 +55,9 @@ export async function* readSSE(
 /** POST /api/ask（text/event-stream），yield 型別化 ask 事件。 */
 export async function* streamAsk(body: object, signal: AbortSignal): AsyncGenerator<AskEvent> {
   yield* readSSE('/api/ask', body, signal)
+}
+
+/** POST /api/report（text/event-stream），yield 型別化 report 事件。 */
+export async function* streamReport(body: object, signal: AbortSignal): AsyncGenerator<ReportEvent> {
+  yield* readSSE('/api/report', body, signal) as AsyncGenerator<ReportEvent>
 }

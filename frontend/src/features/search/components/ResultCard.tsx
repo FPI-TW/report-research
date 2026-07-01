@@ -38,6 +38,10 @@ export const ResultCard = React.memo(function ResultCard({ row, mode, onOpen, te
     }
   }
 
+  const handleToggleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+  }
+
   const cardContent = (
     <>
       {/* Top row: market badge + filename + rank */}
@@ -152,6 +156,7 @@ export const ResultCard = React.memo(function ResultCard({ row, mode, onOpen, te
               type="button"
               aria-expanded={expanded}
               aria-controls={extraPassagesId}
+              onKeyDown={handleToggleKeyDown}
               onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v) }}
               style={{
                 marginTop: 4,

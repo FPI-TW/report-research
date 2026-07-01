@@ -220,3 +220,31 @@ test('展開按鈕不觸發整卡 onOpen', () => {
   fireEvent.click(screen.getByText(/顯示其他 1 段/))
   expect(onOpen).not.toHaveBeenCalled()
 })
+
+test('展開按鈕 Enter 鍵不觸發整卡 onOpen', () => {
+  const onOpen = vi.fn()
+  const row: Row = {
+    ...baseRow, matchCount: 2, rank: 1, bestScore: 0.9,
+    passages: [
+      { score: 0.9, chunk_index: 0, content: '第一段' },
+      { score: 0.7, chunk_index: 1, content: '第二段' },
+    ],
+  }
+  wrap(<ResultCard row={row} mode="search" terms={[]} onOpen={onOpen} />)
+  screen.getByText(/顯示其他 1 段/).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(onOpen).not.toHaveBeenCalled()
+})
+
+test('展開按鈕 Space 鍵不觸發整卡 onOpen', () => {
+  const onOpen = vi.fn()
+  const row: Row = {
+    ...baseRow, matchCount: 2, rank: 1, bestScore: 0.9,
+    passages: [
+      { score: 0.9, chunk_index: 0, content: '第一段' },
+      { score: 0.7, chunk_index: 1, content: '第二段' },
+    ],
+  }
+  wrap(<ResultCard row={row} mode="search" terms={[]} onOpen={onOpen} />)
+  screen.getByText(/顯示其他 1 段/).dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+  expect(onOpen).not.toHaveBeenCalled()
+})

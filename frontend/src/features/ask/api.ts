@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ApiError, getJSON, redirectToLogin } from '../../lib/api'
-import { conversationSummarySchema, historyItemSchema, type ConversationSummary, type HistoryItem } from './schemas'
+import { conversationSummarySchema, historyItemSchema, reportFullSchema, type ConversationSummary, type HistoryItem, type ReportFull } from './schemas'
 
 export function getConversations(): Promise<ConversationSummary[]> {
   return getJSON('/api/conversations?limit=50', z.array(conversationSummarySchema), { cache: 'no-store' })
@@ -38,4 +38,8 @@ export async function sendFeedback(qaId: string, value: 'like' | 'dislike'): Pro
   } catch {
     /* 忽略 */
   }
+}
+
+export async function getReportFull(id: string): Promise<ReportFull> {
+  return getJSON(`/api/report/${encodeURIComponent(id)}/full`, reportFullSchema)
 }

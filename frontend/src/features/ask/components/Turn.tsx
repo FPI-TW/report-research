@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import type { TurnState } from '../lib/conversation'
+import type { ReportState } from '../hooks/useReportStream'
 import { renderMarkdown } from '../lib/markdown'
 import { ProcessSteps } from './ProcessSteps'
+import { ReportPanel } from './ReportPanel'
 import { sendFeedback } from '../api'
 import { mColor, mLabel, fmtDate } from '../../search/components/meta'
 import styles from './AskPage.module.css'
@@ -12,6 +14,10 @@ interface TurnProps {
   turn: TurnState
   onCite: (reportId: string) => void
   onFeedback?: (qaId: string, value: 'like' | 'dislike') => void
+  report: ReportState
+  onStartReport: () => void
+  onDismissReport: () => void
+  onOpenFull: (reportId: string) => void
 }
 
 function getDomain(url: string): string {
@@ -22,7 +28,7 @@ function getDomain(url: string): string {
   }
 }
 
-export function Turn({ turn, onCite, onFeedback }: TurnProps) {
+export function Turn({ turn, onCite, onFeedback, report, onStartReport, onDismissReport, onOpenFull }: TurnProps) {
   const [fb, setFb] = useState<'like' | 'dislike' | null>(turn.feedback)
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [extOpen, setExtOpen] = useState(false)
@@ -190,6 +196,17 @@ export function Turn({ turn, onCite, onFeedback }: TurnProps) {
             </button>
           )}
         </div>
+      )}
+
+      {/* 深度研報面板：主動建議 / 生成中 / 完成 / 歷史重播（notice 時不顯示） */}
+      {!isNotice && (
+        <ReportPanel
+          turn={turn}
+          report={report}
+          onStart={onStartReport}
+          onDismiss={onDismissReport}
+          onOpenFull={onOpenFull}
+        />
       )}
     </div>
   )

@@ -5,16 +5,40 @@ import { theme } from '../../../theme'
 import { Turn } from './Turn'
 import { emptyTurn } from '../lib/conversation'
 import type { TurnState } from '../lib/conversation'
+import type { ReportState } from '../hooks/useReportStream'
 
 vi.mock('../api', () => ({ sendFeedback: vi.fn().mockResolvedValue(undefined) }))
 import * as api from '../api'
 
 afterEach(() => vi.clearAllMocks())
 
-const wrap = (t: TurnState, onCite = vi.fn()) =>
+const IDLE_REPORT: ReportState = {
+  turnId: null,
+  phase: 'idle',
+  stage: null,
+  markdown: '',
+  done: null,
+  error: null,
+}
+
+interface WrapOverrides {
+  report: ReportState
+  onStartReport: () => void
+  onDismissReport: () => void
+  onOpenFull: (reportId: string) => void
+}
+
+const wrap = (t: TurnState, onCite = vi.fn(), overrides: Partial<WrapOverrides> = {}) =>
   render(
     <MantineProvider theme={theme}>
-      <Turn turn={t} onCite={onCite} />
+      <Turn
+        turn={t}
+        onCite={onCite}
+        report={overrides.report ?? IDLE_REPORT}
+        onStartReport={overrides.onStartReport ?? vi.fn()}
+        onDismissReport={overrides.onDismissReport ?? vi.fn()}
+        onOpenFull={overrides.onOpenFull ?? vi.fn()}
+      />
     </MantineProvider>,
   )
 
@@ -129,5 +153,18 @@ describe('Turn', () => {
     const ext = screen.getByTestId('ask-ext')
     expect(ext.querySelector('a[href="https://example.com"]')).not.toBeNull()
     expect(ext).toHaveTextContent('Safe Link')
+  })
+
+  test('offerReport 為 true → 掛載 ReportPanel 顯示 report-offer；點「要」呼叫 onStartReport', () => {
+    const onStartReport = vi.fn()
+    wrap(doneTurn({ offerReport: true }), vi.fn(), { onStartReport })
+    expect(screen.getByTestId('report-offer')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('report-offer-yes'))
+    expect(onStartReport).toHaveBeenCalledTimes(1)
+  })
+
+  test('離題輪不掛載 ReportPanel（即使 offerReport 為 true 也不顯示 report-offer）', () => {
+    wrap(doneTurn({ phase: 'notice', notice: '無法回答此問題的內容', offerReport: true }))
+    expect(screen.queryByTestId('report-offer')).toBeNull()
   })
 })

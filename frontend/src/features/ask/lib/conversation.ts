@@ -1,5 +1,5 @@
 import type { ExtSource, SourceItem } from './sseEvents'
-import type { HistoryItem } from '../schemas'
+import type { HistoryItem, ReportSummary } from '../schemas'
 
 const HTTP = /^https?:\/\//i
 
@@ -21,6 +21,7 @@ export interface TurnState {
   reportTitle: string | null
   stage: string | null
   webUsed: boolean
+  reports?: ReportSummary[]
 }
 
 export function buildAskBody(
@@ -69,5 +70,6 @@ export function historyToTurn(item: HistoryItem, id: string): TurnState {
     reportTitle: null,
     stage: null,
     webUsed: (item.ext_sources ?? []).length > 0,
+    reports: item.reports ?? undefined,
   }
 }

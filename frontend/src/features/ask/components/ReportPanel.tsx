@@ -2,7 +2,6 @@ import { useState, type JSX } from 'react'
 import { Alert, Anchor, Button, Card, Group, Stack, Text } from '@mantine/core'
 import type { TurnState } from '../lib/conversation'
 import type { ReportState } from '../hooks/useReportStream'
-import type { ReportSummary } from '../schemas'
 import type { ReportStage } from '../lib/reportEvents'
 import { renderReport } from '../lib/reportMarkdown'
 
@@ -20,7 +19,7 @@ function stageLabel(stage: ReportStage | null): string {
 }
 
 interface ReportPanelProps {
-  turn: TurnState & { reports?: ReportSummary[] }
+  turn: TurnState
   report: ReportState
   onStart: () => void
   onDismiss: () => void
@@ -61,7 +60,9 @@ export function ReportPanel({ turn, report, onStart, onDismiss, onOpenFull }: Re
             <Text size="sm" c="dimmed" data-testid="report-status">
               {stageLabel(report.stage)}
             </Text>
-            <div data-testid="report-preview">{renderReport(report.markdown)}</div>
+            <div data-testid="report-preview" aria-live="polite">
+              {renderReport(report.markdown)}
+            </div>
           </Stack>
         </Card>
       )

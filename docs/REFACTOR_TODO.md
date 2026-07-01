@@ -42,11 +42,11 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 - [x] **_safe_next 收斂控制字元** — `web/server.py` `_safe_next` 目前僅濾 `\r`/`\n`，其餘 C0 控制字元靠下游 Starlette `quote()` 兜底；改 `any(ord(c) < 0x20 ...)` 讓白名單自身完備（縱深防禦）。[小]
 - [x] **cutover 測試 per-request cookies 棄用** — `tests/test_spa_serving.py::test_legacy_monitor_redirects_to_spa` 用 per-request `cookies=`（deprecation warning）；改 `TestClient(app, cookies=_auth_cookies())` 實例式（與 Task 3 修法一致）。[小]
 
-### A5. 遷移前需鎖定的架構決策
-- [ ] **共用純函式統一策略** — `frontend/src/lib/eta.ts`、`features/monitor/rate.ts` 已移植自 `web/static/app/eta.js`。Phase 2+ 前明確：哪些純函式進 `frontend/lib/`、vanilla 版何時刪、是否 monorepo shared（目前直接 copy 可行）。
-- [ ] **遷移頁的 UI 狀態管理** — 伺服器狀態用已選的 **TanStack Query**；UI 狀態（篩選/排序/檢視/URL 同步）用 React state/context + react-router `searchParams`。**不引入 Zustand/Redux**（避免偏離已定棧）。
-- [ ] **SSE 整合手法（Phase 3 前鎖定）** — ask/report 串流務必沿用 `ask.js` 既有強健語意（result/assistant fallback、只對 API 529 重試、逾時已串文字則 fail-open）。TanStack Query 不原生支援 SSE → 採 `experimental_streamedQuery` 或手動 `setQueryData`，連線自管 + abort。
-- [ ] **圖表庫選型（Phase 6 前鎖定）** — 候選 `@mantine/charts` / visx / ECharts；注意後端 `app/services/chart.py` 的 SVG 是給 PDF 用、與前端圖表庫無關。
+### A5. 遷移前需鎖定的架構決策（皆已由 Phase 2–4 實作定案）
+- [x] **共用純函式統一策略** — 定案＝**目前直接 copy 可行**：`frontend/src/lib/`（eta 等）與 features 內純函式（rate/grouping/filters/terms）分置；vanilla 版於 Phase 5 終局退役時一併刪，暫不做 monorepo shared。
+- [x] **遷移頁的 UI 狀態管理** — 定案並貫徹 Phase 2–4：伺服器狀態 TanStack Query、UI 狀態 React state + react-router `searchParams`（view/group/tableSort 為呈現狀態不進 query key），**未引入 Zustand/Redux**。
+- [x] **SSE 整合手法** — Phase 3（PR #44）定案：沿用 `ask.js` result/assistant fallback、只對 529 重試、逾時已串文字 fail-open；`lib/sse.ts` 抽 `readSSE` 手動連線 + abort（未採 `experimental_streamedQuery`），Phase 4 report 串流重用。
+- [x] **圖表庫選型** — Phase 4（PR #45）定案＝**`@mantine/charts@9.4.1`（+ recharts）**；後端 `chart.py` 的 PDF SVG 與前端圖表庫各自獨立、互不影響。
 
 ---
 
@@ -63,6 +63,7 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 - **Phase 2b 平價清單（已全部收齊）**：(1) `MarketIndex` 改吃 `/api/stats` 全語料各市場 count ✅；(2) `DrillView` 標頭補總篇數 ✅；(3) `LoadMore` 補「還有 N 篇」 ✅；(4) `React.memo(ResultCard)` 已在 2a 實作 ✅；(5) 未分類群 sentinel 以「未分類」呈現達語意平價 ✅。
 - **更新（2026-06-30，2b 最終審查）**：opus 整支審查 **Ready-to-merge（0 Critical）**；173 vitest + build + eslint + live e2e（:8098）2 passed 全綠。審查後補：SearchPage「切檢視不重抓」回歸測試、drill+search 片段高亮透傳。
 - **Phase 2c 清單（cutover 增量，含 2b 審查延後 Minor）**：cutover 把 `/` 導向 `/app/search`（如 monitor，需 :8097 後端先對齊現行 main）；market 分組經表格往返遺失（持久化 group 或文件化接受）；檢視工具列改恆顯（空/載入也可切）；a11y 批次（表格列 role/aria-label、展開鈕 aria-expanded、ViewSwitch 鈕 type=button）；TableView 空 market 顯 '—' 對齊。
+- **Phase 2c 更新（2026-07-01，PR #48 已合併）**：**非 cutover 項全數交付**——分組跨表格往返持久化（`viewStateToParams` 恆寫 `group`）、工具列恆顯、a11y 批次、TableView 空 market `—`。唯餘 cutover redirect（`/`→`/app/search`），見下方「全站導覽 + 統一 cutover」。
 
 ### Phase 3 — ask 串流問答　[風險 高｜最高難度區]　✅ 已完成（PR #44）
 - **遷移模組**：`ask.js`(676，SSE+多輪狀態) / `markdown.js`(172) / `modal.js`(75) / `confirm.js`(52)
@@ -72,12 +73,18 @@ PR #40（`feat/frontend-react-spa-foundation`）已交付 React SPA 的 **Phase 
 - **依賴**：Phase 2（共用側欄/篩選面板）
 - **交付（2026-07-01，PR #44，off main 89a0d8e）**：SDD 12 任務 + 逐任務審查 + opus 整支審查（Merge after fixes→已修）；新增 `/app/ask`（**未 cutover**，後端零變動、無 schema）。雙重 latest-wins、XSS 安全 markdown（無 `dangerouslySetInnerHTML`、外部連結 http-only 串流/重播兩路徑一致）、多輪 condense、live e2e（:8098）綠。
 - **Phase 3c 待辦（cutover/polish，承最終審查 Minor）**：cutover `/`→`/app/ask`（需 :8097 對齊現行 main）；`markdown.tsx` module-level `keySeq` 改局部閉包（每 token 全量 remount 隱患）；e2e Step 4 來源無命中時 soft-assert 讓 skip 可見；`openConversation`/`onClose` 用 `useCallback`；Sidebar 空清單/active class 測試；補各 hook 邊界測試（401 redirect、catch 錯誤訊息等，見 `.superpowers/sdd/progress.md` Minor 累積）。
+- **Phase 3c 更新（2026-07-01，PR #47 已合併）**：測試補強（Sidebar 空清單/active、hook 401/錯誤邊界）+ e2e soft-assert 交付；`useCallback` 於 Phase 4 重寫時已就位（AskPage `openConversation`/`handleNewConversation`/`handleStartReport`）；`markdown.tsx` key 穩定改由並行 session 更完整的 position-based 版處理（本線移除避免重疊，見 `.superpowers` 紀錄）。**cutover 落地目標修正為 `/app/search`（非 `/app/ask`）** 並與 2c/4 統一，見下方。
 
 ### Phase 4 — 深度研報 report　[風險 中高]
 - **範圍**：問答區「生成深度研報」面板 + report SSE + PDF 下載 + 報告 modal；report_gate（問答後是否建議報告）
 - **消費端點**：`/api/report`(SSE) / `/api/report-doc/{id}/pdf` / `/api/report/{id}/full` / `/api/report/{id}/file`
 - **重點**：複用 Phase 3 的 SSE 基礎抽象；長回答 markdown；PDF 下載 UX
 - **依賴**：Phase 3
+- **交付（2026-07-01，PR #45 已合併）✅**：SDD 12 任務 + opus 整支審查（→已修）；`/app/ask` 每輪深度研報（offer→生成→下載→全文 modal）、KPI 卡/圖表（`@mantine/charts`）、防禦解析、單一研報 latest-wins；後端零變動。附帶修復既有後端 bug（`llm.py` asyncio 64KB 行上限致長研報 `LimitOverrunError`，PR #46 已合併）。**未 cutover。**
+
+### 全站導覽 + Phase 2–4 統一 cutover　[cutover 前置已交付，redirect 待部署]
+- **全站導覽（2026-07-01，PR #49）**：SPA 分路後補頂部導覽（`AppNav`：品牌 + 搜尋/問答/監控 + active 態 + a11y landmark）+ 共用 `RootLayout`（`AppShell.Header` + `<Outlet/>`）+ `/app`→`/app/search` 落地；補齊 vanilla 搜尋↔問答切換平價。frontend-only、live :8098 客觀量測綠（導覽/active/redirect/AskPage 無 overflow/0 console error）。**cutover 前置。**
+- **統一 cutover（待 #49 合併 + main 部署到 :8097）**：2c/3c/4 皆已在 SPA 且導覽相連，cutover 收斂為**單一後端一行**——`web/server.py` `index()` 由服務 `index.html` 改 `RedirectResponse('/app/search', 307)`（仿既有 `/monitor`→`/app/monitor`），並更新 `tests/test_spa_serving.py` 對 `/` 的斷言。**使用者可見變更，部署後執行。**
 
 ### Phase 5 — login + help + 終局退役　[風險 中]
 - **範圍**：`login.html`(91) 可選移 `/app/login`（或保留 vanilla、認證層分離）；`help.html`(347) 靜態→React 元件；切 basename `/app`→`/`、退役 vanilla、刪 `web/static`、`index.html`(1031) 取消掛載

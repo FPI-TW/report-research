@@ -46,6 +46,7 @@ export function ViewSwitch({ value, onChange }: ViewSwitchProps) {
         return (
           <button
             key={opt.value}
+            type="button"
             role="radio"
             aria-checked={isChecked}
             tabIndex={isChecked ? 0 : -1}

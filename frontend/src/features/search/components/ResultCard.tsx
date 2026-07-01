@@ -13,6 +13,7 @@ interface ResultCardProps {
 export const ResultCard = React.memo(function ResultCard({ row, mode, onOpen, terms = [] }: ResultCardProps) {
   const color = mColor(row.market ?? '')
   const [expanded, setExpanded] = useState(false)
+  const extraPassagesId = `extra-passages-${row.report_id}`
 
   // Info row: source · date · type · (search: matchCount)
   const infoParts: string[] = []
@@ -35,6 +36,10 @@ export const ResultCard = React.memo(function ResultCard({ row, mode, onOpen, te
       e.preventDefault()
       onOpen(row.report_id)
     }
+  }
+
+  const handleToggleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
   }
 
   const cardContent = (
@@ -146,9 +151,13 @@ export const ResultCard = React.memo(function ResultCard({ row, mode, onOpen, te
               <Highlight text={firstPassage} terms={terms} />
             </div>
           )}
-          {extraPassages.length > 0 && !expanded && (
+          {extraPassages.length > 0 && (
             <button
-              onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
+              type="button"
+              aria-expanded={expanded}
+              aria-controls={extraPassagesId}
+              onKeyDown={handleToggleKeyDown}
+              onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v) }}
               style={{
                 marginTop: 4,
                 background: 'none',
@@ -159,24 +168,28 @@ export const ResultCard = React.memo(function ResultCard({ row, mode, onOpen, te
                 padding: '2px 0',
               }}
             >
-              顯示其他 {extraPassages.length} 段片段
+              {expanded ? '收合' : `顯示其他 ${extraPassages.length} 段片段`}
             </button>
           )}
-          {expanded && extraPassages.map((p, i) => (
-            <div
-              key={p.chunk_index ?? i}
-              style={{
-                fontSize: 12,
-                color: '#495057',
-                marginTop: 4,
-                background: '#f8f9fa',
-                padding: '4px 8px',
-                borderRadius: 4,
-              }}
-            >
-              <Highlight text={p.content.slice(0, 300)} terms={terms} />
+          {expanded && (
+            <div id={extraPassagesId}>
+              {extraPassages.map((p, i) => (
+                <div
+                  key={p.chunk_index ?? i}
+                  style={{
+                    fontSize: 12,
+                    color: '#495057',
+                    marginTop: 4,
+                    background: '#f8f9fa',
+                    padding: '4px 8px',
+                    borderRadius: 4,
+                  }}
+                >
+                  <Highlight text={p.content.slice(0, 300)} terms={terms} />
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </>
       )}
     </>

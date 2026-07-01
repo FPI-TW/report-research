@@ -108,15 +108,9 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
 
         {isBlockingError ? (
           <ErrorState onRetry={() => void refetch()} />
-        ) : isLoading ? (
-          <div className={styles.loadingWrap}>
-            <Loader />
-          </div>
-        ) : rows.length === 0 ? (
-          <EmptyState onReset={() => setFilters(DEFAULT_FILTERS)} />
         ) : (
           <>
-            {/* ── View toolbar ──────────────────────────────────────── */}
+            {/* ── View toolbar：常駐顯示，載入中／無結果時也可先切換檢視 ──── */}
             <div className={styles.viewToolbar}>
               <ViewSwitch
                 value={topView}
@@ -130,20 +124,28 @@ function SearchPageLoaded({ stats }: { stats: StatsResponse }) {
               )}
             </div>
 
-            <div className={styles.resultsWrap}>
-              <ResultsView
-                view={topView}
-                group={viewState.group}
-                rows={rows}
-                mode={mode}
-                terms={terms}
-                total={total}
-                markets={markets}
-                onOpen={setModalId}
-                onPickMarket={(m) => setFilters({ ...filters, market: m })}
-                market={filters.market}
-              />
-            </div>
+            {isLoading ? (
+              <div className={styles.loadingWrap}>
+                <Loader />
+              </div>
+            ) : rows.length === 0 ? (
+              <EmptyState onReset={() => setFilters(DEFAULT_FILTERS)} />
+            ) : (
+              <div className={styles.resultsWrap}>
+                <ResultsView
+                  view={topView}
+                  group={viewState.group}
+                  rows={rows}
+                  mode={mode}
+                  terms={terms}
+                  total={total}
+                  markets={markets}
+                  onOpen={setModalId}
+                  onPickMarket={(m) => setFilters({ ...filters, market: m })}
+                  market={filters.market}
+                />
+              </div>
+            )}
           </>
         )}
 

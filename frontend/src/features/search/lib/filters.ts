@@ -70,11 +70,15 @@ export interface ViewState {
 
 export const DEFAULT_VIEW_STATE: ViewState = { view: 'group', group: 'month' }
 
-// 對齊 url.js：view≠group 才寫 view；view=group 且 group≠month 才寫 group
+// view≠group 才寫 view；group≠month 才寫 group（與 view 無關）。
+// 注意：這裡刻意偏離 vanilla url.js（其只在 view=group 時寫 group）——vanilla 的
+// `state` 是常駐記憶體物件，切到 table 檢視不會忘記 group；React 版的 viewState
+// 純粹由 URL 每次重算而來，沒有另外的記憶體物件，若比照 vanilla 只在 view=group
+// 時寫 group，會在 grouped → table → grouped 的切換中把 group 選擇弄丟（Phase 2c）。
 export function viewStateToParams(vs: ViewState): [string, string][] {
   const out: [string, string][] = []
   if (vs.view !== 'group') out.push(['view', vs.view])
-  if (vs.view === 'group' && vs.group !== 'month') out.push(['group', vs.group])
+  if (vs.group !== 'month') out.push(['group', vs.group])
   return out
 }
 

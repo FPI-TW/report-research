@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MantineProvider } from '@mantine/core'
 import { theme } from '../../theme'
 import * as api from './api'
+import type { ReportsResponse } from './schemas'
 import SearchPage from './SearchPage'
 
 // ── Shared fixtures ────────────────────────────────────────────────────────────
@@ -91,6 +92,30 @@ test('(b) 無結果時顯示 EmptyState', async () => {
   expect(await screen.findByTestId('empty-state')).toBeInTheDocument()
   // 卡片不應出現
   expect(screen.queryAllByTestId('result-card')).toHaveLength(0)
+  // 檢視切換工具列仍應常駐顯示（Phase 2c：可在無結果時先切換檢視）
+  expect(screen.getByRole('radiogroup', { name: '檢視方式' })).toBeInTheDocument()
+
+  unmount()
+  qc.clear()
+})
+
+// ── (b2) View toolbar 在載入中亦常駐顯示（Phase 2c）────────────────────────────
+test('(b2) 載入中仍顯示檢視切換工具列', async () => {
+  vi.spyOn(api, 'getStats').mockResolvedValue(STATS)
+  let resolveReports!: (v: ReportsResponse) => void
+  vi.spyOn(api, 'getReports').mockImplementation(
+    () => new Promise((resolve) => { resolveReports = resolve }),
+  )
+
+  const { qc, unmount } = renderPage()
+
+  // stats 已載入、reports 仍 pending（isLoading）→ 結果區顯示 Loader，但工具列應已可見
+  await screen.findByTestId('results-meta')
+  expect(screen.queryByTestId('empty-state')).toBeNull()
+  expect(screen.getByRole('radiogroup', { name: '檢視方式' })).toBeInTheDocument()
+
+  resolveReports({ total: 0, offset: 0, items: [] })
+  await screen.findByTestId('empty-state')
 
   unmount()
   qc.clear()

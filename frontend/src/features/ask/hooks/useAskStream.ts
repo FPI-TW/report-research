@@ -113,7 +113,9 @@ export function useAskStream(): UseAskStream {
       cancelActive()
       setStreaming(false)
       setConversationId(id)
-      setTurns(items.map((it, i) => historyToTurn(it, `h${i}`)))
+      // id 用 qa_log 的 it.id（全域唯一）而非位置索引：位置式 h0/h1... 會在不同對話間重複，
+      // 導致 key={t.id} 不重掛載（dismissed 洩漏）且 ReportPanel 的 report.turnId===turn.id 誤配到別的對話。
+      setTurns(items.map((it) => historyToTurn(it, `h${it.id}`)))
     },
     [cancelActive],
   )

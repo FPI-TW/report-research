@@ -6,7 +6,6 @@ import { ReportPanel } from './ReportPanel'
 import { emptyTurn } from '../lib/conversation'
 import type { TurnState } from '../lib/conversation'
 import type { ReportState } from '../hooks/useReportStream'
-import type { ReportSummary } from '../schemas'
 
 const IDLE_REPORT: ReportState = {
   turnId: null,
@@ -18,7 +17,7 @@ const IDLE_REPORT: ReportState = {
 }
 
 function wrap(
-  turn: TurnState & { reports?: ReportSummary[] },
+  turn: TurnState,
   report: ReportState,
   overrides: Partial<{ onStart: () => void; onDismiss: () => void; onOpenFull: (id: string) => void }> = {},
 ) {
@@ -109,7 +108,7 @@ describe('ReportPanel', () => {
   })
 
   test('turn.reports 有歷史資料 → 渲染 report-done 卡（下載+查看全文），優先於其他狀態', () => {
-    const turn: TurnState & { reports?: ReportSummary[] } = {
+    const turn: TurnState = {
       ...emptyTurn('t1', '台積電?'),
       offerReport: true, // 不應影響：歷史重播優先
       reports: [{ report_id: 'r9', title: '歷史研報', download_url: '/api/report-doc/r9/pdf', created_at: null }],

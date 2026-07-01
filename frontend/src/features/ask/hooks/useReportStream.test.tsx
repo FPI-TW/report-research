@@ -83,7 +83,35 @@ describe('useReportStream', () => {
     act(() => result.current.start('t1', body))
     await waitFor(() => expect(result.current.report.markdown).toBe('x'))
     expect(() => act(() => result.current.cancel())).not.toThrow()
-    // cancel 只中止飛行中串流，不重置已寫入的畫面狀態
+  })
+
+  test('cancel 將 report 重置為 idle 狀態（不留舊 turnId，避免跨對話誤配）', async () => {
+    genQueue.push(gen([{ event: 'token', data: 'x' }], { hang: true }))
+    const { result } = renderHook(() => useReportStream())
+    act(() => result.current.start('t1', body))
+    await waitFor(() => expect(result.current.report.markdown).toBe('x'))
+    act(() => result.current.cancel())
+    expect(result.current.report).toEqual({
+      turnId: null,
+      phase: 'idle',
+      stage: null,
+      markdown: '',
+      done: null,
+      error: null,
+    })
+  })
+
+  test('start 內部呼叫 cancel 後立即設回 generating：淨效果不受 cancel 重置影響', async () => {
+    genQueue.push(gen([
+      { event: 'token', data: '報' },
+      { event: 'done', data: { report_id: 'r1', title: 'T', download_url: '/x' } },
+    ]))
+    const { result } = renderHook(() => useReportStream())
+    act(() => result.current.start('t1', body))
+    // start() 內部同步呼叫 cancel()（重置為 idle）後緊接 setReport(generating)，
+    // React 批次更新使兩者落在同一次 render，外部只會觀察到 generating，不會看到中間的 idle。
+    expect(result.current.report.turnId).toBe('t1')
     expect(result.current.report.phase).toBe('generating')
+    await waitFor(() => expect(result.current.report.phase).toBe('done'))
   })
 })

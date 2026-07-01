@@ -37,6 +37,7 @@ export function useReportStream(): UseReportStream {
       ctrlRef.current.abort()
       ctrlRef.current = null
     }
+    setReport(IDLE_STATE) // 重置畫面狀態，避免舊 turnId 殘留跨對話誤配（ReportPanel 的 turnId 比對）
   }, [])
 
   const start = useCallback(

@@ -19,8 +19,7 @@ COMPOSE := $(DOCKER) compose
         ingest ingest-lowio restore-durability align normalize serve search \
         stats reset-db clean-data pipeline \
         up-edge down-edge edge-logs edge-reload \
-        sync-once \
-        spa-dev spa-build spa-test
+        sync-once
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -89,20 +88,6 @@ serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
 
 search:  ## CLI 檢索（用法：make search Q="查詢" MARKET=TW）
 	uv run python scripts/search.py "$(Q)" $(if $(MARKET),--market $(MARKET),)
-
-# ───── 前端 SPA（Vite + React，掛 /app）─────
-spa-dev:  ## 啟動 Vite dev server（HMR；需另開 make serve 跑 uvicorn）
-	cd frontend && npm run dev
-
-spa-build:  ## 建置 SPA：型別檢查 + 先產到 staging 再原子換版到 frontend/dist（失敗則 live dist 不動）
-	cd frontend && npm ci
-	cd frontend && npm run typecheck
-	cd frontend && rm -rf dist.next && npx vite build --outDir dist.next
-	cd frontend && rm -rf dist.prev && (test -d dist && mv dist dist.prev || true) && mv dist.next dist
-	@echo "SPA build 換版完成；如需回滾：cd frontend && rm -rf dist && mv dist.prev dist"
-
-spa-test:  ## 跑前端 Vitest
-	cd frontend && npm run test -- --passWithNoTests
 
 stats:  ## 看 DB 市場分佈與筆數
 	@$(DOCKER) exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \

@@ -7,8 +7,8 @@ from web.server import _safe_next, app
 
 
 def test_safe_next_accepts_same_origin_relative():
-    assert _safe_next("/app/monitor") == "/app/monitor"
-    assert _safe_next("/app/monitor?x=1") == "/app/monitor?x=1"
+    assert _safe_next("/monitor") == "/monitor"
+    assert _safe_next("/monitor?x=1") == "/monitor?x=1"
 
 
 def test_safe_next_rejects_open_redirects():
@@ -18,20 +18,21 @@ def test_safe_next_rejects_open_redirects():
     assert _safe_next("evil") == "/"
     assert _safe_next(None) == "/"
     # CRLF injection guard
-    assert _safe_next("/app/foo\r\nX-Injected: 1") == "/"
+    assert _safe_next("/foo\r\nX-Injected: 1") == "/"
     # 其餘 C0 控制字元 / DEL 一律拒絕（縱深防禦）
-    assert _safe_next("/app\tfoo") == "/"
-    assert _safe_next("/app\x00foo") == "/"
-    assert _safe_next("/app\x7ffoo") == "/"
+    assert _safe_next("/mon\titor") == "/"
+    assert _safe_next("/mon\x00itor") == "/"
+    assert _safe_next("/mon\x7fitor") == "/"
     # javascript: scheme guard
     assert _safe_next("javascript:alert(1)") == "/"
 
 
-def test_unauthed_app_deeplink_redirects_with_next():
+def test_unauthed_page_redirects_to_plain_login():
+    # vanilla 頁面未登入一律導回 /login（不帶 next；SPA 移除後恢復原行為）
     client = TestClient(app)
-    resp = client.get("/app/monitor", follow_redirects=False)
+    resp = client.get("/monitor", follow_redirects=False)
     assert resp.status_code == 302
-    assert resp.headers["location"] == "/login?next=%2Fapp%2Fmonitor"
+    assert resp.headers["location"] == "/login"
 
 
 def test_login_post_honors_safe_next(monkeypatch):
@@ -40,11 +41,11 @@ def test_login_post_honors_safe_next(monkeypatch):
     client = TestClient(app)
     resp = client.post(
         "/login",
-        data={"username": "x", "password": "y", "next": "/app/monitor"},
+        data={"username": "x", "password": "y", "next": "/monitor"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/app/monitor"
+    assert resp.headers["location"] == "/monitor"
 
 
 def test_login_post_ignores_evil_next(monkeypatch):
@@ -63,10 +64,30 @@ def test_authed_login_get_honors_safe_next(monkeypatch):
     monkeypatch.setattr(auth, "verify_token", lambda token, now: True)
     client = TestClient(app)
     # valid same-origin next: should redirect there
-    resp = client.get("/login?next=/app/monitor", follow_redirects=False)
+    resp = client.get("/login?next=/monitor", follow_redirects=False)
     assert resp.status_code == 302
-    assert resp.headers["location"] == "/app/monitor"
+    assert resp.headers["location"] == "/monitor"
     # evil next: should redirect to /
     resp2 = client.get("/login?next=https://evil.com", follow_redirects=False)
     assert resp2.status_code == 302
     assert resp2.headers["location"] == "/"
+
+
+def test_authed_root_serves_vanilla_index(monkeypatch):
+    monkeypatch.setattr(auth, "verify_token", lambda token, now: True)
+    client = TestClient(app, cookies={auth.COOKIE_NAME: "any"})
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def _auth_cookies() -> dict[str, str]:
+    return {auth.COOKIE_NAME: auth.issue_token(int(time.time()))}
+
+
+def test_authed_monitor_serves_vanilla_page():
+    client = TestClient(app, cookies=_auth_cookies())
+    resp = client.get("/monitor", follow_redirects=False)
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]

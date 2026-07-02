@@ -65,7 +65,6 @@ from app.services.pdf import render_report_pdf  # noqa: E402
 from app.services.report import fetch_report_doc, generate_report, write_report_pdf  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-SPA_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 logger = logging.getLogger(__name__)
 SEARCH_QUERY_MAX_CHARS = 500
 ASK_QUESTION_MAX_CHARS = 2000
@@ -89,15 +88,6 @@ class _NoCacheStatic(StaticFiles):
     async def get_response(self, path, scope):  # type: ignore[override]
         resp = await super().get_response(path, scope)
         resp.headers["Cache-Control"] = "no-cache"
-        return resp
-
-
-class _ImmutableStatic(StaticFiles):
-    """Vite 內容雜湊資產（/app/assets/*）長快取：hash 變則 URL 變，故可 immutable。"""
-
-    async def get_response(self, path, scope):  # type: ignore[override]
-        resp = await super().get_response(path, scope)
-        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return resp
 
 
@@ -168,12 +158,7 @@ async def require_login(request: Request, call_next):
         return response
     if path.startswith("/api/"):
         return JSONResponse({"detail": "未登入"}, status_code=401)
-    if path.startswith("/app/"):
-        nxt = _safe_next(request.url.path + ("?" + request.url.query if request.url.query else ""))
-        target = "/login" if nxt == "/" else "/login?next=" + quote(nxt, safe="")
-    else:
-        target = "/login"
-    return RedirectResponse(target, status_code=302)
+    return RedirectResponse("/login", status_code=302)
 
 
 class Passage(BaseModel):
@@ -487,8 +472,7 @@ async def progress():
 
 @app.get("/monitor")
 async def monitor():
-    # cutover：監控頁已遷至 SPA；舊 monitor.html 保留檔案，僅不再由此服務。
-    return RedirectResponse("/app/monitor", status_code=307)
+    return _static_page("monitor.html")
 
 
 @app.get("/help")
@@ -915,26 +899,7 @@ async def logout():
 
 @app.get("/")
 async def index():
-    # cutover：首頁已遷至 SPA（搜尋/問答/研報同在 /app，導覽相連）；舊 index.html 保留檔案，
-    # 僅不再由此服務（對齊 /monitor → /app/monitor）。落地目標＝檢索頁。
-    return RedirectResponse("/app/search", status_code=307)
-
-
-# ───── SPA（/app 子路徑；shell + 雜湊資產，純服務無業務邏輯）─────
-app.mount(
-    "/app/assets",
-    _ImmutableStatic(directory=SPA_DIST / "assets", check_dir=False),
-    name="spa-assets",
-)
-
-
-@app.get("/app/{spa_path:path}")
-async def spa_shell(spa_path: str):
-    """SPA shell：所有 /app/* 深連結回同一份 index.html，交給 client 端路由。"""
-    index = SPA_DIST / "index.html"
-    if not index.is_file():
-        raise HTTPException(status_code=503, detail="SPA 尚未建置（make spa-build）")
-    return FileResponse(index, headers={"Cache-Control": "no-cache"})
+    return _static_page("index.html")
 
 
 app.mount("/static", _NoCacheStatic(directory=STATIC_DIR), name="static")

@@ -1,7 +1,0 @@
-node_modules
-dist
-dist.next
-dist.prev
-test-results
-playwright-report
-*.local

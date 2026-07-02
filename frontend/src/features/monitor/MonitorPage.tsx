@@ -22,11 +22,11 @@ function Tile({
 }) {
   const shown = useTween(value)
   return (
-    <Card withBorder padding="md" radius="md">
+    <Card padding="md">
       <Text size="xs" c="dimmed">
         {label}
       </Text>
-      <Text fw={700} size="xl">
+      <Text fw={700} fz={26} lh={1.3} className="tf-tabular-nums">
         {nf(shown)}
         {suffix ? (
           <Text span size="sm" c="dimmed">
@@ -121,9 +121,11 @@ export default function MonitorPage() {
       </SimpleGrid>
 
       {tag ? (
-        <Card withBorder padding="md" radius="md">
+        <Card padding="md">
           <Group justify="space-between">
-            <Text fw={600}>標註 TAGGING</Text>
+            <Title order={3} size="h5">
+              標註 TAGGING
+            </Title>
             <Text size="sm" c="dimmed">
               未標 {nf(tag.fail)}
             </Text>
@@ -144,9 +146,11 @@ export default function MonitorPage() {
         </Card>
       ) : null}
 
-      <Card withBorder padding="md" radius="md">
+      <Card padding="md">
         <Group justify="space-between">
-          <Text fw={600}>導入 INGEST</Text>
+          <Title order={3} size="h5">
+            導入 INGEST
+          </Title>
           <Text size="sm" c="dimmed">
             本輪導入 {nf(ing?.ingested ?? 0)} · 失敗 {nf(ing?.fail ?? 0)}
           </Text>
@@ -157,9 +161,11 @@ export default function MonitorPage() {
       </Card>
 
       {sum ? (
-        <Card withBorder padding="md" radius="md">
+        <Card padding="md">
           <Group justify="space-between">
-            <Text fw={600}>摘要 SUMMARY</Text>
+            <Title order={3} size="h5">
+              摘要 SUMMARY
+            </Title>
             <Text size="sm" c="dimmed">
               未生成 {nf(sum.remaining)}
             </Text>
@@ -180,10 +186,10 @@ export default function MonitorPage() {
         </Card>
       ) : null}
 
-      <Card withBorder padding="md" radius="md">
-        <Text fw={600} mb="xs">
+      <Card padding="md">
+        <Title order={3} size="h5" mb="xs">
           管線 PIPELINES
-        </Text>
+        </Title>
         <Group>
           {(['web', 'ingest', 'tag', 'summaries'] as const).map((k) => (
             <Badge key={k} color={data?.pipelines?.[k] ? 'green' : 'gray'} variant="light">
@@ -193,15 +199,15 @@ export default function MonitorPage() {
         </Group>
       </Card>
 
-      <Card withBorder padding="md" radius="md">
-        <Text fw={600} mb="xs">
+      <Card padding="md">
+        <Title order={3} size="h5" mb="xs">
           市場分佈 MARKETS
-        </Text>
+        </Title>
         <Stack gap={4}>
           {(data?.db.markets ?? []).map((m) => (
             <Group key={m.market} justify="space-between">
               <Text size="sm">{m.market}</Text>
-              <Text size="sm" c="dimmed">
+              <Text size="sm" c="dimmed" className="tf-tabular-nums">
                 {nf(m.count)}
               </Text>
             </Group>

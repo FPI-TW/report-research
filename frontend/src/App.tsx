@@ -17,11 +17,11 @@ function RootLayout() {
   return (
     <AppShell
       navbar={isMobile ? undefined : { width: 60, breakpoint: 0 }}
-      footer={isMobile ? { height: 56 } : undefined}
+      footer={isMobile ? { height: 'calc(56px + env(safe-area-inset-bottom))' } : undefined}
       padding="md"
     >
       {!isMobile && (
-        <AppShell.Navbar>
+        <AppShell.Navbar component="div">
           <AppRail />
         </AppShell.Navbar>
       )}
@@ -31,7 +31,7 @@ function RootLayout() {
         <Outlet />
       </AppShell.Main>
       {isMobile && (
-        <AppShell.Footer>
+        <AppShell.Footer component="div">
           <MobileTabBar />
         </AppShell.Footer>
       )}

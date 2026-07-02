@@ -1,6 +1,7 @@
 import { Card, createTheme, Paper, type MantineColorsTuple } from '@mantine/core'
 
-// 由品牌金 #ae7415（tokens.css --brand）衍生的 10 階色票；index 7 = 品牌主色。
+// 由品牌金 #ae7415（web/static/tokens.css --brand，與 src/styles/tokens.css
+// --tf-gold-text 同源）衍生的 10 階色票；index 7 = 品牌主色。
 const gold: MantineColorsTuple = [
   '#fbf3e3',
   '#f3e4c6',
@@ -9,9 +10,9 @@ const gold: MantineColorsTuple = [
   '#d09a26',
   '#c98e10',
   '#c58808',
-  '#ae7415', // 品牌主色（--brand）
+  '#ae7415', // 品牌主色
   '#9c6710',
-  '#8a5a0f', // --brand-strong
+  '#8a5a0f', // 深金（--tf-gold-text）
 ]
 
 export const theme = createTheme({

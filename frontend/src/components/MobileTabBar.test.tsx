@@ -44,7 +44,11 @@ test('目前分路帶 aria-current=page', () => {
 
 test('第 4 格帳號：頭像鈕點開有登出', async () => {
   wrap('/app/search')
-  expect(screen.getByText('帳號')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: '帳號選單' }))
+  const label = screen.getByText('帳號')
+  expect(label).toBeInTheDocument()
+  // 整格可點：文字標籤須在可存取按鈕（name=帳號選單）內部，而非按鈕外的死文字。
+  const button = screen.getByRole('button', { name: '帳號選單' })
+  expect(button).toContainElement(label)
+  fireEvent.click(button)
   expect(await screen.findByText('研究員')).toBeInTheDocument()
 })

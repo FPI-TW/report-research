@@ -22,8 +22,7 @@ export function MobileTabBar() {
         ))}
       </nav>
       <div className={classes.account}>
-        <AccountMenu position="top-end" />
-        <span>帳號</span>
+        <AccountMenu position="top-end" label="帳號" />
       </div>
     </div>
   )

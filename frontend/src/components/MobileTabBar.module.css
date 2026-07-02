@@ -29,14 +29,8 @@
   font-weight: 700;
 }
 
+/* 按鈕本身（AccountMenu label 版）撐滿整格，讓觸控目標涵蓋整個第 4 格 */
 .account {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  font-size: 10px;
-  line-height: 1;
-  color: var(--tf-text-3);
 }

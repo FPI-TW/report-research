@@ -196,10 +196,8 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], "/")
         self.assertIn(auth.COOKIE_NAME, r.cookies)
-        # cutover 後 / 對已認證者導向 SPA 檢索頁（不再直接回 200）。
-        r2 = client.get("/", follow_redirects=False)
-        self.assertEqual(r2.status_code, 307)
-        self.assertEqual(r2.headers["location"], "/app/search")
+        r2 = client.get("/")
+        self.assertEqual(r2.status_code, 200)
 
     def test_logout_clears_session(self):
         client = _client()
@@ -242,20 +240,19 @@ class AuthFlowTests(unittest.TestCase):
         self.assertIn("error=insecure", r.headers["location"])
 
     def test_authed_request_refreshes_cookie(self):
-        # 每次通過認證的回應都應重新簽發 session cookie(滑動到期)。
-        # cutover 後 / 回 307 導向，middleware 仍應在該（已認證）回應上重簽 cookie。
+        # 每次通過認證的回應都應重新簽發 session cookie(滑動到期)
         client = _client()
         client.post("/login", data={"username": "tester", "password": "testpass"})
-        r = client.get("/", follow_redirects=False)
-        self.assertEqual(r.status_code, 307)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
         self.assertIn(auth.COOKIE_NAME, r.cookies)
 
-    def test_avatar_asset_served(self):
-        # cutover 後首頁改由 SPA 服務；帳號頭像移至 SPA 導覽列，仍取用同一靜態圖片。
+    def test_authed_homepage_uses_static_avatar_image(self):
         client = _client()
         client.post("/login", data={"username": "tester", "password": "testpass"})
-        r = client.get("/static/img/avatar.jpg")
+        r = client.get("/")
         self.assertEqual(r.status_code, 200)
+        self.assertIn('src="/static/img/avatar.jpg"', r.text)
 
     def test_unauthed_static_is_gated(self):
         # /static 不在白名單:未登入直接取 /static/index.html 應被擋(防繞過 route 門檻)

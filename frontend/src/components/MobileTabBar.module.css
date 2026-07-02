@@ -1,0 +1,42 @@
+.bar {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  background: var(--tf-surface);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.nav {
+  display: flex;
+  flex: 3;
+}
+
+.item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--tf-text-3);
+  text-decoration: none;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.active {
+  color: var(--tf-gold-text);
+  font-weight: 700;
+}
+
+.account {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--tf-text-3);
+}

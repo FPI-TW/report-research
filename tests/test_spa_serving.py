@@ -42,6 +42,14 @@ def test_legacy_monitor_redirects_to_spa():
     assert resp.headers["location"] == "/app/monitor"
 
 
+def test_legacy_index_redirects_to_spa():
+    # cutover：首頁 / 導向 SPA 檢索頁（對齊 /monitor）。
+    client = TestClient(app, cookies=_auth_cookies())
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/app/search"
+
+
 def test_spa_assets_have_immutable_cache():
     assets_dir = SPA_DIST / "assets"
     if not assets_dir.is_dir():

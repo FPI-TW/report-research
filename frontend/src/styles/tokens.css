@@ -11,7 +11,10 @@
   --tf-text-4: #98a2b3; /* 弱化 */
   --tf-gold-text: #8a5a0f; /* 金色文字一律用深金（白底 AA） */
   --tf-gold-tint: #faf3e3; /* 金色淡底（膠囊/選中態） */
-  --tf-serif: 'Noto Serif TC', Georgia, 'Times New Roman', serif;
+  /* 僅使用本機字型堆疊，避免登入後介面為了 webfont 對第三方發 request。 */
+  --tf-serif:
+    'Noto Serif TC', 'Source Han Serif TC', 'PMingLiU', 'MingLiU', Georgia,
+    'Times New Roman', serif;
 }
 
 body {

@@ -2,23 +2,39 @@ import { Suspense, lazy } from 'react'
 import { createBrowserRouter, Navigate, Outlet } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { AppShell, Loader, Title, VisuallyHidden } from '@mantine/core'
-import { AppNav } from './components/AppNav'
+import { useMediaQuery } from '@mantine/hooks'
+import { AppRail } from './components/AppRail'
+import { MobileTabBar } from './components/MobileTabBar'
+import { MOBILE_NAV_QUERY } from './components/navLinks'
 
 const MonitorPage = lazy(() => import('./features/monitor/MonitorPage'))
 const SearchPage = lazy(() => import('./features/search/SearchPage'))
 const AskPage = lazy(() => import('./features/ask/AskPage'))
 
 function RootLayout() {
+  // 手機（<=48em）：底部分頁列；桌機：左側窄軌。jsdom 無 matchMedia → 預設桌機。
+  const isMobile = useMediaQuery(MOBILE_NAV_QUERY, false, { getInitialValueInEffect: false })
   return (
-    <AppShell header={{ height: 56 }} padding="md">
-      <AppShell.Header>
-        <AppNav />
-      </AppShell.Header>
+    <AppShell
+      navbar={isMobile ? undefined : { width: 60, breakpoint: 0 }}
+      footer={isMobile ? { height: 56 } : undefined}
+      padding="md"
+    >
+      {!isMobile && (
+        <AppShell.Navbar>
+          <AppRail />
+        </AppShell.Navbar>
+      )}
       <AppShell.Main>
         {/* 全站唯一 h1（視覺隱藏）：確保每頁有正常的 h1→h2 標題梯級 */}
         <VisuallyHidden component="h1">廷豐智能研報</VisuallyHidden>
         <Outlet />
       </AppShell.Main>
+      {isMobile && (
+        <AppShell.Footer>
+          <MobileTabBar />
+        </AppShell.Footer>
+      )}
     </AppShell>
   )
 }

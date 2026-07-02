@@ -1,4 +1,4 @@
-import { test, expect } from 'vitest'
+import { test, expect, afterEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { MantineProvider } from '@mantine/core'
@@ -27,4 +27,39 @@ test('/app 落地重導向到 /app/search（顯示導覽，非 stub）', async (
   await waitFor(() => expect(router.state.location.pathname).toBe('/app/search'))
   expect(screen.getByRole('link', { name: '搜尋' })).toHaveAttribute('aria-current', 'page')
   expect(screen.queryByText('SPA 地基已就緒。')).not.toBeInTheDocument()
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+function mockMatchMedia(matchingQueries: ReadonlyArray<string>) {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn().mockImplementation((query: string) => ({
+      matches: matchingQueries.includes(query),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  )
+}
+
+test('桌機：渲染左軌（品牌廷 + 主導覽），無底部帳號分頁格', async () => {
+  renderAt('/app/search')
+  expect(await screen.findByRole('link', { name: '廷豐智能研報' })).toBeInTheDocument()
+  expect(screen.getByRole('navigation', { name: '主導覽' })).toBeInTheDocument()
+  expect(screen.queryByText('帳號')).toBeNull()
+})
+
+test('手機（<=48em）：渲染底部分頁列（含帳號格），無品牌廷', async () => {
+  mockMatchMedia(['(max-width: 48em)'])
+  renderAt('/app/search')
+  expect(await screen.findByText('帳號')).toBeInTheDocument()
+  expect(screen.getByRole('navigation', { name: '主導覽' })).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: '廷豐智能研報' })).toBeNull()
 })

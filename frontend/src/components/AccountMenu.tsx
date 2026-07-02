@@ -10,7 +10,7 @@ export function AccountMenu({ position = 'right-end' }: { position?: 'right-end'
   const { data } = useQuery({ queryKey: ['stats'], queryFn: getStats, staleTime: 5 * 60_000 })
   const name = (data?.username || '').trim() || '使用者'
   return (
-    <Menu position={position} withArrow transitionProps={{ duration: 0 }}>
+    <Menu position={position} withArrow transitionProps={{ duration: 0 }} closeOnItemClick={false}>
       <Menu.Target>
         <UnstyledButton aria-label="帳號選單" style={{ display: 'block', lineHeight: 0 }}>
           <img

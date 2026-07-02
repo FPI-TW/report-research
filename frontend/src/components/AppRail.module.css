@@ -1,0 +1,53 @@
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  padding: 14px 0 12px;
+  background: var(--tf-surface);
+}
+
+.brand {
+  font-family: var(--tf-serif);
+  font-weight: 800;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--tf-gold-text);
+  text-decoration: none;
+  margin-bottom: 14px;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 9px;
+  border-radius: 10px;
+  min-width: 46px;
+  color: var(--tf-text-3);
+  text-decoration: none;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.item:hover {
+  background: var(--tf-border-weak);
+}
+
+.active {
+  background: var(--tf-gold-tint);
+  color: var(--tf-gold-text);
+  font-weight: 700;
+}
+
+.account {
+  margin-top: auto;
+}

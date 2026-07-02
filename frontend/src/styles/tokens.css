@@ -1,0 +1,24 @@
+/* 設計 token（Spec 2026-07-02）：介面基調單一事實來源。
+   深色模式日後在 [data-mantine-color-scheme='dark'] 覆寫同名變數即可。 */
+:root {
+  --tf-canvas: #f6f7f9; /* 頁面畫布底 */
+  --tf-surface: #ffffff; /* 卡片面 */
+  --tf-border: #e4e7ec;
+  --tf-border-weak: #f2f4f7;
+  --tf-text-1: #101828; /* 主標 */
+  --tf-text-2: #344054; /* 內文 */
+  --tf-text-3: #667085; /* 次要 */
+  --tf-text-4: #98a2b3; /* 弱化 */
+  --tf-gold-text: #8a5a0f; /* 金色文字一律用深金（白底 AA） */
+  --tf-gold-tint: #faf3e3; /* 金色淡底（膠囊/選中態） */
+  --tf-serif: 'Noto Serif TC', Georgia, 'Times New Roman', serif;
+}
+
+body {
+  background-color: var(--tf-canvas);
+}
+
+/* 數字等寬：統計、表格、監控 KPI */
+.tf-tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

@@ -7,9 +7,12 @@ interface PopoverProps {
   onClose: () => void
   children: ReactNode
   className?: string
+  /** panel ARIA role；預設 'menu'（選單），表單型彈出層傳 'dialog' */
+  role?: string
+  ariaLabel?: string
 }
 
-export function Popover({ open, onClose, children, className }: PopoverProps) {
+export function Popover({ open, onClose, children, className, role = 'menu', ariaLabel }: PopoverProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   useFocusTrap(panelRef, open)
 
@@ -24,7 +27,7 @@ export function Popover({ open, onClose, children, className }: PopoverProps) {
   return (
     <>
       <div className={styles.scrim} onClick={onClose} aria-hidden="true" />
-      <div ref={panelRef} className={`${styles.panel} ${className ?? ''}`} role="menu">
+      <div ref={panelRef} className={`${styles.panel} ${className ?? ''}`} role={role} aria-label={ariaLabel}>
         {children}
       </div>
     </>

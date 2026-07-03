@@ -2,7 +2,7 @@ import type { ReactNode, SVGProps } from 'react'
 
 export type IconName =
   | 'search' | 'messages' | 'activity' | 'user' | 'plus'
-  | 'panel' | 'logout' | 'chevronDown' | 'x'
+  | 'panel' | 'logout' | 'chevronDown' | 'x' | 'filter'
 
 const PATHS: Record<IconName, ReactNode> = {
   search: (<><circle cx="10" cy="10" r="7" /><path d="M21 21l-6 -6" /></>),
@@ -14,6 +14,7 @@ const PATHS: Record<IconName, ReactNode> = {
   logout: (<><path d="M14 8V6a2 2 0 0 0 -2 -2H6a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3M18 15l3 -3" /></>),
   chevronDown: (<path d="M6 9l6 6l6 -6" />),
   x: (<path d="M18 6l-12 12M6 6l12 12" />),
+  filter: (<path d="M4 6h16M7 12h10M10 18h4" />),
 }
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

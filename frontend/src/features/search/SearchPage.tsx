@@ -72,8 +72,7 @@ export default function SearchPage() {
             state={state}
             instrumentOptions={instrumentOptions}
             reportTypeOptions={reportTypeOptions}
-            onPatch={update}
-            onClear={() => applyState(clearFilters(state))}
+            onApply={update}
           />
         </div>
         <ActiveChips state={state} onPatch={update} />

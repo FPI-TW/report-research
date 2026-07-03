@@ -1,0 +1,4 @@
+.wrap { position: fixed; right: 24px; bottom: 24px; z-index: 30; display: inline-flex; gap: 2px; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-pill); padding: 3px; box-shadow: var(--tf-shadow-viewtoggle); }
+.btn { border: none; background: none; width: 34px; height: 34px; border-radius: var(--tf-radius-pill); cursor: pointer; font-size: 16px; color: var(--tf-text-3); }
+.active { background: var(--tf-gold-tint); color: var(--tf-gold-text); }
+@media (max-width: 1023px) { .wrap { bottom: 80px; } }

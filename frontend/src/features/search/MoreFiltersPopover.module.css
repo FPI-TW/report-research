@@ -1,0 +1,8 @@
+.wrap { position: relative; }
+.trigger { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: var(--tf-radius-seg); padding: 6px 12px; font-size: 13px; cursor: pointer; font-family: inherit; }
+.badge { background: var(--tf-gold-strong); color: var(--tf-on-gold); border-radius: var(--tf-radius-pill); font-size: 11px; min-width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
+.menu { top: 40px; right: 0; min-width: 240px; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--tf-text-3); }
+.field select { padding: 6px 8px; border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); font-family: inherit; font-size: 13px; color: var(--tf-text-1); background: var(--tf-surface); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tf-text-2); cursor: pointer; }
+.clear { border: none; background: var(--tf-border-weak); color: var(--tf-text-2); border-radius: var(--tf-radius-md); padding: 7px; font-size: 13px; cursor: pointer; font-family: inherit; }

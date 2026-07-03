@@ -182,7 +182,7 @@ class AuthFlowTests(unittest.TestCase):
         self.assertIn('name="username"', r.text)
         self.assertIn('name="password"', r.text)
         self.assertNotIn("請登入以使用研究報告檢索", r.text)
-        self.assertIn('class="brand-row"', r.text)
+        self.assertIn('class="brand"', r.text)
 
     def test_wrong_credentials_redirect_with_error(self):
         r = _client().post("/login", data={"username": "tester", "password": "bad"})

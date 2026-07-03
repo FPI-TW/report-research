@@ -5,6 +5,7 @@
   border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2);
   border-radius: var(--tf-radius-pill); padding: 6px 13px;
   font-size: 13px; cursor: pointer; font-family: inherit;
+  white-space: nowrap; flex-shrink: 0;   /* 不換行、不被壓縮 */
 }
 .trigger:hover { background: var(--tf-border-weak); }
 

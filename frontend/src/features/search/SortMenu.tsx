@@ -11,6 +11,7 @@ interface Props { mode: SearchMode; value: SortValue; onChange: (v: SortValue) =
 export function SortMenu({ mode, value, onChange }: Props) {
   const [open, setOpen] = useState(false)
   const opts = sortOptions(mode)
+  if (opts.length === 0) return null   // 瀏覽模式無可選排序 → 不顯示排序鈕
   const current = opts.find(o => o.value === value) ?? opts[0]
   return (
     <div className={styles.wrap}>

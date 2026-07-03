@@ -2,15 +2,17 @@ import { describe, it, expect } from 'vitest'
 import { sortOptions, normalizeSort } from './sortForMode'
 
 describe('sortForMode', () => {
-  it('search 有 3 選項含 relevance；browse 只有 2（無 relevance）', () => {
-    expect(sortOptions('search').map(o => o.value)).toEqual(['relevance', 'date_desc', 'date_asc'])
-    expect(sortOptions('browse').map(o => o.value)).toEqual(['date_desc', 'date_asc'])
+  it('日期選項已移除：search 只留 relevance；browse 無可選排序', () => {
+    expect(sortOptions('search').map(o => o.value)).toEqual(['relevance'])
+    expect(sortOptions('browse')).toEqual([])
   })
-  it('normalizeSort: browse 下 relevance 非法→回退 date_desc', () => {
+  it('normalizeSort: browse 一律回 date_desc（無可選項、順序固定新→舊）', () => {
     expect(normalizeSort('browse', 'relevance')).toBe('date_desc')
+    expect(normalizeSort('browse', 'date_asc')).toBe('date_desc')
+    expect(normalizeSort('browse', 'date_desc')).toBe('date_desc')
   })
-  it('normalizeSort: 合法值原樣', () => {
+  it('normalizeSort: search 一律回 relevance（日期值不再合法）', () => {
     expect(normalizeSort('search', 'relevance')).toBe('relevance')
-    expect(normalizeSort('browse', 'date_asc')).toBe('date_asc')
+    expect(normalizeSort('search', 'date_desc')).toBe('relevance')
   })
 })

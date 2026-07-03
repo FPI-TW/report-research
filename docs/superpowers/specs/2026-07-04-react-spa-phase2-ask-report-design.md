@@ -64,7 +64,7 @@
 ## 2. 架構與狀態
 
 - `AskPage`（default export）：讀 `?c`，以 `useReducer(askReducer, ...)` 管 `turns[]`＋串流；以 react-query 管 `conversations` 清單與載入既有對話。
-- **turn 模型**（reducer state）：
+- **turn 模型**（reducer state；一筆 `Turn` ＝ **一輪 QA pair**，非 role-based 訊息串——render 時同一筆輸出 `UserMessage`+`AssistantMessage`；歷史重播與研報回掛皆以此 QA pair 為單位）：
   ```ts
   type Stage = 'understanding'|'retrieved'|'reading'|'searching_web'|'generating'
   interface Turn {
@@ -93,7 +93,7 @@
   }
   ```
 - `conversationId`（AskPage state，非 reducer）：首個 `done.conversation_id` 設定後續用；同步 URL `?c=`。
-- latest-wins：AskPage 持 `reqId` ref，每次送出 `++reqId`；readSSE 事件套用時比對「此串流的 stamp === 當前 reqId」，否則丟棄；同時 `AbortController.abort()` 舊串流。
+- latest-wins：**串流消費層**（AskPage 或 `useAskStream` hook）持 `reqId` ref，每次送出 `++reqId`；讀到 readSSE 事件時比對「此串流的 stamp === 當前 reqId」，**不符則在 dispatch 前丟棄**（故 `askReducer` 永遠只收到當前串流事件、保持純粹，stamp 不進 reducer state/action）；同時 `AbortController.abort()` 舊串流。
 
 ## 3. 元件（每個一責任、可獨立測試）
 
@@ -103,10 +103,10 @@
 | `Composer` | textarea 自動長高、送出鈕；Enter 送出 / Shift+Enter 換行 / **IME 守衛**（`e.nativeEvent.isComposing`）；`disabled`（串流中）；空狀態置中版 + 底部固定版由 `variant` 切 | `value,onChange,onSubmit,disabled,variant` |
 | `AskEmptyState` | 置中 廷 logo + 「向廷豐智能體提問」+ 副標 + 置中 `Composer`；**無範例膠囊** | `onSubmit` |
 | `UserMessage` | 右側金色實心泡泡 | `text` |
-| `AssistantMessage` | 「已思考 N 秒」可收合 + 襯線 markdown 區塊 + 行內 `[n]` 金膠囊 + 動作列（讚/倒讚/複製 + 分隔 + 資料來源 N + 外部參考 N） | `turn,onCite,onToggleSources,onFeedback,onCopy` |
+| `AssistantMessage` | 「已思考 N 秒」可收合 + 襯線 markdown 區塊 + 行內 `[n]` 金膠囊 + 動作列（讚/倒讚/複製 + 分隔 + **單一** `資料來源 {N}`，N＝研報來源數＋網路來源數，對齊 `.dc.html` `m.refCount`；點擊開抽屜。無獨立「外部參考」鈕） | `turn,onCite,onToggleSources,onFeedback,onCopy` |
 | `ThinkingSteps` | 思考卡：理解問題→檢索研報→閱讀整理→(網路補充)→生成回答；由 `turn.stages` 映射三態 ✓/spinner/dot；收尾凍結「已思考 N 秒」 | `turn` |
 | `DeepReportPanel` | offer(要/不用)→生成中(里程碑 %+撰寫動態+階段文字)→完成(暖金卡＋下載 PDF)→**失敗** `Callout error`＋重試 | `turn.report,onGenerate,onDecline,onRetry` |
-| `SourcesDrawer` | 右側「引用來源」抽屜：研報來源卡（`n`+市場徽章+標題+來源·日期，點→ReportDetailModal）＋網路來源卡（標題+站台，→新分頁）；標頭+關閉；ESC/scrim 關 | `open,turn,onClose,onOpenReport` |
+| `SourcesDrawer` | 右側「引用來源」抽屜（**單一入口、面板內含兩類內容**）：標頭「引用來源」+關閉；子標「資料來源 · {研報來源數}」領研報來源卡（金 `n`+市場徽章+標題+來源·日期，點→ReportDetailModal）；其後緊接網路來源卡（橘框 `n`+標題+「網路 · 站台」，→新分頁）；ESC/scrim 關 | `open,turn,onClose,onOpenReport` |
 | `Callout` | 警示卡原語：`variant:'error'|'warning'`，圖示+底色+邊框+文字+選用 action | `variant,children,action?` |
 | 重用 | `ReportDetailModal`(Phase 1)、`ConversationList`(Phase 0 側欄，導 `/ask?c=`)、`AppShell`、`Modal`/`Icon` 原語 | — |
 | lib | `readSSE.ts`、`askApi.ts`（Zod schema + POST fetch + conversations getJSON）、`askMarkdown.tsx`（`[n]`→膠囊、XSS 安全 React 節點）、`thinkingStages.ts`（stage→步驟清單 + 三態）、`reportProgress.ts`（stage→里程碑 %）、`askReducer.ts`（`(state,event)→state` 純函式） | — |
@@ -117,7 +117,7 @@
 ## 4. 資料流
 
 ### 4.1 送出問答
-1. `Composer.onSubmit(q)` → reducer `SUBMIT`：push user turn + assistant turn（`phase:'thinking'`, `startedAt=now`, `stages:['understanding']`）；`++reqId`；abort 舊串流。
+1. `Composer.onSubmit(q)` → reducer `SUBMIT`：push **一筆 Turn（QA pair）**（`question=q`、`answer=''`、`phase:'thinking'`, `startedAt=now`, `stages:['understanding']`）——render 時該筆同時輸出 `UserMessage`(question) + `AssistantMessage`(answer/狀態)，**不是**分開 push 兩筆 role-based 訊息；`++reqId`；abort 舊串流。
 2. `POST /api/ask {question:q, conversation_id?}` → `readSSE`（帶此串流 stamp）。
 3. 事件 → reducer（僅當 stamp===reqId）：
    - `status` → 累加 `stages`；`searching_web`→`webUsed=true`；`generating`→`phase:'streaming'`、記 `thinking_ms`。
@@ -175,15 +175,15 @@
 ## 9. 文案（繁中，逐字）
 - 空狀態：標題「向廷豐智能體提問」；副標「以自然語言詢問研究主題，回答將附上券商研報的引用來源。」；composer placeholder「輸入你的問題…」。
 - 思考步驟：`理解問題`、`檢索研報`、`閱讀整理`、`網路補充`、`生成回答`；凍結「已思考 {N} 秒」。
-- 動作列：`資料來源 {N}`、`外部參考 {N}`；複製後暫態 `已複製`。
+- 動作列：單一 `資料來源 {N}`（N＝研報來源數＋網路來源數，對齊 `.dc.html` `m.refCount`）；複製後暫態 `已複製`。
 - 研報 offer：標題「要不要整理成完整 PDF 深度研報？」；副標「彙整以上引用來源，生成含圖表與重點的深度研報。」；鈕 `要` / `不用`。
 - 研報生成中：標題「深度研報生成中…」；階段文字（§4.2）；完成：「深度研報已完成」+ `下載 PDF`。
-- 抽屜：標題「引用來源」；分節「資料來源 · {N}」；網路來源標「網路 · {站台}」。
+- 抽屜：標題「引用來源」；子標「資料來源 · {研報來源數}」領研報來源卡；網路來源卡緊接其後、逐條標「網路 · {站台}」（對齊 `.dc.html`，無獨立網路子標）。
 - 錯誤：問答「查詢逾時或失敗」+ `重試`；研報「研報生成失敗，請重試」+ `重試`；離題採後端 `OFF_TOPIC_MESSAGE` 字串 + `換個說法重新提問`。
 
 ## 10. 測試
-- **單元（Vitest）**：`readSSE`（分幀/壞幀丟棄/多幀）、`askMarkdown`（`[n]` 膠囊界內外、XSS `<img onerror>` 惰性、外部連結 scheme）、`thinkingStages`（stage→步驟三態、`searching_web` 才顯網路步）、`reportProgress`（stage→里程碑 %）、`askReducer`（各事件→state、done schema 三分支、latest-wins 丟棄舊 stamp）。
-- **元件**：`Composer`（Enter 送/ Shift+Enter 換行 / IME 守衛不誤送 / disabled）、`AssistantMessage`（`[n]` 點擊 onCite、動作列僅非離題）、`ThinkingSteps`（階段轉換）、`DeepReportPanel`（offer→generating→done→error 四態、下載連結 scheme）、`SourcesDrawer`（研報點擊 onOpenReport、網路新分頁、ESC/scrim 關）、`Callout`（兩 variant）。
+- **單元（Vitest）**：`readSSE`（分幀/壞幀丟棄/多幀）、`askMarkdown`（`[n]` 膠囊界內外、XSS `<img onerror>` 惰性、外部連結 scheme）、`thinkingStages`（stage→步驟三態、`searching_web` 才顯網路步）、`reportProgress`（stage→里程碑 %）、`askReducer`（各事件→state、done schema 三分支；**reducer 為純函式、不含 stamp 概念**）。
+- **元件／整合**：`Composer`（Enter 送/ Shift+Enter 換行 / IME 守衛不誤送 / disabled）、`AssistantMessage`（`[n]` 點擊 onCite、**單一 `資料來源 {N}` 開抽屜且 N＝研報＋網路**、動作列僅非離題）、`ThinkingSteps`（階段轉換）、`DeepReportPanel`（offer→generating→done→error 四態、下載連結 scheme）、`SourcesDrawer`（研報點擊 onOpenReport、網路新分頁、ESC/scrim 關）、`Callout`（兩 variant）、**`AskPage`/`useAskStream` 整合：舊 stamp 事件在 dispatch 前被丟棄、reducer 不接收 stale 事件**。
 - **e2e（Playwright :8098 live）**：問答→串流答案+來源抽屜、多輪追問（第二輪帶 `conversation_id`）、離題→`Callout warning`；研報 ~5min 用 terminal-agnostic（`done` 或 `error` 皆可通過），需暖機 BGE-M3 + 放寬 per-test timeout（`--timeout` 覆寫 config 30s）。live LLM 端到端不確定性用 `toPass`。
 
 ## 11. 非目標 / 範圍外

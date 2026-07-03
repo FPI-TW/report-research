@@ -14,7 +14,7 @@
 | 分組 | **月分組僅用於卡片檢視**（sticky pill 標頭）；**表格檢視為平坦表格（flat，照 `.dc.html` `showTable`→`visibleFlat`）**；不做市場分組／索引／drill-in |
 | 表格欄位/排序 | **批准延伸**（超出 `.dc.html`，使用者拍板）：表格 flat 結構照 `.dc.html`，但**保留 vanilla 的 標的／命中 欄與表頭排序**以維持功能平價 |
 | 無日期項的月分組 | 歸入 **「未標日期」** 組，置於所有月組**之後（最底）** |
-| 資料抓取 | react-query 標準 `useQuery` + **手動 offset 累積**（非 `useInfiniteQuery`）；換排序即重抓、換檢視不重抓、載入更多累積 |
+| 資料抓取 | react-query **`useInfiniteQuery`** 做 offset 累積（實作採用；行為與原「`useQuery`+手動累積」等價且更簡潔——換排序即重抓、換檢視不重抓、載入更多累積，皆經測試驗證）。query key 只含抓取相關欄位，排除 `view`/`tableSort` |
 | 分頁大小 | **初始 50、每次 +50**（`SEARCH_PAGE_SIZE=50`，對齊 vanilla `BROWSE_PAGE/SEARCH_PAGE=50`；**取代總 spec §6.3 的「初始 8」**以維持平價） |
 | 詳情 modal | **打 `/api/report/{id}/full` 取 `has_file`**，依 `has_file`／`isPdf` 四分支（PDF iframe／非 PDF 下載提示／缺檔 fallback／載入失敗）—— 平價保留 vanilla `modal.js` 行為（**修正總 spec §9.4「不打 API、固定 PDF」的縮水**） |
 | 篩選 | 皆**單值**（對齊後端）：`market`／`instrument_type`／`report_type` 各單選 + `relates_stock`／`relates_futures` 布林；**無多值陣列、無標的值篩選** |

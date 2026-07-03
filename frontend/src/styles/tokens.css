@@ -101,3 +101,5 @@ input, button, textarea { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }
+
+mark { background: var(--tf-mark); color: inherit; border-radius: 3px; padding: 0 1px; }

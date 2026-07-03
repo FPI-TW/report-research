@@ -2767,9 +2767,10 @@ import { useSearchParams } from 'react-router'
 import { useStats } from '../../lib/useStats'
 import { useSearchResults } from '../../lib/useSearchResults'
 import {
-  parseParams, buildParams, modeOf, normalizeSort, hasAnyFilter,
+  parseParams, buildParams, modeOf, hasAnyFilter,
   clearFilters, browseAll, type SearchState,
 } from '../../lib/searchFilters'
+import { normalizeSort } from '../../lib/sortForMode'
 import { queryTerms } from '../../lib/terms'
 import { latestId } from '../../lib/isLatest'
 import { resultsMetaText, emptyState } from '../../lib/resultsMeta'
@@ -2883,16 +2884,13 @@ export default function SearchPage() {
 .error button { margin-left: 10px; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-pill); padding: 4px 12px; cursor: pointer; font-family: inherit; }
 ```
 
-- [ ] **Step 5: Fix Phase 0 e2e placeholder assertion**
+- [ ] **Step 5: Fix Phase 0 placeholder assertions（e2e + 單元）**
 
-`frontend/e2e/shell.spec.ts` 第 17 行由：
-```ts
-  await expect(page.getByText('檢索頁（Phase 1 實作）')).toBeVisible()
-```
-改為（改斷言搜尋框存在，代表 SearchPage 已渲染）：
-```ts
-  await expect(page.getByLabel('搜尋研報')).toBeVisible()
-```
+覆寫 placeholder 會讓兩處 Phase 0 測試對 placeholder 文字的斷言失敗，皆改為斷言新搜尋框：
+
+`frontend/e2e/shell.spec.ts` 第 17 行 `page.getByText('檢索頁（Phase 1 實作）')` → `page.getByLabel('搜尋研報')`。
+
+`frontend/src/App.test.tsx`（`/search 落在…` 測試）的 `findByText('檢索頁（Phase 1 實作）')` → `findByLabelText('搜尋研報', {}, { timeout: 5000 })`（SearchPage 現為較大的 lazy chunk，動態載入可能超過預設 1000ms，故放寬逾時；斷言搜尋框存在＝真渲染，非套套邏輯）。
 
 - [ ] **Step 6: Run unit test to verify PASS** — `cd frontend && ./node_modules/.bin/vitest run src/features/search/SearchPage.test.tsx`（2 tests）
 

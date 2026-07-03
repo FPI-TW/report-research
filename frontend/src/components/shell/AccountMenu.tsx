@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Popover } from '../primitives/Popover'
 import { Icon } from '../primitives/Icon'
 import { useStats } from '../../lib/useStats'
@@ -8,10 +8,9 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
   const { data } = useStats()
   const name = data?.username ?? '分析師'
   const [open, setOpen] = useState(false)
-  const wrapRef = useRef<HTMLDivElement>(null)
 
   return (
-    <div className={styles.wrap} ref={wrapRef}>
+    <div className={styles.wrap}>
       <button
         type="button"
         aria-expanded={open}

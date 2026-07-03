@@ -10,7 +10,7 @@
 }
 .glyph { font-family: var(--tf-serif); font-weight: 800; font-size: 22px; color: var(--tf-gold-text); line-height: 1; padding: 2px 6px; text-decoration: none; }
 .glyphSmall { font-family: var(--tf-serif); font-weight: 800; font-size: 22px; color: var(--tf-gold-text); line-height: 1; padding-left: 4px; }
-.toggleMini { margin-top: 14px; border: 1px solid var(--tf-border); background: #fff; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-3); padding: 0; }
+.toggleMini { margin-top: 14px; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-3); padding: 0; }
 .toggleMini:hover { border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
 .miniNav { display: flex; flex-direction: column; gap: 6px; margin-top: 18px; }
 .spacer { flex: 1; }

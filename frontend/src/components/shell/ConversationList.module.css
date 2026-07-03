@@ -1,7 +1,7 @@
 .newWrap { padding: 0 10px 8px; }
 .newBtn {
   width: 100%; display: flex; align-items: center; gap: 8px;
-  border: 1px solid var(--tf-border); background: #fff; border-radius: 8px;
+  border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: 8px;
   color: var(--tf-gold-text); font-weight: 600; font-size: 13px; padding: 9px 12px;
   cursor: pointer; text-decoration: none;
 }

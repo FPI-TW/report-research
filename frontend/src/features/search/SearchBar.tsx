@@ -35,7 +35,6 @@ export function SearchBar({ initial, onSubmit }: Props) {
           <Icon name="x" size={16} />
         </button>
       )}
-      <button type="button" className={styles.go} onClick={submit}>搜尋</button>
     </div>
   )
 }

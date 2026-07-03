@@ -1,0 +1,10 @@
+.scrim { position: fixed; inset: 0; z-index: 35; }
+.panel {
+  position: absolute;
+  z-index: 40;
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-pop);
+  padding: 8px;
+}

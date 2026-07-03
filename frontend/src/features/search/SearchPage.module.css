@@ -1,0 +1,5 @@
+.page { max-width: 1120px; margin: 0 auto; padding: 20px 24px 80px; }
+.controls { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+.toolbar { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+.loading, .error { text-align: center; padding: 56px 16px; color: var(--tf-text-3); }
+.error button { margin-left: 10px; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-pill); padding: 4px 12px; cursor: pointer; font-family: inherit; }

@@ -27,7 +27,12 @@ import styles from './SearchPage.module.css'
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams()
-  const state = useMemo(() => parseParams(params.toString()), [params])
+  // URL 為狀態真相；初次載入亦將 sort 過 normalizeSort，避免書籤 /search?sort=relevance（無 q）
+  // 讓 browse 態殘留不合法排序（顯示與後端雖已各自回退，仍以狀態一致為準）。
+  const state = useMemo(() => {
+    const s = parseParams(params.toString())
+    return { ...s, sort: normalizeSort(modeOf(s), s.sort) }
+  }, [params])
   const mode = modeOf(state)
   const [tableSort, setTableSort] = useState<TableSort>({ key: 'date', dir: 'desc' })
   const [openReport, setOpenReport] = useState<{ id: string; fileName: string } | null>(null)

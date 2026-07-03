@@ -17,4 +17,5 @@ test('/search 落在檢索 placeholder 且側欄可見', async () => {
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   expect(await screen.findByText('檢索頁（Phase 1 實作）')).toBeInTheDocument()
   expect(screen.getByRole('heading', { level: 1, name: '廷豐智能研報' })).toBeInTheDocument()
+  expect(screen.getByTitle('收合側欄')).toBeInTheDocument()
 })

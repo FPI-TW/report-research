@@ -36,7 +36,7 @@
 | 總覽/枚舉 | `sources[]`（`is_latest` 恆 false）→ `status{retrieved,count}` → `status{generating,thinking_ms}` → `token`×N → `done{cited,qa_id,conversation_id,thinking_ms}`（**無** offer_report；無網搜） |
 | 離題 | `sources[]`（空）→ `notice`（字串 `OFF_TOPIC_MESSAGE`）→ `done{cited:[],conversation_id,thinking_ms}`（**無** qa_id、**無** offer_report） |
 
-- `sources[]` item：`{ n:int, report_id:str, file_name:str, market:str, report_date:str|null, is_latest:bool }`。
+- `sources[]` item：`{ n:int, report_id:str, file_name:str, market:str, report_date:str|null, is_latest:bool }`。**無 `source`(發行機構)、無獨立 title 欄**——抽屜卡片標題用 `file_name`、次資訊只用 `report_date`；完整發行機構於點卡片開 `ReportDetailModal`(`/api/report/{id}/full` 才有 `source`)時顯示，**不在抽屜逐筆 enrichment**（避免 N 次額外請求）。
 - `ext_sources[]` item：`{ title:str, url:str }`（僅正常 RAG 路徑；串流結束後一次）。
 - 引用：正文行內 `[1]`、`[2]`（可連寫 `[1][3]`）對應 `sources[].n`；網路引用為正文字面「（網路）」＋獨立 `ext_sources`。
 - `error`：`{"detail":"問答服務發生錯誤"}`，終止。
@@ -106,7 +106,7 @@
 | `AssistantMessage` | 「已思考 N 秒」可收合 + 襯線 markdown 區塊 + 行內 `[n]` 金膠囊 + 動作列（讚/倒讚/複製 + 分隔 + **單一** `資料來源 {N}`，N＝研報來源數＋網路來源數，對齊 `.dc.html` `m.refCount`；點擊開抽屜。無獨立「外部參考」鈕） | `turn,onCite,onToggleSources,onFeedback,onCopy` |
 | `ThinkingSteps` | 思考卡：理解問題→檢索研報→閱讀整理→(網路補充)→生成回答；由 `turn.stages` 映射三態 ✓/spinner/dot；收尾凍結「已思考 N 秒」 | `turn` |
 | `DeepReportPanel` | offer(要/不用)→生成中(里程碑 %+撰寫動態+階段文字)→完成(暖金卡＋下載 PDF)→**失敗** `Callout error`＋重試 | `turn.report,onGenerate,onDecline,onRetry` |
-| `SourcesDrawer` | 右側「引用來源」抽屜（**單一入口、面板內含兩類內容**）：標頭「引用來源」+關閉；子標「資料來源 · {研報來源數}」領研報來源卡（金 `n`+市場徽章+標題+來源·日期，點→ReportDetailModal）；其後緊接網路來源卡（橘框 `n`+標題+「網路 · 站台」，→新分頁）；ESC/scrim 關 | `open,turn,onClose,onOpenReport` |
+| `SourcesDrawer` | 右側「引用來源」抽屜（**單一入口、面板內含兩類內容**）：標頭「引用來源」+關閉；子標「資料來源 · {N}」（N＝研報＋網路**總數**，對齊 `.dc.html` `drawerSrcCount = sources.length + externals.length`）；研報來源卡（金 `n`+市場徽章+`file_name`(標題)+`report_date`(次資訊)，點→ReportDetailModal）；其後緊接網路來源卡（橘框 `n`+標題+「網路 · 站台」，→新分頁）；ESC/scrim 關 | `open,turn,onClose,onOpenReport` |
 | `Callout` | 警示卡原語：`variant:'error'|'warning'`，圖示+底色+邊框+文字+選用 action | `variant,children,action?` |
 | 重用 | `ReportDetailModal`(Phase 1)、`ConversationList`(Phase 0 側欄，導 `/ask?c=`)、`AppShell`、`Modal`/`Icon` 原語 | — |
 | lib | `readSSE.ts`、`askApi.ts`（Zod schema + POST fetch + conversations getJSON）、`askMarkdown.tsx`（`[n]`→膠囊、XSS 安全 React 節點）、`thinkingStages.ts`（stage→步驟清單 + 三態）、`reportProgress.ts`（stage→里程碑 %）、`askReducer.ts`（`(state,event)→state` 純函式） | — |
@@ -147,7 +147,8 @@
 - 切換對話 / 新對話：abort 現行串流；清 turns；`new` → `conversationId=null`、`?c` 移除、顯空狀態、composer 回置中。
 
 ### 4.4 對話側欄 / 回饋
-- `ConversationList`（Phase 0）：`GET /api/conversations?limit=50`（react-query）；點 → 導 `/ask?c=<id>`；`新對話` → 導 `/ask`；刪除 → `DELETE`（失敗 fallback `POST /delete`）→ invalidate；刪到目前對話則轉新對話。
+- `ConversationList`（Phase 0）：`GET /api/conversations?limit=50`（react-query）；點 → 導 `/ask?c=<id>`；`新對話` → 導 `/ask`。
+- **刪除對話【批准延伸】**：`.dc.html` 與上位 rebuild spec §7 側欄僅畫「新對話＋歷史選取」、**未畫刪除 UI**；本 Phase 依「功能對等硬約束」保留 vanilla 現有刪除能力，為經使用者批准之刻意偏離設計權威。行為：歷史列每列附垃圾桶鈕 → `confirmDialog`（標題「刪除此對話？」/內文「將永久移除整個對話串，無法復原。」/確認鈕「刪除」）→ `DELETE /api/conversations/{id}`（若 404/405 fallback `POST /api/conversations/{id}/delete`）→ invalidate `conversations`；刪到目前對話則轉新對話（`newConversation`）。
 - 回饋：`onFeedback(qaId,value)` → 樂觀切換 `.on`（讚/倒讚互斥）→ `POST /api/feedback`；失敗靜默不回滾；**僅非離題且有 `qaId` 的回合**顯示動作列。
 
 ## 5. SSE（`readSSE`）
@@ -178,7 +179,7 @@
 - 動作列：單一 `資料來源 {N}`（N＝研報來源數＋網路來源數，對齊 `.dc.html` `m.refCount`）；複製後暫態 `已複製`。
 - 研報 offer：標題「要不要整理成完整 PDF 深度研報？」；副標「彙整以上引用來源，生成含圖表與重點的深度研報。」；鈕 `要` / `不用`。
 - 研報生成中：標題「深度研報生成中…」；階段文字（§4.2）；完成：「深度研報已完成」+ `下載 PDF`。
-- 抽屜：標題「引用來源」；子標「資料來源 · {研報來源數}」領研報來源卡；網路來源卡緊接其後、逐條標「網路 · {站台}」（對齊 `.dc.html`，無獨立網路子標）。
+- 抽屜：標題「引用來源」；子標「資料來源 · {N}」（N＝研報＋網路**總數**，對齊 `.dc.html` `drawerSrcCount`）；研報來源卡標題用 `file_name`、次資訊只顯 `report_date`（ask `sources[]` 無發行機構欄）；網路來源卡緊接其後、逐條標「網路 · {站台}」（無獨立網路子標）。
 - 錯誤：問答「查詢逾時或失敗」+ `重試`；研報「研報生成失敗，請重試」+ `重試`；離題採後端 `OFF_TOPIC_MESSAGE` 字串 + `換個說法重新提問`。
 
 ## 10. 測試

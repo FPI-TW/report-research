@@ -190,7 +190,7 @@
 - **`最新` 徽章（前端計算）**：鏡像後端 ask 來源規則（`answer.py:335-343`，**僅日期嚴格大於才更新**）——在**目前已載入結果集**中取 `report_date` 嚴格最大者標「最新」；**同日並列時保留最先出現者（當前排序下第一筆），只標一篇**；無 `report_date` 者不參與。結果集變動（載入更多／換篩選／改排序）即重算，純函式可單元測試。
 - **篩選 → URL / API 參數（皆單值，對齊後端）**：`q`、`market`、`instrument_type`、`report_type`、`relates_stock`、`relates_futures`、`sort`、`view`。「全部」不帶該參數。切 `view` 為呈現態，**不進 query key、不重抓**。（**不支援** 多值陣列或標的值篩選——後端無此契約）
 - **排序（`SortMenu`，功能平價）**：搜尋模式＝`相關度`(relevance，預設)／`最新`(date_desc)／`最舊`(date_asc)；瀏覽模式＝`最新`(date_desc，預設)／`最舊`(date_asc)（無相關度）。sort 改變**會重打 API**（進 query key，與 view/group 不同）；對應現行 vanilla 的排序 chip。
-- **分頁**：`載入更多` 提升 `limit`/`offset`（初始 8，每次 +N；沿用後端分頁），`hasMore = 已載入 < total`，`remaining = total - 已載入`。
+- **分頁**：`載入更多` 提升 `limit`/`offset`（初始 50，每次 +50，對齊 vanilla `BROWSE_PAGE/SEARCH_PAGE`；沿用後端分頁），`hasMore = 已載入 < total`，`remaining = total - 已載入`。（細節以 Phase 1 spec `2026-07-03-react-spa-phase1-search-design.md` 為準）
 - **ResultsMeta 文案**：有 q → `「q」· <市場> — 找到 N 篇研報`；無 q 有篩選 → `<市場|全部研報> — N 篇`；皆無 → `全部研報 — 共 N 篇`。
 - **EmptyState 文案**：`找不到「q」的相關研報` / `沒有符合條件的研報`＋`換個說法或關鍵字試試，或清除目前的篩選條件重新檢索。`
 
@@ -264,7 +264,7 @@
 ### 9.4 行為原語與共用元件
 - `Popover`/`Menu`/`Modal`（fixed 遮罩＋click-outside＋Esc 關閉＋`useFocusTrap`）。
 - `Icon`：Tabler 風 SVG（`stroke-width 1.8`，size 18–21，直接內嵌與 `.dc.html` 相同的 path）。
-- `ReportDetailModal`（檢索用）：資料取自搜尋結果 item（標題/市場/來源/日期/類型/商品/摘要，**無需再打 API**）＋PDF iframe（`/api/report/{id}/file`）＋`在新分頁開啟`／`下載原始檔`（同一端點）。
+- `ReportDetailModal`（檢索用）：開啟時打 `/api/report/{id}/full` 取 metadata＋`has_file`，依 `has_file`／`isPdf` 四分支（PDF iframe／非 PDF 下載提示／缺檔 fallback／載入失敗）＋`在新分頁開啟`／`下載原始檔`（`/api/report/{id}/file`）。（細節以 Phase 1 spec 為準）
 
 ---
 

@@ -19,7 +19,7 @@
 | 篩選 | 皆**單值**（對齊後端）：`market`／`instrument_type`／`report_type` 各單選 + `relates_stock`／`relates_futures` 布林；**無多值陣列、無標的值篩選** |
 | 標的文字框 | `.dc.html` 的標的文字框以「個股／期貨」兩顆布林膠囊取代（後端無標的值篩選） |
 | `最新` 徽章 | **前端計算**，鏡像 `app/services/answer.py:335-343`（嚴格大於才更新、同日保留第一筆、無日期不參與） |
-| 後端 | 零改動；沿用 `/api/reports`、`/api/search`、`/api/report/{id}/file` |
+| 後端 | 零改動；沿用 `/api/reports`、`/api/search`、`/api/report/{id}/full`、`/api/report/{id}/file`、`/api/stats` |
 | 範圍外 | 問答（§7/Phase 2）、監控（§8/Phase 3）、cutover（Phase 4） |
 
 ## 1. 版面（照 `.dc.html`；細節見總 spec §6.1）
@@ -42,7 +42,7 @@
 | `MonthGroup.tsx` | sticky 月標頭 + 該組內容插槽（卡片網格或表格列） |
 | `ResultCard.tsx` | 單卡（search／browse 兩模式，見 §3） |
 | `TableView.tsx` | 表格。欄（browse）：**報告名稱／市場／類型／日期／來源／標的**；**search 模式再加 相關度／命中**（＝vanilla `render.js` `tableHtml` 全欄）。表頭可排序＝呈現態 `tableSort`，可排序鍵 `name/market/type/date/source/score/match`（**`標的` 欄不排序**）；search 分數顯 `round(best_score*100)%`、命中顯 `match_count` |
-| `EmptyState.tsx` | 空結果（襯線標題＋補救句＋金鈕「清除篩選再試」） |
+| `EmptyState.tsx` | 空結果（襯線標題＋補救句＋CTA：條件式「清除篩選再試」＋search 模式「瀏覽全部報告」，見 §7） |
 | `LoadMore.tsx` | 次按鈕「載入更多（還有 N 篇）」 |
 | `ViewSwitch.tsx` | 浮動卡片/表格切換 |
 
@@ -86,6 +86,7 @@
 - **ResultsMeta**：有 q → `「{q}」· {市場} — 找到 {N} 篇研報`；無 q 有篩選 → `{市場|全部研報} — {N} 篇`；皆無 → `全部研報 — 共 {N} 篇`。
 - **月標頭**：`{YYYY} 年 {M} 月`；無日期組 → `未標日期`。
 - **EmptyState**：標題 `找不到「{q}」的相關研報`（有 q）／`沒有符合條件的研報`（無 q）；補救句 `換個說法或關鍵字試試，或清除目前的篩選條件重新檢索。`
+  - **CTA（平價 vanilla `render.js:77-78`）**：`清除篩選再試`（**僅當有作用中進階篩選或 市場≠全部**時顯示 → 清篩選+重查）＋（**search 模式**）`瀏覽全部報告`（清空 `q`＋清篩選 → 切 browse）。browse 模式無 q，只顯條件式`清除篩選再試`。
 - **LoadMore**：`載入更多（還有 {remaining} 篇）`。
 
 ## 8. `ReportDetailModal` 與 `Modal` 原語
@@ -103,7 +104,7 @@
 
 ## 10. 測試
 - **純函式（Vitest，RED→GREEN）**：`filters`(參數↔URL 雙向、單值、預設不帶)、`grouping`(YYYY-MM 分組、無日期置底、組內序沿排序)、`highlight`/`terms`(分段、無 term 原樣、特殊字元不炸)、`isLatest`(嚴格大於、同日第一筆、無日期不參與、載入更多重算)、`tableSort`(各欄升降序，含 `score`/`match` 數值欄)、`sortForMode`(**browse 下 `relevance` 回退 `date_desc`**、合法值原樣、各模式預設)、`resultsMeta`(三種文案分支)。
-- **元件（Testing Library）**：SearchBar 送出＋IME 守衛；MarketChipBar active＋count；MoreFiltersPopover 單選切換＋badge 計數＋清除；ActiveChips 可刪；ResultCard 兩模式（高亮/相關度條 vs 摘要）；**`TableView` 欄位（browse 6 欄／search 8 欄含 標的/相關度/命中）＋表頭排序（`標的` 不可排）**；ViewSwitch 切換**不重抓**（mock fetch 呼叫次數不增）；LoadMore 累積；EmptyState；`Modal` 開關/Esc/focus-trap；**`ReportDetailModal` 三分支（mock `/full`：`has_file+pdf`→iframe／`has_file+docx`→下載提示／`!has_file`→缺檔文案）＋下載 scheme 守門**。
+- **元件（Testing Library）**：SearchBar 送出＋IME 守衛；MarketChipBar active＋count；MoreFiltersPopover 單選切換＋badge 計數＋清除；ActiveChips 可刪；ResultCard 兩模式（高亮/相關度條 vs 摘要）；**`TableView` 欄位（browse 6 欄／search 8 欄含 標的/相關度/命中）＋表頭排序（`標的` 不可排）**；ViewSwitch 切換**不重抓**（mock fetch 呼叫次數不增）；LoadMore 累積；EmptyState；`Modal` 開關/Esc/focus-trap；**`ReportDetailModal` 四分支（mock `/full`：`has_file+pdf`→iframe／`has_file+docx`→下載提示／`!has_file`→缺檔文案／`/full` query error→載入失敗 fallback）＋下載 scheme 守門**；EmptyState 兩 CTA（search：清除篩選再試[有篩選]＋瀏覽全部報告；browse：清除篩選再試）。
 - **排序/狀態（整合）**：`relevance` 從 search 切回 browse（清空 q）自動回退 `date_desc`；URL 帶 `sort` 可還原到對應選項；改 `sort` **會** refetch（query key 變、fetch 次數增），改 `view`／`tableSort` **不** refetch。
 - **e2e 冒煙（`:8098`，Playwright）**：登入 → `/app/search` browse 載入 → 輸入關鍵字搜尋 → 套用一個篩選 → 月分組顯示 → 切表格檢視（不重抓）→ 載入更多 → 開 `ReportDetailModal`（PDF 內嵌）。
 - 執行慣例：前端 `./node_modules/.bin/vitest run <path>`（RTK 遮 exit code → 直接 binary；完整套件 WSL flake → 焦點檔＋build）；e2e 由控制端跑（工作樹 `:8098`、`ss` 核對埠免誤殺正式 `:8097`、預熱非必要因不觸發 LLM）。

@@ -2096,7 +2096,7 @@ describe('MarketChipBar', () => {
 - [ ] **Step 3: Implement `SearchBar.tsx`**
 
 ```tsx
-import { useEffect, useState, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { Icon } from '../../components/primitives/Icon'
 import styles from './SearchBar.module.css'
 
@@ -2104,7 +2104,13 @@ interface Props { initial: string; onSubmit: (q: string) => void }
 
 export function SearchBar({ initial, onSubmit }: Props) {
   const [draft, setDraft] = useState(initial)
-  useEffect(() => { setDraft(initial) }, [initial])   // 父層外部重設 q（如「瀏覽全部」）時同步
+  // 父層外部重設 q（如「瀏覽全部」）時同步 draft：於 render 期間調整 state（React 官方
+  // 「adjust state during render」模式），避免在 effect 內 setState 觸發 react-hooks/set-state-in-effect。
+  const [prevInitial, setPrevInitial] = useState(initial)
+  if (initial !== prevInitial) {
+    setPrevInitial(initial)
+    setDraft(initial)
+  }
   const submit = () => onSubmit(draft.trim())
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     // React 19：e.isComposing 恆 undefined，必須讀 nativeEvent.isComposing

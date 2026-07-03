@@ -11,7 +11,9 @@ test('登入後 /app/search 殼與側欄導覽可見', async ({ page }) => {
   await page.fill('#username', process.env.TF_USER || 'analyst')
   await page.fill('#password', process.env.TF_PW || 'test')
   await page.getByRole('button', { name: '登入' }).click()
-  await page.waitForURL('**/app/search')
+  // Phase 0 未 cutover：登入後導向 '/'（vanilla）；認證後再進入 SPA /app/search。
+  await page.waitForURL((u) => u.pathname === '/')
+  await page.goto('/app/search')
   await expect(page.getByText('檢索頁（Phase 1 實作）')).toBeVisible()
   await expect(page.getByRole('link', { name: /問答/ })).toBeVisible()
 })

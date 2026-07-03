@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Popover } from '../../components/primitives/Popover'
 import { activeAdvancedCount, type SearchState } from '../../lib/searchFilters'
 import styles from './MoreFiltersPopover.module.css'
@@ -13,10 +13,9 @@ interface Props {
 
 export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions, onPatch, onClear }: Props) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
   const count = activeAdvancedCount(state)
   return (
-    <div className={styles.wrap} ref={ref}>
+    <div className={styles.wrap}>
       <button type="button" className={styles.trigger} onClick={() => setOpen(o => !o)}
         aria-haspopup="menu" aria-expanded={open}>
         更多篩選{count > 0 && <span className={styles.badge}>{count}</span>}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { useFocusTrap } from '../../lib/useFocusTrap'
 import styles from './Modal.module.css'
 
@@ -12,6 +12,7 @@ interface ModalProps {
 
 export function Modal({ open, onClose, title, children, className }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const titleId = useId()
   useFocusTrap(panelRef, open)
 
   useEffect(() => {
@@ -29,11 +30,12 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
         className={`${styles.panel} ${className ?? ''}`}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title != null ? titleId : undefined}
         onClick={e => e.stopPropagation()}
       >
         {title != null && (
           <div className={styles.header}>
-            <div className={styles.title}>{title}</div>
+            <div id={titleId} className={styles.title}>{title}</div>
             <button type="button" className={styles.close} onClick={onClose} aria-label="關閉">×</button>
           </div>
         )}

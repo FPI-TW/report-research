@@ -1,4 +1,4 @@
-import { MARKET_ORDER, marketLabel } from '../../lib/meta'
+import { MARKET_ORDER, marketColor, marketLabel } from '../../lib/meta'
 import styles from './MarketChipBar.module.css'
 
 const ALL = 'ALL'
@@ -12,7 +12,7 @@ interface Props {
 export function MarketChipBar({ value, onChange, counts }: Props) {
   const chips = [ALL, ...MARKET_ORDER]
   return (
-    <div className={styles.bar} role="tablist" aria-label="市場篩選">
+    <div className={styles.bar} role="group" aria-label="市場篩選">
       {chips.map(code => {
         const active = value === code
         const label = code === ALL ? '全部' : marketLabel(code)
@@ -21,11 +21,11 @@ export function MarketChipBar({ value, onChange, counts }: Props) {
           <button
             key={code}
             type="button"
-            role="tab"
-            aria-selected={active}
+            aria-pressed={active}
             className={`${styles.chip} ${active ? styles.active : ''}`}
             onClick={() => onChange(code)}
           >
+            <span className={styles.dot} style={{ background: active ? 'var(--tf-on-gold)' : marketColor(code) }} aria-hidden="true" />
             {label}{typeof n === 'number' ? ` ${n}` : ''}
           </button>
         )

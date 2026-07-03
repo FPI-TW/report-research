@@ -51,7 +51,13 @@ export function TableView({ rows, mode, sort, onSort, onOpen }: Props) {
           {sorted.map(r => {
             const targets = [...(r.stock_targets ?? []), ...(r.futures_targets ?? [])]
             return (
-              <tr key={r.report_id} className={styles.row} onClick={() => onOpen(r.report_id, r.file_name)}>
+              <tr
+                key={r.report_id}
+                className={styles.row}
+                tabIndex={0}
+                onClick={() => onOpen(r.report_id, r.file_name)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(r.report_id, r.file_name) } }}
+              >
                 <td className={styles.name}>{r.file_name}</td>
                 <td>
                   <span className={styles.badge} style={{ background: marketColor(r.market ?? '') }}>

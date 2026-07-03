@@ -51,7 +51,7 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen }: Props) {
       {mode === 'search' ? (
         <>
           {snippet && (
-            <div className={styles.snippet}>{highlight(snippet.slice(0, 300), terms)}…</div>
+            <div className={styles.snippet}>{highlight(snippet.slice(0, 300), terms)}{snippet.length > 300 ? '…' : ''}</div>
           )}
           <div className={styles.scoreRow}>
             <div className={styles.scoreTrack}>

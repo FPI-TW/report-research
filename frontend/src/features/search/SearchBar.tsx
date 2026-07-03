@@ -24,7 +24,7 @@ export function SearchBar({ initial, onSubmit }: Props) {
       <input
         className={styles.input}
         value={draft}
-        placeholder="搜尋研報主題、個股、產業…"
+        placeholder="搜尋主題、公司、事件…"
         aria-label="搜尋研報"
         onChange={e => setDraft(e.target.value)}
         onKeyDown={onKey}

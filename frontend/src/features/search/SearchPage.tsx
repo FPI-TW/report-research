@@ -50,6 +50,7 @@ export default function SearchPage() {
   const marketCounts = useMemo(() => {
     const m: Record<string, number> = {}
     for (const it of stats.data?.markets ?? []) m[it.market] = it.count
+    if (stats.data) m.ALL = stats.data.total_reports
     return m
   }, [stats.data])
   const instrumentOptions = (stats.data?.instrument_types ?? []).map(t => t.type)

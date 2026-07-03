@@ -97,7 +97,7 @@ class _ImmutableStatic(StaticFiles):
 
     async def get_response(self, path, scope):  # type: ignore[override]
         resp = await super().get_response(path, scope)
-        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
         return resp
 
 

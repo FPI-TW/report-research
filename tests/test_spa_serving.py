@@ -1,9 +1,10 @@
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from web import auth
-from web.server import app
+from web.server import SPA_DIST, app
 
 
 def _auth_cookies() -> dict[str, str]:
@@ -18,10 +19,10 @@ def test_unauthed_app_redirects_to_login():
 
 
 def test_authed_app_deeplink_serves_shell():
+    if not (SPA_DIST / "index.html").is_file():
+        pytest.skip("frontend/dist not built")
     client = TestClient(app, cookies=_auth_cookies())
     resp = client.get("/app/ask", follow_redirects=False)
-    # dist 若尚未 build，回 503；已 build 回 200 且為 HTML shell
-    assert resp.status_code in (200, 503)
-    if resp.status_code == 200:
-        assert "text/html" in resp.headers["content-type"]
-        assert resp.headers.get("cache-control") == "no-cache"
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert resp.headers.get("cache-control") == "no-cache"

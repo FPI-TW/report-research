@@ -344,7 +344,7 @@ describe('searchFilters', () => {
   })
   it('buildParams omits defaults (ALL/空/false/預設 sort/cards)', () => {
     expect(buildParams(defaultState()).toString()).toBe('')
-    const p = buildParams({ ...defaultState(), q: 'AI', market: 'TW', view: 'table' })
+    const p = buildParams({ ...defaultState(), q: 'AI', market: 'TW', view: 'table', sort: 'relevance' as const })
     expect(p.get('q')).toBe('AI'); expect(p.get('market')).toBe('TW')
     expect(p.get('view')).toBe('table'); expect(p.has('sort')).toBe(false)
   })

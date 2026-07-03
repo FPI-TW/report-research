@@ -1,4 +1,18 @@
-import { marketColor, marketLabel, ptypeColor, MARKET_ORDER } from './meta'
+import { marketColor, marketLabel, ptypeColor, MARKET_ORDER, instrumentLabel, reportTypeLabel } from './meta'
+
+test('商品類型代碼→中文（鏡像 tagging.py），未知回原字串', () => {
+  expect(instrumentLabel('equity')).toBe('股票')
+  expect(instrumentLabel('futures')).toBe('期貨')
+  expect(instrumentLabel('commodity')).toBe('原物料')
+  expect(instrumentLabel('etf')).toBe('ETF')
+  expect(instrumentLabel('股票')).toBe('股票')   // 已中文 → 原樣
+})
+
+test('報告類型：英文碼→中文，已中文者原樣', () => {
+  expect(reportTypeLabel('memo')).toBe('備忘')
+  expect(reportTypeLabel('snapshot')).toBe('快照')
+  expect(reportTypeLabel('速報')).toBe('速報')
+})
 
 test('市場色與標籤取自 .dc.html', () => {
   expect(marketColor('TW')).toBe('#34c759')

@@ -1,4 +1,4 @@
-import { marketColor, marketLabel } from '../../lib/meta'
+import { marketColor, marketLabel, reportTypeLabel } from '../../lib/meta'
 import { sortRows, type TableSort, type TableSortKey } from '../../lib/tableSort'
 import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
@@ -64,7 +64,7 @@ export function TableView({ rows, mode, sort, onSort, onOpen }: Props) {
                     {marketLabel(r.market ?? '')}
                   </span>
                 </td>
-                <td>{r.report_type ?? ''}</td>
+                <td>{reportTypeLabel(r.report_type ?? '')}</td>
                 <td className={styles.nowrap}>{(r.report_date ?? '').slice(0, 10)}</td>
                 <td className={styles.nowrap}>{r.source ?? ''}</td>
                 <td>{targets.join('、')}</td>

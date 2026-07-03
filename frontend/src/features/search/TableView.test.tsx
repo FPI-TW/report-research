@@ -34,6 +34,11 @@ describe('TableView', () => {
     fireEvent.click(screen.getByText('標的'))
     expect(onSort).toHaveBeenCalledTimes(1)
   })
+  it('類型欄英文碼顯示中文（memo→備忘）', () => {
+    render(<TableView rows={[row({ report_type: 'memo' })]} mode="browse" sort={sort} onSort={() => {}} onOpen={() => {}} />)
+    expect(screen.getByText('備忘')).toBeTruthy()
+    expect(screen.queryByText('memo')).toBeNull()
+  })
   it('點列 → onOpen(id, fileName)', () => {
     const onOpen = vi.fn()
     render(<TableView rows={[row({})]} mode="browse" sort={sort} onSort={() => {}} onOpen={onOpen} />)

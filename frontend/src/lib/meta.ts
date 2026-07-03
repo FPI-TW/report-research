@@ -30,3 +30,20 @@ export function marketLabel(code: string): string {
 export function ptypeColor(name: string): string {
   return PTYPE[name] ?? FALLBACK
 }
+
+// 商品類型代碼 → 中文顯示（鏡像 app/services/tagging.py INSTRUMENT_DISPLAY）
+const INSTRUMENT_LABEL: Record<string, string> = {
+  equity: '股票', index: '指數', futures: '期貨', options: '選擇權', etf: 'ETF',
+  bond: '債券', fx: '外匯', commodity: '原物料', crypto: '加密',
+}
+// 報告類型：多數標註已是中文，僅少數英文碼需對照；其餘回傳原字串
+const REPORT_TYPE_LABEL: Record<string, string> = {
+  memo: '備忘', snapshot: '快照',
+}
+
+export function instrumentLabel(code: string): string {
+  return INSTRUMENT_LABEL[code] ?? code
+}
+export function reportTypeLabel(value: string): string {
+  return REPORT_TYPE_LABEL[value] ?? value
+}

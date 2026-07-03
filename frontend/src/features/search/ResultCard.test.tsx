@@ -25,6 +25,13 @@ describe('ResultCard', () => {
     expect(document.querySelector('mark')).not.toBeNull()
     expect(screen.getByText('最新')).toBeTruthy()
   })
+  it('商品類型代碼顯示中文（equity→股票、index→指數）', () => {
+    render(<ResultCard row={row({ instrument_types: ['equity', 'index'] })}
+      mode="browse" isLatest={false} terms={[]} onOpen={() => {}} />)
+    expect(screen.getByText('股票')).toBeTruthy()
+    expect(screen.getByText('指數')).toBeTruthy()
+    expect(screen.queryByText('equity')).toBeNull()
+  })
   it('整卡可點 → onOpen(id, fileName)', () => {
     const onOpen = vi.fn()
     render(<ResultCard row={row({})} mode="browse" isLatest={false} terms={[]} onOpen={onOpen} />)

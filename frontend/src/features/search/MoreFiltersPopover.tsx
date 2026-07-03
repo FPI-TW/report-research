@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Popover } from '../../components/primitives/Popover'
 import { Icon } from '../../components/primitives/Icon'
+import { instrumentLabel, reportTypeLabel } from '../../lib/meta'
 import { activeAdvancedCount, type SearchState } from '../../lib/searchFilters'
 import styles from './MoreFiltersPopover.module.css'
 
@@ -34,8 +35,9 @@ function pick(s: SearchState): Draft {
 }
 
 // 對齊 Claude Design（.dc.html 更多篩選彈出層）：pill 切換 + 清除條件/套用（apply-on-button）。
+// 商品類型/報告類型 pill 顯示中文（instrumentLabel/reportTypeLabel），送後端仍為原碼。
 // 註：.dc.html 的「個股 · 標的」為標的代碼/名稱文字框，但後端無「標的值」篩選端點，
-// 依 Phase 1 §0 既定決策改為 個股/期貨 兩顆布林 pill（section 標題相應為「個股 · 期貨」）。
+// 依 Phase 1 §0 既定決策改為 個股/期貨 兩顆布林 pill；標「個股相關/期貨相關」以與商品類型的「期貨」區隔。
 export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions, onApply }: Props) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<Draft>(() => pick(state))
@@ -72,7 +74,7 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
           {instrumentOptions.map(o => (
             <button key={o} type="button" className={pillClass(draft.instrument_type === o)}
               aria-pressed={draft.instrument_type === o}
-              onClick={() => pickOne('instrument_type', o)}>{o}</button>
+              onClick={() => pickOne('instrument_type', o)}>{instrumentLabel(o)}</button>
           ))}
         </div>
 
@@ -81,7 +83,7 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
           {reportTypeOptions.map(o => (
             <button key={o} type="button" className={pillClass(draft.report_type === o)}
               aria-pressed={draft.report_type === o}
-              onClick={() => pickOne('report_type', o)}>{o}</button>
+              onClick={() => pickOne('report_type', o)}>{reportTypeLabel(o)}</button>
           ))}
         </div>
 
@@ -89,10 +91,10 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
         <div className={styles.pillRow}>
           <button type="button" className={pillClass(draft.relates_stock)}
             aria-pressed={draft.relates_stock}
-            onClick={() => toggle('relates_stock')}>個股</button>
+            onClick={() => toggle('relates_stock')}>個股相關</button>
           <button type="button" className={pillClass(draft.relates_futures)}
             aria-pressed={draft.relates_futures}
-            onClick={() => toggle('relates_futures')}>期貨</button>
+            onClick={() => toggle('relates_futures')}>期貨相關</button>
         </div>
 
         <div className={styles.footer}>

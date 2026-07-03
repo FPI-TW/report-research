@@ -1,4 +1,4 @@
-import { marketColor, marketLabel } from '../../lib/meta'
+import { marketColor, marketLabel, instrumentLabel } from '../../lib/meta'
 import { highlight } from '../../lib/highlight'
 import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
@@ -19,7 +19,7 @@ function truncate(s: string | null, n: number): string {
 
 export function ResultCard({ row, mode, isLatest, terms, onOpen }: Props) {
   const targets = [...(row.stock_targets ?? []), ...(row.futures_targets ?? [])]
-  const pills = [...(row.instrument_types ?? []), ...targets]
+  const pills = [...(row.instrument_types ?? []).map(instrumentLabel), ...targets]
   const date = (row.report_date ?? '').slice(0, 10)
   const open = () => onOpen(row.report_id, row.file_name)
   const pct = mode === 'search'

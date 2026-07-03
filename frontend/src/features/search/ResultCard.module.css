@@ -1,0 +1,20 @@
+.card {
+  background: var(--tf-surface); border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-xs);
+  padding: 13px 15px; cursor: pointer; transition: border-color var(--tf-dur-1) var(--tf-ease-out);
+}
+.card:hover, .card:focus-visible { border-color: var(--tf-gold-text); outline: none; }
+.top { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.badge { color: var(--tf-on-gold); border-radius: var(--tf-radius-pill); padding: 1px 8px; font-size: 12px; font-weight: 600; }
+.latest { border: 1px solid var(--tf-success); color: var(--tf-success-text); border-radius: var(--tf-radius-pill); padding: 0 8px; font-size: 11px; font-weight: 600; }
+.title { font-family: var(--tf-serif); font-weight: 700; font-size: 14.5px; line-height: 1.45; color: var(--tf-text-1); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.tag { background: var(--tf-border-weak); border-radius: var(--tf-radius-pill); padding: 2px 9px; font-size: 11px; color: var(--tf-text-2); }
+.snippet { font-size: 12.5px; color: var(--tf-text-3); line-height: 1.55; margin-top: 6px; }
+.scoreRow { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.scoreTrack { flex: 1; height: 6px; border-radius: var(--tf-radius-pill); background: var(--tf-border-weak); overflow: hidden; }
+.scoreFill { height: 100%; border-radius: var(--tf-radius-pill); background: var(--tf-gold-text); }
+.scoreNum { font-size: 11px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
+.summary { font-size: 13px; color: var(--tf-text-2); line-height: 1.55; margin-top: 2px; }
+.footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 12px; color: var(--tf-text-3); }
+.cta { color: var(--tf-gold-text); font-weight: 600; }

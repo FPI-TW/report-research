@@ -65,15 +65,17 @@ export default function SearchPage() {
     <div className={styles.page}>
       <div className={styles.controls}>
         <SearchBar initial={state.q} onSubmit={q => update({ q })} />
-        <MarketChipBar value={state.market} onChange={m => update({ market: m })} counts={marketCounts} />
-        <div className={styles.toolbar}>
-          <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
-          <MoreFiltersPopover
-            state={state}
-            instrumentOptions={instrumentOptions}
-            reportTypeOptions={reportTypeOptions}
-            onApply={update}
-          />
+        <div className={styles.filterRow}>
+          <MarketChipBar value={state.market} onChange={m => update({ market: m })} counts={marketCounts} />
+          <div className={styles.toolbar}>
+            <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
+            <MoreFiltersPopover
+              state={state}
+              instrumentOptions={instrumentOptions}
+              reportTypeOptions={reportTypeOptions}
+              onApply={update}
+            />
+          </div>
         </div>
         <ActiveChips state={state} onPatch={update} />
       </div>

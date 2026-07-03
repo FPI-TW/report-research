@@ -1,4 +1,4 @@
-.bar { display: flex; flex-wrap: wrap; gap: 7px; }
+.bar { display: flex; flex-wrap: wrap; gap: 7px; flex: 1; min-width: 0; }
 .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: var(--tf-radius-pill); padding: 5px 13px; font-size: 12.5px; cursor: pointer; font-family: inherit; }
 .chip:hover { border-color: var(--tf-gold-strong); }
 .active { background: var(--tf-gold-tint); border-color: var(--tf-gold-strong); color: var(--tf-gold-text); font-weight: 600; }

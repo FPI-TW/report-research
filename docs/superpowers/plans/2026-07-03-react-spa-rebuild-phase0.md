@@ -736,22 +736,22 @@ Expected: FAIL。
 - [ ] **Step 3: 實作 `frontend/src/components/primitives/Icon.tsx`**（path 取自 `.dc.html`）
 
 ```tsx
-import type { SVGProps } from 'react'
+import type { ReactNode, SVGProps } from 'react'
 
 export type IconName =
   | 'search' | 'messages' | 'activity' | 'user' | 'plus'
   | 'panel' | 'logout' | 'chevronDown' | 'x'
 
-const PATHS: Record<IconName, string> = {
-  search: '<circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path>',
-  messages: '<path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path>',
-  activity: '<path d="M3 12h4l3 8l4 -16l3 8h4"></path>',
-  user: '<circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path>',
-  plus: '<path d="M12 5v14M5 12h14"></path>',
-  panel: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path>',
-  logout: '<path d="M14 8V6a2 2 0 0 0 -2 -2H6a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2 -2v-2"></path><path d="M9 12h12l-3 -3M18 15l3 -3"></path>',
-  chevronDown: '<path d="M6 9l6 6l6 -6"></path>',
-  x: '<path d="M18 6l-12 12M6 6l12 12"></path>',
+const PATHS: Record<IconName, ReactNode> = {
+  search: (<><circle cx="10" cy="10" r="7" /><path d="M21 21l-6 -6" /></>),
+  messages: (<><path d="M8 9h8" /><path d="M8 13h5" /><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z" /></>),
+  activity: (<path d="M3 12h4l3 8l4 -16l3 8h4" />),
+  user: (<><circle cx="12" cy="8" r="4" /><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1" /></>),
+  plus: (<path d="M12 5v14M5 12h14" />),
+  panel: (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>),
+  logout: (<><path d="M14 8V6a2 2 0 0 0 -2 -2H6a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3M18 15l3 -3" /></>),
+  chevronDown: (<path d="M6 9l6 6l6 -6" />),
+  x: (<path d="M18 6l-12 12M6 6l12 12" />),
 }
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
@@ -772,13 +772,14 @@ export function Icon({ name, size = 20, ...rest }: IconProps) {
       strokeLinejoin="round"
       aria-hidden="true"
       {...rest}
-      dangerouslySetInnerHTML={{ __html: PATHS[name] }}
-    />
+    >
+      {PATHS[name]}
+    </svg>
   )
 }
 ```
 
-> 註：`dangerouslySetInnerHTML` 僅注入本檔內建的靜態常數 path（非使用者輸入），無 XSS 風險。
+> 註：圖示以 React 子節點渲染（非 `dangerouslySetInnerHTML`），路徑為本檔靜態常數。
 
 - [ ] **Step 4: 跑測試確認通過**
 
@@ -1205,7 +1206,7 @@ git commit -m "feat(frontend): NavItem（mini/row/mobile 三型，active 金膠�
   - `useSidebarCollapsed(): { collapsed: boolean; toggle: () => void }`（localStorage key `tf.sidebar.collapsed`）
   - `SideRail({ collapsed, onToggle }): JSX`（collapsed→迷你 60；否則→完整 272）
 
-> 註：本 Task 先以 `ConversationList`/`AccountMenu` 的**佔位空 div** 通過測試；Task 10、11 完成後在 Step 6 接線。
+> **前置（執行順序）**：本 Task 須在 **Task 10（ConversationList）與 Task 11（AccountMenu）之後**執行——`SideRail` 直接 import 兩者的真實實作，故其測試需掛 `QueryClientProvider` 並 stub `fetch`。
 
 - [ ] **Step 1: 寫失敗測試**
 
@@ -1228,15 +1229,27 @@ test('預設展開；toggle 後收合並寫入 localStorage', () => {
 
 `frontend/src/components/shell/SideRail.test.tsx`:
 ```tsx
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
+import { afterEach, expect, test, vi } from 'vitest'
 import { SideRail } from './SideRail'
 
+afterEach(() => vi.unstubAllGlobals())
+
 function renderRail(collapsed: boolean) {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    url.includes('/api/conversations')
+      ? new Response(JSON.stringify([]), { status: 200 })
+      : new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 }),
+  ))
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MemoryRouter initialEntries={['/search']}>
-      <SideRail collapsed={collapsed} onToggle={() => {}} />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/search']}>
+        <SideRail collapsed={collapsed} onToggle={() => {}} />
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 
@@ -1365,7 +1378,7 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
 - [ ] **Step 5: 跑測試確認通過**
 
 Run: `cd frontend && ./node_modules/.bin/vitest run src/lib/useSidebarCollapsed.test.tsx src/components/shell/SideRail.test.tsx`
-Expected: 3 passed。（前提：Task 10/11 的 `ConversationList`/`AccountMenu` 已存在；若先做本 Task，暫以 `export function ConversationList(){return null}` / `export function AccountMenu(){return null}` 佔位，Task 10/11 再補實作。）
+Expected: 3 passed。（前置：Task 10、11 已完成，`SideRail` import 其真實實作。）
 
 - [ ] **Step 6: Commit**
 

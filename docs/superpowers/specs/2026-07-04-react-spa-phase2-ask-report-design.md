@@ -184,7 +184,7 @@
 
 ## 10. 測試
 - **單元（Vitest）**：`readSSE`（分幀/壞幀丟棄/多幀）、`askMarkdown`（`[n]` 膠囊界內外、XSS `<img onerror>` 惰性、外部連結 scheme）、`thinkingStages`（stage→步驟三態、`searching_web` 才顯網路步）、`reportProgress`（stage→里程碑 %）、`askReducer`（各事件→state、done schema 三分支；**reducer 為純函式、不含 stamp 概念**）。
-- **元件／整合**：`Composer`（Enter 送/ Shift+Enter 換行 / IME 守衛不誤送 / disabled）、`AssistantMessage`（`[n]` 點擊 onCite、**單一 `資料來源 {N}` 開抽屜且 N＝研報＋網路**、動作列僅非離題）、`ThinkingSteps`（階段轉換）、`DeepReportPanel`（offer→generating→done→error 四態、下載連結 scheme）、`SourcesDrawer`（研報點擊 onOpenReport、網路新分頁、ESC/scrim 關）、`Callout`（兩 variant）、**`AskPage`/`useAskStream` 整合：舊 stamp 事件在 dispatch 前被丟棄、reducer 不接收 stale 事件**。
+- **元件／整合**：`Composer`（Enter 送/ Shift+Enter 換行 / IME 守衛不誤送 / disabled）、`AssistantMessage`（`[n]` 點擊 onCite、**單一 `資料來源 {N}` 開抽屜且 N＝研報＋網路**、動作列僅非離題）、`ThinkingSteps`（階段轉換）、`DeepReportPanel`（offer→generating→done→error 四態、下載連結 scheme）、`SourcesDrawer`（研報點擊 onOpenReport、網路新分頁、ESC/scrim 關）、`Callout`（兩 variant）、**`AskPage`/`useAskStream` 整合：舊 stamp 事件在 dispatch 前被丟棄、reducer 不接收 stale 事件**、**`ConversationList` 刪除【批准延伸】：確認 → 送 `DELETE`／取消 → 不送任何請求；`DELETE` 回 404/405 → fallback `POST /api/conversations/{id}/delete`；刪除**目前**對話 → 呼叫 `newConversation`（清 turns、回空狀態、`?c` 移除）**。
 - **e2e（Playwright :8098 live）**：問答→串流答案+來源抽屜、多輪追問（第二輪帶 `conversation_id`）、離題→`Callout warning`；研報 ~5min 用 terminal-agnostic（`done` 或 `error` 皆可通過），需暖機 BGE-M3 + 放寬 per-test timeout（`--timeout` 覆寫 config 30s）。live LLM 端到端不確定性用 `toPass`。
 
 ## 11. 非目標 / 範圍外

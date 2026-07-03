@@ -25,6 +25,9 @@ data/tags.bak.*/
 # 自動產生 / 一次性 artifact（舊的無障礙樹快照）
 search-after.yml
 
+# superpowers / SDD 本機 session 狀態（brainstorm/sdd，非原始碼）
+.superpowers/
+
 # 對外存取邊緣的秘密（隧道 token / Basic Auth 帳密）
 deploy/.env
 deploy/secrets/

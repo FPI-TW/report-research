@@ -1,0 +1,5 @@
+.bar { display: flex; align-items: center; gap: 8px; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-pill); padding: 8px 10px 8px 14px; box-shadow: var(--tf-shadow-xs); }
+.icon { color: var(--tf-text-3); flex-shrink: 0; }
+.input { flex: 1; min-width: 0; border: none; outline: none; background: none; font-size: 14px; color: var(--tf-text-1); font-family: inherit; }
+.clear { border: none; background: none; cursor: pointer; color: var(--tf-text-3); display: flex; padding: 2px; }
+.go { border: none; background: var(--tf-gold-strong); color: var(--tf-on-gold); border-radius: var(--tf-radius-pill); padding: 6px 16px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; flex-shrink: 0; }

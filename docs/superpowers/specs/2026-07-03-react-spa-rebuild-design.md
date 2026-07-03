@@ -186,7 +186,7 @@
 ### 6.3 資料流（真實 API 對應）
 - **browseMode（無 `q`）** → `GET /api/reports?market=&instrument_type=&report_type=&relates_stock=&relates_futures=&sort=&limit=&offset=`；排序預設日期新→舊；卡片顯 `summary`。
 - **searchMode（有 `q`）** → `GET /api/search?q=&passages=N&market=&...`；排序相關度；卡片顯 passage 片段＋`best_score`（相關度條）。
-- **月分組**：對已載入結果依 `report_date` 前 7 碼（`YYYY-MM`）分組，標頭文案 `YYYY 年 M 月`；組內順序沿用當前排序。（**不做市場分組**）
+- **月分組**：對已載入結果依 `report_date` 前 7 碼（`YYYY-MM`）分組，標頭文案 `YYYY 年 M 月`；組內順序沿用當前排序。（**不做市場分組**；**月分組僅用於卡片檢視，表格檢視為 flat**，照 `.dc.html` `visibleFlat`——以 Phase 1 spec 為準）
 - **`最新` 徽章（前端計算）**：鏡像後端 ask 來源規則（`answer.py:335-343`，**僅日期嚴格大於才更新**）——在**目前已載入結果集**中取 `report_date` 嚴格最大者標「最新」；**同日並列時保留最先出現者（當前排序下第一筆），只標一篇**；無 `report_date` 者不參與。結果集變動（載入更多／換篩選／改排序）即重算，純函式可單元測試。
 - **篩選 → URL / API 參數（皆單值，對齊後端）**：`q`、`market`、`instrument_type`、`report_type`、`relates_stock`、`relates_futures`、`sort`、`view`。「全部」不帶該參數。切 `view` 為呈現態，**不進 query key、不重抓**。（**不支援** 多值陣列或標的值篩選——後端無此契約）
 - **排序（`SortMenu`，功能平價）**：搜尋模式＝`相關度`(relevance，預設)／`最新`(date_desc)／`最舊`(date_asc)；瀏覽模式＝`最新`(date_desc，預設)／`最舊`(date_asc)（無相關度）。sort 改變**會重打 API**（進 query key，與 view/group 不同）；對應現行 vanilla 的排序 chip。

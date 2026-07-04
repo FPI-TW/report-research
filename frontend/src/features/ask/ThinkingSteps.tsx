@@ -7,7 +7,9 @@ import styles from './ThinkingSteps.module.css'
 export function ThinkingSteps({ turn }: { turn: Turn }) {
   const live = turn.phase === 'thinking' || turn.phase === 'streaming'
   const [open, setOpen] = useState(true)
-  const steps = stagesToSteps(turn.stages, turn.webUsed)
+  const rawSteps = stagesToSteps(turn.stages, turn.webUsed)
+  const terminal = turn.phase === 'done' || turn.phase === 'notice' || turn.phase === 'error'
+  const steps = terminal ? rawSteps.map(s => (s.state === 'active' ? { ...s, state: 'done' as const } : s)) : rawSteps
   const sec = Math.round((turn.thinkingMs ?? 0) / 1000)
   const label = live ? '思考中…' : `已思考 ${sec} 秒`
   const hasSteps = turn.stages.length > 0

@@ -33,3 +33,11 @@ test('stages 空（歷史重播）只顯 header、不顯步驟與收合箭頭', 
   expect(screen.queryByText('理解問題')).toBeNull()
   expect(screen.queryByText('生成回答')).toBeNull()
 })
+
+test('done 且有步驟時不顯示旋轉中的步驟（終止態最後一步應轉為 done）', () => {
+  const { container } = render(
+    <ThinkingSteps turn={turn({ phase: 'done', stages: ['understanding', 'retrieved', 'reading', 'generating'], thinkingMs: 4200 })} />
+  )
+  expect(screen.getByText('生成回答')).toBeInTheDocument()
+  expect(container.querySelector('[class*="spin"]')).toBeNull()
+})

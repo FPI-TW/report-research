@@ -62,6 +62,9 @@
   --tf-success: #34c759;
   --tf-success-text: #248a3d;
   --tf-warn: #ff9f0a;
+  --tf-warn-bg: #fffaeb;
+  --tf-warn-border: #fedf89;
+  --tf-warn-text: #b25e00;
   --tf-error: #ff3b30;
   --tf-error-bg: #fef3f2;
   --tf-error-border: #fecdca;

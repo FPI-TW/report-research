@@ -4,6 +4,7 @@ export type IconName =
   | 'search' | 'messages' | 'activity' | 'user' | 'plus'
   | 'panel' | 'logout' | 'chevronDown' | 'x' | 'filter'
   | 'alertCircle' | 'alertTriangle' | 'send' | 'fileText' | 'trash' | 'thumbUp' | 'thumbDown' | 'copy'
+  | 'check' | 'spinner'
 
 const PATHS: Record<IconName, ReactNode> = {
   search: (<><circle cx="10" cy="10" r="7" /><path d="M21 21l-6 -6" /></>),
@@ -24,6 +25,8 @@ const PATHS: Record<IconName, ReactNode> = {
   thumbUp: (<><path d="M7 11v9" /><path d="M11 11l1.4 -4.2a1.5 1.5 0 0 1 3 .5v3.7h3.6a1.6 1.6 0 0 1 1.6 1.9l-1.2 5.5a1.6 1.6 0 0 1 -1.6 1.2H7v-9z" /></>),
   thumbDown: (<><path d="M17 13v-9" /><path d="M13 13l-1.4 4.2a1.5 1.5 0 0 1 -3 -.5v-3.7H5a1.6 1.6 0 0 1 -1.6 -1.9l1.2 -5.5a1.6 1.6 0 0 1 1.6 -1.2H17v9z" /></>),
   copy: (<><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2 -2h10" /></>),
+  check: (<path d="M5 12l5 5l9 -11" />),
+  spinner: (<path d="M12 3a9 9 0 1 0 9 9" />),
 }
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

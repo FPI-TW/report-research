@@ -14,23 +14,26 @@ test('問答：送出 → 串流答案 + 資料來源；多輪追問', async ({ 
   const box = page.getByPlaceholder('輸入你的問題…')
   await expect(box).toBeVisible()
 
-  await box.fill('AI 伺服器供應鏈的受惠標的有哪些？')
+  // 用分析型提問（避開「有哪些…標的」枚舉句式：後端 overview 路徑會把它當
+  // 聚合題、且 _extract_stock_name 易誤判片語為個股名 → 回無來源，非本頁行為）。
+  await box.fill('AI 伺服器的最新發展如何？')
   await box.press('Enter')
-  // 使用者泡泡即時出現
-  await expect(page.getByText('AI 伺服器供應鏈的受惠標的有哪些？')).toBeVisible()
+  // 使用者泡泡即時出現（.last()：同題可能已在歷史側欄留下同文字連結，取最新的泡泡）
+  await expect(page.getByText('AI 伺服器的最新發展如何？').last()).toBeVisible()
   // 首次冷啟動 BGE-M3 + LLM：放寬逾時，等「資料來源 N」或「已思考」出現
   await expect(page.getByRole('button', { name: /資料來源 \d+/ })).toBeVisible({ timeout: 180_000 })
 
   // 開來源抽屜
   await page.getByRole('button', { name: /資料來源 \d+/ }).first().click()
-  await expect(page.getByText('引用來源')).toBeVisible()
+  // exact：避免與研報 offer 副標「彙整以上引用來源…」的子字串相撞（strict mode）
+  await expect(page.getByText('引用來源', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '關閉' }).click()
 
   // 多輪追問（等輸入框可用＝串流結束）
   await expect(box).toBeEnabled({ timeout: 180_000 })
-  await box.fill('那散熱類股呢？')
+  await box.fill('散熱技術的進展如何？')
   await box.press('Enter')
-  await expect(page.getByText('那散熱類股呢？')).toBeVisible()
+  await expect(page.getByText('散熱技術的進展如何？').last()).toBeVisible()
   await expect(page.getByRole('button', { name: /資料來源 \d+/ }).nth(1)).toBeVisible({ timeout: 180_000 })
 })
 

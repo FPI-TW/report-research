@@ -14,3 +14,11 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .item:hover { background: var(--tf-border-weak); }
+
+.row { display: flex; align-items: center; gap: 2px; border-radius: 8px; }
+.row:hover { background: var(--tf-border-weak); }
+.row .item { flex: 1; min-width: 0; }
+.item.active { background: var(--tf-gold-tint); color: var(--tf-gold-text); font-weight: 600; }
+.del { flex: none; border: none; background: none; color: var(--tf-text-4); border-radius: 6px; padding: 6px; cursor: pointer; opacity: 0; }
+.row:hover .del, .del:focus-visible { opacity: 1; }
+.del:hover { color: var(--tf-error); background: var(--tf-surface); }

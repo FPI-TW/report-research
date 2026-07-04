@@ -1,0 +1,5 @@
+.page { display: flex; height: 100%; overflow: hidden; }
+.column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.flow { flex: 1; overflow-y: auto; padding: 20px 20px 8px; }
+.flow > :first-child, .flow > div { max-width: 760px; margin-left: auto; margin-right: auto; }
+.composerBar { flex: none; padding: 0 20px 18px; }

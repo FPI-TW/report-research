@@ -10,7 +10,7 @@ export function ThinkingSteps({ turn }: { turn: Turn }) {
   const steps = stagesToSteps(turn.stages, turn.webUsed)
   const sec = Math.round((turn.thinkingMs ?? 0) / 1000)
   const label = live ? '思考中…' : `已思考 ${sec} 秒`
-  const hasSteps = steps.length > 0
+  const hasSteps = turn.stages.length > 0
 
   return (
     <div className={styles.card}>

@@ -26,3 +26,10 @@ test('done 顯示已思考 N 秒、點擊可收合步驟', () => {
   fireEvent.click(head)
   expect(screen.queryByText('理解問題')).toBeNull()
 })
+
+test('stages 空（歷史重播）只顯 header、不顯步驟與收合箭頭', () => {
+  render(<ThinkingSteps turn={turn({ phase: 'done', stages: [], thinkingMs: 2000 })} />)
+  expect(screen.getByText('已思考 2 秒')).toBeInTheDocument()
+  expect(screen.queryByText('理解問題')).toBeNull()
+  expect(screen.queryByText('生成回答')).toBeNull()
+})

@@ -1,0 +1,19 @@
+.panel { width: 340px; flex: none; background: var(--tf-surface); border-left: 1px solid var(--tf-border); display: flex; flex-direction: column; height: 100%; }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--tf-border-weak); flex: none; }
+.title { font-family: var(--tf-serif); font-weight: 700; font-size: 16px; color: var(--tf-text-1); }
+.close { border: none; background: var(--tf-border-weak); border-radius: 999px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-3); }
+.close:hover { background: var(--tf-border); }
+.body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+.subhead { font-size: 12px; font-weight: 600; color: var(--tf-text-4); margin-bottom: 10px; }
+.list { display: flex; flex-direction: column; gap: 8px; }
+.srcCard { text-align: left; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; gap: 10px; align-items: flex-start; }
+.srcCard:hover { border-color: var(--tf-gold-text); }
+.numGold { background: var(--tf-gold-tint); color: var(--tf-gold-text); border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 1px 8px; flex: none; margin-top: 1px; }
+.srcMain { min-width: 0; }
+.mkt { color: #fff; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+.srcTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 13.5px; color: var(--tf-text-1); line-height: 1.4; margin-top: 4px; word-break: break-all; }
+.srcMeta { font-size: 12px; color: var(--tf-text-3); margin-top: 3px; }
+.extCard { border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start; text-decoration: none; }
+.numOrange { border: 1px solid var(--tf-warn); color: var(--tf-warn-text); border-radius: 999px; font-size: 11px; font-weight: 600; padding: 0 7px; flex: none; margin-top: 2px; }
+.extTitle { font-size: 13.5px; color: var(--tf-text-1); font-weight: 500; }
+.extMeta { font-size: 12px; color: var(--tf-text-4); margin-top: 2px; }

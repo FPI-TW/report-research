@@ -93,3 +93,16 @@ test('turnFromHistory 離題轉 notice、qaId null', () => {
   expect(t.noticeText).toBe('無法回答此問題')
   expect(t.qaId).toBeNull()
 })
+
+test('report-cancel：generating→offered；done 不被還原', () => {
+  let s = submit()
+  s = askReducer(s, { type: 'report-start', id: 't1' })
+  s = askReducer(s, { type: 'report-cancel', id: 't1' })
+  expect(s.turns[0].report.status).toBe('offered')
+
+  let s2 = submit()
+  s2 = askReducer(s2, { type: 'report-start', id: 't1' })
+  s2 = askReducer(s2, { type: 'report-event', id: 't1', event: { event: 'done', data: { report_id: 'r', title: 'T', download_url: '/api/report-doc/r/pdf' } } })
+  s2 = askReducer(s2, { type: 'report-cancel', id: 't1' })
+  expect(s2.turns[0].report.status).toBe('done')
+})

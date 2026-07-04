@@ -24,10 +24,16 @@ export function useAskController(): UseAskController {
   const reqId = useRef(0)
   const askCtrl = useRef<AbortController | null>(null)
   const reportCtrl = useRef<AbortController | null>(null)
+  const reportReqId = useRef(0)
+  const reportTurnRef = useRef<string | null>(null)
 
   const abortAll = useCallback(() => {
     askCtrl.current?.abort(); askCtrl.current = null
-    reportCtrl.current?.abort(); reportCtrl.current = null
+    if (reportCtrl.current) {
+      reportCtrl.current.abort(); reportCtrl.current = null
+      reportReqId.current++
+      if (reportTurnRef.current) { dispatch({ type: 'report-cancel', id: reportTurnRef.current }); reportTurnRef.current = null }
+    }
   }, [])
 
   const submit = useCallback((question: string) => {
@@ -57,7 +63,10 @@ export function useAskController(): UseAskController {
   }, [abortAll])
 
   const generateReport = useCallback((turnId: string, question: string, qaId: string | null) => {
+    if (reportTurnRef.current && reportTurnRef.current !== turnId) dispatch({ type: 'report-cancel', id: reportTurnRef.current })
     reportCtrl.current?.abort()
+    const myReport = ++reportReqId.current
+    reportTurnRef.current = turnId
     const ctrl = new AbortController()
     reportCtrl.current = ctrl
     dispatch({ type: 'report-start', id: turnId })
@@ -68,14 +77,21 @@ export function useAskController(): UseAskController {
         if (convRef.current) body.conversation_id = convRef.current
         if (qaId) body.qa_id = qaId
         for await (const raw of streamReport(body, ctrl.signal)) {
+          if (myReport !== reportReqId.current) return
           const ev = parseReportEvent(raw)
           if (!ev) continue
           if (ev.event === 'done' || ev.event === 'error') sawTerminal = true
           dispatch({ type: 'report-event', id: turnId, event: ev })
         }
-        if (!sawTerminal) dispatch({ type: 'report-fail', id: turnId, errorText: '研報生成未完成' })
+        if (myReport === reportReqId.current) {
+          reportTurnRef.current = null
+          if (!sawTerminal) dispatch({ type: 'report-fail', id: turnId, errorText: '研報生成未完成' })
+        }
       } catch {
-        if (!ctrl.signal.aborted && !sawTerminal) dispatch({ type: 'report-fail', id: turnId, errorText: '研報生成失敗，請重試' })
+        if (myReport === reportReqId.current) {
+          reportTurnRef.current = null
+          if (!ctrl.signal.aborted && !sawTerminal) dispatch({ type: 'report-fail', id: turnId, errorText: '研報生成失敗，請重試' })
+        }
       }
     })()
   }, [])

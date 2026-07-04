@@ -46,6 +46,7 @@ export type AskAction =
   | { type: 'report-event'; id: string; event: ReportEvent }
   | { type: 'report-fail'; id: string; errorText: string }
   | { type: 'report-decline'; id: string }
+  | { type: 'report-cancel'; id: string }
   | { type: 'feedback'; id: string; value: 'like' | 'dislike' }
   | { type: 'load'; turns: Turn[] }
   | { type: 'reset' }
@@ -113,6 +114,12 @@ export function askReducer(state: AskState, action: AskAction): AskState {
     case 'report-event': return { turns: mapTurn(state.turns, action.id, t => applyReport(t, action.event)) }
     case 'report-fail': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...t.report, status: 'error', errorText: action.errorText } })) }
     case 'report-decline': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: idleReport, offerReport: false })) }
+    case 'report-cancel': return {
+      turns: mapTurn(state.turns, action.id, t =>
+        t.report.status === 'generating'
+          ? { ...t, report: { status: 'offered', pct: 0, stageText: '', downloadUrl: null, title: t.reportTitle, errorText: null } }
+          : t),
+    }
     case 'feedback': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, feedback: action.value })) }
     case 'load': return { turns: action.turns }
     case 'reset': return { turns: [] }

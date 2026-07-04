@@ -59,3 +59,29 @@ test('latest-wins：第二次 submit 後，第一串流的後續事件被丟棄'
   expect(turns[0].answer).toBe('A1')  // 舊輪停在 A1，未被 A2 汙染
   expect(turns[1].answer).toBe('B1')
 })
+
+test('研報生成中送出新問題：舊輪研報從 generating 還原為 offered', async () => {
+  const askGen = gated([
+    { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1', offer_report: true, report_title: 'T' } },
+  ])
+  const reportGen = gated([{ event: 'status', data: { stage: 'writing' } }, { event: 'status', data: { stage: 'writing' } }])
+  const askGen2 = gated([{ event: 'done', data: { conversation_id: 'c1', qa_id: 'qa2' } }])
+  streamAsk.mockReturnValueOnce(askGen.gen).mockReturnValueOnce(askGen2.gen)
+  streamReport.mockReturnValueOnce(reportGen.gen)
+
+  const { result } = renderHook(() => useAskController())
+  act(() => result.current.submit('Q1'))
+  await act(async () => { askGen.release(); await Promise.resolve() })
+  await waitFor(() => expect(result.current.state.turns[0].report.status).toBe('offered'))
+
+  const turnId = result.current.state.turns[0].id
+  act(() => result.current.generateReport(turnId, 'Q1', 'qa1'))
+  await act(async () => { reportGen.release(); await Promise.resolve() })
+  await waitFor(() => expect(result.current.state.turns[0].report.status).toBe('generating'))
+
+  act(() => result.current.submit('Q2'))
+  expect(result.current.state.turns[0].report.status).toBe('offered')
+
+  await act(async () => { askGen2.release(); await Promise.resolve() })
+  await waitFor(() => expect(result.current.state.turns[1].phase).toBe('done'))
+})

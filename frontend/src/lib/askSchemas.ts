@@ -6,8 +6,8 @@ export const sourceSchema = z.object({
   report_id: z.string(),
   file_name: z.string(),
   market: z.string(),
-  report_date: z.string().nullable(),
-  is_latest: z.boolean(),
+  report_date: z.string().nullable().default(null),
+  is_latest: z.boolean().default(false),
 })
 export type Source = z.infer<typeof sourceSchema>
 
@@ -88,8 +88,8 @@ export const conversationTurnSchema = z.object({
   answer: z.string(),
   created_at: z.string().nullish(),
   feedback: z.enum(['like', 'dislike']).nullable().default(null),
-  sources: z.array(sourceSchema).default([]),
-  ext_sources: z.array(extSourceSchema).default([]),
+  sources: z.array(sourceSchema).catch([]),
+  ext_sources: z.array(extSourceSchema).catch([]),
   is_offtopic: z.boolean().default(false),
   thinking_ms: z.number().nullable().default(null),
   reports: z.array(conversationReportSchema).default([]),

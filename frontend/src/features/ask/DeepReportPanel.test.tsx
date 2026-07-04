@@ -36,3 +36,10 @@ test('error 顯示 Callout 與重試', () => {
   expect(screen.getByRole('alert')).toHaveTextContent('找不到足夠資料生成研報')
   fireEvent.click(screen.getByRole('button', { name: '重試' })); expect(onGenerate).toHaveBeenCalled()
 })
+
+test('done：協定相對/跨源 downloadUrl 不渲染下載連結（scheme 守門）', () => {
+  const { rerender } = render(<DeepReportPanel report={rs({ status: 'done', pct: 100, downloadUrl: '//evil.com/x', title: 'T' })} onGenerate={() => {}} onDecline={() => {}} />)
+  expect(screen.queryByRole('link', { name: '下載 PDF' })).toBeNull()
+  rerender(<DeepReportPanel report={rs({ status: 'done', pct: 100, downloadUrl: 'https://evil.com/x', title: 'T' })} onGenerate={() => {}} onDecline={() => {}} />)
+  expect(screen.queryByRole('link', { name: '下載 PDF' })).toBeNull()
+})

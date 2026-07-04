@@ -5,7 +5,7 @@ import styles from './DeepReportPanel.module.css'
 
 function safeDownload(url: string | null): string | null {
   if (!url) return null
-  if (url.startsWith('/')) return url
+  if (url.startsWith('/') && !url.startsWith('//')) return url
   try { if (new URL(url).origin === location.origin) return url } catch { /* ignore */ }
   return null
 }

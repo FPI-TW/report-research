@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import { Icon } from '../primitives/Icon'
+import { BrandLogo } from '../BrandLogo'
 import { NavItem } from './NavItem'
 import { ConversationList } from './ConversationList'
 import { AccountMenu } from './AccountMenu'
@@ -14,7 +15,7 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
   if (collapsed) {
     return (
       <div className={styles.mini}>
-        <Link to="/search" title="廷豐智能研報" className={styles.glyph}>廷</Link>
+        <Link to="/search" title="廷豐智能研報" className={styles.glyph}><BrandLogo size={30} /></Link>
         <button type="button" onClick={onToggle} title="展開側欄" className={styles.toggleMini}>
           <Icon name="panel" size={17} />
         </button>
@@ -31,7 +32,7 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
   return (
     <div className={styles.full}>
       <div className={styles.header}>
-        <span className={styles.glyphSmall}>廷</span>
+        <BrandLogo size={26} className={styles.glyphSmall} />
         <span className={styles.title}>廷豐智能研報</span>
         <button type="button" onClick={onToggle} title="收合側欄" className={styles.toggleFull}>
           <Icon name="panel" size={17} />

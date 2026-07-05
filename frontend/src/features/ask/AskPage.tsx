@@ -47,7 +47,7 @@ export default function AskPage() {
   return (
     <div className={styles.page}>
       <div className={styles.column}>
-        <div className={`${styles.flow} tf-scroll`} ref={flowRef}>
+        <div className={`${styles.flow} ${turns.length === 0 ? styles.flowCentered : ''} tf-scroll`} ref={flowRef}>
           {turns.length === 0 ? (
             <AskEmptyState value={draft} onChange={setDraft} onSubmit={handleSubmit} />
           ) : (

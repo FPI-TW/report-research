@@ -1,4 +1,3 @@
-import { Link } from 'react-router'
 import { Icon } from '../primitives/Icon'
 import { BrandLogo } from '../BrandLogo'
 import { NavItem } from './NavItem'
@@ -15,9 +14,10 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
   if (collapsed) {
     return (
       <div className={styles.mini}>
-        <Link to="/search" title="廷豐智能研報" className={styles.glyph}><BrandLogo size={30} /></Link>
-        <button type="button" onClick={onToggle} title="展開側欄" className={styles.toggleMini}>
-          <Icon name="panel" size={17} />
+        {/* 品牌標記與展開鈕同格：預設顯示 logo，hover 換成展開圖示，點擊展開（仿 ChatGPT） */}
+        <button type="button" onClick={onToggle} title="展開側欄" aria-label="展開側欄" className={styles.brandToggle}>
+          <BrandLogo size={30} className={styles.brandLogo} alt="" />
+          <Icon name="panel" size={18} className={styles.brandExpand} />
         </button>
         <nav className={styles.miniNav}>
           <NavItem to="/search" icon="search" label="檢索" variant="mini" />

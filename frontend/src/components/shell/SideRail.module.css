@@ -8,10 +8,14 @@
   background: var(--tf-sidebar); border-right: 1px solid var(--tf-border);
   display: flex; flex-direction: column;
 }
-.glyph { display: flex; align-items: center; padding: 2px 6px; text-decoration: none; }
 .glyphSmall { display: block; padding-left: 4px; flex: none; }
-.toggleMini { margin-top: 14px; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-3); padding: 0; }
-.toggleMini:hover { border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
+/* 收合態品牌／展開鈕同格：logo 與展開圖示疊放，hover 淡入淡出互換（仿 ChatGPT） */
+.brandToggle { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: none; background: none; padding: 0; cursor: pointer; border-radius: 8px; color: var(--tf-text-3); }
+.brandToggle:hover { background: var(--tf-surface); color: var(--tf-gold-text); }
+.brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: opacity .12s ease; }
+.brandExpand { opacity: 0; }
+.brandToggle:hover .brandLogo { opacity: 0; }
+.brandToggle:hover .brandExpand { opacity: 1; }
 .miniNav { display: flex; flex-direction: column; gap: 6px; margin-top: 18px; }
 .spacer { flex: 1; }
 .header { padding: 16px 10px 12px; display: flex; align-items: center; gap: 8px; }

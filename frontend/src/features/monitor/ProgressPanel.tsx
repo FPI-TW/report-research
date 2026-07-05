@@ -1,6 +1,11 @@
 import styles from './MonitorPage.module.css'
 import { fmtInt } from './rate'
 
+/** 進度百分比夾在 0–100，防越界資料把進度條/aria 推出合理範圍。 */
+function clampPct(pct: number): number {
+  return Math.min(100, Math.max(0, pct))
+}
+
 export function ProgressPanel({ title, data, rateLine, idleText }: {
   title: string
   data: { done: number; total: number; pct: number } | null
@@ -17,7 +22,16 @@ export function ProgressPanel({ title, data, rateLine, idleText }: {
             <span className={styles.pof}>/ {fmtInt(data.total)} 篇</span>
             <span className={styles.ppct}>{data.pct.toFixed(1)}%</span>
           </div>
-          <div className={styles.bar}><div className={styles.barFill} style={{ width: `${data.pct}%` }} /></div>
+          <div
+            className={styles.bar}
+            role="progressbar"
+            aria-label={title}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(clampPct(data.pct))}
+          >
+            <div className={styles.barFill} style={{ width: `${clampPct(data.pct)}%` }} />
+          </div>
           <div className={styles.prate}>{rateLine}</div>
         </>
       ) : (

@@ -15,7 +15,7 @@ export function ProgressPanel({ title, data, rateLine, idleText }: {
           <div className={styles.pmain}>
             <span className={styles.big}>{fmtInt(data.done)}</span>
             <span className={styles.pof}>/ {fmtInt(data.total)} 篇</span>
-            <span className={styles.ppct}>{data.pct.toFixed(2)}%</span>
+            <span className={styles.ppct}>{data.pct.toFixed(1)}%</span>
           </div>
           <div className={styles.bar}><div className={styles.barFill} style={{ width: `${data.pct}%` }} /></div>
           <div className={styles.prate}>{rateLine}</div>

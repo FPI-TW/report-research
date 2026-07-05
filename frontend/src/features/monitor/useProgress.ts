@@ -9,5 +9,6 @@ export function useProgress(): UseQueryResult<Progress> {
     queryFn: () => getJSON('/api/progress', progressSchema, { cache: 'no-store' }),
     refetchInterval: 5000,
     placeholderData: keepPreviousData,
+    retry: false,
   })
 }

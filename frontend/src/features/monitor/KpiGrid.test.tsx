@@ -20,8 +20,10 @@ test('4 卡值與情境副字', () => {
   expect(screen.getByText('向量片段總數')).toBeInTheDocument()
   expect(screen.getByText('已標註 80 / 100')).toBeInTheDocument()
   expect(screen.getByText('已生成 90 / 100')).toBeInTheDocument()
-  expect(screen.getByText('80.00')).toBeInTheDocument()
-  expect(screen.getByText('90.00')).toBeInTheDocument()
+  expect(screen.getByText('80.0')).toBeInTheDocument()
+  expect(screen.getByText('90.0')).toBeInTheDocument()
+  expect(screen.getByText('篇')).toBeInTheDocument()
+  expect(screen.getByText('段')).toBeInTheDocument()
 })
 
 test('tagging null → 標註卡顯 —、無副字', () => {

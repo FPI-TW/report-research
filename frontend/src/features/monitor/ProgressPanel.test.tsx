@@ -9,7 +9,7 @@ test('有資料：done/total/pct + 速率行 + 進度條寬', () => {
   expect(screen.getByText('語意標註')).toBeInTheDocument()
   expect(screen.getByText('80')).toBeInTheDocument()
   expect(screen.getByText('/ 100 篇')).toBeInTheDocument()
-  expect(screen.getByText('80.00%')).toBeInTheDocument()
+  expect(screen.getByText('80.0%')).toBeInTheDocument()
   expect(screen.getByText('速率 2.0 標註/分 · 預估剩餘 ~10 分')).toBeInTheDocument()
   const fill = container.querySelector('[class*="barFill"]') as HTMLElement
   expect(fill.style.width).toBe('80%')

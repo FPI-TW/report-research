@@ -12,7 +12,7 @@ import { MarketDistribution } from './MarketDistribution'
 export default function MonitorPage() {
   const q = useProgress()
   const clock = useClock()
-  const rates = useRates(q.data)
+  const rates = useRates(q.data, q.dataUpdatedAt)
   const p = q.data
   const live = !q.isError
 

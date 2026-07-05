@@ -23,6 +23,20 @@ test('無 orchestrator 有 ingest → 本輪已導入', () => {
   expect(screen.getByText('本輪已導入 42 篇 · 失敗 1')).toBeInTheDocument()
 })
 
+test('orchestrator 與 ingest 同時存在 → orchestrator.label 優先（?? 短路）', () => {
+  render(
+    <IngestPanel
+      progress={mk({
+        orchestrator: { raw: '', timestamp: null, status: 'running', label: '編排器執行中' },
+        ingest: { ingested: 42, chunks: 100, fail: 1 },
+      })}
+      rateLine=""
+    />,
+  )
+  expect(screen.getByText('編排器執行中')).toBeInTheDocument()
+  expect(screen.queryByText('本輪已導入 42 篇 · 失敗 1')).toBeNull()
+})
+
 test('皆無 → 目前無執行中的導入', () => {
   render(<IngestPanel progress={mk()} rateLine="" />)
   expect(screen.getByText('目前無執行中的導入')).toBeInTheDocument()

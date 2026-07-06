@@ -17,7 +17,7 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
         {/* 品牌標記與展開鈕同格：預設顯示 logo，hover 換成展開圖示，點擊展開（仿 ChatGPT） */}
         <button type="button" onClick={onToggle} title="展開側欄" aria-label="展開側欄" className={styles.brandToggle}>
           <BrandLogo size={30} className={styles.brandLogo} alt="" />
-          <Icon name="panel" size={18} className={styles.brandExpand} />
+          <Icon name="panel" size={22} className={styles.brandExpand} />
         </button>
         <nav className={styles.miniNav}>
           <NavItem to="/search" icon="search" label="檢索" variant="mini" />
@@ -32,10 +32,12 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
   return (
     <div className={styles.full}>
       <div className={styles.header}>
-        <BrandLogo size={26} className={styles.glyphSmall} />
+        {/* 品牌 logo 置左（與收合態 logo 同座標、中心 x≈30），收合鈕置右上；
+            下方導覽 icon 兩態同座標，切換時完整銜接、不位移 */}
+        <span className={styles.glyphSmall}><BrandLogo size={30} alt="" /></span>
         <span className={styles.title}>廷豐智能研報</span>
-        <button type="button" onClick={onToggle} title="收合側欄" className={styles.toggleFull}>
-          <Icon name="panel" size={17} />
+        <button type="button" onClick={onToggle} title="收合側欄" aria-label="收合側欄" className={styles.toggleFull}>
+          <Icon name="panel" size={22} />
         </button>
       </div>
       <nav className={styles.fullNav}>

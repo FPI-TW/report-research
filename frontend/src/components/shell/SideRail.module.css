@@ -8,19 +8,28 @@
   background: var(--tf-sidebar); border-right: 1px solid var(--tf-border);
   display: flex; flex-direction: column;
 }
-.glyphSmall { display: block; padding-left: 4px; flex: none; }
-/* 收合態品牌／展開鈕同格：logo 與展開圖示疊放，hover 淡入淡出互換（仿 ChatGPT） */
+/* 收合態品牌／展開鈕同格：logo 與展開圖示疊放，hover 淡入淡出互換（仿 ChatGPT）。
+   置中於 60px 軌道 → 中心 x≈30，展開後與 .glyphSmall logo 同座標、完整銜接。 */
+.glyphSmall { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none; }
 .brandToggle { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: none; background: none; padding: 0; cursor: pointer; border-radius: 8px; color: var(--tf-text-3); }
 .brandToggle:hover { background: var(--tf-surface); color: var(--tf-gold-text); }
-.brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: opacity .12s ease; }
-.brandExpand { opacity: 0; }
-.brandToggle:hover .brandLogo { opacity: 0; }
-.brandToggle:hover .brandExpand { opacity: 1; }
-.miniNav { display: flex; flex-direction: column; gap: 6px; margin-top: 18px; }
+.brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: opacity .16s ease, transform .16s ease; }
+.brandExpand { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+.brandToggle:hover .brandLogo { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+.brandToggle:hover .brandExpand { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+/* miniNav 起始 Y 與間距對齊 fullNav，讓兩態導覽 icon 完整銜接不位移：
+   收合 padding-top 14 + brandToggle 34 = 48，+ margin-top 12 → 導覽起於 y60（=展開 header 高）。
+   列間距與 fullNav 同為 4，item 高同為 36 → 每個 icon 在兩態同 Y。 */
+.miniNav { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
 .spacer { flex: 1; }
-.header { padding: 16px 10px 12px; display: flex; align-items: center; gap: 8px; }
+/* 展開態 header 高 60（padding-top14 + 內容34 + padding-bottom12），使 fullNav 起於 y60、與收合態一致；
+   padding-left 13 讓 .glyphSmall logo 落在與收合態 logo 相同座標（中心 x≈30）。收合鈕靠右（title flex:1 推）。
+   gap 3：讓標題文字左緣（glyphSmall 盒右47 + gap3 = 50）對齊下方導覽 label 左緣（icon右40 + gap10 = 50）。 */
+.header { padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px; }
 .title { flex: 1; font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
-.toggleFull { border: none; background: none; border-radius: 8px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-4); padding: 0; flex: none; }
+.toggleFull { border: none; background: none; border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-4); padding: 0; flex: none; transition: background .12s ease, color .12s ease; }
 .toggleFull:hover { background: var(--tf-border-weak); color: var(--tf-text-3); }
-.fullNav { padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }
+.toggleFull svg { transition: transform .16s ease; }
+.toggleFull:hover svg { transform: scale(1.12); }
+.fullNav { padding: 0 10px; display: flex; flex-direction: column; gap: 4px; }
 .divider { height: 1px; background: var(--tf-divider); margin: 12px 12px 8px; }

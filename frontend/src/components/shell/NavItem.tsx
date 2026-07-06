@@ -19,7 +19,7 @@ export function NavItem({ to, icon, label, variant }: NavItemProps) {
       aria-current={active ? 'page' : undefined}
       className={`${styles[variant]} ${active ? styles.active : ''}`}
     >
-      <Icon name={icon} size={variant === 'mobile' ? 21 : variant === 'row' ? 19 : 20} />
+      <Icon name={icon} size={variant === 'mobile' ? 21 : 20} />
       {variant !== 'mini' && <span className={styles.label}>{label}</span>}
     </Link>
   )

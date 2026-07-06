@@ -30,3 +30,35 @@ test('連結僅接受 http(s)，javascript: 退回字面', () => {
   expect(a).toHaveAttribute('rel', 'noopener noreferrer')
   expect(container.textContent).toContain('[壞]')
 })
+
+test('引言 > 渲染為 blockquote，不外洩 > 字面', () => {
+  const { container } = render(<div>{renderAnswer('> 這是引言\n> 第二行', 0, () => {})}</div>)
+  const bq = container.querySelector('blockquote')
+  expect(bq).toBeTruthy()
+  expect(bq?.textContent).toContain('這是引言')
+  expect(container.textContent).not.toContain('>')
+})
+
+test('GFM 表格渲染為 table，含表頭與資料列，不外洩 | 字面', () => {
+  const md = '| 券商 | 評等 |\n| --- | --- |\n| 元大 | 買進 |\n| 凱基 | 中立 |'
+  const { container } = render(<div>{renderAnswer(md, 0, () => {})}</div>)
+  expect(container.querySelector('table')).toBeTruthy()
+  expect(container.querySelectorAll('th')).toHaveLength(2)
+  expect(container.querySelectorAll('tbody tr')).toHaveLength(2)
+  expect(container.querySelectorAll('td')).toHaveLength(4)
+  expect(container.textContent).not.toContain('|')
+})
+
+test('表格儲存格內 [n] 仍為可點膠囊', () => {
+  const onCite = vi.fn()
+  const md = '| 標的 | 來源 |\n| --- | --- |\n| 台積電 | [1] |'
+  render(<div>{renderAnswer(md, 3, onCite)}</div>)
+  fireEvent.click(screen.getByRole('button', { name: '1' }))
+  expect(onCite).toHaveBeenCalledWith(1)
+})
+
+test('缺分隔列的 | a | b | 不誤判為表格', () => {
+  const { container } = render(<div>{renderAnswer('比較 | A | B | 三者', 0, () => {})}</div>)
+  expect(container.querySelector('table')).toBeNull()
+  expect(container.textContent).toContain('| A | B |')
+})

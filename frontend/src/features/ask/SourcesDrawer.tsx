@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Icon } from '../../components/primitives/Icon'
 import { marketColor, marketLabel } from '../../lib/meta'
+import { usePresence } from '../../lib/usePresence'
 import type { Turn } from '../../lib/askReducer'
 import styles from './SourcesDrawer.module.css'
 
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function SourcesDrawer({ open, turn, onClose, onOpenReport }: Props) {
+  const { isMounted, state } = usePresence(open, { duration: 240 })
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -23,11 +25,11 @@ export function SourcesDrawer({ open, turn, onClose, onOpenReport }: Props) {
     return () => document.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  if (!open || !turn) return null
+  if (!isMounted || !turn) return null
   const total = turn.sources.length + turn.extSources.length
 
   return (
-    <aside className={styles.panel} aria-label="引用來源">
+    <aside className={styles.panel} data-state={state} aria-label="引用來源">
       <div className={styles.header}>
         <span className={styles.title}>引用來源</span>
         <button type="button" className={styles.close} onClick={onClose} aria-label="關閉"><Icon name="x" size={17} /></button>

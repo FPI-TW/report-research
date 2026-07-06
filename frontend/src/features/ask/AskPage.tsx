@@ -52,7 +52,7 @@ export default function AskPage() {
             <AskEmptyState value={draft} onChange={setDraft} onSubmit={handleSubmit} />
           ) : (
             turns.map(t => (
-              <div key={t.id}>
+              <div key={t.id} className="tf-reveal">
                 <UserMessage text={t.question} />
                 <AssistantMessage
                   turn={t}
@@ -80,7 +80,7 @@ export default function AskPage() {
       <SourcesDrawer
         open={drawer.open}
         turn={drawerTurn}
-        onClose={() => setDrawer({ open: false, turnId: null })}
+        onClose={() => setDrawer(d => ({ ...d, open: false }))}
         onOpenReport={(reportId, fileName) => setModal({ reportId, fileName })}
       />
       <ReportDetailModal reportId={modal.reportId} fileName={modal.fileName} onClose={() => setModal({ reportId: null })} />

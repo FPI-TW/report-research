@@ -36,9 +36,8 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
     <div className={styles.msg}>
       {(turn.stages.length > 0 || turn.phase === 'thinking' || turn.phase === 'streaming') && <ThinkingSteps turn={turn} />}
       {turn.answer && (
-        <div className={styles.body}>
+        <div className={styles.body} data-streaming={turn.phase === 'streaming' ? '' : undefined}>
           {renderAnswer(turn.answer, turn.sources.length, onCite)}
-          {turn.phase === 'streaming' && <span className={styles.caret} />}
         </div>
       )}
       {showActions && (

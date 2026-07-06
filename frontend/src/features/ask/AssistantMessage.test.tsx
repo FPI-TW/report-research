@@ -36,3 +36,19 @@ test('error：Callout error + 重試', () => {
   render(<AssistantMessage turn={turn({ phase: 'error', answer: '', errorText: '查詢逾時或失敗' })} onCite={noop} onOpenSources={noop} onFeedback={noop} onNoticeRetry={noop} onErrorRetry={onErrorRetry} />)
   fireEvent.click(screen.getByRole('button', { name: '重試' })); expect(onErrorRetry).toHaveBeenCalled()
 })
+
+test('串流中：本文帶 data-streaming（行內游標鉤）', () => {
+  const { container } = render(
+    <AssistantMessage turn={turn({ phase: 'streaming', answer: '生成中的內容', qaId: null })}
+      onCite={noop} onOpenSources={noop} onFeedback={noop} onNoticeRetry={noop} onErrorRetry={noop} />
+  )
+  expect(container.querySelector('[data-streaming]')).toBeTruthy()
+})
+
+test('done：本文不帶 data-streaming', () => {
+  const { container } = render(
+    <AssistantMessage turn={turn({})}
+      onCite={noop} onOpenSources={noop} onFeedback={noop} onNoticeRetry={noop} onErrorRetry={noop} />
+  )
+  expect(container.querySelector('[data-streaming]')).toBeNull()
+})

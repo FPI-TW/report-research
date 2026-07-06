@@ -20,7 +20,16 @@
 .body th, .body td { border: 1px solid var(--tf-border); padding: 6px 10px; text-align: left; vertical-align: top; }
 .body thead th { background: var(--tf-border-weak); color: var(--tf-text-1); font-weight: 700; }
 .body > :last-child { margin-bottom: 0; }
-.caret { display: inline-block; width: 7px; height: 15px; background: var(--tf-gold-text); margin-left: 2px; vertical-align: text-bottom; animation: tf-pulse 1s steps(2) infinite; }
+.body[data-streaming] > :last-child::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--tf-gold-text);
+  animation: tf-pulse 1s steps(2) infinite;
+}
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .act { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; padding: 6px; cursor: pointer; }
 .act:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }

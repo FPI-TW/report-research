@@ -92,8 +92,10 @@ def _tag_via_cli(
         f"請依上述規則只輸出單一 JSON 物件。"
     ).replace("\x00", "")
     try:
+        # --setting-sources '' 排除 user/專案設定＋SessionStart hooks＋MCP server，
+        # 避免每篇標註冷啟動載入全部外掛造成小檔 I/O 風暴（對齊 llm.py / generate_summaries.py）
         r = subprocess.run(
-            ["claude", "-p", prompt, "--model", model],
+            ["claude", "-p", prompt, "--model", model, "--setting-sources", ""],
             capture_output=True,
             text=True,
             timeout=timeout,

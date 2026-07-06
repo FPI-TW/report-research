@@ -48,9 +48,11 @@ def call_cli(prompt: str, timeout: int = 150) -> str | None:
     # ValueError('embedded null byte')（POSIX argv 不可含 NUL），導致該檔永久標註失敗。
     prompt = prompt.replace("\x00", "")
     try:
-        # cwd 設 /tmp 避免載入專案 CLAUDE.md 拖慢每次呼叫
+        # cwd 設 /tmp 避免載入專案 CLAUDE.md 拖慢每次呼叫；
+        # --setting-sources '' 排除 user/專案設定＋SessionStart hooks＋MCP server，
+        # 避免每篇冷啟動載入全部外掛造成小檔 I/O 風暴（對齊 llm.py / generate_summaries.py）
         r = subprocess.run(
-            ["claude", "-p", prompt, "--model", MODEL],
+            ["claude", "-p", prompt, "--model", MODEL, "--setting-sources", ""],
             capture_output=True,
             text=True,
             timeout=timeout,

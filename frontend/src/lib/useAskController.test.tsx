@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { RawSSEEvent } from './readSSE'
@@ -13,6 +15,19 @@ vi.mock('./askApi', () => ({
 import { useAskController } from './useAskController'
 
 afterEach(() => vi.clearAllMocks())
+
+function withQueryClient() {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  })
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  )
+  return { client, wrapper }
+}
 
 // 可控 async generator：每 yield 前等待外部 gate
 function gated(events: RawSSEEvent[]) {
@@ -33,7 +48,8 @@ test('submit 串流：sources→token→done 寫入 state 並記 conversationId'
     { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1' } },
   ])
   streamAsk.mockReturnValue(g.gen)
-  const { result } = renderHook(() => useAskController())
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
   act(() => result.current.submit('Q'))
   expect(result.current.state.turns[0].phase).toBe('thinking')
   await act(async () => { g.release(); await Promise.resolve() })
@@ -48,7 +64,8 @@ test('latest-wins：第二次 submit 後，第一串流的後續事件被丟棄'
   const g1 = gated([{ event: 'token', data: 'A1' }, { event: 'token', data: 'A2' }])
   const g2 = gated([{ event: 'token', data: 'B1' }])
   streamAsk.mockReturnValueOnce(g1.gen).mockReturnValueOnce(g2.gen)
-  const { result } = renderHook(() => useAskController())
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
   act(() => result.current.submit('Q1'))
   await act(async () => { g1.release(); await Promise.resolve() }) // A1 到第一輪
   act(() => result.current.submit('Q2'))                            // 遞增 reqId、abort 舊
@@ -69,7 +86,8 @@ test('研報生成中送出新問題：舊輪研報從 generating 還原為 offe
   streamAsk.mockReturnValueOnce(askGen.gen).mockReturnValueOnce(askGen2.gen)
   streamReport.mockReturnValueOnce(reportGen.gen)
 
-  const { result } = renderHook(() => useAskController())
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
   act(() => result.current.submit('Q1'))
   await act(async () => { askGen.release(); await Promise.resolve() })
   await waitFor(() => expect(result.current.state.turns[0].report.status).toBe('offered'))
@@ -84,4 +102,38 @@ test('研報生成中送出新問題：舊輪研報從 generating 還原為 offe
 
   await act(async () => { askGen2.release(); await Promise.resolve() })
   await waitFor(() => expect(result.current.state.turns[1].phase).toBe('done'))
+})
+
+test('問答串流提早結束但未收到 done 時，turn 會標成 error', async () => {
+  const g = gated([{ event: 'token', data: '半句回答' }])
+  streamAsk.mockReturnValue(g.gen)
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
+
+  act(() => result.current.submit('Q'))
+  await act(async () => { g.release(); await Promise.resolve() })
+
+  await waitFor(() => expect(result.current.state.turns[0].phase).toBe('error'))
+  expect(result.current.state.turns[0].answer).toBe('半句回答')
+})
+
+test('每次問答完成都會刷新 conversations 快取', async () => {
+  const askGen1 = gated([{ event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1' } }])
+  const askGen2 = gated([{ event: 'done', data: { conversation_id: 'c1', qa_id: 'qa2' } }])
+  streamAsk.mockReturnValueOnce(askGen1.gen).mockReturnValueOnce(askGen2.gen)
+
+  const { client, wrapper } = withQueryClient()
+  const invalidate = vi.spyOn(client, 'invalidateQueries')
+  const { result } = renderHook(() => useAskController(), { wrapper })
+
+  act(() => result.current.submit('Q1'))
+  await act(async () => { askGen1.release(); await Promise.resolve() })
+  await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1))
+
+  act(() => result.current.submit('Q2'))
+  await act(async () => { askGen2.release(); await Promise.resolve() })
+  await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2))
+
+  expect(invalidate).toHaveBeenNthCalledWith(1, { queryKey: ['conversations'] })
+  expect(invalidate).toHaveBeenNthCalledWith(2, { queryKey: ['conversations'] })
 })

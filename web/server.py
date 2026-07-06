@@ -135,6 +135,15 @@ app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
 
 # ───── 認證閘門(deny-by-default;白名單僅 /login)─────
 _AUTH_ALLOWLIST = {"/login"}
+_AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
+
+
+def _auth_allowed(path: str) -> bool:
+    return (
+        path in _AUTH_ALLOWLIST
+        or path == "/app/assets"
+        or any(path.startswith(prefix) for prefix in _AUTH_PREFIX_ALLOWLIST)
+    )
 
 
 def _safe_next(raw: str | None) -> str:
@@ -154,7 +163,7 @@ def _safe_next(raw: str | None) -> str:
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
-    if path in _AUTH_ALLOWLIST:
+    if _auth_allowed(path):
         return await call_next(request)
     now = int(time.time())
     if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), now):

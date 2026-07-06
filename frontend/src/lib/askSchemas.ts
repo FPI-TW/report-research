@@ -29,6 +29,7 @@ const askDoneData = z.object({
   report_title: z.string().nullable().optional(),
 })
 export type AskDone = z.infer<typeof askDoneData>
+const askErrorData = z.object({ detail: z.string() })
 
 const reportDoneData = z.object({
   report_id: z.string(),
@@ -45,6 +46,7 @@ export type AskEvent =
   | { event: 'token'; data: string }
   | { event: 'notice'; data: string }
   | { event: 'done'; data: AskDone }
+  | { event: 'error'; data: z.infer<typeof askErrorData> }
 
 export type ReportEvent =
   | { event: 'status'; data: { stage: ReportStage } }
@@ -61,6 +63,7 @@ export function parseAskEvent(raw: RawSSEEvent): AskEvent | null {
     case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : null
     case 'notice': return typeof raw.data === 'string' ? { event: 'notice', data: raw.data } : null
     case 'done': { const r = askDoneData.safeParse(raw.data); return r.success ? { event: 'done', data: r.data } : null }
+    case 'error': { const r = askErrorData.safeParse(raw.data); return r.success ? { event: 'error', data: r.data } : null }
     default: return null
   }
 }

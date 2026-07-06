@@ -52,6 +52,24 @@ test('ask-end 無 token 且非 notice → error', () => {
   expect(s.turns[0].errorText).toBe('查詢逾時或失敗')
 })
 
+test('ask-end 有部分 token 但缺 terminal 事件 → error', () => {
+  let s = submit()
+  s = askReducer(s, ev({ event: 'token', data: '半句回答' }))
+  s = askReducer(s, { type: 'ask-end', id: 't1' })
+  expect(s.turns[0].phase).toBe('error')
+  expect(s.turns[0].answer).toBe('半句回答')
+  expect(s.turns[0].errorText).toBe('查詢逾時或失敗')
+})
+
+test('ask error 事件會保留 partial answer 並標成 error', () => {
+  let s = submit()
+  s = askReducer(s, ev({ event: 'token', data: '半句回答' }))
+  s = askReducer(s, ev({ event: 'error', data: { detail: '問答服務發生錯誤' } }))
+  expect(s.turns[0].phase).toBe('error')
+  expect(s.turns[0].answer).toBe('半句回答')
+  expect(s.turns[0].errorText).toBe('問答服務發生錯誤')
+})
+
 test('searching_web 設 webUsed', () => {
   let s = submit()
   s = askReducer(s, ev({ event: 'status', data: { stage: 'searching_web' } }))

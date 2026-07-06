@@ -1,4 +1,5 @@
 import { useCallback, useReducer, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { askReducer, initialAskState, turnFromHistory, type AskState } from './askReducer'
 import { parseAskEvent, parseReportEvent } from './askSchemas'
 import { streamAsk, streamReport, getConversation, sendFeedback } from './askApi'
@@ -20,6 +21,7 @@ export interface UseAskController {
 export function useAskController(): UseAskController {
   const [state, dispatch] = useReducer(askReducer, initialAskState)
   const [conversationId, setConversationId] = useState<string | null>(null)
+  const qc = useQueryClient()
   const convRef = useRef<string | null>(null)
   const reqId = useRef(0)
   const askCtrl = useRef<AbortController | null>(null)
@@ -52,7 +54,13 @@ export function useAskController(): UseAskController {
           if (my !== reqId.current) return
           const ev = parseAskEvent(raw)
           if (!ev) continue
-          if (ev.event === 'done' && !convRef.current) { convRef.current = ev.data.conversation_id; setConversationId(ev.data.conversation_id) }
+          if (ev.event === 'done') {
+            if (!convRef.current) {
+              convRef.current = ev.data.conversation_id
+              setConversationId(ev.data.conversation_id)
+            }
+            void qc.invalidateQueries({ queryKey: ['conversations'] })
+          }
           dispatch({ type: 'ask-event', id, event: ev })
         }
         if (my === reqId.current) dispatch({ type: 'ask-end', id })
@@ -60,7 +68,7 @@ export function useAskController(): UseAskController {
         if (my === reqId.current) dispatch({ type: 'ask-end', id })
       }
     })()
-  }, [abortAll])
+  }, [abortAll, qc])
 
   const generateReport = useCallback((turnId: string, question: string, qaId: string | null) => {
     if (reportTurnRef.current && reportTurnRef.current !== turnId) dispatch({ type: 'report-cancel', id: reportTurnRef.current })

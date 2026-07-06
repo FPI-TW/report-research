@@ -10,6 +10,8 @@ interface Props {
   isLatest: boolean
   terms: string[]
   onOpen: (id: string, fileName: string) => void
+  /** 清單中的序號，用於封頂 stagger 進場；預設 0。 */
+  index?: number
 }
 
 function truncate(s: string | null, n: number): string {
@@ -17,7 +19,7 @@ function truncate(s: string | null, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
-export function ResultCard({ row, mode, isLatest, terms, onOpen }: Props) {
+export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Props) {
   const targets = [...(row.stock_targets ?? []), ...(row.futures_targets ?? [])]
   const pills = [...(row.instrument_types ?? []).map(instrumentLabel), ...targets]
   const date = (row.report_date ?? '').slice(0, 10)
@@ -29,7 +31,8 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen }: Props) {
 
   return (
     <div
-      className={styles.card}
+      className={`${styles.card} tf-reveal`}
+      style={{ ['--tf-i' as string]: index }}
       role="button"
       tabIndex={0}
       aria-label={row.file_name}
@@ -55,7 +58,7 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen }: Props) {
           )}
           <div className={styles.scoreRow}>
             <div className={styles.scoreTrack}>
-              <div className={styles.scoreFill} style={{ width: `${pct}%` }} />
+              <div className={styles.scoreFill} style={{ ['--score' as string]: `${pct}%` }} />
             </div>
             <span className={styles.scoreNum}>相關度 {pct}</span>
           </div>

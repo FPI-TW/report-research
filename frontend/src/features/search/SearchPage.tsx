@@ -19,6 +19,7 @@ import { ActiveChips } from './ActiveChips'
 import { ResultsMeta } from './ResultsMeta'
 import { CardsView } from './CardsView'
 import { TableView } from './TableView'
+import { SearchSkeleton } from './SearchSkeleton'
 import { EmptyState } from './EmptyState'
 import { LoadMore } from './LoadMore'
 import { ViewSwitch } from './ViewSwitch'
@@ -63,48 +64,52 @@ export default function SearchPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.controls}>
-        <SearchBar initial={state.q} onSubmit={q => update({ q })} />
-        <div className={styles.filterRow}>
-          <MarketChipBar value={state.market} onChange={m => update({ market: m })} counts={marketCounts} />
-          <div className={styles.toolbar}>
-            <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
-            <MoreFiltersPopover
-              state={state}
-              instrumentOptions={instrumentOptions}
-              reportTypeOptions={reportTypeOptions}
-              onApply={update}
+      <div className={styles.inner}>
+        <div className={styles.controls}>
+          <SearchBar initial={state.q} onSubmit={q => update({ q })} />
+          <div className={styles.filterRow}>
+            <MarketChipBar value={state.market} onChange={m => update({ market: m })} counts={marketCounts} />
+            <div className={styles.toolbar}>
+              <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
+              <MoreFiltersPopover
+                state={state}
+                instrumentOptions={instrumentOptions}
+                reportTypeOptions={reportTypeOptions}
+                onApply={update}
+              />
+            </div>
+          </div>
+          <ActiveChips state={state} onPatch={update} />
+        </div>
+
+        {results.isError ? (
+          <div className={`${styles.error} tf-reveal`}>
+            載入失敗，請稍後再試。<button type="button" onClick={results.refetch}>重試</button>
+          </div>
+        ) : results.isLoading ? (
+          <SearchSkeleton view={state.view === 'table' ? 'table' : 'cards'} mode={mode} />
+        ) : results.total === 0 ? (
+          <div className="tf-reveal">
+            <EmptyState
+              copy={emptyState(state, hasAnyFilter(state))}
+              onClear={() => applyState(clearFilters(state))}
+              onBrowseAll={() => applyState(browseAll(state))}
             />
           </div>
-        </div>
-        <ActiveChips state={state} onPatch={update} />
+        ) : (
+          <>
+            <ResultsMeta text={resultsMetaText(state, results.total)} />
+            {state.view === 'table' ? (
+              <TableView rows={results.rows} mode={mode} sort={tableSort} onSort={onSort} onOpen={onOpen} />
+            ) : (
+              <CardsView rows={results.rows} mode={mode} terms={terms} latestId={latest} onOpen={onOpen} />
+            )}
+            {results.hasMore && (
+              <LoadMore remaining={results.remaining} loading={results.isFetchingMore} onClick={results.loadMore} />
+            )}
+          </>
+        )}
       </div>
-
-      {results.isError ? (
-        <div className={styles.error}>
-          載入失敗，請稍後再試。<button type="button" onClick={results.refetch}>重試</button>
-        </div>
-      ) : results.isLoading ? (
-        <div className={styles.loading} aria-busy="true">載入中…</div>
-      ) : results.total === 0 ? (
-        <EmptyState
-          copy={emptyState(state, hasAnyFilter(state))}
-          onClear={() => applyState(clearFilters(state))}
-          onBrowseAll={() => applyState(browseAll(state))}
-        />
-      ) : (
-        <>
-          <ResultsMeta text={resultsMetaText(state, results.total)} />
-          {state.view === 'table' ? (
-            <TableView rows={results.rows} mode={mode} sort={tableSort} onSort={onSort} onOpen={onOpen} />
-          ) : (
-            <CardsView rows={results.rows} mode={mode} terms={terms} latestId={latest} onOpen={onOpen} />
-          )}
-          {results.hasMore && (
-            <LoadMore remaining={results.remaining} loading={results.isFetchingMore} onClick={results.loadMore} />
-          )}
-        </>
-      )}
 
       <ViewSwitch view={state.view} onChange={v => update({ view: v })} />
       <ReportDetailModal

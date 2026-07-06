@@ -19,7 +19,7 @@ export function CardsView({ rows, mode, terms, latestId, onOpen }: Props) {
       {monthGroups(rows).map(g => (
         <MonthGroup key={g.key} title={g.title} count={g.count}>
           <div className={styles.grid}>
-            {g.items.map(r => (
+            {g.items.map((r, i) => (
               <ResultCard
                 key={r.report_id}
                 row={r}
@@ -27,6 +27,7 @@ export function CardsView({ rows, mode, terms, latestId, onOpen }: Props) {
                 terms={terms}
                 isLatest={r.report_id === latestId}
                 onOpen={onOpen}
+                index={i}
               />
             ))}
           </div>

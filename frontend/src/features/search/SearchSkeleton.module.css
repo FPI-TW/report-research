@@ -1,0 +1,30 @@
+.meta { margin: 2px 0 4px; }
+.monthHeader { padding: 14px 0 9px; }
+
+/* 對齊 CardsView.module.css .grid */
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (max-width: 1023px) { .grid { grid-template-columns: 1fr; } }
+
+/* 對齊 ResultCard.module.css .card 外殼 */
+.card {
+  background: var(--tf-surface); border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-xs);
+  padding: 13px 15px; display: flex; flex-direction: column; height: 100%;
+}
+.top { margin-bottom: 7px; }
+.titleLine { margin-bottom: 5px; }
+.tags { display: flex; gap: 6px; margin: 8px 0 2px; }
+.line { margin-top: 6px; }
+.scoreRow { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.scoreTrack { flex: 1; }
+.footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 10px; }
+
+/* 對齊 TableView.module.css .wrap/.table */
+.tableWrap {
+  border: 1px solid var(--tf-border); border-radius: var(--tf-radius-card);
+  overflow: hidden; background: var(--tf-surface); box-shadow: var(--tf-shadow-xs); margin-top: 10px;
+}
+.table { width: 100%; border-collapse: collapse; }
+.table th { padding: 9px 12px; background: var(--tf-border-weak); text-align: left; }
+.table td { padding: 10px 12px; }
+.table tbody tr { border-top: 1px solid var(--tf-border-weak); }

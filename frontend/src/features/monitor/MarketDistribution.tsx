@@ -1,5 +1,6 @@
 import styles from './MonitorPage.module.css'
 import { marketColor, marketLabel } from '../../lib/meta'
+import { TweenNumber } from '../../components/primitives/TweenNumber'
 import { fmtInt } from './rate'
 import type { MarketCount } from './progressSchema'
 
@@ -25,7 +26,7 @@ export function MarketDistribution({ markets }: { markets: MarketCount[] }) {
                 <div className={styles.mktBar}>
                   <div className={styles.mktFill} style={{ width: `${((m.count / max) * 100).toFixed(1)}%`, background: color }} />
                 </div>
-                <span className={styles.mktCount}>{fmtInt(m.count)}</span>
+                <span className={styles.mktCount}><TweenNumber value={m.count} decimals={0} format={fmtInt} duration={600} /></span>
                 <span className={styles.mktPct}>{pct.toFixed(0)}%</span>
               </div>
             )

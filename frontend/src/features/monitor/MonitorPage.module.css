@@ -61,7 +61,7 @@
 .mktRow { display: flex; align-items: center; gap: 12px; }
 .mktLabel { width: 52px; font-size: 12.5px; color: #344054; flex: none; }
 .mktBar { flex: 1; height: 8px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
-.mktFill { height: 100%; border-radius: 999px; }
+.mktFill { height: 100%; border-radius: 999px; transition: width var(--tf-dur-4) var(--tf-ease-out); }
 .mktCount { width: 66px; text-align: right; font-size: 12px; color: #667085; font-variant-numeric: tabular-nums; flex: none; }
 .mktPct { width: 38px; text-align: right; font-size: 12px; color: #98a2b3; flex: none; }
 

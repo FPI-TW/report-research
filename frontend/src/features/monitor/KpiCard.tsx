@@ -1,8 +1,9 @@
+import type { ReactNode } from 'react'
 import styles from './MonitorPage.module.css'
 
 export function KpiCard({ label, value, suffix, sub }: {
   label: string
-  value: string
+  value: ReactNode
   suffix?: string
   sub?: string
 }) {

@@ -8,6 +8,7 @@ import { ProgressPanel } from './ProgressPanel'
 import { IngestPanel } from './IngestPanel'
 import { PipelineStatus } from './PipelineStatus'
 import { MarketDistribution } from './MarketDistribution'
+import { MonitorSkeleton } from './MonitorSkeleton'
 
 export default function MonitorPage() {
   const q = useProgress()
@@ -62,8 +63,10 @@ export default function MonitorPage() {
               <MarketDistribution markets={p.db.markets} />
               <div className={styles.footer}>資料每 5 秒自動更新 · 廷豐智能研報導入管線</div>
             </>
+          ) : q.isError ? (
+            <div className={styles.footer}>連線失敗，重試中…</div>
           ) : (
-            <div className={styles.footer}>{q.isError ? '連線失敗，重試中…' : '載入中…'}</div>
+            <MonitorSkeleton />
           )}
         </div>
       </div>

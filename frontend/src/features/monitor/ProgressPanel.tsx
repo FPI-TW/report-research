@@ -1,5 +1,8 @@
 import styles from './MonitorPage.module.css'
+import { TweenNumber } from '../../components/primitives/TweenNumber'
 import { fmtInt } from './rate'
+
+const toFixed1 = (n: number) => n.toFixed(1)
 
 /** 進度百分比夾在 0–100，防越界資料把進度條/aria 推出合理範圍。 */
 function clampPct(pct: number): number {
@@ -18,9 +21,9 @@ export function ProgressPanel({ title, data, rateLine, idleText }: {
       {data ? (
         <>
           <div className={styles.pmain}>
-            <span className={styles.big}>{fmtInt(data.done)}</span>
+            <span className={styles.big}><TweenNumber value={data.done} decimals={0} format={fmtInt} duration={600} /></span>
             <span className={styles.pof}>/ {fmtInt(data.total)} 篇</span>
-            <span className={styles.ppct}>{data.pct.toFixed(1)}%</span>
+            <span className={styles.ppct}><TweenNumber value={data.pct} decimals={1} format={toFixed1} duration={600} />%</span>
           </div>
           <div
             className={styles.bar}

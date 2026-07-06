@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { useFocusTrap } from '../../lib/useFocusTrap'
+import { usePresence } from '../../lib/usePresence'
 import styles from './Popover.module.css'
 
 interface PopoverProps {
@@ -14,6 +15,7 @@ interface PopoverProps {
 
 export function Popover({ open, onClose, children, className, role = 'menu', ariaLabel }: PopoverProps) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const { isMounted, state } = usePresence(open, { duration: 180 })
   useFocusTrap(panelRef, open)
 
   useEffect(() => {
@@ -23,11 +25,11 @@ export function Popover({ open, onClose, children, className, role = 'menu', ari
     return () => document.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  if (!open) return null
+  if (!isMounted) return null
   return (
     <>
       <div className={styles.scrim} onClick={onClose} aria-hidden="true" />
-      <div ref={panelRef} className={`${styles.panel} ${className ?? ''}`} role={role} aria-label={ariaLabel}>
+      <div ref={panelRef} data-state={state} className={`${styles.panel} ${className ?? ''}`} role={role} aria-label={ariaLabel}>
         {children}
       </div>
     </>

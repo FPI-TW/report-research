@@ -4,7 +4,10 @@
   background: rgba(16, 24, 40, 0.45);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
+  transition: opacity var(--tf-dur-2) var(--tf-ease-out);
 }
+.scrim[data-state='closed'] { opacity: 0; pointer-events: none; }
+.scrim[data-state='open'] { opacity: 1; }
 .panel {
   background: var(--tf-surface);
   border-radius: var(--tf-radius-card);
@@ -13,7 +16,12 @@
   max-height: 90vh;
   display: flex; flex-direction: column;
   overflow: hidden;
+  transition: opacity var(--tf-dur-3) var(--tf-ease-out),
+              translate var(--tf-dur-3) var(--tf-ease-out),
+              scale var(--tf-dur-3) var(--tf-ease-out);
 }
+.panel[data-state='closed'] { opacity: 0; translate: 0 8px; scale: 0.98; }
+.panel[data-state='open'] { opacity: 1; translate: 0 0; scale: 1; }
 .header {
   display: flex; align-items: center; gap: 12px;
   padding: 14px 18px; border-bottom: 1px solid var(--tf-border);

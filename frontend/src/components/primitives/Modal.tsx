@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { useFocusTrap } from '../../lib/useFocusTrap'
+import { usePresence } from '../../lib/usePresence'
 import styles from './Modal.module.css'
 
 interface ModalProps {
@@ -13,6 +14,7 @@ interface ModalProps {
 export function Modal({ open, onClose, title, children, className }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
+  const { isMounted, state } = usePresence(open, { duration: 240 })
   useFocusTrap(panelRef, open)
 
   useEffect(() => {
@@ -22,11 +24,12 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
     return () => document.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  if (!open) return null
+  if (!isMounted) return null
   return (
-    <div className={styles.scrim} data-scrim onClick={onClose}>
+    <div className={styles.scrim} data-scrim data-state={state} onClick={onClose}>
       <div
         ref={panelRef}
+        data-state={state}
         className={`${styles.panel} ${className ?? ''}`}
         role="dialog"
         aria-modal="true"

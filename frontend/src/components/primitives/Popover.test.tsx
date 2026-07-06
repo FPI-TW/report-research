@@ -26,3 +26,9 @@ test('open=true 渲染內容；Esc 觸發 onClose', () => {
   fireEvent.keyDown(document, { key: 'Escape' })
   expect(onClose).toHaveBeenCalled()
 })
+
+test('open=true 面板帶 data-state=open', () => {
+  render(<Harness open onClose={() => {}} />)
+  const panel = screen.getByText('登出').closest('[data-state]')
+  expect(panel?.getAttribute('data-state')).toBe('open')
+})

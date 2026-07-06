@@ -19,6 +19,10 @@ describe('Modal', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+  it('open=true dialog 帶 data-state=open', () => {
+    render(<Modal open onClose={() => {}}>x</Modal>)
+    expect(screen.getByRole('dialog').getAttribute('data-state')).toBe('open')
+  })
   it('點遮罩關閉、點面板不關閉', () => {
     const onClose = vi.fn()
     const { container } = render(<Modal open onClose={onClose} title="t">body</Modal>)

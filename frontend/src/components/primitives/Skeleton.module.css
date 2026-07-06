@@ -1,0 +1,8 @@
+.sk {
+  display: block;
+  background: var(--tf-border-weak);
+  border-radius: var(--tf-radius-md);
+  animation: tf-pulse 1.4s var(--tf-ease-out) infinite;
+}
+.text { height: 0.8em; border-radius: 4px; }
+.circle { border-radius: var(--tf-radius-pill); }

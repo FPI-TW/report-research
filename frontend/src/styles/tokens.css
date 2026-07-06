@@ -45,6 +45,8 @@
   --tf-dur-2: 180ms;
   --tf-dur-3: 240ms;
   --tf-dur-4: 340ms;
+  --tf-stagger: 40ms;
+  --tf-stagger-cap: 8;
 
   /* 語意色 — 市場 */
   --mkt-TW: #34c759;
@@ -100,9 +102,22 @@ input, button, textarea { font-family: inherit; }
 @keyframes tf-indet { 0% { left: -40%; } 100% { left: 100%; } }
 @keyframes tf-spin { to { transform: rotate(360deg); } }
 @keyframes tf-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes tf-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tf-grow { from { width: 0; } }
+
+/* 進場淡入＋上浮；清單以 style={{'--tf-i': index}} 做封頂 stagger。 */
+.tf-reveal {
+  animation: tf-up var(--tf-dur-3) var(--tf-ease-out) both;
+  animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger));
+}
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 mark { background: var(--tf-mark); color: inherit; border-radius: 3px; padding: 0 1px; }

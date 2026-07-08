@@ -48,7 +48,16 @@ export function renderAnswer(md: string, sourceCount: number, onCite: (n: number
   const flushAll = () => { flushPara(); flushUl(); flushOl(); flushQuote() }
 
   const splitRow = (s: string): string[] => {
-    const cells = s.trim().split('|').map(c => c.trim())
+    // 逐字掃描：反斜線跳脫的管線 `\|` 視為字面 |（不當欄位分隔），其餘 | 才切欄。
+    const t = s.trim()
+    const cells: string[] = []
+    let cur = ''
+    for (let idx = 0; idx < t.length; idx++) {
+      if (t[idx] === '\\' && t[idx + 1] === '|') { cur += '|'; idx += 1; continue }
+      if (t[idx] === '|') { cells.push(cur.trim()); cur = ''; continue }
+      cur += t[idx]
+    }
+    cells.push(cur.trim())
     if (cells.length && cells[0] === '') cells.shift()
     if (cells.length && cells[cells.length - 1] === '') cells.pop()
     return cells
@@ -92,7 +101,7 @@ export function renderAnswer(md: string, sourceCount: number, onCite: (n: number
         <div className="tableWrap" key={`tbl${tk}`}>
           <table>
             <thead><tr>{headers.map((h, j) => <th key={j}>{renderInline(h, sourceCount, onCite, `th${tk}-${j}`)}</th>)}</tr></thead>
-            <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((cell, ci) => <td key={ci}>{renderInline(cell, sourceCount, onCite, `td${tk}-${ri}-${ci}`)}</td>)}</tr>)}</tbody>
+            <tbody>{rows.map((r, ri) => <tr key={ri}>{headers.map((_, ci) => <td key={ci}>{renderInline(r[ci] ?? '', sourceCount, onCite, `td${tk}-${ri}-${ci}`)}</td>)}</tr>)}</tbody>
           </table>
         </div>
       )

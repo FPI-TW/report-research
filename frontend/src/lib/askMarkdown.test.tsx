@@ -63,6 +63,25 @@ test('缺分隔列的 | a | b | 不誤判為表格', () => {
   expect(container.textContent).toContain('| A | B |')
 })
 
+test('表格儲存格內跳脫管線 \\| 視為字面，不誤切欄', () => {
+  const md = '| 運算 | 說明 |\n| --- | --- |\n| a \\| b | 位元或 |'
+  const { container } = render(<div>{renderAnswer(md, 0, () => {})}</div>)
+  const cells = container.querySelectorAll('tbody td')
+  expect(cells).toHaveLength(2) // 兩欄，不因 \| 多切一欄
+  expect(cells[0].textContent).toContain('a | b') // \| 還原為字面 |
+})
+
+test('資料列欄數與表頭不符時對齊表頭欄數（多截少補）', () => {
+  const md = '| 標的 | 評等 |\n| --- | --- |\n| 台積 | 買進 | 多一欄 |\n| 只有一欄 |'
+  const { container } = render(<div>{renderAnswer(md, 0, () => {})}</div>)
+  const trs = container.querySelectorAll('tbody tr')
+  expect(trs).toHaveLength(2)
+  expect(trs[0].querySelectorAll('td')).toHaveLength(2) // 多的第三欄被截掉
+  expect(trs[1].querySelectorAll('td')).toHaveLength(2) // 缺的欄補空
+  expect(trs[1].querySelectorAll('td')[1].textContent).toBe('') // 第二欄為空
+  expect(container.textContent).not.toContain('多一欄') // 溢出欄不顯示
+})
+
 test('相鄰兩表格（中間無空行）各自成表，不互相吞併', () => {
   const md = '| A | B |\n| --- | --- |\n| 1 | 2 |\n| C | D |\n| --- | --- |\n| 3 | 4 |'
   const { container } = render(<div>{renderAnswer(md, 0, () => {})}</div>)

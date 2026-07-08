@@ -10,6 +10,8 @@ from typing import Optional, Sequence
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.rows import ChunkRow
+
 
 @dataclass
 class ReportRow:
@@ -276,7 +278,7 @@ async def search_chunks_meta(
     rows = await session.execute(
         text(sql.format(cols=_meta_columns("c"), where=where)), params
     )
-    return rows.all()
+    return [ChunkRow._make(r) for r in rows.all()]
 
 
 def _lexical_sql(
@@ -368,4 +370,4 @@ async def search_chunks_lexical(
     )
     sql = _lexical_sql(len(term_patterns), extra, per_report, limit=limit)
     rows = await session.execute(text(sql), params)
-    return rows.all()
+    return [ChunkRow._make(r) for r in rows.all()]

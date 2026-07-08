@@ -1,0 +1,123 @@
+:root {
+  /* 介面基調 */
+  --tf-canvas: #f6f7f9;
+  --tf-surface: #ffffff;
+  --tf-sidebar: #fbfbfc;
+  --tf-border: #e4e7ec;
+  --tf-border-weak: #f2f4f7;
+  --tf-divider: #eceef1;
+  --tf-text-1: #101828;
+  --tf-text-2: #344054;
+  --tf-text-3: #667085;
+  --tf-text-4: #98a2b3;
+
+  /* 品牌金 */
+  --tf-gold-text: #8a5a0f;
+  --tf-gold-strong: #ae7415;
+  --tf-gold-hover: #7a4f0c;
+  --tf-gold-tint: #faf3e3;
+  --tf-on-gold: #ffffff;
+  --tf-on-gold-muted: rgba(255, 255, 255, 0.75);
+
+  /* 字型 */
+  --tf-serif: 'Noto Serif TC', Georgia, 'Times New Roman', serif;
+  --tf-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
+    'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
+  --tf-mono: ui-monospace, Menlo, monospace;
+
+  /* 圓角 */
+  --tf-radius-card: 12px;
+  --tf-radius-pill: 999px;
+  --tf-radius-seg: 10px;
+  --tf-radius-md: 8px;
+
+  /* 陰影 */
+  --tf-shadow-xs: 0 1px 3px rgba(16, 24, 40, 0.06);
+  --tf-shadow-seg: 0 1px 3px rgba(16, 24, 40, 0.12);
+  --tf-shadow-float: 0 4px 16px rgba(16, 24, 40, 0.08);
+  --tf-shadow-viewtoggle: 0 6px 20px rgba(16, 24, 40, 0.14);
+  --tf-shadow-pop: 0 12px 32px rgba(16, 24, 40, 0.16);
+  --tf-shadow-modal: 0 20px 48px rgba(16, 24, 40, 0.24);
+
+  /* 動效 */
+  --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --tf-dur-1: 120ms;
+  --tf-dur-2: 180ms;
+  --tf-dur-3: 240ms;
+  --tf-dur-4: 340ms;
+  --tf-stagger: 40ms;
+  --tf-stagger-cap: 8;
+
+  /* 語意色 — 市場 */
+  --mkt-TW: #34c759;
+  --mkt-US: #007aff;
+  --mkt-HK: #ff9500;
+  --mkt-CN: #ff3b30;
+  --mkt-FX: #00c7be;
+  --mkt-WTX: #af52de;
+  --mkt-MACRO: #ff2d55;
+  --mkt-GLOBAL: #5856d6;
+  --mkt-CRYPTO: #a2845e;
+  --mkt-fallback: #8e8e93;
+
+  /* 狀態色 */
+  --tf-success: #34c759;
+  --tf-success-text: #248a3d;
+  --tf-warn: #ff9f0a;
+  --tf-warn-bg: #fffaeb;
+  --tf-warn-border: #fedf89;
+  --tf-warn-text: #b25e00;
+  --tf-error: #ff3b30;
+  --tf-error-bg: #fef3f2;
+  --tf-error-border: #fecdca;
+  --tf-error-text: #b42318;
+  --tf-mark: #fff3bf;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--tf-canvas);
+  font-family: var(--tf-sans);
+  color: var(--tf-text-1);
+  -webkit-font-smoothing: antialiased;
+}
+input, button, textarea { font-family: inherit; }
+::selection { background: var(--tf-gold-tint); }
+
+:focus-visible {
+  outline: 2px solid var(--tf-gold-text);
+  outline-offset: 2px;
+}
+
+.tf-scroll { overflow-x: hidden; }
+.tf-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.tf-scroll::-webkit-scrollbar-thumb {
+  background: var(--tf-border);
+  border-radius: 999px;
+  border: 3px solid var(--tf-canvas);
+}
+
+@keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes tf-indet { 0% { left: -40%; } 100% { left: 100%; } }
+@keyframes tf-spin { to { transform: rotate(360deg); } }
+@keyframes tf-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes tf-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tf-grow { from { width: 0; } }
+
+/* 進場淡入＋上浮；清單以 style={{'--tf-i': index}} 做封頂 stagger。 */
+.tf-reveal {
+  animation: tf-up var(--tf-dur-3) var(--tf-ease-out) both;
+  animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+mark { background: var(--tf-mark); color: inherit; border-radius: 3px; padding: 0 1px; }

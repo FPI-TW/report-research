@@ -1,0 +1,8 @@
+.box { display: flex; gap: 10px; align-items: flex-start; border: 1px solid; border-radius: var(--tf-radius-card); padding: 12px 14px; margin: 4px 0 12px; }
+.error { background: var(--tf-error-bg); border-color: var(--tf-error-border); color: var(--tf-error-text); }
+.warning { background: var(--tf-warn-bg); border-color: var(--tf-warn-border); color: var(--tf-warn-text); }
+.icon { flex: none; margin-top: 1px; }
+.content { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.text { font-size: 14px; line-height: 1.6; }
+.action { align-self: flex-start; background: none; border: 1px solid currentColor; color: inherit; border-radius: var(--tf-radius-pill); font-size: 12.5px; font-weight: 600; padding: 4px 14px; cursor: pointer; }
+.action:hover { opacity: 0.82; }

@@ -1,0 +1,2 @@
+.row { display: flex; justify-content: flex-end; margin: 18px 0 10px; }
+.bubble { max-width: 78%; background: var(--tf-gold-text); color: var(--tf-on-gold); border-radius: 16px 16px 4px 16px; padding: 10px 14px; font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }

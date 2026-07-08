@@ -1,0 +1,14 @@
+.wrap { position: relative; }
+.avatarBtn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--tf-border); background: var(--tf-gold-tint); color: var(--tf-gold-text); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.avatarBtn:hover { border-color: var(--tf-gold-text); }
+.rowTrigger { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; cursor: pointer; padding: 7px 8px; border-radius: 8px; font-family: inherit; }
+.rowTrigger:hover { background: var(--tf-border-weak); }
+.avatar { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-border); background: var(--tf-gold-tint); color: var(--tf-gold-text); display: flex; align-items: center; justify-content: center; flex: none; }
+.rowText { flex: 1; text-align: left; min-width: 0; }
+.name { display: block; font-size: 13px; font-weight: 600; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub { display: block; font-size: 11.5px; color: var(--tf-text-4); }
+/* 帳號選單向上開：進場從下方、以底邊為縮放原點 */
+.pop { left: 10px; right: 10px; bottom: calc(100% - 4px); --tf-pop-origin: bottom; --tf-pop-rise: 4px; }
+.popHead { padding: 8px 10px 10px; border-bottom: 1px solid var(--tf-border-weak); margin-bottom: 4px; }
+.logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-family: inherit; }
+.logout:hover { background: var(--tf-border-weak); }

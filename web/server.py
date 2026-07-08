@@ -65,6 +65,7 @@ from app.services.pdf import render_report_pdf  # noqa: E402
 from app.services.report import fetch_report_doc, generate_report, write_report_pdf  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+SPA_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 logger = logging.getLogger(__name__)
 SEARCH_QUERY_MAX_CHARS = 500
 ASK_QUESTION_MAX_CHARS = 2000
@@ -88,6 +89,15 @@ class _NoCacheStatic(StaticFiles):
     async def get_response(self, path, scope):  # type: ignore[override]
         resp = await super().get_response(path, scope)
         resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+class _ImmutableStatic(StaticFiles):
+    """Vite 內容雜湊資產（/app/assets/*）長快取：hash 變則 URL 變，故可 immutable。"""
+
+    async def get_response(self, path, scope):  # type: ignore[override]
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
         return resp
 
 
@@ -900,6 +910,25 @@ async def logout():
 @app.get("/")
 async def index():
     return _static_page("index.html")
+
+
+# ───── SPA（/app 子路徑；shell + 雜湊資產，純服務無業務邏輯）─────
+if (SPA_DIST / "assets").is_dir():
+    app.mount(
+        "/app/assets",
+        _ImmutableStatic(directory=SPA_DIST / "assets", check_dir=False),
+        name="spa-assets",
+    )
+
+
+@app.get("/app")
+@app.get("/app/{spa_path:path}")
+async def spa_shell(spa_path: str = ""):
+    """SPA shell：所有 /app/* 深連結回同一份 index.html，交給 client 端路由。"""
+    index = SPA_DIST / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=503, detail="SPA 尚未 build（frontend/dist 不存在）")
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", _NoCacheStatic(directory=STATIC_DIR), name="static")

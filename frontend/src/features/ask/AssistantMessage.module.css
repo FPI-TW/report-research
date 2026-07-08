@@ -20,7 +20,16 @@
 .body th, .body td { border: 1px solid var(--tf-border); padding: 6px 10px; text-align: left; vertical-align: top; }
 .body thead th { background: var(--tf-border-weak); color: var(--tf-text-1); font-weight: 700; }
 .body > :last-child { margin-bottom: 0; }
-.body[data-streaming] > :last-child::after {
+/* 串流游標貼在最後區塊的「行內葉節點」尾端：段落/標題/引言直接於文末，清單取末項 li，
+   程式碼取 code，表格取末列末格——避免 ::after 落在區塊級容器內而掉到新行（游標掉行）。 */
+.body[data-streaming] > p:last-child::after,
+.body[data-streaming] > h3:last-child::after,
+.body[data-streaming] > h4:last-child::after,
+.body[data-streaming] > blockquote:last-child::after,
+.body[data-streaming] > ul:last-child li:last-child::after,
+.body[data-streaming] > ol:last-child li:last-child::after,
+.body[data-streaming] > pre:last-child code::after,
+.body[data-streaming] > :global(.tableWrap):last-child tbody tr:last-child td:last-child::after {
   content: '';
   display: inline-block;
   width: 7px;

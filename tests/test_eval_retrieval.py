@@ -12,17 +12,31 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from app.services.answer import Source  # noqa: E402
+from app.services.rows import ChunkRow  # noqa: E402
 
 import eval_retrieval as ev  # noqa: E402
 
 
 def _row(report_id, content, distance=0.1):
-    """造一列符合 hybrid_search 回傳結構的 row（只填會被讀到的位置）。"""
-    row = [None] * 16
-    row[1] = report_id  # _RID
-    row[14] = content  # _CONTENT
-    row[15] = distance  # distance（row[-1]）
-    return tuple(row)
+    """造一列符合 hybrid_search 回傳結構的 ChunkRow。"""
+    return ChunkRow(
+        chunk_id=None,
+        report_id=report_id,
+        file_name=None,
+        market=None,
+        source=None,
+        summary=None,
+        report_date=None,
+        report_type=None,
+        instrument_types=None,
+        relates_stock=None,
+        relates_futures=None,
+        stock_targets=None,
+        futures_targets=None,
+        chunk_index=0,
+        content=content,
+        distance=distance,
+    )
 
 
 def _src(n, rid, file_name, report_date, market="TW"):
@@ -195,15 +209,25 @@ class RunCaseTests(unittest.IsolatedAsyncioTestCase):
 
 
 def _make_full_row(report_id, file_name, content, report_date):
-    """build_context 需要的完整 row（含 file_name/market/date 位置）。"""
-    row = [None] * 16
-    row[1] = report_id
-    row[2] = file_name
-    row[3] = "TW"
-    row[6] = report_date
-    row[14] = content
-    row[15] = 0.1
-    return tuple(row)
+    """build_context 需要的完整 ChunkRow（含 file_name/market/date）。"""
+    return ChunkRow(
+        chunk_id=None,
+        report_id=report_id,
+        file_name=file_name,
+        market="TW",
+        source=None,
+        summary=None,
+        report_date=report_date,
+        report_type=None,
+        instrument_types=None,
+        relates_stock=None,
+        relates_futures=None,
+        stock_targets=None,
+        futures_targets=None,
+        chunk_index=0,
+        content=content,
+        distance=0.1,
+    )
 
 
 if __name__ == "__main__":

@@ -19,18 +19,29 @@ from app.services.answer import (  # noqa: E402
     history_item,
     split_external_sources,
 )
+from app.services.rows import ChunkRow  # noqa: E402
 
 
 def make_row(report_id, file_name, market, content, report_date=None, distance=0.1):
-    """造一列符合 hybrid_search 回傳結構的 row（只填會被讀到的位置）。"""
-    row = [None] * 16
-    row[1] = report_id  # _RID
-    row[2] = file_name  # _FNAME
-    row[3] = market  # _MARKET
-    row[6] = report_date  # _RDATE
-    row[14] = content  # _CONTENT
-    row[15] = distance  # distance（row[-1]）
-    return tuple(row)
+    """造一列符合 hybrid_search 回傳結構的 ChunkRow。"""
+    return ChunkRow(
+        chunk_id=None,
+        report_id=report_id,
+        file_name=file_name,
+        market=market,
+        source=None,
+        summary=None,
+        report_date=report_date,
+        report_type=None,
+        instrument_types=None,
+        relates_stock=None,
+        relates_futures=None,
+        stock_targets=None,
+        futures_targets=None,
+        chunk_index=0,
+        content=content,
+        distance=distance,
+    )
 
 
 class StreamParseTests(unittest.TestCase):

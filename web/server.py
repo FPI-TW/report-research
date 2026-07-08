@@ -595,17 +595,23 @@ async def search(
 
     results: list[ReportResult] = []
     for i, g in enumerate(page, start=offset + 1):  # 全域 rank，跨頁不重號
-        (
-            _chunk_id, rid, fn, m, src, summary, rdate, rtype_, itypes, rstock, rfut,
-            stargets, ftargets, _cidx, _content, _dist,
-        ) = g.meta_row
+        mr = g.meta_row
+        rid, fn, m, src, summary, rdate = (
+            mr.report_id, mr.file_name, mr.market, mr.source, mr.summary, mr.report_date
+        )
+        rtype_ = mr.report_type
+        itypes = mr.instrument_types
+        rstock = mr.relates_stock
+        rfut = mr.relates_futures
+        stargets = mr.stock_targets
+        ftargets = mr.futures_targets
         ps: list[Passage] = []
         for sc, prow in g.passages[:passages]:
-            cleaned = clean_text(prow[-2])  # content = row[-2]
+            cleaned = clean_text(prow.content)
             if cleaned:
                 ps.append(
-                    Passage(score=sc, chunk_index=int(prow[-3]), content=cleaned)
-                )  # chunk_index = row[-3]
+                    Passage(score=sc, chunk_index=int(prow.chunk_index), content=cleaned)
+                )
         results.append(
             ReportResult(
                 rank=i,

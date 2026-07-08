@@ -8,14 +8,29 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.services.retrieval import rank_reports  # noqa: E402
+from app.services.rows import ChunkRow  # noqa: E402
 
 
 def row(report_id, report_date=None):
-    """造一列符合 hybrid_search 回傳結構的 row（rank_reports 只讀 [1] 與 [6]）。"""
-    r = [None] * 16
-    r[1] = report_id
-    r[6] = report_date
-    return tuple(r)
+    """造一列符合 hybrid_search 回傳結構的 ChunkRow。"""
+    return ChunkRow(
+        chunk_id=None,
+        report_id=report_id,
+        file_name=None,
+        market=None,
+        source=None,
+        summary=None,
+        report_date=report_date,
+        report_type=None,
+        instrument_types=None,
+        relates_stock=None,
+        relates_futures=None,
+        stock_targets=None,
+        futures_targets=None,
+        chunk_index=0,
+        content="",
+        distance=0.0,
+    )
 
 
 def scored(*items):

@@ -128,9 +128,6 @@ def split_external_sources(text: str) -> tuple[str, list[dict]]:
 
 _CITE_RE = re.compile(r"\[(\d+)\]")
 
-# hybrid_search 回傳 row 的欄位位置（見 store._meta_columns + distance；server.py:473 對應解包）
-_RID, _FNAME, _MARKET, _RDATE, _CONTENT = 1, 2, 3, 6, 14
-
 
 def _as_date(value: object) -> date | None:
     """把 report_date 轉為 date：datetime/date 直接取；字串以 YYYY-MM-DD 解析；其餘 None。"""
@@ -233,17 +230,17 @@ def build_context(
     by_report: dict[str, dict] = {}
     order: list[str] = []
     for tier, fused, row in scored:
-        rid = row[_RID]
-        content = clean_text(row[_CONTENT])
+        rid = row.report_id
+        content = clean_text(row.content)
         if not content:
             continue
         info = by_report.get(rid)
         if info is None:
             info = {
                 "passages": [],
-                "file_name": row[_FNAME],
-                "market": row[_MARKET],
-                "report_date": row[_RDATE],
+                "file_name": row.file_name,
+                "market": row.market,
+                "report_date": row.report_date,
                 "best_tier": tier,
                 "best_fused": fused,
             }

@@ -37,6 +37,7 @@ from app.services.overview import (
 )
 from app.services.report_gate import should_offer_report
 from app.services.retrieval import hybrid_search
+from app.services.stream_sentinel import SentinelStreamParser
 from app.services.textnorm import clean_text
 
 logger = logging.getLogger(__name__)
@@ -868,9 +869,7 @@ async def answer_question(
 
     user_prompt = build_user_prompt(question, context, history_block)
     raw_parts: list[str] = []
-    buf = ""
-    hold = len(EXT_SENTINEL)
-    sentinel_found = False
+    parser = SentinelStreamParser(EXT_SENTINEL)
     searching_sent = False
     thinking_ms: int | None = None
 
@@ -896,22 +895,13 @@ async def answer_question(
                 yield ("status", {"stage": "searching_web"})  # 步驟4：搜尋網路補充
             continue
         raw_parts.append(chunk)
-        if sentinel_found:
-            continue
-        buf += chunk
-        idx = buf.find(EXT_SENTINEL)
-        if idx != -1:
-            if buf[:idx]:
-                for ev in _emit_token(buf[:idx]):
-                    yield ev
-            sentinel_found = True
-            buf = ""
-        elif len(buf) > hold:
-            for ev in _emit_token(buf[:-hold]):
+        emit = parser.feed(chunk)
+        if emit:
+            for ev in _emit_token(emit):
                 yield ev
-            buf = buf[-hold:]
-    if not sentinel_found and buf:
-        for ev in _emit_token(buf):
+    tail = parser.flush()
+    if tail:
+        for ev in _emit_token(tail):
             yield ev
 
     raw = "".join(raw_parts)

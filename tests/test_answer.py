@@ -431,12 +431,14 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
         )
         rp.hybrid_search = recording_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         try:
             _ = [e async for e in ans.answer_question("台積電展望")]
@@ -446,6 +448,7 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
                 rp.embed_query_cached,
                 ans.stream_completion,
                 rp.SessionFactory,
+                ans.SessionFactory,
                 ans.classify_intent,
             ) = orig
 
@@ -586,6 +589,7 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -594,6 +598,7 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -606,6 +611,7 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -812,6 +818,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -820,6 +827,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -831,6 +839,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
                 rp.embed_query_cached,
                 ans.stream_completion,
                 rp.SessionFactory,
+                ans.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -888,6 +897,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -896,6 +906,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -907,6 +918,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
                 rp.embed_query_cached,
                 ans.stream_completion,
                 rp.SessionFactory,
+                ans.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -958,6 +970,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -966,6 +979,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -977,6 +991,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
                 rp.embed_query_cached,
                 ans.stream_completion,
                 rp.SessionFactory,
+                ans.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -1437,6 +1452,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -1445,6 +1461,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -1461,6 +1478,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
                 rp.embed_query_cached,
                 ans.stream_completion,
                 rp.SessionFactory,
+                ans.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -1511,6 +1529,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -1520,6 +1539,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -1537,6 +1557,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
                 rp.embed_query_cached,
                 ans.stream_completion,
                 rp.SessionFactory,
+                ans.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -1578,6 +1599,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             rp.embed_query_cached,
             ans.stream_completion,
             rp.SessionFactory,
+            ans.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -1586,6 +1608,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -1599,6 +1622,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
                 rp.embed_query_cached,
                 ans.stream_completion,
                 rp.SessionFactory,
+                ans.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,

@@ -27,17 +27,18 @@ class DoneOffersReportTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-                rp.SessionFactory, ans.classify_intent)
+                rp.SessionFactory, ans.SessionFactory, ans.classify_intent)
         rp.hybrid_search = fake_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         try:
             events = [e async for e in ans.answer_question("請分析台積電產業趨勢")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-             rp.SessionFactory, ans.classify_intent) = orig
+             rp.SessionFactory, ans.SessionFactory, ans.classify_intent) = orig
 
         done = [p for (k, p) in events if k == "done"][-1]
         self.assertTrue(done.get("offer_report"))

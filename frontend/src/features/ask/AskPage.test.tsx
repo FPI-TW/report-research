@@ -42,6 +42,27 @@ test('送出問題→串流答案顯示、資料來源鈕出現', async () => {
   expect(await screen.findByRole('button', { name: '資料來源 1' })).toBeInTheDocument()
 })
 
+test('資料來源鈕可切換開／關來源側欄', async () => {
+  streamAsk.mockReturnValue(immediate([
+    { event: 'sources', data: [{ n: 1, report_id: 'r1', file_name: 'f.pdf', market: 'TW', report_date: '2026-06-20', is_latest: false }] },
+    { event: 'status', data: { stage: 'generating', thinking_ms: 3000 } },
+    { event: 'token', data: '這是答案 [1]' },
+    { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1', cited: ['r1'] } },
+  ]))
+  wrap()
+  fireEvent.change(screen.getByPlaceholderText('輸入你的問題…'), { target: { value: '台積電評價' } })
+  fireEvent.keyDown(screen.getByPlaceholderText('輸入你的問題…'), { key: 'Enter' })
+  const srcBtn = await screen.findByRole('button', { name: '資料來源 1' })
+
+  // 首次點擊：開啟側欄
+  fireEvent.click(srcBtn)
+  expect(await screen.findByRole('complementary', { name: '引用來源' })).toBeInTheDocument()
+
+  // 再次點擊同一鈕：關閉側欄（離場後卸載）
+  fireEvent.click(srcBtn)
+  await waitFor(() => expect(screen.queryByRole('complementary', { name: '引用來源' })).not.toBeInTheDocument())
+})
+
 test('離題→Callout warning', async () => {
   streamAsk.mockReturnValue(immediate([
     { event: 'sources', data: [] },

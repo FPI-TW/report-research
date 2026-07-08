@@ -57,7 +57,7 @@ export default function AskPage() {
                 <AssistantMessage
                   turn={t}
                   onCite={() => setDrawer({ open: true, turnId: t.id })}
-                  onOpenSources={() => setDrawer({ open: true, turnId: t.id })}
+                  onOpenSources={() => setDrawer(d => (d.open && d.turnId === t.id ? { open: false, turnId: t.id } : { open: true, turnId: t.id }))}
                   onFeedback={v => t.qaId && ctrl.setFeedback(t.id, t.qaId, v)}
                   onNoticeRetry={() => setDraft(t.question)}
                   onErrorRetry={() => handleSubmit(t.question)}

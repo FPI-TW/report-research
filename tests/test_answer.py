@@ -412,6 +412,7 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dense_scan_forwarded_from_ask_path(self):
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         captured: dict = {}
 
@@ -426,25 +427,25 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         orig = (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
         )
-        ans.hybrid_search = recording_search
-        ans.embed_query_cached = lambda q: [0.0]
+        rp.hybrid_search = recording_search
+        rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        rp.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         try:
             _ = [e async for e in ans.answer_question("台積電展望")]
         finally:
             (
-                ans.hybrid_search,
-                ans.embed_query_cached,
+                rp.hybrid_search,
+                rp.embed_query_cached,
                 ans.stream_completion,
-                ans.SessionFactory,
+                rp.SessionFactory,
                 ans.classify_intent,
             ) = orig
 
@@ -545,7 +546,7 @@ class _FakeSession:
 class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
     """離題判定改由 classify_intent（看意圖）決定，與 scored 分數無關。"""
 
-    def _patch(self, ans, *, in_domain, called):
+    def _patch(self, ans, rp, *, in_domain, called):
         async def fake_search(*a, **k):
             return [
                 (
@@ -581,30 +582,30 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             return []
 
         orig = (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
         )
-        ans.hybrid_search = fake_search
-        ans.embed_query_cached = fake_embed
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        rp.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
         return orig
 
     @staticmethod
-    def _restore(ans, orig):
+    def _restore(ans, rp, orig):
         (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
@@ -613,13 +614,14 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_off_topic_intent_skips_llm(self):
         # 意圖判定為離題（即使檢索分數不低）→ 拒答、空來源、不跑主 LLM
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         called = {"llm": False, "intent": False}
-        orig = self._patch(ans, in_domain=False, called=called)
+        orig = self._patch(ans, rp, in_domain=False, called=called)
         try:
             events = [e async for e in ans.answer_question("我想喝飲料推薦給我")]
         finally:
-            self._restore(ans, orig)
+            self._restore(ans, rp, orig)
 
         kinds = [k for k, _ in events]
         self.assertEqual(
@@ -637,13 +639,14 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_on_topic_intent_calls_llm(self):
         # 意圖判定為在領域 → 正常檢索 + 串流回答 + 引用
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         called = {"llm": False, "intent": False}
-        orig = self._patch(ans, in_domain=True, called=called)
+        orig = self._patch(ans, rp, in_domain=True, called=called)
         try:
             events = [e async for e in ans.answer_question("可口可樂的投資評級如何")]
         finally:
-            self._restore(ans, orig)
+            self._restore(ans, rp, orig)
 
         kinds = [k for k, _ in events]
         self.assertEqual(kinds[0], "status")  # 開頭為 understanding status
@@ -660,18 +663,19 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_context_emits_retrieved_zero_without_reading(self):
         # 在領域但檢索無結果 → 無脈絡：retrieved(count=0)、不發 reading、回 NO_CONTEXT，且不跑主 LLM
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         called = {"llm": False, "intent": False}
-        orig = self._patch(ans, in_domain=True, called=called)
+        orig = self._patch(ans, rp, in_domain=True, called=called)
 
         async def empty_search(*a, **k):
             return []
 
-        ans.hybrid_search = empty_search  # 覆寫 _patch 的單列 fake_search
+        rp.hybrid_search = empty_search  # 覆寫 _patch 的單列 fake_search
         try:
             events = [e async for e in ans.answer_question("某個查不到的冷門問題")]
         finally:
-            self._restore(ans, orig)
+            self._restore(ans, rp, orig)
 
         kinds = [k for k, _ in events]
         self.assertEqual(
@@ -691,13 +695,14 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_emits_process_status_steps(self):
         # 在領域問題：事件序須含 understanding(開頭) → retrieved(count) → reading(token 前)
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         called = {"llm": False, "intent": False}
-        orig = self._patch(ans, in_domain=True, called=called)
+        orig = self._patch(ans, rp, in_domain=True, called=called)
         try:
             events = [e async for e in ans.answer_question("可口可樂的投資評級如何")]
         finally:
-            self._restore(ans, orig)
+            self._restore(ans, rp, orig)
 
         # 第一個事件即 understanding（在檢索/來源之前）
         self.assertEqual(events[0], ("status", {"stage": "understanding"}))
@@ -726,13 +731,14 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_emits_generating_with_thinking_ms(self):
         # 正常路徑：第一個 token 前發 generating 帶 int thinking_ms；done 亦帶 thinking_ms
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         called = {"llm": False, "intent": False}
-        orig = self._patch(ans, in_domain=True, called=called)
+        orig = self._patch(ans, rp, in_domain=True, called=called)
         try:
             events = [e async for e in ans.answer_question("可口可樂的投資評級如何")]
         finally:
-            self._restore(ans, orig)
+            self._restore(ans, rp, orig)
 
         i_gen = next(
             i
@@ -763,6 +769,7 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
     async def test_body_excludes_sentinel_and_emits_ext_sources(self):
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         async def fake_search(*a, **k):
             return [
@@ -801,18 +808,18 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             return (a[1] if len(a) > 1 else "", True)
 
         orig = (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
         )
-        ans.hybrid_search = fake_search
-        ans.embed_query_cached = fake_embed
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        rp.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -820,10 +827,10 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in ans.answer_question("台積電封裝")]
         finally:
             (
-                ans.hybrid_search,
-                ans.embed_query_cached,
+                rp.hybrid_search,
+                rp.embed_query_cached,
                 ans.stream_completion,
-                ans.SessionFactory,
+                rp.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -847,6 +854,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
     async def test_sentinel_split_across_chunks_not_leaked(self):
         # sentinel 被拆在兩個 chunk（"[EXT_" + "SOURCES]"）：hold 尾段須仍攔截、不外洩
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         async def fake_search(*a, **k):
             return [
@@ -876,18 +884,18 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             return (a[1] if len(a) > 1 else "", True)
 
         orig = (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
         )
-        ans.hybrid_search = fake_search
-        ans.embed_query_cached = fake_embed
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        rp.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -895,10 +903,10 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in ans.answer_question("問題")]
         finally:
             (
-                ans.hybrid_search,
-                ans.embed_query_cached,
+                rp.hybrid_search,
+                rp.embed_query_cached,
                 ans.stream_completion,
-                ans.SessionFactory,
+                rp.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -916,6 +924,7 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         # 模型開始搜尋（stream 吐 SEARCH_EVENT 標記）→ 發一次 ("status","searching_web")，標記不外洩
         from app.services import answer as ans
         from app.services.llm import SEARCH_EVENT
+        import app.services.retrieval_pipeline as rp
 
         async def fake_search(*a, **k):
             return [
@@ -945,18 +954,18 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             return (a[1] if len(a) > 1 else "", True)
 
         orig = (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
         )
-        ans.hybrid_search = fake_search
-        ans.embed_query_cached = fake_embed
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        rp.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -964,10 +973,10 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in ans.answer_question("問題")]
         finally:
             (
-                ans.hybrid_search,
-                ans.embed_query_cached,
+                rp.hybrid_search,
+                rp.embed_query_cached,
                 ans.stream_completion,
-                ans.SessionFactory,
+                rp.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -1393,6 +1402,7 @@ class ConversationStaticContractTests(unittest.TestCase):
 class FollowUpTests(unittest.IsolatedAsyncioTestCase):
     async def test_followup_uses_condensed_query_for_retrieval(self):
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         seen = {}
 
@@ -1423,18 +1433,18 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("續問不應呼叫 classify_intent")
 
         orig = (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
         )
-        ans.hybrid_search = fake_search
-        ans.embed_query_cached = fake_embed
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        rp.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -1447,10 +1457,10 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             ]
         finally:
             (
-                ans.hybrid_search,
-                ans.embed_query_cached,
+                rp.hybrid_search,
+                rp.embed_query_cached,
                 ans.stream_completion,
-                ans.SessionFactory,
+                rp.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -1462,6 +1472,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_followup_passes_history_block_to_prompt(self):
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         seen = {}
 
@@ -1496,19 +1507,19 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             return orig_bup(question, context, history_block)
 
         orig = (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
             ans.build_user_prompt,
         )
-        ans.hybrid_search = fake_search
-        ans.embed_query_cached = fake_embed
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        rp.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -1522,10 +1533,10 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             ]
         finally:
             (
-                ans.hybrid_search,
-                ans.embed_query_cached,
+                rp.hybrid_search,
+                rp.embed_query_cached,
                 ans.stream_completion,
-                ans.SessionFactory,
+                rp.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,
@@ -1537,6 +1548,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_followup_offtopic_skips_llm(self):
         from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
 
         called = {"llm": False}
 
@@ -1562,18 +1574,18 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("續問不應呼叫 classify_intent")
 
         orig = (
-            ans.hybrid_search,
-            ans.embed_query_cached,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.stream_completion,
-            ans.SessionFactory,
+            rp.SessionFactory,
             ans.classify_intent,
             ans.condense_and_classify,
             ans.load_recent_turns,
         )
-        ans.hybrid_search = fake_search
-        ans.embed_query_cached = fake_embed
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
         ans.stream_completion = fake_stream
-        ans.SessionFactory = lambda: _FakeSession()
+        rp.SessionFactory = lambda: _FakeSession()
         ans.classify_intent = fake_intent
         ans.condense_and_classify = fake_condense
         ans.load_recent_turns = fake_load
@@ -1583,10 +1595,10 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             ]
         finally:
             (
-                ans.hybrid_search,
-                ans.embed_query_cached,
+                rp.hybrid_search,
+                rp.embed_query_cached,
                 ans.stream_completion,
-                ans.SessionFactory,
+                rp.SessionFactory,
                 ans.classify_intent,
                 ans.condense_and_classify,
                 ans.load_recent_turns,

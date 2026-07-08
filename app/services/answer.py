@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import time
 import uuid
@@ -22,6 +21,7 @@ from datetime import date, datetime, timezone
 
 from sqlalchemy import text
 
+from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
 from app.services.intent import classify_intent, condense_and_classify
@@ -43,13 +43,14 @@ from app.services.textnorm import clean_text
 logger = logging.getLogger(__name__)
 
 # 脈絡規模：取前 N 篇、每篇至多 M 段、總字數上限（控延遲與 prompt 大小）。env 化便於壓測調參。
-MAX_REPORTS = int(os.getenv("ASK_MAX_REPORTS", "15"))
-MAX_PASSAGES_PER_REPORT = int(os.getenv("ASK_MAX_PASSAGES", "4"))
-MAX_CONTEXT_CHARS = int(os.getenv("ASK_MAX_CONTEXT_CHARS", "20000"))
-RETRIEVAL_K = int(os.getenv("ASK_RETRIEVAL_K", "15"))
+_S = get_settings()
+MAX_REPORTS = _S.ask_max_reports
+MAX_PASSAGES_PER_REPORT = _S.ask_max_passages
+MAX_CONTEXT_CHARS = _S.ask_max_context_chars
+RETRIEVAL_K = _S.ask_retrieval_k
 # 問答路徑專用的 dense 召回深度：顯式傳給 hybrid_search（不改其預設），多掃最近鄰、
 # 降低「漏研報」；檢索頁走自己的參數，完全不受影響。
-ASK_DENSE_SCAN = int(os.getenv("ASK_DENSE_SCAN", "400"))
+ASK_DENSE_SCAN = _S.ask_dense_scan
 
 # 多輪對話脈絡：帶進 prompt 的近輪數與舊答案截斷長度（控 prompt 大小/延遲）
 MAX_HISTORY_TURNS = 3
@@ -69,37 +70,37 @@ SYSTEM_PROMPT = (
 
 NO_CONTEXT_MESSAGE = "在目前的研報語料中找不到與此問題相關的內容。"
 
-RECENCY_WEIGHT = float(os.getenv("ASK_RECENCY_WEIGHT", "0.06"))  # 保留供顯示/向後相容
-RECENCY_HALF_LIFE_DAYS = float(os.getenv("ASK_RECENCY_HALF_LIFE_DAYS", "90"))
+RECENCY_WEIGHT = _S.ask_recency_weight  # 保留供顯示/向後相容
+RECENCY_HALF_LIFE_DAYS = _S.ask_recency_half_life_days
 # 相關度分桶：同一 band 內「以新近度為主排序維度」，跨 band 由相關度主導——
 # 把「夠新」與「夠相關」解耦，避免老的字面命中淹沒新研報，又不為了新而漏掉強相關。
 # BAND_EPS 是邊界容差，避免恰落在桶邊界的相近分數（如 0.80）被切到不同桶。
-RELEVANCE_BAND = float(os.getenv("ASK_RELEVANCE_BAND", "0.10"))
-BAND_EPS = float(os.getenv("ASK_BAND_EPS", "0.03"))
+RELEVANCE_BAND = _S.ask_relevance_band
+BAND_EPS = _S.ask_band_eps
 
 # 過舊軟性截斷（fail-open）：當「夠新」(recency_factor≥FRESH) 的相關報告數達門檻，
 # 才跳過「過舊」(recency_factor<STALE) 的報告；不足則完全不截斷——歷史性問題
 # （新報告本就稀少）自動保留舊研報，守住「不漏」。MIN_FRESH 調很大即停用截斷。
-ASK_FRESH_FACTOR = float(os.getenv("ASK_FRESH_FACTOR", "0.5"))  # ~半衰期內（預設 90 天）
-ASK_STALE_FACTOR = float(os.getenv("ASK_STALE_FACTOR", "0.1"))  # ~300 天以上
-ASK_MIN_FRESH_BEFORE_CUTOFF = int(os.getenv("ASK_MIN_FRESH_BEFORE_CUTOFF", "2"))
+ASK_FRESH_FACTOR = _S.ask_fresh_factor  # ~半衰期內（預設 90 天）
+ASK_STALE_FACTOR = _S.ask_stale_factor  # ~300 天以上
+ASK_MIN_FRESH_BEFORE_CUTOFF = _S.ask_min_fresh_before_cutoff
 
 # 相關度下限（tier 感知，寧缺勿濫）：純語意(tier 0)研報的 best_fused 最低門檻；
 # tier≥1（字面命中）一律放行。fused 分數壓縮，故此為「弱命中防護」非精準切刀。
-ASK_RELEVANCE_FLOOR = float(os.getenv("ASK_RELEVANCE_FLOOR", "0.62"))
+ASK_RELEVANCE_FLOOR = _S.ask_relevance_floor
 # 保底篇數：前 N 篇不受相關度/過舊閘限制，避免邊界但合理的問題被餓死。
-ASK_MIN_REPORTS = int(os.getenv("ASK_MIN_REPORTS", "3"))
+ASK_MIN_REPORTS = _S.ask_min_reports
 # 過舊篇數上限：脈絡中「年齡 > STALE_AGE_DAYS 天」的研報最多 MAX_STALE 篇，
 # 把多出的槽留給較新的相關研報（與既有極舊軟截斷並存互補）。
-ASK_STALE_AGE_DAYS = int(os.getenv("ASK_STALE_AGE_DAYS", "180"))
-ASK_MAX_STALE_REPORTS = int(os.getenv("ASK_MAX_STALE_REPORTS", "4"))
+ASK_STALE_AGE_DAYS = _S.ask_stale_age_days
+ASK_MAX_STALE_REPORTS = _S.ask_max_stale_reports
 
 OFF_TOPIC_MESSAGE = (
     "這個問題與廷豐研報的語料無關，請改問與研報內容相關的問題"
     "（例如特定市場、個股、期貨或總經主題）。"
 )
 
-ASK_ENABLE_WEB = os.getenv("ASK_ENABLE_WEB", "1") not in ("0", "false", "False", "")
+ASK_ENABLE_WEB = _S.ask_enable_web
 
 EXT_SENTINEL = "[EXT_SOURCES]"  # 模型在答案末尾以此標記外部來源區塊
 

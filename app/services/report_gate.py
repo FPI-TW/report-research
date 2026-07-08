@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
-import os
+from app.config import get_settings
 
+_S = get_settings()
 # 引用篇數門檻：實際引用少於此數，視為素材不足，不建議出研報。
-REPORT_MIN_CITED = int(os.getenv("REPORT_MIN_CITED", "3"))
+REPORT_MIN_CITED = _S.report_min_cited
 
 # 分析意圖關鍵詞：帶這些字代表使用者要的是分析/整理，而非單一即時事實。
 _ANALYSIS_HINTS = (
@@ -20,7 +21,7 @@ _ANALYSIS_HINTS = (
 _TRIVIAL_HINTS = ("股價", "報價", "收盤", "開盤", "幾元", "多少錢")
 
 # 答案夠長也視為有分析深度（無顯式關鍵詞時的後備門檻）。
-_LONG_ANSWER_CHARS = int(os.getenv("REPORT_LONG_ANSWER_CHARS", "400"))
+_LONG_ANSWER_CHARS = _S.report_long_answer_chars
 
 
 def suggested_title(question: str) -> str:

@@ -11,13 +11,14 @@ fail-open：判定失敗/逾時/空回應一律視為在領域內（回 True）�
 
 from __future__ import annotations
 
-import os
 import re
 
+from app.config import get_settings
 from app.services.llm import stream_completion
 
-INTENT_MODEL = os.getenv("ASK_INTENT_MODEL", "claude-haiku-4-5")
-INTENT_TIMEOUT = float(os.getenv("ASK_INTENT_TIMEOUT", "20"))
+_S = get_settings()
+INTENT_MODEL = _S.ask_intent_model
+INTENT_TIMEOUT = _S.ask_intent_timeout
 
 # 共用「意圖判準」：首輪閘門與多輪改寫器共用同一份 IN/OUT 定義＋範例，
 # 避免兩處判準漂移（曾因此讓「緯創最新收盤價」首輪判 IN、續問卻判 OUT）。
@@ -81,8 +82,8 @@ async def classify_intent(
         return True
 
 
-CONDENSE_MODEL = os.getenv("ASK_CONDENSE_MODEL", INTENT_MODEL)
-CONDENSE_TIMEOUT = float(os.getenv("ASK_CONDENSE_TIMEOUT", "20"))
+CONDENSE_MODEL = _S.ask_condense_model
+CONDENSE_TIMEOUT = _S.ask_condense_timeout
 
 CONDENSE_SYSTEM_PROMPT = (
     "你是「廷豐研報」投資問答系統的前置處理器。根據『先前對話』，把使用者的"

@@ -59,6 +59,9 @@ export function renderAnswer(md: string, sourceCount: number, onCite: (n: number
     const cells = splitRow(t)
     return cells.length > 0 && cells.every(c => /^:?-+:?$/.test(c))
   }
+  // 某行是否為「新表格的表頭」（下一行為分隔列）——用於在相鄰表格間正確終止前一表。
+  const startsTable = (idx: number): boolean =>
+    idx + 1 < lines.length && lines[idx].includes('|') && isTableSep(lines[idx + 1])
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -73,7 +76,14 @@ export function renderAnswer(md: string, sourceCount: number, onCite: (n: number
       const headers = splitRow(line)
       i += 1 // 跳過分隔列
       const rows: string[][] = []
-      while (i + 1 < lines.length && lines[i + 1].includes('|') && lines[i + 1].trim() !== '') {
+      // 吞併資料列至：下一行為空、不含 '|'、本身是分隔列、或是新表格表頭為止（GFM：遇非表格列即結束）。
+      while (
+        i + 1 < lines.length &&
+        lines[i + 1].includes('|') &&
+        lines[i + 1].trim() !== '' &&
+        !isTableSep(lines[i + 1]) &&
+        !startsTable(i + 1)
+      ) {
         i += 1
         rows.push(splitRow(lines[i]))
       }

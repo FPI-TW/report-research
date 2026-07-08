@@ -62,3 +62,14 @@ test('缺分隔列的 | a | b | 不誤判為表格', () => {
   expect(container.querySelector('table')).toBeNull()
   expect(container.textContent).toContain('| A | B |')
 })
+
+test('相鄰兩表格（中間無空行）各自成表，不互相吞併', () => {
+  const md = '| A | B |\n| --- | --- |\n| 1 | 2 |\n| C | D |\n| --- | --- |\n| 3 | 4 |'
+  const { container } = render(<div>{renderAnswer(md, 0, () => {})}</div>)
+  expect(container.querySelectorAll('table')).toHaveLength(2)
+  // 第一表僅一列資料，第二表的表頭/分隔列不被吞成第一表的爛列
+  const tables = container.querySelectorAll('table')
+  expect(tables[0].querySelectorAll('tbody tr')).toHaveLength(1)
+  expect(tables[1].querySelectorAll('th')).toHaveLength(2)
+  expect(container.textContent).not.toContain('---')
+})

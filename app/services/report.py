@@ -21,13 +21,11 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 
-from app.services.answer import build_context
 from app.services.db import SessionFactory
-from app.services.embed import embed_query_cached
 from app.services.llm import SEARCH_EVENT, stream_completion
 from app.services.pdf import render_report_pdf, strip_preamble
 from app.services.report_gate import suggested_title
-from app.services.retrieval import hybrid_search
+from app.services.retrieval_pipeline import retrieve_context
 
 logger = logging.getLogger(__name__)
 
@@ -205,16 +203,14 @@ async def generate_report(
     started = time.monotonic()
 
     yield ("status", {"stage": "retrieving"})
-    qvec = await asyncio.to_thread(embed_query_cached, question)
-    async with SessionFactory() as session:
-        scored = await hybrid_search(
-            session, question, qvec, k=REPORT_DEEP_K, dense_scan=ASK_DENSE_SCAN, **filters
-        )
-    sources, context = build_context(
-        scored,
+    sources, context = await retrieve_context(
+        question,
+        k=REPORT_DEEP_K,
+        dense_scan=ASK_DENSE_SCAN,
         max_reports=REPORT_MAX_REPORTS,
         max_passages=REPORT_MAX_PASSAGES,
         max_chars=REPORT_MAX_CONTEXT_CHARS,
+        filters=filters,
     )
     yield ("sources", [asdict(s) for s in sources])
     # 網搜開啟時，即使脈絡薄/空也照常生成（由模型上網補齊）；僅「脈絡空且網搜關」才拒生成。

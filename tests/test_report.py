@@ -66,8 +66,8 @@ class _FakeSession:
 
 class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_event_sequence_and_done_payload(self):
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
             yield "## 執行摘要\n"
@@ -79,13 +79,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             captured["persisted"] = True
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -95,7 +93,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("請分析台積電趨勢")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -117,8 +115,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         否則在 120s 被 _run_attempt 靜默截斷（streamed_any→return），導致研報寫到一半就結束。
         """
 
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
 
         captured = {}
 
@@ -130,13 +128,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -146,7 +142,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("請分析台積電趨勢")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -159,8 +155,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         """REPORT_ENABLE_WEB 預設開，且以 allow_web=True 呼叫 stream_completion。"""
         self.assertTrue(rpt.REPORT_ENABLE_WEB)
 
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
 
         captured = {}
 
@@ -172,13 +168,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -188,7 +182,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -198,8 +192,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_search_event_emits_searching_web_status(self):
         """串流中出現 SEARCH_EVENT → 事件序含 status searching_web（只發一次）。"""
 
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
             yield rpt.SEARCH_EVENT
@@ -210,13 +204,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -226,7 +218,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -240,8 +232,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_context_with_web_proceeds(self):
         """空脈絡 + 網搜開 → 不回 error，照常生成到 done（由模型上網補）。"""
 
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([], "")
 
         async def fake_stream(*a, **k):
             yield "## 執行摘要\n全由網路整理[1]（網路）"
@@ -250,13 +242,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([], "")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -267,7 +257,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
             ) = orig
@@ -313,8 +303,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_status_resets_to_writing_after_search(self):
         """SEARCH_EVENT 後應重設回 writing 狀態，不讓「搜尋網路補充…」卡住整個撰寫段。"""
 
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
             yield rpt.SEARCH_EVENT
@@ -324,13 +314,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -340,7 +328,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -354,8 +342,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         """串流首段為流程旁白時，持久化（與渲染）的 markdown 應已去旁白，首字即 # 標題。"""
         captured = {}
 
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
             yield "好的，現在我來進行網路搜尋補充材料行業資料。"
@@ -370,13 +358,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return b"%PDF-1.4 fake"
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([], "脈絡內容")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = fake_render
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -386,7 +372,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -397,23 +383,21 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_context_without_web_emits_error(self):
         """空脈絡 + 網搜關 → 仍回 error（守住舊行為）。"""
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([], "")
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([], "")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.SessionFactory = lambda: _FakeSession()
         rpt.REPORT_ENABLE_WEB = False
         try:
             events = [e async for e in rpt.generate_report("隨便問")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
             ) = orig
 
@@ -422,8 +406,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_thin_coverage_injects_web_nudge(self):
         """命中研報數 < 門檻且網搜開 → user prompt 注入「主動上網補充」指令。"""
 
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([_FakeSource(0), _FakeSource(1), _FakeSource(2)], "脈絡內容")
 
         captured = {}
 
@@ -435,13 +419,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([_FakeSource(0), _FakeSource(1), _FakeSource(2)], "脈絡內容")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -452,7 +434,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
             ) = orig
@@ -463,8 +445,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_sufficient_coverage_no_web_nudge(self):
         """命中研報數 ≥ 門檻 → 不注入薄涵蓋指令（避免充分涵蓋主題無謂搜尋）。"""
 
-        async def fake_search(session, q, qvec, **k):
-            return []
+        async def fake_retrieve_context(question, **k):
+            return ([_FakeSource(i) for i in range(10)], "脈絡內容")
 
         captured = {}
 
@@ -476,13 +458,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+            rpt.retrieve_context,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
         )
-        rpt.hybrid_search = fake_search
-        rpt.embed_query_cached = lambda q: [0.0]
-        rpt.build_context = lambda scored, **k: ([_FakeSource(i) for i in range(10)], "脈絡內容")
+        rpt.retrieve_context = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -493,7 +473,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析台積電趨勢")]
         finally:
             (
-                rpt.hybrid_search, rpt.embed_query_cached, rpt.build_context,
+                rpt.retrieve_context,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
             ) = orig

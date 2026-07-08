@@ -22,7 +22,18 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
     return <Callout variant="warning" action={{ label: '換個說法重新提問', onClick: onNoticeRetry }}>{turn.noticeText ?? '無法回答此問題'}</Callout>
   }
   if (turn.phase === 'error') {
-    return <Callout variant="error" action={{ label: '重試', onClick: onErrorRetry }}>{turn.errorText ?? '查詢逾時或失敗'}</Callout>
+    // 串流中斷/發生錯誤時仍保留已串出的部分答案（reducer 有保留 turn.answer），僅在下方補錯誤提示，
+    // 不整段抹除使用者已讀到的內容。無部分答案時退化為單純錯誤 Callout。
+    return (
+      <div className={styles.msg}>
+        {turn.answer && (
+          <div className={styles.body}>
+            {renderAnswer(turn.answer, turn.sources.length, onCite)}
+          </div>
+        )}
+        <Callout variant="error" action={{ label: '重試', onClick: onErrorRetry }}>{turn.errorText ?? '查詢逾時或失敗'}</Callout>
+      </div>
+    )
   }
 
   const refCount = turn.sources.length + turn.extSources.length

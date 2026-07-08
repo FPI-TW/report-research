@@ -37,6 +37,14 @@ test('error：Callout error + 重試', () => {
   fireEvent.click(screen.getByRole('button', { name: '重試' })); expect(onErrorRetry).toHaveBeenCalled()
 })
 
+test('error 但有部分答案：保留答案本文＋錯誤提示＋重試（不抹除已串出的內容）', () => {
+  const onErrorRetry = vi.fn()
+  const { container } = render(<AssistantMessage turn={turn({ phase: 'error', answer: '已串出的半句回答', qaId: null, errorText: '查詢逾時或失敗' })} onCite={noop} onOpenSources={noop} onFeedback={noop} onNoticeRetry={noop} onErrorRetry={onErrorRetry} />)
+  expect(screen.getByText(/已串出的半句回答/)).toBeInTheDocument() // 部分答案本文保留顯示
+  expect(container.querySelector('[data-streaming]')).toBeNull()   // 已中斷、非串流，不顯示游標
+  fireEvent.click(screen.getByRole('button', { name: '重試' })); expect(onErrorRetry).toHaveBeenCalled() // 錯誤提示仍在
+})
+
 test('串流中：本文帶 data-streaming（行內游標鉤）', () => {
   const { container } = render(
     <AssistantMessage turn={turn({ phase: 'streaming', answer: '生成中的內容', qaId: null })}

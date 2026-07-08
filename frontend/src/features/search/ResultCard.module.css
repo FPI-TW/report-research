@@ -28,3 +28,5 @@
 .summary { font-size: 13px; color: var(--tf-text-2); line-height: 1.55; margin-top: 2px; }
 .footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 10px; font-size: 12px; color: var(--tf-text-3); }
 .cta { color: var(--tf-gold-text); font-weight: 600; }
+/* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
+@keyframes tf-grow { from { width: 0; } }

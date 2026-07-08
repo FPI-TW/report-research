@@ -74,3 +74,7 @@
   .panelGrid { grid-template-columns: 1fr; }
   .scroll { padding: 20px 16px; }
 }
+
+/* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
+@keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes tf-indet { 0% { left: -40%; } 100% { left: 100%; } }

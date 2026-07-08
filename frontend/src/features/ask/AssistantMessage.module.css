@@ -37,3 +37,5 @@
 .divider { width: 1px; height: 16px; background: var(--tf-border); margin: 0 2px; }
 .srcBtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12px; padding: 5px 11px; cursor: pointer; }
 .srcBtn:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
+/* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
+@keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

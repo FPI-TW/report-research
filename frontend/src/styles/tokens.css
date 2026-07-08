@@ -98,12 +98,10 @@ input, button, textarea { font-family: inherit; }
   border: 3px solid var(--tf-canvas);
 }
 
-@keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-@keyframes tf-indet { 0% { left: -40%; } 100% { left: 100%; } }
-@keyframes tf-spin { to { transform: rotate(360deg); } }
+/* tf-up 供全域 class .tf-reveal 使用，定義於此。
+   其餘 keyframe（tf-spin/tf-pulse/tf-fade/tf-indet/tf-grow）由各 CSS Module「就地定義」——
+   CSS Modules 會把 module 內 animation 名稱在地化雜湊，引用此處全域 keyframe 會落空、動畫不播，故不放全域。 */
 @keyframes tf-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes tf-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes tf-grow { from { width: 0; } }
 
 /* 進場淡入＋上浮；清單以 style={{'--tf-i': index}} 做封頂 stagger。 */
 .tf-reveal {

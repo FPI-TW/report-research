@@ -6,5 +6,6 @@
 .step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--tf-text-2); }
 .done { color: var(--tf-gold-text); }
 .spin { color: var(--tf-gold-text); animation: tf-spin 0.8s linear infinite; }
+@keyframes tf-spin { to { transform: rotate(360deg); } }
 .dot { width: 7px; height: 7px; border-radius: 999px; border: 1.5px solid var(--tf-border); display: inline-block; margin: 0 4.5px; }
 .pendingText { color: var(--tf-text-4); }

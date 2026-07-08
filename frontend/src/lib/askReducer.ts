@@ -80,6 +80,7 @@ function applyAsk(t: Turn, ev: AskEvent): Turn {
       reportTitle: ev.data.report_title ?? null,
       report: ev.data.offer_report ? { ...t.report, status: 'offered', title: ev.data.report_title ?? null } : t.report,
     }
+    case 'error': return { ...t, phase: 'error', errorText: ev.data.detail }
   }
 }
 
@@ -107,7 +108,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
     case 'ask-end': return {
       turns: mapTurn(state.turns, action.id, t => {
         if (t.phase === 'notice' || t.phase === 'done' || t.phase === 'error') return t
-        return t.answer === '' ? { ...t, phase: 'error', errorText: '查詢逾時或失敗' } : { ...t, phase: 'done' }
+        return { ...t, phase: 'error', errorText: '查詢逾時或失敗' }
       }),
     }
     case 'report-start': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { status: 'generating', pct: 0, stageText: '準備生成研報…', downloadUrl: null, title: t.reportTitle, errorText: null } })) }

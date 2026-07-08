@@ -7,6 +7,8 @@ test('parseAskEvent 驗證各事件、拒未知/壞形狀', () => {
   expect(parseAskEvent({ event: 'token', data: '片段' })).toEqual({ event: 'token', data: '片段' })
   expect(parseAskEvent({ event: 'sources', data: [{ n: 1, report_id: 'r', file_name: 'f', market: 'TW', report_date: null, is_latest: false }] }))
     .toMatchObject({ event: 'sources' })
+  expect(parseAskEvent({ event: 'error', data: { detail: '問答服務發生錯誤' } }))
+    .toEqual({ event: 'error', data: { detail: '問答服務發生錯誤' } })
   // done 路徑差異：允許缺 qa_id/offer_report
   expect(parseAskEvent({ event: 'done', data: { conversation_id: 'c1' } }))
     .toEqual({ event: 'done', data: { conversation_id: 'c1' } })

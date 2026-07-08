@@ -30,7 +30,15 @@ test('展開態顯示站名與三導覽 label', () => {
   expect(screen.getByRole('link', { name: /監控/ })).toBeInTheDocument()
 })
 
-test('收合態不顯示站名文字（僅 glyph）', () => {
+test('收合態：迷你軌可存取、完整態內容移出無障礙樹', () => {
   renderRail(true)
-  expect(screen.queryByText('廷豐智能研報')).not.toBeInTheDocument()
+  // 兩態層皆恆掛載（供跨態寬度／淡入淡出動畫），但完整態層 aria-hidden＋inert → 不在無障礙樹
+  expect(screen.getByRole('button', { name: '展開側欄' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '收合側欄' })).not.toBeInTheDocument()
+})
+
+test('展開態：完整態可存取、迷你軌移出無障礙樹', () => {
+  renderRail(false)
+  expect(screen.getByRole('button', { name: '收合側欄' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '展開側欄' })).not.toBeInTheDocument()
 })

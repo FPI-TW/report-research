@@ -1,13 +1,21 @@
-.mini {
-  width: 60px; flex: none; height: 100%;
+/* 外層軌道：唯一持續存在的元素，寬度 60↔272 過渡即「平滑展開／收合」動畫；overflow 裁掉離場層多出的寬度。 */
+.rail {
+  position: relative; flex: none; height: 100%; width: 272px;
   background: var(--tf-sidebar); border-right: 1px solid var(--tf-border);
-  display: flex; flex-direction: column; align-items: center; padding: 14px 0;
+  overflow: hidden;
+  transition: width var(--tf-dur-3) var(--tf-ease-out);
 }
-.full {
-  width: 272px; flex: none; height: 100%;
-  background: var(--tf-sidebar); border-right: 1px solid var(--tf-border);
+.rail[data-collapsed='true'] { width: 60px; }
+/* 兩態層疊放於軌道內（絕對定位、各保自身寬度），以 opacity 交叉淡入淡出；非當前態層不可互動。 */
+.mini, .full {
+  position: absolute; top: 0; left: 0; height: 100%;
   display: flex; flex-direction: column;
+  transition: opacity var(--tf-dur-2) var(--tf-ease-out);
 }
+.mini { width: 60px; align-items: center; padding: 14px 0; }
+.full { width: 272px; }
+.rail[data-collapsed='false'] .mini { opacity: 0; pointer-events: none; }
+.rail[data-collapsed='true'] .full { opacity: 0; pointer-events: none; }
 /* 收合態品牌／展開鈕同格：logo 與展開圖示疊放，hover 淡入淡出互換（仿 ChatGPT）。
    置中於 60px 軌道 → 中心 x≈30，展開後與 .glyphSmall logo 同座標、完整銜接。 */
 .glyphSmall { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none; }

@@ -792,25 +792,24 @@ async def answer_question(
                     "overview path failed before any output; falling back to RAG"
                 )
 
-    # 既有 RAG 路徑
+    # 既有 RAG 路徑（embed+檢索+build_context 收斂於 retrieve_context；函式內 import
+    # 避免頂層循環 import——retrieval_pipeline 於頂層 import 本模組）
+    from app.services.retrieval_pipeline import retrieve_context
+
     if turns:
-        qvec = await asyncio.to_thread(embed_query_cached, standalone_query)
-        timer.mark("embed")
-        async with SessionFactory() as session:  # 短連線：檢索完即釋放
-            scored = await hybrid_search(
-                session, standalone_query, qvec, k=k, dense_scan=ASK_DENSE_SCAN, **filters
-            )
-        timer.mark("retrieve")
+        sources, context = await retrieve_context(
+            standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
+            max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
+            max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+        )
     else:
         intent_task = asyncio.create_task(classify_intent(question))
         try:
-            qvec = await asyncio.to_thread(embed_query_cached, question)
-            timer.mark("embed")
-            async with SessionFactory() as session:
-                scored = await hybrid_search(
-                    session, question, qvec, k=k, dense_scan=ASK_DENSE_SCAN, **filters
-                )
-            timer.mark("retrieve")
+            sources, context = await retrieve_context(
+                question, k=k, dense_scan=ASK_DENSE_SCAN,
+                max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
+                max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+            )
             in_domain = await intent_task
             timer.mark("intent_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
         except BaseException:
@@ -838,7 +837,6 @@ async def answer_question(
         )
         return
 
-    sources, context = build_context(scored)
     yield ("sources", [asdict(s) for s in sources])
     yield ("status", {"stage": "retrieved", "count": len(sources)})  # 步驟2：找到 N 篇
 

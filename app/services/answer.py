@@ -204,29 +204,33 @@ class Source:
     is_latest: bool = False  # 該批來源中日期最新者（供前端標「最新」徽章）
 
 
-def build_context(
-    scored: list[tuple[int, float, tuple]],
-    *,
-    max_reports: int = MAX_REPORTS,
-    max_passages: int = MAX_PASSAGES_PER_REPORT,
-    max_chars: int = MAX_CONTEXT_CHARS,
-    now: datetime | None = None,
-    half_life_days: float = RECENCY_HALF_LIFE_DAYS,
-    min_reports: int = ASK_MIN_REPORTS,
-    relevance_floor: float = ASK_RELEVANCE_FLOOR,
-    stale_age_days: int = ASK_STALE_AGE_DAYS,
-    max_stale: int = ASK_MAX_STALE_REPORTS,
-) -> tuple[list[Source], str]:
-    """把檢索結果整理成『來源清單 + 帶編號的脈絡文字』，並強烈偏好較新的報告。
+@dataclass
+class SelectedReport:
+    report_id: str
+    file_name: object
+    market: object
+    report_date: object
+    passages: list  # list[str]，已依字數預算裁切
 
-    報告依 (best_tier, 相關度 band, 新近度因子, best_fused, report_id) 由高到低排序：
-    - tier 為硬保證（字面強命中優先，守住準度、不漏強相關）；
-    - 同 tier、同相關度 band 內，以『新近度』為主排序維度（落實偏好最新）；
-    - 跨 band 由相關度主導（不為了新而漏掉強相關研報）。
-    再取前 max_reports 篇、每篇至多 max_passages 段、受 max_chars 總字數約束，
-    依新順序給連續編號 [1..N]。
+
+def select_reports(
+    scored,
+    *,
+    max_reports: int,
+    max_passages: int,
+    max_chars: int,
+    now,
+    half_life_days: float,
+    min_reports: int,
+    relevance_floor: float,
+    stale_age_days: int,
+    max_stale: int,
+) -> list["SelectedReport"]:
+    """選篇政策（純函式）：聚合→排序→過舊軟截斷→相關度下限→過舊配額→字數預算。
+
+    排序鍵 (best_tier, 相關度 band, 新近度, best_fused, report_id) 由高到低。
     """
-    now_date = (now or datetime.now(timezone.utc)).date()
+    now_date = now
     by_report: dict[str, dict] = {}
     order: list[str] = []
     for tier, fused, row in scored:
@@ -254,7 +258,6 @@ def build_context(
         if len(info["passages"]) < max_passages:
             info["passages"].append(content)
 
-    # 依 first-appearance 順序為穩定鍵；同分時保序（Python sort 穩定）
     reports = [(rid, by_report[rid]) for rid in order if by_report[rid]["passages"]]
     reports.sort(
         key=lambda it: (
@@ -262,12 +265,11 @@ def build_context(
             _relevance_band(it[1]["best_fused"]),
             _recency_factor(it[1]["report_date"], now_date, half_life_days),
             it[1]["best_fused"],
-            it[0],  # report_id：穩定排序、避免不可預期順序
+            it[0],
         ),
         reverse=True,
     )
 
-    # 過舊軟性截斷（fail-open）：只有在有足夠多「夠新」報告時，才丟棄「過舊」報告
     factors = {
         rid: _recency_factor(info["report_date"], now_date, half_life_days)
         for rid, info in reports
@@ -275,8 +277,7 @@ def build_context(
     fresh_count = sum(1 for f in factors.values() if f >= ASK_FRESH_FACTOR)
     cutoff_active = fresh_count >= ASK_MIN_FRESH_BEFORE_CUTOFF
 
-    sources: list[Source] = []
-    blocks: list[str] = []
+    selected: list[SelectedReport] = []
     total = 0
     n = 0
     stale_used = 0
@@ -284,17 +285,14 @@ def build_context(
         if n >= max_reports:
             break
         if cutoff_active and factors[rid] < ASK_STALE_FACTOR:
-            continue  # 既有極舊軟截斷：有足夠新資料 → 跳過極舊報告
+            continue
         rdate_d = _as_date(info["report_date"])
         is_stale = (
             rdate_d is not None and (now_date - rdate_d).days > stale_age_days
         )
-        # 保底 min_reports 篇不受相關度/過舊閘限制（避免邊界但合理的問題被餓死）
         if n >= min_reports:
-            # 相關度下限（tier 感知）：字面命中(tier≥1)放行，純語意需 fused≥門檻
             if info["best_tier"] < 1 and info["best_fused"] < relevance_floor:
                 continue
-            # 過舊配額：年齡 > stale_age_days 的研報最多 max_stale 篇
             if is_stale and stale_used >= max_stale:
                 continue
         kept: list[str] = []
@@ -308,28 +306,65 @@ def build_context(
         n += 1
         if is_stale:
             stale_used += 1
-        rdate = info["report_date"]
-        rdate_s = rdate.isoformat() if hasattr(rdate, "isoformat") else (rdate or None)
-        sources.append(
-            Source(
-                n=n,
+        selected.append(
+            SelectedReport(
                 report_id=rid,
                 file_name=info["file_name"],
                 market=info["market"],
+                report_date=info["report_date"],
+                passages=kept,
+            )
+        )
+    return selected
+
+
+def build_context(
+    scored: list[tuple[int, float, tuple]],
+    *,
+    max_reports: int = MAX_REPORTS,
+    max_passages: int = MAX_PASSAGES_PER_REPORT,
+    max_chars: int = MAX_CONTEXT_CHARS,
+    now: datetime | None = None,
+    half_life_days: float = RECENCY_HALF_LIFE_DAYS,
+    min_reports: int = ASK_MIN_REPORTS,
+    relevance_floor: float = ASK_RELEVANCE_FLOOR,
+    stale_age_days: int = ASK_STALE_AGE_DAYS,
+    max_stale: int = ASK_MAX_STALE_REPORTS,
+) -> tuple[list[Source], str]:
+    """把檢索結果整理成『來源清單 + 帶編號的脈絡文字』（選篇政策見 select_reports）。"""
+    now_date = (now or datetime.now(timezone.utc)).date()
+    selected = select_reports(
+        scored,
+        max_reports=max_reports, max_passages=max_passages, max_chars=max_chars,
+        now=now_date, half_life_days=half_life_days, min_reports=min_reports,
+        relevance_floor=relevance_floor, stale_age_days=stale_age_days,
+        max_stale=max_stale,
+    )
+
+    sources: list[Source] = []
+    blocks: list[str] = []
+    for i, sr in enumerate(selected, start=1):
+        rdate = sr.report_date
+        rdate_s = rdate.isoformat() if hasattr(rdate, "isoformat") else (rdate or None)
+        sources.append(
+            Source(
+                n=i,
+                report_id=sr.report_id,
+                file_name=sr.file_name,
+                market=sr.market,
                 report_date=rdate_s,
             )
         )
-        head = f"[{n}] 報告：{info['file_name']}"
+        head = f"[{i}] 報告：{sr.file_name}"
         bits = []
-        if info["market"]:
-            bits.append(f"市場 {info['market']}")
+        if sr.market:
+            bits.append(f"市場 {sr.market}")
         if rdate_s:
             bits.append(f"日期 {rdate_s}")
         if bits:
             head += "（" + "，".join(bits) + "）"
-        blocks.append(head + "\n" + "\n".join(kept))
+        blocks.append(head + "\n" + "\n".join(sr.passages))
 
-    # 標記日期最新的來源（供前端顯示「最新」徽章；無日期者一律不標）
     latest_n, latest_d = None, None
     for s in sources:
         d = _as_date(s.report_date)

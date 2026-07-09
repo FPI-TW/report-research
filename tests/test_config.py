@@ -48,6 +48,14 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.report_min_cited, 3)
         self.assertEqual(s.report_long_answer_chars, 400)
 
+    def test_rerank_defaults(self):
+        s = get_settings()
+        self.assertEqual(s.ask_rerank_enabled, True)
+        self.assertEqual(s.ask_rerank_candidates, 50)
+        self.assertEqual(s.report_rerank_enabled, True)
+        self.assertEqual(s.report_rerank_candidates, 120)
+        self.assertEqual(s.rerank_model, "BAAI/bge-reranker-v2-m3")
+
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())
 

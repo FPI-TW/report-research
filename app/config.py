@@ -51,6 +51,12 @@ class Settings:
     # report_gate.py
     report_min_cited: int
     report_long_answer_chars: int
+    # rerank.py（M2）
+    ask_rerank_enabled: bool
+    ask_rerank_candidates: int
+    report_rerank_enabled: bool
+    report_rerank_candidates: int
+    rerank_model: str
 
 
 def _load() -> Settings:
@@ -88,6 +94,11 @@ def _load() -> Settings:
         report_thin_coverage=int(os.getenv("REPORT_THIN_COVERAGE", "8")),
         report_min_cited=int(os.getenv("REPORT_MIN_CITED", "3")),
         report_long_answer_chars=int(os.getenv("REPORT_LONG_ANSWER_CHARS", "400")),
+        ask_rerank_enabled=_flag("ASK_RERANK_ENABLED", "1"),
+        ask_rerank_candidates=int(os.getenv("ASK_RERANK_CANDIDATES", "50")),
+        report_rerank_enabled=_flag("REPORT_RERANK_ENABLED", "1"),
+        report_rerank_candidates=int(os.getenv("REPORT_RERANK_CANDIDATES", "120")),
+        rerank_model=os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),
     )
 
 

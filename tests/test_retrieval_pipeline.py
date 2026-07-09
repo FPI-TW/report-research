@@ -1,0 +1,49 @@
+import sys
+import unittest
+from pathlib import Path
+from unittest import mock
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+
+class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_wires_embed_search_buildcontext_and_marks_timer(self):
+        import app.services.retrieval_pipeline as rp
+
+        calls = []
+
+        class _Session:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+
+        class _Timer:
+            def mark(self, name): calls.append(("mark", name))
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            calls.append(("hybrid", q, kw.get("k"), kw.get("dense_scan")))
+            return [("scored")]
+
+        def _fake_build(scored, **kw):
+            calls.append(("build", tuple(scored), kw.get("max_reports")))
+            return (["S"], "CTX")
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build):
+            t = _Timer()
+            sources, ctx = await rp.retrieve_context(
+                "台積電", k=30, dense_scan=400, max_reports=25,
+                max_passages=6, max_chars=40000, filters={"market": "TW"}, timer=t,
+            )
+
+        self.assertEqual((sources, ctx), (["S"], "CTX"))
+        self.assertIn(("hybrid", "台積電", 30, 400), calls)
+        self.assertIn(("build", ("scored",), 25), calls)
+        self.assertIn(("mark", "embed"), calls)
+        self.assertIn(("mark", "retrieve"), calls)
+
+
+if __name__ == "__main__":
+    unittest.main()

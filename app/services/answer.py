@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import time
 import uuid
@@ -22,6 +21,7 @@ from datetime import date, datetime, timezone
 
 from sqlalchemy import text
 
+from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
 from app.services.intent import classify_intent, condense_and_classify
@@ -37,18 +37,20 @@ from app.services.overview import (
 )
 from app.services.report_gate import should_offer_report
 from app.services.retrieval import hybrid_search
+from app.services.stream_sentinel import SentinelStreamParser
 from app.services.textnorm import clean_text
 
 logger = logging.getLogger(__name__)
 
 # 脈絡規模：取前 N 篇、每篇至多 M 段、總字數上限（控延遲與 prompt 大小）。env 化便於壓測調參。
-MAX_REPORTS = int(os.getenv("ASK_MAX_REPORTS", "15"))
-MAX_PASSAGES_PER_REPORT = int(os.getenv("ASK_MAX_PASSAGES", "4"))
-MAX_CONTEXT_CHARS = int(os.getenv("ASK_MAX_CONTEXT_CHARS", "20000"))
-RETRIEVAL_K = int(os.getenv("ASK_RETRIEVAL_K", "15"))
+_S = get_settings()
+MAX_REPORTS = _S.ask_max_reports
+MAX_PASSAGES_PER_REPORT = _S.ask_max_passages
+MAX_CONTEXT_CHARS = _S.ask_max_context_chars
+RETRIEVAL_K = _S.ask_retrieval_k
 # 問答路徑專用的 dense 召回深度：顯式傳給 hybrid_search（不改其預設），多掃最近鄰、
 # 降低「漏研報」；檢索頁走自己的參數，完全不受影響。
-ASK_DENSE_SCAN = int(os.getenv("ASK_DENSE_SCAN", "400"))
+ASK_DENSE_SCAN = _S.ask_dense_scan
 
 # 多輪對話脈絡：帶進 prompt 的近輪數與舊答案截斷長度（控 prompt 大小/延遲）
 MAX_HISTORY_TURNS = 3
@@ -68,37 +70,37 @@ SYSTEM_PROMPT = (
 
 NO_CONTEXT_MESSAGE = "在目前的研報語料中找不到與此問題相關的內容。"
 
-RECENCY_WEIGHT = float(os.getenv("ASK_RECENCY_WEIGHT", "0.06"))  # 保留供顯示/向後相容
-RECENCY_HALF_LIFE_DAYS = float(os.getenv("ASK_RECENCY_HALF_LIFE_DAYS", "90"))
+RECENCY_WEIGHT = _S.ask_recency_weight  # 保留供顯示/向後相容
+RECENCY_HALF_LIFE_DAYS = _S.ask_recency_half_life_days
 # 相關度分桶：同一 band 內「以新近度為主排序維度」，跨 band 由相關度主導——
 # 把「夠新」與「夠相關」解耦，避免老的字面命中淹沒新研報，又不為了新而漏掉強相關。
 # BAND_EPS 是邊界容差，避免恰落在桶邊界的相近分數（如 0.80）被切到不同桶。
-RELEVANCE_BAND = float(os.getenv("ASK_RELEVANCE_BAND", "0.10"))
-BAND_EPS = float(os.getenv("ASK_BAND_EPS", "0.03"))
+RELEVANCE_BAND = _S.ask_relevance_band
+BAND_EPS = _S.ask_band_eps
 
 # 過舊軟性截斷（fail-open）：當「夠新」(recency_factor≥FRESH) 的相關報告數達門檻，
 # 才跳過「過舊」(recency_factor<STALE) 的報告；不足則完全不截斷——歷史性問題
 # （新報告本就稀少）自動保留舊研報，守住「不漏」。MIN_FRESH 調很大即停用截斷。
-ASK_FRESH_FACTOR = float(os.getenv("ASK_FRESH_FACTOR", "0.5"))  # ~半衰期內（預設 90 天）
-ASK_STALE_FACTOR = float(os.getenv("ASK_STALE_FACTOR", "0.1"))  # ~300 天以上
-ASK_MIN_FRESH_BEFORE_CUTOFF = int(os.getenv("ASK_MIN_FRESH_BEFORE_CUTOFF", "2"))
+ASK_FRESH_FACTOR = _S.ask_fresh_factor  # ~半衰期內（預設 90 天）
+ASK_STALE_FACTOR = _S.ask_stale_factor  # ~300 天以上
+ASK_MIN_FRESH_BEFORE_CUTOFF = _S.ask_min_fresh_before_cutoff
 
 # 相關度下限（tier 感知，寧缺勿濫）：純語意(tier 0)研報的 best_fused 最低門檻；
 # tier≥1（字面命中）一律放行。fused 分數壓縮，故此為「弱命中防護」非精準切刀。
-ASK_RELEVANCE_FLOOR = float(os.getenv("ASK_RELEVANCE_FLOOR", "0.62"))
+ASK_RELEVANCE_FLOOR = _S.ask_relevance_floor
 # 保底篇數：前 N 篇不受相關度/過舊閘限制，避免邊界但合理的問題被餓死。
-ASK_MIN_REPORTS = int(os.getenv("ASK_MIN_REPORTS", "3"))
+ASK_MIN_REPORTS = _S.ask_min_reports
 # 過舊篇數上限：脈絡中「年齡 > STALE_AGE_DAYS 天」的研報最多 MAX_STALE 篇，
 # 把多出的槽留給較新的相關研報（與既有極舊軟截斷並存互補）。
-ASK_STALE_AGE_DAYS = int(os.getenv("ASK_STALE_AGE_DAYS", "180"))
-ASK_MAX_STALE_REPORTS = int(os.getenv("ASK_MAX_STALE_REPORTS", "4"))
+ASK_STALE_AGE_DAYS = _S.ask_stale_age_days
+ASK_MAX_STALE_REPORTS = _S.ask_max_stale_reports
 
 OFF_TOPIC_MESSAGE = (
     "這個問題與廷豐研報的語料無關，請改問與研報內容相關的問題"
     "（例如特定市場、個股、期貨或總經主題）。"
 )
 
-ASK_ENABLE_WEB = os.getenv("ASK_ENABLE_WEB", "1") not in ("0", "false", "False", "")
+ASK_ENABLE_WEB = _S.ask_enable_web
 
 EXT_SENTINEL = "[EXT_SOURCES]"  # 模型在答案末尾以此標記外部來源區塊
 
@@ -127,9 +129,6 @@ def split_external_sources(text: str) -> tuple[str, list[dict]]:
 
 
 _CITE_RE = re.compile(r"\[(\d+)\]")
-
-# hybrid_search 回傳 row 的欄位位置（見 store._meta_columns + distance；server.py:473 對應解包）
-_RID, _FNAME, _MARKET, _RDATE, _CONTENT = 1, 2, 3, 6, 14
 
 
 def _as_date(value: object) -> date | None:
@@ -207,43 +206,47 @@ class Source:
     is_latest: bool = False  # 該批來源中日期最新者（供前端標「最新」徽章）
 
 
-def build_context(
-    scored: list[tuple[int, float, tuple]],
-    *,
-    max_reports: int = MAX_REPORTS,
-    max_passages: int = MAX_PASSAGES_PER_REPORT,
-    max_chars: int = MAX_CONTEXT_CHARS,
-    now: datetime | None = None,
-    half_life_days: float = RECENCY_HALF_LIFE_DAYS,
-    min_reports: int = ASK_MIN_REPORTS,
-    relevance_floor: float = ASK_RELEVANCE_FLOOR,
-    stale_age_days: int = ASK_STALE_AGE_DAYS,
-    max_stale: int = ASK_MAX_STALE_REPORTS,
-) -> tuple[list[Source], str]:
-    """把檢索結果整理成『來源清單 + 帶編號的脈絡文字』，並強烈偏好較新的報告。
+@dataclass
+class SelectedReport:
+    report_id: str
+    file_name: object
+    market: object
+    report_date: object
+    passages: list  # list[str]，已依字數預算裁切
 
-    報告依 (best_tier, 相關度 band, 新近度因子, best_fused, report_id) 由高到低排序：
-    - tier 為硬保證（字面強命中優先，守住準度、不漏強相關）；
-    - 同 tier、同相關度 band 內，以『新近度』為主排序維度（落實偏好最新）；
-    - 跨 band 由相關度主導（不為了新而漏掉強相關研報）。
-    再取前 max_reports 篇、每篇至多 max_passages 段、受 max_chars 總字數約束，
-    依新順序給連續編號 [1..N]。
+
+def select_reports(
+    scored,
+    *,
+    max_reports: int,
+    max_passages: int,
+    max_chars: int,
+    now,
+    half_life_days: float,
+    min_reports: int,
+    relevance_floor: float,
+    stale_age_days: int,
+    max_stale: int,
+) -> list["SelectedReport"]:
+    """選篇政策（純函式）：聚合→排序→過舊軟截斷→相關度下限→過舊配額→字數預算。
+
+    排序鍵 (best_tier, 相關度 band, 新近度, best_fused, report_id) 由高到低。
     """
-    now_date = (now or datetime.now(timezone.utc)).date()
+    now_date = now
     by_report: dict[str, dict] = {}
     order: list[str] = []
     for tier, fused, row in scored:
-        rid = row[_RID]
-        content = clean_text(row[_CONTENT])
+        rid = row.report_id
+        content = clean_text(row.content)
         if not content:
             continue
         info = by_report.get(rid)
         if info is None:
             info = {
                 "passages": [],
-                "file_name": row[_FNAME],
-                "market": row[_MARKET],
-                "report_date": row[_RDATE],
+                "file_name": row.file_name,
+                "market": row.market,
+                "report_date": row.report_date,
                 "best_tier": tier,
                 "best_fused": fused,
             }
@@ -257,7 +260,6 @@ def build_context(
         if len(info["passages"]) < max_passages:
             info["passages"].append(content)
 
-    # 依 first-appearance 順序為穩定鍵；同分時保序（Python sort 穩定）
     reports = [(rid, by_report[rid]) for rid in order if by_report[rid]["passages"]]
     reports.sort(
         key=lambda it: (
@@ -265,12 +267,11 @@ def build_context(
             _relevance_band(it[1]["best_fused"]),
             _recency_factor(it[1]["report_date"], now_date, half_life_days),
             it[1]["best_fused"],
-            it[0],  # report_id：穩定排序、避免不可預期順序
+            it[0],
         ),
         reverse=True,
     )
 
-    # 過舊軟性截斷（fail-open）：只有在有足夠多「夠新」報告時，才丟棄「過舊」報告
     factors = {
         rid: _recency_factor(info["report_date"], now_date, half_life_days)
         for rid, info in reports
@@ -278,8 +279,7 @@ def build_context(
     fresh_count = sum(1 for f in factors.values() if f >= ASK_FRESH_FACTOR)
     cutoff_active = fresh_count >= ASK_MIN_FRESH_BEFORE_CUTOFF
 
-    sources: list[Source] = []
-    blocks: list[str] = []
+    selected: list[SelectedReport] = []
     total = 0
     n = 0
     stale_used = 0
@@ -287,17 +287,14 @@ def build_context(
         if n >= max_reports:
             break
         if cutoff_active and factors[rid] < ASK_STALE_FACTOR:
-            continue  # 既有極舊軟截斷：有足夠新資料 → 跳過極舊報告
+            continue
         rdate_d = _as_date(info["report_date"])
         is_stale = (
             rdate_d is not None and (now_date - rdate_d).days > stale_age_days
         )
-        # 保底 min_reports 篇不受相關度/過舊閘限制（避免邊界但合理的問題被餓死）
         if n >= min_reports:
-            # 相關度下限（tier 感知）：字面命中(tier≥1)放行，純語意需 fused≥門檻
             if info["best_tier"] < 1 and info["best_fused"] < relevance_floor:
                 continue
-            # 過舊配額：年齡 > stale_age_days 的研報最多 max_stale 篇
             if is_stale and stale_used >= max_stale:
                 continue
         kept: list[str] = []
@@ -311,28 +308,65 @@ def build_context(
         n += 1
         if is_stale:
             stale_used += 1
-        rdate = info["report_date"]
-        rdate_s = rdate.isoformat() if hasattr(rdate, "isoformat") else (rdate or None)
-        sources.append(
-            Source(
-                n=n,
+        selected.append(
+            SelectedReport(
                 report_id=rid,
                 file_name=info["file_name"],
                 market=info["market"],
+                report_date=info["report_date"],
+                passages=kept,
+            )
+        )
+    return selected
+
+
+def build_context(
+    scored: list[tuple[int, float, tuple]],
+    *,
+    max_reports: int = MAX_REPORTS,
+    max_passages: int = MAX_PASSAGES_PER_REPORT,
+    max_chars: int = MAX_CONTEXT_CHARS,
+    now: datetime | None = None,
+    half_life_days: float = RECENCY_HALF_LIFE_DAYS,
+    min_reports: int = ASK_MIN_REPORTS,
+    relevance_floor: float = ASK_RELEVANCE_FLOOR,
+    stale_age_days: int = ASK_STALE_AGE_DAYS,
+    max_stale: int = ASK_MAX_STALE_REPORTS,
+) -> tuple[list[Source], str]:
+    """把檢索結果整理成『來源清單 + 帶編號的脈絡文字』（選篇政策見 select_reports）。"""
+    now_date = (now or datetime.now(timezone.utc)).date()
+    selected = select_reports(
+        scored,
+        max_reports=max_reports, max_passages=max_passages, max_chars=max_chars,
+        now=now_date, half_life_days=half_life_days, min_reports=min_reports,
+        relevance_floor=relevance_floor, stale_age_days=stale_age_days,
+        max_stale=max_stale,
+    )
+
+    sources: list[Source] = []
+    blocks: list[str] = []
+    for i, sr in enumerate(selected, start=1):
+        rdate = sr.report_date
+        rdate_s = rdate.isoformat() if hasattr(rdate, "isoformat") else (rdate or None)
+        sources.append(
+            Source(
+                n=i,
+                report_id=sr.report_id,
+                file_name=sr.file_name,
+                market=sr.market,
                 report_date=rdate_s,
             )
         )
-        head = f"[{n}] 報告：{info['file_name']}"
+        head = f"[{i}] 報告：{sr.file_name}"
         bits = []
-        if info["market"]:
-            bits.append(f"市場 {info['market']}")
+        if sr.market:
+            bits.append(f"市場 {sr.market}")
         if rdate_s:
             bits.append(f"日期 {rdate_s}")
         if bits:
             head += "（" + "，".join(bits) + "）"
-        blocks.append(head + "\n" + "\n".join(kept))
+        blocks.append(head + "\n" + "\n".join(sr.passages))
 
-    # 標記日期最新的來源（供前端顯示「最新」徽章；無日期者一律不標）
     latest_n, latest_d = None, None
     for s in sources:
         d = _as_date(s.report_date)
@@ -760,25 +794,24 @@ async def answer_question(
                     "overview path failed before any output; falling back to RAG"
                 )
 
-    # 既有 RAG 路徑
+    # 既有 RAG 路徑（embed+檢索+build_context 收斂於 retrieve_context；函式內 import
+    # 避免頂層循環 import——retrieval_pipeline 於頂層 import 本模組）
+    from app.services.retrieval_pipeline import retrieve_context
+
     if turns:
-        qvec = await asyncio.to_thread(embed_query_cached, standalone_query)
-        timer.mark("embed")
-        async with SessionFactory() as session:  # 短連線：檢索完即釋放
-            scored = await hybrid_search(
-                session, standalone_query, qvec, k=k, dense_scan=ASK_DENSE_SCAN, **filters
-            )
-        timer.mark("retrieve")
+        sources, context = await retrieve_context(
+            standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
+            max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
+            max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+        )
     else:
         intent_task = asyncio.create_task(classify_intent(question))
         try:
-            qvec = await asyncio.to_thread(embed_query_cached, question)
-            timer.mark("embed")
-            async with SessionFactory() as session:
-                scored = await hybrid_search(
-                    session, question, qvec, k=k, dense_scan=ASK_DENSE_SCAN, **filters
-                )
-            timer.mark("retrieve")
+            sources, context = await retrieve_context(
+                question, k=k, dense_scan=ASK_DENSE_SCAN,
+                max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
+                max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+            )
             in_domain = await intent_task
             timer.mark("intent_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
         except BaseException:
@@ -806,7 +839,6 @@ async def answer_question(
         )
         return
 
-    sources, context = build_context(scored)
     yield ("sources", [asdict(s) for s in sources])
     yield ("status", {"stage": "retrieved", "count": len(sources)})  # 步驟2：找到 N 篇
 
@@ -838,9 +870,7 @@ async def answer_question(
 
     user_prompt = build_user_prompt(question, context, history_block)
     raw_parts: list[str] = []
-    buf = ""
-    hold = len(EXT_SENTINEL)
-    sentinel_found = False
+    parser = SentinelStreamParser(EXT_SENTINEL)
     searching_sent = False
     thinking_ms: int | None = None
 
@@ -866,22 +896,13 @@ async def answer_question(
                 yield ("status", {"stage": "searching_web"})  # 步驟4：搜尋網路補充
             continue
         raw_parts.append(chunk)
-        if sentinel_found:
-            continue
-        buf += chunk
-        idx = buf.find(EXT_SENTINEL)
-        if idx != -1:
-            if buf[:idx]:
-                for ev in _emit_token(buf[:idx]):
-                    yield ev
-            sentinel_found = True
-            buf = ""
-        elif len(buf) > hold:
-            for ev in _emit_token(buf[:-hold]):
+        emit = parser.feed(chunk)
+        if emit:
+            for ev in _emit_token(emit):
                 yield ev
-            buf = buf[-hold:]
-    if not sentinel_found and buf:
-        for ev in _emit_token(buf):
+    tail = parser.flush()
+    if tail:
+        for ev in _emit_token(tail):
             yield ev
 
     raw = "".join(raw_parts)

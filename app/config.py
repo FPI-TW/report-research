@@ -1,0 +1,101 @@
+"""集中設定：一次讀取 ASK_*/REPORT_* 環境變數。
+
+各服務模組保留原常數名，改由 get_settings() 取值，避免同一 env 在多檔重複讀取
+（如 ASK_DENSE_SCAN 原本 answer.py 與 report.py 各定義一次）。retrieval.py 的
+非-env 字面量（BAND_WIDTH 等）不在此收斂範圍（見 M6）。
+"""
+
+import os
+from dataclasses import dataclass
+
+
+def _flag(name: str, default: str) -> bool:
+    return os.getenv(name, default) not in ("0", "false", "False", "")
+
+
+@dataclass(frozen=True)
+class Settings:
+    # ASK_*（answer.py）
+    ask_max_reports: int
+    ask_max_passages: int
+    ask_max_context_chars: int
+    ask_retrieval_k: int
+    ask_dense_scan: int
+    ask_recency_weight: float
+    ask_recency_half_life_days: float
+    ask_relevance_band: float
+    ask_band_eps: float
+    ask_fresh_factor: float
+    ask_stale_factor: float
+    ask_min_fresh_before_cutoff: int
+    ask_relevance_floor: float
+    ask_min_reports: int
+    ask_stale_age_days: int
+    ask_max_stale_reports: int
+    ask_enable_web: bool
+    # intent.py
+    ask_intent_model: str
+    ask_intent_timeout: float
+    ask_condense_model: str
+    ask_condense_timeout: float
+    # report.py
+    report_model: str
+    report_deep_k: int
+    report_max_reports: int
+    report_max_passages: int
+    report_max_context_chars: int
+    report_timeout: float
+    reports_dir: str
+    report_enable_web: bool
+    report_thin_coverage: int
+    # report_gate.py
+    report_min_cited: int
+    report_long_answer_chars: int
+
+
+def _load() -> Settings:
+    intent_model = os.getenv("ASK_INTENT_MODEL", "claude-haiku-4-5")
+    return Settings(
+        ask_max_reports=int(os.getenv("ASK_MAX_REPORTS", "15")),
+        ask_max_passages=int(os.getenv("ASK_MAX_PASSAGES", "4")),
+        ask_max_context_chars=int(os.getenv("ASK_MAX_CONTEXT_CHARS", "20000")),
+        ask_retrieval_k=int(os.getenv("ASK_RETRIEVAL_K", "15")),
+        ask_dense_scan=int(os.getenv("ASK_DENSE_SCAN", "400")),
+        ask_recency_weight=float(os.getenv("ASK_RECENCY_WEIGHT", "0.06")),
+        ask_recency_half_life_days=float(os.getenv("ASK_RECENCY_HALF_LIFE_DAYS", "90")),
+        ask_relevance_band=float(os.getenv("ASK_RELEVANCE_BAND", "0.10")),
+        ask_band_eps=float(os.getenv("ASK_BAND_EPS", "0.03")),
+        ask_fresh_factor=float(os.getenv("ASK_FRESH_FACTOR", "0.5")),
+        ask_stale_factor=float(os.getenv("ASK_STALE_FACTOR", "0.1")),
+        ask_min_fresh_before_cutoff=int(os.getenv("ASK_MIN_FRESH_BEFORE_CUTOFF", "2")),
+        ask_relevance_floor=float(os.getenv("ASK_RELEVANCE_FLOOR", "0.62")),
+        ask_min_reports=int(os.getenv("ASK_MIN_REPORTS", "3")),
+        ask_stale_age_days=int(os.getenv("ASK_STALE_AGE_DAYS", "180")),
+        ask_max_stale_reports=int(os.getenv("ASK_MAX_STALE_REPORTS", "4")),
+        ask_enable_web=_flag("ASK_ENABLE_WEB", "1"),
+        ask_intent_model=intent_model,
+        ask_intent_timeout=float(os.getenv("ASK_INTENT_TIMEOUT", "20")),
+        ask_condense_model=os.getenv("ASK_CONDENSE_MODEL", intent_model),
+        ask_condense_timeout=float(os.getenv("ASK_CONDENSE_TIMEOUT", "20")),
+        report_model=os.getenv("REPORT_MODEL", "claude-sonnet-4-6"),
+        report_deep_k=int(os.getenv("REPORT_DEEP_K", "30")),
+        report_max_reports=int(os.getenv("REPORT_MAX_REPORTS", "25")),
+        report_max_passages=int(os.getenv("REPORT_MAX_PASSAGES", "6")),
+        report_max_context_chars=int(os.getenv("REPORT_MAX_CONTEXT_CHARS", "40000")),
+        report_timeout=float(os.getenv("REPORT_TIMEOUT", "600")),
+        reports_dir=os.getenv("REPORTS_DIR", "data/reports"),
+        report_enable_web=_flag("REPORT_ENABLE_WEB", "1"),
+        report_thin_coverage=int(os.getenv("REPORT_THIN_COVERAGE", "8")),
+        report_min_cited=int(os.getenv("REPORT_MIN_CITED", "3")),
+        report_long_answer_chars=int(os.getenv("REPORT_LONG_ANSWER_CHARS", "400")),
+    )
+
+
+_SETTINGS: Settings | None = None
+
+
+def get_settings() -> Settings:
+    global _SETTINGS
+    if _SETTINGS is None:
+        _SETTINGS = _load()
+    return _SETTINGS

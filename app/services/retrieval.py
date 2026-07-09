@@ -92,12 +92,12 @@ async def hybrid_search(
     seen: set[str] = set()
     scored: list[tuple[int, float, tuple]] = []
     for row in list(lex_rows) + list(dense_rows):
-        chunk_id = row[0]
+        chunk_id = row.chunk_id
         if chunk_id in seen:
             continue
         seen.add(chunk_id)
-        dense_sim = 1.0 - float(row[-1])
-        nc = norm_for_match(row[-2])  # content
+        dense_sim = 1.0 - float(row.distance)
+        nc = norm_for_match(row.content)
         hit_phrase = bool(phrase) and phrase in nc
         coverage = (sum(t in nc for t in terms) / len(terms)) if terms else 0.0
         hit_all = coverage == 1.0 and len(terms) >= 2
@@ -150,14 +150,14 @@ def rank_reports(scored, *, sort: str = "relevance") -> list[RankedReport]:
     """
     groups: dict[str, RankedReport] = {}
     for tier, fused, row in scored:
-        rid = row[1]
+        rid = row.report_id
         g = groups.get(rid)
         if g is None:
             g = RankedReport(
                 report_id=rid,
                 tier=tier,
                 best_score=fused,
-                report_date=row[6],
+                report_date=row.report_date,
                 meta_row=row,
             )
             groups[rid] = g

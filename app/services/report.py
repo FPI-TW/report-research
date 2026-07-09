@@ -21,33 +21,33 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 
-from app.services.answer import build_context
+from app.config import get_settings
 from app.services.db import SessionFactory
-from app.services.embed import embed_query_cached
 from app.services.llm import SEARCH_EVENT, stream_completion
 from app.services.pdf import render_report_pdf, strip_preamble
 from app.services.report_gate import suggested_title
-from app.services.retrieval import hybrid_search
+from app.services.retrieval_pipeline import retrieve_context
 
 logger = logging.getLogger(__name__)
 
-REPORT_MODEL = os.getenv("REPORT_MODEL", "claude-sonnet-4-6")
-REPORT_DEEP_K = int(os.getenv("REPORT_DEEP_K", "30"))
-REPORT_MAX_REPORTS = int(os.getenv("REPORT_MAX_REPORTS", "25"))
-REPORT_MAX_PASSAGES = int(os.getenv("REPORT_MAX_PASSAGES", "6"))
-REPORT_MAX_CONTEXT_CHARS = int(os.getenv("REPORT_MAX_CONTEXT_CHARS", "40000"))
+_S = get_settings()
+REPORT_MODEL = _S.report_model
+REPORT_DEEP_K = _S.report_deep_k
+REPORT_MAX_REPORTS = _S.report_max_reports
+REPORT_MAX_PASSAGES = _S.report_max_passages
+REPORT_MAX_CONTEXT_CHARS = _S.report_max_context_chars
 # 研報為長輸出（多段結構化），生成時間遠長於 Q&A 短答。沿用 stream_completion 的 120s
 # 預設會在 120s 被靜默截斷（_run_attempt 逾時但 streamed_any→直接 return），研報寫到
 # 一半就結束。故顯式拉長逾時（可由 env 調整）。網搜深報＋圖表使輸出更長、更易逼近上限，
 # live 實測純文字深報 ~200s、網搜深報常逼近/超過 300s，故預設拉到 600s。
-REPORT_TIMEOUT = float(os.getenv("REPORT_TIMEOUT", "600"))
-REPORTS_DIR = os.getenv("REPORTS_DIR", "data/reports")
+REPORT_TIMEOUT = _S.report_timeout
+REPORTS_DIR = _S.reports_dir
 # 研報專用 dense 召回深度（沿用問答路徑值，多掃最近鄰降漏報）
-ASK_DENSE_SCAN = int(os.getenv("ASK_DENSE_SCAN", "400"))
-REPORT_ENABLE_WEB = os.getenv("REPORT_ENABLE_WEB", "1") not in ("0", "false", "False", "")
+ASK_DENSE_SCAN = _S.ask_dense_scan
+REPORT_ENABLE_WEB = _S.report_enable_web
 # 薄涵蓋門檻：命中研報數 < 此值時，視為語料涵蓋不足，於 prompt 明確要求模型主動上網補充。
 # 純 LLM 自我判斷對「薄但非空」的覆蓋偏保守（少數片段即當足夠），故加此決定性 nudge。
-REPORT_THIN_COVERAGE = int(os.getenv("REPORT_THIN_COVERAGE", "8"))
+REPORT_THIN_COVERAGE = _S.report_thin_coverage
 
 REPORT_SYSTEM_PROMPT = (
     "你是「廷豐智能研報」的研究分析師，負責把研報片段（必要時佐以網路資料）彙整成一份"
@@ -205,16 +205,14 @@ async def generate_report(
     started = time.monotonic()
 
     yield ("status", {"stage": "retrieving"})
-    qvec = await asyncio.to_thread(embed_query_cached, question)
-    async with SessionFactory() as session:
-        scored = await hybrid_search(
-            session, question, qvec, k=REPORT_DEEP_K, dense_scan=ASK_DENSE_SCAN, **filters
-        )
-    sources, context = build_context(
-        scored,
+    sources, context = await retrieve_context(
+        question,
+        k=REPORT_DEEP_K,
+        dense_scan=ASK_DENSE_SCAN,
         max_reports=REPORT_MAX_REPORTS,
         max_passages=REPORT_MAX_PASSAGES,
         max_chars=REPORT_MAX_CONTEXT_CHARS,
+        filters=filters,
     )
     yield ("sources", [asdict(s) for s in sources])
     # 網搜開啟時，即使脈絡薄/空也照常生成（由模型上網補齊）；僅「脈絡空且網搜關」才拒生成。

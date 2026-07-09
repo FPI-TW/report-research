@@ -41,3 +41,35 @@ def rerank_scores(query: str, passages: list[str]) -> list[float]:
     if isinstance(raw, (int, float)):
         raw = [raw]
     return [float(s) for s in raw]
+
+
+def rerank_scored(question, scored, *, top_m, timer=None):
+    """對 scored 前 top_m 個（依現行序）重排：rerank 分覆蓋 fused、tier/row 保留；
+    尾段壓縮到嚴格低於最低重排分並保相對序（守 recall、同 tier 內不反超）。
+    任何例外/退化/形狀不符 → 回原 scored（fail-open）。
+    """
+    if not scored or top_m <= 0:
+        return scored
+    try:
+        head = scored[:top_m]
+        tail = scored[top_m:]
+        scores = rerank_scores(question, [row.content for (_t, _f, row) in head])
+        if len(scores) != len(head):
+            return scored  # 形狀不符：fail-open
+        reranked = [(tier, scores[i], row) for i, (tier, _f, row) in enumerate(head)]
+        if tail:
+            min_rr = min(scores)
+            ceiling = min_rr * 0.99  # 嚴格低於最低重排分
+            tail_fused = [f for (_t, f, _r) in tail]
+            lo, hi = min(tail_fused), max(tail_fused)
+            span = hi - lo
+            tail = [
+                (tier, (ceiling if span == 0 else ceiling * (f - lo) / span), row)
+                for (tier, f, row) in tail
+            ]
+        if timer is not None:
+            timer.mark("rerank")
+        return reranked + tail
+    except Exception:
+        logger.warning("rerank failed, fall back to fused order", exc_info=True)
+        return scored

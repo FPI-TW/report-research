@@ -25,8 +25,8 @@ export function MarketChipBar({ value, onChange, counts }: Props) {
             className={`${styles.chip} ${active ? styles.active : ''}`}
             onClick={() => onChange(code)}
           >
-            <span className={styles.dot} style={{ background: active ? 'var(--tf-on-gold)' : marketColor(code) }} aria-hidden="true" />
-            {label}{typeof n === 'number' ? ` ${n}` : ''}
+            <span className={styles.dot} style={{ background: marketColor(code) }} aria-hidden="true" />
+            {label}{typeof n === 'number' ? ` ${n.toLocaleString()}` : ''}
           </button>
         )
       })}

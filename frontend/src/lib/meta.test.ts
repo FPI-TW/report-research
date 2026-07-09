@@ -14,21 +14,21 @@ test('報告類型：英文碼→中文，已中文者原樣', () => {
   expect(reportTypeLabel('速報')).toBe('速報')
 })
 
-test('市場色與標籤取自 .dc.html', () => {
-  expect(marketColor('TW')).toBe('#34c759')
+test('市場色與標籤（1a 墨青×鎏金重設計降彩度色票）', () => {
+  expect(marketColor('TW')).toBe('#237a46')
   expect(marketLabel('TW')).toBe('台股')
-  expect(marketColor('WTX')).toBe('#af52de')
+  expect(marketColor('WTX')).toBe('#6e48a8')
   expect(marketLabel('CRYPTO')).toBe('加密')
 })
 
 test('未知市場回 fallback 色、原字串標籤', () => {
-  expect(marketColor('ZZ')).toBe('#8e8e93')
+  expect(marketColor('ZZ')).toBe('#75808a')
   expect(marketLabel('ZZ')).toBe('ZZ')
 })
 
 test('商品類型色與 fallback', () => {
-  expect(ptypeColor('股票')).toBe('#0a84ff')
-  expect(ptypeColor('不存在')).toBe('#8e8e93')
+  expect(ptypeColor('股票')).toBe('#2e5fa3')
+  expect(ptypeColor('不存在')).toBe('#75808a')
 })
 
 test('膠囊市場順序', () => {

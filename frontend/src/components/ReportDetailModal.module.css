@@ -1,13 +1,25 @@
 .state { padding: 24px 8px; text-align: center; color: var(--tf-text-2); font-size: 14px; }
 .state p { margin: 0 0 14px; }
-.pdfWrap { display: flex; flex-direction: column; gap: 10px; }
+.pdfWrap { display: flex; flex-direction: column; gap: 12px; }
+.actions { display: flex; align-items: center; gap: 8px; }
+.primary {
+  background: var(--tf-ink); color: var(--tf-on-ink); border-radius: 9px;
+  font-size: 12.5px; font-weight: 600; padding: 7px 16px; text-decoration: none;
+}
+.primary:hover { background: var(--tf-ink-hover); color: var(--tf-on-ink); }
+.ghost {
+  border: 1px solid var(--tf-border); color: var(--tf-text-2); border-radius: 9px;
+  font-size: 12.5px; font-weight: 500; padding: 7px 16px; text-decoration: none;
+}
+.ghost:hover { border-color: var(--tf-ink); color: var(--tf-ink); }
+.hint { margin-left: auto; font-size: 11.5px; color: var(--tf-text-4); }
 .frame {
-  width: 100%; height: 72vh;
+  width: 100%; height: 70vh;
   border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md);
   background: var(--tf-surface);
 }
-.link { align-self: flex-end; color: var(--tf-gold-text); font-size: 13px; font-weight: 600; text-decoration: none; }
 .download {
-  align-self: center; color: var(--tf-gold-text); font-size: 13px; font-weight: 600; text-decoration: none;
-  padding: 8px 16px; border: 1px solid var(--tf-gold-strong); border-radius: var(--tf-radius-md);
+  align-self: center; display: inline-block; color: var(--tf-ink); font-size: 13px; font-weight: 600; text-decoration: none;
+  padding: 8px 16px; border: 1px solid var(--tf-ink); border-radius: var(--tf-radius-md);
 }
+.download:hover { background: var(--tf-ink-tint); }

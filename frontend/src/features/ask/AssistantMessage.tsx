@@ -28,7 +28,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       <div className={styles.msg}>
         {turn.answer && (
           <div className={styles.body}>
-            {renderAnswer(turn.answer, turn.sources.length, onCite)}
+            {renderAnswer(turn.answer, turn.sources.length, onCite, turn.sources)}
           </div>
         )}
         <Callout variant="error" action={{ label: '重試', onClick: onErrorRetry }}>{turn.errorText ?? '查詢逾時或失敗'}</Callout>
@@ -48,7 +48,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       {(turn.stages.length > 0 || turn.phase === 'thinking' || turn.phase === 'streaming') && <ThinkingSteps turn={turn} />}
       {turn.answer && (
         <div className={styles.body} data-streaming={turn.phase === 'streaming' ? '' : undefined}>
-          {renderAnswer(turn.answer, turn.sources.length, onCite)}
+          {renderAnswer(turn.answer, turn.sources.length, onCite, turn.sources)}
         </div>
       )}
       {showActions && (

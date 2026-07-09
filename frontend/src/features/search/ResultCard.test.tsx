@@ -21,16 +21,18 @@ describe('ResultCard', () => {
     const r = row({ rank: 1, best_score: 0.83, match_count: 4,
       passages: [{ score: 0.9, chunk_index: 0, content: '台積電營收成長' }] })
     render(<ResultCard row={r} mode="search" isLatest terms={['台積']} onOpen={() => {}} />)
-    expect(screen.getByText(/相關度/)).toBeTruthy()
+    // 1a 重設計：相關度改為分數條＋百分比（best_score 0.83 → 83%）
+    expect(screen.getByText('83%')).toBeTruthy()
     expect(document.querySelector('mark')).not.toBeNull()
     expect(screen.getByText('最新')).toBeTruthy()
   })
   it('商品類型代碼顯示中文（equity→股票、index→指數）', () => {
     render(<ResultCard row={row({ instrument_types: ['equity', 'index'] })}
       mode="browse" isLatest={false} terms={[]} onOpen={() => {}} />)
-    expect(screen.getByText('股票')).toBeTruthy()
-    expect(screen.getByText('指數')).toBeTruthy()
-    expect(screen.queryByText('equity')).toBeNull()
+    // 1a 重設計：商品類型併入高密度標籤行（股票 · 指數 · …），比對合併後文字
+    const tagLine = screen.getByText(/股票/)
+    expect(tagLine.textContent).toContain('指數')
+    expect(tagLine.textContent).not.toContain('equity')
   })
   it('整卡可點 → onOpen(id, fileName)', () => {
     const onOpen = vi.fn()

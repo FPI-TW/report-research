@@ -1,4 +1,4 @@
-import { marketColor, marketLabel, reportTypeLabel } from '../../lib/meta'
+import { marketLabel, marketTint, reportTypeLabel } from '../../lib/meta'
 import { sortRows, type TableSort, type TableSortKey } from '../../lib/tableSort'
 import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
@@ -60,7 +60,7 @@ export function TableView({ rows, mode, sort, onSort, onOpen }: Props) {
               >
                 <td className={styles.name}>{r.file_name}</td>
                 <td>
-                  <span className={styles.badge} style={{ background: marketColor(r.market ?? '') }}>
+                  <span className={styles.badge} style={marketTint(r.market ?? '')}>
                     {marketLabel(r.market ?? '')}
                   </span>
                 </td>

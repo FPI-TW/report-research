@@ -1,27 +1,28 @@
 .msg { margin: 2px 0 20px; }
-.body { font-size: 15px; line-height: 1.7; color: var(--tf-text-2); }
-.body :global(.tf-cite) { display: inline-block; background: var(--tf-gold-tint); color: var(--tf-gold-text); border: none; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 6px; margin: 0 1px; cursor: pointer; vertical-align: baseline; }
-.body :global(.tf-md-h) { font-family: var(--tf-serif); font-weight: 700; color: var(--tf-text-1); margin: 18px 0 8px; }
+.body { font-size: 15px; line-height: 1.75; color: var(--tf-text-2); }
+/* 引註 [n]：鎏金 pill — 引用與研報的語意色 */
+.body :global(.tf-cite) { display: inline-block; background: var(--tf-gold-tint); color: var(--tf-gold-text); border: none; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 7px; margin: 0 2px; cursor: pointer; vertical-align: baseline; }
+.body :global(.tf-cite:hover) { background: var(--tf-gold-text); color: var(--tf-on-gold); }
+.body :global(.tf-md-h) { font-family: var(--tf-serif); font-weight: 700; color: var(--tf-text-1); margin: 16px 0 8px; }
 .body h3 { font-size: 16px; }
 .body h4 { font-size: 14.5px; }
 .body p { margin: 0 0 12px; }
 .body ul, .body ol { margin: 0 0 12px; padding-left: 20px; }
-.body li { margin-bottom: 6px; }
+.body li { margin-bottom: 7px; }
 .body li:last-child { margin-bottom: 0; }
-.body a { color: var(--tf-gold-text); text-decoration: underline; text-underline-offset: 2px; }
-.body a:hover { color: var(--tf-gold-hover); }
+.body a { color: var(--tf-ink); text-decoration: underline; text-underline-offset: 2px; }
+.body a:hover { color: var(--tf-ink-hover); }
 .body strong { color: var(--tf-text-1); font-weight: 700; }
-.body code { font-family: var(--tf-mono); font-size: 0.9em; background: var(--tf-gold-tint); border: 1px solid var(--tf-border-weak); border-radius: 5px; padding: 1px 5px; }
+.body code { font-family: var(--tf-mono); font-size: 0.9em; background: var(--tf-border-weak); border: 1px solid var(--tf-divider); border-radius: 5px; padding: 1px 5px; }
 .body pre { background: var(--tf-canvas); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); padding: 12px 14px; margin: 0 0 12px; overflow-x: auto; }
 .body pre code { background: none; border: none; padding: 0; font-size: 13px; line-height: 1.6; }
-.body blockquote { border-left: 3px solid var(--tf-gold-strong); background: var(--tf-gold-tint); padding: 8px 14px; margin: 0 0 12px; border-radius: 0 var(--tf-radius-md) var(--tf-radius-md) 0; color: var(--tf-text-2); }
+.body blockquote { border-left: 3px solid var(--tf-ink); background: var(--tf-ink-tint); padding: 8px 14px; margin: 0 0 12px; border-radius: 0 var(--tf-radius-md) var(--tf-radius-md) 0; color: var(--tf-text-2); }
 .body :global(.tableWrap) { overflow-x: auto; margin: 0 0 12px; }
-.body table { border-collapse: collapse; font-size: 14px; }
+.body table { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .body th, .body td { border: 1px solid var(--tf-border); padding: 6px 10px; text-align: left; vertical-align: top; }
-.body thead th { background: var(--tf-border-weak); color: var(--tf-text-1); font-weight: 700; }
+.body thead th { background: var(--tf-sidebar); color: var(--tf-text-1); font-weight: 700; }
 .body > :last-child { margin-bottom: 0; }
-/* 串流游標貼在最後區塊的「行內葉節點」尾端：段落/標題/引言直接於文末，清單取末項 li，
-   程式碼取 code，表格取末列末格——避免 ::after 落在區塊級容器內而掉到新行（游標掉行）。 */
+/* 串流游標貼在最後區塊的「行內葉節點」尾端（結構同原版，僅換色為鎏金）。 */
 .body[data-streaming] > p:last-child::after,
 .body[data-streaming] > h3:last-child::after,
 .body[data-streaming] > h4:last-child::after,
@@ -39,12 +40,12 @@
   background: var(--tf-gold-text);
   animation: tf-pulse 1s steps(2) infinite;
 }
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
 .act { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; padding: 6px; cursor: pointer; }
-.act:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
-.on { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
+.act:hover { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink); }
+.on { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink); }
 .divider { width: 1px; height: 16px; background: var(--tf-border); margin: 0 2px; }
-.srcBtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12px; padding: 5px 11px; cursor: pointer; }
-.srcBtn:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
+.srcBtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.srcBtn:hover { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink); }
 /* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
 @keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

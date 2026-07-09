@@ -2,16 +2,22 @@
   display: flex; align-items: center; cursor: pointer;
   border: none; background: none; text-decoration: none;
   color: var(--tf-text-3); font-family: inherit;
+  position: relative;
 }
 .mini { flex-direction: column; gap: 3px; padding: 8px 9px; border-radius: var(--tf-radius-seg); min-width: 46px; justify-content: center; }
-.row { gap: 10px; padding: 8px 10px; border-radius: 8px; width: 100%; font-size: 13.5px; color: var(--tf-text-2); }
+.row { gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; width: 100%; font-size: 13.5px; color: var(--tf-text-2); }
 .mobile { flex: 1; flex-direction: column; gap: 3px; padding: 6px 0; justify-content: center; }
 .label { font-size: 10px; line-height: 1; }
 .row .label { font-size: 13.5px; }
 
 .mini:hover, .row:hover { background: var(--tf-border-weak); }
 
-.active { color: var(--tf-gold-text); font-weight: 700; }
-.mini.active, .row.active { background: var(--tf-gold-tint); }
-.mobile.active { background: none; }
+.active { color: var(--tf-ink); font-weight: 700; }
+.mini.active, .row.active { background: var(--tf-ink-tint); color: var(--tf-ink-deep); }
 .row.active { font-weight: 600; }
+/* 展開態選取列左緣 3px 墨青指示條 */
+.row.active::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px;
+  width: 3px; border-radius: 2px; background: var(--tf-ink);
+}
+.mobile.active { background: none; color: var(--tf-ink); }

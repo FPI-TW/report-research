@@ -1,23 +1,24 @@
 interface MarketMeta { label: string; color: string }
 
+/** 市場語意色：降彩度重校（oklch 同層亮度/彩度），配合淡底深字 chip 使用。 */
 const MARKETS: Record<string, MarketMeta> = {
-  TW: { label: '台股', color: '#34c759' },
-  US: { label: '美股', color: '#007aff' },
-  HK: { label: '港股', color: '#ff9500' },
-  CN: { label: '陸股', color: '#ff3b30' },
-  FX: { label: '外匯', color: '#00c7be' },
-  WTX: { label: '台指期', color: '#af52de' },
-  MACRO: { label: '總經', color: '#ff2d55' },
-  GLOBAL: { label: '全球', color: '#5856d6' },
-  CRYPTO: { label: '加密', color: '#a2845e' },
+  TW: { label: '台股', color: '#237a46' },
+  US: { label: '美股', color: '#2e5fa3' },
+  HK: { label: '港股', color: '#b26a0b' },
+  CN: { label: '陸股', color: '#b03a30' },
+  FX: { label: '外匯', color: '#0e7d74' },
+  WTX: { label: '台指期', color: '#6e48a8' },
+  MACRO: { label: '總經', color: '#a03052' },
+  GLOBAL: { label: '全球', color: '#4a4fa0' },
+  CRYPTO: { label: '加密', color: '#7d6234' },
 }
 
 const PTYPE: Record<string, string> = {
-  股票: '#0a84ff', 指數: '#5e5ce6', 期貨: '#ff9f0a', 選擇權: '#bf5af2',
-  ETF: '#30d158', 債券: '#0bb8c4', 外匯: '#00c7be', 原物料: '#ac8e68', 加密: '#e0a400',
+  股票: '#2e5fa3', 指數: '#4a4fa0', 期貨: '#b26a0b', 選擇權: '#6e48a8',
+  ETF: '#237a46', 債券: '#0e7d74', 外匯: '#0e7d74', 原物料: '#7d6234', 加密: '#8a5a0f',
 }
 
-const FALLBACK = '#8e8e93'
+const FALLBACK = '#75808a'
 
 export const MARKET_ORDER = ['TW', 'US', 'HK', 'CN', 'WTX', 'FX', 'MACRO', 'GLOBAL', 'CRYPTO'] as const
 
@@ -26,6 +27,11 @@ export function marketColor(code: string): string {
 }
 export function marketLabel(code: string): string {
   return MARKETS[code]?.label ?? code
+}
+/** 市場 chip 統一「淡底深字」：底色為市場色 10% 混白。 */
+export function marketTint(code: string): { background: string; color: string } {
+  const c = marketColor(code)
+  return { background: `color-mix(in srgb, ${c} 10%, white)`, color: c }
 }
 export function ptypeColor(name: string): string {
   return PTYPE[name] ?? FALLBACK

@@ -2,11 +2,16 @@ import { useEffect, useRef, useState, type ChangeEvent, type CompositionEvent, t
 import { Icon } from '../../components/primitives/Icon'
 import styles from './SearchBar.module.css'
 
-interface Props { initial: string; onSubmit: (q: string) => void }
+interface Props {
+  initial: string
+  onSubmit: (q: string) => void
+  /** lg：首頁 hero 大型搜尋框（含「搜尋」按鈕）；md：結果頁精簡列。預設 md。 */
+  size?: 'md' | 'lg'
+}
 
 const DEBOUNCE_MS = 350
 
-export function SearchBar({ initial, onSubmit }: Props) {
+export function SearchBar({ initial, onSubmit, size = 'md' }: Props) {
   const [draft, setDraft] = useState(initial)
   const [lastSubmitted, setLastSubmitted] = useState(initial.trim()) // 最近一次自身送出的值（state 才能於 render 讀取）
   const composing = useRef(false)                                     // IME 組字中
@@ -52,12 +57,12 @@ export function SearchBar({ initial, onSubmit }: Props) {
   const clear = () => { setDraft(''); fire('') }
 
   return (
-    <div className={styles.bar}>
-      <Icon name="search" size={18} className={styles.icon} />
+    <div className={`${styles.bar} ${size === 'lg' ? styles.lg : ''}`}>
+      <Icon name="search" size={size === 'lg' ? 20 : 18} className={styles.icon} />
       <input
         className={styles.input}
         value={draft}
-        placeholder="搜尋主題、公司、事件…"
+        placeholder={size === 'lg' ? '搜尋產業、公司、事件…' : '搜尋主題、公司、事件…'}
         aria-label="搜尋研報"
         onChange={onChange}
         onCompositionStart={onCompositionStart}
@@ -68,6 +73,9 @@ export function SearchBar({ initial, onSubmit }: Props) {
         <button type="button" className={styles.clear} aria-label="清除搜尋" onClick={clear}>
           <Icon name="x" size={16} />
         </button>
+      )}
+      {size === 'lg' && (
+        <button type="button" className={styles.go} onClick={() => fire(draft)}>搜尋</button>
       )}
     </div>
   )

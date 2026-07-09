@@ -1,45 +1,57 @@
 :root {
-  /* 介面基調 */
-  --tf-canvas: #f6f7f9;
+  /* ── 介面基調（暖紙白，印刷感） ── */
+  --tf-canvas: #f7f6f2;
   --tf-surface: #ffffff;
-  --tf-sidebar: #fbfbfc;
-  --tf-border: #e4e7ec;
-  --tf-border-weak: #f2f4f7;
-  --tf-divider: #eceef1;
-  --tf-text-1: #101828;
-  --tf-text-2: #344054;
-  --tf-text-3: #667085;
-  --tf-text-4: #98a2b3;
+  --tf-sidebar: #fbfaf6;
+  --tf-border: #e7e4dc;
+  --tf-border-weak: #f3f1eb;
+  --tf-divider: #efede7;
+  --tf-text-1: #212b33;
+  --tf-text-2: #40525f;
+  --tf-text-3: #6e7e89;
+  --tf-text-4: #9aa5ae;
 
-  /* 品牌金 */
+  /* ── 墨青（導航與操作：按鈕、連結、選取態） ── */
+  --tf-ink: #1e5175;
+  --tf-ink-deep: #163a54;
+  --tf-ink-hover: #174260;
+  --tf-ink-tint: #eaf1f6;
+  --tf-ink-line: #dce6ee;
+  --tf-on-ink: #ffffff;
+
+  /* ── 鎏金（引用 [n]、深度研報、品牌；Logo 原色） ── */
   --tf-gold-text: #8a5a0f;
   --tf-gold-strong: #ae7415;
   --tf-gold-hover: #7a4f0c;
-  --tf-gold-tint: #faf3e3;
+  --tf-gold-tint: #f8f1e0;
+  --tf-gold-line: #ead9ae;
+  --tf-gold-panel: #fbf7ec;
   --tf-on-gold: #ffffff;
   --tf-on-gold-muted: rgba(255, 255, 255, 0.75);
 
-  /* 字型 */
+  /* ── 字型 ── */
   --tf-serif: 'Noto Serif TC', Georgia, 'Times New Roman', serif;
-  --tf-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
-    'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
+  --tf-sans: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
   --tf-mono: ui-monospace, Menlo, monospace;
 
-  /* 圓角 */
+  /* ── 圓角：控制項 8 · 卡片 12 · 面板 16 ── */
   --tf-radius-card: 12px;
+  --tf-radius-panel: 16px;
   --tf-radius-pill: 999px;
   --tf-radius-seg: 10px;
   --tf-radius-md: 8px;
 
-  /* 陰影 */
-  --tf-shadow-xs: 0 1px 3px rgba(16, 24, 40, 0.06);
-  --tf-shadow-seg: 0 1px 3px rgba(16, 24, 40, 0.12);
-  --tf-shadow-float: 0 4px 16px rgba(16, 24, 40, 0.08);
-  --tf-shadow-viewtoggle: 0 6px 20px rgba(16, 24, 40, 0.14);
-  --tf-shadow-pop: 0 12px 32px rgba(16, 24, 40, 0.16);
-  --tf-shadow-modal: 0 20px 48px rgba(16, 24, 40, 0.24);
+  /* ── 陰影（墨青色系投影） ── */
+  --tf-shadow-xs: 0 1px 3px rgba(22, 42, 58, 0.05);
+  --tf-shadow-seg: 0 1px 3px rgba(22, 42, 58, 0.1);
+  --tf-shadow-float: 0 8px 24px rgba(22, 42, 58, 0.07);
+  --tf-shadow-viewtoggle: 0 6px 20px rgba(22, 42, 58, 0.12);
+  --tf-shadow-pop: 0 12px 32px rgba(22, 42, 58, 0.16);
+  --tf-shadow-modal: 0 24px 64px rgba(22, 42, 58, 0.28);
+  --tf-ring-ink: 0 0 0 3px rgba(30, 81, 117, 0.12);
 
-  /* 動效 */
+  /* ── 動效 ── */
   --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --tf-dur-1: 120ms;
   --tf-dur-2: 180ms;
@@ -48,30 +60,31 @@
   --tf-stagger: 40ms;
   --tf-stagger-cap: 8;
 
-  /* 語意色 — 市場 */
-  --mkt-TW: #34c759;
-  --mkt-US: #007aff;
-  --mkt-HK: #ff9500;
-  --mkt-CN: #ff3b30;
-  --mkt-FX: #00c7be;
-  --mkt-WTX: #af52de;
-  --mkt-MACRO: #ff2d55;
-  --mkt-GLOBAL: #5856d6;
-  --mkt-CRYPTO: #a2845e;
-  --mkt-fallback: #8e8e93;
+  /* ── 語意色 — 市場（降彩度重校；chip 一律淡底深字） ── */
+  --mkt-TW: #237a46;
+  --mkt-US: #2e5fa3;
+  --mkt-HK: #b26a0b;
+  --mkt-CN: #b03a30;
+  --mkt-FX: #0e7d74;
+  --mkt-WTX: #6e48a8;
+  --mkt-MACRO: #a03052;
+  --mkt-GLOBAL: #4a4fa0;
+  --mkt-CRYPTO: #7d6234;
+  --mkt-fallback: #75808a;
 
-  /* 狀態色 */
-  --tf-success: #34c759;
-  --tf-success-text: #248a3d;
-  --tf-warn: #ff9f0a;
-  --tf-warn-bg: #fffaeb;
-  --tf-warn-border: #fedf89;
-  --tf-warn-text: #b25e00;
-  --tf-error: #ff3b30;
-  --tf-error-bg: #fef3f2;
-  --tf-error-border: #fecdca;
-  --tf-error-text: #b42318;
-  --tf-mark: #fff3bf;
+  /* ── 狀態色 ── */
+  --tf-success: #237a46;
+  --tf-success-text: #237a46;
+  --tf-success-line: #7fb89a;
+  --tf-warn: #c9a75c;
+  --tf-warn-bg: #fbf7ec;
+  --tf-warn-border: #ead9ae;
+  --tf-warn-text: #7a5a1e;
+  --tf-error: #b03a30;
+  --tf-error-bg: #fbf0ef;
+  --tf-error-border: #e8c4c0;
+  --tf-error-text: #96362d;
+  --tf-mark: #faedc4;
 }
 
 * { box-sizing: border-box; }
@@ -83,10 +96,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 input, button, textarea { font-family: inherit; }
-::selection { background: var(--tf-gold-tint); }
+a { color: var(--tf-ink); }
+a:hover { color: var(--tf-ink-hover); }
+::selection { background: var(--tf-ink-tint); }
 
 :focus-visible {
-  outline: 2px solid var(--tf-gold-text);
+  outline: 2px solid var(--tf-ink);
   outline-offset: 2px;
 }
 

@@ -21,11 +21,11 @@ function listResp(ids: string[], total: number) {
   }
 }
 
-function wrap(node: ReactNode) {
+function wrap(node: ReactNode, entry = '/search') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/search']}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes><Route path="/search" element={node} /></Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -35,7 +35,7 @@ function wrap(node: ReactNode) {
 beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(useStatsMod.useStats).mockReturnValue({
-    data: { markets: [{ market: 'TW', count: 5 }], instrument_types: [], report_types: [] },
+    data: { total_reports: 5, markets: [{ market: 'TW', count: 5 }], instrument_types: [], report_types: [] },
   } as unknown as ReturnType<typeof useStatsMod.useStats>)
 })
 
@@ -49,7 +49,8 @@ describe('SearchPage 整合', () => {
 
   it('切表格檢視不重抓（browseReports 次數不變）', async () => {
     vi.mocked(searchApi.browseReports).mockResolvedValue(listResp(['a'], 1))
-    wrap(<SearchPage />)
+    // 1a 重設計：工具列（含檢視切換）只在非 hero 態顯示；帶 market 篩選以離開 hero 但仍為 browse
+    wrap(<SearchPage />, '/search?market=TW')
     await waitFor(() => expect(screen.getByText('a.pdf')).toBeTruthy())
     expect(searchApi.browseReports).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('button', { name: '表格檢視' }))

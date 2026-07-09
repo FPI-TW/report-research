@@ -7,6 +7,8 @@ embed(text) -> list[float]（1024 維）。
 
 from __future__ import annotations
 
+import asyncio
+
 import numpy as np
 
 # --- Prompt 常數（就地共置；一律要求 JSON-only 輸出）---
@@ -112,6 +114,9 @@ async def answer_relevancy(question: str, answer: str, *, judge, embed) -> float
     gen = [q for q in (gen or []) if isinstance(q, str) and q.strip()]
     if not gen:
         return 0.0
-    qv = embed(question)
-    sims = [_cosine(qv, embed(g)) for g in gen]
+    qv = await asyncio.to_thread(embed, question)
+    sims = []
+    for g in gen:
+        gv = await asyncio.to_thread(embed, g)
+        sims.append(_cosine(qv, gv))
     return sum(sims) / len(sims)

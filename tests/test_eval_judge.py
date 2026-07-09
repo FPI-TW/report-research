@@ -54,10 +54,20 @@ class JudgeJsonTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(judge_mod.DEFAULT_JUDGE_MODEL, "claude-haiku-4-5")
 
     async def test_json_with_brackets_in_string_value(self):
-        """迴歸測試：JSON 字串值內的括號不應干擾深度計算。"""
-        judge_mod.stream_completion = _fake_stream(['結果：{"statements": ["用 {模板} 產生 [注意]"]}, 完成'])
+        """迴歸測試：JSON 字串值內的括號不應干擾深度計算（不平衡括號需靠 in_str 跳過）。"""
+        judge_mod.stream_completion = _fake_stream(
+            ['結果：{"statements": ["內容含右括號 } 符號"]}, 完成']
+        )
         out = await judge_json("x", system="s")
-        self.assertEqual(out, {"statements": ["用 {模板} 產生 [注意]"]})
+        self.assertEqual(out, {"statements": ["內容含右括號 } 符號"]})
+
+    async def test_prefers_object_over_leading_citation_bracket(self):
+        """迴歸測試：散文中的 [n] 引註括號不應被誤判為 JSON 起點，物件優先於陣列。"""
+        judge_mod.stream_completion = _fake_stream(
+            ['根據片段 [2] 的內容，此主張成立。\n{"verdicts": [{"idx": 0, "supported": true}]}']
+        )
+        out = await judge_json("x", system="s")
+        self.assertEqual(out, {"verdicts": [{"idx": 0, "supported": True}]})
 
 
 if __name__ == "__main__":

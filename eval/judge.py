@@ -32,10 +32,13 @@ def _loads_robust(raw: str) -> dict | list:
         return json.loads(s)
     except (ValueError, TypeError):
         pass
-    starts = [i for i in (s.find("{"), s.find("[")) if i != -1]
-    if not starts:
-        raise JudgeError(f"no JSON found in judge output: {raw[:120]!r}")
-    start = min(starts)
+    brace = s.find("{")
+    if brace != -1:
+        start = brace
+    else:
+        start = s.find("[")
+        if start == -1:
+            raise JudgeError(f"no JSON found in judge output: {raw[:120]!r}")
     open_ch = s[start]
     close_ch = "}" if open_ch == "{" else "]"
     depth = 0

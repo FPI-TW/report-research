@@ -44,6 +44,79 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("mark", "embed"), calls)
         self.assertIn(("mark", "retrieve"), calls)
 
+    async def test_rerank_top_m_zero_skips_rerank(self):
+        import app.services.retrieval_pipeline as rp
+        from unittest import mock
+
+        called = {"n": 0}
+
+        class _Session:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            return [(0, 0.5, "row")]
+
+        def _fake_build(scored, **kw):
+            return (["S"], "CTX")
+
+        def _spy_rerank(question, scored, *, top_m, timer=None):
+            called["n"] += 1
+            return scored
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build), \
+             mock.patch.object(rp, "rerank_scored", _spy_rerank):
+            out = await rp.retrieve_context(
+                "q", k=15, dense_scan=400, max_reports=15,
+                max_passages=4, max_chars=20000, rerank_top_m=0,
+            )
+        self.assertEqual(out, (["S"], "CTX"))
+        self.assertEqual(called["n"], 0)  # rerank_top_m=0 → 不呼叫
+
+    async def test_rerank_top_m_positive_calls_rerank_and_marks_timer(self):
+        import app.services.retrieval_pipeline as rp
+        from unittest import mock
+
+        seen = {}
+
+        class _Session:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+
+        class _Timer:
+            def __init__(self): self.marks = []
+            def mark(self, name): self.marks.append(name)
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            return [(0, 0.5, "row")]
+
+        def _fake_build(scored, **kw):
+            seen["build_scored"] = scored
+            return (["S"], "CTX")
+
+        def _fake_rerank(question, scored, *, top_m, timer=None):
+            seen["top_m"] = top_m
+            if timer is not None:
+                timer.mark("rerank")
+            return [(0, 0.99, "reranked")]
+
+        t = _Timer()
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build), \
+             mock.patch.object(rp, "rerank_scored", _fake_rerank):
+            await rp.retrieve_context(
+                "q", k=15, dense_scan=400, max_reports=15,
+                max_passages=4, max_chars=20000, rerank_top_m=50, timer=t,
+            )
+        self.assertEqual(seen["top_m"], 50)
+        self.assertEqual(seen["build_scored"], [(0, 0.99, "reranked")])  # 重排結果進 build_context
+        self.assertIn("rerank", t.marks)
+
 
 if __name__ == "__main__":
     unittest.main()

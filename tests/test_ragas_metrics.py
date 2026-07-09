@@ -87,6 +87,21 @@ class FaithfulnessTests(unittest.IsolatedAsyncioTestCase):
         score = await faithfulness("ans", ["ctx"], judge=judge)
         self.assertAlmostEqual(score, 0.5)
 
+    async def test_duplicate_and_outofrange_verdicts(self):
+        """Guard against malformed judge: duplicate idx and out-of-range idx should not inflate score > 1.0."""
+        judge = make_judge({
+            "拆解": {"statements": ["s1", "s2"]},
+            "佐證": {"verdicts": [
+                {"idx": 0, "supported": True},
+                {"idx": 0, "supported": True},  # duplicate
+                {"idx": 5, "supported": True},  # out-of-range
+            ]},
+        })
+        score = await faithfulness("ans", ["ctx"], judge=judge)
+        # Only idx 0 counts among 2 statements → score = 1/2 = 0.5
+        self.assertAlmostEqual(score, 0.5)
+        self.assertLessEqual(score, 1.0)
+
 
 class ContextPrecisionTests(unittest.IsolatedAsyncioTestCase):
     async def test_all_relevant_is_one(self):

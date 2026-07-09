@@ -77,11 +77,13 @@ async def faithfulness(answer: str, contexts: list[str], *, judge) -> float | No
     payload = f"參考片段：\n{joined_ctx}\n\n主張：\n{enumerated}"
     res = await judge(GROUND_SYS, payload)
     verdicts = res.get("verdicts") if isinstance(res, dict) else None
-    supported = sum(
-        1
-        for v in (verdicts or [])
-        if isinstance(v, dict) and v.get("supported") is True
-    )
+    supmap: dict[int, bool] = {}
+    for v in verdicts or []:
+        if isinstance(v, dict) and isinstance(v.get("idx"), int):
+            idx = v["idx"]
+            if 0 <= idx < len(statements):
+                supmap[idx] = v.get("supported") is True
+    supported = sum(1 for ok in supmap.values() if ok)
     return supported / len(statements)
 
 

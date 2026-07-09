@@ -142,6 +142,20 @@ class RerankScoredTests(unittest.TestCase):
         self.assertIs(rr.rerank_scored("q", scored, top_m=0), scored)
         self.assertEqual(rr.rerank_scored("q", [], top_m=5), [])
 
+    def test_zero_min_rerank_tail_stays_strictly_below(self):
+        # rerank head 最低分為 0（sigmoid underflow）時，尾段仍須嚴格低於 0、保序
+        scored = _scored(
+            (0, 0.9, "A", "a"), (0, 0.8, "B", "b"),
+            (0, 0.7, "C", "c"), (0, 0.6, "D", "d"),
+        )
+        with mock.patch.object(rr, "rerank_scores", lambda q, ps: [0.5, 0.0]):
+            out = rr.rerank_scored("q", scored, top_m=2)
+        head, tail = out[:2], out[2:]
+        self.assertEqual([f for (_t, f, _r) in head], [0.5, 0.0])  # min_rr=0
+        self.assertTrue(all(f < 0.0 for (_t, f, _r) in tail))       # 嚴格低於最低重排分(0.0)
+        self.assertEqual([r.content for (_t, _f, r) in tail], ["c", "d"])  # 保相對序
+        self.assertGreaterEqual(tail[0][1], tail[1][1])             # C(原0.7) >= D(原0.6)
+
     def test_tier_priority_preserved_through_build_context(self):
         # 端到端：tier1 字面命中即使 rerank 分低，仍排在 tier0 語意（rerank 分高）之上
         from app.services.answer import build_context

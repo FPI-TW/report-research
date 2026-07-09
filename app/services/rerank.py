@@ -59,14 +59,29 @@ def rerank_scored(question, scored, *, top_m, timer=None):
         reranked = [(tier, scores[i], row) for i, (tier, _f, row) in enumerate(head)]
         if tail:
             min_rr = min(scores)
-            ceiling = min_rr * 0.99  # 嚴格低於最低重排分
             tail_fused = [f for (_t, f, _r) in tail]
             lo, hi = min(tail_fused), max(tail_fused)
             span = hi - lo
-            tail = [
-                (tier, (ceiling if span == 0 else ceiling * (f - lo) / span), row)
-                for (tier, f, row) in tail
-            ]
+            if min_rr > 0:
+                # 乘法收縮：尾段落在 [0, min_rr*0.99]，嚴格低於最低重排分、保序
+                ceiling = min_rr * 0.99
+                tail = [
+                    (tier, (ceiling if span == 0 else ceiling * (f - lo) / span), row)
+                    for (tier, f, row) in tail
+                ]
+            else:
+                # 退化：min_rr<=0（sigmoid 對極不相關片段 float underflow 到 0）時，無非負值
+                # 可嚴格小於 min_rr，改用減法位移把尾段壓到 min_rr 之下一段極小區間（可能為負，
+                # 語意即全數不相關；select_reports 以 tier 為主鍵、tail 永遠殿後），保序不反超。
+                eps = 1e-9
+                tail = [
+                    (
+                        tier,
+                        (min_rr - eps if span == 0 else min_rr - eps - (hi - f) / span * eps),
+                        row,
+                    )
+                    for (tier, f, row) in tail
+                ]
         if timer is not None:
             timer.mark("rerank")
         return reranked + tail

@@ -53,6 +53,12 @@ class JudgeJsonTests(unittest.IsolatedAsyncioTestCase):
     async def test_default_judge_model_is_haiku(self):
         self.assertEqual(judge_mod.DEFAULT_JUDGE_MODEL, "claude-haiku-4-5")
 
+    async def test_json_with_brackets_in_string_value(self):
+        """迴歸測試：JSON 字串值內的括號不應干擾深度計算。"""
+        judge_mod.stream_completion = _fake_stream(['結果：{"statements": ["用 {模板} 產生 [注意]"]}, 完成'])
+        out = await judge_json("x", system="s")
+        self.assertEqual(out, {"statements": ["用 {模板} 產生 [注意]"]})
+
 
 if __name__ == "__main__":
     unittest.main()

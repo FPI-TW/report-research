@@ -39,8 +39,20 @@ def _loads_robust(raw: str) -> dict | list:
     open_ch = s[start]
     close_ch = "}" if open_ch == "{" else "]"
     depth = 0
+    in_str = False
+    esc = False
     for i in range(start, len(s)):
-        if s[i] == open_ch:
+        if in_str:
+            if esc:
+                esc = False
+            elif s[i] == "\\":
+                esc = True
+            elif s[i] == '"':
+                in_str = False
+            continue
+        if s[i] == '"':
+            in_str = True
+        elif s[i] == open_ch:
             depth += 1
         elif s[i] == close_ch:
             depth -= 1

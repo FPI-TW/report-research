@@ -1,9 +1,12 @@
 import type { ReactNode } from 'react'
+import { CiteButton } from '../components/CitePreview'
+import type { Source } from './askSchemas'
 
 const HTTP = /^https?:\/\//i
 
 // 行內：粗體/斜體/行內 code/連結/[n] 膠囊 → React 節點（React 自動轉義文字）
-function renderInline(text: string, sourceCount: number, onCite: (n: number) => void, keyBase: string): ReactNode[] {
+// sources 若提供，[n] 膠囊帶 hover／focus 來源預覽（CiteButton）；未提供則為單純膠囊。
+function renderInline(text: string, sourceCount: number, onCite: (n: number) => void, keyBase: string, sources?: Source[]): ReactNode[] {
   const out: ReactNode[] = []
   const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)|\[(\d+)\]/g
   let last = 0
@@ -22,7 +25,7 @@ function renderInline(text: string, sourceCount: number, onCite: (n: number) => 
     } else if (m[6] !== undefined) {
       const n = Number(m[6])
       if (n >= 1 && n <= sourceCount) {
-        out.push(<button key={key} type="button" className="tf-cite" onClick={() => onCite(n)}>{n}</button>)
+        out.push(<CiteButton key={key} n={n} source={sources?.find(s => s.n === n)} onCite={onCite} />)
       } else out.push(m[0])
     }
     last = re.lastIndex
@@ -31,7 +34,7 @@ function renderInline(text: string, sourceCount: number, onCite: (n: number) => 
   return out
 }
 
-export function renderAnswer(md: string, sourceCount: number, onCite: (n: number) => void): ReactNode {
+export function renderAnswer(md: string, sourceCount: number, onCite: (n: number) => void, sources?: Source[]): ReactNode {
   const lines = md.split('\n')
   const blocks: ReactNode[] = []
   let para: string[] = []
@@ -41,10 +44,12 @@ export function renderAnswer(md: string, sourceCount: number, onCite: (n: number
   let code: string[] | null = null
   let k = 0
 
-  const flushPara = () => { if (para.length) { blocks.push(<p key={`p${k++}`}>{renderInline(para.join(' '), sourceCount, onCite, `p${k}`)}</p>); para = [] } }
-  const flushUl = () => { if (ul.length) { const items = ul; blocks.push(<ul key={`ul${k++}`}>{items.map((t, i) => <li key={i}>{renderInline(t, sourceCount, onCite, `ul${k}-${i}`)}</li>)}</ul>); ul = [] } }
-  const flushOl = () => { if (ol.length) { const items = ol; blocks.push(<ol key={`ol${k++}`}>{items.map((t, i) => <li key={i}>{renderInline(t, sourceCount, onCite, `ol${k}-${i}`)}</li>)}</ol>); ol = [] } }
-  const flushQuote = () => { if (quote.length) { const items = quote; blocks.push(<blockquote key={`bq${k++}`}>{renderInline(items.join(' '), sourceCount, onCite, `bq${k}`)}</blockquote>); quote = [] } }
+  const inline = (text: string, keyBase: string) => renderInline(text, sourceCount, onCite, keyBase, sources)
+
+  const flushPara = () => { if (para.length) { blocks.push(<p key={`p${k++}`}>{inline(para.join(' '), `p${k}`)}</p>); para = [] } }
+  const flushUl = () => { if (ul.length) { const items = ul; blocks.push(<ul key={`ul${k++}`}>{items.map((t, i) => <li key={i}>{inline(t, `ul${k}-${i}`)}</li>)}</ul>); ul = [] } }
+  const flushOl = () => { if (ol.length) { const items = ol; blocks.push(<ol key={`ol${k++}`}>{items.map((t, i) => <li key={i}>{inline(t, `ol${k}-${i}`)}</li>)}</ol>); ol = [] } }
+  const flushQuote = () => { if (quote.length) { const items = quote; blocks.push(<blockquote key={`bq${k++}`}>{inline(items.join(' '), `bq${k}`)}</blockquote>); quote = [] } }
   const flushAll = () => { flushPara(); flushUl(); flushOl(); flushQuote() }
 
   const splitRow = (s: string): string[] => {
@@ -100,15 +105,15 @@ export function renderAnswer(md: string, sourceCount: number, onCite: (n: number
       blocks.push(
         <div className="tableWrap" key={`tbl${tk}`}>
           <table>
-            <thead><tr>{headers.map((h, j) => <th key={j}>{renderInline(h, sourceCount, onCite, `th${tk}-${j}`)}</th>)}</tr></thead>
-            <tbody>{rows.map((r, ri) => <tr key={ri}>{headers.map((_, ci) => <td key={ci}>{renderInline(r[ci] ?? '', sourceCount, onCite, `td${tk}-${ri}-${ci}`)}</td>)}</tr>)}</tbody>
+            <thead><tr>{headers.map((h, j) => <th key={j}>{inline(h, `th${tk}-${j}`)}</th>)}</tr></thead>
+            <tbody>{rows.map((r, ri) => <tr key={ri}>{headers.map((_, ci) => <td key={ci}>{inline(r[ci] ?? '', `td${tk}-${ri}-${ci}`)}</td>)}</tr>)}</tbody>
           </table>
         </div>
       )
       continue
     }
     const h = /^(#{1,6})\s+(.*)$/.exec(line)
-    if (h) { flushAll(); const lvl = Math.min(h[1].length, 4); const Tag = (lvl <= 3 ? 'h3' : 'h4') as 'h3' | 'h4'; blocks.push(<Tag key={`h${k++}`} className="tf-md-h">{renderInline(h[2], sourceCount, onCite, `h${k}`)}</Tag>); continue }
+    if (h) { flushAll(); const lvl = Math.min(h[1].length, 4); const Tag = (lvl <= 3 ? 'h3' : 'h4') as 'h3' | 'h4'; blocks.push(<Tag key={`h${k++}`} className="tf-md-h">{inline(h[2], `h${k}`)}</Tag>); continue }
     const bq = /^>\s?(.*)$/.exec(line)
     if (bq) { flushPara(); flushUl(); flushOl(); quote.push(bq[1]); continue }
     const uli = /^[-*]\s+(.*)$/.exec(line)

@@ -1,11 +1,12 @@
-.card { border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-card); padding: 12px 16px; margin: 4px 0 16px; }
-.head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 0; cursor: pointer; font-size: 12.5px; color: var(--tf-text-4); }
+/* 思考狀態：收成一行膠囊摘要，展開才見步驟 */
+.card { display: inline-block; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-card); padding: 8px 14px; margin: 4px 0 14px; }
+.head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 0; cursor: pointer; font-size: 12.5px; color: var(--tf-text-3); font-variant-numeric: tabular-nums; }
 .chev { transition: transform var(--tf-dur-2); }
 .chevOpen { transform: rotate(180deg); transition: transform var(--tf-dur-2); }
 .steps { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--tf-text-2); }
-.done { color: var(--tf-gold-text); }
-.spin { color: var(--tf-gold-text); animation: tf-spin 0.8s linear infinite; }
+.done { color: var(--tf-ink); }
+.spin { color: var(--tf-ink); animation: tf-spin 0.8s linear infinite; }
 @keyframes tf-spin { to { transform: rotate(360deg); } }
 .dot { width: 7px; height: 7px; border-radius: 999px; border: 1.5px solid var(--tf-border); display: inline-block; margin: 0 4.5px; }
 .pendingText { color: var(--tf-text-4); }

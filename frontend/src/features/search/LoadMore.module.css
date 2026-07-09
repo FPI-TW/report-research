@@ -1,3 +1,4 @@
 .wrap { display: flex; justify-content: center; padding: 20px 0 40px; }
-.btn { border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: var(--tf-radius-pill); padding: 9px 22px; font-size: 13px; cursor: pointer; font-family: inherit; }
+.btn { border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: var(--tf-radius-pill); padding: 9px 22px; font-size: 13px; cursor: pointer; font-family: inherit; font-variant-numeric: tabular-nums; }
+.btn:hover { border-color: var(--tf-ink); color: var(--tf-ink); }
 .btn:disabled { opacity: .6; cursor: default; }

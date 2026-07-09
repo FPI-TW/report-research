@@ -1,7 +1,7 @@
-/* 遮罩色為覆蓋層，tokens.css 無對應 token（陰影同色系 rgba(16,24,40,...)）。 */
+/* 遮罩帶墨青色偏，聚焦內容。 */
 .scrim {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(16, 24, 40, 0.45);
+  background: rgba(22, 42, 58, 0.5);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
   transition: opacity var(--tf-dur-2) var(--tf-ease-out);
@@ -10,9 +10,9 @@
 .scrim[data-state='open'] { opacity: 1; }
 .panel {
   background: var(--tf-surface);
-  border-radius: var(--tf-radius-card);
+  border-radius: var(--tf-radius-panel);
   box-shadow: var(--tf-shadow-modal);
-  width: min(880px, 100%);
+  width: min(920px, 100%);
   max-height: 90vh;
   display: flex; flex-direction: column;
   overflow: hidden;
@@ -24,11 +24,13 @@
 .panel[data-state='open'] { opacity: 1; translate: 0 0; scale: 1; }
 .header {
   display: flex; align-items: center; gap: 12px;
-  padding: 14px 18px; border-bottom: 1px solid var(--tf-border);
+  padding: 14px 20px; border-bottom: 1px solid var(--tf-divider);
 }
-.title { flex: 1; min-width: 0; font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
+.title { flex: 1; min-width: 0; font-family: var(--tf-serif); font-weight: 700; font-size: 15.5px; color: var(--tf-text-1); }
 .close {
-  border: none; background: none; cursor: pointer;
-  font-size: 22px; line-height: 1; color: var(--tf-text-2); padding: 0 4px;
+  border: none; background: var(--tf-border-weak); border-radius: 999px;
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 18px; line-height: 1; color: var(--tf-text-2); padding: 0;
 }
-.body { padding: 16px 18px; overflow: auto; }
+.close:hover { background: var(--tf-border); }
+.body { padding: 16px 20px; overflow: auto; }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { useStats } from '../../lib/useStats'
 import { useSearchResults } from '../../lib/useSearchResults'
 import {
@@ -11,6 +11,8 @@ import { queryTerms } from '../../lib/terms'
 import { latestId } from '../../lib/isLatest'
 import { resultsMetaText, emptyState } from '../../lib/resultsMeta'
 import type { TableSort, TableSortKey } from '../../lib/tableSort'
+import { Icon } from '../../components/primitives/Icon'
+import { BrandLogo } from '../../components/BrandLogo'
 import { SearchBar } from './SearchBar'
 import { MarketChipBar } from './MarketChipBar'
 import { SortMenu } from './SortMenu'
@@ -25,6 +27,9 @@ import { LoadMore } from './LoadMore'
 import { ViewSwitch } from './ViewSwitch'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
 import styles from './SearchPage.module.css'
+
+/** 首頁 hero 的建議查詢（純起手式，點了即搜） */
+const TRY_QUERIES = ['AI 伺服器散熱供應鏈', 'FOMC 降息路徑', '高股息 ETF 配置']
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams()
@@ -42,6 +47,9 @@ export default function SearchPage() {
   const results = useSearchResults(state)
   const terms = useMemo(() => queryTerms(state.q), [state.q])
   const latest = useMemo(() => latestId(results.rows), [results.rows])
+
+  // 空查詢且無任何篩選 → 品牌起始畫面（hero），下方即為最新入庫（瀏覽模式本身依日期排序）
+  const showHero = mode === 'browse' && !hasAnyFilter(state)
 
   function applyState(next: SearchState) {
     setParams(buildParams({ ...next, sort: normalizeSort(modeOf(next), next.sort) }))
@@ -64,21 +72,51 @@ export default function SearchPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.inner}>
-        <div className={styles.controls}>
-          <SearchBar initial={state.q} onSubmit={q => update({ q })} />
-          <div className={styles.filterRow}>
-            <MarketChipBar value={state.market} onChange={m => update({ market: m })} counts={marketCounts} />
-            <div className={styles.toolbar}>
-              <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
-              <MoreFiltersPopover
-                state={state}
-                instrumentOptions={instrumentOptions}
-                reportTypeOptions={reportTypeOptions}
-                onApply={update}
-              />
+      <div className={styles.inner} data-hero={showHero || undefined}>
+        {showHero && (
+          <div className={`${styles.hero} tf-reveal`}>
+            <BrandLogo size={64} />
+            <h2 className={styles.heroTitle}>廷豐智能研報</h2>
+            <p className={styles.heroSub}>
+              {stats.data ? `收錄 ${stats.data.total_reports.toLocaleString()} 篇券商研報 — ` : ''}
+              語意檢索 · 智能問答 · 深度研報
+            </p>
+            <div className={styles.heroModes}>
+              <span className={`${styles.heroMode} ${styles.heroModeActive}`} aria-current="page">
+                <Icon name="search" size={15} />檢索研報
+              </span>
+              <Link to="/ask" className={styles.heroMode}>
+                <Icon name="messages" size={15} />智能問答
+              </Link>
             </div>
           </div>
+        )}
+
+        <div className={styles.controls}>
+          <div className={styles.searchRow}>
+            <SearchBar initial={state.q} onSubmit={q => update({ q })} size={showHero ? 'lg' : 'md'} />
+            {!showHero && (
+              <div className={styles.toolbar}>
+                <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
+                <MoreFiltersPopover
+                  state={state}
+                  instrumentOptions={instrumentOptions}
+                  reportTypeOptions={reportTypeOptions}
+                  onApply={update}
+                />
+                <ViewSwitch view={state.view} onChange={v => update({ view: v })} />
+              </div>
+            )}
+          </div>
+          {showHero && (
+            <div className={styles.tryRow}>
+              <span className={styles.tryLabel}>試試</span>
+              {TRY_QUERIES.map(q => (
+                <button key={q} type="button" className={styles.tryChip} onClick={() => update({ q })}>{q}</button>
+              ))}
+            </div>
+          )}
+          <MarketChipBar value={state.market} onChange={m => update({ market: m })} counts={marketCounts} />
           <ActiveChips state={state} onPatch={update} />
         </div>
 
@@ -98,7 +136,14 @@ export default function SearchPage() {
           </div>
         ) : (
           <>
-            <ResultsMeta text={resultsMetaText(state, results.total)} />
+            {showHero ? (
+              <div className={styles.sectionHead}>
+                <span className={styles.sectionTitle}>最新入庫</span>
+                <span className={styles.sectionMeta}>{resultsMetaText(state, results.total)}</span>
+              </div>
+            ) : (
+              <ResultsMeta text={resultsMetaText(state, results.total)} />
+            )}
             {state.view === 'table' ? (
               <TableView rows={results.rows} mode={mode} sort={tableSort} onSort={onSort} onOpen={onOpen} />
             ) : (
@@ -111,7 +156,6 @@ export default function SearchPage() {
         )}
       </div>
 
-      <ViewSwitch view={state.view} onChange={v => update({ view: v })} />
       <ReportDetailModal
         reportId={openReport?.id ?? null}
         fileName={openReport?.fileName}

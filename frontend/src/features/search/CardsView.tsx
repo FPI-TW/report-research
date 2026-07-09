@@ -15,7 +15,7 @@ interface Props {
 
 export function CardsView({ rows, mode, terms, latestId, onOpen }: Props) {
   return (
-    <div>
+    <div className={styles.wrap}>
       {monthGroups(rows).map(g => (
         <MonthGroup key={g.key} title={g.title} count={g.count}>
           <div className={styles.grid}>

@@ -42,9 +42,12 @@ export function Composer({ value, onChange, onSubmit, disabled, variant = 'botto
           onKeyDown={onKey}
         />
         <button type="button" className={styles.send} onClick={fire} disabled={disabled} aria-label="送出" title="送出">
-          <Icon name="send" size={20} />
+          <Icon name="send" size={19} />
         </button>
       </div>
+      {variant === 'bottom' && (
+        <div className={styles.note}>回答由 AI 依券商研報生成，投資決策請以原始研報與公開資訊為準。</div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { marketColor, marketLabel, instrumentLabel } from '../../lib/meta'
+import { marketLabel, marketTint, instrumentLabel } from '../../lib/meta'
 import { highlight } from '../../lib/highlight'
 import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
@@ -19,6 +19,7 @@ function truncate(s: string | null, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
+/** 高密度列表列：市場｜標題＋標的＋命中片段｜相關度＋來源日期（等高欄位、可掃讀）。 */
 export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Props) {
   const targets = [...(row.stock_targets ?? []), ...(row.futures_targets ?? [])]
   const pills = [...(row.instrument_types ?? []).map(instrumentLabel), ...targets]
@@ -39,35 +40,38 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
       onClick={open}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() } }}
     >
-      <div className={styles.top}>
-        <span className={styles.badge} style={{ background: marketColor(row.market ?? '') }}>
+      <div className={styles.chipCol}>
+        <span className={styles.badge} style={marketTint(row.market ?? '')}>
+          <span className={styles.badgeDot} style={{ background: 'currentColor' }} aria-hidden="true" />
           {marketLabel(row.market ?? '')}
         </span>
-        {isLatest && <span className={styles.latest}>最新</span>}
       </div>
-      <div className={styles.title}>{row.file_name}</div>
-      {pills.length > 0 && (
-        <div className={styles.tags}>
-          {pills.map((t, i) => <span key={i} className={styles.tag}>{t}</span>)}
+
+      <div className={styles.main}>
+        <div className={styles.titleRow}>
+          <span className={styles.title}>{row.file_name}</span>
+          {isLatest && <span className={styles.latest}>最新</span>}
         </div>
-      )}
-      {mode === 'search' ? (
-        <>
-          {snippet && (
-            <div className={styles.snippet}>{highlight(snippet.slice(0, 300), terms)}{snippet.length > 300 ? '…' : ''}</div>
-          )}
-          <div className={styles.scoreRow}>
-            <div className={styles.scoreTrack}>
-              <div className={styles.scoreFill} style={{ ['--score' as string]: `${pct}%` }} />
-            </div>
-            <span className={styles.scoreNum}>相關度 {pct}</span>
-          </div>
-        </>
-      ) : (
-        row.summary && <div className={styles.summary}>{truncate(row.summary, 88)}</div>
-      )}
-      <div className={styles.footer}>
-        <span>{[row.source, date].filter(Boolean).join(' · ')}</span>
+        {pills.length > 0 && <div className={styles.tags}>{pills.join(' · ')}</div>}
+        {mode === 'search' ? (
+          snippet && (
+            <div className={styles.snippet}>{highlight(snippet.slice(0, 160), terms)}{snippet.length > 160 ? '…' : ''}</div>
+          )
+        ) : (
+          row.summary && <div className={styles.summary}>{truncate(row.summary, 96)}</div>
+        )}
+      </div>
+
+      <div className={styles.right}>
+        {mode === 'search' && (
+          <span className={styles.scoreRow}>
+            <span className={styles.scoreTrack}>
+              <span className={styles.scoreFill} style={{ ['--score' as string]: `${pct}%` }} />
+            </span>
+            <span className={styles.scoreNum}>{pct}%</span>
+          </span>
+        )}
+        <span className={styles.meta}>{[row.source, date].filter(Boolean).join(' · ')}</span>
         <span className={styles.cta}>查看全文 ›</span>
       </div>
     </div>

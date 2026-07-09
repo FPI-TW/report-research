@@ -10,12 +10,12 @@ test('idle 不渲染', () => {
   expect(container.firstChild).toBeNull()
 })
 
-test('offered：要/不用 觸發 callback', () => {
+test('offered：生成研報/暫時不用 觸發 callback', () => {
   const onGenerate = vi.fn(); const onDecline = vi.fn()
   render(<DeepReportPanel report={rs({ status: 'offered' })} onGenerate={onGenerate} onDecline={onDecline} />)
   expect(screen.getByText('要不要整理成完整 PDF 深度研報？')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: '要' })); expect(onGenerate).toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: '不用' })); expect(onDecline).toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '生成研報' })); expect(onGenerate).toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '暫時不用' })); expect(onDecline).toHaveBeenCalled()
 })
 
 test('generating 顯示進度與階段文字', () => {

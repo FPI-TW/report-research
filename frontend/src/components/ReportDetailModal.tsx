@@ -34,8 +34,12 @@ export function ReportDetailModal({ reportId, fileName, onClose }: Props) {
     if (d.has_file && isPdfName(d.file_name)) {
       return (
         <div className={styles.pdfWrap}>
+          <div className={styles.actions}>
+            <a className={styles.primary} href={href} target="_blank" rel="noopener noreferrer">在新分頁開啟</a>
+            <a className={styles.ghost} href={href} download>下載原始檔</a>
+            <span className={styles.hint}>Esc 關閉</span>
+          </div>
           <iframe className={styles.frame} src={href} title={d.file_name} />
-          <a className={styles.link} href={href} target="_blank" rel="noopener noreferrer">在新分頁開啟</a>
         </div>
       )
     }

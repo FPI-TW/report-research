@@ -6,12 +6,15 @@
 .table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .table th {
   padding: 9px 12px; font-weight: 600; text-align: left;
-  color: var(--tf-text-3); background: var(--tf-border-weak); white-space: nowrap;
+  color: var(--tf-text-3); background: var(--tf-sidebar); white-space: nowrap;
+  border-bottom: 1px solid var(--tf-border-weak);
 }
 .sortable { cursor: pointer; user-select: none; }
+.sortable:hover { color: var(--tf-ink); }
 .row { border-top: 1px solid var(--tf-border-weak); cursor: pointer; }
-.row:hover { background: var(--tf-gold-tint); }
+.row:hover { background: var(--tf-border-weak); }
+.row:focus-visible { outline: none; box-shadow: inset 2px 0 0 var(--tf-ink); background: var(--tf-border-weak); }
 .table td { padding: 10px 12px; color: var(--tf-text-2); }
 .name { color: var(--tf-text-1); font-weight: 500; max-width: 380px; }
 .nowrap { white-space: nowrap; color: var(--tf-text-3); }
-.badge { color: var(--tf-on-gold); border-radius: var(--tf-radius-pill); padding: 1px 8px; font-size: 11.5px; font-weight: 600; }
+.badge { display: inline-flex; align-items: center; border-radius: var(--tf-radius-pill); padding: 2px 9px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }

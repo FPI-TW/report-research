@@ -1,4 +1,6 @@
-.wrap { position: fixed; right: 24px; bottom: 24px; z-index: 30; display: inline-flex; gap: 2px; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-pill); padding: 3px; box-shadow: var(--tf-shadow-viewtoggle); }
-.btn { border: none; background: none; width: 34px; height: 34px; border-radius: var(--tf-radius-pill); cursor: pointer; font-size: 16px; color: var(--tf-text-3); }
-.active { background: var(--tf-gold-tint); color: var(--tf-gold-text); }
-@media (max-width: 1023px) { .wrap { bottom: 80px; } }
+/* 檢視切換：由右下浮動鈕移入工具列，改分段控制樣式 */
+.wrap { display: inline-flex; gap: 2px; background: var(--tf-border-weak); border: none; border-radius: var(--tf-radius-seg); padding: 3px; }
+.btn { border: none; background: none; width: 34px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 15px; color: var(--tf-text-3); }
+.btn:hover { color: var(--tf-text-2); }
+.active { background: var(--tf-surface); color: var(--tf-ink-deep); box-shadow: var(--tf-shadow-seg); }
+.active:hover { color: var(--tf-ink-deep); }

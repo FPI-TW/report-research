@@ -1,9 +1,9 @@
 .wrap { position: relative; }
-.avatarBtn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--tf-border); background: var(--tf-gold-tint); color: var(--tf-gold-text); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
-.avatarBtn:hover { border-color: var(--tf-gold-text); }
+.avatarBtn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.avatarBtn:hover { border-color: var(--tf-ink); }
 .rowTrigger { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; cursor: pointer; padding: 7px 8px; border-radius: 8px; font-family: inherit; }
 .rowTrigger:hover { background: var(--tf-border-weak); }
-.avatar { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-border); background: var(--tf-gold-tint); color: var(--tf-gold-text); display: flex; align-items: center; justify-content: center; flex: none; }
+.avatar { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink); display: flex; align-items: center; justify-content: center; flex: none; }
 .rowText { flex: 1; text-align: left; min-width: 0; }
 .name { display: block; font-size: 13px; font-weight: 600; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { display: block; font-size: 11.5px; color: var(--tf-text-4); }

@@ -18,13 +18,14 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
   if (report.status === 'offered') {
     return (
       <div className={styles.offer}>
+        <span className={styles.offerIcon}><Icon name="fileText" size={18} /></span>
         <div className={styles.offerMain}>
           <div className={styles.offerTitle}>要不要整理成完整 PDF 深度研報？</div>
-          <div className={styles.offerSub}>彙整以上引用來源，生成含圖表與重點的深度研報。</div>
+          <div className={styles.offerSub}>彙整本輪引用來源，生成含 KPI 與圖表的深度研報，約需 3–5 分鐘。</div>
         </div>
         <div className={styles.offerBtns}>
-          <button type="button" className={styles.yes} onClick={onGenerate}>要</button>
-          <button type="button" className={styles.no} onClick={onDecline}>不用</button>
+          <button type="button" className={styles.yes} onClick={onGenerate}>生成研報</button>
+          <button type="button" className={styles.no} onClick={onDecline}>暫時不用</button>
         </div>
       </div>
     )

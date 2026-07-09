@@ -454,6 +454,49 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(captured.get("dense_scan"), ans.ASK_DENSE_SCAN)
 
+    async def test_rerank_top_m_forwarded_from_ask_path(self):
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        captured = {}
+
+        async def recording_search(session, q, qvec, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
+
+        def recording_rerank(question, scored, *, top_m, timer=None):
+            captured["top_m"] = top_m
+            return scored
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_intent(question, **k):
+            return True
+
+        orig = (
+            rp.hybrid_search, rp.embed_query_cached, rp.rerank_scored,
+            ans.stream_completion, rp.SessionFactory, ans.SessionFactory,
+            ans.classify_intent,
+        )
+        rp.hybrid_search = recording_search
+        rp.embed_query_cached = lambda q: [0.0]
+        rp.rerank_scored = recording_rerank
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        try:
+            _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            (
+                rp.hybrid_search, rp.embed_query_cached, rp.rerank_scored,
+                ans.stream_completion, rp.SessionFactory, ans.SessionFactory,
+                ans.classify_intent,
+            ) = orig
+
+        self.assertEqual(captured.get("top_m"), ans.ASK_RERANK_TOP_M)
+        self.assertEqual(ans.ASK_RERANK_TOP_M, 50)  # 預設啟用
+
 
 class StageTimerTests(unittest.TestCase):
     def test_records_intervals_and_total(self):

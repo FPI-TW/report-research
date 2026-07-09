@@ -3,6 +3,11 @@
 插在 hybrid_search 之後、build_context 之前（見 retrieval_pipeline）。同 tier 內重排：
 rerank 分 sigmoid 正規化 [0,1] 覆蓋被重排候選的 fused、tier 保留；尾段壓縮保 recall。
 fail-open：載入/推論失敗回原融合序。
+
+後端用 transformers 直跑 cross-encoder（AutoModelForSequenceClassification），
+非 FlagEmbedding.FlagReranker——後者在 transformers>=5 呼叫已移除的
+tokenizer.prepare_for_model 而 AttributeError（embed 的 BGEM3FlagModel 走另一路徑不受影響）。
+transformers/torch 皆既有依賴，故仍零新增。
 """
 
 from __future__ import annotations
@@ -18,21 +23,50 @@ _model = None
 _lock = threading.Lock()
 
 
+class _CrossEncoder:
+    """bge-reranker-v2-m3 cross-encoder（CPU）。compute_score 介面比照 FlagReranker，
+    使 rerank_scores 與其單測（注入 fake model）不受後端替換影響。"""
+
+    def __init__(self, model_name: str, max_length: int = 512):
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        self._torch = torch
+        self._max_length = max_length
+        self._tokenizer = AutoTokenizer.from_pretrained(model_name)  # fast tokenizer
+        self._model = AutoModelForSequenceClassification.from_pretrained(model_name)
+        self._model.eval()
+
+    def compute_score(self, pairs, normalize: bool = False) -> list[float]:
+        """回每個 (query, passage) pair 的分數；normalize=True 走 sigmoid → [0,1]。恆回 list。"""
+        torch = self._torch
+        with torch.no_grad():
+            inputs = self._tokenizer(
+                list(pairs),
+                padding=True,
+                truncation=True,
+                max_length=self._max_length,
+                return_tensors="pt",
+            )
+            logits = self._model(**inputs, return_dict=True).logits.view(-1).float()
+            if normalize:
+                logits = torch.sigmoid(logits)
+            return logits.tolist()
+
+
 def _get_model():
     global _model
     if _model is None:
         with _lock:
             if _model is None:
-                from FlagEmbedding import FlagReranker
-
-                _model = FlagReranker(get_settings().rerank_model, use_fp16=False)  # CPU
+                _model = _CrossEncoder(get_settings().rerank_model)  # CPU
     return _model
 
 
 def rerank_scores(query: str, passages: list[str]) -> list[float]:
     """回每個 passage 對 query 的相關度 ∈ [0,1]（sigmoid 正規化）。空 → []。
 
-    FlagReranker.compute_score 單一 pair 回 float、多 pair 回 list，統一成 list[float]。
+    compute_score 恆回 list；保留 float→list 防禦以相容注入 fake 的單測。
     """
     if not passages:
         return []

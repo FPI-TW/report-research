@@ -69,14 +69,17 @@ class RerankScoresTests(unittest.TestCase):
 
 
 class RerankScoredTests(unittest.TestCase):
-    def test_overwrites_fused_keeps_tier_and_row(self):
+    def test_overwrites_fused_and_sorts_head_by_score_desc(self):
         scored = _scored((0, 0.9, "A", "aa"), (0, 0.8, "B", "bb"), (0, 0.7, "C", "cc"))
-        rows = [r for (_t, _f, r) in scored]
+        rows = {id(r) for (_t, _f, r) in scored}
+        # rerank 依 head 原序對應：A→0.2、B→0.5、C→0.9
         with mock.patch.object(rr, "rerank_scores", lambda q, ps: [0.2, 0.5, 0.9]):
             out = rr.rerank_scored("q", scored, top_m=3)
-        self.assertEqual([t for (t, _f, _r) in out], [0, 0, 0])       # tier 保留
-        self.assertEqual([f for (_t, f, _r) in out], [0.2, 0.5, 0.9]) # fused=rerank 分
-        self.assertEqual([r for (_t, _f, r) in out], rows)            # row 物件不變
+        self.assertEqual([t for (t, _f, _r) in out], [0, 0, 0])            # tier 保留
+        # head 依 rerank 分降序：C(0.9) > B(0.5) > A(0.2)，分數隨 row 正確搬移（無錯位）
+        self.assertEqual([r.content for (_t, _f, r) in out], ["cc", "bb", "aa"])
+        self.assertEqual([f for (_t, f, _r) in out], [0.9, 0.5, 0.2])
+        self.assertEqual({id(r) for (_t, _f, r) in out}, rows)             # 仍為原 row 物件
 
     def test_passes_content_to_rerank(self):
         scored = _scored((0, 0.9, "A", "內容一"), (0, 0.8, "B", "內容二"))
@@ -97,8 +100,8 @@ class RerankScoredTests(unittest.TestCase):
         with mock.patch.object(rr, "rerank_scores", lambda q, ps: [0.4, 0.6]):
             out = rr.rerank_scored("q", scored, top_m=2)
         head, tail = out[:2], out[2:]
-        self.assertEqual([f for (_t, f, _r) in head], [0.4, 0.6])      # 重排分覆蓋
-        self.assertEqual([r.content for (_t, _f, r) in head], ["a", "b"])
+        self.assertEqual([f for (_t, f, _r) in head], [0.6, 0.4])      # head 依 rerank 分降序
+        self.assertEqual([r.content for (_t, _f, r) in head], ["b", "a"])
         min_rr = 0.4
         self.assertTrue(all(f < min_rr for (_t, f, _r) in tail))       # 尾段嚴格低於最低重排分
         self.assertEqual([r.content for (_t, _f, r) in tail], ["c", "d"])  # 保相對序
@@ -164,6 +167,62 @@ class RerankScoredTests(unittest.TestCase):
             reranked = rr.rerank_scored("q", scored, top_m=2)
         sources, _ = build_context(reranked, now=datetime(2026, 6, 17, tzinfo=timezone.utc))
         self.assertEqual(sources[0].report_id, "lit")  # tier 硬性優先於 rerank 分
+
+    def test_nan_score_fails_open(self):
+        # 模型回非有限分數（NaN）→ fail-open 回原 scored（float(nan) 不會拋，須顯式攔）
+        scored = _scored((0, 0.9, "A", "a"), (0, 0.8, "B", "b"))
+        with mock.patch.object(rr, "rerank_scores", lambda q, ps: [0.5, float("nan")]):
+            out = rr.rerank_scored("q", scored, top_m=2)
+        self.assertIs(out, scored)
+
+    def test_tail_span_zero_all_equal_fused(self):
+        # 尾段候選 fused 全同（span==0）：均壓到同一 ceiling、仍嚴格低於最低重排分
+        scored = _scored(
+            (0, 0.9, "A", "a"), (0, 0.8, "B", "b"),
+            (0, 0.5, "C", "c"), (0, 0.5, "D", "d"),  # tail 同分 → span==0
+        )
+        with mock.patch.object(rr, "rerank_scores", lambda q, ps: [0.6, 0.4]):
+            out = rr.rerank_scored("q", scored, top_m=2)
+        tail = out[2:]
+        min_rr = 0.4
+        self.assertTrue(all(f < min_rr for (_t, f, _r) in tail))
+        self.assertEqual(tail[0][1], tail[1][1])  # span==0：兩者同壓縮值
+
+    def test_load_failure_is_cached_and_disables_rerank(self):
+        # 模型載入失敗一次後熔斷：不再重試，_get_model 回 None、rerank_scores 回 []（不拋）
+        calls = {"n": 0}
+
+        def _boom_ctor(name):
+            calls["n"] += 1
+            raise RuntimeError("no network")
+
+        with mock.patch.object(rr, "_model", None), \
+             mock.patch.object(rr, "_load_failed", False), \
+             mock.patch.object(rr, "_CrossEncoder", _boom_ctor):
+            first = rr._get_model()
+            second = rr._get_model()
+            scores = rr.rerank_scores("q", ["a", "b"])
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+        self.assertEqual(calls["n"], 1)   # 只嘗試載入一次（熔斷、無重試）
+        self.assertEqual(scores, [])      # 模型不可用 → 空 → rerank_scored 以形狀不符 fail-open
+
+    def test_tail_ranked_below_head_through_select_reports(self):
+        # 端到端經真實 select_reports：reranked head 報告排在壓縮 tail 之上，且 min_reports
+        # 保底仍納入 tail 一篇（守最小 recall）。記錄實際邊界：min_reports 之上、被壓到
+        # relevance_floor 之下的 tail 會被剔除（見 M2 審查 finding 3；生產 top_m>>max_reports
+        # 使 tail 幾乎不進最終選集，實務影響有限）。
+        from app.services.answer import build_context
+        scored = _scored(
+            (0, 0.90, "r1", "一"), (0, 0.85, "r2", "二"),
+            (0, 0.80, "r3", "三"), (0, 0.75, "r4", "四"), (0, 0.70, "r5", "五"),
+        )
+        with mock.patch.object(rr, "rerank_scores", lambda q, ps: [0.95, 0.90]):
+            reranked = rr.rerank_scored("q", scored, top_m=2)  # head=r1,r2；tail=r3,r4,r5
+        sources, _ = build_context(reranked, now=datetime(2026, 6, 17, tzinfo=timezone.utc))
+        ids = [s.report_id for s in sources]
+        self.assertEqual(ids[:2], ["r1", "r2"])       # reranked head 兩篇最前
+        self.assertGreaterEqual(len(sources), 3)      # min_reports=3 保底（tail 至少一篇）
 
 
 if __name__ == "__main__":

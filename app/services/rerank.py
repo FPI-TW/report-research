@@ -13,6 +13,7 @@ transformers/torch 皆既有依賴，故仍零新增。
 from __future__ import annotations
 
 import logging
+import math
 import threading
 
 from app.config import get_settings
@@ -20,6 +21,7 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 _model = None
+_load_failed = False  # 熔斷：載入失敗一次後不再重試（否則每次請求都重載+再阻塞）
 _lock = threading.Lock()
 
 
@@ -55,22 +57,37 @@ class _CrossEncoder:
 
 
 def _get_model():
-    global _model
-    if _model is None:
-        with _lock:
-            if _model is None:
-                _model = _CrossEncoder(get_settings().rerank_model)  # CPU
+    """回單例 cross-encoder；載入失敗回 None 並熔斷（不再重試），呼叫端 fail-open。"""
+    global _model, _load_failed
+    if _model is not None:
+        return _model
+    if _load_failed:
+        return None  # 已知不可用：短路，不重載、不再阻塞
+    with _lock:
+        if _model is not None:
+            return _model
+        if _load_failed:
+            return None
+        try:
+            _model = _CrossEncoder(get_settings().rerank_model)  # CPU
+        except Exception:
+            _load_failed = True
+            logger.warning("rerank model load failed; disabling rerank", exc_info=True)
+            return None
     return _model
 
 
 def rerank_scores(query: str, passages: list[str]) -> list[float]:
-    """回每個 passage 對 query 的相關度 ∈ [0,1]（sigmoid 正規化）。空 → []。
+    """回每個 passage 對 query 的相關度 ∈ [0,1]（sigmoid 正規化）。
 
+    空 passages → []；模型不可用（載入失敗/已熔斷）→ [] → rerank_scored 以形狀不符 fail-open。
     compute_score 恆回 list；保留 float→list 防禦以相容注入 fake 的單測。
     """
     if not passages:
         return []
     model = _get_model()
+    if model is None:
+        return []
     raw = model.compute_score([(query, p) for p in passages], normalize=True)
     if isinstance(raw, (int, float)):
         raw = [raw]
@@ -78,9 +95,11 @@ def rerank_scores(query: str, passages: list[str]) -> list[float]:
 
 
 def rerank_scored(question, scored, *, top_m, timer=None):
-    """對 scored 前 top_m 個（依現行序）重排：rerank 分覆蓋 fused、tier/row 保留；
-    尾段壓縮到嚴格低於最低重排分並保相對序（守 recall、同 tier 內不反超）。
-    任何例外/退化/形狀不符 → 回原 scored（fail-open）。
+    """對 scored 前 top_m 個重排：rerank 分覆蓋 fused、tier/row 保留，head 依
+    (tier, rerank 分) 皆降序重排——tier 硬性優先（字面命中永在語意之上），同 tier
+    內取最相關者先入，故 select_reports 每報告前 max_passages 段落即重排後最相關者。
+    尾段（top_m 之後）壓縮到嚴格低於最低重排分並保相對序（守 recall、同 tier 內不反超）。
+    推論失敗/形狀不符（含模型不可用回 []）/非有限分數(NaN/inf)/退化 → 回原 scored（fail-open）。
     """
     if not scored or top_m <= 0:
         return scored
@@ -88,9 +107,13 @@ def rerank_scored(question, scored, *, top_m, timer=None):
         head = scored[:top_m]
         tail = scored[top_m:]
         scores = rerank_scores(question, [row.content for (_t, _f, row) in head])
-        if len(scores) != len(head):
-            return scored  # 形狀不符：fail-open
-        reranked = [(tier, scores[i], row) for i, (tier, _f, row) in enumerate(head)]
+        if len(scores) != len(head) or not all(math.isfinite(s) for s in scores):
+            return scored  # 形狀不符（含模型不可用）/NaN/inf：fail-open
+        reranked = sorted(
+            ((tier, scores[i], row) for i, (tier, _f, row) in enumerate(head)),
+            key=lambda x: (x[0], x[1]),
+            reverse=True,
+        )
         if tail:
             min_rr = min(scores)
             tail_fused = [f for (_t, f, _r) in tail]

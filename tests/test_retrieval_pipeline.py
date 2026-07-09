@@ -49,15 +49,18 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
 
         called = {"n": 0}
+        seen = {}
+        hybrid_out = [(0, 0.5, "row")]
 
         class _Session:
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
 
         async def _fake_hybrid(session, q, vec, **kw):
-            return [(0, 0.5, "row")]
+            return hybrid_out
 
         def _fake_build(scored, **kw):
+            seen["build_scored"] = scored
             return (["S"], "CTX")
 
         def _spy_rerank(question, scored, *, top_m, timer=None):
@@ -75,6 +78,7 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(out, (["S"], "CTX"))
         self.assertEqual(called["n"], 0)  # rerank_top_m=0 → 不呼叫
+        self.assertIs(seen["build_scored"], hybrid_out)  # build_context 收到未變動的原 scored
 
     async def test_rerank_top_m_positive_calls_rerank_and_marks_timer(self):
         import app.services.retrieval_pipeline as rp

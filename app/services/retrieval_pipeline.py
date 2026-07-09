@@ -39,7 +39,11 @@ async def retrieve_context(
     if timer is not None:
         timer.mark("retrieve")
     if rerank_top_m > 0:
-        scored = rerank_scored(question, scored, top_m=rerank_top_m, timer=timer)
+        # CPU-bound cross-encoder：比照 embed_query_cached 卸載到執行緒，避免同步
+        # 推論（ask 50 / report 120 對候選）阻塞單一 asyncio event loop 凍結全站併發。
+        scored = await asyncio.to_thread(
+            rerank_scored, question, scored, top_m=rerank_top_m, timer=timer
+        )
     return build_context(
         scored,
         max_reports=max_reports,

@@ -127,12 +127,18 @@ async def run(
     judge_model: str = DEFAULT_JUDGE_MODEL,
     limit: int | None = None,
     concurrency: int = 3,
+    rerank_top_m: int = 0,
 ) -> dict:
-    """讀題集 → 有界併發 eval_question → aggregate → 寫報表（{summary, cases}）。"""
+    """讀題集 → 有界併發 eval_question → aggregate → 寫報表（{summary, cases}）。
+
+    rerank_top_m>0 時檢索走 M2 cross-encoder 重排（rerank-on 基準線），=0 為 rerank-off。
+    """
     dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
     questions = dataset.get("questions", [])
     if limit is not None:
         questions = questions[:limit]
+
+    retrieval_params = {**RETRIEVAL_PARAMS, "rerank_top_m": rerank_top_m}
 
     async def _judge(system: str, user: str):
         return await judge_json(user, system=system, model=judge_model)
@@ -142,7 +148,7 @@ async def run(
     async def _one(q: dict) -> dict:
         async with sem:  # 限制同時 spawn 的 claude CLI 數，避開 IO 風暴
             return await eval_question(
-                q, judge=_judge, embed=embed_query_cached, retrieval_params=RETRIEVAL_PARAMS
+                q, judge=_judge, embed=embed_query_cached, retrieval_params=retrieval_params
             )
 
     cases = await asyncio.gather(*[_one(q) for q in questions])
@@ -178,6 +184,12 @@ def _main() -> None:
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--concurrency", type=int, default=3)
+    parser.add_argument(
+        "--rerank-top-m",
+        type=int,
+        default=0,
+        help="檢索重排候選上限（>0 走 M2 cross-encoder 重排，0=off）",
+    )
     parser.add_argument("--json", action="store_true", help="改輸出完整 JSON 到 stdout")
     args = parser.parse_args()
 
@@ -188,6 +200,7 @@ def _main() -> None:
             judge_model=args.judge_model,
             limit=args.limit,
             concurrency=args.concurrency,
+            rerank_top_m=args.rerank_top_m,
         )
     )
     if args.json:

@@ -221,7 +221,10 @@ export function turnFromHistory(item: ConversationTurn): Turn {
     errorText: null,
     followups: item.followups,
     priorVersions: [],
-    versionIndex: 0,
+    // priorVersions 尚未載入（見 AskPage pager 首次點擊觸發 loadVersions）；
+    // 多版本時先假定使用者看的是最新版，index 對齊 versionCount-1，
+    // 避免 pager 標籤（N/M）與實際顯示內容（永遠是 liveView）錯位。
+    versionIndex: item.version_count > 1 ? item.version_count - 1 : 0,
     rootQaId: item.root_qa_id,
     versionCount: item.version_count,
   }

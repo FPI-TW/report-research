@@ -93,6 +93,12 @@ export function useAskController(): UseAskController {
     if (!turnId) return
     const t = stateRef.current.turns.find(x => x.id === turnId)
     let qaId: string | null = t?.qaId ?? null
+    // 重生途中被停止：priorVersions 已由 regenerate-start 快照被取代的版本，
+    // regenerate_of 應為該版本的 qaId 以接回版本鏈（編輯途中 priorVersions 已被
+    // submit-edit 清空，regenOf 自然 undefined，不 chain）。
+    const regenOf = t && t.priorVersions.length > 0
+      ? (t.priorVersions[t.priorVersions.length - 1].qaId ?? undefined)
+      : undefined
     try {
       const r = await stopAsk({
         question: t?.question ?? '',
@@ -100,6 +106,7 @@ export function useAskController(): UseAskController {
         partial_answer: t?.answer ?? '',
         sources: t?.sources ?? [],
         stages: t?.stages ?? [],
+        ...(regenOf ? { regenerate_of: regenOf } : {}),
       })
       qaId = r.qa_id
     } catch { /* fail-open：仍標 stopped */ }

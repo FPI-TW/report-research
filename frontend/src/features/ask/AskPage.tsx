@@ -64,8 +64,11 @@ export default function AskPage() {
                   onRegenerate={() => ctrl.regenerate(t.id, t.qaId, t.question)}
                   onFollowup={q => handleSubmit(q)}
                   onSetVersion={i => {
-                    ctrl.setVersion(t.id, i)
-                    if (t.priorVersions.length === 0 && t.rootQaId && t.versionCount > 1) void ctrl.loadVersions(t.id, t.rootQaId)
+                    if (t.priorVersions.length === 0 && t.rootQaId && t.versionCount > 1) {
+                      void ctrl.loadVersions(t.id, t.rootQaId).then(() => ctrl.setVersion(t.id, i))
+                    } else {
+                      ctrl.setVersion(t.id, i)
+                    }
                   }}
                 />
                 <DeepReportPanel

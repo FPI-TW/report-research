@@ -93,3 +93,26 @@ test('version pager shows when versionCount > 1', () => {
   render(<AssistantMessage turn={turn} {...noop} />)
   expect(screen.getByText('2/2')).toBeInTheDocument()
 })
+
+test('重載最新版（priorVersions 尚未載入）：pager 標籤與內容不錯位，回饋鈕顯示', () => {
+  const onFeedback = vi.fn()
+  const turn = makeTurn({ phase: 'done', qaId: 'q2', priorVersions: [], versionIndex: 1, versionCount: 2, answer: '最新' })
+  render(<AssistantMessage turn={turn} {...noop} onFeedback={onFeedback} />)
+  expect(screen.getByText('2/2')).toBeInTheDocument()
+  expect(screen.getByText('最新')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '讚' }))
+  expect(onFeedback).toHaveBeenCalledWith('like')
+})
+
+test('檢視舊版快照（非 live）：回饋鈕隱藏，追問 chips 隱藏', () => {
+  const turn = makeTurn({
+    phase: 'done', qaId: 'q2', versionCount: 2, versionIndex: 0, followups: ['追問一'],
+    priorVersions: [{ answer: '舊答案', sources: [], extSources: [], qaId: 'q1', thinkingMs: null, stages: [], feedback: null, followups: [] }],
+  })
+  render(<AssistantMessage turn={turn} {...noop} />)
+  expect(screen.getByText('1/2')).toBeInTheDocument()
+  expect(screen.getByText(/舊答案/)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '讚' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '倒讚' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '追問一' })).toBeNull()
+})

@@ -46,4 +46,28 @@ describe('useAskController stop', () => {
     await act(async () => { await result.current.stop() })
     expect(result.current.state.turns[0].phase).toBe('stopped')
   })
+
+  it('stop during regenerate forwards regenerate_of (被取代版本的 qaId)', async () => {
+    vi.spyOn(api, 'streamAsk')
+      .mockReturnValueOnce((async function* () {
+        yield { event: 'token', data: '第一版' }
+        yield { event: 'done', data: { qa_id: 'qa-v1', conversation_id: 'c1' } }
+      })())
+      .mockReturnValueOnce(oneToken())
+    const stopSpy = vi.spyOn(api, 'stopAsk').mockResolvedValue({ qa_id: 'qa-stop' })
+
+    const { result } = renderHook(() => useAskController(), { wrapper })
+    act(() => { result.current.submit('台積電') })
+    await waitFor(() => expect(result.current.state.turns[0]?.qaId).toBe('qa-v1'))
+
+    const turnId = result.current.state.turns[0].id
+    act(() => { result.current.regenerate(turnId, 'qa-v1', '台積電') })
+    await waitFor(() => expect(result.current.state.turns[0]?.answer).toBe('部分'))
+
+    await act(async () => { await result.current.stop() })
+
+    expect(stopSpy).toHaveBeenCalledOnce()
+    expect(stopSpy.mock.calls[0][0]).toMatchObject({ regenerate_of: 'qa-v1' })
+    expect(result.current.state.turns[0].phase).toBe('stopped')
+  })
 })

@@ -186,6 +186,17 @@ describe('askReducer M3', () => {
     expect(s.turns[0].answer).toBe('')
   })
 
+  it('turnFromHistory 重載多版本 turn：versionIndex 對齊最新版（避免 pager 標籤/內容錯位）', () => {
+    const t = turnFromHistory({
+      id: 'qa9', question: 'H', answer: '最新答案', created_at: null, feedback: null,
+      sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [],
+      stages: [], followups: [], root_qa_id: 'qa1', version_count: 3, stopped: false,
+    })
+    expect(t.versionIndex).toBe(2)
+    expect(t.versionCount).toBe(3)
+    expect(t.priorVersions).toEqual([])
+  })
+
   it('load-versions fills priorVersions from all-but-last', () => {
     const versions = [
       { qa_id: 'v1', answer: '答一', sources: [], ext_sources: [], thinking_ms: 100, stages: [], feedback: null, created_at: null },

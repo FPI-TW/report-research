@@ -42,10 +42,10 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
     )
   }
 
-  // 目前顯示版本：live（versionIndex===priorVersions.length）或歷史快照。
+  // 目前顯示版本：live（正在看最新版，versionIndex===versionCount-1）或歷史快照。
   // 歷史對話重載時 versionCount>1 但 priorVersions 尚未載入（見 AskPage pager 首次點擊觸發
   // loadVersions）；此時快照取不到，退回顯示 live 內容，避免讀取 undefined 炸掉。
-  const isLive = turn.versionIndex === turn.priorVersions.length
+  const isLive = turn.versionIndex === turn.versionCount - 1
   const liveView = { answer: turn.answer, sources: turn.sources, extSources: turn.extSources, feedback: turn.feedback, qaId: turn.qaId }
   const view = isLive ? liveView : (turn.priorVersions[turn.versionIndex] ?? liveView)
 
@@ -90,7 +90,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       )}
       {showActions && (
         <div className={styles.actions}>
-          {view.qaId && (
+          {isLive && view.qaId && (
             <>
               <button type="button" className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback('like')} aria-label="讚"><Icon name="thumbUp" size={15} /></button>
               <button type="button" className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback('dislike')} aria-label="倒讚"><Icon name="thumbDown" size={15} /></button>

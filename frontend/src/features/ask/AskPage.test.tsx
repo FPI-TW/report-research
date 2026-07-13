@@ -74,3 +74,18 @@ test('離題→Callout warning', async () => {
   fireEvent.keyDown(screen.getByPlaceholderText('輸入你的問題…'), { key: 'Enter' })
   expect(await screen.findByRole('alert')).toHaveTextContent('無法回答此問題')
 })
+
+test('對話進行中頂端顯示檢索↔問答切換鈕', async () => {
+  streamAsk.mockReturnValue(immediate([
+    { event: 'sources', data: [] },
+    { event: 'status', data: { stage: 'generating', thinking_ms: 1000 } },
+    { event: 'token', data: '答案' },
+    { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1', cited: [] } },
+  ]))
+  wrap()
+  fireEvent.change(screen.getByPlaceholderText('輸入你的問題…'), { target: { value: '台積電' } })
+  fireEvent.keyDown(screen.getByPlaceholderText('輸入你的問題…'), { key: 'Enter' })
+  expect(await screen.findByText('台積電')).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: /檢索研報/ })).toHaveAttribute('href', '/search')
+  expect(screen.getByText('智能問答').closest('[aria-current="page"]')).not.toBeNull()
+})

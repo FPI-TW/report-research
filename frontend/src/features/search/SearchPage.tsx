@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { useStats } from '../../lib/useStats'
 import { useSearchResults } from '../../lib/useSearchResults'
 import {
@@ -11,8 +11,8 @@ import { queryTerms } from '../../lib/terms'
 import { latestId } from '../../lib/isLatest'
 import { resultsMetaText, emptyState } from '../../lib/resultsMeta'
 import type { TableSort, TableSortKey } from '../../lib/tableSort'
-import { Icon } from '../../components/primitives/Icon'
 import { BrandLogo } from '../../components/BrandLogo'
+import { ModeSwitch } from '../../components/shell/ModeSwitch'
 import { SearchBar } from './SearchBar'
 import { MarketChipBar } from './MarketChipBar'
 import { SortMenu } from './SortMenu'
@@ -81,14 +81,7 @@ export default function SearchPage() {
               {stats.data ? `收錄 ${stats.data.total_reports.toLocaleString()} 篇券商研報 — ` : ''}
               語意檢索 · 智能問答 · 深度研報
             </p>
-            <div className={styles.heroModes}>
-              <span className={`${styles.heroMode} ${styles.heroModeActive}`} aria-current="page">
-                <Icon name="search" size={15} />檢索研報
-              </span>
-              <Link to="/ask" className={styles.heroMode}>
-                <Icon name="messages" size={15} />智能問答
-              </Link>
-            </div>
+            <ModeSwitch className={styles.heroSwitch} />
           </div>
         )}
 

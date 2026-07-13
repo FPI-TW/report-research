@@ -1,0 +1,18 @@
+/* 共享元素轉場：檢索↔問答切換鈕。名稱定義於全域（非 CSS Module），避免在地化雜湊；
+   每頁僅一個 ModeSwitch，故名稱唯一。 */
+[data-vt='mode-switch'] { view-transition-name: tf-mode-switch; }
+[data-vt='mode-thumb'] { view-transition-name: tf-mode-thumb; }
+
+/* 讓 thumb／容器的 morph 使用品牌時序（240ms＋tf-ease-out） */
+::view-transition-group(tf-mode-thumb),
+::view-transition-group(tf-mode-switch) {
+  animation-duration: var(--tf-dur-3);
+  animation-timing-function: var(--tf-ease-out);
+}
+
+/* 偏好減少動態 → View Transition 立即切換（無 morph／crossfade） */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) { animation: none !important; }
+}

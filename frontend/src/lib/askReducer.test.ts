@@ -99,14 +99,14 @@ test('feedback / reset / load', () => {
   expect(s.turns[0].feedback).toBe('like')
   s = askReducer(s, { type: 'reset' })
   expect(s.turns).toEqual([])
-  const turn = turnFromHistory({ id: 'qa9', question: 'H', answer: 'A', created_at: '2026-06-20T00:00:00Z', feedback: 'dislike', sources: [], ext_sources: [], is_offtopic: false, thinking_ms: 1500, reports: [{ report_id: 'rp', title: 'RT', download_url: '/api/report-doc/rp/pdf', created_at: null }] })
+  const turn = turnFromHistory({ id: 'qa9', question: 'H', answer: 'A', created_at: '2026-06-20T00:00:00Z', feedback: 'dislike', sources: [], ext_sources: [], is_offtopic: false, thinking_ms: 1500, reports: [{ report_id: 'rp', title: 'RT', download_url: '/api/report-doc/rp/pdf', created_at: null }], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false })
   s = askReducer(s, { type: 'load', turns: [turn] })
   expect(s.turns[0]).toMatchObject({ id: 'qa9', phase: 'done', qaId: 'qa9', feedback: 'dislike' })
   expect(s.turns[0].report).toMatchObject({ status: 'done', downloadUrl: '/api/report-doc/rp/pdf' })
 })
 
 test('turnFromHistory 離題轉 notice、qaId null', () => {
-  const t = turnFromHistory({ id: 'qaX', question: 'H', answer: '無法回答此問題', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: true, thinking_ms: null, reports: [] })
+  const t = turnFromHistory({ id: 'qaX', question: 'H', answer: '無法回答此問題', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: true, thinking_ms: null, reports: [], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false })
   expect(t.phase).toBe('notice')
   expect(t.noticeText).toBe('無法回答此問題')
   expect(t.qaId).toBeNull()

@@ -72,6 +72,7 @@ function applyAsk(t: Turn, ev: AskEvent): Turn {
     case 'ext_sources': return { ...t, extSources: ev.data.filter(e => HTTP.test(e.url)) }
     case 'token': return { ...t, answer: t.answer + ev.data, phase: t.isOfftopic ? 'notice' : 'streaming' }
     case 'notice': return { ...t, phase: 'notice', isOfftopic: true, noticeText: ev.data }
+    case 'followups': return t  // followups 由 controller 派送專屬 action 處理；此處為型別窮盡的 no-op
     case 'done': return {
       ...t,
       phase: t.isOfftopic ? 'notice' : 'done',

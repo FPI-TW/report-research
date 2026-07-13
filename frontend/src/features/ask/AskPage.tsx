@@ -53,7 +53,7 @@ export default function AskPage() {
           ) : (
             turns.map(t => (
               <div key={t.id} className="tf-reveal">
-                <UserMessage text={t.question} />
+                <UserMessage text={t.question} onEdit={q => ctrl.editResubmit(t.id, t.qaId, q)} />
                 <AssistantMessage
                   turn={t}
                   onCite={() => setDrawer({ open: true, turnId: t.id })}
@@ -61,6 +61,15 @@ export default function AskPage() {
                   onFeedback={v => t.qaId && ctrl.setFeedback(t.id, t.qaId, v)}
                   onNoticeRetry={() => setDraft(t.question)}
                   onErrorRetry={() => handleSubmit(t.question)}
+                  onRegenerate={() => ctrl.regenerate(t.id, t.qaId, t.question)}
+                  onFollowup={q => handleSubmit(q)}
+                  onSetVersion={i => {
+                    if (t.priorVersions.length === 0 && t.rootQaId && t.versionCount > 1) {
+                      void ctrl.loadVersions(t.id, t.rootQaId).then(() => ctrl.setVersion(t.id, i))
+                    } else {
+                      ctrl.setVersion(t.id, i)
+                    }
+                  }}
                 />
                 <DeepReportPanel
                   report={t.report}
@@ -73,7 +82,7 @@ export default function AskPage() {
         </div>
         {turns.length > 0 && (
           <div className={styles.composerBar}>
-            <Composer value={draft} onChange={setDraft} onSubmit={handleSubmit} disabled={busy} />
+            <Composer value={draft} onChange={setDraft} onSubmit={handleSubmit} disabled={busy} onStop={ctrl.stop} />
           </div>
         )}
       </div>

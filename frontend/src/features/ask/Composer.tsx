@@ -7,10 +7,11 @@ interface Props {
   onChange: (v: string) => void
   onSubmit: (q: string) => void
   disabled?: boolean
+  onStop?: () => void
   variant?: 'center' | 'bottom'
 }
 
-export function Composer({ value, onChange, onSubmit, disabled, variant = 'bottom' }: Props) {
+export function Composer({ value, onChange, onSubmit, disabled, onStop, variant = 'bottom' }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
     const el = ref.current
@@ -41,9 +42,15 @@ export function Composer({ value, onChange, onSubmit, disabled, variant = 'botto
           onChange={e => onChange(e.target.value)}
           onKeyDown={onKey}
         />
-        <button type="button" className={styles.send} onClick={fire} disabled={disabled} aria-label="送出" title="送出">
-          <Icon name="send" size={20} />
-        </button>
+        {disabled ? (
+          <button type="button" className={styles.send} onClick={onStop} aria-label="停止生成" title="停止生成">
+            <Icon name="x" size={18} />
+          </button>
+        ) : (
+          <button type="button" className={styles.send} onClick={fire} aria-label="送出" title="送出">
+            <Icon name="send" size={20} />
+          </button>
+        )}
       </div>
     </div>
   )

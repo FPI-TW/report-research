@@ -48,3 +48,12 @@
 .srcBtn:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
 /* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
 @keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.stopped { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--tf-text-3); }
+.pager { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.pagerBtn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 14px; line-height: 1; cursor: pointer; }
+.pagerBtn:hover:not(:disabled) { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
+.pagerBtn:disabled { opacity: 0.4; cursor: default; }
+.pagerText { font-size: 12px; color: var(--tf-text-3); }
+.followups { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip { border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12.5px; padding: 6px 12px; cursor: pointer; }
+.chip:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }

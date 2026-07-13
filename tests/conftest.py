@@ -11,6 +11,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 # Repo root = parent of this tests/ directory
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
@@ -22,3 +24,23 @@ if _REPO_ROOT not in sys.path:
 os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
 os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
+
+
+@pytest.fixture(autouse=True)
+def _stub_followups():
+    """預設關閉追問建議（M3）：主 RAG 路徑在 done 之後會呼叫 generate_followups，
+    真跑會外連 claude CLI 並讓事件序尾隨 followups。除非測試明確驗追問，否則一律
+    stub 成回 []（不發 followups 事件）。明確驗追問的測試在其函式內自行覆寫 + 還原。"""
+    import app.services.answer as ans
+
+    orig = getattr(ans, "generate_followups", None)
+
+    async def _empty(*a, **k):
+        return []
+
+    ans.generate_followups = _empty
+    try:
+        yield
+    finally:
+        if orig is not None:
+            ans.generate_followups = orig

@@ -1,10 +1,36 @@
 import { z } from 'zod'
 import { getJSON } from './api'
 import { readSSE, type RawSSEEvent } from './readSSE'
-import { conversationTurnSchema, type ConversationTurn } from './askSchemas'
+import { conversationTurnSchema, qaVersionSchema, type ConversationTurn, type QaVersion } from './askSchemas'
 
-export function streamAsk(body: { question: string; conversation_id?: string }, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {
+export function streamAsk(
+  body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string },
+  signal: AbortSignal,
+): AsyncGenerator<RawSSEEvent> {
   return readSSE('/api/ask', body, signal)
+}
+
+export async function stopAsk(body: {
+  question: string
+  conversation_id?: string | null
+  partial_answer: string
+  sources?: unknown[]
+  ext_sources?: unknown[]
+  stages?: string[]
+  regenerate_of?: string
+}): Promise<{ qa_id: string }> {
+  const resp = await fetch('/api/ask/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    credentials: 'same-origin',
+  })
+  if (!resp.ok) throw new Error(`stop failed: ${resp.status}`)
+  return resp.json()
+}
+
+export function getQaVersions(rootId: string): Promise<QaVersion[]> {
+  return getJSON(`/api/qa/${encodeURIComponent(rootId)}/versions`, z.array(qaVersionSchema), { cache: 'no-store' })
 }
 
 export function streamReport(body: { question: string; conversation_id?: string; qa_id?: string }, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {

@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { parseAskEvent, parseReportEvent, conversationTurnSchema, sourceSchema } from './askSchemas'
 
 test('parseAskEvent 驗證各事件、拒未知/壞形狀', () => {
@@ -48,4 +48,26 @@ test('conversationTurnSchema：sources 含歷史缺欄物件仍可解析（不 t
   expect(t.sources).toHaveLength(1)
   expect(t.sources[0].is_latest).toBe(false)
   expect(t.sources[0].report_date).toBeNull()
+})
+
+describe('askSchemas M3', () => {
+  it('parses followups event', () => {
+    const ev = parseAskEvent({ event: 'followups', data: ['問一', '問二'] })
+    expect(ev).toEqual({ event: 'followups', data: ['問一', '問二'] })
+  })
+
+  it('rejects non-string-array followups', () => {
+    expect(parseAskEvent({ event: 'followups', data: [1, 2] })).toBeNull()
+  })
+
+  it('conversationTurn defaults new fields', () => {
+    const t = conversationTurnSchema.parse({
+      id: 'x', question: 'q', answer: 'a',
+    })
+    expect(t.stages).toEqual([])
+    expect(t.followups).toEqual([])
+    expect(t.version_count).toBe(1)
+    expect(t.stopped).toBe(false)
+    expect(t.root_qa_id).toBeNull()
+  })
 })

@@ -2,7 +2,7 @@ import { useCallback, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { askReducer, initialAskState, turnFromHistory, type AskState } from './askReducer'
 import { parseAskEvent, parseReportEvent } from './askSchemas'
-import { streamAsk, streamReport, getConversation, sendFeedback } from './askApi'
+import { streamAsk, streamReport, getConversation, sendFeedback, stopAsk, getQaVersions } from './askApi'
 
 let seq = 0
 const newId = () => `t${Date.now()}_${seq++}`
@@ -11,6 +11,11 @@ export interface UseAskController {
   state: AskState
   conversationId: string | null
   submit: (question: string) => void
+  stop: () => Promise<void>
+  regenerate: (turnId: string, qaId: string | null, question: string) => void
+  editResubmit: (turnId: string, qaId: string | null, newQuestion: string) => void
+  setVersion: (turnId: string, index: number) => void
+  loadVersions: (turnId: string, rootId: string) => Promise<void>
   generateReport: (turnId: string, question: string, qaId: string | null) => void
   declineReport: (turnId: string) => void
   loadConversation: (id: string) => Promise<void>
@@ -28,6 +33,9 @@ export function useAskController(): UseAskController {
   const reportCtrl = useRef<AbortController | null>(null)
   const reportReqId = useRef(0)
   const reportTurnRef = useRef<string | null>(null)
+  const streamTurnRef = useRef<string | null>(null)
+  const stateRef = useRef(state)
+  stateRef.current = state
 
   const abortAll = useCallback(() => {
     askCtrl.current?.abort(); askCtrl.current = null
@@ -38,18 +46,15 @@ export function useAskController(): UseAskController {
     }
   }, [])
 
-  const submit = useCallback((question: string) => {
-    const q = question.trim()
-    if (!q) return
+  // 共用串流：submit/regenerate/editResubmit 皆走此
+  const runStream = useCallback((turnId: string, body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string }) => {
     abortAll()
     const my = ++reqId.current
-    const id = newId()
     const ctrl = new AbortController()
     askCtrl.current = ctrl
-    dispatch({ type: 'submit', id, question: q, startedAt: Date.now() })
+    streamTurnRef.current = turnId
     void (async () => {
       try {
-        const body = convRef.current ? { question: q, conversation_id: convRef.current } : { question: q }
         for await (const raw of streamAsk(body, ctrl.signal)) {
           if (my !== reqId.current) return
           const ev = parseAskEvent(raw)
@@ -61,14 +66,80 @@ export function useAskController(): UseAskController {
             }
             void qc.invalidateQueries({ queryKey: ['conversations'] })
           }
-          dispatch({ type: 'ask-event', id, event: ev })
+          if (ev.event === 'followups') dispatch({ type: 'followups', id: turnId, data: ev.data })
+          else dispatch({ type: 'ask-event', id: turnId, event: ev })
         }
-        if (my === reqId.current) dispatch({ type: 'ask-end', id })
+        if (my === reqId.current) { streamTurnRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
       } catch {
-        if (my === reqId.current) dispatch({ type: 'ask-end', id })
+        if (my === reqId.current) { streamTurnRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
       }
     })()
   }, [abortAll, qc])
+
+  const submit = useCallback((question: string) => {
+    const q = question.trim()
+    if (!q) return
+    const id = newId()
+    dispatch({ type: 'submit', id, question: q, startedAt: Date.now() })
+    const body = convRef.current ? { question: q, conversation_id: convRef.current } : { question: q }
+    runStream(id, body)
+  }, [runStream])
+
+  const stop = useCallback(async () => {
+    const turnId = streamTurnRef.current
+    ++reqId.current
+    askCtrl.current?.abort(); askCtrl.current = null
+    streamTurnRef.current = null
+    if (!turnId) return
+    const t = stateRef.current.turns.find(x => x.id === turnId)
+    let qaId: string | null = t?.qaId ?? null
+    // 重生途中被停止：priorVersions 已由 regenerate-start 快照被取代的版本，
+    // regenerate_of 應為該版本的 qaId 以接回版本鏈（編輯途中 priorVersions 已被
+    // submit-edit 清空，regenOf 自然 undefined，不 chain）。
+    const regenOf = t && t.priorVersions.length > 0
+      ? (t.priorVersions[t.priorVersions.length - 1].qaId ?? undefined)
+      : undefined
+    try {
+      const r = await stopAsk({
+        question: t?.question ?? '',
+        conversation_id: convRef.current,
+        partial_answer: t?.answer ?? '',
+        sources: t?.sources ?? [],
+        stages: t?.stages ?? [],
+        ...(regenOf ? { regenerate_of: regenOf } : {}),
+      })
+      qaId = r.qa_id
+    } catch { /* fail-open：仍標 stopped */ }
+    dispatch({ type: 'ask-stop', id: turnId, qaId })
+  }, [])
+
+  const regenerate = useCallback((turnId: string, qaId: string | null, question: string) => {
+    dispatch({ type: 'regenerate-start', id: turnId })
+    const body: { question: string; conversation_id?: string; regenerate_of?: string } = { question }
+    if (convRef.current) body.conversation_id = convRef.current
+    if (qaId) body.regenerate_of = qaId
+    runStream(turnId, body)
+  }, [runStream])
+
+  const editResubmit = useCallback((turnId: string, qaId: string | null, newQuestion: string) => {
+    const q = newQuestion.trim()
+    if (!q) return
+    dispatch({ type: 'truncate-after', id: turnId })
+    dispatch({ type: 'submit-edit', id: turnId, question: q })
+    const body: { question: string; conversation_id?: string; edit_of?: string } = { question: q }
+    if (convRef.current) body.conversation_id = convRef.current
+    if (qaId) body.edit_of = qaId
+    runStream(turnId, body)
+  }, [runStream])
+
+  const setVersion = useCallback((turnId: string, index: number) => dispatch({ type: 'set-version', id: turnId, index }), [])
+
+  const loadVersions = useCallback(async (turnId: string, rootId: string) => {
+    try {
+      const versions = await getQaVersions(rootId)
+      dispatch({ type: 'load-versions', id: turnId, versions })
+    } catch { /* 版本載入失敗不打擾 */ }
+  }, [])
 
   const generateReport = useCallback((turnId: string, question: string, qaId: string | null) => {
     if (reportTurnRef.current && reportTurnRef.current !== turnId) dispatch({ type: 'report-cancel', id: reportTurnRef.current })
@@ -130,5 +201,8 @@ export function useAskController(): UseAskController {
     void sendFeedback(qaId, value).catch(() => { /* 回饋失敗不打擾 */ })
   }, [])
 
-  return { state, conversationId, submit, generateReport, declineReport, loadConversation, newConversation, setFeedback }
+  return {
+    state, conversationId, submit, stop, regenerate, editResubmit, setVersion, loadVersions,
+    generateReport, declineReport, loadConversation, newConversation, setFeedback,
+  }
 }

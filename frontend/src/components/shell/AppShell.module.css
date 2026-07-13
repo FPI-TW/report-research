@@ -5,3 +5,9 @@
 /* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
 @keyframes tf-fade { from { opacity: 0; } to { opacity: 1; } }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* 支援 View Transitions 的瀏覽器：換頁淡入由 VT root crossfade 主導，
+   縮短 .routeReveal 以免雙淡入疊加；不支援者維持原 --tf-dur-2 淡入（fallback）。 */
+@supports (view-transition-name: none) {
+  .routeReveal { animation-duration: var(--tf-dur-1); }
+}

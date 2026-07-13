@@ -544,6 +544,37 @@ async def _load_qa_meta(qa_id: str):
         return None
 
 
+async def _deactivate_qa(qa_id: str) -> None:
+    """把一列標為 inactive（重新生成的舊版本）；best-effort。"""
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text("UPDATE research.qa_log SET active = false WHERE id = :id"),
+                {"id": qa_id},
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
+async def _count_versions(group_key: str) -> int:
+    """某群組（COALESCE(root_qa_id, id)）的版本總數（含 inactive）。"""
+    try:
+        async with SessionFactory() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM research.qa_log "
+                        "WHERE COALESCE(root_qa_id, id) = :gk"
+                    ),
+                    {"gk": group_key},
+                )
+            ).first()
+        return int(row[0]) if row else 1
+    except Exception:
+        return 1
+
+
 async def log_stopped_qa(
     question: str,
     partial_answer: str,
@@ -907,17 +938,29 @@ async def answer_question(
     filters: dict | None = None,
     model: str = DEFAULT_MODEL,
     conversation_id: str | None = None,
+    regenerate_of: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """產生 ("sources"|"status"|"token"|"notice"|"ext_sources"|"done", payload) 事件序列。
 
     首輪（未帶 conversation_id）：意圖判定與檢索並行（省延遲）。
     續問（帶 conversation_id）：先載近輪歷史，一次 Haiku 改寫追問為獨立查詢並判定意圖，
     再以改寫後查詢檢索；先前對話內嵌進 prompt。所有 done 事件回傳 conversation_id。
+    regenerate_of 有值時：讀舊列群組鍵、沿用其 conversation_id、停用舊列，
+    新列與舊列同組（root_qa_id），done 事件回傳 root_qa_id 與 version_count。
     """
     filters = filters or {}
     started = time.monotonic()
     timer = _StageTimer()
     conv_id = conversation_id or str(uuid.uuid4())
+
+    new_root: str | None = None
+    if regenerate_of:
+        _meta = await _load_qa_meta(regenerate_of)
+        if _meta is not None:
+            _old_root, _old_conv, _ = _meta
+            conv_id = _old_conv or conv_id
+            new_root = _old_root or regenerate_of
+            await _deactivate_qa(regenerate_of)
 
     stages_seen: list[str] = []
 
@@ -1014,6 +1057,7 @@ async def answer_question(
             conversation_id=conv_id,
             thinking_ms=thinking_ms,
             stages=stages_seen,
+            root_qa_id=new_root,
         )
         yield (
             "done",
@@ -1039,6 +1083,7 @@ async def answer_question(
             conversation_id=conv_id,
             thinking_ms=thinking_ms,
             stages=stages_seen,
+            root_qa_id=new_root,
         )
         yield (
             "done",
@@ -1101,6 +1146,7 @@ async def answer_question(
         conversation_id=conv_id,
         thinking_ms=thinking_ms,
         stages=stages_seen,
+        root_qa_id=new_root,
     )
     logger.info(
         "qa_timing id=%s %s total_ms=%s thinking_ms=%s",
@@ -1109,6 +1155,8 @@ async def answer_question(
         timer.total_ms(),
         thinking_ms,
     )
+    group_key = new_root or qa_id
+    version_count = await _count_versions(group_key) if regenerate_of else 1
     offer_report, report_title = should_offer_report(question, cited, body)
     yield (
         "done",
@@ -1119,6 +1167,8 @@ async def answer_question(
             "thinking_ms": thinking_ms,
             "offer_report": offer_report,
             "report_title": report_title,
+            "root_qa_id": group_key,
+            "version_count": version_count,
         },
     )
 

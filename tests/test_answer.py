@@ -2074,5 +2074,65 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("followups", [k for k, _ in events])
 
 
+class RegenerateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_regenerate_deactivates_old_and_groups(self):
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        state = {"deactivated": None, "logged_root": "unset"}
+
+        async def fake_meta(qid):
+            return (None, "c1", None)  # 舊列無 root → 群組=舊 id
+
+        async def fake_deactivate(qid):
+            state["deactivated"] = qid
+
+        async def fake_count(gk):
+            return 2
+
+        async def fake_log(*a, **k):
+            state["logged_root"] = k.get("root_qa_id")
+            return "new-qa"
+
+        async def fake_search(*a, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "新答案[1]"
+
+        async def fake_intent(q, **k): return True
+        async def no_followups(q, a, **k): return []
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+                ans._load_qa_meta, ans._deactivate_qa, ans._count_versions,
+                ans._log_qa, ans.generate_followups)
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans._load_qa_meta = fake_meta
+        ans._deactivate_qa = fake_deactivate
+        ans._count_versions = fake_count
+        ans._log_qa = fake_log
+        ans.generate_followups = no_followups
+        try:
+            events = [e async for e in ans.answer_question(
+                "台積電展望", regenerate_of="old-1")]
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+             ans._load_qa_meta, ans._deactivate_qa, ans._count_versions,
+             ans._log_qa, ans.generate_followups) = orig
+
+        self.assertEqual(state["deactivated"], "old-1")
+        self.assertEqual(state["logged_root"], "old-1")  # 群組鍵=舊 id
+        done = next(p for k, p in events if k == "done")
+        self.assertEqual(done["version_count"], 2)
+        self.assertEqual(done["root_qa_id"], "old-1")
+
+
 if __name__ == "__main__":
     unittest.main()

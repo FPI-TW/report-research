@@ -5,7 +5,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.services.answer import NO_CONTEXT_MESSAGE, OFF_TOPIC_MESSAGE  # noqa: E402
+from app.services.answer import (  # noqa: E402
+    NO_CONTEXT_MESSAGE,
+    OFF_TOPIC_MESSAGES,
+    TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
+)
 from eval.dataset import select_questions  # noqa: E402
 
 
@@ -22,8 +26,10 @@ class SelectQuestionsTests(unittest.TestCase):
     def test_drops_off_topic_and_no_context(self):
         rows = [
             _row("台積電先進製程展望如何"),
-            _row("幫我寫一首詩", answer=OFF_TOPIC_MESSAGE),
+            _row("幫我寫一首詩", answer=OFF_TOPIC_MESSAGES[0]),
             _row("有沒有火星股票", answer=NO_CONTEXT_MESSAGE),
+            _row("舊版離題問題", answer=OFF_TOPIC_MESSAGES[-1]),
+            _row("時間敏感問題", answer=TIME_SENSITIVE_UNAVAILABLE_MESSAGE),
         ]
         out = select_questions(rows, per_market_cap=10, target=10)
         self.assertEqual([q["question"] for q in out], ["台積電先進製程展望如何"])

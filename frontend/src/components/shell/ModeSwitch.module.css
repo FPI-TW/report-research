@@ -1,0 +1,6 @@
+.switch { display: inline-flex; background: #eceae3; border-radius: 12px; padding: 3px; }
+.mode { display: inline-flex; align-items: center; gap: 7px; border-radius: 9px; padding: 7px 20px; font-size: 13.5px; color: var(--tf-text-3); text-decoration: none; }
+.mode:hover { color: var(--tf-text-2); }
+.active { background: var(--tf-surface); color: var(--tf-ink-deep); font-weight: 600; box-shadow: var(--tf-shadow-seg); }
+.active:hover { color: var(--tf-ink-deep); }
+.sm .mode { padding: 5px 14px; font-size: 12.5px; }

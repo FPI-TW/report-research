@@ -18,7 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text  # noqa: E402
 
-from app.services.answer import NO_CONTEXT_MESSAGE, OFF_TOPIC_MESSAGE  # noqa: E402
+from app.services.answer import (  # noqa: E402
+    NO_CONTEXT_MESSAGE,
+    OFF_TOPIC_MESSAGES,
+    TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
+)
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.textnorm import norm_for_match  # noqa: E402
 
@@ -57,7 +61,7 @@ def select_questions(rows: list[dict], *, per_market_cap: int, target: int) -> l
         filters = r.get("filters") or {}
         if not q or len(q) < MIN_QUESTION_LEN:
             continue
-        if a in (OFF_TOPIC_MESSAGE, NO_CONTEXT_MESSAGE):
+        if a in (*OFF_TOPIC_MESSAGES, NO_CONTEXT_MESSAGE, TIME_SENSITIVE_UNAVAILABLE_MESSAGE):
             continue
         if filters.get("path") == "overview":  # 總覽走純 SQL、非 RAG，不進題集
             continue

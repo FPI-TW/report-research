@@ -29,7 +29,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -38,7 +38,7 @@ from web.env_loader import load_env_file  # noqa: E402
 load_env_file(Path(__file__).resolve().parents[1] / ".env")
 
 from app.services.answer import (  # noqa: E402
-    OFF_TOPIC_MESSAGE,
+    OFF_TOPIC_MESSAGES,
     answer_question,
     delete_conversation,
     delete_qa,
@@ -818,10 +818,10 @@ async def history(limit: int = Query(50, ge=1, le=200)):
                 text(
                     "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
                     "FROM research.qa_log "
-                    "WHERE answer IS DISTINCT FROM :offtopic AND active "
+                    "WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active "
                     "ORDER BY created_at DESC LIMIT :limit"
-                ),
-                {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+                ).bindparams(bindparam("offtopics", expanding=True)),
+                {"offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit},
             )
         ).all()
     return [history_item(tuple(r)) for r in rows]

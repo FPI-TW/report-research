@@ -1273,6 +1273,16 @@ class HistoryItemTests(unittest.TestCase):
         out = history_item(row)
         self.assertTrue(out["is_offtopic"])
 
+    def test_legacy_offtopic_answer_still_flagged(self):
+        from app.services import answer as ans
+
+        # 舊 qa_log 列存舊婉拒文案；文案改版後仍須標 is_offtopic
+        legacy = ans.OFF_TOPIC_MESSAGES[-1]
+        self.assertNotEqual(legacy, ans.OFF_TOPIC_MESSAGE)  # 確認 tuple 含舊版
+        row = ("id4", "q", legacy, date(2026, 6, 1), None, None, None)
+        item = history_item(row)
+        self.assertTrue(item["is_offtopic"])
+
 
 class _RowsResult:
     def __init__(self, rows):
@@ -1556,11 +1566,12 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
 
         sql = " ".join((session.statement_text or "").split())
         self.assertIn(
-            "(array_agg(question ORDER BY created_at) FILTER (WHERE answer IS DISTINCT FROM :offtopic AND active))[1] AS title",
+            "(array_agg(question ORDER BY created_at) FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active))[1] AS title",
             sql,
         )
         self.assertIn("WHERE turn_count > 0", sql)
-        self.assertNotIn("first_answer IS DISTINCT FROM :offtopic", sql)
+        self.assertNotIn("first_answer NOT IN :offtopics", sql)
+        self.assertEqual(session.params["offtopics"], list(ans.OFF_TOPIC_MESSAGES))
 
 
 class ConversationStaticContractTests(unittest.TestCase):

@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from app.config import get_settings
 from app.services.db import SessionFactory
@@ -99,8 +99,27 @@ ASK_STALE_AGE_DAYS = _S.ask_stale_age_days
 ASK_MAX_STALE_REPORTS = _S.ask_max_stale_reports
 
 OFF_TOPIC_MESSAGE = (
+    "這裡是廷豐研報的投資研究問答，這個問題超出我能引據回答的範圍。"
+    "歡迎改問特定市場、個股、期貨、匯率或總經主題，我會依研報內容為你解讀。"
+)
+
+# 舊版婉拒文案：既有 qa_log 列仍存此字串，所有離題偵測必須同時辨識新舊兩版。
+_LEGACY_OFF_TOPIC_MESSAGE = (
     "這個問題與廷豐研報的語料無關，請改問與研報內容相關的問題"
     "（例如特定市場、個股、期貨或總經主題）。"
+)
+OFF_TOPIC_MESSAGES: tuple[str, ...] = (OFF_TOPIC_MESSAGE, _LEGACY_OFF_TOPIC_MESSAGE)
+
+TIME_SENSITIVE_UNAVAILABLE_MESSAGE = (
+    "這個問題需要即時行情或最新公告資料，目前系統尚未接入可信的即時資料來源，"
+    "無法為你驗證最新數字；為避免把過期研報當成即時資訊，我不會以研報內容代答。"
+    "歡迎改問個股、產業或總經的研報觀點與分析。"
+)
+
+RESEARCH_ONLY_POLICY = (
+    "\n\n【研究資訊限制】使用者的問題涉及個人化投資決策。你只能整理研報來源"
+    "支持的正反論點、風險因素與不同觀點，並提醒使用者自行評估；禁止給出"
+    "個人化的買賣建議、目標部位、槓桿倍數、停損停利點位或任何保證報酬的說法。"
 )
 
 ASK_ENABLE_WEB = _S.ask_enable_web
@@ -457,7 +476,7 @@ def history_item(row) -> dict:
         "feedback": feedback,
         "sources": sources or [],
         "ext_sources": ext_sources or [],
-        "is_offtopic": answer == OFF_TOPIC_MESSAGE,
+        "is_offtopic": answer in OFF_TOPIC_MESSAGES,
         "thinking_ms": thinking_ms,
     }
 
@@ -663,13 +682,13 @@ async def load_recent_turns(
                     text(
                         "SELECT question, answer FROM research.qa_log "
                         "WHERE COALESCE(conversation_id, id) = :cid "
-                        "AND answer IS DISTINCT FROM :offtopic "
+                        "AND COALESCE(answer NOT IN :offtopics, TRUE) "
                         "AND active AND stopped IS NOT TRUE "
                         "ORDER BY created_at DESC LIMIT :limit"
-                    ),
+                    ).bindparams(bindparam("offtopics", expanding=True)),
                     {
                         "cid": conversation_id,
-                        "offtopic": OFF_TOPIC_MESSAGE,
+                        "offtopics": list(OFF_TOPIC_MESSAGES),
                         "limit": limit,
                     },
                 )
@@ -693,15 +712,15 @@ async def list_conversations(limit: int = 50) -> list[dict]:
                     "SELECT conv_id, title, last_at, turn_count FROM ("
                     "  SELECT COALESCE(conversation_id, id) AS conv_id,"
                     "         (array_agg(question ORDER BY created_at) "
-                    "             FILTER (WHERE answer IS DISTINCT FROM :offtopic AND active))[1] AS title,"
+                    "             FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active))[1] AS title,"
                     "         max(created_at) AS last_at,"
-                    "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic AND active) AS turn_count"
+                    "         count(*) FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active) AS turn_count"
                     "  FROM research.qa_log"
                     "  GROUP BY COALESCE(conversation_id, id)"
                     ") g WHERE turn_count > 0 "
                     "ORDER BY last_at DESC LIMIT :limit"
-                ),
-                {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+                ).bindparams(bindparam("offtopics", expanding=True)),
+                {"offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit},
             )
         ).all()
     out: list[dict] = []

@@ -1769,5 +1769,48 @@ class LogQaColumnsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(captured["params"]["followups"])
 
 
+class StagesPersistTests(unittest.IsolatedAsyncioTestCase):
+    """主 RAG 路徑把經過的 stage 序列寫入 _log_qa 的 stages 參數。"""
+
+    async def test_main_path_persists_stages(self):
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        logged = {}
+
+        async def fake_log(*a, **k):
+            logged.update(k)
+            return "qa-1"
+
+        async def fake_search(*a, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_intent(question, **k):
+            return True
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_intent, ans._log_qa)
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans._log_qa = fake_log
+        try:
+            _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_intent, ans._log_qa) = orig
+
+        self.assertIn("stages", logged)
+        self.assertEqual(logged["stages"][0], "understanding")
+        self.assertIn("retrieved", logged["stages"])
+        self.assertIn("generating", logged["stages"])
+
+
 if __name__ == "__main__":
     unittest.main()

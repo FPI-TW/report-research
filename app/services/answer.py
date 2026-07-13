@@ -678,6 +678,12 @@ async def _answer_overview(
     started: float,
 ) -> AsyncIterator[tuple[str, object]]:
     """總覽路徑：分面聚合 → LLM 用算好的數字潤飾 → 失敗退回模板。事件序列同主路徑。"""
+    stages_seen: list[str] = []
+
+    def _status(stage: str, **extra):
+        stages_seen.append(stage)
+        return ("status", {"stage": stage, **extra})
+
     scoped_filters = merge_request_filters(ov_filters, filters)
     async with SessionFactory() as session:  # 短連線：聚合完即釋放
         overview = await aggregate_facets(session, scoped_filters)
@@ -686,11 +692,11 @@ async def _answer_overview(
         msg = render_overview_text(overview)  # 「找不到…」
         yield ("sources", [])
         thinking_ms = int((time.monotonic() - started) * 1000)
-        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+        yield _status("generating", thinking_ms=thinking_ms)
         yield ("token", msg)
         qa_id = await _log_qa(
             question, msg, [], dict(filters, path="overview"), thinking_ms, [], [],
-            conversation_id=conv_id, thinking_ms=thinking_ms,
+            conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
         )
         yield ("done", {"cited": [], "qa_id": qa_id,
                         "conversation_id": conv_id, "thinking_ms": thinking_ms})
@@ -702,12 +708,12 @@ async def _answer_overview(
         for i, (rid, fn, mk, rd) in enumerate(overview.samples, 1)
     ]
     yield ("sources", [asdict(s) for s in sources])
-    yield ("status", {"stage": "retrieved", "count": overview.total})
+    yield _status("retrieved", count=overview.total)
 
     facts = format_facts(overview)
     user_prompt = f"{facts}\n\n問題：{prompt_query}\n\n請依規則作答。"
     thinking_ms = int((time.monotonic() - started) * 1000)
-    yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+    yield _status("generating", thinking_ms=thinking_ms)
 
     raw_parts: list[str] = []
     emitted_token = False
@@ -735,7 +741,7 @@ async def _answer_overview(
         question, body, cited, dict(filters, path="overview"),
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources], [],
-        conversation_id=conv_id, thinking_ms=thinking_ms,
+        conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
     )
     yield ("done", {"cited": cited, "qa_id": qa_id,
                     "conversation_id": conv_id, "thinking_ms": thinking_ms})
@@ -759,7 +765,14 @@ async def answer_question(
     started = time.monotonic()
     timer = _StageTimer()
     conv_id = conversation_id or str(uuid.uuid4())
-    yield ("status", {"stage": "understanding"})  # 步驟1：理解問題（含意圖判定/改寫）
+
+    stages_seen: list[str] = []
+
+    def _status(stage: str, **extra):
+        stages_seen.append(stage)
+        return ("status", {"stage": stage, **extra})
+
+    yield _status("understanding")  # 步驟1：理解問題（含意圖判定/改寫）
 
     # 僅「續問」才載歷史；首輪無歷史，維持並行意圖判定
     turns = await load_recent_turns(conv_id) if conversation_id else []
@@ -847,6 +860,7 @@ async def answer_question(
             [],
             conversation_id=conv_id,
             thinking_ms=thinking_ms,
+            stages=stages_seen,
         )
         yield (
             "done",
@@ -855,11 +869,11 @@ async def answer_question(
         return
 
     yield ("sources", [asdict(s) for s in sources])
-    yield ("status", {"stage": "retrieved", "count": len(sources)})  # 步驟2：找到 N 篇
+    yield _status("retrieved", count=len(sources))  # 步驟2：找到 N 篇
 
     if not context:
         thinking_ms = int((time.monotonic() - started) * 1000)
-        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+        yield _status("generating", thinking_ms=thinking_ms)
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
             question,
@@ -871,6 +885,7 @@ async def answer_question(
             [],
             conversation_id=conv_id,
             thinking_ms=thinking_ms,
+            stages=stages_seen,
         )
         yield (
             "done",
@@ -895,20 +910,18 @@ async def answer_question(
         out: list[tuple[str, str | dict]] = []
         if thinking_ms is None:
             thinking_ms = int((time.monotonic() - started) * 1000)
-            out.append(
-                ("status", {"stage": "generating", "thinking_ms": thinking_ms})
-            )
+            out.append(_status("generating", thinking_ms=thinking_ms))
         out.append(("token", piece))
         return out
 
-    yield ("status", {"stage": "reading"})  # 步驟3：閱讀重點、整理回答
+    yield _status("reading")  # 步驟3：閱讀重點、整理回答
     async for chunk in stream_completion(
         user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
     ):
         if chunk == SEARCH_EVENT:
             if not searching_sent:
                 searching_sent = True
-                yield ("status", {"stage": "searching_web"})  # 步驟4：搜尋網路補充
+                yield _status("searching_web")  # 步驟4：搜尋網路補充
             continue
         raw_parts.append(chunk)
         emit = parser.feed(chunk)
@@ -934,6 +947,7 @@ async def answer_question(
         ext_sources,
         conversation_id=conv_id,
         thinking_ms=thinking_ms,
+        stages=stages_seen,
     )
     logger.info(
         "qa_timing id=%s %s total_ms=%s thinking_ms=%s",

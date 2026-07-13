@@ -24,6 +24,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
+from app.services.followups import generate_followups
 from app.services.intent import classify_intent, condense_and_classify
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.overview import (
@@ -51,6 +52,8 @@ RETRIEVAL_K = _S.ask_retrieval_k
 # 問答路徑專用的 dense 召回深度：顯式傳給 hybrid_search（不改其預設），多掃最近鄰、
 # 降低「漏研報」；檢索頁走自己的參數，完全不受影響。
 ASK_DENSE_SCAN = _S.ask_dense_scan
+# rerank（M2）：問答路徑保守候選上限；旗標關時 0＝不重排
+ASK_RERANK_TOP_M = _S.ask_rerank_candidates if _S.ask_rerank_enabled else 0
 
 # 多輪對話脈絡：帶進 prompt 的近輪數與舊答案截斷長度（控 prompt 大小/延遲）
 MAX_HISTORY_TURNS = 3
@@ -470,12 +473,16 @@ async def _log_qa(
     *,
     conversation_id: str | None = None,
     thinking_ms: int | None = None,
+    root_qa_id: str | None = None,
+    stages: list[str] | None = None,
+    followups: list[str] | None = None,
 ) -> str:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
     回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
     sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
-    conversation_id 將多輪問答歸為同一串。
+    conversation_id 將多輪問答歸為同一串。root_qa_id 將同題多版本歸為同一群組。
+    stages/followups 供歷史重現思考卡與追問 chips。
     """
     qa_id = str(uuid.uuid4())
     ext_sources = ext_sources or []
@@ -485,21 +492,154 @@ async def _log_qa(
                 text(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
-                    "sources, ext_sources, conversation_id, thinking_ms) "
+                    "sources, ext_sources, conversation_id, thinking_ms, "
+                    "root_qa_id, active, stages, followups) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
-                    ":sources, :ext_sources, :conv, :think)"
+                    ":sources, :ext_sources, :conv, :think, "
+                    ":root, true, :stages, :followups)"
                 ),
                 {
                     "id": qa_id,
                     "q": question,
                     "a": answer,
-                    "cited": cited,  # uuid[]：asyncpg 由欄位型別推斷，傳 list[str]
-                    "filters": json.dumps(filters, ensure_ascii=False),  # jsonb
+                    "cited": cited,
+                    "filters": json.dumps(filters, ensure_ascii=False),
                     "lat": latency_ms,
-                    "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
-                    "ext_sources": json.dumps(ext_sources, ensure_ascii=False),  # jsonb
+                    "sources": json.dumps(sources, ensure_ascii=False),
+                    "ext_sources": json.dumps(ext_sources, ensure_ascii=False),
                     "conv": conversation_id,
                     "think": thinking_ms,
+                    "root": root_qa_id,
+                    "stages": json.dumps(stages, ensure_ascii=False)
+                    if stages is not None else None,
+                    "followups": json.dumps(followups, ensure_ascii=False)
+                    if followups is not None else None,
+                },
+            )
+            await session.commit()
+    except Exception:
+        pass
+    return qa_id
+
+
+async def _load_qa_meta(qa_id: str):
+    """讀一列的 (root_qa_id, conversation_id, created_at)；查無/錯誤回 None。"""
+    try:
+        async with SessionFactory() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT root_qa_id, conversation_id, created_at "
+                        "FROM research.qa_log WHERE id = :id"
+                    ),
+                    {"id": qa_id},
+                )
+            ).first()
+        if row is None:
+            return None
+        root, conv, created = row
+        return (str(root) if root else None,
+                str(conv) if conv else None, created)
+    except Exception:
+        return None
+
+
+async def _deactivate_qa(qa_id: str) -> None:
+    """把一列標為 inactive（重新生成的舊版本）；best-effort。"""
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text("UPDATE research.qa_log SET active = false WHERE id = :id"),
+                {"id": qa_id},
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
+async def _truncate_from(conversation_id: str, created_at) -> None:
+    """把某對話中 created_at 起（含）的所有列標為 inactive（編輯重送截斷）；best-effort。"""
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text(
+                    "UPDATE research.qa_log SET active = false "
+                    "WHERE COALESCE(conversation_id, id) = :cid AND created_at >= :ts"
+                ),
+                {"cid": conversation_id, "ts": created_at},
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
+async def _count_versions(group_key: str) -> int:
+    """某群組（COALESCE(root_qa_id, id)）的版本總數（含 inactive）。"""
+    try:
+        async with SessionFactory() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM research.qa_log "
+                        "WHERE COALESCE(root_qa_id, id) = :gk"
+                    ),
+                    {"gk": group_key},
+                )
+            ).first()
+        return int(row[0]) if row else 1
+    except Exception:
+        return 1
+
+
+async def log_stopped_qa(
+    question: str,
+    partial_answer: str,
+    *,
+    conversation_id: str | None = None,
+    sources: list[dict] | None = None,
+    ext_sources: list[dict] | None = None,
+    stages: list[str] | None = None,
+    regenerate_of: str | None = None,
+) -> str:
+    """寫一列停止的部分答案（stopped=true, active=true）；回新 qa_id。
+
+    regenerate_of 有值時：解析其群組鍵作 root_qa_id（續版本鏈）。
+    best-effort：DB 失敗仍回傳前端可掛的 qa_id（沿用 _log_qa 語意）。
+    """
+    qa_id = str(uuid.uuid4())
+    root_qa_id: str | None = None
+    if regenerate_of:
+        meta = await _load_qa_meta(regenerate_of)
+        if meta is not None:
+            old_root, old_conv, _ = meta
+            root_qa_id = old_root or regenerate_of
+            conversation_id = conversation_id or old_conv
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO research.qa_log "
+                    "(id, question, answer, cited_report_ids, filters, latency_ms, "
+                    "sources, ext_sources, conversation_id, thinking_ms, "
+                    "root_qa_id, active, stages, followups, stopped) "
+                    "VALUES (:id, :q, :a, :cited, :filters, :lat, "
+                    ":sources, :ext_sources, :conv, :think, "
+                    ":root, true, :stages, NULL, true)"
+                ),
+                {
+                    "id": qa_id,
+                    "q": question,
+                    "a": partial_answer,
+                    "cited": [],
+                    "filters": json.dumps({}, ensure_ascii=False),
+                    "lat": None,
+                    "sources": json.dumps(sources or [], ensure_ascii=False),
+                    "ext_sources": json.dumps(ext_sources or [], ensure_ascii=False),
+                    "conv": conversation_id,
+                    "think": None,
+                    "root": root_qa_id,
+                    "stages": json.dumps(stages, ensure_ascii=False)
+                    if stages is not None else None,
                 },
             )
             await session.commit()
@@ -524,6 +664,7 @@ async def load_recent_turns(
                         "SELECT question, answer FROM research.qa_log "
                         "WHERE COALESCE(conversation_id, id) = :cid "
                         "AND answer IS DISTINCT FROM :offtopic "
+                        "AND active AND stopped IS NOT TRUE "
                         "ORDER BY created_at DESC LIMIT :limit"
                     ),
                     {
@@ -552,9 +693,9 @@ async def list_conversations(limit: int = 50) -> list[dict]:
                     "SELECT conv_id, title, last_at, turn_count FROM ("
                     "  SELECT COALESCE(conversation_id, id) AS conv_id,"
                     "         (array_agg(question ORDER BY created_at) "
-                    "             FILTER (WHERE answer IS DISTINCT FROM :offtopic))[1] AS title,"
+                    "             FILTER (WHERE answer IS DISTINCT FROM :offtopic AND active))[1] AS title,"
                     "         max(created_at) AS last_at,"
-                    "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic) AS turn_count"
+                    "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic AND active) AS turn_count"
                     "  FROM research.qa_log"
                     "  GROUP BY COALESCE(conversation_id, id)"
                     ") g WHERE turn_count > 0 "
@@ -578,27 +719,86 @@ async def list_conversations(limit: int = 50) -> list[dict]:
     return out
 
 
+def _conversation_item(row) -> dict:
+    """qa_log 一列（13 欄，含版本/思考卡/追問中繼資料）→ 對話重現用 dict。
+
+    在 history_item 的基礎欄位上，補 stages/followups/root_qa_id/stopped/
+    version_count 五鍵，供前端重現思考卡、追問 chips 與版本切換。
+    """
+    (rid, question, answer, created_at, feedback, sources, ext_sources,
+     thinking_ms, stages, followups, root_qa_id, stopped, version_count) = row
+    base = history_item(
+        (rid, question, answer, created_at, feedback, sources, ext_sources, thinking_ms)
+    )
+    base["stages"] = stages or []
+    base["followups"] = followups or []
+    base["root_qa_id"] = str(root_qa_id) if root_qa_id else None
+    base["stopped"] = bool(stopped)
+    base["version_count"] = int(version_count)
+    return base
+
+
 async def get_conversation(conversation_id: str) -> list[dict]:
-    """該對話全部輪次（history_item 格式），由舊到新，供重開重現與續問。"""
+    """該對話全部有效輪次（由舊到新），供重開重現與續問。"""
     async with SessionFactory() as session:
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
-                    "FROM research.qa_log "
-                    "WHERE COALESCE(conversation_id, id) = :cid "
-                    "ORDER BY created_at ASC"
+                    "SELECT q.id, q.question, q.answer, q.created_at, q.feedback, "
+                    "q.sources, q.ext_sources, q.thinking_ms, q.stages, q.followups, "
+                    "q.root_qa_id, q.stopped, "
+                    "(SELECT count(*) FROM research.qa_log v "
+                    " WHERE COALESCE(v.root_qa_id, v.id) = COALESCE(q.root_qa_id, q.id)) "
+                    "AS version_count "
+                    "FROM research.qa_log q "
+                    "WHERE COALESCE(q.conversation_id, q.id) = :cid AND q.active "
+                    "ORDER BY q.created_at ASC"
                 ),
                 {"cid": conversation_id},
             )
         ).all()
-    items = [history_item(tuple(r)) for r in rows]
+    items = [_conversation_item(tuple(r)) for r in rows]
     from app.services.report import reports_for_conversation  # 延遲 import：避免與 report.py 循環
 
     reports_by_qa = await reports_for_conversation(conversation_id)
     for it in items:
         it["reports"] = reports_by_qa.get(str(it.get("id")), [])
     return items
+
+
+async def list_qa_versions(root_qa_id: str) -> list[dict]:
+    """某問題群組的全部版本（含 inactive），由舊到新，供歷史 pager 回看。
+
+    任何 DB 錯誤 → 回 []（fail-open）。
+    """
+    try:
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, answer, sources, ext_sources, thinking_ms, "
+                        "stages, feedback, created_at FROM research.qa_log "
+                        "WHERE COALESCE(root_qa_id, id) = :root "
+                        "ORDER BY created_at ASC"
+                    ),
+                    {"root": root_qa_id},
+                )
+            ).all()
+    except Exception:
+        return []
+    out = []
+    for (qid, answer, sources, ext_sources, thinking_ms, stages, feedback, created) in rows:
+        out.append({
+            "qa_id": str(qid),
+            "answer": answer,
+            "sources": sources or [],
+            "ext_sources": ext_sources or [],
+            "thinking_ms": thinking_ms,
+            "stages": stages or [],
+            "feedback": feedback,
+            "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+        })
+    return out
 
 
 async def delete_conversation(conversation_id: str) -> bool:
@@ -637,6 +837,19 @@ async def record_feedback(qa_id: str, value: str) -> bool:
         return False
 
 
+async def _update_followups(qa_id: str, followups: list[str]) -> None:
+    """best-effort 補寫 followups（追問在 done 後才產）。"""
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text("UPDATE research.qa_log SET followups = :f WHERE id = :id"),
+                {"f": json.dumps(followups, ensure_ascii=False), "id": qa_id},
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
 async def delete_qa(qa_id: str) -> bool:
     """刪除一列 research.qa_log（使用者清除單筆歷史問答）。
 
@@ -665,6 +878,12 @@ async def _answer_overview(
     started: float,
 ) -> AsyncIterator[tuple[str, object]]:
     """總覽路徑：分面聚合 → LLM 用算好的數字潤飾 → 失敗退回模板。事件序列同主路徑。"""
+    stages_seen: list[str] = []
+
+    def _status(stage: str, **extra):
+        stages_seen.append(stage)
+        return ("status", {"stage": stage, **extra})
+
     scoped_filters = merge_request_filters(ov_filters, filters)
     async with SessionFactory() as session:  # 短連線：聚合完即釋放
         overview = await aggregate_facets(session, scoped_filters)
@@ -673,11 +892,11 @@ async def _answer_overview(
         msg = render_overview_text(overview)  # 「找不到…」
         yield ("sources", [])
         thinking_ms = int((time.monotonic() - started) * 1000)
-        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+        yield _status("generating", thinking_ms=thinking_ms)
         yield ("token", msg)
         qa_id = await _log_qa(
             question, msg, [], dict(filters, path="overview"), thinking_ms, [], [],
-            conversation_id=conv_id, thinking_ms=thinking_ms,
+            conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
         )
         yield ("done", {"cited": [], "qa_id": qa_id,
                         "conversation_id": conv_id, "thinking_ms": thinking_ms})
@@ -689,12 +908,12 @@ async def _answer_overview(
         for i, (rid, fn, mk, rd) in enumerate(overview.samples, 1)
     ]
     yield ("sources", [asdict(s) for s in sources])
-    yield ("status", {"stage": "retrieved", "count": overview.total})
+    yield _status("retrieved", count=overview.total)
 
     facts = format_facts(overview)
     user_prompt = f"{facts}\n\n問題：{prompt_query}\n\n請依規則作答。"
     thinking_ms = int((time.monotonic() - started) * 1000)
-    yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+    yield _status("generating", thinking_ms=thinking_ms)
 
     raw_parts: list[str] = []
     emitted_token = False
@@ -722,7 +941,7 @@ async def _answer_overview(
         question, body, cited, dict(filters, path="overview"),
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources], [],
-        conversation_id=conv_id, thinking_ms=thinking_ms,
+        conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
     )
     yield ("done", {"cited": cited, "qa_id": qa_id,
                     "conversation_id": conv_id, "thinking_ms": thinking_ms})
@@ -735,18 +954,48 @@ async def answer_question(
     filters: dict | None = None,
     model: str = DEFAULT_MODEL,
     conversation_id: str | None = None,
+    regenerate_of: str | None = None,
+    edit_of: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """產生 ("sources"|"status"|"token"|"notice"|"ext_sources"|"done", payload) 事件序列。
 
     首輪（未帶 conversation_id）：意圖判定與檢索並行（省延遲）。
     續問（帶 conversation_id）：先載近輪歷史，一次 Haiku 改寫追問為獨立查詢並判定意圖，
     再以改寫後查詢檢索；先前對話內嵌進 prompt。所有 done 事件回傳 conversation_id。
+    regenerate_of 有值時：讀舊列群組鍵、沿用其 conversation_id、停用舊列，
+    新列與舊列同組（root_qa_id），done 事件回傳 root_qa_id 與 version_count。
+    edit_of 有值時（與 regenerate_of 互斥，regenerate_of 優先）：讀被編輯列的
+    conversation_id 與 created_at，把該輪及其後全部標 inactive（截斷後續對話），
+    再以編輯後新問題作答為全新輪次（不進版本群組，new_root 維持 None）。
     """
     filters = filters or {}
     started = time.monotonic()
     timer = _StageTimer()
     conv_id = conversation_id or str(uuid.uuid4())
-    yield ("status", {"stage": "understanding"})  # 步驟1：理解問題（含意圖判定/改寫）
+
+    new_root: str | None = None
+    if regenerate_of:
+        _meta = await _load_qa_meta(regenerate_of)
+        if _meta is not None:
+            _old_root, _old_conv, _ = _meta
+            conv_id = _old_conv or conv_id
+            new_root = _old_root or regenerate_of
+            await _deactivate_qa(regenerate_of)
+    elif edit_of:
+        _meta = await _load_qa_meta(edit_of)
+        if _meta is not None:
+            _old_root, _old_conv, _old_created = _meta
+            conv_id = _old_conv or conv_id
+            if _old_created is not None:
+                await _truncate_from(conv_id, _old_created)
+
+    stages_seen: list[str] = []
+
+    def _status(stage: str, **extra):
+        stages_seen.append(stage)
+        return ("status", {"stage": stage, **extra})
+
+    yield _status("understanding")  # 步驟1：理解問題（含意圖判定/改寫）
 
     # 僅「續問」才載歷史；首輪無歷史，維持並行意圖判定
     turns = await load_recent_turns(conv_id) if conversation_id else []
@@ -803,6 +1052,7 @@ async def answer_question(
             standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
             max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
             max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+            rerank_top_m=ASK_RERANK_TOP_M,
         )
     else:
         intent_task = asyncio.create_task(classify_intent(question))
@@ -811,6 +1061,7 @@ async def answer_question(
                 question, k=k, dense_scan=ASK_DENSE_SCAN,
                 max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
                 max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+                rerank_top_m=ASK_RERANK_TOP_M,
             )
             in_domain = await intent_task
             timer.mark("intent_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
@@ -832,6 +1083,8 @@ async def answer_question(
             [],
             conversation_id=conv_id,
             thinking_ms=thinking_ms,
+            stages=stages_seen,
+            root_qa_id=new_root,
         )
         yield (
             "done",
@@ -840,11 +1093,11 @@ async def answer_question(
         return
 
     yield ("sources", [asdict(s) for s in sources])
-    yield ("status", {"stage": "retrieved", "count": len(sources)})  # 步驟2：找到 N 篇
+    yield _status("retrieved", count=len(sources))  # 步驟2：找到 N 篇
 
     if not context:
         thinking_ms = int((time.monotonic() - started) * 1000)
-        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+        yield _status("generating", thinking_ms=thinking_ms)
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
             question,
@@ -856,6 +1109,8 @@ async def answer_question(
             [],
             conversation_id=conv_id,
             thinking_ms=thinking_ms,
+            stages=stages_seen,
+            root_qa_id=new_root,
         )
         yield (
             "done",
@@ -880,20 +1135,18 @@ async def answer_question(
         out: list[tuple[str, str | dict]] = []
         if thinking_ms is None:
             thinking_ms = int((time.monotonic() - started) * 1000)
-            out.append(
-                ("status", {"stage": "generating", "thinking_ms": thinking_ms})
-            )
+            out.append(_status("generating", thinking_ms=thinking_ms))
         out.append(("token", piece))
         return out
 
-    yield ("status", {"stage": "reading"})  # 步驟3：閱讀重點、整理回答
+    yield _status("reading")  # 步驟3：閱讀重點、整理回答
     async for chunk in stream_completion(
         user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
     ):
         if chunk == SEARCH_EVENT:
             if not searching_sent:
                 searching_sent = True
-                yield ("status", {"stage": "searching_web"})  # 步驟4：搜尋網路補充
+                yield _status("searching_web")  # 步驟4：搜尋網路補充
             continue
         raw_parts.append(chunk)
         emit = parser.feed(chunk)
@@ -919,6 +1172,8 @@ async def answer_question(
         ext_sources,
         conversation_id=conv_id,
         thinking_ms=thinking_ms,
+        stages=stages_seen,
+        root_qa_id=new_root,
     )
     logger.info(
         "qa_timing id=%s %s total_ms=%s thinking_ms=%s",
@@ -927,6 +1182,8 @@ async def answer_question(
         timer.total_ms(),
         thinking_ms,
     )
+    group_key = new_root or qa_id
+    version_count = await _count_versions(group_key) if regenerate_of else 1
     offer_report, report_title = should_offer_report(question, cited, body)
     yield (
         "done",
@@ -937,5 +1194,12 @@ async def answer_question(
             "thinking_ms": thinking_ms,
             "offer_report": offer_report,
             "report_title": report_title,
+            "root_qa_id": group_key,
+            "version_count": version_count,
         },
     )
+
+    fups = await generate_followups(question, body)
+    if fups:
+        await _update_followups(qa_id, fups)
+        yield ("followups", fups)

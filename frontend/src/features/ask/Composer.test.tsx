@@ -27,9 +27,17 @@ test('IME 組字中的 Enter 不送出', () => {
   expect(onSubmit).not.toHaveBeenCalled()
 })
 
-test('disabled 時送出鈕不觸發', () => {
+test('disabled 時不顯示可用送出鈕（改停止鈕）', () => {
   const onSubmit = vi.fn()
   render(<Composer value="x" onChange={() => {}} onSubmit={onSubmit} disabled />)
-  fireEvent.click(screen.getByRole('button', { name: '送出' }))
+  expect(screen.queryByRole('button', { name: '送出' })).toBeNull()
   expect(onSubmit).not.toHaveBeenCalled()
+})
+
+test('shows stop button when busy and calls onStop', async () => {
+  const onStop = vi.fn()
+  render(<Composer value="" onChange={() => {}} onSubmit={() => {}} disabled onStop={onStop} />)
+  const btn = screen.getByRole('button', { name: /停止/ })
+  fireEvent.click(btn)
+  expect(onStop).toHaveBeenCalledOnce()
 })

@@ -480,3 +480,28 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("涵蓋可能不足", captured["prompt"])
         self.assertNotIn("僅找到", captured["prompt"])
+
+    async def test_rerank_top_m_forwarded_from_report_path(self):
+        from app.services import report as rpt
+
+        captured = {}
+
+        async def recording_retrieve(question, **kw):
+            captured.update(kw)
+            return ([], "")
+
+        orig = rpt.retrieve_context
+        rpt.retrieve_context = recording_retrieve
+        try:
+            # 脈絡空且網搜關 → 早退，足以捕捉 retrieve_context 的 kwargs
+            orig_web = rpt.REPORT_ENABLE_WEB
+            rpt.REPORT_ENABLE_WEB = False
+            try:
+                _ = [e async for e in rpt.generate_report("台積電深度研報")]
+            finally:
+                rpt.REPORT_ENABLE_WEB = orig_web
+        finally:
+            rpt.retrieve_context = orig
+
+        self.assertEqual(captured.get("rerank_top_m"), rpt.REPORT_RERANK_TOP_M)
+        self.assertEqual(rpt.REPORT_RERANK_TOP_M, 120)  # 預設啟用

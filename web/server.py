@@ -45,6 +45,8 @@ from app.services.answer import (  # noqa: E402
     get_conversation,
     history_item,
     list_conversations,
+    list_qa_versions,
+    log_stopped_qa,
     record_feedback,
 )
 from app.services.db import SessionFactory  # noqa: E402
@@ -221,6 +223,8 @@ class AskRequest(BaseModel):
     relates_futures: bool | None = None
     report_type: str | None = None
     k: int = 8
+    regenerate_of: str | None = None
+    edit_of: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -678,12 +682,21 @@ async def ask(req: AskRequest):
         report_type=rtype,
     )
     k = max(1, min(req.k, 20))
+    if req.regenerate_of is not None and not _valid_uuid(req.regenerate_of):
+        raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
+    if req.edit_of is not None and not _valid_uuid(req.edit_of):
+        raise HTTPException(status_code=400, detail="edit_of 格式不正確")
 
     async def gen():
         async with _ASK_SEMAPHORE:
             try:
                 async for event, payload in answer_question(
-                    question, k=k, filters=filters, conversation_id=req.conversation_id
+                    question,
+                    k=k,
+                    filters=filters,
+                    conversation_id=req.conversation_id,
+                    regenerate_of=req.regenerate_of,
+                    edit_of=req.edit_of,
                 ):
                     yield _sse(event, payload)
             except Exception:
@@ -703,6 +716,33 @@ def _valid_uuid(s) -> bool:
         return True
     except (ValueError, AttributeError, TypeError):
         return False
+
+
+class StopRequest(BaseModel):
+    question: str
+    conversation_id: str | None = None
+    partial_answer: str = ""
+    sources: list[dict] | None = None
+    ext_sources: list[dict] | None = None
+    stages: list[str] | None = None
+    regenerate_of: str | None = None
+
+
+@app.post("/api/ask/stop")
+async def ask_stop(req: StopRequest):
+    """使用者中斷串流時保存部分答案（stopped=true）。回 {qa_id}。"""
+    if req.regenerate_of is not None and not _valid_uuid(req.regenerate_of):
+        raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
+    qa_id = await log_stopped_qa(
+        (req.question or "").strip(),
+        req.partial_answer or "",
+        conversation_id=req.conversation_id,
+        sources=req.sources,
+        ext_sources=req.ext_sources,
+        stages=req.stages,
+        regenerate_of=req.regenerate_of,
+    )
+    return {"qa_id": qa_id}
 
 
 @app.post("/api/report")
@@ -778,7 +818,7 @@ async def history(limit: int = Query(50, ge=1, le=200)):
                 text(
                     "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
                     "FROM research.qa_log "
-                    "WHERE answer IS DISTINCT FROM :offtopic "
+                    "WHERE answer IS DISTINCT FROM :offtopic AND active "
                     "ORDER BY created_at DESC LIMIT :limit"
                 ),
                 {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
@@ -802,6 +842,14 @@ async def delete_history_post(qa_id: str):
     """
     ok = await delete_qa(qa_id)
     return {"ok": ok}
+
+
+@app.get("/api/qa/{root_qa_id}/versions")
+async def qa_versions(root_qa_id: str):
+    """某問題群組全部版本（供歷史 pager 回看）。"""
+    if not _valid_uuid(root_qa_id):
+        raise HTTPException(status_code=404, detail="not found")
+    return await list_qa_versions(root_qa_id)
 
 
 @app.get("/api/conversations")

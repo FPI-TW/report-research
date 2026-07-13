@@ -1,0 +1,77 @@
+{
+  "summary": {
+    "faithfulness": 0.9453413253413253,
+    "context_precision": 0.7231843615214151,
+    "answer_relevancy": 0.6080540782767462,
+    "n": 8,
+    "n_errors": 0,
+    "n_no_context": 0,
+    "thresholds_pass": false
+  },
+  "cases": [
+    {
+      "id": "q001",
+      "question": "台積電最新的營運展望如何",
+      "faithfulness": 1.0,
+      "context_precision": 0.46438110500610497,
+      "answer_relevancy": 0.6978979264480177,
+      "n_contexts": 15
+    },
+    {
+      "id": "q002",
+      "question": "分析台灣市場",
+      "faithfulness": 0.7727272727272727,
+      "context_precision": 0.8344122147693577,
+      "answer_relevancy": 0.5571049514097198,
+      "n_contexts": 15
+    },
+    {
+      "id": "q003",
+      "question": "材料行業分析報告'",
+      "faithfulness": 0.96,
+      "context_precision": 1.0,
+      "answer_relevancy": 0.5157938739361538,
+      "n_contexts": 3
+    },
+    {
+      "id": "q004",
+      "question": "散熱技術的進展如何？",
+      "faithfulness": 0.9230769230769231,
+      "context_precision": 0.5,
+      "answer_relevancy": 0.611237494749765,
+      "n_contexts": 4
+    },
+    {
+      "id": "q005",
+      "question": "AI 伺服器的最新發展如何？",
+      "faithfulness": 1.0,
+      "context_precision": 0.8344122147693577,
+      "answer_relevancy": 0.7438125784400217,
+      "n_contexts": 15
+    },
+    {
+      "id": "q006",
+      "question": "台積電最新展望如何？",
+      "faithfulness": 1.0,
+      "context_precision": 0.8344122147693577,
+      "answer_relevancy": 0.7452814513569154,
+      "n_contexts": 15
+    },
+    {
+      "id": "q007",
+      "question": "材料行業分析報告",
+      "faithfulness": 0.9523809523809523,
+      "context_precision": 0.5833333333333333,
+      "answer_relevancy": 0.5082907121780186,
+      "n_contexts": 3
+    },
+    {
+      "id": "q008",
+      "question": "台積電先進封裝",
+      "faithfulness": 0.9545454545454546,
+      "context_precision": 0.7345238095238096,
+      "answer_relevancy": 0.4850136376953573,
+      "n_contexts": 7
+    }
+  ]
+}

@@ -211,6 +211,7 @@ class FormatFactsTests(unittest.TestCase):
 import asyncio  # noqa: E402
 
 from app.services import answer as ans  # noqa: E402
+from app.services import scope_router as sr  # noqa: E402
 
 
 class AnswerQuestionOverviewBranchTests(unittest.TestCase):
@@ -279,7 +280,7 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             ans._log_qa,
             ans.SessionFactory,
             ans.load_recent_turns,
-            ans.condense_and_classify,
+            ans.condense_and_route,
         )
         try:
             self._patch_common()
@@ -292,12 +293,13 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             async def fake_load_recent_turns(_conv_id):
                 return [("前一題", "前一答")]
 
-            async def fake_condense(_history, _question):
-                return "元大有哪些報告種類", True
+            async def fake_condense(_history, _question, **kw):
+                standalone = "元大有哪些報告種類"
+                return standalone, sr.resolve_overview_route(standalone, kw["today"])
 
             ans.stream_completion = fake_stream
             ans.load_recent_turns = fake_load_recent_turns
-            ans.condense_and_classify = fake_condense
+            ans.condense_and_route = fake_condense
 
             self._drive("那元大呢？", conversation_id="conv-1")
             self.assertIn("問題：元大有哪些報告種類", captured["prompt"])
@@ -310,7 +312,7 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
                 ans._log_qa,
                 ans.SessionFactory,
                 ans.load_recent_turns,
-                ans.condense_and_classify,
+                ans.condense_and_route,
             ) = orig
 
     def test_overview_merges_request_filters_before_aggregation(self):

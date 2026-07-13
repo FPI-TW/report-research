@@ -20,6 +20,7 @@ from app.services.answer import (  # noqa: E402
     split_external_sources,
 )
 from app.services.rows import ChunkRow  # noqa: E402
+from app.services import scope_router as sr  # noqa: E402
 
 
 def make_row(report_id, file_name, market, content, report_date=None, distance=0.1):
@@ -423,8 +424,8 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "答案[1]"
 
-        async def fake_intent(question, **k):
-            return True
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         orig = (
             rp.hybrid_search,
@@ -432,14 +433,14 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
+            ans.classify_non_overview,
         )
         rp.hybrid_search = recording_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
+        ans.classify_non_overview = fake_route
         try:
             _ = [e async for e in ans.answer_question("台積電展望")]
         finally:
@@ -449,7 +450,7 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
                 ans.stream_completion,
                 rp.SessionFactory,
                 ans.SessionFactory,
-                ans.classify_intent,
+                ans.classify_non_overview,
             ) = orig
 
         self.assertEqual(captured.get("dense_scan"), ans.ASK_DENSE_SCAN)
@@ -470,13 +471,13 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "答案[1]"
 
-        async def fake_intent(question, **k):
-            return True
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         orig = (
             rp.hybrid_search, rp.embed_query_cached, rp.rerank_scored,
             ans.stream_completion, rp.SessionFactory, ans.SessionFactory,
-            ans.classify_intent,
+            ans.classify_non_overview,
         )
         rp.hybrid_search = recording_search
         rp.embed_query_cached = lambda q: [0.0]
@@ -484,14 +485,14 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
+        ans.classify_non_overview = fake_route
         try:
             _ = [e async for e in ans.answer_question("台積電展望")]
         finally:
             (
                 rp.hybrid_search, rp.embed_query_cached, rp.rerank_scored,
                 ans.stream_completion, rp.SessionFactory, ans.SessionFactory,
-                ans.classify_intent,
+                ans.classify_non_overview,
             ) = orig
 
         self.assertEqual(captured.get("top_m"), ans.ASK_RERANK_TOP_M)
@@ -590,7 +591,7 @@ class _FakeSession:
 
 
 class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
-    """離題判定改由 classify_intent（看意圖）決定，與 scored 分數無關。"""
+    """離題判定改由 classify_non_overview（看意圖路由）決定，與 scored 分數無關。"""
 
     def _patch(self, ans, rp, *, in_domain, called):
         async def fake_search(*a, **k):
@@ -616,13 +617,16 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             called["llm"] = True
             yield "答案[1]"
 
-        async def fake_intent(question, **k):
+        def _route_for(in_domain_):
+            return sr._decision(sr.CORPUS_QA if in_domain_ else sr.OFF_TOPIC)
+
+        async def fake_route(question, **k):
             called["intent"] = True
-            return in_domain
+            return _route_for(in_domain)
 
         async def fake_condense(history_text, question, **k):
             called["condense"] = True
-            return (question, in_domain)
+            return (question, _route_for(in_domain))
 
         async def fake_load(conversation_id, **k):
             return []
@@ -633,8 +637,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
-            ans.condense_and_classify,
+            ans.classify_non_overview,
+            ans.condense_and_route,
             ans.load_recent_turns,
         )
         rp.hybrid_search = fake_search
@@ -642,8 +646,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
-        ans.condense_and_classify = fake_condense
+        ans.classify_non_overview = fake_route
+        ans.condense_and_route = fake_condense
         ans.load_recent_turns = fake_load
         return orig
 
@@ -655,8 +659,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
-            ans.condense_and_classify,
+            ans.classify_non_overview,
+            ans.condense_and_route,
             ans.load_recent_turns,
         ) = orig
 
@@ -815,6 +819,208 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(events[-1][1]["thinking_ms"], int)  # done 帶 thinking_ms
 
 
+class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
+    """M4 四分支：off_topic/time_sensitive 不檢索不發 sources；advice_risk 加政策；corpus_qa 關網搜。"""
+
+    def _patch(self, ans, rp, *, decision, called):
+        async def fake_search(*a, **k):
+            called["search"] = True
+            return [
+                (
+                    0,
+                    0.80,
+                    make_row(
+                        "r1", "x.pdf", "TW", "內容。", date(2026, 6, 1), distance=0.2
+                    ),
+                )
+            ]
+
+        def fake_embed(q):
+            called["embed"] = True
+            return [0.0]
+
+        async def fake_stream(*a, **k):
+            called["llm"] = True
+            called["stream_kwargs"] = k
+            yield "答案[1]"
+
+        async def fake_route(question, **k):
+            called["route"] = True
+            return decision
+
+        async def fake_load(conversation_id, **k):
+            return []
+
+        async def fake_log(question, answer, cited, filters, *a, **k):
+            called["log_filters"] = filters
+            return "qa-routed"
+
+        orig = (
+            rp.hybrid_search,
+            rp.embed_query_cached,
+            ans.stream_completion,
+            rp.SessionFactory,
+            ans.SessionFactory,
+            ans.classify_non_overview,
+            ans.load_recent_turns,
+            ans._log_qa,
+        )
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_non_overview = fake_route
+        ans.load_recent_turns = fake_load
+        ans._log_qa = fake_log
+        return orig
+
+    @staticmethod
+    def _restore(ans, rp, orig):
+        (
+            rp.hybrid_search,
+            rp.embed_query_cached,
+            ans.stream_completion,
+            rp.SessionFactory,
+            ans.SessionFactory,
+            ans.classify_non_overview,
+            ans.load_recent_turns,
+            ans._log_qa,
+        ) = orig
+
+    async def test_time_sensitive_first_turn_no_sources_no_llm(self):
+        # 首輪：並行取證因路由被丟棄 → 發空來源（非真實檢索結果）、notice 為時效文案、不呼叫主 LLM
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        called = {}
+        orig = self._patch(
+            ans, rp, decision=sr._decision(sr.TIME_SENSITIVE), called=called
+        )
+        try:
+            events = [e async for e in ans.answer_question("台積電現在股價多少")]
+        finally:
+            self._restore(ans, rp, orig)
+
+        kinds = [k for k, _ in events]
+        self.assertEqual(kinds, ["status", "sources", "notice", "done"])
+        self.assertEqual(events[1], ("sources", []))  # 並行取證的真實結果被丟棄
+        self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE))
+        self.assertTrue(called.get("search"))  # 並行取證確實跑過，僅結果被丟棄
+        self.assertTrue(called.get("route"))
+        self.assertFalse(called.get("llm"))  # 主 LLM 不得被呼叫
+        self.assertEqual(called.get("log_filters", {}).get("path"), "time_sensitive")
+        done = events[-1][1]
+        self.assertNotIn("qa_id", done)  # 比照既有離題 done payload 形狀
+        self.assertEqual(
+            done, {"cited": [], "conversation_id": done["conversation_id"],
+                   "thinking_ms": done["thinking_ms"]},
+        )
+
+    async def test_advice_risk_appends_policy_and_emits_sources(self):
+        # advice_risk 走 RAG：附研究資訊限制政策、正常發真實 sources（有據回答須附出處）
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        called = {}
+        orig = self._patch(
+            ans, rp, decision=sr._decision(sr.ADVICE_RISK), called=called
+        )
+        try:
+            events = [e async for e in ans.answer_question("台積電該不該買")]
+        finally:
+            self._restore(ans, rp, orig)
+
+        kinds = [k for k, _ in events]
+        self.assertIn("sources", kinds)
+        srcs = next(p for k, p in events if k == "sources")
+        self.assertTrue(len(srcs) >= 1)  # 有真實來源，非丟棄
+        self.assertTrue(called.get("llm"))
+        system_prompt = called["stream_kwargs"]["system"]
+        self.assertTrue(system_prompt.endswith(ans.RESEARCH_ONLY_POLICY))
+        self.assertEqual(called.get("log_filters", {}).get("path"), "advice_risk")
+
+    async def test_corpus_qa_disables_web(self):
+        # corpus_qa（M4 預設工具政策）：主 LLM 呼叫一律 allow_web=False
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        called = {}
+        orig = self._patch(
+            ans, rp, decision=sr._decision(sr.CORPUS_QA), called=called
+        )
+        try:
+            _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            self._restore(ans, rp, orig)
+
+        self.assertTrue(called.get("llm"))
+        self.assertIs(called["stream_kwargs"]["allow_web"], False)
+        self.assertNotIn("path", called.get("log_filters", {}))  # corpus_qa 不寫 path
+
+    async def test_multiturn_time_sensitive_skips_retrieval(self):
+        # 續問：condense_and_route 直接判 time_sensitive → 提前返回，retrieve_context 完全未跑
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        called = {"search": False, "embed": False}
+
+        async def fake_search(*a, **k):
+            called["search"] = True
+            return []
+
+        def fake_embed(q):
+            called["embed"] = True
+            return [0.0]
+
+        async def fake_condense(history_text, question, **k):
+            return ("台積電現在股價多少", sr._decision(sr.TIME_SENSITIVE))
+
+        async def fake_load(conversation_id, **k):
+            return [("台積電前景?", "看好[1]")]
+
+        async def fake_route(question, **k):
+            raise AssertionError("續問不應呼叫 classify_non_overview")
+
+        orig = (
+            rp.hybrid_search,
+            rp.embed_query_cached,
+            rp.SessionFactory,
+            ans.SessionFactory,
+            ans.classify_non_overview,
+            ans.condense_and_route,
+            ans.load_recent_turns,
+        )
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = fake_embed
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_non_overview = fake_route
+        ans.condense_and_route = fake_condense
+        ans.load_recent_turns = fake_load
+        try:
+            events = [
+                e
+                async for e in ans.answer_question("現在多少?", conversation_id="c1")
+            ]
+        finally:
+            (
+                rp.hybrid_search,
+                rp.embed_query_cached,
+                rp.SessionFactory,
+                ans.SessionFactory,
+                ans.classify_non_overview,
+                ans.condense_and_route,
+                ans.load_recent_turns,
+            ) = orig
+
+        self.assertFalse(called["search"])  # retrieve_context 未被呼叫
+        self.assertFalse(called["embed"])
+        notice = next(p for k, p in events if k == "notice")
+        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(events[1], ("sources", []))
+
+
 class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
     async def test_body_excludes_sentinel_and_emits_ext_sources(self):
         from app.services import answer as ans
@@ -847,14 +1053,14 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             ]:
                 yield ch
 
-        async def fake_intent(q, **k):
-            return True
+        async def fake_route(q, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         async def fake_load(*a, **k):
             return []
 
         async def fake_condense(*a, **k):
-            return (a[1] if len(a) > 1 else "", True)
+            return (a[1] if len(a) > 1 else "", sr._decision(sr.CORPUS_QA))
 
         orig = (
             rp.hybrid_search,
@@ -862,8 +1068,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
-            ans.condense_and_classify,
+            ans.classify_non_overview,
+            ans.condense_and_route,
             ans.load_recent_turns,
         )
         rp.hybrid_search = fake_search
@@ -871,8 +1077,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
-        ans.condense_and_classify = fake_condense
+        ans.classify_non_overview = fake_route
+        ans.condense_and_route = fake_condense
         ans.load_recent_turns = fake_load
         try:
             events = [e async for e in ans.answer_question("台積電封裝")]
@@ -883,8 +1089,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
                 ans.stream_completion,
                 rp.SessionFactory,
                 ans.SessionFactory,
-                ans.classify_intent,
-                ans.condense_and_classify,
+                ans.classify_non_overview,
+                ans.condense_and_route,
                 ans.load_recent_turns,
             ) = orig
 
@@ -926,14 +1132,14 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             for ch in ["前段答案[1]。\n[EXT_", "SOURCES]\n- 標題 | https://x.com\n"]:
                 yield ch
 
-        async def fake_intent(q, **k):
-            return True
+        async def fake_route(q, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         async def fake_load(*a, **k):
             return []
 
         async def fake_condense(*a, **k):
-            return (a[1] if len(a) > 1 else "", True)
+            return (a[1] if len(a) > 1 else "", sr._decision(sr.CORPUS_QA))
 
         orig = (
             rp.hybrid_search,
@@ -941,8 +1147,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
-            ans.condense_and_classify,
+            ans.classify_non_overview,
+            ans.condense_and_route,
             ans.load_recent_turns,
         )
         rp.hybrid_search = fake_search
@@ -950,8 +1156,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
-        ans.condense_and_classify = fake_condense
+        ans.classify_non_overview = fake_route
+        ans.condense_and_route = fake_condense
         ans.load_recent_turns = fake_load
         try:
             events = [e async for e in ans.answer_question("問題")]
@@ -962,8 +1168,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
                 ans.stream_completion,
                 rp.SessionFactory,
                 ans.SessionFactory,
-                ans.classify_intent,
-                ans.condense_and_classify,
+                ans.classify_non_overview,
+                ans.condense_and_route,
                 ans.load_recent_turns,
             ) = orig
 
@@ -999,14 +1205,14 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             yield SEARCH_EVENT  # 模型開始上網
             yield "答案[1]。"
 
-        async def fake_intent(q, **k):
-            return True
+        async def fake_route(q, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         async def fake_load(*a, **k):
             return []
 
         async def fake_condense(*a, **k):
-            return (a[1] if len(a) > 1 else "", True)
+            return (a[1] if len(a) > 1 else "", sr._decision(sr.CORPUS_QA))
 
         orig = (
             rp.hybrid_search,
@@ -1014,8 +1220,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
-            ans.condense_and_classify,
+            ans.classify_non_overview,
+            ans.condense_and_route,
             ans.load_recent_turns,
         )
         rp.hybrid_search = fake_search
@@ -1023,8 +1229,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
-        ans.condense_and_classify = fake_condense
+        ans.classify_non_overview = fake_route
+        ans.condense_and_route = fake_condense
         ans.load_recent_turns = fake_load
         try:
             events = [e async for e in ans.answer_question("問題")]
@@ -1035,8 +1241,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
                 ans.stream_completion,
                 rp.SessionFactory,
                 ans.SessionFactory,
-                ans.classify_intent,
-                ans.condense_and_classify,
+                ans.classify_non_overview,
+                ans.condense_and_route,
                 ans.load_recent_turns,
             ) = orig
 
@@ -1603,7 +1809,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             return [("台積電前景?", "看好[1]")]
 
         async def fake_condense(history_text, question, **k):
-            return ("台積電 2026 先進封裝 展望", True)
+            return ("台積電 2026 先進封裝 展望", sr._decision(sr.CORPUS_QA))
 
         async def fake_search(session, query, qvec, **k):
             seen["query"] = query
@@ -1622,8 +1828,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "答案[1]"
 
-        async def fake_intent(q, **k):
-            raise AssertionError("續問不應呼叫 classify_intent")
+        async def fake_route(q, **k):
+            raise AssertionError("續問不應呼叫 classify_non_overview")
 
         orig = (
             rp.hybrid_search,
@@ -1631,8 +1837,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
-            ans.condense_and_classify,
+            ans.classify_non_overview,
+            ans.condense_and_route,
             ans.load_recent_turns,
         )
         rp.hybrid_search = fake_search
@@ -1640,8 +1846,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
-        ans.condense_and_classify = fake_condense
+        ans.classify_non_overview = fake_route
+        ans.condense_and_route = fake_condense
         ans.load_recent_turns = fake_load
         try:
             events = [
@@ -1657,8 +1863,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
                 ans.stream_completion,
                 rp.SessionFactory,
                 ans.SessionFactory,
-                ans.classify_intent,
-                ans.condense_and_classify,
+                ans.classify_non_overview,
+                ans.condense_and_route,
                 ans.load_recent_turns,
             ) = orig
 
@@ -1676,7 +1882,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             return [("台積電前景?", "看好[1]")]
 
         async def fake_condense(history_text, question, **k):
-            return ("台積電 先進封裝 展望", True)
+            return ("台積電 先進封裝 展望", sr._decision(sr.CORPUS_QA))
 
         async def fake_search(session, query, qvec, **k):
             return [
@@ -1693,8 +1899,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "答案[1]"
 
-        async def fake_intent(q, **k):
-            return True
+        async def fake_route(q, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         orig_bup = ans.build_user_prompt
 
@@ -1708,8 +1914,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
-            ans.condense_and_classify,
+            ans.classify_non_overview,
+            ans.condense_and_route,
             ans.load_recent_turns,
             ans.build_user_prompt,
         )
@@ -1718,8 +1924,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
-        ans.condense_and_classify = fake_condense
+        ans.classify_non_overview = fake_route
+        ans.condense_and_route = fake_condense
         ans.load_recent_turns = fake_load
         ans.build_user_prompt = spy_bup
         try:
@@ -1736,8 +1942,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
                 ans.stream_completion,
                 rp.SessionFactory,
                 ans.SessionFactory,
-                ans.classify_intent,
-                ans.condense_and_classify,
+                ans.classify_non_overview,
+                ans.condense_and_route,
                 ans.load_recent_turns,
                 ans.build_user_prompt,
             ) = orig
@@ -1755,7 +1961,7 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             return [("台積電前景?", "看好[1]")]
 
         async def fake_condense(history_text, question, **k):
-            return ("幫我寫一首詩", False)  # 改寫後判定離題
+            return ("幫我寫一首詩", sr._decision(sr.OFF_TOPIC))  # 改寫後判定離題
 
         async def fake_search(session, query, qvec, **k):
             return [
@@ -1769,8 +1975,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             called["llm"] = True
             yield "不該被呼叫"
 
-        async def fake_intent(q, **k):
-            raise AssertionError("續問不應呼叫 classify_intent")
+        async def fake_route(q, **k):
+            raise AssertionError("續問不應呼叫 classify_non_overview")
 
         orig = (
             rp.hybrid_search,
@@ -1778,8 +1984,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
             ans.stream_completion,
             rp.SessionFactory,
             ans.SessionFactory,
-            ans.classify_intent,
-            ans.condense_and_classify,
+            ans.classify_non_overview,
+            ans.condense_and_route,
             ans.load_recent_turns,
         )
         rp.hybrid_search = fake_search
@@ -1787,8 +1993,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
-        ans.condense_and_classify = fake_condense
+        ans.classify_non_overview = fake_route
+        ans.condense_and_route = fake_condense
         ans.load_recent_turns = fake_load
         try:
             events = [
@@ -1801,8 +2007,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
                 ans.stream_completion,
                 rp.SessionFactory,
                 ans.SessionFactory,
-                ans.classify_intent,
-                ans.condense_and_classify,
+                ans.classify_non_overview,
+                ans.condense_and_route,
                 ans.load_recent_turns,
             ) = orig
 
@@ -1923,23 +2129,23 @@ class StagesPersistTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "答案[1]"
 
-        async def fake_intent(question, **k):
-            return True
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-                rp.SessionFactory, ans.SessionFactory, ans.classify_intent, ans._log_qa)
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview, ans._log_qa)
         rp.hybrid_search = fake_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
+        ans.classify_non_overview = fake_route
         ans._log_qa = fake_log
         try:
             _ = [e async for e in ans.answer_question("台積電展望")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-             rp.SessionFactory, ans.SessionFactory, ans.classify_intent, ans._log_qa) = orig
+             rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview, ans._log_qa) = orig
 
         self.assertIn("stages", logged)
         self.assertEqual(logged["stages"][0], "understanding")
@@ -2021,27 +2227,27 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "答案[1]"
 
-        async def fake_intent(question, **k):
-            return True
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         async def fake_followups(q, a, **k):
             return ["追問一", "追問二"]
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-                rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
                 ans.generate_followups)
         rp.hybrid_search = fake_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
+        ans.classify_non_overview = fake_route
         ans.generate_followups = fake_followups
         try:
             events = [e async for e in ans.answer_question("台積電展望")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-             rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
              ans.generate_followups) = orig
 
         kinds = [k for k, _ in events]
@@ -2062,25 +2268,25 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "答案[1]"
 
-        async def fake_intent(q, **k): return True
+        async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
 
         async def empty_followups(q, a, **k): return []
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-                rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
                 ans.generate_followups)
         rp.hybrid_search = fake_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
+        ans.classify_non_overview = fake_route
         ans.generate_followups = empty_followups
         try:
             events = [e async for e in ans.answer_question("台積電展望")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-             rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
              ans.generate_followups) = orig
         self.assertNotIn("followups", [k for k, _ in events])
 
@@ -2111,11 +2317,11 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "新答案[1]"
 
-        async def fake_intent(q, **k): return True
+        async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
         async def no_followups(q, a, **k): return []
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-                rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
                 ans._load_qa_meta, ans._deactivate_qa, ans._count_versions,
                 ans._log_qa, ans.generate_followups)
         rp.hybrid_search = fake_search
@@ -2123,7 +2329,7 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
+        ans.classify_non_overview = fake_route
         ans._load_qa_meta = fake_meta
         ans._deactivate_qa = fake_deactivate
         ans._count_versions = fake_count
@@ -2134,7 +2340,7 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
                 "台積電展望", regenerate_of="old-1")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-             rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
              ans._load_qa_meta, ans._deactivate_qa, ans._count_versions,
              ans._log_qa, ans.generate_followups) = orig
 
@@ -2164,18 +2370,18 @@ class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "編輯後答案[1]"
 
-        async def fake_intent(q, **k): return True
+        async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
         async def no_followups(q, a, **k): return []
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-                rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
                 ans._load_qa_meta, ans._truncate_from, ans.generate_followups)
         rp.hybrid_search = fake_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
+        ans.classify_non_overview = fake_route
         ans._load_qa_meta = fake_meta
         ans._truncate_from = fake_truncate
         ans.generate_followups = no_followups
@@ -2184,7 +2390,7 @@ class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
                 "台積電最新展望", edit_of="turn-2")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-             rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
              ans._load_qa_meta, ans._truncate_from, ans.generate_followups) = orig
 
         self.assertEqual(state["truncated"], ("c1", "TS"))

@@ -25,7 +25,17 @@ from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
 from app.services.followups import generate_followups
-from app.services.scope_router import classify_intent, condense_and_classify
+from app.services.scope_router import (
+    ADVICE_RISK,
+    CORPUS_QA,
+    OFF_TOPIC,
+    OVERVIEW,
+    TIME_SENSITIVE,
+    RouteDecision,
+    classify_non_overview,
+    condense_and_route,
+    resolve_overview_route,
+)
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.overview import (
     OVERVIEW_SYSTEM_PROMPT,
@@ -122,6 +132,8 @@ RESEARCH_ONLY_POLICY = (
     "個人化的買賣建議、目標部位、槓桿倍數、停損停利點位或任何保證報酬的說法。"
 )
 
+# M4：主 LLM 呼叫已改寫死 allow_web=False（見 answer_question 內 stream_completion
+# 呼叫處的工具政策註解），此常數暫不生效；保留供 M5 依 tool_policy 重新啟用網搜時沿用。
 ASK_ENABLE_WEB = _S.ask_enable_web
 
 EXT_SENTINEL = "[EXT_SOURCES]"  # 模型在答案末尾以此標記外部來源區塊
@@ -966,6 +978,48 @@ async def _answer_overview(
                     "conversation_id": conv_id, "thinking_ms": thinking_ms})
 
 
+async def _yield_routed_notice(
+    decision: RouteDecision,
+    question: str,
+    filters: dict,
+    conv_id: str,
+    started: float,
+    stages_seen: list[str],
+    new_root: str | None,
+) -> AsyncIterator[tuple[str, object]]:
+    """no-answer 終端路由（off_topic / time_sensitive）：固定文案、不檢索、不呼叫主 LLM。
+
+    off_topic 與 time_sensitive 共用同一事件序（sources[] → notice → done）；
+    done payload 維持既有離題形狀，不含 qa_id（與有答覆路徑的 done 區隔）。
+    """
+    if decision.scope == TIME_SENSITIVE:
+        message = TIME_SENSITIVE_UNAVAILABLE_MESSAGE
+        log_filters = dict(filters, path="time_sensitive")
+    else:
+        message = OFF_TOPIC_MESSAGE
+        log_filters = filters
+    yield ("sources", [])
+    yield ("notice", message)
+    thinking_ms = int((time.monotonic() - started) * 1000)
+    await _log_qa(
+        question,
+        message,
+        [],
+        log_filters,
+        thinking_ms,
+        [],
+        [],
+        conversation_id=conv_id,
+        thinking_ms=thinking_ms,
+        stages=stages_seen,
+        root_qa_id=new_root,
+    )
+    yield (
+        "done",
+        {"cited": [], "conversation_id": conv_id, "thinking_ms": thinking_ms},
+    )
+
+
 async def answer_question(
     question: str,
     *,
@@ -1020,47 +1074,57 @@ async def answer_question(
     turns = await load_recent_turns(conv_id) if conversation_id else []
     history_block = build_history_block(turns)
 
-    # 多輪需先 condense 取得獨立查詢；首輪直接用原問題（意圖判定仍延後並行）
+    today = datetime.now(timezone.utc).date()
+    decision: RouteDecision | None = None
+
+    # 多輪：一次 Haiku 改寫＋分類（內含改寫後 overview/前檢重判）；首輪延後並行判定
     if turns:
-        standalone_query, in_domain = await condense_and_classify(
-            history_block, question
+        standalone_query, decision = await condense_and_route(
+            history_block, question, today=today
         )
         timer.mark("condense")
     else:
-        standalone_query, in_domain = question, None
+        standalone_query = question
+        ov = resolve_overview_route(question, today)  # 確定性優先，零 LLM 零向量
+        if ov is not None:
+            decision = ov
 
-    # 總覽分支：枚舉/聚合題改走全語料分面統計（純規則判定，零 LLM、零向量檢索）。
-    # 先用較便宜的 detect_overview 當閘門，命中才解析條件——避免每題都跑 resolve_filters。
-    # 需解析到 ≥1 金融條件才改道（此門檻即離題保護）；否則回退既有 RAG。
-    if detect_overview(standalone_query):
-        ov_filters = resolve_filters(
-            standalone_query, datetime.now(timezone.utc).date()
-        )
-        if ov_filters.any():
-            produced = False
-            try:
-                async for ev in _answer_overview(
-                    question,
-                    standalone_query,
-                    ov_filters,
-                    filters,
-                    conv_id=conv_id,
-                    model=model,
-                    started=started,
-                ):
-                    produced = True
-                    yield ev
-                if produced:
-                    return
-            except Exception:
-                # 已 yield 過事件再拋例外無法乾淨回退（會重發 sources 汙染 SSE）→ 直接上拋；
-                # 僅「尚未 yield」（produced 為 False，例如 aggregate_facets 拋錯）才 fail-open 回退 RAG。
-                if produced:
-                    logger.exception("overview path failed mid-stream; cannot fall back")
-                    raise
-                logger.exception(
-                    "overview path failed before any output; falling back to RAG"
-                )
+    # 總覽分支：枚舉/聚合題走全語料分面統計（decision 攜帶已解析 filters，不重算）
+    if decision is not None and decision.scope == OVERVIEW:
+        ov_filters = decision.overview_filters
+        produced = False
+        try:
+            async for ev in _answer_overview(
+                question, standalone_query, ov_filters, filters,
+                conv_id=conv_id, model=model, started=started,
+            ):
+                produced = True
+                yield ev
+            if produced:
+                return
+        except Exception:
+            # 已 yield 過事件再拋例外無法乾淨回退（會重發 sources 汙染 SSE）→ 直接上拋；
+            # 僅「尚未 yield」（produced 為 False，例如 aggregate_facets 拋錯）才 fail-open 回退 RAG。
+            if produced:
+                logger.exception("overview path failed mid-stream; cannot fall back")
+                raise
+            logger.exception(
+                "overview path failed before any output; falling back to RAG"
+            )
+            # 回退 RAG：首輪重新並行判定（decision=None）；續問已耗用改寫結果，fail-open 判 corpus_qa
+            decision = None
+            if turns:
+                from app.services.scope_router import _decision as _mk
+
+                decision = _mk(CORPUS_QA)
+
+    # 終端路由（不檢索、不呼叫主 LLM）：續問在檢索前提前返回
+    if decision is not None and decision.scope in (OFF_TOPIC, TIME_SENSITIVE):
+        async for ev in _yield_routed_notice(
+            decision, question, filters, conv_id, started, stages_seen, new_root
+        ):
+            yield ev
+        return
 
     # 既有 RAG 路徑（embed+檢索+build_context 收斂於 retrieve_context；函式內 import
     # 避免頂層循環 import——retrieval_pipeline 於頂層 import 本模組）
@@ -1074,7 +1138,7 @@ async def answer_question(
             rerank_top_m=ASK_RERANK_TOP_M,
         )
     else:
-        intent_task = asyncio.create_task(classify_intent(question))
+        route_task = asyncio.create_task(classify_non_overview(question))
         try:
             sources, context = await retrieve_context(
                 question, k=k, dense_scan=ASK_DENSE_SCAN,
@@ -1082,34 +1146,25 @@ async def answer_question(
                 max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
                 rerank_top_m=ASK_RERANK_TOP_M,
             )
-            in_domain = await intent_task
-            timer.mark("intent_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
+            decision = await route_task
+            timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
         except BaseException:
-            intent_task.cancel()
+            route_task.cancel()
             raise
 
-    if not in_domain:  # 離題：拒答、不跑主 LLM
-        yield ("sources", [])
-        yield ("notice", OFF_TOPIC_MESSAGE)
-        thinking_ms = int((time.monotonic() - started) * 1000)
-        await _log_qa(
-            question,
-            OFF_TOPIC_MESSAGE,
-            [],
-            filters,
-            thinking_ms,
-            [],
-            [],
-            conversation_id=conv_id,
-            thinking_ms=thinking_ms,
-            stages=stages_seen,
-            root_qa_id=new_root,
-        )
-        yield (
-            "done",
-            {"cited": [], "conversation_id": conv_id, "thinking_ms": thinking_ms},
-        )
+    # 首輪終端路由：並行取證被丟棄——不發 sources、不持久化取證結果
+    if decision is not None and decision.scope in (OFF_TOPIC, TIME_SENSITIVE):
+        async for ev in _yield_routed_notice(
+            decision, question, filters, conv_id, started, stages_seen, new_root
+        ):
+            yield ev
         return
+
+    system_prompt = SYSTEM_PROMPT
+    log_filters = filters
+    if decision is not None and decision.scope == ADVICE_RISK:
+        system_prompt = SYSTEM_PROMPT + RESEARCH_ONLY_POLICY
+        log_filters = dict(filters, path="advice_risk")
 
     yield ("sources", [asdict(s) for s in sources])
     yield _status("retrieved", count=len(sources))  # 步驟2：找到 N 篇
@@ -1122,7 +1177,7 @@ async def answer_question(
             question,
             NO_CONTEXT_MESSAGE,
             [],
-            filters,
+            log_filters,
             thinking_ms,
             [],
             [],
@@ -1160,7 +1215,8 @@ async def answer_question(
 
     yield _status("reading")  # 步驟3：閱讀重點、整理回答
     async for chunk in stream_completion(
-        user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
+        # M4 依工具政策一律關閉未受控網搜；M5 才按 tool_policy 重開（spec §2）
+        user_prompt, model=model, system=system_prompt, allow_web=False
     ):
         if chunk == SEARCH_EVENT:
             if not searching_sent:
@@ -1185,7 +1241,7 @@ async def answer_question(
         question,
         body,
         cited,
-        filters,
+        log_filters,
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources],
         ext_sources,

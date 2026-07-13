@@ -1,4 +1,4 @@
-# tests/test_intent.py
+# tests/test_scope_router.py
 import sys
 import unittest
 from pathlib import Path
@@ -126,6 +126,16 @@ class SafetyPrecheckTests(unittest.TestCase):
         # 「最新展望」是研報題，不得被前檢誤攔（eval q001 保護案例）
         self.assertIsNone(_safety_precheck("台積電最新的營運展望如何"))
         self.assertIsNone(_safety_precheck("散熱產業的競爭格局"))
+
+    def test_corpus_price_trend_no_hit(self):
+        # 研報常見的商品/記憶體「報價走勢」分析不得被裸詞誤攔（eval memory-prices 保護案例）
+        self.assertIsNone(_safety_precheck("記憶體報價的近期走勢"))
+        self.assertIsNone(_safety_precheck("台積電近期漲停後法人如何看待"))
+
+    def test_institutional_positioning_no_hit(self):
+        # 法人持倉/買賣超分析是 corpus 題，不得誤判 advice_risk
+        self.assertIsNone(_safety_precheck("外資倉位增減分析"))
+        self.assertIsNone(_safety_precheck("三大法人買多少台積電"))
 
 
 class DecisionTests(unittest.TestCase):

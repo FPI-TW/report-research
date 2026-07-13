@@ -104,6 +104,9 @@ function applyAsk(t: Turn, ev: AskEvent): Turn {
       reportTitle: ev.data.report_title ?? null,
       rootQaId: ev.data.root_qa_id ?? t.rootQaId,
       versionCount: ev.data.version_count ?? t.versionCount,
+      // done 時剛完成的答案即最新版，versionIndex 對齊最新——修正「重載多版本後直接重生」時
+      // 伺服器權威 version_count 晚到、樂觀 versionIndex 未同步導致 isLive 誤 false 而隱藏回饋/追問鈕。
+      versionIndex: (ev.data.version_count ?? t.versionCount) - 1,
       report: ev.data.offer_report ? { ...t.report, status: 'offered', title: ev.data.report_title ?? null } : t.report,
     }
     case 'error': return { ...t, phase: 'error', errorText: ev.data.detail }

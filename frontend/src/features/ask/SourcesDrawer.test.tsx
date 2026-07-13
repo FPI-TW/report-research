@@ -11,7 +11,8 @@ function turn(over: Partial<Turn>): Turn {
     extSources: [{ title: '外部新聞', url: 'https://news.example.com/a' }],
     qaId: 'qa1', isOfftopic: false, noticeText: null, offerReport: false, reportTitle: null,
     feedback: null, report: { status: 'idle', pct: 0, stageText: '', downloadUrl: null, title: null, errorText: null },
-    errorText: null, ...over,
+    errorText: null, followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1,
+    ...over,
   }
 }
 

@@ -1,10 +1,15 @@
-import { expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { askReducer, initialAskState, turnFromHistory, type AskState } from './askReducer'
 
 function submit(): AskState {
   return askReducer(initialAskState, { type: 'submit', id: 't1', question: 'Q', startedAt: 1000 })
 }
 const ev = (event: unknown) => ({ type: 'ask-event' as const, id: 't1', event: event as never })
+
+function seeded(): AskState {
+  const s = askReducer(initialAskState, { type: 'submit', id: 't1', question: 'q', startedAt: 0 })
+  return askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'token', data: '答案' } })
+}
 
 test('submit 推入一筆 thinking turn', () => {
   const s = submit()
@@ -123,4 +128,74 @@ test('report-cancel：generating→offered；done 不被還原', () => {
   s2 = askReducer(s2, { type: 'report-event', id: 't1', event: { event: 'done', data: { report_id: 'r', title: 'T', download_url: '/api/report-doc/r/pdf' } } })
   s2 = askReducer(s2, { type: 'report-cancel', id: 't1' })
   expect(s2.turns[0].report.status).toBe('done')
+})
+
+describe('askReducer M3', () => {
+  it('ask-stop sets stopped phase and keeps answer + qaId', () => {
+    const s = askReducer(seeded(), { type: 'ask-stop', id: 't1', qaId: 'qa-stop' })
+    const t = s.turns[0]
+    expect(t.phase).toBe('stopped')
+    expect(t.answer).toBe('答案')
+    expect(t.qaId).toBe('qa-stop')
+  })
+
+  it('ask-end does not overwrite stopped', () => {
+    let s = askReducer(seeded(), { type: 'ask-stop', id: 't1', qaId: 'x' })
+    s = askReducer(s, { type: 'ask-end', id: 't1' })
+    expect(s.turns[0].phase).toBe('stopped')
+  })
+
+  it('followups sets chips', () => {
+    const s = askReducer(seeded(), { type: 'followups', id: 't1', data: ['追問一', '追問二'] })
+    expect(s.turns[0].followups).toEqual(['追問一', '追問二'])
+  })
+
+  it('regenerate-start snapshots prior version and resets live', () => {
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', qa_id: 'qa1' } } })
+    s = askReducer(s, { type: 'regenerate-start', id: 't1' })
+    const t = s.turns[0]
+    expect(t.priorVersions.length).toBe(1)
+    expect(t.priorVersions[0].answer).toBe('答案')
+    expect(t.answer).toBe('')
+    expect(t.phase).toBe('thinking')
+    expect(t.versionIndex).toBe(1)
+  })
+
+  it('set-version switches displayed index', () => {
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', qa_id: 'qa1' } } })
+    s = askReducer(s, { type: 'regenerate-start', id: 't1' })
+    s = askReducer(s, { type: 'set-version', id: 't1', index: 0 })
+    expect(s.turns[0].versionIndex).toBe(0)
+  })
+
+  it('truncate-after removes turns following the given id', () => {
+    let s = askReducer(initialAskState, { type: 'submit', id: 't1', question: 'q1', startedAt: 0 })
+    s = askReducer(s, { type: 'submit', id: 't2', question: 'q2', startedAt: 0 })
+    s = askReducer(s, { type: 'truncate-after', id: 't1' })
+    expect(s.turns.map(t => t.id)).toEqual(['t1'])
+  })
+
+  it('submit-edit resets turn to new question thinking state', () => {
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', qa_id: 'qa1' } } })
+    s = askReducer(s, { type: 'submit-edit', id: 't1', question: '新問題' })
+    expect(s.turns[0].question).toBe('新問題')
+    expect(s.turns[0].phase).toBe('thinking')
+    expect(s.turns[0].answer).toBe('')
+  })
+
+  it('load-versions fills priorVersions from all-but-last', () => {
+    const versions = [
+      { qa_id: 'v1', answer: '答一', sources: [], ext_sources: [], thinking_ms: 100, stages: [], feedback: null, created_at: null },
+      { qa_id: 'v2', answer: '答二', sources: [], ext_sources: [], thinking_ms: 120, stages: [], feedback: 'like' as const, created_at: null },
+    ]
+    let s = seeded()
+    s = askReducer(s, { type: 'load-versions', id: 't1', versions })
+    expect(s.turns[0].priorVersions.length).toBe(1)
+    expect(s.turns[0].priorVersions[0].qaId).toBe('v1')
+    expect(s.turns[0].versionCount).toBe(2)
+    expect(s.turns[0].versionIndex).toBe(1)
+  })
 })

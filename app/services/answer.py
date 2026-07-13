@@ -557,6 +557,22 @@ async def _deactivate_qa(qa_id: str) -> None:
         pass
 
 
+async def _truncate_from(conversation_id: str, created_at) -> None:
+    """把某對話中 created_at 起（含）的所有列標為 inactive（編輯重送截斷）；best-effort。"""
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text(
+                    "UPDATE research.qa_log SET active = false "
+                    "WHERE COALESCE(conversation_id, id) = :cid AND created_at >= :ts"
+                ),
+                {"cid": conversation_id, "ts": created_at},
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
 async def _count_versions(group_key: str) -> int:
     """某群組（COALESCE(root_qa_id, id)）的版本總數（含 inactive）。"""
     try:
@@ -939,6 +955,7 @@ async def answer_question(
     model: str = DEFAULT_MODEL,
     conversation_id: str | None = None,
     regenerate_of: str | None = None,
+    edit_of: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """產生 ("sources"|"status"|"token"|"notice"|"ext_sources"|"done", payload) 事件序列。
 
@@ -947,6 +964,9 @@ async def answer_question(
     再以改寫後查詢檢索；先前對話內嵌進 prompt。所有 done 事件回傳 conversation_id。
     regenerate_of 有值時：讀舊列群組鍵、沿用其 conversation_id、停用舊列，
     新列與舊列同組（root_qa_id），done 事件回傳 root_qa_id 與 version_count。
+    edit_of 有值時（與 regenerate_of 互斥，regenerate_of 優先）：讀被編輯列的
+    conversation_id 與 created_at，把該輪及其後全部標 inactive（截斷後續對話），
+    再以編輯後新問題作答為全新輪次（不進版本群組，new_root 維持 None）。
     """
     filters = filters or {}
     started = time.monotonic()
@@ -961,6 +981,13 @@ async def answer_question(
             conv_id = _old_conv or conv_id
             new_root = _old_root or regenerate_of
             await _deactivate_qa(regenerate_of)
+    elif edit_of:
+        _meta = await _load_qa_meta(edit_of)
+        if _meta is not None:
+            _old_root, _old_conv, _old_created = _meta
+            conv_id = _old_conv or conv_id
+            if _old_created is not None:
+                await _truncate_from(conv_id, _old_created)
 
     stages_seen: list[str] = []
 

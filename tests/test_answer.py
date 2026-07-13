@@ -2134,5 +2134,51 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(done["root_qa_id"], "old-1")
 
 
+class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_edit_truncates_from_edited_turn(self):
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        state = {"truncated": None}
+
+        async def fake_meta(qid):
+            return (None, "c1", "TS")  # created_at 標記
+
+        async def fake_truncate(conv, ts):
+            state["truncated"] = (conv, ts)
+
+        async def fake_search(*a, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "編輯後答案[1]"
+
+        async def fake_intent(q, **k): return True
+        async def no_followups(q, a, **k): return []
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+                ans._load_qa_meta, ans._truncate_from, ans.generate_followups)
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans._load_qa_meta = fake_meta
+        ans._truncate_from = fake_truncate
+        ans.generate_followups = no_followups
+        try:
+            events = [e async for e in ans.answer_question(
+                "台積電最新展望", edit_of="turn-2")]
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+             ans._load_qa_meta, ans._truncate_from, ans.generate_followups) = orig
+
+        self.assertEqual(state["truncated"], ("c1", "TS"))
+        self.assertIn("done", [k for k, _ in events])
+
+
 if __name__ == "__main__":
     unittest.main()

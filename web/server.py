@@ -223,6 +223,8 @@ class AskRequest(BaseModel):
     relates_futures: bool | None = None
     report_type: str | None = None
     k: int = 8
+    regenerate_of: str | None = None
+    edit_of: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -680,12 +682,21 @@ async def ask(req: AskRequest):
         report_type=rtype,
     )
     k = max(1, min(req.k, 20))
+    if req.regenerate_of is not None and not _valid_uuid(req.regenerate_of):
+        raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
+    if req.edit_of is not None and not _valid_uuid(req.edit_of):
+        raise HTTPException(status_code=400, detail="edit_of 格式不正確")
 
     async def gen():
         async with _ASK_SEMAPHORE:
             try:
                 async for event, payload in answer_question(
-                    question, k=k, filters=filters, conversation_id=req.conversation_id
+                    question,
+                    k=k,
+                    filters=filters,
+                    conversation_id=req.conversation_id,
+                    regenerate_of=req.regenerate_of,
+                    edit_of=req.edit_of,
                 ):
                     yield _sse(event, payload)
             except Exception:

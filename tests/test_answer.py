@@ -1873,5 +1873,82 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["params"]["root"], "root-x")
 
 
+class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
+    """主 RAG 路徑在 done 之後補發 followups 事件（非空才發，fail-open 不擋主答）。"""
+
+    async def test_followups_event_after_done(self):
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        async def fake_search(*a, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_intent(question, **k):
+            return True
+
+        async def fake_followups(q, a, **k):
+            return ["追問一", "追問二"]
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+                ans.generate_followups)
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans.generate_followups = fake_followups
+        try:
+            events = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+             ans.generate_followups) = orig
+
+        kinds = [k for k, _ in events]
+        self.assertIn("done", kinds)
+        self.assertIn("followups", kinds)
+        # followups 在 done 之後
+        self.assertGreater(kinds.index("followups"), kinds.index("done"))
+        fu_payload = next(p for k, p in events if k == "followups")
+        self.assertEqual(fu_payload, ["追問一", "追問二"])
+
+    async def test_empty_followups_not_emitted(self):
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        async def fake_search(*a, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_intent(q, **k): return True
+
+        async def empty_followups(q, a, **k): return []
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+                ans.generate_followups)
+        rp.hybrid_search = fake_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_intent = fake_intent
+        ans.generate_followups = empty_followups
+        try:
+            events = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+             rp.SessionFactory, ans.SessionFactory, ans.classify_intent,
+             ans.generate_followups) = orig
+        self.assertNotIn("followups", [k for k, _ in events])
+
+
 if __name__ == "__main__":
     unittest.main()

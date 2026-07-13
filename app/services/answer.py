@@ -24,6 +24,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
+from app.services.followups import generate_followups
 from app.services.intent import classify_intent, condense_and_classify
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.overview import (
@@ -729,6 +730,19 @@ async def record_feedback(qa_id: str, value: str) -> bool:
         return False
 
 
+async def _update_followups(qa_id: str, followups: list[str]) -> None:
+    """best-effort 補寫 followups（追問在 done 後才產）。"""
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text("UPDATE research.qa_log SET followups = :f WHERE id = :id"),
+                {"f": json.dumps(followups, ensure_ascii=False), "id": qa_id},
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
 async def delete_qa(qa_id: str) -> bool:
     """刪除一列 research.qa_log（使用者清除單筆歷史問答）。
 
@@ -1047,3 +1061,8 @@ async def answer_question(
             "report_title": report_title,
         },
     )
+
+    fups = await generate_followups(question, body)
+    if fups:
+        await _update_followups(qa_id, fups)
+        yield ("followups", fups)

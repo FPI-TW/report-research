@@ -8,6 +8,7 @@ import { DeepReportPanel } from './DeepReportPanel'
 import { SourcesDrawer } from './SourcesDrawer'
 import { Composer } from './Composer'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
+import { ModeSwitch } from '../../components/shell/ModeSwitch'
 import styles from './AskPage.module.css'
 
 export default function AskPage() {
@@ -47,6 +48,9 @@ export default function AskPage() {
   return (
     <div className={styles.page}>
       <div className={styles.column}>
+        {turns.length > 0 && (
+          <div className={styles.modeBar}><ModeSwitch size="sm" /></div>
+        )}
         <div className={`${styles.flow} ${turns.length === 0 ? styles.flowCentered : ''} tf-scroll`} ref={flowRef}>
           {turns.length === 0 ? (
             <AskEmptyState value={draft} onChange={setDraft} onSubmit={handleSubmit} />

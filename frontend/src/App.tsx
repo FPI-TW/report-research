@@ -1,11 +1,12 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { AppShell } from './components/shell/AppShell'
+import { routeLoaders, preloadIdle } from './lib/routePreload'
 
-const SearchPage = lazy(() => import('./features/search/SearchPage'))
-const AskPage = lazy(() => import('./features/ask/AskPage'))
-const MonitorPage = lazy(() => import('./features/monitor/MonitorPage'))
+const SearchPage = lazy(routeLoaders.search)
+const AskPage = lazy(routeLoaders.ask)
+const MonitorPage = lazy(routeLoaders.monitor)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -28,5 +29,6 @@ export const routes = [
 const router = createBrowserRouter(routes, { basename: '/app' })
 
 export default function App() {
+  useEffect(() => { preloadIdle(['search', 'ask']) }, [])
   return <RouterProvider router={router} />
 }

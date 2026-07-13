@@ -1705,5 +1705,69 @@ class HistoryItemThinkingTests(unittest.TestCase):
         self.assertEqual(item["ext_sources"], [])
 
 
+class LogQaColumnsTests(unittest.IsolatedAsyncioTestCase):
+    """_log_qa 寫入新欄 root_qa_id/stages/followups/active。"""
+
+    async def test_log_qa_writes_new_columns(self):
+        from app.services import answer as ans
+
+        captured = {}
+
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                captured["sql"] = str(stmt)
+                captured["params"] = params
+                return None
+            async def commit(self): return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _CapSession()
+        try:
+            qa_id = await ans._log_qa(
+                "問題", "答案", [], {}, 10, [], [],
+                conversation_id="c1", thinking_ms=5,
+                root_qa_id="root1", stages=["understanding", "generating"],
+                followups=["追問A", "追問B"],
+            )
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertTrue(qa_id)
+        self.assertIn("root_qa_id", captured["sql"])
+        self.assertIn("stages", captured["sql"])
+        self.assertIn("followups", captured["sql"])
+        self.assertEqual(captured["params"]["root"], "root1")
+        self.assertEqual(json.loads(captured["params"]["stages"]),
+                         ["understanding", "generating"])
+        self.assertEqual(json.loads(captured["params"]["followups"]),
+                         ["追問A", "追問B"])
+
+    async def test_log_qa_new_columns_default_none(self):
+        from app.services import answer as ans
+
+        captured = {}
+
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                captured["params"] = params
+                return None
+            async def commit(self): return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _CapSession()
+        try:
+            await ans._log_qa("q", "a", [], {}, 1, [], [])
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertIsNone(captured["params"]["root"])
+        self.assertIsNone(captured["params"]["stages"])
+        self.assertIsNone(captured["params"]["followups"])
+
+
 if __name__ == "__main__":
     unittest.main()

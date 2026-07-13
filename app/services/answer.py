@@ -472,12 +472,16 @@ async def _log_qa(
     *,
     conversation_id: str | None = None,
     thinking_ms: int | None = None,
+    root_qa_id: str | None = None,
+    stages: list[str] | None = None,
+    followups: list[str] | None = None,
 ) -> str:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
     回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
     sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
-    conversation_id 將多輪問答歸為同一串。
+    conversation_id 將多輪問答歸為同一串。root_qa_id 將同題多版本歸為同一群組。
+    stages/followups 供歷史重現思考卡與追問 chips。
     """
     qa_id = str(uuid.uuid4())
     ext_sources = ext_sources or []
@@ -487,21 +491,28 @@ async def _log_qa(
                 text(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
-                    "sources, ext_sources, conversation_id, thinking_ms) "
+                    "sources, ext_sources, conversation_id, thinking_ms, "
+                    "root_qa_id, active, stages, followups) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
-                    ":sources, :ext_sources, :conv, :think)"
+                    ":sources, :ext_sources, :conv, :think, "
+                    ":root, true, :stages, :followups)"
                 ),
                 {
                     "id": qa_id,
                     "q": question,
                     "a": answer,
-                    "cited": cited,  # uuid[]：asyncpg 由欄位型別推斷，傳 list[str]
-                    "filters": json.dumps(filters, ensure_ascii=False),  # jsonb
+                    "cited": cited,
+                    "filters": json.dumps(filters, ensure_ascii=False),
                     "lat": latency_ms,
-                    "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
-                    "ext_sources": json.dumps(ext_sources, ensure_ascii=False),  # jsonb
+                    "sources": json.dumps(sources, ensure_ascii=False),
+                    "ext_sources": json.dumps(ext_sources, ensure_ascii=False),
                     "conv": conversation_id,
                     "think": thinking_ms,
+                    "root": root_qa_id,
+                    "stages": json.dumps(stages, ensure_ascii=False)
+                    if stages is not None else None,
+                    "followups": json.dumps(followups, ensure_ascii=False)
+                    if followups is not None else None,
                 },
             )
             await session.commit()

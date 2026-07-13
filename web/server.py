@@ -45,6 +45,7 @@ from app.services.answer import (  # noqa: E402
     get_conversation,
     history_item,
     list_conversations,
+    list_qa_versions,
     log_stopped_qa,
     record_feedback,
 )
@@ -806,7 +807,7 @@ async def history(limit: int = Query(50, ge=1, le=200)):
                 text(
                     "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
                     "FROM research.qa_log "
-                    "WHERE answer IS DISTINCT FROM :offtopic "
+                    "WHERE answer IS DISTINCT FROM :offtopic AND active "
                     "ORDER BY created_at DESC LIMIT :limit"
                 ),
                 {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
@@ -830,6 +831,14 @@ async def delete_history_post(qa_id: str):
     """
     ok = await delete_qa(qa_id)
     return {"ok": ok}
+
+
+@app.get("/api/qa/{root_qa_id}/versions")
+async def qa_versions(root_qa_id: str):
+    """某問題群組全部版本（供歷史 pager 回看）。"""
+    if not _valid_uuid(root_qa_id):
+        raise HTTPException(status_code=404, detail="not found")
+    return await list_qa_versions(root_qa_id)
 
 
 @app.get("/api/conversations")

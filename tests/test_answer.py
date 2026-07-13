@@ -1343,15 +1343,56 @@ class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(turns, [])
 
 
+class ActiveFilterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_load_recent_turns_filters_active(self):
+        from app.services import answer as ans
+
+        captured = {}
+
+        class _CapSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, stmt, params=None):
+                captured["sql"] = str(stmt)
+
+                class _R:
+                    def all(self_inner):
+                        return []
+
+                return _R()
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _CapSession()
+        try:
+            await ans.load_recent_turns("c1")
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertIn("active", captured["sql"])
+        self.assertIn("stopped IS NOT TRUE", captured["sql"])
+
+
 class GetConversationTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_rows_via_history_item(self):
         from app.services import answer as ans
         import app.services.report as rpt
         from datetime import date
 
+        # 13 欄須與新 SELECT 順序對齊：id, question, answer, created_at, feedback,
+        # sources, ext_sources, thinking_ms, stages, followups, root_qa_id,
+        # stopped, version_count
         rows = [
-            ("id1", "Q1", "A1", date(2026, 6, 1), None, None, None),
-            ("id2", "Q2", "A2", date(2026, 6, 2), "like", None, None),
+            ("id1", "Q1", "A1", date(2026, 6, 1), None, None, None,
+             None, None, None, None, False, 1),
+            ("id2", "Q2", "A2", date(2026, 6, 2), "like", None, None,
+             None, None, None, None, False, 1),
         ]
         async def _no_reports(cid):
             return {}
@@ -1366,6 +1407,89 @@ class GetConversationTests(unittest.IsolatedAsyncioTestCase):
             ans.SessionFactory = orig_sf
             rpt.reports_for_conversation = orig_rfc
         self.assertEqual([t["question"] for t in out], ["Q1", "Q2"])
+        self.assertEqual(out[1]["feedback"], "like")
+
+
+class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_conversation_includes_new_fields(self):
+        from app.services import answer as ans
+
+        # 假一列（順序須對齊新 SELECT）：
+        # id, question, answer, created_at, feedback, sources, ext_sources,
+        # thinking_ms, stages, followups, root_qa_id, stopped, version_count
+        row = ("id1", "問題", "答案", None, None, [], [], 100,
+               ["understanding", "generating"], ["追問A"], None, False, 2)
+
+        class _Rows:
+            def all(self):
+                return [row]
+
+        class _CapSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, stmt, params=None):
+                assert "active" in str(stmt)
+                return _Rows()
+
+            async def commit(self):
+                return None
+
+        async def no_reports(cid):
+            return {}
+
+        import app.services.report as rpt
+        orig = (ans.SessionFactory, rpt.reports_for_conversation)
+        ans.SessionFactory = lambda: _CapSession()
+        rpt.reports_for_conversation = no_reports
+        try:
+            items = await ans.get_conversation("c1")
+        finally:
+            (ans.SessionFactory, rpt.reports_for_conversation) = orig
+
+        it = items[0]
+        self.assertEqual(it["stages"], ["understanding", "generating"])
+        self.assertEqual(it["followups"], ["追問A"])
+        self.assertEqual(it["version_count"], 2)
+        self.assertFalse(it["stopped"])
+
+    async def test_list_qa_versions_orders_ascending(self):
+        from app.services import answer as ans
+
+        rows = [
+            ("v1", "答一", [], [], 100, ["understanding"], None, None),
+            ("v2", "答二", [], [], 120, ["understanding", "generating"], "like", None),
+        ]
+
+        class _Rows:
+            def all(self):
+                return rows
+
+        class _CapSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, stmt, params=None):
+                assert "ORDER BY created_at ASC" in str(stmt)
+                return _Rows()
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _CapSession()
+        try:
+            out = await ans.list_qa_versions("root1")
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertEqual([v["qa_id"] for v in out], ["v1", "v2"])
         self.assertEqual(out[1]["feedback"], "like")
 
 
@@ -1432,7 +1556,7 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
 
         sql = " ".join((session.statement_text or "").split())
         self.assertIn(
-            "(array_agg(question ORDER BY created_at) FILTER (WHERE answer IS DISTINCT FROM :offtopic))[1] AS title",
+            "(array_agg(question ORDER BY created_at) FILTER (WHERE answer IS DISTINCT FROM :offtopic AND active))[1] AS title",
             sql,
         )
         self.assertIn("WHERE turn_count > 0", sql)

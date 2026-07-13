@@ -617,6 +617,7 @@ async def load_recent_turns(
                         "SELECT question, answer FROM research.qa_log "
                         "WHERE COALESCE(conversation_id, id) = :cid "
                         "AND answer IS DISTINCT FROM :offtopic "
+                        "AND active AND stopped IS NOT TRUE "
                         "ORDER BY created_at DESC LIMIT :limit"
                     ),
                     {
@@ -645,9 +646,9 @@ async def list_conversations(limit: int = 50) -> list[dict]:
                     "SELECT conv_id, title, last_at, turn_count FROM ("
                     "  SELECT COALESCE(conversation_id, id) AS conv_id,"
                     "         (array_agg(question ORDER BY created_at) "
-                    "             FILTER (WHERE answer IS DISTINCT FROM :offtopic))[1] AS title,"
+                    "             FILTER (WHERE answer IS DISTINCT FROM :offtopic AND active))[1] AS title,"
                     "         max(created_at) AS last_at,"
-                    "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic) AS turn_count"
+                    "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic AND active) AS turn_count"
                     "  FROM research.qa_log"
                     "  GROUP BY COALESCE(conversation_id, id)"
                     ") g WHERE turn_count > 0 "
@@ -671,27 +672,86 @@ async def list_conversations(limit: int = 50) -> list[dict]:
     return out
 
 
+def _conversation_item(row) -> dict:
+    """qa_log 一列（13 欄，含版本/思考卡/追問中繼資料）→ 對話重現用 dict。
+
+    在 history_item 的基礎欄位上，補 stages/followups/root_qa_id/stopped/
+    version_count 五鍵，供前端重現思考卡、追問 chips 與版本切換。
+    """
+    (rid, question, answer, created_at, feedback, sources, ext_sources,
+     thinking_ms, stages, followups, root_qa_id, stopped, version_count) = row
+    base = history_item(
+        (rid, question, answer, created_at, feedback, sources, ext_sources, thinking_ms)
+    )
+    base["stages"] = stages or []
+    base["followups"] = followups or []
+    base["root_qa_id"] = str(root_qa_id) if root_qa_id else None
+    base["stopped"] = bool(stopped)
+    base["version_count"] = int(version_count)
+    return base
+
+
 async def get_conversation(conversation_id: str) -> list[dict]:
-    """該對話全部輪次（history_item 格式），由舊到新，供重開重現與續問。"""
+    """該對話全部有效輪次（由舊到新），供重開重現與續問。"""
     async with SessionFactory() as session:
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
-                    "FROM research.qa_log "
-                    "WHERE COALESCE(conversation_id, id) = :cid "
-                    "ORDER BY created_at ASC"
+                    "SELECT q.id, q.question, q.answer, q.created_at, q.feedback, "
+                    "q.sources, q.ext_sources, q.thinking_ms, q.stages, q.followups, "
+                    "q.root_qa_id, q.stopped, "
+                    "(SELECT count(*) FROM research.qa_log v "
+                    " WHERE COALESCE(v.root_qa_id, v.id) = COALESCE(q.root_qa_id, q.id)) "
+                    "AS version_count "
+                    "FROM research.qa_log q "
+                    "WHERE COALESCE(q.conversation_id, q.id) = :cid AND q.active "
+                    "ORDER BY q.created_at ASC"
                 ),
                 {"cid": conversation_id},
             )
         ).all()
-    items = [history_item(tuple(r)) for r in rows]
+    items = [_conversation_item(tuple(r)) for r in rows]
     from app.services.report import reports_for_conversation  # 延遲 import：避免與 report.py 循環
 
     reports_by_qa = await reports_for_conversation(conversation_id)
     for it in items:
         it["reports"] = reports_by_qa.get(str(it.get("id")), [])
     return items
+
+
+async def list_qa_versions(root_qa_id: str) -> list[dict]:
+    """某問題群組的全部版本（含 inactive），由舊到新，供歷史 pager 回看。
+
+    任何 DB 錯誤 → 回 []（fail-open）。
+    """
+    try:
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, answer, sources, ext_sources, thinking_ms, "
+                        "stages, feedback, created_at FROM research.qa_log "
+                        "WHERE COALESCE(root_qa_id, id) = :root "
+                        "ORDER BY created_at ASC"
+                    ),
+                    {"root": root_qa_id},
+                )
+            ).all()
+    except Exception:
+        return []
+    out = []
+    for (qid, answer, sources, ext_sources, thinking_ms, stages, feedback, created) in rows:
+        out.append({
+            "qa_id": str(qid),
+            "answer": answer,
+            "sources": sources or [],
+            "ext_sources": ext_sources or [],
+            "thinking_ms": thinking_ms,
+            "stages": stages or [],
+            "feedback": feedback,
+            "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+        })
+    return out
 
 
 async def delete_conversation(conversation_id: str) -> bool:

@@ -521,6 +521,85 @@ async def _log_qa(
     return qa_id
 
 
+async def _load_qa_meta(qa_id: str):
+    """讀一列的 (root_qa_id, conversation_id, created_at)；查無/錯誤回 None。"""
+    try:
+        async with SessionFactory() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT root_qa_id, conversation_id, created_at "
+                        "FROM research.qa_log WHERE id = :id"
+                    ),
+                    {"id": qa_id},
+                )
+            ).first()
+        if row is None:
+            return None
+        root, conv, created = row
+        return (str(root) if root else None,
+                str(conv) if conv else None, created)
+    except Exception:
+        return None
+
+
+async def log_stopped_qa(
+    question: str,
+    partial_answer: str,
+    *,
+    conversation_id: str | None = None,
+    sources: list[dict] | None = None,
+    ext_sources: list[dict] | None = None,
+    stages: list[str] | None = None,
+    regenerate_of: str | None = None,
+) -> str:
+    """寫一列停止的部分答案（stopped=true, active=true）；回新 qa_id。
+
+    regenerate_of 有值時：解析其群組鍵作 root_qa_id（續版本鏈）。
+    best-effort：DB 失敗仍回傳前端可掛的 qa_id（沿用 _log_qa 語意）。
+    """
+    qa_id = str(uuid.uuid4())
+    root_qa_id: str | None = None
+    if regenerate_of:
+        meta = await _load_qa_meta(regenerate_of)
+        if meta is not None:
+            old_root, old_conv, _ = meta
+            root_qa_id = old_root or regenerate_of
+            conversation_id = conversation_id or old_conv
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO research.qa_log "
+                    "(id, question, answer, cited_report_ids, filters, latency_ms, "
+                    "sources, ext_sources, conversation_id, thinking_ms, "
+                    "root_qa_id, active, stages, followups, stopped) "
+                    "VALUES (:id, :q, :a, :cited, :filters, :lat, "
+                    ":sources, :ext_sources, :conv, :think, "
+                    ":root, true, :stages, NULL, true)"
+                ),
+                {
+                    "id": qa_id,
+                    "q": question,
+                    "a": partial_answer,
+                    "cited": [],
+                    "filters": json.dumps({}, ensure_ascii=False),
+                    "lat": None,
+                    "sources": json.dumps(sources or [], ensure_ascii=False),
+                    "ext_sources": json.dumps(ext_sources or [], ensure_ascii=False),
+                    "conv": conversation_id,
+                    "think": None,
+                    "root": root_qa_id,
+                    "stages": json.dumps(stages, ensure_ascii=False)
+                    if stages is not None else None,
+                },
+            )
+            await session.commit()
+    except Exception:
+        pass
+    return qa_id
+
+
 async def load_recent_turns(
     conversation_id: str, *, limit: int = MAX_HISTORY_TURNS
 ) -> list[tuple[str, str]]:

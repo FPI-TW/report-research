@@ -45,6 +45,7 @@ from app.services.answer import (  # noqa: E402
     get_conversation,
     history_item,
     list_conversations,
+    log_stopped_qa,
     record_feedback,
 )
 from app.services.db import SessionFactory  # noqa: E402
@@ -703,6 +704,33 @@ def _valid_uuid(s) -> bool:
         return True
     except (ValueError, AttributeError, TypeError):
         return False
+
+
+class StopRequest(BaseModel):
+    question: str
+    conversation_id: str | None = None
+    partial_answer: str = ""
+    sources: list[dict] | None = None
+    ext_sources: list[dict] | None = None
+    stages: list[str] | None = None
+    regenerate_of: str | None = None
+
+
+@app.post("/api/ask/stop")
+async def ask_stop(req: StopRequest):
+    """使用者中斷串流時保存部分答案（stopped=true）。回 {qa_id}。"""
+    if req.regenerate_of is not None and not _valid_uuid(req.regenerate_of):
+        raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
+    qa_id = await log_stopped_qa(
+        (req.question or "").strip(),
+        req.partial_answer or "",
+        conversation_id=req.conversation_id,
+        sources=req.sources,
+        ext_sources=req.ext_sources,
+        stages=req.stages,
+        regenerate_of=req.regenerate_of,
+    )
+    return {"qa_id": qa_id}
 
 
 @app.post("/api/report")

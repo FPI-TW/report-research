@@ -1812,5 +1812,66 @@ class StagesPersistTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("generating", logged["stages"])
 
 
+class StopLogTests(unittest.IsolatedAsyncioTestCase):
+    """log_stopped_qa 寫入 stopped=true 的部分答案列；regenerate_of 解析 root_qa_id。"""
+
+    async def test_log_stopped_writes_stopped_true(self):
+        from app.services import answer as ans
+
+        captured = {}
+
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                captured["sql"] = str(stmt); captured["params"] = params
+                return None
+            async def commit(self): return None
+
+        orig = (ans.SessionFactory, ans._load_qa_meta)
+        ans.SessionFactory = lambda: _CapSession()
+
+        async def no_meta(qid): return None
+        ans._load_qa_meta = no_meta
+        try:
+            qa_id = await ans.log_stopped_qa(
+                "問題", "部分答", conversation_id="c1",
+                sources=[{"n": 1}], stages=["understanding", "generating"],
+            )
+        finally:
+            (ans.SessionFactory, ans._load_qa_meta) = orig
+
+        self.assertTrue(qa_id)
+        self.assertIn("stopped", captured["sql"])
+        self.assertEqual(captured["params"]["conv"], "c1")
+        self.assertIsNone(captured["params"]["root"])  # 無 regenerate_of
+
+    async def test_log_stopped_resolves_root_from_regenerate_of(self):
+        from app.services import answer as ans
+
+        captured = {}
+
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                captured["params"] = params
+                return None
+            async def commit(self): return None
+
+        async def meta(qid):
+            return ("root-x", "c1", None)  # 舊列已有 root
+
+        orig = (ans.SessionFactory, ans._load_qa_meta)
+        ans.SessionFactory = lambda: _CapSession()
+        ans._load_qa_meta = meta
+        try:
+            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1")
+        finally:
+            (ans.SessionFactory, ans._load_qa_meta) = orig
+
+        self.assertEqual(captured["params"]["root"], "root-x")
+
+
 if __name__ == "__main__":
     unittest.main()

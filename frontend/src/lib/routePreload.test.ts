@@ -1,5 +1,9 @@
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import * as rp from './routePreload'
+
+beforeEach(() => {
+  rp.__resetPreloadState()
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -30,4 +34,17 @@ test('preloadIdle 無 requestIdleCallback 時退回 setTimeout', () => {
   vi.runAllTimers()
   expect(spy).toHaveBeenCalledTimes(1)
   vi.useRealTimers()
+})
+
+test('preloadRoute 首次載入失敗後清除狀態，之後可重試', async () => {
+  let calls = 0
+  const spy = vi.spyOn(rp.routeLoaders, 'ask').mockImplementation(() => {
+    calls += 1
+    return calls === 1 ? Promise.reject(new Error('boom')) : Promise.resolve({ default: () => null } as never)
+  })
+  rp.preloadRoute('ask')
+  await Promise.resolve() // 讓 rejection 的 .catch 跑完、清除 started
+  await Promise.resolve()
+  rp.preloadRoute('ask')
+  expect(spy).toHaveBeenCalledTimes(2)
 })

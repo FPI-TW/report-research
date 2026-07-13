@@ -25,7 +25,7 @@ from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
 from app.services.followups import generate_followups
-from app.services.intent import classify_intent, condense_and_classify
+from app.services.scope_router import classify_intent, condense_and_classify
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.overview import (
     OVERVIEW_SYSTEM_PROMPT,

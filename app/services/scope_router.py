@@ -12,13 +12,103 @@ fail-open：判定失敗/逾時/空回應一律視為在領域內（回 True）�
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Literal
 
 from app.config import get_settings
 from app.services.llm import stream_completion
+from app.services.overview import OverviewFilters
 
 _S = get_settings()
 INTENT_MODEL = _S.ask_intent_model
 INTENT_TIMEOUT = _S.ask_intent_timeout
+
+Scope = Literal["off_topic", "overview", "corpus_qa", "time_sensitive", "advice_risk"]
+ToolPolicy = Literal[
+    "no_answer", "corpus_only", "trusted_external_required", "research_only"
+]
+
+OFF_TOPIC: Scope = "off_topic"
+OVERVIEW: Scope = "overview"
+CORPUS_QA: Scope = "corpus_qa"
+TIME_SENSITIVE: Scope = "time_sensitive"
+ADVICE_RISK: Scope = "advice_risk"
+
+NO_ANSWER: ToolPolicy = "no_answer"
+CORPUS_ONLY: ToolPolicy = "corpus_only"
+TRUSTED_EXTERNAL_REQUIRED: ToolPolicy = "trusted_external_required"
+RESEARCH_ONLY: ToolPolicy = "research_only"
+
+POLICY_FOR_SCOPE: dict[Scope, ToolPolicy] = {
+    OFF_TOPIC: NO_ANSWER,
+    OVERVIEW: CORPUS_ONLY,
+    CORPUS_QA: CORPUS_ONLY,
+    TIME_SENSITIVE: TRUSTED_EXTERNAL_REQUIRED,
+    ADVICE_RISK: RESEARCH_ONLY,
+}
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    """路由結果：answer.py 與未來 agentic_qa.py 的唯一契約。
+
+    下游只依 scope/tool_policy 分支，不得以字串關鍵字重新推斷工具權限。
+    """
+
+    scope: Scope
+    tool_policy: ToolPolicy
+    overview_filters: OverviewFilters | None = None
+
+
+def _decision(scope: Scope, overview_filters: OverviewFilters | None = None) -> RouteDecision:
+    return RouteDecision(
+        scope=scope,
+        tool_policy=POLICY_FOR_SCOPE[scope],
+        overview_filters=overview_filters,
+    )
+
+
+_VALID_ROUTES: dict[str, Scope] = {
+    "OFF_TOPIC": OFF_TOPIC,
+    "CORPUS_QA": CORPUS_QA,
+    "TIME_SENSITIVE": TIME_SENSITIVE,
+    "ADVICE_RISK": ADVICE_RISK,
+}
+
+
+def parse_route(text: str) -> Scope | None:
+    """嚴格解析：strip+upper 後必須恰為四 token 之一，否則 None（交上層安全 fallback）。
+
+    與舊 parse_intent 的寬鬆兜底相反——路由 token 帶錯誤語意風險，模糊時寧可交
+    fallback（前檢命中→安全 scope；否則 corpus_qa），不能寬鬆猜成 off_topic。
+    """
+    return _VALID_ROUTES.get(text.strip().upper())
+
+
+# 保守安全前檢：明確報價/即時詞與個人化指令詞（advice 優先於 time）。
+# 詞表刻意窄：只收「無法用歷史研報正確回答」的明確訊號；「最新展望」「近期表現」
+# 這類研報常見措辭不得入表（會誤攔 corpus 題，見 eval q001）。
+_TIME_SENSITIVE_TERMS = (
+    "收盤價", "開盤價", "現價", "成交價", "報價", "盤中",
+    "現在股價", "今日股價", "今天股價", "股價多少", "即時",
+    "現在價格", "今天價格", "今日價格", "漲停", "跌停",
+)
+_ADVICE_TERMS = (
+    "該不該買", "該不該賣", "該買嗎", "該賣嗎", "能不能買", "能不能賣",
+    "可以買嗎", "可以賣嗎", "值得買嗎", "建議我買", "建議我賣",
+    "幫我配置", "幫我配倉", "倉位", "部位怎麼配", "買多少", "賣多少",
+    "全押", "梭哈", "停損點", "停利點", "幫我操盤", "我該買", "我該賣",
+)
+
+
+def _safety_precheck(question: str) -> Scope | None:
+    """確定性前檢：命中即回安全 scope，不交 LLM。兩類同時命中 → advice_risk 優先。"""
+    q = question.strip()
+    if any(t in q for t in _ADVICE_TERMS):
+        return ADVICE_RISK
+    if any(t in q for t in _TIME_SENSITIVE_TERMS):
+        return TIME_SENSITIVE
+    return None
 
 # 共用「意圖判準」：首輪閘門與多輪改寫器共用同一份 IN/OUT 定義＋範例，
 # 避免兩處判準漂移（曾因此讓「緯創最新收盤價」首輪判 IN、續問卻判 OUT）。

@@ -40,11 +40,9 @@ from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.overview import (
     OVERVIEW_SYSTEM_PROMPT,
     aggregate_facets,
-    detect_overview,
     format_facts,
     merge_request_filters,
     render_overview_text,
-    resolve_filters,
 )
 from app.services.report_gate import should_offer_report
 from app.services.retrieval import hybrid_search
@@ -208,7 +206,7 @@ def _relevance_band(fused: float) -> int:
 class _StageTimer:
     """累積各階段耗時（毫秒）做延遲分段觀測。mark(name) 記『上次 mark 到現在』的耗時。
 
-    注意：首輪意圖判定與檢索並行，故 intent_wait 段與 embed/retrieve 段時間重疊，
+    注意：首輪路由判定與檢索並行，故 route_wait 段與 embed/retrieve 段時間重疊，
     各段加總不等於 total，log 僅供分段觀測、非嚴格序列耗時。clock 可注入便於測試。
     """
 

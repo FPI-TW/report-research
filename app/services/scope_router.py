@@ -304,3 +304,68 @@ async def route_question(
     if ov is not None:
         return ov
     return await classify_non_overview(question, model=model, timeout=timeout)
+
+
+CONDENSE_ROUTE_SYSTEM_PROMPT = (
+    "你是「廷豐研報」投資問答系統的前置處理器。根據『先前對話』，把使用者的"
+    "『追問』改寫成一個語意完整、可獨立檢索的問題：補齊代名詞與省略的主語"
+    "（例如把「它」「那檔」「上述」還原為具體公司／標的／主題）。同時依下列判準"
+    "將改寫後的問題分類：\n"
+    + ROUTE_CRITERIA
+    + "\n嚴格只輸出兩行，不要任何其他文字或標點說明：\n"
+    "QUERY: <改寫後可獨立檢索的完整問題>\n"
+    "ROUTE: OFF_TOPIC 或 CORPUS_QA 或 TIME_SENSITIVE 或 ADVICE_RISK"
+)
+
+
+def parse_condense_route(text: str) -> tuple[str | None, Scope | None]:
+    """解析改寫器輸出 → (standalone_query 或 None, scope 或 None)。
+
+    QUERY 空 → None（呼叫端退回原問題）；ROUTE 交嚴格 parse_route（缺行/模糊 → None）。
+    """
+    query: str | None = None
+    scope: Scope | None = None
+    for line in text.splitlines():
+        s = line.strip()
+        upper = s.upper()
+        if upper.startswith("QUERY:"):
+            query = s[len("QUERY:"):].strip() or None
+        elif upper.startswith("ROUTE:"):
+            scope = parse_route(s[len("ROUTE:"):])
+    return query, scope
+
+
+async def condense_and_route(
+    history_text: str,
+    question: str,
+    *,
+    today: date,
+    model: str = CONDENSE_MODEL,
+    timeout: float = CONDENSE_TIMEOUT,
+) -> tuple[str, RouteDecision]:
+    """一次 Haiku 呼叫：改寫追問為獨立查詢並分類 → (standalone_query, RouteDecision)。
+
+    解析後以「改寫後問題」重新執行確定性判定：overview 優先，其次安全前檢——
+    兩者皆覆蓋 LLM 的 ROUTE token（確定性規則勝過機率輸出）。
+    任何錯誤/逾時/空回應 → (原 question, 前檢命中則安全 scope、否則 corpus_qa)。
+    """
+    prompt = f"先前對話：\n{history_text}\n\n追問：{question}"
+    query: str | None = None
+    scope: Scope | None = None
+    try:
+        parts: list[str] = []
+        async for chunk in stream_completion(
+            prompt, model=model, system=CONDENSE_ROUTE_SYSTEM_PROMPT, timeout=timeout
+        ):
+            parts.append(chunk)
+        query, scope = parse_condense_route("".join(parts))
+    except Exception:
+        query, scope = None, None
+    standalone = query or question
+    ov = resolve_overview_route(standalone, today)
+    if ov is not None:
+        return standalone, ov
+    pre = _safety_precheck(standalone)
+    if pre is not None:
+        return standalone, _decision(pre)
+    return standalone, _decision(scope if scope is not None else CORPUS_QA)

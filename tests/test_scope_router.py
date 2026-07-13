@@ -14,6 +14,8 @@ from app.services.scope_router import (  # noqa: E402
     parse_intent,
     parse_condense,
     parse_route,
+    parse_condense_route,
+    condense_and_route,
     _safety_precheck,
     _decision,
     RouteDecision,
@@ -238,6 +240,75 @@ class RouteQuestionTests(unittest.TestCase):
         with mock.patch.object(sr, "stream_completion", fake_stream):
             d = _run(sr.route_question("幫我寫一首詩", today=date(2026, 7, 13)))
         self.assertEqual(d.scope, sr.OFF_TOPIC)
+
+
+class ParseCondenseRouteTests(unittest.TestCase):
+    def test_standard_two_lines(self):
+        q, s = sr.parse_condense_route("QUERY: 台積電先進封裝的展望\nROUTE: CORPUS_QA")
+        self.assertEqual(q, "台積電先進封裝的展望")
+        self.assertEqual(s, sr.CORPUS_QA)
+
+    def test_lowercase_and_whitespace(self):
+        q, s = sr.parse_condense_route("  query:  鴻海營收 \n  route: off_topic ")
+        self.assertEqual(q, "鴻海營收")
+        self.assertEqual(s, sr.OFF_TOPIC)
+
+    def test_missing_route_returns_none_scope(self):
+        q, s = sr.parse_condense_route("QUERY: 只有查詢")
+        self.assertEqual(q, "只有查詢")
+        self.assertIsNone(s)
+
+    def test_garbage(self):
+        q, s = sr.parse_condense_route("我不知道怎麼改寫")
+        self.assertIsNone(q)
+        self.assertIsNone(s)
+
+
+class CondenseAndRouteTests(unittest.TestCase):
+    TODAY = date(2026, 7, 13)
+
+    def _with_llm(self, output):
+        async def fake_stream(prompt, **kw):
+            yield output
+        return mock.patch.object(sr, "stream_completion", fake_stream)
+
+    def test_normal_rewrite_and_route(self):
+        with self._with_llm("QUERY: 台積電的資本支出計畫\nROUTE: CORPUS_QA"):
+            q, d = _run(sr.condense_and_route("先前對話…", "那資本支出呢", today=self.TODAY))
+        self.assertEqual(q, "台積電的資本支出計畫")
+        self.assertEqual(d.scope, sr.CORPUS_QA)
+
+    def test_rewritten_query_overview_overrides_llm_route(self):
+        # 改寫後命中 overview 規則 → 覆蓋 LLM 的 ROUTE token（overview 不交 LLM 判斷）
+        with self._with_llm("QUERY: 台灣市場有哪些券商的報告\nROUTE: CORPUS_QA"):
+            q, d = _run(sr.condense_and_route("先前對話…", "那有哪些券商", today=self.TODAY))
+        self.assertEqual(d.scope, sr.OVERVIEW)
+        self.assertIsNotNone(d.overview_filters)
+
+    def test_rewritten_query_precheck_overrides_llm_route(self):
+        # 改寫還原主語後浮現報價詞 → 前檢覆蓋 LLM 判斷（保守安全優先）
+        with self._with_llm("QUERY: 緯創今天的收盤價\nROUTE: CORPUS_QA"):
+            q, d = _run(sr.condense_and_route("先前對話…", "那它今天收多少", today=self.TODAY))
+        self.assertEqual(d.scope, sr.TIME_SENSITIVE)
+
+    def test_failure_falls_back_to_original_question(self):
+        async def boom(prompt, **kw):
+            raise RuntimeError("cli down")
+            yield  # pragma: no cover
+
+        with mock.patch.object(sr, "stream_completion", boom):
+            q, d = _run(sr.condense_and_route("先前對話…", "追問原文", today=self.TODAY))
+        self.assertEqual(q, "追問原文")
+        self.assertEqual(d.scope, sr.CORPUS_QA)  # fail-open
+
+    def test_failure_with_precheck_hit_keeps_safe_scope(self):
+        async def boom(prompt, **kw):
+            raise RuntimeError("cli down")
+            yield  # pragma: no cover
+
+        with mock.patch.object(sr, "stream_completion", boom):
+            q, d = _run(sr.condense_and_route("先前對話…", "我該不該買台積電", today=self.TODAY))
+        self.assertEqual(d.scope, sr.ADVICE_RISK)
 
 
 if __name__ == "__main__":

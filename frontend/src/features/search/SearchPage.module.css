@@ -8,11 +8,7 @@
 .hero { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 14px; }
 .heroTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 32px; letter-spacing: 0.02em; color: var(--tf-ink-deep); margin: 16px 0 0; }
 .heroSub { font-size: 14px; color: var(--tf-text-3); margin: 8px 0 0; font-variant-numeric: tabular-nums; }
-.heroModes { display: inline-flex; background: #eceae3; border-radius: 12px; padding: 3px; margin-top: 30px; }
-.heroMode { display: inline-flex; align-items: center; gap: 7px; border-radius: 9px; padding: 7px 20px; font-size: 13.5px; color: var(--tf-text-3); text-decoration: none; }
-.heroMode:hover { color: var(--tf-text-2); }
-.heroModeActive { background: var(--tf-surface); color: var(--tf-ink-deep); font-weight: 600; box-shadow: var(--tf-shadow-seg); }
-.heroModeActive:hover { color: var(--tf-ink-deep); }
+.heroSwitch { margin-top: 30px; }
 
 /* hero 態：搜尋框與市場 chips 置中、收窄 */
 .inner[data-hero] .controls { align-items: center; }

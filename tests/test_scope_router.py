@@ -1,11 +1,15 @@
 # tests/test_scope_router.py
+import asyncio
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.services import scope_router as sr  # noqa: E402
 from app.services.scope_router import (  # noqa: E402
     parse_intent,
     parse_condense,
@@ -23,6 +27,10 @@ from app.services.scope_router import (  # noqa: E402
     RESEARCH_ONLY,
     NO_ANSWER,
 )
+
+
+def _run(coro):
+    return asyncio.run(coro)
 
 
 class ParseIntentTests(unittest.TestCase):
@@ -150,6 +158,86 @@ class DecisionTests(unittest.TestCase):
         d = _decision(CORPUS_QA)
         with self.assertRaises(Exception):
             d.scope = OFF_TOPIC  # type: ignore[misc]
+
+
+class ResolveOverviewRouteTests(unittest.TestCase):
+    def test_overview_question_returns_decision_with_filters(self):
+        d = sr.resolve_overview_route("台灣市場有哪些券商的報告", date(2026, 7, 13))
+        self.assertIsNotNone(d)
+        self.assertEqual(d.scope, sr.OVERVIEW)
+        self.assertEqual(d.tool_policy, sr.CORPUS_ONLY)
+        self.assertIsNotNone(d.overview_filters)
+        self.assertTrue(d.overview_filters.any())
+
+    def test_non_overview_returns_none(self):
+        self.assertIsNone(sr.resolve_overview_route("台積電的先進封裝展望", date(2026, 7, 13)))
+
+
+class ClassifyNonOverviewTests(unittest.TestCase):
+    def _with_llm(self, output):
+        async def fake_stream(prompt, **kw):
+            yield output
+        return mock.patch.object(sr, "stream_completion", fake_stream)
+
+    def test_llm_token_routes(self):
+        with self._with_llm("CORPUS_QA"):
+            self.assertEqual(_run(sr.classify_non_overview("台積電展望")).scope, sr.CORPUS_QA)
+        with self._with_llm("OFF_TOPIC"):
+            self.assertEqual(_run(sr.classify_non_overview("幫我寫一首詩")).scope, sr.OFF_TOPIC)
+        with self._with_llm("TIME_SENSITIVE"):
+            self.assertEqual(_run(sr.classify_non_overview("台積電下季財報數字")).scope, sr.TIME_SENSITIVE)
+        with self._with_llm("ADVICE_RISK"):
+            self.assertEqual(_run(sr.classify_non_overview("現在適合進場嗎")).scope, sr.ADVICE_RISK)
+
+    def test_precheck_hit_skips_llm(self):
+        called = False
+
+        async def fake_stream(prompt, **kw):
+            nonlocal called
+            called = True
+            yield "CORPUS_QA"
+
+        with mock.patch.object(sr, "stream_completion", fake_stream):
+            d = _run(sr.classify_non_overview("查詢緯創最新的收盤價"))
+        self.assertEqual(d.scope, sr.TIME_SENSITIVE)
+        self.assertFalse(called)  # 前檢命中 → 不呼叫 LLM
+
+    def test_llm_failure_fails_open_to_corpus_qa(self):
+        async def boom(prompt, **kw):
+            raise RuntimeError("cli down")
+            yield  # pragma: no cover
+
+        with mock.patch.object(sr, "stream_completion", boom):
+            self.assertEqual(_run(sr.classify_non_overview("台積電展望")).scope, sr.CORPUS_QA)
+
+    def test_garbage_output_fails_open(self):
+        with self._with_llm("我不確定"):
+            self.assertEqual(_run(sr.classify_non_overview("台積電展望")).scope, sr.CORPUS_QA)
+        with self._with_llm(""):
+            self.assertEqual(_run(sr.classify_non_overview("台積電展望")).scope, sr.CORPUS_QA)
+
+
+class RouteQuestionTests(unittest.TestCase):
+    def test_overview_precedence_no_llm(self):
+        called = False
+
+        async def fake_stream(prompt, **kw):
+            nonlocal called
+            called = True
+            yield "CORPUS_QA"
+
+        with mock.patch.object(sr, "stream_completion", fake_stream):
+            d = _run(sr.route_question("台灣市場有哪些券商的報告", today=date(2026, 7, 13)))
+        self.assertEqual(d.scope, sr.OVERVIEW)
+        self.assertFalse(called)
+
+    def test_falls_to_classifier(self):
+        async def fake_stream(prompt, **kw):
+            yield "OFF_TOPIC"
+
+        with mock.patch.object(sr, "stream_completion", fake_stream):
+            d = _run(sr.route_question("幫我寫一首詩", today=date(2026, 7, 13)))
+        self.assertEqual(d.scope, sr.OFF_TOPIC)
 
 
 if __name__ == "__main__":

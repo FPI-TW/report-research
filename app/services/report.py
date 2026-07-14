@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -23,6 +24,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.services.db import SessionFactory
+from app.services.evidence import manifest_from_answer
 from app.services.llm import SEARCH_EVENT, stream_completion
 from app.services.pdf import render_report_pdf, strip_preamble
 from app.services.report_gate import suggested_title
@@ -120,6 +122,32 @@ def build_report_prompt(
     return "\n\n".join(parts)
 
 
+_EXT_SECTION_RE = re.compile(r"^##\s*外部參考（網路）\s*$", re.MULTILINE)
+_EXT_REF_LINE_RE = re.compile(
+    r"^\s*-\s*\[([^\]]*)\]\((https?://[^)\s]+)\)", re.MULTILINE
+)
+_NEXT_HEADING_RE = re.compile(r"^#{1,2}(?!#)\s", re.MULTILINE)
+
+
+def parse_external_refs(markdown: str) -> list[dict]:
+    """解析「## 外部參考（網路）」節的 `- [標題](網址)` 行 → [{"title","url"}]。
+
+    確定性、可測；這是研報路徑唯一受控的外部來源入口（M4b evidence ledger 用），
+    非 http(s) 連結與節外的連結一律不採。無此節 → []。
+    """
+    m = _EXT_SECTION_RE.search(markdown or "")
+    if m is None:
+        return []
+    section = markdown[m.end():]
+    nxt = _NEXT_HEADING_RE.search(section)
+    if nxt is not None:
+        section = section[: nxt.start()]
+    return [
+        {"title": title or url, "url": url}
+        for title, url in _EXT_REF_LINE_RE.findall(section)
+    ]
+
+
 def write_report_pdf(report_id: str, pdf_bytes: bytes) -> str:
     """把 PDF bytes 落地到 REPORTS_DIR/<id>.pdf，回路徑。"""
     os.makedirs(REPORTS_DIR, exist_ok=True)
@@ -130,19 +158,26 @@ def write_report_pdf(report_id: str, pdf_bytes: bytes) -> str:
 
 
 async def persist_report_doc(
-    report_id, qa_id, conversation_id, question, title, markdown, pdf_path, sources, thinking_ms
+    report_id, qa_id, conversation_id, question, title, markdown, pdf_path,
+    sources, thinking_ms, evidence_manifest: dict | None = None,
 ) -> None:
     async with SessionFactory() as session:
         await session.execute(
             text(
                 "INSERT INTO research.report_doc "
-                "(id, qa_id, conversation_id, question, title, markdown, pdf_path, sources, thinking_ms) "
-                "VALUES (:id, :qa_id, :conv, :q, :title, :md, :pdf, CAST(:src AS jsonb), :tms)"
+                "(id, qa_id, conversation_id, question, title, markdown, pdf_path, "
+                "sources, thinking_ms, evidence_manifest) "
+                "VALUES (:id, :qa_id, :conv, :q, :title, :md, :pdf, "
+                "CAST(:src AS jsonb), :tms, CAST(:evm AS jsonb))"
             ),
             {
                 "id": report_id, "qa_id": qa_id, "conv": conversation_id,
                 "q": question, "title": title, "md": markdown, "pdf": pdf_path,
                 "src": json.dumps(sources, ensure_ascii=False), "tms": thinking_ms,
+                "evm": (
+                    json.dumps(evidence_manifest, ensure_ascii=False)
+                    if evidence_manifest is not None else None
+                ),
             },
         )
         await session.commit()
@@ -261,9 +296,15 @@ async def generate_report(
         render_report_pdf, markdown, title=title, meta={"date": today, "question": question}
     )
     pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
+    # M4b：corpus 來源 + 受控解析的外部參考 → evidence manifest（無證據時寫 NULL）
+    evidence_manifest = manifest_from_answer(
+        [asdict(s) for s in sources],
+        parse_external_refs(markdown),
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+    )
     await persist_report_doc(
         report_id, qa_id, conversation_id, question, title, markdown, pdf_path,
-        [asdict(s) for s in sources], thinking_ms,
+        [asdict(s) for s in sources], thinking_ms, evidence_manifest,
     )
     yield (
         "done",

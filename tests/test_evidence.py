@@ -152,6 +152,20 @@ class RenderCitationsTests(unittest.TestCase):
         self.assertEqual(out.text, "已知[1]，未知。")
         self.assertEqual(out.n_unknown, 1)
 
+    def test_malformed_placeholders_never_leak(self):
+        """非法形狀（大寫 hex、非 hex、過短、空 id）也不得漏內部 token 到輸出，
+        且計入 n_unknown（審查 M4b-1：模型抄寫 id 漂移是 M5/M7 的常見失效模式）。"""
+        led, e1, _ = _ledger_with_corpus()
+        text = (
+            f"合法[[ev:{e1.evidence_id}]]、"
+            "大寫[[ev:ABCD1234EF567890]]、非hex[[ev:xyz-123]]、"
+            "過短[[ev:abc]]、空[[ev:]]。"
+        )
+        out = ev.render_citations(text, led)
+        self.assertEqual(out.text, "合法[1]、大寫、非hex、過短、空。")
+        self.assertNotIn("[[ev:", out.text)
+        self.assertEqual(out.n_unknown, 4)
+
     def test_multi_section_reassembly_single_render_is_consistent(self):
         # M7 語義：各節只寫 evidence_id 佔位；不論節次如何重排，最終「單次」
         # 渲染內同一 evidence 恆同號、編號連續無空洞。

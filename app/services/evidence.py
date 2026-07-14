@@ -26,6 +26,9 @@ EVIDENCE_SCHEMA_VERSION = 1
 Kind = Literal["corpus", "external"]
 
 EV_PLACEHOLDER_RE = re.compile(r"\[\[ev:([0-9a-f]{8,64})\]\]")
+# 寬鬆掃描：合法替換後殘留的任何 [[ev:...]] 形狀（大寫/非 hex/過短/空 id）
+# 一律視為未知並移除——內部 token 不得漏到輸出（模型抄寫 id 漂移是常見失效）。
+_EV_MALFORMED_RE = re.compile(r"\[\[ev:[^\]]*\]\]")
 
 
 class EvidenceValidationError(ValueError):
@@ -240,6 +243,15 @@ def render_citations(text: str, ledger: EvidenceLedger) -> RenderedCitations:
         return f"[{n}]"
 
     rendered = EV_PLACEHOLDER_RE.sub(_sub, text or "")
+
+    # 二段式清理：合法形狀已處理完，殘留的變形佔位（大寫/非 hex/過短）同樣
+    # 移除並計入 unknown，確保「不漏內部 token」與把關訊號同時成立。
+    def _sub_malformed(m: re.Match) -> str:
+        nonlocal unknown
+        unknown += 1
+        return ""
+
+    rendered = _EV_MALFORMED_RE.sub(_sub_malformed, rendered)
     return RenderedCitations(rendered, ordered, number_of, unknown)
 
 

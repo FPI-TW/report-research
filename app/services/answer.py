@@ -47,6 +47,11 @@ from app.services.overview import (
 from app.services.report_gate import should_offer_report
 from app.services.retrieval import hybrid_search
 from app.services.stream_sentinel import SentinelStreamParser
+from app.services.evidence import (
+    EvidenceLedger,
+    from_trusted_point,
+    manifest_from_answer,
+)
 from app.services.textnorm import clean_text
 from app.services.trusted_market_data import (
     TrustedDataPoint,
@@ -553,6 +558,7 @@ async def _log_qa(
     request_id: str | None = None,
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
+    evidence_manifest: dict | None = None,
 ) -> str | None:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
@@ -561,6 +567,7 @@ async def _log_qa(
     sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
     conversation_id 將多輪問答歸為同一串。root_qa_id 將同題多版本歸為同一群組。
     stages/followups 供歷史重現思考卡與追問 chips。
+    evidence_manifest（M4b）為證據帳本序列化；None＝無證據（與歷史列同語義）。
     """
     qa_id = str(uuid.uuid4())
     ext_sources = ext_sources or []
@@ -570,10 +577,12 @@ async def _log_qa(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
                     "sources, ext_sources, conversation_id, thinking_ms, "
-                    "root_qa_id, active, stages, followups, request_id) "
+                    "root_qa_id, active, stages, followups, request_id, "
+                    "evidence_manifest) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
                     ":sources, :ext_sources, :conv, :think, "
-                    ":root, true, :stages, :followups, :request_id)"
+                    ":root, true, :stages, :followups, :request_id, "
+                    ":evidence_manifest)"
                 )
             if request_id is not None:
                 stmt = text(
@@ -599,6 +608,9 @@ async def _log_qa(
                     "followups": json.dumps(followups, ensure_ascii=False)
                     if followups is not None else None,
                     "request_id": request_id,
+                    "evidence_manifest": json.dumps(
+                        evidence_manifest, ensure_ascii=False
+                    ) if evidence_manifest is not None else None,
                 },
             )
             if request_id is not None:
@@ -1035,6 +1047,10 @@ async def _answer_overview(
         conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
         root_qa_id=root_qa_id, deactivate_qa_id=deactivate_qa_id,
         truncate_from=truncate_from, request_id=request_id,
+        evidence_manifest=manifest_from_answer(
+            [asdict(s) for s in sources], [],
+            retrieved_at=datetime.now(timezone.utc).isoformat(),
+        ),
     )
     group_key = root_qa_id or qa_id
     version_count = await _count_versions(group_key) if root_qa_id and group_key else 1
@@ -1131,6 +1147,9 @@ async def _answer_time_sensitive(
     yield ("token", body)
     ext = [trusted_ext_source(point)]
     yield ("ext_sources", ext)
+    # M4b：外部證據只能由受控建構器（from_trusted_point）產生
+    ledger = EvidenceLedger()
+    ledger.add(from_trusted_point(point))
     qa_id = await _log_qa(
         question,
         body,
@@ -1146,6 +1165,7 @@ async def _answer_time_sensitive(
         deactivate_qa_id=deactivate_qa_id,
         truncate_from=truncate_from,
         request_id=request_id,
+        evidence_manifest=ledger.to_manifest(),
     )
     group_key = new_root or qa_id
     version_count = await _count_versions(group_key) if new_root and group_key else 1
@@ -1411,6 +1431,11 @@ async def answer_question(
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources],
         ext_sources,
+        # M4b：corpus 來源 + 受控 [EXT_SOURCES] 解析結果 → 證據帳本 manifest
+        evidence_manifest=manifest_from_answer(
+            [asdict(s) for s in sources], ext_sources,
+            retrieved_at=datetime.now(timezone.utc).isoformat(),
+        ),
         conversation_id=conv_id,
         thinking_ms=thinking_ms,
         stages=stages_seen,

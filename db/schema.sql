@@ -110,6 +110,8 @@ ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS followups jsonb;
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS stopped boolean NOT NULL DEFAULT false;
 -- 串流完成與「停止」請求共用前端 request_id，避免網路競態寫出兩筆同一輪問答。
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS request_id uuid;
+-- M4b：證據帳本 manifest（{"schema_version":1,"evidence":[...]}；NULL＝舊列，空帳本語義）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS evidence_manifest jsonb;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_qa_log_request_id
     ON research.qa_log (request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_qa_log_root
@@ -132,3 +134,5 @@ CREATE INDEX IF NOT EXISTS idx_report_doc_qa
     ON research.report_doc (qa_id);
 CREATE INDEX IF NOT EXISTS idx_report_doc_conversation
     ON research.report_doc (conversation_id, created_at);
+-- M4b：證據帳本 manifest（與 qa_log 同格式；NULL＝舊列，空帳本語義）
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS evidence_manifest jsonb;

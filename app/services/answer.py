@@ -48,6 +48,12 @@ from app.services.report_gate import should_offer_report
 from app.services.retrieval import hybrid_search
 from app.services.stream_sentinel import SentinelStreamParser
 from app.services.textnorm import clean_text
+from app.services.trusted_market_data import (
+    TrustedDataPoint,
+    TrustedDataUnavailable,
+    fetch_trusted,
+    infer_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +133,39 @@ TIME_SENSITIVE_UNAVAILABLE_MESSAGE = (
 # 前端歷史重播目前以 is_offtopic 表示「固定 notice」；時效安全說明雖非離題，
 # 也必須走相同呈現，否則重載後會被誤當成一般回答。
 NOTICE_MESSAGES: tuple[str, ...] = (*OFF_TOPIC_MESSAGES, TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+
+TRUSTED_ANSWER_DISCLAIMER = "即時資料僅供參考，不構成投資建議；請以來源官方網站為準。"
+
+
+def format_trusted_answer(point: TrustedDataPoint) -> str:
+    """把已驗證的 TrustedDataPoint 轉為確定性模板答案（零 LLM、零檢索）。
+
+    必須顯示資料時間與來源性質（M4a 驗收）；只有此結構可進入時效答案，
+    外部網頁自由文字沒有任何路徑能繞過 adapter 混入。
+    """
+    unit = f" {point.unit}" if point.unit else ""
+    lines = [
+        f"根據受信任資料來源（{point.source_type}｜{point.provider}）："
+        f"{point.subject} 為 {point.value}{unit}。",
+        f"資料時間：{point.as_of.isoformat()}",
+    ]
+    if point.published_at is not None:
+        lines.append(f"發布時間：{point.published_at.isoformat()}")
+    lines.append(f"來源：{point.url}")
+    lines.append(f"（{TRUSTED_ANSWER_DISCLAIMER}）")
+    return "\n".join(lines)
+
+
+def trusted_ext_source(point: TrustedDataPoint) -> dict:
+    """TrustedDataPoint → ext_sources 元素（加法欄位；既有前端只讀 title/url）。"""
+    return {
+        "title": f"{point.provider}（{point.source_type}）",
+        "url": point.url,
+        "source_type": point.source_type,
+        "provider": point.provider,
+        "as_of": point.as_of.isoformat(),
+        "content_hash": point.content_hash,
+    }
 
 RESEARCH_ONLY_POLICY = (
     "\n\n【研究資訊限制】使用者的問題涉及個人化投資決策。你只能整理研報來源"
@@ -1050,6 +1089,72 @@ async def _yield_routed_notice(
     )
 
 
+async def _answer_time_sensitive(
+    decision: RouteDecision,
+    question: str,
+    filters: dict,
+    conv_id: str,
+    started: float,
+    stages_seen: list[str],
+    new_root: str | None,
+    deactivate_qa_id: str | None = None,
+    truncate_from: tuple[str, object] | None = None,
+    request_id: str | None = None,
+    fetch_query: str | None = None,
+) -> AsyncIterator[tuple[str, object]]:
+    """時效題唯一作答路徑：僅受信任 adapter（M4a）可提供數值，零 LLM、零檢索。
+
+    adapter 不可用/驗證失敗 → 委派 _yield_routed_notice（M4 既有婉拒，事件序
+    與文案完全不變）。成功 → 確定性模板答案（含資料時間與來源性質），來源以
+    加法欄位落 qa_log.ext_sources。CancelledError 沿 async generator 自然上拋。
+    fetch_query：續問時傳 condense 改寫後的獨立查詢給 provider（「那現在呢？」
+    這類代名詞追問 provider 解析不出標的）；qa_log 仍記原始問題。
+    """
+    query = fetch_query or question
+    try:
+        point = await fetch_trusted(infer_category(query), query)
+    except TrustedDataUnavailable:
+        async for ev in _yield_routed_notice(
+            decision, question, filters, conv_id, started, stages_seen, new_root,
+            deactivate_qa_id, truncate_from, request_id,
+        ):
+            yield ev
+        return
+
+    yield ("sources", [])  # 研報來源不得混入時效答案（並行取證一律丟棄）
+    thinking_ms = int((time.monotonic() - started) * 1000)
+    stages_seen.append("generating")
+    yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+    body = format_trusted_answer(point)
+    yield ("token", body)
+    ext = [trusted_ext_source(point)]
+    yield ("ext_sources", ext)
+    qa_id = await _log_qa(
+        question,
+        body,
+        [],
+        dict(filters, path="time_sensitive"),
+        int((time.monotonic() - started) * 1000),
+        [],
+        ext,
+        conversation_id=conv_id,
+        thinking_ms=thinking_ms,
+        stages=stages_seen,
+        root_qa_id=new_root,
+        deactivate_qa_id=deactivate_qa_id,
+        truncate_from=truncate_from,
+        request_id=request_id,
+    )
+    group_key = new_root or qa_id
+    version_count = await _count_versions(group_key) if new_root and group_key else 1
+    yield (
+        "done",
+        {"cited": [], "qa_id": qa_id, "conversation_id": conv_id,
+         "thinking_ms": thinking_ms, "root_qa_id": group_key,
+         "version_count": version_count},
+    )
+
+
 async def answer_question(
     question: str,
     *,
@@ -1153,8 +1258,18 @@ async def answer_question(
 
                 decision = _mk(CORPUS_QA)
 
-    # 終端路由（不檢索、不呼叫主 LLM）：續問在檢索前提前返回
-    if decision is not None and decision.scope in (OFF_TOPIC, TIME_SENSITIVE):
+    # 時效題（續問）：檢索前分流——僅 M4a 受信任 adapter 可作答，不可用則安全婉拒
+    if decision is not None and decision.scope == TIME_SENSITIVE:
+        async for ev in _answer_time_sensitive(
+            decision, question, filters, conv_id, started, stages_seen, new_root,
+            deactivate_qa_id, truncate_from, request_id,
+            fetch_query=standalone_query,
+        ):
+            yield ev
+        return
+
+    # 完全離題（續問）：固定婉拒，不檢索、不呼叫主 LLM，檢索前提前返回
+    if decision is not None and decision.scope == OFF_TOPIC:
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
             deactivate_qa_id, truncate_from, request_id,
@@ -1188,8 +1303,17 @@ async def answer_question(
             route_task.cancel()
             raise
 
-    # 首輪終端路由：並行取證被丟棄——不發 sources、不持久化取證結果
-    if decision is not None and decision.scope in (OFF_TOPIC, TIME_SENSITIVE):
+    # 首輪時效題：並行取證一律丟棄，僅受信任 adapter 可作答（不可用則婉拒）
+    if decision is not None and decision.scope == TIME_SENSITIVE:
+        async for ev in _answer_time_sensitive(
+            decision, question, filters, conv_id, started, stages_seen, new_root,
+            deactivate_qa_id, truncate_from, request_id,
+        ):
+            yield ev
+        return
+
+    # 首輪完全離題：並行取證被丟棄——不發 sources、不持久化取證結果
+    if decision is not None and decision.scope == OFF_TOPIC:
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
             deactivate_qa_id, truncate_from, request_id,

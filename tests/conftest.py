@@ -27,6 +27,16 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 
 
 @pytest.fixture(autouse=True)
+def _clear_trusted_providers():
+    """M4a：trusted registry／快取／限流是模組級狀態。每測試後清空，防止
+    忘記 tearDown 的註冊型測試讓「空 registry＝安全婉拒」的 M4 回歸誤判。"""
+    yield
+    from app.services.trusted_market_data import clear_providers
+
+    clear_providers()
+
+
+@pytest.fixture(autouse=True)
 def _stub_followups():
     """預設關閉追問建議（M3）：主 RAG 路徑在 done 之後會呼叫 generate_followups，
     真跑會外連 claude CLI 並讓事件序尾隨 followups。除非測試明確驗追問，否則一律

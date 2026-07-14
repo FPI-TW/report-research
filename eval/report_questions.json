@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_at": "2026-07-14T06:40:00+00:00",
-  "reviewed": false,
+  "reviewed": true,
   "note": "M1b 研報專用題集（與問答題集 ragas_questions.json 分檔分版本）。題目取材自語料市場分布（TW 10077/WTX 1849/GLOBAL 929/US 724/MACRO 619/CN 311）與既有 report_doc 主題；expected_facets 的 keywords 是評分規則的一部分，隨版本凍結。no_data 題為人工設計的語料未涵蓋主題。人工審核通過後將 reviewed 改為 true 並凍結為 v1。",
   "count": 10,
   "questions": [

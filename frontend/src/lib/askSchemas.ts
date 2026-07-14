@@ -14,7 +14,7 @@ export type Source = z.infer<typeof sourceSchema>
 export const extSourceSchema = z.object({ title: z.string(), url: z.string() })
 export type ExtSource = z.infer<typeof extSourceSchema>
 
-const askStage = z.enum(['understanding', 'retrieved', 'reading', 'searching_web', 'generating'])
+export const askStage = z.enum(['understanding', 'retrieved', 'reading', 'searching_web', 'generating'])
 export type AskStage = z.infer<typeof askStage>
 const reportStage = z.enum(['retrieving', 'writing', 'searching_web', 'rendering'])
 export type ReportStage = z.infer<typeof reportStage>
@@ -27,6 +27,8 @@ const askDoneData = z.object({
   thinking_ms: z.number().optional(),
   offer_report: z.boolean().optional(),
   report_title: z.string().nullable().optional(),
+  root_qa_id: z.string().nullable().optional(),
+  version_count: z.number().optional(),
 })
 export type AskDone = z.infer<typeof askDoneData>
 const askErrorData = z.object({ detail: z.string() })
@@ -45,6 +47,7 @@ export type AskEvent =
   | { event: 'ext_sources'; data: ExtSource[] }
   | { event: 'token'; data: string }
   | { event: 'notice'; data: string }
+  | { event: 'followups'; data: string[] }
   | { event: 'done'; data: AskDone }
   | { event: 'error'; data: z.infer<typeof askErrorData> }
 
@@ -62,6 +65,10 @@ export function parseAskEvent(raw: RawSSEEvent): AskEvent | null {
     case 'ext_sources': { const r = z.array(extSourceSchema).safeParse(raw.data); return r.success ? { event: 'ext_sources', data: r.data } : null }
     case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : null
     case 'notice': return typeof raw.data === 'string' ? { event: 'notice', data: raw.data } : null
+    case 'followups': {
+      const r = z.array(z.string()).safeParse(raw.data)
+      return r.success ? { event: 'followups', data: r.data } : null
+    }
     case 'done': { const r = askDoneData.safeParse(raw.data); return r.success ? { event: 'done', data: r.data } : null }
     case 'error': { const r = askErrorData.safeParse(raw.data); return r.success ? { event: 'error', data: r.data } : null }
     default: return null
@@ -96,5 +103,22 @@ export const conversationTurnSchema = z.object({
   is_offtopic: z.boolean().default(false),
   thinking_ms: z.number().nullable().default(null),
   reports: z.array(conversationReportSchema).default([]),
+  stages: z.array(askStage).catch([]),
+  followups: z.array(z.string()).catch([]),
+  root_qa_id: z.string().nullable().default(null),
+  version_count: z.number().default(1),
+  stopped: z.boolean().default(false),
 })
 export type ConversationTurn = z.infer<typeof conversationTurnSchema>
+
+export const qaVersionSchema = z.object({
+  qa_id: z.string(),
+  answer: z.string(),
+  sources: z.array(sourceSchema).catch([]),
+  ext_sources: z.array(extSourceSchema).catch([]),
+  thinking_ms: z.number().nullable().default(null),
+  stages: z.array(askStage).catch([]),
+  feedback: z.enum(['like', 'dislike']).nullable().default(null),
+  created_at: z.string().nullish(),
+})
+export type QaVersion = z.infer<typeof qaVersionSchema>

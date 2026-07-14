@@ -48,6 +48,8 @@ REPORT_ENABLE_WEB = _S.report_enable_web
 # 薄涵蓋門檻：命中研報數 < 此值時，視為語料涵蓋不足，於 prompt 明確要求模型主動上網補充。
 # 純 LLM 自我判斷對「薄但非空」的覆蓋偏保守（少數片段即當足夠），故加此決定性 nudge。
 REPORT_THIN_COVERAGE = _S.report_thin_coverage
+# rerank（M2）：研報路徑較深候選上限；旗標關時 0＝不重排
+REPORT_RERANK_TOP_M = _S.report_rerank_candidates if _S.report_rerank_enabled else 0
 
 REPORT_SYSTEM_PROMPT = (
     "你是「廷豐智能研報」的研究分析師，負責把研報片段（必要時佐以網路資料）彙整成一份"
@@ -213,6 +215,7 @@ async def generate_report(
         max_passages=REPORT_MAX_PASSAGES,
         max_chars=REPORT_MAX_CONTEXT_CHARS,
         filters=filters,
+        rerank_top_m=REPORT_RERANK_TOP_M,
     )
     yield ("sources", [asdict(s) for s in sources])
     # 網搜開啟時，即使脈絡薄/空也照常生成（由模型上網補齊）；僅「脈絡空且網搜關」才拒生成。

@@ -19,21 +19,30 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
-from app.services.intent import classify_intent, condense_and_classify
+from app.services.followups import generate_followups
+from app.services.scope_router import (
+    ADVICE_RISK,
+    CORPUS_QA,
+    OFF_TOPIC,
+    OVERVIEW,
+    TIME_SENSITIVE,
+    RouteDecision,
+    classify_non_overview,
+    condense_and_route,
+    resolve_overview_route,
+)
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
 from app.services.overview import (
     OVERVIEW_SYSTEM_PROMPT,
     aggregate_facets,
-    detect_overview,
     format_facts,
     merge_request_filters,
     render_overview_text,
-    resolve_filters,
 )
 from app.services.report_gate import should_offer_report
 from app.services.retrieval import hybrid_search
@@ -51,6 +60,8 @@ RETRIEVAL_K = _S.ask_retrieval_k
 # 問答路徑專用的 dense 召回深度：顯式傳給 hybrid_search（不改其預設），多掃最近鄰、
 # 降低「漏研報」；檢索頁走自己的參數，完全不受影響。
 ASK_DENSE_SCAN = _S.ask_dense_scan
+# rerank（M2）：問答路徑保守候選上限；旗標關時 0＝不重排
+ASK_RERANK_TOP_M = _S.ask_rerank_candidates if _S.ask_rerank_enabled else 0
 
 # 多輪對話脈絡：帶進 prompt 的近輪數與舊答案截斷長度（控 prompt 大小/延遲）
 MAX_HISTORY_TURNS = 3
@@ -96,10 +107,35 @@ ASK_STALE_AGE_DAYS = _S.ask_stale_age_days
 ASK_MAX_STALE_REPORTS = _S.ask_max_stale_reports
 
 OFF_TOPIC_MESSAGE = (
+    "這裡是廷豐研報的投資研究問答，這個問題超出我能引據回答的範圍。"
+    "歡迎改問特定市場、個股、期貨、匯率或總經主題，我會依研報內容為你解讀。"
+)
+
+# 舊版婉拒文案：既有 qa_log 列仍存此字串，所有離題偵測必須同時辨識新舊兩版。
+_LEGACY_OFF_TOPIC_MESSAGE = (
     "這個問題與廷豐研報的語料無關，請改問與研報內容相關的問題"
     "（例如特定市場、個股、期貨或總經主題）。"
 )
+OFF_TOPIC_MESSAGES: tuple[str, ...] = (OFF_TOPIC_MESSAGE, _LEGACY_OFF_TOPIC_MESSAGE)
 
+TIME_SENSITIVE_UNAVAILABLE_MESSAGE = (
+    "這個問題需要即時行情或最新公告資料，目前系統尚未接入可信的即時資料來源，"
+    "無法為你驗證最新數字；為避免把過期研報當成即時資訊，我不會以研報內容代答。"
+    "歡迎改問個股、產業或總經的研報觀點與分析。"
+)
+
+# 前端歷史重播目前以 is_offtopic 表示「固定 notice」；時效安全說明雖非離題，
+# 也必須走相同呈現，否則重載後會被誤當成一般回答。
+NOTICE_MESSAGES: tuple[str, ...] = (*OFF_TOPIC_MESSAGES, TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+
+RESEARCH_ONLY_POLICY = (
+    "\n\n【研究資訊限制】使用者的問題涉及個人化投資決策。你只能整理研報來源"
+    "支持的正反論點、風險因素與不同觀點，並提醒使用者自行評估；禁止給出"
+    "個人化的買賣建議、目標部位、槓桿倍數、停損停利點位或任何保證報酬的說法。"
+)
+
+# M4：主 LLM 呼叫已改寫死 allow_web=False（見 answer_question 內 stream_completion
+# 呼叫處的工具政策註解），此常數暫不生效；保留供 M5 依 tool_policy 重新啟用網搜時沿用。
 ASK_ENABLE_WEB = _S.ask_enable_web
 
 EXT_SENTINEL = "[EXT_SOURCES]"  # 模型在答案末尾以此標記外部來源區塊
@@ -174,7 +210,7 @@ def _relevance_band(fused: float) -> int:
 class _StageTimer:
     """累積各階段耗時（毫秒）做延遲分段觀測。mark(name) 記『上次 mark 到現在』的耗時。
 
-    注意：首輪意圖判定與檢索並行，故 intent_wait 段與 embed/retrieve 段時間重疊，
+    注意：首輪路由判定與檢索並行，故 route_wait 段與 embed/retrieve 段時間重疊，
     各段加總不等於 total，log 僅供分段觀測、非嚴格序列耗時。clock 可注入便於測試。
     """
 
@@ -454,7 +490,7 @@ def history_item(row) -> dict:
         "feedback": feedback,
         "sources": sources or [],
         "ext_sources": ext_sources or [],
-        "is_offtopic": answer == OFF_TOPIC_MESSAGE,
+        "is_offtopic": answer in NOTICE_MESSAGES,
         "thinking_ms": thinking_ms,
     }
 
@@ -470,41 +506,186 @@ async def _log_qa(
     *,
     conversation_id: str | None = None,
     thinking_ms: int | None = None,
-) -> str:
+    root_qa_id: str | None = None,
+    stages: list[str] | None = None,
+    followups: list[str] | None = None,
+    request_id: str | None = None,
+    deactivate_qa_id: str | None = None,
+    truncate_from: tuple[str, object] | None = None,
+) -> str | None:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
-    回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
+    回傳已提交的列 id；寫入失敗時回 None。若指定 replacement metadata，INSERT 與
+    active 狀態轉換共用同一筆 transaction，避免生成失敗時先隱藏舊歷史。
     sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
-    conversation_id 將多輪問答歸為同一串。
+    conversation_id 將多輪問答歸為同一串。root_qa_id 將同題多版本歸為同一群組。
+    stages/followups 供歷史重現思考卡與追問 chips。
     """
     qa_id = str(uuid.uuid4())
     ext_sources = ext_sources or []
     try:
         async with SessionFactory() as session:
-            await session.execute(
-                text(
+            stmt = text(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
-                    "sources, ext_sources, conversation_id, thinking_ms) "
+                    "sources, ext_sources, conversation_id, thinking_ms, "
+                    "root_qa_id, active, stages, followups, request_id) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
-                    ":sources, :ext_sources, :conv, :think)"
-                ),
+                    ":sources, :ext_sources, :conv, :think, "
+                    ":root, true, :stages, :followups, :request_id)"
+                )
+            if request_id is not None:
+                stmt = text(
+                    f"{stmt.text} ON CONFLICT (request_id) WHERE request_id IS NOT NULL "
+                    "DO UPDATE SET request_id = EXCLUDED.request_id RETURNING id"
+                )
+            result = await session.execute(
+                stmt,
                 {
                     "id": qa_id,
                     "q": question,
                     "a": answer,
-                    "cited": cited,  # uuid[]：asyncpg 由欄位型別推斷，傳 list[str]
-                    "filters": json.dumps(filters, ensure_ascii=False),  # jsonb
+                    "cited": cited,
+                    "filters": json.dumps(filters, ensure_ascii=False),
                     "lat": latency_ms,
-                    "sources": json.dumps(sources, ensure_ascii=False),  # jsonb
-                    "ext_sources": json.dumps(ext_sources, ensure_ascii=False),  # jsonb
+                    "sources": json.dumps(sources, ensure_ascii=False),
+                    "ext_sources": json.dumps(ext_sources, ensure_ascii=False),
                     "conv": conversation_id,
                     "think": thinking_ms,
+                    "root": root_qa_id,
+                    "stages": json.dumps(stages, ensure_ascii=False)
+                    if stages is not None else None,
+                    "followups": json.dumps(followups, ensure_ascii=False)
+                    if followups is not None else None,
+                    "request_id": request_id,
                 },
             )
+            if request_id is not None:
+                qa_id = str(result.scalar_one())
+            if deactivate_qa_id is not None:
+                await session.execute(
+                    text("UPDATE research.qa_log SET active = false WHERE id = :id"),
+                    {"id": deactivate_qa_id},
+                )
+            if truncate_from is not None:
+                conversation_id, created_at = truncate_from
+                await session.execute(
+                    text(
+                        "UPDATE research.qa_log SET active = false "
+                        "WHERE COALESCE(conversation_id, id) = :cid AND created_at >= :ts"
+                    ),
+                    {"cid": conversation_id, "ts": created_at},
+                )
             await session.commit()
     except Exception:
-        pass
+        return None
+    return qa_id
+
+
+async def _load_qa_meta(qa_id: str):
+    """讀一列的 (root_qa_id, conversation_id, created_at)；查無/錯誤回 None。"""
+    try:
+        async with SessionFactory() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT root_qa_id, conversation_id, created_at "
+                        "FROM research.qa_log WHERE id = :id"
+                    ),
+                    {"id": qa_id},
+                )
+            ).first()
+        if row is None:
+            return None
+        root, conv, created = row
+        return (str(root) if root else None,
+                str(conv) if conv else None, created)
+    except Exception:
+        return None
+
+
+async def _count_versions(group_key: str) -> int:
+    """某群組（COALESCE(root_qa_id, id)）的版本總數（含 inactive）。"""
+    try:
+        async with SessionFactory() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM research.qa_log "
+                        "WHERE COALESCE(root_qa_id, id) = :gk"
+                    ),
+                    {"gk": group_key},
+                )
+            ).first()
+        return int(row[0]) if row else 1
+    except Exception:
+        return 1
+
+
+async def log_stopped_qa(
+    question: str,
+    partial_answer: str,
+    *,
+    conversation_id: str | None = None,
+    sources: list[dict] | None = None,
+    ext_sources: list[dict] | None = None,
+    stages: list[str] | None = None,
+    regenerate_of: str | None = None,
+    request_id: str | None = None,
+) -> str | None:
+    """寫一列停止的部分答案（stopped=true, active=true）；回新 qa_id。
+
+    regenerate_of 有值時：解析其群組鍵作 root_qa_id（續版本鏈）。
+    同一 request_id 的完成／停止請求會由唯一索引收斂成同一列；DB 失敗回 None。
+    """
+    qa_id = str(uuid.uuid4())
+    root_qa_id: str | None = None
+    if regenerate_of:
+        meta = await _load_qa_meta(regenerate_of)
+        if meta is not None:
+            old_root, old_conv, _ = meta
+            root_qa_id = old_root or regenerate_of
+            conversation_id = conversation_id or old_conv
+    try:
+        async with SessionFactory() as session:
+            stmt = text(
+                    "INSERT INTO research.qa_log "
+                    "(id, question, answer, cited_report_ids, filters, latency_ms, "
+                    "sources, ext_sources, conversation_id, thinking_ms, "
+                    "root_qa_id, active, stages, followups, stopped, request_id) "
+                    "VALUES (:id, :q, :a, :cited, :filters, :lat, "
+                    ":sources, :ext_sources, :conv, :think, "
+                    ":root, true, :stages, NULL, true, :request_id)"
+                )
+            if request_id is not None:
+                stmt = text(
+                    f"{stmt.text} ON CONFLICT (request_id) WHERE request_id IS NOT NULL "
+                    "DO UPDATE SET request_id = EXCLUDED.request_id RETURNING id"
+                )
+            result = await session.execute(
+                stmt,
+                {
+                    "id": qa_id,
+                    "q": question,
+                    "a": partial_answer,
+                    "cited": [],
+                    "filters": json.dumps({}, ensure_ascii=False),
+                    "lat": None,
+                    "sources": json.dumps(sources or [], ensure_ascii=False),
+                    "ext_sources": json.dumps(ext_sources or [], ensure_ascii=False),
+                    "conv": conversation_id,
+                    "think": None,
+                    "root": root_qa_id,
+                    "stages": json.dumps(stages, ensure_ascii=False)
+                    if stages is not None else None,
+                    "request_id": request_id,
+                },
+            )
+            if request_id is not None:
+                qa_id = str(result.scalar_one())
+            await session.commit()
+    except Exception:
+        return None
     return qa_id
 
 
@@ -523,12 +704,13 @@ async def load_recent_turns(
                     text(
                         "SELECT question, answer FROM research.qa_log "
                         "WHERE COALESCE(conversation_id, id) = :cid "
-                        "AND answer IS DISTINCT FROM :offtopic "
+                        "AND COALESCE(answer NOT IN :offtopics, TRUE) "
+                        "AND active AND stopped IS NOT TRUE "
                         "ORDER BY created_at DESC LIMIT :limit"
-                    ),
+                    ).bindparams(bindparam("offtopics", expanding=True)),
                     {
                         "cid": conversation_id,
-                        "offtopic": OFF_TOPIC_MESSAGE,
+                        "offtopics": list(OFF_TOPIC_MESSAGES),
                         "limit": limit,
                     },
                 )
@@ -552,15 +734,15 @@ async def list_conversations(limit: int = 50) -> list[dict]:
                     "SELECT conv_id, title, last_at, turn_count FROM ("
                     "  SELECT COALESCE(conversation_id, id) AS conv_id,"
                     "         (array_agg(question ORDER BY created_at) "
-                    "             FILTER (WHERE answer IS DISTINCT FROM :offtopic))[1] AS title,"
+                    "             FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active))[1] AS title,"
                     "         max(created_at) AS last_at,"
-                    "         count(*) FILTER (WHERE answer IS DISTINCT FROM :offtopic) AS turn_count"
+                    "         count(*) FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active) AS turn_count"
                     "  FROM research.qa_log"
                     "  GROUP BY COALESCE(conversation_id, id)"
                     ") g WHERE turn_count > 0 "
                     "ORDER BY last_at DESC LIMIT :limit"
-                ),
-                {"offtopic": OFF_TOPIC_MESSAGE, "limit": limit},
+                ).bindparams(bindparam("offtopics", expanding=True)),
+                {"offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit},
             )
         ).all()
     out: list[dict] = []
@@ -578,27 +760,86 @@ async def list_conversations(limit: int = 50) -> list[dict]:
     return out
 
 
+def _conversation_item(row) -> dict:
+    """qa_log 一列（13 欄，含版本/思考卡/追問中繼資料）→ 對話重現用 dict。
+
+    在 history_item 的基礎欄位上，補 stages/followups/root_qa_id/stopped/
+    version_count 五鍵，供前端重現思考卡、追問 chips 與版本切換。
+    """
+    (rid, question, answer, created_at, feedback, sources, ext_sources,
+     thinking_ms, stages, followups, root_qa_id, stopped, version_count) = row
+    base = history_item(
+        (rid, question, answer, created_at, feedback, sources, ext_sources, thinking_ms)
+    )
+    base["stages"] = stages or []
+    base["followups"] = followups or []
+    base["root_qa_id"] = str(root_qa_id) if root_qa_id else None
+    base["stopped"] = bool(stopped)
+    base["version_count"] = int(version_count)
+    return base
+
+
 async def get_conversation(conversation_id: str) -> list[dict]:
-    """該對話全部輪次（history_item 格式），由舊到新，供重開重現與續問。"""
+    """該對話全部有效輪次（由舊到新），供重開重現與續問。"""
     async with SessionFactory() as session:
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
-                    "FROM research.qa_log "
-                    "WHERE COALESCE(conversation_id, id) = :cid "
-                    "ORDER BY created_at ASC"
+                    "SELECT q.id, q.question, q.answer, q.created_at, q.feedback, "
+                    "q.sources, q.ext_sources, q.thinking_ms, q.stages, q.followups, "
+                    "q.root_qa_id, q.stopped, "
+                    "(SELECT count(*) FROM research.qa_log v "
+                    " WHERE COALESCE(v.root_qa_id, v.id) = COALESCE(q.root_qa_id, q.id)) "
+                    "AS version_count "
+                    "FROM research.qa_log q "
+                    "WHERE COALESCE(q.conversation_id, q.id) = :cid AND q.active "
+                    "ORDER BY q.created_at ASC"
                 ),
                 {"cid": conversation_id},
             )
         ).all()
-    items = [history_item(tuple(r)) for r in rows]
+    items = [_conversation_item(tuple(r)) for r in rows]
     from app.services.report import reports_for_conversation  # 延遲 import：避免與 report.py 循環
 
     reports_by_qa = await reports_for_conversation(conversation_id)
     for it in items:
         it["reports"] = reports_by_qa.get(str(it.get("id")), [])
     return items
+
+
+async def list_qa_versions(root_qa_id: str) -> list[dict]:
+    """某問題群組的全部版本（含 inactive），由舊到新，供歷史 pager 回看。
+
+    任何 DB 錯誤 → 回 []（fail-open）。
+    """
+    try:
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, answer, sources, ext_sources, thinking_ms, "
+                        "stages, feedback, created_at FROM research.qa_log "
+                        "WHERE COALESCE(root_qa_id, id) = :root "
+                        "ORDER BY created_at ASC"
+                    ),
+                    {"root": root_qa_id},
+                )
+            ).all()
+    except Exception:
+        return []
+    out = []
+    for (qid, answer, sources, ext_sources, thinking_ms, stages, feedback, created) in rows:
+        out.append({
+            "qa_id": str(qid),
+            "answer": answer,
+            "sources": sources or [],
+            "ext_sources": ext_sources or [],
+            "thinking_ms": thinking_ms,
+            "stages": stages or [],
+            "feedback": feedback,
+            "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+        })
+    return out
 
 
 async def delete_conversation(conversation_id: str) -> bool:
@@ -637,6 +878,19 @@ async def record_feedback(qa_id: str, value: str) -> bool:
         return False
 
 
+async def _update_followups(qa_id: str, followups: list[str]) -> None:
+    """best-effort 補寫 followups（追問在 done 後才產）。"""
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text("UPDATE research.qa_log SET followups = :f WHERE id = :id"),
+                {"f": json.dumps(followups, ensure_ascii=False), "id": qa_id},
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
 async def delete_qa(qa_id: str) -> bool:
     """刪除一列 research.qa_log（使用者清除單筆歷史問答）。
 
@@ -663,8 +917,18 @@ async def _answer_overview(
     conv_id: str,
     model: str,
     started: float,
+    root_qa_id: str | None = None,
+    deactivate_qa_id: str | None = None,
+    truncate_from: tuple[str, object] | None = None,
+    request_id: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """總覽路徑：分面聚合 → LLM 用算好的數字潤飾 → 失敗退回模板。事件序列同主路徑。"""
+    stages_seen: list[str] = []
+
+    def _status(stage: str, **extra):
+        stages_seen.append(stage)
+        return ("status", {"stage": stage, **extra})
+
     scoped_filters = merge_request_filters(ov_filters, filters)
     async with SessionFactory() as session:  # 短連線：聚合完即釋放
         overview = await aggregate_facets(session, scoped_filters)
@@ -673,14 +937,19 @@ async def _answer_overview(
         msg = render_overview_text(overview)  # 「找不到…」
         yield ("sources", [])
         thinking_ms = int((time.monotonic() - started) * 1000)
-        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+        yield _status("generating", thinking_ms=thinking_ms)
         yield ("token", msg)
         qa_id = await _log_qa(
             question, msg, [], dict(filters, path="overview"), thinking_ms, [], [],
-            conversation_id=conv_id, thinking_ms=thinking_ms,
+            conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
+            root_qa_id=root_qa_id, deactivate_qa_id=deactivate_qa_id,
+            truncate_from=truncate_from, request_id=request_id,
         )
+        group_key = root_qa_id or qa_id
+        version_count = await _count_versions(group_key) if root_qa_id and group_key else 1
         yield ("done", {"cited": [], "qa_id": qa_id,
-                        "conversation_id": conv_id, "thinking_ms": thinking_ms})
+                        "conversation_id": conv_id, "thinking_ms": thinking_ms,
+                        "root_qa_id": group_key, "version_count": version_count})
         return
 
     sources = [
@@ -689,12 +958,12 @@ async def _answer_overview(
         for i, (rid, fn, mk, rd) in enumerate(overview.samples, 1)
     ]
     yield ("sources", [asdict(s) for s in sources])
-    yield ("status", {"stage": "retrieved", "count": overview.total})
+    yield _status("retrieved", count=overview.total)
 
     facts = format_facts(overview)
     user_prompt = f"{facts}\n\n問題：{prompt_query}\n\n請依規則作答。"
     thinking_ms = int((time.monotonic() - started) * 1000)
-    yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+    yield _status("generating", thinking_ms=thinking_ms)
 
     raw_parts: list[str] = []
     emitted_token = False
@@ -722,10 +991,63 @@ async def _answer_overview(
         question, body, cited, dict(filters, path="overview"),
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources], [],
-        conversation_id=conv_id, thinking_ms=thinking_ms,
+        conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
+        root_qa_id=root_qa_id, deactivate_qa_id=deactivate_qa_id,
+        truncate_from=truncate_from, request_id=request_id,
     )
+    group_key = root_qa_id or qa_id
+    version_count = await _count_versions(group_key) if root_qa_id and group_key else 1
     yield ("done", {"cited": cited, "qa_id": qa_id,
-                    "conversation_id": conv_id, "thinking_ms": thinking_ms})
+                    "conversation_id": conv_id, "thinking_ms": thinking_ms,
+                    "root_qa_id": group_key, "version_count": version_count})
+
+
+async def _yield_routed_notice(
+    decision: RouteDecision,
+    question: str,
+    filters: dict,
+    conv_id: str,
+    started: float,
+    stages_seen: list[str],
+    new_root: str | None,
+    deactivate_qa_id: str | None = None,
+    truncate_from: tuple[str, object] | None = None,
+    request_id: str | None = None,
+) -> AsyncIterator[tuple[str, object]]:
+    """no-answer 終端路由（off_topic / time_sensitive）：固定文案、不檢索、不呼叫主 LLM。
+
+    off_topic 與 time_sensitive 共用同一事件序（sources[] → notice → done）；
+    done payload 維持既有離題形狀，不含 qa_id（與有答覆路徑的 done 區隔）。
+    """
+    if decision.scope == TIME_SENSITIVE:
+        message = TIME_SENSITIVE_UNAVAILABLE_MESSAGE
+        log_filters = dict(filters, path="time_sensitive")
+    else:
+        message = OFF_TOPIC_MESSAGE
+        log_filters = filters
+    yield ("sources", [])
+    yield ("notice", message)
+    thinking_ms = int((time.monotonic() - started) * 1000)
+    await _log_qa(
+        question,
+        message,
+        [],
+        log_filters,
+        thinking_ms,
+        [],
+        [],
+        conversation_id=conv_id,
+        thinking_ms=thinking_ms,
+        stages=stages_seen,
+        root_qa_id=new_root,
+        deactivate_qa_id=deactivate_qa_id,
+        truncate_from=truncate_from,
+        request_id=request_id,
+    )
+    yield (
+        "done",
+        {"cited": [], "conversation_id": conv_id, "thinking_ms": thinking_ms},
+    )
 
 
 async def answer_question(
@@ -735,64 +1057,110 @@ async def answer_question(
     filters: dict | None = None,
     model: str = DEFAULT_MODEL,
     conversation_id: str | None = None,
+    regenerate_of: str | None = None,
+    edit_of: str | None = None,
+    request_id: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """產生 ("sources"|"status"|"token"|"notice"|"ext_sources"|"done", payload) 事件序列。
 
     首輪（未帶 conversation_id）：意圖判定與檢索並行（省延遲）。
     續問（帶 conversation_id）：先載近輪歷史，一次 Haiku 改寫追問為獨立查詢並判定意圖，
     再以改寫後查詢檢索；先前對話內嵌進 prompt。所有 done 事件回傳 conversation_id。
+    regenerate_of 有值時：讀舊列群組鍵、沿用其 conversation_id；新列成功寫入時才停用舊列，
+    新列與舊列同組（root_qa_id），done 事件回傳 root_qa_id 與 version_count。
+    edit_of 有值時（與 regenerate_of 互斥，regenerate_of 優先）：讀被編輯列的
+    conversation_id 與 created_at；新列成功寫入時才把該輪及其後全部標 inactive（截斷後續對話），
+    再以編輯後新問題作答為全新輪次（不進版本群組，new_root 維持 None）。
     """
     filters = filters or {}
     started = time.monotonic()
     timer = _StageTimer()
     conv_id = conversation_id or str(uuid.uuid4())
-    yield ("status", {"stage": "understanding"})  # 步驟1：理解問題（含意圖判定/改寫）
+
+    new_root: str | None = None
+    deactivate_qa_id: str | None = None
+    truncate_from: tuple[str, object] | None = None
+    if regenerate_of:
+        _meta = await _load_qa_meta(regenerate_of)
+        if _meta is not None:
+            _old_root, _old_conv, _ = _meta
+            conv_id = _old_conv or conv_id
+            new_root = _old_root or regenerate_of
+            deactivate_qa_id = regenerate_of
+    elif edit_of:
+        _meta = await _load_qa_meta(edit_of)
+        if _meta is not None:
+            _old_root, _old_conv, _old_created = _meta
+            conv_id = _old_conv or conv_id
+            if _old_created is not None:
+                truncate_from = (conv_id, _old_created)
+
+    stages_seen: list[str] = []
+
+    def _status(stage: str, **extra):
+        stages_seen.append(stage)
+        return ("status", {"stage": stage, **extra})
+
+    yield _status("understanding")  # 步驟1：理解問題（含意圖判定/改寫）
 
     # 僅「續問」才載歷史；首輪無歷史，維持並行意圖判定
     turns = await load_recent_turns(conv_id) if conversation_id else []
     history_block = build_history_block(turns)
 
-    # 多輪需先 condense 取得獨立查詢；首輪直接用原問題（意圖判定仍延後並行）
+    today = datetime.now(timezone.utc).date()
+    decision: RouteDecision | None = None
+
+    # 多輪：一次 Haiku 改寫＋分類（內含改寫後 overview/前檢重判）；首輪延後並行判定
     if turns:
-        standalone_query, in_domain = await condense_and_classify(
-            history_block, question
+        standalone_query, decision = await condense_and_route(
+            history_block, question, today=today
         )
         timer.mark("condense")
     else:
-        standalone_query, in_domain = question, None
+        standalone_query = question
+        ov = resolve_overview_route(question, today)  # 確定性優先，零 LLM 零向量
+        if ov is not None:
+            decision = ov
 
-    # 總覽分支：枚舉/聚合題改走全語料分面統計（純規則判定，零 LLM、零向量檢索）。
-    # 先用較便宜的 detect_overview 當閘門，命中才解析條件——避免每題都跑 resolve_filters。
-    # 需解析到 ≥1 金融條件才改道（此門檻即離題保護）；否則回退既有 RAG。
-    if detect_overview(standalone_query):
-        ov_filters = resolve_filters(
-            standalone_query, datetime.now(timezone.utc).date()
-        )
-        if ov_filters.any():
-            produced = False
-            try:
-                async for ev in _answer_overview(
-                    question,
-                    standalone_query,
-                    ov_filters,
-                    filters,
-                    conv_id=conv_id,
-                    model=model,
-                    started=started,
-                ):
-                    produced = True
-                    yield ev
-                if produced:
-                    return
-            except Exception:
-                # 已 yield 過事件再拋例外無法乾淨回退（會重發 sources 汙染 SSE）→ 直接上拋；
-                # 僅「尚未 yield」（produced 為 False，例如 aggregate_facets 拋錯）才 fail-open 回退 RAG。
-                if produced:
-                    logger.exception("overview path failed mid-stream; cannot fall back")
-                    raise
-                logger.exception(
-                    "overview path failed before any output; falling back to RAG"
-                )
+    # 總覽分支：枚舉/聚合題走全語料分面統計（decision 攜帶已解析 filters，不重算）
+    if decision is not None and decision.scope == OVERVIEW:
+        ov_filters = decision.overview_filters
+        produced = False
+        try:
+            async for ev in _answer_overview(
+                question, standalone_query, ov_filters, filters,
+                conv_id=conv_id, model=model, started=started, root_qa_id=new_root,
+                deactivate_qa_id=deactivate_qa_id, truncate_from=truncate_from,
+                request_id=request_id,
+            ):
+                produced = True
+                yield ev
+            if produced:
+                return
+        except Exception:
+            # 已 yield 過事件再拋例外無法乾淨回退（會重發 sources 汙染 SSE）→ 直接上拋；
+            # 僅「尚未 yield」（produced 為 False，例如 aggregate_facets 拋錯）才 fail-open 回退 RAG。
+            if produced:
+                logger.exception("overview path failed mid-stream; cannot fall back")
+                raise
+            logger.exception(
+                "overview path failed before any output; falling back to RAG"
+            )
+            # 回退 RAG：首輪重新並行判定（decision=None）；續問已耗用改寫結果，fail-open 判 corpus_qa
+            decision = None
+            if turns:
+                from app.services.scope_router import _decision as _mk
+
+                decision = _mk(CORPUS_QA)
+
+    # 終端路由（不檢索、不呼叫主 LLM）：續問在檢索前提前返回
+    if decision is not None and decision.scope in (OFF_TOPIC, TIME_SENSITIVE):
+        async for ev in _yield_routed_notice(
+            decision, question, filters, conv_id, started, stages_seen, new_root,
+            deactivate_qa_id, truncate_from, request_id,
+        ):
+            yield ev
+        return
 
     # 既有 RAG 路徑（embed+檢索+build_context 收斂於 retrieve_context；函式內 import
     # 避免頂層循環 import——retrieval_pipeline 於頂層 import 本模組）
@@ -803,59 +1171,60 @@ async def answer_question(
             standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
             max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
             max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+            rerank_top_m=ASK_RERANK_TOP_M,
         )
     else:
-        intent_task = asyncio.create_task(classify_intent(question))
+        route_task = asyncio.create_task(classify_non_overview(question))
         try:
             sources, context = await retrieve_context(
                 question, k=k, dense_scan=ASK_DENSE_SCAN,
                 max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
                 max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+                rerank_top_m=ASK_RERANK_TOP_M,
             )
-            in_domain = await intent_task
-            timer.mark("intent_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
+            decision = await route_task
+            timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
         except BaseException:
-            intent_task.cancel()
+            route_task.cancel()
             raise
 
-    if not in_domain:  # 離題：拒答、不跑主 LLM
-        yield ("sources", [])
-        yield ("notice", OFF_TOPIC_MESSAGE)
-        thinking_ms = int((time.monotonic() - started) * 1000)
-        await _log_qa(
-            question,
-            OFF_TOPIC_MESSAGE,
-            [],
-            filters,
-            thinking_ms,
-            [],
-            [],
-            conversation_id=conv_id,
-            thinking_ms=thinking_ms,
-        )
-        yield (
-            "done",
-            {"cited": [], "conversation_id": conv_id, "thinking_ms": thinking_ms},
-        )
+    # 首輪終端路由：並行取證被丟棄——不發 sources、不持久化取證結果
+    if decision is not None and decision.scope in (OFF_TOPIC, TIME_SENSITIVE):
+        async for ev in _yield_routed_notice(
+            decision, question, filters, conv_id, started, stages_seen, new_root,
+            deactivate_qa_id, truncate_from, request_id,
+        ):
+            yield ev
         return
 
+    system_prompt = SYSTEM_PROMPT
+    log_filters = filters
+    if decision is not None and decision.scope == ADVICE_RISK:
+        system_prompt = SYSTEM_PROMPT + RESEARCH_ONLY_POLICY
+        log_filters = dict(filters, path="advice_risk")
+
     yield ("sources", [asdict(s) for s in sources])
-    yield ("status", {"stage": "retrieved", "count": len(sources)})  # 步驟2：找到 N 篇
+    yield _status("retrieved", count=len(sources))  # 步驟2：找到 N 篇
 
     if not context:
         thinking_ms = int((time.monotonic() - started) * 1000)
-        yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
+        yield _status("generating", thinking_ms=thinking_ms)
         yield ("token", NO_CONTEXT_MESSAGE)
         qa_id = await _log_qa(
             question,
             NO_CONTEXT_MESSAGE,
             [],
-            filters,
+            log_filters,
             thinking_ms,
             [],
             [],
             conversation_id=conv_id,
             thinking_ms=thinking_ms,
+            stages=stages_seen,
+            root_qa_id=new_root,
+            deactivate_qa_id=deactivate_qa_id,
+            truncate_from=truncate_from,
+            request_id=request_id,
         )
         yield (
             "done",
@@ -880,20 +1249,19 @@ async def answer_question(
         out: list[tuple[str, str | dict]] = []
         if thinking_ms is None:
             thinking_ms = int((time.monotonic() - started) * 1000)
-            out.append(
-                ("status", {"stage": "generating", "thinking_ms": thinking_ms})
-            )
+            out.append(_status("generating", thinking_ms=thinking_ms))
         out.append(("token", piece))
         return out
 
-    yield ("status", {"stage": "reading"})  # 步驟3：閱讀重點、整理回答
+    yield _status("reading")  # 步驟3：閱讀重點、整理回答
     async for chunk in stream_completion(
-        user_prompt, model=model, system=SYSTEM_PROMPT, allow_web=ASK_ENABLE_WEB
+        # M4 依工具政策一律關閉未受控網搜；M5 才按 tool_policy 重開（spec §2）
+        user_prompt, model=model, system=system_prompt, allow_web=False
     ):
         if chunk == SEARCH_EVENT:
             if not searching_sent:
                 searching_sent = True
-                yield ("status", {"stage": "searching_web"})  # 步驟4：搜尋網路補充
+                yield _status("searching_web")  # 步驟4：搜尋網路補充
             continue
         raw_parts.append(chunk)
         emit = parser.feed(chunk)
@@ -913,12 +1281,17 @@ async def answer_question(
         question,
         body,
         cited,
-        filters,
+        log_filters,
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources],
         ext_sources,
         conversation_id=conv_id,
         thinking_ms=thinking_ms,
+        stages=stages_seen,
+        root_qa_id=new_root,
+        deactivate_qa_id=deactivate_qa_id,
+        truncate_from=truncate_from,
+        request_id=request_id,
     )
     logger.info(
         "qa_timing id=%s %s total_ms=%s thinking_ms=%s",
@@ -927,6 +1300,8 @@ async def answer_question(
         timer.total_ms(),
         thinking_ms,
     )
+    group_key = new_root or qa_id
+    version_count = await _count_versions(group_key) if regenerate_of and group_key else 1
     offer_report, report_title = should_offer_report(question, cited, body)
     yield (
         "done",
@@ -937,5 +1312,12 @@ async def answer_question(
             "thinking_ms": thinking_ms,
             "offer_report": offer_report,
             "report_title": report_title,
+            "root_qa_id": group_key,
+            "version_count": version_count,
         },
     )
+
+    fups = await generate_followups(question, body)
+    if fups and qa_id:
+        await _update_followups(qa_id, fups)
+        yield ("followups", fups)

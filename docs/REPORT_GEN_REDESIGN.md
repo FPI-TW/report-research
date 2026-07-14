@@ -3,6 +3,8 @@
 > 目標：在**不破壞**「Python 管確定性、Claude 管語意、以 `file_hash` 為鍵、checkpoint 可續」這個核心分層的前提下，把「深度研報」的**內容品質**與**輸出質感**一起拉到可交付水準，並讓品質**可量測、防回歸**。
 >
 > 決策前提（已確認）：全端藍圖；品質優先（單份深報可接受數分鐘）；評測採 reference-free 指標（無黃金答案）。
+>
+> **文件狀態（2026-07-13）**：Phase 0 的設定集中／共用檢索 helper、Phase 5-a 的初版題集與三項問答指標、以及 Phase 1 的 reranker 已有對應實作。本文保留完整目標架構，但後續工作應以 `docs/IMPLEMENTATION_PLAN.md` 的實際里程碑與驗收狀態為準，避免重複實作。
 
 ---
 
@@ -123,6 +125,9 @@ flowchart TD
 3. **MMR 多樣性 + 新近度選取（取代純相關度砍量）。**
    在 `build_context` 的選篇政策加入 MMR（相關度 vs. 已選集合的冗餘度權衡），避免「25 篇同質研報」。與既有 tier/新近度/過舊配額並存：先 rerank 分數與新近度定基礎序，再用 MMR 去冗餘。
 
+   - 多樣性不可只看文字向量：選取政策須明定並可量測地分散**子題、券商／發行來源、報告日期與正反觀點**；不足時才退化為單純相關度排序。
+   - 將 MMR 的 `lambda`、每來源／日期的上限、候選數與降級條件集中設定，並把「重複來源率、子題覆蓋率」列為 eval 觀察值。
+
 > 建議把「選篇政策」從 `build_context` 抽成純函式 `select_reports(candidates) -> list`，與字串格式化分離、可單獨測；同時和 `retrieval.rank_reports`（目前 BAND_WIDTH=0.05，與問答路徑 RELEVANCE_BAND=0.10 兩套會漂移）合流到同一套定義。
 
 ### Phase 2 — 生成重構（大綱→逐節，取代單次 40k 字）
@@ -131,9 +136,10 @@ flowchart TD
 
 1. **大綱生成。** 以現有固定骨架（執行摘要／關鍵發現／重點分析／風險與展望／引用來源）為外層，讓模型依檢索到的證據補**動態子節**（例如重點分析下細分為「先進封裝」「HBM 需求」「地緣風險」）。輸出結構化大綱（JSON）。
 2. **逐節針對性檢索。** 每個子節用該節標題 + 主題再取一次相關片段（從 Phase 1 的候選池挑，或對該節做一次 rerank），只餵該節相關證據，而非全份共用一坨 40k 字。
-3. **逐節撰寫 + 串流。** 一節一節寫，天然貼合你現有的 `("token", …)` 串流（前端逐節浮現）。每節帶自己的來源編號、句末 `[n]`。
-4. **組裝。** 串接為完整 Markdown，統一重編來源編號、收斂 `## 引用來源`。
-   - fail-open：大綱或逐節任一步異常 → 退回現有「單次生成」路徑，研報照樣產出。
+3. **統一證據帳本。** 在內部以穩定 `evidence_id`（而非模型直接輸出的 `[n]`）標註每個段落、KPI 與圖表；帳本保存 corpus/web 來源、報告／chunk ID 或 URL、發布／取得時間、內容雜湊與來源類型。最後渲染時才把 `evidence_id` 映射為全篇一致的 `[n]`，避免逐節重編後錯配。
+4. **逐節撰寫 + 串流。** 一節一節寫，天然貼合你現有的 `("token", …)` 串流（前端逐節浮現）。每節只能引用被分配的 `evidence_id`；前端可在節邊界顯示進度。
+5. **組裝。** 串接為完整 Markdown，依證據帳本產生 `## 引用來源`、外部參考與可稽核的 claim-to-evidence 對照。
+   - **回退邊界**：首個內容 token 前（大綱／取證／首節準備）異常可退回現有單次生成；一旦已串流內容，不得改跑整份單次生成，以免重複或互相矛盾。此時應完成可用的既有草稿，或以明確狀態結束並保存可重試的 checkpoint。
 
 > 這一步是「品質優先」取捨的主要耗時來源：N 個子節 = N 次（檢索 + LLM 撰寫）。用 §6 的並行策略壓延遲。
 
@@ -141,11 +147,11 @@ flowchart TD
 
 新增 `app/services/faithfulness.py`，採 **RAGAS 的 faithfulness 演算法**（reference-free，不需黃金答案）：
 
-1. **claim 拆解。** 把生成研報拆成子主張（statements），特別標記**數值型主張**（營收年增、毛利率、EPS、目標價…）。
-2. **逐條 grounding。** 每條主張比對其宣稱來源 `[n]` 對應的片段，判斷「被支持 / 未被支持 / 無來源」。
+1. **claim 拆解。** 把生成研報拆成子主張（statements），特別標記**數值型主張**（營收年增、毛利率、EPS、目標價…），並保留其 `evidence_id`。
+2. **逐條 grounding。** 每條主張只比對自己的證據帳本：研報 chunk 依 `report_id/chunk_id` 驗證；網路來源依持久化的 URL、取得時間與內容快照／雜湊驗證，判斷「被支持 / 未被支持 / 無來源」。
 3. **處置。**
    - 未被支持的數值主張 → 標註並要求模型改寫或移除（可做一輪 targeted 修正）。
-   - 產出 `faithfulness_score` 一併寫入 `report_doc`（新增欄位，沿用 `ALTER ADD COLUMN IF NOT EXISTS` 慣例），低於門檻可在 UI 顯示「內容審核中/信心較低」徽章。
+   - 分開記錄 `citation_coverage`、`numeric_support_rate`、`faithfulness_score`，不可把它們包裝成「內容為真」的單一信心分數；UI 應描述為「來源支持度／待複核」，而非真實性保證。
    - fail-open：查核異常不阻擋交付，僅不加分數。
 
 ### Phase 4 — Typst 渲染層（取代 WeasyPrint 手刻）
@@ -164,9 +170,9 @@ flowchart TD
 
 新增 `eval/`（離線，不進 web 服務路徑）：
 
-- **題庫來源：** 從 `qa_log` / 既有研報主題萃取一組固定評測題（無需人工黃金答案）。
-- **指標（RAGAS，reference-free）：** Faithfulness（目標 >0.9）、Context Precision（>0.8）、Context Recall（>0.8）、Answer Relevancy（>0.85）。Faithfulness 與 Context Recall 訊號最高（分別抓幻覺與漏檢）。
-- **用途：** 每個 Phase 落地前後跑同一組題，量增益、防回歸；接進 CI 當 gate（低於基準線擋合併）。
+- **題庫來源：** 問答與深度研報分成兩套固定題集。`qa_log` 可作候選來源，但須人工去偏、凍結版本，並覆蓋時效題、跨市場題、反方論點與無資料題。
+- **指標：** 初版 reference-free 指標限 Faithfulness、Context Precision、Answer Relevancy；**Context Recall 只在有人工參考答案、標記證據或可審核的 pseudo-reference 時啟用**，不得宣稱為既有無黃金答案評測的一部分。研報題集另加章節覆蓋率、引用完整率、數值主張支持率與外部來源標示率。
+- **用途：** 每個 Phase 落地前後跑同一組凍結題集、保留逐題結果與失敗原因。LLM 評審具波動性，CI 應以相對基準線、容許誤差區間與人工抽樣複核為 gate，不採單次絕對分數直接阻擋合併。
 - **注意：** RAGAS 需一個評審 LLM；沿用你的 `claude` CLI（Haiku/Sonnet）即可，離線批次跑、不影響線上延遲。
 
 ---
@@ -185,6 +191,7 @@ app/
     rerank.py               # Phase 1：BGE-reranker-v2-m3 封裝
     select.py               # Phase 1：MMR + 新近度選篇（從 build_context 抽出）
     report_writer.py        # Phase 2：大綱→逐節生成編排
+    evidence.py             # Phase 2：穩定 evidence_id、來源帳本、引用渲染
     faithfulness.py         # Phase 3：claim 拆解 + grounding
     typst_render.py         # Phase 4：MD→Typst→PDF（漸進取代 pdf.py/chart.py）
   templates/
@@ -203,7 +210,7 @@ eval/
 - **Reranker 模型（BGE-reranker-v2-m3）：** 首次下載約數百 MB；`torch` 為 CPU-only（CLAUDE.md 既定），CPU 推論可行但要算進延遲預算（見 §6），必要時上批次/快取。沿用你「首次 ingest 下載 BGE-M3」的模型落地慣例。
 - **Typst：** `typst` binary 或 PyPI 套件 + CJK 字型安裝；systemd drop-in 補 PATH（同 `claude` CLI 既有處理）。
 - **RAGAS：** 僅離線 `eval/` 用，不進 `web/server.py` 請求路徑，不影響線上。
-- **Schema：** `report_doc` 新增 `faithfulness_score`、`outline`(jsonb) 等欄位，一律 `ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS`（無 migration 工具、保持冪等，符合現況）。
+- **Schema：** `report_doc` 新增 `outline`、`evidence_manifest`、`claim_evidence`、`evaluation`（jsonb）等欄位；其中 `evidence_manifest` 必須保存外部來源的 URL、來源類型、發布／取得時間與內容雜湊。數值／引用／忠實度分數放在 `evaluation`，保留可追溯的原始判定。一律 `ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS`（無 migration 工具、保持冪等，符合現況）。
 - **市場代碼／findb 對齊：** 不受影響（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO` 對齊維持 `make align` 決定性重映）。
 - **`make serve` 無 --reload：** 新模組上線需重啟 `report-mark-web.service`。
 - **併發：** 研報維持 `REPORT_SEMAPHORE` 序列化；逐節生成與 reranker 增加單份耗時，序列化下更需 §6 的並行內縮延遲。
@@ -232,21 +239,23 @@ eval/
 | 風險 | 緩解 |
 |---|---|
 | 逐節生成使各節重複/銜接生硬 | 大綱階段先定義各節範圍與去重；組裝後做一次輕量「全文連貫性」潤飾 |
+| 逐節引用在重編編號後錯配 | 內部只用穩定 `evidence_id`；最後一步才渲染 `[n]`，KPI／圖表同走證據帳本 |
+| 網搜內容無法重現或被錯當研報 | 外部來源持久化 URL、來源類型、發布／取得時間與內容雜湊；UI 明確區分「研報」與「外部」 |
 | CPU reranker 拖慢 | 限候選數上限、批次推論、結果快取；必要時只對 top-K 重排 |
 | 事實查核誤殺正確主張 | 查核只「標註/建議」不硬刪；分數低走 UI 徽章而非拒發 |
 | Typst 繁中豆腐字 / 遷移風險 | env flag 雙軌並行、`markdown` 可回退 WeasyPrint、先原型驗字型 |
-| 新階段增加失敗面 | 每階段 fail-open 退回現有行為，可用性不倒退 |
+| 新階段增加失敗面 | 僅首個內容 token 前可 fail-open 回退；串流開始後保存 checkpoint 並避免重跑整份內容 |
 | Prompt 契約與 parser 漂移 | 依 feature 共置 prompt+parser（citations / ext_sources / chart_block 各一模組） |
 
 ---
 
 ## 8. 分階段落地路線圖（每步以 eval 驗證增益）
 
-1. **Phase 5-a + Phase 0：** 先建 reference-free eval 題庫拿到**基準線**，同時做重構地基（型別化 row、共用 helper）。— *沒有基準線，後面所有增益都無法證明。*
+1. **Phase 5-a + Phase 0：** 先凍結問答／研報分離的 eval 題庫並拿到**基準線**，同時做重構地基（型別化 row、共用 helper）。— *沒有可重現的基準線，後面所有增益都無法證明。*
 2. **Phase 1 rerank：** 加 BGE-reranker-v2-m3。最省事、faithfulness/precision 立即可量。
 3. **Phase 1 多查詢分解 + MMR：** 覆蓋度與多樣性。
 4. **Phase 2 大綱→逐節：** 合成深度（本藍圖最大內容躍升）。
-5. **Phase 3 事實查核：** 金融數字紅線。
+5. **Phase 3 事實查核：** 先完成證據帳本與外部來源持久化，再處理金融數字紅線。
 6. **Phase 4 Typst 渲染：** 內容穩定後再美化外觀，雙軌切換。
 
 每一步：跑同一組 eval → 比基準線 → 沒退步才進下一步。

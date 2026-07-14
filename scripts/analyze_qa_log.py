@@ -23,10 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text  # noqa: E402
 
-from app.services.answer import NO_CONTEXT_MESSAGE, OFF_TOPIC_MESSAGE  # noqa: E402
+from app.services.answer import NO_CONTEXT_MESSAGE, OFF_TOPIC_MESSAGES  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 
-OFFTOPIC_ANSWERS = {OFF_TOPIC_MESSAGE, NO_CONTEXT_MESSAGE}
+OFFTOPIC_ANSWERS = set(OFF_TOPIC_MESSAGES) | {NO_CONTEXT_MESSAGE}
 
 
 def percentiles(values: list[float], ps: list[int]) -> dict:

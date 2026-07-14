@@ -98,6 +98,22 @@ CREATE INDEX IF NOT EXISTS idx_qa_log_conversation
     ON research.qa_log ((COALESCE(conversation_id, id)), created_at);
 -- 思考時間：開始→第一個 token（毫秒），供歷史顯示（冪等補欄）
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS thinking_ms int;
+-- M3：版本群組鍵（重新生成的多版本共用；NULL 以自身 id 為群組，冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS root_qa_id uuid;
+-- M3：有效列旗標（重生舊版/編輯截斷下游設 false；歷史/續問僅取 true，冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
+-- M3：思考步驟（stage 名稱序列），供歷史重現思考卡（冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS stages jsonb;
+-- M3：追問建議（字串陣列），供歷史重現追問 chips（冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS followups jsonb;
+-- M3：停止標記（使用者中斷串流時保存的部分答案列，冪等補欄）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS stopped boolean NOT NULL DEFAULT false;
+-- 串流完成與「停止」請求共用前端 request_id，避免網路競態寫出兩筆同一輪問答。
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS request_id uuid;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_qa_log_request_id
+    ON research.qa_log (request_id) WHERE request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_qa_log_root
+    ON research.qa_log ((COALESCE(root_qa_id, id)), created_at);
 
 -- 生成的深度研報（隨對話輪次保存；markdown 為真相來源，PDF 可由其重建）
 CREATE TABLE IF NOT EXISTS research.report_doc (

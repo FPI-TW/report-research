@@ -5,11 +5,37 @@
 """
 
 import asyncio
+import logging
+import os
 
 from app.services.answer import Source, build_context
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
 from app.services.retrieval import hybrid_search
+from app.services.rerank import rerank_scored
+
+logger = logging.getLogger(__name__)
+_RERANK_WORKERS = max(1, int(os.getenv("REPORT_MARK_RERANK_WORKERS", "1")))
+_RERANK_TIMEOUT = float(os.getenv("REPORT_MARK_RERANK_TIMEOUT", "30"))
+_rerank_semaphore = asyncio.Semaphore(_RERANK_WORKERS)
+
+
+async def _run_rerank(question, scored, *, top_m, timer):
+    """執行緒工作由此 task 持有 semaphore；呼叫端取消不會釋放仍在跑的 CPU 工作。"""
+    async with _rerank_semaphore:
+        return await asyncio.to_thread(
+            rerank_scored, question, scored, top_m=top_m, timer=timer
+        )
+
+
+def _consume_rerank_result(task: asyncio.Task) -> None:
+    """讀取背景重排結果，避免逾時或取消後的例外成為未取用 task exception。"""
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.debug("background rerank failed", exc_info=True)
 
 
 async def retrieve_context(
@@ -23,8 +49,10 @@ async def retrieve_context(
     filters: dict | None = None,
     now=None,
     timer=None,
+    rerank_top_m: int = 0,
 ) -> tuple[list[Source], str]:
-    """回 (sources, context)。timer 給定時記 embed/retrieve 兩段耗時（保留 qa_timing）。"""
+    """回 (sources, context)。timer 給定時記 embed/retrieve/rerank 各段耗時。
+    rerank_top_m>0 時在檢索後、選篇前插入 cross-encoder 重排（fail-open）。"""
     filters = filters or {}
     qvec = await asyncio.to_thread(embed_query_cached, question)
     if timer is not None:
@@ -35,6 +63,20 @@ async def retrieve_context(
         )
     if timer is not None:
         timer.mark("retrieve")
+    if rerank_top_m > 0:
+        # CPU-bound cross-encoder：比照 embed_query_cached 卸載到執行緒，避免同步
+        # 推論（ask 50 / report 120 對候選）阻塞單一 asyncio event loop 凍結全站併發。
+        task = asyncio.create_task(
+            _run_rerank(question, scored, top_m=rerank_top_m, timer=timer)
+        )
+        try:
+            scored = await asyncio.wait_for(asyncio.shield(task), timeout=_RERANK_TIMEOUT)
+        except TimeoutError:
+            logger.warning("rerank timed out; using fused ranking")
+            task.add_done_callback(_consume_rerank_result)
+        except asyncio.CancelledError:
+            task.add_done_callback(_consume_rerank_result)
+            raise
     return build_context(
         scored,
         max_reports=max_reports,

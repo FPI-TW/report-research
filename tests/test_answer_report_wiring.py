@@ -7,6 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import answer as ans  # noqa: E402
+from app.services import scope_router as sr  # noqa: E402
 import app.services.retrieval_pipeline as rp  # noqa: E402
 from tests.test_answer import _FakeSession, make_row  # noqa: E402
 
@@ -23,22 +24,22 @@ class DoneOffersReportTests(unittest.IsolatedAsyncioTestCase):
         async def fake_stream(*a, **k):
             yield "分析結論[1][2][3]"
 
-        async def fake_intent(question, **k):
-            return True
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-                rp.SessionFactory, ans.SessionFactory, ans.classify_intent)
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview)
         rp.hybrid_search = fake_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
         rp.SessionFactory = lambda: _FakeSession()
         ans.SessionFactory = lambda: _FakeSession()
-        ans.classify_intent = fake_intent
+        ans.classify_non_overview = fake_route
         try:
             events = [e async for e in ans.answer_question("請分析台積電產業趨勢")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
-             rp.SessionFactory, ans.SessionFactory, ans.classify_intent) = orig
+             rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview) = orig
 
         done = [p for (k, p) in events if k == "done"][-1]
         self.assertTrue(done.get("offer_report"))
@@ -53,10 +54,13 @@ class GetConversationAttachesReportsTests(unittest.IsolatedAsyncioTestCase):
             return {"qa-1": [{"report_id": "rep-1", "title": "X 深度研報",
                               "download_url": "/api/report-doc/rep-1/pdf", "created_at": "t"}]}
 
-        # 假 get_conversation 的 qa 行：history_item 需要的欄位
+        # 假 get_conversation 的 qa 行：_conversation_item 需要的 13 欄
+        # (id, question, answer, created_at, feedback, sources, ext_sources,
+        #  thinking_ms, stages, followups, root_qa_id, stopped, version_count)
         class _Result:
             def all(self_inner):
-                return [("qa-1", "問題", "答案", None, None, None, None, 100)]
+                return [("qa-1", "問題", "答案", None, None, None, None, 100,
+                         None, None, None, False, 1)]
 
         class _Sess(_FakeSession):
             async def execute(self_inner, *a, **k):

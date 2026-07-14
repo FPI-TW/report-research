@@ -161,6 +161,48 @@ class TrustedAnswerFlowTests(unittest.IsolatedAsyncioTestCase):
         body = "".join(p for (k, p) in events if k == "token")
         self.assertIn("資料時間", body)
 
+    async def test_followup_fetch_uses_condensed_query(self):
+        """審查 M4a-1：續問已花一次 Haiku 改寫出可獨立檢索的查詢，
+        adapter 必須收到改寫後查詢（否則 provider 拿到「那現在呢？」解析不出標的）；
+        qa_log 仍記原始問題。"""
+        captured = {}
+
+        class _RecordingProvider:
+            async def fetch(self, query):
+                captured["question"] = query.question
+                return _fresh_point()
+
+        async def fake_turns(conv_id, **kw):
+            return [("台積電最近怎樣", "回答內容")]
+
+        async def fake_condense(history_text, question, **kw):
+            from app.services.scope_router import _decision, TIME_SENSITIVE
+            return "台積電今日股價多少", _decision(TIME_SENSITIVE)
+
+        async def boom_retrieve(question, **kw):
+            raise AssertionError("時效題不得觸發 retrieve_context")
+
+        rp.retrieve_context = boom_retrieve
+        ans.load_recent_turns = fake_turns
+        orig_condense = ans.condense_and_route
+        ans.condense_and_route = fake_condense
+        rec = _Recorder()
+        ans._log_qa = rec
+        tmd.register_provider(_spec(), _RecordingProvider())
+        try:
+            events = [
+                e async for e in ans.answer_question(
+                    "那現在呢？", conversation_id="conv-1"
+                )
+            ]
+        finally:
+            ans.condense_and_route = orig_condense
+
+        body = "".join(p for (k, p) in events if k == "token")
+        self.assertIn("資料時間", body)
+        self.assertEqual(captured["question"], "台積電今日股價多少")
+        self.assertEqual(rec.calls[0][0][0], "那現在呢？")  # qa_log 記原始問題
+
     async def test_provider_failure_falls_back_to_notice(self):
         class _BoomProvider:
             async def fetch(self, query):

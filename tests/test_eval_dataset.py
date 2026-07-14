@@ -75,6 +75,20 @@ class SelectQuestionsTests(unittest.TestCase):
         out = select_questions(rows, per_market_cap=10, target=10)
         self.assertEqual([q["question"] for q in out], ["台積電先進製程展望如何"])
 
+    def test_drops_time_sensitive_path_rows(self):
+        """M4a：成功的時效答案（模板文字、path=time_sensitive）非固定婉拒文案，
+        不會被答案比對攔下；必須以 path 排除，防其問題被挖進 corpus_qa 題集。"""
+        rows = [
+            _row(
+                "台積電今天收盤價多少",
+                answer="根據受信任資料來源（exchange｜fake）：台積電 2330 為 1085.00 TWD。",
+                filters={"path": "time_sensitive"},
+            ),
+            _row("台積電先進製程展望如何"),
+        ]
+        out = select_questions(rows, per_market_cap=10, target=10)
+        self.assertEqual([q["question"] for q in out], ["台積電先進製程展望如何"])
+
 
 if __name__ == "__main__":
     unittest.main()

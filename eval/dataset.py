@@ -63,7 +63,9 @@ def select_questions(rows: list[dict], *, per_market_cap: int, target: int) -> l
             continue
         if a in (*OFF_TOPIC_MESSAGES, NO_CONTEXT_MESSAGE, TIME_SENSITIVE_UNAVAILABLE_MESSAGE):
             continue
-        if filters.get("path") == "overview":  # 總覽走純 SQL、非 RAG，不進題集
+        # overview 走純 SQL、time_sensitive 走 adapter/婉拒——皆非 corpus RAG，
+        # 不進題集（時效成功答案是模板文字，不會被上面的固定文案比對攔下）
+        if filters.get("path") in ("overview", "time_sensitive"):
             continue
         key = norm_for_match(q)
         if key in seen:

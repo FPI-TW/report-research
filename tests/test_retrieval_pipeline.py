@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import unittest
 from pathlib import Path
@@ -63,7 +64,7 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
             seen["build_scored"] = scored
             return (["S"], "CTX")
 
-        def _spy_rerank(question, scored, *, top_m, timer=None):
+        def _spy_rerank(question, scored, *, top_m, timer=None, deadline=None):
             called["n"] += 1
             return scored
 
@@ -101,8 +102,9 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
             seen["build_scored"] = scored
             return (["S"], "CTX")
 
-        def _fake_rerank(question, scored, *, top_m, timer=None):
+        def _fake_rerank(question, scored, *, top_m, timer=None, deadline=None):
             seen["top_m"] = top_m
+            seen["deadline"] = deadline
             if timer is not None:
                 timer.mark("rerank")
             return [(0, 0.99, "reranked")]
@@ -120,6 +122,80 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["top_m"], 50)
         self.assertEqual(seen["build_scored"], [(0, 0.99, "reranked")])  # 重排結果進 build_context
         self.assertIn("rerank", t.marks)
+        self.assertIsNotNone(seen["deadline"])  # deadline 傳入供批次邊界提早中止
+
+    async def test_rerank_timeout_expiry_falls_back_to_fused(self):
+        import time as _time
+
+        import app.services.retrieval_pipeline as rp
+
+        seen = {}
+        hybrid_out = [(0, 0.5, "row")]
+
+        class _Session:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            return hybrid_out
+
+        def _fake_build(scored, **kw):
+            seen["build_scored"] = scored
+            return (["S"], "CTX")
+
+        def _slow_rerank(question, scored, *, top_m, timer=None, deadline=None):
+            _time.sleep(0.2)
+            return [(0, 0.99, "reranked")]
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build), \
+             mock.patch.object(rp, "rerank_scored", _slow_rerank):
+            out = await rp.retrieve_context(
+                "q", k=15, dense_scan=400, max_reports=15,
+                max_passages=4, max_chars=20000,
+                rerank_top_m=50, rerank_timeout=0.05,
+            )
+            await asyncio.sleep(0.3)  # 讓背景 task 收尾，避免 loop 關閉警告
+        self.assertEqual(out, (["S"], "CTX"))
+        self.assertIs(seen["build_scored"], hybrid_out)  # 逾時 → 用原 fused 序
+
+    async def test_rerank_timeout_none_falls_back_to_module_default(self):
+        import time as _time
+
+        import app.services.retrieval_pipeline as rp
+
+        seen = {}
+        hybrid_out = [(0, 0.5, "row")]
+
+        class _Session:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            return hybrid_out
+
+        def _fake_build(scored, **kw):
+            seen["build_scored"] = scored
+            return (["S"], "CTX")
+
+        def _slow_rerank(question, scored, *, top_m, timer=None, deadline=None):
+            _time.sleep(0.2)
+            return [(0, 0.99, "reranked")]
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build), \
+             mock.patch.object(rp, "rerank_scored", _slow_rerank), \
+             mock.patch.object(rp, "_RERANK_TIMEOUT", 0.05):
+            await rp.retrieve_context(
+                "q", k=15, dense_scan=400, max_reports=15,
+                max_passages=4, max_chars=20000, rerank_top_m=50,
+            )
+            await asyncio.sleep(0.3)
+        self.assertIs(seen["build_scored"], hybrid_out)  # 未給參數 → 模組預設仍生效
 
 
 if __name__ == "__main__":

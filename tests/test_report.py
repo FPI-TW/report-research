@@ -591,6 +591,8 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(captured.get("rerank_top_m"), rpt.REPORT_RERANK_TOP_M)
         self.assertEqual(rpt.REPORT_RERANK_TOP_M, 120)  # 預設啟用
+        self.assertEqual(captured.get("rerank_timeout"), rpt.REPORT_RERANK_TIMEOUT)
+        self.assertEqual(rpt.REPORT_RERANK_TIMEOUT, 180.0)  # 實測 120 對 ~93s + 餘裕
 
 
 class ParseExternalRefsTests(unittest.TestCase):

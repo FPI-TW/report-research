@@ -464,8 +464,9 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
         async def recording_search(session, q, qvec, **k):
             return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
 
-        def recording_rerank(question, scored, *, top_m, timer=None):
+        def recording_rerank(question, scored, *, top_m, timer=None, deadline=None):
             captured["top_m"] = top_m
+            captured["deadline"] = deadline
             return scored
 
         async def fake_stream(*a, **k):
@@ -497,6 +498,8 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(captured.get("top_m"), ans.ASK_RERANK_TOP_M)
         self.assertEqual(ans.ASK_RERANK_TOP_M, 50)  # 預設啟用
+        self.assertIsNotNone(captured.get("deadline"))  # 問答路徑逾時 → deadline 傳遞
+        self.assertEqual(ans.ASK_RERANK_TIMEOUT, 60.0)  # 預設 60s（實測 50 對 ~34s + 餘裕）
 
 
 class StageTimerTests(unittest.TestCase):

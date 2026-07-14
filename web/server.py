@@ -49,9 +49,11 @@ from app.services.answer import (  # noqa: E402
     log_stopped_qa,
     record_feedback,
 )
+from app.config import get_settings  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.filename import source_display  # noqa: E402
+from app.services.rerank import warmup as rerank_warmup  # noqa: E402
 from app.services.retrieval import (  # noqa: E402
     DENSE_SCAN_SEARCH,
     LEX_CAP_SEARCH,
@@ -107,30 +109,40 @@ async def _warmup_embeddings() -> None:
     await asyncio.to_thread(embed_texts, ["warmup"])
 
 
+async def _warmup_rerank() -> None:
+    # 冷載入實測 44-52s：不預載則首個帶 rerank 的請求把載入算進逾時預算而 fail-open。
+    await asyncio.to_thread(rerank_warmup)
+
+
 def _log_warmup_result(task: asyncio.Task[None]) -> None:
     try:
         task.result()
     except asyncio.CancelledError:
         return
     except Exception:
-        logger.exception("embedding warmup failed")
+        logger.exception("model warmup failed")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
-    warmup_task = asyncio.create_task(_warmup_embeddings())
-    warmup_task.add_done_callback(_log_warmup_result)
-    app.state.embed_warmup_task = warmup_task
+    warmup_tasks = [asyncio.create_task(_warmup_embeddings())]
+    _s = get_settings()
+    if _s.ask_rerank_enabled or _s.report_rerank_enabled:
+        warmup_tasks.append(asyncio.create_task(_warmup_rerank()))
+    for t in warmup_tasks:
+        t.add_done_callback(_log_warmup_result)
+    app.state.embed_warmup_task = warmup_tasks[0]
     try:
         yield
     finally:
-        if not warmup_task.done():
-            warmup_task.cancel()
-            try:
-                await warmup_task
-            except asyncio.CancelledError:
-                pass
+        for t in warmup_tasks:
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
 
 
 app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)

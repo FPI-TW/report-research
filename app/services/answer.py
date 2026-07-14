@@ -73,6 +73,8 @@ RETRIEVAL_K = _S.ask_retrieval_k
 ASK_DENSE_SCAN = _S.ask_dense_scan
 # rerank（M2）：問答路徑保守候選上限；旗標關時 0＝不重排
 ASK_RERANK_TOP_M = _S.ask_rerank_candidates if _S.ask_rerank_enabled else 0
+# 問答路徑 rerank 逾時（prod 實測 50 對 ~34s；30s 共用預設曾使 rerank 靜默全關）
+ASK_RERANK_TIMEOUT = _S.ask_rerank_timeout
 
 # 多輪對話脈絡：帶進 prompt 的近輪數與舊答案截斷長度（控 prompt 大小/延遲）
 MAX_HISTORY_TURNS = 3
@@ -1308,7 +1310,7 @@ async def answer_question(
             standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
             max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
             max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
-            rerank_top_m=ASK_RERANK_TOP_M,
+            rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
         )
     else:
         route_task = asyncio.create_task(classify_non_overview(question))
@@ -1317,7 +1319,7 @@ async def answer_question(
                 question, k=k, dense_scan=ASK_DENSE_SCAN,
                 max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
                 max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
-                rerank_top_m=ASK_RERANK_TOP_M,
+                rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
             )
             decision = await route_task
             timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列

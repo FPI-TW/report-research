@@ -54,8 +54,10 @@ class Settings:
     # rerank.py（M2）
     ask_rerank_enabled: bool
     ask_rerank_candidates: int
+    ask_rerank_timeout: float
     report_rerank_enabled: bool
     report_rerank_candidates: int
+    report_rerank_timeout: float
     rerank_model: str
     # trusted_market_data.py（M4a）
     trusted_data_enabled: bool
@@ -98,8 +100,12 @@ def _load() -> Settings:
         report_long_answer_chars=int(os.getenv("REPORT_LONG_ANSWER_CHARS", "400")),
         ask_rerank_enabled=_flag("ASK_RERANK_ENABLED", "1"),
         ask_rerank_candidates=int(os.getenv("ASK_RERANK_CANDIDATES", "50")),
+        # per-path 逾時：prod 實測（20 核 CPU）50 對 ~34s、120 對 ~93s；預設須蓋過
+        # 實測值 + 忙碌餘裕，否則 rerank 靜默 fail-open 形同全關（M1b 基準線 10/10 逾時）。
+        ask_rerank_timeout=float(os.getenv("ASK_RERANK_TIMEOUT", "60")),
         report_rerank_enabled=_flag("REPORT_RERANK_ENABLED", "1"),
         report_rerank_candidates=int(os.getenv("REPORT_RERANK_CANDIDATES", "120")),
+        report_rerank_timeout=float(os.getenv("REPORT_RERANK_TIMEOUT", "180")),
         rerank_model=os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),
         trusted_data_enabled=_flag("TRUSTED_DATA_ENABLED", "1"),
     )

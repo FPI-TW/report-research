@@ -105,14 +105,26 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(case["context_chars"], 0)
         self.assertEqual(case["stages"], ["retrieving", "writing"])
 
-    async def test_error_event_recorded_and_no_data_handled(self):
+    async def test_structured_error_event_is_report_error_not_runner_error(self):
+        """審查 M1b-1：generate_report 的結構化 error（研報婉拒）不是 runner 失敗；
+        no_data 題的婉拒是 spec 定義的安全形態，不得計入 n_errors。"""
         q = dict(_Q, id="r009", no_data=True, expected_facets=[])
         case = await rre.eval_question(
             q, gen=_gen_error, broker_lookup=_brokers_ok, question_timeout=5.0
         )
-        self.assertIn("error", case)
+        self.assertNotIn("error", case)
+        self.assertEqual(case["report_error"], "找不到足夠資料生成研報")
         self.assertTrue(case["no_data"])
-        self.assertTrue(case["no_data_handled"])  # error 事件＝安全婉拒
+        self.assertTrue(case["no_data_handled"])  # 結構化婉拒＝安全
+
+    async def test_normal_question_decline_recorded_as_report_error(self):
+        case = await rre.eval_question(
+            _Q, gen=_gen_error, broker_lookup=_brokers_ok, question_timeout=5.0
+        )
+        self.assertNotIn("error", case)
+        self.assertEqual(case["report_error"], "找不到足夠資料生成研報")
+        self.assertIsNone(case["no_data_handled"])  # 非 no_data 題不適用
+        self.assertNotIn("facet_coverage", case)  # 無產出 → 不算結構指標
 
     async def test_exception_fail_open(self):
         case = await rre.eval_question(

@@ -134,6 +134,16 @@ class CitationMetricsTests(unittest.TestCase):
         self.assertEqual(out["n_citations"], 0)
         self.assertIsNone(out["citation_validity"])
 
+    def test_fence_containing_section_heading_does_not_eat_body(self):
+        """圍欄先去、節後剔：圍欄內含「## 引用來源」行時不得誤砍正文引用。"""
+        md = (
+            "## 重點分析\n\n```chart\n## 引用來源\n{\"values\":[5]}\n```\n\n"
+            "正文論點[1][2]。\n\n## 引用來源\n\n[1] A\n[2] B\n"
+        )
+        out = rm.citation_metrics(md, n_sources=2)
+        self.assertEqual(out["n_citations"], 2)
+        self.assertAlmostEqual(out["citation_validity"], 1.0)
+
     def test_zero_sources_rate_none(self):
         out = rm.citation_metrics("內文[1]。", n_sources=0)
         self.assertIsNone(out["source_citation_rate"])
@@ -233,6 +243,31 @@ class AggregateCasesTests(unittest.TestCase):
         cases = [self._case(), self._case(error="x"), self._case(error="y")]
         s = rm.aggregate_cases(cases)
         self.assertFalse(s["sufficient_n"])
+
+    def test_report_declines_separate_from_runner_errors(self):
+        """審查 M1b-1：no_data 題的結構化婉拒（report_error）不計 n_errors、
+        計入 no_data_handled 分母；正常題的婉拒計 n_report_declined 且不算有效題。"""
+        cases = [self._case(id=f"r{i:03d}") for i in range(6)]
+        cases.append({
+            "id": "r009", "no_data": True,
+            "report_error": "找不到足夠資料生成研報",
+            "no_data_handled": True, "n_sources": 0, "stages": ["retrieving"],
+        })
+        cases.append({
+            "id": "r007", "no_data": False,
+            "report_error": "找不到足夠資料生成研報",
+            "no_data_handled": None, "n_sources": 0, "stages": ["retrieving"],
+        })
+        s = rm.aggregate_cases(cases)
+        self.assertEqual(s["n_errors"], 0)
+        self.assertEqual(s["n_report_declined"], 2)
+        self.assertEqual(s["n_no_data"], 1)
+        self.assertAlmostEqual(s["no_data_handled"]["mean"], 1.0)
+        self.assertEqual(s["no_data_handled"]["n_valid"], 1)
+        self.assertTrue(s["sufficient_n"])  # 6 題正常有效
+        # 正常題婉拒不得灌入有效題數
+        cases_fewer = cases[1:]  # 只剩 5 題正常有效
+        self.assertFalse(rm.aggregate_cases(cases_fewer)["sufficient_n"])
 
 
 if __name__ == "__main__":

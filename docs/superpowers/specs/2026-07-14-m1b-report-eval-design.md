@@ -80,6 +80,7 @@
 ### 4. Runner `eval/run_report_eval.py`
 
 - CLI：`uv run python eval/run_report_eval.py --dataset eval/report_questions.json --out eval/baselines/report-m1b.json [--limit N] [--question-timeout 900]`。
+- **兩種失敗分開記**：`generate_report` 的結構化 `error` 事件（研報婉拒）記為 `report_error`，屬系統行為觀察值（計 `n_report_declined`；no_data 題的婉拒是安全形態、進 `no_data_handled` 分母）；runner 例外／逾時記為 `error`（基礎設施失敗，計 `n_errors` 並整題排除）。比較規則的「`n_errors` 不得上升超過 1」只約束後者。正常題的婉拒不灌入 `sufficient_n` 有效題數。
 - **序列執行**（concurrency=1 固定）：研報生成是長 LLM 工作（實測 3–5 分/題），claude CLI 多併發實證會觸發限流（M4 Task 7 教訓），且 prod 端 `REPORT_SEMAPHORE` 本就序列化。
 - 逐題流程：消費 `generate_report(topic, filters=filters, persist=False)` 事件流 → 收集 `sources`／stages／`done.markdown`／`done.context`／`error`；外層 `asyncio.wait_for(question_timeout)` 護欄。逐題 fail-open：任何例外記 `{"error": ...}` 不中斷批次。
 - 逐題結束後以一個短連線查 `research_report.source`（broker 多樣性）；DB 失敗 → `n_brokers: None`。

@@ -144,8 +144,10 @@ def citation_metrics(markdown: str, n_sources: int) -> dict:
 
     citation_validity 分母 = 正文 [n] 總數（0 → None）；
     source_citation_rate 分母 = len(sources)（0 → None）。
+    先去圍欄再剔節：圍欄內若含行首「## 引用來源」字樣，反序會從圍欄中段
+    誤砍到下一個標題、吃掉真正的正文引用。
     """
-    body = _FENCE_RE.sub("", _strip_reference_sections(markdown or ""))
+    body = _strip_reference_sections(_FENCE_RE.sub("", markdown or ""))
     nums = [int(m) for m in _CITE_RE.findall(body)]
     n_citations = len(nums)
     valid = [n for n in nums if 1 <= n <= n_sources]
@@ -208,7 +210,12 @@ def _metric_mean(values: list) -> dict:
 
 
 def aggregate_cases(cases: list[dict]) -> dict:
-    """聚合逐題結果：各指標均值僅計非 None、非 error 題；附各自 n_valid 與計數。"""
+    """聚合逐題結果：各指標均值僅計非 None、非 error 題；附各自 n_valid 與計數。
+
+    error（runner 例外/逾時）與 report_error（generate_report 結構化婉拒）分開：
+    前者計 n_errors 且整題排除；後者計 n_report_declined，no_data 題的婉拒屬
+    安全形態（進 no_data_handled 分母），正常題的婉拒不灌入 sufficient_n 有效題數。
+    """
     ok = [c for c in cases if not c.get("error")]
 
     def rate_of(key: str) -> list:
@@ -234,11 +241,14 @@ def aggregate_cases(cases: list[dict]) -> dict:
         if c.get("no_data") and c.get("no_data_handled") is not None else None
         for c in ok
     ]
-    n_valid_normal = sum(1 for c in ok if not c.get("no_data"))
+    n_valid_normal = sum(
+        1 for c in ok if not c.get("no_data") and not c.get("report_error")
+    )
     return {
         "ruleset_version": RULESET_VERSION,
         "n": len(cases),
         "n_errors": sum(1 for c in cases if c.get("error")),
+        "n_report_declined": sum(1 for c in ok if c.get("report_error")),
         "n_no_data": sum(1 for c in cases if c.get("no_data")),
         "sufficient_n": n_valid_normal >= MIN_VALID_QUESTIONS,
         "facet_coverage": _metric_mean(rate_of("facet_coverage")),

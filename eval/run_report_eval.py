@@ -73,10 +73,14 @@ async def eval_question(
     stages: list[str] = []
     markdown: str | None = None
     context: str | None = None
-    error: str | None = None
+    # 兩種失敗分開記（審查 M1b-1）：report_error＝generate_report 的結構化
+    # error 事件（研報婉拒，no_data 題的安全形態）；run_error＝runner 例外/逾時
+    # （基礎設施失敗，計入 n_errors）。
+    report_error: str | None = None
+    run_error: str | None = None
 
     async def _consume() -> None:
-        nonlocal markdown, context, error
+        nonlocal markdown, context, report_error
         async for kind, payload in gen(
             topic, filters=q.get("filters") or {}, persist=False
         ):
@@ -85,7 +89,10 @@ async def eval_question(
             elif kind == "sources":
                 sources[:] = list(payload)
             elif kind == "error":
-                error = payload.get("detail") if isinstance(payload, dict) else str(payload)
+                report_error = (
+                    payload.get("detail") if isinstance(payload, dict)
+                    else str(payload)
+                )
             elif kind == "done":
                 markdown = payload.get("markdown")
                 context = payload.get("context")
@@ -93,17 +100,23 @@ async def eval_question(
     try:
         await asyncio.wait_for(_consume(), timeout=question_timeout)
     except TimeoutError:
-        error = f"timeout: exceeded {question_timeout}s"
+        run_error = f"timeout: exceeded {question_timeout}s"
     except Exception as e:  # noqa: BLE001 — 逐題 fail-open
-        error = f"{type(e).__name__}: {e}"
+        run_error = f"{type(e).__name__}: {e}"
+
+    if run_error is not None:
+        # runner 失敗＝結果未知：不算 no_data_handled 分母，計入 n_errors
+        return {**base, "error": run_error, "stages": stages,
+                "n_sources": len(sources)}
 
     handled = (
-        no_data_handled(error=error, n_sources=len(sources), markdown=markdown)
+        no_data_handled(error=report_error, n_sources=len(sources),
+                        markdown=markdown)
         if no_data
         else None
     )
-    if error is not None:
-        return {**base, "error": error, "stages": stages,
+    if report_error is not None:
+        return {**base, "report_error": report_error, "stages": stages,
                 "n_sources": len(sources), "no_data_handled": handled}
 
     brokers = await broker_lookup([s.get("report_id") for s in sources
@@ -194,8 +207,8 @@ def _print_summary(report: dict) -> None:
     ):
         m = s[key]
         print(f"{key:22s}: {_fmt(m['mean'])}  (n_valid={m['n_valid']})")
-    print(f"n={s['n']}  errors={s['n_errors']}  no_data={s['n_no_data']}  "
-          f"sufficient_n={s['sufficient_n']}")
+    print(f"n={s['n']}  errors={s['n_errors']}  declined={s['n_report_declined']}  "
+          f"no_data={s['n_no_data']}  sufficient_n={s['sufficient_n']}")
 
 
 def _main() -> None:

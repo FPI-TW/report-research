@@ -57,6 +57,8 @@ class Settings:
     report_rerank_enabled: bool
     report_rerank_candidates: int
     rerank_model: str
+    # trusted_market_data.py（M4a）
+    trusted_data_enabled: bool
 
 
 def _load() -> Settings:
@@ -99,6 +101,7 @@ def _load() -> Settings:
         report_rerank_enabled=_flag("REPORT_RERANK_ENABLED", "1"),
         report_rerank_candidates=int(os.getenv("REPORT_RERANK_CANDIDATES", "120")),
         rerank_model=os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),
+        trusted_data_enabled=_flag("TRUSTED_DATA_ENABLED", "1"),
     )
 
 

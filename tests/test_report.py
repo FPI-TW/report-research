@@ -481,6 +481,92 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("涵蓋可能不足", captured["prompt"])
         self.assertNotIn("僅找到", captured["prompt"])
 
+    async def test_persist_false_skips_db_and_pdf_and_exposes_markdown_context(self):
+        """M1b eval 模式（persist=False）：不渲染 PDF、不寫 report_doc、不落地檔案；
+        done 帶 markdown（已去旁白）與 context（檢索脈絡），report_id 為 None。"""
+
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
+
+        async def fake_stream(*a, **k):
+            yield "好的，我先整理。\n\n"
+            yield "# 標題\n\n## 執行摘要\n\n內文[1]。"
+
+        def _boom_render(*a, **k):
+            raise AssertionError("persist=False 不得渲染 PDF")
+
+        async def _boom_persist(*a, **k):
+            raise AssertionError("persist=False 不得寫 report_doc")
+
+        orig = (
+            rpt.retrieve_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.retrieve_context = fake_retrieve_context
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = _boom_render
+        rpt.write_report_pdf = _boom_render
+        rpt.persist_report_doc = _boom_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            events = [
+                e async for e in rpt.generate_report("分析材料行業", persist=False)
+            ]
+        finally:
+            (
+                rpt.retrieve_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        stages = [p["stage"] for (k, p) in events if k == "status"]
+        self.assertNotIn("rendering", stages)
+        self.assertEqual(events[-1][0], "done")
+        done = events[-1][1]
+        self.assertIsNone(done["report_id"])
+        self.assertTrue(done["markdown"].startswith("# 標題"))
+        self.assertNotIn("好的，我先整理", done["markdown"])
+        self.assertEqual(done["context"], "脈絡內容")
+        self.assertIn("thinking_ms", done)
+
+    async def test_persist_true_done_payload_has_no_eval_fields(self):
+        """預設（persist=True）行為零變化：done 不帶 markdown/context（契約不外漏 eval 欄位）。"""
+
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
+
+        async def fake_stream(*a, **k):
+            yield "## 執行摘要\n重點[1]"
+
+        async def fake_persist(*a, **k):
+            return None
+
+        orig = (
+            rpt.retrieve_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.retrieve_context = fake_retrieve_context
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            events = [e async for e in rpt.generate_report("分析材料行業")]
+        finally:
+            (
+                rpt.retrieve_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        done = events[-1][1]
+        self.assertNotIn("markdown", done)
+        self.assertNotIn("context", done)
+        self.assertIn("download_url", done)
+
     async def test_rerank_top_m_forwarded_from_report_path(self):
         from app.services import report as rpt
 

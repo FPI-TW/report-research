@@ -62,7 +62,7 @@ class _LogRecorder:
 
 
 class MainRagManifestTests(unittest.IsolatedAsyncioTestCase):
-    async def test_manifest_has_corpus_and_controlled_external(self):
+    async def test_model_external_reference_is_not_added_to_manifest(self):
         rec = _LogRecorder()
 
         async def fake_search(session, q, qvec, **k):
@@ -100,13 +100,11 @@ class MainRagManifestTests(unittest.IsolatedAsyncioTestCase):
         manifest = rec.kwargs["evidence_manifest"]
         self.assertEqual(ev.validate_manifest(manifest), [])
         kinds = [d["kind"] for d in manifest["evidence"]]
-        self.assertEqual(kinds, ["corpus", "external"])  # 壞外部來源被跳過
+        self.assertEqual(kinds, ["corpus"])
         corpus = manifest["evidence"][0]
         self.assertEqual(corpus["report_id"], "r-1")
-        external = manifest["evidence"][1]
-        self.assertEqual(external["url"], "https://news.example.com/a")
-        self.assertEqual(external["source_type"], "web")
-        self.assertIsNotNone(external["retrieved_at"])
+        # 原始 [EXT_SOURCES] 仍供歷史顯示，卻沒有 adapter 快照/雜湊，不能升格為證據。
+        self.assertEqual(rec.args[6][0]["url"], "https://news.example.com/a")
 
 
 class TrustedManifestTests(unittest.IsolatedAsyncioTestCase):
@@ -127,6 +125,8 @@ class TrustedManifestTests(unittest.IsolatedAsyncioTestCase):
             as_of=datetime.now(timezone.utc) - timedelta(minutes=1),
             published_at=None, url="https://example.com/q",
             source_type="exchange",
+            profile_id="trusted-quote", snapshot_ref="snapshot://trusted-quote/p",
+            canonical_payload=b"p",
             content_hash=hashlib.sha256(b"p").hexdigest(),
             provider="fake-quote", category="quote", subject="台積電 2330",
         )
@@ -160,6 +160,8 @@ class TrustedManifestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(e["kind"], "external")
         self.assertEqual(e["source_type"], "exchange")
         self.assertEqual(e["content_hash"], point.content_hash)
+        self.assertEqual(e["profile_id"], point.profile_id)
+        self.assertEqual(e["snapshot_ref"], point.snapshot_ref)
 
 
 class LogQaSqlTests(unittest.IsolatedAsyncioTestCase):

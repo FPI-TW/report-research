@@ -49,8 +49,10 @@ class Evidence:
     url: str | None = None
     title: str | None = None
     source_type: str | None = None
+    profile_id: str | None = None
     published_at: str | None = None
     retrieved_at: str | None = None
+    snapshot_ref: str | None = None
     content_hash: str | None = None
 
 
@@ -121,22 +123,19 @@ class EvidenceLedger:
         url: str,
         title: str | None = None,
         source_type: str | None = "web",
+        profile_id: str | None = None,
         published_at: str | None = None,
         retrieved_at: str | None = None,
+        snapshot_ref: str | None = None,
         content_hash: str | None = None,
+        canonical_payload: bytes | None = None,
     ) -> Evidence:
-        return self._add(
-            Evidence(
-                evidence_id=_derive_id("external", url, content_hash or ""),
-                kind="external",
-                url=url,
-                title=title,
-                source_type=source_type,
-                published_at=published_at,
-                retrieved_at=retrieved_at,
-                content_hash=content_hash,
-            )
-        )
+        return self._add(from_ext_source({
+            "url": url, "title": title, "source_type": source_type,
+            "profile_id": profile_id, "published_at": published_at,
+            "snapshot_ref": snapshot_ref, "content_hash": content_hash,
+            "canonical_payload": canonical_payload,
+        }, retrieved_at))
 
     def add(self, evidence: Evidence) -> Evidence:
         """登錄一筆已由受控建構器產生的 Evidence（去重）。"""
@@ -198,6 +197,16 @@ def validate_manifest(obj) -> list[str]:
             url = d.get("url") or ""
             if not (url.startswith("http://") or url.startswith("https://")):
                 errors.append(f"evidence[{i}] external requires http(s) url")
+                continue
+            if not d.get("profile_id"):
+                errors.append(f"evidence[{i}] external requires profile_id")
+                continue
+            if not d.get("snapshot_ref"):
+                errors.append(f"evidence[{i}] external requires snapshot_ref")
+                continue
+            content_hash = d.get("content_hash") or ""
+            if not re.fullmatch(r"[0-9a-f]{64}", content_hash):
+                errors.append(f"evidence[{i}] external requires sha256 content_hash")
                 continue
         expected = _expected_id(d)
         if d.get("evidence_id") != expected:
@@ -267,31 +276,46 @@ def from_trusted_point(point, retrieved_at: str | None = None) -> Evidence:
         url=point.url,
         title=f"{point.provider}（{point.source_type}）",
         source_type=point.source_type,
+        profile_id=point.profile_id,
         published_at=(
             point.published_at.isoformat() if point.published_at else None
         ),
         retrieved_at=retrieved_at or _now_iso(),
+        snapshot_ref=point.snapshot_ref,
         content_hash=point.content_hash,
     )
 
 
 def from_ext_source(d: dict, retrieved_at: str | None) -> Evidence:
-    """受控 Web 解析結果（{title,url,...}）→ external Evidence。
+    """已由受控 adapter 擷取、快照化的外部來源 → external Evidence。
 
-    僅接受 http(s) URL；非受控形狀直接 raise（呼叫端決定跳過或上拋）。
+    僅有模型輸出的 title/url 不足以構成證據；adapter 必須提供 profile、不可變
+    快照參照與可重算的 canonical payload hash。非受控形狀直接 raise。
     """
     url = (d.get("url") or "").strip()
     if not (url.startswith("http://") or url.startswith("https://")):
         raise ValueError(f"external source requires http(s) url: {url!r}")
+    profile_id = d.get("profile_id")
+    snapshot_ref = d.get("snapshot_ref")
+    payload = d.get("canonical_payload")
+    content_hash = d.get("content_hash")
+    if not profile_id or not snapshot_ref:
+        raise ValueError("external source requires profile_id and snapshot_ref")
+    if not isinstance(payload, bytes):
+        raise ValueError("external source canonical_payload must be bytes")
+    if hashlib.sha256(payload).hexdigest() != content_hash:
+        raise ValueError("external source content_hash mismatch")
     return Evidence(
-        evidence_id=_derive_id("external", url, d.get("content_hash") or ""),
+        evidence_id=_derive_id("external", url, content_hash),
         kind="external",
         url=url,
         title=d.get("title"),
         source_type=d.get("source_type") or "web",
+        profile_id=profile_id,
         published_at=d.get("published_at"),
         retrieved_at=retrieved_at,
-        content_hash=d.get("content_hash"),
+        snapshot_ref=snapshot_ref,
+        content_hash=content_hash,
     )
 
 
@@ -301,10 +325,10 @@ def manifest_from_answer(
     *,
     retrieved_at: str | None,
 ) -> dict | None:
-    """問答/研報寫入路徑共用：sources（asdict(Source) 形）＋受控外部來源 → manifest。
+    """問答/研報寫入路徑共用：sources 與受控 adapter 來源 → manifest。
 
-    無任何證據回 None（寫 NULL，與歷史列同語義）；無效外部來源逐筆跳過（fail-open，
-    不因單筆壞來源丟失整份 manifest）。
+    無任何證據回 None（寫 NULL，與歷史列同語義）。模型的 [EXT_SOURCES]／研報
+    Markdown 只有 title/url，缺少 adapter 快照與 hash，會被逐筆跳過而不污染帳本。
     """
     led = EvidenceLedger()
     for s in sources or []:

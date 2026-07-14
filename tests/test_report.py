@@ -646,7 +646,7 @@ class _FakeSourceFull:
 
 
 class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
-    async def test_persist_receives_manifest_with_corpus_and_external(self):
+    async def test_persist_keeps_model_external_reference_out_of_manifest(self):
         captured = {}
 
         async def fake_retrieve_context(question, **k):
@@ -690,11 +690,8 @@ class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(validate_manifest(manifest), [])
         kinds = [d["kind"] for d in manifest["evidence"]]
-        self.assertEqual(kinds, ["corpus", "external"])
+        self.assertEqual(kinds, ["corpus"])
         self.assertEqual(manifest["evidence"][0]["report_id"], "r-1")
-        self.assertEqual(
-            manifest["evidence"][1]["url"], "https://news.example.com/a"
-        )
 
     async def test_no_sources_no_ext_persists_none(self):
         captured = {}

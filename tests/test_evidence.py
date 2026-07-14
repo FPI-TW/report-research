@@ -38,9 +38,12 @@ class LedgerBasicsTests(unittest.TestCase):
         led = ev.EvidenceLedger()
         e = led.add_external(
             url="https://example.com/x", title="新聞", source_type="web",
+            profile_id="controlled-research-web",
             published_at="2026-07-01T00:00:00+00:00",
             retrieved_at="2026-07-14T06:00:00+00:00",
+            snapshot_ref="snapshot://controlled-research-web/x",
             content_hash=hashlib.sha256(b"x").hexdigest(),
+            canonical_payload=b"x",
         )
         restored = ev.EvidenceLedger.from_manifest(led.to_manifest())
         self.assertEqual(list(restored), [e])
@@ -56,8 +59,13 @@ class LedgerBasicsTests(unittest.TestCase):
 
     def test_external_dedup_same_url(self):
         led = ev.EvidenceLedger()
-        led.add_external(url="https://example.com/x")
-        led.add_external(url="https://example.com/x")
+        kwargs = dict(
+            url="https://example.com/x", profile_id="controlled-research-web",
+            snapshot_ref="snapshot://controlled-research-web/x",
+            content_hash=hashlib.sha256(b"x").hexdigest(), canonical_payload=b"x",
+        )
+        led.add_external(**kwargs)
+        led.add_external(**kwargs)
         self.assertEqual(len(led), 1)
 
     def test_chunk_level_ids_differ_from_report_level(self):
@@ -80,7 +88,11 @@ class LedgerBasicsTests(unittest.TestCase):
         led1, _, _ = _ledger_with_corpus()
         led2 = ev.EvidenceLedger()
         led2.add_corpus(report_id="r-2")  # 與 led1 相同身分
-        led2.add_external(url="https://example.com/x")
+        led2.add_external(
+            url="https://example.com/x", profile_id="controlled-research-web",
+            snapshot_ref="snapshot://controlled-research-web/x",
+            content_hash=hashlib.sha256(b"x").hexdigest(), canonical_payload=b"x",
+        )
         led1.merge(led2)
         self.assertEqual(len(led1), 3)  # r-1, r-2, external
 
@@ -189,6 +201,8 @@ class ControlledConstructorsTests(unittest.TestCase):
             as_of=datetime(2026, 7, 14, 5, 59, tzinfo=timezone.utc),
             published_at=datetime(2026, 7, 14, 5, 30, tzinfo=timezone.utc),
             url="https://example.com/quote/2330", source_type="exchange",
+            profile_id="trusted-quote", snapshot_ref="snapshot://trusted-quote/p",
+            canonical_payload=b"p",
             content_hash=hashlib.sha256(b"p").hexdigest(),
             provider="fake-quote", category="quote", subject="台積電 2330",
         )
@@ -197,11 +211,16 @@ class ControlledConstructorsTests(unittest.TestCase):
         self.assertEqual(e.source_type, "exchange")
         self.assertEqual(e.url, "https://example.com/quote/2330")
         self.assertEqual(e.content_hash, point.content_hash)
+        self.assertEqual(e.profile_id, point.profile_id)
+        self.assertEqual(e.snapshot_ref, point.snapshot_ref)
         self.assertEqual(e.published_at, "2026-07-14T05:30:00+00:00")
 
-    def test_from_ext_source_defaults_web(self):
-        e = ev.from_ext_source({"title": "新聞", "url": "https://e.com/a"},
-                               retrieved_at="2026-07-14T06:00:00+00:00")
+    def test_from_ext_source_requires_verified_adapter_metadata(self):
+        e = ev.from_ext_source({
+            "title": "新聞", "url": "https://e.com/a", "profile_id": "controlled-web",
+            "snapshot_ref": "snapshot://controlled-web/a", "canonical_payload": b"a",
+            "content_hash": hashlib.sha256(b"a").hexdigest(),
+        }, retrieved_at="2026-07-14T06:00:00+00:00")
         self.assertEqual(e.source_type, "web")
         self.assertEqual(e.retrieved_at, "2026-07-14T06:00:00+00:00")
 
@@ -226,11 +245,20 @@ class ManifestBuilderTests(unittest.TestCase):
             sources, ext, retrieved_at="2026-07-14T06:00:00+00:00"
         )
         kinds = [d["kind"] for d in manifest["evidence"]]
-        self.assertEqual(kinds, ["corpus", "corpus", "external"])
+        self.assertEqual(kinds, ["corpus", "corpus"])
         self.assertEqual(ev.validate_manifest(manifest), [])
 
     def test_manifest_from_answer_empty_returns_none(self):
         self.assertIsNone(ev.manifest_from_answer([], [], retrieved_at=None))
+
+    def test_unverified_model_external_source_is_not_evidence(self):
+        """只有模型回傳的標題與網址沒有取得證據，不能進入帳本。"""
+        manifest = ev.manifest_from_answer(
+            [],
+            [{"title": "模型自稱來源", "url": "https://attacker.example/a"}],
+            retrieved_at="2026-07-14T06:00:00+00:00",
+        )
+        self.assertIsNone(manifest)
 
 
 if __name__ == "__main__":

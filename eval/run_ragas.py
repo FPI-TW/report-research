@@ -128,13 +128,17 @@ async def run(
     limit: int | None = None,
     concurrency: int = 3,
     rerank_top_m: int = 0,
+    scope: str | None = None,
 ) -> dict:
     """讀題集 → 有界併發 eval_question → aggregate → 寫報表（{summary, cases}）。
 
     rerank_top_m>0 時檢索走 M2 cross-encoder 重排（rerank-on 基準線），=0 為 rerank-off。
+    scope 指定時只跑該 scope 的題目（未標 scope 的題目視為 corpus_qa）。
     """
     dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
     questions = dataset.get("questions", [])
+    if scope:
+        questions = [q for q in questions if q.get("scope", "corpus_qa") == scope]
     if limit is not None:
         questions = questions[:limit]
 
@@ -190,6 +194,8 @@ def _main() -> None:
         default=0,
         help="檢索重排候選上限（>0 走 M2 cross-encoder 重排，0=off）",
     )
+    parser.add_argument("--scope", default=None,
+                        help="只跑指定 scope 的題目（如 corpus_qa）；未標 scope 的題目視為 corpus_qa")
     parser.add_argument("--json", action="store_true", help="改輸出完整 JSON 到 stdout")
     args = parser.parse_args()
 
@@ -201,6 +207,7 @@ def _main() -> None:
             limit=args.limit,
             concurrency=args.concurrency,
             rerank_top_m=args.rerank_top_m,
+            scope=args.scope,
         )
     )
     if args.json:

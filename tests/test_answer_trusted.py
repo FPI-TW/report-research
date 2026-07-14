@@ -30,6 +30,9 @@ def _fresh_point():
         published_at=None,
         url="https://example.com/quote/2330",
         source_type="exchange",
+        profile_id="trusted-quote",
+        snapshot_ref="snapshot://trusted-quote/payload",
+        canonical_payload=b"payload",
         content_hash=hashlib.sha256(b"payload").hexdigest(),
         provider="fake-quote",
         category="quote",
@@ -133,6 +136,8 @@ class TrustedAnswerFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ext[0]["url"], "https://example.com/quote/2330")
         self.assertEqual(ext[0]["source_type"], "exchange")
         self.assertIn("as_of", ext[0])
+        self.assertEqual(ext[0]["profile_id"], "trusted-quote")
+        self.assertEqual(ext[0]["snapshot_ref"], "snapshot://trusted-quote/payload")
         done = events[-1][1] if events[-1][0] == "done" else None
         self.assertIsNotNone(done)
         self.assertEqual(done["qa_id"], "qa-fixed-id")

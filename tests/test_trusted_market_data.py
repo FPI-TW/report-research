@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import sys
 import unittest
+from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -47,6 +48,9 @@ def _point(category="quote", **over):
         published_at=None,
         url="https://example.com/quote/2330",
         source_type="exchange",
+        profile_id=f"trusted-{category}",
+        snapshot_ref=f"snapshot://trusted-{category}/payload",
+        canonical_payload=b"payload",
         content_hash=_hash(),
         provider=f"fake-{category}",
         category=category,
@@ -116,6 +120,12 @@ class ValidationTests(_Base):
     async def test_stale_data_rejected(self):
         await self._expect_unavailable(
             _point(as_of=NOW - timedelta(minutes=30))  # max_age 15 分鐘
+        )
+
+    async def test_future_as_of_rejected(self):
+        """供應商時鐘或時區錯誤不得讓未來資料冒充即時行情。"""
+        await self._expect_unavailable(
+            _point(as_of=NOW + timedelta(minutes=1))
         )
 
     async def test_naive_as_of_rejected(self):
@@ -273,6 +283,12 @@ class InferCategoryTests(unittest.TestCase):
     def test_quote_default(self):
         self.assertEqual(tmd.infer_category("台積電今天收盤價"), "quote")
         self.assertEqual(tmd.infer_category("現在大盤多少點"), "quote")
+
+
+class TrustedPointContractTests(unittest.TestCase):
+    def test_snapshot_and_canonical_payload_are_required_contract_fields(self):
+        names = {f.name for f in fields(tmd.TrustedDataPoint)}
+        self.assertTrue({"profile_id", "snapshot_ref", "canonical_payload"} <= names)
 
 
 if __name__ == "__main__":

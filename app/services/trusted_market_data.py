@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -57,7 +58,10 @@ class TrustedDataPoint:
     published_at: datetime | None
     url: str                 # 必須落在 provider allowlist 網域
     source_type: str         # 來源性質：exchange / official / regulator ...
-    content_hash: str        # provider 原始 payload 的 sha256 hex
+    profile_id: str          # 核准來源 profile；不可由模型自由指定
+    snapshot_ref: str        # provider 已保存的不可變原始內容快照參照
+    canonical_payload: bytes # 用於重算 content_hash 的 canonical 原始 payload
+    content_hash: str        # canonical payload 的 sha256 hex
     provider: str
     category: Category
     subject: str             # 標的/主題描述（供答案顯示）
@@ -142,12 +146,22 @@ def validate_point(
         return "missing value"
     if not point.source_type:
         return "missing source_type"
+    if not point.profile_id:
+        return "missing profile_id"
+    if not point.snapshot_ref:
+        return "missing snapshot_ref"
+    if not isinstance(point.canonical_payload, bytes):
+        return "canonical_payload must be bytes"
     if not point.content_hash or not _SHA256_RE.match(point.content_hash):
         return "invalid content_hash"
+    if hashlib.sha256(point.canonical_payload).hexdigest() != point.content_hash:
+        return "content_hash does not match canonical_payload"
     if not _domain_allowed(point.url, spec.allowed_domains):
         return "url not in allowlist"
     if point.as_of is None or point.as_of.tzinfo is None:
         return "as_of must be tz-aware"
+    if point.as_of > now:
+        return "as_of is in future"
     if now - point.as_of > spec.max_age:
         return "data too old"
     return None

@@ -163,6 +163,8 @@ def trusted_ext_source(point: TrustedDataPoint) -> dict:
         "url": point.url,
         "source_type": point.source_type,
         "provider": point.provider,
+        "profile_id": point.profile_id,
+        "snapshot_ref": point.snapshot_ref,
         "as_of": point.as_of.isoformat(),
         "content_hash": point.content_hash,
     }

@@ -81,6 +81,12 @@ class SafetyPrecheckTests(unittest.TestCase):
         self.assertIsNone(_safety_precheck("外資倉位增減分析"))
         self.assertIsNone(_safety_precheck("三大法人買多少台積電"))
 
+    def test_substring_collision_no_hit(self):
+        # 裸詞子字串碰撞不得誤攔合法研報題（M4 最終審查實測案例）
+        self.assertIsNone(_safety_precheck("大盤中長期趨勢"))
+        self.assertIsNone(_safety_precheck("台積電如何體現價值投資"))
+        self.assertIsNone(_safety_precheck("個股歷史成交價量分析"))
+
 
 class DecisionTests(unittest.TestCase):
     def test_policy_mapping(self):

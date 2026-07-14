@@ -3,22 +3,23 @@ import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
 import { ThinkingSteps } from './ThinkingSteps'
 import { renderAnswer } from '../../lib/askMarkdown'
-import type { Turn } from '../../lib/askReducer'
+import { visibleAnswerView, type AnswerView, type Turn } from '../../lib/askReducer'
 import styles from './AssistantMessage.module.css'
 
 interface Props {
   turn: Turn
-  onCite: (n: number) => void
-  onOpenSources: () => void
+  onCite: (n: number, view: AnswerView) => void
+  onOpenSources: (view: AnswerView) => void
   onFeedback: (v: 'like' | 'dislike') => void
   onNoticeRetry: () => void
   onErrorRetry: () => void
   onRegenerate: () => void
   onFollowup: (t: string) => void
   onSetVersion: (i: number) => void
+  disabled?: boolean
 }
 
-export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion }: Props) {
+export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion, disabled = false }: Props) {
   const [copied, setCopied] = useState(false)
 
   if (turn.phase === 'notice') {
@@ -31,12 +32,17 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       <div className={styles.msg}>
         {turn.answer && (
           <div className={styles.body}>
-            {renderAnswer(turn.answer, turn.sources.length, onCite, turn.sources)}
+            {renderAnswer(
+              turn.answer,
+              turn.sources.length,
+              n => onCite(n, visibleAnswerView(turn)),
+              turn.sources,
+            )}
           </div>
         )}
-        <Callout variant="error" action={{ label: '重試', onClick: onErrorRetry }}>{turn.errorText ?? '查詢逾時或失敗'}</Callout>
+        <Callout variant="error" action={disabled ? undefined : { label: '重試', onClick: onErrorRetry }}>{turn.errorText ?? '查詢逾時或失敗'}</Callout>
         <div className={styles.actions}>
-          <button type="button" className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成">重新生成</button>
+          <button type="button" className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</button>
         </div>
       </div>
     )
@@ -46,8 +52,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
   // 歷史對話重載時 versionCount>1 但 priorVersions 尚未載入（見 AskPage pager 首次點擊觸發
   // loadVersions）；此時快照取不到，退回顯示 live 內容，避免讀取 undefined 炸掉。
   const isLive = turn.versionIndex === turn.versionCount - 1
-  const liveView = { answer: turn.answer, sources: turn.sources, extSources: turn.extSources, feedback: turn.feedback, qaId: turn.qaId }
-  const view = isLive ? liveView : (turn.priorVersions[turn.versionIndex] ?? liveView)
+  const view = visibleAnswerView(turn)
 
   const refCount = view.sources.length + view.extSources.length
   const showActions = (turn.phase === 'done' || turn.phase === 'stopped') && !turn.isOfftopic
@@ -61,7 +66,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       {(turn.stages.length > 0 || turn.phase === 'thinking' || turn.phase === 'streaming') && <ThinkingSteps turn={turn} />}
       {view.answer && (
         <div className={styles.body} data-streaming={turn.phase === 'streaming' ? '' : undefined}>
-          {renderAnswer(view.answer, view.sources.length, onCite, view.sources)}
+          {renderAnswer(view.answer, view.sources.length, n => onCite(n, view), view.sources)}
         </div>
       )}
       {turn.phase === 'stopped' && <span className={styles.stopped}>已停止</span>}
@@ -97,11 +102,11 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
             </>
           )}
           <button type="button" className={styles.act} onClick={copy} aria-label="複製回答" title={copied ? '已複製' : '複製'}><Icon name="copy" size={15} /></button>
-          <button type="button" className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成">重新生成</button>
+          <button type="button" className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</button>
           {refCount > 0 && (
             <>
               <span className={styles.divider} />
-              <button type="button" className={styles.srcBtn} onClick={onOpenSources}>資料來源 {refCount}</button>
+              <button type="button" className={styles.srcBtn} onClick={() => onOpenSources(view)}>資料來源 {refCount}</button>
             </>
           )}
         </div>
@@ -109,7 +114,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       {isLive && turn.followups.length > 0 && (turn.phase === 'done' || turn.phase === 'stopped') && (
         <div className={styles.followups}>
           {turn.followups.map((f, i) => (
-            <button key={i} type="button" className={styles.chip} onClick={() => onFollowup(f)}>{f}</button>
+            <button key={i} type="button" className={styles.chip} onClick={() => onFollowup(f)} disabled={disabled}>{f}</button>
           ))}
         </div>
       )}

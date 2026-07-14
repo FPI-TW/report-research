@@ -11,6 +11,7 @@ from app.services.llm import stream_completion
 logger = logging.getLogger(__name__)
 
 FOLLOWUP_MODEL = os.getenv("ASK_FOLLOWUP_MODEL", "claude-haiku-4-5-20251001")
+FOLLOWUP_TIMEOUT = float(os.getenv("ASK_FOLLOWUP_TIMEOUT", "15"))
 
 _SYSTEM = (
     "你是券商研報問答助理。根據使用者的問題與你剛給的回答，"
@@ -35,14 +36,18 @@ def _parse_array(text_out: str) -> list[str]:
 
 
 async def generate_followups(
-    question: str, answer: str, *, model: str = FOLLOWUP_MODEL
+    question: str,
+    answer: str,
+    *,
+    model: str = FOLLOWUP_MODEL,
+    timeout: float = FOLLOWUP_TIMEOUT,
 ) -> list[str]:
     """回 ≤3 條追問；任何失敗/逾時回 []（fail-open，不擋主答題）。"""
     prompt = f"問題：{question}\n\n回答：{answer}\n\n請依規則輸出 JSON 陣列。"
     parts: list[str] = []
     try:
         async for chunk in stream_completion(
-            prompt, model=model, system=_SYSTEM, allow_web=False
+            prompt, model=model, system=_SYSTEM, allow_web=False, timeout=timeout
         ):
             parts.append(chunk)
     except Exception:

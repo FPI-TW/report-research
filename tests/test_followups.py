@@ -9,6 +9,22 @@ from app.services import followups as fu  # noqa: E402
 
 
 class GenerateFollowupsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_passes_explicit_timeout_to_llm(self):
+        seen = {}
+
+        async def fake_stream(*a, **k):
+            seen.update(k)
+            yield '[]'
+
+        orig = fu.stream_completion
+        fu.stream_completion = fake_stream
+        try:
+            await fu.generate_followups("q", "a", timeout=7)
+        finally:
+            fu.stream_completion = orig
+
+        self.assertEqual(seen["timeout"], 7)
+
     async def test_parses_json_array(self):
         async def fake_stream(*a, **k):
             yield '["台積電資本支出？", "先進封裝進度？", "競爭對手比較？"]'

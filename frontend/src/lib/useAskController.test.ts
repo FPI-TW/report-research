@@ -31,8 +31,12 @@ describe('useAskController stop', () => {
     await act(async () => { await result.current.stop() })
 
     expect(stopSpy).toHaveBeenCalledOnce()
+    expect(stopSpy).toHaveBeenCalledWith(expect.objectContaining({ ext_sources: [] }))
     expect(result.current.state.turns[0].phase).toBe('stopped')
     expect(result.current.state.turns[0].qaId).toBe('qa-stop')
+    // 首題在 done 前停止時，qa_id 同時是資料庫 COALESCE(conversation_id, id)
+    // 的對話鍵；後續重生必須沿用它，否則會被拆成另一個對話。
+    expect(result.current.conversationId).toBe('qa-stop')
   })
 
   it('stop still sets stopped when stopAsk fails (fail-open)', async () => {
@@ -69,5 +73,20 @@ describe('useAskController stop', () => {
     expect(stopSpy).toHaveBeenCalledOnce()
     expect(stopSpy.mock.calls[0][0]).toMatchObject({ regenerate_of: 'qa-v1' })
     expect(result.current.state.turns[0].phase).toBe('stopped')
+  })
+
+  it('新請求取代串流時，舊 turn 會結束為 error 而非永久 busy', async () => {
+    vi.spyOn(api, 'streamAsk')
+      .mockReturnValueOnce(oneToken())
+      .mockReturnValueOnce(oneToken())
+
+    const { result } = renderHook(() => useAskController(), { wrapper })
+    act(() => { result.current.submit('第一題') })
+    await waitFor(() => expect(result.current.state.turns[0]?.answer).toBe('部分'))
+
+    act(() => { result.current.submit('第二題') })
+
+    await waitFor(() => expect(result.current.state.turns[0]?.phase).toBe('error'))
+    expect(result.current.state.turns[1]?.phase).not.toBe('error')
   })
 })

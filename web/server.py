@@ -225,6 +225,7 @@ class AskRequest(BaseModel):
     k: int = 8
     regenerate_of: str | None = None
     edit_of: str | None = None
+    request_id: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -686,6 +687,8 @@ async def ask(req: AskRequest):
         raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
     if req.edit_of is not None and not _valid_uuid(req.edit_of):
         raise HTTPException(status_code=400, detail="edit_of 格式不正確")
+    if req.request_id is not None and not _valid_uuid(req.request_id):
+        raise HTTPException(status_code=400, detail="request_id 格式不正確")
 
     async def gen():
         async with _ASK_SEMAPHORE:
@@ -697,6 +700,7 @@ async def ask(req: AskRequest):
                     conversation_id=req.conversation_id,
                     regenerate_of=req.regenerate_of,
                     edit_of=req.edit_of,
+                    request_id=req.request_id,
                 ):
                     yield _sse(event, payload)
             except Exception:
@@ -719,13 +723,14 @@ def _valid_uuid(s) -> bool:
 
 
 class StopRequest(BaseModel):
-    question: str
+    question: str = Field(..., min_length=1, max_length=ASK_QUESTION_MAX_CHARS)
     conversation_id: str | None = None
-    partial_answer: str = ""
-    sources: list[dict] | None = None
-    ext_sources: list[dict] | None = None
-    stages: list[str] | None = None
+    partial_answer: str = Field(default="", max_length=20_000)
+    sources: list[dict] | None = Field(default=None, max_length=100)
+    ext_sources: list[dict] | None = Field(default=None, max_length=50)
+    stages: list[str] | None = Field(default=None, max_length=10)
     regenerate_of: str | None = None
+    request_id: str | None = None
 
 
 @app.post("/api/ask/stop")
@@ -733,6 +738,10 @@ async def ask_stop(req: StopRequest):
     """使用者中斷串流時保存部分答案（stopped=true）。回 {qa_id}。"""
     if req.regenerate_of is not None and not _valid_uuid(req.regenerate_of):
         raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
+    if req.conversation_id is not None and not _valid_uuid(req.conversation_id):
+        raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
+    if req.request_id is not None and not _valid_uuid(req.request_id):
+        raise HTTPException(status_code=400, detail="request_id 格式不正確")
     qa_id = await log_stopped_qa(
         (req.question or "").strip(),
         req.partial_answer or "",
@@ -741,7 +750,10 @@ async def ask_stop(req: StopRequest):
         ext_sources=req.ext_sources,
         stages=req.stages,
         regenerate_of=req.regenerate_of,
+        request_id=req.request_id,
     )
+    if qa_id is None:
+        raise HTTPException(status_code=503, detail="停止的回答暫時無法保存")
     return {"qa_id": qa_id}
 
 
@@ -818,7 +830,8 @@ async def history(limit: int = Query(50, ge=1, le=200)):
                 text(
                     "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
                     "FROM research.qa_log "
-                    "WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active "
+                    "WHERE COALESCE(answer NOT IN :offtopics, TRUE) "
+                    "AND active AND stopped IS NOT TRUE "
                     "ORDER BY created_at DESC LIMIT :limit"
                 ).bindparams(bindparam("offtopics", expanding=True)),
                 {"offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit},

@@ -24,6 +24,14 @@ export interface TurnVersion {
   followups: string[]
 }
 
+export interface AnswerView {
+  answer: string
+  sources: Source[]
+  extSources: ExtSource[]
+  feedback: 'like' | 'dislike' | null
+  qaId: string | null
+}
+
 export interface Turn {
   id: string
   question: string
@@ -49,6 +57,19 @@ export interface Turn {
   versionIndex: number
   rootQaId: string | null
   versionCount: number
+}
+
+export function visibleAnswerView(turn: Turn): AnswerView {
+  const live: AnswerView = {
+    answer: turn.answer,
+    sources: turn.sources,
+    extSources: turn.extSources,
+    feedback: turn.feedback,
+    qaId: turn.qaId,
+  }
+  return turn.versionIndex === turn.versionCount - 1
+    ? live
+    : turn.priorVersions[turn.versionIndex] ?? live
 }
 
 export interface AskState { turns: Turn[] }
@@ -189,6 +210,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
     }
     case 'load-versions': return {
       turns: mapTurn(state.turns, action.id, t => {
+        if (action.versions.length === 0) return t
         // 後端回全版本（由舊到新，末項=現用）；末項即目前顯示，其餘進 priorVersions
         const prior: TurnVersion[] = action.versions.slice(0, -1).map(v => ({
           answer: v.answer, sources: v.sources, extSources: v.ext_sources, qaId: v.qa_id,

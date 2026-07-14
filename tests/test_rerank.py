@@ -92,7 +92,7 @@ class RerankScoredTests(unittest.TestCase):
         self.assertEqual(seen["q"], "我的問題")
         self.assertEqual(seen["ps"], ["內容一", "內容二"])
 
-    def test_tail_compressed_below_min_rerank_preserves_order(self):
+    def test_tail_keeps_original_fused_scores_for_recall(self):
         scored = _scored(
             (0, 0.9, "A", "a"), (0, 0.8, "B", "b"),
             (0, 0.7, "C", "c"), (0, 0.6, "D", "d"),
@@ -102,8 +102,7 @@ class RerankScoredTests(unittest.TestCase):
         head, tail = out[:2], out[2:]
         self.assertEqual([f for (_t, f, _r) in head], [0.6, 0.4])      # head 依 rerank 分降序
         self.assertEqual([r.content for (_t, _f, r) in head], ["b", "a"])
-        min_rr = 0.4
-        self.assertTrue(all(f < min_rr for (_t, f, _r) in tail))       # 尾段嚴格低於最低重排分
+        self.assertEqual([f for (_t, f, _r) in tail], [0.7, 0.6])     # 保持與 select_reports 相容的尺度
         self.assertEqual([r.content for (_t, _f, r) in tail], ["c", "d"])  # 保相對序
         self.assertGreaterEqual(tail[0][1], tail[1][1])                # C(原0.7) >= D(原0.6)
 
@@ -145,8 +144,7 @@ class RerankScoredTests(unittest.TestCase):
         self.assertIs(rr.rerank_scored("q", scored, top_m=0), scored)
         self.assertEqual(rr.rerank_scored("q", [], top_m=5), [])
 
-    def test_zero_min_rerank_tail_stays_strictly_below(self):
-        # rerank head 最低分為 0（sigmoid underflow）時，尾段仍須嚴格低於 0、保序
+    def test_zero_min_rerank_keeps_tail_scores(self):
         scored = _scored(
             (0, 0.9, "A", "a"), (0, 0.8, "B", "b"),
             (0, 0.7, "C", "c"), (0, 0.6, "D", "d"),
@@ -155,7 +153,7 @@ class RerankScoredTests(unittest.TestCase):
             out = rr.rerank_scored("q", scored, top_m=2)
         head, tail = out[:2], out[2:]
         self.assertEqual([f for (_t, f, _r) in head], [0.5, 0.0])  # min_rr=0
-        self.assertTrue(all(f < 0.0 for (_t, f, _r) in tail))       # 嚴格低於最低重排分(0.0)
+        self.assertEqual([f for (_t, f, _r) in tail], [0.7, 0.6])
         self.assertEqual([r.content for (_t, _f, r) in tail], ["c", "d"])  # 保相對序
         self.assertGreaterEqual(tail[0][1], tail[1][1])             # C(原0.7) >= D(原0.6)
 
@@ -175,8 +173,7 @@ class RerankScoredTests(unittest.TestCase):
             out = rr.rerank_scored("q", scored, top_m=2)
         self.assertIs(out, scored)
 
-    def test_tail_span_zero_all_equal_fused(self):
-        # 尾段候選 fused 全同（span==0）：均壓到同一 ceiling、仍嚴格低於最低重排分
+    def test_tail_span_zero_keeps_all_equal_fused(self):
         scored = _scored(
             (0, 0.9, "A", "a"), (0, 0.8, "B", "b"),
             (0, 0.5, "C", "c"), (0, 0.5, "D", "d"),  # tail 同分 → span==0
@@ -184,9 +181,7 @@ class RerankScoredTests(unittest.TestCase):
         with mock.patch.object(rr, "rerank_scores", lambda q, ps: [0.6, 0.4]):
             out = rr.rerank_scored("q", scored, top_m=2)
         tail = out[2:]
-        min_rr = 0.4
-        self.assertTrue(all(f < min_rr for (_t, f, _r) in tail))
-        self.assertEqual(tail[0][1], tail[1][1])  # span==0：兩者同壓縮值
+        self.assertEqual([f for (_t, f, _r) in tail], [0.5, 0.5])
 
     def test_load_failure_is_cached_and_disables_rerank(self):
         # 模型載入失敗一次後熔斷：不再重試，_get_model 回 None、rerank_scores 回 []（不拋）

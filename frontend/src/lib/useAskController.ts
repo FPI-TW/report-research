@@ -6,6 +6,8 @@ import { streamAsk, streamReport, getConversation, sendFeedback, stopAsk, getQaV
 
 let seq = 0
 const newId = () => `t${Date.now()}_${seq++}`
+const newRequestId = () => globalThis.crypto?.randomUUID?.()
+  ?? `00000000-0000-4000-8000-${`${Date.now().toString(16)}${seq++}`.padStart(12, '0').slice(-12)}`
 
 export interface UseAskController {
   state: AskState
@@ -15,7 +17,7 @@ export interface UseAskController {
   regenerate: (turnId: string, qaId: string | null, question: string) => void
   editResubmit: (turnId: string, qaId: string | null, newQuestion: string) => void
   setVersion: (turnId: string, index: number) => void
-  loadVersions: (turnId: string, rootId: string) => Promise<void>
+  loadVersions: (turnId: string, rootId: string) => Promise<boolean>
   generateReport: (turnId: string, question: string, qaId: string | null) => void
   declineReport: (turnId: string) => void
   loadConversation: (id: string) => Promise<void>
@@ -34,11 +36,21 @@ export function useAskController(): UseAskController {
   const reportReqId = useRef(0)
   const reportTurnRef = useRef<string | null>(null)
   const streamTurnRef = useRef<string | null>(null)
+  const streamRequestIdRef = useRef<string | null>(null)
+  const versionRequestId = useRef(0)
   const stateRef = useRef(state)
   stateRef.current = state
 
   const abortAll = useCallback(() => {
-    askCtrl.current?.abort(); askCtrl.current = null
+    const supersededTurn = streamTurnRef.current
+    if (askCtrl.current) {
+      askCtrl.current.abort()
+      askCtrl.current = null
+      // 取代中的串流不會再通過 reqId 檢查而觸發 ask-end；先結束它，避免 UI 永久 busy。
+      if (supersededTurn) dispatch({ type: 'ask-end', id: supersededTurn })
+      streamTurnRef.current = null
+      streamRequestIdRef.current = null
+    }
     if (reportCtrl.current) {
       reportCtrl.current.abort(); reportCtrl.current = null
       reportReqId.current++
@@ -51,11 +63,13 @@ export function useAskController(): UseAskController {
     abortAll()
     const my = ++reqId.current
     const ctrl = new AbortController()
+    const requestId = newRequestId()
     askCtrl.current = ctrl
     streamTurnRef.current = turnId
+    streamRequestIdRef.current = requestId
     void (async () => {
       try {
-        for await (const raw of streamAsk(body, ctrl.signal)) {
+        for await (const raw of streamAsk({ ...body, request_id: requestId }, ctrl.signal)) {
           if (my !== reqId.current) return
           const ev = parseAskEvent(raw)
           if (!ev) continue
@@ -69,9 +83,9 @@ export function useAskController(): UseAskController {
           if (ev.event === 'followups') dispatch({ type: 'followups', id: turnId, data: ev.data })
           else dispatch({ type: 'ask-event', id: turnId, event: ev })
         }
-        if (my === reqId.current) { streamTurnRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
+        if (my === reqId.current) { streamTurnRef.current = null; streamRequestIdRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
       } catch {
-        if (my === reqId.current) { streamTurnRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
+        if (my === reqId.current) { streamTurnRef.current = null; streamRequestIdRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
       }
     })()
   }, [abortAll, qc])
@@ -87,9 +101,11 @@ export function useAskController(): UseAskController {
 
   const stop = useCallback(async () => {
     const turnId = streamTurnRef.current
+    const requestId = streamRequestIdRef.current
     ++reqId.current
     askCtrl.current?.abort(); askCtrl.current = null
     streamTurnRef.current = null
+    streamRequestIdRef.current = null
     if (!turnId) return
     const t = stateRef.current.turns.find(x => x.id === turnId)
     let qaId: string | null = t?.qaId ?? null
@@ -105,13 +121,22 @@ export function useAskController(): UseAskController {
         conversation_id: convRef.current,
         partial_answer: t?.answer ?? '',
         sources: t?.sources ?? [],
+        ext_sources: t?.extSources ?? [],
         stages: t?.stages ?? [],
+        ...(requestId ? { request_id: requestId } : {}),
         ...(regenOf ? { regenerate_of: regenOf } : {}),
       })
       qaId = r.qa_id
+      // 首題尚未收到 done 時，資料庫以 COALESCE(conversation_id, id) 將停止列
+      // 視為自己的對話。沿用 qa_id，才能讓後續重生／續問留在同一串。
+      if (!convRef.current) {
+        convRef.current = r.qa_id
+        setConversationId(r.qa_id)
+        void qc.invalidateQueries({ queryKey: ['conversations'] })
+      }
     } catch { /* fail-open：仍標 stopped */ }
     dispatch({ type: 'ask-stop', id: turnId, qaId })
-  }, [])
+  }, [qc])
 
   const regenerate = useCallback((turnId: string, qaId: string | null, question: string) => {
     dispatch({ type: 'regenerate-start', id: turnId })
@@ -135,10 +160,16 @@ export function useAskController(): UseAskController {
   const setVersion = useCallback((turnId: string, index: number) => dispatch({ type: 'set-version', id: turnId, index }), [])
 
   const loadVersions = useCallback(async (turnId: string, rootId: string) => {
+    const requestId = ++versionRequestId.current
     try {
       const versions = await getQaVersions(rootId)
+      const turn = stateRef.current.turns.find(item => item.id === turnId)
+      // 避免晚到的舊請求覆蓋目前已切換到其他題目的版本資料；空結果也不應把
+      // 已知的 versionCount 歸零，否則 pager 會顯示 1/0。
+      if (requestId !== versionRequestId.current || !turn || turn.rootQaId !== rootId || versions.length === 0) return false
       dispatch({ type: 'load-versions', id: turnId, versions })
-    } catch { /* 版本載入失敗不打擾 */ }
+      return true
+    } catch { return false }
   }, [])
 
   const generateReport = useCallback((turnId: string, question: string, qaId: string | null) => {

@@ -108,6 +108,10 @@ ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS stages jsonb;
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS followups jsonb;
 -- M3：停止標記（使用者中斷串流時保存的部分答案列，冪等補欄）
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS stopped boolean NOT NULL DEFAULT false;
+-- 串流完成與「停止」請求共用前端 request_id，避免網路競態寫出兩筆同一輪問答。
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS request_id uuid;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_qa_log_request_id
+    ON research.qa_log (request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_qa_log_root
     ON research.qa_log ((COALESCE(root_qa_id, id)), created_at);
 

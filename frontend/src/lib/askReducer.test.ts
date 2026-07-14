@@ -210,6 +210,14 @@ describe('askReducer M3', () => {
     expect(s.turns[0].versionIndex).toBe(1)
   })
 
+  it('load-versions 收到空陣列時保留既有版本中繼資料', () => {
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', qa_id: 'qa2', version_count: 2 } } })
+    s = askReducer(s, { type: 'load-versions', id: 't1', versions: [] })
+    expect(s.turns[0].versionCount).toBe(2)
+    expect(s.turns[0].versionIndex).toBe(1)
+  })
+
   it('done 對齊 versionIndex 至最新版：伺服器權威 version_count 晚到時不讓 isLive 誤 false', () => {
     // 重載多版本後直接重生：regenerate-start 樂觀設 versionIndex=1/versionCount=2，
     // done 帶回伺服器 version_count=4 → versionIndex 應對齊 3（=versionCount-1），使 isLive 為真。

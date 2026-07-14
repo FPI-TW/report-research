@@ -29,7 +29,7 @@ const noop = {
 test('done：答案+單一資料來源 {N}+讚/倒讚', () => {
   const onFeedback = vi.fn(); const onOpenSources = vi.fn(); const onCite = vi.fn()
   render(<AssistantMessage turn={makeTurn({})} {...noop} onCite={onCite} onOpenSources={onOpenSources} onFeedback={onFeedback} />)
-  fireEvent.click(screen.getByRole('button', { name: '1' })); expect(onCite).toHaveBeenCalledWith(1)
+  fireEvent.click(screen.getByRole('button', { name: '1' })); expect(onCite).toHaveBeenCalledWith(1, expect.objectContaining({ sources: expect.any(Array) }))
   fireEvent.click(screen.getByRole('button', { name: '資料來源 1' })); expect(onOpenSources).toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '讚' })); expect(onFeedback).toHaveBeenCalledWith('like')
   expect(screen.queryByRole('button', { name: /外部參考/ })).toBeNull() // 無獨立外部參考鈕
@@ -49,10 +49,12 @@ test('error：Callout error + 重試', () => {
 })
 
 test('error 但有部分答案：保留答案本文＋錯誤提示＋重試（不抹除已串出的內容）', () => {
-  const onErrorRetry = vi.fn()
-  const { container } = render(<AssistantMessage turn={makeTurn({ phase: 'error', answer: '已串出的半句回答', qaId: null, errorText: '查詢逾時或失敗' })} {...noop} onErrorRetry={onErrorRetry} />)
+  const onErrorRetry = vi.fn(); const onCite = vi.fn()
+  const { container } = render(<AssistantMessage turn={makeTurn({ phase: 'error', answer: '已串出的半句回答 [1]', qaId: null, errorText: '查詢逾時或失敗' })} {...noop} onErrorRetry={onErrorRetry} onCite={onCite} />)
   expect(screen.getByText(/已串出的半句回答/)).toBeInTheDocument() // 部分答案本文保留顯示
   expect(container.querySelector('[data-streaming]')).toBeNull()   // 已中斷、非串流，不顯示游標
+  fireEvent.click(screen.getByRole('button', { name: '1' }))
+  expect(onCite).toHaveBeenCalledWith(1, expect.objectContaining({ qaId: null }))
   fireEvent.click(screen.getByRole('button', { name: '重試' })); expect(onErrorRetry).toHaveBeenCalled() // 錯誤提示仍在
 })
 
@@ -115,4 +117,17 @@ test('檢視舊版快照（非 live）：回饋鈕隱藏，追問 chips 隱藏',
   expect(screen.queryByRole('button', { name: '讚' })).toBeNull()
   expect(screen.queryByRole('button', { name: '倒讚' })).toBeNull()
   expect(screen.queryByRole('button', { name: '追問一' })).toBeNull()
+})
+
+test('檢視舊版快照時，資料來源操作帶出該版來源', () => {
+  const onOpenSources = vi.fn()
+  const oldSource = { n: 1, report_id: 'old-r1', file_name: '舊版.pdf', market: 'TW', report_date: '2025-01-01', is_latest: false }
+  const turn = makeTurn({
+    phase: 'done', qaId: 'q2', versionCount: 2, versionIndex: 0,
+    priorVersions: [{ answer: '舊答案', sources: [oldSource], extSources: [], qaId: 'q1', thinkingMs: null, stages: [], feedback: null, followups: [] }],
+  })
+  render(<AssistantMessage turn={turn} {...noop} onOpenSources={onOpenSources} />)
+
+  fireEvent.click(screen.getByRole('button', { name: '資料來源 1' }))
+  expect(onOpenSources).toHaveBeenCalledWith(expect.objectContaining({ sources: [oldSource] }))
 })

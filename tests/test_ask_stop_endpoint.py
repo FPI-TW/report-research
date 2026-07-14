@@ -39,7 +39,8 @@ class AskStopEndpointTests(unittest.TestCase):
             resp = client.post(
                 "/api/ask/stop",
                 json={"question": "台積電", "partial_answer": "部分答案",
-                      "conversation_id": None, "sources": [{"n": 1}]},
+                      "conversation_id": None, "sources": [{"n": 1}],
+                      "request_id": "123e4567-e89b-42d3-a456-426614174000"},
             )
         finally:
             server.log_stopped_qa = orig
@@ -49,6 +50,7 @@ class AskStopEndpointTests(unittest.TestCase):
         self.assertEqual(called["partial"], "部分答案")
         self.assertEqual(called["q"], "台積電")
         self.assertEqual(called["kw"]["sources"], [{"n": 1}])
+        self.assertEqual(called["kw"]["request_id"], "123e4567-e89b-42d3-a456-426614174000")
 
     def test_invalid_regenerate_of_returns_400(self):
         client = _authed_client()
@@ -59,6 +61,23 @@ class AskStopEndpointTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("regenerate_of", resp.json().get("detail", ""))
+
+    def test_stop_rejects_oversized_partial_answer(self):
+        client = _authed_client()
+        resp = client.post(
+            "/api/ask/stop",
+            json={"question": "台積電", "partial_answer": "x" * 20_001},
+        )
+        self.assertEqual(resp.status_code, 422)
+
+    def test_stop_rejects_invalid_request_id(self):
+        client = _authed_client()
+        resp = client.post(
+            "/api/ask/stop",
+            json={"question": "台積電", "request_id": "not-a-uuid"},
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("request_id", resp.json().get("detail", ""))
 
 
 if __name__ == "__main__":

@@ -231,6 +231,13 @@ class CondenseAndRouteTests(unittest.TestCase):
             q, d = _run(sr.condense_and_route("先前對話…", "那它今天收多少", today=self.TODAY))
         self.assertEqual(d.scope, sr.TIME_SENSITIVE)
 
+    def test_original_advice_question_cannot_be_downgraded_by_rewrite(self):
+        with self._with_llm("QUERY: 台積電產業展望\nROUTE: CORPUS_QA"):
+            _, d = _run(sr.condense_and_route(
+                "先前對話…", "我該不該買台積電？", today=self.TODAY
+            ))
+        self.assertEqual(d.scope, sr.ADVICE_RISK)
+
     def test_failure_falls_back_to_original_question(self):
         async def boom(prompt, **kw):
             raise RuntimeError("cli down")

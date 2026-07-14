@@ -124,6 +124,10 @@ TIME_SENSITIVE_UNAVAILABLE_MESSAGE = (
     "歡迎改問個股、產業或總經的研報觀點與分析。"
 )
 
+# 前端歷史重播目前以 is_offtopic 表示「固定 notice」；時效安全說明雖非離題，
+# 也必須走相同呈現，否則重載後會被誤當成一般回答。
+NOTICE_MESSAGES: tuple[str, ...] = (*OFF_TOPIC_MESSAGES, TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+
 RESEARCH_ONLY_POLICY = (
     "\n\n【研究資訊限制】使用者的問題涉及個人化投資決策。你只能整理研報來源"
     "支持的正反論點、風險因素與不同觀點，並提醒使用者自行評估；禁止給出"
@@ -486,7 +490,7 @@ def history_item(row) -> dict:
         "feedback": feedback,
         "sources": sources or [],
         "ext_sources": ext_sources or [],
-        "is_offtopic": answer in OFF_TOPIC_MESSAGES,
+        "is_offtopic": answer in NOTICE_MESSAGES,
         "thinking_ms": thinking_ms,
     }
 
@@ -505,10 +509,14 @@ async def _log_qa(
     root_qa_id: str | None = None,
     stages: list[str] | None = None,
     followups: list[str] | None = None,
-) -> str:
+    request_id: str | None = None,
+    deactivate_qa_id: str | None = None,
+    truncate_from: tuple[str, object] | None = None,
+) -> str | None:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
-    回傳該列 id（即使寫入失敗仍回傳，供前端掛回饋；指向不存在列時 UPDATE 為 no-op）。
+    回傳已提交的列 id；寫入失敗時回 None。若指定 replacement metadata，INSERT 與
+    active 狀態轉換共用同一筆 transaction，避免生成失敗時先隱藏舊歷史。
     sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
     conversation_id 將多輪問答歸為同一串。root_qa_id 將同題多版本歸為同一群組。
     stages/followups 供歷史重現思考卡與追問 chips。
@@ -517,16 +525,22 @@ async def _log_qa(
     ext_sources = ext_sources or []
     try:
         async with SessionFactory() as session:
-            await session.execute(
-                text(
+            stmt = text(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
                     "sources, ext_sources, conversation_id, thinking_ms, "
-                    "root_qa_id, active, stages, followups) "
+                    "root_qa_id, active, stages, followups, request_id) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
                     ":sources, :ext_sources, :conv, :think, "
-                    ":root, true, :stages, :followups)"
-                ),
+                    ":root, true, :stages, :followups, :request_id)"
+                )
+            if request_id is not None:
+                stmt = text(
+                    f"{stmt.text} ON CONFLICT (request_id) WHERE request_id IS NOT NULL "
+                    "DO UPDATE SET request_id = EXCLUDED.request_id RETURNING id"
+                )
+            result = await session.execute(
+                stmt,
                 {
                     "id": qa_id,
                     "q": question,
@@ -543,11 +557,28 @@ async def _log_qa(
                     if stages is not None else None,
                     "followups": json.dumps(followups, ensure_ascii=False)
                     if followups is not None else None,
+                    "request_id": request_id,
                 },
             )
+            if request_id is not None:
+                qa_id = str(result.scalar_one())
+            if deactivate_qa_id is not None:
+                await session.execute(
+                    text("UPDATE research.qa_log SET active = false WHERE id = :id"),
+                    {"id": deactivate_qa_id},
+                )
+            if truncate_from is not None:
+                conversation_id, created_at = truncate_from
+                await session.execute(
+                    text(
+                        "UPDATE research.qa_log SET active = false "
+                        "WHERE COALESCE(conversation_id, id) = :cid AND created_at >= :ts"
+                    ),
+                    {"cid": conversation_id, "ts": created_at},
+                )
             await session.commit()
     except Exception:
-        pass
+        return None
     return qa_id
 
 
@@ -571,35 +602,6 @@ async def _load_qa_meta(qa_id: str):
                 str(conv) if conv else None, created)
     except Exception:
         return None
-
-
-async def _deactivate_qa(qa_id: str) -> None:
-    """把一列標為 inactive（重新生成的舊版本）；best-effort。"""
-    try:
-        async with SessionFactory() as session:
-            await session.execute(
-                text("UPDATE research.qa_log SET active = false WHERE id = :id"),
-                {"id": qa_id},
-            )
-            await session.commit()
-    except Exception:
-        pass
-
-
-async def _truncate_from(conversation_id: str, created_at) -> None:
-    """把某對話中 created_at 起（含）的所有列標為 inactive（編輯重送截斷）；best-effort。"""
-    try:
-        async with SessionFactory() as session:
-            await session.execute(
-                text(
-                    "UPDATE research.qa_log SET active = false "
-                    "WHERE COALESCE(conversation_id, id) = :cid AND created_at >= :ts"
-                ),
-                {"cid": conversation_id, "ts": created_at},
-            )
-            await session.commit()
-    except Exception:
-        pass
 
 
 async def _count_versions(group_key: str) -> int:
@@ -629,11 +631,12 @@ async def log_stopped_qa(
     ext_sources: list[dict] | None = None,
     stages: list[str] | None = None,
     regenerate_of: str | None = None,
-) -> str:
+    request_id: str | None = None,
+) -> str | None:
     """寫一列停止的部分答案（stopped=true, active=true）；回新 qa_id。
 
     regenerate_of 有值時：解析其群組鍵作 root_qa_id（續版本鏈）。
-    best-effort：DB 失敗仍回傳前端可掛的 qa_id（沿用 _log_qa 語意）。
+    同一 request_id 的完成／停止請求會由唯一索引收斂成同一列；DB 失敗回 None。
     """
     qa_id = str(uuid.uuid4())
     root_qa_id: str | None = None
@@ -645,16 +648,22 @@ async def log_stopped_qa(
             conversation_id = conversation_id or old_conv
     try:
         async with SessionFactory() as session:
-            await session.execute(
-                text(
+            stmt = text(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
                     "sources, ext_sources, conversation_id, thinking_ms, "
-                    "root_qa_id, active, stages, followups, stopped) "
+                    "root_qa_id, active, stages, followups, stopped, request_id) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
                     ":sources, :ext_sources, :conv, :think, "
-                    ":root, true, :stages, NULL, true)"
-                ),
+                    ":root, true, :stages, NULL, true, :request_id)"
+                )
+            if request_id is not None:
+                stmt = text(
+                    f"{stmt.text} ON CONFLICT (request_id) WHERE request_id IS NOT NULL "
+                    "DO UPDATE SET request_id = EXCLUDED.request_id RETURNING id"
+                )
+            result = await session.execute(
+                stmt,
                 {
                     "id": qa_id,
                     "q": question,
@@ -669,11 +678,14 @@ async def log_stopped_qa(
                     "root": root_qa_id,
                     "stages": json.dumps(stages, ensure_ascii=False)
                     if stages is not None else None,
+                    "request_id": request_id,
                 },
             )
+            if request_id is not None:
+                qa_id = str(result.scalar_one())
             await session.commit()
     except Exception:
-        pass
+        return None
     return qa_id
 
 
@@ -905,6 +917,10 @@ async def _answer_overview(
     conv_id: str,
     model: str,
     started: float,
+    root_qa_id: str | None = None,
+    deactivate_qa_id: str | None = None,
+    truncate_from: tuple[str, object] | None = None,
+    request_id: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """總覽路徑：分面聚合 → LLM 用算好的數字潤飾 → 失敗退回模板。事件序列同主路徑。"""
     stages_seen: list[str] = []
@@ -926,9 +942,14 @@ async def _answer_overview(
         qa_id = await _log_qa(
             question, msg, [], dict(filters, path="overview"), thinking_ms, [], [],
             conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
+            root_qa_id=root_qa_id, deactivate_qa_id=deactivate_qa_id,
+            truncate_from=truncate_from, request_id=request_id,
         )
+        group_key = root_qa_id or qa_id
+        version_count = await _count_versions(group_key) if root_qa_id and group_key else 1
         yield ("done", {"cited": [], "qa_id": qa_id,
-                        "conversation_id": conv_id, "thinking_ms": thinking_ms})
+                        "conversation_id": conv_id, "thinking_ms": thinking_ms,
+                        "root_qa_id": group_key, "version_count": version_count})
         return
 
     sources = [
@@ -971,9 +992,14 @@ async def _answer_overview(
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources], [],
         conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
+        root_qa_id=root_qa_id, deactivate_qa_id=deactivate_qa_id,
+        truncate_from=truncate_from, request_id=request_id,
     )
+    group_key = root_qa_id or qa_id
+    version_count = await _count_versions(group_key) if root_qa_id and group_key else 1
     yield ("done", {"cited": cited, "qa_id": qa_id,
-                    "conversation_id": conv_id, "thinking_ms": thinking_ms})
+                    "conversation_id": conv_id, "thinking_ms": thinking_ms,
+                    "root_qa_id": group_key, "version_count": version_count})
 
 
 async def _yield_routed_notice(
@@ -984,6 +1010,9 @@ async def _yield_routed_notice(
     started: float,
     stages_seen: list[str],
     new_root: str | None,
+    deactivate_qa_id: str | None = None,
+    truncate_from: tuple[str, object] | None = None,
+    request_id: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """no-answer 終端路由（off_topic / time_sensitive）：固定文案、不檢索、不呼叫主 LLM。
 
@@ -1011,6 +1040,9 @@ async def _yield_routed_notice(
         thinking_ms=thinking_ms,
         stages=stages_seen,
         root_qa_id=new_root,
+        deactivate_qa_id=deactivate_qa_id,
+        truncate_from=truncate_from,
+        request_id=request_id,
     )
     yield (
         "done",
@@ -1027,16 +1059,17 @@ async def answer_question(
     conversation_id: str | None = None,
     regenerate_of: str | None = None,
     edit_of: str | None = None,
+    request_id: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """產生 ("sources"|"status"|"token"|"notice"|"ext_sources"|"done", payload) 事件序列。
 
     首輪（未帶 conversation_id）：意圖判定與檢索並行（省延遲）。
     續問（帶 conversation_id）：先載近輪歷史，一次 Haiku 改寫追問為獨立查詢並判定意圖，
     再以改寫後查詢檢索；先前對話內嵌進 prompt。所有 done 事件回傳 conversation_id。
-    regenerate_of 有值時：讀舊列群組鍵、沿用其 conversation_id、停用舊列，
+    regenerate_of 有值時：讀舊列群組鍵、沿用其 conversation_id；新列成功寫入時才停用舊列，
     新列與舊列同組（root_qa_id），done 事件回傳 root_qa_id 與 version_count。
     edit_of 有值時（與 regenerate_of 互斥，regenerate_of 優先）：讀被編輯列的
-    conversation_id 與 created_at，把該輪及其後全部標 inactive（截斷後續對話），
+    conversation_id 與 created_at；新列成功寫入時才把該輪及其後全部標 inactive（截斷後續對話），
     再以編輯後新問題作答為全新輪次（不進版本群組，new_root 維持 None）。
     """
     filters = filters or {}
@@ -1045,20 +1078,22 @@ async def answer_question(
     conv_id = conversation_id or str(uuid.uuid4())
 
     new_root: str | None = None
+    deactivate_qa_id: str | None = None
+    truncate_from: tuple[str, object] | None = None
     if regenerate_of:
         _meta = await _load_qa_meta(regenerate_of)
         if _meta is not None:
             _old_root, _old_conv, _ = _meta
             conv_id = _old_conv or conv_id
             new_root = _old_root or regenerate_of
-            await _deactivate_qa(regenerate_of)
+            deactivate_qa_id = regenerate_of
     elif edit_of:
         _meta = await _load_qa_meta(edit_of)
         if _meta is not None:
             _old_root, _old_conv, _old_created = _meta
             conv_id = _old_conv or conv_id
             if _old_created is not None:
-                await _truncate_from(conv_id, _old_created)
+                truncate_from = (conv_id, _old_created)
 
     stages_seen: list[str] = []
 
@@ -1094,7 +1129,9 @@ async def answer_question(
         try:
             async for ev in _answer_overview(
                 question, standalone_query, ov_filters, filters,
-                conv_id=conv_id, model=model, started=started,
+                conv_id=conv_id, model=model, started=started, root_qa_id=new_root,
+                deactivate_qa_id=deactivate_qa_id, truncate_from=truncate_from,
+                request_id=request_id,
             ):
                 produced = True
                 yield ev
@@ -1119,7 +1156,8 @@ async def answer_question(
     # 終端路由（不檢索、不呼叫主 LLM）：續問在檢索前提前返回
     if decision is not None and decision.scope in (OFF_TOPIC, TIME_SENSITIVE):
         async for ev in _yield_routed_notice(
-            decision, question, filters, conv_id, started, stages_seen, new_root
+            decision, question, filters, conv_id, started, stages_seen, new_root,
+            deactivate_qa_id, truncate_from, request_id,
         ):
             yield ev
         return
@@ -1153,7 +1191,8 @@ async def answer_question(
     # 首輪終端路由：並行取證被丟棄——不發 sources、不持久化取證結果
     if decision is not None and decision.scope in (OFF_TOPIC, TIME_SENSITIVE):
         async for ev in _yield_routed_notice(
-            decision, question, filters, conv_id, started, stages_seen, new_root
+            decision, question, filters, conv_id, started, stages_seen, new_root,
+            deactivate_qa_id, truncate_from, request_id,
         ):
             yield ev
         return
@@ -1183,6 +1222,9 @@ async def answer_question(
             thinking_ms=thinking_ms,
             stages=stages_seen,
             root_qa_id=new_root,
+            deactivate_qa_id=deactivate_qa_id,
+            truncate_from=truncate_from,
+            request_id=request_id,
         )
         yield (
             "done",
@@ -1247,6 +1289,9 @@ async def answer_question(
         thinking_ms=thinking_ms,
         stages=stages_seen,
         root_qa_id=new_root,
+        deactivate_qa_id=deactivate_qa_id,
+        truncate_from=truncate_from,
+        request_id=request_id,
     )
     logger.info(
         "qa_timing id=%s %s total_ms=%s thinking_ms=%s",
@@ -1256,7 +1301,7 @@ async def answer_question(
         thinking_ms,
     )
     group_key = new_root or qa_id
-    version_count = await _count_versions(group_key) if regenerate_of else 1
+    version_count = await _count_versions(group_key) if regenerate_of and group_key else 1
     offer_report, report_title = should_offer_report(question, cited, body)
     yield (
         "done",
@@ -1273,6 +1318,6 @@ async def answer_question(
     )
 
     fups = await generate_followups(question, body)
-    if fups:
+    if fups and qa_id:
         await _update_followups(qa_id, fups)
         yield ("followups", fups)

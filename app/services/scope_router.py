@@ -239,6 +239,11 @@ async def condense_and_route(
     兩者皆覆蓋 LLM 的 ROUTE token（確定性規則勝過機率輸出）。
     任何錯誤/逾時/空回應 → (原 question, 前檢命中則安全 scope、否則 corpus_qa)。
     """
+    # 原始使用者輸入是安全決策的權威來源；改寫器是機率模型，不能把明確的
+    # 個人化投資／即時資料請求降級成看似安全的 corpus 問題。
+    original_precheck = _safety_precheck(question)
+    if original_precheck is not None:
+        return question, _decision(original_precheck)
     prompt = f"先前對話：\n{history_text}\n\n追問：{question}"
     query: str | None = None
     scope: Scope | None = None

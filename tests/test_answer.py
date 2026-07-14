@@ -1489,6 +1489,16 @@ class HistoryItemTests(unittest.TestCase):
         item = history_item(row)
         self.assertTrue(item["is_offtopic"])
 
+    def test_time_sensitive_notice_still_flagged_after_history_reload(self):
+        from app.services import answer as ans
+
+        row = (
+            "id5", "台積電今天收盤價", ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
+            date(2026, 6, 1), None, None, None,
+        )
+        item = history_item(row)
+        self.assertTrue(item["is_offtopic"])
+
 
 class _RowsResult:
     def __init__(self, rows):
@@ -2213,6 +2223,36 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(captured["params"]["root"], "root-x")
 
+    async def test_log_stopped_reuses_existing_row_for_same_request_id(self):
+        from app.services import answer as ans
+
+        captured = {}
+
+        class _Result:
+            def scalar_one(self): return "existing-qa"
+
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                captured["sql"] = str(stmt)
+                captured["params"] = params
+                return _Result()
+            async def commit(self): return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _CapSession()
+        try:
+            qa_id = await ans.log_stopped_qa(
+                "問題", "部分答", request_id="123e4567-e89b-42d3-a456-426614174000",
+            )
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertEqual(qa_id, "existing-qa")
+        self.assertIn("ON CONFLICT (request_id)", captured["sql"])
+        self.assertEqual(captured["params"]["request_id"], "123e4567-e89b-42d3-a456-426614174000")
+
 
 class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
     """主 RAG 路徑在 done 之後補發 followups 事件（非空才發，fail-open 不擋主答）。"""
@@ -2292,23 +2332,48 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RegenerateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_regenerate_failure_does_not_deactivate_old_answer(self):
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        state = {"logged": False}
+
+        async def fake_meta(qid): return (None, "c1", None)
+        async def failed_search(*a, **k): raise RuntimeError("retrieval failed")
+        async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
+        async def fake_log(*a, **k): state["logged"] = True; return "new-qa"
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans._load_qa_meta,
+                ans.classify_non_overview, ans._log_qa)
+        rp.hybrid_search = failed_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans._load_qa_meta = fake_meta
+        ans.classify_non_overview = fake_route
+        ans._log_qa = fake_log
+        try:
+            with self.assertRaises(RuntimeError):
+                _ = [event async for event in ans.answer_question("台積電展望", regenerate_of="old-1")]
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans._load_qa_meta,
+             ans.classify_non_overview, ans._log_qa) = orig
+
+        self.assertFalse(state["logged"])
+
     async def test_regenerate_deactivates_old_and_groups(self):
         from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
 
-        state = {"deactivated": None, "logged_root": "unset"}
+        state = {"logged_root": "unset", "deactivate": None}
 
         async def fake_meta(qid):
             return (None, "c1", None)  # 舊列無 root → 群組=舊 id
-
-        async def fake_deactivate(qid):
-            state["deactivated"] = qid
 
         async def fake_count(gk):
             return 2
 
         async def fake_log(*a, **k):
             state["logged_root"] = k.get("root_qa_id")
+            state["deactivate"] = k.get("deactivate_qa_id")
             return "new-qa"
 
         async def fake_search(*a, **k):
@@ -2322,8 +2387,8 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
                 rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
-                ans._load_qa_meta, ans._deactivate_qa, ans._count_versions,
-                ans._log_qa, ans.generate_followups)
+                ans._load_qa_meta, ans._count_versions,
+                ans._log_qa, ans.generate_followups, ans.ASK_RERANK_TOP_M)
         rp.hybrid_search = fake_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
@@ -2331,20 +2396,20 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
         ans.SessionFactory = lambda: _FakeSession()
         ans.classify_non_overview = fake_route
         ans._load_qa_meta = fake_meta
-        ans._deactivate_qa = fake_deactivate
         ans._count_versions = fake_count
         ans._log_qa = fake_log
         ans.generate_followups = no_followups
+        ans.ASK_RERANK_TOP_M = 0
         try:
             events = [e async for e in ans.answer_question(
                 "台積電展望", regenerate_of="old-1")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
              rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
-             ans._load_qa_meta, ans._deactivate_qa, ans._count_versions,
-             ans._log_qa, ans.generate_followups) = orig
+             ans._load_qa_meta, ans._count_versions,
+             ans._log_qa, ans.generate_followups, ans.ASK_RERANK_TOP_M) = orig
 
-        self.assertEqual(state["deactivated"], "old-1")
+        self.assertEqual(state["deactivate"], "old-1")
         self.assertEqual(state["logged_root"], "old-1")  # 群組鍵=舊 id
         done = next(p for k, p in events if k == "done")
         self.assertEqual(done["version_count"], 2)
@@ -2361,9 +2426,6 @@ class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
         async def fake_meta(qid):
             return (None, "c1", "TS")  # created_at 標記
 
-        async def fake_truncate(conv, ts):
-            state["truncated"] = (conv, ts)
-
         async def fake_search(*a, **k):
             return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
 
@@ -2372,10 +2434,14 @@ class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
         async def no_followups(q, a, **k): return []
+        async def fake_log(*a, **k):
+            state["truncated"] = k.get("truncate_from")
+            return "new-qa"
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
                 rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
-                ans._load_qa_meta, ans._truncate_from, ans.generate_followups)
+                ans._load_qa_meta, ans._log_qa, ans.generate_followups,
+                ans.ASK_RERANK_TOP_M)
         rp.hybrid_search = fake_search
         rp.embed_query_cached = lambda q: [0.0]
         ans.stream_completion = fake_stream
@@ -2383,15 +2449,17 @@ class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
         ans.SessionFactory = lambda: _FakeSession()
         ans.classify_non_overview = fake_route
         ans._load_qa_meta = fake_meta
-        ans._truncate_from = fake_truncate
+        ans._log_qa = fake_log
         ans.generate_followups = no_followups
+        ans.ASK_RERANK_TOP_M = 0
         try:
             events = [e async for e in ans.answer_question(
                 "台積電最新展望", edit_of="turn-2")]
         finally:
             (rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
              rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
-             ans._load_qa_meta, ans._truncate_from, ans.generate_followups) = orig
+             ans._load_qa_meta, ans._log_qa, ans.generate_followups,
+             ans.ASK_RERANK_TOP_M) = orig
 
         self.assertEqual(state["truncated"], ("c1", "TS"))
         self.assertIn("done", [k for k, _ in events])

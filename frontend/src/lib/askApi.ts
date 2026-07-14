@@ -4,7 +4,7 @@ import { readSSE, type RawSSEEvent } from './readSSE'
 import { conversationTurnSchema, qaVersionSchema, type ConversationTurn, type QaVersion } from './askSchemas'
 
 export function streamAsk(
-  body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string },
+  body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string; request_id?: string },
   signal: AbortSignal,
 ): AsyncGenerator<RawSSEEvent> {
   return readSSE('/api/ask', body, signal)
@@ -18,6 +18,7 @@ export async function stopAsk(body: {
   ext_sources?: unknown[]
   stages?: string[]
   regenerate_of?: string
+  request_id?: string
 }): Promise<{ qa_id: string }> {
   const resp = await fetch('/api/ask/stop', {
     method: 'POST',

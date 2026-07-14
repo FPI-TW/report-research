@@ -9,6 +9,7 @@ import { SourcesDrawer } from './SourcesDrawer'
 import { Composer } from './Composer'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
 import { ModeSwitch } from '../../components/shell/ModeSwitch'
+import type { AnswerView } from '../../lib/askReducer'
 import styles from './AskPage.module.css'
 
 export default function AskPage() {
@@ -17,7 +18,7 @@ export default function AskPage() {
   const [params, setParams] = useSearchParams()
   const c = params.get('c')
   const [draft, setDraft] = useState('')
-  const [drawer, setDrawer] = useState<{ open: boolean; turnId: string | null }>({ open: false, turnId: null })
+  const [drawer, setDrawer] = useState<{ open: boolean; view: AnswerView | null }>({ open: false, view: null })
   const [modal, setModal] = useState<{ reportId: string | null; fileName?: string }>({ reportId: null })
   const flowRef = useRef<HTMLDivElement>(null)
 
@@ -43,7 +44,9 @@ export default function AskPage() {
   const busy = !!last && (last.phase === 'thinking' || last.phase === 'streaming')
 
   function handleSubmit(q: string) { ctrl.submit(q); setDraft('') }
-  const drawerTurn = drawer.turnId ? turns.find(t => t.id === drawer.turnId) ?? null : null
+  function openSources(view: AnswerView) {
+    setDrawer({ open: true, view })
+  }
 
   return (
     <div className={styles.page}>
@@ -57,19 +60,22 @@ export default function AskPage() {
           ) : (
             turns.map(t => (
               <div key={t.id} className="tf-reveal">
-                <UserMessage text={t.question} onEdit={q => ctrl.editResubmit(t.id, t.qaId, q)} />
+                <UserMessage text={t.question} onEdit={q => ctrl.editResubmit(t.id, t.qaId, q)} disabled={busy} />
                 <AssistantMessage
                   turn={t}
-                  onCite={() => setDrawer({ open: true, turnId: t.id })}
-                  onOpenSources={() => setDrawer(d => (d.open && d.turnId === t.id ? { open: false, turnId: t.id } : { open: true, turnId: t.id }))}
+                  onCite={(_n, view) => openSources(view)}
+                  onOpenSources={view => setDrawer(d => d.open ? { open: false, view: null } : { open: true, view })}
                   onFeedback={v => t.qaId && ctrl.setFeedback(t.id, t.qaId, v)}
                   onNoticeRetry={() => setDraft(t.question)}
                   onErrorRetry={() => handleSubmit(t.question)}
                   onRegenerate={() => ctrl.regenerate(t.id, t.qaId, t.question)}
                   onFollowup={q => handleSubmit(q)}
+                  disabled={busy}
                   onSetVersion={i => {
                     if (t.priorVersions.length === 0 && t.rootQaId && t.versionCount > 1) {
-                      void ctrl.loadVersions(t.id, t.rootQaId).then(() => ctrl.setVersion(t.id, i))
+                      void ctrl.loadVersions(t.id, t.rootQaId).then(loaded => {
+                        if (loaded) ctrl.setVersion(t.id, i)
+                      })
                     } else {
                       ctrl.setVersion(t.id, i)
                     }
@@ -92,8 +98,8 @@ export default function AskPage() {
       </div>
       <SourcesDrawer
         open={drawer.open}
-        turn={drawerTurn}
-        onClose={() => setDrawer(d => ({ ...d, open: false }))}
+        view={drawer.view}
+        onClose={() => setDrawer({ open: false, view: null })}
         onOpenReport={(reportId, fileName) => setModal({ reportId, fileName })}
       />
       <ReportDetailModal reportId={modal.reportId} fileName={modal.fileName} onClose={() => setModal({ reportId: null })} />

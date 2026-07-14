@@ -201,7 +201,7 @@ async def reports_for_conversation(conversation_id: str) -> dict[str, list[dict]
 async def generate_report(
     question: str, *, filters: dict | None = None,
     conversation_id: str | None = None, qa_id: str | None = None,
-    model: str = REPORT_MODEL,
+    model: str = REPORT_MODEL, persist: bool = True,
 ) -> AsyncIterator[tuple[str, object]]:
     filters = filters or {}
     started = time.monotonic()
@@ -252,6 +252,19 @@ async def generate_report(
         yield ("token", chunk)
     # 根因去旁白：丟棄標題前的流程旁白，讓持久化 markdown 與全文檢視都乾淨（不僅 PDF）。
     markdown = strip_preamble("".join(parts).strip())
+
+    # M1b eval 模式：跳過渲染/落地/DB，done 直接帶 markdown 與檢索脈絡供離線指標計算；
+    # web 層一律走預設 persist=True，此分支不影響線上事件契約。
+    if not persist:
+        yield (
+            "done",
+            {
+                "report_id": None, "title": title,
+                "markdown": markdown, "context": context,
+                "thinking_ms": int((time.monotonic() - started) * 1000),
+            },
+        )
+        return
 
     yield ("status", {"stage": "rendering"})
     thinking_ms = int((time.monotonic() - started) * 1000)

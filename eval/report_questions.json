@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "generated_at": "2026-07-14T06:40:00+00:00",
+  "reviewed": false,
+  "note": "M1b 研報專用題集（與問答題集 ragas_questions.json 分檔分版本）。題目取材自語料市場分布（TW 10077/WTX 1849/GLOBAL 929/US 724/MACRO 619/CN 311）與既有 report_doc 主題；expected_facets 的 keywords 是評分規則的一部分，隨版本凍結。no_data 題為人工設計的語料未涵蓋主題。人工審核通過後將 reviewed 改為 true 並凍結為 v1。",
+  "count": 10,
+  "questions": [
+    {
+      "id": "r001",
+      "topic": "台積電先進製程布局與 AI 需求帶動的營運展望",
+      "market": "TW",
+      "expected_facets": [
+        {"name": "財報營運", "keywords": ["營收", "毛利率", "EPS"]},
+        {"name": "先進製程", "keywords": ["3奈米", "2奈米", "先進製程", "CoWoS", "先進封裝"]},
+        {"name": "AI需求", "keywords": ["AI", "人工智慧", "HPC"]},
+        {"name": "風險因子", "keywords": ["風險", "地緣", "關稅", "匯率"]},
+        {"name": "估值", "keywords": ["目標價", "估值", "本益比"]}
+      ],
+      "allowed_source_types": ["corpus", "web"],
+      "no_data": false,
+      "filters": {}
+    },
+    {
+      "id": "r002",
+      "topic": "台股 AI 伺服器供應鏈（組裝與散熱）投資機會分析",
+      "market": "TW",
+      "expected_facets": [
+        {"name": "AI伺服器需求", "keywords": ["AI伺服器", "AI 伺服器", "GB200", "GB300", "輝達", "NVIDIA"]},
+        {"name": "供應鏈個股", "keywords": ["鴻海", "廣達", "緯創", "緯穎"]},
+        {"name": "散熱", "keywords": ["散熱", "水冷", "液冷"]},
+        {"name": "風險因子", "keywords": ["風險", "關稅", "競爭"]}
+      ],
+      "allowed_source_types": ["corpus", "web"],
+      "no_data": false,
+      "filters": {}
+    },
+    {
+      "id": "r003",
+      "topic": "台指期籌碼結構與除權息旺季對指數的影響",
+      "market": "WTX",
+      "expected_facets": [
+        {"name": "籌碼結構", "keywords": ["外資", "未平倉", "大額交易人", "籌碼"]},
+        {"name": "除權息", "keywords": ["除權息", "除息", "點數"]},
+        {"name": "技術面", "keywords": ["月線", "支撐", "壓力", "均線"]}
+      ],
+      "allowed_source_types": ["corpus", "web"],
+      "no_data": false,
+      "filters": {}
+    },
+    {
+      "id": "r004",
+      "topic": "美股科技股走勢與聯準會政策環境展望",
+      "market": "US",
+      "expected_facets": [
+        {"name": "美股大盤", "keywords": ["標普", "S&P", "那斯達克", "美股"]},
+        {"name": "聯準會政策", "keywords": ["聯準會", "Fed", "FOMC", "利率"]},
+        {"name": "科技股", "keywords": ["科技", "AI", "半導體"]},
+        {"name": "風險因子", "keywords": ["通膨", "關稅", "衝突", "風險"]}
+      ],
+      "allowed_source_types": ["corpus", "web"],
+      "no_data": false,
+      "filters": {}
+    },
+    {
+      "id": "r005",
+      "topic": "FOMC 會後利率路徑與債券市場投資展望",
+      "market": "MACRO",
+      "expected_facets": [
+        {"name": "利率決策", "keywords": ["FOMC", "聯準會", "降息", "升息", "基點"]},
+        {"name": "債券市場", "keywords": ["債券", "殖利率", "公債"]},
+        {"name": "通膨就業", "keywords": ["通膨", "CPI", "就業", "非農"]}
+      ],
+      "allowed_source_types": ["corpus", "web"],
+      "no_data": false,
+      "filters": {}
+    },
+    {
+      "id": "r006",
+      "topic": "全球記憶體產業景氣循環與供需展望",
+      "market": "GLOBAL",
+      "expected_facets": [
+        {"name": "記憶體產品", "keywords": ["記憶體", "DRAM", "NAND", "HBM"]},
+        {"name": "供需與價格", "keywords": ["供需", "庫存", "漲價", "報價"]},
+        {"name": "大廠動態", "keywords": ["三星", "海力士", "美光", "Samsung"]}
+      ],
+      "allowed_source_types": ["corpus", "web"],
+      "no_data": false,
+      "filters": {}
+    },
+    {
+      "id": "r007",
+      "topic": "中國股市與 A50 指數行情展望",
+      "market": "CN",
+      "expected_facets": [
+        {"name": "指數行情", "keywords": ["A50", "上證", "陸股", "恒生"]},
+        {"name": "政策刺激", "keywords": ["政策", "刺激", "人行", "財政"]},
+        {"name": "產業消費", "keywords": ["車市", "消費", "地產", "出口"]}
+      ],
+      "allowed_source_types": ["corpus", "web"],
+      "no_data": false,
+      "filters": {}
+    },
+    {
+      "id": "r008",
+      "topic": "台灣金融股獲利動能與配息展望",
+      "market": "TW",
+      "expected_facets": [
+        {"name": "獲利動能", "keywords": ["獲利", "EPS", "淨利", "手續費"]},
+        {"name": "配息", "keywords": ["股利", "配息", "殖利率"]},
+        {"name": "利率與資本", "keywords": ["利差", "壽險", "資本", "避險成本"]}
+      ],
+      "allowed_source_types": ["corpus", "web"],
+      "no_data": false,
+      "filters": {}
+    },
+    {
+      "id": "r009",
+      "topic": "北歐綠色航運債券市場的投資機會",
+      "market": "GLOBAL",
+      "expected_facets": [],
+      "allowed_source_types": ["web"],
+      "no_data": true,
+      "filters": {}
+    },
+    {
+      "id": "r010",
+      "topic": "DeFi 借貸協議收益策略與主要山寨幣比較",
+      "market": "CRYPTO",
+      "expected_facets": [],
+      "allowed_source_types": ["web"],
+      "no_data": true,
+      "filters": {}
+    }
+  ]
+}

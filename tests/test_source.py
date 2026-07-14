@@ -78,7 +78,7 @@ class ExtractSourceFromTextTests(unittest.TestCase):
 
     # --- 視窗：外資提及只在表頭算數；過深的提及不採（防 body-mention 誤判）---
     def test_foreign_mention_beyond_window_ignored(self):
-        txt = "x" * 3000 + " Morgan Stanley equity research note deep in body"
+        txt = "x" * 4100 + " Morgan Stanley equity research note deep in body"
         self.assertIsNone(self._s(txt))
 
     def test_cjk_issuer_credit_deep_still_detected(self):
@@ -204,6 +204,76 @@ class NewBrokerMappingTests(unittest.TestCase):
     def test_source_date_anchor_still_matches_ms(self):
         # 錨定式 -MS<8碼> 路徑不受影響
         self.assertEqual(parse_filename("鴻海(2317)-MS20240314.pdf").source, "morgan_stanley")
+
+
+class LowercaseBrokerTokenTests(unittest.TestCase):
+    """2026-07 NAS 新批次外資檔名採小寫券商代號（YYMMDD_broker_標的.pdf）。
+
+    token 比對須大小寫不敏感（≥3 字母，詞邊界仍防 substrates/citizen 類子字串）；
+    2 字母短代碼（MS/GS/DW/MQ）不分大小寫誤中面積大（5ms、毫秒單位等），
+    僅追加「分隔符包夾」形式（_ms_），全大寫詞邊界既有行為不變。
+    範例檔名取自 2026-07-14 實際漏標語料。
+    """
+
+    def test_lowercase_ubs(self):
+        self.assertEqual(parse_filename("250708_ubs_bizlink.pdf").source, "ubs")
+
+    def test_lowercase_citi(self):
+        self.assertEqual(parse_filename("260709_citi_largan.pdf").source, "citi")
+
+    def test_lowercase_nmr_hyphen_separated(self):
+        self.assertEqual(
+            parse_filename("20260711-nmr-GlobalWafers.pdf").source, "nomura"
+        )
+
+    def test_lowercase_daiwa_alias(self):
+        # DAIWA 全字過去不在 BROKER_MAP（只收 DW），須補 alias
+        self.assertEqual(parse_filename("260709_daiwa_ASE.pdf").source, "daiwa")
+
+    def test_daiwa_capitalized_prefix(self):
+        self.assertEqual(
+            parse_filename(
+                "Daiwa_MediaTek-Upgrading to Buy, higher TP of 1,666   20250723.pdf"
+            ).source,
+            "daiwa",
+        )
+
+    def test_fubon_latin_token(self):
+        self.assertEqual(
+            parse_filename("UNH Q2 Earnings Call memo_Fubon 20250730.pdf").source,
+            "fubon",
+        )
+
+    def test_lowercase_ms_delimiter_bounded(self):
+        self.assertEqual(
+            parse_filename("260713_ms_TSMC-US-feedback.pdf").source, "morgan_stanley"
+        )
+
+    def test_lowercase_ms_not_in_5ms(self):
+        # 「5ms」（毫秒）非券商：2 字母小寫代碼需分隔符包夾，前綴數字不算
+        self.assertIsNone(parse_filename("panel_response_5ms_spec.pdf").source)
+
+    def test_lowercase_ems_still_not_morgan_stanley(self):
+        # 小寫化後 'ems' 仍不得讓 MS 誤中（詞邊界 + 包夾雙重防護）
+        self.assertIsNone(parse_filename("中國股市-ems產業 20240930.pdf").source)
+
+
+class ForeignSignatureWindowTests(unittest.TestCase):
+    """2026-07 新批次外資 PDF 表頭較長（表格先被抽出）：發行者自稱實測落在
+    char 2653–3862，原 LATIN_SIG_WINDOW=2500 全數超窗 → 擴至 4000（與 CJK 對齊）。
+    深於 4000 的提及仍不採（防 body-mention）。"""
+
+    def test_citi_research_header_at_2800(self):
+        txt = "x" * 2800 + " 13 july 2026 Citi Research | 2 | relationships"
+        self.assertEqual(extract_source_from_text(txt), "citi")
+
+    def test_ubs_securities_disclaimer_at_3860(self):
+        txt = "y" * 3860 + " this report has been prepared by UBS Securities Pte. Ltd."
+        self.assertEqual(extract_source_from_text(txt), "ubs")
+
+    def test_nomura_chart_credit_at_2960(self):
+        txt = "z" * 2960 + " relative performance chart source: lseg, Nomura research"
+        self.assertEqual(extract_source_from_text(txt), "nomura")
 
 
 if __name__ == "__main__":

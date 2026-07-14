@@ -21,6 +21,8 @@ BROKER_MAP: dict[str, str] = {
     "NMR": "nomura",
     "MQ": "macquarie",
     "DW": "daiwa",
+    "DAIWA": "daiwa",  # 2026-07 NAS 批次與 Daiwa_ 前綴檔名帶全字
+    "FUBON": "fubon",  # 拉丁形式（memo_Fubon 20250730.pdf）；富邦 CJK 已另收
     "CLSA": "clsa",
     "CITI": "citi",
     "BOFA": "bofa",
@@ -228,10 +230,25 @@ def parse_filename(file_name: str) -> FilenameMeta:
             # "MSCI"/"MSFT"/"EMS"/"Memory" 等（曾使多篇研報被錯標 morgan_stanley）。
             # 外資代碼的精確錨點是上方 RE_SOURCE_DATE（-MS20240314）；此處保留 -MS-/-MS<6碼>
             # 等詞邊界形式。CJK 券商名為多字、distinctive，維持子字串比對。
+            # 2026-07 NAS 新批次改用小寫代碼（260709_ubs_largan.pdf）：≥3 字母代碼
+            # 不分大小寫（詞邊界仍防 substrates/citizen 類子字串）；2 字母短代碼
+            # 不分大小寫誤中面積大（"5ms" 毫秒等），僅追加分隔符包夾形式（_ms_），
+            # 全大寫詞邊界既有行為不變。
             if token.isascii():
-                hit = re.search(
-                    rf"(?<![A-Za-z]){re.escape(token)}(?![A-Za-z])", stem
-                )
+                if len(token) >= 3:
+                    hit = re.search(
+                        rf"(?<![A-Za-z]){re.escape(token)}(?![A-Za-z])",
+                        stem,
+                        re.IGNORECASE,
+                    )
+                else:
+                    hit = re.search(
+                        rf"(?<![A-Za-z]){re.escape(token)}(?![A-Za-z])", stem
+                    ) or re.search(
+                        rf"(?:^|[\s_\-.]){re.escape(token)}(?=[\s_\-.]|$)",
+                        stem,
+                        re.IGNORECASE,
+                    )
             else:
                 hit = token in stem
             if hit:
@@ -310,9 +327,13 @@ _LATIN_SIG_RE: list[tuple[str, list[re.Pattern[str]]]] = [
     for name, markers in CONTENT_SIGNATURES_LATIN
 ]
 
-# 本土發行機構指紋掃前 4000 字（含前數頁圖表自我標註）；外資拉丁只掃前 2500 字（防提及）。
+# 本土發行機構指紋掃前 4000 字（含前數頁圖表自我標註）；外資拉丁同為 4000 —
+# 原 2500 太小：2026-07 NAS 批次外資 PDF 表頭較長（表格先被抽出），發行者自稱
+# （citi research／prepared by ubs securities／source: lseg, nomura）實測落在
+# char 2653–3862，全數超窗致 source NULL。詞邊界＋最早指紋優先＋「無本土指紋才採」
+# 三重防護不變，深於 4000 的 body-mention 仍不採。
 CJK_SIG_WINDOW = 4000
-LATIN_SIG_WINDOW = 2500
+LATIN_SIG_WINDOW = 4000
 
 
 def _detect_issuer(full_text: str, window: int) -> Optional[str]:

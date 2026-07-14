@@ -212,6 +212,45 @@ class CacheAndRateLimitTests(_Base):
             await tmd.fetch_trusted("quote", "聯電收盤價", now=NOW)  # 不同 key、限流中
         self.assertEqual(provider.calls, 1)
 
+    async def test_cache_hit_revalidates_age(self):
+        """cache_ttl 與 max_age 是獨立旋鈕：TTL 未過但資料已超過最大年齡時，
+        快取命中不得回過期值（審查 M4a-2）。"""
+        provider = _Provider(point=_point())  # as_of = NOW-1min
+        tmd.register_provider(
+            _spec(cache_ttl=timedelta(hours=1), max_age=timedelta(minutes=15)),
+            provider,
+        )
+        await tmd.fetch_trusted("quote", "台積電收盤價", now=NOW)
+        # TTL 內（+20min），但資料年齡 21min > max_age 15min → 不得回快取；
+        # 重打 provider 拿到同一過舊點 → 驗證擋下 → unavailable
+        with self.assertRaises(tmd.TrustedDataUnavailable):
+            await tmd.fetch_trusted(
+                "quote", "台積電收盤價", now=NOW + timedelta(minutes=20)
+            )
+        self.assertEqual(provider.calls, 2)
+
+    async def test_stale_failure_allowlist_each_category(self):
+        """spec 驗收：每類時效題都有過期/provider 失敗/不在 allowlist 的測試。"""
+        for cat in ("quote", "filing", "rate"):
+            with self.subTest(category=cat, mode="stale"):
+                tmd.clear_providers()
+                tmd.register_provider(_spec(cat), _Provider(
+                    point=_point(cat, as_of=NOW - timedelta(minutes=30))))
+                with self.assertRaises(tmd.TrustedDataUnavailable):
+                    await tmd.fetch_trusted(cat, "有效問題", now=NOW)
+            with self.subTest(category=cat, mode="provider_failure"):
+                tmd.clear_providers()
+                tmd.register_provider(_spec(cat), _Provider(
+                    exc=RuntimeError("down")))
+                with self.assertRaises(tmd.TrustedDataUnavailable):
+                    await tmd.fetch_trusted(cat, "有效問題", now=NOW)
+            with self.subTest(category=cat, mode="allowlist"):
+                tmd.clear_providers()
+                tmd.register_provider(_spec(cat), _Provider(
+                    point=_point(cat, url="https://evil.com/x")))
+                with self.assertRaises(tmd.TrustedDataUnavailable):
+                    await tmd.fetch_trusted(cat, "有效問題", now=NOW)
+
     async def test_rate_limit_allows_after_interval(self):
         provider = _Provider(point=_point())
         tmd.register_provider(_spec(min_interval=10.0), provider)

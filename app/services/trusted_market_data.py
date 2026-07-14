@@ -176,7 +176,11 @@ async def fetch_trusted(
     key = (category, norm_for_match(question or ""))
     cached = _cache.get(key)
     if cached is not None and now < cached[1]:
-        return cached[0]
+        # 快取命中仍須重驗（尤其資料年齡）：cache_ttl 與 max_age 是兩個獨立旋鈕，
+        # TTL 未過但資料已超過最大年齡時不得回過期值——安全語義優先於快取效益。
+        if validate_point(cached[0], spec, now) is None:
+            return cached[0]
+        del _cache[key]
 
     nxt = _next_allowed_at.get(spec.name)
     if nxt is not None and now < nxt:

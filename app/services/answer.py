@@ -1116,15 +1116,19 @@ async def _answer_time_sensitive(
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     request_id: str | None = None,
+    fetch_query: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """時效題唯一作答路徑：僅受信任 adapter（M4a）可提供數值，零 LLM、零檢索。
 
     adapter 不可用/驗證失敗 → 委派 _yield_routed_notice（M4 既有婉拒，事件序
     與文案完全不變）。成功 → 確定性模板答案（含資料時間與來源性質），來源以
     加法欄位落 qa_log.ext_sources。CancelledError 沿 async generator 自然上拋。
+    fetch_query：續問時傳 condense 改寫後的獨立查詢給 provider（「那現在呢？」
+    這類代名詞追問 provider 解析不出標的）；qa_log 仍記原始問題。
     """
+    query = fetch_query or question
     try:
-        point = await fetch_trusted(infer_category(question), question)
+        point = await fetch_trusted(infer_category(query), query)
     except TrustedDataUnavailable:
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
@@ -1279,6 +1283,7 @@ async def answer_question(
         async for ev in _answer_time_sensitive(
             decision, question, filters, conv_id, started, stages_seen, new_root,
             deactivate_qa_id, truncate_from, request_id,
+            fetch_query=standalone_query,
         ):
             yield ev
         return

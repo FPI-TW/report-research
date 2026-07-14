@@ -165,9 +165,12 @@ def external_labeling(markdown: str) -> dict:
 
     分母 = 有用到網路的題（兩訊號皆無 → applicable False、score None，不入分母）。
     """
-    body = _strip_reference_sections(markdown or "")
+    # 與 citation_metrics 相同，必須先移除圍欄再解析標題；chart/KPI JSON
+    # 可包含看似 Markdown 標題的文字，不能讓它誤切正文或真正的外部參考節。
+    clean_markdown = _FENCE_RE.sub("", markdown or "")
+    body = _strip_reference_sections(clean_markdown)
     used_web = "（網路）" in body
-    ext = _extract_section(markdown or "", "外部參考")
+    ext = _extract_section(clean_markdown, "外部參考")
     has_ext_section = bool(ext and _LINK_LINE_RE.search(ext))
     applicable = used_web or has_ext_section
     if not applicable:

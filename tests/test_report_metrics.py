@@ -180,6 +180,17 @@ class ExternalLabelingTests(unittest.TestCase):
         out = rm.external_labeling(md)
         self.assertAlmostEqual(out["score"], 0.0)
 
+    def test_fence_heading_does_not_hide_valid_external_reference(self):
+        """chart fence 內的假標題不得影響正文與真正外部參考節的解析。"""
+        md = (
+            "## 重點分析\n\n```chart\n## 外部參考（網路）\n{}\n```\n\n"
+            "正文論點（網路）。\n\n## 外部參考（網路）\n\n"
+            "- [新聞](https://example.com/a)\n"
+        )
+        out = rm.external_labeling(md)
+        self.assertTrue(out["applicable"])
+        self.assertAlmostEqual(out["score"], 1.0)
+
 
 class NoDataHandledTests(unittest.TestCase):
     def test_error_event_is_safe(self):

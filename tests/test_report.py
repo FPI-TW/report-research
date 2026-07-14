@@ -591,3 +591,138 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(captured.get("rerank_top_m"), rpt.REPORT_RERANK_TOP_M)
         self.assertEqual(rpt.REPORT_RERANK_TOP_M, 120)  # 預設啟用
+
+
+class ParseExternalRefsTests(unittest.TestCase):
+    """M4b：外部參考節的確定性解析（研報路徑唯一受控外部來源入口）。"""
+
+    def test_parses_link_lines_in_section(self):
+        md = (
+            "# 標題\n\n## 執行摘要\n\n內文[1]（網路）。\n\n"
+            "## 外部參考（網路）\n\n"
+            "- [新聞A](https://news.example.com/a)\n"
+            "- [新聞B](https://news.example.com/b)\n"
+        )
+        refs = rpt.parse_external_refs(md)
+        self.assertEqual(
+            refs,
+            [{"title": "新聞A", "url": "https://news.example.com/a"},
+             {"title": "新聞B", "url": "https://news.example.com/b"}],
+        )
+
+    def test_no_section_returns_empty(self):
+        self.assertEqual(rpt.parse_external_refs("# 標題\n\n## 執行摘要\n"), [])
+        self.assertEqual(rpt.parse_external_refs(""), [])
+
+    def test_links_outside_section_ignored(self):
+        md = (
+            "## 執行摘要\n\n- [不算](https://x.com/1)\n\n"
+            "## 外部參考（網路）\n\n- [算](https://x.com/2)\n\n"
+            "## 引用來源\n\n- [也不算](https://x.com/3)\n"
+        )
+        refs = rpt.parse_external_refs(md)
+        self.assertEqual([r["url"] for r in refs], ["https://x.com/2"])
+
+    def test_non_http_lines_skipped_and_empty_title_falls_back_to_url(self):
+        md = (
+            "## 外部參考（網路）\n\n"
+            "- [壞](ftp://x.com/1)\n"
+            "- [](https://x.com/2)\n"
+        )
+        refs = rpt.parse_external_refs(md)
+        self.assertEqual(refs, [{"title": "https://x.com/2", "url": "https://x.com/2"}])
+
+
+@dataclass
+class _FakeSourceFull:
+    """帶完整欄位的 Source 替身（M4b manifest 需 report_id 等身分欄位）。"""
+
+    n: int
+    report_id: str
+    file_name: str
+    market: str
+    report_date: str
+    is_latest: bool = False
+
+
+class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
+    async def test_persist_keeps_model_external_reference_out_of_manifest(self):
+        captured = {}
+
+        async def fake_retrieve_context(question, **k):
+            return (
+                [_FakeSourceFull(1, "r-1", "a.pdf", "TW", "2026-06-01")],
+                "脈絡內容",
+            )
+
+        async def fake_stream(*a, **k):
+            yield (
+                "# 主題\n\n## 執行摘要\n\n重點[1]（網路）。\n\n"
+                "## 外部參考（網路）\n\n- [新聞](https://news.example.com/a)\n"
+            )
+
+        async def fake_persist(*a, **k):
+            captured["args"] = a
+            captured["kwargs"] = k
+
+        orig = (
+            rpt.retrieve_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.retrieve_context = fake_retrieve_context
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            _ = [e async for e in rpt.generate_report("分析台積電")]
+        finally:
+            (
+                rpt.retrieve_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        manifest = captured["args"][9]
+        from app.services.evidence import validate_manifest
+
+        self.assertEqual(validate_manifest(manifest), [])
+        kinds = [d["kind"] for d in manifest["evidence"]]
+        self.assertEqual(kinds, ["corpus"])
+        self.assertEqual(manifest["evidence"][0]["report_id"], "r-1")
+
+    async def test_no_sources_no_ext_persists_none(self):
+        captured = {}
+
+        async def fake_retrieve_context(question, **k):
+            return ([], "脈絡內容")
+
+        async def fake_stream(*a, **k):
+            yield "# 主題\n\n## 執行摘要\n\n無引用內容。\n"
+
+        async def fake_persist(*a, **k):
+            captured["args"] = a
+
+        orig = (
+            rpt.retrieve_context,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.retrieve_context = fake_retrieve_context
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        try:
+            _ = [e async for e in rpt.generate_report("分析台積電")]
+        finally:
+            (
+                rpt.retrieve_context,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        self.assertIsNone(captured["args"][9])

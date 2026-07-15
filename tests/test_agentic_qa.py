@@ -9,6 +9,7 @@ import asyncio
 import dataclasses
 import sys
 import unittest
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,7 +24,8 @@ from app.services import query_planner as qp  # noqa: E402
 from app.services import scope_router as sr  # noqa: E402
 from app.services import answer as ans  # noqa: E402
 from app.services.agentic_qa import merge_retrievals  # noqa: E402
-from app.services.answer import Source  # noqa: E402
+from app.services.answer import Source, build_context  # noqa: E402
+from app.services.rows import ChunkRow  # noqa: E402
 
 
 def _texts(plan):
@@ -148,6 +150,17 @@ def _batch(*reports):
     return sources, "\n\n".join(blocks)
 
 
+def _row(report_id, file_name, market, content, report_date=None):
+    """造一列 hybrid_search 形狀的 ChunkRow（供真品 build_context round-trip）。"""
+    return ChunkRow(
+        chunk_id=None, report_id=report_id, file_name=file_name, market=market,
+        source=None, summary=None, report_date=report_date, report_type=None,
+        instrument_types=None, relates_stock=None, relates_futures=None,
+        stock_targets=None, futures_targets=None, chunk_index=0,
+        content=content, distance=0.1,
+    )
+
+
 class TestMergeRetrievals(unittest.TestCase):
     """merge_retrievals 純函式：切塊檢核、去重交錯、重編號、預算與 fail-open。"""
 
@@ -182,6 +195,34 @@ class TestMergeRetrievals(unittest.TestCase):
         ids = {s.report_id for s in sources}
         self.assertIn("r1", ids)
         self.assertIn("r9", ids)
+
+    def test_round_trip_with_real_build_context(self):
+        # 真品 round-trip：merge 的切塊/檢核硬編碼依賴 build_context 產物格式，
+        # 手工複製格式的 _batch 防不了雙方同時對真格式失真（檢核失敗＝fail-open
+        # 靜默丟批，測試仍全綠）。以真 build_context 產物（含市場前綴的完整
+        # head）餵入，斷言兩批皆入合併——格式漂移時本測試會壞。
+        now = datetime(2026, 6, 24, tzinfo=timezone.utc)
+        first = build_context(
+            [(1, 0.85, _row("r1", "a.pdf", "TW", "甲段內容。", date(2026, 5, 1)))],
+            now=now,
+        )
+        second = build_context(
+            [
+                (1, 0.80, _row("r2", "b.pdf", "US", "乙段內容。", date(2026, 6, 1))),
+                (1, 0.75, _row("r3", "c.pdf", None, "丙段內容。", None)),
+            ],
+            now=now,
+        )
+        sources, context = merge_retrievals(
+            [first, second], max_reports=15, max_chars=20000
+        )
+        self.assertEqual([s.report_id for s in sources], ["r1", "r2", "r3"])
+        self.assertEqual([s.n for s in sources], [1, 2, 3])
+        blocks = context.split("\n\n")
+        self.assertEqual(len(blocks), 3)
+        for src, block in zip(sources, blocks):
+            self.assertTrue(block.startswith(f"[{src.n}] 報告：{src.file_name}"))
+        self.assertEqual([s.report_id for s in sources if s.is_latest], ["r2"])
 
     def test_single_valid_batch_passes_check_not_identity(self):
         # 合法 build_context 產物（首字元即 [1] 報告：）不因零寬 split 空首元素被誤丟；
@@ -565,6 +606,94 @@ class TestRunAgentic(unittest.IsolatedAsyncioTestCase):
         o = self._final_outcome(events)
         self.assertEqual([c["q"] for c in retrieve_calls], ["聯電 產能利用率"])
         self.assertEqual(o.subqueries_run, [self.Q, "聯電 產能利用率"])
+
+    async def test_empty_eval_queries_fall_back_to_plan_subqueries(self):
+        # 規格 §3：評估 queries 空 → 退回 plan 中原問題以外、未執行過的子查詢；
+        # 原問題（norm key 已在 executed_keys）不重跑、不多耗預算槽位。
+        self._use_settings()
+        retrieve_calls = []
+        payload = '{"sufficient": false, "queries": []}'
+        result_map = {
+            "聯電 2026 展望": _batch(("rA", "A.pdf", None, ["Ａ段"])),
+            "台積電 先進製程": _batch(("rB", "B.pdf", None, ["Ｂ段"])),
+        }
+        with (
+            patch.object(qp, "stream_completion", _eval_stream([payload])),
+            patch.object(rp, "retrieve_context", _retrieving(result_map, retrieve_calls)),
+        ):
+            events = await self._collect(
+                self._plan(self.Q, "聯電 2026 展望", "台積電 先進製程")
+            )
+        o = self._final_outcome(events)
+        self.assertEqual(
+            [c["q"] for c in retrieve_calls], ["聯電 2026 展望", "台積電 先進製程"]
+        )
+        self.assertNotIn(self.Q, [c["q"] for c in retrieve_calls])
+        self.assertEqual(
+            o.subqueries_run, [self.Q, "聯電 2026 展望", "台積電 先進製程"]
+        )
+        self.assertEqual(o.rounds, 2)
+        self.assertEqual(o.skipped, 0)
+        self.assertLessEqual(1 + len(retrieve_calls), 3)
+        self.assertEqual({s.report_id for s in o.sources}, {"r1", "rA", "rB"})
+
+    async def test_plan_fallback_cropped_to_remaining_budget(self):
+        # 第二輪評估 queries 空 → plan fallback 的 pending 同受剩餘預算裁切
+        # （skipped 計數），檢索總數硬預算不變量維持。
+        self._use_settings(qa_max_rounds=3)
+        eval_calls, retrieve_calls = [], []
+        payloads = [
+            '{"sufficient": false, "queries": ["查A"]}',
+            '{"sufficient": false, "queries": []}',
+        ]
+        result_map = {
+            "查A": _batch(("rA", "A.pdf", None, ["Ａ段"])),
+            "子查B": _batch(("rB", "B.pdf", None, ["Ｂ段"])),
+        }
+        with (
+            patch.object(qp, "stream_completion", _eval_stream(payloads, eval_calls)),
+            patch.object(rp, "retrieve_context", _retrieving(result_map, retrieve_calls)),
+        ):
+            events = await self._collect(self._plan(self.Q, "子查B", "子查C"))
+        o = self._final_outcome(events)
+        self.assertEqual(len(eval_calls), 2)
+        # plan fallback pending=[子查B, 子查C] 被剩餘預算 1 裁為 [子查B]
+        self.assertEqual([c["q"] for c in retrieve_calls], ["查A", "子查B"])
+        self.assertEqual(o.subqueries_run, [self.Q, "查A", "子查B"])
+        self.assertEqual(o.skipped, 1)
+        self.assertEqual(o.rounds, 3)
+        self.assertLessEqual(1 + len(retrieve_calls), 3)
+
+    async def test_supplement_retrievals_never_overlap(self):
+        # 「補查依序而非並行」是生產不變量（rerank semaphore=1，並行會把排隊
+        # 時間吃進彼此的 rerank 逾時預算）。呼叫順序清單分不出 asyncio.gather
+        # 與依序（coroutine 依建立順序進入），故以 active/max_active 計數器
+        # 斷言不重疊（測法比照 tests/test_run_ragas.py 的序列化測試）。
+        self._use_settings()
+        seen = {"active": 0, "max_active": 0}
+        payload = '{"sufficient": false, "queries": ["查A", "查B"]}'
+        result_map = {
+            "查A": _batch(("rA", "A.pdf", None, ["Ａ段"])),
+            "查B": _batch(("rB", "B.pdf", None, ["Ｂ段"])),
+        }
+
+        async def probing_retrieve(question, **kwargs):
+            seen["active"] += 1
+            seen["max_active"] = max(seen["max_active"], seen["active"])
+            try:
+                await asyncio.sleep(0.01)
+            finally:
+                seen["active"] -= 1
+            return result_map[question]
+
+        with (
+            patch.object(qp, "stream_completion", _eval_stream([payload])),
+            patch.object(rp, "retrieve_context", probing_retrieve),
+        ):
+            events = await self._collect(self._plan(self.Q, "聯電 2026 展望"))
+        o = self._final_outcome(events)
+        self.assertEqual(o.subqueries_run, [self.Q, "查A", "查B"])
+        self.assertEqual(seen["max_active"], 1)
 
     async def test_budget_invariant_across_rounds(self):
         # qa_max_rounds=5、預算 3：第二輪跑 1 條、第三輪 2 條被剩餘預算裁為 1
@@ -975,6 +1104,107 @@ class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pending, set())
         self.assertTrue(plan_tasks[0].cancelled())
         self.assertEqual(retrieval_cancelled, [self.Q])
+
+    def _stub_followup_turn(self, condensed, decision):
+        """續問共用 stub：非空 turns ＋ condense_and_route 回（改寫查詢, decision）。"""
+
+        async def fake_turns(conv_id, **kwargs):
+            return [("上一問", "上一答")]
+
+        async def fake_condense(history_text, question, **kwargs):
+            return condensed, decision
+
+        self._patch(ans, "load_recent_turns", fake_turns)
+        self._patch(ans, "condense_and_route", fake_condense)
+
+    async def test_followup_uses_condensed_query_throughout(self):
+        # 續問縫（規格 §5.1；M3 端點縫教訓）：plan_queries／run_agentic／補查
+        # 皆以 condense 後的 standalone_query 為基準，而非原始追問。
+        self._pin_settings()
+        condensed = "台積電與聯電 2026 先進製程比較"
+        followup = "那先進製程呢?"
+        first = _batch(("r1", "a.pdf", "2026-05-01", ["甲段"]))
+        second = _batch(("r2", "b.pdf", "2026-06-01", ["乙段"]))
+        state = self._stub_chain(
+            plan=self._plan(condensed, "聯電 先進製程 進度"),
+            result_map={condensed: first, "查A": second},
+        )
+        self._stub_followup_turn(condensed, sr._decision(sr.CORPUS_QA))
+
+        eval_calls = []
+        payload = '{"sufficient": false, "queries": ["查A"]}'
+        with patch.object(
+            qp, "stream_completion", _eval_stream([payload], eval_calls)
+        ):
+            events = [
+                e async for e in ans.answer_question(followup, conversation_id="c1")
+            ]
+
+        stages = [p["stage"] for k, p in events if k == "status"]
+        self.assertEqual(
+            stages,
+            ["understanding", "evaluating", "retrieved", "reading", "generating"],
+        )
+        # 規劃收到改寫查詢（非原始追問）
+        self.assertEqual(len(state["plan_calls"]), 1)
+        self.assertEqual(state["plan_calls"][0]["question"], condensed)
+        # 第一輪檢索以改寫查詢為基準；補查為評估 queries
+        self.assertEqual(
+            [c["q"] for c in state["retrieve_calls"]], [condensed, "查A"]
+        )
+        # run_agentic 收到改寫查詢：評估 prompt 的「問題：」行以其為準
+        self.assertIn(f"問題：{condensed}", eval_calls[0]["prompt"])
+        self.assertNotIn(followup, eval_calls[0]["prompt"])
+        src_payload = next(p for k, p in events if k == "sources")
+        self.assertEqual([s["report_id"] for s in src_payload], ["r1", "r2"])
+        self.assertEqual(events[-1][1]["conversation_id"], "c1")
+
+    async def test_followup_advice_risk_scope_still_plans(self):
+        # 續問 scope 閘門含 ADVICE_RISK（漏掉即靜默回歸一次性 RAG 而其他測試全綠）。
+        self._pin_settings()
+        condensed = "台積電 加碼 風險評估"
+        first = _batch(("r1", "a.pdf", "2026-05-01", ["甲段"]))
+        state = self._stub_chain(
+            plan=self._plan(condensed), result_map={condensed: first}
+        )
+        self._stub_followup_turn(condensed, sr._decision(sr.ADVICE_RISK))
+
+        events = [
+            e async for e in ans.answer_question("所以呢?", conversation_id="c1")
+        ]
+
+        # plan_task 有建（單查詢 plan → 快速路徑，事件序與一次性 RAG 一致）
+        self.assertEqual(len(state["plan_calls"]), 1)
+        self.assertEqual(state["plan_calls"][0]["question"], condensed)
+        self.assertEqual(state["plan_calls"][0]["profile"], "qa")
+        kinds = [k for k, _ in events]
+        self.assertEqual(
+            kinds,
+            ["status", "sources", "status", "status", "status", "token",
+             "ext_sources", "done"],
+        )
+
+    async def test_followup_route_failopen_none_skips_planner(self):
+        # 續問 decision fail-open（None，契約漂移防護）：scope 閘門不建
+        # plan_task 也不得炸（null-safe），agentic 不介入、主 RAG 照常完成。
+        self._pin_settings()
+        condensed = "台積電 2026 展望"
+        first = _batch(("r1", "a.pdf", "2026-05-01", ["甲段"]))
+        state = self._stub_chain(
+            plan=self._plan(condensed), result_map={condensed: first}
+        )
+        self._stub_followup_turn(condensed, None)
+
+        events = [
+            e async for e in ans.answer_question("後續?", conversation_id="c1")
+        ]
+
+        self.assertEqual(state["plan_calls"], [])
+        stages = [p["stage"] for k, p in events if k == "status"]
+        self.assertEqual(
+            stages, ["understanding", "retrieved", "reading", "generating"]
+        )
+        self.assertEqual(events[-1][1]["cited"], ["r1"])
 
 
 if __name__ == "__main__":

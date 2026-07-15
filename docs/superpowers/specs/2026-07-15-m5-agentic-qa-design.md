@@ -15,7 +15,7 @@
 1. `app/services/query_planner.py`：M5 只改 `_QA_PROFILE` 標記區段（`query_planner.py:219–229`，填 `build_prompt`、調參數）；共用核心（`SubQuery`/`QueryPlan`/`parse_plan_json`/`normalize_subqueries`/`plan_queries`）不可改。
 2. `app/services/retrieval_pipeline.py::retrieve_context`（`retrieval_pipeline.py:45`）：M5 **不修改此檔，只呼叫**。
 3. `app/services/answer.py` 區域分工：M5 只動 `answer_question`（1182 行）以下；`select_reports`（302 行）/`build_context`（407 行）區域屬 M6，M5 只能以既有簽名**呼叫**、不得修改。**任何新符號（`plan_queries`、`run_agentic` 等）一律於 `answer_question` 函式內 import**——頂層 import 區塊位於 1182 行以上，即使不構成循環 import 也違反本條。
-4. 測試分流：M5 新測試進新檔 `tests/test_agentic_qa.py`（＋必要的最小 `tests/test_answer.py` 增補）；不動 `test_answer.py` 既有斷言。qa profile 的 prompt 測試也放 `test_agentic_qa.py`（避免與 M6 在 `tests/test_query_planner.py` 產生 add/add 衝突）。**另明訂：`eval/run_ragas.py`、`tests/test_run_ragas.py` 與 `frontend/`（含 vitest 測試）為 M5 專屬觸碰範圍——M6 驗收走研報題集與 `tests/test_select_reports.py`（`IMPLEMENTATION_PLAN.md:211–222`），不觸碰上述檔案；此白名單列入凍結契約自查。**
+4. 測試分流：M5 新測試進新檔 `tests/test_agentic_qa.py`（＋必要的最小 `tests/test_answer.py` 增補）；不動 `test_answer.py` 既有斷言。qa profile 的 prompt 測試也放 `test_agentic_qa.py`（避免與 M6 在 `tests/test_query_planner.py` 產生 add/add 衝突）。**另明訂：`eval/run_ragas.py`、`tests/test_run_ragas.py` 與 `frontend/`（含 vitest 測試）為 M5 專屬觸碰範圍——M6 驗收走研報題集與 `tests/test_select_reports.py`（`IMPLEMENTATION_PLAN.md:211–222`），不觸碰上述檔案；此白名單列入凍結契約自查。** `tests/conftest.py` 亦屬白名單，惟僅限單一共用 planner stub（autouse `_stub_query_planner_llm`，stub 點＝`query_planner.stream_completion`）：`qa_agentic_enabled` 預設開啟使所有既有 `answer_question` 端到端測試（test_answer／test_answer_trusted／test_evidence_wiring／test_overview／test_answer_report_wiring）都會經 `plan_queries` 外連 claude CLI，逐檔複製 stub 需觸碰更多非白名單檔、反而擴大衝突面；M6 沿用同一 stub、不得另加第二份 planner fixture，需要不同 planner 行為的測試在測試內自行 patch（2026-07-15 整合審查修訂）。
 5. `app/config.py` 與 `tests/test_config.py`：只在 M5 標記區段（`config.py:64–68`、`config.py:120–124`）與 `test_config.py::test_query_planner_defaults_m5`（`test_config.py:63–69`）內加鍵與斷言。
 6. 循環 import：`query_planner` 只 import 葉模組；`retrieval_pipeline` 頂層 import `answer`（`retrieval_pipeline.py:12`），故 `answer.py` 只能在函式內 import `retrieve_context`（現況 `answer.py:1306`）。新模組 `agentic_qa.py` 比照：頂層只 import 葉模組，`retrieve_context` 於函式內 import。
 7. eval 執行序列化：M5 與 M6 的 eval 跑批不可同時執行（API 529 限流＋單一 rerank semaphore `retrieval_pipeline.py:19–22`＋CPU-bound 模型）。
@@ -286,12 +286,15 @@ POST /api/ask（web/server.py:674，_ASK_SEMAPHORE=3）
 - `is_latest` 重算唯一。
 - 非首批塊數不符/前綴不符 → 該批丟棄；首批不符 → 原樣回傳首批（identity）。
 - 錨定行為（拆兩案，審查修訂）：（a）`[1] 報告：` 樣式出現在**行中** → 不誤切；（b）passage 恰以該樣式**起行** → 誤切被塊數檢核捕捉、該批丟棄（首批則 identity 回傳）。
+- **真品 round-trip（整合審查修訂）：以真 `build_context` 產物（含市場前綴的完整 head）餵入 `merge_retrievals`，斷言兩批 report_id 皆入合併、重編號連續**——手工複製格式的 fixture 防不了雙方同時對真格式失真；build_context 格式漂移時本測試會壞，把「格式耦合」從註解宣稱升級為測試保證。
 
 **`TestRunAgentic`**（stub `agentic_qa` 內函式級 import：monkeypatch `app.services.retrieval_pipeline.retrieve_context`——函式內 `from X import name` 於呼叫時綁定，先 patch 再呼叫即生效；planner/評估 stub `query_planner.stream_completion`）
 - 快速路徑（判定單點在此）：單查詢 plan → 零評估 LLM 呼叫、零補查、outcome==first；degraded plan 同。
 - 評估 sufficient → 無補查；insufficient＋queries → 依序補查、合併 outcome、yield `evaluating`。
 - 評估例外/垃圾 → 不 raise、outcome 以第一輪收斂、`degraded=True`。
 - 評估 queries 預算：stub 回 3 條 queries → 清洗裁切後至多執行 `qa_planner_max_subqueries - 1` 條；與原問題/已執行查詢重複的 queries 被去重不重跑。
+- 評估 queries 空（`{"sufficient": false, "queries": []}`）→ 退回 plan 中原問題以外、未執行過的子查詢；原問題不重跑；fallback 同受剩餘預算裁切（skipped 計數）（整合審查修訂）。
+- 補查依序不重疊：retrieve stub 以 active/max_active 計數器（進入 +1、sleep、離開 -1）斷言 `max_active == 1`——呼叫順序清單分不出 `asyncio.gather` 與依序，測法比照 `tests/test_run_ragas.py` 的序列化測試（整合審查修訂）。
 - deadline 注入（`now` 假時鐘）到期 → 補查未開始、skipped 正確計數；慢速補查 stub → 被 `wait_for` 取消、不炸迴圈。
 - 檢索呼叫總數 ≤ `qa_planner_max_subqueries`（跨輪不變量）。
 - `qa_max_rounds=1` → 無評估、無補查；`qa_max_rounds=3`＋預算未滿 → 第二次評估發生。
@@ -304,6 +307,7 @@ POST /api/ask（web/server.py:674，_ASK_SEMAPHORE=3）
 - `qa_agentic_enabled=False` → planner stub 零呼叫、事件序與既有一致。
 - 首輪被路由 time_sensitive/off_topic → plan_task 被 cancel（斷言 task.cancelled()）。
 - 生成器提前 close（模擬停止）→ plan_task 取消、無殘留 pending task。
+- 續問（turns 非空，整合審查修訂）：`plan_queries`／`run_agentic`／補查皆以 condense 後的 standalone_query 為基準（非原始追問，斷言評估 prompt 的「問題：」行）；scope 閘門含 ADVICE_RISK（續問 advice_risk 仍建 plan_task）；decision fail-open（None）時 planner 零呼叫、主 RAG 照常完成。
 
 **`tests/test_answer.py` 最小增補**：僅加「agentic 關閉時既有主 RAG 事件序回歸」一類保險絲測試（不改既有斷言）。
 
@@ -335,7 +339,7 @@ POST /api/ask（web/server.py:674，_ASK_SEMAPHORE=3）
 - [ ] 時效題行為與 M4a 驗收一致：仍由 `_answer_time_sensitive` 作答/婉拒、顯示截至時間（既有 `tests/test_answer_trusted.py` 零回歸）。
 - [ ] 政策自查：agentic 迴圈內零 `fetch_trusted`／零外部 adapter 呼叫（grep `agentic_qa.py` 無 `trusted` import）；`allow_web=False` 維持。
 - [ ] `qa_agentic_enabled=0` 時事件序與 qa_log 寫入與 M4 一致（回退開關驗證）。
-- [ ] 凍結契約自查：`query_planner` 共用核心 diff 為零；`retrieval_pipeline.py` diff 為零；`answer.py` 1182 行以上 diff 為零（含 import 區塊）；`select_reports`/`build_context` diff 為零；config/test_config 只動 M5 區段；M5 觸碰的 `eval/run_ragas.py`、`tests/test_run_ragas.py`、`frontend/` 屬契約 4 白名單。
+- [ ] 凍結契約自查：`query_planner` 共用核心 diff 為零；`retrieval_pipeline.py` diff 為零；`answer.py` 1182 行以上 diff 為零（含 import 區塊）；`select_reports`/`build_context` diff 為零；config/test_config 只動 M5 區段；M5 觸碰的 `eval/run_ragas.py`、`tests/test_run_ragas.py`、`frontend/`、`tests/conftest.py`（僅限單一共用 planner stub）屬契約 4 白名單。
 - [ ] Commit 序列全為 `feat(問答): ...`。
 
 ## 部署
@@ -377,3 +381,13 @@ POST /api/ask（web/server.py:674，_ASK_SEMAPHORE=3）
 12. **快速路徑雙份判定（MINOR）**：成立。統一單點在 `run_agentic`，§4/§5.3/測試同步。
 13. **eval 併發自我競爭（MINOR）**：成立（rerank workers=1）。`--agentic` 強制 concurrency 1＋per-case 歸因欄位。
 14. **ext_sources「恆空」假設（MINOR）**：成立（`answer.py:92/203–212`）。改寫為「通常為空、不可依賴」，行為不改（保回退 byte-identical），manifest 側 `evidence.py:344–348` 已安全，測試不得斷言恆空。
+
+## 整合審查修訂紀錄（2026-07-15，第二輪）
+
+實作完成後的整合審查 5 條 IMPORTANT findings 全數成立，處置如下：
+
+1. **契約 4 白名單漏 `tests/conftest.py`**：共用 planner stub 落在 conftest 卻不在白名單。經開檔評估：per-file 複製需觸碰 test_answer_trusted／test_evidence_wiring／test_overview／test_answer_report_wiring 等更多非白名單檔，故採白名單修訂案——契約 4 明文納入 conftest（僅限單一共用 stub）並約定 M6 沿用、不另加第二份。
+2. **續問接線零覆蓋**：standalone_query 縫與續問 scope 閘門無測試。補 TestAnswerAgenticWiring 續問三案（condensed query 貫穿規劃/迴圈/補查、ADVICE_RISK 閘門、decision None 零規劃）。
+3. **merge 無真品 round-trip**：合併測試全用手工複製格式的 fixture。補真 build_context 產物 round-trip 測試。
+4. **plan-fallback 分支零覆蓋**：評估 queries 空的退回分支無測試。補空 queries 退回 plan 子查詢＋剩餘預算裁切（skipped）兩案。
+5. **「依序」斷言無鑑別力**：呼叫順序清單分不出 gather 與依序。補 active/max_active 計數器測試（`max_active == 1`）。

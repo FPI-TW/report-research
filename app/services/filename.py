@@ -21,7 +21,11 @@ BROKER_MAP: dict[str, str] = {
     "NMR": "nomura",
     "MQ": "macquarie",
     "DW": "daiwa",
+    "DAIWA": "daiwa",  # 2026-07 NAS 批次與 Daiwa_ 前綴檔名帶全字
+    "大和": "daiwa",  # 大和台灣業務端中文筆記（大和 AMD 3QFY24法說摘要.pdf）
+    "FUBON": "fubon",  # 拉丁形式（memo_Fubon 20250730.pdf）；富邦 CJK 已另收
     "CLSA": "clsa",
+    "CLST": "clsa",  # CL Securities Taiwan（CLSA 台灣）個股報告檔名帶 -CLST<日期>
     "CITI": "citi",
     "BOFA": "bofa",
     "BAML": "bofa",
@@ -228,10 +232,25 @@ def parse_filename(file_name: str) -> FilenameMeta:
             # "MSCI"/"MSFT"/"EMS"/"Memory" 等（曾使多篇研報被錯標 morgan_stanley）。
             # 外資代碼的精確錨點是上方 RE_SOURCE_DATE（-MS20240314）；此處保留 -MS-/-MS<6碼>
             # 等詞邊界形式。CJK 券商名為多字、distinctive，維持子字串比對。
+            # 2026-07 NAS 新批次改用小寫代碼（260709_ubs_largan.pdf）：≥3 字母代碼
+            # 不分大小寫（詞邊界仍防 substrates/citizen 類子字串）；2 字母短代碼
+            # 不分大小寫誤中面積大（"5ms" 毫秒等），僅追加分隔符包夾形式（_ms_），
+            # 全大寫詞邊界既有行為不變。
             if token.isascii():
-                hit = re.search(
-                    rf"(?<![A-Za-z]){re.escape(token)}(?![A-Za-z])", stem
-                )
+                if len(token) >= 3:
+                    hit = re.search(
+                        rf"(?<![A-Za-z]){re.escape(token)}(?![A-Za-z])",
+                        stem,
+                        re.IGNORECASE,
+                    )
+                else:
+                    hit = re.search(
+                        rf"(?<![A-Za-z]){re.escape(token)}(?![A-Za-z])", stem
+                    ) or re.search(
+                        rf"(?:^|[\s_\-.]){re.escape(token)}(?=[\s_\-.]|$)",
+                        stem,
+                        re.IGNORECASE,
+                    )
             else:
                 hit = token in stem
             if hit:
@@ -288,19 +307,44 @@ CONTENT_SIGNATURES_CJK: list[tuple[str, list[str]]] = [
     ("huanan", ["華南投顧"]),
     ("fubon_sec", ["福邦投顧"]),
 ]
+# 拉丁指紋與 CJK 側同原則：**只用發行者自我指稱形式**（法律實體名、研究部門名、
+# 圖表自我標註「Source: X forecasts」），不可用裸品牌名——彙整型週報（本土「重要企業
+# 財報前瞻」轉述「投行Jefferies警告…」、英文 Last Week in Markets 提及「HSBC and
+# Hang Seng use their own HIBOR」）常在前 4000 字「提及」外資，裸名必誤標。
+# 舊版裸名靠 2500 小窗僥倖低誤中，窗擴至 4000 後裸名不可再留。
 CONTENT_SIGNATURES_LATIN: list[tuple[str, list[str]]] = [
-    ("morgan_stanley", ["morgan stanley"]),
-    ("goldman_sachs", ["goldman sachs"]),
-    ("jpmorgan", ["j.p. morgan", "jpmorgan"]),
+    ("morgan_stanley", [
+        "morgan stanley & co", "morgan stanley asia", "morgan stanley taiwan",
+        "morgan stanley research",
+    ]),
+    ("goldman_sachs", [
+        "goldman sachs & co", "goldman sachs japan", "goldman sachs asia",
+        "goldman sachs international", "goldman sachs research",
+    ]),
+    ("jpmorgan", [
+        "j.p. morgan securities", "j.p. morgan research", "jpmorgan chase",
+        "j.p. morgan asset management",
+    ]),
     ("ubs", ["ubs ag", "ubs securities", "ubs limited"]),
-    ("nomura", ["nomura"]),
-    ("macquarie", ["macquarie"]),
-    ("daiwa", ["daiwa"]),
-    ("clsa", ["clsa"]),
+    ("nomura", [
+        "nomura securities", "nomura international", "nomura global markets",
+        "source: lseg, nomura",
+    ]),
+    ("macquarie", [
+        "macquarie capital", "macquarie securities", "macquarie research",
+    ]),
+    ("daiwa", [
+        "daiwa securities", "daiwa capital markets", "source: daiwa",
+        "daiwa forecasts",
+    ]),
+    ("clsa", [
+        "clsa limited", "clsa securities", "clsa research",
+        "cl securities taiwan", "source: clst",
+    ]),
     ("citi", ["citigroup", "citi research", "citivelocity"]),
     ("bofa", ["bofa securities", "merrill lynch", "bofaml"]),
-    ("hsbc", ["hsbc"]),
-    ("jefferies", ["jefferies"]),
+    ("hsbc", ["hsbc global research", "hsbc securities", "the hongkong and shanghai banking"]),
+    ("jefferies", ["jefferies llc", "jefferies group", "jefferies research", "jefferies hong kong"]),
 ]
 _LATIN_SIG_RE: list[tuple[str, list[re.Pattern[str]]]] = [
     (
@@ -310,9 +354,13 @@ _LATIN_SIG_RE: list[tuple[str, list[re.Pattern[str]]]] = [
     for name, markers in CONTENT_SIGNATURES_LATIN
 ]
 
-# 本土發行機構指紋掃前 4000 字（含前數頁圖表自我標註）；外資拉丁只掃前 2500 字（防提及）。
+# 本土發行機構指紋掃前 4000 字（含前數頁圖表自我標註）；外資拉丁同為 4000 —
+# 原 2500 太小：2026-07 NAS 批次外資 PDF 表頭較長（表格先被抽出），發行者自稱
+# （citi research／prepared by ubs securities／source: lseg, nomura）實測落在
+# char 2653–3862，全數超窗致 source NULL。詞邊界＋最早指紋優先＋「無本土指紋才採」
+# 三重防護不變，深於 4000 的 body-mention 仍不採。
 CJK_SIG_WINDOW = 4000
-LATIN_SIG_WINDOW = 2500
+LATIN_SIG_WINDOW = 4000
 
 
 def _detect_issuer(full_text: str, window: int) -> Optional[str]:

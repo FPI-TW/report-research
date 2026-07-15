@@ -136,3 +136,60 @@ CREATE INDEX IF NOT EXISTS idx_report_doc_conversation
     ON research.report_doc (conversation_id, created_at);
 -- M4b：證據帳本 manifest（與 qa_log 同格式；NULL＝舊列，空帳本語義）
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS evidence_manifest jsonb;
+
+-- ── 觀點雷達訊號層：一列＝「一份研報 × 一個標的」的不可覆寫歷史快照 ──
+-- 報告可涵蓋多個 stock_targets，故每個標的各一列。（研報觀點變化雷達設計規格「資料模型」）
+-- 由 scripts/extract_signals.py 以 LLM 依固定 schema 擷取、Python 正規化後 upsert。
+-- 讀取雷達時不呼叫 LLM，所有差異由 app/services/radar/ 決定性計算。
+CREATE TABLE IF NOT EXISTS research.report_signal (
+    id                    uuid PRIMARY KEY,
+    -- 同 file_hash 重新 ingest 時（store.upsert_report 先刪後插）舊訊號連帶 CASCADE 清除，
+    -- 批次下次偵測缺列自動補擷取＝要的冪等行為。
+    report_id             uuid NOT NULL
+                            REFERENCES research.research_report(id) ON DELETE CASCADE,
+    market                text NOT NULL,               -- findb 市場代碼（對齊 research_report.market）
+    instrument_code       text NOT NULL,               -- 個股代碼（來自 stock_targets）
+    broker                text,                         -- 券商（來自 research_report.source，可 NULL）
+    report_date           date,                         -- 報告日（來自 research_report.report_date）
+    created_at            timestamptz NOT NULL DEFAULT now(),
+
+    -- 評等：原文保留 + 正規化五級；無法映射 → 'unknown'（不計入分布，見設計規格）
+    rating_raw            text,
+    rating_normalized     text NOT NULL DEFAULT 'unknown'
+        CHECK (rating_normalized IN
+               ('buy','overweight','neutral','underweight','sell','unknown')),
+
+    -- 目標價：保幣別、不換算、不混入跨券商中位數。numeric 不可用 float（精確計算）
+    target_price          numeric(18,4),
+    target_currency       text,
+    target_horizon        text,
+    target_price_evidence text,
+
+    -- EPS：陣列，每筆 {fiscal_year, period, currency, unit, value, evidence}
+    eps_estimates         jsonb NOT NULL DEFAULT '[]'::jsonb,
+
+    -- 四維論點：{outlook, catalyst, risk, valuation}，各 {stance, summary, evidence}
+    thesis_dimensions     jsonb NOT NULL DEFAULT '{}'::jsonb,
+
+    -- 可追溯：schema/prompt 版本、擷取狀態、原始輸出、錯誤
+    extraction_version    text NOT NULL,
+    extraction_status     text NOT NULL DEFAULT 'pending'
+        CHECK (extraction_status IN ('pending','valid','partial','rejected')),
+    raw_payload           jsonb,
+    error_detail          text,
+
+    -- 一份研報對一個標的至多一列（不同報告＝不同快照各一列；同報告重擷取只更新該列）
+    CONSTRAINT uq_report_signal_report_instr
+        UNIQUE (report_id, market, instrument_code)
+);
+
+-- 索引（設計規格「建立索引」段）：總覽與券商時間線查詢
+CREATE INDEX IF NOT EXISTS idx_report_signal_instr_date
+    ON research.report_signal (market, instrument_code, report_date DESC);
+CREATE INDEX IF NOT EXISTS idx_report_signal_instr_broker_date
+    ON research.report_signal (market, instrument_code, broker, report_date DESC);
+CREATE INDEX IF NOT EXISTS idx_report_signal_report
+    ON research.report_signal (report_id);
+-- 批次 checkpoint / rerun：快速撈 pending/rejected/partial
+CREATE INDEX IF NOT EXISTS idx_report_signal_status
+    ON research.report_signal (extraction_status);

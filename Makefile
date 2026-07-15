@@ -17,7 +17,7 @@ COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align normalize serve search \
-        stats reset-db clean-data pipeline \
+        stats reset-db clean-data pipeline signals \
         up-edge down-edge edge-logs edge-reload \
         sync-once
 
@@ -81,6 +81,9 @@ normalize:  ## 一次性清理 chunk content（CJK 空白）+ ANALYZE（冪等�
 
 summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續傳，補 summary IS NULL）
 	uv run python scripts/generate_summaries.py
+
+signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 make schema）→ research.report_signal
+	uv run python scripts/extract_signals.py
 
 # ───── 檢索 ─────
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)

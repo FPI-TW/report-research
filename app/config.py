@@ -61,6 +61,15 @@ class Settings:
     rerank_model: str
     # trusted_market_data.py（M4a）
     trusted_data_enabled: bool
+    # agentic_qa / query_planner（M5）—— M5 里程碑只在本區段內加鍵
+    qa_planner_model: str
+    qa_planner_timeout: float
+    qa_planner_max_subqueries: int
+    qa_max_rounds: int
+    # report 檢索增強 / query_planner（M6）—— M6 里程碑只在本區段內加鍵
+    report_planner_model: str
+    report_planner_timeout: float
+    report_planner_max_subqueries: int
 
 
 def _load() -> Settings:
@@ -108,6 +117,15 @@ def _load() -> Settings:
         report_rerank_timeout=float(os.getenv("REPORT_RERANK_TIMEOUT", "180")),
         rerank_model=os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),
         trusted_data_enabled=_flag("TRUSTED_DATA_ENABLED", "1"),
+        # agentic_qa / query_planner（M5）—— M5 里程碑只在本區段內加鍵
+        qa_planner_model=os.getenv("QA_PLANNER_MODEL", intent_model),
+        qa_planner_timeout=float(os.getenv("QA_PLANNER_TIMEOUT", "20")),
+        qa_planner_max_subqueries=int(os.getenv("QA_PLANNER_MAX_SUBQUERIES", "3")),
+        qa_max_rounds=int(os.getenv("QA_MAX_ROUNDS", "2")),
+        # report 檢索增強 / query_planner（M6）—— M6 里程碑只在本區段內加鍵
+        report_planner_model=os.getenv("REPORT_PLANNER_MODEL", intent_model),
+        report_planner_timeout=float(os.getenv("REPORT_PLANNER_TIMEOUT", "30")),
+        report_planner_max_subqueries=int(os.getenv("REPORT_PLANNER_MAX_SUBQUERIES", "8")),
     )
 
 

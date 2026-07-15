@@ -427,6 +427,169 @@ class RetrieveContextMultiTests(unittest.IsolatedAsyncioTestCase):
                 await task
         self.assertEqual(built["n"], 0)  # 不以部分結果續跑
 
+    async def test_multiquery_rerank_disabled_degrades_to_primary(self):
+        # 緊急退場 REPORT_RERANK_ENABLED=0 → rerank_top_m=0：rerank（唯一以原題對
+        # 子查詢召回打分的防線）整段跳過。多查詢必須降級回原題單查詢結果，而非讓
+        # 異質 (tier, fused) 合併序＋max-over-subqueries gate 直接進 build_context。
+        import app.services.retrieval_pipeline as rp
+
+        primary = [(0, 0.5, _row("c1", "r1"))]
+        sub = [(2, 0.9, _row("c2", "r2"))]
+        seen = {}
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            return primary if q == "原題" else sub
+
+        def _fake_build(scored, **kw):
+            seen["build_scored"] = scored
+            seen["gate"] = kw.get("gate_scores")
+            return (["S"], "CTX")
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build):
+            await rp.retrieve_context_multi(
+                "原題", ["原題", "面向A"], mmr_lambda=0.0,
+                rerank_top_m=0, **self._KNOBS,
+            )
+        self.assertIs(seen["build_scored"], primary)  # 原題單查詢原始結果
+        self.assertIsNone(seen["gate"])               # gate 快照不傳
+
+    async def test_offtopic_subquery_hit_retiered_against_question(self):
+        # 離題子查詢的字面命中（子查詢端 tier 2）合併後以原始主題重算 tier：
+        # 內容不含原題詞 → 降為 TIER_SEMANTIC，不再冒充 tier 2 霸佔頂部/繞過 floor；
+        # rerank 有套用（同 tier 內重排）也無法把跨 tier 垃圾壓下去——重算才是防線。
+        import app.services.retrieval_pipeline as rp
+        from app.services.retrieval import TIER_PHRASE, TIER_SEMANTIC
+
+        on_topic = [(2, 0.90, _row("c_on", "r_on", "台積電先進製程展望"))]
+        off_topic = [(2, 0.95, _row("c_off", "r_off", "虛擬貨幣詐騙頻傳"))]
+        seen = {}
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            return on_topic if q == "台積電" else off_topic
+
+        def _identity_content_rerank(question, scored, *, top_m, timer=None, deadline=None):
+            return list(scored)  # 新物件＝套用；不動 tier（同 tier 內重排語意）
+
+        def _fake_build(scored, **kw):
+            seen["scored"] = list(scored)
+            return (["S"], "CTX")
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "rerank_scored", _identity_content_rerank), \
+             mock.patch.object(rp, "build_context", _fake_build):
+            await rp.retrieve_context_multi(
+                "台積電", ["台積電", "虛擬貨幣 詐騙"], mmr_lambda=0.0,
+                rerank_top_m=50, rerank_timeout=5.0, **self._KNOBS,
+            )
+        tiers = {r.chunk_id: t for (t, _f, r) in seen["scored"]}
+        self.assertEqual(tiers["c_on"], TIER_PHRASE)     # 原題字面命中保留
+        self.assertEqual(tiers["c_off"], TIER_SEMANTIC)  # 離題命中降為語意層
+
+    async def test_build_context_runs_off_event_loop(self):
+        # MMR cosine 為純 Python CPU；build_context 必須卸載到執行緒，否則在單一
+        # event loop 同步跑會凍結全站併發（M2 教訓，比照 rerank/embed 卸載）。
+        import threading
+
+        import app.services.retrieval_pipeline as rp
+
+        main_thread = threading.current_thread()
+        seen = {}
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            return [(0, 0.5, _row("c1", "r1"))]
+
+        def _fake_build(scored, **kw):
+            seen["thread"] = threading.current_thread()
+            return (["S"], "CTX")
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build):
+            await rp.retrieve_context_multi(
+                "原題", ["原題"], mmr_lambda=0.0, **self._KNOBS,
+            )
+        self.assertIsNot(seen["thread"], main_thread)
+
+    async def test_cancellation_with_partial_completion_does_not_continue(self):
+        # 混合 fixture：第一條查詢已完成、第二條掛起時取消——外層取消必須經
+        # asyncio.gather 穿透，且不得以「已完成的部分結果」續跑 build_context。
+        # （守的是外層取消傳播；個別 task 的 except Exception vs BaseException 在
+        # gather＋外層取消下等價——兩者取消皆由 gather future 穿透，非此測試標的。）
+        import app.services.retrieval_pipeline as rp
+
+        q0_done = asyncio.Event()
+        q1_started = asyncio.Event()
+        built = {"n": 0}
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            if q == "原題":
+                q0_done.set()
+                return [(0, 0.5, _row("c1", "r1"))]
+            q1_started.set()
+            await asyncio.sleep(30)
+            return []
+
+        def _fake_build(scored, **kw):
+            built["n"] += 1
+            return ([], "")
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "build_context", _fake_build):
+            task = asyncio.create_task(
+                rp.retrieve_context_multi(
+                    "原題", ["原題", "面向A"], mmr_lambda=0.0, **self._KNOBS,
+                )
+            )
+            await q0_done.wait()
+            await q1_started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(built["n"], 0)  # 部分完成也不得續跑
+
+    async def test_primary_failed_and_rerank_not_applied_keeps_merged(self):
+        # 複合故障：原題（首條）檢索失敗＋rerank 未套用（回同一物件）。降級無原題
+        # 可退 → else 分支：保留合併序（子查詢結果）、gate 不傳。此分支是研報能否
+        # 生成的最後防線，若誤植（NameError／raise）會炸掉整份研報。
+        import app.services.retrieval_pipeline as rp
+
+        sub = [(1, 0.8, _row("c2", "r2", "面向內容"))]
+        seen = {}
+
+        async def _fake_hybrid(session, q, vec, **kw):
+            if q == "原題":
+                raise RuntimeError("primary down")
+            return sub
+
+        def _identity_rerank(question, scored, *, top_m, timer=None, deadline=None):
+            return scored  # 同一物件＝未套用
+
+        def _fake_build(scored, **kw):
+            seen["scored"] = list(scored)
+            seen["gate"] = kw.get("gate_scores")
+            return (["S"], "CTX")
+
+        with mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
+             mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
+             mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "rerank_scored", _identity_rerank), \
+             mock.patch.object(rp, "build_context", _fake_build):
+            out = await rp.retrieve_context_multi(
+                "原題", ["原題", "面向A"], mmr_lambda=0.0,
+                rerank_top_m=50, rerank_timeout=5.0, **self._KNOBS,
+            )
+        self.assertEqual(out, (["S"], "CTX"))  # 不拋：研報照常生成
+        self.assertEqual([r.chunk_id for (_t, _f, r) in seen["scored"]], ["c2"])
+        self.assertIsNone(seen["gate"])
+
     async def test_multiquery_rerank_timeout_degrades_to_primary(self):
         import time as _time
 
@@ -603,6 +766,9 @@ class RetrieveContextMultiTests(unittest.IsolatedAsyncioTestCase):
             scans.append((q, kw.get("dense_scan")))
             return rows_primary if q == "原題" else []
 
+        def _fake_rerank(question, scored, *, top_m, timer=None, deadline=None):
+            return list(scored)  # 新物件＝套用（避免多查詢降級遮蔽 total_candidates 斷言）
+
         async def _fake_fetch(session, chunk_ids):
             return {}
 
@@ -615,12 +781,13 @@ class RetrieveContextMultiTests(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(rp, "embed_query_cached", lambda q: [0.1]), \
              mock.patch.object(rp, "SessionFactory", lambda: _Session()), \
              mock.patch.object(rp, "hybrid_search", _fake_hybrid), \
+             mock.patch.object(rp, "rerank_scored", _fake_rerank), \
              mock.patch.object(rp, "fetch_chunk_embeddings", _fake_fetch), \
              mock.patch.object(rp, "build_context", _fake_build):
             await rp.retrieve_context_multi(
                 "原題", ["原題", "面向A"],
                 k=30, dense_scan=400, max_reports=25, max_passages=6,
-                max_chars=40000,
+                max_chars=40000, rerank_top_m=50,
             )
         self.assertEqual(dict(scans)["面向A"], 123)               # 子查詢掃描深度
         self.assertEqual(len(seen["build_scored"]), 7)            # total_candidates 截斷

@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.services.answer import Source, build_context
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
-from app.services.retrieval import hybrid_search
+from app.services.retrieval import classify_match, extract_terms, hybrid_search
 from app.services.rerank import rerank_scored
 from app.services.rows import ChunkRow
 from app.services.store import fetch_chunk_embeddings
@@ -141,6 +141,25 @@ def merge_scored(
     return merged
 
 
+def _retier_to_question(question, merged):
+    """以原始主題重算合併候選的 tier（純函式，可卸載到執行緒）。
+
+    各子查詢的 hybrid_search tier 只相對「該子查詢字面」；離題子查詢的字面命中
+    會冒充 tier 2 霸佔 select_reports 頂部並繞過 relevance_floor（tier>=TIER_ALL_TERMS
+    免閘），而 rerank 只在同 tier 內重排（保留 tier）無法跨 tier 壓垃圾。改以原題的
+    phrase/all-terms 判定（與 hybrid_search 共用 classify_match）重算 tier：切題命中
+    保留、離題命中降為 TIER_SEMANTIC。fused 不變（仍是 max-over-subqueries 快照）；
+    重算後依 (tier, fused) 降序重排。
+    """
+    phrase, terms = extract_terms(question)
+    retiered = [
+        (classify_match(phrase, terms, row.content)[0], fused, row)
+        for (_tier, fused, row) in merged
+    ]
+    retiered.sort(key=lambda s: (s[0], s[1]), reverse=True)
+    return retiered
+
+
 async def retrieve_context_multi(
     question: str,
     queries: Sequence[str],
@@ -230,6 +249,10 @@ async def retrieve_context_multi(
         raise errors[-1]  # 全部失敗＝系統性故障，不吞（等同現行檢索失敗傳播）
 
     merged = merge_scored(ok, cap=cap)
+    if len(qlist) > 1:
+        # 合併後以原始主題重算 tier（純 CPU，卸載到執行緒避免凍結 event loop，
+        # 比照 rerank/embed；_retier_to_question docstring 說明其防線角色）。
+        merged = await asyncio.to_thread(_retier_to_question, question, merged)
     if timer is not None:
         timer.mark("retrieve")
 
@@ -239,29 +262,32 @@ async def retrieve_context_multi(
     }
 
     scored: list = merged
+    applied = False
     if rerank_top_m > 0:
         timeout = rerank_timeout if rerank_timeout is not None else _RERANK_TIMEOUT
         scored, applied = await _rerank_stage(
             question, scored, top_m=rerank_top_m, timeout=timeout, timer=timer
         )
-        if not applied and len(qlist) > 1:
-            # 離題子查詢防線：rerank（唯一以原題重打分者）未套用時，合併序只反映
-            # 「對各子查詢字面」的 (tier, fused)，垃圾子查詢的字面命中會排最前——
-            # 整批降級回原題單查詢結果（＝現行 retrieve_context fail-open 後行為）。
-            primary = results[0]
-            if primary is not None:
-                logger.warning(
-                    "multi-query rerank not applied; degrading to primary-query results"
-                )
-                scored = primary
-            else:
-                # 原題那條檢索也失敗時無可退，保留合併序（gate 一樣不傳：
-                # rerank 未套用，各 chunk fused 未被覆蓋，floor 直接比 fused 等價）
-                logger.warning(
-                    "multi-query rerank not applied and primary query failed; "
-                    "keeping merged order"
-                )
-            gate_scores = None
+    if len(qlist) > 1 and not applied:
+        # 離題子查詢防線：rerank（唯一以原題重打分、把同 tier 內垃圾壓到尾段者）
+        # 未實際套用時——無論逾時、fail-open 回傳同一物件、或 rerank 旗標關閉
+        # （rerank_top_m<=0，緊急退場 REPORT_RERANK_ENABLED=0）——合併序只反映
+        # 「對各子查詢字面」的 (tier, fused)，離題子查詢的字面命中會排最前。整批
+        # 降級回原題單查詢結果（＝現行 retrieve_context fail-open 後行為）。
+        primary = results[0]
+        if primary is not None:
+            logger.warning(
+                "multi-query rerank not applied; degrading to primary-query results"
+            )
+            scored = primary
+        else:
+            # 原題那條檢索也失敗時無可退，保留合併序（gate 一樣不傳：
+            # rerank 未套用，各 chunk fused 未被覆蓋，floor 直接比 fused 等價）
+            logger.warning(
+                "multi-query rerank not applied and primary query failed; "
+                "keeping merged order"
+            )
+        gate_scores = None
 
     chunk_embeddings: dict[str, list[float]] = {}
     if mmr_lambda > 0:
@@ -286,7 +312,10 @@ async def retrieve_context_multi(
                 )
                 chunk_embeddings = {}
 
-    return build_context(
+    # MMR cosine 為純 Python O(候選×已選×1024) CPU：卸載到執行緒，避免在單一
+    # asyncio event loop 同步跑而凍結全站併發（比照 rerank/embed；M2 教訓）。
+    return await asyncio.to_thread(
+        build_context,
         scored,
         max_reports=max_reports,
         max_passages=max_passages,

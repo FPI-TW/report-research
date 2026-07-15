@@ -46,6 +46,22 @@ def extract_terms(q: str) -> tuple[str, list[str]]:
     return phrase, terms
 
 
+def classify_match(phrase: str, terms: list[str], content: str) -> tuple[int, float]:
+    """content 相對 (phrase, terms) 的字面命中分層與融合加成 → (tier, bonus)。
+
+    hybrid_search 逐候選呼叫；多查詢合併後以原始主題重算 tier 亦共用此判定
+    （retrieval_pipeline._retier_to_question），確保兩處 phrase/all-terms 尺度不漂移。
+    """
+    nc = norm_for_match(content)
+    hit_phrase = bool(phrase) and phrase in nc
+    coverage = (sum(t in nc for t in terms) / len(terms)) if terms else 0.0
+    if hit_phrase:
+        return TIER_PHRASE, W_PHRASE
+    if coverage == 1.0 and len(terms) >= 2:
+        return TIER_ALL_TERMS, W_ALL
+    return TIER_SEMANTIC, W_PARTIAL * coverage
+
+
 async def hybrid_search(
     session: AsyncSession,
     q: str,
@@ -102,16 +118,7 @@ async def hybrid_search(
             continue
         seen.add(chunk_id)
         dense_sim = 1.0 - float(row.distance)
-        nc = norm_for_match(row.content)
-        hit_phrase = bool(phrase) and phrase in nc
-        coverage = (sum(t in nc for t in terms) / len(terms)) if terms else 0.0
-        hit_all = coverage == 1.0 and len(terms) >= 2
-        if hit_phrase:
-            tier, bonus = TIER_PHRASE, W_PHRASE
-        elif hit_all:
-            tier, bonus = TIER_ALL_TERMS, W_ALL
-        else:
-            tier, bonus = TIER_SEMANTIC, W_PARTIAL * coverage
+        tier, bonus = classify_match(phrase, terms, row.content)
         fused = min(0.999, round(dense_sim + bonus, 4))
         scored.append((tier, fused, row))
 

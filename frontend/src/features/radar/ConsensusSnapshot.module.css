@@ -1,0 +1,78 @@
+.grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr 0.9fr;
+  gap: 12px;
+}
+
+.card {
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-xs);
+  padding: 16px 18px;
+  min-height: 120px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--tf-text-3);
+  margin-bottom: 10px;
+}
+
+.value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--tf-text-1);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.sub {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--tf-text-3);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+}
+
+.foot {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.buckets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--tf-text-2);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 10px;
+}
+
+.bucket b { font-weight: 700; color: var(--tf-text-1); }
+
+.quality {
+  font-size: 13px;
+  color: var(--tf-text-2);
+  line-height: 1.5;
+}
+.quality strong {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--tf-text-1);
+  font-variant-numeric: tabular-nums;
+  margin: 6px 0 8px;
+}
+
+@media (max-width: 1100px) {
+  .grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) {
+  .grid { grid-template-columns: 1fr; }
+  .rating { grid-column: 1 / -1; }
+}

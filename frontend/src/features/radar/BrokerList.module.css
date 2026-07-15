@@ -1,0 +1,115 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-xs);
+  overflow: hidden;
+}
+
+.table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tf-text-3);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--tf-border);
+  background: var(--tf-sidebar);
+}
+
+.table td {
+  padding: 12px 14px;
+  font-size: 13.5px;
+  color: var(--tf-text-1);
+  border-bottom: 1px solid var(--tf-divider);
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+
+.table tr:last-child td { border-bottom: 0; }
+
+.row {
+  cursor: pointer;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard);
+}
+
+.row:hover td { background: var(--tf-gold-panel); }
+.row:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: -2px; }
+.rowOpen td { background: var(--tf-ink-tint); }
+
+.broker {
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stale {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tf-text-4);
+}
+
+.num { text-align: right; white-space: nowrap; }
+.dash { color: var(--tf-text-4); }
+
+.expand {
+  width: 36px;
+  text-align: center;
+  color: var(--tf-text-4);
+  transition: transform var(--tf-dur-2) var(--tf-ease-out);
+}
+.expandOpen { transform: rotate(180deg); color: var(--tf-ink); }
+
+.panelCell {
+  padding: 0 !important;
+  background: var(--tf-canvas) !important;
+  border-bottom: 1px solid var(--tf-border) !important;
+}
+
+/* 手機卡片 */
+.cards { display: none; flex-direction: column; gap: 10px; }
+
+.card {
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-xs);
+  overflow: hidden;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 14px 16px;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--tf-sans);
+  min-height: 56px;
+}
+
+.cardHead:hover { background: var(--tf-gold-panel); }
+
+.cardMain { flex: 1; min-width: 0; }
+.cardName { font-weight: 700; font-size: 14px; color: var(--tf-text-1); }
+.cardMeta {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--tf-text-3);
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.cardChange { margin-top: 6px; }
+
+@media (max-width: 900px) {
+  .tableWrap { display: none; }
+  .cards { display: flex; }
+}

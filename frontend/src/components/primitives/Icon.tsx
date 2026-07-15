@@ -5,6 +5,7 @@ export type IconName =
   | 'panel' | 'logout' | 'chevronDown' | 'x' | 'filter'
   | 'alertCircle' | 'alertTriangle' | 'send' | 'fileText' | 'trash' | 'thumbUp' | 'thumbDown' | 'copy'
   | 'check' | 'spinner'
+  | 'compass' | 'trendUp' | 'trendDown' | 'trendFlat' | 'diverge' | 'notComparable' | 'quote' | 'info'
 
 const PATHS: Record<IconName, ReactNode> = {
   search: (<><circle cx="10" cy="10" r="7" /><path d="M21 21l-6 -6" /></>),
@@ -27,6 +28,14 @@ const PATHS: Record<IconName, ReactNode> = {
   copy: (<><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2 -2h10" /></>),
   check: (<path d="M5 12l5 5l9 -11" />),
   spinner: (<path d="M12 3a9 9 0 1 0 9 9" />),
+  compass: (<><circle cx="12" cy="12" r="9" /><path d="M14.5 9.5l-2 5l-5 2l2 -5z" /><circle cx="12" cy="12" r="1" /></>),
+  trendUp: (<path d="M4 16l6 -6l4 4l6 -6M14 8h6v6" />),
+  trendDown: (<path d="M4 8l6 6l4 -4l6 6M14 16h6v-6" />),
+  trendFlat: (<path d="M4 12h16M16 8l4 4l-4 4" />),
+  diverge: (<><path d="M12 4v16" /><path d="M6 9l6 -5l6 5" /><path d="M6 15l6 5l6 -5" /></>),
+  notComparable: (<><circle cx="12" cy="12" r="9" /><path d="M8 12h8" /></>),
+  quote: (<path d="M8 13h2a2 2 0 0 0 2 -2V9a2 2 0 0 0 -2 -2H8a2 2 0 0 0 -2 2v2c0 3 2 5 4 6M16 13h2a2 2 0 0 0 2 -2V9a2 2 0 0 0 -2 -2h-2a2 2 0 0 0 -2 2v2c0 3 2 5 4 6" />),
+  info: (<><circle cx="12" cy="12" r="9" /><path d="M12 10v6M12 7h.01" /></>),
 }
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

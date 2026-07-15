@@ -22,11 +22,12 @@ function renderRail(collapsed: boolean) {
   )
 }
 
-test('展開態顯示站名與三導覽 label', () => {
+test('展開態顯示站名與四導覽 label', () => {
   renderRail(false)
   expect(screen.getByText('廷豐智能研報')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /檢索/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /問答/ })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: /觀點雷達/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /監控/ })).toBeInTheDocument()
 })
 

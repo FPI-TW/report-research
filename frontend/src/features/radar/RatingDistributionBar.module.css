@@ -1,0 +1,39 @@
+.bar {
+  display: flex;
+  height: 10px;
+  border-radius: var(--tf-radius-pill);
+  overflow: hidden;
+  background: #f2f4f7;
+  gap: 1px;
+}
+
+.seg {
+  height: 100%;
+  min-width: 0;
+  transition: width var(--tf-dur-3) var(--tf-ease-out);
+}
+
+.buy { background: #027a48; }
+.overweight { background: #32d583; }
+.neutral { background: #98a2b3; }
+.underweight { background: #f97066; }
+.sell { background: #b42318; }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--tf-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-right: 4px;
+  vertical-align: middle;
+}

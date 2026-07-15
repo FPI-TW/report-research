@@ -1,0 +1,62 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 32px 40px;
+}
+
+.inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.section {
+  margin-top: 20px;
+}
+
+.sectionTitle {
+  font-family: var(--tf-serif);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--tf-text-1);
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sectionMeta {
+  margin-left: auto;
+  font-family: var(--tf-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tf-ink);
+}
+
+.card {
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-xs);
+}
+
+.muted {
+  color: var(--tf-text-3);
+  font-size: 13px;
+}
+
+.dash {
+  color: var(--tf-text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .scroll { padding: 20px 16px 32px; }
+}

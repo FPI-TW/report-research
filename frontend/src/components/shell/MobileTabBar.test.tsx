@@ -6,7 +6,7 @@ import { MobileTabBar } from './MobileTabBar'
 
 afterEach(() => vi.unstubAllGlobals())
 
-test('四格導覽含帳號', () => {
+test('五格導覽含觀點雷達與帳號', () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
     total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst',
   }), { status: 200 })))
@@ -18,5 +18,6 @@ test('四格導覽含帳號', () => {
   )
   expect(screen.getByRole('link', { name: /檢索/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /問答/ })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: /觀點雷達/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /監控/ })).toBeInTheDocument()
 })

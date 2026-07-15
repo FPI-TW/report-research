@@ -7,6 +7,7 @@ import { routeLoaders, preloadIdle } from './lib/routePreload'
 const SearchPage = lazy(routeLoaders.search)
 const AskPage = lazy(routeLoaders.ask)
 const MonitorPage = lazy(routeLoaders.monitor)
+const RadarPage = lazy(routeLoaders.radar)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -21,6 +22,7 @@ export const routes = [
       { path: '/search', element: <Suspense><SearchPage /></Suspense> },
       { path: '/ask', element: <Suspense><AskPage /></Suspense> },
       { path: '/monitor', element: <Suspense><MonitorPage /></Suspense> },
+      { path: '/radar', element: <Suspense><RadarPage /></Suspense> },
       { path: '*', element: <NotFound /> },
     ],
   },

@@ -30,6 +30,7 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
         <nav className={styles.fullNav}>
           <NavItem to="/search" icon="search" label="檢索" variant="row" />
           <NavItem to="/ask" icon="messages" label="問答" variant="row" />
+          <NavItem to="/radar" icon="compass" label="觀點雷達" variant="row" />
           <NavItem to="/monitor" icon="activity" label="監控" variant="row" />
         </nav>
         <div className={styles.divider} />
@@ -45,6 +46,7 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
         <nav className={styles.miniNav}>
           <NavItem to="/search" icon="search" label="檢索" variant="mini" />
           <NavItem to="/ask" icon="messages" label="問答" variant="mini" />
+          <NavItem to="/radar" icon="compass" label="觀點雷達" variant="mini" />
           <NavItem to="/monitor" icon="activity" label="監控" variant="mini" />
         </nav>
         <div className={styles.spacer} />

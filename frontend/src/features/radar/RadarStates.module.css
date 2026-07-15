@@ -1,0 +1,50 @@
+.box {
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-xs);
+  padding: 28px 24px;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.title {
+  font-family: var(--tf-serif);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--tf-text-1);
+  margin: 0 0 8px;
+}
+
+.text {
+  font-size: 13.5px;
+  color: var(--tf-text-3);
+  line-height: 1.55;
+  margin: 0 0 16px;
+  max-width: 420px;
+  margin-inline: auto;
+}
+
+.btn, .btnSecondary {
+  appearance: none;
+  border: 0;
+  border-radius: var(--tf-radius-pill);
+  font-family: var(--tf-sans);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  min-height: 40px;
+  cursor: pointer;
+}
+
+.btn {
+  background: var(--tf-ink);
+  color: var(--tf-on-ink);
+}
+.btn:hover { background: var(--tf-ink-hover); }
+
+.btnSecondary {
+  background: var(--tf-ink-tint);
+  color: var(--tf-ink);
+}
+.btnSecondary:hover { background: var(--tf-ink-line); }

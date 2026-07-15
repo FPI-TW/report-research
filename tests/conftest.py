@@ -54,3 +54,23 @@ def _stub_followups():
     finally:
         if orig is not None:
             ans.generate_followups = orig
+
+
+@pytest.fixture(autouse=True)
+def _stub_query_planner_llm():
+    """預設關閉查詢規劃 LLM（M5）：qa_agentic_enabled 預設開，answer_question 會
+    並行呼叫 plan_queries，真跑會外連 claude CLI。stub 成回空子查詢陣列——
+    計畫為單一原問題查詢 → run_agentic 走快速路徑，事件序與 M4 完全一致。
+    驗規劃／評估行為的測試在其內部自行 patch query_planner.stream_completion。"""
+    import app.services.query_planner as qp
+
+    orig = qp.stream_completion
+
+    async def _empty_plan(prompt, **kwargs):
+        yield '{"subqueries": []}'
+
+    qp.stream_completion = _empty_plan
+    try:
+        yield
+    finally:
+        qp.stream_completion = orig

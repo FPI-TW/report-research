@@ -21,6 +21,7 @@ from app.config import get_settings  # noqa: E402
 from app.services import agentic_qa as aq  # noqa: E402
 from app.services import query_planner as qp  # noqa: E402
 from app.services import scope_router as sr  # noqa: E402
+from app.services import answer as ans  # noqa: E402
 from app.services.agentic_qa import merge_retrievals  # noqa: E402
 from app.services.answer import Source  # noqa: E402
 
@@ -703,6 +704,277 @@ class TestRunAgentic(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await self._collect(self._plan(self.Q, "聯電 2026 展望"))
+
+
+class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
+    """answer_question 接線（設計 §5）：並行規劃、run_agentic 消費、fail-open
+    fallback、路由早退與停止時的 plan_task 取消、qa_agentic_enabled 回退開關。
+
+    沿 test_answer.py harness 手法（stub 全鏈、不碰 DB），但依凍結契約 4 寫在本檔。
+    """
+
+    Q = "台積電與聯電 2026 展望比較"
+
+    def _patch(self, target, name, value):
+        p = patch.object(target, name, value)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _pin_settings(self, **over):
+        """同時 patch answer 與 agentic_qa 的 get_settings（patch-where-used）。"""
+        values = dict(
+            qa_agentic_enabled=True,
+            qa_max_rounds=2,
+            qa_planner_max_subqueries=3,
+            qa_agentic_timeout=90.0,
+            qa_subquery_max_reports=5,
+            qa_planner_timeout=20.0,
+        )
+        values.update(over)
+        stub = dataclasses.replace(get_settings(), **values)
+        for mod in (ans, aq):
+            self._patch(mod, "get_settings", lambda: stub)
+        return stub
+
+    def _plan(self, *texts, degraded=False):
+        subs = tuple(qp.SubQuery(text=t) for t in texts)
+        return qp.QueryPlan(subs, profile="qa", degraded=degraded)
+
+    def _stub_chain(self, *, plan, result_map, answer_text="答案[1]"):
+        """stub 全鏈：規劃／檢索／路由／主 LLM／寫 log。回傳呼叫記錄。"""
+        state = {"plan_calls": [], "retrieve_calls": [], "log_calls": []}
+
+        async def fake_plan(question, **kwargs):
+            state["plan_calls"].append({"question": question, **kwargs})
+            return plan
+
+        async def fake_retrieve(question, **kwargs):
+            state["retrieve_calls"].append({"q": question, **kwargs})
+            return result_map[question]
+
+        async def fake_route(question, **kwargs):
+            return sr._decision(sr.CORPUS_QA)
+
+        async def fake_main_stream(prompt, **kwargs):
+            yield answer_text
+
+        async def fake_log(*args, **kwargs):
+            state["log_calls"].append((args, kwargs))
+            return "qa-test-1"
+
+        self._patch(qp, "plan_queries", fake_plan)
+        self._patch(rp, "retrieve_context", fake_retrieve)
+        self._patch(ans, "classify_non_overview", fake_route)
+        self._patch(ans, "stream_completion", fake_main_stream)
+        self._patch(ans, "_log_qa", fake_log)
+        return state
+
+    async def test_multi_facet_flow_events_and_manifest(self):
+        # 多面向題：evaluating stage 依序出現、sources 為合併重編清單、
+        # _log_qa 收到 manifest_from_answer 形狀的 manifest、done payload 形狀不變。
+        settings = self._pin_settings()
+        first = _batch(("r1", "a.pdf", "2026-05-01", ["甲段"]))
+        second = _batch(("r2", "b.pdf", "2026-06-01", ["乙段"]))
+        state = self._stub_chain(
+            plan=self._plan(self.Q, "聯電 2026 展望"),
+            result_map={self.Q: first, "查A": second},
+            answer_text="答案[1][2]",
+        )
+        payload = '{"sufficient": false, "queries": ["查A"]}'
+        with patch.object(qp, "stream_completion", _eval_stream([payload])):
+            events = [e async for e in ans.answer_question(self.Q)]
+
+        kinds = [k for k, _ in events]
+        self.assertEqual(
+            kinds,
+            ["status", "status", "sources", "status", "status", "status",
+             "token", "ext_sources", "done"],
+        )
+        stages = [p["stage"] for k, p in events if k == "status"]
+        self.assertEqual(
+            stages,
+            ["understanding", "evaluating", "retrieved", "reading", "generating"],
+        )
+        # 規劃：首輪以原問題、profile="qa" 呼叫
+        self.assertEqual(len(state["plan_calls"]), 1)
+        self.assertEqual(state["plan_calls"][0]["question"], self.Q)
+        self.assertEqual(state["plan_calls"][0]["profile"], "qa")
+        # sources 事件＝合併後清單（重編 1..N）；retrieved 吃合併後數量
+        src_payload = next(p for k, p in events if k == "sources")
+        self.assertEqual([s["report_id"] for s in src_payload], ["r1", "r2"])
+        self.assertEqual([s["n"] for s in src_payload], [1, 2])
+        retrieved = next(
+            p for k, p in events if k == "status" and p["stage"] == "retrieved"
+        )
+        self.assertEqual(retrieved["count"], 2)
+        # 第一輪檢索沿用 M4 參數；補查依 §5 轉發 retrieval_params 與子查詢預算
+        self.assertEqual([c["q"] for c in state["retrieve_calls"]], [self.Q, "查A"])
+        self.assertEqual(state["retrieve_calls"][0]["max_reports"], ans.MAX_REPORTS)
+        supp = state["retrieve_calls"][1]
+        self.assertEqual(supp["max_reports"], settings.qa_subquery_max_reports)
+        self.assertEqual(supp["k"], ans.RETRIEVAL_K)
+        self.assertEqual(supp["dense_scan"], ans.ASK_DENSE_SCAN)
+        self.assertEqual(supp["max_passages"], ans.MAX_PASSAGES_PER_REPORT)
+        self.assertEqual(supp["max_chars"], ans.MAX_CONTEXT_CHARS)
+        self.assertEqual(supp["rerank_top_m"], ans.ASK_RERANK_TOP_M)
+        self.assertLessEqual(supp["rerank_timeout"], ans.ASK_RERANK_TIMEOUT)
+        # ext_sources 僅斷言形狀（不得斷言恆空，設計 §5.5）
+        ext_payload = next(p for k, p in events if k == "ext_sources")
+        self.assertIsInstance(ext_payload, list)
+        # done payload 形狀不變
+        done = events[-1][1]
+        self.assertEqual(done["cited"], ["r1", "r2"])
+        for key in ("qa_id", "conversation_id", "thinking_ms", "offer_report",
+                    "report_title", "root_qa_id", "version_count"):
+            self.assertIn(key, done)
+        # _log_qa：stages 含 evaluating、manifest 為 manifest_from_answer 形狀
+        _args, kwargs = state["log_calls"][0]
+        self.assertIn("evaluating", kwargs["stages"])
+        manifest = kwargs["evidence_manifest"]
+        self.assertIn("schema_version", manifest)
+        self.assertEqual(len(manifest["evidence"]), 2)
+        self.assertTrue(all(e["kind"] == "corpus" for e in manifest["evidence"]))
+
+    async def test_run_agentic_exception_falls_back_to_first_round(self):
+        # run_agentic 逸出例外 → 完整回答仍完成、sources==第一輪、無 agentic stage。
+        self._pin_settings()
+        first = _batch(("r1", "a.pdf", "2026-05-01", ["甲段"]))
+        self._stub_chain(
+            plan=self._plan(self.Q, "聯電 2026 展望"), result_map={self.Q: first}
+        )
+
+        async def boom(*args, **kwargs):
+            raise RuntimeError("agentic exploded")
+            yield  # pragma: no cover
+
+        with patch.object(aq, "run_agentic", boom):
+            events = [e async for e in ans.answer_question(self.Q)]
+
+        kinds = [k for k, _ in events]
+        self.assertEqual(
+            kinds,
+            ["status", "sources", "status", "status", "status", "token",
+             "ext_sources", "done"],
+        )
+        stages = [p["stage"] for k, p in events if k == "status"]
+        self.assertNotIn("evaluating", stages)
+        src_payload = next(p for k, p in events if k == "sources")
+        self.assertEqual([s["report_id"] for s in src_payload], ["r1"])
+        self.assertEqual(events[-1][1]["cited"], ["r1"])
+
+    async def test_disabled_flag_skips_planner_and_keeps_baseline_events(self):
+        # 回退開關：planner 零呼叫、事件序與既有主 RAG 一致。
+        self._pin_settings(qa_agentic_enabled=False)
+        first = _batch(("r1", "a.pdf", "2026-05-01", ["甲段"]))
+        state = self._stub_chain(plan=self._plan(self.Q), result_map={self.Q: first})
+        events = [e async for e in ans.answer_question(self.Q)]
+
+        self.assertEqual(state["plan_calls"], [])
+        kinds = [k for k, _ in events]
+        self.assertEqual(
+            kinds,
+            ["status", "sources", "status", "status", "status", "token",
+             "ext_sources", "done"],
+        )
+        stages = [p["stage"] for k, p in events if k == "status"]
+        self.assertEqual(
+            stages, ["understanding", "retrieved", "reading", "generating"]
+        )
+        _args, kwargs = state["log_calls"][0]
+        self.assertNotIn("evaluating", kwargs["stages"])
+
+    async def _assert_routed_cancels_plan(self, scope):
+        """首輪被路由走（time_sensitive/off_topic）→ plan_task 被取消。"""
+        self._pin_settings()
+        first = _batch(("r1", "a.pdf", "2026-05-01", ["甲段"]))
+        plan_tasks = []
+
+        async def hanging_plan(question, **kwargs):
+            plan_tasks.append(asyncio.current_task())
+            await asyncio.Event().wait()
+
+        async def fake_retrieve(question, **kwargs):
+            return first
+
+        async def fake_route(question, **kwargs):
+            return sr._decision(scope)
+
+        async def unavailable(*args, **kwargs):
+            raise tmd.TrustedDataUnavailable("no provider")
+
+        async def fake_log(*args, **kwargs):
+            return "qa-test-1"
+
+        self._patch(qp, "plan_queries", hanging_plan)
+        self._patch(rp, "retrieve_context", fake_retrieve)
+        self._patch(ans, "classify_non_overview", fake_route)
+        self._patch(ans, "fetch_trusted", unavailable)
+        self._patch(ans, "_log_qa", fake_log)
+
+        events = [e async for e in ans.answer_question(self.Q)]
+
+        self.assertEqual(len(plan_tasks), 1)
+        _done, pending = await asyncio.wait(plan_tasks, timeout=2)
+        for t in pending:
+            t.cancel()
+        self.assertEqual(pending, set())
+        self.assertTrue(plan_tasks[0].cancelled())
+        # 事件序＝既有婉拒路徑，agentic 不介入
+        kinds = [k for k, _ in events]
+        self.assertEqual(kinds, ["status", "sources", "notice", "done"])
+        self.assertEqual(next(p for k, p in events if k == "sources"), [])
+
+    async def test_time_sensitive_route_cancels_plan_task(self):
+        await self._assert_routed_cancels_plan(sr.TIME_SENSITIVE)
+
+    async def test_off_topic_route_cancels_plan_task(self):
+        await self._assert_routed_cancels_plan(sr.OFF_TOPIC)
+
+    async def test_consumer_stop_cancels_plan_task(self):
+        # 生成器提前終止（模擬使用者停止）→ plan_task 取消、無殘留 pending task。
+        self._pin_settings()
+        plan_tasks = []
+        retrieval_started = asyncio.Event()
+        retrieval_cancelled = []
+
+        async def hanging_plan(question, **kwargs):
+            plan_tasks.append(asyncio.current_task())
+            await asyncio.Event().wait()
+
+        async def hanging_retrieve(question, **kwargs):
+            retrieval_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                retrieval_cancelled.append(question)
+                raise
+
+        async def fake_route(question, **kwargs):
+            return sr._decision(sr.CORPUS_QA)
+
+        self._patch(qp, "plan_queries", hanging_plan)
+        self._patch(rp, "retrieve_context", hanging_retrieve)
+        self._patch(ans, "classify_non_overview", fake_route)
+
+        agen = ans.answer_question(self.Q)
+        try:
+            kind, payload = await anext(agen)
+            self.assertEqual((kind, payload["stage"]), ("status", "understanding"))
+            consumer = asyncio.create_task(anext(agen))
+            await asyncio.wait_for(retrieval_started.wait(), timeout=5)
+            consumer.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await consumer
+        finally:
+            await agen.aclose()
+
+        self.assertEqual(len(plan_tasks), 1)
+        _done, pending = await asyncio.wait(plan_tasks, timeout=2)
+        for t in pending:
+            t.cancel()
+        self.assertEqual(pending, set())
+        self.assertTrue(plan_tasks[0].cancelled())
+        self.assertEqual(retrieval_cancelled, [self.Q])
 
 
 if __name__ == "__main__":

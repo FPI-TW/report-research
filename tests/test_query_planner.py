@@ -158,13 +158,16 @@ class PlanQueriesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_texts(plan), [self.Q])
         self.assertEqual(plan.profile, "nope")
 
-    async def test_qa_profile_fail_open_without_llm(self):
-        # Step 0（M5 區段）：qa profile 未填 prompt → fail-open 且不得呼叫 LLM。
-        # M5 填入 build_prompt 後，本測試由 M5 里程碑改寫／移除。
-        with patch.object(qp, "stream_completion") as spy:
+    async def test_qa_profile_calls_llm(self):
+        # M5 已填入 qa build_prompt → plan_queries 會呼叫 LLM；prompt 內容
+        # 契約測試在 tests/test_agentic_qa.py::TestQaPlannerProfile。
+        calls = []
+        with patch.object(
+            qp, "stream_completion", _stream(['{"subqueries": []}'], calls)
+        ):
             plan = await qp.plan_queries(self.Q, profile="qa")
-        spy.assert_not_called()
-        self.assertTrue(plan.degraded)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(plan.degraded)
         self.assertEqual(_texts(plan), [self.Q])
 
     async def test_report_profile_fail_open_without_llm(self):

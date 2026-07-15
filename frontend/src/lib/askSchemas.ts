@@ -14,7 +14,7 @@ export type Source = z.infer<typeof sourceSchema>
 export const extSourceSchema = z.object({ title: z.string(), url: z.string() })
 export type ExtSource = z.infer<typeof extSourceSchema>
 
-export const askStage = z.enum(['understanding', 'retrieved', 'reading', 'searching_web', 'generating'])
+export const askStage = z.enum(['understanding', 'evaluating', 'retrieved', 'reading', 'searching_web', 'generating'])
 export type AskStage = z.infer<typeof askStage>
 const reportStage = z.enum(['retrieving', 'writing', 'searching_web', 'rendering'])
 export type ReportStage = z.infer<typeof reportStage>

@@ -1301,34 +1301,54 @@ async def answer_question(
             yield ev
         return
 
+    # M5 agentic：規劃與第一輪檢索並行（Haiku 規劃藏在檢索影子裡，設計 §5.1）；
+    # 首輪 decision 未知一律建，續問僅 corpus_qa/advice_risk 建。新符號一律函式內
+    # import——本函式以上的頂層 import 區塊屬凍結範圍（契約 3）。
+    plan_task: asyncio.Task | None = None
+    if get_settings().qa_agentic_enabled and (
+        not turns
+        or (decision is not None and decision.scope in (CORPUS_QA, ADVICE_RISK))
+    ):
+        from app.services.query_planner import plan_queries
+
+        plan_task = asyncio.create_task(plan_queries(standalone_query, profile="qa"))
+
     # 既有 RAG 路徑（embed+檢索+build_context 收斂於 retrieve_context；函式內 import
     # 避免頂層循環 import——retrieval_pipeline 於頂層 import 本模組）
     from app.services.retrieval_pipeline import retrieve_context
 
-    if turns:
-        sources, context = await retrieve_context(
-            standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
-            max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
-            max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
-            rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
-        )
-    else:
-        route_task = asyncio.create_task(classify_non_overview(question))
-        try:
+    try:
+        if turns:
             sources, context = await retrieve_context(
-                question, k=k, dense_scan=ASK_DENSE_SCAN,
+                standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
                 max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
                 max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
                 rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
             )
-            decision = await route_task
-            timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
-        except BaseException:
-            route_task.cancel()
-            raise
+        else:
+            route_task = asyncio.create_task(classify_non_overview(question))
+            try:
+                sources, context = await retrieve_context(
+                    question, k=k, dense_scan=ASK_DENSE_SCAN,
+                    max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
+                    max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+                    rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
+                )
+                decision = await route_task
+                timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
+            except BaseException:
+                route_task.cancel()
+                raise
+    except BaseException:
+        # 檢索中被停止/例外：收攏並行規劃背景工作（比照上方 route_task 自身模式）
+        if plan_task is not None:
+            plan_task.cancel()
+        raise
 
     # 首輪時效題：並行取證一律丟棄，僅受信任 adapter 可作答（不可用則婉拒）
     if decision is not None and decision.scope == TIME_SENSITIVE:
+        if plan_task is not None:
+            plan_task.cancel()  # 已被路由走：規劃結果不再被消費
         async for ev in _answer_time_sensitive(
             decision, question, filters, conv_id, started, stages_seen, new_root,
             deactivate_qa_id, truncate_from, request_id,
@@ -1338,12 +1358,68 @@ async def answer_question(
 
     # 首輪完全離題：並行取證被丟棄——不發 sources、不持久化取證結果
     if decision is not None and decision.scope == OFF_TOPIC:
+        if plan_task is not None:
+            plan_task.cancel()  # 已被路由走：規劃結果不再被消費
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
             deactivate_qa_id, truncate_from, request_id,
         ):
             yield ev
         return
+
+    # M5 agentic 迴圈：受控多輪「評估→補查」。快速路徑判定單點在 run_agentic 內部
+    # （設計 §4），此處一律呼叫；上方第一輪檢索結果兼任迴圈輪 1 與 fail-open fallback。
+    if plan_task is not None:
+        from app.services.agentic_qa import run_agentic
+
+        try:
+            plan = await plan_task  # plan_queries 永不 raise（失敗回 degraded 計畫）
+        except BaseException:
+            plan_task.cancel()  # 等待中被停止：收攏背景工作後原樣上拋
+            raise
+        timer.mark("plan_wait")
+        agentic_decision = decision
+        if agentic_decision is None:
+            # 路由 fail-open（decision 缺席）時本路徑語意即 corpus_qa
+            from app.services.scope_router import _decision as _mk_decision
+
+            agentic_decision = _mk_decision(CORPUS_QA)
+        first_retrieval = (sources, context)
+        try:
+            async for a_kind, a_payload in run_agentic(
+                standalone_query,
+                plan=plan,
+                decision=agentic_decision,
+                first=first_retrieval,
+                filters=filters,
+                retrieval_params={
+                    "k": k,
+                    "dense_scan": ASK_DENSE_SCAN,
+                    "max_passages": MAX_PASSAGES_PER_REPORT,
+                    "max_chars": MAX_CONTEXT_CHARS,
+                    "rerank_top_m": ASK_RERANK_TOP_M,
+                    "rerank_timeout": ASK_RERANK_TIMEOUT,
+                },
+                timer=timer,
+            ):
+                if a_kind == "stage":
+                    yield _status(str(a_payload))
+                elif a_kind == "outcome":
+                    sources, context = a_payload.sources, a_payload.context
+                    logger.info(
+                        "qa_agentic rounds=%s subqueries=%s skipped=%s "
+                        "fresh_requested=%s degraded=%s",
+                        a_payload.rounds,
+                        len(a_payload.subqueries_run),
+                        a_payload.skipped,
+                        a_payload.fresh_requested,
+                        a_payload.degraded,
+                    )
+        except Exception:
+            # CancelledError 屬 BaseException 原樣上拋（停止語意）；其餘例外
+            # fail-open 沿用第一輪檢索結果，主流程不受影響（設計 §5.3）。
+            logger.exception("run_agentic 逸出例外，沿用第一輪檢索結果")
+            sources, context = first_retrieval
 
     system_prompt = SYSTEM_PROMPT
     log_filters = filters

@@ -66,6 +66,9 @@ class Settings:
     qa_planner_timeout: float
     qa_planner_max_subqueries: int
     qa_max_rounds: int
+    qa_agentic_enabled: bool
+    qa_agentic_timeout: float
+    qa_subquery_max_reports: int
     # report 檢索增強 / query_planner（M6）—— M6 里程碑只在本區段內加鍵
     report_planner_model: str
     report_planner_timeout: float
@@ -122,6 +125,10 @@ def _load() -> Settings:
         qa_planner_timeout=float(os.getenv("QA_PLANNER_TIMEOUT", "20")),
         qa_planner_max_subqueries=int(os.getenv("QA_PLANNER_MAX_SUBQUERIES", "3")),
         qa_max_rounds=int(os.getenv("QA_MAX_ROUNDS", "2")),
+        qa_agentic_enabled=_flag("QA_AGENTIC_ENABLED", "1"),
+        # 迴圈總逾時（秒）；不含第一輪檢索與最終作答串流，於 asyncio.wait_for 落實。
+        qa_agentic_timeout=float(os.getenv("QA_AGENTIC_TIMEOUT", "90")),
+        qa_subquery_max_reports=int(os.getenv("QA_SUBQUERY_MAX_REPORTS", "5")),
         # report 檢索增強 / query_planner（M6）—— M6 里程碑只在本區段內加鍵
         report_planner_model=os.getenv("REPORT_PLANNER_MODEL", intent_model),
         report_planner_timeout=float(os.getenv("REPORT_PLANNER_TIMEOUT", "30")),

@@ -67,6 +67,9 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.qa_planner_timeout, 20.0)
         self.assertEqual(s.qa_planner_max_subqueries, 3)
         self.assertEqual(s.qa_max_rounds, 2)
+        self.assertEqual(s.qa_agentic_enabled, True)
+        self.assertEqual(s.qa_agentic_timeout, 90.0)
+        self.assertEqual(s.qa_subquery_max_reports, 5)
 
     def test_query_planner_defaults_m6(self):
         # report 檢索增強 / query_planner（M6 區段；M6 里程碑只在本方法內加斷言）

@@ -260,6 +260,8 @@ M10 雙語 / i18n：M4b 後開始，M10c 依賴 M9
 
 藍圖：`REPORT_GEN_REDESIGN.md` §3 Phase 4 + 可選模板設計（本次擴充）。
 
+> **決策（2026-07-15）**：渲染路線拍板**直接走 Typst**，WeasyPrint 視覺化改版計畫（`docs/superpowers/plans/2026-07-08-report-claude-design-backend.md`）不執行。M9a 前置 spike 已完成——converter 選定 pandoc（`gfm-tex_math_dollars`，經 `pypandoc-binary`）、編譯走 typst-py、圖表首版重用 `chart.py` SVG、生產主機字型已具備；實證結論與 fixtures 見 `docs/typst_spike_m9a.md` 與 `docs/typst_spike/`。
+
 **核心原則：內容與版型解耦**——`markdown` 為真相、```kpi/```chart 為結構化區塊，故「選模板」只換渲染層，**不動任何內容生成邏輯**。切成 M9a（引擎 + 契約 + 首款模板）與 M9b（registry + 選擇 + 換皮），可獨立上線。
 
 ### M9a — Typst 渲染引擎 + 模板契約 + 首款模板

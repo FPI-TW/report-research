@@ -307,5 +307,58 @@ class RerankBatchDeadlineTests(unittest.TestCase):
             self.assertFalse(rr.warmup())  # 載入失敗/熔斷 → False（不拋）
 
 
+class RerankIdentityContractTests(unittest.TestCase):
+    """rerank_scored 回傳物件同一性契約（M6 明文化）：fail-open 路徑一律回傳
+    「輸入的同一 list 物件」、成功路徑回新建 list——retrieval_pipeline._rerank_stage
+    以 `is` 判定 rerank 是否實際套用（多查詢降級依據），重構不得默默破壞。"""
+
+    def test_success_returns_new_list_object(self):
+        scored = _scored((0, 0.9, "A", "a"), (0, 0.8, "B", "b"))
+        with mock.patch.object(rr, "rerank_scores", lambda q, ps, deadline=None: [0.1, 0.2]):
+            out = rr.rerank_scored("q", scored, top_m=2)
+        self.assertIsNot(out, scored)
+
+    def test_shape_mismatch_returns_same_object(self):
+        scored = _scored((0, 0.9, "A", "a"), (0, 0.8, "B", "b"))
+        with mock.patch.object(rr, "rerank_scores", lambda q, ps, deadline=None: [0.5]):
+            self.assertIs(rr.rerank_scored("q", scored, top_m=2), scored)
+
+    def test_model_unavailable_empty_scores_returns_same_object(self):
+        scored = _scored((0, 0.9, "A", "a"))
+        with mock.patch.object(rr, "rerank_scores", lambda q, ps, deadline=None: []):
+            self.assertIs(rr.rerank_scored("q", scored, top_m=1), scored)
+
+    def test_nan_returns_same_object(self):
+        scored = _scored((0, 0.9, "A", "a"), (0, 0.8, "B", "b"))
+        with mock.patch.object(
+            rr, "rerank_scores", lambda q, ps, deadline=None: [float("nan"), 0.5]
+        ):
+            self.assertIs(rr.rerank_scored("q", scored, top_m=2), scored)
+
+    def test_exception_returns_same_object(self):
+        scored = _scored((0, 0.9, "A", "a"))
+
+        def _boom(q, ps, deadline=None):
+            raise RuntimeError("model down")
+
+        with mock.patch.object(rr, "rerank_scores", _boom):
+            self.assertIs(rr.rerank_scored("q", scored, top_m=1), scored)
+
+    def test_deadline_abort_returns_same_object(self):
+        # deadline 已過期 → rerank_scores 回 [] → 形狀不符 fail-open（同一物件）
+        scored = _scored((0, 0.9, "A", "a"))
+        fake = _FakeModel([0.1])
+        with mock.patch.object(rr, "_get_model", lambda: fake), \
+             mock.patch.object(rr, "_monotonic", lambda: 100.0):
+            out = rr.rerank_scored("q", scored, top_m=1, deadline=99.0)
+        self.assertIs(out, scored)
+
+    def test_passthrough_returns_same_object(self):
+        scored = _scored((0, 0.9, "A", "a"))
+        self.assertIs(rr.rerank_scored("q", scored, top_m=0), scored)
+        empty = []
+        self.assertIs(rr.rerank_scored("q", empty, top_m=5), empty)
+
+
 if __name__ == "__main__":
     unittest.main()

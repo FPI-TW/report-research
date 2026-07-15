@@ -22,8 +22,10 @@ BROKER_MAP: dict[str, str] = {
     "MQ": "macquarie",
     "DW": "daiwa",
     "DAIWA": "daiwa",  # 2026-07 NAS 批次與 Daiwa_ 前綴檔名帶全字
+    "大和": "daiwa",  # 大和台灣業務端中文筆記（大和 AMD 3QFY24法說摘要.pdf）
     "FUBON": "fubon",  # 拉丁形式（memo_Fubon 20250730.pdf）；富邦 CJK 已另收
     "CLSA": "clsa",
+    "CLST": "clsa",  # CL Securities Taiwan（CLSA 台灣）個股報告檔名帶 -CLST<日期>
     "CITI": "citi",
     "BOFA": "bofa",
     "BAML": "bofa",
@@ -305,19 +307,44 @@ CONTENT_SIGNATURES_CJK: list[tuple[str, list[str]]] = [
     ("huanan", ["華南投顧"]),
     ("fubon_sec", ["福邦投顧"]),
 ]
+# 拉丁指紋與 CJK 側同原則：**只用發行者自我指稱形式**（法律實體名、研究部門名、
+# 圖表自我標註「Source: X forecasts」），不可用裸品牌名——彙整型週報（本土「重要企業
+# 財報前瞻」轉述「投行Jefferies警告…」、英文 Last Week in Markets 提及「HSBC and
+# Hang Seng use their own HIBOR」）常在前 4000 字「提及」外資，裸名必誤標。
+# 舊版裸名靠 2500 小窗僥倖低誤中，窗擴至 4000 後裸名不可再留。
 CONTENT_SIGNATURES_LATIN: list[tuple[str, list[str]]] = [
-    ("morgan_stanley", ["morgan stanley"]),
-    ("goldman_sachs", ["goldman sachs"]),
-    ("jpmorgan", ["j.p. morgan", "jpmorgan"]),
+    ("morgan_stanley", [
+        "morgan stanley & co", "morgan stanley asia", "morgan stanley taiwan",
+        "morgan stanley research",
+    ]),
+    ("goldman_sachs", [
+        "goldman sachs & co", "goldman sachs japan", "goldman sachs asia",
+        "goldman sachs international", "goldman sachs research",
+    ]),
+    ("jpmorgan", [
+        "j.p. morgan securities", "j.p. morgan research", "jpmorgan chase",
+        "j.p. morgan asset management",
+    ]),
     ("ubs", ["ubs ag", "ubs securities", "ubs limited"]),
-    ("nomura", ["nomura"]),
-    ("macquarie", ["macquarie"]),
-    ("daiwa", ["daiwa"]),
-    ("clsa", ["clsa"]),
+    ("nomura", [
+        "nomura securities", "nomura international", "nomura global markets",
+        "source: lseg, nomura",
+    ]),
+    ("macquarie", [
+        "macquarie capital", "macquarie securities", "macquarie research",
+    ]),
+    ("daiwa", [
+        "daiwa securities", "daiwa capital markets", "source: daiwa",
+        "daiwa forecasts",
+    ]),
+    ("clsa", [
+        "clsa limited", "clsa securities", "clsa research",
+        "cl securities taiwan", "source: clst",
+    ]),
     ("citi", ["citigroup", "citi research", "citivelocity"]),
     ("bofa", ["bofa securities", "merrill lynch", "bofaml"]),
-    ("hsbc", ["hsbc"]),
-    ("jefferies", ["jefferies"]),
+    ("hsbc", ["hsbc global research", "hsbc securities", "the hongkong and shanghai banking"]),
+    ("jefferies", ["jefferies llc", "jefferies group", "jefferies research", "jefferies hong kong"]),
 ]
 _LATIN_SIG_RE: list[tuple[str, list[re.Pattern[str]]]] = [
     (

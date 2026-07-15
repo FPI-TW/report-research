@@ -272,8 +272,59 @@ class ForeignSignatureWindowTests(unittest.TestCase):
         self.assertEqual(extract_source_from_text(txt), "ubs")
 
     def test_nomura_chart_credit_at_2960(self):
-        txt = "z" * 2960 + " relative performance chart source: lseg, Nomura research"
+        txt = "z" * 2960 + " relative performance chart Source: LSEG, Nomura research analysts"
         self.assertEqual(extract_source_from_text(txt), "nomura")
+
+    # --- 擴窗的代價控制：拉丁指紋須為「發行者自我指稱」形式（實體名/圖表自我標註），
+    #     裸品牌名是提及，不得採——與 CJK 側同原則。兩例取自擴窗後實際誤標的語料。 ---
+    def test_jefferies_mention_in_cjk_digest_not_issuer(self):
+        # 本土週報「重要企業財報前瞻」內文轉述投行觀點（char ~3800，擴窗後才進窗）
+        txt = "重" * 3800 + " 投行Jefferies警告，勞工短缺以及供應鏈問題將使第三季財報面臨壓力"
+        self.assertIsNone(extract_source_from_text(txt))
+
+    def test_hsbc_mention_in_english_digest_not_issuer(self):
+        # 英文市場週報提及 HSBC 的 HIBOR 定價行為，非發行者自稱
+        txt = "Last Week in Markets " + "m" * 3700 + " HSBC and Hang Seng use their own HIBOR"
+        self.assertIsNone(extract_source_from_text(txt))
+
+    def test_goldman_entity_selfref_still_detected(self):
+        # 分析師署名塊的法律實體名是自我指稱（Goldman Sachs Japan Co., Ltd.）
+        txt = "n" * 2500 + " bruce.kirk@gs.com Goldman Sachs Japan Co., Ltd. Kazunori Tatebe"
+        self.assertEqual(extract_source_from_text(txt), "goldman_sachs")
+
+    def test_jpmorgan_entity_selfref_still_detected(self):
+        txt = "n" * 2500 + " jimmy.huang J.P. Morgan Securities (Taiwan) Limited Gokul"
+        self.assertEqual(extract_source_from_text(txt), "jpmorgan")
+
+    def test_jpmorgan_asset_management_cover_selfref(self):
+        # LTCMA 封面自稱（2025 Long-Term Capital Market Assumptions | J.P. Morgan Asset Management）
+        txt = "29th annual edition 2025 Long-Term Capital Market Assumptions J.P. Morgan Asset Management"
+        self.assertEqual(extract_source_from_text(txt), "jpmorgan")
+
+    def test_daiwa_chart_credit_selfref_still_detected(self):
+        # 圖表自我標註「Source: Daiwa forecasts」＝發行者自稱（同 CJK「資料來源：X投顧」）
+        txt = "n" * 3100 + " cutting 12M TP to TWD312 Source: Daiwa forecasts Faraday"
+        self.assertEqual(extract_source_from_text(txt), "daiwa")
+
+    def test_clsa_taiwan_disclaimer_selfref(self):
+        # CLSA 台灣（CLST）個股報告免責聲明與圖表自我標註（雙鴻/台達電等 20+ 篇實形式）
+        txt = "Net debt/equity (%) 4.5 4.6 Source: CLST  CLSA and CL Securities Taiwan Co., Ltd. (“CLST”) do and seek to do business"
+        self.assertEqual(extract_source_from_text(txt), "clsa")
+
+
+class IssuerFilenameTokenAdditionsTests(unittest.TestCase):
+    """檔名 token 補洞：CLST（CLSA 台灣，比照 CTBC→citic 前例）與 CJK「大和」。"""
+
+    def test_clst_filename_token_maps_to_clsa(self):
+        self.assertEqual(
+            parse_filename("台達電(2308)-CLST20240502.pdf").source, "clsa"
+        )
+
+    def test_daiwa_cjk_filename_token(self):
+        # 大和台灣業務端中文筆記（內文自稱 sales note, not Daiwa official report）
+        self.assertEqual(
+            parse_filename("大和 AMD 3QFY24法說摘要.pdf").source, "daiwa"
+        )
 
 
 if __name__ == "__main__":

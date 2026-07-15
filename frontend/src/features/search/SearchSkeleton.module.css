@@ -1,23 +1,35 @@
 .meta { margin: 2px 0 4px; }
-.monthHeader { padding: 14px 0 9px; }
 
-/* 對齊 CardsView.module.css .grid */
-.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-@media (max-width: 1023px) { .grid { grid-template-columns: 1fr; } }
-
-/* 對齊 ResultCard.module.css .card 外殼 */
-.card {
+/* 鏡射 CardsView.module.css .wrap（單一白底容器）＋ MonthGroup 標頭條 */
+.wrap {
   background: var(--tf-surface); border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-xs);
-  padding: 13px 15px; display: flex; flex-direction: column; height: 100%;
+  border-radius: 14px; box-shadow: var(--tf-shadow-xs); overflow: hidden;
+  margin-top: 4px;
 }
-.top { margin-bottom: 7px; }
-.titleLine { margin-bottom: 5px; }
-.tags { display: flex; gap: 6px; margin: 8px 0 2px; }
-.line { margin-top: 6px; }
-.scoreRow { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
-.scoreTrack { flex: 1; }
-.footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 10px; }
+.monthHeader { background: var(--tf-sidebar); border-bottom: 1px solid var(--tf-border-weak); padding: 12px 16px; }
+
+/* 鏡射 ResultCard.module.css .card：92px / 1fr / 200px、列間 border-bottom 接縫 */
+.card {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) 200px; gap: 14px;
+  align-items: start;
+  border-bottom: 1px solid var(--tf-border-weak);
+  padding: 13px 16px;
+}
+.card:last-child { border-bottom: none; }
+.chipCol { padding-top: 1px; }
+.main { min-width: 0; }
+.titleLine { margin-bottom: 7px; }
+.tagLine { margin-bottom: 8px; }
+.snippetLine { margin-top: 2px; }
+.right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.scoreRow { display: flex; align-items: center; gap: 8px; }
+.scoreTrack { width: 56px; }
+
+@media (max-width: 1023px) {
+  .card { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .chipCol { order: -1; }
+  .right { flex-direction: row; align-items: center; gap: 10px; }
+}
 
 /* 對齊 TableView.module.css .wrap/.table */
 .tableWrap {

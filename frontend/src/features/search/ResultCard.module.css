@@ -6,11 +6,16 @@
   border-bottom: 1px solid var(--tf-border-weak);
   padding: 13px 16px;
   cursor: pointer;
-  transition: background var(--tf-dur-1) var(--tf-ease-out);
+  /* 卡片為同一容器內的接縫列，不做抬升/浮影（會斷開分隔線）；
+     改用左緣 accent 由 0→3px 漸長＋背景緩變，press 時微推入 */
+  box-shadow: inset 0 0 0 0 transparent;
+  transition: background var(--tf-dur-1) var(--tf-ease-standard),
+              box-shadow var(--tf-dur-1) var(--tf-ease-standard),
+              translate var(--tf-dur-1) var(--tf-ease-standard);
 }
 .card:last-child { border-bottom: none; }
-.card:hover, .card:focus-visible { background: #f8f7f3; outline: none; }
-.card:focus-visible { box-shadow: inset 2px 0 0 var(--tf-ink); }
+.card:hover, .card:focus-visible { background: #f8f7f3; outline: none; box-shadow: inset 3px 0 0 var(--tf-ink); }
+.card:active { background: #f2f0ea; translate: 1px 0; }
 
 .chipCol { padding-top: 1px; }
 .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--tf-radius-pill); padding: 3px 10px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }

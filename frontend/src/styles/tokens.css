@@ -52,13 +52,23 @@
   --tf-ring-ink: 0 0 0 3px rgba(30, 81, 117, 0.12);
 
   /* ── 動效 ── */
+  /* 緩動家族：進場減速為主曲線；可逆 hover 用對稱曲線；離場加速；emphasized 為
+     極輕收束過衝（僅用於 thumb／按壓回彈／落定，過衝幅度刻意壓在 ~1.26 以維持印刷感的沉穩）。
+     --tf-ease-out 保留為 --tf-ease-entrance 的相容別名，既有呼叫端零破壞。 */
   --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --tf-ease-entrance: var(--tf-ease-out);
+  --tf-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --tf-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --tf-ease-emphasized: cubic-bezier(0.34, 1.26, 0.64, 1);
   --tf-dur-1: 120ms;
   --tf-dur-2: 180ms;
   --tf-dur-3: 240ms;
   --tf-dur-4: 340ms;
   --tf-stagger: 40ms;
   --tf-stagger-cap: 8;
+  /* 觸覺：按壓縮放與 hover 抬升位移（供 .tf-pressable / .tf-lift 與各模組引用）。 */
+  --tf-press: 0.96;
+  --tf-lift-y: -1px;
 
   /* ── 語意色 — 市場（降彩度重校；chip 一律淡底深字） ── */
   --mkt-TW: #237a46;
@@ -113,16 +123,40 @@ a:hover { color: var(--tf-ink-hover); }
   border: 3px solid var(--tf-canvas);
 }
 
-/* tf-up 供全域 class .tf-reveal 使用，定義於此。
-   其餘 keyframe（tf-spin/tf-pulse/tf-fade/tf-indet/tf-grow）由各 CSS Module「就地定義」——
+/* tf-up 及其變體供全域 class .tf-reveal* 使用，定義於此。
+   其餘 keyframe（tf-spin/tf-pulse/tf-fade/tf-indet/tf-grow…）由各 CSS Module「就地定義」——
    CSS Modules 會把 module 內 animation 名稱在地化雜湊，引用此處全域 keyframe 會落空、動畫不播，故不放全域。 */
-@keyframes tf-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes tf-up { from { opacity: 0; transform: translateY(var(--tf-reveal-dy, 6px)); } to { opacity: 1; transform: none; } }
+@keyframes tf-up-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tf-up-scale { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: none; } }
 
-/* 進場淡入＋上浮；清單以 style={{'--tf-i': index}} 做封頂 stagger。 */
+/* 進場淡入＋上浮；清單以 style={{'--tf-i': index}} 做封頂 stagger，
+   位移可用 style={{'--tf-reveal-dy':'10px'}}、節奏可用 style={{'--tf-stagger':'28ms'}} 覆寫。 */
 .tf-reveal {
   animation: tf-up var(--tf-dur-3) var(--tf-ease-out) both;
   animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger));
 }
+/* 變體：純淡入（密集文字/表格用，避免位移干擾）與淡入＋微縮放。 */
+.tf-reveal-fade {
+  animation: tf-up-fade var(--tf-dur-3) var(--tf-ease-out) both;
+  animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger));
+}
+.tf-reveal-scale {
+  animation: tf-up-scale var(--tf-dur-3) var(--tf-ease-entrance) both;
+  animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger));
+}
+
+/* 觸覺微互動：opt-in 全域工具類（全域定義以避開 CSS Modules 名稱在地化）。
+   一律用 scale:／translate: 長寫法，與元素既有 transform 疊加而不覆蓋。
+   reduced-motion 時全域 blanket 會歸零過渡，:active／:hover 態改為瞬時套用（靜態、可接受）。 */
+.tf-pressable { transition: scale var(--tf-dur-1) var(--tf-ease-standard); }
+.tf-pressable:active { scale: var(--tf-press); }
+
+.tf-lift {
+  transition: translate var(--tf-dur-2) var(--tf-ease-standard),
+              box-shadow var(--tf-dur-2) var(--tf-ease-standard);
+}
+.tf-lift:hover { translate: 0 var(--tf-lift-y); box-shadow: var(--tf-shadow-float); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

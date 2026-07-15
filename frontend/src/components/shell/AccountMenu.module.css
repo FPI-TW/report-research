@@ -1,8 +1,12 @@
 .wrap { position: relative; }
-.avatarBtn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.avatarBtn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  transition: border-color var(--tf-dur-1) var(--tf-ease-standard), scale var(--tf-dur-1) var(--tf-ease-standard); }
 .avatarBtn:hover { border-color: var(--tf-ink); }
-.rowTrigger { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; cursor: pointer; padding: 7px 8px; border-radius: 8px; font-family: inherit; }
+.avatarBtn:active { scale: var(--tf-press); }
+.rowTrigger { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; cursor: pointer; padding: 7px 8px; border-radius: 8px; font-family: inherit;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard), scale var(--tf-dur-1) var(--tf-ease-standard); }
 .rowTrigger:hover { background: var(--tf-border-weak); }
+.rowTrigger:active { scale: var(--tf-press); }
 .avatar { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink); display: flex; align-items: center; justify-content: center; flex: none; }
 .rowText { flex: 1; text-align: left; min-width: 0; }
 .name { display: block; font-size: 13px; font-weight: 600; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -10,5 +14,7 @@
 /* 帳號選單向上開：進場從下方、以底邊為縮放原點 */
 .pop { left: 10px; right: 10px; bottom: calc(100% - 4px); --tf-pop-origin: bottom; --tf-pop-rise: 4px; }
 .popHead { padding: 8px 10px 10px; border-bottom: 1px solid var(--tf-border-weak); margin-bottom: 4px; }
-.logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-family: inherit; }
+.logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-family: inherit;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard), scale var(--tf-dur-1) var(--tf-ease-standard); }
 .logout:hover { background: var(--tf-border-weak); }
+.logout:active { scale: var(--tf-press); }

@@ -17,7 +17,7 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
 
   if (report.status === 'offered') {
     return (
-      <div className={styles.offer}>
+      <div className={`${styles.offer} tf-reveal`}>
         <span className={styles.offerIcon}><Icon name="fileText" size={18} /></span>
         <div className={styles.offerMain}>
           <div className={styles.offerTitle}>要不要整理成完整 PDF 深度研報？</div>

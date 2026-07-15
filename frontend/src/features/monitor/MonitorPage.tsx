@@ -42,7 +42,7 @@ export default function MonitorPage() {
           {p ? (
             <>
               <KpiGrid progress={p} />
-              <div className={styles.panelGrid}>
+              <div className={`${styles.panelGrid} tf-reveal`} style={{ ['--tf-i' as string]: 4 }}>
                 <ProgressPanel
                   title="語意標註"
                   data={p.tagging}
@@ -51,7 +51,7 @@ export default function MonitorPage() {
                 />
                 <IngestPanel progress={p} rateLine={ingestRateText(rates.rpm, rates.cps)} />
               </div>
-              <div className={styles.panelGrid}>
+              <div className={`${styles.panelGrid} tf-reveal`} style={{ ['--tf-i' as string]: 5 }}>
                 <ProgressPanel
                   title="摘要生成"
                   data={p.summary}
@@ -60,7 +60,7 @@ export default function MonitorPage() {
                 />
                 <PipelineStatus pipelines={p.pipelines} />
               </div>
-              <MarketDistribution markets={p.db.markets} />
+              <MarketDistribution markets={p.db.markets} index={6} />
               <div className={styles.footer}>資料每 5 秒自動更新 · 廷豐智能研報導入管線</div>
             </>
           ) : q.isError ? (

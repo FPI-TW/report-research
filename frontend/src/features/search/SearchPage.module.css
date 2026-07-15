@@ -22,7 +22,7 @@
 
 .tryRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
 .tryLabel { font-size: 12.5px; color: var(--tf-text-4); }
-.tryChip { border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-pill); padding: 4px 13px; font-size: 12.5px; color: var(--tf-text-2); cursor: pointer; font-family: inherit; }
+.tryChip { border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-pill); padding: 4px 13px; font-size: 12.5px; color: var(--tf-text-2); cursor: pointer; font-family: inherit; transition: background-color var(--tf-dur-1) var(--tf-ease-standard), border-color var(--tf-dur-1) var(--tf-ease-standard), color var(--tf-dur-1) var(--tf-ease-standard); }
 .tryChip:hover { border-color: var(--tf-ink); color: var(--tf-ink); }
 
 /* hero 下方「最新入庫」區段標頭 */

@@ -1,11 +1,18 @@
 .wrap { margin: 0 auto; width: 100%; }
 .center { max-width: 640px; }
 .bottom { max-width: 760px; }
-.box { background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-panel); box-shadow: var(--tf-shadow-float); padding: 8px 8px 8px 18px; display: flex; align-items: flex-end; gap: 10px; }
+/* 聚焦時邊框／環暈平緩生長（可逆對稱曲線） */
+.box { background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-panel); box-shadow: var(--tf-shadow-float); padding: 8px 8px 8px 18px; display: flex; align-items: flex-end; gap: 10px; transition: border-color var(--tf-dur-2) var(--tf-ease-standard), box-shadow var(--tf-dur-2) var(--tf-ease-standard); }
 .box:focus-within { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); }
 .input { flex: 1; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.6; color: var(--tf-text-1); max-height: 140px; min-height: 24px; padding: 9px 0; background: none; }
 .input::placeholder { color: var(--tf-text-4); }
-.send { width: 40px; height: 40px; flex: none; border-radius: var(--tf-radius-pill); border: none; background: var(--tf-ink); color: var(--tf-on-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+/* 送出鈕：hover 換色、按下輕縮（scale 長寫法，與潛在 transform 疊加不覆蓋） */
+.send { width: 40px; height: 40px; flex: none; border-radius: var(--tf-radius-pill); border: none; background: var(--tf-ink); color: var(--tf-on-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background var(--tf-dur-1) var(--tf-ease-standard), scale var(--tf-dur-1) var(--tf-ease-standard); }
 .send:hover { background: var(--tf-ink-hover); }
+.send:active:not(:disabled) { scale: 0.92; }
 .send:disabled { opacity: 0.5; cursor: default; }
+/* 送出↔停止圖示切換時，新圖以微縮放淡入落定（按鈕帶 key 切換→svg 重掛播一次；非閒置迴圈）。
+   keyframe 就地定義（CSS Modules 名稱在地化）。 */
+.send svg { animation: tf-send-morph var(--tf-dur-1) var(--tf-ease-out) both; }
+@keyframes tf-send-morph { from { opacity: 0; scale: 0.8; } to { opacity: 1; scale: 1; } }
 .note { text-align: center; font-size: 11.5px; color: var(--tf-text-4); margin-top: 8px; }

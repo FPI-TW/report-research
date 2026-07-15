@@ -9,9 +9,9 @@
   color: var(--tf-text-3); background: var(--tf-sidebar); white-space: nowrap;
   border-bottom: 1px solid var(--tf-border-weak);
 }
-.sortable { cursor: pointer; user-select: none; }
+.sortable { cursor: pointer; user-select: none; transition: color var(--tf-dur-1) var(--tf-ease-standard); }
 .sortable:hover { color: var(--tf-ink); }
-.row { border-top: 1px solid var(--tf-border-weak); cursor: pointer; }
+.row { border-top: 1px solid var(--tf-border-weak); cursor: pointer; transition: background-color var(--tf-dur-1) var(--tf-ease-standard), box-shadow var(--tf-dur-1) var(--tf-ease-standard); }
 .row:hover { background: var(--tf-border-weak); }
 .row:focus-visible { outline: none; box-shadow: inset 2px 0 0 var(--tf-ink); background: var(--tf-border-weak); }
 .table td { padding: 10px 12px; color: var(--tf-text-2); }

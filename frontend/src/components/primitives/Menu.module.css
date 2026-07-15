@@ -1,0 +1,19 @@
+/* 選單項：hover／focus-visible 帶墨青淡底與加深文字，並有色彩過渡與按壓縮放回饋 */
+.item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: var(--tf-text-2);
+  padding: 8px 10px;
+  border-radius: var(--tf-radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard),
+              color var(--tf-dur-1) var(--tf-ease-standard),
+              scale var(--tf-dur-1) var(--tf-ease-standard);
+}
+.item:hover,
+.item:focus-visible { background: var(--tf-ink-tint); color: var(--tf-text-1); }
+.item:active { scale: 0.98; }

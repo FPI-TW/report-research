@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
 import { ThinkingSteps } from './ThinkingSteps'
@@ -21,6 +21,9 @@ interface Props {
 
 export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion, disabled = false }: Props) {
   const [copied, setCopied] = useState(false)
+  const revertRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 卸載時清掉「已複製」回復計時器，避免對已卸載元件 setState。
+  useEffect(() => () => { if (revertRef.current) clearTimeout(revertRef.current) }, [])
 
   if (turn.phase === 'notice') {
     return <Callout variant="warning" action={{ label: '換個說法重新提問', onClick: onNoticeRetry }}>{turn.noticeText ?? '無法回答此問題'}</Callout>
@@ -58,7 +61,11 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
   const showActions = (turn.phase === 'done' || turn.phase === 'stopped') && !turn.isOfftopic
 
   function copy() {
-    void navigator.clipboard?.writeText(view.answer).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) })
+    void navigator.clipboard?.writeText(view.answer).then(() => {
+      setCopied(true)
+      if (revertRef.current) clearTimeout(revertRef.current)
+      revertRef.current = setTimeout(() => setCopied(false), 1200)
+    })
   }
 
   return (
@@ -101,7 +108,12 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
               <button type="button" className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback('dislike')} aria-label="倒讚"><Icon name="thumbDown" size={15} /></button>
             </>
           )}
-          <button type="button" className={styles.act} onClick={copy} aria-label="複製回答" title={copied ? '已複製' : '複製'}><Icon name="copy" size={15} /></button>
+          <button type="button" className={styles.act} onClick={copy} aria-label="複製回答" title={copied ? '已複製' : '複製'}>
+            <span className={styles.iconSwap} data-copied={copied ? '' : undefined}>
+              <Icon name="copy" size={15} className={styles.iconCopy} />
+              <Icon name="check" size={15} className={styles.iconCheck} />
+            </span>
+          </button>
           <button type="button" className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</button>
           {refCount > 0 && (
             <>

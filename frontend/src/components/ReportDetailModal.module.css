@@ -5,13 +5,23 @@
 .primary {
   background: var(--tf-ink); color: var(--tf-on-ink); border-radius: 9px;
   font-size: 12.5px; font-weight: 600; padding: 7px 16px; text-decoration: none;
+  /* 觸覺：色彩過渡＋按壓縮放（寬版連結型按鈕用 0.97 較含蓄） */
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard),
+              color var(--tf-dur-1) var(--tf-ease-standard),
+              scale var(--tf-dur-1) var(--tf-ease-standard);
 }
 .primary:hover { background: var(--tf-ink-hover); color: var(--tf-on-ink); }
+.primary:active { scale: 0.97; }
 .ghost {
   border: 1px solid var(--tf-border); color: var(--tf-text-2); border-radius: 9px;
   font-size: 12.5px; font-weight: 500; padding: 7px 16px; text-decoration: none;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard),
+              border-color var(--tf-dur-1) var(--tf-ease-standard),
+              color var(--tf-dur-1) var(--tf-ease-standard),
+              scale var(--tf-dur-1) var(--tf-ease-standard);
 }
 .ghost:hover { border-color: var(--tf-ink); color: var(--tf-ink); }
+.ghost:active { scale: 0.97; }
 .hint { margin-left: auto; font-size: 11.5px; color: var(--tf-text-4); }
 .frame {
   width: 100%; height: 70vh;
@@ -21,5 +31,10 @@
 .download {
   align-self: center; display: inline-block; color: var(--tf-ink); font-size: 13px; font-weight: 600; text-decoration: none;
   padding: 8px 16px; border: 1px solid var(--tf-ink); border-radius: var(--tf-radius-md);
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard),
+              border-color var(--tf-dur-1) var(--tf-ease-standard),
+              color var(--tf-dur-1) var(--tf-ease-standard),
+              scale var(--tf-dur-1) var(--tf-ease-standard);
 }
 .download:hover { background: var(--tf-ink-tint); }
+.download:active { scale: 0.97; }

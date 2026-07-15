@@ -17,6 +17,8 @@ export function NavItem({ to, icon, label, variant }: NavItemProps) {
       to={to}
       title={variant === 'mini' ? label : undefined}
       aria-current={active ? 'page' : undefined}
+      data-nav-item=""
+      viewTransition
       className={`${styles[variant]} ${active ? styles.active : ''}`}
     >
       <Icon name={icon} size={variant === 'mobile' ? 21 : 20} />

@@ -31,7 +31,7 @@ export function TableView({ rows, mode, sort, onSort, onOpen }: Props) {
   const sorted = sortRows(rows, sort)
   const arrow = (key: TableSortKey) => (sort.key === key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '')
   return (
-    <div className={styles.wrap}>
+    <div className={`${styles.wrap} tf-reveal`}>
       <table className={styles.table}>
         <thead>
           <tr>

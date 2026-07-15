@@ -1,8 +1,14 @@
-.box { display: flex; gap: 10px; align-items: flex-start; border: 1px solid; border-radius: var(--tf-radius-card); padding: 12px 14px; margin: 4px 0 12px; }
+.box { display: flex; gap: 10px; align-items: flex-start; border: 1px solid; border-radius: var(--tf-radius-card); padding: 12px 14px; margin: 4px 0 12px; animation: tf-callout-in var(--tf-dur-3) var(--tf-ease-out) both; }
+/* keyframe 須就地定義於本模組（CSS Modules 名稱在地化）；掛載時淡入＋微上浮＋微縮放 */
+@keyframes tf-callout-in { from { opacity: 0; transform: translateY(4px) scale(0.99); } to { opacity: 1; transform: none; } }
 .error { background: var(--tf-error-bg); border-color: var(--tf-error-border); color: var(--tf-error-text); }
 .warning { background: var(--tf-warn-bg); border-color: var(--tf-warn-border); color: var(--tf-warn-text); }
 .icon { flex: none; margin-top: 1px; }
 .content { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .text { font-size: 14px; line-height: 1.6; }
-.action { align-self: flex-start; background: none; border: 1px solid currentColor; color: inherit; border-radius: var(--tf-radius-pill); font-size: 12.5px; font-weight: 600; padding: 4px 14px; cursor: pointer; }
+.action { align-self: flex-start; background: none; border: 1px solid currentColor; color: inherit; border-radius: var(--tf-radius-pill); font-size: 12.5px; font-weight: 600; padding: 4px 14px; cursor: pointer;
+  transition: opacity var(--tf-dur-1) var(--tf-ease-standard),
+              background-color var(--tf-dur-1) var(--tf-ease-standard),
+              scale var(--tf-dur-1) var(--tf-ease-standard); }
 .action:hover { opacity: 0.82; }
+.action:active { scale: var(--tf-press); }

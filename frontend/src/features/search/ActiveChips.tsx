@@ -19,11 +19,16 @@ export function ActiveChips({ state, onPatch }: Props) {
   if (chips.length === 0) return null
   return (
     <div className={styles.bar}>
-      {chips.map((c, i) => (
-        <button key={i} type="button" className={styles.chip} onClick={() => onPatch(c.patch)}>
-          {c.label}<span className={styles.x}>×</span>
-        </button>
-      ))}
+      {chips.map(c => {
+        // 以 patch 欄位名作穩定 key（每 chip 對應唯一篩選欄位），
+        // 讓既有 chip 不因序位變動而重掛、只有新加入者才觸發 chipIn 彈入動畫
+        const key = Object.keys(c.patch)[0]
+        return (
+          <button key={key} type="button" className={styles.chip} onClick={() => onPatch(c.patch)}>
+            {c.label}<span className={styles.x}>×</span>
+          </button>
+        )
+      })}
     </div>
   )
 }

@@ -1,4 +1,13 @@
 .bar { display: flex; flex-wrap: wrap; gap: 7px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink-deep); border-radius: var(--tf-radius-pill); padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink-deep); border-radius: var(--tf-radius-pill); padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard),
+              border-color var(--tf-dur-1) var(--tf-ease-standard),
+              color var(--tf-dur-1) var(--tf-ease-standard);
+  /* 新加入的 chip（穩定 key，僅新增節點才 mount）輕巧彈入；移除為瞬時（無退場） */
+  animation: chipIn var(--tf-dur-2) var(--tf-ease-out) both;
+}
 .chip:hover { border-color: var(--tf-ink); }
 .x { font-size: 14px; line-height: 1; }
+/* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
+@keyframes chipIn { from { opacity: 0; transform: scale(0.9); } }

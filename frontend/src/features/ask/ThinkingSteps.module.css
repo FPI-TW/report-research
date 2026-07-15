@@ -4,8 +4,13 @@
 .chev { transition: transform var(--tf-dur-2); }
 .chevOpen { transform: rotate(180deg); transition: transform var(--tf-dur-2); }
 .steps { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--tf-text-2); }
-.done { color: var(--tf-ink); }
+/* 步驟列以 --tf-i 做封頂 stagger 依序上浮；新列掛載才播一次，既有列（key=s.key）不重播。
+   keyframe 就地定義（CSS Modules 名稱在地化）；reduced-motion 歸零後停在終態，文字正常可見。 */
+.step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--tf-text-2); animation: tf-step-rise var(--tf-dur-2) var(--tf-ease-out) both; animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger)); }
+@keyframes tf-step-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* 完成勾在該步由 active→done 換上 check 圖示時精準落定（scale .5→1＋淡入，播一次）。 */
+.done { color: var(--tf-ink); animation: tf-check-pop var(--tf-dur-2) var(--tf-ease-out) both; }
+@keyframes tf-check-pop { from { opacity: 0; scale: 0.5; } to { opacity: 1; scale: 1; } }
 .spin { color: var(--tf-ink); animation: tf-spin 0.8s linear infinite; }
 @keyframes tf-spin { to { transform: rotate(360deg); } }
 .dot { width: 7px; height: 7px; border-radius: 999px; border: 1.5px solid var(--tf-border); display: inline-block; margin: 0 4.5px; }

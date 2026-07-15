@@ -13,15 +13,29 @@
   transition: opacity var(--tf-dur-2) var(--tf-ease-out);
 }
 .mini { width: 60px; align-items: center; padding: 14px 0; }
-.full { width: 272px; }
+/* 展開：label 層延後 dur-1 才淡入＋自 -4px 收束，待軌道（dur-3 寬度過渡）接近全寬才顯現，
+   避免文字先於寬度出現被裁；translate 長寫法不覆蓋既有 transform。 */
+.full {
+  width: 272px;
+  translate: 0;
+  transition: opacity var(--tf-dur-2) var(--tf-ease-out) var(--tf-dur-1),
+              translate var(--tf-dur-3) var(--tf-ease-out);
+}
 .rail[data-collapsed='false'] .mini { opacity: 0; pointer-events: none; }
-.rail[data-collapsed='true'] .full { opacity: 0; pointer-events: none; }
+/* 收合：立即隱藏（無延遲、離場加速），內容先消失再收窄，避免文字被裁切。 */
+.rail[data-collapsed='true'] .full {
+  opacity: 0;
+  translate: -4px 0;
+  pointer-events: none;
+  transition: opacity var(--tf-dur-1) var(--tf-ease-exit),
+              translate var(--tf-dur-2) var(--tf-ease-exit);
+}
 /* 收合態品牌／展開鈕同格：logo 與展開圖示疊放，hover 淡入淡出互換。
    置中於 60px 軌道 → 中心 x≈30，展開後與 .glyphSmall logo 同座標、完整銜接。 */
 .glyphSmall { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none; }
-.brandToggle { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: none; background: none; padding: 0; cursor: pointer; border-radius: 8px; color: var(--tf-text-3); }
+.brandToggle { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: none; background: none; padding: 0; cursor: pointer; border-radius: 8px; color: var(--tf-text-3); transition: background-color var(--tf-dur-1) var(--tf-ease-standard), color var(--tf-dur-1) var(--tf-ease-standard); }
 .brandToggle:hover { background: var(--tf-surface); color: var(--tf-ink); }
-.brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: opacity .16s ease, transform .16s ease; }
+.brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: opacity var(--tf-dur-1) var(--tf-ease-standard), transform var(--tf-dur-1) var(--tf-ease-standard); }
 .brandExpand { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
 .brandToggle:hover .brandLogo { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
 .brandToggle:hover .brandExpand { opacity: 1; transform: translate(-50%, -50%) scale(1); }
@@ -31,9 +45,9 @@
 /* 展開態 header：幾何同原版（高 60、logo 中心 x≈30、label 左緣 50）。 */
 .header { padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px; }
 .title { flex: 1; font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-ink-deep); }
-.toggleFull { border: none; background: none; border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-4); padding: 0; flex: none; transition: background .12s ease, color .12s ease; }
+.toggleFull { border: none; background: none; border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-4); padding: 0; flex: none; transition: background-color var(--tf-dur-1) var(--tf-ease-standard), color var(--tf-dur-1) var(--tf-ease-standard); }
 .toggleFull:hover { background: var(--tf-border-weak); color: var(--tf-text-3); }
-.toggleFull svg { transition: transform .16s ease; }
+.toggleFull svg { transition: transform var(--tf-dur-1) var(--tf-ease-standard); }
 .toggleFull:hover svg { transform: scale(1.12); }
 .fullNav { padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }
 .divider { height: 1px; background: var(--tf-divider); margin: 12px 12px 8px; }

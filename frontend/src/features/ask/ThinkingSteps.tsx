@@ -22,8 +22,8 @@ export function ThinkingSteps({ turn }: { turn: Turn }) {
       </button>
       {hasSteps && open && (
         <div className={styles.steps}>
-          {steps.map(s => (
-            <div key={s.key} className={styles.step}>
+          {steps.map((s, i) => (
+            <div key={s.key} className={styles.step} style={{ ['--tf-i' as string]: i }}>
               {s.state === 'done' && <Icon name="check" size={16} className={styles.done} />}
               {s.state === 'active' && <Icon name="spinner" size={16} className={styles.spin} />}
               {s.state === 'pending' && <span className={styles.dot} />}

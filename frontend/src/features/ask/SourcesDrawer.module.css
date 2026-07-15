@@ -1,7 +1,9 @@
 .panel {
   width: 340px; flex: none; background: var(--tf-surface); border-left: 1px solid var(--tf-border);
   display: flex; flex-direction: column; height: 100%;
-  transition: translate var(--tf-dur-3) var(--tf-ease-out), opacity var(--tf-dur-3) var(--tf-ease-out);
+  /* 位移用 emphasized（極輕收束過衝、落定更俐落），透明度維持 --tf-ease-out 以免整體顯得彈跳；
+     過衝被 AskPage .page overflow:hidden 裁切，不會生水平捲軸。 */
+  transition: translate var(--tf-dur-3) var(--tf-ease-emphasized), opacity var(--tf-dur-3) var(--tf-ease-out);
 }
 /* 右側滑入：離場時整片移出右緣（由 AskPage .page overflow:hidden 裁切、不生水平捲軸） */
 .panel[data-state='closed'] { translate: 100% 0; opacity: 0; pointer-events: none; }
@@ -15,7 +17,11 @@
 .body { flex: 1; overflow-y: auto; padding: 14px 16px; }
 .subhead { font-size: 11px; font-weight: 700; color: var(--tf-text-4); letter-spacing: 0.05em; margin-bottom: 8px; }
 .list { display: flex; flex-direction: column; gap: 8px; }
-.srcCard { text-align: left; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-card); padding: 10px 12px; cursor: pointer; font-family: inherit; }
+/* 來源卡在面板抵達後（延一個 --tf-dur-2 起算）以 --tf-i 依序上浮就位。
+   keyframe 就地定義（CSS Modules 名稱在地化）；reduced-motion 歸零後停在終態、卡片正常可見。 */
+.srcCard, .extCard { animation: tf-src-rise var(--tf-dur-3) var(--tf-ease-out) both; animation-delay: calc(var(--tf-dur-2) + min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger)); }
+@keyframes tf-src-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.srcCard { text-align: left; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-card); padding: 10px 12px; cursor: pointer; font-family: inherit; transition: border-color var(--tf-dur-1) var(--tf-ease-standard), box-shadow var(--tf-dur-1) var(--tf-ease-standard); }
 .srcCard:hover { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink); }
 .srcTop { display: flex; align-items: center; gap: 8px; }
 .numGold { background: var(--tf-gold-tint); color: var(--tf-gold-text); border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; flex: none; }
@@ -23,7 +29,7 @@
 .srcSpacer { flex: 1; }
 .srcDate { font-size: 11.5px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
 .srcTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 13.5px; color: var(--tf-text-1); line-height: 1.45; margin-top: 6px; word-break: break-all; }
-.extCard { border: 1px dashed var(--tf-border); background: var(--tf-sidebar); border-radius: var(--tf-radius-card); padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start; text-decoration: none; }
+.extCard { border: 1px dashed var(--tf-border); background: var(--tf-sidebar); border-radius: var(--tf-radius-card); padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start; text-decoration: none; transition: border-color var(--tf-dur-1) var(--tf-ease-standard); }
 .extCard:hover { border-color: var(--tf-ink); }
 .numOrange { border: 1px solid var(--tf-warn); color: var(--tf-gold-text); border-radius: 999px; font-size: 11px; font-weight: 600; padding: 0 7px; flex: none; margin-top: 2px; }
 .extTitle { font-size: 13px; color: var(--tf-text-1); font-weight: 500; }

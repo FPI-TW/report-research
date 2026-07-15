@@ -14,11 +14,14 @@
 .track { height: 8px; border-radius: 999px; background: var(--tf-gold-tint); overflow: hidden; position: relative; }
 .fill { height: 100%; border-radius: 999px; background: var(--tf-gold-strong); transition: width var(--tf-dur-4) var(--tf-ease-out); }
 .indet { position: relative; }
-.indet::after { content: ''; position: absolute; top: 0; bottom: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent); animation: tf-indet 1.1s linear infinite; }
+/* 不確定進度＝單一鎏金色相的柔和掃光（ease-in-out ~1.4s，兩端減速、不硬跑）；確定進度仍走上面的 width 過渡。 */
+.indet::after { content: ''; position: absolute; top: 0; bottom: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(248, 241, 224, 0.65), transparent); animation: tf-indet 1.4s ease-in-out infinite; }
 .genMeta { font-size: 12.5px; color: var(--tf-text-3); margin-top: 8px; font-variant-numeric: tabular-nums; }
 .done { border: 1px solid var(--tf-gold-line); background: var(--tf-gold-panel); border-radius: 14px; padding: 16px 18px; margin-bottom: 8px; }
 .doneHead { display: flex; align-items: center; gap: 8px; }
-.doneIcon { color: var(--tf-gold-text); }
+/* 完成勾精準落定（scale .5→1＋淡入，播一次）；keyframe 就地定義（CSS Modules 名稱在地化）。 */
+.doneIcon { color: var(--tf-gold-text); animation: tf-check-pop var(--tf-dur-2) var(--tf-ease-out) both; }
+@keyframes tf-check-pop { from { opacity: 0; scale: 0.5; } to { opacity: 1; scale: 1; } }
 .doneTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
 .doneMeta { font-size: 12.5px; color: var(--tf-text-3); margin: 8px 0 14px; }
 .dl { display: inline-flex; align-items: center; gap: 6px; background: var(--tf-gold-text); color: var(--tf-on-gold); border-radius: 999px; font-size: 13px; font-weight: 600; padding: 8px 20px; text-decoration: none; }

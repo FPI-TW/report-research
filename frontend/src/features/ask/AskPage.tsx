@@ -59,7 +59,9 @@ export default function AskPage() {
             <AskEmptyState value={draft} onChange={setDraft} onSubmit={handleSubmit} />
           ) : (
             turns.map(t => (
-              <div key={t.id} className="tf-reveal">
+              // 進場交由子元件分別演繹（UserMessage 由右滑入、AssistantMessage 延一拍落定），
+              // 故此處不再統一套 tf-reveal，避免整組同時淡入而失去問→答的節奏。
+              <div key={t.id}>
                 <UserMessage text={t.question} onEdit={q => ctrl.editResubmit(t.id, t.qaId, q)} disabled={busy} />
                 <AssistantMessage
                   turn={t}

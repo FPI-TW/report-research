@@ -22,47 +22,38 @@ export function SearchSkeleton({ view, mode, cards = 6, rows = 10 }: Props) {
   )
 }
 
+/* 鏡射 CardsView：單一白底容器 + 月份標頭條 + 92px/1fr/200px 接縫列，
+   與實際 ResultCard 幾何一致，換入時零跳動。 */
 function CardGridSkeleton({ mode, cards }: { mode: SearchMode; cards: number }) {
   return (
-    <section>
+    <div className={styles.wrap}>
       <div className={styles.monthHeader}>
-        <Skeleton width={116} height={30} radius="var(--tf-radius-pill)" />
+        <Skeleton width={116} height={16} radius="var(--tf-radius-pill)" />
       </div>
-      <div className={styles.grid}>
-        {Array.from({ length: cards }, (_, i) => <CardSkeleton key={i} mode={mode} />)}
-      </div>
-    </section>
+      {Array.from({ length: cards }, (_, i) => <CardSkeleton key={i} mode={mode} />)}
+    </div>
   )
 }
 
 function CardSkeleton({ mode }: { mode: SearchMode }) {
   return (
     <div className={styles.card} data-testid="skeleton-card">
-      <div className={styles.top}>
-        <Skeleton width={44} height={18} radius="var(--tf-radius-pill)" />
-      </div>
-      <Skeleton className={styles.titleLine} height={14} width="92%" />
-      <Skeleton className={styles.titleLine} height={14} width="64%" />
-      <div className={styles.tags}>
-        <Skeleton width={52} height={20} radius="var(--tf-radius-pill)" />
-        <Skeleton width={40} height={20} radius="var(--tf-radius-pill)" />
+      <div className={styles.chipCol}>
         <Skeleton width={64} height={20} radius="var(--tf-radius-pill)" />
       </div>
-      {mode === 'search' ? (
-        <>
-          <Skeleton className={styles.line} height={12} width="100%" />
-          <Skeleton className={styles.line} height={12} width="78%" />
+      <div className={styles.main}>
+        <Skeleton className={styles.titleLine} height={15} width="72%" />
+        <Skeleton className={styles.tagLine} height={12} width="42%" />
+        <Skeleton className={styles.snippetLine} height={12} width={mode === 'search' ? '90%' : '84%'} />
+      </div>
+      <div className={styles.right}>
+        {mode === 'search' && (
           <div className={styles.scoreRow}>
-            <Skeleton className={styles.scoreTrack} height={6} radius="var(--tf-radius-pill)" />
-            <Skeleton width={52} height={11} radius={4} />
+            <Skeleton className={styles.scoreTrack} height={4} radius="var(--tf-radius-pill)" />
+            <Skeleton width={30} height={13} radius={4} />
           </div>
-        </>
-      ) : (
-        <Skeleton className={styles.line} height={13} width="85%" />
-      )}
-      <div className={styles.footer}>
-        <Skeleton width={120} height={12} radius={4} />
-        <Skeleton width={56} height={12} radius={4} />
+        )}
+        <Skeleton width={110} height={12} radius={4} />
       </div>
     </div>
   )

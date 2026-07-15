@@ -1,16 +1,30 @@
-/* 引註 hover 即時預覽卡：純展示、不攔截滑鼠；fixed 定位避免被捲動容器裁切 */
+/* 引註 hover 即時預覽卡：純展示、不攔截滑鼠。
+   外層 .card 只負責 fixed 定位（含上翻 translateY(-100%)），與動效解耦——
+   內層 .inner 才是視覺卡片本體並承載進場／離場動效，故上翻定位不會佔用 transform。 */
 .card {
   position: fixed; z-index: 60; width: 300px;
-  display: block; text-align: left; cursor: default; pointer-events: none;
+  display: block; pointer-events: none;
+}
+.inner {
+  display: block; text-align: left; cursor: default;
   background: var(--tf-surface); border: 1px solid var(--tf-border);
   border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-pop);
   padding: 12px 14px;
   font-weight: 400; font-size: 12px; line-height: 1.5; white-space: normal;
   color: var(--tf-text-2);
-  animation: tf-cite-fade var(--tf-dur-2) var(--tf-ease-out) both;
+  /* transform-origin 朝錨點（下開＝左上角、上開＝左下角），微縮放自角落展開 */
+  transform-origin: top left;
+  transition: opacity var(--tf-dur-2) var(--tf-ease-out),
+              transform var(--tf-dur-2) var(--tf-ease-out);
 }
-/* keyframe 須定義於本模組（CSS Modules 在地化）；僅淡入，不動 transform（上翻定位靠 translateY） */
-@keyframes tf-cite-fade { from { opacity: 0; } to { opacity: 1; } }
+.above { transform-origin: bottom left; }
+/* 初始／離場態：微縮放＋上浮＋淡出，離場改用加速曲線並縮短時長（須在 usePresence 150ms 內收完） */
+.inner[data-state='closed'] {
+  opacity: 0; transform: translateY(3px) scale(0.985);
+  transition-duration: var(--tf-dur-1);
+  transition-timing-function: var(--tf-ease-exit);
+}
+.inner[data-state='open'] { opacity: 1; transform: none; }
 
 .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .mkt { display: inline-flex; align-items: center; border-radius: var(--tf-radius-pill); padding: 1px 8px; font-size: 11px; font-weight: 500; }

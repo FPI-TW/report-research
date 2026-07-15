@@ -13,5 +13,6 @@
               translate var(--tf-dur-2) var(--tf-ease-out),
               scale var(--tf-dur-2) var(--tf-ease-out);
 }
-.panel[data-state='closed'] { opacity: 0; translate: 0 var(--tf-pop-rise, -4px); scale: 0.98; pointer-events: none; }
+/* 較深的初始縮放（0.96）讓面板可見地自錨點角落展開 */
+.panel[data-state='closed'] { opacity: 0; translate: 0 var(--tf-pop-rise, -4px); scale: 0.96; pointer-events: none; }
 .panel[data-state='open'] { opacity: 1; translate: 0 0; scale: 1; }

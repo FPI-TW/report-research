@@ -1,6 +1,17 @@
 /* 檢視切換：由右下浮動鈕移入工具列，改分段控制樣式 */
-.wrap { display: inline-flex; gap: 2px; background: var(--tf-border-weak); border: none; border-radius: var(--tf-radius-seg); padding: 3px; }
-.btn { border: none; background: none; width: 34px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 15px; color: var(--tf-text-3); }
+/* gap 移除，使 thumb 的 translateX(100%) 剛好落在下一段（段寬＝鈕寬 34px） */
+.wrap { position: relative; display: inline-flex; gap: 0; background: var(--tf-border-weak); border: none; border-radius: var(--tf-radius-seg); padding: 3px; }
+/* 滑動指示塊：白底段片，隨 --idx 平移；純 transform，無 keyframe、jsdom 靜態 */
+.thumb {
+  position: absolute; top: 3px; left: 3px;
+  width: 34px; height: 32px; border-radius: 8px;
+  background: var(--tf-surface); box-shadow: var(--tf-shadow-seg);
+  transform: translateX(calc(var(--idx, 0) * 100%));
+  transition: transform var(--tf-dur-2) var(--tf-ease-out);
+  pointer-events: none;
+}
+.btn { position: relative; z-index: 1; border: none; background: none; width: 34px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 15px; color: var(--tf-text-3); transition: color var(--tf-dur-1) var(--tf-ease-standard); }
 .btn:hover { color: var(--tf-text-2); }
-.active { background: var(--tf-surface); color: var(--tf-ink-deep); box-shadow: var(--tf-shadow-seg); }
+/* active 只翻字色，背景交給滑動 thumb */
+.active { color: var(--tf-ink-deep); }
 .active:hover { color: var(--tf-ink-deep); }

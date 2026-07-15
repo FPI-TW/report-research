@@ -6,6 +6,7 @@
   border-radius: var(--tf-radius-seg); padding: 8px 14px;
   font-size: 13px; cursor: pointer; font-family: inherit;
   white-space: nowrap; flex-shrink: 0;   /* 不換行、不被壓縮 */
+  transition: border-color var(--tf-dur-1) var(--tf-ease-standard), color var(--tf-dur-1) var(--tf-ease-standard);
 }
 .trigger:hover { border-color: var(--tf-ink); color: var(--tf-ink); }
 
@@ -17,7 +18,8 @@
 }
 
 /* 面板底樣式（bg/border/radius/shadow）沿用 Popover .panel；此處僅定位與尺寸。 */
-.panel { top: calc(100% + 8px); right: 0; width: 420px; max-width: 88vw; padding: 16px; }
+/* 右對齊面板：自觸發鈕右上角展開（覆寫 Popover 的進場原點/位移變數） */
+.panel { top: calc(100% + 8px); right: 0; width: 420px; max-width: 88vw; padding: 16px; --tf-pop-origin: top right; --tf-pop-rise: -6px; }
 
 .sectionLabel { font-size: 12px; font-weight: 600; color: var(--tf-text-2); margin-bottom: 9px; }
 
@@ -27,6 +29,9 @@
   border-radius: var(--tf-radius-pill); padding: 5px 13px;
   font-size: 13px; cursor: pointer; font-family: inherit;
   border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2);
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard),
+              border-color var(--tf-dur-1) var(--tf-ease-standard),
+              color var(--tf-dur-1) var(--tf-ease-standard);
 }
 .pill:hover { background: var(--tf-border-weak); }
 .pillActive {
@@ -46,5 +51,8 @@
   background: var(--tf-ink); color: var(--tf-on-ink); border: none;
   border-radius: var(--tf-radius-pill); font-size: 13px; font-weight: 600;
   padding: 7px 20px; cursor: pointer; font-family: inherit;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-standard),
+              scale var(--tf-dur-1) var(--tf-ease-emphasized);
 }
 .applyBtn:hover { background: var(--tf-ink-hover); }
+.applyBtn:active { scale: var(--tf-press); }

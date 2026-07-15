@@ -8,8 +8,8 @@
 .title { font-family: 'Noto Serif TC', Georgia, serif; font-weight: 700; font-size: 26px; color: #101828; margin: 0 0 6px; }
 .sub { font-size: 13px; color: #667085; font-variant-numeric: tabular-nums; }
 .headRight { display: flex; align-items: center; gap: 12px; }
-.live { display: inline-flex; align-items: center; gap: 6px; background: #faf3e3; color: #8a5a0f; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 4px 11px; }
-.liveDot { width: 7px; height: 7px; border-radius: 999px; background: #34c759; animation: tf-pulse 1.6s ease-in-out infinite; }
+.live { display: inline-flex; align-items: center; gap: 6px; background: #faf3e3; color: #8a5a0f; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 4px 11px; transition: background-color var(--tf-dur-2) var(--tf-ease-out), color var(--tf-dur-2) var(--tf-ease-out); }
+.liveDot { width: 7px; height: 7px; border-radius: 999px; background: #34c759; animation: tf-pulse 1.6s ease-in-out infinite; transition: background-color var(--tf-dur-2) var(--tf-ease-out); }
 .stale { background: #fef3f2; color: #b42318; }
 .staleDot { background: #f04438; animation: none; }
 .clock { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: #667085; font-variant-numeric: tabular-nums; }
@@ -35,24 +35,27 @@
 .pof { font-size: 14px; color: #98a2b3; }
 .ppct { margin-left: auto; font-size: 13px; font-weight: 600; color: #8a5a0f; font-variant-numeric: tabular-nums; }
 .bar { height: 9px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
-.barFill { height: 100%; border-radius: 999px; background: #8a5a0f; transition: width .34s cubic-bezier(.22, 1, .36, 1); }
+/* 進度條：首載以 scaleX 由左生長（transform-only，保留 inline width 給後續 poll 更新與測試讀取） */
+.barFill { height: 100%; border-radius: 999px; background: #8a5a0f; transform-origin: left; transition: width var(--tf-dur-4) var(--tf-ease-out); animation: tf-grow var(--tf-dur-4) var(--tf-ease-out) both; }
 .prate { font-size: 12.5px; color: #667085; margin-top: 10px; }
 .pidle { font-size: 13px; color: #98a2b3; margin: 6px 0 12px; }
 
 /* 報告導入 */
 .ingCurrent { font-size: 13px; color: #344054; margin-bottom: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .indetWrap { position: relative; height: 9px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
-.indetBar { position: absolute; top: 0; height: 100%; width: 34%; border-radius: 999px; background: #8a5a0f; animation: tf-indet 1.4s ease-in-out infinite; }
+/* 不定量掃描：以 translateX 位移（不觸發 layout），頭尾金色漸淡讀作沉穩的掃光而非跑馬燈 */
+.indetBar { position: absolute; top: 0; left: 0; height: 100%; width: 42%; border-radius: 999px; background: linear-gradient(90deg, rgba(138, 90, 15, 0) 0%, #8a5a0f 45%, #8a5a0f 55%, rgba(138, 90, 15, 0) 100%); will-change: translate; animation: tf-indet 1.4s var(--tf-ease-standard) infinite; }
 .indetIdle { position: absolute; top: 0; left: 0; height: 100%; width: 100%; border-radius: 999px; background: #e4e7ec; }
 
 /* 處理管線 */
 .pipeList { display: flex; flex-direction: column; gap: 13px; margin-top: 14px; }
 .pipeRow { display: flex; align-items: center; gap: 10px; }
-.pipeDot { width: 9px; height: 9px; border-radius: 999px; flex: none; }
-.pipeOn { background: #34c759; }
+.pipeDot { width: 9px; height: 9px; border-radius: 999px; flex: none; transition: background-color var(--tf-dur-2) var(--tf-ease-out), color var(--tf-dur-2) var(--tf-ease-out); }
+/* 執行中的燈點沿用 LIVE 燈點的沉穩呼吸，示意管線活著 */
+.pipeOn { background: #34c759; animation: tf-pulse 1.6s ease-in-out infinite; }
 .pipeOff { background: #d0d5dd; }
 .pipeName { font-size: 13.5px; color: #344054; flex: 1; }
-.pipeBadge { font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 2px 9px; }
+.pipeBadge { font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 2px 9px; transition: background-color var(--tf-dur-2) var(--tf-ease-out), color var(--tf-dur-2) var(--tf-ease-out); }
 .badgeOn { background: #ecfdf3; color: #027a48; }
 .badgeOff { background: #f2f4f7; color: #667085; }
 
@@ -61,7 +64,8 @@
 .mktRow { display: flex; align-items: center; gap: 12px; }
 .mktLabel { width: 52px; font-size: 12.5px; color: #344054; flex: none; }
 .mktBar { flex: 1; height: 8px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
-.mktFill { height: 100%; border-radius: 999px; transition: width var(--tf-dur-4) var(--tf-ease-out); }
+/* 市場分佈條：首載以 scaleX 由左生長並依列 stagger，保留 inline width 給 poll 更新與測試讀取 */
+.mktFill { height: 100%; border-radius: 999px; transform-origin: left; transition: width var(--tf-dur-4) var(--tf-ease-out); animation: tf-grow var(--tf-dur-4) var(--tf-ease-out) both; animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger)); }
 .mktCount { width: 66px; text-align: right; font-size: 12px; color: #667085; font-variant-numeric: tabular-nums; flex: none; }
 .mktPct { width: 38px; text-align: right; font-size: 12px; color: #98a2b3; flex: none; }
 
@@ -77,4 +81,7 @@
 
 /* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
 @keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-@keyframes tf-indet { 0% { left: -40%; } 100% { left: 100%; } }
+/* 用 translate 長寫法（相對自身寬度位移），與元素其他 transform 疊加不覆蓋 */
+@keyframes tf-indet { from { translate: -100% 0; } to { translate: 300% 0; } }
+/* 進度條進場生長：用 scale 長寫法（transform-origin: left 由左長出），to 落回元素自身狀態（scale 1），不改 inline width */
+@keyframes tf-grow { from { scale: 0 1; } }

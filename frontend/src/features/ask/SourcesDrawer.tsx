@@ -39,8 +39,8 @@ export function SourcesDrawer({ open, view, onClose, onOpenReport }: Props) {
       <div className={`${styles.body} tf-scroll`}>
         {view.sources.length > 0 && <div className={styles.subhead}>研報 · {view.sources.length}</div>}
         <div className={styles.list}>
-          {view.sources.map(s => (
-            <button key={`s${s.n}`} type="button" className={styles.srcCard} onClick={() => onOpenReport(s.report_id, s.file_name)}>
+          {view.sources.map((s, i) => (
+            <button key={`s${s.n}`} type="button" className={styles.srcCard} style={{ ['--tf-i' as string]: i }} onClick={() => onOpenReport(s.report_id, s.file_name)}>
               <div className={styles.srcTop}>
                 <span className={styles.numGold}>{s.n}</span>
                 <span className={styles.mkt} style={marketTint(s.market)}>{marketLabel(s.market)}</span>
@@ -56,7 +56,7 @@ export function SourcesDrawer({ open, view, onClose, onOpenReport }: Props) {
             <div className={styles.subhead} style={{ marginTop: 14 }}>網路補充 · {view.extSources.length}</div>
             <div className={styles.list}>
               {view.extSources.map((e, i) => (
-                <a key={`e${i}`} className={styles.extCard} href={e.url} target="_blank" rel="noopener noreferrer">
+                <a key={`e${i}`} className={styles.extCard} style={{ ['--tf-i' as string]: view.sources.length + i }} href={e.url} target="_blank" rel="noopener noreferrer">
                   <span className={styles.numOrange}>{view.sources.length + i + 1}</span>
                   <div>
                     <div className={styles.extTitle}>{e.title}</div>

@@ -43,11 +43,12 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
           onKeyDown={onKey}
         />
         {disabled ? (
-          <button type="button" className={styles.send} onClick={onStop} aria-label="停止生成" title="停止生成">
+          // key 使送出↔停止切換時按鈕重掛，內層 svg 隨之重掛以觸發一次性的縮放淡入落定。
+          <button key="stop" type="button" className={styles.send} onClick={onStop} aria-label="停止生成" title="停止生成">
             <Icon name="x" size={18} />
           </button>
         ) : (
-          <button type="button" className={styles.send} onClick={fire} aria-label="送出" title="送出">
+          <button key="send" type="button" className={styles.send} onClick={fire} aria-label="送出" title="送出">
             <Icon name="send" size={19} />
           </button>
         )}

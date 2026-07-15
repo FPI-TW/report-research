@@ -10,6 +10,19 @@
   animation-timing-function: var(--tf-ease-out);
 }
 
+/* 側欄選取列左緣指示條跨頁滑動（比照 ModeSwitch，名稱綁定於全域非 CSS Module）：
+   換頁時舊／新 active 列的 ::before 於兩位置間 morph，取代原本的瞬跳。
+   唯一性保證——名稱僅落在「完整側欄 .row.active 的 ::before」上：迷你／行動變體的
+   ::before 無 content 故不生方塊、不參與；SideRail 與 MobileTabBar 依 useMediaQuery
+   二選一掛載（絕不同時在場）；同一時刻僅一列 active，故同名元素恆為唯一。
+   NavItem 的 <Link> 帶 viewTransition，故經導覽或 ModeSwitch 導覽皆能觸發此 morph。 */
+[data-nav-item][aria-current='page']::before { view-transition-name: tf-nav-indicator; }
+
+::view-transition-group(tf-nav-indicator) {
+  animation-duration: var(--tf-dur-3);
+  animation-timing-function: var(--tf-ease-out);
+}
+
 /* 偏好減少動態 → View Transition 立即切換（無 morph／crossfade） */
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*),

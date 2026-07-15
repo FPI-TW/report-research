@@ -74,6 +74,13 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.report_planner_model, "claude-haiku-4-5")
         self.assertEqual(s.report_planner_timeout, 30.0)
         self.assertEqual(s.report_planner_max_subqueries, 8)
+        self.assertEqual(s.report_fanout_concurrency, 3)
+        self.assertEqual(s.report_subquery_dense_scan, 200)
+        self.assertEqual(s.report_total_candidates, 600)
+        self.assertEqual(s.report_mmr_enabled, True)
+        self.assertEqual(s.report_mmr_lambda, 0.7)
+        self.assertEqual(s.report_mmr_max_per_source, 6)
+        self.assertEqual(s.report_mmr_max_per_month, 0)
 
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())

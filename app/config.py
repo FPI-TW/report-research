@@ -70,6 +70,13 @@ class Settings:
     report_planner_model: str
     report_planner_timeout: float
     report_planner_max_subqueries: int
+    report_fanout_concurrency: int
+    report_subquery_dense_scan: int
+    report_total_candidates: int
+    report_mmr_enabled: bool
+    report_mmr_lambda: float
+    report_mmr_max_per_source: int
+    report_mmr_max_per_month: int
 
 
 def _load() -> Settings:
@@ -126,6 +133,16 @@ def _load() -> Settings:
         report_planner_model=os.getenv("REPORT_PLANNER_MODEL", intent_model),
         report_planner_timeout=float(os.getenv("REPORT_PLANNER_TIMEOUT", "30")),
         report_planner_max_subqueries=int(os.getenv("REPORT_PLANNER_MAX_SUBQUERIES", "8")),
+        report_fanout_concurrency=int(os.getenv("REPORT_FANOUT_CONCURRENCY", "3")),
+        # 子查詢掃描深度刻意低於呼叫端 dense_scan：原題恆用呼叫端值，子查詢走此淺掃
+        report_subquery_dense_scan=int(os.getenv("REPORT_SUBQUERY_DENSE_SCAN", "200")),
+        report_total_candidates=int(os.getenv("REPORT_TOTAL_CANDIDATES", "600")),
+        report_mmr_enabled=_flag("REPORT_MMR_ENABLED", "1"),
+        report_mmr_lambda=float(os.getenv("REPORT_MMR_LAMBDA", "0.7")),
+        # 0＝不限額；source=None 不計入配額
+        report_mmr_max_per_source=int(os.getenv("REPORT_MMR_MAX_PER_SOURCE", "6")),
+        # 預設關：財報季主題天然集中同月，硬性月配額誤傷風險高
+        report_mmr_max_per_month=int(os.getenv("REPORT_MMR_MAX_PER_MONTH", "0")),
     )
 
 

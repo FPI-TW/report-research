@@ -22,6 +22,11 @@ from app.services.textnorm import norm_for_match
 W_PHRASE = 0.25
 W_ALL = 0.15
 W_PARTIAL = 0.05
+# 問答/研報共用的 tier 契約：hybrid_search 產出、select_reports 門檻消費
+# （TIER_ALL_TERMS 以上＝字面命中一律放行）。與搜尋頁 BAND_WIDTH 無關，禁止合流。
+TIER_SEMANTIC = 0
+TIER_ALL_TERMS = 1
+TIER_PHRASE = 2
 DENSE_SCAN_MIN = 120
 LEX_LIMIT = 200
 LEX_CAP = 2000
@@ -102,11 +107,11 @@ async def hybrid_search(
         coverage = (sum(t in nc for t in terms) / len(terms)) if terms else 0.0
         hit_all = coverage == 1.0 and len(terms) >= 2
         if hit_phrase:
-            tier, bonus = 2, W_PHRASE
+            tier, bonus = TIER_PHRASE, W_PHRASE
         elif hit_all:
-            tier, bonus = 1, W_ALL
+            tier, bonus = TIER_ALL_TERMS, W_ALL
         else:
-            tier, bonus = 0, W_PARTIAL * coverage
+            tier, bonus = TIER_SEMANTIC, W_PARTIAL * coverage
         fused = min(0.999, round(dense_sim + bonus, 4))
         scored.append((tier, fused, row))
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Sequence
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.rows import ChunkRow
@@ -371,3 +371,28 @@ async def search_chunks_lexical(
     sql = _lexical_sql(len(term_patterns), extra, per_report, limit=limit)
     rows = await session.execute(text(sql), params)
     return [ChunkRow._make(r) for r in rows.all()]
+
+
+def _parse_vec_text(s: str) -> list[float]:
+    """pgvector '[f1,f2,...]' 文字 → list[float]（純函式，可獨測）。"""
+    body = s.strip().strip("[]").strip()
+    if not body:
+        return []
+    return [float(x) for x in body.split(",")]
+
+
+async def fetch_chunk_embeddings(
+    session: AsyncSession, chunk_ids: Sequence[str]
+) -> dict[str, list[float]]:
+    """按 chunk_id 批次取已持久化 embedding（1024 維）；空輸入回 {}，查無的 id 缺鍵。
+
+    embedding 不得加進 _meta_columns / ChunkRow（位置存取契約），故獨立批次查詢。
+    """
+    if not chunk_ids:
+        return {}
+    stmt = text(
+        "SELECT id::text, embedding::text"
+        " FROM research.report_chunk WHERE id IN :ids"
+    ).bindparams(bindparam("ids", expanding=True))
+    rows = await session.execute(stmt, {"ids": list(chunk_ids)})
+    return {row[0]: _parse_vec_text(row[1]) for row in rows if row[1] is not None}

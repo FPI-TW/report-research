@@ -167,15 +167,6 @@ class PlanQueriesTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(plan.degraded)
         self.assertEqual(_texts(plan), [self.Q])
 
-    async def test_report_profile_fail_open_without_llm(self):
-        # Step 0（M6 區段）：report profile 未填 prompt → fail-open 且不得呼叫 LLM。
-        # M6 填入 build_prompt 後，本測試由 M6 里程碑改寫／移除。
-        with patch.object(qp, "stream_completion") as spy:
-            plan = await qp.plan_queries(self.Q, profile="report")
-        spy.assert_not_called()
-        self.assertTrue(plan.degraded)
-        self.assertEqual(_texts(plan), [self.Q])
-
     async def test_llm_error_fail_open(self):
         async def boom(prompt, **kwargs):
             raise RuntimeError("LLM down")

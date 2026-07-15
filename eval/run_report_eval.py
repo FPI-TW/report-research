@@ -152,6 +152,17 @@ def _config_snapshot(dataset: dict) -> dict:
         "report_rerank_enabled": s.report_rerank_enabled,
         "report_rerank_candidates": s.report_rerank_candidates,
         "report_thin_coverage": s.report_thin_coverage,
+        # M6：多查詢分解＋MMR 組態（純加法，供跨版本 eval 對比歸因）
+        "report_planner_model": s.report_planner_model,
+        "report_planner_timeout": s.report_planner_timeout,
+        "report_planner_max_subqueries": s.report_planner_max_subqueries,
+        "report_fanout_concurrency": s.report_fanout_concurrency,
+        "report_subquery_dense_scan": s.report_subquery_dense_scan,
+        "report_total_candidates": s.report_total_candidates,
+        "report_mmr_enabled": s.report_mmr_enabled,
+        "report_mmr_lambda": s.report_mmr_lambda,
+        "report_mmr_max_per_source": s.report_mmr_max_per_source,
+        "report_mmr_max_per_month": s.report_mmr_max_per_month,
     }
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+from time import monotonic as _monotonic
 
 from app.config import get_settings
 
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 _model = None
 _load_failed = False  # 熔斷：載入失敗一次後不再重試（否則每次請求都重載+再阻塞）
 _lock = threading.Lock()
+
+# CPU 推論分批：單一大 batch 會一路算完才返回；分批使 deadline 檢查有中止點
+# （逾時被放棄的背景工作在批次邊界收手，不再燒 CPU、不再占住 rerank semaphore）。
+_BATCH_SIZE = 16
 
 
 class _CrossEncoder:
@@ -77,36 +82,61 @@ def _get_model():
     return _model
 
 
-def rerank_scores(query: str, passages: list[str]) -> list[float]:
+def warmup() -> bool:
+    """預載模型（web 啟動時於背景執行緒呼叫）。回模型是否可用；不拋例外。
+
+    冷載入實測 44-52s：不預載則首個帶 rerank 的請求必然把載入時間算進逾時預算而
+    fail-open，rerank 形同關閉直到有請求「犧牲」一次。
+    """
+    return _get_model() is not None
+
+
+def rerank_scores(
+    query: str, passages: list[str], deadline: float | None = None
+) -> list[float]:
     """回每個 passage 對 query 的相關度 ∈ [0,1]（sigmoid 正規化）。
 
     空 passages → []；模型不可用（載入失敗/已熔斷）→ [] → rerank_scored 以形狀不符 fail-open。
-    compute_score 恆回 list；保留 float→list 防禦以相容注入 fake 的單測。
+    deadline（time.monotonic 基準）到期 → 中止並回 []（同樣走 fail-open）；分批推論使
+    中止在批次邊界生效。compute_score 恆回 list；保留 float→list 防禦以相容注入 fake 的單測。
     """
     if not passages:
         return []
     model = _get_model()
     if model is None:
         return []
-    raw = model.compute_score([(query, p) for p in passages], normalize=True)
-    if isinstance(raw, (int, float)):
-        raw = [raw]
-    return [float(s) for s in raw]
+    scores: list[float] = []
+    for i in range(0, len(passages), _BATCH_SIZE):
+        if deadline is not None and _monotonic() >= deadline:
+            logger.warning(
+                "rerank deadline reached after %d/%d passages; aborting",
+                i, len(passages),
+            )
+            return []
+        batch = passages[i : i + _BATCH_SIZE]
+        raw = model.compute_score([(query, p) for p in batch], normalize=True)
+        if isinstance(raw, (int, float)):
+            raw = [raw]
+        scores.extend(float(s) for s in raw)
+    return scores
 
 
-def rerank_scored(question, scored, *, top_m, timer=None):
+def rerank_scored(question, scored, *, top_m, timer=None, deadline=None):
     """對 scored 前 top_m 個重排：rerank 分覆蓋 fused、tier/row 保留，head 依
     (tier, rerank 分) 皆降序重排——tier 硬性優先（字面命中永在語意之上），同 tier
     內取最相關者先入，故 select_reports 每報告前 max_passages 段落即重排後最相關者。
     尾段（top_m 之後）保留原 fused 分數與相對序，避免與 select_reports 的門檻尺度不相容。
-    推論失敗/形狀不符（含模型不可用回 []）/非有限分數(NaN/inf)/退化 → 回原 scored（fail-open）。
+    推論失敗/形狀不符（含模型不可用回 []）/非有限分數(NaN/inf)/deadline 中止/退化
+    → 回原 scored（fail-open）。
     """
     if not scored or top_m <= 0:
         return scored
     try:
         head = scored[:top_m]
         tail = scored[top_m:]
-        scores = rerank_scores(question, [row.content for (_t, _f, row) in head])
+        scores = rerank_scores(
+            question, [row.content for (_t, _f, row) in head], deadline=deadline
+        )
         if len(scores) != len(head) or not all(math.isfinite(s) for s in scores):
             return scored  # 形狀不符（含模型不可用）/NaN/inf：fail-open
         reranked = sorted(

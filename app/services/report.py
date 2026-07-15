@@ -52,6 +52,8 @@ REPORT_ENABLE_WEB = _S.report_enable_web
 REPORT_THIN_COVERAGE = _S.report_thin_coverage
 # rerank（M2）：研報路徑較深候選上限；旗標關時 0＝不重排
 REPORT_RERANK_TOP_M = _S.report_rerank_candidates if _S.report_rerank_enabled else 0
+# 研報路徑 rerank 逾時（prod 實測 120 對 ~93s；30s 共用預設曾使 M1b 基準線 10/10 逾時）
+REPORT_RERANK_TIMEOUT = _S.report_rerank_timeout
 
 REPORT_SYSTEM_PROMPT = (
     "你是「廷豐智能研報」的研究分析師，負責把研報片段（必要時佐以網路資料）彙整成一份"
@@ -251,6 +253,7 @@ async def generate_report(
         max_chars=REPORT_MAX_CONTEXT_CHARS,
         filters=filters,
         rerank_top_m=REPORT_RERANK_TOP_M,
+        rerank_timeout=REPORT_RERANK_TIMEOUT,
     )
     yield ("sources", [asdict(s) for s in sources])
     # 網搜開啟時，即使脈絡薄/空也照常生成（由模型上網補齊）；僅「脈絡空且網搜關」才拒生成。

@@ -55,6 +55,10 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.report_rerank_enabled, True)
         self.assertEqual(s.report_rerank_candidates, 120)
         self.assertEqual(s.rerank_model, "BAAI/bge-reranker-v2-m3")
+        # per-path 逾時：prod 實測 50 對 ~34s、120 對 ~93s（20 核 CPU），
+        # 舊共用 30s 使兩路徑全數逾時（M1b 基準線 notes）。預設須蓋過實測值 + 餘裕。
+        self.assertEqual(s.ask_rerank_timeout, 60.0)
+        self.assertEqual(s.report_rerank_timeout, 180.0)
 
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())

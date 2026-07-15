@@ -7,6 +7,8 @@
 > 設計細節看藍圖；本文件只管**做什麼、動哪些檔、怎麼算完成**。依相依性排序，一個里程碑一個 session。
 
 > **狀態校準（2026-07-14）**：M0、M2、M3、M4 已落地；M1 的**問答**題集、評測 runner 與基準線已落地。它們不得再重做。M1b（研報專用評測）、M4a（受信任時效資料）與 M4b（共用證據帳本）是後續工作的前置契約；其餘里程碑仍待執行。
+>
+> **狀態校準（2026-07-15）**：M1b/M4a/M4b 已落地合併。M5 與 M6 平行開發的共用地基（`app/services/query_planner.py` 共用核心＋`app/config.py`／`tests/test_config.py` 的 M5/M6 標記預留區）已由 `feat/query-planner-foundation` 落地；M5/M6 各自只在自己的標記區段與 profile 區段內擴充，不得改共用核心或對方區段（契約見 `docs/superpowers/specs/2026-07-15-query-planner-foundation-design.md`）。
 
 ---
 

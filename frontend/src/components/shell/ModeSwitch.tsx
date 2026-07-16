@@ -1,4 +1,5 @@
-import { Link, useLocation } from 'react-router'
+import { useLocation } from 'react-router'
+import { MotionLink } from '../primitives/MotionLink'
 import { Icon, type IconName } from '../primitives/Icon'
 import { preloadRoute, type RouteKey } from '../../lib/routePreload'
 import styles from './ModeSwitch.module.css'
@@ -39,8 +40,15 @@ function ModeItem({ to, icon, label, active, routeKey }: ModeItemProps) {
   }
   const preload = () => preloadRoute(routeKey)
   return (
-    <Link to={to} className={styles.mode} viewTransition onPointerEnter={preload} onFocus={preload}>
+    <MotionLink
+      to={to}
+      className={styles.mode}
+      viewTransition
+      onPointerEnter={preload}
+      onFocus={preload}
+      whileTap={{ scale: 0.96 }}
+    >
       <Icon name={icon} size={15} />{label}
-    </Link>
+    </MotionLink>
   )
 }

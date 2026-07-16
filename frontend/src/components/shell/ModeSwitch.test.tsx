@@ -12,18 +12,18 @@ function renderAt(path: string) {
 
 test('在 /search：檢索為 active、問答為連向 /ask 的連結', () => {
   renderAt('/search')
-  expect(screen.getByText('檢索研報').closest('[aria-current="page"]')).not.toBeNull()
-  expect(screen.getByRole('link', { name: /智能問答/ })).toHaveAttribute('href', '/ask')
+  expect(screen.getByText('檢索').closest('[aria-current="page"]')).not.toBeNull()
+  expect(screen.getByRole('link', { name: /問答/ })).toHaveAttribute('href', '/ask')
 })
 
 test('在 /ask：問答為 active、檢索為連向 /search 的連結', () => {
   renderAt('/ask')
-  expect(screen.getByText('智能問答').closest('[aria-current="page"]')).not.toBeNull()
-  expect(screen.getByRole('link', { name: /檢索研報/ })).toHaveAttribute('href', '/search')
+  expect(screen.getByText('問答').closest('[aria-current="page"]')).not.toBeNull()
+  expect(screen.getByRole('link', { name: /檢索/ })).toHaveAttribute('href', '/search')
 })
 
 test('hover 非 active 連結預載對向路由', () => {
   renderAt('/search')
-  fireEvent.pointerEnter(screen.getByRole('link', { name: /智能問答/ }))
+  fireEvent.pointerEnter(screen.getByRole('link', { name: /問答/ }))
   expect(preloadRoute).toHaveBeenCalledWith('ask')
 })

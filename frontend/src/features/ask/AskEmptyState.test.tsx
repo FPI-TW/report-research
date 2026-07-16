@@ -21,6 +21,6 @@ test('顯示標題/副標/輸入框，無範例膠囊', () => {
 
 test('含檢索↔問答切換鈕：問答 active、檢索連向 /search', () => {
   renderEmpty()
-  expect(screen.getByText('智能問答').closest('[aria-current="page"]')).not.toBeNull()
-  expect(screen.getByRole('link', { name: /檢索研報/ })).toHaveAttribute('href', '/search')
+  expect(screen.getByText('問答').closest('[aria-current="page"]')).not.toBeNull()
+  expect(screen.getByRole('link', { name: /檢索/ })).toHaveAttribute('href', '/search')
 })

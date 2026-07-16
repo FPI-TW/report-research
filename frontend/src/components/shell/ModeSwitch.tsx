@@ -9,14 +9,14 @@ interface ModeSwitchProps {
   className?: string
 }
 
-/** 「檢索研報／智能問答」分段控制。每頁僅渲染一個。 */
+/** 「檢索／問答」分段控制。每頁僅渲染一個。 */
 export function ModeSwitch({ size = 'md', className }: ModeSwitchProps) {
   const askActive = useLocation().pathname.startsWith('/ask')
   const cls = [styles.switch, size === 'sm' ? styles.sm : '', className ?? ''].filter(Boolean).join(' ')
   return (
     <div className={cls} role="group" aria-label="檢索與問答切換">
-      <ModeItem to="/search" icon="search" label="檢索研報" active={!askActive} routeKey="search" />
-      <ModeItem to="/ask" icon="messages" label="智能問答" active={askActive} routeKey="ask" />
+      <ModeItem to="/search" icon="search" label="檢索" active={!askActive} routeKey="search" />
+      <ModeItem to="/ask" icon="messages" label="問答" active={askActive} routeKey="ask" />
     </div>
   )
 }

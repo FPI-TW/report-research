@@ -112,7 +112,6 @@ export default function SearchPage() {
           </div>
           {showHero && (
             <div className={styles.tryRow}>
-              <span className={styles.tryLabel}>試試</span>
               {TRY_QUERIES.map(q => (
                 <Pressable key={q} className={styles.tryChip} onClick={() => update({ q })}>{q}</Pressable>
               ))}

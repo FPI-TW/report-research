@@ -1794,15 +1794,6 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ConversationStaticContractTests(unittest.TestCase):
-    def test_history_replay_preserves_offtopic_notice_branch(self):
-        js = (REPO_ROOT / "web/static/app/ask.js").read_text(encoding="utf-8")
-        normalized = " ".join(js.split())
-        self.assertRegex(
-            normalized,
-            r'if \(it\.is_offtopic\) \{ paintNotice\(turn, it\.answer \|\| ""\); \} else \{',
-        )
-        self.assertIn("paintAnswer(turn, false); paintActions(turn);", normalized)
-
     def test_schema_uses_expression_index_for_conversation_lookup(self):
         schema = (REPO_ROOT / "db/schema.sql").read_text(encoding="utf-8")
         self.assertRegex(

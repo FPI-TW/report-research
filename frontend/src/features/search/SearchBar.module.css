@@ -9,5 +9,3 @@
 .lg { border-radius: var(--tf-radius-panel); border-width: 1.5px; border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); padding: 6px 6px 6px 20px; gap: 12px; }
 .lg:focus-within { border-color: var(--tf-ink); box-shadow: 0 0 0 4px rgba(30, 81, 117, 0.14), var(--tf-shadow-float); }
 .lg .input { font-size: 15px; padding: 11px 0; }
-.go { flex: none; background: var(--tf-ink); color: var(--tf-on-ink); border: none; border-radius: 11px; height: 44px; padding: 0 24px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
-.go:hover { background: var(--tf-ink-hover); }

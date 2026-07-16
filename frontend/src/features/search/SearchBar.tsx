@@ -75,9 +75,6 @@ export function SearchBar({ initial, onSubmit, size = 'md' }: Props) {
           <Icon name="x" size={16} />
         </Pressable>
       )}
-      {size === 'lg' && (
-        <Pressable className={styles.go} onClick={() => fire(draft)}>搜尋</Pressable>
-      )}
     </div>
   )
 }

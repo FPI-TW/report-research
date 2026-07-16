@@ -12,7 +12,6 @@ import { latestId } from '../../lib/isLatest'
 import { resultsMetaText, emptyState } from '../../lib/resultsMeta'
 import type { TableSort, TableSortKey } from '../../lib/tableSort'
 import { BrandLogo } from '../../components/BrandLogo'
-import { ModeSwitch } from '../../components/shell/ModeSwitch'
 import { SearchBar } from './SearchBar'
 import { MarketChipBar } from './MarketChipBar'
 import { SortMenu } from './SortMenu'
@@ -30,9 +29,6 @@ import { Reveal } from '../../components/primitives/Reveal'
 import { Pressable } from '../../components/primitives/Pressable'
 import { GradientBackground } from '../../components/animate-ui/components/backgrounds/gradient'
 import styles from './SearchPage.module.css'
-
-/** 首頁 hero 的建議查詢（純起手式，點了即搜） */
-const TRY_QUERIES = ['AI 伺服器散熱供應鏈', 'FOMC 降息路徑', '高股息 ETF 配置']
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams()
@@ -90,7 +86,6 @@ export default function SearchPage() {
               {stats.data ? `收錄 ${stats.data.total_reports.toLocaleString()} 篇券商研報 — ` : ''}
               語意檢索 · 智能問答 · 深度研報
             </p>
-            <ModeSwitch className={styles.heroSwitch} />
           </Reveal>
         )}
 
@@ -110,13 +105,6 @@ export default function SearchPage() {
               </div>
             )}
           </div>
-          {showHero && (
-            <div className={styles.tryRow}>
-              {TRY_QUERIES.map(q => (
-                <Pressable key={q} className={styles.tryChip} onClick={() => update({ q })}>{q}</Pressable>
-              ))}
-            </div>
-          )}
           <MarketChipBar value={state.market} onChange={m => update({ market: m })} counts={marketCounts} />
           <ActiveChips state={state} onPatch={update} />
         </div>

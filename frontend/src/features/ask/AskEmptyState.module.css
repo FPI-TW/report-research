@@ -6,4 +6,3 @@
 .glyph { display: block; margin-bottom: 6px; }
 .title { font-family: var(--tf-serif); font-weight: 700; font-size: 24px; color: var(--tf-ink-deep); }
 .sub { font-size: 13.5px; color: var(--tf-text-3); margin-bottom: 14px; max-width: 420px; }
-.switch { margin: 4px 0 8px; }

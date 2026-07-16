@@ -1,6 +1,9 @@
 /* 檢視切換：由右下浮動鈕移入工具列，改分段控制樣式 */
 .wrap { display: inline-flex; gap: 2px; background: var(--tf-border-weak); border: none; border-radius: var(--tf-radius-seg); padding: 3px; }
-.btn { border: none; background: none; width: 34px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 15px; color: var(--tf-text-3); }
+.btn { position: relative; border: none; background: none; width: 34px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 15px; color: var(--tf-text-3); transition: color var(--tf-dur-1) var(--tf-ease-out); }
 .btn:hover { color: var(--tf-text-2); }
-.active { background: var(--tf-surface); color: var(--tf-ink-deep); box-shadow: var(--tf-shadow-seg); }
+/* 滑動 thumb：active 底板由 Motion layoutId 於兩鍵間滑移；label 疊在其上 */
+.thumb { position: absolute; inset: 0; background: var(--tf-surface); box-shadow: var(--tf-shadow-seg); border-radius: 8px; z-index: 0; }
+.label { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+.active { color: var(--tf-ink-deep); }
 .active:hover { color: var(--tf-ink-deep); }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { MotionLink } from '../primitives/MotionLink'
 import { Icon } from '../primitives/Icon'
 import { ConfirmDialog } from '../primitives/ConfirmDialog'
@@ -36,8 +36,17 @@ export function ConversationList() {
       </div>
       <div className={styles.heading}>歷史對話</div>
       <div className={`${styles.list} tf-scroll`}>
+        <AnimatePresence initial={false}>
         {(data ?? []).map((cv) => (
-          <motion.div key={cv.conversation_id} className={styles.row} initial="rest" animate="rest" whileHover="hover">
+          <motion.div
+            key={cv.conversation_id}
+            className={styles.row}
+            layout="position"
+            initial="rest"
+            animate="rest"
+            whileHover="hover"
+            exit={{ opacity: 0, x: -12, transition: { duration: 0.18 } }}
+          >
             <MotionLink
               to={`/ask?c=${encodeURIComponent(cv.conversation_id)}`}
               className={`${styles.item} ${cv.conversation_id === activeC ? styles.active : ''}`}
@@ -58,6 +67,7 @@ export function ConversationList() {
             </motion.button>
           </motion.div>
         ))}
+        </AnimatePresence>
       </div>
       <ConfirmDialog
         open={pending !== null}

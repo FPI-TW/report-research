@@ -311,11 +311,27 @@ def select_reports(
     relevance_floor: float,
     stale_age_days: int,
     max_stale: int,
+    mmr_lambda: float = 0.0,
+    chunk_embeddings: dict[str, list[float]] | None = None,
+    mmr_max_per_source: int = 0,
+    mmr_max_per_month: int = 0,
+    gate_scores: dict[str, float] | None = None,
 ) -> list["SelectedReport"]:
     """選篇政策（純函式）：聚合→排序→過舊軟截斷→相關度下限→過舊配額→字數預算。
 
     排序鍵 (best_tier, 相關度 band, 新近度, best_fused, report_id) 由高到低。
+    M6 追加 kwargs（皆有預設值，預設下與原行為逐 byte 等價）：
+    - gate_scores：chunk_id → rerank 前 fused 快照。相關度下限改比 best_gate
+      （排序仍用傳入分數）——rerank sigmoid 分與以 fused 尺度校準的 floor
+      量綱解耦；未提供或缺鍵一律退回該 chunk 自身 fused（現行語意）。
+    - mmr_lambda > 0 且 chunk_embeddings 非空 → MMR 多樣性選取（_mmr_pick）；
+      分支內任何例外 log 後 fallback 現行迴圈（fail-open）。
+    - mmr_max_per_source / mmr_max_per_month：MMR 分支的多樣性配額，0＝不限；
+      source=None／無日期不計入配額。
     """
+    # 契約：不動頂部 import 區（M5/M6 平行），跨模組常數以函式內 import 取用
+    from app.services.retrieval import TIER_ALL_TERMS
+
     now_date = now
     by_report: dict[str, dict] = {}
     order: list[str] = []
@@ -324,6 +340,8 @@ def select_reports(
         content = clean_text(row.content)
         if not content:
             continue
+        # gate＝rerank 前 fused 快照（finding 3）；未提供／缺鍵退回自身 fused
+        gate = gate_scores.get(row.chunk_id, fused) if gate_scores else fused
         info = by_report.get(rid)
         if info is None:
             info = {
@@ -331,8 +349,14 @@ def select_reports(
                 "file_name": row.file_name,
                 "market": row.market,
                 "report_date": row.report_date,
+                # source／best_chunk_id 供 MMR 配額與代表 embedding。
+                # best_chunk_id＝首個非空內容 chunk：與 retrieve_context_multi
+                # 的代表 chunk 規則對齊，兩端取不同 chunk 會使冗餘懲罰靜默失效
+                "source": row.source,
+                "best_chunk_id": row.chunk_id,
                 "best_tier": tier,
                 "best_fused": fused,
+                "best_gate": gate,
             }
             by_report[rid] = info
             order.append(rid)
@@ -341,6 +365,8 @@ def select_reports(
                 info["best_tier"] = tier
             if fused > info["best_fused"]:
                 info["best_fused"] = fused
+            if gate > info["best_gate"]:
+                info["best_gate"] = gate
         if len(info["passages"]) < max_passages:
             info["passages"].append(content)
 
@@ -363,6 +389,30 @@ def select_reports(
     fresh_count = sum(1 for f in factors.values() if f >= ASK_FRESH_FACTOR)
     cutoff_active = fresh_count >= ASK_MIN_FRESH_BEFORE_CUTOFF
 
+    if mmr_lambda > 0 and chunk_embeddings:
+        # MMR 分支整段 fail-open：任何例外（如 embedding 形狀不符）落回現行
+        # 迴圈，選篇永遠有結果（單一寬 try，比照 rerank_scored 的裁決）
+        try:
+            return _mmr_pick(
+                reports,
+                factors=factors,
+                cutoff_active=cutoff_active,
+                now_date=now_date,
+                max_reports=max_reports,
+                min_reports=min_reports,
+                relevance_floor=relevance_floor,
+                stale_age_days=stale_age_days,
+                max_stale=max_stale,
+                max_chars=max_chars,
+                mmr_lambda=mmr_lambda,
+                chunk_embeddings=chunk_embeddings,
+                max_per_source=mmr_max_per_source,
+                max_per_month=mmr_max_per_month,
+                tier_floor=TIER_ALL_TERMS,
+            )
+        except Exception:
+            logger.warning("MMR 選篇失敗，退回現行選篇迴圈", exc_info=True)
+
     selected: list[SelectedReport] = []
     total = 0
     n = 0
@@ -377,7 +427,7 @@ def select_reports(
             rdate_d is not None and (now_date - rdate_d).days > stale_age_days
         )
         if n >= min_reports:
-            if info["best_tier"] < 1 and info["best_fused"] < relevance_floor:
+            if info["best_tier"] < TIER_ALL_TERMS and info["best_gate"] < relevance_floor:
                 continue
             if is_stale and stale_used >= max_stale:
                 continue
@@ -404,6 +454,167 @@ def select_reports(
     return selected
 
 
+def _unit(vec) -> list[float] | None:
+    """向量正規化（純 Python，MMR cosine 用）；零向量回 None 表示不可比。"""
+    norm = sum(x * x for x in vec) ** 0.5
+    if norm <= 0:
+        return None
+    return [x / norm for x in vec]
+
+
+def _mmr_pick(
+    reports,
+    *,
+    factors,
+    cutoff_active,
+    now_date,
+    max_reports,
+    min_reports,
+    relevance_floor,
+    stale_age_days,
+    max_stale,
+    max_chars,
+    mmr_lambda,
+    chunk_embeddings,
+    max_per_source,
+    max_per_month,
+    tier_floor,
+) -> list["SelectedReport"]:
+    """MMR greedy 選取：基礎序位次當相關度、持久化 embedding cosine 當冗餘度。
+
+    閘門語意與現行選篇迴圈逐項對齊：過舊軟截斷／gate 門檻／過舊配額＝永久剔除；
+    source／年月配額只在 n >= min_reports 後生效且僅本輪跳過，最後由放寬段依
+    基礎序補回（只放寬配額；gate、過舊、字數預算照常把關）——配額只重排資源、
+    不淨減篇數。相關度項用位次（1 - idx/N）而非分數：head（rerank 分）與尾段
+    （fused）尺度不同，不可直接進同一算術。mmr_lambda=1.0 時恆選基礎序首位
+    通過者，選集與現行迴圈等價。
+    """
+    n_total = len(reports)
+    base_idx = {rid: i for i, (rid, _) in enumerate(reports)}
+    unit_cache: dict[str, list[float] | None] = {}
+
+    def _rep_vec(info):
+        cid = info["best_chunk_id"]
+        if cid not in unit_cache:
+            vec = chunk_embeddings.get(cid)
+            unit_cache[cid] = _unit(vec) if vec is not None else None
+        return unit_cache[cid]
+
+    def _is_stale(info):
+        rdate_d = _as_date(info["report_date"])
+        return rdate_d is not None and (now_date - rdate_d).days > stale_age_days
+
+    def _month_key(info):
+        d = _as_date(info["report_date"])
+        return (d.year, d.month) if d is not None else None
+
+    selected: list[SelectedReport] = []
+    selected_vecs: list[list[float]] = []
+    total = 0
+    n = 0
+    stale_used = 0
+    src_used: dict[str, int] = {}
+    month_used: dict[tuple[int, int], int] = {}
+
+    def _take(rid, info):
+        """套字數預算入選；kept 空回 False（呼叫端已自候選移除，不計 n）。"""
+        nonlocal total, n, stale_used
+        kept: list[str] = []
+        for content in info["passages"]:
+            if total + len(content) > max_chars:
+                continue
+            kept.append(content)
+            total += len(content)
+        if not kept:
+            return False
+        n += 1
+        if _is_stale(info):
+            stale_used += 1
+        src = info["source"]
+        if src is not None:
+            src_used[src] = src_used.get(src, 0) + 1
+        mk = _month_key(info)
+        if mk is not None:
+            month_used[mk] = month_used.get(mk, 0) + 1
+        vec = _rep_vec(info)
+        if vec is not None:
+            selected_vecs.append(vec)
+        selected.append(
+            SelectedReport(
+                report_id=rid,
+                file_name=info["file_name"],
+                market=info["market"],
+                report_date=info["report_date"],
+                passages=kept,
+            )
+        )
+        return True
+
+    remaining = list(reports)
+    while n < max_reports and remaining:
+        survivors: list = []
+        eligible: list = []
+        for rid, info in remaining:
+            if cutoff_active and factors[rid] < ASK_STALE_FACTOR:
+                continue  # 永久剔除
+            if n >= min_reports:
+                if (
+                    info["best_tier"] < tier_floor
+                    and info["best_gate"] < relevance_floor
+                ):
+                    continue  # 永久剔除
+                if _is_stale(info) and stale_used >= max_stale:
+                    continue  # 永久剔除
+                src = info["source"]
+                mk = _month_key(info)
+                if (
+                    max_per_source > 0
+                    and src is not None
+                    and src_used.get(src, 0) >= max_per_source
+                ) or (
+                    max_per_month > 0
+                    and mk is not None
+                    and month_used.get(mk, 0) >= max_per_month
+                ):
+                    survivors.append((rid, info))  # 僅本輪跳過，留待放寬段
+                    continue
+            survivors.append((rid, info))
+            eligible.append((rid, info))
+        if not eligible:
+            remaining = survivors
+            break
+        best = None
+        best_score = None
+        for rid, info in eligible:
+            rank_rel = 1.0 - base_idx[rid] / n_total
+            vec = _rep_vec(info)
+            max_sim = 0.0
+            if vec is not None and selected_vecs:
+                max_sim = max(
+                    sum(a * b for a, b in zip(vec, sv)) for sv in selected_vecs
+                )
+            score = mmr_lambda * rank_rel - (1.0 - mmr_lambda) * max_sim
+            if best_score is None or score > best_score:
+                best, best_score = (rid, info), score
+        rid, info = best
+        remaining = [(r, i) for r, i in survivors if r != rid]
+        _take(rid, info)
+
+    # 放寬段：只放寬 source／年月配額；gate、過舊、字數預算照常把關
+    for rid, info in remaining:
+        if n >= max_reports:
+            break
+        if cutoff_active and factors[rid] < ASK_STALE_FACTOR:
+            continue
+        if n >= min_reports:
+            if info["best_tier"] < tier_floor and info["best_gate"] < relevance_floor:
+                continue
+            if _is_stale(info) and stale_used >= max_stale:
+                continue
+        _take(rid, info)
+    return selected
+
+
 def build_context(
     scored: list[tuple[int, float, tuple]],
     *,
@@ -416,6 +627,11 @@ def build_context(
     relevance_floor: float = ASK_RELEVANCE_FLOOR,
     stale_age_days: int = ASK_STALE_AGE_DAYS,
     max_stale: int = ASK_MAX_STALE_REPORTS,
+    mmr_lambda: float = 0.0,
+    chunk_embeddings: dict[str, list[float]] | None = None,
+    mmr_max_per_source: int = 0,
+    mmr_max_per_month: int = 0,
+    gate_scores: dict[str, float] | None = None,
 ) -> tuple[list[Source], str]:
     """把檢索結果整理成『來源清單 + 帶編號的脈絡文字』（選篇政策見 select_reports）。"""
     now_date = (now or datetime.now(timezone.utc)).date()
@@ -425,6 +641,9 @@ def build_context(
         now=now_date, half_life_days=half_life_days, min_reports=min_reports,
         relevance_floor=relevance_floor, stale_age_days=stale_age_days,
         max_stale=max_stale,
+        mmr_lambda=mmr_lambda, chunk_embeddings=chunk_embeddings,
+        mmr_max_per_source=mmr_max_per_source, mmr_max_per_month=mmr_max_per_month,
+        gate_scores=gate_scores,
     )
 
     sources: list[Source] = []
@@ -1301,34 +1520,54 @@ async def answer_question(
             yield ev
         return
 
+    # M5 agentic：規劃與第一輪檢索並行（Haiku 規劃藏在檢索影子裡，設計 §5.1）；
+    # 首輪 decision 未知一律建，續問僅 corpus_qa/advice_risk 建。新符號一律函式內
+    # import——本函式以上的頂層 import 區塊屬凍結範圍（契約 3）。
+    plan_task: asyncio.Task | None = None
+    if get_settings().qa_agentic_enabled and (
+        not turns
+        or (decision is not None and decision.scope in (CORPUS_QA, ADVICE_RISK))
+    ):
+        from app.services.query_planner import plan_queries
+
+        plan_task = asyncio.create_task(plan_queries(standalone_query, profile="qa"))
+
     # 既有 RAG 路徑（embed+檢索+build_context 收斂於 retrieve_context；函式內 import
     # 避免頂層循環 import——retrieval_pipeline 於頂層 import 本模組）
     from app.services.retrieval_pipeline import retrieve_context
 
-    if turns:
-        sources, context = await retrieve_context(
-            standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
-            max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
-            max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
-            rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
-        )
-    else:
-        route_task = asyncio.create_task(classify_non_overview(question))
-        try:
+    try:
+        if turns:
             sources, context = await retrieve_context(
-                question, k=k, dense_scan=ASK_DENSE_SCAN,
+                standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
                 max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
                 max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
                 rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
             )
-            decision = await route_task
-            timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
-        except BaseException:
-            route_task.cancel()
-            raise
+        else:
+            route_task = asyncio.create_task(classify_non_overview(question))
+            try:
+                sources, context = await retrieve_context(
+                    question, k=k, dense_scan=ASK_DENSE_SCAN,
+                    max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
+                    max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+                    rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
+                )
+                decision = await route_task
+                timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
+            except BaseException:
+                route_task.cancel()
+                raise
+    except BaseException:
+        # 檢索中被停止/例外：收攏並行規劃背景工作（比照上方 route_task 自身模式）
+        if plan_task is not None:
+            plan_task.cancel()
+        raise
 
     # 首輪時效題：並行取證一律丟棄，僅受信任 adapter 可作答（不可用則婉拒）
     if decision is not None and decision.scope == TIME_SENSITIVE:
+        if plan_task is not None:
+            plan_task.cancel()  # 已被路由走：規劃結果不再被消費
         async for ev in _answer_time_sensitive(
             decision, question, filters, conv_id, started, stages_seen, new_root,
             deactivate_qa_id, truncate_from, request_id,
@@ -1338,12 +1577,68 @@ async def answer_question(
 
     # 首輪完全離題：並行取證被丟棄——不發 sources、不持久化取證結果
     if decision is not None and decision.scope == OFF_TOPIC:
+        if plan_task is not None:
+            plan_task.cancel()  # 已被路由走：規劃結果不再被消費
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
             deactivate_qa_id, truncate_from, request_id,
         ):
             yield ev
         return
+
+    # M5 agentic 迴圈：受控多輪「評估→補查」。快速路徑判定單點在 run_agentic 內部
+    # （設計 §4），此處一律呼叫；上方第一輪檢索結果兼任迴圈輪 1 與 fail-open fallback。
+    if plan_task is not None:
+        from app.services.agentic_qa import run_agentic
+
+        try:
+            plan = await plan_task  # plan_queries 永不 raise（失敗回 degraded 計畫）
+        except BaseException:
+            plan_task.cancel()  # 等待中被停止：收攏背景工作後原樣上拋
+            raise
+        timer.mark("plan_wait")
+        agentic_decision = decision
+        if agentic_decision is None:
+            # 路由 fail-open（decision 缺席）時本路徑語意即 corpus_qa
+            from app.services.scope_router import _decision as _mk_decision
+
+            agentic_decision = _mk_decision(CORPUS_QA)
+        first_retrieval = (sources, context)
+        try:
+            async for a_kind, a_payload in run_agentic(
+                standalone_query,
+                plan=plan,
+                decision=agentic_decision,
+                first=first_retrieval,
+                filters=filters,
+                retrieval_params={
+                    "k": k,
+                    "dense_scan": ASK_DENSE_SCAN,
+                    "max_passages": MAX_PASSAGES_PER_REPORT,
+                    "max_chars": MAX_CONTEXT_CHARS,
+                    "rerank_top_m": ASK_RERANK_TOP_M,
+                    "rerank_timeout": ASK_RERANK_TIMEOUT,
+                },
+                timer=timer,
+            ):
+                if a_kind == "stage":
+                    yield _status(str(a_payload))
+                elif a_kind == "outcome":
+                    sources, context = a_payload.sources, a_payload.context
+                    logger.info(
+                        "qa_agentic rounds=%s subqueries=%s skipped=%s "
+                        "fresh_requested=%s degraded=%s",
+                        a_payload.rounds,
+                        len(a_payload.subqueries_run),
+                        a_payload.skipped,
+                        a_payload.fresh_requested,
+                        a_payload.degraded,
+                    )
+        except Exception:
+            # CancelledError 屬 BaseException 原樣上拋（停止語意）；其餘例外
+            # fail-open 沿用第一輪檢索結果，主流程不受影響（設計 §5.3）。
+            logger.exception("run_agentic 逸出例外，沿用第一輪檢索結果")
+            sources, context = first_retrieval
 
     system_prompt = SYSTEM_PROMPT
     log_filters = filters

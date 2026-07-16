@@ -42,3 +42,13 @@ test('done 且有步驟時不顯示旋轉中的步驟（終止態最後一步應
   expect(screen.getByText('生成回答')).toBeInTheDocument()
   expect(container.querySelector('[class*="spin"]')).toBeNull()
 })
+
+test('stages 含 evaluating 時顯示評估補查步驟', () => {
+  render(<ThinkingSteps turn={turn({ phase: 'thinking', stages: ['understanding', 'evaluating'] })} />)
+  expect(screen.getByText('評估補查')).toBeInTheDocument()
+})
+
+test('stages 不含 evaluating 時不顯示評估補查步驟', () => {
+  render(<ThinkingSteps turn={turn({ phase: 'thinking', stages: ['understanding', 'retrieved'] })} />)
+  expect(screen.queryByText('評估補查')).toBeNull()
+})

@@ -9,6 +9,7 @@ export interface ThinkStep {
 
 const ORDER: { key: AskStage; name: string }[] = [
   { key: 'understanding', name: '理解問題' },
+  { key: 'evaluating', name: '評估補查' },
   { key: 'retrieved', name: '檢索研報' },
   { key: 'reading', name: '閱讀整理' },
   { key: 'searching_web', name: '網路補充' },
@@ -16,7 +17,10 @@ const ORDER: { key: AskStage; name: string }[] = [
 ]
 
 export function stagesToSteps(reached: AskStage[], webUsed: boolean): ThinkStep[] {
-  const visible = ORDER.filter(s => s.key !== 'searching_web' || webUsed)
+  // evaluating 與 searching_web 皆為條件性步驟：未實際發生的流程不顯示假步驟
+  const visible = ORDER.filter(
+    s => (s.key !== 'searching_web' || webUsed) && (s.key !== 'evaluating' || reached.includes('evaluating'))
+  )
   const last = reached.length ? reached[reached.length - 1] : null
   const lastIdx = last ? visible.findIndex(s => s.key === last) : -1
   return visible.map((s, i) => ({

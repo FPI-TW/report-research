@@ -66,10 +66,20 @@ class Settings:
     qa_planner_timeout: float
     qa_planner_max_subqueries: int
     qa_max_rounds: int
+    qa_agentic_enabled: bool
+    qa_agentic_timeout: float
+    qa_subquery_max_reports: int
     # report 檢索增強 / query_planner（M6）—— M6 里程碑只在本區段內加鍵
     report_planner_model: str
     report_planner_timeout: float
     report_planner_max_subqueries: int
+    report_fanout_concurrency: int
+    report_subquery_dense_scan: int
+    report_total_candidates: int
+    report_mmr_enabled: bool
+    report_mmr_lambda: float
+    report_mmr_max_per_source: int
+    report_mmr_max_per_month: int
 
 
 def _load() -> Settings:
@@ -122,10 +132,24 @@ def _load() -> Settings:
         qa_planner_timeout=float(os.getenv("QA_PLANNER_TIMEOUT", "20")),
         qa_planner_max_subqueries=int(os.getenv("QA_PLANNER_MAX_SUBQUERIES", "3")),
         qa_max_rounds=int(os.getenv("QA_MAX_ROUNDS", "2")),
+        qa_agentic_enabled=_flag("QA_AGENTIC_ENABLED", "1"),
+        # 迴圈總逾時（秒）；不含第一輪檢索與最終作答串流，於 asyncio.wait_for 落實。
+        qa_agentic_timeout=float(os.getenv("QA_AGENTIC_TIMEOUT", "90")),
+        qa_subquery_max_reports=int(os.getenv("QA_SUBQUERY_MAX_REPORTS", "5")),
         # report 檢索增強 / query_planner（M6）—— M6 里程碑只在本區段內加鍵
         report_planner_model=os.getenv("REPORT_PLANNER_MODEL", intent_model),
         report_planner_timeout=float(os.getenv("REPORT_PLANNER_TIMEOUT", "30")),
         report_planner_max_subqueries=int(os.getenv("REPORT_PLANNER_MAX_SUBQUERIES", "8")),
+        report_fanout_concurrency=int(os.getenv("REPORT_FANOUT_CONCURRENCY", "3")),
+        # 子查詢掃描深度刻意低於呼叫端 dense_scan：原題恆用呼叫端值，子查詢走此淺掃
+        report_subquery_dense_scan=int(os.getenv("REPORT_SUBQUERY_DENSE_SCAN", "200")),
+        report_total_candidates=int(os.getenv("REPORT_TOTAL_CANDIDATES", "600")),
+        report_mmr_enabled=_flag("REPORT_MMR_ENABLED", "1"),
+        report_mmr_lambda=float(os.getenv("REPORT_MMR_LAMBDA", "0.7")),
+        # 0＝不限額；source=None 不計入配額
+        report_mmr_max_per_source=int(os.getenv("REPORT_MMR_MAX_PER_SOURCE", "6")),
+        # 預設關：財報季主題天然集中同月，硬性月配額誤傷風險高
+        report_mmr_max_per_month=int(os.getenv("REPORT_MMR_MAX_PER_MONTH", "0")),
     )
 
 

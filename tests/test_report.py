@@ -1,12 +1,35 @@
+import asyncio
 import sys
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import report as rpt  # noqa: E402
+from app.services.query_planner import QueryPlan, SubQuery  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _stub_plan_queries():
+    """預設 stub 掉 planner：plan_queries 用的是 query_planner 模組自己 import 的
+    stream_completion，rpt 層的 stream_completion stub 碰不到它——不 stub 則有
+    claude CLI 的機器每測試真跑一次 Haiku（30s 逾時預算），無 CLI 的環境靜默
+    degraded 而遮蔽接線缺陷。預設回 degraded 單一原題（＝現行單查詢檢索）；
+    驗 planner 接線的測試在函式內自行覆寫＋還原。"""
+
+    async def _degraded(question, *, profile, **k):
+        return QueryPlan((SubQuery(text=question),), profile=profile, degraded=True)
+
+    orig = rpt.plan_queries
+    rpt.plan_queries = _degraded
+    try:
+        yield
+    finally:
+        rpt.plan_queries = orig
 
 
 @dataclass
@@ -66,7 +89,7 @@ class _FakeSession:
 
 class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_event_sequence_and_done_payload(self):
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
@@ -79,11 +102,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             captured["persisted"] = True
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -93,7 +116,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("請分析台積電趨勢")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -115,7 +138,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         否則在 120s 被 _run_attempt 靜默截斷（streamed_any→return），導致研報寫到一半就結束。
         """
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         captured = {}
@@ -128,11 +151,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -142,7 +165,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("請分析台積電趨勢")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -155,7 +178,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         """REPORT_ENABLE_WEB 預設開，且以 allow_web=True 呼叫 stream_completion。"""
         self.assertTrue(rpt.REPORT_ENABLE_WEB)
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         captured = {}
@@ -168,11 +191,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -182,7 +205,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -192,7 +215,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_search_event_emits_searching_web_status(self):
         """串流中出現 SEARCH_EVENT → 事件序含 status searching_web（只發一次）。"""
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
@@ -204,11 +227,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -218,7 +241,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -232,7 +255,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_context_with_web_proceeds(self):
         """空脈絡 + 網搜開 → 不回 error，照常生成到 done（由模型上網補）。"""
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "")
 
         async def fake_stream(*a, **k):
@@ -242,11 +265,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -257,7 +280,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
             ) = orig
@@ -303,7 +326,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_status_resets_to_writing_after_search(self):
         """SEARCH_EVENT 後應重設回 writing 狀態，不讓「搜尋網路補充…」卡住整個撰寫段。"""
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
@@ -314,11 +337,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -328,7 +351,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -342,7 +365,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         """串流首段為流程旁白時，持久化（與渲染）的 markdown 應已去旁白，首字即 # 標題。"""
         captured = {}
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
@@ -358,11 +381,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return b"%PDF-1.4 fake"
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = fake_render
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -372,7 +395,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -383,21 +406,21 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_context_without_web_emits_error(self):
         """空脈絡 + 網搜關 → 仍回 error（守住舊行為）。"""
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "")
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.SessionFactory = lambda: _FakeSession()
         rpt.REPORT_ENABLE_WEB = False
         try:
             events = [e async for e in rpt.generate_report("隨便問")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
             ) = orig
 
@@ -406,7 +429,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_thin_coverage_injects_web_nudge(self):
         """命中研報數 < 門檻且網搜開 → user prompt 注入「主動上網補充」指令。"""
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([_FakeSource(0), _FakeSource(1), _FakeSource(2)], "脈絡內容")
 
         captured = {}
@@ -419,11 +442,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -434,7 +457,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
             ) = orig
@@ -445,7 +468,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_sufficient_coverage_no_web_nudge(self):
         """命中研報數 ≥ 門檻 → 不注入薄涵蓋指令（避免充分涵蓋主題無謂搜尋）。"""
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([_FakeSource(i) for i in range(10)], "脈絡內容")
 
         captured = {}
@@ -458,11 +481,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -473,7 +496,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析台積電趨勢")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory, rpt.REPORT_ENABLE_WEB,
             ) = orig
@@ -485,7 +508,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
         """M1b eval 模式（persist=False）：不渲染 PDF、不寫 report_doc、不落地檔案；
         done 帶 markdown（已去旁白）與 context（檢索脈絡），report_id 為 None。"""
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
@@ -499,11 +522,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("persist=False 不得寫 report_doc")
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = _boom_render
         rpt.write_report_pdf = _boom_render
@@ -515,7 +538,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             ]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -533,7 +556,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
     async def test_persist_true_done_payload_has_no_eval_fields(self):
         """預設（persist=True）行為零變化：done 不帶 markdown/context（契約不外漏 eval 欄位）。"""
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
@@ -543,11 +566,11 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -557,7 +580,7 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             events = [e async for e in rpt.generate_report("分析材料行業")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -572,12 +595,12 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
 
         captured = {}
 
-        async def recording_retrieve(question, **kw):
+        async def recording_retrieve(question, queries, **kw):
             captured.update(kw)
             return ([], "")
 
-        orig = rpt.retrieve_context
-        rpt.retrieve_context = recording_retrieve
+        orig = rpt.retrieve_context_multi
+        rpt.retrieve_context_multi = recording_retrieve
         try:
             # 脈絡空且網搜關 → 早退，足以捕捉 retrieve_context 的 kwargs
             orig_web = rpt.REPORT_ENABLE_WEB
@@ -587,12 +610,134 @@ class GenerateReportTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 rpt.REPORT_ENABLE_WEB = orig_web
         finally:
-            rpt.retrieve_context = orig
+            rpt.retrieve_context_multi = orig
 
         self.assertEqual(captured.get("rerank_top_m"), rpt.REPORT_RERANK_TOP_M)
         self.assertEqual(rpt.REPORT_RERANK_TOP_M, 120)  # 預設啟用
         self.assertEqual(captured.get("rerank_timeout"), rpt.REPORT_RERANK_TIMEOUT)
         self.assertEqual(rpt.REPORT_RERANK_TIMEOUT, 180.0)  # 實測 120 對 ~93s + 餘裕
+
+
+class PlannerWiringTests(unittest.IsolatedAsyncioTestCase):
+    """generate_report ↔ plan_queries／retrieve_context_multi 的接線（M6）。"""
+
+    def _install(self, captured):
+        """安裝完整 stub 鏈（檢索/串流/渲染/落地/DB），回還原函式。"""
+
+        async def fake_retrieve(question, queries, **k):
+            captured["queries"] = list(queries)
+            captured["retrieve_kwargs"] = k
+            return ([], "脈絡內容")
+
+        async def fake_stream(*a, **k):
+            yield "## 執行摘要\n重點[1]"
+
+        async def fake_persist(*a, **k):
+            return None
+
+        orig = (
+            rpt.retrieve_context_multi,
+            rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+            rpt.persist_report_doc, rpt.SessionFactory,
+        )
+        rpt.retrieve_context_multi = fake_retrieve
+        rpt.stream_completion = fake_stream
+        rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+
+        def restore():
+            (
+                rpt.retrieve_context_multi,
+                rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
+                rpt.persist_report_doc, rpt.SessionFactory,
+            ) = orig
+
+        return restore
+
+    async def test_plan_queries_called_with_report_profile_and_forwarded(self):
+        """plan_queries 以 profile="report" 被呼叫；子查詢文字（原題首位）
+        轉發至 retrieve_context_multi 的第二個位置參數。"""
+        captured = {}
+
+        async def fake_plan(question, *, profile, **k):
+            captured["profile"] = profile
+            return QueryPlan(
+                (
+                    SubQuery(text=question),
+                    SubQuery(text="台積電 財報 營收 毛利率", facet="財報營運"),
+                    SubQuery(text="台積電 先進製程 競爭格局", facet="競爭格局"),
+                ),
+                profile=profile,
+            )
+
+        restore = self._install(captured)
+        orig_plan = rpt.plan_queries
+        rpt.plan_queries = fake_plan
+        try:
+            events = [e async for e in rpt.generate_report("台積電深度研報")]
+        finally:
+            rpt.plan_queries = orig_plan
+            restore()
+
+        self.assertEqual(captured["profile"], "report")
+        self.assertEqual(
+            captured["queries"],
+            ["台積電深度研報", "台積電 財報 營收 毛利率", "台積電 先進製程 競爭格局"],
+        )
+        self.assertEqual(events[-1][0], "done")
+
+    async def test_planner_degraded_single_query_still_generates(self):
+        """planner fail-open（module autouse stub 即 degraded 單一原題）→ 照常生成。"""
+        captured = {}
+        restore = self._install(captured)
+        try:
+            events = [e async for e in rpt.generate_report("台積電深度研報")]
+        finally:
+            restore()
+
+        self.assertEqual(captured["queries"], ["台積電深度研報"])
+        self.assertEqual(events[-1][0], "done")
+
+    async def test_planner_wall_timeout_falls_back_to_single_query(self):
+        """plan_queries 掛起超過 REPORT_PLANNER_TIMEOUT → wall-clock 硬上限中止、
+        退回單一原題照常生成（不讓 retrieving 死區被 planner 拖死）。"""
+        captured = {}
+
+        async def hanging_plan(question, *, profile, **k):
+            await asyncio.sleep(30)
+            raise AssertionError("wall timeout 未生效")
+
+        restore = self._install(captured)
+        orig = (rpt.plan_queries, rpt.REPORT_PLANNER_TIMEOUT)
+        rpt.plan_queries = hanging_plan
+        rpt.REPORT_PLANNER_TIMEOUT = 0.05
+        try:
+            events = [e async for e in rpt.generate_report("台積電深度研報")]
+        finally:
+            (rpt.plan_queries, rpt.REPORT_PLANNER_TIMEOUT) = orig
+            restore()
+
+        self.assertEqual(captured["queries"], ["台積電深度研報"])
+        self.assertEqual(events[-1][0], "done")
+
+    async def test_sse_event_shape_unchanged(self):
+        """planner 併入既有 retrieving 階段：事件序首事件不變、無新增 stage。"""
+        captured = {}
+        restore = self._install(captured)
+        try:
+            events = [e async for e in rpt.generate_report("台積電深度研報")]
+        finally:
+            restore()
+
+        kinds = [e[0] for e in events]
+        self.assertEqual(kinds[0], "status")
+        self.assertEqual(events[0][1]["stage"], "retrieving")
+        stages = [p["stage"] for (k, p) in events if k == "status"]
+        self.assertEqual(
+            [s for s in stages if s not in ("retrieving", "writing", "rendering")], []
+        )
 
 
 class ParseExternalRefsTests(unittest.TestCase):
@@ -651,7 +796,7 @@ class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
     async def test_persist_keeps_model_external_reference_out_of_manifest(self):
         captured = {}
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return (
                 [_FakeSourceFull(1, "r-1", "a.pdf", "TW", "2026-06-01")],
                 "脈絡內容",
@@ -668,11 +813,11 @@ class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
             captured["kwargs"] = k
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -682,7 +827,7 @@ class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析台積電")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig
@@ -698,7 +843,7 @@ class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_sources_no_ext_persists_none(self):
         captured = {}
 
-        async def fake_retrieve_context(question, **k):
+        async def fake_retrieve_context(question, queries, **k):
             return ([], "脈絡內容")
 
         async def fake_stream(*a, **k):
@@ -708,11 +853,11 @@ class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
             captured["args"] = a
 
         orig = (
-            rpt.retrieve_context,
+            rpt.retrieve_context_multi,
             rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
             rpt.persist_report_doc, rpt.SessionFactory,
         )
-        rpt.retrieve_context = fake_retrieve_context
+        rpt.retrieve_context_multi = fake_retrieve_context
         rpt.stream_completion = fake_stream
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
@@ -722,7 +867,7 @@ class PersistEvidenceManifestTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in rpt.generate_report("分析台積電")]
         finally:
             (
-                rpt.retrieve_context,
+                rpt.retrieve_context_multi,
                 rpt.stream_completion, rpt.render_report_pdf, rpt.write_report_pdf,
                 rpt.persist_report_doc, rpt.SessionFactory,
             ) = orig

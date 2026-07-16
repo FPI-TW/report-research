@@ -145,6 +145,40 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(case["source_diversity"]["n_brokers"])
 
 
+class ConfigSnapshotTests(unittest.TestCase):
+    def test_snapshot_includes_m6_keys(self):
+        """M6 鍵入 snapshot（純加法）：eval 結果須可追溯多查詢／MMR 當時的組態。"""
+        from app.config import get_settings
+
+        snap = rre._config_snapshot({"version": 1})
+        s = get_settings()
+        for key in (
+            "report_planner_model",
+            "report_planner_timeout",
+            "report_planner_max_subqueries",
+            "report_fanout_concurrency",
+            "report_subquery_dense_scan",
+            "report_total_candidates",
+            "report_mmr_enabled",
+            "report_mmr_lambda",
+            "report_mmr_max_per_source",
+            "report_mmr_max_per_month",
+        ):
+            self.assertIn(key, snap)
+            self.assertEqual(snap[key], getattr(s, key))
+
+    def test_snapshot_keeps_existing_keys(self):
+        snap = rre._config_snapshot({"version": 1})
+        for key in (
+            "dataset_version",
+            "ruleset_version",
+            "report_model",
+            "report_enable_web",
+            "report_rerank_enabled",
+        ):
+            self.assertIn(key, snap)
+
+
 class RunTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_writes_report_with_summary_cases_config(self):
         import tempfile

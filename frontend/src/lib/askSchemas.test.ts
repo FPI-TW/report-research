@@ -50,6 +50,28 @@ test('conversationTurnSchema：sources 含歷史缺欄物件仍可解析（不 t
   expect(t.sources[0].report_date).toBeNull()
 })
 
+describe('askSchemas M5', () => {
+  it('status 事件接受 evaluating stage', () => {
+    expect(parseAskEvent({ event: 'status', data: { stage: 'evaluating' } }))
+      .toEqual({ event: 'status', data: { stage: 'evaluating' } })
+  })
+
+  it('既有 stage 值不受影響', () => {
+    for (const stage of ['understanding', 'retrieved', 'reading', 'searching_web', 'generating']) {
+      expect(parseAskEvent({ event: 'status', data: { stage } })).toEqual({ event: 'status', data: { stage } })
+    }
+    expect(parseAskEvent({ event: 'status', data: { stage: 'bogus' } })).toBeNull()
+  })
+
+  it('conversationTurn 歷史 stages 含 evaluating 不被 catch 清空', () => {
+    const t = conversationTurnSchema.parse({
+      id: 'x', question: 'q', answer: 'a',
+      stages: ['understanding', 'evaluating', 'retrieved', 'reading', 'generating'],
+    })
+    expect(t.stages).toEqual(['understanding', 'evaluating', 'retrieved', 'reading', 'generating'])
+  })
+})
+
 describe('askSchemas M3', () => {
   it('parses followups event', () => {
     const ev = parseAskEvent({ event: 'followups', data: ['問一', '問二'] })

@@ -128,6 +128,11 @@ def rerank_scored(question, scored, *, top_m, timer=None, deadline=None):
     尾段（top_m 之後）保留原 fused 分數與相對序，避免與 select_reports 的門檻尺度不相容。
     推論失敗/形狀不符（含模型不可用回 []）/非有限分數(NaN/inf)/deadline 中止/退化
     → 回原 scored（fail-open）。
+
+    回傳物件同一性契約：所有 fail-open 路徑（含 top_m<=0 與空輸入的 passthrough）
+    一律回傳「輸入的同一 list 物件」；成功路徑一律回傳新建 list。
+    retrieval_pipeline._rerank_stage 以 `is` 判定 rerank 是否實際套用（多查詢
+    降級依據）——改動此同一性即默默破壞降級偵測，守護測試在 tests/test_rerank.py。
     """
     if not scored or top_m <= 0:
         return scored

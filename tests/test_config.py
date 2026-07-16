@@ -67,6 +67,9 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.qa_planner_timeout, 20.0)
         self.assertEqual(s.qa_planner_max_subqueries, 3)
         self.assertEqual(s.qa_max_rounds, 2)
+        self.assertEqual(s.qa_agentic_enabled, True)
+        self.assertEqual(s.qa_agentic_timeout, 90.0)
+        self.assertEqual(s.qa_subquery_max_reports, 5)
 
     def test_query_planner_defaults_m6(self):
         # report 檢索增強 / query_planner（M6 區段；M6 里程碑只在本方法內加斷言）
@@ -74,6 +77,13 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.report_planner_model, "claude-haiku-4-5")
         self.assertEqual(s.report_planner_timeout, 30.0)
         self.assertEqual(s.report_planner_max_subqueries, 8)
+        self.assertEqual(s.report_fanout_concurrency, 3)
+        self.assertEqual(s.report_subquery_dense_scan, 200)
+        self.assertEqual(s.report_total_candidates, 600)
+        self.assertEqual(s.report_mmr_enabled, True)
+        self.assertEqual(s.report_mmr_lambda, 0.7)
+        self.assertEqual(s.report_mmr_max_per_source, 6)
+        self.assertEqual(s.report_mmr_max_per_month, 0)
 
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())

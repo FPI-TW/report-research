@@ -80,6 +80,16 @@ class Settings:
     report_mmr_lambda: float
     report_mmr_max_per_source: int
     report_mmr_max_per_month: int
+    # 逐節生成 / report_writer（M7 里程碑）—— M7 里程碑只在本區段內加鍵
+    report_sectioned_enabled: bool
+    report_outline_timeout: float
+    report_outline_max_subsections: int
+    report_section_timeout: float
+    report_section_max_reports: int
+    report_section_max_passages: int
+    report_section_max_context_chars: int
+    report_section_rerank_candidates: int
+    report_section_retry: int
 
 
 def _load() -> Settings:
@@ -150,6 +160,23 @@ def _load() -> Settings:
         report_mmr_max_per_source=int(os.getenv("REPORT_MMR_MAX_PER_SOURCE", "6")),
         # 預設關：財報季主題天然集中同月，硬性月配額誤傷風險高
         report_mmr_max_per_month=int(os.getenv("REPORT_MMR_MAX_PER_MONTH", "0")),
+        # 逐節生成 / report_writer（M7 里程碑）—— M7 里程碑只在本區段內加鍵
+        report_sectioned_enabled=_flag("REPORT_SECTIONED_ENABLED", "1"),
+        report_outline_timeout=float(os.getenv("REPORT_OUTLINE_TIMEOUT", "45")),
+        report_outline_max_subsections=int(
+            os.getenv("REPORT_OUTLINE_MAX_SUBSECTIONS", "5")
+        ),
+        # 逐節逾時／配額：刻意低於整份（25/6/40000/120），控 N 節串行延遲
+        report_section_timeout=float(os.getenv("REPORT_SECTION_TIMEOUT", "150")),
+        report_section_max_reports=int(os.getenv("REPORT_SECTION_MAX_REPORTS", "8")),
+        report_section_max_passages=int(os.getenv("REPORT_SECTION_MAX_PASSAGES", "4")),
+        report_section_max_context_chars=int(
+            os.getenv("REPORT_SECTION_MAX_CONTEXT_CHARS", "12000")
+        ),
+        report_section_rerank_candidates=int(
+            os.getenv("REPORT_SECTION_RERANK_CANDIDATES", "40")
+        ),
+        report_section_retry=int(os.getenv("REPORT_SECTION_RETRY", "1")),
     )
 
 

@@ -247,5 +247,84 @@ class SectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out[1]["status"], "final")
 
 
+# ── T3 大綱 ─────────────────────────────────────────────────────────────────
+class OutlineTests(unittest.TestCase):
+    def test_skeleton_always_present(self):
+        o = rw.build_outline("台積電展望", None, [{"heading": "先進製程", "topic": "N2 量產"}])
+        keys = [s["key"] for s in o["sections"]]
+        self.assertEqual(keys[0], "exec_summary")
+        self.assertEqual(keys[1], "key_findings")
+        self.assertEqual(keys[-1], "risk_outlook")
+        self.assertIn("analysis", keys)
+        self.assertEqual(
+            [s["position"] for s in o["sections"]], list(range(len(o["sections"])))
+        )
+        self.assertTrue(o["title"])
+
+    def test_default_title_and_no_analysis(self):
+        o = rw.build_outline("主題X", "", [])
+        self.assertEqual(o["title"], "主題X 深度研報")
+        self.assertEqual([s["kind"] for s in o["sections"]], ["framing", "framing", "framing"])
+
+    def test_dedup_clean_and_topic_default(self):
+        o = rw.build_outline(
+            "q", "T", [{"heading": "營運  展望"}, {"heading": "營運 展望"}, {"heading": ""}]
+        )
+        analysis = [s for s in o["sections"] if s["kind"] == "analysis"]
+        self.assertEqual(len(analysis), 1)  # 折疊空白後去重 + 跳過空 heading
+        self.assertEqual(analysis[0]["heading"], "營運 展望")
+        self.assertEqual(analysis[0]["topic"], "營運 展望")  # topic 缺省用 heading
+
+    def test_sections_from_outline_roundtrip(self):
+        o = rw.build_outline("q", "T", [{"heading": "A", "topic": "ta"}])
+        secs = rw.sections_from_outline(o)
+        self.assertEqual(
+            [s["heading"] for s in secs], [s["heading"] for s in o["sections"]]
+        )
+
+    def test_sections_from_outline_bad_shape(self):
+        self.assertEqual(rw.sections_from_outline(None), [])
+        self.assertEqual(rw.sections_from_outline({"sections": "x"}), [])
+        self.assertEqual(rw.sections_from_outline({"sections": [{"key": "x"}]}), [])
+
+
+def _fake_stream(text_out):
+    def factory(*a, **k):
+        async def gen():
+            yield text_out
+        return gen()
+    return factory
+
+
+def _raise_stream(*a, **k):
+    async def gen():
+        raise RuntimeError("boom")
+        yield ""  # 使之為 async generator（不可達）
+    return gen()
+
+
+class PlanOutlineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_valid_outline(self):
+        js = '{"title":"標題","analysis_subsections":[{"heading":"營運","topic":"營運展望"}]}'
+        with patch.object(rw, "stream_completion", _fake_stream(js)):
+            o = await rw.plan_outline("台積電", "ctx")
+        self.assertEqual(o["title"], "標題")
+        self.assertTrue(
+            any(s["kind"] == "analysis" and s["heading"] == "營運" for s in o["sections"])
+        )
+
+    async def test_no_analysis_returns_none(self):
+        with patch.object(rw, "stream_completion", _fake_stream('{"analysis_subsections":[]}')):
+            self.assertIsNone(await rw.plan_outline("q", "ctx"))
+
+    async def test_parse_failure_returns_none(self):
+        with patch.object(rw, "stream_completion", _fake_stream("這不是 JSON")):
+            self.assertIsNone(await rw.plan_outline("q", "ctx"))
+
+    async def test_llm_exception_returns_none(self):
+        with patch.object(rw, "stream_completion", _raise_stream):
+            self.assertIsNone(await rw.plan_outline("q", "ctx"))
+
+
 if __name__ == "__main__":
     unittest.main()

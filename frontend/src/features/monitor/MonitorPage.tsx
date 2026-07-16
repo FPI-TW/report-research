@@ -9,6 +9,7 @@ import { IngestPanel } from './IngestPanel'
 import { PipelineStatus } from './PipelineStatus'
 import { MarketDistribution } from './MarketDistribution'
 import { MonitorSkeleton } from './MonitorSkeleton'
+import { Pulse } from '../../components/primitives/motionLoops'
 
 export default function MonitorPage() {
   const q = useProgress()
@@ -32,7 +33,11 @@ export default function MonitorPage() {
             </div>
             <div className={styles.headRight}>
               <span className={`${styles.live} ${live ? '' : styles.stale}`}>
-                <span className={`${styles.liveDot} ${live ? '' : styles.staleDot}`} />
+                {live ? (
+                  <Pulse className={styles.liveDot} min={0.35} duration={1.6} />
+                ) : (
+                  <span className={`${styles.liveDot} ${styles.staleDot}`} />
+                )}
                 {live ? 'LIVE' : '重連中'}
               </span>
               <span className={styles.clock}>{clock}</span>

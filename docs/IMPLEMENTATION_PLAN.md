@@ -9,6 +9,8 @@
 > **狀態校準（2026-07-14）**：M0、M2、M3、M4 已落地；M1 的**問答**題集、評測 runner 與基準線已落地。它們不得再重做。M1b（研報專用評測）、M4a（受信任時效資料）與 M4b（共用證據帳本）是後續工作的前置契約；其餘里程碑仍待執行。
 >
 > **狀態校準（2026-07-15）**：M1b/M4a/M4b 已落地合併。M5 與 M6 平行開發的共用地基（`app/services/query_planner.py` 共用核心＋`app/config.py`／`tests/test_config.py` 的 M5/M6 標記預留區）已由 `feat/query-planner-foundation` 落地；M5/M6 各自只在自己的標記區段與 profile 區段內擴充，不得改共用核心或對方區段（契約見 `docs/superpowers/specs/2026-07-15-query-planner-foundation-design.md`）。
+>
+> **狀態校準（2026-07-15 晚）**：M5（問答 agentic 迴圈）與 M6（研報多查詢分解＋MMR）已完成並通過 eval 驗收。M6：券商多樣性 2.5→4.0、n_months 5.6→6.7、facet/引用/no_data 品質線零退步（`eval/baselines/report-m6.json` vs `report-m1b-rerank.json`）。M5：Faithfulness 0.921→0.965、CP 持平（−0.011，逐題 n_contexts 與非 agentic 完全相同——8 題單面向題規劃器全判單輪）、延遲分佈已記錄（`eval/baselines/m5-agentic-qa.json` vs 當代基準 `m4-corpus-qa-rerank.json`）。注意：舊 `m4-corpus-qa.json` 與 `report-m1b.json` 皆為 rerank 壞損期所錄，後續比較一律用 rerank 生效版基準線。
 
 ---
 

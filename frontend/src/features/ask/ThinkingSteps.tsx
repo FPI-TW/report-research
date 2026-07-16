@@ -1,6 +1,9 @@
 import { useState } from 'react'
+import { motion } from 'motion/react'
 import { Icon } from '../../components/primitives/Icon'
+import { Pressable } from '../../components/primitives/Pressable'
 import { Spin } from '../../components/primitives/motionLoops'
+import { TF_EASE_OUT } from '../../lib/motionTokens'
 import { stagesToSteps } from '../../lib/thinkingStages'
 import type { Turn } from '../../lib/askReducer'
 import styles from './ThinkingSteps.module.css'
@@ -17,10 +20,14 @@ export function ThinkingSteps({ turn }: { turn: Turn }) {
 
   return (
     <div className={styles.card}>
-      <button type="button" className={styles.head} onClick={() => setOpen(o => !o)}>
+      <Pressable className={styles.head} onClick={() => setOpen(o => !o)} hoverScale={1}>
         <span>{label}</span>
-        {hasSteps && <Icon name="chevronDown" size={15} className={open ? styles.chevOpen : styles.chev} />}
-      </button>
+        {hasSteps && (
+          <motion.span className={styles.chev} animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2, ease: TF_EASE_OUT }}>
+            <Icon name="chevronDown" size={15} />
+          </motion.span>
+        )}
+      </Pressable>
       {hasSteps && open && (
         <div className={styles.steps}>
           {steps.map(s => (

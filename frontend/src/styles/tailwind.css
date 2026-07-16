@@ -1,0 +1,39 @@
+/* Tailwind v4：僅載入 theme + utilities，刻意略過 preflight，避免其基礎 reset 打壞既有
+   CSS Modules 頁面排版（既有 reset 見 tokens.css）。animate-ui 元件所需的 shadcn 設計 token
+   於下方 @theme 對應到既有 --tf-* 品牌變數，讓新元件沿用品牌配色。 */
+@layer theme, base, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tw-animate-css';
+
+@theme inline {
+  /* shadcn/animate-ui 標準設計 token → 專案 --tf-* 品牌變數 */
+  --color-background: var(--tf-canvas);
+  --color-foreground: var(--tf-text-1);
+  --color-card: var(--tf-surface);
+  --color-card-foreground: var(--tf-text-1);
+  --color-popover: var(--tf-surface);
+  --color-popover-foreground: var(--tf-text-1);
+  --color-primary: var(--tf-ink);
+  --color-primary-foreground: var(--tf-on-ink);
+  --color-secondary: var(--tf-ink-tint);
+  --color-secondary-foreground: var(--tf-ink-deep);
+  --color-muted: var(--tf-border-weak);
+  --color-muted-foreground: var(--tf-text-3);
+  --color-accent: var(--tf-gold-tint);
+  --color-accent-foreground: var(--tf-gold-text);
+  --color-destructive: var(--tf-error);
+  --color-border: var(--tf-border);
+  --color-input: var(--tf-border);
+  --color-ring: var(--tf-ink);
+
+  --radius-sm: calc(var(--tf-radius-md) - 2px);
+  --radius-md: var(--tf-radius-md);
+  --radius-lg: var(--tf-radius-card);
+  --radius-xl: var(--tf-radius-panel);
+
+  --font-sans: var(--tf-sans);
+  --font-serif: var(--tf-serif);
+  --font-mono: var(--tf-mono);
+}

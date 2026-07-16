@@ -4,6 +4,7 @@ import { MotionConfig } from 'motion/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { tfTransition } from './lib/motionTokens'
 import './styles/tokens.css'
+import './styles/tailwind.css'
 import './styles/view-transitions.css'
 import App from './App'
 

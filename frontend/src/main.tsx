@@ -11,9 +11,11 @@ const queryClient = new QueryClient()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {/* reducedMotion="user" 自動停用所有 motion 子元件的位移/scale/layout 動畫（保留 opacity），
-        故 hover/press 的 scale 於減少動態時免逐一加 guard；transition 預設對齊 --tf-dur-3/--tf-ease-out。 */}
-    <MotionConfig reducedMotion="user" transition={tfTransition}>
+    {/* reducedMotion="never"：不做全域一刀切停用，改由各元件自行以 useReducedMotion() 決定。
+        如此「功能性微互動」（按壓/hover/分段滑動 thumb/清單退場）即使系統開了減少動態仍照常播（皆為小幅、非前庭誘發的位移）；
+        而大幅進場波浪、裝飾迴圈、Modal/Popover/抽屜/數字補間等已各自 guard，仍尊重減少動態偏好。
+        transition 預設對齊 --tf-dur-3/--tf-ease-out。 */}
+    <MotionConfig reducedMotion="never" transition={tfTransition}>
       <QueryClientProvider client={queryClient}>
         <App />
       </QueryClientProvider>

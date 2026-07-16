@@ -52,13 +52,23 @@
   --tf-ring-ink: 0 0 0 3px rgba(30, 81, 117, 0.12);
 
   /* ── 動效 ── */
+  /* 緩動家族：進場減速為主曲線；可逆 hover 用對稱 standard；離場加速；emphasized 為極輕收束過衝
+     （幅度壓在 ~1.26 維持印刷感）。--tf-ease-out 保留為 --tf-ease-entrance 相容別名。
+     進出場主體已由 Motion 驅動，這些 token 供殘留的 CSS 微互動/hover/press 使用。 */
   --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --tf-ease-entrance: var(--tf-ease-out);
+  --tf-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --tf-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --tf-ease-emphasized: cubic-bezier(0.34, 1.26, 0.64, 1);
   --tf-dur-1: 120ms;
   --tf-dur-2: 180ms;
   --tf-dur-3: 240ms;
   --tf-dur-4: 340ms;
   --tf-stagger: 40ms;
   --tf-stagger-cap: 8;
+  /* 觸覺：CSS `:active` 按壓縮放與 hover 抬升位移（各模組以 var() 引用）。 */
+  --tf-press: 0.96;
+  --tf-lift-y: -1px;
 
   /* ── 語意色 — 市場（降彩度重校；chip 一律淡底深字） ── */
   --mkt-TW: #237a46;

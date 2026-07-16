@@ -23,9 +23,9 @@
   white-space: nowrap;
   min-height: 32px;
   transition:
-    background-color var(--tf-dur-1) var(--tf-ease-out),
-    color var(--tf-dur-1) var(--tf-ease-out),
-    box-shadow var(--tf-dur-1) var(--tf-ease-out);
+    background-color var(--tf-dur-1) var(--tf-ease-standard),
+    color var(--tf-dur-1) var(--tf-ease-standard),
+    box-shadow var(--tf-dur-1) var(--tf-ease-standard);
 }
 
 .btn:hover { color: var(--tf-ink); }

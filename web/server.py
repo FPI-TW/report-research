@@ -61,12 +61,27 @@ from app.services.retrieval import (  # noqa: E402
     rank_reports,
 )
 from app.services.store import list_reports  # noqa: E402
-from app.services.tagging import MARKETS  # noqa: E402
+from app.services.tagging import MARKETS, MARKET_DISPLAY  # noqa: E402
 from app.services.textnorm import clean_text  # noqa: E402
 from web import auth  # noqa: E402
 
 from app.services.pdf import render_report_pdf  # noqa: E402
 from app.services.report import fetch_report_doc, generate_report, write_report_pdf  # noqa: E402
+from app.services.radar import (  # noqa: E402
+    build_broker_history,
+    build_overview,
+    fetch_broker_signals,
+    fetch_coverage_counts,
+    fetch_instrument_signals,
+    list_radar_instruments,
+)
+from app.services.radar.schemas import (  # noqa: E402
+    BrokerHistoryResponse,
+    RadarInstrumentItem,
+    RadarInstrumentsResponse,
+    RadarOverviewResponse,
+    Window,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 SPA_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -519,6 +534,100 @@ async def help_page():
 @app.get("/api/markets")
 async def markets():
     return {"markets": MARKETS}
+
+
+@app.get("/api/radar/instruments", response_model=RadarInstrumentsResponse)
+async def radar_instruments(
+    market: str | None = Query(None, max_length=16),
+    q: str | None = Query(None, max_length=64),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """觀點雷達「選標的」目錄：有可展示訊號的標的清單（獨立頁選單資料源）。"""
+    if market and market not in MARKETS:
+        raise HTTPException(status_code=422, detail="market 非法")
+    t0 = time.monotonic()
+    async with SessionFactory() as session:
+        total, rows = await list_radar_instruments(
+            session, market=market, q=q, limit=limit, offset=offset
+        )
+    items = [
+        RadarInstrumentItem(
+            market=r.market,
+            market_display=MARKET_DISPLAY.get(r.market),
+            instrument_code=r.instrument_code,
+            instrument_name=r.instrument_name,
+            broker_count=r.broker_count,
+            report_count=r.report_count,
+            latest_report_date=r.latest_report_date.isoformat() if r.latest_report_date else None,
+            coverage_state=r.coverage_state,
+        )
+        for r in rows
+    ]
+    logger.info(
+        "radar instruments total=%d q=%s market=%s elapsed_ms=%.1f",
+        total, q, market, (time.monotonic() - t0) * 1000,
+    )
+    return RadarInstrumentsResponse(total=total, offset=offset, items=items)
+
+
+@app.get("/api/instrument/{code}/radar", response_model=RadarOverviewResponse)
+async def instrument_radar(
+    code: str,
+    market: str = Query(..., min_length=1, max_length=16),
+    window: Window = Query("90"),
+):
+    """跨券商總覽：共識快照 + 四維論點 + 近期事件 + 券商清單（讀取不呼叫 LLM）。"""
+    if market not in MARKETS:
+        raise HTTPException(status_code=422, detail="market 非法")
+    code = code.strip()
+    if not code or len(code) > 16:
+        raise HTTPException(status_code=422, detail="code 非法")
+    t0 = time.monotonic()
+    async with SessionFactory() as session:
+        coverage = await fetch_coverage_counts(session, market, code)
+        # 完全無研報 → 404；有研報但尚未擷取訊號 → 200 pending_extraction 空狀態
+        if not coverage.has_reports:
+            raise HTTPException(status_code=404, detail="instrument not found")
+        signals = await fetch_instrument_signals(session, market, code)
+    resp = build_overview(signals, coverage, window=window)
+    logger.info(
+        "radar overview code=%s market=%s window=%s signals=%d state=%s events=%d elapsed_ms=%.1f",
+        code, market, window, len(signals), resp.coverage.state,
+        resp.recent_events_total, (time.monotonic() - t0) * 1000,
+    )
+    return resp
+
+
+@app.get(
+    "/api/instrument/{code}/radar/brokers/{broker}",
+    response_model=BrokerHistoryResponse,
+)
+async def instrument_radar_broker(
+    code: str,
+    broker: str,
+    market: str = Query(..., min_length=1, max_length=16),
+    window: Window = Query("90"),
+):
+    """單券商歷程（延遲載入，展開券商列才請求）：全歷程快照 + 相鄰差異。"""
+    if market not in MARKETS:
+        raise HTTPException(status_code=422, detail="market 非法")
+    code, broker = code.strip(), broker.strip()
+    if not code or not broker:
+        raise HTTPException(status_code=422, detail="參數非法")
+    t0 = time.monotonic()
+    async with SessionFactory() as session:
+        signals = await fetch_broker_signals(session, market, code, broker)
+        if not signals:
+            raise HTTPException(status_code=404, detail="broker history not found")
+    resp = build_broker_history(
+        signals, market=market, code=code, broker=broker, window=window
+    )
+    logger.info(
+        "radar broker code=%s market=%s broker=%s window=%s snapshots=%d elapsed_ms=%.1f",
+        code, market, broker, window, resp.report_count, (time.monotonic() - t0) * 1000,
+    )
+    return resp
 
 
 @app.get("/api/reports", response_model=ReportListResponse)

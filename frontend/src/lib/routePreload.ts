@@ -1,12 +1,13 @@
 import type { ComponentType } from 'react'
 
-export type RouteKey = 'search' | 'ask' | 'monitor'
+export type RouteKey = 'search' | 'ask' | 'monitor' | 'radar'
 
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
   search: () => import('../features/search/SearchPage'),
   ask: () => import('../features/ask/AskPage'),
   monitor: () => import('../features/monitor/MonitorPage'),
+  radar: () => import('../features/radar/RadarPage'),
 }
 
 const started = new Set<RouteKey>()

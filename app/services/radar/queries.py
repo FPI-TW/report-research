@@ -1,0 +1,191 @@
+"""觀點雷達純 SQL 取數層（named param、無字串拼接注入；風格對齊 overview.py/store.py）。
+
+窗期過濾交給 Python（單標的訊號通常僅數十列），此層只負責「取該標的/券商的全部有效
+訊號」「覆蓋度計數」「標的目錄」。jsonb 欄位以 ::text 取出（見 types.SIGNAL_SELECT_COLUMNS）。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+from typing import Optional
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.radar.types import SIGNAL_SELECT_COLUMNS, Signal, parse_signal_row
+
+VALID_STATUSES = ["valid", "partial"]
+
+
+@dataclass
+class CoverageCounts:
+    market: str
+    instrument_code: str
+    instrument_name: Optional[str]
+    brokers_total: int
+    brokers_extracted: int
+    reports_available: int
+    has_reports: bool
+
+
+@dataclass
+class RadarInstrumentRow:
+    market: str
+    instrument_code: str
+    instrument_name: Optional[str]
+    broker_count: int
+    report_count: int
+    latest_report_date: Optional[date]
+    coverage_state: str  # ok | partial
+
+
+def _instrument_signals_sql(broker: bool) -> str:
+    where_broker = "AND s.broker = :broker " if broker else ""
+    order = (
+        "ORDER BY s.report_date DESC NULLS LAST, s.created_at DESC"
+        if broker
+        else "ORDER BY s.broker, s.report_date DESC NULLS LAST, s.created_at DESC"
+    )
+    return (
+        f"SELECT {SIGNAL_SELECT_COLUMNS} "
+        "FROM research.report_signal s "
+        "JOIN research.research_report r ON r.id = s.report_id "
+        "WHERE s.market = :market AND s.instrument_code = :code "
+        "  AND s.extraction_status = ANY(:statuses) "
+        f"{where_broker}"
+        f"{order}"
+    )
+
+
+async def fetch_instrument_signals(
+    session: AsyncSession, market: str, code: str, *, statuses=VALID_STATUSES
+) -> list[Signal]:
+    rows = (
+        await session.execute(
+            text(_instrument_signals_sql(broker=False)),
+            {"market": market, "code": code, "statuses": list(statuses)},
+        )
+    ).all()
+    return [parse_signal_row(r) for r in rows]
+
+
+async def fetch_broker_signals(
+    session: AsyncSession, market: str, code: str, broker: str, *, statuses=VALID_STATUSES
+) -> list[Signal]:
+    rows = (
+        await session.execute(
+            text(_instrument_signals_sql(broker=True)),
+            {"market": market, "code": code, "broker": broker, "statuses": list(statuses)},
+        )
+    ).all()
+    return [parse_signal_row(r) for r in rows]
+
+
+_COVERAGE_SQL = text(
+    """
+    SELECT
+      (SELECT count(DISTINCT r.source) FROM research.research_report r
+         WHERE r.market = :market AND :code = ANY(r.stock_targets)
+           AND r.is_research IS NOT FALSE) AS brokers_total,
+      (SELECT count(DISTINCT s.broker) FROM research.report_signal s
+         WHERE s.market = :market AND s.instrument_code = :code
+           AND s.extraction_status = ANY(:statuses)) AS brokers_extracted,
+      (SELECT count(*) FROM research.research_report r
+         WHERE r.market = :market AND :code = ANY(r.stock_targets)
+           AND r.is_research IS NOT FALSE) AS reports_available,
+      (SELECT r.company_name FROM research.research_report r
+         WHERE r.market = :market AND :code = ANY(r.stock_targets)
+           AND r.company_name IS NOT NULL
+         ORDER BY r.report_date DESC NULLS LAST LIMIT 1) AS instrument_name
+    """
+)
+
+
+async def fetch_coverage_counts(
+    session: AsyncSession, market: str, code: str
+) -> CoverageCounts:
+    row = (
+        await session.execute(
+            _COVERAGE_SQL, {"market": market, "code": code, "statuses": VALID_STATUSES}
+        )
+    ).first()
+    brokers_total = int(row[0] or 0)
+    brokers_extracted = int(row[1] or 0)
+    reports_available = int(row[2] or 0)
+    return CoverageCounts(
+        market=market, instrument_code=code, instrument_name=row[3],
+        brokers_total=brokers_total, brokers_extracted=brokers_extracted,
+        reports_available=reports_available, has_reports=reports_available > 0,
+    )
+
+
+def _catalog_cte() -> str:
+    """有可展示訊號的標的目錄（每 (market, code) 一列）。"""
+    return (
+        "WITH sig AS ("
+        "  SELECT market, instrument_code,"
+        "         count(DISTINCT broker) FILTER (WHERE extraction_status = ANY(:statuses)) AS sig_brokers,"
+        "         max(report_date) FILTER (WHERE extraction_status = ANY(:statuses)) AS latest,"
+        "         bool_or(extraction_status = ANY(:statuses)) AS has_valid"
+        "  FROM research.report_signal GROUP BY market, instrument_code"
+        "), rep AS ("
+        "  SELECT r.market, st AS instrument_code,"
+        "         count(DISTINCT r.source) AS broker_count, count(*) AS report_count,"
+        "         (array_agg(r.company_name ORDER BY r.report_date DESC NULLS LAST)"
+        "            FILTER (WHERE r.company_name IS NOT NULL))[1] AS name"
+        "  FROM research.research_report r, unnest(r.stock_targets) st"
+        "  WHERE r.is_research IS NOT FALSE GROUP BY r.market, st"
+        "), cat AS ("
+        "  SELECT rep.market, rep.instrument_code, rep.name, rep.broker_count,"
+        "         rep.report_count, sig.latest, sig.sig_brokers"
+        "  FROM sig JOIN rep ON rep.market = sig.market"
+        "                   AND rep.instrument_code = sig.instrument_code"
+        "  WHERE sig.has_valid = true"
+        ")"
+    )
+
+
+def _catalog_filters(market: Optional[str], q: Optional[str]) -> tuple[str, dict]:
+    conds: list[str] = []
+    params: dict = {"statuses": VALID_STATUSES}
+    if market:
+        conds.append("cat.market = :market")
+        params["market"] = market
+    if q:
+        conds.append("(cat.instrument_code ILIKE :q OR cat.name ILIKE :q)")
+        params["q"] = f"%{q}%"
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    return where, params
+
+
+async def list_radar_instruments(
+    session: AsyncSession, *, market: Optional[str] = None, q: Optional[str] = None,
+    limit: int = 50, offset: int = 0,
+) -> tuple[int, list[RadarInstrumentRow]]:
+    where, params = _catalog_filters(market, q)
+    cte = _catalog_cte()
+    total = (
+        await session.execute(text(f"{cte} SELECT count(*) FROM cat {where}"), params)
+    ).scalar_one()
+    rows = (
+        await session.execute(
+            text(
+                f"{cte} SELECT cat.market, cat.instrument_code, cat.name, cat.broker_count, "
+                f"cat.report_count, cat.latest, cat.sig_brokers FROM cat {where} "
+                "ORDER BY cat.latest DESC NULLS LAST, cat.instrument_code "
+                "LIMIT :limit OFFSET :offset"
+            ),
+            {**params, "limit": limit, "offset": offset},
+        )
+    ).all()
+    items = [
+        RadarInstrumentRow(
+            market=r[0], instrument_code=r[1], instrument_name=r[2],
+            broker_count=int(r[3] or 0), report_count=int(r[4] or 0),
+            latest_report_date=r[5],
+            coverage_state="ok" if int(r[6] or 0) >= int(r[3] or 0) else "partial",
+        )
+        for r in rows
+    ]
+    return int(total), items

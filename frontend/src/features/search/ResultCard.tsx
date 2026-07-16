@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from 'motion/react'
 import { marketLabel, marketTint, instrumentLabel } from '../../lib/meta'
 import { highlight } from '../../lib/highlight'
-import { revealTransition, revealVariantsFor, TF_DUR, TF_EASE_OUT, tfInstant } from '../../lib/motionTokens'
+import { revealTransition, revealVariantsFor, springHover, TF_DUR, TF_EASE_OUT, tfInstant } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
 import styles from './ResultCard.module.css'
@@ -40,7 +40,7 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
       initial="hidden"
       animate="visible"
       transition={revealTransition(reduced, index)}
-      whileHover={{ y: -2 }}
+      whileHover={{ y: -6, transition: springHover }}
       role="button"
       tabIndex={0}
       aria-label={row.file_name}

@@ -1,11 +1,9 @@
-import { useState } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
+import { CopyButton } from '../../components/animate-ui/components/buttons/copy'
 import { ThinkingSteps } from './ThinkingSteps'
 import { renderAnswer } from '../../lib/askMarkdown'
-import { TF_DUR, tfInstant } from '../../lib/motionTokens'
 import { visibleAnswerView, type AnswerView, type Turn } from '../../lib/askReducer'
 import styles from './AssistantMessage.module.css'
 
@@ -23,9 +21,6 @@ interface Props {
 }
 
 export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion, disabled = false }: Props) {
-  const [copied, setCopied] = useState(false)
-  const reduced = useReducedMotion()
-
   if (turn.phase === 'notice') {
     return <Callout variant="warning" action={{ label: '換個說法重新提問', onClick: onNoticeRetry }}>{turn.noticeText ?? '無法回答此問題'}</Callout>
   }
@@ -60,10 +55,6 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
 
   const refCount = view.sources.length + view.extSources.length
   const showActions = (turn.phase === 'done' || turn.phase === 'stopped') && !turn.isOfftopic
-
-  function copy() {
-    void navigator.clipboard?.writeText(view.answer).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) })
-  }
 
   return (
     <div className={styles.msg}>
@@ -105,20 +96,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
               <Pressable className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback('dislike')} aria-label="倒讚"><Icon name="thumbDown" size={15} /></Pressable>
             </>
           )}
-          <Pressable className={styles.act} onClick={copy} aria-label="複製回答" title={copied ? '已複製' : '複製'}>
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.span
-                key={copied ? 'check' : 'copy'}
-                style={{ display: 'inline-flex' }}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={reduced ? tfInstant : { duration: TF_DUR.d1 }}
-              >
-                <Icon name={copied ? 'check' : 'copy'} size={15} />
-              </motion.span>
-            </AnimatePresence>
-          </Pressable>
+          <CopyButton content={view.answer} variant="ghost" className={styles.act} aria-label="複製回答" title="複製回答" />
           <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</Pressable>
           {refCount > 0 && (
             <>

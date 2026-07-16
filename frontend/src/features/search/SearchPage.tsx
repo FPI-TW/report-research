@@ -28,6 +28,7 @@ import { ViewSwitch } from './ViewSwitch'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
 import { Reveal } from '../../components/primitives/Reveal'
 import { Pressable } from '../../components/primitives/Pressable'
+import { GradientBackground } from '../../components/animate-ui/components/backgrounds/gradient'
 import styles from './SearchPage.module.css'
 
 /** 首頁 hero 的建議查詢（純起手式，點了即搜） */
@@ -77,6 +78,12 @@ export default function SearchPage() {
       <div className={styles.inner} data-hero={showHero || undefined}>
         {showHero && (
           <Reveal className={styles.hero}>
+            <div className={styles.heroBg} aria-hidden="true">
+              <GradientBackground
+                className={styles.heroGradient}
+                transition={{ duration: 18, ease: 'easeInOut', repeat: Infinity }}
+              />
+            </div>
             <BrandLogo size={64} />
             <h2 className={styles.heroTitle}>廷豐智能研報</h2>
             <p className={styles.heroSub}>

@@ -5,7 +5,27 @@
 
 /* ── 品牌起始畫面（空查詢） ── */
 .inner[data-hero] { padding-top: 72px; }
-.hero { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 14px; }
+.hero { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 14px; }
+.hero > *:not(.heroBg) { position: relative; z-index: 1; }
+/* animate-ui GradientBackground 作為 hero 柔光底：品牌墨青×鎏金、徑向淡出、緩慢流動 */
+.heroBg {
+  position: absolute;
+  left: 50%;
+  top: -60px;
+  width: min(760px, 116%);
+  height: 300px;
+  transform: translateX(-50%);
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  -webkit-mask-image: radial-gradient(ellipse 60% 60% at 50% 42%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(ellipse 60% 60% at 50% 42%, #000 0%, transparent 72%);
+}
+.heroGradient {
+  background: linear-gradient(120deg, var(--tf-ink-tint), var(--tf-gold-tint) 45%, var(--tf-ink-line) 70%, var(--tf-ink-tint));
+  background-size: 280% 280%;
+  opacity: 0.85;
+}
 .heroTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 32px; letter-spacing: 0.02em; color: var(--tf-ink-deep); margin: 16px 0 0; }
 .heroSub { font-size: 14px; color: var(--tf-text-3); margin: 8px 0 0; font-variant-numeric: tabular-nums; }
 .heroSwitch { margin-top: 30px; }

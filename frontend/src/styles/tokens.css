@@ -113,16 +113,9 @@ a:hover { color: var(--tf-ink-hover); }
   border: 3px solid var(--tf-canvas);
 }
 
-/* tf-up 供全域 class .tf-reveal 使用，定義於此。
-   其餘 keyframe（tf-spin/tf-pulse/tf-fade/tf-indet/tf-grow）由各 CSS Module「就地定義」——
-   CSS Modules 會把 module 內 animation 名稱在地化雜湊，引用此處全域 keyframe 會落空、動畫不播，故不放全域。 */
-@keyframes tf-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-
-/* 進場淡入＋上浮；清單以 style={{'--tf-i': index}} 做封頂 stagger。 */
-.tf-reveal {
-  animation: tf-up var(--tf-dur-3) var(--tf-ease-out) both;
-  animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger));
-}
+/* 進場淡入＋上浮已改由 Motion（components/primitives/Reveal.tsx）提供，不再用全域 .tf-reveal / @keyframes tf-up。
+   殘留的裝飾性 keyframe（tf-spin/tf-pulse/tf-fade/tf-indet/tf-grow）仍由各 CSS Module「就地定義」——
+   CSS Modules 會把 module 內 animation 名稱在地化雜湊，引用全域 keyframe 會落空、動畫不播，故不放全域。 */
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

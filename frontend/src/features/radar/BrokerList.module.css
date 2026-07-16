@@ -31,7 +31,7 @@
 
 .row {
   cursor: pointer;
-  transition: background-color var(--tf-dur-1) var(--tf-ease-standard);
+  transition: background-color var(--tf-dur-1) var(--tf-ease-out);
 }
 
 .row:hover td { background: var(--tf-gold-panel); }

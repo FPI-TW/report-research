@@ -1,5 +1,6 @@
 import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
+import { Reveal } from '../../components/primitives/Reveal'
 import type { ReportState } from '../../lib/askReducer'
 import styles from './DeepReportPanel.module.css'
 
@@ -46,11 +47,11 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
   if (report.status === 'done') {
     const href = safeDownload(report.downloadUrl)
     return (
-      <div className={`${styles.done} tf-reveal`}>
+      <Reveal className={styles.done}>
         <div className={styles.doneHead}><Icon name="check" size={18} className={styles.doneIcon} /><span className={styles.doneTitle}>深度研報已完成</span></div>
         {report.title && <div className={styles.doneMeta}>{report.title}</div>}
         {href && <a className={styles.dl} href={href} download><Icon name="fileText" size={16} /> 下載 PDF</a>}
-      </div>
+      </Reveal>
     )
   }
 

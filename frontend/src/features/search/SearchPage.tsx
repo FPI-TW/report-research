@@ -26,6 +26,8 @@ import { EmptyState } from './EmptyState'
 import { LoadMore } from './LoadMore'
 import { ViewSwitch } from './ViewSwitch'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
+import { Reveal } from '../../components/primitives/Reveal'
+import { Pressable } from '../../components/primitives/Pressable'
 import styles from './SearchPage.module.css'
 
 /** 首頁 hero 的建議查詢（純起手式，點了即搜） */
@@ -74,7 +76,7 @@ export default function SearchPage() {
     <div className={styles.page}>
       <div className={styles.inner} data-hero={showHero || undefined}>
         {showHero && (
-          <div className={`${styles.hero} tf-reveal`}>
+          <Reveal className={styles.hero}>
             <BrandLogo size={64} />
             <h2 className={styles.heroTitle}>廷豐智能研報</h2>
             <p className={styles.heroSub}>
@@ -82,7 +84,7 @@ export default function SearchPage() {
               語意檢索 · 智能問答 · 深度研報
             </p>
             <ModeSwitch className={styles.heroSwitch} />
-          </div>
+          </Reveal>
         )}
 
         <div className={styles.controls}>
@@ -105,7 +107,7 @@ export default function SearchPage() {
             <div className={styles.tryRow}>
               <span className={styles.tryLabel}>試試</span>
               {TRY_QUERIES.map(q => (
-                <button key={q} type="button" className={styles.tryChip} onClick={() => update({ q })}>{q}</button>
+                <Pressable key={q} className={styles.tryChip} onClick={() => update({ q })}>{q}</Pressable>
               ))}
             </div>
           )}
@@ -114,19 +116,19 @@ export default function SearchPage() {
         </div>
 
         {results.isError ? (
-          <div className={`${styles.error} tf-reveal`}>
+          <Reveal className={styles.error}>
             載入失敗，請稍後再試。<button type="button" onClick={results.refetch}>重試</button>
-          </div>
+          </Reveal>
         ) : results.isLoading ? (
           <SearchSkeleton view={state.view === 'table' ? 'table' : 'cards'} mode={mode} />
         ) : results.total === 0 ? (
-          <div className="tf-reveal">
+          <Reveal>
             <EmptyState
               copy={emptyState(state, hasAnyFilter(state))}
               onClear={() => applyState(clearFilters(state))}
               onBrowseAll={() => applyState(browseAll(state))}
             />
-          </div>
+          </Reveal>
         ) : (
           <>
             {showHero ? (

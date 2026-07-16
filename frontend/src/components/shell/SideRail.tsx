@@ -1,4 +1,5 @@
 import { Icon } from '../primitives/Icon'
+import { Pressable } from '../primitives/Pressable'
 import { BrandLogo } from '../BrandLogo'
 import { NavItem } from './NavItem'
 import { ConversationList } from './ConversationList'
@@ -23,9 +24,9 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
         <div className={styles.header}>
           <span className={styles.glyphSmall}><BrandLogo size={30} alt="" /></span>
           <span className={styles.title}>廷豐智能研報</span>
-          <button type="button" onClick={onToggle} title="收合側欄" aria-label="收合側欄" className={styles.toggleFull}>
+          <Pressable onClick={onToggle} title="收合側欄" aria-label="收合側欄" className={styles.toggleFull}>
             <Icon name="panel" size={22} />
-          </button>
+          </Pressable>
         </div>
         <nav className={styles.fullNav}>
           <NavItem to="/search" icon="search" label="檢索" variant="row" />
@@ -39,10 +40,10 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
       </div>
       <div className={styles.mini} aria-hidden={!collapsed} inert={!collapsed}>
         {/* 品牌標記與展開鈕同格：預設顯示 logo，hover 換成展開圖示，點擊展開（仿 ChatGPT） */}
-        <button type="button" onClick={onToggle} title="展開側欄" aria-label="展開側欄" className={styles.brandToggle}>
+        <Pressable onClick={onToggle} title="展開側欄" aria-label="展開側欄" className={styles.brandToggle}>
           <BrandLogo size={30} className={styles.brandLogo} alt="" />
           <Icon name="panel" size={22} className={styles.brandExpand} />
-        </button>
+        </Pressable>
         <nav className={styles.miniNav}>
           <NavItem to="/search" icon="search" label="檢索" variant="mini" />
           <NavItem to="/ask" icon="messages" label="問答" variant="mini" />

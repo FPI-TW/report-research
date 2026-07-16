@@ -9,6 +9,7 @@ import { SourcesDrawer } from './SourcesDrawer'
 import { Composer } from './Composer'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
 import { ModeSwitch } from '../../components/shell/ModeSwitch'
+import { Reveal } from '../../components/primitives/Reveal'
 import type { AnswerView } from '../../lib/askReducer'
 import styles from './AskPage.module.css'
 
@@ -59,7 +60,7 @@ export default function AskPage() {
             <AskEmptyState value={draft} onChange={setDraft} onSubmit={handleSubmit} />
           ) : (
             turns.map(t => (
-              <div key={t.id} className="tf-reveal">
+              <Reveal key={t.id}>
                 <UserMessage text={t.question} onEdit={q => ctrl.editResubmit(t.id, t.qaId, q)} disabled={busy} />
                 <AssistantMessage
                   turn={t}
@@ -86,7 +87,7 @@ export default function AskPage() {
                   onGenerate={() => ctrl.generateReport(t.id, t.question, t.qaId)}
                   onDecline={() => ctrl.declineReport(t.id)}
                 />
-              </div>
+              </Reveal>
             ))
           )}
         </div>

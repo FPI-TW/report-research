@@ -26,7 +26,7 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
           </span>
         )}
       </button>
-      <Popover open={open} onClose={() => setOpen(false)} className={styles.pop}>
+      <Popover open={open} onClose={() => setOpen(false)} className={styles.pop} openUp>
         <div className={styles.popHead}>
           <div className={styles.name}>{name}</div>
           <div className={styles.sub}>研究部 · 分析師</div>

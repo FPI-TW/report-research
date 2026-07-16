@@ -1,5 +1,7 @@
+import { motion, useReducedMotion } from 'motion/react'
 import { marketLabel, marketTint, instrumentLabel } from '../../lib/meta'
 import { highlight } from '../../lib/highlight'
+import { revealTransition, revealVariants } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
 import styles from './ResultCard.module.css'
@@ -21,6 +23,7 @@ function truncate(s: string | null, n: number): string {
 
 /** 高密度列表列：市場｜標題＋標的＋命中片段｜相關度＋來源日期（等高欄位、可掃讀）。 */
 export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Props) {
+  const reduced = useReducedMotion()
   const targets = [...(row.stock_targets ?? []), ...(row.futures_targets ?? [])]
   const pills = [...(row.instrument_types ?? []).map(instrumentLabel), ...targets]
   const date = (row.report_date ?? '').slice(0, 10)
@@ -31,9 +34,13 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
   const snippet = row.passages?.[0]?.content ?? ''
 
   return (
-    <div
-      className={`${styles.card} tf-reveal`}
+    <motion.div
+      className={styles.card}
       style={{ ['--tf-i' as string]: index }}
+      variants={revealVariants}
+      initial="hidden"
+      animate="visible"
+      transition={revealTransition(reduced, index)}
       role="button"
       tabIndex={0}
       aria-label={row.file_name}
@@ -74,6 +81,6 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
         <span className={styles.meta}>{[row.source, date].filter(Boolean).join(' · ')}</span>
         <span className={styles.cta}>查看全文 ›</span>
       </div>
-    </div>
+    </motion.div>
   )
 }

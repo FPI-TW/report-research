@@ -28,7 +28,11 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.llm import stream_completion
-from app.services.query_planner import parse_plan_json
+from app.services.query_planner import parse_plan_json, plan_queries
+from app.services.retrieval_pipeline import (
+    retrieve_context,
+    retrieve_context_multi,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +291,39 @@ async def plan_outline(
     if not any(sec["kind"] == "analysis" for sec in outline["sections"]):
         return None
     return outline
+
+
+# ── 逐節針對性檢索（重用 M6 多查詢 fan-out）─────────────────────────────────
+async def retrieve_for_section(
+    topic: str,
+    *,
+    filters: dict | None = None,
+    planner_model: str | None = None,
+) -> tuple[list, str]:
+    """單一節次的針對性檢索：plan_queries(profile="report") 展子查詢 → 多查詢走
+    retrieve_context_multi（M6 fan-out+MMR）、單查詢走 retrieve_context；一律用逐節
+    配額（低於整份，控 N 節串行延遲）。回 (sources, context)。
+
+    plan_queries 永不 raise；retrieve_* 的逾時與有界重試由逐節迴圈（T6）包裹。
+    """
+    s = get_settings()
+    plan = await plan_queries(topic, profile="report", model=planner_model)
+    queries = [sq.text for sq in plan.subqueries]
+    kwargs: dict[str, Any] = {
+        "k": s.report_deep_k,
+        "dense_scan": s.report_subquery_dense_scan,
+        "max_reports": s.report_section_max_reports,
+        "max_passages": s.report_section_max_passages,
+        "max_chars": s.report_section_max_context_chars,
+        "filters": filters,
+        "rerank_top_m": (
+            s.report_section_rerank_candidates if s.report_rerank_enabled else 0
+        ),
+        "rerank_timeout": s.report_rerank_timeout,
+    }
+    if len(queries) > 1:
+        return await retrieve_context_multi(topic, queries, **kwargs)
+    return await retrieve_context(topic, **kwargs)
 
 
 # ── report_run：upsert 與原子狀態推進 ───────────────────────────────────────

@@ -326,5 +326,63 @@ class PlanOutlineTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await rw.plan_outline("q", "ctx"))
 
 
+# ── T4 逐節檢索 ──────────────────────────────────────────────────────────────
+class _AsyncRec:
+    """記錄呼叫並回固定值的 async callable。"""
+
+    def __init__(self, ret):
+        self.ret = ret
+        self.calls: list[tuple[tuple, dict]] = []
+
+    async def __call__(self, *a, **k):
+        self.calls.append((a, k))
+        return self.ret
+
+
+def _patch_plan(*subquery_texts):
+    from types import SimpleNamespace
+
+    plan = SimpleNamespace(
+        subqueries=[SimpleNamespace(text=t) for t in subquery_texts],
+        profile="report",
+        degraded=False,
+    )
+
+    async def fake(topic, **k):
+        return plan
+
+    return patch.object(rw, "plan_queries", fake)
+
+
+class RetrieveForSectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_single_query_uses_retrieve_context(self):
+        rc = _AsyncRec((["src"], "ctx"))
+        rcm = _AsyncRec((["x"], "y"))
+        with _patch_plan("topic"), patch.object(rw, "retrieve_context", rc), patch.object(
+            rw, "retrieve_context_multi", rcm
+        ):
+            sources, ctx = await rw.retrieve_for_section("topic")
+        self.assertEqual((sources, ctx), (["src"], "ctx"))
+        self.assertEqual((len(rc.calls), len(rcm.calls)), (1, 0))
+        _, kw = rc.calls[0]
+        self.assertEqual(kw["max_reports"], 8)  # 逐節配額（非整份 25）
+        self.assertEqual(kw["max_passages"], 4)  # 非整份 6
+        self.assertEqual(kw["max_chars"], 12000)  # 非整份 40000
+        self.assertEqual(kw["rerank_top_m"], 40)  # 逐節 rerank 候選下修（非 120）
+
+    async def test_multi_query_uses_retrieve_context_multi(self):
+        rc = _AsyncRec((["x"], "y"))
+        rcm = _AsyncRec((["src"], "ctx"))
+        with _patch_plan("topic", "面向2"), patch.object(
+            rw, "retrieve_context", rc
+        ), patch.object(rw, "retrieve_context_multi", rcm):
+            sources, ctx = await rw.retrieve_for_section("topic", filters={"market": "TW"})
+        self.assertEqual((len(rc.calls), len(rcm.calls)), (0, 1))
+        args, kw = rcm.calls[0]
+        self.assertEqual(args[0], "topic")
+        self.assertEqual(args[1], ["topic", "面向2"])  # queries 首項為原題
+        self.assertEqual(kw["filters"], {"market": "TW"})
+
+
 if __name__ == "__main__":
     unittest.main()

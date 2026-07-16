@@ -53,12 +53,18 @@
 
   /* ── 動效 ── */
   --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* 標準過渡緩動：與 --tf-ease-out 同值。多處（含雷達）以此名引用；缺它會使整條
+     transition 於計算期失效被丟棄，故務必保留定義。 */
+  --tf-ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+  /* 彈簧緩動（輕微 overshoot）：供 press/pop 微互動用，純 CSS 取得一點彈跳感。 */
+  --tf-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --tf-dur-1: 120ms;
   --tf-dur-2: 180ms;
   --tf-dur-3: 240ms;
   --tf-dur-4: 340ms;
   --tf-stagger: 40ms;
   --tf-stagger-cap: 8;
+  --tf-press: 0.97; /* 按壓縮放共用值 */
 
   /* ── 語意色 — 市場（降彩度重校；chip 一律淡底深字） ── */
   --mkt-TW: #237a46;
@@ -103,6 +109,26 @@ a:hover { color: var(--tf-ink-hover); }
 :focus-visible {
   outline: 2px solid var(--tf-ink);
   outline-offset: 2px;
+}
+
+/* ── 全域互動基礎動效 ──
+   為互動元素補上平滑過渡與按壓回饋。這是元素選擇器（低特異度），凡元件自帶 class 級
+   transition（Modal/Popover/卡片/SideRail…）皆更特異、維持不變；本規則只在「原本無 transition
+   的瞬間換色 hover」處生效，一次平滑化全站數十個按鈕/晶片/連結。獨立 scale 屬性不覆寫元件的
+   transform 動畫。press 不含 <a>，避免影響內文連結/引註 pill 的基準線。reduced-motion 由檔尾
+   全域歸零涵蓋。 */
+button, a, summary, [role='button'], [role='tab'] {
+  transition: background-color var(--tf-dur-1) var(--tf-ease-out),
+              border-color var(--tf-dur-1) var(--tf-ease-out),
+              color var(--tf-dur-1) var(--tf-ease-out),
+              box-shadow var(--tf-dur-1) var(--tf-ease-out),
+              transform var(--tf-dur-1) var(--tf-ease-out),
+              scale var(--tf-dur-1) var(--tf-ease-spring);
+}
+button:not(:disabled):active,
+[role='button']:not([aria-disabled='true']):active,
+[role='tab']:active {
+  scale: var(--tf-press);
 }
 
 .tf-scroll { overflow-x: hidden; }

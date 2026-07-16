@@ -31,6 +31,9 @@
   border: none; background: var(--tf-border-weak); border-radius: 999px;
   width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
   cursor: pointer; font-size: 18px; line-height: 1; color: var(--tf-text-2); padding: 0;
+  transition: background var(--tf-dur-1) var(--tf-ease-out),
+              color var(--tf-dur-1) var(--tf-ease-out),
+              rotate var(--tf-dur-2) var(--tf-ease-spring);
 }
-.close:hover { background: var(--tf-border); }
+.close:hover { background: var(--tf-border); color: var(--tf-text-1); rotate: 90deg; }
 .body { padding: 16px 20px; overflow: auto; }

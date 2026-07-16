@@ -6,6 +6,6 @@
 .input { flex: 1; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.6; color: var(--tf-text-1); max-height: 140px; min-height: 24px; padding: 9px 0; background: none; }
 .input::placeholder { color: var(--tf-text-4); }
 .send { width: 40px; height: 40px; flex: none; border-radius: var(--tf-radius-pill); border: none; background: var(--tf-ink); color: var(--tf-on-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.send:hover { background: var(--tf-ink-hover); }
+.send:hover:not(:disabled) { background: var(--tf-ink-hover); scale: 1.06; }
 .send:disabled { opacity: 0.5; cursor: default; }
 .note { text-align: center; font-size: 11.5px; color: var(--tf-text-4); margin-top: 8px; }

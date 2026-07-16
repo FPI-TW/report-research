@@ -1,16 +1,20 @@
 /* 高密度列表列：置於 CardsView 的白底容器內，一列一報告 */
 .card {
+  position: relative;
   display: grid; grid-template-columns: 92px minmax(0, 1fr) 200px; gap: 14px;
   align-items: start;
   background: var(--tf-surface);
   border-bottom: 1px solid var(--tf-border-weak);
   padding: 13px 16px;
   cursor: pointer;
-  transition: background var(--tf-dur-1) var(--tf-ease-out);
+  transition: background var(--tf-dur-1) var(--tf-ease-out),
+              box-shadow var(--tf-dur-2) var(--tf-ease-out);
 }
 .card:last-child { border-bottom: none; }
-.card:hover, .card:focus-visible { background: #f8f7f3; outline: none; }
-.card:focus-visible { box-shadow: inset 2px 0 0 var(--tf-ink); }
+/* 列（非獨立卡）以收斂陰影＋提層營造微浮起，不用 translateY 以免與相鄰列邊框抖動。
+   陰影較 --tf-shadow-float 更緊（3px/12px），避免密集列表相鄰列被暈染。 */
+.card:hover, .card:focus-visible { background: #f8f7f3; outline: none; z-index: 1; box-shadow: 0 3px 12px rgba(22, 42, 58, 0.09); }
+.card:focus-visible { box-shadow: 0 3px 12px rgba(22, 42, 58, 0.09), inset 2px 0 0 var(--tf-ink); }
 
 .chipCol { padding-top: 1px; }
 .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--tf-radius-pill); padding: 3px 10px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }

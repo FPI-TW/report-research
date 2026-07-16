@@ -1,4 +1,5 @@
 import type { Coverage, EpsConsensus, RatingConsensus, TargetConsensus, Window } from '../../lib/radarSchemas'
+import { TweenNumber } from '../../components/primitives/TweenNumber'
 import { DirectionTag } from './DirectionTag'
 import { currencyPrefix, fmtNum, fmtPrice, WINDOW_LABEL } from './radarFormat'
 import { RatingDistributionBar } from './RatingDistributionBar'
@@ -19,14 +20,14 @@ export function ConsensusSnapshot({ rating, target, eps, coverage, window }: Pro
 
   return (
     <section className={styles.grid} aria-label="共識快照">
-      <div className={`${styles.card} ${styles.rating}`}>
+      <div className={`${styles.card} ${styles.rating} tf-reveal`} style={{ ['--tf-i' as string]: 0 }}>
         <div className={styles.label}>評等共識</div>
         {rating && rating.total_rated > 0 ? (
           <>
             <div className={styles.buckets}>
-              <span>偏多 <b>{rating.bullish}</b></span>
-              <span>中立 <b>{rating.neutral}</b></span>
-              <span>偏空 <b>{rating.bearish}</b></span>
+              <span>偏多 <b><TweenNumber value={rating.bullish} decimals={0} /></b></span>
+              <span>中立 <b><TweenNumber value={rating.neutral} decimals={0} /></b></span>
+              <span>偏空 <b><TweenNumber value={rating.bearish} decimals={0} /></b></span>
             </div>
             <RatingDistributionBar distribution={rating.distribution} totalRated={rating.total_rated} />
             <div className={styles.sub}>
@@ -39,7 +40,7 @@ export function ConsensusSnapshot({ rating, target, eps, coverage, window }: Pro
         )}
       </div>
 
-      <div className={styles.card}>
+      <div className={`${styles.card} tf-reveal`} style={{ ['--tf-i' as string]: 1 }}>
         <div className={styles.label}>目標價中位數</div>
         {primaryTarget ? (
           <>
@@ -63,7 +64,7 @@ export function ConsensusSnapshot({ rating, target, eps, coverage, window }: Pro
         )}
       </div>
 
-      <div className={styles.card}>
+      <div className={`${styles.card} tf-reveal`} style={{ ['--tf-i' as string]: 2 }}>
         <div className={styles.label}>
           EPS{primaryEps?.fiscal_year ? `（FY${primaryEps.fiscal_year}）` : ''}
         </div>
@@ -89,11 +90,11 @@ export function ConsensusSnapshot({ rating, target, eps, coverage, window }: Pro
         )}
       </div>
 
-      <div className={styles.card}>
+      <div className={`${styles.card} tf-reveal`} style={{ ['--tf-i' as string]: 3 }}>
         <div className={styles.label}>資料品質</div>
         <div className={styles.quality}>
           <strong>
-            {coverage.brokers_extracted}/{coverage.brokers_total || '—'} 家
+            <TweenNumber value={coverage.brokers_extracted} decimals={0} />/{coverage.brokers_total || '—'} 家
           </strong>
           券商已擷取
           <div className={styles.sub} style={{ marginTop: 6 }}>

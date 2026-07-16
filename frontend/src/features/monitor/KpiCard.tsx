@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react'
 import styles from './MonitorPage.module.css'
 
-export function KpiCard({ label, value, suffix, sub }: {
+export function KpiCard({ label, value, suffix, sub, index = 0 }: {
   label: string
   value: ReactNode
   suffix?: string
   sub?: string
+  /** 進場 stagger 序號；封頂由 --tf-stagger-cap 處理。 */
+  index?: number
 }) {
   return (
-    <div className={`${styles.card} ${styles.kpiCard}`}>
+    <div className={`${styles.card} ${styles.kpiCard} tf-reveal`} style={{ ['--tf-i' as string]: index }}>
       <div className={styles.kpiLabel}>{label}</div>
       <div className={styles.kpiValRow}>
         <span className={styles.kpiVal}>{value}</span>

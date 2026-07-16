@@ -25,7 +25,7 @@ export function RecentChanges({ events, total, onOpenReport, showAll, onToggleAl
     <div>
       <div className={styles.list}>
         {visible.map((ev, i) => (
-          <article key={`${ev.report_link.report_id}-${ev.report_date}-${i}`} className={styles.card}>
+          <article key={`${ev.report_link.report_id}-${ev.report_date}-${i}`} className={`${styles.card} tf-reveal`} style={{ ['--tf-i' as string]: i }}>
             <div className={styles.top}>
               <span className={styles.date}>{fmtDate(ev.report_date)}</span>
               <span className={styles.broker}>{ev.broker_display || ev.broker || '未知券商'}</span>

@@ -117,7 +117,7 @@ export default function SearchPage() {
 
         {results.isError ? (
           <Reveal className={styles.error}>
-            載入失敗，請稍後再試。<button type="button" onClick={results.refetch}>重試</button>
+            載入失敗，請稍後再試。<Pressable onClick={results.refetch}>重試</Pressable>
           </Reveal>
         ) : results.isLoading ? (
           <SearchSkeleton view={state.view === 'table' ? 'table' : 'cards'} mode={mode} />

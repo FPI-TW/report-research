@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from 'motion/react'
 import { marketLabel, marketTint, instrumentLabel } from '../../lib/meta'
 import { highlight } from '../../lib/highlight'
-import { revealTransition, revealVariants } from '../../lib/motionTokens'
+import { revealTransition, revealVariantsFor, TF_DUR, TF_EASE_OUT, tfInstant } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
 import styles from './ResultCard.module.css'
@@ -34,13 +34,13 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
   const snippet = row.passages?.[0]?.content ?? ''
 
   return (
-    <motion.div
+    <motion.article
       className={styles.card}
-      style={{ ['--tf-i' as string]: index }}
-      variants={revealVariants}
+      variants={revealVariantsFor('up')}
       initial="hidden"
       animate="visible"
       transition={revealTransition(reduced, index)}
+      whileHover={{ y: -2 }}
       role="button"
       tabIndex={0}
       aria-label={row.file_name}
@@ -73,7 +73,12 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
         {mode === 'search' && (
           <span className={styles.scoreRow}>
             <span className={styles.scoreTrack}>
-              <span className={styles.scoreFill} style={{ ['--score' as string]: `${pct}%` }} />
+              <motion.span
+                className={styles.scoreFill}
+                initial={{ width: 0 }}
+                animate={{ width: `${pct}%` }}
+                transition={reduced ? tfInstant : { duration: TF_DUR.d4, ease: TF_EASE_OUT, delay: Math.min(index, 8) * 0.04 }}
+              />
             </span>
             <span className={styles.scoreNum}>{pct}%</span>
           </span>
@@ -81,6 +86,6 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
         <span className={styles.meta}>{[row.source, date].filter(Boolean).join(' · ')}</span>
         <span className={styles.cta}>查看全文 ›</span>
       </div>
-    </motion.div>
+    </motion.article>
   )
 }

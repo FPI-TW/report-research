@@ -1,3 +1,4 @@
+import { Pressable } from '../../components/primitives/Pressable'
 import { MARKET_ORDER, marketColor, marketLabel } from '../../lib/meta'
 import styles from './MarketChipBar.module.css'
 
@@ -18,16 +19,15 @@ export function MarketChipBar({ value, onChange, counts }: Props) {
         const label = code === ALL ? '全部' : marketLabel(code)
         const n = counts?.[code]
         return (
-          <button
+          <Pressable
             key={code}
-            type="button"
             aria-pressed={active}
             className={`${styles.chip} ${active ? styles.active : ''}`}
             onClick={() => onChange(code)}
           >
             <span className={styles.dot} style={{ background: marketColor(code) }} aria-hidden="true" />
             {label}{typeof n === 'number' ? ` ${n.toLocaleString()}` : ''}
-          </button>
+          </Pressable>
         )
       })}
     </div>

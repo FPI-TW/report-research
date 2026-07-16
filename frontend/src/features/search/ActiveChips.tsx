@@ -1,3 +1,4 @@
+import { Pressable } from '../../components/primitives/Pressable'
 import { marketLabel, instrumentLabel, reportTypeLabel } from '../../lib/meta'
 import type { SearchState } from '../../lib/searchFilters'
 import styles from './ActiveChips.module.css'
@@ -20,9 +21,9 @@ export function ActiveChips({ state, onPatch }: Props) {
   return (
     <div className={styles.bar}>
       {chips.map((c, i) => (
-        <button key={i} type="button" className={styles.chip} onClick={() => onPatch(c.patch)}>
+        <Pressable key={i} className={styles.chip} onClick={() => onPatch(c.patch)}>
           {c.label}<span className={styles.x}>×</span>
-        </button>
+        </Pressable>
       ))}
     </div>
   )

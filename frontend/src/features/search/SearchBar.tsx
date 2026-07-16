@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type CompositionEvent, type KeyboardEvent } from 'react'
 import { Icon } from '../../components/primitives/Icon'
+import { Pressable } from '../../components/primitives/Pressable'
 import styles from './SearchBar.module.css'
 
 interface Props {
@@ -70,12 +71,12 @@ export function SearchBar({ initial, onSubmit, size = 'md' }: Props) {
         onKeyDown={onKey}
       />
       {draft && (
-        <button type="button" className={styles.clear} aria-label="清除搜尋" onClick={clear}>
+        <Pressable className={styles.clear} aria-label="清除搜尋" onClick={clear}>
           <Icon name="x" size={16} />
-        </button>
+        </Pressable>
       )}
       {size === 'lg' && (
-        <button type="button" className={styles.go} onClick={() => fire(draft)}>搜尋</button>
+        <Pressable className={styles.go} onClick={() => fire(draft)}>搜尋</Pressable>
       )}
     </div>
   )

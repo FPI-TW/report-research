@@ -2,6 +2,7 @@ import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
 import { Reveal } from '../../components/primitives/Reveal'
 import { Sweep } from '../../components/primitives/motionLoops'
+import { RippleButton, RippleButtonRipples } from '../../components/animate-ui/primitives/buttons/ripple'
 import type { ReportState } from '../../lib/askReducer'
 import styles from './DeepReportPanel.module.css'
 
@@ -26,7 +27,10 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
           <div className={styles.offerSub}>彙整本輪引用來源，生成含 KPI 與圖表的深度研報，約需 3–5 分鐘。</div>
         </div>
         <div className={styles.offerBtns}>
-          <button type="button" className={styles.yes} onClick={onGenerate}>生成研報</button>
+          <RippleButton type="button" className={styles.yes} hoverScale={1.03} tapScale={0.96} onClick={onGenerate}>
+            生成研報
+            <RippleButtonRipples color="rgba(255,255,255,0.6)" />
+          </RippleButton>
           <button type="button" className={styles.no} onClick={onDecline}>暫時不用</button>
         </div>
       </div>

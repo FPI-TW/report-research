@@ -40,7 +40,8 @@ function overview(partial?: Partial<RadarOverview>): RadarOverview {
     rating: {
       distribution: [{ rating: 'buy', count: 1 }],
       bullish: 1, neutral: 0, bearish: 0, unknown: 0,
-      total_rated: 1, upgrades: 0, downgrades: 0, unchanged: 1,
+      total_rated: 1, median_rating: 'buy',
+      upgrades: 0, downgrades: 0, unchanged: 1,
     },
     target_price: {
       primary_currency: 'TWD',
@@ -126,7 +127,7 @@ describe('RadarPage', () => {
       }],
     })
     wrap('/radar')
-    expect(screen.getByRole('heading', { name: '觀點雷達' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '廷豐雷達' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('南電')).toBeInTheDocument())
     expect(radarApi.getRadarInstruments).toHaveBeenCalled()
   })
@@ -135,7 +136,7 @@ describe('RadarPage', () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
     wrap('/radar?market=TW&code=8046&window=90')
     await waitFor(() => expect(screen.getByRole('heading', { name: '南電' })).toBeInTheDocument())
-    expect(screen.getByText('研報觀點變化雷達')).toBeInTheDocument()
+    expect(screen.getByText('券商共識')).toBeInTheDocument()
     expect(screen.getByText('四向觀點')).toBeInTheDocument()
     expect(screen.getByText('轉強')).toBeInTheDocument()
     expect(screen.getByText('近期關鍵變化')).toBeInTheDocument()

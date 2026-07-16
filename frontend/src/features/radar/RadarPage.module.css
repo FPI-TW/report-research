@@ -18,18 +18,30 @@
 }
 
 .section {
-  margin-top: 20px;
+  margin-top: 32px;
 }
 
 .sectionTitle {
   font-family: var(--tf-serif);
   font-weight: 700;
-  font-size: 18px;
+  font-size: 19px;
   color: var(--tf-text-1);
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   display: flex;
   align-items: center;
   gap: 8px;
+  position: relative;
+  padding-left: 14px;
+}
+.sectionTitle::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.16em;
+  bottom: 0.16em;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--tf-gold-strong);
 }
 
 .sectionMeta {

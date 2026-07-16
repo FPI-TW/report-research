@@ -384,5 +384,69 @@ class RetrieveForSectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw["filters"], {"market": "TW"})
 
 
+# ── T5 帳本組裝 + render_citations 單次 ─────────────────────────────────────
+class LedgerAssemblyTests(unittest.TestCase):
+    def test_build_ledger_report_level_dedup(self):
+        s1 = [
+            {"report_id": "r1", "file_name": "a.pdf", "market": "TW", "report_date": "2026-01-01"},
+            {"report_id": "r2", "file_name": "b.pdf", "market": "TW", "report_date": "2026-02-01"},
+        ]
+        s2 = [{"report_id": "r1", "file_name": "a.pdf", "market": "TW", "report_date": "2026-01-01"}]
+        ledger, per = rw.build_ledger([s1, s2])
+        self.assertEqual(len(list(ledger)), 2)  # r1/r2 各一（去重）
+        self.assertEqual(len(per[0]), 2)
+        self.assertEqual(len(per[1]), 1)
+        self.assertEqual(per[1][0], per[0][0])  # r1 跨節同一 evidence_id
+
+    def test_build_ledger_skips_missing_report_id(self):
+        ledger, per = rw.build_ledger([[{"file_name": "x"}]])
+        self.assertEqual(len(list(ledger)), 0)
+        self.assertEqual(per, [[]])
+
+    def test_assemble_body_skeleton_and_strip_heading(self):
+        secs = [
+            {"key": "exec_summary", "heading": "執行摘要", "kind": "framing", "draft": "## 執行摘要\n摘要內容"},
+            {"key": "key_findings", "heading": "關鍵發現", "kind": "framing", "draft": "發現內容"},
+            {"key": "analysis", "heading": "子題A", "kind": "analysis", "draft": "### 子題A\nA內容"},
+            {"key": "analysis", "heading": "子題B", "kind": "analysis", "draft": "B內容"},
+            {"key": "risk_outlook", "heading": "風險與展望", "kind": "framing", "draft": "風險內容"},
+        ]
+        body = rw.assemble_body("我的研報", secs)
+        self.assertTrue(body.startswith("# 我的研報"))
+        for h in ("## 執行摘要", "## 關鍵發現", "## 風險與展望", "### 子題A", "### 子題B"):
+            self.assertIn(h, body)
+        self.assertEqual(body.count("## 重點分析"), 1)  # analysis 只包裝一次
+        self.assertEqual(body.count("執行摘要"), 1)  # 草稿前導標題被剝除，不雙標題
+
+    def test_assemble_final_citation_numbering(self):
+        ledger = rw.EvidenceLedger()
+        e1 = ledger.add_corpus(report_id="r1", file_name="a.pdf", market="TW", report_date="2026-01-01")
+        e2 = ledger.add_corpus(report_id="r2", file_name="b.pdf", market="US", report_date="2026-02-01")
+        secs = [
+            {"key": "exec_summary", "heading": "執行摘要", "kind": "framing",
+             "draft": f"看好[[ev:{e1.evidence_id}]]"},
+            {"key": "analysis", "heading": "A", "kind": "analysis",
+             "draft": f"分析[[ev:{e2.evidence_id}]]又見[[ev:{e1.evidence_id}]]"},
+            {"key": "risk_outlook", "heading": "風險與展望", "kind": "framing", "draft": "風險"},
+        ]
+        final, rendered = rw.assemble_final("研報", secs, ledger)
+        self.assertEqual(rendered.n_unknown, 0)
+        self.assertIn("看好[1]", final)  # e1 首見=1
+        self.assertIn("分析[2]", final)  # e2 第二見=2
+        self.assertIn("又見[1]", final)  # e1 全文恆同號
+        self.assertIn("## 引用來源", final)
+        self.assertIn("[1] a.pdf（TW·2026-01-01）", final)
+        self.assertIn("[2] b.pdf（US·2026-02-01）", final)
+
+    def test_assemble_final_unknown_id_counted_and_stripped(self):
+        ledger = rw.EvidenceLedger()
+        ledger.add_corpus(report_id="r1", file_name="a.pdf")
+        secs = [{"key": "analysis", "heading": "A", "kind": "analysis",
+                 "draft": "引用[[ev:deadbeefdeadbeef]]"}]
+        final, rendered = rw.assemble_final("研報", secs, ledger)
+        self.assertEqual(rendered.n_unknown, 1)  # 未知 id 計數（把關訊號）
+        self.assertNotIn("[[ev:", final)  # 內部 token 不漏到輸出
+
+
 if __name__ == "__main__":
     unittest.main()

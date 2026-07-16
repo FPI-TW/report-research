@@ -27,6 +27,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.services.db import SessionFactory
+from app.services.evidence import EvidenceLedger, RenderedCitations, render_citations
 from app.services.llm import stream_completion
 from app.services.query_planner import parse_plan_json, plan_queries
 from app.services.retrieval_pipeline import (
@@ -324,6 +325,102 @@ async def retrieve_for_section(
     if len(queries) > 1:
         return await retrieve_context_multi(topic, queries, **kwargs)
     return await retrieve_context(topic, **kwargs)
+
+
+# ── 證據帳本組裝 + render_citations 單次（報告級引用）───────────────────────
+_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+.*(?:\n|$)")
+
+
+def _src_get(src: Any, name: str) -> Any:
+    """相容 Source dataclass 與 dict 的欄位取值。"""
+    if isinstance(src, dict):
+        return src.get(name)
+    return getattr(src, name, None)
+
+
+def build_ledger(section_sources: list[list]) -> tuple[EvidenceLedger, list[list[str]]]:
+    """把各節檢索到的 sources 一次性註冊進**單一** EvidenceLedger（報告級）。
+
+    回 (ledger, per_section_evidence_ids)：per_section_evidence_ids[i] 為第 i 節可引用
+    的 evidence_id 子集（供逐節草稿 prompt 限定）。報告級去重：同 report_id 跨節得
+    同一 evidence_id（EvidenceLedger 內建去重）。**本函式為單一協調任務呼叫，不得在
+    並行節內執行**（_add 讀改寫無鎖）。
+    """
+    ledger = EvidenceLedger()
+    per_section: list[list[str]] = []
+    for sources in section_sources:
+        ids: list[str] = []
+        for src in sources or []:
+            report_id = _src_get(src, "report_id")
+            if not report_id:
+                continue
+            ev = ledger.add_corpus(
+                report_id=str(report_id),
+                file_name=_src_get(src, "file_name"),
+                market=_src_get(src, "market"),
+                report_date=_src_get(src, "report_date"),
+            )
+            if ev.evidence_id not in ids:
+                ids.append(ev.evidence_id)
+        per_section.append(ids)
+    return ledger, per_section
+
+
+def _strip_leading_heading(text: str) -> str:
+    """去掉草稿最前面的單一 markdown 標題行（組裝時另補固定標題，避免雙標題）。"""
+    return _HEADING_RE.sub("", text or "", count=1).strip()
+
+
+def assemble_body(title: str, sections: list[dict]) -> str:
+    """把逐節草稿組成單一前導 # 標題＋固定五章骨架的 markdown（引用來源另補）。
+
+    sections：[{key, heading, kind, draft}]。analysis 子節共用單一 '## 重點分析' 包裝、
+    各自 '### heading'；framing 節以 '## heading' 呈現。草稿內的前導標題會被剝除。
+    """
+    out = [f"# {_clean(title) or '深度研報'}"]
+    analysis_opened = False
+    for sec in sections:
+        heading = _clean(str(sec.get("heading") or ""))
+        draft = _strip_leading_heading(str(sec.get("draft") or "").strip())
+        if sec.get("kind") == "analysis":
+            if not analysis_opened:
+                out.append(f"## {SKELETON_HEADINGS['analysis']}")
+                analysis_opened = True
+            out.append(f"### {heading}")
+        else:
+            out.append(f"## {heading}")
+        if draft:
+            out.append(draft)
+    return "\n\n".join(out)
+
+
+def build_references(ordered: list) -> str:
+    """由 render_citations 的 ordered（依 [n] 序）產『## 引用來源』節。"""
+    lines = [f"## {SKELETON_HEADINGS['references']}"]
+    for i, ev in enumerate(ordered, 1):
+        if getattr(ev, "kind", "corpus") == "external":
+            label = ev.title or ev.url or "外部來源"
+            lines.append(f"[{i}] {label}（{ev.url}）" if ev.url else f"[{i}] {label}")
+        else:
+            name = ev.file_name or ev.report_id or "研報"
+            meta = "·".join(x for x in (ev.market, ev.report_date) if x)
+            lines.append(f"[{i}] {name}（{meta}）" if meta else f"[{i}] {name}")
+    return "\n".join(lines)
+
+
+def assemble_final(
+    title: str, sections: list[dict], ledger: EvidenceLedger
+) -> tuple[str, RenderedCitations]:
+    """組裝逐節草稿 → 整份單次 render_citations（[[ev:]]→[n]）→ 補『## 引用來源』。
+
+    回 (final_markdown, rendered)。呼叫端須檢查 rendered.n_unknown==0（把關：模型未
+    抄寫不存在/變形 id）。[n] 由全文首次出現序決定，多節重編仍穩定（id 不變 + 單次渲染）。
+    """
+    body = assemble_body(title, sections)
+    rendered = render_citations(body, ledger)
+    references = build_references(rendered.ordered)
+    final = rendered.text.rstrip() + "\n\n" + references + "\n"
+    return final, rendered
 
 
 # ── report_run：upsert 與原子狀態推進 ───────────────────────────────────────

@@ -19,7 +19,6 @@ export function NavItem({ to, icon, label, variant }: NavItemProps) {
       title={variant === 'mini' ? label : undefined}
       aria-current={active ? 'page' : undefined}
       data-nav-item=""
-      viewTransition
       className={`${styles[variant]} ${active ? styles.active : ''}`}
       whileTap={{ scale: variant === 'mobile' ? 0.94 : 0.96 }}
     >

@@ -7,16 +7,13 @@ import { SideRail } from './SideRail'
 import { MobileTabBar } from './MobileTabBar'
 import styles from './AppShell.module.css'
 
-/** 原生 View Transitions 換頁時整頁 crossfade 已由瀏覽器主導，縮短 routeReveal 淡入避免雙重淡入。 */
-const supportsViewTransition =
-  typeof document !== 'undefined' && typeof document.startViewTransition === 'function'
-
 export function AppShell() {
   const isMobile = useMediaQuery('(max-width: 767px)')
   const { collapsed, toggle } = useSidebarCollapsed()
   const { pathname } = useLocation()
   const reduced = useReducedMotion()
-  const routeDur = reduced ? 0 : supportsViewTransition ? TF_DUR.d1 : TF_DUR.d2
+  // 換頁整頁淡入（Motion 主導；已移除原生 View Transitions，故不再依偵測縮短時長）
+  const routeDur = reduced ? 0 : TF_DUR.d2
   return (
     <div className={styles.shell}>
       <h1 className={styles.srOnly}>廷豐智能研報</h1>

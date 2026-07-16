@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Icon } from '../../components/primitives/Icon'
 import { Popover } from '../../components/primitives/Popover'
+import { Pressable } from '../../components/primitives/Pressable'
 import type { Coverage, Window } from '../../lib/radarSchemas'
 import { fmtDate, WINDOW_LABEL } from './radarFormat'
 import { WindowSegmented } from './WindowSegmented'
@@ -29,7 +30,7 @@ export function RadarHeader({
     <header className={styles.wrap}>
       <div className={styles.left}>
         <nav className={styles.crumb} aria-label="麵包屑">
-          <button type="button" className={styles.crumbBtn} onClick={onBack}>標的</button>
+          <Pressable className={styles.crumbBtn} onClick={onBack}>標的</Pressable>
           <span className={styles.sep}>/</span>
           <span>{marketDisplay || market}</span>
           <span className={styles.sep}>/</span>
@@ -49,15 +50,14 @@ export function RadarHeader({
         <div className={styles.blockTitle}>
           <h2 className={styles.blockH}>研報觀點變化雷達</h2>
           <span style={{ position: 'relative' }}>
-            <button
-              type="button"
+            <Pressable
               className={styles.infoBtn}
               aria-label="說明"
               aria-expanded={infoOpen}
               onClick={() => setInfoOpen(v => !v)}
             >
               <Icon name="info" size={16} />
-            </button>
+            </Pressable>
             <div className={styles.pop}>
               <Popover
                 open={infoOpen}

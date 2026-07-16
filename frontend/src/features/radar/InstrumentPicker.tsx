@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '../../components/primitives/Icon'
+import { Pressable } from '../../components/primitives/Pressable'
 import { Skeleton } from '../../components/primitives/Skeleton'
 import { fmtDate } from './radarFormat'
 import { useRadarInstruments } from './useRadar'
@@ -52,14 +53,13 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
         </label>
         <div className={styles.markets} role="group" aria-label="市場">
           {MARKETS.map(m => (
-            <button
+            <Pressable
               key={m.code || 'all'}
-              type="button"
               className={`${styles.chip} ${(market || '') === m.code ? styles.chipActive : ''}`}
               onClick={() => onMarketChange(m.code)}
             >
               {m.label}
-            </button>
+            </Pressable>
           ))}
         </div>
       </div>
@@ -78,9 +78,9 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
       ) : query.isError ? (
         <div className={styles.error} role="alert">
           載入標的清單失敗。
-          <button type="button" className={styles.chip} style={{ marginLeft: 8 }} onClick={() => query.refetch()}>
+          <Pressable className={styles.chip} style={{ marginLeft: 8 }} onClick={() => query.refetch()}>
             重試
-          </button>
+          </Pressable>
         </div>
       ) : !query.data?.items.length ? (
         <div className={styles.empty}>尚無可展示訊號的標的。請先完成訊號擷取，或調整搜尋條件。</div>
@@ -88,8 +88,7 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
         <ul className={styles.list}>
           {query.data.items.map(item => (
             <li key={`${item.market}:${item.instrument_code}`}>
-              <button
-                type="button"
+              <Pressable
                 className={styles.item}
                 onClick={() => onSelect(item.market, item.instrument_code)}
               >
@@ -105,7 +104,7 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
                 </div>
                 <span className={styles.mkt}>{item.market_display || item.market}</span>
                 <Icon name="chevronDown" size={16} className={styles.chevron} />
-              </button>
+              </Pressable>
             </li>
           ))}
         </ul>

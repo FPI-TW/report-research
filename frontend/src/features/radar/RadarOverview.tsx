@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
+import { Pressable } from '../../components/primitives/Pressable'
 import type { Window } from '../../lib/radarSchemas'
 import { BrokerList } from './BrokerList'
 import { ConsensusSnapshot } from './ConsensusSnapshot'
@@ -84,8 +85,8 @@ export function RadarOverview({ market, code, window, onWindowChange, onBack }: 
               <h2 className={pageStyles.sectionTitle}>
                 近期關鍵變化
                 {data.recent_events_total > 3 ? (
-                  <button
-                    type="button"
+                  <Pressable
+                    tapScale={0.97}
                     className={pageStyles.sectionMeta}
                     style={{
                       appearance: 'none', border: 0, background: 'none', cursor: 'pointer',
@@ -93,7 +94,7 @@ export function RadarOverview({ market, code, window, onWindowChange, onBack }: 
                     onClick={() => setShowAllEvents(v => !v)}
                   >
                     {showAllEvents ? '收合' : `查看全部 ${data.recent_events_total} 項`}
-                  </button>
+                  </Pressable>
                 ) : null}
               </h2>
               <RecentChanges

@@ -1,4 +1,5 @@
 import { Icon } from '../../components/primitives/Icon'
+import { Pressable } from '../../components/primitives/Pressable'
 import type { EventCard as EventCardT } from '../../lib/radarSchemas'
 import { DirectionTag } from './DirectionTag'
 import { fmtDate } from './radarFormat'
@@ -49,21 +50,21 @@ export function RecentChanges({ events, total, onOpenReport, showAll, onToggleAl
                 <span className={styles.evidenceText}>{ev.evidence[0]}</span>
               </div>
             ) : null}
-            <button
-              type="button"
+            <Pressable
+              tapScale={0.97}
               className={styles.link}
               onClick={() => onOpenReport(ev.report_link.report_id, ev.report_link.file_name)}
             >
               查看原始研報
-            </button>
+            </Pressable>
           </article>
         ))}
       </div>
       {total > PREVIEW && onToggleAll ? (
         <div style={{ marginTop: 10, textAlign: 'right' }}>
-          <button type="button" className={styles.link} onClick={onToggleAll}>
+          <Pressable tapScale={0.97} className={styles.link} onClick={onToggleAll}>
             {showAll ? '收合' : `查看全部 ${total} 項`}
-          </button>
+          </Pressable>
         </div>
       ) : null}
     </div>

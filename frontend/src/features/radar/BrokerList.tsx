@@ -1,5 +1,7 @@
 import { Fragment, useState } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
 import { Icon } from '../../components/primitives/Icon'
+import { tfInstant, tfTransition } from '../../lib/motionTokens'
 import type { BrokerSummary, Window } from '../../lib/radarSchemas'
 import { BrokerTimeline } from './BrokerTimeline'
 import { DirectionTag } from './DirectionTag'
@@ -16,6 +18,7 @@ interface Props {
 
 export function BrokerList({ brokers, code, market, window, onOpenReport }: Props) {
   const [open, setOpen] = useState<string | null>(null)
+  const reduced = useReducedMotion()
 
   function toggle(key: string) {
     setOpen(prev => (prev === key ? null : key))
@@ -90,11 +93,17 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
                     </td>
                     <td>{fmtDate(b.latest_report_date)}</td>
                     <td>
-                      <Icon
-                        name="chevronDown"
-                        size={16}
-                        className={`${styles.expand} ${isOpen ? styles.expandOpen : ''}`}
-                      />
+                      <motion.span
+                        style={{ display: 'inline-flex' }}
+                        animate={{ rotate: isOpen ? 180 : 0 }}
+                        transition={reduced ? tfInstant : tfTransition}
+                      >
+                        <Icon
+                          name="chevronDown"
+                          size={16}
+                          className={`${styles.expand} ${isOpen ? styles.expandOpen : ''}`}
+                        />
+                      </motion.span>
                     </td>
                   </tr>
                   {isOpen && b.broker ? (
@@ -160,11 +169,17 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
                     </div>
                   ) : null}
                 </div>
-                <Icon
-                  name="chevronDown"
-                  size={18}
-                  className={`${styles.expand} ${isOpen ? styles.expandOpen : ''}`}
-                />
+                <motion.span
+                  style={{ display: 'inline-flex' }}
+                  animate={{ rotate: isOpen ? 180 : 0 }}
+                  transition={reduced ? tfInstant : tfTransition}
+                >
+                  <Icon
+                    name="chevronDown"
+                    size={18}
+                    className={`${styles.expand} ${isOpen ? styles.expandOpen : ''}`}
+                  />
+                </motion.span>
               </button>
               {isOpen && b.broker ? (
                 <BrokerTimeline

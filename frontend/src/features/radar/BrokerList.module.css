@@ -58,9 +58,9 @@
   width: 36px;
   text-align: center;
   color: var(--tf-text-4);
-  transition: transform var(--tf-dur-2) var(--tf-ease-out);
 }
-.expandOpen { transform: rotate(180deg); color: var(--tf-ink); }
+/* rotation now owned by Motion (animate rotate); only the colour shift stays in CSS */
+.expandOpen { color: var(--tf-ink); }
 
 .panelCell {
   padding: 0 !important;

@@ -53,7 +53,7 @@ describe('SearchPage 整合', () => {
     wrap(<SearchPage />, '/search?market=TW')
     await waitFor(() => expect(screen.getByText('a.pdf')).toBeTruthy())
     expect(searchApi.browseReports).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('button', { name: '表格檢視' }))
+    fireEvent.click(screen.getByRole('tab', { name: '表格檢視' }))
     await waitFor(() => expect(screen.getAllByRole('columnheader').length).toBeGreaterThan(0))
     expect(searchApi.browseReports).toHaveBeenCalledTimes(1)
   })

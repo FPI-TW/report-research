@@ -35,7 +35,7 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.ask_condense_model, "claude-haiku-4-5")
         self.assertEqual(s.ask_condense_timeout, 20.0)
         # REPORT_*
-        self.assertEqual(s.report_model, "claude-sonnet-4-6")
+        self.assertEqual(s.report_model, "claude-sonnet-5")
         self.assertEqual(s.report_deep_k, 30)
         self.assertEqual(s.report_max_reports, 25)
         self.assertEqual(s.report_max_passages, 6)

@@ -33,7 +33,7 @@ make schema
 
 | 變數 | 預設 | 說明 |
 |------|------|------|
-| `REPORT_MODEL` | `claude-sonnet-4-6` | 研報生成模型（長輸出用 Sonnet） |
+| `REPORT_MODEL` | `claude-sonnet-5` | 研報生成模型（長輸出用 Sonnet） |
 | `REPORT_DEEP_K` | 30 | 深度檢索 k |
 | `REPORT_MAX_REPORTS` | 25 | 研報脈絡最多篇數 |
 | `REPORT_MAX_PASSAGES` | 6 | 每篇最多段數 |

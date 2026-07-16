@@ -96,7 +96,7 @@ def _load() -> Settings:
         ask_intent_timeout=float(os.getenv("ASK_INTENT_TIMEOUT", "20")),
         ask_condense_model=os.getenv("ASK_CONDENSE_MODEL", intent_model),
         ask_condense_timeout=float(os.getenv("ASK_CONDENSE_TIMEOUT", "20")),
-        report_model=os.getenv("REPORT_MODEL", "claude-sonnet-4-6"),
+        report_model=os.getenv("REPORT_MODEL", "claude-sonnet-5"),
         report_deep_k=int(os.getenv("REPORT_DEEP_K", "30")),
         report_max_reports=int(os.getenv("REPORT_MAX_REPORTS", "25")),
         report_max_passages=int(os.getenv("REPORT_MAX_PASSAGES", "6")),

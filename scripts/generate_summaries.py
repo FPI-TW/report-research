@@ -30,7 +30,7 @@ from app.services.db import SessionFactory  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "summary_failures.log"
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 MAX_SUMMARY_CHARS = 400  # 安全上限，避免模型暴走輸出整段
 
 PROMPT_INSTRUCTION = (

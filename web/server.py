@@ -523,12 +523,14 @@ async def progress():
 
 @app.get("/monitor")
 async def monitor():
-    return _static_page("monitor.html")
+    # 舊 vanilla 監控頁已退場，導向 SPA 監控頁（保留舊路徑/書籤相容）
+    return RedirectResponse("/app/monitor", status_code=302)
 
 
 @app.get("/help")
 async def help_page():
-    return _static_page("help.html")
+    # 舊 vanilla 說明頁已退場，導向 SPA 說明頁
+    return RedirectResponse("/app/help", status_code=302)
 
 
 @app.get("/api/markets")
@@ -1106,7 +1108,8 @@ async def logout():
 
 @app.get("/")
 async def index():
-    return _static_page("index.html")
+    # 舊 vanilla 首頁已退場，根路徑導向 SPA 檢索頁
+    return RedirectResponse("/app/search", status_code=302)
 
 
 # ───── SPA（/app 子路徑；shell + 雜湊資產，純服務無業務邏輯）─────

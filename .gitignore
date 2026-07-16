@@ -10,8 +10,6 @@ data/*.json
 .playwright-mcp/
 .playwright-cli/
 *.png
-# 但保留說明頁截圖（屬 UI 資產、被 help.html 引用，需入版控；其餘 png 仍忽略）
-!web/static/help/*.png
 
 # runtime logs / locks / tag backups（執行期產生，非原始碼）
 data/*.log

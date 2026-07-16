@@ -251,11 +251,8 @@ report-mark/
 ├─ web/
 │   auth.py        共用帳密、HMAC 簽章 session cookie、登入限流、localhost HTTP 例外
 │   env_loader.py  輕量 .env 載入器（make serve 啟動時讀 repo 根目錄）
-│   server.py      FastAPI 組裝層：auth、檢索、問答、對話、深度研報、監控、靜態頁
-│   static/index.html    查詢介面（雙欄、檢索＋問答、列表/表格、高亮、即打即查）
-│   static/monitor.html  ingestion / summary / DB / 背景程序監控頁
-│   static/app/*.js      原生 ES module：api / search / render / ask / modal / state / markdown …
-│   static/app/*.test.mjs  前端模組測試（node --test）
+│   server.py      FastAPI 組裝層：auth、檢索、問答、對話、深度研報、監控、SPA 服務
+│   static/login.html   共用帳號登入頁（自包樣式）；其餘 vanilla 頁已退場，改由 frontend/ React SPA 服務 /app/*
 │
 ├─ db/schema.sql    research schema：research_report + report_chunk + qa_log + report_doc
 ├─ docs/            WORKFLOW / ROADMAP / EXTERNAL_ACCESS / nas_scheduled_sync / qa_pdf_report / 向量搜索優化報告

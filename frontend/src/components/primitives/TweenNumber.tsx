@@ -14,26 +14,25 @@ interface TweenNumberProps {
 
 /**
  * Motion animate() 數字補間，取代舊 useTween 的手刻 rAF。
- * - reduced-motion 或首次顯示 → 直接跳到真值（不從 0 數起）。
- * - 從當前顯示值 retarget，連續更新不跳；target 未變則短路。
+ * - reduced-motion → 直接跳到真值（不動畫，維持測試 determinism）。
+ * - 允許動畫時，首次進場從 0 數起（count-up 效果）；之後從當前顯示值 retarget，
+ *   連續更新不跳、target 未變則短路。
  */
 export function TweenNumber({ value, format, duration = 340, decimals = 0 }: TweenNumberProps) {
   const reduced = useReducedMotion()
-  const [display, setDisplay] = useState(value)
-  const fromRef = useRef(value) // 最近顯示值，作為 retarget 起點
+  // 非 reduced 時首幀從 0 起跳（count-up）；reduced 於 render 直接取真值，不進 effect setState
+  const [display, setDisplay] = useState(0)
+  const fromRef = useRef(0) // 最近顯示值，作為 retarget 起點
   const firstRef = useRef(true)
 
   useEffect(() => {
     const first = firstRef.current
     firstRef.current = false
-    if (reduced || first) {
-      fromRef.current = value
-      setDisplay(value)
-      return
-    }
-    if (value === fromRef.current) return
+    if (reduced) { fromRef.current = value; return }
+    if (!first && value === fromRef.current) return
     const controls = animate(fromRef.current, value, {
-      duration: duration / 1000,
+      // 進場 count-up 給足時長；後續 retarget 用原本節奏
+      duration: (first ? Math.max(duration, 700) : duration) / 1000,
       ease: TF_EASE_OUT,
       onUpdate: v => { fromRef.current = v; setDisplay(v) },
     })
@@ -41,6 +40,7 @@ export function TweenNumber({ value, format, duration = 340, decimals = 0 }: Twe
   }, [value, reduced, duration])
 
   const f = 10 ** decimals
-  const v = Math.round(display * f) / f
+  // reduced 直接呈現真值，避開 effect 內 setState 與動畫
+  const v = Math.round((reduced ? value : display) * f) / f
   return <>{format ? format(v) : String(v)}</>
 }

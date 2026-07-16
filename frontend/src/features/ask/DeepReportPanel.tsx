@@ -1,6 +1,7 @@
 import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
 import { Reveal } from '../../components/primitives/Reveal'
+import { Sweep } from '../../components/primitives/motionLoops'
 import type { ReportState } from '../../lib/askReducer'
 import styles from './DeepReportPanel.module.css'
 
@@ -37,7 +38,9 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
       <div className={styles.gen}>
         <div className={styles.genTitle}>深度研報生成中…</div>
         <div className={styles.track}>
-          <div className={`${styles.fill} ${report.pct === 50 ? styles.indet : ''}`} style={{ width: `${report.pct}%` }} />
+          {report.pct === 50
+            ? <Sweep className={styles.indet} barClassName={styles.indetBar} />
+            : <div className={styles.fill} style={{ width: `${report.pct}%` }} />}
         </div>
         <div className={styles.genMeta}>{report.stageText}</div>
       </div>

@@ -1,8 +1,11 @@
 import { useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
+import { Pressable } from '../../components/primitives/Pressable'
 import { ThinkingSteps } from './ThinkingSteps'
 import { renderAnswer } from '../../lib/askMarkdown'
+import { TF_DUR, tfInstant } from '../../lib/motionTokens'
 import { visibleAnswerView, type AnswerView, type Turn } from '../../lib/askReducer'
 import styles from './AssistantMessage.module.css'
 
@@ -21,6 +24,7 @@ interface Props {
 
 export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion, disabled = false }: Props) {
   const [copied, setCopied] = useState(false)
+  const reduced = useReducedMotion()
 
   if (turn.phase === 'notice') {
     return <Callout variant="warning" action={{ label: '換個說法重新提問', onClick: onNoticeRetry }}>{turn.noticeText ?? '無法回答此問題'}</Callout>
@@ -42,7 +46,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
         )}
         <Callout variant="error" action={disabled ? undefined : { label: '重試', onClick: onErrorRetry }}>{turn.errorText ?? '查詢逾時或失敗'}</Callout>
         <div className={styles.actions}>
-          <button type="button" className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</button>
+          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</Pressable>
         </div>
       </div>
     )
@@ -97,16 +101,29 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
         <div className={styles.actions}>
           {isLive && view.qaId && (
             <>
-              <button type="button" className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback('like')} aria-label="讚"><Icon name="thumbUp" size={15} /></button>
-              <button type="button" className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback('dislike')} aria-label="倒讚"><Icon name="thumbDown" size={15} /></button>
+              <Pressable className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback('like')} aria-label="讚"><Icon name="thumbUp" size={15} /></Pressable>
+              <Pressable className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback('dislike')} aria-label="倒讚"><Icon name="thumbDown" size={15} /></Pressable>
             </>
           )}
-          <button type="button" className={styles.act} onClick={copy} aria-label="複製回答" title={copied ? '已複製' : '複製'}><Icon name="copy" size={15} /></button>
-          <button type="button" className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</button>
+          <Pressable className={styles.act} onClick={copy} aria-label="複製回答" title={copied ? '已複製' : '複製'}>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.span
+                key={copied ? 'check' : 'copy'}
+                style={{ display: 'inline-flex' }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={reduced ? tfInstant : { duration: TF_DUR.d1 }}
+              >
+                <Icon name={copied ? 'check' : 'copy'} size={15} />
+              </motion.span>
+            </AnimatePresence>
+          </Pressable>
+          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</Pressable>
           {refCount > 0 && (
             <>
               <span className={styles.divider} />
-              <button type="button" className={styles.srcBtn} onClick={() => onOpenSources(view)}>資料來源 {refCount}</button>
+              <Pressable className={styles.srcBtn} onClick={() => onOpenSources(view)}>資料來源 {refCount}</Pressable>
             </>
           )}
         </div>

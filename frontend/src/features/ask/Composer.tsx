@@ -1,5 +1,8 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Icon } from '../../components/primitives/Icon'
+import { Pressable } from '../../components/primitives/Pressable'
+import { TF_DUR, tfInstant } from '../../lib/motionTokens'
 import styles from './Composer.module.css'
 
 interface Props {
@@ -12,6 +15,7 @@ interface Props {
 }
 
 export function Composer({ value, onChange, onSubmit, disabled, onStop, variant = 'bottom' }: Props) {
+  const reduced = useReducedMotion()
   const ref = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
     const el = ref.current
@@ -42,15 +46,25 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
           onChange={e => onChange(e.target.value)}
           onKeyDown={onKey}
         />
-        {disabled ? (
-          <button type="button" className={styles.send} onClick={onStop} aria-label="停止生成" title="停止生成">
-            <Icon name="x" size={18} />
-          </button>
-        ) : (
-          <button type="button" className={styles.send} onClick={fire} aria-label="送出" title="送出">
-            <Icon name="send" size={19} />
-          </button>
-        )}
+        <Pressable
+          className={styles.send}
+          onClick={disabled ? onStop : fire}
+          aria-label={disabled ? '停止生成' : '送出'}
+          title={disabled ? '停止生成' : '送出'}
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={disabled ? 'stop' : 'send'}
+              style={{ display: 'inline-flex' }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={reduced ? tfInstant : { duration: TF_DUR.d1 }}
+            >
+              <Icon name={disabled ? 'x' : 'send'} size={disabled ? 18 : 19} />
+            </motion.span>
+          </AnimatePresence>
+        </Pressable>
       </div>
       {variant === 'bottom' && (
         <div className={styles.note}>回答由 AI 依券商研報生成，投資決策請以原始研報與公開資訊為準。</div>

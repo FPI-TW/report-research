@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Icon } from '../../components/primitives/Icon'
+import { Spin } from '../../components/primitives/motionLoops'
 import { stagesToSteps } from '../../lib/thinkingStages'
 import type { Turn } from '../../lib/askReducer'
 import styles from './ThinkingSteps.module.css'
@@ -25,7 +26,7 @@ export function ThinkingSteps({ turn }: { turn: Turn }) {
           {steps.map(s => (
             <div key={s.key} className={styles.step}>
               {s.state === 'done' && <Icon name="check" size={16} className={styles.done} />}
-              {s.state === 'active' && <Icon name="spinner" size={16} className={styles.spin} />}
+              {s.state === 'active' && <Spin className={styles.spin}><Icon name="spinner" size={16} /></Spin>}
               {s.state === 'pending' && <span className={styles.dot} />}
               <span className={s.state === 'pending' ? styles.pendingText : undefined}>{s.name}</span>
             </div>

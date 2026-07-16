@@ -448,5 +448,122 @@ class LedgerAssemblyTests(unittest.TestCase):
         self.assertNotIn("[[ev:", final)  # 內部 token 不漏到輸出
 
 
+# ── T6 逐節草稿 + 串流編排 ───────────────────────────────────────────────────
+def _eid(report_id):
+    return rw.EvidenceLedger().add_corpus(report_id=report_id).evidence_id
+
+
+class EvidenceContextTests(unittest.TestCase):
+    def test_relabels_n_to_evidence_and_registers(self):
+        from types import SimpleNamespace
+
+        ledger = rw.EvidenceLedger()
+        src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf", market="TW", report_date="2026-01-01")
+        labeled, ids = rw._evidence_context([src], "[1] 報告：a.pdf\n內容片段", ledger)
+        self.assertEqual(ids, [_eid("r1")])
+        self.assertIn(f"[[ev:{_eid('r1')}]] 報告：a.pdf", labeled)
+        self.assertEqual(len(list(ledger)), 1)  # 已註冊
+
+    def test_skips_missing_report_id(self):
+        from types import SimpleNamespace
+
+        ledger = rw.EvidenceLedger()
+        labeled, ids = rw._evidence_context(
+            [SimpleNamespace(n=1, report_id=None, file_name="x")], "[1] 報告：x", ledger
+        )
+        self.assertEqual(ids, [])
+        self.assertIn("[1] 報告：x", labeled)  # 無 eid 對應時保留原標記
+
+
+def _draft_stream(text_out):
+    def factory(*a, **k):
+        async def gen():
+            yield text_out
+        return gen()
+    return factory
+
+
+class DraftReportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fallback_when_outline_none(self):
+        async def none_outline(*a, **k):
+            return None
+
+        with patch.object(rw, "plan_outline", none_outline):
+            events = [e async for e in rw.draft_report("q", "ctx")]
+        self.assertEqual(events, [("__fallback__", None)])
+
+    async def test_fallback_when_no_analysis(self):
+        async def framing_only(*a, **k):
+            return rw.build_outline("q", "T", [])  # 無 analysis 子節
+
+        with patch.object(rw, "plan_outline", framing_only):
+            events = [e async for e in rw.draft_report("q", "ctx")]
+        self.assertEqual(events[0], ("__fallback__", None))
+
+    async def test_happy_path_events_and_citations(self):
+        from types import SimpleNamespace
+
+        eid = _eid("r1")
+        outline = {
+            "title": "研報T",
+            "sections": [
+                {"position": 0, "key": "exec_summary", "heading": "執行摘要", "topic": "q", "kind": "framing"},
+                {"position": 1, "key": "analysis", "heading": "面向A", "topic": "ta", "kind": "analysis"},
+                {"position": 2, "key": "risk_outlook", "heading": "風險與展望", "topic": "r", "kind": "framing"},
+            ],
+        }
+
+        async def fake_outline(*a, **k):
+            return outline
+
+        src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf", market="TW", report_date="2026-01-01")
+
+        async def fake_retrieve(topic, **k):
+            return ([src], "[1] 報告：a.pdf\n內容片段")
+
+        with patch.object(rw, "plan_outline", fake_outline), patch.object(
+            rw, "retrieve_for_section", fake_retrieve
+        ), patch.object(rw, "stream_completion", _draft_stream(f"分析結論[[ev:{eid}]]")):
+            events = [e async for e in rw.draft_report("台積電", "ctx")]
+
+        kinds = [e[0] for e in events]
+        self.assertIn("status", kinds)
+        self.assertIn("token", kinds)
+        self.assertEqual(kinds.count("section_draft"), 3)  # 三節各一
+        self.assertIn("document_revision", kinds)
+        self.assertEqual(kinds[-1], "__final__")
+
+        final = events[-1][1]
+        self.assertEqual(final["n_unknown"], 0)  # 引用 token 皆可解析
+        self.assertIn("[1]", final["markdown"])  # [[ev:]] → [n]
+        self.assertNotIn("[[ev:", final["markdown"])  # 內部 token 不漏
+        self.assertIn("## 引用來源", final["markdown"])
+        self.assertIn("a.pdf", final["markdown"])
+        self.assertEqual(final["sources"][0]["report_id"], "r1")
+        self.assertEqual(final["manifest"]["schema_version"], 1)
+
+    async def test_section_retrieve_failure_is_fail_open(self):
+        outline = {
+            "title": "T",
+            "sections": [
+                {"position": 0, "key": "analysis", "heading": "A", "topic": "ta", "kind": "analysis"},
+            ],
+        }
+
+        async def fake_outline(*a, **k):
+            return outline
+
+        async def boom_retrieve(topic, **k):
+            raise RuntimeError("retrieval down")
+
+        with patch.object(rw, "plan_outline", fake_outline), patch.object(
+            rw, "retrieve_for_section", boom_retrieve
+        ), patch.object(rw, "stream_completion", _draft_stream("在無片段下審慎撰寫")):
+            events = [e async for e in rw.draft_report("q", "ctx")]
+        # 檢索炸掉仍走完（fail-open），產出最終文件
+        self.assertEqual(events[-1][0], "__final__")
+        self.assertIn("在無片段下審慎撰寫", events[-1][1]["markdown"])
+
+
 if __name__ == "__main__":
     unittest.main()

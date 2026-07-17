@@ -132,6 +132,51 @@ describe('RadarPage', () => {
     expect(radarApi.getRadarInstruments).toHaveBeenCalled()
   })
 
+  // 免責曾在改版中從 picker 副標與 RadarHeader info 泡泡雙雙消失而無人察覺
+  // （plan 誤以為「已改置底 notes」，但 notes 只放資料品質註記）。這兩條把它釘住。
+  it('picker 狀態顯示免責', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
+      total: 0, offset: 0, items: [],
+    })
+    wrap('/radar')
+    expect(screen.getByText(/非系統預測或投資建議/)).toBeInTheDocument()
+  })
+
+  it('overview 狀態顯示免責（即使 notes 為空）', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({ notes: [] }))
+    wrap('/radar?market=TW&code=8046&window=90')
+    await waitFor(() => expect(screen.getByRole('heading', { name: '南電' })).toBeInTheDocument())
+    expect(screen.getByText(/非系統預測或投資建議/)).toBeInTheDocument()
+  })
+
+  it('標的數超出 limit 時筆數標籤如實顯示已載入/總數', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
+      total: 200, offset: 0,
+      items: Array.from({ length: 50 }, (_, i) => ({
+        market: 'TW', market_display: '台股',
+        instrument_code: String(1000 + i), instrument_name: `標的${i}`,
+        broker_count: 3, report_count: 5,
+        latest_report_date: '2026-07-11', coverage_state: 'partial' as const,
+      })),
+    })
+    wrap('/radar')
+    await waitFor(() => expect(screen.getByText('顯示 50 / 200 檔')).toBeInTheDocument())
+  })
+
+  it('標的數未超出 limit 時筆數標籤只顯示總數', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
+      total: 1, offset: 0,
+      items: [{
+        market: 'TW', market_display: '台股',
+        instrument_code: '8046', instrument_name: '南電',
+        broker_count: 12, report_count: 91,
+        latest_report_date: '2026-07-11', coverage_state: 'partial',
+      }],
+    })
+    wrap('/radar')
+    await waitFor(() => expect(screen.getByText('顯示 1 檔')).toBeInTheDocument())
+  })
+
   it('有 market+code 時載入總覽', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
     wrap('/radar?market=TW&code=8046&window=90')

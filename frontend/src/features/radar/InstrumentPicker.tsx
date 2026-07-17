@@ -77,7 +77,13 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
             </button>
           ))}
         </div>
-        {total != null ? <span className={styles.count}>顯示 {total} 檔</span> : null}
+        {total != null ? (
+          <span className={styles.count}>
+            {/* total 是符合篩選的全部筆數，items 受 useRadar 的 limit 截斷且無分頁：
+                兩者不等時要如實顯示，否則標籤會宣稱格內有它沒有的卡片。 */}
+            顯示 {items.length < total ? `${items.length} / ${total}` : total} 檔
+          </span>
+        ) : null}
       </div>
 
       {query.isLoading ? (

@@ -64,6 +64,18 @@
   font-size: 13px;
 }
 
+/* 常駐於 picker 與 overview 兩種狀態之下：免責不得依賴 overview 的 notes
+   （那是資料品質註記，單幣別＋EPS 單組時為空陣列，整區不渲染）。 */
+.disclaimer {
+  margin: 28px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--tf-border);
+  font-family: var(--tf-sans);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--tf-text-3);
+}
+
 .dash {
   color: var(--tf-text-4);
   font-variant-numeric: tabular-nums;

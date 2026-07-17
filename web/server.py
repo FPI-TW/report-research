@@ -62,7 +62,9 @@ from app.services.retrieval import (  # noqa: E402
     hybrid_search,
     rank_reports,
 )
+from app.services.reading.anchor import locate_chunk  # noqa: E402
 from app.services.reading.queries import (  # noqa: E402
+    fetch_chunk_content,
     fetch_doc,
     fetch_signals,
     fetch_similar,
@@ -743,6 +745,26 @@ def _reading_takeaways(rows, text_sha256: str | None) -> list[Takeaway]:
     return out
 
 
+def _chunk_anchor(
+    canonical: str, chunk_content: str | None, visible_chars: int
+) -> tuple[int | None, int | None]:
+    """把檢索命中的 chunk 錨回正典文字 → (start, end)；錨不到一律 (None, None)。
+
+    **錨不到不是錯誤**：前端據此不高亮，頁面照常（也因此此處不拋 4xx）。錨定邏輯全在
+    app/services/reading/anchor.py（實測 400/400 命中），前端不重造比對。
+
+    **offset 一律對「完整正典文字」計算**（locate_chunk 的契約），但回傳給讀者的 text
+    可能被截斷（見 reading_text 的截斷語意）。錨點落在截斷範圍之外＝指向讀者手上根本
+    沒有的文字 → 收回為 None。寧可不高亮，也不要指到不存在的位置。
+    """
+    if not chunk_content:
+        return None, None
+    anchor = locate_chunk(canonical, chunk_content)
+    if anchor is None or anchor.end > visible_chars:
+        return None, None
+    return anchor.start, anchor.end
+
+
 def _reading_signals(rows) -> list[Signal]:
     """radar 的 Signal dataclass → 閱讀頁契約 Signal（欄位形狀刻意不同）。
 
@@ -823,17 +845,27 @@ async def reading_doc(file_hash: str):
 
 
 @app.get("/api/reading/{file_hash}/text", response_model=ReadingText)
-async def reading_text(file_hash: str):
+async def reading_text(file_hash: str, chunk: int | None = Query(None, ge=0)):
     """正典文字（＝clean_extracted(full_text)）。所有 offset 都以此字串為準。
 
     **截斷語意**：text 超過 READING_TEXT_MAX_CHARS 時只回前綴並標 truncated=True，
     但 text_sha256 與 text_chars 仍是「完整正典文字」的值 —— takeaway 的錨點是對完整
     文字算出來的，回截斷版的 sha 會讓前端的驗章一律失敗、跳轉整個失效。截斷純粹是
     顯示層的事；超出截斷範圍的錨點由前端自行丟棄。
+
+    **?chunk=N**：檢索命中的 chunk_index。帶了就一併回該段在正典文字上的字元區間
+    （chunk_start/chunk_end），供前端標出「你從檢索點進來的那一段」。chunk 不存在或
+    錨不到 → 兩者為 None，回應仍是 200：**沒有命中位置不是錯誤**，頁面照常。
     """
     _validate_file_hash(file_hash)
     async with SessionFactory() as session:
         doc = await fetch_doc(session, file_hash)
+        # 同一個 session 內取完：出了 with 區塊 session 已關閉
+        chunk_content = (
+            await fetch_chunk_content(session, doc.report_id, chunk)
+            if doc is not None and chunk is not None
+            else None
+        )
     if doc is None:
         raise HTTPException(status_code=404, detail="report not found")
     canonical, text_sha256 = _canonical_text(doc.full_text)
@@ -841,12 +873,16 @@ async def reading_text(file_hash: str):
         # text_state="missing" 的那一篇：骨架回 200，這裡沒有文字可給
         raise HTTPException(status_code=404, detail="report text not available")
     truncated = len(canonical) > READING_TEXT_MAX_CHARS
+    body = canonical[:READING_TEXT_MAX_CHARS] if truncated else canonical
+    chunk_start, chunk_end = _chunk_anchor(canonical, chunk_content, len(body))
     return ReadingText(
         file_hash=doc.file_hash,
-        text=canonical[:READING_TEXT_MAX_CHARS] if truncated else canonical,
+        text=body,
         text_sha256=text_sha256,  # 完整正典文字的 sha，截斷後也不重算
         text_chars=len(canonical),  # 完整長度，非回傳字串長度
         truncated=truncated,
+        chunk_start=chunk_start,
+        chunk_end=chunk_end,
     )
 
 

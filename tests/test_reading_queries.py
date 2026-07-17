@@ -82,6 +82,9 @@ class SqlBindTests(unittest.TestCase):
             {"rid", "probe_n", "per_probe", "max_dist", "min_probes", "limit"},
         )
 
+    def test_chunk_content_sql(self):
+        self._assert_binds(queries._CHUNK_CONTENT_SQL, {"rid", "ci"})
+
 
 class SqlStructureTests(unittest.TestCase):
     """結構斷言一律對「編譯後」字串做（同一個理由：只有編譯後才是真相）。"""
@@ -135,6 +138,14 @@ class SqlStructureTests(unittest.TestCase):
 
     def test_similar_sql_excludes_self(self):
         self.assertIn("c.report_id <>", _sql(queries._SIMILAR_SQL))
+
+    def test_chunk_content_sql_casts_with_cast_not_double_colon(self):
+        sql = _sql(queries._CHUNK_CONTENT_SQL)
+        self.assertIn("FROM research.report_chunk", sql)
+        self.assertIn("chunk_index =", sql)
+        # `:rid::uuid` 會讓 compiler 回溯成短名、參數綁不上（PR #89 的生產 500）
+        self.assertIn("CAST(", sql)
+        self.assertNotIn("::uuid", sql)
 
 
 class _FakeResult:
@@ -245,6 +256,20 @@ class FetchSignalsTests(unittest.IsolatedAsyncioTestCase):
         # 全語料僅 0.68% 有訊號：空是常態，不是錯誤
         session = _RecordingSession([_FakeResult([])])
         self.assertEqual(await queries.fetch_signals(session, "rep-1"), [])
+
+
+class FetchChunkContentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_content_for_chunk_index(self):
+        session = _RecordingSession([_FakeResult([("命中的那一段內文。",)])])
+        out = await queries.fetch_chunk_content(session, "rep-1", 4)
+        self.assertEqual(out, "命中的那一段內文。")
+        self.assertEqual(session.calls[0][1], {"rid": "rep-1", "ci": 4})
+
+    async def test_missing_chunk_returns_none(self):
+        # chunk 不存在不是錯誤（連結可能來自重新 ingest 前的檢索結果）：
+        # 端點據此不回 offset，前端不高亮但頁面照常
+        session = _RecordingSession([_FakeResult([])])
+        self.assertIsNone(await queries.fetch_chunk_content(session, "rep-1", 999))
 
 
 def _similar_row(file_hash="c" * 64, matched=9, score=5.4, total=12):

@@ -1,11 +1,12 @@
 """研報閱讀頁純 SQL 取數層（named param、無字串拼接注入；風格對齊 radar/queries.py）。
 
-四個讀取面向，全部以 report_id / file_hash 為鍵、讀取時零 LLM：
+五個讀取面向，全部以 report_id / file_hash 為鍵、讀取時零 LLM：
 
 - fetch_doc：閱讀頁骨架（含 full_text 原文，正典化交給呼叫端）
 - fetch_takeaways：重點摘錄（含 text_sha256 供呼叫端驗章）
 - fetch_signals：結構化訊號（jsonb 以 ::text 取出後 json.loads，重用 radar 的 parse）
 - fetch_similar：相似研報（全篇均勻取樣 probe → 逐 probe 最近鄰 → 廣度加權）
+- fetch_chunk_content：單一 chunk 原文（供 anchor.locate_chunk 錨回正典文字）
 
 **bind 參數禁忌**：SQLAlchemy 的 text() 以 regex 掃 `:name`，其負向前瞻 `(?!:)` 會讓
 「參數名緊接 ::」的寫法回溯成短名（`:markets::text[]` → 綁到不存在的 `market`，冒號
@@ -174,6 +175,29 @@ async def fetch_signals(
         )
     ).all()
     return [parse_signal_row(r) for r in rows]
+
+
+_CHUNK_CONTENT_SQL = text(
+    "SELECT content FROM research.report_chunk "
+    "WHERE report_id = CAST(:rid AS uuid) AND chunk_index = :ci"
+)
+
+
+async def fetch_chunk_content(
+    session: AsyncSession, report_id: str, chunk_index: int
+) -> Optional[str]:
+    """取單一 chunk 的原文；查無 → None。
+
+    供閱讀頁「跳到檢索命中那一段」：呼叫端把回傳字串交給 anchor.locate_chunk 錨回正典
+    文字。**查無不是錯誤**（連結可能來自已重新 ingest 的舊檢索結果）—— 呼叫端據此不回
+    offset，前端不高亮但頁面照常。
+
+    轉型用 `CAST(:rid AS uuid)`（見模組 docstring 的 bind 參數禁忌）。
+    """
+    row = (
+        await session.execute(_CHUNK_CONTENT_SQL, {"rid": report_id, "ci": chunk_index})
+    ).first()
+    return row[0] if row else None
 
 
 # ── 相似研報 ────────────────────────────────────────────────────────────

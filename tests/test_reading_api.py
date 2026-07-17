@@ -31,6 +31,10 @@ RAW_TEXT = "台 積 電 第 三 季 營 收 創 高。\n\n毛 利 率 上 修 �
 CANONICAL = clean_extracted(RAW_TEXT)
 SHA = hashlib.sha256(CANONICAL.encode("utf-8")).hexdigest()
 
+# report_chunk.content 是「清理後」的文字（ingest 走 chunk_text(clean_extracted(raw))），
+# 故它不帶 full_text 的 CJK 間空白 —— 見 reading/anchor.py 模組 docstring 的事實一/二。
+CHUNK_CONTENT = "毛利率上修至五成。"
+
 
 class _FakeSession:
     async def __aenter__(self):
@@ -95,16 +99,17 @@ class ReadingApiBase(unittest.TestCase):
             k: getattr(server, k)
             for k in (
                 "SessionFactory", "fetch_doc", "fetch_takeaways", "fetch_signals",
-                "fetch_similar", "READING_TEXT_MAX_CHARS",
+                "fetch_similar", "fetch_chunk_content", "READING_TEXT_MAX_CHARS",
             )
         }
         server.SessionFactory = lambda: _FakeSession()
-        # 預設：一篇有全文、無摘錄、無訊號的報告
+        # 預設：一篇有全文、無摘錄、無訊號、查不到 chunk 的報告
         self._set(
             fetch_doc=self._async(_doc()),
             fetch_takeaways=self._async([]),
             fetch_signals=self._async([]),
             fetch_similar=self._async([]),
+            fetch_chunk_content=self._async(None),
         )
 
     def tearDown(self):
@@ -315,6 +320,80 @@ class ReadingTextTests(ReadingApiBase):
         body = _authed_client().get(f"/api/reading/{HASH}/text").json()
         self.assertFalse(body["truncated"])
         self.assertEqual(body["text"], CANONICAL)
+
+
+class ChunkAnchorTests(ReadingApiBase):
+    """?chunk=N → 回該段在正典文字上的字元區間（閱讀頁「跳到命中那一段」的資料源）。"""
+
+    def test_no_chunk_param_no_offsets_and_no_chunk_query(self):
+        def boom(*a, **k):
+            raise AssertionError("沒帶 ?chunk 就不該查 chunk")
+
+        self._set(fetch_chunk_content=boom)
+        body = _authed_client().get(f"/api/reading/{HASH}/text").json()
+        self.assertIsNone(body["chunk_start"])
+        self.assertIsNone(body["chunk_end"])
+
+    def test_anchored_offsets_slice_back_to_the_chunk(self):
+        # 錨定的唯一驗收標準：拿 offset 去切正典文字，切出來就是那個 chunk
+        self._set(fetch_chunk_content=self._async(CHUNK_CONTENT))
+        body = _authed_client().get(f"/api/reading/{HASH}/text?chunk=1").json()
+        self.assertIsNotNone(body["chunk_start"])
+        self.assertEqual(
+            body["text"][body["chunk_start"]:body["chunk_end"]], CHUNK_CONTENT
+        )
+
+    def test_chunk_index_and_report_id_forwarded(self):
+        seen = {}
+
+        async def fake(session, report_id, chunk_index):
+            seen.update(report_id=report_id, chunk_index=chunk_index)
+            return CHUNK_CONTENT
+
+        self._set(fetch_chunk_content=fake)
+        _authed_client().get(f"/api/reading/{HASH}/text?chunk=4")
+        # chunk 以 report_id（非 file_hash）查：chunk 表以 report_id 為鍵
+        self.assertEqual(seen, {"report_id": "rep-1", "chunk_index": 4})
+
+    def test_unknown_chunk_is_not_an_error(self):
+        # 連結可能來自重新 ingest 前的檢索結果 → 查無此 chunk。不高亮，但頁面照常
+        self._set(fetch_chunk_content=self._async(None))
+        r = _authed_client().get(f"/api/reading/{HASH}/text?chunk=999")
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.json()["chunk_start"])
+
+    def test_unanchorable_chunk_is_not_an_error(self):
+        self._set(fetch_chunk_content=self._async("這段話完全不在這篇研報的全文裡。"))
+        r = _authed_client().get(f"/api/reading/{HASH}/text?chunk=1")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertIsNone(body["chunk_start"])
+        self.assertIsNone(body["chunk_end"])
+        self.assertEqual(body["text"], CANONICAL)  # 文字照給
+
+    def test_offsets_outside_truncation_are_dropped(self):
+        # offset 是對「完整正典文字」算的；回的 text 被截斷時，落在範圍外的錨點會
+        # 指向讀者手上根本沒有的文字 → 收回為 None（寧可不高亮，也不指錯位置）
+        self._set(fetch_chunk_content=self._async(CHUNK_CONTENT),
+                  READING_TEXT_MAX_CHARS=5)
+        body = _authed_client().get(f"/api/reading/{HASH}/text?chunk=1").json()
+        self.assertTrue(body["truncated"])
+        self.assertIsNone(body["chunk_start"])
+        self.assertIsNone(body["chunk_end"])
+
+    def test_offsets_kept_when_still_inside_truncation(self):
+        self._set(fetch_chunk_content=self._async(CHUNK_CONTENT),
+                  READING_TEXT_MAX_CHARS=len(CANONICAL))
+        body = _authed_client().get(f"/api/reading/{HASH}/text?chunk=1").json()
+        self.assertFalse(body["truncated"])
+        self.assertEqual(
+            body["text"][body["chunk_start"]:body["chunk_end"]], CHUNK_CONTENT
+        )
+
+    def test_negative_chunk_422(self):
+        self.assertEqual(
+            _authed_client().get(f"/api/reading/{HASH}/text?chunk=-1").status_code, 422
+        )
 
 
 class SimilarTests(ReadingApiBase):

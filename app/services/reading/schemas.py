@@ -96,13 +96,23 @@ class ReadingDoc(BaseModel):
 
 
 class ReadingText(BaseModel):
-    """正典文字＝clean_extracted(full_text)。所有 offset 都以此字串為準。"""
+    """正典文字＝clean_extracted(full_text)。所有 offset 都以此字串為準。
+
+    chunk_start/chunk_end：僅當請求帶 `?chunk=` 且該 chunk 錨定成功時有值 —— 供前端
+    標出「你從檢索命中點進來的那一段」。錨不到、chunk 不存在、或 offset 落在截斷範圍
+    之外，一律為 None：**前端不高亮，但頁面照常**（不是錯誤，不回 4xx）。
+
+    與 takeaway 的 quote_start/quote_end 不同，這兩個值不需驗章：它們與同一回應的
+    text 出自同一份正典文字，必然同源。
+    """
 
     file_hash: str
     text: str
     text_sha256: str
     text_chars: int
     truncated: bool = False
+    chunk_start: Optional[int] = None
+    chunk_end: Optional[int] = None
 
 
 class SimilarReport(BaseModel):

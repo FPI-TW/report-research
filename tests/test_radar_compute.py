@@ -442,6 +442,52 @@ class EventTests(unittest.TestCase):
         self.assertEqual(ov.recent_events_total, 1)
         self.assertEqual(ov.recent_events[0].evidence, ["真正對應證據"])
 
+    def test_event_evidence_follows_eps_headline_priority(self):
+        signals = [
+            _sig(
+                "a", date(2026, 7, 1), "unknown",
+                target=1000.0, currency="TWD",
+                eps=[_eps(2026, 60.0, evidence="舊 EPS 證據")],
+            ),
+            _sig(
+                "a", date(2026, 7, 10), "unknown",
+                target=1200.0, currency="TWD",
+                eps=[_eps(2026, 66.0, evidence="EPS 標題對應證據")],
+            ),
+        ]
+        ov = build_overview(signals, _cov(reports=2), window="90")
+
+        event = ov.recent_events[0]
+        self.assertIn("EPS", event.headline)
+        self.assertEqual(
+            [change.field for change in event.changes],
+            ["target_price", "eps"],
+        )
+        self.assertEqual(event.evidence, ["EPS 標題對應證據", "TP 證據"])
+
+    def test_event_evidence_follows_target_headline_priority(self):
+        signals = [
+            _sig(
+                "a", date(2026, 7, 1), "unknown",
+                target=1000.0, currency="TWD",
+                thesis={"outlook": _st("neutral")},
+            ),
+            _sig(
+                "a", date(2026, 7, 10), "unknown",
+                target=1200.0, currency="TWD",
+                thesis={"outlook": _st("positive")},
+            ),
+        ]
+        ov = build_overview(signals, _cov(reports=2), window="90")
+
+        event = ov.recent_events[0]
+        self.assertIn("目標價上修", event.headline)
+        self.assertEqual(
+            [change.field for change in event.changes],
+            ["target_price", "thesis"],
+        )
+        self.assertEqual(event.evidence, ["TP 證據", "論點證據"])
+
 
 class BrokerSummaryTests(unittest.TestCase):
     def test_broker_summary_eps_uses_own_metadata(self):

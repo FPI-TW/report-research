@@ -45,6 +45,7 @@ from app.services.tagging import MARKET_DISPLAY
 WINDOW_DAYS = {"30": 30, "90": 90, "180": 180, "all": None}
 FIVE_LEVELS = ("buy", "overweight", "neutral", "underweight", "sell")
 OVERVIEW_EVENTS_LIMIT = 3
+HEADLINE_FIELD_ORDER = {"rating": 0, "eps": 1, "target_price": 2, "thesis": 3}
 
 
 def _broker_display(b: Optional[str]) -> Optional[str]:
@@ -127,9 +128,12 @@ def _change_item(c: Change) -> ChangeItem:
     )
 
 
+def _headline_change(material: list[Change]) -> Change:
+    return min(material, key=lambda change: HEADLINE_FIELD_ORDER.get(change.field, 9))
+
+
 def _headline(material: list[Change]) -> str:
-    order = {"rating": 0, "eps": 1, "target_price": 2, "thesis": 3}
-    c = min(material, key=lambda x: order.get(x.field, 9))
+    c = _headline_change(material)
     pct = f"{abs(c.pct_change):.1f}%" if c.pct_change is not None else ""
     if c.field == "rating":
         verb = {"up": "上調", "down": "下調"}.get(c.direction, "調整")
@@ -167,7 +171,14 @@ def _evidence_for_change(s: Signal, change: Change) -> Optional[str]:
 def _evidence_for(s: Signal, material: list[Change]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
-    for c in material:
+    if not material:
+        return out
+    headline_change = _headline_change(material)
+    ordered_changes = [
+        headline_change,
+        *(change for change in material if change is not headline_change),
+    ]
+    for c in ordered_changes:
         text = _evidence_for_change(s, c)
         if text and text not in seen:
             seen.add(text)

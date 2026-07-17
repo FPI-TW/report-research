@@ -33,8 +33,9 @@
 }
 .scoreNum { font-size: 13px; font-weight: 600; color: var(--tf-ink); font-variant-numeric: tabular-nums; }
 .meta { font-size: 12px; color: var(--tf-text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cta { color: var(--tf-ink); font-weight: 600; font-size: 12px; opacity: 0; transition: opacity var(--tf-dur-1) var(--tf-ease-out); }
-.card:hover .cta, .card:focus-visible .cta { opacity: 1; }
+/* 「查看全文」的淡入改由 Motion 的 variant 傳播驅動（ResultCard.tsx 的 ctaVariants），
+   含鍵盤焦點（whileFocus）。此處不留 opacity 與其過渡——透明度是 Motion 的地盤。 */
+.cta { color: var(--tf-ink); font-weight: 600; font-size: 12px; }
 
 @media (max-width: 1023px) {
   .card { grid-template-columns: minmax(0, 1fr); gap: 6px; }

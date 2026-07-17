@@ -193,3 +193,52 @@ CREATE INDEX IF NOT EXISTS idx_report_signal_report
 -- 批次 checkpoint / rerun：快速撈 pending/rejected/partial
 CREATE INDEX IF NOT EXISTS idx_report_signal_status
     ON research.report_signal (extraction_status);
+
+-- ── 研報重點摘錄層：一列＝「一份研報 × 一條重點」（研報閱讀頁 /app/report/:hash）──
+-- 由 scripts/extract_takeaways.py 以 LLM 回「論點 + 逐字引文」、Python 用
+-- app/services/reading/anchor.py 確定性定位後寫入。讀取閱讀頁時不呼叫 LLM。
+--
+-- **quote_start/quote_end 錨定於 clean_extracted(full_text)，不是 full_text 本身。**
+-- full_text 存的是未清理的原始抽取文字（見 scripts/ingest_all.py：full_text=raw_text
+-- 但 chunks=chunk_text(clean_extracted(raw_text))），保留 CJK 間空白「台 積 電」。
+-- 錨點基準字串／餵 LLM 的 excerpt／API 回傳的文字三者必須同一個 —— text_sha256
+-- 就是為了讓這件事一旦被破壞會被偵測到（降級為不可跳，而非跳到錯的地方）。
+CREATE TABLE IF NOT EXISTS research.report_takeaway (
+    id                 uuid PRIMARY KEY,
+    -- 同 file_hash 重新 ingest 時（store.upsert_report 先刪後插）連帶 CASCADE 清除，
+    -- 批次下次偵測缺列自動補擷取＝要的冪等行為。
+    report_id          uuid NOT NULL
+                         REFERENCES research.research_report(id) ON DELETE CASCADE,
+    ordinal            int  NOT NULL,           -- 1..N 顯示順序
+    claim              text NOT NULL,           -- 論點（LLM）
+    quote              text,                    -- 逐字引文（LLM，須出自正典文字）
+    quote_start        int,                     -- 確定性錨定結果；NULL＝錨不到，條目仍顯示但不可跳
+    quote_end          int,
+    anchor_method      text
+        CHECK (anchor_method IS NULL
+               OR anchor_method IN ('exact','normalized','prefix')),
+
+    -- sha256(clean_extracted(full_text))：讀取時驗章，防 offset 漂移
+    text_sha256        text NOT NULL,
+    extraction_version text NOT NULL,
+    extraction_status  text NOT NULL DEFAULT 'pending'
+        CHECK (extraction_status IN ('pending','valid','partial','rejected')),
+    raw_payload        jsonb,
+    error_detail       text,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_report_takeaway_ordinal UNIQUE (report_id, ordinal),
+    CONSTRAINT ck_report_takeaway_span
+        CHECK (quote_start IS NULL
+               OR (quote_start >= 0 AND quote_end > quote_start))
+);
+
+-- 讀取：依報告取全部摘錄，已排序
+CREATE INDEX IF NOT EXISTS idx_report_takeaway_report
+    ON research.report_takeaway (report_id, ordinal);
+-- 批次 checkpoint / rerun
+CREATE INDEX IF NOT EXISTS idx_report_takeaway_status
+    ON research.report_takeaway (extraction_status);
+
+-- 閱讀頁以 file_hash 為網址鍵（report_id 於重新 ingest 時會換新，分享連結會失效）。
+-- file_hash 已是 UNIQUE，此處不需額外索引。

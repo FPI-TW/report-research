@@ -318,13 +318,21 @@ async def _finalize_sectioned(
     final_sources = payload.get("sources") or []
 
     if not persist:
-        # eval 模式：done 另帶 claim_evidence（逐節證據連結）供 evidence_link_coverage
-        # 計算；線上 persist=True 路徑不外洩此欄（契約見 test_report）。
+        # eval 模式：done 另帶三個逐節專用欄（線上 persist=True 不外洩，契約見 test_report）：
+        #   sources        ＝ 正文 [n] 對應的最終來源表。逐節路徑的編號由逐節帳本
+        #                     render_citations 產生，與 run-level `sources` 事件無關；
+        #                     拿後者當分母會算出假的 citation_validity。
+        #   n_evidence     ＝ 餵給逐節撰寫的證據總數（共用帳本大小）＝
+        #                     source_citation_rate 的真分母（sources 已是「被引用」子集，
+        #                     拿它當分母會恆為 1.0 而失去訊號）。
+        #   claim_evidence ＝ 逐節證據連結，供 evidence_link_coverage。
         yield (
             "done",
             {
                 "report_id": None, "title": title,
                 "markdown": markdown, "context": eval_context,
+                "sources": final_sources,
+                "n_evidence": payload.get("n_evidence"),
                 "claim_evidence": payload.get("claim_evidence"),
                 "thinking_ms": int((time.monotonic() - started) * 1000),
             },
@@ -340,9 +348,12 @@ async def _finalize_sectioned(
         meta={"date": today, "question": question},
     )
     pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
-    # M4b：只以實際被 [n] 引用的 corpus 來源建 manifest（逐節無受控外部來源）
+    # M4b：只以實際被 [n] 引用的 corpus 來源建 manifest；模型自報的網路來源經與單次
+    # 路徑同一套受控解析後併入（缺 adapter 快照/hash 者由 manifest_from_answer 逐筆
+    # 跳過而不污染帳本——M4a/M4b 信任契約）。
     evidence_manifest = manifest_from_answer(
-        final_sources, [], retrieved_at=datetime.now(timezone.utc).isoformat()
+        final_sources, parse_external_refs(markdown),
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
     )
     await persist_report_doc(
         report_id, qa_id, conversation_id, question, title, markdown, pdf_path,
@@ -426,14 +437,26 @@ async def generate_report(
         )
         produced = False           # 是否已吐過任一「內容 token」（退單次的硬邊界）
         final_payload: dict | None = None
+        failed_detail: str | None = None
+        # 薄涵蓋 nudge（PR #36）：逐節路徑沿用 run-level 命中數的同一判定與門檻
+        # （逐節配額 max_reports=8 遠低於整份 25，拿逐節命中數套 REPORT_THIN_COVERAGE=8
+        # 會幾乎每節都誤觸發網搜），算一次後注入每節 prompt。
+        note = coverage_directive(len(sources), web_enabled=REPORT_ENABLE_WEB)
         try:
             async for kind, payload in report_writer.draft_report(
                 question, context, filters=filters, run_id=run_id, draft_model=model,
+                web_enabled=REPORT_ENABLE_WEB, coverage_note=note,
             ):
                 if kind == "__final__":
                     final_payload = payload if isinstance(payload, dict) else {}
                     break
                 if kind == "__fallback__":
+                    break
+                if kind == "__failed__":
+                    # writer 已在硬邊界後判定不可續（骨架節耗盡／n_unknown 重生耗盡）
+                    failed_detail = (
+                        payload.get("detail") if isinstance(payload, dict) else None
+                    ) or "研報生成失敗"
                     break
                 if kind == "token":
                     produced = True
@@ -449,6 +472,12 @@ async def generate_report(
                 return
             # 尚未吐內容 → 安全退單次
             run_id = None
+
+        if failed_detail is not None:
+            # 已吐內容才會走到這（writer 在邊界前一律回 __fallback__）→ 不可退單次
+            await _mark_run(run_id, "failed", error_detail=failed_detail)
+            yield ("error", {"detail": failed_detail})
+            return
 
         if final_payload is not None:
             async for ev in _finalize_sectioned(

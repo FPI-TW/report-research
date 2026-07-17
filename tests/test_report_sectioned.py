@@ -44,10 +44,22 @@ class _Src:
     report_date: str = "2026-06-01"
 
 
-def _fake_draft(events):
-    """把事件序包成 report_writer.draft_report 相容的 async generator。"""
+def _fake_draft(events, *, capture=None):
+    """把事件序包成 report_writer.draft_report 相容的 async generator。
 
-    async def _gen(question, context, *, filters=None, run_id=None, draft_model=None):
+    **簽章必須與真 draft_report 一致**：不一致時 generate_report 的 `except Exception`
+    會把 TypeError 當成「生成失敗」→ 靜默退單次生成，測試看似仍過但測的是另一條路
+    （本檔曾因此讓整組測試改跑真 claude CLI 而卡死）。組合測試
+    SectionedComposedTests 用真 draft_report，是這種簽章漂移的最終防線。
+    """
+
+    async def _gen(question, context, *, filters=None, run_id=None, draft_model=None,
+                   web_enabled=False, coverage_note=""):
+        if capture is not None:
+            capture["draft_kwargs"] = {
+                "filters": filters, "run_id": run_id, "draft_model": draft_model,
+                "web_enabled": web_enabled, "coverage_note": coverage_note,
+            }
         for e in events:
             yield e
 
@@ -68,6 +80,7 @@ _FINAL_OK = (
         "revision_id": "rev-xyz",
         "markdown_hash": "hhh",
         "n_unknown": 0,
+        "n_evidence": 3,   # 共用帳本大小（可用證據）＞ 已被引用的 1 筆
     },
 )
 
@@ -127,7 +140,7 @@ class _SectionedBase(unittest.IsolatedAsyncioTestCase):
         rpt.SessionFactory = lambda: _FakeSession()
         rpt._open_sectioned_run = fake_open_run
         rpt._mark_run = fake_mark
-        rw.draft_report = _fake_draft(draft_events)
+        rw.draft_report = _fake_draft(draft_events, capture=capture)
         rpt.REPORT_SECTIONED_ENABLED = True
 
         def restore():
@@ -241,6 +254,72 @@ class SectionedFinalTests(_SectionedBase):
         self.assertIn("執行摘要", done["markdown"])
         self.assertEqual(done["context"], "run-level 脈絡")
 
+    async def test_eval_done_carries_cited_sources_and_evidence_total(self):
+        """審查 #2：eval done 必須帶 done.sources（正文 [n] 的對應表）與 n_evidence
+        （共用帳本大小）。少了它們，harness 只能拿 run-level sources 事件當引用分母
+        ——但逐節路徑的 [n] 由逐節帳本編號，兩者毫無關係 → 指標失真。"""
+        capture, restore = self._install([_FINAL_OK])
+        try:
+            evs = [e async for e in rpt.generate_report("台積電趨勢", persist=False)]
+        finally:
+            restore()
+
+        done = evs[-1][1]
+        # done.sources ＝ __final__ 的 final_sources（[n] 序），非 run-level 的 [_Src(1)]
+        self.assertEqual([s["report_id"] for s in done["sources"]], ["r-1"])
+        self.assertEqual(done["sources"][0]["n"], 1)
+        self.assertEqual(done["n_evidence"], 3)
+        self.assertEqual(done["claim_evidence"], {"0": ["abc123"]})
+
+    async def test_persist_true_done_has_no_eval_fields(self):
+        """線上路徑契約不變：done 不外洩 markdown/context/sources/n_evidence/
+        claim_evidence（對齊單次路徑的 test_report 斷言）。"""
+        capture, restore = self._install([_FINAL_OK])
+        try:
+            evs = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+
+        done = evs[-1][1]
+        self.assertEqual(evs[-1][0], "done")
+        for leaked in ("markdown", "context", "sources", "n_evidence", "claim_evidence"):
+            self.assertNotIn(leaked, done)
+        self.assertEqual(
+            sorted(done), ["download_url", "report_id", "thinking_ms", "title"]
+        )
+
+    async def test_web_enabled_and_coverage_note_forwarded_to_writer(self):
+        """審查 #3：REPORT_ENABLE_WEB 與薄涵蓋 nudge 必須傳進 writer，否則逐節路徑
+        完全不會上網（空脈絡守門「網搜會補」的前提就不成立）。"""
+        capture, restore = self._install([_FINAL_OK])
+        orig_web = rpt.REPORT_ENABLE_WEB
+        rpt.REPORT_ENABLE_WEB = True
+        try:
+            _ = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            rpt.REPORT_ENABLE_WEB = orig_web
+            restore()
+
+        kw = capture["draft_kwargs"]
+        self.assertIs(kw["web_enabled"], True)
+        # run-level 只命中 1 篇（_Src(1)）< REPORT_THIN_COVERAGE=8 → 注入薄涵蓋 nudge
+        self.assertIn("僅找到 1 篇", kw["coverage_note"])
+        self.assertIn("主動以網路搜尋補充", kw["coverage_note"])
+
+    async def test_coverage_note_empty_when_web_off(self):
+        capture, restore = self._install([_FINAL_OK])
+        orig_web = rpt.REPORT_ENABLE_WEB
+        rpt.REPORT_ENABLE_WEB = False
+        try:
+            _ = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            rpt.REPORT_ENABLE_WEB = orig_web
+            restore()
+
+        kw = capture["draft_kwargs"]
+        self.assertIs(kw["web_enabled"], False)
+        self.assertEqual(kw["coverage_note"], "")
+
 
 class SectionedFallbackTests(_SectionedBase):
     async def test_outline_fallback_runs_single_shot(self):
@@ -269,7 +348,8 @@ class SectionedFallbackTests(_SectionedBase):
     async def test_exception_after_token_emits_error_no_single_shot(self):
         """已吐內容 token 後 draft_report 例外 → 回 error、不退單次（避免重覆內容）。"""
 
-        async def _boom_gen(question, context, *, filters=None, run_id=None, draft_model=None):
+        async def _boom_gen(question, context, *, filters=None, run_id=None,
+                            draft_model=None, web_enabled=False, coverage_note=""):
             yield ("status", {"stage": "writing"})
             yield ("token", "部分內容")
             raise RuntimeError("draft boom")
@@ -290,6 +370,207 @@ class SectionedFallbackTests(_SectionedBase):
         self.assertIn("failed", [m[1] for m in capture.get("marks", [])])
 
 
+    async def test_failed_sentinel_emits_error_and_no_single_shot(self):
+        """審查 #5：writer 在硬邊界後判定不可續（__failed__）→ 回 error、不退單次。"""
+        events = [
+            ("status", {"stage": "writing"}),
+            ("token", "執行摘要內文"),
+            ("__failed__", {"detail": "研報引用標記異常"}),
+        ]
+        capture, restore = self._install(events)
+        try:
+            evs = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+
+        self.assertEqual(evs[-1][0], "error")
+        self.assertEqual(evs[-1][1]["detail"], "研報引用標記異常")
+        self.assertNotIn("single_shot", capture)  # 不得重跑一份完整內容
+        marks = [m for m in capture.get("marks", []) if m[1] == "failed"]
+        self.assertTrue(marks)
+        self.assertEqual(marks[-1][2].get("error_detail"), "研報引用標記異常")
+
+
+class SectionedComposedTests(unittest.IsolatedAsyncioTestCase):
+    """**組合測試**：generate_report ↔ 真 report_writer.draft_report（不 stub 掉）。
+
+    只替換最外層 I/O（run-level 檢索／大綱／逐節檢索／stream_completion／渲染／落地），
+    中間整條 M7 生產路徑照跑。這是 #6 測試盲點的正解：draft_report 被整支 stub 時，
+    report.py↔report_writer.py 的模組縫（簽章、事件契約、run 持久化）完全沒被驗過。
+    """
+
+    def _install(self, capture, *, stream, run_id="run-1", web=False):
+        eid = rw.EvidenceLedger().add_corpus(report_id="r-sec").evidence_id
+        capture["eid"] = eid
+        outline = {
+            "title": "台積電 深度研報",
+            "sections": [
+                {"position": 0, "key": "exec_summary", "heading": "執行摘要",
+                 "topic": "q", "kind": "framing"},
+                {"position": 1, "key": "analysis", "heading": "先進製程",
+                 "topic": "n2", "kind": "analysis"},
+                {"position": 2, "key": "risk_outlook", "heading": "風險與展望",
+                 "topic": "r", "kind": "framing"},
+            ],
+        }
+        src = _Src(1, report_id="r-sec", file_name="sec.pdf")
+
+        async def fake_plan(question, *, profile, **k):
+            return QueryPlan((SubQuery(text=question),), profile=profile, degraded=True)
+
+        async def fake_rcm(question, queries, **k):
+            return ([_Src(1)], "run-level 脈絡")
+
+        async def fake_outline(*a, **k):
+            return outline
+
+        async def fake_sec_retrieve(topic, **k):
+            capture.setdefault("topics", []).append(topic)
+            return ([src], "[1] 報告：sec.pdf\n片段內容")
+
+        async def fake_open_run(*a, **k):
+            return run_id
+
+        async def fake_mark(rid, status, **f):
+            capture.setdefault("marks", []).append((rid, status, f))
+
+        async def fake_advance(rid, status, **k):
+            capture.setdefault("advances", []).append(status)
+
+        async def fake_upsert(rid, pos, **k):
+            capture.setdefault("upserts", []).append((pos, k.get("status")))
+
+        async def fake_persist(*a, **k):
+            capture["persist_args"] = a
+            capture["persist_kwargs"] = k
+
+        def fake_render(md, **k):
+            capture["rendered"] = md
+            return b"%PDF-1.4 fake"
+
+        async def boom_single(*a, **k):
+            raise AssertionError("不得退單次生成")
+            yield ""
+
+        orig = {n: getattr(rpt, n) for n in (
+            "plan_queries", "retrieve_context_multi", "stream_completion",
+            "render_report_pdf", "write_report_pdf", "persist_report_doc",
+            "SessionFactory", "_open_sectioned_run", "_mark_run",
+            "REPORT_SECTIONED_ENABLED", "REPORT_ENABLE_WEB",
+        )}
+        orig_rw = {n: getattr(rw, n) for n in (
+            "plan_outline", "retrieve_for_section", "stream_completion",
+            "advance_status", "upsert_section",
+        )}
+        rpt.plan_queries = fake_plan
+        rpt.retrieve_context_multi = fake_rcm
+        rpt.stream_completion = boom_single
+        rpt.render_report_pdf = fake_render
+        rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
+        rpt.persist_report_doc = fake_persist
+        rpt.SessionFactory = lambda: _FakeSession()
+        rpt._open_sectioned_run = fake_open_run
+        rpt._mark_run = fake_mark
+        rpt.REPORT_SECTIONED_ENABLED = True
+        rpt.REPORT_ENABLE_WEB = web
+        rw.plan_outline = fake_outline
+        rw.retrieve_for_section = fake_sec_retrieve
+        rw.stream_completion = stream
+        rw.advance_status = fake_advance
+        rw.upsert_section = fake_upsert
+
+        def restore():
+            for n, v in orig.items():
+                setattr(rpt, n, v)
+            for n, v in orig_rw.items():
+                setattr(rw, n, v)
+
+        return restore
+
+    async def test_real_writer_end_to_end_produces_report(self):
+        capture = {}
+
+        def stream(*a, **k):
+            async def gen():
+                yield f"本節結論[[ev:{capture['eid']}]]。"
+            return gen()
+
+        restore = self._install(capture, stream=stream)
+        try:
+            evs = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+
+        kinds = [e[0] for e in evs]
+        self.assertEqual(kinds[0], "status")
+        self.assertEqual(evs[0][1]["stage"], "retrieving")
+        self.assertEqual(kinds.count("section_draft"), 3)
+        self.assertIn("document_revision", kinds)
+        self.assertEqual(kinds[-1], "done")   # done 仍為最後且形狀不變
+
+        md = capture["rendered"]
+        self.assertTrue(md.startswith("# 台積電 深度研報"))
+        for h in ("## 執行摘要", "## 重點分析", "### 先進製程", "## 風險與展望",
+                  "## 引用來源"):
+            self.assertIn(h, md)
+        self.assertIn("本節結論[1]。", md)      # [[ev:]] → [n]
+        self.assertNotIn("[[ev:", md)          # 內部 token 不漏到輸出
+        # 逐節檢索確實用了 outline 的 topic（非整份原題）
+        self.assertEqual(capture["topics"], ["q", "n2", "r"])
+        # 狀態機走完整條前進路徑
+        self.assertEqual(
+            capture["advances"], ["outlining", "drafting", "verifying", "rendering"]
+        )
+        self.assertIn("completed", [m[1] for m in capture["marks"]])
+        # persist 的 sources 與正文 [n] 同一份表
+        self.assertEqual(capture["persist_args"][7][0]["report_id"], "r-sec")
+
+    async def test_real_writer_audit_failure_still_produces_report(self):
+        """審查 #1 的端到端回歸：稽核寫入全炸（DB down）→ 研報仍完成到 done。"""
+        capture = {}
+
+        def stream(*a, **k):
+            async def gen():
+                yield f"本節結論[[ev:{capture['eid']}]]。"
+            return gen()
+
+        restore = self._install(capture, stream=stream)
+
+        async def dying(*a, **k):
+            raise RuntimeError("DB connection reset")
+
+        rw.advance_status = dying
+        rw.upsert_section = dying
+        try:
+            evs = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+
+        self.assertEqual(evs[-1][0], "done")
+        self.assertTrue(evs[-1][1]["report_id"])
+        self.assertNotIn("error", [e[0] for e in evs])
+
+    async def test_real_writer_forwards_allow_web_to_stream_completion(self):
+        """審查 #3 的端到端回歸：REPORT_ENABLE_WEB → 逐節 stream_completion 開網搜。"""
+        capture = {}
+
+        def stream(*a, **k):
+            capture.setdefault("allow_web", []).append(k.get("allow_web"))
+            async def gen():
+                yield f"本節結論[[ev:{capture['eid']}]]。"
+            return gen()
+
+        restore = self._install(capture, stream=stream, web=True)
+        try:
+            evs = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+
+        self.assertEqual(evs[-1][0], "done")
+        self.assertTrue(capture["allow_web"])
+        self.assertTrue(all(v is True for v in capture["allow_web"]))
+
+
 class SectionedRunLifecycleTests(unittest.IsolatedAsyncioTestCase):
     """_open_sectioned_run 的真實 fail-open（不 stub 該函式，改 stub 底層 open_run）。"""
 
@@ -308,9 +589,15 @@ class SectionedRunLifecycleTests(unittest.IsolatedAsyncioTestCase):
         async def fake_persist(*a, **k):
             capture["persist_kwargs"] = k
 
+        async def boom_single(*a, **k):
+            # 護欄：真 stream_completion 會 spawn claude CLI 並卡到 REPORT_TIMEOUT=600s
+            raise AssertionError("不得走到單次生成")
+            yield ""
+
         orig = {
             "plan_queries": rpt.plan_queries,
             "retrieve_context_multi": rpt.retrieve_context_multi,
+            "stream_completion": rpt.stream_completion,
             "render_report_pdf": rpt.render_report_pdf,
             "write_report_pdf": rpt.write_report_pdf,
             "persist_report_doc": rpt.persist_report_doc,
@@ -321,6 +608,7 @@ class SectionedRunLifecycleTests(unittest.IsolatedAsyncioTestCase):
         }
         rpt.plan_queries = fake_plan
         rpt.retrieve_context_multi = fake_retrieve
+        rpt.stream_completion = boom_single
         rpt.render_report_pdf = lambda md, **k: b"%PDF-1.4 fake"
         rpt.write_report_pdf = lambda rid, b: f"/tmp/{rid}.pdf"
         rpt.persist_report_doc = fake_persist
@@ -333,6 +621,7 @@ class SectionedRunLifecycleTests(unittest.IsolatedAsyncioTestCase):
         finally:
             rpt.plan_queries = orig["plan_queries"]
             rpt.retrieve_context_multi = orig["retrieve_context_multi"]
+            rpt.stream_completion = orig["stream_completion"]
             rpt.render_report_pdf = orig["render_report_pdf"]
             rpt.write_report_pdf = orig["write_report_pdf"]
             rpt.persist_report_doc = orig["persist_report_doc"]

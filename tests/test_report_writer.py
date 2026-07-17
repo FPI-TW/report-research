@@ -7,6 +7,7 @@ fake session 驗發出的 SQL/params（沿用本 repo「測試不連真 DB」慣
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from unittest.mock import patch
@@ -563,6 +564,481 @@ class DraftReportTests(unittest.IsolatedAsyncioTestCase):
         # 檢索炸掉仍走完（fail-open），產出最終文件
         self.assertEqual(events[-1][0], "__final__")
         self.assertIn("在無片段下審慎撰寫", events[-1][1]["markdown"])
+
+
+# ── 共用：以 stub 過的 outline/檢索/串流跑 draft_report ─────────────────────
+def _outline_3():
+    return {
+        "title": "研報T",
+        "sections": [
+            {"position": 0, "key": "exec_summary", "heading": "執行摘要",
+             "topic": "q", "kind": "framing"},
+            {"position": 1, "key": "analysis", "heading": "面向A",
+             "topic": "ta", "kind": "analysis"},
+            {"position": 2, "key": "risk_outlook", "heading": "風險與展望",
+             "topic": "r", "kind": "framing"},
+        ],
+    }
+
+
+async def _run_draft(outline, *, draft="內文", run_id=None, extra=None, **kw):
+    from types import SimpleNamespace
+
+    src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf", market="TW",
+                          report_date="2026-01-01")
+
+    async def fake_outline(*a, **k):
+        return outline
+
+    async def fake_retrieve(topic, **k):
+        return ([src], "[1] 報告：a.pdf\n片段")
+
+    stack = [
+        patch.object(rw, "plan_outline", fake_outline),
+        patch.object(rw, "retrieve_for_section", fake_retrieve),
+    ]
+    if not any(getattr(c, "attribute", None) == "stream_completion"
+               for c in (extra or [])):
+        stack.append(patch.object(rw, "stream_completion", _draft_stream(draft)))
+    stack.extend(extra or [])
+    for cm in stack:
+        cm.__enter__()
+    try:
+        return [e async for e in rw.draft_report("q", "ctx", run_id=run_id, **kw)]
+    finally:
+        for cm in reversed(stack):
+            cm.__exit__(None, None, None)
+
+
+def _multi_stream(texts):
+    """依序回不同輸出的 stream_completion 替身（耗盡則重複最後一個）。"""
+    box = {"i": 0}
+
+    def factory(*a, **k):
+        i = min(box["i"], len(texts) - 1)
+        box["i"] += 1
+        out = texts[i]
+
+        async def gen():
+            if out is None:
+                raise RuntimeError("LLM down")
+            yield out
+
+        return gen()
+
+    return factory
+
+
+# ── #1：run 持久化全 fail-open（稽核失敗絕不阻斷生成）──────────────────────
+class DraftReportRunPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    """run_id 給定時的狀態機持久化——**先前沒有任何測試碰過這條路**（審查 #6）：
+    draft_report 的呼叫全部省略 run_id，`if run_id:` 區塊在整個測試套件裡一行都沒跑過。
+    """
+
+    async def test_run_id_drives_state_machine_and_sections(self):
+        adv: list = []
+        ups: list = []
+
+        async def rec_advance(rid, status, **k):
+            adv.append((rid, status))
+
+        async def rec_upsert(rid, pos, **k):
+            ups.append((rid, pos, k.get("status")))
+
+        events = await _run_draft(
+            _outline_3(), run_id="run-9",
+            extra=[patch.object(rw, "advance_status", rec_advance),
+                   patch.object(rw, "upsert_section", rec_upsert)],
+        )
+        self.assertEqual(events[-1][0], "__final__")
+        self.assertEqual(
+            [s for _, s in adv], ["outlining", "drafting", "verifying", "rendering"]
+        )
+        self.assertTrue(all(rid == "run-9" for rid, _ in adv))
+        # 三節各：pending（展開）→ drafted（草稿）→ final（組裝後）
+        self.assertEqual([p for _, p, s in ups if s == "pending"], [0, 1, 2])
+        self.assertEqual([p for _, p, s in ups if s == "drafted"], [0, 1, 2])
+        self.assertEqual([p for _, p, s in ups if s == "final"], [0, 1, 2])
+
+    async def test_upsert_section_failure_does_not_abort_generation(self):
+        """審查 #1：草稿 commit（純稽核）在已吐 token 後失敗——裸 await 會讓整份研報
+        作廢（使用者拿不到研報、N 次 LLM 全丟）。run 只是稽核紀錄，必須 fail-open。"""
+        calls = {"n": 0}
+
+        async def flaky_upsert(rid, pos, **k):
+            calls["n"] += 1
+            if calls["n"] >= 4:   # 前 3 次＝outline 展開；第 4 次起＝草稿 commit
+                raise RuntimeError("DB connection reset")
+
+        async def ok_advance(*a, **k):
+            return None
+
+        events = await _run_draft(
+            _outline_3(), run_id="run-9",
+            extra=[patch.object(rw, "advance_status", ok_advance),
+                   patch.object(rw, "upsert_section", flaky_upsert)],
+        )
+        kinds = [e[0] for e in events]
+        self.assertEqual(kinds[-1], "__final__")           # 生成照常完成
+        self.assertEqual(kinds.count("section_draft"), 3)  # 事件序零差異
+        self.assertNotIn("__failed__", kinds)
+        self.assertNotIn("__fallback__", kinds)
+
+    async def test_advance_status_failure_does_not_abort_generation(self):
+        async def dying(*a, **k):
+            raise RuntimeError("DB down")
+
+        async def ok_upsert(*a, **k):
+            return None
+
+        events = await _run_draft(
+            _outline_3(), run_id="run-9",
+            extra=[patch.object(rw, "advance_status", dying),
+                   patch.object(rw, "upsert_section", ok_upsert)],
+        )
+        self.assertEqual(events[-1][0], "__final__")
+
+    async def test_all_audit_writes_failing_still_produces_final(self):
+        async def dying(*a, **k):
+            raise RuntimeError("DB down")
+
+        events = await _run_draft(
+            _outline_3(), run_id="run-9",
+            extra=[patch.object(rw, "advance_status", dying),
+                   patch.object(rw, "upsert_section", dying)],
+        )
+        self.assertEqual(events[-1][0], "__final__")
+        self.assertIn("## 執行摘要", events[-1][1]["markdown"])
+
+    async def test_audit_propagates_cancellation(self):
+        """客戶端斷線的取消不得被 fail-open 吞掉。"""
+        async def cancelled(*a, **k):
+            raise asyncio.CancelledError()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await rw._audit(cancelled, "x")
+
+    async def test_final_reports_evidence_total(self):
+        """__final__ 帶 n_evidence（共用帳本大小）＝ source_citation_rate 的真分母。"""
+        events = await _run_draft(_outline_3(), draft="無引用內文")
+        self.assertEqual(events[-1][0], "__final__")
+        self.assertEqual(events[-1][1]["n_evidence"], 1)  # r1 跨三節去重
+        self.assertEqual(events[-1][1]["sources"], [])    # 沒引用 → [n] 表為空
+
+
+# ── #5：失敗節處置（決策 #2）＋ n_unknown 把關（決策 #4）────────────────────
+class SectionFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_analysis_subsection_is_skipped_not_shipped_empty(self):
+        """決策 #2：動態子節草稿耗盡 → 跳過，**不得以空標題出貨**
+        （section_coverage 只認標題，空章節在指標上看不出來）。"""
+        outline = {
+            "title": "T",
+            "sections": [
+                {"position": 0, "key": "exec_summary", "heading": "執行摘要",
+                 "topic": "q", "kind": "framing"},
+                {"position": 1, "key": "analysis", "heading": "壞子節",
+                 "topic": "bad", "kind": "analysis"},
+                {"position": 2, "key": "analysis", "heading": "好子節",
+                 "topic": "good", "kind": "analysis"},
+                {"position": 3, "key": "risk_outlook", "heading": "風險與展望",
+                 "topic": "r", "kind": "framing"},
+            ],
+        }
+        # 節 0 OK → 節 1 全空（含重試）→ 節 2、3 OK
+        events = await _run_draft(
+            outline,
+            extra=[patch.object(
+                rw, "stream_completion",
+                _multi_stream(["摘要內文", "", "", "好子節內文", "風險內文"]),
+            )],
+        )
+        self.assertEqual(events[-1][0], "__final__")
+        md = events[-1][1]["markdown"]
+        self.assertNotIn("### 壞子節", md)   # 空節整個不出現（無空標題）
+        self.assertIn("### 好子節", md)
+        self.assertIn("## 重點分析", md)
+        # 跳過的節不入 claim_evidence（evidence_link_coverage 分母不含未出貨的節）
+        self.assertEqual(sorted(events[-1][1]["claim_evidence"]), ["0", "2", "3"])
+
+    async def test_skeleton_section_empty_before_token_falls_back(self):
+        """硬邊界前：骨架節耗盡 → __fallback__（退單次，前端事件序零差異）。"""
+        events = await _run_draft(
+            _outline_3(),
+            extra=[patch.object(rw, "stream_completion", _multi_stream(["", ""]))],
+        )
+        kinds = [e[0] for e in events]
+        self.assertIn(("__fallback__", None), events)
+        self.assertNotIn("token", kinds)   # 未吐內容才可退單次
+
+    async def test_skeleton_section_empty_after_token_fails(self):
+        """硬邊界後：骨架節耗盡 → __failed__（不得退單次，會重覆內容）。"""
+        events = await _run_draft(
+            _outline_3(),
+            extra=[patch.object(
+                rw, "stream_completion",
+                _multi_stream(["摘要內文", "分析內文", "", ""]),
+            )],
+        )
+        kinds = [e[0] for e in events]
+        self.assertIn("token", kinds)
+        self.assertEqual(events[-1][0], "__failed__")
+        self.assertIn("detail", events[-1][1])
+
+    async def test_all_analysis_skipped_fails_missing_chapter(self):
+        """「重點分析」也是五章骨架之一：動態子節全滅＝缺章，不可出貨。"""
+        events = await _run_draft(
+            _outline_3(),
+            extra=[patch.object(
+                rw, "stream_completion",
+                _multi_stream(["摘要內文", "", "", "風險內文"]),
+            )],
+        )
+        self.assertEqual(events[-1][0], "__failed__")
+
+
+class NUnknownGateTests(unittest.IsolatedAsyncioTestCase):
+    """決策 #4／spec §3：n_unknown>0 → 有界重生違規節；耗盡 → failed（非只 log）。"""
+
+    async def test_unknown_id_regenerated_then_ok(self):
+        eid = _eid("r1")
+        events = await _run_draft(
+            _outline_3(),
+            extra=[patch.object(
+                rw, "stream_completion",
+                _multi_stream([
+                    "摘要[[ev:deadbeefdeadbeef]]",  # pos 0：抄歪成不存在的 id
+                    "分析內文", "風險內文",
+                    f"摘要重生[[ev:{eid}]]",         # pos 0 重生後正確
+                ]),
+            )],
+        )
+        self.assertEqual(events[-1][0], "__final__")
+        self.assertEqual(events[-1][1]["n_unknown"], 0)
+        self.assertIn("摘要重生[1]", events[-1][1]["markdown"])
+        # 重生再吐一次該 position 的 section_draft（覆寫語意）
+        pos0 = [p for k, p in events if k == "section_draft" and p["position"] == 0]
+        self.assertEqual(len(pos0), 2)
+        self.assertIn("摘要重生", pos0[-1]["markdown"])
+
+    async def test_unknown_id_exhausted_fails(self):
+        """重生後仍抄歪 → __failed__。只 log 等於出貨一份「有主張、無引用」的研報。"""
+        events = await _run_draft(
+            _outline_3(),
+            extra=[patch.object(
+                rw, "stream_completion",
+                _multi_stream(["摘要[[ev:deadbeefdeadbeef]]", "分析內文", "風險內文",
+                               "摘要仍歪[[ev:deadbeefdeadbeef]]"]),
+            )],
+        )
+        self.assertEqual(events[-1][0], "__failed__")
+        self.assertEqual(events[-1][1]["detail"], "研報引用標記異常")
+
+    async def test_malformed_placeholder_also_gated(self):
+        """變形佔位（大寫/過短）同樣計入 n_unknown → 同一把關。"""
+        events = await _run_draft(
+            _outline_3(),
+            extra=[patch.object(
+                rw, "stream_completion",
+                _multi_stream(["摘要[[ev:ZZZ]]", "分析內文", "風險內文",
+                               "摘要仍歪[[ev:ZZZ]]"]),
+            )],
+        )
+        self.assertEqual(events[-1][0], "__failed__")
+
+
+# ── #3：逐節網搜（allow_web／searching_web／外部參考彙整）───────────────────
+class StreamSectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_allow_web_forwarded_and_search_status_emitted(self):
+        cap = {}
+
+        def stream(*a, **k):
+            cap["allow_web"] = k.get("allow_web")
+
+            async def gen():
+                yield rw.SEARCH_EVENT
+                yield "網路補充內文（網路）"
+
+            return gen()
+
+        with patch.object(rw, "stream_completion", stream):
+            evs = [e async for e in rw._stream_section(
+                "sys", "p", timeout=1, retry=0, model="m", allow_web=True)]
+
+        self.assertIs(cap["allow_web"], True)
+        stages = [p["stage"] for k, p in evs if k == "status"]
+        self.assertEqual(stages, ["searching_web", "writing"])  # 搜尋後重設回 writing
+        self.assertEqual(evs[-1], ("__text__", "網路補充內文（網路）"))
+
+    async def test_search_event_never_leaks_into_text(self):
+        def stream(*a, **k):
+            async def gen():
+                yield rw.SEARCH_EVENT
+                yield "內文"
+                yield rw.SEARCH_EVENT
+            return gen()
+
+        with patch.object(rw, "stream_completion", stream):
+            evs = [e async for e in rw._stream_section(
+                "sys", "p", timeout=1, retry=0, model="m", allow_web=True)]
+        self.assertEqual(evs[-1], ("__text__", "內文"))
+        stages = [p["stage"] for k, p in evs if k == "status"]
+        self.assertEqual(stages.count("searching_web"), 1)  # 只發一次
+
+    async def test_retry_only_when_nothing_streamed(self):
+        with patch.object(rw, "stream_completion", _multi_stream([None, "第二次成功"])):
+            evs = [e async for e in rw._stream_section(
+                "sys", "p", timeout=1, retry=1, model="m")]
+        self.assertEqual(evs[-1], ("__text__", "第二次成功"))
+
+    async def test_exhausted_returns_empty_text(self):
+        with patch.object(rw, "stream_completion", _multi_stream([None, None])):
+            evs = [e async for e in rw._stream_section(
+                "sys", "p", timeout=1, retry=1, model="m")]
+        self.assertEqual(evs[-1], ("__text__", ""))
+
+
+class SectionPromptTests(unittest.TestCase):
+    def _sys(self, **kw):
+        sec = kw.pop("section", {"key": "analysis", "heading": "A", "kind": "analysis"})
+        return rw._build_section_prompt(
+            "q", sec, "[[ev:abc]] 報告：a.pdf", True, **kw
+        )[0]
+
+    def test_web_rules_only_when_enabled(self):
+        off = self._sys(web_enabled=False)
+        on = self._sys(web_enabled=True)
+        self.assertNotIn("（網路）", off)
+        self.assertNotIn(rw.SECTION_WEB_HEADING, off)
+        self.assertIn("網路搜尋", on)
+        self.assertIn("（網路）", on)
+        self.assertIn(rw.SECTION_WEB_HEADING, on)
+
+    def test_kpi_rule_in_exec_summary_and_analysis_only(self):
+        self.assertIn("```kpi", self._sys())
+        self.assertIn("```kpi", self._sys(
+            section={"key": "exec_summary", "heading": "執行摘要", "kind": "framing"}))
+        self.assertNotIn("```kpi", self._sys(
+            section={"key": "risk_outlook", "heading": "風險", "kind": "framing"}))
+
+    def test_chart_rule_only_in_analysis(self):
+        self.assertIn("```chart", self._sys())
+        self.assertNotIn("```chart", self._sys(
+            section={"key": "exec_summary", "heading": "執行摘要", "kind": "framing"}))
+
+    def test_kpi_and_chart_source_uses_ev_placeholder_not_bare_number(self):
+        """圍欄內的 source 必須寫 [[ev:]]（render_citations 會一併換成 [n]）；
+        叫模型自行寫 [1] 會產生與帳本無關的假編號。"""
+        s = self._sys()
+        self.assertIn('"source":"[[ev:xxx]]"', s)
+        self.assertIn("不得杜撰", s)
+
+    def test_kpi_source_offers_web_only_when_web_enabled(self):
+        """網搜關時 KPI 的 source 不得提示「（網路）」——等於邀請模型標一個它根本
+        查不到的來源。"""
+        self.assertIn('"source":"[[ev:xxx]] 或 （網路）"', self._sys(web_enabled=True))
+        self.assertIn('"source":"[[ev:xxx]]"', self._sys(web_enabled=False))
+        self.assertNotIn("網路", self._sys(web_enabled=False))
+
+    def test_forbids_self_numbering(self):
+        self.assertIn("不得自行編造", self._sys())
+        self.assertIn("自行編號", self._sys())
+
+    def test_coverage_note_injected_into_prompt(self):
+        _, p = rw._build_section_prompt(
+            "q", {"key": "analysis", "heading": "A", "kind": "analysis"},
+            "ctx", True, web_enabled=True, coverage_note="（薄涵蓋提示）",
+        )
+        self.assertIn("（薄涵蓋提示）", p)
+
+    def test_no_evidence_with_web_directs_web_primary(self):
+        _, p = rw._build_section_prompt(
+            "q", {"key": "analysis", "heading": "A", "kind": "analysis"},
+            "", False, web_enabled=True, coverage_note="（薄涵蓋提示）",
+        )
+        self.assertIn("本節無檢索到的參考片段", p)
+        self.assertIn("以網路搜尋為主", p)
+
+    def test_no_evidence_without_web_stays_conservative(self):
+        _, p = rw._build_section_prompt(
+            "q", {"key": "analysis", "heading": "A", "kind": "analysis"},
+            "", False, web_enabled=False,
+        )
+        self.assertIn("本節無檢索到的參考片段", p)
+        self.assertNotIn("以網路搜尋為主", p)
+
+
+class WebRefsAssemblyTests(unittest.TestCase):
+    def test_split_web_refs_extracts_and_removes_block(self):
+        draft = (
+            "內文（網路）。\n\n"
+            f"### {rw.SECTION_WEB_HEADING}\n"
+            "- [新聞A](https://e.com/a)\n"
+            "- [壞](ftp://e.com/b)\n"
+        )
+        body, refs = rw.split_web_refs(draft)
+        self.assertEqual(body, "內文（網路）。")
+        self.assertEqual(refs, [{"title": "新聞A", "url": "https://e.com/a"}])
+
+    def test_split_web_refs_no_block(self):
+        self.assertEqual(rw.split_web_refs("純內文"), ("純內文", []))
+
+    def test_build_external_refs_dedups_by_url(self):
+        out = rw.build_external_refs([
+            {"title": "A", "url": "https://e.com/a"},
+            {"title": "A 重複", "url": "https://e.com/a"},
+            {"title": "B", "url": "https://e.com/b"},
+        ])
+        self.assertEqual(
+            out,
+            f"## {rw.EXTERNAL_HEADING}\n- [A](https://e.com/a)\n- [B](https://e.com/b)",
+        )
+
+    def test_build_external_refs_empty_returns_blank(self):
+        self.assertEqual(rw.build_external_refs([]), "")
+
+    def test_assemble_final_merges_section_web_refs_into_one_section(self):
+        ledger = rw.EvidenceLedger()
+        e1 = ledger.add_corpus(report_id="r1", file_name="a.pdf", market="TW")
+        secs = [
+            {"key": "exec_summary", "heading": "執行摘要", "kind": "framing",
+             "draft": f"摘要[[ev:{e1.evidence_id}]]（網路）\n\n"
+                      f"### {rw.SECTION_WEB_HEADING}\n- [N1](https://e.com/1)\n"},
+            {"key": "analysis", "heading": "A", "kind": "analysis",
+             "draft": f"分析（網路）\n\n### {rw.SECTION_WEB_HEADING}\n"
+                      "- [N1](https://e.com/1)\n- [N2](https://e.com/2)\n"},
+            {"key": "risk_outlook", "heading": "風險與展望", "kind": "framing",
+             "draft": "風險"},
+        ]
+        final, rendered = rw.assemble_final("研報", secs, ledger)
+        self.assertEqual(rendered.n_unknown, 0)
+        self.assertEqual(final.count(f"## {rw.EXTERNAL_HEADING}"), 1)  # 只有一節
+        self.assertNotIn(rw.SECTION_WEB_HEADING, final)  # 中繼標題不外漏
+        self.assertEqual(final.count("https://e.com/1"), 1)  # 跨節去重
+        self.assertIn("- [N2](https://e.com/2)", final)
+        self.assertLess(final.index("## 引用來源"), final.index(f"## {rw.EXTERNAL_HEADING}"))
+
+    def test_assembled_web_section_parses_with_report_parse_external_refs(self):
+        """組裝出來的外部參考節必須能被 report.parse_external_refs（M4b 唯一受控
+        外部入口）解析——兩邊格式必須逐字對齊。"""
+        from app.services.report import parse_external_refs
+
+        ledger = rw.EvidenceLedger()
+        secs = [{"key": "analysis", "heading": "A", "kind": "analysis",
+                 "draft": f"分析（網路）\n\n### {rw.SECTION_WEB_HEADING}\n"
+                          "- [新聞](https://news.example.com/a)\n"}]
+        final, _ = rw.assemble_final("研報", secs, ledger)
+        self.assertEqual(
+            parse_external_refs(final),
+            [{"title": "新聞", "url": "https://news.example.com/a"}],
+        )
+
+    def test_references_section_never_empty(self):
+        """無語料引用時仍寫一行說明（空章節會讓 PDF 看起來壞掉、也會被
+        section_coverage 的『章節須有內文』把關判為缺章）。"""
+        out = rw.build_references([])
+        self.assertIn("## 引用來源", out)
+        self.assertIn(rw.EXTERNAL_HEADING, out)
+        self.assertGreater(len(out.splitlines()), 1)
 
 
 if __name__ == "__main__":

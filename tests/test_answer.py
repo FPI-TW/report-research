@@ -1794,15 +1794,6 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ConversationStaticContractTests(unittest.TestCase):
-    def test_history_replay_preserves_offtopic_notice_branch(self):
-        js = (REPO_ROOT / "web/static/app/ask.js").read_text(encoding="utf-8")
-        normalized = " ".join(js.split())
-        self.assertRegex(
-            normalized,
-            r'if \(it\.is_offtopic\) \{ paintNotice\(turn, it\.answer \|\| ""\); \} else \{',
-        )
-        self.assertIn("paintAnswer(turn, false); paintActions(turn);", normalized)
-
     def test_schema_uses_expression_index_for_conversation_lookup(self):
         schema = (REPO_ROOT / "db/schema.sql").read_text(encoding="utf-8")
         self.assertRegex(
@@ -2466,6 +2457,67 @@ class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(state["truncated"], ("c1", "TS"))
         self.assertIn("done", [k for k, _ in events])
+
+
+class AgenticDisabledFuseTests(unittest.IsolatedAsyncioTestCase):
+    """M5 保險絲：qa_agentic_enabled=0 時主 RAG 事件序與既有（M4）完全一致，
+    且 planner 零呼叫（回退開關保證；agentic 行為測試在 tests/test_agentic_qa.py）。"""
+
+    async def test_disabled_agentic_keeps_baseline_event_sequence(self):
+        import dataclasses
+        from unittest.mock import patch
+
+        import app.services.query_planner as qp
+        import app.services.retrieval_pipeline as rp
+        from app.config import get_settings
+        from app.services import answer as ans
+
+        stub_settings = dataclasses.replace(get_settings(), qa_agentic_enabled=False)
+        plan_calls = []
+
+        async def fake_plan(question, **kwargs):
+            plan_calls.append(question)
+            return qp.QueryPlan(
+                (qp.SubQuery(text=question),), profile="qa", degraded=True
+            )
+
+        async def fake_retrieve(question, **kwargs):
+            row = make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1))
+            from app.services.answer import build_context
+
+            return build_context(
+                [(0, 0.80, row)],
+                now=datetime(2026, 6, 24, tzinfo=timezone.utc),
+            )
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
+
+        with (
+            patch.object(ans, "get_settings", lambda: stub_settings),
+            patch.object(qp, "plan_queries", fake_plan),
+            patch.object(rp, "retrieve_context", fake_retrieve),
+            patch.object(ans, "SessionFactory", lambda: _FakeSession()),
+            patch.object(ans, "stream_completion", fake_stream),
+            patch.object(ans, "classify_non_overview", fake_route),
+        ):
+            events = [e async for e in ans.answer_question("台積電展望")]
+
+        self.assertEqual(plan_calls, [])  # 關閉時不建 plan_task
+        kinds = [k for k, _ in events]
+        self.assertEqual(
+            kinds,
+            ["status", "sources", "status", "status", "status", "token",
+             "ext_sources", "done"],
+        )
+        stages = [p["stage"] for k, p in events if k == "status"]
+        self.assertEqual(
+            stages, ["understanding", "retrieved", "reading", "generating"]
+        )
+        self.assertEqual(events[-1][1]["cited"], ["r1"])
 
 
 if __name__ == "__main__":

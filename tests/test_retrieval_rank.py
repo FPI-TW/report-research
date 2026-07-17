@@ -138,5 +138,77 @@ class HybridSearchConfigTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(seen["limit"])
 
 
+class TierBandContractTests(unittest.TestCase):
+    """守約回歸：搜尋頁 band 契約凍結、rank_reports 與問答 band 設定解耦。"""
+
+    def test_band_width_frozen(self):
+        from app.services import retrieval as ret
+
+        self.assertEqual(ret.BAND_WIDTH, 0.05)
+
+    def test_tier_constants_frozen(self):
+        from app.services import retrieval as ret
+
+        self.assertEqual(ret.TIER_SEMANTIC, 0)
+        self.assertEqual(ret.TIER_ALL_TERMS, 1)
+        self.assertEqual(ret.TIER_PHRASE, 2)
+
+    def test_rank_reports_decoupled_from_ask_relevance_band(self):
+        # 0.80 vs 0.60 在 BAND_WIDTH=0.05 下屬不同 band → 高分在前；
+        # 若誤耦合 ask_relevance_band（此處設 0.5 使兩者同 band），
+        # 排序會翻成日期新者在前，此測試即抓到。
+        import dataclasses
+        from unittest import mock
+
+        import app.config as config
+
+        patched = dataclasses.replace(config.get_settings(), ask_relevance_band=0.5)
+        with mock.patch.object(config, "_SETTINGS", patched):
+            s = scored(
+                ("HIGH", 0, 0.80, date(2020, 1, 1)),
+                ("LOW", 0, 0.60, date(2024, 1, 1)),
+            )
+            ranked = rank_reports(s, sort="relevance")
+        self.assertEqual([g.report_id for g in ranked], ["HIGH", "LOW"])
+
+
+class HybridSearchTierTests(unittest.IsolatedAsyncioTestCase):
+    """tier 常數值必須與 hybrid_search 融合輸出一致（共用契約的來源端）。"""
+
+    @staticmethod
+    def _crow(chunk_id, content):
+        return row(f"R{chunk_id}")._replace(
+            chunk_id=chunk_id, content=content, distance=0.5
+        )
+
+    async def test_fusion_tiers_match_named_constants(self):
+        from app.services import retrieval as ret
+
+        rows = [
+            self._crow(1, "AI伺服器需求強勁"),  # 片語命中 → TIER_PHRASE
+            self._crow(2, "ai 帶動伺服器出貨"),  # 全詞命中（無片語）→ TIER_ALL_TERMS
+            self._crow(3, "ai 應用概況"),  # 部分命中 → TIER_SEMANTIC
+        ]
+
+        async def fake_dense(*a, **k):
+            return rows
+
+        async def fake_lex(*a, **k):
+            return []
+
+        orig = (ret.search_chunks_meta, ret.search_chunks_lexical)
+        ret.search_chunks_meta = fake_dense
+        ret.search_chunks_lexical = fake_lex
+        try:
+            out = await ret.hybrid_search(object(), "AI伺服器", [0.0])
+        finally:
+            ret.search_chunks_meta, ret.search_chunks_lexical = orig
+
+        tiers = {r_.chunk_id: tier for tier, _fused, r_ in out}
+        self.assertEqual(tiers[1], ret.TIER_PHRASE)
+        self.assertEqual(tiers[2], ret.TIER_ALL_TERMS)
+        self.assertEqual(tiers[3], ret.TIER_SEMANTIC)
+
+
 if __name__ == "__main__":
     unittest.main()

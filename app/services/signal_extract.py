@@ -19,8 +19,8 @@ from typing import Optional
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（承載可追溯性、供重跑比較）
 EXTRACTION_VERSION = "sig-2026-07-15.v1"
 
-# 數值/證據擷取重準確度 → 預設 Sonnet（對齊 config.py 慣例；批次可用 --model 覆寫）
-SIGNAL_MODEL_DEFAULT = "claude-sonnet-4-6"
+# 數值/證據擷取重準確度 → 預設 Sonnet（現代世代 sonnet-5；批次可用 --model 覆寫）
+SIGNAL_MODEL_DEFAULT = "claude-sonnet-5"
 
 # 文字截斷上限（防模型暴走輸出整段）
 RATING_RAW_MAX = 100

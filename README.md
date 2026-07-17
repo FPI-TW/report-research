@@ -251,11 +251,8 @@ report-mark/
 ├─ web/
 │   auth.py        共用帳密、HMAC 簽章 session cookie、登入限流、localhost HTTP 例外
 │   env_loader.py  輕量 .env 載入器（make serve 啟動時讀 repo 根目錄）
-│   server.py      FastAPI 組裝層：auth、檢索、問答、對話、深度研報、監控、靜態頁
-│   static/index.html    查詢介面（雙欄、檢索＋問答、列表/表格、高亮、即打即查）
-│   static/monitor.html  ingestion / summary / DB / 背景程序監控頁
-│   static/app/*.js      原生 ES module：api / search / render / ask / modal / state / markdown …
-│   static/app/*.test.mjs  前端模組測試（node --test）
+│   server.py      FastAPI 組裝層：auth、檢索、問答、對話、深度研報、監控、SPA 服務
+│   static/login.html   共用帳號登入頁（自包樣式）；其餘 vanilla 頁已退場，改由 frontend/ React SPA 服務 /app/*
 │
 ├─ db/schema.sql    research schema：research_report + report_chunk + qa_log + report_doc
 ├─ docs/            WORKFLOW / ROADMAP / EXTERNAL_ACCESS / nas_scheduled_sync / qa_pdf_report / 向量搜索優化報告
@@ -369,7 +366,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 **問答（`ASK_*`）** — 常用：`ASK_MAX_REPORTS`(15)、`ASK_MAX_PASSAGES`(4)、`ASK_MAX_CONTEXT_CHARS`(20000)、`ASK_RETRIEVAL_K`(15)、`ASK_DENSE_SCAN`(400)、`ASK_RELEVANCE_FLOOR`(0.62)、`ASK_STALE_AGE_DAYS`(180)、`ASK_MAX_STALE_REPORTS`(4)、`ASK_RECENCY_HALF_LIFE_DAYS`(90)、`ASK_ENABLE_WEB`(1)、`ASK_INTENT_MODEL`(`claude-haiku-4-5`)。
 
-**深度研報（`REPORT_*`）** — `REPORT_MODEL`(`claude-sonnet-4-6`)、`REPORT_DEEP_K`(30)、`REPORT_MAX_REPORTS`(25)、`REPORT_MAX_PASSAGES`(6)、`REPORT_MAX_CONTEXT_CHARS`(40000)、`REPORT_TIMEOUT`(600s)、`REPORT_THIN_COVERAGE`(8)、`REPORT_ENABLE_WEB`(1)、`REPORTS_DIR`(`data/reports`)、`REPORT_SEMAPHORE`(1)、`REPORT_MIN_CITED`(3)。
+**深度研報（`REPORT_*`）** — `REPORT_MODEL`(`claude-sonnet-5`)、`REPORT_DEEP_K`(30)、`REPORT_MAX_REPORTS`(25)、`REPORT_MAX_PASSAGES`(6)、`REPORT_MAX_CONTEXT_CHARS`(40000)、`REPORT_TIMEOUT`(600s)、`REPORT_THIN_COVERAGE`(8)、`REPORT_ENABLE_WEB`(1)、`REPORTS_DIR`(`data/reports`)、`REPORT_SEMAPHORE`(1)、`REPORT_MIN_CITED`(3)。
 
 > 預設值即程式碼內 `os.getenv(...)` 的 fallback（見 `app/services/answer.py`、`report.py`、`intent.py`、`web/auth.py`、`web/server.py`），不必設定也能跑。
 

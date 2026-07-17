@@ -1,4 +1,4 @@
-"""深度研報生成編排：深度檢索 → 結構化研報串流 → 渲染 PDF → 持久化。
+"""深度研報生成編排：查詢分解（fail-open）→ 多查詢深度檢索 → 結構化研報串流 → 渲染 PDF → 持久化。
 
 事件序（傳輸無關，由 web 層轉 SSE）：
   ("status",{"stage":"retrieving"}) → ("sources",[...]) →
@@ -27,8 +27,9 @@ from app.services.db import SessionFactory
 from app.services.evidence import manifest_from_answer
 from app.services.llm import SEARCH_EVENT, stream_completion
 from app.services.pdf import render_report_pdf, strip_preamble
+from app.services.query_planner import plan_queries
 from app.services.report_gate import suggested_title
-from app.services.retrieval_pipeline import retrieve_context
+from app.services.retrieval_pipeline import retrieve_context_multi
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,9 @@ REPORT_THIN_COVERAGE = _S.report_thin_coverage
 REPORT_RERANK_TOP_M = _S.report_rerank_candidates if _S.report_rerank_enabled else 0
 # 研報路徑 rerank 逾時（prod 實測 120 對 ~93s；30s 共用預設曾使 M1b 基準線 10/10 逾時）
 REPORT_RERANK_TIMEOUT = _S.report_rerank_timeout
+# planner 的 wall-clock 硬上限；同一 config 鍵也是 plan_queries 內部 per-attempt
+# timeout。設 0 ＝ 即刻到期恆退單一原題（緊急退場：等同關閉多查詢分解）。
+REPORT_PLANNER_TIMEOUT = _S.report_planner_timeout
 
 REPORT_SYSTEM_PROMPT = (
     "你是「廷豐智能研報」的研究分析師，負責把研報片段（必要時佐以網路資料）彙整成一份"
@@ -244,8 +248,23 @@ async def generate_report(
     started = time.monotonic()
 
     yield ("status", {"stage": "retrieving"})
-    sources, context = await retrieve_context(
+    try:
+        # wall-clock 硬上限：plan_queries 內部的 stream_completion 預設 retries=2 且
+        # timeout 為 per-attempt，無外層上限時最壞 ~3x30s＋backoff ≈ 95s 全落在
+        # retrieving 死區（零 SSE bytes）。asyncio.timeout 到期把內部 CancelledError
+        # 轉 TimeoutError 於此捕獲；客戶端斷線的「外部」取消仍以 CancelledError
+        # 穿透（不誤吞）。
+        async with asyncio.timeout(REPORT_PLANNER_TIMEOUT):
+            plan = await plan_queries(question, profile="report")
+        queries = [sq.text for sq in plan.subqueries]
+        degraded = plan.degraded
+    except TimeoutError:
+        logger.warning("report planner wall timeout; fallback to single query")
+        queries, degraded = [question], True
+    logger.info("report query plan: n=%d degraded=%s", len(queries), degraded)
+    sources, context = await retrieve_context_multi(
         question,
+        queries,
         k=REPORT_DEEP_K,
         dense_scan=ASK_DENSE_SCAN,
         max_reports=REPORT_MAX_REPORTS,

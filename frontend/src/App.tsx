@@ -8,6 +8,7 @@ const SearchPage = lazy(routeLoaders.search)
 const AskPage = lazy(routeLoaders.ask)
 const MonitorPage = lazy(routeLoaders.monitor)
 const RadarPage = lazy(routeLoaders.radar)
+const HelpPage = lazy(routeLoaders.help)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -23,6 +24,7 @@ export const routes = [
       { path: '/ask', element: <Suspense><AskPage /></Suspense> },
       { path: '/monitor', element: <Suspense><MonitorPage /></Suspense> },
       { path: '/radar', element: <Suspense><RadarPage /></Suspense> },
+      { path: '/help', element: <Suspense><HelpPage /></Suspense> },
       { path: '*', element: <NotFound /> },
     ],
   },

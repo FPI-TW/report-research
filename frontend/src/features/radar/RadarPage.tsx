@@ -61,6 +61,9 @@ export default function RadarPage() {
               onMarketChange={m => patch({ market: m || null })}
             />
           )}
+          <p className={styles.disclaimer}>
+            本區整理券商研報中的已擷取觀點與數值變化，非系統預測或投資建議。
+          </p>
         </div>
       </div>
     </div>

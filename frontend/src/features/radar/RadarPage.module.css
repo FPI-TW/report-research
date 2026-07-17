@@ -18,18 +18,30 @@
 }
 
 .section {
-  margin-top: 20px;
+  margin-top: 32px;
 }
 
 .sectionTitle {
   font-family: var(--tf-serif);
   font-weight: 700;
-  font-size: 18px;
+  font-size: 19px;
   color: var(--tf-text-1);
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   display: flex;
   align-items: center;
   gap: 8px;
+  position: relative;
+  padding-left: 14px;
+}
+.sectionTitle::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.16em;
+  bottom: 0.16em;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--tf-gold-strong);
 }
 
 .sectionMeta {
@@ -50,6 +62,18 @@
 .muted {
   color: var(--tf-text-3);
   font-size: 13px;
+}
+
+/* 常駐於 picker 與 overview 兩種狀態之下：免責不得依賴 overview 的 notes
+   （那是資料品質註記，單幣別＋EPS 單組時為空陣列，整區不渲染）。 */
+.disclaimer {
+  margin: 28px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--tf-border);
+  font-family: var(--tf-sans);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--tf-text-3);
 }
 
 .dash {

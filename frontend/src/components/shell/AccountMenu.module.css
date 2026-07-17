@@ -10,5 +10,7 @@
 /* 帳號選單向上開：定位在觸發點上方（進場方向/縮放原點由 Popover openUp 控制） */
 .pop { left: 10px; right: 10px; bottom: calc(100% - 4px); }
 .popHead { padding: 8px 10px 10px; border-bottom: 1px solid var(--tf-border-weak); margin-bottom: 4px; }
+.menuItem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: 8px; text-decoration: none; box-sizing: border-box; }
+.menuItem:hover { background: var(--tf-border-weak); color: var(--tf-text-1); }
 .logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-family: inherit; }
 .logout:hover { background: var(--tf-border-weak); }

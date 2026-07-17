@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import type { Direction, RatingNorm } from '../../lib/radarSchemas'
 
 export const RATING_DISPLAY: Record<RatingNorm, string> = {
@@ -7,6 +8,21 @@ export const RATING_DISPLAY: Record<RatingNorm, string> = {
   underweight: '減碼',
   sell: '賣出',
   unknown: '未評等',
+}
+
+/** 評等 → 三桶語意（立場詞著色：偏多/中立/偏空）。 */
+export const RATING_BUCKET: Record<RatingNorm, 'bull' | 'neu' | 'bear'> = {
+  buy: 'bull',
+  overweight: 'bull',
+  neutral: 'neu',
+  underweight: 'bear',
+  sell: 'bear',
+  unknown: 'neu',
+}
+
+/** 市場徽章底色：以 --badge 帶入市場語意色（未知市場退回 fallback）。 */
+export function marketVar(market: string): CSSProperties {
+  return { '--badge': `var(--mkt-${market}, var(--mkt-fallback))` } as CSSProperties
 }
 
 export const WINDOW_OPTIONS = [

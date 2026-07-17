@@ -46,6 +46,7 @@ class RatingConsensus(BaseModel):
     bearish: int
     unknown: int
     total_rated: int  # 計入分布家數（不含 unknown）
+    median_rating: Optional[RatingNorm] = None  # 中位立場（加權中位，偶數跨級取較偏多者）
     upgrades: int
     downgrades: int
     unchanged: int
@@ -201,6 +202,37 @@ class BrokerHistoryResponse(BaseModel):
 # ── Endpoint C：標的目錄（獨立頁選標的）──
 
 
+class InstrumentStance(BaseModel):
+    """卡片用精簡評等共識（overview RatingConsensus 的子集）。"""
+
+    rating: RatingNorm  # 中位立場
+    bullish: int
+    neutral: int
+    bearish: int
+    total_rated: int
+    distribution: list[RatingBucketCount]  # 五級（迷你分佈條）
+    upgrades: int
+    downgrades: int
+    net_rating: int  # upgrades - downgrades
+
+
+class InstrumentTargetBrief(BaseModel):
+    """卡片用目標價中位（primary group）。"""
+
+    currency: str
+    median: float
+    revision_pct: Optional[float] = None
+    revision_direction: Direction = "none"
+
+
+class InstrumentConsensus(BaseModel):
+    """標的卡片的精簡共識預覽；無共識（尚未擷取/窗期空）時整體為 None。"""
+
+    window: Window
+    stance: InstrumentStance
+    target: Optional[InstrumentTargetBrief] = None
+
+
 class RadarInstrumentItem(BaseModel):
     market: str
     market_display: Optional[str] = None
@@ -210,6 +242,7 @@ class RadarInstrumentItem(BaseModel):
     report_count: int
     latest_report_date: Optional[str] = None
     coverage_state: CoverageState
+    consensus: Optional[InstrumentConsensus] = None
 
 
 class RadarInstrumentsResponse(BaseModel):

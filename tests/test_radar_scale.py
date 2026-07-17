@@ -12,6 +12,7 @@ from app.services.radar.scale import (  # noqa: E402
     classify_dimension,
     diff_signals,
     is_material,
+    median_rating,
     pct_change,
     quantiles,
     rating_bucket,
@@ -67,6 +68,29 @@ class RatingTests(unittest.TestCase):
     def test_direction_unknown_is_none(self):
         self.assertEqual(rating_direction("unknown", "buy"), "none")
         self.assertEqual(rating_direction("buy", "unknown"), "none")
+
+
+class MedianRatingTests(unittest.TestCase):
+    def test_skewed_distribution_rounds_toward_bullish(self):
+        # 買進9/加碼3/中立5/減碼1（總18，跨加碼/買進）→ 向偏多取整 = buy
+        dist = [("buy", 9), ("overweight", 3), ("neutral", 5),
+                ("underweight", 1), ("sell", 0)]
+        self.assertEqual(median_rating(dist), "buy")
+
+    def test_odd_sample_exact_level(self):
+        self.assertEqual(median_rating([("buy", 1), ("neutral", 1), ("sell", 1)]), "neutral")
+
+    def test_all_one_level(self):
+        self.assertEqual(median_rating([("sell", 3)]), "sell")
+
+    def test_even_split_lands_neutral(self):
+        # [buy(2), sell(-2)] 中位 0 → neutral
+        self.assertEqual(median_rating([("buy", 1), ("sell", 1)]), "neutral")
+
+    def test_empty_or_unknown_is_none(self):
+        self.assertIsNone(median_rating([]))
+        self.assertIsNone(median_rating([("unknown", 5)]))  # unknown 不在序位
+        self.assertIsNone(median_rating([("buy", 0)]))  # count 0 不計
 
 
 class QuantilesTests(unittest.TestCase):

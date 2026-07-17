@@ -63,6 +63,7 @@ class RadarApiBase(unittest.TestCase):
             for k in (
                 "SessionFactory", "fetch_coverage_counts", "fetch_instrument_signals",
                 "fetch_broker_signals", "list_radar_instruments",
+                "fetch_signals_for_instruments",
             )
         }
         server.SessionFactory = lambda: _FakeSession()
@@ -170,13 +171,36 @@ class InstrumentCatalogTests(RadarApiBase):
                 RadarInstrumentRow("TW", "8046", "南電", 12, 91, date(2026, 7, 11), "partial"),
                 RadarInstrumentRow("TW", "9914", "美利達", 11, 179, date(2026, 7, 9), "partial"),
             ]
-        self._set(list_radar_instruments=lst)
+
+        async def batch(*a, **k):
+            return {}  # 無共識資料 → consensus 皆 None
+
+        self._set(list_radar_instruments=lst, fetch_signals_for_instruments=batch)
         r = _authed_client().get("/api/radar/instruments?market=TW")
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertEqual(body["total"], 2)
         self.assertEqual(body["items"][0]["instrument_code"], "8046")
         self.assertEqual(body["items"][0]["market_display"], "台股")
+        self.assertIsNone(body["items"][0]["consensus"])
+
+    def test_catalog_with_consensus(self):
+        async def lst(*a, **k):
+            return 1, [
+                RadarInstrumentRow("TW", "8046", "南電", 12, 91, date(2026, 7, 11), "partial"),
+            ]
+
+        async def batch(session, keys, **k):
+            return {("TW", "8046"): [_sig()]}
+
+        self._set(list_radar_instruments=lst, fetch_signals_for_instruments=batch)
+        r = _authed_client().get("/api/radar/instruments?market=TW")
+        self.assertEqual(r.status_code, 200)
+        item = r.json()["items"][0]
+        self.assertIsNotNone(item["consensus"])
+        self.assertEqual(item["consensus"]["stance"]["rating"], "buy")
+        self.assertEqual(item["consensus"]["stance"]["total_rated"], 1)
+        self.assertEqual(item["consensus"]["target"]["currency"], "TWD")
 
     def test_catalog_invalid_market_422(self):
         r = _authed_client().get("/api/radar/instruments?market=ZZ")

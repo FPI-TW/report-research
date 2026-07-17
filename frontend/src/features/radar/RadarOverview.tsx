@@ -4,6 +4,7 @@ import { Pressable } from '../../components/primitives/Pressable'
 import type { Window } from '../../lib/radarSchemas'
 import { BrokerList } from './BrokerList'
 import { ConsensusSnapshot } from './ConsensusSnapshot'
+import { KeyFigures } from './KeyFigures'
 import { RadarHeader } from './RadarHeader'
 import pageStyles from './RadarPage.module.css'
 import { RadarSkeleton } from './RadarSkeleton'
@@ -68,13 +69,12 @@ export function RadarOverview({ market, code, window, onWindowChange, onBack }: 
           <RadarWindowEmpty note={data.coverage.note} />
         ) : (
           <>
-            <ConsensusSnapshot
-              rating={data.rating}
-              target={data.target_price}
-              eps={data.eps}
-              coverage={data.coverage}
-              window={window}
-            />
+            <KeyFigures target={data.target_price} eps={data.eps} coverage={data.coverage} />
+
+            <section className={pageStyles.section}>
+              <h2 className={pageStyles.sectionTitle}>券商共識</h2>
+              <ConsensusSnapshot rating={data.rating} window={window} />
+            </section>
 
             <section className={pageStyles.section}>
               <h2 className={pageStyles.sectionTitle}>四向觀點</h2>

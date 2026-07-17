@@ -196,8 +196,10 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(r.status_code, 303)
         self.assertEqual(r.headers["location"], "/")
         self.assertIn(auth.COOKIE_NAME, r.cookies)
+        # 授權後根路徑導向 SPA 檢索頁（舊 vanilla 首頁已退場）
         r2 = client.get("/")
-        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r2.status_code, 302)
+        self.assertEqual(r2.headers["location"], "/app/search")
 
     def test_logout_clears_session(self):
         client = _client()
@@ -240,19 +242,12 @@ class AuthFlowTests(unittest.TestCase):
         self.assertIn("error=insecure", r.headers["location"])
 
     def test_authed_request_refreshes_cookie(self):
-        # 每次通過認證的回應都應重新簽發 session cookie(滑動到期)
+        # 每次通過認證的回應都應重新簽發 session cookie(滑動到期)；根路徑現為 302 導向 SPA
         client = _client()
         client.post("/login", data={"username": "tester", "password": "testpass"})
         r = client.get("/")
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.status_code, 302)
         self.assertIn(auth.COOKIE_NAME, r.cookies)
-
-    def test_authed_homepage_uses_static_avatar_image(self):
-        client = _client()
-        client.post("/login", data={"username": "tester", "password": "testpass"})
-        r = client.get("/")
-        self.assertEqual(r.status_code, 200)
-        self.assertIn('src="/static/img/avatar.jpg"', r.text)
 
     def test_unauthed_static_is_gated(self):
         # /static 不在白名單:未登入直接取 /static/index.html 應被擋(防繞過 route 門檻)

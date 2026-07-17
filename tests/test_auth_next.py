@@ -73,21 +73,30 @@ def test_authed_login_get_honors_safe_next(monkeypatch):
     assert resp2.headers["location"] == "/"
 
 
-def test_authed_root_serves_vanilla_index(monkeypatch):
+def test_authed_root_redirects_to_spa(monkeypatch):
+    # 舊 vanilla 首頁已退場：授權後根路徑導向 SPA 檢索頁
     monkeypatch.setattr(auth, "verify_token", lambda token, now: True)
-    client = TestClient(app, cookies={auth.COOKIE_NAME: "any"})
+    client = TestClient(app, cookies={auth.COOKIE_NAME: "any"}, follow_redirects=False)
     resp = client.get("/")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-    assert resp.headers.get("cache-control") == "no-cache"
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/app/search"
 
 
 def _auth_cookies() -> dict[str, str]:
     return {auth.COOKIE_NAME: auth.issue_token(int(time.time()))}
 
 
-def test_authed_monitor_serves_vanilla_page():
+def test_authed_monitor_redirects_to_spa():
+    # 舊 vanilla 監控頁已退場：導向 SPA 監控頁
     client = TestClient(app, cookies=_auth_cookies())
     resp = client.get("/monitor", follow_redirects=False)
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/app/monitor"
+
+
+def test_authed_help_redirects_to_spa():
+    # 舊 vanilla 說明頁已退場：導向 SPA 說明頁
+    client = TestClient(app, cookies=_auth_cookies())
+    resp = client.get("/help", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/app/help"

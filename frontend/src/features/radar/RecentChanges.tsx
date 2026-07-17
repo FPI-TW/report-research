@@ -1,4 +1,3 @@
-import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
 import type { EventCard as EventCardT } from '../../lib/radarSchemas'
 import { DirectionTag } from './DirectionTag'
@@ -15,7 +14,7 @@ interface Props {
 
 const PREVIEW = 3
 
-export function RecentChanges({ events, total, onOpenReport, showAll, onToggleAll }: Props) {
+export function RecentChanges({ events, onOpenReport, showAll }: Props) {
   const visible = showAll ? events : events.slice(0, PREVIEW)
 
   if (!events.length) {
@@ -23,11 +22,14 @@ export function RecentChanges({ events, total, onOpenReport, showAll, onToggleAl
   }
 
   return (
-    <div>
-      <div className={styles.list}>
-        {visible.map((ev, i) => (
-          <article key={`${ev.report_link.report_id}-${ev.report_date}-${i}`} className={styles.card}>
-            <div className={styles.top}>
+    <div className={styles.feed}>
+      {visible.map((ev, i) => (
+        <article
+          key={`${ev.report_link.report_id}-${ev.report_date}-${i}`}
+          className={styles.event}
+        >
+          <div className={styles.card}>
+            <div className={styles.meta}>
               <span className={styles.date}>{fmtDate(ev.report_date)}</span>
               <span className={styles.broker}>{ev.broker_display || ev.broker || '未知券商'}</span>
             </div>
@@ -44,29 +46,20 @@ export function RecentChanges({ events, total, onOpenReport, showAll, onToggleAl
                 ))}
               </div>
             ) : null}
-            {ev.evidence[0] ? (
-              <div className={styles.evidence}>
-                <Icon name="quote" size={14} className={styles.quoteIcon} />
-                <span className={styles.evidenceText}>{ev.evidence[0]}</span>
-              </div>
-            ) : null}
-            <Pressable
-              tapScale={0.97}
-              className={styles.link}
-              onClick={() => onOpenReport(ev.report_link.report_id, ev.report_link.file_name)}
-            >
-              查看原始研報
-            </Pressable>
-          </article>
-        ))}
-      </div>
-      {total > PREVIEW && onToggleAll ? (
-        <div style={{ marginTop: 10, textAlign: 'right' }}>
-          <Pressable tapScale={0.97} className={styles.link} onClick={onToggleAll}>
-            {showAll ? '收合' : `查看全部 ${total} 項`}
-          </Pressable>
-        </div>
-      ) : null}
+            <div className={styles.foot}>
+              {ev.evidence[0] ? <p className={styles.cite}>「{ev.evidence[0]}」</p> : <span />}
+              <Pressable
+                type="button"
+                tapScale={0.97}
+                className={styles.link}
+                onClick={() => onOpenReport(ev.report_link.report_id, ev.report_link.file_name)}
+              >
+                原始研報 →
+              </Pressable>
+            </div>
+          </div>
+        </article>
+      ))}
     </div>
   )
 }

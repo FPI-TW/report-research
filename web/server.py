@@ -70,10 +70,12 @@ from app.services.pdf import render_report_pdf  # noqa: E402
 from app.services.report import fetch_report_doc, generate_report, write_report_pdf  # noqa: E402
 from app.services.radar import (  # noqa: E402
     build_broker_history,
+    build_instrument_slim,
     build_overview,
     fetch_broker_signals,
     fetch_coverage_counts,
     fetch_instrument_signals,
+    fetch_signals_for_instruments,
     list_radar_instruments,
 )
 from app.services.radar.schemas import (  # noqa: E402
@@ -121,13 +123,22 @@ class _ImmutableStatic(StaticFiles):
         return resp
 
 
-async def _warmup_embeddings() -> None:
-    await asyncio.to_thread(embed_texts, ["warmup"])
+async def _warmup_models() -> None:
+    """依序（非並行）暖機 embed 與 rerank 模型。
 
-
-async def _warmup_rerank() -> None:
-    # 冷載入實測 44-52s：不預載則首個帶 rerank 的請求把載入算進逾時預算而 fail-open。
-    await asyncio.to_thread(rerank_warmup)
+    必須依序：transformers 首次 import 是 lazy-module 初始化，embed（經 FlagEmbedding）
+    與 rerank（直接 import）兩執行緒同時首次 import 會競態出
+    ImportError: cannot import name 'is_torch_npu_available'，暖機每次開機全滅。
+    rerank 冷載入實測 44-52s：不預載則首個帶 rerank 的請求把載入算進逾時預算而 fail-open。
+    """
+    try:
+        await asyncio.to_thread(embed_texts, ["warmup"])
+    except Exception:
+        # embed 暖機失敗不阻斷 rerank 暖機；embed 無熔斷、首個查詢會 lazy 重試。
+        logger.exception("embedding warmup failed")
+    _s = get_settings()
+    if _s.ask_rerank_enabled or _s.report_rerank_enabled:
+        await asyncio.to_thread(rerank_warmup)  # 失敗由 rerank 模組熔斷處理，不拋
 
 
 def _log_warmup_result(task: asyncio.Task[None]) -> None:
@@ -142,23 +153,18 @@ def _log_warmup_result(task: asyncio.Task[None]) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
-    warmup_tasks = [asyncio.create_task(_warmup_embeddings())]
-    _s = get_settings()
-    if _s.ask_rerank_enabled or _s.report_rerank_enabled:
-        warmup_tasks.append(asyncio.create_task(_warmup_rerank()))
-    for t in warmup_tasks:
-        t.add_done_callback(_log_warmup_result)
-    app.state.embed_warmup_task = warmup_tasks[0]
+    warmup_task = asyncio.create_task(_warmup_models())
+    warmup_task.add_done_callback(_log_warmup_result)
+    app.state.embed_warmup_task = warmup_task
     try:
         yield
     finally:
-        for t in warmup_tasks:
-            if not t.done():
-                t.cancel()
-                try:
-                    await t
-                except asyncio.CancelledError:
-                    pass
+        if not warmup_task.done():
+            warmup_task.cancel()
+            try:
+                await warmup_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
@@ -533,12 +539,14 @@ async def progress():
 
 @app.get("/monitor")
 async def monitor():
-    return _static_page("monitor.html")
+    # 舊 vanilla 監控頁已退場，導向 SPA 監控頁（保留舊路徑/書籤相容）
+    return RedirectResponse("/app/monitor", status_code=302)
 
 
 @app.get("/help")
 async def help_page():
-    return _static_page("help.html")
+    # 舊 vanilla 說明頁已退場，導向 SPA 說明頁
+    return RedirectResponse("/app/help", status_code=302)
 
 
 @app.get("/api/markets")
@@ -552,8 +560,13 @@ async def radar_instruments(
     q: str | None = Query(None, max_length=64),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    with_consensus: bool = Query(True),
 ):
-    """觀點雷達「選標的」目錄：有可展示訊號的標的清單（獨立頁選單資料源）。"""
+    """觀點雷達「選標的」目錄：有可展示訊號的標的清單（獨立頁選單資料源）。
+
+    with_consensus=True（預設）時，當頁每檔附精簡共識預覽（立場/分佈/淨變動/目標價），
+    以單次批次查詢計算，避免逐檔 N+1。
+    """
     if market and market not in MARKETS:
         raise HTTPException(status_code=422, detail="market 非法")
     t0 = time.monotonic()
@@ -561,6 +574,13 @@ async def radar_instruments(
         total, rows = await list_radar_instruments(
             session, market=market, q=q, limit=limit, offset=offset
         )
+        signals_by_key: dict[tuple[str, str], list] = {}
+        if with_consensus and rows:
+            keys = [(r.market, r.instrument_code) for r in rows]
+            signals_by_key = await fetch_signals_for_instruments(session, keys)
+    consensus_by_key = {
+        key: build_instrument_slim(sigs) for key, sigs in signals_by_key.items()
+    }
     items = [
         RadarInstrumentItem(
             market=r.market,
@@ -571,12 +591,13 @@ async def radar_instruments(
             report_count=r.report_count,
             latest_report_date=r.latest_report_date.isoformat() if r.latest_report_date else None,
             coverage_state=r.coverage_state,
+            consensus=consensus_by_key.get((r.market, r.instrument_code)),
         )
         for r in rows
     ]
     logger.info(
-        "radar instruments total=%d q=%s market=%s elapsed_ms=%.1f",
-        total, q, market, (time.monotonic() - t0) * 1000,
+        "radar instruments total=%d q=%s market=%s consensus=%s elapsed_ms=%.1f",
+        total, q, market, with_consensus, (time.monotonic() - t0) * 1000,
     )
     return RadarInstrumentsResponse(total=total, offset=offset, items=items)
 
@@ -1126,7 +1147,8 @@ async def logout():
 
 @app.get("/")
 async def index():
-    return _static_page("index.html")
+    # 舊 vanilla 首頁已退場，根路徑導向 SPA 檢索頁
+    return RedirectResponse("/app/search", status_code=302)
 
 
 # ───── SPA（/app 子路徑；shell + 雜湊資產，純服務無業務邏輯）─────

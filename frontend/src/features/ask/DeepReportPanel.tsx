@@ -21,7 +21,7 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
         <span className={styles.offerIcon}><Icon name="fileText" size={18} /></span>
         <div className={styles.offerMain}>
           <div className={styles.offerTitle}>要不要整理成完整 PDF 深度研報？</div>
-          <div className={styles.offerSub}>彙整本輪引用來源，生成含 KPI 與圖表的深度研報，約需 3–5 分鐘。</div>
+          <div className={styles.offerSub}>彙整本輪引用來源，逐節撰寫含 KPI 與圖表的深度研報，約需 5–12 分鐘，可留在此頁等候。</div>
         </div>
         <div className={styles.offerBtns}>
           <button type="button" className={styles.yes} onClick={onGenerate}>生成研報</button>

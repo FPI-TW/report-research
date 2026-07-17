@@ -191,15 +191,28 @@ def _parse_chart(raw: str) -> ChartBlock | None:
     return ChartBlock(svg=svg)
 
 
+class ProseConversionError(RuntimeError):
+    """pandoc 無法轉換散文段。由分派層接住 → 回退 WeasyPrint（它不依賴 pandoc）。"""
+
+
 def _prose_to_typst(md: str) -> str:
-    """散文段 → Typst 片段。轉換失敗 → ""（該段捨棄，不讓整份炸掉）。"""
+    """散文段 → Typst 片段。轉換失敗 **拋出**，不吞。
+
+    先前這裡是逐段 fail-open（回 ""），但那個 fail-open 在文件層級是錯的：pandoc 若
+    整個壞掉（版本不符、binary 缺失），每一段都被略過 → 產出一份「五章標題俱在、免責
+    俱在、33KB、`%PDF` 開頭、零例外」卻**完全沒有內文**的空殼研報，然後照樣落地與寫 DB
+    當成功。而且因為不拋，分派層的 fail-open 永遠不會觸發、WeasyPrint 也救不了。
+    更隱蔽的是部分失敗：單段轉換失敗就從 PDF 靜默消失，無人察覺。
+
+    區塊層的 fail-open（畸形 kpi/chart JSON 略過該區塊）是對的——少一張卡不影響研報
+    成立；但少掉內文就不是同一件事了。
+    """
     if not md.strip():
         return ""
     try:
         return pypandoc.convert_text(md, "typst", format=_PANDOC_FORMAT)
-    except Exception:
-        logger.warning("pandoc 轉換失敗，略過該段", exc_info=True)
-        return ""
+    except Exception as exc:
+        raise ProseConversionError(f"pandoc 轉換失敗：{exc}") from exc
 
 
 def _blocks_for(body: str) -> tuple[Block, ...]:
@@ -326,11 +339,22 @@ def _emit_kpi(items: tuple[KpiItem, ...]) -> str:
 
 
 def _emit_body(doc: DocumentModel) -> str:
-    """章節 → Typst body。ProseBlock 已是 pandoc 跳脫後的片段，可直接插入。"""
+    """章節 → Typst body。ProseBlock 已是 pandoc 跳脫後的片段，可直接插入。
+
+    **heading 必須走 `_tstr` 成為字串常值，不可用 `#section-heading[...]` 的 content
+    語法**：章節標題是刻意在 pandoc 之前切出來的（否則 `## X` 會變成 Typst `== X` 而
+    丟失章節邊界），所以它是這條管線上**唯一沒有被 pandoc 跳脫過**的 LLM 原文。用
+    content 語法等於把它當 Typst 原始碼求值——實測 `## #read("/.env")` 會把 repo root
+    的 .env（含共用帳密與 DB 連線字串）整份渲染進一份可下載的 PDF；`## #eval(...)` 會
+    真的求值；`]` 還能脫出 content block 接任意指令。
+
+    附帶：content 語法也讓 spec D6 在標題失效——`## 2026 年 EPS 上修 $14.2 至 $16.8`
+    的兩個 `$` 會被配對成數學模式而吃掉內容，`## 依 @法說會 資料` 會直接編譯失敗。
+    """
     out: list[str] = []
     for sec in doc.sections:
         if sec.heading:
-            out.append(f"#section-heading[{sec.heading}]")
+            out.append(f"#section-heading({_tstr(sec.heading)})")
         for b in sec.blocks:
             if isinstance(b, ProseBlock):
                 out.append(b.typst)

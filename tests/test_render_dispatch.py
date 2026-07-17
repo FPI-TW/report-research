@@ -172,10 +172,62 @@ class HostileFixtureTests(unittest.TestCase):
             self.skipTest("敵意 fixture 不存在")
         self.md = self._FIXTURE.read_text(encoding="utf-8")
 
-    def test_hostile_markdown_compiles_to_single_page_pdf(self):
+    def test_hostile_markdown_compiles_to_pdf(self):
         pdf = rpt.render_report_pdf(self.md, title="敵意輸入測試", meta=_META)
         self.assertTrue(pdf.startswith(b"%PDF"))
         self.assertGreater(len(pdf), 10_000)
+
+    def test_heading_injection_is_not_executed(self):
+        """**章節標題是唯一沒被 pandoc 跳脫過的 LLM 原文**——必須由 emitter 以字串
+        常值輸出。初版用 `#section-heading[...]` 的 content 語法，實測 `## #eval(...)`
+        會真的求值、`## #read("/.env")` 會把 repo root 的 .env（含共用帳密）渲染進
+        可下載的 PDF、`]` 還能脫出 content block 接任意指令。
+        """
+        from app.services.typst_render import build_document, emit_typst
+
+        src = emit_typst(
+            build_document(self.md, title="敵意輸入測試", meta=_META),
+            disclaimer=REPORT_DISCLAIMER,
+        )
+        # 標題必須成為字串常值的引數，不得是 content block
+        self.assertNotIn("#section-heading[", src, "標題不得用 content 語法（可注入）")
+        for probe in ('#section-heading("#eval', '#section-heading("#read'):
+            with self.subTest(probe=probe):
+                self.assertIn(probe, src, "標題應以字串常值輸出")
+
+    def test_heading_with_dollar_not_mangled(self):
+        """`## 2026 年 EPS 上修 $14.2 至 $16.8` 是正常財經標題。
+
+        spec D6 的 gfm-tex_math_dollars 只作用於 pandoc，對標題無效——content 語法下
+        兩個 `$` 會被配對成數學模式吃掉內容（編譯成功、零錯誤，但字沒了）。
+        """
+        from app.services.typst_render import build_document, emit_typst
+
+        doc = build_document("## 2026 年 EPS 上修 $14.2 至 $16.8\n\n內文\n", title="T", meta=_META)
+        src = emit_typst(doc, disclaimer=REPORT_DISCLAIMER)
+        self.assertIn('#section-heading("2026 年 EPS 上修 $14.2 至 $16.8")', src)
+
+    def test_hostile_pdf_page_count_sane(self):
+        """頁數是唯一能自動抓到「版面被撐開」與「#read 把整份檔案灌進 PDF」的訊號。
+
+        PDF bytes 數量不能當驗收——初版曾編譯成功、73KB、零錯誤，但整份是 6 頁空白。
+        """
+        import typst
+
+        from app.services.pdf import REPORT_DISCLAIMER as _D
+        from app.services.typst_render import build_document, emit_typst
+
+        src = emit_typst(
+            build_document(self.md, title="敵意輸入測試", meta=_META), disclaimer=_D
+        )
+        tmp = REPO_ROOT / "_hostile_pagecheck.typ"
+        tmp.write_text(src, encoding="utf-8")
+        try:
+            pages = typst.compile(str(tmp), root=str(REPO_ROOT), format="png", ppi=72)
+            pages = pages if isinstance(pages, list) else [pages]
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.assertLessEqual(len(pages), 3, f"{len(pages)} 頁——版面被撐開或有檔案被讀入")
 
     def test_injection_vectors_escaped_in_emitted_source(self):
         from app.services.typst_render import build_document, emit_typst
@@ -206,6 +258,40 @@ class HostileFixtureTests(unittest.TestCase):
         ]
         self.assertEqual(len(imports), 1, "除模板 import 外不得有未跳脫的 #import")
         self.assertLess(imports[0].start(), src.index("\n"), "模板 import 應在第 1 行")
+
+
+class ProseFailureTests(unittest.TestCase):
+    """pandoc 壞掉不得靜默產出「只有標題、沒有內文」的空殼研報。
+
+    先前 _prose_to_typst 逐段 fail-open（回 ""），在文件層級累積成內容全失：33KB、
+    %PDF 開頭、五章標題俱在、免責俱在、零例外——唯獨沒有任何內文，然後照樣落地寫 DB
+    當成功。且因為不拋，分派層的 fail-open 永遠不會觸發、WeasyPrint 也救不了。
+    """
+
+    def test_pandoc_failure_raises_not_silently_empty(self):
+        from app.services.typst_render import ProseConversionError, build_document
+
+        with patch("pypandoc.convert_text", side_effect=RuntimeError("pandoc dead")):
+            with self.assertRaises(ProseConversionError):
+                build_document(_MD, title="T", meta=_META)
+
+    def test_pandoc_failure_falls_back_to_weasyprint(self):
+        """整條鏈：pandoc 壞 → typst 拋 → 分派層回退 WeasyPrint（它不依賴 pandoc）。"""
+        with patch.object(rpt, "REPORT_RENDERER", "typst"), patch(
+            "pypandoc.convert_text", side_effect=RuntimeError("pandoc dead")
+        ), patch.object(rpt, "_render_weasyprint", return_value=b"%PDF-weasy") as m_weasy:
+            out = rpt.render_report_pdf(_MD, title="T", meta=_META)
+        self.assertEqual(out, b"%PDF-weasy")
+        m_weasy.assert_called_once()
+
+    def test_block_level_failure_still_fails_open(self):
+        """區塊層 fail-open 維持不變——少一張畸形 KPI 卡不影響研報成立。"""
+        from app.services.typst_render import KpiBlock, build_document
+
+        doc = build_document("## 執行摘要\n\n內文\n\n```kpi\n{bad json\n```\n", title="T", meta=_META)
+        self.assertFalse([b for s in doc.sections for b in s.blocks if isinstance(b, KpiBlock)])
+        self.assertTrue(doc.sections)
+
 
 if __name__ == "__main__":
     unittest.main()

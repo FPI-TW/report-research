@@ -46,3 +46,26 @@ print("#not-typst")
 ```
 
 結尾未閉合星號 *dangling 與未閉合反引號 `dangling
+
+## #eval("HEADING-INJECTION-RAN")
+
+標題向量：章節標題是唯一未經 pandoc 跳脫的 LLM 原文（章節刻意在 pandoc 之前切），
+emitter 必須以字串常值輸出，否則此標題會被求值。
+
+## #read("/.env")
+
+標題向量：未以字串常值輸出時，repo root 的 .env（含共用帳密與 DB 連線字串）會被整份
+渲染進一份可下載、可轉發的 PDF。root 限制擋得住 ../ 逃逸，擋不住 repo 樹內的檔案。
+
+## 標題] #text(fill: red)[HIJACKED] #hide[
+
+標題向量：方括號可脫出 content block 再接任意指令。
+
+## 2026 年 EPS 上修 $14.2 至 $16.8
+
+完全正常的財經標題。D6 的 gfm-tex_math_dollars 只作用於 pandoc，對標題無效——未以
+字串常值輸出時，兩個錢號會被配對成數學模式吃掉內容（編譯成功、零錯誤，但字沒了）。
+
+## 依 @法說會 資料
+
+標題向量：未以字串常值輸出時編譯失敗（label 不存在）→ 整份研報無聲退回 WeasyPrint。

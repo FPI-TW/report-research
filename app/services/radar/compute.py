@@ -23,6 +23,9 @@ from app.services.radar.schemas import (
     EpsConsensus,
     EpsGroup,
     EventCard,
+    InstrumentConsensus,
+    InstrumentStance,
+    InstrumentTargetBrief,
     RadarOverviewResponse,
     RatingBucketCount,
     RatingConsensus,
@@ -173,7 +176,9 @@ def _rating_consensus(consensus, by_broker) -> RatingConsensus:
     return RatingConsensus(
         distribution=[RatingBucketCount(rating=lvl, count=dist[lvl]) for lvl in FIVE_LEVELS],
         bullish=bullish, neutral=neutral, bearish=bearish, unknown=unknown,
-        total_rated=sum(dist.values()), upgrades=up, downgrades=down, unchanged=flat,
+        total_rated=sum(dist.values()),
+        median_rating=scale.median_rating([(lvl, dist[lvl]) for lvl in FIVE_LEVELS]),
+        upgrades=up, downgrades=down, unchanged=flat,
     )
 
 
@@ -387,6 +392,44 @@ def build_overview(
         rating=rating, target_price=target, eps=eps, thesis=thesis,
         recent_events=events, recent_events_total=events_total, brokers=brokers, notes=notes,
     )
+
+
+def build_instrument_slim(
+    signals: list[Signal], *, window: str = "90"
+) -> Optional[InstrumentConsensus]:
+    """標的卡片用精簡共識（overview 子集）：中位立場 + 五級分佈 + 淨變動 + 目標價中位。
+
+    重用 build_overview 的共識子聚合，只保留卡片所需欄位。無共識（尚未擷取/窗期空/
+    全 unknown）→ None，卡片走淡態。窗期預設 90 天，以各標的自身 as_of 起算。
+    """
+    if not signals:
+        return None
+    as_of = max((s.report_date for s in signals if s.report_date), default=None)
+    ws = _window_start(as_of, window)
+    by_broker = _by_broker(signals)
+    consensus = _consensus_set(by_broker, ws)
+    if not consensus:
+        return None
+    rc = _rating_consensus(consensus, by_broker)
+    if rc.total_rated == 0 or rc.median_rating is None:
+        return None
+    tc = _target_consensus(consensus, by_broker)
+    target: Optional[InstrumentTargetBrief] = None
+    if tc and tc.groups:
+        primary = next(
+            (g for g in tc.groups if g.currency == tc.primary_currency), tc.groups[0]
+        )
+        target = InstrumentTargetBrief(
+            currency=primary.currency, median=primary.median,
+            revision_pct=primary.revision_pct, revision_direction=primary.revision_direction,
+        )
+    stance = InstrumentStance(
+        rating=rc.median_rating, bullish=rc.bullish, neutral=rc.neutral, bearish=rc.bearish,
+        total_rated=rc.total_rated, distribution=rc.distribution,
+        upgrades=rc.upgrades, downgrades=rc.downgrades,
+        net_rating=rc.upgrades - rc.downgrades,
+    )
+    return InstrumentConsensus(window=window, stance=stance, target=target)
 
 
 def _eps_group_single(e) -> EpsGroup:

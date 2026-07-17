@@ -104,6 +104,15 @@ class _QueuedSession:
         return res
 
 
+def _brow(code, broker="a", market="TW"):
+    # SIGNAL_SELECT_COLUMNS 順序，供批次分組測試（不同 code/broker）
+    return (
+        f"s-{code}-{broker}", f"r-{code}-{broker}", market, code, broker,
+        date(2026, 7, 11), "Buy", "buy", Decimal("100.0"), "TWD", "12M", "e",
+        "[]", "{}", "valid", f"{broker}.pdf",
+    )
+
+
 class FetchTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_instrument_signals_packs_rows(self):
         session = _QueuedSession([_FakeResult([_row(), _row(rating="neutral")])])
@@ -111,6 +120,33 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 2)
         self.assertEqual(signals[0].instrument_code, "8046")
         self.assertEqual(signals[1].rating_normalized, "neutral")
+
+
+class BatchSignalsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_groups_by_instrument(self):
+        session = _QueuedSession(
+            [_FakeResult([_brow("8046"), _brow("8046", "b"), _brow("9914")])]
+        )
+        out = await queries.fetch_signals_for_instruments(
+            session, [("TW", "8046"), ("TW", "9914")]
+        )
+        self.assertEqual(set(out.keys()), {("TW", "8046"), ("TW", "9914")})
+        self.assertEqual(len(out[("TW", "8046")]), 2)
+        self.assertEqual(len(out[("TW", "9914")]), 1)
+
+    async def test_empty_keys_skips_query(self):
+        session = _QueuedSession([])  # 若真的 execute 會 IndexError
+        out = await queries.fetch_signals_for_instruments(session, [])
+        self.assertEqual(out, {})
+        self.assertEqual(session.executed, 0)
+
+
+class BatchSqlStructureTests(unittest.TestCase):
+    def test_batch_sql_named_params(self):
+        sql = str(queries._BATCH_SIGNALS_SQL)
+        self.assertIn("unnest(:markets::text[], :codes::text[])", sql)
+        self.assertIn("(s.market, s.instrument_code) IN", sql)
+        self.assertIn("s.extraction_status = ANY(:statuses)", sql)
 
 
 if __name__ == "__main__":

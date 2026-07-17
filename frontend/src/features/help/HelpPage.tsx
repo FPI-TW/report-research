@@ -36,7 +36,7 @@ const TOC: [string, string][] = [
   ['result', '看懂一筆結果'],
   ['full', '查看完整報告（PDF）'],
   ['ask', '智能問答（向 AI 提問）'],
-  ['radar', '觀點雷達'],
+  ['radar', '廷豐觀點'],
   ['monitor', '導入監控（進階）'],
 ]
 
@@ -106,7 +106,7 @@ export default function HelpPage() {
           </h1>
           <p className={styles.lede}>
             廷豐智能研報把券商研報集中起來，用「語意 ＋ 關鍵字」混合搜尋，幾秒內找到相關報告與段落，
-            並可直接閱讀原始 PDF、向 AI 提問、或用觀點雷達追蹤各券商評等變化。本說明帶你快速上手。
+            並可直接閱讀原始 PDF、向 AI 提問、或用廷豐觀點追蹤各券商評等變化。本說明帶你快速上手。
           </p>
         </header>
 
@@ -271,8 +271,8 @@ export default function HelpPage() {
         </section>
 
         <section id="radar" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>7</span>觀點雷達</h2>
-          <p><strong>觀點雷達</strong>把同一標的的各券商研報彙整起來，追蹤一段期間內的<strong>觀點與評等變化</strong>：</p>
+          <h2 className={styles.h2}><span className={styles.no}>7</span>廷豐觀點</h2>
+          <p><strong>廷豐觀點</strong>把同一標的的各券商研報彙整起來，追蹤一段期間內的<strong>觀點與評等變化</strong>：</p>
           <ul className={styles.bul}>
             <li>先選一個標的，即可看到<strong>評等共識</strong>、<strong>目標價／EPS 中位數</strong>與資料品質。</li>
             <li><strong>近期關鍵變化</strong>列出各券商的上修／下修事件，可點開原始研報佐證。</li>

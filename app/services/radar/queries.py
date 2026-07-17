@@ -82,6 +82,44 @@ async def fetch_broker_signals(
     return [parse_signal_row(r) for r in rows]
 
 
+_BATCH_SIGNALS_SQL = text(
+    f"SELECT {SIGNAL_SELECT_COLUMNS} "
+    "FROM research.report_signal s "
+    "JOIN research.research_report r ON r.id = s.report_id "
+    "WHERE (s.market, s.instrument_code) IN ("
+    "  SELECT m, c FROM unnest(:markets::text[], :codes::text[]) AS t(m, c)) "
+    "  AND s.extraction_status = ANY(:statuses) "
+    "ORDER BY s.market, s.instrument_code, s.broker, "
+    "         s.report_date DESC NULLS LAST, s.created_at DESC"
+)
+
+
+async def fetch_signals_for_instruments(
+    session: AsyncSession, keys: list[tuple[str, str]], *, statuses=VALID_STATUSES
+) -> dict[tuple[str, str], list[Signal]]:
+    """一次批次抓多檔（當頁 ≤50）的全部有效訊號，依 (market, code) 分組。
+
+    picker 卡片精簡共識用：單次查詢取代逐檔 N+1；窗期過濾仍交給 Python。
+    """
+    if not keys:
+        return {}
+    out: dict[tuple[str, str], list[Signal]] = {}
+    rows = (
+        await session.execute(
+            _BATCH_SIGNALS_SQL,
+            {
+                "markets": [m for m, _ in keys],
+                "codes": [c for _, c in keys],
+                "statuses": list(statuses),
+            },
+        )
+    ).all()
+    for r in rows:
+        sig = parse_signal_row(r)
+        out.setdefault((sig.market, sig.instrument_code), []).append(sig)
+    return out
+
+
 _COVERAGE_SQL = text(
     """
     SELECT

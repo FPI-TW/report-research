@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import statistics
 from dataclasses import dataclass
 from typing import Optional
@@ -19,6 +20,7 @@ RATING_BUCKET = {
     "buy": "bullish", "overweight": "bullish", "neutral": "neutral",
     "underweight": "bearish", "sell": "bearish",
 }
+_INV_RATING_SCALE = {v: k for k, v in RATING_SCALE.items()}
 RATING_DISPLAY = {
     "buy": "買進", "overweight": "加碼", "neutral": "中立",
     "underweight": "減碼", "sell": "賣出", "unknown": "未評等",
@@ -52,6 +54,25 @@ def rating_scale(rating: Optional[str]) -> Optional[int]:
 def rating_bucket(rating: Optional[str]) -> Optional[str]:
     """五級 → 三桶（bullish/neutral/bearish）；unknown → None。"""
     return RATING_BUCKET.get(rating or "")
+
+
+def median_rating(distribution: list[tuple[str, int]]) -> Optional[str]:
+    """五級評等分佈的加權中位立場（買進>加碼>中立>減碼>賣出）。
+
+    展開為序位樣本取中位；偶數樣本恰跨兩級時向偏多側取整（round-half-up）。
+    空分佈（或全 unknown）→ None。
+    """
+    samples: list[int] = []
+    for rating, count in distribution:
+        s = RATING_SCALE.get(rating)
+        if s is None or count <= 0:
+            continue
+        samples.extend([s] * count)
+    if not samples:
+        return None
+    m = statistics.median(samples)
+    idx = max(-2, min(2, math.floor(m + 0.5)))
+    return _INV_RATING_SCALE[idx]
 
 
 def rating_direction(prev: Optional[str], curr: Optional[str]) -> str:

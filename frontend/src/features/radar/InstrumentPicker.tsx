@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '../../components/primitives/Icon'
-import { Skeleton } from '../../components/primitives/Skeleton'
+import { InstrumentCard } from './InstrumentCard'
 import { fmtDate } from './radarFormat'
 import { useRadarInstruments } from './useRadar'
 import styles from './InstrumentPicker.module.css'
@@ -29,27 +29,42 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
   }, [q])
 
   const query = useRadarInstruments({ market, q: debounced })
+  const items = query.data?.items ?? []
+  const total = query.data?.total
+  const latest = items[0]?.latest_report_date
 
   return (
     <div className={styles.wrap}>
-      <h1 className={styles.title}>觀點雷達</h1>
-      <p className={styles.sub}>
-        選擇標的後，檢視跨券商評等、目標價、EPS 與四維論點共識，以及近期觀點變化。
-        本區整理已擷取的研報觀點，非系統預測或投資建議。
-      </p>
+      <div className={styles.mast}>
+        <div>
+          <h1 className={styles.title}>廷豐觀點</h1>
+          <p className={styles.lede}>券商觀點一眼掌握</p>
+        </div>
+        <div className={styles.statrail}>
+          <div className={styles.stat}>
+            <b>{total != null ? total : '—'}</b>
+            <span>檔標的</span>
+          </div>
+          <div className={styles.stat}>
+            <b>{latest ? fmtDate(latest) : '—'}</b>
+            <span>最新研報</span>
+          </div>
+        </div>
+      </div>
 
-      <div className={styles.controls}>
-        <label className={styles.search}>
-          <Icon name="search" size={18} className={styles.searchIcon} />
-          <input
-            className={styles.input}
-            type="search"
-            placeholder="搜尋代碼或名稱…"
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            aria-label="搜尋標的"
-          />
-        </label>
+      <label className={styles.search}>
+        <Icon name="search" size={18} className={styles.searchIcon} />
+        <input
+          className={styles.input}
+          type="search"
+          placeholder="搜尋代碼或名稱…"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          aria-label="搜尋標的"
+        />
+      </label>
+
+      <div className={styles.filterrow}>
         <div className={styles.markets} role="group" aria-label="市場">
           {MARKETS.map(m => (
             <button
@@ -62,53 +77,36 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
             </button>
           ))}
         </div>
+        {total != null ? (
+          <span className={styles.count}>
+            {/* total 是符合篩選的全部筆數，items 受 useRadar 的 limit 截斷且無分頁：
+                兩者不等時要如實顯示，否則標籤會宣稱格內有它沒有的卡片。 */}
+            顯示 {items.length < total ? `${items.length} / ${total}` : total} 檔
+          </span>
+        ) : null}
       </div>
 
       {query.isLoading ? (
-        <div className={styles.list} aria-busy="true" data-testid="picker-skeleton">
-          {Array.from({ length: 6 }, (_, i) => (
-            <div key={i} className={styles.item} style={{ pointerEvents: 'none' }}>
-              <div className={styles.main}>
-                <Skeleton width={120} height={16} radius={4} />
-                <Skeleton width={180} height={12} radius={4} style={{ marginTop: 8 }} />
-              </div>
-            </div>
-          ))}
+        <div className={styles.grid} aria-busy="true" data-testid="picker-skeleton">
+          {Array.from({ length: 6 }, (_, i) => <div key={i} className={styles.skel} />)}
         </div>
       ) : query.isError ? (
         <div className={styles.error} role="alert">
           載入標的清單失敗。
-          <button type="button" className={styles.chip} style={{ marginLeft: 8 }} onClick={() => query.refetch()}>
-            重試
-          </button>
+          <button type="button" className={styles.retry} onClick={() => query.refetch()}>重試</button>
         </div>
-      ) : !query.data?.items.length ? (
+      ) : !items.length ? (
         <div className={styles.empty}>尚無可展示訊號的標的。請先完成訊號擷取，或調整搜尋條件。</div>
       ) : (
-        <ul className={styles.list}>
-          {query.data.items.map(item => (
-            <li key={`${item.market}:${item.instrument_code}`}>
-              <button
-                type="button"
-                className={styles.item}
-                onClick={() => onSelect(item.market, item.instrument_code)}
-              >
-                <div className={styles.main}>
-                  <div className={styles.name}>
-                    <span>{item.instrument_name || item.instrument_code}</span>
-                    <span className={styles.code}>{item.instrument_code}</span>
-                  </div>
-                  <div className={styles.meta}>
-                    {item.broker_count} 家券商 · {item.report_count} 份研報
-                    {item.latest_report_date ? ` · 最新 ${fmtDate(item.latest_report_date)}` : ''}
-                  </div>
-                </div>
-                <span className={styles.mkt}>{item.market_display || item.market}</span>
-                <Icon name="chevronDown" size={16} className={styles.chevron} />
-              </button>
-            </li>
+        <div className={styles.grid}>
+          {items.map(item => (
+            <InstrumentCard
+              key={`${item.market}:${item.instrument_code}`}
+              item={item}
+              onSelect={onSelect}
+            />
           ))}
-        </ul>
+        </div>
       )}
     </div>
   )

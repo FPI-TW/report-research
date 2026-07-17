@@ -69,10 +69,12 @@ from app.services.pdf import render_report_pdf  # noqa: E402
 from app.services.report import fetch_report_doc, generate_report, write_report_pdf  # noqa: E402
 from app.services.radar import (  # noqa: E402
     build_broker_history,
+    build_instrument_slim,
     build_overview,
     fetch_broker_signals,
     fetch_coverage_counts,
     fetch_instrument_signals,
+    fetch_signals_for_instruments,
     list_radar_instruments,
 )
 from app.services.radar.schemas import (  # noqa: E402
@@ -548,8 +550,13 @@ async def radar_instruments(
     q: str | None = Query(None, max_length=64),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    with_consensus: bool = Query(True),
 ):
-    """觀點雷達「選標的」目錄：有可展示訊號的標的清單（獨立頁選單資料源）。"""
+    """觀點雷達「選標的」目錄：有可展示訊號的標的清單（獨立頁選單資料源）。
+
+    with_consensus=True（預設）時，當頁每檔附精簡共識預覽（立場/分佈/淨變動/目標價），
+    以單次批次查詢計算，避免逐檔 N+1。
+    """
     if market and market not in MARKETS:
         raise HTTPException(status_code=422, detail="market 非法")
     t0 = time.monotonic()
@@ -557,6 +564,13 @@ async def radar_instruments(
         total, rows = await list_radar_instruments(
             session, market=market, q=q, limit=limit, offset=offset
         )
+        signals_by_key: dict[tuple[str, str], list] = {}
+        if with_consensus and rows:
+            keys = [(r.market, r.instrument_code) for r in rows]
+            signals_by_key = await fetch_signals_for_instruments(session, keys)
+    consensus_by_key = {
+        key: build_instrument_slim(sigs) for key, sigs in signals_by_key.items()
+    }
     items = [
         RadarInstrumentItem(
             market=r.market,
@@ -567,12 +581,13 @@ async def radar_instruments(
             report_count=r.report_count,
             latest_report_date=r.latest_report_date.isoformat() if r.latest_report_date else None,
             coverage_state=r.coverage_state,
+            consensus=consensus_by_key.get((r.market, r.instrument_code)),
         )
         for r in rows
     ]
     logger.info(
-        "radar instruments total=%d q=%s market=%s elapsed_ms=%.1f",
-        total, q, market, (time.monotonic() - t0) * 1000,
+        "radar instruments total=%d q=%s market=%s consensus=%s elapsed_ms=%.1f",
+        total, q, market, with_consensus, (time.monotonic() - t0) * 1000,
     )
     return RadarInstrumentsResponse(total=total, offset=offset, items=items)
 

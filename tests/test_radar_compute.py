@@ -7,7 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.radar.compute import build_broker_history, build_overview  # noqa: E402
+from app.services.radar.compute import (  # noqa: E402
+    build_broker_history,
+    build_instrument_slim,
+    build_overview,
+)
 from app.services.radar.queries import CoverageCounts  # noqa: E402
 from app.services.radar.types import DimensionStance, EpsEstimate, Signal  # noqa: E402
 
@@ -164,6 +168,43 @@ class BrokerHistoryTests(unittest.TestCase):
         tp = [c for c in newest.changes if c.field == "target_price"][0]
         self.assertEqual(tp.direction, "up")
         self.assertTrue(tp.comparable)
+
+
+class InstrumentSlimTests(unittest.TestCase):
+    def test_slim_happy_path(self):
+        signals = [
+            _sig("a", date(2026, 7, 1), "neutral", target=1000.0, currency="TWD"),
+            _sig("a", date(2026, 7, 10), "buy", rating_raw="買進", target=1200.0, currency="TWD"),
+            _sig("b", date(2026, 7, 9), "overweight", target=1100.0, currency="TWD"),
+        ]
+        c = build_instrument_slim(signals, window="90")
+        self.assertIsNotNone(c)
+        # 每家最新：a=buy、b=overweight → 皆偏多
+        self.assertEqual(c.stance.bullish, 2)
+        self.assertEqual(c.stance.total_rated, 2)
+        self.assertEqual(c.stance.rating, "buy")  # 中位 [buy,overweight] 向偏多取整
+        # a: neutral→buy 上調1；b 無前次；淨 = 1
+        self.assertEqual(c.stance.upgrades, 1)
+        self.assertEqual(c.stance.net_rating, 1)
+        # 目標價 primary TWD 中位 [1200,1100]=1150；a 1000→1200 上修
+        self.assertEqual(c.target.currency, "TWD")
+        self.assertEqual(c.target.median, 1150.0)
+        self.assertEqual(c.target.revision_direction, "up")
+
+    def test_slim_none_when_no_signals(self):
+        self.assertIsNone(build_instrument_slim([], window="90"))
+
+    def test_slim_none_when_all_unknown(self):
+        signals = [_sig("a", date(2026, 7, 10), "unknown")]
+        self.assertIsNone(build_instrument_slim(signals, window="90"))
+
+    def test_slim_target_none_without_prices(self):
+        c = build_instrument_slim([_sig("a", date(2026, 7, 10), "buy")], window="90")
+        self.assertIsNotNone(c)
+        self.assertIsNone(c.target)
+        self.assertEqual(c.stance.rating, "buy")
+        self.assertEqual(c.stance.net_rating, 0)  # 無前次
+        self.assertEqual(len(c.stance.distribution), 5)  # 五級皆在（供迷你條）
 
 
 if __name__ == "__main__":

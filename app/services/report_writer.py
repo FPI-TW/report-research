@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -164,6 +165,13 @@ SKELETON_HEADINGS: dict[str, str] = {
     "risk_outlook": "風險與展望",
     "references": "引用來源",
 }
+
+# 單節的薄涵蓋提示。run-level 的 coverage_directive 講的是「整份研報找不到語料」，
+# 逐節要的是「這一節缺料」，語意不同故另立文案。
+_SECTION_WEB_NOTE = (
+    "注意：本節在語料中命中的研報偏少。請主動以網路搜尋補足本節缺漏的面向，"
+    "並在「### 本節網路來源」逐條列出所用網址。"
+)
 
 # 逐節網路來源的中繼區塊：各節自報本節用到的網址，組裝時抽出、去重、彙整為單一
 # 「## 外部參考（網路）」節（必須與 report.parse_external_refs 的受控解析逐字對齊）。
@@ -939,6 +947,8 @@ async def draft_report(
     draft_model: str | None = None,
     web_enabled: bool = False,
     coverage_note: str = "",
+    thin_coverage: int = 0,
+    deadline: float | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """M7 逐節生成核心編排（async generator）。
 
@@ -987,6 +997,23 @@ async def draft_report(
 
     for sec in secs:
         pos = sec["position"]
+        # 逾時預算：超支後只砍動態子節（kind="analysis"），骨架節（kind="framing"）
+        # 仍必須跑完——section_coverage 分母=5，頂層節缺一個就是缺章。deadline 因此是
+        # 「軟」的：限制的是報告深度，不是完整性。
+        #
+        # 且至少保留一個動態子節：砍光會讓「重點分析」整章消失，觸發下方的缺章
+        # __failed__ 檢查——逾時保護反而把原本能出貨的研報變成不出貨。
+        if (
+            deadline is not None
+            and sec["kind"] == "analysis"
+            and time.monotonic() > deadline
+            and any(d["kind"] == "analysis" for d in drafts)
+        ):
+            # 跳過的節維持 pending：schema 的 status 列舉沒有 'skipped'，硬寫會違反
+            # CHECK 而被 _audit 的 fail-open 靜默吞掉（等於留下錯的稽核）。pending
+            # 已足以表達「這節沒跑」。
+            logger.warning("逾時預算用罄，跳過動態子節 pos=%s", pos)
+            continue
         try:
             sources, sec_ctx = await asyncio.wait_for(
                 retrieve_for_section(sec["topic"], filters=filters),
@@ -998,14 +1025,20 @@ async def draft_report(
             logger.warning("section retrieve fail-open pos=%s", pos, exc_info=True)
             sources, sec_ctx = [], ""
         labeled_ctx, allowed_ids = _evidence_context(sources, sec_ctx, ledger)
+        # 網搜逐節開啟會讓成本放大 N 倍：單次路徑一份研報只搜 1 次，逐節無條件開就是
+        # 每節各搜一次（實測 8 節 8 次網搜 → 破 1500s，r005/r009 皆如此）。沿用既有的
+        # 薄涵蓋門檻：本節自己檢索到的研報夠多就不上網——那正是 coverage_directive 的
+        # 判斷，先前每節無條件開等於把它架空。
+        sec_web = web_enabled and len(sources) < thin_coverage
         system, prompt = _build_section_prompt(
             question, sec, labeled_ctx, bool(allowed_ids),
-            web_enabled=web_enabled, coverage_note=coverage_note,
+            web_enabled=sec_web,
+            coverage_note=(coverage_note or _SECTION_WEB_NOTE) if sec_web else "",
         )
         draft_text = ""
         async for kind, payload in _stream_section(
             system, prompt, timeout=s.report_section_timeout, retry=retry,
-            model=draft_model, allow_web=web_enabled,
+            model=draft_model, allow_web=sec_web,
         ):
             if kind == "__text__":
                 draft_text = str(payload)

@@ -54,11 +54,12 @@ def _fake_draft(events, *, capture=None):
     """
 
     async def _gen(question, context, *, filters=None, run_id=None, draft_model=None,
-                   web_enabled=False, coverage_note=""):
+                   web_enabled=False, coverage_note="", thin_coverage=0, deadline=None):
         if capture is not None:
             capture["draft_kwargs"] = {
                 "filters": filters, "run_id": run_id, "draft_model": draft_model,
                 "web_enabled": web_enabled, "coverage_note": coverage_note,
+                "thin_coverage": thin_coverage, "deadline": deadline,
             }
         for e in events:
             yield e
@@ -349,7 +350,8 @@ class SectionedFallbackTests(_SectionedBase):
         """已吐內容 token 後 draft_report 例外 → 回 error、不退單次（避免重覆內容）。"""
 
         async def _boom_gen(question, context, *, filters=None, run_id=None,
-                            draft_model=None, web_enabled=False, coverage_note=""):
+                            draft_model=None, web_enabled=False, coverage_note="",
+                            thin_coverage=0, deadline=None):
             yield ("status", {"stage": "writing"})
             yield ("token", "部分內容")
             raise RuntimeError("draft boom")

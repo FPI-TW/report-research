@@ -62,6 +62,9 @@ REPORT_RERANK_TIMEOUT = _S.report_rerank_timeout
 REPORT_PLANNER_TIMEOUT = _S.report_planner_timeout
 # 逐節生成（M7）：預設開。關閉即完全退回單次生成路徑（事件序、契約皆不變）。
 REPORT_SECTIONED_ENABLED = _S.report_sectioned_enabled
+# 逐節薄涵蓋門檻（該節命中低於此數才上網補）。與 REPORT_THIN_COVERAGE 分開：後者
+# 是 run-level（分母 25），拿來套逐節（配額 8）會幾乎每節誤觸發網搜。
+REPORT_SECTION_THIN_COVERAGE = _S.report_section_thin_coverage
 
 REPORT_SYSTEM_PROMPT = (
     "你是「廷豐智能研報」的研究分析師，負責把研報片段（必要時佐以網路資料）彙整成一份"
@@ -438,14 +441,19 @@ async def generate_report(
         produced = False           # 是否已吐過任一「內容 token」（退單次的硬邊界）
         final_payload: dict | None = None
         failed_detail: str | None = None
-        # 薄涵蓋 nudge（PR #36）：逐節路徑沿用 run-level 命中數的同一判定與門檻
-        # （逐節配額 max_reports=8 遠低於整份 25，拿逐節命中數套 REPORT_THIN_COVERAGE=8
-        # 會幾乎每節都誤觸發網搜），算一次後注入每節 prompt。
+        # 薄涵蓋 nudge（PR #36）：run-level 命中數算一次，作為「整份研報都沒料」時的
+        # 提示；逐節另有自己的門檻（REPORT_SECTION_THIN_COVERAGE），因為逐節配額
+        # max_reports=8 遠低於整份 25，拿 REPORT_THIN_COVERAGE=8 套逐節會幾乎每節誤觸發。
         note = coverage_directive(len(sources), web_enabled=REPORT_ENABLE_WEB)
         try:
             async for kind, payload in report_writer.draft_report(
                 question, context, filters=filters, run_id=run_id, draft_model=model,
                 web_enabled=REPORT_ENABLE_WEB, coverage_note=note,
+                thin_coverage=REPORT_SECTION_THIN_COVERAGE,
+                # 逐節路徑先前完全沒有總預算：單次路徑有 REPORT_TIMEOUT=600s 上限，
+                # 逐節卻是 N 節 × 每節 150s（＋retry）無界累加，M1b 實測兩題破 1500s。
+                # 超支只砍動態子節，骨架五章仍跑完（見 draft_report）。
+                deadline=started + REPORT_TIMEOUT,
             ):
                 if kind == "__final__":
                     final_payload = payload if isinstance(payload, dict) else {}

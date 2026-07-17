@@ -90,6 +90,7 @@ class Settings:
     report_section_max_context_chars: int
     report_section_rerank_candidates: int
     report_section_retry: int
+    report_section_thin_coverage: int
 
 
 def _load() -> Settings:
@@ -177,6 +178,14 @@ def _load() -> Settings:
             os.getenv("REPORT_SECTION_RERANK_CANDIDATES", "40")
         ),
         report_section_retry=int(os.getenv("REPORT_SECTION_RETRY", "1")),
+        # 逐節薄涵蓋門檻：低於此數才讓該節上網補。**必須明顯低於逐節配額**
+        # （REPORT_SECTION_MAX_REPORTS=8）——拿 run-level 的 REPORT_THIN_COVERAGE=8
+        # 來套會幾乎每節都觸發（節最多就檢索 8 篇）。無條件開網搜的代價是成本放大
+        # N 倍：單次路徑一份研報搜 1 次，逐節 8 節就搜 8 次（M1b 實測 r005/r009
+        # 各 8/7 次網搜，雙雙撞破 1500s）。
+        report_section_thin_coverage=int(
+            os.getenv("REPORT_SECTION_THIN_COVERAGE", "3")
+        ),
     )
 
 

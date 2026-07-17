@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import unittest
 from unittest.mock import patch
 
@@ -1043,3 +1044,135 @@ class WebRefsAssemblyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── M7 成本控制：逐節網搜門檻與逾時預算 ────────────────────────────────────
+def _outline_5_analysis():
+    """五章骨架 + 3 個動態子節（deadline 測試需要多個 analysis 節可砍）。"""
+    return {
+        "title": "研報T",
+        "sections": [
+            {"position": 0, "key": "exec_summary", "heading": "執行摘要",
+             "topic": "q", "kind": "framing"},
+            {"position": 1, "key": "key_findings", "heading": "關鍵發現",
+             "topic": "q", "kind": "framing"},
+            {"position": 2, "key": "analysis", "heading": "面向A",
+             "topic": "ta", "kind": "analysis"},
+            {"position": 3, "key": "analysis", "heading": "面向B",
+             "topic": "tb", "kind": "analysis"},
+            {"position": 4, "key": "analysis", "heading": "面向C",
+             "topic": "tc", "kind": "analysis"},
+            {"position": 5, "key": "risk_outlook", "heading": "風險與展望",
+             "topic": "r", "kind": "framing"},
+        ],
+    }
+
+
+class SectionWebGatingTests(unittest.IsolatedAsyncioTestCase):
+    """逐節網搜必須依「該節自己的命中數」決定。
+
+    無條件開的代價是成本放大 N 倍：單次路徑一份研報搜 1 次，逐節 8 節就搜 8 次
+    （M1b 實測 r005/r009 各 8/7 次網搜，雙雙撞破 1500s）。門檻必須明顯低於逐節配額
+    （REPORT_SECTION_MAX_REPORTS=8）——拿 run-level 的 REPORT_THIN_COVERAGE=8 來套
+    會幾乎每節都觸發，等於沒關。
+    """
+
+    async def _allow_web_calls(self, n_sources, *, thin_coverage, web_enabled=True):
+        from types import SimpleNamespace
+
+        seen = []
+        src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf", market="TW",
+                              report_date="2026-01-01")
+
+        async def fake_outline(*a, **k):
+            return _outline_3()
+
+        async def fake_retrieve(topic, **k):
+            return ([src] * n_sources, "[1] 報告：a.pdf\n片段")
+
+        def fake_stream(*a, **k):
+            seen.append(k.get("allow_web"))
+
+            async def gen():
+                yield "內文"
+
+            return gen()
+
+        with patch.object(rw, "plan_outline", fake_outline), patch.object(
+            rw, "retrieve_for_section", fake_retrieve
+        ), patch.object(rw, "stream_completion", fake_stream):
+            [e async for e in rw.draft_report(
+                "q", "ctx", web_enabled=web_enabled, thin_coverage=thin_coverage)]
+        return seen
+
+    async def test_rich_section_does_not_search_web(self):
+        """該節命中數達門檻 → 不開網搜（一般題的常態，省下 N 次網搜）。"""
+        seen = await self._allow_web_calls(8, thin_coverage=3)
+        self.assertTrue(seen)
+        self.assertTrue(all(v is False for v in seen), f"不該有節開網搜：{seen}")
+
+    async def test_thin_section_searches_web(self):
+        """該節真的缺料 → 仍要上網補，否則會產出無資料支撐的章節。"""
+        seen = await self._allow_web_calls(1, thin_coverage=3)
+        self.assertTrue(all(v is True for v in seen), f"缺料節應開網搜：{seen}")
+
+    async def test_web_disabled_globally_never_searches(self):
+        seen = await self._allow_web_calls(0, thin_coverage=3, web_enabled=False)
+        self.assertTrue(all(v is False for v in seen), f"全域關網搜仍被開：{seen}")
+
+    async def test_run_level_threshold_would_defeat_the_gate(self):
+        """回歸：拿 run-level 門檻（8）套逐節配額（8）會幾乎每節誤觸發。
+
+        這條記錄的是「為什麼 REPORT_SECTION_THIN_COVERAGE 要跟 REPORT_THIN_COVERAGE
+        分開」——同一組 sources 在門檻 8 下全開、門檻 3 下全關。
+        """
+        self.assertTrue(all(v is True for v in await self._allow_web_calls(7, thin_coverage=8)))
+        self.assertTrue(all(v is False for v in await self._allow_web_calls(7, thin_coverage=3)))
+
+
+class SectionDeadlineTests(unittest.IsolatedAsyncioTestCase):
+    """逐節路徑的總預算：單次路徑有 REPORT_TIMEOUT 上限，逐節先前完全無界。"""
+
+    async def _headings(self, *, deadline):
+        from types import SimpleNamespace
+
+        src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf", market="TW",
+                              report_date="2026-01-01")
+
+        async def fake_outline(*a, **k):
+            return _outline_5_analysis()
+
+        async def fake_retrieve(topic, **k):
+            return ([src] * 8, "[1] 報告：a.pdf\n片段")
+
+        with patch.object(rw, "plan_outline", fake_outline), patch.object(
+            rw, "retrieve_for_section", fake_retrieve
+        ), patch.object(rw, "stream_completion", _draft_stream("內文")):
+            events = [e async for e in rw.draft_report(
+                "q", "ctx", thin_coverage=3, deadline=deadline)]
+        md = events[-1][1]["markdown"]
+        return md, [e for e in events if e[0] == "section_draft"]
+
+    async def test_expired_deadline_skips_extra_analysis_but_keeps_skeleton(self):
+        """預算用罄 → 砍動態子節，但骨架五章與至少一個動態子節必須留下。
+
+        砍光 analysis 會讓「重點分析」整章消失、觸發缺章 __failed__——逾時保護反而
+        把原本能出貨的研報變成不出貨。
+        """
+        md, drafts = await self._headings(deadline=time.monotonic() - 1)
+        self.assertIn("執行摘要", md)
+        self.assertIn("關鍵發現", md)
+        self.assertIn("風險與展望", md)
+        self.assertIn("面向A", md)          # 第一個動態子節必須留（否則缺章）
+        self.assertNotIn("面向B", md)       # 其餘動態子節被預算砍掉
+        self.assertNotIn("面向C", md)
+
+    async def test_no_deadline_keeps_all_sections(self):
+        md, _ = await self._headings(deadline=None)
+        for h in ("執行摘要", "關鍵發現", "面向A", "面向B", "面向C", "風險與展望"):
+            self.assertIn(h, md)
+
+    async def test_future_deadline_keeps_all_sections(self):
+        md, _ = await self._headings(deadline=time.monotonic() + 600)
+        for h in ("面向A", "面向B", "面向C"):
+            self.assertIn(h, md)

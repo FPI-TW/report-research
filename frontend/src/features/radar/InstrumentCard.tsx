@@ -1,4 +1,4 @@
-import type { RadarInstrumentItem, RatingNorm } from '../../lib/radarSchemas'
+import type { Market, RadarInstrumentItem, RatingNorm } from '../../lib/radarSchemas'
 import { DirectionTag } from './DirectionTag'
 import { fmtDate, fmtPrice, marketVar, RATING_BUCKET, RATING_DISPLAY } from './radarFormat'
 import styles from './InstrumentCard.module.css'
@@ -7,7 +7,7 @@ const ORDER: RatingNorm[] = ['buy', 'overweight', 'neutral', 'underweight', 'sel
 
 interface Props {
   item: RadarInstrumentItem
-  onSelect: (market: string, code: string) => void
+  onSelect: (market: Market, code: string) => void
 }
 
 export function InstrumentCard({ item, onSelect }: Props) {

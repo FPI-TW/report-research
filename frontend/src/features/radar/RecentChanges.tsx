@@ -10,11 +10,27 @@ interface Props {
   onOpenReport: (reportId: string, fileName?: string | null) => void
   showAll?: boolean
   onToggleAll?: () => void
+  hasMore?: boolean
+  remaining?: number
+  isLoadingMore?: boolean
+  loadError?: boolean
+  onLoadMore?: () => void
+  onRetryLoad?: () => void
 }
 
 const PREVIEW = 3
 
-export function RecentChanges({ events, onOpenReport, showAll }: Props) {
+export function RecentChanges({
+  events,
+  onOpenReport,
+  showAll,
+  hasMore,
+  remaining = 0,
+  isLoadingMore,
+  loadError,
+  onLoadMore,
+  onRetryLoad,
+}: Props) {
   const visible = showAll ? events : events.slice(0, PREVIEW)
 
   if (!events.length) {
@@ -22,7 +38,7 @@ export function RecentChanges({ events, onOpenReport, showAll }: Props) {
   }
 
   return (
-    <div className={styles.feed}>
+    <div className={styles.feed} id="radar-recent-events">
       {visible.map((ev, i) => (
         <article
           key={`${ev.report_link.report_id}-${ev.report_date}-${i}`}
@@ -60,6 +76,31 @@ export function RecentChanges({ events, onOpenReport, showAll }: Props) {
           </div>
         </article>
       ))}
+      {showAll && isLoadingMore && events.length <= PREVIEW ? (
+        <div className={styles.loading} role="status">正在載入完整事件…</div>
+      ) : null}
+      {showAll && loadError ? (
+        <div className={styles.loadError} role="alert">
+          <span>載入完整事件失敗，已保留目前可用內容。</span>
+          {onRetryLoad ? (
+            <Pressable type="button" className={styles.loadMore} onClick={onRetryLoad}>
+              重試載入事件
+            </Pressable>
+          ) : null}
+        </div>
+      ) : null}
+      {showAll && !loadError && hasMore && onLoadMore ? (
+        <div className={styles.loadMoreWrap}>
+          <Pressable
+            type="button"
+            className={styles.loadMore}
+            disabled={isLoadingMore}
+            onClick={onLoadMore}
+          >
+            {isLoadingMore ? '載入中…' : `載入更多（尚有 ${remaining} 項）`}
+          </Pressable>
+        </div>
+      ) : null}
     </div>
   )
 }

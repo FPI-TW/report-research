@@ -14,9 +14,11 @@ describe('DirectionTag', () => {
 
   it('不可比較顯示對應標籤與圖示', () => {
     const { container } = render(
-      <DirectionTag direction="incomparable" />,
+      <DirectionTag direction="incomparable" label="EPS" pct={99.9} />,
     )
     expect(screen.getByText('不可比較')).toBeInTheDocument()
+    expect(screen.queryByText('EPS')).not.toBeInTheDocument()
+    expect(screen.queryByText('99.9%')).not.toBeInTheDocument()
     expect(container.querySelector('svg')).toBeTruthy()
   })
 

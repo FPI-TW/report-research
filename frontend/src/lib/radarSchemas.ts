@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import { MARKET_ORDER } from './meta'
+
+export const marketSchema = z.enum(MARKET_ORDER)
+export type Market = z.infer<typeof marketSchema>
 
 /** 與後端 app/services/radar/schemas.py 逐字鏡像的 enum 契約。 */
 export const directionSchema = z.enum(['up', 'down', 'flat', 'incomparable', 'none'])
@@ -43,6 +47,7 @@ export const changeItemSchema = z.object({
   curr_value: z.string().nullish(),
   pct_change: z.number().nullish(),
   comparable: z.boolean(),
+  reason_code: z.string().nullish(),
   incomparable_reason: z.string().nullish(),
 })
 export type ChangeItem = z.infer<typeof changeItemSchema>
@@ -53,8 +58,17 @@ export const ratingBucketCountSchema = z.object({
 })
 export type RatingBucketCount = z.infer<typeof ratingBucketCountSchema>
 
+const FIVE_LEVEL_RATINGS = ['buy', 'overweight', 'neutral', 'underweight', 'sell'] as const
+const ratingDistributionSchema = z.array(ratingBucketCountSchema).length(5).superRefine((items, ctx) => {
+  const keys = items.map(item => item.rating)
+  if (new Set(keys).size !== FIVE_LEVEL_RATINGS.length
+      || FIVE_LEVEL_RATINGS.some(key => !keys.includes(key))) {
+    ctx.addIssue({ code: 'custom', message: '評等分布必須完整且不得重複' })
+  }
+})
+
 export const ratingConsensusSchema = z.object({
-  distribution: z.array(ratingBucketCountSchema),
+  distribution: ratingDistributionSchema,
   bullish: z.number().int(),
   neutral: z.number().int(),
   bearish: z.number().int(),
@@ -118,6 +132,15 @@ export const thesisDimensionSchema = z.object({
 })
 export type ThesisDimension = z.infer<typeof thesisDimensionSchema>
 
+const THESIS_DIMENSIONS = ['outlook', 'catalyst', 'risk', 'valuation'] as const
+const thesisDimensionsSchema = z.array(thesisDimensionSchema).length(4).superRefine((items, ctx) => {
+  const keys = items.map(item => item.dimension)
+  if (new Set(keys).size !== THESIS_DIMENSIONS.length
+      || THESIS_DIMENSIONS.some(key => !keys.includes(key))) {
+    ctx.addIssue({ code: 'custom', message: '四向觀點必須完整且不得重複' })
+  }
+})
+
 export const eventCardSchema = z.object({
   broker: z.string().nullish(),
   broker_display: z.string().nullish(),
@@ -138,6 +161,9 @@ export const brokerSummarySchema = z.object({
   latest_target_currency: z.string().nullish(),
   latest_eps_value: z.number().nullish(),
   latest_eps_fy: z.number().int().nullish(),
+  latest_eps_period: z.string().nullish(),
+  latest_eps_currency: z.string().nullish(),
+  latest_eps_unit: z.string().nullish(),
   latest_report_date: z.string(),
   report_link: reportLinkSchema,
   recent_change_label: z.string().nullish(),
@@ -158,7 +184,7 @@ export const coverageSchema = z.object({
 export type Coverage = z.infer<typeof coverageSchema>
 
 export const radarOverviewSchema = z.object({
-  market: z.string(),
+  market: marketSchema,
   market_display: z.string().nullish(),
   instrument_code: z.string(),
   instrument_name: z.string().nullish(),
@@ -168,9 +194,11 @@ export const radarOverviewSchema = z.object({
   rating: ratingConsensusSchema.nullish(),
   target_price: targetConsensusSchema.nullish(),
   eps: epsConsensusSchema.nullish(),
-  thesis: z.array(thesisDimensionSchema),
+  thesis: thesisDimensionsSchema,
   recent_events: z.array(eventCardSchema),
   recent_events_total: z.number().int(),
+  recent_events_has_more: z.boolean().optional().default(false),
+  recent_events_next_offset: z.number().int().nonnegative().nullish().default(null),
   brokers: z.array(brokerSummarySchema),
   notes: z.array(z.string()),
 })
@@ -184,6 +212,14 @@ export const thesisCellSchema = z.object({
   evidence: z.string().nullish(),
 })
 
+const thesisCellsSchema = z.array(thesisCellSchema).length(4).superRefine((items, ctx) => {
+  const keys = items.map(item => item.dimension)
+  if (new Set(keys).size !== THESIS_DIMENSIONS.length
+      || THESIS_DIMENSIONS.some(key => !keys.includes(key))) {
+    ctx.addIssue({ code: 'custom', message: '券商四向觀點必須完整且不得重複' })
+  }
+})
+
 export const brokerSnapshotSchema = z.object({
   report_id: z.string(),
   report_date: z.string(),
@@ -193,23 +229,26 @@ export const brokerSnapshotSchema = z.object({
   target_price: z.number().nullish(),
   target_currency: z.string().nullish(),
   eps: z.array(epsGroupSchema),
-  thesis: z.array(thesisCellSchema),
+  primary_eps: epsGroupSchema.nullish(),
+  thesis: thesisCellsSchema,
   extraction_status: z.string(),
   report_link: reportLinkSchema,
 })
 export type BrokerSnapshot = z.infer<typeof brokerSnapshotSchema>
 
 export const snapshotDiffSchema = z.object({
+  from_report_id: z.string().nullish(),
   from_report_date: z.string().nullish(),
   to_report_date: z.string(),
   changes: z.array(changeItemSchema),
+  has_prior_report: z.boolean().optional(),
   has_prior_comparable: z.boolean(),
   note: z.string().nullish(),
 })
 export type SnapshotDiff = z.infer<typeof snapshotDiffSchema>
 
 export const brokerHistorySchema = z.object({
-  market: z.string(),
+  market: marketSchema,
   instrument_code: z.string(),
   broker: z.string().nullish(),
   broker_display: z.string().nullish(),
@@ -229,7 +268,7 @@ export const instrumentStanceSchema = z.object({
   neutral: z.number().int(),
   bearish: z.number().int(),
   total_rated: z.number().int(),
-  distribution: z.array(ratingBucketCountSchema),
+  distribution: ratingDistributionSchema,
   upgrades: z.number().int(),
   downgrades: z.number().int(),
   net_rating: z.number().int(),
@@ -252,7 +291,7 @@ export const instrumentConsensusSchema = z.object({
 export type InstrumentConsensus = z.infer<typeof instrumentConsensusSchema>
 
 export const radarInstrumentItemSchema = z.object({
-  market: z.string(),
+  market: marketSchema,
   market_display: z.string().nullish(),
   instrument_code: z.string(),
   instrument_name: z.string().nullish(),
@@ -266,7 +305,24 @@ export type RadarInstrumentItem = z.infer<typeof radarInstrumentItemSchema>
 
 export const radarInstrumentsSchema = z.object({
   total: z.number().int(),
+  limit: z.number().int().positive().optional(),
   offset: z.number().int(),
+  has_more: z.boolean().optional(),
+  next_offset: z.number().int().nonnegative().nullish(),
   items: z.array(radarInstrumentItemSchema),
 })
 export type RadarInstruments = z.infer<typeof radarInstrumentsSchema>
+
+export const radarEventsSchema = z.object({
+  market: marketSchema,
+  instrument_code: z.string(),
+  window: windowSchema,
+  as_of: z.string().nullish(),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().nonnegative().nullable(),
+  items: z.array(eventCardSchema),
+})
+export type RadarEvents = z.infer<typeof radarEventsSchema>

@@ -5,12 +5,28 @@
 非-env 字面量（BAND_WIDTH 等）不在此收斂範圍（見 M6）。
 """
 
+import logging
 import os
 from dataclasses import dataclass
 
 
 def _flag(name: str, default: str) -> bool:
     return os.getenv(name, default) not in ("0", "false", "False", "")
+
+
+_RENDERERS = ("typst", "weasyprint")
+
+
+def _renderer(name: str, default: str) -> str:
+    """渲染器名稱；未知值退回預設並警告——不讓 typo 靜默切換渲染路徑。"""
+    v = (os.getenv(name, default) or "").strip().lower()
+    if v not in _RENDERERS:
+        logging.getLogger(__name__).warning(
+            "%s=%r 不是合法渲染器（可用：%s），退回 %s",
+            name, v, "/".join(_RENDERERS), default,
+        )
+        return default
+    return v
 
 
 @dataclass(frozen=True)
@@ -46,6 +62,7 @@ class Settings:
     report_max_context_chars: int
     report_timeout: float
     reports_dir: str
+    report_renderer: str
     report_enable_web: bool
     report_thin_coverage: int
     # report_gate.py
@@ -113,6 +130,7 @@ def _load() -> Settings:
         report_max_context_chars=int(os.getenv("REPORT_MAX_CONTEXT_CHARS", "40000")),
         report_timeout=float(os.getenv("REPORT_TIMEOUT", "600")),
         reports_dir=os.getenv("REPORTS_DIR", "data/reports"),
+        report_renderer=_renderer("REPORT_RENDERER", "typst"),
         report_enable_web=_flag("REPORT_ENABLE_WEB", "1"),
         report_thin_coverage=int(os.getenv("REPORT_THIN_COVERAGE", "8")),
         report_min_cited=int(os.getenv("REPORT_MIN_CITED", "3")),

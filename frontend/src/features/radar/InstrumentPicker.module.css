@@ -67,7 +67,7 @@
   transition: border-color var(--tf-dur-2) var(--tf-ease-out), box-shadow var(--tf-dur-2) var(--tf-ease-out);
 }
 .search:focus-within { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink); }
-.searchIcon { color: var(--tf-text-4); flex: none; }
+.searchIcon { color: var(--tf-text-muted-aa); flex: none; }
 .input {
   flex: 1;
   border: 0;
@@ -78,7 +78,7 @@
   color: var(--tf-text-1);
   min-width: 0;
 }
-.input::placeholder { color: var(--tf-text-4); }
+.input::placeholder { color: var(--tf-text-muted-aa); }
 
 /* ── 篩選列 ── */
 .filterrow {

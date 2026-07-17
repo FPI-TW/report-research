@@ -54,7 +54,7 @@
 /* 五級色（bar 段＋圖例點共用；此類只帶顏色） */
 .buy { background: var(--tf-success); }
 .overweight { background: var(--tf-success-soft); }
-.neutral { background: var(--tf-text-4); }
+.neutral { background: var(--tf-text-muted-aa); }
 .underweight { background: var(--tf-warn); }
 .sell { background: var(--tf-error); }
 
@@ -84,7 +84,7 @@
   justify-content: space-between;
   margin-top: 12px;
   font-size: 11.5px;
-  color: var(--tf-text-4);
+  color: var(--tf-text-muted-aa);
 }
 
 .legend {
@@ -118,7 +118,7 @@
 }
 .up { color: var(--tf-success); }
 .down { color: var(--tf-error); }
-.flat { color: var(--tf-text-4); }
+.flat { color: var(--tf-text-muted-aa); }
 
 .mvLabel { font-size: 13.5px; color: var(--tf-text-2); }
 

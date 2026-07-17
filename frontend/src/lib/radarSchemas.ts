@@ -197,10 +197,23 @@ export const radarOverviewSchema = z.object({
   thesis: thesisDimensionsSchema,
   recent_events: z.array(eventCardSchema),
   recent_events_total: z.number().int(),
-  recent_events_has_more: z.boolean().optional().default(false),
-  recent_events_next_offset: z.number().int().nonnegative().nullish().default(null),
+  recent_events_has_more: z.boolean().optional(),
+  recent_events_next_offset: z.number().int().nonnegative().nullish(),
   brokers: z.array(brokerSummarySchema),
   notes: z.array(z.string()),
+}).transform((overview) => {
+  const recentEventsHasMore = overview.recent_events_has_more
+    ?? (overview.recent_events_next_offset != null
+      || overview.recent_events_total > overview.recent_events.length)
+  const recentEventsNextOffset = overview.recent_events_next_offset === undefined
+    ? (recentEventsHasMore ? overview.recent_events.length : null)
+    : overview.recent_events_next_offset
+
+  return {
+    ...overview,
+    recent_events_has_more: recentEventsHasMore,
+    recent_events_next_offset: recentEventsNextOffset,
+  }
 })
 export type RadarOverview = z.infer<typeof radarOverviewSchema>
 

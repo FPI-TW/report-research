@@ -46,6 +46,14 @@ function mediaBlock(source: string, maxWidth: number): string {
   )
 }
 
+function containerBlock(source: string, maxWidth: number): string {
+  return blockAfter(
+    source,
+    new RegExp(`@container\\s*\\(max-width:\\s*${maxWidth}px\\)`),
+    `@container (max-width: ${maxWidth}px)`,
+  )
+}
+
 function ruleBlock(source: string, selector: string): string {
   return blockAfter(
     source,
@@ -94,13 +102,16 @@ describe('Radar 390px 版型契約', () => {
     expectDeclaration(mobile, '.fig:nth-child(3)', 'grid-column', '1 / -1')
   })
 
-  it('KPI 大字在 390px 的雙欄內縮放且不溢出', () => {
+  it('KPI 長合法值依卡片寬度縮放並允許換行，不靠 nowrap 裁切', () => {
     const mobile = mediaBlock(keyFiguresCss, 560)
+    const compactCard = containerBlock(keyFiguresCss, 180)
 
     expectDeclaration(mobile, '.fig', 'min-width', '0')
     expectDeclaration(mobile, '.fig', 'padding', '20px 14px 22px')
-    expectDeclaration(mobile, '.val', 'font-size', 'clamp(26px, 8vw, 32px)')
-    expectDeclaration(mobile, '.val', 'white-space', 'nowrap')
+    expectDeclaration(keyFiguresCss, '.fig', 'container-type', 'inline-size')
+    expectDeclaration(keyFiguresCss, '.val', 'overflow-wrap', 'anywhere')
+    expectDeclaration(compactCard, '.val', 'font-size', 'clamp(26px, 20cqi, 30px)')
+    expect(ruleBlock(mobile, '.val')).not.toContain('white-space: nowrap')
   })
 
   it('論點羅盤在 390px 維持 2x2，僅 340px 以下退為單欄', () => {
@@ -153,6 +164,10 @@ describe('Radar 觸控目標契約', () => {
   ])('%s 至少 44px 高', (_label, css, selector) => {
     expectDeclaration(css, selector, 'min-height', '44px')
   })
+
+  it('麵包屑返回在兩軸都至少 44px', () => {
+    expectDeclaration(radarHeaderCss, '.crumbBtn', 'min-width', '44px')
+  })
 })
 
 describe('Radar muted text 對比契約', () => {
@@ -163,10 +178,10 @@ describe('Radar muted text 對比契約', () => {
     expect(contrastRatio(muted, tokenValue('--tf-canvas'))).toBeGreaterThanOrEqual(4.5)
   })
 
-  it('Radar 不再使用未達 AA 的舊 muted token', () => {
+  it.each(['--tf-text-3', '--tf-text-4'])('Radar 不再使用未達 AA 的 %s token', (token) => {
     expect(Object.keys(radarCssModules).length).toBeGreaterThan(0)
     for (const [path, css] of Object.entries(radarCssModules)) {
-      expect(css, path).not.toContain('var(--tf-text-3)')
+      expect(css, path).not.toContain(`var(${token})`)
     }
   })
 })

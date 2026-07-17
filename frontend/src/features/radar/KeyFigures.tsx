@@ -73,6 +73,9 @@ export function KeyFigures({ target, eps, coverage }: Props) {
         <div className={styles.qbar}>
           <i style={{ width: `${qualityPct}%` }} />
         </div>
+        {coverage.state === 'partial' ? (
+          <div className={styles.qualityState}>部分資料 · 非完整品質</div>
+        ) : null}
         <div className={styles.sub}>
           券商已擷取 · 共識納入 {coverage.brokers_in_consensus} 家
         </div>

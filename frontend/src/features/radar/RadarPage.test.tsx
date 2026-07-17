@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as radarApi from '../../lib/radarApi'
-import type { EventCard, RadarOverview } from '../../lib/radarSchemas'
+import { radarOverviewSchema, type EventCard, type RadarOverview } from '../../lib/radarSchemas'
 import RadarPage from './RadarPage'
 
 vi.mock('../../lib/radarApi')
@@ -298,6 +298,25 @@ describe('RadarPage', () => {
     )
   })
 
+  it('partial 即使全部券商已擷取，仍在正常總覽明示部分資料註記', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({
+      coverage: {
+        state: 'partial',
+        brokers_total: 2,
+        brokers_extracted: 2,
+        brokers_in_consensus: 2,
+        reports_available: 8,
+        note: '歷史研報仍有部分欄位尚待整理。',
+      },
+    }))
+
+    wrap('/radar?market=TW&code=8046&window=90')
+
+    const notice = await screen.findByRole('status', { name: '部分資料' })
+    expect(notice).toHaveTextContent('歷史研報仍有部分欄位尚待整理。')
+    expect(screen.getByText('券商共識')).toBeInTheDocument()
+  })
+
   it('pending_extraction 顯示尚未整理狀態', async () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview({
       coverage: {
@@ -361,6 +380,36 @@ describe('RadarPage', () => {
       { market: 'TW', window: '90', limit: 12, offset: 12 },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
+  })
+
+  it('舊 overview 只有 preview 與 total 時，點查看全部仍會請求事件 API', async () => {
+    const legacyPayload = {
+      ...overview({
+        rating: null,
+        recent_events: [radarEvent(0), radarEvent(1), radarEvent(2)],
+        recent_events_total: 20,
+      }),
+    } as Record<string, unknown>
+    delete legacyPayload.recent_events_has_more
+    delete legacyPayload.recent_events_next_offset
+
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(
+      radarOverviewSchema.parse(legacyPayload),
+    )
+    vi.mocked(radarApi.getRadarEvents).mockResolvedValue({
+      market: 'TW', instrument_code: '8046', window: '90', as_of: '2026-07-11',
+      total: 20, limit: 12, offset: 0, has_more: true, next_offset: 12,
+      items: Array.from({ length: 12 }, (_, i) => radarEvent(i)),
+    })
+
+    wrap('/radar?market=TW&code=8046&window=90')
+    fireEvent.click(await screen.findByRole('button', { name: '查看全部 20 項' }))
+
+    await waitFor(() => expect(radarApi.getRadarEvents).toHaveBeenCalledWith(
+      '8046',
+      { market: 'TW', window: '90', limit: 12, offset: 0 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ))
   })
 
   it('完整事件首次請求失敗時保留 preview，重試後恢復', async () => {

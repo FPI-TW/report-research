@@ -92,6 +92,19 @@ export function RadarOverview({
           <RadarWindowEmpty note={data.coverage.note} />
         ) : (
           <>
+            {data.coverage.state === 'partial' ? (
+              <aside
+                className={pageStyles.coverageNotice}
+                role="status"
+                aria-label="部分資料"
+              >
+                <strong>部分資料</strong>
+                <span>
+                  {data.coverage.note || '部分研報仍在整理，以下僅顯示目前已擷取內容。'}
+                </span>
+              </aside>
+            ) : null}
+
             <KeyFigures target={data.target_price} eps={data.eps} coverage={data.coverage} />
 
             <section className={pageStyles.section}>

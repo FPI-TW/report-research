@@ -157,6 +157,32 @@ describe('radarSchemas', () => {
     expect(parsed.has_more).toBe(true)
   })
 
+  it('舊總覽缺少事件分頁 metadata 時，依 preview 與 total 推導下一頁', () => {
+    const parsed = radarOverviewSchema.parse({
+      market: 'TW', instrument_code: '8046', window: '90', as_of: '2026-07-11',
+      coverage: {
+        state: 'ok', brokers_total: 1, brokers_extracted: 1,
+        brokers_in_consensus: 1, reports_available: 1, note: '',
+      },
+      rating: null, target_price: null, eps: null,
+      thesis: [
+        { dimension: 'outlook', dimension_display: '展望', label: 'insufficient', label_display: '資料不足', brokers_strengthen: 0, brokers_weaken: 0, brokers_comparable: 0 },
+        { dimension: 'catalyst', dimension_display: '催化劑', label: 'insufficient', label_display: '資料不足', brokers_strengthen: 0, brokers_weaken: 0, brokers_comparable: 0 },
+        { dimension: 'risk', dimension_display: '風險', label: 'insufficient', label_display: '資料不足', brokers_strengthen: 0, brokers_weaken: 0, brokers_comparable: 0 },
+        { dimension: 'valuation', dimension_display: '估值', label: 'insufficient', label_display: '資料不足', brokers_strengthen: 0, brokers_weaken: 0, brokers_comparable: 0 },
+      ],
+      recent_events: Array.from({ length: 3 }, (_, index) => ({
+        broker: 'daiwa', report_date: '2026-07-11', headline: `event-${index}`,
+        changes: [], evidence: [], report_link: { report_id: `r${index}` },
+      })),
+      recent_events_total: 8,
+      brokers: [], notes: [],
+    })
+
+    expect(parsed.recent_events_has_more).toBe(true)
+    expect(parsed.recent_events_next_offset).toBe(3)
+  })
+
   it('解析標的目錄', () => {
     const parsed = radarInstrumentsSchema.parse({
       total: 1, limit: 50, offset: 0, has_more: false, next_offset: null,

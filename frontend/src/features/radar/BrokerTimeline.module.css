@@ -71,7 +71,7 @@
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.k { color: var(--tf-text-4); }
+.k { color: var(--tf-text-muted-aa); }
 .v { color: var(--tf-text-1); font-weight: 600; }
 
 .mid {
@@ -119,7 +119,7 @@
   z-index: 1;
 }
 
-.outWindow .dot { border-color: var(--tf-text-4); }
+.outWindow .dot { border-color: var(--tf-text-muted-aa); }
 
 .nodeHead {
   display: flex;

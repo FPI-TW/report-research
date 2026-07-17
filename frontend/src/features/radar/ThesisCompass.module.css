@@ -49,7 +49,7 @@
 }
 .split span { display: block; height: 100%; }
 .up { background: var(--tf-success); }
-.mid { background: var(--tf-text-4); }
+.mid { background: var(--tf-text-muted-aa); }
 .down { background: var(--tf-error); }
 
 .counts {

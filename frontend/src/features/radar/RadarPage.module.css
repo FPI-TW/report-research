@@ -65,6 +65,22 @@
   font-size: 13px;
 }
 
+.coverageNotice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 20px;
+  padding: 10px 14px;
+  border: 1px solid var(--tf-warn-border);
+  border-radius: var(--tf-radius-card);
+  background: var(--tf-warn-bg);
+  color: var(--tf-warn-text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.coverageNotice strong { flex: none; }
+
 /* 常駐於 picker 與 overview 兩種狀態之下：免責不得依賴 overview 的 notes
    （那是資料品質註記，單幣別＋EPS 單組時為空陣列，整區不渲染）。 */
 .disclaimer {
@@ -78,10 +94,11 @@
 }
 
 .dash {
-  color: var(--tf-text-4);
+  color: var(--tf-text-muted-aa);
   font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 900px) {
   .scroll { padding: 20px 16px calc(80px + env(safe-area-inset-bottom, 0px)); }
+  .coverageNotice { align-items: flex-start; flex-direction: column; gap: 2px; }
 }

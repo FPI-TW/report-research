@@ -46,16 +46,16 @@
 .stale {
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--tf-text-4);
+  color: var(--tf-text-muted-aa);
 }
 
 .num { text-align: right; white-space: nowrap; }
-.dash { color: var(--tf-text-4); }
+.dash { color: var(--tf-text-muted-aa); }
 
 .expand {
   width: 36px;
   text-align: center;
-  color: var(--tf-text-4);
+  color: var(--tf-text-muted-aa);
 }
 /* rotation now owned by Motion (animate rotate); only the colour shift stays in CSS */
 .expandOpen { color: var(--tf-ink); }

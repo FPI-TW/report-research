@@ -1,3 +1,4 @@
+import { Pressable } from '../../components/primitives/Pressable'
 import type { EventCard as EventCardT } from '../../lib/radarSchemas'
 import { DirectionTag } from './DirectionTag'
 import { fmtDate } from './radarFormat'
@@ -47,13 +48,14 @@ export function RecentChanges({ events, onOpenReport, showAll }: Props) {
             ) : null}
             <div className={styles.foot}>
               {ev.evidence[0] ? <p className={styles.cite}>「{ev.evidence[0]}」</p> : <span />}
-              <button
+              <Pressable
                 type="button"
+                tapScale={0.97}
                 className={styles.link}
                 onClick={() => onOpenReport(ev.report_link.report_id, ev.report_link.file_name)}
               >
                 原始研報 →
-              </button>
+              </Pressable>
             </div>
           </div>
         </article>

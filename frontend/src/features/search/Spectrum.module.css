@@ -1,0 +1,3 @@
+.spectrum { display: flex; gap: 2px; height: 8px; }
+/* flex-basis:0 讓 flex-grow 完全決定段寬＝真實佔比；min-width 保住極小市場的一絲存在 */
+.seg { flex-basis: 0; min-width: 2px; border-radius: 2px; transform-origin: left center; }

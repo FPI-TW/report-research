@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Pressable } from '../../components/primitives/Pressable'
 import styles from './UserMessage.module.css'
 
 interface Props {
@@ -23,9 +24,8 @@ export function UserMessage({ text, onEdit, disabled = false }: Props) {
             disabled={disabled}
           />
           <div className={styles.editActions}>
-            <button type="button" onClick={() => setEditing(false)} aria-label="取消" disabled={disabled}>取消</button>
-            <button
-              type="button"
+            <Pressable onClick={() => setEditing(false)} aria-label="取消" disabled={disabled}>取消</Pressable>
+            <Pressable
               onClick={() => {
                 const v = draft.trim()
                 if (v) { onEdit(v); setEditing(false) }
@@ -34,7 +34,7 @@ export function UserMessage({ text, onEdit, disabled = false }: Props) {
               disabled={disabled}
             >
               送出
-            </button>
+            </Pressable>
           </div>
         </div>
       </div>
@@ -44,8 +44,7 @@ export function UserMessage({ text, onEdit, disabled = false }: Props) {
   return (
     <div className={styles.row}>
       <div className={styles.bubble}>{text}</div>
-      <button
-        type="button"
+      <Pressable
         className={styles.editBtn}
         onClick={() => { setDraft(text); setEditing(true) }}
         aria-label="編輯"
@@ -53,7 +52,7 @@ export function UserMessage({ text, onEdit, disabled = false }: Props) {
         disabled={disabled}
       >
         編輯
-      </button>
+      </Pressable>
     </div>
   )
 }

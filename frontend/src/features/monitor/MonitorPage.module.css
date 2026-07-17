@@ -9,9 +9,9 @@
 .sub { font-size: 13px; color: #667085; font-variant-numeric: tabular-nums; }
 .headRight { display: flex; align-items: center; gap: 12px; }
 .live { display: inline-flex; align-items: center; gap: 6px; background: #faf3e3; color: #8a5a0f; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 4px 11px; }
-.liveDot { width: 7px; height: 7px; border-radius: 999px; background: #34c759; animation: tf-pulse 1.6s ease-in-out infinite; }
+.liveDot { width: 7px; height: 7px; border-radius: 999px; background: #34c759; }
 .stale { background: #fef3f2; color: #b42318; }
-.staleDot { background: #f04438; animation: none; }
+.staleDot { background: #f04438; }
 .clock { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: #667085; font-variant-numeric: tabular-nums; }
 
 /* 卡片共用 */
@@ -41,8 +41,8 @@
 
 /* 報告導入 */
 .ingCurrent { font-size: 13px; color: #344054; margin-bottom: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.indetWrap { position: relative; height: 9px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
-.indetBar { position: absolute; top: 0; height: 100%; width: 34%; border-radius: 999px; background: #8a5a0f; animation: tf-indet 1.4s ease-in-out infinite; }
+.indetWrap { display: block; position: relative; height: 9px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
+.indetBar { position: absolute; top: 0; left: 0; height: 100%; width: 34%; border-radius: 999px; background: #8a5a0f; }
 .indetIdle { position: absolute; top: 0; left: 0; height: 100%; width: 100%; border-radius: 999px; background: #e4e7ec; }
 
 /* 處理管線 */
@@ -74,7 +74,3 @@
   .panelGrid { grid-template-columns: 1fr; }
   .scroll { padding: 20px 16px; }
 }
-
-/* keyframe 須定義於本模組：CSS Modules 會把 animation 名稱在地化雜湊，引用全域 keyframe 會落空 */
-@keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-@keyframes tf-indet { 0% { left: -40%; } 100% { left: 100%; } }

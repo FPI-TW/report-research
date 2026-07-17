@@ -21,10 +21,8 @@
 .glyphSmall { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none; }
 .brandToggle { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: none; background: none; padding: 0; cursor: pointer; border-radius: 8px; color: var(--tf-text-3); }
 .brandToggle:hover { background: var(--tf-surface); color: var(--tf-ink); }
-.brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: opacity .16s ease, transform .16s ease; }
-.brandExpand { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
-.brandToggle:hover .brandLogo { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
-.brandToggle:hover .brandExpand { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+/* 置中偏移（x/y -50%）與 opacity/scale crossfade 皆由 Motion 驅動（見 SideRail.tsx）；此處僅絕對定位錨點 */
+.brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; display: inline-flex; }
 /* miniNav 起始 Y 與間距對齊 fullNav，讓兩態導覽 icon 完整銜接不位移（同原版幾何）。 */
 .miniNav { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
 .spacer { flex: 1; }
@@ -33,7 +31,5 @@
 .title { flex: 1; font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-ink-deep); }
 .toggleFull { border: none; background: none; border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-4); padding: 0; flex: none; transition: background .12s ease, color .12s ease; }
 .toggleFull:hover { background: var(--tf-border-weak); color: var(--tf-text-3); }
-.toggleFull svg { transition: transform .16s ease; }
-.toggleFull:hover svg { transform: scale(1.12); }
 .fullNav { padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }
 .divider { height: 1px; background: var(--tf-divider); margin: 12px 12px 8px; }

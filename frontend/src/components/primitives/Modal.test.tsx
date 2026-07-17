@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitForElementToBeRemoved } from '@testing-library/react'
 import { Modal } from './Modal'
 
 describe('Modal', () => {
@@ -19,9 +19,11 @@ describe('Modal', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
-  it('open=true dialog 帶 data-state=open', () => {
-    render(<Modal open onClose={() => {}}>x</Modal>)
-    expect(screen.getByRole('dialog').getAttribute('data-state')).toBe('open')
+  it('open→false 後離場卸載（dialog 移除）', async () => {
+    const { rerender } = render(<Modal open onClose={() => {}}>x</Modal>)
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    rerender(<Modal open={false} onClose={() => {}}>x</Modal>)
+    await waitForElementToBeRemoved(() => screen.queryByRole('dialog'))
   })
   it('點遮罩關閉、點面板不關閉', () => {
     const onClose = vi.fn()

@@ -82,12 +82,15 @@ async def fetch_broker_signals(
     return [parse_signal_row(r) for r in rows]
 
 
+# 陣列參數一律用 CAST(:x AS text[])，不可寫 :x::text[]：text() 的 bind 比對規則遇到
+# 參數名緊接 :: 會回溯成短名（:markets → bind "market" ＋殘字 "s"），冒號原樣送進 PG 而炸
+# syntax error，且缺參數不會有例外——只在真的打 DB 時才爆。
 _BATCH_SIGNALS_SQL = text(
     f"SELECT {SIGNAL_SELECT_COLUMNS} "
     "FROM research.report_signal s "
     "JOIN research.research_report r ON r.id = s.report_id "
     "WHERE (s.market, s.instrument_code) IN ("
-    "  SELECT m, c FROM unnest(:markets::text[], :codes::text[]) AS t(m, c)) "
+    "  SELECT m, c FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c)) "
     "  AND s.extraction_status = ANY(:statuses) "
     "ORDER BY s.market, s.instrument_code, s.broker, "
     "         s.report_date DESC NULLS LAST, s.created_at DESC"

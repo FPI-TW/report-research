@@ -9,6 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg  # noqa: E402
+
 from app.services.radar import queries  # noqa: E402
 from app.services.radar.types import parse_signal_row  # noqa: E402
 
@@ -142,11 +144,27 @@ class BatchSignalsTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BatchSqlStructureTests(unittest.TestCase):
-    def test_batch_sql_named_params(self):
-        sql = str(queries._BATCH_SIGNALS_SQL)
-        self.assertIn("unnest(:markets::text[], :codes::text[])", sql)
-        self.assertIn("(s.market, s.instrument_code) IN", sql)
-        self.assertIn("s.extraction_status = ANY(:statuses)", sql)
+    """須在「編譯後」驗證：str(text()) 只是把原字串吐回來，參數沒綁上也看不出來。
+
+    :markets::text[] 曾讓 bind 回溯成短名 market＋殘字 s，冒號原樣送進 PG 炸 syntax
+    error；當時的字串比對測試卻是綠的（它比對的正是壞掉的原字串）。
+    """
+
+    def _compiled(self):
+        return queries._BATCH_SIGNALS_SQL.compile(dialect=pg_asyncpg.dialect())
+
+    def test_batch_sql_binds_are_complete_names(self):
+        # 名字被吃掉一個字元（markets → market）就會在這裡現形
+        self.assertEqual(set(self._compiled().params), {"markets", "codes", "statuses"})
+
+    def test_batch_sql_leaves_no_unbound_colon_param(self):
+        # 編譯後只該剩 $n 佔位與 ::text 轉型；殘留 :name 代表該參數根本沒綁上
+        self.assertNotRegex(str(self._compiled()), r"(?<!:):\w+")
+
+    def test_batch_sql_keeps_row_wise_key_filter(self):
+        compiled = str(self._compiled())
+        self.assertIn("(s.market, s.instrument_code) IN", compiled)
+        self.assertIn("unnest(CAST($1 AS text[]), CAST($2 AS text[]))", compiled)
 
 
 if __name__ == "__main__":

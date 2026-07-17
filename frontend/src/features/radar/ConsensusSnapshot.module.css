@@ -17,7 +17,7 @@
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   margin-bottom: 10px;
 }
 
@@ -131,7 +131,7 @@
 
 .empty {
   font-size: 13.5px;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   padding: 16px 4px;
 }
 

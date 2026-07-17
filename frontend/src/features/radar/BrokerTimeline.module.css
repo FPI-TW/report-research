@@ -22,7 +22,7 @@
 
 .meta {
   font-size: 12.5px;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   font-variant-numeric: tabular-nums;
 }
 
@@ -36,7 +36,7 @@
   font-family: var(--tf-sans);
   border-radius: var(--tf-radius-pill);
   padding: 6px 12px;
-  min-height: 36px;
+  min-height: 44px;
   cursor: pointer;
 }
 
@@ -60,7 +60,7 @@
 .colLabel {
   font-size: 12px;
   font-weight: 600;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   margin-bottom: 10px;
 }
 
@@ -139,7 +139,7 @@
 .badge {
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   background: #f2f4f7;
   border-radius: var(--tf-radius-pill);
   padding: 2px 8px;
@@ -158,6 +158,43 @@
 .changes {
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.changeDetail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.incomparableDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 260px;
+  color: var(--tf-text-muted-aa);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.quality,
+.pending {
+  margin: 0 0 16px;
+  color: var(--tf-text-muted-aa);
+  font-size: 12.5px;
+}
+
+.pending {
+  padding: 16px;
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  background: var(--tf-surface);
+}
+
+.evidenceList {
+  display: grid;
   gap: 6px;
   margin-bottom: 8px;
 }
@@ -182,7 +219,7 @@
   font-family: var(--tf-sans);
   cursor: pointer;
   padding: 0;
-  min-height: 32px;
+  min-height: 44px;
 }
 
 .link:hover { text-decoration: underline; text-underline-offset: 2px; }
@@ -196,7 +233,7 @@
 
 .note {
   font-size: 12.5px;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   margin: 0 0 12px;
 }
 

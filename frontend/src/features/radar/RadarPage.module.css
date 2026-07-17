@@ -50,6 +50,7 @@
   font-size: 13px;
   font-weight: 500;
   color: var(--tf-ink);
+  min-height: 44px;
 }
 
 .card {
@@ -60,7 +61,7 @@
 }
 
 .muted {
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   font-size: 13px;
 }
 
@@ -73,7 +74,7 @@
   font-family: var(--tf-sans);
   font-size: 12px;
   line-height: 1.6;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
 }
 
 .dash {
@@ -82,5 +83,5 @@
 }
 
 @media (max-width: 900px) {
-  .scroll { padding: 20px 16px 32px; }
+  .scroll { padding: 20px 16px calc(80px + env(safe-area-inset-bottom, 0px)); }
 }

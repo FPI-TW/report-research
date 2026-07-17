@@ -12,7 +12,7 @@
   text-align: left;
   font-size: 12px;
   font-weight: 600;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   padding: 10px 14px;
   border-bottom: 1px solid var(--tf-border);
   background: var(--tf-sidebar);
@@ -30,12 +30,10 @@
 .table tr:last-child td { border-bottom: 0; }
 
 .row {
-  cursor: pointer;
   transition: background-color var(--tf-dur-1) var(--tf-ease-standard);
 }
 
 .row:hover td { background: var(--tf-gold-panel); }
-.row:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: -2px; }
 .rowOpen td { background: var(--tf-ink-tint); }
 
 .broker {
@@ -61,6 +59,21 @@
 }
 /* rotation now owned by Motion (animate rotate); only the colour shift stays in CSS */
 .expandOpen { color: var(--tf-ink); }
+
+.expandButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--tf-radius-sm);
+}
+.expandButton:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
 
 .panelCell {
   padding: 0 !important;
@@ -101,7 +114,7 @@
 .cardMeta {
   margin-top: 4px;
   font-size: 12.5px;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   font-variant-numeric: tabular-nums;
   display: flex;
   flex-wrap: wrap;

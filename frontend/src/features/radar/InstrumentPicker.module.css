@@ -48,7 +48,7 @@
   display: block;
   font-size: 11.5px;
   letter-spacing: 0.04em;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   margin-top: 5px;
 }
 
@@ -92,7 +92,7 @@
 .markets { display: flex; gap: 8px; flex-wrap: wrap; }
 .count {
   font-size: 12.5px;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -107,6 +107,7 @@
   font-family: var(--tf-sans);
   border-radius: var(--tf-radius-pill);
   padding: 7px 14px;
+  min-height: 44px;
   cursor: pointer;
   transition: all var(--tf-dur-2) var(--tf-ease-out);
 }
@@ -124,6 +125,26 @@
   gap: 20px;
 }
 
+.loadMoreWrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 24px;
+}
+
+.loadMore {
+  appearance: none;
+  min-height: 44px;
+  border: 1px solid var(--tf-ink-line);
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-surface);
+  color: var(--tf-ink);
+  padding: 8px 20px;
+  font: 600 13px/1.4 var(--tf-sans);
+  cursor: pointer;
+}
+.loadMore:hover { border-color: var(--tf-ink); }
+.loadMore:disabled { cursor: wait; opacity: 0.65; }
+
 .skel {
   height: 210px;
   border-radius: var(--tf-radius-card);
@@ -139,7 +160,7 @@
 .empty, .error {
   padding: 40px 16px;
   text-align: center;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   font-size: 13.5px;
 }
 .error { color: var(--tf-error); }
@@ -154,6 +175,7 @@
   font-weight: 600;
   border-radius: var(--tf-radius-pill);
   padding: 5px 12px;
+  min-height: 44px;
   cursor: pointer;
 }
 

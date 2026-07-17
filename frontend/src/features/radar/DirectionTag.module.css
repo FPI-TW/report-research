@@ -13,7 +13,7 @@
 
 .up { color: #027a48; background: #ecfdf3; }
 .down { color: #b42318; background: #fef3f2; }
-.flat { color: var(--tf-text-3); background: #f2f4f7; }
+.flat { color: var(--tf-text-muted-aa); background: #f2f4f7; }
 .incomparable { color: var(--tf-text-2); background: var(--tf-gold-tint); }
 .none { color: var(--tf-text-4); background: transparent; padding-left: 0; padding-right: 0; }
 

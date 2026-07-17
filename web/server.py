@@ -15,6 +15,7 @@ import re
 import sys
 import time
 import uuid as _uuidlib
+from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -234,10 +235,19 @@ class ReportResult(BaseModel):
     passages: list[Passage]
 
 
+class MarketFacet(BaseModel):
+    market: str
+    count: int
+
+
 class SearchResponse(BaseModel):
     query: str
     market: str | None
     total: int
+    # 命中集合的市場組成，於切頁前對 ranked 全量計算。
+    # 注意：ranked 已套用 market 篩選，故選定市場時本欄只會有該市場——
+    # 要得知其他市場的命中數需再跑一次未篩選的檢索，成本翻倍，故不做。
+    market_facets: list[MarketFacet] = []
     results: list[ReportResult]
 
 
@@ -717,6 +727,8 @@ async def search(
     # 分組成「全部」召回報告 → 依 sort 排序 → 取 total → 切當頁
     ranked = rank_reports(scored, sort=sort)
     total = len(ranked)
+    # 色譜讀數：命中集合的市場組成。ranked 已全量在記憶體，額外成本僅一次計數。
+    facet_counts = Counter(g.meta_row.market for g in ranked if g.meta_row.market)
     page = ranked[offset : offset + limit]
 
     results: list[ReportResult] = []
@@ -758,7 +770,15 @@ async def search(
                 passages=ps,
             )
         )
-    return SearchResponse(query=q, market=mkt, total=total, results=results)
+    return SearchResponse(
+        query=q,
+        market=mkt,
+        total=total,
+        market_facets=[
+            MarketFacet(market=m, count=c) for m, c in facet_counts.most_common()
+        ],
+        results=results,
+    )
 
 
 # ───── RAG 問答（Phase 1）：SSE 串流 ─────

@@ -1,0 +1,590 @@
+"""重點摘錄擷取批次（近 N 天先行、冪等可續傳）→ research.report_takeaway
+
+閱讀頁 `/app/report/:hash` 左欄「重點摘錄」的資料來源：每篇 3-5 條論點，每條帶一句
+原文逐字引文；點條目跳到原文對應處並高亮。**摘錄一律離線批次產生、落 DB，
+閱讀頁讀取時零 LLM**（對齊 extract_signals.py 之於觀點雷達的分工）。
+
+流程（對齊 scripts/extract_signals.py 的 asyncio + Semaphore + claude CLI 慣例）：
+1. 撈工作集：近 --since-days 天、有全文的研究報告。
+2. checkpoint-resume：該報告已有列、且 extraction_version 與 text_sha256 皆相符、
+   且狀態 ∈ (valid, partial) → 跳過。
+3. 逐報告 spawn `claude -p`(Sonnet) 依固定 schema 擷取 {claim, quote}。
+4. Python 端用 reading/anchor.locate_quote 把引文確定性錨回正典文字（LLM 不給 offset）。
+5. 每份報告在單一 transaction 內 DELETE + 全量 INSERT（**不是 upsert**，見 _replace_rows）。
+6. 單筆失敗只寫 data/takeaway_failures.log，不中斷、不影響檢索/問答。
+
+════════════════════════════════════════════════════════════════════════
+不可妥協的不變量：正典文字＝clean_extracted(full_text)
+════════════════════════════════════════════════════════════════════════
+餵給 LLM 的文字、錨點基準字串、API 回傳給前端的文字，**三者必須同源**：
+
+    canonical = clean_extracted(report.full_text)     # 絕對不是 full_text 本身
+
+`research_report.full_text` 存的是「未清理」的原始抽取文字，保留 PDF 抽字的 CJK 間
+空白（「台 積 電」）—— 見 app/services/reading/anchor.py 模組 docstring 事實一。
+拿 full_text 當基準會讓**所有 offset 全錯**，而且測試抓不到（引文照樣「錨得到」，
+只是錨在錯的座標系）。故本檔一取到 full_text 就立刻轉成 canonical，之後只用 canonical：
+excerpt 取它的前 N 字、text_sha256 是它的 sha256、locate_quote 也搜它。
+
+用法：
+  uv run python scripts/extract_takeaways.py --dry-run       # 只印工作集大小
+  uv run python scripts/extract_takeaways.py --limit 5       # 小跑試驗
+  uv run python scripts/extract_takeaways.py                 # 近 90 天
+  uv run python scripts/extract_takeaways.py --since-days 365
+  uv run python scripts/extract_takeaways.py --reextract     # 版本升級後強制重跑
+
+成本：--since-days 預設 90（約 549 篇、約 2-3 小時）。全語料 14,575 篇要跑十天以上，
+故預設不跑全量；要補歷史請自行放大 --since-days 並有心理準備。
+
+注意：每份研報都會冷啟動一個 `claude -p`；--workers 越高越容易頂滿磁碟小檔 I/O
+（見 generate_summaries.py 註）。預設壓到 2。**且不可與 scripts/extract_signals.py
+同時跑** —— 多個批次併發搶 claude CLI 曾導致訊號大量被誤判 rejected（真因不是資料
+壞、也不是模型壞，是搶資源）。要跑就一次跑一支。
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import hashlib
+import json
+import subprocess
+import sys
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from sqlalchemy import text  # noqa: E402
+
+from app.services.db import SessionFactory  # noqa: E402
+from app.services.reading.anchor import locate_quote  # noqa: E402
+from app.services.textnorm import clean_extracted  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+FAIL_LOG = ROOT / "data" / "takeaway_failures.log"
+
+# 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（舊列版本不符 → 自動重跑）
+EXTRACTION_VERSION = "takeaway-2026-07-17.v1"
+
+# 逐字引文重準確度（改寫一個字就錨不到）→ 預設 Sonnet；批次可用 --model 覆寫
+TAKEAWAY_MODEL_DEFAULT = "claude-sonnet-5"
+
+# 每篇最多幾條（prompt 要 3-5；多回的截掉。少於 3 條不算錯 —— prompt 明說「寧可少一
+# 條也不要編造」，只有 0 條才 rejected）
+MAX_TAKEAWAYS = 5
+
+# 文字安全上限（防模型暴走輸出整段）。prompt 規定 claim ≤ 60 字、quote 15-60 字，
+# 這裡放寬到約兩倍才截，避免把「只超標一點」的正常輸出攔腰砍斷。
+CLAIM_MAX = 120
+QUOTE_MAX = 200
+RAW_TEXT_MAX = 4000  # rejected 時寫進 log 的原始回應長度上限
+
+
+# ── LLM 必須回傳的固定 JSON schema（供 prompt 與解析對齊）──
+# 非 f-string：schema 的大括號要原樣出現在 prompt 裡。
+TAKEAWAY_INSTRUCTION = """你是金融研報的重點摘錄助理。閱讀以下券商研報內文，摘出這篇報告最重要的 3-5 條論點，
+每條論點都要附一句「從原文逐字複製」的句子當證據。
+
+嚴格規則（違反會被系統丟棄）：
+1. 只輸出「單一 JSON 物件」，不要任何說明文字、不要 markdown、不要程式碼圍欄。
+2. 3-5 條，依報告中的重要性由高到低排序。
+3. claim＝一句話論點，繁體中文，不超過 60 字。客觀轉述研報的說法，不要加入你的評論。
+4. quote＝**從上方研報內文逐字複製**的一句話，15-60 字，作為該論點的證據。
+   - 不得改寫、不得補標點、不得加省略號、不得跨段落拼接。
+   - 必須是內文中「連續出現」的一段字元：系統會逐字回頭比對，對不上就無法定位。
+   - 引文請挑在內文中獨一無二的句子；頁首、頁尾、目錄、免責聲明這類重複出現的
+     樣板文字不要拿來當引文。
+5. 某條論點找不到可以逐字引用的句子時，寧可少一條，也不要編造或改寫引文。
+
+JSON 格式：
+{
+  "takeaways": [
+    {"claim": "<一句話論點，繁體中文，不超過 60 字>",
+     "quote": "<研報內文的逐字片段，15-60 字>"}
+  ]
+}
+"""
+
+
+def build_takeaway_prompt(
+    file_name: str,
+    report_date: Optional[str],
+    source: Optional[str],
+    body_excerpt: str,
+) -> str:
+    """組裝擷取 prompt（仿 extract_signals.build_signal_prompt）。
+
+    `body_excerpt` 必須是 canonical（clean_extracted 後）的前綴，不是 full_text 的前綴。
+    """
+    meta = [f"檔名：{file_name}"]
+    if report_date:
+        meta.append(f"報告日：{report_date}")
+    if source:
+        meta.append(f"券商：{source}")
+    header = "\n".join(meta)
+    return (
+        f"{TAKEAWAY_INSTRUCTION}\n\n"
+        f"{header}\n\n"
+        f"研報內文：\n{body_excerpt}\n\n"
+        f"請依上述 schema 只輸出單一 JSON 物件。"
+    )
+
+
+# ── 正典文字 / 指紋（不變量的唯一入口）──
+
+def canonical_text(full_text: Optional[str]) -> str:
+    """full_text → 正典文字。**本檔取得 full_text 後唯一允許的轉換**。"""
+    return clean_extracted(full_text or "")
+
+
+def sha256_of(canonical: str) -> str:
+    """正典文字的指紋。全文一變 sha 就變 → checkpoint 自動失效重跑，免人工介入。"""
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+# ── 純 SQL builder（供 test_extract_takeaways_sql.py 字串斷言、無 DB）──
+# 轉型一律用 CAST(:x AS ...)，**絕不寫 :x::type**：SQLAlchemy 的 text() 會把
+# 「參數名緊接 ::」回溯成短名，導致參數完全沒綁上、冒號原樣進 PG → 生產 500。
+
+def build_reports_sql() -> str:
+    """工作集：近 N 天、有全文的研究報告。
+
+    is_research 用 IS NOT FALSE（含 NULL：未判定的也算研報），不是 = true。
+    report_date 為 NULL 者天然被 >= 比較排除（NULL 比較結果非 true）。
+    """
+    return (
+        "SELECT r.id::text, r.file_name, r.report_date, r.source, r.full_text "
+        "FROM research.research_report r "
+        "WHERE r.full_text IS NOT NULL "
+        "  AND r.full_text <> '' "
+        "  AND r.is_research IS NOT FALSE "
+        "  AND r.report_date >= current_date - CAST(:since_days AS int) "
+        "ORDER BY r.report_date DESC, r.file_name"
+    )
+
+
+def build_existing_takeaways_sql() -> str:
+    """撈既有摘錄列供 checkpoint 判斷（以 report_id::text 比對避免 uuid 陣列轉型）。"""
+    return (
+        "SELECT report_id::text, extraction_status, extraction_version, text_sha256 "
+        "FROM research.report_takeaway "
+        "WHERE report_id::text = ANY(:report_ids)"
+    )
+
+
+# 每份報告在單一 transaction 內：先 DELETE 該報告全部舊列，再全量 INSERT。
+#
+# **刻意不用 upsert（ON CONFLICT (report_id, ordinal) DO UPDATE）—— 不要「順手」改掉。**
+# 摘錄是**變長列表**：重擷取可能從 5 條變 3 條，upsert 只會蓋掉 ordinal 1-3，
+# 留下 ordinal 4-5 的陳舊尾列，閱讀頁就會顯示上一版的論點（且指向舊 offset）。
+# delete + insert 是唯一能讓「列數變少」正確收斂的寫法。
+#
+# 對比 report_signal 之所以能用 upsert：它的鍵集合＝requested 標的代碼，事前已知且
+# 每次相同，不會有「這次少了一個鍵」的情況。摘錄沒有這個性質。
+TAKEAWAY_DELETE_SQL = text(
+    "DELETE FROM research.report_takeaway WHERE report_id = CAST(:report_id AS uuid)"
+)
+
+TAKEAWAY_INSERT_SQL = text(
+    """
+    INSERT INTO research.report_takeaway
+        (id, report_id, ordinal, claim, quote, quote_start, quote_end,
+         anchor_method, text_sha256, extraction_version, extraction_status,
+         raw_payload, error_detail)
+    VALUES
+        (CAST(:id AS uuid), CAST(:report_id AS uuid), :ordinal, :claim, :quote,
+         :quote_start, :quote_end, :anchor_method, :text_sha256,
+         :extraction_version, :extraction_status,
+         CAST(:raw_payload AS jsonb), :error_detail)
+    """
+)
+
+
+# ── 資料結構 ──
+
+@dataclass
+class ParsedTakeaways:
+    """parse_takeaways 的結果：容錯、不 raise。ok=False 代表整份 payload 無法解析。
+
+    ok=True 但 takeaways 為空（LLM 回了合法 JSON 的空陣列）也是常見情況，
+    由 build_rows 判為「無列可寫」→ 批次記 rejected。
+    """
+
+    ok: bool
+    takeaways: list[dict] = field(default_factory=list)  # [{"claim": str, "quote": str|None}]
+    raw_text: str = ""
+    error: Optional[str] = None
+
+
+@dataclass
+class TakeawayRow:
+    """對應 research.report_takeaway 一列（id 由 row_to_params 產生）。"""
+
+    report_id: str
+    ordinal: int
+    claim: str
+    quote: Optional[str]
+    quote_start: Optional[int]
+    quote_end: Optional[int]
+    anchor_method: Optional[str]
+    text_sha256: str
+    extraction_version: str
+    extraction_status: str  # valid | partial（rejected 不寫列，見 extract_one）
+    raw_payload: Optional[dict]
+    error_detail: Optional[str]
+
+
+# ── 解析（純函式）──
+
+def _clean_claim(value: object) -> Optional[str]:
+    """論點：收斂空白 + 截長。非字串/空字串 → None（該條目丟棄）。"""
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.split()).strip()
+    if not cleaned:
+        return None
+    return cleaned[:CLAIM_MAX]
+
+
+def _clean_quote(value: object) -> Optional[str]:
+    """引文：**只去頭尾空白 + 截長，內部空白原樣保留**。
+
+    內部空白不可動：canonical 的拉丁文字之間本來就有空白，改動內部空白會讓
+    locate_quote 的 exact 層失手、掉到 normalized 層（能錨到但品質標示變差）。
+    截長刻意在錨定「之前」做，好讓 DB 存的 quote 與 quote_start/quote_end 描述
+    的是同一個字串（截長在後會讓 offset 對應到一段沒被存下來的文字）。
+    """
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    return cleaned[:QUOTE_MAX]
+
+
+def parse_takeaways(raw: str) -> ParsedTakeaways:
+    """容錯解析 LLM 回應：去圍欄、抓首個 '{' 到末個 '}'。
+
+    解析不出合法 JSON / 缺 takeaways 陣列 → ok=False（**不 raise**），保留原文供 log。
+    claim 缺失或空白的條目直接丟棄（無論點的條目無意義）；quote 缺失的條目保留，
+    quote=None → 錨不到 → 該報告落 partial。多回的條目截到 MAX_TAKEAWAYS。
+    """
+    raw_text = (raw or "")[:RAW_TEXT_MAX]
+    if not raw or not raw.strip():
+        return ParsedTakeaways(ok=False, raw_text=raw_text, error="空回應")
+    s = raw.strip()
+    if s.startswith("```"):
+        s = s.strip("`").strip()
+    start, end = s.find("{"), s.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return ParsedTakeaways(ok=False, raw_text=raw_text, error="找不到 JSON 物件")
+    try:
+        obj = json.loads(s[start : end + 1])
+    except json.JSONDecodeError as exc:
+        return ParsedTakeaways(ok=False, raw_text=raw_text, error=f"JSON 解析失敗：{exc}")
+    if not isinstance(obj, dict):
+        return ParsedTakeaways(ok=False, raw_text=raw_text, error="頂層非物件")
+    arr = obj.get("takeaways")
+    if not isinstance(arr, list):
+        return ParsedTakeaways(ok=False, raw_text=raw_text, error="缺 takeaways 陣列")
+
+    items: list[dict] = []
+    for it in arr:
+        if not isinstance(it, dict):
+            continue
+        claim = _clean_claim(it.get("claim"))
+        if not claim:
+            continue
+        items.append({"claim": claim, "quote": _clean_quote(it.get("quote"))})
+        if len(items) >= MAX_TAKEAWAYS:
+            break
+    return ParsedTakeaways(ok=True, takeaways=items, raw_text=raw_text)
+
+
+def build_rows(
+    report_id: str, canonical: str, text_sha256: str, parsed: ParsedTakeaways
+) -> list[TakeawayRow]:
+    """ParsedTakeaways → 可寫入的列（含確定性錨定）。無列可寫時回 []（＝rejected）。
+
+    `canonical` 必須是 clean_extracted(full_text)，且與 text_sha256 同源。
+
+    錨定回 None **不是失敗**：該條目照樣寫入（讀者看得到論點與引文），只是
+    quote_start/anchor_method 為 NULL、前端不給跳。整份報告的狀態：
+    全部錨到 → valid；有任一條錨不到 → partial。
+    """
+    if not parsed.ok:
+        return []
+
+    rows: list[TakeawayRow] = []
+    for ordinal, item in enumerate(parsed.takeaways, start=1):
+        quote = item.get("quote")
+        anchor = locate_quote(canonical, quote) if quote else None
+        if anchor is not None:
+            error_detail = None
+        elif quote:
+            error_detail = "引文錨定失敗（原文找不到或多處出現）"
+        else:
+            error_detail = "LLM 未提供引文"
+        rows.append(
+            TakeawayRow(
+                report_id=report_id,
+                ordinal=ordinal,
+                claim=item["claim"],
+                quote=quote,
+                quote_start=anchor.start if anchor else None,
+                quote_end=anchor.end if anchor else None,
+                anchor_method=anchor.method if anchor else None,
+                text_sha256=text_sha256,
+                extraction_version=EXTRACTION_VERSION,
+                extraction_status="valid",  # 下方依整份錨定結果覆寫
+                raw_payload=dict(item),
+                error_detail=error_detail,
+            )
+        )
+    if not rows:
+        return []
+
+    status = "valid" if all(r.quote_start is not None for r in rows) else "partial"
+    for row in rows:
+        row.extraction_status = status
+    return rows
+
+
+def row_to_params(row: TakeawayRow) -> dict:
+    """TakeawayRow → insert named params（jsonb 欄位序列化為字串供 CAST）。"""
+    return {
+        "id": str(uuid.uuid4()),
+        "report_id": row.report_id,
+        "ordinal": row.ordinal,
+        "claim": row.claim,
+        "quote": row.quote,
+        "quote_start": row.quote_start,
+        "quote_end": row.quote_end,
+        "anchor_method": row.anchor_method,
+        "text_sha256": row.text_sha256,
+        "extraction_version": row.extraction_version,
+        "extraction_status": row.extraction_status,
+        "raw_payload": (
+            json.dumps(row.raw_payload, ensure_ascii=False)
+            if row.raw_payload is not None
+            else None
+        ),
+        "error_detail": row.error_detail,
+    }
+
+
+# ── claude CLI 呼叫（對齊 extract_signals.py / generate_summaries.py）──
+
+def build_cli_args(prompt: str, model: str) -> list[str]:
+    """組 `claude -p` 的 argv。
+
+    `--setting-sources ""`＝不載入任何 settings 來源，連帶略過全域 hooks/plugins/
+    CLAUDE.md —— 每次冷啟動載入它們正是磁碟小檔 I/O 的主因。
+    輸出格式用 CLI 預設的純文字（parse_takeaways 直接吃）：**不要加
+    `--output-format json`**，那會把回應包進一層 CLI envelope，解析會抓到外層物件。
+    """
+    prompt = prompt.replace("\x00", "")  # POSIX argv 不可含 NUL
+    return ["claude", "-p", prompt, "--model", model, "--setting-sources", ""]
+
+
+def call_cli(prompt: str, model: str, timeout: int = 180) -> Optional[str]:
+    try:
+        r = subprocess.run(
+            build_cli_args(prompt, model),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd="/tmp",  # 避免載入專案 CLAUDE.md
+        )
+        return r.stdout if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+# ── 進度計數 ──
+_done = 0
+_ok = 0
+_rejected = 0
+_fail = 0
+
+
+class WorkItem:
+    """一份待擷取的研報。canonical 已是正典文字，全程不再碰 full_text。"""
+
+    __slots__ = ("report_id", "file_name", "report_date", "source", "canonical",
+                 "text_sha256")
+
+    def __init__(self, report_id, file_name, report_date, source, canonical, text_sha256):
+        self.report_id = report_id
+        self.file_name = file_name
+        self.report_date = report_date
+        self.source = source
+        self.canonical = canonical
+        self.text_sha256 = text_sha256
+
+
+async def _fetch_reports(session, since_days):
+    return (
+        await session.execute(text(build_reports_sql()), {"since_days": since_days})
+    ).all()
+
+
+async def _fetch_done_map(session, report_ids):
+    """report_id → [(status, version, text_sha256), ...]，供 checkpoint 判斷。"""
+    if not report_ids:
+        return {}
+    rows = (
+        await session.execute(
+            text(build_existing_takeaways_sql()), {"report_ids": list(report_ids)}
+        )
+    ).all()
+    out: dict[str, list[tuple[str, str, str]]] = {}
+    for rid, status, version, sha in rows:
+        out.setdefault(rid, []).append((status, version, sha))
+    return out
+
+
+def _is_done(existing: list[tuple[str, str, str]], text_sha256: str, reextract: bool) -> bool:
+    """該報告是否可跳過。checkpoint 由「內容」決定而非時間。
+
+    existing = [(status, version, sha), ...]（該報告既有的全部列）。
+    跳過條件：有列、且每列版本相符、sha 相符、狀態 ∈ (valid, partial)。
+
+    - 版本不符 → prompt/schema 已升級，重跑。
+    - sha 不符 → 全文變了（重新抽取/重新 ingest），舊 offset 已失效，重跑。
+    - rejected → 上次沒擷出東西，重跑（正常路徑不會寫 rejected 列，此處是防禦性
+      判斷：萬一有別的路徑寫了，checkpoint 也要能自動修）。
+    - 無列 → 沒做過（或上次 rejected 什麼都沒寫），重跑。
+    """
+    if reextract:
+        return False
+    if not existing:
+        return False
+    for status, version, sha in existing:
+        if status not in ("valid", "partial"):
+            return False
+        if version != EXTRACTION_VERSION:
+            return False
+        if sha != text_sha256:
+            return False
+    return True
+
+
+async def build_worklist(since_days: int, reextract: bool) -> tuple[int, list[WorkItem]]:
+    """回傳 (掃描到的報告數, 待擷取的 WorkItem)。"""
+    async with SessionFactory() as session:
+        reports = await _fetch_reports(session, since_days)
+        done_map = await _fetch_done_map(session, [r[0] for r in reports])
+
+        worklist: list[WorkItem] = []
+        for rid, file_name, report_date, source, full_text in reports:
+            canonical = canonical_text(full_text)
+            if not canonical:
+                continue  # 清理後空白（極端壞檔）→ 沒東西可摘
+            sha = sha256_of(canonical)
+            if _is_done(done_map.get(rid, []), sha, reextract):
+                continue
+            worklist.append(
+                WorkItem(rid, file_name, report_date, source, canonical, sha)
+            )
+    return len(reports), worklist
+
+
+async def _replace_rows(report_id: str, rows: list[TakeawayRow]) -> None:
+    """單一 transaction 內：先刪該報告全部舊列，再全量插入新列。
+
+    見 TAKEAWAY_DELETE_SQL 上方註解 —— **不可改成 upsert**。
+    """
+    async with SessionFactory() as session:
+        await session.execute(TAKEAWAY_DELETE_SQL, {"report_id": report_id})
+        for row in rows:
+            await session.execute(TAKEAWAY_INSERT_SQL, row_to_params(row))
+        await session.commit()
+
+
+def _log_failure(item: WorkItem, reason: str) -> None:
+    with open(FAIL_LOG, "a", encoding="utf-8") as f:
+        f.write(f"{item.report_id}\t{item.file_name}\t{reason}\n")
+
+
+async def extract_one(
+    sem: asyncio.Semaphore, item: WorkItem, excerpt: int, model: str, total: int,
+    retries: int = 2,
+) -> None:
+    global _done, _ok, _rejected, _fail
+    date_str = item.report_date.isoformat() if item.report_date else None
+    prompt = build_takeaway_prompt(
+        item.file_name, date_str, item.source, item.canonical[:excerpt]
+    )
+    parsed: Optional[ParsedTakeaways] = None
+    async with sem:
+        for _ in range(retries + 1):
+            raw = await asyncio.to_thread(call_cli, prompt, model)
+            if raw:
+                parsed = parse_takeaways(raw)
+                if parsed.ok:
+                    break
+        if parsed is None:
+            parsed = ParsedTakeaways(ok=False, error="CLI 無回應或逾時")
+
+    try:
+        rows = build_rows(item.report_id, item.canonical, item.text_sha256, parsed)
+        if not rows:
+            # rejected：**不寫任何列**（也不刪既有列 —— 一次 CLI 抽風不該毀掉上一版
+            # 好的摘錄）。下次批次看不到符合的列/或 sha 仍不符 → 自動重跑。
+            _rejected += 1
+            _log_failure(item, parsed.error or "0 條摘錄")
+        else:
+            await _replace_rows(item.report_id, rows)
+            _ok += 1
+    except Exception as exc:  # 單筆例外只記 log，不中斷長跑
+        _fail += 1
+        _log_failure(item, f"EXC:{exc}")
+
+    _done += 1
+    if _done % 10 == 0 or _done == total:
+        print(f"  {_done}/{total}  ok={_ok} rejected={_rejected} fail={_fail}", flush=True)
+
+
+async def main(args) -> None:
+    FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
+    scanned, worklist = await build_worklist(args.since_days, args.reextract)
+    print(
+        f"近 {args.since_days} 天研報：{scanned} 篇｜待擷取：{len(worklist)} 篇"
+        f"｜version={EXTRACTION_VERSION}｜model={args.model}",
+        flush=True,
+    )
+
+    if args.dry_run:
+        print(f"\n[dry-run] 待擷取 {len(worklist)} 篇（未呼叫 LLM）", flush=True)
+        return
+
+    if args.limit:
+        worklist = worklist[: args.limit]
+    total = len(worklist)
+    if not total:
+        print("nothing to do（近期研報皆已擷取）", flush=True)
+        return
+
+    sem = asyncio.Semaphore(args.workers)
+    await asyncio.gather(
+        *(extract_one(sem, item, args.excerpt, args.model, total) for item in worklist)
+    )
+    print(f"\ndone. ok={_ok} rejected={_rejected} fail={_fail}", flush=True)
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--since-days", type=int, default=90,
+                    help="只擷取近 N 天的研報（預設 90；全語料成本過高）")
+    ap.add_argument("--workers", type=int, default=2,
+                    help="同時 claude CLI 呼叫數（勿調高；且不可與 extract_signals.py 同時跑）")
+    ap.add_argument("--limit", type=int, default=None, help="最多擷取幾篇（試跑用）")
+    ap.add_argument("--excerpt", type=int, default=24000, help="餵給 LLM 的正典文字上限")
+    ap.add_argument("--model", default=TAKEAWAY_MODEL_DEFAULT)
+    ap.add_argument("--reextract", action="store_true", help="忽略 checkpoint，強制重跑")
+    ap.add_argument("--dry-run", action="store_true", help="只印工作集大小，不呼叫 LLM")
+    asyncio.run(main(ap.parse_args()))

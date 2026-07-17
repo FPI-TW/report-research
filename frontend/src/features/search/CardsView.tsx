@@ -10,10 +10,9 @@ interface Props {
   mode: SearchMode
   terms: string[]
   latestId: string | null
-  onOpen: (id: string, fileName: string) => void
 }
 
-export function CardsView({ rows, mode, terms, latestId, onOpen }: Props) {
+export function CardsView({ rows, mode, terms, latestId }: Props) {
   return (
     <div className={styles.wrap}>
       {monthGroups(rows).map(g => (
@@ -26,7 +25,6 @@ export function CardsView({ rows, mode, terms, latestId, onOpen }: Props) {
                 mode={mode}
                 terms={terms}
                 isLatest={r.report_id === latestId}
-                onOpen={onOpen}
                 index={i}
               />
             ))}

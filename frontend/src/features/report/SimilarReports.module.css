@@ -1,0 +1,114 @@
+.sim {
+  border-top: 1px solid var(--tf-border);
+  background: var(--tf-surface);
+  flex: none;
+  padding: 15px 28px 17px;
+  /* 長文頁的頁底區塊：離開視窗時省下排版成本 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 11px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--tf-text-4);
+  font-family: var(--tf-mono);
+  margin: 0;
+}
+
+.note {
+  font-size: 11.5px;
+  color: var(--tf-text-4);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+/* 位移歸 Motion（MotionLink whileHover）；此處只留邊框與陰影的 hover 態 */
+.card {
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  padding: 11px 13px;
+  background: var(--tf-surface);
+  cursor: pointer;
+  text-decoration: none;
+  display: block;
+  transition: border-color var(--tf-dur-2) var(--tf-ease-standard),
+              box-shadow var(--tf-dur-2) var(--tf-ease-standard);
+}
+.card:hover {
+  border-color: var(--tf-ink-line);
+  box-shadow: var(--tf-shadow-float);
+}
+.card:focus-visible {
+  outline: 2px solid var(--tf-ink);
+  outline-offset: 2px;
+}
+
+.cardTitle {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--tf-text-1);
+  line-height: 1.45;
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cardMeta {
+  font-size: 11px;
+  color: var(--tf-text-3);
+  font-family: var(--tf-mono);
+  margin-bottom: 8px;
+}
+
+.cardBar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.bar {
+  flex: 1;
+  height: 3px;
+  background: var(--tf-border-weak);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  background: var(--tf-ink);
+  border-radius: 999px;
+}
+
+.pct {
+  font-size: 10px;
+  color: var(--tf-text-3);
+  font-family: var(--tf-mono);
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .row { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 900px) {
+  .sim { padding: 14px 16px; }
+  .row { grid-template-columns: 1fr; }
+}

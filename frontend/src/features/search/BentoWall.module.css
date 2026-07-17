@@ -33,11 +33,12 @@
 
 /* 結果列躺在畫布上可以靠「hover 變白」浮起；此處在白底磚內，同招無效，
    故反過來染成暖紙白讓列從白底浮出。位移交給 Motion，這裡只留純色。 */
+/* 根元素是真連結（<a>），故重置底線與顏色 */
 .lrow {
   display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 18px; align-items: center;
   padding: 13px 10px; margin: 0 -10px;
   border-top: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md);
-  cursor: pointer;
+  cursor: pointer; text-decoration: none; color: inherit;
   transition: background 120ms var(--tf-ease-out);
 }
 .lrow:hover { background: var(--tf-canvas); }

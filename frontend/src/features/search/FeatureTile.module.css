@@ -1,4 +1,5 @@
-/* 頭條磚。Motion 擁有 hover 位移；此處只留純色／邊框／陰影的 hover 態。 */
+/* 頭條磚。Motion 擁有 hover 位移；此處只留純色／邊框／陰影的 hover 態。
+   根元素是真連結（<a>），故重置底線與顏色。 */
 .tile {
   position: relative;
   overflow: hidden;
@@ -9,6 +10,8 @@
   border-radius: var(--tf-radius-tile);
   padding: 20px;
   cursor: pointer;
+  text-decoration: none;
+  color: inherit;
   transition: box-shadow 150ms var(--tf-ease-out), border-color 150ms var(--tf-ease-out);
 }
 .tile:hover { box-shadow: var(--tf-shadow-float); border-color: var(--tf-ink-line); }

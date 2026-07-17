@@ -1,11 +1,13 @@
-import { motion, useReducedMotion } from 'motion/react'
+import { useReducedMotion } from 'motion/react'
 import type { CSSProperties } from 'react'
 import { marketColor, marketLabel } from '../../lib/meta'
 import { springHover } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
+import { MotionLink } from '../../components/primitives/MotionLink'
 import { Pressable } from '../../components/primitives/Pressable'
 import { FeatureTile } from './FeatureTile'
 import { Spectrum, type SpectrumSlice } from './Spectrum'
+import { reportHref } from '../report/readingFormat'
 import styles from './BentoWall.module.css'
 
 /** 圖例只列前 5 大市場，其餘留給色譜本身表達——避免圖例喧賓奪主。 */
@@ -19,7 +21,6 @@ interface Props {
   totalReports: number
   composition: SpectrumSlice[]
   monthLabel: string
-  onOpen: (id: string, fileName: string) => void
   onSeeAll: () => void
 }
 
@@ -36,7 +37,7 @@ export { monthOf }
  * 首頁＝每日簡報面，不是行銷招牌——品牌已在左欄 SideRail，此處不重複。
  */
 export function BentoWall({
-  rows, latestId, totalReports, composition, monthLabel, onOpen, onSeeAll,
+  rows, latestId, totalReports, composition, monthLabel, onSeeAll,
 }: Props) {
   const reduced = useReducedMotion()
   const [head, ...rest] = rows
@@ -52,7 +53,6 @@ export function BentoWall({
           row={head}
           mode="browse"
           isLatest={head.report_id === latestId}
-          onOpen={onOpen}
         />
       )}
 
@@ -92,18 +92,14 @@ export function BentoWall({
           {listRows.map(r => {
             const date = (r.report_date ?? '').slice(0, 10)
             return (
-              <motion.div
+              // 真連結：cmd+click／中鍵／複製連結（瀏覽態無命中，故不帶 chunk）
+              <MotionLink
                 key={r.report_id}
                 className={styles.lrow}
+                to={reportHref(r.file_hash)}
                 style={{ '--c': marketColor(r.market ?? '') } as CSSProperties}
                 whileHover={reduced ? undefined : { x: 2, transition: springHover }}
-                role="button"
-                tabIndex={0}
                 aria-label={r.file_name}
-                onClick={() => onOpen(r.report_id, r.file_name)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(r.report_id, r.file_name) }
-                }}
               >
                 <span className={styles.code}>{marketLabel(r.market ?? '')}</span>
                 <span className={styles.ltitleWrap}>
@@ -111,7 +107,7 @@ export function BentoWall({
                   {r.source && <span className={styles.lsrc}>{r.source}</span>}
                 </span>
                 <span className={styles.ldate}>{date.slice(5)}</span>
-              </motion.div>
+              </MotionLink>
             )
           })}
         </div>

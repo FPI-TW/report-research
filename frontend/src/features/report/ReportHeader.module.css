@@ -1,0 +1,147 @@
+.hd {
+  border-bottom: 1px solid var(--tf-border);
+  background: var(--tf-surface);
+  flex: none;
+  padding: 16px 28px 0;
+}
+
+.crumb {
+  font-size: 12.5px;
+  color: var(--tf-text-3);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.crumb a {
+  color: var(--tf-text-3);
+  text-decoration: none;
+}
+.crumb a:hover {
+  color: var(--tf-ink);
+  text-decoration: underline;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-family: var(--tf-serif);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 9px;
+  line-height: 1.35;
+  color: var(--tf-text-1);
+}
+
+.metas {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+/* 市場 chip：淡底深字由 marketTint() 以 inline style 帶入 */
+.mkt {
+  font-family: var(--tf-mono);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: var(--tf-radius-pill);
+}
+
+.metaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--tf-text-2);
+}
+.metaItem b {
+  font-weight: 500;
+  color: var(--tf-text-1);
+}
+
+.dot {
+  color: var(--tf-text-4);
+}
+
+.code {
+  font-family: var(--tf-mono);
+  font-size: 12px;
+  color: var(--tf-ink);
+  background: var(--tf-ink-tint);
+  border: 1px solid var(--tf-ink-line);
+  padding: 1px 7px;
+  border-radius: var(--tf-radius-pill);
+}
+
+.tag {
+  font-size: 11.5px;
+  color: var(--tf-text-3);
+  background: var(--tf-canvas);
+  border: 1px solid var(--tf-border);
+  padding: 2px 8px;
+  border-radius: var(--tf-radius-pill);
+}
+
+.acts {
+  display: flex;
+  gap: 8px;
+  flex: none;
+  padding-top: 4px;
+}
+
+/* 位移/縮放歸 Motion（Pressable/MotionLink）；此處只留純色與邊框的 hover 態 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: var(--tf-radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--tf-border);
+  background: var(--tf-surface);
+  color: var(--tf-text-2);
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background var(--tf-dur-1) var(--tf-ease-standard),
+              border-color var(--tf-dur-1) var(--tf-ease-standard),
+              color var(--tf-dur-1) var(--tf-ease-standard);
+}
+.btn:hover {
+  border-color: var(--tf-ink-line);
+  color: var(--tf-ink);
+  background: var(--tf-ink-tint);
+}
+
+.btnGold {
+  background: var(--tf-gold-strong);
+  border-color: var(--tf-gold-strong);
+  color: var(--tf-on-gold);
+}
+.btnGold:hover {
+  background: var(--tf-gold-hover);
+  border-color: var(--tf-gold-hover);
+  color: var(--tf-on-gold);
+}
+
+@media (max-width: 900px) {
+  .hd { padding: 14px 16px 0; }
+  .row { flex-direction: column; gap: 12px; }
+  .title { font-size: 20px; }
+  .acts { padding-top: 0; }
+}

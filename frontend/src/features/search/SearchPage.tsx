@@ -28,7 +28,6 @@ import { SearchSkeleton } from './SearchSkeleton'
 import { EmptyState } from './EmptyState'
 import { LoadMore } from './LoadMore'
 import { ViewSwitch } from './ViewSwitch'
-import { ReportDetailModal } from '../../components/ReportDetailModal'
 import { Reveal } from '../../components/primitives/Reveal'
 import { Pressable } from '../../components/primitives/Pressable'
 import styles from './SearchPage.module.css'
@@ -43,7 +42,6 @@ export default function SearchPage() {
   }, [params])
   const mode = modeOf(state)
   const [tableSort, setTableSort] = useState<TableSort>({ key: 'date', dir: 'desc' })
-  const [openReport, setOpenReport] = useState<{ id: string; fileName: string } | null>(null)
 
   const stats = useStats()
   const results = useSearchResults(state)
@@ -95,7 +93,6 @@ export default function SearchPage() {
   function onSort(key: TableSortKey) {
     setTableSort(s => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }))
   }
-  const onOpen = (id: string, fileName: string) => setOpenReport({ id, fileName })
 
   const [topHit, ...restHits] = results.rows
   const showFeature = mode === 'search' && state.view !== 'table' && !!topHit
@@ -149,7 +146,6 @@ export default function SearchPage() {
             totalReports={stats.data?.total_reports ?? results.total}
             composition={corpusComposition}
             monthLabel={monthOf(results.rows[0]?.report_date ?? null)}
-            onOpen={onOpen}
             onSeeAll={() => update({ all: true })}
           />
         ) : (
@@ -173,12 +169,11 @@ export default function SearchPage() {
                 row={topHit}
                 mode="search"
                 isLatest={topHit.report_id === latest}
-                onOpen={onOpen}
               />
             )}
 
             {state.view === 'table' ? (
-              <TableView rows={results.rows} mode={mode} sort={tableSort} onSort={onSort} onOpen={onOpen} />
+              <TableView rows={results.rows} mode={mode} sort={tableSort} onSort={onSort} />
             ) : mode === 'search' ? (
               <div className={styles.results}>
                 {restHits.map((r, i) => (
@@ -188,13 +183,12 @@ export default function SearchPage() {
                     isLatest={r.report_id === latest}
                     terms={terms}
                     index={i}
-                    onOpen={onOpen}
                   />
                 ))}
               </div>
             ) : (
               // 完整清單（查看全部／已篩選的瀏覽）：時間是主軸，保留月份分組
-              <CardsView rows={results.rows} mode={mode} terms={terms} latestId={latest} onOpen={onOpen} />
+              <CardsView rows={results.rows} mode={mode} terms={terms} latestId={latest} />
             )}
 
             {results.hasMore && (
@@ -203,12 +197,6 @@ export default function SearchPage() {
           </>
         )}
       </div>
-
-      <ReportDetailModal
-        reportId={openReport?.id ?? null}
-        fileName={openReport?.fileName}
-        onClose={() => setOpenReport(null)}
-      />
     </div>
   )
 }

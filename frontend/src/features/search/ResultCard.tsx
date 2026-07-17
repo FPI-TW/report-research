@@ -1,10 +1,12 @@
 import { motion, useReducedMotion, type Variants } from 'motion/react'
 import { useMemo } from 'react'
+import { MotionLink } from '../../components/primitives/MotionLink'
 import { marketLabel, marketTint, instrumentLabel } from '../../lib/meta'
 import { highlight } from '../../lib/highlight'
 import { revealTransition, revealVariantsFor, springHover, TF_DUR, TF_EASE_OUT, tfInstant } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
 import type { SearchMode } from '../../lib/searchFilters'
+import { reportHref } from '../report/readingFormat'
 import styles from './ResultCard.module.css'
 
 interface Props {
@@ -12,7 +14,6 @@ interface Props {
   mode: SearchMode
   isLatest: boolean
   terms: string[]
-  onOpen: (id: string, fileName: string) => void
   /** 清單中的序號，用於封頂 stagger 進場；預設 0。 */
   index?: number
 }
@@ -31,12 +32,11 @@ const ctaVariants: Variants = {
 }
 
 /** 高密度列表列：市場｜標題＋標的＋命中片段｜相關度＋來源日期（等高欄位、可掃讀）。 */
-export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Props) {
+export function ResultCard({ row, mode, isLatest, terms, index = 0 }: Props) {
   const reduced = useReducedMotion()
   const targets = [...(row.stock_targets ?? []), ...(row.futures_targets ?? [])]
   const pills = [...(row.instrument_types ?? []).map(instrumentLabel), ...targets]
   const date = (row.report_date ?? '').slice(0, 10)
-  const open = () => onOpen(row.report_id, row.file_name)
   const pct = mode === 'search'
     ? Math.max(4, Math.min(100, Math.round((row.best_score ?? 0) * 100)))
     : 0
@@ -50,8 +50,11 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
   }), [reduced])
 
   return (
-    <motion.article
+    // 真連結（非 role=button）：cmd+click／中鍵開新分頁／複製連結網址都拿得回來。
+    // 命中的 chunk 帶進 query，閱讀頁據此預設文字檢視並定位。
+    <MotionLink
       className={styles.card}
+      to={reportHref(row.file_hash, row.passages?.[0]?.chunk_index)}
       variants={cardVariants}
       initial="hidden"
       animate="visible"
@@ -59,11 +62,7 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
       whileHover="hover"
       // 原 CSS 為 .card:hover .cta, .card:focus-visible .cta——鍵盤焦點也要看得到提示
       whileFocus="hover"
-      role="button"
-      tabIndex={0}
       aria-label={row.file_name}
-      onClick={open}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() } }}
     >
       <div className={styles.chipCol}>
         <span className={styles.badge} style={marketTint(row.market ?? '')}>
@@ -104,6 +103,6 @@ export function ResultCard({ row, mode, isLatest, terms, onOpen, index = 0 }: Pr
         <span className={styles.meta}>{[row.source, date].filter(Boolean).join(' · ')}</span>
         <motion.span className={styles.cta} variants={ctaVariants}>查看全文 ›</motion.span>
       </div>
-    </motion.article>
+    </MotionLink>
   )
 }

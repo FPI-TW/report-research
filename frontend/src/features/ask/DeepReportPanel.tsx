@@ -1,5 +1,8 @@
 import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
+import { Reveal } from '../../components/primitives/Reveal'
+import { Sweep } from '../../components/primitives/motionLoops'
+import { RippleButton, RippleButtonRipples } from '../../components/animate-ui/primitives/buttons/ripple'
 import type { ReportState } from '../../lib/askReducer'
 import styles from './DeepReportPanel.module.css'
 
@@ -24,7 +27,10 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
           <div className={styles.offerSub}>彙整本輪引用來源，逐節撰寫含 KPI 與圖表的深度研報，約需 5–12 分鐘，可留在此頁等候。</div>
         </div>
         <div className={styles.offerBtns}>
-          <button type="button" className={styles.yes} onClick={onGenerate}>生成研報</button>
+          <RippleButton type="button" className={styles.yes} hoverScale={1.03} tapScale={0.96} onClick={onGenerate}>
+            生成研報
+            <RippleButtonRipples color="rgba(255,255,255,0.6)" />
+          </RippleButton>
           <button type="button" className={styles.no} onClick={onDecline}>暫時不用</button>
         </div>
       </div>
@@ -36,7 +42,9 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
       <div className={styles.gen}>
         <div className={styles.genTitle}>深度研報生成中…</div>
         <div className={styles.track}>
-          <div className={`${styles.fill} ${report.pct === 50 ? styles.indet : ''}`} style={{ width: `${report.pct}%` }} />
+          {report.pct === 50
+            ? <Sweep className={styles.indet} barClassName={styles.indetBar} />
+            : <div className={styles.fill} style={{ width: `${report.pct}%` }} />}
         </div>
         <div className={styles.genMeta}>{report.stageText}</div>
       </div>
@@ -46,11 +54,11 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
   if (report.status === 'done') {
     const href = safeDownload(report.downloadUrl)
     return (
-      <div className={`${styles.done} tf-reveal`}>
+      <Reveal className={styles.done}>
         <div className={styles.doneHead}><Icon name="check" size={18} className={styles.doneIcon} /><span className={styles.doneTitle}>深度研報已完成</span></div>
         {report.title && <div className={styles.doneMeta}>{report.title}</div>}
         {href && <a className={styles.dl} href={href} download><Icon name="fileText" size={16} /> 下載 PDF</a>}
-      </div>
+      </Reveal>
     )
   }
 

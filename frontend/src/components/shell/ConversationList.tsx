@@ -1,10 +1,18 @@
 import { useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
+import { AnimatePresence, motion } from 'motion/react'
+import { MotionLink } from '../primitives/MotionLink'
 import { Icon } from '../primitives/Icon'
 import { ConfirmDialog } from '../primitives/ConfirmDialog'
 import { useConversations } from '../../lib/useConversations'
 import { useDeleteConversation } from '../../lib/useDeleteConversation'
 import styles from './ConversationList.module.css'
+
+/** 列 hover 時 del 鈕滑入；rest 隱藏、hover/focus 顯現（取代原 CSS opacity 顯隱）。 */
+const delVariants = {
+  rest: { opacity: 0, x: 6 },
+  hover: { opacity: 1, x: 0 },
+}
 
 export function ConversationList() {
   const { data } = useConversations()
@@ -24,23 +32,42 @@ export function ConversationList() {
   return (
     <>
       <div className={styles.newWrap}>
-        <Link to="/ask" className={styles.newBtn}><Icon name="plus" size={17} /> 新對話</Link>
+        <MotionLink to="/ask" className={styles.newBtn} whileTap={{ scale: 0.97 }}><Icon name="plus" size={17} /> 新對話</MotionLink>
       </div>
       <div className={styles.heading}>歷史對話</div>
       <div className={`${styles.list} tf-scroll`}>
+        <AnimatePresence initial={false}>
         {(data ?? []).map((cv) => (
-          <div key={cv.conversation_id} className={styles.row}>
-            <Link
+          <motion.div
+            key={cv.conversation_id}
+            className={styles.row}
+            layout="position"
+            initial="rest"
+            animate="rest"
+            whileHover="hover"
+            exit={{ opacity: 0, x: -12, transition: { duration: 0.18 } }}
+          >
+            <MotionLink
               to={`/ask?c=${encodeURIComponent(cv.conversation_id)}`}
               className={`${styles.item} ${cv.conversation_id === activeC ? styles.active : ''}`}
               aria-current={cv.conversation_id === activeC ? 'page' : undefined}
               title={cv.title}
-            >{cv.title}</Link>
-            <button type="button" className={styles.del} aria-label="刪除對話" onClick={() => setPending(cv.conversation_id)}>
+              whileTap={{ scale: 0.98 }}
+            >{cv.title}</MotionLink>
+            <motion.button
+              type="button"
+              className={styles.del}
+              aria-label="刪除對話"
+              variants={delVariants}
+              whileFocus={{ opacity: 1, x: 0 }}
+              whileTap={{ scale: 0.94 }}
+              onClick={() => setPending(cv.conversation_id)}
+            >
               <Icon name="trash" size={15} />
-            </button>
-          </div>
+            </motion.button>
+          </motion.div>
         ))}
+        </AnimatePresence>
       </div>
       <ConfirmDialog
         open={pending !== null}

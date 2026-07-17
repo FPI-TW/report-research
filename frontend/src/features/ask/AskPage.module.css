@@ -6,5 +6,4 @@
 .flowCentered { display: flex; flex-direction: column; justify-content: center; }
 /* flex 子項預設縮成內容寬；補 width:100% 讓 wrap 維持 760/composer 640 原寬 */
 .flowCentered > * { width: 100%; }
-.modeBar { flex: none; display: flex; justify-content: center; padding: 12px 20px 4px; }
 .composerBar { flex: none; padding: 0 20px 18px; }

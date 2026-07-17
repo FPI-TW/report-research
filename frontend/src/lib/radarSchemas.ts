@@ -60,6 +60,7 @@ export const ratingConsensusSchema = z.object({
   bearish: z.number().int(),
   unknown: z.number().int(),
   total_rated: z.number().int(),
+  median_rating: ratingNormSchema.nullish(),
   upgrades: z.number().int(),
   downgrades: z.number().int(),
   unchanged: z.number().int(),
@@ -222,6 +223,34 @@ export const brokerHistorySchema = z.object({
 })
 export type BrokerHistory = z.infer<typeof brokerHistorySchema>
 
+export const instrumentStanceSchema = z.object({
+  rating: ratingNormSchema,
+  bullish: z.number().int(),
+  neutral: z.number().int(),
+  bearish: z.number().int(),
+  total_rated: z.number().int(),
+  distribution: z.array(ratingBucketCountSchema),
+  upgrades: z.number().int(),
+  downgrades: z.number().int(),
+  net_rating: z.number().int(),
+})
+export type InstrumentStance = z.infer<typeof instrumentStanceSchema>
+
+export const instrumentTargetBriefSchema = z.object({
+  currency: z.string(),
+  median: z.number(),
+  revision_pct: z.number().nullish(),
+  revision_direction: directionSchema.default('none'),
+})
+export type InstrumentTargetBrief = z.infer<typeof instrumentTargetBriefSchema>
+
+export const instrumentConsensusSchema = z.object({
+  window: windowSchema,
+  stance: instrumentStanceSchema,
+  target: instrumentTargetBriefSchema.nullish(),
+})
+export type InstrumentConsensus = z.infer<typeof instrumentConsensusSchema>
+
 export const radarInstrumentItemSchema = z.object({
   market: z.string(),
   market_display: z.string().nullish(),
@@ -231,6 +260,7 @@ export const radarInstrumentItemSchema = z.object({
   report_count: z.number().int(),
   latest_report_date: z.string().nullish(),
   coverage_state: coverageStateSchema,
+  consensus: instrumentConsensusSchema.nullish(),
 })
 export type RadarInstrumentItem = z.infer<typeof radarInstrumentItemSchema>
 

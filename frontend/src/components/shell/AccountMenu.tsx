@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { Popover } from '../primitives/Popover'
+import { Pressable } from '../primitives/Pressable'
 import { Icon } from '../primitives/Icon'
 import { preloadRoute } from '../../lib/routePreload'
 import { useStats } from '../../lib/useStats'
@@ -13,8 +14,7 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
 
   return (
     <div className={styles.wrap}>
-      <button
-        type="button"
+      <Pressable
         aria-expanded={open}
         title={name}
         onClick={() => setOpen((o) => !o)}
@@ -27,8 +27,8 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
             <span className={styles.sub}>研究部 · 分析師</span>
           </span>
         )}
-      </button>
-      <Popover open={open} onClose={() => setOpen(false)} className={styles.pop}>
+      </Pressable>
+      <Popover open={open} onClose={() => setOpen(false)} className={styles.pop} openUp>
         <div className={styles.popHead}>
           <div className={styles.name}>{name}</div>
           <div className={styles.sub}>研究部 · 分析師</div>
@@ -42,7 +42,7 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
           <Icon name="info" size={16} />使用說明
         </Link>
         <form method="post" action="/logout">
-          <button type="submit" className={styles.logout}>登出</button>
+          <Pressable type="submit" className={styles.logout}>登出</Pressable>
         </form>
       </Popover>
     </div>

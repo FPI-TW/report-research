@@ -7,10 +7,15 @@
 - schemas：HTTP 回應 pydantic（API enum 契約）
 """
 
-from app.services.radar.compute import build_broker_history, build_overview  # noqa: F401
+from app.services.radar.compute import (  # noqa: F401
+    build_broker_history,
+    build_instrument_slim,
+    build_overview,
+)
 from app.services.radar.queries import (  # noqa: F401
     fetch_broker_signals,
     fetch_coverage_counts,
     fetch_instrument_signals,
+    fetch_signals_for_instruments,
     list_radar_instruments,
 )

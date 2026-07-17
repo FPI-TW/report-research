@@ -19,6 +19,6 @@
 .row:hover { background: var(--tf-border-weak); }
 .row .item { flex: 1; min-width: 0; }
 .item.active { background: var(--tf-ink-tint); color: var(--tf-ink-deep); font-weight: 600; }
-.del { flex: none; border: none; background: none; color: var(--tf-text-4); border-radius: 6px; padding: 6px; cursor: pointer; opacity: 0; }
-.row:hover .del, .del:focus-visible { opacity: 1; }
+/* del 的顯隱位移由 Motion（ConversationList.tsx 的 rest/hover variants + whileFocus）驅動；此處僅留底樣式與 hover 變色。 */
+.del { flex: none; border: none; background: none; color: var(--tf-text-4); border-radius: 6px; padding: 6px; cursor: pointer; }
 .del:hover { color: var(--tf-error); background: var(--tf-surface); }

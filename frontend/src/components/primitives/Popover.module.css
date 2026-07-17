@@ -1,4 +1,5 @@
 .scrim { position: fixed; inset: 0; z-index: 35; }
+/* 進出場（opacity/translate/scale/transform-origin）改由 Motion（Popover.tsx）驅動，此處僅留版面。 */
 .panel {
   position: absolute;
   z-index: 40;
@@ -7,11 +8,4 @@
   border-radius: var(--tf-radius-card);
   box-shadow: var(--tf-shadow-pop);
   padding: 8px;
-  /* origin/進場位移可被消費端以變數覆寫（向上開的選單傳 bottom / 正值） */
-  transform-origin: var(--tf-pop-origin, top);
-  transition: opacity var(--tf-dur-2) var(--tf-ease-out),
-              translate var(--tf-dur-2) var(--tf-ease-out),
-              scale var(--tf-dur-2) var(--tf-ease-out);
 }
-.panel[data-state='closed'] { opacity: 0; translate: 0 var(--tf-pop-rise, -4px); scale: 0.98; pointer-events: none; }
-.panel[data-state='open'] { opacity: 1; translate: 0 0; scale: 1; }

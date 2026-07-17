@@ -1,0 +1,138 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  appearance: none;
+  font-family: var(--tf-sans);
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  padding: 22px 22px 18px;
+  box-shadow: var(--tf-shadow-xs);
+  transition:
+    border-color var(--tf-dur-2) var(--tf-ease-out),
+    box-shadow var(--tf-dur-2) var(--tf-ease-out),
+    transform var(--tf-dur-2) var(--tf-ease-out);
+}
+.card:hover {
+  border-color: var(--tf-ink-line);
+  box-shadow: var(--tf-shadow-float);
+  transform: translateY(-2px);
+}
+.card:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.id { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.name {
+  font-family: var(--tf-serif);
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--tf-text-1);
+}
+.code {
+  font-family: var(--tf-mono);
+  font-size: 13px;
+  color: var(--tf-text-3);
+}
+
+.badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--tf-radius-pill);
+  color: var(--badge, var(--mkt-fallback));
+  background: color-mix(in srgb, var(--badge, var(--mkt-fallback)) 12%, var(--tf-surface));
+  border: 1px solid color-mix(in srgb, var(--badge, var(--mkt-fallback)) 26%, transparent);
+}
+
+.stanceLine {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 20px 0 0;
+}
+.stanceWord {
+  font-family: var(--tf-serif);
+  font-weight: 800;
+  font-size: 23px;
+  line-height: 1;
+}
+.bull { color: var(--tf-success); }
+.neu { color: var(--tf-text-1); }
+.bear { color: var(--tf-error); }
+
+.dist {
+  display: flex;
+  height: 8px;
+  border-radius: var(--tf-radius-pill);
+  overflow: hidden;
+  background: var(--tf-border-weak);
+  margin-top: 16px;
+}
+.dist span { display: block; height: 100%; }
+.buy { background: var(--tf-success); }
+.overweight { background: var(--tf-success-soft); }
+.neutral { background: var(--tf-text-4); }
+.underweight { background: var(--tf-warn); }
+.sell { background: var(--tf-error); }
+
+.tp {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 20px;
+}
+.tpLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--tf-text-3);
+}
+.tpVal {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--tf-text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.pending {
+  margin: 18px 0 4px;
+  font-size: 12.5px;
+  color: var(--tf-text-4);
+}
+
+.foot {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--tf-divider);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.meta {
+  font-size: 12px;
+  color: var(--tf-text-3);
+  font-variant-numeric: tabular-nums;
+}
+.go {
+  color: var(--tf-text-4);
+  font-size: 16px;
+  transition: color var(--tf-dur-2) var(--tf-ease-out), transform var(--tf-dur-2) var(--tf-ease-out);
+}
+.card:hover .go { color: var(--tf-ink); transform: translateX(2px); }

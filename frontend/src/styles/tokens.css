@@ -33,10 +33,12 @@
   --tf-serif: 'Noto Serif TC', Georgia, 'Times New Roman', serif;
   --tf-sans: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
     'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
-  --tf-mono: ui-monospace, Menlo, monospace;
+  /* 資料字體：標的代號／日期／計數是券商研報的母語，用等寬呈現 */
+  --tf-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Noto Sans Mono CJK TC', monospace;
 
-  /* ── 圓角：控制項 8 · 卡片 12 · 面板 16 ── */
+  /* ── 圓角：控制項 8 · 卡片 12 · 磚 14 · 面板 16 ── */
   --tf-radius-card: 12px;
+  --tf-radius-tile: 14px;
   --tf-radius-panel: 16px;
   --tf-radius-pill: 999px;
   --tf-radius-seg: 10px;
@@ -52,13 +54,23 @@
   --tf-ring-ink: 0 0 0 3px rgba(30, 81, 117, 0.12);
 
   /* ── 動效 ── */
+  /* 緩動家族：進場減速為主曲線；可逆 hover 用對稱 standard；離場加速；emphasized 為極輕收束過衝
+     （幅度壓在 ~1.26 維持印刷感）。--tf-ease-out 保留為 --tf-ease-entrance 相容別名。
+     進出場主體已由 Motion 驅動，這些 token 供殘留的 CSS 微互動/hover/press 使用。 */
   --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --tf-ease-entrance: var(--tf-ease-out);
+  --tf-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --tf-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --tf-ease-emphasized: cubic-bezier(0.34, 1.26, 0.64, 1);
   --tf-dur-1: 120ms;
   --tf-dur-2: 180ms;
   --tf-dur-3: 240ms;
   --tf-dur-4: 340ms;
   --tf-stagger: 40ms;
   --tf-stagger-cap: 8;
+  /* 觸覺：CSS `:active` 按壓縮放與 hover 抬升位移（各模組以 var() 引用）。 */
+  --tf-press: 0.96;
+  --tf-lift-y: -1px;
 
   /* ── 語意色 — 市場（降彩度重校；chip 一律淡底深字） ── */
   --mkt-TW: #237a46;
@@ -113,16 +125,9 @@ a:hover { color: var(--tf-ink-hover); }
   border: 3px solid var(--tf-canvas);
 }
 
-/* tf-up 供全域 class .tf-reveal 使用，定義於此。
-   其餘 keyframe（tf-spin/tf-pulse/tf-fade/tf-indet/tf-grow）由各 CSS Module「就地定義」——
-   CSS Modules 會把 module 內 animation 名稱在地化雜湊，引用此處全域 keyframe 會落空、動畫不播，故不放全域。 */
-@keyframes tf-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-
-/* 進場淡入＋上浮；清單以 style={{'--tf-i': index}} 做封頂 stagger。 */
-.tf-reveal {
-  animation: tf-up var(--tf-dur-3) var(--tf-ease-out) both;
-  animation-delay: calc(min(var(--tf-i, 0), var(--tf-stagger-cap)) * var(--tf-stagger));
-}
+/* 進場淡入＋上浮已改由 Motion（components/primitives/Reveal.tsx）提供，不再用全域 .tf-reveal / @keyframes tf-up。
+   殘留的裝飾性 keyframe（tf-spin/tf-pulse/tf-fade/tf-indet/tf-grow）仍由各 CSS Module「就地定義」——
+   CSS Modules 會把 module 內 animation 名稱在地化雜湊，引用全域 keyframe 會落空、動畫不播，故不放全域。 */
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

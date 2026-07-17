@@ -1,6 +1,11 @@
 import { useRef, useState } from 'react'
 import { marketLabel, marketTint, ptypeColor, MARKET_ORDER } from '../../lib/meta'
 import { Icon } from '../../components/primitives/Icon'
+import browseImg from '../../assets/help/browse.png'
+import resultsImg from '../../assets/help/results.png'
+import reportImg from '../../assets/help/report.png'
+import askImg from '../../assets/help/ask.png'
+import monitorImg from '../../assets/help/monitor.png'
 import styles from './HelpPage.module.css'
 
 const ACCESS_URL = 'http://192.168.1.128:8097/'
@@ -36,7 +41,7 @@ const TOC: [string, string][] = [
   ['result', '看懂一筆結果'],
   ['full', '查看完整報告（PDF）'],
   ['ask', '智能問答（向 AI 提問）'],
-  ['radar', '觀點雷達'],
+  ['radar', '廷豐觀點'],
   ['monitor', '導入監控（進階）'],
 ]
 
@@ -96,6 +101,15 @@ function CopyUrlButton({ url }: { url: string }) {
   )
 }
 
+function Figure({ src, alt, caption }: { src: string; alt: string; caption: string }) {
+  return (
+    <figure className={styles.figure}>
+      <img src={src} alt={alt} loading="lazy" />
+      <figcaption className={styles.figcaption}>{caption}</figcaption>
+    </figure>
+  )
+}
+
 export default function HelpPage() {
   return (
     <div className={`${styles.scroll} tf-scroll`}>
@@ -106,7 +120,7 @@ export default function HelpPage() {
           </h1>
           <p className={styles.lede}>
             廷豐智能研報把券商研報集中起來，用「語意 ＋ 關鍵字」混合搜尋，幾秒內找到相關報告與段落，
-            並可直接閱讀原始 PDF、向 AI 提問、或用觀點雷達追蹤各券商評等變化。本說明帶你快速上手。
+            並可直接閱讀原始 PDF、向 AI 提問、或用廷豐觀點追蹤各券商評等變化。本說明帶你快速上手。
           </p>
         </header>
 
@@ -135,6 +149,11 @@ export default function HelpPage() {
             進入後預設是<strong>檢索研報</strong>。還沒輸入查詢時，畫面下方會以<strong>最新入庫</strong>
             （日期新到舊）列出目前所有已導入的報告，可直接瀏覽。
           </p>
+          <Figure
+            src={browseImg}
+            alt="檢索起始畫面"
+            caption="起始畫面：品牌起始＋「檢索／問答」切換＋搜尋框；下方為「最新入庫」，左側為導覽與歷史對話"
+          />
           <p>在<strong>搜尋框</strong>輸入主題後按 <strong>Enter</strong> 即可搜尋：</p>
           <ul className={styles.bul}>
             <li>可輸入主題、公司、事件，例如：「AI 伺服器散熱」、「台積電 先進封裝」、「美國 升息」。</li>
@@ -149,6 +168,11 @@ export default function HelpPage() {
             搜尋回傳的是<strong>最相關的前幾篇</strong>研報（非整個資料庫）；想更精準就多加關鍵字縮小範圍。
             百分比是「最相關<strong>片段</strong>的相似度」，不是整篇報告的相關度。
           </div>
+          <Figure
+            src={resultsImg}
+            alt="搜尋結果畫面"
+            caption="搜尋「AI 伺服器散熱」的結果：依月份分組，每筆列出命中片段（關鍵詞黃底高亮），右側為相似度 %"
+          />
         </section>
 
         <section id="filter" className={styles.section}>
@@ -254,6 +278,11 @@ export default function HelpPage() {
             <li>可上下捲動閱讀；用 PDF 工具列可放大、下載、列印。</li>
             <li>點視窗外的灰色區域或右上<strong>關閉鈕</strong>，即可回到結果。</li>
           </ul>
+          <Figure
+            src={reportImg}
+            alt="完整報告 PDF 內嵌檢視"
+            caption="點任一筆結果，會在視窗內嵌原始券商 PDF，可直接閱讀，或在新分頁開啟／下載原始檔"
+          />
         </section>
 
         <section id="ask" className={styles.section}>
@@ -268,11 +297,16 @@ export default function HelpPage() {
           <div className={styles.note}>
             問答以<strong>整個語料庫</strong>為範圍（不受檢索篩選影響）。若問題與研報內容無關，系統會婉拒並說明原因。
           </div>
+          <Figure
+            src={askImg}
+            alt="智能問答畫面"
+            caption="問答模式：上方思考步驟、主區為帶引註來源（鎏金 [n]）的回答與表格，下方為提問輸入框"
+          />
         </section>
 
         <section id="radar" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>7</span>觀點雷達</h2>
-          <p><strong>觀點雷達</strong>把同一標的的各券商研報彙整起來，追蹤一段期間內的<strong>觀點與評等變化</strong>：</p>
+          <h2 className={styles.h2}><span className={styles.no}>7</span>廷豐觀點</h2>
+          <p><strong>廷豐觀點</strong>把同一標的的各券商研報彙整起來，追蹤一段期間內的<strong>觀點與評等變化</strong>：</p>
           <ul className={styles.bul}>
             <li>先選一個標的，即可看到<strong>評等共識</strong>、<strong>目標價／EPS 中位數</strong>與資料品質。</li>
             <li><strong>近期關鍵變化</strong>列出各券商的上修／下修事件，可點開原始研報佐證。</li>
@@ -289,6 +323,11 @@ export default function HelpPage() {
             <li>數字會定時自動刷新。</li>
           </ul>
           <div className={styles.note}>畫面上的「<strong>—</strong>」代表資料載入中或暫無數值，連上後會自動帶入。</div>
+          <Figure
+            src={monitorImg}
+            alt="導入監控畫面"
+            caption="導入監控：已導入報告／片段／標註／摘要進度、四條處理管線狀態，與市場分佈長條圖"
+          />
         </section>
 
         <footer className={styles.foot}>廷豐金融科技 · 廷豐智能研報</footer>

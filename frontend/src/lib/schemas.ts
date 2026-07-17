@@ -56,10 +56,18 @@ export const reportListResponseSchema = z.object({
 })
 export type ReportListResponse = z.infer<typeof reportListResponseSchema>
 
+export const marketFacetSchema = z.object({
+  market: z.string(),
+  count: z.number().int(),
+})
+export type MarketFacet = z.infer<typeof marketFacetSchema>
+
 export const searchResponseSchema = z.object({
   query: z.string(),
   market: z.string().nullable(),
   total: z.number().int(),
+  /** 命中集合的市場組成（色譜讀數）。舊後端無此欄，故給預設空陣列。 */
+  market_facets: z.array(marketFacetSchema).default([]),
   results: z.array(reportResultSchema),
 })
 export type SearchResponse = z.infer<typeof searchResponseSchema>

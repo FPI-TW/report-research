@@ -5,9 +5,21 @@
 .input::placeholder { color: var(--tf-text-4); }
 .clear { border: none; background: none; cursor: pointer; color: var(--tf-text-3); display: flex; padding: 2px; }
 
-/* ── 首頁 hero 大型搜尋框 ── */
-.lg { border-radius: var(--tf-radius-panel); border-width: 1.5px; border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); padding: 6px 6px 6px 20px; gap: 12px; }
+/* ── 檢索台主角大框：全頁唯一主角 ── */
+.lg { border-radius: var(--tf-radius-panel); border-width: 1.5px; border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); height: 60px; padding: 0 12px 0 20px; gap: 15px; }
 .lg:focus-within { border-color: var(--tf-ink); box-shadow: 0 0 0 4px rgba(30, 81, 117, 0.14), var(--tf-shadow-float); }
-.lg .input { font-size: 15px; padding: 11px 0; }
-.go { flex: none; background: var(--tf-ink); color: var(--tf-on-ink); border: none; border-radius: 11px; height: 44px; padding: 0 24px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
-.go:hover { background: var(--tf-ink-hover); }
+.lg .input { font-size: 16.5px; }
+.lg .icon { color: var(--tf-ink); }
+
+/* Enter 鍵帽（僅大框）：下緣加粗做出鍵帽的實體感 */
+.key {
+  font-family: var(--tf-mono); font-size: 10.5px; color: var(--tf-text-3);
+  border: 1px solid var(--tf-border); border-bottom-width: 2px; border-radius: 5px;
+  padding: 4px 8px; background: var(--tf-canvas); flex: none;
+}
+
+@media (max-width: 900px) {
+  .lg { height: 56px; padding-left: 16px; }
+  .lg .input { font-size: 16px; }
+  .key { display: none; }
+}

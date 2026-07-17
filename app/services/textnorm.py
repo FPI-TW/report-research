@@ -39,3 +39,28 @@ def norm_for_match(s: str) -> str:
     lower(regexp_replace(normalize(content, NFKC), '\\s+', '', 'g'))
     """
     return _RE_ALL_WS.sub("", unicodedata.normalize("NFKC", s).lower())
+
+
+def norm_for_match_with_map(s: str) -> tuple[str, list[int]] | None:
+    """norm_for_match 的可回溯版：同時回傳每個正規化字元的原始 index。
+
+    回傳 `(norm, idx)`，其中 `norm[i]` 來自 `s[idx[i]]`；供
+    `app/services/reading/anchor.py` 把正規化後找到的位置映射回原文 offset。
+
+    **逐字元 NFKC 與整串 NFKC 不保證等價**：組合字元序列（如 か + ゛→ が）在整串
+    正規化時會合併、逐字元時不會。故本函式建完後與 `norm_for_match(s)` 實際比對，
+    不符即回 None，由呼叫端放棄錨定 —— 寧可不能跳，也不要跳到錯的地方。
+    """
+    out: list[str] = []
+    idx: list[int] = []
+    for i, ch in enumerate(s):
+        for c in unicodedata.normalize("NFKC", ch).lower():
+            # NFKC 可能把 NBSP 之類轉成一般空白，故正規化「之後」才濾
+            if _RE_ALL_WS.fullmatch(c):
+                continue
+            out.append(c)
+            idx.append(i)
+    norm = "".join(out)
+    if norm != norm_for_match(s):
+        return None
+    return norm, idx

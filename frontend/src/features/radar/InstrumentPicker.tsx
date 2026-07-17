@@ -37,7 +37,7 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
     <div className={styles.wrap}>
       <div className={styles.mast}>
         <div>
-          <h1 className={styles.title}>廷豐雷達</h1>
+          <h1 className={styles.title}>廷豐觀點</h1>
           <p className={styles.lede}>券商觀點一眼掌握</p>
         </div>
         <div className={styles.statrail}>

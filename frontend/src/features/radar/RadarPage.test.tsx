@@ -127,7 +127,7 @@ describe('RadarPage', () => {
       }],
     })
     wrap('/radar')
-    expect(screen.getByRole('heading', { name: '廷豐雷達' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '廷豐觀點' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('南電')).toBeInTheDocument())
     expect(radarApi.getRadarInstruments).toHaveBeenCalled()
   })

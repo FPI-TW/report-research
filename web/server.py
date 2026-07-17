@@ -122,13 +122,22 @@ class _ImmutableStatic(StaticFiles):
         return resp
 
 
-async def _warmup_embeddings() -> None:
-    await asyncio.to_thread(embed_texts, ["warmup"])
+async def _warmup_models() -> None:
+    """依序（非並行）暖機 embed 與 rerank 模型。
 
-
-async def _warmup_rerank() -> None:
-    # 冷載入實測 44-52s：不預載則首個帶 rerank 的請求把載入算進逾時預算而 fail-open。
-    await asyncio.to_thread(rerank_warmup)
+    必須依序：transformers 首次 import 是 lazy-module 初始化，embed（經 FlagEmbedding）
+    與 rerank（直接 import）兩執行緒同時首次 import 會競態出
+    ImportError: cannot import name 'is_torch_npu_available'，暖機每次開機全滅。
+    rerank 冷載入實測 44-52s：不預載則首個帶 rerank 的請求把載入算進逾時預算而 fail-open。
+    """
+    try:
+        await asyncio.to_thread(embed_texts, ["warmup"])
+    except Exception:
+        # embed 暖機失敗不阻斷 rerank 暖機；embed 無熔斷、首個查詢會 lazy 重試。
+        logger.exception("embedding warmup failed")
+    _s = get_settings()
+    if _s.ask_rerank_enabled or _s.report_rerank_enabled:
+        await asyncio.to_thread(rerank_warmup)  # 失敗由 rerank 模組熔斷處理，不拋
 
 
 def _log_warmup_result(task: asyncio.Task[None]) -> None:
@@ -143,23 +152,18 @@ def _log_warmup_result(task: asyncio.Task[None]) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
-    warmup_tasks = [asyncio.create_task(_warmup_embeddings())]
-    _s = get_settings()
-    if _s.ask_rerank_enabled or _s.report_rerank_enabled:
-        warmup_tasks.append(asyncio.create_task(_warmup_rerank()))
-    for t in warmup_tasks:
-        t.add_done_callback(_log_warmup_result)
-    app.state.embed_warmup_task = warmup_tasks[0]
+    warmup_task = asyncio.create_task(_warmup_models())
+    warmup_task.add_done_callback(_log_warmup_result)
+    app.state.embed_warmup_task = warmup_task
     try:
         yield
     finally:
-        for t in warmup_tasks:
-            if not t.done():
-                t.cancel()
-                try:
-                    await t
-                except asyncio.CancelledError:
-                    pass
+        if not warmup_task.done():
+            warmup_task.cancel()
+            try:
+                await warmup_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)

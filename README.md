@@ -56,6 +56,7 @@
 |------|------|
 | **檢索** | 即打即查、關鍵字黃底高亮、命中片段預覽、2-3 句中文摘要、內嵌原始 PDF；可依市場／商品類型／標的／報告類型篩選，列表（依月/市場分組）或表格檢視 |
 | **問答（RAG）** | SSE 串流回答、行內 `[n]` 引用可點回原報告、對話歷史側欄、多輪續問、讚／倒讚回饋、離題閘門、語料總覽題（如「有哪些券商」）走分面統計 |
+| **研報閱讀頁** | `/app/report/:file_hash`：一份研報的原文（PDF／文字雙檢視）＋重點摘錄（點擊跳到原文並高亮）＋標籤／摘要／訊號＋相似研報＋「就這篇提問」，收攏到一個可分享的網址 |
 | **深度研報** | 深度檢索 → 長文串流 → KPI/圖表 → WeasyPrint 渲染 PDF → 持久化（markdown 為真相來源，PDF 可重建） |
 | **監控頁** | `/monitor`：DB 筆數、標註／嵌入／摘要進度、背景程序狀態、速率與 ETA |
 | **對外存取** | Cloudflare Tunnel ＋ nginx 邊緣（無需開放入站埠）；App 內建共用帳密登入 |
@@ -223,6 +224,7 @@ report-mark/
 │   answer.py      RAG 問答：檢索、來源編號、串流回答、新近度/相關度守門、qa_log
 │   report.py      深度研報生成：深度檢索、長文串流、薄涵蓋上網 nudge、PDF 持久化
 │   report_gate.py 問答後是否提示生成深度研報、建議標題（純規則）
+│   reading/       研報閱讀頁：anchor.py（引文/chunk 錨回正典文字）、queries.py（純 SQL 取數）、schemas.py（API 契約，前端 zod 鏡像）
 │   pdf.py         Markdown → 品牌化 HTML/PDF（WeasyPrint），支援圖表與 KPI 區塊
 │   chart.py       ```chart / ```kpi JSON → 純 SVG 渲染（零依賴，支援負值）
 │   llm.py         Claude CLI 串流包裝（stream-json、網搜事件、529 重試、逾時保護）
@@ -239,6 +241,7 @@ report-mark/
 │   backfill_full_text.py   回填 full_text 欄
 │   backfill_report_dates.py / backfill_report_sources.py   回填報告日期 / 發行來源
 │   generate_summaries.py   為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續）→ make summaries
+│   extract_takeaways.py    閱讀頁重點摘錄：LLM 只出「論點＋逐字引文」、Python 確定性錨定（Sonnet，近 90 天，冪等可續）→ make takeaways
 │   align_findb_markets.py  中文標籤 → findb 代碼（一次性、冪等）
 │   search.py               CLI 語意檢索（可 --market 過濾）
 │   eval_retrieval.py       離線 retrieval 評估（hit rate / 新近度）
@@ -296,7 +299,17 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 - **多輪對話**：以 `conversation_id` 分組（`COALESCE(conversation_id, id)` 相容舊列），追問會被壓縮改寫。
 - **總覽路徑**（`overview.py`）：枚舉/聚合題（「有哪些券商」「報告分類」）改走全語料分面統計，避開 top-k 限制。
 
-### 4）深度研報（report.py + pdf.py + chart.py）
+### 4）研報閱讀頁（app/services/reading/ + scripts/extract_takeaways.py）
+
+`/app/report/:file_hash`：把一份研報的原文、語料已知的一切（標籤／摘要／重點摘錄／訊號／相似研報）與下一步動作（就這篇提問）收攏到一個可分享的網址。以 `file_hash` 為網址鍵——`report_id` 在重新 ingest 時會換新，分享連結會失效。
+
+沿用全站分工：**Claude 只出語意、Python 負責定位**。`make takeaways` 讓 Sonnet 每篇回 3-5 條「論點 ＋ 一句逐字引文」（不給 offset），再由 `reading/anchor.py` 的 `locate_quote` 確定性錨回原文字元區間，寫入 `research.report_takeaway`。因此**閱讀頁讀取時零 LLM 呼叫**。
+
+**正典文字＝`clean_extracted(full_text)`，不是 `full_text`**（`full_text` 存的是未清理的原始抽取文字，保留 PDF 抽字的 CJK 間空白，如「台 積 電」）。餵 LLM 的 excerpt、錨點基準、API 回傳的文字三者必須是同一個字串；`text_sha256` 就是這個不變量的守衛：讀取時比對「摘錄擷取當時的 sha」與「當前正典文字的 sha」，不符即把該條降級為不可跳，而不是跳到錯的地方。錨不到（`quote_start` 為 `NULL`）時條目照樣顯示，只是不給跳轉。
+
+> 定位一律走 `reading/anchor.py`，不要自己 `full_text.find(...)`：`report_chunk.content` 因切塊 overlap 而**不是** `full_text` 的子字串，天真比對約 99% 無聲失敗，詳見 `anchor.py` 模組 docstring。
+
+### 5）深度研報（report.py + pdf.py + chart.py）
 
 深度檢索（`REPORT_DEEP_K`=30）→ Claude 長文串流（可輸出 ` ```kpi ` / ` ```chart ` 區塊）→ `pdf.py` 將 markdown 渲染為品牌化 PDF（KPI 卡片、callout、引用徽章、純 SVG 圖表）→ 存入 `report_doc`（markdown 為真相來源，PDF 遺失可由 markdown 重建）。涵蓋不足時會 nudge 模型上網補充（`REPORT_THIN_COVERAGE`）。
 
@@ -312,6 +325,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | `report_chunk` | 切塊層，一塊一列 | `embedding vector(1024)`、`content`、`content_norm`(GENERATED)；索引：`embedding`(HNSW cosine)、`content_norm`(GIN trgm)；FK `ON DELETE CASCADE` |
 | `qa_log` | 每次 `/api/ask` 一列（稽核/分析） | `question`、`answer`、`cited_report_ids[]`、`filters`、`latency_ms`、`thinking_ms`、`feedback`、`sources`、`ext_sources`、`conversation_id` |
 | `report_doc` | 生成的深度研報（隨對話保存） | `qa_id`、`conversation_id`、`title`、`markdown`(真相來源)、`pdf_path`、`sources` |
+| `report_takeaway` | 閱讀頁重點摘錄，一列＝一份研報 × 一條重點（`make takeaways` 產出，讀取零 LLM） | `report_id`(FK CASCADE)、`ordinal`、`claim`、`quote`、`quote_start`/`quote_end`、`anchor_method`(`exact`/`normalized`/`prefix`)、`text_sha256`、`extraction_version`、`extraction_status`(`pending`/`valid`/`partial`/`rejected`)；`UNIQUE(report_id, ordinal)` |
 
 > `content_norm` 的 GENERATED 表達式（`lower(regexp_replace(normalize(content, NFKC), '\s+', '', 'g'))`）必須與 `app/services/textnorm.py` 的 `norm_for_match()` 一致。
 
@@ -332,8 +346,11 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 |--------|------|------|:----:|
 | GET | `/api/stats` | 總筆數、市場/商品/類型分面、帳號名（5s 快取） | |
 | GET | `/api/markets` | 市場清單 | |
-| GET | `/api/reports` | 瀏覽（無關鍵字，分頁，可篩選/排序） | |
-| GET | `/api/search` | 混合檢索（`q` 必填，每報告回 `passages` 片段） | |
+| GET | `/api/reports` | 瀏覽（無關鍵字，分頁，可篩選/排序；回 `file_hash`） | |
+| GET | `/api/search` | 混合檢索（`q` 必填，每報告回 `passages` 片段與 `file_hash`） | |
+| GET | `/api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號（**不含全文**） | |
+| GET | `/api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`，所有 offset 以此為準）；帶 `?chunk=N` 一併回該段的字元區間供高亮 | |
+| GET | `/api/reading/{file_hash}/similar` | 相似研報（向量近鄰，`limit` 預設 6、上限 20） | |
 | POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3） | SSE |
 | POST | `/api/report` | 生成深度研報（併發由 `REPORT_SEMAPHORE`，預設 1 序列化） | SSE |
 | GET | `/api/report-doc/{id}/pdf` | 下載生成的深度研報 PDF（缺檔即由 markdown 重建） | |

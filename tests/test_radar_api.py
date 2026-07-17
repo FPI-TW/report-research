@@ -15,6 +15,7 @@ os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 from fastapi.testclient import TestClient  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
 from web import server  # noqa: E402
 from app.services.radar.queries import CoverageCounts, RadarInstrumentRow  # noqa: E402
@@ -452,6 +453,23 @@ class InstrumentCatalogTests(RadarApiBase):
     def test_catalog_invalid_market_422(self):
         r = _authed_client().get("/api/radar/instruments?market=ZZ")
         self.assertEqual(r.status_code, 422)
+
+    def test_catalog_rejects_unsupported_response_market(self):
+        async def lst(*a, **k):
+            return 1, [
+                RadarInstrumentRow(
+                    "UNKNOWN", "8046", "南電", 1, 1,
+                    date(2026, 7, 11), "ok",
+                )
+            ]
+
+        async def batch(*a, **k):
+            return {}
+
+        self._set(list_radar_instruments=lst, fetch_signals_for_instruments=batch)
+
+        with self.assertRaises(ValidationError):
+            _authed_client().get("/api/radar/instruments?with_consensus=false")
 
 
 if __name__ == "__main__":

@@ -144,7 +144,7 @@ class Coverage(BaseModel):
 
 
 class RadarOverviewResponse(BaseModel):
-    market: str
+    market: Market
     market_display: Optional[str] = None
     instrument_code: str
     instrument_name: Optional[str] = None
@@ -167,7 +167,7 @@ class RadarOverviewResponse(BaseModel):
 
 
 class RadarEventsResponse(BaseModel):
-    market: str
+    market: Market
     instrument_code: str
     window: Window
     as_of: Optional[str]
@@ -216,7 +216,7 @@ class SnapshotDiff(BaseModel):
 
 
 class BrokerHistoryResponse(BaseModel):
-    market: str
+    market: Market
     instrument_code: str
     broker: Optional[str] = None
     broker_display: Optional[str] = None
@@ -264,7 +264,7 @@ class InstrumentConsensus(BaseModel):
 
 
 class RadarInstrumentItem(BaseModel):
-    market: str
+    market: Market
     market_display: Optional[str] = None
     instrument_code: str
     instrument_name: Optional[str] = None

@@ -13,6 +13,8 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.tagging import MARKETS
+
 from app.services.radar.types import (
     EFFECTIVE_BROKER_SQL,
     SIGNAL_SELECT_COLUMNS,
@@ -231,14 +233,17 @@ def _catalog_cte() -> str:
         "  JOIN research.research_report r ON r.id = s.report_id"
         "  WHERE r.is_research IS NOT FALSE"
         "    AND s.market = r.market"
+        "    AND s.market = ANY(:markets)"
         "    AND s.instrument_code = ANY(r.stock_targets)"
         "), sig AS ("
         "  SELECT market, instrument_code,"
-        "         count(DISTINCT broker) FILTER (WHERE extraction_status = ANY(:statuses)) AS sig_brokers,"
+        "         count(DISTINCT broker) FILTER (WHERE extraction_status = 'valid') AS sig_brokers,"
         "         max(report_date) FILTER (WHERE broker IS NOT NULL"
         "                                  AND extraction_status = ANY(:statuses)) AS latest,"
         "         bool_or(extraction_status = ANY(:statuses))"
-        "           FILTER (WHERE broker IS NOT NULL) AS has_valid"
+        "           FILTER (WHERE broker IS NOT NULL) AS has_valid,"
+        "         bool_or(extraction_status = 'partial')"
+        "           FILTER (WHERE broker IS NOT NULL) AS has_partial"
         "  FROM signal_base GROUP BY market, instrument_code"
         "), rep AS ("
         "  SELECT r.market, st AS instrument_code,"
@@ -254,10 +259,12 @@ def _catalog_cte() -> str:
         "    ON s.report_id = r.id"
         "   AND s.market = r.market"
         "   AND s.instrument_code = st"
-        "  WHERE r.is_research IS NOT FALSE GROUP BY r.market, st"
+        "  WHERE r.is_research IS NOT FALSE"
+        "    AND r.market = ANY(:markets)"
+        "  GROUP BY r.market, st"
         "), cat AS ("
         "  SELECT rep.market, rep.instrument_code, rep.name, rep.broker_count,"
-        "         rep.report_count, sig.latest, sig.sig_brokers"
+        "         rep.report_count, sig.latest, sig.sig_brokers, sig.has_partial"
         "  FROM sig JOIN rep ON rep.market = sig.market"
         "                   AND rep.instrument_code = sig.instrument_code"
         "  WHERE sig.has_valid = true"
@@ -267,7 +274,7 @@ def _catalog_cte() -> str:
 
 def _catalog_filters(market: Optional[str], q: Optional[str]) -> tuple[str, dict]:
     conds: list[str] = []
-    params: dict = {"statuses": VALID_STATUSES}
+    params: dict = {"statuses": VALID_STATUSES, "markets": list(MARKETS)}
     if market:
         conds.append("cat.market = :market")
         params["market"] = market
@@ -291,8 +298,8 @@ async def list_radar_instruments(
         await session.execute(
             text(
                 f"{cte} SELECT cat.market, cat.instrument_code, cat.name, cat.broker_count, "
-                f"cat.report_count, cat.latest, cat.sig_brokers FROM cat {where} "
-                "ORDER BY cat.latest DESC NULLS LAST, cat.instrument_code, cat.market "
+                f"cat.report_count, cat.latest, cat.sig_brokers, cat.has_partial FROM cat {where} "
+                "ORDER BY cat.latest DESC NULLS LAST, cat.market, cat.instrument_code "
                 "LIMIT :limit OFFSET :offset"
             ),
             {**params, "limit": limit, "offset": offset},
@@ -303,7 +310,11 @@ async def list_radar_instruments(
             market=r[0], instrument_code=r[1], instrument_name=r[2],
             broker_count=int(r[3] or 0), report_count=int(r[4] or 0),
             latest_report_date=r[5],
-            coverage_state="ok" if int(r[6] or 0) >= int(r[3] or 0) else "partial",
+            coverage_state=(
+                "partial"
+                if bool(r[7]) or int(r[6] or 0) < int(r[3] or 0)
+                else "ok"
+            ),
         )
         for r in rows
     ]

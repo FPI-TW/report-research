@@ -77,6 +77,22 @@ class RadarOpenApiTests(unittest.TestCase):
                     EXPECTED_MARKETS,
                 )
 
+    def test_all_radar_response_markets_publish_the_same_enum(self):
+        response_schemas = (
+            "RadarOverviewResponse",
+            "RadarEventsResponse",
+            "BrokerHistoryResponse",
+            "RadarInstrumentItem",
+        )
+        schemas = self.schema["components"]["schemas"]
+
+        for schema_name in response_schemas:
+            with self.subTest(schema=schema_name):
+                self.assertEqual(
+                    _enum_values(schemas[schema_name]["properties"]["market"]),
+                    EXPECTED_MARKETS,
+                )
+
     def test_overview_and_catalog_pagination_fields_are_additive(self):
         schemas = self.schema["components"]["schemas"]
         overview = schemas["RadarOverviewResponse"]

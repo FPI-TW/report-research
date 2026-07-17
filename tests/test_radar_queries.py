@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg  # noqa: E402
 
 from app.services.radar import queries  # noqa: E402
 from app.services.radar.types import parse_signal_row  # noqa: E402
+from app.services.tagging import MARKETS  # noqa: E402
 
 
 def _row(eps_json="[]", thesis_json="{}", target=Decimal("2444.0000"), rating="buy",
@@ -110,6 +111,27 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("count(DISTINCT broker)", cte)
         self.assertIn("bool_or(extraction_status = ANY(:statuses))", cte)
 
+    def test_catalog_cte_keeps_partial_out_of_complete_broker_count(self):
+        cte = queries._catalog_cte()
+
+        self.assertIn(
+            "count(DISTINCT broker) FILTER (WHERE extraction_status = 'valid') "
+            "AS sig_brokers",
+            cte,
+        )
+        self.assertIn(
+            "bool_or(extraction_status = 'partial')"
+            "           FILTER (WHERE broker IS NOT NULL) AS has_partial",
+            cte,
+        )
+        self.assertIn("sig.has_partial", cte)
+
+    def test_catalog_cte_limits_both_signal_and_report_universes_to_supported_markets(self):
+        cte = queries._catalog_cte()
+
+        self.assertIn("s.market = ANY(:markets)", cte)
+        self.assertIn("r.market = ANY(:markets)", cte)
+
     def test_instrument_name_is_bound_to_matching_stock_code(self):
         coverage_sql = str(queries._COVERAGE_SQL)
         catalog_cte = queries._catalog_cte()
@@ -122,10 +144,11 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("ILIKE :q", where)
         self.assertEqual(params["market"], "TW")
         self.assertEqual(params["q"], "%台積%")
-        # 無 q/market → 只有 statuses
+        # 無 q/market 仍限制既有支援市場，不能讓未知 DB 值進入 response enum。
         where2, params2 = queries._catalog_filters(None, None)
         self.assertEqual(where2, "")
-        self.assertEqual(list(params2.keys()), ["statuses"])
+        self.assertEqual(params2["statuses"], queries.VALID_STATUSES)
+        self.assertEqual(params2["markets"], MARKETS)
 
 
 class _FakeResult:
@@ -228,9 +251,29 @@ class CatalogQueryTests(unittest.IsolatedAsyncioTestCase):
         await queries.list_radar_instruments(session)
         page_sql = str(session.calls[1][0][0])
         self.assertIn(
-            "ORDER BY cat.latest DESC NULLS LAST, cat.instrument_code, cat.market",
+            "ORDER BY cat.latest DESC NULLS LAST, cat.market, cat.instrument_code",
             page_sql,
         )
+
+    async def test_catalog_partial_signal_forces_partial_row_state(self):
+        session = _QueuedSession(
+            [
+                _FakeResult([1]),
+                _FakeResult(
+                    [
+                        (
+                            "TW", "8046", "南電", 1, 1,
+                            date(2026, 7, 11), 1, True,
+                        )
+                    ]
+                ),
+            ]
+        )
+
+        total, rows = await queries.list_radar_instruments(session)
+
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0].coverage_state, "partial")
 
 
 class BatchSqlStructureTests(unittest.TestCase):

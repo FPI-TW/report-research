@@ -26,6 +26,7 @@ from eval.report_metrics import (  # noqa: E402
     aggregate_cases,
     citation_metrics,
     date_diversity,
+    evidence_link_coverage,
     external_labeling,
     facet_coverage,
     no_data_handled,
@@ -73,6 +74,7 @@ async def eval_question(
     stages: list[str] = []
     markdown: str | None = None
     context: str | None = None
+    claim_evidence: dict | None = None  # 逐節路徑才有；單次路徑 None
     # 兩種失敗分開記（審查 M1b-1）：report_error＝generate_report 的結構化
     # error 事件（研報婉拒，no_data 題的安全形態）；run_error＝runner 例外/逾時
     # （基礎設施失敗，計入 n_errors）。
@@ -80,7 +82,7 @@ async def eval_question(
     run_error: str | None = None
 
     async def _consume() -> None:
-        nonlocal markdown, context, report_error
+        nonlocal markdown, context, report_error, claim_evidence
         async for kind, payload in gen(
             topic, filters=q.get("filters") or {}, persist=False
         ):
@@ -96,6 +98,7 @@ async def eval_question(
             elif kind == "done":
                 markdown = payload.get("markdown")
                 context = payload.get("context")
+                claim_evidence = payload.get("claim_evidence")
 
     try:
         await asyncio.wait_for(_consume(), timeout=question_timeout)
@@ -130,6 +133,7 @@ async def eval_question(
         "source_diversity": source_diversity(sources, brokers=brokers),
         "date_diversity": date_diversity(sources),
         "section_coverage": section_coverage(markdown or ""),
+        "evidence_link_coverage": evidence_link_coverage(claim_evidence),
         **cm,
         "external_labeling": external_labeling(markdown or ""),
         "no_data_handled": handled,
@@ -163,6 +167,13 @@ def _config_snapshot(dataset: dict) -> dict:
         "report_mmr_lambda": s.report_mmr_lambda,
         "report_mmr_max_per_source": s.report_mmr_max_per_source,
         "report_mmr_max_per_month": s.report_mmr_max_per_month,
+        # M7：逐節生成組態（供跨版本 eval 對比歸因）
+        "report_sectioned_enabled": s.report_sectioned_enabled,
+        "report_outline_max_subsections": s.report_outline_max_subsections,
+        "report_section_max_reports": s.report_section_max_reports,
+        "report_section_max_passages": s.report_section_max_passages,
+        "report_section_max_context_chars": s.report_section_max_context_chars,
+        "report_section_rerank_candidates": s.report_section_rerank_candidates,
     }
 
 
@@ -212,9 +223,10 @@ def _print_summary(report: dict) -> None:
     s = report["summary"]
     print("=== M1b 研報評測基準線 ===")
     for key in (
-        "facet_coverage", "section_coverage", "citation_validity",
-        "source_citation_rate", "external_labeling", "no_data_handled",
-        "n_reports", "n_brokers", "n_markets", "date_span_days", "n_months",
+        "facet_coverage", "section_coverage", "evidence_link_coverage",
+        "citation_validity", "source_citation_rate", "external_labeling",
+        "no_data_handled", "n_reports", "n_brokers", "n_markets",
+        "date_span_days", "n_months",
     ):
         m = s[key]
         print(f"{key:22s}: {_fmt(m['mean'])}  (n_valid={m['n_valid']})")

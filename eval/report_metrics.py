@@ -16,7 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.textnorm import norm_for_match  # noqa: E402
 
-RULESET_VERSION = 1
+# v2（M7）：新增 evidence_link_coverage（逐節生成的證據連結覆蓋率）。純加法指標，
+# 既有指標定義不變；單次生成題無 claim_evidence → 該指標 None，跨版本比較不受影響。
+RULESET_VERSION = 2
 
 # 基準線最低有效題數：非 error 的正常題（no_data 除外）少於此數時，基準線不得用於比較
 MIN_VALID_QUESTIONS = 6
@@ -138,6 +140,25 @@ def section_coverage(markdown: str) -> dict:
     }
 
 
+def evidence_link_coverage(claim_evidence) -> dict | None:
+    """逐節生成的證據連結覆蓋率：有掛到 ≥1 個檢索證據的節數 / 總節數。
+
+    claim_evidence 為 {section_position(str): [evidence_id, ...]}，僅逐節（sectioned）
+    路徑產出：每個值是「該節針對性檢索到、可供引用的證據 id 集」。這量測「逐節管線
+    是否為多數章節取到可據以撰寫的證據」（空集＝該節純框架/無檢索接地，屬弱點）。
+
+    語義上限於「證據可用性」的結構訊號——引用是否真正支持主張屬 M8 grounding，不在此。
+    單次生成路徑無 claim_evidence → None（不計均值，跨版本基準線不受影響）。
+    """
+    if not isinstance(claim_evidence, dict) or not claim_evidence:
+        return None
+    total = len(claim_evidence)
+    linked = sum(
+        1 for ids in claim_evidence.values() if isinstance(ids, list) and ids
+    )
+    return {"linked": linked, "total": total, "rate": linked / total}
+
+
 def citation_metrics(markdown: str, n_sources: int) -> dict:
     """正文引用指標。正文 = 全文剔除引用來源/外部參考節與 ``` 圍欄（圍欄內
     的 JSON 數值陣列如 [5] 會誤判為引用；KPI/chart 的 source 對應屬 M8）。
@@ -256,6 +277,7 @@ def aggregate_cases(cases: list[dict]) -> dict:
         "sufficient_n": n_valid_normal >= MIN_VALID_QUESTIONS,
         "facet_coverage": _metric_mean(rate_of("facet_coverage")),
         "section_coverage": _metric_mean(rate_of("section_coverage")),
+        "evidence_link_coverage": _metric_mean(rate_of("evidence_link_coverage")),
         "citation_validity": _metric_mean(rate_of("citation_validity")),
         "source_citation_rate": _metric_mean(rate_of("source_citation_rate")),
         "external_labeling": _metric_mean(labeling),

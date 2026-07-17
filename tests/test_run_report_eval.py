@@ -52,6 +52,27 @@ def _gen_ok(topic, *, filters=None, persist=True, **kw):
     return _g()
 
 
+def _gen_sectioned(topic, *, filters=None, persist=True, **kw):
+    """逐節路徑替身：含 section_draft/document_revision 加法事件，done 帶 claim_evidence。"""
+    assert persist is False
+
+    async def _g():
+        yield ("status", {"stage": "retrieving"})
+        yield ("sources", _SOURCES)
+        yield ("status", {"stage": "writing"})
+        yield ("token", "執行摘要內文[1]")
+        yield ("section_draft", {"position": 0, "section_key": "exec_summary",
+                                 "heading": "執行摘要", "markdown": "執行摘要內文[1]"})
+        yield ("document_revision", {"revision_id": "rev-1", "revision": 1,
+                                     "markdown_hash": "h"})
+        yield ("done", {"report_id": None, "title": topic, "markdown": _MD,
+                        "context": "[1] 報告：x\n3奈米製程",
+                        "claim_evidence": {"0": ["e1"], "1": ["e1", "e2"], "2": []},
+                        "thinking_ms": 9})
+
+    return _g()
+
+
 def _gen_error(topic, **kw):
     async def _g():
         yield ("status", {"stage": "retrieving"})
@@ -104,6 +125,21 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("context", case)  # 脈絡不落地（體積），只記長度
         self.assertGreater(case["context_chars"], 0)
         self.assertEqual(case["stages"], ["retrieving", "writing"])
+        # 單次路徑 done 無 claim_evidence → evidence_link_coverage None
+        self.assertIsNone(case["evidence_link_coverage"])
+
+    async def test_sectioned_case_evidence_link_coverage(self):
+        """逐節路徑：done 帶 claim_evidence → 算出 evidence_link_coverage；
+        section_draft/document_revision 加法事件不干擾指標。"""
+        case = await rre.eval_question(
+            _Q, gen=_gen_sectioned, broker_lookup=_brokers_ok, question_timeout=5.0
+        )
+        self.assertNotIn("error", case)
+        elc = case["evidence_link_coverage"]
+        self.assertEqual(elc["linked"], 2)   # pos 0,1 有證據；pos 2 空
+        self.assertEqual(elc["total"], 3)
+        self.assertAlmostEqual(elc["rate"], 2 / 3)
+        self.assertAlmostEqual(case["section_coverage"]["rate"], 1.0)
 
     async def test_structured_error_event_is_report_error_not_runner_error(self):
         """審查 M1b-1：generate_report 的結構化 error（研報婉拒）不是 runner 失敗；
@@ -177,6 +213,23 @@ class ConfigSnapshotTests(unittest.TestCase):
             "report_rerank_enabled",
         ):
             self.assertIn(key, snap)
+
+    def test_snapshot_includes_m7_sectioned_keys(self):
+        """M7 逐節組態入 snapshot（純加法）：eval 結果可追溯當時逐節旋鈕。"""
+        from app.config import get_settings
+
+        snap = rre._config_snapshot({"version": 1})
+        s = get_settings()
+        for key in (
+            "report_sectioned_enabled",
+            "report_outline_max_subsections",
+            "report_section_max_reports",
+            "report_section_max_passages",
+            "report_section_max_context_chars",
+            "report_section_rerank_candidates",
+        ):
+            self.assertIn(key, snap)
+            self.assertEqual(snap[key], getattr(s, key))
 
 
 class RunTests(unittest.IsolatedAsyncioTestCase):

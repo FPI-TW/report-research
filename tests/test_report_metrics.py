@@ -119,6 +119,57 @@ class SectionCoverageTests(unittest.TestCase):
         out = rm.section_coverage("")
         self.assertEqual(out["covered"], 0)
 
+    def test_dynamic_subsections_do_not_break_coverage(self):
+        """逐節生成：## 重點分析 下掛多個 ### 動態子節，仍恰命中五章、### 不誤計。"""
+        md = (
+            "# 台積電 深度研報\n\n## 執行摘要\n\n綜述[1]。\n\n"
+            "## 關鍵發現\n\n- 重點[2]。\n\n"
+            "## 重點分析\n\n### 先進製程\n\n內容[1]。\n\n### 競爭格局\n\n內容[2]。\n\n"
+            "### 估值\n\n內容[3]。\n\n"
+            "## 風險與展望\n\n風險[3]。\n\n"
+            "## 引用來源\n\n[1] A\n[2] B\n[3] C\n"
+        )
+        out = rm.section_coverage(md)
+        self.assertEqual(out["covered"], 5)
+        self.assertEqual(out["missing"], [])
+
+
+class EvidenceLinkCoverageTests(unittest.TestCase):
+    """M7 evidence link coverage：掛到 ≥1 檢索證據的節 / 總節數。"""
+
+    def test_all_linked(self):
+        ce = {"0": ["a1"], "1": ["a1", "b2"], "2": ["c3"]}
+        out = rm.evidence_link_coverage(ce)
+        self.assertEqual(out, {"linked": 3, "total": 3, "rate": 1.0})
+
+    def test_partial_linked(self):
+        ce = {"0": ["a1"], "1": [], "2": ["c3"], "3": []}
+        out = rm.evidence_link_coverage(ce)
+        self.assertEqual(out["linked"], 2)
+        self.assertEqual(out["total"], 4)
+        self.assertAlmostEqual(out["rate"], 0.5)
+
+    def test_single_shot_none(self):
+        # 單次生成路徑無 claim_evidence → None（不入均值）
+        self.assertIsNone(rm.evidence_link_coverage(None))
+        self.assertIsNone(rm.evidence_link_coverage({}))
+
+    def test_malformed_values_treated_as_unlinked(self):
+        ce = {"0": "not-a-list", "1": ["ok"]}
+        out = rm.evidence_link_coverage(ce)
+        self.assertEqual(out["linked"], 1)
+        self.assertEqual(out["total"], 2)
+
+    def test_aggregates_only_sectioned_cases(self):
+        cases = [
+            {"id": "r1", "no_data": False, "evidence_link_coverage":
+             {"linked": 4, "total": 5, "rate": 0.8}},
+            {"id": "r2", "no_data": False, "evidence_link_coverage": None},  # 單次題
+        ]
+        s = rm.aggregate_cases(cases)
+        self.assertAlmostEqual(s["evidence_link_coverage"]["mean"], 0.8)
+        self.assertEqual(s["evidence_link_coverage"]["n_valid"], 1)
+
 
 class CitationMetricsTests(unittest.TestCase):
     def test_valid_invalid_mix_and_reference_sections_excluded(self):

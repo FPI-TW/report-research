@@ -110,6 +110,56 @@ class ServerStartupTests(unittest.TestCase):
         self.assertFalse(errors, errors)
         self.assertEqual(response_data.get("status_code"), 200)
 
+    def test_rerank_warmup_waits_for_embed_warmup(self):
+        # transformers 首次 import 是 lazy-module 初始化，embed（經 FlagEmbedding）與
+        # rerank（直接 import）兩執行緒同時首次 import 會競態出
+        # ImportError: cannot import name 'is_torch_npu_available'，暖機每次開機全滅
+        # （prod 7/15-7/16 三連炸實錄）。迴歸保證：rerank 暖機須等 embed 暖機完成。
+        embed_started = threading.Event()
+        allow_embed_finish = threading.Event()
+        rerank_called = threading.Event()
+        test_done = threading.Event()
+        errors: list[BaseException] = []
+
+        def blocking_embed(_texts: list[str]) -> list[list[float]]:
+            embed_started.set()
+            if not allow_embed_finish.wait(timeout=5):
+                raise TimeoutError("embed warmup was never released by the test")
+            return [[0.0]]
+
+        def recording_rerank() -> bool:
+            rerank_called.set()
+            return True
+
+        def run_client() -> None:
+            try:
+                with TestClient(app):
+                    if not test_done.wait(timeout=5):
+                        raise TimeoutError("test never finished while app was alive")
+            except BaseException as exc:  # pragma: no cover - surfaced by assertions
+                errors.append(exc)
+
+        with patch("web.server.embed_texts", side_effect=blocking_embed), \
+             patch("web.server.rerank_warmup", side_effect=recording_rerank):
+            thread = threading.Thread(target=run_client)
+            thread.start()
+            try:
+                self.assertTrue(embed_started.wait(timeout=1))
+                # embed 暖機未完成前，rerank 暖機不得開始（0.3s 寬限：並行實作會即刻觸發）
+                self.assertFalse(rerank_called.wait(timeout=0.3))
+                allow_embed_finish.set()
+                self.assertTrue(
+                    rerank_called.wait(timeout=2),
+                    "rerank warmup never ran after embed warmup finished",
+                )
+            finally:
+                allow_embed_finish.set()
+                test_done.set()
+                thread.join(timeout=2)
+
+        self.assertFalse(thread.is_alive(), "test client thread did not shut down")
+        self.assertFalse(errors, errors)
+
 
 if __name__ == "__main__":
     unittest.main()

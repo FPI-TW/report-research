@@ -11,12 +11,15 @@ export interface SearchState {
   relates_futures: boolean
   sort: SortValue
   view: ViewMode
+  /** 「查看全部」：無查詢無篩選時，跳過 bento 簡報牆直接看完整清單。純呈現態，不進 API。 */
+  all: boolean
 }
 
 export function defaultState(): SearchState {
   return {
     q: '', market: 'ALL', instrument_type: '', report_type: '',
     relates_stock: false, relates_futures: false, sort: 'date_desc', view: 'cards',
+    all: false,
   }
 }
 
@@ -42,6 +45,7 @@ export function parseParams(search: string): SearchState {
     relates_futures: p.get('relates_futures') === '1',
     sort: isSort(sortRaw) ? sortRaw : defSort,
     view: p.get('view') === 'table' ? 'table' : 'cards',
+    all: p.get('all') === '1',
   }
 }
 
@@ -56,6 +60,7 @@ export function buildParams(s: SearchState): URLSearchParams {
   const defSort: SortValue = s.q.trim() ? 'relevance' : 'date_desc'
   if (s.sort !== defSort) p.set('sort', s.sort)
   if (s.view !== 'cards') p.set('view', s.view)
+  if (s.all) p.set('all', '1')
   return p
 }
 

@@ -1,13 +1,11 @@
-/* 遮罩帶墨青色偏，聚焦內容。 */
+/* 遮罩帶墨青色偏，聚焦內容。進出場 opacity 由 Motion（Modal.tsx）驅動。 */
 .scrim {
   position: fixed; inset: 0; z-index: 50;
   background: rgba(22, 42, 58, 0.5);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
-  transition: opacity var(--tf-dur-2) var(--tf-ease-out);
 }
-.scrim[data-state='closed'] { opacity: 0; pointer-events: none; }
-.scrim[data-state='open'] { opacity: 1; }
+/* 進出場（opacity/translate/scale）改由 Motion 驅動，此處僅留版面。 */
 .panel {
   background: var(--tf-surface);
   border-radius: var(--tf-radius-panel);
@@ -16,12 +14,7 @@
   max-height: 90vh;
   display: flex; flex-direction: column;
   overflow: hidden;
-  transition: opacity var(--tf-dur-3) var(--tf-ease-out),
-              translate var(--tf-dur-3) var(--tf-ease-out),
-              scale var(--tf-dur-3) var(--tf-ease-out);
 }
-.panel[data-state='closed'] { opacity: 0; translate: 0 8px; scale: 0.98; }
-.panel[data-state='open'] { opacity: 1; translate: 0 0; scale: 1; }
 .header {
   display: flex; align-items: center; gap: 12px;
   padding: 14px 20px; border-bottom: 1px solid var(--tf-divider);

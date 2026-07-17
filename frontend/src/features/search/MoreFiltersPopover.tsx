@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Popover } from '../../components/primitives/Popover'
 import { Icon } from '../../components/primitives/Icon'
+import { Pressable } from '../../components/primitives/Pressable'
 import { instrumentLabel, reportTypeLabel } from '../../lib/meta'
 import { activeAdvancedCount, type SearchState } from '../../lib/searchFilters'
 import styles from './MoreFiltersPopover.module.css'
@@ -60,47 +61,47 @@ export function MoreFiltersPopover({ state, instrumentOptions, reportTypeOptions
 
   return (
     <div className={styles.wrap}>
-      <button type="button" className={styles.trigger} onClick={() => setOpen(o => !o)}
+      <Pressable className={styles.trigger} onClick={() => setOpen(o => !o)}
         aria-haspopup="dialog" aria-expanded={open}>
         <Icon name="filter" size={18} />
         更多篩選
         {count > 0 && <span className={styles.badge}>{count}</span>}
         <Icon name="chevronDown" size={15} />
-      </button>
+      </Pressable>
       <Popover open={open} onClose={() => setOpen(false)} className={styles.panel}
         role="dialog" ariaLabel="更多篩選">
         <div className={styles.sectionLabel}>商品類型</div>
         <div className={styles.pillRow}>
           {instrumentOptions.map(o => (
-            <button key={o} type="button" className={pillClass(draft.instrument_type === o)}
+            <Pressable key={o} className={pillClass(draft.instrument_type === o)}
               aria-pressed={draft.instrument_type === o}
-              onClick={() => pickOne('instrument_type', o)}>{instrumentLabel(o)}</button>
+              onClick={() => pickOne('instrument_type', o)}>{instrumentLabel(o)}</Pressable>
           ))}
         </div>
 
         <div className={styles.sectionLabel}>報告類型</div>
         <div className={styles.pillRow}>
           {reportTypeOptions.map(o => (
-            <button key={o} type="button" className={pillClass(draft.report_type === o)}
+            <Pressable key={o} className={pillClass(draft.report_type === o)}
               aria-pressed={draft.report_type === o}
-              onClick={() => pickOne('report_type', o)}>{reportTypeLabel(o)}</button>
+              onClick={() => pickOne('report_type', o)}>{reportTypeLabel(o)}</Pressable>
           ))}
         </div>
 
         <div className={styles.sectionLabel}>個股 · 期貨</div>
         <div className={styles.pillRow}>
-          <button type="button" className={pillClass(draft.relates_stock)}
+          <Pressable className={pillClass(draft.relates_stock)}
             aria-pressed={draft.relates_stock}
-            onClick={() => toggle('relates_stock')}>個股相關</button>
-          <button type="button" className={pillClass(draft.relates_futures)}
+            onClick={() => toggle('relates_stock')}>個股相關</Pressable>
+          <Pressable className={pillClass(draft.relates_futures)}
             aria-pressed={draft.relates_futures}
-            onClick={() => toggle('relates_futures')}>期貨相關</button>
+            onClick={() => toggle('relates_futures')}>期貨相關</Pressable>
         </div>
 
         <div className={styles.footer}>
-          <button type="button" className={styles.clearBtn}
-            onClick={() => setDraft(EMPTY)}>清除條件</button>
-          <button type="button" className={styles.applyBtn} onClick={apply}>套用</button>
+          <Pressable className={styles.clearBtn}
+            onClick={() => setDraft(EMPTY)}>清除條件</Pressable>
+          <Pressable className={styles.applyBtn} onClick={apply}>套用</Pressable>
         </div>
       </Popover>
     </div>

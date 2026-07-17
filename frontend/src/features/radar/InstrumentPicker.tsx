@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '../../components/primitives/Icon'
+import { Pressable } from '../../components/primitives/Pressable'
 import { InstrumentCard } from './InstrumentCard'
 import { fmtDate } from './radarFormat'
 import { useRadarInstruments } from './useRadar'
@@ -67,14 +68,14 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
       <div className={styles.filterrow}>
         <div className={styles.markets} role="group" aria-label="市場">
           {MARKETS.map(m => (
-            <button
+            <Pressable
               key={m.code || 'all'}
               type="button"
               className={`${styles.chip} ${(market || '') === m.code ? styles.chipActive : ''}`}
               onClick={() => onMarketChange(m.code)}
             >
               {m.label}
-            </button>
+            </Pressable>
           ))}
         </div>
         {total != null ? (
@@ -93,7 +94,7 @@ export function InstrumentPicker({ market, onSelect, onMarketChange }: Props) {
       ) : query.isError ? (
         <div className={styles.error} role="alert">
           載入標的清單失敗。
-          <button type="button" className={styles.retry} onClick={() => query.refetch()}>重試</button>
+          <Pressable type="button" className={styles.retry} onClick={() => query.refetch()}>重試</Pressable>
         </div>
       ) : !items.length ? (
         <div className={styles.empty}>尚無可展示訊號的標的。請先完成訊號擷取，或調整搜尋條件。</div>

@@ -1,6 +1,7 @@
-/* 檢視切換：由右下浮動鈕移入工具列，改分段控制樣式 */
-.wrap { display: inline-flex; gap: 2px; background: var(--tf-border-weak); border: none; border-radius: var(--tf-radius-seg); padding: 3px; }
-.btn { border: none; background: none; width: 34px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 15px; color: var(--tf-text-3); }
-.btn:hover { color: var(--tf-text-2); }
-.active { background: var(--tf-surface); color: var(--tf-ink-deep); box-shadow: var(--tf-shadow-seg); }
-.active:hover { color: var(--tf-ink-deep); }
+/* 檢視切換改用 animate-ui Tabs（分段控制）。
+   配色（軌道 bg-muted、底板 bg-background、文字 muted/foreground）由 tailwind.css
+   的 @theme token 對應品牌 --tf-*；此處僅微調工具列尺寸：收斂為 inline、沿用分段圓角與字級。
+   未分層的 CSS Module 會勝過 Tailwind utilities（cascade layer 規則）。 */
+.tabs { display: inline-flex; }
+.list { height: 32px; border-radius: var(--tf-radius-seg); }
+.trigger { min-width: 34px; font-size: 15px; }

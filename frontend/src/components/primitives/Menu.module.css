@@ -1,0 +1,20 @@
+/* 選單項：按壓縮放由 Pressable（Motion whileTap）驅動；此處僅留底樣式與 hover 變色過渡。 */
+.item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: var(--tf-text-2);
+  padding: 8px 10px;
+  border-radius: var(--tf-radius-md);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-out),
+    color var(--tf-dur-1) var(--tf-ease-out);
+}
+.item:hover,
+.item:focus-visible {
+  background: var(--tf-ink-tint);
+  color: var(--tf-text-1);
+}

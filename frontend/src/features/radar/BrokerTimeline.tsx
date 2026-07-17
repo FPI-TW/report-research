@@ -1,3 +1,4 @@
+import { Pressable } from '../../components/primitives/Pressable'
 import { Skeleton } from '../../components/primitives/Skeleton'
 import type { Window } from '../../lib/radarSchemas'
 import { DirectionTag } from './DirectionTag'
@@ -40,7 +41,7 @@ export function BrokerTimeline({
     return (
       <div className={styles.panel}>
         <p className={styles.error}>載入券商歷程失敗。</p>
-        <button type="button" className={styles.link} onClick={() => q.refetch()}>重試</button>
+        <Pressable tapScale={0.97} className={styles.link} onClick={() => q.refetch()}>重試</Pressable>
       </div>
     )
   }
@@ -59,7 +60,7 @@ export function BrokerTimeline({
             目前評等 {RATING_DISPLAY[data.current_rating]} · {data.report_count} 份研報 · {WINDOW_LABEL[window]}
           </div>
         </div>
-        <button type="button" className={styles.collapse} onClick={onCollapse}>收合</button>
+        <Pressable className={styles.collapse} onClick={onCollapse}>收合</Pressable>
       </div>
 
       {latest ? (
@@ -142,13 +143,13 @@ export function BrokerTimeline({
                 <p className={styles.note}>{diff.note || '無前次可比較研報'}</p>
               ) : null}
               {evidence ? <div className={styles.evidence}>{evidence}</div> : null}
-              <button
-                type="button"
+              <Pressable
+                tapScale={0.97}
                 className={styles.link}
                 onClick={() => onOpenReport(snap.report_link.report_id, snap.report_link.file_name)}
               >
                 查看原始研報
-              </button>
+              </Pressable>
             </li>
           )
         })}

@@ -10,6 +10,7 @@
 }
 
 .btn {
+  position: relative;
   appearance: none;
   border: 0;
   background: transparent;
@@ -22,10 +23,7 @@
   cursor: pointer;
   white-space: nowrap;
   min-height: 32px;
-  transition:
-    background-color var(--tf-dur-1) var(--tf-ease-standard),
-    color var(--tf-dur-1) var(--tf-ease-standard),
-    box-shadow var(--tf-dur-1) var(--tf-ease-standard);
+  transition: color var(--tf-dur-1) var(--tf-ease-standard);
 }
 
 .btn:hover { color: var(--tf-ink); }
@@ -34,8 +32,20 @@
   outline-offset: 1px;
 }
 
-.active {
+/* 滑動 thumb：active 底板由 Motion layoutId 於各鍵間滑移；label 疊在其上 */
+.thumb {
+  position: absolute;
+  inset: 0;
   background: var(--tf-surface);
-  color: var(--tf-ink);
   box-shadow: var(--tf-shadow-seg);
+  border-radius: 8px;
+  z-index: 0;
+}
+.label {
+  position: relative;
+  z-index: 1;
+}
+
+.active {
+  color: var(--tf-ink);
 }

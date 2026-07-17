@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { marketLabel, marketTint } from '../lib/meta'
+import { TF_DUR, TF_EASE_OUT, tfInstant } from '../lib/motionTokens'
 import type { Source } from '../lib/askSchemas'
 import styles from './CitePreview.module.css'
 
@@ -21,6 +23,7 @@ const GAP = 8
  * - fixed 定位避免被對話捲動容器裁切；貼近視窗下緣時翻到上方，捲動/縮放即關閉。
  */
 export function CiteButton({ n, source, onCite }: Props) {
+  const reduced = useReducedMotion()
   const btnRef = useRef<HTMLButtonElement>(null)
   const timer = useRef<number | undefined>(undefined)
   const [pos, setPos] = useState<{ top: number; left: number; above: boolean } | null>(null)
@@ -68,22 +71,29 @@ export function CiteButton({ n, source, onCite }: Props) {
       onKeyDown={e => { if (e.key === 'Escape') cancel() }}
     >
       {n}
-      {pos && source && (
-        <span
-          className={styles.card}
-          style={pos.above
-            ? { top: pos.top, left: pos.left, transform: 'translateY(-100%)' }
-            : { top: pos.top, left: pos.left }}
-          aria-hidden="true"
-        >
-          <span className={styles.top}>
-            <span className={styles.mkt} style={marketTint(source.market)}>{marketLabel(source.market)}</span>
-            {source.report_date && <span className={styles.date}>{source.report_date}</span>}
-          </span>
-          <span className={styles.title}>{source.file_name}</span>
-          <span className={styles.foot}>點擊編號查看引用來源 ›</span>
-        </span>
-      )}
+      <AnimatePresence>
+        {pos && source && (
+          <motion.span
+            key="card"
+            className={styles.card}
+            style={pos.above
+              ? { top: pos.top, left: pos.left, transform: 'translateY(-100%)' }
+              : { top: pos.top, left: pos.left }}
+            aria-hidden="true"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={reduced ? tfInstant : { duration: TF_DUR.d2, ease: TF_EASE_OUT }}
+          >
+            <span className={styles.top}>
+              <span className={styles.mkt} style={marketTint(source.market)}>{marketLabel(source.market)}</span>
+              {source.report_date && <span className={styles.date}>{source.report_date}</span>}
+            </span>
+            <span className={styles.title}>{source.file_name}</span>
+            <span className={styles.foot}>點擊編號查看引用來源 ›</span>
+          </motion.span>
+        )}
+      </AnimatePresence>
     </button>
   )
 }

@@ -1,3 +1,6 @@
+import { motion } from 'motion/react'
+import { Pressable } from '../../components/primitives/Pressable'
+import { springThumb } from '../../lib/motionTokens'
 import type { Window } from '../../lib/radarSchemas'
 import { WINDOW_OPTIONS } from './radarFormat'
 import styles from './WindowSegmented.module.css'
@@ -13,16 +16,17 @@ export function WindowSegmented({ value, onChange }: Props) {
       {WINDOW_OPTIONS.map(opt => {
         const active = opt.value === value
         return (
-          <button
+          <Pressable
             key={opt.value}
-            type="button"
             role="radio"
             aria-checked={active}
+            hoverScale={1}
             className={`${styles.btn} ${active ? styles.active : ''}`}
             onClick={() => onChange(opt.value)}
           >
-            {opt.label}
-          </button>
+            {active && <motion.span layoutId="window-thumb" className={styles.thumb} transition={springThumb} aria-hidden="true" />}
+            <span className={styles.label}>{opt.label}</span>
+          </Pressable>
         )
       })}
     </div>

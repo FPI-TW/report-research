@@ -7,10 +7,8 @@
   padding: 12px 14px;
   font-weight: 400; font-size: 12px; line-height: 1.5; white-space: normal;
   color: var(--tf-text-2);
-  animation: tf-cite-fade var(--tf-dur-2) var(--tf-ease-out) both;
+  /* 淡入/淡出由 Motion（CitePreview.tsx 的 AnimatePresence）驅動；transform 保留給上翻定位。 */
 }
-/* keyframe 須定義於本模組（CSS Modules 在地化）；僅淡入，不動 transform（上翻定位靠 translateY） */
-@keyframes tf-cite-fade { from { opacity: 0; } to { opacity: 1; } }
 
 .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .mkt { display: inline-flex; align-items: center; border-radius: var(--tf-radius-pill); padding: 1px 8px; font-size: 11px; font-weight: 500; }

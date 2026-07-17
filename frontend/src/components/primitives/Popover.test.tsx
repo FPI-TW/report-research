@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitForElementToBeRemoved } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { Popover } from './Popover'
 
@@ -27,8 +27,14 @@ test('open=true 渲染內容；Esc 觸發 onClose', () => {
   expect(onClose).toHaveBeenCalled()
 })
 
-test('open=true 面板帶 data-state=open', () => {
+test('open=true 面板以 role 呈現', () => {
   render(<Harness open onClose={() => {}} />)
-  const panel = screen.getByText('登出').closest('[data-state]')
-  expect(panel?.getAttribute('data-state')).toBe('open')
+  expect(screen.getByRole('menu')).toBeInTheDocument()
+})
+
+test('open→false 後離場卸載（面板移除）', async () => {
+  const { rerender } = render(<Harness open onClose={() => {}} />)
+  expect(screen.getByText('登出')).toBeInTheDocument()
+  rerender(<Harness open={false} onClose={() => {}} />)
+  await waitForElementToBeRemoved(() => screen.queryByText('登出'))
 })

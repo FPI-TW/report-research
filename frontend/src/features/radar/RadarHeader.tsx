@@ -1,3 +1,4 @@
+import { Pressable } from '../../components/primitives/Pressable'
 import type { Coverage, Window } from '../../lib/radarSchemas'
 import { fmtDate, marketVar, WINDOW_LABEL } from './radarFormat'
 import { WindowSegmented } from './WindowSegmented'
@@ -25,7 +26,7 @@ export function RadarHeader({
     <header className={styles.wrap}>
       <div className={styles.top}>
         <nav className={styles.crumb} aria-label="麵包屑">
-          <button type="button" className={styles.crumbBtn} onClick={onBack}>標的</button>
+          <Pressable type="button" className={styles.crumbBtn} onClick={onBack}>標的</Pressable>
           <span className={styles.sep}>/</span>
           <span>{marketDisplay || market}</span>
           <span className={styles.sep}>/</span>

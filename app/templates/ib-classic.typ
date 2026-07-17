@@ -83,8 +83,11 @@
 }
 
 // 圖表：chart.py 的 SVG。figure 中文編號「圖 N」。
+//
+// 用 `image(bytes(svg), format: "svg")`——`image.decode` 在 Typst 0.15 已移除
+// （錯誤訊息：function `image` does not contain field `decode`）。
 #let chart-figure(svg, caption) = figure(
-  image.decode(svg, width: 100%),
+  image(bytes(svg), format: "svg", width: 100%),
   caption: text(size: 8pt, fill: text-3, caption),
   supplement: [圖],
 )

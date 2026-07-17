@@ -25,6 +25,33 @@ _REF_NL_RE = re.compile(r"\n+(\[\d+\])")
 _TITLE_RE = re.compile(r"(?m)^#\s+(.+)$")
 
 BRAND_NAME = "廷豐智能研報"
+
+# 研報 PDF 的免責聲明。**兩條渲染路徑（WeasyPrint / Typst）的唯一文字來源**——
+# 各自複製一份必然漂移。深度研報是可下載、可轉發的檔案：離開平台後沒有任何上下文，
+# 收到的人只看到一份看起來像券商研報、內含目標價與評等彙整的文件。
+#
+# 免責**不得依賴 LLM 產出**（漏寫或內容截斷都會讓它消失），也不得依賴任何資料是否存在
+# ——雷達改版時免責就是這樣無聲消失的（PR #87 cc054c3：plan 以為它「已改置底 notes」，
+# 但那區只放資料品質註記且常為空陣列，整區不渲染）。
+REPORT_DISCLAIMER = (
+    "免責聲明：本報告由「廷豐智能研報」依語料庫中已擷取之券商研報觀點與數值自動彙整生成，"
+    "非系統預測，亦不構成投資建議或要約。所引用之評等、目標價與財務預估均為原研報作者之觀點，"
+    "其正確性與時效性以原始研報為準。投資人應自行判斷並承擔投資風險。"
+)
+
+
+def _disclaimer_html() -> str:
+    return (
+        '<div class="tf-disclaimer">'
+        f"{_html.escape(REPORT_DISCLAIMER)}"
+        "</div>"
+    )
+
+
+_DISCLAIMER_CSS = (
+    ".tf-disclaimer{margin-top:18px;padding-top:10px;border-top:1px solid #e7e4dc;"
+    "font-size:8.5pt;line-height:1.6;color:#6e7e89;}"
+)
 BRAND_GOLD = "#AE7415"
 _GOLD_SOFT = "#faf6ee"
 _GOLD_LINE = "#ecdcc0"
@@ -70,12 +97,13 @@ def _document_html(title: str, body_html: str, meta: dict) -> str:
     date = _html.escape(str(meta.get("date") or ""))
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
-        f"<style>{_PAGE_CSS}</style></head><body>"
+        f"<style>{_PAGE_CSS}{_DISCLAIMER_CSS}</style></head><body>"
         '<div class="brand-bar">'
         f'<div class="brand-name">{_html.escape(BRAND_NAME)}</div>'
         f'<div class="brand-meta">研究報告　生成日期 {date}</div>'
         "</div>"
         f"{body_html}"
+        f"{_disclaimer_html()}"
         "</body></html>"
     )
 
@@ -398,7 +426,8 @@ def _render_fancy(title: str, sections: list[tuple[str, str]], meta: dict) -> st
     body = "".join(body_parts)
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
-        f"<style>{_FANCY_CSS}</style></head><body>{cover}{toc}{body}</body></html>"
+        f"<style>{_FANCY_CSS}{_DISCLAIMER_CSS}</style></head>"
+        f"<body>{cover}{toc}{body}{_disclaimer_html()}</body></html>"
     )
 
 

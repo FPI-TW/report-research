@@ -26,7 +26,8 @@ from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.evidence import manifest_from_answer
 from app.services.llm import SEARCH_EVENT, stream_completion
-from app.services.pdf import render_report_pdf, strip_preamble
+from app.services.pdf import render_report_pdf as _render_weasyprint
+from app.services.pdf import strip_preamble
 from app.services.query_planner import plan_queries
 from app.services.report_gate import suggested_title
 from app.services.retrieval_pipeline import retrieve_context_multi
@@ -44,6 +45,9 @@ REPORT_MAX_CONTEXT_CHARS = _S.report_max_context_chars
 # 一半就結束。故顯式拉長逾時（可由 env 調整）。網搜深報＋圖表使輸出更長、更易逼近上限，
 # live 實測純文字深報 ~200s、網搜深報常逼近/超過 300s，故預設拉到 600s。
 REPORT_TIMEOUT = _S.report_timeout
+# 渲染器雙軌（M9a）：typst（預設）／weasyprint。出事時設 REPORT_RENDERER=weasyprint
+# 即可全域回退，markdown 是真相故 PDF 隨時可重建。
+REPORT_RENDERER = _S.report_renderer
 REPORTS_DIR = _S.reports_dir
 # 研報專用 dense 召回深度（沿用問答路徑值，多掃最近鄰降漏報）
 ASK_DENSE_SCAN = _S.ask_dense_scan
@@ -152,6 +156,28 @@ def parse_external_refs(markdown: str) -> list[dict]:
         {"title": title or url, "url": url}
         for title, url in _EXT_REF_LINE_RE.findall(section)
     ]
+
+
+def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
+    """依 REPORT_RENDERER 分派渲染；Typst 失敗 fail-open 回退 WeasyPrint（M9a T5）。
+
+    **兩軌都必須產出含免責的 PDF**：回退路徑存在正是為了應付沒預料到的情況，那恰恰
+    是最不該少免責的時候。免責文字兩軌同源（`pdf.REPORT_DISCLAIMER`）。
+
+    這裡是所有渲染的單一入口——`web/server.py` 的 PDF 重建端點也必須經過它，否則
+    重建出來的檔案會繞過分派、永遠是 WeasyPrint 版。
+    """
+    if REPORT_RENDERER == "typst":
+        try:
+            # 延遲 import：typst/pypandoc 載入不該計入 web.server 的匯入預算
+            from app.services.typst_render import render_report_pdf as _render_typst
+
+            return _render_typst(markdown_text, title=title, meta=meta)
+        except Exception:
+            # 編譯錯誤、模板炸掉、pandoc 異常都在此收斂——研報寧可版型退化，
+            # 不可因渲染而完全沒有 PDF（無 PDF＝無持久化＝重建永久 500）。
+            logger.warning("typst 渲染失敗，回退 weasyprint", exc_info=True)
+    return _render_weasyprint(markdown_text, title=title, meta=meta)
 
 
 def write_report_pdf(report_id: str, pdf_bytes: bytes) -> str:

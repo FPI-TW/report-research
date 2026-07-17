@@ -17,13 +17,19 @@ from __future__ import annotations
 import json
 import logging
 import re
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Union
 
 import pypandoc
 
 from app.services.chart import _valid as _chart_valid
 from app.services.chart import render_chart_svg
+
+# 與 WeasyPrint 路徑共用引用正規化與免責文字——兩軌各留一份必然漂移。
+# pdf.py 的 weasyprint 是延遲 import，故此處頂層 import 不會吃到它的載入成本。
+from app.services.pdf import _normalize_refs
 
 logger = logging.getLogger(__name__)
 
@@ -269,10 +275,14 @@ def build_document(markdown: str, *, title: str, meta: dict | None = None) -> Do
     內容——研報寧可少一張 KPI 卡，不可整份沒有 PDF。未知章節保留為 key=None。
     """
     m = meta or {}
-    sections = [
-        Section(key=_section_key(heading), heading=heading, blocks=_blocks_for(body))
-        for heading, body in _split_sections(markdown)
-    ]
+    sections = []
+    for heading, body in _split_sections(markdown):
+        key = _section_key(heading)
+        if key == "references":
+            # 引用來源逐條起新段落：模型常把 [1][2][3] 寫成單換行，pandoc 會併成一段
+            # → PDF 上整串擠成一行。與 WeasyPrint 路徑共用同一個正規化（複製一份必漂移）。
+            body = _normalize_refs(body)
+        sections.append(Section(key=key, heading=heading, blocks=_blocks_for(body)))
     return DocumentModel(
         sections=tuple(s for s in sections if s.blocks or s.heading),
         meta=DocMeta(
@@ -281,3 +291,114 @@ def build_document(markdown: str, *, title: str, meta: dict | None = None) -> Do
             question=str(m.get("question") or ""),
         ),
     )
+
+
+# ── DocumentModel → Typst 原始碼 → PDF ────────────────────────────────────────
+
+_TEMPLATE_PATH = "/app/templates/ib-classic.typ"  # root 相對路徑（compile 的 root=repo）
+
+
+def _tstr(s: object) -> str:
+    """Python 值 → Typst 字串常值。
+
+    **這是安全邊界上的函式**：Typst 有 #eval/#read/#import 且圖靈完備，任何未跳脫的
+    值拼進原始碼等於任意執行。反斜線必須先跳脫（否則後續跳脫的 \\" 會被它反過來吃掉）。
+    """
+    t = str(s)
+    t = t.replace("\\", "\\\\").replace('"', '\\"')
+    # 控制字元（含 CR/LF）在 Typst 字串常值中須以逸出序列表示
+    t = t.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    return f'"{t}"'
+
+
+def _emit_kpi(items: tuple[KpiItem, ...]) -> str:
+    if not items:
+        return "()"
+    cells = ", ".join(
+        "(value: {v}, label: {l}, change: {c}, direction: {d}, source: {s})".format(
+            v=_tstr(it.value), l=_tstr(it.label), c=_tstr(it.change),
+            d=_tstr(it.direction), s=_tstr(it.source),
+        )
+        for it in items
+    )
+    # 單元素 tuple 在 Typst 需尾逗號，否則會被當成括號運算式
+    return f"({cells},)"
+
+
+def _emit_body(doc: DocumentModel) -> str:
+    """章節 → Typst body。ProseBlock 已是 pandoc 跳脫後的片段，可直接插入。"""
+    out: list[str] = []
+    for sec in doc.sections:
+        if sec.heading:
+            out.append(f"#section-heading[{sec.heading}]")
+        for b in sec.blocks:
+            if isinstance(b, ProseBlock):
+                out.append(b.typst)
+            elif isinstance(b, ChartBlock):
+                out.append(f"#chart-figure({_tstr(b.svg)}, {_tstr('')})")
+            elif isinstance(b, KpiBlock):
+                # 章節內的 KPI（非跨欄置頂那組）就地排一列
+                out.append(f"#kpi-strip({_emit_kpi(b.items)})")
+    return "\n\n".join(out)
+
+
+def _split_hero_kpi(doc: DocumentModel) -> tuple[tuple[KpiItem, ...], DocumentModel]:
+    """抽出第一組 KPI 作為跨欄置頂的 KPI 帶（設計定稿：數字先行）。
+
+    其餘 KPI 留在原章節。跨欄那組必須由 report() 參數帶入——留在 body 會被
+    columns(2) 壓進單一欄。
+    """
+    hero: tuple[KpiItem, ...] = ()
+    secs = []
+    for sec in doc.sections:
+        blocks = []
+        for b in sec.blocks:
+            if isinstance(b, KpiBlock) and not hero:
+                hero = b.items
+                continue
+            blocks.append(b)
+        secs.append(Section(key=sec.key, heading=sec.heading, blocks=tuple(blocks)))
+    return hero, DocumentModel(sections=tuple(secs), meta=doc.meta)
+
+
+def emit_typst(doc: DocumentModel, *, disclaimer: str, methods: str = "") -> str:
+    """DocumentModel → 完整 .typ 原始碼（呼叫 ib-classic 的模板契約）。"""
+    hero, rest = _split_hero_kpi(doc)
+    head = (
+        f'#import "{_TEMPLATE_PATH}": report, section-heading, kpi-strip, chart-figure\n\n'
+        "#show: report.with(\n"
+        f"  title: {_tstr(doc.meta.title)},\n"
+        f"  date: {_tstr(doc.meta.date)},\n"
+        f"  subject: {_tstr(doc.meta.question)},\n"
+        f"  kpi: {_emit_kpi(hero)},\n"
+        f"  methods: {_tstr(methods)},\n"
+        f"  disclaimer: {_tstr(disclaimer)},\n"
+        ")\n\n"
+    )
+    return head + _emit_body(rest) + "\n"
+
+
+def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
+    """markdown → Typst → PDF bytes。簽章與 pdf.render_report_pdf 一致（雙軌可互換）。
+
+    典型 0.2s（spike 實測，WeasyPrint 為秒級）。編譯以 root 限制檔案存取；模板零
+    @preview 依賴故無網路需求。失敗直接拋——由 report.py 的分派層 fail-open 回退
+    WeasyPrint（回退路徑同樣有免責，見 pdf.REPORT_DISCLAIMER）。
+    """
+    # 延遲 import：與 pdf.py 的 weasyprint 同理，不讓模組匯入期吃載入成本
+    import typst
+
+    from app.services.pdf import REPORT_DISCLAIMER
+
+    doc = build_document(markdown_text, title=title, meta=meta or {})
+    src = emit_typst(doc, disclaimer=REPORT_DISCLAIMER)
+    root = Path(__file__).resolve().parents[2]
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".typ", dir=root, encoding="utf-8", delete=False
+    ) as fh:
+        fh.write(src)
+        tmp = Path(fh.name)
+    try:
+        return typst.compile(str(tmp), root=str(root))
+    finally:
+        tmp.unlink(missing_ok=True)

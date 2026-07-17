@@ -31,10 +31,20 @@
 .seeAll { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-ink); font-weight: 600; cursor: pointer; margin-left: auto; }
 .seeAll:hover { color: var(--tf-ink-hover); }
 
-.lrow { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 13px 0; border-top: 1px solid var(--tf-border-weak); cursor: pointer; }
+/* 結果列躺在畫布上可以靠「hover 變白」浮起；此處在白底磚內，同招無效，
+   故反過來染成暖紙白讓列從白底浮出。位移交給 Motion，這裡只留純色。 */
+.lrow {
+  display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 18px; align-items: center;
+  padding: 13px 10px; margin: 0 -10px;
+  border-top: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md);
+  cursor: pointer;
+  transition: background 120ms var(--tf-ease-out);
+}
+.lrow:hover { background: var(--tf-canvas); }
+.lrow:hover .ltitle { color: var(--tf-ink-deep); }
 .code { font-family: var(--tf-mono); font-size: 11px; font-weight: 600; color: var(--c); letter-spacing: 0.03em; }
 .ltitleWrap { min-width: 0; display: flex; align-items: baseline; }
-.ltitle { font-family: var(--tf-serif); font-weight: 700; font-size: 14.5px; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ltitle { font-family: var(--tf-serif); font-weight: 700; font-size: 14.5px; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color 120ms var(--tf-ease-out); }
 .lsrc { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); margin-left: 10px; flex: none; }
 .ldate { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); white-space: nowrap; }
 

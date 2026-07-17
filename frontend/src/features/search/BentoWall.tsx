@@ -1,5 +1,7 @@
+import { motion, useReducedMotion } from 'motion/react'
 import type { CSSProperties } from 'react'
 import { marketColor, marketLabel } from '../../lib/meta'
+import { springHover } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
 import { Pressable } from '../../components/primitives/Pressable'
 import { FeatureTile } from './FeatureTile'
@@ -36,6 +38,7 @@ export { monthOf }
 export function BentoWall({
   rows, latestId, totalReports, composition, monthLabel, onOpen, onSeeAll,
 }: Props) {
+  const reduced = useReducedMotion()
   const [head, ...rest] = rows
   const listRows = rest.slice(0, LIST_ROWS)
   const legend = composition.slice(0, LEGEND_MAX)
@@ -89,10 +92,11 @@ export function BentoWall({
           {listRows.map(r => {
             const date = (r.report_date ?? '').slice(0, 10)
             return (
-              <div
+              <motion.div
                 key={r.report_id}
                 className={styles.lrow}
                 style={{ '--c': marketColor(r.market ?? '') } as CSSProperties}
+                whileHover={reduced ? undefined : { x: 2, transition: springHover }}
                 role="button"
                 tabIndex={0}
                 aria-label={r.file_name}
@@ -107,7 +111,7 @@ export function BentoWall({
                   {r.source && <span className={styles.lsrc}>{r.source}</span>}
                 </span>
                 <span className={styles.ldate}>{date.slice(5)}</span>
-              </div>
+              </motion.div>
             )
           })}
         </div>

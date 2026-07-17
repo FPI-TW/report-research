@@ -154,5 +154,58 @@ class TypstEscapingTests(unittest.TestCase):
         self.assertIn('title: "#eval(\\"1+1\\")"', src)
 
 
+
+class HostileFixtureTests(unittest.TestCase):
+    """完整管線（markdown → emit → compile）對敵意輸入的實證。
+
+    spike 驗的是 pandoc 單步；這裡驗的是整條管線——emit 會把 metadata 拼進原始碼，
+    那是 pandoc 管不到的地方（由 `_tstr` 負責）。
+
+    fixture 內的 `#eval`/`#read`/`#import` 是 **Typst 語法字串**（測試資料），
+    斷言的正是它們被跳脫成字面文字、不會被 Typst 編譯器執行。
+    """
+
+    _FIXTURE = REPO_ROOT / "docs" / "typst_spike" / "fixture_hostile.md"
+
+    def setUp(self):
+        if not self._FIXTURE.is_file():
+            self.skipTest("敵意 fixture 不存在")
+        self.md = self._FIXTURE.read_text(encoding="utf-8")
+
+    def test_hostile_markdown_compiles_to_single_page_pdf(self):
+        pdf = rpt.render_report_pdf(self.md, title="敵意輸入測試", meta=_META)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertGreater(len(pdf), 10_000)
+
+    def test_injection_vectors_escaped_in_emitted_source(self):
+        from app.services.typst_render import build_document, emit_typst
+
+        src = emit_typst(
+            build_document(self.md, title="敵意輸入測試", meta=_META),
+            disclaimer=REPORT_DISCLAIMER,
+        )
+        for vector in ("\\#eval", "\\#read", "\\#import", "\\#set", "\\$", "\\@"):
+            with self.subTest(vector=vector):
+                self.assertIn(vector, src, f"{vector} 未被 pandoc 跳脫")
+
+    def test_only_our_own_import_is_unescaped(self):
+        """原始碼裡唯一未跳脫的 `#import` 必須是模板自己的那行（第 1 行）。
+
+        raw 區塊（反引號）內的 `#eval` 不求值，故不在此檢查範圍。
+        """
+        import re
+
+        from app.services.typst_render import build_document, emit_typst
+
+        src = emit_typst(
+            build_document(self.md, title="敵意輸入測試", meta=_META),
+            disclaimer=REPORT_DISCLAIMER,
+        )
+        imports = [
+            m for m in re.finditer(r"(?<!\\)#import", src)
+        ]
+        self.assertEqual(len(imports), 1, "除模板 import 外不得有未跳脫的 #import")
+        self.assertLess(imports[0].start(), src.index("\n"), "模板 import 應在第 1 行")
+
 if __name__ == "__main__":
     unittest.main()

@@ -133,6 +133,63 @@ class SectionCoverageTests(unittest.TestCase):
         self.assertEqual(out["covered"], 5)
         self.assertEqual(out["missing"], [])
 
+    def test_empty_chapter_not_counted(self):
+        """v2：只認標題會讓「## 執行摘要」下空無一字的殘報照樣 rate=1.0
+        （逐節生成的節草稿耗盡即此形態）——空章節必須算缺章。"""
+        md = (
+            "# T\n\n## 執行摘要\n\n## 關鍵發現\n\n發現。\n\n"
+            "## 重點分析\n\n分析。\n\n## 風險與展望\n\n風險。\n\n"
+            "## 引用來源\n\n[1] A\n"
+        )
+        out = rm.section_coverage(md)
+        self.assertEqual(out["covered"], 4)
+        self.assertEqual(out["missing"], ["執行摘要"])
+
+    def test_whitespace_only_chapter_not_counted(self):
+        md = "## 執行摘要\n\n   \n\n## 關鍵發現\n\n有內容\n"
+        out = rm.section_coverage(md)
+        self.assertIn("執行摘要", out["missing"])
+        self.assertNotIn("關鍵發現", out["missing"])
+
+    def test_analysis_wrapper_with_only_subsections_counts(self):
+        """`## 重點分析` 自身無內文、只掛 ### 子節（M7 的正常組裝形態）→ 仍算有內文。"""
+        md = "## 重點分析\n\n### 子題\n\n子題內文\n"
+        self.assertNotIn("重點分析", rm.section_coverage(md)["missing"])
+
+    def test_heading_only_subsections_do_not_rescue_chapter(self):
+        """子節也全空 → 該章仍算缺（標題堆疊不算內文）。"""
+        md = "# T\n\n## 重點分析\n\n### 子題\n\n### 子題2\n"
+        self.assertIn("重點分析", rm.section_coverage(md)["missing"])
+
+
+class CitationDenominatorTests(unittest.TestCase):
+    """v2：source_citation_rate 的分母＝餵給模型的證據總數（n_available）。"""
+
+    def test_n_available_none_keeps_v1_semantics(self):
+        md = "## 執行摘要\n\n甲[1]、乙[2]。\n"
+        out = rm.citation_metrics(md, 5)
+        self.assertAlmostEqual(out["citation_validity"], 1.0)
+        self.assertAlmostEqual(out["source_citation_rate"], 2 / 5)
+
+    def test_n_available_used_as_denominator(self):
+        """逐節路徑：n_sources 是「已被引用」表（恆滿），真分母是共用帳本大小。"""
+        md = "## 執行摘要\n\n甲[1]、乙[2]。\n"
+        out = rm.citation_metrics(md, 2, n_available=10)
+        self.assertAlmostEqual(out["citation_validity"], 1.0)   # [1][2] 皆在 1..2
+        self.assertAlmostEqual(out["source_citation_rate"], 2 / 10)
+
+    def test_validity_uses_n_sources_not_n_available(self):
+        """[n] 的合法上界仍是研報自己的引用來源表：模型手寫的越界 [9] 要抓得出來。"""
+        md = "## 執行摘要\n\n甲[1]、亂寫[9]。\n"
+        out = rm.citation_metrics(md, 2, n_available=10)
+        self.assertAlmostEqual(out["citation_validity"], 0.5)
+        self.assertAlmostEqual(out["source_citation_rate"], 1 / 10)
+
+    def test_zero_available_returns_none(self):
+        out = rm.citation_metrics("## 執行摘要\n\n無引用。\n", 0, n_available=0)
+        self.assertIsNone(out["citation_validity"])
+        self.assertIsNone(out["source_citation_rate"])
+
 
 class EvidenceLinkCoverageTests(unittest.TestCase):
     """M7 evidence link coverage：掛到 ≥1 檢索證據的節 / 總節數。"""

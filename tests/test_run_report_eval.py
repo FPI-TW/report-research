@@ -24,6 +24,13 @@ _SOURCES = [
     {"report_id": "rb", "market": "TW", "report_date": "2026-04-20"},
 ]
 
+# 逐節路徑的 done.sources：正文 [n] 的對應表（由逐節帳本 render_citations 編號）。
+# 刻意與 run-level 的 _SOURCES 不同——這正是審查 #2 的重點：兩者毫無關係。
+_CITED_SOURCES = [
+    {"n": 1, "report_id": "rx", "market": "US", "report_date": "2026-05-01"},
+    {"n": 2, "report_id": "ry", "market": "US", "report_date": "2026-05-02"},
+]
+
 _Q = {
     "id": "r001",
     "topic": "台積電先進製程展望",
@@ -67,6 +74,10 @@ def _gen_sectioned(topic, *, filters=None, persist=True, **kw):
                                      "markdown_hash": "h"})
         yield ("done", {"report_id": None, "title": topic, "markdown": _MD,
                         "context": "[1] 報告：x\n3奈米製程",
+                        # 逐節路徑：done.sources ＝ 正文 [n] 的對應表（逐節帳本編號），
+                        # 與上面 run-level 的 sources 事件是兩份不同的清單。
+                        "sources": _CITED_SOURCES,
+                        "n_evidence": 8,
                         "claim_evidence": {"0": ["e1"], "1": ["e1", "e2"], "2": []},
                         "thinking_ms": 9})
 
@@ -140,6 +151,31 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(elc["total"], 3)
         self.assertAlmostEqual(elc["rate"], 2 / 3)
         self.assertAlmostEqual(case["section_coverage"]["rate"], 1.0)
+
+    async def test_sectioned_citation_denominators_come_from_done_not_sources_event(self):
+        """審查 #2：逐節路徑的引用分母必須取自 done.sources／done.n_evidence，
+        不能用 run-level 的 `sources` 事件（兩套編號毫無關係 → 指標失真）。"""
+        case = await rre.eval_question(
+            _Q, gen=_gen_sectioned, broker_lookup=_brokers_ok, question_timeout=5.0
+        )
+        # _MD 正文引用 [1][2]，done.sources 有 2 筆 → 全合法
+        self.assertAlmostEqual(case["citation_validity"], 1.0)
+        # source_citation_rate 分母＝ n_evidence=8（可用證據），非 len(done.sources)=2
+        # （後者恆為 1.0）、也非 run-level len(sources)=2
+        self.assertAlmostEqual(case["source_citation_rate"], 2 / 8)
+        # 多樣性仍以 run-level 檢索為準（量的是「檢索找到什麼」）
+        self.assertEqual(case["n_sources"], 2)
+        self.assertEqual(case["source_diversity"]["n_markets"], 1)  # _SOURCES 全 TW
+
+    async def test_single_shot_without_done_sources_falls_back_to_event(self):
+        """單次路徑 done 無 sources／n_evidence → 分母沿用 run-level sources 事件
+        （v1 語義逐字不變）。"""
+        case = await rre.eval_question(
+            _Q, gen=_gen_ok, broker_lookup=_brokers_ok, question_timeout=5.0
+        )
+        # _MD 正文引用 [1][2]；run-level sources 2 筆 → 全合法、全被引用
+        self.assertAlmostEqual(case["citation_validity"], 1.0)
+        self.assertAlmostEqual(case["source_citation_rate"], 2 / 2)
 
     async def test_structured_error_event_is_report_error_not_runner_error(self):
         """審查 M1b-1：generate_report 的結構化 error（研報婉拒）不是 runner 失敗；

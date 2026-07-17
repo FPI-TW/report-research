@@ -2,11 +2,11 @@
 .wrap {
   background: var(--tf-surface);
   border: 1px solid var(--tf-border);
-  border-radius: 14px;
+  border-radius: var(--tf-radius-tile);
   box-shadow: var(--tf-shadow-xs);
 }
 /* 圓角交給首末元素（不能用 overflow:hidden，會破壞月份標頭的 sticky） */
-.wrap > section:first-child > div:first-child { border-top-left-radius: 14px; border-top-right-radius: 14px; }
-.wrap > section:last-child > .grid > :last-child { border-bottom-left-radius: 14px; border-bottom-right-radius: 14px; }
+.wrap > section:first-child > div:first-child { border-top-left-radius: var(--tf-radius-tile); border-top-right-radius: var(--tf-radius-tile); }
+.wrap > section:last-child > .grid > :last-child { border-bottom-left-radius: var(--tf-radius-tile); border-bottom-right-radius: var(--tf-radius-tile); }
 
 .grid { display: flex; flex-direction: column; }

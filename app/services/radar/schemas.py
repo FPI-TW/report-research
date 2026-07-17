@@ -31,6 +31,7 @@ class ChangeItem(BaseModel):
     curr_value: Optional[str] = None
     pct_change: Optional[float] = None
     comparable: bool
+    reason_code: Optional[str] = None
     incomparable_reason: Optional[str] = None
 
 
@@ -117,6 +118,9 @@ class BrokerSummary(BaseModel):
     latest_target_currency: Optional[str] = None
     latest_eps_value: Optional[float] = None
     latest_eps_fy: Optional[int] = None
+    latest_eps_period: Optional[str] = None
+    latest_eps_currency: Optional[str] = None
+    latest_eps_unit: Optional[str] = None
     latest_report_date: str
     report_link: ReportLink
     recent_change_label: Optional[str] = None
@@ -172,15 +176,18 @@ class BrokerSnapshot(BaseModel):
     target_price: Optional[float] = None
     target_currency: Optional[str] = None
     eps: list[EpsGroup]
+    primary_eps: Optional[EpsGroup] = None
     thesis: list[ThesisCell]
     extraction_status: str
     report_link: ReportLink
 
 
 class SnapshotDiff(BaseModel):
+    from_report_id: Optional[str] = None
     from_report_date: Optional[str] = None
     to_report_date: str
     changes: list[ChangeItem]
+    has_prior_report: bool = False
     has_prior_comparable: bool
     note: Optional[str] = None
 

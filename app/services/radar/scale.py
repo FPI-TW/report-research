@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from dataclasses import dataclass
@@ -161,6 +162,59 @@ def _fmt_price(value: Optional[float], currency: Optional[str]) -> Optional[str]
     return f"{currency} {num}" if currency else num
 
 
+def eps_group_label(group_key: tuple) -> str:
+    """EPS 完整可比較鍵的人類可讀穩定標籤。"""
+    fiscal_year, period, currency, unit = group_key
+    return " · ".join(
+        (
+            f"FY{fiscal_year}" if fiscal_year is not None else "FY 未註明",
+            period or "期間未註明",
+            currency or "幣別未註明",
+            unit or "單位未註明",
+        )
+    )
+
+
+def eps_group_identity(group_key: tuple) -> str:
+    """EPS 完整 group key 的無碰撞穩定表示，供內部 evidence 配對。"""
+    return json.dumps(group_key, ensure_ascii=False, separators=(",", ":"))
+
+
+def has_comparable_fields(previous: Signal, current: Signal) -> bool:
+    """兩份訊號是否至少有一個可直接比較的欄位。"""
+    if (
+        rating_scale(previous.rating_normalized) is not None
+        and rating_scale(current.rating_normalized) is not None
+    ):
+        return True
+    if (
+        previous.target_price is not None
+        and current.target_price is not None
+        and previous.target_currency
+        and previous.target_currency == current.target_currency
+    ):
+        return True
+    previous_eps_keys = {
+        estimate.group_key() for estimate in previous.eps if estimate.value is not None
+    }
+    current_eps_keys = {
+        estimate.group_key() for estimate in current.eps if estimate.value is not None
+    }
+    if previous_eps_keys & current_eps_keys:
+        return True
+    for dimension in THESIS_DIMENSIONS:
+        previous_cell = previous.thesis.get(dimension)
+        current_cell = current.thesis.get(dimension)
+        if not previous_cell or not current_cell:
+            continue
+        if (
+            stance_constructiveness(dimension, previous_cell.stance) is not None
+            and stance_constructiveness(dimension, current_cell.stance) is not None
+        ):
+            return True
+    return False
+
+
 def diff_signals(prev: Optional[Signal], curr: Signal) -> list[Change]:
     """單券商前後兩份訊號的差異清單（事件卡與時間線共用）。
 
@@ -213,12 +267,18 @@ def diff_signals(prev: Optional[Signal], curr: Signal) -> list[Change]:
             )
 
     # EPS：對 curr 每個分組鍵找 prev 同鍵比較（同 FY/期間/幣別/單位才可比）
-    prev_eps = {e.group_key(): e for e in prev.eps if e.value is not None}
+    previous_eps = sorted(
+        (estimate for estimate in prev.eps if estimate.value is not None),
+        key=lambda estimate: eps_group_label(estimate.group_key()),
+    )
+    prev_eps = {estimate.group_key(): estimate for estimate in previous_eps}
     for c in curr.eps:
         if c.value is None:
             continue
         p = prev_eps.get(c.group_key())
+        group_label = eps_group_label(c.group_key())
         label = f"{c.fiscal_year} {c.period} EPS".strip()
+        group_identity = eps_group_identity(c.group_key())
         if p is not None:
             changes.append(
                 Change(
@@ -226,6 +286,25 @@ def diff_signals(prev: Optional[Signal], curr: Signal) -> list[Change]:
                     direction=_sign_direction(p.value, c.value),
                     prev_value=f"{p.value:g}", curr_value=f"{c.value:g}",
                     pct_change=pct_change(p.value, c.value), comparable=True,
+                    eps_group_identity=group_identity,
+                )
+            )
+        elif previous_eps:
+            previous_group = previous_eps[0]
+            changes.append(
+                Change(
+                    field="eps", dimension=group_label,
+                    label="EPS 群組變更",
+                    direction="incomparable",
+                    prev_value=eps_group_label(previous_group.group_key()),
+                    curr_value=group_label,
+                    pct_change=None,
+                    comparable=False,
+                    reason_code="eps_group_mismatch",
+                    incomparable_reason=(
+                        "EPS 群組不同：FY／期間／幣別／單位無法直接比較"
+                    ),
+                    eps_group_identity=group_identity,
                 )
             )
 

@@ -121,7 +121,8 @@ def _change_item(c: Change) -> ChangeItem:
     return ChangeItem(
         field=c.field, dimension=c.dimension, label=c.label, direction=c.direction,
         prev_value=c.prev_value, curr_value=c.curr_value, pct_change=c.pct_change,
-        comparable=c.comparable, incomparable_reason=c.incomparable_reason,
+        comparable=c.comparable, reason_code=c.reason_code,
+        incomparable_reason=c.incomparable_reason,
     )
 
 
@@ -142,18 +143,31 @@ def _headline(material: list[Change]) -> str:
     return f"{c.label}論點{verb}"
 
 
+def _evidence_for_change(s: Signal, change: Change) -> Optional[str]:
+    if change.field == "target_price":
+        return s.target_price_evidence
+    if change.field == "thesis" and change.dimension:
+        cell = s.thesis.get(change.dimension)
+        return cell.evidence if cell else None
+    if change.field == "eps" and change.eps_group_identity:
+        return next(
+            (
+                estimate.evidence
+                for estimate in s.eps
+                if estimate.evidence
+                and scale.eps_group_identity(estimate.group_key())
+                == change.eps_group_identity
+            ),
+            None,
+        )
+    return None
+
+
 def _evidence_for(s: Signal, material: list[Change]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for c in material:
-        text: Optional[str] = None
-        if c.field == "target_price":
-            text = s.target_price_evidence
-        elif c.field == "thesis" and c.dimension:
-            cell = s.thesis.get(c.dimension)
-            text = cell.evidence if cell else None
-        elif c.field == "eps":
-            text = next((e.evidence for e in s.eps if e.evidence), None)
+        text = _evidence_for_change(s, c)
         if text and text not in seen:
             seen.add(text)
             out.append(text)
@@ -178,7 +192,50 @@ def _prev_signal(by_broker, s: Signal) -> Optional[Signal]:
     return lst[idx + 1] if idx + 1 < len(lst) else None
 
 
-def _rating_consensus(consensus, by_broker) -> RatingConsensus:
+def _rating_movement_counts(by_broker, ws, window: str) -> tuple[int, int, int]:
+    up = down = flat = 0
+    for signals in by_broker.values():
+        comparable = [
+            signal
+            for signal in signals
+            if scale.rating_scale(signal.rating_normalized) is not None
+        ]
+        in_window = [
+            signal
+            for signal in comparable
+            if _in_window(signal, ws, window)
+        ]
+        if not in_window:
+            continue
+        current = in_window[0]
+        if window == "all":
+            baseline = in_window[-1]
+        else:
+            baseline = next(
+                (
+                    signal
+                    for signal in comparable
+                    if ws is not None
+                    and signal.report_date is not None
+                    and signal.report_date < ws
+                ),
+                None,
+            )
+            if baseline is None:
+                baseline = in_window[-1]
+        direction = scale.rating_direction(
+            baseline.rating_normalized, current.rating_normalized
+        )
+        if direction == "up":
+            up += 1
+        elif direction == "down":
+            down += 1
+        elif direction == "flat":
+            flat += 1
+    return up, down, flat
+
+
+def _rating_consensus(consensus, by_broker, ws, window: str) -> RatingConsensus:
     dist = {lvl: 0 for lvl in FIVE_LEVELS}
     bullish = neutral = bearish = unknown = 0
     for s in consensus.values():
@@ -195,18 +252,7 @@ def _rating_consensus(consensus, by_broker) -> RatingConsensus:
             bearish += 1
         elif bucket == "neutral":
             neutral += 1
-    up = down = flat = 0
-    for s in consensus.values():
-        prev = _prev_signal(by_broker, s)
-        if prev is None:
-            continue
-        d = scale.rating_direction(prev.rating_normalized, s.rating_normalized)
-        if d == "up":
-            up += 1
-        elif d == "down":
-            down += 1
-        elif d == "flat":
-            flat += 1
+    up, down, flat = _rating_movement_counts(by_broker, ws, window)
     return RatingConsensus(
         distribution=[RatingBucketCount(rating=lvl, count=dist[lvl]) for lvl in FIVE_LEVELS],
         bullish=bullish, neutral=neutral, bearish=bearish, unknown=unknown,
@@ -252,15 +298,73 @@ def _target_consensus(consensus, by_broker) -> Optional[TargetConsensus]:
     return TargetConsensus(primary_currency=primary, groups=groups, note=note)
 
 
-def _eps_consensus(consensus, by_broker) -> Optional[EpsConsensus]:
+def _eps_complete_key(group: EpsGroup) -> tuple[str, str, str]:
+    return (
+        group.period or "",
+        group.currency or "",
+        group.unit or "",
+    )
+
+
+def _select_primary_eps(
+    groups: list[EpsGroup], as_of: Optional[date]
+) -> Optional[EpsGroup]:
+    """依 broker count、年度群組、基準年與完整 key 選出 primary EPS。"""
+    if not groups:
+        return None
+    max_count = max(group.count for group in groups)
+    candidates = [group for group in groups if group.count == max_count]
+    annual_groups = [
+        group for group in candidates if (group.period or "").upper() == "FY"
+    ]
+    if annual_groups:
+        candidates = annual_groups
+    fy_groups = [group for group in candidates if group.fiscal_year is not None]
+    if fy_groups:
+        candidates = fy_groups
+        reference_year = as_of.year if as_of is not None else None
+        if reference_year is None:
+            selected_year = max(group.fiscal_year for group in candidates)
+        else:
+            unexpired_years = [
+                group.fiscal_year
+                for group in candidates
+                if group.fiscal_year >= reference_year
+            ]
+            selected_year = (
+                min(unexpired_years)
+                if unexpired_years
+                else max(group.fiscal_year for group in candidates)
+            )
+        candidates = [
+            group for group in candidates if group.fiscal_year == selected_year
+        ]
+    return min(candidates, key=_eps_complete_key)
+
+
+def _eps_consensus(consensus, by_broker, as_of: Optional[date]) -> Optional[EpsConsensus]:
     values: dict[tuple, list[float]] = defaultdict(list)
     pairs: dict[tuple, list[tuple]] = defaultdict(list)
     for s in consensus.values():
         prev = _prev_signal(by_broker, s)
-        prev_eps = {e.group_key(): e for e in prev.eps} if prev else {}
-        for e in s.eps:
-            if e.value is None:
-                continue
+        prev_eps = {}
+        if prev is not None:
+            for estimate in sorted(
+                (e for e in prev.eps if e.value is not None),
+                key=lambda e: (
+                    scale.eps_group_label(e.group_key()), e.value, e.evidence or ""
+                ),
+            ):
+                prev_eps.setdefault(estimate.group_key(), estimate)
+        current_eps = {}
+        for estimate in sorted(
+            (e for e in s.eps if e.value is not None),
+            key=lambda e: (
+                scale.eps_group_label(e.group_key()), e.value, e.evidence or ""
+            ),
+        ):
+            current_eps.setdefault(estimate.group_key(), estimate)
+        for key, e in current_eps.items():
             key = e.group_key()
             values[key].append(e.value)
             pe = prev_eps.get(key)
@@ -277,8 +381,14 @@ def _eps_consensus(consensus, by_broker) -> Optional[EpsConsensus]:
             fiscal_year=fy, period=period, currency=currency, unit=unit,
             median=q.median, count=q.count, revision_pct=rp, revision_direction=rd,
         ))
-    groups.sort(key=lambda g: (-g.count, g.fiscal_year or 0))
-    return EpsConsensus(primary=groups[0], groups=groups)
+    groups.sort(
+        key=lambda group: (
+            group.fiscal_year is None,
+            group.fiscal_year or 0,
+            *_eps_complete_key(group),
+        )
+    )
+    return EpsConsensus(primary=_select_primary_eps(groups, as_of), groups=groups)
 
 
 def _dim_sample_summary(consensus, dim: str) -> Optional[str]:
@@ -347,11 +457,20 @@ def _events(by_broker, ws, window: str) -> tuple[list[EventCard], int]:
             material = [c for c in changes if scale.is_material(c)]
             if not material:
                 continue
+            evidenced_material = [
+                change
+                for change in material
+                if _evidence_for_change(s, change)
+            ]
+            evidence = _evidence_for(s, evidenced_material)
+            if not evidence:
+                continue
             events.append(EventCard(
                 broker=broker, broker_display=_broker_display(broker),
-                report_date=_iso(s.report_date) or "", headline=_headline(material),
-                changes=[_change_item(c) for c in changes],
-                evidence=_evidence_for(s, material), report_link=_report_link(s),
+                report_date=_iso(s.report_date) or "",
+                headline=_headline(evidenced_material),
+                changes=[_change_item(c) for c in evidenced_material],
+                evidence=evidence, report_link=_report_link(s),
             ))
     events.sort(key=lambda e: e.report_date, reverse=True)
     return events[:MAX_EVENTS], len(events)
@@ -364,13 +483,17 @@ def _broker_summaries(by_broker, ws, window: str) -> list[BrokerSummary]:
         prev = lst[1] if len(lst) > 1 else None
         material = [c for c in scale.diff_signals(prev, s) if scale.is_material(c)]
         top = material[0] if material else None
-        latest_eps = s.eps[0] if s.eps else None
+        eps_groups = _eps_groups_for_signal(s)
+        latest_eps = _select_primary_eps(eps_groups, s.report_date)
         out.append(BrokerSummary(
             broker=broker, broker_display=_broker_display(broker),
             latest_rating=s.rating_normalized, latest_rating_raw=s.rating_raw,
             latest_target_price=s.target_price, latest_target_currency=s.target_currency,
-            latest_eps_value=latest_eps.value if latest_eps else None,
+            latest_eps_value=latest_eps.median if latest_eps else None,
             latest_eps_fy=latest_eps.fiscal_year if latest_eps else None,
+            latest_eps_period=latest_eps.period if latest_eps else None,
+            latest_eps_currency=latest_eps.currency if latest_eps else None,
+            latest_eps_unit=latest_eps.unit if latest_eps else None,
             latest_report_date=_iso(s.report_date) or "", report_link=_report_link(s),
             recent_change_label=_headline([top]) if top else None,
             recent_change_direction=top.direction if top else "none",
@@ -383,6 +506,8 @@ def _broker_summaries(by_broker, ws, window: str) -> list[BrokerSummary]:
 def _coverage_state(coverage: CoverageCounts, signals, consensus) -> str:
     if not signals:
         return "pending_extraction"
+    if any(signal.extraction_status == "partial" for signal in signals):
+        return "partial"
     if not consensus:
         return "window_empty"
     if coverage.brokers_extracted < coverage.brokers_total:
@@ -399,9 +524,9 @@ def build_overview(
     ws = _window_start(as_of, window)
     consensus = _consensus_set(by_broker, ws, window)
 
-    rating = _rating_consensus(consensus, by_broker) if consensus else None
+    rating = _rating_consensus(consensus, by_broker, ws, window) if consensus else None
     target = _target_consensus(consensus, by_broker) if consensus else None
-    eps = _eps_consensus(consensus, by_broker) if consensus else None
+    eps = _eps_consensus(consensus, by_broker, as_of) if consensus else None
     thesis = _thesis_dimensions(consensus, by_broker)  # 永遠 4 格
     events, events_total = _events(by_broker, ws, window)
     brokers = _broker_summaries(by_broker, ws, window)
@@ -444,7 +569,7 @@ def build_instrument_slim(
     consensus = _consensus_set(by_broker, ws, window)
     if not consensus:
         return None
-    rc = _rating_consensus(consensus, by_broker)
+    rc = _rating_consensus(consensus, by_broker, ws, window)
     if rc.total_rated == 0 or rc.median_rating is None:
         return None
     tc = _target_consensus(consensus, by_broker)
@@ -466,11 +591,24 @@ def build_instrument_slim(
     return InstrumentConsensus(window=window, stance=stance, target=target)
 
 
-def _eps_group_single(e) -> EpsGroup:
-    return EpsGroup(
-        fiscal_year=e.fiscal_year, period=e.period, currency=e.currency, unit=e.unit,
-        median=e.value if e.value is not None else 0.0, count=1,
-    )
+def _eps_groups_for_signal(signal: Signal) -> list[EpsGroup]:
+    values: dict[tuple, list[float]] = defaultdict(list)
+    for estimate in signal.eps:
+        if estimate.value is not None:
+            values[estimate.group_key()].append(estimate.value)
+    groups: list[EpsGroup] = []
+    for key in sorted(values, key=scale.eps_group_identity):
+        fiscal_year, period, currency, unit = key
+        quartiles = scale.quantiles(values[key])
+        groups.append(EpsGroup(
+            fiscal_year=fiscal_year,
+            period=period,
+            currency=currency,
+            unit=unit,
+            median=quartiles.median,
+            count=1,
+        ))
+    return groups
 
 
 def _thesis_cell(dim: str, cell) -> ThesisCell:
@@ -491,25 +629,44 @@ def build_broker_history(
 
     snapshots: list[BrokerSnapshot] = []
     for s in signals:
+        eps_groups = _eps_groups_for_signal(s)
         snapshots.append(BrokerSnapshot(
             report_id=s.report_id, report_date=_iso(s.report_date) or "",
             in_window=_in_window(s, ws, window), rating=s.rating_normalized,
             rating_raw=s.rating_raw,
             target_price=s.target_price, target_currency=s.target_currency,
-            eps=[_eps_group_single(e) for e in s.eps if e.value is not None],
+            eps=eps_groups,
+            primary_eps=_select_primary_eps(eps_groups, s.report_date),
             thesis=[_thesis_cell(dim, s.thesis.get(dim)) for dim in THESIS_DIMENSIONS],
             extraction_status=s.extraction_status, report_link=_report_link(s),
         ))
 
     diffs: list[SnapshotDiff] = []
     for i, s in enumerate(signals):
-        prev = signals[i + 1] if i + 1 < len(signals) else None
+        older_reports = signals[i + 1:]
+        has_prior_report = bool(older_reports)
+        prev = next(
+            (
+                candidate
+                for candidate in older_reports
+                if scale.has_comparable_fields(candidate, s)
+            ),
+            None,
+        )
+        if prev is not None:
+            note = None
+        elif has_prior_report:
+            note = "有前次研報，但沒有可比較欄位"
+        else:
+            note = "沒有更早研報"
         diffs.append(SnapshotDiff(
+            from_report_id=prev.report_id if prev else None,
             from_report_date=_iso(prev.report_date) if prev else None,
             to_report_date=_iso(s.report_date) or "",
             changes=[_change_item(c) for c in scale.diff_signals(prev, s)],
+            has_prior_report=has_prior_report,
             has_prior_comparable=prev is not None,
-            note=None if prev else "此窗期內沒有前次可比較研報",
+            note=note,
         ))
 
     return BrokerHistoryResponse(

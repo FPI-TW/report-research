@@ -41,7 +41,7 @@ class Change:
 
     field: rating | target_price | eps | thesis
     direction: up | down | flat | incomparable | none
-    comparable=False 時附 incomparable_reason（幣別/FY 不同/缺前值），不畫方向箭頭。
+    comparable=False 時附穩定 reason_code 與 incomparable_reason，不畫方向箭頭。
     """
 
     field: str
@@ -52,7 +52,9 @@ class Change:
     curr_value: Optional[str]
     pct_change: Optional[float]
     comparable: bool
+    reason_code: Optional[str] = None
     incomparable_reason: Optional[str] = None
+    eps_group_identity: Optional[str] = None  # 內部 evidence 配對；不輸出 API
 
 
 @dataclass(frozen=True)

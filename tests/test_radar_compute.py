@@ -17,14 +17,15 @@ from app.services.radar.types import DimensionStance, EpsEstimate, Signal  # noq
 
 
 def _sig(broker, d, rating="neutral", rating_raw=None, target=None, currency=None,
-         eps=(), thesis=None, code="2330", signal_id=None, created_at=None):
+         eps=(), thesis=None, code="2330", signal_id=None, created_at=None,
+         extraction_status="valid"):
     signal_id = signal_id or f"{broker}-{d}"
     signal = Signal(
         id=signal_id, report_id=f"r-{signal_id}", market="TW",
         instrument_code=code, broker=broker, report_date=d, rating_raw=rating_raw,
         rating_normalized=rating, target_price=target, target_currency=currency,
         target_horizon=None, target_price_evidence="TP 證據" if target else None,
-        eps=tuple(eps), thesis=thesis or {}, extraction_status="valid",
+        eps=tuple(eps), thesis=thesis or {}, extraction_status=extraction_status,
         file_name=f"{broker}.pdf",
     )
     # RED 階段 Signal 尚無 created_at；object.__setattr__ 讓排序行為先可被測試。
@@ -41,9 +42,12 @@ def _cov(total=1, extracted=1, reports=5, name="台積電", has=True):
     )
 
 
-def _eps(fy=2026, value=66.4):
-    return EpsEstimate(fiscal_year=fy, period="FY", currency="TWD", unit="per_share",
-                       value=value, evidence="EPS 證據")
+def _eps(
+    fy=2026, value=66.4, period="FY", currency="TWD", unit="per_share",
+    evidence="EPS 證據",
+):
+    return EpsEstimate(fiscal_year=fy, period=period, currency=currency, unit=unit,
+                       value=value, evidence=evidence)
 
 
 def _st(stance):
@@ -85,6 +89,95 @@ class ConsensusTests(unittest.TestCase):
         self.assertEqual(fy26.count, 2)
         self.assertEqual(fy26.median, 67.0)
 
+    def test_eps_primary_is_order_independent_and_policy_driven(self):
+        def primary(eps, *, as_of=date(2026, 7, 10)):
+            ov = build_overview([_sig("a", as_of, eps=eps)], _cov(), window="all")
+            return ov.eps.primary
+
+        # broker count 是第一順位，即使該 FY 已過期仍勝出。
+        count_wins = build_overview(
+            [
+                _sig("a", date(2026, 7, 10), eps=[_eps(2025), _eps(2026)]),
+                _sig("b", date(2026, 7, 9), eps=[_eps(2025)]),
+            ],
+            _cov(total=2, extracted=2),
+            window="all",
+        )
+        self.assertEqual(count_wins.eps.primary.fiscal_year, 2025)
+
+        # 同 count 時，有 FY 的群組優先；再取最近且未過期的 FY。
+        fy_wins = primary([_eps(None, period="LTM"), _eps(2028), _eps(2027)])
+        self.assertEqual(fy_wins.fiscal_year, 2027)
+
+        # 若所有 FY 都已過期，取最新 FY。
+        past = primary([_eps(2024), _eps(2025)])
+        self.assertEqual(past.fiscal_year, 2025)
+
+        # 完整 key 是最後 tie-break，輸入順序不得改變 primary。
+        first = primary([
+            _eps(2027, currency="USD"),
+            _eps(2027, currency="TWD"),
+        ])
+        second = primary([
+            _eps(2027, currency="TWD"),
+            _eps(2027, currency="USD"),
+        ])
+        self.assertEqual(first.model_dump(), second.model_dump())
+        self.assertEqual(first.currency, "TWD")
+
+    def test_eps_primary_counts_each_broker_once(self):
+        ov = build_overview(
+            [
+                _sig(
+                    "a", date(2026, 7, 10),
+                    eps=[_eps(2025), _eps(2025), _eps(2025)],
+                ),
+                _sig("b", date(2026, 7, 9), eps=[_eps(2026)]),
+                _sig("c", date(2026, 7, 8), eps=[_eps(2026)]),
+            ],
+            _cov(total=3, extracted=3),
+            window="all",
+        )
+        self.assertEqual(ov.eps.primary.fiscal_year, 2026)
+
+    def test_eps_primary_prefers_annual_period(self):
+        ov = build_overview(
+            [
+                _sig(
+                    "a", date(2026, 7, 10),
+                    eps=[_eps(2027, period="Q1"), _eps(2028, period="FY")],
+                )
+            ],
+            _cov(),
+            window="all",
+        )
+        self.assertEqual(ov.eps.primary.period, "FY")
+        self.assertEqual(ov.eps.primary.fiscal_year, 2028)
+
+    def test_rating_movement_uses_window_baseline_not_last_hop(self):
+        signals = [
+            _sig("a", date(2026, 6, 20), "neutral"),
+            _sig("a", date(2026, 7, 1), "buy"),
+            _sig("a", date(2026, 7, 10), "neutral"),
+        ]
+        ov = build_overview(signals, _cov(reports=3), window="30")
+
+        self.assertEqual(ov.rating.upgrades, 0)
+        self.assertEqual(ov.rating.downgrades, 0)
+        self.assertEqual(ov.rating.unchanged, 1)
+
+    def test_rating_movement_uses_nearest_comparable_pre_window_baseline(self):
+        signals = [
+            _sig("a", date(2026, 5, 1), "neutral"),
+            _sig("a", date(2026, 6, 1), "unknown"),
+            _sig("a", date(2026, 7, 10), "buy"),
+        ]
+        ov = build_overview(signals, _cov(reports=3), window="30")
+
+        self.assertEqual(ov.rating.upgrades, 1)
+        self.assertEqual(ov.rating.downgrades, 0)
+        self.assertEqual(ov.rating.unchanged, 0)
+
 
 class StateTests(unittest.TestCase):
     def test_pending_extraction(self):
@@ -105,6 +198,16 @@ class StateTests(unittest.TestCase):
         signals = [_sig("a", date(2026, 7, 10), "buy")]
         ov = build_overview(signals, _cov(total=1, extracted=1), window="90")
         self.assertEqual(ov.coverage.state, "ok")
+
+    def test_partial_signal_forces_partial_coverage(self):
+        signals = [
+            _sig(
+                "a", date(2026, 7, 10), "buy",
+                extraction_status="partial",
+            )
+        ]
+        ov = build_overview(signals, _cov(total=1, extracted=1), window="90")
+        self.assertEqual(ov.coverage.state, "partial")
 
     def test_null_and_blank_brokers_do_not_form_consensus(self):
         signals = [
@@ -202,13 +305,24 @@ class ThesisAggTests(unittest.TestCase):
 class EventTests(unittest.TestCase):
     def test_event_on_material_change(self):
         signals = [
-            _sig("a", date(2026, 7, 1), "neutral", rating_raw="中立"),
-            _sig("a", date(2026, 7, 10), "buy", rating_raw="買進"),
+            _sig(
+                "a", date(2026, 7, 1), "neutral", rating_raw="中立",
+                target=1000.0, currency="TWD",
+            ),
+            _sig(
+                "a", date(2026, 7, 10), "buy", rating_raw="買進",
+                target=1200.0, currency="TWD",
+            ),
         ]
         ov = build_overview(signals, _cov(), window="90")
         self.assertEqual(ov.recent_events_total, 1)
         self.assertEqual(ov.recent_events[0].broker, "a")
-        self.assertIn("上調", ov.recent_events[0].headline)
+        self.assertIn("目標價上修", ov.recent_events[0].headline)
+        self.assertEqual(
+            [change.field for change in ov.recent_events[0].changes],
+            ["target_price"],
+        )
+        self.assertEqual(ov.recent_events[0].evidence, ["TP 證據"])
 
     def test_no_event_without_prior(self):
         signals = [_sig("a", date(2026, 7, 10), "buy")]
@@ -218,13 +332,110 @@ class EventTests(unittest.TestCase):
     def test_old_report_not_in_recent_when_window_excludes(self):
         # a 於窗期外(很久前)有一份、窗期內最新一份；事件只算窗期內那份
         signals = [
-            _sig("a", date(2024, 1, 1), "neutral"),
-            _sig("a", date(2026, 7, 10), "buy", rating_raw="買進"),
+            _sig(
+                "a", date(2024, 1, 1), "neutral",
+                target=1000.0, currency="TWD",
+            ),
+            _sig(
+                "a", date(2026, 7, 10), "buy", rating_raw="買進",
+                target=1200.0, currency="TWD",
+            ),
         ]
         ov = build_overview(signals, _cov(), window="30")
         # as_of=2026-07-10，窗期起點 2026-06-10；2024 那份在窗期外
         self.assertEqual(ov.recent_events_total, 1)
         self.assertEqual(ov.recent_events[0].report_date, "2026-07-10")
+
+    def test_material_change_without_evidence_does_not_create_event(self):
+        signals = [
+            _sig("a", date(2026, 7, 1), "neutral"),
+            _sig("a", date(2026, 7, 10), "buy"),
+        ]
+        ov = build_overview(signals, _cov(reports=2), window="90")
+        self.assertEqual(ov.recent_events_total, 0)
+
+    def test_eps_event_uses_matching_group_evidence(self):
+        signals = [
+            _sig(
+                "a", date(2026, 7, 1), "unknown",
+                eps=[_eps(2026, 60.0, evidence="舊證據")],
+            ),
+            _sig(
+                "a", date(2026, 7, 10), "unknown",
+                eps=[
+                    _eps(2027, 70.0, evidence="不相干證據"),
+                    _eps(2026, 66.0, evidence="FY2026 對應證據"),
+                ],
+            ),
+        ]
+        ov = build_overview(signals, _cov(reports=2), window="90")
+
+        self.assertEqual(ov.recent_events_total, 1)
+        self.assertEqual(ov.recent_events[0].evidence, ["FY2026 對應證據"])
+
+    def test_eps_evidence_matches_collision_free_group_identity(self):
+        signals = [
+            _sig(
+                "a", date(2026, 7, 1), "unknown",
+                eps=[_eps(2026, 60.0, period=None, evidence="舊證據")],
+            ),
+            _sig(
+                "a", date(2026, 7, 10), "unknown",
+                eps=[
+                    _eps(
+                        2026, 70.0, period="期間未註明",
+                        evidence="碰撞但不相干證據",
+                    ),
+                    _eps(2026, 66.0, period=None, evidence="真正對應證據"),
+                ],
+            ),
+        ]
+        ov = build_overview(signals, _cov(reports=2), window="90")
+
+        self.assertEqual(ov.recent_events_total, 1)
+        self.assertEqual(ov.recent_events[0].evidence, ["真正對應證據"])
+
+
+class BrokerSummaryTests(unittest.TestCase):
+    def test_broker_summary_eps_uses_own_metadata(self):
+        signals = [
+            _sig(
+                "a", date(2026, 7, 10), "buy", target=1200.0, currency="TWD",
+                eps=[
+                    _eps(
+                        2027, 5.0, period="Q1", currency="USD",
+                        unit="per_share",
+                    )
+                ],
+            )
+        ]
+        broker = build_overview(signals, _cov(), window="90").brokers[0]
+
+        self.assertEqual(broker.latest_target_currency, "TWD")
+        self.assertEqual(broker.latest_eps_value, 5.0)
+        self.assertEqual(broker.latest_eps_fy, 2027)
+        self.assertEqual(broker.latest_eps_period, "Q1")
+        self.assertEqual(broker.latest_eps_currency, "USD")
+        self.assertEqual(broker.latest_eps_unit, "per_share")
+
+    def test_duplicate_eps_group_is_aggregated_order_independently(self):
+        def result(eps):
+            signal = _sig("a", date(2026, 7, 10), "buy", eps=eps)
+            broker = build_overview([signal], _cov(), window="90").brokers[0]
+            snapshot = build_broker_history(
+                [signal], market="TW", code="2330", broker="a", window="90"
+            ).snapshots[0]
+            return broker, snapshot
+
+        forward = result([_eps(2027, 5.0), _eps(2027, 7.0)])
+        reverse = result([_eps(2027, 7.0), _eps(2027, 5.0)])
+
+        self.assertEqual(forward[0].latest_eps_value, 6.0)
+        self.assertEqual(reverse[0].latest_eps_value, 6.0)
+        self.assertEqual(forward[1].primary_eps.median, 6.0)
+        self.assertEqual(reverse[1].primary_eps.median, 6.0)
+        self.assertEqual(len(forward[1].eps), 1)
+        self.assertEqual(len(reverse[1].eps), 1)
 
 
 class BrokerHistoryTests(unittest.TestCase):
@@ -247,6 +458,49 @@ class BrokerHistoryTests(unittest.TestCase):
         tp = [c for c in newest.changes if c.field == "target_price"][0]
         self.assertEqual(tp.direction, "up")
         self.assertTrue(tp.comparable)
+
+    def test_history_uses_prior_comparable_report_and_matching_eps_group(self):
+        signals = [
+            _sig(
+                "a", date(2026, 5, 1), "unknown", signal_id="old-comparable",
+                eps=[_eps(2026, 60.0, evidence="舊 FY2026")],
+            ),
+            _sig(
+                "a", date(2026, 6, 1), "unknown", signal_id="near-mismatch",
+                eps=[_eps(2025, 50.0, evidence="FY2025")],
+            ),
+            _sig(
+                "a", date(2026, 7, 11), "unknown", signal_id="current",
+                eps=[
+                    _eps(2027, 70.0, evidence="不相干 FY2027"),
+                    _eps(2026, 66.0, evidence="對應 FY2026"),
+                ],
+            ),
+        ]
+        hist = build_broker_history(
+            signals, market="TW", code="2330", broker="a", window="90"
+        )
+
+        newest = hist.diffs[0]
+        self.assertTrue(newest.has_prior_report)
+        self.assertTrue(newest.has_prior_comparable)
+        self.assertEqual(newest.from_report_id, "r-old-comparable")
+        self.assertEqual(newest.from_report_date, "2026-05-01")
+        comparable_eps = [
+            change for change in newest.changes
+            if change.field == "eps" and change.comparable
+        ]
+        self.assertEqual(len(comparable_eps), 1)
+        self.assertIn("2026", comparable_eps[0].label)
+
+        middle = hist.diffs[1]
+        self.assertTrue(middle.has_prior_report)
+        self.assertFalse(middle.has_prior_comparable)
+        self.assertIsNone(middle.from_report_id)
+
+        newest_snapshot = hist.snapshots[0]
+        self.assertIsNotNone(newest_snapshot.primary_eps)
+        self.assertEqual(newest_snapshot.primary_eps.fiscal_year, 2026)
 
 
 class InstrumentSlimTests(unittest.TestCase):

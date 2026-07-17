@@ -6,7 +6,7 @@ import styles from './SearchBar.module.css'
 interface Props {
   initial: string
   onSubmit: (q: string) => void
-  /** lg：首頁 hero 大型搜尋框（含「搜尋」按鈕）；md：結果頁精簡列。預設 md。 */
+  /** lg：檢索台主角大框（附 Enter 鍵帽）；md：結果頁精簡列。預設 md。 */
   size?: 'md' | 'lg'
 }
 
@@ -75,6 +75,8 @@ export function SearchBar({ initial, onSubmit, size = 'md' }: Props) {
           <Icon name="x" size={16} />
         </Pressable>
       )}
+      {/* 取代「搜尋」按鈕：告訴你怎麼送出，而不是多一顆鈕 */}
+      {size === 'lg' && <kbd className={styles.key} aria-hidden="true">Enter</kbd>}
     </div>
   )
 }

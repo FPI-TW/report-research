@@ -1,0 +1,48 @@
+/* Bento 簡報牆：頭條（2×2）｜數據｜數據
+                              ｜語料庫組成（跨 2 欄）
+   更多最新入庫（跨 4 欄） */
+.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 22px; }
+
+.tile { background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-tile); padding: 20px; }
+
+.feature { grid-column: 1 / 3; grid-row: 1 / 3; }
+
+/* 數據磚：大襯線數字＋等寬小標 */
+.stat { display: flex; flex-direction: column; justify-content: center; }
+.num { font-family: var(--tf-serif); font-weight: 700; font-size: 32px; color: var(--tf-ink-deep); line-height: 1; font-variant-numeric: tabular-nums; }
+/* 鎏金只用在語意處：市場數是這個語料庫的廣度 */
+.gold { color: var(--tf-gold-strong); }
+.lbl { font-family: var(--tf-mono); font-size: 10px; letter-spacing: 0.14em; color: var(--tf-text-4); margin-top: 10px; }
+
+/* 語料庫組成磚 */
+.comp { grid-column: 3 / 5; grid-row: 2; }
+.h { font-family: var(--tf-mono); font-size: 10px; letter-spacing: 0.14em; color: var(--tf-text-4); }
+.spectrum { margin-top: 14px; }
+.lgs { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 14px; font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-3); }
+.lgs > span { white-space: nowrap; }
+.lgs i { display: inline-block; width: 7px; height: 7px; border-radius: 2px; background: var(--c); margin-right: 6px; vertical-align: middle; }
+.mk { color: var(--c); font-weight: 600; }
+
+/* 更多清單磚 */
+.list { grid-column: 1 / 5; grid-row: 3; padding: 4px 20px; }
+.lh { display: flex; align-items: baseline; gap: 12px; padding: 14px 0 4px; }
+.t { font-family: var(--tf-serif); font-weight: 700; font-size: 14px; color: var(--tf-text-1); }
+.m { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); }
+.seeAll { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-ink); font-weight: 600; cursor: pointer; margin-left: auto; }
+.seeAll:hover { color: var(--tf-ink-hover); }
+
+.lrow { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 13px 0; border-top: 1px solid var(--tf-border-weak); cursor: pointer; }
+.code { font-family: var(--tf-mono); font-size: 11px; font-weight: 600; color: var(--c); letter-spacing: 0.03em; }
+.ltitleWrap { min-width: 0; display: flex; align-items: baseline; }
+.ltitle { font-family: var(--tf-serif); font-weight: 700; font-size: 14.5px; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lsrc { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); margin-left: 10px; flex: none; }
+.ldate { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .feature { grid-column: 1 / 3; grid-row: auto; }
+  .stat { grid-row: auto; }
+  .comp { grid-column: 1 / 3; grid-row: auto; }
+  .list { grid-column: 1 / 3; grid-row: auto; }
+  .ltitle { white-space: normal; }
+}

@@ -34,6 +34,12 @@ class CoverageCounts:
     has_reports: bool
 
 
+@dataclass(frozen=True)
+class BrokerCoverageCounts:
+    instrument_reports_available: int
+    broker_reports_available: int
+
+
 @dataclass
 class RadarInstrumentRow:
     market: str
@@ -177,6 +183,41 @@ async def fetch_coverage_counts(
         market=market, instrument_code=code, instrument_name=row[3],
         brokers_total=brokers_total, brokers_extracted=brokers_extracted,
         reports_available=reports_available, has_reports=reports_available > 0,
+    )
+
+
+_BROKER_COVERAGE_SQL = text(
+    f"""
+    SELECT
+      count(DISTINCT r.id) AS instrument_reports_available,
+      count(DISTINCT r.id) FILTER (
+        WHERE {EFFECTIVE_BROKER_SQL} = :broker
+      ) AS broker_reports_available
+    FROM research.research_report r
+    LEFT JOIN research.report_signal s
+      ON s.report_id = r.id
+     AND s.market = :market
+     AND s.instrument_code = :code
+    WHERE r.market = :market
+      AND :code = ANY(r.stock_targets)
+      AND r.is_research IS NOT FALSE
+    """
+)
+
+
+async def fetch_broker_coverage_counts(
+    session: AsyncSession, market: str, code: str, broker: str
+) -> BrokerCoverageCounts:
+    """區分標的不存在、canonical broker 不存在與尚未擷取訊號。"""
+    row = (
+        await session.execute(
+            _BROKER_COVERAGE_SQL,
+            {"market": market, "code": code, "broker": broker},
+        )
+    ).first()
+    return BrokerCoverageCounts(
+        instrument_reports_available=int(row[0] or 0) if row else 0,
+        broker_reports_available=int(row[1] or 0) if row else 0,
     )
 
 

@@ -138,6 +138,9 @@ class _FakeResult:
     def scalar_one(self):
         return self._rows[0]
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
 
 class _QueuedSession:
     def __init__(self, results):
@@ -169,6 +172,35 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 2)
         self.assertEqual(signals[0].instrument_code, "8046")
         self.assertEqual(signals[1].rating_normalized, "neutral")
+
+    async def test_broker_coverage_counts_distinguish_instrument_and_broker(self):
+        fetch = getattr(queries, "fetch_broker_coverage_counts", None)
+        self.assertIsNotNone(fetch)
+        session = _QueuedSession([_FakeResult([(7, 2)])])
+
+        coverage = await fetch(session, "TW", "USD/TWD", "A/B")
+
+        self.assertEqual(coverage.instrument_reports_available, 7)
+        self.assertEqual(coverage.broker_reports_available, 2)
+        params = session.calls[0][0][1]
+        self.assertEqual(
+            params,
+            {"market": "TW", "code": "USD/TWD", "broker": "A/B"},
+        )
+
+
+class BrokerCoverageSqlTests(unittest.TestCase):
+    def test_uses_canonical_effective_broker_and_report_universe(self):
+        sql_obj = getattr(queries, "_BROKER_COVERAGE_SQL", None)
+        self.assertIsNotNone(sql_obj)
+        sql = str(sql_obj)
+        self.assertIn(
+            "COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), ''))",
+            sql,
+        )
+        self.assertIn(":code = ANY(r.stock_targets)", sql)
+        self.assertIn("r.is_research IS NOT FALSE", sql)
+        self.assertIn("= :broker", sql)
 
 
 class BatchSignalsTests(unittest.IsolatedAsyncioTestCase):

@@ -12,6 +12,7 @@ from app.services.radar.compute import (  # noqa: E402
     build_instrument_slim,
     build_overview,
 )
+from app.services.radar import compute as radar_compute  # noqa: E402
 from app.services.radar.queries import CoverageCounts  # noqa: E402
 from app.services.radar.types import DimensionStance, EpsEstimate, Signal  # noqa: E402
 
@@ -303,6 +304,52 @@ class ThesisAggTests(unittest.TestCase):
 
 
 class EventTests(unittest.TestCase):
+    @staticmethod
+    def _thirteen_same_day_events():
+        return [
+            _sig(
+                "a", date(2026, 7, 10), "unknown",
+                target=100.0 + index, currency="TWD", signal_id=f"event-{index:02d}",
+                created_at=datetime(2026, 7, 10, index, tzinfo=timezone.utc),
+            )
+            for index in range(14)
+        ]
+
+    def test_overview_events_are_three_item_preview_with_full_total(self):
+        ov = build_overview(
+            self._thirteen_same_day_events(), _cov(reports=14), window="all"
+        )
+
+        self.assertEqual(ov.recent_events_total, 13)
+        self.assertEqual(len(ov.recent_events), 3)
+        self.assertTrue(ov.recent_events_has_more)
+        self.assertEqual(ov.recent_events_next_offset, 3)
+
+    def test_event_pages_are_stable_complete_and_non_overlapping(self):
+        builder = getattr(radar_compute, "build_events_page", None)
+        self.assertIsNotNone(builder)
+        signals = self._thirteen_same_day_events()
+
+        pages = [
+            builder(
+                signals, market="TW", code="2330", window="all",
+                limit=5, offset=offset,
+            )
+            for offset in (0, 5, 10)
+        ]
+        ids = [
+            item.report_link.report_id
+            for page in pages
+            for item in page.items
+        ]
+
+        self.assertEqual([page.total for page in pages], [13, 13, 13])
+        self.assertEqual([len(page.items) for page in pages], [5, 5, 3])
+        self.assertEqual([page.has_more for page in pages], [True, True, False])
+        self.assertEqual([page.next_offset for page in pages], [5, 10, None])
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(ids, [f"r-event-{index:02d}" for index in range(1, 14)])
+
     def test_event_on_material_change(self):
         signals = [
             _sig(

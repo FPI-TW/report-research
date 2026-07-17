@@ -26,6 +26,7 @@ from app.services.radar.schemas import (
     InstrumentConsensus,
     InstrumentStance,
     InstrumentTargetBrief,
+    RadarEventsResponse,
     RadarOverviewResponse,
     RatingBucketCount,
     RatingConsensus,
@@ -43,7 +44,7 @@ from app.services.tagging import MARKET_DISPLAY
 
 WINDOW_DAYS = {"30": 30, "90": 90, "180": 180, "all": None}
 FIVE_LEVELS = ("buy", "overweight", "neutral", "underweight", "sell")
-MAX_EVENTS = 12
+OVERVIEW_EVENTS_LIMIT = 3
 
 
 def _broker_display(b: Optional[str]) -> Optional[str]:
@@ -446,7 +447,7 @@ def _thesis_dimensions(consensus, by_broker) -> list[ThesisDimension]:
     return out
 
 
-def _events(by_broker, ws, window: str) -> tuple[list[EventCard], int]:
+def _all_events(by_broker, ws, window: str) -> list[EventCard]:
     events: list[EventCard] = []
     for broker, lst in by_broker.items():
         for i, s in enumerate(lst):
@@ -472,8 +473,37 @@ def _events(by_broker, ws, window: str) -> tuple[list[EventCard], int]:
                 changes=[_change_item(c) for c in evidenced_material],
                 evidence=evidence, report_link=_report_link(s),
             ))
-    events.sort(key=lambda e: e.report_date, reverse=True)
-    return events[:MAX_EVENTS], len(events)
+    # 同日事件的次序不可依賴 SQL 或輸入 list 的偶然順序，否則 offset 分頁會重複或漏項。
+    events.sort(key=lambda event: (event.broker or "", event.report_link.report_id))
+    events.sort(key=lambda event: event.report_date, reverse=True)
+    return events
+
+
+def build_events_page(
+    signals: list[Signal], *, market: str, code: str, window: str,
+    limit: int, offset: int,
+) -> RadarEventsResponse:
+    """以 overview 同一事件來源建立穩定、完整的 offset 分頁。"""
+    by_broker = _by_broker(signals)
+    as_of = _attributed_as_of(by_broker)
+    ws = _window_start(as_of, window)
+    events = _all_events(by_broker, ws, window)
+    items = events[offset:offset + limit]
+    total = len(events)
+    next_offset = offset + len(items)
+    has_more = next_offset < total
+    return RadarEventsResponse(
+        market=market,
+        instrument_code=code,
+        window=window,
+        as_of=_iso(as_of),
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=has_more,
+        next_offset=next_offset if has_more else None,
+        items=items,
+    )
 
 
 def _broker_summaries(by_broker, ws, window: str) -> list[BrokerSummary]:
@@ -528,7 +558,10 @@ def build_overview(
     target = _target_consensus(consensus, by_broker) if consensus else None
     eps = _eps_consensus(consensus, by_broker, as_of) if consensus else None
     thesis = _thesis_dimensions(consensus, by_broker)  # 永遠 4 格
-    events, events_total = _events(by_broker, ws, window)
+    all_events = _all_events(by_broker, ws, window)
+    events_total = len(all_events)
+    events = all_events[:OVERVIEW_EVENTS_LIMIT]
+    events_has_more = events_total > len(events)
     brokers = _broker_summaries(by_broker, ws, window)
 
     notes: list[str] = []
@@ -549,7 +582,10 @@ def build_overview(
         instrument_code=coverage.instrument_code, instrument_name=coverage.instrument_name,
         window=window, as_of=_iso(as_of), coverage=cov,
         rating=rating, target_price=target, eps=eps, thesis=thesis,
-        recent_events=events, recent_events_total=events_total, brokers=brokers, notes=notes,
+        recent_events=events, recent_events_total=events_total,
+        recent_events_has_more=events_has_more,
+        recent_events_next_offset=len(events) if events_has_more else None,
+        brokers=brokers, notes=notes,
     )
 
 
@@ -640,6 +676,14 @@ def build_broker_history(
             thesis=[_thesis_cell(dim, s.thesis.get(dim)) for dim in THESIS_DIMENSIONS],
             extraction_status=s.extraction_status, report_link=_report_link(s),
         ))
+
+    if coverage_state == "ok":
+        if not signals:
+            coverage_state = "pending_extraction"
+        elif not any(snapshot.in_window for snapshot in snapshots):
+            coverage_state = "window_empty"
+        elif any(signal.extraction_status == "partial" for signal in signals):
+            coverage_state = "partial"
 
     diffs: list[SnapshotDiff] = []
     for i, s in enumerate(signals):

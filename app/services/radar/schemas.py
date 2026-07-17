@@ -11,7 +11,12 @@ RatingNorm = Literal["buy", "overweight", "neutral", "underweight", "sell", "unk
 DimKey = Literal["outlook", "catalyst", "risk", "valuation"]
 DimLabel = Literal["strengthen", "weaken", "diverging", "stable", "insufficient"]
 CoverageState = Literal["ok", "partial", "pending_extraction", "window_empty"]
+Market = Literal["TW", "US", "HK", "CN", "FX", "WTX", "MACRO", "GLOBAL", "CRYPTO"]
 Window = Literal["30", "90", "180", "all"]
+
+
+class ApiErrorResponse(BaseModel):
+    detail: str
 
 
 class ReportLink(BaseModel):
@@ -152,11 +157,29 @@ class RadarOverviewResponse(BaseModel):
     thesis: list[ThesisDimension]  # 永遠 4 格
     recent_events: list[EventCard]
     recent_events_total: int
+    recent_events_has_more: bool = False
+    recent_events_next_offset: Optional[int] = None
     brokers: list[BrokerSummary]
     notes: list[str]
 
 
-# ── Endpoint B：單券商歷程 ──
+# ── Endpoint B：完整事件分頁 ──
+
+
+class RadarEventsResponse(BaseModel):
+    market: str
+    instrument_code: str
+    window: Window
+    as_of: Optional[str]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+    next_offset: Optional[int]
+    items: list[EventCard]
+
+
+# ── Endpoint C：單券商歷程 ──
 
 
 class ThesisCell(BaseModel):
@@ -206,7 +229,7 @@ class BrokerHistoryResponse(BaseModel):
     coverage_state: CoverageState
 
 
-# ── Endpoint C：標的目錄（獨立頁選標的）──
+# ── Endpoint D：標的目錄（獨立頁選標的）──
 
 
 class InstrumentStance(BaseModel):
@@ -254,5 +277,8 @@ class RadarInstrumentItem(BaseModel):
 
 class RadarInstrumentsResponse(BaseModel):
     total: int
+    limit: int = 50
     offset: int
+    has_more: bool = False
+    next_offset: Optional[int] = None
     items: list[RadarInstrumentItem]

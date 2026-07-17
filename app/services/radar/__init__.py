@@ -9,10 +9,12 @@
 
 from app.services.radar.compute import (  # noqa: F401
     build_broker_history,
+    build_events_page,
     build_instrument_slim,
     build_overview,
 )
 from app.services.radar.queries import (  # noqa: F401
+    fetch_broker_coverage_counts,
     fetch_broker_signals,
     fetch_coverage_counts,
     fetch_instrument_signals,

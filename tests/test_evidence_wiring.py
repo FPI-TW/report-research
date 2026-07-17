@@ -23,7 +23,8 @@ from app.services.rows import ChunkRow  # noqa: E402
 def _row(report_id="r-1", file_name="a.pdf", market="TW",
          report_date=date(2026, 6, 1), content="台積電內容。"):
     return ChunkRow(
-        chunk_id="c-1", report_id=report_id, file_name=file_name, market=market,
+        chunk_id="c-1", report_id=report_id, file_hash=f"h-{report_id}",
+        file_name=file_name, market=market,
         source=None, summary=None, report_date=report_date, report_type=None,
         instrument_types=None, relates_stock=None, relates_futures=None,
         stock_targets=None, futures_targets=None, chunk_index=0,

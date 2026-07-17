@@ -31,9 +31,15 @@ from app.services.answer import _as_date, build_context  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.retrieval import hybrid_search  # noqa: E402
+from app.services.rows import ChunkRow  # noqa: E402
 from app.services.textnorm import norm_for_match  # noqa: E402
 
-_RID, _CONTENT = 1, 14  # row 欄位位置（與 answer.py 一致）
+# 由 ChunkRow 推導欄位位置，不要寫死數字：ChunkRow 是 NamedTuple，任何在中段插入
+# 欄位（如 2026-07 為閱讀頁加的 file_hash）都會讓寫死的索引指到別的欄，而且是
+# **無聲的** —— row[14] 從 content 變成 chunk_index 不會拋例外，只會讓評估分數
+# 悄悄變成垃圾。曾實際發生：本檔原為 `_RID, _CONTENT = 1, 14`。
+_RID = ChunkRow._fields.index("report_id")
+_CONTENT = ChunkRow._fields.index("content")
 
 
 def load_queryset(path: str | Path) -> dict:

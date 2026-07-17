@@ -16,6 +16,7 @@ def row(report_id, report_date=None):
     return ChunkRow(
         chunk_id=None,
         report_id=report_id,
+        file_hash=f"h-{report_id}",
         file_name=None,
         market=None,
         source=None,

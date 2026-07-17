@@ -28,6 +28,7 @@ def make_row(report_id, file_name, market, content, report_date=None, distance=0
     return ChunkRow(
         chunk_id=None,
         report_id=report_id,
+        file_hash=f"h-{report_id}",
         file_name=file_name,
         market=market,
         source=None,

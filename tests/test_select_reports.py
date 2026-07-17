@@ -13,7 +13,7 @@ from app.services.rows import ChunkRow  # noqa: E402
 
 def _row(chunk_id, rid, fn, market, rdate, content, distance):
     return ChunkRow._make((
-        chunk_id, rid, fn, market, "src", "sum", rdate, None,
+        chunk_id, rid, f"h-{rid}", fn, market, "src", "sum", rdate, None,
         None, None, None, None, None, 0, content, distance,
     ))
 
@@ -107,7 +107,7 @@ class SelectReportsTests(unittest.TestCase):
 def _row_src(chunk_id, rid, *, source="src", rdate="2026-07-01", content="內容一段",
              market="TW", distance=0.10):
     return ChunkRow._make((
-        chunk_id, rid, f"{rid}.pdf", market, source, "sum", rdate, None,
+        chunk_id, rid, f"h-{rid}", f"{rid}.pdf", market, source, "sum", rdate, None,
         None, None, None, None, None, 0, content, distance,
     ))
 

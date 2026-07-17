@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import glob as _glob
+import hashlib
 import json
 import logging
 import os
@@ -61,9 +62,25 @@ from app.services.retrieval import (  # noqa: E402
     hybrid_search,
     rank_reports,
 )
+from app.services.reading.queries import (  # noqa: E402
+    fetch_doc,
+    fetch_signals,
+    fetch_similar,
+    fetch_takeaways,
+)
+from app.services.reading.schemas import (  # noqa: E402
+    EpsEstimate,
+    ReadingDoc,
+    ReadingText,
+    Signal,
+    SimilarReport,
+    SimilarResponse,
+    Takeaway,
+    ThesisDim,
+)
 from app.services.store import list_reports  # noqa: E402
 from app.services.tagging import MARKETS, MARKET_DISPLAY  # noqa: E402
-from app.services.textnorm import clean_text  # noqa: E402
+from app.services.textnorm import clean_extracted, clean_text  # noqa: E402
 from web import auth  # noqa: E402
 
 from app.services.pdf import render_report_pdf  # noqa: E402
@@ -225,6 +242,7 @@ class Passage(BaseModel):
 class ReportResult(BaseModel):
     rank: int
     report_id: str
+    file_hash: str  # 閱讀頁連結鍵（/app/reading/{file_hash}）
     file_name: str
     market: str | None
     source: str | None
@@ -278,6 +296,7 @@ class FeedbackRequest(BaseModel):
 
 class ReportListItem(BaseModel):
     report_id: str
+    file_hash: str  # 閱讀頁連結鍵（/app/reading/{file_hash}）
     file_name: str
     market: str | None
     source: str | None
@@ -661,6 +680,209 @@ async def instrument_radar_broker(
     return resp
 
 
+# ───── 研報閱讀頁（/api/reading/*；讀取零 LLM）─────
+#
+# 契約見 app/services/reading/schemas.py（已凍結，前端 zod 逐字鏡像）。
+# 既有的 /api/report/{report_id}/full 與 /file 是舊 modal 的資料源，與此處無關、不動。
+
+_FILE_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+# /text 單次回傳上限。超過即截斷（truncated=True），但 text_sha256/text_chars 一律
+# 是「完整正典文字」的值——見 _canonical_text 與 reading_text 的說明。
+READING_TEXT_MAX_CHARS = 400_000
+
+
+def _validate_file_hash(file_hash: str) -> None:
+    """file_hash 是網址鍵，格式不符直接 422（不進 DB 查詢）。"""
+    if not _FILE_HASH_RE.match(file_hash):
+        raise HTTPException(status_code=422, detail="file_hash 非法")
+
+
+def _canonical_text(full_text: str | None) -> tuple[str, str | None]:
+    """回傳（正典文字, 其 sha256）。full_text 為 NULL/空 → ("", None)。
+
+    **正典文字＝clean_extracted(full_text)，不是 full_text**：DB 存的是未清理的原始
+    抽取文字（保留 PDF 抽字的 CJK 間空白與破碎換行），而 report_takeaway 的
+    quote_start/quote_end 全部錨定於清理後的字串。詳見
+    app/services/reading/anchor.py 模組 docstring 的「事實一」。
+
+    **與 scripts/extract_takeaways.py 綁死**：那支批次以同樣的
+    `sha256(clean_extracted(full_text))` 算出並寫入 report_takeaway.text_sha256，
+    本函式算出的值要拿去和它比對驗章。兩邊任一側改了清理或編碼方式而另一側沒跟上，
+    驗章會全篇失敗、跳轉靜默失效（不會拋錯）。要改就兩邊一起改。
+
+    無全文不是錯誤：該篇只是沒有可讀文字（只能看 PDF），呼叫端據此回
+    text_state="missing"。
+    """
+    canonical = clean_extracted(full_text) if full_text else ""
+    if not canonical:
+        return "", None
+    return canonical, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _reading_takeaways(rows, text_sha256: str | None) -> list[Takeaway]:
+    """DB 摘錄列 → 契約 Takeaway，並在此驗章。
+
+    每列的 text_sha256 是「擷取當時的正典文字」的 sha。與當前正典文字不符即代表全文
+    已被重新 ingest 換過、offset 已漂移 → 降級為不可跳（quote_start/quote_end/
+    anchor_method 全 None），條目與引文本身照常顯示。寧可不能跳，也不要跳到錯的地方。
+    """
+    out: list[Takeaway] = []
+    for r in rows:
+        stale = text_sha256 is None or r.text_sha256 != text_sha256
+        out.append(
+            Takeaway(
+                ordinal=r.ordinal,
+                claim=r.claim,
+                quote=r.quote,
+                quote_start=None if stale else r.quote_start,
+                quote_end=None if stale else r.quote_end,
+                anchor_method=None if stale else r.anchor_method,
+            )
+        )
+    return out
+
+
+def _reading_signals(rows) -> list[Signal]:
+    """radar 的 Signal dataclass → 閱讀頁契約 Signal（欄位形狀刻意不同）。
+
+    注意 fiscal_year：radar 存 int、契約要 str，此處轉型（契約已凍結，不改欄位型別）。
+    """
+    return [
+        Signal(
+            instrument_code=s.instrument_code,
+            market=s.market,
+            broker=s.broker,
+            broker_display=source_display(s.broker),
+            rating_raw=s.rating_raw,
+            rating_normalized=s.rating_normalized,
+            target_price=s.target_price,
+            target_currency=s.target_currency,
+            target_horizon=s.target_horizon,
+            eps_estimates=[
+                EpsEstimate(
+                    fiscal_year=str(e.fiscal_year) if e.fiscal_year is not None else None,
+                    period=e.period,
+                    currency=e.currency,
+                    unit=e.unit,
+                    value=e.value,
+                )
+                for e in s.eps
+            ],
+            # radar 的 _parse_thesis 依 THESIS_DIMENSIONS 順序建 dict，故此處順序穩定
+            thesis=[
+                ThesisDim(
+                    key=key, stance=dim.stance, summary=dim.summary, evidence=dim.evidence
+                )
+                for key, dim in s.thesis.items()
+            ],
+        )
+        for s in rows
+    ]
+
+
+@app.get("/api/reading/{file_hash}", response_model=ReadingDoc)
+async def reading_doc(file_hash: str):
+    """閱讀頁骨架：metadata + 重點摘錄 + 訊號。**不含全文**（PDF 是預設檢視）。
+
+    全文另走 /api/reading/{file_hash}/text，前端只在需要文字檢視時才取。
+    """
+    _validate_file_hash(file_hash)
+    async with SessionFactory() as session:
+        doc = await fetch_doc(session, file_hash)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        takeaway_rows = await fetch_takeaways(session, doc.report_id)
+        signal_rows = await fetch_signals(session, doc.report_id)
+    canonical, text_sha256 = _canonical_text(doc.full_text)
+    signals = _reading_signals(signal_rows)
+    return ReadingDoc(
+        report_id=doc.report_id,
+        file_hash=doc.file_hash,
+        file_name=doc.file_name,
+        market=doc.market,
+        market_display=MARKET_DISPLAY.get(doc.market) if doc.market else None,
+        source=doc.source,
+        source_display=source_display(doc.source),
+        report_date=doc.report_date.isoformat() if doc.report_date else None,
+        report_type=doc.report_type,
+        summary=doc.summary,
+        instrument_types=doc.instrument_types,
+        stock_targets=doc.stock_targets,
+        futures_targets=doc.futures_targets,
+        has_file=bool(doc.file_path) and os.path.isfile(doc.file_path),
+        is_pdf=bool(doc.file_path) and doc.file_path.lower().endswith(".pdf"),
+        text_state="ok" if canonical else "missing",
+        text_chars=len(canonical),
+        text_sha256=text_sha256,
+        takeaways=_reading_takeaways(takeaway_rows, text_sha256),
+        # 全語料僅 0.68% 有訊號：空是常態不是錯誤，前端據此整區不進 DOM
+        signals_state="available" if signals else "none",
+        signals=signals,
+    )
+
+
+@app.get("/api/reading/{file_hash}/text", response_model=ReadingText)
+async def reading_text(file_hash: str):
+    """正典文字（＝clean_extracted(full_text)）。所有 offset 都以此字串為準。
+
+    **截斷語意**：text 超過 READING_TEXT_MAX_CHARS 時只回前綴並標 truncated=True，
+    但 text_sha256 與 text_chars 仍是「完整正典文字」的值 —— takeaway 的錨點是對完整
+    文字算出來的，回截斷版的 sha 會讓前端的驗章一律失敗、跳轉整個失效。截斷純粹是
+    顯示層的事；超出截斷範圍的錨點由前端自行丟棄。
+    """
+    _validate_file_hash(file_hash)
+    async with SessionFactory() as session:
+        doc = await fetch_doc(session, file_hash)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="report not found")
+    canonical, text_sha256 = _canonical_text(doc.full_text)
+    if not canonical or text_sha256 is None:
+        # text_state="missing" 的那一篇：骨架回 200，這裡沒有文字可給
+        raise HTTPException(status_code=404, detail="report text not available")
+    truncated = len(canonical) > READING_TEXT_MAX_CHARS
+    return ReadingText(
+        file_hash=doc.file_hash,
+        text=canonical[:READING_TEXT_MAX_CHARS] if truncated else canonical,
+        text_sha256=text_sha256,  # 完整正典文字的 sha，截斷後也不重算
+        text_chars=len(canonical),  # 完整長度，非回傳字串長度
+        truncated=truncated,
+    )
+
+
+@app.get("/api/reading/{file_hash}/similar", response_model=SimilarResponse)
+async def reading_similar(file_hash: str, limit: int = Query(6, ge=1, le=20)):
+    """相似研報（全篇均勻取樣 probe + 廣度加權；理由見 reading/queries.py）。"""
+    _validate_file_hash(file_hash)
+    t0 = time.monotonic()
+    async with SessionFactory() as session:
+        doc = await fetch_doc(session, file_hash)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        rows = await fetch_similar(session, doc.report_id, limit=limit)
+    logger.info(
+        "reading similar file_hash=%s items=%d elapsed_ms=%.1f",
+        file_hash, len(rows), (time.monotonic() - t0) * 1000,
+    )
+    return SimilarResponse(
+        file_hash=file_hash,
+        items=[
+            SimilarReport(
+                file_hash=r.file_hash,
+                file_name=r.file_name,
+                market=r.market,
+                source=r.source,
+                source_display=source_display(r.source),
+                report_date=r.report_date.isoformat() if r.report_date else None,
+                summary=r.summary,
+                matched_probes=r.matched_probes,
+                total_probes=r.total_probes,
+            )
+            for r in rows
+        ],
+    )
+
+
 @app.get("/api/reports", response_model=ReportListResponse)
 async def reports(
     market: str | None = Query(None),
@@ -691,6 +913,7 @@ async def reports(
     items = [
         ReportListItem(
             report_id=rid,
+            file_hash=fhash,
             file_name=fn,
             market=m,
             source=source_display(src),
@@ -704,7 +927,7 @@ async def reports(
             futures_targets=list(ftargets) if ftargets else None,
         )
         for (
-            rid, fn, m, src, rdate, rtype, itypes, rstock, rfut,
+            rid, fhash, fn, m, src, rdate, rtype, itypes, rstock, rfut,
             stargets, ftargets, summary,
         ) in rows
     ]
@@ -775,6 +998,7 @@ async def search(
             ReportResult(
                 rank=i,
                 report_id=rid,
+                file_hash=mr.file_hash,
                 file_name=fn,
                 market=m,
                 source=source_display(src),

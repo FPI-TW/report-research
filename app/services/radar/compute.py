@@ -8,7 +8,7 @@ build_broker_history：單券商歷程（全歷程快照 + 相鄰差異，延遲
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from app.services.filename import source_display
@@ -61,10 +61,30 @@ def _window_start(as_of: Optional[date], window: str) -> Optional[date]:
     return as_of - timedelta(days=days)
 
 
-def _in_window(s: Signal, ws: Optional[date]) -> bool:
-    if ws is None:
+def _in_window(s: Signal, ws: Optional[date], window: str) -> bool:
+    if window == "all":
         return True
-    return s.report_date is not None and s.report_date >= ws
+    return s.report_date is not None and ws is not None and s.report_date >= ws
+
+
+def _created_at_key(s: Signal) -> datetime:
+    value = getattr(s, "created_at", None)
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _signal_sort_key(s: Signal) -> tuple:
+    return (s.report_date or date.min, _created_at_key(s), s.id)
+
+
+def _broker_key(s: Signal) -> Optional[str]:
+    if not isinstance(s.broker, str):
+        return None
+    broker = s.broker.strip()
+    return broker or None
 
 
 def _report_link(s: Signal) -> ReportLink:
@@ -74,13 +94,27 @@ def _report_link(s: Signal) -> ReportLink:
     )
 
 
-def _by_broker(signals: list[Signal]) -> dict[Optional[str], list[Signal]]:
-    d: dict[Optional[str], list[Signal]] = defaultdict(list)
+def _by_broker(signals: list[Signal]) -> dict[str, list[Signal]]:
+    d: dict[str, list[Signal]] = defaultdict(list)
     for s in signals:
-        d[s.broker].append(s)
+        broker = _broker_key(s)
+        if broker is not None:
+            d[broker].append(s)
     for lst in d.values():
-        lst.sort(key=lambda s: (s.report_date or date.min, s.id), reverse=True)
+        lst.sort(key=_signal_sort_key, reverse=True)
     return dict(d)
+
+
+def _attributed_as_of(by_broker: dict[str, list[Signal]]) -> Optional[date]:
+    return max(
+        (
+            signal.report_date
+            for broker_signals in by_broker.values()
+            for signal in broker_signals
+            if signal.report_date is not None
+        ),
+        default=None,
+    )
 
 
 def _change_item(c: Change) -> ChangeItem:
@@ -128,18 +162,18 @@ def _evidence_for(s: Signal, material: list[Change]) -> list[str]:
 
 # ── 共識子聚合 ──
 
-def _consensus_set(by_broker, ws) -> dict[Optional[str], Signal]:
+def _consensus_set(by_broker, ws, window: str) -> dict[str, Signal]:
     """每家券商窗期內最新有效訊號（窗期外的券商不計入共識）。"""
     out: dict[Optional[str], Signal] = {}
     for broker, lst in by_broker.items():
-        latest = next((s for s in lst if _in_window(s, ws)), None)
+        latest = next((s for s in lst if _in_window(s, ws, window)), None)
         if latest is not None:
             out[broker] = latest
     return out
 
 
 def _prev_signal(by_broker, s: Signal) -> Optional[Signal]:
-    lst = by_broker[s.broker]
+    lst = by_broker[_broker_key(s)]
     idx = lst.index(s)
     return lst[idx + 1] if idx + 1 < len(lst) else None
 
@@ -190,7 +224,7 @@ def _target_consensus(consensus, by_broker) -> Optional[TargetConsensus]:
             continue
         cur = s.target_currency
         values[cur].append(s.target_price)
-        lst = by_broker[s.broker]
+        lst = by_broker[_broker_key(s)]
         idx = lst.index(s)
         prev = next(
             (p for p in lst[idx + 1:]
@@ -269,7 +303,7 @@ def _thesis_dimensions(consensus, by_broker) -> list[ThesisDimension]:
             cs = scale.stance_constructiveness(dim, cell.stance)
             if cs is None:
                 continue
-            lst = by_broker[s.broker]
+            lst = by_broker[_broker_key(s)]
             idx = lst.index(s)
             prev_c: Optional[int] = None
             for p in lst[idx + 1:]:
@@ -302,11 +336,11 @@ def _thesis_dimensions(consensus, by_broker) -> list[ThesisDimension]:
     return out
 
 
-def _events(by_broker, ws) -> tuple[list[EventCard], int]:
+def _events(by_broker, ws, window: str) -> tuple[list[EventCard], int]:
     events: list[EventCard] = []
     for broker, lst in by_broker.items():
         for i, s in enumerate(lst):
-            if s.report_date is None or not _in_window(s, ws):
+            if s.report_date is None or not _in_window(s, ws, window):
                 continue
             prev = lst[i + 1] if i + 1 < len(lst) else None
             changes = scale.diff_signals(prev, s)
@@ -323,7 +357,7 @@ def _events(by_broker, ws) -> tuple[list[EventCard], int]:
     return events[:MAX_EVENTS], len(events)
 
 
-def _broker_summaries(by_broker, ws) -> list[BrokerSummary]:
+def _broker_summaries(by_broker, ws, window: str) -> list[BrokerSummary]:
     out: list[BrokerSummary] = []
     for broker, lst in by_broker.items():
         s = lst[0]
@@ -340,7 +374,7 @@ def _broker_summaries(by_broker, ws) -> list[BrokerSummary]:
             latest_report_date=_iso(s.report_date) or "", report_link=_report_link(s),
             recent_change_label=_headline([top]) if top else None,
             recent_change_direction=top.direction if top else "none",
-            stale=not _in_window(s, ws), has_history=len(lst) > 1,
+            stale=not _in_window(s, ws, window), has_history=len(lst) > 1,
         ))
     out.sort(key=lambda b: b.latest_report_date, reverse=True)
     return out
@@ -360,17 +394,17 @@ def build_overview(
     signals: list[Signal], coverage: CoverageCounts, *, window: str
 ) -> RadarOverviewResponse:
     market = coverage.market or (signals[0].market if signals else "")
-    as_of = max((s.report_date for s in signals if s.report_date), default=None)
-    ws = _window_start(as_of, window)
     by_broker = _by_broker(signals)
-    consensus = _consensus_set(by_broker, ws)
+    as_of = _attributed_as_of(by_broker)
+    ws = _window_start(as_of, window)
+    consensus = _consensus_set(by_broker, ws, window)
 
     rating = _rating_consensus(consensus, by_broker) if consensus else None
     target = _target_consensus(consensus, by_broker) if consensus else None
     eps = _eps_consensus(consensus, by_broker) if consensus else None
     thesis = _thesis_dimensions(consensus, by_broker)  # 永遠 4 格
-    events, events_total = _events(by_broker, ws)
-    brokers = _broker_summaries(by_broker, ws)
+    events, events_total = _events(by_broker, ws, window)
+    brokers = _broker_summaries(by_broker, ws, window)
 
     notes: list[str] = []
     if target and target.note:
@@ -404,10 +438,10 @@ def build_instrument_slim(
     """
     if not signals:
         return None
-    as_of = max((s.report_date for s in signals if s.report_date), default=None)
-    ws = _window_start(as_of, window)
     by_broker = _by_broker(signals)
-    consensus = _consensus_set(by_broker, ws)
+    as_of = _attributed_as_of(by_broker)
+    ws = _window_start(as_of, window)
+    consensus = _consensus_set(by_broker, ws, window)
     if not consensus:
         return None
     rc = _rating_consensus(consensus, by_broker)
@@ -451,7 +485,7 @@ def build_broker_history(
     signals: list[Signal], *, market: str, code: str, broker: str, window: str,
     coverage_state: str = "ok",
 ) -> BrokerHistoryResponse:
-    signals = sorted(signals, key=lambda s: (s.report_date or date.min, s.id), reverse=True)
+    signals = sorted(signals, key=_signal_sort_key, reverse=True)
     as_of = max((s.report_date for s in signals if s.report_date), default=None)
     ws = _window_start(as_of, window)
 
@@ -459,7 +493,8 @@ def build_broker_history(
     for s in signals:
         snapshots.append(BrokerSnapshot(
             report_id=s.report_id, report_date=_iso(s.report_date) or "",
-            in_window=_in_window(s, ws), rating=s.rating_normalized, rating_raw=s.rating_raw,
+            in_window=_in_window(s, ws, window), rating=s.rating_normalized,
+            rating_raw=s.rating_raw,
             target_price=s.target_price, target_currency=s.target_currency,
             eps=[_eps_group_single(e) for e in s.eps if e.value is not None],
             thesis=[_thesis_cell(dim, s.thesis.get(dim)) for dim in THESIS_DIMENSIONS],

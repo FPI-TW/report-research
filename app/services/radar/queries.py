@@ -13,7 +13,12 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.radar.types import SIGNAL_SELECT_COLUMNS, Signal, parse_signal_row
+from app.services.radar.types import (
+    EFFECTIVE_BROKER_SQL,
+    SIGNAL_SELECT_COLUMNS,
+    Signal,
+    parse_signal_row,
+)
 
 VALID_STATUSES = ["valid", "partial"]
 
@@ -41,11 +46,14 @@ class RadarInstrumentRow:
 
 
 def _instrument_signals_sql(broker: bool) -> str:
-    where_broker = "AND s.broker = :broker " if broker else ""
+    where_broker = f"AND {EFFECTIVE_BROKER_SQL} = :broker " if broker else ""
     order = (
-        "ORDER BY s.report_date DESC NULLS LAST, s.created_at DESC"
+        "ORDER BY s.report_date DESC NULLS LAST, s.created_at DESC, s.id DESC"
         if broker
-        else "ORDER BY s.broker, s.report_date DESC NULLS LAST, s.created_at DESC"
+        else (
+            f"ORDER BY {EFFECTIVE_BROKER_SQL} ASC NULLS LAST, "
+            "s.report_date DESC NULLS LAST, s.created_at DESC, s.id DESC"
+        )
     )
     return (
         f"SELECT {SIGNAL_SELECT_COLUMNS} "
@@ -92,8 +100,8 @@ _BATCH_SIGNALS_SQL = text(
     "WHERE (s.market, s.instrument_code) IN ("
     "  SELECT m, c FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c)) "
     "  AND s.extraction_status = ANY(:statuses) "
-    "ORDER BY s.market, s.instrument_code, s.broker, "
-    "         s.report_date DESC NULLS LAST, s.created_at DESC"
+    f"ORDER BY s.market, s.instrument_code, {EFFECTIVE_BROKER_SQL} ASC NULLS LAST, "
+    "         s.report_date DESC NULLS LAST, s.created_at DESC, s.id DESC"
 )
 
 
@@ -126,19 +134,30 @@ async def fetch_signals_for_instruments(
 _COVERAGE_SQL = text(
     """
     SELECT
-      (SELECT count(DISTINCT r.source) FROM research.research_report r
+      (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
+         FROM research.research_report r
+         LEFT JOIN research.report_signal s
+           ON s.report_id = r.id
+          AND s.market = :market
+          AND s.instrument_code = :code
          WHERE r.market = :market AND :code = ANY(r.stock_targets)
            AND r.is_research IS NOT FALSE) AS brokers_total,
-      (SELECT count(DISTINCT s.broker) FROM research.report_signal s
+      (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
+         FROM research.report_signal s
+         JOIN research.research_report r ON r.id = s.report_id
          WHERE s.market = :market AND s.instrument_code = :code
-           AND s.extraction_status = ANY(:statuses)) AS brokers_extracted,
+           AND s.extraction_status = ANY(:statuses)
+           AND r.market = :market AND :code = ANY(r.stock_targets)
+           AND r.is_research IS NOT FALSE) AS brokers_extracted,
       (SELECT count(*) FROM research.research_report r
          WHERE r.market = :market AND :code = ANY(r.stock_targets)
            AND r.is_research IS NOT FALSE) AS reports_available,
       (SELECT r.company_name FROM research.research_report r
-         WHERE r.market = :market AND :code = ANY(r.stock_targets)
+         WHERE r.market = :market AND r.stock_code = :code
            AND r.company_name IS NOT NULL
-         ORDER BY r.report_date DESC NULLS LAST LIMIT 1) AS instrument_name
+           AND r.is_research IS NOT FALSE
+         ORDER BY r.report_date DESC NULLS LAST, r.created_at DESC, r.id
+         LIMIT 1) AS instrument_name
     """
 )
 
@@ -164,18 +183,36 @@ async def fetch_coverage_counts(
 def _catalog_cte() -> str:
     """有可展示訊號的標的目錄（每 (market, code) 一列）。"""
     return (
-        "WITH sig AS ("
+        "WITH signal_base AS ("
+        "  SELECT s.market, s.instrument_code, s.report_date, s.extraction_status,"
+        f"         {EFFECTIVE_BROKER_SQL} AS broker"
+        "  FROM research.report_signal s"
+        "  JOIN research.research_report r ON r.id = s.report_id"
+        "  WHERE r.is_research IS NOT FALSE"
+        "    AND s.market = r.market"
+        "    AND s.instrument_code = ANY(r.stock_targets)"
+        "), sig AS ("
         "  SELECT market, instrument_code,"
         "         count(DISTINCT broker) FILTER (WHERE extraction_status = ANY(:statuses)) AS sig_brokers,"
-        "         max(report_date) FILTER (WHERE extraction_status = ANY(:statuses)) AS latest,"
-        "         bool_or(extraction_status = ANY(:statuses)) AS has_valid"
-        "  FROM research.report_signal GROUP BY market, instrument_code"
+        "         max(report_date) FILTER (WHERE broker IS NOT NULL"
+        "                                  AND extraction_status = ANY(:statuses)) AS latest,"
+        "         bool_or(extraction_status = ANY(:statuses))"
+        "           FILTER (WHERE broker IS NOT NULL) AS has_valid"
+        "  FROM signal_base GROUP BY market, instrument_code"
         "), rep AS ("
         "  SELECT r.market, st AS instrument_code,"
-        "         count(DISTINCT r.source) AS broker_count, count(*) AS report_count,"
-        "         (array_agg(r.company_name ORDER BY r.report_date DESC NULLS LAST)"
-        "            FILTER (WHERE r.company_name IS NOT NULL))[1] AS name"
-        "  FROM research.research_report r, unnest(r.stock_targets) st"
+        f"         count(DISTINCT {EFFECTIVE_BROKER_SQL}) AS broker_count,"
+        "         count(DISTINCT r.id) AS report_count,"
+        "         (array_agg(r.company_name ORDER BY r.report_date DESC NULLS LAST,"
+        "                                           r.created_at DESC, r.id)"
+        "            FILTER (WHERE r.company_name IS NOT NULL"
+        "                    AND r.stock_code = st))[1] AS name"
+        "  FROM research.research_report r"
+        "  CROSS JOIN LATERAL unnest(r.stock_targets) st"
+        "  LEFT JOIN research.report_signal s"
+        "    ON s.report_id = r.id"
+        "   AND s.market = r.market"
+        "   AND s.instrument_code = st"
         "  WHERE r.is_research IS NOT FALSE GROUP BY r.market, st"
         "), cat AS ("
         "  SELECT rep.market, rep.instrument_code, rep.name, rep.broker_count,"
@@ -214,7 +251,7 @@ async def list_radar_instruments(
             text(
                 f"{cte} SELECT cat.market, cat.instrument_code, cat.name, cat.broker_count, "
                 f"cat.report_count, cat.latest, cat.sig_brokers FROM cat {where} "
-                "ORDER BY cat.latest DESC NULLS LAST, cat.instrument_code "
+                "ORDER BY cat.latest DESC NULLS LAST, cat.instrument_code, cat.market "
                 "LIMIT :limit OFFSET :offset"
             ),
             {**params, "limit": limit, "offset": offset},

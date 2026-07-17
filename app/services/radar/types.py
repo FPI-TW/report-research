@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from app.services.signal_extract import THESIS_DIMENSIONS
@@ -73,6 +73,7 @@ class Signal:
     thesis: dict[str, DimensionStance] = field(default_factory=dict)
     extraction_status: str = "valid"
     file_name: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 def _loads(value: object) -> object:
@@ -136,13 +137,21 @@ def _parse_thesis(raw: object) -> dict[str, DimensionStance]:
     return out
 
 
+# research_report.source 是校正後的券商真相；舊 signal.broker 僅作 fallback。
+# NULL/空白券商不得成為可比較的券商 identity。
+EFFECTIVE_BROKER_SQL = (
+    "COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), ''))"
+)
+
+
 # queries.py 的 SELECT 欄位順序（parse_signal_row 依此位置解析，兩者必須一致）
 SIGNAL_SELECT_COLUMNS = (
-    "s.id::text, s.report_id::text, s.market, s.instrument_code, s.broker, "
+    "s.id::text, s.report_id::text, s.market, s.instrument_code, "
+    f"{EFFECTIVE_BROKER_SQL} AS broker, "
     "s.report_date, s.rating_raw, s.rating_normalized, s.target_price, "
     "s.target_currency, s.target_horizon, s.target_price_evidence, "
     "s.eps_estimates::text, s.thesis_dimensions::text, s.extraction_status, "
-    "r.file_name"
+    "r.file_name, s.created_at"
 )
 
 
@@ -165,4 +174,5 @@ def parse_signal_row(row) -> Signal:
         thesis=_parse_thesis(row[13]),
         extraction_status=row[14] or "valid",
         file_name=row[15],
+        created_at=row[16],
     )

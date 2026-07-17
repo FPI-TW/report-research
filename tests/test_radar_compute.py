@@ -2,7 +2,7 @@
 """radar/compute.py 聚合測試（in-memory Signal fixtures，零 DB）。"""
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,15 +17,20 @@ from app.services.radar.types import DimensionStance, EpsEstimate, Signal  # noq
 
 
 def _sig(broker, d, rating="neutral", rating_raw=None, target=None, currency=None,
-         eps=(), thesis=None, code="2330"):
-    return Signal(
-        id=f"{broker}-{d}", report_id=f"r-{broker}-{d}", market="TW",
+         eps=(), thesis=None, code="2330", signal_id=None, created_at=None):
+    signal_id = signal_id or f"{broker}-{d}"
+    signal = Signal(
+        id=signal_id, report_id=f"r-{signal_id}", market="TW",
         instrument_code=code, broker=broker, report_date=d, rating_raw=rating_raw,
         rating_normalized=rating, target_price=target, target_currency=currency,
         target_horizon=None, target_price_evidence="TP 證據" if target else None,
         eps=tuple(eps), thesis=thesis or {}, extraction_status="valid",
         file_name=f"{broker}.pdf",
     )
+    # RED 階段 Signal 尚無 created_at；object.__setattr__ 讓排序行為先可被測試。
+    if created_at is not None:
+        object.__setattr__(signal, "created_at", created_at)
+    return signal
 
 
 def _cov(total=1, extracted=1, reports=5, name="台積電", has=True):
@@ -100,6 +105,80 @@ class StateTests(unittest.TestCase):
         signals = [_sig("a", date(2026, 7, 10), "buy")]
         ov = build_overview(signals, _cov(total=1, extracted=1), window="90")
         self.assertEqual(ov.coverage.state, "ok")
+
+    def test_null_and_blank_brokers_do_not_form_consensus(self):
+        signals = [
+            _sig(None, date(2026, 7, 10), "buy"),
+            _sig("   ", date(2026, 7, 9), "sell"),
+        ]
+        ov = build_overview(
+            signals,
+            _cov(total=0, extracted=0, reports=2),
+            window="90",
+        )
+        self.assertEqual(ov.coverage.brokers_in_consensus, 0)
+        self.assertIsNone(ov.rating)
+        self.assertEqual(ov.brokers, [])
+        self.assertEqual(ov.recent_events_total, 0)
+
+    def test_unattributed_signal_does_not_advance_finite_window_anchor(self):
+        attributed = _sig("a", date(2026, 1, 1), "buy")
+        unattributed = _sig(None, date(2026, 7, 10), "sell")
+
+        ov = build_overview(
+            [attributed, unattributed],
+            _cov(total=1, extracted=1, reports=2),
+            window="30",
+        )
+        slim = build_instrument_slim([attributed, unattributed], window="30")
+
+        self.assertEqual(ov.as_of, "2026-01-01")
+        self.assertEqual(ov.coverage.brokers_in_consensus, 1)
+        self.assertEqual(ov.rating.median_rating, "buy")
+        self.assertFalse(ov.brokers[0].stale)
+        self.assertIsNotNone(slim)
+        self.assertEqual(slim.stance.rating, "buy")
+
+    def test_undated_signal_is_only_in_all_window(self):
+        signal = _sig("a", None, "buy")
+
+        finite = build_overview([signal], _cov(), window="30")
+        all_time = build_overview([signal], _cov(), window="all")
+        finite_history = build_broker_history(
+            [signal], market="TW", code="2330", broker="a", window="30"
+        )
+        all_history = build_broker_history(
+            [signal], market="TW", code="2330", broker="a", window="all"
+        )
+
+        self.assertEqual(finite.coverage.brokers_in_consensus, 0)
+        self.assertIsNone(finite.rating)
+        self.assertTrue(finite.brokers[0].stale)
+        self.assertFalse(finite_history.snapshots[0].in_window)
+        self.assertEqual(all_time.coverage.brokers_in_consensus, 1)
+        self.assertEqual(all_time.rating.bullish, 1)
+        self.assertFalse(all_time.brokers[0].stale)
+        self.assertTrue(all_history.snapshots[0].in_window)
+
+    def test_same_day_latest_uses_created_at_before_uuid(self):
+        older = _sig(
+            "a", date(2026, 7, 10), "sell", signal_id="z-older",
+            created_at=datetime(2026, 7, 10, 8, tzinfo=timezone.utc),
+        )
+        newer = _sig(
+            "a", date(2026, 7, 10), "buy", signal_id="a-newer",
+            created_at=datetime(2026, 7, 10, 9, tzinfo=timezone.utc),
+        )
+
+        ov = build_overview([older, newer], _cov(reports=2), window="90")
+        history = build_broker_history(
+            [older, newer], market="TW", code="2330", broker="a", window="90"
+        )
+
+        self.assertEqual(ov.rating.median_rating, "buy")
+        self.assertEqual(ov.brokers[0].latest_rating, "buy")
+        self.assertEqual(history.current_rating, "buy")
+        self.assertEqual(history.snapshots[0].report_id, "r-a-newer")
 
 
 class ThesisAggTests(unittest.TestCase):

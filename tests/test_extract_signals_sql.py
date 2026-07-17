@@ -59,6 +59,10 @@ class UpsertSqlTests(unittest.TestCase):
         self.assertIn("CAST(:thesis_dimensions AS jsonb)", sql)
         self.assertIn("CAST(:raw_payload AS jsonb)", sql)
 
+    def test_reextract_preserves_created_at(self):
+        sql = str(es.SIGNAL_UPSERT_SQL)
+        self.assertNotIn("created_at = now()", sql)
+
 
 class RowToParamsTests(unittest.TestCase):
     def _row(self):

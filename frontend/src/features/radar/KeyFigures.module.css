@@ -70,3 +70,14 @@
 @media (max-width: 720px) {
   .val { font-size: 34px; }
 }
+
+@media (max-width: 560px) {
+  .fig {
+    min-width: 0;
+    padding: 20px 14px 22px;
+  }
+  .val {
+    font-size: clamp(26px, 8vw, 32px);
+    white-space: nowrap;
+  }
+}

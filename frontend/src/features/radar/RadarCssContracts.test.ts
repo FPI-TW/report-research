@@ -94,6 +94,15 @@ describe('Radar 390px 版型契約', () => {
     expectDeclaration(mobile, '.fig:nth-child(3)', 'grid-column', '1 / -1')
   })
 
+  it('KPI 大字在 390px 的雙欄內縮放且不溢出', () => {
+    const mobile = mediaBlock(keyFiguresCss, 560)
+
+    expectDeclaration(mobile, '.fig', 'min-width', '0')
+    expectDeclaration(mobile, '.fig', 'padding', '20px 14px 22px')
+    expectDeclaration(mobile, '.val', 'font-size', 'clamp(26px, 8vw, 32px)')
+    expectDeclaration(mobile, '.val', 'white-space', 'nowrap')
+  })
+
   it('論點羅盤在 390px 維持 2x2，僅 340px 以下退為單欄', () => {
     const tablet = mediaBlock(thesisCompassCss, 1080)
     const narrow = mediaBlock(thesisCompassCss, 340)

@@ -38,6 +38,11 @@
 .copyBtn:hover { background: var(--tf-surface); border-color: var(--tf-ink); }
 .copyDone { color: var(--tf-success-text); background: color-mix(in srgb, var(--tf-success) 12%, white); border-color: var(--tf-success-line); }
 
+/* 畫面截圖 figure */
+.figure { margin: 16px 0 8px; }
+.figure img { display: block; width: 100%; height: auto; border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); box-shadow: var(--tf-shadow-xs); }
+.figcaption { margin-top: 8px; font-size: 12.5px; color: var(--tf-text-3); text-align: center; line-height: 1.5; }
+
 /* 圖例（市場徽章 / 商品類型 / 標的） */
 .legend { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 6px; }
 .lrow { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: start; font-size: 14px; line-height: 1.55; color: var(--tf-text-2); }

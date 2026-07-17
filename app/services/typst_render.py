@@ -75,9 +75,33 @@ class DocMeta:
 
 
 @dataclass(frozen=True)
-class DocumentModel:
+class Section:
+    """模板契約的一個區塊。
+
+    key 為骨架節鍵（見 _SECTION_KEYS）；**未知章節 key=None 但內容照樣保留**——
+    內容是真相，版型不得吃掉內容。模板對 key=None 以泛用樣式排版。
+    """
+
+    key: str | None
+    heading: str
     blocks: tuple[Block, ...]
+
+
+@dataclass(frozen=True)
+class DocumentModel:
+    sections: tuple[Section, ...]
     meta: DocMeta
+
+    @property
+    def blocks(self) -> tuple[Block, ...]:
+        """攤平所有區塊（順序保留），供不需章節結構的呼叫端使用。"""
+        return tuple(b for s in self.sections for b in s.blocks)
+
+    def section(self, key: str) -> Section | None:
+        for s in self.sections:
+            if s.key == key:
+                return s
+        return None
 
 
 def _split_fences(markdown: str) -> list[tuple[str, str]]:
@@ -172,29 +196,85 @@ def _prose_to_typst(md: str) -> str:
         return ""
 
 
-def build_document(markdown: str, *, title: str, meta: dict | None = None) -> DocumentModel:
-    """markdown + metadata → DocumentModel（模板契約的輸入）。
-
-    純函式、無 I/O（pandoc 為同進程呼叫）。任何區塊解析失敗都只是少一個區塊，
-    不影響其餘內容——研報寧可少一張 KPI 卡，不可整份沒有 PDF。
-    """
-    m = meta or {}
-    blocks: list[Block] = []
-    for kind, payload in _split_fences(markdown):
+def _blocks_for(body: str) -> tuple[Block, ...]:
+    """一段 markdown（單一章節內文）→ 區塊序列。"""
+    out: list[Block] = []
+    for kind, payload in _split_fences(body):
         if kind == "prose":
             frag = _prose_to_typst(payload)
             if frag.strip():
-                blocks.append(ProseBlock(typst=frag))
+                out.append(ProseBlock(typst=frag))
         elif kind == "kpi":
             kb = _parse_kpi(payload)
             if kb is not None:
-                blocks.append(kb)
+                out.append(kb)
         elif kind == "chart":
             cb = _parse_chart(payload)
             if cb is not None:
-                blocks.append(cb)
+                out.append(cb)
+    return tuple(out)
+
+
+def _split_sections(markdown: str) -> list[tuple[str, str]]:
+    """依頂層 `## ` 切章節 → [(heading, body_md)]。
+
+    **必須在 pandoc 之前切**：pandoc 會把 `## 執行摘要` 轉成 Typst 的 `== 執行摘要`，
+    章節邊界就化進片段裡、模板再也分不出區塊。
+
+    `## ` 之前的前言（前導 `# 標題` 等）以 heading="" 的首段承接——不丟棄。
+    圍欄內的 `## ` 不算章節標題（```chart 的 JSON 不會有，但防禦性排除）。
+    """
+    src = markdown or ""
+    spans = [(m.start(), m.end()) for m in _FENCE_RE.finditer(src)]
+
+    def _in_fence(i: int) -> bool:
+        return any(a <= i < b for a, b in spans)
+
+    out: list[tuple[str, str]] = []
+    cuts = [m for m in re.finditer(r"^##[ \t]+(.+?)[ \t]*$", src, re.MULTILINE)
+            if not _in_fence(m.start())]
+    if not cuts:
+        return [("", src)] if src.strip() else []
+    if src[: cuts[0].start()].strip():
+        out.append(("", src[: cuts[0].start()]))
+    for i, m in enumerate(cuts):
+        end = cuts[i + 1].start() if i + 1 < len(cuts) else len(src)
+        out.append((m.group(1).strip(), src[m.end() : end]))
+    return out
+
+
+# markdown 章節標題 → 骨架節鍵。標題文字來自 M7 的五章骨架（report_writer 的
+# outline）；此處是渲染層對它的鏡像，兩邊漂移只會讓章節退化為 key=None 的泛用
+# 區塊（內容仍保留），不會丟內容。
+_SECTION_KEYS: dict[str, str] = {
+    "執行摘要": "exec_summary",
+    "關鍵發現": "key_findings",
+    "重點分析": "analysis",
+    "風險與展望": "risk_outlook",
+    "風險展望": "risk_outlook",  # 容忍去「與」的變體
+    "引用來源": "references",
+    "外部參考（網路）": "external",
+    "外部參考": "external",
+}
+
+
+def _section_key(heading: str) -> str | None:
+    return _SECTION_KEYS.get(heading.strip())
+
+
+def build_document(markdown: str, *, title: str, meta: dict | None = None) -> DocumentModel:
+    """markdown + metadata → DocumentModel（模板契約的輸入）。
+
+    無 I/O（pandoc 為同進程呼叫）。任何區塊解析失敗都只是少一個區塊，不影響其餘
+    內容——研報寧可少一張 KPI 卡，不可整份沒有 PDF。未知章節保留為 key=None。
+    """
+    m = meta or {}
+    sections = [
+        Section(key=_section_key(heading), heading=heading, blocks=_blocks_for(body))
+        for heading, body in _split_sections(markdown)
+    ]
     return DocumentModel(
-        blocks=tuple(blocks),
+        sections=tuple(s for s in sections if s.blocks or s.heading),
         meta=DocMeta(
             title=str(title or ""),
             date=str(m.get("date") or ""),

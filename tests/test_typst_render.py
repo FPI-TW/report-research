@@ -155,10 +155,27 @@ class PandocEscapingTests(unittest.TestCase):
     def test_at_reference_escaped(self):
         self.assertIn("\\@", self._typst("聯絡 @someone 取得資料"))
 
-    def test_heading_and_cjk_survive(self):
-        out = self._typst("## 執行摘要\n\n台積電先進製程展望良好。")
-        self.assertIn("執行摘要", out)
-        self.assertIn("台積電先進製程展望良好", out)
+    def test_cjk_prose_survives(self):
+        self.assertIn("台積電先進製程展望良好", self._typst("台積電先進製程展望良好。"))
+
+    def test_section_heading_leaves_prose_and_becomes_section_key(self):
+        """T3 起 `## ` 標題成為 Section.heading，不再留在內文片段裡。
+
+        章節必須在 pandoc 之前切——否則標題會變成 Typst 的 `==` 而混進片段，
+        模板就分不出區塊邊界。
+        """
+        doc = build_document("## 執行摘要\n\n台積電先進製程展望良好。", title="t")
+        self.assertEqual(doc.sections[0].heading, "執行摘要")
+        self.assertEqual(doc.sections[0].key, "exec_summary")
+        body = "\n".join(b.typst for b in doc.sections[0].blocks if isinstance(b, ProseBlock))
+        self.assertIn("台積電先進製程展望良好", body)
+        self.assertNotIn("執行摘要", body)
+
+    def test_h3_subsection_stays_in_body(self):
+        """動態子節（`###`）不是章節邊界，須留在該章內文中由 pandoc 轉換。"""
+        doc = build_document("## 重點分析\n\n### 需求結構\n\n內文", title="t")
+        body = "\n".join(b.typst for b in doc.sections[0].blocks if isinstance(b, ProseBlock))
+        self.assertIn("需求結構", body)
 
 
 class BuildDocumentTests(unittest.TestCase):
@@ -183,6 +200,92 @@ class BuildDocumentTests(unittest.TestCase):
 
     def test_empty_markdown_yields_no_blocks(self):
         self.assertEqual(build_document("", title="t").blocks, ())
+
+
+class SectionContractTests(unittest.TestCase):
+    """模板契約：章節必須在 pandoc 之前切出來，且任何形態都不得丟內容。
+
+    pandoc 會把 `## 執行摘要` 轉成 Typst `== 執行摘要`——若先轉再切，章節邊界就
+    化進片段裡、模板再也分不出區塊。
+    """
+
+    def _doc(self, md: str):
+        return build_document(md, title="t")
+
+    def _text_of(self, section) -> str:
+        return "\n".join(b.typst for b in section.blocks if isinstance(b, ProseBlock))
+
+    def test_five_skeleton_sections_mapped(self):
+        md = (
+            "## 執行摘要\n\n摘要內文\n\n"
+            "## 關鍵發現\n\n發現內文\n\n"
+            "## 重點分析\n\n分析內文\n\n"
+            "## 風險與展望\n\n風險內文\n\n"
+            "## 引用來源\n\n[1] 來源\n"
+        )
+        doc = self._doc(md)
+        self.assertEqual(
+            [s.key for s in doc.sections],
+            ["exec_summary", "key_findings", "analysis", "risk_outlook", "references"],
+        )
+        self.assertIn("摘要內文", self._text_of(doc.section("exec_summary")))
+
+    def test_missing_section_is_simply_absent(self):
+        """缺章不得炸——section() 回 None，模板自行決定怎麼呈現。"""
+        doc = self._doc("## 執行摘要\n\n只有摘要\n")
+        self.assertIsNotNone(doc.section("exec_summary"))
+        self.assertIsNone(doc.section("key_findings"))
+
+    def test_unknown_section_kept_with_null_key(self):
+        """未知章節不得丟棄——內容是真相，版型不得吃掉內容。"""
+        doc = self._doc("## 執行摘要\n\n摘要\n\n## 產業補充\n\n這段不能消失\n")
+        unknown = [s for s in doc.sections if s.key is None]
+        self.assertEqual(len(unknown), 1)
+        self.assertEqual(unknown[0].heading, "產業補充")
+        self.assertIn("這段不能消失", self._text_of(unknown[0]))
+
+    def test_out_of_order_sections_preserved_in_source_order(self):
+        """章節順序錯亂時保留原順序（模板決定排版順序，不在此重排）。"""
+        doc = self._doc("## 引用來源\n\n[1] x\n\n## 執行摘要\n\n摘要\n")
+        self.assertEqual([s.key for s in doc.sections], ["references", "exec_summary"])
+
+    def test_preamble_before_first_section_kept(self):
+        """`## ` 之前的前言（前導 # 標題）以 heading='' 承接，不丟。"""
+        doc = self._doc("# 台積電深度研報\n\n前言段落\n\n## 執行摘要\n\n摘要\n")
+        self.assertEqual(doc.sections[0].heading, "")
+        self.assertIn("前言段落", self._text_of(doc.sections[0]))
+
+    def test_no_sections_at_all_is_single_unkeyed_block(self):
+        doc = self._doc("完全沒有章節標題的內文")
+        self.assertEqual(len(doc.sections), 1)
+        self.assertIsNone(doc.sections[0].key)
+        self.assertIn("完全沒有章節標題的內文", self._text_of(doc.sections[0]))
+
+    def test_hash_inside_fence_not_treated_as_section(self):
+        """圍欄內出現的 `## ` 不得被誤判為章節邊界。"""
+        md = f'## 重點分析\n\n分析\n\n```chart\n{_GOOD_CHART}\n```\n\n後續分析\n'
+        doc = self._doc(md)
+        self.assertEqual([s.key for s in doc.sections], ["analysis"])
+        self.assertTrue([b for b in doc.sections[0].blocks if isinstance(b, ChartBlock)])
+
+    def test_risk_heading_variant_mapped(self):
+        self.assertEqual(self._doc("## 風險展望\n\nx\n").sections[0].key, "risk_outlook")
+
+    def test_fences_attach_to_owning_section(self):
+        md = (
+            f"## 執行摘要\n\n摘要\n\n```kpi\n{_GOOD_KPI}\n```\n\n"
+            f"## 重點分析\n\n分析\n\n```chart\n{_GOOD_CHART}\n```\n"
+        )
+        doc = self._doc(md)
+        self.assertTrue([b for b in doc.section("exec_summary").blocks if isinstance(b, KpiBlock)])
+        self.assertTrue([b for b in doc.section("analysis").blocks if isinstance(b, ChartBlock)])
+        # KPI 不得漏到分析節去
+        self.assertFalse([b for b in doc.section("analysis").blocks if isinstance(b, KpiBlock)])
+
+    def test_flattened_blocks_property_preserves_order(self):
+        md = f"## 執行摘要\n\n摘要\n\n```kpi\n{_GOOD_KPI}\n```\n\n## 重點分析\n\n分析\n"
+        kinds = [type(b).__name__ for b in self._doc(md).blocks]
+        self.assertEqual(kinds, ["ProseBlock", "KpiBlock", "ProseBlock"])
 
 
 if __name__ == "__main__":

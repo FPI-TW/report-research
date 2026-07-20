@@ -1,0 +1,75 @@
+name: CI
+
+# 這個 workflow 的存在理由：PR #92 與 #93 相隔 14 秒併入 main，兩邊都以
+# 舊 main 為基準通過測試，卻在合併後才互相踩到（#93 為共用的 SELECT 常數
+# 增欄，#92 的測試 fixture 沒跟上）。沒有 CI 時，「分支必須先更新」這個
+# 分支保護規則只會強迫合併順序、不會有人重跑測試；要真的擋住語意衝突，
+# 必須有一份在「分支＋最新 main」的合併結果上跑的測試。
+#
+# pull_request 事件跑的正是合併後的暫時 commit（不是分支頂端），這就是
+# 這裡要的語意；再配合 main 的 require-branches-up-to-date，才形成閉環。
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# 這裡只跑測試，不需要寫入任何東西；預設的 token 是可寫的，收到唯讀。
+permissions:
+  contents: read
+
+# 同一個 PR 連推多次時，取消尚未跑完的舊次（節省私有 repo 的 Actions 額度）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 後端測試（pytest）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # 測試不需要 DB，也不該碰網路下載 BGE-M3（embed 是延遲載入，測試皆
+      # 以假物件替代）。強制離線可讓「某天有人不小心讓測試真的去載模型」
+      # 立刻失敗，而不是變成一個每次多跑好幾分鐘的沉默成本。
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: 安裝 Python 與相依套件
+        run: uv sync --frozen
+
+      - name: pytest
+        run: uv run pytest -q
+
+  frontend:
+    name: 前端測試（tsc + vitest）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: 型別檢查
+        run: npm run typecheck
+
+      - name: vitest
+        run: npm test

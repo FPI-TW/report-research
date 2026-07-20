@@ -19,6 +19,15 @@ dependencies = [
     "pypandoc-binary>=1.17",
 ]
 
+[dependency-groups]
+# 測試相依。先前完全沒宣告，本機 .venv 是手動裝出來的——乾淨 clone 後
+# `uv sync` 跑不了測試，CI 也裝不到 pytest（加 CI 時才發現）。
+# 版本對齊本機已驗證通過全套的環境。
+dev = [
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+]
+
 [tool.uv]
 # CPU-only torch；避免抓 CUDA 輪子
 [[tool.uv.index]]

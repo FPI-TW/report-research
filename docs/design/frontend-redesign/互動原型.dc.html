@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&amp;family=Noto+Sans+TC:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body { font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif; -webkit-font-smoothing: antialiased; }
+    :root {
+      --pk: #1E5175; --pk-deep: #163A54; --pk-hover: #174260; --pk-tint: #EAF1F6; --pk-line: #DCE6EE;
+      --pk-ring: rgba(30,81,117,0.10); --df: 'Noto Serif TC', Georgia, serif;
+      --n-canvas: #F7F6F2; --n-sidebar: #FBFAF6; --n-border: #E7E4DC; --n-border2: #E0DDD4;
+      --n-track: #ECEAE3; --n-div: #EFEDE7; --n-weak: #F3F1EB; --n-group: #FAF9F5; --n-frame: #D9D6CD;
+    }
+    a { color: var(--pk); }
+    a:hover { color: var(--pk-hover); }
+    ::selection { background: var(--pk-tint); }
+    :focus-visible { outline: 2px solid var(--pk); outline-offset: 2px; }
+    input, button, textarea { font-family: inherit; }
+    mark { background: #FAEDC4; color: inherit; border-radius: 3px; padding: 0 1px; }
+    .proto-scroll { overflow-x: hidden; }
+    .proto-scroll::-webkit-scrollbar { width: 10px; }
+    .proto-scroll::-webkit-scrollbar-thumb { background: var(--n-border); border-radius: 999px; border: 3px solid var(--n-canvas); }
+    @keyframes pk-spin { to { transform: rotate(360deg); } }
+    @keyframes pk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    @keyframes pk-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @keyframes pk-fade { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+</helmet>
+
+<div style="height: 100vh; display: flex; overflow: hidden; background: var(--n-canvas); color: #212B33; {{ themeVars }}">
+
+  <!-- ═══ 側欄 ═══ -->
+  <div style="{{ railStyle }}">
+    <sc-if value="{{ expanded }}" hint-placeholder-val="{{ true }}">
+      <div style="width: 272px; height: 100%; display: flex; flex-direction: column;">
+        <div style="padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px;">
+          <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none;"><img src="assets/logo.png" width="30" height="30" alt="廷豐"></span>
+          <span style="flex: 1; font-family: var(--df); font-weight: 700; font-size: 15px; color: var(--pk-deep);">廷豐智能研報</span>
+          <button type="button" aria-label="收合側欄" title="收合側欄" onClick="{{ collapseRail }}" style="width: 34px; height: 34px; border: none; background: none; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #9AA5AE; padding: 0;">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg>
+          </button>
+        </div>
+        <nav style="padding: 0 10px; display: flex; flex-direction: column; gap: 2px;">
+          <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="3">
+            <button type="button" onClick="{{ nav.go }}" style="{{ nav.rowStyle }}">
+              <span style="{{ nav.barStyle }}"></span>
+              <span style="display: inline-flex; width: 19px; height: 19px;">{{ nav.icon }}</span>
+              <span>{{ nav.label }}</span>
+            </button>
+          </sc-for>
+        </nav>
+        <div style="height: 1px; background: var(--n-div); margin: 12px 12px 8px;"></div>
+        <div style="padding: 0 10px 4px;">
+          <button type="button" onClick="{{ newConvo }}" style="width: 100%; display: flex; align-items: center; gap: 8px; border: 1px solid var(--n-border2); background: #FFFFFF; border-radius: 10px; color: var(--pk); font-weight: 600; font-size: 13px; padding: 9px 12px; cursor: pointer;" style-hover="border-color: var(--pk);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+            新對話
+          </button>
+        </div>
+        <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; padding: 10px 16px 4px;">歷史對話</div>
+        <div class="proto-scroll" style="flex: 1; overflow-y: auto; padding: 0 10px;">
+          <sc-for list="{{ convoRows }}" as="cv" hint-placeholder-count="2">
+            <div style="display: flex; align-items: center; gap: 2px; border-radius: 8px;" style-hover="background: var(--n-weak);">
+              <button type="button" onClick="{{ cv.open }}" title="{{ cv.title }}" style="{{ cv.itemStyle }}">{{ cv.title }}</button>
+              <button type="button" aria-label="刪除對話" onClick="{{ cv.del }}" style="flex: none; border: none; background: none; color: #9AA5AE; border-radius: 6px; padding: 6px; cursor: pointer; display: flex;" style-hover="color: #B03A30;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v2M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1 -1l1 -12"></path></svg>
+              </button>
+            </div>
+          </sc-for>
+        </div>
+        <div style="border-top: 1px solid var(--n-div); padding: 8px 8px 10px; margin: 0 4px;">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px;">
+            <span style="width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--pk-line); background: var(--pk-tint); color: var(--pk); display: flex; align-items: center; justify-content: center; flex: none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg></span>
+            <span style="flex: 1; min-width: 0;">
+              <span style="display: block; font-size: 13px; font-weight: 600; color: #212B33;">tingfeng</span>
+              <span style="display: block; font-size: 11.5px; color: #9AA5AE;">研究部 · 分析師</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ collapsed }}" hint-placeholder-val="{{ false }}">
+      <div style="width: 60px; height: 100%; display: flex; flex-direction: column; align-items: center; padding: 14px 0;">
+        <button type="button" aria-label="展開側欄" title="展開側欄" onClick="{{ expandRail }}" style="width: 34px; height: 34px; border: none; background: none; padding: 0; cursor: pointer; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+          <img src="assets/logo.png" width="30" height="30" alt="展開側欄">
+        </button>
+        <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 12px; align-items: center;">
+          <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="3">
+            <button type="button" title="{{ nav.label }}" onClick="{{ nav.go }}" style="{{ nav.miniStyle }}">
+              <span style="display: inline-flex; width: 19px; height: 19px;">{{ nav.icon }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <div style="flex: 1;"></div>
+        <span style="width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--pk-line); background: var(--pk-tint); color: var(--pk); display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg></span>
+      </div>
+    </sc-if>
+  </div>
+
+  <!-- ═══ 檢索頁 ═══ -->
+  <sc-if value="{{ isSearch }}" hint-placeholder-val="{{ true }}">
+    <div class="proto-scroll" style="flex: 1; min-width: 0; height: 100%; overflow-y: auto;">
+      <div style="{{ searchInnerStyle }}">
+
+        <sc-if value="{{ heroOn }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 14px; animation: pk-up 240ms cubic-bezier(0.22,1,0.36,1) both;">
+            <img src="assets/logo.png" width="64" height="64" alt="">
+            <h2 style="font-family: var(--df); font-weight: 700; font-size: 32px; letter-spacing: 0.02em; color: var(--pk-deep); margin: 16px 0 0;">廷豐智能研報</h2>
+            <p style="font-size: 14px; color: #6E7E89; margin: 8px 0 0;">語意檢索 · 智能問答 · 深度研報 — 互動原型</p>
+            <div style="display: inline-flex; background: var(--n-track); border-radius: 12px; padding: 3px; margin-top: 30px;">
+              <span style="display: inline-flex; align-items: center; gap: 7px; background: #FFFFFF; border-radius: 9px; padding: 7px 20px; font-size: 13.5px; font-weight: 600; color: var(--pk-deep); box-shadow: 0 1px 3px rgba(22,42,58,0.1);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--pk);"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                檢索研報
+              </span>
+              <button type="button" onClick="{{ goAsk }}" style="display: inline-flex; align-items: center; gap: 7px; border: none; background: none; border-radius: 9px; padding: 7px 20px; font-size: 13.5px; color: #6E7E89; cursor: pointer;" style-hover="color: #40525F;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg>
+                智能問答
+              </button>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- 搜尋列 + 工具列 -->
+        <div style="{{ controlsStyle }}">
+          <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+            <div style="{{ searchBoxStyle }}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6E7E89" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+              <input value="{{ draftQ }}" placeholder="{{ searchPlaceholder }}" aria-label="搜尋研報" onChange="{{ onDraftQ }}" onKeyDown="{{ onQKey }}" onCompositionStart="{{ onCompStart }}" onCompositionEnd="{{ onCompEnd }}" style="{{ searchInputStyle }}">
+              <sc-if value="{{ hasDraftQ }}" hint-placeholder-val="{{ false }}">
+                <button type="button" aria-label="清除搜尋" onClick="{{ clearQ }}" style="border: none; background: none; cursor: pointer; color: #6E7E89; display: flex; padding: 2px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12M6 6l12 12"></path></svg>
+                </button>
+              </sc-if>
+              <sc-if value="{{ heroOn }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ submitQ }}" style="flex: none; background: var(--pk); color: #FFFFFF; border: none; border-radius: 11px; height: 44px; padding: 0 24px; font-size: 14px; font-weight: 600; cursor: pointer;" style-hover="background: var(--pk-hover);">搜尋</button>
+              </sc-if>
+            </div>
+            <sc-if value="{{ toolbarOn }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0; position: relative;">
+                <button type="button" onClick="{{ toggleSort }}" aria-haspopup="menu" style="display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--n-border2); background: #FFFFFF; color: #40525F; border-radius: 10px; padding: 9px 14px; font-size: 13px; cursor: pointer; white-space: nowrap;" style-hover="border-color: var(--pk); color: var(--pk);">
+                  排序：{{ sortLabel }}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"></path></svg>
+                </button>
+                <sc-if value="{{ sortOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="position: absolute; top: 44px; right: 92px; min-width: 160px; background: #FFFFFF; border: 1px solid var(--n-border); border-radius: 12px; box-shadow: 0 12px 32px rgba(22,42,58,0.16); padding: 6px; z-index: 30; animation: pk-fade 160ms ease both;">
+                    <sc-for list="{{ sortOptions }}" as="opt" hint-placeholder-count="2">
+                      <button type="button" onClick="{{ opt.pick }}" style="{{ opt.style }}">{{ opt.label }}</button>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <span style="display: inline-flex; background: var(--n-track); border-radius: 10px; padding: 3px;">
+                  <button type="button" aria-label="列表檢視" onClick="{{ setListView }}" style="{{ listBtnStyle }}">≣</button>
+                  <button type="button" aria-label="表格檢視" onClick="{{ setTableView }}" style="{{ tableBtnStyle }}">▦</button>
+                </span>
+              </div>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{ heroOn }}" hint-placeholder-val="{{ true }}">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;">
+              <span style="font-size: 12.5px; color: #9AA5AE;">試試</span>
+              <sc-for list="{{ tryChips }}" as="chip" hint-placeholder-count="3">
+                <button type="button" onClick="{{ chip.fire }}" style="border: 1px solid var(--n-border2); background: #FFFFFF; border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: #40525F; cursor: pointer;" style-hover="border-color: var(--pk); color: var(--pk);">{{ chip.label }}</button>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <div style="{{ chipRowStyle }}">
+            <sc-for list="{{ marketChips }}" as="mc" hint-placeholder-count="6">
+              <button type="button" aria-pressed="{{ mc.active }}" onClick="{{ mc.pick }}" style="{{ mc.style }}">
+                <span style="{{ mc.dotStyle }}"></span>
+                {{ mc.label }}
+              </button>
+            </sc-for>
+          </div>
+        </div>
+
+        <!-- 結果區 -->
+        <sc-if value="{{ emptyOn }}" hint-placeholder-val="{{ false }}">
+          <div style="text-align: center; padding: 56px 16px; animation: pk-up 240ms ease both;">
+            <div style="font-family: var(--df); font-weight: 700; font-size: 17px; color: #212B33;">{{ emptyTitle }}</div>
+            <div style="font-size: 13px; color: #6E7E89; margin-top: 8px;">換個說法或關鍵字試試，或清除目前的篩選條件重新檢索。</div>
+            <div style="display: flex; gap: 10px; justify-content: center; margin-top: 18px;">
+              <button type="button" onClick="{{ clearFiltersFn }}" style="border: 1px solid var(--pk); background: #FFFFFF; color: var(--pk); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;" style-hover="background: var(--pk-tint);">清除篩選再試</button>
+              <button type="button" onClick="{{ browseAllFn }}" style="border: 1px solid var(--n-border2); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 7px 16px; font-size: 13px; cursor: pointer;">瀏覽全部報告</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ resultsOn }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; align-items: baseline; gap: 12px; padding: 18px 2px 10px;">
+            <sc-if value="{{ heroOn }}" hint-placeholder-val="{{ true }}">
+              <span style="font-family: var(--df); font-weight: 700; font-size: 16px; color: #212B33;">最新入庫</span>
+            </sc-if>
+            <span style="font-size: 12.5px; color: #6E7E89;">{{ resultsMeta }}</span>
+          </div>
+
+          <sc-if value="{{ listViewOn }}" hint-placeholder-val="{{ true }}">
+            <div style="background: #FFFFFF; border: 1px solid var(--n-border); border-radius: 14px; box-shadow: 0 1px 3px rgba(22,42,58,0.05); overflow: hidden;">
+              <sc-for list="{{ groups }}" as="g" hint-placeholder-count="2">
+                <div style="display: flex; align-items: baseline; gap: 8px; background: var(--n-group); border-bottom: 1px solid var(--n-div); padding: 8px 16px;">
+                  <span style="font-family: var(--df); font-weight: 700; font-size: 13.5px; color: #212B33;">{{ g.title }}</span>
+                  <span style="font-size: 12px; color: #9AA5AE;">{{ g.count }} 篇</span>
+                </div>
+                <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+                  <div role="button" tabIndex="{{ zero }}" aria-label="{{ r.title }}" onClick="{{ r.open }}" onKeyDown="{{ r.key }}" style="display: grid; grid-template-columns: 92px minmax(0, 1fr) 200px; gap: 14px; align-items: start; padding: 13px 16px; border-bottom: 1px solid var(--n-div); cursor: pointer; background: #FFFFFF; transition: background 120ms ease;" style-hover="background: var(--n-group);">
+                    <span style="padding-top: 1px;"><span style="{{ r.badgeStyle }}"><span style="{{ r.badgeDot }}"></span>{{ r.marketLabel }}</span></span>
+                    <span style="min-width: 0; display: block;">
+                      <span style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                        <span style="font-family: var(--df); font-weight: 700; font-size: 15px; line-height: 1.5; color: #212B33; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ r.title }}</span>
+                        <sc-if value="{{ r.latest }}" hint-placeholder-val="{{ false }}">
+                          <span style="border: 1px solid #7FB89A; color: #237A46; border-radius: 999px; padding: 0 8px; font-size: 11px; font-weight: 600; flex: none;">最新</span>
+                        </sc-if>
+                      </span>
+                      <span style="display: block; font-size: 12px; color: #9AA5AE; margin-top: 3px;">{{ r.tags }}</span>
+                      <span style="display: block; font-size: 12.5px; color: #6E7E89; line-height: 1.6; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.snippetNodes }}</span>
+                    </span>
+                    <span style="display: flex; flex-direction: column; align-items: flex-end; gap: 5px;">
+                      <sc-if value="{{ r.showScore }}" hint-placeholder-val="{{ false }}">
+                        <span style="display: inline-flex; align-items: center; gap: 8px;">
+                          <span style="width: 56px; height: 4px; border-radius: 999px; background: var(--n-weak); overflow: hidden; display: inline-block;"><span style="{{ r.scoreFill }}"></span></span>
+                          <span style="font-size: 13px; font-weight: 600; color: var(--pk);">{{ r.scorePct }}</span>
+                        </span>
+                      </sc-if>
+                      <span style="font-size: 12px; color: #6E7E89; white-space: nowrap;">{{ r.meta }}</span>
+                    </span>
+                  </div>
+                </sc-for>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ tableViewOn }}" hint-placeholder-val="{{ false }}">
+            <div style="border: 1px solid var(--n-border); border-radius: 12px; overflow: hidden; overflow-x: auto; background: #FFFFFF; box-shadow: 0 1px 3px rgba(22,42,58,0.05);">
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                  <tr>
+                    <th style="padding: 9px 12px; font-weight: 600; text-align: left; color: #6E7E89; background: var(--n-sidebar); white-space: nowrap; border-bottom: 1px solid var(--n-div);">報告名稱</th>
+                    <th style="padding: 9px 12px; font-weight: 600; text-align: left; color: #6E7E89; background: var(--n-sidebar); white-space: nowrap; border-bottom: 1px solid var(--n-div);">市場</th>
+                    <th style="padding: 9px 12px; font-weight: 600; text-align: left; color: #6E7E89; background: var(--n-sidebar); white-space: nowrap; border-bottom: 1px solid var(--n-div);">日期</th>
+                    <th style="padding: 9px 12px; font-weight: 600; text-align: left; color: #6E7E89; background: var(--n-sidebar); white-space: nowrap; border-bottom: 1px solid var(--n-div);">來源</th>
+                    <th style="padding: 9px 12px; font-weight: 600; text-align: left; color: #6E7E89; background: var(--n-sidebar); white-space: nowrap; border-bottom: 1px solid var(--n-div);">標的</th>
+                    <th style="padding: 9px 12px; font-weight: 600; text-align: left; color: #6E7E89; background: var(--n-sidebar); white-space: nowrap; border-bottom: 1px solid var(--n-div);">相關度</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <sc-for list="{{ flatRows }}" as="r" hint-placeholder-count="5">
+                    <tr tabIndex="{{ zero }}" onClick="{{ r.open }}" onKeyDown="{{ r.key }}" style="border-top: 1px solid var(--n-div); cursor: pointer;" style-hover="background: var(--n-weak);">
+                      <td style="padding: 10px 12px; color: #212B33; font-weight: 500; max-width: 380px;">{{ r.title }}</td>
+                      <td style="padding: 10px 12px;"><span style="{{ r.badgeStyle }}">{{ r.marketLabel }}</span></td>
+                      <td style="padding: 10px 12px; color: #6E7E89; white-space: nowrap;">{{ r.date }}</td>
+                      <td style="padding: 10px 12px; color: #6E7E89; white-space: nowrap;">{{ r.source }}</td>
+                      <td style="padding: 10px 12px; color: #40525F;">{{ r.tags }}</td>
+                      <td style="padding: 10px 12px; color: var(--pk); font-weight: 600; white-space: nowrap;">{{ r.scorePct }}</td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+          </sc-if>
+        </sc-if>
+
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ═══ 問答頁 ═══ -->
+  <sc-if value="{{ isAsk }}" hint-placeholder-val="{{ false }}">
+    <div style="flex: 1; min-width: 0; height: 100%; display: flex; overflow: hidden;">
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+        <div id="proto-ask-flow" class="proto-scroll" style="{{ flowStyle }}" onScroll="{{ onFlowScroll }}">
+
+          <sc-if value="{{ askEmptyOn }}" hint-placeholder-val="{{ true }}">
+            <div style="max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 24px 16px; animation: pk-up 240ms ease both;">
+              <img src="assets/logo.png" width="56" height="56" alt="" style="margin-bottom: 12px;">
+              <div style="font-family: var(--df); font-weight: 700; font-size: 24px; color: var(--pk-deep);">向廷豐智能體提問</div>
+              <div style="font-size: 13.5px; color: #6E7E89; margin: 8px 0 18px; max-width: 420px;">以自然語言詢問研究主題，回答將附上券商研報的引用來源。</div>
+              <div style="width: 100%; background: #FFFFFF; border: 1px solid var(--n-border2); border-radius: 16px; box-shadow: 0 8px 24px rgba(22,42,58,0.07); padding: 8px 8px 8px 18px; display: flex; align-items: flex-end; gap: 10px;">
+                <textarea rows="{{ one }}" value="{{ draftAsk }}" placeholder="輸入你的問題，例如「AI 伺服器液冷散熱的供應鏈受惠股有哪些？」" aria-label="輸入你的問題" onChange="{{ onDraftAsk }}" onKeyDown="{{ onAskKey }}" style="flex: 1; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.6; color: #212B33; min-height: 24px; padding: 9px 0; background: none; font-family: inherit;"></textarea>
+                <button type="button" aria-label="送出" onClick="{{ submitAsk }}" style="{{ sendStyle }}">
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"></path><path d="M6 11l6 -6l6 6"></path></svg>
+                </button>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px;">
+                <sc-for list="{{ askTryChips }}" as="chip" hint-placeholder-count="2">
+                  <button type="button" onClick="{{ chip.fire }}" style="border: 1px solid var(--n-border2); background: #FFFFFF; border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: #40525F; cursor: pointer;" style-hover="border-color: var(--pk); color: var(--pk);">{{ chip.label }}</button>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-for list="{{ turnRows }}" as="t" hint-placeholder-count="1">
+            <div style="max-width: 760px; margin: 0 auto; animation: pk-up 240ms ease both;">
+              <div style="display: flex; justify-content: flex-end; margin: 18px 0 12px;">
+                <div style="max-width: 78%; background: var(--pk); color: #FFFFFF; border-radius: 14px 14px 4px 14px; padding: 10px 16px; font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;">{{ t.q }}</div>
+              </div>
+
+              <sc-if value="{{ t.isNotice }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; gap: 10px; align-items: flex-start; border: 1px solid #EAD9AE; background: #FBF7EC; border-radius: 12px; padding: 12px 14px; margin: 4px 0 12px;">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8A5A0F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 2px;"><path d="M12 3l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg>
+                  <span>
+                    <span style="display: block; font-size: 13.5px; line-height: 1.6; color: #7A5A1E;">這個問題與研報庫內容較無關聯，建議聚焦市場、產業或個股主題。</span>
+                    <button type="button" onClick="{{ t.noticeRetry }}" style="display: inline-block; background: none; border: 1px solid #C9A75C; color: #8A5A0F; border-radius: 999px; font-size: 12px; font-weight: 600; padding: 4px 13px; margin-top: 9px; cursor: pointer;">換個說法重新提問</button>
+                  </span>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ t.showThink }}" hint-placeholder-val="{{ false }}">
+                <div style="display: inline-block; border: 1px solid var(--n-border); background: #FFFFFF; border-radius: 12px; padding: 8px 14px; margin-bottom: 12px;">
+                  <button type="button" onClick="{{ t.toggleSteps }}" style="display: flex; align-items: center; gap: 7px; background: none; border: none; padding: 0; cursor: pointer; font-size: 12.5px; color: #6E7E89;">
+                    {{ t.thinkIcon }}
+                    <span>{{ t.thinkLabel }}</span>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9AA5AE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="{{ t.chevStyle }}"><path d="M6 9l6 6l6 -6"></path></svg>
+                  </button>
+                  <sc-if value="{{ t.stepsOpen }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;">
+                      <sc-for list="{{ t.steps }}" as="s" hint-placeholder-count="4">
+                        <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
+                          {{ s.icon }}
+                          <span style="{{ s.textStyle }}">{{ s.name }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ t.hasAnswer }}" hint-placeholder-val="{{ false }}">
+                <div style="font-size: 15px; line-height: 1.75; color: #40525F;">{{ t.answerNodes }}</div>
+              </sc-if>
+
+              <sc-if value="{{ t.showActions }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px;">
+                  <button type="button" aria-label="讚" onClick="{{ t.like }}" style="{{ t.likeStyle }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11v9"></path><path d="M11 11l1.4 -4.2a1.5 1.5 0 0 1 3 .5v3.7h3.6a1.6 1.6 0 0 1 1.6 1.9l-1.2 5.5a1.6 1.6 0 0 1 -1.6 1.2H7v-9z"></path></svg></button>
+                  <button type="button" aria-label="倒讚" onClick="{{ t.dislike }}" style="{{ t.dislikeStyle }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 13v-9"></path><path d="M13 13l-1.4 4.2a1.5 1.5 0 0 1 -3 -.5v-3.7H5a1.6 1.6 0 0 1 -1.6 -1.9l1.2 -5.5a1.6 1.6 0 0 1 1.6 -1.2H17v9z"></path></svg></button>
+                  <button type="button" aria-label="複製回答" title="{{ t.copyTitle }}" onClick="{{ t.copy }}" style="display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--n-border2); background: #FFFFFF; color: #6E7E89; border-radius: 999px; padding: 6px; cursor: pointer;" style-hover="border-color: var(--pk); color: var(--pk); background: var(--pk-tint);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2 -2h10"></path></svg></button>
+                  <span style="width: 1px; height: 16px; background: var(--n-border2); margin: 0 2px;"></span>
+                  <button type="button" onClick="{{ t.openDrawer }}" style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2); background: #FFFFFF; color: #40525F; border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px; cursor: pointer;" style-hover="border-color: var(--pk); color: var(--pk); background: var(--pk-tint);">資料來源 {{ t.srcCount }}</button>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ t.showOffer }}" hint-placeholder-val="{{ false }}">
+                <div style="border: 1px solid #EAD9AE; background: #FBF7EC; border-radius: 14px; padding: 15px 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 18px; animation: pk-up 240ms ease both;">
+                  <span style="width: 38px; height: 38px; border-radius: 999px; background: #F8F1E0; color: #8A5A0F; display: flex; align-items: center; justify-content: center; flex: none;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0 -2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2V8z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg></span>
+                  <span style="flex: 1; min-width: 220px;">
+                    <span style="display: block; font-family: var(--df); font-weight: 700; font-size: 15px; color: #212B33;">要不要整理成完整 PDF 深度研報？</span>
+                    <span style="display: block; font-size: 12.5px; color: #6E7E89; margin-top: 3px;">彙整本輪 {{ t.srcCount }} 個引用來源，生成含 KPI 與圖表的深度研報。</span>
+                  </span>
+                  <span style="display: flex; gap: 8px; flex: none;">
+                    <button type="button" onClick="{{ t.genReport }}" style="background: #8A5A0F; color: #FFFFFF; border: none; border-radius: 999px; font-size: 13px; font-weight: 600; padding: 8px 20px; cursor: pointer;" style-hover="background: #7A4F0C;">生成研報</button>
+                    <button type="button" onClick="{{ t.declineReport }}" style="background: transparent; border: 1px solid var(--n-border2); border-radius: 999px; color: #6E7E89; font-size: 13px; font-weight: 500; padding: 8px 16px; cursor: pointer;">暫時不用</button>
+                  </span>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ t.showGen }}" hint-placeholder-val="{{ false }}">
+                <div style="border: 1px solid #EAD9AE; background: #FBF7EC; border-radius: 14px; padding: 16px 18px; margin-top: 18px;">
+                  <div style="font-family: var(--df); font-weight: 700; font-size: 15px; color: #212B33; margin-bottom: 10px;">深度研報生成中…</div>
+                  <div style="height: 8px; border-radius: 999px; background: #F8F1E0; overflow: hidden;">
+                    <div style="{{ t.genFill }}"></div>
+                  </div>
+                  <div style="font-size: 12.5px; color: #6E7E89; margin-top: 8px;">{{ t.genStage }}</div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ t.showDone }}" hint-placeholder-val="{{ false }}">
+                <div style="border: 1px solid #EAD9AE; background: #FBF7EC; border-radius: 14px; padding: 16px 18px; margin-top: 18px; animation: pk-up 240ms ease both;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A5A0F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"></path></svg>
+                    <span style="font-family: var(--df); font-weight: 700; font-size: 15px; color: #212B33;">深度研報已完成</span>
+                  </div>
+                  <div style="font-size: 12.5px; color: #6E7E89; margin: 8px 0 14px;">{{ t.reportTitle }}</div>
+                  <button type="button" onClick="{{ t.download }}" style="display: inline-flex; align-items: center; gap: 6px; background: #8A5A0F; color: #FFFFFF; border: none; border-radius: 999px; font-size: 13px; font-weight: 600; padding: 8px 20px; cursor: pointer;" style-hover="background: #7A4F0C;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0 -2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2V8z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg>
+                    下載 PDF
+                  </button>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ composerOn }}" hint-placeholder-val="{{ false }}">
+          <div style="flex: none; padding: 0 24px 14px;">
+            <div style="max-width: 760px; margin: 0 auto;">
+              <div style="background: #FFFFFF; border: 1px solid var(--n-border2); border-radius: 16px; box-shadow: 0 8px 24px rgba(22,42,58,0.07); padding: 8px 8px 8px 18px; display: flex; align-items: flex-end; gap: 10px;">
+                <textarea rows="{{ one }}" value="{{ draftAsk }}" placeholder="繼續追問，例如「主要風險是什麼？」" aria-label="輸入你的問題" onChange="{{ onDraftAsk }}" onKeyDown="{{ onAskKey }}" style="flex: 1; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.6; color: #212B33; min-height: 24px; max-height: 140px; padding: 9px 0; background: none; font-family: inherit;"></textarea>
+                <button type="button" aria-label="送出" onClick="{{ submitAsk }}" style="{{ sendStyle }}">
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"></path><path d="M6 11l6 -6l6 6"></path></svg>
+                </button>
+              </div>
+              <div style="text-align: center; font-size: 11.5px; color: #9AA5AE; margin-top: 8px;">回答由 AI 依券商研報生成，投資決策請以原始研報與公開資訊為準。</div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- 來源抽屜 -->
+      <div style="{{ drawerStyle }}" aria-label="引用來源">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 16px 18px; border-bottom: 1px solid var(--n-div); flex: none;">
+          <span style="font-family: var(--df); font-weight: 700; font-size: 16px; color: #212B33;">引用來源</span>
+          <span style="background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 1px 8px;">{{ drawerCount }}</span>
+          <span style="flex: 1;"></span>
+          <button type="button" aria-label="關閉" onClick="{{ closeDrawer }}" style="border: none; background: var(--n-weak); border-radius: 999px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #6E7E89;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12M6 6l12 12"></path></svg>
+          </button>
+        </div>
+        <div class="proto-scroll" style="flex: 1; overflow-y: auto; padding: 14px 16px;">
+          <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; margin-bottom: 8px;">研報 · {{ drawerSrcCount }}</div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <sc-for list="{{ drawerSources }}" as="s" hint-placeholder-count="5">
+              <button type="button" onClick="{{ s.open }}" style="text-align: left; border: 1px solid var(--n-border); background: #FFFFFF; border-radius: 12px; padding: 10px 12px; cursor: pointer; font-family: inherit;" style-hover="border-color: var(--pk); box-shadow: 0 0 0 3px var(--pk-ring);">
+                <span style="display: flex; align-items: center; gap: 8px;">
+                  <span style="background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; flex: none;">{{ s.n }}</span>
+                  <span style="{{ s.mktStyle }}">{{ s.marketLabel }}</span>
+                  <span style="flex: 1;"></span>
+                  <span style="font-size: 11.5px; color: #9AA5AE;">{{ s.date }}</span>
+                </span>
+                <span style="display: block; font-family: var(--df); font-weight: 700; font-size: 13.5px; color: #212B33; line-height: 1.45; margin-top: 6px;">{{ s.title }}</span>
+                <span style="display: block; font-size: 12px; color: #6E7E89; margin-top: 3px;">{{ s.source }} · PDF</span>
+              </button>
+            </sc-for>
+          </div>
+          <sc-if value="{{ drawerHasExt }}" hint-placeholder-val="{{ false }}">
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; margin: 14px 0 8px;">網路補充 · 1</div>
+            <div style="border: 1px dashed var(--n-border2); background: var(--n-sidebar); border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start;">
+              <span style="border: 1px solid #C9A75C; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 600; padding: 0 7px; flex: none; margin-top: 1px;">{{ drawerExtN }}</span>
+              <span style="min-width: 0;">
+                <span style="display: block; font-size: 13px; color: #212B33; font-weight: 500;">TrendForce：2026 液冷滲透率預估上修</span>
+                <span style="display: block; font-size: 11.5px; color: #9AA5AE; margin-top: 2px;">網路 · trendforce.com</span>
+              </span>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ═══ 監控 stub ═══ -->
+  <sc-if value="{{ isMonitor }}" hint-placeholder-val="{{ false }}">
+    <div style="flex: 1; display: flex; align-items: center; justify-content: center;">
+      <div style="text-align: center; padding: 32px;">
+        <div style="font-family: var(--df); font-weight: 700; font-size: 17px; color: #212B33;">監控頁不在此原型範圍</div>
+        <div style="font-size: 13px; color: #6E7E89; margin-top: 8px;">語料庫進度監控維持現有版面，僅套用新設計 token。</div>
+        <button type="button" onClick="{{ goSearch }}" style="border: 1px solid var(--pk); background: #FFFFFF; color: var(--pk); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 18px;" style-hover="background: var(--pk-tint);">回到檢索</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ═══ 研報詳情 Modal ═══ -->
+  <sc-if value="{{ modalOn }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeModal }}" style="position: fixed; inset: 0; z-index: 50; background: rgba(22,42,58,0.5); display: flex; align-items: center; justify-content: center; padding: 24px; animation: pk-fade 180ms ease both;">
+      <div role="dialog" aria-modal="true" onClick="{{ swallow }}" style="background: #FFFFFF; border-radius: 16px; box-shadow: 0 24px 64px rgba(22,42,58,0.28); width: min(920px, 100%); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; animation: pk-up 240ms cubic-bezier(0.22,1,0.36,1) both;">
+        <div style="padding: 16px 20px 14px; border-bottom: 1px solid var(--n-div);">
+          <div style="display: flex; align-items: flex-start; gap: 12px;">
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 7px;">
+                <span style="{{ modalBadgeStyle }}">{{ modalMarket }}</span>
+                <sc-if value="{{ modalLatest }}" hint-placeholder-val="{{ false }}">
+                  <span style="border: 1px solid #7FB89A; color: #237A46; border-radius: 999px; padding: 0 8px; font-size: 11px; font-weight: 600;">最新</span>
+                </sc-if>
+              </div>
+              <div style="font-family: var(--df); font-weight: 700; font-size: 17px; color: #212B33; line-height: 1.45;">{{ modalTitle }}</div>
+              <div style="font-size: 12.5px; color: #6E7E89; margin-top: 6px;">{{ modalMeta }}</div>
+            </div>
+            <button type="button" aria-label="關閉" onClick="{{ closeModal }}" style="background: var(--n-weak); border: none; border-radius: 999px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; color: #6E7E89; flex: none; cursor: pointer;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12M6 6l12 12"></path></svg>
+            </button>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 12px; align-items: center;">
+            <button type="button" onClick="{{ modalOpenTab }}" style="background: var(--pk); color: #FFFFFF; border: none; border-radius: 9px; font-size: 12.5px; font-weight: 600; padding: 7px 16px; cursor: pointer;" style-hover="background: var(--pk-hover);">在新分頁開啟</button>
+            <button type="button" onClick="{{ modalDownload }}" style="border: 1px solid var(--n-border2); background: #FFFFFF; color: #40525F; border-radius: 9px; font-size: 12.5px; font-weight: 500; padding: 7px 16px; cursor: pointer;" style-hover="border-color: var(--pk); color: var(--pk);">下載原始檔</button>
+            <span style="flex: 1;"></span>
+            <span style="font-size: 11.5px; color: #9AA5AE;">Esc 關閉</span>
+          </div>
+        </div>
+        <div style="padding: 16px 20px; flex: 1; overflow: auto;">
+          <div style="width: 100%; height: 62vh; border: 1px solid var(--n-div); border-radius: 10px; background: repeating-linear-gradient(45deg, #FAFAF8, #FAFAF8 12px, #F1F0EC 12px, #F1F0EC 24px); display: flex; align-items: center; justify-content: center;">
+            <span style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #9AA5AE; background: #FFFFFF; border: 1px dashed var(--n-frame); border-radius: 6px; padding: 6px 12px;">PDF 內嵌預覽（原型示意）— /api/report/{id}/file</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- 引註 hover 預覽 -->
+  <sc-if value="{{ citeCardOn }}" hint-placeholder-val="{{ false }}">
+    <div aria-hidden="true" style="{{ citeCardStyle }}">
+      <span style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+        <span style="{{ citeMktStyle }}">{{ citeMarket }}</span>
+        <span style="font-size: 11.5px; color: #9AA5AE;">{{ citeDate }}</span>
+      </span>
+      <span style="display: block; font-family: var(--df); font-weight: 700; font-size: 13.5px; color: #212B33; line-height: 1.5; margin-top: 6px;">{{ citeTitle }}</span>
+      <span style="display: block; font-size: 11.5px; color: var(--pk); font-weight: 600; margin-top: 8px;">點擊編號查看引用來源 ›</span>
+    </div>
+  </sc-if>
+
+  <!-- Toast -->
+  <sc-if value="{{ toastOn }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 80; background: #212B33; color: #FFFFFF; border-radius: 999px; font-size: 12.5px; padding: 8px 18px; box-shadow: 0 12px 32px rgba(22,42,58,0.3); animation: pk-up 200ms ease both;">{{ toastMsg }}</div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;ink&quot;: {
+    &quot;editor&quot;: &quot;color&quot;,
+    &quot;default&quot;: &quot;#1E5175&quot;,
+    &quot;tsType&quot;: &quot;string&quot;,
+    &quot;options&quot;: [&quot;#1E5175&quot;, &quot;#1E5B4B&quot;, &quot;#8A3E3C&quot;, &quot;#4A4FA0&quot;],
+    &quot;section&quot;: &quot;主題方向&quot;
+  },
+  &quot;displayFont&quot;: {
+    &quot;editor&quot;: &quot;enum&quot;,
+    &quot;default&quot;: &quot;宋體標題&quot;,
+    &quot;tsType&quot;: &quot;string&quot;,
+    &quot;options&quot;: [&quot;宋體標題&quot;, &quot;全黑體&quot;],
+    &quot;section&quot;: &quot;主題方向&quot;
+  },
+  &quot;paper&quot;: {
+    &quot;editor&quot;: &quot;enum&quot;,
+    &quot;default&quot;: &quot;暖紙白&quot;,
+    &quot;tsType&quot;: &quot;string&quot;,
+    &quot;options&quot;: [&quot;暖紙白&quot;, &quot;冷調灰白&quot;],
+    &quot;section&quot;: &quot;主題方向&quot;
+  }
+}">
+class Component extends DCLogic {
+  // ── 市場定義 ──
+  M = {
+    TW: { l: '台股', c: '#237A46' },
+    US: { l: '美股', c: '#2E5FA3' },
+    WTX: { l: '台指期', c: '#6E48A8' },
+    MACRO: { l: '總經', c: '#A03052' },
+    GLOBAL: { l: '全球', c: '#4A4FA0' },
+  }
+
+  // ── 示意研報庫 ──
+  DATA = [
+    { id: 'tsmc', m: 'TW', title: '台積電(2330)—2nm 量產進度與 CoWoS 供需更新', src: '元大投顧', date: '2026-06-28', tags: '股票 · 2330 台積電', sum: '2nm 試產良率優於預期，CoWoS 月產能上修至 9 萬片；重申買進。', snip: '2nm 試產良率優於預期，CoWoS 供需缺口延續至 2027 上半年，先進封裝仍為成長主軸…', rel: 76, hit: '台積電 2330 2nm cowos 先進製程 半導體 ai' },
+    { id: 'fomc', m: 'MACRO', title: '6 月 FOMC 會後：點陣圖下修與降息路徑', src: '國泰投顧', date: '2026-06-28', tags: '總經 · 利率', sum: '點陣圖中位數下修，維持 9 月首降判斷；關注核心服務通膨黏性。', snip: '點陣圖中位數下修一碼，聲明對通膨表述轉中性，市場定價 2026 年再降三碼…', rel: 74, hit: 'fomc 降息 利率 點陣圖 聯準會 通膨' },
+    { id: 'r1', m: 'TW', title: '奇鋐(3017)—AI 散熱獨家受惠，液冷放量在即', src: '凱基投顧', date: '2026-06-27', tags: '股票 · 3017 奇鋐', sum: '3D VC 與液冷板雙引擎，上修 2026 年 EPS 與目標價。', snip: '受惠 AI 伺服器需求，3D VC 與液冷板出貨大幅成長，GB300 世代散熱模組單價續揚，上修 2026 年 EPS…', rel: 94, hit: '散熱 液冷 ai 伺服器 奇鋐 3017 gb300 供應鏈 水冷' },
+    { id: 'nvda', m: 'US', title: 'NVIDIA(NVDA)—GB300 出貨節奏與供應鏈檢視', src: '富邦投顧', date: '2026-06-27', tags: '股票 · NVDA', sum: 'GB300 下半年放量，供應鏈瓶頸由 CoWoS 轉向電力與散熱。', snip: 'GB300 出貨節奏優於前代，供應鏈瓶頸由先進封裝轉向機櫃電力與散熱環節…', rel: 80, hit: 'nvidia nvda gb300 ai 伺服器 供應鏈 散熱' },
+    { id: 'wtx', m: 'WTX', title: '台指期週報—外資期現貨佈局與結算行情', src: '永豐期貨', date: '2026-06-27', tags: '期貨 · 台指期', sum: '外資期現貨同步偏多，留意結算前價差收斂。', snip: '外資淨多單續增，現貨買超集中權值電子，結算前留意價差收斂與高基差回落…', rel: 66, hit: '台指期 外資 結算 期貨 價差' },
+    { id: 'flow', m: 'GLOBAL', title: '全球資金流向月報—AI 資本支出循環定位', src: '高盛證券', date: '2026-06-26', tags: '產業報告', sum: 'AI 資本支出循環仍處中段，資金持續流入基礎設施環節。', snip: '全球股票型基金連 8 週淨流入，AI 基礎設施（電力、散熱、網通）為超配主軸…', rel: 72, hit: '資金流向 ai 資本支出 降息 全球' },
+    { id: 'etf', m: 'TW', title: '高股息 ETF 策略—除息旺季配置與成分調整', src: '元大投顧', date: '2026-06-25', tags: 'ETF · 高股息', sum: '除息旺季前配置以「填息紀錄＋殖利率」雙因子篩選。', snip: '除息旺季將至，本文以填息紀錄與預估殖利率雙因子重排高股息 ETF 配置順序…', rel: 70, hit: '高股息 etf 除息 配置 殖利率' },
+    { id: 'r2', m: 'TW', title: '雙鴻(3324)—水冷板出貨動能強勁，下半年營運續揚', src: '統一投顧', date: '2026-06-24', tags: '股票 · 3324 雙鴻', sum: '水冷板通過北美 CSP 驗證，Q3 起貢獻營收。', snip: '水冷板受惠 AI 伺服器拉貨，產能利用率滿載；散熱新品通過北美 CSP 驗證，Q3 起貢獻營收…', rel: 91, hit: '散熱 液冷 水冷 ai 伺服器 雙鴻 3324 供應鏈' },
+    { id: 'r3', m: 'TW', title: 'AI 伺服器產業—GB300 世代散熱設計變革與供應鏈重估', src: '富邦投顧', date: '2026-06-18', tags: '股票 · 產業報告', sum: 'GB300 機櫃功耗突破 140kW，液冷滲透率 2026 年估達 45%。', snip: 'GB300 機櫃功耗突破 140kW，液冷滲透率 2026 年估達 45%；本報告盤點散熱供應鏈受惠順序…', rel: 88, hit: '散熱 液冷 gb300 ai 伺服器 供應鏈 產業' },
+    { id: 'r4', m: 'US', title: 'Vertiv(VRT)—資料中心液冷基礎設施訂單能見度延伸', src: '元大投顧', date: '2026-06-12', tags: '股票 · VRT', sum: '在手訂單 YoY +38%，液冷與電力雙引擎。', snip: '資料中心液冷與電力基礎設施雙引擎，在手訂單 YoY +38%；AI 伺服器建置週期支撐 2027 展望…', rel: 85, hit: '液冷 散熱 資料中心 ai vrt vertiv' },
+    { id: 'r5', m: 'TW', title: '健策(3653)—均熱片龍頭切入水冷模組，客戶集中度改善', src: '國泰綜合證券', date: '2026-05-30', tags: '股票 · 3653 健策', sum: '切入水冷模組後單機價值量提升約 2.4 倍。', snip: '均熱片(VC)市佔穩固，切入水冷模組後單機價值量提升 2.4 倍，2027 年營收貢獻上看 18%…', rel: 82, hit: '散熱 水冷 均熱片 健策 3653 液冷' },
+    { id: 'r6', m: 'GLOBAL', title: '資料中心電力與散熱—2026 下半年展望', src: '高盛證券', date: '2026-05-21', tags: '產業報告', sum: '資本支出上修至 4,200 億美元，散熱與電力為兩大瓶頸。', snip: '全球資料中心資本支出上修至 4,200 億美元，散熱與電力為兩大瓶頸環節…', rel: 79, hit: '散熱 電力 資料中心 液冷 ai 全球' },
+  ]
+
+  // ── 問答腳本 ──
+  SCRIPTS = {
+    main: {
+      test: /(散熱|液冷|伺服|供應鏈|受惠|GB300|AI)/i,
+      retrieved: 15, offer: true, ext: true,
+      srcIds: ['r1', 'r3', 'r2', 'r5', 'r6'],
+      full: '根據近三個月券商研報，AI 伺服器液冷散熱供應鏈的受惠股集中在**水冷板、快接頭與整機模組**三個環節：\n\n### 核心受惠股\n\n- **奇鋐(3017)**：3D VC 與液冷板雙引擎，GB300 世代散熱單價續揚，多家券商上修目標價 [1][2]\n- **雙鴻(3324)**：水冷板通過北美 CSP 驗證，Q3 起放量，產能利用率滿載 [3]\n- **健策(3653)**：均熱片龍頭切入水冷模組，單機價值量提升約 2.4 倍 [4]\n\n整體而言，券商共識為**液冷滲透率 2026 年達 45%**，帶動散熱產業鏈營收規模翻倍成長 [2][5]。',
+      reportTitle: 'AI 伺服器液冷散熱供應鏈深度研報',
+    },
+    risk: {
+      test: /(風險|回檔|下檔|隱憂)/,
+      retrieved: 12, offer: false, ext: true,
+      srcIds: ['r1', 'r3', 'r2', 'r5', 'r6'],
+      full: '液冷供應鏈的主要風險有三：\n\n- **規格迭代風險**：GB300 散熱設計仍在變動，快接頭與分歧管規格若翻案，前期投入恐重置 [2]\n- **產能競賽**：同業擴產若快於 CSP 拉貨節奏，2027 年起價格競爭將侵蝕毛利 [3]\n- **估值已高**：族群本益比已反映 2027 年獲利高成長，出貨遞延將放大股價波動 [5]\n\n建議以**月度出貨與 CSP 資本支出指引**作為追蹤訊號，分批布局而非追價。',
+    },
+    fomc: {
+      test: /(FOMC|降息|利率|聯準會|債)/i,
+      retrieved: 9, offer: false, ext: false,
+      srcIds: ['fomc', 'flow'],
+      full: '**6 月 FOMC 點陣圖中位數下修**，市場定價 2026 年內再降息三碼；券商解讀的分歧集中在核心服務通膨的黏性 [1]。\n\n- **利率路徑**：9 月與 12 月各降一碼的機率最高 [1]\n- **資金流向**：降息預期帶動資金回流科技與 AI 基礎設施 [2]\n\n對台股而言，**估值端壓力緩解**，但基本面仍取決於 AI 資本支出循環 [2]。',
+    },
+  }
+
+  state = {
+    route: 'search', collapsed: false,
+    draftQ: '', q: '', market: 'ALL', view: 'list', sort: 'relevance', sortOpen: false,
+    openId: null,
+    convos: [{ id: 'c1', title: 'AI 伺服器液冷供應鏈受惠股' }, { id: 'c2', title: 'FOMC 降息路徑與債市影響' }],
+    activeConvo: null, turns: [], draftAsk: '', busy: false,
+    drawerOpen: false, drawerTurnId: null,
+    hover: null, toast: '', copiedId: null,
+  }
+
+  _seq = 1
+  _timers = []
+  _mem = {}
+  _comp = false
+
+  componentDidMount() {
+    this._esc = (e) => {
+      if (e.key !== 'Escape') return
+      if (this.state.openId) this.setState({ openId: null })
+      else if (this.state.drawerOpen) this.setState({ drawerOpen: false })
+      else if (this.state.sortOpen) this.setState({ sortOpen: false })
+      if (this.state.hover) this.setState({ hover: null })
+    }
+    document.addEventListener('keydown', this._esc)
+  }
+  componentWillUnmount() {
+    document.removeEventListener('keydown', this._esc)
+    this._timers.forEach(clearTimeout)
+    if (this._iv) clearInterval(this._iv)
+    if (this._gv) clearInterval(this._gv)
+  }
+  t(fn, ms) { const id = setTimeout(fn, ms); this._timers.push(id); return id }
+  showToast(msg) {
+    this.setState({ toast: msg })
+    clearTimeout(this._tt)
+    this._tt = setTimeout(() => this.setState({ toast: '' }), 1900)
+  }
+
+  // ── 小工具 ──
+  tintStyle(m) {
+    const c = (this.M[m] || { c: '#75808A' }).c
+    return `display:inline-flex;align-items:center;gap:6px;background:color-mix(in srgb, ${c} 10%, white);color:${c};border-radius:999px;padding:3px 10px;font-size:11.5px;font-weight:500;white-space:nowrap;`
+  }
+  sv(items, size, extra) {
+    const h = React.createElement
+    return h('svg', Object.assign({ width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }, extra || {}),
+      ...items.map((it, i) => Array.isArray(it) ? h('circle', { key: i, cx: it[0], cy: it[1], r: it[2] }) : h('path', { key: i, d: it })))
+  }
+  hl(text, tokens) {
+    const h = React.createElement
+    if (!tokens.length) return text
+    let parts = [text]
+    tokens.forEach(tok => {
+      const next = []
+      parts.forEach(p => {
+        if (typeof p !== 'string') { next.push(p); return }
+        const pieces = p.split(tok)
+        pieces.forEach((piece, i) => {
+          if (i > 0) next.push(h('mark', { key: `${tok}-${i}-${next.length}` }, tok))
+          if (piece) next.push(piece)
+        })
+      })
+      parts = next
+    })
+    return parts
+  }
+
+  // ── 檢索 ──
+  filteredRows() {
+    const { q, market, sort } = this.state
+    const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    let rows = this.DATA.filter(r => market === 'ALL' || r.m === market)
+    if (tokens.length) {
+      rows = rows.filter(r => {
+        const hay = (r.title + r.tags + r.hit + r.snip).toLowerCase()
+        return tokens.some(t => hay.includes(t))
+      })
+    }
+    const byDate = (a, b) => b.date.localeCompare(a.date)
+    if (tokens.length && sort === 'relevance') rows = [...rows].sort((a, b) => b.rel - a.rel)
+    else rows = [...rows].sort(byDate)
+    return rows
+  }
+  submitSearch(v) {
+    clearTimeout(this._deb)
+    this.setState({ q: v.trim(), sortOpen: false })
+  }
+  enrichRow(r, searchMode, tokens, latestId) {
+    const open = () => this.setState({ openId: r.id, hover: null })
+    return {
+      title: r.title, marketLabel: (this.M[r.m] || {}).l || r.m,
+      badgeStyle: this.tintStyle(r.m),
+      badgeDot: `width:6px;height:6px;border-radius:50%;background:currentColor;opacity:0.9;`,
+      tags: r.tags, latest: r.id === latestId,
+      snippetNodes: searchMode ? this.hl(r.snip, tokens) : r.sum,
+      showScore: searchMode, scorePct: searchMode ? r.rel + '%' : '—',
+      scoreFill: `display:block;height:100%;border-radius:999px;background:var(--pk);width:${r.rel}%;transition:width 340ms cubic-bezier(0.22,1,0.36,1);`,
+      meta: `${r.src} · ${r.date.slice(5)}`, date: r.date, source: r.src,
+      open, key: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() } },
+    }
+  }
+
+  // ── 問答 ──
+  pickScript(q) {
+    if (this.SCRIPTS.risk.test.test(q)) return this.SCRIPTS.risk
+    if (this.SCRIPTS.fomc.test.test(q)) return this.SCRIPTS.fomc
+    if (this.SCRIPTS.main.test.test(q)) return this.SCRIPTS.main
+    return null
+  }
+  updTurn(id, patch) {
+    this.setState(s => ({ turns: s.turns.map(t => t.id === id ? Object.assign({}, t, patch) : t) }))
+  }
+  updReport(id, patch) {
+    this.setState(s => ({ turns: s.turns.map(t => t.id === id ? Object.assign({}, t, { report: Object.assign({}, t.report, patch) }) : t) }))
+  }
+  scrollFlow(force) {
+    const el = document.getElementById('proto-ask-flow')
+    if (!el) return
+    if (force || el.scrollHeight - el.scrollTop - el.clientHeight < 180) el.scrollTop = el.scrollHeight
+  }
+  submitAskText(q) {
+    if (!q || this.state.busy) return
+    const script = this.pickScript(q)
+    const id = 't' + (this._seq++)
+    const turn = {
+      id, q, phase: 'thinking', stageIdx: 0, stepsOpen: false, answer: '',
+      script, feedback: null, startedAt: Date.now(), thinkSec: 0,
+      report: { status: 'idle', pct: 0, stage: '' },
+    }
+    this.setState(s => ({ turns: [...s.turns, turn], draftAsk: '', busy: true }), () => this.scrollFlow(true))
+    if (!script) {
+      this.t(() => { this.updTurn(id, { phase: 'notice' }); this.setState({ busy: false }) }, 1000)
+      return
+    }
+    this.t(() => this.updTurn(id, { stageIdx: 1 }), 450)
+    this.t(() => this.updTurn(id, { stageIdx: 2 }), 950)
+    this.t(() => {
+      this.updTurn(id, { stageIdx: 3, phase: 'streaming' })
+      let pos = 0
+      this._iv = setInterval(() => {
+        pos = Math.min(script.full.length, pos + 7)
+        this.updTurn(id, { answer: script.full.slice(0, pos) })
+        this.scrollFlow(false)
+        if (pos >= script.full.length) {
+          clearInterval(this._iv); this._iv = null
+          const sec = Math.max(1, Math.round((Date.now() - (this.state.turns.find(t => t.id === id) || {}).startedAt) / 1000))
+          this.updTurn(id, { phase: 'done', thinkSec: sec, report: { status: script.offer ? 'offered' : 'idle', pct: 0, stage: '' } })
+          this.setState({ busy: false }, () => this.scrollFlow(false))
+          if (!this.state.activeConvo) {
+            const cid = 'c' + Date.now()
+            this.setState(s => ({ activeConvo: cid, convos: [{ id: cid, title: q.slice(0, 16) }, ...s.convos] }))
+          }
+        }
+      }, 30)
+    }, 1450)
+  }
+  genReport(id) {
+    const turn = this.state.turns.find(t => t.id === id)
+    if (!turn) return
+    this.updReport(id, { status: 'generating', pct: 0, stage: '深度檢索 30 篇切塊…' })
+    this._gv = setInterval(() => {
+      const t = this.state.turns.find(x => x.id === id)
+      if (!t) { clearInterval(this._gv); return }
+      const pct = Math.min(100, t.report.pct + 2 + Math.round(Math.random() * 3))
+      const stage = pct < 30 ? '深度檢索 30 篇切塊…' : pct < 80 ? '撰寫章節與 KPI 卡片…' : '渲染品牌化 PDF…'
+      if (pct >= 100) {
+        clearInterval(this._gv); this._gv = null
+        this.updReport(id, { status: 'done', pct: 100, stage: '' })
+        this.showToast('深度研報已生成（原型示意）')
+        this.t(() => this.scrollFlow(false), 60)
+      } else this.updReport(id, { pct, stage })
+    }, 130)
+  }
+
+  // ── 對話切換 ──
+  cannedTurns(cid) {
+    const mk = (q, script, sec, reportDone) => ({
+      id: 't' + (this._seq++), q, phase: 'done', stageIdx: 3, stepsOpen: false,
+      answer: script.full, script, feedback: null, startedAt: 0, thinkSec: sec,
+      report: reportDone
+        ? { status: 'done', pct: 100, stage: '' }
+        : { status: script.offer ? 'offered' : 'idle', pct: 0, stage: '' },
+    })
+    if (cid === 'c1') return [mk('AI 伺服器液冷散熱的供應鏈受惠股有哪些？', this.SCRIPTS.main, 8, true)]
+    if (cid === 'c2') return [mk('FOMC 降息路徑對債市與台股的影響？', this.SCRIPTS.fomc, 5, false)]
+    return []
+  }
+  saveCur() {
+    if (this.state.activeConvo) this._mem[this.state.activeConvo] = this.state.turns
+  }
+  openConvo(cid) {
+    if (this.state.busy) return
+    this.saveCur()
+    const turns = this._mem[cid] || this.cannedTurns(cid)
+    this._mem[cid] = turns
+    this.setState({ route: 'ask', activeConvo: cid, turns, drawerOpen: false, hover: null, sortOpen: false })
+  }
+  deleteConvo(cid) {
+    delete this._mem[cid]
+    this.setState(s => ({
+      convos: s.convos.filter(c => c.id !== cid),
+      activeConvo: s.activeConvo === cid ? null : s.activeConvo,
+      turns: s.activeConvo === cid ? [] : s.turns,
+    }))
+    this.showToast('已刪除對話')
+  }
+
+  // ── 引註 ──
+  showCite(src, e) {
+    const r = e.currentTarget.getBoundingClientRect()
+    const above = r.bottom + 186 > window.innerHeight
+    const left = Math.max(8, Math.min(r.left - 16, window.innerWidth - 308))
+    this.setState({ hover: { src, above, left, top: above ? r.top - 8 : r.bottom + 8 } })
+  }
+  buildAnswer(turn) {
+    const h = React.createElement
+    const text = turn.answer
+    const streaming = turn.phase === 'streaming'
+    const srcMap = {}
+    ;(turn.script ? turn.script.srcIds : []).forEach((rid, i) => { srcMap[i + 1] = this.DATA.find(d => d.id === rid) })
+    let key = 0
+    const inline = (s) => {
+      const out = []
+      const re = /\*\*([^*]+)\*\*|\[(\d+)\]/g
+      let last = 0, m
+      while ((m = re.exec(s)) !== null) {
+        if (m.index > last) out.push(s.slice(last, m.index))
+        if (m[1] !== undefined) out.push(h('strong', { key: 'k' + (key++), style: { color: '#212B33', fontWeight: 700 } }, m[1]))
+        else {
+          const n = Number(m[2]); const src = srcMap[n]
+          if (src) out.push(h('button', {
+            key: 'k' + (key++), type: 'button',
+            style: { display: 'inline-block', background: '#F8F1E0', color: '#8A5A0F', border: 'none', borderRadius: 999, fontSize: 11.5, fontWeight: 700, padding: '0 7px', margin: '0 2px', cursor: 'pointer', verticalAlign: 'baseline', fontFamily: 'inherit', lineHeight: '18px' },
+            onClick: () => this.setState({ drawerOpen: true, drawerTurnId: turn.id, hover: null }),
+            onMouseEnter: (e) => this.showCite(src, e),
+            onMouseLeave: () => this.setState({ hover: null }),
+            onFocus: (e) => this.showCite(src, e),
+            onBlur: () => this.setState({ hover: null }),
+          }, String(n)))
+          else out.push(m[0])
+        }
+        last = re.lastIndex
+      }
+      if (last < s.length) out.push(s.slice(last))
+      return out
+    }
+    const blocks = text.split('\n\n').filter(b => b.trim() !== '')
+    const nodes = blocks.map((b, bi) => {
+      if (b.startsWith('### ')) return h('h3', { key: 'b' + bi, style: { fontFamily: 'var(--df)', fontWeight: 700, color: '#212B33', margin: '16px 0 8px', fontSize: 16 } }, inline(b.slice(4)))
+      const lines = b.split('\n')
+      if (lines.every(l => l.startsWith('- '))) {
+        return h('ul', { key: 'b' + bi, style: { margin: '0 0 12px', paddingLeft: 20 } },
+          ...lines.map((l, li) => h('li', { key: li, style: { marginBottom: li === lines.length - 1 ? 0 : 7 } }, inline(l.slice(2)))))
+      }
+      return h('p', { key: 'b' + bi, style: { margin: '0 0 12px' } }, inline(b))
+    })
+    if (streaming) nodes.push(h('span', { key: 'cursor', style: { display: 'inline-block', width: 7, height: '1em', marginLeft: 2, verticalAlign: 'text-bottom', background: '#8A5A0F', animation: 'pk-pulse 1s steps(2) infinite' } }))
+    return nodes
+  }
+
+  // ── renderVals ──
+  renderVals() {
+    const h = React.createElement
+    const s = this.state
+
+    // Tweaks 主題
+    const ink = this.props.ink ?? '#1E5175'
+    const mixI = (pct, base) => `color-mix(in srgb, ${ink} ${pct}%, ${base})`
+    const serifOn = (this.props.displayFont ?? '宋體標題') !== '全黑體'
+    const cool = (this.props.paper ?? '暖紙白') === '冷調灰白'
+    const nWarm = { canvas: '#F7F6F2', sidebar: '#FBFAF6', border: '#E7E4DC', border2: '#E0DDD4', track: '#ECEAE3', div: '#EFEDE7', weak: '#F3F1EB', group: '#FAF9F5', frame: '#D9D6CD' }
+    const nCold = { canvas: '#F5F6F8', sidebar: '#FAFBFC', border: '#E2E5EA', border2: '#DCE0E6', track: '#E8EAEE', div: '#ECEEF1', weak: '#F0F2F5', group: '#F7F8FA', frame: '#D5D9DF' }
+    const n = cool ? nCold : nWarm
+    const themeVars = [
+      `--pk: ${ink}`, `--pk-deep: ${mixI(72, '#000')}`, `--pk-hover: ${mixI(78, '#000')}`,
+      `--pk-tint: ${mixI(9, '#fff')}`, `--pk-line: ${mixI(18, '#fff')}`, `--pk-ring: ${mixI(10, 'transparent')}`,
+      `--df: ${serifOn ? "'Noto Serif TC', Georgia, serif" : "'Noto Sans TC', 'PingFang TC', sans-serif"}`,
+      `--n-canvas: ${n.canvas}`, `--n-sidebar: ${n.sidebar}`, `--n-border: ${n.border}`, `--n-border2: ${n.border2}`,
+      `--n-track: ${n.track}`, `--n-div: ${n.div}`, `--n-weak: ${n.weak}`, `--n-group: ${n.group}`, `--n-frame: ${n.frame}`,
+    ].join('; ')
+
+    // 導覽
+    const ICON = {
+      search: [['10', '10', '7'], 'M21 21l-6 -6'],
+      ask: ['M8 9h8', 'M8 13h5', 'M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z'],
+      monitor: ['M3 12h4l3 8l4 -16l3 8h4'],
+    }
+    const navItems = [
+      { key: 'search', label: '檢索' }, { key: 'ask', label: '問答' }, { key: 'monitor', label: '監控' },
+    ].map(it => {
+      const active = s.route === it.key
+      return {
+        label: it.label,
+        icon: this.sv(ICON[it.key], 19, active ? { style: { color: 'var(--pk)' } } : null),
+        go: () => this.setState({ route: it.key, sortOpen: false, hover: null }),
+        rowStyle: `position:relative;display:flex;align-items:center;gap:10px;padding:8px 10px 8px 12px;border-radius:8px;font-size:13.5px;border:none;cursor:pointer;width:100%;text-align:left;${active ? 'background:var(--pk-tint);color:var(--pk-deep);font-weight:600;' : 'background:none;color:#40525F;'}`,
+        barStyle: active ? 'position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--pk);' : 'display:none;',
+        miniStyle: `display:flex;align-items:center;justify-content:center;padding:8px 9px;border-radius:10px;min-width:44px;border:none;cursor:pointer;${active ? 'background:var(--pk-tint);color:var(--pk);' : 'background:none;color:#6E7E89;'}`,
+      }
+    })
+
+    const convoRows = s.convos.map(cv => ({
+      title: cv.title,
+      open: () => this.openConvo(cv.id),
+      del: () => this.deleteConvo(cv.id),
+      itemStyle: `flex:1;min-width:0;padding:7px 10px;border:none;background:none;border-radius:8px;font-size:13px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${cv.id === s.activeConvo ? 'background:var(--pk-tint);color:var(--pk-deep);font-weight:600;' : 'color:#40525F;'}`,
+    }))
+
+    // 檢索衍生
+    const heroOn = s.q.trim() === '' && s.market === 'ALL'
+    const tokens = s.q.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    const searchMode = tokens.length > 0
+    const rows = this.filteredRows()
+    const latestId = rows.length ? [...rows].sort((a, b) => b.date.localeCompare(a.date))[0].id : null
+    const enriched = rows.map(r => this.enrichRow(r, searchMode, tokens, latestId))
+    const groupMap = {}
+    rows.forEach((r, i) => {
+      const k = r.date.slice(0, 7)
+      if (!groupMap[k]) groupMap[k] = { title: `${k.slice(0, 4)} 年 ${Number(k.slice(5))} 月`, count: 0, rows: [] }
+      groupMap[k].count++
+      groupMap[k].rows.push(enriched[i])
+    })
+    const groups = Object.keys(groupMap).sort().reverse().map(k => groupMap[k])
+    const counts = { ALL: this.DATA.length }
+    this.DATA.forEach(r => { counts[r.m] = (counts[r.m] || 0) + 1 })
+    const marketChips = ['ALL', 'TW', 'US', 'WTX', 'MACRO', 'GLOBAL'].map(code => {
+      const active = s.market === code
+      const label = (code === 'ALL' ? '全部' : this.M[code].l) + ' ' + counts[code]
+      return {
+        label, active,
+        pick: () => this.setState({ market: code }),
+        style: `display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:5px 13px;font-size:12.5px;cursor:pointer;${active ? 'border:1px solid var(--pk);background:var(--pk-tint);color:var(--pk-deep);font-weight:600;' : 'border:1px solid var(--n-border2);background:#FFFFFF;color:#40525F;'}`,
+        dotStyle: `width:7px;height:7px;border-radius:50%;flex:none;background:${code === 'ALL' ? '#75808A' : this.M[code].c};`,
+      }
+    })
+    const sortLabel = !searchMode || s.sort === 'latest' ? '最新優先' : '綜合相關度'
+    const sortOptions = [
+      { v: 'relevance', label: '綜合相關度' }, { v: 'latest', label: '最新優先' },
+    ].map(o => ({
+      label: o.label,
+      pick: () => this.setState({ sort: o.v, sortOpen: false }),
+      style: `display:block;width:100%;text-align:left;border:none;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer;${(searchMode ? s.sort : 'latest') === o.v ? 'background:var(--pk-tint);color:var(--pk-deep);font-weight:600;' : 'background:none;color:#40525F;'}`,
+    }))
+    const emptyOn = rows.length === 0
+    const resultsMeta = searchMode
+      ? `「${s.q.trim()}」 — 找到 ${rows.length} 篇研報`
+      : heroOn ? `共 ${this.DATA.length} 篇示意資料` : `${(this.M[s.market] || { l: '全部' }).l} — ${rows.length} 篇`
+
+    // 問答衍生
+    const STEP_NAMES = ['理解問題', '檢索研報', '閱讀整理', '生成回答']
+    const turnRows = s.turns.map(t => {
+      const live = t.phase === 'thinking' || t.phase === 'streaming'
+      const srcCount = t.script ? t.script.srcIds.length + (t.script.ext ? 1 : 0) : 0
+      const actBase = 'display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:6px;cursor:pointer;'
+      const steps = STEP_NAMES.map((name, i) => {
+        const st = t.phase === 'done' || t.phase === 'notice' ? 'done' : i < t.stageIdx ? 'done' : i === t.stageIdx ? 'active' : 'pending'
+        return {
+          name,
+          icon: st === 'done' ? this.sv(['M5 12l5 5l9 -11'], 15, { style: { color: 'var(--pk)' } })
+            : st === 'active' ? this.sv(['M12 3a9 9 0 1 0 9 9'], 15, { style: { color: 'var(--pk)', animation: 'pk-spin 0.8s linear infinite' } })
+            : h('span', { style: { width: 7, height: 7, borderRadius: 999, border: '1.5px solid var(--n-border)', display: 'inline-block', margin: '0 4px' } }),
+          textStyle: st === 'pending' ? 'color:#9AA5AE;' : 'color:#40525F;',
+        }
+      })
+      return {
+        q: t.q,
+        isNotice: t.phase === 'notice',
+        noticeRetry: () => this.setState({ draftAsk: t.q }),
+        showThink: !!t.script && (t.stageIdx > 0 || live || t.phase === 'done'),
+        thinkIcon: live
+          ? this.sv(['M12 3a9 9 0 1 0 9 9'], 14, { style: { color: 'var(--pk)', animation: 'pk-spin 0.8s linear infinite' } })
+          : this.sv(['M5 12l5 5l9 -11'], 14, { style: { color: 'var(--pk)' } }),
+        thinkLabel: live
+          ? `思考中 · ${['理解問題', '檢索研報', '閱讀整理', '生成回答'][t.stageIdx]}…`
+          : `已思考 ${t.thinkSec} 秒 · 檢索 ${t.script ? t.script.retrieved : 0} 篇研報 · 引用 ${srcCount} 個來源`,
+        toggleSteps: () => this.updTurn(t.id, { stepsOpen: !t.stepsOpen }),
+        chevStyle: `transition:transform 180ms ease;${t.stepsOpen ? 'transform:rotate(180deg);' : ''}`,
+        stepsOpen: t.stepsOpen, steps,
+        hasAnswer: t.answer.length > 0,
+        answerNodes: this.buildAnswer(t),
+        showActions: t.phase === 'done',
+        like: () => this.updTurn(t.id, { feedback: t.feedback === 'like' ? null : 'like' }),
+        dislike: () => this.updTurn(t.id, { feedback: t.feedback === 'dislike' ? null : 'dislike' }),
+        likeStyle: actBase + (t.feedback === 'like' ? 'background:var(--pk-tint);border:1px solid var(--pk);color:var(--pk);' : 'background:#FFFFFF;border:1px solid var(--n-border2);color:#6E7E89;'),
+        dislikeStyle: actBase + (t.feedback === 'dislike' ? 'background:var(--pk-tint);border:1px solid var(--pk);color:var(--pk);' : 'background:#FFFFFF;border:1px solid var(--n-border2);color:#6E7E89;'),
+        copy: () => {
+          const plain = t.answer.replace(/\*\*/g, '').replace(/### /g, '')
+          if (navigator.clipboard) navigator.clipboard.writeText(plain)
+          this.setState({ copiedId: t.id }); this.showToast('已複製回答')
+          this.t(() => this.setState({ copiedId: null }), 1400)
+        },
+        copyTitle: s.copiedId === t.id ? '已複製' : '複製',
+        srcCount,
+        openDrawer: () => this.setState({ drawerOpen: true, drawerTurnId: t.id }),
+        showOffer: t.report.status === 'offered',
+        genReport: () => this.genReport(t.id),
+        declineReport: () => this.updReport(t.id, { status: 'declined' }),
+        showGen: t.report.status === 'generating',
+        genFill: `display:block;height:100%;border-radius:999px;background:#AE7415;width:${t.report.pct}%;transition:width 240ms ease;`,
+        genStage: `${t.report.stage} ${t.report.pct}%`,
+        showDone: t.report.status === 'done',
+        reportTitle: t.script && t.script.reportTitle ? t.script.reportTitle : '深度研報',
+        download: () => this.showToast('原型示意：實際版本將下載 PDF'),
+      }
+    })
+
+    // 抽屜
+    const dTurn = s.turns.find(t => t.id === s.drawerTurnId) || null
+    const dScript = dTurn && dTurn.script ? dTurn.script : null
+    const drawerSources = (dScript ? dScript.srcIds : []).map((rid, i) => {
+      const r = this.DATA.find(d => d.id === rid)
+      return {
+        n: i + 1, title: r.title, source: r.src, date: r.date.slice(5),
+        marketLabel: this.M[r.m].l, mktStyle: this.tintStyle(r.m).replace('padding:3px 10px', 'padding:1px 8px').replace('font-size:11.5px', 'font-size:11px'),
+        open: () => this.setState({ openId: r.id }),
+      }
+    })
+
+    // Modal
+    const mr = s.openId ? this.DATA.find(d => d.id === s.openId) : null
+
+    return {
+      themeVars, zero: 0, one: 1,
+      // 側欄
+      railStyle: `flex:none;height:100%;width:${s.collapsed ? 60 : 272}px;background:var(--n-sidebar);border-right:1px solid var(--n-border);overflow:hidden;transition:width 240ms cubic-bezier(0.22,1,0.36,1);`,
+      expanded: !s.collapsed, collapsed: s.collapsed,
+      collapseRail: () => this.setState({ collapsed: true }),
+      expandRail: () => this.setState({ collapsed: false }),
+      navItems, convoRows,
+      newConvo: () => { if (!this.state.busy) { this.saveCur(); this.setState({ route: 'ask', activeConvo: null, turns: [], drawerOpen: false }) } },
+      // 檢索
+      isSearch: s.route === 'search', isAsk: s.route === 'ask', isMonitor: s.route === 'monitor',
+      goSearch: () => this.setState({ route: 'search' }),
+      goAsk: () => this.setState({ route: 'ask' }),
+      searchInnerStyle: `max-width:1180px;margin:0 auto;padding:${heroOn ? '72px' : '20px'} 24px 80px;`,
+      heroOn, toolbarOn: !heroOn,
+      controlsStyle: `display:flex;flex-direction:column;gap:12px;margin-bottom:8px;${heroOn ? 'align-items:center;' : ''}`,
+      searchBoxStyle: heroOn
+        ? 'display:flex;align-items:center;gap:12px;background:#FFFFFF;border:1.5px solid var(--pk);border-radius:16px;box-shadow:0 0 0 4px var(--pk-ring), 0 8px 24px rgba(22,42,58,0.06);padding:6px 6px 6px 20px;width:min(720px,100%);margin:0 auto;'
+        : 'display:flex;align-items:center;gap:8px;background:#FFFFFF;border:1px solid var(--n-border2);border-radius:12px;padding:10px 16px;box-shadow:0 1px 3px rgba(22,42,58,0.05);flex:1;min-width:0;',
+      searchInputStyle: `flex:1;min-width:0;border:none;outline:none;background:none;color:#212B33;font-family:inherit;font-size:${heroOn ? '15px' : '14px'};${heroOn ? 'padding:11px 0;' : ''}`,
+      searchPlaceholder: heroOn ? '搜尋產業、公司、事件…（試試「散熱」）' : '搜尋主題、公司、事件…',
+      draftQ: s.draftQ, hasDraftQ: s.draftQ.length > 0,
+      onDraftQ: (e) => {
+        const v = e.target.value
+        this.setState({ draftQ: v })
+        if (!this._comp) { clearTimeout(this._deb); this._deb = setTimeout(() => this.submitSearch(v), 420) }
+      },
+      onQKey: (e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); this.submitSearch(this.state.draftQ) } },
+      onCompStart: () => { this._comp = true },
+      onCompEnd: (e) => { this._comp = false; const v = e.target.value; clearTimeout(this._deb); this._deb = setTimeout(() => this.submitSearch(v), 420) },
+      clearQ: () => { clearTimeout(this._deb); this.setState({ draftQ: '', q: '' }) },
+      submitQ: () => this.submitSearch(this.state.draftQ),
+      tryChips: ['散熱', 'FOMC 降息', '高股息 ETF'].map(label => ({ label, fire: () => this.setState({ draftQ: label }, () => this.submitSearch(label)) })),
+      chipRowStyle: `display:flex;flex-wrap:wrap;gap:7px;width:100%;${heroOn ? 'justify-content:center;margin-top:20px;' : ''}`,
+      marketChips,
+      toggleSort: () => this.setState({ sortOpen: !s.sortOpen }),
+      sortOpen: s.sortOpen, sortLabel, sortOptions,
+      setListView: () => this.setState({ view: 'list' }),
+      setTableView: () => this.setState({ view: 'table' }),
+      listBtnStyle: `border:none;width:34px;height:32px;border-radius:8px;cursor:pointer;font-size:15px;${s.view === 'list' ? 'background:#FFFFFF;color:var(--pk-deep);box-shadow:0 1px 3px rgba(22,42,58,0.1);' : 'background:none;color:#6E7E89;'}`,
+      tableBtnStyle: `border:none;width:34px;height:32px;border-radius:8px;cursor:pointer;font-size:15px;${s.view === 'table' ? 'background:#FFFFFF;color:var(--pk-deep);box-shadow:0 1px 3px rgba(22,42,58,0.1);' : 'background:none;color:#6E7E89;'}`,
+      emptyOn, emptyTitle: searchMode ? `找不到「${s.q.trim()}」的相關研報` : '沒有符合條件的研報',
+      clearFiltersFn: () => this.setState({ market: 'ALL' }),
+      browseAllFn: () => this.setState({ draftQ: '', q: '', market: 'ALL' }),
+      resultsOn: !emptyOn, resultsMeta,
+      listViewOn: s.view === 'list', tableViewOn: s.view === 'table', searchModeOn: searchMode,
+      groups, flatRows: enriched,
+      // 問答
+      flowStyle: `flex:1;overflow-y:auto;padding:20px 24px 8px;${s.turns.length === 0 ? 'display:flex;flex-direction:column;justify-content:center;' : ''}`,
+      onFlowScroll: () => { if (this.state.hover) this.setState({ hover: null }) },
+      askEmptyOn: s.turns.length === 0,
+      draftAsk: s.draftAsk,
+      onDraftAsk: (e) => this.setState({ draftAsk: e.target.value }),
+      onAskKey: (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); this.submitAskText(this.state.draftAsk.trim()) } },
+      submitAsk: () => this.submitAskText(s.draftAsk.trim()),
+      sendStyle: `width:40px;height:40px;flex:none;border-radius:999px;border:none;background:var(--pk);color:#FFFFFF;display:flex;align-items:center;justify-content:center;${s.busy ? 'opacity:0.5;cursor:default;' : 'cursor:pointer;'}`,
+      askTryChips: ['AI 伺服器液冷散熱的供應鏈受惠股有哪些？', 'FOMC 降息路徑對台股的影響？'].map(label => ({ label, fire: () => this.submitAskText(label) })),
+      turnRows,
+      composerOn: s.turns.length > 0,
+      // 抽屜
+      drawerStyle: `flex:none;height:100%;background:#FFFFFF;display:flex;flex-direction:column;overflow:hidden;transition:width 240ms cubic-bezier(0.22,1,0.36,1);${s.drawerOpen && dTurn ? 'width:340px;border-left:1px solid var(--n-border);' : 'width:0;border-left:none;'}`,
+      drawerCount: dScript ? dScript.srcIds.length + (dScript.ext ? 1 : 0) : 0,
+      drawerSrcCount: dScript ? dScript.srcIds.length : 0,
+      drawerSources, drawerHasExt: !!(dScript && dScript.ext), drawerExtN: dScript ? dScript.srcIds.length + 1 : 0,
+      closeDrawer: () => this.setState({ drawerOpen: false }),
+      // Modal
+      modalOn: !!mr,
+      modalTitle: mr ? mr.title : '', modalMarket: mr ? this.M[mr.m].l : '',
+      modalBadgeStyle: mr ? this.tintStyle(mr.m).replace('padding:3px 10px', 'padding:2px 10px') : '',
+      modalLatest: !!mr && mr.date >= '2026-06-27',
+      modalMeta: mr ? `${mr.src} · ${mr.date} · ${mr.tags}${searchMode && mr.rel ? ` · 相關度 ${mr.rel}%` : ''}` : '',
+      closeModal: () => this.setState({ openId: null }),
+      swallow: (e) => e.stopPropagation(),
+      modalOpenTab: () => this.showToast('原型示意：實際版本將在新分頁開啟 PDF'),
+      modalDownload: () => this.showToast('原型示意：實際版本將下載原始檔'),
+      // 引註預覽
+      citeCardOn: !!s.hover,
+      citeCardStyle: s.hover ? `position:fixed;z-index:70;width:300px;top:${s.hover.top}px;left:${s.hover.left}px;${s.hover.above ? 'transform:translateY(-100%);' : ''}display:block;background:#FFFFFF;border:1px solid var(--n-border);border-radius:12px;box-shadow:0 12px 32px rgba(22,42,58,0.16);padding:12px 14px;pointer-events:none;animation:pk-fade 160ms ease both;` : 'display:none;',
+      citeMktStyle: s.hover ? this.tintStyle(s.hover.src.m).replace('padding:3px 10px', 'padding:1px 8px').replace('font-size:11.5px', 'font-size:11px') : '',
+      citeMarket: s.hover ? this.M[s.hover.src.m].l : '',
+      citeDate: s.hover ? s.hover.src.date : '',
+      citeTitle: s.hover ? s.hover.src.title : '',
+      // Toast
+      toastOn: s.toast !== '', toastMsg: s.toast,
+    }
+  }
+}
+</script>
+</body>
+</html>

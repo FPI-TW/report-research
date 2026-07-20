@@ -1,0 +1,232 @@
+<!-- @dsCard group="檢索頁" -->
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>廷豐智能研報 — 檢索頁</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page">
+    <div class="inner" data-hero>
+
+      <!-- ── hero 起始態：品牌標記 → 標題 → 副標 ── -->
+      <div class="hero">
+        <div class="heroBg" aria-hidden="true"></div>
+        <!-- 品牌標記：墨青底 × 鎏金襯線「廷」（inline SVG，無外部資源、無 emoji） -->
+        <svg class="brandMark" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="廷豐智能研報">
+          <rect x="0" y="0" width="64" height="64" rx="16" fill="#163a54"/>
+          <rect x="1.25" y="1.25" width="61.5" height="61.5" rx="14.75" fill="none" stroke="#ae7415" stroke-width="1.5" opacity="0.55"/>
+          <text x="32" y="33" text-anchor="middle" dominant-baseline="central"
+                font-family="'Noto Serif TC', Georgia, serif" font-size="34" font-weight="700" fill="#c8912f">廷</text>
+        </svg>
+        <h1 class="heroTitle">廷豐智能研報</h1>
+        <p class="heroSub">收錄 5,094 篇券商研報 — 語意檢索 · 智能問答 · 深度研報</p>
+      </div>
+
+      <!-- ── 控制列：大搜尋框（無「搜尋」按鈕）＋ 市場篩選 chips ── -->
+      <div class="controls">
+        <div class="searchRow">
+          <div class="bar lg">
+            <span class="icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+            </span>
+            <input class="input" type="text" placeholder="搜尋產業、公司、事件…" aria-label="搜尋研報">
+          </div>
+        </div>
+
+        <div class="marketBar" role="group" aria-label="市場篩選">
+          <button class="chip active"><span class="dot" style="background:#75808a"></span>全部 5,094</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-TW)"></span>台股 2,860</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-US)"></span>美股 1,120</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-HK)"></span>港股 402</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-CN)"></span>陸股 355</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-WTX)"></span>台指期 128</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-FX)"></span>外匯 96</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-MACRO)"></span>總經 88</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-GLOBAL)"></span>全球 30</button>
+          <button class="chip"><span class="dot" style="background:var(--mkt-CRYPTO)"></span>加密 15</button>
+        </div>
+      </div>
+
+      <!-- ── 「最新入庫」區段標頭 ── -->
+      <div class="sectionHead">
+        <span class="sectionTitle">最新入庫</span>
+        <span class="sectionMeta">全部研報 — 共 5,094 篇</span>
+      </div>
+
+      <!-- ── 結果清單（單一白底容器，內含月份群組與列） ── -->
+      <div class="cardsWrap">
+        <section>
+          <div class="monthHeader">
+            <span class="monthPill">
+              <span class="monthTitle">2026 年 7 月</span>
+              <span class="monthSep">·</span>
+              <span class="monthCount">6 篇</span>
+            </span>
+          </div>
+          <div class="grid">
+
+            <!-- 卡片 1｜TW 台股 -->
+            <article class="card">
+              <div class="chipCol">
+                <span class="badge" style="background:color-mix(in srgb, var(--mkt-TW) 10%, #fff); color:var(--mkt-TW)">
+                  <span class="badgeDot"></span>台股
+                </span>
+              </div>
+              <div class="main">
+                <div class="titleRow">
+                  <span class="title">AI 伺服器液冷散熱滲透加速，2026 出貨量上修</span>
+                  <span class="latest">最新</span>
+                </div>
+                <div class="tags">股票 · 2308 · 3017</div>
+                <div class="summary">資料中心 GPU 功耗續攀，液冷方案由高階伺服器向主流機種擴散。預估 2026 台系散熱模組廠營收年增逾三成，維持產業「加碼」評等。</div>
+              </div>
+              <div class="right">
+                <span class="scoreRow">
+                  <span class="scoreTrack"><span class="scoreFill" style="width:92%"></span></span>
+                  <span class="scoreNum">92%</span>
+                </span>
+                <span class="hits">14 段命中</span>
+                <span class="meta">元大投顧 · 2026-07-15</span>
+                <span class="cta">查看全文 ›</span>
+              </div>
+            </article>
+
+            <!-- 卡片 2｜US 美股 -->
+            <article class="card">
+              <div class="chipCol">
+                <span class="badge" style="background:color-mix(in srgb, var(--mkt-US) 10%, #fff); color:var(--mkt-US)">
+                  <span class="badgeDot"></span>美股
+                </span>
+              </div>
+              <div class="main">
+                <div class="titleRow">
+                  <span class="title">Nvidia：GB300 量產順利，資料中心動能延續至 2027</span>
+                </div>
+                <div class="tags">股票 · NVDA</div>
+                <div class="summary">需求能見度延伸至明年上半年，供應鏈瓶頸逐步緩解。上修目標價至 210 美元，重申「優於大盤」評等。</div>
+              </div>
+              <div class="right">
+                <span class="scoreRow">
+                  <span class="scoreTrack"><span class="scoreFill" style="width:88%"></span></span>
+                  <span class="scoreNum">88%</span>
+                </span>
+                <span class="hits">11 段命中</span>
+                <span class="meta">摩根士丹利 · 2026-07-14</span>
+                <span class="cta">查看全文 ›</span>
+              </div>
+            </article>
+
+            <!-- 卡片 3｜HK 港股 -->
+            <article class="card">
+              <div class="chipCol">
+                <span class="badge" style="background:color-mix(in srgb, var(--mkt-HK) 10%, #fff); color:var(--mkt-HK)">
+                  <span class="badgeDot"></span>港股
+                </span>
+              </div>
+              <div class="main">
+                <div class="titleRow">
+                  <span class="title">騰訊控股：遊戲與廣告雙引擎回溫，估值仍具吸引力</span>
+                </div>
+                <div class="tags">股票 · 0700</div>
+                <div class="summary">本土遊戲版號審批常態化，廣告受惠 AI 推薦提升 eCPM。維持「買進」評等，看好雲業務利潤率持續改善。</div>
+              </div>
+              <div class="right">
+                <span class="scoreRow">
+                  <span class="scoreTrack"><span class="scoreFill" style="width:85%"></span></span>
+                  <span class="scoreNum">85%</span>
+                </span>
+                <span class="hits">9 段命中</span>
+                <span class="meta">里昂證券 · 2026-07-12</span>
+                <span class="cta">查看全文 ›</span>
+              </div>
+            </article>
+
+            <!-- 卡片 4｜CN 陸股 -->
+            <article class="card">
+              <div class="chipCol">
+                <span class="badge" style="background:color-mix(in srgb, var(--mkt-CN) 10%, #fff); color:var(--mkt-CN)">
+                  <span class="badgeDot"></span>陸股
+                </span>
+              </div>
+              <div class="main">
+                <div class="titleRow">
+                  <span class="title">半導體設備國產化提速，看好本土供應鏈重估</span>
+                </div>
+                <div class="tags">股票 · 指數</div>
+                <div class="summary">政策加碼與資本開支回升共振，設備與零組件在地化率快速拉升。首選具驗證進度領先的設備龍頭。</div>
+              </div>
+              <div class="right">
+                <span class="scoreRow">
+                  <span class="scoreTrack"><span class="scoreFill" style="width:81%"></span></span>
+                  <span class="scoreNum">81%</span>
+                </span>
+                <span class="hits">8 段命中</span>
+                <span class="meta">中金公司 · 2026-07-11</span>
+                <span class="cta">查看全文 ›</span>
+              </div>
+            </article>
+
+            <!-- 卡片 5｜TW 台股 -->
+            <article class="card">
+              <div class="chipCol">
+                <span class="badge" style="background:color-mix(in srgb, var(--mkt-TW) 10%, #fff); color:var(--mkt-TW)">
+                  <span class="badgeDot"></span>台股
+                </span>
+              </div>
+              <div class="main">
+                <div class="titleRow">
+                  <span class="title">台積電：先進封裝 CoWoS 產能倍增，法說會前瞻正向</span>
+                </div>
+                <div class="tags">股票 · 2330</div>
+                <div class="summary">3nm 需求強勁、先進封裝供不應求，稼動率維持高檔。預期毛利率優於市場共識，維持「買進」評等。</div>
+              </div>
+              <div class="right">
+                <span class="scoreRow">
+                  <span class="scoreTrack"><span class="scoreFill" style="width:90%"></span></span>
+                  <span class="scoreNum">90%</span>
+                </span>
+                <span class="hits">13 段命中</span>
+                <span class="meta">群益投顧 · 2026-07-10</span>
+                <span class="cta">查看全文 ›</span>
+              </div>
+            </article>
+
+            <!-- 卡片 6｜WTX 台指期 -->
+            <article class="card">
+              <div class="chipCol">
+                <span class="badge" style="background:color-mix(in srgb, var(--mkt-WTX) 10%, #fff); color:var(--mkt-WTX)">
+                  <span class="badgeDot"></span>台指期
+                </span>
+              </div>
+              <div class="main">
+                <div class="titleRow">
+                  <span class="title">台指期週報：外資期貨淨多單回補，區間震盪偏多</span>
+                </div>
+                <div class="tags">期貨 · TXF</div>
+                <div class="summary">三大法人期現貨同步偏多，選擇權 Put/Call 比率轉強。短線以區間操作為主，回檔逢低布局。</div>
+              </div>
+              <div class="right">
+                <span class="scoreRow">
+                  <span class="scoreTrack"><span class="scoreFill" style="width:76%"></span></span>
+                  <span class="scoreNum">76%</span>
+                </span>
+                <span class="hits">6 段命中</span>
+                <span class="meta">凱基期貨 · 2026-07-09</span>
+                <span class="cta">查看全文 ›</span>
+              </div>
+            </article>
+
+          </div>
+        </section>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

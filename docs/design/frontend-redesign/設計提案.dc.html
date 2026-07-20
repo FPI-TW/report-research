@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700;900&amp;family=Noto+Sans+TC:wght@400;500;700&amp;display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #E8E9EB; }
+    a { color: var(--pk, #1E5175); text-decoration: none; }
+    a:hover { color: var(--pk-hover, #174260); }
+  </style>
+</helmet>
+
+<section style="padding: 48px 56px 120px; font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif; {{ themeVars }}">
+
+  <!-- ═══ 提案總覽 ═══ -->
+  <div style="max-width: 1060px; background: #FFFFFF; border: 1px solid var(--n-border2, #E0DDD4); border-radius: 16px; padding: 28px 32px; margin-bottom: 36px; box-shadow: 0 2px 8px rgba(22,42,58,0.05);">
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 14px;">
+      <img src="assets/logo.png" width="34" height="34" alt="">
+      <div>
+        <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 22px; color: var(--pk-deep, #163A54);">廷豐智能研報 — 介面重設計提案</div>
+        <div style="font-size: 12.5px; color: #75808A; margin-top: 2px;">v1 · 2026-07-09 · 方向確認後再改 frontend/ 程式</div>
+      </div>
+    </div>
+    <div style="font-size: 14px; line-height: 1.8; color: #40525F; max-width: 860px;">
+      核心語言：<strong style="color: var(--pk-deep, #163A54);">導航與操作用「墨青」，引用與研報用「鎏金」</strong>。銅錢 Logo 的金色不再攤在整個介面上，而是收斂為知識與來源的語意色——引註 [n]、深度研報、品牌標記；日常操作（按鈕、連結、選取態）改用更沉穩的墨青，畫面對比更清楚、盤中久看不膩。宋體（Noto Serif TC）保留給品牌字與報告標題，維持研究報告的印刷感；介面文字改 Noto Sans TC，跨平台渲染一致。
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px;">
+      <span style="background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px;">主色改墨青，金色降為語意色</span>
+      <span style="background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px;">首頁改為品牌起始畫面（檢索 / 問答一框切換）</span>
+      <span style="background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px;">結果改高密度列表，表格檢視保留</span>
+      <span style="background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px;">引註 [n] 增加 hover 來源預覽</span>
+      <span style="background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px;">Token 集中 tokens.css，元件只換樣式層</span>
+    </div>
+    <div style="font-size: 12.5px; color: #75808A; margin-top: 16px; border-top: 1px solid var(--n-div, #EFEDE7); padding-top: 12px;">
+      <a href="#1a">1a 墨青 × 鎏金（建議）</a> — 完整六畫面 ｜ <a href="#1b">1b 松墨 × 鎏金（替代主色）</a> — 首頁對照 ｜ 現況基準見「現況復刻 Current UI.dc.html」
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start; gap: 64px;">
+
+    <!-- ═══════════════════════ 1a 墨青 × 鎏金 ═══════════════════════ -->
+    <div id="1a" style="flex: none; display: flex; flex-direction: column; gap: 32px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: var(--pk-deep, #163A54); color: #fff; font-size: 12px; font-weight: 700; border-radius: 999px; padding: 4px 11px;">1a</span>
+        <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-size: 17px; font-weight: 700; color: var(--pk-deep, #163A54);">墨青 × 鎏金</span>
+        <span style="font-size: 12px; color: #75808A;">建議方向 — 沉穩金融藍為操作主色，金色回歸品牌與引用</span>
+      </div>
+
+      <!-- ── 設計 Token 一覽 ── -->
+      <div data-screen-label="1a-Tokens" style="width: 1440px; background: #FFFFFF; border: 1px solid var(--n-border2, #E0DDD4); border-radius: 16px; padding: 32px 36px; box-shadow: 0 2px 8px rgba(22,42,58,0.05);">
+        <div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 24px;">
+          <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 18px; color: var(--pk-deep, #163A54);">設計 Token</span>
+          <span style="font-size: 12.5px; color: #75808A;">集中於 frontend/src/styles/tokens.css，元件一律引用變數</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 36px;">
+          <!-- 左：色彩 -->
+          <div>
+            <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin-bottom: 12px;">色彩 — 基調</div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: var(--n-canvas, #F7F6F2);"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">canvas</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#F7F6F2</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: #FFFFFF; border-bottom: 1px solid var(--n-weak, #F3F1EB);"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">surface</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#FFFFFF</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: var(--n-sidebar, #FBFAF6);"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">sidebar</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#FBFAF6</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: var(--n-border, #E7E4DC);"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">border</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#E7E4DC</div></div></div>
+            </div>
+            <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin: 20px 0 12px;">色彩 — 墨青（操作）</div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: var(--pk-deep, #163A54);"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">ink-deep</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#163A54</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: var(--pk, #1E5175);"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">ink（主按鈕/連結）</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#1E5175</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: var(--pk-hover, #174260);"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">ink-hover</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#174260</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: var(--pk-tint, #EAF1F6);"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">ink-tint（選取態）</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#EAF1F6</div></div></div>
+            </div>
+            <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin: 20px 0 12px;">色彩 — 鎏金（引用 · 研報 · 品牌）</div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: #AE7415;"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">gold（Logo 原色）</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#AE7415</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: #8A5A0F;"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">gold-text</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#8A5A0F</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: #F8F1E0;"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">gold-tint（引註底）</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#F8F1E0</div></div></div>
+              <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; overflow: hidden;"><div style="height: 44px; background: #FAEDC4;"></div><div style="padding: 7px 10px;"><div style="font-size: 11.5px; font-weight: 700; color: #212B33;">mark（命中高亮）</div><div style="font-size: 11px; color: #75808A; font-family: ui-monospace, Menlo, monospace;">#FAEDC4</div></div></div>
+            </div>
+            <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin: 20px 0 12px;">文字階層</div>
+            <div style="display: flex; gap: 18px; align-items: baseline;">
+              <span style="font-size: 14px; font-weight: 700; color: #212B33;">text-1 #212B33</span>
+              <span style="font-size: 14px; color: #40525F;">text-2 #40525F</span>
+              <span style="font-size: 14px; color: #6E7E89;">text-3 #6E7E89</span>
+              <span style="font-size: 14px; color: #9AA5AE;">text-4 #9AA5AE</span>
+            </div>
+            <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin: 20px 0 12px;">市場語意色（降彩度重校，chip 改淡底深字）</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #237A46;"></span>台股 #237A46</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(46,95,163,0.1); color: #2E5FA3; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #2E5FA3;"></span>美股 #2E5FA3</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(178,106,11,0.1); color: #B26A0B; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #B26A0B;"></span>港股 #B26A0B</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(176,58,48,0.1); color: #B03A30; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #B03A30;"></span>陸股 #B03A30</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(110,72,168,0.1); color: #6E48A8; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #6E48A8;"></span>台指期 #6E48A8</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(14,125,116,0.1); color: #0E7D74; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #0E7D74;"></span>外匯 #0E7D74</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(160,48,82,0.1); color: #A03052; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #A03052;"></span>總經 #A03052</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(74,79,160,0.1); color: #4A4FA0; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #4A4FA0;"></span>全球 #4A4FA0</span>
+              <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(125,98,52,0.1); color: #7D6234; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #7D6234;"></span>加密 #7D6234</span>
+            </div>
+          </div>
+
+          <!-- 右：字體 / 字級 / 間距 / 無障礙 -->
+          <div>
+            <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin-bottom: 12px;">字體</div>
+            <div style="border: 1px solid var(--n-div, #EFEDE7); border-radius: 12px; padding: 16px 18px;">
+              <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 21px; color: var(--pk-deep, #163A54); line-height: 1.4;">奇鋐(3017)—AI 散熱獨家受惠，液冷放量在即</div>
+              <div style="font-size: 11.5px; color: #9AA5AE; margin: 4px 0 14px;">Noto Serif TC 700 — 品牌字、頁面標題、報告標題</div>
+              <div style="font-size: 14px; color: #40525F; line-height: 1.75;">受惠 AI 伺服器需求，公司 3D VC 與液冷板出貨大幅成長，多家券商同步上修目標價。</div>
+              <div style="font-size: 11.5px; color: #9AA5AE; margin: 4px 0 14px;">Noto Sans TC 400/500/700 — 介面與內文</div>
+              <div style="font-size: 14px; color: #212B33; font-variant-numeric: tabular-nums; font-weight: 500;">2026-06-27 · 相關度 94% · 15,234 篇</div>
+              <div style="font-size: 11.5px; color: #9AA5AE; margin-top: 4px;">數字一律 tabular-nums，欄位對齊不跳動</div>
+            </div>
+            <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin: 20px 0 12px;">字級階層</div>
+            <div style="display: flex; flex-direction: column; gap: 6px; font-variant-numeric: tabular-nums;">
+              <div style="display: flex; align-items: baseline; gap: 14px;"><span style="width: 130px; font-size: 11.5px; color: #9AA5AE; font-family: ui-monospace, Menlo, monospace;">display / 30</span><span style="font-family: 'Noto Serif TC', serif; font-weight: 700; font-size: 30px; color: var(--pk-deep, #163A54);">廷豐智能研報</span></div>
+              <div style="display: flex; align-items: baseline; gap: 14px;"><span style="width: 130px; font-size: 11.5px; color: #9AA5AE; font-family: ui-monospace, Menlo, monospace;">title / 18</span><span style="font-family: 'Noto Serif TC', serif; font-weight: 700; font-size: 18px; color: #212B33;">區塊標題</span></div>
+              <div style="display: flex; align-items: baseline; gap: 14px;"><span style="width: 130px; font-size: 11.5px; color: #9AA5AE; font-family: ui-monospace, Menlo, monospace;">report-title / 15</span><span style="font-family: 'Noto Serif TC', serif; font-weight: 700; font-size: 15px; color: #212B33;">研報標題（列表）</span></div>
+              <div style="display: flex; align-items: baseline; gap: 14px;"><span style="width: 130px; font-size: 11.5px; color: #9AA5AE; font-family: ui-monospace, Menlo, monospace;">body / 14–15</span><span style="font-size: 14.5px; color: #40525F;">內文與回答本文</span></div>
+              <div style="display: flex; align-items: baseline; gap: 14px;"><span style="width: 130px; font-size: 11.5px; color: #9AA5AE; font-family: ui-monospace, Menlo, monospace;">meta / 12.5</span><span style="font-size: 12.5px; color: #6E7E89;">來源 · 日期 · 說明文字</span></div>
+              <div style="display: flex; align-items: baseline; gap: 14px;"><span style="width: 130px; font-size: 11.5px; color: #9AA5AE; font-family: ui-monospace, Menlo, monospace;">micro / 11</span><span style="font-size: 11px; color: #6E7E89;">標籤、引註編號</span></div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 20px;">
+              <div>
+                <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin-bottom: 12px;">間距（4px 基準）</div>
+                <div style="display: flex; align-items: flex-end; gap: 8px;">
+                  <div style="width: 4px; height: 4px; background: var(--pk, #1E5175); border-radius: 2px;"></div>
+                  <div style="width: 8px; height: 8px; background: var(--pk, #1E5175); border-radius: 2px;"></div>
+                  <div style="width: 12px; height: 12px; background: var(--pk, #1E5175); border-radius: 2px;"></div>
+                  <div style="width: 16px; height: 16px; background: var(--pk, #1E5175); border-radius: 3px;"></div>
+                  <div style="width: 24px; height: 24px; background: var(--pk, #1E5175); border-radius: 3px;"></div>
+                  <div style="width: 32px; height: 32px; background: var(--pk, #1E5175); border-radius: 4px;"></div>
+                </div>
+                <div style="font-size: 11px; color: #9AA5AE; margin-top: 6px; font-family: ui-monospace, Menlo, monospace;">4 · 8 · 12 · 16 · 24 · 32</div>
+              </div>
+              <div>
+                <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin-bottom: 12px;">圓角</div>
+                <div style="display: flex; gap: 8px;">
+                  <div style="width: 44px; height: 32px; border: 1.5px solid var(--pk, #1E5175); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--pk, #1E5175);">8</div>
+                  <div style="width: 44px; height: 32px; border: 1.5px solid var(--pk, #1E5175); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--pk, #1E5175);">12</div>
+                  <div style="width: 44px; height: 32px; border: 1.5px solid var(--pk, #1E5175); border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--pk, #1E5175);">16</div>
+                  <div style="width: 44px; height: 32px; border: 1.5px solid var(--pk, #1E5175); border-radius: 999px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--pk, #1E5175);">pill</div>
+                </div>
+                <div style="font-size: 11px; color: #9AA5AE; margin-top: 6px; font-family: ui-monospace, Menlo, monospace;">控制項 8 · 卡片 12 · 面板 16</div>
+              </div>
+            </div>
+            <div style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin: 20px 0 12px;">無障礙</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+              <span style="border: 1px solid var(--n-border, #E7E4DC); background: #FFFFFF; color: var(--pk, #1E5175); border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 500; outline: 2px solid var(--pk, #1E5175); outline-offset: 2px;">focus-visible 樣式</span>
+              <span style="font-size: 12px; color: #6E7E89;">ink #1E5175 對白底 7.4:1（AAA）</span>
+              <span style="font-size: 12px; color: #6E7E89;">gold-text #8A5A0F 6.4:1（AA+）</span>
+              <span style="font-size: 12px; color: #6E7E89;">text-3 #6E7E89 4.6:1（AA）</span>
+              <span style="font-size: 12px; color: #6E7E89;">互動元件均可鍵盤操作，Esc 關閉浮層</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 搜尋首頁（起始畫面） ── -->
+      <div>
+        <div style="font-size: 12.5px; color: #6E7E89; margin-bottom: 10px;"><strong style="color: #212B33;">搜尋首頁</strong> — 空查詢時的品牌起始畫面：一個輸入框，檢索／問答一鍵切換；下方直接給市場入口與最新入庫，盤中零等待</div>
+        <div data-screen-label="1a-搜尋首頁" style="width: 1440px; height: 900px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; overflow: hidden; display: flex; box-shadow: 0 4px 16px rgba(22,42,58,0.08);">
+
+          <!-- 側欄 -->
+          <div style="flex: none; width: 272px; height: 100%; background: var(--n-sidebar, #FBFAF6); border-right: 1px solid var(--n-border, #E7E4DC); display: flex; flex-direction: column;">
+            <div style="padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px;">
+              <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none;"><img src="assets/logo.png" width="30" height="30" alt=""></span>
+              <span style="flex: 1; font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: var(--pk-deep, #163A54);">廷豐智能研報</span>
+              <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></span>
+            </div>
+            <nav style="padding: 0 10px; display: flex; flex-direction: column; gap: 2px;">
+              <div style="position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; background: var(--pk-tint, #EAF1F6); color: var(--pk-deep, #163A54); font-weight: 600;">
+                <span style="position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--pk, #1E5175);"></span>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#1E5175" style="stroke: var(--pk, #1E5175)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                <span>檢索</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; color: #40525F;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg>
+                <span>問答</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; color: #40525F;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8l4 -16l3 8h4"></path></svg>
+                <span>監控</span>
+              </div>
+            </nav>
+            <div style="height: 1px; background: var(--n-div, #EFEDE7); margin: 12px 12px 8px;"></div>
+            <div style="padding: 0 10px 4px;">
+              <div style="display: flex; align-items: center; gap: 8px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 10px; color: var(--pk, #1E5175); font-weight: 600; font-size: 13px; padding: 9px 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+                新對話
+              </div>
+            </div>
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; padding: 10px 16px 4px;">歷史對話</div>
+            <div style="flex: 1; overflow: hidden; padding: 0 10px; display: flex; flex-direction: column;">
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">AI 伺服器液冷供應鏈受惠股</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">FOMC 降息路徑與債市影響</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">台積電先進製程資本支出</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">高股息 ETF 近期配置調整</div>
+            </div>
+            <div style="border-top: 1px solid var(--n-div, #EFEDE7); padding: 8px 8px 10px; margin: 0 4px;">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px;">
+                <span style="width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--pk-line, #DCE6EE); background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); display: flex; align-items: center; justify-content: center; flex: none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg></span>
+                <span style="flex: 1; min-width: 0;">
+                  <span style="display: block; font-size: 13px; font-weight: 600; color: #212B33;">tingfeng</span>
+                  <span style="display: block; font-size: 11.5px; color: #9AA5AE;">研究部 · 分析師</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 主內容：hero -->
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 84px 48px 0;">
+            <img src="assets/logo.png" width="64" height="64" alt="">
+            <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 32px; color: var(--pk-deep, #163A54); letter-spacing: 0.02em; margin-top: 16px;">廷豐智能研報</div>
+            <div style="font-size: 14px; color: #6E7E89; margin-top: 8px; font-variant-numeric: tabular-nums;">收錄 15,234 篇券商研報 — 語意檢索 · 智能問答 · 深度研報</div>
+
+            <!-- 模式切換 -->
+            <div style="display: inline-flex; background: var(--n-track, #ECEAE3); border-radius: 12px; padding: 3px; margin-top: 32px;">
+              <span style="display: inline-flex; align-items: center; gap: 7px; background: #FFFFFF; border-radius: 9px; padding: 7px 20px; font-size: 13.5px; font-weight: 600; color: var(--pk-deep, #163A54); box-shadow: 0 1px 3px rgba(22,42,58,0.1);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1E5175" style="stroke: var(--pk, #1E5175)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                檢索研報
+              </span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border-radius: 9px; padding: 7px 20px; font-size: 13.5px; color: #6E7E89;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg>
+                智能問答
+              </span>
+            </div>
+
+            <!-- Omnibox -->
+            <div style="width: 720px; margin-top: 14px; background: #FFFFFF; border: 1.5px solid var(--pk, #1E5175); border-radius: 16px; box-shadow: 0 0 0 4px var(--pk-ring, rgba(30,81,117,0.08)), 0 8px 24px rgba(22,42,58,0.06); padding: 6px 6px 6px 20px; display: flex; align-items: center; gap: 12px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6E7E89" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+              <span style="flex: 1; font-size: 15px; color: #9AA5AE;">搜尋產業、公司、事件…</span>
+              <span style="border: 1px solid var(--n-border, #E7E4DC); border-radius: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #9AA5AE; padding: 3px 7px;">⌘K</span>
+              <span style="background: var(--pk, #1E5175); color: #FFFFFF; border-radius: 11px; height: 44px; padding: 0 24px; display: inline-flex; align-items: center; font-size: 14px; font-weight: 600;">搜尋</span>
+            </div>
+
+            <!-- 試試範例 -->
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 14px;">
+              <span style="font-size: 12.5px; color: #9AA5AE;">試試</span>
+              <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: #40525F;">AI 伺服器散熱供應鏈</span>
+              <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: #40525F;">FOMC 降息路徑</span>
+              <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: #40525F;">高股息 ETF 配置</span>
+            </div>
+
+            <!-- 市場入口 -->
+            <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 36px; max-width: 900px;">
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #237A46;"></span>台股 6,120</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #2E5FA3;"></span>美股 3,482</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #B26A0B;"></span>港股 1,210</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #B03A30;"></span>陸股 986</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #6E48A8;"></span>台指期 754</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #0E7D74;"></span>外匯 512</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #A03052;"></span>總經 1,420</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #4A4FA0;"></span>全球 620</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #7D6234;"></span>加密 130</span>
+            </div>
+
+            <!-- 最新入庫 -->
+            <div style="width: 1024px; margin-top: 48px;">
+              <div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px;">
+                <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 16px; color: #212B33;">最新入庫</span>
+                <span style="font-size: 12.5px; color: #6E7E89; font-variant-numeric: tabular-nums;">今日新增 218 篇</span>
+                <span style="flex: 1;"></span>
+                <span style="font-size: 13px; font-weight: 600; color: var(--pk, #1E5175);">瀏覽全部 ›</span>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-28</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">台積電(2330)—2nm 量產進度與 CoWoS 供需更新</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">元大投顧</div>
+                </div>
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(160,48,82,0.1); color: #A03052; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #A03052;"></span>總經</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-28</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">6 月 FOMC 會後：點陣圖下修與降息路徑</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">國泰投顧</div>
+                </div>
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-27</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">奇鋐(3017)—AI 散熱獨家受惠，液冷放量在即</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">凱基投顧</div>
+                </div>
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(46,95,163,0.1); color: #2E5FA3; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #2E5FA3;"></span>美股</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-27</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">NVIDIA(NVDA)—GB300 出貨節奏與供應鏈檢視</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">富邦投顧</div>
+                </div>
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(110,72,168,0.1); color: #6E48A8; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #6E48A8;"></span>台指期</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-27</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">台指期週報—外資期現貨佈局與結算行情</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">永豐期貨</div>
+                </div>
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(74,79,160,0.1); color: #4A4FA0; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #4A4FA0;"></span>全球</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-26</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">全球資金流向月報—AI 資本支出循環定位</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">高盛證券</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 搜尋結果（高密度列表） ── -->
+      <div>
+        <div style="font-size: 12.5px; color: #6E7E89; margin-bottom: 10px;"><strong style="color: #212B33;">搜尋結果</strong> — 預設改高密度列表：一列一報告、相關度靠右對齊可快速掃讀；月份改為群組列，工具列整合檢視切換（原右下浮動鈕移入）；表格檢視保留</div>
+        <div data-screen-label="1a-搜尋結果" style="width: 1440px; height: 900px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; overflow: hidden; display: flex; box-shadow: 0 4px 16px rgba(22,42,58,0.08);">
+
+          <!-- 側欄（同首頁，檢索 active） -->
+          <div style="flex: none; width: 272px; height: 100%; background: var(--n-sidebar, #FBFAF6); border-right: 1px solid var(--n-border, #E7E4DC); display: flex; flex-direction: column;">
+            <div style="padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px;">
+              <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none;"><img src="assets/logo.png" width="30" height="30" alt=""></span>
+              <span style="flex: 1; font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: var(--pk-deep, #163A54);">廷豐智能研報</span>
+              <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></span>
+            </div>
+            <nav style="padding: 0 10px; display: flex; flex-direction: column; gap: 2px;">
+              <div style="position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; background: var(--pk-tint, #EAF1F6); color: var(--pk-deep, #163A54); font-weight: 600;">
+                <span style="position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--pk, #1E5175);"></span>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#1E5175" style="stroke: var(--pk, #1E5175)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                <span>檢索</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; color: #40525F;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg>
+                <span>問答</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; color: #40525F;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8l4 -16l3 8h4"></path></svg>
+                <span>監控</span>
+              </div>
+            </nav>
+            <div style="height: 1px; background: var(--n-div, #EFEDE7); margin: 12px 12px 8px;"></div>
+            <div style="padding: 0 10px 4px;">
+              <div style="display: flex; align-items: center; gap: 8px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 10px; color: var(--pk, #1E5175); font-weight: 600; font-size: 13px; padding: 9px 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+                新對話
+              </div>
+            </div>
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; padding: 10px 16px 4px;">歷史對話</div>
+            <div style="flex: 1; overflow: hidden; padding: 0 10px; display: flex; flex-direction: column;">
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">AI 伺服器液冷供應鏈受惠股</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">FOMC 降息路徑與債市影響</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">台積電先進製程資本支出</div>
+            </div>
+            <div style="border-top: 1px solid var(--n-div, #EFEDE7); padding: 8px 8px 10px; margin: 0 4px;">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px;">
+                <span style="width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--pk-line, #DCE6EE); background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); display: flex; align-items: center; justify-content: center; flex: none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg></span>
+                <span style="flex: 1; min-width: 0;">
+                  <span style="display: block; font-size: 13px; font-weight: 600; color: #212B33;">tingfeng</span>
+                  <span style="display: block; font-size: 11.5px; color: #9AA5AE;">研究部 · 分析師</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 主內容：結果列表 -->
+          <div style="flex: 1; min-width: 0; overflow: hidden;">
+            <div style="max-width: 1128px; margin: 0 auto; padding: 18px 28px 0;">
+              <!-- 工具列 -->
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="flex: 1; display: flex; align-items: center; gap: 10px; background: #FFFFFF; border: 1px solid var(--n-border2, #E0DDD4); border-radius: 12px; padding: 10px 16px; box-shadow: 0 1px 3px rgba(22,42,58,0.05);">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6E7E89" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                  <span style="flex: 1; font-size: 14px; color: #212B33;">AI 伺服器 散熱</span>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9AA5AE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12M6 6l12 12"></path></svg>
+                </div>
+                <span style="display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 10px; padding: 9px 14px; font-size: 13px; white-space: nowrap;">排序：綜合相關度<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"></path></svg></span>
+                <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 10px; padding: 9px 14px; font-size: 13px; white-space: nowrap;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M7 12h10M10 18h4"></path></svg>更多篩選</span>
+                <span style="display: inline-flex; background: var(--n-track, #ECEAE3); border-radius: 10px; padding: 3px;">
+                  <span style="width: 34px; height: 32px; border-radius: 8px; background: #FFFFFF; color: var(--pk-deep, #163A54); display: inline-flex; align-items: center; justify-content: center; font-size: 15px; box-shadow: 0 1px 3px rgba(22,42,58,0.1);">≣</span>
+                  <span style="width: 34px; height: 32px; border-radius: 8px; color: #6E7E89; display: inline-flex; align-items: center; justify-content: center; font-size: 15px;">▦</span>
+                </span>
+              </div>
+              <!-- 市場 chips -->
+              <div style="display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px;">
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--pk, #1E5175); background: var(--pk-tint, #EAF1F6); color: var(--pk-deep, #163A54); font-weight: 600; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;">全部 15,234</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #237A46;"></span>台股 6,120</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #2E5FA3;"></span>美股 3,482</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #B26A0B;"></span>港股 1,210</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #B03A30;"></span>陸股 986</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #6E48A8;"></span>台指期 754</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #0E7D74;"></span>外匯 512</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #A03052;"></span>總經 1,420</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #4A4FA0;"></span>全球 620</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #7D6234;"></span>加密 130</span>
+              </div>
+              <!-- 結果 meta -->
+              <div style="font-size: 12.5px; color: #6E7E89; padding: 12px 2px 8px; font-variant-numeric: tabular-nums;">「AI 伺服器 散熱」 — 找到 128 篇研報，依綜合相關度排序</div>
+
+              <!-- 列表 -->
+              <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 14px; overflow: hidden; box-shadow: 0 1px 3px rgba(22,42,58,0.05);">
+                <div style="display: flex; align-items: baseline; gap: 8px; background: var(--n-group, #FAF9F5); border-bottom: 1px solid var(--n-div2, #F1EFE9); padding: 8px 16px;">
+                  <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; color: #212B33;">2026 年 6 月</span>
+                  <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">4 篇</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 88px 1fr 200px; gap: 14px; padding: 13px 16px; border-bottom: 1px solid var(--n-div2, #F1EFE9); align-items: start;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-weight: 500; justify-self: start; margin-top: 1px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                  <div style="min-width: 0;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #212B33;">奇鋐(3017)—AI 散熱獨家受惠，液冷放量在即</span>
+                      <span style="border: 1px solid #7FB89A; color: #237A46; border-radius: 999px; padding: 0 8px; font-size: 11px; font-weight: 600; flex: none;">最新</span>
+                    </div>
+                    <div style="font-size: 12px; color: #9AA5AE; margin-top: 3px;">股票 · 3017 奇鋐</div>
+                    <div style="font-size: 12.5px; color: #6E7E89; line-height: 1.6; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">受惠 <mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">AI 伺服器</mark>需求，3D VC 與<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">液冷</mark>板出貨大幅成長，GB300 世代<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">散熱</mark>模組單價續揚，上修 2026 年 EPS…</div>
+                  </div>
+                  <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                    <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 56px; height: 4px; border-radius: 999px; background: var(--n-div, #EFEDE7); overflow: hidden; display: inline-block;"><span style="display: block; width: 94%; height: 100%; border-radius: 999px; background: var(--pk, #1E5175);"></span></span><span style="font-size: 13px; font-weight: 600; color: var(--pk, #1E5175); font-variant-numeric: tabular-nums;">94%</span></span>
+                    <span style="font-size: 12px; color: #6E7E89; font-variant-numeric: tabular-nums;">凱基投顧 · 06-27</span>
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 88px 1fr 200px; gap: 14px; padding: 13px 16px; border-bottom: 1px solid var(--n-div2, #F1EFE9); align-items: start;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-weight: 500; justify-self: start; margin-top: 1px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                  <div style="min-width: 0;">
+                    <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #212B33;">雙鴻(3324)—水冷板出貨動能強勁，下半年營運續揚</div>
+                    <div style="font-size: 12px; color: #9AA5AE; margin-top: 3px;">股票 · 3324 雙鴻</div>
+                    <div style="font-size: 12.5px; color: #6E7E89; line-height: 1.6; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">水冷板受惠 <mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">AI 伺服器</mark>拉貨，產能利用率滿載；<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">散熱</mark>新品通過北美 CSP 驗證，Q3 起貢獻營收…</div>
+                  </div>
+                  <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                    <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 56px; height: 4px; border-radius: 999px; background: var(--n-div, #EFEDE7); overflow: hidden; display: inline-block;"><span style="display: block; width: 91%; height: 100%; border-radius: 999px; background: var(--pk, #1E5175);"></span></span><span style="font-size: 13px; font-weight: 600; color: var(--pk, #1E5175); font-variant-numeric: tabular-nums;">91%</span></span>
+                    <span style="font-size: 12px; color: #6E7E89; font-variant-numeric: tabular-nums;">統一投顧 · 06-24</span>
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 88px 1fr 200px; gap: 14px; padding: 13px 16px; border-bottom: 1px solid var(--n-div2, #F1EFE9); align-items: start;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-weight: 500; justify-self: start; margin-top: 1px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                  <div style="min-width: 0;">
+                    <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #212B33;">AI 伺服器產業—GB300 世代散熱設計變革與供應鏈重估</div>
+                    <div style="font-size: 12px; color: #9AA5AE; margin-top: 3px;">股票 · 產業報告</div>
+                    <div style="font-size: 12.5px; color: #6E7E89; line-height: 1.6; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">GB300</mark> 機櫃功耗突破 140kW，<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">液冷</mark>滲透率 2026 年估達 45%；盤點<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">散熱</mark>供應鏈受惠順序…</div>
+                  </div>
+                  <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                    <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 56px; height: 4px; border-radius: 999px; background: var(--n-div, #EFEDE7); overflow: hidden; display: inline-block;"><span style="display: block; width: 88%; height: 100%; border-radius: 999px; background: var(--pk, #1E5175);"></span></span><span style="font-size: 13px; font-weight: 600; color: var(--pk, #1E5175); font-variant-numeric: tabular-nums;">88%</span></span>
+                    <span style="font-size: 12px; color: #6E7E89; font-variant-numeric: tabular-nums;">富邦投顧 · 06-18</span>
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 88px 1fr 200px; gap: 14px; padding: 13px 16px; border-bottom: 1px solid var(--n-div2, #F1EFE9); align-items: start;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(46,95,163,0.1); color: #2E5FA3; border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-weight: 500; justify-self: start; margin-top: 1px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #2E5FA3;"></span>美股</span>
+                  <div style="min-width: 0;">
+                    <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #212B33;">Vertiv(VRT)—資料中心液冷基礎設施訂單能見度延伸</div>
+                    <div style="font-size: 12px; color: #9AA5AE; margin-top: 3px;">股票 · VRT</div>
+                    <div style="font-size: 12.5px; color: #6E7E89; line-height: 1.6; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">資料中心<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">液冷</mark>與電力基礎設施雙引擎，在手訂單 YoY +38%；<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">AI 伺服器</mark>建置週期支撐 2027 展望…</div>
+                  </div>
+                  <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                    <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 56px; height: 4px; border-radius: 999px; background: var(--n-div, #EFEDE7); overflow: hidden; display: inline-block;"><span style="display: block; width: 85%; height: 100%; border-radius: 999px; background: var(--pk, #1E5175);"></span></span><span style="font-size: 13px; font-weight: 600; color: var(--pk, #1E5175); font-variant-numeric: tabular-nums;">85%</span></span>
+                    <span style="font-size: 12px; color: #6E7E89; font-variant-numeric: tabular-nums;">元大投顧 · 06-12</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; align-items: baseline; gap: 8px; background: var(--n-group, #FAF9F5); border-bottom: 1px solid var(--n-div2, #F1EFE9); padding: 8px 16px;">
+                  <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; color: #212B33;">2026 年 5 月</span>
+                  <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">2 篇</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 88px 1fr 200px; gap: 14px; padding: 13px 16px; border-bottom: 1px solid var(--n-div2, #F1EFE9); align-items: start;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-weight: 500; justify-self: start; margin-top: 1px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                  <div style="min-width: 0;">
+                    <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #212B33;">健策(3653)—均熱片龍頭切入水冷模組，客戶集中度改善</div>
+                    <div style="font-size: 12px; color: #9AA5AE; margin-top: 3px;">股票 · 3653 健策</div>
+                    <div style="font-size: 12.5px; color: #6E7E89; line-height: 1.6; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">均熱片(VC)市佔穩固，切入<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">水冷</mark>模組後單機價值量提升 2.4 倍，2027 年營收貢獻上看 18%…</div>
+                  </div>
+                  <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                    <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 56px; height: 4px; border-radius: 999px; background: var(--n-div, #EFEDE7); overflow: hidden; display: inline-block;"><span style="display: block; width: 82%; height: 100%; border-radius: 999px; background: var(--pk, #1E5175);"></span></span><span style="font-size: 13px; font-weight: 600; color: var(--pk, #1E5175); font-variant-numeric: tabular-nums;">82%</span></span>
+                    <span style="font-size: 12px; color: #6E7E89; font-variant-numeric: tabular-nums;">國泰綜合證券 · 05-30</span>
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 88px 1fr 200px; gap: 14px; padding: 13px 16px; align-items: start;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(74,79,160,0.1); color: #4A4FA0; border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-weight: 500; justify-self: start; margin-top: 1px;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #4A4FA0;"></span>全球</span>
+                  <div style="min-width: 0;">
+                    <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #212B33;">資料中心電力與散熱—2026 下半年展望</div>
+                    <div style="font-size: 12px; color: #9AA5AE; margin-top: 3px;">產業報告</div>
+                    <div style="font-size: 12.5px; color: #6E7E89; line-height: 1.6; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">全球資料中心資本支出上修至 4,200 億美元，<mark style="background: #FAEDC4; border-radius: 3px; padding: 0 1px; color: inherit;">散熱</mark>與電力為兩大瓶頸環節…</div>
+                  </div>
+                  <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                    <span style="display: inline-flex; align-items: center; gap: 8px;"><span style="width: 56px; height: 4px; border-radius: 999px; background: var(--n-div, #EFEDE7); overflow: hidden; display: inline-block;"><span style="display: block; width: 79%; height: 100%; border-radius: 999px; background: var(--pk, #1E5175);"></span></span><span style="font-size: 13px; font-weight: 600; color: var(--pk, #1E5175); font-variant-numeric: tabular-nums;">79%</span></span>
+                    <span style="font-size: 12px; color: #6E7E89; font-variant-numeric: tabular-nums;">高盛證券 · 05-21</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: center; padding: 16px 0;">
+                <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; padding: 8px 22px; font-size: 13px; font-variant-numeric: tabular-nums;">載入更多（還有 122 篇）</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 問答 ── -->
+      <div>
+        <div style="font-size: 12.5px; color: #6E7E89; margin-bottom: 10px;"><strong style="color: #212B33;">問答</strong> — 引註 [n] 維持鎏金 pill（點擊開右側來源抽屜），新增 hover 即時預覽；思考步驟收成一行摘要；深度研報邀請改鎏金面板，與「研報」語意一致</div>
+        <div data-screen-label="1a-問答" style="width: 1440px; height: 900px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; overflow: hidden; display: flex; box-shadow: 0 4px 16px rgba(22,42,58,0.08);">
+
+          <!-- 側欄（問答 active） -->
+          <div style="flex: none; width: 272px; height: 100%; background: var(--n-sidebar, #FBFAF6); border-right: 1px solid var(--n-border, #E7E4DC); display: flex; flex-direction: column;">
+            <div style="padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px;">
+              <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none;"><img src="assets/logo.png" width="30" height="30" alt=""></span>
+              <span style="flex: 1; font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: var(--pk-deep, #163A54);">廷豐智能研報</span>
+              <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></span>
+            </div>
+            <nav style="padding: 0 10px; display: flex; flex-direction: column; gap: 2px;">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; color: #40525F;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                <span>檢索</span>
+              </div>
+              <div style="position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; background: var(--pk-tint, #EAF1F6); color: var(--pk-deep, #163A54); font-weight: 600;">
+                <span style="position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--pk, #1E5175);"></span>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#1E5175" style="stroke: var(--pk, #1E5175)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg>
+                <span>問答</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; color: #40525F;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8l4 -16l3 8h4"></path></svg>
+                <span>監控</span>
+              </div>
+            </nav>
+            <div style="height: 1px; background: var(--n-div, #EFEDE7); margin: 12px 12px 8px;"></div>
+            <div style="padding: 0 10px 4px;">
+              <div style="display: flex; align-items: center; gap: 8px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 10px; color: var(--pk, #1E5175); font-weight: 600; font-size: 13px; padding: 9px 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+                新對話
+              </div>
+            </div>
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; padding: 10px 16px 4px;">歷史對話</div>
+            <div style="flex: 1; overflow: hidden; padding: 0 10px; display: flex; flex-direction: column;">
+              <div style="display: flex; align-items: center; gap: 2px; border-radius: 8px; background: var(--pk-tint, #EAF1F6);">
+                <div style="flex: 1; min-width: 0; padding: 7px 10px; font-size: 13px; color: var(--pk-deep, #163A54); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">AI 伺服器液冷供應鏈受惠股</div>
+                <span style="flex: none; color: #9AA5AE; padding: 6px; display: flex;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v2M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1 -1l1 -12"></path></svg></span>
+              </div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">FOMC 降息路徑與債市影響</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">台積電先進製程資本支出</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">高股息 ETF 近期配置調整</div>
+            </div>
+            <div style="border-top: 1px solid var(--n-div, #EFEDE7); padding: 8px 8px 10px; margin: 0 4px;">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px;">
+                <span style="width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--pk-line, #DCE6EE); background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); display: flex; align-items: center; justify-content: center; flex: none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg></span>
+                <span style="flex: 1; min-width: 0;">
+                  <span style="display: block; font-size: 13px; font-weight: 600; color: #212B33;">tingfeng</span>
+                  <span style="display: block; font-size: 11.5px; color: #9AA5AE;">研究部 · 分析師</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 對話欄 -->
+          <div style="flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column;">
+            <div style="flex: 1; overflow: hidden; padding: 20px 24px 8px;">
+              <div style="max-width: 760px; margin: 0 auto;">
+                <div style="display: flex; justify-content: flex-end; margin: 14px 0 12px;">
+                  <div style="max-width: 78%; background: var(--pk, #1E5175); color: #FFFFFF; border-radius: 14px 14px 4px 14px; padding: 10px 16px; font-size: 14.5px; line-height: 1.6;">AI 伺服器液冷散熱的供應鏈受惠股有哪些？</div>
+                </div>
+                <!-- 思考摘要（一行） -->
+                <div style="display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--n-border, #E7E4DC); background: #FFFFFF; border-radius: 999px; padding: 6px 14px; margin-bottom: 14px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E5175" style="stroke: var(--pk, #1E5175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"></path></svg>
+                  <span style="font-size: 12.5px; color: #6E7E89; font-variant-numeric: tabular-nums;">已思考 8 秒 · 檢索 15 篇研報 · 引用 6 個來源</span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9AA5AE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"></path></svg>
+                </div>
+                <!-- 回答 -->
+                <div style="font-size: 15px; line-height: 1.75; color: #40525F;">
+                  <p style="margin: 0 0 12px;">根據近三個月券商研報，AI 伺服器液冷散熱供應鏈的受惠股集中在<strong style="color: #212B33; font-weight: 700;">水冷板、快接頭與整機模組</strong>三個環節：</p>
+                  <h3 style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; color: #212B33; margin: 16px 0 8px; font-size: 16px;">核心受惠股</h3>
+                  <ul style="margin: 0 0 12px; padding-left: 20px;">
+                    <li style="margin-bottom: 7px;"><strong style="color: #212B33; font-weight: 700;">奇鋐(3017)</strong>：3D VC 與液冷板雙引擎，GB300 世代散熱單價續揚，多家券商上修目標價<span style="display: inline-block; background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 7px; margin: 0 2px;">1</span><span style="position: relative; display: inline-block;"><span style="display: inline-block; background: #8A5A0F; color: #FFFFFF; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 7px; margin: 0 2px;">2</span><span style="position: absolute; left: -20px; top: 26px; width: 300px; background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; box-shadow: 0 12px 32px rgba(22,42,58,0.16); padding: 12px 14px; z-index: 5;"><span style="position: absolute; top: -9px; left: 24px; background: var(--pk-deep, #163A54); color: #FFFFFF; border-radius: 4px; font-size: 10px; font-weight: 600; padding: 2px 7px; letter-spacing: 0.03em;">hover 即時預覽</span><span style="display: flex; align-items: center; justify-content: space-between;"><span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span><span style="font-size: 11.5px; color: #9AA5AE; font-variant-numeric: tabular-nums;">2026-06-18</span></span><span style="display: block; font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; color: #212B33; line-height: 1.5; margin-top: 6px;">AI 伺服器產業—GB300 世代散熱設計變革</span><span style="display: block; font-size: 12px; color: #6E7E89; line-height: 1.6; margin-top: 5px;">「GB300 機櫃功耗突破 140kW，液冷滲透率 2026 年估達 45%，散熱模組單價提升…」</span><span style="display: block; font-size: 11.5px; color: var(--pk, #1E5175); font-weight: 600; margin-top: 8px;">富邦投顧 · 點擊開啟原文 ›</span></span></span></li>
+                    <li style="margin-bottom: 7px;"><strong style="color: #212B33; font-weight: 700;">雙鴻(3324)</strong>：水冷板通過北美 CSP 驗證，Q3 起放量，產能利用率滿載<span style="display: inline-block; background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 7px; margin: 0 2px;">3</span></li>
+                    <li style="margin-bottom: 0;"><strong style="color: #212B33; font-weight: 700;">健策(3653)</strong>：均熱片龍頭切入水冷模組，單機價值量提升約 2.4 倍<span style="display: inline-block; background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 7px; margin: 0 2px;">4</span></li>
+                  </ul>
+                  <p style="margin: 0;">整體而言，券商共識為<strong style="color: #212B33; font-weight: 700;">液冷滲透率 2026 年達 45%</strong>，帶動散熱產業鏈營收規模翻倍成長<span style="display: inline-block; background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 7px; margin: 0 2px;">2</span><span style="display: inline-block; background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 0 7px; margin: 0 2px;">5</span>。</p>
+                </div>
+                <!-- 動作列 -->
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px;">
+                  <span style="display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #6E7E89; border-radius: 999px; padding: 6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11v9"></path><path d="M11 11l1.4 -4.2a1.5 1.5 0 0 1 3 .5v3.7h3.6a1.6 1.6 0 0 1 1.6 1.9l-1.2 5.5a1.6 1.6 0 0 1 -1.6 1.2H7v-9z"></path></svg></span>
+                  <span style="display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #6E7E89; border-radius: 999px; padding: 6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 13v-9"></path><path d="M13 13l-1.4 4.2a1.5 1.5 0 0 1 -3 -.5v-3.7H5a1.6 1.6 0 0 1 -1.6 -1.9l1.2 -5.5a1.6 1.6 0 0 1 1.6 -1.2H17v9z"></path></svg></span>
+                  <span style="display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #6E7E89; border-radius: 999px; padding: 6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2 -2h10"></path></svg></span>
+                  <span style="width: 1px; height: 16px; background: var(--n-border2, #E0DDD4); margin: 0 2px;"></span>
+                  <span style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px;">資料來源 <span style="font-variant-numeric: tabular-nums;">6</span></span>
+                </div>
+                <!-- 深度研報邀請（鎏金） -->
+                <div style="border: 1px solid #EAD9AE; background: #FBF7EC; border-radius: 14px; padding: 15px 18px; display: flex; align-items: center; gap: 14px; margin-top: 18px;">
+                  <span style="width: 38px; height: 38px; border-radius: 999px; background: #F8F1E0; color: #8A5A0F; display: flex; align-items: center; justify-content: center; flex: none;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0 -2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2V8z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg></span>
+                  <span style="flex: 1; min-width: 0;">
+                    <span style="display: block; font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #212B33;">要不要整理成完整 PDF 深度研報？</span>
+                    <span style="display: block; font-size: 12.5px; color: #6E7E89; margin-top: 3px;">彙整本輪 6 個引用來源，生成含 KPI 與圖表的深度研報，約需 3–5 分鐘。</span>
+                  </span>
+                  <span style="display: flex; gap: 8px; flex: none;">
+                    <span style="background: #8A5A0F; color: #FFFFFF; border-radius: 999px; font-size: 13px; font-weight: 600; padding: 8px 20px;">生成研報</span>
+                    <span style="background: transparent; border: 1px solid var(--n-border2, #E0DDD4); border-radius: 999px; color: #6E7E89; font-size: 13px; font-weight: 500; padding: 8px 16px;">暫時不用</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <!-- Composer -->
+            <div style="flex: none; padding: 0 24px 14px;">
+              <div style="max-width: 760px; margin: 0 auto;">
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border2, #E0DDD4); border-radius: 16px; box-shadow: 0 8px 24px rgba(22,42,58,0.07); padding: 8px 8px 8px 18px; display: flex; align-items: flex-end; gap: 10px;">
+                  <span style="flex: 1; font-size: 14px; line-height: 1.6; color: #9AA5AE; padding: 9px 0;">繼續追問，例如「主要風險是什麼？」</span>
+                  <span style="width: 40px; height: 40px; flex: none; border-radius: 999px; background: var(--pk, #1E5175); color: #FFFFFF; display: flex; align-items: center; justify-content: center;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"></path><path d="M6 11l6 -6l6 6"></path></svg></span>
+                </div>
+                <div style="text-align: center; font-size: 11.5px; color: #9AA5AE; margin-top: 8px;">回答由 AI 依券商研報生成，投資決策請以原始研報與公開資訊為準。</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 來源抽屜 -->
+          <div style="flex: none; width: 340px; height: 100%; background: #FFFFFF; border-left: 1px solid var(--n-border, #E7E4DC); display: flex; flex-direction: column;">
+            <div style="display: flex; align-items: center; gap: 8px; padding: 16px 18px; border-bottom: 1px solid var(--n-div2, #F1EFE9); flex: none;">
+              <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 16px; color: #212B33;">引用來源</span>
+              <span style="background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 1px 8px; font-variant-numeric: tabular-nums;">6</span>
+              <span style="flex: 1;"></span>
+              <span style="background: var(--n-weak, #F3F1EB); border-radius: 999px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; color: #6E7E89;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12M6 6l12 12"></path></svg></span>
+            </div>
+            <div style="flex: 1; overflow: hidden; padding: 14px 16px;">
+              <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; margin-bottom: 8px;">研報 · 5</div>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="border: 1px solid var(--n-border, #E7E4DC); background: #FFFFFF; border-radius: 12px; padding: 10px 12px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; flex: none;">1</span>
+                    <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 500;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                    <span style="flex: 1;"></span>
+                    <span style="font-size: 11.5px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-27</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; color: #212B33; line-height: 1.45; margin-top: 6px;">奇鋐(3017)—AI 散熱獨家受惠，液冷放量在即</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 3px;">凱基投顧 · PDF</div>
+                </div>
+                <div style="border: 1px solid var(--pk, #1E5175); background: #FBFBF8; border-radius: 12px; padding: 10px 12px; box-shadow: 0 0 0 3px var(--pk-ring2, rgba(30,81,117,0.07));">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #8A5A0F; color: #FFFFFF; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; flex: none;">2</span>
+                    <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 500;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                    <span style="flex: 1;"></span>
+                    <span style="font-size: 11.5px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-18</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; color: #212B33; line-height: 1.45; margin-top: 6px;">AI 伺服器產業—GB300 世代散熱設計變革</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 3px;">富邦投顧 · PDF · 對應引註 [2]</div>
+                </div>
+                <div style="border: 1px solid var(--n-border, #E7E4DC); background: #FFFFFF; border-radius: 12px; padding: 10px 12px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; flex: none;">3</span>
+                    <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 500;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                    <span style="flex: 1;"></span>
+                    <span style="font-size: 11.5px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-24</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; color: #212B33; line-height: 1.45; margin-top: 6px;">雙鴻(3324)—水冷板出貨動能強勁</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 3px;">統一投顧 · PDF</div>
+                </div>
+                <div style="border: 1px solid var(--n-border, #E7E4DC); background: #FFFFFF; border-radius: 12px; padding: 10px 12px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; flex: none;">4</span>
+                    <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 500;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                    <span style="flex: 1;"></span>
+                    <span style="font-size: 11.5px; color: #9AA5AE; font-variant-numeric: tabular-nums;">05-30</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; color: #212B33; line-height: 1.45; margin-top: 6px;">健策(3653)—均熱片龍頭切入水冷模組</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 3px;">國泰綜合證券 · PDF</div>
+                </div>
+                <div style="border: 1px solid var(--n-border, #E7E4DC); background: #FFFFFF; border-radius: 12px; padding: 10px 12px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; flex: none;">5</span>
+                    <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(74,79,160,0.1); color: #4A4FA0; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 500;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #4A4FA0;"></span>全球</span>
+                    <span style="flex: 1;"></span>
+                    <span style="font-size: 11.5px; color: #9AA5AE; font-variant-numeric: tabular-nums;">05-21</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; color: #212B33; line-height: 1.45; margin-top: 6px;">資料中心電力與散熱—2026 下半年展望</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 3px;">高盛證券 · PDF</div>
+                </div>
+              </div>
+              <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; margin: 14px 0 8px;">網路補充 · 1</div>
+              <div style="border: 1px dashed var(--n-border2, #E0DDD4); background: #FDFCFA; border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start;">
+                <span style="border: 1px solid #C9A75C; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 600; padding: 0 7px; flex: none; margin-top: 1px;">6</span>
+                <span style="min-width: 0;">
+                  <span style="display: block; font-size: 13px; color: #212B33; font-weight: 500;">TrendForce：2026 液冷滲透率預估上修</span>
+                  <span style="display: block; font-size: 11.5px; color: #9AA5AE; margin-top: 2px;">網路 · trendforce.com</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 問答狀態文案 ── -->
+      <div>
+        <div style="font-size: 12.5px; color: #6E7E89; margin-bottom: 10px;"><strong style="color: #212B33;">狀態與文案</strong> — 串流、離題、錯誤、檢索空狀態的標準寫法</div>
+        <div style="display: flex; gap: 16px; align-items: stretch;">
+          <div data-screen-label="1a-串流中" style="width: 336px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; padding: 18px;">
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; margin-bottom: 10px;">串流回答中</div>
+            <div style="display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--n-border, #E7E4DC); background: #FFFFFF; border-radius: 999px; padding: 6px 14px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E5175" style="stroke: var(--pk, #1E5175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+              <span style="font-size: 12.5px; color: #6E7E89;">思考中 · 正在閱讀 15 篇研報…</span>
+            </div>
+            <div style="font-size: 14.5px; line-height: 1.75; color: #40525F; margin-top: 12px;">根據近三個月券商研報，AI 伺服器液冷散熱供應鏈的受惠股集中在<span style="display: inline-block; width: 8px; height: 17px; background: #8A5A0F; vertical-align: text-bottom; margin-left: 2px;"></span></div>
+          </div>
+          <div data-screen-label="1a-離題" style="width: 336px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; padding: 18px;">
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; margin-bottom: 10px;">離題提醒</div>
+            <div style="display: flex; gap: 10px; align-items: flex-start; border: 1px solid #EAD9AE; background: #FBF7EC; border-radius: 12px; padding: 12px 14px;">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#8A5A0F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 2px;"><path d="M12 3l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg>
+              <span>
+                <span style="display: block; font-size: 13.5px; line-height: 1.6; color: #7A5A1E;">這個問題與研報庫內容較無關聯，建議聚焦市場、產業或個股主題。</span>
+                <span style="display: inline-block; border: 1px solid #C9A75C; color: #8A5A0F; border-radius: 999px; font-size: 12px; font-weight: 600; padding: 4px 13px; margin-top: 9px;">換個說法重新提問</span>
+              </span>
+            </div>
+          </div>
+          <div data-screen-label="1a-錯誤" style="width: 336px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; padding: 18px;">
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; margin-bottom: 10px;">查詢失敗</div>
+            <div style="display: flex; gap: 10px; align-items: flex-start; border: 1px solid #E8C4C0; background: #FBF0EF; border-radius: 12px; padding: 12px 14px;">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#B03A30" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 2px;"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v4M12 16h.01"></path></svg>
+              <span>
+                <span style="display: block; font-size: 13.5px; line-height: 1.6; color: #96362D;">查詢逾時，已保留已生成的部分回答。請稍後重試。</span>
+                <span style="display: inline-block; border: 1px solid #B03A30; color: #B03A30; border-radius: 999px; font-size: 12px; font-weight: 600; padding: 4px 13px; margin-top: 9px;">重試</span>
+              </span>
+            </div>
+          </div>
+          <div data-screen-label="1a-空狀態" style="width: 336px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; padding: 18px;">
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; margin-bottom: 10px;">檢索空狀態</div>
+            <div style="text-align: center; padding: 18px 8px 8px;">
+              <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15.5px; color: #212B33;">找不到「量子電腦封裝」的相關研報</div>
+              <div style="font-size: 12.5px; color: #6E7E89; margin-top: 7px; line-height: 1.6;">換個說法或關鍵字試試，也可以清除篩選條件重新檢索。</div>
+              <div style="display: flex; gap: 8px; justify-content: center; margin-top: 14px;">
+                <span style="border: 1px solid var(--pk, #1E5175); color: var(--pk, #1E5175); border-radius: 999px; padding: 6px 15px; font-size: 12.5px; font-weight: 600;">清除篩選再試</span>
+                <span style="border: 1px solid var(--n-border2, #E0DDD4); color: #40525F; border-radius: 999px; padding: 6px 15px; font-size: 12.5px;">瀏覽全部研報</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 研報詳情 Modal ── -->
+      <div>
+        <div style="font-size: 12.5px; color: #6E7E89; margin-bottom: 10px;"><strong style="color: #212B33;">研報詳情 Modal</strong> — 標題列補齊市場、來源、日期、相關度等中繼資料，動作固定右上；左側示意收合側欄（60px）</div>
+        <div data-screen-label="1a-研報Modal" style="width: 1440px; height: 900px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; overflow: hidden; display: flex; position: relative; box-shadow: 0 4px 16px rgba(22,42,58,0.08);">
+
+          <!-- 收合側欄 60px -->
+          <div style="flex: none; width: 60px; height: 100%; background: var(--n-sidebar, #FBFAF6); border-right: 1px solid var(--n-border, #E7E4DC); display: flex; flex-direction: column; align-items: center; padding: 14px 0;">
+            <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;"><img src="assets/logo.png" width="30" height="30" alt=""></span>
+            <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 12px; align-items: center;">
+              <span style="display: flex; align-items: center; justify-content: center; padding: 8px 9px; border-radius: 10px; min-width: 44px; background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175);"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg></span>
+              <span style="display: flex; align-items: center; justify-content: center; padding: 8px 9px; border-radius: 10px; min-width: 44px; color: #6E7E89;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg></span>
+              <span style="display: flex; align-items: center; justify-content: center; padding: 8px 9px; border-radius: 10px; min-width: 44px; color: #6E7E89;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8l4 -16l3 8h4"></path></svg></span>
+            </div>
+            <div style="flex: 1;"></div>
+            <span style="width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--pk-line, #DCE6EE); background: var(--pk-tint, #EAF1F6); color: var(--pk, #1E5175); display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg></span>
+          </div>
+
+          <!-- 底層（簡化結果頁） -->
+          <div style="flex: 1; min-width: 0; padding: 18px 28px;">
+            <div style="max-width: 1128px; margin: 0 auto;">
+              <div style="display: flex; align-items: center; gap: 10px; background: #FFFFFF; border: 1px solid var(--n-border2, #E0DDD4); border-radius: 12px; padding: 10px 16px;">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6E7E89" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                <span style="flex: 1; font-size: 14px; color: #212B33;">AI 伺服器 散熱</span>
+              </div>
+              <div style="font-size: 12.5px; color: #6E7E89; padding: 14px 2px 8px;">「AI 伺服器 散熱」 — 找到 128 篇研報</div>
+              <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 14px; height: 560px;"></div>
+            </div>
+          </div>
+
+          <!-- 遮罩 + Modal -->
+          <div style="position: absolute; inset: 0; background: rgba(22, 42, 58, 0.5); display: flex; align-items: center; justify-content: center; padding: 28px;">
+            <div style="background: #FFFFFF; border-radius: 16px; box-shadow: 0 24px 64px rgba(22,42,58,0.28); width: 920px; max-height: 844px; display: flex; flex-direction: column; overflow: hidden;">
+              <div style="padding: 16px 20px 14px; border-bottom: 1px solid var(--n-div, #EFEDE7);">
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                  <div style="flex: 1; min-width: 0;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 7px;">
+                      <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 2px 10px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                      <span style="border: 1px solid #7FB89A; color: #237A46; border-radius: 999px; padding: 0 8px; font-size: 11px; font-weight: 600;">最新</span>
+                    </div>
+                    <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 17px; color: #212B33; line-height: 1.45;">奇鋐(3017)—AI 散熱獨家受惠，液冷放量在即</div>
+                    <div style="font-size: 12.5px; color: #6E7E89; margin-top: 6px; font-variant-numeric: tabular-nums;">凱基投顧 · 2026-06-27 · 股票 · 3017 奇鋐 · 相關度 94%</div>
+                  </div>
+                  <span style="background: var(--n-weak, #F3F1EB); border-radius: 999px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; color: #6E7E89; flex: none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12M6 6l12 12"></path></svg></span>
+                </div>
+                <div style="display: flex; gap: 8px; margin-top: 12px;">
+                  <span style="background: var(--pk, #1E5175); color: #FFFFFF; border-radius: 9px; font-size: 12.5px; font-weight: 600; padding: 7px 16px; display: inline-flex; align-items: center; gap: 6px;">在新分頁開啟</span>
+                  <span style="border: 1px solid var(--n-border2, #E0DDD4); color: #40525F; border-radius: 9px; font-size: 12.5px; font-weight: 500; padding: 7px 16px; display: inline-flex; align-items: center; gap: 6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0 -2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2V8z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg>下載原始檔</span>
+                  <span style="flex: 1;"></span>
+                  <span style="font-size: 11.5px; color: #9AA5AE; align-self: center;">Esc 關閉 · ←→ 切換上下篇</span>
+                </div>
+              </div>
+              <div style="padding: 16px 20px; flex: 1;">
+                <div style="width: 100%; height: 640px; border: 1px solid var(--n-div, #EFEDE7); border-radius: 10px; background: repeating-linear-gradient(45deg, #FAFAF8, #FAFAF8 12px, #F1F0EC 12px, #F1F0EC 24px); display: flex; align-items: center; justify-content: center;">
+                  <span style="font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #9AA5AE; background: #FFFFFF; border: 1px dashed var(--n-frame, #D9D6CD); border-radius: 6px; padding: 6px 12px;">PDF 內嵌預覽 — /api/report/{id}/file</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── RWD 行動版 ── -->
+      <div>
+        <div style="font-size: 12.5px; color: #6E7E89; margin-bottom: 10px;"><strong style="color: #212B33;">RWD 行動版（&lt;768px）</strong> — 側欄收為底部分頁列；首頁 hero 縮排、結果改單欄；工具列可橫捲</div>
+        <div style="display: flex; gap: 24px; align-items: flex-start;">
+
+          <!-- 手機：首頁 -->
+          <div data-screen-label="1a-手機首頁" style="width: 390px; height: 800px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 16px rgba(22,42,58,0.08);">
+            <div style="flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; padding: 56px 20px 0;">
+              <img src="assets/logo.png" width="52" height="52" alt="">
+              <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 25px; color: var(--pk-deep, #163A54); margin-top: 12px;">廷豐智能研報</div>
+              <div style="font-size: 12.5px; color: #6E7E89; margin-top: 6px; font-variant-numeric: tabular-nums;">收錄 15,234 篇券商研報</div>
+              <div style="display: inline-flex; background: var(--n-track, #ECEAE3); border-radius: 11px; padding: 3px; margin-top: 24px;">
+                <span style="display: inline-flex; align-items: center; gap: 6px; background: #FFFFFF; border-radius: 8px; padding: 6px 18px; font-size: 13px; font-weight: 600; color: var(--pk-deep, #163A54); box-shadow: 0 1px 3px rgba(22,42,58,0.1);">檢索研報</span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; padding: 6px 18px; font-size: 13px; color: #6E7E89;">智能問答</span>
+              </div>
+              <div style="width: 100%; margin-top: 14px; background: #FFFFFF; border: 1.5px solid var(--pk, #1E5175); border-radius: 14px; box-shadow: 0 0 0 4px var(--pk-ring, rgba(30,81,117,0.08)); padding: 5px 5px 5px 16px; display: flex; align-items: center; gap: 10px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6E7E89" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                <span style="flex: 1; font-size: 14px; color: #9AA5AE;">搜尋產業、公司、事件…</span>
+                <span style="background: var(--pk, #1E5175); color: #FFFFFF; border-radius: 10px; width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg></span>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 14px;">
+                <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 4px 12px; font-size: 12px; color: #40525F;">AI 伺服器散熱供應鏈</span>
+                <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 4px 12px; font-size: 12px; color: #40525F;">FOMC 降息路徑</span>
+              </div>
+              <div style="width: 100%; margin-top: 32px;">
+                <div style="display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px;">
+                  <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #212B33;">最新入庫</span>
+                  <span style="font-size: 12px; color: #6E7E89;">今日 218 篇</span>
+                  <span style="flex: 1;"></span>
+                  <span style="font-size: 12.5px; font-weight: 600; color: var(--pk, #1E5175);">全部 ›</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 12px 14px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                      <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 500;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                      <span style="font-size: 11.5px; color: #9AA5AE;">06-28</span>
+                    </div>
+                    <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; line-height: 1.5; color: #212B33;">台積電(2330)—2nm 量產進度與 CoWoS 供需更新</div>
+                    <div style="font-size: 11.5px; color: #6E7E89; margin-top: 5px;">元大投顧</div>
+                  </div>
+                  <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 12px 14px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                      <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(160,48,82,0.1); color: #A03052; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 500;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #A03052;"></span>總經</span>
+                      <span style="font-size: 11.5px; color: #9AA5AE;">06-28</span>
+                    </div>
+                    <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 13.5px; line-height: 1.5; color: #212B33;">6 月 FOMC 會後：點陣圖下修與降息路徑</div>
+                    <div style="font-size: 11.5px; color: #6E7E89; margin-top: 5px;">國泰投顧</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style="flex: none; height: 62px; background: #FFFFFF; border-top: 1px solid var(--n-border, #E7E4DC); display: flex; align-items: stretch;">
+              <span style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--pk, #1E5175);"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg><span style="font-size: 10px; font-weight: 600;">檢索</span></span>
+              <span style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg><span style="font-size: 10px;">問答</span></span>
+              <span style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8l4 -16l3 8h4"></path></svg><span style="font-size: 10px;">監控</span></span>
+              <span style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg><span style="font-size: 10px;">帳號</span></span>
+            </div>
+          </div>
+
+          <!-- 手機：問答 -->
+          <div data-screen-label="1a-手機問答" style="width: 390px; height: 800px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 16px rgba(22,42,58,0.08);">
+            <div style="flex: none; display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: var(--n-sidebar, #FBFAF6); border-bottom: 1px solid var(--n-border, #E7E4DC);">
+              <img src="assets/logo.png" width="24" height="24" alt="">
+              <span style="flex: 1; font-size: 14px; font-weight: 600; color: #212B33; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">AI 伺服器液冷供應鏈受惠股</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6E7E89" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+            </div>
+            <div style="flex: 1; min-height: 0; padding: 16px 16px 0;">
+              <div style="display: flex; justify-content: flex-end;">
+                <div style="max-width: 85%; background: var(--pk, #1E5175); color: #FFFFFF; border-radius: 14px 14px 4px 14px; padding: 9px 14px; font-size: 14px; line-height: 1.6;">AI 伺服器液冷散熱的供應鏈受惠股有哪些？</div>
+              </div>
+              <div style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border, #E7E4DC); background: #FFFFFF; border-radius: 999px; padding: 5px 12px; margin-top: 12px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1E5175" style="stroke: var(--pk, #1E5175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5l9 -11"></path></svg>
+                <span style="font-size: 12px; color: #6E7E89;">已思考 8 秒 · 引用 6 個來源</span>
+              </div>
+              <div style="font-size: 14.5px; line-height: 1.75; color: #40525F; margin-top: 12px;">
+                <p style="margin: 0 0 10px;">受惠股集中在<strong style="color: #212B33;">水冷板、快接頭與整機模組</strong>三個環節：</p>
+                <ul style="margin: 0; padding-left: 18px;">
+                  <li style="margin-bottom: 6px;"><strong style="color: #212B33;">奇鋐(3017)</strong>：3D VC 與液冷板雙引擎<span style="display: inline-block; background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 0 6px; margin: 0 2px;">1</span></li>
+                  <li style="margin-bottom: 6px;"><strong style="color: #212B33;">雙鴻(3324)</strong>：水冷板 Q3 起放量<span style="display: inline-block; background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 0 6px; margin: 0 2px;">3</span></li>
+                  <li style="margin-bottom: 0;"><strong style="color: #212B33;">健策(3653)</strong>：切入水冷模組，價值量 +2.4 倍<span style="display: inline-block; background: #F8F1E0; color: #8A5A0F; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 0 6px; margin: 0 2px;">4</span></li>
+                </ul>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+                <span style="display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; color: #40525F; border-radius: 999px; font-size: 12px; padding: 5px 12px;">資料來源 6</span>
+                <span style="display: inline-flex; align-items: center; gap: 5px; border: 1px solid #EAD9AE; background: #FBF7EC; color: #8A5A0F; border-radius: 999px; font-size: 12px; font-weight: 600; padding: 5px 12px;">生成深度研報</span>
+              </div>
+            </div>
+            <div style="flex: none; padding: 10px 14px;">
+              <div style="background: #FFFFFF; border: 1px solid var(--n-border2, #E0DDD4); border-radius: 14px; box-shadow: 0 4px 16px rgba(22,42,58,0.06); padding: 6px 6px 6px 14px; display: flex; align-items: center; gap: 8px;">
+                <span style="flex: 1; font-size: 13.5px; color: #9AA5AE;">繼續追問…</span>
+                <span style="width: 36px; height: 36px; flex: none; border-radius: 999px; background: var(--pk, #1E5175); color: #FFFFFF; display: flex; align-items: center; justify-content: center;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"></path><path d="M6 11l6 -6l6 6"></path></svg></span>
+              </div>
+            </div>
+            <div style="flex: none; height: 62px; background: #FFFFFF; border-top: 1px solid var(--n-border, #E7E4DC); display: flex; align-items: stretch;">
+              <span style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg><span style="font-size: 10px;">檢索</span></span>
+              <span style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--pk, #1E5175);"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg><span style="font-size: 10px; font-weight: 600;">問答</span></span>
+              <span style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8l4 -16l3 8h4"></path></svg><span style="font-size: 10px;">監控</span></span>
+              <span style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg><span style="font-size: 10px;">帳號</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ═══════════════════════ 1b 松墨 × 鎏金（替代主色） ═══════════════════════ -->
+    <div id="1b" style="flex: none; display: flex; flex-direction: column; gap: 24px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="background: #14453A; color: #fff; font-size: 12px; font-weight: 700; border-radius: 999px; padding: 4px 11px;">1b</span>
+        <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-size: 17px; font-weight: 700; color: #14453A;">松墨 × 鎏金</span>
+        <span style="font-size: 12px; color: #75808A;">替代主色 — 深松綠，私人銀行質感；版面與 1a 完全相同，僅比較主色</span>
+      </div>
+
+      <div style="width: 1440px; background: #FFFFFF; border: 1px solid var(--n-border2, #E0DDD4); border-radius: 16px; padding: 20px 24px; box-shadow: 0 2px 8px rgba(22,42,58,0.05); display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 12px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.06em; margin-right: 4px;">主色替換</span>
+        <span style="display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--n-div, #EFEDE7); border-radius: 999px; padding: 4px 12px 4px 5px; font-size: 12px; color: #40525F;"><span style="width: 22px; height: 22px; border-radius: 999px; background: #14453A;"></span>pine-deep #14453A</span>
+        <span style="display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--n-div, #EFEDE7); border-radius: 999px; padding: 4px 12px 4px 5px; font-size: 12px; color: #40525F;"><span style="width: 22px; height: 22px; border-radius: 999px; background: #1E5B4B;"></span>pine #1E5B4B（主按鈕/連結）</span>
+        <span style="display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--n-div, #EFEDE7); border-radius: 999px; padding: 4px 12px 4px 5px; font-size: 12px; color: #40525F;"><span style="width: 22px; height: 22px; border-radius: 999px; background: #17493C;"></span>pine-hover #17493C</span>
+        <span style="display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--n-div, #EFEDE7); border-radius: 999px; padding: 4px 12px 4px 5px; font-size: 12px; color: #40525F;"><span style="width: 22px; height: 22px; border-radius: 999px; background: #E7F0EC; border: 1px solid #D8E6E0;"></span>pine-tint #E7F0EC</span>
+        <span style="font-size: 12px; color: #9AA5AE;">鎏金、市場色、基調與 1a 相同；注意與台股綠標籤同色系、辨識度略降</span>
+      </div>
+
+      <div>
+        <div style="font-size: 12.5px; color: #6E7E89; margin-bottom: 10px;"><strong style="color: #212B33;">搜尋首頁</strong> — 松墨版第一印象對照</div>
+        <div data-screen-label="1b-搜尋首頁" style="width: 1440px; height: 900px; background: var(--n-canvas, #F7F6F2); border: 1px solid var(--n-frame, #D9D6CD); border-radius: 12px; overflow: hidden; display: flex; box-shadow: 0 4px 16px rgba(22,42,58,0.08);">
+
+          <!-- 側欄 -->
+          <div style="flex: none; width: 272px; height: 100%; background: var(--n-sidebar, #FBFAF6); border-right: 1px solid var(--n-border, #E7E4DC); display: flex; flex-direction: column;">
+            <div style="padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px;">
+              <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none;"><img src="assets/logo.png" width="30" height="30" alt=""></span>
+              <span style="flex: 1; font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 15px; color: #14453A;">廷豐智能研報</span>
+              <span style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; color: #9AA5AE;"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></span>
+            </div>
+            <nav style="padding: 0 10px; display: flex; flex-direction: column; gap: 2px;">
+              <div style="position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; background: #E7F0EC; color: #14453A; font-weight: 600;">
+                <span style="position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: #1E5B4B;"></span>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#1E5B4B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                <span>檢索</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; color: #40525F;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg>
+                <span>問答</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; font-size: 13.5px; color: #40525F;">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8l4 -16l3 8h4"></path></svg>
+                <span>監控</span>
+              </div>
+            </nav>
+            <div style="height: 1px; background: var(--n-div, #EFEDE7); margin: 12px 12px 8px;"></div>
+            <div style="padding: 0 10px 4px;">
+              <div style="display: flex; align-items: center; gap: 8px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 10px; color: #1E5B4B; font-weight: 600; font-size: 13px; padding: 9px 12px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+                新對話
+              </div>
+            </div>
+            <div style="font-size: 11px; font-weight: 700; color: #9AA5AE; letter-spacing: 0.05em; padding: 10px 16px 4px;">歷史對話</div>
+            <div style="flex: 1; overflow: hidden; padding: 0 10px; display: flex; flex-direction: column;">
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">AI 伺服器液冷供應鏈受惠股</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">FOMC 降息路徑與債市影響</div>
+              <div style="padding: 7px 10px; border-radius: 8px; font-size: 13px; color: #40525F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">台積電先進製程資本支出</div>
+            </div>
+            <div style="border-top: 1px solid var(--n-div, #EFEDE7); padding: 8px 8px 10px; margin: 0 4px;">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px;">
+                <span style="width: 30px; height: 30px; border-radius: 999px; border: 1px solid #D8E6E0; background: #E7F0EC; color: #1E5B4B; display: flex; align-items: center; justify-content: center; flex: none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M6 21v-1a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v1"></path></svg></span>
+                <span style="flex: 1; min-width: 0;">
+                  <span style="display: block; font-size: 13px; font-weight: 600; color: #212B33;">tingfeng</span>
+                  <span style="display: block; font-size: 11.5px; color: #9AA5AE;">研究部 · 分析師</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 主內容：hero -->
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 84px 48px 0;">
+            <img src="assets/logo.png" width="64" height="64" alt="">
+            <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 32px; color: #14453A; letter-spacing: 0.02em; margin-top: 16px;">廷豐智能研報</div>
+            <div style="font-size: 14px; color: #6E7E89; margin-top: 8px; font-variant-numeric: tabular-nums;">收錄 15,234 篇券商研報 — 語意檢索 · 智能問答 · 深度研報</div>
+
+            <div style="display: inline-flex; background: var(--n-track, #ECEAE3); border-radius: 12px; padding: 3px; margin-top: 32px;">
+              <span style="display: inline-flex; align-items: center; gap: 7px; background: #FFFFFF; border-radius: 9px; padding: 7px 20px; font-size: 13.5px; font-weight: 600; color: #14453A; box-shadow: 0 1px 3px rgba(22,42,58,0.1);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1E5B4B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+                檢索研報
+              </span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border-radius: 9px; padding: 7px 20px; font-size: 13.5px; color: #6E7E89;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3z"></path></svg>
+                智能問答
+              </span>
+            </div>
+
+            <div style="width: 720px; margin-top: 14px; background: #FFFFFF; border: 1.5px solid #1E5B4B; border-radius: 16px; box-shadow: 0 0 0 4px rgba(30,91,75,0.08), 0 8px 24px rgba(22,42,58,0.06); padding: 6px 6px 6px 20px; display: flex; align-items: center; gap: 12px;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6E7E89" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"></circle><path d="M21 21l-6 -6"></path></svg>
+              <span style="flex: 1; font-size: 15px; color: #9AA5AE;">搜尋產業、公司、事件…</span>
+              <span style="border: 1px solid var(--n-border, #E7E4DC); border-radius: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #9AA5AE; padding: 3px 7px;">⌘K</span>
+              <span style="background: #1E5B4B; color: #FFFFFF; border-radius: 11px; height: 44px; padding: 0 24px; display: inline-flex; align-items: center; font-size: 14px; font-weight: 600;">搜尋</span>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 14px;">
+              <span style="font-size: 12.5px; color: #9AA5AE;">試試</span>
+              <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: #40525F;">AI 伺服器散熱供應鏈</span>
+              <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: #40525F;">FOMC 降息路徑</span>
+              <span style="border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: #40525F;">高股息 ETF 配置</span>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 36px; max-width: 900px;">
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #237A46;"></span>台股 6,120</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #2E5FA3;"></span>美股 3,482</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #B26A0B;"></span>港股 1,210</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #B03A30;"></span>陸股 986</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #6E48A8;"></span>台指期 754</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #0E7D74;"></span>外匯 512</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #A03052;"></span>總經 1,420</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #4A4FA0;"></span>全球 620</span>
+              <span style="display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--n-border2, #E0DDD4); background: #FFFFFF; border-radius: 999px; padding: 5px 14px; font-size: 12.5px; color: #40525F; font-variant-numeric: tabular-nums;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #7D6234;"></span>加密 130</span>
+            </div>
+
+            <div style="width: 1024px; margin-top: 48px;">
+              <div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px;">
+                <span style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 16px; color: #212B33;">最新入庫</span>
+                <span style="font-size: 12.5px; color: #6E7E89; font-variant-numeric: tabular-nums;">今日新增 218 篇</span>
+                <span style="flex: 1;"></span>
+                <span style="font-size: 13px; font-weight: 600; color: #1E5B4B;">瀏覽全部 ›</span>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-28</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">台積電(2330)—2nm 量產進度與 CoWoS 供需更新</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">元大投顧</div>
+                </div>
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(160,48,82,0.1); color: #A03052; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #A03052;"></span>總經</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-28</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">6 月 FOMC 會後：點陣圖下修與降息路徑</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">國泰投顧</div>
+                </div>
+                <div style="background: #FFFFFF; border: 1px solid var(--n-border, #E7E4DC); border-radius: 12px; padding: 13px 15px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; background: rgba(35,122,70,0.1); color: #237A46; border-radius: 999px; padding: 2px 9px; font-size: 11.5px; font-weight: 500;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #237A46;"></span>台股</span>
+                    <span style="font-size: 12px; color: #9AA5AE; font-variant-numeric: tabular-nums;">06-27</span>
+                  </div>
+                  <div style="font-family: var(--df, 'Noto Serif TC', Georgia, serif); font-weight: 700; font-size: 14px; line-height: 1.5; color: #212B33; height: 42px; overflow: hidden;">奇鋐(3017)—AI 散熱獨家受惠，液冷放量在即</div>
+                  <div style="font-size: 12px; color: #6E7E89; margin-top: 8px;">凱基投顧</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;ink&quot;: {
+    &quot;editor&quot;: &quot;color&quot;,
+    &quot;default&quot;: &quot;#1E5175&quot;,
+    &quot;tsType&quot;: &quot;string&quot;,
+    &quot;options&quot;: [&quot;#1E5175&quot;, &quot;#1E5B4B&quot;, &quot;#8A3E3C&quot;, &quot;#4A4FA0&quot;],
+    &quot;section&quot;: &quot;主題方向（作用於提案 1a 全部畫面）&quot;
+  },
+  &quot;displayFont&quot;: {
+    &quot;editor&quot;: &quot;enum&quot;,
+    &quot;default&quot;: &quot;宋體標題&quot;,
+    &quot;tsType&quot;: &quot;string&quot;,
+    &quot;options&quot;: [&quot;宋體標題&quot;, &quot;全黑體&quot;],
+    &quot;section&quot;: &quot;主題方向（作用於提案 1a 全部畫面）&quot;
+  },
+  &quot;paper&quot;: {
+    &quot;editor&quot;: &quot;enum&quot;,
+    &quot;default&quot;: &quot;暖紙白&quot;,
+    &quot;tsType&quot;: &quot;string&quot;,
+    &quot;options&quot;: [&quot;暖紙白&quot;, &quot;冷調灰白&quot;],
+    &quot;section&quot;: &quot;主題方向（作用於提案 1a 全部畫面）&quot;
+  }
+}">
+class Component extends DCLogic {
+  renderVals() {
+    // 主色：curated 墨青/松墨/玄朱/黛紫；deep/hover/tint/line/ring 全由主色推導
+    const ink = this.props.ink ?? '#1E5175'
+    const mix = (pct, base) => `color-mix(in srgb, ${ink} ${pct}%, ${base})`
+
+    // 標題字體：宋體（印刷感）↔ 全黑體（現代）
+    const serifOn = (this.props.displayFont ?? '宋體標題') !== '全黑體'
+    const df = serifOn
+      ? "'Noto Serif TC', Georgia, serif"
+      : "'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif"
+
+    // 紙感：暖紙白 ↔ 冷調灰白（整組中性色一起換）
+    const cool = (this.props.paper ?? '暖紙白') === '冷調灰白'
+    const warm = { canvas: '#F7F6F2', sidebar: '#FBFAF6', border: '#E7E4DC', border2: '#E0DDD4', track: '#ECEAE3', div: '#EFEDE7', weak: '#F3F1EB', div2: '#F1EFE9', group: '#FAF9F5', frame: '#D9D6CD' }
+    const cold = { canvas: '#F5F6F8', sidebar: '#FAFBFC', border: '#E2E5EA', border2: '#DCE0E6', track: '#E8EAEE', div: '#ECEEF1', weak: '#F0F2F5', div2: '#EFF1F4', group: '#F7F8FA', frame: '#D5D9DF' }
+    const n = cool ? cold : warm
+
+    const themeVars = [
+      `--pk: ${ink}`,
+      `--pk-deep: ${mix(72, '#000')}`,
+      `--pk-hover: ${mix(78, '#000')}`,
+      `--pk-tint: ${mix(9, '#fff')}`,
+      `--pk-line: ${mix(18, '#fff')}`,
+      `--pk-ring: ${mix(8, 'transparent')}`,
+      `--pk-ring2: ${mix(7, 'transparent')}`,
+      `--df: ${df}`,
+      `--n-canvas: ${n.canvas}`,
+      `--n-sidebar: ${n.sidebar}`,
+      `--n-border: ${n.border}`,
+      `--n-border2: ${n.border2}`,
+      `--n-track: ${n.track}`,
+      `--n-div: ${n.div}`,
+      `--n-weak: ${n.weak}`,
+      `--n-div2: ${n.div2}`,
+      `--n-group: ${n.group}`,
+      `--n-frame: ${n.frame}`,
+    ].join('; ')
+
+    return { themeVars }
+  }
+}
+</script>
+</body>
+</html>

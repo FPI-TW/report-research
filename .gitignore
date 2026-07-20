@@ -12,6 +12,8 @@ data/*.json
 *.png
 # 說明頁截圖（UI 資產，被 SPA HelpPage 引用，需入版控；其餘 png 仍忽略）
 !frontend/src/assets/help/*.png
+# 設計稿的圖片資產（docs/design/ 是設計交付存檔，非執行期產物）
+!docs/design/**/*.png
 
 # runtime logs / locks / tag backups（執行期產生，非原始碼）
 data/*.log
@@ -34,3 +36,9 @@ deploy/secrets/
 
 # App 登入帳密 / session 金鑰(本機環境設定)
 /.env
+# .env 的一切變體（備份／環境別）。根錨定的 /.env 涵蓋不到 .env.bak-<timestamp>
+# 這類檔名，而它內含實際帳密與 session 金鑰——一次 `git add -A` 就會提交上去。
+# 刻意擋一整類而非單一事件：.bak / .backup / .bk / .old / .save / .local 都算。
+# 範本檔以 !.env.example 放行（無斜線，同時涵蓋 deploy/.env.example）。
+.env.*
+!.env.example

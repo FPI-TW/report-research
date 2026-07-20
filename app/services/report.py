@@ -372,8 +372,12 @@ async def _finalize_sectioned(
         ).hexdigest()
         if evidence_manifest is not None else None
     )
+    # 刻意不帶 expected_current：研報已渲染並落庫，「完成」是既成事實。若以
+    # expected_current="rendering" 把它綁在某一次中繼稽核寫入的成敗上，只要那次
+    # 寫入被 _audit fail-open 吞掉，這裡就會連帶失敗，讓成功的 run 永遠停在中繼態
+    # 且 report_doc_id 從未回填。is_valid_transition 允許跳階即為此。
     await _mark_run(
-        run_id, "completed", expected_current="rendering",
+        run_id, "completed",
         report_doc_id=report_id, evidence_manifest_hash=emh,
         current_revision_id=payload.get("revision_id"),
     )

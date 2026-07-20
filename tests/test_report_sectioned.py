@@ -225,8 +225,14 @@ class SectionedFinalTests(_SectionedBase):
         # 收尾 run 綁 report_doc_id＝done 的 report_id、帶 revision 與 manifest hash
         self.assertEqual(completed[2].get("report_doc_id"), report_id)
         self.assertEqual(completed[2].get("current_revision_id"), "rev-xyz")
-        self.assertEqual(completed[2].get("expected_current"), "rendering")
         self.assertTrue(completed[2].get("evidence_manifest_hash"))
+        # 審查 F1：收尾**不得**帶 expected_current。研報已渲染並落庫，「完成」是既成
+        # 事實；把它綁在某一次中繼稽核寫入的成敗上，只要那次被 _audit fail-open 吞掉，
+        # 收尾就會連帶失敗，讓成功的 run 永遠停在中繼態、report_doc_id 從未回填。
+        self.assertIsNone(
+            completed[2].get("expected_current"),
+            "收尾綁 expected_current 會讓掉一次稽核寫入就永久假性卡住",
+        )
 
     async def test_eval_persist_false_skips_render_and_persist(self):
         capture, restore = self._install([_FINAL_OK])

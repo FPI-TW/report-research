@@ -67,9 +67,37 @@ class TransitionTests(unittest.TestCase):
         self.assertTrue(is_valid_transition("queued", "retrieving"))
         self.assertTrue(is_valid_transition("rendering", "completed"))
 
-    def test_skipping_states_invalid(self):
-        self.assertFalse(is_valid_transition("queued", "rendering"))
-        self.assertFalse(is_valid_transition("retrieving", "completed"))
+    def test_forward_jump_allowed(self):
+        """向前跳階是**刻意允許**的（審查 F1）。
+
+        原本只准單步前進，配上 `_audit` 對每次寫入 fail-open，會讓任何一次 DB 抖動
+        毒化整條稽核鏈：掉了 outlining 那一次寫入後，drafting/verifying/rendering/
+        completed 全部變成非法轉換再被靜默吞掉，於是成功出貨的研報永遠停在
+        retrieving 且 error_detail 為 NULL。守門要擋的是倒退，不是跳階。
+        """
+        self.assertTrue(is_valid_transition("queued", "rendering"))
+        self.assertTrue(is_valid_transition("retrieving", "completed"))
+        self.assertTrue(is_valid_transition("outlining", "completed"))
+
+    def test_backward_transition_invalid(self):
+        """倒退仍須拒絕——放寬跳階不等於放棄守門。"""
+        self.assertFalse(is_valid_transition("rendering", "drafting"))
+        self.assertFalse(is_valid_transition("completed", "retrieving"))
+        self.assertFalse(is_valid_transition("drafting", "queued"))
+
+    def test_dropped_intermediate_write_still_reaches_completed(self):
+        """F1 回歸：中繼轉換整段掉光，仍必須能把 run 標成 completed。
+
+        模擬 `_audit` 吞掉 outlining/drafting/verifying/rendering 四次寫入後，
+        report.py 仍會以 run 實際狀態 retrieving 呼叫 completed。
+        """
+        current = "retrieving"  # outlining 之後全部寫入失敗，狀態停在此
+        for dropped in ("outlining", "drafting", "verifying", "rendering"):
+            self.assertTrue(is_valid_transition(current, dropped))  # 各自單獨仍合法
+        self.assertTrue(
+            is_valid_transition(current, "completed"),
+            "掉寫入後無法收尾 → report_run 永遠假性卡住",
+        )
 
     def test_same_state_idempotent(self):
         self.assertTrue(is_valid_transition("drafting", "drafting"))
@@ -159,10 +187,22 @@ class AdvanceStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.executed[-1][1]["st"], "retrieving")
 
     async def test_invalid_transition_raises(self):
-        s = _FakeSession(results=[[("queued",)]])
+        """倒退轉換仍須 raise（審查 F1 放寬的是**跳階**，不是倒退）。
+
+        原本此處以 queued→rendering 當非法案例；跳階改為合法後，改用真正該擋的
+        倒退：rendering→drafting。
+        """
+        s = _FakeSession(results=[[("rendering",)]])
         with _use(s):
             with self.assertRaises(InvalidTransition):
-                await rw.advance_status("run-1", "rendering")
+                await rw.advance_status("run-1", "drafting")
+
+    async def test_forward_jump_does_not_raise(self):
+        """F1 回歸：中繼寫入掉光後，仍必須能從 retrieving 直接收尾到 completed。"""
+        s = _FakeSession(results=[[("retrieving",)]])
+        with _use(s):
+            await rw.advance_status("run-1", "completed")
+        self.assertEqual(s.executed[-1][1]["st"], "completed")
 
     async def test_missing_run_raises(self):
         s = _FakeSession(results=[[]])  # SELECT returns nothing
@@ -1119,6 +1159,52 @@ class SectionWebGatingTests(unittest.IsolatedAsyncioTestCase):
     async def test_web_disabled_globally_never_searches(self):
         seen = await self._allow_web_calls(0, thin_coverage=3, web_enabled=False)
         self.assertTrue(all(v is False for v in seen), f"全域關網搜仍被開：{seen}")
+
+    async def test_regeneration_reuses_section_gate_not_run_level(self):
+        """審查 F2 回歸：n_unknown 重生必須沿用該節的閘門結果，不可退回 run-level。
+
+        重生迴圈原本寫死 `allow_web=web_enabled`，於是閘門已明確關掉網搜的節在重生時
+        被重新打開。雙重危害：(1) 成本回歸——模型抄壞 [[ev:]] 時往往多節同壞，一次
+        重生就把 N 次網搜加回來，正是 28b8a68 要消滅的形態；(2) 證據完整性——重生沿用
+        的 prompt 是 sec_web=False 時建的、不含網路標註規則，模型拿到工具卻沒拿到規則，
+        網路內容會未標註地混進正文，永遠進不了 evidence_manifest。
+        """
+        from types import SimpleNamespace
+
+        seen = []
+        src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf", market="TW",
+                              report_date="2026-01-01")
+
+        async def fake_outline(*a, **k):
+            return _outline_3()
+
+        async def fake_retrieve(topic, **k):
+            # 命中數(8) 遠高於門檻(3) → 每節閘門都應關閉網搜
+            return ([src] * 8, "[1] 報告：a.pdf\n片段")
+
+        def fake_stream(*a, **k):
+            seen.append(k.get("allow_web"))
+
+            async def gen():
+                # 抄出一個 ledger 中不存在的 id → n_unknown>0 → 觸發重生迴圈
+                yield "內文[[ev:deadbeefdeadbeef]]"
+
+            return gen()
+
+        with patch.object(rw, "plan_outline", fake_outline), patch.object(
+            rw, "retrieve_for_section", fake_retrieve
+        ), patch.object(rw, "stream_completion", fake_stream):
+            [e async for e in rw.draft_report(
+                "q", "ctx", web_enabled=True, thin_coverage=3)]
+
+        # 必須真的走到重生（否則這條測試等於沒驗到東西）
+        self.assertGreater(
+            len(seen), 3, f"未觸發重生迴圈，本測試失去意義：{seen}"
+        )
+        self.assertTrue(
+            all(v is False for v in seen),
+            f"重生繞過逐節網搜閘門（run-level web_enabled 洩漏進重生）：{seen}",
+        )
 
     async def test_run_level_threshold_would_defeat_the_gate(self):
         """回歸：拿 run-level 門檻（8）套逐節配額（8）會幾乎每節誤觸發。

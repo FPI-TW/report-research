@@ -51,19 +51,26 @@ SECTION_STATES: tuple[str, ...] = (
     "pending", "retrieving", "drafting", "drafted", "verifying", "final", "failed",
 )
 
-# 正常前進路徑；any(非終端)→failed/cancelled 與 same→same 另行允許（見 is_valid_transition）
-_FORWARD: dict[str, set[str]] = {
-    "queued": {"retrieving"},
-    "retrieving": {"outlining"},
-    "outlining": {"drafting"},
-    "drafting": {"verifying"},
-    "verifying": {"rendering"},
-    "rendering": {"completed"},
-}
+# 線性推進序（failed/cancelled 是側向終端出口，不在此序內；any(非終端)→failed/cancelled
+# 與 same→same 另行允許，見 is_valid_transition）。
+# **刻意允許向前跳階**：`_audit` 對每次稽核寫入 fail-open，若只准單步前進，任何一次
+# DB 抖動都會讓其後每一次轉換都變成非法轉換、再被同一個 fail-open 靜默吞掉——結果是
+# 研報成功出貨並落庫，`report_run` 卻永遠停在中繼狀態、`error_detail` 為 NULL、
+# `report_doc_id` 從未回填，維運查「哪些 run 卡住」全是假陽性。守門的真正目的是擋
+# 「倒退」與「終端態復活」，不是強迫每一步都留下紀錄；掉一次寫入應只少一筆中繼
+# 紀錄，不該毒化整條稽核鏈。
+_PROGRESS: tuple[str, ...] = (
+    "queued", "retrieving", "outlining", "drafting",
+    "verifying", "rendering", "completed",
+)
 
 
 class InvalidTransition(ValueError):
     """不合法的狀態轉換（防止亂序推進 report_run.status）。"""
+
+
+# 稽核寫入失敗時可安全入 log 的欄位（小而具辨識性；排除 markdown 類大字串）
+_AUDIT_LOG_KEYS = ("status", "section_key", "expected_current", "error_detail")
 
 
 async def _audit(fn, *args, **kwargs) -> None:
@@ -79,21 +86,33 @@ async def _audit(fn, *args, **kwargs) -> None:
     except asyncio.CancelledError:
         raise
     except Exception:
+        # 只印函式名的話，四行一模一樣的 advance_status 警告無從判斷是哪個 run、
+        # 卡在哪一步。呼叫端一律以 (run_id, status|position) 為前兩個位置參數，
+        # 取之即得辨識脈絡；draft_markdown 等大字串一律不得入 log。
         logger.warning(
-            "report_run 稽核寫入 fail-open：%s", getattr(fn, "__name__", fn),
+            "report_run 稽核寫入 fail-open：fn=%s run=%s target=%s %s",
+            getattr(fn, "__name__", fn),
+            args[0] if args else kwargs.get("run_id"),
+            args[1] if len(args) > 1 else None,
+            {k: v for k, v in kwargs.items() if k in _AUDIT_LOG_KEYS},
             exc_info=True,
         )
 
 
 def is_valid_transition(current: str, nxt: str) -> bool:
-    """狀態機守門：same→same 冪等；非終端→failed/cancelled 恆可；其餘依 _FORWARD。"""
+    """狀態機守門：same→same 冪等；非終端→failed/cancelled 恆可；其餘須沿 _PROGRESS
+    向前（**可跳階**，理由見 _PROGRESS 註解）；倒退與終端態轉出一律拒絕。"""
     if current not in RUN_STATES or nxt not in RUN_STATES:
         return False
     if current == nxt:
         return True  # 冪等（續跑重入同狀態）
+    if current in TERMINAL_STATES:
+        return False
     if nxt in ("failed", "cancelled"):
-        return current not in TERMINAL_STATES
-    return nxt in _FORWARD.get(current, set())
+        return True
+    if current in _PROGRESS and nxt in _PROGRESS:
+        return _PROGRESS.index(nxt) > _PROGRESS.index(current)
+    return False
 
 
 # ── 冪等 request_key 合成 ───────────────────────────────────────────────────
@@ -1066,6 +1085,12 @@ async def draft_report(
         drafts.append(
             {"position": pos, "key": sec["key"], "heading": sec["heading"],
              "kind": sec["kind"], "draft": draft_text,
+             # sec_web 必須隨 system/prompt 一起存：重生時若改用 run-level 的
+             # web_enabled，等於繞過薄涵蓋閘門（成本回歸），且會拿「當初以
+             # sec_web=False 建、不含網路標註規則」的 prompt 搭配 WebSearch 工具 →
+             # 網路內容未標註混進正文 → split_web_refs 抽不到 → 不進外部參考節 →
+             # 永遠不進 evidence_manifest。prompt 與工具必須同源。
+             "sec_web": sec_web,
              "system": system, "prompt": prompt}
         )
         claim_evidence[str(pos)] = allowed_ids
@@ -1106,7 +1131,9 @@ async def draft_report(
             text_out = ""
             async for kind, payload in _stream_section(
                 d["system"], d["prompt"], timeout=s.report_section_timeout,
-                retry=0, model=draft_model, allow_web=web_enabled,
+                # 沿用該節原本的閘門結果（缺鍵時 fail-closed 不開網搜）：
+                # prompt 是以它建的，工具開關必須與 prompt 同源。
+                retry=0, model=draft_model, allow_web=d.get("sec_web", False),
             ):
                 if kind == "__text__":
                     text_out = str(payload)

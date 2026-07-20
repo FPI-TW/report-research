@@ -1,11 +1,13 @@
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.config import get_settings  # noqa: E402
+from app.config import _renderer, get_settings  # noqa: E402
 
 
 class SettingsDefaultsTests(unittest.TestCase):
@@ -85,8 +87,42 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.report_mmr_max_per_source, 6)
         self.assertEqual(s.report_mmr_max_per_month, 0)
 
+    def test_renderer_defaults_m9a(self):
+        # 渲染器雙軌（M9a 區段；M9a 里程碑只在本方法內加斷言）
+        s = get_settings()
+        self.assertEqual(s.report_renderer, "typst")
+
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())
+
+
+class RendererFlagTests(unittest.TestCase):
+    """_renderer 的 fail-safe：typo 不得靜默把生產切到另一條渲染路徑。"""
+
+    def _renderer_with(self, value: str | None) -> str:
+        env = {} if value is None else {"REPORT_RENDERER": value}
+        with mock.patch.dict(os.environ, env, clear=False):
+            if value is None:
+                os.environ.pop("REPORT_RENDERER", None)
+            return _renderer("REPORT_RENDERER", "typst")
+
+    def test_known_values_pass_through(self):
+        self.assertEqual(self._renderer_with("weasyprint"), "weasyprint")
+        self.assertEqual(self._renderer_with("typst"), "typst")
+
+    def test_case_and_space_tolerated(self):
+        self.assertEqual(self._renderer_with("  WeasyPrint "), "weasyprint")
+
+    def test_unknown_falls_back_to_default(self):
+        with self.assertLogs("app.config", level="WARNING"):
+            self.assertEqual(self._renderer_with("typoo"), "typst")
+
+    def test_empty_falls_back_to_default(self):
+        with self.assertLogs("app.config", level="WARNING"):
+            self.assertEqual(self._renderer_with(""), "typst")
+
+    def test_unset_uses_default(self):
+        self.assertEqual(self._renderer_with(None), "typst")
 
 
 if __name__ == "__main__":

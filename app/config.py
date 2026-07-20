@@ -5,12 +5,28 @@
 非-env 字面量（BAND_WIDTH 等）不在此收斂範圍（見 M6）。
 """
 
+import logging
 import os
 from dataclasses import dataclass
 
 
 def _flag(name: str, default: str) -> bool:
     return os.getenv(name, default) not in ("0", "false", "False", "")
+
+
+_RENDERERS = ("typst", "weasyprint")
+
+
+def _renderer(name: str, default: str) -> str:
+    """渲染器名稱；未知值退回預設並警告——不讓 typo 靜默切換渲染路徑。"""
+    v = (os.getenv(name, default) or "").strip().lower()
+    if v not in _RENDERERS:
+        logging.getLogger(__name__).warning(
+            "%s=%r 不是合法渲染器（可用：%s），退回 %s",
+            name, v, "/".join(_RENDERERS), default,
+        )
+        return default
+    return v
 
 
 @dataclass(frozen=True)
@@ -46,6 +62,7 @@ class Settings:
     report_max_context_chars: int
     report_timeout: float
     reports_dir: str
+    report_renderer: str
     report_enable_web: bool
     report_thin_coverage: int
     # report_gate.py
@@ -80,6 +97,17 @@ class Settings:
     report_mmr_lambda: float
     report_mmr_max_per_source: int
     report_mmr_max_per_month: int
+    # 逐節生成 / report_writer（M7 里程碑）—— M7 里程碑只在本區段內加鍵
+    report_sectioned_enabled: bool
+    report_outline_timeout: float
+    report_outline_max_subsections: int
+    report_section_timeout: float
+    report_section_max_reports: int
+    report_section_max_passages: int
+    report_section_max_context_chars: int
+    report_section_rerank_candidates: int
+    report_section_retry: int
+    report_section_thin_coverage: int
 
 
 def _load() -> Settings:
@@ -113,6 +141,7 @@ def _load() -> Settings:
         report_max_context_chars=int(os.getenv("REPORT_MAX_CONTEXT_CHARS", "40000")),
         report_timeout=float(os.getenv("REPORT_TIMEOUT", "600")),
         reports_dir=os.getenv("REPORTS_DIR", "data/reports"),
+        report_renderer=_renderer("REPORT_RENDERER", "typst"),
         report_enable_web=_flag("REPORT_ENABLE_WEB", "1"),
         report_thin_coverage=int(os.getenv("REPORT_THIN_COVERAGE", "8")),
         report_min_cited=int(os.getenv("REPORT_MIN_CITED", "3")),
@@ -150,6 +179,31 @@ def _load() -> Settings:
         report_mmr_max_per_source=int(os.getenv("REPORT_MMR_MAX_PER_SOURCE", "6")),
         # 預設關：財報季主題天然集中同月，硬性月配額誤傷風險高
         report_mmr_max_per_month=int(os.getenv("REPORT_MMR_MAX_PER_MONTH", "0")),
+        # 逐節生成 / report_writer（M7 里程碑）—— M7 里程碑只在本區段內加鍵
+        report_sectioned_enabled=_flag("REPORT_SECTIONED_ENABLED", "1"),
+        report_outline_timeout=float(os.getenv("REPORT_OUTLINE_TIMEOUT", "45")),
+        report_outline_max_subsections=int(
+            os.getenv("REPORT_OUTLINE_MAX_SUBSECTIONS", "5")
+        ),
+        # 逐節逾時／配額：刻意低於整份（25/6/40000/120），控 N 節串行延遲
+        report_section_timeout=float(os.getenv("REPORT_SECTION_TIMEOUT", "150")),
+        report_section_max_reports=int(os.getenv("REPORT_SECTION_MAX_REPORTS", "8")),
+        report_section_max_passages=int(os.getenv("REPORT_SECTION_MAX_PASSAGES", "4")),
+        report_section_max_context_chars=int(
+            os.getenv("REPORT_SECTION_MAX_CONTEXT_CHARS", "12000")
+        ),
+        report_section_rerank_candidates=int(
+            os.getenv("REPORT_SECTION_RERANK_CANDIDATES", "40")
+        ),
+        report_section_retry=int(os.getenv("REPORT_SECTION_RETRY", "1")),
+        # 逐節薄涵蓋門檻：低於此數才讓該節上網補。**必須明顯低於逐節配額**
+        # （REPORT_SECTION_MAX_REPORTS=8）——拿 run-level 的 REPORT_THIN_COVERAGE=8
+        # 來套會幾乎每節都觸發（節最多就檢索 8 篇）。無條件開網搜的代價是成本放大
+        # N 倍：單次路徑一份研報搜 1 次，逐節 8 節就搜 8 次（M1b 實測 r005/r009
+        # 各 8/7 次網搜，雙雙撞破 1500s）。
+        report_section_thin_coverage=int(
+            os.getenv("REPORT_SECTION_THIN_COVERAGE", "3")
+        ),
     )
 
 

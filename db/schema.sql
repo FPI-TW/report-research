@@ -194,6 +194,66 @@ CREATE INDEX IF NOT EXISTS idx_report_signal_report
 CREATE INDEX IF NOT EXISTS idx_report_signal_status
     ON research.report_signal (extraction_status);
 
+-- ── M7：研報生成重構（大綱 → 逐節）────────────────────────────────────────
+-- 生成狀態機：一列＝一次生成請求的完整生命週期。冪等 request_key（同鍵重送回同
+-- run）、每次狀態轉換原子 commit、checkpoint 供 fail-open 從最後一致點續跑。
+-- id 由 Python uuid4 產生（比照 qa_log/report_doc/report_signal；無 DB DEFAULT）。
+-- 對 research_report 刻意無 FK（生成流程史非語料衍生，upsert 先刪後插不應連帶清除）。
+CREATE TABLE IF NOT EXISTS research.report_run (
+    id                     uuid PRIMARY KEY,
+    request_key            text NOT NULL,           -- 冪等鍵：端上合成 hash(question|filters|model|conversation_id)
+    status                 text NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued','retrieving','outlining','drafting',
+                          'verifying','rendering','completed','failed','cancelled')),
+    input_config           jsonb NOT NULL DEFAULT '{}'::jsonb,  -- question/filters/model/prompt/renderer 快照
+    evidence_manifest_hash text,
+    outline                jsonb,                   -- 固定五章 + 動態子節
+    checkpoint             jsonb,                   -- 最後一致可續跑點：{outline, final_positions[], current_revision_id}
+    error_detail           text,
+    current_revision_id    uuid,
+    revision               int  NOT NULL DEFAULT 0,
+    qa_id                  uuid,
+    conversation_id        uuid,
+    report_doc_id          uuid,
+    created_at             timestamptz NOT NULL DEFAULT now(),
+    updated_at             timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_report_run_request_key UNIQUE (request_key)
+);
+CREATE INDEX IF NOT EXISTS idx_report_run_status
+    ON research.report_run (status);
+CREATE INDEX IF NOT EXISTS idx_report_run_conversation
+    ON research.report_run (conversation_id, created_at);
+
+-- 逐節內容層：一列＝大綱一節。run_id CASCADE（緊耦合擁有，比照 report_chunk/
+-- report_signal）；position 決定組裝序與 [n] 首見序；evidence_ids 對齊
+-- evidence.py 的 evidence_id（16 hex）；draft/final 分離（draft=可覆寫 SSE 草稿）。
+CREATE TABLE IF NOT EXISTS research.report_section (
+    id             uuid PRIMARY KEY,
+    run_id         uuid NOT NULL REFERENCES research.report_run(id) ON DELETE CASCADE,
+    position       int  NOT NULL,                   -- 組裝序 = [n] 首見序
+    section_key    text,                            -- 骨架節鍵（exec_summary/...）或動態子節鍵
+    heading        text,
+    draft_markdown text,                            -- 對應 SSE section_draft（可覆寫）
+    final_markdown text,                            -- 對應 document_revision 組裝
+    evidence_ids   text[],                          -- 被分配的 evidence_id 子集
+    status         text NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','retrieving','drafting','drafted','verifying','final','failed')),
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_report_section_run_pos UNIQUE (run_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_report_section_run
+    ON research.report_section (run_id, position);
+CREATE INDEX IF NOT EXISTS idx_report_section_evidence
+    ON research.report_section USING gin (evidence_ids);
+
+-- report_doc 補欄（nullable 無 default，歷史列 NULL 安全退化）。
+-- evidence_manifest 已由 M4b 建立，此處不重複定義。
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS outline             jsonb;
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS claim_evidence      jsonb;   -- claim/KPI/chart → evidence_id 映射
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS current_revision_id uuid;
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS report_run_id       uuid;    -- 反向連結（plain uuid，非 FK）
+
 -- ── 研報重點摘錄層：一列＝「一份研報 × 一條重點」（研報閱讀頁 /app/report/:hash）──
 -- 由 scripts/extract_takeaways.py 以 LLM 回「論點 + 逐字引文」、Python 用
 -- app/services/reading/anchor.py 確定性定位後寫入。讀取閱讀頁時不呼叫 LLM。

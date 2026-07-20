@@ -37,6 +37,12 @@
   overflow-wrap: anywhere;
 }
 
+.currency { white-space: nowrap; }
+.amount {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
 .foot {
   margin-top: 14px;
 }

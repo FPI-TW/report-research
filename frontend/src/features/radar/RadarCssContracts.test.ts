@@ -102,7 +102,7 @@ describe('Radar 390px 版型契約', () => {
     expectDeclaration(mobile, '.fig:nth-child(3)', 'grid-column', '1 / -1')
   })
 
-  it('KPI 長合法值依卡片寬度縮放並允許換行，不靠 nowrap 裁切', () => {
+  it('KPI 長合法值依卡片寬度縮放，僅允許在幣別與完整數字之間換行', () => {
     const mobile = mediaBlock(keyFiguresCss, 560)
     const compactCard = containerBlock(keyFiguresCss, 180)
 
@@ -110,6 +110,8 @@ describe('Radar 390px 版型契約', () => {
     expectDeclaration(mobile, '.fig', 'padding', '20px 14px 22px')
     expectDeclaration(keyFiguresCss, '.fig', 'container-type', 'inline-size')
     expectDeclaration(keyFiguresCss, '.val', 'overflow-wrap', 'anywhere')
+    expectDeclaration(keyFiguresCss, '.amount', 'white-space', 'nowrap')
+    expectDeclaration(keyFiguresCss, '.amount', 'overflow-wrap', 'normal')
     expectDeclaration(compactCard, '.val', 'font-size', 'clamp(26px, 20cqi, 30px)')
     expect(ruleBlock(mobile, '.val')).not.toContain('white-space: nowrap')
   })

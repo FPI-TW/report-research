@@ -329,6 +329,17 @@ test.describe('Radar contract', () => {
     expect(longValueMetrics.left).toBeGreaterThanOrEqual(longValueMetrics.cardLeft - 1)
     expect(longValueMetrics.right).toBeLessThanOrEqual(longValueMetrics.cardRight + 1)
 
+    const medianNeedle = page.getByText('中位', { exact: true }).locator('..')
+    const medianPosition = await medianNeedle.evaluate(node => {
+      const needle = node.getBoundingClientRect()
+      const track = node.parentElement!.querySelector('[class*="dist"]')!.getBoundingClientRect()
+      return {
+        needleCenter: needle.left + needle.width / 2,
+        expected: track.left + track.width * 0.3,
+      }
+    })
+    expect(Math.abs(medianPosition.needleCenter - medianPosition.expected)).toBeLessThanOrEqual(1)
+
     const thesisCells = page.getByLabel('四向觀點').locator(':scope > article')
     await expect(thesisCells).toHaveCount(4)
     const thesisBoxes = await boxes(thesisCells)

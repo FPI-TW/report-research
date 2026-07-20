@@ -1,12 +1,26 @@
 import type { Coverage, EpsConsensus, TargetConsensus } from '../../lib/radarSchemas'
 import { DirectionTag } from './DirectionTag'
-import { currencyPrefix, fmtNum, fmtPrice } from './radarFormat'
+import { currencyPrefix, fmtNum } from './radarFormat'
 import styles from './KeyFigures.module.css'
 
 interface Props {
   target?: TargetConsensus | null
   eps?: EpsConsensus | null
   coverage: Coverage
+}
+
+function PriceValue({ value, currency }: { value: number | null | undefined, currency: string | null | undefined }) {
+  if (value == null) return '—'
+
+  const prefix = currencyPrefix(currency)
+  const amount = fmtNum(value, value >= 100 ? 0 : 2)
+  return (
+    <>
+      {prefix ? <span className={styles.currency}>{prefix}</span> : null}
+      {prefix ? <wbr /> : null}
+      <span className={styles.amount}>{amount}</span>
+    </>
+  )
 }
 
 /** overview 頂部關鍵數字：目標價中位數 / EPS 中位數 / 資料品質。 */
@@ -24,7 +38,9 @@ export function KeyFigures({ target, eps, coverage }: Props) {
         <div className={styles.kicker}>目標價中位數</div>
         {primaryTarget ? (
           <>
-            <div className={styles.val}>{fmtPrice(primaryTarget.median, primaryTarget.currency)}</div>
+            <div className={styles.val}>
+              <PriceValue value={primaryTarget.median} currency={primaryTarget.currency} />
+            </div>
             <div className={styles.foot}>
               <DirectionTag
                 direction={primaryTarget.revision_direction}
@@ -47,7 +63,9 @@ export function KeyFigures({ target, eps, coverage }: Props) {
         </div>
         {primaryEps ? (
           <>
-            <div className={styles.val}>{fmtPrice(primaryEps.median, primaryEps.currency)}</div>
+            <div className={styles.val}>
+              <PriceValue value={primaryEps.median} currency={primaryEps.currency} />
+            </div>
             <div className={styles.foot}>
               <DirectionTag
                 direction={primaryEps.revision_direction}

@@ -32,6 +32,20 @@ def _stub_plan_queries():
         rpt.plan_queries = orig
 
 
+@pytest.fixture(autouse=True)
+def _force_single_shot():
+    """本檔測的是「單次生成」路徑（含逐節大綱 fail-open 後的退場）：釘住
+    REPORT_SECTIONED_ENABLED=False，使 generate_report 走單次分支——這些 stub 患
+    rpt.stream_completion/retrieve_context_multi 的斷言方成立。逐節預設路徑的契約
+    另由 tests/test_report_sectioned.py 覆蓋。"""
+    orig = rpt.REPORT_SECTIONED_ENABLED
+    rpt.REPORT_SECTIONED_ENABLED = False
+    try:
+        yield
+    finally:
+        rpt.REPORT_SECTIONED_ENABLED = orig
+
+
 @dataclass
 class _FakeSource:
     """build_context 回傳的 sources 元素替身（generate_report 會 asdict 它）。"""

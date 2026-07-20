@@ -16,7 +16,7 @@ import sys
 import time
 import uuid as _uuidlib
 from collections import Counter
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress as _suppress
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -827,6 +827,50 @@ def _sse(event: str, data: object) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+SSE_HEARTBEAT_INTERVAL = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "20"))
+
+
+async def _with_heartbeat(gen, interval: float = SSE_HEARTBEAT_INTERVAL):
+    """事件之間插入 SSE 註解心跳，避免長靜默被反向代理切斷連線。
+
+    nginx 的 proxy_read_timeout 是 60s（deploy/nginx.conf），但兩條生成路徑都有
+    超過它的靜默窗：研報逐節路徑每節的針對性檢索（含 rerank）可達 90s+ 完全無事件，
+    單次路徑的 run-level 檢索亦然。缺了心跳，連線會在生成中途被 nginx 切斷。
+
+    這條路徑本機看不到：eval 直接呼叫 generate_report、單元測試不走 HTTP、開發時
+    直連 :8097 也繞過 nginx——只有經 Cloudflare Tunnel + nginx 的實際使用者會遇到，
+    且表現為「生成到一半連線就斷」，容易被誤認為偶發網路問題。
+
+    心跳是 SSE 註解行（`: ...`）：前端 readSSE.parseFrame 對無 `data:` 欄位的框回
+    null 而略過，故對既有事件契約零影響。
+    """
+    it = gen.__aiter__()
+    pending: asyncio.Task | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(it.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=interval)
+            if not done:
+                yield ": keep-alive\n\n"
+                continue
+            task, pending = pending, None
+            try:
+                yield task.result()
+            except StopAsyncIteration:
+                return
+    finally:
+        # 用戶端中斷時，先收掉尚未完成的 __anext__，再讓底層產生器跑自己的 finally
+        # （研報逐節路徑靠它 kill 子程序）。
+        if pending is not None:
+            pending.cancel()
+            with _suppress(BaseException):
+                await pending
+        aclose = getattr(it, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+
 @app.post("/api/ask")
 async def ask(req: AskRequest):
     """RAG 問答：檢索 → 串流回答（帶 [n] 行內引用）。回 text/event-stream。
@@ -876,7 +920,7 @@ async def ask(req: AskRequest):
                 yield _sse("error", {"detail": "問答服務發生錯誤"})
 
     return StreamingResponse(
-        gen(),
+        _with_heartbeat(gen()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -952,7 +996,7 @@ async def report(req: ReportRequest):
                 yield _sse("error", {"detail": "研報生成發生錯誤"})
 
     return StreamingResponse(
-        gen(),
+        _with_heartbeat(gen()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

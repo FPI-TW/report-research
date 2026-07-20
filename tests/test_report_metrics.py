@@ -119,6 +119,114 @@ class SectionCoverageTests(unittest.TestCase):
         out = rm.section_coverage("")
         self.assertEqual(out["covered"], 0)
 
+    def test_dynamic_subsections_do_not_break_coverage(self):
+        """逐節生成：## 重點分析 下掛多個 ### 動態子節，仍恰命中五章、### 不誤計。"""
+        md = (
+            "# 台積電 深度研報\n\n## 執行摘要\n\n綜述[1]。\n\n"
+            "## 關鍵發現\n\n- 重點[2]。\n\n"
+            "## 重點分析\n\n### 先進製程\n\n內容[1]。\n\n### 競爭格局\n\n內容[2]。\n\n"
+            "### 估值\n\n內容[3]。\n\n"
+            "## 風險與展望\n\n風險[3]。\n\n"
+            "## 引用來源\n\n[1] A\n[2] B\n[3] C\n"
+        )
+        out = rm.section_coverage(md)
+        self.assertEqual(out["covered"], 5)
+        self.assertEqual(out["missing"], [])
+
+    def test_empty_chapter_not_counted(self):
+        """v2：只認標題會讓「## 執行摘要」下空無一字的殘報照樣 rate=1.0
+        （逐節生成的節草稿耗盡即此形態）——空章節必須算缺章。"""
+        md = (
+            "# T\n\n## 執行摘要\n\n## 關鍵發現\n\n發現。\n\n"
+            "## 重點分析\n\n分析。\n\n## 風險與展望\n\n風險。\n\n"
+            "## 引用來源\n\n[1] A\n"
+        )
+        out = rm.section_coverage(md)
+        self.assertEqual(out["covered"], 4)
+        self.assertEqual(out["missing"], ["執行摘要"])
+
+    def test_whitespace_only_chapter_not_counted(self):
+        md = "## 執行摘要\n\n   \n\n## 關鍵發現\n\n有內容\n"
+        out = rm.section_coverage(md)
+        self.assertIn("執行摘要", out["missing"])
+        self.assertNotIn("關鍵發現", out["missing"])
+
+    def test_analysis_wrapper_with_only_subsections_counts(self):
+        """`## 重點分析` 自身無內文、只掛 ### 子節（M7 的正常組裝形態）→ 仍算有內文。"""
+        md = "## 重點分析\n\n### 子題\n\n子題內文\n"
+        self.assertNotIn("重點分析", rm.section_coverage(md)["missing"])
+
+    def test_heading_only_subsections_do_not_rescue_chapter(self):
+        """子節也全空 → 該章仍算缺（標題堆疊不算內文）。"""
+        md = "# T\n\n## 重點分析\n\n### 子題\n\n### 子題2\n"
+        self.assertIn("重點分析", rm.section_coverage(md)["missing"])
+
+
+class CitationDenominatorTests(unittest.TestCase):
+    """v2：source_citation_rate 的分母＝餵給模型的證據總數（n_available）。"""
+
+    def test_n_available_none_keeps_v1_semantics(self):
+        md = "## 執行摘要\n\n甲[1]、乙[2]。\n"
+        out = rm.citation_metrics(md, 5)
+        self.assertAlmostEqual(out["citation_validity"], 1.0)
+        self.assertAlmostEqual(out["source_citation_rate"], 2 / 5)
+
+    def test_n_available_used_as_denominator(self):
+        """逐節路徑：n_sources 是「已被引用」表（恆滿），真分母是共用帳本大小。"""
+        md = "## 執行摘要\n\n甲[1]、乙[2]。\n"
+        out = rm.citation_metrics(md, 2, n_available=10)
+        self.assertAlmostEqual(out["citation_validity"], 1.0)   # [1][2] 皆在 1..2
+        self.assertAlmostEqual(out["source_citation_rate"], 2 / 10)
+
+    def test_validity_uses_n_sources_not_n_available(self):
+        """[n] 的合法上界仍是研報自己的引用來源表：模型手寫的越界 [9] 要抓得出來。"""
+        md = "## 執行摘要\n\n甲[1]、亂寫[9]。\n"
+        out = rm.citation_metrics(md, 2, n_available=10)
+        self.assertAlmostEqual(out["citation_validity"], 0.5)
+        self.assertAlmostEqual(out["source_citation_rate"], 1 / 10)
+
+    def test_zero_available_returns_none(self):
+        out = rm.citation_metrics("## 執行摘要\n\n無引用。\n", 0, n_available=0)
+        self.assertIsNone(out["citation_validity"])
+        self.assertIsNone(out["source_citation_rate"])
+
+
+class EvidenceLinkCoverageTests(unittest.TestCase):
+    """M7 evidence link coverage：掛到 ≥1 檢索證據的節 / 總節數。"""
+
+    def test_all_linked(self):
+        ce = {"0": ["a1"], "1": ["a1", "b2"], "2": ["c3"]}
+        out = rm.evidence_link_coverage(ce)
+        self.assertEqual(out, {"linked": 3, "total": 3, "rate": 1.0})
+
+    def test_partial_linked(self):
+        ce = {"0": ["a1"], "1": [], "2": ["c3"], "3": []}
+        out = rm.evidence_link_coverage(ce)
+        self.assertEqual(out["linked"], 2)
+        self.assertEqual(out["total"], 4)
+        self.assertAlmostEqual(out["rate"], 0.5)
+
+    def test_single_shot_none(self):
+        # 單次生成路徑無 claim_evidence → None（不入均值）
+        self.assertIsNone(rm.evidence_link_coverage(None))
+        self.assertIsNone(rm.evidence_link_coverage({}))
+
+    def test_malformed_values_treated_as_unlinked(self):
+        ce = {"0": "not-a-list", "1": ["ok"]}
+        out = rm.evidence_link_coverage(ce)
+        self.assertEqual(out["linked"], 1)
+        self.assertEqual(out["total"], 2)
+
+    def test_aggregates_only_sectioned_cases(self):
+        cases = [
+            {"id": "r1", "no_data": False, "evidence_link_coverage":
+             {"linked": 4, "total": 5, "rate": 0.8}},
+            {"id": "r2", "no_data": False, "evidence_link_coverage": None},  # 單次題
+        ]
+        s = rm.aggregate_cases(cases)
+        self.assertAlmostEqual(s["evidence_link_coverage"]["mean"], 0.8)
+        self.assertEqual(s["evidence_link_coverage"]["n_valid"], 1)
+
 
 class CitationMetricsTests(unittest.TestCase):
     def test_valid_invalid_mix_and_reference_sections_excluded(self):
@@ -196,6 +304,10 @@ class NoDataHandledTests(unittest.TestCase):
     def test_error_event_is_safe(self):
         self.assertTrue(rm.no_data_handled(error="找不到足夠資料生成研報",
                                            n_sources=0, markdown=None))
+
+    def test_internal_generation_error_is_not_a_safe_no_data_refusal(self):
+        self.assertFalse(rm.no_data_handled(error="研報引用標記異常",
+                                            n_sources=0, markdown=None))
 
     def test_web_answer_with_labeling_and_no_invalid_citations(self):
         md = (

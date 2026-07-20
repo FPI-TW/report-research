@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.services import report_writer
 from app.services.db import SessionFactory
 from app.services.evidence import manifest_from_answer
 from app.services.llm import SEARCH_EVENT, stream_completion
@@ -62,6 +64,11 @@ REPORT_RERANK_TIMEOUT = _S.report_rerank_timeout
 # planner 的 wall-clock 硬上限；同一 config 鍵也是 plan_queries 內部 per-attempt
 # timeout。設 0 ＝ 即刻到期恆退單一原題（緊急退場：等同關閉多查詢分解）。
 REPORT_PLANNER_TIMEOUT = _S.report_planner_timeout
+# 逐節生成（M7）：預設開。關閉即完全退回單次生成路徑（事件序、契約皆不變）。
+REPORT_SECTIONED_ENABLED = _S.report_sectioned_enabled
+# 逐節薄涵蓋門檻（該節命中低於此數才上網補）。與 REPORT_THIN_COVERAGE 分開：後者
+# 是 run-level（分母 25），拿來套逐節（配額 8）會幾乎每節誤觸發網搜。
+REPORT_SECTION_THIN_COVERAGE = _S.report_section_thin_coverage
 
 REPORT_SYSTEM_PROMPT = (
     "你是「廷豐智能研報」的研究分析師，負責把研報片段（必要時佐以網路資料）彙整成一份"
@@ -192,15 +199,25 @@ def write_report_pdf(report_id: str, pdf_bytes: bytes) -> str:
 async def persist_report_doc(
     report_id, qa_id, conversation_id, question, title, markdown, pdf_path,
     sources, thinking_ms, evidence_manifest: dict | None = None,
+    *,
+    outline: dict | None = None,
+    claim_evidence: dict | None = None,
+    current_revision_id: str | None = None,
+    report_run_id: str | None = None,
 ) -> None:
+    """寫入 report_doc。M7 逐節生成另帶 outline/claim_evidence/current_revision_id/
+    report_run_id 四欄（單次路徑不傳，寫 NULL、歷史列相容）。這四欄為 keyword-only，
+    位置參數契約（…, sources, thinking_ms, evidence_manifest）不變（見 test_report）。"""
     async with SessionFactory() as session:
         await session.execute(
             text(
                 "INSERT INTO research.report_doc "
                 "(id, qa_id, conversation_id, question, title, markdown, pdf_path, "
-                "sources, thinking_ms, evidence_manifest) "
+                "sources, thinking_ms, evidence_manifest, "
+                "outline, claim_evidence, current_revision_id, report_run_id) "
                 "VALUES (:id, :qa_id, :conv, :q, :title, :md, :pdf, "
-                "CAST(:src AS jsonb), :tms, CAST(:evm AS jsonb))"
+                "CAST(:src AS jsonb), :tms, CAST(:evm AS jsonb), "
+                "CAST(:outline AS jsonb), CAST(:ce AS jsonb), :crid, :rrid)"
             ),
             {
                 "id": report_id, "qa_id": qa_id, "conv": conversation_id,
@@ -210,6 +227,16 @@ async def persist_report_doc(
                     json.dumps(evidence_manifest, ensure_ascii=False)
                     if evidence_manifest is not None else None
                 ),
+                "outline": (
+                    json.dumps(outline, ensure_ascii=False)
+                    if outline is not None else None
+                ),
+                "ce": (
+                    json.dumps(claim_evidence, ensure_ascii=False)
+                    if claim_evidence is not None else None
+                ),
+                "crid": current_revision_id,
+                "rrid": report_run_id,
             },
         )
         await session.commit()
@@ -265,6 +292,131 @@ async def reports_for_conversation(conversation_id: str) -> dict[str, list[dict]
     return out
 
 
+# ── M7 逐節生成：run 生命週期（全 fail-open）與收尾 ─────────────────────────
+async def _open_sectioned_run(
+    question: str, filters: dict, model: str,
+    qa_id: str | None, conversation_id: str | None,
+) -> tuple[str | None, bool]:
+    """建 report_run（冪等）並推進至 retrieving，回 ``(run_id, is_new)``。
+
+    開 run 本身失敗仍 fail-open（``(None, False)``）；但既有 request_key 必須保留
+    run_id 交由呼叫端去重，不能靜默降級成一份未綁 run 的新生成。
+    """
+    try:
+        run_id, is_new = await report_writer.open_run(
+            report_writer.synthesize_request_key(
+                question, filters=filters, model=model,
+                conversation_id=conversation_id,
+            ),
+            input_config={"profile": "report", "sectioned": True},
+            qa_id=qa_id, conversation_id=conversation_id,
+        )
+        if not is_new:
+            return run_id, False
+        await report_writer.advance_status(
+            run_id, "retrieving", expected_current="queued"
+        )
+        return run_id, True
+    except Exception:
+        logger.warning("report_run open fail-open", exc_info=True)
+        return None, False
+
+
+async def _mark_run(run_id: str | None, status: str, **fields) -> None:
+    """把 run 推進到終端/中繼狀態（fail-open）；run_id 為 None 直接跳過。"""
+    if not run_id:
+        return
+    try:
+        await report_writer.advance_status(run_id, status, **fields)
+    except Exception:
+        logger.warning("report_run mark %s fail-open", status, exc_info=True)
+
+
+async def _finalize_sectioned(
+    payload: dict, *, question: str, conversation_id: str | None,
+    qa_id: str | None, run_id: str | None, eval_context: str,
+    started: float, persist: bool,
+) -> AsyncIterator[tuple[str, object]]:
+    """逐節 __final__ 收尾：eval 旁路 / 渲染 PDF / 落地 / persist / 收尾 run / done。
+
+    done 事件形狀與單次路徑逐字一致；persist=False（eval）帶 markdown＋context。
+    """
+    markdown = payload.get("markdown") or ""
+    outline = payload.get("outline") if isinstance(payload.get("outline"), dict) else None
+    title = (outline.get("title") if outline else None) or suggested_title(question)
+    final_sources = payload.get("sources") or []
+
+    if not persist:
+        # eval 模式：done 另帶三個逐節專用欄（線上 persist=True 不外洩，契約見 test_report）：
+        #   sources        ＝ 正文 [n] 對應的最終來源表。逐節路徑的編號由逐節帳本
+        #                     render_citations 產生，與 run-level `sources` 事件無關；
+        #                     拿後者當分母會算出假的 citation_validity。
+        #   n_evidence     ＝ 餵給逐節撰寫的證據總數（共用帳本大小）＝
+        #                     source_citation_rate 的真分母（sources 已是「被引用」子集，
+        #                     拿它當分母會恆為 1.0 而失去訊號）。
+        #   claim_evidence ＝ 逐節證據連結，供 evidence_link_coverage。
+        yield (
+            "done",
+            {
+                "report_id": None, "title": title,
+                "markdown": markdown, "context": eval_context,
+                "sources": final_sources,
+                "n_evidence": payload.get("n_evidence"),
+                "claim_evidence": payload.get("claim_evidence"),
+                "thinking_ms": int((time.monotonic() - started) * 1000),
+            },
+        )
+        return
+
+    yield ("status", {"stage": "rendering"})
+    thinking_ms = int((time.monotonic() - started) * 1000)
+    report_id = str(uuid.uuid4())
+    today = datetime.now(timezone.utc).date().isoformat()
+    pdf_bytes = await asyncio.to_thread(
+        render_report_pdf, markdown, title=title,
+        meta={"date": today, "question": question},
+    )
+    pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
+    # M4b：只以實際被 [n] 引用的 corpus 來源建 manifest；模型自報的網路來源經與單次
+    # 路徑同一套受控解析後併入（缺 adapter 快照/hash 者由 manifest_from_answer 逐筆
+    # 跳過而不污染帳本——M4a/M4b 信任契約）。
+    evidence_manifest = manifest_from_answer(
+        final_sources, parse_external_refs(markdown),
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+    )
+    await persist_report_doc(
+        report_id, qa_id, conversation_id, question, title, markdown, pdf_path,
+        final_sources, thinking_ms, evidence_manifest,
+        outline=outline,
+        claim_evidence=payload.get("claim_evidence") or None,
+        current_revision_id=payload.get("revision_id"),
+        report_run_id=run_id,
+    )
+    emh = (
+        hashlib.sha256(
+            json.dumps(evidence_manifest, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+        if evidence_manifest is not None else None
+    )
+    # 刻意不帶 expected_current：研報已渲染並落庫，「完成」是既成事實。若以
+    # expected_current="rendering" 把它綁在某一次中繼稽核寫入的成敗上，只要那次
+    # 寫入被 _audit fail-open 吞掉，這裡就會連帶失敗，讓成功的 run 永遠停在中繼態
+    # 且 report_doc_id 從未回填。is_valid_transition 允許跳階即為此。
+    await _mark_run(
+        run_id, "completed",
+        report_doc_id=report_id, evidence_manifest_hash=emh,
+        current_revision_id=payload.get("revision_id"),
+    )
+    yield (
+        "done",
+        {
+            "report_id": report_id, "title": title,
+            "download_url": f"/api/report-doc/{report_id}/pdf",
+            "thinking_ms": thinking_ms,
+        },
+    )
+
+
 async def generate_report(
     question: str, *, filters: dict | None = None,
     conversation_id: str | None = None, qa_id: str | None = None,
@@ -307,6 +459,117 @@ async def generate_report(
         return
 
     title = suggested_title(question)
+
+    # ── 逐節生成（M7 預設）：大綱→逐節→整份單次組裝。run-level 檢索已把 reranker
+    # 暖起來，逐節針對性檢索不吃冷載。大綱 fail-open（首個內容 token 前）→ 退單次，
+    # 前端事件序零差異；已吐內容後才失敗 → 不退單次（避免重覆），回 error。
+    if REPORT_SECTIONED_ENABLED:
+        if persist:
+            run_id, is_new_run = await _open_sectioned_run(
+                question, filters, model, qa_id, conversation_id
+            )
+        else:
+            run_id, is_new_run = None, False
+        if run_id and not is_new_run:
+            # 同 request_key 的完成請求回傳原文件；in-flight／失敗 run 則明確回錯，絕不可
+            # 另起一份無 report_run_id 的文件，否則 UNIQUE request_key 沒有冪等意義。
+            try:
+                existing = await report_writer.load_run(run_id)
+                existing_doc_id = existing.get("report_doc_id") if existing else None
+                if existing and existing.get("status") == "completed" and existing_doc_id:
+                    doc = await fetch_report_doc(existing_doc_id)
+                    if doc is not None:
+                        yield (
+                            "done",
+                            {
+                                "report_id": str(existing_doc_id),
+                                "title": doc.get("title"),
+                                "download_url": f"/api/report-doc/{existing_doc_id}/pdf",
+                                "thinking_ms": 0,
+                            },
+                        )
+                        return
+            except Exception:
+                logger.warning("load existing report_run failed", exc_info=True)
+            yield ("error", {"detail": "相同研報請求正在處理或尚未完成"})
+            return
+        produced = False           # 是否已吐過任一「內容 token」（退單次的硬邊界）
+        final_payload: dict | None = None
+        failed_detail: str | None = None
+        # 薄涵蓋 nudge（PR #36）：run-level 命中數算一次，作為「整份研報都沒料」時的
+        # 提示；逐節另有自己的門檻（REPORT_SECTION_THIN_COVERAGE），因為逐節配額
+        # max_reports=8 遠低於整份 25，拿 REPORT_THIN_COVERAGE=8 套逐節會幾乎每節誤觸發。
+        note = coverage_directive(len(sources), web_enabled=REPORT_ENABLE_WEB)
+        try:
+            async for kind, payload in report_writer.draft_report(
+                question, context, filters=filters, run_id=run_id, draft_model=model,
+                web_enabled=REPORT_ENABLE_WEB, coverage_note=note,
+                thin_coverage=REPORT_SECTION_THIN_COVERAGE,
+                # 逐節路徑先前完全沒有總預算：單次路徑有 REPORT_TIMEOUT=600s 上限，
+                # 逐節卻是 N 節 × 每節 150s（＋retry）無界累加，M1b 實測兩題破 1500s。
+                # 超支只砍動態子節，骨架五章仍跑完（見 draft_report）。
+                deadline=started + REPORT_TIMEOUT,
+            ):
+                if kind == "__final__":
+                    final_payload = payload if isinstance(payload, dict) else {}
+                    break
+                if kind == "__fallback__":
+                    break
+                if kind == "__failed__":
+                    # writer 已在硬邊界後判定不可續（骨架節耗盡／n_unknown 重生耗盡）
+                    failed_detail = (
+                        payload.get("detail") if isinstance(payload, dict) else None
+                    ) or "研報生成失敗"
+                    break
+                if kind == "token":
+                    produced = True
+                yield (kind, payload)  # status / token / section_draft / document_revision
+        except asyncio.CancelledError:
+            await _mark_run(run_id, "cancelled", error_detail="client cancelled")
+            raise
+        except Exception:
+            logger.exception("sectioned draft failed")
+            await _mark_run(run_id, "failed", error_detail="sectioned draft exception")
+            if produced:
+                yield ("error", {"detail": "研報生成中斷"})
+                return
+            # 尚未吐內容 → 安全退單次
+            run_id = None
+
+        if failed_detail is not None:
+            # 已吐內容才會走到這（writer 在邊界前一律回 __fallback__）→ 不可退單次
+            await _mark_run(run_id, "failed", error_detail=failed_detail)
+            yield ("error", {"detail": failed_detail})
+            return
+
+        if final_payload is not None:
+            try:
+                async for ev in _finalize_sectioned(
+                    final_payload, question=question, conversation_id=conversation_id,
+                    qa_id=qa_id, run_id=run_id, eval_context=context,
+                    started=started, persist=persist,
+                ):
+                    yield ev
+            except asyncio.CancelledError:
+                await _mark_run(run_id, "cancelled", error_detail="client cancelled during finalize")
+                raise
+            except Exception:
+                logger.exception("sectioned finalize failed")
+                await _mark_run(run_id, "failed", error_detail="sectioned finalize exception")
+                yield ("error", {"detail": "研報生成中斷"})
+            return
+
+        if produced:
+            # 已吐內容卻無 __final__（draft_report 中途斷）→ 不可退單次（會重覆內容）
+            await _mark_run(run_id, "failed", error_detail="no final after tokens")
+            yield ("error", {"detail": "研報生成未完成"})
+            return
+
+        # 大綱 fallback（或前置例外）且未吐內容 → 退單次生成
+        await _mark_run(run_id, "cancelled", error_detail="outline fallback → single-shot")
+        logger.info("sectioned outline fallback → single-shot")
+
+    # ── 單次生成（sectioned 關閉，或大綱 fallback）──────────────────────────
     # 薄涵蓋偵測：命中研報數少時，明確要求模型主動上網補充（補純 LLM 自我判斷的盲點）。
     note = coverage_directive(len(sources), web_enabled=REPORT_ENABLE_WEB)
     prompt = build_report_prompt(question, context, title, note)

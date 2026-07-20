@@ -24,7 +24,11 @@ RatingNorm = Literal["buy", "overweight", "neutral", "underweight", "sell", "unk
 
 
 class Takeaway(BaseModel):
-    """一條重點摘錄。quote_start 為 None＝錨不到，前端顯示條目但不給跳轉。"""
+    """一條重點摘錄。quote_start 為 None＝不可跳，前端顯示條目但不給跳轉。
+
+    後端收回 offset 的三種情形（前端只需看 quote_start 是否為 None，不必自行判斷）：
+    錨不到、驗章不過（正典文字已漂移）、落在 /text 的截斷範圍之外。
+    """
 
     ordinal: int
     claim: str

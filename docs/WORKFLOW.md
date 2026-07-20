@@ -190,8 +190,8 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁；同樣回 `file_hash` |
 | `GET /api/report/{id}/full` | 單篇 metadata 與原始檔狀態（供前端完整報告 modal）|
 | `GET /api/report/{id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|
-| `GET /api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號。**不含全文**（PDF 是預設檢視，文字另取）。`file_hash` 格式不符直接 422、查無報告 404 |
-| `GET /api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`），所有 offset 以此為準。超過 40 萬字只回前綴並標 `truncated`，但 `text_sha256`/`text_chars` 一律是**完整**正典文字的值（回截斷版的 sha 會讓前端驗章全滅）。`?chunk=N`＝檢索命中的 `chunk_index`，一併回該段字元區間供高亮；錨不到則為 `None` 且仍回 200（**沒有命中位置不是錯誤**）|
+| `GET /api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號。**不含全文**（PDF 是預設檢視，文字另取）。`file_hash` 格式不符直接 422、查無報告 404。摘錄的 `quote_start`/`quote_end` 在三種情形由**後端**收回為 `null`：錨不到、驗章不過（正典文字已漂移）、落在 `/text` 的截斷範圍之外 —— 前端只看是否為 `null`，不自行判斷截斷（兩邊各自判會分岔成「顯示可點、點下去卻沒反應」）|
+| `GET /api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`），所有 offset 以此為準。超過 40 萬字只回前綴並標 `truncated`，但 `text_sha256`/`text_chars` 一律是**完整**正典文字的值（回截斷版的 sha 會讓前端驗章全滅）。`?chunk=N`＝檢索命中的 `chunk_index`，一併回該段字元區間供高亮；錨不到、或錨點落在截斷範圍之外，則為 `None` 且仍回 200（**沒有命中位置不是錯誤**）|
 | `GET /api/reading/{file_hash}/similar` | 相似研報（全篇均勻取樣 probe ＋ 廣度加權的向量近鄰）；`limit` 預設 6、上限 20 |
 | `POST /api/ask` | RAG 問答：SSE 串流 `sources` / `token` / `done` / `error`，行內 `[n]` 引用對應來源報告；支援 `conversation_id` 與篩選，寫入 `qa_log` |
 | `POST /api/report` | 深度研報生成：SSE 串流 retrieval/writing/searching/rendering 狀態、來源、token 與 done payload |

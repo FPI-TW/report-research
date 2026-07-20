@@ -25,7 +25,12 @@ export type ReadingRatingNorm = z.infer<typeof readingRatingNormSchema>
 export const thesisKeySchema = z.enum(['outlook', 'catalyst', 'risk', 'valuation'])
 export type ThesisKey = z.infer<typeof thesisKeySchema>
 
-/** 一條重點摘錄。quote_start 為 null＝錨不到，前端顯示條目但不給跳轉。 */
+/**
+ * 一條重點摘錄。quote_start 為 null＝不可跳，前端顯示條目但不給跳轉。
+ *
+ * null 的成因（錨不到／驗章不過／落在 /text 的截斷範圍外）全由後端判斷並收回，
+ * 前端不重造這個判斷 —— 兩邊各自判會分岔成「顯示可點、點下去卻找不到錨點」。
+ */
 export const takeawaySchema = z.object({
   ordinal: z.number().int(),
   claim: z.string(),

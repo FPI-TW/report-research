@@ -271,6 +271,49 @@ class TakeawayTests(ReadingApiBase):
         self.assertEqual(len(body["takeaways"]), 1)
         self.assertIsNone(body["takeaways"][0]["quote_start"])
 
+    def test_offsets_outside_truncation_degrade_to_unjumpable(self):
+        # 錨點落在 /text 根本回不到的範圍 → 骨架端點就收回 offset。
+        # 否則前端 isJumpable（只看 quote_start）會把它渲染成可點，
+        # 而 buildTextSegments（依 text.length 丟棄）不會標出錨點 →
+        # 點下去 querySelector 找不到、靜默無事。
+        self._set(fetch_takeaways=self._async([_takeaway(quote_start=0, quote_end=8)]),
+                  READING_TEXT_MAX_CHARS=5)
+        t = _authed_client().get(f"/api/reading/{HASH}").json()["takeaways"][0]
+        self.assertEqual(t["claim"], "論點1")        # 條目照常顯示
+        self.assertEqual(t["quote"], "台積電第三季")  # 引文照常顯示
+        self.assertIsNone(t["quote_start"])
+        self.assertIsNone(t["quote_end"])
+        self.assertIsNone(t["anchor_method"])
+
+    def test_offsets_kept_when_inside_truncation(self):
+        self._set(fetch_takeaways=self._async([_takeaway(quote_start=0, quote_end=8)]),
+                  READING_TEXT_MAX_CHARS=len(CANONICAL))
+        t = _authed_client().get(f"/api/reading/{HASH}").json()["takeaways"][0]
+        self.assertEqual(t["quote_start"], 0)
+        self.assertEqual(t["quote_end"], 8)
+        self.assertEqual(t["anchor_method"], "normalized")
+
+    def test_offset_ending_exactly_at_truncation_is_kept(self):
+        # 邊界：quote_end == 可見字元數 ＝ 最後一個字剛好看得到 → 仍可跳
+        self._set(fetch_takeaways=self._async([_takeaway(quote_start=0, quote_end=8)]),
+                  READING_TEXT_MAX_CHARS=8)
+        t = _authed_client().get(f"/api/reading/{HASH}").json()["takeaways"][0]
+        self.assertEqual(t["quote_end"], 8)
+
+    def test_doc_and_text_agree_on_jumpability_under_truncation(self):
+        # 真正的不變量：骨架標為可跳的錨點，一定要落在 /text 真的回得出來的文字裡。
+        # 兩個端點各自判斷截斷就會分岔（本案即是：/text 的 _chunk_anchor 有收、
+        # 骨架的 takeaway 沒收）。
+        self._set(fetch_takeaways=self._async([_takeaway(quote_start=0, quote_end=8)]),
+                  READING_TEXT_MAX_CHARS=5)
+        client = _authed_client()
+        t = client.get(f"/api/reading/{HASH}").json()["takeaways"][0]
+        body = client.get(f"/api/reading/{HASH}/text").json()
+        self.assertTrue(body["truncated"])
+        self.assertEqual(len(body["text"]), 5)
+        # 8 > 5：這條摘錄指向讀者拿不到的文字 → 骨架必須已經標成不可跳
+        self.assertIsNone(t["quote_start"])
+
 
 class ReadingTextTests(ReadingApiBase):
     def test_text_200_is_canonical_not_full_text(self):

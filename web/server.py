@@ -244,7 +244,7 @@ class Passage(BaseModel):
 class ReportResult(BaseModel):
     rank: int
     report_id: str
-    file_hash: str  # 閱讀頁連結鍵（/app/reading/{file_hash}）
+    file_hash: str  # 閱讀頁連結鍵（/app/report/:hash）
     file_name: str
     market: str | None
     source: str | None
@@ -298,7 +298,7 @@ class FeedbackRequest(BaseModel):
 
 class ReportListItem(BaseModel):
     report_id: str
-    file_hash: str  # 閱讀頁連結鍵（/app/reading/{file_hash}）
+    file_hash: str  # 閱讀頁連結鍵（/app/report/:hash）
     file_name: str
     market: str | None
     source: str | None
@@ -722,24 +722,45 @@ def _canonical_text(full_text: str | None) -> tuple[str, str | None]:
     return canonical, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _reading_takeaways(rows, text_sha256: str | None) -> list[Takeaway]:
-    """DB 摘錄列 → 契約 Takeaway，並在此驗章。
+def _visible_chars(canonical: str) -> int:
+    """/text 實際回給讀者的字元數（＝截斷後的長度）。
 
-    每列的 text_sha256 是「擷取當時的正典文字」的 sha。與當前正典文字不符即代表全文
-    已被重新 ingest 換過、offset 已漂移 → 降級為不可跳（quote_start/quote_end/
-    anchor_method 全 None），條目與引文本身照常顯示。寧可不能跳，也不要跳到錯的地方。
+    截斷規則只有這一個定義處：骨架端點與 /text 都由此推導，兩邊才不會對「這條摘錄
+    跳不跳得到」給出不同答案。
+    """
+    return min(len(canonical), READING_TEXT_MAX_CHARS)
+
+
+def _reading_takeaways(rows, text_sha256: str | None, visible_chars: int) -> list[Takeaway]:
+    """DB 摘錄列 → 契約 Takeaway，並在此驗章、套截斷。
+
+    降級為不可跳（quote_start/quote_end/anchor_method 全 None，條目與引文照常顯示）
+    有兩個獨立原因：
+
+    1. **驗章不過**：每列的 text_sha256 是「擷取當時的正典文字」的 sha。與當前正典
+       文字不符即代表全文已被重新 ingest 換過、offset 已漂移。
+    2. **落在截斷範圍之外**：offset 對「完整正典文字」計算，但 /text 只回前
+       READING_TEXT_MAX_CHARS 字。錨點超出這個範圍＝指向讀者手上根本沒有的文字。
+
+    兩者都是「寧可不能跳，也不要跳到錯的地方」。第 2 點與 _chunk_anchor 的
+    `anchor.end > visible_chars` 是同一條規則 —— 刻意在後端統一收回，而不是多發一個
+    text_visible_chars 欄位讓前端各自判斷：可跳與否只該有一個真相來源，否則前端
+    buildTextSegments（依 text.length 丟棄）與 isJumpable（只看 quote_start）會再次
+    分岔，摘錄顯示為可點、點下去卻找不到錨點而靜默無事。
     """
     out: list[Takeaway] = []
     for r in rows:
         stale = text_sha256 is None or r.text_sha256 != text_sha256
+        clipped = r.quote_end is None or r.quote_end > visible_chars
+        drop = stale or clipped
         out.append(
             Takeaway(
                 ordinal=r.ordinal,
                 claim=r.claim,
                 quote=r.quote,
-                quote_start=None if stale else r.quote_start,
-                quote_end=None if stale else r.quote_end,
-                anchor_method=None if stale else r.anchor_method,
+                quote_start=None if drop else r.quote_start,
+                quote_end=None if drop else r.quote_end,
+                anchor_method=None if drop else r.anchor_method,
             )
         )
     return out
@@ -837,7 +858,9 @@ async def reading_doc(file_hash: str):
         text_state="ok" if canonical else "missing",
         text_chars=len(canonical),
         text_sha256=text_sha256,
-        takeaways=_reading_takeaways(takeaway_rows, text_sha256),
+        # visible_chars 與 /text 同源：落在截斷範圍外的錨點在此就收回，
+        # 讀者不會看到一條「可點但點不到」的摘錄。
+        takeaways=_reading_takeaways(takeaway_rows, text_sha256, _visible_chars(canonical)),
         # 全語料僅 0.68% 有訊號：空是常態不是錯誤，前端據此整區不進 DOM
         signals_state="available" if signals else "none",
         signals=signals,
@@ -850,8 +873,10 @@ async def reading_text(file_hash: str, chunk: int | None = Query(None, ge=0)):
 
     **截斷語意**：text 超過 READING_TEXT_MAX_CHARS 時只回前綴並標 truncated=True，
     但 text_sha256 與 text_chars 仍是「完整正典文字」的值 —— takeaway 的錨點是對完整
-    文字算出來的，回截斷版的 sha 會讓前端的驗章一律失敗、跳轉整個失效。截斷純粹是
-    顯示層的事；超出截斷範圍的錨點由前端自行丟棄。
+    文字算出來的，回截斷版的 sha 會讓前端的驗章一律失敗、跳轉整個失效。
+    超出截斷範圍的錨點一律由後端收回為 None（此處的 chunk_start/chunk_end 走
+    _chunk_anchor，骨架端點的 takeaway offset 走 _reading_takeaways），前端不需要、
+    也不應該自行判斷截斷。
 
     **?chunk=N**：檢索命中的 chunk_index。帶了就一併回該段在正典文字上的字元區間
     （chunk_start/chunk_end），供前端標出「你從檢索點進來的那一段」。chunk 不存在或
@@ -872,9 +897,10 @@ async def reading_text(file_hash: str, chunk: int | None = Query(None, ge=0)):
     if not canonical or text_sha256 is None:
         # text_state="missing" 的那一篇：骨架回 200，這裡沒有文字可給
         raise HTTPException(status_code=404, detail="report text not available")
-    truncated = len(canonical) > READING_TEXT_MAX_CHARS
-    body = canonical[:READING_TEXT_MAX_CHARS] if truncated else canonical
-    chunk_start, chunk_end = _chunk_anchor(canonical, chunk_content, len(body))
+    visible = _visible_chars(canonical)
+    truncated = len(canonical) > visible
+    body = canonical[:visible]
+    chunk_start, chunk_end = _chunk_anchor(canonical, chunk_content, visible)
     return ReadingText(
         file_hash=doc.file_hash,
         text=body,

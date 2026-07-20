@@ -146,15 +146,31 @@ EFFECTIVE_BROKER_SQL = (
 )
 
 
-# queries.py 的 SELECT 欄位順序（parse_signal_row 依此位置解析，兩者必須一致）
+# queries.py 的 SELECT 欄位順序（parse_signal_row 依此位置解析，兩者必須一致）。
+# 逐欄一個元素而非單一字串：欄數即 len()，測試的 fixture 寬度守門才能精確比對。
+# （曾以「數頂層逗號」推導欄數，但引號內逗號、字串拼接、ARRAY[...] 都會誤數。）
 SIGNAL_SELECT_COLUMNS = (
-    "s.id::text, s.report_id::text, s.market, s.instrument_code, "
-    f"{EFFECTIVE_BROKER_SQL} AS broker, "
-    "s.report_date, s.rating_raw, s.rating_normalized, s.target_price, "
-    "s.target_currency, s.target_horizon, s.target_price_evidence, "
-    "s.eps_estimates::text, s.thesis_dimensions::text, s.extraction_status, "
-    "r.file_name, s.created_at"
+    "s.id::text",
+    "s.report_id::text",
+    "s.market",
+    "s.instrument_code",
+    f"{EFFECTIVE_BROKER_SQL} AS broker",
+    "s.report_date",
+    "s.rating_raw",
+    "s.rating_normalized",
+    "s.target_price",
+    "s.target_currency",
+    "s.target_horizon",
+    "s.target_price_evidence",
+    "s.eps_estimates::text",
+    "s.thesis_dimensions::text",
+    "s.extraction_status",
+    "r.file_name",
+    "s.created_at",
 )
+
+# 給 SELECT 用的字串形式；查詢一律用這個，別自己 join。
+SIGNAL_SELECT_SQL = ", ".join(SIGNAL_SELECT_COLUMNS)
 
 
 def parse_signal_row(row) -> Signal:

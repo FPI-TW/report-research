@@ -3,7 +3,7 @@
 import re
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg  # noqa: E402
 
+from app.services.radar.types import SIGNAL_SELECT_COLUMNS  # noqa: E402
 from app.services.reading import queries  # noqa: E402
 
 _DIALECT = pg_asyncpg.dialect()
@@ -239,8 +240,17 @@ def _sig_row(status="valid"):
     return (
         "sig-1", "rep-1", "TW", "8046", "daiwa", date(2026, 7, 11), "Buy (1)", "buy",
         Decimal("2444.0000"), "TWD", "12M", "TP 證據", "[]", "{}", status,
-        "daiwa-8046.pdf",
+        "daiwa-8046.pdf", datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
     )
+
+
+class SigRowFixtureTests(unittest.TestCase):
+    def test_width_matches_select_columns(self):
+        # fixture 比 SELECT 窄時，既有的 test_reuses_radar_parse 就會 IndexError；
+        # 這條真正補上的是另一半——fixture 比 SELECT 寬時 parse_signal_row 只讀
+        # row[0..16]、不會報錯，fixture 卻已不代表真實列，兩條都會綠。
+        # 順帶讓增欄時的訊息是「16 != 17」而不是 tuple index out of range。
+        self.assertEqual(len(_sig_row()), len(SIGNAL_SELECT_COLUMNS))
 
 
 class FetchSignalsTests(unittest.IsolatedAsyncioTestCase):

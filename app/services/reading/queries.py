@@ -22,7 +22,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.radar.types import SIGNAL_SELECT_COLUMNS, Signal, parse_signal_row
+from app.services.radar.types import SIGNAL_SELECT_SQL, Signal, parse_signal_row
 
 # 可展示狀態：pending/rejected 不給讀者看（見 reading/schemas.py 模組 docstring：
 # DB 的 extraction_status 記錄「批次做了什麼」，與讀者視角的 *_state 刻意分離）
@@ -153,7 +153,7 @@ async def fetch_takeaways(
 
 
 _SIGNALS_SQL = text(
-    f"SELECT {SIGNAL_SELECT_COLUMNS} "
+    f"SELECT {SIGNAL_SELECT_SQL} "
     "FROM research.report_signal s "
     "JOIN research.research_report r ON r.id = s.report_id "
     "WHERE s.report_id = :report_id AND s.extraction_status = ANY(:statuses) "

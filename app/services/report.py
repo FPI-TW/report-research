@@ -270,11 +270,11 @@ async def reports_for_conversation(conversation_id: str) -> dict[str, list[dict]
 async def _open_sectioned_run(
     question: str, filters: dict, model: str,
     qa_id: str | None, conversation_id: str | None,
-) -> str | None:
-    """建 report_run（冪等）並推進至 retrieving，回 run_id；任何失敗回 None。
+) -> tuple[str | None, bool]:
+    """建 report_run（冪等）並推進至 retrieving，回 ``(run_id, is_new)``。
 
-    run 純為耐久稽核紀錄——失敗絕不阻斷生成。既有 run（同題重送/去重）回 None：
-    不重寫其狀態，本次照常生成但不綁 run（避免踩既有終端態的非法轉換）。
+    開 run 本身失敗仍 fail-open（``(None, False)``）；但既有 request_key 必須保留
+    run_id 交由呼叫端去重，不能靜默降級成一份未綁 run 的新生成。
     """
     try:
         run_id, is_new = await report_writer.open_run(
@@ -286,14 +286,14 @@ async def _open_sectioned_run(
             qa_id=qa_id, conversation_id=conversation_id,
         )
         if not is_new:
-            return None
+            return run_id, False
         await report_writer.advance_status(
             run_id, "retrieving", expected_current="queued"
         )
-        return run_id
+        return run_id, True
     except Exception:
         logger.warning("report_run open fail-open", exc_info=True)
-        return None
+        return None, False
 
 
 async def _mark_run(run_id: str | None, status: str, **fields) -> None:
@@ -438,10 +438,35 @@ async def generate_report(
     # 暖起來，逐節針對性檢索不吃冷載。大綱 fail-open（首個內容 token 前）→ 退單次，
     # 前端事件序零差異；已吐內容後才失敗 → 不退單次（避免重覆），回 error。
     if REPORT_SECTIONED_ENABLED:
-        run_id = (
-            await _open_sectioned_run(question, filters, model, qa_id, conversation_id)
-            if persist else None
-        )
+        if persist:
+            run_id, is_new_run = await _open_sectioned_run(
+                question, filters, model, qa_id, conversation_id
+            )
+        else:
+            run_id, is_new_run = None, False
+        if run_id and not is_new_run:
+            # 同 request_key 的完成請求回傳原文件；in-flight／失敗 run 則明確回錯，絕不可
+            # 另起一份無 report_run_id 的文件，否則 UNIQUE request_key 沒有冪等意義。
+            try:
+                existing = await report_writer.load_run(run_id)
+                existing_doc_id = existing.get("report_doc_id") if existing else None
+                if existing and existing.get("status") == "completed" and existing_doc_id:
+                    doc = await fetch_report_doc(existing_doc_id)
+                    if doc is not None:
+                        yield (
+                            "done",
+                            {
+                                "report_id": str(existing_doc_id),
+                                "title": doc.get("title"),
+                                "download_url": f"/api/report-doc/{existing_doc_id}/pdf",
+                                "thinking_ms": 0,
+                            },
+                        )
+                        return
+            except Exception:
+                logger.warning("load existing report_run failed", exc_info=True)
+            yield ("error", {"detail": "相同研報請求正在處理或尚未完成"})
+            return
         produced = False           # 是否已吐過任一「內容 token」（退單次的硬邊界）
         final_payload: dict | None = None
         failed_detail: str | None = None
@@ -492,12 +517,20 @@ async def generate_report(
             return
 
         if final_payload is not None:
-            async for ev in _finalize_sectioned(
-                final_payload, question=question, conversation_id=conversation_id,
-                qa_id=qa_id, run_id=run_id, eval_context=context,
-                started=started, persist=persist,
-            ):
-                yield ev
+            try:
+                async for ev in _finalize_sectioned(
+                    final_payload, question=question, conversation_id=conversation_id,
+                    qa_id=qa_id, run_id=run_id, eval_context=context,
+                    started=started, persist=persist,
+                ):
+                    yield ev
+            except asyncio.CancelledError:
+                await _mark_run(run_id, "cancelled", error_detail="client cancelled during finalize")
+                raise
+            except Exception:
+                logger.exception("sectioned finalize failed")
+                await _mark_run(run_id, "failed", error_detail="sectioned finalize exception")
+                yield ("error", {"detail": "研報生成中斷"})
             return
 
         if produced:

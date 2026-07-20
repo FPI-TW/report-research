@@ -139,6 +139,10 @@ async def eval_question(
     return {
         **base,
         "n_sources": len(sources),
+        # n_sources 保留 run-level 檢索口徑（多樣性指標）；引用指標另保存實際使用的
+        # [n] 上界與可用證據分母，讓凍結基準線可被事後重算與稽核。
+        "n_cited_sources": len(cite_sources),
+        "n_evidence": n_evidence,
         "stages": stages,
         "facet_coverage": facet_coverage(q.get("expected_facets"), context or ""),
         "source_diversity": source_diversity(sources, brokers=brokers),
@@ -180,7 +184,12 @@ def _config_snapshot(dataset: dict) -> dict:
         "report_mmr_max_per_month": s.report_mmr_max_per_month,
         # M7：逐節生成組態（供跨版本 eval 對比歸因）
         "report_sectioned_enabled": s.report_sectioned_enabled,
+        "report_timeout": s.report_timeout,
+        "report_outline_timeout": s.report_outline_timeout,
         "report_outline_max_subsections": s.report_outline_max_subsections,
+        "report_section_timeout": s.report_section_timeout,
+        "report_section_retry": s.report_section_retry,
+        "report_section_thin_coverage": s.report_section_thin_coverage,
         "report_section_max_reports": s.report_section_max_reports,
         "report_section_max_passages": s.report_section_max_passages,
         "report_section_max_context_chars": s.report_section_max_context_chars,

@@ -584,7 +584,7 @@ class DraftReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final["sources"][0]["report_id"], "r1")
         self.assertEqual(final["manifest"]["schema_version"], 1)
 
-    async def test_section_retrieve_failure_is_fail_open(self):
+    async def test_section_retrieve_failure_does_not_ship_ungrounded_report(self):
         outline = {
             "title": "T",
             "sections": [
@@ -602,9 +602,32 @@ class DraftReportTests(unittest.IsolatedAsyncioTestCase):
             rw, "retrieve_for_section", boom_retrieve
         ), patch.object(rw, "stream_completion", _draft_stream("在無片段下審慎撰寫")):
             events = [e async for e in rw.draft_report("q", "ctx")]
-        # 檢索炸掉仍走完（fail-open），產出最終文件
-        self.assertEqual(events[-1][0], "__final__")
-        self.assertIn("在無片段下審慎撰寫", events[-1][1]["markdown"])
+        # run-level 曾有脈絡不代表每一節都可在無證據下自由發揮；網搜關閉時，逐節
+        # 檢索故障不得偽裝成 completed 的零證據研報。
+        self.assertEqual(events[-1][0], "__fallback__")
+
+    async def test_web_enabled_empty_section_requires_recorded_web_sources(self):
+        """無語料時即使開網搜，也不能接受沒有外部來源帳目的泛泛文字。"""
+        outline = {
+            "title": "T",
+            "sections": [
+                {"position": 0, "key": "analysis", "heading": "A", "topic": "ta", "kind": "analysis"},
+            ],
+        }
+
+        async def fake_outline(*a, **k):
+            return outline
+
+        async def no_sources(*a, **k):
+            return [], ""
+
+        with patch.object(rw, "plan_outline", fake_outline), patch.object(
+            rw, "retrieve_for_section", no_sources
+        ), patch.object(rw, "stream_completion", _draft_stream("沒有列來源的網路結論")):
+            events = [e async for e in rw.draft_report(
+                "q", "ctx", web_enabled=True, thin_coverage=3)]
+
+        self.assertEqual(events[-1][0], "__fallback__")
 
 
 # ── 共用：以 stub 過的 outline/檢索/串流跑 draft_report ─────────────────────
@@ -885,6 +908,18 @@ class NUnknownGateTests(unittest.IsolatedAsyncioTestCase):
             )],
         )
         self.assertEqual(events[-1][0], "__failed__")
+
+    async def test_plain_numeric_citation_without_ledger_source_fails(self):
+        """模型直接輸出的 [42] 也必須受正文引用 gate 保護。"""
+        events = await _run_draft(
+            _outline_3(),
+            extra=[patch.object(
+                rw, "stream_completion",
+                _multi_stream(["摘要[42]", "分析內文", "風險內文"]),
+            )],
+        )
+        self.assertEqual(events[-1][0], "__failed__")
+        self.assertEqual(events[-1][1]["detail"], "研報引用編號異常")
 
 
 # ── #3：逐節網搜（allow_web／searching_web／外部參考彙整）───────────────────
@@ -1239,19 +1274,29 @@ class SectionDeadlineTests(unittest.IsolatedAsyncioTestCase):
         md = events[-1][1]["markdown"]
         return md, [e for e in events if e[0] == "section_draft"]
 
-    async def test_expired_deadline_skips_extra_analysis_but_keeps_skeleton(self):
-        """預算用罄 → 砍動態子節，但骨架五章與至少一個動態子節必須留下。
+    async def test_expired_deadline_stops_before_any_section_work(self):
+        """總預算已耗盡時不得再啟動逐節工作，否則 timeout 會按節次累加。"""
+        from types import SimpleNamespace
 
-        砍光 analysis 會讓「重點分析」整章消失、觸發缺章 __failed__——逾時保護反而
-        把原本能出貨的研報變成不出貨。
-        """
-        md, drafts = await self._headings(deadline=time.monotonic() - 1)
-        self.assertIn("執行摘要", md)
-        self.assertIn("關鍵發現", md)
-        self.assertIn("風險與展望", md)
-        self.assertIn("面向A", md)          # 第一個動態子節必須留（否則缺章）
-        self.assertNotIn("面向B", md)       # 其餘動態子節被預算砍掉
-        self.assertNotIn("面向C", md)
+        seen = []
+        src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf", market="TW",
+                              report_date="2026-01-01")
+
+        async def fake_outline(*a, **k):
+            return _outline_5_analysis()
+
+        async def fake_retrieve(topic, **k):
+            seen.append(topic)
+            return ([src], "[1] 報告：a.pdf\n片段")
+
+        with patch.object(rw, "plan_outline", fake_outline), patch.object(
+            rw, "retrieve_for_section", fake_retrieve
+        ), patch.object(rw, "stream_completion", _draft_stream("內文")):
+            events = [e async for e in rw.draft_report(
+                "q", "ctx", thin_coverage=3, deadline=time.monotonic() - 1)]
+
+        self.assertEqual(seen, [])
+        self.assertEqual(events[-1][0], "__fallback__")
 
     async def test_no_deadline_keeps_all_sections(self):
         md, _ = await self._headings(deadline=None)
@@ -1262,3 +1307,29 @@ class SectionDeadlineTests(unittest.IsolatedAsyncioTestCase):
         md, _ = await self._headings(deadline=time.monotonic() + 600)
         for h in ("面向A", "面向B", "面向C"):
             self.assertIn(h, md)
+
+    async def test_expired_deadline_does_not_start_analysis_retrieval(self):
+        """總預算耗盡後不可再啟動動態節檢索，避免 N 節各自耗盡 timeout。"""
+        from types import SimpleNamespace
+
+        seen_topics = []
+        src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf", market="TW",
+                              report_date="2026-01-01")
+
+        async def fake_outline(*a, **k):
+            return _outline_5_analysis()
+
+        async def fake_retrieve(topic, **k):
+            seen_topics.append(topic)
+            return ([src], "[1] 報告：a.pdf\n片段")
+
+        with patch.object(rw, "plan_outline", fake_outline), patch.object(
+            rw, "retrieve_for_section", fake_retrieve
+        ), patch.object(rw, "stream_completion", _draft_stream("內文")):
+            events = [e async for e in rw.draft_report(
+                "q", "ctx", thin_coverage=3, deadline=time.monotonic() - 1)]
+
+        self.assertNotIn("ta", seen_topics)
+        self.assertNotIn("tb", seen_topics)
+        self.assertNotIn("tc", seen_topics)
+        self.assertEqual(events[-1][0], "__fallback__")

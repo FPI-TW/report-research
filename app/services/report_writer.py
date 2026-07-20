@@ -390,6 +390,8 @@ _ANY_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s", re.MULTILINE)
 _WEB_REF_LINE_RE = re.compile(
     r"^\s*-\s*\[([^\]]*)\]\((https?://[^)\s]+)\)", re.MULTILINE
 )
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_NUMERIC_CITATION_RE = re.compile(r"\[(\d+)\]")
 
 
 def _src_get(src: Any, name: str) -> Any:
@@ -539,6 +541,19 @@ def assemble_final(
     if ext:
         parts.append(ext)
     return "\n\n".join(parts) + "\n", rendered
+
+
+def invalid_numeric_citations(markdown: str, n_sources: int) -> list[int]:
+    """回正文中沒有對應「引用來源」條目的 `[n]`。
+
+    `render_citations` 只處理內部 `[[ev:...]]` 佔位；模型仍可能直接輸出 `[42]`。
+    圍欄內的 KPI/chart JSON 不是正文引用，故先移除，避免把單元素數值陣列誤判。
+    """
+    body = _FENCE_RE.sub("", markdown or "")
+    return [
+        int(m) for m in _NUMERIC_CITATION_RE.findall(body)
+        if not 1 <= int(m) <= n_sources
+    ]
 
 
 # ── report_run：upsert 與原子狀態推進 ───────────────────────────────────────
@@ -1016,23 +1031,15 @@ async def draft_report(
 
     for sec in secs:
         pos = sec["position"]
-        # 逾時預算：超支後只砍動態子節（kind="analysis"），骨架節（kind="framing"）
-        # 仍必須跑完——section_coverage 分母=5，頂層節缺一個就是缺章。deadline 因此是
-        # 「軟」的：限制的是報告深度，不是完整性。
-        #
-        # 且至少保留一個動態子節：砍光會讓「重點分析」整章消失，觸發下方的缺章
-        # __failed__ 檢查——逾時保護反而把原本能出貨的研報變成不出貨。
-        if (
-            deadline is not None
-            and sec["kind"] == "analysis"
-            and time.monotonic() > deadline
-            and any(d["kind"] == "analysis" for d in drafts)
-        ):
-            # 跳過的節維持 pending：schema 的 status 列舉沒有 'skipped'，硬寫會違反
-            # CHECK 而被 _audit 的 fail-open 靜默吞掉（等於留下錯的稽核）。pending
-            # 已足以表達「這節沒跑」。
-            logger.warning("逾時預算用罄，跳過動態子節 pos=%s", pos)
-            continue
+        # REPORT_TIMEOUT 是整份研報的 wall-clock 預算。若已耗盡，不能再啟動任何
+        # 逐節檢索或 LLM 呼叫；否則每一節都可能各自跑滿 timeout，總延遲重新變成無界。
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.warning("研報總逾時預算用罄，停止逐節生成 pos=%s", pos)
+            if not produced:
+                yield ("__fallback__", None)
+            else:
+                yield ("__failed__", {"detail": "研報生成逾時"})
+            return
         try:
             sources, sec_ctx = await asyncio.wait_for(
                 retrieve_for_section(sec["topic"], filters=filters),
@@ -1043,12 +1050,21 @@ async def draft_report(
         except Exception:
             logger.warning("section retrieve fail-open pos=%s", pos, exc_info=True)
             sources, sec_ctx = [], ""
+        # run-level 脈絡不代表這一節有可用證據。網搜關閉時，空逐節檢索若仍讓模型
+        # 依「一般常識」撰寫，會把檢索／資料層故障偽裝成零證據成功研報。
+        if not sources and not web_enabled:
+            logger.error("section retrieve yielded no evidence with web disabled pos=%s", pos)
+            if not produced:
+                yield ("__fallback__", None)
+            else:
+                yield ("__failed__", {"detail": "研報章節缺少可用證據"})
+            return
         labeled_ctx, allowed_ids = _evidence_context(sources, sec_ctx, ledger)
         # 網搜逐節開啟會讓成本放大 N 倍：單次路徑一份研報只搜 1 次，逐節無條件開就是
         # 每節各搜一次（實測 8 節 8 次網搜 → 破 1500s，r005/r009 皆如此）。沿用既有的
         # 薄涵蓋門檻：本節自己檢索到的研報夠多就不上網——那正是 coverage_directive 的
         # 判斷，先前每節無條件開等於把它架空。
-        sec_web = web_enabled and len(sources) < thin_coverage
+        sec_web = web_enabled and (not sources or len(sources) < thin_coverage)
         system, prompt = _build_section_prompt(
             question, sec, labeled_ctx, bool(allowed_ids),
             web_enabled=sec_web,
@@ -1063,6 +1079,12 @@ async def draft_report(
                 draft_text = str(payload)
                 break
             yield (kind, payload)
+
+        # 空語料節只能靠網搜接地；若模型沒有留下受控的來源清單，便無法把外部依據
+        # 寫入 evidence manifest，不能把泛泛文字當成成功草稿。
+        if draft_text and not allowed_ids and sec_web and not split_web_refs(draft_text)[1]:
+            logger.warning("web-only section omitted external source list pos=%s", pos)
+            draft_text = ""
 
         if not draft_text:
             # 決策 #2：動態子節→跳過（保留其餘）；骨架節→不可缺（section_coverage
@@ -1158,6 +1180,10 @@ async def draft_report(
         # spec §3 硬把關：佔位雖已移除，引用連結已失真 → 不得當成功出貨
         logger.error("重生耗盡仍 n_unknown=%s → failed", rendered.n_unknown)
         yield ("__failed__", {"detail": "研報引用標記異常"})
+        return
+    if invalid_numeric_citations(rendered.text, len(rendered.ordered)):
+        logger.error("正文含無對應來源的數字引用 → failed")
+        yield ("__failed__", {"detail": "研報引用編號異常"})
         return
 
     revision_id = str(uuid.uuid4())

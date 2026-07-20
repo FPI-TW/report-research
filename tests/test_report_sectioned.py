@@ -109,7 +109,7 @@ class _SectionedBase(unittest.IsolatedAsyncioTestCase):
 
         async def fake_open_run(question, filters, model, qa_id, conversation_id):
             capture["opened"] = True
-            return "run-1"
+            return "run-1", True
 
         async def fake_mark(run_id, status, **fields):
             capture.setdefault("marks", []).append((run_id, status, fields))
@@ -196,6 +196,38 @@ class SectionedFinalTests(_SectionedBase):
         # 單次串流未被觸發
         self.assertNotIn("single_shot", capture)
 
+    async def test_completed_request_key_reuses_existing_document(self):
+        """同一 request_key 已完成時回既有文件，不能再渲染／persist 一份新文件。"""
+        capture, restore = self._install([_FINAL_OK])
+
+        async def existing_run(*a, **k):
+            return "run-existing", False
+
+        async def load_existing(run_id):
+            self.assertEqual(run_id, "run-existing")
+            return {"status": "completed", "report_doc_id": "doc-existing"}
+
+        async def fetch_existing(report_id):
+            self.assertEqual(report_id, "doc-existing")
+            return {"title": "既有研報"}
+
+        original_load = rw.load_run
+        original_fetch = rpt.fetch_report_doc
+        rpt._open_sectioned_run = existing_run
+        rw.load_run = load_existing
+        rpt.fetch_report_doc = fetch_existing
+        try:
+            evs = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            rw.load_run = original_load
+            rpt.fetch_report_doc = original_fetch
+            restore()
+
+        self.assertEqual(evs[-1][0], "done")
+        self.assertEqual(evs[-1][1]["report_id"], "doc-existing")
+        self.assertEqual(evs[-1][1]["title"], "既有研報")
+        self.assertNotIn("persist_args", capture)
+
     async def test_final_persists_new_m7_columns(self):
         capture, restore = self._install([_FINAL_OK])
         try:
@@ -233,6 +265,25 @@ class SectionedFinalTests(_SectionedBase):
             completed[2].get("expected_current"),
             "收尾綁 expected_current 會讓掉一次稽核寫入就永久假性卡住",
         )
+
+    async def test_render_failure_marks_run_failed_and_emits_error(self):
+        """__final__ 後的 PDF 失敗也必須終結 report_run，不能遺留 rendering。"""
+        capture, restore = self._install([_FINAL_OK])
+
+        def boom_render(*a, **k):
+            raise RuntimeError("pdf boom")
+
+        rpt.render_report_pdf = boom_render
+        try:
+            try:
+                evs = [e async for e in rpt.generate_report("台積電趨勢")]
+            except RuntimeError:
+                evs = [("raised", {})]
+        finally:
+            restore()
+
+        self.assertEqual(evs[-1][0], "error")
+        self.assertIn("failed", [m[1] for m in capture.get("marks", [])])
 
     async def test_eval_persist_false_skips_render_and_persist(self):
         capture, restore = self._install([_FINAL_OK])
@@ -437,7 +488,7 @@ class SectionedComposedTests(unittest.IsolatedAsyncioTestCase):
             return ([src], "[1] 報告：sec.pdf\n片段內容")
 
         async def fake_open_run(*a, **k):
-            return run_id
+            return run_id, True
 
         async def fake_mark(rid, status, **f):
             capture.setdefault("marks", []).append((rid, status, f))
@@ -642,6 +693,21 @@ class SectionedRunLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evs[-1][0], "done")
         self.assertTrue(evs[-1][1]["report_id"])
         self.assertIsNone(capture["persist_kwargs"]["report_run_id"])
+
+    async def test_existing_run_is_returned_for_deduplication(self):
+        """既有 request_key 不能被降級成無 run 的新生成。"""
+
+        async def existing_open(*a, **k):
+            return "existing-run", False
+
+        orig_open = rw.open_run
+        try:
+            rw.open_run = existing_open
+            result = await rpt._open_sectioned_run("q", {}, "model", None, "conv")
+        finally:
+            rw.open_run = orig_open
+
+        self.assertEqual(result, ("existing-run", False))
 
 
 if __name__ == "__main__":

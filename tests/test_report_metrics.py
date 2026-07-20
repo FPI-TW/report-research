@@ -305,6 +305,10 @@ class NoDataHandledTests(unittest.TestCase):
         self.assertTrue(rm.no_data_handled(error="找不到足夠資料生成研報",
                                            n_sources=0, markdown=None))
 
+    def test_internal_generation_error_is_not_a_safe_no_data_refusal(self):
+        self.assertFalse(rm.no_data_handled(error="研報引用標記異常",
+                                            n_sources=0, markdown=None))
+
     def test_web_answer_with_labeling_and_no_invalid_citations(self):
         md = (
             "# 主題\n\n## 執行摘要\n\n觀點（網路）。\n\n"

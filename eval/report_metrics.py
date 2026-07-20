@@ -245,8 +245,10 @@ def no_data_handled(*, error: str | None, n_sources: int, markdown: str | None) 
     - 有產出時：正文不得有無效 [n] 引用（憑空捏造編號）、網搜標示必須一致。
     內容層真偽（是否把弱相關研報當依據）屬 M8 與人工抽樣。
     """
+    # 只有空脈絡守門的明確婉拒才是 no-data 題的安全形態。逐節生成失敗、引用
+    # 把關失敗等也會發 error，但若一概算成功會讓 eval 把管線故障誤報為品質通過。
     if error:
-        return True
+        return error == "找不到足夠資料生成研報"
     if not markdown:
         return False
     cm = citation_metrics(markdown, n_sources)

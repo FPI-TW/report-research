@@ -165,6 +165,9 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(case["source_citation_rate"], 2 / 8)
         # 多樣性仍以 run-level 檢索為準（量的是「檢索找到什麼」）
         self.assertEqual(case["n_sources"], 2)
+        # 落盤 case 同時保留真正的引用上界與可用證據分母，才能事後重算指標。
+        self.assertEqual(case["n_cited_sources"], 2)
+        self.assertEqual(case["n_evidence"], 8)
         self.assertEqual(case["source_diversity"]["n_markets"], 1)  # _SOURCES 全 TW
 
     async def test_single_shot_without_done_sources_falls_back_to_event(self):
@@ -263,6 +266,11 @@ class ConfigSnapshotTests(unittest.TestCase):
             "report_section_max_passages",
             "report_section_max_context_chars",
             "report_section_rerank_candidates",
+            "report_timeout",
+            "report_outline_timeout",
+            "report_section_timeout",
+            "report_section_retry",
+            "report_section_thin_coverage",
         ):
             self.assertIn(key, snap)
             self.assertEqual(snap[key], getattr(s, key))

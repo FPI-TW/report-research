@@ -1,0 +1,107 @@
+.card {
+  display: block;
+}
+
+.figs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.fig {
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  padding: 10px 12px;
+  background: var(--tf-canvas);
+}
+
+.figK {
+  font-size: 10.5px;
+  color: var(--tf-text-4);
+  font-family: var(--tf-mono);
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+.figV {
+  font-family: var(--tf-serif);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--tf-text-1);
+  line-height: 1.15;
+}
+
+/* 評等三桶語意色（偏多/中立/偏空）。類名前綴 r- 與論點色調的 s- 分開，
+   同一 module 內若共用 .neu 會互相套用到對方的 background/border。 */
+.rBull { color: var(--tf-success-text); }
+.rNeu { color: var(--tf-text-1); }
+.rBear { color: var(--tf-error-text); }
+
+.figS {
+  font-size: 11px;
+  color: var(--tf-text-3);
+  margin-top: 3px;
+  font-family: var(--tf-mono);
+}
+
+.thesis {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.th {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--tf-border-weak);
+}
+.th:last-child {
+  border-bottom: none;
+}
+
+.thK {
+  font-size: 12px;
+  color: var(--tf-text-3);
+  width: 42px;
+  flex: none;
+  padding-top: 1px;
+}
+
+.thB {
+  flex: 1;
+}
+
+.thS {
+  display: inline-block;
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: var(--tf-radius-pill);
+  margin-bottom: 4px;
+  font-family: var(--tf-mono);
+}
+
+/* 論點 stance 色調（建設性 +1/0/−1） */
+.sPos {
+  background: color-mix(in srgb, var(--tf-success) 9%, transparent);
+  color: var(--tf-success-text);
+  border: 1px solid var(--tf-success-line);
+}
+.sNeu {
+  background: var(--tf-canvas);
+  color: var(--tf-text-3);
+  border: 1px solid var(--tf-border);
+}
+.sNeg {
+  background: var(--tf-error-bg);
+  color: var(--tf-error-text);
+  border: 1px solid var(--tf-error-border);
+}
+
+.thX {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--tf-text-2);
+}

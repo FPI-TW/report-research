@@ -1,8 +1,9 @@
-/* 結果列躺在畫布上，hover 才浮成白色 */
+/* 結果列躺在畫布上，hover 才浮成白色。根元素是真連結（<a>），故重置底線與顏色。 */
 .rrow {
   display: grid; grid-template-columns: 48px minmax(0, 1fr) 96px; gap: 20px; align-items: start;
   padding: 16px 2px; border-top: 1px solid var(--tf-divider); border-radius: var(--tf-radius-md);
-  cursor: pointer; transition: background 120ms var(--tf-ease-out), box-shadow 120ms var(--tf-ease-out);
+  cursor: pointer; text-decoration: none; color: inherit;
+  transition: background 120ms var(--tf-ease-out), box-shadow 120ms var(--tf-ease-out);
 }
 .rrow:hover { background: var(--tf-surface); box-shadow: var(--tf-shadow-xs); }
 

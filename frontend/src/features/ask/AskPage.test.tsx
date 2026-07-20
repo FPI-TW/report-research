@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { RawSSEEvent } from '../../lib/readSSE'
 
@@ -18,11 +18,16 @@ afterEach(() => vi.clearAllMocks())
 function immediate(events: RawSSEEvent[]) {
   return (async function* () { for (const e of events) yield e })()
 }
-function wrap() {
+/** 網址探針：MemoryRouter 沒有真實 location 可讀，靠它把 query string 攤進 DOM。 */
+function LocationProbe() {
+  return <div data-testid="search-params">{useLocation().search}</div>
+}
+
+function wrap(entry = '/ask') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/ask']}><AskPage /></MemoryRouter>
+      <MemoryRouter initialEntries={[entry]}><AskPage /><LocationProbe /></MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -61,6 +66,18 @@ test('資料來源鈕可切換開／關來源側欄', async () => {
   // 再次點擊同一鈕：關閉側欄（離場後卸載）
   fireEvent.click(srcBtn)
   await waitFor(() => expect(screen.queryByRole('complementary', { name: '引用來源' })).not.toBeInTheDocument())
+})
+
+// 閱讀頁的「就這篇提問」靠 ?q= 把報告名帶過來
+test('?q= 預填 composer、不自動送出，並把 q 從網址清掉', async () => {
+  const q = '關於《南亞電路板 — 基板價格漲幅持續超預期.pdf》：'
+  wrap(`/ask?q=${encodeURIComponent(q)}`)
+  expect(await screen.findByDisplayValue(q)).toBeInTheDocument()
+  // 刻意不自動送出：讓使用者先看過、改過再按
+  expect(streamAsk).not.toHaveBeenCalled()
+  // q 用完即丟：留著的話，重整會拿舊題目蓋掉使用者已經編輯的內容
+  // （toHaveTextContent('') 恆真，故直接比對 textContent）
+  await waitFor(() => expect(screen.getByTestId('search-params').textContent).toBe(''))
 })
 
 test('離題→Callout warning', async () => {

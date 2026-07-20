@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 
-export type RouteKey = 'search' | 'ask' | 'monitor' | 'radar' | 'help'
+export type RouteKey = 'search' | 'ask' | 'monitor' | 'radar' | 'help' | 'report'
 
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
@@ -9,6 +9,7 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   monitor: () => import('../features/monitor/MonitorPage'),
   radar: () => import('../features/radar/RadarPage'),
   help: () => import('../features/help/HelpPage'),
+  report: () => import('../features/report/ReportPage'),
 }
 
 const started = new Set<RouteKey>()

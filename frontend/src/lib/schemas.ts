@@ -27,6 +27,8 @@ export type Passage = z.infer<typeof passageSchema>
 
 export const reportListItemSchema = z.object({
   report_id: z.string(),
+  /** 閱讀頁 /report/:hash 的鍵（原始檔仍走 report_id）。 */
+  file_hash: z.string(),
   file_name: z.string(),
   market: z.string().nullable(),
   source: z.string().nullable(),

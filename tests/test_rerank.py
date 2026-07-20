@@ -14,10 +14,10 @@ from app.services.rows import ChunkRow  # noqa: E402
 
 
 def _row(rid, content):
-    vals = [None] * 16
+    vals = [None] * 17
     vals[1] = rid       # report_id
-    vals[14] = content  # content
-    vals[15] = 0.0      # distance
+    vals[15] = content  # content
+    vals[16] = 0.0      # distance
     return ChunkRow._make(vals)
 
 

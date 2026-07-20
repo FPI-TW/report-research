@@ -4,7 +4,7 @@ import type { ReportRow } from './schemas'
 
 function row(p: Partial<ReportRow>): ReportRow {
   return {
-    report_id: 'x', file_name: '', market: null, source: null, summary: null,
+    report_id: 'x', file_hash: 'x'.repeat(64), file_name: '', market: null, source: null, summary: null,
     report_date: null, report_type: null, instrument_types: null,
     relates_stock: null, relates_futures: null, stock_targets: null, futures_targets: null,
     ...p,

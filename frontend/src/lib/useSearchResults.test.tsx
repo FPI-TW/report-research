@@ -18,7 +18,8 @@ function listResp(ids: string[], total: number, offset = 0) {
   return {
     total, offset,
     items: ids.map(id => ({
-      report_id: id, file_name: id, market: null, source: null, summary: null,
+      report_id: id, file_hash: id.repeat(64).slice(0, 64), file_name: id,
+      market: null, source: null, summary: null,
       report_date: null, report_type: null, instrument_types: null,
       relates_stock: null, relates_futures: null, stock_targets: null, futures_targets: null,
     })),

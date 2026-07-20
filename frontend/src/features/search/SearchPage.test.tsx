@@ -14,7 +14,8 @@ function listResp(ids: string[], total: number) {
   return {
     total, offset: 0,
     items: ids.map(id => ({
-      report_id: id, file_name: id + '.pdf', market: 'TW', source: '元大', summary: '摘要',
+      report_id: id, file_hash: id.repeat(64).slice(0, 64), file_name: id + '.pdf',
+      market: 'TW', source: '元大', summary: '摘要',
       report_date: '2026-06-25', report_type: '個股', instrument_types: null,
       relates_stock: null, relates_futures: null, stock_targets: null, futures_targets: null,
     })),
@@ -43,7 +44,8 @@ function searchResp(ids: string[], total: number, facets: { market: string; coun
   return {
     query: 'q', market: null, total, market_facets: facets,
     results: ids.map((id, i) => ({
-      report_id: id, file_name: id + '.pdf', market: 'TW', source: '元大', summary: '摘要',
+      report_id: id, file_hash: id.repeat(64).slice(0, 64), file_name: id + '.pdf',
+      market: 'TW', source: '元大', summary: '摘要',
       report_date: '2026-06-25', report_type: '個股', instrument_types: null,
       relates_stock: null, relates_futures: null, stock_targets: null, futures_targets: null,
       rank: i + 1, best_score: 0.9, match_count: 3, passages: [],

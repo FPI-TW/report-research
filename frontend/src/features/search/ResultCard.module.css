@@ -1,4 +1,5 @@
-/* 高密度列表列：置於 CardsView 的白底容器內，一列一報告 */
+/* 高密度列表列：置於 CardsView 的白底容器內，一列一報告。
+   根元素是真連結（<a>），故需重置連結預設的底線與顏色。 */
 .card {
   display: grid; grid-template-columns: 92px minmax(0, 1fr) 200px; gap: 14px;
   align-items: start;
@@ -6,6 +7,8 @@
   border-bottom: 1px solid var(--tf-border-weak);
   padding: 13px 16px;
   cursor: pointer;
+  text-decoration: none;
+  color: inherit;
   transition: background var(--tf-dur-1) var(--tf-ease-out);
 }
 .card:last-child { border-bottom: none; }

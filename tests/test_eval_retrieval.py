@@ -22,6 +22,7 @@ def _row(report_id, content, distance=0.1):
     return ChunkRow(
         chunk_id=None,
         report_id=report_id,
+        file_hash=f"h-{report_id}",
         file_name=None,
         market=None,
         source=None,
@@ -213,6 +214,7 @@ def _make_full_row(report_id, file_name, content, report_date):
     return ChunkRow(
         chunk_id=None,
         report_id=report_id,
+        file_hash=f"h-{report_id}",
         file_name=file_name,
         market="TW",
         source=None,

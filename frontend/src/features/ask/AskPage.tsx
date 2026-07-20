@@ -17,6 +17,7 @@ export default function AskPage() {
   const { turns } = ctrl.state
   const [params, setParams] = useSearchParams()
   const c = params.get('c')
+  const q = params.get('q')
   const [draft, setDraft] = useState('')
   const [drawer, setDrawer] = useState<{ open: boolean; view: AnswerView | null }>({ open: false, view: null })
   const [modal, setModal] = useState<{ reportId: string | null; fileName?: string }>({ reportId: null })
@@ -28,6 +29,18 @@ export default function AskPage() {
     else if (!c && ctrl.conversationId !== null) ctrl.newConversation()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [c])
+  // URL ?q → 預填 composer（例如閱讀頁的「就這篇提問」帶著報告名過來）。
+  // 刻意不自動送出：讓使用者先看過、改過再按。預填後立刻把 q 從網址移掉，
+  // 否則重整會拿舊題目蓋掉使用者已經編輯的內容。
+  useEffect(() => {
+    if (!q) return
+    setDraft(q)
+    setParams(prev => {
+      const sp = new URLSearchParams(prev)
+      sp.delete('q')
+      return sp
+    }, { replace: true })
+  }, [q, setParams])
   // conversationId → 同步 URL（首個 done 後）
   useEffect(() => {
     if (ctrl.conversationId && ctrl.conversationId !== c) setParams({ c: ctrl.conversationId }, { replace: true })

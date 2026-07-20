@@ -1,0 +1,88 @@
+.list {
+  display: block;
+}
+
+.tk {
+  display: block;
+  text-decoration: none;
+  margin-bottom: 3px;
+}
+
+.in {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border-radius: var(--tf-radius-md);
+  border: 1px solid transparent;
+  transition: background var(--tf-dur-1) var(--tf-ease-standard),
+              border-color var(--tf-dur-1) var(--tf-ease-standard);
+}
+
+/* 只有可跳的摘錄才有 hover 底色與箭頭轉色；不可跳者維持靜態，不暗示動作 */
+.tkOn {
+  cursor: pointer;
+}
+.tkOn:hover .in {
+  background: var(--tf-gold-panel);
+  border-color: var(--tf-gold-line);
+}
+.tkOn:focus-visible {
+  outline: none;
+}
+.tkOn:focus-visible .in {
+  background: var(--tf-gold-panel);
+  border-color: var(--tf-gold-line);
+  box-shadow: var(--tf-ring-ink);
+}
+
+.n {
+  font-family: var(--tf-mono);
+  font-size: 10px;
+  color: var(--tf-gold-text);
+  background: var(--tf-gold-tint);
+  border: 1px solid var(--tf-gold-line);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  margin-top: 1px;
+  font-weight: 700;
+}
+
+.x {
+  flex: 1;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--tf-text-1);
+}
+
+.q {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--tf-text-3);
+  font-style: italic;
+  padding-left: 9px;
+  border-left: 2px solid var(--tf-gold-line);
+}
+
+/* 箭頭常駐（設計稿拍板：不是 hover 才出現），hover 由淡金線轉為金字 */
+.go {
+  flex: none;
+  color: var(--tf-gold-line);
+  transition: color var(--tf-dur-1) var(--tf-ease-standard);
+  margin-top: 3px;
+  display: inline-flex;
+}
+.tkOn:hover .go,
+.tkOn:focus-visible .go {
+  color: var(--tf-gold-text);
+}
+.go svg {
+  width: 13px;
+  height: 13px;
+}

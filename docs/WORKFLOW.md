@@ -52,8 +52,8 @@ flowchart TD
 
 | 由誰負責 | 工作 |
 |----------|------|
-| **Python**（確定性、可重現） | 檔名解析、抽文字、掃描檔偵測、分塊、BGE-M3 嵌入、去重入庫、檢索 |
-| **Claude**（語意理解） | 讀報告文字判定多維標籤：主要市場（findb 代碼）、is_research、confidence、商品類型、個股/期貨關聯、具體標的 |
+| **Python**（確定性、可重現） | 檔名解析、抽文字、掃描檔偵測、分塊、BGE-M3 嵌入、去重入庫、檢索、**引文/chunk 錨回原文字元區間**（`reading/anchor.py`）|
+| **Claude**（語意理解） | 讀報告文字判定多維標籤：主要市場（findb 代碼）、is_research、confidence、商品類型、個股/期貨關聯、具體標的；**閱讀頁重點摘錄的「論點＋逐字引文」（不給 offset）**|
 
 > 券商來源、報告日期、報告類型、股票代碼等 metadata 由**檔名解析**（`filename.py`）取得，不經 Claude。
 
@@ -69,12 +69,15 @@ flowchart TD
 | 向量 | `research.report_chunk` | 全文切塊 ＋ `vector(1024)`（HNSW cosine）＋ `content_norm`（pg_trgm 字面比對）|
 | 問答紀錄 | `research.qa_log` | 每輪 Q&A 的 question/answer、來源、外部參考、conversation、回饋與延遲 |
 | 生成研報 | `research.report_doc` | 深度研報 Markdown 真相來源、PDF 路徑、來源清單與對話/問答關聯 |
+| 重點摘錄 | `research.report_takeaway` | 閱讀頁每篇 3-5 條「論點 ＋ 逐字引文」＋ 錨定出的原文字元區間；離線批次產生，讀取零 LLM |
 
 **`research.research_report` 欄位**：`id`、`file_hash`(唯一)、`file_name`/`file_path`、`market`、`is_research`、`confidence`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`、`language`、`instrument_types[]`、`relates_stock`、`relates_futures`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`created_at`。
 
 **`research.report_chunk` 欄位**：`id`、`report_id`(FK)、`chunk_index`、`content`、`embedding vector(1024)`、`content_norm`（`GENERATED STORED`：NFKC→去空白→小寫，對齊 `textnorm.norm_for_match()`）。
 
 **互動表**：`qa_log` 以 `COALESCE(conversation_id, id)` 分組支援舊單題與新對話串；`report_doc` 用 `markdown` 作真相來源，PDF 檔遺失時可由 Markdown 即時重建。
+
+**`research.report_takeaway` 欄位**：`id`、`report_id`(FK，`ON DELETE CASCADE`)、`ordinal`(1..N 顯示順序)、`claim`(論點，LLM)、`quote`(逐字引文，LLM)、`quote_start`/`quote_end`(Python 錨定結果；`NULL`＝錨不到，條目仍顯示但不可跳)、`anchor_method`(`exact`/`normalized`/`prefix`)、`text_sha256`、`extraction_version`、`extraction_status`(`pending`/`valid`/`partial`/`rejected`)、`raw_payload`、`error_detail`、`created_at`；`UNIQUE(report_id, ordinal)`。CASCADE 是刻意的：同 `file_hash` 重新 ingest（`store.upsert_report` 先刪後插）會連帶清除摘錄，下次批次偵測缺列自動補擷取＝要的冪等行為。
 
 **索引**：`report_chunk.embedding` HNSW(cosine)、`content_norm` GIN(trgm)；`research_report` 的 `market` btree、`instrument_types`/`stock_targets`/`futures_targets` GIN；`qa_log` 依建立時間與對話分組索引；`report_doc` 依 `qa_id` 與 `conversation_id` 索引。DB schema 定義於 [`db/schema.sql`](../db/schema.sql)（DDL 皆 `IF NOT EXISTS`，可冪等套用於既有庫）。
 
@@ -107,6 +110,18 @@ flowchart TD
 - **輸出**：`research.research_report` ＋ `research.report_chunk`
 - **指令**：`uv run python scripts/ingest_all.py [--limit N] [--batch-size 32]`
 
+### ④ 重點摘錄擷取 — `scripts/extract_takeaways.py`（Claude CLI，閱讀頁用）
+- **輸入**：DB 內近 `--since-days`（預設 90）天、有全文的研究報告。餵給 LLM 的是 **`clean_extracted(full_text)` 的前 `--excerpt`（預設 24000）字**，不是 `full_text` 本身（見下方不變量）
+- **做什麼**：asyncio ＋ Semaphore（`--workers` 預設 2）逐報告 spawn `claude -p`（Sonnet），依固定 schema 擷取 3-5 條 `{claim, quote}`；**LLM 只出語意、不給 offset**，Python 端以 `app/services/reading/anchor.py` 的 `locate_quote` 把引文確定性錨回正典文字；每份報告在單一 transaction 內 DELETE ＋ 全量 INSERT（非 upsert）
+  - **checkpoint-resume 條件**：該報告已有列、且 `extraction_version` 與 `text_sha256` **皆相符**、且狀態 ∈ (`valid`, `partial`) → 跳過。任一不符即重擷（全文變了、擷取版本升級了，舊 offset 就不可信）
+  - 單筆失敗只寫 `data/takeaway_failures.log`，不中斷、不影響檢索/問答
+- **輸出**：`research.report_takeaway`（閱讀頁 `/api/reading/{file_hash}` 讀取時零 LLM）
+- **指令**：`make takeaways`＝`uv run python scripts/extract_takeaways.py`；旗標 `[--since-days 90] [--workers 2] [--limit N] [--excerpt 24000] [--model M] [--reextract] [--dry-run]`
+- **成本**：預設 90 天約 549 篇、約 2-3 小時；全語料 14,575 篇要跑十天以上，故預設不跑全量
+- ⚠️ **不可與 `scripts/extract_signals.py` 同時跑**：多個批次併發搶 `claude` CLI 會讓擷取大量被誤判 `rejected`（真因不是資料壞、也不是模型壞，是搶資源）。要跑就一次跑一支。
+
+> **不可妥協的不變量：正典文字＝`clean_extracted(full_text)`**。`research_report.full_text` 存的是**未清理**的原始抽取文字（`ingest_all.py` 寫 `full_text=raw_text`，但 chunk 走 `chunk_text(clean_extracted(raw_text))`），保留 PDF 抽字的 CJK 間空白（「台 積 電」）。**餵 LLM 的 excerpt、錨點基準、API 回傳的文字三者必須同源**，`text_sha256` 是這個不變量的守衛（讀取時比對「擷取當時的 sha」vs「當前正典文字的 sha」，不符即降級為不可跳）。拿 `full_text` 當基準會讓所有 offset 全錯，而且**測試抓不到**——引文照樣「錨得到」，只是錨在錯的座標系。同理，`report_chunk.content` 因切塊 overlap 而不是 `full_text` 的子字串（天真的 `full_text.find(chunk.content)` 約 99% 無聲失敗），定位一律走 `anchor.py`。
+
 ### 編排與離線優化
 - **`scripts/resume_corpus.sh`**：一鍵編排——鎖檔（`data/.resume_corpus.lock` + PID 檢查）防重入，並行起 `tag_all_cli.py` 與 `ingest_all.py`，待首輪導入消化 backlog → 等標註全數完成 → 補跑 catch-up 導入；各階段時間戳記寫 `data/resume_orchestrator_*.log`。`bash scripts/resume_corpus.sh`
 - **`scripts/ingest_lowio.sh`（或 `make ingest-lowio`）**：`ingest_all.py` 的包裝，**離線大量導入**時以 `ALTER SYSTEM` 暫關 Postgres durability（`fsync`/`full_page_writes`/`synchronous_commit`）降磁碟 I/O，並用 `trap` 確保正常/錯誤/Ctrl-C 都會還原。⚠️ **僅限 DB 未對外服務時使用**（關 fsync 期間若主機/DB 崩潰，research 庫不可復原，但可由原始報告重新導入）。中斷未還原時用 `make restore-durability` 重設。
@@ -121,6 +136,7 @@ flowchart TD
 - **Web 檢索** `web/server.py` + `web/static/app/*.js`：FastAPI 啟動時背景暖機 BGE-M3，`/api/search` 走 dense + pg_trgm 字面召回、報告層聚合、tier/band/日期排序；`/api/reports` 提供無關鍵字瀏覽與分頁。
 - **RAG 問答** `app/services/answer.py`：`embed_query_cached → hybrid_search → build_context → stream_completion → qa_log`。來源以 `[n]` 編號，支援多輪對話、語料總覽問題、離題拒答、外部網搜來源、讚倒讚與對話刪除。
 - **深度研報** `app/services/report.py` + `app/services/pdf.py`：`/api/report` 以較深召回與較大 context 生成 Markdown 研報，必要時主動網搜補覆蓋，渲染成品牌化 PDF，並把 Markdown/PDF/source 寫入 `report_doc`。
+- **研報閱讀頁** `app/services/reading/`：`/app/report/:file_hash` 把一份研報的原文、語料已知的一切與下一步動作收攏到一個可分享的網址（以 `file_hash` 為鍵——`report_id` 重新 ingest 會換新，分享連結會失效）。`anchor.py` 負責錨定、`queries.py` 純 SQL 取數、`schemas.py` 為凍結的 API 契約（前端 zod 逐字鏡像）；摘錄早在 ④ 已落 DB，**讀取時零 LLM**。依資料現況優雅降級：無摘錄→整區不渲染；無訊號→整區**不進 DOM**（99.3% 的報告如此，是常態不是錯誤）；無全文→只給 PDF，不是錯誤。
 
 **全站需登入**（共用帳密，env 設定；未登入導向 `/login`，可登出）——認證細節見 `web/auth.py` 與 [docs/EXTERNAL_ACCESS.md](EXTERNAL_ACCESS.md)。
 
@@ -170,10 +186,13 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/stats` | 總篇數、總片段數，各市場代碼／商品類型／報告類型的篇數 |
 | `GET /api/progress` | 供 `/monitor` 使用的 ingestion、tagging、summary、DB 與背景程序進度 |
 | `GET /api/markets` | findb 市場代碼清單 |
-| `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`limit`、`offset`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、摘要與清理後片段 |
-| `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁 |
+| `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`limit`、`offset`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、摘要與清理後片段，以及 `file_hash`（閱讀頁 `/app/report/:file_hash` 的連結鍵）|
+| `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁；同樣回 `file_hash` |
 | `GET /api/report/{id}/full` | 單篇 metadata 與原始檔狀態（供前端完整報告 modal）|
 | `GET /api/report/{id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|
+| `GET /api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號。**不含全文**（PDF 是預設檢視，文字另取）。`file_hash` 格式不符直接 422、查無報告 404。摘錄的 `quote_start`/`quote_end` 在三種情形由**後端**收回為 `null`：錨不到、驗章不過（正典文字已漂移）、落在 `/text` 的截斷範圍之外 —— 前端只看是否為 `null`，不自行判斷截斷（兩邊各自判會分岔成「顯示可點、點下去卻沒反應」）|
+| `GET /api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`），所有 offset 以此為準。超過 40 萬字只回前綴並標 `truncated`，但 `text_sha256`/`text_chars` 一律是**完整**正典文字的值（回截斷版的 sha 會讓前端驗章全滅）。`?chunk=N`＝檢索命中的 `chunk_index`，一併回該段字元區間供高亮；錨不到、或錨點落在截斷範圍之外，則為 `None` 且仍回 200（**沒有命中位置不是錯誤**）|
+| `GET /api/reading/{file_hash}/similar` | 相似研報（全篇均勻取樣 probe ＋ 廣度加權的向量近鄰）；`limit` 預設 6、上限 20 |
 | `POST /api/ask` | RAG 問答：SSE 串流 `sources` / `token` / `done` / `error`，行內 `[n]` 引用對應來源報告；支援 `conversation_id` 與篩選，寫入 `qa_log` |
 | `POST /api/report` | 深度研報生成：SSE 串流 retrieval/writing/searching/rendering 狀態、來源、token 與 done payload |
 | `GET /api/report-doc/{report_id}/pdf` | 下載生成研報 PDF；PDF 遺失時由 persisted Markdown 即時重建 |
@@ -248,6 +267,20 @@ uv run python scripts/search.py "利率與殖利率" --market MACRO
 - `file_hash` 去重與「已標/已導入」檢查讓全流程可隨時中斷續跑。
 - **掃描型 PDF 無 OCR**：`extract_all.py` 以可抽文字 < 100 字判 `scanned=true`，導入階段以 `skip_scanned` 計數略過——刻意排除，不提供 OCR。
 - 標註/導入失敗各自記 `data/tag_failures.log`、`data/ingest_failures.log` 供事後排查。
+
+**資料現況**（實測 2026-07-17）——UI 要據此**優雅降級**，缺欄是常態不是錯誤：
+
+| 項目 | 覆蓋 |
+|------|------|
+| 語料規模 | 14,575 篇（近 90 天 549 篇）|
+| 檔案類型 | PDF 99.8% |
+| `full_text` | 100%（平均 18,220 字、最大 487,187）|
+| `summary` | 70% |
+| `source` | 97.8% |
+| `report_type` | **19.5%** |
+| 結構化訊號（`report_signal`）| **0.68%（99 篇）**|
+
+> 例：閱讀頁在訊號缺席時整個觀點區**不進 DOM**——99.3% 的報告都沒有訊號，那是常態；渲染空框或骨架只會讓讀者以為壞了。同理 `report_type` 僅約兩成有值，任何以它為主軸的分組/篩選都要能承受大量 null。
 
 ---
 

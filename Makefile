@@ -17,7 +17,7 @@ COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align normalize serve search \
-        stats reset-db clean-data pipeline signals \
+        stats reset-db clean-data pipeline signals takeaways \
         up-edge down-edge edge-logs edge-reload \
         sync-once
 
@@ -84,6 +84,10 @@ summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等
 
 signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 make schema）→ research.report_signal
 	uv run python scripts/extract_signals.py
+
+# 勿與 make signals 同時跑：多個批次併發搶 claude CLI 會讓擷取大量被誤判 rejected。
+takeaways:  ## 閱讀頁重點摘錄擷取（近 90 天，冪等可續傳；先 make schema）→ research.report_takeaway
+	uv run python scripts/extract_takeaways.py
 
 # ───── 檢索 ─────
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)

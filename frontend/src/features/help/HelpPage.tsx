@@ -56,7 +56,7 @@ function copyText(text: string): Promise<void> {
     document.body.appendChild(ta)
     ta.focus()
     ta.select()
-    let ok = false
+    let ok: boolean
     try {
       ok = document.execCommand('copy')
     } catch {

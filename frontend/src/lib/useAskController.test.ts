@@ -4,13 +4,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createElement, type ReactNode } from 'react'
 import { useAskController } from './useAskController'
 import * as api from './askApi'
+import type { RawSSEEvent } from './readSSE'
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return createElement(QueryClientProvider, { client: qc }, children)
 }
 
-async function* oneToken(): AsyncGenerator<any> {
+async function* oneToken(): AsyncGenerator<RawSSEEvent> {
   yield { event: 'token', data: '部分' }
   // 掛住：模擬串流尚未結束（否則 for-await 自然收尾會觸發 ask-end 而非停止），
   // 測試在此期間呼叫 stop()。此 promise 永不 resolve；stop() 會 abort 並丟棄殘留。

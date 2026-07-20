@@ -252,6 +252,24 @@ def strip_preamble(markdown_text: str) -> str:
     return text[m.start():] if m else text
 
 
+def chart_caption(spec: object) -> str:
+    """圖表說明（標題＋來源）純文字——**兩軌共用的唯一來源**。
+
+    來源標記是研報可追溯性的一部分，不該因為換了渲染器就消失（Typst 軌曾固定傳空
+    caption，導致 `source: "[7]"` 在 PDF 上只剩「圖 1」）。複製一份必然漂移，故兩軌
+    都從這裡取。回傳純文字，跳脫由呼叫端負責（HTML 走 escape、Typst 走 `_tstr`）。
+    """
+    if not isinstance(spec, dict):  # 形狀防禦：畸形 LLM JSON 不得拋例外
+        return ""
+    title = str(spec.get("title") or "").strip()
+    src = str(spec.get("source") or "").strip()
+    if title and src:
+        return f"{title}（來源 {src}）"
+    if src:
+        return f"（來源 {src}）"
+    return title
+
+
 def inject_charts(markdown_text: str) -> str:
     """把 markdown 內的 ```chart 區塊換成 <figure><svg>…</figure>；壞規格/數據缺則移除該塊。"""
 
@@ -268,9 +286,7 @@ def inject_charts(markdown_text: str) -> str:
         if not svg:
             logger.warning("chart 規格無效或數據缺，略過")
             return ""
-        title = _html.escape(str(spec.get("title") or ""))
-        src = str(spec.get("source") or "").strip()
-        cap = f"{title}（來源 {_html.escape(src)}）" if (title and src) else title
+        cap = _html.escape(chart_caption(spec))
         figcap = f"<figcaption>{cap}</figcaption>" if cap else ""
         return f'\n\n<figure class="chart">{svg}{figcap}</figure>\n\n'
 

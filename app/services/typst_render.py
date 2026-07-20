@@ -30,7 +30,7 @@ from app.services.chart import render_chart_svg
 
 # 與 WeasyPrint 路徑共用引用正規化與免責文字——兩軌各留一份必然漂移。
 # pdf.py 的 weasyprint 是延遲 import，故此處頂層 import 不會吃到它的載入成本。
-from app.services.pdf import _normalize_refs
+from app.services.pdf import _normalize_refs, chart_caption
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ class KpiBlock:
 @dataclass(frozen=True)
 class ChartBlock:
     svg: str  # 已由 chart.render_chart_svg 產出；Typst 以 image() 嵌入
+    caption: str = ""  # 標題＋來源標記；來源是可追溯性的一部分，不可因換渲染器而消失
 
 
 @dataclass(frozen=True)
@@ -189,7 +190,7 @@ def _parse_chart(raw: str) -> ChartBlock | None:
     if not svg:
         logger.warning("chart SVG 產出為空，略過")
         return None
-    return ChartBlock(svg=svg)
+    return ChartBlock(svg=svg, caption=chart_caption(spec))
 
 
 class ProseConversionError(RuntimeError):
@@ -273,24 +274,85 @@ def _blocks_for(body: str) -> tuple[Block, ...]:
     return tuple(out)
 
 
+_FENCE_LINE_RE = re.compile(r"^(?P<indent> {0,3})(?P<marker>`{3,}|~{3,})(?P<info>.*)$")
+
+_H1_RE = re.compile(r"^#[ \t]+(.+?)[ \t]*$", re.MULTILINE)
+_H2_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$", re.MULTILINE)
+
+
+def _fence_spans(src: str) -> list[tuple[int, int]]:
+    """**所有** Markdown 圍欄的字元區間（``` 與 ~~~，長度 3+，含未閉合者）。
+
+    章節切分必須看得見所有圍欄，不只 kpi/chart：一般 ```text / ```python / ~~~ 區塊
+    裡的 `## ` 是程式碼或範例，不是章節標題。先前只掃 `_FENCE_RE`（僅 kpi/chart），
+    於是一個合法的 code block 會被章節 regex 攔腰切成假章節，**原本的 code block 也
+    跟著被截斷**（開頭圍欄留在上一節、閉合圍欄漏到下一節）。
+    """
+    spans: list[tuple[int, int]] = []
+    pos, open_at, marker = 0, -1, ""
+    for line in src.splitlines(keepends=True):
+        m = _FENCE_LINE_RE.match(line.rstrip("\n\r"))
+        if open_at < 0:
+            # 反引號圍欄的 info string 不得含反引號（CommonMark）——排除行內程式碼
+            if m and not (m.group("marker")[0] == "`" and "`" in m.group("info")):
+                open_at, marker = pos, m.group("marker")
+        elif (
+            m
+            and m.group("marker")[0] == marker[0]
+            and len(m.group("marker")) >= len(marker)
+            and not m.group("info").strip()  # 閉合圍欄後不得有 info string
+        ):
+            spans.append((open_at, pos + len(line)))
+            open_at, marker = -1, ""
+        pos += len(line)
+    if open_at >= 0:
+        spans.append((open_at, len(src)))  # 未閉合圍欄延伸到文末（CommonMark）
+    return spans
+
+
+def _extract_doc_title(markdown: str) -> tuple[str, str]:
+    """取出文件級 `# 標題` → (title, 移除該行後的 markdown)。
+
+    模板本來就會渲染 metadata title，而正常生成流程固定輸出一個 `# 主標題`，先前它被
+    當成前言散文原樣保留 → **每一份研報的 PDF 都同時出現兩個主標題**（呼叫端傳入的
+    建議標題，與 LLM 自己寫的標題，兩者不同時尤其刺眼）。
+
+    只處理第一個 `## ` 之前、且不在圍欄內的第一個 H1——那正是「文件標題」的位置。
+    章節內文裡的 `# ` 不動（那是內容，不是文件標題）。
+    """
+    src = markdown or ""
+    spans = _fence_spans(src)
+    first_h2 = next(
+        (m.start() for m in _H2_RE.finditer(src)
+         if not any(a <= m.start() < b for a, b in spans)),
+        len(src),
+    )
+    for m in _H1_RE.finditer(src):
+        if m.start() >= first_h2:
+            break
+        if any(a <= m.start() < b for a, b in spans):
+            continue
+        return m.group(1).strip(), src[: m.start()] + src[m.end():]
+    return "", src
+
+
 def _split_sections(markdown: str) -> list[tuple[str, str]]:
     """依頂層 `## ` 切章節 → [(heading, body_md)]。
 
     **必須在 pandoc 之前切**：pandoc 會把 `## 執行摘要` 轉成 Typst 的 `== 執行摘要`，
     章節邊界就化進片段裡、模板再也分不出區塊。
 
-    `## ` 之前的前言（前導 `# 標題` 等）以 heading="" 的首段承接——不丟棄。
-    圍欄內的 `## ` 不算章節標題（```chart 的 JSON 不會有，但防禦性排除）。
+    `## ` 之前的前言以 heading="" 的首段承接——不丟棄。
+    圍欄內的 `## ` 不算章節標題（見 `_fence_spans`）。
     """
     src = markdown or ""
-    spans = [(m.start(), m.end()) for m in _FENCE_RE.finditer(src)]
+    spans = _fence_spans(src)
 
     def _in_fence(i: int) -> bool:
         return any(a <= i < b for a, b in spans)
 
     out: list[tuple[str, str]] = []
-    cuts = [m for m in re.finditer(r"^##[ \t]+(.+?)[ \t]*$", src, re.MULTILINE)
-            if not _in_fence(m.start())]
+    cuts = [m for m in _H2_RE.finditer(src) if not _in_fence(m.start())]
     if not cuts:
         return [("", src)] if src.strip() else []
     if src[: cuts[0].start()].strip():
@@ -327,6 +389,8 @@ def build_document(markdown: str, *, title: str, meta: dict | None = None) -> Do
     內容——研報寧可少一張 KPI 卡，不可整份沒有 PDF。未知章節保留為 key=None。
     """
     m = meta or {}
+    # 文件級 H1 抽成 metadata title（模板負責排它），不再以散文重複渲染一次
+    doc_title, markdown = _extract_doc_title(markdown or "")
     sections = []
     for heading, body in _split_sections(markdown):
         key = _section_key(heading)
@@ -338,7 +402,8 @@ def build_document(markdown: str, *, title: str, meta: dict | None = None) -> Do
     return DocumentModel(
         sections=tuple(s for s in sections if s.blocks or s.heading),
         meta=DocMeta(
-            title=str(title or ""),
+            # 呼叫端的建議標題優先；沒有時才用 LLM 寫的 H1（總比無標題好）
+            title=str(title or doc_title or ""),
             date=str(m.get("date") or ""),
             question=str(m.get("question") or ""),
         ),
@@ -398,7 +463,7 @@ def _emit_body(doc: DocumentModel) -> str:
             if isinstance(b, ProseBlock):
                 out.append(b.typst)
             elif isinstance(b, ChartBlock):
-                out.append(f"#chart-figure({_tstr(b.svg)}, {_tstr('')})")
+                out.append(f"#chart-figure({_tstr(b.svg)}, {_tstr(b.caption)})")
             elif isinstance(b, KpiBlock):
                 # 章節內的 KPI（非跨欄置頂那組）就地排一列
                 out.append(f"#kpi-strip({_emit_kpi(b.items)})")

@@ -288,5 +288,140 @@ class SectionContractTests(unittest.TestCase):
         self.assertEqual(kinds, ["ProseBlock", "KpiBlock", "ProseBlock"])
 
 
+class DocumentTitleTests(unittest.TestCase):
+    """文件級 `# 標題` 由 metadata 承載，不得再以散文重複渲染一次。
+
+    模板本來就會排 metadata title，而正常生成流程固定輸出一個 `# 主標題`——先前它被
+    當成前言散文原樣保留，於是**每一份研報的 PDF 都有兩個主標題**（呼叫端傳入的建議
+    標題，加上 LLM 自己寫的標題），兩者不同時尤其刺眼。
+    """
+
+    def _prose(self, doc) -> str:
+        return "\n".join(b.typst for b in doc.blocks if isinstance(b, ProseBlock))
+
+    def test_doc_title_not_duplicated_in_body(self):
+        doc = build_document("# LLM 主標題\n\n前言\n\n## 執行摘要\n\n摘要\n", title="建議標題")
+        self.assertEqual(doc.meta.title, "建議標題")
+        self.assertNotIn("LLM 主標題", self._prose(doc))
+
+    def test_doc_title_promoted_when_caller_title_empty(self):
+        """沒有建議標題時用 H1——總比無標題好。"""
+        doc = build_document("# LLM 主標題\n\n前言\n\n## 執行摘要\n\n摘要\n", title="")
+        self.assertEqual(doc.meta.title, "LLM 主標題")
+
+    def test_preamble_prose_survives_title_removal(self):
+        """移除的是標題那一行，不是整段前言。"""
+        doc = build_document("# 主標題\n\n前言段落\n\n## 執行摘要\n\n摘要\n", title="T")
+        self.assertIn("前言段落", self._prose(doc))
+
+    def test_h1_inside_section_body_is_untouched(self):
+        """章節內文裡的 `# ` 是內容，不是文件標題——不得被吃掉。"""
+        doc = build_document("## 執行摘要\n\n# 內文中的一級標題\n\n摘要\n", title="T")
+        self.assertIn("內文中的一級標題", self._prose(doc))
+
+    def test_h1_inside_fence_is_not_the_doc_title(self):
+        doc = build_document("```text\n# 這在圍欄內\n```\n\n## 執行摘要\n\n摘要\n", title="")
+        self.assertEqual(doc.meta.title, "")
+
+    def test_no_h1_at_all_is_safe(self):
+        doc = build_document("## 執行摘要\n\n摘要\n", title="T")
+        self.assertEqual(doc.meta.title, "T")
+
+
+class GenericFenceTests(unittest.TestCase):
+    """一般 ```/~~~ 圍欄內的 `## ` 是程式碼或範例，不是章節標題。
+
+    先前只把 kpi/chart 圍欄視為圍欄，於是一個合法的 ```text / ```python 區塊會被章節
+    regex 攔腰切成假章節，**原本的 code block 也跟著被截斷**（開頭圍欄留在上一節、
+    閉合圍欄漏到下一節）。
+    """
+
+    def _headings(self, md: str):
+        return [s.heading for s in build_document(md, title="T").sections]
+
+    def test_hash_inside_generic_fence_is_not_a_section(self):
+        for fence in ("```text", "```python", "~~~", "````"):
+            with self.subTest(fence=fence):
+                close = "````" if fence == "````" else fence[:3]
+                md = f"## 執行摘要\n\n範例：\n\n{fence}\n## 這在圍欄內\n續行\n{close}\n\n後續\n"
+                self.assertEqual(self._headings(md), ["執行摘要"])
+
+    def test_code_block_content_not_truncated(self):
+        md = "## 執行摘要\n\n```text\n## 圍欄內標題\n圍欄內續行\n```\n\n後續內文\n"
+        doc = build_document(md, title="T")
+        prose = "\n".join(b.typst for b in doc.blocks if isinstance(b, ProseBlock))
+        self.assertIn("圍欄內續行", prose)
+        self.assertIn("後續內文", prose)
+
+    def test_real_sections_after_fence_still_split(self):
+        md = "## 執行摘要\n\n```text\n## 假章節\n```\n\n## 關鍵發現\n\n要點\n"
+        self.assertEqual(self._headings(md), ["執行摘要", "關鍵發現"])
+
+    def test_unclosed_fence_swallows_rest(self):
+        """未閉合圍欄延伸到文末（CommonMark）——其後的 `## ` 不是章節。"""
+        self.assertEqual(self._headings("## 執行摘要\n\n```text\n## 未閉合\n"), ["執行摘要"])
+
+    def test_inline_code_is_not_a_fence(self):
+        """反引號圍欄的 info string 不得含反引號——行內碼不算圍欄。"""
+        md = "## 執行摘要\n\n行內 ```code``` 文字\n\n## 關鍵發現\n\n要點\n"
+        self.assertEqual(self._headings(md), ["執行摘要", "關鍵發現"])
+
+
+class ChartCaptionTests(unittest.TestCase):
+    """圖表的來源標記是研報可追溯性的一部分，不得因為換渲染器而消失。
+
+    Typst 軌先前只保存 SVG、固定傳空 caption，於是 `source: "[7]"` 在 PDF 上只剩
+    「圖 1」——WeasyPrint 軌一直都顯示來源，等於新的預設渲染器弄丟了追溯資訊。
+    """
+
+    def _chart(self, spec: str) -> ChartBlock:
+        blocks = [b for b in build_document(f"```chart\n{spec}\n```", title="T").blocks
+                  if isinstance(b, ChartBlock)]
+        self.assertEqual(len(blocks), 1)
+        return blocks[0]
+
+    def test_source_and_title_preserved(self):
+        spec = ('{"type":"bar","title":"營收趨勢","source":"[7]",'
+                '"x":["Q1"],"series":[{"name":"營收","values":[1]}]}')
+        self.assertEqual(self._chart(spec).caption, "營收趨勢（來源 [7]）")
+
+    def test_source_without_title_still_shown(self):
+        spec = ('{"type":"bar","source":"[7]","x":["Q1"],'
+                '"series":[{"name":"營收","values":[1]}]}')
+        self.assertIn("[7]", self._chart(spec).caption)
+
+    def test_no_caption_when_neither_present(self):
+        self.assertEqual(self._chart(_GOOD_CHART).caption, "")
+
+    def test_caption_reaches_emitted_typst(self):
+        """中介模型存了不算數——必須真的傳進 chart-figure 的 caption 參數。"""
+        from app.services.typst_render import emit_typst
+
+        spec = ('{"type":"bar","title":"營收趨勢","source":"[7]",'
+                '"x":["Q1"],"series":[{"name":"營收","values":[1]}]}')
+        src = emit_typst(build_document(f"```chart\n{spec}\n```", title="T"), disclaimer="D")
+        call = [ln for ln in src.splitlines() if ln.startswith("#chart-figure(")]
+        self.assertEqual(len(call), 1)
+        self.assertIn("營收趨勢（來源 [7]）", call[0])
+
+    def test_both_renderers_share_one_caption_source(self):
+        """複製一份必漂移——兩軌都必須走 pdf.chart_caption。"""
+        import json
+
+        from app.services.pdf import chart_caption
+
+        spec = ('{"type":"bar","title":"營收","source":"[3]",'
+                '"x":["Q1"],"series":[{"name":"s","values":[1]}]}')
+        self.assertEqual(self._chart(spec).caption, chart_caption(json.loads(spec)))
+
+    def test_malformed_spec_shape_does_not_raise(self):
+        """形狀防禦（CLAUDE.md 紅線）：caption 取值不得成為新的炸點。"""
+        from app.services.pdf import chart_caption
+
+        for bad in (None, [], "str", 3, {"title": None}, {"source": []}):
+            with self.subTest(bad=bad):
+                self.assertIsInstance(chart_caption(bad), str)
+
+
 if __name__ == "__main__":
     unittest.main()

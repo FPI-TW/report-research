@@ -16,8 +16,10 @@ interface Props {
 export function DirectionTag({ direction, label, pct, kind = 'number', className }: Props) {
   if (direction === 'none' && !label) return <span className={styles.none}>—</span>
   const icon = directionIconName(direction)
-  const text = label ?? directionVerb(direction, kind)
-  const pctText = pct != null ? fmtPct(pct) : ''
+  const text = direction === 'incomparable'
+    ? directionVerb(direction, kind)
+    : (label ?? directionVerb(direction, kind))
+  const pctText = direction === 'incomparable' ? '' : (pct != null ? fmtPct(pct) : '')
   const tone = direction === 'up' || direction === 'down' || direction === 'flat' || direction === 'incomparable'
     ? styles[direction]
     : styles.none

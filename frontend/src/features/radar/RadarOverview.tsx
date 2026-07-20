@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
 import { Pressable } from '../../components/primitives/Pressable'
-import type { Window } from '../../lib/radarSchemas'
+import type { Market, Window } from '../../lib/radarSchemas'
 import { BrokerList } from './BrokerList'
 import { ConsensusSnapshot } from './ConsensusSnapshot'
 import { KeyFigures } from './KeyFigures'
@@ -16,19 +16,24 @@ import {
 } from './RadarStates'
 import { RecentChanges } from './RecentChanges'
 import { ThesisCompass } from './ThesisCompass'
-import { isNotFound, useInstrumentRadar } from './useRadar'
+import { isNotFound, useInstrumentRadar, useRadarEvents } from './useRadar'
 
 interface Props {
-  market: string
+  market: Market
   code: string
   window: Window
   onWindowChange: (w: Window) => void
   onBack: () => void
+  onBrowseReports: () => void
 }
 
-export function RadarOverview({ market, code, window, onWindowChange, onBack }: Props) {
+export function RadarOverview({
+  market, code, window, onWindowChange, onBack, onBrowseReports,
+}: Props) {
   const q = useInstrumentRadar(code, market, window)
-  const [showAllEvents, setShowAllEvents] = useState(false)
+  const eventQueryKey = `${market}:${code}:${window}`
+  const [expandedEventKey, setExpandedEventKey] = useState<string | null>(null)
+  const showAllEvents = expandedEventKey === eventQueryKey
   const [reportId, setReportId] = useState<string | null>(null)
   const [reportName, setReportName] = useState<string | undefined>()
 
@@ -38,6 +43,24 @@ export function RadarOverview({ market, code, window, onWindowChange, onBack }: 
   }
 
   const data = q.data
+  const fullEvents = useRadarEvents(
+    code,
+    market,
+    window,
+    Boolean(showAllEvents && data?.recent_events_has_more),
+  )
+  const shownEvents = showAllEvents && fullEvents.data
+    ? fullEvents.data.items
+    : (data?.recent_events ?? [])
+  const shownEventsTotal = fullEvents.data?.total ?? data?.recent_events_total ?? 0
+  const eventLoadError = showAllEvents && fullEvents.isError
+  const retryEvents = fullEvents.isFetchNextPageError
+    ? fullEvents.loadMore
+    : fullEvents.refetch
+
+  function toggleAllEvents() {
+    setExpandedEventKey(showAllEvents ? null : eventQueryKey)
+  }
   const showSkeleton = q.isLoading && !data
   const notFound = q.isError && isNotFound(q.error)
   const loadError = q.isError && !notFound
@@ -64,11 +87,24 @@ export function RadarOverview({ market, code, window, onWindowChange, onBack }: 
 
       {data && !notFound && !loadError ? (
         data.coverage.state === 'pending_extraction' ? (
-          <RadarPendingExtraction note={data.coverage.note} />
+          <RadarPendingExtraction note={data.coverage.note} onBrowseReports={onBrowseReports} />
         ) : data.coverage.state === 'window_empty' ? (
           <RadarWindowEmpty note={data.coverage.note} />
         ) : (
           <>
+            {data.coverage.state === 'partial' ? (
+              <aside
+                className={pageStyles.coverageNotice}
+                role="status"
+                aria-label="部分資料"
+              >
+                <strong>部分資料</strong>
+                <span>
+                  {data.coverage.note || '部分研報仍在整理，以下僅顯示目前已擷取內容。'}
+                </span>
+              </aside>
+            ) : null}
+
             <KeyFigures target={data.target_price} eps={data.eps} coverage={data.coverage} />
 
             <section className={pageStyles.section}>
@@ -91,17 +127,25 @@ export function RadarOverview({ market, code, window, onWindowChange, onBack }: 
                     style={{
                       appearance: 'none', border: 0, background: 'none', cursor: 'pointer',
                     }}
-                    onClick={() => setShowAllEvents(v => !v)}
+                    onClick={toggleAllEvents}
+                    aria-expanded={showAllEvents}
+                    aria-controls="radar-recent-events"
                   >
                     {showAllEvents ? '收合' : `查看全部 ${data.recent_events_total} 項`}
                   </Pressable>
                 ) : null}
               </h2>
               <RecentChanges
-                events={data.recent_events}
-                total={data.recent_events_total}
+                events={shownEvents}
+                total={shownEventsTotal}
                 showAll={showAllEvents}
-                onToggleAll={() => setShowAllEvents(v => !v)}
+                onToggleAll={toggleAllEvents}
+                hasMore={showAllEvents && fullEvents.hasMore}
+                remaining={fullEvents.remaining}
+                isLoadingMore={showAllEvents && fullEvents.isFetching}
+                loadError={eventLoadError}
+                onLoadMore={() => void fullEvents.loadMore()}
+                onRetryLoad={() => void retryEvents()}
                 onOpenReport={openReport}
               />
             </section>

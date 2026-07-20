@@ -11,6 +11,7 @@
 
 .fig {
   padding: 22px 26px 24px;
+  container-type: inline-size;
 }
 .fig + .fig {
   border-left: 1px solid var(--tf-border);
@@ -20,7 +21,7 @@
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   margin-bottom: 12px;
 }
 
@@ -32,6 +33,14 @@
   letter-spacing: -0.01em;
   color: var(--tf-text-1);
   font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.currency { white-space: nowrap; }
+.amount {
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .foot {
@@ -41,9 +50,18 @@
 .sub {
   margin-top: 10px;
   font-size: 12.5px;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   font-variant-numeric: tabular-nums;
 }
+
+.qualityState {
+  margin-top: 10px;
+  color: var(--tf-warn-text);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.qualityState + .sub { margin-top: 4px; }
 
 .qbar {
   height: 6px;
@@ -61,10 +79,26 @@
 }
 
 @media (max-width: 860px) {
-  .grid { grid-template-columns: 1fr; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fig + .fig { border-left: 0; border-top: 1px solid var(--tf-border); }
+  .fig:nth-child(2) { border-left: 1px solid var(--tf-border); border-top: 0; }
+  .fig:nth-child(3) { grid-column: 1 / -1; }
 }
 
 @media (max-width: 720px) {
   .val { font-size: 34px; }
+}
+
+@media (max-width: 560px) {
+  .fig {
+    min-width: 0;
+    padding: 20px 14px 22px;
+  }
+  .val {
+    font-size: clamp(26px, 8vw, 32px);
+  }
+}
+
+@container (max-width: 180px) {
+  .val { font-size: clamp(26px, 20cqi, 30px); }
 }

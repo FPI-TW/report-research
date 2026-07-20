@@ -15,7 +15,7 @@
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   white-space: nowrap;
 }
 
@@ -28,10 +28,12 @@
   font: inherit;
   font-weight: 600;
   color: var(--tf-ink);
+  min-height: 44px;
+  min-width: 44px;
 }
 .crumbBtn:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-.sep { color: var(--tf-text-4); }
+.sep { color: var(--tf-text-muted-aa); }
 
 .titleRow {
   display: flex;
@@ -55,7 +57,7 @@
   font-family: var(--tf-mono);
   font-size: 13px;
   letter-spacing: 0.02em;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
 }
 
 .badge {
@@ -73,7 +75,7 @@
 .meta {
   margin: 0;
   font-size: 13.5px;
-  color: var(--tf-text-3);
+  color: var(--tf-text-muted-aa);
   font-variant-numeric: tabular-nums;
 }
 

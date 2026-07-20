@@ -125,8 +125,7 @@ SIGNAL_UPSERT_SQL = text(
         extraction_version = EXCLUDED.extraction_version,
         extraction_status = EXCLUDED.extraction_status,
         raw_payload = EXCLUDED.raw_payload,
-        error_detail = EXCLUDED.error_detail,
-        created_at = now()
+        error_detail = EXCLUDED.error_detail
     """
 )
 

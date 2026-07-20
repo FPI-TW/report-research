@@ -11,7 +11,12 @@ RatingNorm = Literal["buy", "overweight", "neutral", "underweight", "sell", "unk
 DimKey = Literal["outlook", "catalyst", "risk", "valuation"]
 DimLabel = Literal["strengthen", "weaken", "diverging", "stable", "insufficient"]
 CoverageState = Literal["ok", "partial", "pending_extraction", "window_empty"]
+Market = Literal["TW", "US", "HK", "CN", "FX", "WTX", "MACRO", "GLOBAL", "CRYPTO"]
 Window = Literal["30", "90", "180", "all"]
+
+
+class ApiErrorResponse(BaseModel):
+    detail: str
 
 
 class ReportLink(BaseModel):
@@ -31,6 +36,7 @@ class ChangeItem(BaseModel):
     curr_value: Optional[str] = None
     pct_change: Optional[float] = None
     comparable: bool
+    reason_code: Optional[str] = None
     incomparable_reason: Optional[str] = None
 
 
@@ -117,6 +123,9 @@ class BrokerSummary(BaseModel):
     latest_target_currency: Optional[str] = None
     latest_eps_value: Optional[float] = None
     latest_eps_fy: Optional[int] = None
+    latest_eps_period: Optional[str] = None
+    latest_eps_currency: Optional[str] = None
+    latest_eps_unit: Optional[str] = None
     latest_report_date: str
     report_link: ReportLink
     recent_change_label: Optional[str] = None
@@ -135,7 +144,7 @@ class Coverage(BaseModel):
 
 
 class RadarOverviewResponse(BaseModel):
-    market: str
+    market: Market
     market_display: Optional[str] = None
     instrument_code: str
     instrument_name: Optional[str] = None
@@ -148,11 +157,29 @@ class RadarOverviewResponse(BaseModel):
     thesis: list[ThesisDimension]  # 永遠 4 格
     recent_events: list[EventCard]
     recent_events_total: int
+    recent_events_has_more: bool = False
+    recent_events_next_offset: Optional[int] = None
     brokers: list[BrokerSummary]
     notes: list[str]
 
 
-# ── Endpoint B：單券商歷程 ──
+# ── Endpoint B：完整事件分頁 ──
+
+
+class RadarEventsResponse(BaseModel):
+    market: Market
+    instrument_code: str
+    window: Window
+    as_of: Optional[str]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+    next_offset: Optional[int]
+    items: list[EventCard]
+
+
+# ── Endpoint C：單券商歷程 ──
 
 
 class ThesisCell(BaseModel):
@@ -172,21 +199,24 @@ class BrokerSnapshot(BaseModel):
     target_price: Optional[float] = None
     target_currency: Optional[str] = None
     eps: list[EpsGroup]
+    primary_eps: Optional[EpsGroup] = None
     thesis: list[ThesisCell]
     extraction_status: str
     report_link: ReportLink
 
 
 class SnapshotDiff(BaseModel):
+    from_report_id: Optional[str] = None
     from_report_date: Optional[str] = None
     to_report_date: str
     changes: list[ChangeItem]
+    has_prior_report: bool = False
     has_prior_comparable: bool
     note: Optional[str] = None
 
 
 class BrokerHistoryResponse(BaseModel):
-    market: str
+    market: Market
     instrument_code: str
     broker: Optional[str] = None
     broker_display: Optional[str] = None
@@ -199,7 +229,7 @@ class BrokerHistoryResponse(BaseModel):
     coverage_state: CoverageState
 
 
-# ── Endpoint C：標的目錄（獨立頁選標的）──
+# ── Endpoint D：標的目錄（獨立頁選標的）──
 
 
 class InstrumentStance(BaseModel):
@@ -234,7 +264,7 @@ class InstrumentConsensus(BaseModel):
 
 
 class RadarInstrumentItem(BaseModel):
-    market: str
+    market: Market
     market_display: Optional[str] = None
     instrument_code: str
     instrument_name: Optional[str] = None
@@ -247,5 +277,8 @@ class RadarInstrumentItem(BaseModel):
 
 class RadarInstrumentsResponse(BaseModel):
     total: int
+    limit: int = 50
     offset: int
+    has_more: bool = False
+    next_offset: Optional[int] = None
     items: list[RadarInstrumentItem]

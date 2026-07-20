@@ -1,20 +1,39 @@
 import { Pressable } from '../../components/primitives/Pressable'
 import { Skeleton } from '../../components/primitives/Skeleton'
-import type { Window } from '../../lib/radarSchemas'
+import type { ChangeItem, Market, Window } from '../../lib/radarSchemas'
 import { DirectionTag } from './DirectionTag'
-import { fmtDate, fmtPrice, RATING_DISPLAY, WINDOW_LABEL } from './radarFormat'
+import { fmtDate, fmtEps, fmtPrice, RATING_DISPLAY, WINDOW_LABEL } from './radarFormat'
 import { useBrokerHistory } from './useRadar'
 import styles from './BrokerTimeline.module.css'
 
 interface Props {
   code: string
-  market: string
+  market: Market
   broker: string
   brokerDisplay?: string | null
   window: Window
   expanded: boolean
   onCollapse: () => void
   onOpenReport: (reportId: string, fileName?: string | null) => void
+}
+
+function ChangeDetail({ change }: { change: ChangeItem }) {
+  const incomparable = !change.comparable || change.direction === 'incomparable'
+  return (
+    <div className={styles.changeDetail}>
+      <DirectionTag
+        direction={change.direction}
+        label={incomparable ? undefined : change.label}
+        pct={incomparable ? null : change.pct_change}
+      />
+      {incomparable ? (
+        <div className={styles.incomparableDetail}>
+          <span>{change.prev_value || '—'} → {change.curr_value || '—'}</span>
+          {change.incomparable_reason ? <span>{change.incomparable_reason}</span> : null}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export function BrokerTimeline({
@@ -48,8 +67,35 @@ export function BrokerTimeline({
 
   const data = q.data
   const latest = data.snapshots[0]
-  const prior = data.snapshots[1]
+  const latestDiff = data.diffs[0]
+  const hasPriorReport = latestDiff?.has_prior_report
+    ?? Boolean(latestDiff?.from_report_id || latestDiff?.from_report_date || data.snapshots[1])
+  const prior = !hasPriorReport
+    ? undefined
+    : latestDiff?.from_report_id
+      ? data.snapshots.find(snapshot => snapshot.report_id === latestDiff.from_report_id)
+      : latestDiff?.from_report_date
+        ? data.snapshots.find(snapshot => snapshot.report_date === latestDiff.from_report_date)
+        : data.snapshots[1]
+  const priorLabel = latestDiff?.has_prior_comparable ? '前次可比較研報' : '前次研報'
+  const priorNote = latestDiff?.note
+    || (hasPriorReport ? '有前次研報，但沒有可比較欄位' : '沒有前次研報')
   const name = data.broker_display || brokerDisplay || broker
+
+  if (data.coverage_state === 'pending_extraction') {
+    return (
+      <div className={styles.panel}>
+        <div className={styles.head}>
+          <div>
+            <h3 className={styles.title}>{name}觀點歷程</h3>
+            <div className={styles.meta}>此券商已有研報</div>
+          </div>
+          <Pressable className={styles.collapse} onClick={onCollapse}>收合</Pressable>
+        </div>
+        <p className={styles.pending} role="status">此券商研報尚待觀點資料整理</p>
+      </div>
+    )
+  }
 
   return (
     <div className={styles.panel}>
@@ -63,6 +109,10 @@ export function BrokerTimeline({
         <Pressable className={styles.collapse} onClick={onCollapse}>收合</Pressable>
       </div>
 
+      {data.coverage_state === 'partial' ? (
+        <p className={styles.quality}>部分研報仍在整理，以下只顯示已擷取內容。</p>
+      ) : null}
+
       {latest ? (
         <div className={styles.compare}>
           <div className={styles.col}>
@@ -74,26 +124,32 @@ export function BrokerTimeline({
               <span className={styles.v}>{fmtPrice(latest.target_price, latest.target_currency)}</span>
               <span className={styles.k}>EPS</span>
               <span className={styles.v}>
-                {latest.eps[0]
-                  ? `${fmtPrice(latest.eps[0].median, latest.eps[0].currency)}${latest.eps[0].fiscal_year ? ` FY${latest.eps[0].fiscal_year}` : ''}`
+                {latest.primary_eps || latest.eps[0]
+                  ? fmtEps(
+                      (latest.primary_eps ?? latest.eps[0]).median,
+                      (latest.primary_eps ?? latest.eps[0]).currency,
+                      (latest.primary_eps ?? latest.eps[0]).fiscal_year,
+                      (latest.primary_eps ?? latest.eps[0]).period,
+                      (latest.primary_eps ?? latest.eps[0]).unit,
+                    )
                   : '—'}
               </span>
             </div>
           </div>
           <div className={styles.mid}>
-            {data.diffs[0]?.has_prior_comparable ? (
-              data.diffs[0].changes.slice(0, 4).map((c, i) => (
-                <DirectionTag key={i} direction={c.direction} label={c.label} pct={c.pct_change} />
+            {latestDiff?.changes.length ? (
+              latestDiff.changes.slice(0, 4).map((change, index) => (
+                <ChangeDetail key={`${change.field}-${change.dimension ?? ''}-${index}`} change={change} />
               ))
             ) : (
               <span className={styles.note} style={{ margin: 0, textAlign: 'center' }}>
-                {data.diffs[0]?.note || '此窗期內沒有前次可比較研報'}
+                {priorNote}
               </span>
             )}
           </div>
           <div className={styles.col}>
             <div className={styles.colLabel}>
-              {prior ? `前次可比較研報（${fmtDate(prior.report_date)}）` : '前次可比較研報'}
+              {prior ? `${priorLabel}（${fmtDate(prior.report_date)}）` : priorLabel}
             </div>
             {prior ? (
               <div className={styles.kv}>
@@ -103,13 +159,19 @@ export function BrokerTimeline({
                 <span className={styles.v}>{fmtPrice(prior.target_price, prior.target_currency)}</span>
                 <span className={styles.k}>EPS</span>
                 <span className={styles.v}>
-                  {prior.eps[0]
-                    ? `${fmtPrice(prior.eps[0].median, prior.eps[0].currency)}${prior.eps[0].fiscal_year ? ` FY${prior.eps[0].fiscal_year}` : ''}`
+                  {prior.primary_eps || prior.eps[0]
+                    ? fmtEps(
+                        (prior.primary_eps ?? prior.eps[0]).median,
+                        (prior.primary_eps ?? prior.eps[0]).currency,
+                        (prior.primary_eps ?? prior.eps[0]).fiscal_year,
+                        (prior.primary_eps ?? prior.eps[0]).period,
+                        (prior.primary_eps ?? prior.eps[0]).unit,
+                      )
                     : '—'}
                 </span>
               </div>
             ) : (
-              <p className={styles.note}>此窗期內沒有前次可比較研報</p>
+              <p className={styles.note}>{priorNote}</p>
             )}
           </div>
         </div>
@@ -118,7 +180,8 @@ export function BrokerTimeline({
       <ol className={styles.timeline}>
         {data.snapshots.map((snap, idx) => {
           const diff = data.diffs[idx]
-          const evidence = snap.thesis.map(t => t.evidence).find(Boolean)
+          const evidence = snap.thesis.filter(item => item.evidence || item.summary)
+          const primaryEps = snap.primary_eps ?? snap.eps[0]
           return (
             <li key={snap.report_id} className={`${styles.node} ${snap.in_window ? '' : styles.outWindow}`}>
               <span className={styles.dot} aria-hidden />
@@ -130,19 +193,40 @@ export function BrokerTimeline({
                 <span>評等 {snap.rating_raw || RATING_DISPLAY[snap.rating]}</span>
                 <span>目標價 {fmtPrice(snap.target_price, snap.target_currency)}</span>
                 <span>
-                  EPS {snap.eps[0] ? fmtPrice(snap.eps[0].median, snap.eps[0].currency) : '—'}
+                  EPS {primaryEps
+                    ? fmtEps(
+                        primaryEps.median,
+                        primaryEps.currency,
+                        primaryEps.fiscal_year,
+                        primaryEps.period,
+                        primaryEps.unit,
+                      )
+                    : '—'}
                 </span>
               </div>
               {diff?.changes.length ? (
                 <div className={styles.changes}>
-                  {diff.changes.map((c, i) => (
-                    <DirectionTag key={i} direction={c.direction} label={c.label} pct={c.pct_change} />
+                  {diff.changes.map((change, index) => (
+                    <ChangeDetail
+                      key={`${change.field}-${change.dimension ?? ''}-${index}`}
+                      change={change}
+                    />
                   ))}
                 </div>
               ) : diff && !diff.has_prior_comparable ? (
                 <p className={styles.note}>{diff.note || '無前次可比較研報'}</p>
               ) : null}
-              {evidence ? <div className={styles.evidence}>{evidence}</div> : null}
+              {evidence.length ? (
+                <div className={styles.evidenceList}>
+                  {evidence.map(item => (
+                    <div key={item.dimension} className={styles.evidence}>
+                      <strong>{item.dimension_display}</strong>
+                      {item.summary ? `：${item.summary}` : ''}
+                      {item.evidence ? ` — ${item.evidence}` : ''}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <Pressable
                 tapScale={0.97}
                 className={styles.link}

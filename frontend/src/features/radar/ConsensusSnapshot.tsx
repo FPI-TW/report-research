@@ -25,17 +25,12 @@ export function ConsensusSnapshot({ rating, window }: Props) {
   const total = rating.total_rated
   const median = rating.median_rating ?? 'neutral'
 
-  // 指針落在中位級距的水平中心
-  let acc = 0
-  let needlePct = 50
-  for (const r of ORDER) {
-    const w = ((counts.get(r) ?? 0) / total) * 100
-    if (r === median) {
-      needlePct = acc + w / 2
-      break
-    }
-    acc += w
-  }
+  // 標線對應固定五級量表，而不是動態分布條的寬度：
+  // 否則「加碼」會因樣本分布被畫到例如 75%，與下方語意座標脫節。
+  const medianIndex = ORDER.indexOf(median)
+  const needlePct = medianIndex >= 0
+    ? ((medianIndex + 0.5) / ORDER.length) * 100
+    : 50
 
   const net = rating.upgrades - rating.downgrades
   const winLabel = WINDOW_LABEL[window] ?? window

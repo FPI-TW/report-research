@@ -6,7 +6,7 @@ export function RadarSkeleton() {
   return (
     <div aria-busy="true" data-testid="radar-skeleton">
       <div className={styles.kpi}>
-        {Array.from({ length: 4 }, (_, i) => (
+        {Array.from({ length: 3 }, (_, i) => (
           <div key={i} className={styles.card}>
             <Skeleton width={72} height={12} radius={4} />
             <Skeleton width="70%" height={26} radius={6} style={{ marginTop: 12 }} />

@@ -37,9 +37,12 @@ def _sig(
     )
 
 
-def _eps(fy=2026, period="FY", currency="TWD", unit="per_share", value=66.4):
+def _eps(
+    fy=2026, period="FY", currency="TWD", unit="per_share", value=66.4,
+    evidence="e",
+):
     return EpsEstimate(fiscal_year=fy, period=period, currency=currency, unit=unit,
-                       value=value, evidence="e")
+                       value=value, evidence=evidence)
 
 
 def _st(stance):
@@ -202,12 +205,24 @@ class DiffSignalsTests(unittest.TestCase):
         eps = [c for c in diff_signals(prev, curr) if c.field == "eps"][0]
         self.assertTrue(eps.comparable)
         self.assertEqual(eps.direction, "up")
+        self.assertEqual(eps.label, "2026 FY EPS")
+        self.assertEqual(eps.dimension, eps.label)
 
-    def test_eps_diff_fy_no_change(self):
-        prev = _sig(eps=[_eps(fy=2025, value=60.0)])
-        curr = _sig(eps=[_eps(fy=2026, value=66.4)])
+    def test_eps_group_mismatch_returns_incomparable_reason(self):
+        prev = _sig(eps=[_eps(fy=2025, currency="USD", value=60.0)])
+        curr = _sig(eps=[_eps(fy=2026, currency="TWD", value=66.4)])
         eps = [c for c in diff_signals(prev, curr) if c.field == "eps"]
-        self.assertEqual(eps, [])  # 不同 FY 找不到同鍵 → 不比
+
+        self.assertEqual(len(eps), 1)
+        self.assertFalse(eps[0].comparable)
+        self.assertEqual(eps[0].direction, "incomparable")
+        self.assertEqual(eps[0].reason_code, "eps_group_mismatch")
+        self.assertEqual(
+            eps[0].incomparable_reason,
+            "EPS 群組不同：FY／期間／幣別／單位無法直接比較",
+        )
+        self.assertIsNone(eps[0].pct_change)
+        self.assertFalse(is_material(eps[0]))
 
     def test_thesis_stance_change_event(self):
         prev = _sig(thesis={"outlook": _st("neutral")})

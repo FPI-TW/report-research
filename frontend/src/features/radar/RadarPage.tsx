@@ -1,7 +1,7 @@
-import { useCallback, useMemo } from 'react'
-import { useSearchParams } from 'react-router'
-import type { Window } from '../../lib/radarSchemas'
-import { windowSchema } from '../../lib/radarSchemas'
+import { useCallback } from 'react'
+import { useNavigate, useSearchParams } from 'react-router'
+import type { Market, Window } from '../../lib/radarSchemas'
+import { marketSchema, windowSchema } from '../../lib/radarSchemas'
 import { InstrumentPicker } from './InstrumentPicker'
 import { RadarOverview } from './RadarOverview'
 import styles from './RadarPage.module.css'
@@ -13,7 +13,9 @@ function parseWindow(raw: string | null): Window {
 
 export default function RadarPage() {
   const [params, setParams] = useSearchParams()
-  const market = params.get('market') || ''
+  const navigate = useNavigate()
+  const parsedMarket = marketSchema.safeParse(params.get('market'))
+  const market = parsedMarket.success ? parsedMarket.data : ''
   const code = params.get('code') || ''
   const window = parseWindow(params.get('window'))
 
@@ -28,7 +30,7 @@ export default function RadarPage() {
     }, { replace: true })
   }, [setParams])
 
-  const onSelectInstrument = useCallback((mkt: string, c: string) => {
+  const onSelectInstrument = useCallback((mkt: Market, c: string) => {
     patch({ market: mkt, code: c, window: window || '90' })
   }, [patch, window])
 
@@ -40,19 +42,23 @@ export default function RadarPage() {
     patch({ code: null })
   }, [patch])
 
-  const hasSelection = useMemo(() => Boolean(market && code), [market, code])
+  const onBrowseReports = useCallback(() => {
+    const search = new URLSearchParams({ q: code, market })
+    navigate(`/search?${search}`)
+  }, [code, market, navigate])
 
   return (
     <div className={styles.page}>
       <div className={styles.scroll}>
         <div className={styles.inner}>
-          {hasSelection ? (
+          {market && code ? (
             <RadarOverview
               market={market}
               code={code}
               window={window}
               onWindowChange={onWindowChange}
               onBack={onClearInstrument}
+              onBrowseReports={onBrowseReports}
             />
           ) : (
             <InstrumentPicker

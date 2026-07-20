@@ -22,7 +22,7 @@
   border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
-  min-height: 32px;
+  min-height: 44px;
   transition: color var(--tf-dur-1) var(--tf-ease-standard);
 }
 

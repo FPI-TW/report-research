@@ -71,6 +71,28 @@ export function fmtPrice(
   return `${prefix}${fmtNum(value, value >= 100 ? 0 : 2)}`.trim()
 }
 
+const EPS_UNIT_DISPLAY: Record<string, string> = {
+  per_share: '每股',
+}
+
+/** EPS 數值與比較群組 metadata；幣別只取自 EPS，不接受目標價 fallback。 */
+export function fmtEps(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+  fiscalYear?: number | null,
+  period?: string | null,
+  unit?: string | null,
+): string {
+  if (value == null) return '—'
+  const parts = [
+    fmtPrice(value, currency),
+    fiscalYear != null ? `FY${fiscalYear}` : null,
+    period || null,
+    unit ? (EPS_UNIT_DISPLAY[unit] ?? unit) : null,
+  ]
+  return parts.filter((part): part is string => Boolean(part)).join(' · ')
+}
+
 export function fmtPct(pct: number | null | undefined): string {
   if (pct == null || Number.isNaN(pct)) return ''
   return `${Math.abs(pct).toFixed(1)}%`

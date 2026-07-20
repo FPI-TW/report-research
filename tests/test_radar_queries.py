@@ -3,7 +3,7 @@
 import json
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -13,14 +13,16 @@ from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg  # noqa: E402
 
 from app.services.radar import queries  # noqa: E402
 from app.services.radar.types import parse_signal_row  # noqa: E402
+from app.services.tagging import MARKETS  # noqa: E402
 
 
 def _row(eps_json="[]", thesis_json="{}", target=Decimal("2444.0000"), rating="buy",
-         status="valid"):
+         status="valid", created_at=datetime(2026, 7, 11, 9, tzinfo=timezone.utc)):
     # 順序須與 types.SIGNAL_SELECT_COLUMNS 一致
     return (
         "sig-1", "rep-1", "TW", "8046", "daiwa", date(2026, 7, 11), "Buy (1)", rating,
         target, "TWD", "12M", "TP 證據", eps_json, thesis_json, status, "daiwa-8046.pdf",
+        created_at,
     )
 
 
@@ -54,6 +56,11 @@ class ParseSignalRowTests(unittest.TestCase):
         s = parse_signal_row(_row(rating=None))
         self.assertEqual(s.rating_normalized, "unknown")
 
+    def test_created_at_parsed(self):
+        created_at = datetime(2026, 7, 11, 9, tzinfo=timezone.utc)
+        s = parse_signal_row(_row(created_at=created_at))
+        self.assertEqual(getattr(s, "created_at", None), created_at)
+
 
 class SqlStructureTests(unittest.TestCase):
     def test_instrument_signals_sql_named_params(self):
@@ -67,7 +74,36 @@ class SqlStructureTests(unittest.TestCase):
 
     def test_broker_variant_adds_broker_filter(self):
         sql = queries._instrument_signals_sql(broker=True)
-        self.assertIn("s.broker = :broker", sql)
+        self.assertIn(
+            "COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')) = :broker",
+            sql,
+        )
+
+    def test_signal_queries_use_effective_broker_and_stable_order(self):
+        effective = (
+            "COALESCE(NULLIF(BTRIM(r.source), ''), "
+            "NULLIF(BTRIM(s.broker), ''))"
+        )
+        instrument_sql = queries._instrument_signals_sql(broker=False)
+        batch_sql = str(queries._BATCH_SIGNALS_SQL)
+        coverage_sql = str(queries._COVERAGE_SQL)
+        self.assertIn(f"{effective} AS broker", instrument_sql)
+        self.assertIn(f"{effective} AS broker", batch_sql)
+        self.assertIn(effective, coverage_sql)
+        self.assertIn("s.created_at DESC, s.id DESC", instrument_sql)
+        self.assertIn("s.created_at DESC, s.id DESC", batch_sql)
+
+    def test_coverage_denominators_use_effective_broker_identity(self):
+        effective = (
+            "COALESCE(NULLIF(BTRIM(r.source), ''), "
+            "NULLIF(BTRIM(s.broker), ''))"
+        )
+        coverage_total = str(queries._COVERAGE_SQL).split("AS brokers_total", 1)[0]
+        catalog_rep = queries._catalog_cte().split("), rep AS (", 1)[1]
+
+        self.assertIn(effective, coverage_total)
+        self.assertIn("LEFT JOIN research.report_signal s", coverage_total)
+        self.assertIn(f"count(DISTINCT {effective}) AS broker_count", catalog_rep)
 
     def test_catalog_cte_structure(self):
         cte = queries._catalog_cte()
@@ -75,16 +111,44 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("count(DISTINCT broker)", cte)
         self.assertIn("bool_or(extraction_status = ANY(:statuses))", cte)
 
+    def test_catalog_cte_keeps_partial_out_of_complete_broker_count(self):
+        cte = queries._catalog_cte()
+
+        self.assertIn(
+            "count(DISTINCT broker) FILTER (WHERE extraction_status = 'valid') "
+            "AS sig_brokers",
+            cte,
+        )
+        self.assertIn(
+            "bool_or(extraction_status = 'partial')"
+            "           FILTER (WHERE broker IS NOT NULL) AS has_partial",
+            cte,
+        )
+        self.assertIn("sig.has_partial", cte)
+
+    def test_catalog_cte_limits_both_signal_and_report_universes_to_supported_markets(self):
+        cte = queries._catalog_cte()
+
+        self.assertIn("s.market = ANY(:markets)", cte)
+        self.assertIn("r.market = ANY(:markets)", cte)
+
+    def test_instrument_name_is_bound_to_matching_stock_code(self):
+        coverage_sql = str(queries._COVERAGE_SQL)
+        catalog_cte = queries._catalog_cte()
+        self.assertIn("r.stock_code = :code", coverage_sql)
+        self.assertIn("r.stock_code = st", catalog_cte)
+
     def test_catalog_filters_named_params(self):
         where, params = queries._catalog_filters("TW", "台積")
         self.assertIn("cat.market = :market", where)
         self.assertIn("ILIKE :q", where)
         self.assertEqual(params["market"], "TW")
         self.assertEqual(params["q"], "%台積%")
-        # 無 q/market → 只有 statuses
+        # 無 q/market 仍限制既有支援市場，不能讓未知 DB 值進入 response enum。
         where2, params2 = queries._catalog_filters(None, None)
         self.assertEqual(where2, "")
-        self.assertEqual(list(params2.keys()), ["statuses"])
+        self.assertEqual(params2["statuses"], queries.VALID_STATUSES)
+        self.assertEqual(params2["markets"], MARKETS)
 
 
 class _FakeResult:
@@ -94,24 +158,33 @@ class _FakeResult:
     def all(self):
         return list(self._rows)
 
+    def scalar_one(self):
+        return self._rows[0]
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
 
 class _QueuedSession:
     def __init__(self, results):
         self._results = list(results)
         self.executed = 0
+        self.calls = []
 
     async def execute(self, *a, **k):
+        self.calls.append((a, k))
         res = self._results[self.executed]
         self.executed += 1
         return res
 
 
-def _brow(code, broker="a", market="TW"):
+def _brow(code, broker="a", market="TW",
+          created_at=datetime(2026, 7, 11, 9, tzinfo=timezone.utc)):
     # SIGNAL_SELECT_COLUMNS 順序，供批次分組測試（不同 code/broker）
     return (
         f"s-{code}-{broker}", f"r-{code}-{broker}", market, code, broker,
         date(2026, 7, 11), "Buy", "buy", Decimal("100.0"), "TWD", "12M", "e",
-        "[]", "{}", "valid", f"{broker}.pdf",
+        "[]", "{}", "valid", f"{broker}.pdf", created_at,
     )
 
 
@@ -122,6 +195,35 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(signals), 2)
         self.assertEqual(signals[0].instrument_code, "8046")
         self.assertEqual(signals[1].rating_normalized, "neutral")
+
+    async def test_broker_coverage_counts_distinguish_instrument_and_broker(self):
+        fetch = getattr(queries, "fetch_broker_coverage_counts", None)
+        self.assertIsNotNone(fetch)
+        session = _QueuedSession([_FakeResult([(7, 2)])])
+
+        coverage = await fetch(session, "TW", "USD/TWD", "A/B")
+
+        self.assertEqual(coverage.instrument_reports_available, 7)
+        self.assertEqual(coverage.broker_reports_available, 2)
+        params = session.calls[0][0][1]
+        self.assertEqual(
+            params,
+            {"market": "TW", "code": "USD/TWD", "broker": "A/B"},
+        )
+
+
+class BrokerCoverageSqlTests(unittest.TestCase):
+    def test_uses_canonical_effective_broker_and_report_universe(self):
+        sql_obj = getattr(queries, "_BROKER_COVERAGE_SQL", None)
+        self.assertIsNotNone(sql_obj)
+        sql = str(sql_obj)
+        self.assertIn(
+            "COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), ''))",
+            sql,
+        )
+        self.assertIn(":code = ANY(r.stock_targets)", sql)
+        self.assertIn("r.is_research IS NOT FALSE", sql)
+        self.assertIn("= :broker", sql)
 
 
 class BatchSignalsTests(unittest.IsolatedAsyncioTestCase):
@@ -141,6 +243,37 @@ class BatchSignalsTests(unittest.IsolatedAsyncioTestCase):
         out = await queries.fetch_signals_for_instruments(session, [])
         self.assertEqual(out, {})
         self.assertEqual(session.executed, 0)
+
+
+class CatalogQueryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_catalog_order_is_stable_across_markets(self):
+        session = _QueuedSession([_FakeResult([0]), _FakeResult([])])
+        await queries.list_radar_instruments(session)
+        page_sql = str(session.calls[1][0][0])
+        self.assertIn(
+            "ORDER BY cat.latest DESC NULLS LAST, cat.market, cat.instrument_code",
+            page_sql,
+        )
+
+    async def test_catalog_partial_signal_forces_partial_row_state(self):
+        session = _QueuedSession(
+            [
+                _FakeResult([1]),
+                _FakeResult(
+                    [
+                        (
+                            "TW", "8046", "南電", 1, 1,
+                            date(2026, 7, 11), 1, True,
+                        )
+                    ]
+                ),
+            ]
+        )
+
+        total, rows = await queries.list_radar_instruments(session)
+
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0].coverage_state, "partial")
 
 
 class BatchSqlStructureTests(unittest.TestCase):

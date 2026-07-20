@@ -1,4 +1,4 @@
-import { useCallback, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { askReducer, initialAskState, turnFromHistory, type AskState } from './askReducer'
 import { parseAskEvent, parseReportEvent } from './askSchemas'
@@ -39,7 +39,9 @@ export function useAskController(): UseAskController {
   const streamRequestIdRef = useRef<string | null>(null)
   const versionRequestId = useRef(0)
   const stateRef = useRef(state)
-  stateRef.current = state
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
 
   const abortAll = useCallback(() => {
     const supersededTurn = streamTurnRef.current

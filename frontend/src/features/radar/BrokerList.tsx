@@ -2,16 +2,16 @@ import { Fragment, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { Icon } from '../../components/primitives/Icon'
 import { tfInstant, tfTransition } from '../../lib/motionTokens'
-import type { BrokerSummary, Window } from '../../lib/radarSchemas'
+import type { BrokerSummary, Market, Window } from '../../lib/radarSchemas'
 import { BrokerTimeline } from './BrokerTimeline'
 import { DirectionTag } from './DirectionTag'
-import { fmtDate, fmtPrice, RATING_DISPLAY } from './radarFormat'
+import { fmtDate, fmtEps, fmtPrice, RATING_DISPLAY } from './radarFormat'
 import styles from './BrokerList.module.css'
 
 interface Props {
   brokers: BrokerSummary[]
   code: string
-  market: string
+  market: Market
   window: Window
   onOpenReport: (reportId: string, fileName?: string | null) => void
 }
@@ -19,12 +19,13 @@ interface Props {
 export function BrokerList({ brokers, code, market, window, onOpenReport }: Props) {
   const [open, setOpen] = useState<string | null>(null)
   const reduced = useReducedMotion()
+  const attributedBrokers = brokers.filter(broker => Boolean(broker.broker?.trim()))
 
   function toggle(key: string) {
     setOpen(prev => (prev === key ? null : key))
   }
 
-  if (!brokers.length) {
+  if (!attributedBrokers.length) {
     return <div className={styles.dash}>尚無券商清單</div>
   }
 
@@ -44,25 +45,13 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
             </tr>
           </thead>
           <tbody>
-            {brokers.map(b => {
-              const key = b.broker || b.broker_display || b.latest_report_date
+            {attributedBrokers.map(b => {
+              const key = b.broker!.trim()
               const isOpen = open === key
               return (
                 <Fragment key={key}>
                   <tr
                     className={`${styles.row} ${isOpen ? styles.rowOpen : ''}`}
-                    tabIndex={0}
-                    role="button"
-                    aria-expanded={isOpen}
-                    aria-label={`展開 ${b.broker_display || b.broker || '券商'} 歷程`}
-                    data-testid={`broker-row-${b.broker || key}`}
-                    onClick={() => toggle(key)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        toggle(key)
-                      }
-                    }}
                   >
                     <td>
                       <div className={styles.broker}>
@@ -76,9 +65,15 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
                         ? fmtPrice(b.latest_target_price, b.latest_target_currency)
                         : <span className={styles.dash}>—</span>}
                     </td>
-                    <td className={styles.num}>
+                    <td className={styles.num} data-testid={`broker-eps-${key}-desktop`}>
                       {b.latest_eps_value != null
-                        ? `${fmtPrice(b.latest_eps_value, b.latest_target_currency)}${b.latest_eps_fy ? ` FY${b.latest_eps_fy}` : ''}`
+                        ? fmtEps(
+                            b.latest_eps_value,
+                            b.latest_eps_currency,
+                            b.latest_eps_fy,
+                            b.latest_eps_period,
+                            b.latest_eps_unit,
+                          )
                         : <span className={styles.dash}>—</span>}
                     </td>
                     <td>
@@ -93,26 +88,35 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
                     </td>
                     <td>{fmtDate(b.latest_report_date)}</td>
                     <td>
-                      <motion.span
-                        style={{ display: 'inline-flex' }}
-                        animate={{ rotate: isOpen ? 180 : 0 }}
-                        transition={reduced ? tfInstant : tfTransition}
+                      <button
+                        type="button"
+                        className={styles.expandButton}
+                        aria-expanded={isOpen}
+                        aria-label={`${isOpen ? '收合' : '展開'} ${b.broker_display || key} 歷程`}
+                        data-testid={`broker-row-${key}`}
+                        onClick={() => toggle(key)}
                       >
-                        <Icon
-                          name="chevronDown"
-                          size={16}
-                          className={`${styles.expand} ${isOpen ? styles.expandOpen : ''}`}
-                        />
-                      </motion.span>
+                        <motion.span
+                          style={{ display: 'inline-flex' }}
+                          animate={{ rotate: isOpen ? 180 : 0 }}
+                          transition={reduced ? tfInstant : tfTransition}
+                        >
+                          <Icon
+                            name="chevronDown"
+                            size={16}
+                            className={`${styles.expand} ${isOpen ? styles.expandOpen : ''}`}
+                          />
+                        </motion.span>
+                      </button>
                     </td>
                   </tr>
-                  {isOpen && b.broker ? (
+                  {isOpen ? (
                     <tr>
                       <td colSpan={7} className={styles.panelCell}>
                         <BrokerTimeline
                           code={code}
                           market={market}
-                          broker={b.broker}
+                          broker={key}
                           brokerDisplay={b.broker_display}
                           window={window}
                           expanded
@@ -130,8 +134,8 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
       </div>
 
       <div className={styles.cards}>
-        {brokers.map(b => {
-          const key = b.broker || b.broker_display || b.latest_report_date
+        {attributedBrokers.map(b => {
+          const key = b.broker!.trim()
           const isOpen = open === key
           return (
             <div key={key} className={styles.card}>
@@ -154,9 +158,15 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
                         ? fmtPrice(b.latest_target_price, b.latest_target_currency)
                         : '—'}
                     </span>
-                    <span>
+                    <span data-testid={`broker-eps-${key}-mobile`}>
                       EPS{' '}
-                      {b.latest_eps_value != null ? fmtPrice(b.latest_eps_value, null) : '—'}
+                      {fmtEps(
+                        b.latest_eps_value,
+                        b.latest_eps_currency,
+                        b.latest_eps_fy,
+                        b.latest_eps_period,
+                        b.latest_eps_unit,
+                      )}
                     </span>
                     <span>{fmtDate(b.latest_report_date)}</span>
                   </div>
@@ -181,11 +191,11 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
                   />
                 </motion.span>
               </button>
-              {isOpen && b.broker ? (
+              {isOpen ? (
                 <BrokerTimeline
                   code={code}
                   market={market}
-                  broker={b.broker}
+                  broker={key}
                   brokerDisplay={b.broker_display}
                   window={window}
                   expanded

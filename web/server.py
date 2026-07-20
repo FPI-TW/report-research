@@ -66,8 +66,14 @@ from app.services.tagging import MARKETS, MARKET_DISPLAY  # noqa: E402
 from app.services.textnorm import clean_text  # noqa: E402
 from web import auth  # noqa: E402
 
-from app.services.pdf import render_report_pdf  # noqa: E402
-from app.services.report import fetch_report_doc, generate_report, write_report_pdf  # noqa: E402
+# 渲染一律經 report 的分派層（依 REPORT_RENDERER 選 typst/weasyprint，失敗回退）；
+# 直接 import pdf.render_report_pdf 會讓 PDF 重建繞過分派、永遠是 WeasyPrint 版。
+from app.services.report import (  # noqa: E402
+    fetch_report_doc,
+    generate_report,
+    render_report_pdf,
+    write_report_pdf,
+)
 from app.services.radar import (  # noqa: E402
     build_broker_history,
     build_instrument_slim,

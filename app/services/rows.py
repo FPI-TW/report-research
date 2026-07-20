@@ -2,12 +2,13 @@
 
 `store.search_chunks_meta` / `search_chunks_lexical` 的 SELECT 欄位（見
 `store._meta_columns`，16 欄）＋ 尾端 distance ＝ 17 欄。ChunkRow 為 NamedTuple
-（tuple 子型），故既有位移存取（row[0]/row[-1]/row[-2] 等）與新的具名存取並存，
-遷移期零回歸。
+（tuple 子型），故位移存取與具名存取並存。
 
-**新增欄位一律插在中段、絕不 append 到尾端**：消費端以 row[-2]=content、
-row[-1]=distance 位移存取，append 會擠走 content。欄序須與 `store._meta_columns`
-逐欄對齊（`_make()` 靠順序打包，錯位不會拋錯、只會靜默給錯值）。
+**欄序須與 `store._meta_columns` 逐欄對齊**：`_make()` 純靠位置打包，錯位不會拋錯、
+只會靜默給錯值。**新增欄位一律插在中段、絕不 append 到尾端**，且插欄後必須確認沒有
+消費端寫死索引 —— `scripts/eval_retrieval.py` 原本寫死 `_RID, _CONTENT = 1, 14`，
+插入 file_hash 後那兩個常數無聲指向錯的欄位，沒有例外、只有變成垃圾的評測分數
+（現已改為 `ChunkRow._fields.index(...)`，新程式碼一律照做、不要寫數字）。
 """
 
 from typing import NamedTuple

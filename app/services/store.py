@@ -230,9 +230,10 @@ def _meta_filters(
 def _meta_columns(chunk_alias: str) -> str:
     """dense / 字面雙路共用的 SELECT 欄位列表；首欄 chunk_id 供跨路去重。
 
-    新增欄位（summary、file_hash…）必須插在中段，不可放 content 之後——retrieval.py
-    以位置存取 row[-2]=content、row[-1]=distance，append 到尾端會擠走 content。
-    欄序須與 `rows.ChunkRow` 逐欄對齊（`_make()` 靠順序打包）。
+    新增欄位（summary、file_hash…）必須插在中段，不可放 content 之後：欄序須與
+    `rows.ChunkRow` 逐欄對齊（`_make()` 純靠位置打包），且消費端可能寫死索引 ——
+    見 `scripts/eval_retrieval.py` 曾寫死 `_RID, _CONTENT = 1, 14` 而被 file_hash
+    插欄無聲指錯欄的實例。錯位不會拋錯，只會靜默給錯值。
     """
     a = chunk_alias
     return f"""{a}.id::text, r.id::text, r.file_hash, r.file_name, r.market, r.source,

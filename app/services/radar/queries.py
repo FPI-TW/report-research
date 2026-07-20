@@ -17,7 +17,7 @@ from app.services.tagging import MARKETS
 
 from app.services.radar.types import (
     EFFECTIVE_BROKER_SQL,
-    SIGNAL_SELECT_COLUMNS,
+    SIGNAL_SELECT_SQL,
     Signal,
     parse_signal_row,
 )
@@ -64,7 +64,7 @@ def _instrument_signals_sql(broker: bool) -> str:
         )
     )
     return (
-        f"SELECT {SIGNAL_SELECT_COLUMNS} "
+        f"SELECT {SIGNAL_SELECT_SQL} "
         "FROM research.report_signal s "
         "JOIN research.research_report r ON r.id = s.report_id "
         "WHERE s.market = :market AND s.instrument_code = :code "
@@ -102,7 +102,7 @@ async def fetch_broker_signals(
 # 參數名緊接 :: 會回溯成短名（:markets → bind "market" ＋殘字 "s"），冒號原樣送進 PG 而炸
 # syntax error，且缺參數不會有例外——只在真的打 DB 時才爆。
 _BATCH_SIGNALS_SQL = text(
-    f"SELECT {SIGNAL_SELECT_COLUMNS} "
+    f"SELECT {SIGNAL_SELECT_SQL} "
     "FROM research.report_signal s "
     "JOIN research.research_report r ON r.id = s.report_id "
     "WHERE (s.market, s.instrument_code) IN ("

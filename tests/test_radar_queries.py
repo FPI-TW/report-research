@@ -12,7 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg  # noqa: E402
 
 from app.services.radar import queries  # noqa: E402
-from app.services.radar.types import parse_signal_row  # noqa: E402
+from app.services.radar.types import (  # noqa: E402
+    SIGNAL_SELECT_COLUMNS,
+    parse_signal_row,
+)
 from app.services.tagging import MARKETS  # noqa: E402
 
 
@@ -24,6 +27,15 @@ def _row(eps_json="[]", thesis_json="{}", target=Decimal("2444.0000"), rating="b
         target, "TWD", "12M", "TP 證據", eps_json, thesis_json, status, "daiwa-8046.pdf",
         created_at,
     )
+
+
+class SignalFixtureWidthTests(unittest.TestCase):
+    def test_fixtures_match_select_columns(self):
+        # 本檔兩個 fixture 與 tests/test_reading_queries.py 的 _sig_row 共用同一組
+        # SIGNAL_SELECT_COLUMNS 契約。窄了會 IndexError、寬了則悄悄全綠（
+        # parse_signal_row 只讀 row[0..16]），故三處都要守。
+        self.assertEqual(len(_row()), len(SIGNAL_SELECT_COLUMNS))
+        self.assertEqual(len(_brow("2330")), len(SIGNAL_SELECT_COLUMNS))
 
 
 class ParseSignalRowTests(unittest.TestCase):

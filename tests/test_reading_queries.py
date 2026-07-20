@@ -244,25 +244,13 @@ def _sig_row(status="valid"):
     )
 
 
-def _top_level_column_count(select_columns: str) -> int:
-    """數 SELECT 清單的頂層欄位數（括號內的逗號不算，如 COALESCE(a, b)）。"""
-    depth = count = 0
-    for ch in select_columns:
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            count += 1
-    return count + 1
-
-
 class SigRowFixtureTests(unittest.TestCase):
     def test_width_matches_select_columns(self):
-        # parse_signal_row 是位置式解析：fixture 少一欄不會有型別錯誤，
-        # 只會在被解析時 IndexError（#92 與 #93 相隔 14 秒併入即如此）。
-        # SIGNAL_SELECT_COLUMNS 增欄時這條先紅，直接指出 fixture 要跟著補。
-        self.assertEqual(len(_sig_row()), _top_level_column_count(SIGNAL_SELECT_COLUMNS))
+        # fixture 比 SELECT 窄時，既有的 test_reuses_radar_parse 就會 IndexError；
+        # 這條真正補上的是另一半——fixture 比 SELECT 寬時 parse_signal_row 只讀
+        # row[0..16]、不會報錯，fixture 卻已不代表真實列，兩條都會綠。
+        # 順帶讓增欄時的訊息是「16 != 17」而不是 tuple index out of range。
+        self.assertEqual(len(_sig_row()), len(SIGNAL_SELECT_COLUMNS))
 
 
 class FetchSignalsTests(unittest.IsolatedAsyncioTestCase):

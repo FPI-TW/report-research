@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as readingApi from '../../lib/readingApi'
 import type { ReadingDoc, ReadingText, SimilarResponse } from '../../lib/readingSchemas'
 import ReportPage from './ReportPage'
@@ -105,11 +105,29 @@ const SIGNAL: ReadingDoc['signals'][number] = {
   ],
 }
 
+// jsdom 完全沒有 scrollIntoView（TextPane 因此有 typeof 守門），不 stub 就驗不到
+// 「跳轉真的發生」—— 沒有這顆 stub，底下的捲動斷言會永遠是綠的。
+const scrollIntoView = vi.fn()
+
 beforeEach(() => {
   vi.resetAllMocks()
+  HTMLElement.prototype.scrollIntoView = scrollIntoView
   vi.mocked(readingApi.getSimilarReports).mockResolvedValue(similar())
   vi.mocked(readingApi.getReadingText).mockResolvedValue(text())
 })
+
+afterEach(() => {
+  Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+})
+
+/** 手動控制 /text 何時抵達：重現「TextPane 掛載時全文還沒到」的真實時序。 */
+function deferText() {
+  let resolve!: (v: ReadingText) => void
+  vi.mocked(readingApi.getReadingText).mockReturnValue(
+    new Promise<ReadingText>(r => { resolve = r }),
+  )
+  return { arrive: (v: ReadingText = text()) => resolve(v) }
+}
 
 describe('ReportPage', () => {
   it('非 64-hex 的 hash → 找不到頁面，且完全不打 API', async () => {
@@ -271,6 +289,50 @@ describe('ReportPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
     await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
     await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
+  })
+
+  // 這一條走的是**預設檢視**（原文）：點下去時 /text 才剛開始抓，TextPane 掛載時
+  // 走的是載入分支。aria-label 承諾「跳至原文位置」，第一次點就必須真的跳。
+  // （曾經：deps 只有 [jump]，全文抵達後 jump 沒變 → effect 不再執行 → 第一次點
+  //   不捲不 flash，要點第二次才動。只斷言 data-q 存在的測試抓不到。）
+  it('從預設的原文檢視點摘錄 → 全文抵達後真的捲到該段（第一次點就要動）', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    const gate = deferText()
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByRole('radio', { name: '原文' })).toBeChecked())
+
+    fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
+    // 全文還沒到 → 沒有可捲的目標（此時捲了才是錯的）
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    gate.arrive()
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    // 捲的必須是那一條摘錄的引文段，不是隨便一個元素
+    expect((scrollIntoView.mock.contexts[0] as HTMLElement).dataset.q).toBe('q1')
+  })
+
+  it('已在文字檢視時點摘錄 → 立即捲到該段', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}?view=text`)
+    // 不可用 getByText('一二三四五六七八九十') 等全文：buildTextSegments 會依 offset 把
+    // 正典文字切成「一二」+「三四五六七八」(data-q) +「九十」三個元素，沒有任何單一
+    // 元素的 textContent 等於整串，該查詢必然逾時。等的應該是引文段真的被標出來。
+    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    expect((scrollIntoView.mock.contexts[0] as HTMLElement).dataset.q).toBe('q1')
+  })
+
+  // 命中段有等價的補救（依 hitStart 觸發），這條把它一起釘住
+  it('?chunk=N 且後端錨到 → 全文抵達後自動捲到命中段', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ takeaways: [] }))
+    const gate = deferText()
+    wrap(`/report/${HASH}?chunk=4`)
+    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
+    gate.arrive(text({ chunk_start: 2, chunk_end: 6 }))
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    expect((scrollIntoView.mock.contexts[0] as HTMLElement).textContent).toBe('三四五六')
   })
 
   // quote_start 為 null＝錨不到：條目照常顯示，但不可跳、不給箭頭 hover 態

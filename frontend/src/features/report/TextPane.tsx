@@ -28,6 +28,8 @@ interface Props {
 export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isError }: Props) {
   const reduced = useReducedMotion()
   const stageRef = useRef<HTMLDivElement>(null)
+  // 已經執行過的 jump nonce；內容未就緒而暫緩的 jump 不會記進來（見下方 effect）。
+  const doneNonceRef = useRef<number | null>(null)
 
   const segments = useMemo(() => {
     if (!text) return []
@@ -36,12 +38,23 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
     return buildTextSegments(text.text, canJump ? takeaways : [], hit)
   }, [text, takeaways, canJump, hit])
 
+  // 正文是否已在 DOM 上。載入／錯誤分支既沒有可跳的目標、也沒掛 stageRef，
+  // 故 jump 在那兩個狀態下一律無法執行，只能等就緒後重放。
+  const ready = segments.length > 0
+
   useEffect(() => {
-    if (!jump) return
+    // 內容未就緒就先擱著：**不可**記成已執行，否則就緒後不會補跳。
+    // 這是「從預設的原文檢視點摘錄」的必經路徑 —— 那一刻 /text 才剛開始抓，
+    // TextPane 掛載時走的是載入分支。deps 只有 [jump] 時，全文抵達後 jump 物件
+    // 沒變、effect 不再執行 → 第一次點永遠不捲動、不 flash（要點第二次才動）。
+    // 故 ready 必須進 deps：由 false 轉 true 時重放這個待補的 jump。
+    if (!jump || !ready || doneNonceRef.current === jump.nonce) return
     const sel = jump.target === 'hit' ? '[data-hit]' : `[data-q="${quoteAttr(jump.target)}"]`
     const el = stageRef.current?.querySelector(sel)
     if (!(el instanceof HTMLElement)) return
-    // jsdom 未實作 scrollIntoView：測試環境下略過捲動，flash 類別仍會套用。
+    doneNonceRef.current = jump.nonce
+    // jsdom 未實作 scrollIntoView，故守門（缺席時仍套 flash）。
+    // ReportPage.test.tsx 會 stub 一顆上去，才驗得到「跳轉真的發生」。
     if (typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
     }
@@ -54,7 +67,7 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
     el.classList.add(styles.flash)
     const t = setTimeout(() => el.classList.remove(styles.flash), 1600)
     return () => clearTimeout(t)
-  }, [jump, reduced])
+  }, [jump, ready, reduced])
 
   // 只有真的失敗才說失敗：查詢剛啟用、尚未進 fetching 的那一拍 isLoading 仍為 false 而 data 未到，
   // 若把「沒資料」當錯誤會閃出假的錯誤態。故 !text 一律視為載入中。

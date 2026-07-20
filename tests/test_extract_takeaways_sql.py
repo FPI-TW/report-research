@@ -4,12 +4,16 @@
 不連 DB、不呼叫 LLM（對齊 test_extract_signals_sql.py）。
 錨定測試用真的 locate_quote，只是餵手工造的正典文字。
 """
+import asyncio
 import importlib.util
 import json
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -482,6 +486,99 @@ class PromptTests(unittest.TestCase):
         prompt = et.build_takeaway_prompt("x.pdf", None, None, "內文")
         self.assertNotIn("報告日：", prompt)
         self.assertNotIn("券商：", prompt)
+
+
+class CliFailureTests(unittest.TestCase):
+    """CLI 失敗原因必須可區分。
+
+    曾經是 `except Exception: return None` —— 於是「claude 不在 PATH」（systemd 下
+    實際發生過）、逾時、OOM 全被寫成同一句「CLI 無回應或逾時」，整批 549 篇全滅
+    卻還是正常結束、exit 0，只留下一行 ok=0 rejected=549，看不出該修 PATH 還是該
+    調 timeout。
+    """
+
+    def _raises(self, exc):
+        return mock.patch.object(et.subprocess, "run", side_effect=exc)
+
+    def test_success_returns_stdout_and_no_error(self):
+        done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
+        with mock.patch.object(et.subprocess, "run", return_value=done):
+            res = et.call_cli("prompt", "model")
+        self.assertEqual(res.text, "OUT")
+        self.assertIsNone(res.error)
+
+    def test_missing_cli_raises_instead_of_returning_none(self):
+        # 環境層級失敗：每篇都會踩到，必須往上拋以中止整批，
+        # 而不是靜靜地把每一篇都記成 rejected
+        with self._raises(FileNotFoundError(2, "No such file or directory", "claude")):
+            with self.assertRaises(et.CliNotFoundError) as ctx:
+                et.call_cli("prompt", "model")
+        msg = str(ctx.exception)
+        self.assertIn("claude", msg)
+        self.assertIn("PATH", msg)  # 訊息要直接指出真因
+
+    def test_timeout_is_reported_as_timeout(self):
+        with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):
+            res = et.call_cli("prompt", "model", timeout=180)
+        self.assertIsNone(res.text)
+        self.assertIn("逾時", res.error)
+        self.assertIn("180", res.error)
+
+    def test_nonzero_exit_reports_code_and_stderr(self):
+        fail = subprocess.CompletedProcess(
+            args=[], returncode=3, stdout="", stderr="usage: unknown flag\n"
+        )
+        with mock.patch.object(et.subprocess, "run", return_value=fail):
+            res = et.call_cli("prompt", "model")
+        self.assertIsNone(res.text)
+        self.assertIn("3", res.error)
+        self.assertIn("unknown flag", res.error)
+
+    def test_other_exception_is_reported_with_its_type(self):
+        with self._raises(OSError("Cannot allocate memory")):
+            res = et.call_cli("prompt", "model")
+        self.assertIsNone(res.text)
+        self.assertIn("OSError", res.error)
+        self.assertNotIn("逾時", res.error)  # 不得與逾時混為一談
+
+    def test_failure_reasons_are_mutually_distinguishable(self):
+        """三種失敗不可再塌縮成同一句話（這正是原缺陷的本體）。"""
+        with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):
+            timeout_err = et.call_cli("p", "m").error
+        with self._raises(OSError("boom")):
+            other_err = et.call_cli("p", "m").error
+        fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="e")
+        with mock.patch.object(et.subprocess, "run", return_value=fail):
+            exit_err = et.call_cli("p", "m").error
+        self.assertEqual(len({timeout_err, other_err, exit_err}), 3)
+
+
+class CliAbortTests(unittest.IsolatedAsyncioTestCase):
+    """`claude` 不在 PATH → 提早中止整批，不跑完 N 次註定失敗的呼叫。"""
+
+    @staticmethod
+    def _item():
+        return et.WorkItem("rep-1", "台積電_法說會.pdf", None, "券商甲", CANONICAL, SHA)
+
+    async def test_missing_cli_propagates_out_of_extract_one(self):
+        # 不可被單筆的 try/except 吞掉：吞了就會繼續跑完整批、每篇都 rejected
+        before = et._rejected
+        with mock.patch.object(et, "call_cli", side_effect=et.CliNotFoundError("不在 PATH")):
+            with self.assertRaises(et.CliNotFoundError):
+                await et.extract_one(asyncio.Semaphore(1), self._item(), 24000, "m", 1)
+        self.assertEqual(et._rejected, before)  # 不該被記成「這一篇擷取失敗」
+
+    async def test_timeout_reason_reaches_failure_log(self):
+        # 逾時仍屬單篇失敗：不中斷長跑，但 log 要說得出真因（而非「CLI 無回應或逾時」）
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "takeaway_failures.log"
+            with mock.patch.object(et, "FAIL_LOG", log), \
+                 mock.patch.object(et, "call_cli",
+                                   return_value=et.CliResult(None, "CLI 逾時（180s 內未回應）")):
+                await et.extract_one(asyncio.Semaphore(1), self._item(), 24000, "m", 1)
+            written = log.read_text(encoding="utf-8")
+        self.assertIn("rep-1", written)
+        self.assertIn("逾時", written)
 
 
 if __name__ == "__main__":

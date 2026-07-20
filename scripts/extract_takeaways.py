@@ -11,7 +11,8 @@
 3. 逐報告 spawn `claude -p`(Sonnet) 依固定 schema 擷取 {claim, quote}。
 4. Python 端用 reading/anchor.locate_quote 把引文確定性錨回正典文字（LLM 不給 offset）。
 5. 每份報告在單一 transaction 內 DELETE + 全量 INSERT（**不是 upsert**，見 _replace_rows）。
-6. 單筆失敗只寫 data/takeaway_failures.log，不中斷、不影響檢索/問答。
+6. 單筆失敗只寫 data/takeaway_failures.log，不中斷、不影響檢索/問答。**例外**：
+   `claude` 不在 PATH 屬環境層級失敗（每篇都會踩），整批立即中止並回非零退出碼。
 
 ════════════════════════════════════════════════════════════════════════
 不可妥協的不變量：正典文字＝clean_extracted(full_text)
@@ -53,7 +54,7 @@ import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -390,7 +391,29 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
     return ["claude", "-p", prompt, "--model", model, "--setting-sources", ""]
 
 
-def call_cli(prompt: str, model: str, timeout: int = 180) -> Optional[str]:
+class CliNotFoundError(RuntimeError):
+    """`claude` 不在 PATH。整批註定全滅 → 由 main 提早中止，不跑完 N 次必然失敗的呼叫。
+
+    這在本專案實際發生過：systemd 的環境與登入 shell 不同，沒有 claude 的 PATH。
+    """
+
+
+class CliResult(NamedTuple):
+    """CLI 呼叫結果。text 為 None 時 error 必有值（且要說得出「為什麼」）。"""
+
+    text: Optional[str]
+    error: Optional[str]
+
+
+def call_cli(prompt: str, model: str, timeout: int = 180) -> CliResult:
+    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+
+    **失敗原因必須可區分**：曾經整批 except Exception → return None，於是
+    「claude 不在 PATH」「逾時」「OOM」全被寫成同一句「CLI 無回應或逾時」，
+    整批 549 篇全滅卻還是 exit 0，只留下一行 ok=0 rejected=549 —— 看不出該修 PATH
+    還是該調 timeout。故此處只有 CLI 缺席會往上拋（那是環境壞了，不是這一篇壞了），
+    其餘逐類回具體訊息，讓 data/takeaway_failures.log 說得出真因。
+    """
     try:
         r = subprocess.run(
             build_cli_args(prompt, model),
@@ -399,9 +422,20 @@ def call_cli(prompt: str, model: str, timeout: int = 180) -> Optional[str]:
             timeout=timeout,
             cwd="/tmp",  # 避免載入專案 CLAUDE.md
         )
-        return r.stdout if r.returncode == 0 else None
-    except Exception:
-        return None
+    except FileNotFoundError as exc:
+        # 環境層級的失敗：每一篇都會踩到，重試與續跑都沒有意義 → 中止整批
+        raise CliNotFoundError(
+            "`claude` CLI 不在 PATH（systemd 下請補 PATH drop-in；"
+            "互動 shell 請確認 which claude）"
+        ) from exc
+    except subprocess.TimeoutExpired:
+        return CliResult(None, f"CLI 逾時（{timeout}s 內未回應）")
+    except Exception as exc:
+        return CliResult(None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}")
+    if r.returncode != 0:
+        tail = (r.stderr or "").strip().replace("\n", " ")[-200:]
+        return CliResult(None, f"CLI 退出碼 {r.returncode}：{tail or '（無 stderr）'}")
+    return CliResult(r.stdout, None)
 
 
 # ── 進度計數 ──
@@ -520,15 +554,21 @@ async def extract_one(
         item.file_name, date_str, item.source, item.canonical[:excerpt]
     )
     parsed: Optional[ParsedTakeaways] = None
+    # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
+    last_error = "CLI 無回應"
     async with sem:
         for _ in range(retries + 1):
-            raw = await asyncio.to_thread(call_cli, prompt, model)
-            if raw:
-                parsed = parse_takeaways(raw)
+            # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
+            # 讓它一路拋到 main 中止整批，而不是靜靜地把 N 篇都記成 rejected。
+            res = await asyncio.to_thread(call_cli, prompt, model)
+            if res.text:
+                parsed = parse_takeaways(res.text)
                 if parsed.ok:
                     break
+            elif res.error:
+                last_error = res.error
         if parsed is None:
-            parsed = ParsedTakeaways(ok=False, error="CLI 無回應或逾時")
+            parsed = ParsedTakeaways(ok=False, error=last_error)
 
     try:
         rows = build_rows(item.report_id, item.canonical, item.text_sha256, parsed)
@@ -570,9 +610,16 @@ async def main(args) -> None:
         return
 
     sem = asyncio.Semaphore(args.workers)
-    await asyncio.gather(
-        *(extract_one(sem, item, args.excerpt, args.model, total) for item in worklist)
-    )
+    try:
+        await asyncio.gather(
+            *(extract_one(sem, item, args.excerpt, args.model, total) for item in worklist)
+        )
+    except CliNotFoundError as exc:
+        # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷。中止並以非零退出碼收場 ——
+        # 「跑完 549 次註定失敗的呼叫、印 ok=0 rejected=549、然後 exit 0」是最糟的結局。
+        print(f"\n中止：{exc}", flush=True)
+        print(f"（已完成 {_done}/{total}；ok={_ok} rejected={_rejected} fail={_fail}）", flush=True)
+        raise SystemExit(2) from exc
     print(f"\ndone. ok={_ok} rejected={_rejected} fail={_fail}", flush=True)
 
 

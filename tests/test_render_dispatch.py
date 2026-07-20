@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +24,7 @@ from app.services.pdf import REPORT_DISCLAIMER, render_report_pdf as weasy_rende
 
 _MD = "## 執行摘要\n\n內文[1]。\n\n## 引用來源\n\n[1] a.pdf（TW·2026-06-01）\n"
 _META = {"date": "2026-07-17", "question": "Q"}
+_GOOD_CHART = '{"type":"bar","x":["Q1","Q2"],"series":[{"name":"營收","values":[1,2]}]}'
 
 
 class DispatchTests(unittest.TestCase):
@@ -258,6 +261,80 @@ class HostileFixtureTests(unittest.TestCase):
         ]
         self.assertEqual(len(imports), 1, "除模板 import 外不得有未跳脫的 #import")
         self.assertLess(imports[0].start(), src.index("\n"), "模板 import 應在第 1 行")
+
+
+class ImageEmbeddingTests(unittest.TestCase):
+    """markdown 嵌圖語法不得變成 repo 內檔案的讀取指令。
+
+    這條與「跳脫」是不同的攻擊面，先前被漏掉正是因為兩者長得像：`_prose_to_typst` 的
+    輸出確實經過 pandoc 跳脫，但 pandoc 不只是跳脫器——它把 `![x](/a.png)` **翻譯成**
+    `#box(image("/a.png"))`，一個合法且未跳脫的檔案讀取。實測 `![x](
+    /frontend/src/assets/help/ask.png)` 讓 PDF 從 33KB 變 195KB：repo 內的截圖被完整
+    嵌進一份可下載、可轉發的 PDF。編譯 root=repo 只擋得住逃出 repo，擋不住 repo 內。
+    """
+
+    _PROBE = REPO_ROOT / "frontend" / "src" / "assets" / "help" / "ask.png"
+
+    def _emit(self, md: str) -> str:
+        from app.services.typst_render import build_document, emit_typst
+
+        return emit_typst(build_document(md, title="T", meta=_META), disclaimer=REPORT_DISCLAIMER)
+
+    def test_image_paths_never_reach_typst_source(self):
+        for md in (
+            "## 執行摘要\n\n![x](/frontend/src/assets/logo.png)\n",       # 絕對路徑
+            "## 執行摘要\n\n![x](frontend/src/assets/logo.png)\n",        # 相對路徑
+            "## 執行摘要\n\n![x](../../../etc/passwd)\n",                  # 逃逸嘗試
+            "## 執行摘要\n\n行內 ![x](/a.svg) 文字\n",                     # 行內
+            "## 執行摘要\n\n![x][r]\n\n[r]: /frontend/src/assets/logo.png\n",  # 參照式
+        ):
+            with self.subTest(md=md):
+                src = self._emit(md)
+                self.assertNotIn("image(", src, "圖片路徑變成了 Typst 檔案讀取")
+
+    def test_alt_text_survives_as_plain_text(self):
+        """拒絕路徑不等於吃掉內容——alt 文字必須留下。"""
+        self.assertIn("測試說明文字", self._emit("## 執行摘要\n\n![測試說明文字](/a.png)\n"))
+
+    def test_chart_fence_image_is_not_stripped(self):
+        """合法圖表走 ```chart（SVG 以 bytes 內嵌），不得被誤殺。"""
+        src = self._emit(f"## 重點分析\n\n```chart\n{_GOOD_CHART}\n```\n")
+        self.assertIn("#chart-figure(", src)
+
+    def test_repo_file_not_embedded_in_pdf(self):
+        """端到端：PDF 大小不得因為引用了 repo 內的大檔而暴增。"""
+        if not self._PROBE.is_file():
+            self.skipTest("探針檔不存在")
+        probe_size = self._PROBE.stat().st_size
+        base = rpt.render_report_pdf("## 執行摘要\n\n一般內文。\n", title="T", meta=_META)
+        leaky = rpt.render_report_pdf(
+            f"## 執行摘要\n\n一般內文。\n\n![x](/{self._PROBE.relative_to(REPO_ROOT).as_posix()})\n",
+            title="T", meta=_META,
+        )
+        self.assertLess(
+            len(leaky) - len(base), probe_size // 2,
+            f"PDF 膨脹 {len(leaky) - len(base)} bytes——{probe_size} bytes 的 repo 檔案被嵌入了",
+        )
+
+    def test_compile_root_contains_only_template(self):
+        """縱深防禦：編譯 root 是隔離暫存目錄，不是 repo——就算過濾有漏也無檔可洩。
+
+        以 root 內不存在的檔案路徑直接組 Typst 原始碼（繞過 `_strip_images`），
+        編譯必須失敗；若 root 仍是 repo，它會成功並把檔案嵌進去。
+        """
+        import typst
+
+        from app.services.typst_render import _TEMPLATE_PATH
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dst = root / _TEMPLATE_PATH.lstrip("/")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(REPO_ROOT / _TEMPLATE_PATH.lstrip("/"), dst)
+            entry = root / "report.typ"
+            entry.write_text('#image("/frontend/src/assets/logo.png")\n', encoding="utf-8")
+            with self.assertRaises(Exception):
+                typst.compile(str(entry), root=str(root))
 
 
 class ProseFailureTests(unittest.TestCase):

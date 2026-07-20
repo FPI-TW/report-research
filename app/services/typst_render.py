@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -195,6 +196,40 @@ class ProseConversionError(RuntimeError):
     """pandoc 無法轉換散文段。由分派層接住 → 回退 WeasyPrint（它不依賴 pandoc）。"""
 
 
+def _strip_images(node: object) -> object:
+    """遞迴移除 pandoc AST 的 Image 節點，只留 alt 文字。
+
+    **這是安全邊界上的函式**：`_prose_to_typst` 的輸出雖然「經過 pandoc 跳脫」，但
+    pandoc 不只是跳脫器——它會把 markdown 的 `![x](/a.png)` **翻譯成 Typst 的
+    `#box(image("/a.png"))`**，也就是一個貨真價實的檔案讀取指令。跳脫保證的是 LLM 的
+    *文字* 不會變成指令，擋不住 LLM 用 markdown 語法要求嵌圖。
+
+    實測：`![x](/frontend/src/assets/help/ask.png)` 讓 PDF 從 33KB 變 195KB——repo 內
+    的截圖被完整嵌進一份可下載、可轉發的 PDF。編譯 root=repo 只擋得住 `../` 逃出 repo，
+    擋不住讀 repo *內* 的任何 SVG/PNG。研報語料是 NAS 鏡入的券商 PDF（半信任），間接
+    注入即可誘導 LLM 輸出路徑。
+
+    合法圖表走 ```chart 圍欄（SVG 由 chart.py 產出、以 bytes 內嵌），完全不需要檔案
+    路徑，所以這裡直接拒絕**所有** Image：沒有白名單要維護，也就沒有白名單的洞。
+    alt 文字保留為純文字，內容不會憑空消失。
+    """
+    if isinstance(node, list):
+        out: list[object] = []
+        for item in node:
+            if isinstance(item, dict) and item.get("t") == "Image":
+                # Image 的 c = [attr, alt_inlines, [url, title]]；只取 alt inlines
+                c = item.get("c")
+                alt = c[1] if isinstance(c, list) and len(c) > 1 and isinstance(c[1], list) else []
+                got = _strip_images(alt)
+                out.extend(got if isinstance(got, list) else [])
+            else:
+                out.append(_strip_images(item))
+        return out
+    if isinstance(node, dict):
+        return {k: _strip_images(v) for k, v in node.items()}
+    return node
+
+
 def _prose_to_typst(md: str) -> str:
     """散文段 → Typst 片段。轉換失敗 **拋出**，不吞。
 
@@ -210,7 +245,11 @@ def _prose_to_typst(md: str) -> str:
     if not md.strip():
         return ""
     try:
-        return pypandoc.convert_text(md, "typst", format=_PANDOC_FORMAT)
+        # 走 AST 中繼（md → json → 濾除 Image → typst），而非 md → typst 直轉：
+        # 檔案路徑必須在**還是結構化節點**的時候拒絕，事後對 Typst 原始碼做正則
+        # 移除等於在自己剛產生的程式碼上重新剖析，是同一類錯誤的溫床。
+        ast = json.loads(pypandoc.convert_text(md, "json", format=_PANDOC_FORMAT))
+        return pypandoc.convert_text(json.dumps(_strip_images(ast)), "typst", format="json")
     except Exception as exc:
         raise ProseConversionError(f"pandoc 轉換失敗：{exc}") from exc
 
@@ -405,9 +444,14 @@ def emit_typst(doc: DocumentModel, *, disclaimer: str, methods: str = "") -> str
 def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
     """markdown → Typst → PDF bytes。簽章與 pdf.render_report_pdf 一致（雙軌可互換）。
 
-    典型 0.2s（spike 實測，WeasyPrint 為秒級）。編譯以 root 限制檔案存取；模板零
-    @preview 依賴故無網路需求。失敗直接拋——由 report.py 的分派層 fail-open 回退
-    WeasyPrint（回退路徑同樣有免責，見 pdf.REPORT_DISCLAIMER）。
+    典型 0.2s（spike 實測，WeasyPrint 為秒級）。模板零 @preview 依賴故無網路需求。
+    失敗直接拋——由 report.py 的分派層 fail-open 回退 WeasyPrint（回退路徑同樣有
+    免責，見 pdf.REPORT_DISCLAIMER）。
+
+    **編譯 root 是隔離的暫存目錄，只放模板與生成檔**，不是 repo root。root=repo 擋得住
+    `../` 逃出 repo，卻讓 repo 內的每個檔案都可被讀取——`.env`、券商 PDF、任何截圖都在
+    射程內。這裡是縱深防禦的第二層：`_strip_images` 已在 AST 階段拒絕所有檔案路徑，就算
+    它有漏，root 內也沒有東西可洩漏。
     """
     # 延遲 import：與 pdf.py 的 weasyprint 同理，不讓模組匯入期吃載入成本
     import typst
@@ -416,13 +460,13 @@ def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
 
     doc = build_document(markdown_text, title=title, meta=meta or {})
     src = emit_typst(doc, disclaimer=REPORT_DISCLAIMER)
-    root = Path(__file__).resolve().parents[2]
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".typ", dir=root, encoding="utf-8", delete=False
-    ) as fh:
-        fh.write(src)
-        tmp = Path(fh.name)
-    try:
-        return typst.compile(str(tmp), root=str(root))
-    finally:
-        tmp.unlink(missing_ok=True)
+    template = Path(__file__).resolve().parents[1] / "templates" / "ib-classic.typ"
+    with tempfile.TemporaryDirectory(prefix="tf-typst-") as tmpdir:
+        root = Path(tmpdir)
+        # 模板放在 root 內的同一相對路徑，`_TEMPLATE_PATH` 的 import 才解析得到
+        dst = root / _TEMPLATE_PATH.lstrip("/")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(template, dst)
+        entry = root / "report.typ"
+        entry.write_text(src, encoding="utf-8")
+        return typst.compile(str(entry), root=str(root))

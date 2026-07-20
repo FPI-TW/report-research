@@ -11,6 +11,27 @@
 
 參照語法：@citation 與 <label-target> 與 #footnote[惡意]。
 
+## 圖片路徑向量（不得產生任何檔案讀取）
+
+Markdown 嵌圖語法會被 pandoc **翻譯成 Typst 的 `image()` 呼叫**——那是貨真價實的檔案
+讀取指令，不是可以靠跳脫解決的文字。跳脫保證的是 LLM 的文字不變成指令，擋不住 LLM
+直接用合法 markdown 語法要求嵌圖。
+
+絕對路徑：![機密](/frontend/src/assets/help/ask.png)
+
+相對路徑：![相對](frontend/src/assets/logo.png)
+
+跳脫嘗試：![逃逸](../../../etc/passwd) 與 ![點](./app/services/pdf.py)
+
+參照式：![參照][refimg]
+
+[refimg]: /frontend/src/assets/logo.png
+
+行內夾雜：正常文字 ![行內](/frontend/src/assets/logo.png) 後續文字。
+
+合法圖表一律走 ```chart 圍欄（SVG 由 chart.py 產出並以 bytes 內嵌），完全不需要檔案
+路徑，因此這裡的每一個向量都必須被拒絕，只留 alt 文字。
+
 ## 特殊字元
 
 星號 *不是粗體* 字面星號2*3=6、底線 _not italic_ snake_case_name、方括號 [這不是連結]、[1][2] 引用編號。

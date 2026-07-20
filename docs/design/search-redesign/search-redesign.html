@@ -1,0 +1,124 @@
+<!-- @dsCard group="檢索頁 · 改版提案" -->
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>檢索台 — 瀏覽態（Bento 簡報牆）</title>
+  <link rel="stylesheet" href="redesign.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ══ 左側導覽：情境參考用，非本次提案範圍（實際由 AppShell/SideRail 提供） ══ -->
+  <aside class="rail">
+    <div class="railBrand">
+      <svg width="26" height="26" viewBox="0 0 64 64" role="img" aria-label="廷豐智能研報">
+        <rect width="64" height="64" rx="16" fill="#163a54"/>
+        <text x="32" y="33" text-anchor="middle" dominant-baseline="central"
+              font-family="'Noto Serif TC', Georgia, serif" font-size="34" font-weight="700" fill="#c8912f">廷</text>
+      </svg>
+      <span class="railName">廷豐智能研報</span>
+    </div>
+    <nav>
+      <div class="navItem" data-on>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        檢索
+      </div>
+      <div class="navItem">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8z"/></svg>
+        問答
+      </div>
+      <div class="navItem">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+        觀點雷達
+      </div>
+      <div class="navItem">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h4l3 7 4-16 3 9h4"/></svg>
+        監控
+      </div>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+      <h1 class="srOnly">檢索研報</h1>
+
+      <!-- ══ 檢索框＝全頁主角。右側等寬 Enter 鍵帽告訴你怎麼送出 ══ -->
+      <div class="field">
+        <span class="lens">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        </span>
+        <input class="q" type="search" aria-label="搜尋研報" placeholder="搜尋產業、公司、事件…">
+        <kbd class="key">Enter</kbd>
+      </div>
+
+      <!-- ══ 市場篩選：控制項。靜止時安靜，選取時穿上該市場的顏色 ══ -->
+      <div class="chips" role="group" aria-label="市場篩選">
+        <button class="chip" data-on style="--c: var(--tf-ink)">全部<span class="n">5,094</span></button>
+        <button class="chip" style="--c: var(--mkt-TW)">台股<span class="n">2,860</span></button>
+        <button class="chip" style="--c: var(--mkt-US)">美股<span class="n">1,120</span></button>
+        <button class="chip" style="--c: var(--mkt-HK)">港股<span class="n">402</span></button>
+        <button class="chip" style="--c: var(--mkt-CN)">陸股<span class="n">355</span></button>
+        <button class="chip" style="--c: var(--mkt-WTX)">台指期<span class="n">128</span></button>
+        <button class="chip" style="--c: var(--mkt-FX)">外匯<span class="n">96</span></button>
+        <button class="chip" style="--c: var(--mkt-MACRO)">總經<span class="n">88</span></button>
+        <button class="chip" style="--c: var(--mkt-GLOBAL)">全球<span class="n">30</span></button>
+        <button class="chip" style="--c: var(--mkt-CRYPTO)">加密<span class="n">15</span></button>
+      </div>
+
+      <!-- ══ Bento 簡報牆：頭條磚 ＋ 數據磚 ＋ 語料庫組成磚 ＋ 更多清單磚 ══ -->
+      <div class="grid">
+
+        <!-- 頭條磚（2×2）：最新入庫的一篇，市場色左緣 -->
+        <article class="tile feature link" style="--c: var(--mkt-TW)">
+          <div class="top"><span class="mk">台股 · 頭條</span><span class="new">最新</span></div>
+          <div class="title">AI 伺服器液冷散熱滲透加速，2026 出貨量上修</div>
+          <div class="data">2330 · 3017 · 元大投顧</div>
+          <p class="sum">資料中心 GPU 功耗續攀，液冷方案由高階伺服器向主流機種擴散。預估 2026 台系散熱模組廠營收年增逾三成，維持產業「加碼」評等。CDU 認證進度與客戶集中度為後續觀察重點。</p>
+          <div class="foot">2026-07-15 · 查看全文 ›</div>
+        </article>
+
+        <!-- 數據磚 ×2 -->
+        <div class="tile stat"><div class="num">5,094</div><div class="lbl">篇研報 · DOCS</div></div>
+        <div class="tile stat"><div class="num gold">9</div><div class="lbl">涵蓋市場 · MARKETS</div></div>
+
+        <!-- 語料庫組成磚：色譜＋圖例 -->
+        <div class="tile comp">
+          <div class="h">語料庫組成</div>
+          <div class="spectrum" role="img" aria-label="語料庫市場組成：台股 2,860、美股 1,120、港股 402、陸股 355、台指期 128、外匯 96、總經 88、全球 30、加密 15">
+            <span style="--c: var(--mkt-TW);     flex-grow: 2860; animation-delay: 0ms"></span>
+            <span style="--c: var(--mkt-US);     flex-grow: 1120; animation-delay: 40ms"></span>
+            <span style="--c: var(--mkt-HK);     flex-grow: 402;  animation-delay: 80ms"></span>
+            <span style="--c: var(--mkt-CN);     flex-grow: 355;  animation-delay: 120ms"></span>
+            <span style="--c: var(--mkt-WTX);    flex-grow: 128;  animation-delay: 160ms"></span>
+            <span style="--c: var(--mkt-FX);     flex-grow: 96;   animation-delay: 200ms"></span>
+            <span style="--c: var(--mkt-MACRO);  flex-grow: 88;   animation-delay: 240ms"></span>
+            <span style="--c: var(--mkt-GLOBAL); flex-grow: 30;   animation-delay: 280ms"></span>
+            <span style="--c: var(--mkt-CRYPTO); flex-grow: 15;   animation-delay: 320ms"></span>
+          </div>
+          <div class="lgs">
+            <span style="--c: var(--mkt-TW)"><i></i><span class="mk">台股</span> 56%</span>
+            <span style="--c: var(--mkt-US)"><i></i><span class="mk">美股</span> 22%</span>
+            <span style="--c: var(--mkt-HK)"><i></i><span class="mk">港股</span> 8%</span>
+            <span style="--c: var(--mkt-CN)"><i></i><span class="mk">陸股</span> 7%</span>
+            <span style="--c: var(--mkt-WTX)"><i></i><span class="mk">台指期</span> 2.5%</span>
+          </div>
+        </div>
+
+        <!-- 更多清單磚：其餘最新入庫，市場代碼＋標題＋來源＋日期單行掃讀 -->
+        <div class="tile list">
+          <div class="lh"><span class="t">更多最新入庫</span><span class="m">2026 年 7 月 · 共 6 篇</span></div>
+          <div class="lrow" style="--c: var(--mkt-US)"><span class="code">US</span><span><span class="ltitle">Nvidia：GB300 量產順利，資料中心動能延續至 2027</span><span class="lsrc">NVDA · 摩根士丹利</span></span><span class="ldate">07-14</span></div>
+          <div class="lrow" style="--c: var(--mkt-HK)"><span class="code">HK</span><span><span class="ltitle">騰訊控股：遊戲與廣告雙引擎回溫，估值仍具吸引力</span><span class="lsrc">0700 · 里昂證券</span></span><span class="ldate">07-12</span></div>
+          <div class="lrow" style="--c: var(--mkt-CN)"><span class="code">CN</span><span><span class="ltitle">半導體設備國產化提速，看好本土供應鏈重估</span><span class="lsrc">指數 · 中金公司</span></span><span class="ldate">07-11</span></div>
+          <div class="lrow" style="--c: var(--mkt-TW)"><span class="code">TW</span><span><span class="ltitle">台積電：先進封裝 CoWoS 產能倍增，法說會前瞻正向</span><span class="lsrc">2330 · 群益投顧</span></span><span class="ldate">07-10</span></div>
+          <div class="lrow" style="--c: var(--mkt-WTX)"><span class="code">WTX</span><span><span class="ltitle">台指期週報：外資期貨淨多單回補，區間震盪偏多</span><span class="lsrc">TXF · 凱基期貨</span></span><span class="ldate">07-09</span></div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

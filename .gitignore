@@ -12,6 +12,8 @@ data/*.json
 *.png
 # 說明頁截圖（UI 資產，被 SPA HelpPage 引用，需入版控；其餘 png 仍忽略）
 !frontend/src/assets/help/*.png
+# 設計稿的圖片資產（docs/design/ 是設計交付存檔，非執行期產物）
+!docs/design/**/*.png
 
 # runtime logs / locks / tag backups（執行期產生，非原始碼）
 data/*.log
@@ -34,3 +36,6 @@ deploy/secrets/
 
 # App 登入帳密 / session 金鑰(本機環境設定)
 /.env
+# .env 的手動備份（曾出現 .env.bak-<timestamp>：未被 /.env 涵蓋，
+# 一次 `git add -A` 就會把實際帳密與 session 金鑰提交上去）
+.env.bak*

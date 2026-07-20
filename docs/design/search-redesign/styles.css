@@ -1,0 +1,154 @@
+/* ==========================================================================
+   廷豐智能研報 — 檢索頁設計稿樣式（現狀起點，攤平自 React + CSS Modules）
+   來源：src/features/search/*.module.css、src/styles/tokens.css、src/lib/meta.ts
+   ========================================================================== */
+
+/* ── 品牌 design tokens（原樣移入，見 src/styles/tokens.css） ───────────────── */
+:root {
+  --tf-canvas: #f7f6f2; --tf-surface: #ffffff; --tf-sidebar: #fbfaf6;
+  --tf-border: #e7e4dc; --tf-border-weak: #f3f1eb; --tf-divider: #efede7;
+  --tf-text-1: #212b33; --tf-text-2: #40525f; --tf-text-3: #6e7e89; --tf-text-4: #9aa5ae;
+  --tf-ink: #1e5175; --tf-ink-deep: #163a54; --tf-ink-hover: #174260; --tf-ink-tint: #eaf1f6; --tf-ink-line: #dce6ee; --tf-on-ink: #ffffff;
+  --tf-gold-text: #8a5a0f; --tf-gold-strong: #ae7415; --tf-gold-hover: #7a4f0c; --tf-gold-tint: #f8f1e0; --tf-gold-line: #ead9ae; --tf-gold-panel: #fbf7ec; --tf-on-gold: #ffffff;
+  --tf-serif: 'Noto Serif TC', Georgia, serif; /* @kind font */
+  --tf-sans: 'Noto Sans TC', -apple-system, 'Segoe UI', 'Microsoft JhengHei', system-ui, sans-serif; /* @kind font */
+  --tf-radius-card: 12px; --tf-radius-panel: 16px; --tf-radius-pill: 999px; --tf-radius-md: 8px;
+  --tf-shadow-xs: 0 1px 3px rgba(22,42,58,.05); --tf-shadow-float: 0 8px 24px rgba(22,42,58,.07);
+  --mkt-TW: #237a46; --mkt-US: #2e5fa3; --mkt-HK: #b26a0b; --mkt-CN: #b03a30; --mkt-FX: #0e7d74; --mkt-WTX: #6e48a8; --mkt-MACRO: #a03052; --mkt-GLOBAL: #4a4fa0; --mkt-CRYPTO: #7d6234;
+}
+
+/* ── 支援用 token（元件樣式所引用，補齊 tokens.css 中相依值） ─────────────────── */
+:root {
+  --tf-ring-ink: 0 0 0 3px rgba(30, 81, 117, 0.12);
+  --tf-mark: #faedc4;
+  --tf-success-text: #237a46;
+  --tf-success-line: #7fb89a;
+  --tf-dur-1: 120ms; /* @kind other */
+  --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* @kind other */
+}
+
+/* ── 基礎 reset ──────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--tf-canvas);
+  font-family: var(--tf-sans);
+  color: var(--tf-text-1);
+  -webkit-font-smoothing: antialiased;
+}
+input, button, textarea { font-family: inherit; }
+a { color: var(--tf-ink); text-decoration: none; }
+a:hover { color: var(--tf-ink-hover); }
+::selection { background: var(--tf-ink-tint); }
+:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
+mark { background: var(--tf-mark); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+/* ── 頁面容器（對齊 SearchPage.module.css .page / .inner） ────────────────────── */
+.page { min-height: 100vh; }
+.inner { max-width: 1180px; margin: 0 auto; padding: 20px 24px 80px; }
+.inner[data-hero] { padding-top: 72px; }
+
+/* ── 品牌起始畫面 hero（空查詢） ─────────────────────────────────────────────── */
+.hero { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 14px; }
+.heroBg {
+  position: absolute; left: 50%; top: -60px; width: min(760px, 116%); height: 300px;
+  transform: translateX(-50%); z-index: 0; pointer-events: none; overflow: hidden;
+  background: linear-gradient(120deg, var(--tf-ink-tint), var(--tf-gold-tint) 45%, var(--tf-ink-line) 70%, var(--tf-ink-tint));
+  opacity: 0.85;
+  -webkit-mask-image: radial-gradient(ellipse 60% 60% at 50% 42%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(ellipse 60% 60% at 50% 42%, #000 0%, transparent 72%);
+}
+.hero > *:not(.heroBg) { position: relative; z-index: 1; }
+.brandMark { display: block; }
+.heroTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 32px; letter-spacing: 0.02em; color: var(--tf-ink-deep); margin: 16px 0 0; }
+.heroSub { font-size: 14px; color: var(--tf-text-3); margin: 8px 0 0; font-variant-numeric: tabular-nums; }
+
+/* ── 控制列（搜尋框 + 市場 chips） ──────────────────────────────────────────── */
+.controls { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+.searchRow { display: flex; align-items: center; gap: 10px; width: 100%; }
+.searchRow > :first-child { flex: 1; min-width: 0; }
+
+/* hero 態：置中、收窄 */
+.inner[data-hero] .controls { align-items: center; }
+.inner[data-hero] .searchRow { width: min(720px, 100%); }
+
+/* ── 大搜尋框（SearchBar.module.css .bar + .lg） ────────────────────────────── */
+.bar { display: flex; align-items: center; gap: 8px; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-card); padding: 8px 14px; box-shadow: var(--tf-shadow-xs); }
+.bar:focus-within { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink); }
+.bar .icon { color: var(--tf-text-3); flex-shrink: 0; display: flex; }
+.bar .input { flex: 1; min-width: 0; border: none; outline: none; background: none; font-size: 14px; color: var(--tf-text-1); font-family: inherit; }
+.bar .input::placeholder { color: var(--tf-text-4); }
+.bar.lg { border-radius: var(--tf-radius-panel); border-width: 1.5px; border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); padding: 6px 6px 6px 20px; gap: 12px; }
+.bar.lg .input { font-size: 15px; padding: 11px 0; }
+
+/* ── 市場篩選 chips（MarketChipBar.module.css） ────────────────────────────── */
+.marketBar { display: flex; flex-wrap: wrap; gap: 7px; width: 100%; }
+.inner[data-hero] .marketBar { justify-content: center; }
+.chip { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: var(--tf-radius-pill); padding: 5px 13px; font-size: 12.5px; cursor: pointer; font-family: inherit; font-variant-numeric: tabular-nums; }
+.chip:hover { border-color: var(--tf-ink); }
+.chip.active { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink-deep); font-weight: 600; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── 「最新入庫」區段標頭（SearchPage.module.css .sectionHead） ─────────────────── */
+.sectionHead { display: flex; align-items: baseline; gap: 12px; padding: 22px 2px 10px; }
+.sectionTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 16px; color: var(--tf-text-1); }
+.sectionMeta { font-size: 12.5px; color: var(--tf-text-3); font-variant-numeric: tabular-nums; }
+
+/* ── 結果清單白底容器（CardsView.module.css .wrap） ─────────────────────────── */
+.cardsWrap { background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: 14px; box-shadow: var(--tf-shadow-xs); }
+.cardsWrap > section:first-child .monthHeader { border-top-left-radius: 14px; border-top-right-radius: 14px; }
+.grid { display: flex; flex-direction: column; }
+
+/* 月份群組標頭（MonthGroup.module.css） */
+.monthHeader { display: flex; background: var(--tf-sidebar); border-bottom: 1px solid var(--tf-border-weak); padding: 8px 16px; }
+.monthPill { display: inline-flex; align-items: baseline; gap: 8px; }
+.monthTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 13.5px; color: var(--tf-text-1); }
+.monthSep { font-size: 11px; color: var(--tf-text-4); line-height: 1; }
+.monthCount { font-size: 12px; font-weight: 500; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
+
+/* ── 結果卡片／高密度列表列（ResultCard.module.css） ───────────────────────── */
+.card {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) 200px; gap: 14px;
+  align-items: start; background: var(--tf-surface);
+  border-bottom: 1px solid var(--tf-border-weak); padding: 13px 16px; cursor: pointer;
+  transition: background var(--tf-dur-1) var(--tf-ease-out);
+}
+.grid > .card:last-child { border-bottom: none; }
+.cardsWrap > section:last-child .grid > .card:last-child { border-bottom-left-radius: 14px; border-bottom-right-radius: 14px; }
+.card:hover { background: #f8f7f3; }
+
+.chipCol { padding-top: 1px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--tf-radius-pill); padding: 3px 10px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }
+.badgeDot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.9; }
+
+.main { min-width: 0; }
+.titleRow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.title { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; line-height: 1.5; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.latest { border: 1px solid var(--tf-success-line); color: var(--tf-success-text); border-radius: var(--tf-radius-pill); padding: 0 8px; font-size: 11px; font-weight: 600; flex: none; }
+.tags { font-size: 12px; color: var(--tf-text-4); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary { font-size: 12.5px; color: var(--tf-text-2); line-height: 1.6; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.scoreRow { display: inline-flex; align-items: center; gap: 8px; }
+.scoreTrack { width: 56px; height: 4px; border-radius: var(--tf-radius-pill); background: var(--tf-border-weak); overflow: hidden; display: inline-block; }
+.scoreFill { display: block; height: 100%; border-radius: var(--tf-radius-pill); background: var(--tf-ink); }
+.scoreNum { font-size: 13px; font-weight: 600; color: var(--tf-ink); font-variant-numeric: tabular-nums; }
+.meta { font-size: 12px; color: var(--tf-text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hits { font-size: 11.5px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cta { color: var(--tf-ink); font-weight: 600; font-size: 12px; opacity: 0; transition: opacity var(--tf-dur-1) var(--tf-ease-out); }
+.card:hover .cta { opacity: 1; }
+
+/* ── 響應式（對齊各 module 的斷點） ────────────────────────────────────────── */
+@media (max-width: 1023px) {
+  .card { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .chipCol { order: -1; }
+  .right { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .title { white-space: normal; }
+  .cta { display: none; }
+}
+@media (max-width: 767px) {
+  .inner { padding: 16px 14px 96px; }
+  .inner[data-hero] { padding-top: 40px; }
+  .heroTitle { font-size: 25px; }
+  .searchRow { flex-wrap: wrap; }
+}

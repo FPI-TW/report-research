@@ -3,7 +3,7 @@
 import re
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.dialects.postgresql import asyncpg as pg_asyncpg  # noqa: E402
 
+from app.services.radar.types import SIGNAL_SELECT_COLUMNS  # noqa: E402
 from app.services.reading import queries  # noqa: E402
 
 _DIALECT = pg_asyncpg.dialect()
@@ -239,8 +240,29 @@ def _sig_row(status="valid"):
     return (
         "sig-1", "rep-1", "TW", "8046", "daiwa", date(2026, 7, 11), "Buy (1)", "buy",
         Decimal("2444.0000"), "TWD", "12M", "TP 證據", "[]", "{}", status,
-        "daiwa-8046.pdf",
+        "daiwa-8046.pdf", datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
     )
+
+
+def _top_level_column_count(select_columns: str) -> int:
+    """數 SELECT 清單的頂層欄位數（括號內的逗號不算，如 COALESCE(a, b)）。"""
+    depth = count = 0
+    for ch in select_columns:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            count += 1
+    return count + 1
+
+
+class SigRowFixtureTests(unittest.TestCase):
+    def test_width_matches_select_columns(self):
+        # parse_signal_row 是位置式解析：fixture 少一欄不會有型別錯誤，
+        # 只會在被解析時 IndexError（#92 與 #93 相隔 14 秒併入即如此）。
+        # SIGNAL_SELECT_COLUMNS 增欄時這條先紅，直接指出 fixture 要跟著補。
+        self.assertEqual(len(_sig_row()), _top_level_column_count(SIGNAL_SELECT_COLUMNS))
 
 
 class FetchSignalsTests(unittest.IsolatedAsyncioTestCase):

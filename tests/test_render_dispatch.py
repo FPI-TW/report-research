@@ -66,10 +66,14 @@ class DispatchTests(unittest.TestCase):
                 rpt.render_report_pdf(_MD, title="T", meta=_META)
 
     def test_server_imports_dispatcher_not_pdf_directly(self):
-        """PDF 重建端點必須走分派層，否則重建永遠是 WeasyPrint 版。"""
-        import web.server as srv
+        """PDF 重建端點必須走分派層，否則重建永遠是 WeasyPrint 版。
 
-        self.assertIs(srv.render_report_pdf, rpt.render_report_pdf)
+        端點與其 render_report_pdf import 已隨深度研報組拆到 web.routers.report，
+        故在該模組上檢查（分派層 identity），而非 web.server。
+        """
+        import web.routers.report as report_mod
+
+        self.assertIs(report_mod.render_report_pdf, rpt.render_report_pdf)
 
 
 class DisclaimerTests(unittest.TestCase):

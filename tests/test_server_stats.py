@@ -10,8 +10,10 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-import web.server as server  # noqa: E402
+# stats/progress 及其快取、進度解析 helper 已拆到 web.routers.monitor；服務綁定
+# （SessionFactory）仍在 web.deps。故 handler/快取/常數的覆寫指向 monitor 模組。
 from web import deps  # noqa: E402
+from web.routers import monitor  # noqa: E402
 
 
 class _ScalarResult:
@@ -40,7 +42,7 @@ class _FirstResult:
 
 class OrchestratorParseTests(unittest.TestCase):
     def test_parse_resume_done_entry(self):
-        parsed = server._parse_orchestrator_entry(
+        parsed = monitor._parse_orchestrator_entry(
             "[2026-06-18 23:28:15] === resume done ==="
         )
 
@@ -55,7 +57,7 @@ class OrchestratorParseTests(unittest.TestCase):
         )
 
     def test_parse_unknown_entry_falls_back_to_raw(self):
-        parsed = server._parse_orchestrator_entry("some unexpected orchestrator text")
+        parsed = monitor._parse_orchestrator_entry("some unexpected orchestrator text")
 
         self.assertEqual(
             parsed,
@@ -70,13 +72,13 @@ class OrchestratorParseTests(unittest.TestCase):
 
 class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
     def test_cache_ttl_is_within_requested_range(self):
-        self.assertGreaterEqual(server.DB_STATS_CACHE_TTL_SECONDS, 3.0)
-        self.assertLessEqual(server.DB_STATS_CACHE_TTL_SECONDS, 5.0)
+        self.assertGreaterEqual(monitor.DB_STATS_CACHE_TTL_SECONDS, 3.0)
+        self.assertLessEqual(monitor.DB_STATS_CACHE_TTL_SECONDS, 5.0)
 
     def setUp(self):
-        if hasattr(server, "_DB_STATS_CACHE"):
-            server._DB_STATS_CACHE["data"] = None
-            server._DB_STATS_CACHE["expires_at"] = 0.0
+        if hasattr(monitor, "_DB_STATS_CACHE"):
+            monitor._DB_STATS_CACHE["data"] = None
+            monitor._DB_STATS_CACHE["expires_at"] = 0.0
 
     async def test_stats_and_progress_share_one_db_snapshot_within_ttl(self):
         calls = []
@@ -106,20 +108,20 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                 raise AssertionError(sql)
 
         orig_session_factory = deps.SessionFactory
-        orig_gather_runtime = server._gather_runtime
+        orig_gather_runtime = monitor._gather_runtime
         deps.SessionFactory = lambda: FakeSession()
-        server._gather_runtime = lambda: {
+        monitor._gather_runtime = lambda: {
             "tagging": None,
             "ingest": None,
             "pipelines": {"web": True},
             "orchestrator": None,
         }
         try:
-            stats = await server.stats()
-            progress = await server.progress()
+            stats = await monitor.stats()
+            progress = await monitor.progress()
         finally:
             deps.SessionFactory = orig_session_factory
-            server._gather_runtime = orig_gather_runtime
+            monitor._gather_runtime = orig_gather_runtime
 
         self.assertEqual(len(calls), 6)
         self.assertEqual(stats["total_reports"], 6)

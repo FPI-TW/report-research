@@ -22,10 +22,14 @@ interface Props {
   jump: JumpTarget | null
   isLoading: boolean
   isError: boolean
+  /** 全文載入失敗時的重試（react-query refetch）。 */
+  onRetry: () => void
+  /** 是否有原始檔可切。無檔時不得叫讀者「切原文」——那個檢視根本不存在。 */
+  hasFile: boolean
 }
 
 /** 文字檢視：正典文字＋依後端 offset 標出的引文段與檢索命中段。 */
-export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isError }: Props) {
+export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isError, onRetry, hasFile }: Props) {
   const reduced = useReducedMotion()
   const stageRef = useRef<HTMLDivElement>(null)
   // 已經執行過的 jump nonce；內容未就緒而暫緩的 jump 不會記進來（見下方 effect）。
@@ -74,7 +78,10 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
   if (isError) {
     return (
       <div className={styles.stage}>
-        <div className={styles.state} role="status">全文載入失敗，請稍後再試。</div>
+        <div className={styles.state} role="status">
+          <p className={styles.stateText}>全文載入失敗。</p>
+          <button type="button" className={styles.retry} onClick={onRetry}>重試</button>
+        </div>
       </div>
     )
   }
@@ -95,7 +102,7 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
     <div className={styles.stage} ref={stageRef}>
       <article className={styles.reader}>
         <div className={styles.note}>
-          文字檢視為 PDF 抽取結果，圖表與表格排版不會保留 — 需要完整版面請切「原文」。
+          文字檢視為 PDF 抽取結果，圖表與表格排版不會保留{hasFile ? ' — 需要完整版面請切「原文」' : ''}。
         </div>
         {/* data-hit 同時掛在命中段的內文與引文上：它是捲動錨點（querySelector 取第一個），
             故引文即使不套 hit 底色（自己已有更明確的引文標記）也要掛，
@@ -120,7 +127,7 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
         </div>
         {text.truncated && (
           <p className={styles.truncated}>
-            全文過長，此處僅顯示前段 — 需要完整內容請切「原文」。
+            全文過長，此處僅顯示前段{hasFile ? ' — 需要完整內容請切「原文」' : ''}。
           </p>
         )}
       </article>

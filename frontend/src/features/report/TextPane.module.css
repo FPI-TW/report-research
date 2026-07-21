@@ -98,6 +98,27 @@
   width: 100%;
 }
 
+.stateText {
+  margin: 0 0 16px;
+  line-height: 1.55;
+}
+
+.retry {
+  appearance: none;
+  border: 0;
+  background: var(--tf-ink);
+  color: var(--tf-on-ink);
+  border-radius: var(--tf-radius-pill);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--tf-sans);
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: background var(--tf-dur-1) var(--tf-ease-standard);
+}
+.retry:hover { background: var(--tf-ink-hover); }
+.retry:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
+
 @media (max-width: 900px) {
   .stage { padding: 14px; }
   .reader { padding: 24px 20px 32px; }

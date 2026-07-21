@@ -204,6 +204,8 @@ export default function ReportPage() {
               jump={jump}
               isLoading={text.isLoading}
               isError={text.isError}
+              onRetry={() => text.refetch()}
+              hasFile={d.has_file}
             />
           )}
         </section>

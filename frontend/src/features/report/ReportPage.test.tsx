@@ -355,6 +355,27 @@ describe('ReportPage', () => {
     expect(screen.queryByRole('button', { name: /跳至第 1 條摘錄/ })).toBeNull()
   })
 
+  // 全文 /text 失敗曾是死路（只有一行「請稍後再試」、無任何動作）：改為可重試
+  it('全文載入失敗 → 顯示重試，點擊後重新抓取成功', async () => {
+    const { ApiError } = await import('../../lib/api')
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    vi.mocked(readingApi.getReadingText).mockRejectedValueOnce(new ApiError(500, '壞了'))
+    wrap(`/report/${HASH}?view=text`)
+    await waitFor(() => expect(screen.getByText('全文載入失敗。')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '重試' }))
+    // refetch → 落回 beforeEach 的成功回應 → 引文段標出
+    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
+  })
+
+  // 無原始檔時根本沒有「原文」檢視可切，提示不得叫讀者去切一個不存在的檢視
+  it('無原始檔的文字檢視 → 提示不出現「切原文」死路', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ has_file: false, is_pdf: false }))
+    wrap(`/report/${HASH}?view=text`)
+    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
+    expect(screen.getByText(/圖表與表格排版不會保留/)).toBeInTheDocument()
+    expect(screen.queryByText(/請切「原文」/)).toBeNull()
+  })
+
   it('相似研報：顯示「9/12 段相符」且連往閱讀頁', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)

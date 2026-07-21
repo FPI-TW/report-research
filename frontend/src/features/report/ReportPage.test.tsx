@@ -224,6 +224,21 @@ describe('ReportPage', () => {
     expect(readingApi.getReadingText).not.toHaveBeenCalled()
   })
 
+  // radiogroup 鍵盤契約：roving tabindex（只有選中的可 Tab 到）+ 方向鍵選取
+  it('檢視切換：roving tabindex 且方向鍵可切換（radiogroup 契約）', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    const pdf = await screen.findByRole('radio', { name: '原文' })
+    expect(pdf).toBeChecked()
+    expect(pdf).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('radio', { name: '文字' })).toHaveAttribute('tabindex', '-1')
+    pdf.focus()
+    fireEvent.keyDown(pdf, { key: 'ArrowRight' })
+    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
+    expect(screen.getByRole('radio', { name: '文字' })).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('radio', { name: '原文' })).toHaveAttribute('tabindex', '-1')
+  })
+
   it('?chunk=N → 預設文字檢視、抓全文時帶 chunk、顯示命中導航', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     vi.mocked(readingApi.getReadingText).mockResolvedValue(text({ chunk_start: 0, chunk_end: 2 }))
@@ -323,6 +338,15 @@ describe('ReportPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
     expect((scrollIntoView.mock.contexts[0] as HTMLElement).dataset.q).toBe('q1')
+  })
+
+  // 跳段不只是視覺捲動：焦點要移到目標段，鍵盤/報讀使用者才有回饋
+  it('點摘錄跳轉 → 焦點移到該引文段', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}?view=text`)
+    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
+    await waitFor(() => expect((document.activeElement as HTMLElement)?.dataset.q).toBe('q1'))
   })
 
   // 命中段有等價的補救（依 hitStart 觸發），這條把它一起釘住

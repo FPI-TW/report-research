@@ -57,14 +57,19 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
     const el = stageRef.current?.querySelector(sel)
     if (!(el instanceof HTMLElement)) return
     doneNonceRef.current = jump.nonce
-    // jsdom 未實作 scrollIntoView，故守門（缺席時仍套 flash）。
+    // jsdom 未實作 scrollIntoView，故守門（缺席時仍移焦點/套 flash）。
     // ReportPage.test.tsx 會 stub 一顆上去，才驗得到「跳轉真的發生」。
     if (typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
     }
-    // 命中段本來就有常駐淡底、不再閃一次：flash 的終點色是引文的底色，
-    // 套到命中段會在動畫結束移除類名的瞬間閃色。
-    if (jump.target === 'hit') return
+    // 焦點跟著跳：鍵盤焦點與報讀游標落到目標段，跳轉才不只是視覺效果 ——
+    // aria-label 承諾「跳至原文位置」，不移焦點的話鍵盤/報讀使用者毫無回饋。
+    // preventScroll：捲動已由上一行處理，focus 不該再捲一次。
+    el.tabIndex = -1
+    el.focus({ preventScroll: true })
+    // 命中段本來就有常駐淡底、不再閃一次（flash 終點色是引文底色，套到命中段會在
+    // 移除類名的瞬間閃色）；reduce 動態時也不閃（與捲動用 auto 是同一個訊號）。
+    if (jump.target === 'hit' || reduced) return
     // 就地重播：移除 → 強制 reflow → 再加，讓連點同一條也會重新播。
     el.classList.remove(styles.flash)
     void el.offsetWidth

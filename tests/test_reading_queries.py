@@ -120,7 +120,13 @@ class SqlStructureTests(unittest.TestCase):
         sql = _sql(queries._SIMILAR_SQL)
         # 全篇均勻取樣（不是取前 N 塊——開頭多為封面/免責樣板）
         self.assertIn("row_number() OVER (ORDER BY c.chunk_index)", sql)
-        self.assertIn("GREATEST(1, s.tot /", sql)
+        # 均勻鋪滿：generate_series + floor(i * n / min(probe_n, n))。
+        # 舊版的整數除法模數 (rn % (n / probe_n)) 在 n∈[probe_n, 2*probe_n) 會退化成
+        # 「取前 probe_n 塊」＝拿封面/目錄/免責樣板當 probe，必須已被移除。
+        self.assertIn("generate_series(0,", sql)
+        self.assertIn("floor(", sql)
+        self.assertNotIn("GREATEST(1, s.tot", sql)
+        self.assertNotIn(".rn % ", sql)
         self.assertIn("CROSS JOIN LATERAL", sql)
         self.assertIn("c.embedding <=> p.embedding", sql)
 

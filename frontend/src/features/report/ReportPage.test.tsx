@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as readingApi from '../../lib/readingApi'
@@ -142,7 +142,8 @@ describe('ReportPage', () => {
     wrap(`/report/${HASH}`)
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
-    expect(screen.getByText('台股')).toBeInTheDocument()
+    // 市場標籤在報頭與相似卡片都會出現（同為台股）：報頭斷言限縮到 banner 區才唯一
+    expect(within(screen.getByRole('banner')).getByText('台股')).toBeInTheDocument()
     expect(screen.getByText('大和')).toBeInTheDocument()
     expect(screen.getByText('2026-07-14')).toBeInTheDocument()
     expect(screen.getByText('8046')).toBeInTheDocument()
@@ -359,7 +360,8 @@ describe('ReportPage', () => {
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByText('相似研報')).toBeInTheDocument())
     expect(screen.getByText('9/12 段相符')).toBeInTheDocument()
-    expect(screen.getByText(/以全文切成 12 個語意段落比對/)).toBeInTheDocument()
+    // 說法要對得上演算法：均勻「取樣」而非把全文「切成」N 段
+    expect(screen.getByText(/沿全文均勻取樣 12 個段落比對/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /欣興/ }))
       .toHaveAttribute('href', `/report/${'c'.repeat(64)}`)
   })
@@ -370,6 +372,16 @@ describe('ReportPage', () => {
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
     expect(screen.queryByText('相似研報')).toBeNull()
+  })
+
+  // 相似研報 500 曾整區憑空消失、讀者無從得知：改為顯示區塊＋可重試
+  it('相似研報載入失敗 → 顯示失敗與重試（不靜默消失）', async () => {
+    const { ApiError } = await import('../../lib/api')
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    vi.mocked(readingApi.getSimilarReports).mockRejectedValue(new ApiError(500, '壞了'))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('相似研報載入失敗。')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '重試' })).toBeInTheDocument()
   })
 
   // 免責曾在雷達改版中從兩處無聲消失、審查才揪出來；這幾條把它釘死在頁底。

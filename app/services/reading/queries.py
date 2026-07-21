@@ -204,7 +204,14 @@ async def fetch_chunk_content(
 #
 # **為什麼 probe 要全篇均勻取樣，而不是取前 N 塊**：研報開頭幾乎都是封面、目錄、
 # 免責聲明樣板。拿前 N 塊當 probe＝拿樣板當查詢，召回的只會是「同樣有樣板的報告」，
-# 與內容相似度無關。故以 row_number() % (tot / probe_n) 沿 chunk_index 均勻抽樣。
+# 與內容相似度無關。故沿 chunk_index 取 probe_n 個「均勻鋪滿全篇」的位置：
+#   rn = floor(i * n / min(probe_n, n))，  i ∈ [0, probe_n)
+# （n＝可嵌入 chunk 數）——不論長短報告都橫跨整篇。
+#
+# **不可用整數除法模數（rn % (n / probe_n)）**：當 n ∈ [probe_n, 2*probe_n)（幾頁的
+# 短研報最常見）時 n / probe_n 被整數截成 1，每一塊都命中，再被 LIMIT 砍成「前
+# probe_n 塊」＝正好退化回封面/目錄/免責樣板。唯有 n ≥ 2*probe_n 才真的均勻——
+# 對半數語料而言旗艦「相似研報」等於拿樣板在比，且無聲（不報錯、只是召回變雜訊）。
 #
 # **為什麼排序公式是 Σ(1 - best_dist) 而不是 min(dist)**：券商研報的法律免責聲明
 # 幾乎一模一樣，會產生近乎相同的 chunk。若只用 min(dist) 排序，任兩篇研報都會因為
@@ -218,16 +225,23 @@ async def fetch_chunk_content(
 # 否則同一篇的多個 chunk 會對同一 probe 灌票。
 _SIMILAR_SQL = text(
     """
-    WITH probe AS (
-        SELECT embedding FROM (
-            SELECT c.embedding,
-                   row_number() OVER (ORDER BY c.chunk_index) - 1 AS rn,
-                   count(*)     OVER ()                          AS tot
-            FROM research.report_chunk c
-            WHERE c.report_id = :rid AND c.embedding IS NOT NULL
-        ) s
-        WHERE s.rn % GREATEST(1, s.tot / :probe_n) = 0
-        LIMIT :probe_n
+    WITH ranked AS (
+        SELECT c.embedding,
+               row_number() OVER (ORDER BY c.chunk_index) - 1 AS rn
+        FROM research.report_chunk c
+        WHERE c.report_id = :rid AND c.embedding IS NOT NULL
+    ), tot AS (
+        SELECT count(*) AS n FROM ranked
+    ), probe AS (
+        -- 沿 chunk_index 均勻取最多 :probe_n 個位置（見上方註解的取樣理由與整數除法陷阱）
+        SELECT r.embedding
+        FROM ranked r
+        JOIN (
+            SELECT DISTINCT
+                   floor(gs * t.n::numeric / LEAST(:probe_n, GREATEST(t.n, 1)))::int AS rn
+            FROM tot t, generate_series(0, :probe_n - 1) AS gs
+            WHERE t.n > 0
+        ) pick ON pick.rn = r.rn
     ), hit AS (
         SELECT p.embedding AS pe, n.report_id, n.dist
         FROM probe p CROSS JOIN LATERAL (

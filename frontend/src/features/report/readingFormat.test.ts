@@ -203,6 +203,40 @@ describe('buildTextSegments', () => {
   })
 })
 
+// 後端 offset 以 Python str（code point）計；JS 字串是 UTF-16。星平面字元（罕用 CJK
+// 擴充區、emoji）一個 code point 佔兩個 UTF-16 單位——若用 text.slice/text.length 套
+// offset，之後全部邊界右移、高亮/跳段落到錯字（sha 驗不出來）。這組把 code point 座標釘死。
+describe('buildTextSegments（星平面字元 / code point offset）', () => {
+  // '𠀀' 為 CJK 擴充 B（1 code point = 2 UTF-16 單位）；code point 序列為
+  // [𠀀, 一, 二, 三, 四]，長度 5。若誤用 UTF-16 索引，[2,4) 會切到「一二」而非「二三」。
+  const text = '𠀀一二三四'
+
+  it('引文 offset 以 code point 計，星平面字元後不右移', () => {
+    const segs = buildTextSegments(text, [tk({ ordinal: 1, quote_start: 2, quote_end: 4 })])
+    expect(segs.find(s => s.ordinal === 1)?.text).toBe('二三')
+  })
+
+  it('命中段 offset 同樣以 code point 計', () => {
+    const segs = buildTextSegments(text, [], { start: 1, end: 3 })
+    expect(segs.find(s => s.hit)?.text).toBe('一二')
+  })
+
+  it('越界判斷用 code point 長度（末端引文不被 UTF-16 長度誤判為越界）', () => {
+    // code point 長度為 5：[3,5)=「三四」合法；若誤用 text.length（UTF-16=6）雖也放行，
+    // 但切片會取到 UTF-16 的 [3,5) 而非「三四」。這條同時釘住長度與切片兩處。
+    const segs = buildTextSegments(text, [tk({ ordinal: 1, quote_start: 3, quote_end: 5 })])
+    expect(segs.find(s => s.ordinal === 1)?.text).toBe('三四')
+  })
+
+  it('混合星平面字元切片後拼回仍等於原文（不遺失也不切壞代理對）', () => {
+    const mixed = '𠀀一😀三𪜀五'
+    const segs = buildTextSegments(mixed, [tk({ ordinal: 1, quote_start: 2, quote_end: 4 })])
+    expect(segs.map(s => s.text).join('')).toBe(mixed)
+    // [2,4) → 「😀三」（😀 也是星平面）
+    expect(segs.find(s => s.ordinal === 1)?.text).toBe('😀三')
+  })
+})
+
 // 命中段＝?chunk= 帶進來的那一段，offset 同樣由後端 anchor.py 算，前端只切片
 describe('buildTextSegments（命中段）', () => {
   const text = '0123456789'

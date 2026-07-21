@@ -81,7 +81,6 @@ export const readingDocSchema = z.object({
   file_hash: z.string(),
   file_name: z.string(),
   market: z.string().nullish(),
-  market_display: z.string().nullish(),
   source: z.string().nullish(),
   source_display: z.string().nullish(),
   report_date: z.string().nullish(),

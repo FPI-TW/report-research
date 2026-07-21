@@ -30,7 +30,6 @@ from app.services.reading.schemas import (
     Takeaway,
     ThesisDim,
 )
-from app.services.tagging import MARKET_DISPLAY
 from app.services.textnorm import clean_extracted
 from web import deps
 
@@ -196,7 +195,6 @@ async def reading_doc(file_hash: str):
         file_hash=doc.file_hash,
         file_name=doc.file_name,
         market=doc.market,
-        market_display=MARKET_DISPLAY.get(doc.market) if doc.market else None,
         source=doc.source,
         source_display=source_display(doc.source),
         report_date=doc.report_date.isoformat() if doc.report_date else None,

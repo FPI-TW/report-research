@@ -8,11 +8,39 @@
   justify-content: center;
 }
 
-/* PDF 內嵌：撐滿舞台、白底紙感 */
-.frame {
+/* PDF 內嵌容器：上方逃生列 + 撐滿其餘高度的框 */
+.pdfWrap {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: 860px;
-  height: 100%;
+  gap: 8px;
+}
+
+/* 逃生列：手機讀者第一眼看得到（iframe 在下方多半空白） */
+.pdfBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: none;
+  font-size: 11.5px;
+  color: var(--tf-text-4);
+}
+.pdfHint { color: var(--tf-text-4); }
+.pdfDot { color: var(--tf-border); }
+.pdfLink {
+  color: var(--tf-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.pdfLink:hover { text-decoration: underline; }
+.pdfLink:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; border-radius: 2px; }
+
+/* PDF 內嵌：撐滿其餘高度、白底紙感 */
+.frame {
+  flex: 1;
+  width: 100%;
   min-height: 480px;
   border: 1px solid var(--tf-border);
   border-radius: 4px;

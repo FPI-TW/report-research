@@ -161,11 +161,11 @@ export interface HitRange {
   end: number
 }
 
-/** 命中區間與正典文字的交集；越界、反向、錨不到一律視為無命中。 */
-function clampHit(text: string, hit: HitRange | null | undefined): HitRange | null {
+/** 命中區間與正典文字的交集；越界、反向、錨不到一律視為無命中。len 為 code point 數。 */
+function clampHit(len: number, hit: HitRange | null | undefined): HitRange | null {
   if (!hit) return null
   const start = Math.max(0, hit.start)
-  const end = Math.min(text.length, hit.end)
+  const end = Math.min(len, hit.end)
   return end > start ? { start, end } : null
 }
 
@@ -181,6 +181,12 @@ function inHit(hit: HitRange | null, start: number, end: number): true | undefin
  * 不在此重造任何正規化比對邏輯。越界、反向、彼此重疊者略過（先到先得），
  * 略過的摘錄仍會在左欄顯示，只是不可跳。
  *
+ * **座標系**：後端 offset 以 Python str（Unicode code point）為單位，但 JS 字串是
+ * UTF-16 —— 星平面字元（罕用 CJK 擴充區、emoji）一個 code point 佔兩個 UTF-16 單位。
+ * 若直接用 text.slice/text.length 套 offset，遇到這類字元後所有邊界會右移，高亮與跳段
+ * 靜靜落到錯字上（text_sha256 雜湊 UTF-8 位元組、驗不出這種漂移）。故先把文字拆成
+ * code point 陣列，全程以 code point 索引，與後端座標系一致。
+ *
  * 命中段（hit）與引文是兩套獨立的 offset：一般內文會在命中邊界切開，讓區間內外分別
  * 上色；引文段則整段一起標（不切）—— 切開會讓同一 ordinal 出現兩個 data-q，跳轉錨點
  * 就失去唯一性，而引文最多只會跨越命中邊界一次，視覺誤差可忽略。
@@ -190,11 +196,16 @@ export function buildTextSegments(
   takeaways: Takeaway[],
   hitRange?: HitRange | null,
 ): TextSegment[] {
-  const hit = clampHit(text, hitRange)
+  // code point 陣列：cp[i] 對應後端 offset i（見上方座標系說明）。
+  const cp = Array.from(text)
+  const len = cp.length
+  const slice = (a: number, b: number) => cp.slice(a, b).join('')
+
+  const hit = clampHit(len, hitRange)
   const ranges = takeaways
     .filter(isJumpable)
     .map(t => ({ start: t.quote_start as number, end: t.quote_end as number, ordinal: t.ordinal }))
-    .filter(r => r.start >= 0 && r.end <= text.length && r.end > r.start)
+    .filter(r => r.start >= 0 && r.end <= len && r.end > r.start)
     .sort((a, b) => a.start - b.start)
 
   const segments: TextSegment[] = []
@@ -207,7 +218,7 @@ export function buildTextSegments(
     const bounds = [from, ...cuts, to]
     for (let i = 0; i < bounds.length - 1; i++) {
       const [a, b] = [bounds[i], bounds[i + 1]]
-      segments.push({ key: `t${a}`, text: text.slice(a, b), hit: inHit(hit, a, b) })
+      segments.push({ key: `t${a}`, text: slice(a, b), hit: inHit(hit, a, b) })
     }
   }
 
@@ -217,12 +228,12 @@ export function buildTextSegments(
     pushPlain(cursor, r.start)
     segments.push({
       key: `q${r.ordinal}`,
-      text: text.slice(r.start, r.end),
+      text: slice(r.start, r.end),
       ordinal: r.ordinal,
       hit: inHit(hit, r.start, r.end),
     })
     cursor = r.end
   }
-  pushPlain(cursor, text.length)
+  pushPlain(cursor, len)
   return segments
 }

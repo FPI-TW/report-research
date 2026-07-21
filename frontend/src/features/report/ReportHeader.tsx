@@ -15,8 +15,8 @@ interface Props {
 /** 報頭：報告名（serif）+ 市場 chip + 券商 · 日期 · 標的代號 + 動作。 */
 export function ReportHeader({ doc }: Props) {
   const market = doc.market ?? ''
+  const broker = doc.source_display || doc.source || null
   const targets = [...doc.stock_targets, ...doc.futures_targets]
-  const types = doc.instrument_types.map(instrumentLabel)
   const meta = metaParts(doc)
 
   return (
@@ -40,15 +40,21 @@ export function ReportHeader({ doc }: Props) {
             {meta.map((part, i) => (
               <span key={part} className={styles.metaItem}>
                 {i > 0 && <span className={styles.dot} aria-hidden="true">·</span>}
-                {i === 0 ? <b>{part}</b> : part}
+                {/* 只把券商粗體：缺券商時 metaParts 會讓日期落在 index 0，沿用 i===0
+                    會把日期當券商名粗體。改以「這個 token 是不是券商」判斷。 */}
+                {part === broker ? <b>{part}</b> : part}
               </span>
             ))}
-            {targets.map(code => (
-              <span key={code} className={styles.code}>{code}</span>
+            {/* 同一代號可能同時是 stock 與 futures 標的，併陣列後 key 會撞號 → 補 index */}
+            {targets.map((code, i) => (
+              <span key={`${code}-${i}`} className={styles.code}>{code}</span>
             ))}
-            {types.map(t => (
-              <span key={t} className={styles.tag}>{t}</span>
+            {/* 兩個 code 可能映到同一顯示標籤 → 以原始 code+index 當 key，別用顯示字串 */}
+            {doc.instrument_types.map((code, i) => (
+              <span key={`${code}-${i}`} className={styles.tag}>{instrumentLabel(code)}</span>
             ))}
+            {/* report_type 是獨有的報告分類（個股報告/產業報告…），有值才顯示（約 80% 空） */}
+            {doc.report_type && <span className={styles.tag}>{doc.report_type}</span>}
           </div>
         </div>
 

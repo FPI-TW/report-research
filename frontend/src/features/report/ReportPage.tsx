@@ -204,12 +204,20 @@ export default function ReportPage() {
               jump={jump}
               isLoading={text.isLoading}
               isError={text.isError}
+              onRetry={() => text.refetch()}
+              hasFile={d.has_file}
             />
           )}
         </section>
       </div>
 
-      {similarItems.length > 0 && <SimilarReports items={similarItems} />}
+      {/* SimilarReports 自理狀態：錯誤→重試、載入中/空→不渲染（見其元件說明）。 */}
+      <SimilarReports
+        items={similarItems}
+        isLoading={similar.isLoading}
+        isError={similar.isError}
+        onRetry={() => similar.refetch()}
+      />
 
       {/* 合規要求：頁底免責恆常駐，不得依賴訊號/相似研報等任何選擇性區塊。 */}
       <div className={styles.disc}>

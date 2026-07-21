@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as readingApi from '../../lib/readingApi'
@@ -39,7 +39,6 @@ function doc(partial?: Partial<ReadingDoc>): ReadingDoc {
     file_hash: HASH,
     file_name: '南亞電路板 — 基板價格漲幅持續超預期.pdf',
     market: 'TW',
-    market_display: '台股',
     source: 'daiwa',
     source_display: '大和',
     report_date: '2026-07-14',
@@ -142,7 +141,8 @@ describe('ReportPage', () => {
     wrap(`/report/${HASH}`)
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
-    expect(screen.getByText('台股')).toBeInTheDocument()
+    // 市場標籤在報頭與相似卡片都會出現（同為台股）：報頭斷言限縮到 banner 區才唯一
+    expect(within(screen.getByRole('banner')).getByText('台股')).toBeInTheDocument()
     expect(screen.getByText('大和')).toBeInTheDocument()
     expect(screen.getByText('2026-07-14')).toBeInTheDocument()
     expect(screen.getByText('8046')).toBeInTheDocument()
@@ -160,6 +160,49 @@ describe('ReportPage', () => {
       `/ask?q=${encodeURIComponent('關於《南亞電路板 — 基板價格漲幅持續超預期.pdf》：')}`,
     )
     expect(link).toHaveAccessibleName(/全語料/)
+  })
+
+  // report_type 原本抓了不用（死欄）：有值就顯示、空值不留空 chip
+  it('報頭顯示 report_type（有值時）', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ report_type: '個股報告' }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() =>
+      expect(within(screen.getByRole('banner')).getByText('個股報告')).toBeInTheDocument())
+  })
+
+  it('report_type 為空 → 報頭不留空 chip', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ report_type: null }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
+    expect(within(screen.getByRole('banner')).queryByText('個股報告')).toBeNull()
+  })
+
+  it('報頭把券商粗體', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('大和')).toBeInTheDocument())
+    expect(screen.getByText('大和').tagName).toBe('B')
+  })
+
+  // 缺券商時 metaParts 讓日期落在 index 0，舊碼 i===0 會把日期粗體當券商名
+  it('報頭缺券商時不把日期誤當券商名粗體', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ source: null, source_display: null }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('2026-07-14')).toBeInTheDocument())
+    expect(screen.getByText('2026-07-14').closest('b')).toBeNull()
+  })
+
+  // 同代號同時是 stock 與 futures 標的時，併陣列後 key 會撞號 → 補 index 才不觸發警告
+  it('同代號同時是 stock/futures 標的不觸發重複 key 警告', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ stock_targets: ['2330'], futures_targets: ['2330'] }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() =>
+      expect(within(screen.getByRole('banner')).getAllByText('2330')).toHaveLength(2))
+    const logged = spy.mock.calls.map(c => String(c[0])).join('\n')
+    expect(logged).not.toMatch(/same key|two children/)
+    spy.mockRestore()
   })
 
   // 全語料僅 0.68% 有訊號 —— 無訊號是常態不是錯誤，整區不得留下空框或骨架
@@ -221,6 +264,21 @@ describe('ReportPage', () => {
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByRole('radio', { name: '原文' })).toBeChecked())
     expect(readingApi.getReadingText).not.toHaveBeenCalled()
+  })
+
+  // radiogroup 鍵盤契約：roving tabindex（只有選中的可 Tab 到）+ 方向鍵選取
+  it('檢視切換：roving tabindex 且方向鍵可切換（radiogroup 契約）', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    const pdf = await screen.findByRole('radio', { name: '原文' })
+    expect(pdf).toBeChecked()
+    expect(pdf).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('radio', { name: '文字' })).toHaveAttribute('tabindex', '-1')
+    pdf.focus()
+    fireEvent.keyDown(pdf, { key: 'ArrowRight' })
+    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
+    expect(screen.getByRole('radio', { name: '文字' })).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('radio', { name: '原文' })).toHaveAttribute('tabindex', '-1')
   })
 
   it('?chunk=N → 預設文字檢視、抓全文時帶 chunk、顯示命中導航', async () => {
@@ -324,6 +382,15 @@ describe('ReportPage', () => {
     expect((scrollIntoView.mock.contexts[0] as HTMLElement).dataset.q).toBe('q1')
   })
 
+  // 跳段不只是視覺捲動：焦點要移到目標段，鍵盤/報讀使用者才有回饋
+  it('點摘錄跳轉 → 焦點移到該引文段', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}?view=text`)
+    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
+    await waitFor(() => expect((document.activeElement as HTMLElement)?.dataset.q).toBe('q1'))
+  })
+
   // 命中段有等價的補救（依 hitStart 觸發），這條把它一起釘住
   it('?chunk=N 且後端錨到 → 全文抵達後自動捲到命中段', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ takeaways: [] }))
@@ -354,12 +421,34 @@ describe('ReportPage', () => {
     expect(screen.queryByRole('button', { name: /跳至第 1 條摘錄/ })).toBeNull()
   })
 
+  // 全文 /text 失敗曾是死路（只有一行「請稍後再試」、無任何動作）：改為可重試
+  it('全文載入失敗 → 顯示重試，點擊後重新抓取成功', async () => {
+    const { ApiError } = await import('../../lib/api')
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    vi.mocked(readingApi.getReadingText).mockRejectedValueOnce(new ApiError(500, '壞了'))
+    wrap(`/report/${HASH}?view=text`)
+    await waitFor(() => expect(screen.getByText('全文載入失敗。')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '重試' }))
+    // refetch → 落回 beforeEach 的成功回應 → 引文段標出
+    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
+  })
+
+  // 無原始檔時根本沒有「原文」檢視可切，提示不得叫讀者去切一個不存在的檢視
+  it('無原始檔的文字檢視 → 提示不出現「切原文」死路', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ has_file: false, is_pdf: false }))
+    wrap(`/report/${HASH}?view=text`)
+    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
+    expect(screen.getByText(/圖表與表格排版不會保留/)).toBeInTheDocument()
+    expect(screen.queryByText(/請切「原文」/)).toBeNull()
+  })
+
   it('相似研報：顯示「9/12 段相符」且連往閱讀頁', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByText('相似研報')).toBeInTheDocument())
     expect(screen.getByText('9/12 段相符')).toBeInTheDocument()
-    expect(screen.getByText(/以全文切成 12 個語意段落比對/)).toBeInTheDocument()
+    // 說法要對得上演算法：均勻「取樣」而非把全文「切成」N 段
+    expect(screen.getByText(/沿全文均勻取樣 12 個段落比對/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /欣興/ }))
       .toHaveAttribute('href', `/report/${'c'.repeat(64)}`)
   })
@@ -370,6 +459,16 @@ describe('ReportPage', () => {
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
     expect(screen.queryByText('相似研報')).toBeNull()
+  })
+
+  // 相似研報 500 曾整區憑空消失、讀者無從得知：改為顯示區塊＋可重試
+  it('相似研報載入失敗 → 顯示失敗與重試（不靜默消失）', async () => {
+    const { ApiError } = await import('../../lib/api')
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    vi.mocked(readingApi.getSimilarReports).mockRejectedValue(new ApiError(500, '壞了'))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('相似研報載入失敗。')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '重試' })).toBeInTheDocument()
   })
 
   // 免責曾在雷達改版中從兩處無聲消失、審查才揪出來；這幾條把它釘死在頁底。

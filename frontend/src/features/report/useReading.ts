@@ -30,8 +30,9 @@ export function useReadingText(hash: string, enabled: boolean, chunk: number | n
 
 export function useSimilarReports(hash: string, enabled = true) {
   return useQuery({
+    // 版面就是 4 欄（見 SimilarReports.module.css）：抓 4 就好，不多抓兩筆丟掉。
     queryKey: ['reading-similar', hash],
-    queryFn: () => getSimilarReports(hash, 6),
+    queryFn: () => getSimilarReports(hash, 4),
     enabled: enabled && Boolean(hash),
     staleTime: 60_000,
     retry: false,

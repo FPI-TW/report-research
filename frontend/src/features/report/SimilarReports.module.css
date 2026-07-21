@@ -71,11 +71,53 @@
 }
 
 .cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   font-size: 11px;
   color: var(--tf-text-3);
   font-family: var(--tf-mono);
   margin-bottom: 8px;
+  min-height: 15px;
 }
+
+/* 市場 chip：與報頭 .mkt 同語彙，卡片尺度縮小 */
+.cardMkt {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: var(--tf-radius-pill);
+  font-family: var(--tf-sans);
+  white-space: nowrap;
+}
+
+/* 載入失敗：不靜默消失，給讀者一個可重試的落點 */
+.failed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--tf-text-3);
+}
+
+.retry {
+  appearance: none;
+  border: 1px solid var(--tf-border);
+  background: var(--tf-surface);
+  color: var(--tf-ink);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--tf-sans);
+  padding: 3px 12px;
+  border-radius: var(--tf-radius-pill);
+  cursor: pointer;
+  transition: border-color var(--tf-dur-1) var(--tf-ease-standard),
+              background var(--tf-dur-1) var(--tf-ease-standard);
+}
+.retry:hover { border-color: var(--tf-ink-line); background: var(--tf-canvas); }
+.retry:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
 
 .cardBar {
   display: flex;

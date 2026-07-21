@@ -32,9 +32,20 @@ export function PdfPane({ doc }: Props) {
     )
   }
 
+  // PDF：桌面瀏覽器多能內嵌，但 iOS/多數 Android 不會在 <iframe> 內渲染 PDF（只留空白），
+  // 且「無法內嵌」不觸發 onError → 前端無從偵測。故一律附一條可「開新分頁／下載」的逃生口，
+  // 空白框才不至於是死路；桌面上它同時是個順手的捷徑。放在框上方，手機讀者第一眼就看得到。
   return (
     <div className={styles.stage}>
-      <iframe className={styles.frame} src={href} title={doc.file_name} />
+      <div className={styles.pdfWrap}>
+        <div className={styles.pdfBar}>
+          <span className={styles.pdfHint}>若下方無法顯示 PDF</span>
+          <a className={styles.pdfLink} href={href} target="_blank" rel="noopener noreferrer">在新分頁開啟</a>
+          <span className={styles.pdfDot} aria-hidden="true">·</span>
+          <a className={styles.pdfLink} href={href} download>下載</a>
+        </div>
+        <iframe className={styles.frame} src={href} title={doc.file_name} />
+      </div>
     </div>
   )
 }

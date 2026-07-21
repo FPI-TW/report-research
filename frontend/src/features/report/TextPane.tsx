@@ -22,10 +22,14 @@ interface Props {
   jump: JumpTarget | null
   isLoading: boolean
   isError: boolean
+  /** 全文載入失敗時的重試（react-query refetch）。 */
+  onRetry: () => void
+  /** 是否有原始檔可切。無檔時不得叫讀者「切原文」——那個檢視根本不存在。 */
+  hasFile: boolean
 }
 
 /** 文字檢視：正典文字＋依後端 offset 標出的引文段與檢索命中段。 */
-export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isError }: Props) {
+export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isError, onRetry, hasFile }: Props) {
   const reduced = useReducedMotion()
   const stageRef = useRef<HTMLDivElement>(null)
   // 已經執行過的 jump nonce；內容未就緒而暫緩的 jump 不會記進來（見下方 effect）。
@@ -53,20 +57,28 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
     const el = stageRef.current?.querySelector(sel)
     if (!(el instanceof HTMLElement)) return
     doneNonceRef.current = jump.nonce
-    // jsdom 未實作 scrollIntoView，故守門（缺席時仍套 flash）。
+    // jsdom 未實作 scrollIntoView，故守門（缺席時仍移焦點/套 flash）。
     // ReportPage.test.tsx 會 stub 一顆上去，才驗得到「跳轉真的發生」。
     if (typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
     }
-    // 命中段本來就有常駐淡底、不再閃一次：flash 的終點色是引文的底色，
-    // 套到命中段會在動畫結束移除類名的瞬間閃色。
-    if (jump.target === 'hit') return
+    // 焦點跟著跳：鍵盤焦點與報讀游標落到目標段，跳轉才不只是視覺效果 ——
+    // aria-label 承諾「跳至原文位置」，不移焦點的話鍵盤/報讀使用者毫無回饋。
+    // preventScroll：捲動已由上一行處理，focus 不該再捲一次。
+    el.tabIndex = -1
+    el.focus({ preventScroll: true })
+    // 命中段本來就有常駐淡底、不再閃一次（flash 終點色是引文底色，套到命中段會在
+    // 移除類名的瞬間閃色）；reduce 動態時也不閃（與捲動用 auto 是同一個訊號）。
+    if (jump.target === 'hit' || reduced) return
     // 就地重播：移除 → 強制 reflow → 再加，讓連點同一條也會重新播。
     el.classList.remove(styles.flash)
     void el.offsetWidth
     el.classList.add(styles.flash)
-    const t = setTimeout(() => el.classList.remove(styles.flash), 1600)
-    return () => clearTimeout(t)
+    // 用 animationend 收尾，而非寫死的計時器：清除時機與 CSS 動畫時長綁在一起，
+    // 兩個各自的 magic number（1600ms vs 1.5s）不會再各改各的而漂移。
+    const done = () => el.classList.remove(styles.flash)
+    el.addEventListener('animationend', done, { once: true })
+    return () => el.removeEventListener('animationend', done)
   }, [jump, ready, reduced])
 
   // 只有真的失敗才說失敗：查詢剛啟用、尚未進 fetching 的那一拍 isLoading 仍為 false 而 data 未到，
@@ -74,7 +86,10 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
   if (isError) {
     return (
       <div className={styles.stage}>
-        <div className={styles.state} role="status">全文載入失敗，請稍後再試。</div>
+        <div className={styles.state} role="status">
+          <p className={styles.stateText}>全文載入失敗。</p>
+          <button type="button" className={styles.retry} onClick={onRetry}>重試</button>
+        </div>
       </div>
     )
   }
@@ -95,7 +110,7 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
     <div className={styles.stage} ref={stageRef}>
       <article className={styles.reader}>
         <div className={styles.note}>
-          文字檢視為 PDF 抽取結果，圖表與表格排版不會保留 — 需要完整版面請切「原文」。
+          文字檢視為 PDF 抽取結果，圖表與表格排版不會保留{hasFile ? ' — 需要完整版面請切「原文」' : ''}。
         </div>
         {/* data-hit 同時掛在命中段的內文與引文上：它是捲動錨點（querySelector 取第一個），
             故引文即使不套 hit 底色（自己已有更明確的引文標記）也要掛，
@@ -120,7 +135,7 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
         </div>
         {text.truncated && (
           <p className={styles.truncated}>
-            全文過長，此處僅顯示前段 — 需要完整內容請切「原文」。
+            全文過長，此處僅顯示前段{hasFile ? ' — 需要完整內容請切「原文」' : ''}。
           </p>
         )}
       </article>

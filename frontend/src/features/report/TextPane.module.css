@@ -38,6 +38,15 @@
   color: var(--tf-text-1);
 }
 
+/* 跳段會把焦點移到目標段（tabindex=-1）：滑鼠/程式性移焦不顯外框（sighted 由 flash
+   與常駐底色回饋），唯有鍵盤操作（focus-visible）才給明確外框。 */
+.body :focus { outline: none; }
+.body :focus-visible {
+  outline: 2px solid var(--tf-ink);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 /* 引文段標記：常態淡金底，讓讀者看得出哪幾句是摘錄來源 */
 .quote {
   background: var(--tf-gold-panel);
@@ -97,6 +106,27 @@
   max-width: 420px;
   width: 100%;
 }
+
+.stateText {
+  margin: 0 0 16px;
+  line-height: 1.55;
+}
+
+.retry {
+  appearance: none;
+  border: 0;
+  background: var(--tf-ink);
+  color: var(--tf-on-ink);
+  border-radius: var(--tf-radius-pill);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--tf-sans);
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: background var(--tf-dur-1) var(--tf-ease-standard);
+}
+.retry:hover { background: var(--tf-ink-hover); }
+.retry:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
 
 @media (max-width: 900px) {
   .stage { padding: 14px; }

@@ -41,35 +41,19 @@ from web import deps  # noqa: E402
 
 from app.services.answer import (  # noqa: E402
     OFF_TOPIC_MESSAGES,
-    answer_question,
     delete_conversation,
-    delete_qa,
     get_conversation,
     history_item,
     list_conversations,
-    list_qa_versions,
-    log_stopped_qa,
     record_feedback,
 )
 from app.config import get_settings  # noqa: E402
-from app.services.db import SessionFactory  # noqa: E402
-from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.filename import source_display  # noqa: E402
-from app.services.rerank import warmup as rerank_warmup  # noqa: E402
 from app.services.retrieval import (  # noqa: E402
     DENSE_SCAN_SEARCH,
     LEX_CAP_SEARCH,
-    hybrid_search,
-    rank_reports,
 )
 from app.services.reading.anchor import locate_chunk  # noqa: E402
-from app.services.reading.queries import (  # noqa: E402
-    fetch_chunk_content,
-    fetch_doc,
-    fetch_signals,
-    fetch_similar,
-    fetch_takeaways,
-)
 from app.services.reading.schemas import (  # noqa: E402
     EpsEstimate,
     ReadingDoc,
@@ -98,12 +82,6 @@ from app.services.radar import (  # noqa: E402
     build_events_page,
     build_instrument_slim,
     build_overview,
-    fetch_broker_coverage_counts,
-    fetch_broker_signals,
-    fetch_coverage_counts,
-    fetch_instrument_signals,
-    fetch_signals_for_instruments,
-    list_radar_instruments,
 )
 from app.services.radar.schemas import (  # noqa: E402
     ApiErrorResponse,
@@ -163,13 +141,13 @@ async def _warmup_models() -> None:
     rerank 冷載入實測 44-52s：不預載則首個帶 rerank 的請求把載入算進逾時預算而 fail-open。
     """
     try:
-        await asyncio.to_thread(embed_texts, ["warmup"])
+        await asyncio.to_thread(deps.embed_texts, ["warmup"])
     except Exception:
         # embed 暖機失敗不阻斷 rerank 暖機；embed 無熔斷、首個查詢會 lazy 重試。
         logger.exception("embedding warmup failed")
     _s = get_settings()
     if _s.ask_rerank_enabled or _s.report_rerank_enabled:
-        await asyncio.to_thread(rerank_warmup)  # 失敗由 rerank 模組熔斷處理，不拋
+        await asyncio.to_thread(deps.rerank_warmup)  # 失敗由 rerank 模組熔斷處理，不拋
 
 
 def _log_warmup_result(task: asyncio.Task[None]) -> None:
@@ -331,7 +309,7 @@ class ReportListResponse(BaseModel):
 
 
 async def _fetch_db_stats_snapshot() -> dict:
-    async with SessionFactory() as session:
+    async with deps.SessionFactory() as session:
         total_reports = (
             await session.execute(text("SELECT count(*) FROM research.research_report"))
         ).scalar_one()
@@ -601,14 +579,14 @@ async def radar_instruments(
     以單次批次查詢計算，避免逐檔 N+1。
     """
     t0 = time.monotonic()
-    async with SessionFactory() as session:
-        total, rows = await list_radar_instruments(
+    async with deps.SessionFactory() as session:
+        total, rows = await deps.list_radar_instruments(
             session, market=market, q=q, limit=limit, offset=offset
         )
         signals_by_key: dict[tuple[str, str], list] = {}
         if with_consensus and rows:
             keys = [(r.market, r.instrument_code) for r in rows]
-            signals_by_key = await fetch_signals_for_instruments(session, keys)
+            signals_by_key = await deps.fetch_signals_for_instruments(session, keys)
     consensus_by_key = {
         key: build_instrument_slim(sigs) for key, sigs in signals_by_key.items()
     }
@@ -659,11 +637,11 @@ async def instrument_radar_events(
     if not code or len(code) > 16:
         raise HTTPException(status_code=422, detail="code 非法")
     t0 = time.monotonic()
-    async with SessionFactory() as session:
-        coverage = await fetch_coverage_counts(session, market, code)
+    async with deps.SessionFactory() as session:
+        coverage = await deps.fetch_coverage_counts(session, market, code)
         if not coverage.has_reports:
             raise HTTPException(status_code=404, detail="instrument not found")
-        signals = await fetch_instrument_signals(session, market, code)
+        signals = await deps.fetch_instrument_signals(session, market, code)
     resp = build_events_page(
         signals,
         market=market,
@@ -691,12 +669,12 @@ async def instrument_radar(
     if not code or len(code) > 16:
         raise HTTPException(status_code=422, detail="code 非法")
     t0 = time.monotonic()
-    async with SessionFactory() as session:
-        coverage = await fetch_coverage_counts(session, market, code)
+    async with deps.SessionFactory() as session:
+        coverage = await deps.fetch_coverage_counts(session, market, code)
         # 完全無研報 → 404；有研報但尚未擷取訊號 → 200 pending_extraction 空狀態
         if not coverage.has_reports:
             raise HTTPException(status_code=404, detail="instrument not found")
-        signals = await fetch_instrument_signals(session, market, code)
+        signals = await deps.fetch_instrument_signals(session, market, code)
     resp = build_overview(signals, coverage, window=window)
     logger.info(
         "radar overview code=%s market=%s window=%s signals=%d state=%s events=%d elapsed_ms=%.1f",
@@ -722,13 +700,13 @@ async def instrument_radar_broker(
     if not code or len(code) > 16 or not broker or len(broker) > 64:
         raise HTTPException(status_code=422, detail="參數非法")
     t0 = time.monotonic()
-    async with SessionFactory() as session:
-        coverage = await fetch_broker_coverage_counts(session, market, code, broker)
+    async with deps.SessionFactory() as session:
+        coverage = await deps.fetch_broker_coverage_counts(session, market, code, broker)
         if coverage.instrument_reports_available == 0:
             raise HTTPException(status_code=404, detail="instrument not found")
         if coverage.broker_reports_available == 0:
             raise HTTPException(status_code=404, detail="broker not found")
-        signals = await fetch_broker_signals(session, market, code, broker)
+        signals = await deps.fetch_broker_signals(session, market, code, broker)
     resp = build_broker_history(
         signals, market=market, code=code, broker=broker, window=window
     )
@@ -888,12 +866,12 @@ async def reading_doc(file_hash: str):
     全文另走 /api/reading/{file_hash}/text，前端只在需要文字檢視時才取。
     """
     _validate_file_hash(file_hash)
-    async with SessionFactory() as session:
-        doc = await fetch_doc(session, file_hash)
+    async with deps.SessionFactory() as session:
+        doc = await deps.fetch_doc(session, file_hash)
         if doc is None:
             raise HTTPException(status_code=404, detail="report not found")
-        takeaway_rows = await fetch_takeaways(session, doc.report_id)
-        signal_rows = await fetch_signals(session, doc.report_id)
+        takeaway_rows = await deps.fetch_takeaways(session, doc.report_id)
+        signal_rows = await deps.fetch_signals(session, doc.report_id)
     canonical, text_sha256 = _canonical_text(doc.full_text)
     signals = _reading_signals(signal_rows)
     return ReadingDoc(
@@ -940,11 +918,11 @@ async def reading_text(file_hash: str, chunk: int | None = Query(None, ge=0)):
     錨不到 → 兩者為 None，回應仍是 200：**沒有命中位置不是錯誤**，頁面照常。
     """
     _validate_file_hash(file_hash)
-    async with SessionFactory() as session:
-        doc = await fetch_doc(session, file_hash)
+    async with deps.SessionFactory() as session:
+        doc = await deps.fetch_doc(session, file_hash)
         # 同一個 session 內取完：出了 with 區塊 session 已關閉
         chunk_content = (
-            await fetch_chunk_content(session, doc.report_id, chunk)
+            await deps.fetch_chunk_content(session, doc.report_id, chunk)
             if doc is not None and chunk is not None
             else None
         )
@@ -974,11 +952,11 @@ async def reading_similar(file_hash: str, limit: int = Query(6, ge=1, le=20)):
     """相似研報（全篇均勻取樣 probe + 廣度加權；理由見 reading/queries.py）。"""
     _validate_file_hash(file_hash)
     t0 = time.monotonic()
-    async with SessionFactory() as session:
-        doc = await fetch_doc(session, file_hash)
+    async with deps.SessionFactory() as session:
+        doc = await deps.fetch_doc(session, file_hash)
         if doc is None:
             raise HTTPException(status_code=404, detail="report not found")
-        rows = await fetch_similar(session, doc.report_id, limit=limit)
+        rows = await deps.fetch_similar(session, doc.report_id, limit=limit)
     logger.info(
         "reading similar file_hash=%s items=%d elapsed_ms=%.1f",
         file_hash, len(rows), (time.monotonic() - t0) * 1000,
@@ -1017,7 +995,7 @@ async def reports(
     mkt = market if market and market != "全部" else None
     instr = instrument_type if instrument_type and instrument_type != "全部" else None
     rtype = report_type if report_type and report_type != "全部" else None
-    async with SessionFactory() as session:
+    async with deps.SessionFactory() as session:
         total, rows = await list_reports(
             session,
             market=mkt,
@@ -1069,9 +1047,9 @@ async def search(
     mkt = market if market and market != "全部" else None
     instr = instrument_type if instrument_type and instrument_type != "全部" else None
     rtype = report_type if report_type and report_type != "全部" else None
-    qvec = await asyncio.to_thread(embed_query_cached, q)
-    async with SessionFactory() as session:
-        scored = await hybrid_search(
+    qvec = await asyncio.to_thread(deps.embed_query_cached, q)
+    async with deps.SessionFactory() as session:
+        scored = await deps.hybrid_search(
             session,
             q,
             qvec,
@@ -1088,7 +1066,7 @@ async def search(
         )
 
     # 分組成「全部」召回報告 → 依 sort 排序 → 取 total → 切當頁
-    ranked = rank_reports(scored, sort=sort)
+    ranked = deps.rank_reports(scored, sort=sort)
     total = len(ranked)
     # 色譜讀數：命中集合的市場組成。ranked 已全量在記憶體，額外成本僅一次計數。
     facet_counts = Counter(g.meta_row.market for g in ranked if g.meta_row.market)
@@ -1198,7 +1176,7 @@ async def ask(req: AskRequest):
     async def gen():
         async with _ASK_SEMAPHORE:
             try:
-                async for event, payload in answer_question(
+                async for event, payload in deps.answer_question(
                     question,
                     k=k,
                     filters=filters,
@@ -1242,7 +1220,7 @@ async def ask_stop(req: StopRequest):
         raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
     if req.request_id is not None and not deps._valid_uuid(req.request_id):
         raise HTTPException(status_code=400, detail="request_id 格式不正確")
-    qa_id = await log_stopped_qa(
+    qa_id = await deps.log_stopped_qa(
         (req.question or "").strip(),
         req.partial_answer or "",
         conversation_id=req.conversation_id,
@@ -1324,7 +1302,7 @@ async def feedback(req: FeedbackRequest):
 @app.get("/api/history")
 async def history(limit: int = Query(50, ge=1, le=200)):
     """最近的問答歷史（排除離題拒答）；唯讀，供前端「歷史」抽層。"""
-    async with SessionFactory() as session:
+    async with deps.SessionFactory() as session:
         rows = (
             await session.execute(
                 text(
@@ -1343,7 +1321,7 @@ async def history(limit: int = Query(50, ge=1, le=200)):
 @app.delete("/api/history/{qa_id}")
 async def delete_history(qa_id: str):
     """刪除單筆問答歷史（使用者清除側欄某一列）。回 {"ok": bool}。"""
-    ok = await delete_qa(qa_id)
+    ok = await deps.delete_qa(qa_id)
     return {"ok": ok}
 
 
@@ -1353,7 +1331,7 @@ async def delete_history_post(qa_id: str):
 
     某些外部代理/邊緣環境對 DELETE 支援不穩時，前端可回退到 POST alias。
     """
-    ok = await delete_qa(qa_id)
+    ok = await deps.delete_qa(qa_id)
     return {"ok": ok}
 
 
@@ -1362,7 +1340,7 @@ async def qa_versions(root_qa_id: str):
     """某問題群組全部版本（供歷史 pager 回看）。"""
     if not deps._valid_uuid(root_qa_id):
         raise HTTPException(status_code=404, detail="not found")
-    return await list_qa_versions(root_qa_id)
+    return await deps.list_qa_versions(root_qa_id)
 
 
 @app.get("/api/conversations")
@@ -1409,7 +1387,7 @@ async def _fetch_report(session, report_id: str):
 @app.get("/api/report/{report_id}/full")
 async def report_full(report_id: str):
     """回傳單篇報告的 metadata 與原始檔狀態（供前端 modal 內嵌 PDF）。"""
-    async with SessionFactory() as session:
+    async with deps.SessionFactory() as session:
         fn, m, src, rdate, rtype, fpath, _, summary = await _fetch_report(
             session, report_id
         )
@@ -1428,7 +1406,7 @@ async def report_full(report_id: str):
 @app.get("/api/report/{report_id}/file")
 async def report_file(report_id: str):
     """提供原始檔（PDF 內嵌、其他下載）。路徑由 DB 依 id 取得，無路徑注入。"""
-    async with SessionFactory() as session:
+    async with deps.SessionFactory() as session:
         row = await _fetch_report(session, report_id)
     fpath = row[5]
     if not fpath or not os.path.isfile(fpath):

@@ -17,7 +17,7 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 from fastapi.testclient import TestClient  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
-from web import server  # noqa: E402
+from web import deps, server  # noqa: E402
 from app.services.radar.queries import CoverageCounts, RadarInstrumentRow  # noqa: E402
 from app.services.radar.types import Signal  # noqa: E402
 
@@ -82,29 +82,30 @@ def _authed_client():
 
 
 class RadarApiBase(unittest.TestCase):
+    # 這些服務綁定已集中到 web.deps（handler 以 deps.X 呼叫），故 patch 目標是 deps。
     def setUp(self):
         self._missing = object()
         self._orig = {
-            k: getattr(server, k, self._missing)
+            k: getattr(deps, k, self._missing)
             for k in (
                 "SessionFactory", "fetch_coverage_counts", "fetch_instrument_signals",
                 "fetch_broker_signals", "list_radar_instruments",
                 "fetch_signals_for_instruments", "fetch_broker_coverage_counts",
             )
         }
-        server.SessionFactory = lambda: _FakeSession()
+        deps.SessionFactory = lambda: _FakeSession()
 
     def tearDown(self):
         for k, v in self._orig.items():
             if v is self._missing:
-                if hasattr(server, k):
-                    delattr(server, k)
+                if hasattr(deps, k):
+                    delattr(deps, k)
             else:
-                setattr(server, k, v)
+                setattr(deps, k, v)
 
     def _set(self, **fns):
         for name, fn in fns.items():
-            setattr(server, name, fn)
+            setattr(deps, name, fn)
 
 
 class OverviewAuthAndValidationTests(RadarApiBase):

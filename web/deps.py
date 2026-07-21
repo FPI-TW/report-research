@@ -1,5 +1,5 @@
 # web/deps.py
-"""跨路由組共用的 helper 與設定。拆分 web/server.py 成 APIRouter 模組的地基。
+"""web 層的共用 helper、設定，與可 mock 的服務依賴面。拆分 web/server.py 的地基。
 
 ## 存取方式：一律走模組物件，不要 `from web.deps import X`
 
@@ -110,3 +110,40 @@ def _valid_uuid(s) -> bool:
         return True
     except (ValueError, AttributeError, TypeError):
         return False
+
+
+# ── 服務層依賴面：web 層唯一可被 mock 的外部呼叫集合 ──────────────────────
+#
+# 路由 handler 一律以 deps.X(...) 呼叫這些；測試一律 patch web.deps.X。
+# 集中在此的目的：拆分成 router 模組後，這些函式被跨模組使用（handler 在 router
+# 模組、實作在 app.services），patch 目標必須是雙方都看得到的單一位置＝web.deps。
+# 若讓各 router 各自 `from app.services import X`，就回到 from-import 陷阱：
+# `web.deps.X = fake` 改不到 router 內部那份綁定，patch 安靜落空。
+#
+# 只放「測試會 mock 的服務函式」；純資料轉換（source_display / clean_text /
+# MARKETS 等，測試不 mock）仍由各處直接 import，不進這裡。
+from app.services.answer import (  # noqa: E402
+    answer_question,
+    delete_qa,
+    list_qa_versions,
+    log_stopped_qa,
+)
+from app.services.db import SessionFactory  # noqa: E402
+from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
+from app.services.radar import (  # noqa: E402
+    fetch_broker_coverage_counts,
+    fetch_broker_signals,
+    fetch_coverage_counts,
+    fetch_instrument_signals,
+    fetch_signals_for_instruments,
+    list_radar_instruments,
+)
+from app.services.reading.queries import (  # noqa: E402
+    fetch_chunk_content,
+    fetch_doc,
+    fetch_signals,
+    fetch_similar,
+    fetch_takeaways,
+)
+from app.services.rerank import warmup as rerank_warmup  # noqa: E402
+from app.services.retrieval import hybrid_search, rank_reports  # noqa: E402

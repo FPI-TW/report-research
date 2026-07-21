@@ -18,6 +18,7 @@ warnings.filterwarnings(
 
 from fastapi.testclient import TestClient
 
+from web import deps  # noqa: E402
 from web.server import app
 
 
@@ -47,8 +48,8 @@ class ServerStartupTests(unittest.TestCase):
                 request_finished.set()
                 allow_warmup_finish.set()
 
-        with patch("web.server.embed_texts", side_effect=slow_warmup), \
-             patch("web.server.rerank_warmup", return_value=True):
+        with patch("web.deps.embed_texts", side_effect=slow_warmup), \
+             patch("web.deps.rerank_warmup", return_value=True):
             thread = threading.Thread(target=run_client)
             thread.start()
             try:
@@ -92,8 +93,8 @@ class ServerStartupTests(unittest.TestCase):
                 request_finished.set()
                 allow_warmup_finish.set()
 
-        with patch("web.server.embed_texts", return_value=[[0.0]]), \
-             patch("web.server.rerank_warmup", side_effect=slow_rerank_warmup):
+        with patch("web.deps.embed_texts", return_value=[[0.0]]), \
+             patch("web.deps.rerank_warmup", side_effect=slow_rerank_warmup):
             thread = threading.Thread(target=run_client)
             thread.start()
             try:
@@ -139,8 +140,8 @@ class ServerStartupTests(unittest.TestCase):
             except BaseException as exc:  # pragma: no cover - surfaced by assertions
                 errors.append(exc)
 
-        with patch("web.server.embed_texts", side_effect=blocking_embed), \
-             patch("web.server.rerank_warmup", side_effect=recording_rerank):
+        with patch("web.deps.embed_texts", side_effect=blocking_embed), \
+             patch("web.deps.rerank_warmup", side_effect=recording_rerank):
             thread = threading.Thread(target=run_client)
             thread.start()
             try:

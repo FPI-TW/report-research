@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 import web.server as server  # noqa: E402
+from web import deps  # noqa: E402
 
 
 class _ScalarResult:
@@ -104,9 +105,9 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                     return _ScalarResult(6)
                 raise AssertionError(sql)
 
-        orig_session_factory = server.SessionFactory
+        orig_session_factory = deps.SessionFactory
         orig_gather_runtime = server._gather_runtime
-        server.SessionFactory = lambda: FakeSession()
+        deps.SessionFactory = lambda: FakeSession()
         server._gather_runtime = lambda: {
             "tagging": None,
             "ingest": None,
@@ -117,7 +118,7 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
             stats = await server.stats()
             progress = await server.progress()
         finally:
-            server.SessionFactory = orig_session_factory
+            deps.SessionFactory = orig_session_factory
             server._gather_runtime = orig_gather_runtime
 
         self.assertEqual(len(calls), 6)

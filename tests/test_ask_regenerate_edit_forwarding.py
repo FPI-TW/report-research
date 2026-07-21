@@ -20,6 +20,7 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 
 from fastapi.testclient import TestClient  # noqa: E402
 import web.server as server  # noqa: E402
+from web import deps  # noqa: E402
 
 _VALID_UUID = "13c3af97-b458-4108-836d-654a89e76fb7"
 
@@ -43,15 +44,15 @@ class AskForwardingTests(unittest.TestCase):
     def test_ask_forwards_regenerate_of(self):
         client = _authed_client()
         captured: dict = {}
-        orig = server.answer_question
-        server.answer_question = self._patched_answer_question(captured)
+        orig = deps.answer_question
+        deps.answer_question = self._patched_answer_question(captured)
         try:
             resp = client.post(
                 "/api/ask",
                 json={"question": "台積電展望", "regenerate_of": _VALID_UUID},
             )
         finally:
-            server.answer_question = orig
+            deps.answer_question = orig
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(captured.get("regenerate_of"), _VALID_UUID)
@@ -60,15 +61,15 @@ class AskForwardingTests(unittest.TestCase):
     def test_ask_forwards_edit_of(self):
         client = _authed_client()
         captured: dict = {}
-        orig = server.answer_question
-        server.answer_question = self._patched_answer_question(captured)
+        orig = deps.answer_question
+        deps.answer_question = self._patched_answer_question(captured)
         try:
             resp = client.post(
                 "/api/ask",
                 json={"question": "台積電展望", "edit_of": _VALID_UUID},
             )
         finally:
-            server.answer_question = orig
+            deps.answer_question = orig
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(captured.get("edit_of"), _VALID_UUID)

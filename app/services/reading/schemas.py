@@ -76,7 +76,6 @@ class ReadingDoc(BaseModel):
     file_hash: str
     file_name: str
     market: Optional[str] = None
-    market_display: Optional[str] = None
     source: Optional[str] = None
     source_display: Optional[str] = None
     report_date: Optional[str] = None

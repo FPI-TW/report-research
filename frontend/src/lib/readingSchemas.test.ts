@@ -33,7 +33,7 @@ describe('readingDocSchema', () => {
   it('nullable 欄位吃 null 也吃缺席', () => {
     const d = readingDocSchema.parse({
       ...minimalDoc,
-      market: null, market_display: null, source: null, source_display: null,
+      market: null, source: null, source_display: null,
       report_date: null, report_type: null, summary: null, text_sha256: null,
     })
     expect(d.market).toBeNull()
@@ -44,7 +44,7 @@ describe('readingDocSchema', () => {
   it('完整態：狀態列舉與訊號解析正確', () => {
     const d = readingDocSchema.parse({
       ...minimalDoc,
-      market: 'TW', market_display: '台股',
+      market: 'TW',
       source: 'daiwa', source_display: '大和',
       report_date: '2026-07-14', summary: '摘要',
       has_file: true, is_pdf: true,

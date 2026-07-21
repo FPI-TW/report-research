@@ -179,7 +179,7 @@ class ReadingDocShapeTests(ReadingApiBase):
         self.assertEqual(body["file_hash"], HASH)
         self.assertEqual(body["file_name"], "daiwa-8046.pdf")
         self.assertEqual(body["market"], "TW")
-        self.assertEqual(body["market_display"], "台股")
+        self.assertEqual(body["report_type"], "個股報告")  # 前端報頭會顯示
         self.assertEqual(body["source"], "daiwa")
         self.assertEqual(body["source_display"], source_display("daiwa"))
         self.assertEqual(body["report_date"], "2026-07-11")

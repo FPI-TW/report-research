@@ -74,8 +74,11 @@ export function TextPane({ text, takeaways, canJump, hit, jump, isLoading, isErr
     el.classList.remove(styles.flash)
     void el.offsetWidth
     el.classList.add(styles.flash)
-    const t = setTimeout(() => el.classList.remove(styles.flash), 1600)
-    return () => clearTimeout(t)
+    // 用 animationend 收尾，而非寫死的計時器：清除時機與 CSS 動畫時長綁在一起，
+    // 兩個各自的 magic number（1600ms vs 1.5s）不會再各改各的而漂移。
+    const done = () => el.classList.remove(styles.flash)
+    el.addEventListener('animationend', done, { once: true })
+    return () => el.removeEventListener('animationend', done)
   }, [jump, ready, reduced])
 
   // 只有真的失敗才說失敗：查詢剛啟用、尚未進 fetching 的那一拍 isLoading 仍為 false 而 data 未到，

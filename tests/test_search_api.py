@@ -21,7 +21,7 @@ class _FakeSession:
 
 class SearchApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_search_requests_unlimited_lexical_reports(self):
-        from web import server
+        from web import deps, server
 
         seen = {}
 
@@ -37,15 +37,15 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
             return []
 
         orig = (
-            server.hybrid_search,
-            server.embed_query_cached,
-            server.rank_reports,
-            server.SessionFactory,
+            deps.hybrid_search,
+            deps.embed_query_cached,
+            deps.rank_reports,
+            deps.SessionFactory,
         )
-        server.hybrid_search = fake_hybrid_search
-        server.embed_query_cached = fake_embed
-        server.rank_reports = fake_rank_reports
-        server.SessionFactory = lambda: _FakeSession()
+        deps.hybrid_search = fake_hybrid_search
+        deps.embed_query_cached = fake_embed
+        deps.rank_reports = fake_rank_reports
+        deps.SessionFactory = lambda: _FakeSession()
         try:
             response = await server.search(
                 q="台積電",
@@ -61,10 +61,10 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
             )
         finally:
             (
-                server.hybrid_search,
-                server.embed_query_cached,
-                server.rank_reports,
-                server.SessionFactory,
+                deps.hybrid_search,
+                deps.embed_query_cached,
+                deps.rank_reports,
+                deps.SessionFactory,
             ) = orig
 
         self.assertTrue(seen["lex_unlimited"])

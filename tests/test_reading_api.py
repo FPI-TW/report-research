@@ -20,7 +20,16 @@ from app.services.filename import source_display  # noqa: E402
 from app.services.radar.types import DimensionStance, EpsEstimate, Signal  # noqa: E402
 from app.services.reading.queries import DocRow, SimilarRow, TakeawayRow  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
-from web import server  # noqa: E402
+from web import deps, server  # noqa: E402
+
+# 服務綁定（SessionFactory、fetch_*）已集中到 web.deps；但 READING_TEXT_MAX_CHARS
+# 是 reading 組的設定常數，仍在 server（隨 reading router 於後續步驟一起搬）。
+# 故覆寫時按符號選模組，兩者不可混淆。
+_ON_SERVER = {"READING_TEXT_MAX_CHARS"}
+
+
+def _dep_mod(name):
+    return server if name in _ON_SERVER else deps
 
 HASH = "a" * 64
 OTHER_HASH = "c" * 64
@@ -96,13 +105,13 @@ def _authed_client():
 class ReadingApiBase(unittest.TestCase):
     def setUp(self):
         self._orig = {
-            k: getattr(server, k)
+            k: getattr(_dep_mod(k), k)
             for k in (
                 "SessionFactory", "fetch_doc", "fetch_takeaways", "fetch_signals",
                 "fetch_similar", "fetch_chunk_content", "READING_TEXT_MAX_CHARS",
             )
         }
-        server.SessionFactory = lambda: _FakeSession()
+        deps.SessionFactory = lambda: _FakeSession()
         # 預設：一篇有全文、無摘錄、無訊號、查不到 chunk 的報告
         self._set(
             fetch_doc=self._async(_doc()),
@@ -114,11 +123,11 @@ class ReadingApiBase(unittest.TestCase):
 
     def tearDown(self):
         for k, v in self._orig.items():
-            setattr(server, k, v)
+            setattr(_dep_mod(k), k, v)
 
     def _set(self, **fns):
         for name, fn in fns.items():
-            setattr(server, name, fn)
+            setattr(_dep_mod(name), name, fn)
 
     @staticmethod
     def _async(value):

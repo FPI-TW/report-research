@@ -11,6 +11,7 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 from web import auth  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from web.server import app  # noqa: E402
+from web import deps  # noqa: E402
 
 
 class TokenTests(unittest.TestCase):
@@ -272,14 +273,14 @@ class HistoryDeleteApiTests(unittest.TestCase):
             seen["qa_id"] = qa_id
             return True
 
-        orig = server.delete_qa
-        server.delete_qa = fake_delete_qa
+        orig = deps.delete_qa
+        deps.delete_qa = fake_delete_qa
         try:
             client = self._authed_client()
             qa_id = "11111111-1111-1111-1111-111111111111"
             r = client.delete(f"/api/history/{qa_id}")
         finally:
-            server.delete_qa = orig
+            deps.delete_qa = orig
 
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"ok": True})
@@ -299,16 +300,16 @@ class InputLimitTests(unittest.TestCase):
         async def fake_hybrid_search(*_a, **_k):
             return []
 
-        orig_embed = server.embed_query_cached
-        orig_search = server.hybrid_search
-        server.embed_query_cached = lambda _q: [0.0]
-        server.hybrid_search = fake_hybrid_search
+        orig_embed = deps.embed_query_cached
+        orig_search = deps.hybrid_search
+        deps.embed_query_cached = lambda _q: [0.0]
+        deps.hybrid_search = fake_hybrid_search
         try:
             client = self._authed_client()
             r = client.get("/api/search", params={"q": "x" * 5001})
         finally:
-            server.embed_query_cached = orig_embed
-            server.hybrid_search = orig_search
+            deps.embed_query_cached = orig_embed
+            deps.hybrid_search = orig_search
 
         self.assertEqual(r.status_code, 422)
 
@@ -318,13 +319,13 @@ class InputLimitTests(unittest.TestCase):
         async def fake_answer_question(*_a, **_k):
             yield ("done", {"cited": []})
 
-        orig_answer_question = server.answer_question
-        server.answer_question = fake_answer_question
+        orig_answer_question = deps.answer_question
+        deps.answer_question = fake_answer_question
         try:
             client = self._authed_client()
             r = client.post("/api/ask", json={"question": "x" * 5001})
         finally:
-            server.answer_question = orig_answer_question
+            deps.answer_question = orig_answer_question
 
         self.assertEqual(r.status_code, 422)
 
@@ -337,14 +338,14 @@ class InputLimitTests(unittest.TestCase):
             seen["qa_id"] = qa_id
             return True
 
-        orig = server.delete_qa
-        server.delete_qa = fake_delete_qa
+        orig = deps.delete_qa
+        deps.delete_qa = fake_delete_qa
         try:
             client = self._authed_client()
             qa_id = "22222222-2222-2222-2222-222222222222"
             r = client.post(f"/api/history/{qa_id}/delete")
         finally:
-            server.delete_qa = orig
+            deps.delete_qa = orig
 
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"ok": True})

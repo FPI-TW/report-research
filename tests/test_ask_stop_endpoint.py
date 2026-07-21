@@ -13,6 +13,7 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 
 from fastapi.testclient import TestClient  # noqa: E402
 import web.server as server  # noqa: E402
+from web import deps  # noqa: E402
 
 
 def _authed_client():
@@ -33,8 +34,8 @@ class AskStopEndpointTests(unittest.TestCase):
             called["kw"] = k
             return "qa-stop-1"
 
-        orig = server.log_stopped_qa
-        server.log_stopped_qa = fake_log
+        orig = deps.log_stopped_qa
+        deps.log_stopped_qa = fake_log
         try:
             resp = client.post(
                 "/api/ask/stop",
@@ -43,7 +44,7 @@ class AskStopEndpointTests(unittest.TestCase):
                       "request_id": "123e4567-e89b-42d3-a456-426614174000"},
             )
         finally:
-            server.log_stopped_qa = orig
+            deps.log_stopped_qa = orig
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["qa_id"], "qa-stop-1")

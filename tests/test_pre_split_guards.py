@@ -27,6 +27,7 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from web import deps  # noqa: E402
 from web.server import app  # noqa: E402
 
 
@@ -134,14 +135,14 @@ class QaVersionsUuidGuardTests(unittest.TestCase):
         import web.server as server
 
         self.server = server
-        self._orig = server.list_qa_versions
+        self._orig = deps.list_qa_versions
         self.called = []
 
         async def _sentinel(*a, **kw):
             self.called.append(a)
             raise AssertionError("非法 uuid 不該走到 list_qa_versions")
 
-        server.list_qa_versions = _sentinel
+        deps.list_qa_versions = _sentinel
 
     def tearDown(self):
         self.server.list_qa_versions = self._orig

@@ -25,7 +25,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -39,15 +39,8 @@ from web.routers import reading as reading_routes  # noqa: E402
 from web.routers import report_file as report_file_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
 from web.routers import search as search_routes  # noqa: E402
+from web.routers import qa_history as qa_history_routes  # noqa: E402
 
-from app.services.answer import (  # noqa: E402
-    OFF_TOPIC_MESSAGES,
-    delete_conversation,
-    get_conversation,
-    history_item,
-    list_conversations,
-    record_feedback,
-)
 from app.config import get_settings  # noqa: E402
 from web import auth  # noqa: E402
 
@@ -204,9 +197,6 @@ class AskRequest(BaseModel):
     request_id: str | None = None
 
 
-class FeedbackRequest(BaseModel):
-    qa_id: str
-    value: str  # 'like' | 'dislike'
 
 
 
@@ -412,83 +402,8 @@ async def report_doc_pdf(report_id: str):
     )
 
 
-@app.post("/api/feedback")
-async def feedback(req: FeedbackRequest):
-    """記錄使用者對某次回答的讚/倒讚（qa_id 來自 /api/ask 的 done 事件）。"""
-    if req.value not in ("like", "dislike"):
-        raise HTTPException(status_code=400, detail="value 必須是 like 或 dislike")
-    ok = await record_feedback(req.qa_id, req.value)
-    return {"ok": ok}
-
-
-@app.get("/api/history")
-async def history(limit: int = Query(50, ge=1, le=200)):
-    """最近的問答歷史（排除離題拒答）；唯讀，供前端「歷史」抽層。"""
-    async with deps.SessionFactory() as session:
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
-                    "FROM research.qa_log "
-                    "WHERE COALESCE(answer NOT IN :offtopics, TRUE) "
-                    "AND active AND stopped IS NOT TRUE "
-                    "ORDER BY created_at DESC LIMIT :limit"
-                ).bindparams(bindparam("offtopics", expanding=True)),
-                {"offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit},
-            )
-        ).all()
-    return [history_item(tuple(r)) for r in rows]
-
-
-@app.delete("/api/history/{qa_id}")
-async def delete_history(qa_id: str):
-    """刪除單筆問答歷史（使用者清除側欄某一列）。回 {"ok": bool}。"""
-    ok = await deps.delete_qa(qa_id)
-    return {"ok": ok}
-
-
-@app.post("/api/history/{qa_id}/delete")
-async def delete_history_post(qa_id: str):
-    """相容性刪除路由。
-
-    某些外部代理/邊緣環境對 DELETE 支援不穩時，前端可回退到 POST alias。
-    """
-    ok = await deps.delete_qa(qa_id)
-    return {"ok": ok}
-
-
-@app.get("/api/qa/{root_qa_id}/versions")
-async def qa_versions(root_qa_id: str):
-    """某問題群組全部版本（供歷史 pager 回看）。"""
-    if not deps._valid_uuid(root_qa_id):
-        raise HTTPException(status_code=404, detail="not found")
-    return await deps.list_qa_versions(root_qa_id)
-
-
-@app.get("/api/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200)):
-    """對話串清單（首題非離題者）；唯讀，供側欄。"""
-    return await list_conversations(limit)
-
-
-@app.get("/api/conversations/{conversation_id}")
-async def conversation_detail(conversation_id: str):
-    """單一對話全部輪次（由舊到新），供重開重現與續問。"""
-    return await get_conversation(conversation_id)
-
-
-@app.delete("/api/conversations/{conversation_id}")
-async def conversation_delete(conversation_id: str):
-    """刪整個對話串。回 {"ok": bool}。"""
-    ok = await delete_conversation(conversation_id)
-    return {"ok": ok}
-
-
-@app.post("/api/conversations/{conversation_id}/delete")
-async def conversation_delete_post(conversation_id: str):
-    """相容性刪除路由（某些代理/邊緣對 DELETE 不穩時前端回退）。"""
-    ok = await delete_conversation(conversation_id)
-    return {"ok": ok}
+# 問答歷史/回饋/對話串 9 條路由已拆至 web/routers/qa_history.py
+app.include_router(qa_history_routes.router)
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

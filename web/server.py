@@ -11,7 +11,6 @@ import logging
 import os
 import sys
 import time
-from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +25,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -39,24 +38,10 @@ from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
 from web.routers import report_file as report_file_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
+from web.routers import search as search_routes  # noqa: E402
+from web.routers import qa_history as qa_history_routes  # noqa: E402
 
-from app.services.answer import (  # noqa: E402
-    OFF_TOPIC_MESSAGES,
-    delete_conversation,
-    get_conversation,
-    history_item,
-    list_conversations,
-    record_feedback,
-)
 from app.config import get_settings  # noqa: E402
-from app.services.filename import source_display  # noqa: E402
-from app.services.retrieval import (  # noqa: E402
-    DENSE_SCAN_SEARCH,
-    LEX_CAP_SEARCH,
-)
-from app.services.store import list_reports  # noqa: E402
-from app.services.tagging import MARKETS  # noqa: E402
-from app.services.textnorm import clean_text  # noqa: E402
 from web import auth  # noqa: E402
 
 # 渲染一律經 report 的分派層（依 REPORT_RENDERER 選 typst/weasyprint，失敗回退）；
@@ -72,7 +57,6 @@ from app.services.report import (  # noqa: E402
 STATIC_DIR = deps.STATIC_DIR
 SPA_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 logger = logging.getLogger(__name__)
-SEARCH_QUERY_MAX_CHARS = 500
 ASK_QUESTION_MAX_CHARS = 2000
 
 
@@ -197,46 +181,6 @@ async def require_login(request: Request, call_next):
     return RedirectResponse("/login", status_code=302)
 
 
-class Passage(BaseModel):
-    score: float  # 1 - cosine distance，越高越相關
-    chunk_index: int
-    content: str
-
-
-class ReportResult(BaseModel):
-    rank: int
-    report_id: str
-    file_hash: str  # 閱讀頁連結鍵（/app/report/:hash）
-    file_name: str
-    market: str | None
-    source: str | None
-    summary: str | None
-    report_date: str | None
-    report_type: str | None
-    instrument_types: list[str] | None
-    relates_stock: bool | None
-    relates_futures: bool | None
-    stock_targets: list[str] | None
-    futures_targets: list[str] | None
-    best_score: float
-    match_count: int
-    passages: list[Passage]
-
-
-class MarketFacet(BaseModel):
-    market: str
-    count: int
-
-
-class SearchResponse(BaseModel):
-    query: str
-    market: str | None
-    total: int
-    # 命中集合的市場組成，於切頁前對 ranked 全量計算。
-    # 注意：ranked 已套用 market 篩選，故選定市場時本欄只會有該市場——
-    # 要得知其他市場的命中數需再跑一次未篩選的檢索，成本翻倍，故不做。
-    market_facets: list[MarketFacet] = []
-    results: list[ReportResult]
 
 
 class AskRequest(BaseModel):
@@ -253,31 +197,8 @@ class AskRequest(BaseModel):
     request_id: str | None = None
 
 
-class FeedbackRequest(BaseModel):
-    qa_id: str
-    value: str  # 'like' | 'dislike'
 
 
-class ReportListItem(BaseModel):
-    report_id: str
-    file_hash: str  # 閱讀頁連結鍵（/app/report/:hash）
-    file_name: str
-    market: str | None
-    source: str | None
-    summary: str | None
-    report_date: str | None
-    report_type: str | None
-    instrument_types: list[str] | None
-    relates_stock: bool | None
-    relates_futures: bool | None
-    stock_targets: list[str] | None
-    futures_targets: list[str] | None
-
-
-class ReportListResponse(BaseModel):
-    total: int
-    offset: int
-    items: list[ReportListItem]
 
 
 # /api/stats 與 /api/progress 已拆至 web/routers/monitor.py
@@ -298,9 +219,8 @@ async def help_page():
     return RedirectResponse("/app/help", status_code=302)
 
 
-@app.get("/api/markets")
-async def markets():
-    return {"markets": MARKETS}
+# /api/search、/api/reports、/api/markets 已拆至 web/routers/search.py
+app.include_router(search_routes.router)
 
 
 # 觀點雷達 4 條路由已拆至 web/routers/radar.py（見下方 include_router）。
@@ -311,147 +231,8 @@ app.include_router(radar_routes.router)
 app.include_router(reading_routes.router)
 
 
-@app.get("/api/reports", response_model=ReportListResponse)
-async def reports(
-    market: str | None = Query(None),
-    instrument_type: str | None = Query(None),
-    relates_stock: bool | None = Query(None),
-    relates_futures: bool | None = Query(None),
-    report_type: str | None = Query(None),
-    sort: str = Query("date_desc"),  # date_desc | date_asc
-    limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-):
-    """無關鍵字的瀏覽模式：依 sort 列出已導入報告。"""
-    mkt = market if market and market != "全部" else None
-    instr = instrument_type if instrument_type and instrument_type != "全部" else None
-    rtype = report_type if report_type and report_type != "全部" else None
-    async with deps.SessionFactory() as session:
-        total, rows = await list_reports(
-            session,
-            market=mkt,
-            instrument_type=instr,
-            relates_stock=relates_stock or None,
-            relates_futures=relates_futures or None,
-            report_type=rtype,
-            sort=sort,
-            limit=limit,
-            offset=offset,
-        )
-    items = [
-        ReportListItem(
-            report_id=rid,
-            file_hash=fhash,
-            file_name=fn,
-            market=m,
-            source=source_display(src),
-            summary=summary,
-            report_date=rdate.isoformat() if rdate else None,
-            report_type=rtype,
-            instrument_types=list(itypes) if itypes else None,
-            relates_stock=rstock,
-            relates_futures=rfut,
-            stock_targets=list(stargets) if stargets else None,
-            futures_targets=list(ftargets) if ftargets else None,
-        )
-        for (
-            rid, fhash, fn, m, src, rdate, rtype, itypes, rstock, rfut,
-            stargets, ftargets, summary,
-        ) in rows
-    ]
-    return ReportListResponse(total=total, offset=offset, items=items)
 
 
-@app.get("/api/search", response_model=SearchResponse)
-async def search(
-    q: str = Query(..., min_length=1, max_length=SEARCH_QUERY_MAX_CHARS),
-    market: str | None = Query(None),
-    instrument_type: str | None = Query(None),
-    relates_stock: bool | None = Query(None),
-    relates_futures: bool | None = Query(None),
-    report_type: str | None = Query(None),
-    sort: str = Query("relevance"),  # relevance | date_desc | date_asc
-    limit: int = Query(50, ge=1, le=100),  # 回傳的「報告」頁大小
-    offset: int = Query(0, ge=0),
-    passages: int = Query(3, ge=1, le=6),  # 每篇保留的命中片段數
-):
-    mkt = market if market and market != "全部" else None
-    instr = instrument_type if instrument_type and instrument_type != "全部" else None
-    rtype = report_type if report_type and report_type != "全部" else None
-    qvec = await asyncio.to_thread(deps.embed_query_cached, q)
-    async with deps.SessionFactory() as session:
-        scored = await deps.hybrid_search(
-            session,
-            q,
-            qvec,
-            market=mkt,
-            instrument_type=instr,
-            relates_stock=relates_stock or None,
-            relates_futures=relates_futures or None,
-            report_type=rtype,
-            # 不傳 k：dense_scan 已覆蓋掃描深度；lexical 改由 cap 控候選，不再截斷最終報告數
-            dense_scan=DENSE_SCAN_SEARCH,
-            lex_cap=LEX_CAP_SEARCH,
-            lex_per_report=True,
-            lex_unlimited=True,
-        )
-
-    # 分組成「全部」召回報告 → 依 sort 排序 → 取 total → 切當頁
-    ranked = deps.rank_reports(scored, sort=sort)
-    total = len(ranked)
-    # 色譜讀數：命中集合的市場組成。ranked 已全量在記憶體，額外成本僅一次計數。
-    facet_counts = Counter(g.meta_row.market for g in ranked if g.meta_row.market)
-    page = ranked[offset : offset + limit]
-
-    results: list[ReportResult] = []
-    for i, g in enumerate(page, start=offset + 1):  # 全域 rank，跨頁不重號
-        mr = g.meta_row
-        rid, fn, m, src, summary, rdate = (
-            mr.report_id, mr.file_name, mr.market, mr.source, mr.summary, mr.report_date
-        )
-        rtype_ = mr.report_type
-        itypes = mr.instrument_types
-        rstock = mr.relates_stock
-        rfut = mr.relates_futures
-        stargets = mr.stock_targets
-        ftargets = mr.futures_targets
-        ps: list[Passage] = []
-        for sc, prow in g.passages[:passages]:
-            cleaned = clean_text(prow.content)
-            if cleaned:
-                ps.append(
-                    Passage(score=sc, chunk_index=int(prow.chunk_index), content=cleaned)
-                )
-        results.append(
-            ReportResult(
-                rank=i,
-                report_id=rid,
-                file_hash=mr.file_hash,
-                file_name=fn,
-                market=m,
-                source=source_display(src),
-                summary=summary,
-                report_date=rdate.isoformat() if rdate else None,
-                report_type=rtype_,
-                instrument_types=list(itypes) if itypes else None,
-                relates_stock=rstock,
-                relates_futures=rfut,
-                stock_targets=list(stargets) if stargets else None,
-                futures_targets=list(ftargets) if ftargets else None,
-                best_score=g.best_score,
-                match_count=g.match_count,
-                passages=ps,
-            )
-        )
-    return SearchResponse(
-        query=q,
-        market=mkt,
-        total=total,
-        market_facets=[
-            MarketFacet(market=m, count=c) for m, c in facet_counts.most_common()
-        ],
-        results=results,
-    )
 
 
 # ───── RAG 問答（Phase 1）：SSE 串流 ─────
@@ -621,83 +402,8 @@ async def report_doc_pdf(report_id: str):
     )
 
 
-@app.post("/api/feedback")
-async def feedback(req: FeedbackRequest):
-    """記錄使用者對某次回答的讚/倒讚（qa_id 來自 /api/ask 的 done 事件）。"""
-    if req.value not in ("like", "dislike"):
-        raise HTTPException(status_code=400, detail="value 必須是 like 或 dislike")
-    ok = await record_feedback(req.qa_id, req.value)
-    return {"ok": ok}
-
-
-@app.get("/api/history")
-async def history(limit: int = Query(50, ge=1, le=200)):
-    """最近的問答歷史（排除離題拒答）；唯讀，供前端「歷史」抽層。"""
-    async with deps.SessionFactory() as session:
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT id, question, answer, created_at, feedback, sources, ext_sources, thinking_ms "
-                    "FROM research.qa_log "
-                    "WHERE COALESCE(answer NOT IN :offtopics, TRUE) "
-                    "AND active AND stopped IS NOT TRUE "
-                    "ORDER BY created_at DESC LIMIT :limit"
-                ).bindparams(bindparam("offtopics", expanding=True)),
-                {"offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit},
-            )
-        ).all()
-    return [history_item(tuple(r)) for r in rows]
-
-
-@app.delete("/api/history/{qa_id}")
-async def delete_history(qa_id: str):
-    """刪除單筆問答歷史（使用者清除側欄某一列）。回 {"ok": bool}。"""
-    ok = await deps.delete_qa(qa_id)
-    return {"ok": ok}
-
-
-@app.post("/api/history/{qa_id}/delete")
-async def delete_history_post(qa_id: str):
-    """相容性刪除路由。
-
-    某些外部代理/邊緣環境對 DELETE 支援不穩時，前端可回退到 POST alias。
-    """
-    ok = await deps.delete_qa(qa_id)
-    return {"ok": ok}
-
-
-@app.get("/api/qa/{root_qa_id}/versions")
-async def qa_versions(root_qa_id: str):
-    """某問題群組全部版本（供歷史 pager 回看）。"""
-    if not deps._valid_uuid(root_qa_id):
-        raise HTTPException(status_code=404, detail="not found")
-    return await deps.list_qa_versions(root_qa_id)
-
-
-@app.get("/api/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200)):
-    """對話串清單（首題非離題者）；唯讀，供側欄。"""
-    return await list_conversations(limit)
-
-
-@app.get("/api/conversations/{conversation_id}")
-async def conversation_detail(conversation_id: str):
-    """單一對話全部輪次（由舊到新），供重開重現與續問。"""
-    return await get_conversation(conversation_id)
-
-
-@app.delete("/api/conversations/{conversation_id}")
-async def conversation_delete(conversation_id: str):
-    """刪整個對話串。回 {"ok": bool}。"""
-    ok = await delete_conversation(conversation_id)
-    return {"ok": ok}
-
-
-@app.post("/api/conversations/{conversation_id}/delete")
-async def conversation_delete_post(conversation_id: str):
-    """相容性刪除路由（某些代理/邊緣對 DELETE 不穩時前端回退）。"""
-    ok = await delete_conversation(conversation_id)
-    return {"ok": ok}
+# 問答歷史/回饋/對話串 9 條路由已拆至 web/routers/qa_history.py
+app.include_router(qa_history_routes.router)
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

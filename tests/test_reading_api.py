@@ -21,15 +21,16 @@ from app.services.radar.types import DimensionStance, EpsEstimate, Signal  # noq
 from app.services.reading.queries import DocRow, SimilarRow, TakeawayRow  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from web import deps, server  # noqa: E402
+from web.routers import reading as reading_router  # noqa: E402
 
-# 服務綁定（SessionFactory、fetch_*）已集中到 web.deps；但 READING_TEXT_MAX_CHARS
-# 是 reading 組的設定常數，仍在 server（隨 reading router 於後續步驟一起搬）。
+# 服務綁定（SessionFactory、fetch_*）在 web.deps；READING_TEXT_MAX_CHARS 是 reading
+# 組的設定常數，已隨路由搬到 web.routers.reading（_visible_chars 從該模組讀它）。
 # 故覆寫時按符號選模組，兩者不可混淆。
-_ON_SERVER = {"READING_TEXT_MAX_CHARS"}
+_ON_READING = {"READING_TEXT_MAX_CHARS"}
 
 
 def _dep_mod(name):
-    return server if name in _ON_SERVER else deps
+    return reading_router if name in _ON_READING else deps
 
 HASH = "a" * 64
 OTHER_HASH = "c" * 64

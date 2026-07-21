@@ -9,15 +9,13 @@ from __future__ import annotations
 import asyncio
 import glob as _glob
 import hashlib
-import json
 import logging
 import os
 import re
 import sys
 import time
-import uuid as _uuidlib
 from collections import Counter
-from contextlib import asynccontextmanager, suppress as _suppress
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -38,6 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from web.env_loader import load_env_file  # noqa: E402
 
 load_env_file(Path(__file__).resolve().parents[1] / ".env")
+
+from web import deps  # noqa: E402
 
 from app.services.answer import (  # noqa: E402
     OFF_TOPIC_MESSAGES,
@@ -116,7 +116,8 @@ from app.services.radar.schemas import (  # noqa: E402
     Window,
 )
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+# 跨組共用符號一律以 deps.X 存取；此處別名僅為既有測試的 `from web.server import ...`。
+STATIC_DIR = deps.STATIC_DIR
 SPA_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 logger = logging.getLogger(__name__)
 SEARCH_QUERY_MAX_CHARS = 500
@@ -132,7 +133,7 @@ def _static_page(name: str) -> FileResponse:
     每次都回 200 全量 body（HTML 約數十 KB，區網成本可忽略）。/static 下的 css/js 由
     _NoCacheStatic（StaticFiles）服務，才有條件式 304 重新驗證。
     """
-    return FileResponse(STATIC_DIR / name, headers={"Cache-Control": "no-cache"})
+    return FileResponse(deps.STATIC_DIR / name, headers={"Cache-Control": "no-cache"})
 
 
 class _NoCacheStatic(StaticFiles):
@@ -1158,53 +1159,9 @@ class ReportRequest(BaseModel):
     qa_id: str | None = None
 
 
-def _sse(event: str, data: object) -> str:
-    """組一個 SSE 事件框（event + json data）。"""
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-SSE_HEARTBEAT_INTERVAL = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "20"))
-
-
-async def _with_heartbeat(gen, interval: float = SSE_HEARTBEAT_INTERVAL):
-    """事件之間插入 SSE 註解心跳，避免長靜默被反向代理切斷連線。
-
-    nginx 的 proxy_read_timeout 是 60s（deploy/nginx.conf），但兩條生成路徑都有
-    超過它的靜默窗：研報逐節路徑每節的針對性檢索（含 rerank）可達 90s+ 完全無事件，
-    單次路徑的 run-level 檢索亦然。缺了心跳，連線會在生成中途被 nginx 切斷。
-
-    這條路徑本機看不到：eval 直接呼叫 generate_report、單元測試不走 HTTP、開發時
-    直連 :8097 也繞過 nginx——只有經 Cloudflare Tunnel + nginx 的實際使用者會遇到，
-    且表現為「生成到一半連線就斷」，容易被誤認為偶發網路問題。
-
-    心跳是 SSE 註解行（`: ...`）：前端 readSSE.parseFrame 對無 `data:` 欄位的框回
-    null 而略過，故對既有事件契約零影響。
-    """
-    it = gen.__aiter__()
-    pending: asyncio.Task | None = None
-    try:
-        while True:
-            if pending is None:
-                pending = asyncio.ensure_future(it.__anext__())
-            done, _ = await asyncio.wait({pending}, timeout=interval)
-            if not done:
-                yield ": keep-alive\n\n"
-                continue
-            task, pending = pending, None
-            try:
-                yield task.result()
-            except StopAsyncIteration:
-                return
-    finally:
-        # 用戶端中斷時，先收掉尚未完成的 __anext__，再讓底層產生器跑自己的 finally
-        # （研報逐節路徑靠它 kill 子程序）。
-        if pending is not None:
-            pending.cancel()
-            with _suppress(BaseException):
-                await pending
-        aclose = getattr(it, "aclose", None)
-        if aclose is not None:
-            await aclose()
+_sse = deps._sse
+SSE_HEARTBEAT_INTERVAL = deps.SSE_HEARTBEAT_INTERVAL
+_with_heartbeat = deps._with_heartbeat
 
 
 @app.post("/api/ask")
@@ -1231,11 +1188,11 @@ async def ask(req: AskRequest):
         report_type=rtype,
     )
     k = max(1, min(req.k, 20))
-    if req.regenerate_of is not None and not _valid_uuid(req.regenerate_of):
+    if req.regenerate_of is not None and not deps._valid_uuid(req.regenerate_of):
         raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
-    if req.edit_of is not None and not _valid_uuid(req.edit_of):
+    if req.edit_of is not None and not deps._valid_uuid(req.edit_of):
         raise HTTPException(status_code=400, detail="edit_of 格式不正確")
-    if req.request_id is not None and not _valid_uuid(req.request_id):
+    if req.request_id is not None and not deps._valid_uuid(req.request_id):
         raise HTTPException(status_code=400, detail="request_id 格式不正確")
 
     async def gen():
@@ -1250,24 +1207,19 @@ async def ask(req: AskRequest):
                     edit_of=req.edit_of,
                     request_id=req.request_id,
                 ):
-                    yield _sse(event, payload)
+                    yield deps._sse(event, payload)
             except Exception:
                 logger.exception("ask failed")
-                yield _sse("error", {"detail": "問答服務發生錯誤"})
+                yield deps._sse("error", {"detail": "問答服務發生錯誤"})
 
     return StreamingResponse(
-        _with_heartbeat(gen()),
+        deps._with_heartbeat(gen()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-def _valid_uuid(s) -> bool:
-    try:
-        _uuidlib.UUID(str(s))
-        return True
-    except (ValueError, AttributeError, TypeError):
-        return False
+_valid_uuid = deps._valid_uuid
 
 
 class StopRequest(BaseModel):
@@ -1284,11 +1236,11 @@ class StopRequest(BaseModel):
 @app.post("/api/ask/stop")
 async def ask_stop(req: StopRequest):
     """使用者中斷串流時保存部分答案（stopped=true）。回 {qa_id}。"""
-    if req.regenerate_of is not None and not _valid_uuid(req.regenerate_of):
+    if req.regenerate_of is not None and not deps._valid_uuid(req.regenerate_of):
         raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
-    if req.conversation_id is not None and not _valid_uuid(req.conversation_id):
+    if req.conversation_id is not None and not deps._valid_uuid(req.conversation_id):
         raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
-    if req.request_id is not None and not _valid_uuid(req.request_id):
+    if req.request_id is not None and not deps._valid_uuid(req.request_id):
         raise HTTPException(status_code=400, detail="request_id 格式不正確")
     qa_id = await log_stopped_qa(
         (req.question or "").strip(),
@@ -1314,9 +1266,9 @@ async def report(req: ReportRequest):
     question = (req.question or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="question 不可為空")
-    if req.qa_id is not None and not _valid_uuid(req.qa_id):
+    if req.qa_id is not None and not deps._valid_uuid(req.qa_id):
         raise HTTPException(status_code=400, detail="qa_id 格式不正確")
-    if req.conversation_id is not None and not _valid_uuid(req.conversation_id):
+    if req.conversation_id is not None and not deps._valid_uuid(req.conversation_id):
         raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
 
     async def gen():
@@ -1326,13 +1278,13 @@ async def report(req: ReportRequest):
                     question, filters={},
                     conversation_id=req.conversation_id, qa_id=req.qa_id,
                 ):
-                    yield _sse(event, payload)
+                    yield deps._sse(event, payload)
             except Exception:
                 logger.exception("report failed")
-                yield _sse("error", {"detail": "研報生成發生錯誤"})
+                yield deps._sse("error", {"detail": "研報生成發生錯誤"})
 
     return StreamingResponse(
-        _with_heartbeat(gen()),
+        deps._with_heartbeat(gen()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1341,7 +1293,7 @@ async def report(req: ReportRequest):
 @app.get("/api/report-doc/{report_id}/pdf")
 async def report_doc_pdf(report_id: str):
     """下載生成的研報 PDF；pdf_path 不存在時由 markdown 即時重建。"""
-    if not _valid_uuid(report_id):
+    if not deps._valid_uuid(report_id):
         raise HTTPException(status_code=404, detail="report not found")
     doc = await fetch_report_doc(report_id)
     if doc is None:
@@ -1408,7 +1360,7 @@ async def delete_history_post(qa_id: str):
 @app.get("/api/qa/{root_qa_id}/versions")
 async def qa_versions(root_qa_id: str):
     """某問題群組全部版本（供歷史 pager 回看）。"""
-    if not _valid_uuid(root_qa_id):
+    if not deps._valid_uuid(root_qa_id):
         raise HTTPException(status_code=404, detail="not found")
     return await list_qa_versions(root_qa_id)
 
@@ -1556,4 +1508,4 @@ async def spa_shell(spa_path: str = ""):
     return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
-app.mount("/static", _NoCacheStatic(directory=STATIC_DIR), name="static")
+app.mount("/static", _NoCacheStatic(directory=deps.STATIC_DIR), name="static")

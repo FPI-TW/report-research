@@ -39,6 +39,7 @@ load_env_file(Path(__file__).resolve().parents[1] / ".env")
 from web import deps  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
+from web.routers import report_file as report_file_routes  # noqa: E402
 
 from app.services.answer import (  # noqa: E402
     OFF_TOPIC_MESSAGES,
@@ -936,57 +937,9 @@ async def conversation_delete_post(conversation_id: str):
     return {"ok": ok}
 
 
-async def _fetch_report(session, report_id: str):
-    row = (
-        await session.execute(
-            text(
-                "SELECT file_name, market, source, report_date, report_type, "
-                "file_path, full_text, summary FROM research.research_report WHERE id = :id"
-            ),
-            {"id": report_id},
-        )
-    ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="report not found")
-    return row
+# 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py
+app.include_router(report_file_routes.router)
 
-
-@app.get("/api/report/{report_id}/full")
-async def report_full(report_id: str):
-    """回傳單篇報告的 metadata 與原始檔狀態（供前端 modal 內嵌 PDF）。"""
-    async with deps.SessionFactory() as session:
-        fn, m, src, rdate, rtype, fpath, _, summary = await _fetch_report(
-            session, report_id
-        )
-    return {
-        "report_id": report_id,
-        "file_name": fn,
-        "market": m,
-        "source": source_display(src),
-        "summary": summary,
-        "report_date": rdate.isoformat() if rdate else None,
-        "report_type": rtype,
-        "has_file": bool(fpath) and os.path.isfile(fpath),
-    }
-
-
-@app.get("/api/report/{report_id}/file")
-async def report_file(report_id: str):
-    """提供原始檔（PDF 內嵌、其他下載）。路徑由 DB 依 id 取得，無路徑注入。"""
-    async with deps.SessionFactory() as session:
-        row = await _fetch_report(session, report_id)
-    fpath = row[5]
-    if not fpath or not os.path.isfile(fpath):
-        raise HTTPException(status_code=404, detail="original file not found")
-    name = os.path.basename(fpath)
-    is_pdf = name.lower().endswith(".pdf")
-    # PDF 用 inline 才能在 modal 的 iframe 內嵌渲染；其他（.docx）維持下載
-    return FileResponse(
-        fpath,
-        media_type="application/pdf" if is_pdf else None,
-        filename=name,
-        content_disposition_type="inline" if is_pdf else "attachment",
-    )
 
 
 @app.get("/login")

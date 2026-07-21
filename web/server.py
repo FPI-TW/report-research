@@ -8,23 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
 
-from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import (
-    FileResponse,
-    JSONResponse,
-    RedirectResponse,
-)
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from sqlalchemy import text
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -41,42 +31,15 @@ from web.routers import search as search_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import report as report_routes  # noqa: E402
+from web.routers import auth_pages as auth_pages_routes  # noqa: E402
+from web.routers import spa as spa_routes  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
 from web import auth  # noqa: E402
 
 # 跨組共用符號一律以 deps.X 存取；此處別名僅為既有測試的 `from web.server import ...`。
 STATIC_DIR = deps.STATIC_DIR
-SPA_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 logger = logging.getLogger(__name__)
-
-
-def _static_page(name: str) -> FileResponse:
-    """回傳 HTML 殼，並標記 no-cache（瀏覽器每次重新向伺服器取用，改版後同事免強制重整即見新版）。
-
-    註：route-level 的 FileResponse 不會對 If-None-Match/If-Modified-Since 做 304 短路，
-    每次都回 200 全量 body（HTML 約數十 KB，區網成本可忽略）。/static 下的 css/js 由
-    _NoCacheStatic（StaticFiles）服務，才有條件式 304 重新驗證。
-    """
-    return FileResponse(deps.STATIC_DIR / name, headers={"Cache-Control": "no-cache"})
-
-
-class _NoCacheStatic(StaticFiles):
-    """/static 下的 css/js/圖片同樣以 no-cache 重新驗證，確保 tokens.css / utils.js 改版不卡舊版。"""
-
-    async def get_response(self, path, scope):  # type: ignore[override]
-        resp = await super().get_response(path, scope)
-        resp.headers["Cache-Control"] = "no-cache"
-        return resp
-
-
-class _ImmutableStatic(StaticFiles):
-    """Vite 內容雜湊資產（/app/assets/*）長快取：hash 變則 URL 變，故可 immutable。"""
-
-    async def get_response(self, path, scope):  # type: ignore[override]
-        resp = await super().get_response(path, scope)
-        resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
-        return resp
 
 
 async def _warmup_models() -> None:
@@ -138,20 +101,6 @@ def _auth_allowed(path: str) -> bool:
     )
 
 
-def _safe_next(raw: str | None) -> str:
-    """只接受同源相對路徑：必須以單一 '/' 開頭，拒絕 //、/\\、schema URL、控制字元（含 CRLF）。否則回 '/'。"""
-    if not raw or not raw.startswith("/"):
-        return "/"
-    if raw.startswith("//") or raw.startswith("/\\"):
-        return "/"
-    if "://" in raw:
-        return "/"
-    # 拒絕所有 C0 控制字元（含 CR/LF/TAB/NUL）與 DEL，使白名單自身完備（縱深防禦）
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in raw):
-        return "/"
-    return raw
-
-
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
@@ -184,18 +133,6 @@ async def require_login(request: Request, call_next):
 app.include_router(monitor_routes.router)
 
 
-
-
-@app.get("/monitor")
-async def monitor():
-    # 舊 vanilla 監控頁已退場，導向 SPA 監控頁（保留舊路徑/書籤相容）
-    return RedirectResponse("/app/monitor", status_code=302)
-
-
-@app.get("/help")
-async def help_page():
-    # 舊 vanilla 說明頁已退場，導向 SPA 說明頁
-    return RedirectResponse("/app/help", status_code=302)
 
 
 # /api/search、/api/reports、/api/markets 已拆至 web/routers/search.py
@@ -249,69 +186,17 @@ app.include_router(qa_history_routes.router)
 app.include_router(report_file_routes.router)
 
 
+# 登入流程頁面路由（middleware require_login 仍在本檔，見上）
+app.include_router(auth_pages_routes.router)
 
-@app.get("/login")
-async def login_page(request: Request):
-    nxt = _safe_next(request.query_params.get("next"))
-    if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), int(time.time())):
-        return RedirectResponse(nxt, status_code=302)
-    return _static_page("login.html")
+# SPA / 靜態服務：configure 內含 /app/assets Mount → router（catch-all）→ /static 的
+# 正確掛載順序，assets Mount 必須贏過 /app/{spa_path}（見 tests/test_pre_split_guards.py）。
+spa_routes.configure(app)
 
-
-@app.post("/login")
-async def login_submit(
-    request: Request,
-    username: str = Form(""),
-    password: str = Form(""),
-    next: str = Form(""),
-):
-    nxt = _safe_next(next)
-    err_q = "&next=" + quote(nxt, safe="") if nxt != "/" else ""
-    if not auth.login_allowed(request):
-        return RedirectResponse(f"/login?error=insecure{err_q}", status_code=303)
-    now = int(time.time())
-    ip = auth.client_ip(request)
-    if auth.is_locked(ip, now):
-        return RedirectResponse(f"/login?error=locked{err_q}", status_code=303)
-    if auth.check_credentials(username, password):
-        auth.reset(ip)
-        resp = RedirectResponse(nxt, status_code=303)
-        auth.set_session_cookie(resp, now, secure=auth.request_is_secure(request))
-        return resp
-    auth.record_failure(ip, now)
-    return RedirectResponse(f"/login?error=1{err_q}", status_code=303)
+# 既有測試以 from web.server import 取用的符號，於拆分後在此 re-export。
+SPA_DIST = spa_routes.SPA_DIST
+_safe_next = auth_pages_routes._safe_next
 
 
-@app.post("/logout")
-async def logout():
-    resp = RedirectResponse("/login", status_code=303)
-    auth.clear_session_cookie(resp)
-    return resp
 
 
-@app.get("/")
-async def index():
-    # 舊 vanilla 首頁已退場，根路徑導向 SPA 檢索頁
-    return RedirectResponse("/app/search", status_code=302)
-
-
-# ───── SPA（/app 子路徑；shell + 雜湊資產，純服務無業務邏輯）─────
-if (SPA_DIST / "assets").is_dir():
-    app.mount(
-        "/app/assets",
-        _ImmutableStatic(directory=SPA_DIST / "assets", check_dir=False),
-        name="spa-assets",
-    )
-
-
-@app.get("/app")
-@app.get("/app/{spa_path:path}")
-async def spa_shell(spa_path: str = ""):
-    """SPA shell：所有 /app/* 深連結回同一份 index.html，交給 client 端路由。"""
-    index = SPA_DIST / "index.html"
-    if not index.is_file():
-        raise HTTPException(status_code=503, detail="SPA 尚未 build（frontend/dist 不存在）")
-    return FileResponse(index, headers={"Cache-Control": "no-cache"})
-
-
-app.mount("/static", _NoCacheStatic(directory=deps.STATIC_DIR), name="static")

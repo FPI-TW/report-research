@@ -39,7 +39,6 @@ function doc(partial?: Partial<ReadingDoc>): ReadingDoc {
     file_hash: HASH,
     file_name: '南亞電路板 — 基板價格漲幅持續超預期.pdf',
     market: 'TW',
-    market_display: '台股',
     source: 'daiwa',
     source_display: '大和',
     report_date: '2026-07-14',
@@ -161,6 +160,49 @@ describe('ReportPage', () => {
       `/ask?q=${encodeURIComponent('關於《南亞電路板 — 基板價格漲幅持續超預期.pdf》：')}`,
     )
     expect(link).toHaveAccessibleName(/全語料/)
+  })
+
+  // report_type 原本抓了不用（死欄）：有值就顯示、空值不留空 chip
+  it('報頭顯示 report_type（有值時）', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ report_type: '個股報告' }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() =>
+      expect(within(screen.getByRole('banner')).getByText('個股報告')).toBeInTheDocument())
+  })
+
+  it('report_type 為空 → 報頭不留空 chip', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ report_type: null }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
+    expect(within(screen.getByRole('banner')).queryByText('個股報告')).toBeNull()
+  })
+
+  it('報頭把券商粗體', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('大和')).toBeInTheDocument())
+    expect(screen.getByText('大和').tagName).toBe('B')
+  })
+
+  // 缺券商時 metaParts 讓日期落在 index 0，舊碼 i===0 會把日期粗體當券商名
+  it('報頭缺券商時不把日期誤當券商名粗體', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ source: null, source_display: null }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('2026-07-14')).toBeInTheDocument())
+    expect(screen.getByText('2026-07-14').closest('b')).toBeNull()
+  })
+
+  // 同代號同時是 stock 與 futures 標的時，併陣列後 key 會撞號 → 補 index 才不觸發警告
+  it('同代號同時是 stock/futures 標的不觸發重複 key 警告', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ stock_targets: ['2330'], futures_targets: ['2330'] }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() =>
+      expect(within(screen.getByRole('banner')).getAllByText('2330')).toHaveLength(2))
+    const logged = spy.mock.calls.map(c => String(c[0])).join('\n')
+    expect(logged).not.toMatch(/same key|two children/)
+    spy.mockRestore()
   })
 
   // 全語料僅 0.68% 有訊號 —— 無訊號是常態不是錯誤，整區不得留下空框或骨架

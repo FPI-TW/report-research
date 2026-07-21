@@ -21,7 +21,10 @@ class _FakeSession:
 
 class SearchApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_search_requests_unlimited_lexical_reports(self):
-        from web import deps, server
+        # search handler 與 LEX_CAP_SEARCH 已拆到 web.routers.search；
+        # 檢索綁定（hybrid_search 等）仍走 web.deps。
+        from web import deps
+        from web.routers import search as search_mod
 
         seen = {}
 
@@ -47,7 +50,7 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         deps.rank_reports = fake_rank_reports
         deps.SessionFactory = lambda: _FakeSession()
         try:
-            response = await server.search(
+            response = await search_mod.search(
                 q="台積電",
                 market=None,
                 instrument_type=None,
@@ -68,7 +71,7 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
             ) = orig
 
         self.assertTrue(seen["lex_unlimited"])
-        self.assertEqual(seen["lex_cap"], server.LEX_CAP_SEARCH)
+        self.assertEqual(seen["lex_cap"], search_mod.LEX_CAP_SEARCH)
         self.assertEqual(seen["sort"], "relevance")
         self.assertEqual(response.total, 0)
 

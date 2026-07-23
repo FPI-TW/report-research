@@ -584,6 +584,93 @@ class SectionedComposedTests(unittest.IsolatedAsyncioTestCase):
         # persist 的 sources 與正文 [n] 同一份表
         self.assertEqual(capture["persist_args"][7][0]["report_id"], "r-sec")
 
+    async def test_real_writer_faithfulness_regen_and_evaluation(self):
+        """M8b 端到端：低數值支持率的節觸發修正一輪，evaluation 進 persist。
+
+        patch rw.check_faithfulness 控制判定（pos1 初判未支持→修正；reground 支持），
+        並 patch grounding 的 DB 面（resolve_evidence_texts/SessionFactory）避開真 DB。
+        """
+        from unittest.mock import patch as _patch
+
+        from app.services.faithfulness import ClaimVerdict, FaithfulnessResult
+
+        capture = {}
+
+        def stream(*a, **k):
+            async def gen():
+                yield f"本節結論[[ev:{capture['eid']}]]。"
+            return gen()
+
+        checks = []
+
+        async def fake_check(text, context_texts, **kw):
+            checks.append(text)
+            # 初始 grounding 逐節：pos0,1,2 依序；令第 2 呼叫（pos1）數值未支持 → 需修
+            if len(checks) == 2:
+                return FaithfulnessResult(
+                    0.0, 0.0, [ClaimVerdict("毛利率 90%", True, "unsupported")],
+                    degraded=False,
+                )
+            return FaithfulnessResult(
+                1.0, 1.0, [ClaimVerdict("台積電是晶圓代工廠", False, "supported")],
+                degraded=False,
+            )
+
+        async def fake_resolve(ledger, session, *, evidence_ids=None, **kw):
+            return ["證據文字"]
+
+        class _S:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+
+        restore = self._install(capture, stream=stream)
+        try:
+            with _patch.object(rw, "check_faithfulness", fake_check), \
+                 _patch.object(rw, "resolve_evidence_texts", fake_resolve), \
+                 _patch.object(rw, "SessionFactory", lambda: _S()):
+                evs = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+
+        kinds = [e[0] for e in evs]
+        # 3 節初稿 + pos1 修正一輪 = 4 個 section_draft
+        self.assertEqual(kinds.count("section_draft"), 4)
+        # check 呼叫：初始 3 節 + reground pos1 = 4
+        self.assertEqual(len(checks), 4)
+        self.assertEqual(kinds[-1], "done")
+        # evaluation 落進 persist：修正後全支持、非 degraded
+        ev = capture["persist_kwargs"]["evaluation"]
+        self.assertIsNotNone(ev)
+        self.assertFalse(ev["degraded"])
+        self.assertEqual(ev["faithfulness_score"], 1.0)
+        self.assertIn("非真實性保證", ev["note"])
+
+    async def test_real_writer_faithfulness_failopen(self):
+        """grounding 全程異常 → fail-open：報告照常 done，evaluation 落 None。"""
+        from unittest.mock import patch as _patch
+
+        capture = {}
+
+        def stream(*a, **k):
+            async def gen():
+                yield f"本節結論[[ev:{capture['eid']}]]。"
+            return gen()
+
+        async def boom(*a, **k):
+            raise RuntimeError("grounding 炸了")
+
+        restore = self._install(capture, stream=stream)
+        try:
+            with _patch.object(rw, "_ground_sections", boom):
+                evs = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+
+        kinds = [e[0] for e in evs]
+        self.assertEqual(kinds[-1], "done")           # 仍完成
+        self.assertEqual(kinds.count("section_draft"), 3)  # 無修正一輪
+        self.assertIsNone(capture["persist_kwargs"]["evaluation"])  # 不加分
+
     async def test_real_writer_audit_failure_still_produces_report(self):
         """審查 #1 的端到端回歸：稽核寫入全炸（DB down）→ 研報仍完成到 done。"""
         capture = {}

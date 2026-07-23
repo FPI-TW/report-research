@@ -31,6 +31,12 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.services.db import SessionFactory
 from app.services.evidence import EvidenceLedger, RenderedCitations, render_citations
+from app.services.faithfulness import (
+    FaithfulnessResult,
+    check_faithfulness,
+    resolve_evidence_texts,
+    summarize_claims,
+)
 from app.services.llm import SEARCH_EVENT, stream_completion
 from app.services.query_planner import parse_plan_json, plan_queries
 from app.services.retrieval_pipeline import (
@@ -516,6 +522,48 @@ def build_external_refs(refs: list[dict]) -> str:
         seen.add(url)
         lines.append(f"- [{r.get('title') or url}]({url})")
     return "\n".join(lines) if len(lines) > 1 else ""
+
+
+# ── M8 忠實度查核（逐節 grounding + 低分修正一輪；全程 fail-open）──
+
+_FAITHFULNESS_FIX_SUFFIX = (
+    "\n\n【忠實度修正】下列數值主張未能由本節所給證據支持，請依證據改正數字，"
+    "或若證據不足以支撐則移除該主張；不要新增任何無證據的數字：\n"
+)
+
+
+async def _ground_sections(
+    drafts: list[dict], claim_evidence: dict[str, list[str]], ledger: EvidenceLedger,
+    *, model: str, timeout: float,
+) -> dict[int, FaithfulnessResult]:
+    """逐節 grounding：每節只餵 claim_evidence[pos] 分配到的證據文字。回 {position: 結果}。
+
+    每節獨立 check：得節層歸屬，供「低分節重生一輪」定位（doc 級拆解會丟失節歸屬）。
+    """
+    results: dict[int, FaithfulnessResult] = {}
+    async with SessionFactory() as session:
+        for d in drafts:
+            ids = claim_evidence.get(str(d["position"])) or []
+            texts = await resolve_evidence_texts(ledger, session, evidence_ids=ids)
+            results[d["position"]] = await check_faithfulness(
+                d["draft"], texts, model=model, timeout=timeout,
+            )
+    return results
+
+
+def _section_needs_fix(result: FaithfulnessResult, min_rate: float) -> bool:
+    """該節數值主張支持率低於門檻且確有未支持的數值主張 → 觸發修正一輪。degraded 不修。"""
+    if result.degraded or result.numeric_support_rate is None:
+        return False
+    return result.numeric_support_rate < min_rate and any(
+        c.is_numeric and c.verdict != "supported" for c in result.claims
+    )
+
+
+def _citation_coverage(rendered: RenderedCitations) -> float | None:
+    """[n] 引用中對得上來源的比率（無引用 → None）。n_unknown 硬把關後多為 1.0。"""
+    total = len(rendered.ordered) + rendered.n_unknown
+    return (len(rendered.ordered) / total) if total else None
 
 
 def assemble_final(
@@ -1175,6 +1223,66 @@ async def draft_report(
                  "heading": d["heading"], "markdown": text_out},
             )
 
+    # M8：逐節 grounding + 低數值支持率的節修正一輪。全程 fail-open——任何異常都不
+    # 阻擋交付（faith_results=None＝不加分），報告仍照既有流程組裝出貨。
+    faith_results: dict[int, FaithfulnessResult] | None = None
+    if s.report_faithfulness_enabled:
+        try:
+            faith_results = await _ground_sections(
+                drafts, claim_evidence, ledger,
+                model=s.faithfulness_model, timeout=s.faithfulness_timeout,
+            )
+            fix_positions = [
+                d["position"] for d in drafts
+                if _section_needs_fix(
+                    faith_results[d["position"]], s.report_faithfulness_min
+                )
+            ]
+            for d in drafts:
+                if d["position"] not in fix_positions:
+                    continue
+                unsupported = [
+                    c.text for c in faith_results[d["position"]].claims
+                    if c.is_numeric and c.verdict != "supported"
+                ]
+                logger.warning("節 pos=%s 數值主張未獲支持 → 修正一輪", d["position"])
+                fix_prompt = d["prompt"] + _FAITHFULNESS_FIX_SUFFIX + "\n".join(
+                    f"- {u}" for u in unsupported
+                )
+                text_out = ""
+                async for kind, payload in _stream_section(
+                    d["system"], fix_prompt, timeout=s.report_section_timeout,
+                    # 沿用該節閘門結果（同 n_unknown 重生）：prompt 與工具開關必須同源
+                    retry=0, model=draft_model, allow_web=d.get("sec_web", False),
+                ):
+                    if kind == "__text__":
+                        text_out = str(payload)
+                        break
+                    yield (kind, payload)
+                if not text_out:
+                    continue
+                d["draft"] = text_out
+                if run_id:
+                    await _audit(
+                        upsert_section, run_id, d["position"],
+                        draft_markdown=text_out, status="drafted",
+                    )
+                yield (
+                    "section_draft",
+                    {"position": d["position"], "section_key": d["key"],
+                     "heading": d["heading"], "markdown": text_out},
+                )
+            if fix_positions:
+                reground = await _ground_sections(
+                    [d for d in drafts if d["position"] in fix_positions],
+                    claim_evidence, ledger,
+                    model=s.faithfulness_model, timeout=s.faithfulness_timeout,
+                )
+                faith_results.update(reground)
+        except Exception:
+            logger.exception("忠實度查核失敗（fail-open，不阻擋交付）")
+            faith_results = None
+
     final_markdown, rendered = assemble_final(title, drafts, ledger)
     if rendered.n_unknown:
         # spec §3 硬把關：佔位雖已移除，引用連結已失真 → 不得當成功出貨
@@ -1207,6 +1315,19 @@ async def draft_report(
             ),
         )
 
+    # M8：把逐節 grounding 結果合併成 doc 級 evaluation（單一分數計算真相＝
+    # summarize_claims）。faith_results None＝停用/fail-open → evaluation None，落 NULL。
+    evaluation = None
+    if faith_results is not None:
+        try:
+            evaluation = summarize_claims(
+                [c for r in faith_results.values() for c in r.claims],
+                degraded=all(r.degraded for r in faith_results.values()),
+            ).to_evaluation(citation_coverage=_citation_coverage(rendered))
+        except Exception:
+            logger.exception("忠實度分數彙總失敗（fail-open）")
+            evaluation = None
+
     yield (
         "document_revision",
         {"revision_id": revision_id, "revision": 1, "markdown_hash": markdown_hash},
@@ -1216,5 +1337,6 @@ async def draft_report(
         {"markdown": final_markdown, "manifest": ledger.to_manifest(),
          "sources": final_sources, "outline": outline, "claim_evidence": claim_evidence,
          "revision_id": revision_id, "markdown_hash": markdown_hash,
-         "n_unknown": rendered.n_unknown, "n_evidence": len(ledger)},
+         "n_unknown": rendered.n_unknown, "n_evidence": len(ledger),
+         "evaluation": evaluation},
     )

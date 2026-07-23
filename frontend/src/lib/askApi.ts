@@ -34,8 +34,23 @@ export function getQaVersions(rootId: string): Promise<QaVersion[]> {
   return getJSON(`/api/qa/${encodeURIComponent(rootId)}/versions`, z.array(qaVersionSchema), { cache: 'no-store' })
 }
 
-export function streamReport(body: { question: string; conversation_id?: string; qa_id?: string }, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {
+export function streamReport(body: { question: string; conversation_id?: string; qa_id?: string; template_id?: string }, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {
   return readSSE('/api/report', body, signal)
+}
+
+// M9b：可選研報渲染模板（registry）。前端模板選擇器資料源。
+export const reportTemplateSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  is_default: z.boolean(),
+  thumbnail: z.string().nullable(),
+})
+export type ReportTemplate = z.infer<typeof reportTemplateSchema>
+
+export function getReportTemplates(): Promise<ReportTemplate[]> {
+  return getJSON('/api/report-templates', z.object({ templates: z.array(reportTemplateSchema) }), { cache: 'no-store' })
+    .then((r) => r.templates)
 }
 
 export function getConversation(id: string): Promise<ConversationTurn[]> {

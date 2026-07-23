@@ -259,6 +259,24 @@ ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS report_run_id       uui
 -- M8：忠實度查核結果（同 qa_log.evaluation 形狀；含 citation_coverage/numeric_support_rate/
 -- faithfulness_score/claims；分數是來源支持度非真實性保證；NULL＝未查核或 degraded）
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS evaluation          jsonb;
+-- M9b：目前渲染版本指標（指向 report_rendition；NULL＝尚無 rendition，下載回退 pdf_path）
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS current_rendition_id uuid;
+
+-- ── M9b 渲染產物層：不可變 rendition（換皮重出的歷史；同內容不同模板各一列）──
+-- 換模板重出＝用既有 markdown 以另一模板產新 rendition，成功後原子切換
+-- report_doc.current_rendition_id；不覆蓋歷史 PDF（每列 pdf_path 各異）。零 LLM。
+CREATE TABLE IF NOT EXISTS research.report_rendition (
+    id           uuid PRIMARY KEY,
+    report_id    uuid NOT NULL,        -- 反向連結 report_doc（plain uuid，非 FK，比照既有慣例）
+    renderer     text NOT NULL,        -- typst | weasyprint
+    template_id  text,                 -- 選用模板（weasyprint 或未指定為 NULL）
+    content_hash text NOT NULL,        -- markdown 的 sha256（換皮不重生內容 → 同 hash）
+    pdf_path     text NOT NULL,
+    status       text NOT NULL DEFAULT 'ready',
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_report_rendition_report
+    ON research.report_rendition (report_id, created_at DESC);
 
 -- ── 研報重點摘錄層：一列＝「一份研報 × 一條重點」（研報閱讀頁 /app/report/:hash）──
 -- 由 scripts/extract_takeaways.py 以 LLM 回「論點 + 逐字引文」、Python 用

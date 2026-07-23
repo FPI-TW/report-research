@@ -54,12 +54,13 @@ def _fake_draft(events, *, capture=None):
     """
 
     async def _gen(question, context, *, filters=None, run_id=None, draft_model=None,
-                   web_enabled=False, coverage_note="", thin_coverage=0, deadline=None):
+                   web_enabled=False, coverage_note="", thin_coverage=0, deadline=None,
+                   locale="zh-Hant"):
         if capture is not None:
             capture["draft_kwargs"] = {
                 "filters": filters, "run_id": run_id, "draft_model": draft_model,
                 "web_enabled": web_enabled, "coverage_note": coverage_note,
-                "thin_coverage": thin_coverage, "deadline": deadline,
+                "thin_coverage": thin_coverage, "deadline": deadline, "locale": locale,
             }
         for e in events:
             yield e
@@ -408,7 +409,7 @@ class SectionedFallbackTests(_SectionedBase):
 
         async def _boom_gen(question, context, *, filters=None, run_id=None,
                             draft_model=None, web_enabled=False, coverage_note="",
-                            thin_coverage=0, deadline=None):
+                            thin_coverage=0, deadline=None, locale="zh-Hant"):
             yield ("status", {"stage": "writing"})
             yield ("token", "部分內容")
             raise RuntimeError("draft boom")

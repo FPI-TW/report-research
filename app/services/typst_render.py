@@ -489,11 +489,21 @@ def _split_hero_kpi(doc: DocumentModel) -> tuple[tuple[KpiItem, ...], DocumentMo
     return hero, DocumentModel(sections=tuple(secs), meta=doc.meta)
 
 
-def emit_typst(doc: DocumentModel, *, disclaimer: str, methods: str = "") -> str:
-    """DocumentModel → 完整 .typ 原始碼（呼叫 ib-classic 的模板契約）。"""
+def emit_typst(
+    doc: DocumentModel,
+    *,
+    disclaimer: str,
+    methods: str = "",
+    template_import_path: str = _TEMPLATE_PATH,
+) -> str:
+    """DocumentModel → 完整 .typ 原始碼（呼叫模板契約的 4 個函式）。
+
+    template_import_path 指向 compile root 內的模板檔（預設 ib-classic）；M9b 依
+    template_id 換不同模板，import 契約不變（report/section-heading/kpi-strip/chart-figure）。
+    """
     hero, rest = _split_hero_kpi(doc)
     head = (
-        f'#import "{_TEMPLATE_PATH}": report, section-heading, kpi-strip, chart-figure\n\n'
+        f'#import "{template_import_path}": report, section-heading, kpi-strip, chart-figure\n\n'
         "#show: report.with(\n"
         f"  title: {_tstr(doc.meta.title)},\n"
         f"  date: {_tstr(doc.meta.date)},\n"
@@ -506,8 +516,13 @@ def emit_typst(doc: DocumentModel, *, disclaimer: str, methods: str = "") -> str
     return head + _emit_body(rest) + "\n"
 
 
-def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
+def render_report_pdf(
+    markdown_text: str, *, title: str, meta: dict, template_id: str | None = None
+) -> bytes:
     """markdown → Typst → PDF bytes。簽章與 pdf.render_report_pdf 一致（雙軌可互換）。
+
+    template_id 依 manifest 選模板（None／未知 → 預設 ib-classic，fail-safe）；只換渲染
+    層、不動內容。
 
     典型 0.2s（spike 實測，WeasyPrint 為秒級）。模板零 @preview 依賴故無網路需求。
     失敗直接拋——由 report.py 的分派層 fail-open 回退 WeasyPrint（回退路徑同樣有
@@ -522,16 +537,20 @@ def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
     import typst
 
     from app.services.pdf import REPORT_DISCLAIMER
+    from app.templates import manifest
+
+    spec = manifest.resolve(template_id)  # 未知/None → 預設（fail-safe）
+    template_rel = f"/app/templates/{spec.filename}"  # compile root 內相對路徑
+    template_src = Path(__file__).resolve().parents[1] / "templates" / spec.filename
 
     doc = build_document(markdown_text, title=title, meta=meta or {})
-    src = emit_typst(doc, disclaimer=REPORT_DISCLAIMER)
-    template = Path(__file__).resolve().parents[1] / "templates" / "ib-classic.typ"
+    src = emit_typst(doc, disclaimer=REPORT_DISCLAIMER, template_import_path=template_rel)
     with tempfile.TemporaryDirectory(prefix="tf-typst-") as tmpdir:
         root = Path(tmpdir)
-        # 模板放在 root 內的同一相對路徑，`_TEMPLATE_PATH` 的 import 才解析得到
-        dst = root / _TEMPLATE_PATH.lstrip("/")
+        # 選定模板放進 root 內對應相對路徑，`template_rel` 的 import 才解析得到
+        dst = root / template_rel.lstrip("/")
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(template, dst)
+        shutil.copyfile(template_src, dst)
         entry = root / "report.typ"
         entry.write_text(src, encoding="utf-8")
         return typst.compile(str(entry), root=str(root))

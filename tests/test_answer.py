@@ -693,6 +693,64 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(called["intent"])  # 有跑意圖判定
         self.assertFalse(called["llm"])  # 未跑主 LLM
 
+    async def test_numeric_answer_triggers_faithfulness_spot_check(self):
+        # M8c 接線：答案含金融數字 → done 後觸發忠實度抽查（帶 qa_id 與答案本文）。
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, rp, in_domain=True, called=called)
+
+        spot = {"called": False}
+
+        async def numeric_stream(*a, **k):
+            yield "營收年增 30%[1]"
+
+        async def spy_spot(qa_id, answer, manifest):
+            spot["called"] = True
+            spot["qa_id"] = qa_id
+            spot["answer"] = answer
+
+        saved = (ans.stream_completion, ans._faithfulness_spot_check,
+                 ans.ASK_FAITHFULNESS_SAMPLE_RATE)
+        ans.stream_completion = numeric_stream
+        ans._faithfulness_spot_check = spy_spot
+        ans.ASK_FAITHFULNESS_SAMPLE_RATE = 1.0        # 抽樣必中
+        try:
+            _ = [e async for e in ans.answer_question("可口可樂營收")]
+        finally:
+            (ans.stream_completion, ans._faithfulness_spot_check,
+             ans.ASK_FAITHFULNESS_SAMPLE_RATE) = saved
+            self._restore(ans, rp, orig)
+
+        self.assertTrue(spot["called"])                  # 抽查確實被 answer_question 呼叫
+        self.assertTrue(spot.get("qa_id"))               # 帶 qa_id（真 uuid，非空）
+        self.assertIn("30%", spot.get("answer", ""))     # 帶答案本文供 grounding
+
+    async def test_non_numeric_answer_skips_spot_check(self):
+        # 答案無金融數字 → 不觸發抽查（省成本）。
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, rp, in_domain=True, called=called)  # fake_stream 回「答案[1]」
+
+        spot = {"called": False}
+
+        async def spy_spot(*a, **k):
+            spot["called"] = True
+
+        saved = (ans._faithfulness_spot_check, ans.ASK_FAITHFULNESS_SAMPLE_RATE)
+        ans._faithfulness_spot_check = spy_spot
+        ans.ASK_FAITHFULNESS_SAMPLE_RATE = 1.0
+        try:
+            _ = [e async for e in ans.answer_question("可口可樂展望")]
+        finally:
+            (ans._faithfulness_spot_check, ans.ASK_FAITHFULNESS_SAMPLE_RATE) = saved
+            self._restore(ans, rp, orig)
+
+        self.assertFalse(spot["called"])  # 「答案[1]」無金融數字 → 不查
+
     async def test_on_topic_intent_calls_llm(self):
         # 意圖判定為在領域 → 正常檢索 + 串流回答 + 引用
         from app.services import answer as ans

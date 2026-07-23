@@ -2,9 +2,10 @@ import { z } from 'zod'
 import { getJSON } from './api'
 import { readSSE, type RawSSEEvent } from './readSSE'
 import { conversationTurnSchema, qaVersionSchema, type ConversationTurn, type QaVersion } from './askSchemas'
+import type { Locale } from './useLocale'
 
 export function streamAsk(
-  body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string; request_id?: string },
+  body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string; request_id?: string; locale?: Locale },
   signal: AbortSignal,
 ): AsyncGenerator<RawSSEEvent> {
   return readSSE('/api/ask', body, signal)
@@ -34,7 +35,7 @@ export function getQaVersions(rootId: string): Promise<QaVersion[]> {
   return getJSON(`/api/qa/${encodeURIComponent(rootId)}/versions`, z.array(qaVersionSchema), { cache: 'no-store' })
 }
 
-export function streamReport(body: { question: string; conversation_id?: string; qa_id?: string; template_id?: string }, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {
+export function streamReport(body: { question: string; conversation_id?: string; qa_id?: string; template_id?: string; locale?: Locale }, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {
   return readSSE('/api/report', body, signal)
 }
 

@@ -14,3 +14,11 @@
 .menuItem:hover { background: var(--tf-border-weak); color: var(--tf-text-1); }
 .logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-family: inherit; }
 .logout:hover { background: var(--tf-border-weak); }
+/* M10b 語言切換：popover 內的分段控制 */
+.localeRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 8px; }
+.localeLabel { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tf-text-2); }
+.localeSeg { display: inline-flex; border: 1px solid var(--tf-ink-line); border-radius: 8px; overflow: hidden; }
+.localeBtn { border: none; background: none; font-family: inherit; font-size: 12px; color: var(--tf-text-3); padding: 4px 10px; cursor: pointer; }
+.localeBtn:hover { background: var(--tf-border-weak); color: var(--tf-text-1); }
+.localeBtnActive { background: var(--tf-gold, #ae7415); color: #fff; }
+.localeBtnActive:hover { background: var(--tf-gold, #ae7415); color: #fff; }

@@ -38,6 +38,11 @@ from app.services.scope_router import (
     resolve_overview_route,
 )
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
+from app.services.locale import (
+    DEFAULT_LOCALE,
+    output_directive,
+    resolve_locale,
+)
 from app.services.overview import (
     OVERVIEW_SYSTEM_PROMPT,
     aggregate_facets,
@@ -106,6 +111,13 @@ SYSTEM_PROMPT = (
 )
 
 NO_CONTEXT_MESSAGE = "在目前的研報語料中找不到與此問題相關的內容。"
+NO_CONTEXT_MESSAGE_EN = (
+    "No relevant content was found in the current research-report corpus for this question."
+)
+
+
+def no_context_message(locale: str) -> str:
+    return NO_CONTEXT_MESSAGE_EN if locale == "en" else NO_CONTEXT_MESSAGE
 
 RECENCY_WEIGHT = _S.ask_recency_weight  # 保留供顯示/向後相容
 RECENCY_HALF_LIFE_DAYS = _S.ask_recency_half_life_days
@@ -136,34 +148,85 @@ OFF_TOPIC_MESSAGE = (
     "這裡是廷豐研報的投資研究問答，這個問題超出我能引據回答的範圍。"
     "歡迎改問特定市場、個股、期貨、匯率或總經主題，我會依研報內容為你解讀。"
 )
+OFF_TOPIC_MESSAGE_EN = (
+    "This is 廷豐研報's investment-research Q&A, and this question is outside the scope "
+    "of what I can answer from our reports. Feel free to ask about a specific market, "
+    "stock, futures contract, FX pair, or macro topic, and I'll interpret it from the "
+    "research reports."
+)
 
 # 舊版婉拒文案：既有 qa_log 列仍存此字串，所有離題偵測必須同時辨識新舊兩版。
 _LEGACY_OFF_TOPIC_MESSAGE = (
     "這個問題與廷豐研報的語料無關，請改問與研報內容相關的問題"
     "（例如特定市場、個股、期貨或總經主題）。"
 )
-OFF_TOPIC_MESSAGES: tuple[str, ...] = (OFF_TOPIC_MESSAGE, _LEGACY_OFF_TOPIC_MESSAGE)
+# NOTE：新增在地化文案（如英文版）必須一併列入此元組——歷史重播以精確字串比對
+# 判定「固定 notice」，漏列會讓英文婉拒被誤當成一般回答重播。
+# 順序約定：[0] 為現行中文版、[-1] 保持為舊版中文文案（既有測試以此定位）；
+# 新語系插在兩者之間，勿改動首末位置。
+OFF_TOPIC_MESSAGES: tuple[str, ...] = (
+    OFF_TOPIC_MESSAGE, OFF_TOPIC_MESSAGE_EN, _LEGACY_OFF_TOPIC_MESSAGE,
+)
 
 TIME_SENSITIVE_UNAVAILABLE_MESSAGE = (
     "這個問題需要即時行情或最新公告資料，目前系統尚未接入可信的即時資料來源，"
     "無法為你驗證最新數字；為避免把過期研報當成即時資訊，我不會以研報內容代答。"
     "歡迎改問個股、產業或總經的研報觀點與分析。"
 )
+TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN = (
+    "This question needs real-time quotes or the latest disclosures, and the system is "
+    "not yet connected to a trusted live-data source, so I can't verify the newest "
+    "figures. To avoid presenting stale reports as live data, I won't answer from report "
+    "content here. Feel free to ask about the research view or analysis for a stock, "
+    "sector, or macro topic."
+)
 
 # 前端歷史重播目前以 is_offtopic 表示「固定 notice」；時效安全說明雖非離題，
 # 也必須走相同呈現，否則重載後會被誤當成一般回答。
-NOTICE_MESSAGES: tuple[str, ...] = (*OFF_TOPIC_MESSAGES, TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+NOTICE_MESSAGES: tuple[str, ...] = (
+    *OFF_TOPIC_MESSAGES,
+    TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
+    TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN,
+)
+
+
+def off_topic_message(locale: str) -> str:
+    return OFF_TOPIC_MESSAGE_EN if locale == "en" else OFF_TOPIC_MESSAGE
+
+
+def time_sensitive_message(locale: str) -> str:
+    return (
+        TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN if locale == "en"
+        else TIME_SENSITIVE_UNAVAILABLE_MESSAGE
+    )
+
 
 TRUSTED_ANSWER_DISCLAIMER = "即時資料僅供參考，不構成投資建議；請以來源官方網站為準。"
+TRUSTED_ANSWER_DISCLAIMER_EN = (
+    "Live data is for reference only and does not constitute investment advice; "
+    "please refer to the official source website."
+)
 
 
-def format_trusted_answer(point: TrustedDataPoint) -> str:
+def format_trusted_answer(point: TrustedDataPoint, locale: str = DEFAULT_LOCALE) -> str:
     """把已驗證的 TrustedDataPoint 轉為確定性模板答案（零 LLM、零檢索）。
 
     必須顯示資料時間與來源性質（M4a 驗收）；只有此結構可進入時效答案，
-    外部網頁自由文字沒有任何路徑能繞過 adapter 混入。
+    外部網頁自由文字沒有任何路徑能繞過 adapter 混入。輸出隨 locale 切換（M10）；
+    數值/來源網址/時間戳維持原樣，只翻譯框架標籤。
     """
     unit = f" {point.unit}" if point.unit else ""
+    if locale == "en":
+        lines = [
+            f"According to a trusted data source ({point.source_type} | {point.provider}): "
+            f"{point.subject} is {point.value}{unit}.",
+            f"As of: {point.as_of.isoformat()}",
+        ]
+        if point.published_at is not None:
+            lines.append(f"Published: {point.published_at.isoformat()}")
+        lines.append(f"Source: {point.url}")
+        lines.append(f"({TRUSTED_ANSWER_DISCLAIMER_EN})")
+        return "\n".join(lines)
     lines = [
         f"根據受信任資料來源（{point.source_type}｜{point.provider}）："
         f"{point.subject} 為 {point.value}{unit}。",
@@ -1241,6 +1304,7 @@ async def _answer_overview(
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     request_id: str | None = None,
+    locale: str = DEFAULT_LOCALE,
 ) -> AsyncIterator[tuple[str, object]]:
     """總覽路徑：分面聚合 → LLM 用算好的數字潤飾 → 失敗退回模板。事件序列同主路徑。"""
     stages_seen: list[str] = []
@@ -1254,7 +1318,7 @@ async def _answer_overview(
         overview = await aggregate_facets(session, scoped_filters)
 
     if overview.total == 0:
-        msg = render_overview_text(overview)  # 「找不到…」
+        msg = render_overview_text(overview, locale)  # 「找不到…」
         yield ("sources", [])
         thinking_ms = int((time.monotonic() - started) * 1000)
         yield _status("generating", thinking_ms=thinking_ms)
@@ -1289,7 +1353,8 @@ async def _answer_overview(
     emitted_token = False
     try:
         async for chunk in stream_completion(
-            user_prompt, model=model, system=OVERVIEW_SYSTEM_PROMPT, allow_web=False
+            user_prompt, model=model,
+            system=OVERVIEW_SYSTEM_PROMPT + output_directive(locale), allow_web=False,
         ):
             if chunk == SEARCH_EVENT:
                 continue
@@ -1303,7 +1368,7 @@ async def _answer_overview(
 
     body = "".join(raw_parts).strip()
     if not body:
-        body = render_overview_text(overview)
+        body = render_overview_text(overview, locale)
         yield ("token", body)
 
     cited = cited_report_ids(body, sources)
@@ -1337,6 +1402,7 @@ async def _yield_routed_notice(
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     request_id: str | None = None,
+    locale: str = DEFAULT_LOCALE,
 ) -> AsyncIterator[tuple[str, object]]:
     """no-answer 終端路由（off_topic / time_sensitive）：固定文案、不檢索、不呼叫主 LLM。
 
@@ -1344,10 +1410,10 @@ async def _yield_routed_notice(
     done payload 維持既有離題形狀，不含 qa_id（與有答覆路徑的 done 區隔）。
     """
     if decision.scope == TIME_SENSITIVE:
-        message = TIME_SENSITIVE_UNAVAILABLE_MESSAGE
+        message = time_sensitive_message(locale)
         log_filters = dict(filters, path="time_sensitive")
     else:
-        message = OFF_TOPIC_MESSAGE
+        message = off_topic_message(locale)
         log_filters = filters
     yield ("sources", [])
     yield ("notice", message)
@@ -1386,6 +1452,7 @@ async def _answer_time_sensitive(
     truncate_from: tuple[str, object] | None = None,
     request_id: str | None = None,
     fetch_query: str | None = None,
+    locale: str = DEFAULT_LOCALE,
 ) -> AsyncIterator[tuple[str, object]]:
     """時效題唯一作答路徑：僅受信任 adapter（M4a）可提供數值，零 LLM、零檢索。
 
@@ -1401,7 +1468,7 @@ async def _answer_time_sensitive(
     except TrustedDataUnavailable:
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id,
+            deactivate_qa_id, truncate_from, request_id, locale=locale,
         ):
             yield ev
         return
@@ -1410,7 +1477,7 @@ async def _answer_time_sensitive(
     thinking_ms = int((time.monotonic() - started) * 1000)
     stages_seen.append("generating")
     yield ("status", {"stage": "generating", "thinking_ms": thinking_ms})
-    body = format_trusted_answer(point)
+    body = format_trusted_answer(point, locale)
     yield ("token", body)
     ext = [trusted_ext_source(point)]
     yield ("ext_sources", ext)
@@ -1454,6 +1521,7 @@ async def answer_question(
     regenerate_of: str | None = None,
     edit_of: str | None = None,
     request_id: str | None = None,
+    locale: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """產生 ("sources"|"status"|"token"|"notice"|"ext_sources"|"done", payload) 事件序列。
 
@@ -1467,6 +1535,9 @@ async def answer_question(
     再以編輯後新問題作答為全新輪次（不進版本群組，new_root 維持 None）。
     """
     filters = filters or {}
+    # locale 解析 fail-open → zh-Hant（未帶/未知一律中文，零回歸）。輸出語言隨此值切換；
+    # 檢索與證據一律保留原文（M10 設計）。
+    locale = resolve_locale(locale)
     started = time.monotonic()
     timer = _StageTimer()
     conv_id = conversation_id or str(uuid.uuid4())
@@ -1525,7 +1596,7 @@ async def answer_question(
                 question, standalone_query, ov_filters, filters,
                 conv_id=conv_id, model=model, started=started, root_qa_id=new_root,
                 deactivate_qa_id=deactivate_qa_id, truncate_from=truncate_from,
-                request_id=request_id,
+                request_id=request_id, locale=locale,
             ):
                 produced = True
                 yield ev
@@ -1552,7 +1623,7 @@ async def answer_question(
         async for ev in _answer_time_sensitive(
             decision, question, filters, conv_id, started, stages_seen, new_root,
             deactivate_qa_id, truncate_from, request_id,
-            fetch_query=standalone_query,
+            fetch_query=standalone_query, locale=locale,
         ):
             yield ev
         return
@@ -1561,7 +1632,7 @@ async def answer_question(
     if decision is not None and decision.scope == OFF_TOPIC:
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id,
+            deactivate_qa_id, truncate_from, request_id, locale=locale,
         ):
             yield ev
         return
@@ -1616,7 +1687,7 @@ async def answer_question(
             plan_task.cancel()  # 已被路由走：規劃結果不再被消費
         async for ev in _answer_time_sensitive(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id,
+            deactivate_qa_id, truncate_from, request_id, locale=locale,
         ):
             yield ev
         return
@@ -1627,7 +1698,7 @@ async def answer_question(
             plan_task.cancel()  # 已被路由走：規劃結果不再被消費
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id,
+            deactivate_qa_id, truncate_from, request_id, locale=locale,
         ):
             yield ev
         return
@@ -1691,6 +1762,8 @@ async def answer_question(
     if decision is not None and decision.scope == ADVICE_RISK:
         system_prompt = SYSTEM_PROMPT + RESEARCH_ONLY_POLICY
         log_filters = dict(filters, path="advice_risk")
+    # 語言覆寫附加於最後（zh-Hant 回空字串 → 提示一字不動）
+    system_prompt = system_prompt + output_directive(locale)
 
     yield ("sources", [asdict(s) for s in sources])
     yield _status("retrieved", count=len(sources))  # 步驟2：找到 N 篇
@@ -1698,10 +1771,11 @@ async def answer_question(
     if not context:
         thinking_ms = int((time.monotonic() - started) * 1000)
         yield _status("generating", thinking_ms=thinking_ms)
-        yield ("token", NO_CONTEXT_MESSAGE)
+        _no_ctx = no_context_message(locale)
+        yield ("token", _no_ctx)
         qa_id = await _log_qa(
             question,
-            NO_CONTEXT_MESSAGE,
+            _no_ctx,
             [],
             log_filters,
             thinking_ms,

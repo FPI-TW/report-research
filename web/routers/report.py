@@ -50,6 +50,7 @@ class ReportRequest(BaseModel):
     conversation_id: str | None = None
     qa_id: str | None = None
     template_id: str | None = None  # M9b：選渲染模板；未知/未帶 → 預設（fail-safe）
+    locale: str | None = None  # M10：輸出語言（zh-Hant/en）；未帶/未知 → 預設中文（fail-open）
 
 
 @router.post("/api/report")
@@ -72,7 +73,7 @@ async def report(req: ReportRequest):
                 async for event, payload in generate_report(
                     question, filters={},
                     conversation_id=req.conversation_id, qa_id=req.qa_id,
-                    template_id=req.template_id,
+                    template_id=req.template_id, locale=req.locale,
                 ):
                     yield deps._sse(event, payload)
             except Exception:

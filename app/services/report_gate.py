@@ -24,9 +24,11 @@ _TRIVIAL_HINTS = ("股價", "報價", "收盤", "開盤", "幾元", "多少錢")
 _LONG_ANSWER_CHARS = _S.report_long_answer_chars
 
 
-def suggested_title(question: str) -> str:
-    """由問題組出研報標題草稿。"""
+def suggested_title(question: str, locale: str = "zh-Hant") -> str:
+    """由問題組出研報標題草稿（輸出隨 locale；非 en 一律中文）。"""
     q = (question or "").strip().rstrip("?？。.!！").strip()
+    if locale == "en":
+        return f"{q} — Deep Research Report" if q else "Research Report"
     if not q:
         return "研報"
     return f"{q} 深度研報"

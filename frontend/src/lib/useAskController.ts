@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { askReducer, initialAskState, turnFromHistory, type AskState } from './askReducer'
 import { parseAskEvent, parseReportEvent } from './askSchemas'
 import { streamAsk, streamReport, getConversation, sendFeedback, stopAsk, getQaVersions } from './askApi'
+import { useLocale } from './useLocale'
 
 let seq = 0
 const newId = () => `t${Date.now()}_${seq++}`
@@ -28,6 +29,7 @@ export interface UseAskController {
 export function useAskController(): UseAskController {
   const [state, dispatch] = useReducer(askReducer, initialAskState)
   const [conversationId, setConversationId] = useState<string | null>(null)
+  const locale = useLocale()  // M10b：輸出語言，注入 /api/ask 與 /api/report 請求
   const qc = useQueryClient()
   const convRef = useRef<string | null>(null)
   const reqId = useRef(0)
@@ -71,7 +73,7 @@ export function useAskController(): UseAskController {
     streamRequestIdRef.current = requestId
     void (async () => {
       try {
-        for await (const raw of streamAsk({ ...body, request_id: requestId }, ctrl.signal)) {
+        for await (const raw of streamAsk({ ...body, request_id: requestId, locale }, ctrl.signal)) {
           if (my !== reqId.current) return
           const ev = parseAskEvent(raw)
           if (!ev) continue
@@ -90,7 +92,7 @@ export function useAskController(): UseAskController {
         if (my === reqId.current) { streamTurnRef.current = null; streamRequestIdRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
       }
     })()
-  }, [abortAll, qc])
+  }, [abortAll, qc, locale])
 
   const submit = useCallback((question: string) => {
     const q = question.trim()
@@ -185,7 +187,7 @@ export function useAskController(): UseAskController {
     void (async () => {
       let sawTerminal = false
       try {
-        const body: { question: string; conversation_id?: string; qa_id?: string; template_id?: string } = { question }
+        const body: { question: string; conversation_id?: string; qa_id?: string; template_id?: string; locale?: typeof locale } = { question, locale }
         if (convRef.current) body.conversation_id = convRef.current
         if (qaId) body.qa_id = qaId
         if (templateId) body.template_id = templateId
@@ -207,7 +209,7 @@ export function useAskController(): UseAskController {
         }
       }
     })()
-  }, [])
+  }, [locale])
 
   const declineReport = useCallback((turnId: string) => dispatch({ type: 'report-decline', id: turnId }), [])
 

@@ -204,20 +204,23 @@ async def persist_report_doc(
     claim_evidence: dict | None = None,
     current_revision_id: str | None = None,
     report_run_id: str | None = None,
+    evaluation: dict | None = None,
 ) -> None:
     """寫入 report_doc。M7 逐節生成另帶 outline/claim_evidence/current_revision_id/
-    report_run_id 四欄（單次路徑不傳，寫 NULL、歷史列相容）。這四欄為 keyword-only，
-    位置參數契約（…, sources, thinking_ms, evidence_manifest）不變（見 test_report）。"""
+    report_run_id 四欄（單次路徑不傳，寫 NULL、歷史列相容）；M8 另帶 evaluation
+    （忠實度查核，NULL＝未查核/停用/degraded）。這些為 keyword-only，位置參數契約
+    （…, sources, thinking_ms, evidence_manifest）不變（見 test_report）。"""
     async with SessionFactory() as session:
         await session.execute(
             text(
                 "INSERT INTO research.report_doc "
                 "(id, qa_id, conversation_id, question, title, markdown, pdf_path, "
                 "sources, thinking_ms, evidence_manifest, "
-                "outline, claim_evidence, current_revision_id, report_run_id) "
+                "outline, claim_evidence, current_revision_id, report_run_id, evaluation) "
                 "VALUES (:id, :qa_id, :conv, :q, :title, :md, :pdf, "
                 "CAST(:src AS jsonb), :tms, CAST(:evm AS jsonb), "
-                "CAST(:outline AS jsonb), CAST(:ce AS jsonb), :crid, :rrid)"
+                "CAST(:outline AS jsonb), CAST(:ce AS jsonb), :crid, :rrid, "
+                "CAST(:eval AS jsonb))"
             ),
             {
                 "id": report_id, "qa_id": qa_id, "conv": conversation_id,
@@ -237,6 +240,10 @@ async def persist_report_doc(
                 ),
                 "crid": current_revision_id,
                 "rrid": report_run_id,
+                "eval": (
+                    json.dumps(evaluation, ensure_ascii=False)
+                    if evaluation is not None else None
+                ),
             },
         )
         await session.commit()
@@ -391,6 +398,7 @@ async def _finalize_sectioned(
         claim_evidence=payload.get("claim_evidence") or None,
         current_revision_id=payload.get("revision_id"),
         report_run_id=run_id,
+        evaluation=payload.get("evaluation") or None,
     )
     emh = (
         hashlib.sha256(

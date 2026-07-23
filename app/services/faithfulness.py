@@ -206,7 +206,7 @@ async def check_faithfulness(
         claims = [
             ClaimVerdict(s, is_numeric_claim(s), "no_source") for s in statements
         ]
-        return _summarize(claims, degraded=False)
+        return summarize_claims(claims, degraded=False)
 
     supmap = await ground_statements(statements, context_texts, judge=judge)
     if supmap is None:
@@ -220,10 +220,14 @@ async def check_faithfulness(
         )
         for i, s in enumerate(statements)
     ]
-    return _summarize(claims, degraded=False)
+    return summarize_claims(claims, degraded=False)
 
 
-def _summarize(claims: list[ClaimVerdict], *, degraded: bool) -> FaithfulnessResult:
+def summarize_claims(claims: list[ClaimVerdict], *, degraded: bool) -> FaithfulnessResult:
+    """把逐條 verdict 彙總成 FaithfulnessResult（分數計算單一真相）。
+
+    供研報「逐節查核→合併成 doc-level evaluation」復用（M8b）。
+    """
     total = len(claims)
     supported = sum(1 for c in claims if c.verdict == "supported")
     numerics = [c for c in claims if c.is_numeric]
@@ -246,16 +250,23 @@ async def resolve_evidence_texts(
     ledger: EvidenceLedger,
     session,
     *,
+    evidence_ids: list[str] | None = None,
     max_chars: int = _MAX_CHARS_PER_EVIDENCE,
 ) -> list[str]:
     """把帳本的 corpus 證據回查成文字（依 report_id 取該報告 chunk 串接，capped）。
 
-    external 證據的快照內容不在庫內（帳本只有 snapshot_ref/content_hash），故略過——
-    無法在庫內驗證的外部數值主張，check_faithfulness 會因缺 context 判 no_source。
+    evidence_ids 給定時只回查那些證據（供研報逐節查核，只餵該節被分配的證據）；
+    None 則回查整份帳本。external 證據的快照內容不在庫內（帳本只有 snapshot_ref/
+    content_hash），故略過——無法在庫內驗證的外部數值主張，check_faithfulness 會因缺
+    context 判 no_source。
     """
+    if evidence_ids is None:
+        candidates = list(ledger)
+    else:
+        candidates = [ev for eid in evidence_ids if (ev := ledger.get(eid)) is not None]
     seen_reports: set[str] = set()
     texts: list[str] = []
-    for ev in ledger:
+    for ev in candidates:
         if ev.kind != "corpus" or not ev.report_id or ev.report_id in seen_reports:
             continue
         seen_reports.add(ev.report_id)

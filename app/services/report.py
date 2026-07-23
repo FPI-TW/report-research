@@ -165,7 +165,9 @@ def parse_external_refs(markdown: str) -> list[dict]:
     ]
 
 
-def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
+def render_report_pdf(
+    markdown_text: str, *, title: str, meta: dict, template_id: str | None = None
+) -> bytes:
     """依 REPORT_RENDERER 分派渲染；Typst 失敗 fail-open 回退 WeasyPrint（M9a T5）。
 
     **兩軌都必須產出含免責的 PDF**：回退路徑存在正是為了應付沒預料到的情況，那恰恰
@@ -179,7 +181,9 @@ def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
             # 延遲 import：typst/pypandoc 載入不該計入 web.server 的匯入預算
             from app.services.typst_render import render_report_pdf as _render_typst
 
-            return _render_typst(markdown_text, title=title, meta=meta)
+            return _render_typst(
+                markdown_text, title=title, meta=meta, template_id=template_id
+            )
         except Exception:
             # 編譯錯誤、模板炸掉、pandoc 異常都在此收斂——研報寧可版型退化，
             # 不可因渲染而完全沒有 PDF（無 PDF＝無持久化＝重建永久 500）。
@@ -342,7 +346,7 @@ async def _mark_run(run_id: str | None, status: str, **fields) -> None:
 async def _finalize_sectioned(
     payload: dict, *, question: str, conversation_id: str | None,
     qa_id: str | None, run_id: str | None, eval_context: str,
-    started: float, persist: bool,
+    started: float, persist: bool, template_id: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """逐節 __final__ 收尾：eval 旁路 / 渲染 PDF / 落地 / persist / 收尾 run / done。
 
@@ -381,7 +385,7 @@ async def _finalize_sectioned(
     today = datetime.now(timezone.utc).date().isoformat()
     pdf_bytes = await asyncio.to_thread(
         render_report_pdf, markdown, title=title,
-        meta={"date": today, "question": question},
+        meta={"date": today, "question": question}, template_id=template_id,
     )
     pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
     # M4b：只以實際被 [n] 引用的 corpus 來源建 manifest；模型自報的網路來源經與單次
@@ -428,7 +432,7 @@ async def _finalize_sectioned(
 async def generate_report(
     question: str, *, filters: dict | None = None,
     conversation_id: str | None = None, qa_id: str | None = None,
-    model: str = REPORT_MODEL, persist: bool = True,
+    model: str = REPORT_MODEL, persist: bool = True, template_id: str | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     filters = filters or {}
     started = time.monotonic()
@@ -555,7 +559,7 @@ async def generate_report(
                 async for ev in _finalize_sectioned(
                     final_payload, question=question, conversation_id=conversation_id,
                     qa_id=qa_id, run_id=run_id, eval_context=context,
-                    started=started, persist=persist,
+                    started=started, persist=persist, template_id=template_id,
                 ):
                     yield ev
             except asyncio.CancelledError:
@@ -625,7 +629,8 @@ async def generate_report(
     report_id = str(uuid.uuid4())
     today = datetime.now(timezone.utc).date().isoformat()
     pdf_bytes = await asyncio.to_thread(
-        render_report_pdf, markdown, title=title, meta={"date": today, "question": question}
+        render_report_pdf, markdown, title=title,
+        meta={"date": today, "question": question}, template_id=template_id,
     )
     pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
     # M4b：corpus 來源 + 受控解析的外部參考 → evidence manifest（無證據時寫 NULL）

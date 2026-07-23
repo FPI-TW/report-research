@@ -44,6 +44,7 @@ class ReportRequest(BaseModel):
     question: str
     conversation_id: str | None = None
     qa_id: str | None = None
+    template_id: str | None = None  # M9b：選渲染模板；未知/未帶 → 預設（fail-safe）
 
 
 @router.post("/api/report")
@@ -66,6 +67,7 @@ async def report(req: ReportRequest):
                 async for event, payload in generate_report(
                     question, filters={},
                     conversation_id=req.conversation_id, qa_id=req.qa_id,
+                    template_id=req.template_id,
                 ):
                     yield deps._sse(event, payload)
             except Exception:
@@ -77,6 +79,22 @@ async def report(req: ReportRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/api/report-templates")
+async def report_templates():
+    """可選研報渲染模板清單（M9b registry）；前端模板選擇器資料源。"""
+    from app.templates import manifest
+
+    return {
+        "templates": [
+            {
+                "id": t.id, "name": t.name, "description": t.description,
+                "is_default": t.is_default, "thumbnail": t.thumbnail,
+            }
+            for t in manifest.list_templates()
+        ]
+    }
 
 
 @router.get("/api/report-doc/{report_id}/pdf")

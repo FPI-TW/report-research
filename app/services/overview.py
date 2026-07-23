@@ -385,26 +385,45 @@ def format_facts(ov: CorpusOverview) -> str:
     return "\n".join(lines)
 
 
-def render_overview_text(ov: CorpusOverview) -> str:
-    """LLM 潤飾失敗時的確定性模板答案（保證有答案、不阻斷）。"""
+def render_overview_text(ov: CorpusOverview, locale: str = "zh-Hant") -> str:
+    """LLM 潤飾失敗時的確定性模板答案（保證有答案、不阻斷）。
+
+    輸出隨 locale 切換（M10）；分面維度標籤（市場/商品類型）維持原文——證據不翻譯。
+    非 en 一律回中文（fail-open）。
+    """
+    from app.services.locale import is_english
+
+    en = is_english(locale)
     f = ov.filters or OverviewFilters()
-    cond = "、".join(f.applied_labels()) or "全語料"
+    cond = "、".join(f.applied_labels()) or ("all reports" if en else "全語料")
     if ov.total == 0:
-        return f"在研報語料中找不到符合條件（{cond}）的研報。"
-    parts = [f"符合條件（{cond}）的研報共 {ov.total} 篇。"]
+        return (
+            f"No reports matching the criteria ({cond}) were found in the corpus."
+            if en else f"在研報語料中找不到符合條件（{cond}）的研報。"
+        )
+    parts = [
+        f"A total of {ov.total} reports match the criteria ({cond})."
+        if en else f"符合條件（{cond}）的研報共 {ov.total} 篇。"
+    ]
     if ov.date_min or ov.date_max:
         lo = ov.date_min.isoformat() if ov.date_min else "?"
         hi = ov.date_max.isoformat() if ov.date_max else "?"
-        parts.append(f"日期範圍 {lo} ~ {hi}。")
+        parts.append(f"Date range {lo} ~ {hi}." if en else f"日期範圍 {lo} ~ {hi}。")
     if ov.by_market:
-        parts.append("按市場：" + _fmt_pairs(ov.by_market, MARKET_DISPLAY) + "。")
+        pairs = _fmt_pairs(ov.by_market, MARKET_DISPLAY)
+        parts.append((f"By market: {pairs}." if en else f"按市場：{pairs}。"))
     if ov.by_instrument:
-        parts.append("按商品類型：" + _fmt_pairs(ov.by_instrument, INSTRUMENT_DISPLAY) + "。")
+        pairs = _fmt_pairs(ov.by_instrument, INSTRUMENT_DISPLAY)
+        parts.append((f"By instrument type: {pairs}." if en else f"按商品類型：{pairs}。"))
     untagged = dict(ov.by_report_type).get("(未標註)", 0)
     if untagged and untagged >= ov.total * 0.5:
-        parts.append("（多數研報未標註『報告種類』欄位，故改以市場/商品類型維度呈現。）")
+        parts.append(
+            "(Most reports have no 'report type' label, so market / instrument-type "
+            "dimensions are shown instead.)"
+            if en else "（多數研報未標註『報告種類』欄位，故改以市場/商品類型維度呈現。）"
+        )
     if ov.samples:
-        parts.append("最新樣本：")
+        parts.append("Latest samples:" if en else "最新樣本：")
         for i, (_rid, fn, _mk, rd) in enumerate(ov.samples, 1):
             ds = rd.isoformat() if hasattr(rd, "isoformat") else (rd or "")
             parts.append(f"[{i}] {fn}{f'（{ds}）' if ds else ''}")

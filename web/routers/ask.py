@@ -40,6 +40,7 @@ class AskRequest(BaseModel):
     regenerate_of: str | None = None
     edit_of: str | None = None
     request_id: str | None = None
+    locale: str | None = None  # M10：輸出語言（zh-Hant/en）；未帶/未知 → 預設中文（fail-open）
 
 
 # 每次提問會 spawn 一個 claude CLI 子程序（CPU-bound 機器），限制同時數避免區網多人同問雪崩。
@@ -88,6 +89,7 @@ async def ask(req: AskRequest):
                     regenerate_of=req.regenerate_of,
                     edit_of=req.edit_of,
                     request_id=req.request_id,
+                    locale=req.locale,
                 ):
                     yield deps._sse(event, payload)
             except Exception:

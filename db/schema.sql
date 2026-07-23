@@ -112,6 +112,9 @@ ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS stopped boolean NOT NULL DE
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS request_id uuid;
 -- M4b：證據帳本 manifest（{"schema_version":1,"evidence":[...]}；NULL＝舊列，空帳本語義）
 ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS evidence_manifest jsonb;
+-- M8：忠實度查核結果（citation_coverage/numeric_support_rate/faithfulness_score/claims；
+-- 「來源支持度／待複核」非真實性保證；NULL＝未查核或 degraded fail-open）
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS evaluation jsonb;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_qa_log_request_id
     ON research.qa_log (request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_qa_log_root
@@ -253,6 +256,9 @@ ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS outline             jso
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS claim_evidence      jsonb;   -- claim/KPI/chart → evidence_id 映射
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS current_revision_id uuid;
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS report_run_id       uuid;    -- 反向連結（plain uuid，非 FK）
+-- M8：忠實度查核結果（同 qa_log.evaluation 形狀；含 citation_coverage/numeric_support_rate/
+-- faithfulness_score/claims；分數是來源支持度非真實性保證；NULL＝未查核或 degraded）
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS evaluation          jsonb;
 
 -- ── 研報重點摘錄層：一列＝「一份研報 × 一條重點」（研報閱讀頁 /app/report/:hash）──
 -- 由 scripts/extract_takeaways.py 以 LLM 回「論點 + 逐字引文」、Python 用

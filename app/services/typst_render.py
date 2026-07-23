@@ -30,6 +30,7 @@ from app.services.chart import render_chart_svg
 
 # 與 WeasyPrint 路徑共用引用正規化與免責文字——兩軌各留一份必然漂移。
 # pdf.py 的 weasyprint 是延遲 import，故此處頂層 import 不會吃到它的載入成本。
+from app.services.locale import DEFAULT_LOCALE
 from app.services.pdf import _normalize_refs, chart_caption
 
 logger = logging.getLogger(__name__)
@@ -172,11 +173,11 @@ def _parse_kpi(raw: str) -> KpiBlock | None:
     return KpiBlock(items=tuple(parsed), source=block_src)
 
 
-def _parse_chart(raw: str) -> ChartBlock | None:
+def _parse_chart(raw: str, locale: str = DEFAULT_LOCALE) -> ChartBlock | None:
     """```chart JSON → ChartBlock（含預先算好的 SVG）；壞規格 → None。
 
     重用 chart.py 既有的 _valid 與 render_chart_svg（D5）：SVG 走 Typst image()
-    原生嵌入，零 @preview 套件依賴 → 無網路編譯開箱即得。
+    原生嵌入，零 @preview 套件依賴 → 無網路編譯開箱即得。caption 來源標籤隨 locale。
     """
     try:
         spec = json.loads(raw)
@@ -190,7 +191,7 @@ def _parse_chart(raw: str) -> ChartBlock | None:
     if not svg:
         logger.warning("chart SVG 產出為空，略過")
         return None
-    return ChartBlock(svg=svg, caption=chart_caption(spec))
+    return ChartBlock(svg=svg, caption=chart_caption(spec, locale))
 
 
 class ProseConversionError(RuntimeError):
@@ -255,7 +256,7 @@ def _prose_to_typst(md: str) -> str:
         raise ProseConversionError(f"pandoc 轉換失敗：{exc}") from exc
 
 
-def _blocks_for(body: str) -> tuple[Block, ...]:
+def _blocks_for(body: str, locale: str = DEFAULT_LOCALE) -> tuple[Block, ...]:
     """一段 markdown（單一章節內文）→ 區塊序列。"""
     out: list[Block] = []
     for kind, payload in _split_fences(body):
@@ -268,7 +269,7 @@ def _blocks_for(body: str) -> tuple[Block, ...]:
             if kb is not None:
                 out.append(kb)
         elif kind == "chart":
-            cb = _parse_chart(payload)
+            cb = _parse_chart(payload, locale)
             if cb is not None:
                 out.append(cb)
     return tuple(out)
@@ -375,6 +376,13 @@ _SECTION_KEYS: dict[str, str] = {
     "引用來源": "references",
     "外部參考（網路）": "external",
     "外部參考": "external",
+    # M10c：英文骨架標題（與 report_writer.SKELETON_HEADINGS_EN 對齊）
+    "Executive Summary": "exec_summary",
+    "Key Findings": "key_findings",
+    "In-Depth Analysis": "analysis",
+    "Risks & Outlook": "risk_outlook",
+    "References": "references",
+    "External References (Web)": "external",
 }
 
 
@@ -382,7 +390,8 @@ def _section_key(heading: str) -> str | None:
     return _SECTION_KEYS.get(heading.strip())
 
 
-def build_document(markdown: str, *, title: str, meta: dict | None = None) -> DocumentModel:
+def build_document(markdown: str, *, title: str, meta: dict | None = None,
+                   locale: str = DEFAULT_LOCALE) -> DocumentModel:
     """markdown + metadata → DocumentModel（模板契約的輸入）。
 
     無 I/O（pandoc 為同進程呼叫）。任何區塊解析失敗都只是少一個區塊，不影響其餘
@@ -398,7 +407,7 @@ def build_document(markdown: str, *, title: str, meta: dict | None = None) -> Do
             # 引用來源逐條起新段落：模型常把 [1][2][3] 寫成單換行，pandoc 會併成一段
             # → PDF 上整串擠成一行。與 WeasyPrint 路徑共用同一個正規化（複製一份必漂移）。
             body = _normalize_refs(body)
-        sections.append(Section(key=key, heading=heading, blocks=_blocks_for(body)))
+        sections.append(Section(key=key, heading=heading, blocks=_blocks_for(body, locale)))
     return DocumentModel(
         sections=tuple(s for s in sections if s.blocks or s.heading),
         meta=DocMeta(
@@ -442,7 +451,12 @@ def _emit_kpi(items: tuple[KpiItem, ...]) -> str:
     return f"({cells},)"
 
 
-def _emit_body(doc: DocumentModel) -> str:
+def _emit_body(
+    doc: DocumentModel,
+    *,
+    chart_supplement: str | None = None,
+    kpi_source_label: str | None = None,
+) -> str:
     """章節 → Typst body。ProseBlock 已是 pandoc 跳脫後的片段，可直接插入。
 
     **heading 必須走 `_tstr` 成為字串常值，不可用 `#section-heading[...]` 的 content
@@ -454,7 +468,12 @@ def _emit_body(doc: DocumentModel) -> str:
 
     附帶：content 語法也讓 spec D6 在標題失效——`## 2026 年 EPS 上修 $14.2 至 $16.8`
     的兩個 `$` 會被配對成數學模式而吃掉內容，`## 依 @法說會 資料` 會直接編譯失敗。
+
+    M10c：chart_supplement／kpi_source_label 非 None 時（en）於呼叫附上該具名引數，
+    覆寫 .typ 的中文預設（「圖」／「來源」）；None（zh）則不附引數，輸出 byte 相同。
     """
+    supp = f", supplement: {_tstr(chart_supplement)}" if chart_supplement is not None else ""
+    kpi_lbl = f", source-label: {_tstr(kpi_source_label)}" if kpi_source_label is not None else ""
     out: list[str] = []
     for sec in doc.sections:
         if sec.heading:
@@ -463,10 +482,10 @@ def _emit_body(doc: DocumentModel) -> str:
             if isinstance(b, ProseBlock):
                 out.append(b.typst)
             elif isinstance(b, ChartBlock):
-                out.append(f"#chart-figure({_tstr(b.svg)}, {_tstr(b.caption)})")
+                out.append(f"#chart-figure({_tstr(b.svg)}, {_tstr(b.caption)}{supp})")
             elif isinstance(b, KpiBlock):
                 # 章節內的 KPI（非跨欄置頂那組）就地排一列
-                out.append(f"#kpi-strip({_emit_kpi(b.items)})")
+                out.append(f"#kpi-strip({_emit_kpi(b.items)}{kpi_lbl})")
     return "\n\n".join(out)
 
 
@@ -495,12 +514,34 @@ def emit_typst(
     disclaimer: str,
     methods: str = "",
     template_import_path: str = _TEMPLATE_PATH,
+    locale: str = DEFAULT_LOCALE,
 ) -> str:
     """DocumentModel → 完整 .typ 原始碼（呼叫模板契約的 4 個函式）。
 
     template_import_path 指向 compile root 內的模板檔（預設 ib-classic）；M9b 依
     template_id 換不同模板，import 契約不變（report/section-heading/kpi-strip/chart-figure）。
+
+    M10c：locale=en 時額外 emit 品牌／頁尾／語系／KPI 來源標籤等 chrome 參數（模板函式
+    皆有中文預設，未 emit 時走預設）。zh-Hant（預設）不 emit 任何額外參數 → 輸出與
+    改動前 byte 相同（零回歸）。全部經 `_tstr` 跳脫，維持安全邊界。
     """
+    en = locale == "en"
+    # en-only chrome：從 pdf.py 取品牌（兩軌單一真相源），其餘為本地標籤常量
+    extra = ""
+    chart_supp: str | None = None
+    kpi_src_label: str | None = None
+    if en:
+        from app.services.pdf import brand_name
+
+        extra = (
+            f"  brand: {_tstr(brand_name('en'))},\n"
+            f"  footer-note: {_tstr('Auto-generated')},\n"
+            '  lang: "en",\n'
+            '  region: "US",\n'
+            f"  kpi-source-label: {_tstr('Source')},\n"
+        )
+        chart_supp = "Fig."
+        kpi_src_label = "Source"
     hero, rest = _split_hero_kpi(doc)
     head = (
         f'#import "{template_import_path}": report, section-heading, kpi-strip, chart-figure\n\n'
@@ -511,13 +552,15 @@ def emit_typst(
         f"  kpi: {_emit_kpi(hero)},\n"
         f"  methods: {_tstr(methods)},\n"
         f"  disclaimer: {_tstr(disclaimer)},\n"
+        f"{extra}"
         ")\n\n"
     )
-    return head + _emit_body(rest) + "\n"
+    return head + _emit_body(rest, chart_supplement=chart_supp, kpi_source_label=kpi_src_label) + "\n"
 
 
 def render_report_pdf(
-    markdown_text: str, *, title: str, meta: dict, template_id: str | None = None
+    markdown_text: str, *, title: str, meta: dict, template_id: str | None = None,
+    locale: str = DEFAULT_LOCALE,
 ) -> bytes:
     """markdown → Typst → PDF bytes。簽章與 pdf.render_report_pdf 一致（雙軌可互換）。
 
@@ -536,15 +579,18 @@ def render_report_pdf(
     # 延遲 import：與 pdf.py 的 weasyprint 同理，不讓模組匯入期吃載入成本
     import typst
 
-    from app.services.pdf import REPORT_DISCLAIMER
+    from app.services.pdf import report_disclaimer
     from app.templates import manifest
 
     spec = manifest.resolve(template_id)  # 未知/None → 預設（fail-safe）
     template_rel = f"/app/templates/{spec.filename}"  # compile root 內相對路徑
     template_src = Path(__file__).resolve().parents[1] / "templates" / spec.filename
 
-    doc = build_document(markdown_text, title=title, meta=meta or {})
-    src = emit_typst(doc, disclaimer=REPORT_DISCLAIMER, template_import_path=template_rel)
+    doc = build_document(markdown_text, title=title, meta=meta or {}, locale=locale)
+    src = emit_typst(
+        doc, disclaimer=report_disclaimer(locale),
+        template_import_path=template_rel, locale=locale,
+    )
     with tempfile.TemporaryDirectory(prefix="tf-typst-") as tmpdir:
         root = Path(tmpdir)
         # 選定模板放進 root 內對應相對路徑，`template_rel` 的 import 才解析得到

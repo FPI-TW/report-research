@@ -252,15 +252,17 @@ def parse_external_refs(markdown: str) -> list[dict]:
 
 
 def render_report_pdf(
-    markdown_text: str, *, title: str, meta: dict, template_id: str | None = None
+    markdown_text: str, *, title: str, meta: dict, template_id: str | None = None,
+    locale: str = DEFAULT_LOCALE,
 ) -> bytes:
     """依 REPORT_RENDERER 分派渲染；Typst 失敗 fail-open 回退 WeasyPrint（M9a T5）。
 
     **兩軌都必須產出含免責的 PDF**：回退路徑存在正是為了應付沒預料到的情況，那恰恰
-    是最不該少免責的時候。免責文字兩軌同源（`pdf.REPORT_DISCLAIMER`）。
+    是最不該少免責的時候。免責文字兩軌同源（`pdf.report_disclaimer(locale)`）。
 
     這裡是所有渲染的單一入口——`web/server.py` 的 PDF 重建端點也必須經過它，否則
-    重建出來的檔案會繞過分派、永遠是 WeasyPrint 版。
+    重建出來的檔案會繞過分派、永遠是 WeasyPrint 版。locale（M10c）決定 chrome 語言，
+    兩軌一致；免責回退時同樣隨 locale。
     """
     if REPORT_RENDERER == "typst":
         try:
@@ -268,13 +270,14 @@ def render_report_pdf(
             from app.services.typst_render import render_report_pdf as _render_typst
 
             return _render_typst(
-                markdown_text, title=title, meta=meta, template_id=template_id
+                markdown_text, title=title, meta=meta, template_id=template_id,
+                locale=locale,
             )
         except Exception:
             # 編譯錯誤、模板炸掉、pandoc 異常都在此收斂——研報寧可版型退化，
             # 不可因渲染而完全沒有 PDF（無 PDF＝無持久化＝重建永久 500）。
             logger.warning("typst 渲染失敗，回退 weasyprint", exc_info=True)
-    return _render_weasyprint(markdown_text, title=title, meta=meta)
+    return _render_weasyprint(markdown_text, title=title, meta=meta, locale=locale)
 
 
 def write_report_pdf(report_id: str, pdf_bytes: bytes, *, suffix: str = "") -> str:
@@ -527,6 +530,7 @@ async def _finalize_sectioned(
     pdf_bytes = await asyncio.to_thread(
         render_report_pdf, markdown, title=title,
         meta={"date": today, "question": question}, template_id=template_id,
+        locale=locale,
     )
     pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
     # M4b：只以實際被 [n] 引用的 corpus 來源建 manifest；模型自報的網路來源經與單次
@@ -778,6 +782,7 @@ async def generate_report(
     pdf_bytes = await asyncio.to_thread(
         render_report_pdf, markdown, title=title,
         meta={"date": today, "question": question}, template_id=template_id,
+        locale=locale,
     )
     pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
     # M4b：corpus 來源 + 受控解析的外部參考 → evidence manifest（無證據時寫 NULL）

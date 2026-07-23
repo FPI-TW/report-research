@@ -36,7 +36,7 @@
 )
 
 // KPI 卡：深色卡片、鎏金主數字、淺色標籤。等高交給 grid。
-#let kpi-card(value, label, change, dir, source) = {
+#let kpi-card(value, label, change, dir, source, source-label: "來源") = {
   let chg-color = if dir == "up" { sem-up } else if dir == "down" { sem-down } else { ink-3 }
   let chg-mark = if dir == "up" { "▲ " } else if dir == "down" { "▼ " } else { "" }
   block(
@@ -54,28 +54,28 @@
       ]
       #if source != "" [
         #v(2pt, weak: true)
-        #text(font: sans-cjk, size: 6.5pt, fill: ink-4, "來源 " + source)
+        #text(font: sans-cjk, size: 6.5pt, fill: ink-4, source-label + " " + source)
       ]
     ],
   )
 }
 
-#let kpi-strip(items) = {
+#let kpi-strip(items, source-label: "來源") = {
   if items.len() == 0 { return }
   block(above: 10pt, below: 4pt, width: 100%,
     grid(
       columns: items.map(_ => 1fr), gutter: 8pt,
-      ..items.map(it => kpi-card(it.value, it.label, it.change, it.direction, it.source)),
+      ..items.map(it => kpi-card(it.value, it.label, it.change, it.direction, it.source, source-label: source-label)),
     ),
   )
 }
 
 // 圖表：chart.py SVG 為淺底，深頁上以白色卡片承載，避免衝突。
-#let chart-figure(svg, caption) = figure(
+#let chart-figure(svg, caption, supplement: "圖") = figure(
   block(fill: rgb("#f6f7f9"), inset: 6pt, radius: 3pt,
     image(bytes(svg), format: "svg", width: 100%)),
   caption: text(size: 8pt, fill: ink-3, caption),
-  supplement: [圖],
+  supplement: [#supplement],
 )
 
 #let disclaimer-block(body) = block(
@@ -92,6 +92,10 @@
   disclaimer: "",
   methods: "",
   kpi: (),
+  footer-note: "自動生成",
+  lang: "zh",
+  region: "TW",
+  kpi-source-label: "來源",
   body,
 ) = {
   set document(title: title)
@@ -101,12 +105,12 @@
       set text(font: sans-cjk, size: 7.5pt, fill: ink-4)
       grid(
         columns: (1fr, auto),
-        align(left, brand + " · 自動生成"),
+        align(left, brand + " · " + footer-note),
         align(right, [#counter(page).display("1") / #counter(page).final().first()]),
       )
     },
   )
-  set text(font: sans-cjk, size: 10.5pt, fill: ink-light, lang: "zh", region: "TW")
+  set text(font: sans-cjk, size: 10.5pt, fill: ink-light, lang: lang, region: region)
   set par(justify: true, leading: 0.8em, spacing: 1.0em)
   show heading: it => it
 
@@ -126,7 +130,7 @@
     ]
   ])
 
-  if kpi.len() > 0 { kpi-strip(kpi) }
+  if kpi.len() > 0 { kpi-strip(kpi, source-label: kpi-source-label) }
   v(10pt)
   body
 

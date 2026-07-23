@@ -69,8 +69,9 @@ class RenderDispatchTemplateTests(unittest.TestCase):
 
         seen = {}
 
-        def fake_typst(markdown_text, *, title, meta, template_id=None):
+        def fake_typst(markdown_text, *, title, meta, template_id=None, locale="zh-Hant"):
             seen["template_id"] = template_id
+            seen["locale"] = locale
             return b"%PDF-typst"
 
         with patch.object(rpt, "REPORT_RENDERER", "typst"), \

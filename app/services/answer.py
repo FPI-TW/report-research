@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 import uuid
@@ -52,6 +53,11 @@ from app.services.evidence import (
     from_trusted_point,
     manifest_from_answer,
 )
+from app.services.faithfulness import (
+    check_faithfulness,
+    is_numeric_claim,
+    resolve_evidence_texts,
+)
 from app.services.textnorm import clean_text
 from app.services.trusted_market_data import (
     TrustedDataPoint,
@@ -64,6 +70,13 @@ logger = logging.getLogger(__name__)
 
 # 脈絡規模：取前 N 篇、每篇至多 M 段、總字數上限（控延遲與 prompt 大小）。env 化便於壓測調參。
 _S = get_settings()
+
+# 忠實度查核 / faithfulness（M8c 問答迷你抽查）—— done 後非同步、僅含數字時觸發、抽樣
+ASK_FAITHFULNESS_ENABLED = _S.ask_faithfulness_enabled
+ASK_FAITHFULNESS_SAMPLE_RATE = _S.ask_faithfulness_sample_rate
+FAITHFULNESS_MODEL = _S.faithfulness_model
+FAITHFULNESS_TIMEOUT = _S.faithfulness_timeout
+
 MAX_REPORTS = _S.ask_max_reports
 MAX_PASSAGES_PER_REPORT = _S.ask_max_passages
 MAX_CONTEXT_CHARS = _S.ask_max_context_chars
@@ -1165,6 +1178,39 @@ async def _update_followups(qa_id: str, followups: list[str]) -> None:
         pass
 
 
+async def _update_evaluation(qa_id: str, evaluation: dict) -> None:
+    """best-effort 補寫 M8 忠實度查核結果（done 後抽查）。"""
+    try:
+        async with SessionFactory() as session:
+            await session.execute(
+                text("UPDATE research.qa_log SET evaluation = CAST(:e AS jsonb) WHERE id = :id"),
+                {"e": json.dumps(evaluation, ensure_ascii=False), "id": qa_id},
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
+async def _faithfulness_spot_check(qa_id: str, answer: str, manifest: dict | None) -> None:
+    """問答迷你忠實度抽查（M8c）：在 done 之後跑，不佔可見答案延遲。
+
+    以 done 時已建的 evidence manifest 回查 corpus 證據 → grounding → 寫 qa_log.evaluation。
+    全程 fail-open（含 check_faithfulness 自身的 degraded 語義），不影響已交付的答案。
+    呼叫端負責前置閘門（啟用／含數字／抽樣），此處只做查核與落庫。
+    """
+    try:
+        ledger = EvidenceLedger.load(manifest) if manifest else EvidenceLedger()
+        async with SessionFactory() as session:
+            context_texts = await resolve_evidence_texts(ledger, session)
+        result = await check_faithfulness(
+            answer, context_texts,
+            model=FAITHFULNESS_MODEL, timeout=FAITHFULNESS_TIMEOUT,
+        )
+        await _update_evaluation(qa_id, result.to_evaluation())
+    except Exception:
+        logger.exception("問答忠實度抽查失敗（fail-open，不影響答案）")
+
+
 async def delete_qa(qa_id: str) -> bool:
     """刪除一列 research.qa_log（使用者清除單筆歷史問答）。
 
@@ -1729,10 +1775,10 @@ async def answer_question(
         [asdict(s) for s in sources],
         ext_sources,
         # M4b：corpus 來源 + 受控 [EXT_SOURCES] 解析結果 → 證據帳本 manifest
-        evidence_manifest=manifest_from_answer(
+        evidence_manifest=(evidence_manifest := manifest_from_answer(
             [asdict(s) for s in sources], ext_sources,
             retrieved_at=datetime.now(timezone.utc).isoformat(),
-        ),
+        )),
         conversation_id=conv_id,
         thinking_ms=thinking_ms,
         stages=stages_seen,
@@ -1769,3 +1815,12 @@ async def answer_question(
     if fups and qa_id:
         await _update_followups(qa_id, fups)
         yield ("followups", fups)
+
+    # M8c：問答迷你忠實度抽查——done 之後跑，不佔可見答案延遲。閘門：啟用 + 答案含
+    # 金融數字（無數字不查，省成本）+ 抽樣。結果落 qa_log.evaluation，暫不上 UI。
+    if (
+        ASK_FAITHFULNESS_ENABLED and qa_id
+        and is_numeric_claim(body)
+        and random.random() < ASK_FAITHFULNESS_SAMPLE_RATE
+    ):
+        await _faithfulness_spot_check(qa_id, body, evidence_manifest)

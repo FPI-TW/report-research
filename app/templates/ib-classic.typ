@@ -45,7 +45,7 @@
 )
 
 // KPI 卡：主數字襯線、標籤與來源列靠左對齊，卡內距一致（規範：基線對齊）
-#let kpi-card(value, label, change, dir, source) = {
+#let kpi-card(value, label, change, dir, source, source-label: "來源") = {
   let chg-color = if dir == "up" { sem-up } else if dir == "down" { sem-down } else { text-3 }
   // 可列印：方向以 +/− 符號承載，不單靠顏色
   let chg-mark = if dir == "up" { "▲ " } else if dir == "down" { "▼ " } else { "" }
@@ -66,18 +66,18 @@
       ]
       #if source != "" [
         #v(2pt, weak: true)
-        #text(font: sans-cjk, size: 6.5pt, fill: text-4, "來源 " + source)
+        #text(font: sans-cjk, size: 6.5pt, fill: text-4, source-label + " " + source)
       ]
     ],
   )
 }
 
-#let kpi-strip(items) = {
+#let kpi-strip(items, source-label: "來源") = {
   if items.len() == 0 { return }
   block(above: 9pt, below: 3pt, width: 100%,
     grid(
       columns: items.map(_ => 1fr), gutter: 3pt,
-      ..items.map(it => kpi-card(it.value, it.label, it.change, it.direction, it.source)),
+      ..items.map(it => kpi-card(it.value, it.label, it.change, it.direction, it.source, source-label: source-label)),
     ),
   )
 }
@@ -86,10 +86,10 @@
 //
 // 用 `image(bytes(svg), format: "svg")`——`image.decode` 在 Typst 0.15 已移除
 // （錯誤訊息：function `image` does not contain field `decode`）。
-#let chart-figure(svg, caption) = figure(
+#let chart-figure(svg, caption, supplement: "圖") = figure(
   image(bytes(svg), format: "svg", width: 100%),
   caption: text(size: 8pt, fill: text-3, caption),
-  supplement: [圖],
+  supplement: [#supplement],
 )
 
 // 免責：模板固定文字、恆定存在，不依賴 LLM 產出（spec D1）。
@@ -110,6 +110,10 @@
   disclaimer: "",
   methods: "",
   kpi: (),
+  footer-note: "自動生成",
+  lang: "zh",
+  region: "TW",
+  kpi-source-label: "來源",
   body,
 ) = {
   set document(title: title)
@@ -119,13 +123,13 @@
       set text(font: sans-cjk, size: 7.5pt, fill: text-4)
       grid(
         columns: (1fr, auto),
-        align(left, brand + " · 自動生成"),
+        align(left, brand + " · " + footer-note),
         align(right, [#counter(page).display("1") / #counter(page).final().first()]),
       )
     },
   )
   // 正文 10.5pt、行高 1.72（規範）；lang/region 讓 Typst 走 CJK 斷行規則
-  set text(font: sans-cjk, size: 10.5pt, fill: text-1, lang: "zh", region: "TW")
+  set text(font: sans-cjk, size: 10.5pt, fill: text-1, lang: lang, region: region)
   set par(justify: true, leading: 0.75em)
   // 引用來源用固定 tab stop（規範）；此處以懸掛縮排落實
   show heading: it => it
@@ -151,7 +155,7 @@
   ])
 
   // ── KPI 帶（跨欄置頂）與雙欄本文 ──
-  if kpi.len() > 0 { kpi-strip(kpi) }
+  if kpi.len() > 0 { kpi-strip(kpi, source-label: kpi-source-label) }
   v(8pt)
   columns(2, gutter: 14pt, body)
 

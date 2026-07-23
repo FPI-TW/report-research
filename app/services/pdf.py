@@ -15,6 +15,7 @@ from html.parser import HTMLParser
 import markdown as _md
 
 from app.services.chart import render_chart_svg
+from app.services.locale import DEFAULT_LOCALE
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,12 @@ _REF_NL_RE = re.compile(r"\n+(\[\d+\])")
 _TITLE_RE = re.compile(r"(?m)^#\s+(.+)$")
 
 BRAND_NAME = "廷豐智能研報"
+BRAND_NAME_EN = "Tingfeng Intelligent Research"
+
+
+def brand_name(locale: str = DEFAULT_LOCALE) -> str:
+    """研報品牌名（輸出隨 locale；非 en 一律中文）。"""
+    return BRAND_NAME_EN if locale == "en" else BRAND_NAME
 
 # 研報 PDF 的免責聲明。**兩條渲染路徑（WeasyPrint / Typst）的唯一文字來源**——
 # 各自複製一份必然漂移。深度研報是可下載、可轉發的檔案：離開平台後沒有任何上下文，
@@ -38,12 +45,26 @@ REPORT_DISCLAIMER = (
     "非系統預測，亦不構成投資建議或要約。所引用之評等、目標價與財務預估均為原研報作者之觀點，"
     "其正確性與時效性以原始研報為準。投資人應自行判斷並承擔投資風險。"
 )
+REPORT_DISCLAIMER_EN = (
+    "Disclaimer: This report is automatically compiled by \"Tingfeng Intelligent "
+    "Research\" from broker research views and figures already extracted into the "
+    "corpus. It is not a system forecast and does not constitute investment advice or "
+    "an offer. The ratings, target prices, and financial estimates cited are the views "
+    "of the original report authors; their accuracy and timeliness are subject to the "
+    "original reports. Investors should exercise their own judgement and bear their own "
+    "investment risk."
+)
 
 
-def _disclaimer_html() -> str:
+def report_disclaimer(locale: str = DEFAULT_LOCALE) -> str:
+    """研報免責聲明（兩軌唯一文字來源，輸出隨 locale；非 en 一律中文）。"""
+    return REPORT_DISCLAIMER_EN if locale == "en" else REPORT_DISCLAIMER
+
+
+def _disclaimer_html(locale: str = DEFAULT_LOCALE) -> str:
     return (
         '<div class="tf-disclaimer">'
-        f"{_html.escape(REPORT_DISCLAIMER)}"
+        f"{_html.escape(report_disclaimer(locale))}"
         "</div>"
     )
 
@@ -64,6 +85,13 @@ _SECT_SLUG = {
     "風險與展望": "outlook",
     "引用來源": "refs",
     "外部參考（網路）": "extrefs",
+    # M10c：英文研報骨架標題（與 report_writer.SKELETON_HEADINGS_EN 對齊）
+    "Executive Summary": "exec",
+    "Key Findings": "findings",
+    "In-Depth Analysis": "analysis",
+    "Risks & Outlook": "outlook",
+    "References": "refs",
+    "External References (Web)": "extrefs",
 }
 _NO_CITE_SLUGS = {"refs", "extrefs"}
 _FANCY_MIN_SECTIONS = 3
@@ -93,17 +121,18 @@ figcaption { font-size: 9pt; color: #888; margin-top: 4px; }
 """ % {"gold": BRAND_GOLD}
 
 
-def _document_html(title: str, body_html: str, meta: dict) -> str:
+def _document_html(title: str, body_html: str, meta: dict, locale: str = DEFAULT_LOCALE) -> str:
     date = _html.escape(str(meta.get("date") or ""))
+    meta_line = f"Research Report · Generated {date}" if locale == "en" else f"研究報告　生成日期 {date}"
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
         f"<style>{_PAGE_CSS}{_DISCLAIMER_CSS}</style></head><body>"
         '<div class="brand-bar">'
-        f'<div class="brand-name">{_html.escape(BRAND_NAME)}</div>'
-        f'<div class="brand-meta">研究報告　生成日期 {date}</div>'
+        f'<div class="brand-name">{_html.escape(brand_name(locale))}</div>'
+        f'<div class="brand-meta">{meta_line}</div>'
         "</div>"
         f"{body_html}"
-        f"{_disclaimer_html()}"
+        f"{_disclaimer_html(locale)}"
         "</body></html>"
     )
 
@@ -212,7 +241,7 @@ tbody td:first-child { font-weight: 700; color: #333; }
   margin: 6px 0; }
 .s-extrefs .s-body a { font-size: 10pt; }
 """
-    .replace("$BRAND$", BRAND_NAME)
+    # $BRAND$ 保留為 placeholder，於 _render_fancy 依 locale 替換（頁尾品牌名）
     .replace("$GOLD$", BRAND_GOLD)
     .replace("$SOFT$", _GOLD_SOFT)
     .replace("$LINE$", _GOLD_LINE)
@@ -252,17 +281,24 @@ def strip_preamble(markdown_text: str) -> str:
     return text[m.start():] if m else text
 
 
-def chart_caption(spec: object) -> str:
+def chart_caption(spec: object, locale: str = DEFAULT_LOCALE) -> str:
     """圖表說明（標題＋來源）純文字——**兩軌共用的唯一來源**。
 
     來源標記是研報可追溯性的一部分，不該因為換了渲染器就消失（Typst 軌曾固定傳空
     caption，導致 `source: "[7]"` 在 PDF 上只剩「圖 1」）。複製一份必然漂移，故兩軌
     都從這裡取。回傳純文字，跳脫由呼叫端負責（HTML 走 escape、Typst 走 `_tstr`）。
+    來源標籤隨 locale（M10c）。
     """
     if not isinstance(spec, dict):  # 形狀防禦：畸形 LLM JSON 不得拋例外
         return ""
     title = str(spec.get("title") or "").strip()
     src = str(spec.get("source") or "").strip()
+    if locale == "en":
+        if title and src:
+            return f"{title} (Source {src})"
+        if src:
+            return f"(Source {src})"
+        return title
     if title and src:
         return f"{title}（來源 {src}）"
     if src:
@@ -270,7 +306,7 @@ def chart_caption(spec: object) -> str:
     return title
 
 
-def inject_charts(markdown_text: str) -> str:
+def inject_charts(markdown_text: str, locale: str = DEFAULT_LOCALE) -> str:
     """把 markdown 內的 ```chart 區塊換成 <figure><svg>…</figure>；壞規格/數據缺則移除該塊。"""
 
     def _repl(m: "re.Match[str]") -> str:
@@ -286,15 +322,16 @@ def inject_charts(markdown_text: str) -> str:
         if not svg:
             logger.warning("chart 規格無效或數據缺，略過")
             return ""
-        cap = _html.escape(chart_caption(spec))
+        cap = _html.escape(chart_caption(spec, locale))
         figcap = f"<figcaption>{cap}</figcaption>" if cap else ""
         return f'\n\n<figure class="chart">{svg}{figcap}</figure>\n\n'
 
     return _CHART_RE.sub(_repl, markdown_text or "")
 
 
-def inject_kpi(markdown_text: str) -> str:
+def inject_kpi(markdown_text: str, locale: str = DEFAULT_LOCALE) -> str:
     """把 ```kpi 區塊換成一排數據亮點卡片；壞 JSON 或 items 空則移除＋warning。"""
+    src_label = "Source" if locale == "en" else "來源"
 
     def _repl(m: "re.Match[str]") -> str:
         try:
@@ -329,7 +366,7 @@ def inject_kpi(markdown_text: str) -> str:
             )
             src = str(it.get("source") or block_src).strip()
             src_html = (
-                f'<div class="kpi-src">來源 {_html.escape(src)}</div>' if src else ""
+                f'<div class="kpi-src">{src_label} {_html.escape(src)}</div>' if src else ""
             )
             cells.append(
                 f'<div class="kpi"><div class="kpi-value">{val}</div>'
@@ -403,29 +440,36 @@ def _normalize_refs(body: str) -> str:
     return _REF_NL_RE.sub(r"\n\n\1", (body or "").strip())
 
 
-def _render_fancy(title: str, sections: list[tuple[str, str]], meta: dict) -> str:
+def _render_fancy(title: str, sections: list[tuple[str, str]], meta: dict,
+                  locale: str = DEFAULT_LOCALE) -> str:
+    en = locale == "en"
     date = _html.escape(str(meta.get("date") or ""))
+    brand = _html.escape(brand_name(locale))
+    kicker = "In-Depth Research Report" if en else "深度研究報告"
+    date_label = f"Generated {date}" if en else f"生成日期 {date}"
+    foot_note = "AI-Assisted Research Analysis" if en else "AI 輔助研究分析"
+    toc_title = "Contents" if en else "目錄"
     cover = (
         '<section class="cover">'
-        f'<div class="cover-brand">{_html.escape(BRAND_NAME)}</div>'
+        f'<div class="cover-brand">{brand}</div>'
         '<div class="cover-rule"></div>'
         '<div class="cover-mid">'
-        '<div class="cover-kicker">深度研究報告</div>'
+        f'<div class="cover-kicker">{kicker}</div>'
         f'<h1 class="cover-title">{_html.escape(title)}</h1>'
-        f'<div class="cover-date">生成日期 {date}</div>'
+        f'<div class="cover-date">{date_label}</div>'
         "</div>"
-        f'<div class="cover-foot">{_html.escape(BRAND_NAME)}　·　AI 輔助研究分析</div>'
+        f'<div class="cover-foot">{brand}　·　{foot_note}</div>'
         "</section>"
     )
     toc_items = "".join(
         f'<li><a href="#sec-{i}">{_html.escape(name)}</a></li>'
         for i, (name, _) in enumerate(sections)
     )
-    toc = f'<nav class="toc"><div class="toc-h">目錄</div><ol>{toc_items}</ol></nav>'
+    toc = f'<nav class="toc"><div class="toc-h">{toc_title}</div><ol>{toc_items}</ol></nav>'
     body_parts = []
     for i, (name, body) in enumerate(sections):
         slug = _SECT_SLUG.get(name, "sec")
-        prepared = inject_kpi(inject_charts(body))
+        prepared = inject_kpi(inject_charts(body, locale), locale)
         if slug == "refs":
             prepared = _normalize_refs(prepared)
         body_html = _md.markdown(
@@ -440,27 +484,30 @@ def _render_fancy(title: str, sections: list[tuple[str, str]], meta: dict) -> st
             "</section>"
         )
     body = "".join(body_parts)
+    fancy_css = _FANCY_CSS.replace("$BRAND$", brand_name(locale))
     return (
         '<!doctype html><html><head><meta charset="utf-8">'
-        f"<style>{_FANCY_CSS}{_DISCLAIMER_CSS}</style></head>"
-        f"<body>{cover}{toc}{body}{_disclaimer_html()}</body></html>"
+        f"<style>{fancy_css}{_DISCLAIMER_CSS}</style></head>"
+        f"<body>{cover}{toc}{body}{_disclaimer_html(locale)}</body></html>"
     )
 
 
-def _build_document(markdown_text: str, *, title: str, meta: dict) -> str:
+def _build_document(markdown_text: str, *, title: str, meta: dict,
+                    locale: str = DEFAULT_LOCALE) -> str:
     """依內容選版型：完整研報走 fancy（封面/目錄/章節），退化輸入回退簡版。回完整 HTML。"""
     md = markdown_text or ""
     parsed_title, sections = split_report(md)
     if parsed_title and len(sections) >= _FANCY_MIN_SECTIONS:
-        return _render_fancy(parsed_title, sections, meta or {})
-    prepared = inject_charts(md)
+        return _render_fancy(parsed_title, sections, meta or {}, locale)
+    prepared = inject_charts(md, locale)
     body_html = _md.markdown(prepared, extensions=["tables", "fenced_code", "sane_lists"])
-    return _document_html(title, body_html, meta or {})
+    return _document_html(title, body_html, meta or {}, locale)
 
 
-def render_report_pdf(markdown_text: str, *, title: str, meta: dict) -> bytes:
-    """markdown → HTML → WeasyPrint PDF。回 PDF bytes（以 b'%PDF' 開頭）。"""
-    doc = _build_document(markdown_text, title=title, meta=meta or {})
+def render_report_pdf(markdown_text: str, *, title: str, meta: dict,
+                      locale: str = DEFAULT_LOCALE) -> bytes:
+    """markdown → HTML → WeasyPrint PDF。回 PDF bytes（以 b'%PDF' 開頭）。輸出 chrome 隨 locale。"""
+    doc = _build_document(markdown_text, title=title, meta=meta or {}, locale=locale)
     # 延遲 import：weasyprint 載入重（cffi/pango/fontconfig ~3s），不在模組頂層匯入，
     # 以免 `import web.server`（經 report→pdf）開機就吃這秒數（會拖垮匯入逾時測試）。
     from weasyprint import HTML

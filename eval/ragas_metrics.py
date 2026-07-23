@@ -11,22 +11,16 @@ import asyncio
 
 import numpy as np
 
-# --- Prompt 常數（就地共置；一律要求 JSON-only 輸出）---
-
-DECOMPOSE_SYS = (
-    "你是 RAG 評測助手。把下列『回答』拆解成一組獨立、原子的事實主張（statement）。"
-    "每個主張須可獨立判斷真偽，不含連接詞堆疊。若回答只是『找不到資料』之類、"
-    "未提出任何事實主張，回空陣列。\n"
-    '只輸出 JSON，格式：{"statements": ["主張1", "主張2", ...]}，不要任何其他文字。'
+# faithfulness 的 claim 拆解／grounding 與其 prompt 已上升到生產層 app/services，
+# 供研報/問答的 M8 查核與本評測共用（單一真相、防漂移）。本檔只保留評測專用的
+# context_precision / answer_relevancy。
+from app.services.faithfulness import (  # noqa: F401  (DECOMPOSE_SYS/GROUND_SYS 供既有測試 import)
+    DECOMPOSE_SYS,
+    GROUND_SYS,
+    faithfulness,
 )
 
-GROUND_SYS = (
-    "你是 RAG 忠實度評審。給定『參考片段』與一組『主張』，逐一判斷每個主張是否"
-    "能由參考片段直接佐證支持（supported）。只依片段內容判斷，不用外部知識；片段沒說到、"
-    "或與片段矛盾，一律 supported=false。\n"
-    '只輸出 JSON，格式：{"verdicts": [{"idx": 0, "supported": true}, ...]}，'
-    "idx 對應主張的 0-based 序號，不要任何其他文字。"
-)
+# --- Prompt 常數（評測專用；一律要求 JSON-only 輸出）---
 
 CTX_RELEVANCE_SYS = (
     "你是 RAG 檢索精準度評審。給定『問題』『回答』與一組候選片段，逐一判斷每個片段"
@@ -65,28 +59,6 @@ def _average_precision(rel: list[int]) -> float:
             hits += 1
             score += hits / k
     return score / total_relevant
-
-
-async def faithfulness(answer: str, contexts: list[str], *, judge) -> float | None:
-    """拆解回答為主張 → 逐條佐證於 contexts。分數 = supported/total；total==0 → None。"""
-    dec = await judge(DECOMPOSE_SYS, answer)
-    statements = dec.get("statements") if isinstance(dec, dict) else None
-    statements = [s for s in (statements or []) if isinstance(s, str) and s.strip()]
-    if not statements:
-        return None  # 無事實主張（如「找不到資料」）：自均值排除，不以空洞值灌水
-    joined_ctx = "\n\n".join(contexts)
-    enumerated = "\n".join(f"{i}. {s}" for i, s in enumerate(statements))
-    payload = f"參考片段：\n{joined_ctx}\n\n主張：\n{enumerated}"
-    res = await judge(GROUND_SYS, payload)
-    verdicts = res.get("verdicts") if isinstance(res, dict) else None
-    supmap: dict[int, bool] = {}
-    for v in verdicts or []:
-        if isinstance(v, dict) and isinstance(v.get("idx"), int):
-            idx = v["idx"]
-            if 0 <= idx < len(statements):
-                supmap[idx] = v.get("supported") is True
-    supported = sum(1 for ok in supmap.values() if ok)
-    return supported / len(statements)
 
 
 async def context_precision(

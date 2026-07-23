@@ -109,6 +109,14 @@ class Settings:
     report_section_retry: int
     report_section_thin_coverage: int
 
+    # 忠實度查核 / faithfulness（M8 里程碑）—— M8 里程碑只在本區段內加鍵
+    report_faithfulness_enabled: bool
+    ask_faithfulness_enabled: bool
+    report_faithfulness_min: float      # 研報：低於此支持率的數值主張觸發修正一輪
+    ask_faithfulness_sample_rate: float  # 問答：含數字答案的查核抽樣率（0..1）
+    faithfulness_model: str
+    faithfulness_timeout: float
+
 
 def _load() -> Settings:
     intent_model = os.getenv("ASK_INTENT_MODEL", "claude-haiku-4-5")
@@ -204,6 +212,16 @@ def _load() -> Settings:
         report_section_thin_coverage=int(
             os.getenv("REPORT_SECTION_THIN_COVERAGE", "3")
         ),
+        # 忠實度查核 / faithfulness（M8 里程碑）
+        report_faithfulness_enabled=_flag("REPORT_FAITHFULNESS_ENABLED", "1"),
+        ask_faithfulness_enabled=_flag("ASK_FAITHFULNESS_ENABLED", "1"),
+        report_faithfulness_min=float(os.getenv("REPORT_FAITHFULNESS_MIN", "0.9")),
+        ask_faithfulness_sample_rate=float(
+            os.getenv("ASK_FAITHFULNESS_SAMPLE_RATE", "1.0")
+        ),
+        # judge 復用 haiku（同 planner）；離線批次語氣輕、成本低
+        faithfulness_model=os.getenv("FAITHFULNESS_MODEL", intent_model),
+        faithfulness_timeout=float(os.getenv("FAITHFULNESS_TIMEOUT", "60")),
     )
 
 

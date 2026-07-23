@@ -18,7 +18,7 @@ export interface UseAskController {
   editResubmit: (turnId: string, qaId: string | null, newQuestion: string) => void
   setVersion: (turnId: string, index: number) => void
   loadVersions: (turnId: string, rootId: string) => Promise<boolean>
-  generateReport: (turnId: string, question: string, qaId: string | null) => void
+  generateReport: (turnId: string, question: string, qaId: string | null, templateId?: string) => void
   declineReport: (turnId: string) => void
   loadConversation: (id: string) => Promise<void>
   newConversation: () => void
@@ -174,7 +174,7 @@ export function useAskController(): UseAskController {
     } catch { return false }
   }, [])
 
-  const generateReport = useCallback((turnId: string, question: string, qaId: string | null) => {
+  const generateReport = useCallback((turnId: string, question: string, qaId: string | null, templateId?: string) => {
     if (reportTurnRef.current && reportTurnRef.current !== turnId) dispatch({ type: 'report-cancel', id: reportTurnRef.current })
     reportCtrl.current?.abort()
     const myReport = ++reportReqId.current
@@ -185,9 +185,10 @@ export function useAskController(): UseAskController {
     void (async () => {
       let sawTerminal = false
       try {
-        const body: { question: string; conversation_id?: string; qa_id?: string } = { question }
+        const body: { question: string; conversation_id?: string; qa_id?: string; template_id?: string } = { question }
         if (convRef.current) body.conversation_id = convRef.current
         if (qaId) body.qa_id = qaId
+        if (templateId) body.template_id = templateId
         for await (const raw of streamReport(body, ctrl.signal)) {
           if (myReport !== reportReqId.current) return
           const ev = parseReportEvent(raw)

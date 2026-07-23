@@ -93,7 +93,7 @@ export default function AskPage() {
                 />
                 <DeepReportPanel
                   report={t.report}
-                  onGenerate={() => ctrl.generateReport(t.id, t.question, t.qaId)}
+                  onGenerate={(templateId) => ctrl.generateReport(t.id, t.question, t.qaId, templateId)}
                   onDecline={() => ctrl.declineReport(t.id)}
                 />
               </Reveal>

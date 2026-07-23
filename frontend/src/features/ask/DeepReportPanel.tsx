@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
 import { Reveal } from '../../components/primitives/Reveal'
 import { Sweep } from '../../components/primitives/motionLoops'
 import { RippleButton, RippleButtonRipples } from '../../components/animate-ui/primitives/buttons/ripple'
 import type { ReportState } from '../../lib/askReducer'
+import { TemplateSelector } from './TemplateSelector'
 import styles from './DeepReportPanel.module.css'
 
 function safeDownload(url: string | null): string | null {
@@ -13,9 +15,10 @@ function safeDownload(url: string | null): string | null {
   return null
 }
 
-interface Props { report: ReportState; onGenerate: () => void; onDecline: () => void }
+interface Props { report: ReportState; onGenerate: (templateId?: string) => void; onDecline: () => void }
 
 export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
+  const [templateId, setTemplateId] = useState<string | undefined>(undefined)
   if (report.status === 'idle') return null
 
   if (report.status === 'offered') {
@@ -25,9 +28,10 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
         <div className={styles.offerMain}>
           <div className={styles.offerTitle}>要不要整理成完整 PDF 深度研報？</div>
           <div className={styles.offerSub}>彙整本輪引用來源，逐節撰寫含 KPI 與圖表的深度研報，約需 5–12 分鐘，可留在此頁等候。</div>
+          <TemplateSelector value={templateId} onChange={setTemplateId} />
         </div>
         <div className={styles.offerBtns}>
-          <RippleButton type="button" className={styles.yes} hoverScale={1.03} tapScale={0.96} onClick={onGenerate}>
+          <RippleButton type="button" className={styles.yes} hoverScale={1.03} tapScale={0.96} onClick={() => onGenerate(templateId)}>
             生成研報
             <RippleButtonRipples color="rgba(255,255,255,0.6)" />
           </RippleButton>
@@ -62,5 +66,5 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
     )
   }
 
-  return <Callout variant="error" action={{ label: '重試', onClick: onGenerate }}>{report.errorText || '研報生成失敗，請重試'}</Callout>
+  return <Callout variant="error" action={{ label: '重試', onClick: () => onGenerate(templateId) }}>{report.errorText || '研報生成失敗，請重試'}</Callout>
 }

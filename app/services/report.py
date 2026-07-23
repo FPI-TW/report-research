@@ -191,13 +191,67 @@ def render_report_pdf(
     return _render_weasyprint(markdown_text, title=title, meta=meta)
 
 
-def write_report_pdf(report_id: str, pdf_bytes: bytes) -> str:
-    """把 PDF bytes 落地到 REPORTS_DIR/<id>.pdf，回路徑。"""
+def write_report_pdf(report_id: str, pdf_bytes: bytes, *, suffix: str = "") -> str:
+    """把 PDF bytes 落地到 REPORTS_DIR/<id><suffix>.pdf，回路徑。
+
+    suffix 空＝原始產物 <id>.pdf（與 report_doc.pdf_path 相容）；換皮重出（M9b）用
+    `-<rendition8>` 之類的後綴避免覆蓋歷史 PDF。
+    """
     os.makedirs(REPORTS_DIR, exist_ok=True)
-    path = os.path.join(REPORTS_DIR, f"{report_id}.pdf")
+    path = os.path.join(REPORTS_DIR, f"{report_id}{suffix}.pdf")
     with open(path, "wb") as f:
         f.write(pdf_bytes)
     return path
+
+
+async def create_rendition(
+    report_id: str, *, renderer: str, template_id: str | None,
+    content_hash: str, pdf_path: str, status: str = "ready",
+) -> str:
+    """寫入一列不可變 report_rendition，回 rendition_id。"""
+    rendition_id = str(uuid.uuid4())
+    async with SessionFactory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO research.report_rendition "
+                "(id, report_id, renderer, template_id, content_hash, pdf_path, status) "
+                "VALUES (:id, :rid, :rend, :tid, :ch, :pp, :st)"
+            ),
+            {
+                "id": rendition_id, "rid": report_id, "rend": renderer,
+                "tid": template_id, "ch": content_hash, "pp": pdf_path, "st": status,
+            },
+        )
+        await session.commit()
+    return rendition_id
+
+
+async def set_current_rendition(report_id: str, rendition_id: str) -> None:
+    """原子切換 report_doc 的目前 rendition 指標（換皮重出成功後）。"""
+    async with SessionFactory() as session:
+        await session.execute(
+            text(
+                "UPDATE research.report_doc SET current_rendition_id = :cr WHERE id = :id"
+            ),
+            {"cr": rendition_id, "id": report_id},
+        )
+        await session.commit()
+
+
+async def fetch_current_rendition_pdf(report_id: str) -> str | None:
+    """目前 rendition 的 pdf_path；無 rendition（NULL 指標）→ None（下載回退 report_doc.pdf_path）。"""
+    async with SessionFactory() as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT r.pdf_path FROM research.report_doc d "
+                    "JOIN research.report_rendition r ON r.id = d.current_rendition_id "
+                    "WHERE d.id = :id"
+                ),
+                {"id": report_id},
+            )
+        ).first()
+    return row[0] if row else None
 
 
 async def persist_report_doc(

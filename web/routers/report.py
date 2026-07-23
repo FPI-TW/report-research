@@ -16,6 +16,7 @@ generate_report/fetch_report_doc/write_report_pdf 同樣直接匯入；_valid_uu
 _with_heartbeat 走 web.deps。
 """
 import asyncio
+import hashlib
 import logging
 import os
 
@@ -24,9 +25,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.services.report import (
+    REPORT_RENDERER,
+    create_rendition,
+    fetch_current_rendition_pdf,
     fetch_report_doc,
     generate_report,
     render_report_pdf,
+    set_current_rendition,
     write_report_pdf,
 )
 from web import deps
@@ -97,15 +102,58 @@ async def report_templates():
     }
 
 
-@router.get("/api/report-doc/{report_id}/pdf")
-async def report_doc_pdf(report_id: str):
-    """下載生成的研報 PDF；pdf_path 不存在時由 markdown 即時重建。"""
+class RerenderRequest(BaseModel):
+    template_id: str | None = None  # 未知/未帶 → 預設（fail-safe）
+
+
+@router.post("/api/report-doc/{report_id}/rerender")
+async def report_doc_rerender(report_id: str, req: RerenderRequest):
+    """換皮重出（M9b）：用既有 markdown 以另一模板產新 rendition，成功後原子切換目前
+    版本——**零 LLM、零重新生成**。失敗保留上一個可下載 PDF（回 500，不動指標）。
+    """
     if not deps._valid_uuid(report_id):
         raise HTTPException(status_code=404, detail="report not found")
     doc = await fetch_report_doc(report_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="report not found")
-    path = doc.get("pdf_path")
+    try:
+        pdf_bytes = await asyncio.to_thread(
+            render_report_pdf, doc["markdown"], title=doc["title"],
+            meta={"date": doc.get("date") or "", "question": doc.get("question")},
+            template_id=req.template_id,
+        )
+    except Exception:
+        # 渲染分派層本身 fail-open 回退 weasyprint；仍拋代表兩軌皆炸 → 保留上一版
+        logger.exception("換皮重出渲染失敗，保留上一個 rendition")
+        raise HTTPException(status_code=500, detail="重新渲染失敗，已保留上一個版本")
+    content_hash = hashlib.sha256(doc["markdown"].encode("utf-8")).hexdigest()
+    # 先建 rendition_id 再落地（用其短碼當檔名後綴，不覆蓋歷史 PDF），最後原子切換指標
+    rendition_id = await create_rendition(
+        report_id, renderer=REPORT_RENDERER,
+        template_id=(req.template_id if REPORT_RENDERER == "typst" else None),
+        content_hash=content_hash,
+        pdf_path=await asyncio.to_thread(
+            write_report_pdf, report_id, pdf_bytes,
+            suffix=f"-{hashlib.sha256((report_id + content_hash + (req.template_id or '')).encode()).hexdigest()[:8]}",
+        ),
+    )
+    await set_current_rendition(report_id, rendition_id)
+    return {"rendition_id": rendition_id, "template_id": req.template_id}
+
+
+@router.get("/api/report-doc/{report_id}/pdf")
+async def report_doc_pdf(report_id: str):
+    """下載目前渲染版本的研報 PDF；無 rendition 指標→回退原始 pdf_path，仍不存在→即時重建。"""
+    if not deps._valid_uuid(report_id):
+        raise HTTPException(status_code=404, detail="report not found")
+    # M9b：優先服務目前 rendition（換皮重出後）；NULL 指標或舊列 → 回退 report_doc.pdf_path
+    path = await fetch_current_rendition_pdf(report_id)
+    doc = None
+    if not path or not os.path.isfile(path):
+        doc = await fetch_report_doc(report_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        path = doc.get("pdf_path")
     if not path or not os.path.isfile(path):
         pdf_bytes = await asyncio.to_thread(
             render_report_pdf, doc["markdown"], title=doc["title"],

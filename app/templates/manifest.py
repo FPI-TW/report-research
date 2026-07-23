@@ -34,6 +34,18 @@ _TEMPLATES: tuple[TemplateSpec, ...] = (
         filename="ib-classic.typ",
         is_default=True,
     ),
+    TemplateSpec(
+        id="broker-modern",
+        name="現代簡潔",
+        description="單欄、留白充足、無襯線、閱讀優先",
+        filename="broker-modern.typ",
+    ),
+    TemplateSpec(
+        id="privatebank-dark",
+        name="私銀深色",
+        description="深色高階、鎏金強調、襯線標題",
+        filename="privatebank-dark.typ",
+    ),
 )
 
 _BY_ID = {t.id: t for t in _TEMPLATES}

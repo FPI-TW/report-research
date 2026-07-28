@@ -73,8 +73,22 @@ if [ -s "$HASHES" ]; then
     --hashes-file "$HASHES" \
     ${SYNC_SUMMARY_WORKERS:+--workers "$SYNC_SUMMARY_WORKERS"} >>"$LOG" 2>&1 \
     || log "摘要生成非零退出（best-effort，已略過）"
+
+  # 5) 閱讀頁重點摘錄（best-effort，同樣只針對本輪新研報）
+  #    **必須序列跑在摘要之後**：兩者都 spawn claude CLI，併發會互搶——
+  #    CLAUDE.md 記載 extract_takeaways 與 extract_signals 併發時擷取會被
+  #    大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。
+  #
+  #    **一定要用 --hashes-file，不可用 --since-days 1**：後者濾的是 report_date
+  #    而非入庫時間，而 NAS 匯入的研報日期常比入庫日早——實測近 10 天入庫的 90 篇
+  #    裡有 79 篇（88%）report_date 超過一天前，用天數會靜默漏掉近九成。
+  log "本次新增 ${N} 篇 → 擷取重點摘錄（僅本輪新研報）"
+  nice -n 19 ionice -c3 "$UV" run python scripts/extract_takeaways.py \
+    --hashes-file "$HASHES" \
+    ${SYNC_TAKEAWAY_WORKERS:+--workers "$SYNC_TAKEAWAY_WORKERS"} >>"$LOG" 2>&1 \
+    || log "摘錄擷取非零退出（best-effort，已略過）"
 else
-  log "本次無新研報入庫 → 跳過摘要"
+  log "本次無新研報入庫 → 跳過摘要與摘錄"
 fi
 
 rm -f "$DELTA"

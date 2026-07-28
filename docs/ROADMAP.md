@@ -1,94 +1,81 @@
-# report-mark 進階應用 Roadmap
+# report-mark Roadmap
 
-把現有「研報語意檢索」升級為「問答 + 訊號 + 對外服務」平台。共四階段,前後有依賴。
+從「研報語意檢索」升級為「問答 + 訊號 + 對外服務」平台的進度視圖。
 
-> 詳細實作設計見規劃文件;本檔為階段里程碑視圖(非綁定日期)。
-
-```
-Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3
- 基礎        智慧問答      訊號+findb     MCP/API
-            (方向A)       (方向B)        (方向D)
-              │             │              │
-              └─ ask 服務 ──┴── 共識服務 ───┘  ← Phase 3 重用前兩階段
-```
+> **2026-07-28 全面重寫。** 前一版停在 2026-06 的 Phase 0–3 敘事，其里程碑編號（M0–M3）與實際採用的 M0–M10 衝突（例如舊文件的「M2」是共識聚合，實際 M2 是 rerank），且把已上線的東西列為未實作、把交付檔名寫成從未存在的名字（`signals.py`／`consensus.py`／`app/api/auth.py`），相依清單也列了四個從未安裝的套件。本檔改以**實際里程碑**為準，每項都對得上 repo 內的檔案。
 
 ---
 
-## Phase 0 — 共用基礎(所有方向的前置)
+## 已上線
 
-**目標**:建好設定、LLM 客戶端、認證、資料表、測試骨架,後續三階段都站在上面。
+### 基礎與檢索
 
-| 項目 | 交付物 |
-|------|--------|
-| 設定集中化 | `app/config.py`(pydantic-settings),`db.py` 改讀 settings |
-| 依賴 | `anthropic`、`pydantic-settings`、`httpx`、`sse-starlette`、`mcp` |
-| 統一 LLM 客戶端 | `app/services/llm.py`:SDK 串流(serving)+ CLI 包裝(批次) |
-| 認證與安全 | `app/api/auth.py`:API key、prompt-injection 防護、速率限制 |
-| 新資料表 | `daily_brief`、`report_signal`、`qa_log`(沿用 `db/schema.sql` 冪等模式) |
-| 測試骨架 | mock LLM / embeddings 的 pytest fixtures |
+| 里程碑 | 內容 | 落點 |
+|---|---|---|
+| — | 語料管線：抽取 → Claude 標註 → BGE-M3 嵌入 → pgvector | `scripts/extract_all.py`、`tag_all_cli.py`、`ingest_all.py` |
+| — | 混合檢索：dense（HNSW 餘弦）＋ lexical（`pg_trgm`）分層融合 | `app/services/retrieval.py`、`store.py`、`textnorm.py` |
+| **M0** | 設定集中化 | `app/config.py`（frozen dataclass ＋ `os.getenv`，**非 pydantic-settings**；約 80 鍵） |
+| **M1** | 檢索 eval／RAGAS harness 與基準線 | `eval/`（`dataset`、`judge`、`ragas_metrics`、`run_ragas`） |
+| **M1b** | 研報評測題集凍結 | `eval/report_questions.json`、`eval/report_metrics.py` |
+| **M2** | Cross-encoder rerank | `app/services/rerank.py` |
 
-**里程碑 M0**:`uv run pytest` 綠燈;設定與 LLM 客戶端可被新服務 import。
+### 問答
 
----
+| 里程碑 | 內容 | 落點 |
+|---|---|---|
+| — | RAG 問答（SSE 串流、`[n]` 行內引用、`qa_log`） | `app/services/answer.py`、`web/routers/ask.py` |
+| — | 多輪對話、歷史、版本鏈、回饋 | `web/routers/qa_history.py` |
+| — | 總覽路徑（枚舉／聚合題走純 SQL 分面，繞過 top-k） | `app/services/overview.py` |
+| **M3** | 問答 UX（重生版本鏈／停止落庫／編輯重送） | `frontend/src/features/ask/` |
+| **M4** | 五類範圍路由（`OFF_TOPIC`／`OVERVIEW`／`CORPUS_QA`／`TIME_SENSITIVE`／`ADVICE_RISK`） | `app/services/scope_router.py`（前身 `intent.py`，已改名） |
+| **M4a** | 受信任時效資料（registry 為空即安全婉拒） | `app/services/trusted_market_data.py` |
+| **M4b** | 證據帳本 | `app/services/evidence.py` |
+| **M5** | Agentic 多輪補查 | `app/services/agentic_qa.py`、`query_planner.py` |
 
-## Phase 1 — 智慧問答 / 深度研報 / 簡報(方向 A)
+### 深度研報
 
-**目標**:從「找報告」升級為「回答 + 摘要 + 可下載研究報告」。最快展現語料價值。
+| 里程碑 | 內容 | 落點 |
+|---|---|---|
+| — | 深度研報生成（深檢索 → 長文串流 → KPI／圖表 → PDF → `report_doc`） | `app/services/report.py`、`web/routers/report.py` |
+| **M6** | 研報檢索增強（多查詢 fan-out ＋ MMR） | `app/services/retrieval_pipeline.py` |
+| **M7** | **逐節生成**（大綱 → 逐節檢索與草稿 → 單次組裝），狀態機落庫 | `app/services/report_writer.py`、`report_run`／`report_section` |
+| **M8** | 忠實度查核：a 地基／b 研報逐節 grounding ＋修正一輪／c 問答抽查 | `app/services/faithfulness.py` |
+| **M9a** | **Typst 渲染引擎**（成為主軌，WeasyPrint 降為 fail-open 回退） | `app/services/typst_render.py`、`app/templates/ib-classic.typ` |
+| **M9b** | 模板 registry ＋ `report_rendition` 不可變表 ＋ 零 LLM 換皮重出 ＋ 前端入口 | `app/templates/manifest.py`、`broker-modern.typ`、`privatebank-dark.typ`、`frontend/src/features/ask/RerenderControl.tsx` |
+| **M10** | 雙語（zh-Hant／en）：a 問答與研報輸出語言／b 前端切換／c PDF chrome | `app/services/locale.py` |
 
-| 項目 | 交付物 |
-|------|--------|
-| RAG 問答服務 | `app/services/answer.py`(重用 `hybrid_search`,回答帶行內引用 → PDF) |
-| 問答端點 | `POST /api/ask`(SSE 串流,掛認證,寫 `qa_log`,支援多輪對話) |
-| 對話歷史 | `/api/conversations` + `qa_log.conversation_id`(重開、續問、刪整串) |
-| 深度研報 | `app/services/report.py` + `/api/report`(深度檢索、長文串流、必要時網搜補覆蓋) |
-| PDF 產出 | `app/services/pdf.py` + `research.report_doc`(Markdown 持久化、PDF 可重建) |
-| 每日簡報 | `app/services/brief.py` + `scripts/daily_brief.py`(可排程) |
-| 前端 | index.html 加「問答」模式、對話側欄、處理過程、引用來源、深度研報下載卡;新增 `brief.html` |
+### 其他已上線
 
-**里程碑 M1**:`/api/ask` 串流回答且引用可連回原始 PDF;`/api/report` 可產出 PDF 深度研報;每日簡報可產出並快取。
-
-> **狀態(2026-06)**:RAG 問答(`answer.py`)、`/api/ask`(SSE)、`qa_log`、`/api/conversations`、`/api/history`、`/api/feedback`、深度研報生成(`report.py`)、PDF 渲染(`pdf.py`)、`report_doc` 與前端問答模式(對話歷史／引用來源／處理過程／讚倒讚／深度研報下載)已上線;**每日簡報(`brief.py`／`brief.html`)尚未實作**。
-
----
-
-## Phase 2 — 結構化訊號 + findb 整合(方向 B)
-
-**目標**:把報告變成資料。工作量最大,可獨立批次跑。
-
-| 項目 | 交付物 |
-|------|--------|
-| 抽取 schema | `app/services/signals.py`(評等 / 目標價 / EPS / 分析師,正規化) |
-| 批次抽取管線 | `scripts/extract_signals.py`(仿 `tag_all_cli.py`,可續跑) |
-| findb 客戶端 | `app/services/findb_client.py`(唯讀 Serve API:行情 + 名稱) |
-| 共識聚合 | `app/services/consensus.py` + `/api/instrument/{code}`、`/api/consensus/{code}` |
-| 前端 | `instrument.html`:報告時間軸 + 共識卡 + findb 價格疊圖 |
-| (P2 延伸) | 券商準確度回測:目標價 vs findb 實現價 |
-
-**里程碑 M2**:`/api/consensus/{code}` 回評等分布 + 相對 findb 收盤的 upside。
+| 項目 | 內容 | 落點 |
+|---|---|---|
+| **觀點雷達** | 訊號擷取 → 跨券商共識聚合 → `/app/radar` | `app/services/signal_extract.py`、`app/services/radar/`、`web/routers/radar.py`、`research.report_signal` |
+| **閱讀頁** | 單篇研報全文＋重點摘錄＋命中跳段，可分享網址 `/app/report/:hash` | `app/services/reading/`、`web/routers/reading.py`、`research.report_takeaway` |
+| **前端 SPA** | React 19 ＋ TypeScript ＋ Vite（舊 vanilla 頁已退場） | `frontend/` |
+| **CI 與分支保護** | 每個 PR 跑 pytest ＋ tsc/vitest 兩個必要檢查 | `.github/workflows/ci.yml` |
+| **server.py 拆分** | 單體拆成 11 個 APIRouter ＋ `web/deps.py` 共用綁定層 | `web/routers/` |
+| **生產韌性** | DB 自動重啟、免認證 `/healthz`、`OnFailure` 告警、systemd unit 收回 repo | `web/routers/health.py`、`deploy/systemd/`、`docs/production_resilience.md` |
+| **定時同步** | NAS 增量匯入（3h）→ 自動補摘要 → 自動補重點摘錄 | `scripts/sync_new_reports.sh`、`report-mark-sync.timer` |
 
 ---
 
-## Phase 3 — MCP / API 對外(方向 D)
+## 尚未實作
 
-**目標**:把語料與服務包成 agent / 外部工具可消費的介面。放最後接最完整。
-
-| 項目 | 交付物 |
-|------|--------|
-| MCP server | `mcp_server/`:`search_reports` / `get_report` / `ask_reports` / `list_recent` / `get_consensus`(直接重用前兩階段服務層) |
-| REST 對外 | `/api/v1/*`(認證 + 速率限制),FastAPI 自動 OpenAPI |
-| 文件 | `docs/API.md`、`mcp_server/README.md` |
-
-**里程碑 M3**:Claude Code 可載入 MCP server 並查詢;`/api/v1/*` 無金鑰 401、帶金鑰 200。
+| 項目 | 說明 | 前置／阻礙 |
+|---|---|---|
+| **findb 整合** | 唯讀 Serve API 取行情與名稱，讓雷達能算「相對收盤的 upside」、時效題能引真實數字 | 不只是接線：findb 服務本身要可連（目前 `docker ps` 無 findb-app），且憑證與網路路徑屬跨專案部署問題，第一步不在本 repo |
+| **每日簡報** | `brief.py` ＋ 前端頁 | 無技術前置。成本考量：會再增一條每日 `claude` CLI 批次，與既有的摘要／摘錄排程競爭同一支 CLI |
+| **MCP server** | 把檢索／問答／雷達包成 agent 可消費的工具 | 選型未定：`hybrid_search` 需要**已算好的** query embedding，而 BGE-M3 是 2–4 GB 的行內 CPU 單例——stdio server 每次 spawn 都要重載模型，改走常駐 HTTP 則需先做金鑰認證 |
+| **對外 REST `/api/v1/*`** | 機器可用的認證與 per-key 配額 | 全站目前只有一組共用帳密的 session cookie，無 API key 機制；昂貴端點僅靠 semaphore 擋。且尚無外部消費者的實際需求 |
 
 ---
 
-## 依賴與關鍵原則
+## 關鍵原則
 
-- **Phase 0 必須先做**;Phase 1/2 可平行(若人力足),但 **Phase 3 依賴 1 與 2 的服務層**。
-- **零重造檢索**:RAG 與 MCP 直接重用 `hybrid_search` / `list_reports`。
-- **批次解耦**:訊號抽取仿既有 tagging 可續跑模式,獨立於主管線。
-- **邊界乾淨**:findb 只走唯讀 Serve API,不直連其 DB。
+- **零重造檢索**：新功能一律重用 `hybrid_search` / `retrieval_pipeline`，不另建一套。
+- **批次解耦且互斥**：訊號、摘要、摘錄擷取皆為可續跑的獨立批次，但**不可併發**——搶 `claude` CLI 會讓擷取被大量誤標 `rejected`（不是資料壞、也不是模型壞）。
+- **邊界乾淨**：findb 只走唯讀 Serve API，不直連其 DB。
+- **fail-open 優先**：派生功能（rerank、忠實度、追問、摘錄、換皮）失敗一律降級而非阻斷主流程。
 
 ## 暫不納入
 
-掃描檔 OCR、GPU 加速 ingest、多帳號系統、通知/訂閱(方向 C)。
+掃描檔 OCR、GPU 加速 ingest、多帳號系統、通知／訂閱。

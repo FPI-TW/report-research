@@ -1,13 +1,17 @@
 # web/routers/report.py
-"""深度研報 API：/api/report（SSE 串流生成）與 /api/report-doc/{id}/pdf（下載）。
+"""深度研報 API：/api/report（SSE 串流生成）、/api/report-runs/*（背景 run 的探詢與
+重連）與 /api/report-doc/{id}/pdf（下載）。
 
 從 web/server.py 拆出（第三步之八）。與舊 modal 的 /api/report/{id}/full、/file
 （web/routers/report_file.py）同前綴但不同組——本組產生/下載「生成的」研報，那組
-只讀「來源」研報。
+只讀「來源」研報。**重連組刻意用 /api/report-runs 而非 /api/report/... 第三個前綴**：
+同一個前綴底下已經有兩組語意不同的路由，再塞一組只會讓下一個人猜錯。
 
+生成本身跑在背景（web/report_runs.py），HTTP 只是訂閱端——重整/關分頁不再殺掉生成。
 _REPORT_SEMAPHORE 是模組級狀態，預設序列化研報生成（單機重負載保護）。定義於本
 模組、由本模組 handler 使用；server.py 以單一 `from web.routers import report` 匯入，
-故只有一個 semaphore 實例。
+故只有一個 semaphore 實例。**它現在由背景任務持有，不再由 request handler 持有**：
+掛在 handler 上的話，斷線就會釋放 semaphore，而背景任務仍在跑 → 序列化保護落空。
 
 render_report_pdf 刻意由 app.services.report（分派層，依 REPORT_RENDERER 選
 typst/weasyprint 並在失敗時回退）匯入，而非 app.services.pdf.render_report_pdf
@@ -19,8 +23,9 @@ import asyncio
 import hashlib
 import logging
 import os
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -34,7 +39,7 @@ from app.services.report import (
     set_current_rendition,
     write_report_pdf,
 )
-from web import deps
+from web import deps, report_runs
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +58,35 @@ class ReportRequest(BaseModel):
     locale: str | None = None  # M10：輸出語言（zh-Hant/en）；未帶/未知 → 預設中文（fail-open）
 
 
+def _sse_response(gen) -> StreamingResponse:
+    return StreamingResponse(
+        deps._with_heartbeat(gen),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _tail(run_id: str) -> AsyncIterator[str]:
+    """把一個背景 run 的事件轉成 SSE。
+
+    首事件恆為 `run{run_id, elapsed_ms}`：前端據此記住 handle（重整後可再接回）並回推
+    起始時刻算已耗時／預估剩餘。放在最前面是為了讓它在**任何**生成事件之前抵達——
+    重連時 replay 會先湧出一批舊事件，夾在中間就等於沒有。
+    """
+    yield deps._sse("run", {"run_id": run_id, "elapsed_ms": report_runs.elapsed_ms(run_id)})
+    async for event, payload in report_runs.subscribe(run_id):
+        yield deps._sse(event, payload)
+
+
 @router.post("/api/report")
 async def report(req: ReportRequest):
     """深度研報生成：深度檢索 → 串流撰寫 → 渲染 PDF。回 text/event-stream。
 
-    事件序：status(retrieving/writing/rendering) → sources → token… → done{download_url}。
+    事件序：run → status(retrieving/outlining/writing/verifying/rendering) → outline →
+    sources → token/section_draft/section_skipped… → done{download_url}。
+
+    生成跑在背景任務，本回應只是訂閱端：**中途斷線不會中止生成**，重連走
+    GET /api/report-runs/{run_id}/stream。同題重按只會接回既有 run，不會跑兩份。
     """
     question = (req.question or "").strip()
     if not question:
@@ -67,24 +96,59 @@ async def report(req: ReportRequest):
     if req.conversation_id is not None and not deps._valid_uuid(req.conversation_id):
         raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
 
-    async def gen():
-        async with _REPORT_SEMAPHORE:
-            try:
-                async for event, payload in generate_report(
-                    question, filters={},
-                    conversation_id=req.conversation_id, qa_id=req.qa_id,
-                    template_id=req.template_id, locale=req.locale,
-                ):
-                    yield deps._sse(event, payload)
-            except Exception:
-                logger.exception("report failed")
-                yield deps._sse("error", {"detail": "研報生成發生錯誤"})
+    def _make_events() -> AsyncIterator[tuple[str, object]]:
+        # semaphore 在背景任務內持有（見模組 docstring）：掛在 handler 上的話，使用者
+        # 一斷線就把重負載保護一起放掉了。
+        async def gen() -> AsyncIterator[tuple[str, object]]:
+            async with _REPORT_SEMAPHORE:
+                try:
+                    async for event, payload in generate_report(
+                        question, filters={},
+                        conversation_id=req.conversation_id, qa_id=req.qa_id,
+                        template_id=req.template_id, locale=req.locale,
+                    ):
+                        yield (event, payload)
+                except asyncio.CancelledError:
+                    raise  # 取消不是錯誤：交給 _pump 發「已取消」並收尾
+                except Exception:
+                    logger.exception("report failed")
+                    yield ("error", {"detail": "研報生成發生錯誤"})
 
-    return StreamingResponse(
-        deps._with_heartbeat(gen()),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        return gen()
+
+    run_id, _is_new = report_runs.start_or_attach(
+        question=question, conversation_id=req.conversation_id, qa_id=req.qa_id,
+        template_id=req.template_id, locale=req.locale, make_events=_make_events,
     )
+    return _sse_response(_tail(run_id))
+
+
+@router.get("/api/report-runs")
+async def report_runs_active(conversation_id: str = Query(...)):
+    """某對話目前仍在背景生成的研報。前端載入對話時據此自動接回進度框。"""
+    if not deps._valid_uuid(conversation_id):
+        raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
+    return {"runs": report_runs.find_active(conversation_id)}
+
+
+@router.get("/api/report-runs/{run_id}/stream")
+async def report_run_stream(run_id: str):
+    """重連一個背景 run：先重播已發生的事件，再接上直播。
+
+    未知 run_id 回 404 而非空串流——行程重啟後前端手上的 id 已無意義，明確的 404 讓它
+    退回「重新生成」，空串流只會讓進度框永遠停在 0%。
+    """
+    if not deps._valid_uuid(run_id) or not report_runs.exists(run_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    return _sse_response(_tail(run_id))
+
+
+@router.post("/api/report-runs/{run_id}/cancel")
+async def report_run_cancel(run_id: str):
+    """使用者主動中止生成。背景執行後這是唯一的停止手段——關掉分頁不再等於取消。"""
+    if not deps._valid_uuid(run_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"cancelled": report_runs.cancel(run_id)}
 
 
 @router.get("/api/report-templates")

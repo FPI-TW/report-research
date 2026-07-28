@@ -114,6 +114,7 @@ class Settings:
     report_section_wall: float
     report_finalize_reserve: float
     report_retrieve_budget: float
+    report_run_stale_seconds: float
 
     # 忠實度查核 / faithfulness（M8 里程碑）—— M8 里程碑只在本區段內加鍵
     report_faithfulness_enabled: bool
@@ -237,6 +238,12 @@ def _load() -> Settings:
         # run-level 檢索的牆鐘上界。實測 202s，且 BGE-M3 嵌入本身完全無界——不設此界
         # 則整個請求的上界無法計算。
         report_retrieve_budget=float(os.getenv("REPORT_RETRIEVE_BUDGET", "300")),
+        # 多久沒有心跳的 in-flight run 視為「行程已死」而可重跑。研報改為背景執行後，
+        # 重啟／OOM 會讓 run 停在 drafting 之類的中繼態且**沒有人**會去標記它——冪等鍵
+        # 於是永久擋住同一（問題×對話×語言）的重試（open_run 只重置 failed/cancelled）。
+        # 下界由實際心跳間隔決定：每節結束才寫一次 updated_at，單節牆鐘上界 240s，
+        # run-level 檢索另有 300s，故 1800s 留了寬裕的安全邊際。
+        report_run_stale_seconds=float(os.getenv("REPORT_RUN_STALE_SECONDS", "1800")),
         # 忠實度查核 / faithfulness（M8 里程碑）
         report_faithfulness_enabled=_flag("REPORT_FAITHFULNESS_ENABLED", "1"),
         ask_faithfulness_enabled=_flag("ASK_FAITHFULNESS_ENABLED", "1"),

@@ -2,9 +2,17 @@
 
 事件序（傳輸無關，由 web 層轉 SSE）：
   ("status",{"stage":"retrieving"}) → ("sources",[...]) →
-  ("status",{"stage":"writing"}) → ("token",str)×N →
+  逐節路徑：("status",{"stage":"outlining"}) → ("outline",{title,sections}) →
+            ("status",{"stage":"writing"}) →
+            (("token",str) | ("section_draft",{...}) | ("section_skipped",{...}))×N →
+            ("status",{"stage":"verifying"}) → ("document_revision",{...}) →
+  單次路徑：("outline",{"sections":[]}) → ("status",{"stage":"writing"}) → ("token",str)×N →
   ("status",{"stage":"rendering"}) → ("done",{report_id,title,download_url,thinking_ms})
 無脈絡時改 yield ("error",{detail})。
+
+單次路徑那個空 outline 不是贅事件：逐節先吐了大綱、之後才 fail-open 退單次時，前端
+手上會留著一份**永遠不會被寫完**的章節清單，進度條卡在 n/N 不動。空 sections 是明確
+的「忘掉大綱、改看不定量進度」訊號。
 """
 
 from __future__ import annotations
@@ -659,8 +667,13 @@ async def generate_report(
     title = suggested_title(question, locale)
 
     # ── 逐節生成（M7 預設）：大綱→逐節→整份單次組裝。run-level 檢索已把 reranker
-    # 暖起來，逐節針對性檢索不吃冷載。大綱 fail-open（首個內容 token 前）→ 退單次，
-    # 前端事件序零差異；已吐內容後才失敗 → 不退單次（避免重覆），回 error。
+    # 暖起來，逐節針對性檢索不吃冷載。大綱 fail-open（首個內容 token 前）→ 退單次；
+    # 已吐內容後才失敗 → 不退單次（避免重覆），回 error。
+    #
+    # 退單次時前端會多收到一個 status:outlining（大綱確實試過了）與一個空 outline
+    # （見模組 docstring）。這不再是「事件序零差異」，但兩者都是良性的：前者讓那段
+    # 靜默窗有話可說，後者是把分母收回去的明確訊號。**大綱本身在這兩條失敗路徑上
+    # 一律不下發**，否則前端會拿到一份永遠寫不完的章節清單。
     if REPORT_SECTIONED_ENABLED:
         if persist:
             run_id, is_new_run = await _open_sectioned_run(
@@ -731,7 +744,10 @@ async def generate_report(
                     produced = True
                 yield (kind, payload)  # status / token / section_draft / document_revision
         except asyncio.CancelledError:
-            await _mark_run(run_id, "cancelled", error_detail="client cancelled")
+            # 生成已改為背景執行（web/report_runs.py），這裡的取消來源只剩「使用者按
+            # 取消」與「行程收工」——不再是「使用者斷線」。訊息別再寫 client cancelled，
+            # 那會讓事後查 error_detail 的人以為是網路問題。
+            await _mark_run(run_id, "cancelled", error_detail="run cancelled")
             raise
         except Exception:
             logger.exception("sectioned draft failed")
@@ -758,7 +774,7 @@ async def generate_report(
                 ):
                     yield ev
             except asyncio.CancelledError:
-                await _mark_run(run_id, "cancelled", error_detail="client cancelled during finalize")
+                await _mark_run(run_id, "cancelled", error_detail="run cancelled during finalize")
                 raise
             except Exception:
                 logger.exception("sectioned finalize failed")
@@ -781,6 +797,8 @@ async def generate_report(
     note = coverage_directive(len(sources), web_enabled=REPORT_ENABLE_WEB, locale=locale)
     prompt = build_report_prompt(question, context, title, note, locale)
 
+    # 見模組 docstring：清掉可能已下發的逐節大綱。單次路徑沒有章節分母，前端回不定量。
+    yield ("outline", {"sections": []})
     yield ("status", {"stage": "writing"})
     parts: list[str] = []
     searching_sent = False

@@ -613,7 +613,10 @@ class DraftReportTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(rw, "plan_outline", none_outline):
             events = [e async for e in rw.draft_report("q", "ctx")]
-        self.assertEqual(events, [("__fallback__", None)])
+        # status:outlining 先於 fallback——大綱規劃確實開始過，而且是本路徑唯一一次
+        # 「已經在做事但完全沒有事件」的長靜默窗（planner 模型往返）。
+        # **outline 事件不可出現**：沒有大綱就沒有分母，前端必須留在不定量進度。
+        self.assertEqual(events, [("status", {"stage": "outlining"}), ("__fallback__", None)])
 
     async def test_fallback_when_no_analysis(self):
         async def framing_only(*a, **k):
@@ -621,7 +624,11 @@ class DraftReportTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(rw, "plan_outline", framing_only):
             events = [e async for e in rw.draft_report("q", "ctx")]
-        self.assertEqual(events[0], ("__fallback__", None))
+        self.assertEqual(events[0], ("status", {"stage": "outlining"}))
+        self.assertEqual(events[1], ("__fallback__", None))
+        # 大綱缺「重點分析」＝不出貨這份大綱，故不得下發給前端（下發了就會畫出一份
+        # 永遠寫不完的章節清單）。
+        self.assertNotIn("outline", [k for k, _ in events])
 
     async def test_happy_path_events_and_citations(self):
         from types import SimpleNamespace

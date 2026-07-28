@@ -150,21 +150,41 @@ def sha256_of(canonical: str) -> str:
 # 轉型一律用 CAST(:x AS ...)，**絕不寫 :x::type**：SQLAlchemy 的 text() 會把
 # 「參數名緊接 ::」回溯成短名，導致參數完全沒綁上、冒號原樣進 PG → 生產 500。
 
-def build_reports_sql() -> str:
-    """工作集：近 N 天、有全文的研究報告。
+def build_reports_sql(by_hashes: bool = False) -> str:
+    """工作集：近 N 天（或指定 file_hash 清單）、有全文的研究報告。
 
     is_research 用 IS NOT FALSE（含 NULL：未判定的也算研報），不是 = true。
     report_date 為 NULL 者天然被 >= 比較排除（NULL 比較結果非 true）。
+
+    by_hashes=True：改以 file_hash 清單選取，**且不套 report_date 條件**。
+    定時同步必須走這條——`--since-days` 濾的是 `report_date` 而非入庫時間，而
+    NAS 匯入的研報日期常常比入庫日早：實測近 10 天入庫的 90 篇裡有 79 篇（88%）
+    的 report_date 超過一天前。用 `--since-days 1` 接排程會漏掉近九成新研報，
+    而且是靜默漏——正是這次要修的那種失效。
     """
+    where_scope = (
+        "  AND r.file_hash = ANY(:hashes) "
+        if by_hashes
+        else "  AND r.report_date >= current_date - CAST(:since_days AS int) "
+    )
     return (
         "SELECT r.id::text, r.file_name, r.report_date, r.source, r.full_text "
         "FROM research.research_report r "
         "WHERE r.full_text IS NOT NULL "
         "  AND r.full_text <> '' "
         "  AND r.is_research IS NOT FALSE "
-        "  AND r.report_date >= current_date - CAST(:since_days AS int) "
-        "ORDER BY r.report_date DESC, r.file_name"
+        + where_scope
+        + "ORDER BY r.report_date DESC, r.file_name"
     )
+
+
+def read_hashes_file(path: str) -> list[str]:
+    """讀殼層寫的 file_hash 清單（每行一個），去除空白行與前後空白。
+
+    與 generate_summaries.read_hashes_file 同語義（同一個 data/.sync_last_hashes）。
+    """
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return [h.strip() for h in lines if h.strip()]
 
 
 def build_existing_takeaways_sql() -> str:
@@ -460,7 +480,15 @@ class WorkItem:
         self.text_sha256 = text_sha256
 
 
-async def _fetch_reports(session, since_days):
+async def _fetch_reports(session, since_days, hashes: list[str] | None = None):
+    if hashes is not None:
+        if not hashes:
+            return []  # 本輪無新研報 → 不查 DB（比照 generate_summaries）
+        return (
+            await session.execute(
+                text(build_reports_sql(by_hashes=True)), {"hashes": hashes}
+            )
+        ).all()
     return (
         await session.execute(text(build_reports_sql()), {"since_days": since_days})
     ).all()
@@ -507,10 +535,15 @@ def _is_done(existing: list[tuple[str, str, str]], text_sha256: str, reextract: 
     return True
 
 
-async def build_worklist(since_days: int, reextract: bool) -> tuple[int, list[WorkItem]]:
-    """回傳 (掃描到的報告數, 待擷取的 WorkItem)。"""
+async def build_worklist(
+    since_days: int, reextract: bool, hashes: list[str] | None = None
+) -> tuple[int, list[WorkItem]]:
+    """回傳 (掃描到的報告數, 待擷取的 WorkItem)。
+
+    hashes 非 None＝只處理這批 file_hash（定時同步用），忽略 since_days。
+    """
     async with SessionFactory() as session:
-        reports = await _fetch_reports(session, since_days)
+        reports = await _fetch_reports(session, since_days, hashes)
         done_map = await _fetch_done_map(session, [r[0] for r in reports])
 
         worklist: list[WorkItem] = []
@@ -591,9 +624,11 @@ async def extract_one(
 
 async def main(args) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
-    scanned, worklist = await build_worklist(args.since_days, args.reextract)
+    hashes = read_hashes_file(args.hashes_file) if args.hashes_file else None
+    scanned, worklist = await build_worklist(args.since_days, args.reextract, hashes)
+    scope = f"本輪 {len(hashes)} 個 file_hash" if hashes is not None else f"近 {args.since_days} 天"
     print(
-        f"近 {args.since_days} 天研報：{scanned} 篇｜待擷取：{len(worklist)} 篇"
+        f"{scope}研報：{scanned} 篇｜待擷取：{len(worklist)} 篇"
         f"｜version={EXTRACTION_VERSION}｜model={args.model}",
         flush=True,
     )
@@ -626,7 +661,13 @@ async def main(args) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--since-days", type=int, default=90,
-                    help="只擷取近 N 天的研報（預設 90；全語料成本過高）")
+                    help="只擷取近 N 天的研報（預設 90；全語料成本過高）。"
+                         "注意它濾的是 report_date 而非入庫時間")
+    ap.add_argument("--hashes-file", default=None,
+                    help="只處理這個檔案裡列出的 file_hash（每行一個），忽略 --since-days。"
+                         "定時同步用（data/.sync_last_hashes）——因為 --since-days 濾 "
+                         "report_date，而 NAS 匯入的研報日期常比入庫日早（實測近 10 天"
+                         "入庫者有 88%% 的 report_date 超過一天前），用天數接排程會靜默漏掉近九成")
     ap.add_argument("--workers", type=int, default=2,
                     help="同時 claude CLI 呼叫數（勿調高；且不可與 extract_signals.py 同時跑）")
     ap.add_argument("--limit", type=int, default=None, help="最多擷取幾篇（試跑用）")

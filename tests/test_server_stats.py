@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 
 os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
@@ -95,6 +96,12 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                 calls.append(sql)
                 if "FILTER (WHERE summary IS NOT NULL)" in sql:
                     return _FirstResult((3, 7))
+                # 這兩個必須排在下方 catch-all「FROM research.research_report」之前:
+                # 它們同樣掃 research_report,被 catch-all 攔到會回純量、解包時炸。
+                if "report_takeaway" in sql:
+                    return _FirstResult((4, 10, date(2026, 7, 20)))
+                if "report_signal" in sql:
+                    return _FirstResult((1, 10, date(2026, 7, 16)))
                 if "unnest(instrument_types)" in sql:
                     return _RowsResult([("equity", 5)])
                 if "GROUP BY report_type" in sql:
@@ -123,10 +130,21 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
             deps.SessionFactory = orig_session_factory
             monitor._gather_runtime = orig_gather_runtime
 
-        self.assertEqual(len(calls), 6)
+        # 8 = 原本 6 + takeaway/signal 覆蓋率各一。這個數字守的是「stats 與 progress
+        # 共用 _DB_STATS_CACHE、TTL 內只打一次 DB」（見 monitor.py 模組 docstring）。
+        self.assertEqual(len(calls), 8)
         self.assertEqual(stats["total_reports"], 6)
         self.assertEqual(progress["db"]["reports"], 6)
         self.assertEqual(progress["summary"]["total"], 7)
+        # 派生資產新鮮度（在 progress 而非 stats——與既有的 summary 覆蓋率同處）:
+        # 先前只量 summary,而 summary 恰好是唯一有排程的,真正在腐化的兩張表零量測。
+        self.assertEqual(progress["takeaway"]["done"], 4)
+        self.assertEqual(progress["takeaway"]["total"], 10)
+        self.assertEqual(progress["takeaway"]["remaining"], 6)
+        self.assertEqual(progress["takeaway"]["pct"], 40.0)
+        self.assertEqual(progress["takeaway"]["latest"], "2026-07-20")
+        self.assertEqual(progress["signal"]["done"], 1)
+        self.assertEqual(progress["signal"]["latest"], "2026-07-16")
 
 
 if __name__ == "__main__":

@@ -78,6 +78,46 @@ async def _fetch_db_stats_snapshot() -> dict:
                 )
             )
         ).first()
+        # 派生資產的新鮮度（近 30 天窗口）。
+        #
+        # **為什麼是近 30 天而非全表**：takeaway/signal 都刻意只跑子集（前者近 90 天、
+        # 後者「子集先行」），全表覆蓋率永遠很低、無法當訊號。真正要偵測的是「批次
+        # 停跑」——那會表現為近期窗口的覆蓋率驟降與 latest 日期不再前進。
+        #
+        # 先前這裡**只量 summary，而 summary 恰好是唯一有排程的**；真正在腐化的兩張表
+        # （2026-07 實測 takeaway 停更 8 天、signal 停更 12 天）零量測。缺席時閱讀頁
+        # 整區不進 DOM（優雅降級），所以症狀是「最新研報靜默少一個功能」，
+        # 永遠不會有人回報。
+        tk_done, tk_total, tk_latest = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE t.report_id IS NOT NULL), count(*), "
+                    "       (SELECT max(created_at)::date FROM research.report_takeaway) "
+                    "FROM research.research_report r "
+                    "LEFT JOIN (SELECT DISTINCT report_id FROM research.report_takeaway) t "
+                    "       ON t.report_id = r.id "
+                    "WHERE r.report_date > current_date - 30 "
+                    "  AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE"
+                )
+            )
+        ).first()
+        sig_done, sig_total, sig_latest = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE s.report_id IS NOT NULL), count(*), "
+                    "       (SELECT max(created_at)::date FROM research.report_signal) "
+                    "FROM research.research_report r "
+                    "LEFT JOIN (SELECT DISTINCT report_id FROM research.report_signal) s "
+                    "       ON s.report_id = r.id "
+                    "WHERE r.report_date > current_date - 30 "
+                    "  AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE"
+                )
+            )
+        ).first()
+
+    def _d(v) -> str | None:
+        return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else None)
+
     return {
         "total_reports": total_reports,
         "total_chunks": total_chunks,
@@ -86,6 +126,13 @@ async def _fetch_db_stats_snapshot() -> dict:
         "report_types": [{"type": t, "count": c} for t, c in type_rows],
         "summary_done": int(s_done),
         "summary_total": int(s_total),
+        # 近 30 天窗口的派生資產覆蓋率 + 全表最新產出日（批次停跑的偵測訊號）
+        "takeaway_done_30d": int(tk_done),
+        "takeaway_total_30d": int(tk_total),
+        "takeaway_latest": _d(tk_latest),
+        "signal_done_30d": int(sig_done),
+        "signal_total_30d": int(sig_total),
+        "signal_latest": _d(sig_latest),
     }
 
 
@@ -250,6 +297,18 @@ def _gather_runtime() -> dict:
 
 
 @router.get("/api/progress")
+def _coverage_block(done: int, total: int, latest: str | None) -> dict:
+    """近 30 天覆蓋率區塊；形狀比照既有的 summary（done/total/remaining/pct）另加 latest。"""
+    done, total = int(done), int(total)
+    return {
+        "done": done,
+        "total": total,
+        "remaining": max(0, total - done),
+        "pct": round(done / total * 100, 2) if total else 0.0,
+        "latest": latest,
+    }
+
+
 async def progress():
     snapshot = await _db_stats_snapshot()
     runtime = await asyncio.to_thread(_gather_runtime)
@@ -268,5 +327,18 @@ async def progress():
             "remaining": max(0, s_total - s_done),
             "pct": round(s_done / s_total * 100, 2) if s_total else 0.0,
         },
+        # 派生資產新鮮度（近 30 天窗口 + 全表最新產出日）。
+        # 先前這裡**只有 summary，而 summary 恰好是唯一有排程的**；真正在腐化的兩張表
+        # 零量測（2026-07 實測 takeaway 停更 8 天、signal 停更 12 天）。缺席時閱讀頁
+        # 整區不進 DOM（優雅降級），症狀是「最新研報靜默少一個功能」，不會有人回報。
+        # 全表覆蓋率不能當訊號（兩者都刻意只跑子集），要看的是近期窗口與 latest 是否前進。
+        "takeaway": _coverage_block(
+            snapshot["takeaway_done_30d"], snapshot["takeaway_total_30d"],
+            snapshot["takeaway_latest"],
+        ),
+        "signal": _coverage_block(
+            snapshot["signal_done_30d"], snapshot["signal_total_30d"],
+            snapshot["signal_latest"],
+        ),
         **runtime,
     }

@@ -194,6 +194,65 @@ class BudgetLookaheadDraftTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("__final__", kinds)
 
 
+class TelemetrySurvivesFinalCheckpointTests(unittest.IsolatedAsyncioTestCase):
+    """收尾寫 rendering 時不得覆蓋逐節累積的遙測。
+
+    修復前:該處新建了一個 Checkpoint(...)，把 section_seconds / skipped_positions
+    一併清空 → 生產實測成功 run 的 section_seconds 為 []，而成功 run 的耗時分佈
+    正是校準 REPORT_DRAFT_BUDGET 最該用的資料（失敗 run 反而留得住,更諷刺）。
+    """
+
+    async def test_final_checkpoint_keeps_section_seconds(self):
+        from types import SimpleNamespace
+
+        clock = _Clock(50.0)
+        src = SimpleNamespace(n=1, report_id="r1", file_name="a.pdf",
+                              market="TW", report_date="2026-01-01")
+        ckpts = []
+
+        async def fake_outline(*a, **k):
+            return _outline_5()
+
+        async def fake_retrieve(topic, **k):
+            return ([src], "[1] 報告：a.pdf\n片段")
+
+        async def fake_stream(*a, **k):
+            clock.tick()
+            yield "內文"
+
+        async def rec_advance(run_id, status, **k):
+            if "checkpoint" in k and k["checkpoint"] is not None:
+                ckpts.append((status, k["checkpoint"].to_json()))
+
+        async def rec_upsert(*a, **k):
+            return None
+
+        s = rw.get_settings()
+        cfg = SimpleNamespace(**{
+            **{f: getattr(s, f) for f in s.__dataclass_fields__},
+            "report_faithfulness_enabled": False,
+        })
+
+        with patch.object(rw, "plan_outline", fake_outline), \
+             patch.object(rw, "retrieve_for_section", fake_retrieve), \
+             patch.object(rw, "stream_completion", fake_stream), \
+             patch.object(rw, "advance_status", rec_advance), \
+             patch.object(rw, "upsert_section", rec_upsert), \
+             patch.object(rw, "_now", clock.now), \
+             patch.object(rw, "get_settings", lambda: cfg):
+            events = [e async for e in rw.draft_report(
+                "q", "ctx", run_id="run-tele", deadline=100000.0,
+            )]
+
+        self.assertEqual(events[-1][0], "__final__")
+        rendering = [c for st, c in ckpts if st == "rendering"]
+        self.assertTrue(rendering, "收尾必須寫一次 rendering checkpoint")
+        final_ck = rendering[-1]
+        self.assertEqual(len(final_ck["section_seconds"]), 5,
+                         "收尾 checkpoint 必須保留五節的耗時遙測")
+        self.assertEqual(final_ck["final_positions"], [0, 1, 2, 3, 4])
+
+
 class StreamSectionBudgetTests(unittest.IsolatedAsyncioTestCase):
     """單節牆鐘:修掉「_stream_section 從未把 retries 傳給 stream_completion」。"""
 

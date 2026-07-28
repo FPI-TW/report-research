@@ -116,13 +116,46 @@ class OutlineSectionPromptLocaleTests(unittest.TestCase):
         self.assertIn("In-Depth Analysis", system)
         self.assertIn("MUST be in English", system)
 
-    def test_section_prompt_en_override_and_web_heading(self):
+    def test_section_prompt_en_is_a_full_english_variant(self):
+        """逐節英文提示必須是**整份英文**,不是「中文底稿＋尾部覆寫」。
+
+        2026-07-28 生產實測:後者會機率性失守——一份 8 節英文研報中,
+        「Competitive Positioning and Geopolitical Risks」整節 57.7% 是繁中散文。
+        單次路徑（REPORT_SYSTEM_PROMPT_EN）早有整份變體的先例,逐節補上。
+        """
         sec = {"key": "analysis", "heading": "A", "kind": "analysis"}
         system, prompt = rw._build_section_prompt(
             "TSMC", sec, "ctx", True, web_enabled=True, locale="en"
         )
-        self.assertIn("OUTPUT LANGUAGE OVERRIDE", system)
+        # 系統提示不得殘留中文底稿（那正是漂移的來源）
+        self.assertNotIn("繁體中文深度研報", system)
+        self.assertNotIn("規則：", system)
+        cjk = sum(1 for c in system if "一" <= c <= "鿿")
+        self.assertEqual(cjk, 0, f"英文逐節系統提示不該含中文（實得 {cjk} 字）")
+        # 英文語言規則必須在規則清單裡（而非尾部附加）
+        self.assertIn("entire section in fluent English", system)
         self.assertIn("Web Sources for This Section", system)
+        # 使用者提示也應為英文
+        self.assertIn("Output this section's body Markdown in English", prompt)
+
+    def test_section_prompt_en_preserves_contracts(self):
+        """語言變體不得順手改動任何契約:[[ev:]] 標記、KPI/chart 圍欄形狀。"""
+        sec = {"key": "analysis", "heading": "A", "kind": "analysis"}
+        system, _ = rw._build_section_prompt(
+            "TSMC", sec, "ctx", True, web_enabled=True, locale="en"
+        )
+        self.assertIn("[[ev:xxxxxxxx]]", system)       # 引用標記契約
+        self.assertIn("```kpi", system)
+        self.assertIn("```chart", system)
+        self.assertIn('"dir":"up|down"', system)        # KPI 形狀與中文版一致
+        self.assertIn('"type":"bar|line|pie"', system)  # chart 形狀與中文版一致
+
+    def test_section_prompt_en_exec_summary_has_kpi_but_no_chart(self):
+        """規則分派邏輯與中文版一致:exec_summary 有 KPI 無 chart。"""
+        sec = {"key": "exec_summary", "heading": "Executive Summary", "kind": "framing"}
+        system, _ = rw._build_section_prompt("TSMC", sec, "ctx", True, locale="en")
+        self.assertIn("```kpi", system)
+        self.assertNotIn("```chart", system)
 
     def test_section_prompt_zh_default_no_override(self):
         sec = {"key": "analysis", "heading": "A", "kind": "analysis"}

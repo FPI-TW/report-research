@@ -95,6 +95,7 @@ export default function AskPage() {
                   report={t.report}
                   onGenerate={(templateId) => ctrl.generateReport(t.id, t.question, t.qaId, templateId)}
                   onDecline={() => ctrl.declineReport(t.id)}
+                  onCancel={(runId) => ctrl.cancelReport(t.id, runId)}
                 />
               </Reveal>
             ))

@@ -16,7 +16,7 @@ export type ExtSource = z.infer<typeof extSourceSchema>
 
 export const askStage = z.enum(['understanding', 'evaluating', 'retrieved', 'reading', 'searching_web', 'generating'])
 export type AskStage = z.infer<typeof askStage>
-const reportStage = z.enum(['retrieving', 'writing', 'searching_web', 'rendering'])
+const reportStage = z.enum(['retrieving', 'outlining', 'writing', 'searching_web', 'verifying', 'rendering'])
 export type ReportStage = z.infer<typeof reportStage>
 
 const askStatusData = z.object({ stage: askStage, count: z.number().int().optional(), thinking_ms: z.number().optional() })
@@ -41,6 +41,27 @@ const reportDoneData = z.object({
 })
 export type ReportDone = z.infer<typeof reportDoneData>
 
+// 研報進度的三個資料來源：outline 給分母、section_draft/section_skipped 給分子。
+// 後端早就在送 section_draft，前端卻沒有對應的 parser——parseReportEvent 對未知
+// event 回 null，於是它一路被靜默丟棄，畫面只剩一根停在 50% 的不定量掃光條。
+export const reportSectionSchema = z.object({
+  position: z.number().int(),
+  section_key: z.string().nullish(),
+  heading: z.string(),
+})
+export type ReportSectionPlan = z.infer<typeof reportSectionSchema>
+
+// sections 為空＝「忘掉大綱」（後端退單次生成時送出，見 app/services/report.py）。
+const reportOutlineData = z.object({
+  title: z.string().nullish(),
+  sections: z.array(reportSectionSchema).catch([]),
+})
+// markdown 刻意不進 schema：研報內文的真相是 done 帶的 PDF，前端不渲染草稿。
+const reportSectionEventData = z.object({ position: z.number().int() })
+// 背景生成的 handle：重整後靠 run_id 接回，elapsed_ms 回推起始時刻（免受時鐘偏差影響）。
+const reportRunData = z.object({ run_id: z.string(), elapsed_ms: z.number().default(0) })
+export type ReportRunHandle = z.infer<typeof reportRunData>
+
 export type AskEvent =
   | { event: 'status'; data: z.infer<typeof askStatusData> }
   | { event: 'sources'; data: Source[] }
@@ -52,7 +73,11 @@ export type AskEvent =
   | { event: 'error'; data: z.infer<typeof askErrorData> }
 
 export type ReportEvent =
+  | { event: 'run'; data: ReportRunHandle }
   | { event: 'status'; data: { stage: ReportStage } }
+  | { event: 'outline'; data: z.infer<typeof reportOutlineData> }
+  | { event: 'section_draft'; data: { position: number } }
+  | { event: 'section_skipped'; data: { position: number } }
   | { event: 'sources'; data: Source[] }
   | { event: 'token'; data: string }
   | { event: 'done'; data: ReportDone }
@@ -77,7 +102,11 @@ export function parseAskEvent(raw: RawSSEEvent): AskEvent | null {
 
 export function parseReportEvent(raw: RawSSEEvent): ReportEvent | null {
   switch (raw.event) {
+    case 'run': { const r = reportRunData.safeParse(raw.data); return r.success ? { event: 'run', data: r.data } : null }
     case 'status': { const r = z.object({ stage: reportStage }).safeParse(raw.data); return r.success ? { event: 'status', data: r.data } : null }
+    case 'outline': { const r = reportOutlineData.safeParse(raw.data); return r.success ? { event: 'outline', data: r.data } : null }
+    case 'section_draft': { const r = reportSectionEventData.safeParse(raw.data); return r.success ? { event: 'section_draft', data: r.data } : null }
+    case 'section_skipped': { const r = reportSectionEventData.safeParse(raw.data); return r.success ? { event: 'section_skipped', data: r.data } : null }
     case 'sources': { const r = z.array(sourceSchema).safeParse(raw.data); return r.success ? { event: 'sources', data: r.data } : null }
     case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : null
     case 'done': { const r = reportDoneData.safeParse(raw.data); return r.success ? { event: 'done', data: r.data } : null }

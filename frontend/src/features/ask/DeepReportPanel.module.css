@@ -1,26 +1,88 @@
-/* 深度研報＝鎏金語意：邀請、生成、完成一律金色系面板 */
-.offer { border: 1px solid var(--tf-gold-line); background: var(--tf-gold-panel); border-radius: 14px; padding: 15px 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 8px; }
-.offerIcon { width: 38px; height: 38px; border-radius: 999px; background: var(--tf-gold-tint); color: var(--tf-gold-text); display: flex; align-items: center; justify-content: center; flex: none; }
-.offerMain { flex: 1; min-width: 220px; }
+/* 深度研報＝鎏金語意：邀請、生成、完成一律金色系面板
+   （生成中的面板已獨立成 ReportProgress.module.css） */
+.offer {
+  border: 1px solid var(--tf-gold-line);
+  background: var(--tf-gold-panel);
+  border-radius: var(--tf-radius-tile);
+  padding: 15px 18px 16px;
+  margin-bottom: 8px;
+}
+
+/* 說明列：圖示 + 標題/副標。版型選擇與動作各自成列排在下方。 */
+.offerHead { display: flex; align-items: flex-start; gap: 12px; }
+
+.offerIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-gold-tint);
+  color: var(--tf-gold-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.offerMain { flex: 1; min-width: 0; }
 .offerTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
-.offerSub { font-size: 12.5px; color: var(--tf-text-3); margin-top: 3px; }
-.offerBtns { display: flex; gap: 8px; }
-.yes { background: var(--tf-gold-text); color: var(--tf-on-gold); border: none; border-radius: 999px; font-size: 13px; font-weight: 600; padding: 8px 20px; cursor: pointer; }
+.offerSub { font-size: 12.5px; line-height: 1.6; color: var(--tf-text-3); margin-top: 3px; }
+
+/* 動作靠右，與版型縮圖之間留出明顯的間距，讓「選版型 → 按生成」讀得出先後 */
+.offerBtns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tf-gold-line);
+}
+
+.yes {
+  background: var(--tf-gold-text);
+  color: var(--tf-on-gold);
+  border: none;
+  border-radius: var(--tf-radius-pill);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 22px;
+  cursor: pointer;
+}
 .yes:hover { background: var(--tf-gold-hover); }
-.no { background: transparent; border: 1px solid var(--tf-border); border-radius: 999px; color: var(--tf-text-3); font-size: 13px; font-weight: 500; padding: 8px 16px; cursor: pointer; }
+
+.no {
+  background: transparent;
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-pill);
+  color: var(--tf-text-3);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+  cursor: pointer;
+}
 .no:hover { color: var(--tf-text-2); border-color: var(--tf-text-4); }
-.gen { border: 1px solid var(--tf-gold-line); background: var(--tf-gold-panel); border-radius: 14px; padding: 16px 18px; margin-bottom: 8px; }
-.genTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); margin-bottom: 10px; }
-.track { height: 8px; border-radius: 999px; background: var(--tf-gold-tint); overflow: hidden; position: relative; }
-.fill { height: 100%; border-radius: 999px; background: var(--tf-gold-strong); transition: width var(--tf-dur-4) var(--tf-ease-out); }
-/* 不定量掃光：<Sweep> 的軌道（撐滿 .track）與掃光條（漸層＋寬度），位移由 Motion 驅動 */
-.indet { position: absolute; inset: 0; overflow: hidden; }
-.indetBar { position: absolute; left: 0; top: 0; bottom: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent); }
-.genMeta { font-size: 12.5px; color: var(--tf-text-3); margin-top: 8px; font-variant-numeric: tabular-nums; }
-.done { border: 1px solid var(--tf-gold-line); background: var(--tf-gold-panel); border-radius: 14px; padding: 16px 18px; margin-bottom: 8px; }
+
+.done {
+  border: 1px solid var(--tf-gold-line);
+  background: var(--tf-gold-panel);
+  border-radius: var(--tf-radius-tile);
+  padding: 16px 18px;
+  margin-bottom: 8px;
+}
 .doneHead { display: flex; align-items: center; gap: 8px; }
 .doneIcon { color: var(--tf-gold-text); }
 .doneTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
 .doneMeta { font-size: 12.5px; color: var(--tf-text-3); margin: 8px 0 14px; }
-.dl { display: inline-flex; align-items: center; gap: 6px; background: var(--tf-gold-text); color: var(--tf-on-gold); border-radius: 999px; font-size: 13px; font-weight: 600; padding: 8px 20px; text-decoration: none; }
+
+.dl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--tf-gold-text);
+  color: var(--tf-on-gold);
+  border-radius: var(--tf-radius-pill);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 20px;
+  text-decoration: none;
+}
 .dl:hover { background: var(--tf-gold-hover); color: var(--tf-on-gold); }

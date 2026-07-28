@@ -20,12 +20,16 @@ function parseFrame(frame: string): RawSSEEvent | null {
 export async function* readSSE(
   path: string,
   body: unknown,
-  signal: AbortSignal
+  signal: AbortSignal,
+  method: 'POST' | 'GET' = 'POST'
 ): AsyncGenerator<RawSSEEvent> {
+  // GET 用於「重連既有背景 run」——那條沒有請求體，帶 Content-Type 與空 body 會被
+  // Starlette 當成畸形請求。
   const resp = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    method,
+    ...(method === 'POST'
+      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : {}),
     credentials: 'same-origin',
     signal,
   })

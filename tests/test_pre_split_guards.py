@@ -145,7 +145,13 @@ class QaVersionsUuidGuardTests(unittest.TestCase):
         deps.list_qa_versions = _sentinel
 
     def tearDown(self):
-        self.server.list_qa_versions = self._orig
+        # **必須還原到 patch 的那個物件**（deps），不是 self.server。
+        # 原本寫成 `self.server.list_qa_versions = self._orig`：deps 上的 sentinel
+        # 永遠留著、web.server 還憑空長出一個同名屬性。已同進程實測坐實——
+        # 測試本身 OK，但跑完後 deps.list_qa_versions 仍是會 raise 的 sentinel，
+        # 之後任何走 /api/qa/{id}/versions 成功路徑的測試都會拿到與自身無關的失敗
+        # （而該成功路徑目前零覆蓋，所以今天沒炸只是運氣）。
+        deps.list_qa_versions = self._orig
 
     def test_invalid_root_qa_id_rejected_before_query(self):
         client = _authed_client()
@@ -169,3 +175,27 @@ class QaVersionsUuidGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PatchHygieneTests(unittest.TestCase):
+    """守門：上面那組測試不得把 sentinel 留在 deps 上。
+
+    2026-07-28 實測：tearDown 還原到 self.server 而非 deps，跑完後
+    deps.list_qa_versions 仍是 sentinel。這種汙染的症狀是「別人的測試莫名失敗、
+    單檔重現不了」，排查成本遠高於寫這條防護。
+    """
+
+    def test_deps_symbol_is_not_left_patched(self):
+        self.assertNotEqual(
+            getattr(deps.list_qa_versions, "__name__", ""), "_sentinel",
+            "deps.list_qa_versions 被留成 sentinel（tearDown 還原到錯的物件）",
+        )
+
+    def test_server_has_no_stray_attribute(self):
+        """web.server 不該有 list_qa_versions —— 那是還原到錯物件時憑空長出來的。"""
+        import web.server as server
+
+        self.assertFalse(
+            hasattr(server, "list_qa_versions"),
+            "web.server 憑空長出 list_qa_versions（tearDown 寫錯物件的痕跡）",
+        )

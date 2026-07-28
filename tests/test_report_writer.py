@@ -311,10 +311,30 @@ class SectionTests(unittest.IsolatedAsyncioTestCase):
             )
         sql, params = s.executed[-1]
         self.assertIn("ON CONFLICT (run_id, position) DO UPDATE", sql)
-        self.assertIn("draft_markdown = COALESCE(EXCLUDED.draft_markdown", sql)
+        # 預設（reset=False）維持 COALESCE 保留語意
+        self.assertIn("COALESCE(EXCLUDED.draft_markdown", sql)
         self.assertIn("CAST(:evids AS text[])", sql)
         self.assertEqual(params["pos"], 0)
         self.assertEqual(params["evids"], ["a1b2"])
+        self.assertIs(params["reset"], False)
+
+    async def test_upsert_reset_clears_previous_attempt(self):
+        """reset=True 明確把 draft/final/evidence_ids 清成 NULL。
+
+        重試同一 run 時大綱會重新規劃,同一 position 可能換成不同標題;不清空的話
+        上一次嘗試的 draft_markdown 會被新標題「領養」,留下章節數對、標題對、
+        內容全錯的稽核列,而且沒有任何一層會報錯。
+        """
+        s = _FakeSession()
+        with _use(s):
+            await rw.upsert_section(
+                "run-1", 0, section_key="exec_summary", heading="執行摘要",
+                status="pending", reset=True,
+            )
+        sql, params = s.executed[-1]
+        self.assertIs(params["reset"], True)
+        for col in ("draft_markdown", "final_markdown", "evidence_ids"):
+            self.assertIn(f"{col} = CASE WHEN :reset THEN NULL", sql)
 
     async def test_load_run_maps_row(self):
         row = (
@@ -776,9 +796,13 @@ class DraftReportRunPersistenceTests(unittest.IsolatedAsyncioTestCase):
                    patch.object(rw, "upsert_section", rec_upsert)],
         )
         self.assertEqual(events[-1][0], "__final__")
+        # status="" 是預算遙測的 checkpoint 寫入（沿用 advance_status 的
+        # `target = status or current` 語義，不推進狀態），不屬狀態序列。
         self.assertEqual(
-            [s for _, s in adv], ["outlining", "drafting", "verifying", "rendering"]
+            [s for _, s in adv if s], ["outlining", "drafting", "verifying", "rendering"]
         )
+        # 每節都要即時落一次遙測——失敗的 run 才有耗時資料可供下次校準
+        self.assertGreaterEqual(len([s for _, s in adv if not s]), 3)
         self.assertTrue(all(rid == "run-9" for rid, _ in adv))
         # 三節各：pending（展開）→ drafted（草稿）→ final（組裝後）
         self.assertEqual([p for _, p, s in ups if s == "pending"], [0, 1, 2])

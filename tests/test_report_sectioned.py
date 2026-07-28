@@ -606,9 +606,10 @@ class SectionedComposedTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("[[ev:", md)          # 內部 token 不漏到輸出
         # 逐節檢索確實用了 outline 的 topic（非整份原題）
         self.assertEqual(capture["topics"], ["q", "n2", "r"])
-        # 狀態機走完整條前進路徑
+        # 狀態機走完整條前進路徑（status="" 是預算遙測的 checkpoint 寫入,不推進狀態）
         self.assertEqual(
-            capture["advances"], ["outlining", "drafting", "verifying", "rendering"]
+            [s for s in capture["advances"] if s],
+            ["outlining", "drafting", "verifying", "rendering"],
         )
         self.assertIn("completed", [m[1] for m in capture["marks"]])
         # persist 的 sources 與正文 [n] 同一份表

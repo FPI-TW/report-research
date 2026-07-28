@@ -2,6 +2,9 @@
 Description=廷豐智能研報 NAS 增量同步匯入（drvfs + rsync + 增量 ingest）
 After=network-online.target report-mark-web.service
 Wants=network-online.target
+# 這是排程任務，沒有人在看它。失敗必須留下可稽核的痕跡——2026-07 曾有一輪同步
+# 異常結束（data/sync_delta_*.txt 留下孤兒檔），三週後才被發現。
+OnFailure=report-mark-alert@%n.service
 
 [Service]
 Type=oneshot

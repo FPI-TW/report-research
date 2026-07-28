@@ -32,9 +32,14 @@ deps:  ## 安裝相依套件
 db:  ## 起 pgvector 容器（已存在則啟動）
 	$(DOCKER) start $(DB_CONTAINER) 2>/dev/null || \
 	$(DOCKER) run -d --name $(DB_CONTAINER) \
+	  --restart unless-stopped \
 	  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=$(DB_NAME) \
 	  -p $(DB_PORT):5432 -v report-mark-pgdata:/var/lib/postgresql/data \
 	  pgvector/pgvector:pg16
+	@# 既有容器補上重啟策略（--restart 只在 run 時生效；docker update 免重建）。
+	@# 少了它，重開機後 nginx/cloudflared/web 都會自己回來、只有 DB 不會 →
+	@# 站台開得起來、登入還會成功（登入路徑不碰 DB）、每個查詢 500。
+	$(DOCKER) update --restart unless-stopped $(DB_CONTAINER) >/dev/null
 
 schema: db  ## 套用 DB schema（vector 擴充 + 表 + HNSW 索引）
 	@for i in $$(seq 1 30); do $(DOCKER) exec $(DB_CONTAINER) pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done

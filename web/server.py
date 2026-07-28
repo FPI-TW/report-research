@@ -27,6 +27,7 @@ from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
 from web.routers import report_file as report_file_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
+from web.routers import health as health_routes  # noqa: E402
 from web.routers import search as search_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
@@ -88,8 +89,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
 
-# ───── 認證閘門(deny-by-default;白名單僅 /login)─────
-_AUTH_ALLOWLIST = {"/login"}
+# ───── 認證閘門(deny-by-default;白名單僅 /login 與 /healthz)─────
+# /healthz 必須免認證：它存在的理由就是讓**外部**監控能分辨「DB 掛了」與「站台正常」。
+# 登入路徑完全不碰 DB，所以 DB 掛掉時登入仍會成功——沒有這個豁免，探測只會拿到
+# 302 導向 /login，與不存在的路由完全相同。回應內容刻意極簡（見 routers/health.py）。
+_AUTH_ALLOWLIST = {"/login", "/healthz"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
 
 
@@ -128,6 +132,10 @@ async def require_login(request: Request, call_next):
 
 
 
+
+# /healthz（免認證存活探測）——必須與 _AUTH_ALLOWLIST 的白名單成對存在，
+# 只掛路由而沒放行等於它永遠回 302，與不存在的路由無從分辨（那正是它要解決的問題）。
+app.include_router(health_routes.router)
 
 # /api/stats 與 /api/progress 已拆至 web/routers/monitor.py
 app.include_router(monitor_routes.router)

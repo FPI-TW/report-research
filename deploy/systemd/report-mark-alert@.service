@@ -1,0 +1,12 @@
+[Unit]
+Description=廷豐智能研報 unit 失敗告警（%i）
+# 由各 unit 的 OnFailure= 觸發；%i 為失敗的 unit 名。
+# 本身刻意不宣告 OnFailure（告警器失敗不該再觸發告警，避免遞迴）。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -lc '"${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/deploy/systemd/report-mark-alert.sh" "%i"'

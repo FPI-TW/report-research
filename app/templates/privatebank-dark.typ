@@ -112,6 +112,10 @@
   )
   set text(font: sans-cjk, size: 10.5pt, fill: ink-light, lang: lang, region: region)
   set par(justify: true, leading: 0.8em, spacing: 1.0em)
+  // 表格框線：pandoc 產出的是裸 #table(...)，未設 set table 時 Typst 用預設**黑**框。
+  // 深色模板上黑線對 #12181f 底的對比僅約 1.19:1（幾乎看不見的髒邊），淺色模板則
+  // 與整份克制的線條語彙不一致。一律改用該模板既有的線色，不引入新色。
+  set table(stroke: 0.5pt + gold-line, fill: (_, y) => if y == 0 { panel } else { none })
   show heading: it => it
 
   // ── 報頭（鎏金底線）──

@@ -131,6 +131,10 @@
   // 正文 10.5pt、行高 1.72（規範）；lang/region 讓 Typst 走 CJK 斷行規則
   set text(font: sans-cjk, size: 10.5pt, fill: text-1, lang: lang, region: region)
   set par(justify: true, leading: 0.75em)
+  // 表格框線：pandoc 產出的是裸 #table(...)，未設 set table 時 Typst 用預設**黑**框。
+  // 深色模板上黑線對 #12181f 底的對比僅約 1.19:1（幾乎看不見的髒邊），淺色模板則
+  // 與整份克制的線條語彙不一致。一律改用該模板既有的線色，不引入新色。
+  set table(stroke: 0.5pt + line-c, fill: (_, y) => if y == 0 { brand-gold-panel } else { none })
   // 引用來源用固定 tab stop（規範）；此處以懸掛縮排落實
   show heading: it => it
 

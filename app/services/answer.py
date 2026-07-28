@@ -1885,7 +1885,7 @@ async def answer_question(
         },
     )
 
-    fups = await generate_followups(question, body)
+    fups = await generate_followups(question, body, locale=locale)
     if fups and qa_id:
         await _update_followups(qa_id, fups)
         yield ("followups", fups)

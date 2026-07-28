@@ -115,6 +115,10 @@
   // 正文較 ib-classic 略大、行距更寬（閱讀優先）
   set text(font: sans-cjk, size: 11pt, fill: text-1, lang: lang, region: region)
   set par(justify: true, leading: 0.85em, spacing: 1.05em)
+  // 表格框線：pandoc 產出的是裸 #table(...)，未設 set table 時 Typst 用預設**黑**框。
+  // 深色模板上黑線對 #12181f 底的對比僅約 1.19:1（幾乎看不見的髒邊），淺色模板則
+  // 與整份克制的線條語彙不一致。一律改用該模板既有的線色，不引入新色。
+  set table(stroke: 0.5pt + line-c)
   show heading: it => it
 
   // ── 報頭（無襯線、細墨青底線）──

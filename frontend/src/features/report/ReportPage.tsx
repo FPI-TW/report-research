@@ -165,6 +165,15 @@ export default function ReportPage() {
               ))}
             </section>
           )}
+
+          {/* 相似研報：側欄末區塊，自理狀態（錯誤→重試、載入中/空→不渲染，見其元件說明）。
+              原為頁底整條橫幅卡片，太佔閱讀區垂直空間，改收進側欄緊湊清單。 */}
+          <SimilarReports
+            items={similarItems}
+            isLoading={similar.isLoading}
+            isError={similar.isError}
+            onRetry={() => similar.refetch()}
+          />
         </aside>
 
         <section className={styles.doc}>
@@ -210,14 +219,6 @@ export default function ReportPage() {
           )}
         </section>
       </div>
-
-      {/* SimilarReports 自理狀態：錯誤→重試、載入中/空→不渲染（見其元件說明）。 */}
-      <SimilarReports
-        items={similarItems}
-        isLoading={similar.isLoading}
-        isError={similar.isError}
-        onRetry={() => similar.refetch()}
-      />
 
       {/* 合規要求：頁底免責恆常駐，不得依賴訊號/相似研報等任何選擇性區塊。 */}
       <div className={styles.disc}>

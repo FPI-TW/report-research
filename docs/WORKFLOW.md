@@ -37,7 +37,7 @@ flowchart TD
 
     DB --> WEB["web/server.py (FastAPI)<br/>BGE-M3 常駐 + auth + API composition"]
     DB --> CLI["search.py (CLI)"]
-    WEB --> UI["web/static/index.html + app/*.js<br/>檢索 / 問答 / 對話歷史 / PDF 下載"]
+    WEB --> UI["frontend/dist（React SPA）<br/>檢索 / 問答 / 觀點雷達 / 閱讀頁 / 監控"]
     WEB --> QA["answer.py<br/>RAG 問答 + qa_log"]
     WEB --> RP["report.py + pdf.py<br/>深度研報生成 + report_doc"]
 ```
@@ -133,9 +133,9 @@ flowchart TD
 
 ### 檢索、問答與深度研報
 - **CLI** `scripts/search.py`：嵌入查詢 → cosine top-k，可加 `--market <findb 代碼>` 過濾
-- **Web 檢索** `web/server.py` + `web/static/app/*.js`：FastAPI 啟動時背景暖機 BGE-M3，`/api/search` 走 dense + pg_trgm 字面召回、報告層聚合、tier/band/日期排序；`/api/reports` 提供無關鍵字瀏覽與分頁。
+- **Web 檢索** `web/server.py`（組合層）+ `web/routers/*.py` + `frontend/`（React SPA）：FastAPI 啟動時背景暖機 BGE-M3 與 reranker（**必須依序，不可並行**：兩執行緒同時首次 import 會競態出 `ImportError: cannot import name is_torch_npu_available`），`/api/search` 走 dense + pg_trgm 字面召回、報告層聚合、tier/band/日期排序；`/api/reports` 提供無關鍵字瀏覽與分頁。
 - **RAG 問答** `app/services/answer.py`：`embed_query_cached → hybrid_search → build_context → stream_completion → qa_log`。來源以 `[n]` 編號，支援多輪對話、語料總覽問題、離題拒答、外部網搜來源、讚倒讚與對話刪除。
-- **深度研報** `app/services/report.py` + `app/services/pdf.py`：`/api/report` 以較深召回與較大 context 生成 Markdown 研報，必要時主動網搜補覆蓋，渲染成品牌化 PDF，並把 Markdown/PDF/source 寫入 `report_doc`。
+- **深度研報** `app/services/report.py` + `report_writer.py`（逐節，預設開）+ `typst_render.py`（主軌）/ `pdf.py`（回退）：`/api/report` 以較深召回與較大 context 生成 Markdown 研報，必要時主動網搜補覆蓋，渲染成品牌化 PDF，並把 Markdown/PDF/source 寫入 `report_doc`。
 - **研報閱讀頁** `app/services/reading/`：`/app/report/:file_hash` 把一份研報的原文、語料已知的一切與下一步動作收攏到一個可分享的網址（以 `file_hash` 為鍵——`report_id` 重新 ingest 會換新，分享連結會失效）。`anchor.py` 負責錨定、`queries.py` 純 SQL 取數、`schemas.py` 為凍結的 API 契約（前端 zod 逐字鏡像）；摘錄早在 ④ 已落 DB，**讀取時零 LLM**。依資料現況優雅降級：無摘錄→整區不渲染；無訊號→整區**不進 DOM**（99.3% 的報告如此，是常態不是錯誤）；無全文→只給 PDF，不是錯誤。
 
 **全站需登入**（共用帳密，env 設定；未登入導向 `/login`，可登出）——認證細節見 `web/auth.py` 與 [docs/EXTERNAL_ACCESS.md](EXTERNAL_ACCESS.md)。
@@ -202,10 +202,11 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /monitor` | 背景管線與資料庫監控頁 |
 | `GET /help` | 使用說明頁 |
 | `GET /` | 單頁前端（檢索／問答兩種模式）|
-| `GET`/`POST /login` | 登入頁與登入提交（共用帳密；**唯一免登入端點**）|
+| `GET`/`POST /login` | 登入頁與登入提交（共用帳密）|
+| `GET /healthz` | **免認證**存活探測：健康 200、DB 不可用 **503**（見 `web/routers/health.py`）|
 | `POST /logout` | 清除 session cookie 並導回 `/login` |
 
-> **認證**：除 `/login` 外所有端點皆需登入（deny-by-default 中介層）。未帶有效 session cookie 時 `/api/*` 回 **401**、其餘導向 **`/login`**；`/static/*` 也受保護。憑證為單一共用帳密（env `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD`，fail-closed），cookie 以 `REPORT_MARK_SESSION_SECRET` 簽章、7 天滑動到期，並對登入失敗做每 IP 限流。
+> **認證**：deny-by-default 中介層。**免登入的只有 `/login`、`/healthz` 與前綴 `/app/assets/`**（`web/server.py` 的 `_AUTH_ALLOWLIST` / `_AUTH_PREFIX_ALLOWLIST`）。`/healthz` 刻意免認證——登入路徑完全不碰 DB，DB 掛掉時仍能登入，沒有這個豁免就沒有任何探測能分辨。未帶有效 session cookie 時 `/api/*` 回 **401**、其餘導向 **`/login`**；`/static/*` 也受保護。憑證為單一共用帳密（env `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD`，fail-closed），cookie 以 `REPORT_MARK_SESSION_SECRET` 簽章、7 天滑動到期，並對登入失敗做每 IP 限流。
 
 前端特性：雙欄側邊版面（手機收單欄）、頂部**檢索／問答**模式切換。檢索結果預設**列表**（依市場／報告類型／日期(月)分組，右上可切「分組依據」），可切**表格**（右上角圖示）；市場／商品類型／標的／報告類型篩選與排序、同篇研報合併、搜尋時列表顯示命中片段＋關鍵字黃底高亮（可展開更多）、點任一筆「內嵌完整報告 PDF」、即打即查（debounce 450ms）、骨架載入。問答模式：RAG 串流回答＋可點引用來源、處理過程面板、側欄對話歷史（可重看／續問／刪除）、外部參考、讚倒讚、複製答案，以及深度研報 PDF 生成與下載卡片。
 
@@ -255,7 +256,7 @@ uv run python scripts/search.py "利率與殖利率" --market MACRO
 | Web 服務 | uvicorn，port **8097**（`make serve`，無 `--reload`，改碼後須重啟）|
 | 登入 | 共用帳密 env `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（fail-closed）＋簽章金鑰 `REPORT_MARK_SESSION_SECRET`；由 `make serve` 載入 repo 根 `.env`（已 gitignore）。本機 `localhost` 可直連，其他裝置請走 HTTPS 入口 |
 
-> 此機 `docker compose` 子指令不可用，故用 `docker run` 起單一容器。背景編排（`resume_corpus.sh`）以 setsid/nohup 方式長跑。
+> DB 以 `docker run` 起單一容器（`make db`，含 `--restart unless-stopped`）；對外邊緣層（nginx + cloudflared）則用 `docker compose`（`make up-edge`，見 `deploy/docker-compose.yml`）。背景編排（`resume_corpus.sh`）以 setsid/nohup 方式長跑。
 
 ---
 

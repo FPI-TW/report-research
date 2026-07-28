@@ -9,7 +9,7 @@
   <img alt="pgvector" src="https://img.shields.io/badge/pgvector-pg16-336791?logo=postgresql&logoColor=white">
   <img alt="BGE-M3" src="https://img.shields.io/badge/Embedding-BGE--M3%201024d-FF6F00">
   <img alt="Claude" src="https://img.shields.io/badge/LLM-Claude%20CLI-AE7415">
-  <img alt="WeasyPrint" src="https://img.shields.io/badge/PDF-WeasyPrint-444">
+  <img alt="Typst" src="https://img.shields.io/badge/PDF-Typst-444">
 </p>
 
 ---
@@ -57,7 +57,7 @@
 | **檢索** | 即打即查、關鍵字黃底高亮、命中片段預覽、2-3 句中文摘要、內嵌原始 PDF；可依市場／商品類型／標的／報告類型篩選，列表（依月/市場分組）或表格檢視 |
 | **問答（RAG）** | SSE 串流回答、行內 `[n]` 引用可點回原報告、對話歷史側欄、多輪續問、讚／倒讚回饋、離題閘門、語料總覽題（如「有哪些券商」）走分面統計 |
 | **研報閱讀頁** | `/app/report/:file_hash`：一份研報的原文（PDF／文字雙檢視）＋重點摘錄（點擊跳到原文並高亮）＋標籤／摘要／訊號＋相似研報＋「就這篇提問」，收攏到一個可分享的網址 |
-| **深度研報** | 深度檢索 → 長文串流 → KPI/圖表 → WeasyPrint 渲染 PDF → 持久化（markdown 為真相來源，PDF 可重建） |
+| **深度研報** | 深度檢索 → 逐節長文串流 → KPI/圖表 → Typst 渲染 PDF（WeasyPrint 為回退）→ 持久化（markdown 為真相來源，PDF 可重建） |
 | **監控頁** | `/monitor`：DB 筆數、標註／嵌入／摘要進度、背景程序狀態、速率與 ETA |
 | **對外存取** | Cloudflare Tunnel ＋ nginx 邊緣（無需開放入站埠）；App 內建共用帳密登入 |
 
@@ -116,7 +116,7 @@ sequenceDiagram
     participant DB as pgvector
     participant LLM as llm.py<br/>claude CLI
     participant REP as report.py
-    participant PDF as pdf.py<br/>WeasyPrint
+    participant PDF as typst_render.py<br/>Typst（pdf.py 為回退）
 
     U->>API: POST /api/ask（問題）
     API->>ANS: answer_question(q, k=8)
@@ -150,8 +150,8 @@ sequenceDiagram
 | 向量庫 | PostgreSQL 16 ＋ `pgvector`（容器 `report-mark-postgres`，host port `5436`）| `research` schema，HNSW（cosine）＋ pg_trgm（GIN）混合檢索 |
 | 嵌入 | BGE-M3 dense 1024 維（`FlagEmbedding`，CPU、單例延遲載入）| 報告切塊與查詢向量化 |
 | LLM | Claude CLI（headless `claude -p`，stream-json）| 多維標註（Haiku）、摘要／問答／研報（Sonnet）；`app/services/llm.py` 包裝串流與網搜事件 |
-| PDF | WeasyPrint ＋ `markdown` ＋ 純 stdlib SVG | 品牌化深度研報 PDF（Noto Sans CJK 字型、金色 `#AE7415`） |
-| 前端 | 原生 ES Module（零工具鏈）| `web/static/app/*.js`，無打包步驟 |
+| PDF | **Typst**（主軌）＋ WeasyPrint（fail-open 回退）＋ `markdown` ＋ 純 stdlib SVG | 品牌化深度研報 PDF（Noto Sans CJK 字型、金色 `#AE7415`） |
+| 前端 | React 19 ＋ TypeScript ＋ Vite | `frontend/`，**需 `npm run build` 產出 `dist`** |
 | 部署 | systemd ＋ Docker（pgvector / nginx / cloudflared）| 詳見[部署](#部署) |
 
 > torch 走 CPU-only index（`pyproject.toml` 的 `pytorch-cpu`），避免抓 CUDA 輪子。
@@ -219,13 +219,15 @@ report-mark/
 │   store.py       file_hash 去重 upsert + 雙路（dense／字面）召回查詢
 │   textnorm.py    顯示/儲存/比對三種正規化（NFKC、去空白、小寫、NUL 清理）
 │   retrieval.py   混合檢索編排：dense＋字面 → 去重 → tier/band 融合排序
-│   intent.py      問答離題判定（Haiku，fail-open）與多輪續問壓縮改寫
+│   scope_router.py 問答五類範圍路由（離題／總覽／語料問答／時效／建議風險，fail-open）
 │   overview.py    語料庫總覽問題偵測、facet 聚合與文字化（純 SQL，無 LLM）
 │   answer.py      RAG 問答：檢索、來源編號、串流回答、新近度/相關度守門、qa_log
 │   report.py      深度研報生成：深度檢索、長文串流、薄涵蓋上網 nudge、PDF 持久化
 │   report_gate.py 問答後是否提示生成深度研報、建議標題（純規則）
 │   reading/       研報閱讀頁：anchor.py（引文/chunk 錨回正典文字）、queries.py（純 SQL 取數）、schemas.py（API 契約，前端 zod 鏡像）
-│   pdf.py         Markdown → 品牌化 HTML/PDF（WeasyPrint），支援圖表與 KPI 區塊
+│   typst_render.py 中介模型 → Typst 原始碼 → PDF（**主軌**，模板見 app/templates/）
+  pdf.py         Markdown → 品牌化 HTML/PDF（WeasyPrint，**fail-open 回退軌**）
+  report_writer.py 逐節生成編排（大綱／逐節草稿／組裝，M7）
 │   chart.py       ```chart / ```kpi JSON → 純 SVG 渲染（零依賴，支援負值）
 │   llm.py         Claude CLI 串流包裝（stream-json、網搜事件、529 重試、逾時保護）
 │   db.py          async SQLAlchemy 引擎（env REPORT_MARK_DB_URL）
@@ -295,7 +297,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 查詢向量化 → `hybrid_search` → `build_context`（編號來源 + 清理片段）→ Claude 串流回答（行內 `[n]` 引用）→ 解析引用 → 寫 `qa_log`。內建：
 
 - **新近度/相關度守門**：相關度下限 `ASK_RELEVANCE_FLOOR`、過舊軟截斷（`ASK_STALE_AGE_DAYS`），但 fail-open 不致濫殺。
-- **離題閘門**（`intent.py`，Haiku 並行隱藏延遲、fail-open）擋掉與研報無關的提問。
+- **範圍路由**（`scope_router.py`，五類；Haiku 並行隱藏延遲、fail-open）擋掉與研報無關的提問。
 - **多輪對話**：以 `conversation_id` 分組（`COALESCE(conversation_id, id)` 相容舊列），追問會被壓縮改寫。
 - **總覽路徑**（`overview.py`）：枚舉/聚合題（「有哪些券商」「報告分類」）改走全語料分面統計，避開 top-k 限制。
 
@@ -311,7 +313,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 ### 5）深度研報（report.py + pdf.py + chart.py）
 
-深度檢索（`REPORT_DEEP_K`=30）→ Claude 長文串流（可輸出 ` ```kpi ` / ` ```chart ` 區塊）→ `pdf.py` 將 markdown 渲染為品牌化 PDF（KPI 卡片、callout、引用徽章、純 SVG 圖表）→ 存入 `report_doc`（markdown 為真相來源，PDF 遺失可由 markdown 重建）。涵蓋不足時會 nudge 模型上網補充（`REPORT_THIN_COVERAGE`）。
+深度檢索（`REPORT_DEEP_K`=30）→ Claude 長文串流（可輸出 ` ```kpi ` / ` ```chart ` 區塊）→ `typst_render.py` 將 markdown 渲染為品牌化 PDF（失敗才回退 `pdf.py`）（KPI 卡片、callout、引用徽章、純 SVG 圖表）→ 存入 `report_doc`（markdown 為真相來源，PDF 遺失可由 markdown 重建）。涵蓋不足時會 nudge 模型上網補充（`REPORT_THIN_COVERAGE`）。
 
 ---
 
@@ -381,11 +383,13 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` | loopback | 信任的反向代理 CIDR（走 Cloudflare Tunnel 外網時必填）|
 | `REPORT_MARK_DB_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5436/research` | DB 連線字串 |
 
-**問答（`ASK_*`）** — 常用：`ASK_MAX_REPORTS`(15)、`ASK_MAX_PASSAGES`(4)、`ASK_MAX_CONTEXT_CHARS`(20000)、`ASK_RETRIEVAL_K`(15)、`ASK_DENSE_SCAN`(400)、`ASK_RELEVANCE_FLOOR`(0.62)、`ASK_STALE_AGE_DAYS`(180)、`ASK_MAX_STALE_REPORTS`(4)、`ASK_RECENCY_HALF_LIFE_DAYS`(90)、`ASK_ENABLE_WEB`(1)、`ASK_INTENT_MODEL`(`claude-haiku-4-5`)。
+**問答（`ASK_*`）** — 常用：`ASK_MAX_REPORTS`(15)、`ASK_MAX_PASSAGES`(4)、`ASK_MAX_CONTEXT_CHARS`(20000)、`ASK_RETRIEVAL_K`(15)、`ASK_DENSE_SCAN`(400)、`ASK_RELEVANCE_FLOOR`(0.62)、`ASK_STALE_AGE_DAYS`(180)、`ASK_MAX_STALE_REPORTS`(4)、`ASK_RECENCY_HALF_LIFE_DAYS`(90)、`ASK_INTENT_MODEL`(`claude-haiku-4-5`)。
 
 **深度研報（`REPORT_*`）** — `REPORT_MODEL`(`claude-sonnet-5`)、`REPORT_DEEP_K`(30)、`REPORT_MAX_REPORTS`(25)、`REPORT_MAX_PASSAGES`(6)、`REPORT_MAX_CONTEXT_CHARS`(40000)、`REPORT_TIMEOUT`(600s)、`REPORT_THIN_COVERAGE`(8)、`REPORT_ENABLE_WEB`(1)、`REPORTS_DIR`(`data/reports`)、`REPORT_SEMAPHORE`(1)、`REPORT_MIN_CITED`(3)。
 
-> 預設值即程式碼內 `os.getenv(...)` 的 fallback（見 `app/services/answer.py`、`report.py`、`intent.py`、`web/auth.py`、`web/server.py`），不必設定也能跑。
+> 預設值集中在 **`app/config.py`** 的 `_load()`（frozen dataclass ＋ `os.getenv`），不必設定也能跑。各服務模組保留原常數名但改由 `get_settings()` 取值。
+>
+> 本表僅列常用鍵；`app/config.py` 另有約 60 個未在此列出的旋鈕（`REPORT_RENDERER`、`REPORT_SECTIONED_ENABLED`、`REPORT_DRAFT_BUDGET`、`ASK_RERANK_*`、`QA_AGENTIC_*`、`FAITHFULNESS_*`、`TRUSTED_DATA_ENABLED` 等），以該檔為準。
 
 ---
 
@@ -397,12 +401,13 @@ uv run pytest -q                         # 全部
 uv run pytest tests/test_answer.py       # 單檔
 uv run pytest -k retrieval               # 關鍵字
 
-# 前端模組測試（零工具鏈）
-node --test web/static/app/*.test.mjs
+# 前端測試（React + TS + Vite）
+cd frontend && npm test          # vitest
+cd frontend && npm run typecheck # tsc --noEmit
 ```
 
-- `tests/` 共 25 個檔，涵蓋 filename/extract/retrieval/answer/report/pdf/auth/store/overview/intent/summary 等；偏好以 mock 隔離 LLM、嵌入、檔案、DB 邊界。
-- **慣例**：確定性邏輯放 Python，Claude CLI 只用於語意標註/摘要/問答/研報；前端維持 `web/static/app/` 下聚焦的 ES module；環境變數一律 `REPORT_MARK_*` 命名。本 repo **未配置** ruff/black/mypy/pre-commit（風格約定見 [AGENTS.md](AGENTS.md)）。
+- `tests/` 共 86 個檔，涵蓋 filename/extract/retrieval/answer/report/pdf/auth/store/overview/intent/summary 等；偏好以 mock 隔離 LLM、嵌入、檔案、DB 邊界。
+- **慣例**：確定性邏輯放 Python，Claude CLI 只用於語意標註/摘要/問答/研報；前端在 `frontend/src/`（React ＋ TS ＋ CSS Modules）；新增旋鈕加在 `app/config.py`，`REPORT_MARK_*` 前綴**只**用於 auth/DB 那五個變數。Python 側未配置 ruff/black/mypy/pre-commit，**前端有 ESLint ＋ `tsc --noEmit`，且與 pytest 同列 CI 必要檢查**（風格約定見 [AGENTS.md](AGENTS.md)）。
 - **提交**：採 Conventional Commits（常見繁中 scope，如 `feat(report): …`、`fix(report): …`）；提交前看近期訊息與 staged diff，勿用整句英文當訊息。
 - **改後端要重啟、靜態檔即時生效**：`make serve` 無 `--reload`；靜態資源走 `_NoCacheStatic`（破快取、304 revalidation）。
 
@@ -438,6 +443,7 @@ node --test web/static/app/*.test.mjs
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 四階段里程碑與現況 |
 | [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md) | Cloudflare Tunnel ＋ nginx 對外存取架構與維運 |
 | [docs/nas_scheduled_sync_deployment.md](docs/nas_scheduled_sync_deployment.md) | NAS 定時增量同步（systemd timer）部署 |
-| [docs/qa_pdf_report_deployment.md](docs/qa_pdf_report_deployment.md) | 深度研報 PDF（WeasyPrint ＋ CJK 字型）部署 |
+| [docs/qa_pdf_report_deployment.md](docs/qa_pdf_report_deployment.md) | 深度研報 PDF（CJK 字型）部署 |
+| [docs/production_resilience.md](docs/production_resilience.md) | 生產韌性：重啟策略、健康檢查、失敗告警、systemd unit 還原 |
 | [docs/向量搜索優化報告.md](docs/向量搜索優化報告.md) | 向量檢索優化（混合檢索、HNSW 調校、CJK 正規化）|
 | [AGENTS.md](AGENTS.md) | 貢獻者指南（結構、風格、測試、提交與安全慣例）|

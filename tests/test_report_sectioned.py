@@ -108,8 +108,12 @@ class _SectionedBase(unittest.IsolatedAsyncioTestCase):
             capture["persist_args"] = a
             capture["persist_kwargs"] = k
 
-        async def fake_open_run(question, filters, model, qa_id, conversation_id):
+        # **簽章必須與真 _open_sectioned_run 一致**（同本檔 _fake_draft 的告誡）：
+        # locale 是 M10 加入的第 6 個位置參數,漏了會在呼叫點拋 TypeError。
+        async def fake_open_run(question, filters, model, qa_id, conversation_id,
+                                locale="zh-Hant"):
             capture["opened"] = True
+            capture["open_locale"] = locale
             return "run-1", True
 
         async def fake_mark(run_id, status, **fields):
@@ -378,6 +382,31 @@ class SectionedFinalTests(_SectionedBase):
         kw = capture["draft_kwargs"]
         self.assertIs(kw["web_enabled"], False)
         self.assertEqual(kw["coverage_note"], "")
+
+    async def test_locale_forwarded_to_run_key_and_writer(self):
+        """locale 必須同時走到冪等鍵與逐節撰寫（M10）。
+
+        走不到冪等鍵時:同對話切英文重問同一句會命中舊鍵,被當重複請求直接回傳
+        先前那份中文 PDF——事件序是正常 done,沒有任何錯誤訊息可循。
+        """
+        capture, restore = self._install([_FINAL_OK])
+        try:
+            _ = [e async for e in rpt.generate_report("TSMC outlook", locale="en")]
+        finally:
+            restore()
+
+        self.assertEqual(capture["open_locale"], "en")       # → synthesize_request_key
+        self.assertEqual(capture["draft_kwargs"]["locale"], "en")  # → 逐節撰寫
+
+    async def test_locale_defaults_to_zh_hant_when_absent(self):
+        capture, restore = self._install([_FINAL_OK])
+        try:
+            _ = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+
+        self.assertEqual(capture["open_locale"], "zh-Hant")
+        self.assertEqual(capture["draft_kwargs"]["locale"], "zh-Hant")
 
 
 class SectionedFallbackTests(_SectionedBase):

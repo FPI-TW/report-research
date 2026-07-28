@@ -129,10 +129,19 @@ def synthesize_request_key(
     filters: dict | None = None,
     model: str | None = None,
     conversation_id: str | None = None,
+    locale: str = DEFAULT_LOCALE,
 ) -> str:
-    """同題（同 filters/model/對話）重送得同鍵 → report_run 冪等回同一 run。
+    """同題（同 filters/model/對話/語言）重送得同鍵 → report_run 冪等回同一 run。
 
     以穩定序列化（filters sort_keys）避免 dict 順序造成假異鍵。
+
+    **locale 必須進鍵**（M10）：它改變的是產出物本身（內文語言與 PDF chrome），
+    不是呈現方式。漏掉它會讓「同一對話切成英文後重問同一句」命中舊鍵，被當成重複
+    請求直接回傳先前那份**中文** PDF，且事件序是正常的 done、沒有任何錯誤訊息。
+
+    **template_id 刻意不進鍵**:換版型不該重跑 5–12 分鐘的 LLM。同一份 markdown
+    換皮屬於 M9b 的 rendition 路徑（``POST /api/report-doc/{id}/rerender``，零 LLM），
+    把它加進冪等鍵等於把那條路徑的設計意圖抵銷掉。
     """
     payload = "\x00".join(
         [
@@ -140,6 +149,7 @@ def synthesize_request_key(
             json.dumps(filters or {}, sort_keys=True, ensure_ascii=False),
             model or "",
             conversation_id or "",
+            locale or "",
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
@@ -690,6 +700,9 @@ async def open_run(
 
     回 (run_id, is_new)：is_new=False 表撈回既有 in-flight/完成 run 供續跑或去重。
     冪等：同 request_key 重送恆回同一 run_id、不產生重複列。
+
+    **終端失敗態（failed/cancelled）視為可重試**：原子重置回 queued 並回
+    ``is_new=True``，沿用同一 run_id（request_key 唯一，不可另起新列）。
     """
     new_id = str(uuid.uuid4())
     async with SessionFactory() as session:
@@ -713,7 +726,38 @@ async def open_run(
         if inserted is not None:
             await session.commit()
             return str(inserted[0]), True
-        # request_key 已存在：撈回既有 run 供續跑/去重
+        # request_key 已存在且處於終端失敗態 → 這是一次「重試」，原子重置回 queued。
+        #
+        # **刻意不走 advance_status**：is_valid_transition 明文拒絕終端態轉出，那條守門
+        # 擋的是進度機在稽核鏈上自我復活（掉一次寫入不該讓 run 憑空倒退）。使用者按下
+        # 「重試」是同一冪等鍵上的**新一次嘗試**，語意不同，必須有明確出口。
+        #
+        # 沒有這個分支時：report.py 對任何非 completed 狀態一律回「相同研報請求正在
+        # 處理或尚未完成」，於是研報一旦逾時／中斷，該（問題×對話×語言）組合就永久
+        # 無法再生成——前端 DeepReportPanel 的「重試」鈕保證失敗，且不會有人察覺。
+        #
+        # 條件式 UPDATE 兼作併發閘：多個請求同時撞上同一 failed run 時只有一個拿得到
+        # RETURNING，其餘落回下方既有 run 分支照常去重（不會併發跑兩份）。
+        #
+        # 前次嘗試的 report_section 列刻意保留：upsert_section 以 (run_id, position)
+        # 覆寫本次會用到的位置,殘留的高位次只是稽核痕跡（生產無讀取路徑），且是日後
+        # 要做「續跑」時唯一的素材（checkpoint 恆為 NULL——它只在全節 final 後才寫）。
+        retried = (
+            await session.execute(
+                text(
+                    "UPDATE research.report_run "
+                    "SET status = 'queued', error_detail = NULL, checkpoint = NULL, "
+                    "    current_revision_id = NULL, updated_at = now() "
+                    "WHERE request_key = :rk AND status IN ('failed', 'cancelled') "
+                    "RETURNING id"
+                ),
+                {"rk": request_key},
+            )
+        ).first()
+        if retried is not None:
+            await session.commit()
+            return str(retried[0]), True
+        # 其餘（in-flight／completed）：撈回既有 run 供去重
         row = (
             await session.execute(
                 text("SELECT id FROM research.report_run WHERE request_key = :rk"),

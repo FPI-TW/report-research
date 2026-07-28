@@ -135,6 +135,38 @@ class RequestKeyTests(unittest.TestCase):
     def test_hex_length(self):
         self.assertRegex(synthesize_request_key("q"), r"^[0-9a-f]{32}$")
 
+    def test_locale_changes_key(self):
+        """不同輸出語言是不同產出物,不可互相去重（M10）。
+
+        漏掉 locale 時:同對話切成英文後重問同一句 → 命中舊鍵 → 被當重複請求,
+        直接回傳先前那份**中文** PDF,而且事件序是正常的 done、無任何錯誤訊息。
+        """
+        zh = synthesize_request_key("q", model="m", conversation_id="c", locale="zh-Hant")
+        en = synthesize_request_key("q", model="m", conversation_id="c", locale="en")
+        self.assertNotEqual(zh, en)
+
+    def test_locale_defaults_to_zh_hant(self):
+        """未帶 locale 等同 zh-Hant——與全專案 fail-open→zh-Hant 的慣例一致。
+
+        若預設是 None/""，舊呼叫端算出的鍵會與生產路徑（一律先 resolve_locale）
+        算出的鍵不同,冪等去重會靜默失效。
+        """
+        self.assertEqual(
+            synthesize_request_key("q", model="m", conversation_id="c"),
+            synthesize_request_key("q", model="m", conversation_id="c", locale="zh-Hant"),
+        )
+
+    def test_template_id_not_part_of_key(self):
+        """契約防護:template_id 不得進鍵。
+
+        換版型屬 M9b 的 rendition 路徑（零 LLM 換皮）;把它加進冪等鍵等於每次換版型
+        都重跑 5-12 分鐘 LLM,抵銷該路徑的設計意圖。此測試在有人「順手加上去」時變紅。
+        """
+        import inspect
+
+        params = inspect.signature(synthesize_request_key).parameters
+        self.assertNotIn("template_id", params)
+
 
 class CheckpointTests(unittest.TestCase):
     def test_roundtrip(self):
@@ -168,11 +200,40 @@ class OpenRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(s.commits, 1)
 
     async def test_existing_run_returns_is_new_false(self):
-        s = _FakeSession(results=[[], [("exist-id",)]])  # RETURNING empty → SELECT existing
+        # INSERT RETURNING 空 → 重試用的條件式 UPDATE 也空（非終端失敗態）→ SELECT 既有
+        s = _FakeSession(results=[[], [], [("exist-id",)]])
         with _use(s):
             run_id, is_new = await rw.open_run("rk-1")
         self.assertEqual((run_id, is_new), ("exist-id", False))
-        self.assertTrue(s.executed[1][0].strip().upper().startswith("SELECT"))
+        self.assertTrue(s.executed[2][0].strip().upper().startswith("SELECT"))
+
+    async def test_failed_run_is_reset_to_queued_and_retried(self):
+        """終端失敗態 → 原子重置回 queued 並回 is_new=True（前端「重試」鈕的命脈）。
+
+        沒有這個分支時 report.py 對任何非 completed 狀態一律回錯，該
+        （問題×對話×語言）組合永久無法再生成。
+        """
+        s = _FakeSession(results=[[], [("failed-id",)]])  # INSERT 空 → UPDATE 命中 failed 列
+        with _use(s):
+            run_id, is_new = await rw.open_run("rk-1")
+        self.assertEqual((run_id, is_new), ("failed-id", True))
+        upd = s.executed[1][0]
+        self.assertTrue(upd.strip().upper().startswith("UPDATE"))
+        # 只重置終端失敗態,不得碰 in-flight／completed
+        self.assertIn("status IN ('failed', 'cancelled')", upd)
+        self.assertIn("status = 'queued'", upd)
+        # 殘留的失敗狀態必須清乾淨,否則下一輪帶著上次的錯誤訊息與 revision 指標跑
+        self.assertIn("error_detail = NULL", upd)
+        self.assertIn("current_revision_id = NULL", upd)
+        # 重置後 status='queued',呼叫端 advance_status(expected_current="queued") 才接得上
+        self.assertGreaterEqual(s.commits, 1)
+
+    async def test_completed_run_not_reset(self):
+        """completed 不在重置條件內：同題重送必須回既有文件,不可重跑 5-12 分鐘 LLM。"""
+        s = _FakeSession(results=[[], [], [("done-id",)]])  # UPDATE 不命中(status=completed)
+        with _use(s):
+            run_id, is_new = await rw.open_run("rk-1")
+        self.assertEqual((run_id, is_new), ("done-id", False))
 
 
 class AdvanceStatusTests(unittest.IsolatedAsyncioTestCase):

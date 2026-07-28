@@ -450,17 +450,20 @@ async def reports_for_conversation(conversation_id: str) -> dict[str, list[dict]
 async def _open_sectioned_run(
     question: str, filters: dict, model: str,
     qa_id: str | None, conversation_id: str | None,
+    locale: str = DEFAULT_LOCALE,
 ) -> tuple[str | None, bool]:
     """建 report_run（冪等）並推進至 retrieving，回 ``(run_id, is_new)``。
 
     開 run 本身失敗仍 fail-open（``(None, False)``）；但既有 request_key 必須保留
     run_id 交由呼叫端去重，不能靜默降級成一份未綁 run 的新生成。
+
+    locale 進冪等鍵（M10）：不同輸出語言是不同產出物，不可互相去重。
     """
     try:
         run_id, is_new = await report_writer.open_run(
             report_writer.synthesize_request_key(
                 question, filters=filters, model=model,
-                conversation_id=conversation_id,
+                conversation_id=conversation_id, locale=locale,
             ),
             input_config={"profile": "report", "sectioned": True},
             qa_id=qa_id, conversation_id=conversation_id,
@@ -627,7 +630,7 @@ async def generate_report(
     if REPORT_SECTIONED_ENABLED:
         if persist:
             run_id, is_new_run = await _open_sectioned_run(
-                question, filters, model, qa_id, conversation_id
+                question, filters, model, qa_id, conversation_id, locale
             )
         else:
             run_id, is_new_run = None, False

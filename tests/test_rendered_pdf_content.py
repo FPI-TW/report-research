@@ -81,19 +81,54 @@ _TWO_KPI_MD = f"""# 測試研報
 
 
 def _pdf_text(pdf: bytes) -> str:
-    """抽出 PDF 全文並去除所有空白。
+    """抽出 PDF 全文，去掉所有空白與不可列印字元。
 
-    去空白是必要的：PDF 抽字會依版面在字間／行尾插入空白與換行，帶著空白比對
-    會對出偽陰性。去掉之後比對的是字元序列本身。
+    兩層正規化都是必要的：
+
+    - **去空白**：PDF 抽字會依版面在字間／行尾插入空白與換行，帶著空白比對必然偽陰性。
+    - **去控制字元**：字型的 ToUnicode 對應不全時，pypdf 會把該字位還原成 `\\x00`
+      並與可對應的字元交錯（UTF-16BE 的高位位元組直接漏出來）。實測 CI 上
+      WeasyPrint 那軌的英文免責就長成 `\\x00T\\x00i\\x00n\\x00g...`——文字其實在裡面，
+      只是被 `\\x00` 切碎。`str.split()` 不會移除 `\\x00`（它不是空白），所以必須另外濾。
     """
     from pypdf import PdfReader
 
     pages = PdfReader(io.BytesIO(pdf)).pages
-    return "".join("".join((p.extract_text() or "").split()) for p in pages)
+    return _flat("".join(p.extract_text() or "" for p in pages))
 
 
 def _flat(s: str) -> str:
-    return "".join(s.split())
+    """去空白 + 去不可列印字元，兩邊比對前都要過這一層。"""
+    return "".join(c for c in s if not c.isspace() and c.isprintable())
+
+
+def _cjk_extractable() -> bool:
+    """本環境能不能從渲染出來的 PDF 抽回中文字。
+
+    不是所有環境都能：沒安裝 CJK 字型時 Typst 會退到不含中文字符對應的字型，
+    PDF 照樣編得出來、頁數照樣正常，但抽字全部變成 `\\x00`（CI 實測即如此）。
+
+    這種情況**不能靜默當成通過**，也不該報成「PDF 不含免責」那種會誤導人的訊息，
+    所以做成明確的 skip 並在訊息裡指出缺什麼。英文那組不受影響（ASCII 一律抽得回來），
+    所以即使中文這組被跳過，「免責被拿掉」依然會被英文那組抓到。
+    """
+    global _CJK_OK
+    if _CJK_OK is None:
+        try:
+            from app.services.typst_render import render_report_pdf
+
+            pdf = render_report_pdf(
+                "# 探針\n\n## 執行摘要\n\n中文可抽字探針。\n",
+                title="探針", meta={"date": "2026-07-28", "question": "q"},
+            )
+            _CJK_OK = "中文可抽字探針" in _pdf_text(pdf)
+        except Exception:
+            _CJK_OK = False
+    return _CJK_OK
+
+
+_CJK_OK: bool | None = None
+_NO_CJK = "本環境無法從 PDF 抽回中文（缺 CJK 字型，例如 fonts-noto-cjk）"
 
 
 class DisclaimerSourceSanityTests(unittest.TestCase):
@@ -119,6 +154,8 @@ class TypstRenderedDisclaimerTests(unittest.TestCase):
         for spec in manifest.list_templates():
             for loc in _LOCALES:
                 with self.subTest(template=spec.id, locale=loc):
+                    if loc != "en" and not _cjk_extractable():
+                        self.skipTest(_NO_CJK)
                     pdf = render_report_pdf(
                         _SIMPLE_MD, title="測試研報",
                         meta={"date": "2026-07-28", "question": "台積電"},
@@ -142,6 +179,9 @@ class TypstRenderedDisclaimerTests(unittest.TestCase):
         for spec in manifest.list_templates():
             for loc in _LOCALES:
                 with self.subTest(template=spec.id, locale=loc):
+                    # 抽不回中文時「中文沒洩漏」是恆真的，斷言失去意義。
+                    if not _cjk_extractable():
+                        self.skipTest(_NO_CJK)
                     pdf = render_report_pdf(
                         _SIMPLE_MD, title="測試研報",
                         meta={"date": "2026-07-28", "question": "台積電"},
@@ -165,6 +205,8 @@ class WeasyprintFallbackDisclaimerTests(unittest.TestCase):
 
         for loc in _LOCALES:
             with self.subTest(locale=loc):
+                if loc != "en" and not _cjk_extractable():
+                    self.skipTest(_NO_CJK)
                 pdf = weasy_render(
                     _SIMPLE_MD, title="測試研報",
                     meta={"date": "2026-07-28", "question": "台積電"}, locale=loc,
@@ -218,9 +260,15 @@ class InlineKpiStripTests(unittest.TestCase):
                     )
                     self.assertEqual(pdf[:4], b"%PDF", spec.id)
                     text = _pdf_text(pdf)
-                    # hero（第一組）與內文（第二組）都要印出來
-                    self.assertIn("目標價", text, f"{spec.id}/{loc} 缺 hero KPI")
-                    self.assertIn("毛利率", text, f"{spec.id}/{loc} 缺內文 KPI")
+                    # hero（第一組）與內文（第二組）都要印出來。
+                    # **主斷言用 ASCII 的數值而非中文標籤**：數值在任何字型環境下都
+                    # 抽得回來，中文標籤在缺 CJK 字型的環境會整批變 \x00（CI 實測）。
+                    # 「內文那組有沒有被渲染出來」才是這個測試要問的問題，用值問就夠。
+                    self.assertIn("NT$1,280", text, f"{spec.id}/{loc} 缺 hero KPI")
+                    self.assertIn("55%", text, f"{spec.id}/{loc} 缺內文 KPI")
+                    if _cjk_extractable():
+                        self.assertIn("目標價", text, f"{spec.id}/{loc} 缺 hero KPI 標籤")
+                        self.assertIn("毛利率", text, f"{spec.id}/{loc} 缺內文 KPI 標籤")
                     # 版面守門沿用 M9a 訊號：短報告不該爆頁
                     from pypdf import PdfReader
 

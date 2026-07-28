@@ -6,6 +6,7 @@ import { Sweep } from '../../components/primitives/motionLoops'
 import { RippleButton, RippleButtonRipples } from '../../components/animate-ui/primitives/buttons/ripple'
 import type { ReportState } from '../../lib/askReducer'
 import { TemplateSelector } from './TemplateSelector'
+import { RerenderControl } from './RerenderControl'
 import styles from './DeepReportPanel.module.css'
 
 function safeDownload(url: string | null): string | null {
@@ -62,6 +63,9 @@ export function DeepReportPanel({ report, onGenerate, onDecline }: Props) {
         <div className={styles.doneHead}><Icon name="check" size={18} className={styles.doneIcon} /><span className={styles.doneTitle}>深度研報已完成</span></div>
         {report.title && <div className={styles.doneMeta}>{report.title}</div>}
         {href && <a className={styles.dl} href={href} download><Icon name="fileText" size={16} /> 下載 PDF</a>}
+        {/* 換皮重出（M9b）：零 LLM 換版型。後端完整且有測試，先前卻沒有任何 UI 能觸發
+            —— 生產 report_rendition 長期 0 列。輸出語言不變（後端沿用產出當時的 locale）。*/}
+        {report.reportId && <RerenderControl reportId={report.reportId} />}
       </Reveal>
     )
   }

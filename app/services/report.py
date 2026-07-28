@@ -356,22 +356,29 @@ async def persist_report_doc(
     current_revision_id: str | None = None,
     report_run_id: str | None = None,
     evaluation: dict | None = None,
+    locale: str | None = None,
+    template_id: str | None = None,
 ) -> None:
     """寫入 report_doc。M7 逐節生成另帶 outline/claim_evidence/current_revision_id/
     report_run_id 四欄（單次路徑不傳，寫 NULL、歷史列相容）；M8 另帶 evaluation
     （忠實度查核，NULL＝未查核/停用/degraded）。這些為 keyword-only，位置參數契約
-    （…, sources, thinking_ms, evidence_manifest）不變（見 test_report）。"""
+    （…, sources, thinking_ms, evidence_manifest）不變（見 test_report）。
+
+    locale/template_id（M10c 收尾）：**產出當時的實際值**，供換皮重出與 PDF 重建
+    沿用。不存的話這兩個值只活在原始請求裡，重出時退回預設 → 英文研報變成
+    「英文內文 + 中文 chrome + 預設版型」。歷史列為 NULL，讀取端 fail-open。"""
     async with SessionFactory() as session:
         await session.execute(
             text(
                 "INSERT INTO research.report_doc "
                 "(id, qa_id, conversation_id, question, title, markdown, pdf_path, "
                 "sources, thinking_ms, evidence_manifest, "
-                "outline, claim_evidence, current_revision_id, report_run_id, evaluation) "
+                "outline, claim_evidence, current_revision_id, report_run_id, evaluation, "
+                "locale, template_id) "
                 "VALUES (:id, :qa_id, :conv, :q, :title, :md, :pdf, "
                 "CAST(:src AS jsonb), :tms, CAST(:evm AS jsonb), "
                 "CAST(:outline AS jsonb), CAST(:ce AS jsonb), :crid, :rrid, "
-                "CAST(:eval AS jsonb))"
+                "CAST(:eval AS jsonb), :locale, :tpl)"
             ),
             {
                 "id": report_id, "qa_id": qa_id, "conv": conversation_id,
@@ -395,6 +402,8 @@ async def persist_report_doc(
                     json.dumps(evaluation, ensure_ascii=False)
                     if evaluation is not None else None
                 ),
+                "locale": locale,
+                "tpl": template_id,
             },
         )
         await session.commit()
@@ -405,7 +414,8 @@ async def fetch_report_doc(report_id: str) -> dict | None:
         row = (
             await session.execute(
                 text(
-                    "SELECT id, title, markdown, pdf_path, question, created_at "
+                    "SELECT id, title, markdown, pdf_path, question, created_at, "
+                    "       locale, template_id "
                     "FROM research.report_doc WHERE id = :id"
                 ),
                 {"id": report_id},
@@ -422,6 +432,9 @@ async def fetch_report_doc(report_id: str) -> dict | None:
     return {
         "report_id": str(row[0]), "title": row[1], "markdown": row[2],
         "pdf_path": row[3], "question": row[4], "date": date,
+        # 產出當時的值；歷史列為 NULL → 呼叫端 fail-open（resolve_locale(None)＝zh-Hant、
+        # manifest.resolve(None)＝預設模板），恰好就是那些列產出時的實際行為。
+        "locale": row[6], "template_id": row[7],
     }
 
 
@@ -555,6 +568,7 @@ async def _finalize_sectioned(
         current_revision_id=payload.get("revision_id"),
         report_run_id=run_id,
         evaluation=payload.get("evaluation") or None,
+        locale=locale, template_id=template_id,
     )
     emh = (
         hashlib.sha256(
@@ -824,6 +838,7 @@ async def generate_report(
     await persist_report_doc(
         report_id, qa_id, conversation_id, question, title, markdown, pdf_path,
         [asdict(s) for s in sources], thinking_ms, evidence_manifest,
+        locale=locale, template_id=template_id,
     )
     yield (
         "done",

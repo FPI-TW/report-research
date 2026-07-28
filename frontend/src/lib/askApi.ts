@@ -49,6 +49,22 @@ export const reportTemplateSchema = z.object({
 })
 export type ReportTemplate = z.infer<typeof reportTemplateSchema>
 
+// M9b 換皮重出：用既有 markdown 以另一模板產新 rendition（零 LLM）。
+// locale 不在參數裡——後端一律沿用產出當時存下的值，換皮只換版型、不改輸出語言。
+export async function rerenderReport(
+  reportId: string,
+  templateId: string,
+): Promise<{ rendition_id: string; template_id: string | null }> {
+  const resp = await fetch(`/api/report-doc/${encodeURIComponent(reportId)}/rerender`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template_id: templateId }),
+    credentials: 'same-origin',
+  })
+  if (!resp.ok) throw new Error(`rerender failed: ${resp.status}`)
+  return resp.json()
+}
+
 export function getReportTemplates(): Promise<ReportTemplate[]> {
   return getJSON('/api/report-templates', z.object({ templates: z.array(reportTemplateSchema) }), { cache: 'no-store' })
     .then((r) => r.templates)

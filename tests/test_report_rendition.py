@@ -126,7 +126,9 @@ class RerenderEndpointTests(unittest.TestCase):
         async def fake_doc(rid):
             return {"markdown": "# R", "title": "T", "date": "2026-07-23", "question": "q"}
 
-        def fake_render(md, *, title, meta, template_id=None):
+        # **簽章必須與真 render_report_pdf 一致**（本 session 第五次踩簽章漂移）：
+        # locale 是 A 項加入的參數,漏了會在呼叫點 TypeError → 端點回 500。
+        def fake_render(md, *, title, meta, template_id=None, locale=None):
             state["rendered_template"] = template_id
             state["rendered_md"] = md
             return b"%PDF-1.4 x"

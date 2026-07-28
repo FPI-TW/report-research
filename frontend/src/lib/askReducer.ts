@@ -10,8 +10,11 @@ export interface ReportState {
   downloadUrl: string | null
   title: string | null
   errorText: string | null
+  // 換皮重出（M9b）需要 report_id。從 downloadUrl 反解字串太脆（路徑一改就靜默失效），
+  // 直接從 done 事件帶下來。
+  reportId: string | null
 }
-const idleReport: ReportState = { status: 'idle', pct: 0, stageText: '', downloadUrl: null, title: null, errorText: null }
+const idleReport: ReportState = { status: 'idle', pct: 0, stageText: '', downloadUrl: null, title: null, errorText: null, reportId: null }
 
 export interface TurnVersion {
   answer: string
@@ -139,7 +142,7 @@ function applyReport(t: Turn, ev: ReportEvent): Turn {
     case 'status': { const { pct, text } = reportProgress(ev.data.stage); return { ...t, report: { ...t.report, status: 'generating', pct, stageText: text } } }
     case 'sources': return t
     case 'token': return t
-    case 'done': return { ...t, report: { ...t.report, status: 'done', pct: 100, downloadUrl: ev.data.download_url, title: ev.data.title, errorText: null } }
+    case 'done': return { ...t, report: { ...t.report, status: 'done', pct: 100, downloadUrl: ev.data.download_url, title: ev.data.title, errorText: null, reportId: ev.data.report_id } }
     case 'error': return { ...t, report: { ...t.report, status: 'error', errorText: ev.data.detail } }
   }
 }
@@ -162,14 +165,14 @@ export function askReducer(state: AskState, action: AskAction): AskState {
         return { ...t, phase: 'error', errorText: '查詢逾時或失敗' }
       }),
     }
-    case 'report-start': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { status: 'generating', pct: 0, stageText: '準備生成研報…', downloadUrl: null, title: t.reportTitle, errorText: null } })) }
+    case 'report-start': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { status: 'generating', pct: 0, stageText: '準備生成研報…', downloadUrl: null, title: t.reportTitle, errorText: null, reportId: null } })) }
     case 'report-event': return { turns: mapTurn(state.turns, action.id, t => applyReport(t, action.event)) }
     case 'report-fail': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...t.report, status: 'error', errorText: action.errorText } })) }
     case 'report-decline': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: idleReport, offerReport: false })) }
     case 'report-cancel': return {
       turns: mapTurn(state.turns, action.id, t =>
         t.report.status === 'generating'
-          ? { ...t, report: { status: 'offered', pct: 0, stageText: '', downloadUrl: null, title: t.reportTitle, errorText: null } }
+          ? { ...t, report: { status: 'offered', pct: 0, stageText: '', downloadUrl: null, title: t.reportTitle, errorText: null, reportId: null } }
           : t),
     }
     case 'feedback': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, feedback: action.value })) }
@@ -242,7 +245,7 @@ export function turnFromHistory(item: ConversationTurn): Turn {
     offerReport: false,
     reportTitle: null,
     feedback: item.feedback,
-    report: last ? { status: 'done', pct: 100, stageText: '', downloadUrl: last.download_url, title: last.title, errorText: null } : idleReport,
+    report: last ? { status: 'done', pct: 100, stageText: '', downloadUrl: last.download_url, title: last.title, errorText: null, reportId: last.report_id ?? null } : idleReport,
     errorText: null,
     followups: item.followups,
     priorVersions: [],

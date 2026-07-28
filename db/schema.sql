@@ -262,6 +262,14 @@ ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS evaluation          jso
 -- M9b：目前渲染版本指標（指向 report_rendition；NULL＝尚無 rendition，下載回退 pdf_path）
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS current_rendition_id uuid;
 
+-- 產出時的輸出語言與渲染模板（M10c 收尾）。
+-- 沒有這兩欄時，locale/template_id 只活在「當初那個請求」裡：換皮重出（rerender）
+-- 與 PDF 重建都會退回預設值 → 英文研報變成「英文內文 + 中文封面/頁首/免責 + 預設版型」。
+-- 免責聲明是可轉寄 PDF 上最不該漂移的東西，而 M10c 才剛把它收斂到單一來源。
+-- 歷史列為 NULL：讀取端一律 fail-open 到 zh-Hant / 預設模板（＝這些列產出時的實際值）。
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS locale text;
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS template_id text;
+
 -- ── M9b 渲染產物層：不可變 rendition（換皮重出的歷史；同內容不同模板各一列）──
 -- 換模板重出＝用既有 markdown 以另一模板產新 rendition，成功後原子切換
 -- report_doc.current_rendition_id；不覆蓋歷史 PDF（每列 pdf_path 各異）。零 LLM。

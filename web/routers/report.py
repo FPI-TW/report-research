@@ -117,11 +117,18 @@ async def report_doc_rerender(report_id: str, req: RerenderRequest):
     doc = await fetch_report_doc(report_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="report not found")
+    # locale 一律沿用**產出當時**的值：換皮只換版型，不該改變輸出語言。
+    # 不沿用的話英文研報換皮後會變成「英文內文 + 中文封面/頁首/免責」——而免責聲明
+    # 正是可轉寄 PDF 上最不該漂移的東西。歷史列為 NULL → fail-open 到 zh-Hant，
+    # 恰好就是那些列產出時的實際行為。
+    doc_locale = doc.get("locale")
+    # template_id 未帶＝維持原模板（不是「換成預設模板」）。
+    target_template = req.template_id or doc.get("template_id")
     try:
         pdf_bytes = await asyncio.to_thread(
             render_report_pdf, doc["markdown"], title=doc["title"],
             meta={"date": doc.get("date") or "", "question": doc.get("question")},
-            template_id=req.template_id,
+            template_id=target_template, locale=doc_locale,
         )
     except Exception:
         # 渲染分派層本身 fail-open 回退 weasyprint；仍拋代表兩軌皆炸 → 保留上一版
@@ -131,15 +138,15 @@ async def report_doc_rerender(report_id: str, req: RerenderRequest):
     # 先建 rendition_id 再落地（用其短碼當檔名後綴，不覆蓋歷史 PDF），最後原子切換指標
     rendition_id = await create_rendition(
         report_id, renderer=REPORT_RENDERER,
-        template_id=(req.template_id if REPORT_RENDERER == "typst" else None),
+        template_id=(target_template if REPORT_RENDERER == "typst" else None),
         content_hash=content_hash,
         pdf_path=await asyncio.to_thread(
             write_report_pdf, report_id, pdf_bytes,
-            suffix=f"-{hashlib.sha256((report_id + content_hash + (req.template_id or '')).encode()).hexdigest()[:8]}",
+            suffix=f"-{hashlib.sha256((report_id + content_hash + (target_template or '')).encode()).hexdigest()[:8]}",
         ),
     )
     await set_current_rendition(report_id, rendition_id)
-    return {"rendition_id": rendition_id, "template_id": req.template_id}
+    return {"rendition_id": rendition_id, "template_id": target_template}
 
 
 @router.get("/api/report-doc/{report_id}/pdf")
@@ -156,9 +163,13 @@ async def report_doc_pdf(report_id: str):
             raise HTTPException(status_code=404, detail="report not found")
         path = doc.get("pdf_path")
     if not path or not os.path.isfile(path):
+        # 重建也必須沿用產出當時的 locale/template_id（docs/qa_pdf_report_deployment.md
+        # 正是以「PDF 可重建」為由主張 REPORTS_DIR 不需備份——重建出不一樣的東西，
+        # 那個主張就不成立了）。
         pdf_bytes = await asyncio.to_thread(
             render_report_pdf, doc["markdown"], title=doc["title"],
             meta={"date": doc.get("date") or "", "question": doc.get("question")},
+            template_id=doc.get("template_id"), locale=doc.get("locale"),
         )
         path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
     return FileResponse(

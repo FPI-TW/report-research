@@ -5,7 +5,7 @@ import { DeepReportPanel } from './DeepReportPanel'
 import type { ReportState } from '../../lib/askReducer'
 import * as askApi from '../../lib/askApi'
 
-const rs = (over: Partial<ReportState>): ReportState => ({ status: 'idle', pct: 0, stageText: '', downloadUrl: null, title: null, errorText: null, ...over })
+const rs = (over: Partial<ReportState>): ReportState => ({ status: 'idle', pct: 0, stageText: '', downloadUrl: null, title: null, errorText: null, reportId: null, ...over })
 
 // DeepReportPanel 的 offered 狀態嵌 TemplateSelector（useQuery）→ 需 QueryClientProvider。
 function withClient(ui: React.ReactElement) {

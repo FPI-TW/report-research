@@ -47,6 +47,15 @@ from app.services.retrieval_pipeline import (
 
 logger = logging.getLogger(__name__)
 
+# 測試以 monkeypatch 此名注入假時鐘（預算排程是純時間函式，用真時鐘測會變成慢測試
+# 或不穩定測試）；生產恆為 time.monotonic。
+_now = time.monotonic
+# 單節牆鐘中分給逐節檢索的比例（240 × 0.25 = 60s）。不開旋鈕：它是 REPORT_SECTION_WALL
+# 的內部切分，獨立調整只會讓兩者不一致。
+_RETRIEVE_SHARE = 0.25
+# 低於此秒數不值得再開一次 LLM attempt（開了也只會在吐出第一段前被砍）。
+_MIN_ATTEMPT = 20.0
+
 # ── 狀態機常數（與 db/schema.sql 的 CHECK 逐字對齊）──────────────────────────
 RUN_STATES: tuple[str, ...] = (
     "queued", "retrieving", "outlining", "drafting",
@@ -129,10 +138,19 @@ def synthesize_request_key(
     filters: dict | None = None,
     model: str | None = None,
     conversation_id: str | None = None,
+    locale: str = DEFAULT_LOCALE,
 ) -> str:
-    """同題（同 filters/model/對話）重送得同鍵 → report_run 冪等回同一 run。
+    """同題（同 filters/model/對話/語言）重送得同鍵 → report_run 冪等回同一 run。
 
     以穩定序列化（filters sort_keys）避免 dict 順序造成假異鍵。
+
+    **locale 必須進鍵**（M10）：它改變的是產出物本身（內文語言與 PDF chrome），
+    不是呈現方式。漏掉它會讓「同一對話切成英文後重問同一句」命中舊鍵，被當成重複
+    請求直接回傳先前那份**中文** PDF，且事件序是正常的 done、沒有任何錯誤訊息。
+
+    **template_id 刻意不進鍵**:換版型不該重跑 5–12 分鐘的 LLM。同一份 markdown
+    換皮屬於 M9b 的 rendition 路徑（``POST /api/report-doc/{id}/rerender``，零 LLM），
+    把它加進冪等鍵等於把那條路徑的設計意圖抵銷掉。
     """
     payload = "\x00".join(
         [
@@ -140,6 +158,7 @@ def synthesize_request_key(
             json.dumps(filters or {}, sort_keys=True, ensure_ascii=False),
             model or "",
             conversation_id or "",
+            locale or "",
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
@@ -153,12 +172,19 @@ class Checkpoint:
     outline_ready: bool = False
     final_positions: list[int] = field(default_factory=list)  # 已 final 的節次
     current_revision_id: str | None = None
+    # 預算遙測：每節實耗秒數、以及被前瞻砍掉的 position。**每節即時落庫**——
+    # 舊實作只在全節 final、正要進 rendering 時寫一次 checkpoint，於是失敗的 run
+    # （正是要診斷的對象）一筆耗時資料都不會留下（生產失敗列 checkpoint IS NULL）。
+    section_seconds: list[float] = field(default_factory=list)
+    skipped_positions: list[int] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "outline_ready": self.outline_ready,
             "final_positions": sorted(set(self.final_positions)),
             "current_revision_id": self.current_revision_id,
+            "section_seconds": [round(float(x), 1) for x in self.section_seconds],
+            "skipped_positions": sorted(set(self.skipped_positions)),
         }
 
     @classmethod
@@ -172,10 +198,22 @@ class Checkpoint:
         # final_positions 是集合語意（已完成節次），去重排序保持 canonical
         positions = sorted({p for p in positions if isinstance(p, int)})
         rev = obj.get("current_revision_id")
+        secs = obj.get("section_seconds")
+        secs = (
+            [float(x) for x in secs if isinstance(x, (int, float))]
+            if isinstance(secs, list) else []
+        )
+        skipped = obj.get("skipped_positions")
+        skipped = (
+            sorted({p for p in skipped if isinstance(p, int)})
+            if isinstance(skipped, list) else []
+        )
         return cls(
             outline_ready=bool(obj.get("outline_ready")),
             final_positions=positions,
             current_revision_id=rev if isinstance(rev, str) else None,
+            section_seconds=secs,
+            skipped_positions=skipped,
         )
 
 
@@ -690,6 +728,9 @@ async def open_run(
 
     回 (run_id, is_new)：is_new=False 表撈回既有 in-flight/完成 run 供續跑或去重。
     冪等：同 request_key 重送恆回同一 run_id、不產生重複列。
+
+    **終端失敗態（failed/cancelled）視為可重試**：原子重置回 queued 並回
+    ``is_new=True``，沿用同一 run_id（request_key 唯一，不可另起新列）。
     """
     new_id = str(uuid.uuid4())
     async with SessionFactory() as session:
@@ -713,7 +754,38 @@ async def open_run(
         if inserted is not None:
             await session.commit()
             return str(inserted[0]), True
-        # request_key 已存在：撈回既有 run 供續跑/去重
+        # request_key 已存在且處於終端失敗態 → 這是一次「重試」，原子重置回 queued。
+        #
+        # **刻意不走 advance_status**：is_valid_transition 明文拒絕終端態轉出，那條守門
+        # 擋的是進度機在稽核鏈上自我復活（掉一次寫入不該讓 run 憑空倒退）。使用者按下
+        # 「重試」是同一冪等鍵上的**新一次嘗試**，語意不同，必須有明確出口。
+        #
+        # 沒有這個分支時：report.py 對任何非 completed 狀態一律回「相同研報請求正在
+        # 處理或尚未完成」，於是研報一旦逾時／中斷，該（問題×對話×語言）組合就永久
+        # 無法再生成——前端 DeepReportPanel 的「重試」鈕保證失敗，且不會有人察覺。
+        #
+        # 條件式 UPDATE 兼作併發閘：多個請求同時撞上同一 failed run 時只有一個拿得到
+        # RETURNING，其餘落回下方既有 run 分支照常去重（不會併發跑兩份）。
+        #
+        # 前次嘗試的 report_section 列刻意保留：upsert_section 以 (run_id, position)
+        # 覆寫本次會用到的位置,殘留的高位次只是稽核痕跡（生產無讀取路徑），且是日後
+        # 要做「續跑」時唯一的素材（checkpoint 恆為 NULL——它只在全節 final 後才寫）。
+        retried = (
+            await session.execute(
+                text(
+                    "UPDATE research.report_run "
+                    "SET status = 'queued', error_detail = NULL, checkpoint = NULL, "
+                    "    current_revision_id = NULL, updated_at = now() "
+                    "WHERE request_key = :rk AND status IN ('failed', 'cancelled') "
+                    "RETURNING id"
+                ),
+                {"rk": request_key},
+            )
+        ).first()
+        if retried is not None:
+            await session.commit()
+            return str(retried[0]), True
+        # 其餘（in-flight／completed）：撈回既有 run 供去重
         row = (
             await session.execute(
                 text("SELECT id FROM research.report_run WHERE request_key = :rk"),
@@ -803,10 +875,16 @@ async def upsert_section(
     final_markdown: str | None = None,
     evidence_ids: list[str] | None = None,
     status: str | None = None,
+    reset: bool = False,
 ) -> None:
     """依 uq(run_id, position) upsert 該節；只更新有傳入的欄位（COALESCE 保留舊值）。
 
     section_draft 覆寫語意：同 position 再寫 draft_markdown 即覆蓋前次草稿。
+
+    reset=True：把 draft/final/evidence_ids 明確清成 NULL（繞過 COALESCE 的保留語意）。
+    **重試同一 run 時必須帶**：大綱會重新規劃，同一個 position 可能換成不同標題，
+    不清空的話上一次嘗試的 draft_markdown 會被新標題「領養」，在稽核表裡留下
+    章節數對、標題對、內容全錯的列，而且沒有任何一層會報錯。
     """
     async with SessionFactory() as session:
         await session.execute(
@@ -819,9 +897,12 @@ async def upsert_section(
                 "ON CONFLICT (run_id, position) DO UPDATE SET "
                 "  section_key = COALESCE(EXCLUDED.section_key, research.report_section.section_key), "
                 "  heading = COALESCE(EXCLUDED.heading, research.report_section.heading), "
-                "  draft_markdown = COALESCE(EXCLUDED.draft_markdown, research.report_section.draft_markdown), "
-                "  final_markdown = COALESCE(EXCLUDED.final_markdown, research.report_section.final_markdown), "
-                "  evidence_ids = COALESCE(EXCLUDED.evidence_ids, research.report_section.evidence_ids), "
+                "  draft_markdown = CASE WHEN :reset THEN NULL ELSE "
+                "    COALESCE(EXCLUDED.draft_markdown, research.report_section.draft_markdown) END, "
+                "  final_markdown = CASE WHEN :reset THEN NULL ELSE "
+                "    COALESCE(EXCLUDED.final_markdown, research.report_section.final_markdown) END, "
+                "  evidence_ids = CASE WHEN :reset THEN NULL ELSE "
+                "    COALESCE(EXCLUDED.evidence_ids, research.report_section.evidence_ids) END, "
                 "  status = COALESCE(EXCLUDED.status, research.report_section.status), "
                 "  updated_at = now()"
             ),
@@ -835,6 +916,7 @@ async def upsert_section(
                 "final": final_markdown,
                 "evids": evidence_ids,
                 "st": status,
+                "reset": reset,
             },
         )
         await session.commit()
@@ -1048,6 +1130,43 @@ def _build_section_prompt(
     return system, "\n".join(parts)
 
 
+def plan_section_action(
+    *,
+    kind: str,
+    has_analysis_draft: bool,
+    now: float,
+    section_stop: float | None,
+    hard_stop: float | None,
+    est: float,
+) -> str:
+    """逐節排程決策：回 ``'run'`` | ``'skip'`` | ``'stop'``。
+
+    無 I/O、不讀時鐘（``now`` 由呼叫端傳入）→ 可窮舉測試。這是本次逾時修復唯一的
+    排程判斷點，刻意抽成純函式，避免它散落在已經有四種提前結束路徑的 draft_report 裡。
+
+    **保底集合（＝最小可出貨研報）**：三個骨架節 + 第一個 analysis 子節。
+    後者受保護是既有硬規則的必然結果——全部 analysis 子節皆耗盡即「重點分析」缺章，
+    與骨架節缺章同罪、一樣不可出貨（見 draft_report 的 `if not any(... == "analysis")`）。
+
+    修的是什麼：舊實作在迴圈頂端只有一個「超過 deadline 就 return」的檢查，完全繞過
+    「動態子節可砍、骨架節不可缺」這條既有規則。而 build_outline 把 risk_outlook 排在
+    **最後**，於是預算被前面的分析子節吃光時，骨架節根本輪不到 → produced=True 已成立
+    → 不能退單次（會重複內容）→ 硬失敗，整份丟棄。2026-07-28 生產逾時就是這個形態。
+    """
+    if hard_stop is None:
+        return "run"  # 無預算（deadline=None，例如 eval 路徑）：不設任何界
+    if now >= hard_stop:
+        return "stop"  # 連保底節都不再開；呼叫端依 produced 分派 fallback/failed
+    if (
+        section_stop is not None          # None ＝ kill switch 關掉前瞻，只留硬停止
+        and kind == "analysis"
+        and has_analysis_draft
+        and now + est > section_stop
+    ):
+        return "skip"  # 可砍的動態子節：前瞻超支 → 跳過，把預算留給骨架節
+    return "run"
+
+
 async def _stream_section(
     system: str,
     prompt: str,
@@ -1056,6 +1175,7 @@ async def _stream_section(
     retry: int,
     model: str | None,
     allow_web: bool = False,
+    budget: float | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """逐節草稿串流：yield ('status',{'stage':'searching_web'|'writing'}) 切換事件，
     最後恆 yield ('__text__', str)（重試耗盡 → 空字串，呼叫端據 kind 決定跳過/failed）。
@@ -1066,16 +1186,37 @@ async def _stream_section(
 
     SEARCH_EVENT↔writing 的切換邏輯比照單次路徑（spec §3），status 只用既有封閉
     枚舉值，前端 reportStage zod enum 不受影響。
+
+    budget：本節草稿的牆鐘額度（秒）。``None`` ＝不設界，即修復前的行為。
+    **不設界時單節真實上界不是 timeout**：attempts=retry+1=2，而每個 attempt 內部
+    的 stream_completion 有自己的 `retries=2` 預設（此處從未顯式傳過）→ 最壞
+    2×3×timeout = 900s，加上呼叫端的逐節檢索 150s 共 1050s。給定 budget 時，
+    每次 attempt 依剩餘額度收斂 per-attempt timeout 並**顯式**傳 retries，
+    使單節上界收斂到 budget。
     """
     attempts = max(1, retry + 1)
+    end = (_now() + budget) if budget is not None else None
     searching_sent = False
     for attempt in range(attempts):
+        if end is not None:
+            left = end - _now()
+            if left < _MIN_ATTEMPT:
+                logger.warning(
+                    "section draft budget exhausted before attempt %s（剩餘 %.0fs）",
+                    attempt, left,
+                )
+                break
+            per_attempt = max(_MIN_ATTEMPT, min(timeout, left))
+            # 額度還夠幾輪就允許幾次內部重試（上限沿用 stream_completion 預設 2）
+            inner_retries = max(0, min(2, int(left // per_attempt) - 1))
+        else:
+            per_attempt, inner_retries = timeout, 2  # stream_completion 的既有預設
         parts: list[str] = []
         reset_pending = False
         try:
             async for chunk in stream_completion(
-                prompt, model=model, system=system, timeout=timeout,
-                allow_web=allow_web,
+                prompt, model=model, system=system, timeout=per_attempt,
+                allow_web=allow_web, retries=inner_retries,
             ):
                 if chunk == SEARCH_EVENT:
                     if not searching_sent:
@@ -1145,7 +1286,7 @@ async def draft_report(
         for sec in secs:
             await _audit(
                 upsert_section, run_id, sec["position"], section_key=sec["key"],
-                heading=sec["heading"], status="pending",
+                heading=sec["heading"], status="pending", reset=True,
             )
         await _audit(advance_status, run_id, "drafting")
 
@@ -1157,12 +1298,54 @@ async def draft_report(
     retry = s.report_section_retry
     produced = False  # 是否已 yield 過內容 token（退單次的硬邊界）
 
+    # ── 預算前瞻（2026-07-28 逾時修復）──────────────────────────────────────
+    # section_stop 早於 hard_stop 一個 finalize_reserve：尾段留給 n_unknown 重生與
+    # M8 grounding，那兩段在迴圈之後、先前完全不在任何預算內。
+    budget_on = s.report_budget_lookahead_enabled and deadline is not None
+    # **hard_stop 恆為 deadline**：kill switch 只關掉「前瞻跳過」這個新行為,不可連帶
+    # 移除既有的硬停止——那會讓逐節迴圈完全無界,比修復前更糟。
+    hard_stop = deadline
+    section_stop = (deadline - s.report_finalize_reserve) if budget_on else None
+    sec_wall = s.report_section_wall if budget_on else None
+    retrieve_cap = sec_wall * _RETRIEVE_SHARE if budget_on else s.report_section_timeout
+    elapsed: list[float] = []
+    ckpt = Checkpoint(outline_ready=True)
+
+    async def _record(secs_elapsed: list[float]) -> None:
+        """每節即時把遙測落庫——失敗的 run 才有耗時資料可供下次校準。"""
+        ckpt.section_seconds = list(secs_elapsed)
+        if run_id:
+            await _audit(advance_status, run_id, "", checkpoint=ckpt)
+
     for sec in secs:
         pos = sec["position"]
-        # REPORT_TIMEOUT 是整份研報的 wall-clock 預算。若已耗盡，不能再啟動任何
-        # 逐節檢索或 LLM 呼叫；否則每一節都可能各自跑滿 timeout，總延遲重新變成無界。
-        if deadline is not None and time.monotonic() >= deadline:
-            logger.warning("研報總逾時預算用罄，停止逐節生成 pos=%s", pos)
+        t0 = _now()
+        # 估計器用實測最大值（保守）；保底集合恆先執行,故前瞻第一次判定時
+        # elapsed 必已有樣本,種子（report_section_timeout）實務上用不到。
+        est = max(elapsed) if elapsed else s.report_section_timeout
+        action = plan_section_action(
+            kind=sec["kind"],
+            has_analysis_draft=any(d["kind"] == "analysis" for d in drafts),
+            now=t0, section_stop=section_stop, hard_stop=hard_stop, est=est,
+        )
+        if action == "skip":
+            # 動態子節可砍是既有規則（決策 #2）；舊實作的預算檢查走另一條 return,
+            # 完全繞過它 → 排在最後的 risk_outlook 根本輪不到。
+            logger.warning(
+                "預算前瞻砍節 pos=%s（%s）est=%.0fs 剩餘=%.0fs",
+                pos, sec["heading"], est, (section_stop or 0) - t0,
+            )
+            ckpt.skipped_positions.append(pos)
+            if run_id:
+                await _audit(upsert_section, run_id, pos, status="failed")
+            await _record(elapsed)
+            continue
+        if action == "stop":
+            logger.error(
+                "研報總逾時預算用罄（保底節亦不再開）pos=%s elapsed=%s skipped=%s",
+                pos, [round(x) for x in elapsed], ckpt.skipped_positions,
+            )
+            await _record(elapsed)
             if not produced:
                 yield ("__fallback__", None)
             else:
@@ -1171,7 +1354,7 @@ async def draft_report(
         try:
             sources, sec_ctx = await asyncio.wait_for(
                 retrieve_for_section(sec["topic"], filters=filters),
-                timeout=s.report_section_timeout,
+                timeout=retrieve_cap,
             )
         except asyncio.CancelledError:
             raise
@@ -1182,6 +1365,8 @@ async def draft_report(
         # 依「一般常識」撰寫，會把檢索／資料層故障偽裝成零證據成功研報。
         if not sources and not web_enabled:
             logger.error("section retrieve yielded no evidence with web disabled pos=%s", pos)
+            elapsed.append(_now() - t0)
+            await _record(elapsed)
             if not produced:
                 yield ("__fallback__", None)
             else:
@@ -1200,9 +1385,14 @@ async def draft_report(
             locale=locale,
         )
         draft_text = ""
+        # 單節牆鐘扣掉本節檢索已花的時間,剩下的才是草稿額度（見 _stream_section
+        # 的 budget 說明：不設界時單節最壞可達 1050s，遠超任何 run-level 預算）。
+        draft_budget = (
+            max(_MIN_ATTEMPT, sec_wall - (_now() - t0)) if sec_wall is not None else None
+        )
         async for kind, payload in _stream_section(
             system, prompt, timeout=s.report_section_timeout, retry=retry,
-            model=draft_model, allow_web=sec_web,
+            model=draft_model, allow_web=sec_web, budget=draft_budget,
         ):
             if kind == "__text__":
                 draft_text = str(payload)
@@ -1218,8 +1408,11 @@ async def draft_report(
         if not draft_text:
             # 決策 #2：動態子節→跳過（保留其餘）；骨架節→不可缺（section_coverage
             # 分母=5），依硬邊界決定退單次或 failed。**不得以空標題出貨。**
+            # 耗時照記：時間確實花掉了，估計器不記就會低估、下一節又超支。
+            elapsed.append(_now() - t0)
             if run_id:
                 await _audit(upsert_section, run_id, pos, status="failed")
+            await _record(elapsed)
             if sec["kind"] == "analysis":
                 logger.warning("動態子節草稿耗盡 → 跳過 pos=%s（%s）", pos, sec["heading"])
                 continue
@@ -1231,6 +1424,7 @@ async def draft_report(
             yield ("__failed__", {"detail": "研報章節生成失敗"})
             return
 
+        elapsed.append(_now() - t0)
         yield ("token", draft_text)
         produced = True
         drafts.append(
@@ -1250,6 +1444,7 @@ async def draft_report(
                 upsert_section, run_id, pos, draft_markdown=draft_text,
                 evidence_ids=allowed_ids or None, status="drafted",
             )
+        await _record(elapsed)
         yield (
             "section_draft",
             {"position": pos, "section_key": sec["key"],
@@ -1281,6 +1476,11 @@ async def draft_report(
         if not bad:
             break
         for d in bad:
+            if budget_on and _now() >= deadline:
+                # 引用完整性優先於 M8：重生排在 grounding 之前拿尾段預算。這段先前
+                # 完全不在任何預算內（deadline 檢查只在逐節迴圈頂端）。
+                logger.error("預算用罄，n_unknown 重生中止 pos=%s", d["position"])
+                break
             logger.warning("節 pos=%s 含未知引用標記 → 重生", d["position"])
             text_out = ""
             async for kind, payload in _stream_section(
@@ -1288,6 +1488,7 @@ async def draft_report(
                 # 沿用該節原本的閘門結果（缺鍵時 fail-closed 不開網搜）：
                 # prompt 是以它建的，工具開關必須與 prompt 同源。
                 retry=0, model=draft_model, allow_web=d.get("sec_web", False),
+                budget=sec_wall,
             ):
                 if kind == "__text__":
                     text_out = str(payload)
@@ -1310,23 +1511,35 @@ async def draft_report(
     # M8：逐節 grounding + 低數值支持率的節修正一輪。全程 fail-open——任何異常都不
     # 阻擋交付（faith_results=None＝不加分），報告仍照既有流程組裝出貨。
     faith_results: dict[int, FaithfulnessResult] | None = None
-    if s.report_faithfulness_enabled:
+    # **全有全無**：預算不足時整段跳過,不做部分 grounding。理由有二——
+    # (1) 用子集算出的 faithfulness_score 會冒充全文分數（語義污染,且 evaluation
+    #     落 NULL 與落假分數在監控上看不出差別）;
+    # (2) 部分 dict 餵進下方的 faith_results[pos] 直接索引必 KeyError,被同區塊的
+    #     except 吞成 faith_results=None,結果與跳過相同卻多花了時間。
+    # decompose + ground 兩次 judge → 每節約需 faithfulness_timeout。
+    grounding_need = len(drafts) * (s.faithfulness_timeout / 2)
+    budget_ok = (not budget_on) or (deadline - _now() >= grounding_need)
+    if s.report_faithfulness_enabled and not budget_ok:
+        logger.warning("預算不足，跳過 M8 忠實度查核（need=%.0fs）", grounding_need)
+    if s.report_faithfulness_enabled and budget_ok:
         try:
             faith_results = await _ground_sections(
                 drafts, claim_evidence, ledger,
                 model=s.faithfulness_model, timeout=s.faithfulness_timeout,
             )
+            # .get() 防禦：即使未來有人再引入部分結果,也只是少修一節,不會 KeyError
+            # 被吞掉整段（那會讓 evaluation 靜默落 NULL、監控查不出差別）。
             fix_positions = [
                 d["position"] for d in drafts
-                if _section_needs_fix(
-                    faith_results[d["position"]], s.report_faithfulness_min
-                )
+                if (r := faith_results.get(d["position"])) is not None
+                and _section_needs_fix(r, s.report_faithfulness_min)
             ]
             for d in drafts:
                 if d["position"] not in fix_positions:
                     continue
+                r = faith_results.get(d["position"])
                 unsupported = [
-                    c.text for c in faith_results[d["position"]].claims
+                    c.text for c in (r.claims if r else [])
                     if c.is_numeric and c.verdict != "supported"
                 ]
                 logger.warning("節 pos=%s 數值主張未獲支持 → 修正一輪", d["position"])
@@ -1338,6 +1551,7 @@ async def draft_report(
                     d["system"], fix_prompt, timeout=s.report_section_timeout,
                     # 沿用該節閘門結果（同 n_unknown 重生）：prompt 與工具開關必須同源
                     retry=0, model=draft_model, allow_web=d.get("sec_web", False),
+                    budget=sec_wall,
                 ):
                     if kind == "__text__":
                         text_out = str(payload)

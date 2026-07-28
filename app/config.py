@@ -108,6 +108,12 @@ class Settings:
     report_section_rerank_candidates: int
     report_section_retry: int
     report_section_thin_coverage: int
+    # 逐節預算（2026-07-28 逾時修復）
+    report_budget_lookahead_enabled: bool
+    report_draft_budget: float
+    report_section_wall: float
+    report_finalize_reserve: float
+    report_retrieve_budget: float
 
     # 忠實度查核 / faithfulness（M8 里程碑）—— M8 里程碑只在本區段內加鍵
     report_faithfulness_enabled: bool
@@ -212,6 +218,25 @@ def _load() -> Settings:
         report_section_thin_coverage=int(
             os.getenv("REPORT_SECTION_THIN_COVERAGE", "3")
         ),
+        # 逐節預算（2026-07-28 逾時修復）——只在本區段內加鍵。
+        # 請求牆鐘上界 = REPORT_PLANNER_TIMEOUT(30) + REPORT_RETRIEVE_BUDGET(300)
+        #              + REPORT_DRAFT_BUDGET(900) + REPORT_SECTION_WALL(240) + 收尾渲染
+        report_budget_lookahead_enabled=_flag("REPORT_BUDGET_LOOKAHEAD_ENABLED", "1"),
+        # 草稿階段（大綱＋逐節＋n_unknown 重生＋M8）的預算，錨點＝draft_report 進入點。
+        # **刻意與 REPORT_TIMEOUT 分名**：後者是單次路徑的 per-attempt stream timeout，
+        # 逐節借用它會讓同一個名字在同一個檔案裡有兩種語意（M7 原始實作的錯，也正是
+        # 2026-07-28 逾時的成因——錨在 started，run-level 檢索先吃掉 1/3 預算）。
+        report_draft_budget=float(os.getenv("REPORT_DRAFT_BUDGET", "900")),
+        # 單節牆鐘上界（含逐節檢索＋全部草稿 attempt＋stream_completion 內部 529 重試）。
+        # 未設此界時真實上界＝150(檢索)+2(attempt)×3(內部 retries)×150 = 1050s：
+        # _stream_section 從未把 retries 傳給 stream_completion，用的是它的預設 2。
+        report_section_wall=float(os.getenv("REPORT_SECTION_WALL", "240")),
+        # 草稿預算中保留給「n_unknown 重生 + M8 grounding」的尾段；逐節迴圈提前這麼多秒
+        # 就不再開「可砍」的分析子節。骨架節與第一個 analysis 子節不受此限（保底集合）。
+        report_finalize_reserve=float(os.getenv("REPORT_FINALIZE_RESERVE", "180")),
+        # run-level 檢索的牆鐘上界。實測 202s，且 BGE-M3 嵌入本身完全無界——不設此界
+        # 則整個請求的上界無法計算。
+        report_retrieve_budget=float(os.getenv("REPORT_RETRIEVE_BUDGET", "300")),
         # 忠實度查核 / faithfulness（M8 里程碑）
         report_faithfulness_enabled=_flag("REPORT_FAITHFULNESS_ENABLED", "1"),
         ask_faithfulness_enabled=_flag("ASK_FAITHFULNESS_ENABLED", "1"),

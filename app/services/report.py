@@ -67,6 +67,10 @@ REPORT_RERANK_TIMEOUT = _S.report_rerank_timeout
 REPORT_PLANNER_TIMEOUT = _S.report_planner_timeout
 # 逐節生成（M7）：預設開。關閉即完全退回單次生成路徑（事件序、契約皆不變）。
 REPORT_SECTIONED_ENABLED = _S.report_sectioned_enabled
+# 逐節預算（2026-07-28 逾時修復）。kill switch 關掉即回到修復前行為（byte 等價）。
+REPORT_BUDGET_LOOKAHEAD = _S.report_budget_lookahead_enabled
+REPORT_DRAFT_BUDGET = _S.report_draft_budget
+REPORT_RETRIEVE_BUDGET = _S.report_retrieve_budget
 # 逐節薄涵蓋門檻（該節命中低於此數才上網補）。與 REPORT_THIN_COVERAGE 分開：後者
 # 是 run-level（分母 25），拿來套逐節（配額 8）會幾乎每節誤觸發網搜。
 REPORT_SECTION_THIN_COVERAGE = _S.report_section_thin_coverage
@@ -450,17 +454,20 @@ async def reports_for_conversation(conversation_id: str) -> dict[str, list[dict]
 async def _open_sectioned_run(
     question: str, filters: dict, model: str,
     qa_id: str | None, conversation_id: str | None,
+    locale: str = DEFAULT_LOCALE,
 ) -> tuple[str | None, bool]:
     """建 report_run（冪等）並推進至 retrieving，回 ``(run_id, is_new)``。
 
     開 run 本身失敗仍 fail-open（``(None, False)``）；但既有 request_key 必須保留
     run_id 交由呼叫端去重，不能靜默降級成一份未綁 run 的新生成。
+
+    locale 進冪等鍵（M10）：不同輸出語言是不同產出物，不可互相去重。
     """
     try:
         run_id, is_new = await report_writer.open_run(
             report_writer.synthesize_request_key(
                 question, filters=filters, model=model,
-                conversation_id=conversation_id,
+                conversation_id=conversation_id, locale=locale,
             ),
             input_config={"profile": "report", "sectioned": True},
             qa_id=qa_id, conversation_id=conversation_id,
@@ -601,9 +608,7 @@ async def generate_report(
         logger.warning("report planner wall timeout; fallback to single query")
         queries, degraded = [question], True
     logger.info("report query plan: n=%d degraded=%s", len(queries), degraded)
-    sources, context = await retrieve_context_multi(
-        question,
-        queries,
+    _retrieve_kwargs = dict(
         k=REPORT_DEEP_K,
         dense_scan=ASK_DENSE_SCAN,
         max_reports=REPORT_MAX_REPORTS,
@@ -613,6 +618,24 @@ async def generate_report(
         rerank_top_m=REPORT_RERANK_TOP_M,
         rerank_timeout=REPORT_RERANK_TIMEOUT,
     )
+    try:
+        if REPORT_BUDGET_LOOKAHEAD:
+            # run-level 檢索先前完全無界（BGE-M3 嵌入本身也無界），實測 202s。不設界
+            # 則整個請求的牆鐘上界無法計算,而且它吃掉的正是逐節要用的預算。
+            async with asyncio.timeout(REPORT_RETRIEVE_BUDGET):
+                sources, context = await retrieve_context_multi(
+                    question, queries, **_retrieve_kwargs
+                )
+        else:
+            sources, context = await retrieve_context_multi(
+                question, queries, **_retrieve_kwargs
+            )
+    except TimeoutError:
+        # 超過檢索預算代表檢索層異常；繼續往下只會產出一份 20 分鐘後才失敗的請求。
+        # 明確報錯，不靜默降級成零證據研報。
+        logger.error("report run-level retrieval wall timeout (%.0fs)", REPORT_RETRIEVE_BUDGET)
+        yield ("error", {"detail": "研報檢索逾時，請稍後重試"})
+        return
     yield ("sources", [asdict(s) for s in sources])
     # 網搜開啟時，即使脈絡薄/空也照常生成（由模型上網補齊）；僅「脈絡空且網搜關」才拒生成。
     if not context and not REPORT_ENABLE_WEB:
@@ -627,7 +650,7 @@ async def generate_report(
     if REPORT_SECTIONED_ENABLED:
         if persist:
             run_id, is_new_run = await _open_sectioned_run(
-                question, filters, model, qa_id, conversation_id
+                question, filters, model, qa_id, conversation_id, locale
             )
         else:
             run_id, is_new_run = None, False
@@ -666,10 +689,17 @@ async def generate_report(
                 question, context, filters=filters, run_id=run_id, draft_model=model,
                 web_enabled=REPORT_ENABLE_WEB, coverage_note=note,
                 thin_coverage=REPORT_SECTION_THIN_COVERAGE,
-                # 逐節路徑先前完全沒有總預算：單次路徑有 REPORT_TIMEOUT=600s 上限，
-                # 逐節卻是 N 節 × 每節 150s（＋retry）無界累加，M1b 實測兩題破 1500s。
-                # 超支只砍動態子節，骨架五章仍跑完（見 draft_report）。
-                deadline=started + REPORT_TIMEOUT,
+                # 預算錨點＝草稿階段開始，**不含** run-level 檢索（實測 202s）與收尾
+                # 渲染。舊實作錨在 started 又借用 REPORT_TIMEOUT(600s)：檢索先吃掉
+                # 1/3，600s 只塞得下約 3.3 節，而大綱最多開到 8 節 → 2026-07-28 實測
+                # 4 節後撞牆、整份丟棄。REPORT_TIMEOUT 在此路徑不再有意義（它真正的
+                # 用途是單次路徑的 per-attempt stream timeout），改用 REPORT_DRAFT_BUDGET。
+                # 超支只砍動態子節，骨架五章仍跑完（見 plan_section_action）。
+                deadline=(
+                    time.monotonic() + REPORT_DRAFT_BUDGET
+                    if REPORT_BUDGET_LOOKAHEAD
+                    else started + REPORT_TIMEOUT  # kill switch：行為等同修復前
+                ),
                 locale=locale,
             ):
                 if kind == "__final__":

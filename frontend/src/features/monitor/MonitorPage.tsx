@@ -9,6 +9,7 @@ import { IngestPanel } from './IngestPanel'
 import { PipelineStatus } from './PipelineStatus'
 import { MarketDistribution } from './MarketDistribution'
 import { MonitorSkeleton } from './MonitorSkeleton'
+import { FaithfulnessPanel } from './FaithfulnessPanel'
 import { Pulse } from '../../components/primitives/motionLoops'
 
 export default function MonitorPage() {
@@ -64,6 +65,30 @@ export default function MonitorPage() {
                   idleText="—"
                 />
                 <PipelineStatus pipelines={p.pipelines} />
+              </div>
+              {/*
+                派生資產新鮮度。後端從 P4 起就在回 takeaway/signal，但 progressSchema
+                沒宣告這兩個鍵，zod 靜默剝除 → 資料一路送到前端卻從未進 DOM。
+                批次停跑（實測 takeaway 停 8 天、signal 停 12 天）的症狀是閱讀頁
+                優雅降級、少一個區塊，沒有人會回報，所以只能靠這裡看。
+                全表覆蓋率不是訊號（兩者都刻意只跑子集），latest 有沒有前進才是。
+              */}
+              <div className={styles.panelGrid}>
+                <ProgressPanel
+                  title="重點摘錄（近 30 天）"
+                  data={p.takeaway ?? null}
+                  rateLine={p.takeaway?.latest ? `最後產出 ${p.takeaway.latest}` : '尚無產出'}
+                  idleText="此版後端未提供摘錄統計"
+                />
+                <ProgressPanel
+                  title="觀點訊號（近 30 天）"
+                  data={p.signal ?? null}
+                  rateLine={p.signal?.latest ? `最後產出 ${p.signal.latest}` : '尚無產出'}
+                  idleText="此版後端未提供訊號統計"
+                />
+              </div>
+              <div className={styles.panelGrid}>
+                <FaithfulnessPanel evaluation={p.evaluation} />
               </div>
               <MarketDistribution markets={p.db.markets} />
               <div className={styles.footer}>資料每 5 秒自動更新 · 廷豐智能研報導入管線</div>

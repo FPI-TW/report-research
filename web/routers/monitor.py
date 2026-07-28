@@ -296,9 +296,14 @@ def _gather_runtime() -> dict:
     }
 
 
-@router.get("/api/progress")
 def _coverage_block(done: int, total: int, latest: str | None) -> dict:
-    """近 30 天覆蓋率區塊；形狀比照既有的 summary（done/total/remaining/pct）另加 latest。"""
+    """近 30 天覆蓋率區塊；形狀比照既有的 summary（done/total/remaining/pct）另加 latest。
+
+    **必須定義在 `@router.get` 之上**：夾在裝飾器與 handler 之間的話，裝飾器會套到
+    這支輔助函式，FastAPI 就把 done/total/latest 當成 query 參數 → `/api/progress`
+    對正常請求回 422。這正是 2026-07-28 的實際事故；測試直接呼叫 `monitor.progress()`
+    函式物件、繞過路由層，所以全綠也擋不住（見 test_monitor_http 的 HTTP 層測試）。
+    """
     done, total = int(done), int(total)
     return {
         "done": done,
@@ -309,6 +314,7 @@ def _coverage_block(done: int, total: int, latest: str | None) -> dict:
     }
 
 
+@router.get("/api/progress")
 async def progress():
     snapshot = await _db_stats_snapshot()
     runtime = await asyncio.to_thread(_gather_runtime)

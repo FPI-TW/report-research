@@ -1,0 +1,28 @@
+[Unit]
+Description=廷豐智能研報 web (uvicorn web.server:app, BGE-M3 resident) on :8097
+# DB 是 Docker 容器 report-mark-postgres(:5436)，非本 distro systemd 管理；
+# 故不宣告 After=，改以 Restart=always 容忍啟動時 DB/磁碟掛載尚未就緒。
+After=network-online.target
+Wants=network-online.target
+# 失敗時留下可稽核的痕跡（journald 沒人盯著看）。%n 帶入本 unit 名。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=simple
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+WorkingDirectory=/mnt/c/Users/User/Desktop/Project/report-mark
+ExecStart=/home/kashionz/.local/bin/uv run uvicorn web.server:app --host 0.0.0.0 --port 8097
+Restart=always
+RestartSec=3
+# BGE-M3 載入較久，給足啟動寬限，避免被誤判失敗
+TimeoutStartSec=180
+# uvicorn 收到 SIGTERM 後以 143(128+15) 退出，這是**正常收場**。未宣告的話每次
+# `systemctl restart` 都會在日誌留下 "Failed with result 'exit-code'"，維運查問題時
+# 會被這些假錯誤帶偏（也會讓真正的失敗淹沒在雜訊裡）。
+SuccessExitStatus=143
+# 日誌走 journald：journalctl -u report-mark-web -f
+
+[Install]
+WantedBy=multi-user.target

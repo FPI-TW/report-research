@@ -1,0 +1,13 @@
+[Unit]
+Description=每日觸發 DB 備份（不可重建表 → NAS）
+
+[Timer]
+# 03:30 刻意錯開 report-mark-sync.timer 的整點（00/3），避免同時搶 NAS 與磁碟 I/O。
+OnCalendar=*-*-* 03:30:00
+# 機器關著／WSL 沒起來而錯過的那一次，開機後補跑。備份最常見的無聲失效就是
+# 「那幾天機器沒開」，而缺一天沒有任何訊號。
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

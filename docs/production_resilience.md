@@ -124,8 +124,115 @@ systemd-analyze verify /etc/systemd/system/report-mark-web.service
 systemctl show report-mark-web.service -p OnFailure --value        # 應非空
 ```
 
+## 備份與還原
+
+在此之前這個 DB **完全沒有備份**——`pg_dump` / `pgbackrest` / `pg_basebackup` 在 Makefile、`scripts/`、`deploy/`、`docs/`、systemd、crontab 全部零命中，唯一的副本是 docker named volume `report-mark-pgdata`。而 `docs/qa_pdf_report_deployment.md` 早在深度研報上線時就寫著「DB 的 `report_doc` 表需納入備份」，一直沒有人做。
+
+### 為什麼只備七張表
+
+| 表 | 為什麼備 |
+|---|---|
+| `research.qa_log` | 每一次提問、當時的來源與證據帳本、使用者的讚／倒讚。**沒有任何來源可以重建** |
+| `research.report_doc` | 深度研報的 `markdown`（schema 註解明寫「真相來源」，PDF 由它重建） |
+| `research.report_rendition` | 換皮重出的不可變渲染史 |
+| `research.report_takeaway` | 閱讀頁重點摘錄（Sonnet 批次產物 + 確定性錨點） |
+| `research.report_signal` | 觀點雷達訊號（Sonnet 批次產物） |
+| `research.report_run` / `report_section` | 逐節生成的流程史 |
+
+沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這七張表的體積相對很小，備起來幾乎沒有成本。
+
+**這個取捨有一個已知代價，先寫在這裡免得還原那天才發現**：`report_takeaway` 與 `report_signal` 以 `report_id` FK 指向 `research_report`，而 `report_id` 是每次 ingest 重新產生的 uuid。**語料層若被整個重建，這兩張表的備份就對不回去了**（另五張沒有 FK，任何情況都還原得乾淨）。若之後判定摘錄／訊號值得那個代價，正解是把 `research_report` 一起納入備份（`report_chunk` 仍不必——向量重算得回來），而不是在還原時 `--disable-triggers` 硬塞孤兒列。
+
+### 怎麼跑
+
+```bash
+make db-backup                       # 手動跑一次
+systemctl list-timers report-mark-backup.timer   # 排程：每日 03:30（Persistent=true）
+```
+
+輸出落在 NAS：
+
+```
+/mnt/nas-backup/report-mark-db/daily/report-mark-critical-YYYYmmdd_HHMMSS.dump   # 保留 7 份
+/mnt/nas-backup/report-mark-db/weekly/report-mark-critical-YYYY-Www.dump         # 保留 4 份
+```
+
+幾個刻意的設計：
+
+- **掛載不可用就失敗，絕不退回本地路徑。** 備份的全部價值在「跟 pgdata 不同一塊磁碟」；靜默寫本地會產出一份看起來成功、實際上跟 pgdata 一起死的備份，還會餵飽下面那個 `ingest-lowio` 閘門——把安全網變成假象比沒有安全網更糟。
+- **既有的 `/mnt/nas-research` 是 `-o ro`**（研報來源刻意唯讀），寫不進去。所以另有一支 rw 掛載 `deploy/systemd/mount-nas-backup` → `/mnt/nas-backup`（同一個 share、不同選項、不同掛載點），搭配 `deploy/systemd/report-mark-backup.sudoers`。
+- **驗過才改名成 `*.dump`。** 先寫 `.partial-*`，檢查檔頭魔數 `PGDMP` 與大小下限後才原子 `mv`。備份最惡劣的失敗型態是「檔案在、內容不能用」，而 `.dump` 這個副檔名同時是保留策略與新鮮度閘門的判準。
+- **`docker exec` 一律不加 `-t`。** 配 TTY 會對 stdout 做行尾轉換，把二進位 dump 悄悄弄壞——檔案照樣產出、大小也合理，直到還原那天才發現。
+- **週備用 `cp` 不用 hardlink。** drvfs 的 hardlink 支援不可靠，而「以為連結還在、其實日備輪替時一起砍掉了」是完全靜默的資料消失。
+
+### 還原步驟（沒演練過的備份不算備份）
+
+一律用 stdin 餵 `pg_restore`，不要 `docker cp`：備份檔在 `/mnt/nas-backup`，那是 WSL 的掛載點，`docker.exe` 看不到這個路徑；由 WSL 這側讀檔、管線送進容器才對得起來。
+
+```bash
+DUMP=/mnt/nas-backup/report-mark-db/daily/report-mark-critical-20260730_033000.dump
+
+# 1) 先證明這份 dump 讀得回來（完全不動 DB）
+docker exec -i report-mark-postgres pg_restore -l - < "$DUMP"
+
+# 2) 還原到臨時 DB 驗過，再碰生產
+docker exec -i report-mark-postgres psql -U postgres -c 'CREATE DATABASE restore_check;'
+docker exec -i report-mark-postgres psql -U postgres -d restore_check \
+  -c 'CREATE SCHEMA IF NOT EXISTS research;'
+docker exec -i report-mark-postgres pg_restore -U postgres -d restore_check \
+  --no-owner --no-privileges < "$DUMP"
+docker exec -i report-mark-postgres psql -U postgres -d restore_check \
+  -c 'select count(*) from research.qa_log;' \
+  -c 'select count(*) from research.report_doc;'
+
+# 3) 確認筆數合理後才動生產。單張表被誤刪／誤清時只還原那一張：
+docker exec -i report-mark-postgres pg_restore -U postgres -d research \
+  --no-owner --no-privileges -t qa_log < "$DUMP"
+
+# 4) 整組還原到空 DB（例如 pgdata 全滅、重建叢集之後）：
+make schema                                    # 先把 schema 建回來（含 vector 擴充與索引）
+docker exec -i report-mark-postgres pg_restore -U postgres -d research \
+  --no-owner --no-privileges --data-only --disable-triggers < "$DUMP"
+docker exec -i report-mark-postgres psql -U postgres -d research -c 'DROP DATABASE restore_check;'
+```
+
+第 4 步用 `--data-only` 是因為 `make schema` 已經把表建好了（含 CHECK 與索引）；`--disable-triggers` 讓 `report_takeaway` / `report_signal` 的 FK 檢查在載入時先讓開——**但那只在 `research_report` 也還原到相同 `report_id` 時才有意義**，見上面的已知代價。
+
+`pg_restore` 的退出碼要看：非 0 就是沒還原完，**不要因為「有些表看起來有資料」就當成功**。
+
+### `make ingest-lowio` 現在有硬閘
+
+`scripts/ingest_lowio.sh` 會關掉 `fsync` / `full_page_writes` / `synchronous_commit`，崩潰即可能整個 pgdata 報廢。它檔頭原本的安全論證是「本 DB 為衍生、可由原始研報重建」——**在上面那七張表存在之後，這句話已經不成立**。現在它開頭會檢查備份目錄有沒有 24 小時內的 `*.dump`，沒有就 `exit 1`，且在碰 docker 之前就擋下。
+
+確定這座 DB 裡沒有不可重建資料（例如正在從零重建語料）時，用 `ALLOW_STALE_BACKUP=1 make ingest-lowio` 明示略過。
+
+### 安裝
+
+```bash
+REPO=/mnt/c/Users/User/Desktop/Project/report-mark
+sudo install -m 0755 -o root -g root "$REPO"/deploy/systemd/mount-nas-backup /usr/local/sbin/
+sudo install -m 0440 -o root -g root "$REPO"/deploy/systemd/report-mark-backup.sudoers \
+  /etc/sudoers.d/report-mark-backup
+sudo cp "$REPO"/deploy/systemd/report-mark-backup.service \
+        "$REPO"/deploy/systemd/report-mark-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-backup.timer
+
+# 首跑與驗收
+sudo systemctl start report-mark-backup.service
+journalctl -u report-mark-backup.service -n 40 --no-pager
+ls -lh /mnt/nas-backup/report-mark-db/daily
+```
+
+`/etc/default/report-mark-sync` 是共用的環境檔（備份 unit 也讀它），備份專屬旋鈕的範例在 `deploy/systemd/report-mark-sync.env.example`。
+
+**待驗（本輪未在主機上執行）**：NAS 帳號對 `\\192.168.1.100\投資研究處` 是否有寫入權、同一個 share 以 drvfs 掛在第二個掛載點是否如預期，都要等實際安裝那次才知道。備份腳本的落點檢查、原子改名、檔頭驗證與輪替已用假 `docker` 二進位在沙箱驗過。
+
 ## 這一輪刻意沒做
 
 - **外部 uptime 監控**：`/healthz` 是給它用的介面，但要接哪一家（UptimeRobot／自架）是部署決策，不該由一次程式碼改動偷渡。
 - **把 unit 失敗顯示在監控頁**：`data/unit_failures.log` 已是可讀來源，但要不要進 UI 屬產品決策。
 - **告警投遞管道**：webhook 已留 opt-in 掛勾，設不設由部署端決定。
+- **語料層（`research_report` / `report_chunk`）納入備份**：見上面的取捨與已知代價，那是一個容量決定（`full_text` 是全語料原文），不該夾帶在第一版備份裡。
+- **異地／離線副本與加密**：NAS 已經比 pgdata 好一個數量級，但 NAS 本身壞掉仍是單點。
+- **自動還原演練**：真正的驗收是定期把 dump 還原到臨時 DB 比對筆數。這需要排程與判準，先把還原步驟寫成可照抄的指令。

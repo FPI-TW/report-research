@@ -193,7 +193,7 @@ async def _run(args) -> None:
     from sqlalchemy import text as sql_text
 
     from app.services.chunk import chunk_text
-    from app.services.db import SessionFactory
+    from app.services.db import SessionFactory, relax_statement_timeout
     from app.services.embed import embed_texts
 
     from app.services.extract import extract_text
@@ -323,6 +323,9 @@ async def _run(args) -> None:
             print(f"  [{tag.market}] {path.name[:55]} ({len(chunks)} chunks)", flush=True)
 
         if stats["ingested"] and not args.dry_run:
+            # ANALYZE 可能久於引擎層的 statement_timeout，且是本輪匯入的最後一步——
+            # 被砍掉時資料都已 commit，症狀只有 planner 統計靜默過期，排程沒人在看。
+            await relax_statement_timeout(session)
             await session.execute(sql_text("ANALYZE research.report_chunk"))
             await session.commit()
 

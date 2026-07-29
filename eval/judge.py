@@ -8,12 +8,28 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 
-from app.services.llm import stream_completion
+from app.services.llm import LLMUnavailableError, stream_completion
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "claude-haiku-4-5")
+
+# 逾時 60s 曾讓整份評測不可用：8 題裡 3-5 題失敗，而且**兩種錯誤其實同源**——
+# stream_completion 逾時後「已吐字就 fail-open、沒吐字就 raise」，於是同一個逾時
+# 依運氣呈現為 LLMUnavailableError 或「截斷的 JSON」（JudgeError: unbalanced）。
+#
+# 2026-07-29 實測（decompose 長答案，3 筆）：
+#     3999 字  timeout=60 → OK 32.9s        timeout=180 → OK 22.3s
+#     3658 字  timeout=60 → 逾時失敗 60.0s   timeout=180 → OK 25.3s
+#     3475 字  timeout=60 → 截斷 JSON 60.0s  timeout=180 → OK 23.0s
+# 正常耗時只有 22-33 秒，60s 卡住的是「偶爾卡一下」的那些——上限訂得太貼近中位數。
+# 同一種形狀的 bug 見 PR #72（rerank 30s 全逾時 → per-path 60/180s）。
+DEFAULT_JUDGE_TIMEOUT = float(os.getenv("EVAL_JUDGE_TIMEOUT", "180"))
+DEFAULT_JUDGE_RETRIES = int(os.getenv("EVAL_JUDGE_RETRIES", "1"))
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
@@ -67,14 +83,7 @@ def _loads_robust(raw: str) -> dict | list:
     raise JudgeError(f"unbalanced JSON in judge output: {raw[:120]!r}")
 
 
-async def judge_json(
-    prompt: str,
-    *,
-    system: str,
-    model: str = DEFAULT_JUDGE_MODEL,
-    timeout: float = 60.0,
-) -> dict | list:
-    """drain stream_completion 取全文 → robust 解析為 JSON。空/畸形 → JudgeError。"""
+async def _judge_once(prompt: str, *, system: str, model: str, timeout: float):
     parts: list[str] = []
     async for chunk in stream_completion(
         prompt, model=model, system=system, timeout=timeout, allow_web=False
@@ -84,3 +93,34 @@ async def judge_json(
     if not text.strip():
         raise JudgeError("empty judge response")
     return _loads_robust(text)
+
+
+async def judge_json(
+    prompt: str,
+    *,
+    system: str,
+    model: str = DEFAULT_JUDGE_MODEL,
+    timeout: float = DEFAULT_JUDGE_TIMEOUT,
+    retries: int = DEFAULT_JUDGE_RETRIES,
+) -> dict | list:
+    """drain stream_completion 取全文 → robust 解析為 JSON。空/畸形 → JudgeError。
+
+    **逾時是暫時性的，所以要重試**：evaluation 的每一題只要有一次 judge 呼叫失敗，
+    整題就記成 error 而被排除在指標之外——n=8 的題集掉 3-5 題，剩下的平均值毫無意義
+    （2026-07-29 就是這樣連續兩次跑出不可用的 baseline）。重試次數有界，仍失敗照樣拋，
+    不會把真正的故障吞掉。
+    """
+    last: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return await _judge_once(
+                prompt, system=system, model=model, timeout=timeout
+            )
+        except (JudgeError, LLMUnavailableError) as e:
+            last = e
+            if attempt < retries:
+                logger.warning(
+                    "judge 第 %d 次失敗（%s），重試：%s",
+                    attempt + 1, type(e).__name__, str(e)[:100],
+                )
+    raise last  # type: ignore[misc]

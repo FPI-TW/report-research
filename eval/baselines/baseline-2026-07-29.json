@@ -1,0 +1,172 @@
+{
+  "summary": {
+    "faithfulness": 0.9032734303126252,
+    "context_precision": 0.6790060575998076,
+    "answer_relevancy": 0.645734570763277,
+    "latency_ms_mean": 45387.875,
+    "latency_ms_p50": 31308,
+    "latency_ms_p95": 146887,
+    "n": 8,
+    "n_errors": 0,
+    "n_no_context": 0,
+    "thresholds_pass": false,
+    "thresholds_failed": [
+      "context_precision"
+    ]
+  },
+  "cases": [
+    {
+      "id": "q001",
+      "question": "台積電最新的營運展望如何",
+      "faithfulness": 0.9545454545454546,
+      "context_precision": 0.7480555555555556,
+      "answer_relevancy": 0.7435375481770028,
+      "answer_relevancy_questions": [
+        "台積電2026年營收年增率預期是多少？資本支出如何調整？",
+        "台積電2026年第二季財報表現如何？是否超越市場預期？",
+        "台積電未來將在哪些地區新建晶圓廠？擴產計劃涉及哪些製程？"
+      ],
+      "answer_relevancy_sims": [
+        0.7771,
+        0.7497,
+        0.7038
+      ],
+      "n_contexts": 15,
+      "latency_ms": 146887
+    },
+    {
+      "id": "q002",
+      "question": "分析台灣市場",
+      "faithfulness": 0.7,
+      "context_precision": 0.8183221870721872,
+      "answer_relevancy": 0.5957473629780151,
+      "answer_relevancy_questions": [
+        "台股目前面临的主要技术压力是什么？为什么短线需要放量突破月线才能确认方向？",
+        "从6月底至7月下旬，台股经历了怎样的修复过程？关键的支撑与压力位在哪里？",
+        "应该通过哪些籌碼指标（如PB<1家数占比、外资成交比重）来判断台股的估值水位和资金动能？"
+      ],
+      "answer_relevancy_sims": [
+        0.5962,
+        0.5633,
+        0.6277
+      ],
+      "n_contexts": 15,
+      "latency_ms": 27345
+    },
+    {
+      "id": "q003",
+      "question": "材料行業分析報告'",
+      "faithfulness": 0.8125,
+      "context_precision": 0.5,
+      "answer_relevancy": 0.6311443849305911,
+      "answer_relevancy_questions": [
+        "根據提供的研報片段，台灣材料行業目前的發展趨勢和市場前景如何？",
+        "台灣PCB產業和鋼鐵產業的最新狀況是什麼，這些材料相關產業是否具有投資價值？",
+        "『材料行業』應該如何界定和劃分範圍，才能進行準確的產業分析和投資評估？"
+      ],
+      "answer_relevancy_sims": [
+        0.6953,
+        0.498,
+        0.7002
+      ],
+      "n_contexts": 3,
+      "latency_ms": 26428
+    },
+    {
+      "id": "q004",
+      "question": "散熱技術的進展如何？",
+      "faithfulness": 0.9743589743589743,
+      "context_precision": 0.5833333333333333,
+      "answer_relevancy": 0.671156648712155,
+      "answer_relevancy_questions": [
+        "AI伺服器散熱為什麼正快速從氣冷轉向液冷？",
+        "液冷散熱能為數據中心帶來多大的能源效率提升？",
+        "微通道均熱片（MCL）技術在散熱演進中的位置和作用是什麼？"
+      ],
+      "answer_relevancy_sims": [
+        0.6413,
+        0.6883,
+        0.6839
+      ],
+      "n_contexts": 4,
+      "latency_ms": 27573
+    },
+    {
+      "id": "q005",
+      "question": "AI 伺服器的最新發展如何？",
+      "faithfulness": 0.9615384615384616,
+      "context_precision": 0.8344122147693577,
+      "answer_relevancy": 0.6854516548224541,
+      "answer_relevancy_questions": [
+        "2026-2027年全球AI伺服器市場規模與出貨量預期增長率分別是多少？",
+        "AI伺服器產業中ASIC晶片（Google、AWS、Microsoft）對NVIDIA GPU市場的排擠效應和競爭態勢如何？",
+        "AI伺服器供應鏈中，哪些廠商和零組件領域（如液冷、電源、PCB/載板）會因需求增長而受惠？"
+      ],
+      "answer_relevancy_sims": [
+        0.7464,
+        0.6352,
+        0.6747
+      ],
+      "n_contexts": 15,
+      "latency_ms": 31308
+    },
+    {
+      "id": "q006",
+      "question": "台積電最新展望如何？",
+      "faithfulness": 1.0,
+      "context_precision": 0.6100000000000001,
+      "answer_relevancy": 0.7026575338468998,
+      "answer_relevancy_questions": [
+        "台積電2026年第二季法說會公布的財務表現如何？",
+        "台積電為什麼上修2026年全年營收預估和資本支出目標？",
+        "台積電法說會後股市出現什麼反應，短期投資應該採取什麼策略？"
+      ],
+      "answer_relevancy_sims": [
+        0.7287,
+        0.7193,
+        0.66
+      ],
+      "n_contexts": 15,
+      "latency_ms": 36921
+    },
+    {
+      "id": "q007",
+      "question": "材料行業分析報告",
+      "faithfulness": 0.9661016949152542,
+      "context_precision": 0.5833333333333333,
+      "answer_relevancy": 0.5529433385796757,
+      "answer_relevancy_questions": [
+        "2026年材料行業各子產業（化纖原料、泛用樹脂、成衣代工、半導體材料）的投資評等和前景分別如何？",
+        "油價下跌對化纖原料和泛用樹脂產業的基本面和採購行為有什麼衝擊？",
+        "半導體特用化學品產業為什麼具有結構性成長潛力，相比傳統塑化材料更值得關注？"
+      ],
+      "answer_relevancy_sims": [
+        0.6191,
+        0.5273,
+        0.5124
+      ],
+      "n_contexts": 3,
+      "latency_ms": 35093
+    },
+    {
+      "id": "q008",
+      "question": "台積電先進封裝",
+      "faithfulness": 0.8571428571428571,
+      "context_precision": 0.7545918367346939,
+      "answer_relevancy": 0.5832380940594225,
+      "answer_relevancy_questions": [
+        "台積電先進封裝的CoWoS技術將如何演進？interposer尺寸、HBM堆疊層數和對應邏輯製程將如何升級至2028-2029年？",
+        "台積電先進封裝產能為何供不應求，2026-2027年將如何擴大委外給OSAT廠商，預期委外產能將達多少？",
+        "台積電先進封裝需求增長將為哪些供應鏈廠商帶來商機，包括設備廠、海外OSAT和材料廠商？"
+      ],
+      "answer_relevancy_sims": [
+        0.5319,
+        0.587,
+        0.6308
+      ],
+      "n_contexts": 8,
+      "latency_ms": 31548
+    }
+  ],
+  "notes": "2026-07-29 乾淨基準：n=8、errors=0。以 --concurrency 1 產出——預設的 3 會讓多個 claude -p 互搶，實測 8 題掉 3 題、延遲 213-222s（單執行緒 23-37s）。judge 逾時 60→180s 並加有界重試後 errors 才歸零（先前兩次跑分別掉 3 題與 5 題）。summary 的門檻旗標以本檔 cases 重算（aggregate 為純函式，逐題量測未改動），對應門檻 F>0.9 / CP>0.8 / AR>0.55。"
+}

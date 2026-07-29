@@ -72,3 +72,87 @@ class JudgeJsonTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JudgeRetryTests(unittest.IsolatedAsyncioTestCase):
+    """judge 逾時是暫時性的，必須重試。
+
+    2026-07-29：evaluation 連續兩次跑出不可用的 baseline（8 題掉 3-5 題），
+    真因是 judge 的 60s 上限訂得太貼近中位數。實測 decompose 長答案正常只要 22-33s，
+    但偶爾卡住就撞上 60s，而 stream_completion「已吐字就 fail-open、沒吐字就 raise」
+    讓**同一個逾時**依運氣呈現為 LLMUnavailableError 或截斷 JSON——兩者同源。
+
+    一次 judge 失敗就讓整題記成 error 被排除，剩下的平均值毫無意義，所以重試不是
+    錦上添花，是讓這份工具可用的前提。
+    """
+
+    def setUp(self):
+        self._orig = judge_mod.stream_completion
+
+    def tearDown(self):
+        judge_mod.stream_completion = self._orig
+
+    @staticmethod
+    def _flaky(fail_times, exc, then):
+        """前 fail_times 次拋 exc，之後吐出 then。回 (gen_factory, 計數器)。"""
+        calls = {"n": 0}
+
+        def factory(*a, **k):
+            async def _gen(prompt, **kw):
+                calls["n"] += 1
+                if calls["n"] <= fail_times:
+                    raise exc
+                for c in then:
+                    yield c
+            return _gen(*a, **k)
+
+        return factory, calls
+
+    async def test_retries_after_llm_unavailable(self):
+        from app.services.llm import LLMUnavailableError
+
+        gen, calls = self._flaky(1, LLMUnavailableError("claude 無有效回應"),
+                                 ['{"statements": ["a"]}'])
+        judge_mod.stream_completion = gen
+        out = await judge_json("x", system="s")
+        self.assertEqual(out, {"statements": ["a"]})
+        self.assertEqual(calls["n"], 2)   # 失敗一次 + 成功一次
+
+    async def test_retries_after_truncated_json(self):
+        """實際觀察到的形態：串流吐到一半就斷，JSON 沒有收尾。"""
+        gen, calls = self._flaky(0, None, [])
+        # 第一次吐截斷 JSON、第二次吐完整的
+        seq = [['```json\n{\n  "statements": [\n    "台股近兩個月'], ['{"statements": ["ok"]}']]
+        state = {"i": 0}
+
+        def factory(prompt, **kw):
+            async def _gen():
+                chunks = seq[min(state["i"], len(seq) - 1)]
+                state["i"] += 1
+                for c in chunks:
+                    yield c
+            return _gen()
+
+        judge_mod.stream_completion = factory
+        out = await judge_json("x", system="s")
+        self.assertEqual(out, {"statements": ["ok"]})
+        self.assertEqual(state["i"], 2)
+
+    async def test_persistent_failure_still_raises(self):
+        """重試有界；一直失敗照樣拋，不得把真故障吞成空結果。"""
+        judge_mod.stream_completion = _fake_stream([""])
+        with self.assertRaises(JudgeError):
+            await judge_json("x", system="s")
+
+    async def test_retries_zero_disables_retry(self):
+        from app.services.llm import LLMUnavailableError
+
+        gen, calls = self._flaky(1, LLMUnavailableError("boom"), ['{"a": 1}'])
+        judge_mod.stream_completion = gen
+        with self.assertRaises(LLMUnavailableError):
+            await judge_json("x", system="s", retries=0)
+        self.assertEqual(calls["n"], 1)
+
+    def test_default_timeout_is_evidence_based(self):
+        """60s 是失敗的那個值；預設必須明顯高於實測的 22-33s 正常耗時。"""
+        self.assertGreaterEqual(judge_mod.DEFAULT_JUDGE_TIMEOUT, 120)

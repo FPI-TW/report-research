@@ -194,7 +194,10 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`），所有 offset 以此為準。超過 40 萬字只回前綴並標 `truncated`，但 `text_sha256`/`text_chars` 一律是**完整**正典文字的值（回截斷版的 sha 會讓前端驗章全滅）。`?chunk=N`＝檢索命中的 `chunk_index`，一併回該段字元區間供高亮；錨不到、或錨點落在截斷範圍之外，則為 `None` 且仍回 200（**沒有命中位置不是錯誤**）|
 | `GET /api/reading/{file_hash}/similar` | 相似研報（全篇均勻取樣 probe ＋ 廣度加權的向量近鄰）；`limit` 預設 6、上限 20 |
 | `POST /api/ask` | RAG 問答：SSE 串流 `sources` / `token` / `done` / `error`，行內 `[n]` 引用對應來源報告；支援 `conversation_id` 與篩選，寫入 `qa_log` |
-| `POST /api/report` | 深度研報生成：SSE 串流 retrieval/writing/searching/rendering 狀態、來源、token 與 done payload |
+| `POST /api/report` | 深度研報生成：SSE 串流 `run`（背景 run handle）→ `status`（retrieving/outlining/writing/searching_web/verifying/rendering）→ `outline`（章節清單＝進度分母）→ `sources` → `token`/`section_draft`/`section_skipped` → `done`。**生成跑在背景任務，斷線不中止** |
+| `GET /api/report-runs?conversation_id=` | 該對話仍在背景生成的研報；前端載入對話時據此把進度框接回（重整／開新分頁都看得到） |
+| `GET /api/report-runs/{run_id}/stream` | 重連背景 run：先重播已發生的事件（不含 token），再接上直播 |
+| `POST /api/report-runs/{run_id}/cancel` | 主動中止背景生成 |
 | `GET /api/report-doc/{report_id}/pdf` | 下載生成研報 PDF；PDF 遺失時由 persisted Markdown 即時重建 |
 | `GET /api/history` | 最近的問答歷史（舊單題清單）。`DELETE /api/history/{qa_id}` 或 POST alias 刪除單筆 |
 | `GET /api/conversations` | 對話串清單；`GET /api/conversations/{id}` 取回全部輪次；DELETE/POST alias 刪除整串 |

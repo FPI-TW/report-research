@@ -5,18 +5,46 @@ import { afterEach, expect, test, vi } from 'vitest'
 import type { RawSSEEvent } from '../../lib/readSSE'
 
 const streamAsk = vi.fn()
+const streamReportRun = vi.fn()
+const getActiveReportRuns = vi.fn(async () => [] as unknown[])
+const getConversation = vi.fn(async () => [] as unknown[])
+// 這個 mock 必須涵蓋 controller 用到的**每一個** askApi 匯出：vi.mock 會整包取代模組，
+// 漏掉的匯出是 undefined，呼叫它拋的 TypeError 又剛好會被 attachActiveRuns 的 catch
+// 吞掉——測試照樣全綠，功能靜默失效。下面的重連測試就是為了讓這件事會被抓到。
 vi.mock('../../lib/askApi', () => ({
   streamAsk: (...a: unknown[]) => streamAsk(...a),
   streamReport: vi.fn(),
-  getConversation: vi.fn(async () => []),
+  streamReportRun: (...a: unknown[]) => streamReportRun(...a),
+  getActiveReportRuns: (...a: unknown[]) => getActiveReportRuns(...(a as [])),
+  cancelReportRun: vi.fn(async () => {}),
+  getConversation: (...a: unknown[]) => getConversation(...(a as [])),
+  getQaVersions: vi.fn(async () => []),
+  stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
   sendFeedback: vi.fn(async () => {}),
+  getReportTemplates: vi.fn(async () => []),
 }))
 import AskPage from './AskPage'
 
-afterEach(() => vi.clearAllMocks())
+afterEach(() => {
+  vi.clearAllMocks()
+  getActiveReportRuns.mockResolvedValue([])
+  getConversation.mockResolvedValue([])
+})
 
 function immediate(events: RawSSEEvent[]) {
   return (async function* () { for (const e of events) yield e })()
+}
+/**
+ * 「還在跑」的串流：吐完事件後**不結束**。
+ *
+ * 用 immediate 模擬進行中的生成是錯的——串流一結束而沒有 done/error，controller 會
+ * 判定連線掉了並自動重連（那正是它該做的事），測試看到的就是重連耗盡後的錯誤態。
+ */
+function live(events: RawSSEEvent[]) {
+  return (async function* () {
+    for (const e of events) yield e
+    await new Promise(() => { /* 永不 resolve：模擬生成仍在進行 */ })
+  })()
 }
 /** 網址探針：MemoryRouter 沒有真實 location 可讀，靠它把 query string 攤進 DOM。 */
 function LocationProbe() {
@@ -78,6 +106,52 @@ test('?q= 預填 composer、不自動送出，並把 q 從網址清掉', async (
   // q 用完即丟：留著的話，重整會拿舊題目蓋掉使用者已經編輯的內容
   // （toHaveTextContent('') 恆真，故直接比對 textContent）
   await waitFor(() => expect(screen.getByTestId('search-params').textContent).toBe(''))
+})
+
+// ── 重整/開新分頁後接回背景生成 ──────────────────────────────────────────
+// 這是本功能的整個重點：生成的真相在伺服器，不在這個分頁的記憶體。載入對話時問一下
+// /api/report-runs，有進行中的就把進度框接回來——重整、開新分頁、換裝置都一樣。
+test('載入對話時自動接回仍在背景生成的研報', async () => {
+  getConversation.mockResolvedValue([{
+    id: 'qa1', question: '台積電評價', answer: '答案', created_at: null, feedback: null,
+    sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [],
+    stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false,
+  }])
+  getActiveReportRuns.mockResolvedValue([
+    { run_id: '11111111-2222-4333-8444-555555555555', qa_id: 'qa1', question: '台積電評價', elapsed_ms: 90_000 },
+  ])
+  streamReportRun.mockImplementation(() => live([
+    { event: 'run', data: { run_id: '11111111-2222-4333-8444-555555555555', elapsed_ms: 90_000 } },
+    { event: 'outline', data: { title: 'T', sections: [
+      { position: 0, section_key: 'exec_summary', heading: '執行摘要' },
+      { position: 1, section_key: 'analysis', heading: '競爭格局' },
+    ] } },
+    { event: 'status', data: { stage: 'writing' } },
+    { event: 'section_draft', data: { position: 0, heading: '執行摘要', markdown: '…' } },
+  ]))
+
+  wrap('/ask?c=123e4567-e89b-12d3-a456-426614174000')
+
+  expect(await screen.findByText('深度研報生成中')).toBeInTheDocument()
+  // 重連是拿 run_id 去接既有 run，不是重新發動一次生成
+  await waitFor(() => expect(streamReportRun).toHaveBeenCalledWith(
+    '11111111-2222-4333-8444-555555555555', expect.anything(),
+  ))
+  // elapsed_ms 回推起始時刻 → 已耗時顯示 01:30 而不是從 00:00 重數
+  expect(await screen.findByText('01:30')).toBeInTheDocument()
+  expect(await screen.findByText(/撰寫研報中（2\/2）/)).toBeInTheDocument()
+})
+
+test('沒有進行中的 run 就不畫進度框', async () => {
+  getConversation.mockResolvedValue([{
+    id: 'qa1', question: 'Q', answer: 'A', created_at: null, feedback: null,
+    sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [],
+    stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false,
+  }])
+  wrap('/ask?c=123e4567-e89b-12d3-a456-426614174000')
+  expect(await screen.findByText('Q')).toBeInTheDocument()
+  expect(screen.queryByText('深度研報生成中')).toBeNull()
+  expect(streamReportRun).not.toHaveBeenCalled()
 })
 
 test('離題→Callout warning', async () => {

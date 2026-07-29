@@ -83,19 +83,71 @@ test('searching_web 設 webUsed', () => {
 
 test('研報：start→status→done', () => {
   let s = submit()
-  s = askReducer(s, { type: 'report-start', id: 't1' })
-  expect(s.turns[0].report.status).toBe('generating')
+  s = askReducer(s, { type: 'report-start', id: 't1', startedAt: 1000 })
+  expect(s.turns[0].report).toMatchObject({ status: 'generating', startedAt: 1000 })
   s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'status', data: { stage: 'writing' } } })
-  expect(s.turns[0].report).toMatchObject({ pct: 50, stageText: '撰寫研報中…' })
+  expect(s.turns[0].report.stage).toBe('writing')
   s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'done', data: { report_id: 'rp1', title: 'T', download_url: '/api/report-doc/rp1/pdf' } } })
-  expect(s.turns[0].report).toMatchObject({ status: 'done', pct: 100, downloadUrl: '/api/report-doc/rp1/pdf', title: 'T' })
+  expect(s.turns[0].report).toMatchObject({ status: 'done', downloadUrl: '/api/report-doc/rp1/pdf', title: 'T' })
 })
 
 test('研報 error 事件 → error 態', () => {
   let s = submit()
-  s = askReducer(s, { type: 'report-start', id: 't1' })
+  s = askReducer(s, { type: 'report-start', id: 't1', startedAt: 0 })
   s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'error', data: { detail: '找不到足夠資料生成研報' } } })
   expect(s.turns[0].report).toMatchObject({ status: 'error', errorText: '找不到足夠資料生成研報' })
+})
+
+test('研報 run 事件記下 handle 與起始時刻（重整後接回的依據）', () => {
+  let s = submit()
+  s = askReducer(s, { type: 'report-start', id: 't1', startedAt: 5000 })
+  s = askReducer(s, {
+    type: 'report-event', id: 't1', startedAt: 2000,
+    event: { event: 'run', data: { run_id: 'run-9', elapsed_ms: 8000 } },
+  })
+  expect(s.turns[0].report).toMatchObject({ runId: 'run-9', startedAt: 2000, status: 'generating' })
+})
+
+test('研報 outline 建分母、section_draft/section_skipped 依 position 標記', () => {
+  let s = submit()
+  s = askReducer(s, { type: 'report-start', id: 't1', startedAt: 0 })
+  s = askReducer(s, {
+    type: 'report-event', id: 't1',
+    event: { event: 'outline', data: { title: 'T', sections: [
+      { position: 0, section_key: 'exec_summary', heading: '執行摘要' },
+      { position: 1, section_key: 'analysis', heading: '面向A' },
+      { position: 2, section_key: 'risk_outlook', heading: '風險與展望' },
+    ] } },
+  })
+  expect(s.turns[0].report.sections.map(x => x.state)).toEqual(['pending', 'pending', 'pending'])
+
+  s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'section_draft', data: { position: 0 } } })
+  s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'section_skipped', data: { position: 1 } } })
+  expect(s.turns[0].report.sections.map(x => x.state)).toEqual(['done', 'skipped', 'pending'])
+
+  // 同一節重送（n_unknown 重生／M8 修正一輪都會再吐一次 section_draft）不可重覆計數
+  s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'section_draft', data: { position: 0 } } })
+  expect(s.turns[0].report.sections.filter(x => x.state === 'done')).toHaveLength(1)
+})
+
+test('空 outline＝後端退單次生成，必須清掉章節分母', () => {
+  let s = submit()
+  s = askReducer(s, { type: 'report-start', id: 't1', startedAt: 0 })
+  s = askReducer(s, {
+    type: 'report-event', id: 't1',
+    event: { event: 'outline', data: { title: null, sections: [{ position: 0, section_key: 'x', heading: 'H' }] } },
+  })
+  s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'outline', data: { title: null, sections: [] } } })
+  // 留著的話畫面會有一份永遠寫不完的章節清單，進度條卡在 n/N。
+  expect(s.turns[0].report.sections).toEqual([])
+})
+
+test('done/error 清掉 runId（run 已結束，不該再能取消）', () => {
+  let s = submit()
+  s = askReducer(s, { type: 'report-start', id: 't1', startedAt: 0 })
+  s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'run', data: { run_id: 'r', elapsed_ms: 0 } } })
+  s = askReducer(s, { type: 'report-event', id: 't1', event: { event: 'error', data: { detail: 'x' } } })
+  expect(s.turns[0].report.runId).toBeNull()
 })
 
 test('feedback / reset / load', () => {
@@ -119,12 +171,12 @@ test('turnFromHistory 離題轉 notice、qaId null', () => {
 
 test('report-cancel：generating→offered；done 不被還原', () => {
   let s = submit()
-  s = askReducer(s, { type: 'report-start', id: 't1' })
+  s = askReducer(s, { type: 'report-start', id: 't1', startedAt: 0 })
   s = askReducer(s, { type: 'report-cancel', id: 't1' })
   expect(s.turns[0].report.status).toBe('offered')
 
   let s2 = submit()
-  s2 = askReducer(s2, { type: 'report-start', id: 't1' })
+  s2 = askReducer(s2, { type: 'report-start', id: 't1', startedAt: 0 })
   s2 = askReducer(s2, { type: 'report-event', id: 't1', event: { event: 'done', data: { report_id: 'r', title: 'T', download_url: '/api/report-doc/r/pdf' } } })
   s2 = askReducer(s2, { type: 'report-cancel', id: 't1' })
   expect(s2.turns[0].report.status).toBe('done')

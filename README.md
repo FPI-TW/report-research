@@ -355,7 +355,10 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | GET | `/api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`，所有 offset 以此為準）；帶 `?chunk=N` 一併回該段的字元區間供高亮 | |
 | GET | `/api/reading/{file_hash}/similar` | 相似研報（向量近鄰，`limit` 預設 6、上限 20） | |
 | POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3） | SSE |
-| POST | `/api/report` | 生成深度研報（併發由 `REPORT_SEMAPHORE`，預設 1 序列化） | SSE |
+| POST | `/api/report` | 生成深度研報（**跑在背景任務**，斷線不中止；併發由 `REPORT_SEMAPHORE`，預設 1 序列化） | SSE |
+| GET | `/api/report-runs?conversation_id=` | 該對話仍在背景生成的研報（前端載入時據此接回進度） | |
+| GET | `/api/report-runs/{run_id}/stream` | 重連背景 run：先重播已發生的事件、再接直播 | SSE |
+| POST | `/api/report-runs/{run_id}/cancel` | 主動中止背景生成（關分頁不等於取消） | |
 | GET | `/api/report-doc/{id}/pdf` | 下載生成的深度研報 PDF（缺檔即由 markdown 重建） | |
 | GET | `/api/report/{id}/full` | 原始報告 metadata（供 modal） | |
 | GET | `/api/report/{id}/file` | 原始報告檔（PDF inline / 其他 attachment） | |

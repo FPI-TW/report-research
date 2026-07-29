@@ -23,6 +23,7 @@ from web.env_loader import load_env_file  # noqa: E402
 load_env_file(Path(__file__).resolve().parents[1] / ".env")
 
 from web import deps  # noqa: E402
+from web import report_runs  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
 from web.routers import report_file as report_file_routes  # noqa: E402
@@ -79,6 +80,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # 研報生成改為背景任務後不再隨請求結束（web/report_runs.py），收工時必須自己
+        # 取消並等它們標記 report_run——否則會留下 in-flight 的列擋住同一冪等鍵。
+        await report_runs.shutdown()
         if not warmup_task.done():
             warmup_task.cancel()
             try:

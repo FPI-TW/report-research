@@ -6,11 +6,21 @@ import type { RawSSEEvent } from './readSSE'
 
 const streamAsk = vi.fn()
 const streamReport = vi.fn()
+const streamReportRun = vi.fn()
+const cancelReportRun = vi.fn(async () => {})
+// 必須列齊 controller 用到的每一個匯出：vi.mock 整包取代模組，漏掉的是 undefined，
+// 而呼叫它拋的 TypeError 常被 fail-open 的 catch 吞掉 → 測試綠、功能死。
 vi.mock('./askApi', () => ({
   streamAsk: (...a: unknown[]) => streamAsk(...a),
   streamReport: (...a: unknown[]) => streamReport(...a),
+  streamReportRun: (...a: unknown[]) => streamReportRun(...a),
+  getActiveReportRuns: vi.fn(async () => []),
+  cancelReportRun: (...a: unknown[]) => cancelReportRun(...(a as [])),
   getConversation: vi.fn(),
+  getQaVersions: vi.fn(async () => []),
+  stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
   sendFeedback: vi.fn(async () => {}),
+  getReportTemplates: vi.fn(async () => []),
 }))
 import { useAskController } from './useAskController'
 
@@ -77,7 +87,14 @@ test('latest-wins：第二次 submit 後，第一串流的後續事件被丟棄'
   expect(turns[1].answer).toBe('B1')
 })
 
-test('研報生成中送出新問題：舊輪研報從 generating 還原為 offered', async () => {
+/**
+ * 生成改為背景執行後，「送出新問題」不再等於「放棄研報」。
+ *
+ * 舊行為（此測試的前身）是把舊輪研報打回 offered——當時是誠實的，因為斷線真的會中止
+ * 生成。現在斷的只是訂閱，伺服器照跑；若還沿用舊行為，畫面會宣稱研報沒生成，
+ * 但十分鐘後它其實好端端地躺在 report_doc 裡。
+ */
+test('研報生成中送出新問題：舊輪研報維持 generating（背景照跑）', async () => {
   const askGen = gated([
     { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1', offer_report: true, report_title: 'T' } },
   ])
@@ -98,10 +115,56 @@ test('研報生成中送出新問題：舊輪研報從 generating 還原為 offe
   await waitFor(() => expect(result.current.state.turns[0].report.status).toBe('generating'))
 
   act(() => result.current.submit('Q2'))
-  expect(result.current.state.turns[0].report.status).toBe('offered')
+  expect(result.current.state.turns[0].report.status).toBe('generating')
+  expect(cancelReportRun).not.toHaveBeenCalled()
 
   await act(async () => { askGen2.release(); await Promise.resolve() })
   await waitFor(() => expect(result.current.state.turns[1].phase).toBe('done'))
+})
+
+test('在另一輪開始生成：舊輪真的被取消（不只是斷訂閱）', async () => {
+  const askGen = gated([
+    { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1', offer_report: true, report_title: 'T' } },
+  ])
+  const reportGen = gated([{ event: 'run', data: { run_id: 'run-a', elapsed_ms: 0 } }])
+  streamAsk.mockReturnValueOnce(askGen.gen)
+  streamReport.mockReturnValueOnce(reportGen.gen).mockReturnValueOnce(gated([]).gen)
+
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
+  act(() => result.current.submit('Q1'))
+  await act(async () => { askGen.release(); await Promise.resolve() })
+  const turnId = result.current.state.turns[0].id
+  act(() => result.current.generateReport(turnId, 'Q1', 'qa1'))
+  await act(async () => { reportGen.release(); await Promise.resolve() })
+  await waitFor(() => expect(result.current.state.turns[0].report.runId).toBe('run-a'))
+
+  // 換一輪生成 → 舊 run 沒人看了，後端 semaphore 又是序列化的，留著只會排隊產廢稿
+  act(() => result.current.generateReport('other-turn', 'Q2', 'qa2'))
+  expect(cancelReportRun).toHaveBeenCalledWith('run-a')
+  expect(result.current.state.turns[0].report.status).toBe('offered')
+})
+
+test('cancelReport 同時斷訂閱與通知後端', async () => {
+  const askGen = gated([
+    { event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1', offer_report: true, report_title: 'T' } },
+  ])
+  const reportGen = gated([{ event: 'run', data: { run_id: 'run-b', elapsed_ms: 0 } }])
+  streamAsk.mockReturnValueOnce(askGen.gen)
+  streamReport.mockReturnValueOnce(reportGen.gen)
+
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
+  act(() => result.current.submit('Q1'))
+  await act(async () => { askGen.release(); await Promise.resolve() })
+  const turnId = result.current.state.turns[0].id
+  act(() => result.current.generateReport(turnId, 'Q1', 'qa1'))
+  await act(async () => { reportGen.release(); await Promise.resolve() })
+  await waitFor(() => expect(result.current.state.turns[0].report.runId).toBe('run-b'))
+
+  act(() => result.current.cancelReport(turnId, 'run-b'))
+  expect(cancelReportRun).toHaveBeenCalledWith('run-b')
+  expect(result.current.state.turns[0].report.status).toBe('offered')
 })
 
 test('問答串流提早結束但未收到 done 時，turn 會標成 error', async () => {

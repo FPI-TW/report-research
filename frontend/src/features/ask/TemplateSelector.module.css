@@ -1,63 +1,159 @@
 .wrap {
-  margin: 10px 0 4px;
+  margin: 14px 0 2px;
 }
 
 .label {
-  font-size: 12px;
-  color: var(--tf-text-3, #6e7e89);
-  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--tf-text-3);
+  text-transform: none;
+  margin-bottom: 8px;
 }
 
+/* 三欄等寬並排；窄畫面自動落成兩欄再一欄。縮圖是 3:4 直式紙張比例，
+   一眼就讀得出「這是一頁研報」。 */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+  gap: 10px;
 }
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
   text-align: left;
-  padding: 9px 11px;
-  border: 1px solid var(--tf-line, #e7e4dc);
-  border-radius: 8px;
-  background: var(--tf-surface, #fff);
+  padding: 8px;
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  background: var(--tf-surface);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  transition:
+    border-color var(--tf-dur-2) var(--tf-ease-standard),
+    box-shadow var(--tf-dur-2) var(--tf-ease-standard),
+    transform var(--tf-dur-1) var(--tf-ease-standard);
 }
 
 .card:hover {
-  border-color: var(--tf-gold-line, #ead9ae);
+  border-color: var(--tf-gold-line);
+  transform: translateY(var(--tf-lift-y));
 }
 
+.card:active { transform: scale(var(--tf-press)); }
+
 .selected {
-  border-color: var(--tf-gold, #ae7415);
-  background: var(--tf-gold-panel, #fbf7ec);
-  box-shadow: inset 0 0 0 1px var(--tf-gold, #ae7415);
+  border-color: var(--tf-gold-strong);
+  box-shadow: 0 0 0 1px var(--tf-gold-strong), var(--tf-shadow-xs);
 }
+
+/* ── 版面骨架縮圖 ─────────────────────────────────────────────────────────
+   純 CSS：無圖檔、無請求，改模板樣式時對照著看得出來。留白/欄數/配色三件事就足以
+   分辨這三款；細到字級的擬真沒有意義（縮圖只有 120px 寬）。 */
+.preview {
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 3 / 4;
+  width: 100%;
+  padding: 7px;
+  gap: 5px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--tf-border-weak);
+}
+
+.pvHeader { height: 3px; border-radius: 2px; flex: none; }
+.pvTitle { height: 7px; border-radius: 2px; flex: none; }
+.pvKpi { display: flex; gap: 3px; flex: none; }
+.pvKpi > span { flex: 1; height: 9px; border-radius: 2px; }
+.pvBody { display: flex; gap: 5px; flex: 1; min-height: 0; }
+/* 內文用重複線性漸層畫「字行」：一個節點就是一整欄文字，DOM 保持極小。 */
+.pvCol {
+  flex: 1;
+  border-radius: 1px;
+  background: repeating-linear-gradient(
+    to bottom,
+    currentColor 0 1.5px,
+    transparent 1.5px 4px
+  );
+}
+
+/* 國際投行經典：密集雙欄、鎏金標題列、KPI 卡整排 */
+.previewClassic { background: #fffdf8; }
+.previewClassic .pvHeader { background: var(--tf-gold-strong); }
+.previewClassic .pvTitle { background: var(--tf-ink-deep); width: 78%; }
+.previewClassic .pvKpi > span { background: var(--tf-gold-tint); box-shadow: inset 0 0 0 1px var(--tf-gold-line); }
+.previewClassic .pvBody { color: #b9c2c9; }
+
+/* 現代簡潔：單欄、留白充足、無 KPI 排、細灰標題列 */
+.previewModern { padding: 10px 9px; gap: 8px; }
+.previewModern .pvHeader { background: var(--tf-border); width: 34%; }
+.previewModern .pvTitle { background: var(--tf-text-2); width: 62%; height: 6px; }
+.previewModern .pvKpi { display: none; }
+.previewModern .pvBody { color: #c9d0d6; }
+.previewModern .pvBody .pvCol:last-child { display: none; }
+.previewModern .pvCol {
+  background: repeating-linear-gradient(to bottom, currentColor 0 1.5px, transparent 1.5px 6px);
+}
+
+/* 私銀深色：深底、鎏金強調、雙欄 */
+.previewDark { background: #1b2733; box-shadow: inset 0 0 0 1px #0e1720; }
+.previewDark .pvHeader { background: var(--tf-gold-strong); width: 46%; }
+.previewDark .pvTitle { background: #f0e2c0; width: 72%; }
+.previewDark .pvKpi > span { background: rgba(174, 116, 21, 0.35); box-shadow: inset 0 0 0 1px var(--tf-gold-strong); }
+.previewDark .pvBody { color: #4a5b6b; }
+
+/* registry 新增模板但還沒畫骨架時的通用樣子（不破版、不擋選擇） */
+.previewGeneric .pvHeader { background: var(--tf-border); }
+.previewGeneric .pvTitle { background: var(--tf-text-3); width: 70%; }
+.previewGeneric .pvKpi > span { background: var(--tf-border-weak); }
+.previewGeneric .pvBody { color: #c9d0d6; }
+
+/* ── 卡片文字 ────────────────────────────────────────────────────────── */
+.meta { display: flex; flex-direction: column; gap: 2px; padding: 0 2px 2px; }
 
 .name {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 5px;
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--tf-ink-deep, #163a54);
+  color: var(--tf-text-1);
+  line-height: 1.3;
 }
 
 .badge {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
-  color: var(--tf-gold-text, #8a5a0f);
-  background: var(--tf-gold-panel, #fbf7ec);
-  border: 1px solid var(--tf-gold-line, #ead9ae);
-  border-radius: 4px;
-  padding: 0 5px;
-  line-height: 15px;
+  color: var(--tf-gold-text);
+  background: var(--tf-gold-tint);
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 14px;
+  flex: none;
 }
 
 .desc {
   font-size: 11px;
-  color: var(--tf-text-3, #6e7e89);
+  line-height: 1.45;
+  color: var(--tf-text-3);
 }
+
+/* 選取標記：右上角鎏金圓點。邊框變色對色弱使用者不夠明確，加一個形狀線索。 */
+.tick {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-gold-strong);
+  color: var(--tf-on-gold);
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.selected .tick { display: flex; }

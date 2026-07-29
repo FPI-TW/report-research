@@ -39,6 +39,39 @@ export function streamReport(body: { question: string; conversation_id?: string;
   return readSSE('/api/report', body, signal)
 }
 
+// ── 背景研報 run（重整/開新分頁後接回進度）─────────────────────────────────
+// 生成跑在伺服器的背景任務上，HTTP 只是訂閱端：斷線不再中止生成。詳見 web/report_runs.py。
+
+/** 重連一個進行中的 run：先收重播、再接直播。POST 是因為 readSSE 只走 POST（見該檔）。 */
+export function streamReportRun(runId: string, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {
+  return readSSE(`/api/report-runs/${encodeURIComponent(runId)}/stream`, undefined, signal, 'GET')
+}
+
+export const activeReportRunSchema = z.object({
+  run_id: z.string(),
+  qa_id: z.string().nullish(),
+  question: z.string(),
+  elapsed_ms: z.number().default(0),
+})
+export type ActiveReportRun = z.infer<typeof activeReportRunSchema>
+
+/** 某對話目前仍在背景生成的研報。載入對話時據此自動接回進度框。 */
+export function getActiveReportRuns(conversationId: string): Promise<ActiveReportRun[]> {
+  return getJSON(
+    `/api/report-runs?conversation_id=${encodeURIComponent(conversationId)}`,
+    z.object({ runs: z.array(activeReportRunSchema) }),
+    { cache: 'no-store' },
+  ).then((r) => r.runs)
+}
+
+/** 主動中止背景生成。關掉分頁不再等於取消，這是唯一的停止手段。 */
+export async function cancelReportRun(runId: string): Promise<void> {
+  await fetch(`/api/report-runs/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+    credentials: 'same-origin',
+  })
+}
+
 // M9b：可選研報渲染模板（registry）。前端模板選擇器資料源。
 export const reportTemplateSchema = z.object({
   id: z.string(),

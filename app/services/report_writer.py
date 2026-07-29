@@ -731,6 +731,7 @@ async def open_run(
 
     **終端失敗態（failed/cancelled）視為可重試**：原子重置回 queued 並回
     ``is_new=True``，沿用同一 run_id（request_key 唯一，不可另起新列）。
+    久無心跳（`report_run_stale_seconds`）的 in-flight run 同樣重置——理由見下方註解。
     """
     new_id = str(uuid.uuid4())
     async with SessionFactory() as session:
@@ -770,16 +771,27 @@ async def open_run(
         # 前次嘗試的 report_section 列刻意保留：upsert_section 以 (run_id, position)
         # 覆寫本次會用到的位置,殘留的高位次只是稽核痕跡（生產無讀取路徑），且是日後
         # 要做「續跑」時唯一的素材（checkpoint 恆為 NULL——它只在全節 final 後才寫）。
+        #
+        # 「久無心跳的 in-flight run」同樣視為可重試。研報改為背景執行後（web/report_runs.py），
+        # 生成不再綁在 SSE 連線上——好處是重整不中斷，代價是行程被殺時**沒有任何人**會把
+        # run 標成 cancelled（那段 except CancelledError 根本不會執行）。少了這個條件，
+        # 一次 OOM／deploy 就讓該（問題×對話×語言）組合的研報永久生不出來，而使用者看到
+        # 的只是「相同研報請求正在處理或尚未完成」——一個永遠不會結束的「正在處理」。
+        # updated_at 由每節收尾的 checkpoint 寫入推進（見 draft_report._record）。
+        stale = get_settings().report_run_stale_seconds
         retried = (
             await session.execute(
                 text(
                     "UPDATE research.report_run "
                     "SET status = 'queued', error_detail = NULL, checkpoint = NULL, "
                     "    current_revision_id = NULL, updated_at = now() "
-                    "WHERE request_key = :rk AND status IN ('failed', 'cancelled') "
-                    "RETURNING id"
+                    "WHERE request_key = :rk AND ("
+                    "      status IN ('failed', 'cancelled')"
+                    "   OR (status <> 'completed'"
+                    "       AND updated_at < now() - make_interval(secs => :stale))"
+                    ") RETURNING id"
                 ),
-                {"rk": request_key},
+                {"rk": request_key, "stale": stale},
             )
         ).first()
         if retried is not None:
@@ -1414,9 +1426,17 @@ async def draft_report(
 ) -> AsyncIterator[tuple[str, object]]:
     """M7 逐節生成核心編排（async generator）。
 
-    yield：('status',{'stage':'writing'|'searching_web'})／('token',str)／
-    ('section_draft',{...})／('document_revision',{...})，最後
+    yield：('status',{'stage':'outlining'|'writing'|'searching_web'|'verifying'})／
+    ('outline',{title,sections:[{position,section_key,heading,kind}]})／('token',str)／
+    ('section_draft',{...})／('section_skipped',{position,heading})／
+    ('document_revision',{...})，最後
     ('__final__',{markdown,manifest,sources,n_evidence,...})。
+
+    **前端進度條吃的是 outline + section_draft/section_skipped**：`outline` 給出分母
+    （這一份要寫幾節）、後兩者給出分子。少了 outline，前端只知道「writing」而不知道
+    要寫多久，畫面上就是一根不定量掃光條停在那裡好幾分鐘——使用者讀成「當掉了」。
+    section_skipped 不可省：被預算前瞻砍掉的節永遠不會有 section_draft，前端若只數
+    section_draft 就會永遠停在 n/N 差幾節而看似卡死。
 
     兩種提前結束（硬邊界＝是否已 yield 過內容 token）：
     - ('__fallback__', None)：**尚未吐任何內容 token**時就無法續（大綱失敗／首個骨架節
@@ -1431,6 +1451,9 @@ async def draft_report(
     """
     s = get_settings()
     draft_model = draft_model or s.report_model
+    # 大綱規劃是 run-level 檢索之後第一個長靜默窗（planner 模型往返）。不先報一聲
+    # 「規劃章節中」，前端會停在「深度檢索研報中…」直到第一節寫完。
+    yield ("status", {"stage": "outlining"})
     outline = await plan_outline(question, context, locale=locale)
     if outline is None:
         yield ("__fallback__", None)
@@ -1449,6 +1472,19 @@ async def draft_report(
             )
         await _audit(advance_status, run_id, "drafting")
 
+    # 大綱出鏡：這是前端唯一能得知「這份研報要寫幾節、每節叫什麼」的來源。刻意排在
+    # status:writing 之前，讓進度條一進入撰寫階段就已經有分母可用。
+    yield (
+        "outline",
+        {
+            "title": outline.get("title"),
+            "sections": [
+                {"position": sec["position"], "section_key": sec["key"],
+                 "heading": sec["heading"], "kind": sec["kind"]}
+                for sec in secs
+            ],
+        },
+    )
     yield ("status", {"stage": "writing"})
 
     ledger = EvidenceLedger()
@@ -1498,6 +1534,7 @@ async def draft_report(
             if run_id:
                 await _audit(upsert_section, run_id, pos, status="failed")
             await _record(elapsed)
+            yield ("section_skipped", {"position": pos, "heading": sec["heading"]})
             continue
         if action == "stop":
             logger.error(
@@ -1574,6 +1611,7 @@ async def draft_report(
             await _record(elapsed)
             if sec["kind"] == "analysis":
                 logger.warning("動態子節草稿耗盡 → 跳過 pos=%s（%s）", pos, sec["heading"])
+                yield ("section_skipped", {"position": pos, "heading": sec["heading"]})
                 continue
             if not produced:
                 logger.warning("骨架節 %s 於首個內容 token 前耗盡 → 退單次", sec["key"])
@@ -1619,6 +1657,9 @@ async def draft_report(
         yield ("__failed__", {"detail": "研報章節生成失敗"})
         return
 
+    # 逐節迴圈結束後還有 n_unknown 重生與 M8 grounding，兩者合計可達數分鐘且完全沒有
+    # 逐節事件——不報一聲，進度條會在最後一節寫完後靜止到 rendering 才動。
+    yield ("status", {"stage": "verifying"})
     if run_id:
         await _audit(advance_status, run_id, "verifying")  # M8 前 no-op pass-through
 

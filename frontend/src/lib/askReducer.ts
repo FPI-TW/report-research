@@ -1,20 +1,34 @@
-import type { AskEvent, ReportEvent, AskStage, Source, ExtSource, ConversationTurn, QaVersion } from './askSchemas'
-import { reportProgress } from './reportProgress'
+import type { AskEvent, ReportEvent, AskStage, ReportStage, Source, ExtSource, ConversationTurn, QaVersion } from './askSchemas'
 
 const HTTP = /^https?:\/\//i
 
+/** 大綱裡的一節。state 是這一節在生成流程中的下場。 */
+export interface ReportSection {
+  position: number
+  heading: string
+  state: 'pending' | 'done' | 'skipped'
+}
+
 export interface ReportState {
   status: 'idle' | 'offered' | 'generating' | 'done' | 'error'
-  pct: number
-  stageText: string
   downloadUrl: string | null
   title: string | null
   errorText: string | null
   // 換皮重出（M9b）需要 report_id。從 downloadUrl 反解字串太脆（路徑一改就靜默失效），
   // 直接從 done 事件帶下來。
   reportId: string | null
+  // ── 進度（pct/剩餘時間由 lib/reportProgress 的純函式從這三個欄位算出，不存冗餘）──
+  stage: ReportStage | null
+  sections: ReportSection[]
+  /** 背景生成的起始時刻（ms epoch）。由 run 事件的 elapsed_ms 回推，故重整後仍正確。 */
+  startedAt: number | null
+  /** 背景 run 的 handle：重整後靠它接回，也是「取消生成」的對象。 */
+  runId: string | null
 }
-const idleReport: ReportState = { status: 'idle', pct: 0, stageText: '', downloadUrl: null, title: null, errorText: null, reportId: null }
+const idleReport: ReportState = {
+  status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null,
+  stage: null, sections: [], startedAt: null, runId: null,
+}
 
 export interface TurnVersion {
   answer: string
@@ -82,8 +96,9 @@ export type AskAction =
   | { type: 'submit'; id: string; question: string; startedAt: number }
   | { type: 'ask-event'; id: string; event: AskEvent }
   | { type: 'ask-end'; id: string }
-  | { type: 'report-start'; id: string }
-  | { type: 'report-event'; id: string; event: ReportEvent }
+  | { type: 'report-start'; id: string; startedAt: number }
+  // startedAt 由 controller 依 run 事件的 elapsed_ms 回推後傳入（reducer 保持純函式）。
+  | { type: 'report-event'; id: string; event: ReportEvent; startedAt?: number }
   | { type: 'report-fail'; id: string; errorText: string }
   | { type: 'report-decline'; id: string }
   | { type: 'report-cancel'; id: string }
@@ -137,13 +152,31 @@ function applyAsk(t: Turn, ev: AskEvent): Turn {
   }
 }
 
-function applyReport(t: Turn, ev: ReportEvent): Turn {
+function markSection(sections: ReportSection[], position: number, state: 'done' | 'skipped'): ReportSection[] {
+  // 依 position 標記而非累加計數：section_draft 會因 n_unknown 重生與 M8 修正一輪
+  // 對同一節重送，用計數器會超過總數、進度條爬到 100% 然後倒退。
+  return sections.map(s => (s.position === position ? { ...s, state } : s))
+}
+
+function applyReport(t: Turn, ev: ReportEvent, startedAt: number | null): Turn {
   switch (ev.event) {
-    case 'status': { const { pct, text } = reportProgress(ev.data.stage); return { ...t, report: { ...t.report, status: 'generating', pct, stageText: text } } }
+    case 'run': return { ...t, report: { ...t.report, status: 'generating', runId: ev.data.run_id, startedAt: startedAt ?? t.report.startedAt } }
+    case 'status': return { ...t, report: { ...t.report, status: 'generating', stage: ev.data.stage } }
+    // 空 sections＝後端退單次生成，明確要求前端放掉分母（見 app/services/report.py）。
+    // 不清掉的話畫面會留著一份永遠寫不完的章節清單。
+    case 'outline': return {
+      ...t,
+      report: {
+        ...t.report,
+        sections: ev.data.sections.map(s => ({ position: s.position, heading: s.heading, state: 'pending' as const })),
+      },
+    }
+    case 'section_draft': return { ...t, report: { ...t.report, sections: markSection(t.report.sections, ev.data.position, 'done') } }
+    case 'section_skipped': return { ...t, report: { ...t.report, sections: markSection(t.report.sections, ev.data.position, 'skipped') } }
     case 'sources': return t
     case 'token': return t
-    case 'done': return { ...t, report: { ...t.report, status: 'done', pct: 100, downloadUrl: ev.data.download_url, title: ev.data.title, errorText: null, reportId: ev.data.report_id } }
-    case 'error': return { ...t, report: { ...t.report, status: 'error', errorText: ev.data.detail } }
+    case 'done': return { ...t, report: { ...t.report, status: 'done', stage: null, downloadUrl: ev.data.download_url, title: ev.data.title, errorText: null, reportId: ev.data.report_id, runId: null } }
+    case 'error': return { ...t, report: { ...t.report, status: 'error', errorText: ev.data.detail, runId: null } }
   }
 }
 
@@ -165,14 +198,14 @@ export function askReducer(state: AskState, action: AskAction): AskState {
         return { ...t, phase: 'error', errorText: '查詢逾時或失敗' }
       }),
     }
-    case 'report-start': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { status: 'generating', pct: 0, stageText: '準備生成研報…', downloadUrl: null, title: t.reportTitle, errorText: null, reportId: null } })) }
-    case 'report-event': return { turns: mapTurn(state.turns, action.id, t => applyReport(t, action.event)) }
-    case 'report-fail': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...t.report, status: 'error', errorText: action.errorText } })) }
+    case 'report-start': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...idleReport, status: 'generating', title: t.reportTitle, startedAt: action.startedAt } })) }
+    case 'report-event': return { turns: mapTurn(state.turns, action.id, t => applyReport(t, action.event, action.startedAt ?? null)) }
+    case 'report-fail': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...t.report, status: 'error', errorText: action.errorText, runId: null } })) }
     case 'report-decline': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: idleReport, offerReport: false })) }
     case 'report-cancel': return {
       turns: mapTurn(state.turns, action.id, t =>
         t.report.status === 'generating'
-          ? { ...t, report: { status: 'offered', pct: 0, stageText: '', downloadUrl: null, title: t.reportTitle, errorText: null, reportId: null } }
+          ? { ...t, report: { ...idleReport, status: 'offered', title: t.reportTitle } }
           : t),
     }
     case 'feedback': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, feedback: action.value })) }
@@ -245,7 +278,9 @@ export function turnFromHistory(item: ConversationTurn): Turn {
     offerReport: false,
     reportTitle: null,
     feedback: item.feedback,
-    report: last ? { status: 'done', pct: 100, stageText: '', downloadUrl: last.download_url, title: last.title, errorText: null, reportId: last.report_id ?? null } : idleReport,
+    report: last
+      ? { ...idleReport, status: 'done', downloadUrl: last.download_url, title: last.title, reportId: last.report_id ?? null }
+      : idleReport,
     errorText: null,
     followups: item.followups,
     priorVersions: [],

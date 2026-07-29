@@ -7,7 +7,7 @@ import * as askApi from '../../lib/askApi'
 
 const rs = (over: Partial<ReportState>): ReportState => ({
   status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null,
-  stage: null, sections: [], startedAt: null, runId: null, ...over,
+  stage: null, sections: [], startedAt: null, runId: null, queuePosition: null, ...over,
 })
 
 // DeepReportPanel 的 offered 狀態嵌 TemplateSelector（useQuery）→ 需 QueryClientProvider。

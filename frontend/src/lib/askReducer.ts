@@ -24,10 +24,12 @@ export interface ReportState {
   startedAt: number | null
   /** 背景 run 的 handle：重整後靠它接回，也是「取消生成」的對象。 */
   runId: string | null
+  /** 併發滿載排隊中時的名次（null＝沒在排隊）。研報序列化，第二個人可能等十分鐘。 */
+  queuePosition: number | null
 }
 const idleReport: ReportState = {
   status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null,
-  stage: null, sections: [], startedAt: null, runId: null,
+  stage: null, sections: [], startedAt: null, runId: null, queuePosition: null,
 }
 
 export interface TurnVersion {
@@ -74,6 +76,8 @@ export interface Turn {
   versionIndex: number
   rootQaId: string | null
   versionCount: number
+  /** 併發滿載排隊中時的名次（null＝沒在排隊）。見 web/concurrency.py 的 queued 事件。 */
+  queuePosition: number | null
 }
 
 export function visibleAnswerView(turn: Turn): AnswerView {
@@ -117,7 +121,12 @@ function mapTurn(turns: Turn[], id: string, fn: (t: Turn) => Turn): Turn[] {
   return turns.map(t => (t.id === id ? fn(t) : t))
 }
 
-function applyAsk(t: Turn, ev: AskEvent): Turn {
+function applyAsk(turn: Turn, ev: AskEvent): Turn {
+  // 排隊狀態只由 queued 事件開啟，並由**任何**後續事件關閉。集中在這裡而不是逐 case
+  // 清，是因為漏掉一個 case 的症狀是「答案都串出來了畫面還寫著排隊中」——一種不會
+  // 報錯、只會讓人不信任介面的錯。
+  if (ev.event === 'queued') return { ...turn, queuePosition: ev.data.position ?? 0 }
+  const t = turn.queuePosition === null ? turn : { ...turn, queuePosition: null }
   switch (ev.event) {
     case 'status': {
       const stage = ev.data.stage
@@ -158,7 +167,16 @@ function markSection(sections: ReportSection[], position: number, state: 'done' 
   return sections.map(s => (s.position === position ? { ...s, state } : s))
 }
 
-function applyReport(t: Turn, ev: ReportEvent, startedAt: number | null): Turn {
+function applyReport(turn: Turn, ev: ReportEvent, startedAt: number | null): Turn {
+  // 同 applyAsk：queued 開、任何後續事件關。研報這條還多一個理由——queued 會進重播
+  // 緩衝（見 web/report_runs.py），重連時可能收到一個早已過期的排隊事件，靠後面接著
+  // 重播的 status/outline 自我修正。
+  if (ev.event === 'queued') {
+    return { ...turn, report: { ...turn.report, status: 'generating', queuePosition: ev.data.position ?? 0 } }
+  }
+  const t = turn.report.queuePosition === null
+    ? turn
+    : { ...turn, report: { ...turn.report, queuePosition: null } }
   switch (ev.event) {
     case 'run': return { ...t, report: { ...t.report, status: 'generating', runId: ev.data.run_id, startedAt: startedAt ?? t.report.startedAt } }
     case 'status': return { ...t, report: { ...t.report, status: 'generating', stage: ev.data.stage } }
@@ -189,6 +207,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
         sources: [], extSources: [], qaId: null, isOfftopic: false, noticeText: null,
         offerReport: false, reportTitle: null, feedback: null, report: idleReport, errorText: null,
         followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1,
+        queuePosition: null,
       }],
     }
     case 'ask-event': return { turns: mapTurn(state.turns, action.id, t => applyAsk(t, action.event)) }
@@ -226,7 +245,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
           ...t, priorVersions, versionIndex: priorVersions.length,
           phase: 'thinking', stages: ['understanding'], answer: '', thinkingMs: null,
           sources: [], extSources: [], followups: [], errorText: null, isOfftopic: false,
-          noticeText: null, versionCount: priorVersions.length + 1,
+          noticeText: null, versionCount: priorVersions.length + 1, queuePosition: null,
         }
       }),
     }
@@ -241,7 +260,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
         answer: '', thinkingMs: null, sources: [], extSources: [], qaId: null, retrievedCount: null,
         isOfftopic: false, noticeText: null, offerReport: false, reportTitle: null,
         feedback: null, report: idleReport, errorText: null, followups: [],
-        priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1,
+        priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1, queuePosition: null,
       })),
     }
     case 'load-versions': return {
@@ -290,5 +309,6 @@ export function turnFromHistory(item: ConversationTurn): Turn {
     versionIndex: item.version_count > 1 ? item.version_count - 1 : 0,
     rootQaId: item.root_qa_id,
     versionCount: item.version_count,
+    queuePosition: null,
   }
 }

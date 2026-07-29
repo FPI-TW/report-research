@@ -396,10 +396,10 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | GET | `/api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號（**不含全文**） | |
 | GET | `/api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`，所有 offset 以此為準）；帶 `?chunk=N` 一併回該段的字元區間供高亮 | |
 | GET | `/api/reading/{file_hash}/similar` | 相似研報（向量近鄰，`limit` 預設 6、上限 20） | |
-| POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3） | SSE |
+| POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3；滿載先送 `queued` 事件，排隊逾 `ASK_MAX_QUEUE` 回 429＋`Retry-After`） | SSE |
 | POST | `/api/ask/stop` | 使用者中斷串流時保存部分答案（`stopped=true`），回 `{qa_id}` | |
 | GET | `/api/qa/{root_qa_id}/versions` | 重生／編輯的版本鏈（**含已標 inactive 的舊版**，歷史 pager 要回看的正是它們） | |
-| POST | `/api/report` | 生成深度研報（**跑在背景任務**，斷線不中止；併發由 `REPORT_SEMAPHORE`，預設 1 序列化） | SSE |
+| POST | `/api/report` | 生成深度研報（**跑在背景任務**，斷線不中止；併發由 `REPORT_SEMAPHORE`，預設 1 序列化；滿載先送 `queued` 事件，排隊逾 `REPORT_MAX_QUEUE` 回 429＋`Retry-After`，**接回既有 run 豁免**） | SSE |
 | GET | `/api/report-runs?conversation_id=` | 該對話仍在背景生成的研報（前端載入時據此接回進度） | |
 | GET | `/api/report-runs/{run_id}/stream` | 重連背景 run：先重播已發生的事件（**不含 `token`**，且 `section_draft` 只保留 position/section_key/heading）、再接直播（未知 `run_id` 回 404） | SSE |
 | POST | `/api/report-runs/{run_id}/cancel` | 主動中止背景生成（關分頁不等於取消） | |
@@ -452,9 +452,9 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 >
 > `DB_STATEMENT_TIMEOUT_MS` 是這組裡唯一真的在擋事情的：沒有它，**單一失控查詢可以無上限佔住一條連線**（雷達目錄與 overview 分面在現規模下都是全表掃描）——這才是連線耗盡的成因，不是「併發使用者太多」。`DB_IDLE_TX_TIMEOUT_MS` **預設關是刻意的**：`scripts/sync_new_reports.py` 會在交易開著時 spawn `claude` CLI 與跑嵌入，開了它等於讓每 3 小時一次的生產同步靜默丟報告；要開就只在 web 的 `.env` 開（批次腳本不讀 repo 根的 `.env`）。
 
-**問答（`ASK_*`）** — 常用：`ASK_MAX_REPORTS`(15)、`ASK_MAX_PASSAGES`(4)、`ASK_MAX_CONTEXT_CHARS`(20000)、`ASK_RETRIEVAL_K`(15)、`ASK_DENSE_SCAN`(400)、`ASK_RELEVANCE_FLOOR`(0.62)、`ASK_STALE_AGE_DAYS`(180)、`ASK_MAX_STALE_REPORTS`(4)、`ASK_RECENCY_HALF_LIFE_DAYS`(90)、`ASK_INTENT_MODEL`(`claude-haiku-4-5`)。
+**問答（`ASK_*`）** — 常用：`ASK_MAX_REPORTS`(15)、`ASK_MAX_PASSAGES`(4)、`ASK_MAX_CONTEXT_CHARS`(20000)、`ASK_RETRIEVAL_K`(15)、`ASK_DENSE_SCAN`(400)、`ASK_RELEVANCE_FLOOR`(0.62)、`ASK_STALE_AGE_DAYS`(180)、`ASK_MAX_STALE_REPORTS`(4)、`ASK_RECENCY_HALF_LIFE_DAYS`(90)、`ASK_INTENT_MODEL`(`claude-haiku-4-5`)、`ASK_MAX_QUEUE`(20，排隊上限；0＝不限)。
 
-**深度研報（`REPORT_*`）** — `REPORT_MODEL`(`claude-sonnet-5`)、`REPORT_DEEP_K`(30)、`REPORT_MAX_REPORTS`(25)、`REPORT_MAX_PASSAGES`(6)、`REPORT_MAX_CONTEXT_CHARS`(40000)、`REPORT_TIMEOUT`(600s)、`REPORT_THIN_COVERAGE`(8)、`REPORT_ENABLE_WEB`(1)、`REPORTS_DIR`(`data/reports`)、`REPORT_SEMAPHORE`(1)、`REPORT_MIN_CITED`(3)。
+**深度研報（`REPORT_*`）** — `REPORT_MODEL`(`claude-sonnet-5`)、`REPORT_DEEP_K`(30)、`REPORT_MAX_REPORTS`(25)、`REPORT_MAX_PASSAGES`(6)、`REPORT_MAX_CONTEXT_CHARS`(40000)、`REPORT_TIMEOUT`(600s)、`REPORT_THIN_COVERAGE`(8)、`REPORT_ENABLE_WEB`(1)、`REPORTS_DIR`(`data/reports`)、`REPORT_SEMAPHORE`(1)、`REPORT_MAX_QUEUE`(5)、`REPORT_MIN_CITED`(3)。
 
 **忠實度查核（M8）** — `REPORT_FAITHFULNESS_ENABLED`(1)、`ASK_FAITHFULNESS_ENABLED`(1)、`REPORT_FAITHFULNESS_MIN`(0.9)、`ASK_FAITHFULNESS_SAMPLE_RATE`(1.0)、`FAITHFULNESS_MODEL`(未設時沿用 `ASK_INTENT_MODEL`)、`FAITHFULNESS_TIMEOUT`(60s)。
 
@@ -466,7 +466,9 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 >
 > 本表僅列常用鍵；`app/config.py` 共約 80 個旋鈕鍵，未列出的還有 `REPORT_RENDERER`(`typst`)、`REPORT_SECTIONED_ENABLED`(1)、`REPORT_DRAFT_BUDGET`(900s)、`REPORT_SECTION_*`、`REPORT_RUN_STALE_SECONDS`(1800s)、`ASK_RERANK_*`、`REPORT_MMR_*`、`QA_AGENTIC_*`、`TRUSTED_DATA_ENABLED` 等，以該檔為準。
 >
-> **集中化還沒做完，找旋鈕時別只翻 `app/config.py`**：`SSE_HEARTBEAT_INTERVAL`（`web/deps.py`）、`REPORT_SEMAPHORE`（`web/routers/report.py` 的 `_REPORT_SEMAPHORE`，由背景任務持有）、`REPORT_RUN_RETENTION_SECONDS`（`web/report_runs.py`）、`ASK_FOLLOWUP_MODEL`／`ASK_FOLLOWUP_TIMEOUT`（`app/services/followups.py`）、`REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`（`app/services/retrieval_pipeline.py`）、`REPORT_MARK_DB_URL`（`app/services/db.py`）、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`（`web/auth.py`）、`EVAL_JUDGE_MODEL`（`eval/judge.py`）仍是就地 `os.getenv`。另外 `/api/ask` 的併發上限 3 是**寫死**在 `web/routers/ask.py` 的 `_ASK_SEMAPHORE`，根本沒有對應環境變數。
+> **集中化還沒做完，找旋鈕時別只翻 `app/config.py`**：`SSE_HEARTBEAT_INTERVAL`（`web/deps.py`）、`REPORT_SEMAPHORE`／`REPORT_MAX_QUEUE`（`web/routers/report.py` 的 `_REPORT_GATE`，由背景任務持有）、`ASK_MAX_QUEUE`（`web/routers/ask.py` 的 `_ASK_GATE`）、`REPORT_RUN_RETENTION_SECONDS`（`web/report_runs.py`）、`ASK_FOLLOWUP_MODEL`／`ASK_FOLLOWUP_TIMEOUT`（`app/services/followups.py`）、`REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`（`app/services/retrieval_pipeline.py`）、`REPORT_MARK_DB_URL`（`app/services/db.py`）、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`（`web/auth.py`）、`EVAL_JUDGE_MODEL`（`eval/judge.py`）仍是就地 `os.getenv`。另外 `/api/ask` 的併發上限 3 仍是**寫死**在 `web/routers/ask.py` 的 `_ASK_GATE`（沒有對應環境變數；可調的只有排隊上限 `ASK_MAX_QUEUE`）。
+>
+> **兩個上限都是 per-process**：`web/server.py` 啟動時以 `web/concurrency.py` 的 `assert_single_worker()` fail-closed 擋下多 worker（讀 `--workers` / `WEB_CONCURRENCY` / gunicorn `-w`；讀不到就放行並在啟動日誌印出有效上限）。要提高吞吐不能靠加 worker。
 
 ---
 

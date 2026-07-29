@@ -58,6 +58,11 @@ _SLIM_KEEP = {
     "section_draft": ("position", "section_key", "heading"),
     "document_revision": ("revision_id", "revision"),
 }
+# `queued`（併發滿載、正在排隊）刻意**兩張表都不列**＝原樣進重播。
+# 直覺會把它當「即時才有意義」丟進 _VOLATILE，但那樣做，在還沒輪到就重整的人重連後
+# 會收到空重播——正是這個事件要消滅的「連上了卻什麼都沒有」。留著則自我修正：排隊
+# 期間重連的人看到「排隊中」（仍是實情），已經開跑的 run 其重播裡 queued 後面必然接著
+# status/outline，前端 reducer 收到任何後續事件就會清掉排隊狀態（見 askReducer）。
 # 佇列終止標記。None／空 tuple 都可能是合法 payload，故用獨一物件。
 _SENTINEL = object()
 
@@ -152,6 +157,26 @@ async def _pump(run: _Run, events: AsyncIterator[tuple[str, object]]) -> None:
         _publish(run, "error", {"detail": "研報生成發生錯誤"})
     finally:
         _finish(run)
+
+
+def active_run_for(
+    *,
+    question: str,
+    conversation_id: str | None,
+    template_id: str | None,
+    locale: str | None,
+) -> str | None:
+    """這組參數目前是否已有進行中的 run（＝`start_or_attach` 會接回而非新開）。
+
+    存在的理由只有一個：`/api/report` 的滿載 429 必須豁免「接回」這條路徑。接回不需要
+    併發名額（生成早就在跑），把它一起擋掉就變成「重整一下，自己快好的研報反而被拒」。
+    """
+    key = _dedup_key(question, conversation_id, template_id, locale)
+    run_id = _BY_KEY.get(key)
+    if run_id is None:
+        return None
+    run = _RUNS.get(run_id)
+    return run_id if run is not None and run.active else None
 
 
 def start_or_attach(

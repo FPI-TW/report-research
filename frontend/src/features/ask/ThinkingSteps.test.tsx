@@ -8,8 +8,8 @@ function turn(over: Partial<Turn>): Turn {
     id: 't', question: 'Q', phase: 'thinking', stages: ['understanding', 'retrieved'], webUsed: false,
     retrievedCount: null, answer: '', thinkingMs: null, startedAt: 0, sources: [], extSources: [],
     qaId: null, isOfftopic: false, noticeText: null, offerReport: false, reportTitle: null,
-    feedback: null, report: { status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null, stage: null, sections: [], startedAt: null, runId: null },
-    errorText: null, followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1,
+    feedback: null, report: { status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null, stage: null, sections: [], startedAt: null, runId: null, queuePosition: null },
+    errorText: null, followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1, queuePosition: null,
     ...over,
   }
 }
@@ -51,4 +51,16 @@ test('stages 含 evaluating 時顯示評估補查步驟', () => {
 test('stages 不含 evaluating 時不顯示評估補查步驟', () => {
   render(<ThinkingSteps turn={turn({ phase: 'thinking', stages: ['understanding', 'retrieved'] })} />)
   expect(screen.queryByText('評估補查')).toBeNull()
+})
+
+test('排隊中顯示「排隊中…」與原因，而不是假裝在思考', () => {
+  render(<ThinkingSteps turn={turn({ phase: 'thinking', queuePosition: 3 })} />)
+  expect(screen.getByText('排隊中（第 3 位）…')).toBeInTheDocument()
+  expect(screen.getByText(/伺服器同時處理量已滿/)).toBeInTheDocument()
+  expect(screen.queryByText('思考中…')).toBeNull()
+})
+
+test('排在第一位不報名次（「第 1 位」只是雜訊）', () => {
+  render(<ThinkingSteps turn={turn({ phase: 'thinking', queuePosition: 1 })} />)
+  expect(screen.getByText('排隊中…')).toBeInTheDocument()
 })

@@ -3,22 +3,24 @@
 
 從 web/server.py 拆出（第三步）。
 
-_ASK_SEMAPHORE 是模組級狀態，限制同時提問數（每次提問 spawn 一個 claude CLI
+_ASK_GATE 是模組級狀態，限制同時提問數（每次提問 spawn 一個 claude CLI
 子程序）。它定義在本模組、由本模組的 handler 使用；server.py 以
-`from web.routers import ask` 單一路徑匯入，故全程只有一個 semaphore 實例——
-若被兩條不同 import 路徑載入會分裂成兩個、併發上限失效。
+`from web.routers import ask` 單一路徑匯入，故全程只有一個閘門實例——
+若被兩條不同 import 路徑載入會分裂成兩個、併發上限失效。**它同時是 per-process
+的**：多 worker 下上限會直接翻倍，故啟動時有 fail-closed 守門，見 web/concurrency.py。
 
 answer_question、log_stopped_qa、_valid_uuid、_sse、_with_heartbeat 走 web.deps
 （測試 patch web.deps.X 即涵蓋）。
 """
-import asyncio
 import logging
+import os
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from web import deps
+from web.concurrency import ConcurrencyGate
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +46,18 @@ class AskRequest(BaseModel):
 
 
 # 每次提問會 spawn 一個 claude CLI 子程序（CPU-bound 機器），限制同時數避免區網多人同問雪崩。
-_ASK_SEMAPHORE = asyncio.Semaphore(3)
+# ASK_MAX_QUEUE 是排隊人數上限（超過即 429，不是排到天荒地老）。預設 20 刻意寬鬆：
+# 上限 3、單題約 60–90s，排到第 21 位表示已是堆積而非尖峰，那時讓人帶著 Retry-After
+# 早點知道，好過在一條開好的 SSE 上等十分鐘。設 0 可退回舊行為（無限排隊）。
+_ASK_GATE = ConcurrencyGate(3, name="ask", max_queue=int(os.getenv("ASK_MAX_QUEUE", "20")))
 
 
 @router.post("/api/ask")
 async def ask(req: AskRequest):
     """RAG 問答：檢索 → 串流回答（帶 [n] 行內引用）。回 text/event-stream。
 
-    事件序：sources（引用清單）→ 多筆 token（文字片段）→ done（實際引用的報告 id）。
+    事件序：（滿載時先 queued）→ sources（引用清單）→ 多筆 token（文字片段）→
+    done（實際引用的報告 id）。
     """
     question = (req.question or "").strip()
     if not question:
@@ -77,9 +83,21 @@ async def ask(req: AskRequest):
         raise HTTPException(status_code=400, detail="edit_of 格式不正確")
     if req.request_id is not None and not deps._valid_uuid(req.request_id):
         raise HTTPException(status_code=400, detail="request_id 格式不正確")
+    # 唯一能回 429 的位置：SSE 一旦送出 200 就改不了 status code（見 ConcurrencyGate.queue_full）。
+    if _ASK_GATE.queue_full():
+        raise HTTPException(
+            status_code=429,
+            detail="問答排隊人數已滿，請稍後再試",
+            headers={"Retry-After": "30"},
+        )
 
     async def gen():
-        async with _ASK_SEMAPHORE:
+        # 排隊要先說。這段跑在回應開始串流之後，若直接 await 到取得名額，使用者看到的
+        # 是「連線建立但永遠沒有 token」——與伺服器卡死完全無從分辨。
+        if _ASK_GATE.would_queue():
+            yield deps._sse("queued", _ASK_GATE.queue_event())
+        await _ASK_GATE.acquire()
+        try:
             try:
                 async for event, payload in deps.answer_question(
                     question,
@@ -95,6 +113,8 @@ async def ask(req: AskRequest):
             except Exception:
                 logger.exception("ask failed")
                 yield deps._sse("error", {"detail": "問答服務發生錯誤"})
+        finally:
+            _ASK_GATE.release()
 
     return StreamingResponse(
         deps._with_heartbeat(gen()),

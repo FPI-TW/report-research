@@ -15,7 +15,7 @@
 | — | 語料管線：抽取 → Claude 標註 → BGE-M3 嵌入 → pgvector | `scripts/extract_all.py`、`tag_all_cli.py`、`ingest_all.py` |
 | — | 混合檢索：dense（HNSW 餘弦）＋ lexical（`pg_trgm`）分層融合 | `app/services/retrieval.py`、`store.py`、`textnorm.py` |
 | **M0** | 設定集中化 | `app/config.py`（frozen dataclass ＋ `os.getenv`，**非 pydantic-settings**；約 80 鍵） |
-| **M1** | 檢索 eval／RAGAS harness 與基準線 | `eval/`（`dataset`、`judge`、`ragas_metrics`、`run_ragas`） |
+| **M1** | 檢索 eval／RAGAS harness 與基準線（`eval/baselines/` 三份 RAGAS 基準線的 `thresholds_pass` 皆 False；`answer_relevancy` 自 M0 起就沒通過過絕對門檻——均值 0.61–0.64 對門檻 0.85。2026-07-29 診斷結論是**指標設計與門檻不相容，不是答案品質差**：反推問題被要求「具體」而題集問題是廣義的，餘弦結構性落在 0.70 附近；門檻要調到多少屬政策決定故未動，量測紀錄留在 `ANSWER_RELEVANCY_MIN` 旁，反推問題與逐題餘弦現已落進結果檔） | `eval/`（`dataset`、`judge`、`ragas_metrics`、`run_ragas`） |
 | **M1b** | 研報評測題集凍結 | `eval/report_questions.json`、`eval/report_metrics.py` |
 | **M2** | Cross-encoder rerank | `app/services/rerank.py` |
 
@@ -38,11 +38,12 @@
 |---|---|---|
 | — | 深度研報生成（深檢索 → 長文串流 → KPI／圖表 → PDF → `report_doc`） | `app/services/report.py`、`web/routers/report.py` |
 | **M6** | 研報檢索增強（多查詢 fan-out ＋ MMR） | `app/services/retrieval_pipeline.py` |
-| **M7** | **逐節生成**（大綱 → 逐節檢索與草稿 → 單次組裝），狀態機落庫 | `app/services/report_writer.py`、`report_run`／`report_section` |
-| **M8** | 忠實度查核：a 地基／b 研報逐節 grounding ＋修正一輪／c 問答抽查 | `app/services/faithfulness.py` |
+| **M7** | **逐節生成**：大綱 → 逐節檢索與草稿 → 逐節 grounding 與低分節修正一輪（M8b，`verifying` 階段）→ 單次組裝，狀態機落庫 | `app/services/report_writer.py`、`report_run`／`report_section` |
+| **M8** | 忠實度查核：a 地基／b 研報逐節 grounding ＋修正一輪／c 問答抽查；查核結果**已有讀取路徑**（監控頁「忠實度查核」卡片＋`--claims <id>` 逐條下鑽），不再只寫不看 | `app/services/faithfulness.py`、`web/routers/monitor.py`（`/api/progress` 的 `evaluation`）、`frontend/src/features/monitor/FaithfulnessPanel.tsx`、`scripts/eval_faithfulness.py` |
 | **M9a** | **Typst 渲染引擎**（成為主軌，WeasyPrint 降為 fail-open 回退） | `app/services/typst_render.py`、`app/templates/ib-classic.typ` |
 | **M9b** | 模板 registry ＋ `report_rendition` 不可變表 ＋ 零 LLM 換皮重出 ＋ 前端入口 | `app/templates/manifest.py`、`broker-modern.typ`、`privatebank-dark.typ`、`frontend/src/features/ask/RerenderControl.tsx` |
 | **M10** | 雙語（zh-Hant／en）：a 問答與研報輸出語言／b 前端切換／c PDF chrome | `app/services/locale.py` |
+| — | **背景執行 ＋ 逐節進度**：`POST /api/report` 只是訂閱端，斷線／重整不中止生成；`/api/report-runs*` 提供探詢、重連（重播＋直播）與主動取消 | `web/report_runs.py`、`web/routers/report.py`、`frontend/src/lib/reportProgress.ts` |
 
 ### 其他已上線
 
@@ -75,6 +76,7 @@
 - **批次解耦且互斥**：訊號、摘要、摘錄擷取皆為可續跑的獨立批次，但**不可併發**——搶 `claude` CLI 會讓擷取被大量誤標 `rejected`（不是資料壞、也不是模型壞）。
 - **邊界乾淨**：findb 只走唯讀 Serve API，不直連其 DB。
 - **fail-open 優先**：派生功能（rerank、忠實度、追問、摘錄、換皮）失敗一律降級而非阻斷主流程。
+- **背景 run 登錄表是行程內狀態，重啟即全滅**——`report_writer.open_run` 因此把「久無心跳（`REPORT_RUN_STALE_SECONDS`，預設 1800）的 in-flight run」也視為可重試。這兩者成對，拆一邊另一邊就是定時炸彈：一次 deploy 就會讓該冪等鍵永遠卡在「正在處理」。
 
 ## 暫不納入
 

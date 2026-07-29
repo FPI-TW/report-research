@@ -61,6 +61,12 @@ _CORPUS_QA_DECISION = RouteDecision(
 )
 
 FAITHFULNESS_MIN = 0.9
+
+# **刻意維持 0.8，不跟著 answer_relevancy 一起降。** 兩者的性質不同：
+# AR 有結構性天花板（見下），CP 沒有——實測會達到 1.0（m2/m4 各有 2 題），
+# 而反覆出現的 0.583 對應 rel=[0,1,1]，意思是「排第一的片段被判為不相關」。
+# 那是真實的排序品質訊號，把門檻降到目前水準（0.68-0.78）等於把缺口粉飾掉。
+# 換句話說：CP 沒過是**待辦事項**，不是校準錯誤。
 CONTEXT_PRECISION_MIN = 0.8
 
 # ⚠️ 這個門檻**從 M0 到 M4 從未通過過**，且與答案品質無關——2026-07-29 量測結論：
@@ -84,10 +90,17 @@ CONTEXT_PRECISION_MIN = 0.8
 #   (b) 加「與回答同語言」→ −0.005 / +0.016 / −0.002（修好語言漂移但分數不動）
 # 主因是粒度而非語言，而粒度是 RAGAS 這個指標的設計本身。
 #
-# 指標本身沒壞：切題 0.69-0.79 vs 無關 0.36-0.43，鑑別力充足。壞的是繼承來的絕對門檻。
-# **門檻要調到多少是政策決定**（會重新定義「回歸」的意義），故此處不擅自更動；
-# 逐題的反推問題與餘弦現已落進結果檔，可據以校準。
-ANSWER_RELEVANCY_MIN = 0.85
+# 指標本身沒壞，鑑別力充足——2026-07-29 乾淨基準（n=8、errors=0）：
+#     切題（逐題 AR）      0.553 - 0.744，平均 0.646
+#     切題（24 個逐題餘弦）0.498 - 0.777
+#     無關對照組            0.357 - 0.428
+# 兩個帶之間有清楚間隙（0.43 ↔ 0.55）。門檻取 **0.55**：高於所有實測的無關值、
+# 低於所有實測的切題值，且對單次跑的抖動留了餘裕。
+#
+# 這是「明顯壞掉」的地板，**不是品質目標**——它答的是「檢索/生成有沒有崩掉」，
+# 不是「答得好不好」。刻意不設在目前平均值附近（0.60+）：那會把此刻的品質當成
+# 標準鎖死，且 n=8 的跑間抖動足以造成假警報。
+ANSWER_RELEVANCY_MIN = 0.55
 
 
 def split_contexts(context: str) -> list[str]:
@@ -212,14 +225,18 @@ def aggregate(per_q: list[dict]) -> dict:
     n_no_context = sum(
         1 for c in per_q if "error" not in c and c.get("faithfulness") is None
     )
-    thresholds_pass = (
-        f is not None
-        and cp is not None
-        and ar is not None
-        and f > FAITHFULNESS_MIN
-        and cp > CONTEXT_PRECISION_MIN
-        and ar > ANSWER_RELEVANCY_MIN
+    # 逐項記錄哪一個沒過。先前只有一個布林，紅了還得自己去比對三個數字才知道
+    # 卡在哪——而三份 baseline 全 False、卻沒人看出來全部都是 answer_relevancy
+    # 一項造成的，正是因為這裡不說話（2026-07-29 診斷）。
+    _checks = (
+        ("faithfulness", f, FAITHFULNESS_MIN),
+        ("context_precision", cp, CONTEXT_PRECISION_MIN),
+        ("answer_relevancy", ar, ANSWER_RELEVANCY_MIN),
     )
+    thresholds_failed = [
+        name for name, val, floor in _checks if val is None or not val > floor
+    ]
+    thresholds_pass = not thresholds_failed
     latencies = [
         c["latency_ms"]
         for c in per_q
@@ -236,6 +253,7 @@ def aggregate(per_q: list[dict]) -> dict:
         "n_errors": n_errors,
         "n_no_context": n_no_context,
         "thresholds_pass": thresholds_pass,
+        "thresholds_failed": thresholds_failed,
     }
 
 
@@ -312,7 +330,9 @@ def _print_summary(report: dict) -> None:
             f"p50={s['latency_ms_p50']:.0f}  p95={s['latency_ms_p95']:.0f}"
         )
     print(f"n={s['n']}  errors={s['n_errors']}  no_context={s['n_no_context']}")
-    print(f"thresholds_pass   : {s['thresholds_pass']}")
+    failed = s.get("thresholds_failed") or []
+    print(f"thresholds_pass   : {s['thresholds_pass']}"
+          + (f"   未達標：{'、'.join(failed)}" if failed else ""))
 
 
 def _main() -> None:

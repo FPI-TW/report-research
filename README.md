@@ -353,7 +353,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 擷取刻意只跑高覆蓋子集（`--min-brokers 3` / `--min-reports 5` / `--top-n 50`），所以**「還沒有訊號」是常態不是錯誤**：有研報但尚未擷取時雷達回 200 `pending_extraction` 空狀態，完全查無研報才 404。
 
-> `extract_signals.py`、`extract_takeaways.py`、`generate_summaries.py` 三支批次都 spawn `claude` CLI，**不可併發**——互搶會讓擷取被大量誤標 `rejected`（不是資料壞、也不是模型壞）。一次只跑一支。
+> `extract_signals.py`、`extract_takeaways.py`、`generate_summaries.py`、`tag_all_cli.py`、`sync_new_reports.py` 五支批次都 spawn `claude` CLI，**不可併發**——互搶會讓擷取被大量誤標 `rejected`（不是資料壞、也不是模型壞）。互斥由 `scripts/_claude_lock.py` 的 `flock` 跨進程鎖強制：撞車時後啟動者印出持有者（腳本名／pid／起始時間）後以 `rc=75` 結束，**不會產出壞資料**。鎖綁在檔案描述子上，持有者行程無論怎麼死（含 SIGKILL）都會自動釋放，不需要手動清鎖檔。緊急繞過＝`CLAUDE_LOCK_DISABLE=1`（會印警告）。
 
 ---
 

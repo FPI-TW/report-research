@@ -22,6 +22,9 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
+
 SRC_LOCAL = ROOT / "研報自動匯入"
 TAGS_DIR = ROOT / "data" / "tags"
 ALL_JSONL = ROOT / "data" / "extracted" / "all.jsonl"
@@ -358,7 +361,10 @@ def main() -> None:
     args = ap.parse_args()
     if not args.delta and not args.all_local:
         ap.error("需指定 --delta <file> 或 --all-local")
-    asyncio.run(_run(args))
+    # 這支也 spawn claude（行內標註，見 _tag_via_cli），而且它跑在排程路徑上、是三小時
+    # 一輪的第一個競爭者——手動批次正在跑時它照樣會被 timer 叫起來。
+    with claude_cli_lock_or_exit("sync_new_reports"):
+        asyncio.run(_run(args))
 
 
 if __name__ == "__main__":

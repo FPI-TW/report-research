@@ -353,7 +353,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 擷取刻意只跑高覆蓋子集（`--min-brokers 3` / `--min-reports 5` / `--top-n 50`），所以**「還沒有訊號」是常態不是錯誤**：有研報但尚未擷取時雷達回 200 `pending_extraction` 空狀態，完全查無研報才 404。
 
-> `extract_signals.py`、`extract_takeaways.py`、`generate_summaries.py` 三支批次都 spawn `claude` CLI，**不可併發**——互搶會讓擷取被大量誤標 `rejected`（不是資料壞、也不是模型壞）。一次只跑一支。
+> `extract_signals.py`、`extract_takeaways.py`、`generate_summaries.py`、`tag_all_cli.py`、`sync_new_reports.py` 五支批次都 spawn `claude` CLI，**不可併發**——互搶會讓擷取被大量誤標 `rejected`（不是資料壞、也不是模型壞）。互斥由 `scripts/_claude_lock.py` 的 `flock` 跨進程鎖強制：撞車時後啟動者印出持有者（腳本名／pid／起始時間）後以 `rc=75` 結束，**不會產出壞資料**。鎖綁在檔案描述子上，持有者行程無論怎麼死（含 SIGKILL）都會自動釋放，不需要手動清鎖檔。緊急繞過＝`CLAUDE_LOCK_DISABLE=1`（會印警告）。
 
 ---
 
@@ -505,6 +505,7 @@ uv run python eval/run_report_eval.py  # M1b：研報結構化指標
 | NAS 增量同步 | systemd `report-mark-sync.timer`（每 3 小時）→ `scripts/sync_new_reports.sh`（drvfs 唯讀掛載 → rsync delta → 增量 extract/tag/ingest → 依序補摘要 → 補重點摘錄，後兩段吃本輪 `--hashes-file`）；手動測試 `make sync-once`。**這條鏈才是生產實際的入庫路徑**，全量三支腳本只在初次建庫或補跑歷史時用。見 [docs/nas_scheduled_sync_deployment.md](docs/nas_scheduled_sync_deployment.md) |
 | 對外存取 | Cloudflare Tunnel ＋ nginx 邊緣（`deploy/docker-compose.yml`，無入站埠）：`make up-edge` / `down-edge` / `edge-logs` / `edge-reload`，需 `deploy/.env` 的 `TUNNEL_TOKEN`。見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md) |
 | 深度研報 PDF | 需安裝 Noto Sans CJK 字型；`REPORT_TIMEOUT` 建議 ≥300s。見 [docs/qa_pdf_report_deployment.md](docs/qa_pdf_report_deployment.md) |
+| DB 備份 | systemd `report-mark-backup.timer`（每日 03:30）→ `scripts/db_backup.sh`：`pg_dump -Fc` **只備重建不回來的七張表**（`qa_log` / `report_doc` / `report_rendition` / `report_takeaway` / `report_signal` / `report_run` / `report_section`）到 NAS，保留 7 日 ＋ 4 週；手動跑一次 `make db-backup`。語料層刻意不備（重跑管線可還原）。**還原步驟與已知限制見 [docs/production_resilience.md](docs/production_resilience.md)** |
 
 對外請求路徑：`Browser ──HTTPS──▶ Cloudflare edge ──tunnel──▶ nginx:80 ──▶ uvicorn:8097`。
 

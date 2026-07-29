@@ -1,0 +1,28 @@
+[Unit]
+Description=廷豐智能研報 DB 備份（pg_dump -Fc 不可重建表 → NAS）
+# DB 是 Docker 容器 report-mark-postgres，非本 distro systemd 管理，故不宣告
+# After=；容器沒起來時腳本自己會以 pg_isready 判定並失敗（→ OnFailure）。
+After=network-online.target
+Wants=network-online.target
+# 備份失敗必須留痕。沒有人會每天去看 NAS 上有沒有新檔案，而「備份靜默停掉」的
+# 症狀要等到真的需要還原那天才會顯現——那時已經來不及了。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 必須硬編碼，不可用 %h：系統層 unit 的 %h 一律解析為 service manager 的
+# 家目錄（/root），**不受 User= 影響**。2026-07-28 的 sync unit 就是這樣連續
+# 10 輪失敗、整條管線停擺 24 小時。與同目錄其他 unit 對齊。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# 沿用 sync 的環境檔（REPORT_MARK_ROOT 在裡面）。備份專屬旋鈕（DOCKER_BIN、
+# REPORT_MARK_BACKUP_DIR 等）同樣寫在那個檔，見 report-mark-sync.env.example。
+EnvironmentFile=-/etc/default/report-mark-sync
+# 用 bash -c 而非 -lc：-l 會去讀登入 shell 的 profile，讓 PATH 來源變得不可預期。
+# 顯式 `bash <script>` 而非直接 exec 腳本：repo 裡的 .sh 在 git 是 100644（非
+# 執行位元），目前只因為 /mnt/c 是 drvfs、一律回報 777 才跑得起來。換個檔案系統
+# 就會變成 Permission denied，而那種失敗跟「腳本內部出錯」在 journal 裡長得很像。
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/db_backup.sh"'
+TimeoutStartSec=3600

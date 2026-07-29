@@ -19,7 +19,7 @@ COMPOSE := $(DOCKER) compose
         ingest ingest-lowio restore-durability align serve search \
         stats reset-db clean-data pipeline signals takeaways \
         up-edge down-edge edge-logs edge-reload \
-        sync-once
+        sync-once db-backup
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -81,13 +81,19 @@ restore-durability:  ## 還原 Postgres 耐久性設定（ingest-lowio 異常中
 align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 	uv run python scripts/align_findb_markets.py
 
+# ───── Claude CLI 批次（互斥）─────
+# 下面三支與 tag_all_cli.py／sync_new_reports.py 共五支都 spawn claude CLI，併發互搶
+# 會讓擷取被大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。互斥由
+# scripts/_claude_lock.py 的 flock 跨進程鎖強制，不再只靠這行註解：撞車時後啟動者
+# 會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，不會產出壞資料。
+# 排程（report-mark-sync.timer，每 3 小時）也走同一把鎖，所以手動開跑前不必再去
+# 確認 timer 有沒有在跑——真撞上就是不跑，不是跑壞。
 summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續傳，補 summary IS NULL）
 	uv run python scripts/generate_summaries.py
 
 signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 make schema）→ research.report_signal
 	uv run python scripts/extract_signals.py
 
-# 勿與 make signals 同時跑：多個批次併發搶 claude CLI 會讓擷取大量被誤判 rejected。
 takeaways:  ## 閱讀頁重點摘錄擷取（近 90 天，冪等可續傳；先 make schema）→ research.report_takeaway
 	uv run python scripts/extract_takeaways.py
 
@@ -130,3 +136,9 @@ clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）
 
 sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync）
 	bash scripts/sync_new_reports.sh
+
+# 只備「重建不回來」的七張表（qa_log / report_doc / rendition / takeaway / signal /
+# run / section）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
+# 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
+db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
+	bash scripts/db_backup.sh

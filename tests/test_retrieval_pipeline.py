@@ -96,10 +96,11 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
             def mark(self, name): self.marks.append(name)
 
         async def _fake_hybrid(session, q, vec, **kw):
-            return [(0, 0.5, "row")]
+            return [(0, 0.5, _row("c1")), (1, 0.71, _row("c2"))]
 
         def _fake_build(scored, **kw):
             seen["build_scored"] = scored
+            seen["build_kw"] = kw
             return (["S"], "CTX")
 
         def _fake_rerank(question, scored, *, top_m, timer=None, deadline=None):
@@ -123,6 +124,10 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["build_scored"], [(0, 0.99, "reranked")])  # 重排結果進 build_context
         self.assertIn("rerank", t.marks)
         self.assertIsNotNone(seen["deadline"])  # deadline 傳入供批次邊界提早中止
+        # rerank 實際套用 → 必須把「重排前的 fused」當 gate 快照傳給 build_context。
+        # 少了它，select_reports 就會拿 rerank 的 sigmoid [0,1] 分去比以 fused 尺度
+        # 校準的 ASK_RELEVANCE_FLOOR=0.62（量綱錯配，會誤剔 tier 0 高相關候選）。
+        self.assertEqual(seen["build_kw"]["gate_scores"], {"c1": 0.5, "c2": 0.71})
 
     async def test_rerank_timeout_expiry_falls_back_to_fused(self):
         import time as _time
@@ -130,7 +135,7 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         import app.services.retrieval_pipeline as rp
 
         seen = {}
-        hybrid_out = [(0, 0.5, "row")]
+        hybrid_out = [(0, 0.5, _row("c1"))]
 
         class _Session:
             async def __aenter__(self): return self
@@ -141,6 +146,7 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
 
         def _fake_build(scored, **kw):
             seen["build_scored"] = scored
+            seen["build_kw"] = kw
             return (["S"], "CTX")
 
         def _slow_rerank(question, scored, *, top_m, timer=None, deadline=None):
@@ -160,6 +166,8 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.3)  # 讓背景 task 收尾，避免 loop 關閉警告
         self.assertEqual(out, (["S"], "CTX"))
         self.assertIs(seen["build_scored"], hybrid_out)  # 逾時 → 用原 fused 序
+        # 逾時＝分數未被覆寫，gate 快照不傳（比 fused 等價，且讓「有無覆寫」可讀）
+        self.assertIsNone(seen["build_kw"]["gate_scores"])
 
     async def test_rerank_timeout_none_falls_back_to_module_default(self):
         import time as _time
@@ -167,7 +175,7 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         import app.services.retrieval_pipeline as rp
 
         seen = {}
-        hybrid_out = [(0, 0.5, "row")]
+        hybrid_out = [(0, 0.5, _row("c1"))]
 
         class _Session:
             async def __aenter__(self): return self

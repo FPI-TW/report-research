@@ -47,6 +47,15 @@ jobs:
       - name: 安裝 Python 與相依套件
         run: uv sync --frozen
 
+      # 研報 PDF 兩軌（Typst / WeasyPrint）都需要 CJK 字型，生產機也是這個前提
+      # （見 README 部署章節）。runner 預設沒有：PDF 照樣編得出來、頁數也正常，
+      # 但中文字位沒有 ToUnicode 對應，抽字全變 \x00 —— 於是「渲染後 PDF 真的含
+      # 免責」這類內容守門在 CI 上會變成假失敗（或被跳過而失去意義）。
+      - name: 安裝 CJK 字型（研報 PDF 內容測試需要）
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
       - name: pytest
         run: uv run pytest -q
 

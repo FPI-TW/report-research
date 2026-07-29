@@ -43,6 +43,13 @@ _SNAPSHOT = {
     "signal_done_30d": 1,
     "signal_total_30d": 10,
     "signal_latest": date(2026, 7, 16),
+    # M8 查核統計。handler 直接透傳這一塊，形狀由 _fetch_db_stats_snapshot 決定。
+    "evaluation": {
+        "qa": {"total": 40, "checked": 3, "degraded": 1, "below_min": 1,
+               "avg_score": 0.5634, "latest": "2026-07-28"},
+        "report": None,
+        "min_score": 0.9,
+    },
 }
 
 

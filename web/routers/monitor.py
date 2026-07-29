@@ -24,10 +24,14 @@ from pathlib import Path
 from fastapi import APIRouter
 from sqlalchemy import text
 
+from app.config import get_settings
 from web import auth, deps
 
 router = APIRouter()
 
+# 「待複核」的分數門檻沿用研報端的 REPORT_FAITHFULNESS_MIN，避免監控頁自成一套標準
+# 而與實際觸發修正的門檻對不上。
+_FAITHFULNESS_MIN = get_settings().report_faithfulness_min
 
 DB_STATS_CACHE_TTL_SECONDS = 5.0
 _DB_STATS_CACHE: dict[str, object] = {"data": None, "expires_at": 0.0}
@@ -115,8 +119,57 @@ async def _fetch_db_stats_snapshot() -> dict:
             )
         ).first()
 
+        # M8 忠實度查核（qa_log.evaluation / report_doc.evaluation）的健康度。
+        #
+        # **這裡看的不是覆蓋率**：問答端有取樣率、且只查含金融數字的回答，研報端
+        # 也可停用，所以「有 evaluation 的比例」天生就不該是 100%，拿它當訊號只會
+        # 一直亮紅燈（同 takeaway/signal 的教訓）。真正的訊號是另外三個：
+        #   degraded  judge 異常時 fail-open 會寫 degraded=true、分數留 None。
+        #             這條若衝高，代表查核**還在跑但全部沒查到東西**——最像
+        #             「一切正常」的故障樣態。
+        #   below_min 分數低於門檻＝該筆待人工複核（實測有 0.208 這種數字）。
+        #   latest    最後一次真的查核的日期；不再前進＝整條路徑停了。
+        #
+        # jsonb 一律用 jsonb_typeof 過濾後才 cast：畸形一列就讓監控頁 500，
+        # 而監控頁恰恰是故障時唯一還想得到要打開的東西。
+        _score = (
+            "CASE WHEN jsonb_typeof(evaluation->'faithfulness_score') = 'number' "
+            "THEN (evaluation->>'faithfulness_score')::float END"
+        )
+        _eval_cols = (
+            "count(*), count(evaluation), "
+            "count(*) FILTER (WHERE evaluation->'degraded' = 'true'::jsonb), "
+            f"count(*) FILTER (WHERE ({_score}) < :fmin), "
+            f"avg({_score}), "
+            "max(created_at::date) FILTER (WHERE evaluation IS NOT NULL)"
+        )
+        eval_rows = (
+            await session.execute(
+                text(
+                    f"SELECT 'qa' kind, {_eval_cols} FROM research.qa_log "
+                    "WHERE created_at > now() - interval '30 days' "
+                    "UNION ALL "
+                    f"SELECT 'report', {_eval_cols} FROM research.report_doc "
+                    "WHERE created_at > now() - interval '30 days'"
+                ),
+                {"fmin": _FAITHFULNESS_MIN},
+            )
+        ).all()
+
     def _d(v) -> str | None:
         return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else None)
+
+    evals = {
+        r[0]: {
+            "total": int(r[1]),
+            "checked": int(r[2]),
+            "degraded": int(r[3]),
+            "below_min": int(r[4]),
+            "avg_score": round(float(r[5]), 4) if r[5] is not None else None,
+            "latest": _d(r[6]),
+        }
+        for r in eval_rows
+    }
 
     return {
         "total_reports": total_reports,
@@ -133,6 +186,12 @@ async def _fetch_db_stats_snapshot() -> dict:
         "signal_done_30d": int(sig_done),
         "signal_total_30d": int(sig_total),
         "signal_latest": _d(sig_latest),
+        # M8 查核健康度（近 30 天），依來源分開：問答與研報的閘門與取樣各自不同。
+        "evaluation": {
+            "qa": evals.get("qa"),
+            "report": evals.get("report"),
+            "min_score": _FAITHFULNESS_MIN,
+        },
     }
 
 
@@ -346,5 +405,9 @@ async def progress():
             snapshot["signal_done_30d"], snapshot["signal_total_30d"],
             snapshot["signal_latest"],
         ),
+        # M8 查核健康度。這兩張表的 evaluation 欄從上線起就**零讀取路徑**
+        # （web/、scripts/、frontend/ 各 0 個消費端），等於查核結果只寫不看：
+        # judge 壞掉會以 degraded=true 靜默累積，低分回答也沒有任何地方會浮出來。
+        "evaluation": snapshot["evaluation"],
         **runtime,
     }

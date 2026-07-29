@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.templates import manifest  # noqa: E402
 
-_CONTRACT = ("report", "section-heading", "kpi-strip", "chart-figure")
+_CONTRACT = ("report", "section-heading", "kpi-strip", "chart-figure", "refs-block")
 
 _GOOD_CHART = '{"type":"bar","x":["Q1","Q2"],"series":[{"name":"營收","values":[1,2]}]}'
 _GOOD_KPI = (
@@ -75,6 +75,37 @@ class TemplateContractTests(unittest.TestCase):
                 ln for ln in src.splitlines() if not ln.strip().startswith("//")
             )
             self.assertNotIn("height: 100%", code, f"{spec.filename} 用了 height: 100%")
+
+    def test_chart_figure_accepts_span(self):
+        """`span` 是契約的一部分：emitter 一律帶 `span: true`（雙欄模板據此跨欄置頂）。
+
+        單欄模板可以忽略它，但**簽章必須接受**——否則換模板重出會編譯失敗，而那是
+        使用者按下「換版型」才會發現的錯。
+        """
+        for spec in manifest.list_templates():
+            src = (REPO_ROOT / "app" / "templates" / spec.filename).read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("span: false", src, f"{spec.filename} 的 chart-figure 缺 span 引數")
+
+    def test_no_noop_heading_show_rule(self):
+        """`show heading: it => it` 是 no-op，會讓 pandoc 轉出的 h2/h3 走 Typst 內建樣式
+        （與模板視覺語彙不搭、間距不足，且內建樣式可能走合成字形而撞上「繁中無斜體」
+        的硬限制）。三款模板都必須明確接管 level 2/3。
+        """
+        for spec in manifest.list_templates():
+            src = (REPO_ROOT / "app" / "templates" / spec.filename).read_text(
+                encoding="utf-8"
+            )
+            code = "\n".join(
+                ln for ln in src.splitlines() if not ln.strip().startswith("//")
+            )
+            self.assertNotIn("show heading: it => it", code, f"{spec.filename} 仍是 no-op")
+            for lvl in (2, 3):
+                self.assertIn(
+                    f"show heading.where(level: {lvl})", code,
+                    f"{spec.filename} 未接管 h{lvl}",
+                )
 
 
 class TemplateRenderTests(unittest.TestCase):

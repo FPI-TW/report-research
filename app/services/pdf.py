@@ -10,6 +10,7 @@ import html as _html
 import json
 import logging
 import re
+import unicodedata
 from html.parser import HTMLParser
 
 import markdown as _md
@@ -279,6 +280,131 @@ def strip_preamble(markdown_text: str) -> str:
     text = markdown_text or ""
     m = _TITLE_RE.search(text)
     return text[m.start():] if m else text
+
+
+# ── 巨型段落切分（兩軌共用，與 strip_preamble 同層：LLM markdown 的結構正規化）──
+#
+# 為什麼在這裡而不是在 prompt 裡：四份研報 prompt（單次 zh/en、逐節 zh/en）是手抄的
+# 平行副本，加規則要改四處且漏一處就機率性失守（2026-07-28 曾有一節 57.7% 語言跑掉）。
+# 段落長度是**決定性的排版問題**，用決定性的程式解，不靠模型配合。
+#
+# 門檻用「顯示寬度」而非句數：實測樣張有 4 句、2765 寬度單位（約 59 行）的段落——句數
+# 少不代表段落短。A4 雙欄單欄約 248pt、正文 10.5pt ⇒ 每行約 47 個寬度單位（西文字元
+# 算 1、CJK 算 2）。900 ≈ 19 行（開始難讀），目標 600 ≈ 13 行。
+_PARA_SPLIT_WIDTH = 900
+_PARA_TARGET_WIDTH = 600
+# 句界必須分中西兩支，**因為中文句子之間沒有空白**：
+# - CJK：`。！？` 之後（＋可選收尾引號）即為句界，不得要求空白，否則整段永遠只有一句
+#   （初版統一要求 `\s+`，中文段落因此完全切不動——測試 test_cjk_width_counted_double
+#   就是釘這件事）。
+# - 西文：要求 `\s+` 且下一句以大寫/引號開頭，才不會把 "Fig. 1" 切開；小數點
+#   （"US$18.4 billion"）後面沒有空白，天然排除。
+_RE_SENT_BOUNDARY = re.compile(
+    r"(?<=[。！？])(?:[”’」』）】]*)(?![。！？])"
+    r"|(?<=[.!?])(?:[\"'”’)\]]*)\s+(?=[A-Z“\"（(\[])"
+)
+# 這些縮寫後面的句點不是句末（切在這裡會產生半句）
+_ABBREV = frozenset(
+    "u.s. e.g. i.e. vs. no. inc. ltd. co. corp. fig. approx. etc. dr. mr. ms. "
+    "jan. feb. mar. apr. jun. jul. aug. sep. sept. oct. nov. dec.".split()
+)
+# 非散文區塊的行首標記（清單／標題／引用／表格／圍欄）——整塊跳過，不冒險
+_RE_NON_PROSE = re.compile(r"^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||```|~~~|\[\d+\])")
+
+
+def _display_width(s: str) -> int:
+    """粗估排版寬度：CJK/全角算 2，其餘算 1。不用 len()——中英混排差兩倍。"""
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def _sentences(para: str) -> list[str]:
+    """段落 → 句子列表（保留原空白，join 後與輸入等價）。"""
+    out: list[str] = []
+    last = 0
+    for m in _RE_SENT_BOUNDARY.finditer(para):
+        head = para[last:m.start()]
+        tail_word = re.search(r"(\S+)$", head)
+        if tail_word:
+            w = tail_word.group(1).lower()
+            # 縮寫、單字母首字母（"J. P. Morgan"）→ 不是句界
+            if w in _ABBREV or re.fullmatch(r"[a-z]\.", w):
+                continue
+        out.append(para[last:m.end()])
+        last = m.end()
+    if last < len(para):
+        out.append(para[last:])
+    return [s for s in out if s]
+
+
+def split_long_paragraphs(
+    markdown_text: str,
+    *,
+    max_width: int = _PARA_SPLIT_WIDTH,
+    target_width: int = _PARA_TARGET_WIDTH,
+) -> str:
+    """把過長的散文段落在句界切成數段。冪等（切完每段都低於門檻，再跑不變）。
+
+    只動「純散文段落」：圍欄內容（```kpi / ```chart / 任何 code block）、標題、清單、
+    引用、表格、`[n]` 引用行一律原樣保留——寧可漏切，不可切壞結構。切不出兩段以上
+    （例如整段只有一個句子）時原樣回傳。
+    """
+    text = markdown_text or ""
+    if not text.strip():
+        return text
+    out: list[str] = []
+    in_fence = False
+    fence_marker = ""
+    # 以空行分塊，但先把圍欄整段保護起來（圍欄內可能有空行）
+    for block in re.split(r"(\n[ \t]*\n)", text):
+        if not block or block.strip() == "":
+            out.append(block)
+            continue
+        lines = block.split("\n")
+        # 圍欄狀態機：跨塊追蹤（```chart 內部可能有空行）
+        if in_fence or any(
+            ln.lstrip().startswith(("```", "~~~")) for ln in lines
+        ):
+            for ln in lines:
+                stripped = ln.lstrip()
+                if not in_fence and stripped.startswith(("```", "~~~")):
+                    in_fence, fence_marker = True, stripped[:3]
+                elif in_fence and stripped.startswith(fence_marker):
+                    in_fence, fence_marker = False, ""
+            out.append(block)
+            continue
+        if any(_RE_NON_PROSE.match(ln) for ln in lines):
+            out.append(block)
+            continue
+        if _display_width(block) <= max_width:
+            out.append(block)
+            continue
+        sents = _sentences(block)
+        if len(sents) < 2:
+            out.append(block)  # 一個句子的長段落沒有安全切點
+            continue
+        chunks: list[str] = []
+        cur = ""
+        for i, s in enumerate(sents):
+            cur += s
+            cur_w = _display_width(cur)
+            nxt_w = _display_width(sents[i + 1]) if i + 1 < len(sents) else 0
+            # 前瞻再決定收段：只看「已達 target」會讓長句把段落撐得很不平均
+            # （實測 344/619/1429 三句 → 963|1429 兩段）。若加上下一句會大幅超標，
+            # 就在這裡收段，即使目前還沒達到 target。
+            if cur_w >= target_width or (
+                nxt_w and cur_w >= target_width * 0.5
+                and cur_w + nxt_w > target_width * 1.35
+            ):
+                chunks.append(cur.strip())
+                cur = ""
+        if cur.strip():
+            # 尾段太短就併回上一段，避免產生孤零零一句
+            if chunks and _display_width(cur) < target_width * 0.35:
+                chunks[-1] = chunks[-1] + " " + cur.strip()
+            else:
+                chunks.append(cur.strip())
+        out.append("\n\n".join(chunks) if len(chunks) > 1 else block)
+    return "".join(out)
 
 
 def chart_caption(spec: object, locale: str = DEFAULT_LOCALE) -> str:

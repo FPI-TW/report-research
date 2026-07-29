@@ -9,8 +9,13 @@ from __future__ import annotations
 import html as _html
 import math
 
-_W, _H = 640, 380
-_PAD_L, _PAD_R, _PAD_T, _PAD_B = 72, 28, 48, 64
+# 畫布尺寸決定「縮放後的實際字級」，不是美觀偏好而是可讀性下限：
+# 圖以 width:100% 嵌入，A4 雙欄的全寬置頂圖為 510pt → 縮放比 510/640 ≈ 0.80，
+# 故 SVG 內的 10px 字在 PDF 上是 8pt——正好是模板規範的「註腳 8pt 起」下限。
+# （改動前圖表被塞進 248pt 的單欄，縮放比 0.39，10px 字只剩 3.9pt，印不出來。）
+# _PAD_T 從 48 降到 22：標題已移到 figure caption，不必再為它留白。
+_W, _H = 640, 340
+_PAD_L, _PAD_R, _PAD_T, _PAD_B = 72, 28, 22, 64
 _PLOT_W = _W - _PAD_L - _PAD_R
 _PLOT_H = _H - _PAD_T - _PAD_B
 _BASE_Y = _PAD_T + _PLOT_H
@@ -209,14 +214,11 @@ def render_chart_svg(spec: dict) -> str:
     body = {"bar": _bar, "line": _line, "pie": _pie}[kind](spec)
     if not body:
         return ""
-    title = _esc(spec.get("title") or "")
-    title_el = (
-        f'<text x="{_W / 2:.0f}" y="26" text-anchor="middle" font-size="14" '
-        f'fill="#1a1a1a">{title}</text>'
-        if title
-        else ""
-    )
+    # 標題**不畫在 SVG 內**：兩軌都已把 spec['title'] 寫進 figure caption
+    # （chart_caption 是唯一來源），畫在 SVG 裡等於同一句話在圖上下各出現一次。
+    # 更關鍵的是縮放：SVG 內的 14px 標題在雙欄縮到 0.8 倍後只有 11pt，比 caption
+    # 的 8pt 大卻更模糊，兩者並排就是版面雜亂的來源之一。
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_W} {_H}" '
-        f'width="{_W}" height="{_H}">{_STYLE}{title_el}{body}</svg>'
+        f'width="{_W}" height="{_H}">{_STYLE}{body}</svg>'
     )

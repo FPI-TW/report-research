@@ -38,7 +38,7 @@ from app.services.evidence import manifest_from_answer
 from app.services.llm import SEARCH_EVENT, stream_completion
 from app.services.locale import DEFAULT_LOCALE, resolve_locale
 from app.services.pdf import render_report_pdf as _render_weasyprint
-from app.services.pdf import strip_preamble
+from app.services.pdf import split_long_paragraphs, strip_preamble
 from app.services.query_planner import plan_queries
 from app.services.report_gate import suggested_title
 from app.services.retrieval_pipeline import retrieve_context_multi
@@ -524,7 +524,10 @@ async def _finalize_sectioned(
 
     done 事件形狀與單次路徑逐字一致；persist=False（eval）帶 markdown＋context。
     """
-    markdown = payload.get("markdown") or ""
+    # 巨型段落切分：模型常寫出 40–60 行不換段的段落，雙欄窄欄下就是一整欄的墨。
+    # 在此（而非 prompt）處理的理由見 pdf.split_long_paragraphs。持久化的 markdown
+    # 也吃到切分——它是真相來源，PDF 只是它的渲染。
+    markdown = split_long_paragraphs(payload.get("markdown") or "")
     outline = payload.get("outline") if isinstance(payload.get("outline"), dict) else None
     title = (outline.get("title") if outline else None) or suggested_title(question, locale)
     final_sources = payload.get("sources") or []
@@ -822,7 +825,9 @@ async def generate_report(
         parts.append(chunk)
         yield ("token", chunk)
     # 根因去旁白：丟棄標題前的流程旁白，讓持久化 markdown 與全文檢視都乾淨（不僅 PDF）。
-    markdown = strip_preamble("".join(parts).strip())
+    # 接著切開巨型段落（見 _finalize_sectioned 的同一處理；兩條路徑必須一致，否則
+    # 「單次」與「逐節」出來的 PDF 段落密度會不一樣）。
+    markdown = split_long_paragraphs(strip_preamble("".join(parts).strip()))
 
     # M1b eval 模式：跳過渲染/落地/DB，done 直接帶 markdown 與檢索脈絡供離線指標計算；
     # web 層一律走預設 persist=True，此分支不影響線上事件契約。

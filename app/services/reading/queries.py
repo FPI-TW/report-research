@@ -41,6 +41,8 @@ class DocRow:
     report_id: str
     file_hash: str
     file_name: str
+    # 報告內部標題（scripts/generate_titles.py 產出）。None＝尚未產生，呈現層回退檔名。
+    title: Optional[str]
     file_path: Optional[str]
     market: Optional[str]
     source: Optional[str]
@@ -77,6 +79,7 @@ class SimilarRow:
 
     file_hash: str
     file_name: str
+    title: Optional[str]
     market: Optional[str]
     source: Optional[str]
     report_date: Optional[date]
@@ -87,7 +90,7 @@ class SimilarRow:
 
 
 _DOC_SQL = text(
-    "SELECT id::text, file_hash, file_name, file_path, market, source, "
+    "SELECT id::text, file_hash, file_name, title, file_path, market, source, "
     "       report_date, report_type, summary, instrument_types, "
     "       stock_targets, futures_targets, full_text "
     "FROM research.research_report "
@@ -108,16 +111,17 @@ async def fetch_doc(session: AsyncSession, file_hash: str) -> Optional[DocRow]:
         report_id=row[0],
         file_hash=row[1],
         file_name=row[2],
-        file_path=row[3],
-        market=row[4],
-        source=row[5],
-        report_date=row[6],
-        report_type=row[7],
-        summary=row[8],
-        instrument_types=list(row[9]) if row[9] else [],
-        stock_targets=list(row[10]) if row[10] else [],
-        futures_targets=list(row[11]) if row[11] else [],
-        full_text=row[12],
+        title=row[3],
+        file_path=row[4],
+        market=row[5],
+        source=row[6],
+        report_date=row[7],
+        report_type=row[8],
+        summary=row[9],
+        instrument_types=list(row[10]) if row[10] else [],
+        stock_targets=list(row[11]) if row[11] else [],
+        futures_targets=list(row[12]) if row[12] else [],
+        full_text=row[13],
     )
 
 
@@ -261,7 +265,8 @@ _SIMILAR_SQL = text(
         FROM best GROUP BY report_id
     )
     SELECT r.file_hash, r.file_name, r.market, r.source, r.report_date, r.summary,
-           a.matched_probes, a.score, (SELECT count(*) FROM probe) AS total_probes
+           a.matched_probes, a.score, (SELECT count(*) FROM probe) AS total_probes,
+           r.title
     FROM agg a JOIN research.research_report r ON r.id = a.report_id
     WHERE r.is_research IS NOT FALSE AND a.matched_probes >= :min_probes
     ORDER BY a.score DESC, a.best_dist ASC, r.report_date DESC NULLS LAST, r.file_name
@@ -303,6 +308,9 @@ async def fetch_similar(
         SimilarRow(
             file_hash=r[0],
             file_name=r[1],
+            # title 刻意 append 在既有欄位之後：本列以位移解包，插在中段會讓每個
+            # 索引無聲位移一格（見 rows.ChunkRow 的同款教訓）。
+            title=r[9],
             market=r[2],
             source=r[3],
             report_date=r[4],

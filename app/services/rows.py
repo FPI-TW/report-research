@@ -19,6 +19,7 @@ class ChunkRow(NamedTuple):
     report_id: str
     file_hash: str  # 閱讀頁網址鍵（report_id 於重新 ingest 會換新）
     file_name: str | None
+    title: str | None  # 報告內部標題（顯示用；NULL＝尚未產生，呼叫端回退 file_name）
     market: str | None
     source: str | None
     summary: str | None

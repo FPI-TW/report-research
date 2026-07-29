@@ -27,6 +27,7 @@ def make_row(report_id, file_name, market, content, report_date=None, distance=0
         report_id=report_id,
         file_hash=f"h-{report_id}",
         file_name=file_name,
+        title=None,
         market=market,
         source=None,
         summary=None,

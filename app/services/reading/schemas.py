@@ -75,6 +75,9 @@ class ReadingDoc(BaseModel):
     report_id: str
     file_hash: str
     file_name: str
+    # 報告內部標題（頁首顯示用）。None＝尚未產生，前端回退 file_name——批次是漸進補的，
+    # 任何時點都有一部分報告沒有標題，這是常態不是錯誤。
+    title: Optional[str] = None
     market: Optional[str] = None
     source: Optional[str] = None
     source_display: Optional[str] = None
@@ -121,6 +124,7 @@ class ReadingText(BaseModel):
 class SimilarReport(BaseModel):
     file_hash: str
     file_name: str
+    title: Optional[str] = None  # 同 ReadingDoc.title
     market: Optional[str] = None
     source: Optional[str] = None
     source_display: Optional[str] = None

@@ -364,6 +364,9 @@ class Source:
     market: str | None
     report_date: str | None
     is_latest: bool = False  # 該批來源中日期最新者（供前端標「最新」徽章）
+    # 報告內部標題（來源卡片顯示用）。None＝尚未產生，前端回退 file_name。
+    # 有預設值故舊 qa_log.sources（無此鍵）反序列化後照樣可用。
+    title: str | None = None
 
 
 @dataclass
@@ -373,6 +376,7 @@ class SelectedReport:
     market: object
     report_date: object
     passages: list  # list[str]，已依字數預算裁切
+    title: object = None  # 報告內部標題（顯示用，None＝尚未產生）
 
 
 def select_reports(
@@ -423,6 +427,7 @@ def select_reports(
             info = {
                 "passages": [],
                 "file_name": row.file_name,
+                "title": row.title,
                 "market": row.market,
                 "report_date": row.report_date,
                 # source／best_chunk_id 供 MMR 配額與代表 embedding。
@@ -525,6 +530,7 @@ def select_reports(
                 market=info["market"],
                 report_date=info["report_date"],
                 passages=kept,
+                title=info.get("title"),
             )
         )
     return selected
@@ -622,6 +628,7 @@ def _mmr_pick(
                 market=info["market"],
                 report_date=info["report_date"],
                 passages=kept,
+                title=info.get("title"),
             )
         )
         return True
@@ -734,6 +741,7 @@ def build_context(
                 file_name=sr.file_name,
                 market=sr.market,
                 report_date=rdate_s,
+                title=sr.title,
             )
         )
         head = f"[{i}] 報告：{sr.file_name}"
@@ -1338,8 +1346,9 @@ async def _answer_overview(
 
     sources = [
         Source(n=i, report_id=rid, file_name=fn, market=mk,
-               report_date=rd.isoformat() if hasattr(rd, "isoformat") else rd)
-        for i, (rid, fn, mk, rd) in enumerate(overview.samples, 1)
+               report_date=rd.isoformat() if hasattr(rd, "isoformat") else rd,
+               title=title)
+        for i, (rid, fn, mk, rd, title) in enumerate(overview.samples, 1)
     ]
     yield ("sources", [asdict(s) for s in sources])
     yield _status("retrieved", count=overview.total)

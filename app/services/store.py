@@ -158,9 +158,10 @@ async def list_reports(
 ):
     """瀏覽模式：依 sort（日期新→舊／舊→新）列出 metadata（無向量檢索）。
 
-    回傳 (total, rows)；rows 欄位：(report_id, file_hash, file_name, market, source,
-    report_date, report_type, instrument_types, relates_stock, relates_futures,
-    stock_targets, futures_targets, summary)。呼叫端以位移解包，欄序即契約。
+    回傳 (total, rows)；rows 欄位：(report_id, file_hash, file_name, title, market,
+    source, report_date, report_type, instrument_types, relates_stock,
+    relates_futures, stock_targets, futures_targets, summary)。
+    呼叫端以位移解包，欄序即契約。
     """
     conds: list[str] = []
     params: dict = {}
@@ -187,7 +188,7 @@ async def list_reports(
     rows = await session.execute(
         text(
             f"""
-            SELECT id::text, file_hash, file_name, market, source, report_date,
+            SELECT id::text, file_hash, file_name, title, market, source, report_date,
                    report_type, instrument_types, relates_stock, relates_futures,
                    stock_targets, futures_targets, summary
             FROM research.research_report
@@ -236,7 +237,8 @@ def _meta_columns(chunk_alias: str) -> str:
     插欄無聲指錯欄的實例。錯位不會拋錯，只會靜默給錯值。
     """
     a = chunk_alias
-    return f"""{a}.id::text, r.id::text, r.file_hash, r.file_name, r.market, r.source,
+    return f"""{a}.id::text, r.id::text, r.file_hash, r.file_name, r.title,
+               r.market, r.source,
                r.summary, r.report_date, r.report_type, r.instrument_types,
                r.relates_stock, r.relates_futures, r.stock_targets, r.futures_targets,
                {a}.chunk_index, {a}.content"""
@@ -254,8 +256,8 @@ async def search_chunks_meta(
 ):
     """掃描前 scan 個最近鄰片段，連同報告 metadata 回傳（供伺服器分組）。
 
-    回傳列：(chunk_id, report_id, file_hash, file_name, market, source, summary,
-             report_date, report_type, instrument_types, relates_stock,
+    回傳列：(chunk_id, report_id, file_hash, file_name, title, market, source,
+             summary, report_date, report_type, instrument_types, relates_stock,
              relates_futures, stock_targets, futures_targets, chunk_index,
              content, distance)，
     已依距離由近到遠排序（iterative scan 下為近似排序，呼叫端會重排）。

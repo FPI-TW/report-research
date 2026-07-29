@@ -210,11 +210,13 @@ from app.services.rows import ChunkRow  # noqa: E402
 
 
 def _row(cid, rid="R", content="內容"):
-    vals = [None] * 17
-    vals[0] = cid       # chunk_id
-    vals[1] = rid       # report_id
-    vals[15] = content  # content
-    vals[16] = 0.0      # distance
+    # 位置一律由 _fields 推導，不要寫死數字：ChunkRow 中段插欄（file_hash、title…）
+    # 時寫死的索引會無聲指向錯欄——scripts/eval_retrieval.py 曾因此讓評測分數變垃圾。
+    vals = [None] * len(ChunkRow._fields)
+    vals[ChunkRow._fields.index("chunk_id")] = cid
+    vals[ChunkRow._fields.index("report_id")] = rid
+    vals[ChunkRow._fields.index("content")] = content
+    vals[ChunkRow._fields.index("distance")] = 0.0
     return ChunkRow._make(vals)
 
 

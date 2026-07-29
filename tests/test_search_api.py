@@ -76,5 +76,48 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.total, 0)
 
 
+class BrowseListMappingTests(unittest.IsolatedAsyncioTestCase):
+    """/api/reports 以**位移**解包 store.list_reports 的列 —— 欄序即契約。
+
+    錯位不會拋錯（型別都是 str|None），只會讓標題欄印出券商名、來源欄印出標題之類
+    的靜默錯值。這裡把欄序釘死：一旦 SELECT 與解包不同步，這條就紅。
+    """
+
+    async def test_row_columns_map_to_the_right_fields(self):
+        from web import deps
+        from web.routers import search as search_mod
+
+        # 順序須與 store.list_reports 的 SELECT 一致
+        row = (
+            "rid-1", "h" * 64, "6247269925_260728_gs_umt.pdf", "低軌衛星業務擴展",
+            "TW", "goldman_sachs", None, "個股報告", ["equity"], True, False,
+            ["3491"], [], "摘要",
+        )
+
+        async def fake_list_reports(session, **kwargs):
+            return 1, [row]
+
+        orig_list, orig_factory = search_mod.list_reports, deps.SessionFactory
+        search_mod.list_reports = fake_list_reports
+        deps.SessionFactory = lambda: _FakeSession()
+        try:
+            resp = await search_mod.reports(
+                market=None, instrument_type=None, relates_stock=None,
+                relates_futures=None, report_type=None, sort="date_desc",
+                limit=50, offset=0,
+            )
+        finally:
+            search_mod.list_reports = orig_list
+            deps.SessionFactory = orig_factory
+
+        item = resp.items[0]
+        self.assertEqual(item.file_name, "6247269925_260728_gs_umt.pdf")
+        self.assertEqual(item.title, "低軌衛星業務擴展")
+        self.assertEqual(item.market, "TW")
+        self.assertEqual(item.report_type, "個股報告")
+        self.assertEqual(item.summary, "摘要")
+        self.assertEqual(item.stock_targets, ["3491"])
+
+
 if __name__ == "__main__":
     unittest.main()

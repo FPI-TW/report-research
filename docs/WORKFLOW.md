@@ -128,7 +128,7 @@ flowchart TD
 - **指令**：`make takeaways`＝`uv run python scripts/extract_takeaways.py`；旗標 `[--since-days 90] [--hashes-file PATH] [--workers 2] [--limit N] [--excerpt 24000] [--model M] [--reextract] [--dry-run]`
 - **成本**：預設 90 天約 549 篇、約 2-3 小時；全語料 14,575 篇要跑十天以上，故預設不跑全量
 - ⚠️ **接排程一律用 `--hashes-file`（它會忽略 `--since-days`），不要用 `--since-days 1`**：後者濾的是 `report_date`（研報自己標的日期）而非入庫時間，而 NAS 匯入的研報日期常比入庫日早——實測近 10 天入庫的 90 篇裡有 79 篇（88%）`report_date` 超過一天前，用天數接排程會**靜默**漏掉近九成新研報。`scripts/sync_new_reports.sh` 走的就是 `--hashes-file data/.sync_last_hashes`（本輪新入庫的 `file_hash` 清單）。
-- ⚠️ **不可與 `scripts/extract_signals.py`／`scripts/generate_summaries.py` 同時跑**：多個批次併發搶 `claude` CLI 會讓擷取大量被誤判 `rejected`（真因不是資料壞、也不是模型壞，是搶資源）。要跑就一次跑一支。
+- ⚠️ **不可與其他 `claude` CLI 批次同時跑**：併發搶 `claude` CLI 會讓擷取大量被誤判 `rejected`（真因不是資料壞、也不是模型壞，是搶資源）。現由 `scripts/_claude_lock.py` 的跨進程鎖強制，見下方〈claude CLI 批次互斥〉。
 
 > **不可妥協的不變量：正典文字＝`clean_extracted(full_text)`**。`research_report.full_text` 存的是**未清理**的原始抽取文字（`ingest_all.py` 寫 `full_text=raw_text`，但 chunk 走 `chunk_text(clean_extracted(raw_text))`），保留 PDF 抽字的 CJK 間空白（「台 積 電」）。**餵 LLM 的 excerpt、錨點基準、API 回傳的文字三者必須同源**，`text_sha256` 是這個不變量的守衛（讀取時比對「擷取當時的 sha」vs「當前正典文字的 sha」，不符即降級為不可跳）。拿 `full_text` 當基準會讓所有 offset 全錯，而且**測試抓不到**——引文照樣「錨得到」，只是錨在錯的座標系。同理，`report_chunk.content` 因切塊 overlap 而不是 `full_text` 的子字串（天真的 `full_text.find(chunk.content)` 約 99% 無聲失敗），定位一律走 `anchor.py`。
 
@@ -138,14 +138,27 @@ flowchart TD
 - **輸出**：`research.report_signal`（讀雷達時零 LLM——跨券商共識、四分位與跨期變動全由 `app/services/radar/` 決定性計算）
 - **指令**：`make signals`＝`uv run python scripts/extract_signals.py`；旗標 `[--min-brokers 3] [--min-reports 5] [--top-n 50] [--workers 2] [--limit N] [--excerpt 16000] [--model M] [--reextract] [--dry-run]`
 - **刻意只跑高覆蓋子集**：全語料僅約 0.68%（99 篇）有訊號。**「沒有訊號」是常態不是錯誤**——雷達對「有研報但尚未擷取」回 200 的 `pending_extraction` 空狀態（完全查無研報才 404），閱讀頁則整區不進 DOM。
-- ⚠️ **不可與 `scripts/extract_takeaways.py`／`scripts/generate_summaries.py` 同時跑**（同一個搶 `claude` CLI 的坑，見 ④）
+- ⚠️ **不可與其他 `claude` CLI 批次同時跑**（同一個搶 CLI 的坑，見 ④；互斥由 `scripts/_claude_lock.py` 強制）
 
 ### ⑥ 摘要生成 — `scripts/generate_summaries.py`（Claude CLI）
 - **輸入**：`research_report` 中 `summary IS NULL`、有全文、`is_research IS NOT FALSE` 的列；帶 `--hashes-file` 時只補該清單列出的 `file_hash`（定時同步走這條，不掃歷史 NULL 積壓）
 - **做什麼**：asyncio ＋ Semaphore（`--workers` 預設 2）逐報告 spawn `claude -p`（Sonnet），依 `full_text` 前 `--excerpt`（預設 12000）字產 2-3 句、約 100-150 字的中文摘要；只補 NULL 故冪等可續傳
 - **輸出**：`research.research_report.summary`（檢索結果卡片與閱讀頁直接顯示）
 - **指令**：`make summaries`＝`uv run python scripts/generate_summaries.py`；旗標 `[--workers 2] [--limit N] [--excerpt 12000] [--hashes-file PATH]`
-- ⚠️ 同樣受 `claude` CLI 併發之限：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段與 ④，手動長批次開跑前先確認排程沒在跑
+- ⚠️ 同樣受 `claude` CLI 併發之限：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段與 ④（見下方〈claude CLI 批次互斥〉）
+
+### claude CLI 批次互斥（`scripts/_claude_lock.py`）
+
+`claude` CLI 是跨進程共用資源。五支批次會 spawn 它——`tag_all_cli.py`（②標註）、`sync_new_reports.py`（增量匯入時的行內標註）、`generate_summaries.py`（⑥）、`extract_takeaways.py`（④）、`extract_signals.py`（⑤）——併發互搶的症狀不是「壞掉」而是**擷取被大量誤標 `rejected`**：資料沒壞、模型也沒壞，只是 CLI 被搶。
+
+規約以前只寫在註解與文件裡，但 `report-mark-sync.timer` 每 3 小時會自動跑「增量匯入 → 摘要 → 摘錄」，文件攔不住排程。現在改由鎖強制：
+
+- **機制**：`fcntl.flock(LOCK_EX | LOCK_NB)` 於鎖檔 `data/.claude_cli.lock`；五支批次在 `main` 進入點取一次（**不在 per-report 迴圈內**）。
+- **撞車行為**：後啟動者印出持有者（腳本名／pid／起始時間）並以 **`rc=75`**（`sysexits.h` 的 `EX_TEMPFAIL`）結束——刻意與「批次自己壞了」分開，讓排程殼能分別處置。
+- **為什麼是 flock 而不是 PID 檔**：flock 綁在開啟檔案描述子上，持有者行程**無論怎麼死（含 SIGKILL）都會自動釋放**，不留陳舊鎖；PID 檔則會在強殺後殘留，且 PID 被回收時 `kill -0` 還會誤判為存活。代價是只在單機有效——這些批次本來就只跑一台。
+- **排程側的可見化**：`scripts/sync_new_reports.sh` 的摘要／摘錄兩段是 best-effort（失敗不擋 sync、unit 不會變紅），所以三個階段的非零退出都會補記一筆到 `data/unit_failures.log`（`OnFailure` 告警既有的落點）。匯入段若因鎖而未執行，還會印出復原指令——**rsync 已把新檔落到本地，下一輪 delta 不會再列出它們**，得用 `scripts/sync_new_reports.py --all-local` 補漏。
+- **逃生口**：`CLAUDE_LOCK_DISABLE=1` 完全繞過（會在 stderr 印警告）。刻意不放進 `.env.example`——批次是 `uv run python scripts/...` 直接跑、不載入 `.env`。
+- **`app/services/llm.py` 不在此鎖範圍內**，且不可加入：它是 `/api/ask` 與研報生成的同一個 spawn 點，納入鎖等於讓一輪數小時的 `tag_all_cli` 把線上問答鎖死。守門在 `tests/test_claude_lock.py`。
 
 ### 編排與離線優化
 - **`scripts/resume_corpus.sh`**：一鍵編排——鎖檔（`data/.resume_corpus.lock` + PID 檢查）防重入，並行起 `tag_all_cli.py` 與 `ingest_all.py`，待首輪導入消化 backlog → 等標註全數完成 → 補跑 catch-up 導入；各階段時間戳記寫 `data/resume_orchestrator_*.log`。`bash scripts/resume_corpus.sh`

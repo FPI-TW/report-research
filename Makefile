@@ -16,7 +16,7 @@ DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command
 COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
-        ingest ingest-lowio restore-durability align normalize serve search \
+        ingest ingest-lowio restore-durability align serve search \
         stats reset-db clean-data pipeline signals takeaways \
         up-edge down-edge edge-logs edge-reload \
         sync-once
@@ -80,9 +80,6 @@ restore-durability:  ## 還原 Postgres 耐久性設定（ingest-lowio 異常中
 
 align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 	uv run python scripts/align_findb_markets.py
-
-normalize:  ## 一次性清理 chunk content（CJK 空白）+ ANALYZE（冪等）
-	uv run python scripts/normalize_chunks.py
 
 summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續傳，補 summary IS NULL）
 	uv run python scripts/generate_summaries.py

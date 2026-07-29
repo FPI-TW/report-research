@@ -152,7 +152,7 @@ flowchart TD
 - **`scripts/ingest_lowio.sh`（或 `make ingest-lowio`）**：`ingest_all.py` 的包裝，**離線大量導入**時以 `ALTER SYSTEM` 暫關 Postgres durability（`fsync`/`full_page_writes`/`synchronous_commit`）降磁碟 I/O，並用 `trap` 確保正常/錯誤/Ctrl-C 都會還原。⚠️ **僅限 DB 未對外服務時使用**（關 fsync 期間若主機/DB 崩潰，research 庫不可復原，但可由原始報告重新導入）。中斷未還原時用 `make restore-durability` 重設。
 
 ### 工具（一次性 / 維運）
-- **`scripts/normalize_chunks.py`（`make normalize`）——是陷阱，看到也不要跑。** target 說明與模組 docstring 都寫「冪等、重跑 0 筆更新」，**那是錯的**：腳本用的是 `clean_text`，而 chunk 是 `chunk_text(clean_extracted(...))` 產生的——`clean_text` 會把換行折成空格，而 chunk 內的段落正是用單一換行接起來的，跑一次就把段落結構整個抹掉，同時讓表與 HNSW 索引雙倍膨脹，而 `content_norm` 完全不變（該 GENERATED 表達式本來就移除所有空白）＝零收益、純破壞。它仍列在 `make help` 裡，別被「（冪等）」四個字騙了。逐步推導與實測見 [`docs/ARCHITECTURE_REVIEW_2026-07.md`](ARCHITECTURE_REVIEW_2026-07.md) 的 P0 第 1 項。
+- **不要再寫一支「清理 chunk 空白」的批次更新——那正是已刪除的 `make normalize` 的死法。** 2026-07-29 連同 scripts/normalize_chunks.py 一併移除（**該檔已不存在**）。它自稱「冪等、重跑 0 筆更新」，**那是錯的**：腳本用 `clean_text`，而 chunk 是 `chunk_text(clean_extracted(...))` 產生的——`clean_text` 把換行折成空格，而 chunk 內的段落正是用**單一換行**接起來的。兩組獨立樣本實測 **95.95%／98.66%** 的 chunk 會被改動（換行數歸零），而 `norm_for_match` 前後不同者 **0**＝`content_norm` 一個字都不會變（該 GENERATED 表達式本來就移除所有空白）：**純破壞、零收益**，外加表與 HNSW 索引雙倍膨脹。**改用 `clean_extracted` 也不行**（`_RE_CJK_GAP` 同樣吃掉段落間那個換行，實測仍破壞 51%）。要改 chunk 內容只有重跑 `ingest_all.py` 一條路。逐步推導見 [`docs/ARCHITECTURE_REVIEW_2026-07.md`](ARCHITECTURE_REVIEW_2026-07.md) 的 P0 第 1 項與 [`ARCHITECTURE_REVIEW_2026-07_VERIFY.md`](ARCHITECTURE_REVIEW_2026-07_VERIFY.md)。
 - **`scripts/backfill_full_text.py`**：由 `sample.jsonl` 回填 `research_report.full_text`（欄位後加時補；僅抽樣路徑）。
 - **`scripts/align_findb_markets.py`**：把既有中文市場標籤確定性重映射為 findb 代碼（同改 `data/tags/*.json` 與 DB），冪等、不需重跑 Claude。
 

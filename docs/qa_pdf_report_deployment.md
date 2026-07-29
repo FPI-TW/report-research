@@ -41,6 +41,7 @@ make schema
 | `REPORT_TIMEOUT` | 300 | 研報生成 LLM 串流逾時（秒）。深報為長輸出（實測常 ~200s），**勿低於 ~240**，否則會在逾時被靜默截斷（研報寫到一半就結束）。題材極廣可再調高。 |
 | `REPORT_MIN_CITED` | 3 | 建議出研報的最低引用篇數 |
 | `REPORT_SEMAPHORE` | 1 | 同時生成數（重任務，預設序列化） |
+| `REPORT_MAX_QUEUE` | 5 | 排隊人數上限，超過回 429＋`Retry-After`（0＝不限）。接回既有 run 豁免 |
 | `REPORTS_DIR` | `data/reports` | PDF 落地目錄（需可寫；建議與資料卷同盤、納入備份） |
 | `REPORT_ENABLE_WEB` | `0` | 研報生成是否允許網路搜尋（預設關，研報以語料為據） |
 
@@ -71,4 +72,5 @@ UI 端到端：問一題分析題（例「請分析台積電近期的產業趨�
 
 - **PDF 落地與備份**：研報以 `markdown` 欄為真相來源，`REPORTS_DIR` 的 PDF 檔遺失時，`GET /api/report-doc/{id}/pdf` 會由 markdown 即時重建。故 `REPORTS_DIR` 不需特別備份（但 DB 的 `report_doc` 表需納入備份）。
 - **無 TTL**：研報為保存成果，預設不自動清理；PDF 體積小（~150KB/篇）。日後若需控盤可加 age-based 清理（清 PDF 檔即可，markdown 仍可重建）。
-- **限流**：`/api/report` 由 `REPORT_SEMAPHORE`（預設 1）序列化；區網多人同時請求會排隊（前端面板顯示生成中），避免同時多個長輸出 + PDF 排版拖垮機器。
+- **限流**：`/api/report` 由 `REPORT_SEMAPHORE`（預設 1）序列化；區網多人同時請求會排隊，SSE 會先送一個 `queued` 事件（前端面板顯示「排隊等待中（第 N 位）」），避免同時多個長輸出 + PDF 排版拖垮機器。排隊超過 `REPORT_MAX_QUEUE` 則在建立串流前回 429＋`Retry-After`。
+- **併發上限是 per-process**：`REPORT_SEMAPHORE` 與問答的併發名額都是模組級狀態，加 `--workers` 會讓上限翻倍且模型記憶體翻倍，故 `web/server.py` 啟動時 fail-closed 擋下多 worker（`web/concurrency.py`）。

@@ -62,7 +62,19 @@ const reportSectionEventData = z.object({ position: z.number().int() })
 const reportRunData = z.object({ run_id: z.string(), elapsed_ms: z.number().default(0) })
 export type ReportRunHandle = z.infer<typeof reportRunData>
 
+// 併發滿載時，後端在真正取得名額之前先送這個（web/concurrency.py 的 ConcurrencyGate）。
+// 沒有它，第 4 個之後的提問者看到的是「連線建立但永遠沒有 token」，與伺服器卡死無從分辨。
+// 三個欄位全 optional：後端可能只送 scope，滾動部署期間也可能新增欄位——整包 parse
+// 失敗會讓事件回到「被靜默丟棄」，那正是這裡要避免的事。
+const queuedData = z.object({
+  scope: z.string().optional(),
+  position: z.number().int().optional(),
+  capacity: z.number().int().optional(),
+})
+export type QueuedInfo = z.infer<typeof queuedData>
+
 export type AskEvent =
+  | { event: 'queued'; data: QueuedInfo }
   | { event: 'status'; data: z.infer<typeof askStatusData> }
   | { event: 'sources'; data: Source[] }
   | { event: 'ext_sources'; data: ExtSource[] }
@@ -74,6 +86,7 @@ export type AskEvent =
 
 export type ReportEvent =
   | { event: 'run'; data: ReportRunHandle }
+  | { event: 'queued'; data: QueuedInfo }
   | { event: 'status'; data: { stage: ReportStage } }
   | { event: 'outline'; data: z.infer<typeof reportOutlineData> }
   | { event: 'section_draft'; data: { position: number } }
@@ -85,6 +98,7 @@ export type ReportEvent =
 
 export function parseAskEvent(raw: RawSSEEvent): AskEvent | null {
   switch (raw.event) {
+    case 'queued': { const r = queuedData.safeParse(raw.data); return r.success ? { event: 'queued', data: r.data } : null }
     case 'status': { const r = askStatusData.safeParse(raw.data); return r.success ? { event: 'status', data: r.data } : null }
     case 'sources': { const r = z.array(sourceSchema).safeParse(raw.data); return r.success ? { event: 'sources', data: r.data } : null }
     case 'ext_sources': { const r = z.array(extSourceSchema).safeParse(raw.data); return r.success ? { event: 'ext_sources', data: r.data } : null }
@@ -103,6 +117,7 @@ export function parseAskEvent(raw: RawSSEEvent): AskEvent | null {
 export function parseReportEvent(raw: RawSSEEvent): ReportEvent | null {
   switch (raw.event) {
     case 'run': { const r = reportRunData.safeParse(raw.data); return r.success ? { event: 'run', data: r.data } : null }
+    case 'queued': { const r = queuedData.safeParse(raw.data); return r.success ? { event: 'queued', data: r.data } : null }
     case 'status': { const r = z.object({ stage: reportStage }).safeParse(raw.data); return r.success ? { event: 'status', data: r.data } : null }
     case 'outline': { const r = reportOutlineData.safeParse(raw.data); return r.success ? { event: 'outline', data: r.data } : null }
     case 'section_draft': { const r = reportSectionEventData.safeParse(raw.data); return r.success ? { event: 'section_draft', data: r.data } : null }

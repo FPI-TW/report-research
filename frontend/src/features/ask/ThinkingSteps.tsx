@@ -15,7 +15,12 @@ export function ThinkingSteps({ turn }: { turn: Turn }) {
   const terminal = turn.phase === 'done' || turn.phase === 'notice' || turn.phase === 'error'
   const steps = terminal ? rawSteps.map(s => (s.state === 'active' ? { ...s, state: 'done' as const } : s)) : rawSteps
   const sec = Math.round((turn.thinkingMs ?? 0) / 1000)
-  const label = live ? '思考中…' : `已思考 ${sec} 秒`
+  // 排隊中要說出來。後端在取得併發名額前先送 queued（web/concurrency.py）；沿用
+  // 「思考中…」會讓人以為已經在算，實際上一個字都還沒開始跑。
+  const queued = turn.queuePosition !== null
+  const label = queued
+    ? (turn.queuePosition && turn.queuePosition > 1 ? `排隊中（第 ${turn.queuePosition} 位）…` : '排隊中…')
+    : live ? '思考中…' : `已思考 ${sec} 秒`
   const hasSteps = turn.stages.length > 0
 
   return (
@@ -28,6 +33,7 @@ export function ThinkingSteps({ turn }: { turn: Turn }) {
           </motion.span>
         )}
       </Pressable>
+      {queued && <div className={styles.queueNote}>伺服器同時處理量已滿，輪到你就會自動開始。</div>}
       {hasSteps && open && (
         <div className={styles.steps}>
           {steps.map(s => (

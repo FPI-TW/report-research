@@ -8,10 +8,12 @@
 同一個前綴底下已經有兩組語意不同的路由，再塞一組只會讓下一個人猜錯。
 
 生成本身跑在背景（web/report_runs.py），HTTP 只是訂閱端——重整/關分頁不再殺掉生成。
-_REPORT_SEMAPHORE 是模組級狀態，預設序列化研報生成（單機重負載保護）。定義於本
+_REPORT_GATE 是模組級狀態，預設序列化研報生成（單機重負載保護）。定義於本
 模組、由本模組 handler 使用；server.py 以單一 `from web.routers import report` 匯入，
-故只有一個 semaphore 實例。**它現在由背景任務持有，不再由 request handler 持有**：
-掛在 handler 上的話，斷線就會釋放 semaphore，而背景任務仍在跑 → 序列化保護落空。
+故只有一個閘門實例。**它現在由背景任務持有，不再由 request handler 持有**：
+掛在 handler 上的話，斷線就會釋放名額，而背景任務仍在跑 → 序列化保護落空。
+它同時是 per-process 的，多 worker 下序列化直接失效——啟動時的 fail-closed 守門見
+web/concurrency.py。
 
 render_report_pdf 刻意由 app.services.report（分派層，依 REPORT_RENDERER 選
 typst/weasyprint 並在失敗時回退）匯入，而非 app.services.pdf.render_report_pdf
@@ -40,6 +42,7 @@ from app.services.report import (
     write_report_pdf,
 )
 from web import deps, report_runs
+from web.concurrency import ConcurrencyGate
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,14 @@ router = APIRouter()
 
 
 # 研報生成比問答重很多（長輸出 + PDF 排版），預設序列化避免區網多人同時生成拖垮機器。
-_REPORT_SEMAPHORE = asyncio.Semaphore(int(os.getenv("REPORT_SEMAPHORE", "1")))
+# REPORT_MAX_QUEUE 是排隊上限。預設 5：單份實測 5–12 分鐘且序列化，排到第 6 位等於
+# 要等將近一小時——那時回 429 讓人稍後再來，比讓進度框停在「排隊中」誠實得多。
+# 設 0 可退回舊行為（無限排隊）。
+_REPORT_GATE = ConcurrencyGate(
+    int(os.getenv("REPORT_SEMAPHORE", "1")),
+    name="report",
+    max_queue=int(os.getenv("REPORT_MAX_QUEUE", "5")),
+)
 
 
 class ReportRequest(BaseModel):
@@ -82,8 +92,9 @@ async def _tail(run_id: str) -> AsyncIterator[str]:
 async def report(req: ReportRequest):
     """深度研報生成：深度檢索 → 串流撰寫 → 渲染 PDF。回 text/event-stream。
 
-    事件序：run → status(retrieving/outlining/writing/verifying/rendering) → outline →
-    sources → token/section_draft/section_skipped… → done{download_url}。
+    事件序：run →（滿載時 queued）→ status(retrieving/outlining/writing/verifying/
+    rendering) → outline → sources → token/section_draft/section_skipped… →
+    done{download_url}。
 
     生成跑在背景任務，本回應只是訂閱端：**中途斷線不會中止生成**，重連走
     GET /api/report-runs/{run_id}/stream。同題重按只會接回既有 run，不會跑兩份。
@@ -95,12 +106,30 @@ async def report(req: ReportRequest):
         raise HTTPException(status_code=400, detail="qa_id 格式不正確")
     if req.conversation_id is not None and not deps._valid_uuid(req.conversation_id):
         raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
+    # 排隊已滿就在送出 200 之前回 429（SSE 開始串流後改不了 status code）。
+    # **接回既有 run 一律豁免**：那條路徑不需要名額（生成早就在跑），把它一起擋掉等於
+    # 讓重整過的人在自己的研報快好時被拒於門外。
+    attachable = report_runs.active_run_for(
+        question=question, conversation_id=req.conversation_id,
+        template_id=req.template_id, locale=req.locale,
+    )
+    if attachable is None and _REPORT_GATE.queue_full():
+        raise HTTPException(
+            status_code=429,
+            detail="研報生成排隊人數已滿，請稍後再試",
+            headers={"Retry-After": "120"},
+        )
 
     def _make_events() -> AsyncIterator[tuple[str, object]]:
-        # semaphore 在背景任務內持有（見模組 docstring）：掛在 handler 上的話，使用者
+        # 名額在背景任務內持有（見模組 docstring）：掛在 handler 上的話，使用者
         # 一斷線就把重負載保護一起放掉了。
         async def gen() -> AsyncIterator[tuple[str, object]]:
-            async with _REPORT_SEMAPHORE:
+            # 排隊要先說：序列化下第二個人可能等上十分鐘，沒有這個事件時畫面只是一根
+            # 停在 0% 的進度條，看起來就像伺服器掛了。
+            if _REPORT_GATE.would_queue():
+                yield ("queued", _REPORT_GATE.queue_event())
+            await _REPORT_GATE.acquire()
+            try:
                 try:
                     async for event, payload in generate_report(
                         question, filters={},
@@ -113,6 +142,8 @@ async def report(req: ReportRequest):
                 except Exception:
                     logger.exception("report failed")
                     yield ("error", {"detail": "研報生成發生錯誤"})
+            finally:
+                _REPORT_GATE.release()
 
         return gen()
 

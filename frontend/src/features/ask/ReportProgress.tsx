@@ -21,7 +21,7 @@ interface Props {
 }
 
 export function ReportProgress({ report, onCancel }: Props) {
-  const { sections, stage, startedAt, runId } = report
+  const { sections, stage, startedAt, runId, queuePosition } = report
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     // 1 秒一跳：已耗時是唯一保證會動的元素，比進度條更能回答「它還活著嗎」。
@@ -41,6 +41,12 @@ export function ReportProgress({ report, onCancel }: Props) {
   const eta = formatEta(reportEtaMs(progress))
   const current = sections.find(s => s.state === 'pending')
   const writing = stage === 'writing' || stage === 'searching_web'
+  // 排隊中（後端還沒取得併發名額）：研報預設序列化，第二個人可能等上十分鐘。此時
+  // 已耗時、章節、百分比全是零，畫面與「壞掉了」長得一模一樣——所以文案要先講實話。
+  const queued = queuePosition !== null
+  const queueText = queuePosition && queuePosition > 1
+    ? `排隊等待中（第 ${queuePosition} 位）`
+    : '排隊等待中'
 
   return (
     <div className={styles.gen}>
@@ -54,19 +60,19 @@ export function ReportProgress({ report, onCancel }: Props) {
 
       <div className={styles.track} role="progressbar" aria-label="研報生成進度"
         aria-valuemin={0} aria-valuemax={100}
-        aria-valuenow={indeterminate ? undefined : pct}>
-        {indeterminate
+        aria-valuenow={indeterminate || queued ? undefined : pct}>
+        {indeterminate || queued
           ? <Sweep className={styles.indet} barClassName={styles.indetBar} />
           : <div className={styles.fill} style={{ width: `${pct}%` }} />}
       </div>
 
       <div className={styles.statusLine}>
         <span className={styles.stageText}>
-          {reportStageText(stage)}
-          {writing && sections.length > 0 && `（${Math.min(settled + 1, sections.length)}/${sections.length}）`}
-          {writing && current && `：${current.heading}`}
+          {queued ? queueText : reportStageText(stage)}
+          {!queued && writing && sections.length > 0 && `（${Math.min(settled + 1, sections.length)}/${sections.length}）`}
+          {!queued && writing && current && `：${current.heading}`}
         </span>
-        {!indeterminate && <span className={styles.pct}>{pct}%</span>}
+        {!indeterminate && !queued && <span className={styles.pct}>{pct}%</span>}
       </div>
 
       {sections.length > 0 && (

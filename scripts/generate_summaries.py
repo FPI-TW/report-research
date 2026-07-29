@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text  # noqa: E402
 
 from app.services.db import SessionFactory  # noqa: E402
+from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "summary_failures.log"
@@ -222,4 +223,5 @@ if __name__ == "__main__":
         help="只補此檔列出的 file_hash（每行一個）；不給＝補全表所有 summary IS NULL",
     )
     args = ap.parse_args()
-    asyncio.run(main(args.workers, args.limit, args.excerpt, args.hashes_file))
+    with claude_cli_lock_or_exit("generate_summaries"):
+        asyncio.run(main(args.workers, args.limit, args.excerpt, args.hashes_file))

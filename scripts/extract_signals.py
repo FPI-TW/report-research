@@ -46,6 +46,7 @@ from app.services.signal_extract import (  # noqa: E402
     build_signal_prompt,
     parse_signal,
 )
+from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "signal_failures.log"
@@ -374,4 +375,6 @@ if __name__ == "__main__":
     ap.add_argument("--model", default=SIGNAL_MODEL_DEFAULT)
     ap.add_argument("--reextract", action="store_true", help="忽略 checkpoint，強制重跑")
     ap.add_argument("--dry-run", action="store_true", help="只印子集與工作項數，不呼叫 LLM")
-    asyncio.run(main(ap.parse_args()))
+    # --dry-run 也一起擋，理由同 extract_takeaways.py：鎖的涵蓋範圍不隨旗標而變。
+    with claude_cli_lock_or_exit("extract_signals"):
+        asyncio.run(main(ap.parse_args()))

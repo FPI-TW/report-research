@@ -22,6 +22,14 @@ from web.env_loader import load_env_file  # noqa: E402
 
 load_env_file(Path(__file__).resolve().parents[1] / ".env")
 
+# 必須在載入 .env 之後（要讀 LOG_LEVEL）、且在任何 app.services.* 之前：那些模組在
+# import 期就 getLogger，而沒有這一行的話 root 沒有 handler、effective level 是
+# WARNING，於是所有 logger.info 在呼叫點被丟棄（qa_timing 分段耗時遙測寫了好幾個
+# 里程碑，生產 journald 近 14 天 0 筆）。詳見 app/logging_setup.py。
+from app.logging_setup import configure_logging  # noqa: E402
+
+configure_logging()
+
 from web import deps  # noqa: E402
 from web import report_runs  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402

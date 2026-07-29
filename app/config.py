@@ -14,6 +14,25 @@ def _flag(name: str, default: str) -> bool:
     return os.getenv(name, default) not in ("0", "false", "False", "")
 
 
+_LOG_LEVELS = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG")
+
+
+def _log_level(name: str, default: str) -> str:
+    """log level 名稱；未知值退回預設並警告。
+
+    刻意不讓 typo 靜默生效：打錯成 `LOG_LEVEL=info0` 若原樣傳進 dictConfig 會拋
+    ValueError，而它發生在 web/server.py 的 import 期——app 起不來且訊息晦澀。
+    """
+    v = (os.getenv(name, default) or "").strip().upper()
+    if v not in _LOG_LEVELS:
+        logging.getLogger(__name__).warning(
+            "%s=%r 不是合法 log level（可用：%s），退回 %s",
+            name, v, "/".join(_LOG_LEVELS), default,
+        )
+        return default
+    return v
+
+
 _RENDERERS = ("typst", "weasyprint")
 
 
@@ -123,6 +142,9 @@ class Settings:
     ask_faithfulness_sample_rate: float  # 問答：含數字答案的查核抽樣率（0..1）
     faithfulness_model: str
     faithfulness_timeout: float
+
+    # 執行期可觀測性
+    log_level: str
 
 
 def _load() -> Settings:
@@ -254,6 +276,7 @@ def _load() -> Settings:
         # judge 復用 haiku（同 planner）；離線批次語氣輕、成本低
         faithfulness_model=os.getenv("FAITHFULNESS_MODEL", intent_model),
         faithfulness_timeout=float(os.getenv("FAITHFULNESS_TIMEOUT", "60")),
+        log_level=_log_level("LOG_LEVEL", "INFO"),
     )
 
 

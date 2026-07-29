@@ -260,7 +260,6 @@ report-mark/
 │   ingest_lowio.sh     離線大量導入：暫關 Postgres durability 降 I/O（結束自動還原）
 │   # 抽樣原型 / 工具
 │   select_sample.py / extract_batch.py / make_worklist.py / run_ingest.py
-│   normalize_chunks.py     **不要跑**：自稱冪等實則破壞性（clean_text 折掉 chunk 段落換行，content_norm 零變化）；見 CLAUDE.md gotcha
 │   backfill_full_text.py   回填 full_text 欄
 │   backfill_report_dates.py / backfill_report_sources.py   回填報告日期 / 發行來源
 │   generate_summaries.py   為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續）→ make summaries

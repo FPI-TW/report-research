@@ -10,8 +10,16 @@ OnFailure=report-mark-alert@%n.service
 Type=oneshot
 User=kashionz
 Group=kashionz
-Environment=HOME=%h
+# HOME 必須硬編碼，不可用 %h：系統層 unit 的 %h 一律解析為 service manager 的家目錄
+# （/root），**不受 User= 影響**。2026-07-28 那次部署把它裝上主機後，uv 去建
+# /root/.cache/uv 立刻 EACCES，整條同步管線連續失敗 24 小時（10 輪 100% exit 2），
+# 而 rsync 已先把新檔落地 ⇒ 檔案在本地卻從未入庫。同目錄的 report-mark-web.service
+# 與 report-mark-alert@.service 都是硬編碼路徑，這裡對齊它們。
+Environment=HOME=/home/kashionz
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-/etc/default/report-mark-sync
-ExecStart=/usr/bin/bash -lc 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; exec "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/sync_new_reports.sh"'
+# 用 bash -c 而非 -lc：-l 會去讀登入 shell 的 profile，HOME 錯時只會製造
+# 「/root/.bash_profile: Permission denied」這種噪音，且讓 PATH 來源變得不可預期。
+# claude/uv 的路徑一律由 SYNC_PATH_EXTRA 顯式提供（見 report-mark-sync.env.example）。
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; exec "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/sync_new_reports.sh"'
 TimeoutStartSec=7200

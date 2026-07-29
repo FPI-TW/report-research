@@ -501,6 +501,7 @@ uv run python eval/run_report_eval.py  # M1b：研報結構化指標
 | NAS 增量同步 | systemd `report-mark-sync.timer`（每 3 小時）→ `scripts/sync_new_reports.sh`（drvfs 唯讀掛載 → rsync delta → 增量 extract/tag/ingest → 依序補摘要 → 補重點摘錄，後兩段吃本輪 `--hashes-file`）；手動測試 `make sync-once`。**這條鏈才是生產實際的入庫路徑**，全量三支腳本只在初次建庫或補跑歷史時用。見 [docs/nas_scheduled_sync_deployment.md](docs/nas_scheduled_sync_deployment.md) |
 | 對外存取 | Cloudflare Tunnel ＋ nginx 邊緣（`deploy/docker-compose.yml`，無入站埠）：`make up-edge` / `down-edge` / `edge-logs` / `edge-reload`，需 `deploy/.env` 的 `TUNNEL_TOKEN`。見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md) |
 | 深度研報 PDF | 需安裝 Noto Sans CJK 字型；`REPORT_TIMEOUT` 建議 ≥300s。見 [docs/qa_pdf_report_deployment.md](docs/qa_pdf_report_deployment.md) |
+| DB 備份 | systemd `report-mark-backup.timer`（每日 03:30）→ `scripts/db_backup.sh`：`pg_dump -Fc` **只備重建不回來的七張表**（`qa_log` / `report_doc` / `report_rendition` / `report_takeaway` / `report_signal` / `report_run` / `report_section`）到 NAS，保留 7 日 ＋ 4 週；手動跑一次 `make db-backup`。語料層刻意不備（重跑管線可還原）。**還原步驟與已知限制見 [docs/production_resilience.md](docs/production_resilience.md)** |
 
 對外請求路徑：`Browser ──HTTPS──▶ Cloudflare edge ──tunnel──▶ nginx:80 ──▶ uvicorn:8097`。
 

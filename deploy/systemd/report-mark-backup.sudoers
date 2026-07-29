@@ -1,0 +1,2 @@
+# 安裝到 /etc/sudoers.d/report-mark-backup（chmod 0440），讓每日備份能無人值守掛載 NAS。
+kashionz ALL=(root) NOPASSWD: /usr/local/sbin/mount-nas-backup

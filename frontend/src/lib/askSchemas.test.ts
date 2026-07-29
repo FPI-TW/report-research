@@ -93,3 +93,21 @@ describe('askSchemas M3', () => {
     expect(t.root_qa_id).toBeNull()
   })
 })
+
+test('parseAskEvent／parseReportEvent 認得 queued（未宣告就會被靜默丟棄）', () => {
+  // 本專案踩過：後端送了 section_draft 好幾個里程碑，parser 沒有對應 case 一律回 null，
+  // 症狀只是「進度條停在 50% 不動」。新事件一律連同 parser 一起加，並用測試釘住。
+  expect(parseAskEvent({ event: 'queued', data: { scope: 'ask', position: 2, capacity: 3 } }))
+    .toEqual({ event: 'queued', data: { scope: 'ask', position: 2, capacity: 3 } })
+  expect(parseReportEvent({ event: 'queued', data: { scope: 'report', position: 1, capacity: 1 } }))
+    .toMatchObject({ event: 'queued' })
+})
+
+test('queued 欄位全 optional：後端只送部分欄位仍解析得出來', () => {
+  // 滾動部署期間後端可能還是舊版（只有 scope），或已是新版（多了欄位）。
+  // 整包 parse 失敗會讓事件回到「被靜默丟棄」，正是這裡要避免的事。
+  expect(parseAskEvent({ event: 'queued', data: {} })).toEqual({ event: 'queued', data: {} })
+  expect(parseAskEvent({ event: 'queued', data: { scope: 'ask' } })).toMatchObject({ event: 'queued' })
+  // 型別錯了才該拒收
+  expect(parseAskEvent({ event: 'queued', data: { position: '很多' } })).toBeNull()
+})

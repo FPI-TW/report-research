@@ -10,8 +10,8 @@ function makeTurn(over: Partial<Turn>): Turn {
     answer: '答案 [1] 內容', thinkingMs: 3000, startedAt: 0,
     sources: [{ n: 1, report_id: 'r1', file_name: 'f.pdf', market: 'TW', report_date: '2026-06-20', is_latest: false }],
     extSources: [], qaId: 'qa1', isOfftopic: false, noticeText: null, offerReport: false, reportTitle: null,
-    feedback: null, report: { status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null, stage: null, sections: [], startedAt: null, runId: null },
-    errorText: null, followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1,
+    feedback: null, report: { status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null, stage: null, sections: [], startedAt: null, runId: null, queuePosition: null },
+    errorText: null, followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1, queuePosition: null,
     ...over,
   }
 }

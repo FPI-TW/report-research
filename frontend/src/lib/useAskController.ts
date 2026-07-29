@@ -7,6 +7,7 @@ import {
   getConversation, sendFeedback, stopAsk, getQaVersions,
 } from './askApi'
 import type { RawSSEEvent } from './readSSE'
+import { ApiError } from './api'
 import { useLocale } from './useLocale'
 
 let seq = 0
@@ -112,8 +113,17 @@ export function useAskController(): UseAskController {
           else dispatch({ type: 'ask-event', id: turnId, event: ev })
         }
         if (my === reqId.current) { streamTurnRef.current = null; streamRequestIdRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
-      } catch {
-        if (my === reqId.current) { streamTurnRef.current = null; streamRequestIdRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
+      } catch (err) {
+        if (my === reqId.current) {
+          streamTurnRef.current = null; streamRequestIdRef.current = null
+          // 429＝排隊已滿，後端連 SSE 都沒開。這時 'ask-end' 的「查詢逾時或失敗」是
+          // 錯的診斷，會讓人一直重按；改用後端給的原因，使用者才知道要等一下。
+          if (err instanceof ApiError && err.status === 429) {
+            dispatch({ type: 'ask-event', id: turnId, event: { event: 'error', data: { detail: err.message } } })
+          } else {
+            dispatch({ type: 'ask-end', id: turnId })
+          }
+        }
       }
     })()
   }, [abortAsk, qc, locale])
@@ -241,9 +251,16 @@ export function useAskController(): UseAskController {
           if (ev.event === 'done' || ev.event === 'error') sawTerminal = true
           dispatch({ type: 'report-event', id: turnId, event: ev })
         }
-      } catch {
+      } catch (err) {
         if (myReport !== reportReqId.current || ctrl.signal.aborted) return
-        // 連線層失敗與「串流正常結束但沒終端事件」同一個處置：試著接回去。
+        // 429＝排隊已滿，後端沒有開任何 run，重連只會再撞一次同一堵牆。
+        if (err instanceof ApiError && err.status === 429) {
+          reportTurnRef.current = null
+          reportRunRef.current = null
+          dispatch({ type: 'report-fail', id: turnId, errorText: err.message })
+          return
+        }
+        // 其餘連線層失敗與「串流正常結束但沒終端事件」同一個處置：試著接回去。
       }
       if (myReport !== reportReqId.current || ctrl.signal.aborted) return
       if (sawTerminal) { reportTurnRef.current = null; reportRunRef.current = null; return }

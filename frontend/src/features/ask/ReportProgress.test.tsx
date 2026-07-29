@@ -8,7 +8,7 @@ const secs = (...states: ReportSection['state'][]): ReportSection[] =>
 
 const rs = (over: Partial<ReportState>): ReportState => ({
   status: 'generating', downloadUrl: null, title: null, errorText: null, reportId: null,
-  stage: 'writing', sections: [], startedAt: Date.now(), runId: null, ...over,
+  stage: 'writing', sections: [], startedAt: Date.now(), runId: null, queuePosition: null, ...over,
 })
 
 beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }) })
@@ -69,4 +69,20 @@ test('非撰寫階段顯示各自的文案', () => {
   expect(screen.getByText('查核引用與數據中')).toBeInTheDocument()
   rerender(<ReportProgress report={rs({ stage: 'rendering' })} />)
   expect(screen.getByText('排版 PDF 中')).toBeInTheDocument()
+})
+
+test('排隊中：文案說排隊、進度條轉不定量、不報 0%', () => {
+  // 排隊時已耗時/章節/百分比全是零，畫面與「壞掉了」長得一模一樣——文案要先講實話。
+  render(<ReportProgress report={rs({ stage: null, sections: [], queuePosition: 2 })} />)
+  expect(screen.getByText('排隊等待中（第 2 位）')).toBeInTheDocument()
+  expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+  expect(screen.queryByText('0%')).toBeNull()
+})
+
+test('排隊狀態解除後回到正常階段文案', () => {
+  const { rerender } = render(<ReportProgress report={rs({ stage: null, queuePosition: 1 })} />)
+  expect(screen.getByText('排隊等待中')).toBeInTheDocument()
+  rerender(<ReportProgress report={rs({ stage: 'writing', sections: secs('done', 'pending'), queuePosition: null })} />)
+  expect(screen.queryByText(/排隊等待中/)).toBeNull()
+  expect(screen.getByText(/撰寫研報中（2\/2）/)).toBeInTheDocument()
 })

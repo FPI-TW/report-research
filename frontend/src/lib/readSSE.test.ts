@@ -71,3 +71,21 @@ test('401 導向登入並拋 ApiError', async () => {
   await expect(collect('/api/ask', {})).rejects.toMatchObject({ status: 401 })
   expect(assign).toHaveBeenCalledWith(expect.stringContaining('/login?next='))
 })
+
+test('429 帶出後端的 detail，而不是只有一個狀態碼', async () => {
+  // 排隊已滿是唯一一種「後端有話要對使用者說」的非 200。丟掉 detail 的話，畫面只剩
+  // 「查詢逾時或失敗」——一個錯的診斷，會讓人一直重按。
+  vi.stubGlobal('fetch', vi.fn(async () =>
+    new Response(JSON.stringify({ detail: '問答排隊人數已滿，請稍後再試' }), {
+      status: 429, headers: { 'Content-Type': 'application/json' },
+    })
+  ))
+  await expect(collect('/api/ask', {})).rejects.toMatchObject({
+    status: 429, message: '問答排隊人數已滿，請稍後再試',
+  })
+})
+
+test('429 但 body 不是 JSON 時退回可讀文案（不是空字串）', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>nginx</html>', { status: 429 })))
+  await expect(collect('/api/ask', {})).rejects.toMatchObject({ status: 429, message: '伺服器忙碌中，請稍後再試' })
+})

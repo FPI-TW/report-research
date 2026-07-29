@@ -37,6 +37,16 @@ export async function* readSSE(
     redirectToLogin()
     throw new ApiError(401, '未登入')
   }
+  // 429＝排隊已滿（後端在送出 200 之前擋下，見 web/concurrency.py）。這是唯一一種
+  // 「後端有話要對使用者說」的非 200，所以要把 detail 帶出去；其餘照舊只帶狀態碼。
+  if (resp.status === 429) {
+    let detail = '伺服器忙碌中，請稍後再試'
+    try {
+      const body = await resp.json()
+      if (body && typeof body.detail === 'string') detail = body.detail
+    } catch { /* 非 JSON body：用預設文案，不要因此變成看不懂的錯誤 */ }
+    throw new ApiError(429, detail)
+  }
   if (!resp.ok || !resp.body) throw new ApiError(resp.status, `HTTP ${resp.status}`)
   const reader = resp.body.getReader()
   const dec = new TextDecoder()

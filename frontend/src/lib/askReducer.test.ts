@@ -281,3 +281,34 @@ describe('askReducer M3', () => {
     expect(s.turns[0].versionIndex).toBe(3)
   })
 })
+
+test('queued 標記排隊名次，任何後續事件都會清掉它', () => {
+  // 清除集中在 applyAsk 開頭而非逐 case：漏掉一個 case 的症狀是「答案都串出來了
+  // 畫面還寫著排隊中」——不會報錯，只會讓人不信任介面。
+  let s = submit()
+  s = askReducer(s, ev({ event: 'queued', data: { scope: 'ask', position: 2, capacity: 3 } }))
+  expect(s.turns[0].queuePosition).toBe(2)
+  s = askReducer(s, ev({ event: 'status', data: { stage: 'retrieved', count: 8 } }))
+  expect(s.turns[0].queuePosition).toBeNull()
+})
+
+test('queued 後直接來 token（沒有 status）也會清掉排隊狀態', () => {
+  let s = submit()
+  s = askReducer(s, ev({ event: 'queued', data: { position: 1 } }))
+  s = askReducer(s, ev({ event: 'token', data: '答' }))
+  expect(s.turns[0].queuePosition).toBeNull()
+  expect(s.turns[0].answer).toBe('答')
+})
+
+test('研報 queued 進 report.queuePosition，後續事件清掉（含重播來的過期 queued）', () => {
+  const rev = (event: unknown) => ({ type: 'report-event' as const, id: 't1', event: event as never })
+  let s = submit()
+  s = askReducer(s, rev({ event: 'run', data: { run_id: 'run-1', elapsed_ms: 0 } }))
+  s = askReducer(s, rev({ event: 'queued', data: { scope: 'report', position: 1, capacity: 1 } }))
+  expect(s.turns[0].report.queuePosition).toBe(1)
+  expect(s.turns[0].report.status).toBe('generating')
+  // 重連時重播會把 queued 再送一次，緊接著是 status——後者必須把排隊狀態關掉
+  s = askReducer(s, rev({ event: 'status', data: { stage: 'writing' } }))
+  expect(s.turns[0].report.queuePosition).toBeNull()
+  expect(s.turns[0].report.stage).toBe('writing')
+})

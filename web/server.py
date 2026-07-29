@@ -30,6 +30,7 @@ from app.logging_setup import configure_logging  # noqa: E402
 
 configure_logging()
 
+from web import concurrency  # noqa: E402
 from web import deps  # noqa: E402
 from web import report_runs  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
@@ -81,6 +82,18 @@ def _log_warmup_result(task: asyncio.Task[None]) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 併發上限與背景 run 登錄表都是 per-process 狀態，多 worker 會讓上限翻倍、模型
+    # 記憶體翻倍、研報重連隨機 404。偵測得到就拒絕啟動（fail-closed），偵測不到就
+    # 放行——判準與已知缺口見 web/concurrency.py。
+    workers = concurrency.assert_single_worker()
+    # 用 warning 而非 info 不是因為它是警告，是因為本 repo 從未初始化 logging，
+    # root logger 走 logging.lastResort（level=WARNING）——info 會直接進黑洞。
+    # 把「有效上限」印出來，是為了讓「上限是多少」不必再靠讀原始碼推。
+    logger.warning(
+        "併發設定：workers=%s；%s",
+        workers if workers is not None else "未偵測到（假定單一行程）",
+        "；".join(g.describe() for g in concurrency.registered_gates()) or "無閘門",
+    )
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
     warmup_task = asyncio.create_task(_warmup_models())
     warmup_task.add_done_callback(_log_warmup_result)

@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
 import { MotionLink } from '../../components/primitives/MotionLink'
+import { displayTitle } from '../../lib/displayTitle'
 import { marketLabel, marketTint, instrumentLabel } from '../../lib/meta'
 import { reportFileHref } from '../../lib/readingApi'
 import type { ReadingDoc } from '../../lib/readingSchemas'
@@ -18,6 +19,7 @@ export function ReportHeader({ doc }: Props) {
   const broker = doc.source_display || doc.source || null
   const targets = [...doc.stock_targets, ...doc.futures_targets]
   const meta = metaParts(doc)
+  const title = displayTitle(doc)
 
   return (
     <header className={styles.hd}>
@@ -30,7 +32,7 @@ export function ReportHeader({ doc }: Props) {
       <div className={styles.row}>
         <div className={styles.main}>
           {/* 頁標題用 h1（沿用 RadarHeader/HelpPage 慣例；AppShell 的 h1 為 srOnly 品牌名） */}
-          <h1 className={styles.title}>{doc.file_name}</h1>
+          <h1 className={styles.title}>{title}</h1>
           <div className={styles.metas}>
             {market && (
               <span className={styles.mkt} style={marketTint(market)}>
@@ -82,7 +84,7 @@ export function ReportHeader({ doc }: Props) {
               hybrid_search 參數 → /api/ask filters → answer prompt），另案處理。 */}
           <MotionLink
             className={`${styles.btn} ${styles.btnGold}`}
-            to={`/ask?q=${encodeURIComponent(`關於《${doc.file_name}》：`)}`}
+            to={`/ask?q=${encodeURIComponent(`關於《${title}》：`)}`}
             aria-label="就這篇提問：帶著這篇的標題到問答頁預填題目（檢索仍涵蓋全語料）"
             title="帶著這篇的標題到問答頁預填題目；問答的檢索範圍仍是全語料"
             whileHover={{ scale: 1.02 }}

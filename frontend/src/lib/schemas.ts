@@ -30,6 +30,11 @@ export const reportListItemSchema = z.object({
   /** 閱讀頁 /report/:hash 的鍵（原始檔仍走 report_id）。 */
   file_hash: z.string(),
   file_name: z.string(),
+  /**
+   * 報告內部標題（顯示用）。null/undefined＝批次尚未產生，一律以 displayTitle()
+   * 回退 file_name。zod 預設會靜默 strip 未宣告的鍵，漏宣告＝後端送了也進不了 DOM。
+   */
+  title: z.string().nullish(),
   market: z.string().nullable(),
   source: z.string().nullable(),
   summary: z.string().nullable(),
@@ -77,6 +82,7 @@ export type SearchResponse = z.infer<typeof searchResponseSchema>
 export const reportFullSchema = z.object({
   report_id: z.string(),
   file_name: z.string(),
+  title: z.string().nullish(),
   market: z.string().nullable(),
   source: z.string().nullable(),
   summary: z.string().nullable(),

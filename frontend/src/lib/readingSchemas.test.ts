@@ -30,6 +30,12 @@ describe('readingDocSchema', () => {
     expect(d.text_chars).toBe(0)
   })
 
+  // zod 預設 strip 未宣告鍵：漏宣告 title 不會噴錯，只會讓頁首靜默退回檔名
+  it('title 留在解析結果，缺席時為 undefined', () => {
+    expect(readingDocSchema.parse({ ...minimalDoc, title: '內部標題' }).title).toBe('內部標題')
+    expect(readingDocSchema.parse(minimalDoc).title).toBeUndefined()
+  })
+
   it('nullable 欄位吃 null 也吃缺席', () => {
     const d = readingDocSchema.parse({
       ...minimalDoc,
@@ -145,5 +151,6 @@ describe('similarResponseSchema', () => {
     })
     expect(s.items[0].matched_probes).toBe(9)
     expect(s.items[0].source).toBeUndefined()
+    expect(s.items[0].title).toBeUndefined()
   })
 })

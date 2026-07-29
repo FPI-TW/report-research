@@ -136,6 +136,16 @@ describe('ReportPage', () => {
     expect(readingApi.getSimilarReports).not.toHaveBeenCalled()
   })
 
+  it('報頭標題用報告內部標題，不是檔名', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ file_name: '6247269925_260714_dw_nypcb.pdf', title: 'NYPCB：基板漲價超預期，重申買進' }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'NYPCB：基板漲價超預期，重申買進' })).toBeInTheDocument())
+    // 檔名只留在文件列（等寬小字），不再當頁面標題
+    expect(screen.queryByRole('heading', { name: /6247269925/ })).toBeNull()
+  })
+
   it('載入後顯示報頭：報告名、市場、券商、日期、標的代號', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)

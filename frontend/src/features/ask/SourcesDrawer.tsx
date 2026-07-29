@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Icon } from '../../components/primitives/Icon'
+import { displayTitle } from '../../lib/displayTitle'
 import { marketLabel, marketTint } from '../../lib/meta'
 import { TF_DUR, TF_EASE_OUT, tfInstant } from '../../lib/motionTokens'
 import type { AnswerView } from '../../lib/askReducer'
@@ -51,14 +52,14 @@ export function SourcesDrawer({ open, view, onClose, onOpenReport }: Props) {
             {view.sources.length > 0 && <div className={styles.subhead}>研報 · {view.sources.length}</div>}
             <div className={styles.list}>
               {view.sources.map(s => (
-                <button key={`s${s.n}`} type="button" className={styles.srcCard} onClick={() => onOpenReport(s.report_id, s.file_name)}>
+                <button key={`s${s.n}`} type="button" className={styles.srcCard} onClick={() => onOpenReport(s.report_id, displayTitle(s))}>
                   <div className={styles.srcTop}>
                     <span className={styles.numGold}>{s.n}</span>
                     <span className={styles.mkt} style={marketTint(s.market)}>{marketLabel(s.market)}</span>
                     <span className={styles.srcSpacer} />
                     {s.report_date && <span className={styles.srcDate}>{s.report_date}</span>}
                   </div>
-                  <div className={styles.srcTitle}>{s.file_name}</div>
+                  <div className={styles.srcTitle}>{displayTitle(s)}</div>
                 </button>
               ))}
             </div>

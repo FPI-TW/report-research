@@ -1,3 +1,4 @@
+import { displayTitle } from '../../lib/displayTitle'
 import { reportFileHref } from '../../lib/readingApi'
 import type { ReadingDoc } from '../../lib/readingSchemas'
 import styles from './PdfPane.module.css'
@@ -44,7 +45,7 @@ export function PdfPane({ doc }: Props) {
           <span className={styles.pdfDot} aria-hidden="true">·</span>
           <a className={styles.pdfLink} href={href} download>下載</a>
         </div>
-        <iframe className={styles.frame} src={href} title={doc.file_name} />
+        <iframe className={styles.frame} src={href} title={displayTitle(doc)} />
       </div>
     </div>
   )

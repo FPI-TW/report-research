@@ -80,6 +80,8 @@ export const readingDocSchema = z.object({
   report_id: z.string(),
   file_hash: z.string(),
   file_name: z.string(),
+  /** 報告內部標題（頁首顯示用）；缺值＝批次尚未產生，回退 file_name。 */
+  title: z.string().nullish(),
   market: z.string().nullish(),
   source: z.string().nullish(),
   source_display: z.string().nullish(),
@@ -123,6 +125,7 @@ export type ReadingText = z.infer<typeof readingTextSchema>
 export const similarReportSchema = z.object({
   file_hash: z.string(),
   file_name: z.string(),
+  title: z.string().nullish(),
   market: z.string().nullish(),
   source: z.string().nullish(),
   source_display: z.string().nullish(),

@@ -1,5 +1,6 @@
 import { useReducedMotion } from 'motion/react'
 import type { CSSProperties } from 'react'
+import { displayTitle } from '../../lib/displayTitle'
 import { marketColor, marketLabel } from '../../lib/meta'
 import { springHover } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
@@ -99,11 +100,11 @@ export function BentoWall({
                 to={reportHref(r.file_hash)}
                 style={{ '--c': marketColor(r.market ?? '') } as CSSProperties}
                 whileHover={reduced ? undefined : { x: 2, transition: springHover }}
-                aria-label={r.file_name}
+                aria-label={displayTitle(r)}
               >
                 <span className={styles.code}>{marketLabel(r.market ?? '')}</span>
                 <span className={styles.ltitleWrap}>
-                  <span className={styles.ltitle}>{r.file_name}</span>
+                  <span className={styles.ltitle}>{displayTitle(r)}</span>
                   {r.source && <span className={styles.lsrc}>{r.source}</span>}
                 </span>
                 <span className={styles.ldate}>{date.slice(5)}</span>

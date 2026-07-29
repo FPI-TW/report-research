@@ -2,6 +2,7 @@ import { motion, useReducedMotion, type Variants } from 'motion/react'
 import { useMemo } from 'react'
 import { MotionLink } from '../../components/primitives/MotionLink'
 import { marketLabel, marketTint, instrumentLabel } from '../../lib/meta'
+import { displayTitle } from '../../lib/displayTitle'
 import { highlight } from '../../lib/highlight'
 import { revealTransition, revealVariantsFor, springHover, TF_DUR, TF_EASE_OUT, tfInstant } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
@@ -41,6 +42,7 @@ export function ResultCard({ row, mode, isLatest, terms, index = 0 }: Props) {
     ? Math.max(4, Math.min(100, Math.round((row.best_score ?? 0) * 100)))
     : 0
   const snippet = row.passages?.[0]?.content ?? ''
+  const title = displayTitle(row)
 
   // hover 抬升與 CTA 淡入共用 'hover' 標籤，父層才能把狀態傳播給子元素。
   // 抬升的 transition 必須寫在 variant 內，否則會吃到帶 stagger 延遲的進場 transition。
@@ -62,7 +64,7 @@ export function ResultCard({ row, mode, isLatest, terms, index = 0 }: Props) {
       whileHover="hover"
       // 原 CSS 為 .card:hover .cta, .card:focus-visible .cta——鍵盤焦點也要看得到提示
       whileFocus="hover"
-      aria-label={row.file_name}
+      aria-label={title}
     >
       <div className={styles.chipCol}>
         <span className={styles.badge} style={marketTint(row.market ?? '')}>
@@ -73,7 +75,7 @@ export function ResultCard({ row, mode, isLatest, terms, index = 0 }: Props) {
 
       <div className={styles.main}>
         <div className={styles.titleRow}>
-          <span className={styles.title}>{row.file_name}</span>
+          <span className={styles.title}>{title}</span>
           {isLatest && <span className={styles.latest}>最新</span>}
         </div>
         {pills.length > 0 && <div className={styles.tags}>{pills.join(' · ')}</div>}

@@ -1,6 +1,7 @@
 import { useReducedMotion } from 'motion/react'
 import type { CSSProperties } from 'react'
 import { MotionLink } from '../../components/primitives/MotionLink'
+import { displayTitle } from '../../lib/displayTitle'
 import { marketColor, marketLabel } from '../../lib/meta'
 import { springHover } from '../../lib/motionTokens'
 import type { ReportRow } from '../../lib/schemas'
@@ -34,7 +35,7 @@ export function FeatureTile({ row, mode, isLatest, className }: Props) {
       to={reportHref(row.file_hash, row.passages?.[0]?.chunk_index)}
       style={{ '--c': marketColor(market) } as CSSProperties}
       whileHover={reduced ? undefined : { y: -2, transition: springHover }}
-      aria-label={row.file_name}
+      aria-label={displayTitle(row)}
     >
       <div className={styles.top}>
         <span className={styles.mk}>
@@ -50,7 +51,7 @@ export function FeatureTile({ row, mode, isLatest, className }: Props) {
         )}
       </div>
 
-      <div className={styles.title}>{row.file_name}</div>
+      <div className={styles.title}>{displayTitle(row)}</div>
       {data.length > 0 && <div className={styles.data}>{data.join(' · ')}</div>}
       {row.summary && <p className={styles.sum}>{row.summary}</p>}
       <div className={styles.foot}>

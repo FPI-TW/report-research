@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { displayTitle } from '../lib/displayTitle'
 import { marketLabel, marketTint } from '../lib/meta'
 import { TF_DUR, TF_EASE_OUT, tfInstant } from '../lib/motionTokens'
 import type { Source } from '../lib/askSchemas'
@@ -89,7 +90,7 @@ export function CiteButton({ n, source, onCite }: Props) {
               <span className={styles.mkt} style={marketTint(source.market)}>{marketLabel(source.market)}</span>
               {source.report_date && <span className={styles.date}>{source.report_date}</span>}
             </span>
-            <span className={styles.title}>{source.file_name}</span>
+            <span className={styles.title}>{displayTitle(source)}</span>
             <span className={styles.foot}>點擊編號查看引用來源 ›</span>
           </motion.span>
         )}

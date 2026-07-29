@@ -48,6 +48,18 @@ describe('ResultCard', () => {
     expect(screen.getByRole('link', { name: /研報\.pdf/ }))
       .toHaveAttribute('href', `/report/${HASH}`)
   })
+  it('卡片標題顯示報告內部標題，不是檔名', () => {
+    wrap(<ResultCard row={row({ title: '南亞電路板：基板漲價超預期' })}
+      mode="browse" isLatest={false} terms={[]} />)
+    expect(screen.getByText('南亞電路板：基板漲價超預期')).toBeTruthy()
+    expect(screen.queryByText('研報.pdf')).toBeNull()
+    // 無障礙名稱同步改用標題，否則螢幕閱讀器仍念流水號檔名
+    expect(screen.getByRole('link', { name: '南亞電路板：基板漲價超預期' })).toBeTruthy()
+  })
+  it('尚未產生標題時回退檔名（批次漸進補，缺值是常態）', () => {
+    wrap(<ResultCard row={row({ title: null })} mode="browse" isLatest={false} terms={[]} />)
+    expect(screen.getByText('研報.pdf')).toBeTruthy()
+  })
   it('search 態把命中的 chunk_index 帶進連結供閱讀頁定位', () => {
     const r = row({ passages: [{ score: 0.9, chunk_index: 7, content: '台積電營收成長' }] })
     wrap(<ResultCard row={r} mode="search" isLatest={false} terms={[]} />)

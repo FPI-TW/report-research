@@ -1,5 +1,6 @@
 import { Pressable } from '../../components/primitives/Pressable'
 import { Skeleton } from '../../components/primitives/Skeleton'
+import { displayTitle } from '../../lib/displayTitle'
 import type { ChangeItem, Market, Window } from '../../lib/radarSchemas'
 import { DirectionTag } from './DirectionTag'
 import { fmtDate, fmtEps, fmtPrice, RATING_DISPLAY, WINDOW_LABEL } from './radarFormat'
@@ -230,7 +231,7 @@ export function BrokerTimeline({
               <Pressable
                 tapScale={0.97}
                 className={styles.link}
-                onClick={() => onOpenReport(snap.report_link.report_id, snap.report_link.file_name)}
+                onClick={() => onOpenReport(snap.report_link.report_id, displayTitle(snap.report_link))}
               >
                 查看原始研報
               </Pressable>

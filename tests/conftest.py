@@ -26,6 +26,37 @@ os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _protect_repo_dotenv():
+    """執行期安全網：任何測試都不得改動 repo 根的 `.env`。
+
+    這台機器上 repo root **就是部署目錄**（systemd 的 WorkingDirectory，且
+    `web/server.py` 從模組自身路徑解析 `.env`）。2026-07-29 有測試覆寫它之後
+    沒還原，生產帳密與 `REPORT_MARK_SESSION_SECRET` 被換成測試值，重啟後生效。
+
+    `test_env_loading.py` 的 AST 掃描擋的是**已知的程式碼形態**；這裡擋的是
+    行為本身——不管用什麼寫法動到它，session 結束時都會被抓出來並**自動還原**，
+    把「靜默毀掉生產憑證」降級成「一條紅色測試」。
+
+    限制講明：行程被 SIGKILL（OOM、逾時強殺）時 teardown 不會執行，這層網就
+    失效。所以它是第二道防線，第一道仍是「測試根本不要碰真實檔案」。
+    """
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    original = env_path.read_bytes() if env_path.is_file() else None
+    yield
+    now = env_path.read_bytes() if env_path.is_file() else None
+    if now == original:
+        return
+    if original is None:
+        env_path.unlink(missing_ok=True)
+    else:
+        env_path.write_bytes(original)
+    raise AssertionError(
+        f"有測試改動了 repo 根的 {env_path.name}（已自動還原）。"
+        "測試不得改動真實部署檔——見 tests/test_env_loading.py 的模組 docstring。"
+    )
+
+
 @pytest.fixture(autouse=True)
 def _clear_trusted_providers():
     """M4a：trusted registry／快取／限流是模組級狀態。每測試後清空，防止

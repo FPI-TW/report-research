@@ -32,6 +32,28 @@ def clean_extracted(s: str) -> str:
     )
 
 
+# 長 token 的軟斷點：分隔符「之後」插入零寬空格（U+200B）
+_RE_TOKEN_SEP = re.compile(r"([_\-./\\·])")
+
+
+def soft_break_token(s: str) -> str:
+    """在 `_ - . / \\ ·` 之後插入零寬空格，讓長檔名在窄欄有斷行機會。冪等。
+
+    Typst 與 WeasyPrint 對「完全沒有斷行機會的長 token」都不會強制斷字——它直接畫到
+    欄外，**且不報任何錯**。實測 report-0475a66d.pdf（A4 雙欄、單欄僅 248pt）有 5 條
+    引用來源被裁切在頁面之外，連 pdftotext 都取不回被裁掉的字元：是靜默的資訊遺失，
+    不是視覺瑕疵。`623565083880456567_260717_ubs_wistron.pdf` 這種 44 字元檔名是常態。
+
+    U+200B 不佔寬度、不改變 `norm_for_match` 之外的任何比對語意，是最小侵入的斷點。
+    冪等靠「只在分隔符後插入、且不對已有 ZWSP 的位置重複插入」達成。
+    """
+    if not s:
+        return ""
+    return _RE_TOKEN_SEP.sub(lambda m: m.group(1) + "​", s).replace(
+        "​​", "​"
+    )
+
+
 def norm_for_match(s: str) -> str:
     """比對用正規化：NFKC → 小寫 → 移除所有空白。
 

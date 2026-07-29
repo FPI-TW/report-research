@@ -478,14 +478,24 @@ def _emit_body(
     for sec in doc.sections:
         if sec.heading:
             out.append(f"#section-heading({_tstr(sec.heading)})")
+        # 引用來源交給模板的 refs-block（清單排版：不兩端對齊、懸掛縮排、小一級字）。
+        # 散文本身仍是 pandoc 跳脫後的片段，只是多包一層樣式 scope。
+        refs = sec.key == "references"
+        if refs:
+            out.append("#refs-block[")
         for b in sec.blocks:
             if isinstance(b, ProseBlock):
                 out.append(b.typst)
             elif isinstance(b, ChartBlock):
-                out.append(f"#chart-figure({_tstr(b.svg)}, {_tstr(b.caption)}{supp})")
+                # span: true —— 圖表一律跨欄置頂。單欄模板忽略此引數（見模板契約）。
+                out.append(
+                    f"#chart-figure({_tstr(b.svg)}, {_tstr(b.caption)}{supp}, span: true)"
+                )
             elif isinstance(b, KpiBlock):
                 # 章節內的 KPI（非跨欄置頂那組）就地排一列
                 out.append(f"#kpi-strip({_emit_kpi(b.items)}{kpi_lbl})")
+        if refs:
+            out.append("]")
     return "\n\n".join(out)
 
 
@@ -544,7 +554,8 @@ def emit_typst(
         kpi_src_label = "Source"
     hero, rest = _split_hero_kpi(doc)
     head = (
-        f'#import "{template_import_path}": report, section-heading, kpi-strip, chart-figure\n\n'
+        f'#import "{template_import_path}": report, section-heading, kpi-strip,'
+        " chart-figure, refs-block\n\n"
         "#show: report.with(\n"
         f"  title: {_tstr(doc.meta.title)},\n"
         f"  date: {_tstr(doc.meta.date)},\n"

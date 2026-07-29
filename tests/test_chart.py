@@ -19,7 +19,25 @@ class RenderChartSvgTests(unittest.TestCase):
         svg = render_chart_svg(spec)
         self.assertTrue(svg.startswith("<svg"))
         self.assertEqual(svg.count("<rect"), 3)  # 單序列：3 長條、無圖例 rect
-        self.assertIn("各廠營收", svg)
+
+    def test_title_lives_in_caption_not_in_svg(self):
+        """標題只能出現一次，而它的位置是 figure caption，不是 SVG 內。
+
+        先前兩邊都畫：SVG 內 14px 一份、chart_caption 一份，PDF 上同一句話在圖的上下
+        各出現一次（實測 report-0475a66d.pdf 第 2 頁）。caption 是唯一來源，因為只有
+        它能參與 figure 的編號、間距與跨頁處理。
+        """
+        from app.services.pdf import chart_caption
+
+        spec = {
+            "type": "bar", "title": "各廠營收（億元）",
+            "x": ["新應材", "台特化", "中砂"],
+            "series": [{"name": "營收", "values": [120, 86, 54]}],
+            "source": "[3]",
+        }
+        self.assertNotIn("各廠營收", render_chart_svg(spec))
+        self.assertIn("各廠營收", chart_caption(spec))
+        self.assertIn("[3]", chart_caption(spec))  # 來源標記不得因此消失
 
     def test_line_has_polyline_and_points(self):
         spec = {

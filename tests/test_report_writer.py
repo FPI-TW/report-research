@@ -558,8 +558,9 @@ class LedgerAssemblyTests(unittest.TestCase):
         self.assertIn("分析[2]", final)  # e2 第二見=2
         self.assertIn("又見[1]", final)  # e1 全文恆同號
         self.assertIn("## 引用來源", final)
-        self.assertIn("[1] a.pdf（TW·2026-01-01）", final)
-        self.assertIn("[2] b.pdf（US·2026-02-01）", final)
+        # 引用標籤去副檔名（見 _ref_label）：檔名主體與 market·日期 仍須逐字保留
+        self.assertIn("[1] a（TW·2026-01-01）", final)
+        self.assertIn("[2] b（US·2026-02-01）", final)
 
     def test_assemble_final_unknown_id_counted_and_stripped(self):
         ledger = rw.EvidenceLedger()
@@ -668,7 +669,8 @@ class DraftReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[1]", final["markdown"])  # [[ev:]] → [n]
         self.assertNotIn("[[ev:", final["markdown"])  # 內部 token 不漏
         self.assertIn("## 引用來源", final["markdown"])
-        self.assertIn("a.pdf", final["markdown"])
+        # 引用標籤去副檔名（見 _ref_label）；檔名主體仍在，可追溯性不變
+        self.assertIn("[1] a（", final["markdown"])
         self.assertEqual(final["sources"][0]["report_id"], "r1")
         self.assertEqual(final["manifest"]["schema_version"], 1)
 
@@ -1207,6 +1209,27 @@ class WebRefsAssemblyTests(unittest.TestCase):
         self.assertIn("## 引用來源", out)
         self.assertIn(rw.EXTERNAL_HEADING, out)
         self.assertGreater(len(out.splitlines()), 1)
+
+    def test_long_filename_gets_soft_break_points(self):
+        """長檔名必須帶軟斷點，否則在 248pt 的窄欄會被畫到欄外並**靜默截斷**。
+
+        實測 report-0475a66d.pdf 有 5 條引用被裁切在頁面之外，連 pdftotext 都取不回
+        被裁掉的字元（是資訊遺失，不是視覺瑕疵）。這條測試釘住的是「每個分隔符後面
+        都有斷行機會」，而不是某個特定字元——ZWSP 只是目前的實作手段。
+        """
+        from app.services.evidence import Evidence
+
+        name = "623565083880456567_260717_ubs_wistron.pdf"
+        ev = Evidence(evidence_id="e1", kind="corpus", file_name=name,
+                      market="TW", report_date="2026-07-17")
+        line = rw.build_references([ev], "en").splitlines()[1]
+
+        # 去掉零寬空格後，語意內容不變（可追溯性不因排版手段而改變）
+        self.assertIn("623565083880456567_260717_ubs_wistron", line.replace("​", ""))
+        self.assertNotIn(".pdf", line)  # 副檔名對讀者零資訊，且佔掉窄欄寬度
+        # 每一段連續字元都不得超過「一欄放得下」的長度：以 30 字元為保守上界
+        longest = max(len(tok) for tok in line.replace("​", " ").split())
+        self.assertLessEqual(longest, 30, f"仍有無斷點長 token：{line!r}")
 
 
 if __name__ == "__main__":

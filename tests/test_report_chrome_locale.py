@@ -105,6 +105,37 @@ class EmitTypstLocaleTests(unittest.TestCase):
         self.assertIn("source-label:", src)
 
 
+class LayoutContractTests(unittest.TestCase):
+    """版面契約：emitter 必須交出讓模板能正確排版的訊號。
+
+    這兩條都是「壞掉時完全不報錯、只是 PDF 變醜或掉字」的類型，所以只能靠測試釘住。
+    """
+
+    def test_charts_are_emitted_as_spanning(self):
+        """圖表一律跨欄。少了 `span: true`，雙欄模板會把 640px 畫布壓進 248pt 的欄，
+        chart.py 的 10px 軸標籤縮成 3.9pt（模板規範下限是 8pt）——圖等於白畫。
+        """
+        doc = build_document(_MD, title="T", meta=_META, locale="en")
+        src = emit_typst(doc, disclaimer=pdf.report_disclaimer("en"), locale="en")
+        self.assertIn("#chart-figure(", src)
+        for call in src.split("#chart-figure(")[1:]:
+            self.assertIn("span: true", call.split("\n")[0] + call[:400])
+
+    def test_references_section_wrapped_in_refs_block(self):
+        """引用來源必須交給 refs-block（不兩端對齊、懸掛縮排、小一級字）。
+
+        留在正文樣式下，長檔名那一行會被 justify 拉出巨大空洞，且沒有斷點時直接
+        溢出欄外並靜默截斷。
+        """
+        doc = build_document(_MD, title="T", meta=_META, locale="en")
+        src = emit_typst(doc, disclaimer=pdf.report_disclaimer("en"), locale="en")
+        self.assertIn("#refs-block[", src)
+        # 只有引用來源一節被包起來（不得誤包正文）
+        self.assertEqual(src.count("#refs-block["), 1)
+        head, tail = src.split("#refs-block[", 1)
+        self.assertIn("References", head[-400:], "refs-block 應緊接在 References 標題之後")
+
+
 class EnglishTypstCompileTests(unittest.TestCase):
     """英文研報三模板實際編譯（.typ 新增參數不破壞編譯的最終防線）。"""
 

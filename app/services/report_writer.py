@@ -44,6 +44,7 @@ from app.services.retrieval_pipeline import (
     retrieve_context,
     retrieve_context_multi,
 )
+from app.services.textnorm import soft_break_token
 
 logger = logging.getLogger(__name__)
 
@@ -565,6 +566,19 @@ def assemble_body(title: str, sections: list[dict], locale: str = DEFAULT_LOCALE
     return "\n\n".join(out)
 
 
+_REF_EXT_RE = re.compile(r"\.(pdf|docx?)$", re.IGNORECASE)
+
+
+def _ref_label(name: str) -> str:
+    """引用來源的檔名 → 可排版的標籤：去副檔名 + 插入軟斷點。
+
+    檔名是可追溯性的錨（使用者拿它回 NAS 找原始檔），故保留原字串不改寫，只做兩件
+    純呈現的事：副檔名對讀者零資訊（語料一律是 pdf/doc），以及**長檔名必須有斷行
+    機會**——否則在 248pt 的窄欄裡它會被畫到欄外並靜默截斷（見 soft_break_token）。
+    """
+    return soft_break_token(_REF_EXT_RE.sub("", name))
+
+
 def build_references(ordered: list, locale: str = DEFAULT_LOCALE) -> str:
     """由 render_citations 的 ordered（依 [n] 序）產『## 引用來源』節。
 
@@ -578,11 +592,16 @@ def build_references(ordered: list, locale: str = DEFAULT_LOCALE) -> str:
     for i, ev in enumerate(ordered, 1):
         if getattr(ev, "kind", "corpus") == "external":
             label = ev.title or ev.url or ("External source" if en else "外部來源")
-            lines.append(f"[{i}] {label}{lp}{ev.url}{rp}" if ev.url else f"[{i}] {label}")
+            # URL 同樣是無斷點長 token（`https://…/a/b/c?d=e`），一併加軟斷點
+            lines.append(
+                f"[{i}] {label}{lp}{soft_break_token(ev.url)}{rp}" if ev.url
+                else f"[{i}] {label}"
+            )
         else:
             name = ev.file_name or ev.report_id or ("Report" if en else "研報")
+            label = _ref_label(name)
             meta = "·".join(x for x in (ev.market, ev.report_date) if x)
-            lines.append(f"[{i}] {name}{lp}{meta}{rp}" if meta else f"[{i}] {name}")
+            lines.append(f"[{i}] {label}{lp}{meta}{rp}" if meta else f"[{i}] {label}")
     if len(lines) == 1:
         if en:
             lines.append(

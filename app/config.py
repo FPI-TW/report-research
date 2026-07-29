@@ -146,6 +146,15 @@ class Settings:
     # 執行期可觀測性
     log_level: str
 
+    # DB 連線池與逾時（app/services/db.py）—— 本區段只放 DB_* 旋鈕
+    db_pool_size: int
+    db_max_overflow: int
+    db_pool_timeout: float
+    db_pool_recycle: int
+    db_statement_timeout_ms: int
+    db_idle_tx_timeout_ms: int
+    db_maintenance_statement_timeout_ms: int
+
 
 def _load() -> Settings:
     intent_model = os.getenv("ASK_INTENT_MODEL", "claude-haiku-4-5")
@@ -277,6 +286,52 @@ def _load() -> Settings:
         faithfulness_model=os.getenv("FAITHFULNESS_MODEL", intent_model),
         faithfulness_timeout=float(os.getenv("FAITHFULNESS_TIMEOUT", "60")),
         log_level=_log_level("LOG_LEVEL", "INFO"),
+        # ── DB 連線池與逾時（app/services/db.py）─────────────────────────────
+        # 池是 **per-process**：生產 web 是單 worker（report-mark-web.service 的
+        # ExecStart 沒有 --workers），批次腳本各自是獨立行程、各自一個池。
+        #
+        # 上限 = pool_size + max_overflow = 20。與 PG 的 max_connections 的關係：
+        # DB 跑 pgvector/pgvector:pg16 官方映像，Makefile 的 docker run 沒有帶任何
+        # postgresql.conf 覆寫 ⇒ max_connections=100、superuser_reserved_connections=3
+        # ⇒ 一般角色可用 97。web 20 ＋ 同步鏈三支批次（各自單執行緒、同時只開一個
+        # session）＝ 26，離 97 還很遠。要加 uvicorn --workers 或提高任何併發閘之前，
+        # 先把「worker 數 × 20 ＋ 批次」重算一次。
+        db_pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
+        # 為何上限取 20 而不是沿用 SQLAlchemy 預設的 5+10=15：有併發閘的路徑只有
+        # /api/ask(3) 與研報（1 個 run × REPORT_FANOUT_CONCURRENCY=3 ＋ 1 條記帳）
+        # ＝ 7 條；/api/search、雷達、閱讀頁、監控頁**完全沒有併發閘**，剩下的 13
+        # 條就是留給它們的突發量。pool_size 只留 5 條常駐，其餘走 overflow 用完即關，
+        # 不讓閒置連線長期佔著 PG 的 backend 記憶體。
+        db_max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "15")),
+        # 取不到連線＝池已滿；在單 worker、上限 20 的前提下這已經是異常狀態。
+        # 預設的 30 秒只是把使用者的等待拉長，最後回的還是同一個 500。
+        db_pool_timeout=float(os.getenv("DB_POOL_TIMEOUT", "10")),
+        # pool_pre_ping 只在 checkout 當下驗一次；recycle 讓長期閒置的連線在被 DB
+        # 或中介（Docker NAT）默默砍掉之前就先主動汰換。
+        db_pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "1800")),
+        # 這條才是真正的耗盡防線：沒有 statement_timeout 時，單一失控查詢可以無上限
+        # 佔住一條連線（雷達目錄與 overview 分面在現規模下都是全表掃描）。
+        # **刻意不取架構檢視建議的 15000**：本專案沒有壓測數據，而有幾支查詢天生偏慢
+        # （雷達目錄的兩次全表 unnest、overview 一題掃 7 次同一母體、閱讀頁 similar
+        # 拉高 ef_search 的 HNSW 掃描），15s 有把正常功能打掛的實質風險。60s 比任何
+        # 已知查詢高一個數量級，仍舊把「無上限」變成有上限。
+        db_statement_timeout_ms=int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "60000")),
+        # **預設 0（關）是刻意的，不是漏設。** 批次匯入會在交易開著的情況下做長時間
+        # 的非 DB 工作：scripts/sync_new_reports.py 先 report_exists() 開了交易，接著
+        # 才 spawn claude CLI 標註（硬逾時 150s）與 BGE-M3 嵌入（大檔可達數分鐘），
+        # 中間完全沒有 commit。設了這個值＝生產每 3 小時一次的同步會把報告靜默丟進
+        # FAIL_LOG。web 行程沒有這個形態（2026-07-29 的 AST 複驗：44 個
+        # `async with SessionFactory()` 區塊沒有一個含 yield 或 LLM 串流），所以要開就
+        # 只在 web 的 .env 開——批次腳本不讀 repo 根的 .env（sync unit 走
+        # /etc/default/report-mark-sync），這個切分是天然的。
+        db_idle_tx_timeout_ms=int(os.getenv("DB_IDLE_TX_TIMEOUT_MS", "0")),
+        # 維運長查詢的豁免值，配 db.relax_statement_timeout() 使用（SET LOCAL，只影響
+        # 當前交易）。0＝不限。存在的理由：ANALYZE research.report_chunk 要在 70 萬列
+        # × vector(1024) 上抽樣，可能久於上面的 60s，而它是匯入流程的最後一步——被
+        # 砍掉時前面的資料都已 commit，症狀只是 planner 統計靜默過期。
+        db_maintenance_statement_timeout_ms=int(
+            os.getenv("DB_MAINTENANCE_STATEMENT_TIMEOUT_MS", "0")
+        ),
     )
 
 

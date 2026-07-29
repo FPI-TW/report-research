@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text as sql_text  # noqa: E402
 
 from app.services.chunk import chunk_text  # noqa: E402
-from app.services.db import SessionFactory  # noqa: E402
+from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
 from app.services.embed import embed_texts  # noqa: E402
 from app.services.store import ReportRow, report_exists, upsert_report  # noqa: E402
 from app.services.tagging import load_tag  # noqa: E402
@@ -109,7 +109,10 @@ async def main(force: bool) -> None:
             print(f"  [{tag.market}] {name[:45]} ({len(chunks)} chunks)")
 
         if stats["ingested"]:
-            # 批量導入後刷新統計，讓 planner 掌握新資料分佈
+            # 批量導入後刷新統計，讓 planner 掌握新資料分佈。
+            # ANALYZE 可能久於引擎層的 statement_timeout，且是最後一步——被砍掉
+            # 只會靜默留下過期統計。先就本交易放寬上界（見 db.relax_statement_timeout）。
+            await relax_statement_timeout(session)
             await session.execute(sql_text("ANALYZE research.report_chunk"))
             await session.commit()
 

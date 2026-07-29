@@ -446,6 +446,12 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` | loopback | 信任的反向代理 CIDR（走 Cloudflare Tunnel 外網時必填）|
 | `REPORT_MARK_DB_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5436/research` | DB 連線字串 |
 
+**DB 連線池與查詢逾時（`DB_*`）** — `DB_POOL_SIZE`(5)、`DB_MAX_OVERFLOW`(15)、`DB_POOL_TIMEOUT`(10s)、`DB_POOL_RECYCLE`(1800s)、`DB_STATEMENT_TIMEOUT_MS`(60000)、`DB_IDLE_TX_TIMEOUT_MS`(0＝關)、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS`(0＝不限)。
+
+> **連線池是 per-process**（一個 uvicorn worker 一個池，每支批次腳本各自一個池）。**調大併發之前先算連線數**：`worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 × 2` 必須小於 DB 的 `max_connections` 扣掉 `superuser_reserved_connections`（官方 `pgvector/pgvector:pg16` 映像未覆寫 conf ⇒ 100 − 3 = 97；現況 1 × 20 + 3 × 2 = 26）。要加 `uvicorn --workers`、提高 `REPORT_SEMAPHORE` 或放寬 `web/routers/ask.py` 寫死的 `_ASK_SEMAPHORE`(3) 之前，重算這條式子——算式與逐項理由見 [.env.example](.env.example) 與 `app/config.py` 的 `DB_*` 區段。
+>
+> `DB_STATEMENT_TIMEOUT_MS` 是這組裡唯一真的在擋事情的：沒有它，**單一失控查詢可以無上限佔住一條連線**（雷達目錄與 overview 分面在現規模下都是全表掃描）——這才是連線耗盡的成因，不是「併發使用者太多」。`DB_IDLE_TX_TIMEOUT_MS` **預設關是刻意的**：`scripts/sync_new_reports.py` 會在交易開著時 spawn `claude` CLI 與跑嵌入，開了它等於讓每 3 小時一次的生產同步靜默丟報告；要開就只在 web 的 `.env` 開（批次腳本不讀 repo 根的 `.env`）。
+
 **問答（`ASK_*`）** — 常用：`ASK_MAX_REPORTS`(15)、`ASK_MAX_PASSAGES`(4)、`ASK_MAX_CONTEXT_CHARS`(20000)、`ASK_RETRIEVAL_K`(15)、`ASK_DENSE_SCAN`(400)、`ASK_RELEVANCE_FLOOR`(0.62)、`ASK_STALE_AGE_DAYS`(180)、`ASK_MAX_STALE_REPORTS`(4)、`ASK_RECENCY_HALF_LIFE_DAYS`(90)、`ASK_INTENT_MODEL`(`claude-haiku-4-5`)、`ASK_MAX_QUEUE`(20，排隊上限；0＝不限)。
 
 **深度研報（`REPORT_*`）** — `REPORT_MODEL`(`claude-sonnet-5`)、`REPORT_DEEP_K`(30)、`REPORT_MAX_REPORTS`(25)、`REPORT_MAX_PASSAGES`(6)、`REPORT_MAX_CONTEXT_CHARS`(40000)、`REPORT_TIMEOUT`(600s)、`REPORT_THIN_COVERAGE`(8)、`REPORT_ENABLE_WEB`(1)、`REPORTS_DIR`(`data/reports`)、`REPORT_SEMAPHORE`(1)、`REPORT_MAX_QUEUE`(5)、`REPORT_MIN_CITED`(3)。

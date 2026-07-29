@@ -9,6 +9,7 @@ from eval.ragas_metrics import (  # noqa: E402
     _average_precision,
     _cosine,
     answer_relevancy,
+    answer_relevancy_detailed,
     context_precision,
     faithfulness,
 )
@@ -152,6 +153,53 @@ class AnswerRelevancyTests(unittest.IsolatedAsyncioTestCase):
         embed = make_embed({})
         score = await answer_relevancy("orig", "a", judge=judge, embed=embed)
         self.assertEqual(score, 0.0)
+
+
+class RelevancyDetailTests(unittest.IsolatedAsyncioTestCase):
+    """反推問題與逐題餘弦必須跟著分數一起回。
+
+    先前 baseline 只存最終分數，於是「AR 為什麼是 0.64」只能重跑整份評測才答得出來
+    （2026-07-29 診斷門檻從未通過時就卡在這裡）。中間產物落庫後，下次診斷是讀檔而非重跑。
+    """
+
+    async def test_returns_questions_and_per_question_sims(self):
+        judge = make_judge({"反推": {"questions": ["g1", "g2"]}})
+        embed = make_embed({
+            "orig": [1.0, 0.0, 0.0],
+            "g1": [1.0, 0.0, 0.0],
+            "g2": [0.0, 1.0, 0.0],
+        })
+        d = await answer_relevancy_detailed("orig", "a", judge=judge, embed=embed)
+        self.assertAlmostEqual(d.score, 0.5)
+        self.assertEqual(d.questions, ("g1", "g2"))
+        self.assertEqual(len(d.sims), 2)
+        self.assertAlmostEqual(d.sims[0], 1.0)
+        self.assertAlmostEqual(d.sims[1], 0.0)
+
+    async def test_score_is_mean_of_reported_sims(self):
+        """分數必須等於它自己回報的逐題餘弦平均——否則存下來的細節解釋不了分數。"""
+        judge = make_judge({"反推": {"questions": ["g1", "g2"]}})
+        embed = make_embed({
+            "orig": [1.0, 0.0, 0.0],
+            "g1": [1.0, 0.0, 0.0],
+            "g2": [0.0, 1.0, 0.0],
+        })
+        d = await answer_relevancy_detailed("orig", "a", judge=judge, embed=embed)
+        self.assertAlmostEqual(d.score, sum(d.sims) / len(d.sims))
+
+    async def test_empty_detail_when_no_questions(self):
+        d = await answer_relevancy_detailed(
+            "orig", "a", judge=make_judge({"反推": {"questions": []}}), embed=make_embed({})
+        )
+        self.assertEqual((d.score, d.questions, d.sims), (0.0, (), ()))
+
+    async def test_old_score_only_api_still_matches(self):
+        """舊介面沿用者不得受影響。"""
+        judge = make_judge({"反推": {"questions": ["g1"]}})
+        embed = make_embed({"orig": [1.0, 0.0], "g1": [1.0, 0.0]})
+        score = await answer_relevancy("orig", "a", judge=judge, embed=embed)
+        d = await answer_relevancy_detailed("orig", "a", judge=judge, embed=embed)
+        self.assertEqual(score, d.score)
 
 
 if __name__ == "__main__":

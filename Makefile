@@ -17,7 +17,7 @@ COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align serve search \
-        stats reset-db clean-data pipeline signals takeaways \
+        stats reset-db clean-data pipeline signals takeaways titles \
         up-edge down-edge edge-logs edge-reload \
         sync-once db-backup
 
@@ -90,6 +90,10 @@ align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 # 確認 timer 有沒有在跑——真撞上就是不跑，不是跑壞。
 summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續傳，補 summary IS NULL）
 	uv run python scripts/generate_summaries.py
+
+# 勿與 make summaries / signals / takeaways 同時跑：多批次併發搶 claude CLI 會大量誤判失敗。
+titles:  ## 產生顯示標題取代檔名（Sonnet，冪等可續傳，補 title IS NULL；新→舊優先）
+	uv run python scripts/generate_titles.py
 
 signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 make schema）→ research.report_signal
 	uv run python scripts/extract_signals.py

@@ -22,6 +22,7 @@ class ApiErrorResponse(BaseModel):
 class ReportLink(BaseModel):
     report_id: str
     file_name: Optional[str] = None
+    title: Optional[str] = None  # 報告內部標題（顯示用）；None＝前端回退 file_name
     report_date: Optional[str] = None
     broker: Optional[str] = None
     broker_display: Optional[str] = None

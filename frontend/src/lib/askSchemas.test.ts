@@ -39,6 +39,14 @@ test('sourceSchema：歷史來源缺 is_latest/report_date 仍可解析（不 th
   expect(parsed.report_date).toBeNull()
 })
 
+test('sourceSchema：title 必須留在解析結果（zod 預設 strip 未宣告鍵）', () => {
+  const parsed = sourceSchema.parse({
+    n: 1, report_id: 'r1', file_name: '6247269925_260728_gs_umt.pdf', market: 'TW',
+    title: '低軌衛星業務擴展，維持買入',
+  })
+  expect(parsed.title).toBe('低軌衛星業務擴展，維持買入')
+})
+
 test('conversationTurnSchema：sources 含歷史缺欄物件仍可解析（不 throw）', () => {
   const legacySource = { n: 1, report_id: 'r1', file_name: '台積電.pdf', market: 'TW' } // 無 is_latest / report_date
   const t = conversationTurnSchema.parse({

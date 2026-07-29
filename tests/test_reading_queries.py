@@ -181,7 +181,8 @@ class _RecordingSession:
 def _doc_row(full_text="內文", file_hash="a" * 64):
     # 順序須與 _DOC_SQL 的 SELECT 一致
     return (
-        "rep-1", file_hash, "daiwa-8046.pdf", "/data/daiwa-8046.pdf", "TW", "daiwa",
+        "rep-1", file_hash, "daiwa-8046.pdf", "基板漲價超預期",
+        "/data/daiwa-8046.pdf", "TW", "daiwa",
         date(2026, 7, 11), "個股報告", "摘要", ["equity"], ["8046"], [], full_text,
     )
 
@@ -193,6 +194,10 @@ class FetchDocTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(doc.report_id, "rep-1")
         self.assertEqual(doc.file_hash, "a" * 64)
         self.assertEqual(doc.file_name, "daiwa-8046.pdf")
+        # title 夾在 file_name 與 file_path 之間：位移錯一格不會拋錯，只會讓報頭
+        # 印出檔案路徑之類的垃圾，故逐欄釘死
+        self.assertEqual(doc.title, "基板漲價超預期")
+        self.assertEqual(doc.file_path, "/data/daiwa-8046.pdf")
         self.assertEqual(doc.market, "TW")
         self.assertEqual(doc.source, "daiwa")
         self.assertEqual(doc.report_date, date(2026, 7, 11))
@@ -247,6 +252,7 @@ def _sig_row(status="valid"):
         "sig-1", "rep-1", "TW", "8046", "daiwa", date(2026, 7, 11), "Buy (1)", "buy",
         Decimal("2444.0000"), "TWD", "12M", "TP 證據", "[]", "{}", status,
         "daiwa-8046.pdf", datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
+        "基板漲價超預期",
     )
 
 
@@ -288,11 +294,11 @@ class FetchChunkContentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await queries.fetch_chunk_content(session, "rep-1", 999))
 
 
-def _similar_row(file_hash="c" * 64, matched=9, score=5.4, total=12):
-    # 順序須與 _SIMILAR_SQL 的最終 SELECT 一致
+def _similar_row(file_hash="c" * 64, matched=9, score=5.4, total=12, title="相似報告標題"):
+    # 順序須與 _SIMILAR_SQL 的最終 SELECT 一致（title 在尾端，見 fetch_similar 註解）
     return (
         file_hash, "other.pdf", "TW", "kgi", date(2026, 7, 1), "摘要",
-        matched, score, total,
+        matched, score, total, title,
     )
 
 
@@ -316,6 +322,7 @@ class FetchSimilarTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item.source, "kgi")
         self.assertEqual(item.report_date, date(2026, 7, 1))
         self.assertEqual(item.summary, "摘要")
+        self.assertEqual(item.title, "相似報告標題")
         # 「9/12 段相符」的兩個數字不可對調（score 夾在中間，位移最易錯的地方）
         self.assertEqual(item.matched_probes, 9)
         self.assertEqual(item.total_probes, 12)

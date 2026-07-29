@@ -91,7 +91,8 @@ def _broker_key(s: Signal) -> Optional[str]:
 
 def _report_link(s: Signal) -> ReportLink:
     return ReportLink(
-        report_id=s.report_id, file_name=s.file_name, report_date=_iso(s.report_date),
+        report_id=s.report_id, file_name=s.file_name, title=s.title,
+        report_date=_iso(s.report_date),
         broker=s.broker, broker_display=_broker_display(s.broker),
     )
 

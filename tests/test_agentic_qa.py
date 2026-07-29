@@ -154,7 +154,7 @@ def _row(report_id, file_name, market, content, report_date=None):
     """造一列 hybrid_search 形狀的 ChunkRow（供真品 build_context round-trip）。"""
     return ChunkRow(
         chunk_id=None, report_id=report_id, file_hash=f"h-{report_id}",
-        file_name=file_name, market=market,
+        file_name=file_name, title=None, market=market,
         source=None, summary=None, report_date=report_date, report_type=None,
         instrument_types=None, relates_stock=None, relates_futures=None,
         stock_targets=None, futures_targets=None, chunk_index=0,

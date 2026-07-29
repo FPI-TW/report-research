@@ -1,4 +1,5 @@
 import { MotionLink } from '../../components/primitives/MotionLink'
+import { displayTitle } from '../../lib/displayTitle'
 import { marketLabel, marketTint } from '../../lib/meta'
 import { springHover } from '../../lib/motionTokens'
 import type { SimilarReport } from '../../lib/readingSchemas'
@@ -53,7 +54,7 @@ export function SimilarReports({ items, isLoading, isError, onRetry }: Props) {
               whileHover={{ x: 2 }}
               transition={springHover}
             >
-              <div className={styles.itemTitle}>{item.file_name}</div>
+              <div className={styles.itemTitle}>{displayTitle(item)}</div>
               <div className={styles.meta}>
                 {item.market && (
                   <span className={styles.mkt} style={marketTint(item.market)}>

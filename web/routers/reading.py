@@ -194,6 +194,7 @@ async def reading_doc(file_hash: str):
         report_id=doc.report_id,
         file_hash=doc.file_hash,
         file_name=doc.file_name,
+        title=doc.title,
         market=doc.market,
         source=doc.source,
         source_display=source_display(doc.source),
@@ -282,6 +283,7 @@ async def reading_similar(file_hash: str, limit: int = Query(6, ge=1, le=20)):
             SimilarReport(
                 file_hash=r.file_hash,
                 file_name=r.file_name,
+                title=r.title,
                 market=r.market,
                 source=r.source,
                 source_display=source_display(r.source),

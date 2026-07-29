@@ -38,6 +38,9 @@ class ReportResult(BaseModel):
     report_id: str
     file_hash: str  # 閱讀頁連結鍵（/app/report/:hash）
     file_name: str
+    # 報告內部標題（顯示用）。None＝尚未產生，前端回退 file_name——批次是漸進補的，
+    # 任何時點都會有一部分報告沒有標題，這是常態不是錯誤。
+    title: str | None = None
     market: str | None
     source: str | None
     summary: str | None
@@ -73,6 +76,7 @@ class ReportListItem(BaseModel):
     report_id: str
     file_hash: str  # 閱讀頁連結鍵（/app/report/:hash）
     file_name: str
+    title: str | None = None  # 同 ReportResult.title
     market: str | None
     source: str | None
     summary: str | None
@@ -128,6 +132,7 @@ async def reports(
             report_id=rid,
             file_hash=fhash,
             file_name=fn,
+            title=title,
             market=m,
             source=source_display(src),
             summary=summary,
@@ -140,7 +145,7 @@ async def reports(
             futures_targets=list(ftargets) if ftargets else None,
         )
         for (
-            rid, fhash, fn, m, src, rdate, rtype, itypes, rstock, rfut,
+            rid, fhash, fn, title, m, src, rdate, rtype, itypes, rstock, rfut,
             stargets, ftargets, summary,
         ) in rows
     ]
@@ -213,6 +218,7 @@ async def search(
                 report_id=rid,
                 file_hash=mr.file_hash,
                 file_name=fn,
+                title=mr.title,
                 market=m,
                 source=source_display(src),
                 summary=summary,

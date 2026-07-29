@@ -239,7 +239,11 @@ class CorpusOverview:
     by_source: list[tuple[str, int]] = field(default_factory=list)
     by_report_type: list[tuple[str, int]] = field(default_factory=list)
     top_stocks: list[tuple[str, int]] = field(default_factory=list)
-    samples: list[tuple[str, str, str | None, object]] = field(default_factory=list)
+    # (report_id, file_name, market, report_date, title)；title 為報告內部標題，
+    # None＝尚未產生（呈現層回退 file_name）。刻意 append 在尾端：既有解包全靠位移。
+    samples: list[tuple[str, str, str | None, object, str | None]] = field(
+        default_factory=list
+    )
     filters: OverviewFilters | None = None
 
 
@@ -325,13 +329,13 @@ async def aggregate_facets(
     sample_rows = (
         await session.execute(
             text(
-                "SELECT r.id::text, r.file_name, r.market, r.report_date "
+                "SELECT r.id::text, r.file_name, r.market, r.report_date, r.title "
                 f"{base} ORDER BY r.report_date DESC NULLS LAST LIMIT :k"
             ),
             {**params, "k": sample_k},
         )
     ).all()
-    samples = [(rid, fn, mk, rd) for rid, fn, mk, rd in sample_rows]
+    samples = [(rid, fn, mk, rd, title) for rid, fn, mk, rd, title in sample_rows]
 
     return CorpusOverview(
         total=total,
@@ -391,9 +395,10 @@ def format_facts(ov: CorpusOverview) -> str:
         lines.append(f"熱門個股標的：{_fmt_pairs(ov.top_stocks, None)}")
     if ov.samples:
         lines.append("最新樣本研報：")
-        for i, (_rid, fn, _mk, rd) in enumerate(ov.samples, 1):
+        for i, (_rid, fn, _mk, rd, title) in enumerate(ov.samples, 1):
             ds = rd.isoformat() if hasattr(rd, "isoformat") else (rd or "")
-            lines.append(f"[{i}] {fn}{f'（{ds}）' if ds else ''}")
+            # 標題優先：檔名多是券商流水號，列進答案裡讀者看不懂
+            lines.append(f"[{i}] {title or fn}{f'（{ds}）' if ds else ''}")
     return "\n".join(lines)
 
 
@@ -436,7 +441,8 @@ def render_overview_text(ov: CorpusOverview, locale: str = "zh-Hant") -> str:
         )
     if ov.samples:
         parts.append("Latest samples:" if en else "最新樣本：")
-        for i, (_rid, fn, _mk, rd) in enumerate(ov.samples, 1):
+        for i, (_rid, fn, _mk, rd, title) in enumerate(ov.samples, 1):
             ds = rd.isoformat() if hasattr(rd, "isoformat") else (rd or "")
-            parts.append(f"[{i}] {fn}{f'（{ds}）' if ds else ''}")
+            # 標題優先：檔名多是券商流水號，列進答案裡讀者看不懂
+            parts.append(f"[{i}] {title or fn}{f'（{ds}）' if ds else ''}")
     return "\n".join(parts)

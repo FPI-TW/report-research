@@ -82,14 +82,16 @@ class ReportFileBehaviourTests(unittest.TestCase):
         from datetime import date
 
         # _fetch_report 的 SELECT 欄序：file_name, market, source, report_date,
-        # report_type, file_path, full_text, summary
+        # report_type, file_path, full_text, summary, title
         row = ("a.pdf", "TW", "kgi", date(2026, 7, 14), "note",
-               "/nonexistent/a.pdf", "全文", "摘要")
+               "/nonexistent/a.pdf", "全文", "摘要", "內部標題")
         deps.SessionFactory = lambda: _FakeSession(row)
         r = _authed().get("/api/report/rid-1/full")
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertEqual(body["file_name"], "a.pdf")
+        # modal 標題用它（缺值時前端才回退檔名）
+        self.assertEqual(body["title"], "內部標題")
         self.assertEqual(body["market"], "TW")
         # 檔案不存在 → has_file False（不因 file_path 有值就當有檔）
         self.assertFalse(body["has_file"])

@@ -32,6 +32,20 @@ describe('schemas', () => {
     })
     expect(s.total).toBe(1)
   })
+  // zod 預設 strip 未宣告鍵：漏宣告 title 不會噴錯，只會讓標題靜默消失（P4 前車之鑑）
+  it('keeps title on list item / search result / report full', () => {
+    expect(reportListItemSchema.parse({ ...baseItem, title: '內部標題' }).title).toBe('內部標題')
+    expect(reportResultSchema.parse({
+      ...baseItem, title: '內部標題', rank: 1, best_score: 0.5, match_count: 1, passages: [],
+    }).title).toBe('內部標題')
+    expect(reportFullSchema.parse({
+      report_id: 'r1', file_name: 'a.pdf', title: '內部標題', market: null, source: null,
+      summary: null, report_date: null, report_type: null, has_file: false,
+    }).title).toBe('內部標題')
+  })
+  it('title 缺席仍可解析（尚未產生標題的報告佔多數）', () => {
+    expect(reportListItemSchema.parse(baseItem).title).toBeUndefined()
+  })
   it('parses a report full (has_file bool)', () => {
     const f = reportFullSchema.parse({
       report_id: 'r1', file_name: 'a.pdf', market: 'TW', source: '元大',

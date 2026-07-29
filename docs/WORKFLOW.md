@@ -74,7 +74,7 @@ flowchart TD
 | 生成狀態機 | `research.report_run` / `report_section` | M7 逐節生成：一列 run＝一次生成請求的完整生命週期；一列 section＝大綱中的一節 |
 | 渲染產物 | `research.report_rendition` | M9b 不可變 rendition：同一份 markdown 換模板重出各存一列，不覆蓋歷史 PDF |
 
-**`research.research_report` 欄位**：`id`、`file_hash`(唯一)、`file_name`/`file_path`、`market`、`is_research`、`confidence`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`、`language`、`instrument_types[]`、`relates_stock`、`relates_futures`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`created_at`。
+**`research.research_report` 欄位**：`id`、`file_hash`(唯一)、`file_name`/`file_path`、`market`、`is_research`、`confidence`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`、`language`、`instrument_types[]`、`relates_stock`、`relates_futures`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`title`／`title_original`／`title_source`（顯示標題三欄，見 ⑦）、`created_at`。
 
 **`research.report_chunk` 欄位**：`id`、`report_id`(FK)、`chunk_index`、`content`、`embedding vector(1024)`、`content_norm`（`GENERATED STORED`：NFKC→去空白→小寫，對齊 `textnorm.norm_for_match()`）。
 
@@ -149,16 +149,28 @@ flowchart TD
 
 ### claude CLI 批次互斥（`scripts/_claude_lock.py`）
 
-`claude` CLI 是跨進程共用資源。五支批次會 spawn 它——`tag_all_cli.py`（②標註）、`sync_new_reports.py`（增量匯入時的行內標註）、`generate_summaries.py`（⑥）、`extract_takeaways.py`（④）、`extract_signals.py`（⑤）——併發互搶的症狀不是「壞掉」而是**擷取被大量誤標 `rejected`**：資料沒壞、模型也沒壞，只是 CLI 被搶。
+`claude` CLI 是跨進程共用資源。會 spawn 它的批次——`tag_all_cli.py`（②標註）、`sync_new_reports.py`（增量匯入時的行內標註）、`generate_summaries.py`（⑥）、`generate_titles.py`（⑦）、`extract_takeaways.py`（④）、`extract_signals.py`（⑤）——併發互搶的症狀不是「壞掉」而是**擷取被大量誤標 `rejected`**：資料沒壞、模型也沒壞，只是 CLI 被搶。
 
 規約以前只寫在註解與文件裡，但 `report-mark-sync.timer` 每 3 小時會自動跑「增量匯入 → 摘要 → 摘錄」，文件攔不住排程。現在改由鎖強制：
 
-- **機制**：`fcntl.flock(LOCK_EX | LOCK_NB)` 於鎖檔 `data/.claude_cli.lock`；五支批次在 `main` 進入點取一次（**不在 per-report 迴圈內**）。
+- **機制**：`fcntl.flock(LOCK_EX | LOCK_NB)` 於鎖檔 `data/.claude_cli.lock`；各批次在 `main` 進入點取一次（**不在 per-report 迴圈內**）。
 - **撞車行為**：後啟動者印出持有者（腳本名／pid／起始時間）並以 **`rc=75`**（`sysexits.h` 的 `EX_TEMPFAIL`）結束——刻意與「批次自己壞了」分開，讓排程殼能分別處置。
 - **為什麼是 flock 而不是 PID 檔**：flock 綁在開啟檔案描述子上，持有者行程**無論怎麼死（含 SIGKILL）都會自動釋放**，不留陳舊鎖；PID 檔則會在強殺後殘留，且 PID 被回收時 `kill -0` 還會誤判為存活。代價是只在單機有效——這些批次本來就只跑一台。
 - **排程側的可見化**：`scripts/sync_new_reports.sh` 的摘要／摘錄兩段是 best-effort（失敗不擋 sync、unit 不會變紅），所以三個階段的非零退出都會補記一筆到 `data/unit_failures.log`（`OnFailure` 告警既有的落點）。匯入段若因鎖而未執行，還會印出復原指令——**rsync 已把新檔落到本地，下一輪 delta 不會再列出它們**，得用 `scripts/sync_new_reports.py --all-local` 補漏。
 - **逃生口**：`CLAUDE_LOCK_DISABLE=1` 完全繞過（會在 stderr 印警告）。刻意不放進 `.env.example`——批次是 `uv run python scripts/...` 直接跑、不載入 `.env`。
 - **`app/services/llm.py` 不在此鎖範圍內**，且不可加入：它是 `/api/ask` 與研報生成的同一個 spawn 點，納入鎖等於讓一輪數小時的 `tag_all_cli` 把線上問答鎖死。守門在 `tests/test_claude_lock.py`。
+
+### ⑦ 顯示標題產生 — `scripts/generate_titles.py`（Claude CLI）
+- **為什麼**：`file_name` 多是券商流水號（624726992507895929_260728_gs_umt.pdf），列在卡片、來源與閱讀頁頁首上讀者看不懂。報告的真正標題印在首頁內文裡，本階段把它抽出來
+- **輸入**：`research_report` 中 `title IS NULL`、有全文、`is_research IS NOT FALSE` 的列（帶 `--hashes-file` 時只補該清單）。餵給 LLM 的是 **`clean_extracted(full_text)` 的前 `--excerpt`（預設 3000）字**——標題在首頁，故摘錄遠比 ④⑥ 短；不清理則「台 積 電」會讓模型讀錯詞。候選依 `report_date DESC` 排序：跑不完全語料時先讓最近的報告有標題
+- **做什麼**：asyncio ＋ Semaphore（`--workers` 預設 2）逐報告 spawn `claude -p`（Sonnet），一次呼叫涵蓋三種情形並記在 `title_source`：
+  - `extracted`：內文標題已是中文 → 原樣保留
+  - `translated`：英文/其他語言標題 → 譯為繁體中文，原文存 `title_original`
+  - `generated`：內文根本沒有標題（掃描件、純表格日報）→ 依重點自擬一句話標題
+- **失敗即留 NULL**：抽字損毀/亂碼時提示詞要求模型回 `null`（不要猜），`parse_title()` 也**刻意沒有純文字 fallback**——模型不照格式輸出時多半是把整段內文吐回來，寧可讓前端回退檔名，也不要顯示一段錯的標題。失敗記 `data/title_failures.log`
+- **輸出**：`research.research_report.title`（讀取時零 LLM；所有呈現層一律「有標題顯示標題、缺標題回退檔名」）
+- **指令**：`make titles`＝`uv run python scripts/generate_titles.py`；旗標 `[--workers 2] [--limit N] [--excerpt 3000] [--hashes-file PATH]`
+- ⚠️ 同樣受 `claude` CLI 併發之限（互斥由 `scripts/_claude_lock.py` 強制，見下方）：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段（只補本輪新研報）
 
 ### 編排與離線優化
 - **`scripts/resume_corpus.sh`**：一鍵編排——鎖檔（`data/.resume_corpus.lock` + PID 檢查）防重入，並行起 `tag_all_cli.py` 與 `ingest_all.py`，待首輪導入消化 backlog → 等標註全數完成 → 補跑 catch-up 導入；各階段時間戳記寫 `data/resume_orchestrator_*.log`。`bash scripts/resume_corpus.sh`

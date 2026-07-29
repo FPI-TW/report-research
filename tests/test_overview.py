@@ -147,7 +147,7 @@ class AggregateFacetsTests(unittest.IsolatedAsyncioTestCase):
             _FakeResult([("equity", 690), ("index", 300)]),             # by_instrument
             _FakeResult([("(未標註)", 732), ("速報", 1), ("策略", 1)]),  # by_report_type
             _FakeResult([("2330", 120), ("2317", 80)]),                # top_stocks
-            _FakeResult([("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20))]),  # samples
+            _FakeResult([("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20), None)]),  # samples
         ]
         f = OverviewFilters(source="yuanta")
         ov = await aggregate_facets(_QueuedSession(results), f)
@@ -167,7 +167,7 @@ class AggregateFacetsTests(unittest.IsolatedAsyncioTestCase):
             _FakeResult([("yuanta", 500), ("kgi", 400)]),                     # by_source (runs: no source filter)
             _FakeResult([("(未標註)", 880)]),                                  # by_report_type
             _FakeResult([("2330", 200)]),                                     # top_stocks
-            _FakeResult([("rid9", "報告.pdf", "TW", date(2026, 6, 20))]),     # samples
+            _FakeResult([("rid9", "報告.pdf", "TW", date(2026, 6, 20), None)]),     # samples
         ]
         ov = await aggregate_facets(_QueuedSession(results), OverviewFilters())
         self.assertEqual(ov.by_source[0], ("yuanta", 500))
@@ -184,7 +184,7 @@ def _sample_overview():
         by_source=[],
         by_report_type=[("(未標註)", 732), ("速報", 1)],
         top_stocks=[("2330", 120)],
-        samples=[("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20))],
+        samples=[("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20), None)],
         filters=OverviewFilters(source="yuanta"),
     )
 
@@ -237,7 +237,7 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
                 by_market=[("TW", 700)], by_instrument=[("equity", 690)],
                 by_source=[], by_report_type=[("(未標註)", 732)],
                 top_stocks=[("2330", 120)],
-                samples=[("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20))],
+                samples=[("rid1", "元大-台積電.pdf", "TW", date(2026, 6, 20), None)],
                 filters=OverviewFilters(source="yuanta"),
             )
 
@@ -329,7 +329,7 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
                     by_market=[("US", 12)], by_instrument=[("equity", 12)],
                     by_source=[], by_report_type=[("策略", 12)],
                     top_stocks=[("2330", 3)],
-                    samples=[("rid1", "樣本.pdf", "US", date(2026, 6, 20))],
+                    samples=[("rid1", "樣本.pdf", "US", date(2026, 6, 20), None)],
                     filters=f,
                 )
 

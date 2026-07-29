@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Modal } from './primitives/Modal'
 import { getReportFull } from '../lib/searchApi'
+import { displayTitle } from '../lib/displayTitle'
 import styles from './ReportDetailModal.module.css'
 
 interface Props {
@@ -23,7 +24,8 @@ export function ReportDetailModal({ reportId, fileName, onClose }: Props) {
     queryFn: () => getReportFull(reportId as string),
     enabled: open,
   })
-  const title = query.data?.file_name ?? fileName ?? '報告'
+  // 標題優先（fileName 是呼叫端在資料到齊前先給的暫時字樣）
+  const title = displayTitle(query.data ?? { file_name: fileName })
 
   function body() {
     if (!open) return null
@@ -39,7 +41,7 @@ export function ReportDetailModal({ reportId, fileName, onClose }: Props) {
             <a className={styles.ghost} href={href} download>下載原始檔</a>
             <span className={styles.hint}>Esc 關閉</span>
           </div>
-          <iframe className={styles.frame} src={href} title={d.file_name} />
+          <iframe className={styles.frame} src={href} title={title} />
         </div>
       )
     }

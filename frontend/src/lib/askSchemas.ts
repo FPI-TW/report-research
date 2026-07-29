@@ -5,6 +5,8 @@ export const sourceSchema = z.object({
   n: z.number().int(),
   report_id: z.string(),
   file_name: z.string(),
+  /** 報告內部標題（顯示用）；缺值＝回退 file_name。舊 qa_log 重播時本欄不存在。 */
+  title: z.string().nullish(),
   market: z.string(),
   report_date: z.string().nullable().default(null),
   is_latest: z.boolean().default(false),

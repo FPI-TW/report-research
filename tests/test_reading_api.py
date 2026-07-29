@@ -57,9 +57,11 @@ class _FakeSession:
         raise AssertionError("端點不應直接打 DB（fetch 已被 monkeypatch）")
 
 
-def _doc(full_text=RAW_TEXT, file_path="/nonexistent/daiwa-8046.pdf"):
+def _doc(full_text=RAW_TEXT, file_path="/nonexistent/daiwa-8046.pdf",
+         title="基板漲價超預期，重申買進"):
     return DocRow(
         report_id="rep-1", file_hash=HASH, file_name="daiwa-8046.pdf",
+        title=title,
         file_path=file_path, market="TW", source="daiwa",
         report_date=date(2026, 7, 11), report_type="個股報告", summary="摘要",
         instrument_types=["equity"], stock_targets=["8046"], futures_targets=[],
@@ -88,9 +90,10 @@ def _signal():
     )
 
 
-def _similar(matched=9, total=12):
+def _similar(matched=9, total=12, title="另一篇的內部標題"):
     return SimilarRow(
-        file_hash=OTHER_HASH, file_name="other.pdf", market="TW", source="kgi",
+        file_hash=OTHER_HASH, file_name="other.pdf", title=title,
+        market="TW", source="kgi",
         report_date=date(2026, 7, 1), summary="另一篇摘要",
         matched_probes=matched, total_probes=total, score=5.4,
     )
@@ -178,6 +181,8 @@ class ReadingDocShapeTests(ReadingApiBase):
         self.assertEqual(body["report_id"], "rep-1")
         self.assertEqual(body["file_hash"], HASH)
         self.assertEqual(body["file_name"], "daiwa-8046.pdf")
+        # 報頭顯示的是內部標題（檔名多為券商流水號）；批次沒跑到的報告則為 None
+        self.assertEqual(body["title"], "基板漲價超預期，重申買進")
         self.assertEqual(body["market"], "TW")
         self.assertEqual(body["report_type"], "個股報告")  # 前端報頭會顯示
         self.assertEqual(body["source"], "daiwa")
@@ -189,6 +194,13 @@ class ReadingDocShapeTests(ReadingApiBase):
         self.assertEqual(body["text_state"], "ok")
         self.assertEqual(body["text_chars"], len(CANONICAL))
         self.assertEqual(body["text_sha256"], SHA)
+
+    def test_title_absent_is_null_not_error(self):
+        # 標題是漸進補的：批次還沒跑到的報告 title 為 NULL，頁面照常（前端回退檔名）
+        self._set(fetch_doc=self._async(_doc(title=None)))
+        body = _authed_client().get(f"/api/reading/{HASH}").json()
+        self.assertIsNone(body["title"])
+        self.assertEqual(body["file_name"], "daiwa-8046.pdf")
 
     def test_doc_never_includes_full_text(self):
         # 契約：閱讀頁骨架不含全文（PDF 是預設檢視，全文另走 /text）
@@ -459,6 +471,7 @@ class SimilarTests(ReadingApiBase):
         item = body["items"][0]
         self.assertEqual(item["file_hash"], OTHER_HASH)
         self.assertEqual(item["file_name"], "other.pdf")
+        self.assertEqual(item["title"], "另一篇的內部標題")
         self.assertEqual(item["source_display"], source_display("kgi"))
         self.assertEqual(item["report_date"], "2026-07-01")
         self.assertEqual(item["matched_probes"], 9)  # 「9/12 段相符」

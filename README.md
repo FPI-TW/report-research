@@ -265,6 +265,7 @@ report-mark/
 │   generate_summaries.py   為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續）→ make summaries
 │   extract_takeaways.py    閱讀頁重點摘錄：LLM 只出「論點＋逐字引文」、Python 確定性錨定（Sonnet，近 90 天，冪等可續）→ make takeaways
 │   extract_signals.py      觀點雷達訊號擷取（Sonnet，高覆蓋子集先行，冪等可續）→ make signals
+│   generate_titles.py      抽報告內部標題取代檔名顯示；英文標題譯中文、無標題則自擬（Sonnet，冪等可續）→ make titles
 │   align_findb_markets.py  中文標籤 → findb 代碼（一次性、冪等）
 │   search.py               CLI 語意檢索（可 --market 過濾）
 │   eval_retrieval.py       離線 retrieval 評估（hit rate / 新近度）
@@ -353,7 +354,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 擷取刻意只跑高覆蓋子集（`--min-brokers 3` / `--min-reports 5` / `--top-n 50`），所以**「還沒有訊號」是常態不是錯誤**：有研報但尚未擷取時雷達回 200 `pending_extraction` 空狀態，完全查無研報才 404。
 
-> `extract_signals.py`、`extract_takeaways.py`、`generate_summaries.py`、`tag_all_cli.py`、`sync_new_reports.py` 五支批次都 spawn `claude` CLI，**不可併發**——互搶會讓擷取被大量誤標 `rejected`（不是資料壞、也不是模型壞）。互斥由 `scripts/_claude_lock.py` 的 `flock` 跨進程鎖強制：撞車時後啟動者印出持有者（腳本名／pid／起始時間）後以 `rc=75` 結束，**不會產出壞資料**。鎖綁在檔案描述子上，持有者行程無論怎麼死（含 SIGKILL）都會自動釋放，不需要手動清鎖檔。緊急繞過＝`CLAUDE_LOCK_DISABLE=1`（會印警告）。
+> `extract_signals.py`、`extract_takeaways.py`、`generate_summaries.py`、`generate_titles.py`、`tag_all_cli.py`、`sync_new_reports.py` 都 spawn `claude` CLI，**不可併發**——互搶會讓擷取被大量誤標 `rejected`（不是資料壞、也不是模型壞）。互斥由 `scripts/_claude_lock.py` 的 `flock` 跨進程鎖強制：撞車時後啟動者印出持有者（腳本名／pid／起始時間）後以 `rc=75` 結束，**不會產出壞資料**。鎖綁在檔案描述子上，持有者行程無論怎麼死（含 SIGKILL）都會自動釋放，不需要手動清鎖檔。緊急繞過＝`CLAUDE_LOCK_DISABLE=1`（會印警告）。
 
 ---
 
@@ -363,7 +364,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 | 表 | 用途 | 關鍵欄位 / 索引 |
 |----|------|------|
-| `research_report` | 報告層，一檔一列（`file_hash` 去重） | `market`、`is_research`、`confidence`、`source`、`report_date`、`instrument_types[]`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`；索引：`market`(btree)、`instrument_types/stock_targets/futures_targets`(GIN) |
+| `research_report` | 報告層，一檔一列（`file_hash` 去重） | `market`、`is_research`、`confidence`、`source`、`report_date`、`instrument_types[]`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`title`/`title_original`/`title_source`（顯示標題，取代檔名）；索引：`market`(btree)、`instrument_types/stock_targets/futures_targets`(GIN) |
 | `report_chunk` | 切塊層，一塊一列 | `embedding vector(1024)`、`content`、`content_norm`(GENERATED)；索引：`embedding`(HNSW cosine)、`content_norm`(GIN trgm)；FK `ON DELETE CASCADE` |
 | `qa_log` | 每次 `/api/ask` 一列（稽核/分析） | `question`、`answer`、`cited_report_ids[]`、`filters`、`latency_ms`、`thinking_ms`、`feedback`、`sources`、`ext_sources`、`conversation_id` |
 | `report_doc` | 生成的深度研報（隨對話保存） | `qa_id`、`conversation_id`、`title`、`markdown`(真相來源)、`pdf_path`、`sources` |

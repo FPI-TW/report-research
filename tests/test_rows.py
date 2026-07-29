@@ -11,7 +11,7 @@ from app.services.store import _meta_columns  # noqa: E402
 
 class ChunkRowTests(unittest.TestCase):
     _VALS = (
-        "c1", "r1", "a" * 64, "f.pdf", "TW", "元大", "摘要",
+        "c1", "r1", "a" * 64, "f.pdf", "報告內部標題", "TW", "元大", "摘要",
         "2026-06-20", "個股", ["equity"], True, False, ["2330"], [],
         3, "本文內容", 0.12,
     )
@@ -23,6 +23,7 @@ class ChunkRowTests(unittest.TestCase):
         self.assertEqual(row.report_id, "r1")
         self.assertEqual(row.file_hash, "a" * 64)
         self.assertEqual(row.file_name, "f.pdf")
+        self.assertEqual(row.title, "報告內部標題")
         self.assertEqual(row.market, "TW")
         self.assertEqual(row.report_date, "2026-06-20")
         self.assertEqual(row.content, "本文內容")
@@ -31,11 +32,11 @@ class ChunkRowTests(unittest.TestCase):
         self.assertEqual(row[0], "c1")      # chunk_id
         self.assertEqual(row[1], "r1")      # report_id
         self.assertEqual(row[2], "a" * 64)  # file_hash
-        self.assertEqual(row[7], "2026-06-20")  # report_date
+        self.assertEqual(row[8], "2026-06-20")  # report_date
         self.assertEqual(row[-1], 0.12)     # distance
         self.assertEqual(row[-2], "本文內容")  # content
         self.assertEqual(row[-3], 3)        # chunk_index
-        self.assertEqual(len(row), 17)
+        self.assertEqual(len(row), 18)
         self.assertIsInstance(row, tuple)
 
     def test_from_sequence_preserves_order(self):
@@ -72,6 +73,13 @@ class MetaColumnsAlignmentTests(unittest.TestCase):
         cols = _meta_column_names()
         self.assertEqual(cols[2], "file_hash")
         self.assertEqual(ChunkRow._fields[2], "file_hash")
+
+    def test_title_sits_right_after_file_name(self):
+        # 顯示標題與檔名成對：呈現層一律 title → 缺值才回退 file_name
+        cols = _meta_column_names()
+        self.assertEqual(cols[3:5], ["file_name", "title"])
+        self.assertEqual(ChunkRow._fields[3:5], ("file_name", "title"))
+        self.assertNotIn("title", cols[-2:])
 
     def test_column_order_matches_chunkrow_fields(self):
         # 前兩欄是 {alias}.id / r.id（ChunkRow 內分別叫 chunk_id / report_id），

@@ -25,7 +25,7 @@ def _row(eps_json="[]", thesis_json="{}", target=Decimal("2444.0000"), rating="b
     return (
         "sig-1", "rep-1", "TW", "8046", "daiwa", date(2026, 7, 11), "Buy (1)", rating,
         target, "TWD", "12M", "TP 證據", eps_json, thesis_json, status, "daiwa-8046.pdf",
-        created_at,
+        created_at, "基板漲價超預期",
     )
 
 
@@ -196,7 +196,7 @@ def _brow(code, broker="a", market="TW",
     return (
         f"s-{code}-{broker}", f"r-{code}-{broker}", market, code, broker,
         date(2026, 7, 11), "Buy", "buy", Decimal("100.0"), "TWD", "12M", "e",
-        "[]", "{}", "valid", f"{broker}.pdf", created_at,
+        "[]", "{}", "valid", f"{broker}.pdf", created_at, f"{broker} 的報告標題",
     )
 
 

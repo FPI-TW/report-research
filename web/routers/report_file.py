@@ -25,7 +25,8 @@ async def _fetch_report(session, report_id: str):
         await session.execute(
             text(
                 "SELECT file_name, market, source, report_date, report_type, "
-                "file_path, full_text, summary FROM research.research_report WHERE id = :id"
+                "file_path, full_text, summary, title "
+                "FROM research.research_report WHERE id = :id"
             ),
             {"id": report_id},
         )
@@ -39,12 +40,14 @@ async def _fetch_report(session, report_id: str):
 async def report_full(report_id: str):
     """回傳單篇報告的 metadata 與原始檔狀態（供前端 modal 內嵌 PDF）。"""
     async with deps.SessionFactory() as session:
-        fn, m, src, rdate, rtype, fpath, _, summary = await _fetch_report(
+        fn, m, src, rdate, rtype, fpath, _, summary, title = await _fetch_report(
             session, report_id
         )
     return {
         "report_id": report_id,
         "file_name": fn,
+        # 報告內部標題（顯示用）；None＝尚未產生，前端回退 file_name
+        "title": title,
         "market": m,
         "source": source_display(src),
         "summary": summary,

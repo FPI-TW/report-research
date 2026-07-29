@@ -76,6 +76,7 @@ class Signal:
     extraction_status: str = "valid"
     file_name: Optional[str] = None
     created_at: Optional[datetime] = None
+    title: Optional[str] = None  # 報告內部標題（顯示用，None＝尚未產生 → 回退檔名）
 
 
 def _loads(value: object) -> object:
@@ -167,6 +168,9 @@ SIGNAL_SELECT_COLUMNS = (
     "s.extraction_status",
     "r.file_name",
     "s.created_at",
+    # title 一律 append 在尾端：parse_signal_row 以位移解包，插在中段會讓後面每個
+    # 索引無聲位移一格（欄數本身另有 fixture 寬度守門）。
+    "r.title",
 )
 
 # 給 SELECT 用的字串形式；查詢一律用這個，別自己 join。
@@ -193,4 +197,5 @@ def parse_signal_row(row) -> Signal:
         extraction_status=row[14] or "valid",
         file_name=row[15],
         created_at=row[16],
+        title=row[17],
     )

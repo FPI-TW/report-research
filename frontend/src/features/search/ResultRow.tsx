@@ -1,6 +1,7 @@
 import { useReducedMotion } from 'motion/react'
 import type { CSSProperties } from 'react'
 import { MotionLink } from '../../components/primitives/MotionLink'
+import { displayTitle } from '../../lib/displayTitle'
 import { highlight } from '../../lib/highlight'
 import { marketColor, marketLabel } from '../../lib/meta'
 import { revealTransition, revealVariantsFor } from '../../lib/motionTokens'
@@ -35,13 +36,13 @@ export function ResultRow({ row, isLatest, terms, index = 0 }: Props) {
       initial="hidden"
       animate="visible"
       transition={revealTransition(reduced, index)}
-      aria-label={row.file_name}
+      aria-label={displayTitle(row)}
     >
       <span className={styles.code}>{marketLabel(market)}</span>
 
       <div className={styles.main}>
         <div className={styles.titleRow}>
-          <span className={styles.rtitle}>{row.file_name}</span>
+          <span className={styles.rtitle}>{displayTitle(row)}</span>
           {isLatest && <span className={styles.new}>最新</span>}
         </div>
         {meta && <div className={styles.meta}>{meta}</div>}

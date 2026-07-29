@@ -1,3 +1,4 @@
+import { displayTitle } from './displayTitle'
 import { marketLabel } from './meta'
 import type { ReportRow } from './schemas'
 
@@ -6,7 +7,9 @@ export interface TableSort { key: TableSortKey; dir: 'asc' | 'desc' }
 
 function valueOf(r: ReportRow, key: TableSortKey): string | number {
   switch (key) {
-    case 'name': return r.file_name ?? ''
+    // 依畫面上看到的字排序：表頭「報告名稱」顯示的是 displayTitle，
+    // 排序若用 file_name 會出現「看起來沒排序」的清單。
+    case 'name': return displayTitle(r, '')
     case 'market': return marketLabel(r.market ?? '')
     case 'type': return r.report_type ?? ''
     case 'date': return r.report_date ?? ''

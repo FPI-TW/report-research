@@ -1,4 +1,5 @@
 import { Link, useNavigate } from 'react-router'
+import { displayTitle } from '../../lib/displayTitle'
 import { marketLabel, marketTint, reportTypeLabel } from '../../lib/meta'
 import { sortRows, type TableSort, type TableSortKey } from '../../lib/tableSort'
 import type { ReportRow } from '../../lib/schemas'
@@ -72,7 +73,7 @@ export function TableView({ rows, mode, sort, onSort }: Props) {
                 }}
               >
                 <td className={styles.name}>
-                  <Link className={styles.nameLink} to={href}>{r.file_name}</Link>
+                  <Link className={styles.nameLink} to={href}>{displayTitle(r)}</Link>
                 </td>
                 <td>
                   <span className={styles.badge} style={marketTint(r.market ?? '')}>

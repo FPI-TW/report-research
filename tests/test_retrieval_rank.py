@@ -18,6 +18,7 @@ def row(report_id, report_date=None):
         report_id=report_id,
         file_hash=f"h-{report_id}",
         file_name=None,
+        title=None,
         market=None,
         source=None,
         summary=None,

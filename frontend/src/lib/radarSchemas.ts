@@ -32,6 +32,8 @@ export type Window = z.infer<typeof windowSchema>
 export const reportLinkSchema = z.object({
   report_id: z.string(),
   file_name: z.string().nullish(),
+  /** 報告內部標題（顯示用）；缺值＝回退 file_name。 */
+  title: z.string().nullish(),
   report_date: z.string().nullish(),
   broker: z.string().nullish(),
   broker_display: z.string().nullish(),

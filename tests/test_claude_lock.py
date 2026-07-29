@@ -7,7 +7,7 @@ CLAUDE.md 裡，而 `report-mark-sync.timer` 每 3 小時自動跑「增量匯�
 
 1. 鎖真的互斥（同進程異 fd 與跨進程都要擋），且**行程被 SIGKILL 後自動釋放**——
    那正是選 flock 而非 PID 檔的唯一理由，沒測到就等於沒選。
-2. 五個批次入口都取了鎖。
+2. 所有批次入口都取了鎖（清單見 LOCKED_SCRIPTS）。
 3. `app/services/llm.py` **沒有**取鎖。它是 web 線上路徑的 spawn 點，納入鎖等於讓
    一輪 tag_all_cli（數小時）把 /api/ask 鎖死——這條反向斷言比正向的五條更重要。
 
@@ -38,10 +38,11 @@ from scripts._claude_lock import (  # noqa: E402
     claude_cli_lock_or_exit,
 )
 
-# 取鎖的五支批次入口。少一支就是留一個併發缺口，所以清單寫死在測試裡而非掃目錄。
+# 取鎖的批次入口。少一支就是留一個併發缺口，所以清單寫死在測試裡而非掃目錄。
 LOCKED_SCRIPTS = [
     "tag_all_cli.py",
     "generate_summaries.py",
+    "generate_titles.py",
     "extract_takeaways.py",
     "extract_signals.py",
     "sync_new_reports.py",
@@ -284,7 +285,7 @@ def _uses_lock(source: str) -> bool:
 
 
 class WiringTests(unittest.TestCase):
-    def test_all_five_batch_entrypoints_take_the_lock(self):
+    def test_all_batch_entrypoints_take_the_lock(self):
         missing = [
             name
             for name in LOCKED_SCRIPTS

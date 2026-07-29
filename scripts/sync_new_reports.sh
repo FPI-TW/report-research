@@ -49,16 +49,20 @@ fi
 #    --size-only：本地已有同 NAS 舊副本，避免因 mtime 漂移整批重傳 15G；
 #    研報每檔內容唯一，同名同位元組視為相同的風險可忽略。
 log "rsync 同步中…（src=$SRC）"
-rsync -rt --size-only --no-motd --out-format='%n' "$SRC" "$DST" >"$DELTA" 2>>"$LOG"
-RC=$?
+# `|| RC=$?` 不可省：本檔開頭是 set -e，裸呼叫失敗會就地中止，下面那行 `RC=$?`
+# 永遠讀到 0 而且根本執行不到——2026-07-28 起連續 10 輪匯入失敗，日誌就只停在
+# 「增量匯入 delta…」，事後完全看不出敗在哪一步（見下方同型修正）。
+RC=0
+rsync -rt --size-only --no-motd --out-format='%n' "$SRC" "$DST" >"$DELTA" 2>>"$LOG" || RC=$?
 NEW=$(grep -cvE '/$' "$DELTA" 2>/dev/null || echo 0)
 log "rsync rc=$RC，本次新傳檔列≈${NEW}"
 if [ "$RC" -ne 0 ]; then log "rsync 失敗 → 結束"; exit 1; fi
 
 # 3) 增量匯入（nice/ionice 降優先序，勿搶線上服務）
 log "增量匯入 delta…"
-nice -n 19 ionice -c3 "$UV" run python scripts/sync_new_reports.py --delta "$DELTA" >>"$LOG" 2>&1
-IMPORT_RC=$?
+IMPORT_RC=0
+nice -n 19 ionice -c3 "$UV" run python scripts/sync_new_reports.py --delta "$DELTA" >>"$LOG" 2>&1 \
+  || IMPORT_RC=$?
 log "匯入結束 rc=$IMPORT_RC"
 if [ "$IMPORT_RC" -ne 0 ]; then log "匯入失敗（保留 delta 供排查）→ 結束"; exit 1; fi
 

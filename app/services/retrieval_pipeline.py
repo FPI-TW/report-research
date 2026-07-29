@@ -92,7 +92,9 @@ async def retrieve_context(
     rerank_timeout: float | None = None,
 ) -> tuple[list[Source], str]:
     """回 (sources, context)。timer 給定時記 embed/retrieve/rerank 各段耗時。
-    rerank_top_m>0 時在檢索後、選篇前插入 cross-encoder 重排（fail-open）。
+    rerank_top_m>0 時在檢索後、選篇前插入 cross-encoder 重排（fail-open），並把
+    重排前的 fused 快照當 gate_scores 傳給 build_context——重排會覆寫分數尺度，
+    而選篇的 relevance_floor 是以 fused 校準的（詳見下方註解）。
     rerank_timeout 未給時退回模組後備值；逾時預算含排隊等待 semaphore 的時間。"""
     filters = filters or {}
     qvec = await asyncio.to_thread(embed_query_cached, question)
@@ -104,19 +106,35 @@ async def retrieve_context(
         )
     if timer is not None:
         timer.mark("retrieve")
+    gate_scores: dict[str, float] | None = None
     if rerank_top_m > 0:
+        # gate 快照：rerank 前的 fused（select_reports 的 relevance_floor 以此尺度校準）。
+        # 不留快照就是量綱錯配——rerank_scored 會把 head 的第 2 欄由 fused 換成
+        # cross-encoder 的 sigmoid [0,1] 分（tail 保留 fused），而 ASK_RELEVANCE_FLOOR
+        # =0.62 是 rerank 進來之前、以 fused 尺度校準的門檻（見 answer.select_reports）。
+        # 兩者相比會誤剔 tier 0 的高相關候選：baseline-m0（rerank off）的 n_contexts
+        # 為 15/15/3/4/15/15/3/15，baseline-m2（rerank on）同題掉到 9/6/3/3/-/6/3/7。
+        # retrieve_context_multi 早在 M6 就傳了快照，這條單查詢路徑被漏掉；而它才是
+        # 預設生產路徑（ASK_RERANK_ENABLED 預設 1），並且研報的逐節檢索在
+        # plan_queries fail-open 回單一查詢時也會落到這裡。
+        gate_scores = {row.chunk_id: fused for (_tier, fused, row) in scored}
         # CPU-bound cross-encoder：比照 embed_query_cached 卸載到執行緒，避免同步
         # 推論（ask 50 / report 120 對候選）阻塞單一 asyncio event loop 凍結全站併發。
         timeout = rerank_timeout if rerank_timeout is not None else _RERANK_TIMEOUT
-        scored, _applied = await _rerank_stage(
+        scored, applied = await _rerank_stage(
             question, scored, top_m=rerank_top_m, timeout=timeout, timer=timer
         )
+        if not applied:
+            # 未套用＝fused 未被覆蓋，gate 直接比 fused 等價；傳 None 讓「有沒有
+            # 發生覆寫」在呼叫端可讀，與 retrieve_context_multi 的降級處理一致。
+            gate_scores = None
     return build_context(
         scored,
         max_reports=max_reports,
         max_passages=max_passages,
         max_chars=max_chars,
         now=now,
+        gate_scores=gate_scores,
     )
 
 

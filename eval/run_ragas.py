@@ -39,7 +39,11 @@ from app.services.query_planner import plan_queries  # noqa: E402
 from app.services.retrieval_pipeline import retrieve_context  # noqa: E402
 from app.services.scope_router import CORPUS_QA, POLICY_FOR_SCOPE, RouteDecision  # noqa: E402
 from eval.judge import DEFAULT_JUDGE_MODEL, judge_json  # noqa: E402
-from eval.ragas_metrics import answer_relevancy, context_precision, faithfulness  # noqa: E402
+from eval.ragas_metrics import (  # noqa: E402
+    answer_relevancy_detailed,
+    context_precision,
+    faithfulness,
+)
 
 RETRIEVAL_PARAMS = {
     "k": RETRIEVAL_K,
@@ -58,6 +62,31 @@ _CORPUS_QA_DECISION = RouteDecision(
 
 FAITHFULNESS_MIN = 0.9
 CONTEXT_PRECISION_MIN = 0.8
+
+# ⚠️ 這個門檻**從 M0 到 M4 從未通過過**，且與答案品質無關——2026-07-29 量測結論：
+#
+# answer_relevancy = 「由回答反推 3 個問題」與原問題的 BGE-M3 餘弦平均。
+# GENQ_SYS 明文要求「問題須具體」，而題集的問題是廣義的（「台積電最新的營運展望如何」），
+# 於是反推出的細節問題與原問題的餘弦**結構性地**落在 0.70 附近：
+#
+#   BGE-M3 尺度（實測，基準＝「台積電最新的營運展望如何」）
+#     完全相同 1.0000 / 僅標點不同 0.9895 / 繁體改寫 0.9350 / 敘述句 0.9484
+#     簡體同義 0.9174 / 帶 [n] 引用 0.9028
+#     具體子問題（3 題平均）0.7197   ← 反推問題的實際樣態
+#     不同公司同類問題 0.7276 / 完全無關 0.4909
+#
+#   真實資料（qa_log 三筆，judge 實跑）
+#     舊提示 0.6953 / 0.7434 / 0.7821     對照組（無關問題）0.3571-0.4277
+#
+# 也就是說 0.85 只有在反推出「原問題的同義改寫」時才達得到，而那與 GENQ_SYS 的要求相反。
+# 兩種提示詞修法皆經 A/B 量測**否決**：
+#   (a) 改要求「反推使用者原始問題」→ +0.018 / +0.045 / **−0.167**（平均反而降）
+#   (b) 加「與回答同語言」→ −0.005 / +0.016 / −0.002（修好語言漂移但分數不動）
+# 主因是粒度而非語言，而粒度是 RAGAS 這個指標的設計本身。
+#
+# 指標本身沒壞：切題 0.69-0.79 vs 無關 0.36-0.43，鑑別力充足。壞的是繼承來的絕對門檻。
+# **門檻要調到多少是政策決定**（會重新定義「回歸」的意義），故此處不擅自更動；
+# 逐題的反推問題與餘弦現已落進結果檔，可據以校準。
 ANSWER_RELEVANCY_MIN = 0.85
 
 
@@ -137,12 +166,18 @@ async def eval_question(
         latency_ms = int((time.monotonic() - t0) * 1000)
         f = await faithfulness(answer, contexts, judge=judge)
         cp = await context_precision(question, answer, contexts, judge=judge)
-        ar = await answer_relevancy(question, answer, judge=judge, embed=embed)
+        ar_detail = await answer_relevancy_detailed(
+            question, answer, judge=judge, embed=embed
+        )
         result = {
             **base,
             "faithfulness": f,
             "context_precision": cp,
-            "answer_relevancy": ar,
+            "answer_relevancy": ar_detail.score,
+            # 反推問題與逐題餘弦一併落庫：先前只存分數，導致「AR 為什麼是 0.64」
+            # 必須重跑整份評測才答得出來（見 ANSWER_RELEVANCY_MIN 旁的量測紀錄）。
+            "answer_relevancy_questions": list(ar_detail.questions),
+            "answer_relevancy_sims": [round(s, 4) for s in ar_detail.sims],
             "n_contexts": len(contexts),
             "latency_ms": latency_ms,
         }

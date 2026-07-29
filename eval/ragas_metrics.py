@@ -8,6 +8,7 @@ embed(text) -> list[float]（1024 維）。
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -79,16 +80,39 @@ async def context_precision(
     return _average_precision(rel)
 
 
-async def answer_relevancy(question: str, answer: str, *, judge, embed) -> float:
-    """由回答反推 3 個問題 → 各與原問題的 embedding cosine 取平均。無反推問題 → 0.0。"""
+@dataclass(frozen=True)
+class RelevancyDetail:
+    """answer_relevancy 的分數與**中間產物**。
+
+    baseline 先前只存最終分數，所以「AR 為什麼是 0.64」無法事後回答——只能重跑一次
+    完整評測（judge + BGE-M3）才看得到反推出什麼問題。這個 dataclass 就是為了讓
+    下一次診斷不必重跑：questions 與 sims 一併落進結果檔。
+    """
+
+    score: float
+    questions: tuple[str, ...] = ()
+    sims: tuple[float, ...] = ()
+
+
+async def answer_relevancy_detailed(
+    question: str, answer: str, *, judge, embed
+) -> RelevancyDetail:
+    """由回答反推 3 個問題 → 各與原問題的 embedding cosine 取平均，連中間產物一起回。"""
     out = await judge(GENQ_SYS, answer)
     gen = out.get("questions") if isinstance(out, dict) else None
     gen = [q for q in (gen or []) if isinstance(q, str) and q.strip()]
     if not gen:
-        return 0.0
+        return RelevancyDetail(0.0)
     qv = await asyncio.to_thread(embed, question)
     sims = []
     for g in gen:
         gv = await asyncio.to_thread(embed, g)
         sims.append(_cosine(qv, gv))
-    return sum(sims) / len(sims)
+    return RelevancyDetail(sum(sims) / len(sims), tuple(gen), tuple(sims))
+
+
+async def answer_relevancy(question: str, answer: str, *, judge, embed) -> float:
+    """只要分數的舊介面（既有測試與外部呼叫沿用）。"""
+    return (
+        await answer_relevancy_detailed(question, answer, judge=judge, embed=embed)
+    ).score

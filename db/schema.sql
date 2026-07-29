@@ -54,6 +54,15 @@ ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS stock_targets    t
 ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS futures_targets  text[];  -- 期貨商品（小詞表）["台指期"]
 ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS full_text        text;    -- 報告全文（供「查看完整報告」）
 ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS summary          text;    -- 報告摘要（2-3 句，供卡片/列表/modal 預覽）
+-- 顯示標題三欄（scripts/generate_titles.py 產出，讀取時零 LLM）。檔名多為券商流水號
+-- （624726992507895929_260728_gs_umt.pdf），對讀者無意義，故改顯示報告內部標題。
+-- title 一律繁體中文；NULL＝尚未產生，前端一律回退 file_name（不可靠此欄存在）。
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS title          text;
+-- 原文標題（英文報告的原標題；中文報告與自擬標題為 NULL）
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS title_original text;
+-- 來源：extracted（內文既有中文標題）／translated（英文標題譯為中文）／
+-- generated（內文找不到標題，依重點自擬）。無 CHECK：值由批次寫入，未知一律存 NULL。
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS title_source   text;
 
 CREATE INDEX IF NOT EXISTS idx_research_report_instr
     ON research.research_report USING gin (instrument_types);

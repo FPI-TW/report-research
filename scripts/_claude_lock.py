@@ -2,8 +2,9 @@
 
 為什麼需要它
 ────────────
-`claude` CLI 是跨進程共用資源，本 repo 有五支批次會 spawn 它（標註、摘要、摘錄、
-訊號擷取，以及增量匯入時的行內標註）。多支同時跑會互搶，而症狀不是「壞掉」而是
+`claude` CLI 是跨進程共用資源，本 repo 有數支批次會 spawn 它（標註、摘要、標題、
+摘錄、訊號擷取，以及增量匯入時的行內標註；權威清單見 tests/test_claude_lock.py
+的 LOCKED_SCRIPTS）。多支同時跑會互搶，而症狀不是「壞掉」而是
 **擷取被大量誤標 rejected**——資料沒壞、模型也沒壞，只是 CLI 被搶（2026-07 的實際
 事故）。更麻煩的是它已經不只由人手動觸發：`report-mark-sync.timer` 每 3 小時跑
 「增量匯入 → 摘要 → 摘錄」，此時有人手動敲 `make signals` 就撞車。光靠文件警語擋
@@ -218,9 +219,9 @@ def claude_cli_lock(owner: str, lock_path: Path | None = None) -> Iterator[Path]
 
 @contextmanager
 def claude_cli_lock_or_exit(owner: str, lock_path: Path | None = None) -> Iterator[Path]:
-    """五支批次入口的統一寫法：取不到鎖就印出持有者並以 EXIT_LOCK_BUSY 結束。
+    """批次入口的統一寫法：取不到鎖就印出持有者並以 EXIT_LOCK_BUSY 結束。
 
-    之所以做成共用 helper 而不是讓五支各寫一份 try/except：本專案已經在四份研報
+    之所以做成共用 helper 而不是讓每支各寫一份 try/except：本專案已經在四份研報
     prompt 上吃過「手抄平行副本、改一處漏三處」的虧，退出碼與訊息格式屬同一類。
     """
     with ExitStack() as stack:

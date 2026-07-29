@@ -18,7 +18,8 @@
 
 注意：每篇都會冷啟動一個 `claude -p` agent；workers 越高、同時冷啟動越多，磁碟
 小檔 I/O 越容易被頂滿（與 generate_summaries.py 同一顆地雷，預設同樣壓到 2）。
-勿與 make signals / make takeaways 同時跑：多批次搶 claude CLI 會大量誤判失敗。
+與其他 claude 批次的互斥由 scripts/_claude_lock.py 的 flock 強制（撞鎖以 rc=75
+結束，不是這支壞掉）——不再只靠這行註解。
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
+from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "title_failures.log"
@@ -291,4 +293,5 @@ if __name__ == "__main__":
         help="只補此檔列出的 file_hash（每行一個）；不給＝補全表所有 title IS NULL",
     )
     args = ap.parse_args()
-    asyncio.run(main(args.workers, args.limit, args.excerpt, args.hashes_file))
+    with claude_cli_lock_or_exit("generate_titles"):
+        asyncio.run(main(args.workers, args.limit, args.excerpt, args.hashes_file))

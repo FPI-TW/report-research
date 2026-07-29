@@ -121,13 +121,18 @@ if [ -s "$HASHES" ]; then
   fi
 
   # 4b) 顯示標題（best-effort，只針對本輪新研報）
-  #     同樣**必須序列跑**：與摘要/摘錄共搶同一支 claude CLI。
-  #     沒補到標題不是錯誤——前端會回退檔名，只是讀者看到流水號檔名而已。
+  #     同樣**必須序列跑**：與摘要/摘錄共搶同一支 claude CLI（另有 _claude_lock.py
+  #     的 flock 兜底）。沒補到標題不是錯誤——前端會回退檔名，只是讀者看到流水號。
   log "本次新增 ${N} 篇 → 產生顯示標題（僅本輪新研報）"
+  TITLE_RC=0
   nice -n 19 ionice -c3 "$UV" run python scripts/generate_titles.py \
     --hashes-file "$HASHES" \
     ${SYNC_TITLE_WORKERS:+--workers "$SYNC_TITLE_WORKERS"} >>"$LOG" 2>&1 \
-    || log "標題生成非零退出（best-effort，已略過）"
+    || TITLE_RC=$?
+  if [ "$TITLE_RC" -ne 0 ]; then
+    log "標題生成非零退出 rc=${TITLE_RC}（best-effort，已略過）"
+    record_unit_failure "generate_titles" "$TITLE_RC"
+  fi
 
   # 5) 閱讀頁重點摘錄（best-effort，同樣只針對本輪新研報）
   #    **必須序列跑在摘要之後**：兩者都 spawn claude CLI，併發會互搶，擷取會被

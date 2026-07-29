@@ -149,11 +149,11 @@ flowchart TD
 
 ### claude CLI 批次互斥（`scripts/_claude_lock.py`）
 
-`claude` CLI 是跨進程共用資源。五支批次會 spawn 它——`tag_all_cli.py`（②標註）、`sync_new_reports.py`（增量匯入時的行內標註）、`generate_summaries.py`（⑥）、`extract_takeaways.py`（④）、`extract_signals.py`（⑤）——併發互搶的症狀不是「壞掉」而是**擷取被大量誤標 `rejected`**：資料沒壞、模型也沒壞，只是 CLI 被搶。
+`claude` CLI 是跨進程共用資源。會 spawn 它的批次——`tag_all_cli.py`（②標註）、`sync_new_reports.py`（增量匯入時的行內標註）、`generate_summaries.py`（⑥）、`generate_titles.py`（⑦）、`extract_takeaways.py`（④）、`extract_signals.py`（⑤）——併發互搶的症狀不是「壞掉」而是**擷取被大量誤標 `rejected`**：資料沒壞、模型也沒壞，只是 CLI 被搶。
 
 規約以前只寫在註解與文件裡，但 `report-mark-sync.timer` 每 3 小時會自動跑「增量匯入 → 摘要 → 摘錄」，文件攔不住排程。現在改由鎖強制：
 
-- **機制**：`fcntl.flock(LOCK_EX | LOCK_NB)` 於鎖檔 `data/.claude_cli.lock`；五支批次在 `main` 進入點取一次（**不在 per-report 迴圈內**）。
+- **機制**：`fcntl.flock(LOCK_EX | LOCK_NB)` 於鎖檔 `data/.claude_cli.lock`；各批次在 `main` 進入點取一次（**不在 per-report 迴圈內**）。
 - **撞車行為**：後啟動者印出持有者（腳本名／pid／起始時間）並以 **`rc=75`**（`sysexits.h` 的 `EX_TEMPFAIL`）結束——刻意與「批次自己壞了」分開，讓排程殼能分別處置。
 - **為什麼是 flock 而不是 PID 檔**：flock 綁在開啟檔案描述子上，持有者行程**無論怎麼死（含 SIGKILL）都會自動釋放**，不留陳舊鎖；PID 檔則會在強殺後殘留，且 PID 被回收時 `kill -0` 還會誤判為存活。代價是只在單機有效——這些批次本來就只跑一台。
 - **排程側的可見化**：`scripts/sync_new_reports.sh` 的摘要／摘錄兩段是 best-effort（失敗不擋 sync、unit 不會變紅），所以三個階段的非零退出都會補記一筆到 `data/unit_failures.log`（`OnFailure` 告警既有的落點）。匯入段若因鎖而未執行，還會印出復原指令——**rsync 已把新檔落到本地，下一輪 delta 不會再列出它們**，得用 `scripts/sync_new_reports.py --all-local` 補漏。
@@ -170,7 +170,7 @@ flowchart TD
 - **失敗即留 NULL**：抽字損毀/亂碼時提示詞要求模型回 `null`（不要猜），`parse_title()` 也**刻意沒有純文字 fallback**——模型不照格式輸出時多半是把整段內文吐回來，寧可讓前端回退檔名，也不要顯示一段錯的標題。失敗記 `data/title_failures.log`
 - **輸出**：`research.research_report.title`（讀取時零 LLM；所有呈現層一律「有標題顯示標題、缺標題回退檔名」）
 - **指令**：`make titles`＝`uv run python scripts/generate_titles.py`；旗標 `[--workers 2] [--limit N] [--excerpt 3000] [--hashes-file PATH]`
-- ⚠️ 同樣受 `claude` CLI 併發之限：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段（只補本輪新研報），手動長批次開跑前先確認排程沒在跑
+- ⚠️ 同樣受 `claude` CLI 併發之限（互斥由 `scripts/_claude_lock.py` 強制，見下方）：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段（只補本輪新研報）
 
 ### 編排與離線優化
 - **`scripts/resume_corpus.sh`**：一鍵編排——鎖檔（`data/.resume_corpus.lock` + PID 檢查）防重入，並行起 `tag_all_cli.py` 與 `ingest_all.py`，待首輪導入消化 backlog → 等標註全數完成 → 補跑 catch-up 導入；各階段時間戳記寫 `data/resume_orchestrator_*.log`。`bash scripts/resume_corpus.sh`

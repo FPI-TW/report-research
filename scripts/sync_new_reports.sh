@@ -14,8 +14,33 @@ DATE=$(date +%Y%m%d)
 LOG="data/sync_run_${DATE}.log"
 DELTA="data/sync_delta_$(date +%Y%m%d_%H%M%S).txt"
 LOCK="data/.sync_new_reports.lock"
+UNIT_FAILURES="data/unit_failures.log"
+
+# scripts/_claude_lock.py 的 EXIT_LOCK_BUSY（sysexits.h EX_TEMPFAIL）。三個階段都會
+# spawn claude CLI，撞到手動批次時會以這個碼結束——刻意與「這支自己壞了」分開，
+# 因為處置完全不同（前者下一輪自然重試，後者要人去看）。
+LOCK_BUSY_RC=75
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+
+# 把失敗留在 OnFailure 告警既有的落點（deploy/systemd/report-mark-alert.sh 寫的也是
+# 這個檔）。理由：下面摘要與摘錄兩段是 best-effort，失敗不會讓 unit 變紅，於是
+# `|| log "...已略過"` 等於只寫進當日 sync log，而那個檔沒有任何程式消費端——
+# 2026-07-28 連續 10 輪匯入失敗就是這樣 24 小時沒人察覺。單一位置可查才有意義。
+record_unit_failure() {
+  local stage="$1" rc="$2"
+  {
+    echo "=== $(date -Iseconds)  UNIT=report-mark-sync.service  STAGE=${stage}  RC=${rc} ==="
+    if [ "$rc" -eq "$LOCK_BUSY_RC" ]; then
+      echo "（rc=${LOCK_BUSY_RC}＝claude CLI 被另一支批次佔用，見 scripts/_claude_lock.py；"
+      echo "  不是這支批次壞掉。持有者資訊印在下方 log 尾巴裡。）"
+    fi
+    echo "--- ${LOG} (last 20) ---"
+    tail -n 20 "$LOG" 2>/dev/null || echo "(sync log 讀取失敗)"
+    echo
+  } >> "$UNIT_FAILURES" 2>/dev/null || true
+}
+
 mkdir -p data
 
 UV="${UV:-}"
@@ -64,7 +89,19 @@ IMPORT_RC=0
 nice -n 19 ionice -c3 "$UV" run python scripts/sync_new_reports.py --delta "$DELTA" >>"$LOG" 2>&1 \
   || IMPORT_RC=$?
 log "匯入結束 rc=$IMPORT_RC"
-if [ "$IMPORT_RC" -ne 0 ]; then log "匯入失敗（保留 delta 供排查）→ 結束"; exit 1; fi
+if [ "$IMPORT_RC" -ne 0 ]; then
+  record_unit_failure "sync_new_reports(import)" "$IMPORT_RC"
+  if [ "$IMPORT_RC" -eq "$LOCK_BUSY_RC" ]; then
+    # 復原提示不可省：rsync 已把新檔落到本地，下一輪 rsync 不會再把它們列進 delta
+    # （--size-only 判定為已同步），所以「等下一輪自然補上」是錯的直覺——delta 只有
+    # 這一次。等手動批次結束後要用 --all-local 對 DB 補漏。
+    log "匯入未執行：claude CLI 被另一支批次佔用（rc=$LOCK_BUSY_RC）"
+    log "  → 本輪新檔已在本地但未入庫；等該批次結束後跑："
+    log "     $UV run python scripts/sync_new_reports.py --all-local"
+  fi
+  log "匯入失敗（保留 delta 供排查）→ 結束"
+  exit 1
+fi
 
 # 4) 本次有新研報入庫才補摘要（best-effort：失敗只記 log，不擋 sync）
 #    僅針對本輪新匯入的 file_hash（--hashes-file），不掃歷史 NULL 積壓；
@@ -73,24 +110,35 @@ HASHES=data/.sync_last_hashes
 if [ -s "$HASHES" ]; then
   N=$(grep -c . "$HASHES" 2>/dev/null || echo 0)
   log "本次新增 ${N} 篇 → 生成摘要（Sonnet，僅本輪新研報）"
+  SUMMARY_RC=0
   nice -n 19 ionice -c3 "$UV" run python scripts/generate_summaries.py \
     --hashes-file "$HASHES" \
     ${SYNC_SUMMARY_WORKERS:+--workers "$SYNC_SUMMARY_WORKERS"} >>"$LOG" 2>&1 \
-    || log "摘要生成非零退出（best-effort，已略過）"
+    || SUMMARY_RC=$?
+  if [ "$SUMMARY_RC" -ne 0 ]; then
+    log "摘要生成非零退出 rc=${SUMMARY_RC}（best-effort，已略過）"
+    record_unit_failure "generate_summaries" "$SUMMARY_RC"
+  fi
 
   # 5) 閱讀頁重點摘錄（best-effort，同樣只針對本輪新研報）
-  #    **必須序列跑在摘要之後**：兩者都 spawn claude CLI，併發會互搶——
-  #    CLAUDE.md 記載 extract_takeaways 與 extract_signals 併發時擷取會被
-  #    大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。
+  #    **必須序列跑在摘要之後**：兩者都 spawn claude CLI，併發會互搶，擷取會被
+  #    大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。這條順序現在
+  #    另有 scripts/_claude_lock.py 的跨進程 flock 兜底——但鎖只保證「不會同時
+  #    跑」，撞上就是有一邊不跑；要兩段都完成，順序仍然得靠這裡寫對。
   #
   #    **一定要用 --hashes-file，不可用 --since-days 1**：後者濾的是 report_date
   #    而非入庫時間，而 NAS 匯入的研報日期常比入庫日早——實測近 10 天入庫的 90 篇
   #    裡有 79 篇（88%）report_date 超過一天前，用天數會靜默漏掉近九成。
   log "本次新增 ${N} 篇 → 擷取重點摘錄（僅本輪新研報）"
+  TAKEAWAY_RC=0
   nice -n 19 ionice -c3 "$UV" run python scripts/extract_takeaways.py \
     --hashes-file "$HASHES" \
     ${SYNC_TAKEAWAY_WORKERS:+--workers "$SYNC_TAKEAWAY_WORKERS"} >>"$LOG" 2>&1 \
-    || log "摘錄擷取非零退出（best-effort，已略過）"
+    || TAKEAWAY_RC=$?
+  if [ "$TAKEAWAY_RC" -ne 0 ]; then
+    log "摘錄擷取非零退出 rc=${TAKEAWAY_RC}（best-effort，已略過）"
+    record_unit_failure "extract_takeaways" "$TAKEAWAY_RC"
+  fi
 else
   log "本次無新研報入庫 → 跳過摘要與摘錄"
 fi

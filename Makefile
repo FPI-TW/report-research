@@ -81,13 +81,19 @@ restore-durability:  ## 還原 Postgres 耐久性設定（ingest-lowio 異常中
 align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 	uv run python scripts/align_findb_markets.py
 
+# ───── Claude CLI 批次（互斥）─────
+# 下面三支與 tag_all_cli.py／sync_new_reports.py 共五支都 spawn claude CLI，併發互搶
+# 會讓擷取被大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。互斥由
+# scripts/_claude_lock.py 的 flock 跨進程鎖強制，不再只靠這行註解：撞車時後啟動者
+# 會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，不會產出壞資料。
+# 排程（report-mark-sync.timer，每 3 小時）也走同一把鎖，所以手動開跑前不必再去
+# 確認 timer 有沒有在跑——真撞上就是不跑，不是跑壞。
 summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續傳，補 summary IS NULL）
 	uv run python scripts/generate_summaries.py
 
 signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 make schema）→ research.report_signal
 	uv run python scripts/extract_signals.py
 
-# 勿與 make signals 同時跑：多個批次併發搶 claude CLI 會讓擷取大量被誤判 rejected。
 takeaways:  ## 閱讀頁重點摘錄擷取（近 90 天，冪等可續傳；先 make schema）→ research.report_takeaway
 	uv run python scripts/extract_takeaways.py
 

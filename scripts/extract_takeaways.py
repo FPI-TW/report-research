@@ -38,9 +38,10 @@ excerpt 取它的前 N 字、text_sha256 是它的 sha256、locate_quote 也搜�
 故預設不跑全量；要補歷史請自行放大 --since-days 並有心理準備。
 
 注意：每份研報都會冷啟動一個 `claude -p`；--workers 越高越容易頂滿磁碟小檔 I/O
-（見 generate_summaries.py 註）。預設壓到 2。**且不可與 scripts/extract_signals.py
-同時跑** —— 多個批次併發搶 claude CLI 曾導致訊號大量被誤判 rejected（真因不是資料
-壞、也不是模型壞，是搶資源）。要跑就一次跑一支。
+（見 generate_summaries.py 註）。預設壓到 2。**且不可與其他 claude CLI 批次同時跑**
+—— 併發搶 claude CLI 曾導致擷取大量被誤判 rejected（真因不是資料壞、也不是模型壞，
+是搶資源）。這條規約現由 scripts/_claude_lock.py 的跨進程 flock 強制：撞車時本腳本
+會印出持有者並以 rc=75 結束，不會產出壞資料。
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ from sqlalchemy import text  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
+from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "takeaway_failures.log"
@@ -669,10 +671,14 @@ if __name__ == "__main__":
                          "report_date，而 NAS 匯入的研報日期常比入庫日早（實測近 10 天"
                          "入庫者有 88%% 的 report_date 超過一天前），用天數接排程會靜默漏掉近九成")
     ap.add_argument("--workers", type=int, default=2,
-                    help="同時 claude CLI 呼叫數（勿調高；且不可與 extract_signals.py 同時跑）")
+                    help="同時 claude CLI 呼叫數（勿調高；與其他批次的互斥由 _claude_lock.py 強制）")
     ap.add_argument("--limit", type=int, default=None, help="最多擷取幾篇（試跑用）")
     ap.add_argument("--excerpt", type=int, default=24000, help="餵給 LLM 的正典文字上限")
     ap.add_argument("--model", default=TAKEAWAY_MODEL_DEFAULT)
     ap.add_argument("--reextract", action="store_true", help="忽略 checkpoint，強制重跑")
     ap.add_argument("--dry-run", action="store_true", help="只印工作集大小，不呼叫 LLM")
-    asyncio.run(main(ap.parse_args()))
+    # --dry-run 也一起擋：鎖的涵蓋範圍若隨旗標而變，日後有人在「不呼叫 LLM」的路徑上
+    # 加了一個 LLM 呼叫，就會出現一個沒人發現的洞。要在批次跑到一半時查工作集，
+    # 用 CLAUDE_LOCK_DISABLE=1（它只讀 DB，不搶 CLI）。
+    with claude_cli_lock_or_exit("extract_takeaways"):
+        asyncio.run(main(ap.parse_args()))

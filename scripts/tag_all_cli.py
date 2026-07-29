@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.tagging import TAG_INSTRUCTION, parse_tags  # noqa: E402
+from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 ALL = ROOT / "data" / "extracted" / "all.jsonl"
@@ -134,4 +135,6 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--excerpt", type=int, default=10000)
     args = ap.parse_args()
-    main(args.workers, args.limit, args.excerpt)
+    # 全語料標註是最長的一支（數小時），也是最容易把排程的匯入／摘要／摘錄擠掉的一支。
+    with claude_cli_lock_or_exit("tag_all_cli"):
+        main(args.workers, args.limit, args.excerpt)

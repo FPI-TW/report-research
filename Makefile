@@ -19,7 +19,7 @@ COMPOSE := $(DOCKER) compose
         ingest ingest-lowio restore-durability align serve search \
         stats reset-db clean-data pipeline signals takeaways \
         up-edge down-edge edge-logs edge-reload \
-        sync-once
+        sync-once db-backup
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -130,3 +130,9 @@ clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）
 
 sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync）
 	bash scripts/sync_new_reports.sh
+
+# 只備「重建不回來」的七張表（qa_log / report_doc / rendition / takeaway / signal /
+# run / section）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
+# 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
+db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
+	bash scripts/db_backup.sh

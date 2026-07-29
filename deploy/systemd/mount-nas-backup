@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# 以快取憑證 drvfs **可寫**掛載 NAS，供每日 DB 備份寫入。冪等：已掛則直接成功。
+#
+# 為什麼不共用 /mnt/nas-research：那支是 `-o ro`（研報來源刻意唯讀，避免任何程式
+# 寫回 NAS 的原始輸入），備份根本寫不進去。同一個 share 以不同選項掛在第二個
+# 掛載點，是達成「備份不與 pgdata 同一塊磁碟」的最小改動。
+#
+# 部署到 /usr/local/sbin/mount-nas-backup（root:root 0755），搭配
+# deploy/systemd/report-mark-backup.sudoers 的 NOPASSWD 條目。
+set -eu
+mountpoint -q /mnt/nas-backup && exit 0
+mkdir -p /mnt/nas-backup
+exec mount -t drvfs '\\192.168.1.100\投資研究處' /mnt/nas-backup -o uid=1000,gid=1000

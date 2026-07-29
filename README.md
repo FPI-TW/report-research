@@ -248,6 +248,7 @@ report-mark/
 │   search.py               CLI 語意檢索（可 --market 過濾）
 │   eval_retrieval.py       離線 retrieval 評估（hit rate / 新近度）
 │   analyze_qa_log.py       問答延遲、引用新近度與回饋分析
+│   eval_faithfulness.py    M8 查核結果彙總（唯讀）；--claims <id> 逐條主張下鑽
 │   sync_new_reports.sh     NAS→本地增量同步 + 增量匯入（drvfs + rsync，三層去重）
 │
 ├─ workflows/
@@ -387,9 +388,15 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 **深度研報（`REPORT_*`）** — `REPORT_MODEL`(`claude-sonnet-5`)、`REPORT_DEEP_K`(30)、`REPORT_MAX_REPORTS`(25)、`REPORT_MAX_PASSAGES`(6)、`REPORT_MAX_CONTEXT_CHARS`(40000)、`REPORT_TIMEOUT`(600s)、`REPORT_THIN_COVERAGE`(8)、`REPORT_ENABLE_WEB`(1)、`REPORTS_DIR`(`data/reports`)、`REPORT_SEMAPHORE`(1)、`REPORT_MIN_CITED`(3)。
 
+**忠實度查核（M8）** — `REPORT_FAITHFULNESS_ENABLED`(1)、`ASK_FAITHFULNESS_ENABLED`(1)、`REPORT_FAITHFULNESS_MIN`(0.9)、`ASK_FAITHFULNESS_SAMPLE_RATE`(1.0)、`FAITHFULNESS_MODEL`(未設時沿用 `ASK_INTENT_MODEL`)、`FAITHFULNESS_TIMEOUT`(60s)。
+
+> 查核結果寫入 `qa_log.evaluation` / `report_doc.evaluation`（jsonb：`faithfulness_score`、`numeric_support_rate`、`citation_coverage`、逐條 `claims`）。
+> **全程 fail-open**：judge 異常或逾時會把該筆標 `degraded=true`、分數留 `None`，主流程不受影響——也就是說**關掉或壞掉都不會有錯誤訊息**，只會讓 evaluation 停止累積。
+> 讀取路徑有兩條：監控頁 `/app/monitor` 的「忠實度查核」卡片（fail-open 計數與最後查核日期即為此而設），以及 `uv run python scripts/eval_faithfulness.py`（`--claims <id>` 可逐條主張下鑽）。
+
 > 預設值集中在 **`app/config.py`** 的 `_load()`（frozen dataclass ＋ `os.getenv`），不必設定也能跑。各服務模組保留原常數名但改由 `get_settings()` 取值。
 >
-> 本表僅列常用鍵；`app/config.py` 另有約 60 個未在此列出的旋鈕（`REPORT_RENDERER`、`REPORT_SECTIONED_ENABLED`、`REPORT_DRAFT_BUDGET`、`ASK_RERANK_*`、`QA_AGENTIC_*`、`FAITHFULNESS_*`、`TRUSTED_DATA_ENABLED` 等），以該檔為準。
+> 本表僅列常用鍵；`app/config.py` 另有約 60 個未在此列出的旋鈕（`REPORT_RENDERER`、`REPORT_SECTIONED_ENABLED`、`REPORT_DRAFT_BUDGET`、`ASK_RERANK_*`、`QA_AGENTIC_*`、`TRUSTED_DATA_ENABLED` 等），以該檔為準。
 
 ---
 

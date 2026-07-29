@@ -1287,6 +1287,20 @@ def _build_section_prompt(
     return system, "\n".join(parts)
 
 
+def plan_fix_action(*, budget_on: bool, remaining: float | None, need: float) -> bool:
+    """這一節的忠實度修正輪還跑不跑得起（純函式，比照 plan_section_action 可單測）。
+
+    修正輪不在草稿階段的預算前瞻裡：它發生在全部草稿完成之後，每修一節等於再跑
+    一次完整的節重生。先前數值主張幾乎偵測不到、fix_positions 恆空，這條路徑
+    從沒吃過時間；偵測修好之後它會真的開始跑，所以必須自己帶預算。
+
+    無預算模式（eval 路徑，deadline=None）不設界，與 plan_section_action 一致。
+    """
+    if not budget_on:
+        return True
+    return remaining is not None and remaining >= need
+
+
 def plan_section_action(
     *,
     kind: str,
@@ -1720,8 +1734,24 @@ async def draft_report(
                 if (r := faith_results.get(d["position"])) is not None
                 and _section_needs_fix(r, s.report_faithfulness_min)
             ]
+            # 修正輪的預算閘門。上面那個 budget_ok 只保證「跑得完 grounding」，
+            # 不含後面的重生：每修一節＝一次完整的節重生（sec_wall）＋稍後那批
+            # re-ground（約 faithfulness_timeout/2）。先前數值主張幾乎偵測不到、
+            # fix_positions 恆空，所以這條路徑實際上從沒吃過時間；修好偵測之後
+            # 它會真的開始跑，八節全中就是八次重生——那正是 2026-07-28「逾時全損」
+            # 的成因。逐節檢查剩餘時間，不夠就停手並**明講跳過幾節**（靜默截斷會
+            # 讓「修過了」與「來不及修」在 evaluation 上長得一模一樣）。
+            fix_need = (sec_wall or s.report_section_timeout) + s.faithfulness_timeout / 2
+            fixed, skipped = 0, 0
             for d in drafts:
                 if d["position"] not in fix_positions:
+                    continue
+                if not plan_fix_action(
+                    budget_on=budget_on,
+                    remaining=(deadline - _now()) if deadline is not None else None,
+                    need=fix_need,
+                ):
+                    skipped += 1
                     continue
                 r = faith_results.get(d["position"])
                 unsupported = [
@@ -1746,6 +1776,9 @@ async def draft_report(
                 if not text_out:
                     continue
                 d["draft"] = text_out
+                # 標記「這一節真的被改寫了」——下面只對它們重新查核。
+                d["_faith_fixed"] = True
+                fixed += 1
                 if run_id:
                     await _audit(
                         upsert_section, run_id, d["position"],
@@ -1756,9 +1789,17 @@ async def draft_report(
                     {"position": d["position"], "section_key": d["key"],
                      "heading": d["heading"], "markdown": text_out},
                 )
-            if fix_positions:
+            if skipped:
+                logger.warning(
+                    "預算不足，%d/%d 節的修正輪被跳過（分數仍為修正前的值）",
+                    skipped, len(fix_positions),
+                )
+            # 只重新查核**真的修過**的節：沒修的節重跑一次 grounding 只是白花時間，
+            # 而且會讓分數看起來像「修過還是這樣」，掩蓋掉「根本沒修」。
+            if fixed:
                 reground = await _ground_sections(
-                    [d for d in drafts if d["position"] in fix_positions],
+                    [d for d in drafts if d["position"] in fix_positions
+                     and d.get("_faith_fixed")],
                     claim_evidence, ledger,
                     model=s.faithfulness_model, timeout=s.faithfulness_timeout,
                 )

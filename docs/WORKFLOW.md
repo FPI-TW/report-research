@@ -74,7 +74,7 @@ flowchart TD
 | 生成狀態機 | `research.report_run` / `report_section` | M7 逐節生成：一列 run＝一次生成請求的完整生命週期；一列 section＝大綱中的一節 |
 | 渲染產物 | `research.report_rendition` | M9b 不可變 rendition：同一份 markdown 換模板重出各存一列，不覆蓋歷史 PDF |
 
-**`research.research_report` 欄位**：`id`、`file_hash`(唯一)、`file_name`/`file_path`、`market`、`is_research`、`confidence`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`、`language`、`instrument_types[]`、`relates_stock`、`relates_futures`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`created_at`。
+**`research.research_report` 欄位**：`id`、`file_hash`(唯一)、`file_name`/`file_path`、`market`、`is_research`、`confidence`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`、`language`、`instrument_types[]`、`relates_stock`、`relates_futures`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`title`／`title_original`／`title_source`（顯示標題三欄，見 ⑦）、`created_at`。
 
 **`research.report_chunk` 欄位**：`id`、`report_id`(FK)、`chunk_index`、`content`、`embedding vector(1024)`、`content_norm`（`GENERATED STORED`：NFKC→去空白→小寫，對齊 `textnorm.norm_for_match()`）。
 
@@ -159,6 +159,18 @@ flowchart TD
 - **排程側的可見化**：`scripts/sync_new_reports.sh` 的摘要／摘錄兩段是 best-effort（失敗不擋 sync、unit 不會變紅），所以三個階段的非零退出都會補記一筆到 `data/unit_failures.log`（`OnFailure` 告警既有的落點）。匯入段若因鎖而未執行，還會印出復原指令——**rsync 已把新檔落到本地，下一輪 delta 不會再列出它們**，得用 `scripts/sync_new_reports.py --all-local` 補漏。
 - **逃生口**：`CLAUDE_LOCK_DISABLE=1` 完全繞過（會在 stderr 印警告）。刻意不放進 `.env.example`——批次是 `uv run python scripts/...` 直接跑、不載入 `.env`。
 - **`app/services/llm.py` 不在此鎖範圍內**，且不可加入：它是 `/api/ask` 與研報生成的同一個 spawn 點，納入鎖等於讓一輪數小時的 `tag_all_cli` 把線上問答鎖死。守門在 `tests/test_claude_lock.py`。
+
+### ⑦ 顯示標題產生 — `scripts/generate_titles.py`（Claude CLI）
+- **為什麼**：`file_name` 多是券商流水號（624726992507895929_260728_gs_umt.pdf），列在卡片、來源與閱讀頁頁首上讀者看不懂。報告的真正標題印在首頁內文裡，本階段把它抽出來
+- **輸入**：`research_report` 中 `title IS NULL`、有全文、`is_research IS NOT FALSE` 的列（帶 `--hashes-file` 時只補該清單）。餵給 LLM 的是 **`clean_extracted(full_text)` 的前 `--excerpt`（預設 3000）字**——標題在首頁，故摘錄遠比 ④⑥ 短；不清理則「台 積 電」會讓模型讀錯詞。候選依 `report_date DESC` 排序：跑不完全語料時先讓最近的報告有標題
+- **做什麼**：asyncio ＋ Semaphore（`--workers` 預設 2）逐報告 spawn `claude -p`（Sonnet），一次呼叫涵蓋三種情形並記在 `title_source`：
+  - `extracted`：內文標題已是中文 → 原樣保留
+  - `translated`：英文/其他語言標題 → 譯為繁體中文，原文存 `title_original`
+  - `generated`：內文根本沒有標題（掃描件、純表格日報）→ 依重點自擬一句話標題
+- **失敗即留 NULL**：抽字損毀/亂碼時提示詞要求模型回 `null`（不要猜），`parse_title()` 也**刻意沒有純文字 fallback**——模型不照格式輸出時多半是把整段內文吐回來，寧可讓前端回退檔名，也不要顯示一段錯的標題。失敗記 `data/title_failures.log`
+- **輸出**：`research.research_report.title`（讀取時零 LLM；所有呈現層一律「有標題顯示標題、缺標題回退檔名」）
+- **指令**：`make titles`＝`uv run python scripts/generate_titles.py`；旗標 `[--workers 2] [--limit N] [--excerpt 3000] [--hashes-file PATH]`
+- ⚠️ 同樣受 `claude` CLI 併發之限：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段（只補本輪新研報），手動長批次開跑前先確認排程沒在跑
 
 ### 編排與離線優化
 - **`scripts/resume_corpus.sh`**：一鍵編排——鎖檔（`data/.resume_corpus.lock` + PID 檢查）防重入，並行起 `tag_all_cli.py` 與 `ingest_all.py`，待首輪導入消化 backlog → 等標註全數完成 → 補跑 catch-up 導入；各階段時間戳記寫 `data/resume_orchestrator_*.log`。`bash scripts/resume_corpus.sh`

@@ -3,6 +3,13 @@
 檢視範圍：`app/services/`（11,238 行）、`db/schema.sql`、`web/`、`frontend/`、`scripts/`、`tests/`（85 檔 23,191 行）、`deploy/`、文件。
 所有結論均以實際檔案內容查證，附「檔案:行號」。
 
+> **快照聲明**：本文是 **commit `3ce718e`（2026-07-29 09:38）當下的檢視快照**，不是持續維護的現況文件——「當時看到什麼」正是它的價值，因此其後併入 main 的修正一律以**時點註記**補在對應段落（目前有第 7 節與第 18 節兩處），論述本身不改寫。文中的行號、計數與預設值都是檢視當下的量測、事後未再校正（連 `3ce718e` 本身都未必逐一對得上，例如檢視範圍寫的 `tests/` 85 檔，在 `3ce718e` 實際是 88 檔）——**任何數字都請重數一次，不要引用**；要看現況請讀 `CLAUDE.md` 與 `README.md`。
+>
+> **逐條複驗（2026-07-29）**：本文全部主張已拆成 119 條逐一查證，結果在
+> `docs/ARCHITECTURE_REVIEW_2026-07_VERIFY.md`——66 條仍屬實、37 條需更正數字或推論、
+> 10 條已修、**5 條是錯的**、1 條需連 DB 才能定論。**動手前先讀那份**，特別是
+> 「報告寫錯的 5 條」那節：其中 P1-12c 的處方與 P0-1 的建議修法照做都會讓現況變差。
+
 ---
 
 ## 總評
@@ -35,6 +42,13 @@ clean_text(上式結果)                              # → '第一段文字。�
 `Makefile:79` 還把它列為推薦指令。
 
 **做法**：從 Makefile 移除 `normalize` 目標，腳本刪除或改用 `clean_extracted`。
+
+> **2026-07-29 複驗**：破壞性完全屬實（對真實抽取文字取兩組獨立樣本實測：589/597＝98.66%
+> 與 2111/2200＝95.95% 的 chunk 會被改動，換行 6112→0 與 17812→0，而 `norm_for_match`
+> 前後不同者 **0**＝零收益；「100% 更新」的正確說法是「幾乎每一列」）。
+> **但上面「或改用 `clean_extracted`」這個選項是錯的**——`textnorm._RE_CJK_GAP` 的
+> `(?<=[CJK])\s+(?=[CJK])` 同樣會吃掉「前段結尾是 CJK、後段開頭是 CJK」的那個單一換行，
+> 實測仍會破壞 1123/2200＝51.05% 的 chunk，一樣零收益。**正解是刪除。**
 
 ### 2. 完全沒有 Postgres 備份，而 DB 裡已有不可重建的資料
 
@@ -88,6 +102,16 @@ CLAUDE.md 的 gotcha「Never run extract_takeaways and extract_signals concurren
 **做法**：`retrieval_pipeline.py:118` 一併計算並傳入 `gate_scores`。根本解見「結構性重構」第 3 項。
 
 ### 7. 文件有 8 處事實錯誤，正在誤導接手的人與 agent
+
+> **2026-07-29 時點註記（複驗於 `9a93a15`）**：本節多數項目已由 PR #130（`f37fb53`「讓貢獻者文件與程式碼現況對齊」）修正。第 1–5 條（`node --test`、前端零工具鏈、`intent.py`、tunables 散落、PDF＝WeasyPrint）**皆已不成立**——`node --test web/static/app/*.test.mjs` 只剩 `AGENTS.md:26` 拿它當反例警告，`intent.py` 只剩 `docs/ROADMAP.md:30` 註明「前身，已改名」，另外三條零命中。以 `9a93a15` 為準還沒收乾淨的是下面三條，**但它們已在同日（2026-07-29）的文件同步中一併修掉**，此處保留只為說明本節第 6–8 條的來歷：
+>
+> - 第 6 條：`docs/ROADMAP.md` 已改對（其「尚未實作」表只剩 findb 整合／每日簡報／MCP server／對外 REST），但 `README.md` 的「尚未實作」句仍把結構化訊號算進「Phase 2」。
+> - 第 7 條：`README.md` 的數字已從 25 改成 86，但複驗當下 `tests/test_*.py` 實測是 **92** 檔——修過一次又漂了，正說明手寫計數不該寫進文件。
+> - 第 8 條：`agentic` 與 `faithfulness`（同在 `CLAUDE.md:60`）、`typst`（`:62,64`）都已補進架構段，只剩 radar 還停在 `:74` 的 `web/routers/` 路由清單裡。
+>
+> 附帶一提：`f37fb53`（07-28 16:16）早於本報告的 `3ce718e`（07-29 09:38）且已在同一棵樹上——第 1–5 條在寫下當天就已對不上自己的 checkout。
+>
+> 因此本節八條**現已全數不成立**（下方表格保留為當時記錄）；要判斷現況一律直接讀 `CLAUDE.md`／`README.md`／`docs/ROADMAP.md`，不要引用此處的行號與判定。
 
 | 錯誤 | 出處 | 現況 |
 |---|---|---|
@@ -153,6 +177,19 @@ CLAUDE.md 的 gotcha「Never run extract_takeaways and extract_signals concurren
 
 **做法**：≥3 字元才走 LIKE，1-2 字元 CJK term 改走 tsvector/bigram 或只留語意路；cap 截斷前加穩定排序鍵，並在回應標記「字面路已截斷」（目前是靜默的）。
 
+> **2026-07-29 複驗：診斷對，但上面這個處方有害，不要照做。**
+> 「≥3 字元才走 LIKE」在 `retrieval.py` 的實際控制流下會造成兩種回退：
+> (a) **單一 2 字元 term 的查詢**（實測「鴻海」「輝達」「財報」切詞後就只有一個 term）
+> 過濾完 `patterns` 為空 ⇒ 字面路整條消失、只剩 dense——而那正是字面精確比對最有價值的
+> 場景（公司簡稱、代碼）；(b) **混合查詢**丟掉短詞後 AND 條件變少 ⇒ LIKE 更不具選擇性
+> ⇒ 命中列暴增 ⇒ **更早**撞上 `LIMIT :cap`，反而放大本節自己指出的截斷問題。
+> 另有一處事實錯誤：**`eps` 是 3 字元**，`%eps%` 抽得出完整 trigram、本來就可索引。
+>
+> 正確順序是：先做本節後半的「cap 截斷可觀測化」拿到實據，確認短詞 seq scan 真是延遲
+> 主因後，再加**獨立的 bigram 召回路**（讓短詞走新路、長詞維持 trgm，任何 term 都不被丟棄）。
+> 任何動到 `extract_terms`／pattern 規則的改動都要用 `scripts/eval_retrieval.py` 前後比對
+> ——它刻意直呼 `hybrid_search`，看得到這層改動。
+
 ### 13. 無 migration 工具的三個具體破口
 
 28 條 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`（`qa_log` 一張表就有 13 條，該表 62% 的欄位是補丁）。人工紀律目前有被遵守，但有三類變更**在既有 DB 上永遠補不上**，而 CI 沒有 DB（`ci.yml:35` 註明「測試不需要 DB」）所以新建 DB 上測試永遠綠：
@@ -204,7 +241,9 @@ CLAUDE.md 的 gotcha「Never run extract_takeaways and extract_signals concurren
 
 契約定義散在三處無單一來源：SSE 框格式（`deps.py:52` ↔ `readSSE.ts:5`）、ask 事件（`answer.py` 的 yield ↔ `askSchemas.ts` 手寫 zod）、`/api/progress`（無 `response_model` ↔ `progressSchema.ts` 手寫 zod）、radar/reading（pydantic ↔ 341+141 行「逐字鏡像」的 zod）。`openapi` 在 scripts 與 package.json 零命中。
 
-**已發生的斷裂**：commit `3f926bf` 為了解決「摘錄停更 8 天沒人發現」而在 `/api/progress` 加了 `takeaway` / `signal` 覆蓋率，但只改了 5 個後端檔；`progressSchema.ts` 沒有這兩個欄位，zod 預設 strip 未知欄位 ⇒ **資料被靜默丟棄，監控頁上什麼都沒多出來**。修復動機達成了一半，失敗模式跟原 bug 一模一樣。
+**已發生的斷裂（已修，留作範例）**：commit `3f926bf` 為了解決「摘錄停更 8 天沒人發現」而在 `/api/progress` 加了 `takeaway` / `signal` 覆蓋率，但只改了 5 個後端檔；`progressSchema.ts` 沒有這兩個欄位，zod 預設 strip 未知欄位 ⇒ **資料被靜默丟棄，監控頁上什麼都沒多出來**。修復動機達成了一半，失敗模式跟原 bug 一模一樣。
+
+> **2026-07-29 時點註記（複驗於 `9a93a15`）**：這個實例已由 PR #131（`603a572`）修掉——`frontend/src/features/monitor/progressSchema.ts:56-58` 補上 `takeaway` / `signal` / `evaluation`（刻意用 `optional()`，讓滾動部署期間缺鍵不會整頁 parse 失敗），`progressSchema.test.ts:52-65` 有回歸測試釘住。`603a572` 不在本報告快照的 `3ce718e` 樹裡，所以上一段在寫下時是對的，是併進 main 後才過時。**但這只修掉一個實例：契約仍無單一來源，下一次加欄位還是會這樣**，本節其餘論點全數維持（下方「做法」只有 (a) 已隨之完成，(b)(c)(d) 都還沒做）。
 
 `response_model` 覆蓋率也不均：radar 4、reading 3、search 2，而 `ask / report / monitor / qa_history / report_file` **全部 0**。
 
@@ -312,6 +351,15 @@ class RetrievalResult:
 但範圍太窄：`store._meta_columns` 是一段 f-string SQL，與 17 個欄位靠**人工註解**對齊，沒有測試斷言欄數與欄序；而其他地方仍是裸 `row[i]`——`radar/types.py:179-195` 有 **17 個連續 `row[0]`…`row[16]`**（且 `row[14/15/16]` 正是 docstring 警告的那種寫死尾端索引）、`report_writer.py:941-948`、`report.py:423`、`answer.py:803,1113`。
 
 **做法**：(1) 加一個 5 行守護測試比對 `_meta_columns` 的欄數與尾段名稱 vs `_fields`（把 12 行註解變成 CI 擋牆）；(2) `radar/types.py` 引入 `SignalRow(NamedTuple)`；(3) 根本解是所有 `text()` 改用 `.mappings()` 具名取值，位置契約整體消失、`rows.py` 那 12 行警告可以刪掉。
+
+> **2026-07-29 複驗：做法 (1) 已經存在，不要重做。**「沒有測試斷言欄數與欄序」是錯的
+> ——`tests/test_rows.py` 的 `MetaColumnsAlignmentTests` 有三題把欄序與欄數都釘死了
+> （含 `cols[2:] == ChunkRow._fields[2:-1]` 與 `len(cols) + 1 == len(_fields)`），
+> 且比這裡建議的 5 行版本更完整。該測試隨 2026-07-17 的閱讀頁 PR 進來，**比本報告早 11 天**
+> ——也就是本節寫下當天就已經錯了。本文「值得肯定」那節（`tests/test_rows.py:56-82`
+> 把 `_meta_columns` 欄序釘死的守門）才是對的，兩處自相矛盾。
+> 順帶更正：`_meta_columns` 是 **16** 欄不是 17，第 17 欄 `distance` 由各查詢自行 append。
+> 做法 (2)(3) 仍然成立。
 
 ---
 

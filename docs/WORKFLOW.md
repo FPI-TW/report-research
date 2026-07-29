@@ -24,7 +24,7 @@ flowchart TD
       IN["ingest_all.py<br/>chunk.py + embed.py + store.py"]
     end
 
-    DB[("pgvector / PostgreSQL 16<br/>schema research<br/>research_report + report_chunk<br/>qa_log + report_doc")]
+    DB[("pgvector / PostgreSQL 16<br/>schema research<br/>research_report + report_chunk<br/>qa_log + report_doc<br/>report_signal + report_takeaway<br/>report_run/report_section + report_rendition")]
 
     SRC --> EX
     EX -->|"data/extracted/all.jsonl"| TG
@@ -37,9 +37,9 @@ flowchart TD
 
     DB --> WEB["web/server.py (FastAPI)<br/>BGE-M3 常駐 + auth + API composition"]
     DB --> CLI["search.py (CLI)"]
-    WEB --> UI["frontend/dist（React SPA）<br/>檢索 / 問答 / 觀點雷達 / 閱讀頁 / 監控"]
+    WEB --> UI["frontend/dist（React SPA）<br/>檢索 / 問答 / 觀點雷達 / 閱讀頁 / 監控 / 說明"]
     WEB --> QA["answer.py<br/>RAG 問答 + qa_log"]
-    WEB --> RP["report.py + pdf.py<br/>深度研報生成 + report_doc"]
+    WEB --> RP["report.py + report_writer.py<br/>逐節生成（M7）+ report_run/report_section<br/>typst_render.py 主軌（pdf.py 回退）→ report_doc"]
 ```
 
 **耦合鍵**：`file_hash`（SHA256）貫穿所有階段，讓 Python（確定性處理）與 Claude（語意標註）兩端解耦，並支援 checkpoint-resume。
@@ -53,7 +53,7 @@ flowchart TD
 | 由誰負責 | 工作 |
 |----------|------|
 | **Python**（確定性、可重現） | 檔名解析、抽文字、掃描檔偵測、分塊、BGE-M3 嵌入、去重入庫、檢索、**引文/chunk 錨回原文字元區間**（`reading/anchor.py`）|
-| **Claude**（語意理解） | 讀報告文字判定多維標籤：主要市場（findb 代碼）、is_research、confidence、商品類型、個股/期貨關聯、具體標的；**閱讀頁重點摘錄的「論點＋逐字引文」（不給 offset）**|
+| **Claude**（語意理解） | 讀報告文字判定多維標籤：主要市場（findb 代碼）、is_research、confidence、商品類型、個股/期貨關聯、具體標的；**閱讀頁重點摘錄的「論點＋逐字引文」（不給 offset）**；**觀點雷達訊號的評等／目標價／EPS 預估／四維論點（只依固定 schema 擷取單篇事實，跨券商共識與跨期變動不由它算）**|
 
 > 券商來源、報告日期、報告類型、股票代碼等 metadata 由**檔名解析**（`filename.py`）取得，不經 Claude。
 
@@ -70,6 +70,9 @@ flowchart TD
 | 問答紀錄 | `research.qa_log` | 每輪 Q&A 的 question/answer、來源、外部參考、conversation、回饋與延遲 |
 | 生成研報 | `research.report_doc` | 深度研報 Markdown 真相來源、PDF 路徑、來源清單與對話/問答關聯 |
 | 重點摘錄 | `research.report_takeaway` | 閱讀頁每篇 3-5 條「論點 ＋ 逐字引文」＋ 錨定出的原文字元區間；離線批次產生，讀取零 LLM |
+| 觀點訊號 | `research.report_signal` | 觀點雷達：一列＝「一份研報 × 一個標的」的不可覆寫歷史快照（評等／目標價／EPS 預估／四維論點）；離線批次產生，讀取零 LLM |
+| 生成狀態機 | `research.report_run` / `report_section` | M7 逐節生成：一列 run＝一次生成請求的完整生命週期；一列 section＝大綱中的一節 |
+| 渲染產物 | `research.report_rendition` | M9b 不可變 rendition：同一份 markdown 換模板重出各存一列，不覆蓋歷史 PDF |
 
 **`research.research_report` 欄位**：`id`、`file_hash`(唯一)、`file_name`/`file_path`、`market`、`is_research`、`confidence`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`、`language`、`instrument_types[]`、`relates_stock`、`relates_futures`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`created_at`。
 
@@ -79,7 +82,13 @@ flowchart TD
 
 **`research.report_takeaway` 欄位**：`id`、`report_id`(FK，`ON DELETE CASCADE`)、`ordinal`(1..N 顯示順序)、`claim`(論點，LLM)、`quote`(逐字引文，LLM)、`quote_start`/`quote_end`(Python 錨定結果；`NULL`＝錨不到，條目仍顯示但不可跳)、`anchor_method`(`exact`/`normalized`/`prefix`)、`text_sha256`、`extraction_version`、`extraction_status`(`pending`/`valid`/`partial`/`rejected`)、`raw_payload`、`error_detail`、`created_at`；`UNIQUE(report_id, ordinal)`。CASCADE 是刻意的：同 `file_hash` 重新 ingest（`store.upsert_report` 先刪後插）會連帶清除摘錄，下次批次偵測缺列自動補擷取＝要的冪等行為。
 
-**索引**：`report_chunk.embedding` HNSW(cosine)、`content_norm` GIN(trgm)；`research_report` 的 `market` btree、`instrument_types`/`stock_targets`/`futures_targets` GIN；`qa_log` 依建立時間與對話分組索引；`report_doc` 依 `qa_id` 與 `conversation_id` 索引。DB schema 定義於 [`db/schema.sql`](../db/schema.sql)（DDL 皆 `IF NOT EXISTS`，可冪等套用於既有庫）。
+**`research.report_signal` 欄位**：`id`、`report_id`(FK，`ON DELETE CASCADE`)、`market`、`instrument_code`(來自 `stock_targets`)、`broker`(來自 `source`)、`report_date`、`rating_raw` ＋ `rating_normalized`(五級 `buy`/`overweight`/`neutral`/`underweight`/`sell`，無法映射為 `unknown`)、`target_price`(`numeric(18,4)`) ＋ `target_currency`/`target_horizon`/`target_price_evidence`、`eps_estimates`(jsonb 陣列)、`thesis_dimensions`(jsonb，`outlook`/`catalyst`/`risk`/`valuation` 各 `{stance, summary, evidence}`)、`extraction_version`、`extraction_status`(`pending`/`valid`/`partial`/`rejected`)、`raw_payload`、`error_detail`、`created_at`；`UNIQUE(report_id, market, instrument_code)`。**目標價保幣別、不換算、不混入跨券商中位數**；CASCADE 同摘錄，重新 ingest 即連帶清除、下次批次自動補擷。
+
+**`research.report_run` / `report_section`**（M7 逐節生成狀態機）：run 有冪等鍵 `request_key`(UNIQUE)、`status`(`queued`/`retrieving`/`outlining`/`drafting`/`verifying`/`rendering`/`completed`/`failed`/`cancelled`)、`outline`、`checkpoint`(最後一致可續跑點) 與 `input_config` 快照；section 有 `position`(組裝序＝`[n]` 首見序)、`section_key`/`heading`、`draft_markdown`（對應 SSE `section_draft`，可覆寫）與 `final_markdown` 分離、`evidence_ids[]`。**`report_run` 對 `research_report` 刻意無 FK**——生成流程史不是語料衍生物，語料 upsert 先刪後插不該連帶清除它。
+
+**`research.report_rendition` 欄位**（M9b）：`id`、`report_id`(反向連結 `report_doc`，plain uuid 非 FK)、`renderer`(`typst`/`weasyprint`)、`template_id`、`content_hash`(markdown 的 sha256——換皮不重生內容，故同 hash)、`pdf_path`、`status`、`created_at`。每列 `pdf_path` 各異，**不覆蓋歷史 PDF**；重出成功後才原子切換 `report_doc.current_rendition_id`。
+
+**索引**：`report_chunk.embedding` HNSW(cosine)、`content_norm` GIN(trgm)；`research_report` 的 `market` btree、`instrument_types`/`stock_targets`/`futures_targets` GIN；`qa_log` 依建立時間與對話分組索引（另有 `request_id` 的部分唯一索引）；`report_doc` 依 `qa_id` 與 `conversation_id` 索引；`report_signal` 依 `(market, instrument_code, report_date DESC)`、`(market, instrument_code, broker, report_date DESC)`、`report_id` 與 `extraction_status` 索引；`report_section.evidence_ids` GIN。DB schema 定義於 [`db/schema.sql`](../db/schema.sql)（DDL 皆 `IF NOT EXISTS`，可冪等套用於既有庫）。
 
 ---
 
@@ -116,26 +125,43 @@ flowchart TD
   - **checkpoint-resume 條件**：該報告已有列、且 `extraction_version` 與 `text_sha256` **皆相符**、且狀態 ∈ (`valid`, `partial`) → 跳過。任一不符即重擷（全文變了、擷取版本升級了，舊 offset 就不可信）
   - 單筆失敗只寫 `data/takeaway_failures.log`，不中斷、不影響檢索/問答
 - **輸出**：`research.report_takeaway`（閱讀頁 `/api/reading/{file_hash}` 讀取時零 LLM）
-- **指令**：`make takeaways`＝`uv run python scripts/extract_takeaways.py`；旗標 `[--since-days 90] [--workers 2] [--limit N] [--excerpt 24000] [--model M] [--reextract] [--dry-run]`
+- **指令**：`make takeaways`＝`uv run python scripts/extract_takeaways.py`；旗標 `[--since-days 90] [--hashes-file PATH] [--workers 2] [--limit N] [--excerpt 24000] [--model M] [--reextract] [--dry-run]`
 - **成本**：預設 90 天約 549 篇、約 2-3 小時；全語料 14,575 篇要跑十天以上，故預設不跑全量
-- ⚠️ **不可與 `scripts/extract_signals.py` 同時跑**：多個批次併發搶 `claude` CLI 會讓擷取大量被誤判 `rejected`（真因不是資料壞、也不是模型壞，是搶資源）。要跑就一次跑一支。
+- ⚠️ **接排程一律用 `--hashes-file`（它會忽略 `--since-days`），不要用 `--since-days 1`**：後者濾的是 `report_date`（研報自己標的日期）而非入庫時間，而 NAS 匯入的研報日期常比入庫日早——實測近 10 天入庫的 90 篇裡有 79 篇（88%）`report_date` 超過一天前，用天數接排程會**靜默**漏掉近九成新研報。`scripts/sync_new_reports.sh` 走的就是 `--hashes-file data/.sync_last_hashes`（本輪新入庫的 `file_hash` 清單）。
+- ⚠️ **不可與 `scripts/extract_signals.py`／`scripts/generate_summaries.py` 同時跑**：多個批次併發搶 `claude` CLI 會讓擷取大量被誤判 `rejected`（真因不是資料壞、也不是模型壞，是搶資源）。要跑就一次跑一支。
 
 > **不可妥協的不變量：正典文字＝`clean_extracted(full_text)`**。`research_report.full_text` 存的是**未清理**的原始抽取文字（`ingest_all.py` 寫 `full_text=raw_text`，但 chunk 走 `chunk_text(clean_extracted(raw_text))`），保留 PDF 抽字的 CJK 間空白（「台 積 電」）。**餵 LLM 的 excerpt、錨點基準、API 回傳的文字三者必須同源**，`text_sha256` 是這個不變量的守衛（讀取時比對「擷取當時的 sha」vs「當前正典文字的 sha」，不符即降級為不可跳）。拿 `full_text` 當基準會讓所有 offset 全錯，而且**測試抓不到**——引文照樣「錨得到」，只是錨在錯的座標系。同理，`report_chunk.content` 因切塊 overlap 而不是 `full_text` 的子字串（天真的 `full_text.find(chunk.content)` 約 99% 無聲失敗），定位一律走 `anchor.py`。
+
+### ⑤ 訊號擷取 — `scripts/extract_signals.py`（Claude CLI，觀點雷達用）
+- **輸入**：DB 內 `stock_targets` 命中「涵蓋子集」的研究報告——子集門檻 `--min-brokers`（預設 3）／`--min-reports`（預設 5）／`--top-n`（預設 50，依覆蓋度取前 N 檔標的）。每份報告的 `requested_codes` ＝該報告 `stock_targets` ∩ 該市場子集；餵給 LLM 的是 `full_text` 前 `--excerpt`（預設 16000）字（訊號擷取只取數值與論點，不做字元錨定，故不需要 ④ 那條正典文字不變量）
+- **做什麼**：asyncio ＋ Semaphore（`--workers` 預設 2）逐報告 spawn `claude -p`（預設 Sonnet），依固定 schema 擷取評等／目標價／EPS 預估／四維論點，Python 端正規化（五級評等映射、目標價保幣別）後 upsert；**一列＝「一份研報 × 一個標的」的不可覆寫歷史快照**。**checkpoint-resume 條件**：該報告的所有 requested 標的皆已有列、狀態 ∈ (`valid`, `partial`) 且 `extraction_version` 相符 → 跳過（`--reextract` 強制重跑）
+- **輸出**：`research.report_signal`（讀雷達時零 LLM——跨券商共識、四分位與跨期變動全由 `app/services/radar/` 決定性計算）
+- **指令**：`make signals`＝`uv run python scripts/extract_signals.py`；旗標 `[--min-brokers 3] [--min-reports 5] [--top-n 50] [--workers 2] [--limit N] [--excerpt 16000] [--model M] [--reextract] [--dry-run]`
+- **刻意只跑高覆蓋子集**：全語料僅約 0.68%（99 篇）有訊號。**「沒有訊號」是常態不是錯誤**——雷達對「有研報但尚未擷取」回 200 的 `pending_extraction` 空狀態（完全查無研報才 404），閱讀頁則整區不進 DOM。
+- ⚠️ **不可與 `scripts/extract_takeaways.py`／`scripts/generate_summaries.py` 同時跑**（同一個搶 `claude` CLI 的坑，見 ④）
+
+### ⑥ 摘要生成 — `scripts/generate_summaries.py`（Claude CLI）
+- **輸入**：`research_report` 中 `summary IS NULL`、有全文、`is_research IS NOT FALSE` 的列；帶 `--hashes-file` 時只補該清單列出的 `file_hash`（定時同步走這條，不掃歷史 NULL 積壓）
+- **做什麼**：asyncio ＋ Semaphore（`--workers` 預設 2）逐報告 spawn `claude -p`（Sonnet），依 `full_text` 前 `--excerpt`（預設 12000）字產 2-3 句、約 100-150 字的中文摘要；只補 NULL 故冪等可續傳
+- **輸出**：`research.research_report.summary`（檢索結果卡片與閱讀頁直接顯示）
+- **指令**：`make summaries`＝`uv run python scripts/generate_summaries.py`；旗標 `[--workers 2] [--limit N] [--excerpt 12000] [--hashes-file PATH]`
+- ⚠️ 同樣受 `claude` CLI 併發之限：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段與 ④，手動長批次開跑前先確認排程沒在跑
 
 ### 編排與離線優化
 - **`scripts/resume_corpus.sh`**：一鍵編排——鎖檔（`data/.resume_corpus.lock` + PID 檢查）防重入，並行起 `tag_all_cli.py` 與 `ingest_all.py`，待首輪導入消化 backlog → 等標註全數完成 → 補跑 catch-up 導入；各階段時間戳記寫 `data/resume_orchestrator_*.log`。`bash scripts/resume_corpus.sh`
 - **`scripts/ingest_lowio.sh`（或 `make ingest-lowio`）**：`ingest_all.py` 的包裝，**離線大量導入**時以 `ALTER SYSTEM` 暫關 Postgres durability（`fsync`/`full_page_writes`/`synchronous_commit`）降磁碟 I/O，並用 `trap` 確保正常/錯誤/Ctrl-C 都會還原。⚠️ **僅限 DB 未對外服務時使用**（關 fsync 期間若主機/DB 崩潰，research 庫不可復原，但可由原始報告重新導入）。中斷未還原時用 `make restore-durability` 重設。
 
 ### 工具（一次性 / 維運）
-- **`scripts/normalize_chunks.py`**：清理 `report_chunk.content`（去 CJK 間隙、收合空白/換行），觸發 `content_norm` 生成欄重算（供字面比對），冪等、結束 `ANALYZE`；不重嵌入、不重切塊。
+- **`scripts/normalize_chunks.py`（`make normalize`）——是陷阱，看到也不要跑。** target 說明與模組 docstring 都寫「冪等、重跑 0 筆更新」，**那是錯的**：腳本用的是 `clean_text`，而 chunk 是 `chunk_text(clean_extracted(...))` 產生的——`clean_text` 會把換行折成空格，而 chunk 內的段落正是用單一換行接起來的，跑一次就把段落結構整個抹掉，同時讓表與 HNSW 索引雙倍膨脹，而 `content_norm` 完全不變（該 GENERATED 表達式本來就移除所有空白）＝零收益、純破壞。它仍列在 `make help` 裡，別被「（冪等）」四個字騙了。逐步推導與實測見 [`docs/ARCHITECTURE_REVIEW_2026-07.md`](ARCHITECTURE_REVIEW_2026-07.md) 的 P0 第 1 項。
 - **`scripts/backfill_full_text.py`**：由 `sample.jsonl` 回填 `research_report.full_text`（欄位後加時補；僅抽樣路徑）。
 - **`scripts/align_findb_markets.py`**：把既有中文市場標籤確定性重映射為 findb 代碼（同改 `data/tags/*.json` 與 DB），冪等、不需重跑 Claude。
 
 ### 檢索、問答與深度研報
 - **CLI** `scripts/search.py`：嵌入查詢 → cosine top-k，可加 `--market <findb 代碼>` 過濾
 - **Web 檢索** `web/server.py`（組合層）+ `web/routers/*.py` + `frontend/`（React SPA）：FastAPI 啟動時背景暖機 BGE-M3 與 reranker（**必須依序，不可並行**：兩執行緒同時首次 import 會競態出 `ImportError: cannot import name is_torch_npu_available`），`/api/search` 走 dense + pg_trgm 字面召回、報告層聚合、tier/band/日期排序；`/api/reports` 提供無關鍵字瀏覽與分頁。
-- **RAG 問答** `app/services/answer.py`：`embed_query_cached → hybrid_search → build_context → stream_completion → qa_log`。來源以 `[n]` 編號，支援多輪對話、語料總覽問題、離題拒答、外部網搜來源、讚倒讚與對話刪除。
+- **RAG 問答** `app/services/answer.py`：`retrieval_pipeline.retrieve_context`（＝`embed_query_cached → hybrid_search → rerank → build_context`）→ `stream_completion` → `qa_log`。**`answer.py` 自己不呼叫 `hybrid_search`**（頂層那個 import 已無呼叫點），檢索編排住在 `app/services/retrieval_pipeline.py`；`build_context`／`select_reports` 仍定義在 `answer.py`。來源以 `[n]` 編號，支援多輪對話、語料總覽問題、離題拒答、外部網搜來源、追問建議、讚倒讚與對話刪除。
 - **深度研報** `app/services/report.py` + `report_writer.py`（逐節，預設開）+ `typst_render.py`（主軌）/ `pdf.py`（回退）：`/api/report` 以較深召回與較大 context 生成 Markdown 研報，必要時主動網搜補覆蓋，渲染成品牌化 PDF，並把 Markdown/PDF/source 寫入 `report_doc`。
+- **觀點雷達** `app/services/radar/`：`/app/radar` 以 ⑤ 落庫的 `report_signal` 為底，做「單一標的跨券商」的共識快照、四維論點、近期事件時間軸與單券商歷程。`types.py`（值型別）→ `queries.py`（純 SQL）→ `scale.py`（純函式）→ `compute.py`（聚合）→ `schemas.py`（HTTP 契約，前端 zod 逐字鏡像其 `Literal` enum）；**四分位、共識與跨期變動全是 Python 決定性計算，讀取零 LLM**。共識一律取「每家券商窗期內最新一筆有效訊號」，不把同券商舊報告累加。`STANCE_CONSTRUCTIVENESS`／`THESIS_DIMENSIONS` 是 `signal_extract.py` 與 `radar/scale.py` 的**共用契約**（radar 端 import，一處為準）。
 - **研報閱讀頁** `app/services/reading/`：`/app/report/:file_hash` 把一份研報的原文、語料已知的一切與下一步動作收攏到一個可分享的網址（以 `file_hash` 為鍵——`report_id` 重新 ingest 會換新，分享連結會失效）。`anchor.py` 負責錨定、`queries.py` 純 SQL 取數、`schemas.py` 為凍結的 API 契約（前端 zod 逐字鏡像）；摘錄早在 ④ 已落 DB，**讀取時零 LLM**。依資料現況優雅降級：無摘錄→整區不渲染；無訊號→整區**不進 DOM**（99.3% 的報告如此，是常態不是錯誤）；無全文→只給 PDF，不是錯誤。
 
 **全站需登入**（共用帳密，env 設定；未登入導向 `/login`，可登出）——認證細節見 `web/auth.py` 與 [docs/EXTERNAL_ACCESS.md](EXTERNAL_ACCESS.md)。
@@ -184,34 +210,41 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | 端點 | 說明 |
 |------|------|
 | `GET /api/stats` | 總篇數、總片段數，各市場代碼／商品類型／報告類型的篇數 |
-| `GET /api/progress` | 供 `/monitor` 使用的 ingestion、tagging、summary、DB 與背景程序進度 |
+| `GET /api/progress` | 供 `/app/monitor` 使用的 ingestion、tagging、summary、DB 與背景程序進度，外加**派生資產新鮮度**（`takeaway`／`signal` 各回近 30 天窗口的 done/total/remaining/pct ＋ 全表最新產出日 `latest`）與 **M8 忠實度查核健康度**（`evaluation`）。**全表覆蓋率不能當訊號**（摘錄與訊號都刻意只跑子集），要看的是近期窗口與 `latest` 有沒有前進 |
 | `GET /api/markets` | findb 市場代碼清單 |
 | `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`limit`、`offset`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、摘要與清理後片段，以及 `file_hash`（閱讀頁 `/app/report/:file_hash` 的連結鍵）|
 | `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁；同樣回 `file_hash` |
-| `GET /api/report/{id}/full` | 單篇 metadata 與原始檔狀態（供前端完整報告 modal）|
-| `GET /api/report/{id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|
+| `GET /api/report/{report_id}/full` | 單篇 metadata 與原始檔狀態（`has_file`），供詳情 modal——**現在只有問答頁的引用來源與雷達頁的報告連結會開它**，檢索結果改導向閱讀頁 |
+| `GET /api/report/{report_id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|
 | `GET /api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號。**不含全文**（PDF 是預設檢視，文字另取）。`file_hash` 格式不符直接 422、查無報告 404。摘錄的 `quote_start`/`quote_end` 在三種情形由**後端**收回為 `null`：錨不到、驗章不過（正典文字已漂移）、落在 `/text` 的截斷範圍之外 —— 前端只看是否為 `null`，不自行判斷截斷（兩邊各自判會分岔成「顯示可點、點下去卻沒反應」）|
 | `GET /api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`），所有 offset 以此為準。超過 40 萬字只回前綴並標 `truncated`，但 `text_sha256`/`text_chars` 一律是**完整**正典文字的值（回截斷版的 sha 會讓前端驗章全滅）。`?chunk=N`＝檢索命中的 `chunk_index`，一併回該段字元區間供高亮；錨不到、或錨點落在截斷範圍之外，則為 `None` 且仍回 200（**沒有命中位置不是錯誤**）|
 | `GET /api/reading/{file_hash}/similar` | 相似研報（全篇均勻取樣 probe ＋ 廣度加權的向量近鄰）；`limit` 預設 6、上限 20 |
-| `POST /api/ask` | RAG 問答：SSE 串流 `sources` / `token` / `done` / `error`，行內 `[n]` 引用對應來源報告；支援 `conversation_id` 與篩選，寫入 `qa_log` |
-| `POST /api/report` | 深度研報生成：SSE 串流 `run`（背景 run handle）→ `status`（retrieving/outlining/writing/searching_web/verifying/rendering）→ `outline`（章節清單＝進度分母）→ `sources` → `token`/`section_draft`/`section_skipped` → `done`。**生成跑在背景任務，斷線不中止** |
+| `GET /api/radar/instruments` | 觀點雷達「選標的」目錄：有可展示訊號的標的清單。參數 `market`／`q`／`limit`（預設 50、上限 100）／`offset`／`with_consensus`（預設 true，當頁每檔附精簡共識預覽，以單次批次查詢算完避免 N+1）|
+| `GET /api/instrument/{code:path}/radar` | 跨券商總覽：共識快照 ＋ 四維論點 ＋ 近期事件 ＋ 券商清單。`market` **必填**（findb 代碼）、`window` ∈ `30`/`90`/`180`/`all`（預設 `90`）。**讀取零 LLM**——差異全由 `app/services/radar/` 決定性計算。完全查無研報 → 404；有研報但尚未擷取訊號 → 200 的 `pending_extraction` 空狀態（**沒有訊號不是錯誤**）|
+| `GET /api/instrument/{code:path}/radar/events` | 與總覽同源的完整近期事件，提供穩定 offset 分頁（`limit` 預設 12、上限 50）；`market` 必帶 |
+| `GET /api/instrument/{code:path}/radar/brokers/{broker:path}` | 單券商歷程（展開券商列才延遲載入）：全歷程快照 ＋ 相鄰差異；`market` 必帶。**路徑上的 `:path` 是 Starlette 轉換器、不是排版**——它會連 `/` 一起吃進參數，抄路徑時別把它去掉（長度上限由 handler 自行檢查，超過即 422）|
+| `POST /api/ask` | RAG 問答：SSE 串流 `status` / `sources` / `token` / `notice` / `ext_sources` / `done` / `followups` / `error`，行內 `[n]` 引用對應來源報告；支援 `conversation_id`、`locale`（`zh-Hant`／`en`，未帶或不認得 fail-open 回中文）與篩選，寫入 `qa_log`。**`ext_sources`（外部網搜來源）在 `done` 之前、`followups`（追問建議）在 `done` 之後**——事件序不止於 `done`。答案本文與外部來源**共用同一條 LLM 串流**，靠 `app/services/stream_sentinel.py` 的 `SentinelStreamParser` 在串流中以哨符（`EXT_SENTINEL`）即時切開：命中之後就不再吐 `token`，來源區塊改由完整原文另行切分。動 `ext_sources` 的格式前先讀該模組——直接改 prompt 會讓哨符對不上，整段外部來源就會當成答案正文串給使用者 |
+| `POST /api/ask/stop` | 使用者中斷串流時保存部分答案（`stopped=true`），回 `{qa_id}`。**與串流完成共用前端 `request_id`**（`qa_log.request_id` 上有部分唯一索引），避免網路競態寫出兩筆同一輪問答 |
+| `POST /api/report` | 深度研報生成：SSE 串流 `run`（背景 run handle，**恆為首事件**）→ `status`（retrieving）→ `sources` → `status`（outlining）→ `outline`（章節清單＝進度分母）→ `status`（writing，必要時穿插 searching_web）→ `token`/`section_draft`/`section_skipped` → `status`（verifying）→ `document_revision` → `status`（rendering）→ `done`；任何階段失敗改送 `error`。**`sources` 在 `outline` 之前**——事件序以 `app/services/report.py` 的模組 docstring 與實際 yield 序為準，別照 `web/routers/report.py` handler 的 docstring（該處把這兩者寫反）。**生成跑在背景任務，斷線不中止**。請求 body 另吃 `template_id`（M9b 渲染模板）與 `locale`（M10 輸出語言 `zh-Hant`／`en`）——兩者未帶或不認得都 fail-open 回預設，不會擋生成 |
 | `GET /api/report-runs?conversation_id=` | 該對話仍在背景生成的研報；前端載入對話時據此把進度框接回（重整／開新分頁都看得到） |
 | `GET /api/report-runs/{run_id}/stream` | 重連背景 run：先重播已發生的事件（不含 token），再接上直播 |
 | `POST /api/report-runs/{run_id}/cancel` | 主動中止背景生成 |
-| `GET /api/report-doc/{report_id}/pdf` | 下載生成研報 PDF；PDF 遺失時由 persisted Markdown 即時重建 |
-| `GET /api/history` | 最近的問答歷史（舊單題清單）。`DELETE /api/history/{qa_id}` 或 POST alias 刪除單筆 |
-| `GET /api/conversations` | 對話串清單；`GET /api/conversations/{id}` 取回全部輪次；DELETE/POST alias 刪除整串 |
+| `GET /api/report-templates` | 可選研報渲染模板清單（M9b registry：ib-classic／broker-modern／privatebank-dark），每項回 `id`／`name`／`description`／`is_default`／`thumbnail`。**`thumbnail` 目前三款皆為 `null`**——前端版型選擇器的縮圖是用 CSS 畫出各模板的版面骨架（零圖檔、零請求），不是後端供圖，別去補圖片資產 |
+| `POST /api/report-doc/{report_id}/rerender` | 換皮重出（M9b）：用既有 markdown 以另一模板產新 rendition，成功後原子切換 `report_doc.current_rendition_id`——**零 LLM、零重新生成**。body 的 `template_id` 未帶＝維持原模板（不是換成預設）；`locale` 不可指定，一律沿用產出當時的值（否則英文研報會變成「英文內文 ＋ 中文封面／免責」）。渲染兩軌皆炸才回 500，並保留上一個可下載 PDF |
+| `GET /api/report-doc/{report_id}/pdf` | 下載研報 PDF：優先服務目前 rendition（換皮重出後），無指標或檔案不在則回退 `report_doc.pdf_path`；仍缺就由 persisted Markdown 即時重建（**沿用產出當時的 `locale`/`template_id`**，否則重建出來的不是同一份東西）|
+| `GET /api/history` | 最近的問答歷史（舊單題清單）。`DELETE /api/history/{qa_id}`（或相容 alias `POST /api/history/{qa_id}/delete`）刪除單筆 |
+| `GET /api/qa/{root_qa_id}/versions` | 某問題群組的**全部**版本（重生版本鏈：以 `COALESCE(root_qa_id, id)` 分組、由舊到新）。**刻意含已標 `active=false` 的舊版**——歷史 pager 要回看的正是它們；濾 `active` 的是歷史／續問清單，不是這條。DB 出錯 fail-open 回 `[]` |
+| `GET /api/conversations` | 對話串清單；`GET /api/conversations/{conversation_id}` 取回全部輪次；`DELETE /api/conversations/{conversation_id}`（或相容 alias `POST /api/conversations/{conversation_id}/delete`）刪除整串 |
 | `POST /api/feedback` | 記錄使用者對某次回答的讚／倒讚（`qa_id` + `value`）|
-| `GET /monitor` | 背景管線與資料庫監控頁 |
-| `GET /help` | 使用說明頁 |
-| `GET /` | 單頁前端（檢索／問答兩種模式）|
+| `GET /app`、`GET /app/{spa_path:path}` | SPA shell：所有深連結都回同一份 `frontend/dist/index.html`，交給 client 端路由。SPA 路由為 `/app/search`、`/app/ask`、`/app/radar`、`/app/monitor`、`/app/help`、`/app/report/:file_hash`（basename `/app`）。**`frontend/dist/index.html` 不存在時直接 503**——前端改動要先 `cd frontend && npm run build` |
+| `GET /`、`GET /monitor`、`GET /help` | 舊 vanilla 頁已退場，三條都只是 **302 相容導向**（分別到 `/app/search`、`/app/monitor`、`/app/help`），不再自己服務任何頁面 |
 | `GET`/`POST /login` | 登入頁與登入提交（共用帳密）|
 | `GET /healthz` | **免認證**存活探測：健康 200、DB 不可用 **503**（見 `web/routers/health.py`）|
 | `POST /logout` | 清除 session cookie 並導回 `/login` |
 
 > **認證**：deny-by-default 中介層。**免登入的只有 `/login`、`/healthz` 與前綴 `/app/assets/`**（`web/server.py` 的 `_AUTH_ALLOWLIST` / `_AUTH_PREFIX_ALLOWLIST`）。`/healthz` 刻意免認證——登入路徑完全不碰 DB，DB 掛掉時仍能登入，沒有這個豁免就沒有任何探測能分辨。未帶有效 session cookie 時 `/api/*` 回 **401**、其餘導向 **`/login`**；`/static/*` 也受保護。憑證為單一共用帳密（env `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD`，fail-closed），cookie 以 `REPORT_MARK_SESSION_SECRET` 簽章、7 天滑動到期，並對登入失敗做每 IP 限流。
 
-前端特性：雙欄側邊版面（手機收單欄）、頂部**檢索／問答**模式切換。檢索結果預設**列表**（依市場／報告類型／日期(月)分組，右上可切「分組依據」），可切**表格**（右上角圖示）；市場／商品類型／標的／報告類型篩選與排序、同篇研報合併、搜尋時列表顯示命中片段＋關鍵字黃底高亮（可展開更多）、點任一筆「內嵌完整報告 PDF」、即打即查（debounce 450ms）、骨架載入。問答模式：RAG 串流回答＋可點引用來源、處理過程面板、側欄對話歷史（可重看／續問／刪除）、外部參考、讚倒讚、複製答案，以及深度研報 PDF 生成與下載卡片。
+前端特性：左側導覽軌（可收合成 mini，手機改底部 tab bar）四個入口——**檢索／問答／觀點／監控**；閱讀頁與說明頁不進導覽列。檢索頁固定有搜尋列 ＋ 市場 chip 列 ＋ 已選條件 chips；**無查詢也無篩選的落地態**顯示 Bento 牆（全語料市場組成色譜、最新一批研報等磚塊），此時工具列不渲染——一旦輸入查詢或套上篩選才換成工具列（排序選單／更多篩選 popover／檢視切換）＋結果區，結果區頂端改以 HitBar 顯示**命中集合**的市場組成色譜。結果檢視只有兩種（`ViewSwitch`：**列表**＝高密度單列、**表格**）；依日期(月)分組只出現在「查看全部／已篩選瀏覽」的完整清單，搜尋結果不分組。同篇研報合併、搜尋時列表顯示命中片段＋關鍵字高亮、即打即查（debounce 350ms，Enter 立即送出）、骨架載入；**點任一筆＝導向閱讀頁 `/app/report/:file_hash`**（帶 `?chunk=N` 可跳到命中段），不是內嵌 PDF modal。問答模式：RAG 串流回答＋可點引用來源、處理過程面板、側欄對話歷史（可重看／續問／刪除）、外部參考、追問建議、讚倒讚、複製答案，以及深度研報生成卡片（版型選擇器＋逐節進度＋換皮重出＋PDF 下載）。
 
 ---
 
@@ -293,7 +326,7 @@ uv run python scripts/search.py "利率與殖利率" --market MACRO
 | 症狀 | 檢查 |
 |------|------|
 | 查詢很慢 / 第一次卡住 | BGE-M3 首次下載 ~2-4GB；server 啟動時已暖機，看 uvicorn log |
-| 改了程式/前端卻沒生效 | `make serve` 無 `--reload`：靜態 HTML 即時生效，但路由/中介層在**啟動時**載入 → 須**重啟** `make serve` 才載入新碼（常見誤判：看到新 UI 卻打到舊路由）|
+| 改了程式/前端卻沒生效 | `make serve` 無 `--reload`：`web/static/`（現在只剩 `login.html`）即時生效，但路由/中介層在**啟動時**載入 → 須**重啟** `make serve` 才載入新碼（常見誤判：看到新 UI 卻打到舊路由）。**SPA 改動另需 `cd frontend && npm run build`**——頁面由 `frontend/dist` 服務，不重建看到的永遠是舊版 |
 | App 啟動即報錯退出 | 未設 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（fail-closed）→ 補進 `.env` 再 `make serve` |
 | 一直回登入頁 / 登出按 404 | 多半是舊程序還在跑（未重啟，見上）；或 `REPORT_MARK_SESSION_SECRET` 每次重啟變動（請在 `.env` 固定一組）|
 | `/api/stats` 連不上 | 容器是否運行 `docker ps`；port 5436 是否被佔 |

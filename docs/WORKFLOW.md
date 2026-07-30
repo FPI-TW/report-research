@@ -181,6 +181,9 @@ flowchart TD
 - **不要再寫一支「清理 chunk 空白」的批次更新——那正是已刪除的 `make normalize` 的死法。** 2026-07-29 連同 scripts/normalize_chunks.py 一併移除（**該檔已不存在**）。它自稱「冪等、重跑 0 筆更新」，**那是錯的**：腳本用 `clean_text`，而 chunk 是 `chunk_text(clean_extracted(...))` 產生的——`clean_text` 把換行折成空格，而 chunk 內的段落正是用**單一換行**接起來的。兩組獨立樣本實測 **95.95%／98.66%** 的 chunk 會被改動（換行數歸零），而 `norm_for_match` 前後不同者 **0**＝`content_norm` 一個字都不會變（該 GENERATED 表達式本來就移除所有空白）：**純破壞、零收益**，外加表與 HNSW 索引雙倍膨脹。**改用 `clean_extracted` 也不行**（`_RE_CJK_GAP` 同樣吃掉段落間那個換行，實測仍破壞 51%）。要改 chunk 內容只有重跑 `ingest_all.py` 一條路。逐步推導見 [`docs/ARCHITECTURE_REVIEW_2026-07.md`](ARCHITECTURE_REVIEW_2026-07.md) 的 P0 第 1 項與 [`ARCHITECTURE_REVIEW_2026-07_VERIFY.md`](ARCHITECTURE_REVIEW_2026-07_VERIFY.md)。
 - **`scripts/backfill_full_text.py`**：由 `sample.jsonl` 回填 `research_report.full_text`（欄位後加時補；僅抽樣路徑）。
 - **`scripts/align_findb_markets.py`**：把既有中文市場標籤確定性重映射為 findb 代碼（同改 `data/tags/*.json` 與 DB），冪等、不需重跑 Claude。
+- **`scripts/check_batch_freshness.py`（或 `make freshness`）**：偵測派生資產是否**停更**。純 SQL 一次查四個 `max(created_at)`（語料／摘要／摘錄／訊號），零 LLM、零寫入；退出碼 `0`＝新鮮、`1`＝停更、`2`＝查不到（DB 不可用，處置不同故刻意分流）。平時由 `report-mark-freshness.timer` 每日 08:30 觸發，非零退出經 `OnFailure=report-mark-alert@%n.service` 走既有告警鏈。
+  - **為什麼不能靠 `OnFailure` 就好**：④⑥⑦ 三段掛在 sync 殼的 `|| RC=$?` 之後，是刻意的 best-effort（摘要失敗不該擋住下一輪匯入），所以連續失敗**永遠不會**讓 unit 進 `failed` ⇒ `OnFailure` 一次都不觸發。2026-07 實測 takeaway 停更 8 天、signal 停更 12 天。
+  - **兩個刻意的預設**：(a) 有一層**語料閘**——三支批次都只吃「本輪新入庫」的研報，語料自己在同窗期內沒前進時派生資產的過期一律判 `suppressed`（少了它，一個連假就讓三個資產同時亮紅）；(b) `signal` 預設門檻 **0＝不告警**，因為 `report_signal` **沒有任何排程產生者**（sync 殼只跑 ⑥⑦④，⑤ 只有手動 `make signals`），給它門檻等於保證永遠紅。要開＝`--signal-days 14`。
 
 ### 檢索、問答與深度研報
 - **CLI** `scripts/search.py`：嵌入查詢 → cosine top-k，可加 `--market <findb 代碼>` 過濾
@@ -236,7 +239,7 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | 端點 | 說明 |
 |------|------|
 | `GET /api/stats` | 總篇數、總片段數，各市場代碼／商品類型／報告類型的篇數 |
-| `GET /api/progress` | 供 `/app/monitor` 使用的 ingestion、tagging、summary、DB 與背景程序進度，外加**派生資產新鮮度**（`takeaway`／`signal` 各回近 30 天窗口的 done/total/remaining/pct ＋ 全表最新產出日 `latest`）與 **M8 忠實度查核健康度**（`evaluation`）。**全表覆蓋率不能當訊號**（摘錄與訊號都刻意只跑子集），要看的是近期窗口與 `latest` 有沒有前進 |
+| `GET /api/progress` | 供 `/app/monitor` 使用的 ingestion、tagging、summary、DB 與背景程序進度，外加**派生資產新鮮度**（`takeaway`／`signal` 各回近 30 天窗口的 done/total/remaining/pct ＋ 全表最新產出日 `latest`）與 **M8 忠實度查核健康度**（`evaluation`）。**全表覆蓋率不能當訊號**（摘錄與訊號都刻意只跑子集），要看的是近期窗口與 `latest` 有沒有前進。另回**排程可見度**兩塊：`sync`（`data/sync_run_*.log` 的最後一行＋完成判定——生產實際的入庫路徑，先前 runtime 區塊只認全量腳本的 log 而完全看不到它）與 `unit_failures`（`data/unit_failures.log` 的 `count_24h`／`count_7d`／`latest`／最近 5 筆；**時間窗計數而非累計未讀數**，累計數會讓紅點永遠亮著）|
 | `GET /api/markets` | findb 市場代碼清單 |
 | `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`limit`、`offset`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、摘要與清理後片段，以及 `file_hash`（閱讀頁 `/app/report/:file_hash` 的連結鍵）。信封另有 `lexical_truncated`：字面路候選是否已被 `LEX_CAP_SEARCH`(8000) 截斷。**截斷時結果本身就不穩定**——`store._lexical_sql` 的 `LIMIT :cap` 沒有 ORDER BY，取到哪 cap 列由 heap 物理順序決定（`synchronize_seqscans` 預設 on ⇒ 併發 seq scan 從任意 block 起掃），同一查詢在不同時刻可能回不同結果。這個旗標存在的目的是**先量出發生率**，不是要照著加排序鍵（加了會逼掃完全部命中列，是淨損失，見該函式 docstring）|
 | `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁；同樣回 `file_hash` |

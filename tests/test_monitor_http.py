@@ -102,10 +102,93 @@ class ProgressHttpTests(unittest.TestCase):
         endpoints = {getattr(r, "endpoint", None) for r in app.routes}
         self.assertNotIn(monitor._coverage_block, endpoints)
 
+    def test_no_private_helper_is_a_route(self):
+        """比上一條更廣：模組裡任何 `_` 開頭的函式都不得成為端點。
+
+        只釘 `_coverage_block` 的話，下一支插錯位置的輔助函式又會是同一個 422。
+        """
+        endpoints = {getattr(r, "endpoint", None) for r in app.routes}
+        offenders = [
+            name
+            for name, obj in vars(monitor).items()
+            if name.startswith("_") and callable(obj) and obj in endpoints
+        ]
+        self.assertEqual([], offenders, f"輔助函式被裝飾成端點：{offenders}")
+
     def test_requires_auth(self):
         c = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
         r = c.get("/api/progress")
         self.assertIn(r.status_code, (302, 401))
+
+
+class ScheduleVisibilityHttpTests(unittest.TestCase):
+    """`sync` 與 `unit_failures` 兩塊必須真的出現在 HTTP 回應裡。
+
+    這兩塊補的是可觀測性斷層：runtime 區塊原本只認 `tag_run_*`／`ingest_run_*`
+    兩種 log，而那兩支全量腳本只在初次建庫時跑——生產實際的入庫路徑
+    （`sync_new_reports.sh`，每 3 小時）在監控頁上零可見度；而
+    `data/unit_failures.log` 從 P3 上線起零程式消費端，2026-07-28 寫了 10 筆告警
+    整整一天沒人知道。
+
+    走 HTTP 而不是直接呼叫 handler，理由同本檔 docstring。
+    """
+
+    RUNTIME = {
+        "tagging": None,
+        "ingest": None,
+        "pipelines": {"web": True},
+        "orchestrator": None,
+        "sync": {
+            "raw": "[2026-07-30 09:00:12] === sync done ===",
+            "timestamp": "2026-07-30 09:00:12",
+            "status": "done",
+            "label": "同步已完成",
+        },
+        "unit_failures": {
+            "latest": "2026-07-28T15:00:03+08:00",
+            "count_24h": 2,
+            "count_7d": 10,
+            "recent": [
+                {"ts": "2026-07-28T15:00:03+08:00",
+                 "unit": "report-mark-sync.service",
+                 "stage": "sync_new_reports(import)", "rc": 2},
+            ],
+        },
+    }
+
+    def _body(self):
+        async def fake_snapshot():
+            d = dict(_SNAPSHOT)
+            d["takeaway_latest"] = "2026-07-20"
+            d["signal_latest"] = "2026-07-16"
+            return d
+
+        with patch.object(monitor, "_db_stats_snapshot", fake_snapshot), \
+             patch.object(monitor, "_gather_runtime", lambda: dict(self.RUNTIME)):
+            r = _authed().get("/api/progress")
+        self.assertEqual(r.status_code, 200, r.text[:300])
+        return r.json()
+
+    def test_sync_block_is_exposed(self):
+        body = self._body()
+        self.assertIn("sync", body)
+        self.assertEqual(body["sync"]["status"], "done")
+        self.assertEqual(body["sync"]["timestamp"], "2026-07-30 09:00:12")
+
+    def test_unit_failures_block_is_exposed(self):
+        body = self._body()
+        self.assertIn("unit_failures", body)
+        self.assertEqual(body["unit_failures"]["count_24h"], 2)
+        self.assertEqual(body["unit_failures"]["count_7d"], 10)
+        self.assertEqual(
+            body["unit_failures"]["recent"][0]["unit"], "report-mark-sync.service"
+        )
+
+    def test_runtime_cache_does_not_leak_across_requests_with_new_data(self):
+        """快取存在，但同一個 patch 下兩次請求必須一致（不是回半舊半新）。"""
+        first = self._body()
+        second = self._body()
+        self.assertEqual(first["unit_failures"], second["unit_failures"])
 
 
 class StatsHttpTests(unittest.TestCase):

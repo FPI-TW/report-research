@@ -15,7 +15,7 @@
 | — | 語料管線：抽取 → Claude 標註 → BGE-M3 嵌入 → pgvector | `scripts/extract_all.py`、`tag_all_cli.py`、`ingest_all.py` |
 | — | 混合檢索：dense（HNSW 餘弦）＋ lexical（`pg_trgm`）分層融合 | `app/services/retrieval.py`、`store.py`、`textnorm.py` |
 | **M0** | 設定集中化 | `app/config.py`（frozen dataclass ＋ `os.getenv`，**非 pydantic-settings**；約 80 鍵） |
-| **M1** | 檢索 eval／RAGAS harness 與基準線（`eval/baselines/` 三份 RAGAS 基準線的 `thresholds_pass` 皆 False；`answer_relevancy` 自 M0 起就沒通過過絕對門檻——均值 0.61–0.64 對門檻 0.85。2026-07-29 診斷結論是**指標設計與門檻不相容，不是答案品質差**：反推問題被要求「具體」而題集問題是廣義的，餘弦結構性落在 0.70 附近；門檻要調到多少屬政策決定故未動，量測紀錄留在 `ANSWER_RELEVANCY_MIN` 旁，反推問題與逐題餘弦現已落進結果檔） | `eval/`（`dataset`、`judge`、`ragas_metrics`、`run_ragas`） |
+| **M1** | 檢索 eval／RAGAS harness 與基準線。**回歸偵測靠 `scripts/eval_compare.py`（`make eval-compare`）比兩份結果，不靠絕對門檻**——四份 RAGAS 基準線的 `thresholds_pass` 皆 False，而以現行門檻重算，未達標項**一律只有 `context_precision`**（0.679–0.777 對門檻 0.8），它從 M0 起就沒綠過；`answer_relevancy` 的門檻已依實測分離度由 0.85 校準到 0.55（2026-07-29 診斷結論是**指標設計與舊門檻不相容，不是答案品質差**：反推問題被要求「具體」而題集問題是廣義的，餘弦結構性落在 0.70 附近）並自此通過。**評測刻意不進 CI**（會 spawn `claude` CLI 與定時同步互搶），題集也刻意還沒擴（要跑 LLM 才有 ground truth，成本在算力不在程式） | `eval/`（`dataset`、`judge`、`ragas_metrics`、`run_ragas`）、`scripts/eval_compare.py` |
 | **M1b** | 研報評測題集凍結 | `eval/report_questions.json`、`eval/report_metrics.py` |
 | **M2** | Cross-encoder rerank | `app/services/rerank.py` |
 
@@ -52,7 +52,7 @@
 | **觀點雷達** | 訊號擷取 → 跨券商共識聚合 → `/app/radar` | `app/services/signal_extract.py`、`app/services/radar/`、`web/routers/radar.py`、`research.report_signal` |
 | **閱讀頁** | 單篇研報全文＋重點摘錄＋命中跳段，可分享網址 `/app/report/:hash` | `app/services/reading/`、`web/routers/reading.py`、`research.report_takeaway` |
 | **前端 SPA** | React 19 ＋ TypeScript ＋ Vite（舊 vanilla 頁已退場） | `frontend/` |
-| **CI 與分支保護** | 每個 PR 跑 pytest ＋ tsc/vitest 兩個必要檢查 | `.github/workflows/ci.yml` |
+| **CI 與分支保護** | 每個 PR 跑後端（ruff + pytest）／前端（ESLint + tsc + build + vitest）／schema 契約（pgvector container）**三個必要檢查**，main strict + enforce_admins | `.github/workflows/ci.yml` |
 | **server.py 拆分** | 單體拆成 11 個 APIRouter ＋ `web/deps.py` 共用綁定層 | `web/routers/` |
 | **生產韌性** | DB 自動重啟、免認證 `/healthz`、`OnFailure` 告警、systemd unit 收回 repo | `web/routers/health.py`、`deploy/systemd/`、`docs/production_resilience.md` |
 | **定時同步** | NAS 增量匯入（3h）→ 自動補摘要 → 自動補重點摘錄 | `scripts/sync_new_reports.sh`、`report-mark-sync.timer` |

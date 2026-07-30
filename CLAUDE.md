@@ -66,7 +66,7 @@ make clean-data                      # rm -rf data/extracted data/tags data/*.js
 
 **`make help` 印出來的東西不等於「可以跑」**——破壞性與陷阱 target 也一併列在裡面。
 
-**CI gates every PR** (`.github/workflows/ci.yml`): **三個 job**——前端測試（ESLint + tsc + **vite build** + vitest）、後端測試（**ruff** + pytest）、**schema 契約（pgvector service container）**。前端 job 把 `frontend/dist` 當 artifact 傳給後端 job，所以 `tests/test_spa_serving.py` 對**真 build 產物**驗證。**必要檢查仍是前兩個**——`schema` job 要生效得另外在 GitHub 的分支保護加上它的 check 名稱（repo 設定，不在 repo 檔案裡）。main 有分支保護（strict + enforce_admins）。本機只跑 pytest 會在前端 job 上翻車。
+**CI gates every PR** (`.github/workflows/ci.yml`): **三個 job**——前端測試（ESLint + tsc + **vite build** + vitest）、後端測試（**ruff** + pytest）、**schema 契約（pgvector service container）**。前端 job 把 `frontend/dist` 當 artifact 傳給後端 job，所以 `tests/test_spa_serving.py` 對**真 build 產物**驗證。**三個 job 皆為必要檢查**（2026-07-29 起）。**required check 名稱就是 job 的中文 `name`，而分支保護是 repo 設定、不在 repo 檔案裡**——改了 `name` 而沒同步改設定，分支保護會等一個永不回報的 check、PR 卡死。所以前端 job 的 `name` 仍寫「tsc + vitest」、沒跟上它現在也跑 ESLint 與 build 的事實，**那是刻意的，別為了讓名稱準確而改它**。main 有分支保護（strict + enforce_admins）。本機只跑 pytest 會在前端 job 上翻車。
 
 **本機全綠仍不代表安全**（這個缺口方向與 CI 相反、還在）：研報 PDF 的內容測試依賴 CJK 字型，本機沒裝 `fonts-noto-cjk` 時 PDF 照樣編得出來、頁數也正常，但抽字全變 `\x00`，測試會 skip 而不是紅（CI 有裝，所以只有本機會漏）。另外 `tests/test_spa_serving.py` 現在**缺 dist 就是紅**（不是 skip）——本機要跑它先 `make build-web`，真的想跳過才設 `SKIP_SPA_TESTS=1`。「`/app/assets` mount 必須贏過 catch-all」另有 `tests/test_pre_split_guards.py` 無條件守門（合成 dist 骨架 + 子行程重新匯入 `web.server`），與上面那支分工：骨架驗順序、真產物驗服務行為與快取標頭。
 
@@ -140,7 +140,7 @@ The Q&A path also runs: cross-encoder **rerank** (`rerank.py`, M2)、**agentic �
 - `docs/WORKFLOW.md` — authoritative end-to-end pipeline, stage I/O, full tag vocabulary, Web API contract.
 - `AGENTS.md` — contributor conventions (structure, style, testing, commits, security).
 - `docs/ROADMAP.md` — 2026-07-28 全面重寫，以實際里程碑 **M0–M10** 為準（舊的 Phase 0–3 敘事已作廢，其編號與實際里程碑衝突）。**觀點雷達、閱讀頁、CI／分支保護、定時同步、server.py 拆分都已上線**；尚未實作的只有 findb 整合、每日簡報、MCP server、對外 REST `/api/v1/*`。
-- `eval/` — 檢索／問答／研報的離線評測 harness（`run_ragas.py`、`run_report_eval.py`、凍結題集、`baselines/`）。**改動檢索或生成品質時用它量測，不要另建一套、也不要憑感覺宣稱改善。** 注意它目前擋不住回歸（baseline 的 `thresholds_pass` 是 `false`，也沒有比較器腳本，用法是「前後各跑一次、自己比表」）；另注意 `answer_relevancy` 的絕對門檻**從 M0 起就從未通過**，根因是題集問題廣義而該指標懲罰廣義問題，**不是答案在編造**——別為了衝這個分數去改提示詞。
+- `eval/` — 檢索／問答／研報的離線評測 harness（`run_ragas.py`、`run_report_eval.py`、凍結題集、`baselines/`）。**改動檢索或生成品質時用它量測，不要另建一套、也不要憑感覺宣稱改善。** 用法是前後各跑一次，再用 **`make eval-compare BASE=… CAND=…`**（`scripts/eval_compare.py`）比——它讀三種結果形狀、逐指標算 delta、劣化超過容忍值即非零退出。**退出碼是結論**：0 無劣化／1 有劣化／**2 不可比**（樣本數或 ruleset 變了、跨形狀）／**3 有未分類指標**。新增評測指標時要在 `METRIC_SPECS` 補一筆方向，否則會被報成未分類——**它刻意不猜方向**，因為默默猜就是製造假綠。刻意不接 CI（RAGAS 要 spawn `claude` CLI，而 `_claude_lock.py` 那把 flock 刻意不含 `llm.py`）。**卡住門檻的是 `context_precision`（0.679 vs 0.8），不是 `answer_relevancy`**——AR 已於 PR #137 依分離度把門檻校準到 0.55 並通過；CP 則從 M0 起就沒過，而且 `baseline-2026-07-29` 是第一份乾淨量測（先前幾份有 judge 逾時掉題，數字虛高）。**門檻值是政策決定，不擅自更動。** 另注意 baseline 停在 M4（RAGAS）／M7（研報，且其 `notes` 自承是混合結果），M8-M10 都沒重跑；而 PR #140 的量綱修正預期會再壓低 CP，**那個數字目前還沒有人量**。
 - `deploy/` — 生產部署的**唯一真相來源**：`systemd/`（web／sync／alert 三組 unit ＋ `claude` PATH drop-in）、`nginx.conf`、`docker-compose.yml`（nginx + cloudflared）。
 - `docs/production_resilience.md` — `/healthz` 語意、`OnFailure` 告警、unit 安裝與更新步驟；`docs/EXTERNAL_ACCESS.md` — Cloudflare Tunnel + nginx 與 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 為何必填。
 - `docs/REPORT_LAYOUT_FIXES.md` — 深度研報版面十項缺陷的逐頁診斷與修法（PR #134）。

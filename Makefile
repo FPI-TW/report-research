@@ -9,6 +9,9 @@ DB_PORT ?= 5436
 Q ?= AI 伺服器散熱需求
 MARKET ?=
 EDGE_COMPOSE ?= deploy/docker-compose.yml
+# eval-compare 的預設容忍值；BASE/CAND 刻意沒有預設，兩份結果檔必須由呼叫者指名
+# （三套評測的形狀不同，猜錯就是拿 RAGAS 去比檢索）。
+TOL ?= 0.03
 
 # Docker 二進位自動偵測：可連到 daemon 的 docker 優先；否則若有 docker.exe（WSL+Docker Desktop）就用它；
 # 都沒有時退回 docker，讓指令自己回報真正的 daemon 錯誤（而非 docker.exe: command not found）。
@@ -18,6 +21,7 @@ COMPOSE := $(DOCKER) compose
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align serve search build-web \
         stats reset-db clean-data pipeline signals takeaways titles \
+        eval-compare \
         up-edge down-edge edge-logs edge-reload \
         sync-once db-backup freshness
 
@@ -118,6 +122,18 @@ stats:  ## 看 DB 市場分佈與筆數
 	@$(DOCKER) exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
 	  -c "select market, count(*) reports from research.research_report group by market order by 2 desc;" \
 	  -c "select count(*) chunks from research.report_chunk;"
+
+# ───── 離線評測 ─────
+# 刻意**不**接進 CI：跑一輪 RAGAS 會 spawn claude CLI，與每 3 小時的
+# report-mark-sync.timer 搶同一個 CLI（那把 flock 刻意不含 llm.py，而 eval 走 llm.py）。
+# 這是本機／手動工具：改檢索或生成品質時前後各跑一次，再用 eval-compare 比。
+eval-compare:  ## 比較兩份評測結果（BASE=… CAND=… [TOL=0.03]；劣化即非零退出）
+	@test -n "$(BASE)" && test -n "$(CAND)" || { \
+	  echo "用法：make eval-compare BASE=<基準線.json> CAND=<待比較.json> [TOL=0.03]"; \
+	  echo "  兩份必須是同一套評測的產物（RAGAS／研報／檢索三套不能互比）"; \
+	  echo "  例：make eval-compare BASE=eval/before.json CAND=eval/after.json"; \
+	  exit 2; }
+	uv run python scripts/eval_compare.py --baseline "$(BASE)" --candidate "$(CAND)" --tolerance $(TOL)
 
 # ───── 對外存取（Cloudflare Tunnel + nginx）─────
 up-edge:  ## 啟動對外邊緣（nginx + cloudflared）

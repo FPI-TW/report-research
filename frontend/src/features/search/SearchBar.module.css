@@ -1,15 +1,21 @@
-.bar { display: flex; align-items: center; gap: 8px; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-card); padding: 8px 14px; box-shadow: var(--tf-shadow-xs); }
+.bar { display: flex; align-items: center; gap: 8px; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); padding: 8px 14px; box-shadow: var(--tf-shadow-xs); transition: box-shadow var(--tf-dur-2) var(--tf-ease-standard), border-color var(--tf-dur-2) var(--tf-ease-standard); }
 .bar:focus-within { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink); }
 .icon { color: var(--tf-text-3); flex-shrink: 0; }
 .input { flex: 1; min-width: 0; border: none; outline: none; background: none; font-size: 14px; color: var(--tf-text-1); font-family: inherit; }
 .input::placeholder { color: var(--tf-text-4); }
 .clear { border: none; background: none; cursor: pointer; color: var(--tf-text-3); display: flex; padding: 2px; }
 
-/* ── 檢索台主角大框：全頁唯一主角 ── */
-.lg { border-radius: var(--tf-radius-panel); border-width: 1.5px; border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); height: 60px; padding: 0 12px 0 20px; gap: 15px; }
-.lg:focus-within { border-color: var(--tf-ink); box-shadow: 0 0 0 4px rgba(30, 81, 117, 0.14), var(--tf-shadow-float); }
+/* ── 檢索台主角大框：全頁唯一主角 ──
+   靠尺寸、圓角與高度取得份量，不靠彩色描邊——簡白調性下深色實線框會顯得髒重。 */
+.lg {
+  border-radius: var(--tf-radius-panel);
+  border-color: var(--tf-border);
+  box-shadow: var(--tf-shadow-float);
+  height: 60px; padding: 0 12px 0 20px; gap: 15px;
+}
+.lg:focus-within { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); }
 .lg .input { font-size: 16.5px; }
-.lg .icon { color: var(--tf-ink); }
+.lg .icon { color: var(--tf-text-2); }
 
 /* Enter 鍵帽（僅大框）：下緣加粗做出鍵帽的實體感 */
 .key {

@@ -33,7 +33,10 @@ export function MarketChipBar({ value, onChange, counts, codes }: Props) {
             aria-label={typeof n === 'number' ? `${label} ${n.toLocaleString()}` : label}
             data-on={active || undefined}
             className={styles.chip}
-            style={{ '--c': code === ALL ? 'var(--tf-ink)' : marketColor(code) } as CSSProperties}
+            // 「全部」是狀態不是市場，故用中性灰而非任何顏色：選取感由填色與字重表達。
+            // 不可用 --tf-ink（近黑，描邊會比整排 chip 都重），也不可用鎏金
+            // （#ae7415 與港股 #b26a0b 在同一排裡近到會被讀成另一個市場色）。
+            style={{ '--c': code === ALL ? 'var(--tf-text-muted-aa)' : marketColor(code) } as CSSProperties}
             onClick={() => onChange(code)}
           >
             {label}

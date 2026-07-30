@@ -2548,6 +2548,222 @@ class StagesPersistTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("generating", logged["stages"])
 
 
+class LlmFailureStillLogsTests(unittest.IsolatedAsyncioTestCase):
+    """LLM 掛掉時那一輪**仍然要落庫**——這是本修正的核心不變量。
+
+    `_log_qa` 在串流之後，所以在此之前拋例外等於該輪完全不進 `qa_log`：使用者看到
+    「問答服務發生錯誤」，而監控端**分不出 API 529 過載與程式 bug**（兩者都是什麼
+    紀錄都沒有）。2026-07-30 生產有一筆這樣的失敗，事後只能從 journald 猜。
+
+    例外仍必須往外拋（router 的錯誤處理與 SSE error 事件靠它），落庫是**額外**做的
+    事而不是取代——所以這裡同時斷言「有寫」與「有拋」。
+    """
+
+    @staticmethod
+    def _patch(logged, *, exc):
+        from app.services import answer as ans
+        from app.services import retrieval_pipeline as rp
+        from app.services import scope_router as sr
+
+        async def boom(*a, **k):
+            raise exc
+            yield ""  # pragma: no cover - 讓它成為 async generator
+
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
+
+        async def fake_log(question, answer, cited, filters, latency, sources, *a, **kw):
+            logged.append({"answer": answer, "filters": filters, "kwargs": kw})
+            return "qa-1"
+
+        orig = (
+            rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+            rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+            ans._log_qa,
+        )
+
+        async def some_hits(session, q, qvec, **k):
+            # **必須有命中**：零命中時 answer_question 走「找不到相關研報」的短路，
+            # 根本不會呼叫 LLM，於是這條測試會以「例外沒被拋出」失敗——那是測試
+            # 沒走到待驗路徑，不是修正沒生效。
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
+
+        rp.hybrid_search = some_hits
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = boom
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_non_overview = fake_route
+        ans._log_qa = fake_log
+        return orig
+
+    @staticmethod
+    def _restore(orig):
+        from app.services import answer as ans
+        from app.services import retrieval_pipeline as rp
+
+        (
+            rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+            rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+            ans._log_qa,
+        ) = orig
+
+    async def test_overloaded_failure_writes_row_and_reraises(self):
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        logged: list[dict] = []
+        orig = self._patch(logged, exc=LLMUnavailableError("529 Overloaded"))
+        try:
+            with self.assertRaises(LLMUnavailableError):
+                _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            self._restore(orig)
+
+        self.assertEqual(len(logged), 1, "LLM 失敗那輪沒有落庫")
+        row = logged[0]
+        self.assertIsNone(row["answer"], "不得寫假答案——NULL 才能讓讀取路徑自然跳過")
+        self.assertEqual(row["filters"]["llm_error"], "overloaded")
+        self.assertIs(row["kwargs"]["active"], False)
+
+    async def test_non_overload_failure_classified_as_other(self):
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        logged: list[dict] = []
+        orig = self._patch(logged, exc=LLMUnavailableError("claude 無有效回應"))
+        try:
+            with self.assertRaises(LLMUnavailableError):
+                _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            self._restore(orig)
+        self.assertEqual(logged[0]["filters"]["llm_error"], "other")
+
+    async def test_route_telemetry_survives_into_the_failure_row(self):
+        """`path`/`decided_by` 也要留著——否則失敗列答不出「這題走了哪條路」。"""
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        logged: list[dict] = []
+        orig = self._patch(logged, exc=LLMUnavailableError("529 Overloaded"))
+        try:
+            with self.assertRaises(LLMUnavailableError):
+                _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            self._restore(orig)
+        self.assertIn("path", logged[0]["filters"])
+
+
+class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
+    """`_log_qa(active=...)` 必須真的 bind 出去，不是寫死 true。
+
+    這是 LLM 失敗落庫的關鍵——`active=false` 讓四條使用者面讀取路徑中的三條自動
+    跳過那一列（condense 脈絡、`/api/history`、`list_conversations` 的 FILTER）。
+    寫死 true 的話，失敗那輪會以一則**空答案**出現在使用者的側欄裡。
+    """
+
+    @staticmethod
+    def _cap(captured):
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                captured.setdefault("sqls", []).append(str(stmt))
+                captured["params"] = params
+                return None
+            async def commit(self): return None
+        return _CapSession
+
+    async def test_active_defaults_true(self):
+        from app.services import answer as ans
+
+        cap = {}
+        orig = ans.SessionFactory
+        ans.SessionFactory = self._cap(cap)
+        try:
+            await ans._log_qa("q", "a", [], {}, 1, [])
+        finally:
+            ans.SessionFactory = orig
+        self.assertIs(cap["params"]["active"], True)
+
+    async def test_active_false_is_bound_not_hardcoded(self):
+        from app.services import answer as ans
+
+        cap = {}
+        orig = ans.SessionFactory
+        ans.SessionFactory = self._cap(cap)
+        try:
+            await ans._log_qa("q", None, [], {"llm_error": "overloaded"}, 1, [], active=False)
+        finally:
+            ans.SessionFactory = orig
+        self.assertIs(cap["params"]["active"], False)
+        # SQL 不得再把 active 寫成字面 true
+        self.assertNotIn(":root, true,", cap["sqls"][0])
+        self.assertIn(":active", cap["sqls"][0])
+
+    async def test_null_answer_is_accepted(self):
+        """`answer=None` 要能寫進去——schema 的 `answer text` 允許 NULL。"""
+        from app.services import answer as ans
+
+        cap = {}
+        orig = ans.SessionFactory
+        ans.SessionFactory = self._cap(cap)
+        try:
+            qa_id = await ans._log_qa("q", None, [], {}, 1, [], active=False)
+        finally:
+            ans.SessionFactory = orig
+        self.assertTrue(qa_id)
+        self.assertIsNone(cap["params"]["a"])
+
+
+class LlmErrorKindTests(unittest.TestCase):
+    """`filters.llm_error` 要回答的問題只有一個：Anthropic 過載，還是我們的 bug。
+
+    先前兩者在監控上**完全無法區分**——LLM 失敗那輪根本不落庫（`_log_qa` 在串流
+    之後），所以兩種情況都是「什麼紀錄都沒有」。
+    """
+
+    def test_overload_detected(self):
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        for msg in ("529 Overloaded", "API Error: 529 {\"type\":\"overloaded_error\"}"):
+            with self.subTest(msg=msg):
+                self.assertEqual(
+                    ans._llm_error_kind(LLMUnavailableError(msg)), "overloaded"
+                )
+
+    def test_other_is_the_fallback_not_overloaded(self):
+        """認不出來要落到 other，不能猜成 overloaded。
+
+        猜成過載＝把我們自己的 bug 記成「上游的問題」，那比沒有分類更糟。
+        """
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        for msg in ("claude 無有效回應", "", "FileNotFoundError: 'claude'"):
+            with self.subTest(msg=msg):
+                self.assertEqual(ans._llm_error_kind(LLMUnavailableError(msg)), "other")
+
+
+class QaVersionsExcludesFailedTurnsTests(unittest.TestCase):
+    """`list_qa_versions` 是唯一沒有 active 過濾的使用者面路徑，要自己擋 NULL 答案。
+
+    版本 pager 刻意顯示所有版本（含被取代的），所以不能靠 `active`。走原始碼靜態
+    驗：這條 SQL 沒有可注入的 fake，而要驗的就是一個子句在不在。
+    """
+
+    def test_query_filters_null_answer(self):
+        import inspect
+
+        from app.services import answer as ans
+
+        src = inspect.getsource(ans.list_qa_versions)
+        self.assertIn("answer IS NOT NULL", src)
+        # 必須是 AND 而非第二個 WHERE（兩個 WHERE 是語法錯誤）
+        self.assertEqual(src.count("WHERE"), 1, "只該有一個 WHERE")
+
+
 class StopLogTests(unittest.IsolatedAsyncioTestCase):
     """log_stopped_qa 寫入 stopped=true 的部分答案列；regenerate_of 解析 root_qa_id。"""
 

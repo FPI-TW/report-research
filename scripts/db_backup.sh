@@ -39,13 +39,14 @@ _default_key() {
 
 DB_CONTAINER="${DB_CONTAINER:-report-mark-postgres}"
 DB_NAME="${DB_NAME:-research}"
-# 本 distro 可能沒有 docker CLI（Docker Desktop WSL integration 關閉）→ fallback 到 docker.exe
-# 這一行刻意與 scripts/ingest_lowio.sh 逐字相同（tests/test_db_backup.py 會比對）：
-# 兩套偵測邏輯並存的話，只會漂到其中一支能跑、另一支莫名其妙失敗。
-# 若本機的 `docker` 存在但連不到 daemon，用 DOCKER_BIN 顯式指定（可寫進
-# /etc/default/report-mark-sync，備份 unit 也讀那個檔）。
+# docker CLI 偵測收斂在 scripts/_docker_bin.sh（與 ingest_lowio.sh 共用同一支，
+# 兩套邏輯並存只會漂到其中一支能跑、另一支莫名其妙失敗）。它會**實際探 daemon**——
+# 這台機器上 /usr/bin/docker 存在但連不到，而 `command -v` 只看檔案存不存在。
+# 顯式的 DOCKER_BIN（環境變數或 /etc/default/report-mark-sync）優先。
+# shellcheck source=scripts/_docker_bin.sh
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/_docker_bin.sh"
 DOCKER_BIN="${DOCKER_BIN:-$(_default_key DOCKER_BIN)}"
-: "${DOCKER_BIN:=$(command -v docker || echo '/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe')}"
+: "${DOCKER_BIN:=$(detect_docker_bin)}"
 
 # 備份落點。既有的 /mnt/nas-research 是 `-o ro` 掛載（研報來源刻意唯讀），寫不進去；
 # 而「同一個 share 再以 rw 掛第二次」2026-07-30 實測也不行——那組帳號對 `投資研究處`

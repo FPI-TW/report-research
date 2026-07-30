@@ -35,7 +35,13 @@ from app.services.faithfulness import (
     resolve_evidence_texts,
 )
 from app.services.followups import generate_followups
-from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion
+from app.services.llm import (
+    DEFAULT_MODEL,
+    SEARCH_EVENT,
+    LLMUnavailableError,
+    looks_like_api_error,
+    stream_completion,
+)
 from app.services.locale import (
     DEFAULT_LOCALE,
     output_directive,
@@ -891,9 +897,18 @@ def history_item(row) -> dict:
     }
 
 
+# LLM 失敗的粗分類。**只分「過載」與「其他」兩類，刻意不解析更細**：訊息文字來自
+# `claude` CLI 透傳的 API 回應，格式不在我們控制之內，分得越細越容易在 CLI 改版後
+# 靜默全部落到「其他」。這個欄位要回答的問題只有一個——**這是 Anthropic 過載還是
+# 我們的 bug**——而那正是先前完全分不出來的事（兩者都是「什麼紀錄都沒有」）。
+def _llm_error_kind(exc: Exception) -> str:
+    detail = str(exc)
+    return "overloaded" if looks_like_api_error(detail) else "other"
+
+
 async def _log_qa(
     question: str,
-    answer: str,
+    answer: str | None,
     cited: list[str],
     filters: dict,
     latency_ms: int,
@@ -909,6 +924,7 @@ async def _log_qa(
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     evidence_manifest: dict | None = None,
+    active: bool = True,
 ) -> str | None:
     """寫一列 research.qa_log（best-effort：失敗不影響已回給使用者的答案）。
 
@@ -931,7 +947,7 @@ async def _log_qa(
                     "evidence_manifest) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
                     ":sources, :ext_sources, :conv, :think, "
-                    ":root, true, :stages, :followups, :request_id, "
+                    ":root, :active, :stages, :followups, :request_id, "
                     ":evidence_manifest)"
                 )
             if request_id is not None:
@@ -953,6 +969,7 @@ async def _log_qa(
                     "conv": conversation_id,
                     "think": thinking_ms,
                     "root": root_qa_id,
+                    "active": active,
                     "stages": json.dumps(stages, ensure_ascii=False)
                     if stages is not None else None,
                     "followups": json.dumps(followups, ensure_ascii=False)
@@ -1223,6 +1240,11 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
                         "SELECT id, answer, sources, ext_sources, thinking_ms, "
                         "stages, feedback, created_at FROM research.qa_log "
                         "WHERE COALESCE(root_qa_id, id) = :root "
+                        # LLM 失敗那一輪會以 answer=NULL、active=false 落庫（供監控
+                        # 分辨 529 過載與程式 bug）。本查詢是唯一沒有 active 過濾的
+                        # 使用者面路徑（版本 pager 刻意顯示所有版本），所以要自己擋，
+                        # 否則會渲染出一則空答案。
+                        "AND answer IS NOT NULL "
                         "ORDER BY created_at ASC"
                     ),
                     {"root": root_qa_id},
@@ -1988,20 +2010,52 @@ async def answer_question(
         return out
 
     yield _status("reading")  # 步驟3：閱讀重點、整理回答
-    async for chunk in stream_completion(
-        # M4 依工具政策一律關閉未受控網搜；M5 才按 tool_policy 重開（spec §2）
-        user_prompt, model=model, system=system_prompt, allow_web=False
-    ):
-        if chunk == SEARCH_EVENT:
-            if not searching_sent:
-                searching_sent = True
-                yield _status("searching_web")  # 步驟4：搜尋網路補充
-            continue
-        raw_parts.append(chunk)
-        emit = parser.feed(chunk)
-        if emit:
-            for ev in _emit_token(emit):
-                yield ev
+    try:
+        async for chunk in stream_completion(
+            # M4 依工具政策一律關閉未受控網搜；M5 才按 tool_policy 重開（spec §2）
+            user_prompt, model=model, system=system_prompt, allow_web=False
+        ):
+            if chunk == SEARCH_EVENT:
+                if not searching_sent:
+                    searching_sent = True
+                    yield _status("searching_web")  # 步驟4：搜尋網路補充
+                continue
+            raw_parts.append(chunk)
+            emit = parser.feed(chunk)
+            if emit:
+                for ev in _emit_token(emit):
+                    yield ev
+    except LLMUnavailableError as exc:
+        # **這一輪仍然要落庫。** `_log_qa` 在串流之後，所以在此之前 LLM 失敗等於
+        # 該輪問答完全不進 `qa_log`：使用者看到「問答服務發生錯誤」，而監控端
+        # **完全分不出 API 529 過載與程式 bug**——兩者都是「什麼紀錄都沒有」。
+        # 2026-07-30 生產就有一筆這樣的失敗，事後只能從 journald 猜。
+        #
+        # 落一筆 `answer=None` ＋ `filters.llm_error` 的列。刻意不寫假答案：
+        # `answer` 為 NULL 才能讓既有的歷史／統計查詢自然跳過它（它們都以
+        # `answer` 有值為前提），而 `filters` 的遙測欄位又讓失敗率可查。
+        logger.warning("LLM 不可用，該輪仍落庫 conv=%s", conv_id, exc_info=True)
+        await _log_qa(
+            question,
+            None,
+            [],
+            {**log_filters, "llm_error": _llm_error_kind(exc)},
+            int((time.monotonic() - started) * 1000),
+            [asdict(s) for s in sources],
+            [],
+            conversation_id=conv_id,
+            thinking_ms=thinking_ms,
+            stages=stages_seen,
+            root_qa_id=new_root,
+            deactivate_qa_id=deactivate_qa_id,
+            truncate_from=truncate_from,
+            request_id=request_id,
+            # active=false 讓四條使用者面讀取路徑中的三條自動跳過它
+            # （condense 脈絡、/api/history、list_conversations 的 FILTER），
+            # 第四條 list_qa_versions 另以 `answer IS NOT NULL` 擋。
+            active=False,
+        )
+        raise
     tail = parser.flush()
     if tail:
         for ev in _emit_token(tail):

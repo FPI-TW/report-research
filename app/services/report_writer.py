@@ -453,17 +453,55 @@ async def plan_outline(
 
 
 # ── 逐節針對性檢索（重用 M6 多查詢 fan-out）─────────────────────────────────
+# rerank 能用掉逐節檢索預算的比例。
+#
+# 不取 1.0（`agentic_qa` 那條路用的是 `min(設定值, remaining)`＝等效 1.0）：兩者的
+# 「預算」語意不同。agentic_qa 每次呼叫前重算 `remaining`，所以 planner 與 embed 的
+# 成本已經被扣掉了；而 `retrieve_for_section` 拿到的是一個**事前**固定的 cap，它還得
+# 涵蓋 `plan_queries`（那是一次 LLM 呼叫）、embed 與 SQL。給 rerank 全額等於保證超支。
+_RERANK_BUDGET_SHARE = 0.6
+
+
+def _rerank_budget(configured: float, budget: float | None) -> float:
+    """rerank 的實際逾時＝`min(設定值, budget × share)`；無 budget 則沿用設定值。
+
+    純函式且獨立命名，是為了讓「內層逾時不得超過外層取消點」這條不變量可以被單獨
+    測試——它先前不成立（60s 的取消點配 180s 的 rerank deadline），而症狀是**下一節
+    排在一個已被放棄的工作後面**，不是任何錯誤訊息。
+
+    `budget <= 0` 視為沒有 budget：0 的語意會是「rerank 不准跑」，但 rerank 是
+    fail-open 的最佳化，把它的預算歸零應該由 `rerank_top_m=0` 明確表達，不是靠
+    一個算出來的 0 悄悄達成。
+    """
+    if budget is None or budget <= 0:
+        return configured
+    return min(configured, budget * _RERANK_BUDGET_SHARE)
+
+
 async def retrieve_for_section(
     topic: str,
     *,
     filters: dict | None = None,
     planner_model: str | None = None,
+    budget: float | None = None,
 ) -> tuple[list, str]:
     """單一節次的針對性檢索：plan_queries(profile="report") 展子查詢 → 多查詢走
     retrieve_context_multi（M6 fan-out+MMR）、單查詢走 retrieve_context；一律用逐節
     配額（低於整份，控 N 節串行延遲）。回 (sources, context)。
 
     plan_queries 永不 raise；retrieve_* 的逾時與有界重試由逐節迴圈（T6）包裹。
+
+    **`budget` ＝呼叫端實際會給的牆鐘秒數**（逐節迴圈的 `retrieve_cap`）。它存在的
+    理由是一個真實的資源洩漏：先前每一層各自拍一個數字，於是外層 `wait_for` 是 60s
+    （`REPORT_SECTION_WALL` 240 × `_RETRIEVE_SHARE` 0.25）而內傳的 `rerank_timeout`
+    是 180s。60s 到了外層取消檢索，但 `_rerank_stage` 用 `asyncio.shield`（刻意如此
+    ——`asyncio.to_thread` 的 CPU 工作取消不了，deadline 才是真正的收手機制），
+    於是那個已被放棄的 rerank 繼續跑到 180s，**並持續持有容量為 1 的
+    `_rerank_semaphore`**。後續章節於是排在一個沒人要的結果後面 ⇒ 連鎖降級。
+
+    給了 budget 就取 `min(設定值, budget × _RERANK_BUDGET_SHARE)`，讓 rerank 的
+    deadline 一定落在呼叫端的取消點之內。留 0.6 而非 1.0 是因為同一份預算還要付
+    `plan_queries`、embed 與 SQL；rerank 是其中可被犧牲的那一段（它 fail-open）。
     """
     s = get_settings()
     plan = await plan_queries(topic, profile="report", model=planner_model)
@@ -478,7 +516,7 @@ async def retrieve_for_section(
         "rerank_top_m": (
             s.report_section_rerank_candidates if s.report_rerank_enabled else 0
         ),
-        "rerank_timeout": s.report_rerank_timeout,
+        "rerank_timeout": _rerank_budget(s.report_rerank_timeout, budget),
     }
     if len(queries) > 1:
         return await retrieve_context_multi(topic, queries, **kwargs)
@@ -1601,8 +1639,13 @@ async def draft_report(
                 yield ("__failed__", {"detail": "研報生成逾時"})
             return
         try:
+            # budget 與 timeout 是**同一個數字**，刻意在同一處給：先前 rerank 自己
+            # 拍 180s 而這裡在 60s 就取消，被放棄的工作繼續持有容量 1 的 semaphore
+            # 到 180s，下一節排在它後面（見 retrieve_for_section 的 docstring）。
             sources, sec_ctx = await asyncio.wait_for(
-                retrieve_for_section(sec["topic"], filters=filters),
+                retrieve_for_section(
+                    sec["topic"], filters=filters, budget=retrieve_cap
+                ),
                 timeout=retrieve_cap,
             )
         except asyncio.CancelledError:

@@ -564,6 +564,120 @@ class RetrieveForSectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw["filters"], {"market": "TW"})
 
 
+class RerankBudgetTests(unittest.TestCase):
+    """`_rerank_budget` 的不變量：內層逾時不得超過外層取消點。
+
+    這條先前不成立，而症狀完全不是錯誤訊息：逐節迴圈在 60s
+    （`REPORT_SECTION_WALL` 240 × `_RETRIEVE_SHARE` 0.25）取消檢索，但
+    `_rerank_stage` 用 `asyncio.shield`（刻意——`asyncio.to_thread` 的 CPU 工作取消
+    不了，deadline 才是真正的收手機制），於是被放棄的 rerank 帶著 180s 的 deadline
+    繼續跑，**並持續持有容量為 1 的 `_rerank_semaphore`**。下一節排在一個沒人要的
+    結果後面 ⇒ 連鎖降級。
+    """
+
+    def test_budget_caps_configured_value(self):
+        # 生產實際的兩個數字：cap 60s、設定 180s
+        self.assertAlmostEqual(rw._rerank_budget(180.0, 60.0), 36.0)
+
+    def test_never_exceeds_budget(self):
+        for budget in (1.0, 10.0, 60.0, 240.0, 1000.0):
+            with self.subTest(budget=budget):
+                self.assertLessEqual(rw._rerank_budget(180.0, budget), budget)
+
+    def test_configured_value_still_a_ceiling(self):
+        """budget 很大時不得反過來把 rerank 逾時放大到設定值以上。"""
+        self.assertEqual(rw._rerank_budget(30.0, 10_000.0), 30.0)
+
+    def test_no_budget_keeps_configured_value(self):
+        self.assertEqual(rw._rerank_budget(180.0, None), 180.0)
+
+    def test_non_positive_budget_treated_as_absent(self):
+        """0 的語意會是「rerank 不准跑」，而那應該由 rerank_top_m=0 明確表達。
+
+        算出一個 0 來悄悄達成同一件事，會讓「為什麼 rerank 沒生效」查無可查。
+        """
+        for budget in (0.0, -5.0):
+            with self.subTest(budget=budget):
+                self.assertEqual(rw._rerank_budget(180.0, budget), 180.0)
+
+
+class RetrieveForSectionBudgetWiringTests(unittest.IsolatedAsyncioTestCase):
+    """接線層：`retrieve_for_section` 必須把 budget 轉成 `rerank_timeout` 傳下去。
+
+    純函式對了但沒接上，等於什麼都沒修——而那正是這個缺陷原本的形狀
+    （`agentic_qa.py` 早就寫了 `min(設定值, remaining)`，逐節這條就是漏了）。
+    """
+
+    async def test_budget_flows_into_rerank_timeout_single_query(self):
+        rc = _AsyncRec((["src"], "ctx"))
+        with _patch_plan("topic"), patch.object(rw, "retrieve_context", rc):
+            await rw.retrieve_for_section("topic", budget=60.0)
+        _, kw = rc.calls[0]
+        self.assertAlmostEqual(kw["rerank_timeout"], 36.0)
+        self.assertLessEqual(kw["rerank_timeout"], 60.0)
+
+    async def test_budget_flows_into_rerank_timeout_multi_query(self):
+        """多查詢那條也要接——fan-out 的每個子查詢都會各跑一次 rerank。"""
+        rcm = _AsyncRec((["src"], "ctx"))
+        with _patch_plan("topic", "面向2"), patch.object(
+            rw, "retrieve_context_multi", rcm
+        ):
+            await rw.retrieve_for_section("topic", budget=60.0)
+        _, kw = rcm.calls[0]
+        self.assertAlmostEqual(kw["rerank_timeout"], 36.0)
+
+    async def test_no_budget_falls_back_to_setting(self):
+        rc = _AsyncRec((["src"], "ctx"))
+        with _patch_plan("topic"), patch.object(rw, "retrieve_context", rc):
+            await rw.retrieve_for_section("topic")
+        _, kw = rc.calls[0]
+        self.assertEqual(kw["rerank_timeout"], rw.get_settings().report_rerank_timeout)
+
+
+class SectionLoopPassesBudgetTests(unittest.TestCase):
+    """迴圈必須把**同一個數字**同時當 budget 與 wait_for 的 timeout。
+
+    走原始碼靜態驗：真的跑一輪逐節生成要 stub 掉整條 LLM 鏈，而那條測試會在
+    「有沒有把 budget 傳下去」之外驗到太多別的東西。這裡要釘的就是一件事——
+    兩個參數取自同一個變數。
+    """
+
+    def test_retrieve_cap_is_used_for_both_budget_and_timeout(self):
+        import ast
+        import inspect
+
+        src = inspect.getsource(rw)
+        tree = ast.parse(src)
+        found = []
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "wait_for"
+            ):
+                continue
+            timeout_kw = next(
+                (k.value for k in node.keywords if k.arg == "timeout"), None
+            )
+            if not (isinstance(timeout_kw, ast.Name) and timeout_kw.id == "retrieve_cap"):
+                continue
+            inner = node.args[0] if node.args else None
+            self.assertIsInstance(inner, ast.Call, "wait_for 的第一個引數應是呼叫")
+            budget_kw = next(
+                (k.value for k in inner.keywords if k.arg == "budget"), None
+            )
+            self.assertIsNotNone(
+                budget_kw,
+                "以 retrieve_cap 為 timeout 的 wait_for，內層必須顯式帶 budget=",
+            )
+            self.assertTrue(
+                isinstance(budget_kw, ast.Name) and budget_kw.id == "retrieve_cap",
+                "budget 必須與 timeout 取自同一個變數，否則兩層又會各拍一個數字",
+            )
+            found.append(node.lineno)
+        self.assertTrue(found, "找不到以 retrieve_cap 為 timeout 的 wait_for")
+
+
 # ── T5 帳本組裝 + render_citations 單次 ─────────────────────────────────────
 class LedgerAssemblyTests(unittest.TestCase):
     def test_build_ledger_report_level_dedup(self):

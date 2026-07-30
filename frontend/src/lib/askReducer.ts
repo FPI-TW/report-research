@@ -108,7 +108,7 @@ export type AskAction =
   | { type: 'report-fail'; id: string; errorText: string }
   | { type: 'report-decline'; id: string }
   | { type: 'report-cancel'; id: string }
-  | { type: 'feedback'; id: string; value: 'like' | 'dislike' }
+  | { type: 'feedback'; id: string; value: 'like' | 'dislike' | null }
   | { type: 'load'; turns: Turn[] }
   | { type: 'reset' }
   | { type: 'ask-stop'; id: string; qaId: string | null }

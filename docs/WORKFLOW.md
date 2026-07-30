@@ -264,7 +264,7 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/history` | 最近的問答歷史（舊單題清單）。`DELETE /api/history/{qa_id}`（或相容 alias `POST /api/history/{qa_id}/delete`）刪除單筆 |
 | `GET /api/qa/{root_qa_id}/versions` | 某問題群組的**全部**版本（重生版本鏈：以 `COALESCE(root_qa_id, id)` 分組、由舊到新）。**刻意含已標 `active=false` 的舊版**——歷史 pager 要回看的正是它們；濾 `active` 的是歷史／續問清單，不是這條。DB 出錯 fail-open 回 `[]` |
 | `GET /api/conversations` | 對話串清單；`GET /api/conversations/{conversation_id}` 取回全部輪次；`DELETE /api/conversations/{conversation_id}`（或相容 alias `POST /api/conversations/{conversation_id}/delete`）刪除整串 |
-| `POST /api/feedback` | 記錄使用者對某次回答的讚／倒讚（`qa_id` + `value`）|
+| `POST /api/feedback` | 記錄使用者對某次回答的讚／倒讚（`qa_id` + `value`，三值列舉 `like`／`dislike`／**`none`**）。`none` ＝再點一次已亮起的那顆＝取消，寫入的是 **SQL NULL** 而非字面值——讀取端（`/api/history`、`/api/qa/{root_qa_id}/versions` 與前端 zod）認的是 `like\|dislike\|null`。取消刻意走第三個列舉值而非「可為 null 的欄位」：後者讓「客戶端漏送欄位」與「明確取消」無法區分 |
 | `GET /app`、`GET /app/{spa_path:path}` | SPA shell：所有深連結都回同一份 `frontend/dist/index.html`，交給 client 端路由。SPA 路由為 `/app/search`、`/app/ask`、`/app/radar`、`/app/monitor`、`/app/help`、`/app/report/:file_hash`（basename `/app`）。**`frontend/dist/index.html` 不存在時直接 503**——前端改動要先 `cd frontend && npm run build` |
 | `GET /`、`GET /monitor`、`GET /help` | 舊 vanilla 頁已退場，三條都只是 **302 相容導向**（分別到 `/app/search`、`/app/monitor`、`/app/help`），不再自己服務任何頁面 |
 | `GET`/`POST /login` | 登入頁與登入提交（共用帳密）|

@@ -137,7 +137,9 @@ export async function deleteConversation(id: string): Promise<void> {
   if (!ok) throw new Error('刪除對話失敗：找不到該對話串')
 }
 
-export async function sendFeedback(qaId: string, value: 'like' | 'dislike'): Promise<void> {
+/** value 'none' ＝取消評價（後端寫成 NULL）。刻意不是可為 null 的欄位——欄位漏送與
+ *  「明確取消」在那種設計下無法區分，客戶端少帶一個欄位就會靜默清掉使用者的評價。 */
+export async function sendFeedback(qaId: string, value: 'like' | 'dislike' | 'none'): Promise<void> {
   await fetch('/api/feedback', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -11,7 +11,8 @@ interface Props {
   turn: Turn
   onCite: (n: number, view: AnswerView) => void
   onOpenSources: (view: AnswerView) => void
-  onFeedback: (v: 'like' | 'dislike') => void
+  /** 傳的是「按下之後應該變成什麼」：再點一次已亮起的那顆會傳 null（取消）。 */
+  onFeedback: (v: 'like' | 'dislike' | null) => void
   onNoticeRetry: () => void
   onErrorRetry: () => void
   onRegenerate: () => void
@@ -95,10 +96,13 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       )}
       {showActions && (
         <div className={styles.actions}>
+          {/* 讚/倒讚是切換鈕：再點一次已亮起的那顆傳 null＝取消（誤按無法收回的話，
+              使用者只剩「按另一顆」這條假出口，那會把錯的評價留在 qa_log 裡）。
+              切換狀態同時給 aria-pressed，否則亮起與否只有視覺上看得出來。 */}
           {isLive && view.qaId && (
             <>
-              <Pressable className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback('like')} aria-label="讚"><Icon name="thumbUp" size={15} /></Pressable>
-              <Pressable className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback('dislike')} aria-label="倒讚"><Icon name="thumbDown" size={15} /></Pressable>
+              <Pressable className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'like' ? null : 'like')} aria-label="讚" aria-pressed={view.feedback === 'like'}><Icon name="thumbUp" size={15} /></Pressable>
+              <Pressable className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'dislike' ? null : 'dislike')} aria-label="倒讚" aria-pressed={view.feedback === 'dislike'}><Icon name="thumbDown" size={15} /></Pressable>
             </>
           )}
           {/* 四顆動作鈕都是純圖示且等大：size="xs" 只是讓 animate-ui 自帶的方框接近目標值，

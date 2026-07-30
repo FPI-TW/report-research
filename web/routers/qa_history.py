@@ -33,7 +33,7 @@ router = APIRouter()
 
 class FeedbackRequest(BaseModel):
     qa_id: str
-    value: str  # 'like' | 'dislike'
+    value: str  # 'like' | 'dislike' | 'none'（none＝取消，寫入 NULL）
 
 
 # ── 輔助函式一律放在所有 @router.* 裝飾器之上 ────────────────────────────────
@@ -62,9 +62,12 @@ async def _delete_conversation_and_files(conversation_id: str) -> bool:
 
 @router.post("/api/feedback")
 async def feedback(req: FeedbackRequest):
-    """記錄使用者對某次回答的讚/倒讚（qa_id 來自 /api/ask 的 done 事件）。"""
-    if req.value not in ("like", "dislike"):
-        raise HTTPException(status_code=400, detail="value 必須是 like 或 dislike")
+    """記錄使用者對某次回答的讚/倒讚（qa_id 來自 /api/ask 的 done 事件）。
+
+    'none' ＝取消（再點一次已亮起的那顆），由 record_feedback 寫成 NULL。
+    """
+    if req.value not in ("like", "dislike", "none"):
+        raise HTTPException(status_code=400, detail="value 必須是 like、dislike 或 none")
     ok = await record_feedback(req.qa_id, req.value)
     return {"ok": ok}
 

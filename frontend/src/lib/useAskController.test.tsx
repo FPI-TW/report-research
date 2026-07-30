@@ -8,6 +8,7 @@ const streamAsk = vi.fn()
 const streamReport = vi.fn()
 const streamReportRun = vi.fn()
 const cancelReportRun = vi.fn(async () => {})
+const sendFeedback = vi.fn(async () => {})
 // 必須列齊 controller 用到的每一個匯出：vi.mock 整包取代模組，漏掉的是 undefined，
 // 而呼叫它拋的 TypeError 常被 fail-open 的 catch 吞掉 → 測試綠、功能死。
 vi.mock('./askApi', () => ({
@@ -19,7 +20,7 @@ vi.mock('./askApi', () => ({
   getConversation: vi.fn(),
   getQaVersions: vi.fn(async () => []),
   stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
-  sendFeedback: vi.fn(async () => {}),
+  sendFeedback: (...a: unknown[]) => sendFeedback(...(a as [])),
   getReportTemplates: vi.fn(async () => []),
 }))
 import { useAskController } from './useAskController'
@@ -178,6 +179,27 @@ test('問答串流提早結束但未收到 done 時，turn 會標成 error', asy
 
   await waitFor(() => expect(result.current.state.turns[0].phase).toBe('error'))
   expect(result.current.state.turns[0].answer).toBe('半句回答')
+})
+
+test('setFeedback：null 送到後端要變成 none（取消），state 同步清空', async () => {
+  // null → 'none' 這層轉換只存在於 controller。後端刻意不收「可為 null 的欄位」，
+  // 因為那讓「漏送欄位」與「明確取消」長得一樣；而轉換寫錯是靜默的（回饋失敗不打擾）。
+  const g = gated([{ event: 'done', data: { conversation_id: 'c1', qa_id: 'qa1' } }])
+  streamAsk.mockReturnValue(g.gen)
+  const { wrapper } = withQueryClient()
+  const { result } = renderHook(() => useAskController(), { wrapper })
+  act(() => result.current.submit('Q'))
+  await act(async () => { g.release(); await Promise.resolve() })
+  await waitFor(() => expect(result.current.state.turns[0].phase).toBe('done'))
+  const turnId = result.current.state.turns[0].id
+
+  act(() => result.current.setFeedback(turnId, 'qa1', 'like'))
+  expect(sendFeedback).toHaveBeenLastCalledWith('qa1', 'like')
+  expect(result.current.state.turns[0].feedback).toBe('like')
+
+  act(() => result.current.setFeedback(turnId, 'qa1', null))
+  expect(sendFeedback).toHaveBeenLastCalledWith('qa1', 'none')
+  expect(result.current.state.turns[0].feedback).toBeNull()
 })
 
 test('每次問答完成都會刷新 conversations 快取', async () => {

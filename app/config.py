@@ -155,6 +155,10 @@ class Settings:
     db_idle_tx_timeout_ms: int
     db_maintenance_statement_timeout_ms: int
 
+    # 嵌入模型的執行緒紀律（app/services/embed.py）
+    embed_max_concurrency: int
+    embed_torch_threads: int
+
 
 def _load() -> Settings:
     intent_model = os.getenv("ASK_INTENT_MODEL", "claude-haiku-4-5")
@@ -303,6 +307,16 @@ def _load() -> Settings:
         # 條就是留給它們的突發量。pool_size 只留 5 條常駐，其餘走 overflow 用完即關，
         # 不讓閒置連線長期佔著 PG 的 backend 記憶體。
         db_max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "15")),
+        # BGE-M3 的 model.encode 是 CPU-bound，而每個 web 呼叫端都經 asyncio.to_thread
+        # 丟進預設執行緒池（min(32, cpu+4) 條）。`/api/search`／雷達／閱讀頁**完全沒有
+        # 併發閘**，所以同時進 encode 的執行緒數沒有上界，而 torch 自己還會再開
+        # intra-op 執行緒——CPU-only 推論下這是嚴重超額訂閱，每一條都變慢。
+        # 預設 1＝序列化。CPU-bound 工作序列化不損總吞吐（反而因為少了搶核而變快），
+        # 代價只是併發請求的尾延遲，而那本來就被超額訂閱吃掉了。
+        embed_max_concurrency=int(os.getenv("EMBED_MAX_CONCURRENCY", "1")),
+        # 0＝不設（沿用 torch 預設＝實體核心數）。與上面那個閘配合：併發限 1 時讓
+        # torch 用滿核心是對的；若把併發開大，這裡就該同步調小，否則兩層相乘。
+        embed_torch_threads=int(os.getenv("EMBED_TORCH_THREADS", "0")),
         # 取不到連線＝池已滿；在單 worker、上限 20 的前提下這已經是異常狀態。
         # 預設的 30 秒只是把使用者的等待拉長，最後回的還是同一個 500。
         db_pool_timeout=float(os.getenv("DB_POOL_TIMEOUT", "10")),

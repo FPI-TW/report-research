@@ -157,5 +157,30 @@ else
   log "本次無新研報入庫 → 跳過摘要、標題與摘錄"
 fi
 
+# 6) 觀點雷達訊號（best-effort）。**刻意在 $HASHES 判斷之外**：它與上面三段不同，
+#    不是「補本輪新研報的缺值」，而是在排一份跨全語料的積壓（2026-07-30 實測待擷取
+#    5047 份）。綁本輪新檔的話，沒有新研報進來的日子它就完全不動——而雷達正是這樣
+#    從 2026-07-16 起靜止了兩週。
+#
+#    **`--limit` 不可省，這是本段最重要的一行**：訊號擷取每份約 100-135s，5047 份
+#    不設上限就是連續佔住 claude CLI 鎖八十小時以上，期間每一輪 sync 的匯入都會撞鎖
+#    以 rc=75 收場——而匯入撞鎖的代價不是「下輪再來」：rsync 已把檔案落到本地，
+#    `--size-only` 讓下一輪 delta 不再列出它們，那批研報就要靠 `--all-local` 手動補。
+#    也就是說，讓這段跑太久會反過來把主資料流弄停。
+#
+#    擷取順序是 `report_date DESC`（見 extract_signals.py 的 _REPORTS_SQL），所以
+#    限量取的一定是最新的那幾份：雷達保持在最新狀態，歷史積壓在背景慢慢排。
+SIGNAL_LIMIT=${SYNC_SIGNAL_LIMIT:-15}
+log "擷取觀點雷達訊號（每輪最多 ${SIGNAL_LIMIT} 份，新→舊；冪等，無新工作即 no-op）"
+SIGNAL_RC=0
+nice -n 19 ionice -c3 "$UV" run python scripts/extract_signals.py \
+  --limit "$SIGNAL_LIMIT" \
+  ${SYNC_SIGNAL_WORKERS:+--workers "$SYNC_SIGNAL_WORKERS"} >>"$LOG" 2>&1 \
+  || SIGNAL_RC=$?
+if [ "$SIGNAL_RC" -ne 0 ]; then
+  log "訊號擷取非零退出 rc=${SIGNAL_RC}（best-effort，已略過）"
+  record_unit_failure "extract_signals" "$SIGNAL_RC"
+fi
+
 rm -f "$DELTA"
 log "=== sync done ==="

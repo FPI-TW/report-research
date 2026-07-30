@@ -1990,6 +1990,155 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
             ans.SessionFactory = orig
         self.assertFalse(ok)
 
+    async def test_deletes_report_derivatives_leaf_first(self):
+        """研報衍生物必須一起刪，且順序是由葉往根。
+
+        三張表（`report_doc` / `report_run` / `report_rendition`）刻意都沒有 FK，
+        所以 DB 不會替你連刪；先前只刪 `qa_log` ⇒ 這些列與磁碟 PDF 全變永久孤兒。
+        2026-07-30 實測生產 14 列 `report_doc` 有 2 列是孤兒。
+
+        `report_rendition` 以 `report_id` 指向 `report_doc`——先刪 doc 就再也找不到
+        要刪哪些 rendition，所以順序不是風格問題。
+        """
+        from app.services import answer as ans
+
+        class Res:
+            rowcount = 1
+
+            def all(self):
+                return []
+
+        sqls: list[str] = []
+
+        class Sess:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, stmt, params=None):
+                sqls.append(str(stmt))
+                return Res()
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: Sess()
+        try:
+            ok = await ans.delete_conversation("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertTrue(ok)
+        joined = "\n".join(sqls)
+        for table in (
+            "research.report_rendition",
+            "research.report_doc",
+            "research.report_run",
+            "research.qa_log",
+        ):
+            self.assertIn(f"DELETE FROM {table}", joined, f"{table} 沒被刪到")
+        i_rend = joined.index("DELETE FROM research.report_rendition")
+        i_doc = joined.index("DELETE FROM research.report_doc")
+        self.assertLess(i_rend, i_doc, "rendition 必須先於 report_doc（否則查不到要刪哪些）")
+
+    async def test_report_section_relies_on_fk_cascade(self):
+        """`report_section` 不直接刪——它以 run_id 對 `report_run` 有 FK CASCADE。
+
+        寫成測試是因為「少一個 DELETE」看起來就像漏掉，下一個人很容易「補上」，
+        而那會變成刪兩次（無害但誤導）或在 run 已刪後對不到列。
+        """
+        from app.services import answer as ans
+
+        class Res:
+            rowcount = 1
+
+            def all(self):
+                return []
+
+        sqls: list[str] = []
+
+        class Sess:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, stmt, params=None):
+                sqls.append(str(stmt))
+                return Res()
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: Sess()
+        try:
+            await ans.delete_conversation("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertNotIn("DELETE FROM research.report_section", "\n".join(sqls))
+
+
+class DeletedPdfPathsTests(unittest.IsolatedAsyncioTestCase):
+    """路徑要在刪除**之前**查——列刪掉之後就查不到了。"""
+
+    @staticmethod
+    def _session(rows, *, boom=False):
+        class Res:
+            def all(self):
+                return rows
+
+        class Sess:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, *a, **k):
+                if boom:
+                    raise RuntimeError("db down")
+                return Res()
+
+        return Sess
+
+    async def test_collects_from_both_tables(self):
+        from app.services import answer as ans
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = self._session([("/d/a.pdf",), ("/d/b.pdf",)])
+        try:
+            out = await ans.deleted_pdf_paths("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(out, ["/d/a.pdf", "/d/b.pdf"])
+
+    async def test_null_paths_dropped(self):
+        from app.services import answer as ans
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = self._session([(None,), ("/d/x.pdf",), ("",)])
+        try:
+            out = await ans.deleted_pdf_paths("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(out, ["/d/x.pdf"])
+
+    async def test_db_error_returns_empty_not_raise(self):
+        """刪對話不該因為「順便查個路徑失敗」而整體失敗。"""
+        from app.services import answer as ans
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = self._session([], boom=True)
+        try:
+            out = await ans.deleted_pdf_paths("c1")
+        finally:
+            ans.SessionFactory = orig
+        self.assertEqual(out, [])
+
 
 class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_grouped_rows(self):

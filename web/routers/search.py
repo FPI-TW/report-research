@@ -69,6 +69,11 @@ class SearchResponse(BaseModel):
     # 注意：ranked 已套用 market 篩選，故選定市場時本欄只會有該市場——
     # 要得知其他市場的命中數需再跑一次未篩選的檢索，成本翻倍，故不做。
     market_facets: list[MarketFacet] = []
+    # 字面路候選是否已被 LEX_CAP_SEARCH 截斷。截斷時「取到哪 cap 列」由 heap 物理順序
+    # 決定（`LIMIT :cap` 沒有 ORDER BY，而 synchronize_seqscans 預設 on），也就是同一
+    # 個查詢在不同時刻可能回不同結果。旗標存在的目的是**先量出發生率**——加排序鍵會
+    # 逼掃完全部命中列，是淨損失，見 store._lexical_sql 的說明。
+    lexical_truncated: bool = False
     results: list[ReportResult]
 
 
@@ -169,11 +174,13 @@ async def search(
     instr = instrument_type if instrument_type and instrument_type != "全部" else None
     rtype = report_type if report_type and report_type != "全部" else None
     qvec = await asyncio.to_thread(deps.embed_query_cached, q)
+    retrieval_stats: dict = {}
     async with deps.SessionFactory() as session:
         scored = await deps.hybrid_search(
             session,
             q,
             qvec,
+            stats=retrieval_stats,
             market=mkt,
             instrument_type=instr,
             relates_stock=relates_stock or None,
@@ -241,5 +248,7 @@ async def search(
         market_facets=[
             MarketFacet(market=m, count=c) for m, c in facet_counts.most_common()
         ],
+        # 測試的 hybrid_search 替身不會填 stats，故一律 .get 帶預設（缺值＝未截斷）。
+        lexical_truncated=bool(retrieval_stats.get("lex_truncated")),
         results=results,
     )

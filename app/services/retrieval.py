@@ -78,11 +78,19 @@ async def hybrid_search(
     lex_cap: Optional[int] = None,
     lex_per_report: bool = False,
     lex_unlimited: bool = False,
+    stats: dict | None = None,
 ) -> list[tuple[int, float, tuple]]:
     """雙路召回 + 去重 + 融合排序。
 
     回傳 [(tier, fused_score, row), ...]，依 (tier, fused) 由高到低排序。
     row 結構同 store._meta_columns + distance（首欄 chunk_id）。
+
+    `stats` 給定時填入字面路的召回遙測：`lex_hits`（受 cap 限制後的候選列數）、
+    `lex_cap`（本次使用的 cap）、`lex_truncated`（候選是否已被 cap 截斷）。
+    **刻意用「傳入的 dict 由本函式填寫」而不是多回一個值**：hybrid_search 的回傳型別
+    被四個生產呼叫端與數十個測試 fake 依賴，改成 tuple 會讓每個 fake 都得跟著改（本
+    專案已有三次「fake 簽章漂移 → TypeError 被吞 → 靜默走錯路徑」的紀錄）。遙測是可
+    選的旁路資訊，不該讓主契約為它變形。
     """
     phrase, terms = extract_terms(q)
     filters = dict(
@@ -95,20 +103,28 @@ async def hybrid_search(
     scan = dense_scan if dense_scan is not None else max(DENSE_SCAN_MIN, k * 8)
     dense_rows = await search_chunks_meta(session, query_embedding, scan=scan, **filters)
     lex_rows = []
+    lex_hits = 0
+    cap = lex_cap if lex_cap is not None else LEX_CAP
     if terms:
         patterns = ["%" + t.translate(_LIKE_ESC) + "%" for t in terms]
         lex_row_limit = None if lex_unlimited else (
             lex_limit if lex_limit is not None else LEX_LIMIT
         )
-        lex_rows = await search_chunks_lexical(
+        lex_rows, lex_hits = await search_chunks_lexical(
             session,
             query_embedding,
             patterns,
             limit=lex_row_limit,
-            cap=lex_cap if lex_cap is not None else LEX_CAP,
+            cap=cap,
             per_report=lex_per_report,
             **filters,
         )
+    if stats is not None:
+        stats["lex_hits"] = lex_hits
+        stats["lex_cap"] = cap
+        # >= 而非 ==：cap 是 SQL LIMIT，理論上不會超過，但用 >= 讓「cap 改小後拿到舊
+        # 計數」這類意外落在保守側（寧可誤報截斷，不可漏報）。
+        stats["lex_truncated"] = bool(terms) and lex_hits >= cap
 
     seen: set[str] = set()
     scored: list[tuple[int, float, tuple]] = []

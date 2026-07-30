@@ -1,5 +1,7 @@
-import { describe, expect, it, test } from 'vitest'
+import { afterEach, describe, expect, it, test, vi } from 'vitest'
 import { parseAskEvent, parseReportEvent, conversationTurnSchema, sourceSchema } from './askSchemas'
+
+afterEach(() => vi.restoreAllMocks())
 
 test('parseAskEvent 驗證各事件、拒未知/壞形狀', () => {
   expect(parseAskEvent({ event: 'status', data: { stage: 'retrieved', count: 8 } }))
@@ -109,6 +111,50 @@ test('parseAskEvent／parseReportEvent 認得 queued（未宣告就會被靜默�
     .toEqual({ event: 'queued', data: { scope: 'ask', position: 2, capacity: 3 } })
   expect(parseReportEvent({ event: 'queued', data: { scope: 'report', position: 1, capacity: 1 } }))
     .toMatchObject({ event: 'queued' })
+})
+
+describe('丟棄事件不再靜默（rejectEvent）', () => {
+  // 回傳值刻意不變（仍是 null）——這組測的只是「有沒有留下痕跡」。沒有痕跡時，schema
+  // 與後端 payload 漂移的唯一症狀是畫面少了東西，沒有任何線索指向 parser。
+  it('schema 不合時警告並帶出 zod 的錯誤', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(parseAskEvent({ event: 'status', data: { stage: 'bogus' } })).toBeNull()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toBe('[sse] 丟棄事件')
+    expect(warn.mock.calls[0][1]).toBe('status')
+    expect(warn.mock.calls[0][2]).toBeTruthy() // zod error，不是 undefined
+  })
+
+  it('token/notice 的非字串 payload 也會警告', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(parseAskEvent({ event: 'token', data: 42 })).toBeNull()
+    expect(parseAskEvent({ event: 'notice', data: null })).toBeNull()
+    expect(parseReportEvent({ event: 'token', data: {} })).toBeNull()
+    expect(warn).toHaveBeenCalledTimes(3)
+  })
+
+  it('未宣告的 event 種類會警告', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(parseAskEvent({ event: 'unknown', data: 1 })).toBeNull()
+    expect(warn).toHaveBeenCalledWith('[sse] 丟棄事件', 'unknown', '未宣告的事件種類')
+  })
+
+  it('成功解析的事件不留噪音（每個 token 都會經過這條路）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(parseAskEvent({ event: 'token', data: '片段' })).not.toBeNull()
+    expect(parseReportEvent({ event: 'status', data: { stage: 'writing' } })).not.toBeNull()
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('document_revision 刻意忽略：回 null 但不警告', () => {
+    // 「刻意忽略」與「忘了宣告」在回傳值上完全一樣（都是 null），差別只有這個警告。
+    // 前者是 M7 的純加法事件（前端要的是 done 帶的 download_url），必須是明確的 case。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(parseReportEvent({
+      event: 'document_revision', data: { revision_id: 'rev-1', revision: 1 },
+    })).toBeNull()
+    expect(warn).not.toHaveBeenCalled()
+  })
 })
 
 test('queued 欄位全 optional：後端只送部分欄位仍解析得出來', () => {

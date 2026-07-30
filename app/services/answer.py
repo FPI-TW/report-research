@@ -1662,6 +1662,9 @@ async def answer_question(
     # 避免頂層循環 import——retrieval_pipeline 於頂層 import 本模組）
     from app.services.retrieval_pipeline import retrieve_context
 
+    # 字面路 cap 截斷的遙測收集點（見 qa_timing log）。`LIMIT :cap` 沒有 ORDER BY，
+    # 被截斷時「取到哪 cap 列」不穩定；先量出實際發生率，再談要不要付排序的代價。
+    retrieval_stats: dict = {}
     try:
         if turns:
             sources, context = await retrieve_context(
@@ -1669,6 +1672,7 @@ async def answer_question(
                 max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
                 max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
                 rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
+                stats=retrieval_stats,
             )
         else:
             route_task = asyncio.create_task(classify_non_overview(question))
@@ -1678,6 +1682,7 @@ async def answer_question(
                     max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
                     max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
                     rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
+                    stats=retrieval_stats,
                 )
                 decision = await route_task
                 timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
@@ -1871,11 +1876,15 @@ async def answer_question(
         request_id=request_id,
     )
     logger.info(
-        "qa_timing id=%s %s total_ms=%s thinking_ms=%s",
+        "qa_timing id=%s %s total_ms=%s thinking_ms=%s lex_hits=%s lex_cap=%s"
+        " lex_truncated=%s",
         qa_id,
         timer.stage_str(),
         timer.total_ms(),
         thinking_ms,
+        retrieval_stats.get("lex_hits"),
+        retrieval_stats.get("lex_cap"),
+        retrieval_stats.get("lex_truncated"),
     )
     group_key = new_root or qa_id
     version_count = await _count_versions(group_key) if regenerate_of and group_key else 1

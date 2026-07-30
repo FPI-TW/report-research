@@ -74,6 +74,63 @@ class SearchApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["lex_cap"], search_mod.LEX_CAP_SEARCH)
         self.assertEqual(seen["sort"], "relevance")
         self.assertEqual(response.total, 0)
+        # 替身沒填 stats → 旗標必須落在保守側（未截斷），不可 KeyError 也不可 None
+        self.assertIs(response.lexical_truncated, False)
+
+
+class LexicalTruncationFlagTests(unittest.IsolatedAsyncioTestCase):
+    """檢索頁必須把「字面候選被 cap 截斷」帶出去。
+
+    截斷本身是靜默的：`LIMIT :cap` 沒有 ORDER BY，取到哪 cap 列由 heap 物理順序決定
+    （`synchronize_seqscans` 預設 on ⇒ 併發 seq scan 從任意 block 起掃），也就是同一
+    查詢在不同時刻可能回不同結果，而回應裡沒有任何線索。
+    """
+
+    async def _search_with_stats(self, filler):
+        from web import deps
+        from web.routers import search as search_mod
+
+        async def fake_hybrid_search(session, query, qvec, *, stats=None, **kwargs):
+            filler(stats)
+            return []
+
+        orig = (
+            deps.hybrid_search, deps.embed_query_cached,
+            deps.rank_reports, deps.SessionFactory,
+        )
+        deps.hybrid_search = fake_hybrid_search
+        deps.embed_query_cached = lambda q: [0.0]
+        deps.rank_reports = lambda scored, *, sort="relevance": []
+        deps.SessionFactory = lambda: _FakeSession()
+        try:
+            return await search_mod.search(
+                q="台積電", market=None, instrument_type=None, relates_stock=None,
+                relates_futures=None, report_type=None, sort="relevance",
+                limit=50, offset=0, passages=3,
+            )
+        finally:
+            (
+                deps.hybrid_search, deps.embed_query_cached,
+                deps.rank_reports, deps.SessionFactory,
+            ) = orig
+
+    async def test_truncated_stats_surface_as_flag(self):
+        resp = await self._search_with_stats(
+            lambda s: s.update({"lex_hits": 8000, "lex_cap": 8000, "lex_truncated": True})
+        )
+        self.assertIs(resp.lexical_truncated, True)
+
+    async def test_untruncated_stats_leave_flag_false(self):
+        resp = await self._search_with_stats(
+            lambda s: s.update({"lex_hits": 37, "lex_cap": 8000, "lex_truncated": False})
+        )
+        self.assertIs(resp.lexical_truncated, False)
+
+    async def test_handler_actually_passes_a_stats_dict(self):
+        """不是 None：hybrid_search 只在 stats is not None 時填，傳 None 等於整條遙測落空。"""
+        got = {}
+        await self._search_with_stats(lambda s: got.update({"is_dict": isinstance(s, dict)}))
+        self.assertTrue(got["is_dict"])
 
 
 class BrowseListMappingTests(unittest.IsolatedAsyncioTestCase):

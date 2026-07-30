@@ -90,19 +90,24 @@ async def retrieve_context(
     timer=None,
     rerank_top_m: int = 0,
     rerank_timeout: float | None = None,
+    stats: dict | None = None,
 ) -> tuple[list[Source], str]:
     """回 (sources, context)。timer 給定時記 embed/retrieve/rerank 各段耗時。
     rerank_top_m>0 時在檢索後、選篇前插入 cross-encoder 重排（fail-open），並把
     重排前的 fused 快照當 gate_scores 傳給 build_context——重排會覆寫分數尺度，
     而選篇的 relevance_floor 是以 fused 校準的（詳見下方註解）。
-    rerank_timeout 未給時退回模組後備值；逾時預算含排隊等待 semaphore 的時間。"""
+    rerank_timeout 未給時退回模組後備值；逾時預算含排隊等待 semaphore 的時間。
+
+    `stats` 給定時原樣轉給 hybrid_search 填寫字面路召回遙測（lex_hits／lex_cap／
+    lex_truncated），由呼叫端決定要不要記錄——本函式不 log，避免同一份資訊在管線裡
+    出現兩次而對不上。"""
     filters = filters or {}
     qvec = await asyncio.to_thread(embed_query_cached, question)
     if timer is not None:
         timer.mark("embed")
     async with SessionFactory() as session:  # 短連線：檢索完即釋放
         scored = await hybrid_search(
-            session, question, qvec, k=k, dense_scan=dense_scan, **filters
+            session, question, qvec, k=k, dense_scan=dense_scan, stats=stats, **filters
         )
     if timer is not None:
         timer.mark("retrieve")

@@ -238,7 +238,7 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/stats` | 總篇數、總片段數，各市場代碼／商品類型／報告類型的篇數 |
 | `GET /api/progress` | 供 `/app/monitor` 使用的 ingestion、tagging、summary、DB 與背景程序進度，外加**派生資產新鮮度**（`takeaway`／`signal` 各回近 30 天窗口的 done/total/remaining/pct ＋ 全表最新產出日 `latest`）與 **M8 忠實度查核健康度**（`evaluation`）。**全表覆蓋率不能當訊號**（摘錄與訊號都刻意只跑子集），要看的是近期窗口與 `latest` 有沒有前進 |
 | `GET /api/markets` | findb 市場代碼清單 |
-| `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`limit`、`offset`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、摘要與清理後片段，以及 `file_hash`（閱讀頁 `/app/report/:file_hash` 的連結鍵）|
+| `GET /api/search` | 語意檢索並**依報告分組**。參數：`q`（必填）、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`relevance` 預設／`date_desc`／`date_asc`）、`limit`、`offset`、`passages`。每篇回傳 best_score、命中片段數、券商/日期/類型/標的 metadata、摘要與清理後片段，以及 `file_hash`（閱讀頁 `/app/report/:file_hash` 的連結鍵）。信封另有 `lexical_truncated`：字面路候選是否已被 `LEX_CAP_SEARCH`(8000) 截斷。**截斷時結果本身就不穩定**——`store._lexical_sql` 的 `LIMIT :cap` 沒有 ORDER BY，取到哪 cap 列由 heap 物理順序決定（`synchronize_seqscans` 預設 on ⇒ 併發 seq scan 從任意 block 起掃），同一查詢在不同時刻可能回不同結果。這個旗標存在的目的是**先量出發生率**，不是要照著加排序鍵（加了會逼掃完全部命中列，是淨損失，見該函式 docstring）|
 | `GET /api/reports` | 無關鍵字瀏覽：依 `sort`（`date_desc` 預設／`date_asc`）列出，支援與 search 相同的篩選參數 ＋ `limit`/`offset` 分頁；同樣回 `file_hash` |
 | `GET /api/report/{report_id}/full` | 單篇 metadata 與原始檔狀態（`has_file`），供詳情 modal——**現在只有問答頁的引用來源與雷達頁的報告連結會開它**，檢索結果改導向閱讀頁 |
 | `GET /api/report/{report_id}/file` | 回傳原始檔（PDF 以 inline 內嵌、其他下載）|

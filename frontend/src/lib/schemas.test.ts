@@ -46,6 +46,22 @@ describe('schemas', () => {
   it('title 缺席仍可解析（尚未產生標題的報告佔多數）', () => {
     expect(reportListItemSchema.parse(baseItem).title).toBeUndefined()
   })
+  // 同一種漏宣告：/api/search 回 lexical_truncated（字面候選被 cap 截斷），schema 沒宣告
+  // 就會被 zod 靜默 strip 掉——後端量得到、前端永遠拿不到。
+  it('keeps lexical_truncated on the search envelope', () => {
+    const s = searchResponseSchema.parse({
+      query: 'AI', market: null, total: 0, lexical_truncated: true, results: [],
+    })
+    expect(s.lexical_truncated).toBe(true)
+  })
+  it('lexical_truncated 缺席時是 undefined，不折成 false', () => {
+    // undefined＝這個後端還沒回報（滾動部署的舊版），false＝回報了且沒截斷。
+    const s = searchResponseSchema.parse({ query: 'AI', market: null, total: 0, results: [] })
+    expect(s.lexical_truncated).toBeUndefined()
+    expect(searchResponseSchema.parse({
+      query: 'AI', market: null, total: 0, lexical_truncated: false, results: [],
+    }).lexical_truncated).toBe(false)
+  })
   it('parses a report full (has_file bool)', () => {
     const f = reportFullSchema.parse({
       report_id: 'r1', file_name: 'a.pdf', market: 'TW', source: '元大',

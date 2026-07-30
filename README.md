@@ -269,6 +269,7 @@ report-mark/
 │   align_findb_markets.py  中文標籤 → findb 代碼（一次性、冪等）
 │   search.py               CLI 語意檢索（可 --market 過濾）
 │   eval_retrieval.py       離線 retrieval 評估（hit rate / 新近度）
+│   eval_compare.py         比較兩份評測結果 JSON，劣化即非零退出（三種形狀通吃）→ make eval-compare
 │   analyze_qa_log.py       問答延遲、引用新近度與回饋分析
 │   eval_faithfulness.py    M8 查核結果彙總（唯讀）；--claims <id> 逐條主張下鑽
 │   check_batch_freshness.py  批次停更偵測：純 SQL 比最新產出日 vs 門檻（0 新鮮／1 停更／2 查不到）→ make freshness
@@ -494,10 +495,20 @@ uv run ruff check .              # E,F,I；line-length 120
 # 離線評測 harness（改動檢索或生成品質時用它量測，不要另建一套）
 uv run python eval/run_ragas.py        # M1：檢索／問答 RAGAS（凍結題集 + baselines/）
 uv run python eval/run_report_eval.py  # M1b：研報結構化指標
+uv run python scripts/eval_retrieval.py --queryset eval/queryset.json --json > eval/after.json
+
+# 比較兩份結果（劣化超過容忍值即非零退出）——不要用人眼比表
+# 兩份必須是同一套評測的產物；跨套（RAGAS vs 檢索）會被形狀指紋擋下
+uv run python scripts/eval_compare.py --baseline eval/before.json --candidate eval/after.json
+make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candidate-ragas.json TOL=0.03
 ```
 
+**評測是手動工具，刻意不在 CI 內**：跑一輪 RAGAS 會 spawn `claude` CLI，與每 3 小時的 `report-mark-sync.timer` 搶同一個 CLI（`scripts/_claude_lock.py` 那把 flock **刻意不含 `llm.py`**，而 eval 走的正是 `llm.py`）。用法是「改動前後各跑一次，再用 `eval-compare` 比」。跑 RAGAS 請帶 `--concurrency 1`：預設的 3 會讓多個 `claude -p` 互搶而自我汙染（實測 8 題掉 3 題、延遲 213-222s vs 單執行緒 23-37s）。
+
+`eval_compare.py` 的退出碼即結論：`0` 無劣化／`1` 有劣化／`2` **不可比**（樣本數、`ruleset_version`、`max_age_days` 不同，或結果自稱 `sufficient_n=false`）／`3` 有未分類指標。它只讀 `summary`、一個指標都不重算，方向表是白名單——**新增評測指標時要在 `METRIC_SPECS` 補一筆方向**，否則會被報成「未分類」（那是刻意的：默默把未知指標當成「越大越好」就是製造假綠）。三個絕對門檻（`FAITHFULNESS_MIN` / `CONTEXT_PRECISION_MIN` / `ANSWER_RELEVANCY_MIN`）是政策決定，比較器不碰、只比相對 baseline 的變化。
+
 - `tests/` 放 Python 測試（`test_*.py`），涵蓋 filename/extract/retrieval/answer/report/report_writer/pdf/typst/auth/store/overview/scope_router/radar/reading/faithfulness 等；前端測試與元件同置，為 `frontend/src/` 下的 `*.test.ts(x)`。偏好以 mock 隔離 LLM、嵌入、檔案、DB 邊界。
-- **CI**（`.github/workflows/ci.yml`）有**三個 job**：前端測試（ESLint + tsc + **vite build** + vitest）、後端測試（**ruff** + pytest）、**schema 契約**（`pgvector/pgvector:pg16` service container，套 `db/schema.sql` 兩次驗冪等 ＋ `content_norm` 等價性 ＋ CHECK 約束清單對帳）。前端 job 把 `frontend/dist` 當 artifact 傳給後端 job，`tests/test_spa_serving.py` 因此對**真 build 產物**驗證（缺 dist 是**紅**不是 skip；本機要跳過設 `SKIP_SPA_TESTS=1`）。**必要檢查仍是前兩個**——`schema` job 要生效得另外在 GitHub 分支保護加它的 check 名稱。main 有分支保護（strict ＋ enforce_admins）。**本機只跑 pytest 會在前端 job 上翻車。**
+- **CI**（`.github/workflows/ci.yml`）有**三個 job**：前端測試（ESLint + tsc + **vite build** + vitest）、後端測試（**ruff** + pytest）、**schema 契約**（`pgvector/pgvector:pg16` service container，套 `db/schema.sql` 兩次驗冪等 ＋ `content_norm` 等價性 ＋ CHECK 約束清單對帳）。前端 job 把 `frontend/dist` 當 artifact 傳給後端 job，`tests/test_spa_serving.py` 因此對**真 build 產物**驗證（缺 dist 是**紅**不是 skip；本機要跳過設 `SKIP_SPA_TESTS=1`）。**三個 job 皆為必要檢查**（2026-07-29 起；required check 名稱是 job 的中文 `name`，改名等於讓分支保護指向一個永不回報的 check，**改 `name` 就要同步改 GitHub 分支保護設定**）。main 有分支保護（strict ＋ enforce_admins）。**本機只跑 pytest 會在前端 job 上翻車。**
 - **慣例**：確定性邏輯放 Python，Claude CLI 只用於語意標註/摘要/訊號/問答/研報；前端在 `frontend/src/`（React ＋ TS ＋ CSS Modules）；新增旋鈕加在 `app/config.py`。`REPORT_MARK_*` 前綴的**規則**是只給 `.env.example` 那五個 auth/DB 變數、新旋鈕一律不加前綴——但程式碼內另有幾個歷史遺留的同前綴鍵（如 `REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`），**是 live 的，別當成命名錯誤改掉**。Python 側有 **ruff**（`E,F,I`、line-length 120，在 CI 內），**沒有** black/mypy/pre-commit，且 `ruff format` 是刻意不做的（會重排 60/90 個檔、洗掉 blame）——其餘風格約定見 [AGENTS.md](AGENTS.md)。
 - **提交**：採 Conventional Commits（常見繁中 scope，如 `feat(report): …`、`fix(report): …`）；提交前看近期訊息與 staged diff，勿用整句英文當訊息。
 - **改後端要重啟、改前端要 build**：`make serve` 無 `--reload`；SPA 由 `frontend/dist` 提供，前端改動須 `cd frontend && npm run build`（`/app/assets/*` 走 `_ImmutableStatic` 長快取）。`_NoCacheStatic` 只剩 `web/static/login.html` 走。

@@ -3,7 +3,7 @@
 檢視範圍：`app/services/`（11,238 行）、`db/schema.sql`、`web/`、`frontend/`、`scripts/`、`tests/`（85 檔 23,191 行）、`deploy/`、文件。
 所有結論均以實際檔案內容查證，附「檔案:行號」。
 
-> **快照聲明**：本文是 **commit `3ce718e`（2026-07-29 09:38）當下的檢視快照**，不是持續維護的現況文件——「當時看到什麼」正是它的價值，因此其後併入 main 的修正一律以**時點註記**補在對應段落（目前有第 7 節與第 18 節兩處），論述本身不改寫。文中的行號、計數與預設值都是檢視當下的量測、事後未再校正（連 `3ce718e` 本身都未必逐一對得上，例如檢視範圍寫的 `tests/` 85 檔，在 `3ce718e` 實際是 88 檔）——**任何數字都請重數一次，不要引用**；要看現況請讀 `CLAUDE.md` 與 `README.md`。
+> **快照聲明**：本文是 **commit `3ce718e`（2026-07-29 09:38）當下的檢視快照**，不是持續維護的現況文件——「當時看到什麼」正是它的價值，因此其後併入 main 的修正一律以**時點註記**補在對應段落（目前有第 7、14、18 節三處），論述本身不改寫。文中的行號、計數與預設值都是檢視當下的量測、事後未再校正（連 `3ce718e` 本身都未必逐一對得上，例如檢視範圍寫的 `tests/` 85 檔，在 `3ce718e` 實際是 88 檔）——**任何數字都請重數一次，不要引用**；要看現況請讀 `CLAUDE.md` 與 `README.md`。
 >
 > **逐條複驗（2026-07-29）**：本文全部主張已拆成 119 條逐一查證，結果在
 > `docs/ARCHITECTURE_REVIEW_2026-07_VERIFY.md`——66 條仍屬實、37 條需更正數字或推論、
@@ -203,6 +203,14 @@ CLAUDE.md 的 gotcha「Never run extract_takeaways and extract_signals concurren
 另注意 `make schema` 在生產上不安全：`schema.sql:43` 的 HNSW `CREATE INDEX`（非 CONCURRENTLY）與 `:70` 的 `ADD COLUMN ... GENERATED STORED` 會在 70 萬列表上取 ACCESS EXCLUSIVE lock。
 
 ### 14. eval 是唯一的品質防線，但目前擋不住任何回歸
+
+> **2026-07-30 時點註記**：本節的「沒有比較器」已修（`scripts/eval_compare.py` ＋ `make eval-compare`，讀兩份結果 JSON 逐指標算 delta、劣化超過容忍值即非零退出；三種結果形狀通吃）。**題集刻意還沒擴**——沒有比較器時擴題集只是讓人眼要比的數字變多，而擴題集要跑 LLM 才有 ground truth，成本在算力不在程式。另外本節有兩處數字要更正：
+>
+> - **「四份 baseline 的 `thresholds_pass` 全是 `false`」不精確**：是**三份 RAGAS** baseline 全 false，第四份 `report-m1b.json` 是研報 eval，**根本沒有 `thresholds_pass` 這個鍵**（它只有 `sufficient_n`，判的是有效題數而非品質門檻）。現在共五份，第五份 `baseline-2026-07-29.json` 也是 RAGAS、同樣 false。
+> - **卡住的不是 `answer_relevancy`**：AR 門檻已由 PR #137 依實測分離度從 0.85 校準到 **0.55** 並自此通過（0.646）。以現行門檻重算，四份 RAGAS baseline 的未達標項**一律只有 `context_precision`**（0.679 / 0.723 / 0.769 / 0.777，門檻 0.8）——它才是從 M0 起就沒綠過的那一項。`5c15a47` 的 commit message 與本報告都寫成「唯一卡住的是 AR」，兩處都不準。
+> - 也要提醒：`baseline-2026-07-29` 是**第一次乾淨量測**（errors=0），先前幾份有 judge 逾時掉題、掉的題不入均值，所以 CP 從 0.777「掉到」0.679 有一部分是先前虛高。
+>
+> 「接進 CI」則是**刻意不做**：跑一輪 RAGAS 要 spawn `claude` CLI，會與每 3 小時的 `report-mark-sync.timer` 搶同一個 CLI（`scripts/_claude_lock.py` 那把 flock 刻意不含 `llm.py`，而 eval 走 `llm.py`）。
 
 - golden set 過小且三套互不相干：`eval/queryset.json` 14 案、`ragas_questions.json` 8 題、`report_questions.json` 10 題。8 題的均值對 faithfulness 這類指標沒有統計力，±0.05 全在噪音內。
 - **門檻從未綠過等於沒有門檻**：四份 baseline 的 `thresholds_pass` 全是 `false`。

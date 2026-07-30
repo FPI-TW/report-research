@@ -76,6 +76,72 @@ MOUNT_HELPER = SYSTEMD_DIR / "mount-nas-backup"
 SYNC_ENV_EXAMPLE = SYSTEMD_DIR / "report-mark-sync.env.example"
 
 
+DOCKER_BIN_SH = REPO_ROOT / "scripts" / "_docker_bin.sh"
+
+
+class DockerDetectionRuntimeTests(unittest.TestCase):
+    """`scripts/_docker_bin.sh` 的**執行期**語意。
+
+    這一段的缺陷靜態測試看不出來：`command -v docker` 在語法上毫無問題，只是
+    語意錯——它只確認檔案存在，不確認 daemon 連得上。2026-07-30 備份因此挑到
+    `/usr/bin/docker` 並在 `pg_isready` 死掉，錯誤訊息還叫人手動設 `DOCKER_BIN`，
+    把一個可以自己偵測的東西變成每台機器都要人工設定一次的隱性前置條件。
+
+    測試用假 bin 餵 `DOCKER_BIN_CANDIDATES`，所以**不依賴這台機器（或 CI）有沒有
+    docker**——那正是原本這一段沒有測試的原因。
+    """
+
+    def _detect(self, candidates: str) -> str:
+        got = subprocess.run(
+            ["bash", "-c", f'. "{DOCKER_BIN_SH}"; detect_docker_bin'],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "DOCKER_BIN_CANDIDATES": candidates},
+        )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        return got.stdout.strip()
+
+    def test_candidate_that_exists_but_cannot_reach_daemon_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "docker-broken"
+            good = Path(d) / "docker-working"
+            bad.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            good.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            bad.chmod(0o755)
+            good.chmod(0o755)
+            self.assertEqual(
+                self._detect(f"{bad}:{good}"), str(good),
+                "存在但 `info` 失敗的候選必須被跳過——這正是 /usr/bin/docker 的情況",
+            )
+
+    def test_falls_back_to_plain_docker_when_nothing_works(self) -> None:
+        """全探不到時回 `docker`，讓後續指令吐出真正的 daemon 錯誤。
+
+        刻意不在這裡就 die：「連不到 daemon」與「找不到指令」是兩件事，處置不同，
+        偵測層把前者偽裝成後者會讓排查走錯方向。
+        """
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "docker-broken"
+            bad.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            bad.chmod(0o755)
+            self.assertEqual(self._detect(str(bad)), "docker")
+
+    def test_probe_uses_info_not_version(self) -> None:
+        """`--version` 不碰 daemon，用它探測就是原本那個誤判的來源。"""
+        live = "\n".join(_live_lines(_read(DOCKER_BIN_SH)))
+        self.assertIn("info", live)
+        self.assertNotIn("--version", live)
+
+    def test_explicit_docker_bin_still_wins(self) -> None:
+        """偵測是便利功能，不該奪走覆寫權（非標準安裝位置仍要能指定）。"""
+        for name, path in (("db_backup.sh", BACKUP_SH), ("ingest_lowio.sh", LOWIO_SH)):
+            live = "\n".join(_live_lines(_read(path)))
+            with self.subTest(script=name):
+                self.assertRegex(
+                    live, r'DOCKER_BIN[:=]?[^\n]*\$\{DOCKER_BIN',
+                    f"{name} 必須讓既有的 DOCKER_BIN 優先於偵測",
+                )
+
+
 class ConfigResolutionRuntimeTests(unittest.TestCase):
     """**執行期**測試，因為這一段的兩個缺陷靜態測試都看不出來（2026-07-30 實際踩到）。
 
@@ -331,20 +397,23 @@ class BackupScriptTests(unittest.TestCase):
                 f"docker exec 不可配 TTY（會弄壞二進位 dump）：{line.strip()}",
             )
 
-    def test_docker_bin_detection_matches_ingest_lowio(self) -> None:
-        """兩支腳本的 docker 偵測必須等價，否則會漂到只有一支跑得起來。
+    def test_both_scripts_share_the_single_docker_detection(self) -> None:
+        """兩支腳本必須共用 `scripts/_docker_bin.sh`，不得各自寫一份偵測。
 
-        比對的是**偵測運算式本身**而非整行：db_backup.sh 多了一層「設定檔覆寫」
-        （`DOCKER_BIN=${DOCKER_BIN:-$(_default_key DOCKER_BIN)}` 再 `: ${DOCKER_BIN:=偵測}`），
-        所以整行逐字比對會誤紅。真正要釘的是 fallback 的路徑與 `command -v docker`。
+        兩套邏輯並存的實際後果：2026-07-30 備份在 `pg_isready` 掛掉，因為它挑到
+        `/usr/bin/docker`——**那支存在但連不到 daemon**（Docker Desktop 的 WSL
+        integration 沒開給這個 distro），而 `command -v` 只看檔案存不存在。
+        `Makefile:15` 從一開始就用實際探測，只有這兩支 shell 用了弱版。
         """
-        probe = "command -v docker"
-        exe = "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
         for name, path in (("db_backup.sh", BACKUP_SH), ("ingest_lowio.sh", LOWIO_SH)):
             live = "\n".join(_live_lines(_read(path)))
             with self.subTest(script=name):
-                self.assertIn(probe, live, f"{name} 缺 docker 偵測")
-                self.assertIn(exe, live, f"{name} 缺 docker.exe fallback")
+                self.assertIn("_docker_bin.sh", live, f"{name} 應 source 共用偵測")
+                self.assertIn("detect_docker_bin", live, f"{name} 應呼叫共用偵測")
+                self.assertNotIn(
+                    "command -v docker ||", live,
+                    f"{name} 不該再自帶弱版偵測（只看檔案存不存在）",
+                )
 
     def test_destination_falls_back_through_defaults_file(self) -> None:
         """腳本自己要讀 /etc/default/report-mark-sync。

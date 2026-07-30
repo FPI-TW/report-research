@@ -21,8 +21,11 @@ set -euo pipefail
 
 DB_CONTAINER="${DB_CONTAINER:-report-mark-postgres}"
 DB_NAME="${DB_NAME:-research}"
-# 本 distro 可能沒有 docker CLI（Docker Desktop WSL integration 關閉）→ fallback 到 docker.exe
-DOCKER_BIN="${DOCKER_BIN:-$(command -v docker || echo '/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe')}"
+# docker CLI 偵測收斂在 scripts/_docker_bin.sh（與 db_backup.sh 共用）。它會**實際探
+# daemon**——這台機器上 /usr/bin/docker 存在但連不到，而 `command -v` 只看檔案存不存在。
+# shellcheck source=scripts/_docker_bin.sh
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/_docker_bin.sh"
+DOCKER_BIN="${DOCKER_BIN:-$(detect_docker_bin)}"
 
 # ── 硬閘：沒有近期備份就不准關 fsync ───────────────────────────────────────
 # 為什麼是硬閘而不是註解裡的提醒：上面那段風險說明從 2026-06 就寫在檔頭，卻沒有

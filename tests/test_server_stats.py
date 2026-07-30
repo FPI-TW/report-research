@@ -1,8 +1,7 @@
 import os
 import sys
-import tempfile
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
@@ -72,218 +71,15 @@ class OrchestratorParseTests(unittest.TestCase):
         )
 
 
-class SyncLogParseTests(unittest.TestCase):
-    """`data/sync_run_<date>.log` 的狀態判定。
-
-    這條 log 是**每日一檔**，一天內會被 8 輪同步接續 append——「整檔有沒有出現
-    `=== sync done ===`」因此是錯的判準：第一輪跑完之後它永遠是「已完成」，
-    後面 7 輪不管掛在哪都看不出來。
-    """
-
-    START = "[2026-07-30 09:00:01] === sync start (pid=1234) ==="
-    DONE = "[2026-07-30 09:04:12] === sync done ==="
-
-    def test_done_when_last_marker_is_done(self):
-        p = monitor._parse_sync_entry([self.START, self.DONE])
-        self.assertEqual(p["status"], "done")
-        self.assertEqual(p["label"], "同步已完成")
-        self.assertEqual(p["timestamp"], "2026-07-30 09:04:12")
-
-    def test_running_when_a_new_round_started_after_an_earlier_done(self):
-        """第二輪已開始、還沒結束——舊寫法（看整檔有無 done）會誤報「已完成」。"""
-        lines = [
-            self.START,
-            self.DONE,
-            "[2026-07-30 12:00:01] === sync start (pid=5678) ===",
-            "[2026-07-30 12:00:09] 增量匯入 delta…",
-        ]
-        p = monitor._parse_sync_entry(lines)
-        self.assertEqual(p["status"], "running")
-        self.assertEqual(p["timestamp"], "2026-07-30 12:00:09")
-        self.assertIn("增量匯入", p["raw"])
-
-    def test_unknown_when_tail_has_no_marker(self):
-        """檔尾只讀數十 KB，start/done 可能已被切掉——不硬猜，回 unknown。"""
-        p = monitor._parse_sync_entry(["[2026-07-30 12:00:09] rsync 同步中…"])
-        self.assertEqual(p["status"], "unknown")
-        self.assertEqual(p["label"], "同步狀態")
-
-    def test_line_without_timestamp_keeps_raw(self):
-        p = monitor._parse_sync_entry(["some unexpected text"])
-        self.assertIsNone(p["timestamp"])
-        self.assertEqual(p["raw"], "some unexpected text")
-
-    def test_empty_is_none(self):
-        self.assertIsNone(monitor._parse_sync_entry([]))
-        self.assertIsNone(monitor._parse_sync_entry(["", "   "]))
-
-
-class UnitFailureParseTests(unittest.TestCase):
-    """`data/unit_failures.log` 的近期失敗計數。
-
-    兩種寫入者的標頭格式不同（`report-mark-alert.sh` 沒有 STAGE/RC，
-    `sync_new_reports.sh` 兩者都有），parser 必須同時吃得下——只認一種的話，
-    真正需要看見的那一種可能剛好是被漏掉的那一種。
-    """
-
-    NOW = datetime(2026, 7, 30, 8, 0, tzinfo=timezone.utc)
-
-    def _log(self) -> str:
-        # 交錯真實內文：systemctl show 與 journal 尾巴不得被誤認成紀錄標頭。
-        return "\n".join([
-            "=== 2026-07-20T15:00:03+00:00  UNIT=report-mark-web.service ===",
-            "Result=exit-code",
-            "--- journal (last 30) ---",
-            "Jul 20 15:00:03 host uvicorn[1]: boom",
-            "",
-            "=== 2026-07-29T23:00:00+00:00  UNIT=report-mark-sync.service"
-            "  STAGE=generate_summaries  RC=75 ===",
-            "--- data/sync_run_20260729.log (last 20) ---",
-            "[2026-07-29 23:00:00] 摘要生成非零退出 rc=75",
-            "",
-            "=== 2026-07-30T07:00:00+00:00  UNIT=report-mark-sync.service"
-            "  STAGE=sync_new_reports(import)  RC=2 ===",
-            "",
-        ])
-
-    def test_counts_per_window(self):
-        d = monitor._parse_unit_failures(self._log(), self.NOW)
-        self.assertEqual(d["count_24h"], 2)   # 07-29 23:00 與 07-30 07:00
-        self.assertEqual(d["count_7d"], 2)    # 07-20 那筆超過 7 天
-        self.assertEqual(d["latest"], "2026-07-30T07:00:00+00:00")
-
-    def test_recent_is_newest_first_and_carries_stage_rc(self):
-        d = monitor._parse_unit_failures(self._log(), self.NOW)
-        self.assertEqual(d["recent"][0]["stage"], "sync_new_reports(import)")
-        self.assertEqual(d["recent"][0]["rc"], 2)
-        self.assertEqual(d["recent"][1]["rc"], 75)
-
-    def test_alert_sh_format_without_stage_or_rc(self):
-        d = monitor._parse_unit_failures(self._log(), self.NOW)
-        oldest = d["recent"][-1]
-        self.assertEqual(oldest["unit"], "report-mark-web.service")
-        self.assertIsNone(oldest["stage"])
-        self.assertIsNone(oldest["rc"])
-
-    def test_body_lines_are_not_counted_as_entries(self):
-        d = monitor._parse_unit_failures(self._log(), self.NOW)
-        self.assertEqual(len(d["recent"]), 3)
-
-    def test_recent_is_capped(self):
-        many = "\n".join(
-            f"=== 2026-07-30T0{i}:00:00+00:00  UNIT=u{i}.service ===" for i in range(1, 9)
-        )
-        d = monitor._parse_unit_failures(many, self.NOW)
-        self.assertEqual(len(d["recent"]), monitor.UNIT_FAILURES_RECENT)
-        self.assertEqual(d["recent"][0]["unit"], "u8.service")
-
-    def test_unparseable_timestamp_is_listed_but_not_counted(self):
-        """寧可少算，也不要把「無法定位時間」的東西算成剛剛發生。"""
-        d = monitor._parse_unit_failures(
-            "=== not-a-timestamp  UNIT=report-mark-sync.service  RC=1 ===", self.NOW
-        )
-        self.assertEqual(d["count_24h"], 0)
-        self.assertIsNone(d["latest"])
-        self.assertEqual(len(d["recent"]), 1)
-
-    def test_empty_log_is_all_zero(self):
-        d = monitor._parse_unit_failures("", self.NOW)
-        self.assertEqual((d["count_24h"], d["count_7d"], d["latest"], d["recent"]),
-                         (0, 0, None, []))
-
-    def test_missing_file_is_all_zero(self):
-        """檔案不存在＝從未有 unit 失敗過，是正常狀態不是錯誤。"""
-        orig = monitor.UNIT_FAILURES_LOG
-        monitor.UNIT_FAILURES_LOG = Path("/nonexistent/unit_failures.log")
-        try:
-            d = monitor._unit_failures()
-        finally:
-            monitor.UNIT_FAILURES_LOG = orig
-        self.assertEqual(d, {"latest": None, "count_24h": 0, "count_7d": 0, "recent": []})
-
-
-class GatherRuntimeShapeTests(unittest.TestCase):
-    """`_gather_runtime` **實際**要產出 sync 與 unit_failures 兩個鍵。
-
-    為什麼這條不能省：`tests/test_monitor_http.py` 的端點測試是 patch 掉
-    `_gather_runtime` 再驗 handler 有沒有透傳，所以把這兩個鍵從 `_gather_runtime`
-    整條拿掉，那邊照樣全綠——症狀只會是監控頁那張卡永遠顯示「此版後端未提供」。
-    這正是本專案記過的「後端在送、前端沒宣告」的鏡像版本。
-    """
-
-    def test_runtime_includes_sync_and_unit_failures(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            empty = Path(tmp)
-            orig = (monitor.DATA_DIR, monitor.TAGS_DIR, monitor.UNIT_FAILURES_LOG)
-            monitor.DATA_DIR = empty
-            monitor.TAGS_DIR = empty / "tags"
-            monitor.UNIT_FAILURES_LOG = empty / "unit_failures.log"
-            monitor.reset_caches()
-            try:
-                runtime = monitor._gather_runtime()
-            finally:
-                monitor.DATA_DIR, monitor.TAGS_DIR, monitor.UNIT_FAILURES_LOG = orig
-                monitor.reset_caches()
-
-        for key in ("tagging", "ingest", "pipelines", "orchestrator", "sync", "unit_failures"):
-            self.assertIn(key, runtime)
-        # 空的 data/ 是合法狀態（新機器）：沒有 log 就是 None，沒有失敗就是全 0。
-        self.assertIsNone(runtime["sync"])
-        self.assertEqual(runtime["unit_failures"]["count_24h"], 0)
-
-    def test_runtime_reads_a_real_sync_log(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            d = Path(tmp)
-            (d / "sync_run_20260730.log").write_text(
-                "[2026-07-30 09:00:01] === sync start (pid=1) ===\n"
-                "[2026-07-30 09:04:12] === sync done ===\n",
-                encoding="utf-8",
-            )
-            (d / "unit_failures.log").write_text(
-                "=== 2026-07-30T07:00:00+00:00  UNIT=report-mark-sync.service  RC=2 ===\n",
-                encoding="utf-8",
-            )
-            orig = (monitor.DATA_DIR, monitor.TAGS_DIR, monitor.UNIT_FAILURES_LOG)
-            monitor.DATA_DIR = d
-            monitor.TAGS_DIR = d / "tags"
-            monitor.UNIT_FAILURES_LOG = d / "unit_failures.log"
-            monitor.reset_caches()
-            try:
-                runtime = monitor._gather_runtime()
-            finally:
-                monitor.DATA_DIR, monitor.TAGS_DIR, monitor.UNIT_FAILURES_LOG = orig
-                monitor.reset_caches()
-
-        self.assertEqual(runtime["sync"]["status"], "done")
-        self.assertEqual(runtime["unit_failures"]["recent"][0]["rc"], 2)
-
-
 class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
     def test_cache_ttl_is_within_requested_range(self):
-        """DB 快照 TTL 的合理區間。
-
-        上界從 5 秒放寬到 15 秒（2026-07-30）：前端每 5 秒輪詢，這一塊是 9 條查詢、
-        其中兩條是全表 GROUP BY，15 秒讓 DB 負載降為三分之一，而 `ts` 欄與 runtime
-        區塊仍每次更新，觀感幾乎無差。下界仍守著「不能拿掉快取」。
-        """
         self.assertGreaterEqual(monitor.DB_STATS_CACHE_TTL_SECONDS, 3.0)
-        self.assertLessEqual(monitor.DB_STATS_CACHE_TTL_SECONDS, 15.0)
-
-    def test_runtime_and_tag_count_have_their_own_ttl(self):
-        """DB 快照拉長只解一半：runtime 區塊（log tail + /proc + tag 檔數）原本
-        每次輪詢都重跑，而其中 `data/tags/` 的 scandir 是整頁最貴的一件事
-        （本機實測 15,852 檔、冷 412 ms／熱 117 ms；三次 `_proc_alive` 只 2.4 ms）。"""
-        self.assertGreaterEqual(monitor.RUNTIME_CACHE_TTL_SECONDS, 5.0)
-        self.assertGreaterEqual(monitor.TAG_FILE_COUNT_TTL_SECONDS, 30.0)
-        # tag 檔數的窗必須比 runtime 更長，否則它會被 runtime 的每次重算拖著走
-        self.assertGreater(
-            monitor.TAG_FILE_COUNT_TTL_SECONDS, monitor.RUNTIME_CACHE_TTL_SECONDS
-        )
+        self.assertLessEqual(monitor.DB_STATS_CACHE_TTL_SECONDS, 5.0)
 
     def setUp(self):
-        # conftest 的 autouse fixture 已經清過三個快取；這裡保留是為了讓本檔單獨
-        # 以 unittest 執行（不經 pytest）時行為一致。
-        monitor.reset_caches()
+        if hasattr(monitor, "_DB_STATS_CACHE"):
+            monitor._DB_STATS_CACHE["data"] = None
+            monitor._DB_STATS_CACHE["expires_at"] = 0.0
 
     async def test_stats_and_progress_share_one_db_snapshot_within_ttl(self):
         calls = []

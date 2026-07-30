@@ -34,31 +34,6 @@ test('成功輪詢 → 頁首副字 + LIVE + 面板', async () => {
   expect(screen.getAllByText('語意標註').length).toBeGreaterThanOrEqual(2)
   expect(screen.getAllByText('摘要生成').length).toBeGreaterThanOrEqual(2)
   expect(screen.getByText('資料每 5 秒自動更新 · 廷豐智能研報導入管線')).toBeInTheDocument()
-  // 排程健康卡在舊後端（fixture 沒有 sync／unit_failures）要降級而不是消失
-  expect(screen.getByText('排程健康')).toBeInTheDocument()
-  expect(screen.getByText('尚無同步紀錄')).toBeInTheDocument()
-  expect(screen.getByText('此版後端未提供失敗紀錄')).toBeInTheDocument()
-})
-
-test('後端有回 sync／unit_failures → 進 DOM 並亮紅點', async () => {
-  // zod 物件預設 strip：schema 沒宣告的鍵會被安靜丟掉（takeaway/signal 就這樣從
-  // P4 起一路送到前端卻從未進 DOM）。這題釘的是「宣告 + 渲染」整條都通。
-  const withSchedule = {
-    ...fixture,
-    sync: { raw: '[2026-07-30 12:00:09] 增量匯入 delta…', timestamp: '2026-07-30 12:00:09', status: 'running', label: '同步執行中' },
-    unit_failures: {
-      latest: '2026-07-30T11:00:00+08:00',
-      count_24h: 1,
-      count_7d: 3,
-      recent: [{ ts: '2026-07-30T11:00:00+08:00', unit: 'report-mark-freshness.service', stage: null, rc: 1 }],
-    },
-  }
-  vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true, json: async () => withSchedule })))
-  const { container } = render(wrap(<MonitorPage />))
-  await waitFor(() => expect(screen.getByText('同步執行中')).toBeInTheDocument())
-  expect(screen.getByText('近 24 小時 1 筆')).toBeInTheDocument()
-  expect(screen.getByText('report-mark-freshness.service · rc=1')).toBeInTheDocument()
-  expect(container.querySelector('[class*="alertDot"]')).not.toBeNull()
 })
 
 test('首抓失敗 → LIVE 顯「重連中」', async () => {

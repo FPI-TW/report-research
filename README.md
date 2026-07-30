@@ -272,7 +272,6 @@ report-mark/
 │   eval_compare.py         比較兩份評測結果 JSON，劣化即非零退出（三種形狀通吃）→ make eval-compare
 │   analyze_qa_log.py       問答延遲、引用新近度與回饋分析
 │   eval_faithfulness.py    M8 查核結果彙總（唯讀）；--claims <id> 逐條主張下鑽
-│   check_batch_freshness.py  批次停更偵測：純 SQL 比最新產出日 vs 門檻（0 新鮮／1 停更／2 查不到）→ make freshness
 │   sync_new_reports.sh     NAS→本地增量同步 + 增量匯入（drvfs + rsync，三層去重）
 │
 ├─ workflows/
@@ -419,7 +418,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | DELETE/POST | `/api/conversations/{conversation_id}`、`/api/conversations/{conversation_id}/delete` | 刪整串對話（POST alias 供 DELETE 不穩的邊緣環境回退） | |
 | GET | `/api/history`、DELETE `/api/history/{qa_id}`、POST `/api/history/{qa_id}/delete` | 問答歷史清單 / 刪單題（POST 為相容 alias） | |
 | POST | `/api/feedback` | 對某次回答記讚/倒讚 | |
-| GET | `/api/progress` | 監控快照（DB 筆數、摘要／重點摘錄／訊號覆蓋、背景程序、忠實度查核，外加 `sync`＝每 3 小時排程同步的最新狀態、`unit_failures`＝`OnFailure` 告警的近期計數） | |
+| GET | `/api/progress` | 監控快照（DB 筆數、摘要／重點摘錄／訊號覆蓋、背景程序、忠實度查核） | |
 | GET | `/healthz` | **唯一免認證的 API 端點**：DB 探測，正常 200 `{"status":"ok"}`、DB 不可用 503 `{"status":"degraded"}`（結果快取 5 秒），供外部監控分辨「站台活著但 DB 掛了」 | |
 | GET/POST | `/login`、POST `/logout` | 登入頁與登入／登出 | |
 | GET | `/`、`/monitor`、`/help` | **302 導向** `/app/search`、`/app/monitor`、`/app/help`（舊 vanilla 頁已退場） | |
@@ -529,7 +528,6 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 | 對外存取 | Cloudflare Tunnel ＋ nginx 邊緣（`deploy/docker-compose.yml`，無入站埠）：`make up-edge` / `down-edge` / `edge-logs` / `edge-reload`，需 `deploy/.env` 的 `TUNNEL_TOKEN`。見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md) |
 | 深度研報 PDF | 需安裝 Noto Sans CJK 字型；`REPORT_TIMEOUT` 建議 ≥300s。見 [docs/qa_pdf_report_deployment.md](docs/qa_pdf_report_deployment.md) |
 | DB 備份 | systemd `report-mark-backup.timer`（每日 03:30）→ `scripts/db_backup.sh`：`pg_dump -Fc` **只備重建不回來的七張表**（`qa_log` / `report_doc` / `report_rendition` / `report_takeaway` / `report_signal` / `report_run` / `report_section`）到 NAS，保留 7 日 ＋ 4 週；手動跑一次 `make db-backup`。語料層刻意不備（重跑管線可還原）。**還原步驟與已知限制見 [docs/production_resilience.md](docs/production_resilience.md)** |
-| 批次停更偵測 | systemd `report-mark-freshness.timer`（每日 08:30）→ `scripts/check_batch_freshness.py`（純 SQL、零 LLM）：查摘要／重點摘錄／觀點訊號的最新產出日，超過門檻即非零退出 → 走既有 `OnFailure` 告警鏈；手動跑一次 `make freshness`。**存在理由**：sync 殼把摘要／標題／摘錄設成 best-effort（失敗只記 log、不讓 unit 變紅），所以停更**不會**觸發 `OnFailure`——2026-07 實測 takeaway 停更 8 天、signal 停更 12 天都是事後才發現 |
 
 對外請求路徑：`Browser ──HTTPS──▶ Cloudflare edge ──tunnel──▶ nginx:80 ──▶ uvicorn:8097`。
 

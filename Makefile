@@ -23,7 +23,7 @@ COMPOSE := $(DOCKER) compose
         stats reset-db clean-data pipeline signals takeaways titles \
         eval-compare \
         up-edge down-edge edge-logs edge-reload \
-        sync-once db-backup freshness
+        sync-once db-backup
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -168,10 +168,3 @@ sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync
 # 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
 db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
 	bash scripts/db_backup.sh
-
-# 派生資產（摘要／摘錄／訊號）停更本來沒有任何訊號會亮：sync 殼把那幾段設成
-# best-effort（失敗只 log、不 exit），所以連續失敗永遠不會讓 unit 變紅 ⇒ OnFailure
-# 一次都不觸發。純 SQL、零 LLM、零寫入，rc 0＝新鮮／1＝停更／2＝查不到（DB 不可用，
-# 處置不同故刻意分流）。平時由 report-mark-freshness.timer 每日 08:30 跑。
-freshness:  ## 批次停更偵測（純 SQL、零 LLM；rc 0 新鮮／1 停更／2 查不到）
-	uv run python scripts/check_batch_freshness.py

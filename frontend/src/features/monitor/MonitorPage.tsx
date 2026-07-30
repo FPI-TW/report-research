@@ -10,7 +10,6 @@ import { PipelineStatus } from './PipelineStatus'
 import { MarketDistribution } from './MarketDistribution'
 import { MonitorSkeleton } from './MonitorSkeleton'
 import { FaithfulnessPanel } from './FaithfulnessPanel'
-import { ScheduleHealthPanel } from './ScheduleHealthPanel'
 import { Pulse } from '../../components/primitives/motionLoops'
 import { useScrolled } from '../../lib/useScrolled'
 
@@ -96,13 +95,7 @@ export default function MonitorPage() {
                   idleText="此版後端未提供訊號統計"
                 />
               </div>
-              {/*
-                排程健康擺在忠實度旁邊，是因為兩張卡都是「只寫不看的東西第一次有出口」：
-                前者是 unit_failures.log（零程式消費端，2026-07-28 寫了 10 筆沒人知道）
-                與生產入庫路徑 sync_run_*.log（runtime 區塊原本只認全量腳本的 log）。
-              */}
               <div className={styles.panelGrid}>
-                <ScheduleHealthPanel sync={p.sync} failures={p.unit_failures} />
                 <FaithfulnessPanel evaluation={p.evaluation} />
               </div>
               <MarketDistribution markets={p.db.markets} />

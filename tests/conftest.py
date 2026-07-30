@@ -58,29 +58,6 @@ def _protect_repo_dotenv():
 
 
 @pytest.fixture(autouse=True)
-def _reset_monitor_caches():
-    """`web.routers.monitor` 的三個模組級 TTL 快取每題前後各清一次。
-
-    沒有這層的話：A 測試 patch 掉 `_gather_runtime` 後打一次 `/api/progress`，
-    假值就進了 `_RUNTIME_CACHE`，B 測試即使 patch 成別的值也拿得到 A 的——兩邊
-    形狀相同時完全看不出來，只會在某個排序下莫名失敗。DB 快照那一份原本靠各測試
-    自己在 setUp 裡清，那是「記得寫才有效」的防線。
-
-    **刻意不主動 import** `web.routers.monitor`：純單元測試（textnorm、chunk 之類）
-    不該為了清一個快取去拉起 web 相依鏈。模組沒被載入就等於沒有快取要清。
-    """
-
-    def _clear() -> None:
-        mod = sys.modules.get("web.routers.monitor")
-        if mod is not None and hasattr(mod, "reset_caches"):
-            mod.reset_caches()
-
-    _clear()
-    yield
-    _clear()
-
-
-@pytest.fixture(autouse=True)
 def _clear_trusted_providers():
     """M4a：trusted registry／快取／限流是模組級狀態。每測試後清空，防止
     忘記 tearDown 的註冊型測試讓「空 registry＝安全婉拒」的 M4 回歸誤判。"""

@@ -50,7 +50,6 @@ make stats                                           # market distribution + chu
 # 維運
 make db-backup                       # pg_dump 七張不可重建的表 → NAS（平時由 timer 每日跑）
 make sync-once                       # 手動跑一次 NAS→本地同步＋增量匯入（平時由 timer 每 3h 跑）
-make freshness                       # 批次停更偵測（純 SQL 零 LLM；平時由 timer 每日 08:30 跑）
 make up-edge / down-edge / edge-logs / edge-reload   # 對外邊緣 nginx + cloudflared（deploy/docker-compose.yml）
 make ingest-lowio                    # 離線全量導入加速：關 fsync/full_page_writes（僅限沒對外服務時；trap 保證還原）
 make restore-durability              # 上一行被中斷沒還原時的保險（ALTER SYSTEM RESET fsync 等）
@@ -62,7 +61,7 @@ make clean-data                      # rm -rf data/extracted data/tags data/*.js
 
 **備份只涵蓋七張不可重建的表**（`qa_log`／`report_doc`／`report_rendition`／`report_takeaway`／`report_signal`／`report_run`／`report_section`），走 `make db-backup`（平時由 `report-mark-backup.timer` 每日 03:30 觸發）→ NAS 的 `/mnt/nas-backup`，保留 7 日 + 4 週。**落點的 share 與目錄都在 `/etc/default/report-mark-sync`（`NAS_BACKUP_UNC`／`REPORT_MARK_BACKUP_DIR`），不在程式裡**——2026-07-30 實測 `投資研究處` 那個 share 的 NAS 帳號**只有讀取權**（rw 掛載仍得 EACCES，是伺服器端 ACL 在擋，不是 mount 旗標），所以備份落在另一個 share；errno 對照與現行落點見 `docs/production_resilience.md`。**語料層（`research_report`／`report_chunk`）刻意不備**——它重跑得回來（研報原檔還在 NAS），但代價是**已知限制**：`report_takeaway`／`report_signal` 以 `report_id` FK 綁 `research_report`，語料層若整個重建，那兩張表的備份就對不回去。任何 TRUNCATE／DROP 之前仍要先問使用者。**還沒做過還原演練的備份不算備份**——步驟寫在 `docs/production_resilience.md`。
 
-**派生資產「停更」不會讓任何 unit 變紅，所以另有一支偵測器**（`scripts/check_batch_freshness.py`／`make freshness`，由 `report-mark-freshness.timer` 每日 08:30 觸發）：sync 殼刻意把摘要／標題／摘錄設成 best-effort（失敗只 log 不 exit，**那個設計是對的**——摘要失敗不該擋住下一輪匯入），代價是連續失敗永遠不會觸發 `OnFailure`；2026-07 實測 takeaway 停更 8 天、signal 停更 12 天都是事後才發現。它量的是**結果**（四個 `max(created_at)`）不是過程，純 SQL、零 LLM、零寫入，rc `0`＝新鮮／`1`＝停更／`2`＝查不到（DB 不可用，處置不同故刻意分流）。**兩個預設別亂動**：語料閘讓「沒有新研報」不算停更；`signal` 門檻 0＝不告警，因為積壓跑完後 `max(created_at)` 本來就不再前進、與故障無法區分——**訊號改靠 `unit_failures` 失敗記錄偵測，不是靠新鮮度**。
+**派生資產「停更」目前沒有任何偵測。** sync 殼刻意把摘要／標題／摘錄設成 best-effort（失敗只 log 不 exit，**那個設計是對的**——摘要失敗不該擋住下一輪匯入），代價是連續失敗永遠不會讓 unit 變紅、`OnFailure` 一次都不觸發；2026-07 實測 takeaway 停更 8 天、signal 停更 12 天都是事後才發現。曾有一支獨立偵測器（scripts/check_batch_freshness.py ＋ 每日 timer；**該檔已不存在**，刻意不加反引號）處理這件事，已於本次移除，**所以那個失效模式現在是敞開的**：批次停了不會有任何訊號。`/api/progress` 的 `takeaway`／`signal` 區塊仍在回 `latest`，目前只能靠人去監控頁看。
 
 **`make help` 印出來的東西不等於「可以跑」**——破壞性與陷阱 target 也一併列在裡面。
 

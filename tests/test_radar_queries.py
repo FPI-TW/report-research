@@ -412,3 +412,49 @@ class CatalogCompiledBindTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SignalRowAlignmentTests(unittest.TestCase):
+    """`SignalRow` 的欄名必須逐一對上 `SIGNAL_SELECT_COLUMNS` 的欄序。
+
+    先前 `parse_signal_row` 是 18 個連續的 `row[0]`…`row[17]`，而那種寫法的失效方式
+    **不是例外**：在中段插一欄會讓後面每個索引無聲位移一格，`title` 拿到
+    `created_at`、`extraction_status` 拿到 `thesis_dimensions`——每個值都是合法型別，
+    雷達照樣算出看起來合理的共識數字。同一種縫在 `eval_retrieval.py` 上出過事
+    （寫死 `_CONTENT = 14`，插入 `file_hash` 後變成垃圾評測分數）。
+    """
+
+    def test_field_names_match_select_column_aliases(self):
+        from app.services.radar.types import (
+            SIGNAL_SELECT_COLUMNS,
+            SignalRow,
+            column_alias,
+        )
+
+        aliases = tuple(column_alias(c) for c in SIGNAL_SELECT_COLUMNS)
+        self.assertEqual(
+            SignalRow._fields, aliases,
+            "SignalRow 的欄名與 SELECT 欄序不符——插欄時兩邊要一起改",
+        )
+
+    def test_width_matches(self):
+        from app.services.radar.types import SIGNAL_SELECT_COLUMNS, SignalRow
+
+        self.assertEqual(len(SignalRow._fields), len(SIGNAL_SELECT_COLUMNS))
+
+    def test_wrong_width_raises_loudly(self):
+        """`_make()` 對錯誤寬度拋 TypeError——這正是取代位移解包的全部理由。"""
+        from app.services.radar.types import SignalRow, parse_signal_row
+
+        with self.assertRaises(TypeError):
+            parse_signal_row(("only", "three", "values"))
+        with self.assertRaises(TypeError):
+            parse_signal_row(tuple(range(len(SignalRow._fields) + 1)))
+
+    def test_column_alias_handles_the_three_shapes(self):
+        from app.services.radar.types import column_alias
+
+        self.assertEqual(column_alias("s.id::text"), "id")
+        self.assertEqual(column_alias("s.market"), "market")
+        self.assertEqual(column_alias("COALESCE(a, b) AS broker"), "broker")
+        self.assertEqual(column_alias("  s.eps_estimates::text  "), "eps_estimates")

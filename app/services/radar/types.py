@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from app.services.signal_extract import THESIS_DIMENSIONS
 
@@ -177,25 +177,71 @@ SIGNAL_SELECT_COLUMNS = (
 SIGNAL_SELECT_SQL = ", ".join(SIGNAL_SELECT_COLUMNS)
 
 
+class SignalRow(NamedTuple):
+    """`SIGNAL_SELECT_COLUMNS` 的具名鏡像。欄序契約由 `tests/test_radar_types.py` 釘住。
+
+    先前是 18 個連續的 `row[0]`…`row[17]`。那種寫法的失效方式**不是例外**：在中段
+    插一欄會讓後面每一個索引無聲位移一格，於是 `title` 拿到 `created_at`、
+    `extraction_status` 拿到 `thesis_dimensions`——每個值都是合法型別，雷達照樣算得
+    出看起來合理的共識數字。這正是 `app/services/rows.py` 那 12 行事故紀錄的同一種縫
+    （`eval_retrieval.py` 寫死 `_CONTENT = 14`，插入 `file_hash` 後變成垃圾評測分數）。
+
+    `_make()` 對錯誤寬度拋 `TypeError` ⇒ **大聲失敗**。加欄位時漏改這裡會當場爆，
+    而不是產出錯位的雷達。
+    """
+
+    id: str
+    report_id: str
+    market: str
+    instrument_code: str
+    broker: Optional[str]
+    report_date: object
+    rating_raw: Optional[str]
+    rating_normalized: Optional[str]
+    target_price: object
+    target_currency: Optional[str]
+    target_horizon: Optional[str]
+    target_price_evidence: Optional[str]
+    eps_estimates: Optional[str]
+    thesis_dimensions: Optional[str]
+    extraction_status: Optional[str]
+    file_name: Optional[str]
+    created_at: object
+    title: Optional[str]
+
+
+def column_alias(sql_fragment: str) -> str:
+    """SELECT 片段 → 它實際回傳的欄名。供測試比對欄序，不在生產路徑上。
+
+    `"s.id::text"` → `id`／`"… AS broker"` → `broker`／`"s.market"` → `market`。
+    """
+    frag = sql_fragment.strip()
+    if " AS " in frag:
+        return frag.rsplit(" AS ", 1)[1].strip()
+    frag = frag.split("::", 1)[0].strip()
+    return frag.rsplit(".", 1)[-1]
+
+
 def parse_signal_row(row) -> Signal:
     """把 SIGNAL_SELECT_COLUMNS 順序的一列打包成 Signal（jsonb 已 ::text）。"""
+    r = SignalRow._make(row)
     return Signal(
-        id=row[0],
-        report_id=row[1],
-        market=row[2],
-        instrument_code=row[3],
-        broker=row[4],
-        report_date=row[5],
-        rating_raw=row[6],
-        rating_normalized=row[7] or "unknown",
-        target_price=_to_float(row[8]),
-        target_currency=row[9],
-        target_horizon=row[10],
-        target_price_evidence=row[11],
-        eps=_parse_eps(row[12]),
-        thesis=_parse_thesis(row[13]),
-        extraction_status=row[14] or "valid",
-        file_name=row[15],
-        created_at=row[16],
-        title=row[17],
+        id=r.id,
+        report_id=r.report_id,
+        market=r.market,
+        instrument_code=r.instrument_code,
+        broker=r.broker,
+        report_date=r.report_date,
+        rating_raw=r.rating_raw,
+        rating_normalized=r.rating_normalized or "unknown",
+        target_price=_to_float(r.target_price),
+        target_currency=r.target_currency,
+        target_horizon=r.target_horizon,
+        target_price_evidence=r.target_price_evidence,
+        eps=_parse_eps(r.eps_estimates),
+        thesis=_parse_thesis(r.thesis_dimensions),
+        extraction_status=r.extraction_status or "valid",
+        file_name=r.file_name,
+        created_at=r.created_at,
+        title=r.title,
     )

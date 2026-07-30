@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv sync                              # install deps (uv, Python 3.11+; torch is CPU-only)
 make setup                           # one-shot: deps + start pgvector container + apply schema
 make serve                           # uvicorn web.server:app on :8097 (loads repo-root .env)
+make serve-dev                       # 開發用：--reload ＋ SKIP_WARMUP=1（只綁 127.0.0.1；勿用於生產）
 make help                            # all Makefile targets
 
 # Full-corpus pipeline (extract -> Claude tag -> embed/ingest) — 初次建庫或補跑歷史才用
@@ -111,7 +112,7 @@ The Q&A path also runs: cross-encoder **rerank** (`rerank.py`, M2)、**agentic �
 
 ## Project-specific gotchas
 
-- **`make serve` has no `--reload`.** Python changes need a restart. In production the web runs as systemd `report-mark-web.service` (enabled, auto-restart) — restart with `sudo systemctl restart report-mark-web.service`. **前端改動需要 `cd frontend && npm run build`**：SPA 由 `frontend/dist` 提供，資產走 `_ImmutableStatic`（`Cache-Control: immutable`，一年）。`web/static/` 現在只剩 `login.html`（走 `_NoCacheStatic`，即時生效）。`frontend/dist` 不存在時 SPA 直接回 **503**。
+- **`make serve` has no `--reload`——但開發時用 `make serve-dev`**（`--reload` ＋ `SKIP_WARMUP=1`，只綁 `127.0.0.1`）。冷載入 BGE-M3 ＋ reranker 合計約一分鐘，沒有捷徑的話「改一行就重等一分鐘」正是**直接在生產機上改檔然後懶得重啟**的溫床（`docs/production_resilience.md` 記錄過一次 unit 就是這樣漂掉的）。`SKIP_WARMUP` 刻意走 `os.environ` 而非 `app/config.py`／`.env`——它是「這次啟動」的一次性選擇，寫進 `.env` 會讓某次 debug 的旗標永久留在生產機上。**判定是 `== "1"` 而非 truthiness**：`SKIP_WARMUP=0` 照字面讀是「不要跳過」。 Python changes need a restart. In production the web runs as systemd `report-mark-web.service` (enabled, auto-restart) — restart with `sudo systemctl restart report-mark-web.service`. **前端改動需要 `cd frontend && npm run build`**：SPA 由 `frontend/dist` 提供，資產走 `_ImmutableStatic`（`Cache-Control: immutable`，一年）。`web/static/` 現在只剩 `login.html`（走 `_NoCacheStatic`，即時生效）。`frontend/dist` 不存在時 SPA 直接回 **503**。
 - **Auth is fail-closed.** The app refuses to start if `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD` are unset. External access (Cloudflare Tunnel + nginx) additionally needs the request to be recognised as coming from a trusted proxy, or login is rejected as non-HTTPS — that is **`REPORT_MARK_EDGE_SECRET`（nginx 注入的 `X-Edge-Secret`）或 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，兩者任一即可**。**刻意是 OR 不是取代**：改 nginx 與改 app 之間必然有時間差，只認其一那段窗口會把所有外網使用者擋在門外。CIDR 那條在 WSL 重開機後網段會漂、必然再犯，祕密那條不會——但**祕密要兩邊逐字相同**（repo root `.env` 與 `deploy/.env`），一邊改另一邊沒改就退回只剩 CIDR 生效。
 - **Session token 有絕對存活上限，撤銷有三把開關。** Cookie 是 `<ver>.<iat>.<exp>.<sig>`，7 天滑動續期但**最長 30 天**（`MAX_ABSOLUTE_TTL`）——滑動若沒有天花板，天天開站的人手上那個 cookie 等於永久憑證，外流也一樣被推遠。三種撤銷：改密碼（簽章訊息含帳密指紋，即時失效）／改 `REPORT_MARK_SESSION_SECRET`／設 `REPORT_MARK_SESSION_EPOCH` 成任何新值（全員登出，不必動金鑰）。**動 token 格式或上述任一變數都會讓所有人被登出一次**，那是預期行為不是故障。
 - **The `claude` CLI must be on PATH** for tagging, summaries, Q&A, and reports. Under systemd this needs an explicit PATH drop-in — **檔案已收回 repo：`deploy/systemd/report-mark-web.service.d/path.conf`**（`claude` 裝在 nvm 的 node bin，不在 systemd 預設 PATH；少了它 `/api/ask` 會以 `FileNotFoundError: 'claude'` 失敗，前端只顯示「問答服務發生錯誤」）。**改它之後要 `sudo cp` 到 `/etc/systemd/system/` 對應目錄再 `daemon-reload`——直接在主機上改會讓 repo 與主機分岔**（sync unit 就是這樣漂掉的）。

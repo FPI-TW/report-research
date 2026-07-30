@@ -115,6 +115,16 @@ build-web:  ## 建置 SPA → frontend/dist（前端改動後必跑；npm run bu
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
 	uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
 
+# 開發用：--reload ＋ 跳過模型暖機。生產一律用上面那個 target。
+# 為什麼需要它：`serve` 沒有 --reload（那是對的），而 BGE-M3 ＋ reranker 冷載入
+# 合計約一分鐘，所以改一行 Python 就要再等一次——那正是「直接在生產機上改檔然後
+# 懶得重啟」的溫床（docs/production_resilience.md 已記錄過一次 unit 漂移）。
+# SKIP_WARMUP=1 讓首個查詢 lazy 載入：慢但可用，改路由／改文案時完全不需要模型。
+# --reload 會開子行程，assert_single_worker() 刻意不用 parent_process() 偵測，
+# 所以這裡不會誤判成多 worker。
+serve-dev:  ## 開發用啟動（--reload ＋ 跳過模型暖機；勿用於生產）
+	SKIP_WARMUP=1 uv run uvicorn web.server:app --host 127.0.0.1 --port $(PORT) --reload
+
 search:  ## CLI 檢索（用法：make search Q="查詢" MARKET=TW）
 	uv run python scripts/search.py "$(Q)" $(if $(MARKET),--market $(MARKET),)
 

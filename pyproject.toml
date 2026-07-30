@@ -25,7 +25,11 @@ dependencies = [
 # 版本對齊本機已驗證通過全套的環境。
 dev = [
     "pytest>=9.1",
-    "pytest-asyncio>=1.4",
+    # pytest-asyncio 曾在此，但**全 repo 零使用**：42 個測試檔走的是 stdlib 的
+    # `unittest.IsolatedAsyncioTestCase`，`pytest.mark.asyncio` 與 `asyncio_mode`
+    # 都是零命中。留著它會讓下一個人以為「這個 repo 的 async 測試用 pytest-asyncio」
+    # 而混用兩種風格（兩者對 event loop 的處理不同，混用是 debug 地獄）。
+    # 真要改用它，請整批遷移並在此重新加回。
     "ruff>=0.16",
 ]
 

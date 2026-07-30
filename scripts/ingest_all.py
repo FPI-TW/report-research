@@ -153,6 +153,10 @@ async def main(limit: int | None, batch_size: int) -> None:
             # 過期統計。先就本交易放寬上界（SET LOCAL，commit 後自動還原）。
             await relax_statement_timeout(session)
             await session.execute(sql_text("ANALYZE research.report_chunk"))
+            # research_report 也一起刷（毫秒級）。autoanalyze 是開著的，所以缺這句不會
+            # 讓統計長期失真；會失真的是「剛大批 ingest 完就立刻查詢」那個短窗——
+            # autoanalyze 還沒被觸發／跑完，雷達與 overview 就已經在用舊的列數與選擇度估算。
+            await session.execute(sql_text("ANALYZE research.research_report"))
             await session.commit()
 
     print("\n=== ingest_all summary ===", flush=True)

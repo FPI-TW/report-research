@@ -150,6 +150,36 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("r.stock_code = :code", coverage_sql)
         self.assertIn("r.stock_code = st", catalog_cte)
 
+    def test_stock_target_filters_use_containment_not_scalar_any(self):
+        """標的過濾必須寫成 `stock_targets @> ARRAY[...]`。
+
+        `:code = ANY(r.stock_targets)` 是 text = text[]，不在 array_ops GIN 支援的
+        `&& @> <@ =` 之內 ⇒ idx_rr_stock_targets 完全用不上、每個子查詢退化成全掃。
+        兩種寫法都語法正確且結果相同，所以退回舊寫法**不會有任何錯誤**——只有這個
+        字串斷言擋得住。
+        """
+        sqls = {
+            "_COVERAGE_SQL": str(queries._COVERAGE_SQL),
+            "_BROKER_COVERAGE_SQL": str(queries._BROKER_COVERAGE_SQL),
+            "_catalog_cte": queries._catalog_cte(),
+        }
+        for name, sql in sqls.items():
+            with self.subTest(sql=name):
+                self.assertNotIn("= ANY(r.stock_targets)", sql)
+
+        self.assertEqual(
+            str(queries._COVERAGE_SQL).count("r.stock_targets @> ARRAY[:code]::text[]"),
+            3,
+        )
+        self.assertIn(
+            "r.stock_targets @> ARRAY[:code]::text[]",
+            str(queries._BROKER_COVERAGE_SQL),
+        )
+        self.assertIn(
+            "r.stock_targets @> ARRAY[s.instrument_code]::text[]",
+            queries._catalog_cte(),
+        )
+
     def test_catalog_filters_named_params(self):
         where, params = queries._catalog_filters("TW", "台積")
         self.assertIn("cat.market = :market", where)
@@ -233,7 +263,7 @@ class BrokerCoverageSqlTests(unittest.TestCase):
             "COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), ''))",
             sql,
         )
-        self.assertIn(":code = ANY(r.stock_targets)", sql)
+        self.assertIn("r.stock_targets @> ARRAY[:code]::text[]", sql)
         self.assertIn("r.is_research IS NOT FALSE", sql)
         self.assertIn("= :broker", sql)
 
@@ -257,30 +287,51 @@ class BatchSignalsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.executed, 0)
 
 
+def _cat_row(market="TW", code="8046", name="南電", broker_count=1, report_count=1,
+             latest=date(2026, 7, 11), sig_brokers=1, has_partial=True, total=1):
+    # list_radar_instruments 的分頁 SELECT 欄序；total 由 count(*) OVER () 附在最後一欄
+    return (market, code, name, broker_count, report_count, latest,
+            sig_brokers, has_partial, total)
+
+
 class CatalogQueryTests(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_order_is_stable_across_markets(self):
-        session = _QueuedSession([_FakeResult([0]), _FakeResult([])])
+        session = _QueuedSession([_FakeResult([])])
         await queries.list_radar_instruments(session)
-        page_sql = str(session.calls[1][0][0])
+        page_sql = str(session.calls[0][0][0])
         self.assertIn(
             "ORDER BY cat.latest DESC NULLS LAST, cat.market, cat.instrument_code",
             page_sql,
         )
 
+    async def test_catalog_runs_one_query_with_window_total(self):
+        """總數不得再另跑一次同一組 CTE。
+
+        原本 count 與分頁列各執行一次 `WITH signal_base ... rep ...`（rep 還
+        CROSS JOIN LATERAL unnest），等於整組聚合做兩遍。改成 count(*) OVER ()
+        附在分頁 SELECT 上；退回兩次查詢時假 session 只排一個結果會 IndexError。
+        """
+        session = _QueuedSession([_FakeResult([_cat_row(total=7)])])
+
+        total, rows = await queries.list_radar_instruments(session)
+
+        self.assertEqual(session.executed, 1)
+        self.assertEqual(total, 7)
+        self.assertEqual(len(rows), 1)
+        page_sql = str(session.calls[0][0][0])
+        self.assertIn("count(*) OVER () AS total", page_sql)
+        self.assertNotIn("SELECT count(*) FROM cat", page_sql)
+
+    async def test_catalog_empty_page_reports_zero_total(self):
+        # 零列時沒有任何列可帶 window 的 total —— 不可 IndexError，語意就是 0
+        session = _QueuedSession([_FakeResult([])])
+
+        total, rows = await queries.list_radar_instruments(session)
+
+        self.assertEqual((total, rows), (0, []))
+
     async def test_catalog_partial_signal_forces_partial_row_state(self):
-        session = _QueuedSession(
-            [
-                _FakeResult([1]),
-                _FakeResult(
-                    [
-                        (
-                            "TW", "8046", "南電", 1, 1,
-                            date(2026, 7, 11), 1, True,
-                        )
-                    ]
-                ),
-            ]
-        )
+        session = _QueuedSession([_FakeResult([_cat_row(has_partial=True)])])
 
         total, rows = await queries.list_radar_instruments(session)
 
@@ -310,6 +361,53 @@ class BatchSqlStructureTests(unittest.TestCase):
         compiled = str(self._compiled())
         self.assertIn("(s.market, s.instrument_code) IN", compiled)
         self.assertIn("unnest(CAST($1 AS text[]), CAST($2 AS text[]))", compiled)
+
+
+class ContainmentBindTests(unittest.TestCase):
+    """`ARRAY[:code]::text[]` 的 bind 必須完整綁上（同上一個類別的理由）。
+
+    `::` 直接接在參數名後面才會觸發回溯短名的地雷（:markets::text[]）；這裡的 `::`
+    接在 `]` 之後，理論上安全——但那正是需要編譯後實測、而非靠推論的地方。
+    """
+
+    def _compiled(self, sql_obj):
+        return sql_obj.compile(dialect=pg_asyncpg.dialect())
+
+    def test_coverage_sql_binds_are_complete_names(self):
+        self.assertEqual(
+            set(self._compiled(queries._COVERAGE_SQL).params),
+            {"market", "code", "statuses"},
+        )
+
+    def test_broker_coverage_sql_binds_are_complete_names(self):
+        self.assertEqual(
+            set(self._compiled(queries._BROKER_COVERAGE_SQL).params),
+            {"market", "code", "broker"},
+        )
+
+    def test_containment_sqls_leave_no_unbound_colon_param(self):
+        for name, obj in (
+            ("_COVERAGE_SQL", queries._COVERAGE_SQL),
+            ("_BROKER_COVERAGE_SQL", queries._BROKER_COVERAGE_SQL),
+        ):
+            with self.subTest(sql=name):
+                # 編譯後只該剩 $n 佔位與 ::text[] 轉型；殘留 :name 代表參數沒綁上
+                self.assertNotRegex(str(self._compiled(obj)), r"(?<!:):\w+")
+
+
+class CatalogCompiledBindTests(unittest.IsolatedAsyncioTestCase):
+    async def test_catalog_page_sql_binds_are_complete_names(self):
+        # _catalog_cte() 是裸字串，只有在 list_radar_instruments 組裝後才是 text()——
+        # 所以從實際送出的那個物件取，才驗得到 ARRAY[s.instrument_code]::text[] 沒吃掉 bind
+        session = _QueuedSession([_FakeResult([])])
+        await queries.list_radar_instruments(session, market="TW", q="南電")
+        compiled = session.calls[0][0][0].compile(dialect=pg_asyncpg.dialect())
+
+        self.assertEqual(
+            set(compiled.params),
+            {"statuses", "markets", "market", "q", "limit", "offset"},
+        )
+        self.assertNotRegex(str(compiled), r"(?<!:):\w+")
 
 
 if __name__ == "__main__":

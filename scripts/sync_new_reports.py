@@ -330,6 +330,10 @@ async def _run(args) -> None:
             # 被砍掉時資料都已 commit，症狀只有 planner 統計靜默過期，排程沒人在看。
             await relax_statement_timeout(session)
             await session.execute(sql_text("ANALYZE research.report_chunk"))
+            # research_report 也一起刷（毫秒級）。autoanalyze 是開著的，缺這句不會讓統計
+            # 長期失真；會失真的是「剛大批 ingest 完就立刻查詢」那個短窗——這條排程每 3 小時
+            # 匯入一次，正好落在那個窗裡。
+            await session.execute(sql_text("ANALYZE research.research_report"))
             await session.commit()
 
     if not args.dry_run:

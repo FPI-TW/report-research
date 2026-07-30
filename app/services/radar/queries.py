@@ -139,6 +139,12 @@ async def fetch_signals_for_instruments(
     return out
 
 
+# 標的過濾一律寫成 stock_targets @> ARRAY[...]，不可寫 :code = ANY(r.stock_targets)：
+# PG 的 array_ops GIN 只支援 && @> <@ =，text = text[] 不在其中，所以 = ANY() 形式讓
+# idx_rr_stock_targets 完全用不上（每個子查詢都退化成 research_report 全掃）。兩種寫法在
+# 這裡的 WHERE 用法下語意等價（arr 為 NULL/空、元素含 NULL、:code 非 NULL 皆已逐情境對過）。
+# 註：現況約 1.4 萬列且 full_text 多半 TOAST 出去，單次全掃的量級估算只有數十毫秒（未實測）
+# ——這是「規模一放大就線性惡化」的預防，不是已量測到的加速。
 _COVERAGE_SQL = text(
     """
     SELECT
@@ -148,17 +154,17 @@ _COVERAGE_SQL = text(
            ON s.report_id = r.id
           AND s.market = :market
           AND s.instrument_code = :code
-         WHERE r.market = :market AND :code = ANY(r.stock_targets)
+         WHERE r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
            AND r.is_research IS NOT FALSE) AS brokers_total,
       (SELECT count(DISTINCT COALESCE(NULLIF(BTRIM(r.source), ''), NULLIF(BTRIM(s.broker), '')))
          FROM research.report_signal s
          JOIN research.research_report r ON r.id = s.report_id
          WHERE s.market = :market AND s.instrument_code = :code
            AND s.extraction_status = ANY(:statuses)
-           AND r.market = :market AND :code = ANY(r.stock_targets)
+           AND r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
            AND r.is_research IS NOT FALSE) AS brokers_extracted,
       (SELECT count(*) FROM research.research_report r
-         WHERE r.market = :market AND :code = ANY(r.stock_targets)
+         WHERE r.market = :market AND r.stock_targets @> ARRAY[:code]::text[]
            AND r.is_research IS NOT FALSE) AS reports_available,
       (SELECT r.company_name FROM research.research_report r
          WHERE r.market = :market AND r.stock_code = :code
@@ -201,7 +207,7 @@ _BROKER_COVERAGE_SQL = text(
      AND s.market = :market
      AND s.instrument_code = :code
     WHERE r.market = :market
-      AND :code = ANY(r.stock_targets)
+      AND r.stock_targets @> ARRAY[:code]::text[]
       AND r.is_research IS NOT FALSE
     """
 )
@@ -234,7 +240,9 @@ def _catalog_cte() -> str:
         "  WHERE r.is_research IS NOT FALSE"
         "    AND s.market = r.market"
         "    AND s.market = ANY(:markets)"
-        "    AND s.instrument_code = ANY(r.stock_targets)"
+        # 同 _COVERAGE_SQL 的理由改寫成 @>；右運算元是外層關聯的欄位而非 bind，nested loop
+        # 下仍可拿它當 GIN 的搜尋鍵，而 = ANY() 形式連這個機會都沒有。
+        "    AND r.stock_targets @> ARRAY[s.instrument_code]::text[]"
         "), sig AS ("
         "  SELECT market, instrument_code,"
         "         count(DISTINCT broker) FILTER (WHERE extraction_status = 'valid') AS sig_brokers,"
@@ -274,6 +282,9 @@ def _catalog_cte() -> str:
 
 def _catalog_filters(market: Optional[str], q: Optional[str]) -> tuple[str, dict]:
     conds: list[str] = []
+    # markets 一律傳入全部 MARKETS，看起來像恆真、其實不是：`market = ANY(:markets)` 擋掉
+    # market IS NULL（尚未標市場）與不在這 9 碼內的髒值，兩者都不該進 response 的 enum。
+    # 刪掉它會改變結果集，不是無謂條件。
     params: dict = {"statuses": VALID_STATUSES, "markets": list(MARKETS)}
     if market:
         conds.append("cat.market = :market")
@@ -290,21 +301,24 @@ async def list_radar_instruments(
     limit: int = 50, offset: int = 0,
 ) -> tuple[int, list[RadarInstrumentRow]]:
     where, params = _catalog_filters(market, q)
-    cte = _catalog_cte()
-    total = (
-        await session.execute(text(f"{cte} SELECT count(*) FROM cat {where}"), params)
-    ).scalar_one()
+    # 總數與分頁列走同一次查詢：window 的 count(*) OVER () 在 LIMIT 之前算完整結果集，
+    # 省掉「同一組 CTE（signal_base/sig/rep 三層聚合，rep 還 CROSS JOIN LATERAL unnest）
+    # 為了一個 count 再跑第二遍」。cat 已是 CTE，多這個 window 幾乎免費。
     rows = (
         await session.execute(
             text(
-                f"{cte} SELECT cat.market, cat.instrument_code, cat.name, cat.broker_count, "
-                f"cat.report_count, cat.latest, cat.sig_brokers, cat.has_partial FROM cat {where} "
+                f"{_catalog_cte()} SELECT cat.market, cat.instrument_code, cat.name, "
+                "cat.broker_count, cat.report_count, cat.latest, cat.sig_brokers, "
+                f"cat.has_partial, count(*) OVER () AS total FROM cat {where} "
                 "ORDER BY cat.latest DESC NULLS LAST, cat.market, cat.instrument_code "
                 "LIMIT :limit OFFSET :offset"
             ),
             {**params, "limit": limit, "offset": offset},
         )
     ).all()
+    # total 固定是 SELECT 的最後一欄（要在它後面加欄位就得改這裡）；零列時沒有任何列可
+    # 帶 total，語意就是 0。
+    total = int(rows[0][-1] or 0) if rows else 0
     items = [
         RadarInstrumentRow(
             market=r[0], instrument_code=r[1], instrument_name=r[2],
@@ -318,4 +332,4 @@ async def list_radar_instruments(
         )
         for r in rows
     ]
-    return int(total), items
+    return total, items

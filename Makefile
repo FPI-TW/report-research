@@ -168,3 +168,15 @@ sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync
 # 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
 db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
 	bash scripts/db_backup.sh
+
+# README 從 P3 起就寫著「手動跑一次 make freshness」，但這個 target 一直不存在
+# （文件承諾了一個不存在的 affordance）。unit 直接呼叫腳本，所以生產一直是好的，
+# 只有照文件操作的人會撞牆。
+freshness:  ## 批次停更偵測（純 SQL；0 新鮮／1 停更／2 DB 不可用）
+	uv run python scripts/check_batch_freshness.py
+
+# 與 freshness 分工：那支量「批次有沒有在前進」，這支量「已產出的資料有沒有互相
+# 矛盾」。兩者都不修東西——處置需要人決定（孤兒該刪還是補回連結？重複 chunk 刪哪列？）。
+# 幾條是 57 萬列全表掃描，腳本內走 relax_statement_timeout，別在對外服務尖峰跑。
+db-audit:  ## 資料完整性稽核（唯讀；0 乾淨／1 有發現／2 DB 不可用）
+	uv run python scripts/db_audit.py

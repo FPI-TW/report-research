@@ -49,6 +49,8 @@ make stats                                           # market distribution + chu
 
 # 維運
 make db-backup                       # pg_dump 七張不可重建的表 → NAS（平時由 timer 每日跑）
+make freshness                       # 批次停更偵測（純 SQL；0 新鮮／1 停更／2 DB 不可用）
+make db-audit                        # 資料完整性稽核（唯讀；0 乾淨／1 有發現／2 DB 不可用）
 make sync-once                       # 手動跑一次 NAS→本地同步＋增量匯入（平時由 timer 每 3h 跑）
 make up-edge / down-edge / edge-logs / edge-reload   # 對外邊緣 nginx + cloudflared（deploy/docker-compose.yml）
 make ingest-lowio                    # 離線全量導入加速：關 fsync/full_page_writes（僅限沒對外服務時；trap 保證還原）

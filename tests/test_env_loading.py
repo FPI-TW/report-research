@@ -25,6 +25,7 @@
 失去的只有「真的 import 一次」這個動作，而它換來的保證已由第 2、3 層以靜態
 方式涵蓋。順帶解掉舊版 `timeout=5` 的假失敗（web.server 匯入在 WSL 要 4-8 秒）。
 """
+import ast
 import os
 import sys
 import tempfile
@@ -134,14 +135,49 @@ class ServerWiringTests(unittest.TestCase):
         )
 
     def test_loader_runs_before_auth_and_deps_import(self):
-        """順序是硬需求：auth 在 import 時就 fail-closed 檢查帳密，
-        載入晚一步會變成「設定明明在 .env 裡卻拒絕啟動」。"""
-        i_load = _SERVER_SRC.index("load_env_file(Path(__file__)")
-        for mod in ("from web import deps", "from web import auth"):
-            if mod in _SERVER_SRC:
-                self.assertLess(
-                    i_load, _SERVER_SRC.index(mod), f"{mod} 早於 .env 載入"
-                )
+        """順序是硬需求：auth 在 import 時就 fail-closed 檢查帳密、並讀走
+        `REPORT_MARK_EDGE_SECRET` 等設定，載入晚一步會變成「設定明明在 .env
+        裡卻拒絕啟動」或「祕密明明填了卻沒生效」。
+
+        走 AST 而非字串比對。**前一版是字串比對，而它已經在空跑**：原本寫的是
+        `if "from web import auth" in _SERVER_SRC:`，PR #156 讓 ruff（含 isort）
+        進 CI 之後，那兩行被併成 `from web import (auth, concurrency, deps, ...)`,
+        兩個子字串同時不再出現、兩個分支都被 `if` 跳過——**守門靜默解除，測試
+        照樣綠**。同一個 import 換個等價寫法就讓斷言消失，這種守門不能用字串寫。
+        """
+        tree = ast.parse(_SERVER_SRC)
+        load_lines = [
+            n.lineno
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "load_env_file"
+        ]
+        self.assertEqual(len(load_lines), 1, "server.py 應恰好呼叫一次 load_env_file")
+        i_load = load_lines[0]
+
+        # 涵蓋 `from web import auth` 與 `from web import (auth, ...)` 兩種等價寫法，
+        # 也涵蓋 `import web.auth`。
+        guarded = {"auth", "deps"}
+        seen: dict[str, int] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "web":
+                for alias in node.names:
+                    if alias.name in guarded:
+                        seen.setdefault(alias.name, node.lineno)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    tail = alias.name.removeprefix("web.")
+                    if alias.name.startswith("web.") and tail in guarded:
+                        seen.setdefault(tail, node.lineno)
+
+        self.assertEqual(
+            set(seen), guarded,
+            f"server.py 應匯入 web.auth 與 web.deps，實際找到 {sorted(seen)}——"
+            "若真的搬走了請改這裡，不要讓斷言無聲失效",
+        )
+        for mod, lineno in sorted(seen.items()):
+            self.assertLess(i_load, lineno, f"web.{mod} 的匯入早於 .env 載入")
 
 
 class NoRealEnvMutationTests(unittest.TestCase):

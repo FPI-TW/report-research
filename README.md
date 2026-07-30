@@ -446,8 +446,12 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | `REPORT_MARK_ACCESS_USERNAME` | —（必填）| 登入帳號；未設則 fail-closed 拒啟 |
 | `REPORT_MARK_ACCESS_PASSWORD` | —（必填）| 登入密碼；未設則 fail-closed 拒啟 |
 | `REPORT_MARK_SESSION_SECRET` | 空（每次重啟換）| session 簽章金鑰；建議固定長隨機字串 |
-| `REPORT_MARK_TRUSTED_PROXY_CIDRS` | loopback | 信任的反向代理 CIDR（走 Cloudflare Tunnel 外網時必填）|
+| `REPORT_MARK_SESSION_EPOCH` | 空 | 全員登出開關：改成任何新值並重啟即讓所有既發 token 失效 |
+| `REPORT_MARK_TRUSTED_PROXY_CIDRS` | loopback | 信任的反向代理 CIDR（走 Cloudflare Tunnel 外網時，與下面那個至少要有一個）|
+| `REPORT_MARK_EDGE_SECRET` | 空（停用）| 邊緣共享祕密；與 nginx 注入的 `X-Edge-Secret` 逐字相符即視為可信代理。與 CIDR **並存（OR）**，不受 WSL 重開機換網段影響 |
 | `REPORT_MARK_DB_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5436/research` | DB 連線字串 |
+
+> **session 是可撤銷的**：token 格式為 `<ver>.<iat>.<exp>.<sig>`，簽章訊息含「帳密指紋」與 `REPORT_MARK_SESSION_EPOCH`，所以**換密碼或 bump epoch ＝ 全員登出**（重啟後生效）。滑動到期仍是 7 天，但另有 **30 天絕對上限**（`web/auth.py` 的 `MAX_ABSOLUTE_TTL`）：續期只推遲 `exp`、不重置 `iat`，因此再活躍的 session 也不會變成永久憑證。舊格式（v1）token 一律拒絕並記一行 log——**這次上線會把所有人登出一次**。登入的成功／失敗／鎖定／遭拒都有稽核日誌，細節與查法見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md)。
 
 **DB 連線池與查詢逾時（`DB_*`）** — `DB_POOL_SIZE`(5)、`DB_MAX_OVERFLOW`(15)、`DB_POOL_TIMEOUT`(10s)、`DB_POOL_RECYCLE`(1800s)、`DB_STATEMENT_TIMEOUT_MS`(60000)、`DB_IDLE_TX_TIMEOUT_MS`(0＝關)、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS`(0＝不限)。
 
@@ -509,7 +513,7 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 
 - `tests/` 放 Python 測試（`test_*.py`），涵蓋 filename/extract/retrieval/answer/report/report_writer/pdf/typst/auth/store/overview/scope_router/radar/reading/faithfulness 等；前端測試與元件同置，為 `frontend/src/` 下的 `*.test.ts(x)`。偏好以 mock 隔離 LLM、嵌入、檔案、DB 邊界。
 - **CI**（`.github/workflows/ci.yml`）有**三個 job**：前端測試（ESLint + tsc + **vite build** + vitest）、後端測試（**ruff** + pytest）、**schema 契約**（`pgvector/pgvector:pg16` service container，套 `db/schema.sql` 兩次驗冪等 ＋ `content_norm` 等價性 ＋ CHECK 約束清單對帳）。前端 job 把 `frontend/dist` 當 artifact 傳給後端 job，`tests/test_spa_serving.py` 因此對**真 build 產物**驗證（缺 dist 是**紅**不是 skip；本機要跳過設 `SKIP_SPA_TESTS=1`）。**三個 job 皆為必要檢查**（2026-07-29 起；required check 名稱是 job 的中文 `name`，改名等於讓分支保護指向一個永不回報的 check，**改 `name` 就要同步改 GitHub 分支保護設定**）。main 有分支保護（strict ＋ enforce_admins）。**本機只跑 pytest 會在前端 job 上翻車。**
-- **慣例**：確定性邏輯放 Python，Claude CLI 只用於語意標註/摘要/訊號/問答/研報；前端在 `frontend/src/`（React ＋ TS ＋ CSS Modules）；新增旋鈕加在 `app/config.py`。`REPORT_MARK_*` 前綴的**規則**是只給 `.env.example` 那五個 auth/DB 變數、新旋鈕一律不加前綴——但程式碼內另有幾個歷史遺留的同前綴鍵（如 `REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`），**是 live 的，別當成命名錯誤改掉**。Python 側有 **ruff**（`E,F,I`、line-length 120，在 CI 內），**沒有** black/mypy/pre-commit，且 `ruff format` 是刻意不做的（會重排 60/90 個檔、洗掉 blame）——其餘風格約定見 [AGENTS.md](AGENTS.md)。
+- **慣例**：確定性邏輯放 Python，Claude CLI 只用於語意標註/摘要/訊號/問答/研報；前端在 `frontend/src/`（React ＋ TS ＋ CSS Modules）；新增旋鈕加在 `app/config.py`。`REPORT_MARK_*` 前綴的**規則**是只給 `.env.example` 那組 auth/DB 變數（現為七個，含 `REPORT_MARK_SESSION_EPOCH` 與 `REPORT_MARK_EDGE_SECRET`）、新旋鈕一律不加前綴——但程式碼內另有幾個歷史遺留的同前綴鍵（如 `REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`），**是 live 的，別當成命名錯誤改掉**。Python 側有 **ruff**（`E,F,I`、line-length 120，在 CI 內），**沒有** black/mypy/pre-commit，且 `ruff format` 是刻意不做的（會重排 60/90 個檔、洗掉 blame）——其餘風格約定見 [AGENTS.md](AGENTS.md)。
 - **提交**：採 Conventional Commits（常見繁中 scope，如 `feat(report): …`、`fix(report): …`）；提交前看近期訊息與 staged diff，勿用整句英文當訊息。
 - **改後端要重啟、改前端要 build**：`make serve` 無 `--reload`；SPA 由 `frontend/dist` 提供，前端改動須 `cd frontend && npm run build`（`/app/assets/*` 走 `_ImmutableStatic` 長快取）。`_NoCacheStatic` 只剩 `web/static/login.html` 走。
 

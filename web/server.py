@@ -137,13 +137,17 @@ async def require_login(request: Request, call_next):
     if _auth_allowed(path):
         return await call_next(request)
     now = int(time.time())
-    if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), now):
+    session = auth.parse_token(request.cookies.get(auth.COOKIE_NAME), now)
+    if session is not None:
         response = await call_next(request)
         if path != "/logout":  # 登出會清 cookie,勿在此又刷新蓋回
+            # issued_at 必須沿用原 token 的簽發時刻:滑動續期只推遲 exp,重置 iat
+            # 會讓 auth.MAX_ABSOLUTE_TTL 的絕對上限每次請求都歸零＝形同不存在。
             auth.set_session_cookie(
                 response,
                 now,
                 secure=auth.request_is_secure(request),
+                issued_at=session.issued_at,
             )
         return response
     if path.startswith("/api/"):

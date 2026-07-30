@@ -271,7 +271,7 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /healthz` | **免認證**存活探測：健康 200、DB 不可用 **503**（見 `web/routers/health.py`）|
 | `POST /logout` | 清除 session cookie 並導回 `/login` |
 
-> **認證**：deny-by-default 中介層。**免登入的只有 `/login`、`/healthz` 與前綴 `/app/assets/`**（`web/server.py` 的 `_AUTH_ALLOWLIST` / `_AUTH_PREFIX_ALLOWLIST`）。`/healthz` 刻意免認證——登入路徑完全不碰 DB，DB 掛掉時仍能登入，沒有這個豁免就沒有任何探測能分辨。未帶有效 session cookie 時 `/api/*` 回 **401**、其餘導向 **`/login`**；`/static/*` 也受保護。憑證為單一共用帳密（env `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD`，fail-closed），cookie 以 `REPORT_MARK_SESSION_SECRET` 簽章、7 天滑動到期，並對登入失敗做每 IP 限流。
+> **認證**：deny-by-default 中介層。**免登入的只有 `/login`、`/healthz` 與前綴 `/app/assets/`**（`web/server.py` 的 `_AUTH_ALLOWLIST` / `_AUTH_PREFIX_ALLOWLIST`）。`/healthz` 刻意免認證——登入路徑完全不碰 DB，DB 掛掉時仍能登入，沒有這個豁免就沒有任何探測能分辨。未帶有效 session cookie 時 `/api/*` 回 **401**、其餘導向 **`/login`**；`/static/*` 也受保護。憑證為單一共用帳密（env `REPORT_MARK_ACCESS_USERNAME`/`_PASSWORD`，fail-closed），cookie 以 `REPORT_MARK_SESSION_SECRET` 簽章、7 天滑動到期（**另有 30 天絕對上限**，續期只推遲 `exp` 不重置 `iat`），並對登入失敗做每 IP 限流。token 格式為 `<ver>.<iat>.<exp>.<sig>`，簽章訊息含帳密指紋與 `REPORT_MARK_SESSION_EPOCH` ⇒ **換密碼或 bump epoch 即全員登出**；舊版格式一律拒絕。登入的成功（INFO）／失敗・鎖定・非 HTTPS 遭拒（WARNING）都會寫進 journald，且不記密碼。
 
 前端特性：左側導覽軌（可收合成 mini，手機改底部 tab bar）四個入口——**檢索／問答／觀點／監控**；閱讀頁與說明頁不進導覽列。檢索頁固定有搜尋列 ＋ 市場 chip 列 ＋ 已選條件 chips；**無查詢也無篩選的落地態**顯示 Bento 牆（全語料市場組成色譜、最新一批研報等磚塊），此時工具列不渲染——一旦輸入查詢或套上篩選才換成工具列（排序選單／更多篩選 popover／檢視切換）＋結果區，結果區頂端改以 HitBar 顯示**命中集合**的市場組成色譜。結果檢視只有兩種（`ViewSwitch`：**列表**＝高密度單列、**表格**）；依日期(月)分組只出現在「查看全部／已篩選瀏覽」的完整清單，搜尋結果不分組。同篇研報合併、搜尋時列表顯示命中片段＋關鍵字高亮、即打即查（debounce 350ms，Enter 立即送出）、骨架載入；**點任一筆＝導向閱讀頁 `/app/report/:file_hash`**（帶 `?chunk=N` 可跳到命中段），不是內嵌 PDF modal。問答模式：RAG 串流回答＋可點引用來源、處理過程面板、側欄對話歷史（可重看／續問／刪除）、外部參考、追問建議、讚倒讚、複製答案，以及深度研報生成卡片（版型選擇器＋逐節進度＋換皮重出＋PDF 下載）。
 
@@ -319,7 +319,7 @@ uv run python scripts/search.py "利率與殖利率" --market MACRO
 | 標註 | `tag_all_cli.py` 需 `claude` CLI（`--model claude-haiku-4-5`，預設 8 worker 執行緒）|
 | 抽文字 | `extract_all.py` 用 multiprocessing（預設 16 worker）|
 | Web 服務 | uvicorn，port **8097**（`make serve`，無 `--reload`，改碼後須重啟）|
-| 登入 | 共用帳密 env `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（fail-closed）＋簽章金鑰 `REPORT_MARK_SESSION_SECRET`；由 `make serve` 載入 repo 根 `.env`（已 gitignore）。本機 `localhost` 可直連，其他裝置請走 HTTPS 入口 |
+| 登入 | 共用帳密 env `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（fail-closed）＋簽章金鑰 `REPORT_MARK_SESSION_SECRET`；由 `make serve` 載入 repo 根 `.env`（已 gitignore）。本機 `localhost` 可直連，其他裝置請走 HTTPS 入口。全員登出＝`REPORT_MARK_SESSION_EPOCH` 換值或改密碼後重啟 |
 
 > DB 以 `docker run` 起單一容器（`make db`，含 `--restart unless-stopped`）；對外邊緣層（nginx + cloudflared）則用 `docker compose`（`make up-edge`，見 `deploy/docker-compose.yml`）。背景編排（`resume_corpus.sh`）以 setsid/nohup 方式長跑。
 

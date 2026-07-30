@@ -5,7 +5,17 @@ services:
     image: nginx:1.31-alpine  # 釘穩定 minor，可重現；bump 時改這裡
     restart: unless-stopped
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 掛成 template 而非直接掛 conf.d：祕密值（X-Edge-Secret）不能寫進 repo，
+      # 官方映像的 entrypoint 會在啟動時以 envsubst 渲染成 conf.d/default.conf。
+      - ./nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      # 與 repo 根 .env 的 REPORT_MARK_EDGE_SECRET 必須是同一個值（一邊改、另一邊
+      # 沒改的期間，App 會自動退回 CIDR 判定，不會把人擋在外面）。未設＝空字串＝
+      # App 端停用該路徑。
+      - EDGE_SECRET=${EDGE_SECRET:-}
+      # 只代換 EDGE_ 開頭的變數：否則 nginx.conf 裡的 $host / $remote_addr 等內建
+      # 變數有被同名環境變數吃掉的風險（envsubst 不認得 nginx 語法）。
+      - NGINX_ENVSUBST_FILTER=^EDGE_
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

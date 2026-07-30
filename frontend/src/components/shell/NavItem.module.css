@@ -1,23 +1,25 @@
 .mini, .row, .mobile {
   display: flex; align-items: center; cursor: pointer;
   border: none; background: none; text-decoration: none;
-  color: var(--tf-text-3); font-family: inherit;
+  color: var(--tf-text-2); font-family: inherit;
   position: relative;
 }
 .mini { flex-direction: column; gap: 3px; padding: 8px 9px; border-radius: var(--tf-radius-seg); min-width: 46px; justify-content: center; }
-.row { gap: 10px; padding: 8px 10px 8px 12px; border-radius: 8px; width: 100%; font-size: 13.5px; color: var(--tf-text-2); }
+.row { gap: 10px; padding: 8px 10px 8px 12px; border-radius: var(--tf-radius-md); width: 100%; font-size: 13.5px; }
 .mobile { flex: 1; flex-direction: column; gap: 3px; padding: 6px 0; justify-content: center; }
 .label { font-size: 10px; line-height: 1; }
 .row .label { font-size: 13.5px; }
 
-.mini:hover, .row:hover { background: var(--tf-border-weak); }
+/* 選取／hover 底色用半透明黑而非實色 tint：側欄是玻璃，實色會蓋成一塊補丁，
+   半透明才是「壓暗底下的材質」，也是 macOS 側欄選取的作法。 */
+.mini:hover, .row:hover { background: rgba(0, 0, 0, 0.045); }
 
-.active { color: var(--tf-ink); font-weight: 700; }
-.mini.active, .row.active { background: var(--tf-ink-tint); color: var(--tf-ink-deep); }
-.row.active { font-weight: 600; }
-/* 展開態選取列左緣 3px 墨青指示條 */
+.active { color: var(--tf-text-1); font-weight: 600; }
+.mini.active, .row.active { background: rgba(0, 0, 0, 0.07); color: var(--tf-text-1); }
+/* 展開態選取列左緣 3px 鎏金指示條——全站唯一強調色在外殼上的落點，
+   與雷達 RadarPage 的 .sectionTitle::before 是同一個語彙。 */
 .row.active::before {
   content: ''; position: absolute; left: 0; top: 8px; bottom: 8px;
-  width: 3px; border-radius: 2px; background: var(--tf-ink);
+  width: 3px; border-radius: 2px; background: var(--tf-gold-strong);
 }
-.mobile.active { background: none; color: var(--tf-ink); }
+.mobile.active { background: none; color: var(--tf-text-1); font-weight: 600; }

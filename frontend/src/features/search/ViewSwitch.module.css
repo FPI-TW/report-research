@@ -4,4 +4,13 @@
    未分層的 CSS Module 會勝過 Tailwind utilities（cascade layer 規則）。 */
 .tabs { display: inline-flex; }
 .list { height: 32px; border-radius: var(--tf-radius-seg); }
-.trigger { min-width: 34px; font-size: 15px; }
+/* tailwind.css 刻意不載入 preflight（會打壞既有 CSS Modules 版面），而 animate-ui 的
+   Tabs 是靠 preflight 幫 <button> 重置的——少了它，兩顆切換鈕會保留瀏覽器預設的
+   `2px outset black` 外框與灰底，在簡白畫面上重得刺眼。這裡就地補上該重置。 */
+.trigger {
+  min-width: 34px;
+  font-size: 15px;
+  appearance: none;
+  border: 0;
+  background: none;
+}

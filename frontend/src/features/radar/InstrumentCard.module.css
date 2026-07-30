@@ -31,8 +31,8 @@
 }
 .id { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .name {
-  font-family: var(--tf-serif);
-  font-weight: 700;
+  font-family: var(--tf-display);
+  font-weight: 600;
   font-size: 19px;
   color: var(--tf-text-1);
 }
@@ -63,7 +63,7 @@
   margin: 20px 0 0;
 }
 .stanceWord {
-  font-family: var(--tf-serif);
+  font-family: var(--tf-display);
   font-weight: 800;
   font-size: 23px;
   line-height: 1;

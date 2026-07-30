@@ -22,8 +22,8 @@
 }
 
 .sectionTitle {
-  font-family: var(--tf-serif);
-  font-weight: 700;
+  font-family: var(--tf-display);
+  font-weight: 600;
   font-size: 19px;
   color: var(--tf-text-1);
   margin: 0 0 14px;

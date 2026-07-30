@@ -1,6 +1,6 @@
 /* 月份群組標頭：白底列表內的全寬窄條，捲動時吸附頂端 */
-.header { position: sticky; top: 0; z-index: 2; display: flex; background: var(--tf-sidebar); border-bottom: 1px solid var(--tf-border-weak); padding: 8px 16px; pointer-events: none; }
+.header { position: sticky; top: 0; z-index: 2; display: flex; background: var(--tf-fill-subtle); border-bottom: 1px solid var(--tf-border-weak); padding: 8px 16px; pointer-events: none; }
 .pill { display: inline-flex; align-items: baseline; gap: 8px; }
-.title { font-family: var(--tf-serif); font-weight: 700; font-size: 13.5px; color: var(--tf-text-1); }
+.title { font-family: var(--tf-display); font-weight: 600; font-size: 13.5px; color: var(--tf-text-1); }
 .dot { font-size: 11px; color: var(--tf-text-4); line-height: 1; }
 .count { font-size: 12px; font-weight: 500; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }

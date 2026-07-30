@@ -6,7 +6,7 @@
 .table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .table th {
   padding: 9px 12px; font-weight: 600; text-align: left;
-  color: var(--tf-text-3); background: var(--tf-sidebar); white-space: nowrap;
+  color: var(--tf-text-3); background: var(--tf-fill-subtle); white-space: nowrap;
   border-bottom: 1px solid var(--tf-border-weak);
 }
 .sortable { cursor: pointer; user-select: none; }

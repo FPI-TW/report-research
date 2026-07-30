@@ -26,7 +26,7 @@
 }
 
 .val {
-  font-family: var(--tf-serif);
+  font-family: var(--tf-display);
   font-weight: 800;
   font-size: 40px;
   line-height: 1;

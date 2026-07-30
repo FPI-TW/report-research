@@ -1,4 +1,27 @@
-.shell { display: flex; height: 100vh; overflow: hidden; background: var(--tf-canvas); }
+/* isolation 建立獨立堆疊脈絡，讓氛圍層的 z-index:-1 停在 .shell 之內、不會鑽到 body 之下。 */
+.shell {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--tf-canvas);
+}
+
+/* 氛圍暈染：玻璃要成立，底下得有東西可透。macOS 的玻璃是靠桌布給色的，
+   網頁沒有桌布就得自己給一層——少了它，磨砂疊在純灰畫布上幾乎看不出效果。
+   上限壓在 4%：這是「深度」不是「色彩」，整體仍須讀作簡白。 */
+.shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 800px at 0% 0%, rgba(174, 116, 21, 0.045), transparent 62%),
+    radial-gradient(1000px 700px at 100% 100%, rgba(44, 44, 46, 0.03), transparent 60%);
+}
+
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; }
 /* 換頁淡入包裹層：須對頁面版面透明（沿用 .main 對 .page 的 height:100% 契約，維持各頁自成捲動容器）。
    淡入改由 Motion（AppShell.tsx 的 motion.div，key=pathname 換頁重播）驅動，VT 縮短亦於該處判斷。 */

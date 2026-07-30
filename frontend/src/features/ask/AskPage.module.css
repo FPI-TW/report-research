@@ -1,9 +1,21 @@
 .page { display: flex; height: 100%; overflow: hidden; }
-.column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.flow { flex: 1; overflow-y: auto; padding: 20px 20px 8px; }
+/* relative 是浮動輸入列的定位脈絡：輸入列改成疊在對話流之上，訊息會從它底下捲過去，
+   磨砂才有東西可透。原本兩者是 flex 上下相鄰，內容捲到輸入列上緣就停住、玻璃等於貼在空氣上。 */
+.column { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* 底部留白 = 輸入列高度 + 呼吸空間，確保最後一則訊息不被浮動輸入列蓋住。
+   貼底捲動（AskPage.tsx 的 scrollHeight 判斷）把這段留白算在內，行為不變。 */
+.flow { flex: 1; overflow-y: auto; padding: 20px 20px 132px; }
 .flow > :first-child, .flow > div { max-width: 760px; margin-left: auto; margin-right: auto; }
-/* 空狀態（尚無對話）：起始畫面的引導文字與輸入框在可用空間內垂直置中 */
-.flowCentered { display: flex; flex-direction: column; justify-content: center; }
+/* 空狀態（尚無對話）：起始畫面的引導文字與輸入框在可用空間內垂直置中。
+   此時不渲染浮動輸入列，故收回為它預留的底部留白。 */
+.flowCentered { display: flex; flex-direction: column; justify-content: center; padding-bottom: 20px; }
 /* flex 子項預設縮成內容寬；補 width:100% 讓 wrap 維持 760/composer 640 原寬 */
 .flowCentered > * { width: 100%; }
-.composerBar { flex: none; padding: 0 20px 18px; }
+.composerBar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 12px 20px 16px;
+  background: var(--tf-glass);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  border-top: 1px solid var(--tf-glass-border);
+}

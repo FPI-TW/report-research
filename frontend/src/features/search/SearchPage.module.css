@@ -1,8 +1,31 @@
 /* .page 填滿 shell 的 .main（height:100vh, overflow:hidden）並自成捲動容器；
    對齊 MonitorPage/.scroll 與 AskPage/.flow，否則超出視窗的結果被 .shell 裁掉無法捲動 */
 .page { height: 100%; overflow-y: auto; }
+
+/* 零高度哨兵：離開視窗即代表工具列已吸頂（見 lib/useScrolled.ts）。
+   負 margin 抵銷自身高度，不影響版面節奏。 */
+.sentinel { display: block; height: 1px; margin-bottom: -1px; }
+
+/* 檢索工具列：捲到它底下之前透明無邊，之後才實體化成玻璃。
+   刻意做成通欄（不受 .inner 的 1000px 限制），否則吸頂後會變成一條浮在畫面中央的島。
+   不轉場 backdrop-filter（無法平滑內插），只轉場底色與邊界；模糊瞬間切換在視覺上讀不出來。 */
+.bar {
+  position: sticky; top: 0; z-index: 20;
+  padding: 24px 0 14px;
+  border-bottom: 1px solid transparent;
+  transition: background-color var(--tf-dur-2) var(--tf-ease-standard),
+    border-color var(--tf-dur-2) var(--tf-ease-standard);
+}
+.barStuck {
+  background: var(--tf-glass);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  border-bottom-color: var(--tf-glass-border);
+}
+.barInner { max-width: 1000px; margin: 0 auto; padding: 0 32px; }
+
 /* 檢索台：不放置中招牌——品牌已在左欄 SideRail，同一畫面不重複第二次 */
-.inner { max-width: 1000px; margin: 0 auto; padding: 44px 32px 88px; }
+.inner { max-width: 1000px; margin: 0 auto; padding: 6px 32px 88px; }
 
 .controls { display: flex; flex-direction: column; gap: 16px; }
 /* 搜尋框（左）與 排序/更多篩選/檢視切換（右）同一列 */
@@ -11,18 +34,20 @@
 .toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; flex-shrink: 0; }
 
 .resultsHead { display: flex; align-items: baseline; gap: 12px; margin-top: 26px; padding-bottom: 12px; border-bottom: 1px solid var(--tf-border); }
-.resultsTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
-.resultsSort { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); }
+.resultsTitle { font-family: var(--tf-display); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; color: var(--tf-text-1); }
+.resultsSort { font-family: var(--tf-mono); font-size: 11px; letter-spacing: 0.04em; color: var(--tf-text-4); }
 .resultsHead > :last-child { margin-left: auto; }
 
 .featureRow { margin-top: 18px; }
 .results { margin-top: 2px; }
 
-.error { text-align: center; padding: 56px 16px; color: var(--tf-text-3); }
+.error { text-align: center; padding: 56px 16px; color: var(--tf-text-muted-aa); }
 .error button { margin-left: 10px; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-pill); padding: 4px 12px; cursor: pointer; font-family: inherit; color: var(--tf-text-2); }
 .error button:hover { border-color: var(--tf-ink); color: var(--tf-ink); }
 
 @media (max-width: 900px) {
-  .inner { padding: 28px 18px 80px; }
+  .bar { padding: 16px 0 12px; }
+  .barInner { padding: 0 18px; }
+  .inner { padding: 6px 18px 80px; }
   .searchRow { flex-wrap: wrap; }
 }

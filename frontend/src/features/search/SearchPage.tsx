@@ -30,6 +30,7 @@ import { LoadMore } from './LoadMore'
 import { ViewSwitch } from './ViewSwitch'
 import { Reveal } from '../../components/primitives/Reveal'
 import { Pressable } from '../../components/primitives/Pressable'
+import { useScrolled } from '../../lib/useScrolled'
 import styles from './SearchPage.module.css'
 
 export default function SearchPage() {
@@ -45,6 +46,8 @@ export default function SearchPage() {
 
   const stats = useStats()
   const results = useSearchResults(state)
+  // 工具列吸頂後才實體化成玻璃：捲到它底下之前保持透明無邊
+  const { scrolled, sentinelRef } = useScrolled()
   const terms = useMemo(() => queryTerms(state.q), [state.q])
   const latest = useMemo(() => latestId(results.rows), [results.rows])
 
@@ -99,32 +102,37 @@ export default function SearchPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.inner}>
-        <div className={styles.controls}>
-          <div className={styles.searchRow}>
-            <SearchBar initial={state.q} onSubmit={q => update({ q })} size={showBento ? 'lg' : 'md'} />
-            {!showBento && (
-              <div className={styles.toolbar}>
-                <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
-                <MoreFiltersPopover
-                  state={state}
-                  instrumentOptions={instrumentOptions}
-                  reportTypeOptions={reportTypeOptions}
-                  onApply={update}
-                />
-                <ViewSwitch view={state.view} onChange={v => update({ view: v })} />
-              </div>
-            )}
+      <span ref={sentinelRef} className={styles.sentinel} aria-hidden="true" />
+      <div className={`${styles.bar} ${scrolled ? styles.barStuck : ''}`}>
+        <div className={styles.barInner}>
+          <div className={styles.controls}>
+            <div className={styles.searchRow}>
+              <SearchBar initial={state.q} onSubmit={q => update({ q })} size={showBento ? 'lg' : 'md'} />
+              {!showBento && (
+                <div className={styles.toolbar}>
+                  <SortMenu mode={mode} value={state.sort} onChange={v => update({ sort: v })} />
+                  <MoreFiltersPopover
+                    state={state}
+                    instrumentOptions={instrumentOptions}
+                    reportTypeOptions={reportTypeOptions}
+                    onApply={update}
+                  />
+                  <ViewSwitch view={state.view} onChange={v => update({ view: v })} />
+                </div>
+              )}
+            </div>
+            <MarketChipBar
+              value={state.market}
+              onChange={m => update({ market: m })}
+              counts={chipCounts}
+              codes={chipCodes}
+            />
+            <ActiveChips state={state} onPatch={update} />
           </div>
-          <MarketChipBar
-            value={state.market}
-            onChange={m => update({ market: m })}
-            counts={chipCounts}
-            codes={chipCodes}
-          />
-          <ActiveChips state={state} onPatch={update} />
         </div>
+      </div>
 
+      <div className={styles.inner}>
         {results.isError ? (
           <Reveal className={styles.error}>
             載入失敗，請稍後再試。<Pressable onClick={results.refetch}>重試</Pressable>

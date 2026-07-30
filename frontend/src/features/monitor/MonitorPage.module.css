@@ -1,95 +1,116 @@
-/* 監控頁樣式，逐值對齊 .dc.html MONITOR 畫面（第 389–460 行）。Task 6–11 共用此檔。 */
+/* 監控頁。原本整頁寫死色碼、完全不吃 --tf-* token，所以歷次改版都繞過它；
+   此次一併收編，色與圓角全部走 token，改版才會真的套用到這一頁。 */
 .page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.scroll { flex: 1; overflow-y: auto; padding: 28px 32px; }
-.inner { max-width: 1120px; margin: 0 auto; }
+.scroll { flex: 1; overflow-y: auto; }
+.inner { max-width: 1120px; margin: 0 auto; padding: 6px 32px 32px; }
 
-/* 頁首 */
-.header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
-.title { font-family: 'Noto Serif TC', Georgia, serif; font-weight: 700; font-size: 26px; color: #101828; margin: 0 0 6px; }
-.sub { font-size: 13px; color: #667085; font-variant-numeric: tabular-nums; }
+/* 零高度哨兵：離開視窗即代表頁首已吸頂（見 lib/useScrolled.ts）。 */
+.sentinel { display: block; height: 1px; margin-bottom: -1px; }
+
+/* 頁首：捲到它底下之後才實體化成玻璃。監控頁常駐開著、時鐘與 LIVE 狀態
+   要一直看得到，所以這裡的吸頂不只是視覺效果。 */
+.headerBar {
+  position: sticky; top: 0; z-index: 20;
+  padding: 24px 0 14px;
+  border-bottom: 1px solid transparent;
+  transition: background-color var(--tf-dur-2) var(--tf-ease-standard),
+    border-color var(--tf-dur-2) var(--tf-ease-standard);
+}
+.headerStuck {
+  background: var(--tf-glass);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  border-bottom-color: var(--tf-glass-border);
+}
+.headerInner { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+.header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.title { font-family: var(--tf-display); font-weight: 600; font-size: 26px; letter-spacing: -0.02em; color: var(--tf-text-1); margin: 0 0 6px; }
+.sub { font-size: 13px; color: var(--tf-text-muted-aa); font-variant-numeric: tabular-nums; }
 .headRight { display: flex; align-items: center; gap: 12px; }
-.live { display: inline-flex; align-items: center; gap: 6px; background: #faf3e3; color: #8a5a0f; border-radius: 999px; font-size: 11.5px; font-weight: 700; padding: 4px 11px; }
-.liveDot { width: 7px; height: 7px; border-radius: 999px; background: #34c759; }
-.stale { background: #fef3f2; color: #b42318; }
-.staleDot { background: #f04438; }
-.clock { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: #667085; font-variant-numeric: tabular-nums; }
+.live { display: inline-flex; align-items: center; gap: 6px; background: var(--tf-gold-tint); color: var(--tf-gold-text); border-radius: var(--tf-radius-pill); font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; padding: 4px 11px; }
+.liveDot { width: 7px; height: 7px; border-radius: var(--tf-radius-pill); background: var(--tf-success); }
+.stale { background: var(--tf-error-bg); color: var(--tf-error-text); }
+.staleDot { background: var(--tf-error); }
+.clock { font-family: var(--tf-mono); font-size: 13px; color: var(--tf-text-muted-aa); font-variant-numeric: tabular-nums; }
 
-/* 卡片共用 */
-.card { background: #fff; border: 1px solid #e4e7ec; border-radius: 12px; box-shadow: 0 1px 3px rgba(16, 24, 40, .06); }
+/* 卡片共用：內容層一律實白＋髮絲環，不用玻璃（底下沒有東西可透）。 */
+.card { background: var(--tf-surface); border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-xs); }
 
 /* KPI 網格 */
 .kpiGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.kpiCard { padding: 16px 18px; }
-.kpiLabel { font-size: 12px; color: #667085; margin-bottom: 8px; }
+.kpiCard { padding: 18px 20px; }
+.kpiLabel { font-size: 12px; color: var(--tf-text-muted-aa); margin-bottom: 8px; }
 .kpiValRow { display: flex; align-items: baseline; gap: 4px; }
-.kpiVal { font-size: 26px; font-weight: 700; color: #101828; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.kpiSuffix { font-size: 13px; color: #98a2b3; }
-.kpiSub { font-size: 12px; color: #667085; margin-top: 8px; }
+.kpiVal { font-size: 27px; font-weight: 600; letter-spacing: -0.02em; color: var(--tf-text-1); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.kpiSuffix { font-size: 13px; color: var(--tf-text-4); }
+.kpiSub { font-size: 12px; color: var(--tf-text-muted-aa); margin-top: 8px; }
 
 /* 面板 */
 .panelGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px; }
-.panel { padding: 18px; }
-.ptitle { font-family: 'Noto Serif TC', Georgia, serif; font-weight: 700; font-size: 16px; color: #101828; margin-bottom: 14px; }
+.panel { padding: 20px; }
+.ptitle { font-family: var(--tf-display); font-weight: 600; font-size: 16px; letter-spacing: -0.01em; color: var(--tf-text-1); margin-bottom: 14px; }
 .pmain { display: flex; align-items: baseline; gap: 6px; margin-bottom: 12px; }
-.big { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; color: #101828; line-height: 1; }
-.pof { font-size: 14px; color: #98a2b3; }
-.ppct { margin-left: auto; font-size: 13px; font-weight: 600; color: #8a5a0f; font-variant-numeric: tabular-nums; }
-.bar { height: 9px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
-.barFill { height: 100%; border-radius: 999px; background: #8a5a0f; transition: width .34s cubic-bezier(.22, 1, .36, 1); }
-.prate { font-size: 12.5px; color: #667085; margin-top: 10px; }
-.pidle { font-size: 13px; color: #98a2b3; margin: 6px 0 12px; }
+.big { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--tf-text-1); line-height: 1; }
+.pof { font-size: 14px; color: var(--tf-text-4); }
+.ppct { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--tf-gold-text); font-variant-numeric: tabular-nums; }
+.bar { height: 9px; border-radius: var(--tf-radius-pill); background: var(--tf-border-weak); overflow: hidden; }
+.barFill { height: 100%; border-radius: var(--tf-radius-pill); background: var(--tf-gold-strong); transition: width var(--tf-dur-4) var(--tf-ease-out); }
+.prate { font-size: 12.5px; color: var(--tf-text-muted-aa); margin-top: 10px; }
+.pidle { font-size: 13px; color: var(--tf-text-4); margin: 6px 0 12px; }
 
 /* 報告導入 */
-.ingCurrent { font-size: 13px; color: #344054; margin-bottom: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.indetWrap { display: block; position: relative; height: 9px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
-.indetBar { position: absolute; top: 0; left: 0; height: 100%; width: 34%; border-radius: 999px; background: #8a5a0f; }
-.indetIdle { position: absolute; top: 0; left: 0; height: 100%; width: 100%; border-radius: 999px; background: #e4e7ec; }
+.ingCurrent { font-size: 13px; color: var(--tf-text-2); margin-bottom: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.indetWrap { display: block; position: relative; height: 9px; border-radius: var(--tf-radius-pill); background: var(--tf-border-weak); overflow: hidden; }
+.indetBar { position: absolute; top: 0; left: 0; height: 100%; width: 34%; border-radius: var(--tf-radius-pill); background: var(--tf-gold-strong); }
+.indetIdle { position: absolute; top: 0; left: 0; height: 100%; width: 100%; border-radius: var(--tf-radius-pill); background: var(--tf-border); }
 
 /* 處理管線 */
 .pipeList { display: flex; flex-direction: column; gap: 13px; margin-top: 14px; }
 .pipeRow { display: flex; align-items: center; gap: 10px; }
-.pipeDot { width: 9px; height: 9px; border-radius: 999px; flex: none; }
-.pipeOn { background: #34c759; }
-.pipeOff { background: #d0d5dd; }
-.pipeName { font-size: 13.5px; color: #344054; flex: 1; }
-.pipeBadge { font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 2px 9px; }
-.badgeOn { background: #ecfdf3; color: #027a48; }
-.badgeOff { background: #f2f4f7; color: #667085; }
+.pipeDot { width: 9px; height: 9px; border-radius: var(--tf-radius-pill); flex: none; }
+.pipeOn { background: var(--tf-success); }
+.pipeOff { background: var(--tf-border); }
+.pipeName { font-size: 13.5px; color: var(--tf-text-2); flex: 1; }
+.pipeBadge { font-size: 11.5px; font-weight: 600; border-radius: var(--tf-radius-pill); padding: 2px 9px; }
+.badgeOn { background: color-mix(in srgb, var(--tf-success) 12%, transparent); color: var(--tf-success-text); }
+.badgeOff { background: var(--tf-border-weak); color: var(--tf-text-muted-aa); }
 
 /* 市場分佈 */
 .mktList { display: flex; flex-direction: column; gap: 11px; margin-top: 16px; }
 .mktRow { display: flex; align-items: center; gap: 12px; }
-.mktLabel { width: 52px; font-size: 12.5px; color: #344054; flex: none; }
-.mktBar { flex: 1; height: 8px; border-radius: 999px; background: #f2f4f7; overflow: hidden; }
-.mktFill { height: 100%; border-radius: 999px; transition: width var(--tf-dur-4) var(--tf-ease-out); }
-.mktCount { width: 66px; text-align: right; font-size: 12px; color: #667085; font-variant-numeric: tabular-nums; flex: none; }
-.mktPct { width: 38px; text-align: right; font-size: 12px; color: #98a2b3; flex: none; }
+.mktLabel { width: 52px; font-size: 12.5px; color: var(--tf-text-2); flex: none; }
+.mktBar { flex: 1; height: 8px; border-radius: var(--tf-radius-pill); background: var(--tf-border-weak); overflow: hidden; }
+.mktFill { height: 100%; border-radius: var(--tf-radius-pill); transition: width var(--tf-dur-4) var(--tf-ease-out); }
+.mktCount { width: 66px; text-align: right; font-size: 12px; color: var(--tf-text-muted-aa); font-variant-numeric: tabular-nums; flex: none; }
+.mktPct { width: 38px; text-align: right; font-size: 12px; color: var(--tf-text-4); flex: none; }
 
 /* 頁尾 + 工具 */
-.footer { text-align: center; font-size: 11.5px; color: #98a2b3; margin-top: 22px; }
+.footer { text-align: center; font-size: 11.5px; color: var(--tf-text-4); margin-top: 22px; }
 .marginTop { margin-top: 12px; }
 
 @media (max-width: 900px) {
   .kpiGrid { grid-template-columns: repeat(2, 1fr); }
   .panelGrid { grid-template-columns: 1fr; }
-  .scroll { padding: 20px 16px; }
+  .headerBar { padding: 16px 0 12px; }
+  .headerInner { padding: 0 16px; }
+  .inner { padding: 6px 16px 24px; }
 }
 
 /* 忠實度查核卡：三段式列（來源 / 數字群 / 時間），窄螢幕改直排。 */
-.fRow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid #f2f4f7; }
+.fRow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--tf-border-weak); }
 .fRow:last-of-type { border-bottom: none; }
-.fLabel { font-weight: 600; font-size: 13.5px; color: #101828; min-width: 34px; }
+.fLabel { font-weight: 600; font-size: 13.5px; color: var(--tf-text-1); min-width: 34px; }
 .fStats { display: flex; gap: 12px; flex-wrap: wrap; }
-.fStat { font-size: 12.5px; color: #667085; font-variant-numeric: tabular-nums; }
-.fWarn { font-size: 12.5px; font-weight: 600; color: #b42318; font-variant-numeric: tabular-nums; }
-.fMuted { margin-left: auto; font-size: 12px; color: #98a2b3; }
+.fStat { font-size: 12.5px; color: var(--tf-text-muted-aa); font-variant-numeric: tabular-nums; }
+.fWarn { font-size: 12.5px; font-weight: 600; color: var(--tf-error-text); font-variant-numeric: tabular-nums; }
+.fMuted { margin-left: auto; font-size: 12px; color: var(--tf-text-4); }
 @media (max-width: 720px) {
   .fMuted { margin-left: 0; }
 }
 
 /* 排程健康卡：卡標題旁的紅點（近 24 小時有 unit 失敗才出現）＋ 最近失敗列。 */
-.alertDot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: #f04438; margin-left: 8px; vertical-align: 2px; }
-.failList { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #f2f4f7; }
+.alertDot { display: inline-block; width: 8px; height: 8px; border-radius: var(--tf-radius-pill); background: var(--tf-error); margin-left: 8px; vertical-align: 2px; }
+.failList { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--tf-border-weak); }
 .failRow { display: flex; gap: 10px; align-items: baseline; }
-.failTs { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: #98a2b3; flex: none; font-variant-numeric: tabular-nums; }
-.failWhat { font-size: 12.5px; color: #344054; overflow-wrap: anywhere; }
+.failTs { font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-text-4); flex: none; font-variant-numeric: tabular-nums; }
+.failWhat { font-size: 12.5px; color: var(--tf-text-2); overflow-wrap: anywhere; }

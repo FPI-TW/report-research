@@ -11,7 +11,7 @@
 
 .main { min-width: 0; }
 .titleRow { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rtitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; line-height: 1.5; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rtitle { font-family: var(--tf-display); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; line-height: 1.5; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new {
   font-family: var(--tf-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
   color: var(--tf-gold-text); border: 1px solid var(--tf-gold-line); background: var(--tf-gold-tint);

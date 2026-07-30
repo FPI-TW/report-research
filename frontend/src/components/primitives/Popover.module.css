@@ -1,11 +1,14 @@
 .scrim { position: fixed; inset: 0; z-index: 35; }
-/* 進出場（opacity/translate/scale/transform-origin）改由 Motion（Popover.tsx）驅動，此處僅留版面。 */
+/* 浮層走玻璃：底下就是頁面內容，模糊在這裡讀得出材質。
+   邊界改由 --tf-shadow-pop 的 0.5px 髮絲環表現，不再用 1px 實線——實線在亮底上會顯重。
+   進出場（opacity/translate/scale/transform-origin）改由 Motion（Popover.tsx）驅動，此處僅留版面。 */
 .panel {
   position: absolute;
   z-index: 40;
-  background: var(--tf-surface);
-  border: 1px solid var(--tf-border);
+  background: var(--tf-glass-strong);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
   border-radius: var(--tf-radius-card);
-  box-shadow: var(--tf-shadow-pop);
-  padding: 8px;
+  box-shadow: var(--tf-shadow-pop), var(--tf-glass-sheen);
+  padding: 6px;
 }

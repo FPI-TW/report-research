@@ -25,9 +25,9 @@
 }
 
 .figV {
-  font-family: var(--tf-serif);
+  font-family: var(--tf-display);
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--tf-text-1);
   line-height: 1.15;
 }

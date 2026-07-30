@@ -1,49 +1,59 @@
-# 重設計實作說明（1a 墨青 × 鎏金）
+# 介面設計說明（macOS 磨砂玻璃 · 簡白）
 
-依「設計提案.dc.html」選定方向 1a 實作。**只動 UI／樣式層**：資料流、hooks（useAskController、useSearchResults…）、API 契約、路由、元件名與 props 全部不變。
+只動 UI／樣式層與少數版面結構：資料流、hooks、API 契約、路由、元件 props 全部不變。
+色值與字級一律以 `src/styles/tokens.css` 為準，這份文件只寫**規則與理由**，不抄數值
+（抄下來的數字會腐爛，改了 token 沒人會回來更新這裡）。
+
+## 一條核心規則：玻璃只給 chrome，不給內容
+
+- **會有內容從底下捲過去的層 → 磨砂玻璃**：側欄、吸頂工具列、浮層／選單／彈窗、
+  問答輸入列、手機底部導覽。
+- **內容本身 → 實白 + 髮絲環 + 微陰影**：結果卡、研報內文、KPI 卡、雷達卡片。
+
+兩個理由都不是風格偏好：
+
+1. `backdrop-filter` 只有在底下真的有東西可模糊時才成立。套在卡片上（底下是純灰畫布）
+   不會變高級，只會變髒。
+2. 每一層 `backdrop-filter` 都是一次獨立合成。檢索頁一次渲染數十張卡，全套玻璃直接掉幀；
+   限縮在三、四個常駐 chrome 層則沒有可感知的成本。
+
+**唯一的例外是登入頁**（`web/static/login.html`）：那一頁只有一張卡片浮在氛圍暈染層上，
+底下確實有東西，所以卡片本身就是玻璃。
 
 ## 設計語言
-- **墨青（--tf-ink #1E5175）**＝導航與操作：按鈕、連結、選取態、focus ring、相關度。
-- **鎏金（--tf-gold-* #8A5A0F/#AE7415）**＝引用與研報：引註 [n]、來源編號、深度研報面板、串流游標、Logo。
-- 字體：標題／報告名 Noto Serif TC；介面 Noto Sans TC（index.html 已加載）；數字 tabular-nums。
-- 市場 chip 一律「淡底深字」（meta.ts 新增 `marketTint()`，color-mix 10% 混白）。
 
-## 變更檔案
-**Token／基礎**
-- `index.html`：加 Noto Sans TC。
-- `src/styles/tokens.css`：全新色票（基調暖紙白、墨青、鎏金、市場色降彩度）、圓角/陰影/焦點環；變數名向下相容並新增 `--tf-ink-*`。
-- `src/lib/meta.ts`：市場色重校＋`marketTint()`。
+- **鎏金 `--tf-gold-*`＝全站唯一強調色**：引用 `[n]`、深度研報、品牌、側欄選取指示條、
+  雷達區段標題的左緣色條。其餘一律中性。
+- **石墨 `--tf-ink-*`＝導航與操作**：主要按鈕填色、焦點環、連結態控制項。
+  變數名沿用 `ink`（語意仍成立），只是墨色從墨青換成中性石墨——111 處引用不必動。
+- **字體全無襯線**，標題與內文同一家族，靠字重（600 / 400）與字級拉層級。
+  `--tf-serif` 已更名為 `--tf-display`；等寬 `--tf-mono` 維持不變，標的代號／日期／
+  計數仍是券商研報的母語。
+- 市場 chip 維持「淡底深字」（`lib/meta.ts` 的 `marketTint()`）。
 
-**Shell**
-- SideRail／NavItem／ConversationList／AccountMenu `.module.css`：選取態改墨青（tint 底＋左緣 3px 指示條）、新對話鈕、帳號頭像改墨青。
+## Signature：捲動時 chrome 才實體化
 
-**檢索（結構性變更僅此頁）**
-- `SearchPage.tsx`：空查詢＋無篩選 → 品牌起始畫面（logo＋宋體字標＋檢索/問答切換＋大型搜尋框＋「試試」建議查詢），下方即「最新入庫」（就是原 browse 結果，資料流不變）；ViewSwitch 由右下浮動移入工具列。
-- `SearchBar.tsx`：新增 `size="lg"`（hero 大框＋「搜尋」鈕），md 態不變。
-- `ResultCard.tsx/.module.css`：2 欄卡片 → 高密度列表列（市場｜標題+標的+命中片段｜相關度+來源日期）。
-- `CardsView.tsx/.module.css`＋`MonthGroup.module.css`：白底容器＋月份 sticky 窄條群組標頭。
-- `ViewSwitch.tsx/.module.css`：分段控制；aria-label「卡片檢視」→「列表檢視」。
-- MarketChipBar／SortMenu／MoreFiltersPopover／ActiveChips／EmptyState／LoadMore／ResultsMeta／TableView：改樣式與 token（TableView 徽章改淡底深字）。
+頁首／工具列在內容捲到它底下之前是透明無邊的，之後才浮現玻璃與髮絲分隔線——
+macOS 視窗標題列的行為。共用 hook 是 `src/lib/useScrolled.ts`（sentinel +
+`IntersectionObserver`；CSS 沒有「已吸頂」選擇器，而 `animation-timeline: scroll()`
+的 Safari 支援還不足以當唯一依據）。
 
-**問答**
-- UserMessage：氣泡改墨青。AssistantMessage：引註 pill 維持鎏金（hover 反白）、游標鎏金、動作列 hover 墨青。
-- `components/CitePreview.tsx`（新）：引註 [n] hover／focus 即時來源預覽卡（市場 chip＋日期＋報告名）。純展示、不攔截點擊；點擊仍開來源抽屜；貼近視窗下緣自動上翻，捲動即關閉。`renderAnswer()` 新增「選用」第 4 參數 `sources`（未傳行為同舊版，既有測試不受影響）。
-- ThinkingSteps：收成一行膠囊摘要（展開邏輯不變）。
-- Composer：送出鈕墨青＋底部 AI 聲明（bottom 變體）。
-- DeepReportPanel：邀請/生成/完成改鎏金面板；文案「生成研報／暫時不用」。
-- SourcesDrawer：分「研報 · n／網路補充 · m」兩節、標頭計數 chip、市場 chip 淡底深字。
+已套用：檢索頁工具列、監控頁頁首、雷達導覽列。
 
-**Modal**
-- Modal.module.css：圓角 16、墨青遮罩、圓形關閉鈕。
-- ReportDetailModal：PDF 態頂部加動作列（在新分頁開啟＝主按鈕、下載原始檔＝ghost、Esc 提示）。
+雷達那一支順帶做了 macOS／iOS 的大標題行為：大標題捲走，標的名收進精簡導覽列。
+**導覽列因此被提到 `RadarOverview` 的根層**——`position: sticky` 只在父容器範圍內有效，
+包回 `<header>` 裡的話，header 一捲出視窗導覽列就跟著鬆開。
 
-## 已知待辦（不影響編譯）
-- 測試文案斷言需同步：DeepReportPanel「要／不用」→「生成研報／暫時不用」；SourcesDrawer「資料來源 · N」→「研報 · N」；ViewSwitch aria-label「卡片檢視」→「列表檢視」。
-- SearchSkeleton 仍是舊卡片形骨架，建議之後改列骨架。
-- Monitor 頁未改版，僅繼承新 token。
-- 換 1b 松墨：改 tokens.css 四值 `--tf-ink: #1E5B4B; --tf-ink-deep: #14453A; --tf-ink-hover: #17493C; --tf-ink-tint: #E7F0EC;`（另 `--tf-ink-line: #D8E6E0`）。
+**閱讀頁（`ReportPage`）刻意沒有玻璃**：它的工具列與左側智慧欄都是 flex 兄弟，
+底下沒有任何東西會捲過，套上去就只是裝飾——正是上面那條規則要擋的。
 
-## 無障礙
-- 主色對白底 7.4:1（AAA）、gold-text 6.4:1、text-3 4.6:1（AA）。
-- `:focus-visible` 全域墨青 2px 外框；列表列 focus 有內側指示；Esc／鍵盤操作沿用原行為。
-- `marketTint()` 使用 color-mix（需較新瀏覽器；Vite target 預設 esnext 無礙）。
+## 退場路徑
+
+`prefers-reduced-transparency`（對應 macOS 的「降低透明度」輔助使用設定）與
+`@supports not (backdrop-filter: …)` **統一在 `tokens.css` 改寫 token 值**，
+所有消費端自動退回實色。新增玻璃表面時只要用 `--tf-glass*` 系列，不必自己重複寫這兩段。
+
+## 已知的手抄副本
+
+`web/static/login.html` 在 auth 牆外，不可引用 `/static` 下受保護的 `tokens.css`，
+色值是手抄的。**改主題時兩邊都要動。**

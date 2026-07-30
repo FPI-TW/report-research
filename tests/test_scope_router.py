@@ -87,6 +87,45 @@ class SafetyPrecheckTests(unittest.TestCase):
         self.assertIsNone(_safety_precheck("台積電如何體現價值投資"))
         self.assertIsNone(_safety_precheck("個股歷史成交價量分析"))
 
+    def test_published_earnings_questions_no_hit(self):
+        """已公布財報／營收的提問是 corpus 題，前檢不得攔。
+
+        研報寫的正是這些；攔下來就是把本平台最高頻的問法之一送進必定拒答的路。
+        判準那側交給 ROUTE_CRITERIA（見該常數上方的 A/B 實測紀錄），這裡守的是
+        「別哪天有人為了抓時效題把『財報』『營收』『毛利率』塞進詞表」。
+        """
+        for q in (
+            "台積電最新財報數字是多少",
+            "台積電上季財報數字如何",
+            "聯發科最新一季營收表現如何",
+            "鴻海最新的毛利率是多少",
+            "台積電法說會釋出什麼訊息",
+            "記憶體報價的近期走勢",
+        ):
+            with self.subTest(q=q):
+                self.assertIsNone(_safety_precheck(q))
+
+
+class RouteCriteriaReuseTests(unittest.TestCase):
+    """判準只有一份，首輪與續問都必須真的用到它。
+
+    首輪走 ROUTE_SYSTEM_PROMPT、續問走 CONDENSE_ROUTE_SYSTEM_PROMPT，兩者都以
+    `+ ROUTE_CRITERIA +` 串接。這條測試釘的是那個串接還在——一旦有人把判準文字
+    手抄進其中一支，改一邊就會漂一邊，而症狀是「同一個問題首輪判 A、續問判 B」，
+    不會有任何錯誤訊息。
+    """
+
+    def test_both_prompts_derive_from_the_single_constant(self):
+        self.assertIn(sr.ROUTE_CRITERIA, sr.ROUTE_SYSTEM_PROMPT)
+        self.assertIn(sr.ROUTE_CRITERIA, sr.CONDENSE_ROUTE_SYSTEM_PROMPT)
+
+    def test_criteria_keeps_the_four_tokens_and_the_tie_breaker(self):
+        # 四個 token 少一個，模型就有機會輸出 parse_route 認不得的字串 → fail-open
+        for token in ("OFF_TOPIC", "CORPUS_QA", "TIME_SENSITIVE", "ADVICE_RISK"):
+            self.assertIn(token, sr.ROUTE_CRITERIA)
+        # 「研報怎麼看 vs 此刻的數字」這條分界是 2026-07-30 A/B 量出來的關鍵句
+        self.assertIn("即使問句帶「最新」二字", sr.ROUTE_CRITERIA)
+
 
 class DecisionTests(unittest.TestCase):
     def test_policy_mapping(self):

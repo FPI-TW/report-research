@@ -1,0 +1,17 @@
+[Unit]
+Description=每日稽核資料完整性（耐久性設定／孤兒列／NULL embedding／market 不一致）
+
+[Timer]
+# 08:45 排在 report-mark-freshness.timer（08:30）之後、彼此錯開 15 分鐘：兩支都會
+# 對 report_chunk 跑全表掃描，同時跑只是互相搶 I/O。同樣排在上班時段的開頭——
+# 這支的產物是「一筆 unit 失敗紀錄」，要有人會在當天看到它才有用。
+# 其餘既有排程：sync 整點 00/3、backup 03:30。
+OnCalendar=*-*-* 08:45:00
+# 機器關著／WSL 沒起來而錯過的那一次，開機後補跑。**這對耐久性檢查特別重要**：
+# ingest_lowio 被 SIGKILL 而留下 fsync=off 的情境，最可能的成因正是「機器被硬收掉」
+# ——也就是說，最需要這支跑的那一天，恰好就是它會被錯過的那一天。
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

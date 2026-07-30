@@ -88,6 +88,25 @@ class Check:
 # 順序即輸出順序：error 在前，且同級內把「會讓使用者看到錯東西」排在「只是殘留」之前。
 CHECKS: tuple[Check, ...] = (
     Check(
+        "durability_off",
+        "耐久性寫入被關掉（fsync / full_page_writes / synchronous_commit）",
+        SEVERITY_ERROR,
+        "SELECT count(*) FROM ("
+        "  SELECT 1 WHERE current_setting('fsync') = 'off'"
+        "  UNION ALL"
+        "  SELECT 1 WHERE current_setting('full_page_writes') = 'off'"
+        "  UNION ALL"
+        "  SELECT 1 WHERE current_setting('synchronous_commit') = 'off'"
+        ") d",
+        "`scripts/ingest_lowio.sh` 會關掉這三項來降 fsync I/O，並以 `trap ... EXIT` 還原。"
+        "**但 trap 擋不住 SIGKILL**（OOM killer、`kill -9`、WSL 整個被收掉），"
+        "而 `ALTER SYSTEM SET` 是寫進 `postgresql.auto.conf` 的——**重啟也不會恢復**。"
+        "結果是 DB 無限期跑在 fsync=off：查詢完全正常、沒有任何症狀，但一次斷電或 DB "
+        "崩潰就可能讓整個 pgdata 報廢。"
+        "處置：`make restore-durability`（等同 `ALTER SYSTEM RESET` 三項 + reload）。"
+        "這是整組檢查裡唯一「不修會失去全部資料」的一條，所以列在最前面。",
+    ),
+    Check(
         "null_embedding",
         "chunk 缺 embedding",
         SEVERITY_ERROR,

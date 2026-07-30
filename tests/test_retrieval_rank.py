@@ -191,6 +191,71 @@ class HybridSearchLexStatsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self._run(lex_hits=2000, stats=None))
 
 
+class NullDistanceGuardTests(unittest.IsolatedAsyncioTestCase):
+    """`distance is None` 必須降級跳過，不能 `float(None)` 讓整頁 500。
+
+    `embedding` 允許 NULL ⇒ `NULL <=> vector` 回 NULL。第一層守門是兩條 SQL 的
+    `embedding IS NOT NULL`（`store._lexical_sql`），這裡驗的是第二層：任何繞過
+    SQL 守門的路徑（新查詢、手改 SQL、未來的 UNION 分支）都不該把 500 打到使用者臉上。
+
+    **降級必須留下訊號**：靜默跳過會讓「ingest 中途被砍」變成永遠查不出的召回缺口。
+    """
+
+    @staticmethod
+    async def _run(rows, *, stats=None):
+        from app.services import retrieval as ret
+
+        async def fake_dense(*a, **k):
+            return []
+
+        async def fake_lex(*a, **k):
+            return rows, len(rows)
+
+        orig = (ret.search_chunks_meta, ret.search_chunks_lexical)
+        ret.search_chunks_meta = fake_dense
+        ret.search_chunks_lexical = fake_lex
+        try:
+            return await ret.hybrid_search(object(), "台積電", [0.0], stats=stats)
+        finally:
+            ret.search_chunks_meta, ret.search_chunks_lexical = orig
+
+    @staticmethod
+    def _row(rid, distance):
+        return row(rid)._replace(chunk_id=f"c-{rid}", distance=distance)
+
+    async def test_null_distance_row_is_skipped_not_raised(self):
+        scored_out = await self._run([self._row("bad", None)])
+        self.assertEqual(scored_out, [], "唯一候選不可用 ⇒ 零結果，不是 TypeError")
+
+    async def test_good_rows_survive_alongside_a_null_one(self):
+        scored_out = await self._run(
+            [self._row("bad", None), self._row("ok", 0.2)]
+        )
+        self.assertEqual([r.report_id for (_t, _f, r) in scored_out], ["ok"])
+
+    async def test_skip_count_lands_in_stats(self):
+        stats: dict = {}
+        await self._run(
+            [self._row("a", None), self._row("b", None), self._row("c", 0.1)],
+            stats=stats,
+        )
+        self.assertEqual(stats["null_embedding_skipped"], 2)
+
+    async def test_zero_skips_still_reported(self):
+        """明確記 0 而非缺鍵——缺鍵無法區分「沒有壞列」與「這版還沒有這個遙測」。"""
+        stats: dict = {}
+        await self._run([self._row("ok", 0.3)], stats=stats)
+        self.assertEqual(stats["null_embedding_skipped"], 0)
+
+    async def test_skip_is_logged_at_warning(self):
+        with self.assertLogs("app.services.retrieval", level="WARNING") as cm:
+            await self._run([self._row("bad", None), self._row("ok", 0.4)])
+        self.assertTrue(
+            any("embedding IS NULL" in m for m in cm.output),
+            f"降級必須留下可搜尋的訊號，實際 log：{cm.output}",
+        )
+
+
 class TierBandContractTests(unittest.TestCase):
     """守約回歸：搜尋頁 band 契約凍結、rank_reports 與問答 band 設定解耦。"""
 

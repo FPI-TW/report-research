@@ -10,6 +10,7 @@ tier 是硬保證：字面全中永遠排在純語意命中之前，不靠 bonus
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
@@ -18,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.store import search_chunks_lexical, search_chunks_meta
 from app.services.textnorm import norm_for_match
+
+logger = logging.getLogger(__name__)
 
 W_PHRASE = 0.25
 W_ALL = 0.15
@@ -128,15 +131,35 @@ async def hybrid_search(
 
     seen: set[str] = set()
     scored: list[tuple[int, float, tuple]] = []
+    skipped_null_distance = 0
     for row in list(lex_rows) + list(dense_rows):
         chunk_id = row.chunk_id
         if chunk_id in seen:
             continue
         seen.add(chunk_id)
+        if row.distance is None:
+            # 縱深防禦第二層。`embedding` 允許 NULL，而 `NULL <=> vector` 回 NULL ⇒
+            # 下面那行 `float(None)` 會 TypeError ⇒ **整個查詢 500**。第一層是兩條
+            # SQL 的 `embedding IS NOT NULL`（store.py），這裡接住任何繞過它的路徑
+            # （新查詢、手改 SQL、未來的 UNION 分支）。
+            # 刻意「跳過並記數」而非拋例外：少一列候選是可接受的降級，整頁 500 不是。
+            # 但**必須留下訊號**——靜默跳過會讓「ingest 中途被砍」變成永遠查不出的
+            # 召回缺口。計數走 stats（進 qa_log）與 logger 各一份。
+            skipped_null_distance += 1
+            continue
         dense_sim = 1.0 - float(row.distance)
         tier, bonus = classify_match(phrase, terms, row.content)
         fused = min(0.999, round(dense_sim + bonus, 4))
         scored.append((tier, fused, row))
+
+    if skipped_null_distance:
+        logger.warning(
+            "檢索跳過 %s 列 embedding IS NULL 的 chunk——ingest 不完整，"
+            "請跑 `make db-audit` 確認範圍",
+            skipped_null_distance,
+        )
+    if stats is not None:
+        stats["null_embedding_skipped"] = skipped_null_distance
 
     scored.sort(key=lambda s: (s[0], s[1]), reverse=True)
     return scored

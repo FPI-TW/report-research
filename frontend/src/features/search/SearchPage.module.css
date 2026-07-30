@@ -11,7 +11,7 @@
 .toolbar { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; flex-shrink: 0; }
 
 .resultsHead { display: flex; align-items: baseline; gap: 12px; margin-top: 26px; padding-bottom: 12px; border-bottom: 1px solid var(--tf-border); }
-.resultsTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
+.resultsTitle { font-family: var(--tf-display); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
 .resultsSort { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); }
 .resultsHead > :last-child { margin-left: auto; }
 

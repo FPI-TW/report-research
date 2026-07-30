@@ -1,7 +1,7 @@
 /* 外層軌道：唯一持續存在的元素，寬度 60↔272 過渡即「平滑展開／收合」動畫；overflow 裁掉離場層多出的寬度。 */
 .rail {
   position: relative; flex: none; height: 100%; width: 272px;
-  background: var(--tf-sidebar); border-right: 1px solid var(--tf-border);
+  background: var(--tf-fill-subtle); border-right: 1px solid var(--tf-border);
   overflow: hidden;
   transition: width var(--tf-dur-3) var(--tf-ease-out);
 }
@@ -28,7 +28,7 @@
 .spacer { flex: 1; }
 /* 展開態 header：幾何同原版（高 60、logo 中心 x≈30、label 左緣 50）。 */
 .header { padding: 14px 12px 12px 13px; display: flex; align-items: center; gap: 3px; }
-.title { flex: 1; font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-ink-deep); }
+.title { flex: 1; font-family: var(--tf-display); font-weight: 700; font-size: 15px; color: var(--tf-ink-deep); }
 .toggleFull { border: none; background: none; border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-4); padding: 0; flex: none; transition: background .12s ease, color .12s ease; }
 .toggleFull:hover { background: var(--tf-border-weak); color: var(--tf-text-3); }
 .fullNav { padding: 0 10px; display: flex; flex-direction: column; gap: 2px; }

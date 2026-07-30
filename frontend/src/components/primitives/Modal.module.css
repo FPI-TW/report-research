@@ -19,7 +19,7 @@
   display: flex; align-items: center; gap: 12px;
   padding: 14px 20px; border-bottom: 1px solid var(--tf-divider);
 }
-.title { flex: 1; min-width: 0; font-family: var(--tf-serif); font-weight: 700; font-size: 15.5px; color: var(--tf-text-1); }
+.title { flex: 1; min-width: 0; font-family: var(--tf-display); font-weight: 700; font-size: 15.5px; color: var(--tf-text-1); }
 .close {
   border: none; background: var(--tf-border-weak); border-radius: 999px;
   width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;

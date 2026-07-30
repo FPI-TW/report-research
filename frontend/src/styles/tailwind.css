@@ -33,7 +33,9 @@
   --radius-lg: var(--tf-radius-card);
   --radius-xl: var(--tf-radius-panel);
 
-  --font-sans: var(--tf-sans);
-  --font-serif: var(--tf-serif);
+  /* 全站已無襯線字體：shadcn 的 font-serif 鍵仍需存在（animate-ui 元件可能引用），
+     但與 font-sans 同指 --tf-display，不再有第二個字體家族。 */
+  --font-sans: var(--tf-display);
+  --font-serif: var(--tf-display);
   --font-mono: var(--tf-mono);
 }

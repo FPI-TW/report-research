@@ -9,7 +9,7 @@
 
 /* 數據磚：大襯線數字＋等寬小標 */
 .stat { display: flex; flex-direction: column; justify-content: center; }
-.num { font-family: var(--tf-serif); font-weight: 700; font-size: 32px; color: var(--tf-ink-deep); line-height: 1; font-variant-numeric: tabular-nums; }
+.num { font-family: var(--tf-display); font-weight: 600; font-size: 32px; color: var(--tf-ink-deep); line-height: 1; font-variant-numeric: tabular-nums; }
 /* 鎏金只用在語意處：市場數是這個語料庫的廣度 */
 .gold { color: var(--tf-gold-strong); }
 .lbl { font-family: var(--tf-mono); font-size: 10px; letter-spacing: 0.14em; color: var(--tf-text-4); margin-top: 10px; }
@@ -26,7 +26,7 @@
 /* 更多清單磚 */
 .list { grid-column: 1 / 5; grid-row: 3; padding: 4px 20px; }
 .lh { display: flex; align-items: baseline; gap: 12px; padding: 14px 0 4px; }
-.t { font-family: var(--tf-serif); font-weight: 700; font-size: 14px; color: var(--tf-text-1); }
+.t { font-family: var(--tf-display); font-weight: 600; font-size: 14px; color: var(--tf-text-1); }
 .m { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); }
 .seeAll { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-ink); font-weight: 600; cursor: pointer; margin-left: auto; }
 .seeAll:hover { color: var(--tf-ink-hover); }
@@ -45,7 +45,7 @@
 .lrow:hover .ltitle { color: var(--tf-ink-deep); }
 .code { font-family: var(--tf-mono); font-size: 11px; font-weight: 600; color: var(--c); letter-spacing: 0.03em; }
 .ltitleWrap { min-width: 0; display: flex; align-items: baseline; }
-.ltitle { font-family: var(--tf-serif); font-weight: 700; font-size: 14.5px; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color 120ms var(--tf-ease-out); }
+.ltitle { font-family: var(--tf-display); font-weight: 600; font-size: 14.5px; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color 120ms var(--tf-ease-out); }
 .lsrc { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); margin-left: 10px; flex: none; }
 .ldate { font-family: var(--tf-mono); font-size: 11px; color: var(--tf-text-4); white-space: nowrap; }
 

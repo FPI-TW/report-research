@@ -24,7 +24,7 @@
 }
 
 .offerMain { flex: 1; min-width: 0; }
-.offerTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
+.offerTitle { font-family: var(--tf-display); font-weight: 600; font-size: 15px; color: var(--tf-text-1); }
 .offerSub { font-size: 12.5px; line-height: 1.6; color: var(--tf-text-3); margin-top: 3px; }
 
 /* 動作靠右，與版型縮圖之間留出明顯的間距，讓「選版型 → 按生成」讀得出先後 */
@@ -70,7 +70,7 @@
 }
 .doneHead { display: flex; align-items: center; gap: 8px; }
 .doneIcon { color: var(--tf-gold-text); }
-.doneTitle { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; color: var(--tf-text-1); }
+.doneTitle { font-family: var(--tf-display); font-weight: 600; font-size: 15px; color: var(--tf-text-1); }
 .doneMeta { font-size: 12.5px; color: var(--tf-text-3); margin: 8px 0 14px; }
 
 .dl {

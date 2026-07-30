@@ -15,7 +15,7 @@
   color: var(--tf-text-muted-aa);
   padding: 10px 14px;
   border-bottom: 1px solid var(--tf-border);
-  background: var(--tf-sidebar);
+  background: var(--tf-fill-subtle);
 }
 
 .table td {

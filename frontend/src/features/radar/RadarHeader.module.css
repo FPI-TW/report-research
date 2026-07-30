@@ -44,7 +44,7 @@
 }
 
 .title {
-  font-family: var(--tf-serif);
+  font-family: var(--tf-display);
   font-weight: 700;
   font-size: 34px;
   letter-spacing: -0.01em;

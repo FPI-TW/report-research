@@ -51,8 +51,8 @@
 .broker { font-weight: 600; color: var(--tf-text-1); }
 
 .headline {
-  font-family: var(--tf-serif);
-  font-weight: 700;
+  font-family: var(--tf-display);
+  font-weight: 600;
   font-size: 15.5px;
   line-height: 1.5;
   color: var(--tf-text-1);
@@ -74,7 +74,7 @@
 }
 
 .cite {
-  font-family: var(--tf-serif);
+  font-family: var(--tf-display);
   font-size: 13px;
   line-height: 1.6;
   color: var(--tf-text-muted-aa);

@@ -217,7 +217,9 @@ systemctl list-timers report-mark-backup.timer   # 排程：每日 03:30（Persi
 DUMP=/mnt/nas-backup/report-mark-db/daily/report-mark-critical-20260730_033000.dump
 
 # 1) 先證明這份 dump 讀得回來（完全不動 DB）
-docker exec -i report-mark-postgres pg_restore -l - < "$DUMP"
+#    **不可寫成 `pg_restore -l -`**：`-` 是 psql 的慣例，pg_restore 會把它當檔名而
+#    以 `could not open input file "-"` 失敗。它在沒有檔名引數時就讀 stdin。
+docker exec -i report-mark-postgres pg_restore -l < "$DUMP"
 
 # 2) 還原到臨時 DB 驗過，再碰生產
 docker exec -i report-mark-postgres psql -U postgres -c 'CREATE DATABASE restore_check;'
@@ -229,6 +231,14 @@ docker exec -i report-mark-postgres psql -U postgres -d restore_check \
   -c 'select count(*) from research.qa_log;' \
   -c 'select count(*) from research.report_doc;'
 
+# 預期輸出：**必定出現 2 個 FK 錯誤**，這是正常的，不是備份壞了——
+#   ERROR: relation "research.research_report" does not exist
+#     （report_takeaway / report_signal 的 report_id FK 指向未納入備份的語料層）
+#   pg_restore: warning: errors ignored on restore: 2
+# **而 pg_restore 的退出碼仍然是 0。** 所以「rc=0 就是還原乾淨」是錯的判準：
+# 要看的是 `errors ignored on restore:` 那一行的數字（臨時 DB 演練＝恰好 2，
+# 多於 2 就要查）。2026-07-30 的演練就是這樣量出來的。
+
 # 3) 確認筆數合理後才動生產。單張表被誤刪／誤清時只還原那一張：
 docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges -t qa_log < "$DUMP"
@@ -237,12 +247,31 @@ docker exec -i report-mark-postgres pg_restore -U postgres -d research \
 make schema                                    # 先把 schema 建回來（含 vector 擴充與索引）
 docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges --data-only --disable-triggers < "$DUMP"
-docker exec -i report-mark-postgres psql -U postgres -d research -c 'DROP DATABASE restore_check;'
+
+# 5) 收尾：清掉步驟 2 的臨時 DB（**不可在 -d restore_check 連線上下這道指令**，
+#    PostgreSQL 不允許 DROP 自己正連著的資料庫）
+docker exec -i report-mark-postgres psql -U postgres -c 'DROP DATABASE restore_check;'
 ```
 
 第 4 步用 `--data-only` 是因為 `make schema` 已經把表建好了（含 CHECK 與索引）；`--disable-triggers` 讓 `report_takeaway` / `report_signal` 的 FK 檢查在載入時先讓開——**但那只在 `research_report` 也還原到相同 `report_id` 時才有意義**，見上面的已知代價。
 
 `pg_restore` 的退出碼要看：非 0 就是沒還原完，**不要因為「有些表看起來有資料」就當成功**。
+但反過來**不成立**——見步驟 2 的註解：臨時 DB 還原必定有 2 個 FK 錯誤而 rc 仍是 0。
+
+### 演練紀錄
+
+| 日期 | 做了什麼 | 結果 |
+|---|---|---|
+| 2026-07-30 | 手動 `make db-backup` → 依上述步驟 1-2 還原到 `restore_check` → 七張表逐表比列數 → 三張大表比內容 md5（含 `report_doc.markdown`）→ 清除臨時 DB | **通過**。七張表列數與內容雜湊全數相符（qa_log 79／report_doc 14／report_rendition 1／report_run 5／report_section 40／report_signal 398／report_takeaway 3094）。生產庫未受影響 |
+
+那次演練抓出三個缺陷。文件這兩條（`pg_restore -l -` 不成立、「rc=0 即乾淨」是錯判準）
+在此修正；第三條是**排程其實跑不起來**——`docker` 偵測只看 binary 存在與否，而本機
+`/usr/bin/docker` 是 WSL integration 留下的死連結（`docker info` rc=1），備份在第一步
+就中止，而 unit 已 enabled/active，從外面看起來卻像備份有在跑。那條已由 PR #151
+（`scripts/_docker_bin.sh` 的 `detect_docker_bin`）修掉。
+
+**演練值得定期重做**：三個缺陷沒有一個是讀程式碼看得出來的——備份檔存在、unit 是
+active、`pg_restore` 退出碼是 0，每一個訊號都指向「沒問題」。
 
 ### `make ingest-lowio` 現在有硬閘
 

@@ -24,6 +24,16 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // 本 repo 既有慣例是以 `_` 前綴表示「刻意不用」（測試的 `(..._a)`、
+      // 解構時 `const { file_hash: _omitted, ...rest }` 這種「拔掉一個鍵」寫法）。
+      // 預設設定會把這些判成錯，於是唯一的解法變成改寫成更難讀的寫法——把慣例
+      // 寫進規則才是正解。ignoreRestSiblings 專門對應那個 rest 解構 idiom。
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      }],
     },
   },
 )

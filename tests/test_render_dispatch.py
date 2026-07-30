@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 import app.services.report as rpt  # noqa: E402
-from app.services.pdf import REPORT_DISCLAIMER, render_report_pdf as weasy_render  # noqa: E402
+from app.services.pdf import REPORT_DISCLAIMER  # noqa: E402
 
 _MD = "## 執行摘要\n\n內文[1]。\n\n## 引用來源\n\n[1] a.pdf（TW·2026-06-01）\n"
 _META = {"date": "2026-07-17", "question": "Q"}

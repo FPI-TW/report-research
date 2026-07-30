@@ -178,7 +178,7 @@ def eps_comparable(a: dict, b: dict) -> bool:
 
 
 # ── LLM 必須回傳的固定 JSON schema（供 prompt 與解析對齊）──
-SIGNAL_INSTRUCTION = f"""你是金融研報結構化擷取助手。閱讀以下券商研報內文，針對指定的標的清單，
+SIGNAL_INSTRUCTION = """你是金融研報結構化擷取助手。閱讀以下券商研報內文，針對指定的標的清單，
 擷取每個標的的「評等、目標價、EPS 預估、四維論點」。
 
 嚴格規則（違反會被系統丟棄）：
@@ -194,26 +194,26 @@ SIGNAL_INSTRUCTION = f"""你是金融研報結構化擷取助手。閱讀以下�
    某標的研報中完全沒有可擷取內容時，該標的可整個省略。
 
 JSON 格式：
-{{
+{
   "signals": [
-    {{
+    {
       "instrument_code": "<4 碼代碼，須在指定清單內>",
-      "rating": {{"raw": "<研報原文評等或 null>", "evidence": "<原句或 null>"}},
-      "target_price": {{"value": <數字或 null>, "currency": "<TWD/USD/HKD/CNY…>",
-                        "horizon": "<如 12M/年底 或 null>", "evidence": "<原句或 null>"}},
+      "rating": {"raw": "<研報原文評等或 null>", "evidence": "<原句或 null>"},
+      "target_price": {"value": <數字或 null>, "currency": "<TWD/USD/HKD/CNY…>",
+                        "horizon": "<如 12M/年底 或 null>", "evidence": "<原句或 null>"},
       "eps_estimates": [
-        {{"fiscal_year": <西元年整數>, "period": "<FY/1H/Q1…>", "currency": "<幣別>",
-          "value": <數字>, "unit": "per_share", "evidence": "<原句>"}}
+        {"fiscal_year": <西元年整數>, "period": "<FY/1H/Q1…>", "currency": "<幣別>",
+          "value": <數字>, "unit": "per_share", "evidence": "<原句>"}
       ],
-      "thesis": {{
-        "outlook":   {{"stance": "positive|neutral|negative", "summary": "<一句>", "evidence": "<原句>"}},
-        "catalyst":  {{"stance": "positive|neutral|negative", "summary": "<一句>", "evidence": "<原句>"}},
-        "risk":      {{"stance": "easing|stable|rising",       "summary": "<一句>", "evidence": "<原句>"}},
-        "valuation": {{"stance": "attractive|fair|stretched",  "summary": "<一句>", "evidence": "<原句>"}}
-      }}
-    }}
+      "thesis": {
+        "outlook":   {"stance": "positive|neutral|negative", "summary": "<一句>", "evidence": "<原句>"},
+        "catalyst":  {"stance": "positive|neutral|negative", "summary": "<一句>", "evidence": "<原句>"},
+        "risk":      {"stance": "easing|stable|rising",       "summary": "<一句>", "evidence": "<原句>"},
+        "valuation": {"stance": "attractive|fair|stretched",  "summary": "<一句>", "evidence": "<原句>"}
+      }
+    }
   ]
-}}
+}
 
 四維 stance 用詞固定（各維度不同）：
 - outlook（展望）、catalyst（催化劑）：positive / neutral / negative

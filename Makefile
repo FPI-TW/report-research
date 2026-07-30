@@ -16,10 +16,10 @@ DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command
 COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
-        ingest ingest-lowio restore-durability align serve search \
+        ingest ingest-lowio restore-durability align serve search build-web \
         stats reset-db clean-data pipeline signals takeaways titles \
         up-edge down-edge edge-logs edge-reload \
-        sync-once db-backup freshness
+        sync-once db-backup
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -102,6 +102,12 @@ takeaways:  ## 閱讀頁重點摘錄擷取（近 90 天，冪等可續傳；先 
 	uv run python scripts/extract_takeaways.py
 
 # ───── 檢索 ─────
+# 刻意**不**讓 serve 相依 build-web：serve 是生產 systemd 的 ExecStart，讓它跑
+# `npm ci` 等於把一次 npm registry 不通變成「站台起不來」。前端改動要生效請自己
+# 先跑 `make build-web`（或 cd frontend && npm run build）再 restart。
+build-web:  ## 建置 SPA → frontend/dist（前端改動後必跑；npm run build 內含 tsc）
+	cd frontend && npm ci && npm run build
+
 serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
 	uv run uvicorn web.server:app --host 0.0.0.0 --port $(PORT)
 
@@ -146,10 +152,3 @@ sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync
 # 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
 db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
 	bash scripts/db_backup.sh
-
-# 為什麼要一支獨立的偵測器：sync 殼把摘要／標題／摘錄設成 best-effort（失敗只 log
-# 不 exit），那個設計是對的，但代價是連續失敗永遠不會讓 unit 變紅 ⇒ OnFailure 一次
-# 都不觸發。2026-07 實測 takeaway 停更 8 天、signal 停更 12 天都是事後才發現。
-# 平時由 report-mark-freshness.timer 每日 08:30 跑，非零退出接既有告警鏈。
-freshness:  ## 偵測派生資產是否停更（純 SQL 零 LLM；0＝新鮮／1＝停更／2＝查不到）
-	uv run python scripts/check_batch_freshness.py

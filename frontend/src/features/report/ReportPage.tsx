@@ -118,7 +118,11 @@ export default function ReportPage() {
   // 全文一到就自動捲到命中段：從檢索命中點進來，要看的就是那一段。
   // 依 offset（而非 hit 物件）觸發：重抓回同一個位置時不該再把讀者拉回去一次。
   const hitStart = hit?.start ?? null
+  // set-state-in-effect 在此刻意豁免：jumpTo 的作用是捲動 DOM（外部系統），
+  // 它順帶記的狀態只是「目前停在哪個命中」。時機上也必須是 effect——要等全文
+  // 真的掛上 DOM 之後才捲得到，render 期做不到。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (hitStart != null) jumpTo('hit')
   }, [hitStart, jumpTo])
 

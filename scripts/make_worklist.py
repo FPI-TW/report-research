@@ -7,7 +7,6 @@ resume：已存在 data/tags/<hash>.json 者略過（不放入 worklist）。
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]

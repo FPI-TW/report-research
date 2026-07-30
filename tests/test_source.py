@@ -308,7 +308,7 @@ class ForeignSignatureWindowTests(unittest.TestCase):
 
     def test_clsa_taiwan_disclaimer_selfref(self):
         # CLSA 台灣（CLST）個股報告免責聲明與圖表自我標註（雙鴻/台達電等 20+ 篇實形式）
-        txt = "Net debt/equity (%) 4.5 4.6 Source: CLST  CLSA and CL Securities Taiwan Co., Ltd. (“CLST”) do and seek to do business"
+        txt = "Net debt/equity (%) 4.5 4.6 Source: CLST  CLSA and CL Securities Taiwan Co., Ltd. (“CLST”) do and seek to do business"  # noqa: E501
         self.assertEqual(extract_source_from_text(txt), "clsa")
 
 

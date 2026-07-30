@@ -46,8 +46,9 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("mark", "retrieve"), calls)
 
     async def test_rerank_top_m_zero_skips_rerank(self):
-        import app.services.retrieval_pipeline as rp
         from unittest import mock
+
+        import app.services.retrieval_pipeline as rp
 
         called = {"n": 0}
         seen = {}
@@ -82,8 +83,9 @@ class RetrieveContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(seen["build_scored"], hybrid_out)  # build_context 收到未變動的原 scored
 
     async def test_rerank_top_m_positive_calls_rerank_and_marks_timer(self):
-        import app.services.retrieval_pipeline as rp
         from unittest import mock
+
+        import app.services.retrieval_pipeline as rp
 
         seen = {}
 

@@ -18,7 +18,6 @@ warnings.filterwarnings(
 
 from fastapi.testclient import TestClient
 
-from web import deps  # noqa: E402
 from web.server import app
 
 

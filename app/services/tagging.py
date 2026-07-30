@@ -138,7 +138,7 @@ futures_targets：報告涉及的期貨商品，從下列固定小詞表選 0 �
 3. 非研究檔 is_research=false（其餘欄位仍盡量填，instrument_types / stock_targets / futures_targets 可為 []）。
 4. confidence 表示你對市場代碼的信心。
 5. 若涉及多市場，選報告主軸；真的跨多市場且無單一主軸才用 GLOBAL。
-"""
+"""  # noqa: E501
 
 
 def normalize_market(value: Optional[str]) -> Optional[str]:

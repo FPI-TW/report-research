@@ -145,16 +145,47 @@ class ServerWiringTests(unittest.TestCase):
         self.assertIn("configure_logging()", _SERVER_SRC)
 
     def test_configure_runs_after_env_load_and_before_service_imports(self):
-        """順序是硬需求：晚於 .env（要讀 LOG_LEVEL），早於任何會 getLogger 的模組。"""
-        i_env = _SERVER_SRC.index("load_env_file(Path(__file__)")
-        i_cfg = _SERVER_SRC.index("configure_logging()")
+        """順序是硬需求：晚於 .env（要讀 LOG_LEVEL），早於任何會 getLogger 的模組。
+
+        **走 AST 而非字面比對**：原本用 `_SERVER_SRC.index("from web import deps")`，
+        而 ruff 的 isort 會把同模組的 from-import 併成一行
+        （`from web import auth, concurrency, deps, report_runs`），於是那個字面
+        消失、測試紅掉——紅的是格式，不是順序。順序這件事 AST 看得更準也更穩。
+        """
+        import ast
+
+        tree = ast.parse(_SERVER_SRC)
+
+        def _call_line(func_name: str) -> int:
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == func_name
+                ):
+                    return node.lineno
+            self.fail(f"web/server.py 找不到 {func_name}(...) 呼叫")
+
+        i_env = _call_line("load_env_file")
+        i_cfg = _call_line("configure_logging")
         self.assertLess(i_env, i_cfg, "LOG_LEVEL 來自 .env，設定必須晚於載入")
-        for mod in ("from web import deps", "from web.routers import", "from web import auth"):
+
+        # `web.env_loader` 刻意在最前面（它就是載 .env 的那支），不算服務模組。
+        service_imports = [
+            (node.lineno, node.module)
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            and node.module
+            and (node.module == "web" or node.module.startswith("web."))
+            and node.module != "web.env_loader"
+        ]
+        self.assertTrue(service_imports, "web/server.py 竟然沒有任何 web.* import？")
+        for lineno, mod in service_imports:
             with self.subTest(mod=mod):
                 self.assertLess(
                     i_cfg,
-                    _SERVER_SRC.index(mod),
-                    f"{mod} 會連帶載入服務模組，logging 設定必須更早",
+                    lineno,
+                    f"from {mod} import ... 會連帶載入服務模組，logging 設定必須更早",
                 )
 
 

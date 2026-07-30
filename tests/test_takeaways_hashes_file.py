@@ -76,7 +76,7 @@ class ReadHashesFileTests(unittest.TestCase):
 class CliArgTests(unittest.TestCase):
     def test_hashes_file_arg_exists(self):
         """契約防護：排程接線靠這個參數。被移掉的話 sync 腳本會靜默失效。"""
-        mod = _load()
+        _load()  # 匯入本身就是斷言：這支腳本必須 import 得起來
         import argparse
 
         # 重建 parser（腳本把 add_argument 寫在 __main__ 區塊外的函式或內聯皆可）

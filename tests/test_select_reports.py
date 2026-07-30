@@ -84,9 +84,15 @@ EXPECTED = (
 class SelectReportsTests(unittest.TestCase):
     def test_returns_ordered_selected_reports(self):
         from app.services.answer import (
-            select_reports, MAX_REPORTS, MAX_PASSAGES_PER_REPORT,
-            MAX_CONTEXT_CHARS, RECENCY_HALF_LIFE_DAYS, ASK_MIN_REPORTS,
-            ASK_RELEVANCE_FLOOR, ASK_STALE_AGE_DAYS, ASK_MAX_STALE_REPORTS,
+            ASK_MAX_STALE_REPORTS,
+            ASK_MIN_REPORTS,
+            ASK_RELEVANCE_FLOOR,
+            ASK_STALE_AGE_DAYS,
+            MAX_CONTEXT_CHARS,
+            MAX_PASSAGES_PER_REPORT,
+            MAX_REPORTS,
+            RECENCY_HALF_LIFE_DAYS,
+            select_reports,
         )
         sel = select_reports(
             _fixture(),

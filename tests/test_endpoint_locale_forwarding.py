@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from fastapi.testclient import TestClient  # noqa: E402
+
 from web import deps  # noqa: E402
 from web.routers import report as report_routes  # noqa: E402
 from web.server import app  # noqa: E402

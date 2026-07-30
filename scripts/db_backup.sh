@@ -29,8 +29,10 @@ DB_NAME="${DB_NAME:-research}"
 # /etc/default/report-mark-sync，備份 unit 也讀那個檔）。
 DOCKER_BIN="${DOCKER_BIN:-$(command -v docker || echo '/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe')}"
 
-# 備份落點。既有的 /mnt/nas-research 是 `-o ro` 掛載（研報來源刻意唯讀），寫不進去，
-# 所以另有一支 rw 掛載 deploy/systemd/mount-nas-backup → /mnt/nas-backup。
+# 備份落點。既有的 /mnt/nas-research 是 `-o ro` 掛載（研報來源刻意唯讀），寫不進去；
+# 而「同一個 share 再以 rw 掛第二次」2026-07-30 實測也不行——那組帳號對 `投資研究處`
+# 只有讀取權，rw 掛載仍得 EACCES。所以 deploy/systemd/mount-nas-backup 掛的是**另一個
+# share**，UNC 與落點都由 /etc/default/report-mark-sync 提供（見該檔的備份段）。
 BACKUP_MOUNT="${REPORT_MARK_BACKUP_MOUNT:-/mnt/nas-backup}"
 BACKUP_DIR="${REPORT_MARK_BACKUP_DIR:-$BACKUP_MOUNT/report-mark-db}"
 MOUNT_HELPER="${REPORT_MARK_BACKUP_MOUNT_HELPER:-/usr/local/sbin/mount-nas-backup}"
@@ -82,8 +84,23 @@ mountpoint -q "$BACKUP_MOUNT" || die "備份落點 $BACKUP_MOUNT 未掛載 → �
 
 MKDIR_RC=0
 mkdir -p "$DAILY_DIR" "$WEEKLY_DIR" || MKDIR_RC=$?
-[ "$MKDIR_RC" -eq 0 ] || die "無法建立 $BACKUP_DIR（rc=$MKDIR_RC）。\
-若 $BACKUP_MOUNT 是以 -o ro 掛的（研報來源那支就是），備份寫不進去，需改用 rw 掛載。"
+if [ "$MKDIR_RC" -ne 0 ]; then
+  # 兩種失敗的處置完全不同，所以訊息要幫人分辨：
+  #   Read-only file system（EROFS）＝ Linux 的 mount 旗標在擋 → 改掛載選項有救
+  #   Permission denied（EACCES）    ＝ 伺服器端 ACL 在擋   → 換 share／要 NAS 開權限，
+  #                                     加 rw 旗標沒有用（2026-07-30 實測過）
+  HINT="$(mkdir -p "$BACKUP_DIR" 2>&1 | tail -1)"
+  case "$HINT" in
+    *"Read-only file system"*|*"唯讀"*)
+      WHY="$BACKUP_MOUNT 是唯讀掛載（Linux 旗標）→ 檢查 mount-nas-backup 的選項。" ;;
+    *"Permission denied"*|*"拒絕"*)
+      WHY="伺服器端不給寫（EACCES）→ 那個 NAS 帳號對這個 share 沒有寫入權。\
+換一個寫得進去的 share（改 /etc/default/report-mark-sync 的 NAS_BACKUP_UNC 與 \
+REPORT_MARK_BACKUP_DIR），或請 NAS 端開權限。**加 rw 掛載旗標沒有用。**" ;;
+    *) WHY="原始錯誤：$HINT" ;;
+  esac
+  die "無法建立 $BACKUP_DIR（rc=$MKDIR_RC）。$WHY"
+fi
 
 # 掛載存在不代表可寫（drvfs 以 ro 掛也會通過 mountpoint 檢查），實際寫一下才算數。
 PROBE="$BACKUP_DIR/.write_probe.$$"

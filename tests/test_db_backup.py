@@ -69,6 +69,82 @@ def _directives(path: Path, key: str) -> list[str]:
     return out
 
 
+MOUNT_HELPER = SYSTEMD_DIR / "mount-nas-backup"
+SYNC_ENV_EXAMPLE = SYSTEMD_DIR / "report-mark-sync.env.example"
+
+
+class MountHelperTests(unittest.TestCase):
+    """掛載腳本的兩條契約，都來自 2026-07-30 的實測。
+
+    (1) 落點**不能**是 `投資研究處`。那組 NAS 帳號對它只有讀取權——第二個掛載點即使
+        `/proc/mounts` 確認是 `rw`，寫入仍得 `Permission denied`（EACCES，伺服器端在
+        擋），而唯讀那支得到的是 `Read-only file system`（EROFS，Linux 旗標在擋）。
+        兩個 errno 不同正是判定依據。**加 rw 旗標救不了 ACL**，這條測試防的是有人
+        照直覺改回同一個 share。
+
+    (2) 讀環境檔**不能用 `source`**。那個檔是給 systemd 的 `EnvironmentFile` 讀的，
+        systemd 不做 shell 解析，所以值合法地可能含 `(` `)`（實際落點就是
+        `01.會議暫存(會後刪除)`）。實測 `bash -c '. 該檔'` 直接
+        `syntax error near unexpected token '('`——source 一個給 systemd 讀的檔是
+        安靜的地雷，更糟的情況是值被當指令求值。
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MOUNT_HELPER)
+        self.live = "\n".join(_live_lines(self.text))
+
+    def test_does_not_mount_the_read_only_research_share(self) -> None:
+        self.assertNotIn(
+            "投資研究處",
+            self.live,
+            "那個 share 的 NAS 帳號只有讀取權（EACCES，非 mount 旗標問題）；"
+            "備份必須落在另一個寫得進去的 share。",
+        )
+
+    def test_reads_env_file_without_sourcing_it(self) -> None:
+        for forbidden in ("source ", ". /etc/default", ". \"$DEFAULTS\"", ". $DEFAULTS"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(
+                    forbidden,
+                    self.live,
+                    "環境檔的值含括號，source 會 syntax error；請逐鍵取值。",
+                )
+        self.assertIn("sed -n", self.live, "應以逐鍵解析取代 source")
+
+    def test_unc_and_mount_point_are_overridable(self) -> None:
+        for key in ("NAS_BACKUP_UNC", "REPORT_MARK_BACKUP_MOUNT"):
+            with self.subTest(key=key):
+                self.assertIn(key, self.live, "主機專屬值不該寫死在 repo")
+
+
+class BackupDestinationTests(unittest.TestCase):
+    """環境檔範例必須指向一個實際寫得進去的 share，且標明落點是臨時的。"""
+
+    def setUp(self) -> None:
+        self.text = _read(SYNC_ENV_EXAMPLE)
+        self.live = "\n".join(_live_lines(self.text))
+
+    def test_backup_unc_is_set_and_not_the_read_only_share(self) -> None:
+        self.assertIn("NAS_BACKUP_UNC=", self.live)
+        unc = next(
+            ln.split("=", 1)[1] for ln in _live_lines(self.text) if "NAS_BACKUP_UNC=" in ln
+        )
+        self.assertNotIn("投資研究處", unc, "該 share 唯讀（伺服器端 ACL）")
+
+    def test_interim_destination_is_flagged_as_interim(self) -> None:
+        """落點目前在一個名為「會後刪除」的暫存區——那是刻意的過渡，但必須寫明，
+        否則下一個人會以為那裡是永久位置。備份內容（qa_log／report_doc）不可重建。"""
+        backup_dir = next(
+            (ln for ln in _live_lines(self.text) if "REPORT_MARK_BACKUP_DIR=" in ln), ""
+        )
+        if "會後刪除" in backup_dir:
+            self.assertIn(
+                "臨時",
+                self.text,
+                "落點在會被清掉的暫存區時，環境檔必須明寫這是臨時安排",
+            )
+
+
 class BackupUnitTests(unittest.TestCase):
     """`report-mark-backup.service` / `.timer` 的形狀。"""
 

@@ -193,7 +193,18 @@ systemctl list-timers report-mark-backup.timer   # 排程：每日 03:30（Persi
 幾個刻意的設計：
 
 - **掛載不可用就失敗，絕不退回本地路徑。** 備份的全部價值在「跟 pgdata 不同一塊磁碟」；靜默寫本地會產出一份看起來成功、實際上跟 pgdata 一起死的備份，還會餵飽下面那個 `ingest-lowio` 閘門——把安全網變成假象比沒有安全網更糟。
-- **既有的 `/mnt/nas-research` 是 `-o ro`**（研報來源刻意唯讀），寫不進去。所以另有一支 rw 掛載 `deploy/systemd/mount-nas-backup` → `/mnt/nas-backup`（同一個 share、不同選項、不同掛載點），搭配 `deploy/systemd/report-mark-backup.sudoers`。
+- **落點必須是另一個 share，不是「同一個 share 再掛一次 rw」。** 這一點 2026-07-30 用實測否證過一次，證據留在這裡免得有人再走一遍：
+
+  | 掛載點 | `/proc/mounts` 旗標 | `touch` 的錯誤 | 誰在擋 |
+  |---|---|---|---|
+  | `/mnt/nas-research` | `ro` | `Read-only file system`（EROFS） | Linux 的 mount 旗標 |
+  | `/mnt/nas-backup`（曾指向同一 share） | **`rw`** | `Permission denied`（EACCES） | **伺服器端 ACL** |
+
+  兩個 errno 不同正是判定依據：第二個掛載確認是 `rw`，所以不是旗標問題——那組 NAS 帳號對 `投資研究處` 就只有讀取權，而 Linux 端的 mount 旗標給不了伺服器不給的權限。**加 rw 旗標救不了 ACL。** 所以 `deploy/systemd/mount-nas-backup` 掛的是另一個 share，UNC 與落點都由 `/etc/default/report-mark-sync` 提供（`NAS_BACKUP_UNC` / `REPORT_MARK_BACKUP_DIR`），搭配 `deploy/systemd/report-mark-backup.sudoers`。`tests/test_db_backup.py` 的 `MountHelperTests` 會擋住改回唯讀那個 share。
+
+  > **目前的落點是臨時的**：`公用資料夾/01.會議暫存(會後刪除)/Jacky/`。那個資料夾依命名就是會後清掉的暫存區，而備份內容（`qa_log`、`report_doc.markdown`）不可重建。等 NAS 開好不會被清的位置，只要改 `/etc/default/report-mark-sync` 的 `REPORT_MARK_BACKUP_DIR` 一個值，腳本與 unit 都不必動。
+
+- **掛載腳本讀環境檔用逐鍵 `sed`，不用 `source`。** 那個檔是給 systemd 的 `EnvironmentFile` 讀的，systemd **不做 shell 解析**，所以值合法地可能含 `(` `)`——實際落點就是一例。實測 `bash -c '. /etc/default/report-mark-sync'` 直接 `syntax error near unexpected token '('`。對一個「給 systemd 讀的檔」下 `source` 是安靜的地雷，更糟的情況是值被當指令求值。
 - **驗過才改名成 `*.dump`。** 先寫 `.partial-*`，檢查檔頭魔數 `PGDMP` 與大小下限後才原子 `mv`。備份最惡劣的失敗型態是「檔案在、內容不能用」，而 `.dump` 這個副檔名同時是保留策略與新鮮度閘門的判準。
 - **`docker exec` 一律不加 `-t`。** 配 TTY 會對 stdout 做行尾轉換，把二進位 dump 悄悄弄壞——檔案照樣產出、大小也合理，直到還原那天才發現。
 - **週備用 `cp` 不用 hardlink。** drvfs 的 hardlink 支援不可靠，而「以為連結還在、其實日備輪替時一起砍掉了」是完全靜默的資料消失。
@@ -248,18 +259,25 @@ sudo install -m 0440 -o root -g root "$REPO"/deploy/systemd/report-mark-backup.s
   /etc/sudoers.d/report-mark-backup
 sudo cp "$REPO"/deploy/systemd/report-mark-backup.service \
         "$REPO"/deploy/systemd/report-mark-backup.timer /etc/systemd/system/
+# 環境檔要一起更新——NAS_BACKUP_UNC 與 REPORT_MARK_BACKUP_DIR 都在裡面，
+# 掛載腳本與備份 unit 都讀它。少了這步，掛載腳本會退回內建預設。
+sudo cp "$REPO"/deploy/systemd/report-mark-sync.env.example /etc/default/report-mark-sync
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-backup.timer
 
+# 換過落點時，舊掛載要先卸掉——mountpoint -q 會通過，然後在寫入探測才失敗
+sudo umount /mnt/nas-backup 2>/dev/null || true
+
 # 首跑與驗收
-sudo systemctl start report-mark-backup.service
-journalctl -u report-mark-backup.service -n 40 --no-pager
-ls -lh /mnt/nas-backup/report-mark-db/daily
+make db-backup                       # 或 sudo systemctl start report-mark-backup.service
+ls -lh "$(sed -n 's/^REPORT_MARK_BACKUP_DIR=//p' /etc/default/report-mark-sync)/daily"
 ```
 
-`/etc/default/report-mark-sync` 是共用的環境檔（備份 unit 也讀它），備份專屬旋鈕的範例在 `deploy/systemd/report-mark-sync.env.example`。
+`/etc/default/report-mark-sync` 是共用的環境檔（備份 unit 與掛載腳本都讀它），備份專屬旋鈕的範例在 `deploy/systemd/report-mark-sync.env.example`。
 
-**待驗（本輪未在主機上執行）**：NAS 帳號對 `\\192.168.1.100\投資研究處` 是否有寫入權、同一個 share 以 drvfs 掛在第二個掛載點是否如預期，都要等實際安裝那次才知道。備份腳本的落點檢查、原子改名、檔頭驗證與輪替已用假 `docker` 二進位在沙箱驗過。
+**已驗（2026-07-30）**：`投資研究處` 的寫入權——**沒有**，見上面的 errno 對照表；掛載腳本、sudoers、`rw` 掛載本身都正常。落點已改為 `公用資料夾`。
+
+**仍待驗**：新 share 的寫入權（首跑就知道）、以及 `docker.exe` 透過 WSL interop 把二進位 dump 送回 WSL 檔案是否位元完整——檔頭魔數 + 大小檢查只擋得住頭尾壞掉，**首次安裝時應該真的做一次上面那節的還原比對**。備份腳本的落點檢查、原子改名、檔頭驗證與輪替已用假 `docker` 二進位在沙箱驗過。
 
 ## 這一輪刻意沒做
 

@@ -843,6 +843,19 @@ async def advance_status(
     """原子推進 report_run.status（＋可選欄），單一交易 UPDATE + updated_at。
 
     傳 status='' 表不改狀態、只更新附帶欄位。轉換不合法拋 InvalidTransition。
+
+    **「原子」靠的是 UPDATE 自帶 `AND status = :expected_row_status`，不是靠上面那次
+    SELECT。** 先前的寫法是 check-then-update：SELECT 讀狀態、Python 判斷合法性、
+    UPDATE 不帶任何狀態條件——兩個併發呼叫可以同時讀到 `drafting`、同時通過守門、
+    同時 UPDATE，後到的無聲覆蓋先到的。對照 `create_run` 一直都用條件式 UPDATE，
+    這裡是漏掉的那個。
+
+    重試由呼叫端決定：狀態機的合法轉換多半不可重入（`drafting → verifying` 重跑
+    一次等於重付一輪 LLM 成本），所以這裡只回報衝突、不自動重試。
+
+    同時修掉一個更隱蔽的：舊碼的 `target = status or current` 讓 `status=''`
+    （只更新附帶欄位）把**剛讀到的舊狀態原樣寫回**，併發下等於靜默倒退狀態機。
+    現在不改狀態就完全不碰該欄。
     """
     async with SessionFactory() as session:
         cur_row = (
@@ -858,12 +871,18 @@ async def advance_status(
             raise InvalidTransition(
                 f"預期 {expected_current} 但實為 {current}（run={run_id}）"
             )
-        target = status or current
         if status and not is_valid_transition(current, status):
             raise InvalidTransition(f"{current} → {status}（run={run_id}）")
 
-        sets = ["status = :st", "updated_at = now()"]
-        params: dict[str, Any] = {"id": run_id, "st": target}
+        sets = ["updated_at = now()"]
+        params: dict[str, Any] = {"id": run_id}
+        if status:
+            # **不改狀態時就完全不碰 status 欄。** 舊碼寫的是 `target = status or
+            # current` ⇒ `status=''`（只更新附帶欄位）會把**剛才讀到的舊狀態原樣寫
+            # 回去**。單執行緒下看不出來，併發下就是靜默倒退：另一條路徑已推進到
+            # verifying，這裡一個 checkpoint 寫入就把它打回 drafting，而且不留痕跡。
+            sets.append("status = :st")
+            params["st"] = status
         if outline is not None:
             sets.append("outline = CAST(:outline AS jsonb)")
             params["outline"] = json.dumps(outline, ensure_ascii=False)
@@ -886,12 +905,27 @@ async def advance_status(
             sets.append("error_detail = :err")
             params["err"] = error_detail
 
-        await session.execute(
-            text(
-                f"UPDATE research.report_run SET {', '.join(sets)} WHERE id = :id"
-            ),
+        # 條件式 UPDATE：把「狀態自 SELECT 之後沒被別人改過」寫進 WHERE，而不是相信
+        # 剛才那次讀。`current` 來自同一交易的 SELECT，比對的就是「我做決定時所根據
+        # 的那個值」。**只在真的要改狀態時加這個條件**——附帶欄位（checkpoint、
+        # revision id）與狀態無關，為它們擋下併發的狀態轉換是白擋。
+        where = "id = :id"
+        if status:
+            where += " AND status = :expected_row_status"
+            params["expected_row_status"] = current
+        result = await session.execute(
+            text(f"UPDATE research.report_run SET {', '.join(sets)} WHERE {where}"),
             params,
         )
+        if result.rowcount == 0:
+            # 列存在是上面那次 SELECT 保證的，所以 0 列只有一個成因：狀態在 SELECT 與
+            # UPDATE 之間被另一個呼叫改掉了。回滾並拋 InvalidTransition——與「轉換不
+            # 合法」共用同一個例外型別，因為對呼叫端而言是同一件事：你以為的狀態不是
+            # 現在的狀態。
+            await session.rollback()
+            raise InvalidTransition(
+                f"併發衝突：{current} → {status} 時狀態已被其他呼叫改動（run={run_id}）"
+            )
         await session.commit()
 
 

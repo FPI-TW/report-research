@@ -25,7 +25,10 @@
 魔數、輪替）已在開發時以假 `docker` 二進位在沙箱驗過，但那需要建立暫存目錄與
 假二進位，放進 CI 只會換來一支對環境敏感的測試。
 """
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -71,6 +74,84 @@ def _directives(path: Path, key: str) -> list[str]:
 
 MOUNT_HELPER = SYSTEMD_DIR / "mount-nas-backup"
 SYNC_ENV_EXAMPLE = SYSTEMD_DIR / "report-mark-sync.env.example"
+
+
+class ConfigResolutionRuntimeTests(unittest.TestCase):
+    """**執行期**測試，因為這一段的兩個缺陷靜態測試都看不出來（2026-07-30 實際踩到）。
+
+    缺陷一：腳本原本只從環境變數讀落點，而 `/etc/default/report-mark-sync` 只有
+    systemd 的 `EnvironmentFile=` 會載入——手動 `make db-backup` 完全不會。結果是
+    **unit 與手動跑寫到不同地方**，而手動那條落回 share 根目錄（不可寫），失敗訊息
+    看起來像 NAS 沒給權限。設定只該有一個真相來源。
+
+    缺陷二：診斷訊息原本寫成 `HINT="$(mkdir …)"`。在 `set -e` 下，命令替換失敗會讓
+    整個賦值失敗、腳本就地中止——所以那段精心寫的 EROFS/EACCES 分辨**一行都沒印出來**，
+    使用者只看到兩行裸 mkdir 錯誤。這種缺陷只有真的跑一次才會現形。
+
+    測試手法：拿 `/` 當「掛載點」——它必然是 mountpoint（所以腳本不會嘗試 sudo 掛載），
+    而非 root 對它 mkdir 必然是 EACCES。不需要 NAS、不需要 docker、不需要 root，
+    腳本會在碰 docker 之前就 die。
+    """
+
+    def _run(self, env: dict[str, str]) -> subprocess.CompletedProcess:
+        merged = {**os.environ, **env}
+        return subprocess.run(
+            ["bash", str(BACKUP_SH)],
+            capture_output=True, text=True, timeout=60, env=merged,
+        )
+
+    def test_diagnosis_is_actually_printed_not_swallowed_by_set_e(self) -> None:
+        got = self._run({
+            "REPORT_MARK_BACKUP_MOUNT": "/",
+            "REPORT_MARK_BACKUP_DIR": "/tf_backup_probe",
+            "REPORT_MARK_BACKUP_DEFAULTS": "/nonexistent-on-purpose",
+        })
+        self.assertNotEqual(got.returncode, 0)
+        self.assertIn("!!", got.stderr, "die 的訊息必須印出來——set -e 不該先把腳本殺掉")
+        self.assertIn("EACCES", got.stderr, "應辨識出是伺服器端／權限在擋，而非唯讀掛載")
+        self.assertIn(
+            "加 rw 掛載旗標沒有用", got.stderr,
+            "EACCES 的處置與 EROFS 相反，訊息要講清楚免得有人去改掛載選項",
+        )
+
+    def test_failure_message_names_where_the_destination_came_from(self) -> None:
+        """落點來源必須出現在訊息裡：同一個 EACCES，可能是 NAS 沒權限，
+        也可能只是設定沒被讀到而落回內建預設——兩者處置完全不同。"""
+        got = self._run({
+            "REPORT_MARK_BACKUP_MOUNT": "/",
+            "REPORT_MARK_BACKUP_DIR": "/tf_backup_probe",
+            "REPORT_MARK_BACKUP_DEFAULTS": "/nonexistent-on-purpose",
+        })
+        self.assertIn("落點來源", got.stderr)
+        self.assertIn("環境變數", got.stderr)
+
+    def test_reads_destination_from_defaults_file_for_manual_runs(self) -> None:
+        """手動跑（沒有 systemd 的 EnvironmentFile）也必須讀到設定檔的落點，
+        否則 `make db-backup` 與 timer 會寫到不同地方。值刻意含括號——那是實際
+        落點的形狀，也是不能用 `source` 讀這個檔的原因。"""
+        with tempfile.TemporaryDirectory() as d:
+            defaults = Path(d) / "report-mark-sync"
+            defaults.write_text(
+                "REPORT_MARK_BACKUP_MOUNT=/\n"
+                "REPORT_MARK_BACKUP_DIR=/tf_probe_from_file(x)\n",
+                encoding="utf-8",
+            )
+            env = {"REPORT_MARK_BACKUP_DEFAULTS": str(defaults)}
+            for key in ("REPORT_MARK_BACKUP_MOUNT", "REPORT_MARK_BACKUP_DIR"):
+                env.pop(key, None)
+            merged = {k: v for k, v in os.environ.items()
+                      if k not in ("REPORT_MARK_BACKUP_MOUNT", "REPORT_MARK_BACKUP_DIR")}
+            merged.update(env)
+            got = subprocess.run(
+                ["bash", str(BACKUP_SH)],
+                capture_output=True, text=True, timeout=60, env=merged,
+            )
+        self.assertNotEqual(got.returncode, 0)
+        self.assertIn(
+            "/tf_probe_from_file(x)", got.stderr,
+            "落點沒有從設定檔讀到——手動跑與 timer 會寫到不同地方",
+        )
+        self.assertIn(str(defaults), got.stderr, "訊息應指出落點取自哪個檔")
 
 
 class MountHelperTests(unittest.TestCase):
@@ -251,19 +332,52 @@ class BackupScriptTests(unittest.TestCase):
             )
 
     def test_docker_bin_detection_matches_ingest_lowio(self) -> None:
-        """兩支腳本的 docker 偵測必須逐字相同，否則會漂到只有一支跑得起來。"""
+        """兩支腳本的 docker 偵測必須等價，否則會漂到只有一支跑得起來。
 
-        def docker_bin_line(path: Path) -> str:
-            for line in _live_lines(_read(path)):
-                if line.startswith("DOCKER_BIN="):
-                    return line.strip()
-            return ""
+        比對的是**偵測運算式本身**而非整行：db_backup.sh 多了一層「設定檔覆寫」
+        （`DOCKER_BIN=${DOCKER_BIN:-$(_default_key DOCKER_BIN)}` 再 `: ${DOCKER_BIN:=偵測}`），
+        所以整行逐字比對會誤紅。真正要釘的是 fallback 的路徑與 `command -v docker`。
+        """
+        probe = "command -v docker"
+        exe = "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
+        for name, path in (("db_backup.sh", BACKUP_SH), ("ingest_lowio.sh", LOWIO_SH)):
+            live = "\n".join(_live_lines(_read(path)))
+            with self.subTest(script=name):
+                self.assertIn(probe, live, f"{name} 缺 docker 偵測")
+                self.assertIn(exe, live, f"{name} 缺 docker.exe fallback")
 
-        mine = docker_bin_line(BACKUP_SH)
-        theirs = docker_bin_line(LOWIO_SH)
-        self.assertTrue(mine, "db_backup.sh 缺 DOCKER_BIN 偵測")
-        self.assertTrue(theirs, "ingest_lowio.sh 缺 DOCKER_BIN 偵測")
-        self.assertEqual(mine, theirs, "兩支腳本的 DOCKER_BIN 偵測不一致")
+    def test_destination_falls_back_through_defaults_file(self) -> None:
+        """腳本自己要讀 /etc/default/report-mark-sync。
+
+        systemd 的 `EnvironmentFile=` 只在 unit 執行時生效，手動 `make db-backup`
+        不會載入——2026-07-30 就因此讓兩條路徑寫到不同地方（詳見
+        ConfigResolutionRuntimeTests 的 docstring）。
+        """
+        self.assertIn("DEFAULTS_FILE", self.live, "缺設定檔來源")
+        self.assertIn("_default_key REPORT_MARK_BACKUP_DIR", self.live)
+        for forbidden in ("source ", '. "$DEFAULTS_FILE"', ". $DEFAULTS_FILE"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(
+                    forbidden, self.live,
+                    "設定檔的值含括號，source 會 syntax error；請逐鍵取值",
+                )
+
+    def test_no_command_substitution_that_set_e_would_abort(self) -> None:
+        """`X="$(可能失敗的指令)"` 在 set -e 下會讓腳本就地中止。
+
+        原本的 mkdir 診斷就是這樣寫的，結果那段 EROFS/EACCES 分辨一行都沒印出來
+        （2026-07-30 實測）。要取回退出碼就得把 `|| RC=$?` 掛在賦值上。
+        """
+        self.assertNotRegex(
+            self.live,
+            r'^\s*\w+="\$\(mkdir[^)]*\)"\s*$',
+            "命令替換裡的 mkdir 失敗會被 set -e 吃掉整個腳本，診斷訊息永遠印不出來",
+        )
+        self.assertRegex(
+            self.live,
+            r'MKDIR_ERR="\$\(mkdir[^)]*\)"\s*\|\|\s*MKDIR_RC=\$\?',
+            "取 stderr 與退出碼要用同一次呼叫，且 `|| RC=$?` 掛在賦值上",
+        )
 
     def test_fails_instead_of_falling_back_to_local_path(self) -> None:
         """落點不可用時必須失敗。與 pgdata 同一塊磁碟的『備份』等於沒有備份。"""
@@ -275,13 +389,15 @@ class BackupScriptTests(unittest.TestCase):
         )
         self.assertRegex(
             self.live,
-            r'REPORT_MARK_BACKUP_MOUNT:-/mnt/',
+            r'BACKUP_MOUNT:=/mnt/',
             "預設落點應在掛載點底下（/mnt/…），不是本機工作目錄",
         )
 
     def test_retention_policy_is_seven_daily_four_weekly(self) -> None:
-        self.assertRegex(self.live, r"BACKUP_KEEP_DAILY:-7\b", "日備保留數應預設 7")
-        self.assertRegex(self.live, r"BACKUP_KEEP_WEEKLY:-4\b", "週備保留數應預設 4")
+        self.assertRegex(self.live, r"KEEP_DAILY:=7\b", "日備保留數應預設 7")
+        self.assertRegex(self.live, r"KEEP_WEEKLY:=4\b", "週備保留數應預設 4")
+        # 保留數同樣要能由設定檔覆寫，否則 unit 與手動跑的輪替深度會不一致
+        self.assertIn("_default_key BACKUP_KEEP_DAILY", self.live)
         self.assertIn("prune_dir", self.live, "有保留參數卻沒有輪替實作＝參數是裝飾品")
 
     def test_validates_dump_before_publishing_it(self) -> None:

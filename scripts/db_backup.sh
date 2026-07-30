@@ -20,6 +20,23 @@
 #      平時由 report-mark-backup.timer 每日觸發。
 set -euo pipefail
 
+# ── 設定來源：環境變數 > /etc/default/report-mark-sync > 內建預設 ─────────────
+# **為什麼腳本自己要讀那個檔**：systemd 的 `EnvironmentFile=` 只在 unit 執行時生效，
+# 手動 `make db-backup` 完全不會載入它。2026-07-30 就這樣出事——unit 會寫進設定好的
+# 落點，手動跑卻用內建預設（share 根目錄，不可寫），**同一支腳本兩條路徑寫到不同
+# 地方**，而失敗訊息看起來像權限問題。設定只該有一個真相來源。
+DEFAULTS_FILE="${REPORT_MARK_BACKUP_DEFAULTS:-/etc/default/report-mark-sync}"
+
+# 逐鍵 sed 取值，**不用 `source`**：那個檔是給 systemd 的 EnvironmentFile 讀的，
+# systemd 不做 shell 解析，所以值合法地可能含 `(` `)`（實際落點就是一例）。
+# 實測 `bash -c '. 該檔'` 直接 syntax error；更糟的情況是值被當指令求值。
+# 與 deploy/systemd/mount-nas-backup 的 read_key 同一套邏輯，改一邊要一起改。
+_default_key() {
+  [ -r "$DEFAULTS_FILE" ] || return 0
+  sed -n "s/^[[:space:]]*$1=//p" "$DEFAULTS_FILE" | tail -1 \
+    | sed 's/^"\(.*\)"$/\1/; s/^'"'"'\(.*\)'"'"'$/\1/'
+}
+
 DB_CONTAINER="${DB_CONTAINER:-report-mark-postgres}"
 DB_NAME="${DB_NAME:-research}"
 # 本 distro 可能沒有 docker CLI（Docker Desktop WSL integration 關閉）→ fallback 到 docker.exe
@@ -27,20 +44,39 @@ DB_NAME="${DB_NAME:-research}"
 # 兩套偵測邏輯並存的話，只會漂到其中一支能跑、另一支莫名其妙失敗。
 # 若本機的 `docker` 存在但連不到 daemon，用 DOCKER_BIN 顯式指定（可寫進
 # /etc/default/report-mark-sync，備份 unit 也讀那個檔）。
-DOCKER_BIN="${DOCKER_BIN:-$(command -v docker || echo '/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe')}"
+DOCKER_BIN="${DOCKER_BIN:-$(_default_key DOCKER_BIN)}"
+: "${DOCKER_BIN:=$(command -v docker || echo '/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe')}"
 
 # 備份落點。既有的 /mnt/nas-research 是 `-o ro` 掛載（研報來源刻意唯讀），寫不進去；
 # 而「同一個 share 再以 rw 掛第二次」2026-07-30 實測也不行——那組帳號對 `投資研究處`
 # 只有讀取權，rw 掛載仍得 EACCES。所以 deploy/systemd/mount-nas-backup 掛的是**另一個
 # share**，UNC 與落點都由 /etc/default/report-mark-sync 提供（見該檔的備份段）。
-BACKUP_MOUNT="${REPORT_MARK_BACKUP_MOUNT:-/mnt/nas-backup}"
-BACKUP_DIR="${REPORT_MARK_BACKUP_DIR:-$BACKUP_MOUNT/report-mark-db}"
+BACKUP_MOUNT="${REPORT_MARK_BACKUP_MOUNT:-$(_default_key REPORT_MARK_BACKUP_MOUNT)}"
+: "${BACKUP_MOUNT:=/mnt/nas-backup}"
+
+# 落點：環境變數 > 設定檔 > 內建預設。**來源要記下來**——2026-07-30 那次失敗其實
+# share 是對的、指定的子目錄也可寫，只是設定沒被讀到而落回 share 根目錄（不可寫），
+# 而錯誤訊息長得跟「NAS 沒給權限」一模一樣。把來源印在失敗訊息裡才分辨得出來。
+BACKUP_DIR="${REPORT_MARK_BACKUP_DIR:-}"
+BACKUP_DIR_SRC="環境變數 REPORT_MARK_BACKUP_DIR"
+if [ -z "$BACKUP_DIR" ]; then
+  BACKUP_DIR="$(_default_key REPORT_MARK_BACKUP_DIR)"
+  BACKUP_DIR_SRC="$DEFAULTS_FILE"
+fi
+if [ -z "$BACKUP_DIR" ]; then
+  # 內建預設是 share 根目錄下一層——實測那多半不可寫（`公用資料夾` 的根就是），
+  # 所以走到這裡本身就是「設定沒被讀到」的訊號，不是一個能用的落點。
+  BACKUP_DIR="$BACKUP_MOUNT/report-mark-db"
+  BACKUP_DIR_SRC="內建預設（設定未被讀到——$DEFAULTS_FILE 不存在或沒有該鍵）"
+fi
 MOUNT_HELPER="${REPORT_MARK_BACKUP_MOUNT_HELPER:-/usr/local/sbin/mount-nas-backup}"
 
 # 保留策略：7 日 + 4 週。日備擋「昨天手滑」，週備擋「三週前就壞了、今天才發現」——
 # 後者是本專案真實發生過的偵測延遲（同步異常結束，三週後才被看到）。
-KEEP_DAILY="${BACKUP_KEEP_DAILY:-7}"
-KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-4}"
+KEEP_DAILY="${BACKUP_KEEP_DAILY:-$(_default_key BACKUP_KEEP_DAILY)}"
+: "${KEEP_DAILY:=7}"
+KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-$(_default_key BACKUP_KEEP_WEEKLY)}"
+: "${KEEP_WEEKLY:=4}"
 
 BACKUP_TABLES=(
   research.qa_log
@@ -82,14 +118,18 @@ mountpoint -q "$BACKUP_MOUNT" || die "備份落點 $BACKUP_MOUNT 未掛載 → �
 刻意不退回本地路徑：與 pgdata 同一塊磁碟的「備份」在磁碟壞掉時一起死，\
 還會讓 ingest_lowio.sh 的備份新鮮度閘門誤以為有救生索。"
 
+# 一次呼叫同時取回 stderr 與退出碼。**不可以拆成兩次 mkdir**：
+# `HINT="$(mkdir …)"` 這種寫法在 `set -e` 下，命令替換失敗會讓整個賦值失敗、腳本
+# 就地中止——2026-07-30 實測就是這樣讓下面那段診斷訊息一行都沒印出來，使用者只看到
+# 兩行裸 mkdir 錯誤。`|| MKDIR_RC=$?` 掛在賦值上才擋得住 set -e。
 MKDIR_RC=0
-mkdir -p "$DAILY_DIR" "$WEEKLY_DIR" || MKDIR_RC=$?
+MKDIR_ERR="$(mkdir -p "$DAILY_DIR" "$WEEKLY_DIR" 2>&1)" || MKDIR_RC=$?
 if [ "$MKDIR_RC" -ne 0 ]; then
   # 兩種失敗的處置完全不同，所以訊息要幫人分辨：
   #   Read-only file system（EROFS）＝ Linux 的 mount 旗標在擋 → 改掛載選項有救
   #   Permission denied（EACCES）    ＝ 伺服器端 ACL 在擋   → 換 share／要 NAS 開權限，
   #                                     加 rw 旗標沒有用（2026-07-30 實測過）
-  HINT="$(mkdir -p "$BACKUP_DIR" 2>&1 | tail -1)"
+  HINT="$(printf '%s\n' "$MKDIR_ERR" | tail -1)"
   case "$HINT" in
     *"Read-only file system"*|*"唯讀"*)
       WHY="$BACKUP_MOUNT 是唯讀掛載（Linux 旗標）→ 檢查 mount-nas-backup 的選項。" ;;
@@ -99,7 +139,7 @@ if [ "$MKDIR_RC" -ne 0 ]; then
 REPORT_MARK_BACKUP_DIR），或請 NAS 端開權限。**加 rw 掛載旗標沒有用。**" ;;
     *) WHY="原始錯誤：$HINT" ;;
   esac
-  die "無法建立 $BACKUP_DIR（rc=$MKDIR_RC）。$WHY"
+  die "無法建立 $BACKUP_DIR（rc=$MKDIR_RC；落點來源＝$BACKUP_DIR_SRC）。$WHY"
 fi
 
 # 掛載存在不代表可寫（drvfs 以 ro 掛也會通過 mountpoint 檢查），實際寫一下才算數。

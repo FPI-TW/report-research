@@ -45,7 +45,7 @@
   border: 1px solid var(--tf-border);
   border-radius: 4px;
   box-shadow: var(--tf-shadow-float);
-  background: #fff;
+  background: var(--tf-surface);
 }
 
 .state {

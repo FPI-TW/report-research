@@ -2,12 +2,46 @@
   margin-bottom: 4px;
 }
 
+/* 零高度哨兵：離開視窗即代表導覽列已吸頂（見 lib/useScrolled.ts）。 */
+.sentinel { display: block; height: 1px; margin-bottom: -1px; }
+
+/* 精簡導覽列：吸頂之後才實體化成玻璃。
+   橫向不做負 margin 出血——RadarPage 的 .scroll 已把內容內縮 32px，
+   那圈留白裡不會有任何東西捲過，故導覽列覆蓋內容欄寬就足夠。 */
 .top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px 20px;
   flex-wrap: wrap;
+  padding: 8px 0;
+  border-bottom: 1px solid transparent;
+  transition: background-color var(--tf-dur-2) var(--tf-ease-standard),
+    border-color var(--tf-dur-2) var(--tf-ease-standard);
+}
+.topStuck {
+  background: var(--tf-glass);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  border-bottom-color: var(--tf-glass-border);
+}
+
+/* 收進導覽列的標的名：置中於麵包屑與窗期之間，過長以省略號收尾。
+   flex-wrap 之下若讓它換行會改變導覽列高度，故 min-width:0 + nowrap 綁死單行。 */
+.stuckTitle {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--tf-text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .crumb {
@@ -44,10 +78,10 @@
 }
 
 .title {
-  font-family: var(--tf-serif);
-  font-weight: 700;
+  font-family: var(--tf-display);
+  font-weight: 600;
   font-size: 34px;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.022em;
   color: var(--tf-text-1);
   margin: 0;
   line-height: 1.15;
@@ -81,4 +115,6 @@
 
 @media (max-width: 720px) {
   .title { font-size: 27px; }
+  /* 窄螢幕的導覽列會換行，塞進標的名會把它撐成兩行——寧可不顯示 */
+  .stuckTitle { display: none; }
 }

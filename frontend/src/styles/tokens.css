@@ -1,26 +1,33 @@
 :root {
-  /* ── 介面基調（暖紙白，印刷感） ── */
-  --tf-canvas: #f7f6f2;
+  /* ── 介面基調（中性亮灰，macOS 簡白） ── */
+  /* 三個色是 RadarCssContracts.test.ts 的對比契約標的，必須維持六位 hex，不可改成 rgba()：
+     --tf-surface / --tf-canvas 是被比對的底色，--tf-text-muted-aa 是前景。 */
+  --tf-canvas: #f2f2f4;
   --tf-surface: #ffffff;
-  --tf-sidebar: #fbfaf6;
-  --tf-border: #e7e4dc;
-  --tf-border-weak: #f3f1eb;
-  --tf-divider: #efede7;
-  --tf-text-1: #212b33;
-  --tf-text-2: #40525f;
-  --tf-text-3: #6e7e89;
-  --tf-text-muted-aa: #5f707b;
-  --tf-text-4: #9aa5ae;
+  /* 極淡填色：表頭、註記塊、次級卡片。側欄本身已改玻璃，不再用這個。 */
+  --tf-fill-subtle: #fafafb;
+  --tf-border: #e3e3e6;
+  --tf-border-weak: #f0f0f2;
+  --tf-divider: #eaeaed;
+  --tf-text-1: #1d1d1f;
+  --tf-text-2: #48484d;
+  /* text-3 刻意停在 AA 以下（對白 4.45:1），只給與鄰近資訊重複的裝飾性文字；
+     需要「淡但仍須讀得到」時一律用 --tf-text-muted-aa（對白 5.30、對畫布 4.75）。
+     兩者若調成同值，RadarCssContracts 禁用 text-3 的那條斷言就退化成空守門。 */
+  --tf-text-3: #77777c;
+  --tf-text-muted-aa: #6b6b70;
+  --tf-text-4: #8e8e93;
 
-  /* ── 墨青（導航與操作：按鈕、連結、選取態） ── */
-  --tf-ink: #1e5175;
-  --tf-ink-deep: #163a54;
-  --tf-ink-hover: #174260;
-  --tf-ink-tint: #eaf1f6;
-  --tf-ink-line: #dce6ee;
+  /* ── 石墨（導航與操作：按鈕、連結、選取態、焦點環） ──
+     沿用 ink 這組名字（111 處引用），語意仍成立：只是墨色從墨青換成中性石墨。 */
+  --tf-ink: #2c2c2e;
+  --tf-ink-deep: #1d1d1f;
+  --tf-ink-hover: #1d1d1f;
+  --tf-ink-tint: #f0f0f2;
+  --tf-ink-line: #dededf;
   --tf-on-ink: #ffffff;
 
-  /* ── 鎏金（引用 [n]、深度研報、品牌；Logo 原色） ── */
+  /* ── 鎏金（全站唯一強調色：引用 [n]、深度研報、品牌、選取指示條） ── */
   --tf-gold-text: #8a5a0f;
   --tf-gold-strong: #ae7415;
   --tf-gold-hover: #7a4f0c;
@@ -30,33 +37,48 @@
   --tf-on-gold: #ffffff;
   --tf-on-gold-muted: rgba(255, 255, 255, 0.75);
 
-  /* ── 字型 ── */
-  --tf-serif: 'Noto Serif TC', Georgia, 'Times New Roman', serif;
-  --tf-sans: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
-    'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
+  /* ── 磨砂玻璃材質 ──
+     只給「會有內容從底下捲過去」的層：側欄、吸頂工具列、浮層、輸入列、手機底部導覽。
+     內容本身（結果卡、研報內文、KPI 卡）一律實白——玻璃疊在沒有東西可模糊的底上只會變髒，
+     且每一層 backdrop-filter 都是一次獨立合成，全站卡片套用會直接掉幀。
+     saturate(180%) 是關鍵：少了它模糊只是灰霧，有了它才讀得出是材質。 */
+  --tf-glass: rgba(255, 255, 255, 0.72);
+  --tf-glass-strong: rgba(255, 255, 255, 0.86);
+  --tf-glass-filter: saturate(180%) blur(20px);
+  --tf-glass-border: rgba(0, 0, 0, 0.07);
+  --tf-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  /* 遮罩：macOS 的表單／警示會把底下的內容一起模糊，不只是壓暗。
+     只在有彈窗開啟時才存在，故這層額外合成是划算的。 */
+  --tf-scrim: rgba(0, 0, 0, 0.22);
+  --tf-scrim-filter: blur(3px);
+
+  /* ── 字型（全無襯線；標題與內文同一家族，靠字重與字級拉層級） ── */
+  --tf-display: -apple-system, BlinkMacSystemFont, 'SF Pro TC', 'PingFang TC',
+    'Noto Sans TC', 'Microsoft JhengHei', system-ui, sans-serif;
+  --tf-sans: var(--tf-display);
   /* 資料字體：標的代號／日期／計數是券商研報的母語，用等寬呈現 */
   --tf-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Noto Sans Mono CJK TC', monospace;
 
-  /* ── 圓角：控制項 8 · 卡片 12 · 磚 14 · 面板 16 ── */
-  --tf-radius-card: 12px;
-  --tf-radius-tile: 14px;
-  --tf-radius-panel: 16px;
+  /* ── 圓角：控制項 10 · 卡片 14 · 磚 18 · 面板 20 ── */
+  --tf-radius-card: 14px;
+  --tf-radius-tile: 18px;
+  --tf-radius-panel: 20px;
   --tf-radius-pill: 999px;
   --tf-radius-seg: 10px;
-  --tf-radius-md: 8px;
+  --tf-radius-md: 10px;
 
-  /* ── 陰影（墨青色系投影） ── */
-  --tf-shadow-xs: 0 1px 3px rgba(22, 42, 58, 0.05);
-  --tf-shadow-seg: 0 1px 3px rgba(22, 42, 58, 0.1);
-  --tf-shadow-float: 0 8px 24px rgba(22, 42, 58, 0.07);
-  --tf-shadow-viewtoggle: 0 6px 20px rgba(22, 42, 58, 0.12);
-  --tf-shadow-pop: 0 12px 32px rgba(22, 42, 58, 0.16);
-  --tf-shadow-modal: 0 24px 64px rgba(22, 42, 58, 0.28);
-  --tf-ring-ink: 0 0 0 3px rgba(30, 81, 117, 0.12);
+  /* ── 高度：0.5px 髮絲環 + 大範圍柔影，取代 1px 實線邊。
+     髮絲環讓浮層在亮底上讀起來「輕」，這是 macOS 浮層的作法。 ── */
+  --tf-shadow-xs: 0 0 0 0.5px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --tf-shadow-seg: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.07);
+  --tf-shadow-float: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --tf-shadow-pop: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 12px 32px rgba(0, 0, 0, 0.13);
+  --tf-shadow-modal: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 24px 64px rgba(0, 0, 0, 0.22);
+  --tf-ring-ink: 0 0 0 3.5px rgba(44, 44, 46, 0.12);
 
   /* ── 動效 ── */
   /* 緩動家族：進場減速為主曲線；可逆 hover 用對稱 standard；離場加速；emphasized 為極輕收束過衝
-     （幅度壓在 ~1.26 維持印刷感）。--tf-ease-out 保留為 --tf-ease-entrance 相容別名。
+     （幅度壓在 ~1.26 維持克制感）。--tf-ease-out 保留為 --tf-ease-entrance 相容別名。
      進出場主體已由 Motion 驅動，這些 token 供殘留的 CSS 微互動/hover/press 使用。 */
   --tf-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --tf-ease-entrance: var(--tf-ease-out);
@@ -86,18 +108,42 @@
   --mkt-fallback: #75808a;
 
   /* ── 狀態色 ── */
-  --tf-success: #237a46;
-  --tf-success-text: #237a46;
+  --tf-success: #1d7a45;
+  --tf-success-text: #1d7a45;
   --tf-success-line: #7fb89a;
-  --tf-warn: #c9a75c;
+  --tf-warn: #b8860b;
   --tf-warn-bg: #fbf7ec;
   --tf-warn-border: #ead9ae;
   --tf-warn-text: #7a5a1e;
-  --tf-error: #b03a30;
-  --tf-error-bg: #fbf0ef;
-  --tf-error-border: #e8c4c0;
-  --tf-error-text: #96362d;
+  --tf-error: #c0392f;
+  --tf-error-bg: #fdf2f1;
+  --tf-error-border: #f0cac6;
+  --tf-error-text: #a3322a;
   --tf-mark: #faedc4;
+}
+
+/* 玻璃的兩條退場路徑集中在這裡，改寫 token 值即可讓所有消費端一起退回實色——
+   否則每個用到玻璃的 module 都要各自重複一次 @supports 與 @media。
+   `prefers-reduced-transparency` 對應 macOS 的「降低透明度」輔助使用設定：
+   玻璃設計不接這條等於只做一半。 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --tf-glass: #ffffff;
+    --tf-glass-strong: #ffffff;
+    --tf-glass-filter: none;
+    --tf-scrim: rgba(0, 0, 0, 0.34);
+    --tf-scrim-filter: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --tf-glass: #ffffff;
+    --tf-glass-strong: #ffffff;
+    --tf-glass-filter: none;
+    --tf-scrim: rgba(0, 0, 0, 0.34);
+    --tf-scrim-filter: none;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -109,9 +155,9 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 input, button, textarea { font-family: inherit; }
-a { color: var(--tf-ink); }
-a:hover { color: var(--tf-ink-hover); }
-::selection { background: var(--tf-ink-tint); }
+a { color: var(--tf-gold-text); }
+a:hover { color: var(--tf-gold-hover); }
+::selection { background: var(--tf-gold-tint); }
 
 :focus-visible {
   outline: 2px solid var(--tf-ink);

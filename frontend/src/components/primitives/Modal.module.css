@@ -1,15 +1,20 @@
-/* 遮罩帶墨青色偏，聚焦內容。進出場 opacity 由 Motion（Modal.tsx）驅動。 */
+/* 遮罩把底下的內容一起模糊而不只是壓暗——這是 macOS 表單（sheet）的作法，
+   也讓彈窗與背景的層級一眼分得出來。進出場 opacity 由 Motion（Modal.tsx）驅動。 */
 .scrim {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(22, 42, 58, 0.5);
+  background: var(--tf-scrim);
+  backdrop-filter: var(--tf-scrim-filter);
+  -webkit-backdrop-filter: var(--tf-scrim-filter);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
 /* 進出場（opacity/translate/scale）改由 Motion 驅動，此處僅留版面。 */
 .panel {
-  background: var(--tf-surface);
+  background: var(--tf-glass-strong);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
   border-radius: var(--tf-radius-panel);
-  box-shadow: var(--tf-shadow-modal);
+  box-shadow: var(--tf-shadow-modal), var(--tf-glass-sheen);
   width: min(920px, 100%);
   max-height: 90vh;
   display: flex; flex-direction: column;
@@ -17,13 +22,13 @@
 }
 .header {
   display: flex; align-items: center; gap: 12px;
-  padding: 14px 20px; border-bottom: 1px solid var(--tf-divider);
+  padding: 14px 20px; border-bottom: 1px solid var(--tf-glass-border);
 }
-.title { flex: 1; min-width: 0; font-family: var(--tf-serif); font-weight: 700; font-size: 15.5px; color: var(--tf-text-1); }
+.title { flex: 1; min-width: 0; font-family: var(--tf-display); font-weight: 600; font-size: 15.5px; letter-spacing: -0.01em; color: var(--tf-text-1); }
 .close {
-  border: none; background: var(--tf-border-weak); border-radius: 999px;
+  border: none; background: rgba(0, 0, 0, 0.06); border-radius: 999px;
   width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
   cursor: pointer; font-size: 18px; line-height: 1; color: var(--tf-text-2); padding: 0;
 }
-.close:hover { background: var(--tf-border); }
+.close:hover { background: rgba(0, 0, 0, 0.11); }
 .body { padding: 16px 20px; overflow: auto; }

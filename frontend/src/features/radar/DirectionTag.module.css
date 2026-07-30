@@ -11,9 +11,10 @@
   white-space: nowrap;
 }
 
-.up { color: #027a48; background: #ecfdf3; }
-.down { color: #b42318; background: #fef3f2; }
-.flat { color: var(--tf-text-muted-aa); background: #f2f4f7; }
+/* 漲跌是語意色，不是品牌色：走 success／error token，不寫死。 */
+.up { color: var(--tf-success-text); background: color-mix(in srgb, var(--tf-success) 10%, transparent); }
+.down { color: var(--tf-error-text); background: var(--tf-error-bg); }
+.flat { color: var(--tf-text-muted-aa); background: var(--tf-border-weak); }
 .incomparable { color: var(--tf-text-2); background: var(--tf-gold-tint); }
 .none { color: var(--tf-text-muted-aa); background: transparent; padding-left: 0; padding-right: 0; }
 

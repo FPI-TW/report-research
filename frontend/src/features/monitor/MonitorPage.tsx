@@ -12,6 +12,7 @@ import { MonitorSkeleton } from './MonitorSkeleton'
 import { FaithfulnessPanel } from './FaithfulnessPanel'
 import { ScheduleHealthPanel } from './ScheduleHealthPanel'
 import { Pulse } from '../../components/primitives/motionLoops'
+import { useScrolled } from '../../lib/useScrolled'
 
 export default function MonitorPage() {
   const q = useProgress()
@@ -19,33 +20,40 @@ export default function MonitorPage() {
   const rates = useRates(q.data, q.dataUpdatedAt)
   const p = q.data
   const live = !q.isError
+  // 頁首吸頂後才實體化成玻璃：LIVE 狀態與時鐘要一直看得見
+  const { scrolled, sentinelRef } = useScrolled()
 
   const alive = p ? [p.pipelines.web, p.pipelines.ingest, p.pipelines.tag, p.pipelines.summaries].filter(Boolean).length : 0
 
   return (
     <div className={styles.page}>
       <div className={styles.scroll}>
-        <div className={styles.inner}>
-          <div className={styles.header}>
-            <div>
-              <h2 className={styles.title}>研報導入監控</h2>
-              <div className={styles.sub}>
-                {p ? `${fmtInt(p.db.reports)} 篇已導入 · ${alive}/4 條管線執行中` : '連線中…'}
+        <span ref={sentinelRef} className={styles.sentinel} aria-hidden="true" />
+        <div className={`${styles.headerBar} ${scrolled ? styles.headerStuck : ''}`}>
+          <div className={styles.headerInner}>
+            <div className={styles.header}>
+              <div>
+                <h2 className={styles.title}>研報導入監控</h2>
+                <div className={styles.sub}>
+                  {p ? `${fmtInt(p.db.reports)} 篇已導入 · ${alive}/4 條管線執行中` : '連線中…'}
+                </div>
+              </div>
+              <div className={styles.headRight}>
+                <span className={`${styles.live} ${live ? '' : styles.stale}`}>
+                  {live ? (
+                    <Pulse className={styles.liveDot} min={0.35} duration={1.6} />
+                  ) : (
+                    <span className={`${styles.liveDot} ${styles.staleDot}`} />
+                  )}
+                  {live ? 'LIVE' : '重連中'}
+                </span>
+                <span className={styles.clock}>{clock}</span>
               </div>
             </div>
-            <div className={styles.headRight}>
-              <span className={`${styles.live} ${live ? '' : styles.stale}`}>
-                {live ? (
-                  <Pulse className={styles.liveDot} min={0.35} duration={1.6} />
-                ) : (
-                  <span className={`${styles.liveDot} ${styles.staleDot}`} />
-                )}
-                {live ? 'LIVE' : '重連中'}
-              </span>
-              <span className={styles.clock}>{clock}</span>
-            </div>
           </div>
+        </div>
 
+        <div className={styles.inner}>
           {p ? (
             <>
               <KpiGrid progress={p} />

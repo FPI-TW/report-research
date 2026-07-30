@@ -13,8 +13,9 @@
   transition: background-color var(--tf-dur-1) var(--tf-ease-out),
     color var(--tf-dur-1) var(--tf-ease-out);
 }
+/* 選單項在玻璃浮層之上：hover 底色用半透明黑壓暗材質，實色 tint 會蓋成一塊補丁。 */
 .item:hover,
 .item:focus-visible {
-  background: var(--tf-ink-tint);
+  background: rgba(0, 0, 0, 0.06);
   color: var(--tf-text-1);
 }

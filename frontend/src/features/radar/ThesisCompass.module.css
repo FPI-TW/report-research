@@ -20,8 +20,8 @@
 }
 
 .name {
-  font-family: var(--tf-serif);
-  font-weight: 700;
+  font-family: var(--tf-display);
+  font-weight: 600;
   font-size: 16px;
   color: var(--tf-text-1);
 }

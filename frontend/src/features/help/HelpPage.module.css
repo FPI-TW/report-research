@@ -2,7 +2,7 @@
 .wrap { max-width: 820px; margin: 0 auto; padding: 40px 24px 80px; }
 
 .head { margin-bottom: 26px; }
-.title { margin: 0; font-family: var(--tf-serif); font-size: 30px; font-weight: 800; letter-spacing: -0.01em; color: var(--tf-text-1); }
+.title { margin: 0; font-family: var(--tf-display); font-size: 30px; font-weight: 800; letter-spacing: -0.01em; color: var(--tf-text-1); }
 .accent { color: var(--tf-gold-strong); }
 .lede { margin: 12px 0 0; font-size: 15px; line-height: 1.7; color: var(--tf-text-2); }
 
@@ -15,20 +15,20 @@
 .tocList a:hover { color: var(--tf-ink-hover); text-decoration: underline; }
 
 .section { margin: 0 0 38px; scroll-margin-top: 20px; }
-.h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; font-family: var(--tf-serif); font-size: 21px; font-weight: 700; letter-spacing: -0.01em; color: var(--tf-text-1); }
+.h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; font-family: var(--tf-display); font-size: 21px; font-weight: 600; letter-spacing: -0.01em; color: var(--tf-text-1); }
 .no { color: var(--tf-gold-strong); font-variant-numeric: tabular-nums; }
 .section p { margin: 10px 0; font-size: 15px; line-height: 1.75; color: var(--tf-text-2); }
 .bul { margin: 12px 0; padding-left: 22px; }
 .bul li { margin: 7px 0; font-size: 15px; line-height: 1.7; color: var(--tf-text-2); }
 .section strong, .bul strong { color: var(--tf-text-1); font-weight: 700; }
 
-.h3 { font-family: var(--tf-serif); font-size: 16.5px; font-weight: 700; margin: 24px 0 8px; color: var(--tf-text-1); }
+.h3 { font-family: var(--tf-display); font-size: 16.5px; font-weight: 600; margin: 24px 0 8px; color: var(--tf-text-1); }
 
 /* 內嵌強調小標 */
 .tagInline { display: inline-block; font-size: 13px; font-weight: 600; padding: 1px 8px; border-radius: var(--tf-radius-md); background: var(--tf-ink-tint); color: var(--tf-ink); }
 
 /* 提示框 */
-.note { background: var(--tf-sidebar); border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md); padding: 12px 16px; margin: 14px 0; font-size: 14px; line-height: 1.65; color: var(--tf-text-2); }
+.note { background: var(--tf-fill-subtle); border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md); padding: 12px 16px; margin: 14px 0; font-size: 14px; line-height: 1.65; color: var(--tf-text-2); }
 .note strong { color: var(--tf-text-1); }
 
 /* 網址列 + 複製 */

@@ -5,44 +5,56 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登入 · 廷豐智能研報</title>
 <meta name="description" content="廷豐智能研報登入" />
-<meta name="theme-color" content="#f6f7f9" />
+<meta name="theme-color" content="#f2f2f4" />
 <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAALpklEQVR42u2aeXBdVRnAf/e9mzSlaYBTpBRlKfsSCtYCg8CAFMEFcmSV4hh2UMACAqcTlKSJjLGHQQRLHzqjMopa5YD7mKdoMlGdEkCtQ4GH4C1vfm3Wz9AyI6qazGwV81yl0eWkNbROaoi6xecghzPqcqBFXOMYkfBpzqhsZ5UvOKM2l+8F4J/Az5KEiMjnh+wGgzOSLJgfZ7T1y4HLZM4EUfX81B6V1dZ/BBwtpesxwoQGZ9T9zqhdtPW55pZiqRuIRTJ5EUAMpOXtuHieixGjM2qyM2pBQHwl8CFwtLb+gyDjuwbYWnBr0tZ/uGB+nBnMPYNBl8QCK/yAFCwALtLW/8QZVaWt73FG7SVV2+3kOFQBS4F5wA3a+jeC9a4GLpR/b9LWnxF82168znfEoqdrvQ9obf1TwZ5nAdensUndHH9IxyyVZp4jVxTtrPKJHIUzgWclLP6xM+otbf1CQegFqQHeAhwm528cMAuY6Yz6vfQInwisNcCm0lzZX5og0yXyTBsnVRRb5vXa+r87o8Zq61dKr2CejOsGTo0iaGr0g64LrldRNNCC6cBvg27v8dr6p5OEaOpKldXWPzbjwLG/FOIml0mZw2pPOeI/AH4BnK6tX9jeFkc37VaIpsxZ2eeMOlkqzSnx52nrbxPc1qtBMqSyeBAhniE9wRTmArPEBVWK+0Ss9JHymyYlrJoykl4EPAM8CDyorV8i8yu19b3OqDHAFeKNUrhAW3/tULvFQ26NBUw4Brg5IKgLaNDW/xe20ErmThQbMk5erQCW1M3xi8MeXzjXGXUE8CPgs8Gcs7T1tw+nVT6sGyIBE/YSdd03+PwAcC3wUKiWa2tklvkWSf9wJlAXvH8OOENb/8xw7wkM+4pMKqWmRiqn9qgGineCwvP+N2ChGM0ubf3SdTC1WiK6IwAtR4ZA6tcAP9DWr2xqHFzld4MyIKzDCwG7AJdKQ6PU8C2ieAPkLfHpS4Niy1ZiLHcsKbkjZfJfiTd4MW2cFlvow4ORvCQVtbfFmeDM7gh8QzzFXqnHCZKh0syz9H0BeFFc3a3a+lcCjSswQrdJR/yaXJr1pedessl9pJU2TTLKSaIdlUEs0S21/tek3PYY8Gxw5S5bkiXyiWRACSMy5QyUM2qsMGCM4NADLNPWryhnaMskUp98BoR7LGsgejivMrna7uTY+tzaLkNH7W1xJu6qiaZnfUHKchv04vRGvS0eFllIYHZTcf/ZzSRE/fW+URiFURiFURiFURiFjQL/BtkcpszxhVcGAAAAAElFTkSuQmCC" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@700;800&display=swap" rel="stylesheet">
 <style>
-  /* 登入頁在 auth 牆外，不可引用 /static 下受保護資產（tokens.css）；樣式全部 inline。 */
+  /* 登入頁在 auth 牆外，不可引用 /static 下受保護資產（tokens.css）；樣式全部 inline。
+     色值與圓角是 frontend/src/styles/tokens.css 的手抄副本——改主題時兩邊都要動。
+     字體改走系統無襯線後不再需要 Google Fonts，連帶省掉 auth 牆外的兩個外部連線。 */
   :root {
-    --gold: #8a5a0f; --gold-hover: #7a4f0c; --gold-tint: #faf3e3;
-    --canvas: #f6f7f9; --surface: #fff; --border: #e4e7ec;
-    --text-1: #101828; --text-2: #344054; --text-3: #667085; --text-4: #98a2b3;
-    --serif: 'Noto Serif TC', Georgia, serif;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
-                 "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    --gold: #8a5a0f; --gold-hover: #7a4f0c;
+    --canvas: #f2f2f4; --surface: #ffffff; --border: #e3e3e6;
+    --text-1: #1d1d1f; --text-2: #48484d; --text-3: #6b6b70; --text-4: #8e8e93;
+    --glass: rgba(255,255,255,.72); --glass-border: rgba(0,0,0,.07);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro TC", "PingFang TC",
+                 "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    :root { --glass: #fff; }
   }
   * { box-sizing: border-box; }
+  /* 全站唯一一處讓磨砂玻璃「以卡片形式」出現的地方：登入卡底下確實有東西
+     （氛圍暈染層），模糊才讀得出材質。應用內的卡片一律實白，見 tokens.css 的說明。 */
   body {
     margin: 0; min-height: 100vh; display: flex;
     align-items: center; justify-content: center;
-    background: var(--canvas); color: var(--text-1); padding: 24px;
+    background:
+      radial-gradient(900px 620px at 18% 8%, rgba(174,116,21,.10), transparent 62%),
+      radial-gradient(760px 520px at 84% 92%, rgba(44,44,46,.07), transparent 60%),
+      var(--canvas);
+    color: var(--text-1); padding: 24px;
   }
   .card {
     width: 360px; max-width: 100%;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 12px; box-shadow: 0 1px 3px rgba(16,24,40,.06);
+    background: var(--glass);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-radius: 20px;
+    box-shadow: 0 0 0 .5px var(--glass-border), 0 12px 40px rgba(0,0,0,.10),
+                inset 0 1px 0 rgba(255,255,255,.65);
     padding: 36px 32px;
   }
   .brand { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-bottom: 26px; }
   .glyph { display: block; width: 56px; height: 56px; }
-  .name { font-family: var(--serif); font-weight: 700; font-size: 21px; color: var(--text-1); }
+  .name { font-weight: 600; font-size: 21px; letter-spacing: -.01em; color: var(--text-1); }
   .tagline { font-size: 12.5px; color: var(--text-3); }
   label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-2); margin: 0 0 6px; }
   input {
-    width: 100%; padding: 9px 12px; font-size: 14px; color: var(--text-1);
-    border: 1px solid var(--border); border-radius: 8px; background: #fff; outline: none;
+    width: 100%; padding: 10px 12px; font-size: 14px; color: var(--text-1);
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface); outline: none;
   }
   input#username { margin-bottom: 14px; }
-  input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(138,90,15,.12); }
+  input:focus { border-color: var(--gold); box-shadow: 0 0 0 3.5px rgba(138,90,15,.12); }
   button {
     width: 100%; margin-top: 18px; padding: 10px 0; font-size: 14px; font-weight: 600;
     color: #fff; background: var(--gold); border: none; border-radius: 999px; cursor: pointer;
@@ -50,7 +62,7 @@
   button:hover { background: var(--gold-hover); }
   .error {
     display: none; margin-top: 12px; padding: 8px 11px; font-size: 12.5px;
-    color: #b42318; background: #fef3f2; border: 1px solid #fecdca; border-radius: 8px;
+    color: #a3322a; background: #fdf2f1; border: 1px solid #f0cac6; border-radius: 10px;
   }
   .hint { margin-top: 16px; text-align: center; font-size: 11.5px; color: var(--text-4); }
 </style>

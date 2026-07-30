@@ -12,7 +12,7 @@
   transition: background var(--tf-dur-1) var(--tf-ease-out);
 }
 .card:last-child { border-bottom: none; }
-.card:hover, .card:focus-visible { background: #f8f7f3; outline: none; }
+.card:hover, .card:focus-visible { background: var(--tf-fill-subtle); outline: none; }
 .card:focus-visible { box-shadow: inset 2px 0 0 var(--tf-ink); }
 
 .chipCol { padding-top: 1px; }
@@ -21,7 +21,7 @@
 
 .main { min-width: 0; }
 .titleRow { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.title { font-family: var(--tf-serif); font-weight: 700; font-size: 15px; line-height: 1.5; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title { font-family: var(--tf-display); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; line-height: 1.5; color: var(--tf-text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .latest { border: 1px solid var(--tf-success-line); color: var(--tf-success-text); border-radius: var(--tf-radius-pill); padding: 0 8px; font-size: 11px; font-weight: 600; flex: none; }
 .tags { font-size: 12px; color: var(--tf-text-4); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .snippet { font-size: 12.5px; color: var(--tf-text-3); line-height: 1.6; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -51,6 +51,7 @@ make stats                                           # market distribution + chu
 make db-backup                       # pg_dump 七張不可重建的表 → NAS（平時由 timer 每日跑）
 make sync-once                       # 手動跑一次 NAS→本地同步＋增量匯入（平時由 timer 每 3h 跑）
 make freshness                       # 批次停更偵測（純 SQL 零 LLM；平時由 timer 每日 08:30 跑）
+make db-audit                        # 資料完整性稽核（唯讀；rc 0 乾淨／1 有發現／2 DB 不可用）
 make up-edge / down-edge / edge-logs / edge-reload   # 對外邊緣 nginx + cloudflared（deploy/docker-compose.yml）
 make ingest-lowio                    # 離線全量導入加速：關 fsync/full_page_writes（僅限沒對外服務時；trap 保證還原）
 make restore-durability              # 上一行被中斷沒還原時的保險（ALTER SYSTEM RESET fsync 等）
@@ -63,6 +64,8 @@ make clean-data                      # rm -rf data/extracted data/tags data/*.js
 **備份只涵蓋七張不可重建的表**（`qa_log`／`report_doc`／`report_rendition`／`report_takeaway`／`report_signal`／`report_run`／`report_section`），走 `make db-backup`（平時由 `report-mark-backup.timer` 每日 03:30 觸發）→ NAS 的 `/mnt/nas-backup`，保留 7 日 + 4 週。**落點的 share 與目錄都在 `/etc/default/report-mark-sync`（`NAS_BACKUP_UNC`／`REPORT_MARK_BACKUP_DIR`），不在程式裡**——2026-07-30 實測 `投資研究處` 那個 share 的 NAS 帳號**只有讀取權**（rw 掛載仍得 EACCES，是伺服器端 ACL 在擋，不是 mount 旗標），所以備份落在另一個 share；errno 對照與現行落點見 `docs/production_resilience.md`。**語料層（`research_report`／`report_chunk`）刻意不備**——它重跑得回來（研報原檔還在 NAS），但代價是**已知限制**：`report_takeaway`／`report_signal` 以 `report_id` FK 綁 `research_report`，語料層若整個重建，那兩張表的備份就對不回去。任何 TRUNCATE／DROP 之前仍要先問使用者。**還沒做過還原演練的備份不算備份**——步驟寫在 `docs/production_resilience.md`。
 
 **派生資產「停更」不會讓任何 unit 變紅，所以另有一支偵測器**（`scripts/check_batch_freshness.py`／`make freshness`，由 `report-mark-freshness.timer` 每日 08:30 觸發）：sync 殼刻意把摘要／標題／摘錄設成 best-effort（失敗只 log 不 exit，**那個設計是對的**——摘要失敗不該擋住下一輪匯入），代價是連續失敗永遠不會觸發 `OnFailure`；2026-07 實測 takeaway 停更 8 天、signal 停更 12 天都是事後才發現。它量的是**結果**（四個 `max(created_at)`）不是過程，純 SQL、零 LLM、零寫入，rc `0`＝新鮮／`1`＝停更／`2`＝查不到（DB 不可用，處置不同故刻意分流）。**兩個預設別亂動**：語料閘讓「沒有新研報」不算停更；`signal` 門檻 0＝不告警，因為積壓跑完後 `max(created_at)` 本來就不再前進、與故障無法區分——**訊號改靠 `unit_failures` 失敗記錄偵測，不是靠新鮮度**。
+
+**資料完整性另有一支唯讀稽核**（`scripts/db_audit.py`／`make db-audit`，**沒有 timer，是手動或改完 schema／重跑 ingest 之後跑**）。與停更偵測分工：那支量「批次有沒有在前進」，這支量「已產出的資料有沒有互相矛盾」。存在理由是本 repo 的完整性保證幾乎全在「寫入端很小心」而不在 DB 約束裡——三張研報衍生表刻意無 FK、`embedding` 可 NULL、`report_signal.market` 與 `research_report.market` 是兩份各自寫入的副本——所以**壞掉的方式全部是靜默的**（孤兒沒有讀取路徑會碰到、重複 `chunk_index` 只讓閱讀頁跳錯位置、`market` 不一致仍會算出看起來合理的共識數字）。九條 SQL 斷言 ＋ `content_norm` 取樣 500 列比對；rc `0` 乾淨／`1` 有發現／`2` DB 不可用。**三個刻意的設計**：只讀不修（處置要人決定）；error／warn 只影響閱讀順序、**兩者都算失敗**（「warn 不算失敗」會讓 warn 區永遠有東西、從此無人閱讀）；走 `db.relax_statement_timeout()`，因為幾條是 57 萬列全表掃描而引擎層 60s 會把它們砍掉——**被砍掉的稽核等於沒有稽核**。`content_norm` 那條與 `tests/test_content_norm_equivalence.py` 分工：測試驗「表達式定義與 Python 等價」，稽核驗「庫裡實際存的值等價」，定義正確但既有列是舊定義算的只有後者看得見。
 
 **`make help` 印出來的東西不等於「可以跑」**——破壞性與陷阱 target 也一併列在裡面。
 

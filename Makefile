@@ -175,3 +175,10 @@ db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日
 # 處置不同故刻意分流）。平時由 report-mark-freshness.timer 每日 08:30 跑。
 freshness:  ## 批次停更偵測（純 SQL、零 LLM；rc 0 新鮮／1 停更／2 查不到）
 	uv run python scripts/check_batch_freshness.py
+
+# 與 freshness 分工：那支量「批次有沒有在前進」，這支量「已產出的資料有沒有互相
+# 矛盾」——兩個不同的問題，同一種失效型態（壞掉了但沒人會回報）。
+# 兩者都不修東西：處置需要人決定（孤兒該刪還是補回連結？重複 chunk 刪哪一列？）。
+# 幾條是 57 萬列全表掃描，腳本內走 relax_statement_timeout，別在對外服務尖峰跑。
+db-audit:  ## 資料完整性稽核（唯讀；rc 0 乾淨／1 有發現／2 DB 不可用）
+	uv run python scripts/db_audit.py

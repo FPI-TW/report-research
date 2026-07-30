@@ -31,6 +31,7 @@ from app.logging_setup import configure_logging  # noqa: E402
 configure_logging()
 
 from app.config import get_settings  # noqa: E402
+from app.services import db  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
@@ -94,6 +95,14 @@ async def lifespan(app: FastAPI):
         "併發設定：workers=%s；%s",
         workers if workers is not None else "未偵測到（假定單一行程）",
         "；".join(g.describe() for g in concurrency.registered_gates()) or "無閘門",
+    )
+    # pgvector 版本：太舊會讓每次檢索與每次開閱讀頁都 500（`hnsw.iterative_scan`
+    # 在 0.8 以前不存在）。fail-closed，但 DB 連不上時放行——那是 /healthz 的職責
+    # （回 503），不該在這裡升級成「App 起不來」。
+    pgvector_version = await db.assert_pgvector_version()
+    logger.warning(
+        "pgvector 版本：%s",
+        pgvector_version or "查不到（DB 不可用，交由 /healthz 回報）",
     )
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
     warmup_task = asyncio.create_task(_warmup_models())

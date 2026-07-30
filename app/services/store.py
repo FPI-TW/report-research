@@ -309,7 +309,18 @@ def _lexical_sql(
     排序鍵是報告新近度，而那要 join `research_report.report_date`，成本更高。先用
     `lex_hits` 量出「實際被截斷的查詢佔比」再決定，不要照架構檢視報告直接加排序。
     """
-    conds = [f"c.content_norm LIKE :t{i}" for i in range(num_patterns)] + extra_conds
+    # `c.embedding IS NOT NULL` 是**防 500**，不是效能過濾：`embedding` 允許 NULL，
+    # 而 `NULL <=> vector` 回 NULL，呼叫端 `retrieval.hybrid_search` 對每一列做
+    # `float(row.distance)` ⇒ `float(None)` TypeError ⇒ 整個查詢 500。字面路（不像
+    # dense 路那樣經 HNSW 索引，索引本身就不含 NULL）是唯一能把這種列撈出來的路徑。
+    # 2026-07-30 實測生產 0 列 embedding IS NULL——所以這是**潛在**而非現行故障，但
+    # ingest 中途被砍、或未來加入「先寫 chunk 後補嵌入」的流程就會踩到。
+    # 放在 CTE 內（不是最外層）：讓 NULL 列連 `:cap` 名額都不佔。
+    conds = (
+        [f"c.content_norm LIKE :t{i}" for i in range(num_patterns)]
+        + ["c.embedding IS NOT NULL"]
+        + extra_conds
+    )
     where = " AND ".join(conds)
     final_limit = "\n        LIMIT :limit" if limit is not None else ""
     if per_report:

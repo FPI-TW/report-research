@@ -167,15 +167,31 @@ class _FakeResult:
 
 
 class _RecordingSession:
-    """依序回傳預備結果，並記錄每次 execute 的 (sql, params)。"""
+    """依序回傳預備結果，並記錄每次 execute 的 (sql, params)。
+
+    **`SET` 敘述不消耗預備結果**。原本是以「第幾次 execute」對位
+    （`self._results[len(self.calls) - 1]`），所以待驗函式多下一句 `SET LOCAL`
+    就把後面每一個結果整體位移，症狀是 IndexError 而不是「這個測試該驗的東西壞了」。
+    `SET` 本來就不回列，把它排除在對位之外才符合現實，也讓「加一句 GUC 設定」不再
+    是會弄壞五個測試的改動。
+
+    預備結果用完仍然 IndexError（不補空列）：那代表待驗函式多下了一句**查詢**，
+    是測試該知道的事。
+    """
 
     def __init__(self, results):
         self._results = list(results)
         self.calls: list[tuple[str, object]] = []
+        self._consumed = 0
 
     async def execute(self, stmt, params=None):
-        self.calls.append((str(stmt), params))
-        return self._results[len(self.calls) - 1]
+        sql = str(stmt)
+        self.calls.append((sql, params))
+        if sql.lstrip().upper().startswith("SET "):
+            return _FakeResult([])
+        row = self._results[self._consumed]
+        self._consumed += 1
+        return row
 
 
 def _doc_row(full_text="內文", file_hash="a" * 64):
@@ -303,16 +319,38 @@ def _similar_row(file_hash="c" * 64, matched=9, score=5.4, total=12, title="相�
 
 
 class FetchSimilarTests(unittest.IsolatedAsyncioTestCase):
-    async def test_sets_ef_search_before_query(self):
-        session = _RecordingSession([_FakeResult([]), _FakeResult([_similar_row()])])
+    """`SET` 敘述**不算進**預備結果的對位（見 `_RecordingSession` docstring）。
+
+    所以這些測試只 script 真正的查詢，並用 `_query_call()` 按語意取那一次 execute，
+    不寫 `calls[1]`——不然每加一句 GUC 設定就要重數一輪索引。
+    """
+
+    @staticmethod
+    def _query_call(session):
+        """非 SET 的那一次 execute 的 (sql, params)。恰好一次，否則斷言失敗。"""
+        hits = [c for c in session.calls if not c[0].lstrip().upper().startswith("SET ")]
+        assert len(hits) == 1, f"預期恰好一次查詢，實際 {len(hits)} 次"
+        return hits[0]
+
+    async def test_sets_hnsw_guc_before_query(self):
+        session = _RecordingSession([_FakeResult([_similar_row()])])
         await queries.fetch_similar(session, "rep-1")
+        sets = [c[0] for c in session.calls if c[0].lstrip().upper().startswith("SET ")]
         # 本篇 chunk 會佔滿 HNSW top-k（`report_id <> :rid` 是掃描後才 recheck），
         # 不拉高 ef_search 外篇根本擠不進候選
-        self.assertIn("SET LOCAL hnsw.ef_search = 100", session.calls[0][0])
-        self.assertEqual(len(session.calls), 2)
+        self.assertTrue(any("hnsw.ef_search = 100" in s for s in sets), sets)
+        # 但拉高 ef_search 只是把候選集變大——過濾掉之後不夠了仍會停在那裡，
+        # 靜默少回幾篇。iterative_scan 才是讓它繼續往下掃的那個開關。
+        self.assertTrue(any("hnsw.iterative_scan = relaxed" in s for s in sets), sets)
+        # 兩個 SET 都必須在查詢之前（SET LOCAL 只影響同交易內後續敘述）
+        first_query = next(
+            i for i, c in enumerate(session.calls)
+            if not c[0].lstrip().upper().startswith("SET ")
+        )
+        self.assertEqual(first_query, len(sets), "SET 必須全部排在查詢之前")
 
     async def test_packs_rows_in_select_order(self):
-        session = _RecordingSession([_FakeResult([]), _FakeResult([_similar_row()])])
+        session = _RecordingSession([_FakeResult([_similar_row()])])
         out = await queries.fetch_similar(session, "rep-1")
         self.assertEqual(len(out), 1)
         item = out[0]
@@ -329,18 +367,18 @@ class FetchSimilarTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item.score, 5.4)
 
     async def test_defaults_passed_as_params(self):
-        session = _RecordingSession([_FakeResult([]), _FakeResult([])])
+        session = _RecordingSession([_FakeResult([])])
         await queries.fetch_similar(session, "rep-1")
         self.assertEqual(
-            session.calls[1][1],
+            self._query_call(session)[1],
             {"rid": "rep-1", "probe_n": 12, "per_probe": 20, "max_dist": 0.45,
              "min_probes": 2, "limit": 6},
         )
 
     async def test_overrides_passed_through(self):
-        session = _RecordingSession([_FakeResult([]), _FakeResult([])])
+        session = _RecordingSession([_FakeResult([])])
         await queries.fetch_similar(session, "rep-1", probe_n=4, limit=2)
-        params = session.calls[1][1]
+        params = self._query_call(session)[1]
         self.assertEqual(params["probe_n"], 4)
         self.assertEqual(params["limit"], 2)
 

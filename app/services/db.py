@@ -68,3 +68,63 @@ async def relax_statement_timeout(session: AsyncSession) -> None:
     ms = int(get_settings().db_maintenance_statement_timeout_ms)
     # SET 不吃 bind 參數，只能字串內插；上一行的 int() 就是這裡唯一的注入防線。
     await session.execute(text(f"SET LOCAL statement_timeout = {ms}"))
+
+
+# 兩處檢索路徑用 `SET LOCAL hnsw.iterative_scan`（`store.search_chunks_meta` 與
+# `reading.queries.fetch_similar`），該 GUC 自 pgvector 0.8 才存在。0.7 環境不是
+# 「功能退化」而是 `unrecognized configuration parameter` ⇒ **每次檢索 500**。
+MIN_PGVECTOR_VERSION = (0, 8)
+
+
+def _parse_extversion(raw: str) -> tuple[int, ...]:
+    """'0.8.2' → (0, 8, 2)。非數字段落一律截斷（'0.8.0-rc1' → (0, 8, 0)）。"""
+    out: list[int] = []
+    for part in str(raw).split("."):
+        digits = ""
+        for ch in part:
+            if not ch.isdigit():
+                break
+            digits += ch
+        if not digits:
+            break
+        out.append(int(digits))
+    return tuple(out)
+
+
+async def assert_pgvector_version() -> str | None:
+    """啟動時檢查 pgvector 版本，太舊即 fail-closed 拋 RuntimeError。回實際版本字串。
+
+    **為什麼是 fail-closed 而不是 fail-open**：太舊的後果不是少個功能，是每次檢索與
+    每次開閱讀頁都 500——那種站台「開得起來、登入成功、每個查詢壞掉」的型態，正是
+    `/healthz` 存在要對付的那一種。啟動時就死，比讓它上線後逐一 500 好判讀得多。
+
+    **但 DB 連不上時放行**（回 None 並由呼叫端 log）：DB 不可用是 `/healthz` 已經
+    處理好的情境（回 503），不該在這裡升級成「App 起不來」。App 起得來、`/healthz`
+    誠實回報 503，是比整站 dead 更容易診斷的狀態。
+
+    容器 image 只釘 `pgvector/pgvector:pg16`（沒釘 pgvector 版本），所以「哪個版本」
+    取決於 pull 的時間點——這個檢查就是那件事的唯一守門。
+    """
+    try:
+        async with SessionFactory() as session:
+            row = (
+                await session.execute(
+                    text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+                )
+            ).first()
+    except Exception:
+        return None
+    if row is None:
+        raise RuntimeError(
+            "PostgreSQL 沒有安裝 pgvector 擴充——請確認連到的是 pgvector 映像"
+            "（`make db`），而不是一般的 postgres。"
+        )
+    raw = row[0]
+    if _parse_extversion(raw) < MIN_PGVECTOR_VERSION:
+        want = ".".join(str(n) for n in MIN_PGVECTOR_VERSION)
+        raise RuntimeError(
+            f"pgvector {raw} 太舊，需要 >= {want}：檢索與閱讀頁會用 "
+            "`SET LOCAL hnsw.iterative_scan`，該參數在更舊的版本不存在，"
+            "結果是每次查詢都 500。請升級容器映像後重跑 `make schema`。"
+        )
+    return raw

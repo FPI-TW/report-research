@@ -23,8 +23,17 @@ from app.services.report_writer import (
 
 
 class _Result:
-    def __init__(self, rows):
+    """SELECT 用 `rows`；UPDATE/DELETE 用 `rowcount`（0 ＝ WHERE 一列都沒中）。
+
+    `rowcount` 預設 1 而非 0：scripted 結果只列 SELECT 的回傳列，UPDATE 那幾次
+    通常不會被列出來（`results` 用完就回空）。預設 0 會讓每一個既有測試都走進
+    「併發衝突」分支——那是 fake 的形狀在替生產程式決定行為，不是在驗它。
+    要驗衝突分支就顯式塞 `_Result([], rowcount=0)`。
+    """
+
+    def __init__(self, rows, rowcount=1):
         self._rows = rows
+        self.rowcount = rowcount
 
     def first(self):
         return self._rows[0] if self._rows else None
@@ -34,12 +43,17 @@ class _Result:
 
 
 class _FakeSession:
-    """記錄 execute 的 (sql, params)，依序吐 scripted 結果列；async CM。"""
+    """記錄 execute 的 (sql, params)，依序吐 scripted 結果列；async CM。
+
+    `results` 的元素可以是「列的 list」（包成預設 `_Result`），也可以直接是
+    `_Result` 實例——後者用於需要指定 `rowcount` 的條件式 UPDATE 測試。
+    """
 
     def __init__(self, results=None):
         self.results = list(results or [])
         self.executed: list[tuple[str, dict]] = []
         self.commits = 0
+        self.rollbacks = 0
 
     async def __aenter__(self):
         return self
@@ -49,8 +63,11 @@ class _FakeSession:
 
     async def execute(self, stmt, params=None):
         self.executed.append((str(stmt), params or {}))
-        rows = self.results.pop(0) if self.results else []
-        return _Result(rows)
+        nxt = self.results.pop(0) if self.results else []
+        return nxt if isinstance(nxt, _Result) else _Result(nxt)
+
+    async def rollback(self):
+        self.rollbacks += 1
 
     async def commit(self):
         self.commits += 1
@@ -293,12 +310,52 @@ class AdvanceStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(params["ckpt"])["outline_ready"], True)
         self.assertEqual(params["rev"], 1)
 
-    async def test_status_empty_keeps_current(self):
+    async def test_status_empty_does_not_touch_status_column(self):
+        """`status=''` 必須**完全不碰** status 欄，不是「把舊值寫回去」。
+
+        這條測試原名 `test_status_empty_keeps_current`，斷言的是
+        `params["st"] == "drafting"`——也就是把讀到的舊狀態原樣寫回。那正是缺陷本身：
+        單執行緒下看不出差別，併發下就是靜默倒退（另一條路徑已推進到 verifying，
+        這裡一個 checkpoint 寫入把它打回 drafting，且不留任何痕跡）。
+        """
         s = _FakeSession(results=[[("drafting",)]])
         with _use(s):
             await rw.advance_status("run-1", "", current_revision_id="rev-9")
-        self.assertEqual(s.executed[-1][1]["st"], "drafting")  # 不改狀態
-        self.assertIn("current_revision_id = :crid", s.executed[-1][0])
+        sql, params = s.executed[-1]
+        self.assertNotIn("status = :st", sql, "不改狀態時 SET 不得含 status")
+        self.assertNotIn("st", params)
+        self.assertIn("current_revision_id = :crid", sql)
+        # 附帶欄位與狀態無關，所以也不該為它擋下併發的狀態轉換。
+        self.assertNotIn("expected_row_status", params)
+        self.assertNotIn("AND status =", sql)
+
+    async def test_transition_update_is_conditional_on_current_status(self):
+        """真的要改狀態時，UPDATE 必須把「狀態沒被改過」寫進 WHERE。
+
+        沒有這個條件，兩個併發呼叫可以同時讀到 drafting、同時通過 Python 的守門、
+        同時 UPDATE，後到的無聲覆蓋先到的。
+        """
+        s = _FakeSession(results=[[("drafting",)]])
+        with _use(s):
+            await rw.advance_status("run-1", "verifying")
+        sql, params = s.executed[-1]
+        self.assertIn("AND status = :expected_row_status", sql)
+        self.assertEqual(params["expected_row_status"], "drafting")
+        self.assertEqual(params["st"], "verifying")
+
+    async def test_zero_rowcount_raises_and_rolls_back(self):
+        """UPDATE 中 0 列＝狀態在 SELECT 與 UPDATE 之間被改掉了。
+
+        列存在是前一次 SELECT 保證的，所以 0 列只有這一個成因。必須回滾並拋錯，
+        不能靜默當成成功——呼叫端會據此以為狀態已推進。
+        """
+        s = _FakeSession(results=[[("drafting",)], _Result([], rowcount=0)])
+        with _use(s):
+            with self.assertRaises(InvalidTransition) as cm:
+                await rw.advance_status("run-1", "verifying")
+        self.assertIn("併發衝突", str(cm.exception))
+        self.assertEqual(s.rollbacks, 1)
+        self.assertEqual(s.commits, 0, "衝突不得 commit")
 
 
 class SectionTests(unittest.IsolatedAsyncioTestCase):

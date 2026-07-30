@@ -1,13 +1,42 @@
 #!/usr/bin/env bash
 # 以快取憑證 drvfs **可寫**掛載 NAS，供每日 DB 備份寫入。冪等：已掛則直接成功。
 #
-# 為什麼不共用 /mnt/nas-research：那支是 `-o ro`（研報來源刻意唯讀，避免任何程式
-# 寫回 NAS 的原始輸入），備份根本寫不進去。同一個 share 以不同選項掛在第二個
-# 掛載點，是達成「備份不與 pgdata 同一塊磁碟」的最小改動。
+# ── 為什麼不是「同一個 share 再掛一次 rw」──────────────────────────────────
+# /mnt/nas-research 是 `-o ro`（研報來源刻意唯讀，避免任何程式寫回 NAS 的原始輸入）。
+# 直覺的最小改動是「同一個 share 以 rw 掛在第二個掛載點」——**2026-07-30 實測不行**：
+#
+#   /mnt/nas-research  ro  → touch 得 `Read-only file system`（EROFS，Linux 旗標在擋）
+#   /mnt/nas-backup    rw  → touch 得 `Permission denied`（EACCES，**伺服器端在擋**）
+#
+# 兩個 errno 不同，正好把原因鎖死：/proc/mounts 確認第二個掛載真的是 rw，所以不是
+# 旗標問題——那組 NAS 帳號對 `投資研究處` 就只有讀取權，而 Linux 端的 mount 旗標
+# 給不了伺服器不給的權限。**備份必須落在另一個帳號寫得進去的 share。**
+# 日後若有人又想「把 ro 那支改成 rw 就好」，上面兩行 errno 就是反證。
+#
+# UNC 與掛載點都可由 /etc/default/report-mark-sync 覆寫（備份 unit 也讀那個檔），
+# 主機專屬值不寫死在 repo。
 #
 # 部署到 /usr/local/sbin/mount-nas-backup（root:root 0755），搭配
 # deploy/systemd/report-mark-backup.sudoers 的 NOPASSWD 條目。
 set -eu
-mountpoint -q /mnt/nas-backup && exit 0
-mkdir -p /mnt/nas-backup
-exec mount -t drvfs '\\192.168.1.100\投資研究處' /mnt/nas-backup -o uid=1000,gid=1000
+
+DEFAULTS=/etc/default/report-mark-sync
+
+# 刻意逐鍵 grep 取值而不是 `source` 整個檔：systemd 的 EnvironmentFile **不做 shell
+# 解析**，所以那個檔裡的值合法地可能含 `(` `)` `&` 等在 bash 會炸或會被求值的字元
+# ——實際落點就是一例（`01.會議暫存(會後刪除)`）。對一個「給 systemd 讀的檔」下
+# source 是安靜的地雷：語法錯誤會讓掛載直接失敗，而更糟的是值被當指令執行。
+read_key() {
+  [ -r "$DEFAULTS" ] || return 0
+  sed -n "s/^[[:space:]]*$1=//p" "$DEFAULTS" | tail -1 \
+    | sed 's/^"\(.*\)"$/\1/; s/^'"'"'\(.*\)'"'"'$/\1/'
+}
+
+MOUNT_POINT="$(read_key REPORT_MARK_BACKUP_MOUNT)"
+: "${MOUNT_POINT:=/mnt/nas-backup}"
+UNC="$(read_key NAS_BACKUP_UNC)"
+: "${UNC:=\\\\192.168.1.100\\公用資料夾}"
+
+mountpoint -q "$MOUNT_POINT" && exit 0
+mkdir -p "$MOUNT_POINT"
+exec mount -t drvfs "$UNC" "$MOUNT_POINT" -o uid=1000,gid=1000

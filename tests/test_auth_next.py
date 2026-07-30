@@ -60,9 +60,10 @@ def test_login_post_ignores_evil_next(monkeypatch):
     assert resp.headers["location"] == "/"
 
 
-def test_authed_login_get_honors_safe_next(monkeypatch):
-    monkeypatch.setattr(auth, "verify_token", lambda token, now: True)
-    client = TestClient(app)
+def test_authed_login_get_honors_safe_next():
+    # 用真 token 而非 stub 掉 verify_token：middleware 與 /login 是兩個不同的驗證
+    # 呼叫點，stub 其中一個只會在下次改認證時無聲失準（本檔曾因此紅）。
+    client = TestClient(app, cookies=_auth_cookies())
     # valid same-origin next: should redirect there
     resp = client.get("/login?next=/monitor", follow_redirects=False)
     assert resp.status_code == 302
@@ -73,10 +74,9 @@ def test_authed_login_get_honors_safe_next(monkeypatch):
     assert resp2.headers["location"] == "/"
 
 
-def test_authed_root_redirects_to_spa(monkeypatch):
+def test_authed_root_redirects_to_spa():
     # 舊 vanilla 首頁已退場：授權後根路徑導向 SPA 檢索頁
-    monkeypatch.setattr(auth, "verify_token", lambda token, now: True)
-    client = TestClient(app, cookies={auth.COOKIE_NAME: "any"}, follow_redirects=False)
+    client = TestClient(app, cookies=_auth_cookies(), follow_redirects=False)
     resp = client.get("/")
     assert resp.status_code == 302
     assert resp.headers["location"] == "/app/search"

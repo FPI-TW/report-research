@@ -3,7 +3,7 @@
 檢視範圍：`app/services/`（11,238 行）、`db/schema.sql`、`web/`、`frontend/`、`scripts/`、`tests/`（85 檔 23,191 行）、`deploy/`、文件。
 所有結論均以實際檔案內容查證，附「檔案:行號」。
 
-> **快照聲明**：本文是 **commit `3ce718e`（2026-07-29 09:38）當下的檢視快照**，不是持續維護的現況文件——「當時看到什麼」正是它的價值，因此其後併入 main 的修正一律以**時點註記**補在對應段落（目前有第 7、14、18 節三處），論述本身不改寫。文中的行號、計數與預設值都是檢視當下的量測、事後未再校正（連 `3ce718e` 本身都未必逐一對得上，例如檢視範圍寫的 `tests/` 85 檔，在 `3ce718e` 實際是 88 檔）——**任何數字都請重數一次，不要引用**；要看現況請讀 `CLAUDE.md` 與 `README.md`。
+> **快照聲明**：本文是 **commit `3ce718e`（2026-07-29 09:38）當下的檢視快照**，不是持續維護的現況文件——「當時看到什麼」正是它的價值，因此其後併入 main 的修正一律以**時點註記**補在對應段落（目前有第 7、14、18 節與 P3 資料完整性一節，共四處），論述本身不改寫。文中的行號、計數與預設值都是檢視當下的量測、事後未再校正（連 `3ce718e` 本身都未必逐一對得上，例如檢視範圍寫的 `tests/` 85 檔，在 `3ce718e` 實際是 88 檔）——**任何數字都請重數一次，不要引用**；要看現況請讀 `CLAUDE.md` 與 `README.md`。
 >
 > **逐條複驗（2026-07-29）**：本文全部主張已拆成 119 條逐一查證，結果在
 > `docs/ARCHITECTURE_REVIEW_2026-07_VERIFY.md`——66 條仍屬實、37 條需更正數字或推論、
@@ -372,6 +372,20 @@ class RetrievalResult:
 ---
 
 ## P3：資料完整性與 schema 細節
+
+> **2026-07-30 時點註記**：13 條逐條對生產複驗後修了 8 條，5 條刻意沒做。**幾個數字要更正**：
+>
+> - **NULL `embedding` 目前是 0 列**（實測 568,349 chunk）。「檢索主路會 500」的缺陷屬實（字面路 CTE 確實沒有 `IS NOT NULL`，`float(None)` 會 TypeError），但它是**潛在而非現行**故障。已補兩層守門並記數。
+> - **`is_research` 14,674 列全部是 `true`**，零 NULL 零 false。所以三種過濾寫法今天結果完全相同——本節說的「靠 ingest 閘門巧合一致」是對的，但要知道那意味著修正純屬防禦。已收斂成 `NOT NULL DEFAULT true` 並統一唯一那處 `= true`。
+> - **孤兒是真的，有現場證據**：14 列 `report_doc` 有 **2 列**（14%）孤兒；`report_run` 與 `report_rendition` 皆 0。已改為連刪 ＋ 清磁碟 PDF。
+> - **`ef_search` 那條要更正**：檢索主路（`store.search_chunks_meta`）**已經**有 `ef_search` 與 `iterative_scan`。本節指的沒設的是 `search_chunks`，而那支的唯一消費端是 `scripts/search.py` 這個 CLI，不在服務路徑上。真正缺 `iterative_scan` 的是閱讀頁 `fetch_similar`（已補）。
+> - **版本風險屬實但已不成立於現況**：實測 PG 16.14 / pgvector **0.8.2**，`iterative_scan` 可用。Makefile 確實只釘 `pgvector/pgvector:pg16`（沒釘 pgvector 版本），已補 `db.assert_pgvector_version()` 於 lifespan fail-closed。
+> - **`advance_status` 屬實，而且比本節寫的更嚴重**：除了 check-then-update，`target = status or current` 讓 `status=''`（只更新附帶欄位）把讀到的舊狀態**寫回去**，併發下等於靜默倒退狀態機。
+> - **「`raw_payload` 無 TTL」的表不是本節暗示的那個**：本 repo 沒有 raw 層（那是 FinDB 的 `raw.market_payload`）；`raw_payload` 是 `report_signal` 與 `report_takeaway` 的欄位，且 takeaway 每列存的是**自己那一條** item 而非整份回應，所以「同一份 payload 重複存 3-5 次」不準。
+>
+> **刻意沒做的 5 條**，都是「需要對 57 萬列做 DDL 或全量重跑」或「需要先決定資料遷移」，不在「只改 repo 內檔案」的範圍：HNSW 建構參數與 `halfvec`（要重建索引）、embedding 改二進位寫入（要全量重跑）、`followups`/`stages` 改 `text[]` 與 `eps_estimates` 拆子表（要遷移既有資料）、`text_sha256` 上移與閱讀頁 `_DOC_SQL` 去掉 `full_text`（要新增欄位＋回填批次）、ingest 的「tag 較新⇒更新 metadata」路徑。
+>
+> 另新增 `make db-audit`（`scripts/db_audit.py`）作為本節「無完整性檢查」那條的答案：九條唯讀 SQL 斷言 ＋ `content_norm` 取樣比對，首跑即抓到上述 2 列孤兒。
 
 | 項目 | 問題 | 建議 |
 |---|---|---|

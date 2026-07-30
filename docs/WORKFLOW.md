@@ -183,7 +183,7 @@ flowchart TD
 - **`scripts/align_findb_markets.py`**：把既有中文市場標籤確定性重映射為 findb 代碼（同改 `data/tags/*.json` 與 DB），冪等、不需重跑 Claude。
 - **`scripts/check_batch_freshness.py`（或 `make freshness`）**：偵測派生資產是否**停更**。純 SQL 一次查四個 `max(created_at)`（語料／摘要／摘錄／訊號），零 LLM、零寫入；退出碼 `0`＝新鮮、`1`＝停更、`2`＝查不到（DB 不可用，處置不同故刻意分流）。平時由 `report-mark-freshness.timer` 每日 08:30 觸發，非零退出經 `OnFailure=report-mark-alert@%n.service` 走既有告警鏈。
   - **為什麼不能靠 `OnFailure` 就好**：④⑥⑦ 三段掛在 sync 殼的 `|| RC=$?` 之後，是刻意的 best-effort（摘要失敗不該擋住下一輪匯入），所以連續失敗**永遠不會**讓 unit 進 `failed` ⇒ `OnFailure` 一次都不觸發。2026-07 實測 takeaway 停更 8 天、signal 停更 12 天。
-  - **兩個刻意的預設**：(a) 有一層**語料閘**——三支批次都只吃「本輪新入庫」的研報，語料自己在同窗期內沒前進時派生資產的過期一律判 `suppressed`（少了它，一個連假就讓三個資產同時亮紅）；(b) `signal` 預設門檻 **0＝不告警**，因為 `report_signal` **沒有任何排程產生者**（sync 殼只跑 ⑥⑦④，⑤ 只有手動 `make signals`），給它門檻等於保證永遠紅。要開＝`--signal-days 14`。
+  - **兩個刻意的預設**：(a) 有一層**語料閘**——三支批次都只吃「本輪新入庫」的研報，語料自己在同窗期內沒前進時派生資產的過期一律判 `suppressed`（少了它，一個連假就讓三個資產同時亮紅）；(b) `signal` 預設門檻 **0＝不告警**——**理由不是「沒有排程產生者」**（`extract_signals.py` 自 PR #150 起就在 sync 殼裡，每輪 `--limit 15`），而是**它的停更在原理上無法與正常區分**：訊號只來自高覆蓋子集，排程把積壓跑完之後 `max(created_at)` 本來就不再前進，那與「這段時間沒有合格研報」完全一樣。設任何門檻都會在積壓耗盡當天開始每日假警報。**訊號靠的是失敗記錄而非新鮮度**——sync 殼對 `extract_signals` 非零退出會 `record_unit_failure`，`/api/progress` 的 `unit_failures` 讀它（`tests/test_batch_freshness.py` 釘住那個呼叫，拿掉訊號就完全沒有偵測）。真要開＝`--signal-days 14`，但先想清楚積壓耗盡後怎麼辦。
 
 ### 檢索、問答與深度研報
 - **CLI** `scripts/search.py`：嵌入查詢 → cosine top-k，可加 `--market <findb 代碼>` 過濾

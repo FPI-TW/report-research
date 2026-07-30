@@ -25,3 +25,16 @@
 /* del 的顯隱位移由 Motion（ConversationList.tsx 的 rest/hover variants + whileFocus）驅動；此處僅留底樣式與 hover 變色。 */
 .del { flex: none; border: none; background: none; color: var(--tf-text-4); border-radius: 6px; padding: 6px; cursor: pointer; }
 .del:hover { color: var(--tf-error); background: rgba(0, 0, 0, 0.05); }
+
+/* 刪除失敗的行內訊息。刻意放在清單之上而非 toast：使用者的視線正在那份清單上，
+   而失敗的意思正是「這一列還在」。 */
+.error {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--tf-error-border);
+  border-radius: 6px;
+  background: var(--tf-error-bg);
+  color: var(--tf-error-text);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}

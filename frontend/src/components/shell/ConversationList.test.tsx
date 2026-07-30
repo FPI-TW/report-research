@@ -46,3 +46,46 @@ test('刪除：確認→呼叫 deleteConversation；取消→不呼叫', async (
   // react-query 的 mutationFn 為非同步派發（非 click 當下同步呼叫），故用 waitFor
   await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith('c1'))
 })
+
+// ── 刪除失敗的整條鏈 ────────────────────────────────────────────────────────
+// 缺陷原本是：deleteConversation 從不讀回應、從不 reject ⇒ useMutation 的 onSuccess
+// 照樣觸發 ⇒ 快取失效、重取後對話還在，而本元件的 onSuccess 還會 navigate('/ask')。
+// 使用者被送離當前對話、清單裡那一列還在、沒有任何錯誤訊息——下一步當然是再按一次。
+//
+// 這幾條刻意在**元件層**驗而不是單測 hook：要證明的是「API throw 之後，畫面確實
+// 收得到」，而那條鏈包含 useMutation 的錯誤傳遞與 onSuccess 的抑制，單測 hook 看不到
+// 後者。
+
+test('刪除失敗：顯示錯誤訊息，且該列仍在清單裡', async () => {
+  deleteConversation.mockRejectedValueOnce(new Error('刪除對話失敗：找不到該對話串'))
+  wrap()
+  await screen.findByText('AI 伺服器供應鏈')
+  fireEvent.click(screen.getByRole('button', { name: '刪除對話' }))
+  fireEvent.click(screen.getByRole('button', { name: '刪除' }))
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('找不到該對話串')
+  // 失敗的意思正是「這一列還在」——訊息與清單要同時成立才算真的講清楚了
+  expect(screen.getByText('AI 伺服器供應鏈')).toBeInTheDocument()
+})
+
+test('刪除失敗：不得導航離開當前對話', async () => {
+  deleteConversation.mockRejectedValueOnce(new Error('boom'))
+  wrap(['/ask?c=c1'])
+  const link = await screen.findByRole('link', { name: 'AI 伺服器供應鏈' })
+  expect(link).toHaveAttribute('aria-current', 'page')
+  fireEvent.click(screen.getByRole('button', { name: '刪除對話' }))
+  fireEvent.click(screen.getByRole('button', { name: '刪除' }))
+  await screen.findByRole('alert')
+  // 仍停在 ?c=c1（若被 navigate('/ask') 帶走，aria-current 會消失）
+  expect(screen.getByRole('link', { name: 'AI 伺服器供應鏈' }))
+    .toHaveAttribute('aria-current', 'page')
+})
+
+test('刪除成功：不顯示錯誤訊息', async () => {
+  wrap()
+  await screen.findByText('AI 伺服器供應鏈')
+  fireEvent.click(screen.getByRole('button', { name: '刪除對話' }))
+  fireEvent.click(screen.getByRole('button', { name: '刪除' }))
+  await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith('c1'))
+  expect(screen.queryByRole('alert')).toBeNull()
+})

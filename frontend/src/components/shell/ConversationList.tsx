@@ -35,6 +35,13 @@ export function ConversationList() {
         <MotionLink to="/ask" className={styles.newBtn} whileTap={{ scale: 0.97 }}><Icon name="plus" size={17} /> 新對話</MotionLink>
       </div>
       <div className={styles.heading}>歷史對話</div>
+      {del.isError && (
+        // 只讓 deleteConversation throw 還不夠——沒有任何畫面反應等於仍是靜默失敗，
+        // 而使用者的下一步是再按一次刪除。role="alert" 讓螢幕閱讀器也收得到。
+        <div className={styles.error} role="alert">
+          {del.error instanceof Error ? del.error.message : '刪除對話失敗'}
+        </div>
+      )}
       <div className={`${styles.list} tf-scroll`}>
         <AnimatePresence initial={false}>
         {(data ?? []).map((cv) => (

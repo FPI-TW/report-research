@@ -124,8 +124,13 @@ def infer_category(question: str) -> Category:
 
 
 def _domain_allowed(url: str, allowed: tuple[str, ...]) -> bool:
+    """allowlist 比對；只收 https。
+
+    明文 http 可被中間人竄改，而這條路徑的整個賣點就是「這個數字可信」——一個
+    可被改寫的來源網址不該進得了答案，也不該進得了 evidence ledger。
+    """
     p = urlparse(url)
-    if p.scheme not in ("http", "https"):
+    if p.scheme != "https":
         return False
     host = (p.hostname or "").lower()
     if not host:

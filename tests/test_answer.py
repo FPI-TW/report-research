@@ -1066,8 +1066,8 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         _patch 的替身都是瞬時的，誰先完成不穩定；這裡讓 hybrid_search 明確地慢，
         「路由先到」才是確定事實，取消才驗得到。
         """
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {}
         orig = self._patch(
@@ -1153,8 +1153,8 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         fail-open 的落點就是 CORPUS_QA（scope_router 的設計），所以分類器每失敗
         一次，就有一題時效或離題問題被拿歷史研報回答——而且無聲。
         """
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {}
         orig = self._patch(

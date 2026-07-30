@@ -1,8 +1,13 @@
+/* 手機底部導覽是常駐 chrome，內容從它底下捲過去——玻璃在這裡是最實在的：
+   捲動時可以真的看見內容在磨砂後面移動。 */
 .bar {
   position: fixed; left: 0; right: 0; bottom: 0;
   height: calc(56px + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
-  background: var(--tf-surface); border-top: 1px solid var(--tf-border);
+  background: var(--tf-glass);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  border-top: 1px solid var(--tf-glass-border);
   display: flex; z-index: 50;
 }
 .account { flex: 1; display: flex; align-items: center; justify-content: center; }

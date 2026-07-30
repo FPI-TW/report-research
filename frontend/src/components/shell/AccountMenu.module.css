@@ -1,24 +1,26 @@
 .wrap { position: relative; }
-.avatarBtn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
-.avatarBtn:hover { border-color: var(--tf-ink); }
-.rowTrigger { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; cursor: pointer; padding: 7px 8px; border-radius: 8px; font-family: inherit; }
-.rowTrigger:hover { background: var(--tf-border-weak); }
-.avatar { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink); display: flex; align-items: center; justify-content: center; flex: none; }
+.avatarBtn { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--tf-glass-border); background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.avatarBtn:hover { background: rgba(0, 0, 0, 0.09); }
+.rowTrigger { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; cursor: pointer; padding: 7px 8px; border-radius: var(--tf-radius-md); font-family: inherit; }
+.rowTrigger:hover { background: rgba(0, 0, 0, 0.045); }
+.avatar { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-glass-border); background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); display: flex; align-items: center; justify-content: center; flex: none; }
 .rowText { flex: 1; text-align: left; min-width: 0; }
 .name { display: block; font-size: 13px; font-weight: 600; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { display: block; font-size: 11.5px; color: var(--tf-text-4); }
 /* 帳號選單向上開：定位在觸發點上方（進場方向/縮放原點由 Popover openUp 控制） */
 .pop { left: 10px; right: 10px; bottom: calc(100% - 4px); }
-.popHead { padding: 8px 10px 10px; border-bottom: 1px solid var(--tf-border-weak); margin-bottom: 4px; }
-.menuItem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: 8px; text-decoration: none; box-sizing: border-box; }
-.menuItem:hover { background: var(--tf-border-weak); color: var(--tf-text-1); }
-.logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-family: inherit; }
-.logout:hover { background: var(--tf-border-weak); }
+.popHead { padding: 8px 10px 10px; border-bottom: 1px solid var(--tf-glass-border); margin-bottom: 4px; }
+.menuItem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: var(--tf-radius-md); text-decoration: none; box-sizing: border-box; }
+.menuItem:hover { background: rgba(0, 0, 0, 0.06); color: var(--tf-text-1); }
+.logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: var(--tf-radius-md); cursor: pointer; font-family: inherit; }
+.logout:hover { background: rgba(0, 0, 0, 0.06); }
 /* M10b 語言切換：popover 內的分段控制 */
 .localeRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 8px; }
 .localeLabel { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tf-text-2); }
-.localeSeg { display: inline-flex; border: 1px solid var(--tf-ink-line); border-radius: 8px; overflow: hidden; }
+.localeSeg { display: inline-flex; border: 1px solid var(--tf-glass-border); border-radius: var(--tf-radius-md); overflow: hidden; }
 .localeBtn { border: none; background: none; font-family: inherit; font-size: 12px; color: var(--tf-text-3); padding: 4px 10px; cursor: pointer; }
-.localeBtn:hover { background: var(--tf-border-weak); color: var(--tf-text-1); }
-.localeBtnActive { background: var(--tf-gold, #ae7415); color: #fff; }
-.localeBtnActive:hover { background: var(--tf-gold, #ae7415); color: #fff; }
+.localeBtn:hover { background: rgba(0, 0, 0, 0.06); color: var(--tf-text-1); }
+/* 選取態用鎏金——語言切換是「已選擇」而非「操作」，屬強調色的職責。
+   原本寫的 var(--tf-gold, #ae7415) 是死回退：--tf-gold 從未定義過，永遠落在後面那個寫死值。 */
+.localeBtnActive { background: var(--tf-gold-strong); color: var(--tf-on-gold); }
+.localeBtnActive:hover { background: var(--tf-gold-strong); color: var(--tf-on-gold); }

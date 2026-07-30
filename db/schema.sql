@@ -109,7 +109,9 @@ CREATE TABLE IF NOT EXISTS research.qa_log (
     question         text NOT NULL,
     answer           text,
     cited_report_ids uuid[],                        -- 回答實際引用的報告 id
-    filters          jsonb,                         -- 提問時套用的市場/商品/類型等篩選
+    filters          jsonb,                         -- 提問時套用的市場/商品/類型等篩選，
+                                                    -- 外加路由遙測 path（落到哪一類）與
+                                                    -- decided_by（precheck/overview/llm/fail_open）
     latency_ms       int,
     thinking_ms      int,                           -- 思考時間：開始→第一個 token（毫秒）
     created_at       timestamptz NOT NULL DEFAULT now()

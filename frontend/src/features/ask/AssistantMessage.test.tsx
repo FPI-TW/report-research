@@ -9,7 +9,7 @@ function makeTurn(over: Partial<Turn>): Turn {
     id: 't', question: 'Q', phase: 'done', stages: [], webUsed: false, retrievedCount: null,
     answer: '答案 [1] 內容', thinkingMs: 3000, startedAt: 0,
     sources: [{ n: 1, report_id: 'r1', file_name: 'f.pdf', market: 'TW', report_date: '2026-06-20', is_latest: false }],
-    extSources: [], qaId: 'qa1', isOfftopic: false, noticeText: null, offerReport: false, reportTitle: null,
+    extSources: [], qaId: 'qa1', isOfftopic: false, noticeText: null, noticeKind: null, offerReport: false, reportTitle: null,
     feedback: null, report: { status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null, stage: null, sections: [], startedAt: null, runId: null, queuePosition: null },
     errorText: null, followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1, queuePosition: null,
     ...over,
@@ -33,6 +33,14 @@ test('done：答案+單一資料來源 {N}+讚/倒讚', () => {
   fireEvent.click(screen.getByRole('button', { name: '資料來源 1' })); expect(onOpenSources).toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: '讚' })); expect(onFeedback).toHaveBeenCalledWith('like')
   expect(screen.queryByRole('button', { name: /外部參考/ })).toBeNull() // 無獨立外部參考鈕
+})
+
+test('時效婉拒不給「換個說法重新提問」：缺的是資料不是措辭', () => {
+  // 換說法不會讓系統生出它沒有的即時資料，只會讓使用者反覆改寫同一題，
+  // 每一次再吃一輪完整檢索。離題題才是換個說法就有救（見下一題）。
+  render(<AssistantMessage turn={makeTurn({ phase: 'notice', isOfftopic: true, noticeKind: 'time_sensitive', noticeText: '需要即時行情或最新公告資料', qaId: null })} {...noop} />)
+  expect(screen.getByText('需要即時行情或最新公告資料')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '換個說法重新提問' })).toBeNull()
 })
 
 test('notice：Callout warning + 換個說法重新提問', () => {

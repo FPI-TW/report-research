@@ -1,4 +1,5 @@
 # tests/test_answer.py
+import asyncio
 import json
 import sys
 import unittest
@@ -1018,8 +1019,12 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
             ans._log_qa,
         ) = orig
 
-    async def test_time_sensitive_first_turn_no_sources_no_llm(self):
-        # 首輪：並行取證因路由被丟棄 → 發空來源（非真實檢索結果）、notice 為時效文案、不呼叫主 LLM
+    async def test_time_sensitive_first_turn_skips_retrieval_entirely(self):
+        # 首輪且前檢命中：檢索連起跑都不該起跑。
+        # 反轉點——這題先前斷言的是 assertTrue(called["search"])，註解寫「並行取證
+        # 確實跑過，僅結果被丟棄」。那份被丟棄的工作含 rerank（生產實測數十秒 CPU，
+        # 且 semaphore 預設只有一個名額，會擋住後面排隊的人）。前檢是確定性的，
+        # 沒有任何理由等檢索跑完才知道這題不需要語料。
         import app.services.retrieval_pipeline as rp
         from app.services import answer as ans
 
@@ -1034,18 +1039,66 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         kinds = [k for k, _ in events]
         self.assertEqual(kinds, ["status", "sources", "notice", "done"])
-        self.assertEqual(events[1], ("sources", []))  # 並行取證的真實結果被丟棄
+        self.assertEqual(events[1], ("sources", []))
         self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE))
-        self.assertTrue(called.get("search"))  # 並行取證確實跑過，僅結果被丟棄
-        self.assertTrue(called.get("route"))
-        self.assertFalse(called.get("llm"))  # 主 LLM 不得被呼叫
-        self.assertEqual(called.get("log_filters", {}).get("path"), "time_sensitive")
+        self.assertFalse(called.get("search"))  # 檢索未起跑
+        self.assertFalse(called.get("embed"))   # 連 embed 都不必
+        self.assertFalse(called.get("route"))   # 前檢已定案，分類器不必呼叫
+        self.assertFalse(called.get("llm"))     # 主 LLM 不得被呼叫
+        lf = called.get("log_filters", {})
+        self.assertEqual(lf.get("path"), "time_sensitive")
+        self.assertEqual(lf.get("decided_by"), "precheck")
         done = events[-1][1]
         self.assertNotIn("qa_id", done)  # 比照既有離題 done payload 形狀
         self.assertEqual(
             done, {"cited": [], "conversation_id": done["conversation_id"],
-                   "thinking_ms": done["thinking_ms"]},
+                   "thinking_ms": done["thinking_ms"],
+                   "notice_kind": "time_sensitive"},
         )
+
+    async def test_off_topic_route_cancels_in_flight_retrieval(self):
+        """分類先回且判離題 → 當場取消仍在跑的檢索，不等它跑完。
+
+        離題靠前檢判不出來（_safety_precheck 只判時效與個人化），只能等分類器；
+        而分類是秒級、檢索含 rerank 是數十秒。先前寫成「await 檢索 → await 路由」，
+        於是離題題也是付完整檢索才丟棄——量比時效題大得多，白工主要在這裡。
+
+        _patch 的替身都是瞬時的，誰先完成不穩定；這裡讓 hybrid_search 明確地慢，
+        「路由先到」才是確定事實，取消才驗得到。
+        """
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+
+        called = {}
+        orig = self._patch(
+            ans, rp,
+            decision=sr._decision(sr.OFF_TOPIC, decided_by=sr.BY_LLM),
+            called=called,
+        )
+        faked_search = rp.hybrid_search
+        search_finished = False
+
+        async def slow_search(*a, **k):
+            nonlocal search_finished
+            await asyncio.sleep(0.2)
+            search_finished = True
+            return await faked_search(*a, **k)
+
+        rp.hybrid_search = slow_search
+        try:
+            events = [e async for e in ans.answer_question("我想喝飲料推薦給我")]
+        finally:
+            self._restore(ans, rp, orig)
+
+        self.assertEqual(
+            [k for k, _ in events], ["status", "sources", "notice", "done"]
+        )
+        self.assertTrue(called.get("embed"))   # 檢索確實已經起跑
+        self.assertFalse(search_finished)      # 但沒讓它跑完
+        lf = called.get("log_filters", {})
+        self.assertEqual(lf.get("path"), "off_topic")  # 先前 off_topic 根本不寫 path
+        self.assertEqual(lf.get("decided_by"), "llm")
+        self.assertEqual(events[-1][1]["notice_kind"], "off_topic")
 
     async def test_advice_risk_appends_policy_and_emits_sources(self):
         # advice_risk 走 RAG：附研究資訊限制政策、正常發真實 sources（有據回答須附出處）
@@ -1077,7 +1130,9 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         called = {}
         orig = self._patch(
-            ans, rp, decision=sr._decision(sr.CORPUS_QA), called=called
+            ans, rp,
+            decision=sr._decision(sr.CORPUS_QA, decided_by=sr.BY_LLM),
+            called=called,
         )
         try:
             _ = [e async for e in ans.answer_question("台積電展望")]
@@ -1086,7 +1141,35 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(called.get("llm"))
         self.assertIs(called["stream_kwargs"]["allow_web"], False)
-        self.assertNotIn("path", called.get("log_filters", {}))  # corpus_qa 不寫 path
+        # 反轉點：先前斷言「corpus_qa 不寫 path」。留白的代價是它與 off_topic 在
+        # qa_log 裡長得一樣，誰都量不出來。
+        lf = called.get("log_filters", {})
+        self.assertEqual(lf.get("path"), "corpus_qa")
+        self.assertEqual(lf.get("decided_by"), "llm")
+
+    async def test_fail_open_corpus_qa_distinguishable_from_real_one(self):
+        """分類器壞掉猜的 corpus_qa，必須與它真的判出來的 corpus_qa 在 log 裡分得開。
+
+        fail-open 的落點就是 CORPUS_QA（scope_router 的設計），所以分類器每失敗
+        一次，就有一題時效或離題問題被拿歷史研報回答——而且無聲。
+        """
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+
+        called = {}
+        orig = self._patch(
+            ans, rp,
+            decision=sr._decision(sr.CORPUS_QA, decided_by=sr.BY_FAIL_OPEN),
+            called=called,
+        )
+        try:
+            _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            self._restore(ans, rp, orig)
+
+        lf = called.get("log_filters", {})
+        self.assertEqual(lf.get("path"), "corpus_qa")
+        self.assertEqual(lf.get("decided_by"), "fail_open")
 
     async def test_multiturn_time_sensitive_skips_retrieval(self):
         # 續問：condense_and_route 直接判 time_sensitive → 提前返回，retrieve_context 完全未跑
@@ -1628,6 +1711,35 @@ class HistoryItemTests(unittest.TestCase):
         )
         item = history_item(row)
         self.assertTrue(item["is_offtopic"])
+
+    def test_notice_kind_separates_off_topic_from_time_sensitive(self):
+        """重播時要分得出兩種婉拒——is_offtopic 對兩者都是 True，那正是問題所在。"""
+        from app.services import answer as ans
+
+        def _item(answer_text):
+            return history_item(
+                ("idk", "q", answer_text, date(2026, 6, 1), None, None, None)
+            )
+
+        off = _item(ans.OFF_TOPIC_MESSAGE)
+        ts = _item(ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        ts_en = _item(ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN)
+        normal = _item("答案[1]")
+
+        self.assertEqual(off["notice_kind"], "off_topic")
+        self.assertEqual(ts["notice_kind"], "time_sensitive")
+        self.assertEqual(ts_en["notice_kind"], "time_sensitive")
+        self.assertIsNone(normal["notice_kind"])
+        self.assertTrue(off["is_offtopic"])
+        self.assertTrue(ts["is_offtopic"])  # 兩者的舊布林一樣，故前端分不出來
+
+    def test_every_notice_message_maps_to_a_kind(self):
+        """新增婉拒文案卻忘了給 kind → 前端悄悄退回離題那顆警告框，不會報錯。"""
+        from app.services import answer as ans
+
+        self.assertTrue(ans.NOTICE_MESSAGES)  # 空集合會讓下面的迴圈變成空斷言
+        for msg in ans.NOTICE_MESSAGES:
+            self.assertIsNotNone(ans.notice_kind_for(msg), msg[:24])
 
 
 class _RowsResult:

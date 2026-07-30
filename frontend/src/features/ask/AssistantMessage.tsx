@@ -22,7 +22,12 @@ interface Props {
 
 export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNoticeRetry, onErrorRetry, onRegenerate, onFollowup, onSetVersion, disabled = false }: Props) {
   if (turn.phase === 'notice') {
-    return <Callout variant="warning" action={{ label: '換個說法重新提問', onClick: onNoticeRetry }}>{turn.noticeText ?? '無法回答此問題'}</Callout>
+    // 時效題刻意不給「換個說法重新提問」：系統缺的是資料不是措辭，換說法只會讓
+    // 使用者反覆改寫同一題，每一次再吃一輪完整檢索。離題題才是換個說法就有救。
+    const retry = turn.noticeKind === 'time_sensitive'
+      ? undefined
+      : { label: '換個說法重新提問', onClick: onNoticeRetry }
+    return <Callout variant="warning" action={retry}>{turn.noticeText ?? '無法回答此問題'}</Callout>
   }
   if (turn.phase === 'error') {
     // 串流中斷/發生錯誤時仍保留已串出的部分答案（reducer 有保留 turn.answer），僅在下方補錯誤提示，

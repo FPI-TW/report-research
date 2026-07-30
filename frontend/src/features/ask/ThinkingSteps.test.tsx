@@ -7,7 +7,7 @@ function turn(over: Partial<Turn>): Turn {
   return {
     id: 't', question: 'Q', phase: 'thinking', stages: ['understanding', 'retrieved'], webUsed: false,
     retrievedCount: null, answer: '', thinkingMs: null, startedAt: 0, sources: [], extSources: [],
-    qaId: null, isOfftopic: false, noticeText: null, offerReport: false, reportTitle: null,
+    qaId: null, isOfftopic: false, noticeText: null, noticeKind: null, offerReport: false, reportTitle: null,
     feedback: null, report: { status: 'idle', downloadUrl: null, title: null, errorText: null, reportId: null, stage: null, sections: [], startedAt: null, runId: null, queuePosition: null },
     errorText: null, followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1, queuePosition: null,
     ...over,

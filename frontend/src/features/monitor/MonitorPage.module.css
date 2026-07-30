@@ -86,3 +86,10 @@
 @media (max-width: 720px) {
   .fMuted { margin-left: 0; }
 }
+
+/* 排程健康卡：卡標題旁的紅點（近 24 小時有 unit 失敗才出現）＋ 最近失敗列。 */
+.alertDot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: #f04438; margin-left: 8px; vertical-align: 2px; }
+.failList { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #f2f4f7; }
+.failRow { display: flex; gap: 10px; align-items: baseline; }
+.failTs { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: #98a2b3; flex: none; font-variant-numeric: tabular-nums; }
+.failWhat { font-size: 12.5px; color: #344054; overflow-wrap: anywhere; }

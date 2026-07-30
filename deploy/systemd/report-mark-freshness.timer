@@ -1,0 +1,14 @@
+[Unit]
+Description=每日偵測派生資產是否停更（摘要／重點摘錄／觀點訊號）
+
+[Timer]
+# 08:30 刻意錯開 report-mark-sync.timer（整點 00/3）與 report-mark-backup.timer（03:30），
+# 並排在上班時段的開頭：這支的產物是「一筆 unit 失敗紀錄」，要有人會在當天看到它才有用。
+OnCalendar=*-*-* 08:30:00
+# 機器關著／WSL 沒起來而錯過的那一次，開機後補跑。停更偵測最沒有意義的失效方式，
+# 就是「那幾天剛好沒跑到」——而缺一天不會有任何訊號。
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

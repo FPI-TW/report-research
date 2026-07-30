@@ -64,6 +64,53 @@ test('三塊皆為 optional：舊後端不會讓整頁 parse 失敗', () => {
   expect(p.evaluation).toBeUndefined()
 })
 
+// ── 排程可見度：sync + unit_failures（同一種 strip 陷阱，第三次）─────────────
+//
+// 這兩塊補的是兩個獨立的斷層：runtime 區塊原本只認 tag_run_*／ingest_run_* 兩種
+// log，而那兩支全量腳本只在初次建庫時跑——生產實際的入庫路徑（每 3 小時的
+// sync_new_reports.sh）在監控頁上零可見度；而 data/unit_failures.log 從 P3 上線起
+// 零程式消費端，2026-07-28 寫了 10 筆告警整整一天沒人知道。
+const schedule = {
+  sync: {
+    raw: '[2026-07-30 09:04:12] === sync done ===',
+    timestamp: '2026-07-30 09:04:12',
+    status: 'done',
+    label: '同步已完成',
+  },
+  unit_failures: {
+    latest: '2026-07-28T15:00:03+08:00',
+    count_24h: 2,
+    count_7d: 10,
+    recent: [
+      { ts: '2026-07-28T15:00:03+08:00', unit: 'report-mark-sync.service', stage: 'sync_new_reports(import)', rc: 2 },
+      { ts: '2026-07-28T12:00:04+08:00', unit: 'report-mark-web.service', stage: null, rc: null },
+    ],
+  },
+}
+
+test('sync/unit_failures 不會被 zod 剝除', () => {
+  const p = progressSchema.parse({ ...full, ...schedule })
+  expect(p.sync?.status).toBe('done')
+  expect(p.unit_failures?.count_24h).toBe(2)
+  expect(p.unit_failures?.count_7d).toBe(10)
+  expect(p.unit_failures?.recent[0].rc).toBe(2)
+})
+
+test('unit_failures.recent 的 stage/rc/ts 可為 null（alert.sh 的標頭沒有這些欄）', () => {
+  // report-mark-alert.sh 寫的標頭只有 ts + UNIT；sync 殼才帶 STAGE/RC。
+  const p = progressSchema.parse({ ...full, ...schedule })
+  expect(p.unit_failures?.recent[1].stage).toBeNull()
+  expect(p.unit_failures?.recent[1].rc).toBeNull()
+})
+
+test('sync 可為 null（尚無 sync_run log），兩塊皆 optional', () => {
+  const withNull = progressSchema.parse({ ...full, sync: null, unit_failures: schedule.unit_failures })
+  expect(withNull.sync).toBeNull()
+  const without = progressSchema.parse(full)
+  expect(without.sync).toBeUndefined()
+  expect(without.unit_failures).toBeUndefined()
+})
+
 test('evaluation.avg_score 可為 null（全部 degraded 時沒有分數）', () => {
   const p = progressSchema.parse({
     ...full,

@@ -30,11 +30,36 @@ export const evaluationSchema = z.object({
   min_score: z.number(),
 })
 
-export const orchestratorSchema = z.object({
+/** log 尾巴的通用形狀：原始行 + 時間戳 + 狀態 + 中文標籤（編排器與排程同步共用）。 */
+export const logEntrySchema = z.object({
   raw: z.string(),
   timestamp: z.string().nullable(),
   status: z.string(),
   label: z.string(),
+})
+export const orchestratorSchema = logEntrySchema
+
+/**
+ * unit 失敗告警（`data/unit_failures.log`）。
+ *
+ * 這個檔從 P3 上線起就**零程式消費端**：2026-07-28 那次 24 小時停擺，`OnFailure`
+ * 確實寫進了 10 筆，webhook 也沒設，所以整整一天沒有人知道。這裡是它的第一個出口。
+ *
+ * 刻意用「時間窗計數」而不是「累計未讀數」——檔案 append-only、沒有 logrotate、
+ * 也沒有已讀游標，累計數當紅點條件等於永遠亮著，兩週內就會被當成背景噪音。
+ */
+export const unitFailureEntrySchema = z.object({
+  ts: z.string().nullable(),
+  unit: z.string(),
+  stage: z.string().nullable(),
+  rc: z.number().nullable(),
+})
+
+export const unitFailuresSchema = z.object({
+  latest: z.string().nullable(),
+  count_24h: z.number(),
+  count_7d: z.number(),
+  recent: z.array(unitFailureEntrySchema),
 })
 
 export const progressSchema = z.object({
@@ -56,6 +81,9 @@ export const progressSchema = z.object({
   takeaway: coverageSchema.optional(),
   signal: coverageSchema.optional(),
   evaluation: evaluationSchema.optional(),
+  // 排程同步（每 3 小時的生產入庫路徑）與 unit 失敗告警。同樣 optional，同樣理由。
+  sync: logEntrySchema.nullable().optional(),
+  unit_failures: unitFailuresSchema.optional(),
 })
 
 export type Progress = z.infer<typeof progressSchema>
@@ -68,3 +96,6 @@ export type Summary = z.infer<typeof summarySchema>
 export type Pipelines = z.infer<typeof pipelinesSchema>
 export type MarketCount = z.infer<typeof marketCountSchema>
 export type Orchestrator = z.infer<typeof orchestratorSchema>
+export type LogEntry = z.infer<typeof logEntrySchema>
+export type UnitFailures = z.infer<typeof unitFailuresSchema>
+export type UnitFailureEntry = z.infer<typeof unitFailureEntrySchema>

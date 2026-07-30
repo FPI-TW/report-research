@@ -20,8 +20,9 @@ Always prefix shell commands with `rtk` when working from Codex (a token-saving 
 - `rtk npm --prefix frontend run typecheck`: `tsc --noEmit`.
 - `rtk npm --prefix frontend run build`: rebuild `frontend/dist` — **required for any frontend change to take effect**.
 - `rtk uv run python scripts/eval_retrieval.py --help`: inspect retrieval evaluation.
+- `make eval-compare BASE=… CAND=…`: diff two eval result JSONs (`scripts/eval_compare.py`); non-zero exit on regression. Eval itself stays manual — it spawns the `claude` CLI, so it is deliberately out of CI.
 
-**CI gates every PR** (`.github/workflows/ci.yml`): 後端（pytest）與前端（typecheck + vitest）兩個必要檢查，main 有分支保護。只跑 pytest 會在前端 job 上翻車。
+**CI gates every PR** (`.github/workflows/ci.yml`): 後端（ruff + pytest）、前端（ESLint + tsc + vite build + vitest）、schema 契約（pgvector service container）**三個必要檢查**，main 有分支保護（strict + enforce_admins）。只跑 pytest 會在前端 job 上翻車。
 
 > 舊文件曾寫 `node --test web/static/app/*.test.mjs`。該目錄已刪除，而且該指令在 bash 下會印出 `tests 0 / pass 0 / fail 0` 並 **exit 0** — 一份看起來全過、實際一個測試都沒跑的假綠。
 

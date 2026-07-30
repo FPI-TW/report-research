@@ -9,6 +9,7 @@
 真 DB 那一半靠實跑：2026-07-30 對生產跑過，抓到 2 列孤兒 report_doc（與獨立查詢
 的數字相符），退出碼 1。
 """
+import re
 import subprocess
 import sys
 import unittest
@@ -51,10 +52,58 @@ class CheckShapeTests(unittest.TestCase):
                 self.assertIn("count(*)", c.sql)
                 self.assertTrue(c.sql.strip().upper().startswith("SELECT COUNT(*)"))
 
-    def test_sql_targets_research_schema_only(self):
+    def test_every_table_reference_is_research_qualified(self):
+        """每個 `FROM`／`JOIN` 的對象只能是 `research.<表>` 或子查詢 `(`。
+
+        這條取代了原本的 `assertIn("research.", sql)`。那個寫法對「完全不碰表」的
+        檢查是誤判——`durability_off` 查的是 `current_setting('fsync')`，一張表都不
+        需要，要求它提到 `research.` 等於逼它去 join 一張用不到的表。
+
+        **改寫的過程中我的第一版 regex 也錯了兩次，兩次都是假命中**，記在這裡因為
+        下一個人很可能踩同一個：
+
+        - `IS DISTINCT FROM r.market` 裡的 `FROM r.` 被當成「schema 叫 r」。`FROM`
+          是 SQL 關鍵字但也出現在 `IS DISTINCT FROM` 這個運算子裡，所以要先剔掉。
+        - `FROM ( ... ) d`（子查詢包裝）被當成「這條在讀表」。
+
+        所以現在的判準是白名單而不是黑名單：剔掉運算子形式的 FROM，剩下的每一個
+        `FROM`／`JOIN` 後面都必須接 `research.` 或 `(`。
+        """
+        # `IS DISTINCT FROM` / `IS NOT DISTINCT FROM` 的 FROM 是運算子的一部分。
+        operator_from = re.compile(r"IS\s+(?:NOT\s+)?DISTINCT\s+FROM", re.IGNORECASE)
+        target = re.compile(r"\b(?:FROM|JOIN)\s+(\S+)", re.IGNORECASE)
         for c in db_audit.CHECKS:
             with self.subTest(key=c.key):
-                self.assertIn("research.", c.sql)
+                sql = operator_from.sub(" __DISTINCT_OP__ ", c.sql)
+                for hit in target.findall(sql):
+                    with self.subTest(target=hit):
+                        self.assertTrue(
+                            hit.startswith("research.") or hit.startswith("("),
+                            f"{c.key}: `FROM/JOIN {hit}` 既不是 research.<表> 也不是子查詢"
+                            "——不寫 schema 就是在賭 search_path，那不是契約",
+                        )
+
+    def test_durability_check_reads_settings_not_tables(self):
+        """耐久性那條刻意不碰表：`current_setting()` 是即時的、零成本的。
+
+        釘住它是因為「改成查 pg_settings 表」是很自然的重寫，而那條路會讓這個
+        檢查跟著 `statement_timeout` 與全表掃描的命運綁在一起。
+        """
+        c = next(x for x in db_audit.CHECKS if x.key == "durability_off")
+        self.assertIn("current_setting(", c.sql)
+        self.assertNotIn(" FROM research.", c.sql)
+        for guc in ("fsync", "full_page_writes", "synchronous_commit"):
+            with self.subTest(guc=guc):
+                self.assertIn(f"current_setting('{guc}')", c.sql)
+
+    def test_durability_is_the_first_check(self):
+        """它是唯一「不修會失去全部資料」的一條，必須排在輸出最前面。
+
+        `run_audit` 只按 severity 排序、同級維持宣告順序，所以「最前面」就是
+        `CHECKS` 的第一筆。
+        """
+        self.assertEqual(db_audit.CHECKS[0].key, "durability_off")
+        self.assertEqual(db_audit.CHECKS[0].severity, db_audit.SEVERITY_ERROR)
 
     def test_no_check_mutates(self):
         """唯讀是硬約束：稽核器自己去修等於在無人監督下改生產資料。"""

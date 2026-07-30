@@ -14,7 +14,7 @@
   color: inherit;
   transition: box-shadow 150ms var(--tf-ease-out), border-color 150ms var(--tf-ease-out);
 }
-.tile:hover { box-shadow: var(--tf-shadow-float); border-color: var(--tf-ink-line); }
+.tile:hover { box-shadow: var(--tf-shadow-float); border-color: var(--tf-graphite-line); }
 /* 市場色左緣：與清單列的色標同一套語言 */
 .tile::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c); }
 
@@ -29,7 +29,7 @@
 }
 
 .score { text-align: right; white-space: nowrap; flex: none; }
-.pct { display: block; font-family: var(--tf-mono); font-size: 15px; font-weight: 600; color: var(--tf-ink); }
+.pct { display: block; font-family: var(--tf-mono); font-size: 15px; font-weight: 600; color: var(--tf-graphite); }
 .hits { display: block; font-family: var(--tf-mono); font-size: 10.5px; color: var(--tf-text-4); margin-top: 2px; }
 
 .title { font-family: var(--tf-display); font-weight: 600; font-size: 22px; line-height: 1.42; color: var(--tf-text-1); margin-top: 16px; }

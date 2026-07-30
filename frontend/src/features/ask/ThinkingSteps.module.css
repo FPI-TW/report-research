@@ -5,8 +5,8 @@
 .chev { display: inline-flex; align-items: center; }
 .steps { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--tf-text-2); }
-.done { color: var(--tf-ink); }
-.spin { color: var(--tf-ink); }
+.done { color: var(--tf-graphite); }
+.spin { color: var(--tf-graphite); }
 .dot { width: 7px; height: 7px; border-radius: 999px; border: 1.5px solid var(--tf-border); display: inline-block; margin: 0 4.5px; }
 .pendingText { color: var(--tf-text-4); }
 /* 排隊中：說明為何一個字都還沒出來（沒有這行，畫面與「卡住了」無法分辨） */

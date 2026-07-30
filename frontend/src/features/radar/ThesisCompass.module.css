@@ -36,7 +36,7 @@
 .strengthen { color: var(--tf-success); background: color-mix(in srgb, var(--tf-success) 13%, var(--tf-surface)); }
 .weaken { color: var(--tf-error); background: color-mix(in srgb, var(--tf-error) 13%, var(--tf-surface)); }
 .diverging { color: var(--tf-gold-text); background: var(--tf-gold-tint); }
-.stable { color: var(--tf-ink); background: var(--tf-ink-tint); }
+.stable { color: var(--tf-graphite); background: var(--tf-graphite-tint); }
 .insufficient { color: var(--tf-text-muted-aa); background: var(--tf-border-weak); }
 
 .split {

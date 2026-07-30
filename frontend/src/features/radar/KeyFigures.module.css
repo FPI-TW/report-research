@@ -74,7 +74,7 @@
 .qbar i {
   display: block;
   height: 100%;
-  background: var(--tf-ink);
+  background: var(--tf-graphite);
   border-radius: inherit;
 }
 

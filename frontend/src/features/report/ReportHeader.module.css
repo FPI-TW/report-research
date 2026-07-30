@@ -18,7 +18,7 @@
   text-decoration: none;
 }
 .crumb a:hover {
-  color: var(--tf-ink);
+  color: var(--tf-graphite);
   text-decoration: underline;
 }
 
@@ -79,9 +79,9 @@
 .code {
   font-family: var(--tf-mono);
   font-size: 12px;
-  color: var(--tf-ink);
-  background: var(--tf-ink-tint);
-  border: 1px solid var(--tf-ink-line);
+  color: var(--tf-graphite);
+  background: var(--tf-graphite-tint);
+  border: 1px solid var(--tf-graphite-line);
   padding: 1px 7px;
   border-radius: var(--tf-radius-pill);
 }
@@ -123,9 +123,9 @@
               color var(--tf-dur-1) var(--tf-ease-standard);
 }
 .btn:hover {
-  border-color: var(--tf-ink-line);
-  color: var(--tf-ink);
-  background: var(--tf-ink-tint);
+  border-color: var(--tf-graphite-line);
+  color: var(--tf-graphite);
+  background: var(--tf-graphite-tint);
 }
 
 .btnGold {

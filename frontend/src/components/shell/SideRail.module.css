@@ -25,7 +25,7 @@
    置中於 60px 軌道 → 中心 x≈30，展開後與 .glyphSmall logo 同座標、完整銜接。 */
 .glyphSmall { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; flex: none; }
 .brandToggle { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: none; background: none; padding: 0; cursor: pointer; border-radius: var(--tf-radius-md); color: var(--tf-text-3); }
-.brandToggle:hover { background: rgba(0, 0, 0, 0.05); color: var(--tf-ink); }
+.brandToggle:hover { background: rgba(0, 0, 0, 0.05); color: var(--tf-graphite); }
 /* 置中偏移（x/y -50%）與 opacity/scale crossfade 皆由 Motion 驅動（見 SideRail.tsx）；此處僅絕對定位錨點 */
 .brandLogo, .brandExpand { position: absolute; top: 50%; left: 50%; display: inline-flex; }
 /* miniNav 起始 Y 與間距對齊 fullNav，讓兩態導覽 icon 完整銜接不位移（同原版幾何）。 */

@@ -1,5 +1,5 @@
 .bar { display: flex; align-items: center; gap: 8px; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); padding: 8px 14px; box-shadow: var(--tf-shadow-xs); transition: box-shadow var(--tf-dur-2) var(--tf-ease-standard), border-color var(--tf-dur-2) var(--tf-ease-standard); }
-.bar:focus-within { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink); }
+.bar:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite); }
 .icon { color: var(--tf-text-3); flex-shrink: 0; }
 .input { flex: 1; min-width: 0; border: none; outline: none; background: none; font-size: 14px; color: var(--tf-text-1); font-family: inherit; }
 .input::placeholder { color: var(--tf-text-4); }
@@ -13,7 +13,7 @@
   box-shadow: var(--tf-shadow-float);
   height: 60px; padding: 0 12px 0 20px; gap: 15px;
 }
-.lg:focus-within { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); }
+.lg:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite), var(--tf-shadow-float); }
 .lg .input { font-size: 16.5px; }
 .lg .icon { color: var(--tf-text-2); }
 

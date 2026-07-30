@@ -26,9 +26,9 @@
   transition: color var(--tf-dur-1) var(--tf-ease-standard);
 }
 
-.btn:hover { color: var(--tf-ink); }
+.btn:hover { color: var(--tf-graphite); }
 .btn:focus-visible {
-  outline: 2px solid var(--tf-ink);
+  outline: 2px solid var(--tf-graphite);
   outline-offset: 1px;
 }
 
@@ -47,5 +47,5 @@
 }
 
 .active {
-  color: var(--tf-ink);
+  color: var(--tf-graphite);
 }

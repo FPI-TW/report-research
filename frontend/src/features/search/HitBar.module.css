@@ -4,7 +4,7 @@
 }
 .spectrum { flex: 1; min-width: 0; }
 .read { font-family: var(--tf-mono); font-size: 12px; color: var(--tf-text-3); white-space: nowrap; }
-.read b { font-size: 15px; font-weight: 600; color: var(--tf-ink-deep); }
+.read b { font-size: 15px; font-weight: 600; color: var(--tf-graphite-deep); }
 .gold { color: var(--tf-gold-strong); }
 
 @media (max-width: 900px) {

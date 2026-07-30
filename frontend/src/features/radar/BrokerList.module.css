@@ -34,7 +34,7 @@
 }
 
 .row:hover td { background: var(--tf-gold-panel); }
-.rowOpen td { background: var(--tf-ink-tint); }
+.rowOpen td { background: var(--tf-graphite-tint); }
 
 .broker {
   font-weight: 700;
@@ -58,7 +58,7 @@
   color: var(--tf-text-muted-aa);
 }
 /* rotation now owned by Motion (animate rotate); only the colour shift stays in CSS */
-.expandOpen { color: var(--tf-ink); }
+.expandOpen { color: var(--tf-graphite); }
 
 .expandButton {
   display: inline-flex;
@@ -73,7 +73,7 @@
   cursor: pointer;
   border-radius: var(--tf-radius-sm);
 }
-.expandButton:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
+.expandButton:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; }
 
 .panelCell {
   padding: 0 !important;

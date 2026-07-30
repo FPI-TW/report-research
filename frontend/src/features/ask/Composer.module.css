@@ -12,14 +12,14 @@
   display: flex; align-items: flex-end; gap: 10px;
   transition: box-shadow var(--tf-dur-2) var(--tf-ease-out), border-color var(--tf-dur-2) var(--tf-ease-out);
 }
-.box:focus-within { border-color: var(--tf-ink); box-shadow: var(--tf-ring-ink), var(--tf-shadow-float); }
+.box:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite), var(--tf-shadow-float); }
 /* 底部變體外面已經包了一層玻璃列，輸入框自己就不必再投一次重影——
    兩層陰影疊起來會讓底部糊成一團。 */
 .bottom .box { box-shadow: var(--tf-shadow-xs); }
-.bottom .box:focus-within { box-shadow: var(--tf-ring-ink), var(--tf-shadow-xs); }
+.bottom .box:focus-within { box-shadow: var(--tf-ring-graphite), var(--tf-shadow-xs); }
 .input { flex: 1; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.6; color: var(--tf-text-1); max-height: 140px; min-height: 24px; padding: 9px 0; background: none; }
 .input::placeholder { color: var(--tf-text-4); }
-.send { width: 40px; height: 40px; flex: none; border-radius: var(--tf-radius-pill); border: none; background: var(--tf-ink); color: var(--tf-on-ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.send:hover { background: var(--tf-ink-hover); }
+.send { width: 40px; height: 40px; flex: none; border-radius: var(--tf-radius-pill); border: none; background: var(--tf-graphite); color: var(--tf-on-graphite); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.send:hover { background: var(--tf-graphite-hover); }
 .send:disabled { opacity: 0.4; cursor: default; }
 .note { text-align: center; font-size: 11.5px; color: var(--tf-text-4); margin-top: 8px; }

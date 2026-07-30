@@ -7,7 +7,7 @@
   transition: border-color 120ms var(--tf-ease-out), color 120ms var(--tf-ease-out);
 }
 .n { font-family: var(--tf-mono); font-size: 10.5px; color: var(--tf-text-4); margin-left: 7px; font-variant-numeric: tabular-nums; }
-.chip:hover { border-color: var(--tf-ink); color: var(--tf-text-1); }
+.chip:hover { border-color: var(--tf-graphite); color: var(--tf-text-1); }
 /* 選取時才穿上該市場的顏色——靜止時保持安靜，讓色譜當畫面上唯一的色彩敘事 */
 .chip[data-on] { border-color: var(--c); color: var(--c); background: color-mix(in srgb, var(--c) 7%, var(--tf-surface)); font-weight: 600; }
 .chip[data-on] .n { color: var(--c); opacity: 0.7; }

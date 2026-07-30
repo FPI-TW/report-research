@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -63,6 +64,13 @@ async def _warmup_models() -> None:
     ImportError: cannot import name 'is_torch_npu_available'，暖機每次開機全滅。
     rerank 冷載入實測 44-52s：不預載則首個帶 rerank 的請求把載入算進逾時預算而 fail-open。
     """
+    # 開發捷徑：BGE-M3 ＋ reranker 冷載入合計約一分鐘，而 `make serve` 沒有
+    # `--reload`，所以改一行 Python 就要再等一次。**預設是暖機**——生產不受影響，
+    # 且刻意用 os.environ 而非 config：這是「這次啟動」的一次性選擇，不是部署設定
+    # （寫進 .env 會讓某次 debug 的旗標永久留在生產機上，那正是 unit 漂掉的方式）。
+    if os.environ.get("SKIP_WARMUP") == "1":
+        logger.warning("SKIP_WARMUP=1：跳過模型暖機（首個查詢會 lazy 載入，慢但可用）")
+        return
     try:
         await asyncio.to_thread(deps.embed_texts, ["warmup"])
     except Exception:

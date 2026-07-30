@@ -49,6 +49,18 @@ test('離題：notice→done 保持 notice、qaId 為 null、不 offer', () => {
   expect(t.offerReport).toBe(false)
 })
 
+test('notice_kind 從 done 帶進 turn（離題與時效婉拒分得開）', () => {
+  let s = submit()
+  s = askReducer(s, ev({ event: 'notice', data: '需要即時行情' }))
+  s = askReducer(s, ev({ event: 'done', data: { conversation_id: 'c1', notice_kind: 'time_sensitive' } }))
+  expect(s.turns[0].noticeKind).toBe('time_sensitive')
+
+  let s2 = submit()
+  s2 = askReducer(s2, ev({ event: 'notice', data: '離題' }))
+  s2 = askReducer(s2, ev({ event: 'done', data: { conversation_id: 'c1', notice_kind: 'off_topic' } }))
+  expect(s2.turns[0].noticeKind).toBe('off_topic')
+})
+
 test('ask-end 無 token 且非 notice → error', () => {
   let s = submit()
   s = askReducer(s, ev({ event: 'sources', data: [] }))
@@ -167,6 +179,13 @@ test('turnFromHistory 離題轉 notice、qaId null', () => {
   expect(t.phase).toBe('notice')
   expect(t.noticeText).toBe('無法回答此問題')
   expect(t.qaId).toBeNull()
+  expect(t.noticeKind).toBeNull()  // 舊列沒有這欄
+})
+
+test('turnFromHistory 帶出 notice_kind（重播不該把時效婉拒當成離題）', () => {
+  const t = turnFromHistory({ id: 'qaY', question: 'H', answer: '需要即時行情', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: true, notice_kind: 'time_sensitive', thinking_ms: null, reports: [], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false })
+  expect(t.phase).toBe('notice')
+  expect(t.noticeKind).toBe('time_sensitive')
 })
 
 test('report-cancel：generating→offered；done 不被還原', () => {

@@ -72,6 +72,18 @@ class FormatTrustedAnswerTests(unittest.TestCase):
         self.assertIn("https://example.com/quote/2330", body)
         self.assertIn("僅供參考", body)
 
+    def test_en_body_carries_disclaimer_and_data_time(self):
+        """英文軌先前完全沒有守門：把 en 那行免責刪掉，整套測試依然全綠。
+
+        免責在這條路徑不是裝飾——時效答案是零 LLM 的確定性模板，模板漏了就一定漏。
+        中英兩軌對稱釘住，避免只有 zh 被保護（M10 雙語上線後的典型漂移方向）。
+        """
+        body = ans.format_trusted_answer(_fresh_point(), "en")
+        self.assertIn("1085.00 TWD", body)
+        self.assertIn("As of:", body)
+        self.assertIn("exchange", body)
+        self.assertIn("does not constitute investment advice", body)
+
 
 class _Recorder:
     def __init__(self):

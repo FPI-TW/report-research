@@ -151,12 +151,27 @@ class ValidationTests(_Base):
     async def test_non_http_scheme_rejected(self):
         await self._expect_unavailable(_point(url="ftp://example.com/q"))
 
+    async def test_plain_http_rejected(self):
+        """明文 http 可被中間人改寫，不得作為「受信任」來源。"""
+        await self._expect_unavailable(_point(url="http://example.com/q"))
+
     async def test_missing_value_rejected(self):
         await self._expect_unavailable(_point(value=""))
 
     async def test_bad_content_hash_rejected(self):
         await self._expect_unavailable(_point(content_hash="not-a-hash"))
         await self._expect_unavailable(_point(content_hash=""))
+
+    async def test_content_hash_mismatch_rejected(self):
+        """格式合法但對不上 canonical_payload → 拒收。
+
+        上一題只餵得進 _SHA256_RE 那道格式檢查，validate_point 真正重算 sha256 的
+        那兩行**沒有任何測試覆蓋**——刪掉它們整套依然全綠，而它是「快照與宣稱的
+        雜湊是同一份東西」的唯一保證。
+        """
+        await self._expect_unavailable(
+            _point(content_hash=hashlib.sha256(b"different payload").hexdigest())
+        )
 
 
 class FailureModeTests(_Base):

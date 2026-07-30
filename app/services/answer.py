@@ -51,6 +51,9 @@ from app.services.overview import (
 from app.services.report_gate import should_offer_report
 from app.services.scope_router import (
     ADVICE_RISK,
+    BY_FAIL_OPEN,
+    BY_OVERVIEW,
+    BY_UNKNOWN,
     CORPUS_QA,
     OFF_TOPIC,
     OVERVIEW,
@@ -58,6 +61,7 @@ from app.services.scope_router import (
     RouteDecision,
     classify_non_overview,
     condense_and_route,
+    precheck_route,
     resolve_overview_route,
 )
 from app.services.stream_sentinel import SentinelStreamParser
@@ -186,6 +190,46 @@ NOTICE_MESSAGES: tuple[str, ...] = (
     TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
     TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN,
 )
+
+TIME_SENSITIVE_MESSAGES: tuple[str, ...] = (
+    TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
+    TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN,
+)
+
+
+def notice_kind_for(answer: str) -> str | None:
+    """重播時從答案文字反推 notice 種類（off_topic / time_sensitive），非固定文案回 None。
+
+    在此之前兩者共用 is_offtopic 一個布林，前端於是把時效婉拒也渲染成離題那顆
+    警告框，附「換個說法重新提問」——對時效題那是錯的建議（換說法不會讓系統
+    生出它沒有的資料），使用者只會反覆改寫同一題，每次再吃一輪完整檢索。
+    比對來源與 is_offtopic 完全相同，不另建第二份字串清單。
+    """
+    if answer in OFF_TOPIC_MESSAGES:
+        return OFF_TOPIC
+    if answer in TIME_SENSITIVE_MESSAGES:
+        return TIME_SENSITIVE
+    return None
+
+
+def route_log_filters(filters: dict, scope: str, decided_by: str) -> dict:
+    """把路由判定寫進 qa_log.filters：path＝落到哪一類、decided_by＝誰判的。
+
+    五類全部要寫。先前只有 overview／time_sensitive／advice_risk 有 path，off_topic
+    與 corpus_qa 留白，於是「分類器判成 corpus_qa」與「分類器壞掉 fail-open 猜成
+    corpus_qa」在 log 裡完全分不出來——而 fail-open 的落點正是 CORPUS_QA。
+    """
+    return dict(filters, path=scope, decided_by=decided_by)
+
+
+def _discard_task_result(task: asyncio.Task) -> None:
+    """取消背景工作後仍要取一次結果，否則 asyncio 會在 GC 時抱怨未取用的例外。"""
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.debug("被放棄的檢索工作拋出例外", exc_info=True)
 
 
 def off_topic_message(locale: str) -> str:
@@ -840,6 +884,9 @@ def history_item(row) -> dict:
         "sources": sources or [],
         "ext_sources": ext_sources or [],
         "is_offtopic": answer in NOTICE_MESSAGES,
+        # is_offtopic 保留是為了滾動部署（舊前端還在讀它）；新前端讀 notice_kind
+        # 才分得出「離題」與「時效資料不可得」。
+        "notice_kind": notice_kind_for(answer),
         "thinking_ms": thinking_ms,
     }
 
@@ -1330,7 +1377,8 @@ async def _answer_overview(
         yield _status("generating", thinking_ms=thinking_ms)
         yield ("token", msg)
         qa_id = await _log_qa(
-            question, msg, [], dict(filters, path="overview"), thinking_ms, [], [],
+            question, msg, [], route_log_filters(filters, OVERVIEW, BY_OVERVIEW),
+            thinking_ms, [], [],
             conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
             root_qa_id=root_qa_id, deactivate_qa_id=deactivate_qa_id,
             truncate_from=truncate_from, request_id=request_id,
@@ -1380,7 +1428,7 @@ async def _answer_overview(
 
     cited = cited_report_ids(body, sources)
     qa_id = await _log_qa(
-        question, body, cited, dict(filters, path="overview"),
+        question, body, cited, route_log_filters(filters, OVERVIEW, BY_OVERVIEW),
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources], [],
         conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
@@ -1418,10 +1466,9 @@ async def _yield_routed_notice(
     """
     if decision.scope == TIME_SENSITIVE:
         message = time_sensitive_message(locale)
-        log_filters = dict(filters, path="time_sensitive")
     else:
         message = off_topic_message(locale)
-        log_filters = filters
+    log_filters = route_log_filters(filters, decision.scope, decision.decided_by)
     yield ("sources", [])
     yield ("notice", message)
     thinking_ms = int((time.monotonic() - started) * 1000)
@@ -1443,7 +1490,10 @@ async def _yield_routed_notice(
     )
     yield (
         "done",
-        {"cited": [], "conversation_id": conv_id, "thinking_ms": thinking_ms},
+        # notice_kind 是加法欄位：前端據此決定文案與行動（時效題不該被建議「換個
+        # 說法重新提問」）。舊前端沒宣告它，zod 會 strip 掉，行為與現在相同。
+        {"cited": [], "conversation_id": conv_id, "thinking_ms": thinking_ms,
+         "notice_kind": decision.scope},
     )
 
 
@@ -1495,7 +1545,7 @@ async def _answer_time_sensitive(
         question,
         body,
         [],
-        dict(filters, path="time_sensitive"),
+        route_log_filters(filters, TIME_SENSITIVE, decision.decided_by),
         int((time.monotonic() - started) * 1000),
         [],
         ext,
@@ -1623,7 +1673,7 @@ async def answer_question(
             if turns:
                 from app.services.scope_router import _decision as _mk
 
-                decision = _mk(CORPUS_QA)
+                decision = _mk(CORPUS_QA, decided_by=BY_FAIL_OPEN)
 
     # 時效題（續問）：檢索前分流——僅 M4a 受信任 adapter 可作答，不可用則安全婉拒
     if decision is not None and decision.scope == TIME_SENSITIVE:
@@ -1644,6 +1694,21 @@ async def answer_question(
             yield ev
         return
 
+    # 首輪：確定性安全前檢在**建立任何工作之前**跑（零 LLM、零向量）。命中
+    # time_sensitive 就完全不檢索——先前是「分類與檢索並行、檢索跑完才 await 路由」，
+    # 於是這類題每一題都付了完整的 embed＋hybrid＋rerank 才把結果整包丟掉，而 rerank
+    # 的 semaphore 預設只有一個名額，這份白工還會擋住後面排隊的人。
+    # 命中 advice_risk 則不短路（它照常走 RAG），只是省掉分類器那次 Haiku 呼叫。
+    if not turns and decision is None:
+        decision = precheck_route(question)
+        if decision is not None and decision.scope == TIME_SENSITIVE:
+            async for ev in _answer_time_sensitive(
+                decision, question, filters, conv_id, started, stages_seen, new_root,
+                deactivate_qa_id, truncate_from, request_id, locale=locale,
+            ):
+                yield ev
+            return
+
     # M5 agentic：規劃與第一輪檢索並行（Haiku 規劃藏在檢索影子裡，設計 §5.1）；
     # 首輪 decision 未知一律建，續問僅 corpus_qa/advice_risk 建。新符號一律函式內
     # import——本函式以上的頂層 import 區塊屬凍結範圍（契約 3）。
@@ -1663,29 +1728,51 @@ async def answer_question(
     # 字面路 cap 截斷的遙測收集點（見 qa_timing log）。`LIMIT :cap` 沒有 ORDER BY，
     # 被截斷時「取到哪 cap 列」不穩定；先量出實際發生率，再談要不要付排序的代價。
     retrieval_stats: dict = {}
+
+    def _retrieve(q: str):
+        return retrieve_context(
+            q, k=k, dense_scan=ASK_DENSE_SCAN,
+            max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
+            max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
+            rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
+            stats=retrieval_stats,
+        )
+
     try:
-        if turns:
-            sources, context = await retrieve_context(
-                standalone_query, k=k, dense_scan=ASK_DENSE_SCAN,
-                max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
-                max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
-                rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
-                stats=retrieval_stats,
-            )
+        if turns or decision is not None:
+            # 續問，或首輪已被前檢定案（advice_risk）：路由不必再跑，直接檢索。
+            sources, context = await _retrieve(standalone_query)
         else:
+            # 分類與檢索並行，但**誰先到就聽誰的**。分類是一次 Haiku（秒級），檢索
+            # 含 rerank 是數十秒；先前寫成「await 檢索 → await 路由」，等於離題題
+            # 一律付完整檢索成本才把結果丟掉（離題的量遠大於時效題，白工主要在這裡）。
+            # 取消不會立刻停掉已送進執行緒的 rerank CPU 工作，但 _rerank_stage 帶
+            # deadline，被放棄的工作會在批次邊界收手（見 retrieval_pipeline）。
             route_task = asyncio.create_task(classify_non_overview(question))
+            retrieve_task = asyncio.create_task(_retrieve(question))
             try:
-                sources, context = await retrieve_context(
-                    question, k=k, dense_scan=ASK_DENSE_SCAN,
-                    max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
-                    max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
-                    rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
-                    stats=retrieval_stats,
+                await asyncio.wait(
+                    {route_task, retrieve_task},
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-                decision = await route_task
+                early = route_task.result() if route_task.done() else None
+                if (
+                    early is not None
+                    and not retrieve_task.done()
+                    and early.scope in (OFF_TOPIC, TIME_SENSITIVE)
+                ):
+                    retrieve_task.cancel()
+                    retrieve_task.add_done_callback(_discard_task_result)
+                    # 這兩類的下游分支只讀 decision 就 return，sources/context 給空
+                    # 值純為防未來有人在 return 之前插入讀取。
+                    decision, sources, context = early, [], ""
+                else:
+                    sources, context = await retrieve_task
+                    decision = await route_task
                 timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
             except BaseException:
                 route_task.cancel()
+                retrieve_task.cancel()
                 raise
     except BaseException:
         # 檢索中被停止/例外：收攏並行規劃背景工作（比照上方 route_task 自身模式）
@@ -1770,10 +1857,15 @@ async def answer_question(
             sources, context = first_retrieval
 
     system_prompt = SYSTEM_PROMPT
-    log_filters = filters
+    # decision 為 None 只可能是「路由整段沒跑到」的防禦分支；照樣要留下痕跡，
+    # 不能悄悄退回沒有 path 的舊形狀（那正是先前分不出 corpus_qa 來源的原因）。
+    log_filters = route_log_filters(
+        filters,
+        decision.scope if decision is not None else CORPUS_QA,
+        decision.decided_by if decision is not None else BY_UNKNOWN,
+    )
     if decision is not None and decision.scope == ADVICE_RISK:
         system_prompt = SYSTEM_PROMPT + RESEARCH_ONLY_POLICY
-        log_filters = dict(filters, path="advice_risk")
     # 語言覆寫附加於最後（zh-Hant 回空字串 → 提示一字不動）
     system_prompt = system_prompt + output_directive(locale)
 

@@ -84,6 +84,45 @@ class SafetyPrecheckTests(unittest.TestCase):
         self.assertIsNone(_safety_precheck("台積電如何體現價值投資"))
         self.assertIsNone(_safety_precheck("個股歷史成交價量分析"))
 
+    def test_published_earnings_questions_no_hit(self):
+        """已公布財報／營收的提問是 corpus 題，前檢不得攔。
+
+        研報寫的正是這些；攔下來就是把本平台最高頻的問法之一送進必定拒答的路。
+        判準那側交給 ROUTE_CRITERIA（見該常數上方的 A/B 實測紀錄），這裡守的是
+        「別哪天有人為了抓時效題把『財報』『營收』『毛利率』塞進詞表」。
+        """
+        for q in (
+            "台積電最新財報數字是多少",
+            "台積電上季財報數字如何",
+            "聯發科最新一季營收表現如何",
+            "鴻海最新的毛利率是多少",
+            "台積電法說會釋出什麼訊息",
+            "記憶體報價的近期走勢",
+        ):
+            with self.subTest(q=q):
+                self.assertIsNone(_safety_precheck(q))
+
+
+class RouteCriteriaReuseTests(unittest.TestCase):
+    """判準只有一份，首輪與續問都必須真的用到它。
+
+    首輪走 ROUTE_SYSTEM_PROMPT、續問走 CONDENSE_ROUTE_SYSTEM_PROMPT，兩者都以
+    `+ ROUTE_CRITERIA +` 串接。這條測試釘的是那個串接還在——一旦有人把判準文字
+    手抄進其中一支，改一邊就會漂一邊，而症狀是「同一個問題首輪判 A、續問判 B」，
+    不會有任何錯誤訊息。
+    """
+
+    def test_both_prompts_derive_from_the_single_constant(self):
+        self.assertIn(sr.ROUTE_CRITERIA, sr.ROUTE_SYSTEM_PROMPT)
+        self.assertIn(sr.ROUTE_CRITERIA, sr.CONDENSE_ROUTE_SYSTEM_PROMPT)
+
+    def test_criteria_keeps_the_four_tokens_and_the_tie_breaker(self):
+        # 四個 token 少一個，模型就有機會輸出 parse_route 認不得的字串 → fail-open
+        for token in ("OFF_TOPIC", "CORPUS_QA", "TIME_SENSITIVE", "ADVICE_RISK"):
+            self.assertIn(token, sr.ROUTE_CRITERIA)
+        # 「研報怎麼看 vs 此刻的數字」這條分界是 2026-07-30 A/B 量出來的關鍵句
+        self.assertIn("即使問句帶「最新」二字", sr.ROUTE_CRITERIA)
+
 
 class DecisionTests(unittest.TestCase):
     def test_policy_mapping(self):
@@ -97,6 +136,66 @@ class DecisionTests(unittest.TestCase):
         d = _decision(CORPUS_QA)
         with self.assertRaises(Exception):
             d.scope = OFF_TOPIC  # type: ignore[misc]
+
+    def test_decided_by_defaults_to_unknown_not_llm(self):
+        """預設刻意不是 llm：漏設的呼叫點要在 log 裡看得出來，不能偽裝成正常分類。"""
+        self.assertEqual(_decision(CORPUS_QA).decided_by, sr.BY_UNKNOWN)
+
+
+class DecidedByTests(unittest.TestCase):
+    """每條判定路徑都要標明是誰判的。
+
+    這組存在的唯一理由：fail-open 的落點是 CORPUS_QA，所以「分類器判的 corpus_qa」
+    與「分類器壞掉猜的 corpus_qa」在行為上一模一樣。沒有 decided_by，分類器失敗率
+    是完全不可觀測的量。
+    """
+
+    def _with_llm(self, output):
+        async def fake_stream(prompt, **kw):
+            yield output
+
+        return mock.patch.object(sr, "stream_completion", fake_stream)
+
+    def test_precheck_route_public_entry(self):
+        d = sr.precheck_route("台積電現在股價多少")
+        self.assertIsNotNone(d)
+        self.assertEqual(d.scope, sr.TIME_SENSITIVE)
+        self.assertEqual(d.decided_by, sr.BY_PRECHECK)
+        self.assertEqual(sr.precheck_route("台積電該不該買").scope, sr.ADVICE_RISK)
+        self.assertIsNone(sr.precheck_route("台積電展望如何"))
+
+    def test_overview_marked(self):
+        d = sr.resolve_overview_route("台灣市場有哪些券商的報告", date(2026, 7, 13))
+        self.assertEqual(d.decided_by, sr.BY_OVERVIEW)
+
+    def test_classifier_paths_marked(self):
+        with self._with_llm("TIME_SENSITIVE"):
+            d = _run(sr.classify_non_overview("那個東西的最新數字"))
+        self.assertEqual(d.decided_by, sr.BY_LLM)
+
+        # 前檢命中：不呼叫 LLM，標 precheck
+        d = _run(sr.classify_non_overview("台積電現在股價多少"))
+        self.assertEqual(d.decided_by, sr.BY_PRECHECK)
+
+        # 解析不出來 → fail-open corpus_qa，但要標得出來是猜的
+        with self._with_llm("我不知道"):
+            d = _run(sr.classify_non_overview("台積電展望"))
+        self.assertEqual((d.scope, d.decided_by), (CORPUS_QA, sr.BY_FAIL_OPEN))
+
+    def test_condense_paths_marked(self):
+        with self._with_llm("QUERY: 台積電展望\nROUTE: CORPUS_QA"):
+            _, d = _run(sr.condense_and_route("h", "它呢", today=date(2026, 7, 13)))
+        self.assertEqual(d.decided_by, sr.BY_LLM)
+
+        with self._with_llm("壞掉的輸出"):
+            _, d = _run(sr.condense_and_route("h", "它呢", today=date(2026, 7, 13)))
+        self.assertEqual((d.scope, d.decided_by), (CORPUS_QA, sr.BY_FAIL_OPEN))
+
+        # 原始問句前檢命中：改寫器連叫都不叫
+        _, d = _run(sr.condense_and_route(
+            "h", "台積電現在股價多少", today=date(2026, 7, 13)
+        ))
+        self.assertEqual(d.decided_by, sr.BY_PRECHECK)
 
 
 class ResolveOverviewRouteTests(unittest.TestCase):

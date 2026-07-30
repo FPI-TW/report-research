@@ -1,4 +1,4 @@
-import type { AskEvent, ReportEvent, AskStage, ReportStage, Source, ExtSource, ConversationTurn, QaVersion } from './askSchemas'
+import type { AskEvent, ReportEvent, AskStage, ReportStage, Source, ExtSource, ConversationTurn, NoticeKind, QaVersion } from './askSchemas'
 
 const HTTP = /^https?:\/\//i
 
@@ -66,6 +66,8 @@ export interface Turn {
   qaId: string | null
   isOfftopic: boolean
   noticeText: string | null
+  /** 固定婉拒的來源：離題 vs 時效資料不可得。null＝不是婉拒。見 askSchemas 的 noticeKind。 */
+  noticeKind: NoticeKind | null
   offerReport: boolean
   reportTitle: string | null
   feedback: 'like' | 'dislike' | null
@@ -148,6 +150,7 @@ function applyAsk(turn: Turn, ev: AskEvent): Turn {
       ...t,
       phase: t.isOfftopic ? 'notice' : 'done',
       qaId: ev.data.qa_id ?? t.qaId,
+      noticeKind: ev.data.notice_kind ?? t.noticeKind,
       offerReport: ev.data.offer_report ?? false,
       reportTitle: ev.data.report_title ?? null,
       rootQaId: ev.data.root_qa_id ?? t.rootQaId,
@@ -204,7 +207,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
       turns: [...state.turns, {
         id: action.id, question: action.question, phase: 'thinking', stages: ['understanding'],
         webUsed: false, retrievedCount: null, answer: '', thinkingMs: null, startedAt: action.startedAt,
-        sources: [], extSources: [], qaId: null, isOfftopic: false, noticeText: null,
+        sources: [], extSources: [], qaId: null, isOfftopic: false, noticeText: null, noticeKind: null,
         offerReport: false, reportTitle: null, feedback: null, report: idleReport, errorText: null,
         followups: [], priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1,
         queuePosition: null,
@@ -245,7 +248,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
           ...t, priorVersions, versionIndex: priorVersions.length,
           phase: 'thinking', stages: ['understanding'], answer: '', thinkingMs: null,
           sources: [], extSources: [], followups: [], errorText: null, isOfftopic: false,
-          noticeText: null, versionCount: priorVersions.length + 1, queuePosition: null,
+          noticeText: null, noticeKind: null, versionCount: priorVersions.length + 1, queuePosition: null,
         }
       }),
     }
@@ -258,7 +261,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
       turns: mapTurn(state.turns, action.id, t => ({
         ...t, question: action.question, phase: 'thinking', stages: ['understanding'],
         answer: '', thinkingMs: null, sources: [], extSources: [], qaId: null, retrievedCount: null,
-        isOfftopic: false, noticeText: null, offerReport: false, reportTitle: null,
+        isOfftopic: false, noticeText: null, noticeKind: null, offerReport: false, reportTitle: null,
         feedback: null, report: idleReport, errorText: null, followups: [],
         priorVersions: [], versionIndex: 0, rootQaId: null, versionCount: 1, queuePosition: null,
       })),
@@ -294,6 +297,7 @@ export function turnFromHistory(item: ConversationTurn): Turn {
     qaId: item.is_offtopic ? null : item.id,
     isOfftopic: item.is_offtopic,
     noticeText: item.is_offtopic ? item.answer : null,
+    noticeKind: item.notice_kind ?? null,
     offerReport: false,
     reportTitle: null,
     feedback: item.feedback,

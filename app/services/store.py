@@ -295,11 +295,26 @@ def _lexical_sql(
     """組 lexical 召回 SQL。per_report=True 時每報告只取最近距離 chunk（DISTINCT ON）。
 
     per_report=False 時結構與原查詢完全一致（問答路徑沿用，不可變更語意）。
+
+    末欄 `lex_hits` ＝**受 cap 限制後**實際取到的候選列數，用來讓 `LIMIT :cap` 的截斷
+    可觀測（`lex_hits == cap` 即已截斷）。刻意寫成「對已 cap 的 CTE 下 scalar
+    subquery」，而不是在 CTE 裡放 `count(*) OVER ()`：PG 的視窗函式在 LIMIT **之前**
+    計算，放進 CTE 會強迫掃完全部命中列才算得出計數——那正好摧毀 `LIMIT` 提早結束
+    掃描的能力（熱門詞可能是數十萬列）。對已 materialize 的 ≤cap 列再數一次幾乎免費。
+
+    **刻意不加 ORDER BY 到 cap 之前。** 現況「取哪 cap 列」由 heap 物理順序決定
+    （而且 `synchronize_seqscans` 預設 on，併發 seq scan 會從任意 block 起掃，同一
+    查詢在不同時刻本來就可能拿到不同的 cap 列）。加 `ORDER BY c.id` 會強迫掃完全部
+    命中列再取前 cap＝把「快而不完整」換成「慢且仍不完整」，是淨損失。唯一有語義的
+    排序鍵是報告新近度，而那要 join `research_report.report_date`，成本更高。先用
+    `lex_hits` 量出「實際被截斷的查詢佔比」再決定，不要照架構檢視報告直接加排序。
     """
     conds = [f"c.content_norm LIKE :t{i}" for i in range(num_patterns)] + extra_conds
     where = " AND ".join(conds)
     final_limit = "\n        LIMIT :limit" if limit is not None else ""
     if per_report:
+        # 計數來源是 lex_base（cap 那一層），不是 DISTINCT ON 之後的 lex——後者已按
+        # report_id 去重，數出來的是報告數、答不了「cap 有沒有咬到」。
         return f"""
         WITH lex_base AS MATERIALIZED (
             SELECT c.id, c.report_id, c.chunk_index, c.content, c.embedding
@@ -320,7 +335,8 @@ def _lexical_sql(
             ORDER BY c.report_id, c.distance
         )
         SELECT {_meta_columns("l")},
-               l.distance
+               l.distance,
+               (SELECT count(*) FROM lex_base) AS lex_hits
         FROM lex l
         JOIN research.research_report r ON r.id = l.report_id
         ORDER BY l.distance{final_limit}
@@ -334,7 +350,8 @@ def _lexical_sql(
             LIMIT :cap
         )
         SELECT {_meta_columns("l")},
-               l.embedding <=> CAST(:q AS vector) AS distance
+               l.embedding <=> CAST(:q AS vector) AS distance,
+               (SELECT count(*) FROM lex) AS lex_hits
         FROM lex l
         JOIN research.research_report r ON r.id = l.report_id
         ORDER BY distance{final_limit}
@@ -354,17 +371,26 @@ async def search_chunks_lexical(
     relates_stock: Optional[bool] = None,
     relates_futures: Optional[bool] = None,
     report_type: Optional[str] = None,
-):
+) -> tuple[list[ChunkRow], int]:
     """字面比對路：content_norm 同時含全部 LIKE pattern 的片段，依向量距離排序。
 
-    回傳列結構與 search_chunks_meta 相同。MATERIALIZED CTE 先過濾（走 trgm GIN
-    索引），再對最多 cap 列算精確距離，避免 planner 因 ORDER BY 走 HNSW。
+    回 `(rows, lex_hits)`。rows 的結構與 search_chunks_meta 相同；`lex_hits` ＝受
+    `cap` 限制後實際取到的候選列數，`lex_hits == cap` 即代表**候選被 cap 截斷**
+    （呼叫端據此做遙測，見 retrieval.hybrid_search 的 stats）。
+
+    **lex_hits 刻意獨立回傳，不併進 `_meta_columns` / `ChunkRow`**：那組欄位是位置式
+    契約（見 `_meta_columns` docstring 的事故紀錄），插欄不會拋錯、只會讓寫死索引的
+    消費端靜默指到錯欄。它在 SQL 裡是 ChunkRow 之後的末欄，故用 `ChunkRow._fields`
+    推導切點，不寫死數字。
+
+    MATERIALIZED CTE 先過濾（走 trgm GIN 索引），再對最多 cap 列算精確距離，避免
+    planner 因 ORDER BY 走 HNSW。
 
     per_report=True 時，每篇報告只回最近的 chunk（DISTINCT ON c.report_id）；
     `limit=None` 可省略最終 lexical 報告數上限；預設 False＝現況，不變動語意。
     """
     if not term_patterns:
-        return []
+        return [], 0
     params: dict = {"q": _vec_literal(query_embedding), "cap": cap}
     if limit is not None:
         params["limit"] = limit
@@ -374,8 +400,14 @@ async def search_chunks_lexical(
         params, market, instrument_type, relates_stock, relates_futures, report_type
     )
     sql = _lexical_sql(len(term_patterns), extra, per_report, limit=limit)
-    rows = await session.execute(text(sql), params)
-    return [ChunkRow._make(r) for r in rows.all()]
+    result = await session.execute(text(sql), params)
+    # 明確轉 tuple 再切片：SQLAlchemy Row 的 slice/int 存取語意隨版本變動過，而這裡切錯
+    # 一欄不會拋錯、只會讓每一列的欄位整體位移（正是 _meta_columns docstring 的事故）。
+    raw = [tuple(r) for r in result.all()]
+    width = len(ChunkRow._fields)
+    # lex_hits 是同一個 scalar subquery，每列同值；零列＝零命中（cap 不可能咬到）。
+    lex_hits = int(raw[0][width]) if raw else 0
+    return [ChunkRow._make(r[:width]) for r in raw], lex_hits
 
 
 def _parse_vec_text(s: str) -> list[float]:

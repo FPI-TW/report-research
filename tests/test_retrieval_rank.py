@@ -122,7 +122,7 @@ class HybridSearchConfigTests(unittest.IsolatedAsyncioTestCase):
 
         async def fake_lex(*a, **k):
             seen.update(k)
-            return []
+            return [], 0  # (rows, lex_hits)：真品的回傳形狀
 
         orig = (ret.search_chunks_meta, ret.search_chunks_lexical)
         ret.search_chunks_meta = fake_dense
@@ -138,6 +138,57 @@ class HybridSearchConfigTests(unittest.IsolatedAsyncioTestCase):
             ret.search_chunks_meta, ret.search_chunks_lexical = orig
 
         self.assertIsNone(seen["limit"])
+
+
+class HybridSearchLexStatsTests(unittest.IsolatedAsyncioTestCase):
+    """字面路 cap 截斷必須可觀測——現況是完全靜默的（呼叫端無從判斷）。"""
+
+    @staticmethod
+    async def _run(*, lex_hits, cap=None, query="台積電", stats=None):
+        from app.services import retrieval as ret
+
+        async def fake_dense(*a, **k):
+            return []
+
+        async def fake_lex(*a, **k):
+            return [], lex_hits
+
+        orig = (ret.search_chunks_meta, ret.search_chunks_lexical)
+        ret.search_chunks_meta = fake_dense
+        ret.search_chunks_lexical = fake_lex
+        try:
+            kwargs = {} if cap is None else {"lex_cap": cap}
+            await ret.hybrid_search(object(), query, [0.0], stats=stats, **kwargs)
+        finally:
+            ret.search_chunks_meta, ret.search_chunks_lexical = orig
+        return stats
+
+    async def test_hits_equal_to_cap_flags_truncated(self):
+        from app.services import retrieval as ret
+
+        stats = await self._run(lex_hits=ret.LEX_CAP, stats={})
+        self.assertEqual(stats["lex_hits"], ret.LEX_CAP)
+        self.assertEqual(stats["lex_cap"], ret.LEX_CAP)
+        self.assertTrue(stats["lex_truncated"])
+
+    async def test_hits_below_cap_not_truncated(self):
+        stats = await self._run(lex_hits=12, cap=2000, stats={})
+        self.assertEqual(stats["lex_cap"], 2000)
+        self.assertFalse(stats["lex_truncated"])
+
+    async def test_caller_supplied_cap_is_the_comparison_base(self):
+        # 檢索頁用 8000；拿模組預設 2000 去比會把每個「命中 2000 列」的查詢誤報成截斷
+        stats = await self._run(lex_hits=2000, cap=8000, stats={})
+        self.assertFalse(stats["lex_truncated"])
+
+    async def test_no_query_terms_is_never_truncated(self):
+        # 純符號查詢抽不出詞 → 完全沒跑字面路，不可報成「截斷」
+        stats = await self._run(lex_hits=0, query="???", stats={})
+        self.assertEqual(stats["lex_hits"], 0)
+        self.assertFalse(stats["lex_truncated"])
+
+    async def test_stats_omitted_is_harmless(self):
+        self.assertIsNone(await self._run(lex_hits=2000, stats=None))
 
 
 class TierBandContractTests(unittest.TestCase):
@@ -196,7 +247,7 @@ class HybridSearchTierTests(unittest.IsolatedAsyncioTestCase):
             return rows
 
         async def fake_lex(*a, **k):
-            return []
+            return [], 0
 
         orig = (ret.search_chunks_meta, ret.search_chunks_lexical)
         ret.search_chunks_meta = fake_dense

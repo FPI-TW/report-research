@@ -504,6 +504,73 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ans.ASK_RERANK_TIMEOUT, 60.0)  # 預設 60s（實測 50 對 ~34s + 餘裕）
 
 
+class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
+    """字面路 cap 截斷必須進 qa_timing。
+
+    截斷是靜默的：`store._lexical_sql` 的 `LIMIT :cap` 沒有 ORDER BY，取到哪 cap 列由
+    heap 物理順序決定，而回應與日誌裡原本沒有任何線索。**先量出實際發生率**才有依據
+    決定要不要付排序的代價（加 ORDER BY 會逼掃完全部命中列，見該函式 docstring）。
+    """
+
+    async def _ask_with_lex_stats(self, *, lex_hits, cap, truncated):
+        from app.services import answer as ans
+        import app.services.retrieval_pipeline as rp
+
+        captured: dict = {}
+
+        async def recording_search(session, q, qvec, *, stats=None, **k):
+            captured["stats_obj"] = stats
+            if stats is not None:
+                stats.update(
+                    {"lex_hits": lex_hits, "lex_cap": cap, "lex_truncated": truncated}
+                )
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
+
+        async def fake_stream(*a, **k):
+            yield "答案[1]"
+
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
+
+        orig = (
+            rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+            rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+        )
+        rp.hybrid_search = recording_search
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = fake_stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_non_overview = fake_route
+        try:
+            with self.assertLogs("app.services.answer", level="INFO") as logs:
+                _ = [e async for e in ans.answer_question("台積電展望")]
+        finally:
+            (
+                rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+            ) = orig
+        timing = [m for m in logs.output if "qa_timing" in m]
+        self.assertEqual(len(timing), 1, logs.output)
+        return captured, timing[0]
+
+    async def test_stats_dict_reaches_retrieval_and_lands_in_qa_timing(self):
+        captured, line = await self._ask_with_lex_stats(
+            lex_hits=2000, cap=2000, truncated=True
+        )
+        # 傳 None 等於整條遙測落空（hybrid_search 只在 stats is not None 時填）
+        self.assertIsInstance(captured["stats_obj"], dict)
+        self.assertIn("lex_hits=2000", line)
+        self.assertIn("lex_cap=2000", line)
+        self.assertIn("lex_truncated=True", line)
+
+    async def test_untruncated_run_logs_false_not_missing(self):
+        _captured, line = await self._ask_with_lex_stats(
+            lex_hits=37, cap=2000, truncated=False
+        )
+        self.assertIn("lex_truncated=False", line)
+
+
 class StageTimerTests(unittest.TestCase):
     def test_records_intervals_and_total(self):
         from app.services.answer import _StageTimer

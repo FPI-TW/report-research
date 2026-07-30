@@ -46,7 +46,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
         )}
         <Callout variant="error" action={disabled ? undefined : { label: '重試', onClick: onErrorRetry }}>{turn.errorText ?? '查詢逾時或失敗'}</Callout>
         <div className={styles.actions}>
-          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</Pressable>
+          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}><Icon name="refresh" size={15} /></Pressable>
         </div>
       </div>
     )
@@ -101,8 +101,10 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
               <Pressable className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback('dislike')} aria-label="倒讚"><Icon name="thumbDown" size={15} /></Pressable>
             </>
           )}
-          <CopyButton content={view.answer} variant="ghost" className={styles.act} aria-label="複製回答" title="複製回答" />
-          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</Pressable>
+          {/* 四顆動作鈕都是純圖示且等大：size="xs" 只是讓 animate-ui 自帶的方框接近目標值，
+              真正釘死尺寸與圓角的是 .act（見 CSS 註解）。 */}
+          <CopyButton content={view.answer} variant="ghost" size="xs" className={styles.act} hoverScale={1.02} tapScale={0.94} aria-label="複製回答" title="複製回答" />
+          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}><Icon name="refresh" size={15} /></Pressable>
           {refCount > 0 && (
             <>
               <span className={styles.divider} />

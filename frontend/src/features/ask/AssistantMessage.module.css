@@ -44,8 +44,14 @@
   animation: tf-pulse 1s steps(2) infinite;
 }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
-.act { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; padding: 6px; cursor: pointer; }
+/* 讚／倒讚／複製／重新生成四顆的尺寸一律由這裡決定，不靠各自的內距去湊：複製鈕來自
+   animate-ui（Tailwind 的 size-* 與 rounded-md），與其他三顆的 padding 算法不同，過去
+   因此大小不一。CSS Modules 不在 @layer 內，會贏過 utilities 層的工具類別，故在此把方框、
+   圓角與圖示尺寸全部釘死——四顆才會等大等圓。 */
+.act { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; padding: 0; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; cursor: pointer; }
+.act svg { width: 15px; height: 15px; }
 .act:hover { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink); }
+.act:disabled { opacity: 0.4; cursor: default; }
 .on { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink); }
 .divider { width: 1px; height: 16px; background: var(--tf-border); margin: 0 2px; }
 .srcBtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px; cursor: pointer; font-variant-numeric: tabular-nums; }

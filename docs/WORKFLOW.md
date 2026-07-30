@@ -138,6 +138,7 @@ flowchart TD
 - **輸出**：`research.report_signal`（讀雷達時零 LLM——跨券商共識、四分位與跨期變動全由 `app/services/radar/` 決定性計算）
 - **指令**：`make signals`＝`uv run python scripts/extract_signals.py`；旗標 `[--min-brokers 3] [--min-reports 5] [--top-n 50] [--workers 2] [--limit N] [--excerpt 16000] [--model M] [--reextract] [--dry-run]`
 - **刻意只跑高覆蓋子集**：全語料僅約 0.68%（99 篇）有訊號。**「沒有訊號」是常態不是錯誤**——雷達對「有研報但尚未擷取」回 200 的 `pending_extraction` 空狀態（完全查無研報才 404），閱讀頁則整區不進 DOM。
+- **已納入排程（每 3 小時，每輪限量）**：`scripts/sync_new_reports.sh` 最後一段跑 `--limit ${SYNC_SIGNAL_LIMIT:-15}`，且**刻意不綁本輪新檔**——它排的是跨全語料的積壓（2026-07-30 實測待擷取 5047 份），綁新檔的話沒有新研報進來就完全不動，雷達正是這樣從 2026-07-16 起靜止兩週。**`--limit` 是安全機制不是調校旋鈕**：不設上限＝連續佔住 claude 鎖八十小時以上，期間每輪匯入撞鎖 rc=75，而匯入撞鎖的那批研報會從 delta 消失（`rsync --size-only` 下輪不再列出），得靠 `--all-local` 手動補。擷取順序是 `report_date DESC`，故限量取的一定是最新那幾份：雷達保持最新，歷史積壓在背景慢慢排。
 - ⚠️ **不可與其他 `claude` CLI 批次同時跑**（同一個搶 CLI 的坑，見 ④；互斥由 `scripts/_claude_lock.py` 強制）
 
 ### ⑥ 摘要生成 — `scripts/generate_summaries.py`（Claude CLI）
@@ -151,7 +152,7 @@ flowchart TD
 
 `claude` CLI 是跨進程共用資源。會 spawn 它的批次——`tag_all_cli.py`（②標註）、`sync_new_reports.py`（增量匯入時的行內標註）、`generate_summaries.py`（⑥）、`generate_titles.py`（⑦）、`extract_takeaways.py`（④）、`extract_signals.py`（⑤）——併發互搶的症狀不是「壞掉」而是**擷取被大量誤標 `rejected`**：資料沒壞、模型也沒壞，只是 CLI 被搶。
 
-規約以前只寫在註解與文件裡，但 `report-mark-sync.timer` 每 3 小時會自動跑「增量匯入 → 摘要 → 摘錄」，文件攔不住排程。現在改由鎖強制：
+規約以前只寫在註解與文件裡，但 `report-mark-sync.timer` 每 3 小時會自動跑「增量匯入 → 摘要 → 標題 → 摘錄 → 訊號」，文件攔不住排程。現在改由鎖強制：
 
 - **機制**：`fcntl.flock(LOCK_EX | LOCK_NB)` 於鎖檔 `data/.claude_cli.lock`；各批次在 `main` 進入點取一次（**不在 per-report 迴圈內**）。
 - **撞車行為**：後啟動者印出持有者（腳本名／pid／起始時間）並以 **`rc=75`**（`sysexits.h` 的 `EX_TEMPFAIL`）結束——刻意與「批次自己壞了」分開，讓排程殼能分別處置。

@@ -333,21 +333,46 @@ class SyncShellVisibilityTests(unittest.TestCase):
         )
 
     def test_records_failures_to_unit_failures_log(self):
-        """三個 claude 階段都要有 record_unit_failure 呼叫點。
+        """每個 claude 階段都要有 record_unit_failure 呼叫點。
 
         只斷言「檔案裡出現 unit_failures.log」是不夠的——函式定義留著、呼叫點被拿掉，
         那種斷言照樣全綠（反轉實驗 R7 實測如此）。要釘的是呼叫點。
         """
         self.assertIn("unit_failures.log", self.src)
-        for stage in ("sync_new_reports(import)", "generate_summaries", "extract_takeaways"):
+        for stage in (
+            "sync_new_reports(import)",
+            "generate_summaries",
+            "generate_titles",
+            "extract_takeaways",
+            "extract_signals",
+        ):
             with self.subTest(stage=stage):
                 self.assertIn(f'record_unit_failure "{stage}"', self.src)
 
     def test_best_effort_stages_capture_return_code(self):
         """`|| log ...` 會把 rc 吃掉；要能分辨 rc=75（被鎖擋下）就必須先接住它。"""
-        for var in ("SUMMARY_RC", "TAKEAWAY_RC"):
+        for var in ("SUMMARY_RC", "TITLE_RC", "TAKEAWAY_RC", "SIGNAL_RC"):
             with self.subTest(var=var):
                 self.assertIn(f"|| {var}=$?", self.src)
+
+    def test_signal_stage_is_bounded_per_round(self):
+        """訊號擷取**必須帶 --limit**：這條是防「排程反過來弄停主資料流」的唯一保險。
+
+        待擷取積壓 5047 份 × 約 100-135s，不設上限就是連續佔住 claude 鎖八十小時以上；
+        期間每輪 sync 的匯入都撞鎖 rc=75，而匯入撞鎖會讓那批研報從 delta 消失
+        （rsync --size-only 下輪不再列出），得靠 --all-local 手動補。
+        """
+        self.assertIn("SIGNAL_LIMIT=${SYNC_SIGNAL_LIMIT:-", self.src)
+        self.assertIn('--limit "$SIGNAL_LIMIT"', self.src)
+
+    def test_signal_stage_runs_regardless_of_new_imports(self):
+        """訊號段刻意在 `$HASHES` 判斷之外——它排的是全語料積壓，不是本輪新檔。
+
+        綁進 if 區塊的話，沒有新研報進來的日子它完全不動，而雷達正是這樣從
+        2026-07-16 起靜止兩週。以「出現在 else 分支之後」釘住位置。
+        """
+        else_branch = self.src.index("本次無新研報入庫")
+        self.assertGreater(self.src.index("scripts/extract_signals.py"), else_branch)
 
     def test_lock_busy_code_matches_python(self):
         """殼層寫死的 75 與 Python 的 EXIT_LOCK_BUSY 漂移了，分支就永遠不成立。"""

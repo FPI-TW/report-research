@@ -113,6 +113,41 @@ test('parseAskEvent／parseReportEvent 認得 queued（未宣告就會被靜默�
     .toMatchObject({ event: 'queued' })
 })
 
+describe('notice_kind：離題與時效婉拒必須分得開', () => {
+  // zod 物件預設是 strip——未宣告的鍵不報錯、直接安靜丟掉。本專案踩過兩次
+  // （/api/progress 的 takeaway/signal 從 P4 就在回，schema 沒宣告於是從未進 DOM）。
+  // 這組的反轉實驗：把 askDoneData 的 notice_kind 那一行刪掉，下面第一題必紅。
+  it('done 帶得出 notice_kind', () => {
+    const r = parseAskEvent({
+      event: 'done',
+      data: { conversation_id: 'c1', notice_kind: 'time_sensitive' },
+    })
+    expect(r).not.toBeNull()
+    expect((r as { data: { notice_kind?: string | null } }).data.notice_kind).toBe('time_sensitive')
+  })
+
+  it('未知的 kind 只讓該欄位退成 null，不讓整個 done 被丟棄', () => {
+    // 滾動部署期間後端可能先送出前端還不認得的值；整包 parse 失敗會讓 done
+    // 事件被靜默丟棄，畫面就永遠停在串流中。
+    const r = parseAskEvent({
+      event: 'done',
+      data: { conversation_id: 'c1', notice_kind: 'something_new' },
+    })
+    expect(r).not.toBeNull()
+    expect((r as { data: { notice_kind?: string | null } }).data.notice_kind).toBeNull()
+  })
+
+  it('歷史重播的 turn 也帶得出 notice_kind', () => {
+    const t = conversationTurnSchema.parse({
+      id: 'q1', question: 'Q', answer: 'A', created_at: null, feedback: null,
+      sources: [], ext_sources: [], is_offtopic: true, notice_kind: 'off_topic',
+      thinking_ms: null, reports: [], stages: [], followups: [],
+      root_qa_id: null, version_count: 1, stopped: false,
+    })
+    expect(t.notice_kind).toBe('off_topic')
+  })
+})
+
 describe('丟棄事件不再靜默（rejectEvent）', () => {
   // 回傳值刻意不變（仍是 null）——這組測的只是「有沒有留下痕跡」。沒有痕跡時，schema
   // 與後端 payload 漂移的唯一症狀是畫面少了東西，沒有任何線索指向 parser。

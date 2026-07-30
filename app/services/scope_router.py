@@ -32,12 +32,23 @@ Scope = Literal["off_topic", "overview", "corpus_qa", "time_sensitive", "advice_
 ToolPolicy = Literal[
     "no_answer", "corpus_only", "trusted_external_required", "research_only"
 ]
+# 判定來源：落 qa_log.filters.decided_by，供事後分辨「分類器判的」與「分類器壞掉
+# 猜的」。fail-open 的落點是 CORPUS_QA，所以分類器每失敗一次，就有一題時效或離題
+# 問題被拿歷史研報回答——在此之前那兩者在 log 裡長得一模一樣。
+DecidedBy = Literal["precheck", "overview", "llm", "fail_open", "unknown"]
 
 OFF_TOPIC: Scope = "off_topic"
 OVERVIEW: Scope = "overview"
 CORPUS_QA: Scope = "corpus_qa"
 TIME_SENSITIVE: Scope = "time_sensitive"
 ADVICE_RISK: Scope = "advice_risk"
+
+BY_PRECHECK: DecidedBy = "precheck"
+BY_OVERVIEW: DecidedBy = "overview"
+BY_LLM: DecidedBy = "llm"
+BY_FAIL_OPEN: DecidedBy = "fail_open"
+# 預設刻意是 unknown 而非 llm：漏設的呼叫點要看得出來，不能偽裝成正常分類結果。
+BY_UNKNOWN: DecidedBy = "unknown"
 
 NO_ANSWER: ToolPolicy = "no_answer"
 CORPUS_ONLY: ToolPolicy = "corpus_only"
@@ -63,13 +74,20 @@ class RouteDecision:
     scope: Scope
     tool_policy: ToolPolicy
     overview_filters: OverviewFilters | None = None
+    decided_by: DecidedBy = BY_UNKNOWN
 
 
-def _decision(scope: Scope, overview_filters: OverviewFilters | None = None) -> RouteDecision:
+def _decision(
+    scope: Scope,
+    overview_filters: OverviewFilters | None = None,
+    *,
+    decided_by: DecidedBy = BY_UNKNOWN,
+) -> RouteDecision:
     return RouteDecision(
         scope=scope,
         tool_policy=POLICY_FOR_SCOPE[scope],
         overview_filters=overview_filters,
+        decided_by=decided_by,
     )
 
 
@@ -118,6 +136,18 @@ def _safety_precheck(question: str) -> Scope | None:
         return TIME_SENSITIVE
     return None
 
+
+def precheck_route(question: str) -> RouteDecision | None:
+    """確定性安全前檢的公開入口：命中回安全 scope，未命中回 None。零 LLM、零向量。
+
+    存在的理由是「檢索之前就能定案的事，不該等檢索跑完才知道」：answer.py 首輪
+    在建立檢索工作之前呼叫它，命中 time_sensitive 就完全不檢索。內部與
+    classify_non_overview 走同一支 _safety_precheck，兩條路不會漂移。
+    """
+    pre = _safety_precheck(question)
+    return _decision(pre, decided_by=BY_PRECHECK) if pre is not None else None
+
+
 CONDENSE_MODEL = _S.ask_condense_model
 CONDENSE_TIMEOUT = _S.ask_condense_timeout
 
@@ -157,7 +187,7 @@ def resolve_overview_route(question: str, today: date) -> RouteDecision | None:
     filters = resolve_filters(question, today)
     if not filters.any():
         return None
-    return _decision(OVERVIEW, overview_filters=filters)
+    return _decision(OVERVIEW, overview_filters=filters, decided_by=BY_OVERVIEW)
 
 
 async def classify_non_overview(
@@ -169,7 +199,7 @@ async def classify_non_overview(
     """非 overview 四類分類：前檢命中直接回（不呼叫 LLM）；LLM 失敗 fail-open corpus_qa。"""
     pre = _safety_precheck(question)
     if pre is not None:
-        return _decision(pre)
+        return _decision(pre, decided_by=BY_PRECHECK)
     try:
         parts: list[str] = []
         async for chunk in stream_completion(
@@ -179,7 +209,9 @@ async def classify_non_overview(
         scope = parse_route("".join(parts))
     except Exception:
         scope = None
-    return _decision(scope if scope is not None else CORPUS_QA)
+    if scope is not None:
+        return _decision(scope, decided_by=BY_LLM)
+    return _decision(CORPUS_QA, decided_by=BY_FAIL_OPEN)
 
 
 async def route_question(
@@ -243,7 +275,7 @@ async def condense_and_route(
     # 個人化投資／即時資料請求降級成看似安全的 corpus 問題。
     original_precheck = _safety_precheck(question)
     if original_precheck is not None:
-        return question, _decision(original_precheck)
+        return question, _decision(original_precheck, decided_by=BY_PRECHECK)
     prompt = f"先前對話：\n{history_text}\n\n追問：{question}"
     query: str | None = None
     scope: Scope | None = None
@@ -262,5 +294,7 @@ async def condense_and_route(
         return standalone, ov
     pre = _safety_precheck(standalone)
     if pre is not None:
-        return standalone, _decision(pre)
-    return standalone, _decision(scope if scope is not None else CORPUS_QA)
+        return standalone, _decision(pre, decided_by=BY_PRECHECK)
+    if scope is not None:
+        return standalone, _decision(scope, decided_by=BY_LLM)
+    return standalone, _decision(CORPUS_QA, decided_by=BY_FAIL_OPEN)

@@ -101,6 +101,66 @@ class DecisionTests(unittest.TestCase):
         with self.assertRaises(Exception):
             d.scope = OFF_TOPIC  # type: ignore[misc]
 
+    def test_decided_by_defaults_to_unknown_not_llm(self):
+        """預設刻意不是 llm：漏設的呼叫點要在 log 裡看得出來，不能偽裝成正常分類。"""
+        self.assertEqual(_decision(CORPUS_QA).decided_by, sr.BY_UNKNOWN)
+
+
+class DecidedByTests(unittest.TestCase):
+    """每條判定路徑都要標明是誰判的。
+
+    這組存在的唯一理由：fail-open 的落點是 CORPUS_QA，所以「分類器判的 corpus_qa」
+    與「分類器壞掉猜的 corpus_qa」在行為上一模一樣。沒有 decided_by，分類器失敗率
+    是完全不可觀測的量。
+    """
+
+    def _with_llm(self, output):
+        async def fake_stream(prompt, **kw):
+            yield output
+
+        return mock.patch.object(sr, "stream_completion", fake_stream)
+
+    def test_precheck_route_public_entry(self):
+        d = sr.precheck_route("台積電現在股價多少")
+        self.assertIsNotNone(d)
+        self.assertEqual(d.scope, sr.TIME_SENSITIVE)
+        self.assertEqual(d.decided_by, sr.BY_PRECHECK)
+        self.assertEqual(sr.precheck_route("台積電該不該買").scope, sr.ADVICE_RISK)
+        self.assertIsNone(sr.precheck_route("台積電展望如何"))
+
+    def test_overview_marked(self):
+        d = sr.resolve_overview_route("台灣市場有哪些券商的報告", date(2026, 7, 13))
+        self.assertEqual(d.decided_by, sr.BY_OVERVIEW)
+
+    def test_classifier_paths_marked(self):
+        with self._with_llm("TIME_SENSITIVE"):
+            d = _run(sr.classify_non_overview("那個東西的最新數字"))
+        self.assertEqual(d.decided_by, sr.BY_LLM)
+
+        # 前檢命中：不呼叫 LLM，標 precheck
+        d = _run(sr.classify_non_overview("台積電現在股價多少"))
+        self.assertEqual(d.decided_by, sr.BY_PRECHECK)
+
+        # 解析不出來 → fail-open corpus_qa，但要標得出來是猜的
+        with self._with_llm("我不知道"):
+            d = _run(sr.classify_non_overview("台積電展望"))
+        self.assertEqual((d.scope, d.decided_by), (CORPUS_QA, sr.BY_FAIL_OPEN))
+
+    def test_condense_paths_marked(self):
+        with self._with_llm("QUERY: 台積電展望\nROUTE: CORPUS_QA"):
+            _, d = _run(sr.condense_and_route("h", "它呢", today=date(2026, 7, 13)))
+        self.assertEqual(d.decided_by, sr.BY_LLM)
+
+        with self._with_llm("壞掉的輸出"):
+            _, d = _run(sr.condense_and_route("h", "它呢", today=date(2026, 7, 13)))
+        self.assertEqual((d.scope, d.decided_by), (CORPUS_QA, sr.BY_FAIL_OPEN))
+
+        # 原始問句前檢命中：改寫器連叫都不叫
+        _, d = _run(sr.condense_and_route(
+            "h", "台積電現在股價多少", today=date(2026, 7, 13)
+        ))
+        self.assertEqual(d.decided_by, sr.BY_PRECHECK)
+
 
 class ResolveOverviewRouteTests(unittest.TestCase):
     def test_overview_question_returns_decision_with_filters(self):

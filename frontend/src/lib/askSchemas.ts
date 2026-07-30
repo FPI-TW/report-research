@@ -22,6 +22,15 @@ const reportStage = z.enum(['retrieving', 'outlining', 'writing', 'searching_web
 export type ReportStage = z.infer<typeof reportStage>
 
 const askStatusData = z.object({ stage: askStage, count: z.number().int().optional(), thinking_ms: z.number().optional() })
+
+// 固定婉拒的兩種來源。先前兩者共用 is_offtopic 一個布林，於是時效婉拒被渲染成
+// 離題那顆警告框、附「換個說法重新提問」——對時效題那是錯的建議，換說法不會讓
+// 系統生出它沒有的資料。`.catch(null)` 讓未來新增的第三種值不會讓整個 done 事件
+// parse 失敗（那會讓事件回到被靜默丟棄，正是這裡要避免的事）。
+export const noticeKind = z.enum(['off_topic', 'time_sensitive'])
+export type NoticeKind = z.infer<typeof noticeKind>
+const noticeKindField = noticeKind.nullish().catch(null)
+
 const askDoneData = z.object({
   cited: z.array(z.string()).optional(),
   qa_id: z.string().optional(),
@@ -31,6 +40,7 @@ const askDoneData = z.object({
   report_title: z.string().nullable().optional(),
   root_qa_id: z.string().nullable().optional(),
   version_count: z.number().optional(),
+  notice_kind: noticeKindField,
 })
 export type AskDone = z.infer<typeof askDoneData>
 const askErrorData = z.object({ detail: z.string() })
@@ -156,6 +166,7 @@ export const conversationTurnSchema = z.object({
   sources: z.array(sourceSchema).catch([]),
   ext_sources: z.array(extSourceSchema).catch([]),
   is_offtopic: z.boolean().default(false),
+  notice_kind: noticeKindField,
   thinking_ms: z.number().nullable().default(null),
   reports: z.array(conversationReportSchema).default([]),
   stages: z.array(askStage).catch([]),

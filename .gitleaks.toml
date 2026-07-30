@@ -1,0 +1,42 @@
+# gitleaks 設定：secret 掃描的 allowlist。
+#
+# 為什麼需要這一層：`.gitignore` 為擋 `.env` 寫了很細緻的規則（`/.env` ＋ `.env.*`
+# ＋ `!.env.example`），註解裡還記著「一次 `git add -A` 就會提交上去」的顧慮。那條
+# 規則擋的是**檔案**；這支掃的是**內容**——貼進測試檔、docstring、設計稿裡的憑證，
+# gitignore 一個都擋不到。2026-07-29 那次事故（測試把生產帳密與 session 金鑰換成
+# 寫在 repo 裡的測試值）正好是「內容」而非「檔案」的問題。
+#
+# 2026-07-30 首次全歷史掃描結果：28 筆命中、**distinct secret 只有 2 個**，都是下面
+# 那個測試 fixture 的變體。**歷史裡沒有真的洩漏過憑證。**
+# **這兩行是整個檔案裡最容易寫錯、且錯了最沒有症狀的地方。**
+#
+# 有自訂 config 時 gitleaks **不會**自動帶內建規則——必須顯式 extend。第一版我寫的是
+# 頂層 `extends = true`（不是 gitleaks 的語法），gitleaks 不報錯、直接載入一個
+# **零規則**的設定，於是工作樹與全歷史掃描都印「no leaks found」。
+# 那不是乾淨，那是掃描器根本沒在看。
+#
+# 判別方法：拿一個內建規則一定會抓的形狀去探（GitHub PAT `ghp_` + 36 字元最可靠）。
+# **不要用 AWS 官方文件的 `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` 當探測值**——
+# 它是全世界最常出現在文件裡的假 key，gitleaks 預設就把它 allowlist 掉，於是
+# 「沒抓到」會被誤讀成設定有問題（我第一次就是這樣誤判的）。
+[extend]
+useDefault = true
+
+[allowlist]
+description = "測試 fixture 的固定假 secret"
+
+# **刻意用「這個字串」而不是「整個 tests/ 目錄」。**
+#
+# 放行整個 tests/ 會讓「有人把真的 secret 貼進測試檔」從此掃不到——而這個 repo 的
+# 實際事故正是測試碰到生產憑證。所以只放行這一個已知的假值，其餘任何高熵字串
+# （包含出現在測試檔裡的）照樣要紅。
+#
+# 這個值在 22 個測試檔 ＋ `tests/conftest.py` 以 `os.environ.setdefault()` 設定
+# （setdefault 而非賦值是刻意的：不覆蓋真實環境變數），另有 2 處出現在
+# `docs/superpowers/plans/` 的歷史設計稿裡。
+#
+# 字元類刻意收窄成 `[0-9a-z]`：`fixed-test-secret-<某段隨機 base64>` 這種「借用
+# 前綴混進真 secret」的寫法不會被放行。
+regexes = [
+  '''fixed-test-secret-[0-9a-z]+''',
+]

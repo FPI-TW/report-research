@@ -189,3 +189,37 @@ jobs:
 
       - name: CHECK 約束清單對帳
         run: uv run pytest -q tests/test_schema_constraints.py
+
+  secrets:
+    name: secret 掃描（gitleaks）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # 刻意**不**宣告 needs：它 20 秒跑完、跟前後端都無關，沒有理由排在 3 分鐘的
+    # 前端 job 後面。與 schema job 同樣獨立。
+    steps:
+      # fetch-depth: 0 是必要的——掃全歷史才抓得到「同一個 PR 裡先 commit 再移除」
+      # 的 secret。淺 clone 只看得到最終樹，那種 secret 仍然留在 git 物件裡。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 直接裝二進位而不用 gitleaks/gitleaks-action：那個 action 對 **organization**
+      # repo 要求 GITLEAKS_LICENSE，而本 repo 在 FPI-TW 組織下 ⇒ 用它會直接失敗。
+      # 版本釘死：規則集會隨版本變動，浮動版本等於「某天 CI 突然紅了而 diff 是空的」。
+      - name: 安裝 gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.0
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      # `--redact` 讓命中內容不進 log：CI log 對整個組織可見，把 secret 印出來等於
+      # 又洩漏一次（而且是在一個保存 90 天的地方）。
+      - name: 掃描全歷史
+        run: gitleaks git . -c .gitleaks.toml --no-banner --redact --verbose
+
+      # 工作樹也掃一次：未追蹤／已 stage 但未 commit 的檔案不在 git 物件裡，
+      # 上一步看不到。兩步的成本合計 ~20 秒。
+      - name: 掃描工作樹
+        run: gitleaks dir . -c .gitleaks.toml --no-banner --redact --verbose

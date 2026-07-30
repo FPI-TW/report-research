@@ -3,7 +3,7 @@
 檢視範圍：`app/services/`（11,238 行）、`db/schema.sql`、`web/`、`frontend/`、`scripts/`、`tests/`（85 檔 23,191 行）、`deploy/`、文件。
 所有結論均以實際檔案內容查證，附「檔案:行號」。
 
-> **快照聲明**：本文是 **commit `3ce718e`（2026-07-29 09:38）當下的檢視快照**，不是持續維護的現況文件——「當時看到什麼」正是它的價值，因此其後併入 main 的修正一律以**時點註記**補在對應段落（目前有第 7、14、18 節與 P3 資料完整性一節，共四處），論述本身不改寫。文中的行號、計數與預設值都是檢視當下的量測、事後未再校正（連 `3ce718e` 本身都未必逐一對得上，例如檢視範圍寫的 `tests/` 85 檔，在 `3ce718e` 實際是 88 檔）——**任何數字都請重數一次，不要引用**；要看現況請讀 `CLAUDE.md` 與 `README.md`。
+> **快照聲明**：本文是 **commit `3ce718e`（2026-07-29 09:38）當下的檢視快照**，不是持續維護的現況文件——「當時看到什麼」正是它的價值，因此其後併入 main 的修正一律以**時點註記**補在對應段落（目前有 P0 第 7 節、P1 第 14／18 節、P2 第 4／6／8 節、P3 資料完整性一節，共七處），論述本身不改寫。文中的行號、計數與預設值都是檢視當下的量測、事後未再校正（連 `3ce718e` 本身都未必逐一對得上，例如檢視範圍寫的 `tests/` 85 檔，在 `3ce718e` 實際是 88 檔）——**任何數字都請重數一次，不要引用**；要看現況請讀 `CLAUDE.md` 與 `README.md`。
 >
 > **逐條複驗（2026-07-29）**：本文全部主張已拆成 119 條逐一查證，結果在
 > `docs/ARCHITECTURE_REVIEW_2026-07_VERIFY.md`——66 條仍屬實、37 條需更正數字或推論、
@@ -312,6 +312,13 @@ class RetrievalResult:
 
 ### 4. LLM 呼叫層：補 `complete()` 與 `wall_timeout`
 
+> **2026-07-30 時點註記**：本節有兩件事，**只做了第二件**（那個資源洩漏），`complete()` 重構未做。同時要更正一處推論：
+>
+> - **「真實牆鐘上界是 `3T + 4.5s`」需要限定條件**。`llm.py:293` **只對 `api_error` 重試**，`timeout` 一律 `break`（註解寫明「逾時＝API 無回應，再等一輪無益」）。所以 `3T` 只在「每次都在逼近逾時的那一刻才回 API 錯誤」時成立——那是可能的（`reason` 的判定把 `result_error` 排在 `timed_out` 之前，慢速 529 會被歸類成 `api_error` 而重試），但**典型情況遠優於此**，因為 529 是快速失敗。上界對，量級的直覺不對。
+> - **資源洩漏已修**：`retrieve_for_section` 現在收 `budget` 並取 `min(設定值, budget × 0.6)`，`budget` 與外層 `wait_for` 的 `timeout` 取自同一個變數（有 AST 測試釘住）。順帶記一件事——**正確寫法早就存在於 `agentic_qa.py`**（`rerank_timeout` 取 `min(設定值, remaining)` 配 `timeout=remaining`），註解甚至寫明了理由，逐節這條就是漏了套上。不取 1.0 是因為兩者的「預算」語意不同：agentic_qa 每次重算 `remaining`（planner 與 embed 已扣），而逐節拿到的是事前固定的 cap，還得涵蓋 `plan_queries`（一次 LLM 呼叫）、embed 與 SQL。
+>
+> `complete()` 與 `wall_timeout` 橫跨 7 個手抄呼叫點，未做。
+
 `llm.py` 只導出串流 API，於是「drain 成字串」這段在 **7 處手抄**（`scope_router` ×2、`query_planner`、`faithfulness`、`followups`、`agentic_qa`、`report_writer`），其中只有 1 處有 wall-clock 保護。
 
 更嚴重的是 `timeout` 是 per-attempt 語意（`retries=2` 預設 + 退避）⇒ **真實牆鐘上界是 `3T + 4.5s`**。`report_writer.py:1336` 的註解正是這個問題的事故報告（「最壞 1050s」），但修法只套用在逐節路徑。其餘 8 個呼叫端的實際上界：
@@ -336,6 +343,16 @@ class RetrievalResult:
 **做法**：建 `app/prompts/` 套件，`blocks.py` 提供 `chart_spec_rule(locale)` / `kpi_spec_rule(locale)` / `injection_guard(locale)` / `citation_rule(locale, scheme)` 等可組裝片段，四份 prompt 改為組裝。好處：prompt 變更的 diff 不再混在邏輯 diff 裡；injection guard 有單一來源可寫測試斷言「每個對外 system prompt 都含 guard」；支撐 prompt 版本化與 A/B。同時選定**一種**在地化策略（建議「整份平行 prompt」，因為 `report_writer.py:1029` 記錄了策略 1 在 8 節研報中實測失守的生產事故），其餘統一遷移。
 
 ### 6. 例外體系與失敗策略顯性化
+
+> **2026-07-30 時點註記**：**只做了第一項的前半**——「LLM 失敗時仍寫一筆 `qa_log`」。`app/errors.py`、`Outcome[T]`／`Degraded[T]`、web 層型別分流、`docs/failure_policy.md` 全部未做。
+>
+> 已修的那半確實有生產實例：`_log_qa` 在串流之後，所以 `LLMUnavailableError` 讓該輪完全不進 `qa_log`——使用者看到「問答服務發生錯誤」，而監控端**分不出 API 529 過載與程式 bug**（兩者都是「什麼紀錄都沒有」）。現在落一筆 `answer=NULL`、`active=false`、`filters.llm_error ∈ {overloaded, other}` 的列，例外照原樣往外拋（router 的錯誤處理與 SSE error 事件靠它，落庫是額外做的事而非取代）。
+>
+> **`active=false` 是刻意複用既有機制**：四條使用者面讀取路徑中的三條已經有 `AND active`（condense 脈絡、`/api/history`、`list_conversations` 的 `FILTER`＋`turn_count > 0`），第四條 `list_qa_versions` 是版本 pager、刻意不濾 active，另補 `answer IS NOT NULL`。代價是**已知的語意混用**：`active=false` 原本只表示「被新版本取代」，現在也表示「這輪 LLM 掛了」；要分開得加欄位＋回填，不在本次範圍。
+>
+> `llm_error` 只分兩類、刻意不細解析：訊息文字來自 `claude` CLI 透傳的 API 回應，格式不在我們控制之內，分越細越容易在 CLI 改版後靜默全部落到「其他」。認不出來一律 `other`——猜成 `overloaded` 等於把自己的 bug 記成上游的問題，比沒有分類更糟。
+>
+> 另外本節有一處要更正：「`LLMUnavailableError` 定義了卻**全庫零捕捉**」——`eval/judge.py:119` 有捕（`except (JudgeError, LLMUnavailableError)`）。生產路徑（`app/`／`web/`）確實零捕捉，那部分是對的。
 
 - `LLMUnavailableError` 定義了卻**全庫零捕捉**。fail-open 端用 `except Exception` 一律吞掉；主答案路徑不捕捉 ⇒ 冒到 router 的泛用 handler ⇒ 使用者看到「問答服務發生錯誤」，且**該輪 qa_log 完全不落庫**（`_log_qa` 在串流之後）。**API 529 過載與程式 bug 在監控上完全無法區分**。
 - 48 個 `except Exception` + 3 個 `except BaseException`，同一份程式碼有至少 5 種失敗語意（回原物件／回 degraded 物件／回 None／回空／fail-closed），辨識方式只有讀 docstring。其中 `retrieval_pipeline.py:78` 用**物件同一性**（`is`）判定 rerank 是否套用，而 `rerank.py:139` 的註解寫著「改動此同一性即默默破壞降級偵測」——任何無害的 `list(...)` 包裝都會靜默改變研報路徑的降級行為。

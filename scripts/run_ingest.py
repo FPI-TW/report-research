@@ -114,6 +114,9 @@ async def main(force: bool) -> None:
             # 只會靜默留下過期統計。先就本交易放寬上界（見 db.relax_statement_timeout）。
             await relax_statement_timeout(session)
             await session.execute(sql_text("ANALYZE research.report_chunk"))
+            # research_report 也一起刷（毫秒級）。autoanalyze 是開著的，缺這句不會讓統計
+            # 長期失真；會失真的是「剛大批 ingest 完就立刻查詢」那個短窗。
+            await session.execute(sql_text("ANALYZE research.research_report"))
             await session.commit()
 
     print("\n=== ingest summary ===")

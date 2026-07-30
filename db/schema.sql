@@ -82,6 +82,27 @@ ALTER TABLE research.report_chunk ADD COLUMN IF NOT EXISTS content_norm text
 CREATE INDEX IF NOT EXISTS idx_report_chunk_content_trgm
     ON research.report_chunk USING gin (content_norm gin_trgm_ops);
 
+-- research_report 常用的過濾／排序欄位原本一個索引都沒有（只有 market 與三個陣列 GIN）。
+-- 嚴重度要如實看待：現況約 1.4 萬列，且 full_text 多半 TOAST 出去、heap 本身不大，
+-- 單次 seq scan 的量級估算只有數十毫秒（未實測）——這幾個索引是「規模一放大就線性惡化」
+-- 的便宜保險，**不是已量測到的加速**。
+-- 生產請先手動 `CREATE INDEX CONCURRENTLY`（同名即冪等，之後 make schema 的
+-- IF NOT EXISTS 會直接跳過）；直接跑本檔會在建索引期間鎖住該表的寫入。
+CREATE INDEX IF NOT EXISTS idx_rr_report_date
+    ON research.research_report (report_date DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_rr_source
+    ON research.research_report (source);
+CREATE INDEX IF NOT EXISTS idx_rr_report_type
+    ON research.research_report (report_type);
+-- stock_code 是純量欄位，與 stock_targets 的 GIN 互不覆蓋：_COVERAGE_SQL 的
+-- instrument_name 子查詢與 overview 個股條件的 OR 左支用的都是這一欄。
+CREATE INDEX IF NOT EXISTS idx_rr_stock_code
+    ON research.research_report (stock_code);
+-- company_name 的唯一查法是 ILIKE '%名%'（overview 的 stock_name 條件），B-tree 用不上，
+-- 只有 trgm GIN 有機會。pg_trgm 於上方 CREATE EXTENSION，故此索引必須排在它之後。
+CREATE INDEX IF NOT EXISTS idx_rr_company_name_trgm
+    ON research.research_report USING gin (company_name gin_trgm_ops);
+
 -- 問答記錄（Phase 1 RAG）：每次 /api/ask 寫一列，供稽核/分析（冪等建表）
 CREATE TABLE IF NOT EXISTS research.qa_log (
     id               uuid PRIMARY KEY,
@@ -198,10 +219,14 @@ CREATE TABLE IF NOT EXISTS research.report_signal (
 -- 索引（設計規格「建立索引」段）：總覽與券商時間線查詢
 CREATE INDEX IF NOT EXISTS idx_report_signal_instr_date
     ON research.report_signal (market, instrument_code, report_date DESC);
+-- 待查（勿逕自刪）：券商過濾一律走 radar/types.py 的 EFFECTIVE_BROKER_SQL
+-- （COALESCE(r.source, s.broker) 跨表運算式），所以第三欄 broker 永遠不會被當過濾鍵用。
+-- 但「從未被使用」是執行期斷言：planner 仍可能為只用 (market, instrument_code) 的查詢
+-- 挑中它。要刪之前先查生產的 pg_stat_user_indexes.idx_scan（查法見 P1-11 的 manual_ddl）。
 CREATE INDEX IF NOT EXISTS idx_report_signal_instr_broker_date
     ON research.report_signal (market, instrument_code, broker, report_date DESC);
-CREATE INDEX IF NOT EXISTS idx_report_signal_report
-    ON research.report_signal (report_id);
+-- idx_report_signal_report (report_id) 已刪：被 uq_report_signal_report_instr
+-- (report_id, market, instrument_code) 的最左前綴完整覆蓋。勿再新增。
 -- 批次 checkpoint / rerun：快速撈 pending/rejected/partial
 CREATE INDEX IF NOT EXISTS idx_report_signal_status
     ON research.report_signal (extraction_status);
@@ -254,8 +279,8 @@ CREATE TABLE IF NOT EXISTS research.report_section (
     updated_at     timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT uq_report_section_run_pos UNIQUE (run_id, position)
 );
-CREATE INDEX IF NOT EXISTS idx_report_section_run
-    ON research.report_section (run_id, position);
+-- idx_report_section_run (run_id, position) 已刪：與 uq_report_section_run_pos
+-- UNIQUE (run_id, position) 逐欄（含欄序）完全相同。勿再新增。
 CREATE INDEX IF NOT EXISTS idx_report_section_evidence
     ON research.report_section USING gin (evidence_ids);
 
@@ -334,9 +359,9 @@ CREATE TABLE IF NOT EXISTS research.report_takeaway (
                OR (quote_start >= 0 AND quote_end > quote_start))
 );
 
--- 讀取：依報告取全部摘錄，已排序
-CREATE INDEX IF NOT EXISTS idx_report_takeaway_report
-    ON research.report_takeaway (report_id, ordinal);
+-- 讀取（依報告取全部摘錄、已排序）由 uq_report_takeaway_ordinal
+-- UNIQUE (report_id, ordinal) 支撐；原 idx_report_takeaway_report 逐欄（含欄序）與它
+-- 完全相同，已刪。勿再新增。
 -- 批次 checkpoint / rerun
 CREATE INDEX IF NOT EXISTS idx_report_takeaway_status
     ON research.report_takeaway (extraction_status);

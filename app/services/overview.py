@@ -274,7 +274,9 @@ def _build_where(f: OverviewFilters) -> tuple[str, dict]:
         conds.append("r.report_date <= :date_to")
         params["date_to"] = f.date_to
     if f.stock_code:
-        conds.append("(r.stock_code = :sc OR :sc = ANY(r.stock_targets))")
+        # 右支寫 @> 而非 :sc = ANY(...)：array_ops GIN 不支援 text = text[]，= ANY() 形式
+        # 讓 idx_rr_stock_targets 完全用不上（語意等價，見 radar/queries.py 的同一段註解）。
+        conds.append("(r.stock_code = :sc OR r.stock_targets @> ARRAY[:sc]::text[])")
         params["sc"] = f.stock_code
     if f.stock_name:
         conds.append("r.company_name ILIKE :sname")

@@ -122,5 +122,70 @@ class AppliedSchemaMatchesGoldenTests(unittest.TestCase):
         )
 
 
+class IsResearchNotNullSourceTests(unittest.TestCase):
+    """不需要 DB：`db/schema.sql` 的收斂敘述必須存在且順序正確。
+
+    `NOT NULL` 不是 CHECK 約束（走 `pg_attribute.attnotnull`），所以上面那組
+    golden 對帳完全看不到它。而它最可能的壞法是**順序**：回填晚於 `SET NOT NULL`
+    ⇒ 有 NULL 的庫會讓整個 `make schema` 停在那一句。有 DB 的環境測不出這件事
+    （測試庫本來就沒有 NULL 列），只有靜態檢查抓得到。
+    """
+
+    SCHEMA = REPO_ROOT / "db" / "schema.sql"
+
+    def setUp(self):
+        self.src = self.SCHEMA.read_text(encoding="utf-8")
+
+    def test_has_backfill_default_and_not_null(self):
+        for frag in (
+            "UPDATE research.research_report SET is_research = true WHERE is_research IS NULL",
+            "ALTER COLUMN is_research SET DEFAULT true",
+            "ALTER COLUMN is_research SET NOT NULL",
+        ):
+            self.assertIn(frag, self.src, f"schema.sql 缺少：{frag}")
+
+    def test_backfill_precedes_set_not_null(self):
+        i_fill = self.src.index("SET is_research = true WHERE is_research IS NULL")
+        i_nn = self.src.index("ALTER COLUMN is_research SET NOT NULL")
+        self.assertLess(
+            i_fill, i_nn,
+            "回填必須早於 SET NOT NULL——反過來會讓有 NULL 的庫在此中斷整個 make schema",
+        )
+
+    def test_no_nullable_declaration_lingers(self):
+        """建表區塊那行不必改（ALTER 會蓋過去），但不得有人又把它加回可 NULL。"""
+        self.assertNotIn("ALTER COLUMN is_research DROP NOT NULL", self.src)
+
+
+class IsResearchFilterConsistencyTests(unittest.TestCase):
+    """不需要 DB：`is_research` 的過濾寫法只准有一種。
+
+    收斂之前有三種語意不同的寫法並存（`= true` 排除 NULL、`IS NOT FALSE` 含 NULL、
+    完全不過濾），檢索頁／總覽題／閱讀頁的母體因此不同——**今天結果一樣純屬巧合**，
+    實測 14,674 列全是 true。這條測試擋的是「下一個人再寫一個 `= true`」。
+
+    檢索主路刻意不過濾（`ingest_all.py` 只對 is_research 的報告寫 chunk，chunk
+    存在本身就是那個保證），所以不在掃描範圍內——這裡只管有寫過濾的那些。
+    """
+
+    ROOTS = ("app", "web", "scripts")
+
+    def test_no_equals_true_form_anywhere(self):
+        offenders = []
+        for root in self.ROOTS:
+            for path in (REPO_ROOT / root).rglob("*.py"):
+                if "__pycache__" in path.parts:
+                    continue
+                text_ = path.read_text(encoding="utf-8")
+                for lineno, line in enumerate(text_.splitlines(), 1):
+                    if "is_research = true" in line and "SET is_research" not in line:
+                        offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno}")
+        self.assertEqual(
+            offenders, [],
+            "SQL 裡請一律用 `is_research IS NOT FALSE`（NULL＝標註器沒說，當研報看）："
+            + ", ".join(offenders),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

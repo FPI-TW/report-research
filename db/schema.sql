@@ -64,6 +64,25 @@ ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS title_original tex
 -- generated（內文找不到標題，依重點自擬）。無 CHECK：值由批次寫入，未知一律存 NULL。
 ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS title_source   text;
 
+-- is_research 收斂成 NOT NULL DEFAULT true。
+--
+-- 原本可 NULL，於是全 repo 出現三種語意不同的過濾寫法：`= true`（overview 分面，
+-- 排除 NULL）、`IS NOT FALSE`（其餘 15 處，含 NULL）、以及**完全不過濾**（檢索主路，
+-- 因為 ingest_all.py 只對 is_research 的報告寫 chunk，chunk 存在本身就是那個保證）。
+-- 三者今天結果相同純屬巧合——2026-07-30 實測 14,674 列**全部**是 true，零 NULL 零
+-- false。一旦哪天有 NULL 進來，檢索頁／總覽題／閱讀頁的母體就會靜靜地分岔。
+--
+-- 選 true 而非 false 當預設：NULL 的語意是「標註器沒說」，而 15 處既有寫法都把它
+-- 當研報看（`extract_takeaways.py` 那句註解寫得最明白）。填 true 是把現行行為寫進
+-- schema，不是改變它。
+--
+-- 回填放在 SET NOT NULL 之前，否則有 NULL 時整個 make schema 會停在這裡。兩句都
+-- 冪等：WHERE IS NULL 第二次就零列，而對已 NOT NULL 的欄位再 SET NOT NULL 是 no-op
+-- （CI 的 schema job 會把 schema.sql 套兩次驗這件事）。
+UPDATE research.research_report SET is_research = true WHERE is_research IS NULL;
+ALTER TABLE research.research_report ALTER COLUMN is_research SET DEFAULT true;
+ALTER TABLE research.research_report ALTER COLUMN is_research SET NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_research_report_instr
     ON research.research_report USING gin (instrument_types);
 CREATE INDEX IF NOT EXISTS idx_rr_stock_targets

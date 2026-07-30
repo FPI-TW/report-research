@@ -33,6 +33,20 @@ VALID_STATUSES = ["valid", "partial"]
 # 外篇根本擠不進候選集。拉高到 100 留足餘裕。
 SIMILAR_EF_SEARCH = 100
 
+# **拉高 ef_search 只是把候選集變大，沒有解決「過濾掉之後不夠了就不再往下掃」。**
+# `c.report_id <> :rid` 正是 pgvector 所謂 post-filter：HNSW 先取 ef_search 個最近鄰，
+# 再套 WHERE。長報告有數百個 chunk，全都比外篇更近——過濾後剩下的可能遠少於 LIMIT，
+# 而沒有 iterative_scan 時掃描就停在那裡，**不會報錯、只會靜默少回幾篇**（正是這支查詢
+# 那三條「錯了不會報錯、只會變雜訊」不變量的第四條）。
+#
+# `relaxed_order` 而非 `strict_order`：與 `store.search_chunks_meta` 一致，且本查詢的
+# 排序鍵本來就不是原始距離（`_SIMILAR_SQL` 用的是跨 probe 的廣度加權），嚴格距離序
+# 對它沒有意義，換來的只是更慢。
+#
+# 需要 pgvector ≥ 0.8——0.7 環境會直接 `unrecognized configuration parameter` ⇒
+# 每次開閱讀頁 500。`assert_pgvector_version()` 在啟動時就擋下這種環境。
+SIMILAR_ITERATIVE_SCAN = "relaxed_order"
+
 
 @dataclass
 class DocRow:
@@ -289,8 +303,11 @@ async def fetch_similar(
     total_probes 為實際取到的 probe 數（可能少於 probe_n：短報告的 chunk 數不足），
     隨每列一起回傳，供前端顯示「9/12 段相符」。無命中時回空 list。
     """
-    # SET LOCAL 只在本交易有效；常數為模組 int，非外部輸入（PG 的 SET 不吃 bind）
+    # SET LOCAL 只在本交易有效；常數為模組 int/字面，非外部輸入（PG 的 SET 不吃 bind）
     await session.execute(text(f"SET LOCAL hnsw.ef_search = {SIMILAR_EF_SEARCH}"))
+    await session.execute(
+        text(f"SET LOCAL hnsw.iterative_scan = {SIMILAR_ITERATIVE_SCAN}")
+    )
     rows = (
         await session.execute(
             _SIMILAR_SQL,

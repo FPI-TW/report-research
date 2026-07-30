@@ -47,6 +47,44 @@ class LexicalSqlTests(unittest.TestCase):
         self.assertIn("c.content_norm LIKE :t0", sql)
 
 
+class NullEmbeddingGuardTests(unittest.TestCase):
+    """`embedding IS NOT NULL` 是防 500，不是效能過濾。
+
+    `embedding` 允許 NULL，而 `NULL <=> vector` 回 NULL；呼叫端
+    `retrieval.hybrid_search` 對每列做 `float(row.distance)` ⇒ `float(None)`
+    TypeError ⇒ 整個查詢 500。字面路是唯一能撈出這種列的路徑——dense 路走 HNSW
+    索引，而索引本身就不含 NULL。
+    """
+
+    def test_both_branches_filter_null_embedding(self):
+        for per_report in (False, True):
+            with self.subTest(per_report=per_report):
+                sql = _lexical_sql(1, [], per_report=per_report)
+                self.assertIn("c.embedding IS NOT NULL", sql)
+
+    def test_filter_sits_inside_the_capped_cte(self):
+        """必須在 `LIMIT :cap` 之前，否則 NULL 列會佔掉 cap 名額。
+
+        放在最外層一樣不會 500，但會讓「cap 咬到」的計數把不可用的列算進去——
+        `lex_hits` 的語意（候選被截斷了嗎）就跟著失真。
+        """
+        for per_report in (False, True):
+            with self.subTest(per_report=per_report):
+                sql = _lexical_sql(1, [], per_report=per_report)
+                self.assertLess(
+                    sql.index("c.embedding IS NOT NULL"), sql.index("LIMIT :cap")
+                )
+
+    def test_filter_precedes_caller_supplied_conds(self):
+        """呼叫端條件接在後面，不得把守門擠掉或蓋掉。"""
+        sql = _lexical_sql(1, ["r.market = :market"], per_report=False)
+        self.assertIn("c.embedding IS NOT NULL", sql)
+        self.assertIn("r.market = :market", sql)
+        self.assertLess(
+            sql.index("c.embedding IS NOT NULL"), sql.index("r.market = :market")
+        )
+
+
 class LexHitsSqlShapeTests(unittest.TestCase):
     """lex_hits（cap 截斷可觀測）的 SQL 形狀。
 

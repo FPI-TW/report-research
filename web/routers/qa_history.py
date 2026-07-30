@@ -8,6 +8,9 @@ delete_qa、list_qa_versions、_valid_uuid、SessionFactory 走 web.deps（測�
 web.deps.X 即涵蓋）。其餘服務函式（record_feedback、history_item、對話串 CRUD、
 OFF_TOPIC_MESSAGES）只有這組用，由 app.services.answer 直接匯入。
 """
+import logging
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import bindparam, text
@@ -15,6 +18,7 @@ from sqlalchemy import bindparam, text
 from app.services.answer import (
     OFF_TOPIC_MESSAGES,
     delete_conversation,
+    deleted_pdf_paths,
     get_conversation,
     history_item,
     list_conversations,
@@ -22,12 +26,38 @@ from app.services.answer import (
 )
 from web import deps
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
 class FeedbackRequest(BaseModel):
     qa_id: str
     value: str  # 'like' | 'dislike'
+
+
+# ── 輔助函式一律放在所有 @router.* 裝飾器之上 ────────────────────────────────
+# 夾在裝飾器與 handler 之間會讓裝飾器套到輔助函式，端點對正常請求回 422
+# （2026-07-28 實際事故）。直接呼叫函式物件的測試看不到，只有 HTTP 層測試會抓到。
+
+
+async def _delete_conversation_and_files(conversation_id: str) -> bool:
+    """刪對話串（含研報衍生物）並清掉磁碟上的 PDF。兩個刪除端點共用。
+
+    **順序是刻意的**：先查路徑（列刪掉就查不到了）→ 刪 DB → 刪檔。
+    檔案刪不掉只 log 不影響回傳——DB 已提交而檔案殘留是可容忍的（`make db-audit`
+    看得到）；反過來檔案刪了 DB 沒刪，就是下載端點永久 500。
+    """
+    paths = await deleted_pdf_paths(conversation_id)
+    ok = await delete_conversation(conversation_id)
+    if not ok:
+        return False
+    for p in paths:
+        try:
+            Path(p).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("刪除對話串的 PDF 失敗（DB 已刪，檔案殘留）path=%s %s", p, exc)
+    return True
 
 
 @router.post("/api/feedback")
@@ -97,13 +127,13 @@ async def conversation_detail(conversation_id: str):
 
 @router.delete("/api/conversations/{conversation_id}")
 async def conversation_delete(conversation_id: str):
-    """刪整個對話串。回 {"ok": bool}。"""
-    ok = await delete_conversation(conversation_id)
+    """刪整個對話串（含研報衍生物與磁碟 PDF）。回 {"ok": bool}。"""
+    ok = await _delete_conversation_and_files(conversation_id)
     return {"ok": ok}
 
 
 @router.post("/api/conversations/{conversation_id}/delete")
 async def conversation_delete_post(conversation_id: str):
     """相容性刪除路由（某些代理/邊緣對 DELETE 不穩時前端回退）。"""
-    ok = await delete_conversation(conversation_id)
+    ok = await _delete_conversation_and_files(conversation_id)
     return {"ok": ok}

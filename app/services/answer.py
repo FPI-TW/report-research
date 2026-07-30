@@ -1246,9 +1246,44 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
 
 
 async def delete_conversation(conversation_id: str) -> bool:
-    """刪整個對話串；刪到 ≥1 列回 True，查無或 DB 異常回 False。"""
+    """刪整個對話串連同其研報衍生物；刪到 ≥1 列回 True，查無或 DB 異常回 False。
+
+    **原本只刪 `qa_log`**，於是同一對話串產出的 `report_doc` / `report_run` /
+    `report_rendition` 與磁碟上的 PDF 全部變成永久孤兒——三張表刻意都沒有 FK
+    （生成流程史不是語料衍生物），所以 DB 不會替你連刪，而 repo 裡也沒有任何清理
+    路徑。2026-07-30 實測生產 14 列 `report_doc` 有 **2 列**是孤兒（14%）。
+
+    刪除順序是**由葉往根**：`report_rendition` 以 `report_id` 指向 `report_doc`，
+    先刪 doc 就再也找不到要刪哪些 rendition。四個 DELETE 在同一交易內，任一失敗
+    整批回滾——半刪掉的狀態比沒刪更難清。
+
+    磁碟檔不在這裡刪：回傳值只有 bool，而呼叫端（`web/routers/qa_history.py`）是
+    HTTP handler。`deleted_pdf_paths()` 另外提供路徑清單，讓「刪檔」成為可獨立
+    重試的一步——DB 已提交而檔案沒刪掉，是可容忍的殘留（`make db-audit` 看得到）；
+    反過來檔案刪了 DB 沒刪，就是下載端點永久 500。
+    """
     try:
         async with SessionFactory() as session:
+            # 以 conversation_id 為鍵的三張表，加上 rendition 那層間接。
+            # `report_doc` / `report_run` 的 conversation_id 對齊 qa_log 的
+            # COALESCE 分組鍵（見 schema.sql:159 註解），所以直接等值比對即可。
+            await session.execute(
+                text(
+                    "DELETE FROM research.report_rendition WHERE report_id IN ("
+                    "  SELECT id FROM research.report_doc WHERE conversation_id = :cid"
+                    ")"
+                ),
+                {"cid": conversation_id},
+            )
+            await session.execute(
+                text("DELETE FROM research.report_doc WHERE conversation_id = :cid"),
+                {"cid": conversation_id},
+            )
+            # report_section 以 run_id 指向 report_run（有 FK CASCADE），故只刪 run。
+            await session.execute(
+                text("DELETE FROM research.report_run WHERE conversation_id = :cid"),
+                {"cid": conversation_id},
+            )
             result = await session.execute(
                 text(
                     "DELETE FROM research.qa_log "
@@ -1257,9 +1292,41 @@ async def delete_conversation(conversation_id: str) -> bool:
                 {"cid": conversation_id},
             )
             await session.commit()
+        # 判斷「有沒有刪到」仍只看 qa_log：對話串的存在與否由它定義，研報衍生物
+        # 是可選的。只有 report_doc 而沒有 qa_log 是不可能的狀態（研報由問答產出）。
         return getattr(result, "rowcount", 0) > 0
     except Exception:
         return False
+
+
+async def deleted_pdf_paths(conversation_id: str) -> list[str]:
+    """該對話串的研報 PDF 路徑（`report_doc` ＋ `report_rendition` 兩處）。
+
+    **要在 `delete_conversation` 之前呼叫**——列刪掉之後就查不到路徑了。分成兩個
+    函式而非一個「刪並回傳」，是為了讓刪檔可以獨立重試：DB 已提交而檔案沒刪，是
+    可容忍的殘留；檔案刪了 DB 沒刪，就是下載端點永久 500。
+
+    DB 異常回空 list（呼叫端就當沒有檔案要刪），不拋——刪對話這個動作不該因為
+    「順便查個路徑失敗」而整體失敗。
+    """
+    try:
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT d.pdf_path FROM research.report_doc d "
+                        "WHERE d.conversation_id = :cid AND d.pdf_path IS NOT NULL "
+                        "UNION "
+                        "SELECT rr.pdf_path FROM research.report_rendition rr "
+                        "JOIN research.report_doc d2 ON d2.id = rr.report_id "
+                        "WHERE d2.conversation_id = :cid"
+                    ),
+                    {"cid": conversation_id},
+                )
+            ).all()
+        return [r[0] for r in rows if r[0]]
+    except Exception:
+        return []
 
 
 async def record_feedback(qa_id: str, value: str) -> bool:

@@ -249,7 +249,12 @@ class CorpusOverview:
 
 def _build_where(f: OverviewFilters) -> tuple[str, dict]:
     """OverviewFilters → (WHERE 片段, params)，欄位皆以別名 r 限定。"""
-    conds = ["r.is_research = true"]
+    # `IS NOT FALSE` 而非 `= true`：全 repo 其餘 15 處都用前者（NULL＝標註器沒說，
+    # 一律當研報看），這裡是唯一的例外，於是總覽題的母體與檢索頁／閱讀頁不同。
+    # 今天結果一樣純屬巧合——實測 is_research 全是 true。`db/schema.sql` 已把該欄
+    # 收斂成 NOT NULL DEFAULT true，兩種寫法自此等價；統一寫法是為了**讀的時候**
+    # 不必再推敲「這裡為什麼不一樣」。
+    conds = ["r.is_research IS NOT FALSE"]
     params: dict = {}
     if f.source:
         conds.append("r.source = :source")

@@ -32,8 +32,13 @@ export default function AskPage() {
   // URL ?q → 預填 composer（例如閱讀頁的「就這篇提問」帶著報告名過來）。
   // 刻意不自動送出：讓使用者先看過、改過再按。預填後立刻把 q 從網址移掉，
   // 否則重整會拿舊題目蓋掉使用者已經編輯的內容。
+  // set-state-in-effect 在此刻意豁免：這條 effect 做的正是規則允許的「與外部系統
+  // 同步」——外部系統是 URL query，而且同一條 effect 必須把 ?q 從網址移掉（見上），
+  // 兩件事不可分開。要真的移掉 setDraft 得改成「以 q 當 composer 的受控初值」，
+  // 那是 composer 的行為改動、需要人眼驗過，不屬於「把 lint 接進 CI」這件事。
   useEffect(() => {
     if (!q) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraft(q)
     setParams(prev => {
       const sp = new URLSearchParams(prev)

@@ -11,10 +11,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+import eval_retrieval as ev  # noqa: E402
+
 from app.services.answer import Source  # noqa: E402
 from app.services.rows import ChunkRow  # noqa: E402
-
-import eval_retrieval as ev  # noqa: E402
 
 
 def _row(report_id, content, distance=0.1):

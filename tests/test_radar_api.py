@@ -17,9 +17,9 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 from fastapi.testclient import TestClient  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
-from web import deps, server  # noqa: E402
 from app.services.radar.queries import CoverageCounts, RadarInstrumentRow  # noqa: E402
 from app.services.radar.types import Signal  # noqa: E402
+from web import deps, server  # noqa: E402
 
 
 class _FakeSession:

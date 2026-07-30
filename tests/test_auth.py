@@ -8,10 +8,13 @@ os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
 os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
-from web import auth  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+from web import (
+    auth,  # noqa: E402
+    deps,  # noqa: E402
+)
 from web.server import app  # noqa: E402
-from web import deps  # noqa: E402
 
 
 class TokenTests(unittest.TestCase):
@@ -265,7 +268,6 @@ class HistoryDeleteApiTests(unittest.TestCase):
         return client
 
     def test_delete_history_endpoint(self):
-        import web.server as server
 
         seen = {}
 
@@ -295,7 +297,6 @@ class InputLimitTests(unittest.TestCase):
         return client
 
     def test_search_rejects_overlong_query(self):
-        import web.server as server
 
         async def fake_hybrid_search(*_a, **_k):
             return []
@@ -314,7 +315,6 @@ class InputLimitTests(unittest.TestCase):
         self.assertEqual(r.status_code, 422)
 
     def test_ask_rejects_overlong_question(self):
-        import web.server as server
 
         async def fake_answer_question(*_a, **_k):
             yield ("done", {"cited": []})
@@ -330,7 +330,6 @@ class InputLimitTests(unittest.TestCase):
         self.assertEqual(r.status_code, 422)
 
     def test_post_delete_history_alias(self):
-        import web.server as server
 
         seen = {}
 

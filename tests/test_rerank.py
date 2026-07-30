@@ -6,10 +6,9 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-import app.services.rerank as rr  # noqa: E402
-
 from datetime import datetime, timezone  # noqa: E402
 
+import app.services.rerank as rr  # noqa: E402
 from app.services.rows import ChunkRow  # noqa: E402
 
 

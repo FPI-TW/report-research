@@ -49,14 +49,14 @@ class ManifestTests(unittest.TestCase):
 
 class EmitTypstTemplateTests(unittest.TestCase):
     def test_emit_uses_given_template_import_path(self):
-        from app.services.typst_render import DocumentModel, DocMeta, emit_typst
+        from app.services.typst_render import DocMeta, DocumentModel, emit_typst
 
         doc = DocumentModel(sections=(), meta=DocMeta(title="t", date="d", question="q"))
         src = emit_typst(doc, disclaimer="免責", template_import_path="/app/templates/foo.typ")
         self.assertIn('#import "/app/templates/foo.typ":', src)
 
     def test_emit_default_import_is_ib_classic(self):
-        from app.services.typst_render import DocumentModel, DocMeta, emit_typst
+        from app.services.typst_render import DocMeta, DocumentModel, emit_typst
 
         doc = DocumentModel(sections=(), meta=DocMeta(title="t", date="d", question="q"))
         src = emit_typst(doc, disclaimer="免責")
@@ -86,6 +86,7 @@ class RenderDispatchTemplateTests(unittest.TestCase):
 class TemplatesEndpointTests(unittest.TestCase):
     def _authed(self):
         from fastapi.testclient import TestClient
+
         from web.server import app
 
         c = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
@@ -95,6 +96,7 @@ class TemplatesEndpointTests(unittest.TestCase):
 
     def test_list_endpoint_requires_login(self):
         from fastapi.testclient import TestClient
+
         from web.server import app
 
         c = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
@@ -112,6 +114,7 @@ class TemplatesEndpointTests(unittest.TestCase):
 class ReportRequestThreadingTests(unittest.IsolatedAsyncioTestCase):
     async def test_report_forwards_template_id_to_generate_report(self):
         from fastapi.testclient import TestClient
+
         from web.routers import report as rr
         from web.server import app
 
@@ -130,6 +133,7 @@ class ReportRequestThreadingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_report_template_id_defaults_none(self):
         from fastapi.testclient import TestClient
+
         from web.routers import report as rr
         from web.server import app
 

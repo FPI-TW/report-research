@@ -15,7 +15,14 @@ GENERATED 運算式算出，而 term 由 Python 的 `norm_for_match()` 算出。
 今天只影響 568,150 筆中的 2 筆，所以本檔的價值是**回歸防線**而非修 bug：
 它鎖住「已知的分歧集合」，任何一邊的正規化被改動（例如有人動了 schema 的
 運算式或 textnorm 的 regex）都會讓這裡變紅。
+
+**跑得到 DB 才有意義**：需要 DB 的那組原本無條件 `SkipTest`，於是在沒有 DB 的
+環境（本機常態、CI 直到 schema job 出現之前）它等於不存在。現在 CI 有一個帶
+`pgvector/pgvector:pg16` service container 的獨立 job，並在那裡設
+`REPORT_MARK_REQUIRE_DB=1`：有設就不准 skip——否則 service container 哪天壞掉，
+只會安靜地退回零覆蓋，而那正是這份測試想避免的失效模式。
 """
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -24,10 +31,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.services.textnorm import norm_for_match  # noqa: E402
-
-# schema 的 GENERATED 運算式（db/schema.sql）——若 schema 改了這裡要跟著改，
-# 而下面的等價性測試就是提醒你改的東西。
-_SCHEMA_EXPR = "lower(regexp_replace(normalize(content, NFKC), '\\s+', '', 'g'))"
 
 # 一般語料會出現的字元：兩邊必須完全一致。
 _MUST_AGREE = [
@@ -44,15 +47,6 @@ _MUST_AGREE = [
 # 已知分歧（實測）。列在這裡不是「接受它」，而是鎖住範圍——
 # 新增分歧會讓 test_no_new_divergences 變紅。
 _KNOWN_DIVERGENT = ["\x1c", "\x1d", "\x1e", "\x1f", "\x85", "İ"]
-
-
-def _pg_norm(session, value: str) -> str:
-    from sqlalchemy import text
-
-    return session.execute(
-        text("SELECT lower(regexp_replace(normalize(:v, NFKC), '\\s+', '', 'g'))"),
-        {"v": value},
-    ).scalar()
 
 
 class SchemaExpressionContractTests(unittest.TestCase):
@@ -115,6 +109,11 @@ class PostgresEquivalenceTests(unittest.TestCase):
         try:
             return asyncio.run(_run())
         except Exception as exc:  # pragma: no cover - 環境相依
+            # 設了 REPORT_MARK_REQUIRE_DB 的環境（CI 的 schema job）承諾 DB 一定在，
+            # 所以連不上是**基礎設施壞了**，必須紅。安靜 skip 會讓這份測試在
+            # 「service container 掛掉」那天無聲失效，而沒有人看得出來。
+            if os.getenv("REPORT_MARK_REQUIRE_DB"):
+                raise
             raise unittest.SkipTest(f"DB 不可用，跳過等價性比對：{exc}")
 
     def test_ordinary_corpus_text_agrees(self):

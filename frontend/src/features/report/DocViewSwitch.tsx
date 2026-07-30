@@ -26,7 +26,9 @@ interface Props {
 export function DocViewSwitch({ value, onChange }: Props) {
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     const idx = OPTIONS.findIndex(o => o.value === value)
-    let next = idx
+    // 不給初值：下面每個處理到的鍵都會賦值，其餘鍵一律 `default: return`。
+    // 給了 `= idx` 反而讓「漏掉某個 case」變成靜默的無反應而非型別錯誤。
+    let next: number
     switch (e.key) {
       case 'ArrowRight':
       case 'ArrowDown':

@@ -68,7 +68,7 @@ class WeasyprintChromeLocaleTests(unittest.TestCase):
         self.assertIn('kpi-src">來源 S', pdf.inject_kpi(block, "zh-Hant"))
 
     def test_inject_charts_caption_locale(self):
-        block = '```chart\n{"type":"bar","title":"Rev","x":["a"],"series":[{"name":"n","values":[1]}],"source":"[1]"}\n```'
+        block = '```chart\n{"type":"bar","title":"Rev","x":["a"],"series":[{"name":"n","values":[1]}],"source":"[1]"}\n```'  # noqa: E501
         self.assertIn("Rev (Source [1])", pdf.inject_charts(block, "en"))
         self.assertIn("Rev（來源 [1]）", pdf.inject_charts(block, "zh-Hant"))
 

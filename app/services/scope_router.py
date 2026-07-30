@@ -15,7 +15,6 @@ fail-open：判定失敗/逾時/空回應一律視為 CORPUS_QA。寧可偶爾�
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal

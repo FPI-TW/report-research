@@ -181,7 +181,7 @@ class TrustedAnswerFlowTests(unittest.IsolatedAsyncioTestCase):
             return [("台積電最近怎樣", "回答內容")]
 
         async def fake_condense(history_text, question, **kw):
-            from app.services.scope_router import _decision, TIME_SENSITIVE
+            from app.services.scope_router import TIME_SENSITIVE, _decision
             return "台積電今日股價多少", _decision(TIME_SENSITIVE)
 
         async def boom_retrieve(question, **kw):

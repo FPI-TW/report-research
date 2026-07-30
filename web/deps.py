@@ -147,3 +147,43 @@ from app.services.reading.queries import (  # noqa: E402
 )
 from app.services.rerank import warmup as rerank_warmup  # noqa: E402
 from app.services.retrieval import hybrid_search, rank_reports  # noqa: E402
+
+# ── 依賴面的完整清單 ────────────────────────────────────────────────────────
+#
+# 這裡不是為了 `from web.deps import *`（沒人這樣用，也不該這樣用——見檔頭）。
+# 它有兩個作用：
+#
+# 1. 把「本模組是 re-export hub」從註解慣例變成程式碼契約。上面那些 import 在
+#    本檔內一個都沒被使用，純粹是為了給 router 與測試一個共同的 patch 位置；
+#    沒有 `__all__` 時，任何 linter 都會判定它們是死 import 而建議刪掉——刪掉
+#    的後果是 router 的 `deps.X` 全部 AttributeError。
+# 2. 反過來當成清單：新增依賴面符號時漏加在這裡不會壞，但 diff 會看得出來
+#    「有人加了東西卻沒宣告」。
+__all__ = [
+    "SSE_HEARTBEAT_INTERVAL",
+    "STATIC_DIR",
+    "SessionFactory",
+    "_sse",
+    "_valid_uuid",
+    "_with_heartbeat",
+    "answer_question",
+    "delete_qa",
+    "embed_query_cached",
+    "embed_texts",
+    "fetch_broker_coverage_counts",
+    "fetch_broker_signals",
+    "fetch_chunk_content",
+    "fetch_coverage_counts",
+    "fetch_doc",
+    "fetch_instrument_signals",
+    "fetch_signals",
+    "fetch_signals_for_instruments",
+    "fetch_similar",
+    "fetch_takeaways",
+    "hybrid_search",
+    "list_qa_versions",
+    "list_radar_instruments",
+    "log_stopped_qa",
+    "rank_reports",
+    "rerank_warmup",
+]

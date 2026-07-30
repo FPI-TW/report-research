@@ -5,8 +5,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.overview import detect_overview  # noqa: E402
-from app.services.overview import OverviewFilters, resolve_filters  # noqa: E402
+from app.services.overview import (  # noqa: E402
+    OverviewFilters,
+    detect_overview,  # noqa: E402
+    resolve_filters,
+)
 
 
 class DetectOverviewTests(unittest.TestCase):

@@ -199,6 +199,7 @@ class RunEndpointTests(unittest.TestCase):
 
     def _client(self):
         from fastapi.testclient import TestClient
+
         from web.server import app
 
         client = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")

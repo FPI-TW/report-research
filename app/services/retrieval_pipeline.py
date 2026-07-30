@@ -16,8 +16,8 @@ from app.config import get_settings
 from app.services.answer import Source, build_context
 from app.services.db import SessionFactory
 from app.services.embed import embed_query_cached
-from app.services.retrieval import classify_match, extract_terms, hybrid_search
 from app.services.rerank import rerank_scored
+from app.services.retrieval import classify_match, extract_terms, hybrid_search
 from app.services.rows import ChunkRow
 from app.services.store import fetch_chunk_embeddings
 from app.services.textnorm import clean_text

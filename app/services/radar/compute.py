@@ -14,6 +14,7 @@ from typing import Optional
 from app.services.filename import source_display
 from app.services.radar import scale
 from app.services.radar.queries import CoverageCounts
+from app.services.radar.scale import DIM_DISPLAY, DIMLABEL_DISPLAY
 from app.services.radar.schemas import (
     BrokerHistoryResponse,
     BrokerSnapshot,
@@ -37,7 +38,6 @@ from app.services.radar.schemas import (
     ThesisCell,
     ThesisDimension,
 )
-from app.services.radar.scale import DIM_DISPLAY, DIMLABEL_DISPLAY
 from app.services.radar.types import Change, Signal
 from app.services.signal_extract import THESIS_DIMENSIONS
 from app.services.tagging import MARKET_DISPLAY

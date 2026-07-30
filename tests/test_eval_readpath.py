@@ -127,6 +127,7 @@ class ProgressHttpTests(unittest.TestCase):
 
     def _get(self):
         from fastapi.testclient import TestClient
+
         from web.routers import monitor
         from web.server import app
 

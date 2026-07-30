@@ -193,8 +193,8 @@ class AnswerQuestionLocaleThreadingTests(unittest.IsolatedAsyncioTestCase):
         ) = orig
 
     async def _run(self, locale):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         captured: dict = {}
         orig = self._patch(ans, rp, captured)

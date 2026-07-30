@@ -56,7 +56,8 @@ class UpdateEvaluationTests(unittest.IsolatedAsyncioTestCase):
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
             async def execute(self, stmt, params):
-                captured["sql"] = str(stmt); captured["params"] = params
+                captured["sql"] = str(stmt)
+                captured["params"] = params
             async def commit(self): captured["committed"] = True
 
         with patch.object(A, "SessionFactory", lambda: _S()):

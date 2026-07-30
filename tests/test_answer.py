@@ -10,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import llm  # noqa: E402
+from app.services import scope_router as sr  # noqa: E402
 from app.services.answer import (  # noqa: E402
     Source,
     _recency_factor,
@@ -21,7 +22,6 @@ from app.services.answer import (  # noqa: E402
     split_external_sources,
 )
 from app.services.rows import ChunkRow  # noqa: E402
-from app.services import scope_router as sr  # noqa: E402
 
 
 def make_row(report_id, file_name, market, content, report_date=None, distance=0.1):
@@ -415,8 +415,8 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
     """問答路徑顯式傳 dense_scan 給 hybrid_search（擴召回、不改共用函式預設）。"""
 
     async def test_dense_scan_forwarded_from_ask_path(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         captured: dict = {}
 
@@ -459,8 +459,8 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured.get("dense_scan"), ans.ASK_DENSE_SCAN)
 
     async def test_rerank_top_m_forwarded_from_ask_path(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         captured = {}
 
@@ -514,8 +514,8 @@ class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
     """
 
     async def _ask_with_lex_stats(self, *, lex_hits, cap, truncated):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         captured: dict = {}
 
@@ -739,8 +739,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_off_topic_intent_skips_llm(self):
         # 意圖判定為離題（即使檢索分數不低）→ 拒答、空來源、不跑主 LLM
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"llm": False, "intent": False}
         orig = self._patch(ans, rp, in_domain=False, called=called)
@@ -764,8 +764,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_numeric_answer_triggers_faithfulness_spot_check(self):
         # M8c 接線：答案含金融數字 → done 後觸發忠實度抽查（帶 qa_id 與答案本文）。
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"llm": False, "intent": False}
         orig = self._patch(ans, rp, in_domain=True, called=called)
@@ -798,8 +798,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_numeric_answer_skips_spot_check(self):
         # 答案無金融數字 → 不觸發抽查（省成本）。
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"llm": False, "intent": False}
         orig = self._patch(ans, rp, in_domain=True, called=called)  # fake_stream 回「答案[1]」
@@ -822,8 +822,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_on_topic_intent_calls_llm(self):
         # 意圖判定為在領域 → 正常檢索 + 串流回答 + 引用
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"llm": False, "intent": False}
         orig = self._patch(ans, rp, in_domain=True, called=called)
@@ -846,8 +846,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_context_emits_retrieved_zero_without_reading(self):
         # 在領域但檢索無結果 → 無脈絡：retrieved(count=0)、不發 reading、回 NO_CONTEXT，且不跑主 LLM
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"llm": False, "intent": False}
         orig = self._patch(ans, rp, in_domain=True, called=called)
@@ -878,8 +878,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_emits_process_status_steps(self):
         # 在領域問題：事件序須含 understanding(開頭) → retrieved(count) → reading(token 前)
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"llm": False, "intent": False}
         orig = self._patch(ans, rp, in_domain=True, called=called)
@@ -914,8 +914,8 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_emits_generating_with_thinking_ms(self):
         # 正常路徑：第一個 token 前發 generating 帶 int thinking_ms；done 亦帶 thinking_ms
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"llm": False, "intent": False}
         orig = self._patch(ans, rp, in_domain=True, called=called)
@@ -1025,8 +1025,8 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         # 確實跑過，僅結果被丟棄」。那份被丟棄的工作含 rerank（生產實測數十秒 CPU，
         # 且 semaphore 預設只有一個名額，會擋住後面排隊的人）。前檢是確定性的，
         # 沒有任何理由等檢索跑完才知道這題不需要語料。
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {}
         orig = self._patch(
@@ -1102,8 +1102,8 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_advice_risk_appends_policy_and_emits_sources(self):
         # advice_risk 走 RAG：附研究資訊限制政策、正常發真實 sources（有據回答須附出處）
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {}
         orig = self._patch(
@@ -1125,8 +1125,8 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_corpus_qa_disables_web(self):
         # corpus_qa（M4 預設工具政策）：主 LLM 呼叫一律 allow_web=False
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {}
         orig = self._patch(
@@ -1173,8 +1173,8 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_multiturn_time_sensitive_skips_retrieval(self):
         # 續問：condense_and_route 直接判 time_sensitive → 提前返回，retrieve_context 完全未跑
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"search": False, "embed": False}
 
@@ -1236,8 +1236,8 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
 
 class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
     async def test_body_excludes_sentinel_and_emits_ext_sources(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         async def fake_search(*a, **k):
             return [
@@ -1324,8 +1324,8 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sentinel_split_across_chunks_not_leaked(self):
         # sentinel 被拆在兩個 chunk（"[EXT_" + "SOURCES]"）：hold 尾段須仍攔截、不外洩
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         async def fake_search(*a, **k):
             return [
@@ -1396,9 +1396,9 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_emits_status_when_web_search_starts(self):
         # 模型開始搜尋（stream 吐 SEARCH_EVENT 標記）→ 發一次 ("status","searching_web")，標記不外洩
+        import app.services.retrieval_pipeline as rp
         from app.services import answer as ans
         from app.services.llm import SEARCH_EVENT
-        import app.services.retrieval_pipeline as rp
 
         async def fake_search(*a, **k):
             return [
@@ -1849,9 +1849,10 @@ class ActiveFilterTests(unittest.IsolatedAsyncioTestCase):
 
 class GetConversationTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_rows_via_history_item(self):
-        from app.services import answer as ans
-        import app.services.report as rpt
         from datetime import date
+
+        import app.services.report as rpt
+        from app.services import answer as ans
 
         # 13 欄須與新 SELECT 順序對齊：id, question, answer, created_at, feedback,
         # sources, ext_sources, thinking_ms, stages, followups, root_qa_id,
@@ -1992,8 +1993,9 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
 
 class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_grouped_rows(self):
-        from app.services import answer as ans
         from datetime import datetime, timezone
+
+        from app.services import answer as ans
 
         last = datetime(2026, 6, 22, 3, 0, tzinfo=timezone.utc)
         # outer SELECT 回 (conv_id, title, last_at, turn_count)
@@ -2010,8 +2012,9 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out[0]["last_at"], last.isoformat())
 
     async def test_sql_uses_first_non_offtopic_question_and_turn_count_filter(self):
-        from app.services import answer as ans
         from datetime import datetime, timezone
+
+        from app.services import answer as ans
 
         last = datetime(2026, 6, 22, 3, 0, tzinfo=timezone.utc)
         session = _CaptureRowsSession([("c1", "第二題", last, 1)])
@@ -2024,7 +2027,7 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
 
         sql = " ".join((session.statement_text or "").split())
         self.assertIn(
-            "(array_agg(question ORDER BY created_at) FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active))[1] AS title",
+            "(array_agg(question ORDER BY created_at) FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active))[1] AS title",  # noqa: E501
             sql,
         )
         self.assertIn("WHERE turn_count > 0", sql)
@@ -2037,14 +2040,14 @@ class ConversationStaticContractTests(unittest.TestCase):
         schema = (REPO_ROOT / "db/schema.sql").read_text(encoding="utf-8")
         self.assertRegex(
             " ".join(schema.split()),
-            r"CREATE INDEX IF NOT EXISTS idx_qa_log_conversation ON research\.qa_log \(\(COALESCE\(conversation_id, id\)\), created_at\);",
+            r"CREATE INDEX IF NOT EXISTS idx_qa_log_conversation ON research\.qa_log \(\(COALESCE\(conversation_id, id\)\), created_at\);",  # noqa: E501
         )
 
 
 class FollowUpTests(unittest.IsolatedAsyncioTestCase):
     async def test_followup_uses_condensed_query_for_retrieval(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         seen = {}
 
@@ -2116,8 +2119,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1][1]["conversation_id"], "c1")  # 沿用傳入對話 id
 
     async def test_followup_passes_history_block_to_prompt(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         seen = {}
 
@@ -2195,8 +2198,8 @@ class FollowUpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("台積電前景?", seen["history_block"])  # 先前對話確實內嵌進 prompt
 
     async def test_followup_offtopic_skips_llm(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         called = {"llm": False}
 
@@ -2357,8 +2360,8 @@ class StagesPersistTests(unittest.IsolatedAsyncioTestCase):
     """主 RAG 路徑把經過的 stage 序列寫入 _log_qa 的 stages 參數。"""
 
     async def test_main_path_persists_stages(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         logged = {}
 
@@ -2408,7 +2411,8 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
             async def execute(self, stmt, params=None):
-                captured["sql"] = str(stmt); captured["params"] = params
+                captured["sql"] = str(stmt)
+                captured["params"] = params
                 return None
             async def commit(self): return None
 
@@ -2491,8 +2495,8 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
     """主 RAG 路徑在 done 之後補發 followups 事件（非空才發，fail-open 不擋主答）。"""
 
     async def test_followups_event_after_done(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         async def fake_search(*a, **k):
             return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
@@ -2532,8 +2536,8 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fu_payload, ["追問一", "追問二"])
 
     async def test_empty_followups_not_emitted(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         async def fake_search(*a, **k):
             return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容[1]。", date(2026, 6, 1)))]
@@ -2566,15 +2570,17 @@ class FollowupsEmitTests(unittest.IsolatedAsyncioTestCase):
 
 class RegenerateTests(unittest.IsolatedAsyncioTestCase):
     async def test_regenerate_failure_does_not_deactivate_old_answer(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         state = {"logged": False}
 
         async def fake_meta(qid): return (None, "c1", None)
         async def failed_search(*a, **k): raise RuntimeError("retrieval failed")
         async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
-        async def fake_log(*a, **k): state["logged"] = True; return "new-qa"
+        async def fake_log(*a, **k):
+            state["logged"] = True
+            return "new-qa"
 
         orig = (rp.hybrid_search, rp.embed_query_cached, ans._load_qa_meta,
                 ans.classify_non_overview, ans._log_qa)
@@ -2593,8 +2599,8 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(state["logged"])
 
     async def test_regenerate_deactivates_old_and_groups(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         state = {"logged_root": "unset", "deactivate": None}
 
@@ -2651,8 +2657,8 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
 
 class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
     async def test_edit_truncates_from_edited_turn(self):
-        from app.services import answer as ans
         import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
 
         state = {"truncated": None}
 

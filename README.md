@@ -485,7 +485,11 @@ uv run pytest -k retrieval               # 關鍵字
 # 前端測試（React + TS + Vite）
 cd frontend && npm test          # vitest
 cd frontend && npm run typecheck # tsc --noEmit
-cd frontend && npm run lint      # ESLint（本機用，不在 CI 內）
+cd frontend && npm run lint      # ESLint（已在 CI 內）
+make build-web                   # 產出 frontend/dist；CI 也會 build 並傳給後端 job
+
+# lint（已在 CI 內；ruff format 刻意不做，見 pyproject.toml 註解）
+uv run ruff check .              # E,F,I；line-length 120
 
 # 離線評測 harness（改動檢索或生成品質時用它量測，不要另建一套）
 uv run python eval/run_ragas.py        # M1：檢索／問答 RAGAS（凍結題集 + baselines/）
@@ -493,8 +497,8 @@ uv run python eval/run_report_eval.py  # M1b：研報結構化指標
 ```
 
 - `tests/` 放 Python 測試（`test_*.py`），涵蓋 filename/extract/retrieval/answer/report/report_writer/pdf/typst/auth/store/overview/scope_router/radar/reading/faithfulness 等；前端測試與元件同置，為 `frontend/src/` 下的 `*.test.ts(x)`。偏好以 mock 隔離 LLM、嵌入、檔案、DB 邊界。
-- **CI**（`.github/workflows/ci.yml`）只有兩個必要檢查：**後端測試（pytest）** 與 **前端測試（tsc + vitest）**，main 有分支保護（strict ＋ enforce_admins）。**本機只跑 pytest 會在前端 job 上翻車**；反過來，**ESLint 不在 CI 內**，`exhaustive-deps` 這類規則沒有守門，改 hook 後請自己跑一次 `npm run lint`。
-- **慣例**：確定性邏輯放 Python，Claude CLI 只用於語意標註/摘要/訊號/問答/研報；前端在 `frontend/src/`（React ＋ TS ＋ CSS Modules）；新增旋鈕加在 `app/config.py`。`REPORT_MARK_*` 前綴的**規則**是只給 `.env.example` 那五個 auth/DB 變數、新旋鈕一律不加前綴——但程式碼內另有幾個歷史遺留的同前綴鍵（如 `REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`），**是 live 的，別當成命名錯誤改掉**。Python 側未配置 ruff/black/mypy/pre-commit（風格約定見 [AGENTS.md](AGENTS.md)）。
+- **CI**（`.github/workflows/ci.yml`）有**三個 job**：前端測試（ESLint + tsc + **vite build** + vitest）、後端測試（**ruff** + pytest）、**schema 契約**（`pgvector/pgvector:pg16` service container，套 `db/schema.sql` 兩次驗冪等 ＋ `content_norm` 等價性 ＋ CHECK 約束清單對帳）。前端 job 把 `frontend/dist` 當 artifact 傳給後端 job，`tests/test_spa_serving.py` 因此對**真 build 產物**驗證（缺 dist 是**紅**不是 skip；本機要跳過設 `SKIP_SPA_TESTS=1`）。**必要檢查仍是前兩個**——`schema` job 要生效得另外在 GitHub 分支保護加它的 check 名稱。main 有分支保護（strict ＋ enforce_admins）。**本機只跑 pytest 會在前端 job 上翻車。**
+- **慣例**：確定性邏輯放 Python，Claude CLI 只用於語意標註/摘要/訊號/問答/研報；前端在 `frontend/src/`（React ＋ TS ＋ CSS Modules）；新增旋鈕加在 `app/config.py`。`REPORT_MARK_*` 前綴的**規則**是只給 `.env.example` 那五個 auth/DB 變數、新旋鈕一律不加前綴——但程式碼內另有幾個歷史遺留的同前綴鍵（如 `REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`），**是 live 的，別當成命名錯誤改掉**。Python 側有 **ruff**（`E,F,I`、line-length 120，在 CI 內），**沒有** black/mypy/pre-commit，且 `ruff format` 是刻意不做的（會重排 60/90 個檔、洗掉 blame）——其餘風格約定見 [AGENTS.md](AGENTS.md)。
 - **提交**：採 Conventional Commits（常見繁中 scope，如 `feat(report): …`、`fix(report): …`）；提交前看近期訊息與 staged diff，勿用整句英文當訊息。
 - **改後端要重啟、改前端要 build**：`make serve` 無 `--reload`；SPA 由 `frontend/dist` 提供，前端改動須 `cd frontend && npm run build`（`/app/assets/*` 走 `_ImmutableStatic` 長快取）。`_NoCacheStatic` 只剩 `web/static/login.html` 走。
 

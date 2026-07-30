@@ -143,12 +143,10 @@ async def summarize_one(
             )
             await session.commit()
         _ok += 1
-        res = "ok"
     else:
         with open(FAIL_LOG, "a", encoding="utf-8") as f:
             f.write(f"{rid}\t{file_name}\n")
         _fail += 1
-        res = "fail"
 
     _done += 1
     if _done % 20 == 0 or _done == total:

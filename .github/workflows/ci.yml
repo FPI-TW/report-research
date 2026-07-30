@@ -25,10 +25,63 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  frontend:
+    name: 前端測試（tsc + vitest）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: 型別檢查
+        run: npm run typecheck
+
+      # ESLint 有設定檔卻長期不在 CI 內，於是 react-hooks 那組規則（含
+      # exhaustive-deps、set-state-in-effect）完全沒有守門。現況是 0 error /
+      # 2 warning，所以直接當必要檢查，不需要 continue-on-error 過渡期。
+      - name: ESLint
+        run: npm run lint
+
+      # `npm run build` 從來沒進過 CI，而 typecheck 只是 build 的嚴格子集：
+      # 打包期才會炸的錯（動態 import 路徑寫錯、public 資產缺檔、Vite/Tailwind
+      # 外掛設定壞掉）在 CI 完全看不到，只會在部署前手動 build 時才發現。
+      # 這一步同時產出 backend job 需要的真 dist（見下）。
+      - name: vite build
+        run: npm run build
+
+      # 傳給 backend job：SPA 服務行為（deep-link 回 index.html、資產的
+      # immutable 快取標頭）只有對著**真的 build 產物**才驗得到。
+      # tests/test_pre_split_guards.py 用合成 dist 骨架守「mount 順序」那條，
+      # 這裡守的是另一半：真產物的 serving 與快取契約。
+      - name: 上傳 dist 給後端 job
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: vitest
+        run: npm test
+
   backend:
     name: 後端測試（pytest）
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    # 代價是序列化（前端約 3 分鐘，總時長從 max() 變成 sum()），換到的是
+    # SPA 測試能對真 dist 跑。副作用要知道：前端 job 紅掉時本 job 直接 skipped、
+    # 拿不到後端訊號——所以前端那邊把便宜的步驟（typecheck/lint）排在最前面。
+    needs: frontend
     env:
       # 測試不需要 DB，也不該碰網路下載 BGE-M3（embed 是延遲載入，測試皆
       # 以假物件替代）。強制離線可讓「某天有人不小心讓測試真的去載模型」
@@ -56,29 +109,83 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends fonts-noto-cjk
 
+      # 沒有這一步，tests/test_spa_serving.py 依賴 dist 的那題會 skip 而非跑。
+      - name: 取回前端 dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      # 在 pytest 之前：lint 秒級完成，先擋掉死 import／未使用變數這類
+      # 「一眼可見但沒人看」的缺陷，不要讓它們等 15 分鐘的測試跑完才被發現。
+      - name: ruff
+        run: uv run ruff check .
+
       - name: pytest
         run: uv run pytest -q
 
-  frontend:
-    name: 前端測試（tsc + vitest）
+  schema:
+    name: schema 契約（PostgreSQL）
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: frontend
+    # 刻意是**獨立 job**、不把 service container 加進 backend job：那會讓 1600+ 支
+    # 既有測試從「連不上 DB」變成「連得上一個空 DB」。兩者對測試而言不等價——
+    # 前者一定 skip 或明確失敗，後者可能安靜地跑出「查無資料」的假綠。
+    services:
+      db:
+        # **必須與 Makefile 的 `make db` 同一顆映像**：schema 的 content_norm 生成欄
+        # 與 CHECK 定義的字面輸出都受 initdb locale／版本影響，換映像＝換基準。
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: research
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      REPORT_MARK_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/research
+      # 讓「DB 不可用就 skip」的退路失效：service container 壞掉時要紅，
+      # 不是安靜地退回零覆蓋（那正是這個 job 存在前的狀態）。
+      REPORT_MARK_REQUIRE_DB: "1"
+      PGPASSWORD: postgres
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: 安裝 uv
+        uses: astral-sh/setup-uv@v5
         with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      - run: npm ci
+      - name: 安裝 Python 與相依套件
+        run: uv sync --frozen
 
-      - name: 型別檢查
-        run: npm run typecheck
+      # runner 映像目前自帶 psql，但那不是契約（映像內容會變）。明確裝一次，
+      # 否則哪天不見了會表現為「schema job 突然找不到指令」而不是可讀的訊息。
+      - name: 安裝 psql（套 schema 用）
+        run: |
+          command -v psql >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends postgresql-client
+          }
 
-      - name: vitest
-        run: npm test
+      # 跑兩次驗冪等：db/schema.sql 沒有 migration 工具，它自稱冪等是被依賴的
+      # 前提（`make schema` 在既有庫上會被重複執行）。第二次要一樣安靜地成功。
+      - name: 套用 db/schema.sql（兩次，驗冪等）
+        run: |
+          psql -h localhost -U postgres -d research -v ON_ERROR_STOP=1 -f db/schema.sql
+          psql -h localhost -U postgres -d research -v ON_ERROR_STOP=1 -f db/schema.sql
+
+      # 這兩支測試在本機一律走 skip 路徑（沒有 CI 的 DB 就驗不到），所以它們
+      # 存在但等於沒跑。這個 job 就是為了讓它們真的跑起來。
+      - name: content_norm 與 norm_for_match 等價性
+        run: uv run pytest -q tests/test_content_norm_equivalence.py
+
+      - name: CHECK 約束清單對帳
+        run: uv run pytest -q tests/test_schema_constraints.py

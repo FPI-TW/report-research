@@ -7,12 +7,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.services.radar import compute as radar_compute  # noqa: E402
 from app.services.radar.compute import (  # noqa: E402
     build_broker_history,
     build_instrument_slim,
     build_overview,
 )
-from app.services.radar import compute as radar_compute  # noqa: E402
 from app.services.radar.queries import CoverageCounts  # noqa: E402
 from app.services.radar.types import DimensionStance, EpsEstimate, Signal  # noqa: E402
 

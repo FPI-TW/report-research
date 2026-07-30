@@ -198,7 +198,6 @@ async def _run(args) -> None:
     from app.services.chunk import chunk_text
     from app.services.db import SessionFactory, relax_statement_timeout
     from app.services.embed import embed_texts
-
     from app.services.extract import extract_text
     from app.services.filename import parse_filename, resolve_source
     from app.services.store import ReportRow, report_exists, upsert_report

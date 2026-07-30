@@ -13,14 +13,13 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.tagging import MARKETS
-
 from app.services.radar.types import (
     EFFECTIVE_BROKER_SQL,
     SIGNAL_SELECT_SQL,
     Signal,
     parse_signal_row,
 )
+from app.services.tagging import MARKETS
 
 VALID_STATUSES = ["valid", "partial"]
 

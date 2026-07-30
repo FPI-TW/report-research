@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
+    "ruff>=0.16",
 ]
 
 [tool.uv]
@@ -37,3 +38,25 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
+
+# ── ruff ────────────────────────────────────────────────────────────────────
+# 在此之前 Python 側完全沒有 linter，於是「死 import」「未使用的區域變數」這類
+# 缺陷只能靠人眼——而本 repo 已經因為死 import 誤導過判斷（`answer.py` 頂層 import
+# 了 hybrid_search 卻從不呼叫，連 CLAUDE.md 都要花一段解釋「那是死 import」）。
+# CI 在 pytest 之前跑 `uv run ruff check .`。
+[tool.ruff]
+# 120 而非預設 88：本 repo 大量行是中文 prompt 與中文註解，88 會噴 867 筆、其中
+# 87% 是 E501。那個數字不是品質訊號，只會讓人把整個 lint 關掉。
+line-length = 120
+
+[tool.ruff.lint]
+# 刻意只開三組：E（pycodestyle）、F（pyflakes，死 import／未使用變數）、
+# I（import 排序）。E402 全域關掉——本 repo 幾十個檔案刻意在 import 之前做
+# `sys.path.insert` 或 `os.environ.setdefault`（`web/auth.py` 在 import 期就
+# fail-closed 檢查帳密，所以 .env 必須更早載入），那是有理由的順序，不是風格問題。
+#
+# 刻意**不**啟用 `ruff format --check`：實測會要求重排 60/90 個檔（含 `web/server.py`、
+# `web/routers/spa.py`），那是一次與任何行為無關的巨型 diff，會把 git blame 整片洗掉。
+# 要做請另開一支只含格式化的 PR。也刻意不加 black／mypy／pre-commit。
+select = ["E", "F", "I"]
+extend-ignore = ["E402"]

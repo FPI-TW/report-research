@@ -7,7 +7,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.services.radar import scale  # noqa: E402
 from app.services.radar.scale import (  # noqa: E402
     classify_dimension,
     diff_signals,
@@ -99,7 +98,7 @@ class MedianRatingTests(unittest.TestCase):
 class QuantilesTests(unittest.TestCase):
     def test_single_value(self):
         q = quantiles([100.0])
-        self.assertEqual((q.median, q.q1, q3 := q.q3, q.low, q.high, q.count),
+        self.assertEqual((q.median, q.q1, q.q3, q.low, q.high, q.count),
                          (100.0, 100.0, 100.0, 100.0, 100.0, 1))
 
     def test_multiple(self):

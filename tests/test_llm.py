@@ -7,7 +7,6 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import llm  # noqa: E402
 
-
 # 假 claude 子程序：讀掉 stdin（_run_attempt 會寫 prompt 後關閉），於子程序內自行組出
 # 一行遠超 64KB 的 text_delta 事件（避免把 300KB 塞進 argv），再補一個 result 終點事件。
 _FAKE_CLAUDE_SCRIPT = r'''

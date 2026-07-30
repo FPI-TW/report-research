@@ -11,21 +11,18 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import scope_router as sr  # noqa: E402
 from app.services.scope_router import (  # noqa: E402
-    parse_route,
-    parse_condense_route,
-    condense_and_route,
-    _safety_precheck,
-    _decision,
-    RouteDecision,
-    OFF_TOPIC,
-    OVERVIEW,
-    CORPUS_QA,
-    TIME_SENSITIVE,
     ADVICE_RISK,
     CORPUS_ONLY,
-    TRUSTED_EXTERNAL_REQUIRED,
-    RESEARCH_ONLY,
+    CORPUS_QA,
     NO_ANSWER,
+    OFF_TOPIC,
+    OVERVIEW,
+    RESEARCH_ONLY,
+    TIME_SENSITIVE,
+    TRUSTED_EXTERNAL_REQUIRED,
+    _decision,
+    _safety_precheck,
+    parse_route,
 )
 
 

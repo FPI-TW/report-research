@@ -30,23 +30,24 @@ from app.logging_setup import configure_logging  # noqa: E402
 
 configure_logging()
 
-from web import concurrency  # noqa: E402
-from web import deps  # noqa: E402
-from web import report_runs  # noqa: E402
+from app.config import get_settings  # noqa: E402
+from web import (
+    auth,  # noqa: E402
+    concurrency,  # noqa: E402
+    deps,  # noqa: E402
+    report_runs,  # noqa: E402
+)
+from web.routers import ask as ask_routes  # noqa: E402
+from web.routers import auth_pages as auth_pages_routes  # noqa: E402
+from web.routers import health as health_routes  # noqa: E402
+from web.routers import monitor as monitor_routes  # noqa: E402
+from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
-from web.routers import report_file as report_file_routes  # noqa: E402
-from web.routers import monitor as monitor_routes  # noqa: E402
-from web.routers import health as health_routes  # noqa: E402
-from web.routers import search as search_routes  # noqa: E402
-from web.routers import qa_history as qa_history_routes  # noqa: E402
-from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import report as report_routes  # noqa: E402
-from web.routers import auth_pages as auth_pages_routes  # noqa: E402
+from web.routers import report_file as report_file_routes  # noqa: E402
+from web.routers import search as search_routes  # noqa: E402
 from web.routers import spa as spa_routes  # noqa: E402
-
-from app.config import get_settings  # noqa: E402
-from web import auth  # noqa: E402
 
 # 跨組共用符號一律以 deps.X 存取；此處別名僅為既有測試的 `from web.server import ...`。
 STATIC_DIR = deps.STATIC_DIR

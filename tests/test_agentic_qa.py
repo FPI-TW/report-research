@@ -20,9 +20,9 @@ import app.services.retrieval_pipeline as rp  # noqa: E402
 import app.services.trusted_market_data as tmd  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services import agentic_qa as aq  # noqa: E402
+from app.services import answer as ans  # noqa: E402
 from app.services import query_planner as qp  # noqa: E402
 from app.services import scope_router as sr  # noqa: E402
-from app.services import answer as ans  # noqa: E402
 from app.services.agentic_qa import merge_retrievals  # noqa: E402
 from app.services.answer import Source, build_context  # noqa: E402
 from app.services.rows import ChunkRow  # noqa: E402

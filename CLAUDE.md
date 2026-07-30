@@ -31,16 +31,18 @@ make signals                         # 觀點雷達訊號擷取（刻意只跑�
 make titles                          # 顯示標題取代檔名（Sonnet，冪等可續傳，新→舊優先）-> research_report.title
 make align                           # remap Chinese labels -> findb market codes (deterministic)
 
-# Tests (unittest-style classes, run via pytest)
+# Tests + lint（兩者都在 CI 內）
 uv run pytest -q                                     # 全部後端測試（前端另有一套 vitest，見下）
 uv run pytest tests/test_answer.py                   # single file
 uv run pytest -k retrieval                           # by keyword
+uv run ruff check .                                  # E,F,I；line-length 120（ruff format 刻意不做）
+SKIP_SPA_TESTS=1 uv run pytest -q                    # 不想先 build 前端時（test_spa_serving 缺 dist 會紅）
 
 # Frontend (React 19 + TS + Vite under frontend/; NOT web/static/)
 cd frontend && npm test                              # vitest
 cd frontend && npm run typecheck                     # tsc --noEmit
-cd frontend && npm run lint                          # eslint（不在 CI 內，要自己跑）
-cd frontend && npm run build                         # 產出 frontend/dist（部署必跑）
+cd frontend && npm run lint                          # eslint（已在 CI 內）
+make build-web                                       # = cd frontend && npm ci && npm run build（產出 dist）
 
 make search Q="AI 伺服器散熱" MARKET=TW              # CLI semantic search
 make stats                                           # market distribution + chunk count
@@ -60,9 +62,11 @@ make clean-data                      # rm -rf data/extracted data/tags data/*.js
 
 **`make help` 印出來的東西不等於「可以跑」**——破壞性與陷阱 target 也一併列在裡面。
 
-**CI gates every PR** (`.github/workflows/ci.yml`): 兩個必要檢查——**後端測試（pytest）** 與 **前端測試（tsc + vitest）**。main 有分支保護（strict + enforce_admins）。本機只跑 pytest 會在前端 job 上翻車。**CI 與本機各有一個涵蓋缺口，方向相反**：(a) **CI 全綠不代表安全**——CI 不跑 `npm run build`，`tests/test_spa_serving.py` 中依賴 dist 的那題在 CI 永遠 skip，動 `web/routers/spa.py` 前要自己 build 再跑（「`/app/assets` mount 必須贏過 catch-all」另有守門 `tests/test_pre_split_guards.py`，用子行程重新匯入 `web.server`）；(b) **本機全綠不代表安全**——研報 PDF 的內容測試依賴 CJK 字型，本機沒裝 `fonts-noto-cjk` 時 PDF 照樣編得出來、頁數也正常，但抽字全變 `\x00`，測試會 skip 而不是紅（CI 有裝，所以這個只有本機會漏）。
+**CI gates every PR** (`.github/workflows/ci.yml`): **三個 job**——前端測試（ESLint + tsc + **vite build** + vitest）、後端測試（**ruff** + pytest）、**schema 契約（pgvector service container）**。前端 job 把 `frontend/dist` 當 artifact 傳給後端 job，所以 `tests/test_spa_serving.py` 對**真 build 產物**驗證。**必要檢查仍是前兩個**——`schema` job 要生效得另外在 GitHub 的分支保護加上它的 check 名稱（repo 設定，不在 repo 檔案裡）。main 有分支保護（strict + enforce_admins）。本機只跑 pytest 會在前端 job 上翻車。
 
-Python 側**沒有 linter/formatter**（無 ruff/black/mypy/pre-commit）；前端的 ESLint 有設定檔（`frontend/eslint.config.js`）**但不在 CI 內**（見上），`exhaustive-deps` 這類規則沒有任何守門。其餘風格慣例見 `AGENTS.md`。
+**本機全綠仍不代表安全**（這個缺口方向與 CI 相反、還在）：研報 PDF 的內容測試依賴 CJK 字型，本機沒裝 `fonts-noto-cjk` 時 PDF 照樣編得出來、頁數也正常，但抽字全變 `\x00`，測試會 skip 而不是紅（CI 有裝，所以只有本機會漏）。另外 `tests/test_spa_serving.py` 現在**缺 dist 就是紅**（不是 skip）——本機要跑它先 `make build-web`，真的想跳過才設 `SKIP_SPA_TESTS=1`。「`/app/assets` mount 必須贏過 catch-all」另有 `tests/test_pre_split_guards.py` 無條件守門（合成 dist 骨架 + 子行程重新匯入 `web.server`），與上面那支分工：骨架驗順序、真產物驗服務行為與快取標頭。
+
+**Python 有 ruff（在 CI 內），沒有 black／mypy／pre-commit。** `pyproject.toml` 的設定刻意只開 `E,F,I` 且 `line-length = 120`、`extend-ignore = ["E402"]`（本 repo 幾十個檔刻意在 import 之前做 `sys.path.insert` 或 `.env` 載入，那是有理由的順序不是風格問題）。**`ruff format` 是刻意不做的**——實測會重排 60/90 個檔、把 blame 整片洗掉；要做請另開一支只含格式化的 PR。**前端 ESLint 已在 CI 內**（`eslint .`，不帶 `--max-warnings 0`，所以 warning 不擋 PR）；`react-hooks/set-state-in-effect` 有兩處就地 `eslint-disable` 並附理由（`AskPage` 的 `?q` 預填與 `ReportPage` 的命中捲動，兩者都是「與外部系統同步」且時機上必須是 effect）。其餘風格慣例見 `AGENTS.md`。
 
 ## Architecture (the parts that span multiple files)
 
@@ -72,7 +76,7 @@ Python 側**沒有 linter/formatter**（無 ruff/black/mypy/pre-commit）；前�
 
 **檢索三步收斂在 `app/services/retrieval_pipeline.py`**（問答與研報的唯一入口；檢索頁分頁不經這裡）：`retrieve_context` ＝ embed → `hybrid_search` →（M2 cross-encoder rerank，含 semaphore／deadline／逾時 fail-open）→ `build_context`；`retrieve_context_multi` 是研報專用的 M6 多查詢 fan-out（逐子查詢檢索 → 合併 → 以原題重算 tier → 合併後單次 rerank → MMR）。**它與 `answer.py` 是刻意的循環依賴**：`retrieval_pipeline` 頂層 `from app.services.answer import Source, build_context`（`build_context`／`select_reports` 仍住在 `answer.py`，搬走的只是編排），所以 `answer.py`／`agentic_qa.py` 反向取用一律寫成**函式內 import**——提到頂層會在載入期直接循環炸掉。`report.py`／`report_writer.py` 頂層 import `retrieval_pipeline` 沒問題，**但反向那條也是環**：`answer.py` 取用 `report.reports_for_conversation` 同樣是函式內 import。凡是 `answer`／`retrieval_pipeline`／`report` 三者之間的反向取用，一律函式內 import。
 
-**RAG Q&A** (`app/services/answer.py`): `retrieval_pipeline.retrieve_context` -> `llm.stream_completion` -> parse `[n]` citations -> write `qa_log`。**`answer.py` 自己不呼叫 `hybrid_search`**——那個 import 已是死 import，真正的呼叫在 `retrieval_pipeline.py`（另兩處：`web/routers/search.py` 的檢索頁分頁，以及 `scripts/eval_retrieval.py`——**後者刻意直呼、不經 `retrieval_pipeline`，所以沒有 rerank 也沒有 `select_reports`**；改了管線裡的東西再跑它，分數可能一動也不動，那不代表改動無效）。Two pre-routers：**`scope_router.py`**（**five-way**，不是二元離題閘門 — `OFF_TOPIC`/`OVERVIEW`/`CORPUS_QA`/`TIME_SENSITIVE`/`ADVICE_RISK`；overview 判定為確定性優先、零 LLM 零向量，其次詞表安全前檢，最後 Haiku 四類分類，fail-open）與 `overview.py`（enumeration/aggregate questions like「有哪些券商」go to pure-SQL facet aggregation, bypassing top-k）。**首輪有三段、順序是刻意的**：(1) 確定性 overview 判定 →(2) `precheck_route()` 詞表安全前檢（零 LLM 零向量；命中 `time_sensitive` **完全不檢索**、連分類器都不呼叫，命中 `advice_risk` 則照走 RAG 只是省掉那次 Haiku）→(3) Haiku 四類分類與 `retrieve_context` **並行、誰先到聽誰的**：分類先回且判 `off_topic`／`time_sensitive` 就當場 `cancel()` 仍在跑的檢索。離題判不出前檢（`_safety_precheck` 只判時效與個人化），只能靠 (3)，而它才是白工的大宗。取消不會立刻停掉已送進執行緒的 rerank，但 `_rerank_stage` 帶 deadline，會在批次邊界收手。續問則是先 `condense_and_route` 再檢索。分段耗時 log 的 `route_wait` 與 `embed`/`retrieve` 重疊，加總不等於 total。**五類全部寫進 `qa_log.filters`**：`path`＝落到哪一類、`decided_by`＝誰判的（`precheck`／`overview`／`llm`／`fail_open`／`unknown`）——**fail-open 的落點正是 `CORPUS_QA`**，沒有 `decided_by` 就分不出「分類器判的」與「分類器壞掉猜的」，分類器失敗率完全不可觀測。Multi-turn uses `conversation_id` grouped by `COALESCE(conversation_id, id)`。
+**RAG Q&A** (`app/services/answer.py`): `retrieval_pipeline.retrieve_context` -> `llm.stream_completion` -> parse `[n]` citations -> write `qa_log`。**`answer.py` 自己不呼叫 `hybrid_search`**——那個死 import 已隨 ruff 進 CI 一併刪掉（**要 patch 檢索請 patch `retrieval_pipeline`**），真正的呼叫在 `retrieval_pipeline.py`（另兩處：`web/routers/search.py` 的檢索頁分頁，以及 `scripts/eval_retrieval.py`——**後者刻意直呼、不經 `retrieval_pipeline`，所以沒有 rerank 也沒有 `select_reports`**；改了管線裡的東西再跑它，分數可能一動也不動，那不代表改動無效）。Two pre-routers：**`scope_router.py`**（**five-way**，不是二元離題閘門 — `OFF_TOPIC`/`OVERVIEW`/`CORPUS_QA`/`TIME_SENSITIVE`/`ADVICE_RISK`；overview 判定為確定性優先、零 LLM 零向量，其次詞表安全前檢，最後 Haiku 四類分類，fail-open）與 `overview.py`（enumeration/aggregate questions like「有哪些券商」go to pure-SQL facet aggregation, bypassing top-k）。**首輪有三段、順序是刻意的**：(1) 確定性 overview 判定 →(2) `precheck_route()` 詞表安全前檢（零 LLM 零向量；命中 `time_sensitive` **完全不檢索**、連分類器都不呼叫，命中 `advice_risk` 則照走 RAG 只是省掉那次 Haiku）→(3) Haiku 四類分類與 `retrieve_context` **並行、誰先到聽誰的**：分類先回且判 `off_topic`／`time_sensitive` 就當場 `cancel()` 仍在跑的檢索。離題判不出前檢（`_safety_precheck` 只判時效與個人化），只能靠 (3)，而它才是白工的大宗。取消不會立刻停掉已送進執行緒的 rerank，但 `_rerank_stage` 帶 deadline，會在批次邊界收手。續問則是先 `condense_and_route` 再檢索。分段耗時 log 的 `route_wait` 與 `embed`/`retrieve` 重疊，加總不等於 total。**五類全部寫進 `qa_log.filters`**：`path`＝落到哪一類、`decided_by`＝誰判的（`precheck`／`overview`／`llm`／`fail_open`／`unknown`）——**fail-open 的落點正是 `CORPUS_QA`**，沒有 `decided_by` 就分不出「分類器判的」與「分類器壞掉猜的」，分類器失敗率完全不可觀測。Multi-turn uses `conversation_id` grouped by `COALESCE(conversation_id, id)`。
 
 The Q&A path also runs: cross-encoder **rerank** (`rerank.py`, M2)、**agentic 多輪補查** (`agentic_qa.py` + `query_planner.py`, M5)、**受信任時效資料** (`trusted_market_data.py`, M4a — registry 為空即安全婉拒)、**證據帳本** (`evidence.py`, M4b)、**忠實度抽查** (`faithfulness.py`, M8c — done 事件之後才跑、不佔可見答案延遲，但仍是同一個 async generator 內的 `await`，**`/api/ask` 的併發名額會一路被佔到查完**；結果落 `qa_log.evaluation`，讀取路徑是監控頁忠實度卡片與 `scripts/eval_faithfulness.py --claims <id>`)、**追問建議** (`followups.py`)、**輸出語言** (`locale.py`, M10 — fail-open 到 zh-Hant)。
 

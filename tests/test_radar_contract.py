@@ -14,7 +14,6 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 
 from web import server  # noqa: E402
 
-
 EXPECTED_MARKETS = {"TW", "US", "HK", "CN", "FX", "WTX", "MACRO", "GLOBAL", "CRYPTO"}
 
 

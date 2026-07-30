@@ -6,9 +6,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+import app.services.retrieval_pipeline as rp  # noqa: E402
 from app.services import answer as ans  # noqa: E402
 from app.services import scope_router as sr  # noqa: E402
-import app.services.retrieval_pipeline as rp  # noqa: E402
 from tests.test_answer import _FakeSession, make_row  # noqa: E402
 
 

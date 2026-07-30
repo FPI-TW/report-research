@@ -14,8 +14,9 @@ os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 from fastapi.testclient import TestClient  # noqa: E402
-from web.server import app  # noqa: E402
+
 from web.routers import health  # noqa: E402
+from web.server import app  # noqa: E402
 
 
 class _FakeSession:

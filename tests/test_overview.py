@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.overview import (  # noqa: E402
     OverviewFilters,
-    detect_overview,  # noqa: E402
+    detect_overview,
     resolve_filters,
 )
 
@@ -214,10 +214,21 @@ class FormatFactsTests(unittest.TestCase):
 import asyncio  # noqa: E402
 
 from app.services import answer as ans  # noqa: E402
+from app.services import retrieval_pipeline as rp  # noqa: E402
 from app.services import scope_router as sr  # noqa: E402
 
 
 class AnswerQuestionOverviewBranchTests(unittest.TestCase):
+    """總覽路徑（純 SQL 分面，繞過 top-k）的 answer_question 分支。
+
+    **檢索的 fake 必須掛在 `retrieval_pipeline` 上，不是 `answer`**：本組原本寫
+    `ans.hybrid_search = fake_hybrid`，而 `answer.py` 根本不呼叫它（真正的呼叫在
+    `retrieval_pipeline`；`answer.py` 那個頂層 import 是死的，已隨 ruff F401 刪除）。
+    於是 `assertEqual(called["hybrid"], 0)  # 沒走 RAG 檢索` 是一條**空斷言**——
+    就算總覽路徑真的跑了一次完整檢索，計數器也永遠是 0。這正是本 repo 的累犯
+    patch-where-used：刪掉那個死 import 才讓它暴露出來。
+    """
+
     def _drive(self, question, **kwargs):
         async def run():
             events = []
@@ -251,7 +262,11 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
         async def fake_log(*a, **k):
             return "qa-id"
 
-        ans.hybrid_search = fake_hybrid
+        rp.hybrid_search = fake_hybrid
+        # embed 也一起 fake：總覽路徑不該碰檢索，但萬一哪天走進去了，真的
+        # embed_query_cached 會去載 BGE-M3（數十秒甚至掛住），失敗訊號會變成
+        # 「測試很慢」而不是「測試紅」。
+        rp.embed_query_cached = lambda _q: [0.0]
         ans.aggregate_facets = fake_agg
         ans.stream_completion = fake_stream
         ans._log_qa = fake_log
@@ -259,8 +274,8 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
         return called
 
     def test_overview_question_takes_overview_path(self):
-        orig = (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
-                ans._log_qa, ans.SessionFactory)
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
+                ans.stream_completion, ans._log_qa, ans.SessionFactory)
         try:
             called = self._patch_common()
             events = self._drive("給我所有元大的報告種類")
@@ -272,12 +287,13 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             text_joined = "".join(p for k, p in events if k == "token" and isinstance(p, str))
             self.assertIn("734", text_joined)
         finally:
-            (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
-             ans._log_qa, ans.SessionFactory) = orig
+            (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
+             ans.stream_completion, ans._log_qa, ans.SessionFactory) = orig
 
     def test_overview_prompt_uses_standalone_query(self):
         orig = (
-            ans.hybrid_search,
+            rp.hybrid_search,
+            rp.embed_query_cached,
             ans.aggregate_facets,
             ans.stream_completion,
             ans._log_qa,
@@ -309,7 +325,8 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             self.assertNotIn("問題：那元大呢？", captured["prompt"])
         finally:
             (
-                ans.hybrid_search,
+                rp.hybrid_search,
+                rp.embed_query_cached,
                 ans.aggregate_facets,
                 ans.stream_completion,
                 ans._log_qa,
@@ -319,8 +336,8 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             ) = orig
 
     def test_overview_merges_request_filters_before_aggregation(self):
-        orig = (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
-                ans._log_qa, ans.SessionFactory)
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
+                ans.stream_completion, ans._log_qa, ans.SessionFactory)
         try:
             self._patch_common()
             seen = {}
@@ -346,12 +363,12 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             self.assertEqual(seen["filters"].report_type, "策略")
             self.assertTrue(seen["filters"].relates_stock)
         finally:
-            (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
-             ans._log_qa, ans.SessionFactory) = orig
+            (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
+             ans.stream_completion, ans._log_qa, ans.SessionFactory) = orig
 
     def test_overview_partial_stream_failure_propagates(self):
-        orig = (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
-                ans._log_qa, ans.SessionFactory)
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
+                ans.stream_completion, ans._log_qa, ans.SessionFactory)
         try:
             self._patch_common()
 
@@ -364,5 +381,5 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self._drive("給我所有元大的報告種類")
         finally:
-            (ans.hybrid_search, ans.aggregate_facets, ans.stream_completion,
-             ans._log_qa, ans.SessionFactory) = orig
+            (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
+             ans.stream_completion, ans._log_qa, ans.SessionFactory) = orig

@@ -1,8 +1,12 @@
 """檢索結果的型別化 row。
 
 `store.search_chunks_meta` / `search_chunks_lexical` 的 SELECT 欄位（見
-`store._meta_columns`，16 欄）＋ 尾端 distance ＝ 17 欄。ChunkRow 為 NamedTuple
-（tuple 子型），故位移存取與具名存取並存。
+`store._meta_columns`）＋ 尾端 distance ＝ 本 NamedTuple 的全部欄位（欄數請看
+`ChunkRow._fields`，不要抄數字——這裡原本寫死「16＋1＝17」，`title` 加進來之後就錯了）。
+ChunkRow 為 NamedTuple（tuple 子型），故位移存取與具名存取並存。
+
+`search_chunks_lexical` 的 SQL 另有一個**在 distance 之後**的 `lex_hits` 欄（cap 截斷
+可觀測），它刻意不是 ChunkRow 的一部分、由該函式獨立回傳——理由同下。
 
 **欄序須與 `store._meta_columns` 逐欄對齊**：`_make()` 純靠位置打包，錯位不會拋錯、
 只會靜默給錯值。**新增欄位一律插在中段、絕不 append 到尾端**，且插欄後必須確認沒有

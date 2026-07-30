@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { RawSSEEvent } from './readSSE'
+import { rejectEvent, type RawSSEEvent } from './readSSE'
 
 export const sourceSchema = z.object({
   n: z.number().int(),
@@ -98,37 +98,46 @@ export type ReportEvent =
   | { event: 'done'; data: ReportDone }
   | { event: 'error'; data: { detail: string } }
 
+// 丟棄事件時一律經 rejectEvent（定義在 readSSE.ts，與「JSON 壞掉」共用同一條訊息，
+// 見該函式註解）。注意「靜默丟棄」精確地說只發生在 SSE 這條路徑：radar/reading 走 zod
+// 但失敗會拋，`/api/progress` 是「schema 沒宣告該鍵 → 被 strip」（那要改 schema，
+// 不是改 parser）。
 export function parseAskEvent(raw: RawSSEEvent): AskEvent | null {
   switch (raw.event) {
-    case 'queued': { const r = queuedData.safeParse(raw.data); return r.success ? { event: 'queued', data: r.data } : null }
-    case 'status': { const r = askStatusData.safeParse(raw.data); return r.success ? { event: 'status', data: r.data } : null }
-    case 'sources': { const r = z.array(sourceSchema).safeParse(raw.data); return r.success ? { event: 'sources', data: r.data } : null }
-    case 'ext_sources': { const r = z.array(extSourceSchema).safeParse(raw.data); return r.success ? { event: 'ext_sources', data: r.data } : null }
-    case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : null
-    case 'notice': return typeof raw.data === 'string' ? { event: 'notice', data: raw.data } : null
+    case 'queued': { const r = queuedData.safeParse(raw.data); return r.success ? { event: 'queued', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'status': { const r = askStatusData.safeParse(raw.data); return r.success ? { event: 'status', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'sources': { const r = z.array(sourceSchema).safeParse(raw.data); return r.success ? { event: 'sources', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'ext_sources': { const r = z.array(extSourceSchema).safeParse(raw.data); return r.success ? { event: 'ext_sources', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : rejectEvent(raw.event, 'data 非字串')
+    case 'notice': return typeof raw.data === 'string' ? { event: 'notice', data: raw.data } : rejectEvent(raw.event, 'data 非字串')
     case 'followups': {
       const r = z.array(z.string()).safeParse(raw.data)
-      return r.success ? { event: 'followups', data: r.data } : null
+      return r.success ? { event: 'followups', data: r.data } : rejectEvent(raw.event, r.error)
     }
-    case 'done': { const r = askDoneData.safeParse(raw.data); return r.success ? { event: 'done', data: r.data } : null }
-    case 'error': { const r = askErrorData.safeParse(raw.data); return r.success ? { event: 'error', data: r.data } : null }
-    default: return null
+    case 'done': { const r = askDoneData.safeParse(raw.data); return r.success ? { event: 'done', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'error': { const r = askErrorData.safeParse(raw.data); return r.success ? { event: 'error', data: r.data } : rejectEvent(raw.event, r.error) }
+    default: return rejectEvent(raw.event, '未宣告的事件種類')
   }
 }
 
 export function parseReportEvent(raw: RawSSEEvent): ReportEvent | null {
   switch (raw.event) {
-    case 'run': { const r = reportRunData.safeParse(raw.data); return r.success ? { event: 'run', data: r.data } : null }
-    case 'queued': { const r = queuedData.safeParse(raw.data); return r.success ? { event: 'queued', data: r.data } : null }
-    case 'status': { const r = z.object({ stage: reportStage }).safeParse(raw.data); return r.success ? { event: 'status', data: r.data } : null }
-    case 'outline': { const r = reportOutlineData.safeParse(raw.data); return r.success ? { event: 'outline', data: r.data } : null }
-    case 'section_draft': { const r = reportSectionEventData.safeParse(raw.data); return r.success ? { event: 'section_draft', data: r.data } : null }
-    case 'section_skipped': { const r = reportSectionEventData.safeParse(raw.data); return r.success ? { event: 'section_skipped', data: r.data } : null }
-    case 'sources': { const r = z.array(sourceSchema).safeParse(raw.data); return r.success ? { event: 'sources', data: r.data } : null }
-    case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : null
-    case 'done': { const r = reportDoneData.safeParse(raw.data); return r.success ? { event: 'done', data: r.data } : null }
-    case 'error': { const r = z.object({ detail: z.string() }).safeParse(raw.data); return r.success ? { event: 'error', data: r.data } : null }
-    default: return null
+    case 'run': { const r = reportRunData.safeParse(raw.data); return r.success ? { event: 'run', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'queued': { const r = queuedData.safeParse(raw.data); return r.success ? { event: 'queued', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'status': { const r = z.object({ stage: reportStage }).safeParse(raw.data); return r.success ? { event: 'status', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'outline': { const r = reportOutlineData.safeParse(raw.data); return r.success ? { event: 'outline', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'section_draft': { const r = reportSectionEventData.safeParse(raw.data); return r.success ? { event: 'section_draft', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'section_skipped': { const r = reportSectionEventData.safeParse(raw.data); return r.success ? { event: 'section_skipped', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'sources': { const r = z.array(sourceSchema).safeParse(raw.data); return r.success ? { event: 'sources', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'token': return typeof raw.data === 'string' ? { event: 'token', data: raw.data } : rejectEvent(raw.event, 'data 非字串')
+    case 'done': { const r = reportDoneData.safeParse(raw.data); return r.success ? { event: 'done', data: r.data } : rejectEvent(raw.event, r.error) }
+    case 'error': { const r = z.object({ detail: z.string() }).safeParse(raw.data); return r.success ? { event: 'error', data: r.data } : rejectEvent(raw.event, r.error) }
+    // 刻意忽略，不是忘了宣告：`document_revision` 是 M7 逐節路徑的純加法事件（M7 spec
+    // 設計成「舊前端可忽略」），前端真正需要的是 done 帶的 download_url——研報內文的
+    // 真相是 PDF，不是串流出來的 markdown。走 default 會被 golden fixture 測試判為
+    // 「後端在送、前端沒宣告」，那正是這個 case 要區分開的兩件事。
+    case 'document_revision': return null
+    default: return rejectEvent(raw.event, '未宣告的事件種類')
   }
 }
 

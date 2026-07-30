@@ -2,6 +2,24 @@ import { ApiError, redirectToLogin } from './api'
 
 export type RawSSEEvent = { event: string; data: unknown }
 
+/**
+ * 丟棄一個 SSE 事件並在開發模式留下痕跡；回傳值恆為 null。
+ *
+ * 存在的理由：本專案兩次被「靜默丟棄」咬到（`section_draft` 從 M7 起就在送但前端沒有
+ * 對應 case，症狀只是「進度條停在 50% 不動」，撐了好幾個里程碑）。這支只加副作用、
+ * 不改任何回傳值，所以接上它的風險近乎零。
+ *
+ * 用 `import.meta.env.DEV` 閘住是因為生產不需要這些噪音——正常運作下 `token` 分支
+ * 每秒會經過同一組判斷數十次，一旦有一個型別漂移就會刷爆 console。
+ *
+ * 住在這裡（SSE 傳輸層）而非 askSchemas：解析失敗有兩種，「JSON 壞掉」在本檔、
+ * 「schema 不合」在 askSchemas，兩邊要吐同一種訊息才看得出是同一類問題。
+ */
+export function rejectEvent(event: string, why: unknown): null {
+  if (import.meta.env.DEV) console.warn('[sse] 丟棄事件', event, why)
+  return null
+}
+
 function parseFrame(frame: string): RawSSEEvent | null {
   let event = 'message'
   let data: string | null = null
@@ -9,11 +27,12 @@ function parseFrame(frame: string): RawSSEEvent | null {
     if (line.startsWith('event:')) event = line.slice(6).trim()
     else if (line.startsWith('data:')) data = (data === null ? '' : data + '\n') + line.slice(5).trim()
   }
+  // 無 data 欄位＝心跳註解行（`: keep-alive`），是預期中的常態，不吐警告。
   if (data === null) return null
   try {
     return { event, data: JSON.parse(data) }
-  } catch {
-    return null
+  } catch (err) {
+    return rejectEvent(event, err)
   }
 }
 

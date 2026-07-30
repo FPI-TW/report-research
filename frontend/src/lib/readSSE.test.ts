@@ -1,7 +1,10 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { readSSE, type RawSSEEvent } from './readSSE'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 function sseResponse(chunks: string[], status = 200): Response {
   const enc = new TextEncoder()
@@ -62,6 +65,23 @@ test('忽略心跳註解幀，不影響事件解析', async () => {
     { event: 'token', data: '內文' },
     { event: 'done', data: { ok: true } },
   ])
+})
+
+test('壞幀被丟棄時留下痕跡，心跳幀不留', async () => {
+  // 「靜默丟棄」在本專案咬過兩次（section_draft 撐了好幾個里程碑沒人發現）。壞 JSON
+  // 仍然只是被丟掉——但至少開發時 console 看得到。心跳幀是預期常態，不可一起吐噪音。
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  vi.stubGlobal('fetch', vi.fn(async () =>
+    sseResponse([
+      ': keep-alive\n\n',
+      'event: oops\ndata: {bad json}\n\n',
+      'event: done\ndata: {"ok":true}\n\n',
+    ])
+  ))
+  const evs = await collect('/api/ask', {})
+  expect(evs).toEqual([{ event: 'done', data: { ok: true } }])
+  expect(warn).toHaveBeenCalledTimes(1)
+  expect(warn.mock.calls[0]).toEqual(['[sse] 丟棄事件', 'oops', expect.anything()])
 })
 
 test('401 導向登入並拋 ApiError', async () => {

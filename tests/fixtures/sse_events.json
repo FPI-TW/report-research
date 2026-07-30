@@ -1,0 +1,198 @@
+{
+  "_readme": [
+    "SSE 事件契約的單一真相來源：後端送得出來的每一種事件，前端都必須有對應宣告。",
+    "兩側各有一支測試吃這份檔案——tests/test_sse_event_contract.py（後端事件種類集合）",
+    "與 frontend/src/lib/sseEventContract.test.ts（parseAskEvent／parseReportEvent 解得出來）。",
+    "改後端事件時先改這份檔案，兩支測試會告訴你另一側還缺什麼。",
+    "",
+    "欄位語意：",
+    "  event    SSE 的 event 名。",
+    "  origin   service＝服務層（app/services/*）產生；transport＝web 層（routers/report_runs）補上。",
+    "           兩者皆有代表同一種事件名兩邊都會送（例如 error）。",
+    "  frontend parsed＝parser 必須解出非 null；ignored＝刻意忽略（必須是明確的 case，不可落到 default）。",
+    "  data     一份代表性 payload，形狀取自後端真實送出的欄位。",
+    "  note     為什麼（只有需要解釋時才有）。",
+    "",
+    "已知不對稱：section_draft 的 markdown 只有即時訂閱者收得到——web/report_runs.py 的",
+    "_SLIM_KEEP 會把它從重播緩衝裡剝掉（見該檔說明）。故 data 帶 markdown，而前端 schema",
+    "刻意不宣告它（見 askSchemas.ts 的 reportSectionEventData）：研報內文的真相是 done 帶的 PDF。",
+    "token 完全不進重播緩衝（_VOLATILE），重連者永遠看不到它。"
+  ],
+  "ask": [
+    {
+      "event": "queued",
+      "origin": ["transport"],
+      "frontend": "parsed",
+      "data": { "scope": "ask", "position": 2, "capacity": 3 },
+      "note": "併發滿載時在取得名額之前先送；沒有它，第 4 個提問者看到的是「連上了卻沒有 token」。"
+    },
+    {
+      "event": "status",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": { "stage": "generating", "thinking_ms": 8421 }
+    },
+    {
+      "event": "sources",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": [
+        {
+          "n": 1,
+          "report_id": "0000018f-0000-7000-8000-000000000001",
+          "file_name": "6247269925_260728_gs_umt.pdf",
+          "title": "低軌衛星業務擴展，維持買入",
+          "market": "TW",
+          "report_date": "2026-07-28",
+          "is_latest": true
+        }
+      ]
+    },
+    {
+      "event": "ext_sources",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": [{ "title": "外部參考", "url": "https://example.com/a" }]
+    },
+    {
+      "event": "token",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": "台積電先進封裝產能"
+    },
+    {
+      "event": "notice",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": "這個問題超出研報語料範圍。",
+      "note": "離題／時效／建議風險三條婉拒路徑用它說明原因。"
+    },
+    {
+      "event": "followups",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": ["CoWoS 產能何時開出？", "競爭對手的進度如何？"]
+    },
+    {
+      "event": "done",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": {
+        "cited": ["0000018f-0000-7000-8000-000000000001"],
+        "qa_id": "0000018f-0000-7000-8000-0000000000aa",
+        "conversation_id": "0000018f-0000-7000-8000-0000000000bb",
+        "thinking_ms": 42000,
+        "offer_report": true,
+        "report_title": "台積電先進封裝深度研報",
+        "root_qa_id": "0000018f-0000-7000-8000-0000000000aa",
+        "version_count": 1
+      }
+    },
+    {
+      "event": "error",
+      "origin": ["transport"],
+      "frontend": "parsed",
+      "data": { "detail": "問答服務發生錯誤" }
+    }
+  ],
+  "report": [
+    {
+      "event": "run",
+      "origin": ["transport"],
+      "frontend": "parsed",
+      "data": { "run_id": "0000018f-0000-7000-8000-0000000000cc", "elapsed_ms": 0 },
+      "note": "恆為首事件：前端據此記住 handle，重整後可再接回（web/routers/report.py 的 _tail）。"
+    },
+    {
+      "event": "queued",
+      "origin": ["transport"],
+      "frontend": "parsed",
+      "data": { "scope": "report", "position": 1, "capacity": 1 }
+    },
+    {
+      "event": "status",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": { "stage": "retrieving" }
+    },
+    {
+      "event": "sources",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": [
+        {
+          "n": 1,
+          "report_id": "0000018f-0000-7000-8000-000000000001",
+          "file_name": "6247269925_260728_gs_umt.pdf",
+          "title": "低軌衛星業務擴展，維持買入",
+          "market": "TW",
+          "report_date": "2026-07-28",
+          "is_latest": true
+        }
+      ]
+    },
+    {
+      "event": "outline",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": {
+        "title": "台積電先進封裝深度研報",
+        "sections": [
+          { "position": 0, "section_key": "exec_summary", "heading": "執行摘要" },
+          { "position": 1, "section_key": "analysis", "heading": "產業分析" }
+        ]
+      },
+      "note": "進度條的分母。sections 為空＝「忘掉大綱」（退單次生成時送出）。"
+    },
+    {
+      "event": "token",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": "## 執行摘要\n\n綜述[1]。"
+    },
+    {
+      "event": "section_draft",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": {
+        "position": 0,
+        "section_key": "exec_summary",
+        "heading": "執行摘要",
+        "markdown": "綜述[1]。"
+      },
+      "note": "進度條的分子。從 M7 起就在送、前端到 PR #132 才有對應 case——症狀只是「進度條停在 50% 不動」，這份 fixture 就是為了不再發生第二次。"
+    },
+    {
+      "event": "section_skipped",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": { "position": 3, "heading": "動態分析：競爭格局" },
+      "note": "被預算前瞻砍掉的節永遠不會有 section_draft；只數 draft 會讓進度永遠差幾節而看似卡死。"
+    },
+    {
+      "event": "document_revision",
+      "origin": ["service"],
+      "frontend": "ignored",
+      "data": { "revision_id": "rev-xyz", "revision": 1, "markdown_hash": "hhh" },
+      "note": "刻意忽略：M7 spec 設計為純加法、舊前端可忽略。前端要的是 done 帶的 download_url。必須是 parseReportEvent 裡明確的 case，這樣「刻意忽略」與「忘了宣告」在程式碼裡分得開。"
+    },
+    {
+      "event": "done",
+      "origin": ["service"],
+      "frontend": "parsed",
+      "data": {
+        "report_id": "0000018f-0000-7000-8000-0000000000dd",
+        "title": "台積電先進封裝深度研報",
+        "download_url": "/api/report-doc/0000018f-0000-7000-8000-0000000000dd/pdf",
+        "thinking_ms": 512000
+      }
+    },
+    {
+      "event": "error",
+      "origin": ["service", "transport"],
+      "frontend": "parsed",
+      "data": { "detail": "研報檢索逾時，請稍後重試" },
+      "note": "服務層（檢索逾時／無脈絡／生成中斷）與 web 層（未捕捉例外、使用者取消）都會送。"
+    }
+  ]
+}

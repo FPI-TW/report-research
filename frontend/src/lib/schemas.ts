@@ -75,6 +75,15 @@ export const searchResponseSchema = z.object({
   total: z.number().int(),
   /** 命中集合的市場組成（色譜讀數）。舊後端無此欄，故給預設空陣列。 */
   market_facets: z.array(marketFacetSchema).default([]),
+  /**
+   * 字面路候選是否已被 cap 截斷（`store._lexical_sql` 的 `LIMIT :cap`，沒有 ORDER BY
+   * ⇒ 取到哪 cap 列由 heap 物理順序決定，同一查詢在不同時刻可能回不同結果）。
+   *
+   * 刻意用 `optional()` 而非 `default(false)`：undefined＝這個後端還沒回報（滾動部署
+   * 期間的舊版），false＝回報了且沒截斷。兩者是不同的事實，混成同一個值就再也分不開。
+   * 宣告本身是必要的——zod 物件預設 `strip`，未宣告的鍵不報錯、直接安靜丟掉。
+   */
+  lexical_truncated: z.boolean().optional(),
   results: z.array(reportResultSchema),
 })
 export type SearchResponse = z.infer<typeof searchResponseSchema>

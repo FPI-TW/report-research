@@ -144,40 +144,45 @@ export default function ReportPage() {
 
       <div className={styles.main}>
         <aside className={styles.intel}>
-          {d.summary && (
-            <section className={styles.sec}>
-              <h2 className={styles.secH}>摘要</h2>
-              <p className={styles.sum}>{d.summary}</p>
-            </section>
-          )}
+          {/* 四區收在同一張卡內：摘要與重點摘錄為主體，觀點與相似研報以 .foot 退為卡內頁腳。
+              包一層而不是讓 aside 自己當卡片 —— aside 同時是捲動容器，圓角與陰影套在
+              捲動容器上會跟著內容一起被裁掉。 */}
+          <div className={styles.card}>
+            {d.summary && (
+              <section className={styles.sec}>
+                <h2 className={styles.secH}>摘要</h2>
+                <p className={styles.sum}>{d.summary}</p>
+              </section>
+            )}
 
-          {showTakeaways && (
-            <section className={styles.sec}>
-              <h2 className={styles.secH}>重點摘錄</h2>
-              <TakeawayList takeaways={d.takeaways} canJump={canJump} onJump={onJump} />
-            </section>
-          )}
+            {showTakeaways && (
+              <section className={styles.sec}>
+                <h2 className={styles.secH}>重點摘錄</h2>
+                <TakeawayList takeaways={d.takeaways} canJump={canJump} onJump={onJump} />
+              </section>
+            )}
 
-          {/* 觀點：無訊號時整區不進 DOM（不是空框、不是骨架）。
-              全語料僅 0.68% 有訊號，這是常態不是錯誤，版面只變短不跳動。 */}
-          {showSignals && (
-            <section className={styles.sec}>
-              <h2 className={styles.secH}>觀點</h2>
-              <p className={styles.signalNote}>本篇已擷取結構化訊號 — 全語料僅 0.68% 有。</p>
-              {d.signals.map(s => (
-                <SignalCard key={`${s.market}-${s.instrument_code}`} signal={s} />
-              ))}
-            </section>
-          )}
+            {/* 觀點：無訊號時整區不進 DOM（不是空框、不是骨架）。
+                全語料僅 0.68% 有訊號，這是常態不是錯誤，版面只變短不跳動。 */}
+            {showSignals && (
+              <section className={`${styles.sec} ${styles.foot}`}>
+                <h2 className={styles.secH}>觀點</h2>
+                <p className={styles.signalNote}>本篇已擷取結構化訊號 — 全語料僅 0.68% 有。</p>
+                {d.signals.map(s => (
+                  <SignalCard key={`${s.market}-${s.instrument_code}`} signal={s} />
+                ))}
+              </section>
+            )}
 
-          {/* 相似研報：側欄末區塊，自理狀態（錯誤→重試、載入中/空→不渲染，見其元件說明）。
-              原為頁底整條橫幅卡片，太佔閱讀區垂直空間，改收進側欄緊湊清單。 */}
-          <SimilarReports
-            items={similarItems}
-            isLoading={similar.isLoading}
-            isError={similar.isError}
-            onRetry={() => similar.refetch()}
-          />
+            {/* 相似研報：卡片最末，預設收合成一行（自理狀態：錯誤→展開＋重試、
+                載入中/空→不渲染，見其元件說明）。 */}
+            <SimilarReports
+              items={similarItems}
+              isLoading={similar.isLoading}
+              isError={similar.isError}
+              onRetry={() => similar.refetch()}
+            />
+          </div>
         </aside>
 
         <section className={styles.doc}>

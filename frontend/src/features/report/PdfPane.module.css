@@ -1,20 +1,20 @@
-/* 舞台：右欄的捲動容器（原文與文字共用版型契約） */
+/* 舞台：只負責置中與留白（捲動已收在 ReportPage 的 .doc，見該檔說明）
+   原文與文字兩個 pane 共用這個版型契約。 */
 .stage {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 22px;
+  padding: 24px 22px 44px;
   display: flex;
   justify-content: center;
 }
 
-/* PDF 內嵌容器：上方逃生列 + 撐滿其餘高度的框 */
+/* PDF 內嵌容器：上方逃生列 + 紙張 */
 .pdfWrap {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 860px;
-  gap: 8px;
+  max-width: 900px;
+  gap: 9px;
 }
 
 /* 逃生列：手機讀者第一眼看得到（iframe 在下方多半空白） */
@@ -26,6 +26,7 @@
   flex: none;
   font-size: 11.5px;
   color: var(--tf-text-4);
+  padding-left: 2px;
 }
 .pdfHint { color: var(--tf-text-4); }
 .pdfDot { color: var(--tf-border); }
@@ -37,13 +38,17 @@
 .pdfLink:hover { text-decoration: underline; }
 .pdfLink:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; border-radius: 2px; }
 
-/* PDF 內嵌：撐滿其餘高度、白底紙感 */
+/* PDF 內嵌：紙張感。
+   刻意不再加 1px 實線邊 —— --tf-shadow-float 的第一層本身就是 0.5px 髮絲環，
+   疊上實線就成了雙重邊框（tokens.css：髮絲環＋柔影「取代」1px 實線邊）。
+   高度改為視窗相對值而不是 flex:1：外層 .doc 已改成捲動容器，其中沒有可分配的
+   剩餘高度，繼續用 flex:1 只會退回 min-height，長 PDF 被壓成一小格。 */
 .frame {
-  flex: 1;
+  flex: none;
   width: 100%;
-  min-height: 480px;
-  border: 1px solid var(--tf-border);
-  border-radius: 4px;
+  height: clamp(520px, calc(100vh - 232px), 1400px);
+  border: 0;
+  border-radius: 8px;
   box-shadow: var(--tf-shadow-float);
   background: var(--tf-surface);
 }
@@ -51,9 +56,9 @@
 .state {
   align-self: flex-start;
   background: var(--tf-surface);
-  border: 1px solid var(--tf-border);
   border-radius: var(--tf-radius-card);
-  padding: 28px 24px;
+  box-shadow: var(--tf-shadow-xs);
+  padding: 30px 26px;
   text-align: center;
   max-width: 420px;
   width: 100%;
@@ -78,3 +83,8 @@
   transition: background var(--tf-dur-1) var(--tf-ease-standard);
 }
 .download:hover { background: var(--tf-graphite-hover); }
+
+@media (max-width: 900px) {
+  .stage { padding: 14px 14px 32px; }
+  .frame { height: 76vh; border-radius: 6px; }
+}

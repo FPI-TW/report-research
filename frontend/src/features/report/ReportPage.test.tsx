@@ -452,15 +452,36 @@ describe('ReportPage', () => {
     expect(screen.queryByText(/請切「原文」/)).toBeNull()
   })
 
-  it('相似研報：顯示「9/12 段相符」且連往閱讀頁', async () => {
+  // 相似研報改為卡片頁腳的收合列：預設只有一行（標題＋篇數），展開才掛清單。
+  // 收合時刻意整段不進 DOM —— 清單列是連結，只用 CSS 藏起來仍會進 Tab 序。
+  it('相似研報：預設收合，展開後顯示「9/12 段相符」且連往閱讀頁', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByText('相似研報')).toBeInTheDocument())
+    expect(screen.queryByText('9/12 段相符')).toBeNull()
+    expect(screen.queryByRole('link', { name: /欣興/ })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /相似研報/ }))
+
     expect(screen.getByText('9/12 段相符')).toBeInTheDocument()
     // 說法要對得上演算法：均勻「取樣」而非把全文「切成」N 段
     expect(screen.getByText(/沿全文均勻取樣 12 個段落比對/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /欣興/ }))
       .toHaveAttribute('href', `/report/${'c'.repeat(64)}`)
+  })
+
+  it('相似研報：收合列回報 aria-expanded，可再點收回', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    const row = await screen.findByRole('button', { name: /相似研報/ })
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(row)
+    expect(row).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(row)
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('9/12 段相符')).toBeNull()
   })
 
   it('相似研報為空 → 整區不渲染', async () => {

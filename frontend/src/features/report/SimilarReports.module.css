@@ -1,36 +1,96 @@
-/* 左側智慧欄的第 4 個區塊：與摘要/重點摘錄/觀點同語彙的緊湊清單，
-   取代舊的頁底整條橫幅卡片（太佔閱讀區垂直空間）。 */
+/* 左側智慧欄的第 4 個區塊，位於卡片頁腳：與觀點同一階淡填色，
+   預設收合成一行（收合態高度約 42px，展開後由 content-visibility 的 auto 自行修正）。 */
 .sim {
-  /* 長文頁：離開視窗的區塊省下排版成本（不引 virtualization 套件） */
+  background: var(--tf-fill-subtle);
+  border-top: 1px solid var(--tf-border-weak);
   content-visibility: auto;
-  contain-intrinsic-size: auto 200px;
+  contain-intrinsic-size: auto 42px;
 }
 
-/* 與 ReportPage .secH 同款：mono 大寫小標＋尾線，維持側欄各區塊一致 */
+/* 錯誤態不收合，故仍需自己的內距（成功態的內距在 .row／.body 上） */
+.simErr {
+  padding: 14px 16px;
+}
+
+/* h2 只承載標題語意，視覺與內距都在內層的 button 上 */
+.head {
+  margin: 0;
+  font: inherit;
+}
+
+/* 收合列：整條可點，是唯一的開合觸發點 */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 12px 16px;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--tf-sans);
+  transition: background var(--tf-dur-1) var(--tf-ease-standard);
+}
+.row:hover {
+  background: color-mix(in srgb, var(--tf-text-1) 4%, transparent);
+}
+.row:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: -2px;
+}
+
+/* 與 ReportPage .secH 同款的區塊小標（無尾線版） */
 .title {
-  font-size: 11px;
+  font-size: 8.5px;
   font-weight: 700;
-  letter-spacing: 0.11em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--tf-text-4);
+  font-family: var(--tf-mono);
+}
+
+.errHead {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--tf-text-4);
   font-family: var(--tf-mono);
   margin: 0 0 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
-.title::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--tf-divider);
+
+/* 篇數：收合態下唯一的資訊量，故用強調色而非灰字 */
+.count {
+  font-family: var(--tf-mono);
+  font-size: 10px;
+  color: var(--tf-gold-text);
+  background: var(--tf-gold-tint);
+  border-radius: var(--tf-radius-pill);
+  padding: 1px 7px;
+  line-height: 1.5;
+}
+
+.chev {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--tf-text-4);
+  transition: transform var(--tf-dur-2) var(--tf-ease-standard);
+}
+.chevOpen {
+  transform: rotate(180deg);
+}
+
+.body {
+  padding: 0 16px 12px;
 }
 
 /* 演算法說明：說法要對得上「均勻取樣」而非把全文「切成」N 段 */
 .note {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--tf-text-4);
-  line-height: 1.6;
+  line-height: 1.55;
   margin: 0 0 4px;
 }
 
@@ -45,14 +105,14 @@
   display: block;
   text-decoration: none;
   padding: 10px 0;
-  border-top: 1px solid var(--tf-divider);
+  border-top: 1px solid var(--tf-border-weak);
   transition: background var(--tf-dur-1) var(--tf-ease-standard);
 }
 .item:first-of-type {
   border-top: 0;
 }
 .item:hover {
-  background: var(--tf-canvas);
+  background: color-mix(in srgb, var(--tf-text-1) 3%, transparent);
 }
 .item:focus-visible {
   outline: 2px solid var(--tf-graphite);

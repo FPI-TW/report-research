@@ -386,6 +386,75 @@ tail -20 data/unit_failures.log                                     # 停更時�
 
 **待驗（本輪未在主機上執行）**：timer 是否真的每日觸發、`OnFailure` 是否真的把停更寫進 `data/unit_failures.log`。腳本本身的三條退出路徑（新鮮／停更／DB 不可用）已對生產 DB 以唯讀查詢實測過。
 
+## 資料完整性稽核（2026-07-30）
+
+### 與停更偵測的分工
+
+上一節那支量的是「批次有沒有在**前進**」，這支量的是「已經產出的資料有沒有**互相矛盾**」。兩個不同的問題，同一種失效型態——**沒有人會回報**。
+
+理由是本 repo 的完整性保證幾乎全在「寫入端很小心」，而不在 DB 的約束裡：三張研報衍生表刻意無 FK、`embedding` 可 NULL、`report_signal.market` 與 `research_report.market` 是兩份各自寫入的副本。這些設計都有理由，代價是壞掉的方式全部是靜默的——孤兒列沒有任何讀取路徑會碰到、重複 `chunk_index` 只讓閱讀頁跳到錯的位置、`market` 不一致仍會算出看起來合理的共識數字。
+
+### 十一條檢查
+
+`scripts/db_audit.py` 的 `CHECKS` 有 **10 條 SQL 斷言**（各回一個違反列數，0＝通過），外加 1 條走 Python 判準的取樣比對：
+
+| 級別 | 檢查 | 為什麼要 |
+|---|---|---|
+| error | `durability_off` | **整組裡唯一「不修會失去全部資料」的一條**，見下 |
+| error | `null_embedding` | 那些 chunk 對語意檢索完全不存在（檢索端跳過並記數是降級，不是修復） |
+| error | `duplicate_chunk_index` | 閱讀頁錨定跳錯位置，看起來只像「引文對不上」 |
+| error | `signal_market_mismatch` | 雷達把訊號歸到錯的市場，數字仍然合理 |
+| error | `is_research_null` | 未判定的研報會被 ingest 閘門與各批次靜默略過 |
+| warn | `chunkless_report` | 有全文卻沒有任何 chunk＝檢索不到 |
+| warn | `orphan_report_doc` / `orphan_report_run` / `orphan_report_rendition` | 對話串或母表已刪的殘留 |
+| warn | `takeaway_sha_disagreement` | 同一報告的摘錄存了不同的 `text_sha256` |
+| （取樣） | `norm_drift` | `content_norm` 是 GENERATED，驗「庫裡實際存的值」與 `norm_for_match()` 是否等價 |
+
+`norm_drift` 與 `tests/test_content_norm_equivalence.py` 的分工要分清楚：**測試驗「表達式定義與 Python 等價」，稽核驗「庫裡實際存的值等價」**——定義正確但既有列是舊定義算出來的，只有後者看得見。它取樣（`--norm-sample`，預設 500 列）而不全掃，因為這種漂移是全域性的。
+
+**`durability_off` 是這支存在的最大理由。** `scripts/ingest_lowio.sh` 會 `ALTER SYSTEM SET fsync=off` 降 I/O，並以 `trap ... EXIT` 還原——**但 trap 擋不住 SIGKILL**（OOM killer、`kill -9`、WSL 整個被收掉），而 `ALTER SYSTEM` 寫的是 pgdata 裡的 `postgresql.auto.conf`，**重啟也不會恢復**。DB 於是無限期跑在 `fsync=off`：查詢完全正常、零症狀，但一次斷電就可能讓整個 pgdata 報廢。處置是 `make restore-durability`。
+
+### 怎麼跑
+
+```bash
+make db-audit                                          # 手動跑一次
+systemctl list-timers report-mark-audit.timer          # 排程：每日 08:45（Persistent=true）
+uv run python scripts/db_audit.py --json               # 供後續接監控
+uv run python scripts/db_audit.py --skip norm_drift    # 跳過取樣那條（最慢）
+```
+
+退出碼：`0`＝乾淨／`1`＝有發現／`2`＝DB 不可用。**1 與 2 刻意分流**，理由與上一節相同：混成同一個碼等於把「DB 掛了」誤導成「資料壞了」。
+
+### 三個刻意的設計
+
+- **只讀，一列都不改。** 稽核器自己去修等於在無人監督下改生產資料，而修法幾乎都需要人決定（孤兒該刪還是補回連結？重複 chunk 刪哪一列？）。輸出給人看，處置由人下。
+- **error / warn 都算失敗（同樣 rc=1）。** 分級只影響閱讀順序。「warn 不算失敗」會在三個月內讓 warn 區永遠有東西、從此無人閱讀。
+- **走 `db.relax_statement_timeout()`（`SET LOCAL`）。** 其中幾條是 57 萬列全表掃描，引擎層的 60s `statement_timeout` 會把它們砍掉——**被砍掉的稽核等於沒有稽核**。用 `SET LOCAL` 而非 `SET`，豁免不會跟著池化連線漏給下一個借用者。
+
+### 安裝
+
+```bash
+REPO=/mnt/c/Users/User/Desktop/Project/report-mark
+sudo cp "$REPO"/deploy/systemd/report-mark-audit.service \
+        "$REPO"/deploy/systemd/report-mark-audit.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-audit.timer
+
+# 首跑與驗收（rc=1 是合法結果，代表真的稽核出東西）
+sudo systemctl start report-mark-audit.service
+journalctl -u report-mark-audit.service -n 40 --no-pager
+systemctl show report-mark-audit.service -p OnFailure --value   # 應非空
+systemctl list-timers report-mark-audit.timer                   # 應排在每日 08:45
+```
+
+它與 freshness 一樣沿用 `/etc/default/report-mark-sync`（`REPORT_MARK_ROOT` 與 `SYNC_PATH_EXTRA` 都在裡面），`SYNC_PATH_EXTRA` 在這支同樣只是為了找到 `uv`。
+
+**08:45 是刻意排在 freshness（08:30）之後、錯開 15 分鐘**：兩支都會對 `report_chunk` 跑全表掃描，同時跑只是互相搶 I/O。同樣排在上班時段的開頭——這支的產物是「一筆 unit 失敗紀錄」，要有人當天看到它才有用。
+
+**`Persistent=true` 對這支特別重要**：最可能留下 `fsync=off` 的情境（機器被硬收掉）恰好就是它會被錯過的那一天。
+
+**待驗（2026-07-31 確認：這組 unit 至今未安裝）**——`/etc/systemd/system/` 裡只有 web／sync／backup／freshness／alert 五組，**每日稽核一次都沒跑過**，包含耐久性那條。腳本本身可用 `make db-audit` 手動驗證。
+
 ## 這一輪刻意沒做
 
 - **外部 uptime 監控**：`/healthz` 是給它用的介面，但要接哪一家（UptimeRobot／自架）是部署決策，不該由一次程式碼改動偷渡。

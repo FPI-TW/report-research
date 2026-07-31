@@ -11,75 +11,110 @@
   min-height: 0;
 }
 
-/* 左欄 · 智慧：摘要 → 重點摘錄 → 觀點（此順序為設計稿拍板） */
+/* 左欄 · 智慧：摘要 → 重點摘錄 → 觀點 → 相似研報（此順序為設計稿拍板）
+   欄本身退成畫布，內容收進一張卡 —— 四區原本各自帶一條尾線、讀起來是四個並列的
+   盒子；改為單卡之後摘要與其下各區才連成同一段敘事。
+   刻意不改玻璃：本欄自己就是捲動容器，內容捲在它「裡面」而不是從它「底下」經過，
+   玻璃疊在沒有東西可模糊的底上只會變髒（見 tokens.css 的材質說明）。 */
 .intel {
-  width: 400px;
+  width: 380px;
   flex: none;
-  border-right: 1px solid var(--tf-border);
-  background: var(--tf-surface);
+  border-right: 1px solid var(--tf-divider);
+  background: var(--tf-canvas);
   overflow-y: auto;
-  padding: 22px 24px 40px;
+  /* 側欄捲到底不再把整頁一起帶走 */
+  overscroll-behavior: contain;
+  padding: 16px 14px 40px;
+}
+
+.card {
+  background: var(--tf-surface);
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-xs);
+  overflow: hidden;
+}
+/* 最貧乏態（無摘要、無摘錄、無訊號、無相似）四區全不渲染，卡片會是空的 ——
+   高度 0 的元素其陰影仍會畫出一條淡線，故整個收掉。 */
+.card:empty {
+  display: none;
 }
 
 .sec {
-  margin-bottom: 26px;
+  padding: 14px 16px;
   /* 長文頁：離開視窗的區塊省下排版成本（不引 virtualization 套件） */
   content-visibility: auto;
   contain-intrinsic-size: auto 160px;
 }
-.sec:last-child {
-  margin-bottom: 0;
+
+/* 相鄰的主體區塊不再各自留上內距，摘要與重點摘錄因此讀起來是連續的一段。
+   .foot 例外（它要靠自己的上邊界與主體分開）；區塊為條件渲染，故用相鄰選擇器
+   而非固定的 nth-child —— 沒有摘要時重點摘錄仍是首區、仍保有完整上內距。 */
+.card > .sec + .sec:not(.foot) {
+  padding-top: 0;
 }
 
+/* 頁腳區：觀點與相似研報是「本篇之外」的延伸，以淡填色與髮絲上界退一階，
+   但仍在同一張卡內 —— 不是第二張卡。 */
+.foot {
+  background: var(--tf-fill-subtle);
+  border-top: 1px solid var(--tf-border-weak);
+}
+
+/* 區塊小標：拿掉原本的尾線並縮小、調淡。標題文字不可從 DOM 移除
+   （測試以 getByText 逐一釘住四個標題的存在與不存在），故是「幾乎看不見」而非刪除。 */
 .secH {
-  font-size: 11px;
+  font-size: 8.5px;
   font-weight: 700;
-  letter-spacing: 0.11em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--tf-text-4);
   font-family: var(--tf-mono);
-  margin: 0 0 11px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.secH::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--tf-divider);
+  margin: 0 0 7px;
 }
 
+/* 摘要是本欄的主體，字級與顏色提到內文級（不再是次要的灰字說明） */
 .sum {
-  font-size: 13.5px;
-  line-height: 1.85;
-  color: var(--tf-text-2);
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--tf-text-1);
   margin: 0;
 }
 
 .signalNote {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--tf-text-4);
-  margin: -4px 0 11px;
-  line-height: 1.6;
+  margin: -2px 0 10px;
+  line-height: 1.55;
 }
 
-/* 右欄 · 文件 */
+/* 右欄 · 文件：捲動容器本身
+   捲動刻意收在這一層（而非各 pane 的 .stage），文件才會從吸頂工具列底下捲過去 ——
+   那正是 --tf-glass 唯一成立的條件。各 pane 的 .stage 因此只負責置中與留白。 */
 .doc {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
   background: var(--tf-canvas);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
+/* 吸頂工具列：磨砂玻璃 ＋ 髮絲底線 ＋ 內側高光，與側欄／輸入列同一種材質。
+   z-index 只需壓過紙張陰影，不與任何浮層競爭。 */
 .docBar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 11px 20px;
-  border-bottom: 1px solid var(--tf-border);
-  background: var(--tf-surface);
+  padding: 10px 24px;
+  background: var(--tf-glass);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  border-bottom: 1px solid var(--tf-glass-border);
+  box-shadow: var(--tf-glass-sheen);
   flex: none;
 }
 
@@ -138,7 +173,7 @@
 
 /* 合規：頁底免責恆常駐 */
 .disc {
-  padding: 10px 28px 13px;
+  padding: 11px 24px 14px;
   font-size: 11px;
   color: var(--tf-text-4);
   line-height: 1.65;
@@ -147,7 +182,9 @@
   flex: none;
 }
 
-/* 窄版：雙欄改為上下堆疊，整頁改為單一捲動容器 */
+/* 窄版：雙欄改為上下堆疊，整頁改為單一捲動容器。
+   兩欄各自的 overflow 必須一起收掉，否則巢狀捲動會在手機上互相搶手勢。
+   工具列仍 sticky，此時吸的是視窗頂緣。 */
 @media (max-width: 1023px) {
   .page {
     height: auto;
@@ -160,12 +197,16 @@
   .intel {
     width: auto;
     border-right: 0;
-    border-bottom: 1px solid var(--tf-border);
+    border-bottom: 1px solid var(--tf-divider);
     overflow: visible;
-    padding: 18px 16px 24px;
+    padding: 14px 12px 20px;
   }
   .doc {
+    overflow: visible;
     min-height: 70vh;
+  }
+  .docBar {
+    padding: 9px 16px;
   }
   .disc {
     padding: 10px 16px 13px;

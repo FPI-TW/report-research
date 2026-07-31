@@ -1,8 +1,10 @@
+/* 水平內距與 ReportPage 的 .docBar／.disc 對齊到同一條 24px 基準線 ——
+   三者上下相鄰，左緣不齊會在標題與工具列之間看出一道階梯。 */
 .hd {
-  border-bottom: 1px solid var(--tf-border);
+  border-bottom: 1px solid var(--tf-divider);
   background: var(--tf-surface);
   flex: none;
-  padding: 16px 28px 0;
+  padding: 18px 24px 0;
 }
 
 .crumb {

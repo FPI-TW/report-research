@@ -12,7 +12,11 @@
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
-    "paths": { "@/*": ["./src/*"], "@fixtures/*": ["../tests/fixtures/*"] },
+    "paths": {
+      "@/*": ["./src/*"],
+      "@fixtures/*": ["../tests/fixtures/*"],
+      "@fonts-tc/*": ["./node_modules/@embedpdf/fonts-tc/fonts/*"]
+    },
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

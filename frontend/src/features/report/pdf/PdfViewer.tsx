@@ -146,9 +146,25 @@ export default function PdfViewer({ url, title }: Props) {
   // catch-all 接走並回傳 index.html。
   // fontFallback 必須明確給值：**不給的話引擎會自己套用 jsDelivr CDN 設定**
   // （`fontFallback ?? cdnFontConfig`），等於在登入牆後偷偷開一條外連。理由見 fontFallback.ts。
+  // `worker: false` ＝ 走 pdfium-direct-engine（主執行緒），刻意不用預設的 worker 引擎。
+  //
+  // 2026-07-31 生產實測：worker 路徑會**靜默卡死**——引擎 handle 正常回傳（過了
+  // isLoading）、`EmbedPDF` 掛載、DocumentManager 也確實抓了 PDF（伺服器日誌 200），
+  // 但 `activeDocumentId` 永遠是 falsy，畫面只剩一個空的 root div。逐項排除過：資產
+  // 全 200、wasm 檔正確（`application/wasm`、4.6MB）、PDF 檔本身瀏覽器開得起來、
+  // 無 CSP、worker 的 Blob 有帶 `application/javascript`、內嵌 worker 原始碼零 import。
+  // 真正的斷點是 **worker 從頭到尾沒有 fetch 過 wasm**（開 DevTools「Disable cache」
+  // 多次重載，伺服器日誌一筆 pdfium wasm 請求都沒有）。主執行緒確實送出了
+  // `{type:"wasmInit", wasmUrl}`，而 worker 的 `self.onmessage` 對不符條件的訊息
+  // **完全靜默、沒有 else 分支**，所以兩端都不會留下任何錯誤。
+  //
+  // 代價：pdfium 改在主執行緒跑，大檔渲染時會卡住 UI。這是為了先讓讀者看得到研報；
+  // 要還原成 worker 只需刪掉這一行，但**還原前請先確認 wasm 真的被抓了**（看伺服器
+  // 日誌有沒有 `pdfium-*.wasm` 的請求），否則會回到同一個無訊息的空白畫面。
   const { engine, isLoading, error } = usePdfiumEngine({
     wasmUrl: pdfiumWasmUrl,
     fontFallback: CJK_FONT_FALLBACK,
+    worker: false,
   })
 
   // plugins 需與 url 綁定；每次 render 重建會讓 provider 反覆重載文件。

@@ -844,6 +844,86 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("conversation_id", events[-1][1])
         self.assertTrue(called["llm"])  # 有跑主 LLM
 
+    def _patch_simplified_stream(self, ans, text: str):
+        """把主 LLM 換成吐指定字串的串流，並關掉 done 之後的兩個外呼。
+
+        `generate_followups` 用的是 `followups.stream_completion`（不是 answer 的那個
+        名字），不擋就會真的去 spawn `claude`。fake 的簽章刻意收 **k 以外的兩個位置
+        參數——與真函式一致，漂移時會在呼叫點大聲 TypeError 而不是靜默走別條路。
+        """
+        async def fake_stream(*a, **k):
+            yield text
+
+        async def no_followups(question, answer, **k):
+            return []
+
+        saved = (ans.stream_completion, ans.generate_followups,
+                 ans.ASK_FAITHFULNESS_SAMPLE_RATE)
+        ans.stream_completion = fake_stream
+        ans.generate_followups = no_followups
+        ans.ASK_FAITHFULNESS_SAMPLE_RATE = 0.0  # 抽查必不中，測試不依賴亂數
+        return saved
+
+    @staticmethod
+    def _restore_simplified_stream(ans, saved):
+        (ans.stream_completion, ans.generate_followups,
+         ans.ASK_FAITHFULNESS_SAMPLE_RATE) = saved
+
+    async def test_simplified_answer_converted_before_persist_and_corrected_on_done(self):
+        """串流吐簡體 → 落庫與 done 都是繁體；token 本身刻意維持原樣。
+
+        轉換是整串決定的（見 app/services/zh_hant.py 的門檻），串流當下拿不到整串，
+        所以不在中途改判——那會產生半繁半簡的畫面。畫面靠 done 的 answer 收斂。
+        """
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, rp, in_domain=True, called=called)
+        saved = self._patch_simplified_stream(ans, "群联电子营收创同期新高[1]")
+
+        logged = {}
+
+        async def spy_log(question, body, *a, **k):
+            logged["body"] = body
+            return "qa-1"
+
+        saved_log = ans._log_qa
+        ans._log_qa = spy_log
+        try:
+            events = [e async for e in ans.answer_question("群聯營收")]
+        finally:
+            ans._log_qa = saved_log
+            self._restore_simplified_stream(ans, saved)
+            self._restore(ans, rp, orig)
+
+        expected = "群聯電子營收創同期新高[1]"
+        # 比對 token 的**串接**：SentinelStreamParser 會為了看哨符而把首字單獨吐出，
+        # token 的切法不是這條測試的契約，「串流內容未被改寫」才是。
+        streamed = "".join(p for k, p in events if k == "token")
+        self.assertEqual(streamed, "群联电子营收创同期新高[1]")
+        done = next(p for k, p in events if k == "done")
+        self.assertEqual(done["answer"], expected)   # 畫面校正
+        self.assertEqual(logged["body"], expected)   # 落庫
+        self.assertEqual(done["cited"], ["r1"])      # [n] 是 ASCII，轉換不影響引用解析
+
+    async def test_traditional_answer_carries_no_correction_field(self):
+        """沒改動就不帶 answer——否則每一次問答的 done 都要多背一份完整答案。"""
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, rp, in_domain=True, called=called)
+        saved = self._patch_simplified_stream(ans, "台積電營收創同期新高[1]")
+        try:
+            events = [e async for e in ans.answer_question("台積電營收")]
+        finally:
+            self._restore_simplified_stream(ans, saved)
+            self._restore(ans, rp, orig)
+
+        done = next(p for k, p in events if k == "done")
+        self.assertNotIn("answer", done)
+
     async def test_no_context_emits_retrieved_zero_without_reading(self):
         # 在領域但檢索無結果 → 無脈絡：retrieved(count=0)、不發 reading、回 NO_CONTEXT，且不跑主 LLM
         import app.services.retrieval_pipeline as rp

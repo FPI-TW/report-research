@@ -201,6 +201,42 @@ class SectionedFinalTests(_SectionedBase):
         # 單次串流未被觸發
         self.assertNotIn("single_shot", capture)
 
+    async def test_simplified_final_markdown_is_converted_before_render(self):
+        """逐節組裝出來的 markdown 走簡體收尾——**兩條收尾路徑都要接**。
+
+        單次路徑的對照測試在 tests/test_zh_hant_streaming.py：只接一條的話，
+        逐節與單次會出來一份繁體、一份簡體的 PDF，而且不會有任何錯誤訊息。
+        前端不渲染研報草稿（askReducer 的 report token 是 no-op），所以在這裡
+        轉完，使用者拿到的 PDF 與全文檢視就都對了。
+        """
+        simplified_final = (
+            "__final__",
+            {**_FINAL_OK[1],
+             "markdown": "# 群联电子 深度研报\n\n## 执行摘要\n\n营收创同期新高[1]。\n"},
+        )
+        capture, restore = self._install([("token", "营收"), simplified_final])
+        try:
+            evs = [e async for e in rpt.generate_report("群聯營收")]
+        finally:
+            restore()
+
+        self.assertEqual(evs[-1][0], "done")
+        rendered = capture["rendered"]
+        self.assertIn("群聯電子 深度研報", rendered)
+        self.assertIn("執行摘要", rendered)
+        self.assertNotIn("营收", rendered)
+        # 落庫的 markdown 與送去渲染的是同一份（PDF 只是它的渲染）
+        self.assertIn(rendered, capture["persist_args"])
+
+    async def test_traditional_final_markdown_untouched(self):
+        """已是繁體就一字不動——密度門檻不該對正常研報動手。"""
+        capture, restore = self._install([_FINAL_OK])
+        try:
+            _ = [e async for e in rpt.generate_report("台積電趨勢")]
+        finally:
+            restore()
+        self.assertEqual(capture["rendered"], _FINAL_OK[1]["markdown"])
+
     async def test_completed_request_key_reuses_existing_document(self):
         """同一 request_key 已完成時回既有文件，不能再渲染／persist 一份新文件。"""
         capture, restore = self._install([_FINAL_OK])

@@ -64,6 +64,7 @@ from sqlalchemy import text  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
+from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -263,17 +264,26 @@ class TakeawayRow:
 # ── 解析（純函式）──
 
 def _clean_claim(value: object) -> Optional[str]:
-    """論點：收斂空白 + 截長。非字串/空字串 → None（該條目丟棄）。"""
+    """論點：收斂空白 + 轉繁體 + 截長。非字串/空字串 → None（該條目丟棄）。
+
+    論點是 LLM 自己的轉述文字（prompt 規則 3 要繁體，但那是機率性保證），所以
+    轉繁體。與下面的 `_clean_quote` **刻意相反**——引文絕對不能轉，理由見該處。
+    截長在轉換之後，讓 DB 存的字串與長度上限描述的是同一個。
+    """
     if not isinstance(value, str):
         return None
     cleaned = " ".join(value.split()).strip()
     if not cleaned:
         return None
-    return cleaned[:CLAIM_MAX]
+    return to_traditional(cleaned)[:CLAIM_MAX]
 
 
 def _clean_quote(value: object) -> Optional[str]:
-    """引文：**只去頭尾空白 + 截長，內部空白原樣保留**。
+    """引文：**只去頭尾空白 + 截長，內部空白原樣保留，且絕不轉繁體**。
+
+    不轉繁體：引文是 canonical text 的逐字片段、locate_quote 的錨定基準。全語料
+    有 63 篇研報原文本身就是簡體，把引文轉成繁體會讓它在原文裡再也找不到——
+    而且 locate_quote 錨不到不會報錯，只會讓該條目靜默降級成「不可跳」。
 
     內部空白不可動：canonical 的拉丁文字之間本來就有空白，改動內部空白會讓
     locate_quote 的 exact 層失手、掉到 normalized 層（能錨到但品質標示變差）。

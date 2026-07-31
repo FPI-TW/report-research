@@ -39,6 +39,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
+from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,14 +135,18 @@ def parse_title(raw: str, file_name: str = "") -> Optional[TitleResult]:
     title = _clean_title(obj.get("title"))
     if not title:
         return None
+    # 規則 2「一律輸出繁體中文」是 prompt 的機率性保證，模型會偶發整句輸出簡體
+    # （2026-07-31 的台股頭條即是）。這裡確定性收尾；未達門檻的專有名詞不動。
+    title = to_traditional(title)
     # 模型把檔名當標題回來＝規則 1 沒遵守，視為失敗（含去副檔名的形式）
     stem = file_name.rsplit(".", 1)[0].strip() if file_name else ""
     if title == file_name.strip() or (stem and title == stem):
         return None
 
+    # title_original 是**原文**（英文或其他語言），刻意不轉——它存在的意義就是保留原樣。
     original = _clean_title(obj.get("title_original"))
-    if original == title:
-        original = None  # 中文報告模型常把原文複製一份，無資訊量
+    if original is not None and to_traditional(original) == title:
+        original = None  # 中文報告模型常把原文複製一份，無資訊量（含簡體副本）
 
     source = obj.get("title_source")
     source = source if source in TITLE_SOURCES else None

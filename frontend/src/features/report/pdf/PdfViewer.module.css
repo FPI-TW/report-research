@@ -125,6 +125,93 @@
   font-variant-numeric: tabular-nums;
 }
 
+.btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.btn:disabled:hover {
+  background: transparent;
+}
+
+/* chevronDown 反向當「上一個」用，省一顆圖示 */
+.flip {
+  transform: rotate(180deg);
+}
+
+/* 頁碼輸入：外觀盡量像文字、不像表單控制項，直到 hover/focus 才顯形 */
+.pageInput {
+  width: 30px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tf-text-1);
+  font-family: var(--tf-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.pageInput:hover {
+  background: color-mix(in srgb, var(--tf-text-1) 6%, transparent);
+}
+.pageInput:focus {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 0;
+  background: var(--tf-surface);
+}
+.pageTotal {
+  font-family: var(--tf-mono);
+  font-size: 10.5px;
+  color: var(--tf-text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 搜尋列：貼在浮島下方，同一套玻璃語彙 ── */
+.searchBar {
+  position: absolute;
+  left: 50%;
+  top: 52px;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: var(--tf-radius-pill);
+  color: var(--tf-text-3);
+  background: var(--tf-glass-strong);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  box-shadow:
+    0 0 0 0.5px var(--tf-glass-border),
+    var(--tf-glass-sheen),
+    0 6px 20px rgba(0, 0, 0, 0.12);
+}
+
+.searchInput {
+  width: 168px;
+  border: 0;
+  background: transparent;
+  color: var(--tf-text-1);
+  font-size: 12px;
+  padding: 3px 2px;
+}
+.searchInput:focus {
+  outline: none;
+}
+.searchInput::placeholder {
+  color: var(--tf-text-4);
+}
+
+.searchCount {
+  min-width: 46px;
+  text-align: right;
+  font-family: var(--tf-mono);
+  font-size: 10px;
+  color: var(--tf-text-4);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── 覆蓋式縮圖列 ── */
 .thumbs {
   position: absolute;
@@ -150,6 +237,28 @@
   .thumbs {
     transition: none;
   }
+}
+
+/* ThumbnailsPane 自己就是捲動容器（內聯 overflow-y:auto ＋ height:100%），我們只加樣式。
+   96px 的欄寬裡，作業系統預設捲軸（Windows Chrome 約 15px）會吃掉六分之一還跟玻璃介面
+   完全不搭，所以收成 6px 的細捲軸；縮圖寬度 THUMB_WIDTH 就是照這個數字算的。
+   捲軸只在 hover 時才明顯——縮圖本身才是內容，軌道常駐會變成視覺噪音。 */
+.thumbsScroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--tf-text-1) 18%, transparent) transparent;
+}
+.thumbsScroll::-webkit-scrollbar {
+  width: 6px;
+}
+.thumbsScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thumbsScroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--tf-text-1) 18%, transparent);
+  border-radius: 3px;
+}
+.thumbsScroll:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--tf-text-1) 34%, transparent);
 }
 
 .thumbBtn {

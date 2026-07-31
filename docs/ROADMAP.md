@@ -52,7 +52,7 @@
 | **觀點雷達** | 訊號擷取 → 跨券商共識聚合 → `/app/radar` | `app/services/signal_extract.py`、`app/services/radar/`、`web/routers/radar.py`、`research.report_signal` |
 | **閱讀頁** | 單篇研報全文＋重點摘錄＋命中跳段，可分享網址 `/app/report/:hash` | `app/services/reading/`、`web/routers/reading.py`、`research.report_takeaway` |
 | **前端 SPA** | React 19 ＋ TypeScript ＋ Vite（舊 vanilla 頁已退場） | `frontend/` |
-| **CI 與分支保護** | 每個 PR 跑後端（ruff + pytest）／前端（ESLint + tsc + build + vitest）／schema 契約（pgvector container）**三個必要檢查**，main strict + enforce_admins | `.github/workflows/ci.yml`、`db/expected_constraints.txt` |
+| **CI 與分支保護** | 每個 PR 跑後端（ruff + pytest）／前端（ESLint + tsc + build + vitest）／schema 契約（pgvector container）／secret 掃描（gitleaks）**四個必要檢查**，main strict + enforce_admins | `.github/workflows/ci.yml`、`db/expected_constraints.txt` |
 | **server.py 拆分** | 單體拆成 11 個 APIRouter ＋ `web/deps.py` 共用綁定層 | `web/routers/` |
 | **生產韌性** | DB 自動重啟、免認證 `/healthz`、`OnFailure` 告警、systemd unit 收回 repo；DB 每日備份至 NAS（七張不可重建的表，已做過還原演練）；批次停更偵測 | `web/routers/health.py`、`deploy/systemd/`、`scripts/db_backup.sh`、`scripts/check_batch_freshness.py`、`docs/production_resilience.md` |
 | **定時同步** | NAS 增量匯入（3h）→ 補摘要 → 補顯示標題 → 補重點摘錄 → 觀點訊號擷取（限量） | `scripts/sync_new_reports.sh`、`report-mark-sync.timer` |

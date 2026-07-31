@@ -161,7 +161,9 @@ sudo journalctl -u report-mark-web.service | grep -E "登入成功|登入失敗|
 
 | 症狀 | 可能原因 / 處置 |
 |------|----------------|
-| 外網開站一直 502 | host uvicorn 沒在跑 → `make serve`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在） |
+| 外網開站一直 502 | host uvicorn 沒在跑 → `make serve`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在）。**uvicorn 明明活著就先看 nginx 有沒有起來**：`docker compose -f deploy/docker-compose.yml logs --tail=60 nginx` |
+| nginx 重啟後 `[emerg] unknown "edge_secret" variable` | envsubst 沒代換掉 `${EDGE_SECRET}`（nginx 查變數會轉小寫，故訊息是 `edge_secret`）——容器環境裡沒有那個變數。成因是 `docker compose restart` **不套用 compose 的 `environment:` 變更**，而長跑的容器建立於該變數加入之前。處置：`make edge-reload`（已改為重建容器）。**這類雷是延遲引爆的**：模板改了但沒重啟，容器內跑的仍是舊渲染結果，要到下一次重啟才炸 |
+| 外網頁面資產隨機 503／`.css` 報「MIME type ('text/html')」 | nginx `limit_req` 超限（預設就是回 503，錯誤頁是 HTML）。SPA 冷載要抓數十個資產，硬重載時全部同時發出。`/app/assets/` 已於 2026-07-31 排除在限流之外（`nginx.conf` 的 `map $uri $rl_key`）；若再出現請看 burst 是否又被調小。**被擋掉的請求不會進 uvicorn 日誌**，從 app 側查會完全看不到 |
 | 內網直接打 `http://<LAN-IP>:8097` 一直回登入頁 | 這是刻意的：非 localhost 的明文 HTTP 不接受登入 session → 請改走 Cloudflare HTTPS 網址；只有本機開發可用 `http://localhost:8097` |
 | 外網（HTTPS）登入顯示「只接受 HTTPS 或本機 localhost」 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` 未含 nginx 進來的來源 IP（Docker→WSL 閘道，~`172.x.x.1`）→ App 不採信 `X-Forwarded-Proto: https`。**先看日誌**：`journalctl -u report-mark-web.service \| grep 登入遭拒` 會直接印出 `peer=<實際對端>`，把它加進 CIDR（見 3b）或改用共享祕密（見 3c，一勞永逸）後重啟 |
 | 設了 `EDGE_SECRET` 仍被當成不可信 | 兩邊值不一致，或 nginx 沒重新渲染模板（`nginx -s reload` 不會重新代換，要 `make edge-reload` 重啟容器）。驗證：`docker compose -f deploy/docker-compose.yml exec nginx cat /etc/nginx/conf.d/default.conf \| grep X-Edge-Secret` 應看到**實際祕密值**而非字面的 `${EDGE_SECRET}` |

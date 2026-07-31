@@ -16,6 +16,14 @@ vi.mock('../../lib/readingApi', async importOriginal => {
   }
 })
 
+// 原文是預設檢視，所以這份檔案幾乎每個案例都會掛上 PdfPane → lazy(PdfViewer)。
+// 真檢視器會把 PDFium/WASM 整包拉進模組圖，而 jsdom 既載不到 WASM 也驗不到引擎行為
+// —— 純粹是每個案例多背一份引擎。實測那份負載足以把並行跑的 App.test.tsx 推過
+// vitest 5s 預設 testTimeout（單跑則過）。
+// **這不是把降級路徑消音**：引擎失敗 → 退回內建 iframe 改由 PdfPane.test.tsx 直接斷言，
+// 而非依賴這裡「WASM 剛好載不到」的副作用（那條路徑先前從未被任何斷言碰過）。
+vi.mock('./pdf/PdfViewer', () => ({ default: () => <div data-testid="pdf-viewer" /> }))
+
 const HASH = 'a'.repeat(64)
 const TEXT_SHA = 'b'.repeat(64)
 

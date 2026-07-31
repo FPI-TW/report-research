@@ -232,6 +232,7 @@ report-mark/
 │   tagging.py     findb 市場代碼 + 商品類型/標的詞表 + 多維標註指令 + tag JSON 解析
 │   store.py       file_hash 去重 upsert + 雙路（dense／字面）召回查詢
 │   textnorm.py    顯示/儲存/比對三種正規化（NFKC、去空白、小寫、NUL 清理）
+│   zh_hant.py     簡體→繁體字形正規化（僅 LLM 產出文字；Big5 判別＋字數/密度雙門檻＋s2tw）
 │   retrieval.py   混合檢索編排：dense＋字面 → 去重 → tier/band 融合排序
 │   retrieval_pipeline.py 問答／研報的檢索單一入口：embed → hybrid_search → rerank → build_context；研報另走多查詢 fan-out ＋ MMR（M6）
 │   rerank.py      cross-encoder 重排（M2；semaphore ＋ deadline，逾時 fail-open）
@@ -262,6 +263,7 @@ report-mark/
 │   select_sample.py / extract_batch.py / make_worklist.py / run_ingest.py
 │   backfill_full_text.py   回填 full_text 欄
 │   backfill_report_dates.py / backfill_report_sources.py   回填報告日期 / 發行來源
+│   backfill_traditional.py 回填顯示文字裡的簡體字（唯讀試跑，--apply 才寫；冪等）
 │   generate_summaries.py   為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續）→ make summaries
 │   extract_takeaways.py    閱讀頁重點摘錄：LLM 只出「論點＋逐字引文」、Python 確定性錨定（Sonnet，近 90 天，冪等可續）→ make takeaways
 │   extract_signals.py      觀點雷達訊號擷取（Sonnet，高覆蓋子集先行，冪等可續）→ make signals

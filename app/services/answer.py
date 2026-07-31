@@ -78,6 +78,7 @@ from app.services.trusted_market_data import (
     fetch_trusted,
     infer_category,
 )
+from app.services.zh_hant import to_traditional
 
 logger = logging.getLogger(__name__)
 
@@ -856,6 +857,21 @@ def cited_report_ids(answer: str, sources: list[Source]) -> list[str]:
     return [s.report_id for s in sources if s.n in nums]
 
 
+def _answer_correction(streamed: str, final: str) -> dict:
+    """有變動才回 `{"answer": final}`，供併進 done 事件；否則回空 dict。
+
+    **答案的真相是落庫的那份，不是螢幕上滾過去的那份。** 簡體轉換是整串決定的
+    （見 `app/services/zh_hant.py` 的門檻），串流當下拿不到整串，所以 token 一律
+    照原樣送、結束時再把改過的整份補送一次讓畫面收斂。刻意不在串流中途轉：
+    一旦中途改判，前半段已經送出去了，畫面會變成半繁半簡——比全簡還糟。
+    也刻意不先緩衝再送：那會讓首個 token 延後，而 `thinking_ms` 量的正是它。
+
+    只在有變動時帶，是為了不讓每一次問答都多背一份完整答案的 payload
+    （實測 84 筆問答 0 筆需要校正，這個欄位平時根本不會出現）。
+    """
+    return {"answer": final} if final != streamed else {}
+
+
 def history_item(row) -> dict:
     """qa_log 一列 → 前端用 dict。
 
@@ -1520,6 +1536,11 @@ async def _answer_overview(
     if not body:
         body = render_overview_text(overview, locale)
         yield ("token", body)
+    # 簡體收尾：token 已按原樣送出，落庫改吃轉換後的版本，螢幕上那份由 done 的
+    # answer 欄位校正（只在真的有變動時帶）。理由與四支批次相同——prompt 的
+    # 「繁體中文」是機率性保證。模板 fallback 走同一條，`to_traditional` 對它是 no-op。
+    streamed_body = body
+    body = to_traditional(body)
 
     cited = cited_report_ids(body, sources)
     qa_id = await _log_qa(
@@ -1538,7 +1559,8 @@ async def _answer_overview(
     version_count = await _count_versions(group_key) if root_qa_id and group_key else 1
     yield ("done", {"cited": cited, "qa_id": qa_id,
                     "conversation_id": conv_id, "thinking_ms": thinking_ms,
-                    "root_qa_id": group_key, "version_count": version_count})
+                    "root_qa_id": group_key, "version_count": version_count,
+                    **_answer_correction(streamed_body, body)})
 
 
 async def _yield_routed_notice(
@@ -2069,6 +2091,10 @@ async def answer_question(
 
     raw = "".join(raw_parts)
     body, ext_sources = split_external_sources(raw)
+    # 簡體收尾（見 _answer_correction）：此行之後的一切——引用解析、落庫、追問、
+    # 忠實度抽查、研報邀請——全部吃轉換後的版本，畫面則由 done 的 answer 校正。
+    streamed_body = body
+    body = to_traditional(body)
     cited = cited_report_ids(body, sources)
     yield ("ext_sources", ext_sources)
     qa_id = await _log_qa(
@@ -2117,6 +2143,7 @@ async def answer_question(
             "report_title": report_title,
             "root_qa_id": group_key,
             "version_count": version_count,
+            **_answer_correction(streamed_body, body),
         },
     )
 

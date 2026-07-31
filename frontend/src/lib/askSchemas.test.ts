@@ -113,6 +113,25 @@ test('parseAskEvent／parseReportEvent 認得 queued（未宣告就會被靜默�
     .toMatchObject({ event: 'queued' })
 })
 
+describe('done.answer：簡體→繁體的畫面校正', () => {
+  // 同一顆地雷（zod strip）：後端只在轉換真的改動了內容時才帶這個欄位，schema
+  // 沒宣告的話它會被安靜丟掉，畫面就永遠停在簡體那份、而 qa_log 是繁體。
+  // 反轉實驗：把 askDoneData 的 answer 那一行刪掉，第一題必紅。
+  it('done 帶得出校正後的答案', () => {
+    const r = parseAskEvent({
+      event: 'done',
+      data: { conversation_id: 'c1', answer: '群聯電子營收創同期新高' },
+    })
+    expect((r as { data: { answer?: string } }).data.answer).toBe('群聯電子營收創同期新高')
+  })
+
+  it('沒帶 answer 仍是合法的 done（平時就是這樣）', () => {
+    const r = parseAskEvent({ event: 'done', data: { conversation_id: 'c1' } })
+    expect(r).not.toBeNull()
+    expect((r as { data: { answer?: string } }).data.answer).toBeUndefined()
+  })
+})
+
 describe('notice_kind：離題與時效婉拒必須分得開', () => {
   // zod 物件預設是 strip——未宣告的鍵不報錯、直接安靜丟掉。本專案踩過兩次
   // （/api/progress 的 takeaway/signal 從 P4 就在回，schema 沒宣告於是從未進 DOM）。

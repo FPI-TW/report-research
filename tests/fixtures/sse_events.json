@@ -87,7 +87,7 @@
         "root_qa_id": "0000018f-0000-7000-8000-0000000000aa",
         "version_count": 1
       },
-      "note": "這是有答覆的 done。固定婉拒（off_topic／time_sensitive）的 done 形狀不同：無 qa_id，改帶 notice_kind——前端據此決定要不要給「換個說法重新提問」，對時效題那是錯的建議。"
+      "note": "這是有答覆的 done。固定婉拒（off_topic／time_sensitive）的 done 形狀不同：無 qa_id，改帶 notice_kind——前端據此決定要不要給「換個說法重新提問」，對時效題那是錯的建議。另有一個刻意不列在這裡的加法欄位 answer：只在簡體→繁體轉換確實改動了答案時才帶（app/services/answer.py 的 _answer_correction），列進典型形狀會讓人以為它一直都在。"
     },
     {
       "event": "error",

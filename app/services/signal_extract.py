@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
+from app.services.zh_hant import to_traditional
+
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（承載可追溯性、供重跑比較）
 EXTRACTION_VERSION = "sig-2026-07-15.v1"
 
@@ -413,9 +415,16 @@ def _normalize_thesis(obj: object) -> tuple[dict, list[str]]:
         if evidence is None:
             notes.append(f"thesis:{dim} 缺 evidence")  # 未取得足夠證據 → 不採（設計規格）
             continue
+        # summary 是 LLM 自己的一句話轉述 → 轉繁體（prompt 要繁體，但那是機率性保證）。
+        # evidence 是研報原句，刻意不轉：原文若是簡體，證據就該是簡體才對得回去。
+        # 轉換在截長之前（同 generate_summaries / extract_takeaways）：讓存下來的
+        # 字串就是 SUMMARY_MAX 所描述的那一個。
+        raw_summary = cell.get("summary")
+        if isinstance(raw_summary, str):
+            raw_summary = to_traditional(raw_summary)
         out[dim] = {
             "stance": stance,
-            "summary": _truncate(cell.get("summary"), SUMMARY_MAX),
+            "summary": _truncate(raw_summary, SUMMARY_MAX),
             "evidence": evidence,
         }
     return out, notes

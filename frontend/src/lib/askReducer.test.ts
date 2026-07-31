@@ -221,6 +221,22 @@ describe('askReducer M3', () => {
     expect(s.turns[0].followups).toEqual(['追問一', '追問二'])
   })
 
+  it('done.answer replaces the streamed text (簡體→繁體校正)', () => {
+    // token 是照原樣送的（轉換要看整串才決定），畫面靠 done 收斂到落庫的那一份。
+    let s = askReducer(initialAskState, { type: 'submit', id: 't1', question: 'q', startedAt: 0 })
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'token', data: '群联电子营收' } })
+    expect(s.turns[0].answer).toBe('群联电子营收')
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', answer: '群聯電子營收' } } })
+    expect(s.turns[0].answer).toBe('群聯電子營收')
+  })
+
+  it('done 沒帶 answer 時保留串流累積的文字', () => {
+    let s = askReducer(initialAskState, { type: 'submit', id: 't1', question: 'q', startedAt: 0 })
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'token', data: '台積電營收' } })
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c' } } })
+    expect(s.turns[0].answer).toBe('台積電營收')
+  })
+
   it('regenerate-start snapshots prior version and resets live', () => {
     let s = seeded()
     s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', qa_id: 'qa1' } } })

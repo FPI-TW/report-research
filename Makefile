@@ -157,8 +157,16 @@ down-edge:  ## 關閉對外邊緣
 edge-logs:  ## 跟看對外邊緣日誌
 	$(COMPOSE) -f $(EDGE_COMPOSE) logs -f --tail=100
 
-edge-reload:  ## 重啟 nginx（更新設定後使用）
-	$(COMPOSE) -f $(EDGE_COMPOSE) restart nginx
+# 刻意用 `up -d --force-recreate` 而不是 `restart`，兩種失效模式各對應其中一半：
+#   - `restart` 會重跑 entrypoint（於是用**新模板**重新渲染），但**不會套用 compose
+#     的 `environment:` 變更**——2026-07-31 就是這樣炸的：#160 同時加了模板裡的
+#     `${EDGE_SECRET}` 與 compose 的 `EDGE_SECRET=`，而長跑的容器環境裡沒有那個變數，
+#     於是首次重啟時 envsubst 代換不掉 → `[emerg] unknown "edge_secret" variable` → 502。
+#   - 單純 `up -d` 會套用 environment，但 nginx.conf 是 bind mount，改它不會改變容器
+#     設定雜湊，compose 會判定無需重建而**靜默 no-op**，新設定根本沒生效。
+# 只有重建同時滿足兩者。
+edge-reload:  ## 重新套用邊緣設定（重建 nginx 容器）
+	$(COMPOSE) -f $(EDGE_COMPOSE) up -d --force-recreate nginx
 
 # ───── 維運 ─────
 pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟

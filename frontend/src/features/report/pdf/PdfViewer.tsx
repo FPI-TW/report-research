@@ -17,6 +17,7 @@ import {
 } from '@embedpdf/plugin-viewport/react'
 import { ZoomMode, ZoomPluginPackage, useZoom } from '@embedpdf/plugin-zoom/react'
 import { Icon } from '../../../components/primitives/Icon'
+import { CJK_FONT_FALLBACK } from './fontFallback'
 import styles from './PdfViewer.module.css'
 
 interface Props {
@@ -143,7 +144,12 @@ export default function PdfViewer({ url, title }: Props) {
   // 走 Vite 的 `?url` 讓產物落在 `assets/` —— 那是 `_ImmutableStatic` 已在服務、
   // 且免登入白名單（`/app/assets/`）已涵蓋的路徑；放進 `public/` 會被 SPA 的
   // catch-all 接走並回傳 index.html。
-  const { engine, isLoading, error } = usePdfiumEngine({ wasmUrl: pdfiumWasmUrl })
+  // fontFallback 必須明確給值：**不給的話引擎會自己套用 jsDelivr CDN 設定**
+  // （`fontFallback ?? cdnFontConfig`），等於在登入牆後偷偷開一條外連。理由見 fontFallback.ts。
+  const { engine, isLoading, error } = usePdfiumEngine({
+    wasmUrl: pdfiumWasmUrl,
+    fontFallback: CJK_FONT_FALLBACK,
+  })
 
   // plugins 需與 url 綁定；每次 render 重建會讓 provider 反覆重載文件。
   const plugins = useMemo(

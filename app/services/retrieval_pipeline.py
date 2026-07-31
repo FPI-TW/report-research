@@ -23,7 +23,10 @@ from app.services.store import fetch_chunk_embeddings
 from app.services.textnorm import clean_text
 
 logger = logging.getLogger(__name__)
-_RERANK_WORKERS = max(1, int(os.getenv("REPORT_MARK_RERANK_WORKERS", "1")))
+# 名額對齊 _ASK_GATE 的容量 3：只有 1 個名額時，同時提問的第 2、3 人各自要多等一輪
+# 完整 rerank（prod 實測單輪 40s），而那段等待不在任何逾時預算內、只表現為「更慢」。
+# 注意這裡沒有連帶限制 torch 的執行緒數，3 輪並行在核心數不足的機器上會互相搶。
+_RERANK_WORKERS = max(1, int(os.getenv("REPORT_MARK_RERANK_WORKERS", "3")))
 # 呼叫端未給 rerank_timeout 時的後備值（answer/report 各自帶 Settings 的 per-path 逾時）。
 _RERANK_TIMEOUT = float(os.getenv("REPORT_MARK_RERANK_TIMEOUT", "30"))
 _rerank_semaphore = asyncio.Semaphore(_RERANK_WORKERS)

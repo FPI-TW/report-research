@@ -66,7 +66,7 @@ class SettingsDefaultsTests(unittest.TestCase):
         # agentic_qa / query_planner（M5 區段；M5 里程碑只在本方法內加斷言）
         s = get_settings()
         self.assertEqual(s.qa_planner_model, "claude-haiku-4-5")
-        self.assertEqual(s.qa_planner_timeout, 20.0)
+        self.assertEqual(s.qa_planner_timeout, 45.0)
         self.assertEqual(s.qa_planner_max_subqueries, 3)
         self.assertEqual(s.qa_max_rounds, 2)
         self.assertEqual(s.qa_agentic_enabled, True)

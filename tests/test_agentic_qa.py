@@ -921,6 +921,8 @@ class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
              "token", "ext_sources", "done"],
         )
         stages = [p["stage"] for k, p in events if k == "status"]
+        # 首輪且檢索瞬間完成（fake）→ 不推進 retrieved，序列與改動前一致；
+        # 「路由先回、檢索仍在跑」的推進另由 test_slow_retrieval_advances_stage 釘住。
         self.assertEqual(
             stages,
             ["understanding", "evaluating", "retrieved", "reading", "generating"],
@@ -934,7 +936,9 @@ class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([s["report_id"] for s in src_payload], ["r1", "r2"])
         self.assertEqual([s["n"] for s in src_payload], [1, 2])
         retrieved = next(
-            p for k, p in events if k == "status" and p["stage"] == "retrieved"
+            p
+            for k, p in events
+            if k == "status" and p["stage"] == "retrieved" and "count" in p
         )
         self.assertEqual(retrieved["count"], 2)
         # 第一輪檢索沿用 M4 參數；補查依 §5 轉發 retrieval_params 與子查詢預算
@@ -1012,6 +1016,11 @@ class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
         )
         _args, kwargs = state["log_calls"][0]
         self.assertNotIn("evaluating", kwargs["stages"])
+        # 補 count 那筆不重複計入持久化的 stages（answer._restatus）
+        self.assertEqual(
+            kwargs["stages"],
+            ["understanding", "retrieved", "reading", "generating"],
+        )
 
     async def _assert_routed_cancels_plan(self, scope):
         """首輪被路由走（time_sensitive/off_topic）→ plan_task 被取消。"""
@@ -1144,7 +1153,8 @@ class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
         stages = [p["stage"] for k, p in events if k == "status"]
         self.assertEqual(
             stages,
-            ["understanding", "evaluating", "retrieved", "reading", "generating"],
+            ["understanding", "retrieved", "evaluating", "retrieved", "reading",
+             "generating"],
         )
         # 規劃收到改寫查詢（非原始追問）
         self.assertEqual(len(state["plan_calls"]), 1)
@@ -1179,9 +1189,10 @@ class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["plan_calls"][0]["question"], condensed)
         self.assertEqual(state["plan_calls"][0]["profile"], "qa")
         kinds = [k for k, _ in events]
+        # 續問路徑一律先推進 retrieved 再檢索，故 sources 之前多一筆 status
         self.assertEqual(
             kinds,
-            ["status", "sources", "status", "status", "status", "token",
+            ["status", "status", "sources", "status", "status", "status", "token",
              "ext_sources", "done"],
         )
 
@@ -1202,8 +1213,11 @@ class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(state["plan_calls"], [])
         stages = [p["stage"] for k, p in events if k == "status"]
+        # 兩筆 retrieved：續問路徑檢索前的推進 ＋ 檢索後補 count（後者不重複計入
+        # 持久化的 stages，見 answer._status_once）
         self.assertEqual(
-            stages, ["understanding", "retrieved", "reading", "generating"]
+            stages,
+            ["understanding", "retrieved", "retrieved", "reading", "generating"],
         )
         self.assertEqual(events[-1][1]["cited"], ["r1"])
 

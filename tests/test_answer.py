@@ -943,17 +943,20 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
 
         kinds = [k for k, _ in events]
         self.assertEqual(
-            kinds, ["status", "sources", "status", "status", "token", "done"]
+            kinds,
+            ["status", "status", "sources", "status", "status", "token", "done"],
         )
         self.assertEqual(events[0], ("status", {"stage": "understanding"}))
-        self.assertEqual(events[2], ("status", {"stage": "retrieved", "count": 0}))
+        # 檢索前先推進步驟（不帶 count），檢索完成後才補上數量
+        self.assertEqual(events[1], ("status", {"stage": "retrieved"}))
+        self.assertEqual(events[3], ("status", {"stage": "retrieved", "count": 0}))
         # 無脈絡路徑不得發 reading
         self.assertNotIn(("status", {"stage": "reading"}), events)
         # NO_CONTEXT token 前補發 generating，帶 thinking_ms
-        self.assertEqual(events[3][0], "status")
-        self.assertEqual(events[3][1]["stage"], "generating")
-        self.assertIn("thinking_ms", events[3][1])
-        self.assertEqual(events[4], ("token", ans.NO_CONTEXT_MESSAGE))
+        self.assertEqual(events[4][0], "status")
+        self.assertEqual(events[4][1]["stage"], "generating")
+        self.assertIn("thinking_ms", events[4][1])
+        self.assertEqual(events[5], ("token", ans.NO_CONTEXT_MESSAGE))
         self.assertFalse(called["llm"])  # 未跑主 LLM
 
     async def test_emits_process_status_steps(self):
@@ -991,6 +994,38 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(0, i_retrieved)
         self.assertLess(i_retrieved, i_reading)
         self.assertLess(i_reading, i_token)
+
+    async def test_slow_retrieval_advances_stage_before_sources(self):
+        # 線上的真實比例：路由（約 12s）先回、檢索含 rerank（約 48s）還在跑。此時
+        # 必須先把步驟推進到 retrieved，否則前端整段停在「理解問題」，與伺服器卡死
+        # 無從分辨。其餘測試的 fake 檢索是瞬間完成的，走不到這條分支。
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, rp, in_domain=True, called=called)
+        instant_search = rp.hybrid_search
+
+        async def slow_search(*a, **k):
+            await asyncio.sleep(0.05)  # 讓 route_task 先完成、retrieve_task 仍在跑
+            return await instant_search(*a, **k)
+
+        rp.hybrid_search = slow_search
+        try:
+            events = [e async for e in ans.answer_question("可口可樂的投資評級如何")]
+        finally:
+            self._restore(ans, rp, orig)
+
+        stages = [p["stage"] for k, p in events if k == "status"]
+        # 兩筆 retrieved：檢索前推進（不帶 count）＋檢索後補數量
+        self.assertEqual(stages.count("retrieved"), 2)
+        i_advance = next(
+            i
+            for i, (k, p) in enumerate(events)
+            if k == "status" and p == {"stage": "retrieved"}
+        )
+        i_sources = next(i for i, (k, _) in enumerate(events) if k == "sources")
+        self.assertLess(i_advance, i_sources)
 
     async def test_emits_generating_with_thinking_ms(self):
         # 正常路徑：第一個 token 前發 generating 帶 int thinking_ms；done 亦帶 thinking_ms

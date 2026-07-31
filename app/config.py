@@ -208,7 +208,10 @@ def _load() -> Settings:
         trusted_data_enabled=_flag("TRUSTED_DATA_ENABLED", "1"),
         # agentic_qa / query_planner（M5）—— M5 里程碑只在本區段內加鍵
         qa_planner_model=os.getenv("QA_PLANNER_MODEL", intent_model),
-        qa_planner_timeout=float(os.getenv("QA_PLANNER_TIMEOUT", "20")),
+        # 20 秒過緊：prod 實測 claude CLI 光冷啟動的 ttft 就約 10s（每次呼叫都重付
+        # ~24K token 系統提示），規劃 prompt 比分類長，於是每一題都逾時 →
+        # LLMUnavailableError → agentic 永遠 degraded，M5 形同關閉。
+        qa_planner_timeout=float(os.getenv("QA_PLANNER_TIMEOUT", "45")),
         qa_planner_max_subqueries=int(os.getenv("QA_PLANNER_MAX_SUBQUERIES", "3")),
         qa_max_rounds=int(os.getenv("QA_MAX_ROUNDS", "2")),
         qa_agentic_enabled=_flag("QA_AGENTIC_ENABLED", "1"),

@@ -2,5 +2,5 @@
 .title { font-family: var(--tf-display); font-weight: 600; font-size: 17px; color: var(--tf-text-1); }
 .hint { font-size: 13px; color: var(--tf-text-3); margin-top: 8px; }
 .actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
-.btn { border: 1px solid var(--tf-ink); background: var(--tf-surface); color: var(--tf-ink); border-radius: var(--tf-radius-pill); padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; }
-.btn:hover { background: var(--tf-ink-tint); }
+.btn { border: 1px solid var(--tf-graphite); background: var(--tf-surface); color: var(--tf-graphite); border-radius: var(--tf-radius-pill); padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.btn:hover { background: var(--tf-graphite-tint); }

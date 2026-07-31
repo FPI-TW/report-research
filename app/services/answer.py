@@ -1354,15 +1354,21 @@ async def deleted_pdf_paths(conversation_id: str) -> list[str]:
 async def record_feedback(qa_id: str, value: str) -> bool:
     """記錄使用者對某次回答的讚/倒讚到 research.qa_log.feedback。
 
-    value 限 'like'/'dislike'；其餘回 False。寫入失敗（含 DB 異常）回 False。
+    value 限 'like'/'dislike'/'none'；其餘回 False。寫入失敗（含 DB 異常）回 False。
+
+    **'none' 寫入的是 SQL NULL，不是字串 'none'**——使用者再點一次已亮起的讚/倒讚
+    即為取消，而讀取端（/api/history、/api/qa/{root_qa_id}/versions 與前端 zod）認的是
+    'like'|'dislike'|null；存進字面值 'none' 會讓歷史清單整頁 parse 失敗。
+    取消刻意走同一支端點的第三個列舉值而不是可為 null 的欄位：欄位漏送與「明確取消」
+    在後者看起來一模一樣，客戶端少帶一個欄位就會靜默清掉評價。
     """
-    if value not in ("like", "dislike"):
+    if value not in ("like", "dislike", "none"):
         return False
     try:
         async with SessionFactory() as session:
             result = await session.execute(
                 text("UPDATE research.qa_log SET feedback = :v WHERE id = :id"),
-                {"v": value, "id": qa_id},
+                {"v": None if value == "none" else value, "id": qa_id},
             )
             await session.commit()
         return getattr(result, "rowcount", 0) == 1

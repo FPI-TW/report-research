@@ -7,10 +7,10 @@
   font-size: 13px; cursor: pointer; font-family: inherit;
   white-space: nowrap; flex-shrink: 0;   /* 不換行、不被壓縮 */
 }
-.trigger:hover { border-color: var(--tf-ink); color: var(--tf-ink); }
+.trigger:hover { border-color: var(--tf-graphite); color: var(--tf-graphite); }
 
 .badge {
-  background: var(--tf-ink); color: var(--tf-on-ink);
+  background: var(--tf-graphite); color: var(--tf-on-graphite);
   border-radius: var(--tf-radius-pill); font-size: 10.5px; font-weight: 700;
   min-width: 16px; height: 16px; padding: 0 4px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -30,8 +30,8 @@
 }
 .pill:hover { background: var(--tf-border-weak); }
 .pillActive {
-  border-color: var(--tf-ink); background: var(--tf-ink-tint);
-  color: var(--tf-ink-deep); font-weight: 600;
+  border-color: var(--tf-graphite); background: var(--tf-graphite-tint);
+  color: var(--tf-graphite-deep); font-weight: 600;
 }
 
 .footer { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
@@ -43,8 +43,8 @@
 .clearBtn:hover { color: var(--tf-text-2); }
 
 .applyBtn {
-  background: var(--tf-ink); color: var(--tf-on-ink); border: none;
+  background: var(--tf-graphite); color: var(--tf-on-graphite); border: none;
   border-radius: var(--tf-radius-pill); font-size: 13px; font-weight: 600;
   padding: 7px 20px; cursor: pointer; font-family: inherit;
 }
-.applyBtn:hover { background: var(--tf-ink-hover); }
+.applyBtn:hover { background: var(--tf-graphite-hover); }

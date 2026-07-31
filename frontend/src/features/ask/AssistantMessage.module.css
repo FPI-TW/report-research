@@ -10,13 +10,13 @@
 .body ul, .body ol { margin: 0 0 12px; padding-left: 20px; }
 .body li { margin-bottom: 7px; }
 .body li:last-child { margin-bottom: 0; }
-.body a { color: var(--tf-ink); text-decoration: underline; text-underline-offset: 2px; }
-.body a:hover { color: var(--tf-ink-hover); }
+.body a { color: var(--tf-graphite); text-decoration: underline; text-underline-offset: 2px; }
+.body a:hover { color: var(--tf-graphite-hover); }
 .body strong { color: var(--tf-text-1); font-weight: 700; }
 .body code { font-family: var(--tf-mono); font-size: 0.9em; background: var(--tf-border-weak); border: 1px solid var(--tf-divider); border-radius: 5px; padding: 1px 5px; }
 .body pre { background: var(--tf-canvas); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); padding: 12px 14px; margin: 0 0 12px; overflow-x: auto; }
 .body pre code { background: none; border: none; padding: 0; font-size: 13px; line-height: 1.6; }
-.body blockquote { border-left: 3px solid var(--tf-ink); background: var(--tf-ink-tint); padding: 8px 14px; margin: 0 0 12px; border-radius: 0 var(--tf-radius-md) var(--tf-radius-md) 0; color: var(--tf-text-2); }
+.body blockquote { border-left: 3px solid var(--tf-graphite); background: var(--tf-graphite-tint); padding: 8px 14px; margin: 0 0 12px; border-radius: 0 var(--tf-radius-md) var(--tf-radius-md) 0; color: var(--tf-text-2); }
 .body :global(.tableWrap) { overflow-x: auto; margin: 0 0 12px; }
 .body table { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .body th, .body td { border: 1px solid var(--tf-border); padding: 6px 10px; text-align: left; vertical-align: top; }
@@ -44,12 +44,18 @@
   animation: tf-pulse 1s steps(2) infinite;
 }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
-.act { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; padding: 6px; cursor: pointer; }
-.act:hover { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink); }
-.on { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink); }
+/* 讚／倒讚／複製／重新生成四顆的尺寸一律由這裡決定，不靠各自的內距去湊：複製鈕來自
+   animate-ui（Tailwind 的 size-* 與 rounded-md），與其他三顆的 padding 算法不同，過去
+   因此大小不一。CSS Modules 不在 @layer 內，會贏過 utilities 層的工具類別，故在此把方框、
+   圓角與圖示尺寸全部釘死——四顆才會等大等圓。 */
+.act { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; padding: 0; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; cursor: pointer; }
+.act svg { width: 15px; height: 15px; }
+.act:hover { background: var(--tf-graphite-tint); border-color: var(--tf-graphite); color: var(--tf-graphite); }
+.act:disabled { opacity: 0.4; cursor: default; }
+.on { background: var(--tf-graphite-tint); border-color: var(--tf-graphite); color: var(--tf-graphite); }
 .divider { width: 1px; height: 16px; background: var(--tf-border); margin: 0 2px; }
 .srcBtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
-.srcBtn:hover { background: var(--tf-ink-tint); border-color: var(--tf-ink); color: var(--tf-ink); }
+.srcBtn:hover { background: var(--tf-graphite-tint); border-color: var(--tf-graphite); color: var(--tf-graphite); }
 /* 唯一保留的 @keyframes（供上方串流游標 ::after 用）；CSS Modules 會在地化雜湊 animation 名，須就地定義。 */
 @keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .stopped { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--tf-text-3); }

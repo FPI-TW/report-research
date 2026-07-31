@@ -61,7 +61,7 @@
   cursor: pointer;
   font: inherit;
   font-weight: 600;
-  color: var(--tf-ink);
+  color: var(--tf-graphite);
   min-height: 44px;
   min-width: 44px;
 }

@@ -1507,11 +1507,47 @@ class WebSearchDetectTests(unittest.TestCase):
 
 class FeedbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_value_rejected_without_db(self):
-        # 非 like/dislike 一律 False，且不觸碰 DB（純驗證分支）
+        # 非 like/dislike/none 一律 False，且不觸碰 DB（純驗證分支）
         from app.services.answer import record_feedback
 
         self.assertFalse(await record_feedback("any-id", "love"))
         self.assertFalse(await record_feedback("any-id", ""))
+        self.assertFalse(await record_feedback("any-id", "null"))
+
+    async def test_none_binds_sql_null_not_the_string(self):
+        # 'none'＝使用者再點一次取消。必須綁 SQL NULL：讀取端（/api/history、
+        # /api/qa/{root_qa_id}/versions 與前端 zod）認的是 'like'|'dislike'|null，存進字面值
+        # 'none' 會讓歷史清單整頁 parse 失敗，而 zod 的 strip/報錯都不會指回這裡。
+        from app.services import answer as ans
+
+        captured = {}
+
+        class Result:
+            rowcount = 1
+
+        class Sess:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def execute(self, stmt, params=None):
+                captured["params"] = params
+                return Result()
+
+            async def commit(self):
+                return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: Sess()
+        try:
+            ok = await ans.record_feedback("q1", "none")
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertTrue(ok)
+        self.assertIsNone(captured["params"]["v"])
 
     async def test_missing_row_reports_failure(self):
         from app.services import answer as ans

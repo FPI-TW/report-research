@@ -10,15 +10,15 @@
   border-bottom: 1px solid var(--tf-border-weak);
 }
 .sortable { cursor: pointer; user-select: none; }
-.sortable:hover { color: var(--tf-ink); }
+.sortable:hover { color: var(--tf-graphite); }
 .row { border-top: 1px solid var(--tf-border-weak); cursor: pointer; }
 .row:hover { background: var(--tf-border-weak); }
-.row:focus-visible { outline: none; box-shadow: inset 2px 0 0 var(--tf-ink); background: var(--tf-border-weak); }
+.row:focus-visible { outline: none; box-shadow: inset 2px 0 0 var(--tf-graphite); background: var(--tf-border-weak); }
 .table td { padding: 10px 12px; color: var(--tf-text-2); }
 .name { color: var(--tf-text-1); font-weight: 500; max-width: 380px; }
 /* 報告名稱是真連結，但視覺沿用儲存格文字（整列已是可點區） */
 .nameLink { color: inherit; text-decoration: none; }
 .nameLink:hover { text-decoration: underline; }
-.nameLink:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; border-radius: 2px; }
+.nameLink:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; border-radius: 2px; }
 .nowrap { white-space: nowrap; color: var(--tf-text-3); }
 .badge { display: inline-flex; align-items: center; border-radius: var(--tf-radius-pill); padding: 2px 9px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }

@@ -38,13 +38,13 @@
 }
 
 .btn {
-  background: var(--tf-ink);
-  color: var(--tf-on-ink);
+  background: var(--tf-graphite);
+  color: var(--tf-on-graphite);
 }
-.btn:hover { background: var(--tf-ink-hover); }
+.btn:hover { background: var(--tf-graphite-hover); }
 
 .btnSecondary {
-  background: var(--tf-ink-tint);
-  color: var(--tf-ink);
+  background: var(--tf-graphite-tint);
+  color: var(--tf-graphite);
 }
-.btnSecondary:hover { background: var(--tf-ink-line); }
+.btnSecondary:hover { background: var(--tf-graphite-line); }

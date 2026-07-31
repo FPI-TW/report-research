@@ -1,4 +1,4 @@
 .bar { display: flex; flex-wrap: wrap; gap: 7px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tf-ink-line); background: var(--tf-ink-tint); color: var(--tf-ink-deep); border-radius: var(--tf-radius-pill); padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
-.chip:hover { border-color: var(--tf-ink); }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--tf-graphite-line); background: var(--tf-graphite-tint); color: var(--tf-graphite-deep); border-radius: var(--tf-radius-pill); padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.chip:hover { border-color: var(--tf-graphite); }
 .x { font-size: 14px; line-height: 1; }

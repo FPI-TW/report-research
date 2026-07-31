@@ -29,7 +29,8 @@ export interface UseAskController {
   cancelReport: (turnId: string, runId: string) => void
   loadConversation: (id: string) => Promise<void>
   newConversation: () => void
-  setFeedback: (turnId: string, qaId: string, value: 'like' | 'dislike') => void
+  /** value null ＝取消評價（再點一次已亮起的那顆）；送到後端會轉成 'none'。 */
+  setFeedback: (turnId: string, qaId: string, value: 'like' | 'dislike' | null) => void
 }
 
 export function useAskController(): UseAskController {
@@ -356,9 +357,9 @@ export function useAskController(): UseAskController {
     dispatch({ type: 'reset' })
   }, [abortAll])
 
-  const setFeedback = useCallback((turnId: string, qaId: string, value: 'like' | 'dislike') => {
+  const setFeedback = useCallback((turnId: string, qaId: string, value: 'like' | 'dislike' | null) => {
     dispatch({ type: 'feedback', id: turnId, value })
-    void sendFeedback(qaId, value).catch(() => { /* 回饋失敗不打擾 */ })
+    void sendFeedback(qaId, value ?? 'none').catch(() => { /* 回饋失敗不打擾 */ })
   }, [])
 
   return {

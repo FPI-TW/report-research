@@ -33,7 +33,7 @@
 .tkOn:focus-visible .in {
   background: var(--tf-gold-panel);
   border-color: var(--tf-gold-line);
-  box-shadow: var(--tf-ring-ink);
+  box-shadow: var(--tf-ring-graphite);
 }
 
 .n {

@@ -71,6 +71,13 @@ class FeedbackValidationTests(unittest.TestCase):
         self.assertEqual(r.json(), {"ok": True})
         self.assertEqual(self.calls, [("q1", "dislike")])
 
+    def test_none_accepted_as_clear(self):
+        # 'none'＝再點一次已亮起的那顆＝取消。若端點仍只收 like/dislike，取消會回 400，
+        # 而前端的回饋失敗刻意不打擾使用者——按鈕看起來熄了，DB 裡的評價卻還在。
+        r = _authed().post("/api/feedback", json={"qa_id": "q1", "value": "none"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.calls, [("q1", "none")])
+
 
 class ConversationsListTests(unittest.TestCase):
     def setUp(self):

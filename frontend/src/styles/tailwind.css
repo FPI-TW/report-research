@@ -15,10 +15,10 @@
   --color-card-foreground: var(--tf-text-1);
   --color-popover: var(--tf-surface);
   --color-popover-foreground: var(--tf-text-1);
-  --color-primary: var(--tf-ink);
-  --color-primary-foreground: var(--tf-on-ink);
-  --color-secondary: var(--tf-ink-tint);
-  --color-secondary-foreground: var(--tf-ink-deep);
+  --color-primary: var(--tf-graphite);
+  --color-primary-foreground: var(--tf-on-graphite);
+  --color-secondary: var(--tf-graphite-tint);
+  --color-secondary-foreground: var(--tf-graphite-deep);
   --color-muted: var(--tf-border-weak);
   --color-muted-foreground: var(--tf-text-3);
   --color-accent: var(--tf-gold-tint);
@@ -26,7 +26,7 @@
   --color-destructive: var(--tf-error);
   --color-border: var(--tf-border);
   --color-input: var(--tf-border);
-  --color-ring: var(--tf-ink);
+  --color-ring: var(--tf-graphite);
 
   --radius-sm: calc(var(--tf-radius-md) - 2px);
   --radius-md: var(--tf-radius-md);

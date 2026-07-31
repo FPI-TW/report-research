@@ -18,14 +18,16 @@
   --tf-text-muted-aa: #6b6b70;
   --tf-text-4: #8e8e93;
 
-  /* ── 石墨（導航與操作：按鈕、連結、選取態、焦點環） ──
-     沿用 ink 這組名字（111 處引用），語意仍成立：只是墨色從墨青換成中性石墨。 */
-  --tf-ink: #2c2c2e;
-  --tf-ink-deep: #1d1d1f;
-  --tf-ink-hover: #1d1d1f;
-  --tf-ink-tint: #f0f0f2;
-  --tf-ink-line: #dededf;
-  --tf-on-ink: #ffffff;
+  /* ── 石墨（導航與操作：按鈕、連結、選取態、焦點環、提問氣泡底） ──
+     #161 把值從墨青 #1E5175 換成中性石墨後，這組曾沿用 ink 這個舊名字；名稱與實際色
+     不符會讓每個讀 CSS 的人先誤判一次色相，故一併更名為 graphite（含 --tf-ring-graphite）。
+     全站唯一強調色仍是鎏金，石墨是「操作」不是「強調」——兩者用途別互換。 */
+  --tf-graphite: #2c2c2e;
+  --tf-graphite-deep: #1d1d1f;
+  --tf-graphite-hover: #1d1d1f;
+  --tf-graphite-tint: #f0f0f2;
+  --tf-graphite-line: #dededf;
+  --tf-on-graphite: #ffffff;
 
   /* ── 鎏金（全站唯一強調色：引用 [n]、深度研報、品牌、選取指示條） ── */
   --tf-gold-text: #8a5a0f;
@@ -74,7 +76,7 @@
   --tf-shadow-float: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
   --tf-shadow-pop: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 12px 32px rgba(0, 0, 0, 0.13);
   --tf-shadow-modal: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 24px 64px rgba(0, 0, 0, 0.22);
-  --tf-ring-ink: 0 0 0 3.5px rgba(44, 44, 46, 0.12);
+  --tf-ring-graphite: 0 0 0 3.5px rgba(44, 44, 46, 0.12);
 
   /* ── 動效 ── */
   /* 緩動家族：進場減速為主曲線；可逆 hover 用對稱 standard；離場加速；emphasized 為極輕收束過衝
@@ -160,7 +162,7 @@ a:hover { color: var(--tf-gold-hover); }
 ::selection { background: var(--tf-gold-tint); }
 
 :focus-visible {
-  outline: 2px solid var(--tf-ink);
+  outline: 2px solid var(--tf-graphite);
   outline-offset: 2px;
 }
 

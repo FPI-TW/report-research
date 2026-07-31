@@ -70,14 +70,14 @@
 .pill {
   font-size: 11px;
   font-weight: 700;
-  color: var(--tf-on-ink);
-  background: var(--tf-ink-deep);
+  color: var(--tf-on-graphite);
+  background: var(--tf-graphite-deep);
   padding: 2px 7px;
   border-radius: var(--tf-radius-pill);
   white-space: nowrap;
   box-shadow: var(--tf-shadow-seg);
 }
-.stem { width: 2px; height: 28px; background: var(--tf-ink-deep); margin-top: 2px; }
+.stem { width: 2px; height: 28px; background: var(--tf-graphite-deep); margin-top: 2px; }
 
 .axis {
   display: flex;

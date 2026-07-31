@@ -55,7 +55,7 @@
   background: var(--tf-canvas);
 }
 .item:focus-visible {
-  outline: 2px solid var(--tf-ink);
+  outline: 2px solid var(--tf-graphite);
   outline-offset: 2px;
 }
 
@@ -112,7 +112,7 @@
   appearance: none;
   border: 1px solid var(--tf-border);
   background: var(--tf-surface);
-  color: var(--tf-ink);
+  color: var(--tf-graphite);
   font-size: 12px;
   font-weight: 600;
   font-family: var(--tf-sans);
@@ -122,5 +122,5 @@
   transition: border-color var(--tf-dur-1) var(--tf-ease-standard),
               background var(--tf-dur-1) var(--tf-ease-standard);
 }
-.retry:hover { border-color: var(--tf-ink-line); background: var(--tf-canvas); }
-.retry:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
+.retry:hover { border-color: var(--tf-graphite-line); background: var(--tf-canvas); }
+.retry:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; }

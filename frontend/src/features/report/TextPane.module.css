@@ -42,7 +42,7 @@
    與常駐底色回饋），唯有鍵盤操作（focus-visible）才給明確外框。 */
 .body :focus { outline: none; }
 .body :focus-visible {
-  outline: 2px solid var(--tf-ink);
+  outline: 2px solid var(--tf-graphite);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -115,8 +115,8 @@
 .retry {
   appearance: none;
   border: 0;
-  background: var(--tf-ink);
-  color: var(--tf-on-ink);
+  background: var(--tf-graphite);
+  color: var(--tf-on-graphite);
   border-radius: var(--tf-radius-pill);
   font-size: 13px;
   font-weight: 600;
@@ -125,8 +125,8 @@
   cursor: pointer;
   transition: background var(--tf-dur-1) var(--tf-ease-standard);
 }
-.retry:hover { background: var(--tf-ink-hover); }
-.retry:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
+.retry:hover { background: var(--tf-graphite-hover); }
+.retry:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; }
 
 @media (max-width: 900px) {
   .stage { padding: 14px; }

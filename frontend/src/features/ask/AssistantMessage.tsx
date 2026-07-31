@@ -11,7 +11,8 @@ interface Props {
   turn: Turn
   onCite: (n: number, view: AnswerView) => void
   onOpenSources: (view: AnswerView) => void
-  onFeedback: (v: 'like' | 'dislike') => void
+  /** 傳的是「按下之後應該變成什麼」：再點一次已亮起的那顆會傳 null（取消）。 */
+  onFeedback: (v: 'like' | 'dislike' | null) => void
   onNoticeRetry: () => void
   onErrorRetry: () => void
   onRegenerate: () => void
@@ -46,7 +47,7 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
         )}
         <Callout variant="error" action={disabled ? undefined : { label: '重試', onClick: onErrorRetry }}>{turn.errorText ?? '查詢逾時或失敗'}</Callout>
         <div className={styles.actions}>
-          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</Pressable>
+          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}><Icon name="refresh" size={15} /></Pressable>
         </div>
       </div>
     )
@@ -95,14 +96,19 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       )}
       {showActions && (
         <div className={styles.actions}>
+          {/* 讚/倒讚是切換鈕：再點一次已亮起的那顆傳 null＝取消（誤按無法收回的話，
+              使用者只剩「按另一顆」這條假出口，那會把錯的評價留在 qa_log 裡）。
+              切換狀態同時給 aria-pressed，否則亮起與否只有視覺上看得出來。 */}
           {isLive && view.qaId && (
             <>
-              <Pressable className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback('like')} aria-label="讚"><Icon name="thumbUp" size={15} /></Pressable>
-              <Pressable className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback('dislike')} aria-label="倒讚"><Icon name="thumbDown" size={15} /></Pressable>
+              <Pressable className={`${styles.act} ${view.feedback === 'like' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'like' ? null : 'like')} aria-label="讚" aria-pressed={view.feedback === 'like'}><Icon name="thumbUp" size={15} /></Pressable>
+              <Pressable className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'dislike' ? null : 'dislike')} aria-label="倒讚" aria-pressed={view.feedback === 'dislike'}><Icon name="thumbDown" size={15} /></Pressable>
             </>
           )}
-          <CopyButton content={view.answer} variant="ghost" className={styles.act} aria-label="複製回答" title="複製回答" />
-          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}>重新生成</Pressable>
+          {/* 四顆動作鈕都是純圖示且等大：size="xs" 只是讓 animate-ui 自帶的方框接近目標值，
+              真正釘死尺寸與圓角的是 .act（見 CSS 註解）。 */}
+          <CopyButton content={view.answer} variant="ghost" size="xs" className={styles.act} hoverScale={1.02} tapScale={0.94} aria-label="複製回答" title="複製回答" />
+          <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}><Icon name="refresh" size={15} /></Pressable>
           {refCount > 0 && (
             <>
               <span className={styles.divider} />

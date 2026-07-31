@@ -2,7 +2,7 @@
 .wrap > *:not(.heroBg) { position: relative; z-index: 1; }
 /* 品牌漸層氛圍：柔和放射遮罩、低透明度，僅作背景光暈 */
 .heroBg { position: absolute; inset: -48px -80px; z-index: 0; overflow: hidden; border-radius: 40px; pointer-events: none; -webkit-mask-image: radial-gradient(72% 62% at 50% 42%, #000 0%, transparent 100%); mask-image: radial-gradient(72% 62% at 50% 42%, #000 0%, transparent 100%); }
-.heroGradient { position: absolute; inset: 0; background: linear-gradient(120deg, var(--tf-ink-tint), var(--tf-gold-tint) 45%, var(--tf-ink-line) 70%, var(--tf-ink-tint)); background-size: 280% 280%; opacity: 0.5; }
+.heroGradient { position: absolute; inset: 0; background: linear-gradient(120deg, var(--tf-graphite-tint), var(--tf-gold-tint) 45%, var(--tf-graphite-line) 70%, var(--tf-graphite-tint)); background-size: 280% 280%; opacity: 0.5; }
 .glyph { display: block; margin-bottom: 6px; }
-.title { font-family: var(--tf-display); font-weight: 600; font-size: 24px; color: var(--tf-ink-deep); }
+.title { font-family: var(--tf-display); font-weight: 600; font-size: 24px; color: var(--tf-graphite-deep); }
 .sub { font-size: 13.5px; color: var(--tf-text-3); margin-bottom: 14px; max-width: 420px; }

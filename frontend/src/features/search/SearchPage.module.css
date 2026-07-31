@@ -43,7 +43,7 @@
 
 .error { text-align: center; padding: 56px 16px; color: var(--tf-text-muted-aa); }
 .error button { margin-left: 10px; border: 1px solid var(--tf-border); background: var(--tf-surface); border-radius: var(--tf-radius-pill); padding: 4px 12px; cursor: pointer; font-family: inherit; color: var(--tf-text-2); }
-.error button:hover { border-color: var(--tf-ink); color: var(--tf-ink); }
+.error button:hover { border-color: var(--tf-graphite); color: var(--tf-graphite); }
 
 @media (max-width: 900px) {
   .bar { padding: 16px 0 12px; }

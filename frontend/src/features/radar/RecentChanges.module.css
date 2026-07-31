@@ -9,7 +9,7 @@
   top: 6px;
   bottom: 6px;
   width: 2px;
-  background: var(--tf-ink-line);
+  background: var(--tf-graphite-line);
 }
 
 .event {
@@ -92,7 +92,7 @@
   appearance: none;
   border: 0;
   background: none;
-  color: var(--tf-ink);
+  color: var(--tf-graphite);
   font-size: 13px;
   font-weight: 600;
   font-family: var(--tf-sans);
@@ -101,7 +101,7 @@
   white-space: nowrap;
   min-height: 44px;
 }
-.link:hover { color: var(--tf-ink-hover); text-decoration: underline; text-underline-offset: 3px; }
+.link:hover { color: var(--tf-graphite-hover); text-decoration: underline; text-underline-offset: 3px; }
 
 .empty {
   font-size: 13.5px;
@@ -138,15 +138,15 @@
 .loadMore {
   appearance: none;
   min-height: 44px;
-  border: 1px solid var(--tf-ink-line);
+  border: 1px solid var(--tf-graphite-line);
   border-radius: var(--tf-radius-pill);
   background: var(--tf-surface);
-  color: var(--tf-ink);
+  color: var(--tf-graphite);
   padding: 8px 18px;
   font: 600 13px/1.4 var(--tf-sans);
   cursor: pointer;
 }
-.loadMore:hover { border-color: var(--tf-ink); }
+.loadMore:hover { border-color: var(--tf-graphite); }
 .loadMore:disabled { cursor: wait; opacity: 0.65; }
 
 @media (max-width: 560px) {

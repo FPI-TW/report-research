@@ -419,7 +419,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | GET | `/api/conversations`、`/api/conversations/{conversation_id}` | 對話串清單 / 單串內容 | |
 | DELETE/POST | `/api/conversations/{conversation_id}`、`/api/conversations/{conversation_id}/delete` | 刪整串對話（POST alias 供 DELETE 不穩的邊緣環境回退） | |
 | GET | `/api/history`、DELETE `/api/history/{qa_id}`、POST `/api/history/{qa_id}/delete` | 問答歷史清單 / 刪單題（POST 為相容 alias） | |
-| POST | `/api/feedback` | 對某次回答記讚/倒讚 | |
+| POST | `/api/feedback` | 對某次回答記讚/倒讚；`value` 為 `like`／`dislike`／`none`（`none`＝再點一次取消，寫入 NULL） | |
 | GET | `/api/progress` | 監控快照（DB 筆數、摘要／重點摘錄／訊號覆蓋、背景程序、忠實度查核，外加 `sync`＝每 3 小時排程同步的最新狀態、`unit_failures`＝`OnFailure` 告警的近期計數） | |
 | GET | `/healthz` | **唯一免認證的 API 端點**：DB 探測，正常 200 `{"status":"ok"}`、DB 不可用 503 `{"status":"degraded"}`（結果快取 5 秒），供外部監控分辨「站台活著但 DB 掛了」 | |
 | GET/POST | `/login`、POST `/logout` | 登入頁與登入／登出 | |

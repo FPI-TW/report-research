@@ -83,7 +83,7 @@
 /* 國際投行經典：密集雙欄、鎏金標題列、KPI 卡整排 */
 .previewClassic { background: #fffdf8; }
 .previewClassic .pvHeader { background: var(--tf-gold-strong); }
-.previewClassic .pvTitle { background: var(--tf-ink-deep); width: 78%; }
+.previewClassic .pvTitle { background: var(--tf-graphite-deep); width: 78%; }
 .previewClassic .pvKpi > span { background: var(--tf-gold-tint); box-shadow: inset 0 0 0 1px var(--tf-gold-line); }
 .previewClassic .pvBody { color: #b9c2c9; }
 

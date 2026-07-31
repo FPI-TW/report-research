@@ -30,7 +30,7 @@
   appearance: none;
   border: 1px solid var(--tf-border);
   background: var(--tf-surface);
-  color: var(--tf-ink);
+  color: var(--tf-graphite);
   font-size: 12.5px;
   font-weight: 600;
   font-family: var(--tf-sans);
@@ -40,7 +40,7 @@
   cursor: pointer;
 }
 
-.collapse:hover { background: var(--tf-ink-tint); }
+.collapse:hover { background: var(--tf-graphite-tint); }
 
 .compare {
   display: grid;
@@ -115,7 +115,7 @@
   height: 12px;
   border-radius: 999px;
   background: var(--tf-surface);
-  border: 2px solid var(--tf-ink);
+  border: 2px solid var(--tf-graphite);
   z-index: 1;
 }
 
@@ -213,7 +213,7 @@
   appearance: none;
   border: 0;
   background: none;
-  color: var(--tf-ink);
+  color: var(--tf-graphite);
   font-size: 13px;
   font-weight: 600;
   font-family: var(--tf-sans);

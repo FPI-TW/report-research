@@ -4,7 +4,7 @@ export type IconName =
   | 'search' | 'messages' | 'activity' | 'user' | 'plus'
   | 'panel' | 'logout' | 'chevronDown' | 'x' | 'filter'
   | 'alertCircle' | 'alertTriangle' | 'send' | 'fileText' | 'trash' | 'thumbUp' | 'thumbDown' | 'copy'
-  | 'check' | 'spinner'
+  | 'check' | 'spinner' | 'refresh'
   | 'compass' | 'trendUp' | 'trendDown' | 'trendFlat' | 'diverge' | 'notComparable' | 'quote' | 'info'
 
 const PATHS: Record<IconName, ReactNode> = {
@@ -28,6 +28,7 @@ const PATHS: Record<IconName, ReactNode> = {
   copy: (<><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2 -2h10" /></>),
   check: (<path d="M5 12l5 5l9 -11" />),
   spinner: (<path d="M12 3a9 9 0 1 0 9 9" />),
+  refresh: (<><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2M4.5 5v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2M19.5 19v-4h-4" /></>),
   compass: (<><circle cx="12" cy="12" r="9" /><path d="M14.5 9.5l-2 5l-5 2l2 -5z" /><circle cx="12" cy="12" r="1" /></>),
   trendUp: (<path d="M4 16l6 -6l4 4l6 -6M14 8h6v6" />),
   trendDown: (<path d="M4 8l6 6l4 -4l6 6M14 16h6v-6" />),

@@ -35,6 +35,19 @@ test('done：答案+單一資料來源 {N}+讚/倒讚', () => {
   expect(screen.queryByRole('button', { name: /外部參考/ })).toBeNull() // 無獨立外部參考鈕
 })
 
+test('讚/倒讚是切換鈕：再點已亮起的那顆傳 null（取消），點另一顆仍傳自己的值', () => {
+  // 沒有取消，誤按就只剩「按另一顆」這條假出口，錯的評價會留在 qa_log 裡。
+  const onFeedback = vi.fn()
+  render(<AssistantMessage turn={makeTurn({ feedback: 'like' })} {...noop} onFeedback={onFeedback} />)
+  const like = screen.getByRole('button', { name: '讚' })
+  expect(like).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: '倒讚' })).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.click(like)
+  expect(onFeedback).toHaveBeenLastCalledWith(null)
+  fireEvent.click(screen.getByRole('button', { name: '倒讚' }))
+  expect(onFeedback).toHaveBeenLastCalledWith('dislike')
+})
+
 test('時效婉拒不給「換個說法重新提問」：缺的是資料不是措辭', () => {
   // 換說法不會讓系統生出它沒有的即時資料，只會讓使用者反覆改寫同一題，
   // 每一次再吃一輪完整檢索。離題題才是換個說法就有救（見下一題）。

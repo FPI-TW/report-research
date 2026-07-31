@@ -17,11 +17,11 @@
     transform var(--tf-dur-2) var(--tf-ease-out);
 }
 .card:hover {
-  border-color: var(--tf-ink-line);
+  border-color: var(--tf-graphite-line);
   box-shadow: var(--tf-shadow-float);
   transform: translateY(-2px);
 }
-.card:focus-visible { outline: 2px solid var(--tf-ink); outline-offset: 2px; }
+.card:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; }
 
 .head {
   display: flex;
@@ -135,4 +135,4 @@
   font-size: 16px;
   transition: color var(--tf-dur-2) var(--tf-ease-out), transform var(--tf-dur-2) var(--tf-ease-out);
 }
-.card:hover .go { color: var(--tf-ink); transform: translateX(2px); }
+.card:hover .go { color: var(--tf-graphite); transform: translateX(2px); }

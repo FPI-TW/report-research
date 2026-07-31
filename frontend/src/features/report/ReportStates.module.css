@@ -41,8 +41,8 @@
 
 .btn {
   display: inline-block;
-  background: var(--tf-ink);
-  color: var(--tf-on-ink);
+  background: var(--tf-graphite);
+  color: var(--tf-on-graphite);
   border-radius: var(--tf-radius-pill);
   font-size: 13px;
   font-weight: 600;
@@ -50,4 +50,4 @@
   text-decoration: none;
   transition: background var(--tf-dur-1) var(--tf-ease-standard);
 }
-.btn:hover { background: var(--tf-ink-hover); }
+.btn:hover { background: var(--tf-graphite-hover); }

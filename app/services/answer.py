@@ -1740,6 +1740,18 @@ async def answer_question(
         stages_seen.append(stage)
         return ("status", {"stage": stage, **extra})
 
+    def _status_once(stage: str, **extra):
+        """送出步驟，但同一步驟只計入 stages_seen 一次。
+
+        retrieved 的推進刻意提前到檢索之前，但**只在「路由先回、檢索仍在跑」時**才送
+        （見下方），所以「找到 N 篇」這筆有時是補數量、有時是該步驟的唯一一次抵達。
+        無條件 append 會讓 qa_log.stages 長出不存在的來回；無條件不 append 則會在
+        沒提前推進的路徑上整個漏掉 retrieved。兩種都錯，故取冪等。
+        """
+        if stage not in stages_seen:
+            stages_seen.append(stage)
+        return ("status", {"stage": stage, **extra})
+
     yield _status("understanding")  # 步驟1：理解問題（含意圖判定/改寫）
 
     # 僅「續問」才載歷史；首輪無歷史，維持並行意圖判定
@@ -1858,6 +1870,9 @@ async def answer_question(
     try:
         if turns or decision is not None:
             # 續問，或首輪已被前檢定案（advice_risk）：路由不必再跑，直接檢索。
+            # 步驟先推進再檢索：embed+hybrid+rerank 整段不送任何事件（prod 實測光
+            # rerank 就佔 40s），停在「理解問題」與伺服器卡死無從分辨。
+            yield _status("retrieved")
             sources, context = await _retrieve(standalone_query)
         else:
             # 分類與檢索並行，但**誰先到就聽誰的**。分類是一次 Haiku（秒級），檢索
@@ -1884,6 +1899,13 @@ async def answer_question(
                     # 值純為防未來有人在 return 之前插入讀取。
                     decision, sources, context = early, [], ""
                 else:
+                    # 只有「路由先回、檢索還在跑」才推進步驟——那正是 rerank 仍在燒的
+                    # 靜默窗（prod：路由約 12s、檢索約 48s，所以線上一律走這條）。
+                    # 檢索先回（early is None）時下面兩個 await 立即返回，補送只會讓
+                    # 離題／時效題也留下不存在的檢索足跡（那兩類的終判在 route_task 上，
+                    # 此刻還不知道）。
+                    if early is not None and not retrieve_task.done():
+                        yield _status("retrieved")
                     sources, context = await retrieve_task
                     decision = await route_task
                 timer.mark("route_wait")  # 與 embed/retrieve 並行，故為等待耗時、非序列
@@ -1987,7 +2009,7 @@ async def answer_question(
     system_prompt = system_prompt + output_directive(locale)
 
     yield ("sources", [asdict(s) for s in sources])
-    yield _status("retrieved", count=len(sources))  # 步驟2：找到 N 篇
+    yield _status_once("retrieved", count=len(sources))  # 步驟2：找到 N 篇
 
     if not context:
         thinking_ms = int((time.monotonic() - started) * 1000)

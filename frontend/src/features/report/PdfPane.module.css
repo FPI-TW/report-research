@@ -8,12 +8,34 @@
   justify-content: center;
 }
 
+/* 自訂檢視器要撐滿舞台（內建檢視則走 .pdfWrap 的 max-width 置中）。
+   高度給在這一層而不是檢視器內部：外層 .doc 是捲動容器，其中沒有可分配的剩餘高度，
+   檢視器自己用 flex:1 會塌成 0。 */
+.stageViewer {
+  height: clamp(560px, calc(100vh - 232px), 1400px);
+  padding: 20px 20px 28px;
+  align-items: stretch;
+}
+/* 降級成內建檢視時，iframe 改為填滿已由 .stageViewer 決定的高度 */
+.stageViewer .frame {
+  flex: 1;
+  height: auto;
+}
+
+.booting {
+  align-self: center;
+  margin: auto;
+  font-size: 12px;
+  color: var(--tf-text-4);
+}
+
 /* PDF 內嵌容器：上方逃生列 + 紙張 */
 .pdfWrap {
   display: flex;
   flex-direction: column;
   width: 100%;
   max-width: 900px;
+  min-height: 0;
   gap: 9px;
 }
 
@@ -86,5 +108,6 @@
 
 @media (max-width: 900px) {
   .stage { padding: 14px 14px 32px; }
+  .stageViewer { height: 78vh; padding: 12px 12px 24px; }
   .frame { height: 76vh; border-radius: 6px; }
 }

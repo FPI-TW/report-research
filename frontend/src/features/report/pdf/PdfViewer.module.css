@@ -1,0 +1,245 @@
+/* 自訂 PDF 檢視器的 chrome。
+   設計原則：介面讓位給文件 —— 工具列是浮在文件上的一顆玻璃膠囊（不是橫貫全寬的長條），
+   縮圖列用覆蓋而非推擠（展開收合時閱讀寬度不變），捲動時 chrome 淡出、頁碼膠囊浮現。 */
+
+.root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background: var(--tf-canvas);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--tf-shadow-float);
+}
+
+/* 捲動區的上內距要讓開浮島，否則第一頁會被壓在底下 */
+.viewport {
+  position: absolute;
+  inset: 0;
+  padding-top: 60px;
+}
+
+/* 紙張：髮絲環＋接觸陰影＋大範圍柔影三層。
+   接觸陰影是紙張「貼在桌面上」的關鍵，只有大範圍柔影會讓它看起來像漂浮的貼紙。 */
+.page {
+  position: relative;
+  background: var(--tf-surface);
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 14px 30px rgba(0, 0, 0, 0.1);
+}
+
+/* 頁碼放在紙張之外的右下角：印在紙上會和研報自己的頁碼打架 */
+.pageNo {
+  position: absolute;
+  bottom: -15px;
+  right: 2px;
+  font-family: var(--tf-mono);
+  font-size: 9.5px;
+  color: var(--tf-text-4);
+  pointer-events: none;
+}
+
+/* ── 浮島工具列 ── */
+.island {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-glass-strong);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  box-shadow:
+    0 0 0 0.5px var(--tf-glass-border),
+    var(--tf-glass-sheen),
+    0 6px 20px rgba(0, 0, 0, 0.12);
+  transition: opacity var(--tf-dur-3) var(--tf-ease-standard);
+}
+
+/* 捲動中淡出，但**刻意留 0.42 不歸零**：完全消失會讓工具列變成隱藏功能，
+   對運動障礙使用者尤其麻煩。降低透明度偏好與減少動態偏好都直接停用這個行為。 */
+.islandDim {
+  opacity: 0.42;
+}
+@media (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce) {
+  .island {
+    transition: none;
+    background: var(--tf-surface);
+  }
+  .islandDim {
+    opacity: 1;
+  }
+}
+
+.btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--tf-graphite);
+  width: 27px;
+  height: 27px;
+  border-radius: var(--tf-radius-pill);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--tf-dur-1) var(--tf-ease-standard);
+}
+.btn:hover {
+  background: color-mix(in srgb, var(--tf-text-1) 6%, transparent);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 1px;
+}
+.btnOn {
+  background: var(--tf-graphite);
+  color: var(--tf-on-graphite);
+}
+.btnOn:hover {
+  background: var(--tf-graphite-hover);
+}
+
+.sep {
+  width: 1px;
+  height: 16px;
+  background: var(--tf-glass-border);
+  margin: 0 2px;
+}
+
+.zoom {
+  font-family: var(--tf-mono);
+  font-size: 10.5px;
+  color: var(--tf-text-2);
+  min-width: 38px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 覆蓋式縮圖列 ── */
+.thumbs {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 96px;
+  z-index: 7;
+  padding: 14px 0 24px;
+  overflow: hidden;
+  background: var(--tf-glass-strong);
+  backdrop-filter: var(--tf-glass-filter);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  border-right: 1px solid var(--tf-glass-border);
+  box-shadow: 6px 0 22px rgba(0, 0, 0, 0.07);
+  transform: translateX(-100%);
+  transition: transform var(--tf-dur-3) var(--tf-ease-standard);
+}
+.thumbsOpen {
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thumbs {
+    transition: none;
+  }
+}
+
+.thumbBtn {
+  position: absolute;
+  left: 0;
+  right: 0;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.thumbImg {
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--tf-surface);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.13),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  transition: box-shadow var(--tf-dur-1) var(--tf-ease-standard);
+}
+.thumbCurrent .thumbImg {
+  box-shadow:
+    0 0 0 2px var(--tf-graphite),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.thumbNo {
+  font-family: var(--tf-mono);
+  font-size: 9px;
+  color: var(--tf-text-4);
+}
+
+/* ── 頁碼膠囊：只在捲動時浮現 ── */
+.pill {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%) translateY(6px);
+  z-index: 6;
+  background: rgba(28, 28, 30, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #fff;
+  font-family: var(--tf-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 5px 12px;
+  border-radius: var(--tf-radius-pill);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--tf-dur-2) var(--tf-ease-standard),
+    transform var(--tf-dur-2) var(--tf-ease-standard);
+}
+.pillOn {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pill {
+    transition: none;
+    transform: translateX(-50%);
+  }
+}
+
+/* ── 引擎啟動中 ── */
+.booting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--tf-text-4);
+  font-size: 12px;
+}
+
+.bootPaper {
+  width: min(52%, 300px);
+  height: 42%;
+  border-radius: 6px;
+  background: var(--tf-surface);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.07),
+    0 14px 30px rgba(0, 0, 0, 0.08);
+}

@@ -6,6 +6,7 @@ export type IconName =
   | 'alertCircle' | 'alertTriangle' | 'send' | 'fileText' | 'trash' | 'thumbUp' | 'thumbDown' | 'copy'
   | 'check' | 'spinner' | 'refresh'
   | 'compass' | 'trendUp' | 'trendDown' | 'trendFlat' | 'diverge' | 'notComparable' | 'quote' | 'info'
+  | 'minus' | 'download' | 'arrowsHorizontal'
 
 const PATHS: Record<IconName, ReactNode> = {
   search: (<><circle cx="10" cy="10" r="7" /><path d="M21 21l-6 -6" /></>),
@@ -37,6 +38,9 @@ const PATHS: Record<IconName, ReactNode> = {
   notComparable: (<><circle cx="12" cy="12" r="9" /><path d="M8 12h8" /></>),
   quote: (<path d="M8 13h2a2 2 0 0 0 2 -2V9a2 2 0 0 0 -2 -2H8a2 2 0 0 0 -2 2v2c0 3 2 5 4 6M16 13h2a2 2 0 0 0 2 -2V9a2 2 0 0 0 -2 -2h-2a2 2 0 0 0 -2 2v2c0 3 2 5 4 6" />),
   info: (<><circle cx="12" cy="12" r="9" /><path d="M12 10v6M12 7h.01" /></>),
+  minus: (<path d="M5 12h14" />),
+  download: (<><path d="M12 4v12" /><path d="M8 12l4 4l4 -4" /><path d="M4 19h16" /></>),
+  arrowsHorizontal: (<path d="M7 8l-4 4l4 4M17 8l4 4l-4 4M4 12h16" />),
 }
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

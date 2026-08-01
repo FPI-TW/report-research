@@ -131,6 +131,9 @@ class StopRequest(BaseModel):
     ext_sources: list[dict] | None = Field(default=None, max_length=50)
     stages: list[str] | None = Field(default=None, max_length=10)
     regenerate_of: str | None = None
+    # 編輯重問途中停止：前端在送出當下已把編輯點之後的輪次從畫面截掉，停止列
+    # 落庫時後端要做同一件事（停用舊輪次），否則重整後被編輯掉的對話整段復活。
+    edit_of: str | None = None
     request_id: str | None = None
 
 
@@ -139,6 +142,8 @@ async def ask_stop(req: StopRequest):
     """使用者中斷串流時保存部分答案（stopped=true）。回 {qa_id}。"""
     if req.regenerate_of is not None and not deps._valid_uuid(req.regenerate_of):
         raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
+    if req.edit_of is not None and not deps._valid_uuid(req.edit_of):
+        raise HTTPException(status_code=400, detail="edit_of 格式不正確")
     if req.conversation_id is not None and not deps._valid_uuid(req.conversation_id):
         raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
     if req.request_id is not None and not deps._valid_uuid(req.request_id):
@@ -151,6 +156,7 @@ async def ask_stop(req: StopRequest):
         ext_sources=req.ext_sources,
         stages=req.stages,
         regenerate_of=req.regenerate_of,
+        edit_of=req.edit_of,
         request_id=req.request_id,
     )
     if qa_id is None:

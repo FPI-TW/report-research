@@ -54,6 +54,39 @@ class AskStopEndpointTests(unittest.TestCase):
         self.assertEqual(called["kw"]["sources"], [{"n": 1}])
         self.assertEqual(called["kw"]["request_id"], "123e4567-e89b-42d3-a456-426614174000")
 
+    def test_edit_of_forwarded(self):
+        """編輯途中停止：edit_of 要一路轉送到 log_stopped_qa（後端截斷靠它）。"""
+        client = _authed_client()
+        called = {}
+
+        async def fake_log(question, partial_answer, **k):
+            called["kw"] = k
+            return "qa-stop-2"
+
+        orig = deps.log_stopped_qa
+        deps.log_stopped_qa = fake_log
+        try:
+            resp = client.post(
+                "/api/ask/stop",
+                json={"question": "台積電（改）", "partial_answer": "部分",
+                      "edit_of": "123e4567-e89b-42d3-a456-426614174001"},
+            )
+        finally:
+            deps.log_stopped_qa = orig
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(called["kw"]["edit_of"], "123e4567-e89b-42d3-a456-426614174001")
+
+    def test_invalid_edit_of_returns_400(self):
+        client = _authed_client()
+        resp = client.post(
+            "/api/ask/stop",
+            json={"question": "台積電", "partial_answer": "部分",
+                  "edit_of": "not-a-uuid"},
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("edit_of", resp.json().get("detail", ""))
+
     def test_invalid_regenerate_of_returns_400(self):
         client = _authed_client()
         resp = client.post(

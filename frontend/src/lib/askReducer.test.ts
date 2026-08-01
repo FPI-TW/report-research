@@ -353,8 +353,8 @@ describe('askReducer M3', () => {
 
   it('load-versions fills priorVersions from all-but-last', () => {
     const versions = [
-      { qa_id: 'v1', answer: '答一', sources: [], ext_sources: [], thinking_ms: 100, stages: [], feedback: null, created_at: null },
-      { qa_id: 'v2', answer: '答二', sources: [], ext_sources: [], thinking_ms: 120, stages: [], feedback: 'like' as const, created_at: null },
+      { qa_id: 'v1', answer: '答一', sources: [], ext_sources: [], thinking_ms: 100, stages: [], feedback: null, created_at: null, stopped: false },
+      { qa_id: 'v2', answer: '答二', sources: [], ext_sources: [], thinking_ms: 120, stages: [], feedback: 'like' as const, created_at: null, stopped: false },
     ]
     let s = seeded()
     s = askReducer(s, { type: 'load-versions', id: 't1', versions })

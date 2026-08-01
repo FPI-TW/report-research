@@ -154,6 +154,28 @@ test('沒有進行中的 run 就不畫進度框', async () => {
   expect(streamReportRun).not.toHaveBeenCalled()
 })
 
+test('重生非最後一輪時 Composer 變成停止鈕（busy 要掃全部輪次）', async () => {
+  // 重新生成可以發生在任何一輪。busy 若只看最後一輪，重生中間輪時 Composer 停在
+  // 送出模式——使用者無法中斷，其他輪的動作也沒被鎖住，再點一下就開出第二條串流。
+  const turn = (id: string, q: string) => ({
+    id, question: q, answer: `${q} 的回答`, created_at: null, feedback: null,
+    sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [],
+    stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false,
+  })
+  getConversation.mockResolvedValue([turn('qa1', '第一題'), turn('qa2', '第二題')])
+  streamAsk.mockImplementation(() => live([{ event: 'status', data: { stage: 'understanding' } }]))
+  wrap('/ask?c=123e4567-e89b-12d3-a456-426614174000')
+  expect(await screen.findByText('第二題')).toBeInTheDocument()
+
+  fireEvent.click(screen.getAllByRole('button', { name: '重新生成' })[0])
+  expect(await screen.findByRole('button', { name: '停止生成' })).toBeInTheDocument()
+  // 互鎖也要跟上：重生中，另一輪的重新生成鈕不可再點。
+  // （第 1 輪已進 thinking、動作列收起，畫面只剩第 2 輪這一顆。）
+  const remaining = screen.getAllByRole('button', { name: '重新生成' })
+  expect(remaining).toHaveLength(1)
+  expect(remaining[0]).toBeDisabled()
+})
+
 test('離題→Callout warning', async () => {
   streamAsk.mockReturnValue(immediate([
     { event: 'sources', data: [] },

@@ -130,7 +130,7 @@ test('重載最新版（priorVersions 尚未載入）：pager 標籤與內容不
 test('檢視舊版快照（非 live）：回饋鈕隱藏，追問 chips 隱藏', () => {
   const turn = makeTurn({
     phase: 'done', qaId: 'q2', versionCount: 2, versionIndex: 0, followups: ['追問一'],
-    priorVersions: [{ answer: '舊答案', sources: [], extSources: [], qaId: 'q1', thinkingMs: null, stages: [], feedback: null, followups: [] }],
+    priorVersions: [{ answer: '舊答案', sources: [], extSources: [], qaId: 'q1', thinkingMs: null, stages: [], feedback: null, followups: [], stopped: false }],
   })
   render(<AssistantMessage turn={turn} {...noop} />)
   expect(screen.getByText('1/2')).toBeInTheDocument()
@@ -145,7 +145,7 @@ test('檢視舊版快照時，資料來源操作帶出該版來源', () => {
   const oldSource = { n: 1, report_id: 'old-r1', file_name: '舊版.pdf', market: 'TW', report_date: '2025-01-01', is_latest: false }
   const turn = makeTurn({
     phase: 'done', qaId: 'q2', versionCount: 2, versionIndex: 0,
-    priorVersions: [{ answer: '舊答案', sources: [oldSource], extSources: [], qaId: 'q1', thinkingMs: null, stages: [], feedback: null, followups: [] }],
+    priorVersions: [{ answer: '舊答案', sources: [oldSource], extSources: [], qaId: 'q1', thinkingMs: null, stages: [], feedback: null, followups: [], stopped: false }],
   })
   render(<AssistantMessage turn={turn} {...noop} onOpenSources={onOpenSources} />)
 

@@ -58,8 +58,11 @@ export default function AskPage() {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight
   }, [turns])
 
-  const last = turns[turns.length - 1]
-  const busy = !!last && (last.phase === 'thinking' || last.phase === 'streaming')
+  // busy 要掃全部輪次而不是只看最後一輪：重新生成可以發生在任何一輪（含中間輪），
+  // 只看最後一輪會讓「重生中間輪」時 Composer 停在送出模式（無法中斷）、其他輪的
+  // 重生／編輯／追問也沒被鎖住——再點一下就開出第二條串流，把第一條擠成錯誤。
+  // 問答串流同時最多一條（useAskController 的 askCtrl 單例），some() 不會多鎖。
+  const busy = turns.some(t => t.phase === 'thinking' || t.phase === 'streaming')
 
   function handleSubmit(q: string) { ctrl.submit(q); setDraft('') }
   function openSources(view: AnswerView) {
@@ -87,7 +90,10 @@ export default function AskPage() {
                   onFollowup={q => handleSubmit(q)}
                   disabled={busy}
                   onSetVersion={i => {
-                    if (t.priorVersions.length === 0 && t.rootQaId && t.versionCount > 1) {
+                    // priorVersions「不完整」（而非只有「全空」）就先補載：歷史多版本輪
+                    // 直接重生後，本地只有剛快照的那一版，中間版本是洞——洞的索引會
+                    // fallback 到 live，pager 顯示的版號與內容對不上。
+                    if (t.rootQaId && t.versionCount > 1 && t.priorVersions.length < t.versionCount - 1) {
                       void ctrl.loadVersions(t.id, t.rootQaId).then(loaded => {
                         if (loaded) ctrl.setVersion(t.id, i)
                       })

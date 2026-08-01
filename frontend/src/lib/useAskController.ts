@@ -48,6 +48,10 @@ export function useAskController(): UseAskController {
   const reportRunRef = useRef<string | null>(null)
   const streamTurnRef = useRef<string | null>(null)
   const streamRequestIdRef = useRef<string | null>(null)
+  // 進行中串流的請求體中繼資料。stop() 要據此把 regenerate_of / edit_of 轉送給
+  // /api/ask/stop——重生的停止列才接得回版本鏈、編輯的停止列才會觸發後端截斷。
+  // 從 state 反推（舊作法：翻 priorVersions）在編輯路徑上根本無值可推，故直接記。
+  const streamBodyRef = useRef<{ regenerateOf?: string; editOf?: string } | null>(null)
   const versionRequestId = useRef(0)
   const stateRef = useRef(state)
   useEffect(() => {
@@ -63,6 +67,7 @@ export function useAskController(): UseAskController {
       if (supersededTurn) dispatch({ type: 'ask-end', id: supersededTurn })
       streamTurnRef.current = null
       streamRequestIdRef.current = null
+      streamBodyRef.current = null
     }
   }, [])
 
@@ -97,6 +102,7 @@ export function useAskController(): UseAskController {
     askCtrl.current = ctrl
     streamTurnRef.current = turnId
     streamRequestIdRef.current = requestId
+    streamBodyRef.current = { regenerateOf: body.regenerate_of, editOf: body.edit_of }
     void (async () => {
       try {
         for await (const raw of streamAsk({ ...body, request_id: requestId, locale }, ctrl.signal)) {
@@ -113,10 +119,10 @@ export function useAskController(): UseAskController {
           if (ev.event === 'followups') dispatch({ type: 'followups', id: turnId, data: ev.data })
           else dispatch({ type: 'ask-event', id: turnId, event: ev })
         }
-        if (my === reqId.current) { streamTurnRef.current = null; streamRequestIdRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
+        if (my === reqId.current) { streamTurnRef.current = null; streamRequestIdRef.current = null; streamBodyRef.current = null; dispatch({ type: 'ask-end', id: turnId }) }
       } catch (err) {
         if (my === reqId.current) {
-          streamTurnRef.current = null; streamRequestIdRef.current = null
+          streamTurnRef.current = null; streamRequestIdRef.current = null; streamBodyRef.current = null
           // 429＝排隊已滿，後端連 SSE 都沒開。這時 'ask-end' 的「查詢逾時或失敗」是
           // 錯的診斷，會讓人一直重按；改用後端給的原因，使用者才知道要等一下。
           if (err instanceof ApiError && err.status === 429) {
@@ -141,19 +147,21 @@ export function useAskController(): UseAskController {
   const stop = useCallback(async () => {
     const turnId = streamTurnRef.current
     const requestId = streamRequestIdRef.current
-    ++reqId.current
+    const streamBody = streamBodyRef.current
+    const my = ++reqId.current
     askCtrl.current?.abort(); askCtrl.current = null
     streamTurnRef.current = null
     streamRequestIdRef.current = null
+    streamBodyRef.current = null
     if (!turnId) return
     const t = stateRef.current.turns.find(x => x.id === turnId)
     let qaId: string | null = t?.qaId ?? null
-    // 重生途中被停止：priorVersions 已由 regenerate-start 快照被取代的版本，
-    // regenerate_of 應為該版本的 qaId 以接回版本鏈（編輯途中 priorVersions 已被
-    // submit-edit 清空，regenOf 自然 undefined，不 chain）。
-    const regenOf = t && t.priorVersions.length > 0
-      ? (t.priorVersions[t.priorVersions.length - 1].qaId ?? undefined)
-      : undefined
+    // 先落地 stopped，再等 /api/ask/stop 的回應補 qaId：token 已停，畫面不能
+    // 繼續掛在「生成中」等一個沒有逾時保證的網路往返——期間停止鈕看起來像壞掉。
+    dispatch({ type: 'ask-stop', id: turnId, qaId })
+    // 重生／編輯途中被停止：regenerate_of 讓停止列接回版本鏈，edit_of 讓後端
+    // 執行與畫面一致的截斷。兩者都直接取自進行中串流的請求體（streamBodyRef），
+    // 不再從 priorVersions 反推——編輯路徑上 priorVersions 已被清空、推不出來。
     try {
       const r = await stopAsk({
         question: t?.question ?? '',
@@ -163,8 +171,13 @@ export function useAskController(): UseAskController {
         ext_sources: t?.extSources ?? [],
         stages: t?.stages ?? [],
         ...(requestId ? { request_id: requestId } : {}),
-        ...(regenOf ? { regenerate_of: regenOf } : {}),
+        ...(streamBody?.regenerateOf ? { regenerate_of: streamBody.regenerateOf } : {}),
+        ...(streamBody?.editOf ? { edit_of: streamBody.editOf } : {}),
       })
+      // 世代檢查：回應在途期間使用者已重生／送出新題／切換對話（都會 ++reqId），
+      // 這裡的副作用（convRef、URL 同步、qaId 覆寫）套上去就是把新狀態汙染回舊
+      // 對話——晚到的回應一律丟棄。
+      if (my !== reqId.current) return
       qaId = r.qa_id
       // 首題尚未收到 done 時，資料庫以 COALESCE(conversation_id, id) 將停止列
       // 視為自己的對話。沿用 qa_id，才能讓後續重生／續問留在同一串。
@@ -173,8 +186,8 @@ export function useAskController(): UseAskController {
         setConversationId(r.qa_id)
         void qc.invalidateQueries({ queryKey: ['conversations'] })
       }
-    } catch { /* fail-open：仍標 stopped */ }
-    dispatch({ type: 'ask-stop', id: turnId, qaId })
+      dispatch({ type: 'ask-stop', id: turnId, qaId })
+    } catch { /* fail-open：已先標 stopped，僅 qaId 補不上 */ }
   }, [qc])
 
   const regenerate = useCallback((turnId: string, qaId: string | null, question: string) => {

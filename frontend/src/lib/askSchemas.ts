@@ -190,5 +190,8 @@ export const qaVersionSchema = z.object({
   stages: z.array(askStage).catch([]),
   feedback: z.enum(['like', 'dislike']).nullable().default(null),
   created_at: z.string().nullish(),
+  // 停止的部分答案在版本 pager 要標得出來。default(false) 讓舊後端（沒回這欄）
+  // 滾動部署期間不會整包 parse 失敗。
+  stopped: z.boolean().default(false),
 })
 export type QaVersion = z.infer<typeof qaVersionSchema>

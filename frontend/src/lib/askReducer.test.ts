@@ -216,6 +216,73 @@ describe('askReducer M3', () => {
     expect(s.turns[0].phase).toBe('stopped')
   })
 
+  it('重生零 token 就失敗（error 事件）→ 回滾快照：舊答案還原成 live、versionCount 退回', () => {
+    // 不回滾的話，error 分支不渲染版本 pager，被快照走的舊答案在畫面上完全不可達
+    // ——使用者看到的是「按了重新生成，原本的答案被吃掉了」。
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', qa_id: 'qa1' } } })
+    s = askReducer(s, { type: 'regenerate-start', id: 't1' })
+    expect(s.turns[0].answer).toBe('')
+    expect(s.turns[0].versionCount).toBe(2)
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'error', data: { detail: '問答排隊人數已滿' } } })
+    const t = s.turns[0]
+    expect(t.phase).toBe('error')
+    expect(t.errorText).toBe('問答排隊人數已滿')
+    expect(t.answer).toBe('答案')       // 舊答案還原
+    expect(t.qaId).toBe('qa1')
+    expect(t.versionCount).toBe(1)      // 樂觀 +1 退回
+    expect(t.priorVersions).toHaveLength(0)
+  })
+
+  it('重生零 token 就斷線（ask-end）→ 同樣回滾快照', () => {
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', qa_id: 'qa1' } } })
+    s = askReducer(s, { type: 'regenerate-start', id: 't1' })
+    s = askReducer(s, { type: 'ask-end', id: 't1' })
+    const t = s.turns[0]
+    expect(t.phase).toBe('error')
+    expect(t.answer).toBe('答案')
+    expect(t.versionCount).toBe(1)
+  })
+
+  it('重生已串出部分文字才失敗 → 不回滾（部分答案保留渲染）', () => {
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'done', data: { conversation_id: 'c', qa_id: 'qa1' } } })
+    s = askReducer(s, { type: 'regenerate-start', id: 't1' })
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'token', data: '重生到一半' } })
+    s = askReducer(s, { type: 'ask-end', id: 't1' })
+    const t = s.turns[0]
+    expect(t.phase).toBe('error')
+    expect(t.answer).toBe('重生到一半')
+    expect(t.versionCount).toBe(2)      // 快照留著，舊版仍在 priorVersions
+    expect(t.priorVersions).toHaveLength(1)
+  })
+
+  it('regenerate-start 的快照記下 stopped 旗標（停止輪重生後，舊版在 pager 標得出「已停止」）', () => {
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-stop', id: 't1', qaId: 'qa-stop' })
+    s = askReducer(s, { type: 'regenerate-start', id: 't1' })
+    expect(s.turns[0].priorVersions[0].stopped).toBe(true)
+  })
+
+  it('ask-stop 清掉 queuePosition：排隊中停止不能同時顯示「排隊中」與「已停止」', () => {
+    // 排隊中（queued 事件已到）按停止：ThinkingSteps 的標籤以 queuePosition 優先，
+    // 不清掉的話停止輪會永遠寫著「排隊中…」＋排隊說明，與「已停止」互相矛盾。
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'queued', data: { position: 2 } } })
+    s = askReducer(s, { type: 'ask-stop', id: 't1', qaId: 'qa-stop' })
+    expect(s.turns[0].phase).toBe('stopped')
+    expect(s.turns[0].queuePosition).toBeNull()
+  })
+
+  it('ask-end 清掉 queuePosition：排隊中連線斷掉的錯誤輪不得殘留排隊標籤', () => {
+    let s = seeded()
+    s = askReducer(s, { type: 'ask-event', id: 't1', event: { event: 'queued', data: { position: 1 } } })
+    s = askReducer(s, { type: 'ask-end', id: 't1' })
+    expect(s.turns[0].phase).toBe('error')
+    expect(s.turns[0].queuePosition).toBeNull()
+  })
+
   it('followups sets chips', () => {
     const s = askReducer(seeded(), { type: 'followups', id: 't1', data: ['追問一', '追問二'] })
     expect(s.turns[0].followups).toEqual(['追問一', '追問二'])
@@ -286,8 +353,8 @@ describe('askReducer M3', () => {
 
   it('load-versions fills priorVersions from all-but-last', () => {
     const versions = [
-      { qa_id: 'v1', answer: '答一', sources: [], ext_sources: [], thinking_ms: 100, stages: [], feedback: null, created_at: null },
-      { qa_id: 'v2', answer: '答二', sources: [], ext_sources: [], thinking_ms: 120, stages: [], feedback: 'like' as const, created_at: null },
+      { qa_id: 'v1', answer: '答一', sources: [], ext_sources: [], thinking_ms: 100, stages: [], feedback: null, created_at: null, stopped: false },
+      { qa_id: 'v2', answer: '答二', sources: [], ext_sources: [], thinking_ms: 120, stages: [], feedback: 'like' as const, created_at: null, stopped: false },
     ]
     let s = seeded()
     s = askReducer(s, { type: 'load-versions', id: 't1', versions })

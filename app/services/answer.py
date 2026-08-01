@@ -1005,12 +1005,18 @@ async def _log_qa(
                 )
             if truncate_from is not None:
                 conversation_id, created_at = truncate_from
+                # `id <> :self` 是必要的：INSERT 在前、截斷在後，新列的 created_at
+                # （transaction 起始時刻）必然 >= 被編輯列的時刻，同一交易又讀得到
+                # 自己剛寫的列——少了排除，每一次編輯重問都會把新答案自己標成
+                # inactive，重整後編輯點之後整段對話消失（2026-08-01 對真實 DB 以
+                # probe 實證；先前測試只驗 truncate_from 有被轉傳，驗不到這一層）。
                 await session.execute(
                     text(
                         "UPDATE research.qa_log SET active = false "
-                        "WHERE COALESCE(conversation_id, id) = :cid AND created_at >= :ts"
+                        "WHERE COALESCE(conversation_id, id) = :cid "
+                        "AND created_at >= :ts AND id <> :self"
                     ),
-                    {"cid": conversation_id, "ts": created_at},
+                    {"cid": conversation_id, "ts": created_at, "self": qa_id},
                 )
             await session.commit()
     except Exception:
@@ -1041,14 +1047,20 @@ async def _load_qa_meta(qa_id: str):
 
 
 async def _count_versions(group_key: str) -> int:
-    """某群組（COALESCE(root_qa_id, id)）的版本總數（含 inactive）。"""
+    """某群組（COALESCE(root_qa_id, id)）的版本總數（含 inactive）。
+
+    `AND answer IS NOT NULL` 與 `list_qa_versions` 同一道濾網：LLM 失敗的遙測列
+    （answer=NULL、active=false）在 /versions 端點被擋掉，這裡若照數，done 事件的
+    version_count 會大於版本清單長度，前端 pager 的分母就對不上內容。
+    """
     try:
         async with SessionFactory() as session:
             row = (
                 await session.execute(
                     text(
                         "SELECT count(*) FROM research.qa_log "
-                        "WHERE COALESCE(root_qa_id, id) = :gk"
+                        "WHERE COALESCE(root_qa_id, id) = :gk "
+                        "AND answer IS NOT NULL"
                     ),
                     {"gk": group_key},
                 )
@@ -1067,21 +1079,38 @@ async def log_stopped_qa(
     ext_sources: list[dict] | None = None,
     stages: list[str] | None = None,
     regenerate_of: str | None = None,
+    edit_of: str | None = None,
     request_id: str | None = None,
 ) -> str | None:
     """寫一列停止的部分答案（stopped=true, active=true）；回新 qa_id。
 
-    regenerate_of 有值時：解析其群組鍵作 root_qa_id（續版本鏈）。
+    regenerate_of 有值時：解析其群組鍵作 root_qa_id（續版本鏈），並在同一筆
+    transaction 內把舊版列停用（active=false）——與完成路徑 `_log_qa` 的
+    `deactivate_qa_id` 對稱。少了這一步，停止列與舊版列會同時 active，而
+    `get_conversation` 只濾 `q.active`，重整後同一問題會出現兩輪（舊完整回答＋
+    停止的部分回答）——2026-08-01 端對端實測重現。
+    edit_of 有值時（與 regenerate_of 互斥，regenerate_of 優先）：比照完成路徑的
+    truncate——把被編輯列及其後輪次停用。前端在編輯送出當下已把後續輪次從畫面
+    截掉，後端不跟上的話，重整後被編輯掉的舊輪次會整段復活。
     同一 request_id 的完成／停止請求會由唯一索引收斂成同一列；DB 失敗回 None。
     """
     qa_id = str(uuid.uuid4())
     root_qa_id: str | None = None
+    truncate_from: tuple[str, object] | None = None
     if regenerate_of:
         meta = await _load_qa_meta(regenerate_of)
         if meta is not None:
             old_root, old_conv, _ = meta
             root_qa_id = old_root or regenerate_of
             conversation_id = conversation_id or old_conv
+    elif edit_of:
+        meta = await _load_qa_meta(edit_of)
+        if meta is not None:
+            _old_root, old_conv, old_created = meta
+            conversation_id = conversation_id or old_conv
+            if old_created is not None:
+                # 舊列若無 conversation_id（legacy），其自身 id 即分組鍵
+                truncate_from = (old_conv or edit_of, old_created)
     try:
         async with SessionFactory() as session:
             stmt = text(
@@ -1119,6 +1148,25 @@ async def log_stopped_qa(
             )
             if request_id is not None:
                 qa_id = str(result.scalar_one())
+            if regenerate_of and qa_id != regenerate_of:
+                # qa_id == regenerate_of 只會發生在 request_id 收斂到「舊列自己」的
+                # 理論極端；此時停用等於把唯一一列藏掉，故跳過。
+                await session.execute(
+                    text("UPDATE research.qa_log SET active = false WHERE id = :id"),
+                    {"id": regenerate_of},
+                )
+            if truncate_from is not None:
+                t_cid, t_ts = truncate_from
+                # `id <> :self` 的理由同 `_log_qa`：停止列自己剛插入、created_at 必然
+                # 晚於被編輯列，不排除就會把自己一併藏掉。
+                await session.execute(
+                    text(
+                        "UPDATE research.qa_log SET active = false "
+                        "WHERE COALESCE(conversation_id, id) = :cid "
+                        "AND created_at >= :ts AND id <> :self"
+                    ),
+                    {"cid": t_cid, "ts": t_ts, "self": qa_id},
+                )
             await session.commit()
     except Exception:
         return None
@@ -1254,7 +1302,7 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
                 await session.execute(
                     text(
                         "SELECT id, answer, sources, ext_sources, thinking_ms, "
-                        "stages, feedback, created_at FROM research.qa_log "
+                        "stages, feedback, created_at, stopped FROM research.qa_log "
                         "WHERE COALESCE(root_qa_id, id) = :root "
                         # LLM 失敗那一輪會以 answer=NULL、active=false 落庫（供監控
                         # 分辨 529 過載與程式 bug）。本查詢是唯一沒有 active 過濾的
@@ -1269,7 +1317,8 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
     except Exception:
         return []
     out = []
-    for (qid, answer, sources, ext_sources, thinking_ms, stages, feedback, created) in rows:
+    for (qid, answer, sources, ext_sources, thinking_ms, stages, feedback, created,
+         stopped) in rows:
         out.append({
             "qa_id": str(qid),
             "answer": answer,
@@ -1279,6 +1328,8 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
             "stages": stages or [],
             "feedback": feedback,
             "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+            # 停止的部分答案在版本 pager 裡要標得出來，否則與完整回答無從分辨
+            "stopped": bool(stopped),
         })
     return out
 
@@ -2097,8 +2148,10 @@ async def answer_question(
             thinking_ms=thinking_ms,
             stages=stages_seen,
             root_qa_id=new_root,
-            deactivate_qa_id=deactivate_qa_id,
-            truncate_from=truncate_from,
+            # 刻意不帶 deactivate_qa_id / truncate_from：docstring 的契約是「新列
+            # **成功**寫入時才停用舊列／截斷後續」。失敗列自己是 active=false 的
+            # 遙測列，若在這裡照常停用，重生撞上 529 會把使用者原本的答案從對話
+            # 歷史藏掉、編輯失敗會把編輯點之後的輪次全部截掉——症狀都是靜默的。
             request_id=request_id,
             # active=false 讓四條使用者面讀取路徑中的三條自動跳過它
             # （condense 脈絡、/api/history、list_conversations 的 FILTER），

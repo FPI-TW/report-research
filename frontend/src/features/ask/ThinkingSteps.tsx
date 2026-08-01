@@ -12,7 +12,8 @@ export function ThinkingSteps({ turn }: { turn: Turn }) {
   const live = turn.phase === 'thinking' || turn.phase === 'streaming'
   const [open, setOpen] = useState(true)
   const rawSteps = stagesToSteps(turn.stages, turn.webUsed)
-  const terminal = turn.phase === 'done' || turn.phase === 'notice' || turn.phase === 'error'
+  // stopped 也是終局：少了它，停止後的思考卡會留一顆永遠轉圈的 spinner。
+  const terminal = turn.phase === 'done' || turn.phase === 'notice' || turn.phase === 'error' || turn.phase === 'stopped'
   const steps = terminal ? rawSteps.map(s => (s.state === 'active' ? { ...s, state: 'done' as const } : s)) : rawSteps
   const sec = Math.round((turn.thinkingMs ?? 0) / 1000)
   // 排隊中要說出來。後端在取得併發名額前先送 queued（web/concurrency.py）；沿用

@@ -2080,8 +2080,8 @@ class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
         from app.services import answer as ans
 
         rows = [
-            ("v1", "答一", [], [], 100, ["understanding"], None, None),
-            ("v2", "答二", [], [], 120, ["understanding", "generating"], "like", None),
+            ("v1", "答一", [], [], 100, ["understanding"], None, None, True),
+            ("v2", "答二", [], [], 120, ["understanding", "generating"], "like", None, False),
         ]
 
         class _Rows:
@@ -2111,6 +2111,8 @@ class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([v["qa_id"] for v in out], ["v1", "v2"])
         self.assertEqual(out[1]["feedback"], "like")
+        # 停止的部分答案在版本 pager 要標得出來
+        self.assertEqual([v["stopped"] for v in out], [True, False])
 
 
 class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
@@ -2804,6 +2806,40 @@ class LlmFailureStillLogsTests(unittest.IsolatedAsyncioTestCase):
             self._restore(orig)
         self.assertIn("path", logged[0]["filters"])
 
+    async def test_regenerate_failure_keeps_old_row_active(self):
+        """重生撞上 LLM 失敗：失敗列不得停用舊版列、不得截斷後續輪次。
+
+        docstring 的契約是「新列**成功**寫入時才停用舊列／截斷」。失敗列是
+        active=false 的遙測列，照常帶 deactivate_qa_id 會把使用者原本的答案從
+        對話歷史藏掉（症狀靜默：重整後那一輪整個消失）。
+        """
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        old_id = "00000000-0000-4000-8000-000000000001"
+        logged: list[dict] = []
+        orig = self._patch(logged, exc=LLMUnavailableError("529 Overloaded"))
+
+        async def meta(qid):
+            return (None, "conv-1", None)
+
+        orig_meta = ans._load_qa_meta
+        ans._load_qa_meta = meta
+        try:
+            with self.assertRaises(LLMUnavailableError):
+                _ = [e async for e in ans.answer_question(
+                    "台積電展望", regenerate_of=old_id)]
+        finally:
+            ans._load_qa_meta = orig_meta
+            self._restore(orig)
+
+        self.assertEqual(len(logged), 1)
+        kw = logged[0]["kwargs"]
+        self.assertIsNone(kw.get("deactivate_qa_id"), "失敗列不得停用舊版列")
+        self.assertIsNone(kw.get("truncate_from"), "失敗列不得截斷後續輪次")
+        # 版本鏈 metadata 仍要保留：監控端才對得回這次失敗屬於哪一組重生
+        self.assertEqual(kw.get("root_qa_id"), old_id)
+
 
 class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
     """`_log_qa(active=...)` 必須真的 bind 出去，不是寫死 true。
@@ -2865,6 +2901,77 @@ class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
             ans.SessionFactory = orig
         self.assertTrue(qa_id)
         self.assertIsNone(cap["params"]["a"])
+
+
+class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
+    """truncate_from 的 UPDATE 必須排除同交易剛插入的新列自己。
+
+    INSERT 在前、截斷在後：新列的 created_at（transaction 起始時刻）必然 >= 被
+    編輯列的時刻，同一交易又讀得到自己剛寫的列——不排除的話，每一次編輯重問都
+    把新答案標成 inactive，重整後編輯點之後整段對話消失。2026-08-01 以 probe 對
+    真實 DB 實證過（先前測試只驗 truncate_from 有被轉傳，驗不到 SQL 語意）。
+    """
+
+    @staticmethod
+    def _cap(executed):
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                executed.append((str(stmt), params))
+                return None
+            async def commit(self): return None
+        return _CapSession
+
+    async def test_log_qa_truncate_excludes_new_row(self):
+        from app.services import answer as ans
+
+        executed: list[tuple[str, dict]] = []
+        orig = ans.SessionFactory
+        ans.SessionFactory = self._cap(executed)
+        try:
+            qa_id = await ans._log_qa(
+                "編輯後問題", "編輯後答案", [], {}, 1, [],
+                conversation_id="c1", truncate_from=("c1", "TS"),
+            )
+        finally:
+            ans.SessionFactory = orig
+
+        truncs = [(s, p) for s, p in executed if "created_at >= :ts" in s]
+        self.assertEqual(len(truncs), 1, "缺 truncate UPDATE")
+        sql, params = truncs[0]
+        self.assertIn("id <> :self", sql, "truncate 沒有排除新列自己")
+        self.assertEqual(params["self"], qa_id)
+
+    async def test_log_stopped_edit_of_truncates_and_excludes_self(self):
+        """編輯途中停止：停止列落庫時要做與完成路徑相同的截斷（同樣排除自己）。"""
+        from app.services import answer as ans
+
+        executed: list[tuple[str, dict]] = []
+
+        async def meta(qid):
+            return (None, "c1", "TS")
+
+        orig = (ans.SessionFactory, ans._load_qa_meta)
+        ans.SessionFactory = self._cap(executed)
+        ans._load_qa_meta = meta
+        try:
+            qa_id = await ans.log_stopped_qa(
+                "編輯後問題", "部分答案", edit_of="edited-1",
+            )
+        finally:
+            (ans.SessionFactory, ans._load_qa_meta) = orig
+
+        truncs = [(s, p) for s, p in executed if "created_at >= :ts" in s]
+        self.assertEqual(len(truncs), 1, "edit_of 停止未觸發截斷")
+        sql, params = truncs[0]
+        self.assertIn("id <> :self", sql)
+        self.assertEqual(params["self"], qa_id)
+        self.assertEqual(params["cid"], "c1")
+        self.assertEqual(params["ts"], "TS")
+        # 編輯是全新輪次、不進版本群組；也不得誤發 regenerate 的單列停用
+        self.assertFalse([s for s, _ in executed
+                          if "SET active = false WHERE id = :id" in s])
 
 
 class LlmErrorKindTests(unittest.TestCase):
@@ -2953,13 +3060,13 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
     async def test_log_stopped_resolves_root_from_regenerate_of(self):
         from app.services import answer as ans
 
-        captured = {}
+        executed = []
 
         class _CapSession:
             async def __aenter__(self): return self
             async def __aexit__(self, *a): return False
             async def execute(self, stmt, params=None):
-                captured["params"] = params
+                executed.append((str(stmt), params))
                 return None
             async def commit(self): return None
 
@@ -2974,7 +3081,65 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
 
-        self.assertEqual(captured["params"]["root"], "root-x")
+        # 停止列落庫後另有一發停用舊版列的 UPDATE，故只看 INSERT 那一發的參數
+        insert_params = next(p for s, p in executed if "INSERT" in s)
+        self.assertEqual(insert_params["root"], "root-x")
+
+    async def test_log_stopped_deactivates_old_version_row(self):
+        """停止重生時舊版列要在同一交易內停用（與 `_log_qa` 的 deactivate 對稱）。
+
+        少了這一步，停止列與舊版列同時 active，`get_conversation` 只濾 `q.active`，
+        重整後同一問題會出現兩輪——2026-08-01 對生產的端對端實測重現過。
+        """
+        from app.services import answer as ans
+
+        executed = []
+
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                executed.append((str(stmt), params))
+                return None
+            async def commit(self): return None
+
+        async def meta(qid):
+            return (None, "c1", None)  # 舊列無 root → 以自身為群組鍵
+
+        orig = (ans.SessionFactory, ans._load_qa_meta)
+        ans.SessionFactory = lambda: _CapSession()
+        ans._load_qa_meta = meta
+        try:
+            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1")
+        finally:
+            (ans.SessionFactory, ans._load_qa_meta) = orig
+
+        deacts = [(s, p) for s, p in executed if "active = false" in s]
+        self.assertEqual(len(deacts), 1, "缺少舊版列停用（UPDATE active=false）")
+        self.assertEqual(deacts[0][1]["id"], "old-1")
+
+    async def test_log_stopped_without_regenerate_does_not_deactivate(self):
+        """一般停止（非重生）沒有舊版列可停用，不得多發 UPDATE。"""
+        from app.services import answer as ans
+
+        executed = []
+
+        class _CapSession:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                executed.append(str(stmt))
+                return None
+            async def commit(self): return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _CapSession()
+        try:
+            await ans.log_stopped_qa("q", "部分", conversation_id="c1")
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertFalse([s for s in executed if "active = false" in s])
 
     async def test_log_stopped_reuses_existing_row_for_same_request_id(self):
         from app.services import answer as ans

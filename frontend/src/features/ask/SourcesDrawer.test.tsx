@@ -8,7 +8,7 @@ function view(over: Partial<AnswerView>): AnswerView {
     answer: '',
     sources: [{ n: 1, report_id: 'r1', file_name: '台積電.pdf', market: 'TW', report_date: '2026-06-20', is_latest: false }],
     extSources: [{ title: '外部新聞', url: 'https://news.example.com/a' }],
-    qaId: 'qa1', feedback: null,
+    qaId: 'qa1', feedback: null, stopped: false,
     ...over,
   }
 }

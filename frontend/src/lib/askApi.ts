@@ -19,13 +19,17 @@ export async function stopAsk(body: {
   ext_sources?: unknown[]
   stages?: string[]
   regenerate_of?: string
+  edit_of?: string
   request_id?: string
 }): Promise<{ qa_id: string }> {
+  // 帶逾時：呼叫端已先把 UI 標成 stopped、事後才補 qaId（fail-open），這個請求
+  // 掛住十幾秒只會讓晚到的回應更容易撞上世代檢查被丟棄，不如早點放棄。
   const resp = await fetch('/api/ask/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     credentials: 'same-origin',
+    signal: AbortSignal.timeout(10_000),
   })
   if (!resp.ok) throw new Error(`stop failed: ${resp.status}`)
   return resp.json()

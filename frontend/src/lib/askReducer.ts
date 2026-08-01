@@ -41,6 +41,8 @@ export interface TurnVersion {
   stages: AskStage[]
   feedback: 'like' | 'dislike' | null
   followups: string[]
+  /** 這一版是不是被中斷的部分答案。缺了它，停止列在版本 pager 裡會偽裝成完整回答。 */
+  stopped: boolean
 }
 
 export interface AnswerView {
@@ -49,6 +51,7 @@ export interface AnswerView {
   extSources: ExtSource[]
   feedback: 'like' | 'dislike' | null
   qaId: string | null
+  stopped: boolean
 }
 
 export interface Turn {
@@ -89,6 +92,7 @@ export function visibleAnswerView(turn: Turn): AnswerView {
     extSources: turn.extSources,
     feedback: turn.feedback,
     qaId: turn.qaId,
+    stopped: turn.phase === 'stopped',
   }
   return turn.versionIndex === turn.versionCount - 1
     ? live
@@ -121,6 +125,28 @@ export type AskAction =
 
 function mapTurn(turns: Turn[], id: string, fn: (t: Turn) => Turn): Turn[] {
   return turns.map(t => (t.id === id ? fn(t) : t))
+}
+
+/**
+ * 重生「一個 token 都還沒串出來」就失敗時，回滾 regenerate-start 的樂觀變更：
+ * 把最後一個快照還原成 live、versionCount 退回。不回滾的話，error 分支不渲染
+ * 版本 pager，被快照走的舊答案在畫面上完全不可達——使用者看到的是「按了重新
+ * 生成，原本的答案被吃掉了」。已串出部分文字時不回滾（部分答案本身有資訊價值，
+ * error 分支會照常渲染它）。
+ */
+function rollbackRegenIfEmpty(t: Turn): Turn {
+  if (t.answer !== '' || t.priorVersions.length === 0) return t
+  if (t.phase !== 'thinking' && t.phase !== 'streaming') return t
+  const prior = t.priorVersions[t.priorVersions.length - 1]
+  return {
+    ...t,
+    answer: prior.answer, sources: prior.sources, extSources: prior.extSources,
+    qaId: prior.qaId, thinkingMs: prior.thinkingMs, stages: prior.stages,
+    feedback: prior.feedback, followups: prior.followups,
+    priorVersions: t.priorVersions.slice(0, -1),
+    versionCount: t.versionCount - 1,
+    versionIndex: t.priorVersions.length - 1,
+  }
 }
 
 function applyAsk(turn: Turn, ev: AskEvent): Turn {
@@ -163,7 +189,10 @@ function applyAsk(turn: Turn, ev: AskEvent): Turn {
       versionIndex: (ev.data.version_count ?? t.versionCount) - 1,
       report: ev.data.offer_report ? { ...t.report, status: 'offered', title: ev.data.report_title ?? null } : t.report,
     }
-    case 'error': return { ...t, phase: 'error', errorText: ev.data.detail }
+    case 'error': {
+      const rolled = rollbackRegenIfEmpty(t)
+      return { ...rolled, phase: 'error', errorText: ev.data.detail }
+    }
   }
 }
 
@@ -219,8 +248,11 @@ export function askReducer(state: AskState, action: AskAction): AskState {
     case 'ask-event': return { turns: mapTurn(state.turns, action.id, t => applyAsk(t, action.event)) }
     case 'ask-end': return {
       turns: mapTurn(state.turns, action.id, t => {
+        // queuePosition 一併清掉：排隊中就失敗（伺服器重啟、連線斷）時，留著會讓
+        // 錯誤輪的思考卡標籤仍寫「排隊中…」——與 applyAsk 的「任何後續事件關閉排隊」
+        // 同一條規則，只是這裡的後續事件是終局。
         if (t.phase === 'notice' || t.phase === 'done' || t.phase === 'error' || t.phase === 'stopped') return t
-        return { ...t, phase: 'error', errorText: '查詢逾時或失敗' }
+        return { ...rollbackRegenIfEmpty(t), phase: 'error', errorText: '查詢逾時或失敗', queuePosition: null }
       }),
     }
     case 'report-start': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...idleReport, status: 'generating', title: t.reportTitle, startedAt: action.startedAt } })) }
@@ -237,7 +269,9 @@ export function askReducer(state: AskState, action: AskAction): AskState {
     case 'load': return { turns: action.turns }
     case 'reset': return { turns: [] }
     case 'ask-stop': return {
-      turns: mapTurn(state.turns, action.id, t => ({ ...t, phase: 'stopped', qaId: action.qaId ?? t.qaId })),
+      // queuePosition 清掉的理由同 ask-end：排隊中按停止，留著會讓「已停止」的輪
+      // 同時顯示「排隊中…」與排隊說明，兩個狀態互相矛盾。
+      turns: mapTurn(state.turns, action.id, t => ({ ...t, phase: 'stopped', qaId: action.qaId ?? t.qaId, queuePosition: null })),
     }
     case 'followups': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, followups: action.data })) }
     case 'regenerate-start': return {
@@ -245,6 +279,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
         const snapshot: TurnVersion = {
           answer: t.answer, sources: t.sources, extSources: t.extSources, qaId: t.qaId,
           thinkingMs: t.thinkingMs, stages: t.stages, feedback: t.feedback, followups: t.followups,
+          stopped: t.phase === 'stopped',
         }
         const priorVersions = [...t.priorVersions, snapshot]
         return {
@@ -276,6 +311,7 @@ export function askReducer(state: AskState, action: AskAction): AskState {
         const prior: TurnVersion[] = action.versions.slice(0, -1).map(v => ({
           answer: v.answer, sources: v.sources, extSources: v.ext_sources, qaId: v.qa_id,
           thinkingMs: v.thinking_ms, stages: v.stages, feedback: v.feedback, followups: [],
+          stopped: v.stopped,
         }))
         return { ...t, priorVersions: prior, versionIndex: prior.length, versionCount: action.versions.length }
       }),

@@ -1475,9 +1475,16 @@ async def set_report_offer_declined(qa_id: str, declined: bool) -> bool:
         async with SessionFactory() as session:
             result = await session.execute(
                 text(
+                    # CAST(:d AS boolean) 的顯式 cast 是必要的：jsonb_build_object
+                    # 的值參數是 "any" 型參數位，asyncpg prepare 時 PostgreSQL 推
+                    # 不出 $1 的型別，沒有 cast 會炸 IndeterminateDatatypeError——
+                    # mock 測試驗不到，2026-08-03 對真 DB probe 才抓到（與 truncate
+                    # 自傷同一課）。寫成 `:d::boolean` 也不行：SQLAlchemy text() 的
+                    # bind 解析不吃緊接 `::` 的參數，會原樣送出而炸語法錯誤。
                     "UPDATE research.qa_log SET filters = "
                     "COALESCE(filters, '{}'::jsonb) "
-                    "|| jsonb_build_object('report_offer_declined', :d) "
+                    "|| jsonb_build_object('report_offer_declined', "
+                    "CAST(:d AS boolean)) "
                     "WHERE id = :id"
                 ),
                 {"d": declined, "id": qa_id},

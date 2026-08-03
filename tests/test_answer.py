@@ -2117,7 +2117,13 @@ class ReportOfferPersistenceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(ok)
         self.assertIn("COALESCE(filters, '{}'::jsonb)", captured["sql"])
-        self.assertIn("jsonb_build_object('report_offer_declined', :d)", captured["sql"])
+        # CAST 是必要的（jsonb_build_object 的 "any" 參數位推不出型別，asyncpg
+        # prepare 直接炸；`:d::boolean` 寫法則過不了 SQLAlchemy 的 bind 解析）
+        # ——這條斷言釘住 cast 不被「清理」掉
+        self.assertIn(
+            "jsonb_build_object('report_offer_declined', CAST(:d AS boolean))",
+            captured["sql"],
+        )
         self.assertIs(captured["params"]["d"], True)
         self.assertEqual(captured["params"]["id"], "qa-1")
 

@@ -14,15 +14,25 @@ export function ThinkingSteps({ turn }: { turn: Turn }) {
   const rawSteps = stagesToSteps(turn.stages, turn.webUsed)
   // stopped 也是終局：少了它，停止後的思考卡會留一顆永遠轉圈的 spinner。
   const terminal = turn.phase === 'done' || turn.phase === 'notice' || turn.phase === 'error' || turn.phase === 'stopped'
-  const steps = terminal ? rawSteps.map(s => (s.state === 'active' ? { ...s, state: 'done' as const } : s)) : rawSteps
+  const settled = terminal ? rawSteps.map(s => (s.state === 'active' ? { ...s, state: 'done' as const } : s)) : rawSteps
+  // 停止的輪不會再前進：pending 步驟一律收掉，殘留的灰點會讀成「還在等」，
+  // 與下方的「已停止生成」互相矛盾（2026-08-03 實際回報的版面缺陷）。
+  const steps = turn.phase === 'stopped' ? settled.filter(s => s.state !== 'pending') : settled
   const sec = Math.round((turn.thinkingMs ?? 0) / 1000)
   // 排隊中要說出來。後端在取得併發名額前先送 queued（web/concurrency.py）；沿用
   // 「思考中…」會讓人以為已經在算，實際上一個字都還沒開始跑。
   const queued = turn.queuePosition !== null
+  // 停止在思考完成之前（thinkingMs 還沒量到）不能寫「已思考 0 秒」——那是沒發生
+  // 過的事；誠實說「思考已中斷」。
   const label = queued
     ? (turn.queuePosition && turn.queuePosition > 1 ? `排隊中（第 ${turn.queuePosition} 位）…` : '排隊中…')
-    : live ? '思考中…' : `已思考 ${sec} 秒`
-  const hasSteps = turn.stages.length > 0
+    : live ? '思考中…'
+    : turn.phase === 'stopped' && turn.thinkingMs == null ? '思考已中斷'
+    : `已思考 ${sec} 秒`
+  // 兩個條件缺一不可：stages 空（歷史重播的舊列）時 stagesToSteps 仍回整排
+  // pending，只看 steps.length 會顯示一份假清單；stopped 過濾後可能一步不剩，
+  // 只看 stages.length 會留下空清單的收合箭頭。
+  const hasSteps = turn.stages.length > 0 && steps.length > 0
 
   return (
     <div className={styles.card}>

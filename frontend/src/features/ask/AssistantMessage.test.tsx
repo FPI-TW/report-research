@@ -152,3 +152,11 @@ test('檢視舊版快照時，資料來源操作帶出該版來源', () => {
   fireEvent.click(screen.getByRole('button', { name: '資料來源 1' }))
   expect(onOpenSources).toHaveBeenCalledWith(expect.objectContaining({ sources: [oldSource] }))
 })
+
+test('「已停止生成」是 block：行內元素會黏到 inline-block 思考卡右側漂著', () => {
+  // 2026-08-03 實際回報的版面缺陷：.stopped 原是 inline-block，思考卡也是
+  // inline-block，兩者同行並排、「已停止」浮在卡片右側。釘死 display，回歸即紅。
+  render(<AssistantMessage turn={makeTurn({ phase: 'stopped', answer: '' })} {...noop} />)
+  const marker = screen.getByText('已停止生成')
+  expect(getComputedStyle(marker).display).toBe('block')
+})

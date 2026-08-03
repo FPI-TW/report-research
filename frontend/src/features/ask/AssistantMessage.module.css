@@ -58,7 +58,9 @@
 .srcBtn:hover { background: var(--tf-graphite-tint); border-color: var(--tf-graphite); color: var(--tf-graphite); }
 /* 唯一保留的 @keyframes（供上方串流游標 ::after 用）；CSS Modules 會在地化雜湊 animation 名，須就地定義。 */
 @keyframes tf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-.stopped { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--tf-text-3); }
+/* 已停止生成：自成一行的弱化說明（比照 ChatGPT）。block 是必要的——思考卡是
+   inline-block，用行內元素會黏到卡片右側同一行漂著。 */
+.stopped { display: block; margin: 2px 0 0; font-size: 13px; color: var(--tf-text-3); }
 .pager { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .pagerBtn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 14px; line-height: 1; cursor: pointer; }
 .pagerBtn:hover:not(:disabled) { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }

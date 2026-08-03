@@ -29,10 +29,10 @@ export function FeatureTile({ row, mode, isLatest, className }: Props) {
   if (mode === 'search' && date) data.push(date.slice(5))
 
   return (
-    // 真連結：cmd+click／中鍵／複製連結；命中的 chunk 帶進 query 供閱讀頁定位。
+    // 真連結：cmd+click／中鍵／複製連結都拿得回來。
     <MotionLink
       className={`${styles.tile}${className ? ` ${className}` : ''}`}
-      to={reportHref(row.file_hash, row.passages?.[0]?.chunk_index)}
+      to={reportHref(row.file_hash)}
       style={{ '--c': marketColor(market) } as CSSProperties}
       whileHover={reduced ? undefined : { y: -2, transition: springHover }}
       aria-label={displayTitle(row)}

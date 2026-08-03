@@ -93,7 +93,7 @@ export function BentoWall({
           {listRows.map(r => {
             const date = (r.report_date ?? '').slice(0, 10)
             return (
-              // 真連結：cmd+click／中鍵／複製連結（瀏覽態無命中，故不帶 chunk）
+              // 真連結：cmd+click／中鍵／複製連結都拿得回來。
               <MotionLink
                 key={r.report_id}
                 className={styles.lrow}

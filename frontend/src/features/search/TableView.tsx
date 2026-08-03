@@ -53,7 +53,7 @@ export function TableView({ rows, mode, sort, onSort }: Props) {
         <tbody>
           {sorted.map(r => {
             const targets = [...(r.stock_targets ?? []), ...(r.futures_targets ?? [])]
-            const href = reportHref(r.file_hash, r.passages?.[0]?.chunk_index)
+            const href = reportHref(r.file_hash)
             return (
               // <tr> 不能是連結，故整列仍以 navigate 開啟；報告名稱另包真 <Link>，
               // 讓 cmd+click／中鍵／複製連結在表格檢視同樣拿得回來。

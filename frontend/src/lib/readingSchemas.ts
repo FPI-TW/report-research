@@ -26,10 +26,13 @@ export const thesisKeySchema = z.enum(['outlook', 'catalyst', 'risk', 'valuation
 export type ThesisKey = z.infer<typeof thesisKeySchema>
 
 /**
- * 一條重點摘錄。quote_start 為 null＝不可跳，前端顯示條目但不給跳轉。
+ * 一條重點摘錄。條目與逐字引文一律顯示；quote_start 為 null＝錨點無效。
  *
  * null 的成因（錨不到／驗章不過／落在 /text 的截斷範圍外）全由後端判斷並收回，
- * 前端不重造這個判斷 —— 兩邊各自判會分岔成「顯示可點、點下去卻找不到錨點」。
+ * 前端不重造這個判斷 —— **錨點有效與否只該有一個真相來源**。
+ *
+ * 三個 offset 欄位**目前沒有任何前端消費端**（引文跳轉已於 2026-08-03 隨文字檢視
+ * 移除），保留宣告是為了後端契約完整與日後恢復的可逆性，不是遺漏。
  */
 export const takeawaySchema = z.object({
   ordinal: z.number().int(),
@@ -75,7 +78,7 @@ export const signalSchema = z.object({
 })
 export type Signal = z.infer<typeof signalSchema>
 
-/** 閱讀頁骨架。不含全文 —— PDF 是預設檢視，用不到；全文另走 /text。 */
+/** 閱讀頁骨架。不含全文 —— 絕大多數研報直接內嵌 PDF，用不到；全文另走 /text。 */
 export const readingDocSchema = z.object({
   report_id: z.string(),
   file_hash: z.string(),
@@ -96,7 +99,11 @@ export const readingDocSchema = z.object({
 
   text_state: textStateSchema.default('missing'),
   text_chars: z.number().int().default(0),
-  /** sha256(clean_extracted(full_text))。只在與 /text 回傳相符時才啟用引文跳轉。 */
+  /**
+   * sha256(clean_extracted(full_text))。前端目前不消費（引文跳轉已移除）——
+   * 保留宣告是因為後端仍在回，且它是「摘錄與全文是否同源」的唯一驗章依據，
+   * 日後要恢復跳轉就要靠它。
+   */
   text_sha256: z.string().nullish(),
 
   takeaways: z.array(takeawaySchema).default([]),
@@ -112,13 +119,10 @@ export const readingTextSchema = z.object({
   text_sha256: z.string(),
   text_chars: z.number().int(),
   truncated: z.boolean().default(false),
-  /**
-   * 檢索命中段的字元區間；僅當抓取帶 ?chunk= 且該段錨定成功時有值。
-   * 錨不到＝null → 前端不高亮，但頁面照常（不是錯誤）。
-   * 不需驗章：與同一回應的 text 出自同一份正典文字，必然同源。
-   */
-  chunk_start: z.number().int().nullish(),
-  chunk_end: z.number().int().nullish(),
+  // 後端仍會回 chunk_start/chunk_end（僅在帶 ?chunk= 時有值），但前端不再帶那個參數、
+  // 也沒有命中高亮的落點，故刻意不宣告 —— zod 預設 strip，多回的鍵會被安靜丟掉。
+  // 注意這個 strip 是雙面刃：日後後端**新增**的欄位同樣會被安靜丟掉，加欄位時要記得
+  // 同步在這裡宣告（用 optional()，滾動部署才不會整頁 parse 失敗）。
 })
 export type ReadingText = z.infer<typeof readingTextSchema>
 

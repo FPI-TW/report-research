@@ -27,10 +27,10 @@ export function ResultRow({ row, isLatest, terms, index = 0 }: Props) {
   const snippet = row.passages?.[0]?.content ?? ''
 
   return (
-    // 真連結：cmd+click／中鍵／複製連結；命中的 chunk 帶進 query 供閱讀頁定位。
+    // 真連結：cmd+click／中鍵／複製連結都拿得回來。
     <MotionLink
       className={styles.rrow}
-      to={reportHref(row.file_hash, row.passages?.[0]?.chunk_index)}
+      to={reportHref(row.file_hash)}
       style={{ '--c': marketColor(market) } as CSSProperties}
       variants={revealVariantsFor('up')}
       initial="hidden"

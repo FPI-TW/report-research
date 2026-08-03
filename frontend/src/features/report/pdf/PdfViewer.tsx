@@ -94,8 +94,8 @@ function Chrome({
   const total = scrollState?.totalPages ?? 0
 
   // 頁碼輸入：只在使用者實際編輯時才有草稿值，其餘時間直接顯示目前頁碼。
-  // 這樣就不需要「用 effect 把 state 同步到 prop」——那正是本 repo 兩處
-  // eslint-disable 的來源，不該再開第三處。
+  // 這樣就不需要「用 effect 把 state 同步到 prop」——那正是本 repo 唯一那處
+  // eslint-disable 的來源，不該再開第二處。
   const [pageDraft, setPageDraft] = useState<string | null>(null)
   const commitPage = () => {
     const n = Number(pageDraft)
@@ -296,7 +296,9 @@ function Chrome({
  * 的邊界接住並退回瀏覽器內建 iframe。理由是「回退」是 PdfPane 的職責（它同時握有
  * 非 PDF、無檔案等其他分支），把降級決策分散到兩個地方會出現兩套不一致的降級規則。
  *
- * 已知未實作：全文搜尋與命中刻度（`@embedpdf/plugin-search`）。
+ * 已知未實作：**文字層與選取**（`@embedpdf/plugin-selection`）。`RenderLayer` 是 canvas，
+ * 所以這頁的原文選不起來、複製不了，螢幕閱讀器也讀不到內文 —— 閱讀頁的文字檢視移除後
+ * （2026-08-03），站內已無其他取得研報純文字的介面。要補只能導入 selection 外掛。
  */
 export default function PdfViewer({ url, title }: Props) {
   // WASM 自架，**刻意不用套件預設的 CDN**：本站在 Cloudflare Tunnel ＋ 登入牆之後，
@@ -349,8 +351,8 @@ export default function PdfViewer({ url, title }: Props) {
   )
 
   // 逾時狀態只由計時器寫入、**不在 effect 裡重設**：換 url 時 `timedOutUrl !== url`
-  // 自然就是 false，免掉一次 set-state-in-effect（本 repo 對該 lint 規則的兩處豁免
-  // 都附了理由，不該再開第三處）。readyRef 是 ref，換 url 時就地重設不觸發渲染。
+  // 自然就是 false，免掉一次 set-state-in-effect（本 repo 對該 lint 規則目前只有一處
+  // 豁免且附了理由，不該再開第二處）。readyRef 是 ref，換 url 時就地重設不觸發渲染。
   const [timedOutUrl, setTimedOutUrl] = useState<string | null>(null)
   // 存「哪一個 url 已就緒」而不是布林旗標，於是**不需要在 effect 裡重設**。
   // 用布林＋重設會壞掉，而且壞得很安靜：React 的子 effect 先於父 effect 執行，
@@ -446,9 +448,9 @@ function ViewerBody({
   useEffect(onReady, [onReady])
 
 
-  // 鍵盤操作。掛在 window 是安全的：切到「文字」檢視時 ReportPage 會整個卸載
-  // PdfPane（見 ReportPage.tsx 的 `view === 'pdf' ? <PdfPane/>`），所以這個監聽
-  // 只在 PDF 真的顯示時存在。
+  // 鍵盤操作。掛在 window 是安全的：離開閱讀頁時 ReportPage 會整個卸載 PdfPane
+  // （內嵌不了 PDF 的研報則根本不掛，見 ReportPage.tsx 的 pdfViewable），
+  // 所以這個監聽只在 PDF 真的顯示時存在。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null

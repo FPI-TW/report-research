@@ -1,4 +1,4 @@
-import type { ReadingDoc, ReadingRatingNorm, Takeaway, ThesisKey } from '../../lib/readingSchemas'
+import type { ReadingDoc, ReadingRatingNorm, ThesisKey } from '../../lib/readingSchemas'
 
 /** file_hash 為 sha256 十六進位；非 64-hex 前端先擋一次（不打 API）。 */
 const HASH_RE = /^[0-9a-f]{64}$/i
@@ -6,10 +6,14 @@ export function isValidHash(hash: string | null | undefined): boolean {
   return typeof hash === 'string' && HASH_RE.test(hash)
 }
 
-/** 閱讀頁連結；帶 chunk 時閱讀頁預設落在文字檢視。 */
-export function reportHref(fileHash: string, chunkIndex?: number | null): string {
-  const base = `/report/${fileHash}`
-  return chunkIndex == null ? base : `${base}?chunk=${chunkIndex}`
+/**
+ * 閱讀頁連結。
+ *
+ * 刻意不帶任何 query：閱讀頁已無文字檢視，命中的 chunk_index 沒有消費端，
+ * 帶著它只會在網址列留下一個沒有作用的參數（本 repo 最容易誤導下一個人的那種殘留）。
+ */
+export function reportHref(fileHash: string): string {
+  return `/report/${fileHash}`
 }
 
 export const RATING_DISPLAY: Record<ReadingRatingNorm, string> = {
@@ -134,106 +138,4 @@ export function targetSub(
 export function currencyPrefix(currency: string | null | undefined): string {
   if (!currency) return ''
   return CURRENCY_PREFIX[currency] ?? `${currency} `
-}
-
-/** 摘錄可否跳轉：需有 quote_start/quote_end，且正典文字未漂移（sha 相符）。 */
-export function isJumpable(t: Takeaway): boolean {
-  return t.quote_start != null && t.quote_end != null && t.quote_end > t.quote_start
-}
-
-/** 文字檢視的引文 DOM 標記；以 ordinal 為鍵（後端保證同篇內唯一）。 */
-export function quoteAttr(ordinal: number): string {
-  return `q${ordinal}`
-}
-
-export interface TextSegment {
-  key: string
-  text: string
-  /** 有值＝此段為某條摘錄的引文，需上標記可跳轉；無值＝一般內文。 */
-  ordinal?: number
-  /** 此段落在檢索命中的區間內（?chunk= 帶進來的那一段）。 */
-  hit?: true
-}
-
-/** 檢索命中段的字元區間（後端 /text?chunk= 回的 chunk_start/chunk_end）。 */
-export interface HitRange {
-  start: number
-  end: number
-}
-
-/** 命中區間與正典文字的交集；越界、反向、錨不到一律視為無命中。len 為 code point 數。 */
-function clampHit(len: number, hit: HitRange | null | undefined): HitRange | null {
-  if (!hit) return null
-  const start = Math.max(0, hit.start)
-  const end = Math.min(len, hit.end)
-  return end > start ? { start, end } : null
-}
-
-/** 區間 [start, end) 是否與命中段有交集。 */
-function inHit(hit: HitRange | null, start: number, end: number): true | undefined {
-  return hit && start < hit.end && end > hit.start ? true : undefined
-}
-
-/**
- * 依 takeaways 的 quote_start/quote_end 把正典文字切成 segment，並標出命中段。
- *
- * offset 一律由後端（app/services/reading/anchor.py）算好，前端只做切片 ——
- * 不在此重造任何正規化比對邏輯。越界、反向、彼此重疊者略過（先到先得），
- * 略過的摘錄仍會在左欄顯示，只是不可跳。
- *
- * **座標系**：後端 offset 以 Python str（Unicode code point）為單位，但 JS 字串是
- * UTF-16 —— 星平面字元（罕用 CJK 擴充區、emoji）一個 code point 佔兩個 UTF-16 單位。
- * 若直接用 text.slice/text.length 套 offset，遇到這類字元後所有邊界會右移，高亮與跳段
- * 靜靜落到錯字上（text_sha256 雜湊 UTF-8 位元組、驗不出這種漂移）。故先把文字拆成
- * code point 陣列，全程以 code point 索引，與後端座標系一致。
- *
- * 命中段（hit）與引文是兩套獨立的 offset：一般內文會在命中邊界切開，讓區間內外分別
- * 上色；引文段則整段一起標（不切）—— 切開會讓同一 ordinal 出現兩個 data-q，跳轉錨點
- * 就失去唯一性，而引文最多只會跨越命中邊界一次，視覺誤差可忽略。
- */
-export function buildTextSegments(
-  text: string,
-  takeaways: Takeaway[],
-  hitRange?: HitRange | null,
-): TextSegment[] {
-  // code point 陣列：cp[i] 對應後端 offset i（見上方座標系說明）。
-  const cp = Array.from(text)
-  const len = cp.length
-  const slice = (a: number, b: number) => cp.slice(a, b).join('')
-
-  const hit = clampHit(len, hitRange)
-  const ranges = takeaways
-    .filter(isJumpable)
-    .map(t => ({ start: t.quote_start as number, end: t.quote_end as number, ordinal: t.ordinal }))
-    .filter(r => r.start >= 0 && r.end <= len && r.end > r.start)
-    .sort((a, b) => a.start - b.start)
-
-  const segments: TextSegment[] = []
-  let cursor = 0
-
-  // 一般內文：在命中邊界切開，命中段才標得出來（key 用絕對起點，切幾段都唯一）
-  const pushPlain = (from: number, to: number) => {
-    if (to <= from) return
-    const cuts = hit ? [hit.start, hit.end].filter(c => c > from && c < to) : []
-    const bounds = [from, ...cuts, to]
-    for (let i = 0; i < bounds.length - 1; i++) {
-      const [a, b] = [bounds[i], bounds[i + 1]]
-      segments.push({ key: `t${a}`, text: slice(a, b), hit: inHit(hit, a, b) })
-    }
-  }
-
-  for (const r of ranges) {
-    // 與前一段重疊 → 略過（保留先到者，避免切片錯位）
-    if (r.start < cursor) continue
-    pushPlain(cursor, r.start)
-    segments.push({
-      key: `q${r.ordinal}`,
-      text: slice(r.start, r.end),
-      ordinal: r.ordinal,
-      hit: inHit(hit, r.start, r.end),
-    })
-    cursor = r.end
-  }
-  pushPlain(cursor, len)
-  return segments
 }

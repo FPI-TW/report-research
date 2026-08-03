@@ -13,15 +13,13 @@ export function useReadingDoc(hash: string, enabled = true) {
 }
 
 /**
- * 正典文字：只有切到文字檢視才抓（PDF 是預設檢視，用不到）。
- *
- * chunk 會改變回應內容（後端一併回該段的字元 offset），故必須進 queryKey ——
- * 否則換了 chunk 會拿到上一段的命中位置。
+ * 正典文字：只有內嵌不了原始 PDF（.docx／無檔）時才抓。
+ * PDF 研報永遠不會啟用這支查詢 —— 呼叫端見 ReportPage 的 pdfViewable。
  */
-export function useReadingText(hash: string, enabled: boolean, chunk: number | null = null) {
+export function useReadingText(hash: string, enabled: boolean) {
   return useQuery({
-    queryKey: ['reading-text', hash, chunk],
-    queryFn: () => getReadingText(hash, chunk),
+    queryKey: ['reading-text', hash],
+    queryFn: () => getReadingText(hash),
     enabled: enabled && Boolean(hash),
     staleTime: 5 * 60_000,
     retry: false,

@@ -65,11 +65,13 @@ describe('TableView', () => {
     wrap(<TableView rows={[row({})]} mode="browse" sort={sort} onSort={() => {}} />)
     expect(screen.getByRole('link', { name: 'A.pdf' })).toHaveAttribute('href', `/report/${HASH}`)
   })
-  it('點列導向閱讀頁（帶命中的 chunk）', () => {
+  // 反向釘死：導覽仍要成立，但不得再帶 ?chunk（閱讀頁已無命中定位的落點）
+  it('點列導向閱讀頁，且不帶 ?chunk', () => {
     wrap(<TableView
       rows={[row({ passages: [{ score: 0.9, chunk_index: 3, content: 'x' }] })]}
       mode="search" sort={sort} onSort={() => {}} />)
     fireEvent.click(screen.getByRole('link', { name: 'A.pdf' }))
-    expect(screen.getByTestId('here')).toHaveTextContent(`/report/${HASH}?chunk=3`)
+    expect(screen.getByTestId('here')).toHaveTextContent(`/report/${HASH}`)
+    expect(screen.getByTestId('here').textContent).not.toContain('chunk')
   })
 })

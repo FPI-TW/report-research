@@ -63,19 +63,26 @@ export function ReportHeader({ doc }: Props) {
         <div className={styles.acts}>
           {/* 原始檔是後端端點、不是 SPA 路由：必須用原生 <a>。
               react-router 的 Link 會套上 router 的 basename（/app），
-              變成 /app/api/report/... 而 404。 */}
+              變成 /app/api/report/... 而 404。
+
+              target 依格式分流：PDF 由後端以 inline 提供（web/routers/report_file.py），
+              新分頁能直接渲染；**.docx 是 attachment**，配 target="_blank" 只會開一個
+              下載完就空著的分頁 —— 那些改走 download 屬性，不開新分頁。 */}
           {doc.has_file && (
             <Pressable
               as="a"
               className={styles.btn}
               href={reportFileHref(doc.report_id)}
-              target="_blank"
-              rel="noopener noreferrer"
+              {...(doc.is_pdf
+                ? { target: '_blank', rel: 'noopener noreferrer' }
+                : { download: true })}
               hoverScale={1.02}
               tapScale={0.96}
             >
               <Icon name="fileText" size={15} />
-              原始 PDF
+              {/* 非 PDF（.docx）不能標成「原始 PDF」：那些研報右欄走的是文字後備，
+                  文案已叫讀者「由頁首下載原始檔」，鈕上卻寫 PDF 會對不上。 */}
+              {doc.is_pdf ? '原始 PDF' : '原始檔'}
             </Pressable>
           )}
           {/* 帶報告名去問答頁預填題目（?q=），不自動送出、也不縮限檢索範圍 ——

@@ -53,10 +53,9 @@ export function ResultCard({ row, mode, isLatest, terms, index = 0 }: Props) {
 
   return (
     // 真連結（非 role=button）：cmd+click／中鍵開新分頁／複製連結網址都拿得回來。
-    // 命中的 chunk 帶進 query，閱讀頁據此預設文字檢視並定位。
     <MotionLink
       className={styles.card}
-      to={reportHref(row.file_hash, row.passages?.[0]?.chunk_index)}
+      to={reportHref(row.file_hash)}
       variants={cardVariants}
       initial="hidden"
       animate="visible"

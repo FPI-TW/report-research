@@ -28,8 +28,10 @@ export function ReportSkeleton() {
           ))}
         </div>
         <div className={styles.doc}>
+          {/* docBar 現在只剩檔名（[原文][文字] 分段控制已移除），佔位塊要跟著縮成
+              一行等寬文字，否則骨架→實體之間會有一次可見的版位跳動。 */}
           <div className={styles.bar}>
-            <Skeleton width={120} height={28} radius={8} />
+            <Skeleton width={220} height={14} radius={4} />
           </div>
           <div className={styles.stage}>
             <Skeleton width="100%" height="100%" radius={4} />

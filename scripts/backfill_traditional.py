@@ -12,8 +12,9 @@ generate_summaries / extract_takeaways / signal_extract 四處），這支負責
 
 **刻意不涵蓋**（動了會壞掉，別順手加）：
   report_takeaway.quote、report_signal.thesis_dimensions[*].evidence
-      逐字引文／原句。前者是 reading/anchor.locate_quote 的錨定基準，轉了就錨
-      不回 canonical text，而且錨不到不會報錯，只會靜默降級成「不可跳」。
+      逐字引文／原句。改一個字就不再是逐字引文——這個理由與任何功能無關。
+      前者另外還是 reading/anchor.locate_quote 的錨定基準，轉了就錨不回
+      canonical text，而且錨不到不會報錯，只會讓 quote_start/quote_end 靜默留空。
   research_report.title_original
       原文（英文或其他語言），保留原樣正是它存在的理由。
   research_report.full_text、report_chunk.content

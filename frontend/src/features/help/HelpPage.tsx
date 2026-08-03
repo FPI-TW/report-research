@@ -3,7 +3,6 @@ import { marketLabel, marketTint, ptypeColor, MARKET_ORDER } from '../../lib/met
 import { Icon } from '../../components/primitives/Icon'
 import browseImg from '../../assets/help/browse.png'
 import resultsImg from '../../assets/help/results.png'
-import reportImg from '../../assets/help/report.png'
 import askImg from '../../assets/help/ask.png'
 import monitorImg from '../../assets/help/monitor.png'
 import styles from './HelpPage.module.css'
@@ -39,7 +38,7 @@ const TOC: [string, string][] = [
   ['search', '檢索研報：瀏覽與搜尋'],
   ['filter', '篩選、排序與檢視'],
   ['result', '看懂一筆結果'],
-  ['full', '查看完整報告（PDF）'],
+  ['full', '查看完整報告（閱讀頁）'],
   ['ask', '智能問答（向 AI 提問）'],
   ['radar', '廷豐觀點'],
   ['monitor', '導入監控（進階）'],
@@ -272,17 +271,17 @@ export default function HelpPage() {
         </section>
 
         <section id="full" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>5</span>查看完整報告（PDF）</h2>
-          <p>點<strong>任一筆結果</strong>（列表或表格的整列；問答則點回答下方的來源），會彈出視窗<strong>內嵌原始 PDF</strong>，不必下載就能讀：</p>
+          <h2 className={styles.h2}><span className={styles.no}>5</span>查看完整報告（研報閱讀頁）</h2>
+          <p>點<strong>任一筆結果</strong>（列表或表格的整列；問答則點回答下方的來源），會開啟該篇的<strong>研報閱讀頁</strong>。那是一個獨立網址，可以直接複製給同事：</p>
           <ul className={styles.bul}>
-            <li>可上下捲動閱讀；用 PDF 工具列可放大、下載、列印。</li>
-            <li>點視窗外的灰色區域或右上<strong>關閉鈕</strong>，即可回到結果。</li>
+            <li><strong>右側</strong>內嵌原始券商 PDF：可捲動閱讀，工具列有縮圖列、搜尋、放大／縮小／符合寬度、旋轉、跳頁與下載。</li>
+            <li><strong>左側</strong>是這篇的摘要與<strong>重點摘錄</strong>（每條一句論點＋一句原文逐字引文），若這篇有結構化訊號還會多一區「觀點」，最下方是<strong>相似研報</strong>。</li>
+            <li>鍵盤：<strong>Ctrl/⌘+F</strong> 或 <strong>/</strong> 開搜尋、<strong>PageUp／PageDown</strong> 翻頁、<strong>Home／End</strong> 跳首末頁、<strong>Esc</strong> 關搜尋。</li>
+            <li>右上<strong>「就這篇提問」</strong>會帶著這篇的標題到問答頁預填題目（檢索範圍仍是全語料）。</li>
           </ul>
-          <Figure
-            src={reportImg}
-            alt="完整報告 PDF 內嵌檢視"
-            caption="點任一筆結果，會在視窗內嵌原始券商 PDF，可直接閱讀，或在新分頁開啟／下載原始檔"
-          />
+          <div className={styles.note}>
+            極少數研報的原始檔是 Word（.docx）而非 PDF，無法內嵌 —— 那些會改為顯示文字抽取結果（圖表與表格排版不會保留），並可從頁首下載原始檔。
+          </div>
         </section>
 
         <section id="ask" className={styles.section}>

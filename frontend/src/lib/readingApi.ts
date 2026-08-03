@@ -16,14 +16,12 @@ export function getReadingDoc(fileHash: string): Promise<ReadingDoc> {
 }
 
 /**
- * 正典文字；所有 takeaway offset 皆以此字串為準。
+ * 正典文字；內嵌不了原始檔時的閱讀來源。
  *
- * 帶 chunk（檢索命中的 chunk_index）時，後端一併回該段的 chunk_start/chunk_end ——
- * 命中定位由後端 anchor.py 算，前端不重造比對邏輯。
+ * 端點仍支援 `?chunk=`（回該段的字元 offset），但前端已無命中定位的落點，故不帶。
  */
-export function getReadingText(fileHash: string, chunk?: number | null): Promise<ReadingText> {
-  const qs = chunk == null ? '' : `?${new URLSearchParams({ chunk: String(chunk) })}`
-  return getJSON(`/api/reading/${encodeURIComponent(fileHash)}/text${qs}`, readingTextSchema, {
+export function getReadingText(fileHash: string): Promise<ReadingText> {
+  return getJSON(`/api/reading/${encodeURIComponent(fileHash)}/text`, readingTextSchema, {
     cache: 'no-store',
   })
 }

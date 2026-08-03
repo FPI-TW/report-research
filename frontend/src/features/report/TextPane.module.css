@@ -7,8 +7,8 @@
   justify-content: center;
 }
 
-/* 紙張：與原文檢視的 .frame 同一種處理 —— 髮絲環＋柔影取代 1px 實線邊，
-   兩種檢視切換時紙張的量體才不會跳動。 */
+/* 紙張：與 PdfPane 的 .frame 同一種處理 —— 髮絲環＋柔影取代 1px 實線邊，
+   兩條路徑呈現的紙張量體才一致。 */
 .reader {
   width: 100%;
   max-width: 720px;
@@ -30,61 +30,14 @@
   border-radius: var(--tf-radius-md);
 }
 
-/* 正典文字原樣呈現：pre-wrap 保留抽取結果的換行與 CJK 間空白，
-   字元 offset 才能與後端 anchor.py 的切片一一對應（不做任何正規化）。 */
+/* 正典文字原樣呈現：pre-wrap 保留抽取結果的換行與 CJK 間空白。
+   刻意不做任何正規化 —— 這裡呈現的就是後端 /text 回的那一份字串。 */
 .body {
   white-space: pre-wrap;
   overflow-wrap: break-word;
   font-size: 14.5px;
   line-height: 2;
   color: var(--tf-text-1);
-}
-
-/* 跳段會把焦點移到目標段（tabindex=-1）：滑鼠/程式性移焦不顯外框（sighted 由 flash
-   與常駐底色回饋），唯有鍵盤操作（focus-visible）才給明確外框。 */
-.body :focus { outline: none; }
-.body :focus-visible {
-  outline: 2px solid var(--tf-graphite);
-  outline-offset: 2px;
-  border-radius: 3px;
-}
-
-/* 引文段標記：常態淡金底，讓讀者看得出哪幾句是摘錄來源 */
-.quote {
-  background: var(--tf-gold-panel);
-  color: inherit;
-  border-radius: 3px;
-  padding: 1px 0;
-}
-
-/* 檢索命中段：從檢索結果點進來的那一段（?chunk=），常駐淡底標出「你要看的是這裡」。
-   區間由後端 anchor.py 算，前端只切片。落在命中段內的引文不再疊底色 —— 引文自己的
-   標記已經更明確，疊上去只會讓兩層淡金互相打架。 */
-.hit {
-  background: var(--tf-gold-tint);
-  border-radius: 2px;
-}
-
-/* 跳段高亮：1.5s 淡出。CSS Modules 會在地化 animation 名，
-   故 @keyframes 必須就地定義，引用全域 keyframe 會落空不播。
-   終點色是引文的 --tf-gold-panel，故只給引文用（命中段不套，見 TextPane 的說明）。 */
-.flash {
-  animation: qflash 1.5s var(--tf-ease-out);
-}
-
-@keyframes qflash {
-  0% {
-    background: var(--tf-gold-tint);
-    box-shadow: 0 0 0 3px var(--tf-gold-tint);
-  }
-  70% {
-    background: var(--tf-gold-tint);
-    box-shadow: 0 0 0 3px var(--tf-gold-tint);
-  }
-  100% {
-    background: var(--tf-gold-panel);
-    box-shadow: 0 0 0 3px transparent;
-  }
 }
 
 .truncated {

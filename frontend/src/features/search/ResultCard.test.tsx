@@ -60,10 +60,12 @@ describe('ResultCard', () => {
     wrap(<ResultCard row={row({ title: null })} mode="browse" isLatest={false} terms={[]} />)
     expect(screen.getByText('研報.pdf')).toBeTruthy()
   })
-  it('search 態把命中的 chunk_index 帶進連結供閱讀頁定位', () => {
+  // 反向釘死：閱讀頁已無命中定位的落點，連結不得再帶 ?chunk（帶了不報錯，
+  // 只會在網址列留下一個沒有消費端的參數）
+  it('search 態的連結不帶 ?chunk', () => {
     const r = row({ passages: [{ score: 0.9, chunk_index: 7, content: '台積電營收成長' }] })
     wrap(<ResultCard row={r} mode="search" isLatest={false} terms={[]} />)
     expect(screen.getByRole('link', { name: /研報\.pdf/ }))
-      .toHaveAttribute('href', `/report/${HASH}?chunk=7`)
+      .toHaveAttribute('href', `/report/${HASH}`)
   })
 })

@@ -120,17 +120,12 @@ describe('readingTextSchema', () => {
     expect(readingTextSchema.parse(minimalText).truncated).toBe(false)
   })
 
-  // 沒帶 ?chunk、chunk 不存在、錨不到、offset 落在截斷範圍外 → 後端都回 null
-  it('命中 offset 可缺席或為 null（錨不到不是錯誤）', () => {
-    expect(readingTextSchema.parse(minimalText).chunk_start).toBeUndefined()
-    const nulled = readingTextSchema.parse({ ...minimalText, chunk_start: null, chunk_end: null })
-    expect(nulled.chunk_start).toBeNull()
-    expect(nulled.chunk_end).toBeNull()
-  })
-
-  it('錨定成功時帶回字元區間', () => {
+  // 後端仍支援 ?chunk= 並回 chunk_start/chunk_end，但前端已無命中定位的落點、
+  // 也不再帶那個參數。schema 刻意不宣告，多回的鍵被 zod strip 掉即可 ——
+  // 這條釘死的是「後端多回不會讓整頁 parse 失敗」，不是「後端不再回」。
+  it('後端多回的命中 offset 被安靜丟棄，不影響其餘欄位', () => {
     const t = readingTextSchema.parse({ ...minimalText, chunk_start: 2, chunk_end: 6 })
-    expect([t.chunk_start, t.chunk_end]).toEqual([2, 6])
+    expect(t).toEqual({ ...minimalText, truncated: false })
   })
 })
 

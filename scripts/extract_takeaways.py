@@ -1,8 +1,13 @@
 """重點摘錄擷取批次（近 N 天先行、冪等可續傳）→ research.report_takeaway
 
 閱讀頁 `/app/report/:hash` 左欄「重點摘錄」的資料來源：每篇 3-5 條論點，每條帶一句
-原文逐字引文；點條目跳到原文對應處並高亮。**摘錄一律離線批次產生、落 DB，
-閱讀頁讀取時零 LLM**（對齊 extract_signals.py 之於觀點雷達的分工）。
+原文逐字引文。**摘錄一律離線批次產生、落 DB，閱讀頁讀取時零 LLM**
+（對齊 extract_signals.py 之於觀點雷達的分工）。
+
+**錨定（quote_start/quote_end）目前沒有前端讀取路徑**——「點條目跳到原文並高亮」已於
+2026-08-03 隨閱讀頁文字檢視一併移除。仍照樣算、照樣寫入，理由有二：db_audit 的
+「摘錄與全文是否同源」稽核靠它，而事後補算的代價是對 674+ 篇重跑 Sonnet 並搶
+_claude_lock 的 flock。**不要因為「沒有消費端」就把第 4 步拿掉。**
 
 流程（對齊 scripts/extract_signals.py 的 asyncio + Semaphore + claude CLI 慣例）：
 1. 撈工作集：近 --since-days 天、有全文的研究報告。
@@ -281,9 +286,10 @@ def _clean_claim(value: object) -> Optional[str]:
 def _clean_quote(value: object) -> Optional[str]:
     """引文：**只去頭尾空白 + 截長，內部空白原樣保留，且絕不轉繁體**。
 
-    不轉繁體：引文是 canonical text 的逐字片段、locate_quote 的錨定基準。全語料
-    有 63 篇研報原文本身就是簡體，把引文轉成繁體會讓它在原文裡再也找不到——
-    而且 locate_quote 錨不到不會報錯，只會讓該條目靜默降級成「不可跳」。
+    不轉繁體，兩個理由：**第一個與任何功能無關**——改一個字它就不再是逐字引文，
+    而「原文就是這麼寫的」正是它存在的全部意義。第二個是它同時是 locate_quote 的
+    錨定基準：全語料有 63 篇研報原文本身就是簡體，把引文轉成繁體會讓它在原文裡
+    再也找不到，而 locate_quote 錨不到不會報錯，只會讓 quote_start/quote_end 靜默留空。
 
     內部空白不可動：canonical 的拉丁文字之間本來就有空白，改動內部空白會讓
     locate_quote 的 exact 層失手、掉到 normalized 層（能錨到但品質標示變差）。

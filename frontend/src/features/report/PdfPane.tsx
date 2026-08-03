@@ -33,7 +33,13 @@ function BuiltInViewer({ href, title }: { href: string; title: string }) {
   )
 }
 
-/** 原文檢視：自訂檢視器；非 PDF／無檔時給可下載的替代說明（不是錯誤）。 */
+/**
+ * 文件區主路徑：自訂檢視器；非 PDF／無檔時給可下載的替代說明（不是錯誤）。
+ *
+ * 那兩個分支**不是死碼**：ReportPage 只有在「內嵌不了且有全文」時才改掛 TextPane，
+ * 內嵌不了又沒有全文的研報仍然送到這裡，靠它們給出終態。改 ReportPage 的分派條件時
+ * 要記得這件事，否則那一格會退化成永遠的載入骨架。
+ */
 export function PdfPane({ doc }: Props) {
   if (!doc.has_file) {
     return (

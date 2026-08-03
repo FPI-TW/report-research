@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as readingApi from '../../lib/readingApi'
 import type { ReadingDoc, ReadingText, SimilarResponse } from '../../lib/readingSchemas'
 import ReportPage from './ReportPage'
@@ -16,7 +16,8 @@ vi.mock('../../lib/readingApi', async importOriginal => {
   }
 })
 
-// 原文是預設檢視，所以這份檔案幾乎每個案例都會掛上 PdfPane → lazy(PdfViewer)。
+// 閱讀頁只有一種文件檢視，所以這份檔案除了 docx／無檔的案例之外，每一個都會掛上
+// PdfPane → lazy(PdfViewer)。
 // 真檢視器會把 PDFium/WASM 整包拉進模組圖，而 jsdom 既載不到 WASM 也驗不到引擎行為
 // —— 純粹是每個案例多背一份引擎。實測那份負載足以把並行跑的 App.test.tsx 推過
 // vitest 5s 預設 testTimeout（單跑則過）。
@@ -112,29 +113,11 @@ const SIGNAL: ReadingDoc['signals'][number] = {
   ],
 }
 
-// jsdom 完全沒有 scrollIntoView（TextPane 因此有 typeof 守門），不 stub 就驗不到
-// 「跳轉真的發生」—— 沒有這顆 stub，底下的捲動斷言會永遠是綠的。
-const scrollIntoView = vi.fn()
-
 beforeEach(() => {
   vi.resetAllMocks()
-  HTMLElement.prototype.scrollIntoView = scrollIntoView
   vi.mocked(readingApi.getSimilarReports).mockResolvedValue(similar())
   vi.mocked(readingApi.getReadingText).mockResolvedValue(text())
 })
-
-afterEach(() => {
-  Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
-})
-
-/** 手動控制 /text 何時抵達：重現「TextPane 掛載時全文還沒到」的真實時序。 */
-function deferText() {
-  let resolve!: (v: ReadingText) => void
-  vi.mocked(readingApi.getReadingText).mockReturnValue(
-    new Promise<ReadingText>(r => { resolve = r }),
-  )
-  return { arrive: (v: ReadingText = text()) => resolve(v) }
-}
 
 describe('ReportPage', () => {
   it('非 64-hex 的 hash → 找不到頁面，且完全不打 API', async () => {
@@ -164,7 +147,10 @@ describe('ReportPage', () => {
     expect(screen.getByText('大和')).toBeInTheDocument()
     expect(screen.getByText('2026-07-14')).toBeInTheDocument()
     expect(screen.getByText('8046')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /原始 PDF/ })).toBeInTheDocument()
+    // PDF 由後端以 inline 提供 → 開新分頁直接看得到，不該強制下載
+    const pdfLink = screen.getByRole('link', { name: /原始 PDF/ })
+    expect(pdfLink).toHaveAttribute('target', '_blank')
+    expect(pdfLink).not.toHaveAttribute('download')
     expect(screen.getByRole('link', { name: /就這篇提問/ })).toBeInTheDocument()
   })
 
@@ -258,206 +244,133 @@ describe('ReportPage', () => {
     expect(screen.queryByText('重點摘錄')).toBeNull()
   })
 
-  // text 缺席只代表「只能看 PDF」，不是錯誤：不得出現錯誤態或檢視切換
-  it('text_state 為 missing → PDF-only 版面（無檢視切換、不抓全文）', async () => {
+  // 文件檢視只有一種，由資料現實決定：能內嵌 PDF 就掛檢視器，否則落到文字後備。
+  // 以下四條把「讀者拿不到任何檢視選項」釘死 —— 少了它們，日後把切換鈕加回來卻沒有
+  // 落點也不會有任何訊號。
+  it('PDF 研報 → 掛 PDF 檢視器，完全不抓全文', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    expect(await screen.findByTestId('pdf-viewer')).toBeInTheDocument()
+    expect(readingApi.getReadingText).not.toHaveBeenCalled()
+  })
+
+  it('頁面不存在任何文件檢視切換控制（反向釘死）', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
+    expect(screen.queryByRole('radiogroup')).toBeNull()
+    expect(screen.queryByRole('radio', { name: '原文' })).toBeNull()
+    expect(screen.queryByRole('radio', { name: '文字' })).toBeNull()
+  })
+
+  // text_state 曾經會左右版面（missing → 不給切換鈕）。現在它只決定「要不要抓全文」，
+  // 對 PDF 研報一律無感 —— 這條擋的是「有人又把 text_state 接回版面判斷」。
+  it('text_state 為 missing 的 PDF 研報 → 版面不變、不抓全文、無錯誤態', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
       doc({ text_state: 'missing', text_chars: 0, text_sha256: null }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
-    expect(screen.queryByRole('radiogroup', { name: '文件檢視' })).toBeNull()
+    expect(await screen.findByTestId('pdf-viewer')).toBeInTheDocument()
     expect(screen.queryByText(/載入失敗/)).toBeNull()
     expect(readingApi.getReadingText).not.toHaveBeenCalled()
   })
 
-  it('text_state 為 missing 且帶 ?chunk → 仍退回 PDF（不會空白）', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
-      doc({ text_state: 'missing', text_sha256: null }))
-    wrap(`/report/${HASH}?chunk=3`)
-    await waitFor(() => expect(screen.getByRole('heading', { name: /南亞電路板/ })).toBeInTheDocument())
+  // 已分享出去的舊網址仍帶著這兩個參數（四個檢索元件曾經每一筆都產生 ?chunk=N）。
+  // 它們現在沒有消費端，必須是「完全無作用」而不是「讓頁面走進別的分支」。
+  it('網址殘留 ?chunk／?view=text → 完全無作用', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}?chunk=4&view=text`)
+    expect(await screen.findByTestId('pdf-viewer')).toBeInTheDocument()
     expect(readingApi.getReadingText).not.toHaveBeenCalled()
-  })
-
-  it('預設為原文檢視，不抓全文', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByRole('radio', { name: '原文' })).toBeChecked())
-    expect(readingApi.getReadingText).not.toHaveBeenCalled()
-  })
-
-  // radiogroup 鍵盤契約：roving tabindex（只有選中的可 Tab 到）+ 方向鍵選取
-  it('檢視切換：roving tabindex 且方向鍵可切換（radiogroup 契約）', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    wrap(`/report/${HASH}`)
-    const pdf = await screen.findByRole('radio', { name: '原文' })
-    expect(pdf).toBeChecked()
-    expect(pdf).toHaveAttribute('tabindex', '0')
-    expect(screen.getByRole('radio', { name: '文字' })).toHaveAttribute('tabindex', '-1')
-    pdf.focus()
-    fireEvent.keyDown(pdf, { key: 'ArrowRight' })
-    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
-    expect(screen.getByRole('radio', { name: '文字' })).toHaveAttribute('tabindex', '0')
-    expect(screen.getByRole('radio', { name: '原文' })).toHaveAttribute('tabindex', '-1')
-  })
-
-  it('?chunk=N → 預設文字檢視、抓全文時帶 chunk、顯示命中導航', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    vi.mocked(readingApi.getReadingText).mockResolvedValue(text({ chunk_start: 0, chunk_end: 2 }))
-    wrap(`/report/${HASH}?chunk=4`)
-    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
-    // chunk 必須一路帶到後端：命中段的 offset 由 anchor.py 算，前端不重造比對
-    await waitFor(() => expect(readingApi.getReadingText).toHaveBeenCalledWith(HASH, 4))
-    expect(await screen.findByRole('button', { name: '回到命中處' })).toBeInTheDocument()
-    expect(screen.getByLabelText('關閉命中導航')).toBeInTheDocument()
-    // 只錨得到一段命中 → 不得出現 n/N 計數與上下鍵（會讓人以為還有別的命中可翻）
-    expect(screen.queryByText(/命中 1 \/ 1/)).toBeNull()
-    expect(screen.queryByLabelText('上一個命中')).toBeNull()
-    expect(screen.queryByLabelText('下一個命中')).toBeNull()
-  })
-
-  // 這一條是整頁的重點：從檢索命中點進來，就是要看那一段
-  it('?chunk=N 且後端錨到 → 依 offset 標出命中段', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ takeaways: [] }))
-    vi.mocked(readingApi.getReadingText).mockResolvedValue(text({ chunk_start: 2, chunk_end: 6 }))
-    wrap(`/report/${HASH}?chunk=4`)
-    // chunk_start 2 / chunk_end 6 → 「三四五六」
-    await waitFor(() => expect(document.querySelector('[data-hit]')?.textContent).toBe('三四五六'))
-  })
-
-  // 錨不到（後端回 null）不是錯誤：不高亮、不給命中導航，其餘照常
-  it('?chunk=N 但後端錨不到 → 無高亮、無命中導航，全文照常顯示', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ takeaways: [] }))
-    vi.mocked(readingApi.getReadingText).mockResolvedValue(
-      text({ chunk_start: null, chunk_end: null }))
-    wrap(`/report/${HASH}?chunk=4`)
-    await waitFor(() => expect(screen.getByText('一二三四五六七八九十')).toBeInTheDocument())
-    expect(document.querySelector('[data-hit]')).toBeNull()
     expect(screen.queryByRole('button', { name: '回到命中處' })).toBeNull()
-    expect(screen.queryByLabelText('關閉命中導航')).toBeNull()
-    expect(screen.queryByText(/載入失敗/)).toBeNull()
   })
 
-  it('關閉命中導航 → 命中列與高亮消失（檢視態不變）', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ takeaways: [] }))
-    vi.mocked(readingApi.getReadingText).mockResolvedValue(text({ chunk_start: 2, chunk_end: 6 }))
-    wrap(`/report/${HASH}?chunk=4`)
-    await waitFor(() => expect(screen.getByLabelText('關閉命中導航')).toBeInTheDocument())
-    fireEvent.click(screen.getByLabelText('關閉命中導航'))
-    await waitFor(() => expect(screen.queryByLabelText('關閉命中導航')).toBeNull())
-    expect(document.querySelector('[data-hit]')).toBeNull()
-    // 收掉命中不該把讀者正在讀的文字檢視一起帶走
-    expect(screen.getByRole('radio', { name: '文字' })).toBeChecked()
-  })
-
-  it('切到文字檢視才抓全文，並依 offset 標出引文', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+  // 34 篇 .docx（2026-08-03 全語料實測）內嵌不了，站內只剩這條路徑可讀。
+  it('非 PDF（docx）→ 落到文字後備，不掛 PDF 檢視器', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ file_name: '南亞電路板-華南Memo20250331.docx', is_pdf: false }))
     wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('radio', { name: '文字' }))
-    await waitFor(() => expect(readingApi.getReadingText).toHaveBeenCalledWith(HASH, null))
-    // quote_start 2 / quote_end 8 → 「三四五六七八」
-    await waitFor(() => expect(document.querySelector('[data-q="q1"]')?.textContent).toBe('三四五六七八'))
+    await waitFor(() => expect(screen.getByText('一二三四五六七八九十')).toBeInTheDocument())
+    expect(screen.queryByTestId('pdf-viewer')).toBeNull()
+    expect(readingApi.getReadingText).toHaveBeenCalledWith(HASH)
+    // 有原始檔可下載時才指路，且指的是真的存在的動作（頁首那顆下載鈕）
+    expect(screen.getByText(/需要原始版面請由頁首下載原始檔/)).toBeInTheDocument()
+    // 那顆鈕在 .docx 上不得標成「原始 PDF」，否則與上面這句指路對不上；
+    // 且不得開新分頁 —— 後端對非 PDF 回 attachment，target="_blank" 只會留下空白分頁。
+    const dl = screen.getByRole('link', { name: /原始檔/ })
+    expect(screen.queryByRole('link', { name: /原始 PDF/ })).toBeNull()
+    expect(dl).toHaveAttribute('download')
+    expect(dl).not.toHaveAttribute('target')
   })
 
-  it('點可跳的摘錄 → 切文字檢視並標出該段', async () => {
+  it('無原始檔 → 落到文字後備，不出現「找不到原始檔」死路', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ has_file: false, is_pdf: false }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('一二三四五六七八九十')).toBeInTheDocument())
+    expect(screen.queryByText('找不到原始檔。')).toBeNull()
+    // 無檔時不得指路去下載一個不存在的東西，也不得叫讀者去切一個不存在的檢視
+    expect(screen.getByText(/圖表與表格排版不會保留/)).toBeInTheDocument()
+    expect(screen.queryByText(/下載原始檔/)).toBeNull()
+    expect(screen.queryByText(/請切「原文」/)).toBeNull()
+  })
+
+  // pdfViewable 的 has_file 那一半：只看 is_pdf 的話這條會紅。
+  // （現實語料上缺檔為 0，但 has_file 是 request-time 的 os.path.isfile，
+  //   repo 一搬家就整批命中。）
+  it('is_pdf 為真但檔案不存在 → 仍落到文字後備，不掛 PDF 檢視器', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ has_file: false, is_pdf: true }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('一二三四五六七八九十')).toBeInTheDocument())
+    expect(screen.queryByTestId('pdf-viewer')).toBeNull()
+  })
+
+  // 第三態：內嵌不了**又**沒有全文。查詢被停用（enabled=false）時 react-query 的
+  // isLoading 是 false 而 data 是 undefined，若讓它落進 TextPane 的 `!text` 分支，
+  // 畫面會永遠停在骨架 —— 無錯誤、無重試、連請求都不發，唯一的訊號是使用者抱怨。
+  it('非 PDF 且無全文 → 給可下載的終態，不是永遠的載入骨架', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ file_name: 'x.docx', is_pdf: false, text_state: 'missing', text_chars: 0, text_sha256: null }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText(/無法內嵌預覽，請下載查看/)).toBeInTheDocument())
+    expect(screen.queryByTestId('text-skeleton')).toBeNull()
+    expect(screen.getByRole('link', { name: '下載原始檔' })).toBeInTheDocument()
+    expect(readingApi.getReadingText).not.toHaveBeenCalled()
+  })
+
+  it('無原始檔且無全文 → 明確終態，不是永遠的載入骨架', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ has_file: false, is_pdf: false, text_state: 'missing', text_chars: 0, text_sha256: null }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('找不到原始檔。')).toBeInTheDocument())
+    expect(screen.queryByTestId('text-skeleton')).toBeNull()
+    expect(readingApi.getReadingText).not.toHaveBeenCalled()
+  })
+
+  // 摘錄的引文沒有可跳的落點了。留著 role=button／箭頭／hover 態＝承諾一個按下去
+  // 什麼也不會發生的動作，而且 console 全乾淨、不會有任何錯誤。
+  it('重點摘錄一律以非互動元素呈現（無跳轉承諾）', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByText('重申買進評級')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
-    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
-    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
-  })
-
-  // 這一條走的是**預設檢視**（原文）：點下去時 /text 才剛開始抓，TextPane 掛載時
-  // 走的是載入分支。aria-label 承諾「跳至原文位置」，第一次點就必須真的跳。
-  // （曾經：deps 只有 [jump]，全文抵達後 jump 沒變 → effect 不再執行 → 第一次點
-  //   不捲不 flash，要點第二次才動。只斷言 data-q 存在的測試抓不到。）
-  it('從預設的原文檢視點摘錄 → 全文抵達後真的捲到該段（第一次點就要動）', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    const gate = deferText()
-    wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByRole('radio', { name: '原文' })).toBeChecked())
-
-    fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
-    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
-    // 全文還沒到 → 沒有可捲的目標（此時捲了才是錯的）
-    expect(scrollIntoView).not.toHaveBeenCalled()
-
-    gate.arrive()
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
-    // 捲的必須是那一條摘錄的引文段，不是隨便一個元素
-    expect((scrollIntoView.mock.contexts[0] as HTMLElement).dataset.q).toBe('q1')
-  })
-
-  it('已在文字檢視時點摘錄 → 立即捲到該段', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    wrap(`/report/${HASH}?view=text`)
-    // 不可用 getByText('一二三四五六七八九十') 等全文：buildTextSegments 會依 offset 把
-    // 正典文字切成「一二」+「三四五六七八」(data-q) +「九十」三個元素，沒有任何單一
-    // 元素的 textContent 等於整串，該查詢必然逾時。等的應該是引文段真的被標出來。
-    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
-    expect((scrollIntoView.mock.contexts[0] as HTMLElement).dataset.q).toBe('q1')
-  })
-
-  // 跳段不只是視覺捲動：焦點要移到目標段，鍵盤/報讀使用者才有回饋
-  it('點摘錄跳轉 → 焦點移到該引文段', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    wrap(`/report/${HASH}?view=text`)
-    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: /跳至第 1 條摘錄/ }))
-    await waitFor(() => expect((document.activeElement as HTMLElement)?.dataset.q).toBe('q1'))
-  })
-
-  // 命中段有等價的補救（依 hitStart 觸發），這條把它一起釘住
-  it('?chunk=N 且後端錨到 → 全文抵達後自動捲到命中段', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ takeaways: [] }))
-    const gate = deferText()
-    wrap(`/report/${HASH}?chunk=4`)
-    await waitFor(() => expect(screen.getByRole('radio', { name: '文字' })).toBeChecked())
-    gate.arrive(text({ chunk_start: 2, chunk_end: 6 }))
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
-    expect((scrollIntoView.mock.contexts[0] as HTMLElement).textContent).toBe('三四五六')
-  })
-
-  // quote_start 為 null＝錨不到：條目照常顯示，但不可跳、不給箭頭 hover 態
-  it('quote_start 為 null 的摘錄顯示但不可跳', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    wrap(`/report/${HASH}`)
-    await waitFor(() => expect(screen.getByText('亞洲兩家基板廠停止接 BT 訂單')).toBeInTheDocument())
-    expect(screen.queryByRole('button', { name: /跳至第 2 條摘錄/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /跳至第 1 條摘錄/ })).toBeInTheDocument()
-  })
-
-  it('全文 sha 與骨架不符 → 摘錄照常顯示但整篇不上引文標記', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
-    vi.mocked(readingApi.getReadingText).mockResolvedValue(text({ text_sha256: 'f'.repeat(64) }))
-    wrap(`/report/${HASH}?chunk=1`)
-    await waitFor(() => expect(screen.getByText('一二三四五六七八九十')).toBeInTheDocument())
-    expect(document.querySelector('[data-q="q1"]')).toBeNull()
-    expect(screen.getByText('重申買進評級')).toBeInTheDocument()
+    // 逐字引文仍要顯示（那是摘錄可查證的部分）
+    expect(screen.getByText('視 NYPCB 為基板族群首選')).toBeInTheDocument()
+    expect(screen.getByText('亞洲兩家基板廠停止接 BT 訂單')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /跳至第 1 條摘錄/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /跳至/ })).toBeNull()
+    expect(document.querySelector('[data-jumpable]')).toBeNull()
   })
 
-  // 全文 /text 失敗曾是死路（只有一行「請稍後再試」、無任何動作）：改為可重試
-  it('全文載入失敗 → 顯示重試，點擊後重新抓取成功', async () => {
+  // 全文 /text 失敗曾是死路（只有一行「請稍後再試」、無任何動作）：改為可重試。
+  // 走得到這條的只有內嵌不了 PDF 的研報，故 fixture 必須是 docx —— 用 PDF 研報會
+  // 根本不呼叫 /text，測試退化成恆真。
+  it('文字後備載入失敗 → 顯示重試，點擊後重新抓取成功', async () => {
     const { ApiError } = await import('../../lib/api')
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ is_pdf: false }))
     vi.mocked(readingApi.getReadingText).mockRejectedValueOnce(new ApiError(500, '壞了'))
-    wrap(`/report/${HASH}?view=text`)
+    wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByText('全文載入失敗。')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '重試' }))
-    // refetch → 落回 beforeEach 的成功回應 → 引文段標出
-    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
-  })
-
-  // 無原始檔時根本沒有「原文」檢視可切，提示不得叫讀者去切一個不存在的檢視
-  it('無原始檔的文字檢視 → 提示不出現「切原文」死路', async () => {
-    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ has_file: false, is_pdf: false }))
-    wrap(`/report/${HASH}?view=text`)
-    await waitFor(() => expect(document.querySelector('[data-q="q1"]')).not.toBeNull())
-    expect(screen.getByText(/圖表與表格排版不會保留/)).toBeInTheDocument()
-    expect(screen.queryByText(/請切「原文」/)).toBeNull()
+    // refetch → 落回 beforeEach 的成功回應
+    await waitFor(() => expect(screen.getByText('一二三四五六七八九十')).toBeInTheDocument())
   })
 
   // 相似研報改為卡片頁腳的收合列：預設只有一行（標題＋篇數），展開才掛清單。

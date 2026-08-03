@@ -53,6 +53,26 @@ test('stages 不含 evaluating 時不顯示評估補查步驟', () => {
   expect(screen.queryByText('評估補查')).toBeNull()
 })
 
+test('stopped 收掉 pending 步驟：停止的輪不會再前進，殘留灰點會讀成「還在等」', () => {
+  // 停在檢索前：只到 understanding。應只剩已完成的步驟，後面三步不顯示。
+  render(<ThinkingSteps turn={turn({ phase: 'stopped', stages: ['understanding'] })} />)
+  expect(screen.getByText('理解問題')).toBeInTheDocument()
+  expect(screen.queryByText('檢索研報')).toBeNull()
+  expect(screen.queryByText('閱讀整理')).toBeNull()
+  expect(screen.queryByText('生成回答')).toBeNull()
+})
+
+test('stopped 且 thinkingMs 未量到時標籤是「思考已中斷」而不是「已思考 0 秒」', () => {
+  render(<ThinkingSteps turn={turn({ phase: 'stopped', stages: ['understanding'], thinkingMs: null })} />)
+  expect(screen.getByText('思考已中斷')).toBeInTheDocument()
+  expect(screen.queryByText(/已思考 0 秒/)).toBeNull()
+})
+
+test('stopped 但思考已完成（thinkingMs 有值）仍照實報「已思考 N 秒」', () => {
+  render(<ThinkingSteps turn={turn({ phase: 'stopped', stages: ['understanding', 'retrieved', 'reading', 'generating'], thinkingMs: 3000 })} />)
+  expect(screen.getByText('已思考 3 秒')).toBeInTheDocument()
+})
+
 test('排隊中顯示「排隊中…」與原因，而不是假裝在思考', () => {
   render(<ThinkingSteps turn={turn({ phase: 'thinking', queuePosition: 3 })} />)
   expect(screen.getByText('排隊中（第 3 位）…')).toBeInTheDocument()

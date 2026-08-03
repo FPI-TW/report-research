@@ -1245,13 +1245,20 @@ async def list_conversations(limit: int = 50) -> list[dict]:
 
 
 def _conversation_item(row) -> dict:
-    """qa_log 一列（13 欄，含版本/思考卡/追問中繼資料）→ 對話重現用 dict。
+    """qa_log 一列（15 欄，含版本/思考卡/追問中繼資料）→ 對話重現用 dict。
 
     在 history_item 的基礎欄位上，補 stages/followups/root_qa_id/stopped/
-    version_count 五鍵，供前端重現思考卡、追問 chips 與版本切換。
+    version_count 五鍵，供前端重現思考卡、追問 chips 與版本切換；另以
+    cited_report_ids/filters 兩欄**在讀取時重算研報邀請**（offer_report/
+    report_title/report_offer_declined）——邀請原本只活在 SSE done 事件裡，
+    重新整理後就消失，使用者從此失去「要不要生成研報」的選擇權。gate 是
+    純規則零 LLM（report_gate.py），逐列重算零成本，且歷史舊列自動涵蓋、
+    不需回填；唯一要落庫的是婉拒旗標（filters.report_offer_declined，
+    additive JSON 鍵），否則每次重整邀請卡都會復活。
     """
     (rid, question, answer, created_at, feedback, sources, ext_sources,
-     thinking_ms, stages, followups, root_qa_id, stopped, version_count) = row
+     thinking_ms, stages, followups, root_qa_id, stopped, version_count,
+     cited, log_filters) = row
     base = history_item(
         (rid, question, answer, created_at, feedback, sources, ext_sources, thinking_ms)
     )
@@ -1260,6 +1267,18 @@ def _conversation_item(row) -> dict:
     base["root_qa_id"] = str(root_qa_id) if root_qa_id else None
     base["stopped"] = bool(stopped)
     base["version_count"] = int(version_count)
+    base["offer_report"] = False
+    base["report_title"] = None
+    base["report_offer_declined"] = False
+    # 停止的部分答案與離題拒答不邀請（素材不完整／根本沒有答案）
+    if not stopped and not base.get("is_offtopic") and answer:
+        offer, title = should_offer_report(question, list(cited or []), answer)
+        if offer:
+            base["offer_report"] = True
+            base["report_title"] = title
+            base["report_offer_declined"] = bool(
+                (log_filters or {}).get("report_offer_declined")
+            )
     return base
 
 
@@ -1274,7 +1293,8 @@ async def get_conversation(conversation_id: str) -> list[dict]:
                     "q.root_qa_id, q.stopped, "
                     "(SELECT count(*) FROM research.qa_log v "
                     " WHERE COALESCE(v.root_qa_id, v.id) = COALESCE(q.root_qa_id, q.id)) "
-                    "AS version_count "
+                    "AS version_count, "
+                    "q.cited_report_ids, q.filters "
                     "FROM research.qa_log q "
                     "WHERE COALESCE(q.conversation_id, q.id) = :cid AND q.active "
                     "ORDER BY q.created_at ASC"
@@ -1436,6 +1456,31 @@ async def record_feedback(qa_id: str, value: str) -> bool:
             result = await session.execute(
                 text("UPDATE research.qa_log SET feedback = :v WHERE id = :id"),
                 {"v": None if value == "none" else value, "id": qa_id},
+            )
+            await session.commit()
+        return getattr(result, "rowcount", 0) == 1
+    except Exception:
+        return False
+
+
+async def set_report_offer_declined(qa_id: str, declined: bool) -> bool:
+    """研報邀請的婉拒旗標（收合／還原）。
+
+    寫進 qa_log.filters 的 additive 鍵 report_offer_declined（jsonb 合併，
+    不動既有遙測鍵）。邀請本身是讀取時由 gate 重算的（見 _conversation_item），
+    這是唯一需要落庫的一片狀態——否則每次重整邀請卡都會復活。
+    更新到一列回 True；查無此列或 DB 異常回 False。
+    """
+    try:
+        async with SessionFactory() as session:
+            result = await session.execute(
+                text(
+                    "UPDATE research.qa_log SET filters = "
+                    "COALESCE(filters, '{}'::jsonb) "
+                    "|| jsonb_build_object('report_offer_declined', :d) "
+                    "WHERE id = :id"
+                ),
+                {"d": declined, "id": qa_id},
             )
             await session.commit()
         return getattr(result, "rowcount", 0) == 1

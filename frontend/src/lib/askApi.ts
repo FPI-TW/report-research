@@ -141,6 +141,17 @@ export async function deleteConversation(id: string): Promise<void> {
   if (!ok) throw new Error('刪除對話失敗：找不到該對話串')
 }
 
+/** 研報邀請的收合（decline）／還原（restore），讓「暫時不用」跨重整持久。
+ *  fire-and-forget（比照 sendFeedback）：失敗的代價只是下次重整回到另一態。 */
+export async function setReportOffer(qaId: string, action: 'decline' | 'restore'): Promise<void> {
+  await fetch(`/api/qa/${encodeURIComponent(qaId)}/report-offer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+    credentials: 'same-origin',
+  })
+}
+
 /** value 'none' ＝取消評價（後端寫成 NULL）。刻意不是可為 null 的欄位——欄位漏送與
  *  「明確取消」在那種設計下無法區分，客戶端少帶一個欄位就會靜默清掉使用者的評價。 */
 export async function sendFeedback(qaId: string, value: 'like' | 'dislike' | 'none'): Promise<void> {

@@ -178,6 +178,11 @@ export const conversationTurnSchema = z.object({
   root_qa_id: z.string().nullable().default(null),
   version_count: z.number().default(1),
   stopped: z.boolean().default(false),
+  // 研報邀請的重載持久化：後端讀取時以 gate 重算（零 LLM），婉拒旗標落庫。
+  // default 讓舊後端（沒回這三欄）滾動部署期間不炸；不宣告則被 zod strip 靜默丟棄。
+  offer_report: z.boolean().default(false),
+  report_title: z.string().nullish(),
+  report_offer_declined: z.boolean().default(false),
 })
 export type ConversationTurn = z.infer<typeof conversationTurnSchema>
 

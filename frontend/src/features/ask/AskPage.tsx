@@ -105,7 +105,8 @@ export default function AskPage() {
                 <DeepReportPanel
                   report={t.report}
                   onGenerate={(templateId) => ctrl.generateReport(t.id, t.question, t.qaId, templateId)}
-                  onDecline={() => ctrl.declineReport(t.id)}
+                  onDecline={() => ctrl.declineReport(t.id, t.qaId)}
+                  onRestore={() => ctrl.restoreReportOffer(t.id, t.qaId)}
                   onCancel={(runId) => ctrl.cancelReport(t.id, runId)}
                 />
               </Reveal>

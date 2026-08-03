@@ -405,6 +405,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3；滿載先送 `queued` 事件，排隊逾 `ASK_MAX_QUEUE` 回 429＋`Retry-After`） | SSE |
 | POST | `/api/ask/stop` | 使用者中斷串流時保存部分答案（`stopped=true`），回 `{qa_id}`；帶 `regenerate_of` 同交易停用舊版列、帶 `edit_of` 截斷被編輯輪之後的輪次 | |
 | GET | `/api/qa/{root_qa_id}/versions` | 重生／編輯的版本鏈（**含已標 inactive 的舊版**，歷史 pager 要回看的正是它們） | |
+| POST | `/api/qa/{qa_id}/report-offer` | 研報邀請的收合／還原（`action: decline\|restore`），讓「暫時不用」跨重整持久；邀請本身由 `get_conversation` 讀取時以 gate 重算 | |
 | POST | `/api/report` | 生成深度研報（**跑在背景任務**，斷線不中止；併發由 `REPORT_SEMAPHORE`，預設 1 序列化；滿載先送 `queued` 事件，排隊逾 `REPORT_MAX_QUEUE` 回 429＋`Retry-After`，**接回既有 run 豁免**） | SSE |
 | GET | `/api/report-runs?conversation_id=` | 該對話仍在背景生成的研報（前端載入時據此接回進度） | |
 | GET | `/api/report-runs/{run_id}/stream` | 重連背景 run：先重播已發生的事件（**不含 `token`**，且 `section_draft` 只保留 position/section_key/heading）、再接直播（未知 `run_id` 回 404） | SSE |

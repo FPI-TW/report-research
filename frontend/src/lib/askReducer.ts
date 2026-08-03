@@ -10,7 +10,9 @@ export interface ReportSection {
 }
 
 export interface ReportState {
-  status: 'idle' | 'offered' | 'generating' | 'done' | 'error'
+  /** dismissed＝邀請被「暫時不用」收合成小入口（不是刪除，隨時可還原成 offered）；
+      idle＝這一輪從頭就沒有邀請。分開才能讓誤點的人叫得回邀請卡。 */
+  status: 'idle' | 'offered' | 'dismissed' | 'generating' | 'done' | 'error'
   downloadUrl: string | null
   title: string | null
   errorText: string | null
@@ -107,6 +109,7 @@ export type AskAction =
   | { type: 'ask-event'; id: string; event: AskEvent }
   | { type: 'ask-end'; id: string }
   | { type: 'report-start'; id: string; startedAt: number }
+  | { type: 'report-reoffer'; id: string }
   // startedAt 由 controller 依 run 事件的 elapsed_ms 回推後傳入（reducer 保持純函式）。
   | { type: 'report-event'; id: string; event: ReportEvent; startedAt?: number }
   | { type: 'report-fail'; id: string; errorText: string }
@@ -258,7 +261,15 @@ export function askReducer(state: AskState, action: AskAction): AskState {
     case 'report-start': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...idleReport, status: 'generating', title: t.reportTitle, startedAt: action.startedAt } })) }
     case 'report-event': return { turns: mapTurn(state.turns, action.id, t => applyReport(t, action.event, action.startedAt ?? null)) }
     case 'report-fail': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...t.report, status: 'error', errorText: action.errorText, runId: null } })) }
-    case 'report-decline': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: idleReport, offerReport: false })) }
+    // 「暫時不用」是收合不是刪除：邀請收成小入口（dismissed），標題留著供還原。
+    // 舊行為（打回 idle）會讓誤點的人永遠失去入口，重整後邀請又復活——兩頭不是。
+    case 'report-decline': return { turns: mapTurn(state.turns, action.id, t => ({ ...t, report: { ...idleReport, status: 'dismissed', title: t.report.title ?? t.reportTitle } })) }
+    case 'report-reoffer': return {
+      turns: mapTurn(state.turns, action.id, t =>
+        t.report.status === 'dismissed'
+          ? { ...t, report: { ...t.report, status: 'offered' } }
+          : t),
+    }
     case 'report-cancel': return {
       turns: mapTurn(state.turns, action.id, t =>
         t.report.status === 'generating'
@@ -321,6 +332,14 @@ export function askReducer(state: AskState, action: AskAction): AskState {
 
 export function turnFromHistory(item: ConversationTurn): Turn {
   const last = item.reports.length ? item.reports[item.reports.length - 1] : null
+  // 研報邀請跨重整還原：已有研報 → 下載卡優先；gate 判可生成 → offered（婉拒過
+  // 則收成 dismissed 小入口）。進行中的背景 run 由 attachActiveRuns 在載入後以
+  // report-start 蓋掉，順序天然正確。
+  const report: ReportState = last
+    ? { ...idleReport, status: 'done', downloadUrl: last.download_url, title: last.title, reportId: last.report_id ?? null }
+    : item.offer_report
+      ? { ...idleReport, status: item.report_offer_declined ? 'dismissed' : 'offered', title: item.report_title ?? null }
+      : idleReport
   return {
     id: item.id,
     question: item.question,
@@ -337,12 +356,10 @@ export function turnFromHistory(item: ConversationTurn): Turn {
     isOfftopic: item.is_offtopic,
     noticeText: item.is_offtopic ? item.answer : null,
     noticeKind: item.notice_kind ?? null,
-    offerReport: false,
-    reportTitle: null,
+    offerReport: !last && item.offer_report,
+    reportTitle: item.report_title ?? null,
     feedback: item.feedback,
-    report: last
-      ? { ...idleReport, status: 'done', downloadUrl: last.download_url, title: last.title, reportId: last.report_id ?? null }
-      : idleReport,
+    report,
     errorText: null,
     followups: item.followups,
     priorVersions: [],

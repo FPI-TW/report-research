@@ -72,8 +72,9 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
       )}
       {/* 停止標記跟著「目前顯示的版本」走：live 是停止輪（phase）或 pager 正切在
           某個被停止的舊版（view.stopped），兩者都要標——否則停止的部分答案在版本
-          切換時會偽裝成完整回答。 */}
-      {view.stopped && <span className={styles.stopped}>已停止</span>}
+          切換時會偽裝成完整回答。必須是 block：思考卡是 inline-block，行內元素會
+          黏到卡片右側漂著（2026-08-03 實際回報的版面缺陷）。 */}
+      {view.stopped && <div className={styles.stopped}>已停止生成</div>}
       {turn.versionCount > 1 && (
         <div className={styles.pager}>
           <button

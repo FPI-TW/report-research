@@ -4,8 +4,12 @@
 .bubble { max-width: 78%; background: var(--tf-graphite); color: var(--tf-on-graphite); border-radius: 14px 14px 4px 14px; padding: 10px 16px; font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .editBtn { flex: none; display: inline-flex; align-items: center; justify-content: center; height: 26px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; font-size: 11.5px; padding: 0 12px; cursor: pointer; }
 .editBtn:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
-.editBox { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 78%; margin: 18px 0 10px auto; }
-.textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid var(--tf-border); border-radius: var(--tf-radius-md); padding: 10px 12px; font-size: 14.5px; line-height: 1.6; color: var(--tf-text-1); background: var(--tf-surface); }
+/* 編輯框比照 ChatGPT：一個圓角容器把輸入區與按鈕包在一起（同 Composer 的
+   「盒＋裸 textarea」作法，含 focus-within 石墨框）；textarea 無框無底、
+   高度隨內容自動長高（見 UserMessage.tsx 的 effect），不給使用者手動 resize。 */
+.editBox { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 78%; margin: 18px 0 10px auto; background: var(--tf-surface); border: 1px solid var(--tf-border); border-radius: var(--tf-radius-panel); box-shadow: var(--tf-shadow-xs); padding: 12px 14px 10px; transition: border-color var(--tf-dur-2) var(--tf-ease-out), box-shadow var(--tf-dur-2) var(--tf-ease-out); }
+.editBox:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite), var(--tf-shadow-xs); }
+.textarea { width: 100%; min-height: 24px; max-height: 200px; overflow-y: auto; resize: none; border: none; outline: none; padding: 0; font-size: 14.5px; line-height: 1.6; color: var(--tf-text-1); background: none; }
 .editActions { display: flex; justify-content: flex-end; gap: 8px; }
 .editActions button { border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12.5px; padding: 6px 14px; cursor: pointer; }
 .editActions button:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }

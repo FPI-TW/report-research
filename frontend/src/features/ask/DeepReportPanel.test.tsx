@@ -69,3 +69,12 @@ test('done：協定相對/跨源 downloadUrl 不渲染下載連結（scheme 守�
   rerender(<DeepReportPanel report={rs({ status: 'done', downloadUrl: 'https://evil.com/x', title: 'T' })} onGenerate={() => {}} onDecline={() => {}} />)
   expect(screen.queryByRole('link', { name: '下載 PDF' })).toBeNull()
 })
+
+test('dismissed：收合成「生成深度研報」小入口，點擊還原邀請（收合不是刪除）', () => {
+  const onRestore = vi.fn()
+  render(<DeepReportPanel report={rs({ status: 'dismissed', title: 'T 深度研報' })} onGenerate={() => {}} onDecline={() => {}} onRestore={onRestore} />)
+  // 大卡不在、小入口在
+  expect(screen.queryByText('要不要整理成完整 PDF 深度研報？')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: /生成深度研報/ }))
+  expect(onRestore).toHaveBeenCalled()
+})

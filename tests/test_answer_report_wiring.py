@@ -54,13 +54,14 @@ class GetConversationAttachesReportsTests(unittest.IsolatedAsyncioTestCase):
             return {"qa-1": [{"report_id": "rep-1", "title": "X 深度研報",
                               "download_url": "/api/report-doc/rep-1/pdf", "created_at": "t"}]}
 
-        # 假 get_conversation 的 qa 行：_conversation_item 需要的 13 欄
+        # 假 get_conversation 的 qa 行：_conversation_item 需要的 15 欄
         # (id, question, answer, created_at, feedback, sources, ext_sources,
-        #  thinking_ms, stages, followups, root_qa_id, stopped, version_count)
+        #  thinking_ms, stages, followups, root_qa_id, stopped, version_count,
+        #  cited_report_ids, filters)
         class _Result:
             def all(self_inner):
                 return [("qa-1", "問題", "答案", None, None, None, None, 100,
-                         None, None, None, False, 1)]
+                         None, None, None, False, 1, None, None)]
 
         class _Sess(_FakeSession):
             async def execute(self_inner, *a, **k):

@@ -86,3 +86,7 @@
   text-decoration: none;
 }
 .dl:hover { background: var(--tf-gold-hover); color: var(--tf-on-gold); }
+/* 婉拒後的小入口：與 AssistantMessage 的資料來源鈕同一種弱化膠囊，刻意低調——
+   邀請卡收合後不該再佔版面，但入口要永遠叫得回來（收合不是刪除）。 */
+.reopen { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; font-size: 12px; padding: 5px 12px; cursor: pointer; }
+.reopen:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }

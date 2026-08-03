@@ -168,14 +168,14 @@ test('feedback / reset / load', () => {
   expect(s.turns[0].feedback).toBe('like')
   s = askReducer(s, { type: 'reset' })
   expect(s.turns).toEqual([])
-  const turn = turnFromHistory({ id: 'qa9', question: 'H', answer: 'A', created_at: '2026-06-20T00:00:00Z', feedback: 'dislike', sources: [], ext_sources: [], is_offtopic: false, thinking_ms: 1500, reports: [{ report_id: 'rp', title: 'RT', download_url: '/api/report-doc/rp/pdf', created_at: null }], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false })
+  const turn = turnFromHistory({ id: 'qa9', question: 'H', answer: 'A', created_at: '2026-06-20T00:00:00Z', feedback: 'dislike', sources: [], ext_sources: [], is_offtopic: false, thinking_ms: 1500, reports: [{ report_id: 'rp', title: 'RT', download_url: '/api/report-doc/rp/pdf', created_at: null }], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false, offer_report: false, report_title: null, report_offer_declined: false })
   s = askReducer(s, { type: 'load', turns: [turn] })
   expect(s.turns[0]).toMatchObject({ id: 'qa9', phase: 'done', qaId: 'qa9', feedback: 'dislike' })
   expect(s.turns[0].report).toMatchObject({ status: 'done', downloadUrl: '/api/report-doc/rp/pdf' })
 })
 
 test('turnFromHistory 離題轉 notice、qaId null', () => {
-  const t = turnFromHistory({ id: 'qaX', question: 'H', answer: '無法回答此問題', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: true, thinking_ms: null, reports: [], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false })
+  const t = turnFromHistory({ id: 'qaX', question: 'H', answer: '無法回答此問題', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: true, thinking_ms: null, reports: [], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false, offer_report: false, report_title: null, report_offer_declined: false })
   expect(t.phase).toBe('notice')
   expect(t.noticeText).toBe('無法回答此問題')
   expect(t.qaId).toBeNull()
@@ -183,7 +183,7 @@ test('turnFromHistory 離題轉 notice、qaId null', () => {
 })
 
 test('turnFromHistory 帶出 notice_kind（重播不該把時效婉拒當成離題）', () => {
-  const t = turnFromHistory({ id: 'qaY', question: 'H', answer: '需要即時行情', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: true, notice_kind: 'time_sensitive', thinking_ms: null, reports: [], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false })
+  const t = turnFromHistory({ id: 'qaY', question: 'H', answer: '需要即時行情', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: true, notice_kind: 'time_sensitive', thinking_ms: null, reports: [], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false, offer_report: false, report_title: null, report_offer_declined: false })
   expect(t.phase).toBe('notice')
   expect(t.noticeKind).toBe('time_sensitive')
 })
@@ -344,7 +344,7 @@ describe('askReducer M3', () => {
     const t = turnFromHistory({
       id: 'qa9', question: 'H', answer: '最新答案', created_at: null, feedback: null,
       sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [],
-      stages: [], followups: [], root_qa_id: 'qa1', version_count: 3, stopped: false,
+      stages: [], followups: [], root_qa_id: 'qa1', version_count: 3, stopped: false, offer_report: false, report_title: null, report_offer_declined: false,
     })
     expect(t.versionIndex).toBe(2)
     expect(t.versionCount).toBe(3)
@@ -413,4 +413,35 @@ test('研報 queued 進 report.queuePosition，後續事件清掉（含重播來
   s = askReducer(s, rev({ event: 'status', data: { stage: 'writing' } }))
   expect(s.turns[0].report.queuePosition).toBeNull()
   expect(s.turns[0].report.stage).toBe('writing')
+})
+
+// ── 研報邀請跨重整持久（offer_report/report_offer_declined 來自 get_conversation）──
+test('turnFromHistory：gate 判可生成 → 邀請卡還原為 offered（重整後不再消失）', () => {
+  const t = turnFromHistory({ id: 'qa1', question: '台積電分析', answer: 'A', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false, offer_report: true, report_title: '台積電分析 深度研報', report_offer_declined: false })
+  expect(t.report.status).toBe('offered')
+  expect(t.report.title).toBe('台積電分析 深度研報')
+  expect(t.offerReport).toBe(true)
+})
+
+test('turnFromHistory：婉拒過 → dismissed 小入口（不是消失也不是大卡復活）', () => {
+  const t = turnFromHistory({ id: 'qa1', question: 'Q', answer: 'A', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false, offer_report: true, report_title: 'T', report_offer_declined: true })
+  expect(t.report.status).toBe('dismissed')
+})
+
+test('turnFromHistory：已有研報 → 下載卡優先於邀請', () => {
+  const t = turnFromHistory({ id: 'qa1', question: 'Q', answer: 'A', created_at: null, feedback: null, sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [{ report_id: 'rp', title: 'RT', download_url: '/api/report-doc/rp/pdf', created_at: null }], stages: [], followups: [], root_qa_id: null, version_count: 1, stopped: false, offer_report: true, report_title: 'T', report_offer_declined: false })
+  expect(t.report.status).toBe('done')
+  expect(t.offerReport).toBe(false)
+})
+
+test('report-decline 收合成 dismissed（標題留著）、report-reoffer 還原成 offered', () => {
+  let s = submit()
+  s = askReducer(s, ev({ event: 'done', data: { conversation_id: 'c', qa_id: 'qa1', offer_report: true, report_title: 'T 深度研報' } }))
+  expect(s.turns[0].report.status).toBe('offered')
+  s = askReducer(s, { type: 'report-decline', id: 't1' })
+  expect(s.turns[0].report.status).toBe('dismissed')
+  expect(s.turns[0].report.title).toBe('T 深度研報')
+  s = askReducer(s, { type: 'report-reoffer', id: 't1' })
+  expect(s.turns[0].report.status).toBe('offered')
+  expect(s.turns[0].report.title).toBe('T 深度研報')
 })

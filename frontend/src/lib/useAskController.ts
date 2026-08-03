@@ -4,7 +4,7 @@ import { askReducer, initialAskState, turnFromHistory, type AskState, type Turn 
 import { parseAskEvent, parseReportEvent } from './askSchemas'
 import {
   streamAsk, streamReport, streamReportRun, getActiveReportRuns, cancelReportRun,
-  getConversation, sendFeedback, stopAsk, getQaVersions,
+  getConversation, sendFeedback, stopAsk, getQaVersions, setReportOffer,
 } from './askApi'
 import type { RawSSEEvent } from './readSSE'
 import { ApiError } from './api'
@@ -25,7 +25,9 @@ export interface UseAskController {
   setVersion: (turnId: string, index: number) => void
   loadVersions: (turnId: string, rootId: string) => Promise<boolean>
   generateReport: (turnId: string, question: string, qaId: string | null, templateId?: string) => void
-  declineReport: (turnId: string) => void
+  /** 「暫時不用」＝收合成小入口（跨重整持久），不是刪除；restore 還原成邀請卡。 */
+  declineReport: (turnId: string, qaId: string | null) => void
+  restoreReportOffer: (turnId: string, qaId: string | null) => void
   cancelReport: (turnId: string, runId: string) => void
   loadConversation: (id: string) => Promise<void>
   newConversation: () => void
@@ -344,7 +346,15 @@ export function useAskController(): UseAskController {
     consumeReport(turn.id, signal => streamReportRun(run.run_id, signal))
   }, [consumeReport])
 
-  const declineReport = useCallback((turnId: string) => dispatch({ type: 'report-decline', id: turnId }), [])
+  const declineReport = useCallback((turnId: string, qaId: string | null) => {
+    dispatch({ type: 'report-decline', id: turnId })
+    if (qaId) void setReportOffer(qaId, 'decline').catch(() => { /* 婉拒寫入失敗不打擾 */ })
+  }, [])
+
+  const restoreReportOffer = useCallback((turnId: string, qaId: string | null) => {
+    dispatch({ type: 'report-reoffer', id: turnId })
+    if (qaId) void setReportOffer(qaId, 'restore').catch(() => { /* 還原寫入失敗不打擾 */ })
+  }, [])
 
   const loadConversation = useCallback(async (id: string) => {
     abortAll()
@@ -377,6 +387,7 @@ export function useAskController(): UseAskController {
 
   return {
     state, conversationId, submit, stop, regenerate, editResubmit, setVersion, loadVersions,
-    generateReport, declineReport, cancelReport, loadConversation, newConversation, setFeedback,
+    generateReport, declineReport, restoreReportOffer, cancelReport, loadConversation,
+    newConversation, setFeedback,
   }
 }

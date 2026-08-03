@@ -56,7 +56,7 @@
 |------|------|
 | **檢索** | 即打即查、關鍵字黃底高亮、命中片段預覽、2-3 句中文摘要；可依市場／商品類型／標的／報告類型篩選，列表或表格檢視；**點任一筆導向閱讀頁 `/app/report/:file_hash`**（不再內嵌 PDF modal）|
 | **問答（RAG）** | SSE 串流回答、行內 `[n]` 引用可點回原報告、對話歷史側欄、多輪續問、讚／倒讚回饋、離題閘門、語料總覽題（如「有哪些券商」）走分面統計 |
-| **研報閱讀頁** | `/app/report/:file_hash`：一份研報的原文（PDF／文字雙檢視）＋重點摘錄（點擊跳到原文並高亮）＋標籤／摘要／訊號＋相似研報＋「就這篇提問」，收攏到一個可分享的網址 |
+| **研報閱讀頁** | `/app/report/:file_hash`：一份研報的原文（內嵌 PDF；內嵌不了的格式落到正典文字）＋重點摘錄（論點＋逐字引文）＋標籤／摘要／訊號＋相似研報＋「就這篇提問」，收攏到一個可分享的網址 |
 | **深度研報** | 深度檢索 → 逐節長文串流 → KPI/圖表 → Typst 渲染 PDF（WeasyPrint 為回退）→ 持久化（markdown 為真相來源，PDF 可重建）；生成跑在背景任務，斷線／重整不中止 |
 | **觀點雷達** | `/app/radar`：`make signals` 由 Claude 依固定 JSON schema 擷取結構化訊號（評等／目標價／EPS／四維論點 → `research.report_signal`）→ `app/services/radar/` 做跨券商共識聚合 → 標的總覽（共識快照／四維論點／近期事件／單券商歷程），**讀取零 LLM 呼叫** |
 | **監控頁** | `/app/monitor`：DB 筆數、摘要／重點摘錄／訊號覆蓋、背景程序狀態、速率與 ETA、忠實度查核卡片 |
@@ -342,7 +342,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 沿用全站分工：**Claude 只出語意、Python 負責定位**。`make takeaways` 讓 Sonnet 每篇回 3-5 條「論點 ＋ 一句逐字引文」（不給 offset），再由 `reading/anchor.py` 的 `locate_quote` 確定性錨回原文字元區間，寫入 `research.report_takeaway`。因此**閱讀頁讀取時零 LLM 呼叫**。
 
-**正典文字＝`clean_extracted(full_text)`，不是 `full_text`**（`full_text` 存的是未清理的原始抽取文字，保留 PDF 抽字的 CJK 間空白，如「台 積 電」）。餵 LLM 的 excerpt、錨點基準、API 回傳的文字三者必須是同一個字串；`text_sha256` 就是這個不變量的守衛：讀取時比對「摘錄擷取當時的 sha」與「當前正典文字的 sha」，不符即把該條降級為不可跳，而不是跳到錯的地方。錨不到（`quote_start` 為 `NULL`）時條目照樣顯示，只是不給跳轉。
+**正典文字＝`clean_extracted(full_text)`，不是 `full_text`**（`full_text` 存的是未清理的原始抽取文字，保留 PDF 抽字的 CJK 間空白，如「台 積 電」）。餵 LLM 的 excerpt、錨點基準、API 回傳的文字三者必須是同一個字串；`text_sha256` 就是這個不變量的守衛：讀取時比對「摘錄擷取當時的 sha」與「當前正典文字的 sha」，不符即把該條的錨點收回（`quote_start`／`quote_end` 回 `NULL`），而不是給出錯位的座標。錨不到時條目照樣顯示（論點與逐字引文本來就是內容主體）。
 
 > 定位一律走 `reading/anchor.py`，不要自己 `full_text.find(...)`：`report_chunk.content` 因切塊 overlap 而**不是** `full_text` 的子字串，天真比對約 99% 無聲失敗，詳見 `anchor.py` 模組 docstring。
 
@@ -386,7 +386,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 **導覽是左側導覽軌**（可收合成 mini，手機改底部 tab bar），四個入口——**檢索／問答／觀點／監控**；閱讀頁與說明頁不進導覽列。
 
-- **檢索**：搜尋列＋市場 chip 列＋已選條件 chips 固定在上方；**無查詢也無篩選的落地態**顯示 Bento 牆（語料市場組成色譜、最新一批研報），此時工具列不渲染，一旦輸入查詢或套上篩選才換成工具列（排序／更多篩選／檢視切換）＋結果區。結果檢視只有兩種（**列表**＝高密度單列、**表格**）；依日期(月)分組只出現在「查看全部／已篩選瀏覽」，搜尋結果不分組。列上顯示市場代碼／標的／券商／日期／相關度，搜尋時列出黃底高亮命中片段，**點任一筆＝導向閱讀頁 `/app/report/:file_hash`**（帶 `?chunk=N` 跳到命中段），不是內嵌 PDF modal。
+- **檢索**：搜尋列＋市場 chip 列＋已選條件 chips 固定在上方；**無查詢也無篩選的落地態**顯示 Bento 牆（語料市場組成色譜、最新一批研報），此時工具列不渲染，一旦輸入查詢或套上篩選才換成工具列（排序／更多篩選／檢視切換）＋結果區。結果檢視只有兩種（**列表**＝高密度單列、**表格**）；依日期(月)分組只出現在「查看全部／已篩選瀏覽」，搜尋結果不分組。列上顯示市場代碼／標的／券商／日期／相關度，搜尋時列出黃底高亮命中片段，**點任一筆＝導向閱讀頁 `/app/report/:file_hash`**（乾淨網址，不帶 query），不是內嵌 PDF modal。
 - **問答**：自然語言提問，SSE 串流回答附可點引用來源，側欄保留對話歷史（可重看／續問／刪除），涵蓋足夠時提示生成深度研報。
 
 **認證**：全站以單一**共用帳號＋密碼**把關（`web/auth.py`）。未登入導向 `/login`；session 以 HMAC 簽章 cookie 維持 7 天（滑動到期）；登入失敗對單一 IP 限流。`/api/*` 未授權回 `401`。
@@ -400,7 +400,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | GET | `/api/reports` | 瀏覽（無關鍵字，分頁，可篩選/排序；回 `file_hash`） | |
 | GET | `/api/search` | 混合檢索（`q` 必填，每報告回 `passages` 片段與 `file_hash`） | |
 | GET | `/api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號（**不含全文**） | |
-| GET | `/api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`，所有 offset 以此為準）；帶 `?chunk=N` 一併回該段的字元區間供高亮 | |
+| GET | `/api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`，所有 offset 以此為準）。SPA 只在**內嵌不了原始檔**時才取；`?chunk=N` 仍支援（回該段字元區間）但前端已不再帶 | |
 | GET | `/api/reading/{file_hash}/similar` | 相似研報（向量近鄰，`limit` 預設 6、上限 20） | |
 | POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3；滿載先送 `queued` 事件，排隊逾 `ASK_MAX_QUEUE` 回 429＋`Retry-After`） | SSE |
 | POST | `/api/ask/stop` | 使用者中斷串流時保存部分答案（`stopped=true`），回 `{qa_id}`；帶 `regenerate_of` 同交易停用舊版列、帶 `edit_of` 截斷被編輯輪之後的輪次 | |

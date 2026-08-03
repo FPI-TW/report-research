@@ -203,7 +203,7 @@ class ReadingDocShapeTests(ReadingApiBase):
         self.assertEqual(body["file_name"], "daiwa-8046.pdf")
 
     def test_doc_never_includes_full_text(self):
-        # 契約：閱讀頁骨架不含全文（PDF 是預設檢視，全文另走 /text）
+        # 契約：閱讀頁骨架不含全文（絕大多數研報直接內嵌 PDF，全文另走 /text）
         body = _authed_client().get(f"/api/reading/{HASH}").json()
         self.assertNotIn("text", body)
         self.assertNotIn("full_text", body)
@@ -295,9 +295,9 @@ class TakeawayTests(ReadingApiBase):
 
     def test_offsets_outside_truncation_degrade_to_unjumpable(self):
         # 錨點落在 /text 根本回不到的範圍 → 骨架端點就收回 offset。
-        # 否則前端 isJumpable（只看 quote_start）會把它渲染成可點，
-        # 而 buildTextSegments（依 text.length 丟棄）不會標出錨點 →
-        # 點下去 querySelector 找不到、靜默無事。
+        # 規則是「寧可沒有座標，也不要給指向讀者手上沒有的文字的座標」——
+        # 收回一律在後端做，消費端不自行判斷截斷。
+        # （前端引文跳轉已於 2026-08-03 移除，故這條目前守的是契約而非畫面行為。）
         self._set(fetch_takeaways=self._async([_takeaway(quote_start=0, quote_end=8)]),
                   READING_TEXT_MAX_CHARS=5)
         t = _authed_client().get(f"/api/reading/{HASH}").json()["takeaways"][0]
@@ -333,7 +333,7 @@ class TakeawayTests(ReadingApiBase):
         body = client.get(f"/api/reading/{HASH}/text").json()
         self.assertTrue(body["truncated"])
         self.assertEqual(len(body["text"]), 5)
-        # 8 > 5：這條摘錄指向讀者拿不到的文字 → 骨架必須已經標成不可跳
+        # 8 > 5：這條摘錄指向讀者拿不到的文字 → 骨架必須已經收回它的錨點
         self.assertIsNone(t["quote_start"])
 
 
@@ -350,7 +350,7 @@ class ReadingTextTests(ReadingApiBase):
         self.assertFalse(body["truncated"])
 
     def test_sha256_matches_doc_endpoint(self):
-        # 前端只在兩者相符時才啟用引文跳轉 → 這條契約壞掉＝跳轉全滅
+        # 兩者相符是「摘錄與全文同源」的唯一驗章 → 這條契約壞掉＝所有錨點靜默失效
         client = _authed_client()
         doc_sha = client.get(f"/api/reading/{HASH}").json()["text_sha256"]
         text_body = client.get(f"/api/reading/{HASH}/text").json()
@@ -368,7 +368,7 @@ class ReadingTextTests(ReadingApiBase):
 
     def test_truncation_keeps_full_text_sha_and_chars(self):
         # 截斷只影響顯示：takeaway 錨點是對「完整正典文字」算的，若回截斷版的 sha，
-        # 前端驗章會一律失敗、跳轉全滅。超出範圍的錨點由前端自行丟棄。
+        # 驗章會一律失敗、該篇錨點全數被收回。超出範圍的錨點另由後端收回（見骨架端點）。
         self._set(READING_TEXT_MAX_CHARS=5)
         body = _authed_client().get(f"/api/reading/{HASH}/text").json()
         self.assertTrue(body["truncated"])

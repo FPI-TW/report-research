@@ -206,9 +206,10 @@ async def fetch_chunk_content(
 ) -> Optional[str]:
     """取單一 chunk 的原文；查無 → None。
 
-    供閱讀頁「跳到檢索命中那一段」：呼叫端把回傳字串交給 anchor.locate_chunk 錨回正典
-    文字。**查無不是錯誤**（連結可能來自已重新 ingest 的舊檢索結果）—— 呼叫端據此不回
-    offset，前端不高亮但頁面照常。
+    原供閱讀頁「跳到檢索命中那一段」（該互動已於 2026-08-03 隨文字檢視移除，SPA 不再
+    帶 `?chunk=`，故此函式目前只有 /text 端點與測試會走）：呼叫端把回傳字串交給
+    anchor.locate_chunk 錨回正典文字。**查無不是錯誤**（連結可能來自已重新 ingest 的
+    舊檢索結果）—— 呼叫端據此不回 offset，頁面照常。
 
     轉型用 `CAST(:rid AS uuid)`（見模組 docstring 的 bind 參數禁忌）。
     """

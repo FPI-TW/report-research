@@ -349,7 +349,9 @@ CREATE INDEX IF NOT EXISTS idx_report_rendition_report
 -- full_text 存的是未清理的原始抽取文字（見 scripts/ingest_all.py：full_text=raw_text
 -- 但 chunks=chunk_text(clean_extracted(raw_text))），保留 CJK 間空白「台 積 電」。
 -- 錨點基準字串／餵 LLM 的 excerpt／API 回傳的文字三者必須同一個 —— text_sha256
--- 就是為了讓這件事一旦被破壞會被偵測到（降級為不可跳，而非跳到錯的地方）。
+-- 就是為了讓這件事一旦被破壞會被偵測到（收回錨點，而非給出錯位的座標）。
+-- 前端引文跳轉已於 2026-08-03 移除，這三欄目前無讀取路徑；批次仍照寫，
+-- 因為 db_audit 的同源稽核靠它，且事後補算＝對 674+ 篇重跑 Sonnet。
 CREATE TABLE IF NOT EXISTS research.report_takeaway (
     id                 uuid PRIMARY KEY,
     -- 同 file_hash 重新 ingest 時（store.upsert_report 先刪後插）連帶 CASCADE 清除，
@@ -359,7 +361,7 @@ CREATE TABLE IF NOT EXISTS research.report_takeaway (
     ordinal            int  NOT NULL,           -- 1..N 顯示順序
     claim              text NOT NULL,           -- 論點（LLM）
     quote              text,                    -- 逐字引文（LLM，須出自正典文字）
-    quote_start        int,                     -- 確定性錨定結果；NULL＝錨不到，條目仍顯示但不可跳
+    quote_start        int,                     -- 確定性錨定結果；NULL＝錨不到，條目仍照常顯示
     quote_end          int,
     anchor_method      text
         CHECK (anchor_method IS NULL

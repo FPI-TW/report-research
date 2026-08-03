@@ -1,4 +1,9 @@
-"""把 chunk／LLM 引文確定性地錨回全文的字元區間。閱讀頁「跳到那一段」的地基。
+"""把 chunk／LLM 引文確定性地錨回全文的字元區間。
+
+原本的消費端是閱讀頁「跳到那一段」，該互動已於 2026-08-03 隨文字檢視移除。
+`locate_quote` **仍在生產路徑上**（scripts/extract_takeaways.py 每 3 小時寫入
+report_takeaway.quote_start/quote_end），`locate_chunk` 則只剩 /text?chunk= 這條
+無人呼叫的端點與測試。兩者都刻意保留：重算的代價是對 674+ 篇重跑 Sonnet。
 
 ════════════════════════════════════════════════════════════════════════
 改動本檔前必讀：兩個實測事實（2026-07-17 直接查生產 DB）
@@ -42,7 +47,7 @@ from app.services.chunk import CHUNK_OVERLAP
 from app.services.textnorm import norm_for_match, norm_for_match_with_map
 
 # 引文短於此長度不錨定：太短的字串在一份研報裡幾乎必然多處出現（頁首、目錄、
-# 表格標題），錨到哪一處都是猜的。寧可讓該條摘錄不能跳。
+# 表格標題），錨到哪一處都是猜的。寧可讓該條摘錄沒有錨點。
 MIN_QUOTE_CHARS = 12
 
 # 整段引文找不到時的前綴退讓長度（正規化後字元數，由長到短）
@@ -128,7 +133,7 @@ def locate_quote(text: str, quote: str) -> Anchor | None:
 def locate_chunk(
     text: str, chunk_content: str, overlap: int = CHUNK_OVERLAP
 ) -> Anchor | None:
-    """把檢索命中的 chunk 錨回正典文字，供「跳到命中那一段」。
+    """把檢索命中的 chunk 錨回正典文字（原供閱讀頁「跳到命中那一段」，該功能已移除）。
 
     `text` 必須是 `clean_extracted(full_text)`（見模組 docstring 事實一）。
 

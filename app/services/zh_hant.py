@@ -38,8 +38,12 @@
    opencc 的詞組表，出來就不是「臺」，不受這步影響。）
 
 **不適用的地方**（各有各的理由，別順手接上去）：
-- `report_takeaway.quote`：逐字引文，是 `reading/anchor.locate_quote` 的錨定基準。
-  原文若是簡體，引文就必須跟著是簡體，否則錨不回 canonical text。
+- `report_takeaway.quote`：**逐字引文**。第一個理由與任何功能無關——改一個字它就不再是
+  逐字引文，而「原文就是這麼寫的」正是它存在的全部意義（全語料 63 篇原文本身就是簡體）。
+  第二個理由是它仍是 `reading/anchor.locate_quote` 的錨定基準，批次照樣在寫
+  quote_start/quote_end；轉了會靜默錨不回 canonical text。
+  **前端引文跳轉已於 2026-08-03 隨文字檢視移除，但這條規則一個字都不能鬆**——
+  跳轉沒了只是讓第二個理由暫時看不見，第一個理由永遠成立。
 - `report_signal.thesis_dimensions[*].evidence`：同理，是原句。
 - `research_report.full_text` / `report_chunk.content`：語料本身（全語料 63 篇
   原文就是簡體）。不是 LLM 產出，動它等於竄改來源；chunk 更是碰不得

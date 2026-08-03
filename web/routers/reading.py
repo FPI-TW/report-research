@@ -62,10 +62,10 @@ def _canonical_text(full_text: str | None) -> tuple[str, str | None]:
     **與 scripts/extract_takeaways.py 綁死**：那支批次以同樣的
     `sha256(clean_extracted(full_text))` 算出並寫入 report_takeaway.text_sha256，
     本函式算出的值要拿去和它比對驗章。兩邊任一側改了清理或編碼方式而另一側沒跟上，
-    驗章會全篇失敗、跳轉靜默失效（不會拋錯）。要改就兩邊一起改。
+    驗章會全篇失敗、該篇所有錨點被靜默收回（不會拋錯）。要改就兩邊一起改。
 
-    無全文不是錯誤：該篇只是沒有可讀文字（只能看 PDF），呼叫端據此回
-    text_state="missing"。
+    無全文不是錯誤：該篇只是沒有可讀文字，呼叫端據此回 text_state="missing"
+    （前端則不取 /text，文件區改由 has_file/is_pdf 決定呈現）。
     """
     canonical = clean_extracted(full_text) if full_text else ""
     if not canonical:
@@ -76,8 +76,8 @@ def _canonical_text(full_text: str | None) -> tuple[str, str | None]:
 def _visible_chars(canonical: str) -> int:
     """/text 實際回給讀者的字元數（＝截斷後的長度）。
 
-    截斷規則只有這一個定義處：骨架端點與 /text 都由此推導，兩邊才不會對「這條摘錄
-    跳不跳得到」給出不同答案。
+    截斷規則只有這一個定義處：骨架端點與 /text 都由此推導，兩邊才不會對「這條摘錄的
+    錨點還算不算數」給出不同答案。
     """
     return min(len(canonical), READING_TEXT_MAX_CHARS)
 
@@ -85,7 +85,7 @@ def _visible_chars(canonical: str) -> int:
 def _reading_takeaways(rows, text_sha256: str | None, visible_chars: int) -> list[Takeaway]:
     """DB 摘錄列 → 契約 Takeaway，並在此驗章、套截斷。
 
-    降級為不可跳（quote_start/quote_end/anchor_method 全 None，條目與引文照常顯示）
+    收回錨點（quote_start/quote_end/anchor_method 全 None，條目與引文照常顯示）
     有兩個獨立原因：
 
     1. **驗章不過**：每列的 text_sha256 是「擷取當時的正典文字」的 sha。與當前正典
@@ -93,11 +93,11 @@ def _reading_takeaways(rows, text_sha256: str | None, visible_chars: int) -> lis
     2. **落在截斷範圍之外**：offset 對「完整正典文字」計算，但 /text 只回前
        READING_TEXT_MAX_CHARS 字。錨點超出這個範圍＝指向讀者手上根本沒有的文字。
 
-    兩者都是「寧可不能跳，也不要跳到錯的地方」。第 2 點與 _chunk_anchor 的
+    兩者都是「寧可沒有座標，也不要給錯的座標」。第 2 點與 _chunk_anchor 的
     `anchor.end > visible_chars` 是同一條規則 —— 刻意在後端統一收回，而不是多發一個
-    text_visible_chars 欄位讓前端各自判斷：可跳與否只該有一個真相來源，否則前端
-    buildTextSegments（依 text.length 丟棄）與 isJumpable（只看 quote_start）會再次
-    分岔，摘錄顯示為可點、點下去卻找不到錨點而靜默無事。
+    text_visible_chars 欄位讓消費端各自判斷：**錨點有效與否只該有一個真相來源**。
+    （前端引文跳轉已於 2026-08-03 移除，這三個欄位目前無讀取路徑；規則仍留著，
+    因為 db_audit 的同源稽核與日後恢復跳轉都靠它，而重算一次的代價是 674 篇 Sonnet。）
     """
     out: list[Takeaway] = []
     for r in rows:
@@ -122,7 +122,8 @@ def _chunk_anchor(
 ) -> tuple[int | None, int | None]:
     """把檢索命中的 chunk 錨回正典文字 → (start, end)；錨不到一律 (None, None)。
 
-    **錨不到不是錯誤**：前端據此不高亮，頁面照常（也因此此處不拋 4xx）。錨定邏輯全在
+    **錨不到不是錯誤**：呼叫端據此不標命中，頁面照常（也因此此處不拋 4xx）。
+    注意 SPA 已不再帶 `?chunk=`，這條路徑目前只有測試與直接呼叫端會走。錨定邏輯全在
     app/services/reading/anchor.py（實測 400/400 命中），前端不重造比對。
 
     **offset 一律對「完整正典文字」計算**（locate_chunk 的契約），但回傳給讀者的 text
@@ -177,9 +178,10 @@ def _reading_signals(rows) -> list[Signal]:
 
 @router.get("/api/reading/{file_hash}", response_model=ReadingDoc)
 async def reading_doc(file_hash: str):
-    """閱讀頁骨架：metadata + 重點摘錄 + 訊號。**不含全文**（PDF 是預設檢視）。
+    """閱讀頁骨架：metadata + 重點摘錄 + 訊號。**不含全文**（絕大多數研報直接內嵌 PDF）。
 
-    全文另走 /api/reading/{file_hash}/text，前端只在需要文字檢視時才取。
+    全文另走 /api/reading/{file_hash}/text，前端只在**內嵌不了原始檔**（非 PDF 或
+    檔案不存在）時才取——閱讀頁已無「文字檢視」這個使用者可選項（2026-08-03 移除）。
     """
     _validate_file_hash(file_hash)
     async with deps.SessionFactory() as session:
@@ -210,7 +212,7 @@ async def reading_doc(file_hash: str):
         text_chars=len(canonical),
         text_sha256=text_sha256,
         # visible_chars 與 /text 同源：落在截斷範圍外的錨點在此就收回，
-        # 讀者不會看到一條「可點但點不到」的摘錄。
+        # 骨架與 /text 才不會對同一條摘錄的錨點是否有效給出兩個答案。
         takeaways=_reading_takeaways(takeaway_rows, text_sha256, _visible_chars(canonical)),
         # 全語料僅 0.68% 有訊號：空是常態不是錯誤，前端據此整區不進 DOM
         signals_state="available" if signals else "none",
@@ -224,9 +226,9 @@ async def reading_text(file_hash: str, chunk: int | None = Query(None, ge=0)):
 
     **截斷語意**：text 超過 READING_TEXT_MAX_CHARS 時只回前綴並標 truncated=True，
     但 text_sha256 與 text_chars 仍是「完整正典文字」的值 —— takeaway 的錨點是對完整
-    文字算出來的，回截斷版的 sha 會讓前端的驗章一律失敗、跳轉整個失效。
+    文字算出來的，回截斷版的 sha 會讓驗章一律失敗、該篇錨點全數被收回。
     超出截斷範圍的錨點一律由後端收回為 None（此處的 chunk_start/chunk_end 走
-    _chunk_anchor，骨架端點的 takeaway offset 走 _reading_takeaways），前端不需要、
+    _chunk_anchor，骨架端點的 takeaway offset 走 _reading_takeaways），消費端不需要、
     也不應該自行判斷截斷。
 
     **?chunk=N**：檢索命中的 chunk_index。帶了就一併回該段在正典文字上的字元區間

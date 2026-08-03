@@ -20,12 +20,24 @@ interface Props {
   report: ReportState
   onGenerate: (templateId?: string) => void
   onDecline: () => void
+  /** dismissed 小入口點開 → 還原成完整邀請卡（收合不是刪除）。 */
+  onRestore?: () => void
   onCancel?: (runId: string) => void
 }
 
-export function DeepReportPanel({ report, onGenerate, onDecline, onCancel }: Props) {
+export function DeepReportPanel({ report, onGenerate, onDecline, onRestore, onCancel }: Props) {
   const [templateId, setTemplateId] = useState<string | undefined>(undefined)
   if (report.status === 'idle') return null
+
+  // 「暫時不用」之後的樣子：一顆低調的小入口，點開回到完整邀請卡。
+  // 邀請與婉拒都跨重整持久（後端 gate 重算＋filters 旗標），入口永遠叫得回來。
+  if (report.status === 'dismissed') {
+    return (
+      <button type="button" className={styles.reopen} onClick={onRestore}>
+        <Icon name="fileText" size={14} /> 生成深度研報
+      </button>
+    )
+  }
 
   if (report.status === 'offered') {
     // 版面改為「說明在上、版型縮圖成排、動作在最下」的直式流程。原本是把三者塞進同一列

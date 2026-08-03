@@ -185,3 +185,42 @@ class ConversationDeleteHttpTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportOfferEndpointTests(unittest.TestCase):
+    """POST /api/qa/{qa_id}/report-offer：研報邀請的收合／還原（跨重整持久）。"""
+
+    QA = "123e4567-e89b-42d3-a456-426614174000"
+
+    def _patched(self):
+        from web import deps
+        calls = []
+
+        async def _fake(qa_id, declined):
+            calls.append((qa_id, declined))
+            return True
+
+        return deps, deps.set_report_offer_declined, _fake, calls
+
+    def test_decline_and_restore_forwarded(self):
+        deps, orig, fake, calls = self._patched()
+        deps.set_report_offer_declined = fake
+        try:
+            c = _authed()
+            r1 = c.post(f"/api/qa/{self.QA}/report-offer", json={"action": "decline"})
+            r2 = c.post(f"/api/qa/{self.QA}/report-offer", json={"action": "restore"})
+        finally:
+            deps.set_report_offer_declined = orig
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertTrue(r1.json()["ok"] and r2.json()["ok"])
+        self.assertEqual(calls, [(self.QA, True), (self.QA, False)])
+
+    def test_invalid_action_400(self):
+        c = _authed()
+        r = c.post(f"/api/qa/{self.QA}/report-offer", json={"action": "maybe"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_invalid_uuid_404(self):
+        c = _authed()
+        r = c.post("/api/qa/not-a-uuid/report-offer", json={"action": "decline"})
+        self.assertEqual(r.status_code, 404)

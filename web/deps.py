@@ -127,6 +127,7 @@ from app.services.answer import (  # noqa: E402
     delete_qa,
     list_qa_versions,
     log_stopped_qa,
+    set_report_offer_declined,
 )
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
@@ -186,4 +187,5 @@ __all__ = [
     "log_stopped_qa",
     "rank_reports",
     "rerank_warmup",
+    "set_report_offer_declined",
 ]

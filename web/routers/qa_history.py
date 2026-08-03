@@ -36,6 +36,10 @@ class FeedbackRequest(BaseModel):
     value: str  # 'like' | 'dislike' | 'none'（none＝取消，寫入 NULL）
 
 
+class ReportOfferRequest(BaseModel):
+    action: str  # 'decline'（收合邀請）| 'restore'（還原邀請）
+
+
 # ── 輔助函式一律放在所有 @router.* 裝飾器之上 ────────────────────────────────
 # 夾在裝飾器與 handler 之間會讓裝飾器套到輔助函式，端點對正常請求回 422
 # （2026-07-28 實際事故）。直接呼叫函式物件的測試看不到，只有 HTTP 層測試會抓到。
@@ -105,6 +109,21 @@ async def delete_history_post(qa_id: str):
     某些外部代理/邊緣環境對 DELETE 支援不穩時，前端可回退到 POST alias。
     """
     ok = await deps.delete_qa(qa_id)
+    return {"ok": ok}
+
+
+@router.post("/api/qa/{qa_id}/report-offer")
+async def qa_report_offer(qa_id: str, req: ReportOfferRequest):
+    """研報邀請的收合／還原（decline/restore）。回 {"ok": bool}。
+
+    邀請本身由 get_conversation 讀取時以 gate 重算（重整後不再消失）；這支只
+    負責婉拒旗標，讓「暫時不用」跨重整持久，且隨時可還原——收合不是刪除。
+    """
+    if not deps._valid_uuid(qa_id):
+        raise HTTPException(status_code=404, detail="not found")
+    if req.action not in ("decline", "restore"):
+        raise HTTPException(status_code=400, detail="action 必須是 decline 或 restore")
+    ok = await deps.set_report_offer_declined(qa_id, req.action == "decline")
     return {"ok": ok}
 
 

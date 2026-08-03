@@ -2005,14 +2005,14 @@ class GetConversationTests(unittest.IsolatedAsyncioTestCase):
         import app.services.report as rpt
         from app.services import answer as ans
 
-        # 13 欄須與新 SELECT 順序對齊：id, question, answer, created_at, feedback,
+        # 15 欄須與新 SELECT 順序對齊：id, question, answer, created_at, feedback,
         # sources, ext_sources, thinking_ms, stages, followups, root_qa_id,
-        # stopped, version_count
+        # stopped, version_count, cited_report_ids, filters
         rows = [
             ("id1", "Q1", "A1", date(2026, 6, 1), None, None, None,
-             None, None, None, None, False, 1),
+             None, None, None, None, False, 1, None, None),
             ("id2", "Q2", "A2", date(2026, 6, 2), "like", None, None,
-             None, None, None, None, False, 1),
+             None, None, None, None, False, 1, None, None),
         ]
         async def _no_reports(cid):
             return {}
@@ -2030,15 +2030,109 @@ class GetConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out[1]["feedback"], "like")
 
 
+class ReportOfferPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    """研報邀請跨重整持久：get_conversation 讀取時以 gate 重算、婉拒旗標落 filters。
+
+    邀請原本只活在 SSE done 事件裡，重整即消失——使用者從此失去「要不要生成
+    研報」的選擇權。gate 純規則零 LLM，逐列重算零成本且舊列自動涵蓋。
+    """
+
+    @staticmethod
+    def _row(*, answer="這是一段夠長的分析回答", question="台積電先進封裝分析",
+             stopped=False, cited=("r1", "r2", "r3"), filters=None):
+        # 15 欄對齊 get_conversation 的 SELECT
+        return ("id1", question, answer, None, None, [], [], 100,
+                [], [], None, stopped, 1, list(cited), filters)
+
+    async def _load(self, row):
+        import app.services.report as rpt
+        from app.services import answer as ans
+
+        class _Rows:
+            def all(self):
+                return [row]
+
+        class _Session:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None): return _Rows()
+            async def commit(self): return None
+
+        async def no_reports(cid):
+            return {}
+
+        orig = (ans.SessionFactory, rpt.reports_for_conversation)
+        ans.SessionFactory = lambda: _Session()
+        rpt.reports_for_conversation = no_reports
+        try:
+            return (await ans.get_conversation("c1"))[0]
+        finally:
+            (ans.SessionFactory, rpt.reports_for_conversation) = orig
+
+    async def test_eligible_turn_offers_after_reload(self):
+        it = await self._load(self._row())
+        self.assertTrue(it["offer_report"])
+        self.assertIn("深度研報", it["report_title"])
+        self.assertFalse(it["report_offer_declined"])
+
+    async def test_declined_flag_survives_reload(self):
+        it = await self._load(self._row(filters={"report_offer_declined": True}))
+        self.assertTrue(it["offer_report"])
+        self.assertTrue(it["report_offer_declined"])
+
+    async def test_stopped_turn_never_offers(self):
+        # 部分答案素材不完整，即使引用夠多也不邀請
+        it = await self._load(self._row(stopped=True))
+        self.assertFalse(it["offer_report"])
+        self.assertIsNone(it["report_title"])
+
+    async def test_insufficient_citations_do_not_offer(self):
+        it = await self._load(self._row(cited=("r1",)))
+        self.assertFalse(it["offer_report"])
+
+    async def test_set_report_offer_declined_merges_jsonb(self):
+        """婉拒旗標必須是 jsonb 合併（additive 鍵），不得整欄覆寫掉既有遙測。"""
+        from app.services import answer as ans
+
+        captured = {}
+
+        class _Result:
+            rowcount = 1
+
+        class _Session:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def execute(self, stmt, params=None):
+                captured["sql"] = str(stmt)
+                captured["params"] = params
+                return _Result()
+            async def commit(self): return None
+
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: _Session()
+        try:
+            ok = await ans.set_report_offer_declined("qa-1", True)
+        finally:
+            ans.SessionFactory = orig
+
+        self.assertTrue(ok)
+        self.assertIn("COALESCE(filters, '{}'::jsonb)", captured["sql"])
+        self.assertIn("jsonb_build_object('report_offer_declined', :d)", captured["sql"])
+        self.assertIs(captured["params"]["d"], True)
+        self.assertEqual(captured["params"]["id"], "qa-1")
+
+
 class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_conversation_includes_new_fields(self):
         from app.services import answer as ans
 
         # 假一列（順序須對齊新 SELECT）：
         # id, question, answer, created_at, feedback, sources, ext_sources,
-        # thinking_ms, stages, followups, root_qa_id, stopped, version_count
+        # thinking_ms, stages, followups, root_qa_id, stopped, version_count,
+        # cited_report_ids, filters
         row = ("id1", "問題", "答案", None, None, [], [], 100,
-               ["understanding", "generating"], ["追問A"], None, False, 2)
+               ["understanding", "generating"], ["追問A"], None, False, 2,
+               None, None)
 
         class _Rows:
             def all(self):

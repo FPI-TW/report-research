@@ -22,6 +22,7 @@ vi.mock('./askApi', () => ({
   stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
   sendFeedback: (...a: unknown[]) => sendFeedback(...(a as [])),
   getReportTemplates: vi.fn(async () => []),
+  setReportOffer: vi.fn(async () => {}),
 }))
 import { useAskController } from './useAskController'
 

@@ -22,6 +22,7 @@ vi.mock('../../lib/askApi', () => ({
   stopAsk: vi.fn(async () => ({ qa_id: 'qa-stop' })),
   sendFeedback: vi.fn(async () => {}),
   getReportTemplates: vi.fn(async () => []),
+  setReportOffer: vi.fn(async () => {}),
 }))
 import AskPage from './AskPage'
 

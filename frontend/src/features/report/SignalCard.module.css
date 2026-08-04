@@ -2,6 +2,37 @@
   display: block;
 }
 
+/* 一張卡＝一個標的。多標的研報會連著掛好幾張，沒有這條分隔線時上一張的論點列會
+   直接黏著下一張的抬頭，讀起來像同一檔標的。 */
+.card + .card {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--tf-border);
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.name {
+  margin: 0;
+  font-family: var(--tf-display);
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--tf-text-1);
+}
+
+.code {
+  font-family: var(--tf-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--tf-text-3);
+}
+
 .figs {
   display: grid;
   grid-template-columns: 1fr 1fr;

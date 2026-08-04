@@ -112,7 +112,8 @@ class ReadingApiBase(unittest.TestCase):
             k: getattr(_dep_mod(k), k)
             for k in (
                 "SessionFactory", "fetch_doc", "fetch_takeaways", "fetch_signals",
-                "fetch_similar", "fetch_chunk_content", "READING_TEXT_MAX_CHARS",
+                "fetch_instrument_names", "fetch_similar", "fetch_chunk_content",
+                "READING_TEXT_MAX_CHARS",
             )
         }
         deps.SessionFactory = lambda: _FakeSession()
@@ -121,6 +122,7 @@ class ReadingApiBase(unittest.TestCase):
             fetch_doc=self._async(_doc()),
             fetch_takeaways=self._async([]),
             fetch_signals=self._async([]),
+            fetch_instrument_names=self._async({}),
             fetch_similar=self._async([]),
             fetch_chunk_content=self._async(None),
         )
@@ -244,11 +246,14 @@ class SignalsStateTests(ReadingApiBase):
         self.assertEqual(body["signals"], [])
 
     def test_with_signals_state_available(self):
-        self._set(fetch_signals=self._async([_signal()]))
+        self._set(fetch_signals=self._async([_signal()]),
+                  fetch_instrument_names=self._async({("TW", "8046"): "南亞電路板"}))
         body = _authed_client().get(f"/api/reading/{HASH}").json()
         self.assertEqual(body["signals_state"], "available")
         sig = body["signals"][0]
+        # 一份研報可能對多檔標的有訊號：代號與名稱是辨識這張卡在講誰的唯一依據
         self.assertEqual(sig["instrument_code"], "8046")
+        self.assertEqual(sig["instrument_name"], "南亞電路板")
         self.assertEqual(sig["rating_normalized"], "buy")
         self.assertEqual(sig["target_price"], 2444.0)
         self.assertEqual(sig["broker_display"], source_display("daiwa"))
@@ -257,6 +262,39 @@ class SignalsStateTests(ReadingApiBase):
         self.assertEqual(sig["eps_estimates"][0]["value"], 66.4)
         self.assertEqual(sig["thesis"][0]["key"], "outlook")
         self.assertEqual(sig["thesis"][0]["stance"], "positive")
+
+    def test_name_lookup_keyed_by_market_and_code(self):
+        # 名稱查詢要拿到的是 (market, code) 對，不是只有 code——同代號跨市場撞號時
+        # 錯的鍵會靜靜取到別的市場那檔的公司名。
+        seen = {}
+
+        async def spy(session, keys):
+            seen["keys"] = list(keys)
+            return {}
+
+        self._set(fetch_signals=self._async([_signal()]), fetch_instrument_names=spy)
+        self.assertEqual(_authed_client().get(f"/api/reading/{HASH}").status_code, 200)
+        self.assertEqual(seen["keys"], [("TW", "8046")])
+
+    def test_missing_name_is_null_not_error(self):
+        # 名稱由檔名解析而來、解析不出就沒有：前端據此只顯示代號（比照 title → file_name）
+        self._set(fetch_signals=self._async([_signal()]),
+                  fetch_instrument_names=self._async({}))
+        body = _authed_client().get(f"/api/reading/{HASH}").json()
+        self.assertEqual(body["signals"][0]["instrument_code"], "8046")
+        self.assertIsNone(body["signals"][0]["instrument_name"])
+
+    def test_no_signals_asks_for_no_names(self):
+        # 99.3% 的研報沒有訊號：那條路徑不該為了名稱多打一次 DB
+        seen = {}
+
+        async def spy(session, keys):
+            seen["keys"] = list(keys)
+            return {}
+
+        self._set(fetch_instrument_names=spy)
+        self.assertEqual(_authed_client().get(f"/api/reading/{HASH}").status_code, 200)
+        self.assertEqual(seen["keys"], [])
 
 
 class TakeawayTests(ReadingApiBase):

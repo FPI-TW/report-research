@@ -142,6 +142,7 @@ from app.services.radar import (  # noqa: E402
 from app.services.reading.queries import (  # noqa: E402
     fetch_chunk_content,
     fetch_doc,
+    fetch_instrument_names,
     fetch_signals,
     fetch_similar,
     fetch_takeaways,
@@ -176,6 +177,7 @@ __all__ = [
     "fetch_chunk_content",
     "fetch_coverage_counts",
     "fetch_doc",
+    "fetch_instrument_names",
     "fetch_instrument_signals",
     "fetch_signals",
     "fetch_signals_for_instruments",

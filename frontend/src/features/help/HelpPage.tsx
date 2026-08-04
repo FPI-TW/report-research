@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { copyText } from '../../lib/clipboard'
 import { marketLabel, marketTint, ptypeColor, MARKET_ORDER } from '../../lib/meta'
 import { Icon } from '../../components/primitives/Icon'
 import browseImg from '../../assets/help/browse.png'
@@ -43,29 +44,6 @@ const TOC: [string, string][] = [
   ['radar', '廷豐觀點'],
   ['monitor', '導入監控（進階）'],
 ]
-
-/** HTTP + 區網 IP 屬非安全情境，navigator.clipboard 會被擋 → execCommand 後備。 */
-function copyText(text: string): Promise<void> {
-  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text)
-  return new Promise((resolve, reject) => {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.top = '-9999px'
-    document.body.appendChild(ta)
-    ta.focus()
-    ta.select()
-    let ok: boolean
-    try {
-      ok = document.execCommand('copy')
-    } catch {
-      ok = false
-    }
-    document.body.removeChild(ta)
-    if (ok) resolve()
-    else reject(new Error('copy failed'))
-  })
-}
 
 function CopyUrlButton({ url }: { url: string }) {
   const [label, setLabel] = useState('複製')
@@ -276,6 +254,7 @@ export default function HelpPage() {
           <ul className={styles.bul}>
             <li><strong>右側</strong>內嵌原始券商 PDF：可捲動閱讀，工具列有縮圖列、搜尋、放大／縮小／符合寬度、旋轉、跳頁與下載。</li>
             <li><strong>左側</strong>是這篇的摘要與<strong>重點摘錄</strong>（每條一句論點＋一句原文逐字引文），若這篇有結構化訊號還會多一區「觀點」，最下方是<strong>相似研報</strong>。</li>
+            <li>可以<strong>直接在頁面上拖曳選字</strong>，再按工具列的複製鈕或 <strong>Ctrl/⌘+C</strong>，把券商原句貼進自己的報告。跨頁選取也可以。</li>
             <li>鍵盤：<strong>Ctrl/⌘+F</strong> 或 <strong>/</strong> 開搜尋、<strong>PageUp／PageDown</strong> 翻頁、<strong>Home／End</strong> 跳首末頁、<strong>Esc</strong> 關搜尋。</li>
             <li>右上<strong>「就這篇提問」</strong>會帶著這篇的標題到問答頁預填題目（檢索範圍仍是全語料）。</li>
           </ul>

@@ -67,7 +67,7 @@
 | **每日簡報** | `brief.py` ＋ 前端頁 | 無技術前置。成本考量：會再增一條每日 `claude` CLI 批次，與既有的摘要／摘錄排程競爭同一支 CLI |
 | **MCP server** | 把檢索／問答／雷達包成 agent 可消費的工具 | 選型未定：`hybrid_search` 需要**已算好的** query embedding，而 BGE-M3 是 2–4 GB 的行內 CPU 單例——stdio server 每次 spawn 都要重載模型，改走常駐 HTTP 則需先做金鑰認證 |
 | **對外 REST `/api/v1/*`** | 機器可用的認證與 per-key 配額 | 全站目前只有一組共用帳密的 session cookie，無 API key 機制；昂貴端點僅靠 semaphore 擋。且尚無外部消費者的實際需求 |
-| **PDF 文字層／選取（`@embedpdf/plugin-selection`）** | 讓閱讀頁的研報內文可反白、可複製、螢幕閱讀器讀得到 | **這是 2026-08-03 移除閱讀頁文字檢視的已知代價**：`RenderLayer` 是 canvas，未裝 selection 外掛，所以 99.77% 的 PDF 研報在站內既選不起來也報讀不到（檢視器內建的搜尋只解決「找得到」）。原本那條路是文字檢視，現已無替代。導入屬新功能、非本次移除的收尾 |
+| **PDF 內文的無障礙讀取（真正的 text layer）** | 讓螢幕閱讀器讀得到研報內文 | **`@embedpdf/plugin-selection` 已於 2026-08-03 導入，但它解決的是選取與複製，不是無障礙**：`SelectionLayer` 只畫 `pointerEvents:none` 的色塊，DOM 裡沒有任何文字節點，所以 99.77% 的 PDF 研報對輔助技術仍是一片 canvas。EmbedPDF 目前沒有提供 text layer 外掛，要補得自己把 `getSelectedText` 那條抽字管線鋪成可報讀的 DOM，屬獨立工程 |
 
 ---
 

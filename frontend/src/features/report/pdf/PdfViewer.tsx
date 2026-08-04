@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
+import { useReducedMotion } from 'motion/react'
 import { createPluginRegistration } from '@embedpdf/core'
-import { EmbedPDF } from '@embedpdf/core/react'
+import { EmbedPDF, useDocumentState } from '@embedpdf/core/react'
 import { usePdfiumEngine } from '@embedpdf/engines/react'
 import {
   DocumentContent,
   DocumentManagerPluginPackage,
 } from '@embedpdf/plugin-document-manager/react'
+import {
+  InteractionManagerPluginPackage,
+  PagePointerProvider,
+} from '@embedpdf/plugin-interaction-manager/react'
 import { RenderLayer, RenderPluginPackage } from '@embedpdf/plugin-render/react'
+// **刻意從基礎套件匯入 SelectionPluginPackage，不是從 `/react`。** `/react` 版把內建的
+// CopyToClipboard 工具綁進 package（見其 dist：`.addUtility(CopyToClipboard)`），那支直接
+// 呼叫 navigator.clipboard.writeText —— 而本站的區網入口是 HTTP ＋ 私有 IP，非安全情境下
+// 那個 API 根本不存在，複製會靜默失敗。複製改由本檔自理，走 lib/clipboard 的 execCommand
+// 後備。元件與 hook 仍取自 `/react`。
+import { SelectionPluginPackage } from '@embedpdf/plugin-selection'
+import { SelectionLayer, useSelectionCapability } from '@embedpdf/plugin-selection/react'
 import { Rotate, RotatePluginPackage, useRotate } from '@embedpdf/plugin-rotate/react'
 import { SearchLayer, SearchPluginPackage, useSearch } from '@embedpdf/plugin-search/react'
 import { Scroller, ScrollPluginPackage, useScroll } from '@embedpdf/plugin-scroll/react'
@@ -19,7 +31,10 @@ import {
 } from '@embedpdf/plugin-viewport/react'
 import { ZoomMode, ZoomPluginPackage, useZoom } from '@embedpdf/plugin-zoom/react'
 import { Icon } from '../../../components/primitives/Icon'
+import { copyText } from '../../../lib/clipboard'
 import { CJK_FONT_FALLBACK } from './fontFallback'
+import { needleLadder } from './quoteNeedle'
+import { scrollToSearchResult } from './searchScroll'
 import styles from './PdfViewer.module.css'
 
 interface Props {
@@ -27,6 +42,9 @@ interface Props {
   url: string
   /** 無障礙名稱，用研報的顯示標題 */
   title: string
+  /** 左欄摘錄送進來的跳轉請求；由 Chrome 消費（那裡才拿得到 search capability） */
+  jump?: JumpRequest | null
+  onJumpResult?: (r: JumpResult) => void
 }
 
 /**
@@ -45,6 +63,17 @@ const READY_TIMEOUT_MS = 15_000
 
 /** 縮圖寬度（px）。與 PdfViewer.module.css 的 `.thumbs` 欄寬 96px 綁在一起，見註冊處。 */
 const THUMB_WIDTH = 72
+
+/**
+ * 選取高亮色。SelectionLayer 以 `mixBlendMode: multiply` 疊色，所以要給**不透明**的
+ * 淺色（像螢光筆：白底變成該色、黑字仍是黑字），不是半透明色。
+ *
+ * 刻意比全站 `::selection` 的 `--tf-gold-tint`(#f8f1e0) 深一階，取 `--tf-gold-line`
+ * 的值：那個 tint 是為了配深色網頁底色調的，疊在 PDF 的白紙上幾乎看不見。
+ * 值寫死而非讀 CSS 變數，因為這是傳給外掛的 inline style 字串、拿不到 CSS Modules 的類別。
+ * 改 tokens.css 的金色系時記得一起看這裡。
+ */
+const SELECTION_TINT = '#ead9ae'
 
 /** 引擎啟動中：給紙張骨架而不是轉圈圈，載入完成時版面不跳動。 */
 function Booting() {
@@ -66,6 +95,42 @@ interface ChromeProps {
   onToggleSearch: () => void
   /** 由 ViewerBody 的鍵盤處理器遞增，用來把焦點送進搜尋框（每次遞增觸發一次） */
   focusSearchTick: number
+  /** 目前有沒有選取文字；否則複製鈕停用（而不是按了沒反應） */
+  canCopy: boolean
+  /** 複製選取文字；回傳是否成功，由本元件給回饋 */
+  onCopy: () => Promise<boolean>
+  /** 待處理的摘錄跳轉；nonce 讓「再點同一條」也會重跑 */
+  jump: JumpRequest | null
+  /** 跳轉結果回報給左欄（成功帶頁碼與命中數，失敗只帶 ok:false） */
+  onJumpResult: (r: JumpResult) => void
+  /** 打開搜尋列（**不是** toggle：跳轉時要確保它是開的） */
+  onOpenSearch: () => void
+}
+
+/** 左欄送進來的一次跳轉請求。 */
+export interface JumpRequest {
+  ordinal: number
+  quote: string
+  /** 連點同一條摘錄也要重跑，所以帶遞增序號 */
+  nonce: number
+}
+
+export interface JumpResult {
+  nonce: number
+  ok: boolean
+  /** 1-based 頁碼，成功才有 */
+  page?: number
+  /** 同一份 PDF 裡的命中總數；>1 代表有歧義，讀者要用上下一個命中確認 */
+  total?: number
+}
+
+/** 該頁的**內建**旋轉（PDF 自帶的 /Rotate），不是使用者按 R 轉的那個。 */
+function pageRotation(
+  pages: readonly { rotation?: number }[] | undefined,
+  pageIndex: number | undefined,
+): number | undefined {
+  if (pageIndex == null) return undefined
+  return pages?.[pageIndex]?.rotation
 }
 
 /**
@@ -82,12 +147,19 @@ function Chrome({
   searchOpen,
   onToggleSearch,
   focusSearchTick,
+  canCopy,
+  onCopy,
+  jump,
+  onJumpResult,
+  onOpenSearch,
 }: ChromeProps) {
   const { provides: zoom, state: zoomState } = useZoom(documentId)
   const { provides: scroll, state: scrollState } = useScroll(documentId)
   const { provides: rotate } = useRotate(documentId)
   const { provides: search, state: searchState } = useSearch(documentId)
   const { isScrolling } = useViewportScrollActivity(documentId)
+  const docState = useDocumentState(documentId)
+  const reduced = useReducedMotion() ?? false
 
   const pct = Math.round((zoomState?.currentZoomLevel ?? 1) * 100)
   const current = scrollState?.currentPage ?? 1
@@ -112,12 +184,111 @@ function Chrome({
   const hits = searchState.results.length
   const activeHit = searchState.activeResultIndex
 
+  // 複製回饋：成功→「已複製」，失敗→「請手動複製」。都會在 1.6 秒後回復。
+  // **失敗一定要說**：非安全情境（區網 HTTP）下複製真的會失敗，靜默成功是最糟的謊。
+  const [copyMsg, setCopyMsg] = useState<'done' | 'fail' | null>(null)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current) }, [])
+  const onCopyClick = () => {
+    void onCopy().then(ok => {
+      setCopyMsg(ok ? 'done' : 'fail')
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => setCopyMsg(null), 1600)
+    })
+  }
+
   // 開關搜尋要同時開關引擎的搜尋 session：關掉時若不 stopSearch，高亮會留在頁面上。
   useEffect(() => {
     if (!search) return
     if (searchOpen) search.startSearch()
     else search.stopSearch()
   }, [search, searchOpen])
+
+  const pages = docState?.document?.pages ?? undefined
+
+  /** 直接捲到某個命中物件。**跳轉路徑一定要走這支** —— 見下面 goToHit 的說明。 */
+  const scrollToHit = useCallback(
+    (hit: { pageIndex: number; rects: { origin: { x: number; y: number } }[] } | undefined) => {
+      scrollToSearchResult(scroll, pageRotation(pages, hit?.pageIndex), hit, reduced)
+    },
+    [scroll, pages, reduced],
+  )
+
+  /**
+   * 命中索引 → 捲過去。`goToResult()` 只換 active index，不移動視窗。
+   *
+   * **只給工具列的上／下一個命中用**：它從 `searchState.results` 取值，而那是渲染當下的
+   * 快照。摘錄跳轉不能用它——那條路徑在 await 之後才拿到結果，此時閉包裡的 results
+   * 還是搜尋前的空陣列，會安靜地什麼都不捲。跳轉請直接把命中物件交給 scrollToHit。
+   */
+  const goToHit = useCallback(
+    (index: number | undefined) => {
+      if (index == null || index < 0) return
+      scrollToHit(searchState.results[index])
+    },
+    [scrollToHit, searchState.results],
+  )
+
+  // 摘錄跳轉＝以該條引文跑一次搜尋。**刻意與工具列共用同一個 search session**：
+  // SearchDocumentState 每份文件只有一個 query/results，另造一套獨立高亮是與資料模型
+  // 作對，而共用之後計數（1 / 2）、上下一個命中、Esc 清除全部天然一致。
+  //
+  // 由 nonce 驅動而非事件：檢視器是 lazy + Suspense + 引擎暖機 + 等文件開啟，共四段
+  // 窗口，事件在任一段都會被丟掉。狀態則是「Chrome 掛載時帶著當下的值一起來」。
+  //
+  // **deps 只有 [jump, search]，其餘一律走 ref。** 這不是效能考量，是正確性：
+  // 搜尋是非同步的，而 cleanup 會把 cancelled 設成 true。只要 deps 裡有任何一個
+  // 在搜尋進行中換了 identity（scrollToHit 隨 useDocumentState 變、上游 callback
+  // 隨父層 state 變），effect 就會取消自己重跑，而重跑立刻被 doneNonceRef 擋掉
+  // ——搜尋被中止、沒有任何回報、畫面什麼都不發生。**2026-08-04 的實際災情就是這個。**
+  // setQuery 不在裡面：useState 的 setter 本來就保證穩定，放進來只會讓
+  // exhaustive-deps 以為這個 effect 會觸發更新迴圈。
+  const latest = useRef({ scrollToHit, onOpenSearch, onJumpResult })
+  // 宣告在 jump effect **之前**：同一個 commit 內 effect 依宣告順序執行，
+  // 所以跳轉讀到的一定是這一輪的最新值。
+  useEffect(() => {
+    latest.current = { scrollToHit, onOpenSearch, onJumpResult }
+  })
+
+  const doneNonceRef = useRef(0)
+  useEffect(() => {
+    if (!jump || !search || doneNonceRef.current === jump.nonce) return
+    doneNonceRef.current = jump.nonce
+    let cancelled = false
+    latest.current.onOpenSearch()
+    void (async () => {
+      for (const needle of needleLadder(jump.quote)) {
+        // 同步輸入框：不同步的話上面那個計數與「無相符」會對著另一組關鍵字說話
+        setQuery(needle)
+        let out
+        try {
+          out = await search.searchAllPages(needle).toPromise()
+        } catch {
+          // TaskAbortedError＝被下一次點擊取代，不是「找不到」。回報失敗會蓋掉新的那次。
+          return
+        }
+        if (cancelled) return
+        if (out.total > 0) {
+          // **必須等 toPromise 之後才 goToResult**：搜尋過程中的進度事件會把
+          // activeResultIndex 設 0，最終 resolve 又硬設一次，提早呼叫會被打回去。
+          search.goToResult(0)
+          // 用手上的 out.results[0]，**不是** goToHit(0)：見 goToHit 的說明
+          latest.current.scrollToHit(out.results[0])
+          latest.current.onJumpResult({
+            nonce: jump.nonce,
+            ok: true,
+            page: out.results[0].pageIndex + 1,
+            total: out.total,
+          })
+          return
+        }
+      }
+      latest.current.onJumpResult({ nonce: jump.nonce, ok: false })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [jump, search])
 
   return (
     <>
@@ -216,6 +387,23 @@ function Chrome({
 
         <span className={styles.sep} aria-hidden="true" />
 
+        {/* 複製選取文字。快捷鍵 Ctrl/⌘+C 之外還要有這顆鈕：選取是外掛畫的色塊，
+            使用者沒有理由知道鍵盤還能用。無選取時 disabled，不做「按了沒反應」。 */}
+        <button
+          type="button"
+          className={styles.btn}
+          disabled={!canCopy}
+          aria-label={copyMsg === 'fail' ? '複製失敗，請手動複製' : '複製選取的文字'}
+          title={canCopy ? '複製選取的文字（Ctrl/⌘+C）' : '先在頁面上選取文字'}
+          onClick={onCopyClick}
+        >
+          <Icon name={copyMsg === 'done' ? 'check' : 'copy'} size={15} />
+        </button>
+        {/* 結果只用 aria-live 報讀＋圖示變化，不插入會撐開工具列的文字 */}
+        <span className={styles.srOnly} role="status">
+          {copyMsg === 'done' ? '已複製' : copyMsg === 'fail' ? '複製失敗，請手動複製' : ''}
+        </span>
+
         {/* 下載走原本的檔案端點，不經引擎 —— 使用者要的是券商原檔本身 */}
         <a className={styles.btn} href={url} download aria-label={`下載 ${title}`}>
           <Icon name="download" size={15} />
@@ -242,8 +430,7 @@ function Chrome({
               e.preventDefault()
               // 同一組關鍵字按 Enter＝跳下一個命中；換了字才重新全文搜尋。
               if (searchState.query === query && hits > 0) {
-                if (e.shiftKey) search?.previousResult()
-                else search?.nextResult()
+                goToHit(e.shiftKey ? search?.previousResult() : search?.nextResult())
               } else if (query.trim()) {
                 search?.searchAllPages(query)
               }
@@ -263,7 +450,7 @@ function Chrome({
             className={styles.btn}
             aria-label="上一個命中"
             disabled={hits === 0}
-            onClick={() => search?.previousResult()}
+            onClick={() => goToHit(search?.previousResult())}
           >
             <Icon name="chevronDown" size={14} className={styles.flip} />
           </button>
@@ -272,7 +459,7 @@ function Chrome({
             className={styles.btn}
             aria-label="下一個命中"
             disabled={hits === 0}
-            onClick={() => search?.nextResult()}
+            onClick={() => goToHit(search?.nextResult())}
           >
             <Icon name="chevronDown" size={14} />
           </button>
@@ -296,11 +483,13 @@ function Chrome({
  * 的邊界接住並退回瀏覽器內建 iframe。理由是「回退」是 PdfPane 的職責（它同時握有
  * 非 PDF、無檔案等其他分支），把降級決策分散到兩個地方會出現兩套不一致的降級規則。
  *
- * 已知未實作：**文字層與選取**（`@embedpdf/plugin-selection`）。`RenderLayer` 是 canvas，
- * 所以這頁的原文選不起來、複製不了，螢幕閱讀器也讀不到內文 —— 閱讀頁的文字檢視移除後
- * （2026-08-03），站內已無其他取得研報純文字的介面。要補只能導入 selection 外掛。
+ * **選取／複製走 `@embedpdf/plugin-selection`（2026-08-03 導入），但那不是文字層。**
+ * `SelectionLayer` 只畫 `pointerEvents:none` 的色塊，DOM 裡沒有任何文字節點 ——
+ * 意思是：拖曳選字與複製可用（複製由本檔自理，見 Ctrl/⌘+C 與工具列複製鈕），
+ * 但**螢幕閱讀器仍然讀不到研報內文**，瀏覽器原生的選取／複製也一樣無效。
+ * 那個缺口不是這個外掛能補的，需要真正的 text layer；已記在 `docs/ROADMAP.md`。
  */
-export default function PdfViewer({ url, title }: Props) {
+export default function PdfViewer({ url, title, jump = null, onJumpResult }: Props) {
   // WASM 自架，**刻意不用套件預設的 CDN**：本站在 Cloudflare Tunnel ＋ 登入牆之後，
   // 外連是一個新的失效點，而 WASM 載不到等於整個檢視器起不來。
   // 走 Vite 的 `?url` 讓產物落在 `assets/` —— 那是 `_ImmutableStatic` 已在服務、
@@ -346,6 +535,11 @@ export default function PdfViewer({ url, title }: Props) {
       createPluginRegistration(ThumbnailPluginPackage, { width: THUMB_WIDTH }),
       createPluginRegistration(RotatePluginPackage),
       createPluginRegistration(SearchPluginPackage),
+      // **順序有意義**：selection 的 peerDependency 就是 interaction-manager，它的
+      // 指標處理器註冊在 interaction-manager 的預設 `pointerMode` 上。反過來註冊，
+      // 選取會安靜地完全沒反應。
+      createPluginRegistration(InteractionManagerPluginPackage),
+      createPluginRegistration(SelectionPluginPackage),
     ],
     [url],
   )
@@ -414,6 +608,8 @@ export default function PdfViewer({ url, title }: Props) {
                     url={url}
                     title={title}
                     onReady={markReady}
+                    jump={jump}
+                    onJumpResult={onJumpResult}
                   />
                 )
               }
@@ -431,11 +627,15 @@ function ViewerBody({
   url,
   title,
   onReady,
+  jump,
+  onJumpResult,
 }: {
   documentId: string
   url: string
   title: string
   onReady: () => void
+  jump: JumpRequest | null
+  onJumpResult?: (r: JumpResult) => void
 }) {
   // 縮圖列預設收合：側欄 380 ＋ 縮圖 96 ＋ 頁面，在 1280px 以下會開始擠。
   const [thumbsOpen, setThumbsOpen] = useState(false)
@@ -444,8 +644,41 @@ function ViewerBody({
   const { provides: scroll, state: scrollState } = useScroll(documentId)
   const { provides: zoom } = useZoom(documentId)
   const { provides: rotate } = useRotate(documentId)
+  const { provides: selection } = useSelectionCapability()
   // 本元件掛上就代表文件真的載入了，於是解除上層的逾時。
   useEffect(onReady, [onReady])
+
+  // 這兩個要穩定：它們是 Chrome 內那個 jump effect 的依賴，每次 render 換新的
+  // 會讓同一次跳轉被重跑（doneNonceRef 擋得住重複執行，但白跑一次搜尋）。
+  const openSearch = useCallback(() => setSearchOpen(true), [])
+  const reportJump = useCallback((r: JumpResult) => onJumpResult?.(r), [onJumpResult])
+
+  // 有沒有選取，決定 Ctrl/⌘+C 要不要攔、工具列的複製鈕要不要啟用。
+  // **必須訂閱而不是複製時才查**：沒有選取時不該攔截 Ctrl+C，那會把使用者在頁面
+  // 其他地方（報頭、摘錄）的正常複製一起吃掉。
+  const [hasSelection, setHasSelection] = useState(false)
+  useEffect(() => {
+    if (!selection) return
+    return selection.forDocument(documentId).onSelectionChange(sel => setHasSelection(Boolean(sel)))
+  }, [selection, documentId])
+
+  /** 複製目前選取的文字。回傳是否成功，供呼叫端給回饋。 */
+  const copySelection = useCallback(async (): Promise<boolean> => {
+    const scoped = selection?.forDocument(documentId)
+    if (!scoped) return false
+    try {
+      // getSelectedText 逐頁回一段，跨頁選取要接起來
+      const parts = await scoped.getSelectedText().toPromise()
+      const text = parts.join('\n').trim()
+      if (!text) return false
+      await copyText(text)
+      return true
+    } catch {
+      // 非安全情境連 execCommand 都失敗、或引擎抽字失敗。回 false 讓 UI 說實話，
+      // 不要假裝複製成功——那正是內建 CopyToClipboard 的失敗方式。
+      return false
+    }
+  }, [selection, documentId])
 
 
   // 鍵盤操作。掛在 window 是安全的：離開閱讀頁時 ReportPage 會整個卸載 PdfPane
@@ -464,6 +697,16 @@ function ViewerBody({
         e.preventDefault()
         setSearchOpen(true)
         setFocusSearchTick(n => n + 1)
+        return
+      }
+
+      // Ctrl/⌘+C：同樣得攔——選取是外掛自己畫的色塊，DOM 裡沒有任何文字節點，
+      // 瀏覽器原生複製會複製到空字串。**只在真的有選取時攔**，否則會把使用者
+      // 在報頭或側欄摘錄上的正常複製一起吃掉。
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        if (!hasSelection) return
+        e.preventDefault()
+        void copySelection()
         return
       }
       if (e.ctrlKey || e.metaKey) return
@@ -518,7 +761,15 @@ function ViewerBody({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [scroll, zoom, rotate, scrollState?.currentPage, scrollState?.totalPages])
+  }, [
+    scroll,
+    zoom,
+    rotate,
+    scrollState?.currentPage,
+    scrollState?.totalPages,
+    hasSelection,
+    copySelection,
+  ])
 
   return (
     <>
@@ -526,13 +777,35 @@ function ViewerBody({
         <Scroller
           documentId={documentId}
           renderPage={({ width, height, pageIndex }) => (
-            <div className={styles.page} style={{ width, height }}>
+            <div
+              className={styles.page}
+              style={{ width, height }}
+              // **RenderLayer 渲染的是 `<img>`**，所以在頁面上拖曳會觸發瀏覽器原生的
+              // 圖片拖放：整頁的半透明殘影跟著游標跑，選取還沒開始就被打斷。
+              // dragstart 會從 img 冒泡上來，在這裡擋掉是唯一跨瀏覽器有效的做法
+              // （`-webkit-user-drag` Firefox 不支援，而 img 的 draggable 屬性
+              //   在外掛內部，我們設不到）。
+              onDragStart={e => e.preventDefault()}
+            >
               {/* Rotate 以 transform 包住頁面內容。紙張外框不必轉——scroll 外掛給的
                   width/height 已依旋轉算好；要轉的是裡面的內容。搜尋高亮必須放在
-                  Rotate 之內，否則旋轉後高亮框會留在原座標系、指到錯的位置。 */}
+                  Rotate 之內，否則旋轉後高亮框會留在原座標系、指到錯的位置。
+
+                  PagePointerProvider 也必須在 Rotate **之內**，理由同源但更隱蔽：
+                  它的預設座標轉換是 `restorePosition(..., rotation, scale)`，也就是
+                  「元素已被視覺旋轉，我把指標位置反算回原始頁座標」。放到 Rotate 之外
+                  元素其實沒轉，那個反算就會多轉一次——旋轉後選取到的字會整片偏掉，
+                  而且不會有任何錯誤，只是選錯地方。 */}
               <Rotate documentId={documentId} pageIndex={pageIndex}>
-                <RenderLayer documentId={documentId} pageIndex={pageIndex} />
-                <SearchLayer documentId={documentId} pageIndex={pageIndex} />
+                <PagePointerProvider documentId={documentId} pageIndex={pageIndex}>
+                  <RenderLayer documentId={documentId} pageIndex={pageIndex} />
+                  <SearchLayer documentId={documentId} pageIndex={pageIndex} />
+                  <SelectionLayer
+                    documentId={documentId}
+                    pageIndex={pageIndex}
+                    background={SELECTION_TINT}
+                  />
+                </PagePointerProvider>
               </Rotate>
               <span className={styles.pageNo}>{pageIndex + 1}</span>
             </div>
@@ -548,6 +821,13 @@ function ViewerBody({
         searchOpen={searchOpen}
         onToggleSearch={() => setSearchOpen(v => !v)}
         focusSearchTick={focusSearchTick}
+        canCopy={hasSelection}
+        onCopy={copySelection}
+        jump={jump}
+        onJumpResult={reportJump}
+        // 刻意是「打開」不是 toggle：跳轉時要確保搜尋列是開的，
+        // 否則 searchOpen 的 effect 會 stopSearch，把剛跳到的高亮清掉。
+        onOpenSearch={openSearch}
       />
     </>
   )

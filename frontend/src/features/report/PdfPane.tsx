@@ -2,6 +2,7 @@ import { Suspense, lazy } from 'react'
 import { displayTitle } from '../../lib/displayTitle'
 import { reportFileHref } from '../../lib/readingApi'
 import type { ReadingDoc } from '../../lib/readingSchemas'
+import type { JumpRequest, JumpResult } from './pdf/PdfViewer'
 import { ViewerBoundary } from './pdf/ViewerBoundary'
 import styles from './PdfPane.module.css'
 
@@ -10,6 +11,15 @@ const PdfViewer = lazy(() => import('./pdf/PdfViewer'))
 
 interface Props {
   doc: ReadingDoc
+  /** 左欄摘錄的跳轉請求，透傳給自訂檢視器 */
+  jump?: JumpRequest | null
+  onJumpResult?: (r: JumpResult) => void
+  /**
+   * 引擎降級成瀏覽器內建檢視時通知呼叫端。
+   * 內建檢視**沒有任何搜尋能力**，所以摘錄必須整批退回非互動 ——
+   * 少了這條通道，降級之後每一次點擊都會變成「找不到」，看起來像資料壞了。
+   */
+  onDegraded?: () => void
 }
 
 /**
@@ -40,7 +50,7 @@ function BuiltInViewer({ href, title }: { href: string; title: string }) {
  * 內嵌不了又沒有全文的研報仍然送到這裡，靠它們給出終態。改 ReportPage 的分派條件時
  * 要記得這件事，否則那一格會退化成永遠的載入骨架。
  */
-export function PdfPane({ doc }: Props) {
+export function PdfPane({ doc, jump = null, onJumpResult, onDegraded }: Props) {
   if (!doc.has_file) {
     return (
       <div className={styles.stage}>
@@ -70,9 +80,9 @@ export function PdfPane({ doc }: Props) {
   // 載入錯誤同樣會被邊界接住）都退回同一個內建檢視，不會出現兩套降級規則。
   return (
     <div className={`${styles.stage} ${styles.stageViewer}`}>
-      <ViewerBoundary fallback={<BuiltInViewer href={href} title={title} />}>
+      <ViewerBoundary fallback={<BuiltInViewer href={href} title={title} />} onError={onDegraded}>
         <Suspense fallback={<div className={styles.booting} role="status">正在啟動 PDF 引擎…</div>}>
-          <PdfViewer url={href} title={title} />
+          <PdfViewer url={href} title={title} jump={jump} onJumpResult={onJumpResult} />
         </Suspense>
       </ViewerBoundary>
     </div>

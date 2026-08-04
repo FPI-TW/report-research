@@ -30,6 +30,20 @@
     0 0 0 0.5px rgba(0, 0, 0, 0.07),
     0 1px 2px rgba(0, 0, 0, 0.05),
     0 14px 30px rgba(0, 0, 0, 0.1);
+  /* 內容是點陣圖，游標不會自動變成 I 形。沒有這一行，「這裡可以選字」完全沒有提示
+     ——選取外掛裝了也等於沒人知道。整張紙都給 text 是刻意的：外掛以字形命中判定，
+     圖片區塊拖曳只是選不到東西，比游標在文字上卻顯示箭頭好。 */
+  cursor: text;
+  /* 選取是外掛自己畫的色塊，原生選取只會讓瀏覽器把整張頁面圖「選起來」（藍色反白），
+     與外掛的高亮疊在一起很難看。關掉不影響外掛選取。 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 頁面圖不可拖曳。與 .page 的 onDragStart 是兩道：這條讓 WebKit 連拖曳都不啟動
+   （游標不會閃一下禁止符號），onDragStart 才是 Firefox 也有效的那道。 */
+.page img {
+  -webkit-user-drag: none;
 }
 
 /* 頁碼放在紙張之外的右下角：印在紙上會和研報自己的頁碼打架 */
@@ -351,4 +365,18 @@
   box-shadow:
     0 0 0 0.5px rgba(0, 0, 0, 0.07),
     0 14px 30px rgba(0, 0, 0, 0.08);
+}
+
+/* 只給輔助技術的狀態播報（複製成功／失敗）。不用 display:none —— 那會讓 aria-live
+   完全不播報；要留在無障礙樹裡但視覺上不佔位。 */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }

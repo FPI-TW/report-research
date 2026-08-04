@@ -1,7 +1,8 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import type { ReadingDoc } from '../../lib/readingSchemas'
 import { PdfPane } from './PdfPane'
+import type { JumpRequest, JumpResult } from './pdf/PdfViewer'
 import { ReportHeader } from './ReportHeader'
 import { ReportSkeleton } from './ReportSkeleton'
 import { ReportLoadError, ReportNotFound } from './ReportStates'
@@ -41,6 +42,42 @@ export default function ReportPage() {
 
   const similarItems = useMemo(() => similar.data?.items ?? [], [similar.data])
 
+  // 摘錄跳轉：狀態下送、結果上回。**都綁 hash**，換研報時就地失效 ——
+  // 沿用 PdfViewer 對 timedOutUrl 的同一招，不用 effect 重設（那會壞，而且壞得很安靜）。
+  const [jumpState, setJumpState] = useState<(JumpRequest & { hash: string }) | null>(null)
+  const [jumpResult, setJumpResult] = useState<(JumpResult & { ordinal: number; hash: string }) | null>(null)
+  // 引擎降級成瀏覽器內建檢視＝沒有搜尋能力，摘錄整批退回非互動
+  const [degraded, setDegraded] = useState(false)
+  const docRef = useRef<HTMLElement>(null)
+
+  const jump = jumpState?.hash === hash ? jumpState : null
+  const result = jumpResult?.hash === hash ? jumpResult : null
+
+  const onJump = useCallback(
+    (t: { ordinal: number; quote?: string | null }) => {
+      if (!t.quote) return
+      setJumpResult(null)
+      setJumpState({ hash, ordinal: t.ordinal, quote: t.quote, nonce: Date.now() })
+    },
+    [hash],
+  )
+
+  const onJumpResult = useCallback(
+    (r: JumpResult) => {
+      // 比對 nonce：連點兩條時，前一次的結果可能晚於後一次抵達，不能讓它蓋掉。
+      // 讀 jumpState 而不是在 setState 的 updater 裡做事——updater 必須是純函式，
+      // StrictMode 會重跑它。identity 變動不要緊：消費端有 doneNonceRef 擋重複執行。
+      if (!jumpState || jumpState.nonce !== r.nonce) return
+      setJumpResult({ ...r, ordinal: jumpState.ordinal, hash: jumpState.hash })
+      // 窄螢幕把兩欄改成上下堆疊，檢視器內部確實捲了，但整個檢視器在視窗外
+      // ——只做 scrollToPage 等於只做一半，畫面一動也不動。
+      if (r.ok && window.matchMedia('(max-width: 1023px)').matches) {
+        docRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      }
+    },
+    [jumpState],
+  )
+
   if (!valid) return <ReportNotFound />
   if (doc.isLoading) return <ReportSkeleton />
   if (doc.isError) return isNotFound(doc.error) ? <ReportNotFound /> : <ReportLoadError onRetry={() => doc.refetch()} />
@@ -69,7 +106,13 @@ export default function ReportPage() {
             {showTakeaways && (
               <section className={styles.sec}>
                 <h2 className={styles.secH}>重點摘錄</h2>
-                <TakeawayList takeaways={d.takeaways} />
+                <TakeawayList
+                  takeaways={d.takeaways}
+                  canJump={pdfViewable(d) && !degraded}
+                  pendingOrdinal={jump && !result ? jump.ordinal : null}
+                  result={result}
+                  onJump={onJump}
+                />
               </section>
             )}
 
@@ -96,7 +139,7 @@ export default function ReportPage() {
           </div>
         </aside>
 
-        <section className={styles.doc}>
+        <section className={styles.doc} ref={docRef}>
           <div className={styles.docBar}>
             <span className={styles.docFile}>{d.file_name}</span>
           </div>
@@ -116,7 +159,12 @@ export default function ReportPage() {
               hasFile={d.has_file}
             />
           ) : (
-            <PdfPane doc={d} />
+            <PdfPane
+              doc={d}
+              jump={jump}
+              onJumpResult={onJumpResult}
+              onDegraded={() => setDegraded(true)}
+            />
           )}
         </section>
       </div>

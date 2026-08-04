@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
+import { CopyButton } from '../../components/animate-ui/components/buttons/copy'
 import styles from './UserMessage.module.css'
 
 interface Props {
@@ -59,21 +61,34 @@ export function UserMessage({ text, onEdit, disabled = false }: Props) {
     )
   }
 
-  // 編輯鈕在氣泡「下方」自成一列，而不是併排在右側：併排時它會一直佔住右邊那段寬度，
-  // 氣泡因此永遠貼不到欄位右緣。移到下方後也就不必再靠 hover 才顯示（隱形但可點的按鈕，
-  // 且留白會撐開版面），改為常駐弱化樣式，與助理訊息下方的動作列一致。
+  // 動作列在氣泡「下方」自成一列，而不是併排在右側：併排時它會一直佔住右邊那段寬度，
+  // 氣泡因此永遠貼不到欄位右緣。列本身預設隱形、滑入該則訊息（或鍵盤 focus 進來）才浮現，
+  // 比照 ChatGPT；隱形走 opacity 而非 display:none，占位高度留著，浮現時版面不會跳動。
+  // 無 hover 的觸控裝置（沒有「滑過」這件事）由 CSS 的 @media (hover: none) 常駐顯示。
   return (
     <div className={styles.row}>
       <div className={styles.bubble}>{text}</div>
-      <Pressable
-        className={styles.editBtn}
-        onClick={() => { setDraft(text); setEditing(true) }}
-        aria-label="編輯"
-        title="編輯"
-        disabled={disabled}
-      >
-        編輯
-      </Pressable>
+      <div className={styles.actions}>
+        <CopyButton
+          content={text}
+          variant="ghost"
+          size="xs"
+          className={styles.act}
+          hoverScale={1.02}
+          tapScale={0.94}
+          aria-label="複製提問"
+          title="複製提問"
+        />
+        <Pressable
+          className={styles.act}
+          onClick={() => { setDraft(text); setEditing(true) }}
+          aria-label="編輯"
+          title="編輯"
+          disabled={disabled}
+        >
+          <Icon name="pencil" size={15} />
+        </Pressable>
+      </div>
     </div>
   )
 }

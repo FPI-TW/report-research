@@ -10,6 +10,7 @@ import {
   type ButtonProps as ButtonPrimitiveProps,
 } from '@/components/animate-ui/primitives/buttons/button';
 import { cn } from '@/lib/utils';
+import { copyText } from '@/lib/clipboard';
 import { useControlledState } from '@/hooks/use-controlled-state';
 
 const buttonVariants = cva(
@@ -73,8 +74,13 @@ function CopyButton({
       onClick?.(e);
       if (copied) return;
       if (content) {
-        navigator.clipboard
-          .writeText(content)
+        // **與 upstream 的唯一分岔，刻意的**：原版直接呼叫 navigator.clipboard.writeText，
+        // 而本站的區網入口是 http://192.168.1.128:8097/（HTTP ＋ 私有 IP ＝ 非安全情境），
+        // 那裡 navigator.clipboard **根本不存在** —— 那行會同步拋 TypeError，連 .catch 都
+        // 接不到（例外發生在 .writeText 之前），使用者按下去圖示不變、零提示、貼不出來。
+        // 同事幾乎都走那個網址，所以那不是邊緣情況。改走 lib/clipboard 的 execCommand 後備。
+        // 失敗時**不翻圖示**：勾勾是「已複製」的承諾，翻了就是說謊。
+        copyText(content)
           .then(() => {
             setIsCopied(true);
             onCopiedChange?.(true, content);

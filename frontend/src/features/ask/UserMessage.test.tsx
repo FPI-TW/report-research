@@ -9,6 +9,28 @@ describe('UserMessage', () => {
     expect(screen.getByText('你好')).toBeInTheDocument()
   })
 
+  // 動作列預設隱形、hover 才浮現（jsdom 模擬不了 :hover，故只驗得到「預設是隱形」這一半；
+  // vitest 設了 css:true，CSS Modules 的規則會真的套進 jsdom，opacity 才量得到）。
+  it('action row is hidden until hover', () => {
+    render(<UserMessage text="你好" onEdit={() => {}} />)
+    const actions = screen.getByRole('button', { name: '編輯' }).parentElement!
+    expect(getComputedStyle(actions).opacity).toBe('0')
+  })
+
+  it('copy button writes the question to the clipboard', async () => {
+    // userEvent.setup() 會替換 navigator.clipboard 為可讀回的 stub（jsdom 本身沒有）。
+    // **還得補 isSecureContext**：jsdom 裡它是 undefined，而 lib/clipboard 的
+    // copyText 以「有 clipboard **且** 是安全情境」決定走原生還是 execCommand 後備
+    // ——不補的話這裡會落到後備，而 jsdom 連 document.execCommand 都沒有。
+    // 這裡模擬的是真實瀏覽器在 HTTPS/localhost 下的情形；後備那條由
+    // src/lib/clipboard.test.ts 專門覆蓋。
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    const user = userEvent.setup()
+    render(<UserMessage text="台積電先進封裝" onEdit={() => {}} />)
+    await user.click(screen.getByRole('button', { name: '複製提問' }))
+    await expect(navigator.clipboard.readText()).resolves.toBe('台積電先進封裝')
+  })
+
   it('edit mode submits new text', async () => {
     const onEdit = vi.fn()
     render(<UserMessage text="舊問題" onEdit={onEdit} />)

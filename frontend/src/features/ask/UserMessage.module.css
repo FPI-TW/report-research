@@ -2,8 +2,31 @@
    會把氣泡往左推 ~50px，看起來就是「沒貼右側」）。 */
 .row { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin: 18px 0 10px; }
 .bubble { max-width: 78%; background: var(--tf-graphite); color: var(--tf-on-graphite); border-radius: 14px 14px 4px 14px; padding: 10px 16px; font-size: 14.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
-.editBtn { flex: none; display: inline-flex; align-items: center; justify-content: center; height: 26px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; font-size: 11.5px; padding: 0 12px; cursor: pointer; }
-.editBtn:hover { background: var(--tf-gold-tint); border-color: var(--tf-gold-text); color: var(--tf-gold-text); }
+/* 動作列（複製／編輯）預設隱形，滑入整則訊息或鍵盤 focus 進來才浮現。刻意不用 display:none，
+   占位高度留著，浮現時版面不會跳動。
+   刻意「不」一併關掉 pointer-events：觸發浮現的 hover 區是整條 .row，指標壓在按鈕上就必然已在
+   hover 該列、按鈕也就已經可見，所以不存在「看不見卻按得到」；反而關掉它會讓 user-event 這類
+   會檢查 pointer-events 的點擊在測試中直接失敗（jsdom 無從模擬 :hover）。 */
+.actions { display: flex; align-items: center; gap: 6px; opacity: 0; transition: opacity 0.12s ease; }
+.row:hover .actions, .actions:focus-within { opacity: 1; }
+/* 觸控裝置沒有 hover，隱藏等於功能消失，故常駐顯示。 */
+@media (hover: none) { .actions { opacity: 1; } }
+/* 無框無底（ChatGPT 式）：靜置只有圖示，hover 才浮出一塊圓形填色。尺寸與圓角在此釘死：
+   複製鈕來自 animate-ui（Tailwind size-*／rounded-md），與 Pressable 的算法不同，不釘就會
+   兩顆不等大；border/background 也要明寫，button 的瀏覽器預設框才會消掉。CSS Modules 不在
+   @layer 內，會贏過 utilities 層。與助理訊息的動作列同一組值，兩排圖示鈕是同一種東西。
+   靜置色用 --tf-text-muted-aa 而非 --tf-text-3：圖示是這顆鈕唯一的說明（旁邊沒有文字重複
+   同一件事），照 tokens.css 的分工就不該用停在 AA 以下的那個。
+   hover 填色用 --tf-border 而非 --tf-graphite-tint：對話流的底是 --tf-canvas(#f2f2f4)，
+   tint(#f0f0f2) 疊上去等於看不見。 */
+/* position: relative／svg display: block／stroke-width 三項的理由與助理訊息那排相同，
+   逐條寫在 AssistantMessage.module.css 的 .act：分別是 popLayout 退場圖示的包含塊、
+   CopyButton 內層 <span> 的基線落差、以及 lucide 與本站 Icon 的線寬差。 */
+.act { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; padding: 0; border: none; background: transparent; color: var(--tf-text-muted-aa); border-radius: 999px; cursor: pointer; }
+.act svg { display: block; width: 15px; height: 15px; stroke-width: 1.8; }
+.act > span { display: flex; align-items: center; justify-content: center; }
+.act:hover { background: var(--tf-border); color: var(--tf-graphite); }
+.act:disabled { opacity: 0.4; cursor: default; }
 /* 編輯框比照 ChatGPT：一個圓角容器把輸入區與按鈕包在一起（同 Composer 的
    「盒＋裸 textarea」作法，含 focus-within 石墨框）；textarea 無框無底、
    高度隨內容自動長高（見 UserMessage.tsx 的 effect），不給使用者手動 resize。 */

@@ -48,6 +48,14 @@ test('讚/倒讚是切換鈕：再點已亮起的那顆傳 null（取消），�
   expect(onFeedback).toHaveBeenLastCalledWith('dislike')
 })
 
+test('動作鈕是定位元素：popLayout 退場圖示才不會飛出畫面', () => {
+  // 複製鈕換圖時，退場那顆會被 motion 套上 position:absolute（依 offsetParent 量到的座標）。
+  // 按鈕若退回 static，offsetParent 會變成 AskPage 的 .column，而捲動的是它裡面的 .flow
+  // ——捲過的對話按下複製，圖示就飛走。壞掉時完全沒有錯誤訊息，故在此釘死。
+  render(<AssistantMessage turn={makeTurn({})} {...noop} />)
+  expect(getComputedStyle(screen.getByRole('button', { name: '複製回答' })).position).toBe('relative')
+})
+
 test('時效婉拒不給「換個說法重新提問」：缺的是資料不是措辭', () => {
   // 換說法不會讓系統生出它沒有的即時資料，只會讓使用者反覆改寫同一題，
   // 每一次再吃一輪完整檢索。離題題才是換個說法就有救（見下一題）。

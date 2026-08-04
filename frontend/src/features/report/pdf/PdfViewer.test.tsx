@@ -1,5 +1,5 @@
-import { act, render, screen } from '@testing-library/react'
-import { Component, type ReactNode } from 'react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { Component, useEffect, useReducer, type ReactNode } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 /**
@@ -26,37 +26,96 @@ const state = {
  * （`search?.searchAllPages` 的 optional chaining 直接短路），所以這裡給一個會記錄
  * 呼叫、且回傳 Task-like 的真替身。
  */
+type Hit = { pageIndex: number; rects: { origin: { x: number; y: number } }[] }
+
+/**
+ * 搜尋替身：**引擎狀態的最小模型**，不是空殼。
+ *
+ * 第一版是 `provides: null`，跳轉測試會恆綠而一行真行為都沒驗到（optional chaining
+ * 直接短路）。第二版有回傳值但 `query` 寫死 `''`、`stopSearch` 是空的 vi.fn、
+ * `searchAllPages` 沒有快取概念——後果是工具列的「無相符」狀態**結構性不可達**、
+ * 搜尋框的 Enter 分流（同關鍵字＝跳下一個 vs 換字＝重搜）測不到，而外掛真正的
+ * 快取短路（在途重按會回報假的「找不到」，#183 修的那條）在測試裡根本不存在。
+ *
+ * 現在照 @embedpdf/plugin-search 的 reducer 語意模型化三件事：
+ *   START_SEARCH   → query 設為關鍵字、results 清空（**這是快取短路會回 0 的原因**）
+ *   STOP_SEARCH    → query/results/activeIndex 全部重設
+ *   快取短路        → query 已等於該關鍵字時直接回目前的 results，不重跑
+ */
 const search = {
   /** needle → 命中；沒列到的 needle 就是 0 命中 */
-  hits: {} as Record<string, { pageIndex: number; rects: { origin: { x: number; y: number } }[] }[]>,
-  /** 設成某個 needle 時，搜尋該字會 reject（模擬被下一次點擊 abort） */
+  hits: {} as Record<string, Hit[]>,
+  /** 設成某個 needle 時，搜尋該字會 reject（模擬引擎中止） */
   abortOn: null as string | null,
   /** 設了就讓搜尋卡在這個 promise 上，測試才能在「搜尋進行中」做事 */
   gate: null as Promise<void> | null,
   queries: [] as string[],
   goneTo: [] as number[],
-  results: [] as { pageIndex: number; rects: { origin: { x: number; y: number } }[] }[],
+  // ── 以下三個是引擎狀態，測試不要直接寫，用 runSearch() 或走 UI ──
+  query: '',
+  results: [] as Hit[],
+  activeIndex: -1,
+}
+
+/** 訂閱者：真的 useSearch 走 onStateChange → setState，替身也必須觸發重繪，
+ *  否則工具列的計數／「無相符」永遠停在初值，那幾個狀態就測不到。 */
+const searchListeners = new Set<() => void>()
+function notifySearch() {
+  searchListeners.forEach(f => f())
 }
 
 const searchApi = {
   startSearch: vi.fn(),
-  stopSearch: vi.fn(),
-  searchAllPages: (keyword: string) => ({
-    toPromise: async () => {
-      search.queries.push(keyword)
+  // STOP_SEARCH 會把 query 一併重設為 ""，不只是清 results
+  stopSearch: vi.fn(() => {
+    search.query = ''
+    search.results = []
+    search.activeIndex = -1
+    notifySearch()
+  }),
+  // **狀態變更是同步發生的，不是等到有人 await 才發生**：產品程式碼有一處
+  // （搜尋框 Enter）呼叫了 searchAllPages 卻不取 task，把工作全放進 toPromise
+  // 的替身會讓那條路徑完全沒反應。
+  searchAllPages: (keyword: string) => {
+    search.queries.push(keyword)
+    // 快取短路發生在任何非同步之前（外掛的 dispatch 是同步的）
+    if (search.query === keyword) {
+      const cached = { total: search.results.length, results: search.results }
+      return { toPromise: async () => cached }
+    }
+    search.query = keyword
+    search.results = []
+    search.activeIndex = -1
+    notifySearch()
+    const task = (async () => {
       if (search.gate) await search.gate
       if (search.abortOn === keyword) throw new Error('TaskAbortedError')
       const results = search.hits[keyword] ?? []
       search.results = results
+      search.activeIndex = results.length ? 0 : -1
+      notifySearch()
       return { total: results.length, results }
-    },
-  }),
+    })()
+    // 沒有人 await 時（Enter 那條）避免 unhandled rejection；awaiter 仍收得到
+    task.catch(() => {})
+    return { toPromise: () => task }
+  },
   goToResult: (i: number) => {
     search.goneTo.push(i)
+    search.activeIndex = i
+    notifySearch()
     return i
   },
-  nextResult: () => 1,
-  previousResult: () => 0,
+  nextResult: () => {
+    if (!search.results.length) return -1
+    const i = search.activeIndex >= search.results.length - 1 ? 0 : search.activeIndex + 1
+    return searchApi.goToResult(i)
+  },
+  previousResult: () => {
+    if (!search.results.length) return -1
+    const i = search.activeIndex <= 0 ? search.results.length - 1 : search.activeIndex - 1
+    return searchApi.goToResult(i)
+  },
 }
 
 const scrollApi = { scrollToPage: vi.fn(), scrollToNextPage: vi.fn() }
@@ -150,19 +209,31 @@ vi.mock('../../../lib/clipboard', () => ({ copyText: (t: string) => copySpy(t) }
 vi.mock('@embedpdf/plugin-search/react', () => ({
   SearchLayer: () => null,
   SearchPluginPackage: {},
-  useSearch: () => ({
+  useSearch: () => {
+    // 訂閱狀態變更並強制重繪，比照真的 useSearch（onStateChange → setState）
+    const [, force] = useReducer((x: number) => x + 1, 0)
+    useEffect(() => {
+      searchListeners.add(force)
+      return () => {
+        searchListeners.delete(force)
+      }
+    }, [])
+    return {
     provides: searchApi,
     state: {
       flags: [],
       results: search.results,
       total: search.results.length,
-      activeResultIndex: search.results.length ? 0 : -1,
+      activeResultIndex: search.activeIndex,
       showAllResults: true,
-      query: '',
+      // **不可寫死 ''**：工具列以 `searchState.query === query` 分流「同關鍵字＝跳下一個」
+      // 與「換字＝重搜」，也以它決定要不要顯示「無相符」。寫死等於把兩者都關掉。
+      query: search.query,
       loading: false,
-      active: false,
+      active: Boolean(search.query),
     },
-  }),
+    }
+  },
 }))
 
 const { default: PdfViewer } = await import('./PdfViewer')
@@ -192,8 +263,13 @@ beforeEach(() => {
   search.gate = null
   search.queries = []
   search.goneTo = []
+  search.query = ''
   search.results = []
+  search.activeIndex = -1
   scrollApi.scrollToPage.mockReset()
+  searchApi.stopSearch.mockClear()
+  searchApi.startSearch.mockClear()
+  searchListeners.clear()
 })
 
 afterEach(() => {
@@ -472,108 +548,81 @@ test('跳轉時把搜尋列打開並同步關鍵字（計數與「無相符」�
   expect(screen.getByLabelText('搜尋研報原文')).toHaveValue('視 NYPCB 為首選')
 })
 
-// 工具列的上/下一個命中本來就不捲動（既有缺陷），與跳轉共用同一支捲動
-test('工具列「下一個命中」會捲動', async () => {
-  search.results = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
-  state.activeDocumentId = 'doc-1'
-  state.isLoaded = true
-  render(<PdfViewer url="/api/report/r1/file" title="研報" />)
-  await act(async () => {})
-
-  await act(async () => {
-    screen.getByLabelText('搜尋原文').click()
-  })
-  await act(async () => {
-    screen.getByLabelText('下一個命中').click()
-  })
-
-  // nextResult 替身回 1 → 第二個命中（pageIndex 20）
-  expect(scrollApi.scrollToPage).toHaveBeenCalledWith(
-    expect.objectContaining({ pageNumber: 21, pageCoordinates: { x: 10, y: 20 }, alignY: 25 }),
-  )
-})
-
-/**
- * 2026-08-04 的實際災情：點摘錄完全沒反應。
- *
- * 成因是 jump effect 把 scrollToHit／onOpenSearch／onJumpResult 放進 deps。搜尋是
- * 非同步的，任何一個 identity 在搜尋進行中改變（useDocumentState 一變、上游 callback
- * 一變都會），cleanup 就把 cancelled 設 true，而重跑立刻被 doneNonceRef 擋掉
- * ——搜尋被中止、沒有回報、畫面什麼都不發生。單元測試當時全綠，因為替身太穩定了。
- */
-test('搜尋進行中父層重新渲染（callback 換 identity）仍要完成跳轉', async () => {
-  search.hits['視 NYPCB 為首選'] = [HIT]
-  let release!: () => void
-  search.gate = new Promise<void>(r => { release = r })
-
-  state.activeDocumentId = 'doc-1'
-  state.isLoaded = true
-  const onJumpResult = vi.fn()
-  const jump = { ordinal: 1, quote: '視 NYPCB 為首選', nonce: 7 }
-  const { rerender } = render(
-    <PdfViewer url="/api/report/r1/file" title="研報" jump={jump} onJumpResult={onJumpResult} />,
-  )
-  await act(async () => {})
-
-  // 父層重新渲染並換掉 callback identity。真實情況：ReportPage 的 onJumpResult 依賴
-  // jumpState、scrollToHit 依賴 useDocumentState，兩者都會在搜尋進行中換 identity。
-  await act(async () => {
-    rerender(
-      <PdfViewer url="/api/report/r1/file" title="研報" jump={jump} onJumpResult={r => onJumpResult(r)} />,
-    )
-  })
-
-  await act(async () => {
-    release()
-    await Promise.resolve()
-  })
-
-  expect(onJumpResult).toHaveBeenCalledWith(expect.objectContaining({ nonce: 7, ok: true, page: 12 }))
-  expect(scrollApi.scrollToPage).toHaveBeenCalled()
-})
-
-// 關搜尋列會讓 plugin-search 對在途的 task 呼叫 abort → toPromise reject。那條 reject
-// 沒有後繼者，若也靜默 return，「尋找中…」就永遠不會結束。只有「被下一次點擊取代」
-// 才該靜默（那時 cleanup 已把 cancelled 設 true，有新的一次會回報）。
-test('搜尋在途時被中止且無後繼者 → 據實回報找不到，不是靜默', async () => {
-  search.hits['視 NYPCB 為首選'] = [HIT]
-  let release!: () => void
-  search.gate = new Promise<void>(r => { release = r })
-  search.abortOn = '視 NYPCB 為首選'
-
-  state.activeDocumentId = 'doc-1'
-  state.isLoaded = true
-  const onJumpResult = vi.fn()
-  render(
-    <PdfViewer
-      url="/api/report/r1/file"
-      title="研報"
-      jump={{ ordinal: 1, quote: '視 NYPCB 為首選', nonce: 3 }}
-      onJumpResult={onJumpResult}
-    />,
-  )
-  await act(async () => {})
-  await act(async () => {
-    release()
-    await Promise.resolve()
-  })
-
-  expect(onJumpResult).toHaveBeenCalledWith({ nonce: 3, ok: false })
-})
-
-// #182 改了三個捲動接點，原本只有「下一個命中」有守門
-test('工具列「上一個命中」會捲動', async () => {
-  search.results = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
-  state.activeDocumentId = 'doc-1'
-  state.isLoaded = true
-  render(<PdfViewer url="/api/report/r1/file" title="研報" />)
-  await act(async () => {})
-
+// 工具列的上/下一個命中本來就不捲動（既有缺陷），與跳轉共用同一支捲動。
+// **走真實流程而不是直接塞 search.results**：掛載時 searchOpen 為 false 會呼叫
+// stopSearch，而那會把 query/results 一併重設——預設狀態的測試會被自己的元件清掉。
+// 順帶把先前結構性不可達的兩件事一起蓋掉：搜尋框的 Enter 分流、以及「無相符」。
+async function runSearchViaUI(keyword: string) {
   await act(async () => { screen.getByLabelText('搜尋原文').click() })
+  const input = screen.getByLabelText('搜尋研報原文')
+  await act(async () => { fireEvent.change(input, { target: { value: keyword } }) })
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
+}
+
+async function renderViewer() {
+  state.activeDocumentId = 'doc-1'
+  state.isLoaded = true
+  render(<PdfViewer url="/api/report/r1/file" title="研報" />)
+  await act(async () => {})
+}
+
+test('搜尋框 Enter：換了關鍵字＝重新全文搜尋', async () => {
+  search.hits['AI 伺服器'] = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+  await renderViewer()
+  await runSearchViaUI('AI 伺服器')
+
+  expect(search.queries).toEqual(['AI 伺服器'])
+  expect(screen.getByText('1 / 2')).toBeInTheDocument()
+})
+
+// 這個狀態先前不可達：替身把 query 寫死 '' ⇒ `searchState.query === query` 永遠為假
+test('搜尋無命中 → 工具列顯示「無相符」', async () => {
+  await renderViewer()
+  await runSearchViaUI('不存在的字串')
+
+  expect(screen.getByText('無相符')).toBeInTheDocument()
+})
+
+test('搜尋框 Enter：同一組關鍵字再按＝跳下一個命中（不重搜）', async () => {
+  search.hits['AI 伺服器'] = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+  await renderViewer()
+  await runSearchViaUI('AI 伺服器')
+  scrollApi.scrollToPage.mockClear()
+
+  await act(async () => {
+    fireEvent.keyDown(screen.getByLabelText('搜尋研報原文'), { key: 'Enter' })
+  })
+
+  // 沒有再發一次搜尋，而是換到第二個命中並捲過去
+  expect(search.queries).toEqual(['AI 伺服器'])
+  expect(screen.getByText('2 / 2')).toBeInTheDocument()
+  expect(scrollApi.scrollToPage).toHaveBeenCalledWith(
+    expect.objectContaining({ pageNumber: 21, pageCoordinates: { x: 10, y: 20 } }),
+  )
+})
+
+test('工具列「下一個命中」會捲動', async () => {
+  search.hits['AI 伺服器'] = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+  await renderViewer()
+  await runSearchViaUI('AI 伺服器')
+  scrollApi.scrollToPage.mockClear()
+
+  await act(async () => { screen.getByLabelText('下一個命中').click() })
+
+  expect(scrollApi.scrollToPage).toHaveBeenCalledWith(
+    expect.objectContaining({ pageNumber: 21, pageCoordinates: { x: 10, y: 20 } }),
+  )
+})
+
+test('工具列「上一個命中」會捲動（從第一個往回捲到最後一個）', async () => {
+  search.hits['AI 伺服器'] = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+  await renderViewer()
+  await runSearchViaUI('AI 伺服器')
+  scrollApi.scrollToPage.mockClear()
+
   await act(async () => { screen.getByLabelText('上一個命中').click() })
 
-  // previousResult 替身回 0 → 第一個命中
   expect(scrollApi.scrollToPage).toHaveBeenCalledWith(
-    expect.objectContaining({ pageNumber: 12, pageCoordinates: { x: 72, y: 430 } }),
+    expect.objectContaining({ pageNumber: 21, pageCoordinates: { x: 10, y: 20 } }),
   )
 })

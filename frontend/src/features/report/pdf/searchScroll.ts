@@ -1,5 +1,5 @@
 /** 搜尋命中的最小形狀（只取捲動需要的欄位，避免綁死外掛的完整型別）。 */
-export interface SearchHit {
+interface SearchHit {
   pageIndex: number
   rects: { origin: { x: number; y: number } }[]
 }

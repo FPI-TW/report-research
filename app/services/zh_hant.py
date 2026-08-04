@@ -42,8 +42,10 @@
   逐字引文，而「原文就是這麼寫的」正是它存在的全部意義（全語料 63 篇原文本身就是簡體）。
   第二個理由是它仍是 `reading/anchor.locate_quote` 的錨定基準，批次照樣在寫
   quote_start/quote_end；轉了會靜默錨不回 canonical text。
-  **前端引文跳轉已於 2026-08-03 隨文字檢視移除，但這條規則一個字都不能鬆**——
-  跳轉沒了只是讓第二個理由暫時看不見，第一個理由永遠成立。
+  **第三個理由是 2026-08-04 新增的、而且使用者看得見**：quote 現在會被原樣拿去當
+  PDFium 的搜尋關鍵字（閱讀頁「在原文中尋找」，見 frontend/.../pdf/quoteNeedle.ts）。
+  轉了繁體就搜不到原本是簡體的那 63 篇，讀者會看到「原文中找不到這段文字」。
+  也就是說這條規則的破壞從「靜默錨不回去」升級成「直接壞在畫面上」。
 - `report_signal.thesis_dimensions[*].evidence`：同理，是原句。
 - `research_report.full_text` / `report_chunk.content`：語料本身（全語料 63 篇
   原文就是簡體）。不是 LLM 產出，動它等於竄改來源；chunk 更是碰不得

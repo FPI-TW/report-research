@@ -418,12 +418,40 @@ test('跳轉：多重命中要把總數一起回報（讀者才知道要用上�
   expect(onJumpResult).toHaveBeenCalledWith({ nonce: 1, ok: true, page: 12, total: 2 })
 })
 
-// abort＝被下一次點擊取代。回報 ok:false 會讓左欄顯示「找不到」，蓋掉正在跑的那次。
-test('跳轉：搜尋被 abort 時不得回報成找不到', async () => {
-  search.abortOn = '被取代的引文'
-  const { onJumpResult } = await renderWithJump('被取代的引文')
+// 只有「被下一次點擊取代」才該靜默：那時 cleanup 已把 cancelled 設 true，接手的那次
+// 會自己回報，舊的再回報一次會蓋掉新的。**其他 reject（關搜尋列、引擎失敗）必須回報**
+// ——見下方那條。舊版把兩者混為一談，等於把「永久尋找中」釘死成預期行為。
+test('跳轉：被下一次點擊取代時，舊那次不得回報', async () => {
+  search.hits['第一次'] = [HIT]
+  search.hits['第二次'] = [HIT]
+  let release!: () => void
+  search.gate = new Promise<void>(r => { release = r })
 
-  expect(onJumpResult).not.toHaveBeenCalled()
+  state.activeDocumentId = 'doc-1'
+  state.isLoaded = true
+  const onJumpResult = vi.fn()
+  const { rerender } = render(
+    <PdfViewer url="/api/report/r1/file" title="研報"
+      jump={{ ordinal: 1, quote: '第一次', nonce: 1 }} onJumpResult={onJumpResult} />,
+  )
+  await act(async () => {})
+
+  // 換 jump → 舊 effect 的 cleanup 執行（cancelled = true）
+  search.gate = null
+  await act(async () => {
+    rerender(
+      <PdfViewer url="/api/report/r1/file" title="研報"
+        jump={{ ordinal: 2, quote: '第二次', nonce: 2 }} onJumpResult={onJumpResult} />,
+    )
+  })
+  await act(async () => {
+    release()
+    await Promise.resolve()
+  })
+
+  // 只有第二次會回報，第一次靜默
+  expect(onJumpResult).toHaveBeenCalledTimes(1)
+  expect(onJumpResult).toHaveBeenCalledWith(expect.objectContaining({ nonce: 2, ok: true }))
 })
 
 // 內建旋轉頁的 pageCoordinates 會被 plugin-scroll 再套一次旋轉 → 只給頁碼
@@ -502,4 +530,50 @@ test('搜尋進行中父層重新渲染（callback 換 identity）仍要完成�
 
   expect(onJumpResult).toHaveBeenCalledWith(expect.objectContaining({ nonce: 7, ok: true, page: 12 }))
   expect(scrollApi.scrollToPage).toHaveBeenCalled()
+})
+
+// 關搜尋列會讓 plugin-search 對在途的 task 呼叫 abort → toPromise reject。那條 reject
+// 沒有後繼者，若也靜默 return，「尋找中…」就永遠不會結束。只有「被下一次點擊取代」
+// 才該靜默（那時 cleanup 已把 cancelled 設 true，有新的一次會回報）。
+test('搜尋在途時被中止且無後繼者 → 據實回報找不到，不是靜默', async () => {
+  search.hits['視 NYPCB 為首選'] = [HIT]
+  let release!: () => void
+  search.gate = new Promise<void>(r => { release = r })
+  search.abortOn = '視 NYPCB 為首選'
+
+  state.activeDocumentId = 'doc-1'
+  state.isLoaded = true
+  const onJumpResult = vi.fn()
+  render(
+    <PdfViewer
+      url="/api/report/r1/file"
+      title="研報"
+      jump={{ ordinal: 1, quote: '視 NYPCB 為首選', nonce: 3 }}
+      onJumpResult={onJumpResult}
+    />,
+  )
+  await act(async () => {})
+  await act(async () => {
+    release()
+    await Promise.resolve()
+  })
+
+  expect(onJumpResult).toHaveBeenCalledWith({ nonce: 3, ok: false })
+})
+
+// #182 改了三個捲動接點，原本只有「下一個命中」有守門
+test('工具列「上一個命中」會捲動', async () => {
+  search.results = [HIT, { pageIndex: 20, rects: [{ origin: { x: 10, y: 20 } }] }]
+  state.activeDocumentId = 'doc-1'
+  state.isLoaded = true
+  render(<PdfViewer url="/api/report/r1/file" title="研報" />)
+  await act(async () => {})
+
+  await act(async () => { screen.getByLabelText('搜尋原文').click() })
+  await act(async () => { screen.getByLabelText('上一個命中').click() })
+
+  // previousResult 替身回 0 → 第一個命中
+  expect(scrollApi.scrollToPage).toHaveBeenCalledWith(
+    expect.objectContaining({ pageNumber: 12, pageCoordinates: { x: 72, y: 430 } }),
+  )
 })

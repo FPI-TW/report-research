@@ -46,18 +46,33 @@ export default function ReportPage() {
   // 沿用 PdfViewer 對 timedOutUrl 的同一招，不用 effect 重設（那會壞，而且壞得很安靜）。
   const [jumpState, setJumpState] = useState<(JumpRequest & { hash: string }) | null>(null)
   const [jumpResult, setJumpResult] = useState<(JumpResult & { ordinal: number; hash: string }) | null>(null)
-  // 引擎降級成瀏覽器內建檢視＝沒有搜尋能力，摘錄整批退回非互動
-  const [degraded, setDegraded] = useState(false)
+  // 引擎降級成瀏覽器內建檢視＝沒有搜尋能力，摘錄整批退回非互動。
+  // **綁 hash**：換到未造訪過的研報時整棵子樹會因骨架而卸載重建、引擎重試且通常會成功，
+  // 但 ReportPage 自己沒卸載——不綁的話會變成「檢視器好好的、摘錄卻全部不能點」，
+  // 零錯誤零提示，重整就好，是最難被回報的那種故障。
+  const [degradedHash, setDegradedHash] = useState<string | null>(null)
   const docRef = useRef<HTMLElement>(null)
+  // 遞增計數器而非 Date.now()：同毫秒兩次點擊會產生相同 nonce，被消費端的
+  // doneNonceRef 當成重複而擋掉 → 永久停在「尋找中…」。也讓測試不依賴掛鐘。
+  const nonceRef = useRef(0)
 
   const jump = jumpState?.hash === hash ? jumpState : null
   const result = jumpResult?.hash === hash ? jumpResult : null
+  const degraded = degradedHash === hash
 
   const onJump = useCallback(
     (t: { ordinal: number; quote?: string | null }) => {
       if (!t.quote) return
+      setJumpState(prev => {
+        // 在途時忽略對**同一條**的重複點擊（jumpState 非 null ⇔ 在途，見下方消費即清除）：
+        // 外掛的 searchAllPages 對「query 已等於這個關鍵字」直接回快取，而搜尋一開始就把
+        // results 清空、total 設 0 —— 重按會拿到假的「找不到」，同時第一次的搜尋跑完又把
+        // 高亮畫上去。點**別條**則照常接管（舊的由 effect cleanup 中止）。
+        if (prev?.hash === hash && prev.ordinal === t.ordinal) return prev
+        nonceRef.current += 1
+        return { hash, ordinal: t.ordinal, quote: t.quote as string, nonce: nonceRef.current }
+      })
       setJumpResult(null)
-      setJumpState({ hash, ordinal: t.ordinal, quote: t.quote, nonce: Date.now() })
     },
     [hash],
   )
@@ -69,6 +84,9 @@ export default function ReportPage() {
       // StrictMode 會重跑它。identity 變動不要緊：消費端有 doneNonceRef 擋重複執行。
       if (!jumpState || jumpState.nonce !== r.nonce) return
       setJumpResult({ ...r, ordinal: jumpState.ordinal, hash: jumpState.hash })
+      // 消費即清除：留著的話離開研報再回來（元件重建、hash 相同）會被當成新的
+      // 待處理請求而自動重播上一次跳轉。
+      setJumpState(null)
       // 窄螢幕把兩欄改成上下堆疊，檢視器內部確實捲了，但整個檢視器在視窗外
       // ——只做 scrollToPage 等於只做一半，畫面一動也不動。
       if (r.ok && window.matchMedia('(max-width: 1023px)').matches) {
@@ -109,7 +127,7 @@ export default function ReportPage() {
                 <TakeawayList
                   takeaways={d.takeaways}
                   canJump={pdfViewable(d) && !degraded}
-                  pendingOrdinal={jump && !result ? jump.ordinal : null}
+                  pendingOrdinal={jump ? jump.ordinal : null}
                   result={result}
                   onJump={onJump}
                 />
@@ -163,7 +181,23 @@ export default function ReportPage() {
               doc={d}
               jump={jump}
               onJumpResult={onJumpResult}
-              onDegraded={() => setDegraded(true)}
+              // 降級不只要熄掉互動，**還要把在途的那次收成終態**：Chrome 從未掛載過，
+              // 沒有任何人會送 JumpResult 進來，光 setDegraded 會讓「尋找中…」永久
+              // 掛在一個已經不能點的條目上——比「什麼都沒發生」更糟，它主動宣稱系統在工作。
+              onDegraded={() => {
+                setDegradedHash(hash)
+                // 不要在 setState 的 updater 裡呼叫另一個 setter——updater 必須是純函式，
+                // StrictMode 會重跑它。直接讀這一輪的 jumpState 即可。
+                if (jumpState) {
+                  setJumpResult({
+                    nonce: jumpState.nonce,
+                    ok: false,
+                    ordinal: jumpState.ordinal,
+                    hash: jumpState.hash,
+                  })
+                }
+                setJumpState(null)
+              }}
             />
           )}
         </section>

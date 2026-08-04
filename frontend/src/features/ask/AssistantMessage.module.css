@@ -47,12 +47,28 @@
 /* 讚／倒讚／複製／重新生成四顆的尺寸一律由這裡決定，不靠各自的內距去湊：複製鈕來自
    animate-ui（Tailwind 的 size-* 與 rounded-md），與其他三顆的 padding 算法不同，過去
    因此大小不一。CSS Modules 不在 @layer 內，會贏過 utilities 層的工具類別，故在此把方框、
-   圓角與圖示尺寸全部釘死——四顆才會等大等圓。 */
-.act { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; padding: 0; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-3); border-radius: 999px; cursor: pointer; }
-.act svg { width: 15px; height: 15px; }
-.act:hover { background: var(--tf-graphite-tint); border-color: var(--tf-graphite); color: var(--tf-graphite); }
+   圓角與圖示尺寸全部釘死——四顆才會等大等圓。
+   無框無底（ChatGPT 式）：靜置只有圖示，hover 才浮出圓形填色；border/background 要明寫，
+   button 的瀏覽器預設框才消得掉。色票取捨與提問訊息的動作列相同（見 UserMessage.module.css）：
+   靜置 --tf-text-muted-aa（圖示是唯一說明，不用停在 AA 以下的 text-3），hover 填 --tf-border
+   （對話流底色是 canvas #f2f2f4，graphite-tint #f0f0f2 疊上去看不見）。 */
+.act { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; padding: 0; border: none; background: transparent; color: var(--tf-text-muted-aa); border-radius: 999px; cursor: pointer; }
+/* position: relative 不是為了定位自己，是為了當「複製→已複製」換圖時的包含塊。animate-ui 的
+   CopyButton 走 AnimatePresence mode="popLayout"，退場那顆圖示會被套上 position:absolute
+   ＋依 offsetParent 量到的 top/left。按鈕若是 static，offsetParent 會一路找到 AskPage 的
+   .column；而捲動容器是它裡面的 .flow，offsetTop 不扣 scrollTop——捲過的對話按下複製，
+   退場圖示就會飛到畫面外。加了 relative，offsetParent 就是按鈕本身，原地換圖。 */
+/* display: block 消掉基線落差：Pressable 的 svg 是 flex 直接子項（會被 blockify，垂直正中），
+   但 CopyButton 的 svg 包在一層 <span> 裡，是行內元素、坐在基線上，行框底下多出一段
+   descender，那顆圖示因此比其他三顆高約 2px——四顆並排就是看得出來的沒對齊。
+   stroke-width 一併統一：lucide 預設 2，本站 Icon 是 1.8，混在同一排會粗細不一。 */
+.act svg { display: block; width: 15px; height: 15px; stroke-width: 1.8; }
+.act > span { display: flex; align-items: center; justify-content: center; }
+.act:hover { background: var(--tf-border); color: var(--tf-graphite); }
 .act:disabled { opacity: 0.4; cursor: default; }
-.on { background: var(--tf-graphite-tint); border-color: var(--tf-graphite); color: var(--tf-graphite); }
+/* 讚／倒讚亮起態：改成實心石墨（tokens.css 把「選取態」歸給石墨）。無框之後若沿用淡填色，
+   亮起與 hover 幾乎同色，切換鈕就看不出自己按過哪一顆——aria-pressed 有，但那只給輔助技術。 */
+.on, .on:hover { background: var(--tf-graphite); color: var(--tf-on-graphite); }
 .divider { width: 1px; height: 16px; background: var(--tf-border); margin: 0 2px; }
 .srcBtn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--tf-border); background: var(--tf-surface); color: var(--tf-text-2); border-radius: 999px; font-size: 12px; font-weight: 500; padding: 5px 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
 .srcBtn:hover { background: var(--tf-graphite-tint); border-color: var(--tf-graphite); color: var(--tf-graphite); }

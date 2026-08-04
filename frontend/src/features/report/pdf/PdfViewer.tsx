@@ -264,7 +264,12 @@ function Chrome({
         try {
           out = await search.searchAllPages(needle).toPromise()
         } catch {
-          // TaskAbortedError＝被下一次點擊取代，不是「找不到」。回報失敗會蓋掉新的那次。
+          // **要分辨中止來源，不能一律靜默。** 被下一次點擊（或卸載）取代時，cleanup 已在
+          // 新 effect 執行前把 cancelled 設 true，所以那種情況仍然不回報——回報會蓋掉
+          // 接手的那一次。但還有兩條沒有後繼者的 reject：使用者關掉搜尋列（stopSearch 會
+          // 對 currentTask 呼叫 abort）、以及引擎層自己失敗。那兩種若也靜默，
+          // 「尋找中…」就永遠不會結束。
+          if (!cancelled) latest.current.onJumpResult({ nonce: jump.nonce, ok: false })
           return
         }
         if (cancelled) return

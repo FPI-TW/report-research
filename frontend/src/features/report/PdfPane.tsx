@@ -80,7 +80,14 @@ export function PdfPane({ doc, jump = null, onJumpResult, onDegraded }: Props) {
   // 載入錯誤同樣會被邊界接住）都退回同一個內建檢視，不會出現兩套降級規則。
   return (
     <div className={`${styles.stage} ${styles.stageViewer}`}>
-      <ViewerBoundary fallback={<BuiltInViewer href={href} title={title} />} onError={onDegraded}>
+      {/* key 綁 href：邊界只有 failed 一個狀態，重建不會丟東西，但**不綁的話**在同一個
+          ReportPage 實例內換研報時 failed 會沾黏，讓下一篇明明能開也直接落到內建檢視。
+          **不要**給 PdfViewer 加 key —— 那會讓同篇的任何重渲染都重載一次引擎。 */}
+      <ViewerBoundary
+        key={href}
+        fallback={<BuiltInViewer href={href} title={title} />}
+        onError={onDegraded}
+      >
         <Suspense fallback={<div className={styles.booting} role="status">正在啟動 PDF 引擎…</div>}>
           <PdfViewer url={href} title={title} jump={jump} onJumpResult={onJumpResult} />
         </Suspense>

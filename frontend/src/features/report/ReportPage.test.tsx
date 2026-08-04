@@ -23,7 +23,27 @@ vi.mock('../../lib/readingApi', async importOriginal => {
 // vitest 5s 預設 testTimeout（單跑則過）。
 // **這不是把降級路徑消音**：引擎失敗 → 退回內建 iframe 改由 PdfPane.test.tsx 直接斷言，
 // 而非依賴這裡「WASM 剛好載不到」的副作用（那條路徑先前從未被任何斷言碰過）。
-vi.mock('./pdf/PdfViewer', () => ({ default: () => <div data-testid="pdf-viewer" /> }))
+// 假檢視器同時是 jump 通道的探針：記錄收到的 jump prop，並讓測試決定回報什麼結果。
+// **這裡不驗引擎互動**（那在 PdfViewer.test.tsx），只驗左欄與檢視器之間的接線。
+const viewer = {
+  jumps: [] as { ordinal: number; quote: string; nonce: number }[],
+  reply: null as { ok: boolean; page?: number; total?: number } | null,
+}
+vi.mock('./pdf/PdfViewer', () => ({
+  default: ({
+    jump,
+    onJumpResult,
+  }: {
+    jump?: { ordinal: number; quote: string; nonce: number } | null
+    onJumpResult?: (r: { nonce: number; ok: boolean; page?: number; total?: number }) => void
+  }) => {
+    if (jump && viewer.jumps.at(-1)?.nonce !== jump.nonce) {
+      viewer.jumps.push(jump)
+      if (viewer.reply) onJumpResult?.({ nonce: jump.nonce, ...viewer.reply })
+    }
+    return <div data-testid="pdf-viewer" />
+  },
+}))
 
 const HASH = 'a'.repeat(64)
 const TEXT_SHA = 'b'.repeat(64)
@@ -98,6 +118,7 @@ function similar(partial?: Partial<SimilarResponse>): SimilarResponse {
 
 const SIGNAL: ReadingDoc['signals'][number] = {
   instrument_code: '8046',
+  instrument_name: '南亞電路板',
   market: 'TW',
   broker: 'daiwa',
   broker_display: '大和',
@@ -117,6 +138,8 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(readingApi.getSimilarReports).mockResolvedValue(similar())
   vi.mocked(readingApi.getReadingText).mockResolvedValue(text())
+  viewer.jumps = []
+  viewer.reply = null
 })
 
 describe('ReportPage', () => {
@@ -218,6 +241,44 @@ describe('ReportPage', () => {
     expect(screen.queryByText('評等')).toBeNull()
     expect(screen.queryByText('目標價')).toBeNull()
     expect(screen.queryByText(/全語料僅 0.68% 有/)).toBeNull()
+  })
+
+  // 一份研報可能同時對多檔標的有訊號（一列＝一份研報 × 一個標的）。少了抬頭就只剩
+  // 一疊看不出在講誰的評等與目標價 —— 而報頭的標的 chip 也解不了，它不區分是哪一張卡。
+  it('觀點卡抬頭標出標的名稱與代號', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ signals_state: 'available', signals: [SIGNAL] }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('觀點')).toBeInTheDocument())
+    // 報頭也有一個 8046 的標的 chip → 斷言限縮到觀點區才唯一
+    const sec = within(screen.getByText('觀點').closest('section')!)
+    expect(sec.getByRole('heading', { name: '南亞電路板' })).toBeInTheDocument()
+    expect(sec.getByText('8046')).toBeInTheDocument()
+  })
+
+  it('名稱缺值 → 代號升為主標，不留空抬頭', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(
+      doc({ signals_state: 'available', signals: [{ ...SIGNAL, instrument_name: null }] }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('觀點')).toBeInTheDocument())
+    const sec = within(screen.getByText('觀點').closest('section')!)
+    expect(sec.getByRole('heading', { name: '8046' })).toBeInTheDocument()
+    // 代號只出現一次：主標已是它，旁邊不該再印一次副標
+    expect(sec.getAllByText('8046')).toHaveLength(1)
+  })
+
+  // 多標的研報：兩張卡各自標出自己的標的，否則兩組評等/目標價無從分辨
+  it('多檔標的 → 每張觀點卡各有自己的抬頭', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({
+      signals_state: 'available',
+      signals: [SIGNAL, { ...SIGNAL, instrument_code: '2330', instrument_name: '台積電' }],
+    }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('觀點')).toBeInTheDocument())
+    const sec = within(screen.getByText('觀點').closest('section')!)
+    expect(sec.getByRole('heading', { name: '南亞電路板' })).toBeInTheDocument()
+    expect(sec.getByRole('heading', { name: '台積電' })).toBeInTheDocument()
+    expect(sec.getByText('2330')).toBeInTheDocument()
   })
 
   it('signals_state 為 available → 渲染評等/目標價與四維論點', async () => {
@@ -347,16 +408,81 @@ describe('ReportPage', () => {
 
   // 摘錄的引文沒有可跳的落點了。留著 role=button／箭頭／hover 態＝承諾一個按下去
   // 什麼也不會發生的動作，而且 console 全乾淨、不會有任何錯誤。
-  it('重點摘錄一律以非互動元素呈現（無跳轉承諾）', async () => {
+  it('有引文的摘錄可互動，動詞是「尋找」而非承諾跳轉', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
     wrap(`/report/${HASH}`)
     await waitFor(() => expect(screen.getByText('重申買進評級')).toBeInTheDocument())
     // 逐字引文仍要顯示（那是摘錄可查證的部分）
     expect(screen.getByText('視 NYPCB 為基板族群首選')).toBeInTheDocument()
+    // 可及名稱由**內容**組成（不可用 aria-label 覆蓋，那會把 claim 與引文對 AT 關掉）
+    const btn = screen.getByRole('button', { name: /重申買進評級/ })
+    expect(btn).toHaveAccessibleName(/視 NYPCB 為基板族群首選/)
+    expect(btn).toHaveAccessibleName(/在原文中尋找這段引文/)
+    // 沒有引文就沒有可搜尋的東西 —— 第 2 條的 quote 是 null，不得給互動
     expect(screen.getByText('亞洲兩家基板廠停止接 BT 訂單')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /跳至第 1 條摘錄/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /第 2 條摘錄/ })).toBeNull()
+    // 舊的承諾式措辭不得復活
     expect(screen.queryByRole('button', { name: /跳至/ })).toBeNull()
-    expect(document.querySelector('[data-jumpable]')).toBeNull()
+  })
+
+  it('點摘錄 → 帶引文送進檢視器；在途重複點同一條會被忽略', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    const btn = await screen.findByRole('button', { name: /重申買進評級/ })
+
+    fireEvent.click(btn)
+    await waitFor(() => expect(viewer.jumps).toHaveLength(1))
+    expect(viewer.jumps[0]).toMatchObject({ ordinal: 1, quote: '視 NYPCB 為基板族群首選' })
+
+    // 在途（還沒回報結果）時再點同一條 → 忽略。外掛的 searchAllPages 對「query 已等於
+    // 這個關鍵字」直接回快取，而搜尋一開始就把 results 清空，重按會拿到假的「找不到」。
+    fireEvent.click(btn)
+    await waitFor(() => expect(viewer.jumps).toHaveLength(1))
+  })
+
+  it('結果回來之後再點同一條 → 重跑，且 nonce 遞增', async () => {
+    viewer.reply = { ok: true, page: 12, total: 1 }
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    const btn = await screen.findByRole('button', { name: /重申買進評級/ })
+
+    fireEvent.click(btn)
+    await waitFor(() => expect(viewer.jumps).toHaveLength(1))
+    fireEvent.click(btn)
+    await waitFor(() => expect(viewer.jumps).toHaveLength(2))
+    expect(viewer.jumps[1].nonce).toBeGreaterThan(viewer.jumps[0].nonce)
+  })
+
+  it('找到 → 畫面只在多重命中時標處數；頁碼僅存在於報讀播報區', async () => {
+    viewer.reply = { ok: true, page: 12, total: 2 }
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    fireEvent.click(await screen.findByRole('button', { name: /重申買進評級/ }))
+    // 可見標籤只在多重命中時出現，且只講處數（捲過去本身就是回饋，不必再標頁碼）
+    expect(await screen.findByText('共 2 處')).toBeInTheDocument()
+    // 頁碼**只**存在於 live region：看得見畫面的人靠捲動得到回饋，看不見的人沒有，
+    // 所以那一份保留頁碼。全頁只此一處提到頁碼。
+    expect(screen.queryAllByText(/第 12 頁/)).toHaveLength(1)
+    expect(screen.getByRole('status').textContent).toContain('已在第 12 頁找到')
+  })
+
+  // 找不到是一個可呈現的結果，不是靜默失敗 —— 這條就是整個設計的守門
+  it('找不到 → 明說，而不是什麼都沒發生', async () => {
+    viewer.reply = { ok: false }
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    fireEvent.click(await screen.findByRole('button', { name: /重申買進評級/ }))
+    // 條目上看得到，而且 live region 也會播報（兩處都要有，故用 findAllByText）
+    expect(await screen.findAllByText('原文中找不到這段文字')).toHaveLength(2)
+    expect(screen.getByRole('status').textContent).toBe('原文中找不到這段文字')
+  })
+
+  // 內建檢視沒有搜尋能力，摘錄必須整批退回非互動（不是逐條標灰）
+  it('非 PDF 研報 → 摘錄不可互動', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ is_pdf: false }))
+    wrap(`/report/${HASH}`)
+    await waitFor(() => expect(screen.getByText('重申買進評級')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /重申買進評級/ })).toBeNull()
   })
 
   // 全文 /text 失敗曾是死路（只有一行「請稍後再試」、無任何動作）：改為可重試。

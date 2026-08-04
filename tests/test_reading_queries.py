@@ -77,6 +77,9 @@ class SqlBindTests(unittest.TestCase):
     def test_signals_sql(self):
         self._assert_binds(queries._SIGNALS_SQL, {"report_id", "statuses"})
 
+    def test_instrument_names_sql(self):
+        self._assert_binds(queries._INSTRUMENT_NAMES_SQL, {"markets", "codes"})
+
     def test_similar_sql(self):
         self._assert_binds(
             queries._SIMILAR_SQL,
@@ -112,6 +115,25 @@ class SqlStructureTests(unittest.TestCase):
         # jsonb 以 ::text 取出後 json.loads，不依賴 asyncpg codec
         self.assertIn("s.eps_estimates::text", sql)
         self.assertIn("s.thesis_dimensions::text", sql)
+
+    def test_instrument_names_sql_mirrors_radar_name_resolution(self):
+        sql = _sql(queries._INSTRUMENT_NAMES_SQL)
+        # 名稱只有一個真相來源：research_report.company_name。改成別的來源（例如
+        # 拿本篇的 company_name 就好）會讓同一檔標的在閱讀頁與雷達叫不同名字。
+        self.assertIn("FROM research.research_report r", sql)
+        self.assertIn("r.company_name", sql)
+        # 依代號比對的是純量欄 stock_code（雷達 _COVERAGE_SQL／_catalog_cte 同語意），
+        # 不是 stock_targets 陣列——後者「這份報告提到這檔」不等於「這份報告在講這檔」，
+        # 拿它取名會把整份產業報告的公司名安到隨便一檔成分股上。
+        self.assertIn("r.stock_code", sql)
+        self.assertNotIn("stock_targets", sql)
+        self.assertIn("is_research IS NOT FALSE", sql)
+        # 每個 (market, code) 只留最新一列
+        self.assertIn("DISTINCT ON (r.market, r.stock_code)", sql)
+        self.assertIn("r.report_date DESC NULLS LAST", sql)
+        # `:markets::text[]` 會讓參數靜默綁不上（PR #89 的生產 500）
+        self.assertIn("CAST(", sql)
+        self.assertNotIn("::text[]", sql)
 
     def test_valid_statuses_excludes_pending_and_rejected(self):
         self.assertEqual(queries.VALID_STATUSES, ["valid", "partial"])
@@ -294,6 +316,33 @@ class FetchSignalsTests(unittest.IsolatedAsyncioTestCase):
         # 全語料僅 0.68% 有訊號：空是常態，不是錯誤
         session = _RecordingSession([_FakeResult([])])
         self.assertEqual(await queries.fetch_signals(session, "rep-1"), [])
+
+
+class FetchInstrumentNamesTests(unittest.IsolatedAsyncioTestCase):
+    async def test_keys_to_names(self):
+        session = _RecordingSession([_FakeResult([("TW", "8046", "南亞電路板")])])
+        out = await queries.fetch_instrument_names(session, [("TW", "8046")])
+        self.assertEqual(out, {("TW", "8046"): "南亞電路板"})
+        # market/code 兩個陣列逐位對應（unnest 的兩欄），順序不可錯開
+        self.assertEqual(session.calls[0][1], {"markets": ["TW"], "codes": ["8046"]})
+
+    async def test_no_keys_never_touches_db(self):
+        # 99.3% 的研報沒有訊號：那條路徑一次 roundtrip 都不該付。
+        # _RecordingSession 沒有預備結果，真打了 DB 會 IndexError 而不是靜默通過。
+        session = _RecordingSession([])
+        self.assertEqual(await queries.fetch_instrument_names(session, []), {})
+        self.assertEqual(session.calls, [])
+
+    async def test_missing_name_is_absent_not_empty_string(self):
+        # 查無名稱是常態（檔名解析不出公司名）：鍵不進 dict，呼叫端據此回退代號
+        session = _RecordingSession([_FakeResult([])])
+        self.assertEqual(await queries.fetch_instrument_names(session, [("TW", "8046")]), {})
+
+    async def test_blank_name_dropped(self):
+        # 全空白的名稱會在呈現層渲染出看不見卻佔位的抬頭，比沒有名稱更糟
+        session = _RecordingSession([_FakeResult([("TW", "8046", "   "), ("TW", "2330", None)])])
+        out = await queries.fetch_instrument_names(session, [("TW", "8046"), ("TW", "2330")])
+        self.assertEqual(out, {})
 
 
 class FetchChunkContentTests(unittest.IsolatedAsyncioTestCase):

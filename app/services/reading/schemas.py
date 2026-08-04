@@ -62,9 +62,17 @@ class EpsEstimate(BaseModel):
 
 
 class Signal(BaseModel):
-    """一份研報對一個標的的結構化訊號。全語料僅 0.68% 的報告有。"""
+    """一份研報對一個標的的結構化訊號。全語料僅 0.68% 的報告有。
+
+    一份研報可能同時對多檔標的有訊號（一列＝一份研報 × 一個標的），所以**代號是辨識
+    這張卡在講誰的唯一依據**，呈現層不得省略。
+    """
 
     instrument_code: str
+    # 公司名。report_signal 只存代號，此值由 fetch_instrument_names 另查
+    # research_report.company_name 而來；解析不出公司名的標的為 None＝常態不是錯誤，
+    # 呈現層回退成只顯示代號（比照 title → file_name）。
+    instrument_name: Optional[str] = None
     market: str
     broker: Optional[str] = None
     broker_display: Optional[str] = None

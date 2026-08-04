@@ -1,10 +1,11 @@
 """研報閱讀頁純 SQL 取數層（named param、無字串拼接注入；風格對齊 radar/queries.py）。
 
-五個讀取面向，全部以 report_id / file_hash 為鍵、讀取時零 LLM：
+六個讀取面向，全部以 report_id / file_hash 為鍵、讀取時零 LLM：
 
 - fetch_doc：閱讀頁骨架（含 full_text 原文，正典化交給呼叫端）
 - fetch_takeaways：重點摘錄（含 text_sha256 供呼叫端驗章）
 - fetch_signals：結構化訊號（jsonb 以 ::text 取出後 json.loads，重用 radar 的 parse）
+- fetch_instrument_names：訊號標的的公司名（report_signal 只存代號，名稱另查）
 - fetch_similar：相似研報（全篇均勻取樣 probe → 逐 probe 最近鄰 → 廣度加權）
 - fetch_chunk_content：單一 chunk 原文（供 anchor.locate_chunk 錨回正典文字）
 
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Optional, Sequence
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -193,6 +194,59 @@ async def fetch_signals(
         )
     ).all()
     return [parse_signal_row(r) for r in rows]
+
+
+# report_signal 只存標的代號，沒有名稱欄位。全語料唯一的名稱來源是
+# research_report.company_name（filename.py 從檔名解析而來），取「最新一份以該代號為
+# stock_code 的報告」——**與雷達的 _COVERAGE_SQL／_catalog_cte 逐字同語意**，否則同一
+# 檔標的在閱讀頁與雷達會叫不同名字，而那種分岔沒有任何錯誤訊息。
+#
+# 名稱是漸進補的：檔名解析不出公司名的報告 company_name 為 NULL，**查無名稱是常態不是
+# 錯誤**（呈現層回退成只顯示代號，比照 title → file_name）。
+#
+# 轉型一律 CAST(:x AS text[])：`:markets::text[]` 會讓 compiler 回溯成短名而參數綁不上
+# （PR #89 的生產 500，見檔頭「bind 參數禁忌」）。
+_INSTRUMENT_NAMES_SQL = text(
+    """
+    SELECT DISTINCT ON (r.market, r.stock_code)
+           r.market, r.stock_code, r.company_name
+      FROM research.research_report r
+     WHERE (r.market, r.stock_code) IN (
+             SELECT m, c
+               FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c))
+       AND r.company_name IS NOT NULL
+       AND r.is_research IS NOT FALSE
+     ORDER BY r.market, r.stock_code,
+              r.report_date DESC NULLS LAST, r.created_at DESC, r.id
+    """
+)
+
+
+async def fetch_instrument_names(
+    session: AsyncSession, keys: Sequence[tuple[str, str]]
+) -> dict[tuple[str, str], str]:
+    """(market, instrument_code) → 公司名。查無名稱的鍵不進 dict（呼叫端回退代號）。
+
+    **keys 為空時完全不打 DB**：全語料僅 0.68% 的研報有訊號，其餘 99.3% 的閱讀頁不該
+    為了這個欄位多付一次 roundtrip。
+
+    空白字串在此就收成「沒有名稱」：SQL 端刻意只濾 NULL（與雷達逐字一致），呈現層拿到
+    全空白的名稱會渲染出一塊看不見卻佔位的元素，比沒有名稱更糟。
+    """
+    if not keys:
+        return {}
+    rows = (
+        await session.execute(
+            _INSTRUMENT_NAMES_SQL,
+            {"markets": [m for m, _ in keys], "codes": [c for _, c in keys]},
+        )
+    ).all()
+    out: dict[tuple[str, str], str] = {}
+    for market, code, name in rows:
+        cleaned = (name or "").strip()
+        if cleaned:
+            out[(market, code)] = cleaned
+    return out
 
 
 _CHUNK_CONTENT_SQL = text(

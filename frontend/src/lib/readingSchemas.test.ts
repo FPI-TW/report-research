@@ -58,13 +58,15 @@ describe('readingDocSchema', () => {
       takeaways: [{ ordinal: 1, claim: '重申買進', quote: '視為首選', quote_start: 10, quote_end: 14, anchor_method: 'exact' }],
       signals_state: 'available',
       signals: [{
-        instrument_code: '8046', market: 'TW',
+        instrument_code: '8046', instrument_name: '南亞電路板', market: 'TW',
         rating_normalized: 'buy', target_price: 2444, target_currency: 'TWD',
         thesis: [{ key: 'outlook', stance: 'positive', summary: '轉佳' }],
       }],
     })
     expect(d.text_state).toBe('ok')
     expect(d.signals_state).toBe('available')
+    // zod 預設 strip：沒宣告的鍵不報錯、直接被安靜丟掉，抬頭就永遠只有代號
+    expect(d.signals[0].instrument_name).toBe('南亞電路板')
     expect(d.signals[0].rating_normalized).toBe('buy')
     expect(d.signals[0].thesis[0].key).toBe('outlook')
     // 後端未給時仍需為空陣列，元件才能安全 .map
@@ -105,6 +107,14 @@ describe('signalSchema', () => {
       eps_estimates: [{ fiscal_year: '2026', value: 45.5, currency: 'TWD' }],
     })
     expect(s.eps_estimates[0].fiscal_year).toBe('2026')
+  })
+  // 名稱由後端另查 research_report.company_name 而來，解析不出就沒有 —— 缺值是常態，
+  // 呈現層回退成只顯示代號，所以 schema 不可要求它必填
+  it('instrument_name 可缺（呈現層回退代號）', () => {
+    expect(signalSchema.parse({ instrument_code: '2330', market: 'TW' }).instrument_name).toBeUndefined()
+    expect(signalSchema.parse({
+      instrument_code: '2330', market: 'TW', instrument_name: null,
+    }).instrument_name).toBeNull()
   })
   it('thesis 的 key 僅收四維', () => {
     expect(() => signalSchema.parse({

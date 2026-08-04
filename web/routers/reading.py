@@ -138,14 +138,18 @@ def _chunk_anchor(
     return anchor.start, anchor.end
 
 
-def _reading_signals(rows) -> list[Signal]:
+def _reading_signals(rows, names: dict[tuple[str, str], str]) -> list[Signal]:
     """radar 的 Signal dataclass → 閱讀頁契約 Signal（欄位形狀刻意不同）。
 
     注意 fiscal_year：radar 存 int、契約要 str，此處轉型（契約已凍結，不改欄位型別）。
+
+    names 由 fetch_instrument_names 另查而來（radar 的 Signal dataclass 上沒有名稱）；
+    查無名稱＝常態，回 None 讓呈現層只顯示代號。
     """
     return [
         Signal(
             instrument_code=s.instrument_code,
+            instrument_name=names.get((s.market, s.instrument_code)),
             market=s.market,
             broker=s.broker,
             broker_display=source_display(s.broker),
@@ -190,8 +194,13 @@ async def reading_doc(file_hash: str):
             raise HTTPException(status_code=404, detail="report not found")
         takeaway_rows = await deps.fetch_takeaways(session, doc.report_id)
         signal_rows = await deps.fetch_signals(session, doc.report_id)
+        # 訊號只帶標的代號，名稱另查（keys 為空時 fetch_instrument_names 直接回 {}、
+        # 完全不打 DB —— 99.3% 的研報沒有訊號，走的正是那條）
+        instrument_names = await deps.fetch_instrument_names(
+            session, [(s.market, s.instrument_code) for s in signal_rows]
+        )
     canonical, text_sha256 = _canonical_text(doc.full_text)
-    signals = _reading_signals(signal_rows)
+    signals = _reading_signals(signal_rows, instrument_names)
     return ReadingDoc(
         report_id=doc.report_id,
         file_hash=doc.file_hash,

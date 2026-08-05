@@ -40,7 +40,18 @@ export function InstrumentCard({ item, onSelect }: Props) {
             </span>
             <DirectionTag direction={netDir} label={netLabel} />
           </div>
-          <div className={styles.dist} role="img" aria-label={`評等分布，共 ${total} 家`}>
+          {/* 標籤要帶分布本身。整張卡是一個 <button>，這段會被串進它的可及名稱，
+              而卡內沒有任何文字版分布可以補救（ConsensusSnapshot 那邊有 .legend 逐級列出，
+              這裡沒有）——只說「共 N 家」等於這條五級分布對螢幕閱讀器使用者完全消失。 */}
+          <div
+            className={styles.dist}
+            role="img"
+            aria-label={
+              ORDER.filter(r => counts.get(r))
+                .map(r => `${RATING_DISPLAY[r]} ${counts.get(r)} 家`)
+                .join('、') + `，共 ${total} 家已評等`
+            }
+          >
             {ORDER.map(r => {
               const n = counts.get(r) ?? 0
               if (!n || !total) return null

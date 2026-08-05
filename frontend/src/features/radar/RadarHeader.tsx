@@ -51,7 +51,10 @@ export function RadarHeader({
           <span className={styles.badge} style={marketVar(market)}>{marketDisplay || market}</span>
         </div>
 
-        <p className={styles.meta}>
+        {/* 切窗期／換標的時整頁內容被換掉，但畫面上沒有任何東西告訴螢幕閱讀器「資料變了」。
+            這一行本來就會跟著改（家數、份數、資料截止日、窗期），把它宣告成 polite 的
+            即時區域，等於用既有內容當更新通知，不必另外塞一段只給輔助技術聽的隱藏文字。 */}
+        <p className={styles.meta} aria-live="polite">
           {brokers != null ? `${brokers} 家券商` : '—'}
           {reports != null ? ` · ${reports} 份可用研報` : ''}
           {asOf ? ` · 資料截至 ${fmtDate(asOf)}` : ''}

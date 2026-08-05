@@ -1,6 +1,9 @@
+/* 軌道 26px → 20px。圓點與垂直線都以 x=6 為中心：
+   線 left:5 width:2 ⇒ 中心 6；圓點 left:-20 相對於 x=20 的 .event ⇒ 佔 x∈[0,12]、中心 6。
+   舊值是 -25px（中心 7），整排節點永遠比軌道偏右 1px。 */
 .feed {
   position: relative;
-  padding-left: 26px;
+  padding-left: 20px;
 }
 .feed::before {
   content: "";
@@ -20,7 +23,7 @@
 .event::before {
   content: "";
   position: absolute;
-  left: -25px;
+  left: -20px;
   top: 6px;
   width: 12px;
   height: 12px;
@@ -73,12 +76,15 @@
   margin-top: 12px;
 }
 
+/* 不用 italic：--tf-display 全家族（SF Pro TC／PingFang TC／Noto Sans TC／JhengHei）
+   都沒有義大利體字面，瀏覽器只能做 skew 合成傾斜，13px 的中文被切斜後筆畫交叉處會糊成一團
+   ——而這是整頁唯一的原文佐證。本專案在 Typst 研報那邊已經把「CJK 無斜體」列為禁忌。
+   引號「」本來就足以標示引文；顏色從 muted-aa 提到 text-2 補回一點分量。 */
 .cite {
   font-family: var(--tf-display);
   font-size: 13px;
   line-height: 1.6;
-  color: var(--tf-text-muted-aa);
-  font-style: italic;
+  color: var(--tf-text-2);
   margin: 0;
   flex: 1;
   min-width: 0;
@@ -88,6 +94,10 @@
   overflow: hidden;
 }
 
+/* 44px 的觸控命中區保留（契約），但讓它退出版面流：沒有 evidence 時 .foot 裡只有一行
+   13px 的「原始研報 →」，卻因為這個 min-height 被撐成 44px，每張卡多出約 31px 純空白。
+   inline-flex + 負的 margin-block 讓外框回到約 22px，命中區仍是 44px（往上下溢出到
+   .card 的內距裡）。 */
 .link {
   appearance: none;
   border: 0;
@@ -99,6 +109,9 @@
   cursor: pointer;
   padding: 0;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  margin-block: -11px;
   min-height: 44px;
 }
 .link:hover { color: var(--tf-graphite-hover); text-decoration: underline; text-underline-offset: 3px; }
@@ -150,5 +163,7 @@
 .loadMore:disabled { cursor: wait; opacity: 0.65; }
 
 @media (max-width: 560px) {
-  .foot { flex-direction: column; align-items: flex-start; gap: 8px; }
+  /* gap 8 → 19：改成直排之後 .link 的 margin-block: -11px 落在主軸上，會直接把
+     gap 吃掉 11px（8 − 11 = −3，引文與連結會疊在一起）。19 − 11 = 8，維持原本的視覺間距。 */
+  .foot { flex-direction: column; align-items: flex-start; gap: 19px; }
 }

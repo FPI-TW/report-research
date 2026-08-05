@@ -21,6 +21,19 @@
   margin-top: 32px;
 }
 
+/* 章節標題列：h2 與該區的操作鈕並排。
+   操作鈕刻意放在 h2 **外面**——放進去的話它會被串進標題的可及名稱，螢幕閱讀器在標題
+   導覽時唸的是「近期關鍵變化 查看全部 20 項，標題 層級 2」，而且展開後同一個標題會變成
+   「近期關鍵變化 收合」，四個章節裡只有這個的名稱會隨狀態跳動。
+   （這個缺陷在測試裡是隱形的：getByText 只串接直接子文字節點，剛好避開巢狀按鈕。） */
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.sectionHead .sectionTitle { margin-bottom: 0; }
+
 .sectionTitle {
   font-family: var(--tf-display);
   font-weight: 600;
@@ -33,24 +46,44 @@
   position: relative;
   padding-left: 14px;
 }
+/* 固定高度、垂直置中，不再用 em 綁住容器高度。
+   舊寫法 top/bottom: 0.16em 讓色條高度跟著 h2 的行高走，於是塞了 44px 觸控目標的那個
+   章節，色條變成別區的兩倍長（約 38px vs 17px）——而它標示的重要性跟其他三區完全平行。
+   更糟的是那個差異是資料驅動的：事件數 ≤ 3 時按鈕不渲染、色條又縮回去，同一頁在不同標的
+   上長得不一樣。改成固定值後四條永遠等長。 */
 .sectionTitle::before {
   content: "";
   position: absolute;
   left: 0;
-  top: 0.16em;
-  bottom: 0.16em;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 20px;
   width: 4px;
   border-radius: 2px;
   background: var(--tf-gold-strong);
 }
 
+/* min-height: 44px 是觸控目標契約（RadarCssContracts 逐字比對），不能拿掉；
+   但它是 flex 項目，會直接決定標題列的高度。負的 margin-block 讓 44px 的命中區
+   往上下溢出到 .sectionHead 的 margin-bottom 與 .section 的 margin-top 空隙裡，
+   cross 軸貢獻變成 −11 + 44 + −11 = 22px（小於文字行的 26.6px），行高因此回到與
+   其他三個章節一致，而實體點擊區一點都沒縮水。 */
 .sectionMeta {
   margin-left: auto;
   font-family: var(--tf-sans);
   font-size: 13px;
   font-weight: 500;
   color: var(--tf-graphite);
+  display: inline-flex;
+  align-items: center;
+  margin-block: -11px;
   min-height: 44px;
+}
+
+/* 資料品質註記（overview 的 data.notes）。原本寫成 inline style。 */
+.notes {
+  margin-top: 16px;
+  padding-left: 18px;
 }
 
 .card {
@@ -101,4 +134,14 @@
 @media (max-width: 900px) {
   .scroll { padding: 20px 16px calc(80px + env(safe-area-inset-bottom, 0px)); }
   .coverageNotice { align-items: flex-start; flex-direction: column; gap: 2px; }
+}
+
+/* 上面那 80px ＝ 56px 手機底部導覽 ＋ 24px 呼吸空間，但底部導覽是 AppShell 在 767px
+   才掛載的，不是 900px。768–900px（iPad 直向、Surface 分割視窗、桌機視窗縮到八百多）
+   有側欄、沒有底部導覽，卻仍留著那 80px，捲到底會看到一段解釋不了的空白。
+   刻意用 min-width 追加一條收窄規則、而不是去改上面那組值——那串 padding 是
+   RadarCssContracts.test.ts 的逐字比對目標，改一個字元就紅；而 mediaBlock 的 regex
+   找的是 `@media (max-width: 900px)`，`@media (min-width: …) and (…)` 不會被它命中。 */
+@media (min-width: 768px) and (max-width: 900px) {
+  .scroll { padding-bottom: 40px; }
 }

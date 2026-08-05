@@ -1,5 +1,9 @@
+/* 不自帶 max-width：內容欄寬一律由 RadarPage 的 .inner（1280px）決定。
+   舊值 1080px 只套在 picker 這一半，而 .disclaimer 是 .inner 的直接子節點、吃 1280px，
+   於是寬螢幕上免責上緣那條分隔線會比它上方的卡片格左右各寬出 100px，讀起來像一條
+   與內容無關的漂浮橫線（overview 狀態沒有這個問題，因為它沒有自己的 max-width）。
+   .grid 是 auto-fill minmax(300px, 1fr)，加寬只會自動多排一欄。 */
 .wrap {
-  max-width: 1080px;
   margin: 0 auto;
   padding: 12px 0 8px;
 }
@@ -15,7 +19,8 @@
 
 .title {
   font-family: var(--tf-display);
-  font-weight: 900;
+  /* 600 是中文字型堆疊真的有的最重一級（PingFang TC Semibold）；900 只會被合成或退回同級。 */
+  font-weight: 600;
   font-size: 40px;
   letter-spacing: -0.01em;
   color: var(--tf-text-1);
@@ -63,7 +68,8 @@
   border: 1px solid var(--tf-border);
   border-radius: var(--tf-radius-md);
   padding: 0 14px;
-  min-height: 46px;
+  /* 44px：與同一列的 .chip 齊高，控制項高度成一套。 */
+  min-height: 44px;
   transition: border-color var(--tf-dur-2) var(--tf-ease-out), box-shadow var(--tf-dur-2) var(--tf-ease-out);
 }
 .search:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite); }

@@ -118,8 +118,10 @@ export function RadarOverview({
             </section>
 
             <section className={pageStyles.section}>
-              <h2 className={pageStyles.sectionTitle}>
-                近期關鍵變化
+              {/* 按鈕是 h2 的**兄弟**而非子節點：巢狀在標題裡會把「查看全部 20 項」
+                  串進標題的可及名稱，而且展開後名稱還會變成「近期關鍵變化 收合」。 */}
+              <div className={pageStyles.sectionHead}>
+                <h2 className={pageStyles.sectionTitle}>近期關鍵變化</h2>
                 {data.recent_events_total > 3 ? (
                   <Pressable
                     tapScale={0.97}
@@ -134,7 +136,7 @@ export function RadarOverview({
                     {showAllEvents ? '收合' : `查看全部 ${data.recent_events_total} 項`}
                   </Pressable>
                 ) : null}
-              </h2>
+              </div>
               <RecentChanges
                 events={shownEvents}
                 total={shownEventsTotal}
@@ -162,7 +164,7 @@ export function RadarOverview({
             </section>
 
             {data.notes.length > 0 ? (
-              <ul className={pageStyles.muted} style={{ marginTop: 16, paddingLeft: 18 }}>
+              <ul className={`${pageStyles.muted} ${pageStyles.notes}`}>
                 {data.notes.map((n, i) => <li key={i}>{n}</li>)}
               </ul>
             ) : null}

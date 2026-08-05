@@ -62,9 +62,11 @@
   flex-wrap: wrap;
   margin: 20px 0 0;
 }
+/* 600 而非 800：立場詞是中文，PingFang TC 最重只到 600、JhengHei 只有 Bold，
+   800 在兩個目標環境都是合成假粗體或退回同一級。 */
 .stanceWord {
   font-family: var(--tf-display);
-  font-weight: 800;
+  font-weight: 600;
   font-size: 23px;
   line-height: 1;
 }
@@ -94,10 +96,10 @@
   gap: 10px;
   margin-top: 20px;
 }
+/* 對齊全頁共用的欄位小標規格：12px / 600 / 無字距（理由見 ConsensusSnapshot .kicker）。 */
 .tpLabel {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--tf-text-muted-aa);
 }
 .tpVal {

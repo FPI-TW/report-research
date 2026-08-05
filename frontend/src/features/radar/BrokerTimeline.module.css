@@ -64,23 +64,30 @@
   margin-bottom: 10px;
 }
 
+/* 兩軌都加 minmax(0, …)：格線項目預設 min-width: auto，寫死的 64px 標籤軌在窄容器裡
+   不會縮，值軌被擠到比內容還小時整個 grid 會直接溢出 .col 的邊框。 */
 .kv {
   display: grid;
-  grid-template-columns: 64px 1fr;
+  grid-template-columns: minmax(0, 64px) minmax(0, 1fr);
   gap: 6px 8px;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 .k { color: var(--tf-text-muted-aa); }
-.v { color: var(--tf-text-1); font-weight: 600; }
+/* fmtEps 產出的「NT$12.34 · FY2026 · 1H · 每股」在窄欄裡是長 token，只放寬軌道
+   而不允許斷字仍會溢出。 */
+.v { color: var(--tf-text-1); font-weight: 600; overflow-wrap: anywhere; }
 
+/* max-width 給中間那條 auto 軌設上限：DirectionTag 是 nowrap、.incomparableDetail 原本
+   還吃到 260px，auto 軌因此會反過來把兩側的 1fr 擠到比 .kv 的固定軌還窄。 */
 .mid {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-width: 100px;
+  min-width: 0;
+  max-width: 220px;
 }
 
 .timeline {
@@ -102,7 +109,7 @@
 
 .node {
   position: relative;
-  padding: 0 0 18px 28px;
+  padding: 0 0 12px 28px;
 }
 
 .node:last-child { padding-bottom: 0; }
@@ -173,7 +180,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-width: 260px;
+  max-width: 100%;
   color: var(--tf-text-muted-aa);
   font-size: 11.5px;
   line-height: 1.45;
@@ -209,6 +216,9 @@
   line-height: 1.45;
 }
 
+/* 同 RecentChanges .link：保留 44px 命中區，但用 inline-flex + 負 margin 讓它不撐高版面。
+   券商歷程展開後動輒 5–10 個節點，每個節點結尾都有一顆這種連結，是本頁最大宗的
+   可回收垂直空間（每顆約 31px）。 */
 .link {
   appearance: none;
   border: 0;
@@ -219,6 +229,9 @@
   font-family: var(--tf-sans);
   cursor: pointer;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  margin-block: -11px;
   min-height: 44px;
 }
 
@@ -242,9 +255,12 @@
   color: var(--tf-error-text);
 }
 
-@media (max-width: 720px) {
+/* 720 → 900：這個面板是從 BrokerList 裡展開的，而 BrokerList 從 900px 起就已經切成
+   手機卡片版。舊斷點讓 721–900px 之間出現「外層已是手機卡片、裡面卻還是三欄比較表」，
+   側欄存在時內容欄只剩約 495px，三欄各自扣掉內距後值欄不到 50px。 */
+@media (max-width: 900px) {
   .compare {
     grid-template-columns: 1fr;
   }
-  .mid { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; }
+  .mid { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; max-width: none; }
 }

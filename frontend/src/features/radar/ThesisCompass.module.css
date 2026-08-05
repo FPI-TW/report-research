@@ -28,13 +28,16 @@
 
 .tag {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   padding: 3px 9px;
   border-radius: var(--tf-radius-pill);
   white-space: nowrap;
 }
-.strengthen { color: var(--tf-success); background: color-mix(in srgb, var(--tf-success) 13%, var(--tf-surface)); }
-.weaken { color: var(--tf-error); background: color-mix(in srgb, var(--tf-error) 13%, var(--tf-surface)); }
+/* 混色比例 13% → 10%：12px/600 不算 WCAG 的大字（門檻是 18.66px 粗體或 24px），
+   所以適用 4.5:1，而 13% 的底只到 4.48／4.47——差 0.02 用眼睛看不出來，正是要靠算的那種。
+   這四個標籤是整區唯一講「這一維轉強還是轉弱」的文字。 */
+.strengthen { color: var(--tf-success); background: color-mix(in srgb, var(--tf-success) 10%, var(--tf-surface)); }
+.weaken { color: var(--tf-error); background: color-mix(in srgb, var(--tf-error) 10%, var(--tf-surface)); }
 .diverging { color: var(--tf-gold-text); background: var(--tf-gold-tint); }
 .stable { color: var(--tf-graphite); background: var(--tf-graphite-tint); }
 .insufficient { color: var(--tf-text-muted-aa); background: var(--tf-border-weak); }

@@ -12,10 +12,17 @@
 }
 
 /* 漲跌是語意色，不是品牌色：走 success／error token，不寫死。 */
-.up { color: var(--tf-success-text); background: color-mix(in srgb, var(--tf-success) 10%, transparent); }
+/* 底色混白、不混 transparent：混 transparent 等於讓 10% 的綠疊在「當下的父層背景」上，
+   而前景是固定的 --tf-success-text，所以底色一變深對比只會單向惡化——這個標籤正好會坐在
+   表格列的 hover 與展開兩種有色狀態上，那兩種狀態下就掉到 AA 以下。
+   .down 走的是不透明的 --tf-error-bg，兩者本來就不對稱（上修的底色看得出比下修淡一階）。
+   在白卡上合成色與改前完全相同，只是不再跟著父層漂。 */
+.up { color: var(--tf-success-text); background: color-mix(in srgb, var(--tf-success) 10%, var(--tf-surface)); }
 .down { color: var(--tf-error-text); background: var(--tf-error-bg); }
 .flat { color: var(--tf-text-muted-aa); background: var(--tf-border-weak); }
-.incomparable { color: var(--tf-text-2); background: var(--tf-gold-tint); }
+/* 與 .flat 同語彙的中性底。「不可比較」是資料降級提示，用全站唯一強調色高亮它
+   剛好相反——把讀者的注意力導到最沒有內容的那一格。 */
+.incomparable { color: var(--tf-text-2); background: var(--tf-border-weak); }
 .none { color: var(--tf-text-muted-aa); background: transparent; padding-left: 0; padding-right: 0; }
 
 .icon { flex: none; }

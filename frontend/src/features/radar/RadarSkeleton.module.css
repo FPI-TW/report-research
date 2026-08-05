@@ -1,22 +1,55 @@
+/* 骨架的存在意義是佔位，佔不準就等於沒有——在這一頁載入態還是常態（雷達目錄與分面
+   查詢天生偏慢）。以下四點都是為了鏡射真實版型，不是裝飾：
+   KPI 真物是**一整片** radius-panel 面板、無間隙、以 border-left 分欄、margin-top 24px，
+   舊骨架卻是三張分離的 radius-card、gap 12px、無上邊距，卡片邊界完全對不上。 */
 .kpi {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 0;
+  margin: 24px 0 0;
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-panel);
+  box-shadow: var(--tf-shadow-xs);
+  overflow: hidden;
+}
+.kpi > .card {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 22px 26px 24px;
+}
+.kpi > .card + .card { border-left: 1px solid var(--tf-border); }
+
+/* 章節標題佔位：四個 h2 各約 19px 字 + 14px 下邊距 + 所屬 section 的 32px 上邊距，
+   舊骨架一個都沒有，合計就少掉約 260px。 */
+.sectionTitle {
+  margin: 32px 0 14px;
+}
+
+/* 券商共識面板佔位。舊骨架完全沒有這一塊，而它是全頁最高的單一區塊。 */
+.consensus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 240px);
+  padding: 0;
+  border-radius: var(--tf-radius-panel);
+}
+.consensusMain { padding: 22px 26px 24px; }
+.consensusSide {
+  padding: 22px 26px 24px;
+  border-left: 1px solid var(--tf-border);
 }
 
 .thesis {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 16px;
 }
 
 .events {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-bottom: 16px;
 }
 
 .card {
@@ -38,8 +71,24 @@
 @media (max-width: 860px) {
   .kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpi > .card:nth-child(3) { grid-column: 1 / -1; }
+  .kpi > .card + .card { border-left: 0; }
+  .kpi > .card:nth-child(2) { border-left: 1px solid var(--tf-border); }
+  .kpi > .card:nth-child(n + 2) { border-top: 1px solid var(--tf-border); }
+  .consensus { grid-template-columns: 1fr; }
+  .consensusSide { border-left: 0; border-top: 1px solid var(--tf-border); }
 }
 @media (max-width: 340px) {
   .kpi { grid-template-columns: 1fr; }
   .thesis { grid-template-columns: 1fr; }
+  .kpi > .card:nth-child(2) { border-left: 0; }
+}
+
+/* 真實的 ThesisCompass 在 >1080px 是四欄一列，骨架卻永遠兩欄兩列，資料到位時
+   會少掉一整列高度、欄數還當場改變。
+   刻意用 min-width 追加在**檔尾**，而不是把上面的基礎值改成 repeat(4, …)：
+   RadarCssContracts 對 `.thesis` 斷言的是 ruleBlock 找到的**第一個**規則區塊，
+   改基礎值會立刻紅；而 mediaBlock 的 regex 只找 `@media (max-width: …)`，
+   min-width 查詢不會被它命中，340／860 兩個區塊的第一匹配也仍然指向原處。 */
+@media (min-width: 1081px) {
+  .thesis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

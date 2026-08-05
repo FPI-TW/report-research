@@ -32,16 +32,20 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
   return (
     <>
       <div className={styles.tableWrap}>
-        <table className={styles.table}>
+        {/* scope 是必要的而非加固：資料列之間插了 <tr><td colSpan={7}> 的展開面板，
+            瀏覽器在這種結構下對「thead 的 th 是欄標頭」的推斷並不可靠。
+            最後一欄拿掉 aria-label——按鈕自己已帶完整名稱（「展開 大和 歷程」），
+            欄名再叫「展開」會讓儲存格導覽唸成「展開，展開 大和 歷程」。 */}
+        <table className={styles.table} aria-label="各券商最新觀點">
           <thead>
             <tr>
-              <th>券商</th>
-              <th>最新評等</th>
-              <th className={styles.num}>目標價</th>
-              <th className={styles.num}>EPS</th>
-              <th>最近變化</th>
-              <th>報告日期</th>
-              <th aria-label="展開" />
+              <th scope="col">券商</th>
+              <th scope="col">最新評等</th>
+              <th scope="col" className={styles.num}>目標價</th>
+              <th scope="col" className={styles.num}>EPS</th>
+              <th scope="col">最近變化</th>
+              <th scope="col">報告日期</th>
+              <th scope="col" />
             </tr>
           </thead>
           <tbody>
@@ -65,7 +69,7 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
                         ? fmtPrice(b.latest_target_price, b.latest_target_currency)
                         : <span className={styles.dash}>—</span>}
                     </td>
-                    <td className={styles.num} data-testid={`broker-eps-${key}-desktop`}>
+                    <td className={`${styles.num} ${styles.epsCell}`} data-testid={`broker-eps-${key}-desktop`}>
                       {b.latest_eps_value != null
                         ? fmtEps(
                             b.latest_eps_value,
@@ -139,10 +143,17 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
           const isOpen = open === key
           return (
             <div key={key} className={styles.card}>
+              {/* aria-label 覆蓋掉子樹串接：沒有它，這顆鈕的可及名稱會變成
+                  「大和 · 買進 目標價 NT$2,444 EPS — 2026/07/11 目標價上修 6.3%」一長串，
+                  完全沒有一個字說明按下去會展開歷程（aria-expanded 只唸得出「已收合」）。
+                  桌機分支本來就有正確標籤，這裡是漏改。
+                  刻意不補 data-testid：桌機那份已經有 broker-row-${key}，兩份同 id 會讓
+                  getByTestId 拋「找到多個元素」。 */}
               <button
                 type="button"
                 className={styles.cardHead}
                 aria-expanded={isOpen}
+                aria-label={`${isOpen ? '收合' : '展開'} ${b.broker_display || key} 歷程`}
                 onClick={() => toggle(key)}
               >
                 <div className={styles.cardMain}>
@@ -152,6 +163,11 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
                     {b.latest_rating_raw || RATING_DISPLAY[b.latest_rating]}
                   </div>
                   <div className={styles.cardMeta}>
+                    {/* 桌機版有、手機版原本沒有：stale 代表這家券商在所選窗期內沒有訊號，
+                        顯示的是窗外最近一筆。窗期正是這頁的語意核心，少了它，同一家券商
+                        在寬窄兩種螢幕上講的是不同的話——這不是排版退化，是資料語意被靜默刪掉。
+                        放進 .cardMeta（flex-wrap）而非 .cardName 之後，才不會多佔一行。 */}
+                    {b.stale ? <span className={styles.stale}>窗外最新</span> : null}
                     <span>
                       目標價{' '}
                       {b.latest_target_price != null

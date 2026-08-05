@@ -1,8 +1,11 @@
 import type { RatingConsensus, RatingNorm, Window } from '../../lib/radarSchemas'
-import { RATING_DISPLAY, WINDOW_LABEL } from './radarFormat'
+import { RATING_BUCKET, RATING_DISPLAY, WINDOW_LABEL } from './radarFormat'
 import styles from './ConsensusSnapshot.module.css'
 
 const ORDER: RatingNorm[] = ['buy', 'overweight', 'neutral', 'underweight', 'sell']
+
+/** 語意桶 → 立場詞著色。與 InstrumentCard 的 .bull/.neu/.bear 同一組，同一筆資料不該兩套色。 */
+const WORD_CLASS = { bull: 'wBull', neu: 'wNeu', bear: 'wBear' } as const
 
 interface Props {
   rating?: RatingConsensus | null
@@ -34,15 +37,21 @@ export function ConsensusSnapshot({ rating, window }: Props) {
 
   const net = rating.upgrades - rating.downgrades
   const winLabel = WINDOW_LABEL[window] ?? window
+  // 淨變動的方向色沿用正上方三列 .mvNum 的同一組 class，不再寫死綠色。
+  const netTone = net > 0 ? styles.up : net < 0 ? styles.down : styles.flat
 
   return (
     <div className={styles.tape}>
       <div className={styles.stance}>
         <div className={styles.kicker}>中位立場</div>
-        <div className={styles.word}>{RATING_DISPLAY[median]}</div>
+        <div className={`${styles.word} ${styles[WORD_CLASS[RATING_BUCKET[median]]]}`}>
+          {RATING_DISPLAY[median]}
+        </div>
+        {/* 只給總數：偏多／中立／偏空的三桶聚合是下方 .legend 五級明細的嚴格子集
+            （bullish = buy + overweight，見 radarFormat.RATING_BUCKET），
+            兩者在垂直方向不到 60px 內把同一組數字講了兩次。 */}
         <div className={styles.sub}>
-          {total} 家已評等 · <b>{rating.bullish}</b> 偏多 / <b>{rating.neutral}</b> 中立
-          {' / '}<b>{rating.bearish}</b> 偏空
+          共 <b>{total}</b> 家已評等
         </div>
 
         <div className={styles.track}>
@@ -58,7 +67,9 @@ export function ConsensusSnapshot({ rating, window }: Props) {
             <span className={styles.stem} />
           </div>
         </div>
-        <div className={styles.axis}><span>偏多</span><span>中立</span><span>偏空</span></div>
+        {/* 只標兩端。中間那個「中立」會宣稱「分布條的 50% ＝ 中立」，但條的段寬是
+            count/total 的比例、指針走的卻是固定五級量表，兩個座標系不同（見 needlePct 註解）。 */}
+        <div className={styles.axis}><span>偏多</span><span>偏空</span></div>
 
         <div className={styles.legend}>
           {ORDER.map(r => {
@@ -87,7 +98,7 @@ export function ConsensusSnapshot({ rating, window }: Props) {
           <span className={`${styles.mvNum} ${styles.flat}`}>{rating.unchanged}</span>
           <span className={styles.mvLabel}>家維持不變</span>
         </div>
-        <p className={styles.mvNet}>評等動能：<b>{netLabel(net)}</b></p>
+        <p className={styles.mvNet}>評等動能：<b className={netTone}>{netLabel(net)}</b></p>
       </div>
     </div>
   )

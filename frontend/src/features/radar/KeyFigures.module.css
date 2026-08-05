@@ -17,17 +17,19 @@
   border-left: 1px solid var(--tf-border);
 }
 
+/* 共用的欄位小標規格：12px / 600 / 無字距（理由見 ConsensusSnapshot .kicker）。 */
 .kicker {
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-weight: 600;
   color: var(--tf-text-muted-aa);
   margin-bottom: 12px;
 }
 
+/* 700 而非 800：這格主要是阿拉伯數字（走拉丁字面有真字重），但「N / M 家」那格帶中文，
+   800 在 PingFang／JhengHei 上是合成假粗體，同一個值裡數字與「家」的輕重會不一致。 */
 .val {
   font-family: var(--tf-display);
-  font-weight: 800;
+  font-weight: 700;
   font-size: 40px;
   line-height: 1;
   letter-spacing: -0.01em;
@@ -55,21 +57,25 @@
 }
 
 .qualityState {
-  margin-top: 10px;
+  margin-top: 8px;
   color: var(--tf-warn-text);
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
-.qualityState + .sub { margin-top: 4px; }
+.qualityState + .sub { margin-top: 2px; }
 
+/* 進度條是 .val 那個分數的另一種畫法，不是新的一層資訊，所以貼近 .val（margin 16 → 10）
+   讓它讀起來像延伸而非自成一段。
+   寬度上限從 170 放寬到 220 而**不是**拿掉：實測滿格寬（1440px 下約 370px）之後，
+   6px 高的深色條直接讀成「14 / 20 家」的粗底線而不是量表——把死白換成誤讀不划算。 */
 .qbar {
   height: 6px;
   border-radius: var(--tf-radius-pill);
   background: var(--tf-border-weak);
   overflow: hidden;
-  margin: 16px 0 0;
-  max-width: 170px;
+  margin: 10px 0 0;
+  max-width: 220px;
 }
 .qbar i {
   display: block;

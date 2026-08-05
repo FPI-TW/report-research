@@ -113,6 +113,13 @@
   --tf-success: #1d7a45;
   --tf-success-text: #1d7a45;
   --tf-success-line: #7fb89a;
+  /* 評等分布條的「加碼」級：買進(--tf-success)與描邊色(--tf-success-line)之間的中間階，
+     兩側都留得出可辨明度差。刻意不重用 --tf-success-line —— 那是邊框色（SignalCard、
+     ResultCard、HelpPage 都拿它畫 border），挪作填色會讓日後調線色連帶改到評等語意色。
+     這個名字先前被兩處消費端引用卻從未定義過：未定義的 var() 無 fallback ⇒ 宣告在
+     computed-value 階段失效 ⇒ background 退回 transparent，「加碼」那一段與圖例色點
+     於是透出軌道底色，五級分布條靜默變成四級，且 CSS 不報錯。 */
+  --tf-success-soft: #4a9a6a;
   --tf-warn: #b8860b;
   --tf-warn-bg: #fbf7ec;
   --tf-warn-border: #ead9ae;

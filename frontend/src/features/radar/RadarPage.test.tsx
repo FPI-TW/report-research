@@ -369,6 +369,11 @@ describe('RadarPage', () => {
     const expand = await screen.findByRole('button', { name: '查看全部 20 項' })
     expect(expand).toHaveAttribute('aria-expanded', 'false')
     expect(expand).toHaveAttribute('aria-controls', 'radar-recent-events')
+    // 按鈕必須是 h2 的兄弟而非子節點。巢狀時標題的可及名稱會被串成
+    //「近期關鍵變化 查看全部 20 項」，展開後又變「近期關鍵變化 收合」——四個章節裡
+    // 只有這個的名稱會隨狀態跳動。這個缺陷用 getByText 是看不到的（它只串接直接子文字節點），
+    // 所以這裡刻意用 getByRole 的可及名稱去釘。
+    expect(screen.getByRole('heading', { name: '近期關鍵變化' })).toBeInTheDocument()
     fireEvent.click(expand)
     await waitFor(() => expect(screen.getByText('event-11')).toBeInTheDocument())
 
@@ -506,7 +511,9 @@ describe('RadarPage', () => {
       )
     })
     await waitFor(() => {
-      expect(screen.getAllByText(/觀點歷程/).length).toBeGreaterThan(0)
+      // 面板標題隨方案 1 從「大和觀點歷程」改成「大和最新觀點」——展開後最先呈現的
+      // 就是最新那一份，歷史研報退到底下的「歷史報告」並預設收合。
+      expect(screen.getAllByText(/最新觀點/).length).toBeGreaterThan(0)
     })
   })
 })

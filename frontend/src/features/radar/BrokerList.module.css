@@ -1,11 +1,35 @@
-.table {
-  width: 100%;
-  border-collapse: collapse;
+/* 外觀掛在 wrapper、不掛在 <table>，有兩個各自獨立的理由：
+   (1) border-collapse: collapse 之下 border-radius 依規範不適用於表格，overflow: hidden 也救不了
+       （根本沒有圓角可裁）——舊寫法讓整頁最寬的區塊成為唯一的方角面板，thead 的實色底把
+       左上／右上兩個直角畫得特別明顯，而它的上下鄰居全是 14/20px 圓角。
+   (2) 舊寫法沒有任何 overflow-x。表格是 auto layout，欄的 min-content 總和（券商名＋評等原文＋
+       nowrap 的目標價與 EPS＋DirectionTag＋44px 展開鈕）約 780px；桌機側欄展開時內容欄只有
+       「視窗寬 − 273 − 64」，1100px 的視窗就已經溢出。溢出一路傳到 .scroll，而 .scroll 的
+       overflow-y: auto 會讓未指定的 overflow-x 計算成 auto ⇒ 整個雷達頁出現橫向捲軸，
+       橫捲時 RadarHeader 的 sticky 導覽列（只鎖垂直）會整條移出畫面，麵包屑與窗期切換一起消失。
+   捲動容器上的 border-radius 是會裁切的，所以圓角與橫捲可以並存。
+   基礎規則必須寫在檔尾 @media (max-width: 900px) 的 display: none 之前，否則同特異度下
+   會反過來蓋掉它，手機就會同時出現表格與卡片兩份。 */
+.tableWrap {
   background: var(--tf-surface);
   border: 1px solid var(--tf-border);
   border-radius: var(--tf-radius-card);
   box-shadow: var(--tf-shadow-xs);
-  overflow: hidden;
+  overflow-x: auto;
+}
+
+/* min-width 是必要的，不是保險。
+   單靠 wrapper 的 overflow-x 不會有任何效果：表格是 auto layout + width: 100%，只有在
+   min-content 寬度大於容器時才會溢出，而**中文的 min-content 是一個字**——券商名那一欄
+   可以一路壓到「大／和／國／泰」逐字直排。實測 640px 容器下表格不捲、改成整欄直排。
+   720px 是「欄位仍讀得懂」的下限；窄於此就在 .tableWrap 內橫捲，而不是把內容壓爛。
+   真實環境會落進這個區間：側欄展開時內容欄 ＝ 視窗寬 − 272 − 64，而表格在 ≤900px 才切成
+   卡片版，所以視窗 901–1180px 正好是「還是表格、但容器只有 565–844px」的地帶。 */
+.table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 .table th {
@@ -29,15 +53,34 @@
 
 .table tr:last-child td { border-bottom: 0; }
 
+/* 刻意沒有 cursor: pointer——整列不是控制項。這一列唯一的展開入口是右端那顆 <button>，
+   底色只是掃視時的追列輔助（六欄橫向讀值很容易跳列）。加上指標手勢就等於承諾整列可點，
+   而 <tr> 既不可聚焦也沒有 aria-expanded，那個承諾對鍵盤與輔助技術一律跳票。 */
 .row {
   transition: background-color var(--tf-dur-1) var(--tf-ease-standard);
 }
 
-.row:hover td { background: var(--tf-gold-panel); }
-.rowOpen td { background: var(--tf-graphite-tint); }
+/* hover／展開都走石墨階。tokens.css 分工寫得很清楚：石墨是「操作」，鎏金是「強調」。
+   舊寫法剛好互換——短暫的 hover 用品牌金，持續的展開態用中性灰。金色是全站唯一強調色，
+   拿來當滑鼠經過的底色會稀釋掉它在引用與深度研報那邊的作用。
+   兩階維持 hover(#f0f0f2) < 選取(#dededf) 的層級，對 td 的 --tf-text-1 都遠超 4.5:1。 */
+/* `:not(.rowOpen)` 不是防禦性寫法，是必要的：`.row:hover td` 特異度 (0,2,1) 高於
+   `.rowOpen td` 的 (0,1,1)，不排除的話滑鼠移到展開中的那一列時，底色會從「已選取」
+   退回較淺的 hover 色——層級整個反轉，而註解宣稱的是 hover < 選取。 */
+.row:not(.rowOpen):hover td { background: var(--tf-graphite-tint); }
+.rowOpen td { background: var(--tf-graphite-line); }
+
+/* 展開列的底色是 --tf-graphite-line (#dededf)，muted 文字在它上面只有 3.94:1。
+   RadarCssContracts 的對比契約只量白底與畫布底，量不到這個狀態底色，所以在這裡
+   把降過階的三類文字提回 --tf-text-2（對 #dededf 為 6.5:1）。
+   特異度要蓋過 .na/.epsMeta/.stale (0,1,0) 與 .table td.dateCell (0,2,1)。 */
+.rowOpen td .na,
+.rowOpen td .epsMeta,
+.rowOpen td .stale,
+.table tr.rowOpen td.dateCell { color: var(--tf-text-2); }
 
 .broker {
-  font-weight: 700;
+  font-weight: 600;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -50,11 +93,35 @@
 }
 
 .num { text-align: right; white-space: nowrap; }
+/* EPS 例外解除 nowrap：fmtEps 會用「 · 」串出「NT$12.34 · FY2026 · 1H · 每股」，
+   在 .num 的 nowrap 之下等於把一個約 190px 的不可斷 token 釘進表格，是欄寬撐爆的主因之一。
+   目標價仍走 .num 保持不斷行（數字中間斷行才是真的不能接受的那種）。 */
+.epsCell { white-space: normal; }
+/* FY・期間・單位是比較群組的註記，不是要一眼讀的數字——與主值同字級同色時
+   「US$5」會被三倍長的註記蓋過去。降一級之後主值才回到視覺重心。 */
+.epsMeta { font-size: 12px; color: var(--tf-text-muted-aa); }
 .dash { color: var(--tf-text-muted-aa); }
 
+/* 「未提供」退一階，但仍要讀得到——它是關於研報的資訊（這份研報沒揭露），
+   不是版面留白。字級不縮：縮了會與同欄的數值對不齊，整欄看起來像有東西沒對正。 */
+.na { color: var(--tf-text-muted-aa); font-weight: 400; }
+
+/* 評等語意色。與 InstrumentCard／ConsensusSnapshot 同一組（radarFormat.RATING_BUCKET）。
+   **必須掛在 <span> 上**：.table td 自帶 color、特異度 (0,1,1) 會贏過這裡的 (0,1,0)，
+   掛在儲存格上整組色會靜默失效（同 .mvNet b 的案底，RadarCssContracts 有守門）。 */
+.rating { font-weight: 600; }
+.bull { color: var(--tf-success); }
+.neu { color: var(--tf-text-1); }
+.bear { color: var(--tf-error); }
+
+/* 報告日期退一階：券商／評等／目標價才是掃視時要抓的東西。
+   同上，色掛在 td 上會被 .table td 蓋掉，故這裡特意用 td.xxx 把特異度墊到 (0,2,1)。 */
+.table td.dateCell { color: var(--tf-text-muted-aa); }
+
+/* 只留顏色。width/text-align 是寫給表格儲存格的宣告，卻掛在 <Icon> 產出的 <svg> 上，
+   會覆蓋掉 size prop 給的 width（桌機 16、手機 18），在兩處各多吃約 20px 死寬，
+   也讓手機卡片的箭頭離右緣 25px、左側內容卻是 16px，左右內距不對稱。 */
 .expand {
-  width: 36px;
-  text-align: center;
   color: var(--tf-text-muted-aa);
 }
 /* rotation now owned by Motion (animate rotate); only the colour shift stays in CSS */
@@ -71,7 +138,10 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
-  border-radius: var(--tf-radius-sm);
+  /* md(10px) 而非 --tf-radius-sm —— 後者從未在 tokens.css 定義過，
+     未定義的 var() 無 fallback ⇒ 宣告失效 ⇒ 這顆鈕的圓角實際是 0。
+     10px 正是 tokens.css 圓角註解裡「控制項」那一級。 */
+  border-radius: var(--tf-radius-md);
 }
 .expandButton:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 2px; }
 
@@ -80,6 +150,10 @@
   background: var(--tf-canvas) !important;
   border-bottom: 1px solid var(--tf-border) !important;
 }
+
+/* 展開面板的高度過渡容器（桌機的 td 內層與手機卡片共用）。
+   overflow: hidden 是 height: 0 → auto 動畫的必要條件，少了它收合過程中內容會滿出來。 */
+.panelInner { overflow: hidden; }
 
 /* 手機卡片 */
 .cards { display: none; flex-direction: column; gap: 10px; }
@@ -92,35 +166,66 @@
   overflow: hidden;
 }
 
+/* 只包標題列。目標價／EPS／報告日期在鈕**外面**（見 BrokerList.tsx 的說明）——
+   包進來會讓它們在無障礙樹上消失，而 ≤900px 時桌機那份語意 DOM 已經 display: none。 */
 .cardHead {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   width: 100%;
   appearance: none;
   border: 0;
   background: transparent;
-  padding: 14px 16px;
+  padding: 12px 16px;
   cursor: pointer;
   text-align: left;
   font-family: var(--tf-sans);
-  min-height: 56px;
+  min-height: 48px;
 }
 
-.cardHead:hover { background: var(--tf-gold-panel); }
+.cardHead:hover { background: var(--tf-graphite-tint); }
+/* 焦點環往內縮。.cardHead 的 border box 與 .card 的 padding box 完全重合，而 .card 有
+   overflow: hidden（那是在裁展開面板的圓角，不能拿掉），outline 畫在 border box 之外
+   會被裁切邊界整圈吃掉。≤900px 時桌機表格 display:none、只剩這張卡，等於窄視窗與手機
+   使用者用鍵盤走整份券商清單時完全沒有可見焦點——而桌機測起來看不到這件事。 */
+.cardHead:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: -3px;
+}
 
-.cardMain { flex: 1; min-width: 0; }
-.cardName { font-weight: 700; font-size: 14px; color: var(--tf-text-1); }
-.cardMeta {
-  margin-top: 4px;
-  font-size: 12.5px;
-  color: var(--tf-text-muted-aa);
+/* 中文字重上限 600：PingFang TC 最重只到 600、JhengHei 只有 Bold，700 會被合成假粗體。
+   卡片標題是行內流（券商 · 評等 窗外最新），不是 flex——用 gap 撐開會讓中間那個
+   「·」左右各多一段間距，看起來像三個獨立標籤而不是一句。 */
+.cardName {
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--tf-text-1);
+  min-width: 0;
+}
+.cardName .stale { margin-left: 8px; }
+
+/* 表格那六欄在這裡改成標籤／值配對，而不是一串以「·」分隔的裸值——
+   「NT$120 US$5／股 2026/07/11」三個數字並排時，讀者無從得知哪個是哪個。
+   內距自己出：它已經不在 .cardHead 裡了（資料不得包進 <button>）。 */
+.cardFields {
+  margin: 0;
+  padding: 0 16px 14px;
+  display: grid;
+  gap: 7px 14px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
 }
-.cardChange { margin-top: 6px; }
+
+.cardField {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.cardField dt { color: var(--tf-text-muted-aa); font-size: 12.5px; }
+.cardField dd { margin: 0; color: var(--tf-text-1); overflow-wrap: anywhere; }
 
 @media (max-width: 900px) {
   .tableWrap { display: none; }

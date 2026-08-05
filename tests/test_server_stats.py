@@ -262,7 +262,7 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
     def test_cache_ttl_is_within_requested_range(self):
         """DB 快照 TTL 的合理區間。
 
-        上界從 5 秒放寬到 15 秒（2026-07-30）：前端每 5 秒輪詢，這一塊是 9 條查詢、
+        上界從 5 秒放寬到 15 秒（2026-07-30）：前端每 5 秒輪詢，這一塊是 10 條查詢、
         其中兩條是全表 GROUP BY，15 秒讓 DB 負載降為三分之一，而 `ts` 欄與 runtime
         區塊仍每次更新，觀感幾乎無差。下界仍守著「不能拿掉快取」。
         """
@@ -320,6 +320,13 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                     return _RowsResult([("daily", 4)])
                 if "GROUP BY market" in sql:
                     return _RowsResult([("TW", 6)])
+                # 券商分佈。NULL source（檔名認不出券商）刻意也回一列——它是導入
+                # 品質的訊號，被過濾掉的話 sources 的總和就不再等於 db.reports。
+                if "GROUP BY source" in sql:
+                    return _RowsResult([
+                        ("kgi", 4, date(2026, 8, 4)),
+                        (None, 2, date(2026, 7, 31)),
+                    ])
                 if "FROM research.report_chunk" in sql:
                     return _ScalarResult(12)
                 if "FROM research.research_report" in sql:
@@ -342,10 +349,10 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
             deps.SessionFactory = orig_session_factory
             monitor._gather_runtime = orig_gather_runtime
 
-        # 9 = 原本 6 + takeaway/signal 覆蓋率各一 + M8 查核統計一（兩張表以 UNION ALL
-        # 併成單次查詢，刻意不拆成兩次）。這個數字守的是「stats 與 progress 共用
-        # _DB_STATS_CACHE、TTL 內只打一次 DB」（見 monitor.py 模組 docstring）。
-        self.assertEqual(len(calls), 9)
+        # 10 = 原本 6 + takeaway/signal 覆蓋率各一 + M8 查核統計一（兩張表以 UNION ALL
+        # 併成單次查詢，刻意不拆成兩次）+ 券商分佈一。這個數字守的是「stats 與
+        # progress 共用 _DB_STATS_CACHE、TTL 內只打一次 DB」（見 monitor.py docstring）。
+        self.assertEqual(len(calls), 10)
         self.assertEqual(stats["total_reports"], 6)
         self.assertEqual(progress["db"]["reports"], 6)
         self.assertEqual(progress["summary"]["total"], 7)
@@ -358,6 +365,16 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(progress["takeaway"]["latest"], "2026-07-20")
         self.assertEqual(progress["signal"]["done"], 1)
         self.assertEqual(progress["signal"]["latest"], "2026-07-16")
+        # 券商分佈：中文名在**後端**由 source_display 決定（對照表的單一真相在
+        # app/services/filename.py，檢索頁與閱讀頁也走它）。若哪天有人把對映搬到
+        # 前端，這條會紅。NULL source 保留為一列且 display 為 None，由 UI 標「未辨識」。
+        self.assertEqual(
+            progress["db"]["sources"],
+            [
+                {"source": "kgi", "display": "凱基", "count": 4, "latest": "2026-08-04"},
+                {"source": None, "display": None, "count": 2, "latest": "2026-07-31"},
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -34,6 +34,10 @@ _SNAPSHOT = {
     "total_reports": 6,
     "total_chunks": 12,
     "markets": [{"market": "TW", "count": 6}],
+    "sources": [
+        {"source": "kgi", "display": "凱基", "count": 4, "latest": "2026-08-04"},
+        {"source": None, "display": None, "count": 2, "latest": "2026-07-31"},
+    ],
     "instrument_types": [{"type": "equity", "count": 5}],
     "report_types": [{"type": "daily", "count": 4}],
     "summary_done": 3,
@@ -93,6 +97,21 @@ class ProgressHttpTests(unittest.TestCase):
         self.assertEqual(body["takeaway"]["pct"], 40.0)
         self.assertEqual(body["takeaway"]["latest"], "2026-07-20")
         self.assertEqual(body["signal"]["latest"], "2026-07-16")
+
+    def test_broker_distribution_is_exposed(self):
+        """券商分佈必須真的出現在 HTTP 回應的 db 區塊裡。
+
+        與 markets 同層是刻意的：兩者的分母都是 db.reports。放到別處（或漏掉
+        NULL source 那一列）會讓監控頁上兩張分佈卡對到不同的總數，而百分比看起來
+        仍然完全合理——這種錯沒有任何地方會報錯。
+        """
+        db = self._get().json()["db"]
+        self.assertIn("sources", db)
+        self.assertEqual(db["sources"][0]["display"], "凱基")
+        self.assertEqual(db["sources"][0]["latest"], "2026-08-04")
+        # NULL source（檔名認不出券商）不得被過濾掉，否則總和不再等於 db.reports
+        self.assertIsNone(db["sources"][1]["source"])
+        self.assertEqual(sum(s["count"] for s in db["sources"]), db["reports"])
 
     def test_coverage_block_is_not_a_route(self):
         """契約：輔助函式不得成為路由（否則就是裝飾器又套錯了）。"""

@@ -15,7 +15,7 @@ _gather_runtime，不阻塞事件迴圈。
 乘上開著頁面的分頁數；TanStack Query 在視窗失焦時會停 interval，所以成立條件是
 「監控頁開著且在前景」）：
 
-  _DB_STATS_CACHE    9 條 DB 查詢。15 秒 ⇒ 每三次輪詢只打一次 DB。
+  _DB_STATS_CACHE    10 條 DB 查詢。15 秒 ⇒ 每三次輪詢只打一次 DB。
   _RUNTIME_CACHE     整個 runtime 區塊（log tail + /proc + tag 檔數）。
   _TAG_COUNT_CACHE   `data/tags/` 的 scandir，**這裡真正的熱點**：本機實測
                      15,852 個檔、冷 412 ms／熱 117 ms，而三次 `_proc_alive`
@@ -37,6 +37,7 @@ from fastapi import APIRouter
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.services.filename import source_display
 from web import auth, deps
 
 router = APIRouter()
@@ -120,6 +121,22 @@ async def _fetch_db_stats_snapshot() -> dict:
                     "FROM research.research_report "
                     "WHERE report_type IS NOT NULL "
                     "GROUP BY report_type ORDER BY c DESC"
+                )
+            )
+        ).all()
+        # 券商分佈。**刻意不濾 is_research／full_text**，與上面的 market/instrument
+        # 分面一致——三者的分母都要等於 db.reports，否則監控頁上兩張分佈卡的百分比
+        # 會各自對到不同的總數，而且沒有任何地方看得出來。
+        #
+        # 一併取 max(report_date) 是因為這頁是「導入」監控：光有篇數看不出某家券商
+        # 是不是早就停止供稿（實測 masterlink 3,814 篇、最新一篇停在一年前）。
+        # NULL source 那一列刻意保留：未辨識券商本身就是導入品質的訊號。
+        source_rows = (
+            await session.execute(
+                text(
+                    "SELECT source, count(*) c, max(report_date) latest "
+                    "FROM research.research_report "
+                    "GROUP BY source ORDER BY c DESC, source"
                 )
             )
         ).all()
@@ -225,6 +242,13 @@ async def _fetch_db_stats_snapshot() -> dict:
         "total_reports": total_reports,
         "total_chunks": total_chunks,
         "markets": [{"market": m, "count": c} for m, c in rows],
+        # display 在後端算：`source_display` 的對照表是 app/services/filename.py 的
+        # 單一真相，檢索頁與閱讀頁也走它。搬一份到前端等於兩份會漂的字典。
+        # 未收錄的 source 由 source_display 原樣回傳（不會變 None），NULL 才是 None。
+        "sources": [
+            {"source": s, "display": source_display(s), "count": int(c), "latest": _d(latest)}
+            for s, c, latest in source_rows
+        ],
         "instrument_types": [{"type": t, "count": c} for t, c in instr_rows],
         "report_types": [{"type": t, "count": c} for t, c in type_rows],
         "summary_done": int(s_done),
@@ -581,6 +605,9 @@ async def progress():
             "reports": snapshot["total_reports"],
             "chunks": snapshot["total_chunks"],
             "markets": snapshot["markets"],
+            # 券商分佈：與 markets 同層，因為它們是同一種東西（語料的組成），
+            # 分母也同樣是 db.reports。**新增鍵記得同步改 progressSchema.ts**。
+            "sources": snapshot["sources"],
         },
         "summary": {
             "done": s_done,

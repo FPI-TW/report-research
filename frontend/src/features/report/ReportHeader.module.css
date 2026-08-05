@@ -1,5 +1,6 @@
-/* 水平內距與 ReportPage 的 .docBar／.disc 對齊到同一條 24px 基準線 ——
-   三者上下相鄰，左緣不齊會在標題與工具列之間看出一道階梯。 */
+/* 水平內距與 ReportPage 的 .docBar 對齊到同一條 24px 基準線 ——
+   兩者上下相鄰，左緣不齊會在標題與工具列之間看出一道階梯。
+   （.disc 已改掛左欄底部、跟著 .intel 的 14px 走，不再是這條基準線上的第三者。） */
 .hd {
   border-bottom: 1px solid var(--tf-divider);
   background: var(--tf-surface);

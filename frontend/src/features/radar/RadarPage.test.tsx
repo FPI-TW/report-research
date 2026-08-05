@@ -511,7 +511,9 @@ describe('RadarPage', () => {
       )
     })
     await waitFor(() => {
-      expect(screen.getAllByText(/觀點歷程/).length).toBeGreaterThan(0)
+      // 面板標題隨方案 1 從「大和觀點歷程」改成「大和最新觀點」——展開後最先呈現的
+      // 就是最新那一份，歷史研報退到底下的「歷史報告」並預設收合。
+      expect(screen.getAllByText(/最新觀點/).length).toBeGreaterThan(0)
     })
   })
 })

@@ -1,15 +1,32 @@
+/* container query 而非 media query：這塊面板有兩個完全不同的容器——桌機掛在
+   `<td colSpan={7}>` 裡（表格 min-width: 720px，所以它永遠 ≥720px，即使視窗只有 940px
+   而側欄佔掉 272px），手機掛在 .card 裡（跟著視窗寬）。以視窗寬決定版型會在 600–900px
+   之間把一個 728px 寬的容器排成單欄——那是拿錯的量在做決定。 */
 .panel {
   padding: 18px 20px 22px;
   border-top: 1px solid var(--tf-border);
+  container-type: inline-size;
 }
+
+/* ── 標頭：券商、報告日期、過期提示、原始研報連結 ── */
 
 .head {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: 6px 12px;
+  margin-bottom: 14px;
+}
+
+/* baseline 對齊要的是「日期與提示貼著標題的基線」，所以標題與其後綴同屬一個 flex 行，
+   而不是把標題單獨包一層 block——包了之後 baseline 只剩一條，提示會掉到標題下緣。 */
+.headMain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
 }
 
 .title {
@@ -20,127 +37,17 @@
   margin: 0;
 }
 
-.meta {
-  font-size: 12.5px;
-  color: var(--tf-text-muted-aa);
-  font-variant-numeric: tabular-nums;
-}
-
-.collapse {
-  appearance: none;
-  border: 1px solid var(--tf-border);
-  background: var(--tf-surface);
-  color: var(--tf-graphite);
-  font-size: 12.5px;
-  font-weight: 600;
-  font-family: var(--tf-sans);
-  border-radius: var(--tf-radius-pill);
-  padding: 6px 12px;
-  min-height: 44px;
-  cursor: pointer;
-}
-
-.collapse:hover { background: var(--tf-graphite-tint); }
-
-.compare {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 12px;
-  align-items: stretch;
-  margin-bottom: 18px;
-}
-
-.col {
-  background: var(--tf-surface);
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-card);
-  padding: 14px;
-}
-
-.colLabel {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--tf-text-muted-aa);
-  margin-bottom: 10px;
-}
-
-/* 兩軌都加 minmax(0, …)：格線項目預設 min-width: auto，寫死的 64px 標籤軌在窄容器裡
-   不會縮，值軌被擠到比內容還小時整個 grid 會直接溢出 .col 的邊框。 */
-.kv {
-  display: grid;
-  grid-template-columns: minmax(0, 64px) minmax(0, 1fr);
-  gap: 6px 8px;
+.headDate {
   font-size: 13px;
+  color: var(--tf-text-2);
   font-variant-numeric: tabular-nums;
 }
-.k { color: var(--tf-text-muted-aa); }
-/* fmtEps 產出的「NT$12.34 · FY2026 · 1H · 每股」在窄欄裡是長 token，只放寬軌道
-   而不允許斷字仍會溢出。 */
-.v { color: var(--tf-text-1); font-weight: 600; overflow-wrap: anywhere; }
 
-/* max-width 給中間那條 auto 軌設上限：DirectionTag 是 nowrap、.incomparableDetail 原本
-   還吃到 260px，auto 軌因此會反過來把兩側的 1fr 擠到比 .kv 的固定軌還窄。 */
-.mid {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-width: 0;
-  max-width: 220px;
-}
-
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  position: relative;
-}
-
-.timeline::before {
-  content: '';
-  position: absolute;
-  left: 7px;
-  top: 6px;
-  bottom: 6px;
-  width: 2px;
-  background: var(--tf-border);
-}
-
-.node {
-  position: relative;
-  padding: 0 0 12px 28px;
-}
-
-.node:last-child { padding-bottom: 0; }
-
-.dot {
-  position: absolute;
-  left: 2px;
-  top: 6px;
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: var(--tf-surface);
-  border: 2px solid var(--tf-graphite);
-  z-index: 1;
-}
-
-.outWindow .dot { border-color: var(--tf-text-muted-aa); }
-
-.nodeHead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px 12px;
-  margin-bottom: 6px;
-}
-
-.date {
-  font-weight: 700;
-  font-size: 13.5px;
-  color: var(--tf-text-1);
-  font-variant-numeric: tabular-nums;
+/* 過期提示是**文字**不是色塊：它要在黑白列印、色盲、以及 DirectionTag 旁邊都讀得出來。
+   刻意不做成警示色 pill——研報過 90 天是常態不是錯誤，紅底會把它讀成故障。 */
+.staleNote {
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
 }
 
 .badge {
@@ -152,38 +59,181 @@
   padding: 2px 8px;
 }
 
-.fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  font-size: 12.5px;
-  color: var(--tf-text-2);
-  font-variant-numeric: tabular-nums;
-  margin-bottom: 8px;
+/* ── 三個摘要：評等／目標價／EPS ── */
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  background: var(--tf-fill-subtle);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
 }
 
-.changes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+/* 三欄之間用分隔線而非留白：三個數字彼此不是同一個量綱（評等是文字、目標價與 EPS
+   是不同幣別基準的金額），沒有分隔時會被讀成一組可以互相比較的數列。 */
+.fact {
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid var(--tf-border);
 }
 
-.changeDetail {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+.fact:first-child {
+  padding-left: 0;
+  border-left: 0;
 }
 
-.incomparableDetail {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-width: 100%;
+.factLabel {
+  font-size: 12px;
+  font-weight: 600;
   color: var(--tf-text-muted-aa);
-  font-size: 11.5px;
-  line-height: 1.45;
+  margin-bottom: 4px;
+}
+
+.factValue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--tf-text-1);
+  font-variant-numeric: tabular-nums;
+  /* 「NT$1,234.56／股」在窄欄是一個長 token；只允許在無處可斷時逐字斷。 */
+  overflow-wrap: anywhere;
+}
+
+/* 前次值退一階：讀者要的是現在的評等，前次只是變化的參照點。 */
+.was {
+  font-weight: 400;
+  color: var(--tf-text-muted-aa);
+}
+
+.arrow {
+  color: var(--tf-text-muted-aa);
+  font-weight: 400;
+}
+
+/* 評等語意色。與 BrokerList／InstrumentCard 同一組（radarFormat.RATING_BUCKET）。
+   這裡沒有 `.table td` 那種帶 color 的祖先選擇器，掛在 span 上即可生效。 */
+.bull { color: var(--tf-success); }
+.neu { color: var(--tf-text-1); }
+.bear { color: var(--tf-error); }
+
+/* ── 一句話結論／核心論點 ── */
+
+.section {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 4px 14px;
+  align-items: baseline;
+  margin-bottom: 12px;
+}
+
+.sectionLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tf-text-muted-aa);
+}
+
+.conclusion {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--tf-text-1);
+}
+
+/* 出處。與結論同一段而非另起一行——它修飾的是那句話，不是獨立的一條資訊。 */
+.source {
+  margin-left: 4px;
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+  /* 中文每個字之間都是合法斷點，不鎖的話「（展望）」會在括號裡斷成兩行 */
+  white-space: nowrap;
+}
+
+.points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+/* 維度名固定寬度：四個維度名是 2–3 個漢字，靠 grid 對齊才能一眼掃過去；
+   跟著文字流排會讓每一列的論點起始位置都不一樣。 */
+.point {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--tf-gold-text);
+  background: var(--tf-gold-panel);
+  border-left: 3px solid var(--tf-gold-line);
+  padding: 7px 12px;
+}
+
+/* --tf-gold-text 而非 --tf-gold-strong：後者是**填色**token（RadarPage/RecentChanges
+   都拿它畫底與邊），當 13.5px/600 的內文用時在 --tf-gold-panel 上只有 3.70:1，未達 AA
+   的 4.5。--tf-gold-text 在同一底色上是 5.53:1。 */
+.dim {
+  font-weight: 600;
+  color: var(--tf-gold-text);
+}
+
+.pointText { color: var(--tf-text-1); }
+
+/* 其他年度的 EPS 修正。標籤是後端組好的字串（如「2027 FY EPS」），方向與幅度交給
+   DirectionTag，維持與摘要那格同一種讀法。 */
+.otherEps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.otherEps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.otherEpsLabel { color: var(--tf-text-2); }
+
+/* ── EPS 口徑提示 ── */
+
+.notes {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: var(--tf-fill-subtle);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-md);
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--tf-text-muted-aa);
+}
+
+.noteIcon {
+  flex: none;
+  margin-top: 2px;
 }
 
 .quality,
@@ -200,25 +250,132 @@
   background: var(--tf-surface);
 }
 
-.evidenceList {
+/* ── 歷史報告 ── */
+
+.history {
+  margin-top: 18px;
+  border-top: 1px solid var(--tf-divider);
+  padding-top: 14px;
+}
+
+.historyTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tf-text-1);
+}
+
+.historyCount {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--tf-text-muted-aa);
+  font-variant-numeric: tabular-nums;
+}
+
+.histList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
   gap: 6px;
-  margin-bottom: 8px;
 }
 
-.evidence {
+.histItem {
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-md);
+  background: var(--tf-surface);
+  overflow: hidden;
+}
+
+/* 整顆是唯一的展開入口（原本這裡另有一顆「收合」與每個節點一顆「論點依據」）。
+   min-height 44px 是觸控目標契約（RadarCssContracts）。 */
+.histToggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--tf-sans);
   font-size: 12.5px;
-  color: var(--tf-gold-text);
-  background: var(--tf-gold-panel);
-  border-left: 3px solid var(--tf-gold-line);
-  padding: 6px 10px;
-  margin-bottom: 8px;
-  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  padding: 8px 12px;
+  min-height: 44px;
 }
 
-/* 同 RecentChanges .link：保留 44px 命中區，但用 inline-flex + 負 margin 讓它不撐高版面。
-   券商歷程展開後動輒 5–10 個節點，每個節點結尾都有一顆這種連結，是本頁最大宗的
-   可回收垂直空間（每顆約 31px）。 */
+.histToggle:hover { background: var(--tf-graphite-tint); }
+
+/* 焦點環往內縮：.histItem 有 overflow: hidden（在裁圓角），畫在 border box 之外
+   會被裁切邊界整圈吃掉——鍵盤走歷史清單時會完全看不到焦點。 */
+.histToggle:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: -3px;
+}
+
+.histDate {
+  font-weight: 600;
+  color: var(--tf-text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.histFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--tf-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.histKey { color: var(--tf-text-muted-aa); }
+
+.chev {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  color: var(--tf-text-muted-aa);
+  transition: transform var(--tf-dur-2) var(--tf-ease-standard);
+}
+
+.chevOpen {
+  transform: rotate(180deg);
+  color: var(--tf-graphite);
+}
+
+.histBody {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--tf-divider);
+}
+
+.skel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+/* 「沒有可比較的前次研報」那句。與 .note 分開是因為它不在 .notes 的網格裡，
+   自己要負責下邊距——共用一個 class 會讓其中一種用法永遠少一段間距。 */
+.diffNote {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+}
+
+.error {
+  font-size: 13px;
+  color: var(--tf-error-text);
+}
+
+/* 同 RecentChanges .link：保留 44px 命中區，但用 inline-flex + 負 margin 讓它不撐高版面。 */
 .link {
   appearance: none;
   border: 0;
@@ -237,30 +394,48 @@
 
 .link:hover { text-decoration: underline; text-underline-offset: 2px; }
 
-.skel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 8px 0;
-}
+/* 歷史報告展開後那顆連結需要與內文留距，負 margin 在這裡會讓它貼上前一段。 */
+.histBody .link { margin-top: 2px; }
 
-.note {
-  font-size: 12.5px;
-  color: var(--tf-text-muted-aa);
-  margin: 0 0 12px;
-}
-
-.error {
-  font-size: 13px;
-  color: var(--tf-error-text);
-}
-
-/* 720 → 900：這個面板是從 BrokerList 裡展開的，而 BrokerList 從 900px 起就已經切成
-   手機卡片版。舊斷點讓 721–900px 之間出現「外層已是手機卡片、裡面卻還是三欄比較表」，
-   側欄存在時內容欄只剩約 495px，三欄各自扣掉內距後值欄不到 50px。 */
-@media (max-width: 900px) {
-  .compare {
+/* 620px 是三欄摘要的下限：三欄 ＋ 兩條分隔線 ＋ 內距之後，每欄約 180px，剛好放得下
+   「FY25E 1H EPS」這種最長的標籤與「NT$1,234.56／股」這種最長的值。再窄就得換成單欄，
+   否則中文會被壓成逐字直排（min-content 是一個字，不會自己橫捲）。 */
+@container (max-width: 620px) {
+  .facts {
     grid-template-columns: 1fr;
+    gap: 0;
+    padding: 12px 14px;
   }
-  .mid { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; max-width: none; }
+
+  /* 單欄之後左邊框變成「掛在半空的直線」，分隔改走列與列之間的細線。 */
+  .fact {
+    padding: 10px 0;
+    border-left: 0;
+    border-top: 1px solid var(--tf-border);
+  }
+
+  .fact:first-child { padding-top: 0; border-top: 0; }
+  .fact:last-child { padding-bottom: 0; }
+
+  /* 標籤在上、值在下的兩欄式在 375px 會讓「一句話結論」四個字擠成兩行。 */
+  .section {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .point {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  /* 數值換到第二行，但箭頭要留在第一行的右端——DOM 順序是 date → facts → chev，
+     不調 order 的話滿寬的 facts 會把箭頭一起擠到第三行，變成一顆浮在卡片左下的箭頭。 */
+  .histFacts { flex: 1 1 100%; order: 1; }
+}
+
+/* 內距刻意留在 media query：`@container` 的規則只套用到**容器的後代**，套不到容器
+   自己（`.panel` 就是那個容器），寫進上面那個區塊會安靜失效。手機收窄左右內距是
+   為了把 16px 還給內容，用視窗寬判斷已經夠準。 */
+@media (max-width: 900px) {
+  .panel { padding: 14px 16px 18px; }
 }

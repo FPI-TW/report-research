@@ -1,4 +1,6 @@
 import tokensCss from '../../styles/tokens.css?raw'
+import brokerListCss from './BrokerList.module.css?raw'
+import brokerListSource from './BrokerList.tsx?raw'
 import brokerTimelineCss from './BrokerTimeline.module.css?raw'
 import consensusSnapshotCss from './ConsensusSnapshot.module.css?raw'
 import instrumentPickerCss from './InstrumentPicker.module.css?raw'
@@ -161,7 +163,8 @@ describe('Radar 觸控目標契約', () => {
     ['麵包屑返回', radarHeaderCss, '.crumbBtn'],
     ['查看全部', radarPageCss, '.sectionMeta'],
     ['事件報告連結', recentChangesCss, '.link'],
-    ['歷史收合', brokerTimelineCss, '.collapse'],
+    // 券商面板的展開控制項收斂成一顆（原本另有 .collapse 與每個節點一顆 .evToggle）
+    ['歷史報告展開', brokerTimelineCss, '.histToggle'],
     ['歷史報告連結', brokerTimelineCss, '.link'],
     ['狀態主要／次要操作', radarStatesCss, '.btn, .btnSecondary'],
   ])('%s 至少 44px 高', (_label, css, selector) => {
@@ -213,6 +216,23 @@ describe('Radar 語意色特異度契約', () => {
   it('.mvNet b 不得自帶 color，否則方向 class 會被特異度蓋掉', () => {
     const body = ruleBlock(consensusSnapshotCss, '.mvNet b').replace(/\s+/g, ' ')
     expect(body).not.toContain('color:')
+  })
+
+  /*
+   * 券商表格的同一個坑：`.table td` 自帶 color，特異度 (0,1,1)。評等的
+   * .bull/.neu/.bear 只有 (0,1,0)，掛在 <td> 上會整組靜默失效——DOM 上 class 明明在，
+   * 顏色就是不出現。所以 TSX 必須把它掛在 <span>；而報告日期那格是掛在 td 上的，
+   * 就必須用 `td.dateCell` 把特異度墊高。兩條都只在靜態層看得見。
+   */
+  it('評等語意色掛在 span 上，不是掛在 td 上', () => {
+    expect(brokerListSource).toMatch(
+      /<span\s+className=\{`\$\{styles\.rating\}\s*\$\{styles\[RATING_BUCKET\[/,
+    )
+    expect(brokerListSource).not.toMatch(/<td[^>]*styles\[RATING_BUCKET\[/)
+  })
+
+  it('.dateCell 以 td.dateCell 取得高於 .table td 的特異度', () => {
+    expect(brokerListCss).toMatch(/\.table\s+td\.dateCell\s*\{/)
   })
 })
 

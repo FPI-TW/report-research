@@ -6,7 +6,7 @@ import { rateText, ingestRateText, fmtInt } from './rate'
 import { KpiGrid } from './KpiGrid'
 import { ProgressPanel } from './ProgressPanel'
 import { IngestPanel } from './IngestPanel'
-import { PipelineStatus } from './PipelineStatus'
+import { PIPELINE_ROWS, PipelineStatus } from './PipelineStatus'
 import { MarketDistribution } from './MarketDistribution'
 import { BrokerDistribution } from './BrokerDistribution'
 import { MonitorSkeleton } from './MonitorSkeleton'
@@ -24,7 +24,8 @@ export default function MonitorPage() {
   // 頁首吸頂後才實體化成玻璃：LIVE 狀態與時鐘要一直看得見
   const { scrolled, sentinelRef } = useScrolled()
 
-  const alive = p ? [p.pipelines.web, p.pipelines.ingest, p.pipelines.tag, p.pipelines.summaries].filter(Boolean).length : 0
+  // 分子與分母都走 PIPELINE_ROWS，避免加一列管線卻漏改這裡（分母原本硬編為 4）。
+  const alive = p ? PIPELINE_ROWS.filter(r => p.pipelines[r.key]).length : 0
 
   return (
     <div className={styles.page}>
@@ -36,7 +37,7 @@ export default function MonitorPage() {
               <div>
                 <h2 className={styles.title}>研報導入監控</h2>
                 <div className={styles.sub}>
-                  {p ? `${fmtInt(p.db.reports)} 篇已導入 · ${alive}/4 條管線執行中` : '連線中…'}
+                  {p ? `${fmtInt(p.db.reports)} 篇已導入 · ${alive}/${PIPELINE_ROWS.length} 條管線執行中` : '連線中…'}
                 </div>
               </div>
               <div className={styles.headRight}>

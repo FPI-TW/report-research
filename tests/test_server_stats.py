@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -230,6 +231,49 @@ class GatherRuntimeShapeTests(unittest.TestCase):
         # 空的 data/ 是合法狀態（新機器）：沒有 log 就是 None，沒有失敗就是全 0。
         self.assertIsNone(runtime["sync"])
         self.assertEqual(runtime["unit_failures"]["count_24h"], 0)
+
+    def test_runtime_pipelines_cover_every_tracked_batch(self):
+        """五格管線一格都不能少。
+
+        `signals` 是 2026-08-06 補的：signal 覆蓋率卡刻意只量近 30 天，而回補歷史
+        積壓時絕大多數研報比 30 天舊（實測缺訊號 13,821 篇裡只有 156 篇在窗口內），
+        那張卡幾乎不動——這一格是唯一看得出 `extract_signals.py` 在不在跑的地方。
+        用集合相等而非 assertIn：多一格沒同步到前端 ROWS 也該被看見。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp)
+            orig = (monitor.DATA_DIR, monitor.TAGS_DIR, monitor.UNIT_FAILURES_LOG)
+            monitor.DATA_DIR = empty
+            monitor.TAGS_DIR = empty / "tags"
+            monitor.UNIT_FAILURES_LOG = empty / "unit_failures.log"
+            monitor.reset_caches()
+            try:
+                runtime = monitor._gather_runtime()
+            finally:
+                monitor.DATA_DIR, monitor.TAGS_DIR, monitor.UNIT_FAILURES_LOG = orig
+                monitor.reset_caches()
+
+        self.assertEqual(
+            set(runtime["pipelines"]),
+            {"web", "ingest", "tag", "summaries", "signals"},
+        )
+
+    def test_proc_alive_tracks_a_real_process(self):
+        """反轉實驗：同一個 needle，行程活著為 True、收掉後為 False。
+
+        少了 False 那半邊，一支永遠回 True 的 `_proc_alive` 也會通過——而那正是
+        「管線燈永遠亮著」的故障樣態，比燈不亮更難發現。
+        """
+        marker = "report_mark_proc_alive_probe"
+        proc = subprocess.Popen(
+            [sys.executable, "-c", f"# {marker}\nimport time; time.sleep(30)"]
+        )
+        try:
+            self.assertTrue(monitor._proc_alive(marker))
+        finally:
+            proc.kill()
+            proc.wait()
+        self.assertFalse(monitor._proc_alive(marker))
 
     def test_runtime_reads_a_real_sync_log(self):
         with tempfile.TemporaryDirectory() as tmp:

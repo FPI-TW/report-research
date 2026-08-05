@@ -8,6 +8,7 @@ import { ProgressPanel } from './ProgressPanel'
 import { IngestPanel } from './IngestPanel'
 import { PipelineStatus } from './PipelineStatus'
 import { MarketDistribution } from './MarketDistribution'
+import { BrokerDistribution } from './BrokerDistribution'
 import { MonitorSkeleton } from './MonitorSkeleton'
 import { FaithfulnessPanel } from './FaithfulnessPanel'
 import { ScheduleHealthPanel } from './ScheduleHealthPanel'
@@ -106,6 +107,9 @@ export default function MonitorPage() {
                 <FaithfulnessPanel evaluation={p.evaluation} />
               </div>
               <MarketDistribution markets={p.db.markets} />
+              {/* 券商分佈接在市場分佈之後：兩張卡是同一種東西（語料的組成），
+                  分母都是 db.reports。券商列數多得多（實測 31），所以放後面。 */}
+              <BrokerDistribution sources={p.db.sources} />
               <div className={styles.footer}>資料每 5 秒自動更新 · 廷豐智能研報導入管線</div>
             </>
           ) : q.isError ? (

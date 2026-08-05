@@ -112,7 +112,7 @@ class ProgressHttpTests(unittest.TestCase):
     """經真實 HTTP 請求驗 `/api/progress` 帶出 evaluation 區塊。"""
 
     _SNAPSHOT = {
-        "total_reports": 1, "total_chunks": 2, "markets": [],
+        "total_reports": 1, "total_chunks": 2, "markets": [], "sources": [],
         "instrument_types": [], "report_types": [],
         "summary_done": 1, "summary_total": 1,
         "takeaway_done_30d": 1, "takeaway_total_30d": 2, "takeaway_latest": "2026-07-20",

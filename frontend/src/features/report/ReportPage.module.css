@@ -5,10 +5,21 @@
   min-height: 0;
 }
 
+/* 兩欄 ＋ 左欄底部的免責。
+   刻意用 grid 而非 flex：免責原本是 .page 最後一格的全寬底帶，橫跨兩欄、把整整一條
+   高度從文件欄一起扣走（研報內文正是本頁的主體）。改成網格後文件欄跨滿兩列，免責
+   只佔左欄的高度 —— 版面上它是「側欄的頁腳」，不是「黏在視窗底的橫幅」。
+   兩條 minmax(0, …) 都是必要的：格線項目預設 min-height/min-width: auto，內容撐得比
+   軌道大時會把軌道頂開，於是 .intel/.doc 的 overflow-y 永遠捲不起來。 */
 .main {
   flex: 1;
-  display: flex;
   min-height: 0;
+  display: grid;
+  grid-template-columns: 380px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'intel doc'
+    'disc  doc';
 }
 
 /* 左欄 · 智慧：摘要 → 重點摘錄 → 觀點 → 相似研報（此順序為設計稿拍板）
@@ -17,14 +28,15 @@
    刻意不改玻璃：本欄自己就是捲動容器，內容捲在它「裡面」而不是從它「底下」經過，
    玻璃疊在沒有東西可模糊的底上只會變髒（見 tokens.css 的材質說明）。 */
 .intel {
-  width: 380px;
-  flex: none;
+  grid-area: intel;
+  min-height: 0;
   border-right: 1px solid var(--tf-divider);
   background: var(--tf-canvas);
   overflow-y: auto;
   /* 側欄捲到底不再把整頁一起帶走 */
   overscroll-behavior: contain;
-  padding: 16px 14px 40px;
+  /* 下內距從 40 收到 22：捲動流的尾端現在接著 .disc，原本那段留白會變成一道空隙 */
+  padding: 16px 14px 22px;
 }
 
 .card {
@@ -91,10 +103,12 @@
    捲動刻意收在這一層（而非各 pane 的 .stage），文件才會從吸頂工具列底下捲過去 ——
    那正是 --tf-glass 唯一成立的條件。各 pane 的 .stage 因此只負責置中與留白。 */
 .doc {
-  flex: 1;
+  /* 跨滿 intel/disc 兩列：免責那一列的高度不從這裡出 */
+  grid-area: doc;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--tf-canvas);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -129,15 +143,20 @@
   white-space: nowrap;
 }
 
-/* 合規：頁底免責恆常駐 */
+/* 合規：免責恆常駐 —— 退為左欄的頁腳（寬版），底色與 border-right 都接著 .intel，
+   讀起來是同一欄的收尾而不是另一個區塊。它在 .intel 的捲動容器「之外」，所以側欄
+   捲多長它都在，不必捲到底才看得到。
+   顏色從 --tf-text-4 換成 --tf-text-muted-aa：前者對畫布只有 3.2:1，是 tokens.css
+   明文指定給「與鄰近資訊重複的裝飾性文字」的色，而免責是必須讀得到的合規文字。 */
 .disc {
-  padding: 11px 24px 14px;
+  grid-area: disc;
+  padding: 10px 14px 12px;
   font-size: 11px;
-  color: var(--tf-text-4);
-  line-height: 1.65;
+  color: var(--tf-text-muted-aa);
+  line-height: 1.6;
   border-top: 1px solid var(--tf-border-weak);
+  border-right: 1px solid var(--tf-divider);
   background: var(--tf-canvas);
-  flex: none;
 }
 
 /* 窄版：雙欄改為上下堆疊，整頁改為單一捲動容器。
@@ -149,11 +168,17 @@
     min-height: 100%;
     overflow-y: auto;
   }
+  /* 單欄堆疊：免責改排到 doc 之後 —— 它是全頁的收尾，夾在側欄與研報之間會變成
+     一段擋路的法遵文字。同一個節點換一個 grid area，DOM 不動。 */
   .main {
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      'intel'
+      'doc'
+      'disc';
   }
   .intel {
-    width: auto;
     border-right: 0;
     border-bottom: 1px solid var(--tf-divider);
     overflow: visible;
@@ -167,6 +192,7 @@
     padding: 9px 16px;
   }
   .disc {
-    padding: 10px 16px 13px;
+    border-right: 0;
+    padding: 11px 16px 14px;
   }
 }

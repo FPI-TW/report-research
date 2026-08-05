@@ -38,6 +38,33 @@ test('成功輪詢 → 頁首副字 + LIVE + 面板', async () => {
   expect(screen.getByText('排程健康')).toBeInTheDocument()
   expect(screen.getByText('尚無同步紀錄')).toBeInTheDocument()
   expect(screen.getByText('此版後端未提供失敗紀錄')).toBeInTheDocument()
+  // 券商分佈同理：fixture 的 db 沒有 sources
+  expect(screen.getByText('券商分佈')).toBeInTheDocument()
+  expect(screen.getByText('此版後端未提供券商統計')).toBeInTheDocument()
+})
+
+test('後端有回 db.sources → 券商名進 DOM', async () => {
+  // 同一種 strip 陷阱的第四次：schema 沒宣告 db.sources 的話，後端送了也會被
+  // zod 安靜丟掉，畫面只會停在「此版後端未提供券商統計」而沒有任何錯誤。
+  // 這題釘的是「宣告 + 渲染」整條都通，不只是 schema 單元測試。
+  const withSources = {
+    ...fixture,
+    db: {
+      ...fixture.db,
+      sources: [
+        { source: 'kgi', display: '凱基', count: 600, latest: '2026-08-04' },
+        { source: 'goldman_sachs', display: '高盛', count: 300, latest: '2026-08-05' },
+        { source: null, display: null, count: 100, latest: '2026-07-31' },
+      ],
+    },
+  }
+  vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true, json: async () => withSources })))
+  render(wrap(<MonitorPage />))
+  await waitFor(() => expect(screen.getByText('凱基')).toBeInTheDocument())
+  expect(screen.getByText('高盛')).toBeInTheDocument()
+  expect(screen.getByText('未辨識')).toBeInTheDocument()
+  expect(screen.getByText(/共 2 家券商 · 1,000 篇/)).toBeInTheDocument()
+  expect(screen.queryByText('此版後端未提供券商統計')).toBeNull()
 })
 
 test('後端有回 sync／unit_failures → 進 DOM 並亮紅點', async () => {

@@ -59,7 +59,7 @@
 | **研報閱讀頁** | `/app/report/:file_hash`：一份研報的原文（內嵌 PDF；內嵌不了的格式落到正典文字）＋重點摘錄（論點＋逐字引文，可點擊在原文中尋找該句並高亮）＋標籤／摘要／訊號＋相似研報＋「就這篇提問」；PDF 原文可拖曳選取與複製，收攏到一個可分享的網址 |
 | **深度研報** | 深度檢索 → 逐節長文串流 → KPI/圖表 → Typst 渲染 PDF（WeasyPrint 為回退）→ 持久化（markdown 為真相來源，PDF 可重建）；生成跑在背景任務，斷線／重整不中止 |
 | **觀點雷達** | `/app/radar`：`make signals` 由 Claude 依固定 JSON schema 擷取結構化訊號（評等／目標價／EPS／四維論點 → `research.report_signal`）→ `app/services/radar/` 做跨券商共識聚合 → 標的總覽（共識快照／四維論點／近期事件／單券商歷程），**讀取零 LLM 呼叫** |
-| **監控頁** | `/app/monitor`：DB 筆數、摘要／重點摘錄／訊號覆蓋、背景程序狀態、速率與 ETA、忠實度查核卡片 |
+| **監控頁** | `/app/monitor`：DB 筆數、摘要／重點摘錄／訊號覆蓋、背景程序狀態、速率與 ETA、忠實度查核卡片、市場分佈、券商分佈（各券商篇數＋最新一篇日期，看得出誰已停止供稿） |
 | **對外存取** | Cloudflare Tunnel ＋ nginx 邊緣（無需開放入站埠）；App 內建共用帳密登入 |
 
 ---
@@ -423,7 +423,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | DELETE/POST | `/api/conversations/{conversation_id}`、`/api/conversations/{conversation_id}/delete` | 刪整串對話（POST alias 供 DELETE 不穩的邊緣環境回退） | |
 | GET | `/api/history`、DELETE `/api/history/{qa_id}`、POST `/api/history/{qa_id}/delete` | 問答歷史清單 / 刪單題（POST 為相容 alias） | |
 | POST | `/api/feedback` | 對某次回答記讚/倒讚；`value` 為 `like`／`dislike`／`none`（`none`＝再點一次取消，寫入 NULL） | |
-| GET | `/api/progress` | 監控快照（DB 筆數、摘要／重點摘錄／訊號覆蓋、背景程序、忠實度查核，外加 `sync`＝每 3 小時排程同步的最新狀態、`unit_failures`＝`OnFailure` 告警的近期計數） | |
+| GET | `/api/progress` | 監控快照（DB 筆數、摘要／重點摘錄／訊號覆蓋、背景程序、忠實度查核，外加 `sync`＝每 3 小時排程同步的最新狀態、`unit_failures`＝`OnFailure` 告警的近期計數、`db.sources`＝券商分佈） | |
 | GET | `/healthz` | **唯一免認證的 API 端點**：DB 探測，正常 200 `{"status":"ok"}`、DB 不可用 503 `{"status":"degraded"}`（結果快取 5 秒），供外部監控分辨「站台活著但 DB 掛了」 | |
 | GET/POST | `/login`、POST `/logout` | 登入頁與登入／登出 | |
 | GET | `/`、`/monitor`、`/help` | **302 導向** `/app/search`、`/app/monitor`、`/app/help`（舊 vanilla 頁已退場） | |

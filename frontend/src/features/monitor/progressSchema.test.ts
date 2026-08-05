@@ -111,6 +111,31 @@ test('sync 可為 null（尚無 sync_run log），兩塊皆 optional', () => {
   expect(without.unit_failures).toBeUndefined()
 })
 
+// ── 券商分佈：同一種 strip 陷阱，第四次 ─────────────────────────────────
+test('db.sources 不會被 zod 剝除，且 source/display/latest 皆可為 null', () => {
+  const p = progressSchema.parse({
+    ...full,
+    db: {
+      ...full.db,
+      sources: [
+        { source: 'kgi', display: '凱基', count: 60, latest: '2026-08-04' },
+        // 檔名認不出券商（實測 327 篇）→ source 與 display 同時為 null
+        { source: null, display: null, count: 30, latest: null },
+        // 對照表未收錄的代碼：source_display 原樣回傳，display 不會是 null
+        { source: 'newbroker', display: 'newbroker', count: 10, latest: '2026-01-01' },
+      ],
+    },
+  })
+  expect(p.db.sources?.[0].display).toBe('凱基')
+  expect(p.db.sources?.[1].source).toBeNull()
+  expect(p.db.sources?.[1].latest).toBeNull()
+  expect(p.db.sources?.[2].display).toBe('newbroker')
+})
+
+test('db.sources 為 optional：舊後端不會讓整頁 parse 失敗', () => {
+  expect(progressSchema.parse(full).db.sources).toBeUndefined()
+})
+
 test('evaluation.avg_score 可為 null（全部 degraded 時沒有分數）', () => {
   const p = progressSchema.parse({
     ...full,

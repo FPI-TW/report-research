@@ -1,6 +1,23 @@
 import { z } from 'zod'
 
 export const marketCountSchema = z.object({ market: z.string().nullable(), count: z.number() })
+
+/**
+ * 券商分佈的一列。
+ *
+ * `source` 是正規化後的穩定代碼（kgi／goldman_sachs…），`display` 是後端以
+ * `app/services/filename.py` 的 SOURCE_DISPLAY 對映出的中文名——**對照表刻意留在
+ * 後端**，檢索頁與閱讀頁也走同一份，搬一份到前端等於兩份會漂的字典。
+ * 兩者都可為 null：`source` null ＝ 檔名認不出券商（實測 327 篇），
+ * `display` null 只會跟著 `source` null 一起發生（未收錄的代碼會被原樣回傳）。
+ * `latest` 是該券商最新一篇的 report_date，用來看出「還在不在供稿」。
+ */
+export const sourceCountSchema = z.object({
+  source: z.string().nullable(),
+  display: z.string().nullable(),
+  count: z.number(),
+  latest: z.string().nullable(),
+})
 export const taggingSchema = z.object({ done: z.number(), total: z.number(), fail: z.number(), pct: z.number() })
 export const ingestSchema = z.object({ ingested: z.number(), chunks: z.number(), fail: z.number() })
 export const summarySchema = z.object({ done: z.number(), total: z.number(), remaining: z.number(), pct: z.number() })
@@ -68,6 +85,9 @@ export const progressSchema = z.object({
     reports: z.number(),
     chunks: z.number(),
     markets: z.array(marketCountSchema),
+    // optional 的理由同下方三塊：滾動部署期間前端可能先上線，缺鍵就整張監控頁
+    // parse 失敗變空白，代價遠大於少一張卡。
+    sources: z.array(sourceCountSchema).optional(),
   }),
   summary: summarySchema,
   tagging: taggingSchema.nullable(),
@@ -95,6 +115,7 @@ export type Ingest = z.infer<typeof ingestSchema>
 export type Summary = z.infer<typeof summarySchema>
 export type Pipelines = z.infer<typeof pipelinesSchema>
 export type MarketCount = z.infer<typeof marketCountSchema>
+export type SourceCount = z.infer<typeof sourceCountSchema>
 export type Orchestrator = z.infer<typeof orchestratorSchema>
 export type LogEntry = z.infer<typeof logEntrySchema>
 export type UnitFailures = z.infer<typeof unitFailuresSchema>

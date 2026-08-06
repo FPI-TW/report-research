@@ -24,6 +24,7 @@ F5：內文 `#kpi-strip(...)` 這個呼叫點**從未被任何測試編譯過**�
 （含 en 才會附上的 `source-label:` 具名引數）全都沒被驗證過。
 """
 import io
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -102,17 +103,24 @@ def _flat(s: str) -> str:
     return "".join(c for c in s if not c.isspace() and c.isprintable())
 
 
-def _cjk_extractable() -> bool:
-    """本環境能不能從渲染出來的 PDF 抽回中文字。
+def _cjk_probe() -> tuple[bool, str | None]:
+    """本環境能不能從渲染出來的 PDF 抽回中文字，以及探針自己有沒有壞掉。
 
     不是所有環境都能：沒安裝 CJK 字型時 Typst 會退到不含中文字符對應的字型，
     PDF 照樣編得出來、頁數照樣正常，但抽字全部變成 `\\x00`（CI 實測即如此）。
 
-    這種情況**不能靜默當成通過**，也不該報成「PDF 不含免責」那種會誤導人的訊息，
-    所以做成明確的 skip 並在訊息裡指出缺什麼。英文那組不受影響（ASCII 一律抽得回來），
-    所以即使中文這組被跳過，「免責被拿掉」依然會被英文那組抓到。
+    **回傳兩種結果而不是一個 bool，是必要的區分**：
+      (False, None)  → 渲染成功但抽不回中文 ＝ 真的缺字型
+      (False, "…")   → 渲染這件事本身就炸了（typst wheel 壞、pypandoc 缺 binary、
+                        build_document 有 bug、記憶體不足…）＝ 與字型無關
+    舊版把兩者都吞成 `except Exception: False`，於是任何一種都會被報成
+    「缺 CJK 字型」——那正好違反本函式自己立的規矩（不該報成會誤導人的訊息），
+    而且會讓人跑去查字型步驟、查一整輪都查不到。
+
+    英文那組不受字型影響（ASCII 一律抽得回來），所以即使中文這組被跳過，
+    「免責被拿掉」依然會被英文那組抓到。
     """
-    global _CJK_OK
+    global _CJK_OK, _CJK_ERR
     if _CJK_OK is None:
         try:
             from app.services.typst_render import render_report_pdf
@@ -122,12 +130,45 @@ def _cjk_extractable() -> bool:
                 title="探針", meta={"date": "2026-07-28", "question": "q"},
             )
             _CJK_OK = "中文可抽字探針" in _pdf_text(pdf)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — 探針要吞掉一切，但要留下原因
             _CJK_OK = False
-    return _CJK_OK
+            _CJK_ERR = f"{type(exc).__name__}: {exc}"
+    return _CJK_OK, _CJK_ERR
+
+
+def _cjk_reason() -> str:
+    """抽不回中文時要說的話。探針自己壞掉時**不可以**說是字型問題。"""
+    _, err = _cjk_probe()
+    if err is not None:
+        return f"CJK 抽字探針本身失敗（**不是**字型問題，別去查字型步驟）：{err}"
+    return _NO_CJK
+
+
+def _cjk_available(case: unittest.TestCase) -> bool:
+    """抽得回中文嗎。
+
+    回 False 之前，若設了 `REPORT_MARK_REQUIRE_CJK` 會先讓這條測試當場失敗——
+    語意比照 schema job 的 `REPORT_MARK_REQUIRE_DB`（同樣用 truthiness 判定）：
+    **設了就代表這個環境承諾字型一定在，不准退回 skip。**
+    存在理由是 skip 的靜默性：字型沒裝到時中文那幾組會整批變成 skipped，
+    CI 全綠而覆蓋率無聲蒸發，沒有任何人會發現。
+    """
+    ok, _ = _cjk_probe()
+    if ok:
+        return True
+    if os.getenv("REPORT_MARK_REQUIRE_CJK"):
+        case.fail(_cjk_reason())
+    return False
+
+
+def _cjk_or_skip(case: unittest.TestCase) -> None:
+    """整條測試依賴中文抽字時用這個：不可用就 skip（或依上述旗標失敗）。"""
+    if not _cjk_available(case):
+        case.skipTest(_cjk_reason())
 
 
 _CJK_OK: bool | None = None
+_CJK_ERR: str | None = None
 _NO_CJK = "本環境無法從 PDF 抽回中文（缺 CJK 字型，例如 fonts-noto-cjk）"
 
 
@@ -154,8 +195,8 @@ class TypstRenderedDisclaimerTests(unittest.TestCase):
         for spec in manifest.list_templates():
             for loc in _LOCALES:
                 with self.subTest(template=spec.id, locale=loc):
-                    if loc != "en" and not _cjk_extractable():
-                        self.skipTest(_NO_CJK)
+                    if loc != "en":
+                        _cjk_or_skip(self)
                     pdf = render_report_pdf(
                         _SIMPLE_MD, title="測試研報",
                         meta={"date": "2026-07-28", "question": "台積電"},
@@ -180,8 +221,9 @@ class TypstRenderedDisclaimerTests(unittest.TestCase):
             for loc in _LOCALES:
                 with self.subTest(template=spec.id, locale=loc):
                     # 抽不回中文時「中文沒洩漏」是恆真的，斷言失去意義。
-                    if not _cjk_extractable():
-                        self.skipTest(_NO_CJK)
+                    # **這裡刻意沒有 `loc != "en"` 的條件**：en 那組要驗的正是
+                    # 「英文報告裡沒有中文免責」，抽不回中文時它同樣恆真。
+                    _cjk_or_skip(self)
                     pdf = render_report_pdf(
                         _SIMPLE_MD, title="測試研報",
                         meta={"date": "2026-07-28", "question": "台積電"},
@@ -205,8 +247,8 @@ class WeasyprintFallbackDisclaimerTests(unittest.TestCase):
 
         for loc in _LOCALES:
             with self.subTest(locale=loc):
-                if loc != "en" and not _cjk_extractable():
-                    self.skipTest(_NO_CJK)
+                if loc != "en":
+                    _cjk_or_skip(self)
                 pdf = weasy_render(
                     _SIMPLE_MD, title="測試研報",
                     meta={"date": "2026-07-28", "question": "台積電"}, locale=loc,
@@ -266,7 +308,11 @@ class InlineKpiStripTests(unittest.TestCase):
                     # 「內文那組有沒有被渲染出來」才是這個測試要問的問題，用值問就夠。
                     self.assertIn("NT$1,280", text, f"{spec.id}/{loc} 缺 hero KPI")
                     self.assertIn("55%", text, f"{spec.id}/{loc} 缺內文 KPI")
-                    if _cjk_extractable():
+                    # 這裡是**條件式斷言**而不是 skip：ASCII 那兩條在任何字型環境下
+                    # 都有意義，不該整條跳過。但條件仍走 _cjk_available ——
+                    # 設了 REPORT_MARK_REQUIRE_CJK 時，字型缺席會在這裡就失敗，
+                    # 而不是安靜地少驗兩條中文標籤。
+                    if _cjk_available(self):
                         self.assertIn("目標價", text, f"{spec.id}/{loc} 缺 hero KPI 標籤")
                         self.assertIn("毛利率", text, f"{spec.id}/{loc} 缺內文 KPI 標籤")
                     # 版面守門沿用 M9a 訊號：短報告不該爆頁

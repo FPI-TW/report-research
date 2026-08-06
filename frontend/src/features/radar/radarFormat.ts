@@ -53,6 +53,18 @@ export const STALE_REPORT_DAYS = 90
 export const STALE_REPORT_LABEL = `最新報告已超過 ${STALE_REPORT_DAYS} 天`
 
 /**
+ * 「樣本不足」的家數門檻。
+ *
+ * 這是**顯示層的提醒，不是後端欄位**——後端不對共識樣本數下判斷（`coverage.state`
+ * 講的是擷取進度，不是統計代表性）。三家是下限而非統計依據：兩家以下時「中位立場」
+ * 等於某一家的意見，五級分佈也只會有一到兩段，讀起來卻和十四家的圖長得一模一樣。
+ * 門檻與說明文字都由這個常數推導，改一個就兩邊一起動。
+ */
+export const RATING_SAMPLE_MIN = 3
+export const RATING_SAMPLE_NOTE
+  = `已評等券商少於 ${RATING_SAMPLE_MIN} 家，中位立場與分佈僅代表少數幾份研報。`
+
+/**
  * 期間／口徑不同的統一說法。
  *
  * 後端對這兩種不可比較各給了一份 `incomparable_reason`，而 `prev_value`/`curr_value`

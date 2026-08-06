@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import { useReducedMotion } from 'motion/react'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
 import { Pressable } from '../../components/primitives/Pressable'
 import type { Market, Window } from '../../lib/radarSchemas'
 import { BrokerList } from './BrokerList'
-import { ConsensusSnapshot } from './ConsensusSnapshot'
-import { KeyFigures } from './KeyFigures'
+import { ConsensusSummary } from './ConsensusSummary'
+import { CoverageStrip } from './CoverageStrip'
 import { RadarHeader } from './RadarHeader'
 import pageStyles from './RadarPage.module.css'
 import { RadarSkeleton } from './RadarSkeleton'
@@ -36,11 +37,33 @@ export function RadarOverview({
   const showAllEvents = expandedEventKey === eventQueryKey
   const [reportId, setReportId] = useState<string | null>(null)
   const [reportName, setReportName] = useState<string | undefined>()
+  // 券商歷程的展開狀態提到這一層：市場共識摘要的「查看券商觀點」與券商列自己的
+  // 展開鈕指的是同一個面板，兩份狀態會互相覆蓋。
+  const [openBroker, setOpenBroker] = useState<string | null>(null)
+  const brokerSectionRef = useRef<HTMLElement>(null)
+  const reduced = useReducedMotion()
 
   function openReport(id: string, fileName?: string | null) {
     setReportId(id)
     setReportName(fileName ?? undefined)
   }
+
+  const viewBroker = useCallback((brokerKey: string) => {
+    setOpenBroker(brokerKey)
+    // jsdom 沒有 scrollIntoView，舊版 Safari 也不吃 options 物件——兩者都不該讓選取失效。
+    brokerSectionRef.current?.scrollIntoView?.({
+      behavior: reduced ? 'auto' : 'smooth',
+      block: 'start',
+    })
+    // 只捲動不移焦點的話，鍵盤使用者的焦點還留在上面那顆「查看券商觀點」，
+    // 再按 Tab 會走進中間所有的點——等於這個動作對他們什麼都沒做。
+    // 展開列是同一次 render 才出現，所以要等一幀。
+    requestAnimationFrame(() => {
+      brokerSectionRef.current
+        ?.querySelector<HTMLElement>(`[data-testid="broker-row-${CSS.escape(brokerKey)}"]`)
+        ?.focus()
+    })
+  }, [reduced])
 
   const data = q.data
   const fullEvents = useRadarEvents(
@@ -105,11 +128,17 @@ export function RadarOverview({
               </aside>
             ) : null}
 
-            <KeyFigures target={data.target_price} eps={data.eps} coverage={data.coverage} />
+            <CoverageStrip coverage={data.coverage} />
 
             <section className={pageStyles.section}>
-              <h2 className={pageStyles.sectionTitle}>券商共識</h2>
-              <ConsensusSnapshot rating={data.rating} window={window} />
+              <h2 className={pageStyles.sectionTitle}>市場共識摘要</h2>
+              <ConsensusSummary
+                rating={data.rating}
+                targetCurrencyHint={data.target_price?.primary_currency}
+                brokers={data.brokers}
+                window={window}
+                onViewBroker={viewBroker}
+              />
             </section>
 
             <section className={pageStyles.section}>
@@ -152,13 +181,15 @@ export function RadarOverview({
               />
             </section>
 
-            <section className={pageStyles.section}>
+            <section className={pageStyles.section} ref={brokerSectionRef}>
               <h2 className={pageStyles.sectionTitle}>各券商最新觀點</h2>
               <BrokerList
                 brokers={data.brokers}
                 code={code}
                 market={market}
                 window={window}
+                openBroker={openBroker}
+                onOpenBrokerChange={setOpenBroker}
                 onOpenReport={openReport}
               />
             </section>

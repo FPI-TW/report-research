@@ -288,7 +288,7 @@ describe('RadarPage', () => {
     vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
     wrap('/radar?market=TW&code=8046&window=90')
     await waitFor(() => expect(screen.getByRole('heading', { name: '南電' })).toBeInTheDocument())
-    expect(screen.getByText('券商共識')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '市場共識摘要' })).toBeInTheDocument()
     expect(screen.getByText('四向觀點')).toBeInTheDocument()
     expect(screen.getByText('轉強')).toBeInTheDocument()
     expect(screen.getByText('近期關鍵變化')).toBeInTheDocument()
@@ -314,7 +314,7 @@ describe('RadarPage', () => {
 
     const notice = await screen.findByRole('status', { name: '部分資料' })
     expect(notice).toHaveTextContent('歷史研報仍有部分欄位尚待整理。')
-    expect(screen.getByText('券商共識')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '市場共識摘要' })).toBeInTheDocument()
   })
 
   it('pending_extraction 顯示尚未整理狀態', async () => {

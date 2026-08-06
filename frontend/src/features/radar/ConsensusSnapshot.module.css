@@ -1,177 +1,141 @@
-.tape {
-  background: var(--tf-surface);
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-panel);
-  /* xs 而非 float：float（0 8px 24px 柔影）在 tokens.css 的層級裡是「浮起來的東西」，
-     與 InstrumentCard 的 hover 態同值。靜止的內容面板用它會讓人以為這塊可點可拖。 */
-  box-shadow: var(--tf-shadow-xs);
-  display: grid;
-  /* 右欄改成內容寬度上限而非比例：1fr 之下（1280px 版面）它會拿到約 492px，
-     但欄內最寬的一行「評等動能：淨上調 3 家」只需約 150px，三分之二是結構性的空白
-     ——欄寬由 fr 決定，內容永遠長不到那個寬度。左欄拿回來給分布條與圖例。 */
-  grid-template-columns: minmax(0, 1fr) minmax(190px, 240px);
-}
-
-.stance { padding: 22px 26px 24px; }
-.movement {
-  padding: 22px 26px 24px;
-  border-left: 1px solid var(--tf-border);
+/* 一條窄橫列，塞不下時整段換行而不是壓縮——中文壓縮到 min-content 就是逐字直排。 */
+.strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 14px 26px;
+  border-bottom: 1px solid var(--tf-border);
 }
 
 /* 欄位小標的共用規格（全頁一致）：12px / 600 / 無字距。
-   letter-spacing 是拉丁小型大寫的手法，套在漢字上只是在等寬方塊之間硬塞空隙、拆散詞界；
-   700 又是 JhengHei／PingFang 的最粗一級，12px 漢字在那個重量下筆畫會黏起來。 */
+   letter-spacing 是拉丁小型大寫的手法，套在漢字上只是在等寬方塊之間硬塞空隙、拆散詞界。 */
 .kicker {
   font-size: 12px;
   font-weight: 600;
   color: var(--tf-text-muted-aa);
-  margin-bottom: 10px;
 }
 
-/* 中位立場＝本頁的結論句。
-   字級從 40px 降到 30px：原本它與 KeyFigures 的 .val 同為 40px，同一屏出現兩個最大字，
-   勝負只好由顏色決定，於是金色的評等詞搶走了目標價的位置。降級後 KPI 的 40px 是該屏唯一最大字。
-   字重從 900 降到 600：中文字型堆疊裡 PingFang TC 最重只到 600、JhengHei 只有 Bold，
-   900 在兩個目標環境都是合成假粗體或退回同一級，CSS 上的四階層級在螢幕上並不存在。
-   顏色改吃語意桶（見下）：同一個「中位立場」在標的卡是綠／墨／紅，在這裡卻一律鎏金，
-   同一筆資料兩套語意色；順帶把鎏金收回給真正需要它的地方。
-   原本的 3px 金色下劃線一併拿掉：語意色已經在做強調，下劃線是同一個元素上的第二個
-   強調裝置，而最常見的「中立」情況它會渲染成深字底下一條淺灰線——看起來像雜訊不像設計。 */
+/* 中位立場＝這一區的結論詞。字重停在 600：PingFang TC 最重只到 600、JhengHei 只有
+   Bold，700 以上在兩個目標環境都是合成假粗體，CSS 上的層級在螢幕上並不存在。 */
 .word {
   font-family: var(--tf-display);
   font-weight: 600;
-  font-size: 30px;
-  line-height: 1.1;
+  font-size: 20px;
+  line-height: 1.2;
   color: var(--tf-text-1);
-  display: inline-block;
 }
 /* 與 InstrumentCard 的 .bull/.neu/.bear 同一組語意（radarFormat.RATING_BUCKET）。 */
 .wBull { color: var(--tf-success); }
 .wNeu { color: var(--tf-text-1); }
 .wBear { color: var(--tf-error); }
 
-/* 只留總數：三桶聚合（偏多／中立／偏空）是 .legend 五級明細的嚴格子集，
-   兩者相距不到 60px，把同一組數字講了兩次。保留 .legend 那份較精確的。 */
-.sub {
-  font-size: 13.5px;
+.rule {
+  width: 1px;
+  height: 20px;
+  background: var(--tf-border);
+}
+
+.count {
+  font-size: 13px;
   color: var(--tf-text-2);
-  margin: 12px 0 20px;
   font-variant-numeric: tabular-nums;
 }
-.sub b { color: var(--tf-text-1); }
-
-.track { position: relative; }
 
 .dist {
   display: flex;
-  height: 15px;
+  width: 92px;
+  height: 8px;
   border-radius: var(--tf-radius-pill);
   overflow: hidden;
   background: var(--tf-border-weak);
 }
-.dist span { display: block; height: 100%; }
+.dist i { display: block; height: 100%; }
 
-/* 五級色（bar 段＋圖例點共用；此類只帶顏色） */
+/* 五級色（bar 段用；此類只帶顏色）。 */
 .buy { background: var(--tf-success); }
 .overweight { background: var(--tf-success-soft); }
 .neutral { background: var(--tf-text-muted-aa); }
 .underweight { background: var(--tf-warn); }
 .sell { background: var(--tf-error); }
 
-/* 由**底部**錨定，不是頂部。
-   舊寫法是 top: -7px + stem 28px，而 .track 的高度恆等於 .dist 的 15px ——
-   指針桿因此有 26px 落在分布條之外，正好壓在 .axis 那一行文字上；而 median 缺值時
-   預設就是 neutral（needlePct 50%），.axis 用 space-between 排三個詞時「中立」剛好置中
-   於 50%，所以最常見的情況就是 2px 的深色線精準劃掉「中立」兩個字。
-   bottom: 0 讓指針下緣永遠對齊分布條底緣，stem 與 .dist 等高（精確覆蓋整條），
-   pill 自動被推到條的上方——不論 pill 因字型度量而多高都成立，不必寫死魔術數字。 */
-.needle {
-  position: absolute;
-  bottom: 0;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  pointer-events: none;
-}
-.pill {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--tf-on-graphite);
-  background: var(--tf-graphite-deep);
-  padding: 2px 7px;
-  border-radius: var(--tf-radius-pill);
-  white-space: nowrap;
-  box-shadow: var(--tf-shadow-seg);
-}
-.stem { width: 2px; height: 15px; background: var(--tf-graphite-deep); margin-top: 2px; }
-
-/* 只留兩個端點。三個詞的版本冒充了它不是的東西：它貼在 .dist 正下方看起來像分布條的座標，
-   但 .dist 的段寬是 count/total 的比例，.axis 的左中右卻對應指針用的固定五級量表。
-   10 家全 buy 時分布條整條是深綠，這一行仍會在正中央標「中立」、右端標「偏空」。
-   收成兩端後它讀起來是指針的方向軸，不再宣稱中點等於中立。 */
-.axis {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 12px;
-  font-size: 11.5px;
-  color: var(--tf-text-muted-aa);
-}
-
-.legend {
-  display: flex;
+.breakdown {
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 8px 14px;
-  margin-top: 16px;
+  align-items: center;
+  gap: 4px 10px;
   font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+  font-variant-numeric: tabular-nums;
+}
+.breakdown > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* 9×9 方塊而非圓點：與分佈條的段是同一組顏色，方形讀起來像「取樣自那條」。 */
+.breakdown i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* 螢幕閱讀器專用文字（視覺上不存在，但仍在無障礙樹裡）。 */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.lowSample {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tf-warn-text);
+  background: var(--tf-warn-bg);
+  border: 1px solid var(--tf-warn-border);
+  border-radius: var(--tf-radius-pill);
+  padding: 2px 9px;
+  cursor: help;
+}
+
+.movement {
+  font-size: 13px;
   color: var(--tf-text-2);
   font-variant-numeric: tabular-nums;
 }
-.legend span { display: inline-flex; align-items: center; gap: 6px; }
-.legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+/* 刻意不在這裡設 color：方向色由 TSX 掛 .up/.down/.flat 決定。基底規則一旦自帶 color，
+   它的 (0,1,1) 會贏過 .down 的 (0,1,0)，class 照樣掛得上去、畫面卻不會變
+   ——本 repo 的 `.mvNet b` 就是這樣錯了很久（RadarCssContracts 有靜態守門）。 */
+.movement b { font-weight: 600; }
 
-.mvRow {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--tf-divider);
-}
-.mvRow:last-of-type { border-bottom: 0; }
+.mvItem { white-space: nowrap; }
 
-/* 700 而非 800：這格內容是純阿拉伯數字，走拉丁字面有真字重，不像中文會被合成。 */
-.mvNum {
-  font-family: var(--tf-display);
-  font-weight: 700;
-  font-size: 26px;
-  line-height: 1;
-  min-width: 44px;
-  font-variant-numeric: tabular-nums;
-}
 .up { color: var(--tf-success); }
 .down { color: var(--tf-error); }
 .flat { color: var(--tf-text-muted-aa); }
 
-.mvLabel { font-size: 13.5px; color: var(--tf-text-2); }
+.midDot { color: var(--tf-text-muted-aa); }
 
-.mvNet {
-  margin: 16px 0 0;
-  font-size: 13.5px;
-  color: var(--tf-text-2);
+/* 靠右推到列尾；wrap 之後它自己成為一列的內容，仍然靠右。 */
+.trailing {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
-/* 刻意不在這裡設 color：方向色由 TSX 依 net 掛 .up/.down/.flat（與正上方三列 .mvNum 同一組）。
-   舊寫法寫死 --tf-success，於是「淨下調 4 家」與「持平」都印成成功綠——這是整區唯一一句
-   直接下結論的話，卻用顏色講了相反的事。留 color 在這裡會以 (0,1,1) 的特異度贏過
-   .down 的 (0,1,0)，改了等於沒改。 */
-.mvNet b { font-weight: 600; }
 
 .empty {
   font-size: 13.5px;
   color: var(--tf-text-muted-aa);
-  padding: 16px 4px;
 }
 
-@media (max-width: 860px) {
-  .tape { grid-template-columns: 1fr; }
-  .movement { border-left: 0; border-top: 1px solid var(--tf-border); }
+@media (max-width: 900px) {
+  .strip { padding: 14px 16px; }
 }

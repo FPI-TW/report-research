@@ -1,0 +1,115 @@
+.strip {
+  margin-top: 20px;
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-xs);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px;
+}
+
+.counts {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--tf-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.counts b {
+  font-weight: 600;
+  color: var(--tf-text-1);
+}
+.midDot { color: var(--tf-text-muted-aa); }
+
+/* 44px 命中區，但用負的 margin-block 讓它溢出到卡片內距裡，橫列高度仍由文字決定
+   （與 RadarPage .sectionMeta 同一手法）。 */
+.toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--tf-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tf-graphite);
+  cursor: pointer;
+}
+.toggle:hover { color: var(--tf-graphite-hover); text-decoration: underline; text-underline-offset: 3px; }
+.toggle:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 2px;
+}
+
+.chev { transition: transform var(--tf-dur-1) var(--tf-ease-standard); }
+.chevOpen { transform: rotate(180deg); }
+
+.panel {
+  padding: 4px 18px 16px;
+  border-top: 1px solid var(--tf-divider);
+  margin-top: -1px;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  margin: 12px 0 0;
+}
+.facts div { display: flex; align-items: center; gap: 8px; }
+.facts dt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tf-text-muted-aa);
+}
+.facts dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--tf-text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  display: block;
+  width: 120px;
+  height: 6px;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-border-weak);
+  overflow: hidden;
+}
+.bar i {
+  display: block;
+  height: 100%;
+  background: var(--tf-graphite);
+  border-radius: inherit;
+}
+.pct { color: var(--tf-text-2); }
+
+.partial {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--tf-warn-text);
+}
+
+.note {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--tf-text-muted-aa);
+}
+
+@media (max-width: 900px) {
+  .head { padding: 0 14px; flex-wrap: wrap; }
+  .panel { padding: 4px 14px 14px; }
+}

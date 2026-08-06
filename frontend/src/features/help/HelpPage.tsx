@@ -286,7 +286,8 @@ export default function HelpPage() {
           <h2 className={styles.h2}><span className={styles.no}>7</span>廷豐觀點</h2>
           <p><strong>廷豐觀點</strong>把同一標的的各券商研報彙整起來，追蹤一段期間內的<strong>觀點與評等變化</strong>：</p>
           <ul className={styles.bul}>
-            <li>先選一個標的，即可看到<strong>評等共識</strong>、<strong>目標價／EPS 中位數</strong>與資料品質。</li>
+            <li>先選一個標的，即可看到<strong>評等共識</strong>，以及<strong>各家目標價／EPS 點圖</strong>——一個點就是一家券商，點下去右側會顯示該券商的數字與報告日期。</li>
+            <li>點圖<strong>不算中位數也不平均</strong>；EPS 需先選定同一個財年才比較，不同財年的會標示「未納入目前期間」。</li>
             <li><strong>近期關鍵變化</strong>列出各券商的上修／下修事件，可點開原始研報佐證。</li>
             <li><strong>各券商最新觀點</strong>可展開單一券商的歷程；上方可切換 30／90／180 天等<strong>時間窗</strong>。</li>
           </ul>

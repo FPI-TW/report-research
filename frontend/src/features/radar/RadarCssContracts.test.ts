@@ -1,10 +1,13 @@
 import tokensCss from '../../styles/tokens.css?raw'
+import brokerDotPlotCss from './BrokerDotPlot.module.css?raw'
+import brokerDotPlotSource from './BrokerDotPlot.tsx?raw'
 import brokerListCss from './BrokerList.module.css?raw'
 import brokerListSource from './BrokerList.tsx?raw'
 import brokerTimelineCss from './BrokerTimeline.module.css?raw'
 import consensusSnapshotCss from './ConsensusSnapshot.module.css?raw'
+import consensusSummaryCss from './ConsensusSummary.module.css?raw'
+import coverageStripCss from './CoverageStrip.module.css?raw'
 import instrumentPickerCss from './InstrumentPicker.module.css?raw'
-import keyFiguresCss from './KeyFigures.module.css?raw'
 import radarHeaderCss from './RadarHeader.module.css?raw'
 import radarPageCss from './RadarPage.module.css?raw'
 import radarSkeletonCss from './RadarSkeleton.module.css?raw'
@@ -49,14 +52,6 @@ function mediaBlock(source: string, maxWidth: number): string {
   )
 }
 
-function containerBlock(source: string, maxWidth: number): string {
-  return blockAfter(
-    source,
-    new RegExp(`@container\\s*\\(max-width:\\s*${maxWidth}px\\)`),
-    `@container (max-width: ${maxWidth}px)`,
-  )
-}
-
 function ruleBlock(source: string, selector: string): string {
   return blockAfter(
     source,
@@ -98,27 +93,6 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe('Radar 390px 版型契約', () => {
-  it('KPI 維持兩欄且第三張跨滿整列', () => {
-    const mobile = mediaBlock(keyFiguresCss, 860)
-
-    expectDeclaration(mobile, '.grid', 'grid-template-columns', 'repeat(2, minmax(0, 1fr))')
-    expectDeclaration(mobile, '.fig:nth-child(3)', 'grid-column', '1 / -1')
-  })
-
-  it('KPI 長合法值依卡片寬度縮放，僅允許在幣別與完整數字之間換行', () => {
-    const mobile = mediaBlock(keyFiguresCss, 560)
-    const compactCard = containerBlock(keyFiguresCss, 180)
-
-    expectDeclaration(mobile, '.fig', 'min-width', '0')
-    expectDeclaration(mobile, '.fig', 'padding', '20px 14px 22px')
-    expectDeclaration(keyFiguresCss, '.fig', 'container-type', 'inline-size')
-    expectDeclaration(keyFiguresCss, '.val', 'overflow-wrap', 'anywhere')
-    expectDeclaration(keyFiguresCss, '.amount', 'white-space', 'nowrap')
-    expectDeclaration(keyFiguresCss, '.amount', 'overflow-wrap', 'normal')
-    expectDeclaration(compactCard, '.val', 'font-size', 'clamp(26px, 20cqi, 30px)')
-    expect(ruleBlock(mobile, '.val')).not.toContain('white-space: nowrap')
-  })
-
   it('論點羅盤在 390px 維持 2x2，僅 340px 以下退為單欄', () => {
     const tablet = mediaBlock(thesisCompassCss, 1080)
     const narrow = mediaBlock(thesisCompassCss, 340)
@@ -128,14 +102,25 @@ describe('Radar 390px 版型契約', () => {
     expect(thesisCompassCss).not.toMatch(/@media\s*\(max-width:\s*(?:3[5-9]\d|[4-9]\d\d)px\)[\s\S]*?\.grid\s*\{\s*grid-template-columns:\s*1fr/)
   })
 
-  it('骨架以三張 KPI 對齊兩欄加跨欄版型', () => {
-    const mobile = mediaBlock(radarSkeletonCss, 860)
+  /*
+   * 骨架與真物的欄寬若不同步，資料到位當下右欄會跳一次寬度、整頁跟著位移。
+   * 這一組把「ConsensusSummary.layout」與「RadarSkeleton.summary」釘成同一組值——
+   * 兩邊各自寫一次是必然的（一個是真物、一個是佔位），所以由測試保證它們相等。
+   */
+  it('骨架的共識摘要欄寬與真物逐字相同', () => {
+    const columns = 'minmax(0, 1fr) minmax(240px, 300px)'
+    expectDeclaration(consensusSummaryCss, '.layout', 'grid-template-columns', columns)
+    expectDeclaration(radarSkeletonCss, '.summary', 'grid-template-columns', columns)
 
-    expect(radarSkeletonSource).toMatch(
-      /className=\{styles\.kpi\}[\s\S]*?Array\.from\(\{\s*length:\s*3\s*\}/,
-    )
-    expectDeclaration(mobile, '.kpi', 'grid-template-columns', 'repeat(2, minmax(0, 1fr))')
-    expectDeclaration(mobile, '.kpi > .card:nth-child(3)', 'grid-column', '1 / -1')
+    expectDeclaration(mediaBlock(consensusSummaryCss, 1080), '.layout', 'grid-template-columns', '1fr')
+    expectDeclaration(mediaBlock(radarSkeletonCss, 1080), '.summary', 'grid-template-columns', '1fr')
+  })
+
+  it('骨架鏡射兩張點圖與右欄詳情面板', () => {
+    // 少畫一張點圖 ≈ 少一整塊高度；右欄少一塊則載入完成當下整頁重排。
+    expect(radarSkeletonSource).toMatch(/Array\.from\(\{\s*length:\s*2\s*\}[\s\S]*?styles\.plot/)
+    expect(radarSkeletonSource).toContain('styles.summarySide')
+    expect(radarSkeletonSource).toContain('styles.detail')
   })
 
   it('骨架論點在 390px 保持兩欄，僅 340px 以下退為單欄', () => {
@@ -167,8 +152,27 @@ describe('Radar 觸控目標契約', () => {
     ['歷史報告展開', brokerTimelineCss, '.histToggle'],
     ['歷史報告連結', brokerTimelineCss, '.link'],
     ['狀態主要／次要操作', radarStatesCss, '.btn, .btnSecondary'],
+    ['資料涵蓋說明展開', coverageStripCss, '.toggle'],
+    ['資料範圍切換', consensusSummaryCss, '.segBtn'],
+    ['EPS 口徑選擇', consensusSummaryCss, '.fyTrigger'],
+    ['切換表格檢視', consensusSummaryCss, '.viewToggle'],
+    ['已選券商操作', consensusSummaryCss, '.detailBtn, .detailBtnGhost'],
   ])('%s 至少 44px 高', (_label, css, selector) => {
     expectDeclaration(css, selector, 'min-height', '44px')
+  })
+
+  /*
+   * 點圖的圓點是唯一刻意**不套** 44px 的可點元素：十四家券商各一列，44px 會讓
+   * 「一屏看完全部券商」這件事直接失效，而那正是這張圖存在的理由。本區塊只做桌機，
+   * 所以退到 WCAG 2.2 的 24px 最小值並在這裡釘住——沒有這條，日後把它縮成 11px
+   * （視覺圓點的大小）不會有任何東西會紅。
+   */
+  it('點圖圓點的命中區至少 24px（桌機專用，刻意不套 44px）', () => {
+    const body = ruleBlock(brokerDotPlotCss, '.dot').replace(/\s+/g, ' ')
+    const size = /(?:^|[^-])width: (\d+)px;/.exec(body)
+    expect(size, '.dot 應明確設定 width').not.toBeNull()
+    expect(Number(size![1])).toBeGreaterThanOrEqual(24)
+    expectDeclaration(brokerDotPlotCss, '.dot', 'height', '30px')
   })
 
   it('麵包屑返回在兩軸都至少 44px', () => {
@@ -208,13 +212,14 @@ describe('Radar token 存在性契約', () => {
 
 describe('Radar 語意色特異度契約', () => {
   /*
-   * 「評等動能」那句的方向色是由 TSX 依 net 掛 .up/.down/.flat 決定的，
-   * 但 `.mvNet b` 的特異度是 (0,1,1)、`.down` 只有 (0,1,0)——只要 `.mvNet b` 自己帶了
+   * 評等升降那三個數字的方向色由 TSX 掛 .up/.down/.flat 決定，
+   * 但 `.movement b` 的特異度是 (0,1,1)、`.down` 只有 (0,1,0)——只要 `.movement b` 自己帶了
    * color，它就會贏，掛在元素上的方向 class 完全不生效，而 DOM 看起來一切正常。
    * 元件測試看不到這件事（class 確實掛上去了），所以在這裡用靜態字串守。
+   * （前身是 `.mvNet b`，同一個坑已經踩過一次。）
    */
-  it('.mvNet b 不得自帶 color，否則方向 class 會被特異度蓋掉', () => {
-    const body = ruleBlock(consensusSnapshotCss, '.mvNet b').replace(/\s+/g, ' ')
+  it('.movement b 不得自帶 color，否則方向 class 會被特異度蓋掉', () => {
+    const body = ruleBlock(consensusSnapshotCss, '.movement b').replace(/\s+/g, ' ')
     expect(body).not.toContain('color:')
   })
 
@@ -233,6 +238,67 @@ describe('Radar 語意色特異度契約', () => {
 
   it('.dateCell 以 td.dateCell 取得高於 .table td 的特異度', () => {
     expect(brokerListCss).toMatch(/\.table\s+td\.dateCell\s*\{/)
+  })
+})
+
+describe('Radar 點圖座標與可讀性契約', () => {
+  /*
+   * 券商名那一欄是**所有列共用的同一條 grid 軌道**，靠 .row / .axisRow 的
+   * `display: contents` 把子元素提上去給 .rows 排。任何一個改成 flex/grid/block，
+   * 每一列就會各自排版：名字欄逐列寬度不同 ⇒ 軌道起點逐列不同 ⇒ 同一個數值在不同列
+   * 畫在不同位置，而軸的刻度只有一份。畫面看起來仍然「有圖」，只是全錯。
+   */
+  it('點圖各列與軸列共用 .rows 的欄軌道', () => {
+    expectDeclaration(
+      brokerDotPlotCss, '.rows', 'grid-template-columns',
+      'minmax(0, max-content) minmax(0, 1fr)',
+    )
+    expectDeclaration(brokerDotPlotCss, '.row, .axisRow', 'display', 'contents')
+  })
+
+  /*
+   * 中文的 min-content 是一個字：max-content 軌道遇上長券商名會把整條軌道吃光，
+   * 點全部擠到右邊一小段。上限 + ellipsis 是唯一擋得住的組合（全名走 title）。
+   */
+  it('券商名欄有寬度上限與截斷，長名不會吃掉軌道', () => {
+    expectDeclaration(brokerDotPlotCss, '.name', 'max-width', '132px')
+    expectDeclaration(brokerDotPlotCss, '.name', 'text-overflow', 'ellipsis')
+    expectDeclaration(brokerDotPlotCss, '.name', 'white-space', 'nowrap')
+    expect(brokerDotPlotSource).toContain('title={point.broker}')
+  })
+
+  /* 同一個坑的表格版：只給 overflow-x 而不給 min-width，中文表格會被壓成逐字直排。 */
+  it('表格檢視同時具備 overflow-x 與 min-width', () => {
+    expectDeclaration(consensusSummaryCss, '.tableWrap', 'overflow-x', 'auto')
+    expectDeclaration(consensusSummaryCss, '.table', 'min-width', '620px')
+  })
+
+  /*
+   * 新鮮度的視覺編碼必須是**填色的有無**（實心／空心），不是色相——否則灰階列印、
+   * 色覺缺陷與低對比螢幕上這條資訊直接消失，而需求明文禁止只靠顏色表達新鮮度。
+   * 兩者共用同一個 border 顏色，差別只在 background 是墨色還是底色。
+   */
+  it('點的新鮮度靠實心／空心區分，不靠色相', () => {
+    expectDeclaration(brokerDotPlotCss, '.recent .mark', 'background', 'var(--tf-graphite)')
+    expectDeclaration(
+      brokerDotPlotCss, '.stale .mark, .unknown .mark', 'background', 'var(--tf-surface)',
+    )
+    expectDeclaration(brokerDotPlotCss, '.mark', 'border', '2px solid var(--tf-graphite)')
+    // 文字圖例與每個點的 aria-label／title 都要把新鮮度講出來，形狀只是輔助。
+    expect(brokerDotPlotSource).toContain('FRESHNESS_LABEL.recent')
+    expect(brokerDotPlotSource).toContain('FRESHNESS_LABEL.stale')
+    expect(brokerDotPlotSource).toContain('aria-label={description}')
+  })
+
+  /*
+   * 刻度線、刻度標籤與資料點三者的百分比必須來自**同一支** axisPosition。
+   * 各算一次的話（例如刻度改用等分、點用真值），軸標與點會在同一張圖上分家——
+   * ConsensusSnapshot 的中位指針就踩過這個坑（段寬座標系 vs 五級量表座標系）。
+   */
+  it('刻度與資料點共用同一支座標函式', () => {
+    const uses = brokerDotPlotSource.match(/axisPosition\(/g) ?? []
+    expect(uses.length).toBeGreaterThanOrEqual(3)
+    expect(brokerDotPlotSource).not.toMatch(/left:\s*`\$\{\s*\(/)
   })
 })
 

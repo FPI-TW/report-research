@@ -1,0 +1,222 @@
+.chart {
+  padding: 20px 26px 22px;
+}
+.chart + .chart {
+  border-top: 1px solid var(--tf-border);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-family: var(--tf-display);
+  font-weight: 600;
+  font-size: 15.5px;
+  color: var(--tf-text-1);
+  margin: 0;
+}
+
+/* 圖例靠右，但在窄容器換行時回到左側跟著標題走。 */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+}
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 實心／空心是新鮮度的**唯一**視覺編碼，兩者同色——顏色在這裡不帶任何訊息，
+   所以色盲、灰階列印、低對比螢幕都不會讓這條資訊消失。 */
+.dotSolid, .dotHollow, .dotUnknown {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--tf-radius-pill);
+  border: 2px solid var(--tf-graphite);
+  box-sizing: border-box;
+}
+.dotSolid { background: var(--tf-graphite); }
+.dotHollow { background: var(--tf-surface); }
+/* 虛線環＝日期不明。與空心（超過 90 天）必須分得開：兩者共用同一種畫法時，
+   一份沒有日期的研報會被畫成「確定超過 90 天」，那是資料裡沒有的斷言。 */
+.dotUnknown {
+  background: var(--tf-surface);
+  border-style: dashed;
+}
+
+.sub {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 券商名欄由所有列共用一個 grid 軌道，所以 .row 必須是 display: contents ——
+   每列各自 grid 的話，名字欄寬度會逐列不同、點的起算原點跟著歪。 */
+.rows {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  align-items: center;
+  margin-top: 14px;
+}
+.row, .axisRow {
+  display: contents;
+}
+
+/* 中文的 min-content 是一個字：不設 max-width 時長券商名會把軌道擠掉，
+   設了之後 max-content 軌道也不會超過這個上限（超長名以 title 補回全名）。 */
+.name {
+  font-size: 13px;
+  color: var(--tf-text-2);
+  padding-right: 14px;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 34px;
+}
+
+.track {
+  position: relative;
+  height: 34px;
+  border-bottom: 1px dashed var(--tf-border);
+}
+
+.gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--tf-border-weak);
+  transform: translateX(-50%);
+}
+
+/* 定位殼層：把 left 的百分比與 hover 提示（title）帶在這裡，按鈕本身回到靜態流內。 */
+.dotWrap {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  line-height: 0;
+  z-index: 1;
+}
+
+/* 命中區 30×30（>= WCAG 2.2 的 24px 最小值）；視覺圓點只有 11px，靠 .mark 內縮。
+   桌機專用區塊，故不套用本 repo 觸控目標的 44px 慣例——那會讓十四列的圖長到
+   一屏放不下，而「一屏看完全部券商」正是這張圖存在的理由。 */
+.dot {
+  width: 30px;
+  height: 30px;
+  /* 雷達頁有吸頂導覽列（RadarHeader .topStuck）。Tab 到某個點時瀏覽器會把它捲進視窗，
+     沒有這個邊距的話它可能剛好停在吸頂列底下、焦點環完全看不到（WCAG 2.2 SC 2.4.11）。 */
+  scroll-margin-top: 76px;
+  scroll-margin-bottom: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: var(--tf-radius-pill);
+  cursor: pointer;
+}
+.dot:hover { background: var(--tf-graphite-tint); }
+.dot:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 0;
+}
+
+/* 顏色一律中性石墨。刻意**不用**綠／紅：那組色在本頁已經被評等語意佔走
+   （偏多綠／偏空紅），拿來畫目標價等於宣稱「數字高＝看多」，而目標價的高低
+   本身不帶方向。選取態才動用鎏金——那是全站唯一強調色，用途正是「選取指示」。 */
+.mark {
+  width: 11px;
+  height: 11px;
+  border-radius: var(--tf-radius-pill);
+  border: 2px solid var(--tf-graphite);
+  box-sizing: border-box;
+  transition: background var(--tf-dur-1) var(--tf-ease-standard);
+}
+.recent .mark { background: var(--tf-graphite); }
+.stale .mark, .unknown .mark { background: var(--tf-surface); }
+.unknown .mark { border-style: dashed; }
+
+.dotOn .mark {
+  border-color: var(--tf-gold-strong);
+  box-shadow: 0 0 0 4px var(--tf-surface), 0 0 0 6px var(--tf-gold-strong);
+}
+.dotOn.recent .mark { background: var(--tf-gold-strong); }
+
+.value {
+  position: absolute;
+  top: 50%;
+  transform: translate(18px, -50%);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--tf-text-1);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.valueFlip { transform: translate(calc(-100% - 18px), -50%); }
+
+.rowMuted .name { color: var(--tf-text-muted-aa); }
+
+.exclNote {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+}
+
+/* 軸線與刻度共用同一條 grid 軌道，所以刻度的百分比與點的百分比是同一個座標系。
+   兩者若各算一次，軸標與點會在容器寬度改變時分家。 */
+.axis {
+  position: relative;
+  height: 26px;
+}
+.tick {
+  position: absolute;
+  top: 6px;
+  transform: translateX(-50%);
+  font-size: 11.5px;
+  color: var(--tf-text-muted-aa);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.axisLabel {
+  grid-column: 2;
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+}
+
+.empty {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-md);
+  background: var(--tf-fill-subtle);
+  font-size: 13px;
+  color: var(--tf-text-muted-aa);
+}
+.empty p { margin: 0; }
+
+.exclList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}

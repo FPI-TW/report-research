@@ -10,7 +10,19 @@ import {
 } from './radarFormat'
 import styles from './BrokerList.module.css'
 
-interface Props {
+/**
+ * 受控展開（可選）。市場共識摘要的「查看券商觀點」要展開這裡的某一列，而
+ * 「哪一列是展開的」只能有一個真相來源——內外各留一份會讓兩個入口互相覆蓋。
+ * 不傳時退回元件自己的狀態，單獨使用 BrokerList 的呼叫端不受影響。
+ *
+ * 兩個欄位**綁成一組**而不是各自 optional：只傳 `openBroker` 而漏了 handler 的話，
+ * 展開鈕會完全點不動、而且沒有任何錯誤——用型別把那個組合擋在編譯期。
+ */
+type OpenControl =
+  | { openBroker: string | null, onOpenBrokerChange: (key: string | null) => void }
+  | { openBroker?: undefined, onOpenBrokerChange?: undefined }
+
+type Props = OpenControl & {
   brokers: BrokerSummary[]
   code: string
   market: Market
@@ -18,8 +30,11 @@ interface Props {
   onOpenReport: (reportId: string, fileName?: string | null) => void
 }
 
-export function BrokerList({ brokers, code, market, window, onOpenReport }: Props) {
-  const [open, setOpen] = useState<string | null>(null)
+export function BrokerList({
+  brokers, code, market, window, onOpenReport, openBroker, onOpenBrokerChange,
+}: Props) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState<string | null>(null)
+  const open = openBroker !== undefined ? openBroker : uncontrolledOpen
   // 面板 id 的前綴。桌機表格與手機卡片是兩份各自渲染的 DOM，若同一頁出現兩個
   // BrokerList（或 id 只由 broker key 組成），aria-controls 會指到別人的面板。
   const uid = useId()
@@ -28,7 +43,9 @@ export function BrokerList({ brokers, code, market, window, onOpenReport }: Prop
   const attributedBrokers = brokers.filter(broker => Boolean(broker.broker?.trim()))
 
   function toggle(key: string) {
-    setOpen(prev => (prev === key ? null : key))
+    const next = open === key ? null : key
+    if (openBroker !== undefined) onOpenBrokerChange?.(next)
+    else setUncontrolledOpen(next)
   }
 
   if (!attributedBrokers.length) {

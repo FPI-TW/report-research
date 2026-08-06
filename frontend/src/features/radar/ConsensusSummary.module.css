@@ -1,0 +1,388 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  gap: 16px;
+  align-items: start;
+}
+
+.main {
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-panel);
+  /* xs 而非 float：float 與 InstrumentCard 的 hover 態同值，靜止面板用它會讓人以為可拖曳。 */
+  box-shadow: var(--tf-shadow-xs);
+  min-width: 0;
+}
+
+.scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--tf-text-muted-aa);
+  cursor: help;
+  white-space: nowrap;
+}
+
+/* 螢幕閱讀器專用：資料範圍的完整說明。視覺上那句話收在 .scope 的 title 裡，
+   但 title 對鍵盤與輔助技術不可靠，所以另外掛一份給 aria-describedby 指。 */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 與 WindowSegmented 同一套視覺語言（分段控制＝互斥的資料選擇）。 */
+.seg {
+  display: inline-flex;
+  background: var(--tf-border-weak);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-seg);
+  padding: 3px;
+  gap: 2px;
+}
+
+.segBtn {
+  position: relative;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--tf-text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: var(--tf-sans);
+  padding: 4px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 44px;
+  transition: color var(--tf-dur-1) var(--tf-ease-standard);
+}
+.segBtn:hover { color: var(--tf-graphite); }
+.segBtn:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 1px;
+}
+.segOn { color: var(--tf-graphite); }
+
+.thumb {
+  position: absolute;
+  inset: 0;
+  background: var(--tf-surface);
+  box-shadow: var(--tf-shadow-seg);
+  border-radius: 8px;
+  z-index: 0;
+}
+.segLabel {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── EPS 口徑選擇器（Popover 不自帶定位，觸發鈕的 wrapper 要 relative） ── */
+.fyWrap { position: relative; }
+
+.fyTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 4px 10px;
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-md);
+  background: var(--tf-surface);
+  font-family: var(--tf-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--tf-text-1);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.fyTrigger:hover { border-color: var(--tf-graphite); }
+.fyTrigger:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 2px;
+}
+
+.fyMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 168px;
+  z-index: 20;
+}
+
+.fyItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--tf-radius-md);
+  background: none;
+  font-family: var(--tf-sans);
+  font-size: 13px;
+  color: var(--tf-text-1);
+  cursor: pointer;
+  text-align: left;
+}
+.fyItem:hover { background: var(--tf-graphite-tint); }
+.fyItem[aria-checked='true'] { font-weight: 600; }
+.fyItem[aria-checked='true']::after {
+  content: '✓';
+  color: var(--tf-gold-text);
+}
+.fyCount {
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 右欄 ── */
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.viewToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-card);
+  background: var(--tf-surface);
+  box-shadow: var(--tf-shadow-xs);
+  font-family: var(--tf-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tf-graphite);
+  cursor: pointer;
+}
+.viewToggle:hover { border-color: var(--tf-graphite); }
+.viewToggle:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 2px;
+}
+.viewToggle[aria-pressed='true'] {
+  background: var(--tf-graphite-tint);
+  border-color: var(--tf-graphite-line);
+}
+
+.detail {
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-panel);
+  box-shadow: var(--tf-shadow-xs);
+  padding: 18px 20px 20px;
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tf-text-muted-aa);
+}
+
+.detailHint {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--tf-text-muted-aa);
+}
+
+.detailName {
+  font-family: var(--tf-display);
+  font-weight: 600;
+  font-size: 22px;
+  line-height: 1.25;
+  color: var(--tf-text-1);
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.detailFacts {
+  margin: 14px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.detailFacts div {
+  padding-top: 12px;
+  border-top: 1px solid var(--tf-divider);
+}
+.detailFacts dt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tf-text-muted-aa);
+}
+/* 600 而非 700：這一格多數時候是阿拉伯數字，但缺值時會是「未提供」——中文字型堆疊
+   （PingFang TC 最重 600、JhengHei 只有 Bold）在 700 會走合成假粗體，於是同一個欄位
+   有值與缺值兩種狀態的筆畫重量不一致。取兩者都成立的 600。 */
+.detailFacts dd {
+  margin: 4px 0 0;
+  font-family: var(--tf-display);
+  font-weight: 600;
+  font-size: 21px;
+  line-height: 1.2;
+  color: var(--tf-text-1);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.detailNote {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--tf-sans);
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+}
+
+/* 新鮮度徽章一律中性底：研報過 90 天是常態不是錯誤，紅底會把它讀成故障。
+   三種狀態的區分靠文字（FRESHNESS_LABEL），不靠顏色。 */
+.freshBadge {
+  display: inline-block;
+  margin: 14px 0 0;
+  padding: 3px 10px;
+  border-radius: var(--tf-radius-pill);
+  background: var(--tf-border-weak);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tf-text-muted-aa);
+}
+.recent { color: var(--tf-text-2); }
+.stale,
+.unknown { color: var(--tf-text-muted-aa); }
+
+.detailBtn, .detailBtnGhost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: var(--tf-radius-md);
+  font-family: var(--tf-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.detailBtn {
+  border: 1px solid var(--tf-graphite);
+  background: var(--tf-surface);
+  color: var(--tf-graphite);
+}
+.detailBtn:hover { background: var(--tf-graphite-tint); }
+.detailBtnGhost {
+  border: 1px solid var(--tf-border);
+  background: var(--tf-surface);
+  color: var(--tf-text-2);
+  font-weight: 500;
+}
+.detailBtnGhost:hover { border-color: var(--tf-graphite); }
+.detailBtn:focus-visible, .detailBtnGhost:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 2px;
+}
+
+/* ── 表格檢視 ── */
+/* 中文的 min-content 是一個字：只給 overflow-x 而不給 min-width，表格會被壓成逐字直排。 */
+.tableWrap {
+  overflow-x: auto;
+  padding: 6px 0 8px;
+}
+.table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.table th,
+.table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--tf-divider);
+  color: var(--tf-text-1);
+}
+.table thead th {
+  background: var(--tf-fill-subtle);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tf-text-muted-aa);
+  white-space: nowrap;
+}
+.table tbody tr:last-child th,
+.table tbody tr:last-child td { border-bottom: 0; }
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.table td.dateCell {
+  color: var(--tf-text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rowHead { font-weight: 400; }
+.rowOn { background: var(--tf-graphite-tint); }
+
+.pickBtn {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-family: var(--tf-sans);
+  font-size: 13px;
+  color: var(--tf-graphite);
+  cursor: pointer;
+  text-align: left;
+}
+.pickBtn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.pickBtn:focus-visible {
+  outline: 2px solid var(--tf-graphite);
+  outline-offset: 2px;
+}
+.pickBtn[aria-pressed='true'] { font-weight: 600; }
+
+.cellNote {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--tf-text-muted-aa);
+}
+.na { color: var(--tf-text-muted-aa); }
+
+.tableEmpty {
+  margin: 14px 26px;
+  font-size: 13px;
+  color: var(--tf-text-muted-aa);
+}
+
+@media (max-width: 1080px) {
+  .layout { grid-template-columns: 1fr; }
+  .side { flex-direction: row-reverse; align-items: flex-start; }
+  .detail { flex: 1; }
+  .viewToggle { flex: none; }
+}
+
+@media (max-width: 900px) {
+  .side { flex-direction: column; }
+  .tableEmpty { margin: 14px 16px; }
+}

@@ -556,6 +556,11 @@ def _gather_runtime() -> dict:
             "ingest": _proc_alive("ingest_all.py"),
             "tag": _proc_alive("tag_all_cli.py"),
             "summaries": _proc_alive("generate_summaries.py"),
+            # 訊號擷取沒有進度表徵，只能靠這一格。signal 覆蓋率卡刻意只量近 30 天
+            # （見 _fetch_db_stats_snapshot 的註解），而擷取的積壓絕大多數比 30 天舊
+            # ——2026-08-06 實測缺訊號的 13,821 篇裡只有 156 篇落在窗口內。也就是說
+            # 回補歷史時那張卡幾乎不動，少了這一格就完全看不出批次在不在跑。
+            "signals": _proc_alive("extract_signals.py"),
         },
         "orchestrator": _parse_orchestrator_entry(_orchestrator_last()),
         # 生產實際的入庫路徑（每 3 小時）與 unit 失敗告警的第一個讀取端。

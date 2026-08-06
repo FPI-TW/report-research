@@ -21,7 +21,21 @@ export const sourceCountSchema = z.object({
 export const taggingSchema = z.object({ done: z.number(), total: z.number(), fail: z.number(), pct: z.number() })
 export const ingestSchema = z.object({ ingested: z.number(), chunks: z.number(), fail: z.number() })
 export const summarySchema = z.object({ done: z.number(), total: z.number(), remaining: z.number(), pct: z.number() })
-export const pipelinesSchema = z.object({ web: z.boolean(), ingest: z.boolean(), tag: z.boolean(), summaries: z.boolean() })
+/**
+ * 各批次管線是否在跑（後端 `_proc_alive` 掃 /proc 比對 cmdline）。
+ *
+ * `signals` 用 optional 的理由同 progressSchema 下方那三塊：滾動部署期間前端可能
+ * 先上線，缺鍵就整張監控頁 parse 失敗變空白，代價遠大於少一列。
+ * 未涵蓋 `generate_titles.py` 與 `extract_takeaways.py`——它們同樣沒有表徵，
+ * 要補是同一個模式（後端加一格 + 這裡加一個 optional + ROWS 加一列）。
+ */
+export const pipelinesSchema = z.object({
+  web: z.boolean(),
+  ingest: z.boolean(),
+  tag: z.boolean(),
+  summaries: z.boolean(),
+  signals: z.boolean().optional(),
+})
 /** 派生資產新鮮度：比 summary 多一個 latest（全表最新產出日）。 */
 export const coverageSchema = summarySchema.extend({ latest: z.string().nullable() })
 

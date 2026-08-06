@@ -162,15 +162,25 @@ fi
 #    5047 份）。綁本輪新檔的話，沒有新研報進來的日子它就完全不動——而雷達正是這樣
 #    從 2026-07-16 起靜止了兩週。
 #
-#    **`--limit` 不可省，這是本段最重要的一行**：訊號擷取每份約 100-135s，5047 份
-#    不設上限就是連續佔住 claude CLI 鎖八十小時以上，期間每一輪 sync 的匯入都會撞鎖
-#    以 rc=75 收場——而匯入撞鎖的代價不是「下輪再來」：rsync 已把檔案落到本地，
+#    **`--limit` 不可省，這是本段最重要的一行**：訊號擷取每份每 worker 約 100-135s，
+#    5047 份不設上限就是連續佔住 claude CLI 鎖八十小時以上，期間每一輪 sync 的匯入都會
+#    撞鎖以 rc=75 收場——而匯入撞鎖的代價不是「下輪再來」：rsync 已把檔案落到本地，
 #    `--size-only` 讓下一輪 delta 不再列出它們，那批研報就要靠 `--all-local` 手動補。
 #    也就是說，讓這段跑太久會反過來把主資料流弄停。
 #
+#    **上限值是從吞吐與視窗回推的，不是隨手填的**：2026-08-06 實測 6 份 / 167s
+#    （預設 2 workers）＝ 每份約 28s 牆鐘，最壞情況以上面的 135s/份/worker 估則約
+#    68s 牆鐘。100 份 ⇒ 常態約 47 分、最壞約 113 分，加上前面 rsync＋匯入的數分鐘，
+#    都還在 3 小時視窗內。**要再往上調就得重量一次吞吐**——超出視窗不會壞資料
+#    （systemd 不會讓同一個 service 併跑，下一輪只會被延後），但匯入會跟著延。
+#
+#    先前預設 15 是 2026-07-30 積壓 5047 份時的保守值；那個速率要 42 天才清得完一輪
+#    積壓，而 2026-08-05 一次大批量手動擷取留下 5932 列 rejected（fail log 全是
+#    「CLI 無回應或逾時」），待擷取因此回升到 2828 份。100 份/輪 ⇒ 約 3.5 天清完。
+#
 #    擷取順序是 `report_date DESC`（見 extract_signals.py 的 _REPORTS_SQL），所以
 #    限量取的一定是最新的那幾份：雷達保持在最新狀態，歷史積壓在背景慢慢排。
-SIGNAL_LIMIT=${SYNC_SIGNAL_LIMIT:-15}
+SIGNAL_LIMIT=${SYNC_SIGNAL_LIMIT:-100}
 log "擷取觀點雷達訊號（每輪最多 ${SIGNAL_LIMIT} 份，新→舊；冪等，無新工作即 no-op）"
 SIGNAL_RC=0
 nice -n 19 ionice -c3 "$UV" run python scripts/extract_signals.py \
@@ -180,6 +190,31 @@ nice -n 19 ionice -c3 "$UV" run python scripts/extract_signals.py \
 if [ "$SIGNAL_RC" -ne 0 ]; then
   log "訊號擷取非零退出 rc=${SIGNAL_RC}（best-effort，已略過）"
   record_unit_failure "extract_signals" "$SIGNAL_RC"
+fi
+
+# 7) 顯示標題的歷史積壓（best-effort）。**與 4b 那段刻意分開，不是重複**：4b 補的是
+#    「本輪新研報」的缺值（--hashes-file），這段排的是跨全語料的積壓——而兩者的差別
+#    正是 4b 永遠碰不到後者：2026-08-06 實測 14,800 篇有 11,879 篇沒有 title（80%），
+#    但近一年只差 1 篇。也就是說缺的全是一年以上的舊檔，它們永遠不會出現在任何一輪的
+#    --hashes-file 裡，不另外排就是永遠不補，讀者在舊研報上看到的永遠是券商流水號檔名。
+#
+#    **同樣以 --limit 限量，理由與 6) 一字不差**：不設上限＝連續佔住 claude 鎖，把主
+#    資料流弄停。generate_titles.py 的順序是 `report_date DESC NULLS LAST, file_name`，
+#    故限量取的一定是最新的那批缺值。標題只餵 3000 字（訊號餵 16000），每份遠比訊號快，
+#    60 份/輪 ≈ 每日 480 份；訊號積壓清完後這段就是視窗裡唯一的長工，屆時可再往上調。
+#
+#    放在 6) 之後而不是之前，是因為雷達訊號的時效性較高：兩者搶同一支 claude CLI，
+#    先跑的那個吃掉的是後面那個的預算。
+TITLE_BACKLOG_LIMIT=${SYNC_TITLE_BACKLOG_LIMIT:-60}
+log "補顯示標題的歷史積壓（每輪最多 ${TITLE_BACKLOG_LIMIT} 份，新→舊；冪等，無缺值即 no-op）"
+TITLE_BACKLOG_RC=0
+nice -n 19 ionice -c3 "$UV" run python scripts/generate_titles.py \
+  --limit "$TITLE_BACKLOG_LIMIT" \
+  ${SYNC_TITLE_WORKERS:+--workers "$SYNC_TITLE_WORKERS"} >>"$LOG" 2>&1 \
+  || TITLE_BACKLOG_RC=$?
+if [ "$TITLE_BACKLOG_RC" -ne 0 ]; then
+  log "標題積壓補值非零退出 rc=${TITLE_BACKLOG_RC}（best-effort，已略過）"
+  record_unit_failure "generate_titles_backlog" "$TITLE_BACKLOG_RC"
 fi
 
 rm -f "$DELTA"

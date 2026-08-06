@@ -88,6 +88,15 @@ jobs:
       # 立刻失敗，而不是變成一個每次多跑好幾分鐘的沉默成本。
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
+      # 本 job 下面那一步保證會裝好 CJK 字型，所以這裡承諾「字型一定在」：
+      # tests/test_rendered_pdf_content.py 的中文那幾組**不准退回 skip**。
+      # 語意與 schema job 的 REPORT_MARK_REQUIRE_DB 相同（同樣用 truthiness 判定）。
+      # 存在理由是 skip 的靜默性：字型步驟即使 exit 0 也可能沒真的裝到（快取被截斷、
+      # 上游改套件名），那時中文那幾組會整批變 skipped、CI 全綠而覆蓋率無聲蒸發。
+      # 這條與字型步驟末尾的 fc-list 斷言是**兩道獨立的門**：fc-list 驗「系統認得字型」，
+      # 這條驗「Typst 真的用得到、而且抽得回中文」——前者過而後者不過是可能的
+      # （例如 Typst 找到的字型不含中文字符對應）。
+      REPORT_MARK_REQUIRE_CJK: "1"
     steps:
       - uses: actions/checkout@v4
 

@@ -27,37 +27,108 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function blockAfter(source: string, marker: RegExp, label: string): string {
-  const match = marker.exec(source)
-  expect(match, `${label} 應存在`).not.toBeNull()
+/**
+ * 先剝掉 CSS 註解再解析。
+ *
+ * 不剝的話註解裡引用選擇器或 media query 的字串會被當成真的規則——RadarPage.module.css
+ * 就有一段註解逐字引用了 `@media (max-width: 900px)`，解析器會從那裡往後找第一個 `{`，
+ * 於是把**下一條規則**的內容當成它的區塊。舊版只取第一個匹配，剛好排在真規則之後才沒出事；
+ * 註解要是寫在規則之前，驗的就是完全不相干的區塊，而且照樣是綠的。
+ */
+function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '')
+}
 
-  const openBrace = source.indexOf('{', match!.index)
-  expect(openBrace, `${label} 應有區塊`).toBeGreaterThanOrEqual(0)
-
+/** 從 openBrace 起走到配對的右大括號，回傳區塊內容。 */
+function braceBody(source: string, openBrace: number, label: string): string {
   let depth = 0
   for (let index = openBrace; index < source.length; index += 1) {
     if (source[index] === '{') depth += 1
     if (source[index] === '}') depth -= 1
     if (depth === 0) return source.slice(openBrace + 1, index)
   }
-
   throw new Error(`${label} 缺少結尾大括號`)
 }
 
+/**
+ * 取 marker 命中的**每一個**區塊。
+ *
+ * 回傳陣列而不是第一個匹配，是這支契約 2026-08-06 之前最大的破口：
+ * **CSS 生效的是最後一次宣告，不是第一次。** 只看第一個匹配的話，在檔尾追加一條
+ * 覆蓋規則（`.layout { grid-template-columns: 1fr; }`）版面整個毀掉，而每一條斷言
+ * 都還是綠的——契約看起來在守，實際上守的是一份不生效的宣告。
+ * ReportCssContracts 早就是這個作法（見該檔 `blocksFor` 的註解），這支一直沒跟上。
+ */
+function blocksAfter(source: string, marker: RegExp, label: string): string[] {
+  const all = marker.flags.includes('g')
+    ? marker
+    : new RegExp(marker.source, `${marker.flags}g`)
+  const out: string[] = []
+  for (const match of source.matchAll(all)) {
+    const openBrace = source.indexOf('{', match.index)
+    expect(openBrace, `${label} 應有區塊`).toBeGreaterThanOrEqual(0)
+    out.push(braceBody(source, openBrace, label))
+  }
+  return out
+}
+
+/**
+ * 去掉所有 @media 區塊，留下基礎層。
+ *
+ * 沒有這一步，「整檔搜某個選擇器」會把 @media 裡的覆蓋規則跟基礎規則混在一起，
+ * 而本檔多數選擇器正是「基礎層一份 ＋ 窄螢幕一份」（.grid／.thesis／.scroll／
+ * .layout 都是）。要驗窄螢幕那份請顯式走 mediaBlock()。
+ */
+function baseLayer(source: string): string {
+  let out = ''
+  let index = 0
+  while (index < source.length) {
+    const at = source.indexOf('@media', index)
+    if (at === -1) {
+      out += source.slice(index)
+      break
+    }
+    out += source.slice(index, at)
+    const openBrace = source.indexOf('{', at)
+    if (openBrace === -1) break
+    const body = braceBody(source, openBrace, '@media')
+    index = openBrace + body.length + 2
+  }
+  return out
+}
+
 function mediaBlock(source: string, maxWidth: number): string {
-  return blockAfter(
-    source,
+  const label = `@media (max-width: ${maxWidth}px)`
+  const blocks = blocksAfter(
+    stripComments(source),
     new RegExp(`@media\\s*\\(max-width:\\s*${maxWidth}px\\)`),
-    `@media (max-width: ${maxWidth}px)`,
+    label,
+  )
+  // 同一個查詢寫兩次＝後者覆蓋前者，此時「這個查詢裡宣告了什麼」沒有單一答案。
+  expect(blocks.length, `${label} 應恰好出現一次，實際 ${blocks.length} 次`).toBe(1)
+  return blocks[0]
+}
+
+/** 某選擇器在基礎層的所有規則區塊（依出現順序，後者層疊勝出）。 */
+function ruleBlocks(source: string, selector: string): string[] {
+  return blocksAfter(
+    baseLayer(stripComments(source)),
+    new RegExp(`(?:^|[}\\n])\\s*${escapeRegExp(selector)}\\s*\\{`),
+    selector,
   )
 }
 
+/** 只在「該選擇器應該只有一個區塊」的斷言裡用；多於一個就無法判定，直接紅。 */
 function ruleBlock(source: string, selector: string): string {
-  return blockAfter(
-    source,
-    new RegExp(`${escapeRegExp(selector)}\\s*\\{`),
-    selector,
-  )
+  const blocks = ruleBlocks(source, selector)
+  expect(blocks.length, `${selector} 應恰好宣告一次，實際 ${blocks.length} 次`).toBe(1)
+  return blocks[0]
+}
+
+/** 取區塊裡某屬性的所有宣告值（同屬性重複宣告一樣是後者生效）。 */
+function declarations(block: string, property: string): string[] {
+  const re = new RegExp(`(?:^|[;{])\\s*${escapeRegExp(property)}\\s*:\\s*([^;}]+)`, 'g')
+  return [...block.matchAll(re)].map((match) => match[1].trim().replace(/\s+/g, ' '))
 }
 
 function expectDeclaration(
@@ -66,8 +137,12 @@ function expectDeclaration(
   property: string,
   value: string,
 ): void {
-  const body = ruleBlock(source, selector).replace(/\s+/g, ' ')
-  expect(body).toContain(`${property}: ${value};`)
+  const values = ruleBlocks(source, selector).flatMap((block) =>
+    declarations(block, property),
+  )
+  expect(values.length, `${selector} 應宣告 ${property}`).toBeGreaterThan(0)
+  // 比最後一個而不是「有沒有出現過」：層疊生效的是最後一次宣告。
+  expect(values.at(-1), `${selector} 的 ${property} 生效值`).toBe(value)
 }
 
 function tokenValue(name: string): string {

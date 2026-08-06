@@ -126,7 +126,7 @@ flowchart TD
   - 單筆失敗只寫 `data/takeaway_failures.log`，不中斷、不影響檢索/問答
 - **輸出**：`research.report_takeaway`（閱讀頁 `/api/reading/{file_hash}` 讀取時零 LLM）
 - **指令**：`make takeaways`＝`uv run python scripts/extract_takeaways.py`；旗標 `[--since-days 90] [--hashes-file PATH] [--workers 2] [--limit N] [--excerpt 24000] [--model M] [--reextract] [--dry-run]`
-- **成本**：預設 90 天約 549 篇、約 2-3 小時；全語料 14,575 篇要跑十天以上，故預設不跑全量
+- **成本**：預設 90 天約 643 篇、約 2-3 小時；全語料 14,800 篇要跑十天以上，故預設不跑全量
 - ⚠️ **接排程一律用 `--hashes-file`（它會忽略 `--since-days`），不要用 `--since-days 1`**：後者濾的是 `report_date`（研報自己標的日期）而非入庫時間，而 NAS 匯入的研報日期常比入庫日早——實測近 10 天入庫的 90 篇裡有 79 篇（88%）`report_date` 超過一天前，用天數接排程會**靜默**漏掉近九成新研報。`scripts/sync_new_reports.sh` 走的就是 `--hashes-file data/.sync_last_hashes`（本輪新入庫的 `file_hash` 清單）。
 - ⚠️ **不可與其他 `claude` CLI 批次同時跑**：併發搶 `claude` CLI 會讓擷取大量被誤判 `rejected`（真因不是資料壞、也不是模型壞，是搶資源）。現由 `scripts/_claude_lock.py` 的跨進程鎖強制，見下方〈claude CLI 批次互斥〉。
 
@@ -137,8 +137,9 @@ flowchart TD
 - **做什麼**：asyncio ＋ Semaphore（`--workers` 預設 2）逐報告 spawn `claude -p`（預設 Sonnet），依固定 schema 擷取評等／目標價／EPS 預估／四維論點，Python 端正規化（五級評等映射、目標價保幣別）後 upsert；**一列＝「一份研報 × 一個標的」的不可覆寫歷史快照**。**checkpoint-resume 條件**：該報告的所有 requested 標的皆已有列、狀態 ∈ (`valid`, `partial`) 且 `extraction_version` 相符 → 跳過（`--reextract` 強制重跑）
 - **輸出**：`research.report_signal`（讀雷達時零 LLM——跨券商共識、四分位與跨期變動全由 `app/services/radar/` 決定性計算）
 - **指令**：`make signals`＝`uv run python scripts/extract_signals.py`；旗標 `[--min-brokers 3] [--min-reports 5] [--top-n 50] [--workers 2] [--limit N] [--excerpt 16000] [--model M] [--reextract] [--dry-run]`
-- **刻意只跑高覆蓋子集**：全語料僅約 0.68%（99 篇）有訊號。**「沒有訊號」是常態不是錯誤**——雷達對「有研報但尚未擷取」回 200 的 `pending_extraction` 空狀態（完全查無研報才 404），閱讀頁則整區不進 DOM。
-- **已納入排程（每 3 小時，每輪限量）**：`scripts/sync_new_reports.sh` 最後一段跑 `--limit ${SYNC_SIGNAL_LIMIT:-15}`，且**刻意不綁本輪新檔**——它排的是跨全語料的積壓（2026-07-30 實測待擷取 5047 份），綁新檔的話沒有新研報進來就完全不動，雷達正是這樣從 2026-07-16 起靜止兩週。**`--limit` 是安全機制不是調校旋鈕**：不設上限＝連續佔住 claude 鎖八十小時以上，期間每輪匯入撞鎖 rc=75，而匯入撞鎖的那批研報會從 delta 消失（`rsync --size-only` 下輪不再列出），得靠 `--all-local` 手動補。擷取順序是 `report_date DESC`，故限量取的一定是最新那幾份：雷達保持最新，歷史積壓在背景慢慢排。
+- **刻意只跑高覆蓋子集**：全語料約 16.4%（2,429 篇）有訊號（2026-08-06 實測；2026-07-17 曾只有 0.68%／99 篇，差距是排程積壓一路排出來的，不是門檻放寬）。**「沒有訊號」仍是常態不是錯誤**——雷達對「有研報但尚未擷取」回 200 的 `pending_extraction` 空狀態（完全查無研報才 404），閱讀頁則整區不進 DOM。
+- **`rejected` 佔全表約 48%（5,932 列）且幾乎全在 2026-08-05 一天內產生**，`data/signal_failures.log` 對應的錯誤一律是「CLI 無回應或逾時」——那天有一次大批量手動擷取，正是〈claude CLI 批次互斥〉那條在描述的失敗型態（資料沒壞、模型也沒壞）。`rejected` **不算 checkpoint 完成**，所以那 2,828 份會被之後每一輪重新排入；同一批報告以排程限量重跑（2026-08-06，9/9）全數成功。判讀覆蓋率時要扣掉 rejected：`extraction_status IN ('valid','partial')` 才是真的有訊號。
+- **已納入排程（每 3 小時，每輪限量）**：`scripts/sync_new_reports.sh` 跑 `--limit ${SYNC_SIGNAL_LIMIT:-100}`（2026-08-06 由 15 調高；上限是從實測吞吐 6 份/167s＝約 28s/份牆鐘與 3 小時視窗回推的，最壞情況估 68s/份仍在視窗內——**要再調就得重量一次吞吐**），且**刻意不綁本輪新檔**——它排的是跨全語料的積壓（2026-07-30 實測待擷取 5047 份），綁新檔的話沒有新研報進來就完全不動，雷達正是這樣從 2026-07-16 起靜止兩週。**`--limit` 是安全機制不是調校旋鈕**：不設上限＝連續佔住 claude 鎖八十小時以上，期間每輪匯入撞鎖 rc=75，而匯入撞鎖的那批研報會從 delta 消失（`rsync --size-only` 下輪不再列出），得靠 `--all-local` 手動補。擷取順序是 `report_date DESC`，故限量取的一定是最新那幾份：雷達保持最新，歷史積壓在背景慢慢排。
 - ⚠️ **不可與其他 `claude` CLI 批次同時跑**（同一個搶 CLI 的坑，見 ④；互斥由 `scripts/_claude_lock.py` 強制）
 
 ### ⑥ 摘要生成 — `scripts/generate_summaries.py`（Claude CLI）
@@ -172,7 +173,8 @@ flowchart TD
 - **輸出**：`research.research_report.title`（讀取時零 LLM；所有呈現層一律「有標題顯示標題、缺標題回退檔名」）
 - **「一律繁體中文」是 prompt 的機率性保證，確定性收尾在 `app/services/zh_hant.py`**：2026-07-31 的台股頭條就是模型把英文標題翻成了整句簡體（`title_source=translated`）。④⑤⑥⑦ 四支批次的 LLM 轉述文字都過這一關（`title`／`summary`／`claim`／thesis `summary`），**逐字引文與原句刻意不過**（理由見下方工具段）。線上的兩條串流路徑同樣有接：問答（`app/services/answer.py` 的主 RAG 與 overview 收尾，畫面靠 `done` 的加法欄位 `answer` 校正）與深度研報（`app/services/report.py` 的**單次與逐節兩個組裝點**，前端不渲染研報草稿故不需要校正事件）。存量由 `scripts/backfill_traditional.py` 清。比照本 repo 對研報版面的一貫作法：用 Python 收尾，不去改四份平行的 prompt 副本
 - **指令**：`make titles`＝`uv run python scripts/generate_titles.py`；旗標 `[--workers 2] [--limit N] [--excerpt 3000] [--hashes-file PATH]`
-- ⚠️ 同樣受 `claude` CLI 併發之限（互斥由 `scripts/_claude_lock.py` 強制，見下方）：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段（只補本輪新研報）
+- **排程有兩段，兩段都必要**：`scripts/sync_new_reports.sh` 在增量匯入後跑本階段補「本輪新研報」的缺值（`--hashes-file`），另在訊號之後跑一段跨全語料的**歷史積壓**（`--limit ${SYNC_TITLE_BACKLOG_LIMIT:-60}`，2026-08-06 新增）。少了後者，一年以上的舊檔永遠不會出現在任何一輪的 `--hashes-file` 裡＝永遠不補：實測 14,800 篇有 11,879 篇（80%）沒有 `title`，而近一年只差 1 篇——缺的全是舊檔
+- ⚠️ 同樣受 `claude` CLI 併發之限（互斥由 `scripts/_claude_lock.py` 強制，見下方）
 
 ### 編排與離線優化
 - **`scripts/resume_corpus.sh`**：一鍵編排——鎖檔（`data/.resume_corpus.lock` + PID 檢查）防重入，並行起 `tag_all_cli.py` 與 `ingest_all.py`，待首輪導入消化 backlog → 等標註全數完成 → 補跑 catch-up 導入；各階段時間戳記寫 `data/resume_orchestrator_*.log`。`bash scripts/resume_corpus.sh`
@@ -338,19 +340,23 @@ uv run python scripts/search.py "利率與殖利率" --market MACRO
 - **掃描型 PDF 無 OCR**：`extract_all.py` 以可抽文字 < 100 字判 `scanned=true`，導入階段以 `skip_scanned` 計數略過——刻意排除，不提供 OCR。
 - 標註/導入失敗各自記 `data/tag_failures.log`、`data/ingest_failures.log` 供事後排查。
 
-**資料現況**（實測 2026-07-17）——UI 要據此**優雅降級**，缺欄是常態不是錯誤：
+**資料現況**（實測 2026-08-06）——UI 要據此**優雅降級**，缺欄是常態不是錯誤：
 
 | 項目 | 覆蓋 |
 |------|------|
-| 語料規模 | 14,575 篇（近 90 天 549 篇）|
+| 語料規模 | 14,800 篇（近 90 天 643 篇）|
 | 檔案類型 | PDF 99.8% |
-| `full_text` | 100%（平均 18,220 字、最大 487,187）|
-| `summary` | 70% |
+| `full_text` | 100%（平均 18,386 字、最大 487,187）|
+| `summary` | 100% |
 | `source` | 97.8% |
-| `report_type` | **19.5%** |
-| 結構化訊號（`report_signal`）| **0.68%（99 篇）**|
+| `report_type` | **19.2%** |
+| `title`（顯示標題）| **19.7%**——但近一年的缺口只有 1 篇，缺的全是一年以上的舊檔（排程積壓中，見 ⑦）|
+| 結構化訊號（`report_signal`）| **16.4%（2,429 篇，只計 valid/partial）**|
+| 重點摘錄（`report_takeaway`）| 817 篇；**近 90 天 643 篇中有 641 篇**（批次只跑近 90 天，見 ④）|
 
-> 例：閱讀頁在訊號缺席時整個觀點區**不進 DOM**——99.3% 的報告都沒有訊號，那是常態；渲染空框或骨架只會讓讀者以為壞了。同理 `report_type` 僅約兩成有值，任何以它為主軸的分組/篩選都要能承受大量 null。
+> 例：閱讀頁在訊號缺席時整個觀點區**不進 DOM**——83.6% 的報告沒有訊號，那是常態；渲染空框或骨架只會讓讀者以為壞了。同理 `report_type` 僅約兩成有值，任何以它為主軸的分組/篩選都要能承受大量 null。
+>
+> **這張表的每個數字都會隨排程漂移**（訊號 0.68%→16.4%、`summary` 70%→100% 都是排程排出來的），引用前先重量，不要把它當常數抄進程式或別的文件。
 
 ---
 

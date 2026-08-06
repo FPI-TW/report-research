@@ -104,10 +104,92 @@ jobs:
       # （見 README 部署章節）。runner 預設沒有：PDF 照樣編得出來、頁數也正常，
       # 但中文字位沒有 ToUnicode 對應，抽字全變 \x00 —— 於是「渲染後 PDF 真的含
       # 免責」這類內容守門在 CI 上會變成假失敗（或被跳過而失去意義）。
+      #
+      # 2026-08-05 事故：PR #192 只改三個前端 CSS/TSX 檔、**零個後端檔**，卻在這一步紅掉。
+      # 鏡像把 61.2MB 的 fonts-noto-cjk 拖了 24.7 分鐘仍未完成，撞上本 job 的
+      # timeout-minutes: 25，訊息只有 `The operation was canceled.` —— 一條測試都還沒
+      # 開始跑，看起來卻像測試壞了（同一套測試另外五次都在 3.5 分鐘內完成）。
+      # 三個手段各治一種失敗，缺一不可：
+      #   actions/cache          → 治「鏡像不可用或很慢」：命中就完全不碰鏡像。
+      #                            這是唯一真正移除失敗模式的，其餘兩個只是止血。
+      #   apt 的 Retries/Timeout → 只治「連上了但不吐位元組」的卡死。
+      #   step 的 timeout-minutes→ 只治「一直在吐、只是很慢」。本次事故正是這一種
+      #                            （61.2MB / 24.7 分鐘 ≈ 40KB/s），apt 的任何逾時設定
+      #                            對它完全無效 —— 理由見下面 Acquire::http::Timeout 那條。
+      - name: 還原 CJK 字型 .deb 快取
+        uses: actions/cache@v4
+        # 快取服務本身也是網路呼叫（要拉 61MB），沒有上界的話它也能吃掉整個 job 的 25 分鐘
+        # —— 與這次事故同型。服務不可用時 actions/cache 是 warning 不是失敗，會自然退回下載路徑。
+        timeout-minutes: 5
+        with:
+          path: ~/deb-cache
+          # key 刻意是固定字串（只有結尾的 v1 由人手動加）。拿套件版本當 key 就得先
+          # apt-get update 去問鏡像 —— 那正是要避開的網路呼叫，等於白做。
+          # 代價是快取凍結在當初抓到的那一版：可接受。這顆字型只用來讓測試 PDF 的中文
+          # 抽得回來、不進生產（生產機自己裝），版本凍結與 gitleaks 釘死版本是同一種
+          # 好處 —— 某天 CI 紅掉不會是因為上游換了東西。GitHub 快取 7 天無存取即淘汰，
+          # 久沒動的 repo 會自己抓回新版，不需要人管。
+          key: noto-cjk-deb-${{ runner.os }}-${{ runner.arch }}-v1
+
       - name: 安裝 CJK 字型（研報 PDF 內容測試需要）
+        # 正常耗時：快取命中約 5 秒；未命中（apt-get update ＋ 61MB 下載 ＋ dpkg 解壓）約 30 秒。
+        # 取 6 分鐘 ≈ 12 倍餘裕，且**必須嚴格小於 job 的 timeout-minutes**，否則先撞到的
+        # 是 job 逾時、訊息又退回那句沒有歸屬的 operation was canceled。
+        # 內層還有一個 timeout 240（只包下載），刻意再小一階，好讓腳本自己拿回控制權印出
+        # 歸因訊息；剩下的約 120 秒留給 update、dpkg 與 fc-cache。三個數字的關係是
+        # 「內層下載 + 安裝尾巴 < step < job」，調任何一個都要一起看。
+        timeout-minutes: 6
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          set -euo pipefail
+          DEB_DIR="$HOME/deb-cache"
+          PKG=fonts-noto-cjk
+          mkdir -p "$DEB_DIR"
+
+          # 失敗一律走這裡：::error 會變成 run 摘要頁最上方的 annotation，不必展開 log
+          # 就知道是字型掛了，而不是「後端測試紅了」。
+          fail() { echo "::error title=CJK 字型安裝失敗::$1"; exit 1; }
+
+          if ! compgen -G "$DEB_DIR/${PKG}_*.deb" > /dev/null; then
+            echo "快取未命中，向 apt 鏡像下載 ${PKG}"
+            # Acquire::http::Timeout 是**停滯**逾時（連線階段與其後每次 socket 讀寫各自
+            # 套用），**不是整包下載的總預算**，上游預設 120 秒。所以對方持續涓滴吐位元組
+            # 時它一輩子不會觸發 —— 本次事故就是這一種，只有 step 逾時擋得住。
+            # Acquire::Retries 上游預設 0：一次 5xx 或連線重置就直接放棄。
+            # 刻意不對 apt-get update 加內層 timeout：索引本來就有數十 MB，在慢鏡像上
+            # 收得太緊會把「慢但會完成」的日子從綠改成紅，那是新製造的失敗而不是修法。
+            APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+            sudo apt-get update -qq "${APT_OPTS[@]}" || fail "apt-get update 失敗（鏡像不可用？）"
+            # apt-get download **不需要 root**：以現有身分把 .deb 放進當前目錄，不必碰
+            # root 所有的 /var/cache/apt/archives。檔名含 URL 編碼的 epoch
+            # （fonts-noto-cjk_1%3a20230817+repack1-3_all.deb），所以下面一律用 glob 比對。
+            ( cd "$DEB_DIR" && timeout 240 apt-get download "$PKG" "${APT_OPTS[@]}" ) \
+              || fail "${PKG} .deb 下載逾時或失敗（61MB，正常 <20 秒）"
+          fi
+
+          # dpkg -i 而非 apt-get install ./x.deb：後者會再連一次鏡像解相依，快取就白做。
+          # 這顆套件可以單獨裝，依據是兩條可自行重跑的指令（不要改成引用某次 CI log）：
+          #   apt-cache depends fonts-noto-cjk        → 只有「建議: fonts-noto-cjk-extra」，零 Depends
+          #   apt-get download --print-uris fonts-noto-cjk → 單一 URI，61,229,778 bytes
+          # 但那是對**今天這顆 runner 映像**的觀察、不是契約，所以留一條會吵的退路。
+          sudo dpkg -i "$DEB_DIR/${PKG}"_*.deb || {
+            echo "::warning title=字型相依未滿足::dpkg 失敗，退回 apt 修相依（runner 映像可能變了）"
+            sudo apt-get -y -f install || fail "dpkg 與 apt-get -f install 都失敗"
+          }
+          sudo fc-cache -f > /dev/null
+
+          # ── 後置條件斷言（不是重複檢查）──
+          # 上面每一步都可能 exit 0 卻沒真的裝到字型：快取命中但 .deb 被截斷、上游改套件名、
+          # 裝進 fontconfig 不看的路徑。而「安靜地沒有字型」比整步失敗更糟 ——
+          # tests/test_rendered_pdf_content.py 的 _cjk_extractable() 會把中文那幾組改成
+          # skip，CI 全綠、覆蓋率無聲蒸發（2026-08-05 實測 CI 是 4 skipped，那 4 條是需要
+          # DB 的那兩支，中文那組當時確實有跑）。所以裝完一定要當場證明字型在。
+          # sans 與 serif 兩個都驗：研報標題吃 Noto Serif CJK，缺了是靜默退回 sans。
+          command -v fc-list > /dev/null \
+            || fail "映像上沒有 fontconfig，無法驗證字型（WeasyPrint 那軌也會不能用）"
+          for fam in "noto sans cjk" "noto serif cjk"; do
+            fc-list :lang=zh family | grep -qi "$fam" \
+              || fail "fc-list 找不到 ${fam}；PDF 中文內容測試會靜默退化成 skip"
+          done
 
       # 沒有這一步，tests/test_spa_serving.py 依賴 dist 的那題會 skip 而非跑。
       - name: 取回前端 dist

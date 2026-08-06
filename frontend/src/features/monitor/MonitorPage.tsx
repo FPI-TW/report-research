@@ -6,7 +6,7 @@ import { rateText, ingestRateText, fmtInt } from './rate'
 import { KpiGrid } from './KpiGrid'
 import { ProgressPanel } from './ProgressPanel'
 import { IngestPanel } from './IngestPanel'
-import { PIPELINE_ROWS, PipelineStatus } from './PipelineStatus'
+import { DERIVED_LABEL, PIPELINE_ROWS, PipelineStatus } from './PipelineStatus'
 import { MarketDistribution } from './MarketDistribution'
 import { BrokerDistribution } from './BrokerDistribution'
 import { MonitorSkeleton } from './MonitorSkeleton'
@@ -86,13 +86,13 @@ export default function MonitorPage() {
               */}
               <div className={styles.panelGrid}>
                 <ProgressPanel
-                  title="重點摘錄（近 30 天）"
+                  title={`${DERIVED_LABEL.takeaways}（近 30 天）`}
                   data={p.takeaway ?? null}
                   rateLine={p.takeaway?.latest ? `最後產出 ${p.takeaway.latest}` : '尚無產出'}
                   idleText="此版後端未提供摘錄統計"
                 />
                 <ProgressPanel
-                  title="觀點訊號（近 30 天）"
+                  title={`${DERIVED_LABEL.signals}（近 30 天）`}
                   data={p.signal ?? null}
                   rateLine={p.signal?.latest ? `最後產出 ${p.signal.latest}` : '尚無產出'}
                   idleText="此版後端未提供訊號統計"

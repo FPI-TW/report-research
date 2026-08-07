@@ -290,10 +290,14 @@ export const instrumentStanceSchema = z.object({
 })
 export type InstrumentStance = z.infer<typeof instrumentStanceSchema>
 
+/**
+ * 清單頁的目標價摘要：**只有方向**。
+ *
+ * 後端刻意不再回中位數／幣別／修正幅度（見 `app/services/radar/schemas.py` 的
+ * `InstrumentTargetBrief`）。這裡跟著只宣告方向——多宣告一個 `median` 也拿不到值，
+ * 只會讓下一個讀這段的人以為那個數字存在。`target` 為 null ＝沒有任何一家給目標價。
+ */
 export const instrumentTargetBriefSchema = z.object({
-  currency: z.string(),
-  median: z.number(),
-  revision_pct: z.number().nullish(),
   revision_direction: directionSchema.default('none'),
 })
 export type InstrumentTargetBrief = z.infer<typeof instrumentTargetBriefSchema>
@@ -318,6 +322,14 @@ export const radarInstrumentItemSchema = z.object({
 })
 export type RadarInstrumentItem = z.infer<typeof radarInstrumentItemSchema>
 
+/** 目錄排序鍵。與後端 `schemas.CatalogSort` 逐字鏡像（值直接進 SQL 白名單）。 */
+export const catalogSortSchema = z.enum(['latest', 'reports', 'brokers', 'code'])
+export type CatalogSort = z.infer<typeof catalogSortSchema>
+
+/** 立場三桶。與後端 `scale.RATING_BUCKET` 的輸出逐字鏡像，不可自造簡寫。 */
+export const stanceFilterSchema = z.enum(['bullish', 'neutral', 'bearish'])
+export type StanceFilter = z.infer<typeof stanceFilterSchema>
+
 export const radarInstrumentsSchema = z.object({
   total: z.number().int(),
   limit: z.number().int().positive().optional(),
@@ -325,6 +337,14 @@ export const radarInstrumentsSchema = z.object({
   has_more: z.boolean().optional(),
   next_offset: z.number().int().nonnegative().nullish(),
   items: z.array(radarInstrumentItemSchema),
+  // zod 物件預設 strip：沒有這兩條宣告，後端回了也會被安靜丟掉（監控頁的 takeaway／
+  // signal 覆蓋率就是這樣從 P4 起一直沒出現）。
+  //
+  // 用 `.optional()` 而不是 `.default({})`：滾動部署時舊後端還沒回這兩個欄位，
+  // 而 `.default()` 會讓推導出的**輸出型別變成必填**，測試裡每一份手寫 fixture 都得補一把。
+  // 消費端一律寫 `data.facets ?? {}`。
+  facets: z.record(z.string(), z.number().int()).optional(),
+  latest_report_date: z.string().nullish(),
 })
 export type RadarInstruments = z.infer<typeof radarInstrumentsSchema>
 

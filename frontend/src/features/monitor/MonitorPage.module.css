@@ -18,8 +18,8 @@
 }
 .headerStuck {
   background: var(--tf-glass);
-  backdrop-filter: var(--tf-glass-filter);
   -webkit-backdrop-filter: var(--tf-glass-filter);
+  backdrop-filter: var(--tf-glass-filter);
   border-bottom-color: var(--tf-glass-border);
 }
 .headerInner { max-width: 1120px; margin: 0 auto; padding: 0 32px; }

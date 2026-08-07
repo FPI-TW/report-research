@@ -13,6 +13,12 @@ DimLabel = Literal["strengthen", "weaken", "diverging", "stable", "insufficient"
 CoverageState = Literal["ok", "partial", "pending_extraction", "window_empty"]
 Market = Literal["TW", "US", "HK", "CN", "FX", "WTX", "MACRO", "GLOBAL", "CRYPTO"]
 Window = Literal["30", "90", "180", "all"]
+# 目錄排序鍵。值要與 queries.CATALOG_SORTS 的鍵**逐字相同**——那份 dict 才是真正進 SQL
+# 的白名單，這裡只是把它抬到 API 契約層讓 FastAPI 先擋一次。
+CatalogSort = Literal["latest", "reports", "brokers", "code"]
+# 立場三桶。值取自 radar.scale.RATING_BUCKET 的輸出（bullish/neutral/bearish），
+# 刻意不另造一套簡寫——同一個概念在後端出現兩種拼法遲早會對不起來。
+StanceFilter = Literal["bullish", "neutral", "bearish"]
 
 
 class ApiErrorResponse(BaseModel):
@@ -248,11 +254,17 @@ class InstrumentStance(BaseModel):
 
 
 class InstrumentTargetBrief(BaseModel):
-    """卡片用目標價中位（primary group）。"""
+    """清單頁的目標價摘要：**只有方向，沒有任何數值**。
 
-    currency: str
-    median: float
-    revision_pct: Optional[float] = None
+    先前是 `currency` ＋ `median` ＋ `revision_pct`。清單頁不呈現目標價的聚合
+    （中位數／均值／區間／幅度），唯一的出口是連到總覽的各家目標價點圖——而
+    「前端不 render」不是防線：留在 payload 裡的數字，下一個人只要三行就能畫回去，
+    而那三行不會有任何測試看得到。整檔標的**沒有任何一家給目標價**時，
+    `InstrumentConsensus.target` 為 None（不是這個型別的某個空值）。
+
+    總覽路徑（`build_overview` → `TargetConsensus`）不受影響：那一頁本來就在講目標價。
+    """
+
     revision_direction: Direction = "none"
 
 
@@ -283,3 +295,8 @@ class RadarInstrumentsResponse(BaseModel):
     has_more: bool = False
     next_offset: Optional[int] = None
     items: list[RadarInstrumentItem]
+    # 各市場筆數（受 q／stance 影響，不受 market 影響）。前端市場膠囊上的數字只能來自這裡
+    # ——沒有出現在這個 dict 裡的市場就是「這個篩選下沒有標的」，前端據此只印市場名稱。
+    facets: dict[str, int] = {}
+    # 整個篩選結果的最新研報日期（不是本頁的）。報頭「最新更新」用它。
+    latest_report_date: Optional[str] = None

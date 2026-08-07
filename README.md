@@ -415,7 +415,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | GET | `/api/report-doc/{report_id}/pdf` | 下載生成的深度研報 PDF（缺檔即由 markdown 重建） | |
 | GET | `/api/report/{report_id}/full` | 原始報告 metadata（供 modal） | |
 | GET | `/api/report/{report_id}/file` | 原始報告檔（PDF inline / 其他 attachment） | |
-| GET | `/api/radar/instruments` | 觀點雷達標的清單（可搜尋／分頁；預設附每檔精簡共識預覽） | |
+| GET | `/api/radar/instruments` | 觀點雷達標的清單（可搜尋／排序／依立場篩選／分頁；預設附每檔精簡共識預覽，另回各市場筆數 `facets`） | |
 | GET | `/api/instrument/{code:path}/radar` | 跨券商共識總覽（**`market` 為必帶 query**；讀取不呼叫 LLM） | |
 | GET | `/api/instrument/{code:path}/radar/events` | 近期事件（穩定 offset 分頁；**`market` 必帶**） | |
 | GET | `/api/instrument/{code:path}/radar/brokers/{broker:path}` | 單券商歷程（展開券商列才請求；**`market` 必帶**） | |

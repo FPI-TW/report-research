@@ -140,6 +140,37 @@ describe('Radar 390px 版型契約', () => {
       '20px 16px calc(80px + env(safe-area-inset-bottom, 0px))',
     )
   })
+
+  /*
+   * 吸頂列必須蓋滿捲動容器的上內距。
+   *
+   * `position: sticky` 的 top 是從 scrollport 的**內距邊**算起，所以 `top: 0` 會讓
+   * 吸頂列停在 .scroll 那圈上內距的下方，上面留一條「內容照常捲過去、完全看得見」的縫
+   * ——2026-08-07 回報的症狀是券商表格的目標價直接壓在麵包屑與標的名上。
+   * 修法是讓 .top 以 --radar-gutter-top 把自己往上拉滿那圈內距，所以這個變數的值
+   * **必須等於** padding 的第一個值；兩者分家時畫面上只會差幾個像素，沒有任何錯誤。
+   */
+  it.each([
+    ['桌機', () => radarPageCss],
+    ['≤900px', () => mediaBlock(radarPageCss, 900)],
+  ])('%s：--radar-gutter-top 等於 .scroll 的上內距', (_label, layer) => {
+    const block = ruleBlock(layer(), '.scroll')
+    const gutter = /--radar-gutter-top:\s*([^;]+)/.exec(block)
+    expect(gutter, '.scroll 應宣告 --radar-gutter-top').not.toBeNull()
+    const padding = /(?:^|;)\s*padding:\s*([^\s;]+)/.exec(block)
+    expect(padding, '.scroll 應宣告 padding').not.toBeNull()
+    expect(gutter![1].trim()).toBe(padding![1].trim())
+  })
+
+  it('吸頂列以 gutter 變數上拉，而不是 top: 0', () => {
+    const top = ruleBlock(radarHeaderCss, '.top')
+    // `top:` 一定要錨在宣告開頭——不錨的話 `margin-top: calc(…)` 就會把這條斷言餵飽，
+    // 把 top 改回 0 照樣全綠（實測如此，這條守門原本是假的）。
+    expect(top).toMatch(/(?:^|;)\s*top:\s*calc\(-1 \* var\(--radar-gutter-top/)
+    expect(top).toMatch(/(?:^|;)\s*margin-top:\s*calc\(-1 \* var\(--radar-gutter-top/)
+    // 自身內距把內容位置補回原處，否則吸附的瞬間整條列會往上跳一段
+    expect(top).toMatch(/(?:^|;)\s*padding:\s*calc\(var\(--radar-gutter-top/)
+  })
 })
 
 describe('Radar 觸控目標契約', () => {

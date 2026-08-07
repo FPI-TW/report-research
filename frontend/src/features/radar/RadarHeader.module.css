@@ -8,24 +8,31 @@
 /* 精簡導覽列：吸頂之後才實體化成玻璃。
    橫向不做負 margin 出血——RadarPage 的 .scroll 已把內容內縮 32px，
    那圈留白裡不會有任何東西捲過，故導覽列覆蓋內容欄寬就足夠。 */
+/* `top: 0` 是不夠的：sticky 的偏移是從 scrollport 的**內距邊**算起，而 RadarPage 的
+   .scroll 有 28px 上內距，於是吸頂列會停在那圈內距下方，上面留一條「內容照常捲過去、
+   完全看得見」的縫——實測就是券商列的目標價直接壓在麵包屑與標的名上。
+   做法是往上拉滿那圈內距（top 與 margin-top 各 -gutter），再用自身 padding 把內容位置
+   補回原處：吸頂前後內容都在同一個 y，不會在吸附的瞬間跳一下。
+   `var(..., 0px)` 的預設值讓這支元件在沒有宣告 gutter 的容器裡退回原本的行為。 */
 .top {
   position: sticky;
-  top: 0;
+  top: calc(-1 * var(--radar-gutter-top, 0px));
+  margin-top: calc(-1 * var(--radar-gutter-top, 0px));
   z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px 20px;
   flex-wrap: wrap;
-  padding: 8px 0;
+  padding: calc(var(--radar-gutter-top, 0px) + 8px) 0 8px;
   border-bottom: 1px solid transparent;
   transition: background-color var(--tf-dur-2) var(--tf-ease-standard),
     border-color var(--tf-dur-2) var(--tf-ease-standard);
 }
 .topStuck {
   background: var(--tf-glass);
-  backdrop-filter: var(--tf-glass-filter);
   -webkit-backdrop-filter: var(--tf-glass-filter);
+  backdrop-filter: var(--tf-glass-filter);
   border-bottom-color: var(--tf-glass-border);
 }
 

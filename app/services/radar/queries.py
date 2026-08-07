@@ -52,6 +52,41 @@ class RadarInstrumentRow:
     coverage_state: str  # ok | partial
 
 
+@dataclass(frozen=True)
+class RadarCatalogPage:
+    """目錄一頁 ＋ 該頁所屬篩選結果的兩個整體數字。
+
+    `total` 與 `latest_report_date` 講的是**整個篩選結果**（LIMIT 之前），不是這一頁：
+    報頭的「N 檔標的／最新更新」要的正是這兩個。先前呼叫端拿 `items[0]` 當最新日期，
+    那在預設排序下碰巧成立，一旦排序改成研報數就會靜默印出某一檔的日期。
+    """
+
+    total: int
+    items: list[RadarInstrumentRow]
+    latest_report_date: Optional[date]
+
+
+# 目錄排序白名單：鍵是對外的值，值是**直接進 SQL 的字面**——所以只能白名單，不能拼接。
+# 每一條都以 (market, instrument_code) 收尾：排序鍵有並列時，沒有決定性尾綴會讓同一列
+# 在相鄰兩頁重複出現或整個消失，而 OFFSET 分頁不會為此報任何錯。
+CATALOG_SORTS: dict[str, str] = {
+    "latest": "cat.latest DESC NULLS LAST, cat.market, cat.instrument_code",
+    "reports": (
+        "cat.report_count DESC, cat.latest DESC NULLS LAST, cat.market, cat.instrument_code"
+    ),
+    "brokers": (
+        "cat.broker_count DESC, cat.latest DESC NULLS LAST, cat.market, cat.instrument_code"
+    ),
+    "code": "cat.market, cat.instrument_code",
+}
+DEFAULT_CATALOG_SORT = "latest"
+
+
+def catalog_order_by(sort: Optional[str]) -> str:
+    """排序鍵 → ORDER BY 片段。未知值退回預設而非拋錯（路由層已用 enum 擋過一次）。"""
+    return CATALOG_SORTS.get(sort or DEFAULT_CATALOG_SORT, CATALOG_SORTS[DEFAULT_CATALOG_SORT])
+
+
 def _instrument_signals_sql(broker: bool) -> str:
     where_broker = f"AND {EFFECTIVE_BROKER_SQL} = :broker " if broker else ""
     order = (
@@ -297,38 +332,76 @@ def _catalog_filters(market: Optional[str], q: Optional[str]) -> tuple[str, dict
 
 async def list_radar_instruments(
     session: AsyncSession, *, market: Optional[str] = None, q: Optional[str] = None,
-    limit: int = 50, offset: int = 0,
-) -> tuple[int, list[RadarInstrumentRow]]:
+    limit: Optional[int] = 50, offset: int = 0, sort: Optional[str] = None,
+) -> RadarCatalogPage:
+    """目錄一頁。`limit=None` ＝不分頁、取回全部符合條件的列。
+
+    `limit=None` 是給「立場篩選」用的：立場來自 `compute.build_instrument_slim()` 的
+    中位數，SQL 算不出來，要跨分頁正確就只能先把符合條件的列全部取回、在 Python 算完
+    共識再篩再分頁。這條路徑刻意由呼叫端明示，不是預設。
+    """
     where, params = _catalog_filters(market, q)
-    # 總數與分頁列走同一次查詢：window 的 count(*) OVER () 在 LIMIT 之前算完整結果集，
+    # 總數、整體最新日期與分頁列走同一次查詢：兩個 window 函式都在 LIMIT 之前算完整結果集，
     # 省掉「同一組 CTE（signal_base/sig/rep 三層聚合，rep 還 CROSS JOIN LATERAL unnest）
-    # 為了一個 count 再跑第二遍」。cat 已是 CTE，多這個 window 幾乎免費。
+    # 為了兩個聚合再跑一遍」。cat 已是 CTE，多這兩個 window 幾乎免費。
+    page_sql = ""
+    if limit is not None:
+        page_sql = " LIMIT :limit OFFSET :offset"
+        params = {**params, "limit": limit, "offset": offset}
+    # 逐欄取值一律走 .mappings() 的欄名，不用位置索引：這段 SELECT 先前是位置式解包，
+    # 而位置式解包在中間插一欄時不會報錯、只會靜默把值接到隔壁欄位去。
     rows = (
         await session.execute(
             text(
                 f"{_catalog_cte()} SELECT cat.market, cat.instrument_code, cat.name, "
                 "cat.broker_count, cat.report_count, cat.latest, cat.sig_brokers, "
-                f"cat.has_partial, count(*) OVER () AS total FROM cat {where} "
-                "ORDER BY cat.latest DESC NULLS LAST, cat.market, cat.instrument_code "
-                "LIMIT :limit OFFSET :offset"
+                "cat.has_partial, count(*) OVER () AS total, "
+                "max(cat.latest) OVER () AS latest_overall "
+                f"FROM cat {where} ORDER BY {catalog_order_by(sort)}{page_sql}"
             ),
-            {**params, "limit": limit, "offset": offset},
+            params,
         )
-    ).all()
-    # total 固定是 SELECT 的最後一欄（要在它後面加欄位就得改這裡）；零列時沒有任何列可
-    # 帶 total，語意就是 0。
-    total = int(rows[0][-1] or 0) if rows else 0
+    ).mappings().all()
+    # 零列時沒有任何列可帶 total／latest_overall，語意就是 0 與「不知道」。
+    total = int(rows[0]["total"] or 0) if rows else 0
+    latest_overall = rows[0]["latest_overall"] if rows else None
     items = [
         RadarInstrumentRow(
-            market=r[0], instrument_code=r[1], instrument_name=r[2],
-            broker_count=int(r[3] or 0), report_count=int(r[4] or 0),
-            latest_report_date=r[5],
+            market=r["market"], instrument_code=r["instrument_code"],
+            instrument_name=r["name"],
+            broker_count=int(r["broker_count"] or 0),
+            report_count=int(r["report_count"] or 0),
+            latest_report_date=r["latest"],
             coverage_state=(
                 "partial"
-                if bool(r[7]) or int(r[6] or 0) < int(r[3] or 0)
+                if bool(r["has_partial"])
+                or int(r["sig_brokers"] or 0) < int(r["broker_count"] or 0)
                 else "ok"
             ),
         )
         for r in rows
     ]
-    return total, items
+    return RadarCatalogPage(total=total, items=items, latest_report_date=latest_overall)
+
+
+async def fetch_catalog_facets(
+    session: AsyncSession, *, q: Optional[str] = None
+) -> dict[str, int]:
+    """各市場的標的筆數（受搜尋詞影響，**不受市場篩選影響**）。
+
+    市場膠囊上的數字要回答的是「切到那個市場會看到幾檔」，所以這裡刻意不套 market 條件。
+    另一個刻意的取捨是它自成一次查詢、而不是塞進上面那支的 window 函式：facets 在
+    「搜尋沒有任何命中」時仍然要有值（那正是最需要它的時候——使用者要靠它知道該切到哪個
+    市場），而零列的結果集帶不回任何 window 值。代價是 CTE 多跑一次。
+    """
+    where, params = _catalog_filters(None, q)
+    rows = (
+        await session.execute(
+            text(
+                f"{_catalog_cte()} SELECT cat.market AS market, count(*) AS n "
+                f"FROM cat {where} GROUP BY cat.market"
+            ),
+            params,
+        )
+    ).mappings().all()
+    return {r["market"]: int(r["n"] or 0) for r in rows}

@@ -1,7 +1,8 @@
 import { useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import type { Market, Window } from '../../lib/radarSchemas'
+import type { CatalogSort, Market, StanceFilter, Window } from '../../lib/radarSchemas'
 import { marketSchema, windowSchema } from '../../lib/radarSchemas'
+import { catalogPatch, instrumentHref, parseCatalogState } from './catalogState'
 import { InstrumentPicker } from './InstrumentPicker'
 import { RadarOverview } from './RadarOverview'
 import styles from './RadarPage.module.css'
@@ -18,6 +19,7 @@ export default function RadarPage() {
   const market = parsedMarket.success ? parsedMarket.data : ''
   const code = params.get('code') || ''
   const window = parseWindow(params.get('window'))
+  const catalog = parseCatalogState(params)
 
   const patch = useCallback((next: Record<string, string | null>) => {
     setParams(prev => {
@@ -29,10 +31,6 @@ export default function RadarPage() {
       return sp
     }, { replace: true })
   }, [setParams])
-
-  const onSelectInstrument = useCallback((mkt: Market, c: string) => {
-    patch({ market: mkt, code: c, window: window || '90' })
-  }, [patch, window])
 
   const onWindowChange = useCallback((w: Window) => {
     patch({ window: w })
@@ -46,6 +44,25 @@ export default function RadarPage() {
     const search = new URLSearchParams({ q: code, market })
     navigate(`/search?${search}`)
   }, [code, market, navigate])
+
+  // 清單狀態一律走同一支 patch（replace，不堆歷史）：搜尋是逐字打出來的，每一次
+  // debounce 都 push 一筆會讓上一頁按十幾次才離得開。
+  const onQueryChange = useCallback((q: string) => {
+    patch(catalogPatch({ q }))
+  }, [patch])
+  const onSortChange = useCallback((sort: CatalogSort) => {
+    patch(catalogPatch({ sort }))
+  }, [patch])
+  const onStanceChange = useCallback((stance: StanceFilter | null) => {
+    patch(catalogPatch({ stance }))
+  }, [patch])
+
+  // 詳情頁連結以當前網址為基底，所以 q／sort／stance 一路帶著；從詳情按返回
+  // （`patch({ code: null })`）就自動回到原本的篩選，不必另外記一份狀態。
+  const hrefFor = useCallback(
+    (mkt: Market, c: string) => instrumentHref(params, mkt, c),
+    [params],
+  )
 
   return (
     <div className={styles.page}>
@@ -63,8 +80,14 @@ export default function RadarPage() {
           ) : (
             <InstrumentPicker
               market={market || undefined}
-              onSelect={onSelectInstrument}
+              q={catalog.q}
+              sort={catalog.sort}
+              stance={catalog.stance}
+              onQueryChange={onQueryChange}
+              onSortChange={onSortChange}
+              onStanceChange={onStanceChange}
               onMarketChange={m => patch({ market: m || null })}
+              hrefFor={hrefFor}
             />
           )}
           <p className={styles.disclaimer}>

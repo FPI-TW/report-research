@@ -612,10 +612,25 @@ class InstrumentSlimTests(unittest.TestCase):
         # a: neutral→buy 上調1；b 無前次；淨 = 1
         self.assertEqual(c.stance.upgrades, 1)
         self.assertEqual(c.stance.net_rating, 1)
-        # 目標價 primary TWD 中位 [1200,1100]=1150；a 1000→1200 上修
-        self.assertEqual(c.target.currency, "TWD")
-        self.assertEqual(c.target.median, 1150.0)
+        # 目標價只留方向：a 1000→1200 上修
         self.assertEqual(c.target.revision_direction, "up")
+
+    def test_slim_target_carries_direction_only(self):
+        """清單頁不呈現目標價聚合，所以中位數／幣別／幅度連 payload 都不該有。
+
+        「前端不 render」不是防線——留在 payload 裡的數字只要三行就能畫回去，
+        而那三行不會有任何測試看得到。
+        """
+        signals = [
+            _sig("a", date(2026, 7, 1), "neutral", target=1000.0, currency="TWD"),
+            _sig("a", date(2026, 7, 10), "buy", target=1200.0, currency="TWD"),
+        ]
+        c = build_instrument_slim(signals, window="90")
+
+        self.assertEqual(
+            c.target.model_dump(), {"revision_direction": "up"},
+            "清單的目標價摘要只能有 revision_direction",
+        )
 
     def test_slim_none_when_no_signals(self):
         self.assertIsNone(build_instrument_slim([], window="90"))

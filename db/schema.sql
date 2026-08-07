@@ -391,3 +391,39 @@ CREATE INDEX IF NOT EXISTS idx_report_takeaway_status
 
 -- 閱讀頁以 file_hash 為網址鍵（report_id 於重新 ingest 時會換新，分享連結會失效）。
 -- file_hash 已是 UNIQUE，此處不需額外索引。
+
+-- ─────────────────────────────────────────────────────────────
+-- 每日簡報（一天一列；讀取時零 LLM）
+-- ─────────────────────────────────────────────────────────────
+-- 與 report_takeaway / report_signal 同一種分工：LLM 只在批次時產出語意（一段
+-- markdown 綜述），窗期界定、來源清單與計數全由 Python 決定性計算並落庫，服務層
+-- 只做 SELECT。
+CREATE TABLE IF NOT EXISTS research.report_brief (
+    id            uuid PRIMARY KEY,
+    brief_date    date NOT NULL,
+
+    -- 窗期以**入庫時間**（research_report.created_at）界定，不是 report_date。
+    -- report_date 是研報自己標的日期，NAS 匯入的常比入庫日早——實測近 10 天入庫的
+    -- 90 篇有 79 篇（88%）report_date 超過一天前，拿它界定窗期會靜默漏掉近九成，
+    -- 與「排程不可用 --since-days」是同一個坑。
+    window_start  timestamptz NOT NULL,
+    window_end    timestamptz NOT NULL,
+
+    markdown      text NOT NULL,
+
+    -- 來源研報由 Python 記錄，不從 markdown 反推：簡報要能點回原文，而模型漏列或
+    -- 多列一篇都不會有任何錯誤訊息。刻意不設 FK（uuid[] 無法 FK，且與另三張衍生表
+    -- 一致）——代價是語料重建後可能留下孤兒 id，讀取端須容忍查不到的 id。
+    report_ids    uuid[] NOT NULL DEFAULT '{}',
+    report_count  int NOT NULL DEFAULT 0,
+    signal_count  int NOT NULL DEFAULT 0,
+
+    model         text,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+
+    -- 一天一列。批次的冪等性完全靠這條：generate_brief.py 以「今天已有列」判斷跳過。
+    CONSTRAINT uq_report_brief_date UNIQUE (brief_date)
+);
+
+-- 讀取只有兩種：最新一份（ORDER BY brief_date DESC LIMIT 1）與指定日期，
+-- 兩者都由 uq_report_brief_date 的 UNIQUE 索引支撐。刻意不另建索引。

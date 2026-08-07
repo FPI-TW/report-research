@@ -1,8 +1,7 @@
 /* 不自帶 max-width：內容欄寬一律由 RadarPage 的 .inner（1280px）決定。
    舊值 1080px 只套在 picker 這一半，而 .disclaimer 是 .inner 的直接子節點、吃 1280px，
-   於是寬螢幕上免責上緣那條分隔線會比它上方的卡片格左右各寬出 100px，讀起來像一條
-   與內容無關的漂浮橫線（overview 狀態沒有這個問題，因為它沒有自己的 max-width）。
-   .grid 是 auto-fill minmax(300px, 1fr)，加寬只會自動多排一欄。 */
+   於是寬螢幕上免責上緣那條分隔線會比它上方的清單左右各寬出 100px，讀起來像一條
+   與內容無關的漂浮橫線（overview 狀態沒有這個問題，因為它沒有自己的 max-width）。 */
 .wrap {
   margin: 0 auto;
   padding: 12px 0 8px;
@@ -62,14 +61,15 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-top: 24px;
   background: var(--tf-surface);
   border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-md);
-  padding: 0 14px;
-  /* 44px：與同一列的 .chip 齊高，控制項高度成一套。 */
-  min-height: 44px;
+  border-radius: var(--tf-radius-card);
+  box-shadow: var(--tf-shadow-xs);
+  padding: 0 12px 0 18px;
+  /* 56px：工作台的主要入口，比同列的 44px 控制項再高一階，讓它在版面上是第一個被看到的東西。 */
+  min-height: 56px;
   transition: border-color var(--tf-dur-2) var(--tf-ease-out), box-shadow var(--tf-dur-2) var(--tf-ease-out);
 }
 .search:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite); }
@@ -79,23 +79,37 @@
   border: 0;
   outline: none;
   background: transparent;
-  font-size: 14.5px;
+  font-size: 15px;
   font-family: var(--tf-sans);
   color: var(--tf-text-1);
   min-width: 0;
 }
 .input::placeholder { color: var(--tf-text-muted-aa); }
+/* Enter 提示：純提示，不是控制項（aria-hidden），所以不套 44px 觸控目標。 */
+.kbd {
+  flex: none;
+  font-family: var(--tf-sans);
+  font-size: 11.5px;
+  color: var(--tf-text-muted-aa);
+  background: var(--tf-fill-subtle);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-seg);
+  padding: 5px 10px;
+}
 
 /* ── 篩選列 ── */
 .filterrow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin: 16px 0 28px;
+  gap: 12px 16px;
+  margin: 16px 0 18px;
   flex-wrap: wrap;
 }
 .markets { display: flex; gap: 8px; flex-wrap: wrap; }
+/* margin-left:auto 而不是靠 .filterrow 的 space-between：膠囊列一旦換行，
+   space-between 會把控制項留在第二行的左端，與右上角的報頭數字對不齊。 */
+.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
 .count {
   font-size: 12.5px;
   color: var(--tf-text-muted-aa);
@@ -105,6 +119,9 @@
 
 .chip {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: 1px solid var(--tf-border);
   background: var(--tf-surface);
   color: var(--tf-text-2);
@@ -112,7 +129,7 @@
   font-weight: 600;
   font-family: var(--tf-sans);
   border-radius: var(--tf-radius-pill);
-  padding: 7px 14px;
+  padding: 7px 16px;
   min-height: 44px;
   cursor: pointer;
   transition: all var(--tf-dur-2) var(--tf-ease-out);
@@ -123,13 +140,14 @@
   border-color: var(--tf-graphite);
   color: var(--tf-on-graphite);
 }
-
-/* ── 標的卡片格 ── */
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 20px;
+.chipCount {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tf-text-muted-aa);
+  font-variant-numeric: tabular-nums;
 }
+/* 選中態是深底，計數得跟著翻成淺色，否則它會消失在深底裡。 */
+.chipActive .chipCount { color: color-mix(in srgb, var(--tf-on-graphite) 68%, transparent); }
 
 .loadMoreWrap {
   display: flex;
@@ -151,25 +169,12 @@
 .loadMore:hover { border-color: var(--tf-graphite); }
 .loadMore:disabled { cursor: wait; opacity: 0.65; }
 
-.skel {
-  height: 210px;
-  border-radius: var(--tf-radius-card);
-  background: linear-gradient(90deg, var(--tf-border-weak), var(--tf-surface), var(--tf-border-weak));
-  background-size: 200% 100%;
-  animation: skel 1.4s ease-in-out infinite;
-}
-@keyframes skel {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
-}
-
-.empty, .error {
+.error {
   padding: 40px 16px;
   text-align: center;
-  color: var(--tf-text-muted-aa);
+  color: var(--tf-error);
   font-size: 13.5px;
 }
-.error { color: var(--tf-error); }
 .retry {
   appearance: none;
   margin-left: 8px;
@@ -185,10 +190,39 @@
   cursor: pointer;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .skel { animation: none; }
+/* ── 表格底下的圖例 ── */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 8px 20px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding: 0 4px;
+  font-size: 11.5px;
+  color: var(--tf-text-2);
 }
+.legendGroup { display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.legendKicker { color: var(--tf-text-muted-aa); font-weight: 600; }
+.legendItem { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+/* 9×9 方塊而非圓點：與 ConsensusSnapshot 的圖例同一種形狀，同一種資料不該有兩種畫法。 */
+.swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.bull { background: var(--tf-success); }
+.neu { background: var(--tf-text-muted-aa); }
+.bear { background: var(--tf-error); }
+.legendNote { color: var(--tf-text-muted-aa); }
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (max-width: 620px) {
   .title { font-size: 30px; }
-  .grid { grid-template-columns: 1fr; }
 }

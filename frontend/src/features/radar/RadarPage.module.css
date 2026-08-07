@@ -8,6 +8,12 @@
 .scroll {
   flex: 1;
   overflow-y: auto;
+  /* 與下面 padding 的第一個值**必須相同**：`position: sticky` 的 top 是從 scrollport 的
+     內距邊算起的，所以 `top: 0` 會讓 RadarHeader 的吸頂列停在這圈內距**下方**，上面留一條
+     內容照常捲過去、完全看得見的縫。那條縫是 2026-08-07 回報的「標的頁頂部顯示」缺陷。
+     吸頂列靠這個變數把自己往上拉滿那圈內距（見 RadarHeader.module.css 的 .top）。
+     兩處都寫死同一個數字是刻意的：padding 那行被 RadarCssContracts 逐字釘住，不能改寫成 var()。 */
+  --radar-gutter-top: 28px;
   padding: 28px 32px 40px;
 }
 
@@ -132,7 +138,11 @@
 }
 
 @media (max-width: 900px) {
-  .scroll { padding: 20px 16px calc(80px + env(safe-area-inset-bottom, 0px)); }
+  /* 變數要跟著同一條規則裡 padding 的第一個值走（契約由 RadarCssContracts 釘住）。 */
+  .scroll {
+    --radar-gutter-top: 20px;
+    padding: 20px 16px calc(80px + env(safe-area-inset-bottom, 0px));
+  }
   .coverageNotice { align-items: flex-start; flex-direction: column; gap: 2px; }
 }
 

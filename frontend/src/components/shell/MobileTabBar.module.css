@@ -5,8 +5,8 @@
   height: calc(56px + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--tf-glass);
-  backdrop-filter: var(--tf-glass-filter);
   -webkit-backdrop-filter: var(--tf-glass-filter);
+  backdrop-filter: var(--tf-glass-filter);
   border-top: 1px solid var(--tf-glass-border);
   display: flex; z-index: 50;
 }

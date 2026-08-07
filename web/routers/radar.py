@@ -8,6 +8,7 @@ web.deps.X 即可涵蓋本模組——不需改測試。純 builder（build_*）
 """
 import logging
 import time
+from collections import Counter
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -17,14 +18,17 @@ from app.services.radar import (
     build_instrument_slim,
     build_overview,
 )
+from app.services.radar.scale import rating_bucket
 from app.services.radar.schemas import (
     ApiErrorResponse,
     BrokerHistoryResponse,
+    CatalogSort,
     Market,
     RadarEventsResponse,
     RadarInstrumentItem,
     RadarInstrumentsResponse,
     RadarOverviewResponse,
+    StanceFilter,
     Window,
 )
 from app.services.tagging import MARKET_DISPLAY
@@ -35,31 +39,83 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _stance_of(consensus) -> str | None:
+    """精簡共識 → 立場三桶；無共識（尚未擷取／窗期空）→ None。"""
+    if consensus is None:
+        return None
+    return rating_bucket(consensus.stance.rating)
+
+
 @router.get("/api/radar/instruments", response_model=RadarInstrumentsResponse)
 async def radar_instruments(
     market: Market | None = Query(None, max_length=16),
     q: str | None = Query(None, max_length=64),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    sort: CatalogSort = Query("latest"),
+    stance: StanceFilter | None = Query(None),
     with_consensus: bool = Query(True),
 ):
     """觀點雷達「選標的」目錄：有可展示訊號的標的清單（獨立頁選單資料源）。
 
     with_consensus=True（預設）時，當頁每檔附精簡共識預覽（立場/分佈/淨變動/目標價），
     以單次批次查詢計算，避免逐檔 N+1。
+
+    **兩條取數路徑，差別只在 stance 有沒有帶**：
+
+    - 無 stance（常態）：SQL 直接分頁，另跑一次 facets 聚合。當頁才算共識。
+    - 有 stance：立場是 `build_instrument_slim()` 的中位數，SQL 算不出來。要讓「偏多」
+      這個篩選跨分頁正確（第 2 頁不能出現第 1 頁該被濾掉的東西），只能先取回全部符合
+      q 的列、對**全部**算共識、篩完之後才在 Python 分頁。市場條件也一併移到 Python，
+      否則 facets 會變成「已經被市場濾過的市場筆數」＝恆等於當前市場。
+
+    兩條路徑回同一個形狀；`with_consensus=false` 與 stance 併用時，stance 仍會強制算共識
+    （不算就沒有東西可篩），這是刻意的——回一份沒被篩過的清單比多算一次更糟。
     """
     t0 = time.monotonic()
     async with deps.SessionFactory() as session:
-        total, rows = await deps.list_radar_instruments(
-            session, market=market, q=q, limit=limit, offset=offset
-        )
-        signals_by_key: dict[tuple[str, str], list] = {}
-        if with_consensus and rows:
-            keys = [(r.market, r.instrument_code) for r in rows]
-            signals_by_key = await deps.fetch_signals_for_instruments(session, keys)
-    consensus_by_key = {
-        key: build_instrument_slim(sigs) for key, sigs in signals_by_key.items()
-    }
+        if stance is None:
+            page = await deps.list_radar_instruments(
+                session, market=market, q=q, limit=limit, offset=offset, sort=sort
+            )
+            facets = await deps.fetch_catalog_facets(session, q=q)
+            rows = page.items
+            total = page.total
+            latest_overall = page.latest_report_date
+            signals_by_key: dict[tuple[str, str], list] = {}
+            if with_consensus and rows:
+                keys = [(r.market, r.instrument_code) for r in rows]
+                signals_by_key = await deps.fetch_signals_for_instruments(session, keys)
+            consensus_by_key = {
+                key: build_instrument_slim(sigs) for key, sigs in signals_by_key.items()
+            }
+        else:
+            page = await deps.list_radar_instruments(
+                session, market=None, q=q, limit=None, offset=0, sort=sort
+            )
+            all_rows = page.items
+            signals_by_key = (
+                await deps.fetch_signals_for_instruments(
+                    session, [(r.market, r.instrument_code) for r in all_rows]
+                )
+                if all_rows
+                else {}
+            )
+            consensus_by_key = {
+                key: build_instrument_slim(sigs) for key, sigs in signals_by_key.items()
+            }
+            kept = [
+                r
+                for r in all_rows
+                if _stance_of(consensus_by_key.get((r.market, r.instrument_code))) == stance
+            ]
+            facets = Counter(r.market for r in kept)
+            if market:
+                kept = [r for r in kept if r.market == market]
+            total = len(kept)
+            dates = [r.latest_report_date for r in kept if r.latest_report_date]
+            latest_overall = max(dates) if dates else None
+            rows = kept[offset : offset + limit]
     items = [
         RadarInstrumentItem(
             market=r.market,
@@ -75,8 +131,8 @@ async def radar_instruments(
         for r in rows
     ]
     logger.info(
-        "radar instruments total=%d q=%s market=%s consensus=%s elapsed_ms=%.1f",
-        total, q, market, with_consensus, (time.monotonic() - t0) * 1000,
+        "radar instruments total=%d q=%s market=%s sort=%s stance=%s consensus=%s elapsed_ms=%.1f",
+        total, q, market, sort, stance, with_consensus, (time.monotonic() - t0) * 1000,
     )
     next_offset = offset + len(items)
     has_more = next_offset < total
@@ -87,6 +143,8 @@ async def radar_instruments(
         has_more=has_more,
         next_offset=next_offset if has_more else None,
         items=items,
+        facets=dict(facets),
+        latest_report_date=latest_overall.isoformat() if latest_overall else None,
     )
 
 

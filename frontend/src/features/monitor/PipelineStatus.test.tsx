@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { DERIVED_LABEL, PIPELINE_ROWS, PipelineStatus } from './PipelineStatus'
+import { PipelineStatus } from './PipelineStatus'
+import { DERIVED_LABEL, PIPELINE_ROWS } from './pipelineMeta'
 
 test('6 列名稱 + 狀態徽章對應布林', () => {
   render(

@@ -1,69 +1,128 @@
-.grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-}
-
-.cell {
+/* 單一面板、四個方位。四張獨立卡片等於為十幾個字付四圈邊框與四層陰影，
+   而且四個等大的方框讓「哪一維動了」完全讀不出來。 */
+.panel {
   background: var(--tf-surface);
   border: 1px solid var(--tf-border);
   border-radius: var(--tf-radius-card);
   box-shadow: var(--tf-shadow-xs);
-  padding: 16px 18px 18px;
+  overflow: hidden;
 }
 
-.head {
+/* 1px 的 gap 讓底色透出來當分隔線：換行成兩欄或一欄時，直線與橫線都自動出現在
+   對的位置，不必為每個斷點各寫一組 :not(:last-child) 的邊框規則。 */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--tf-divider);
+}
+
+.bearing {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  background: var(--tf-surface);
+  padding: 16px 18px 18px;
+  min-width: 0;
 }
 
-.name {
+/* 欄位小標。字距拉開是為了讓它在 11.5px 讀起來像標籤而不是被壓扁的內文。 */
+.axis {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--tf-text-muted-aa);
+}
+
+/* 結論本身。四欄裡通常只有一欄帶顏色——那個不對稱就是這一區要讀出來的東西，
+   所以其餘三欄刻意維持中性，不為了「好看」把四欄都上色。
+   600 是中文字型堆疊真的有的最重一級，再重只會被合成。 */
+.verdict {
+  margin-top: 7px;
   font-family: var(--tf-display);
   font-weight: 600;
-  font-size: 16px;
-  color: var(--tf-text-1);
+  font-size: 17px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
 }
+.strengthen { color: var(--tf-success); }
+.weaken { color: var(--tf-error); }
+.diverging { color: var(--tf-gold-text); }
+.stable { color: var(--tf-text-2); }
+.insufficient { color: var(--tf-text-muted-aa); }
 
-.tag {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 3px 9px;
-  border-radius: var(--tf-radius-pill);
-  white-space: nowrap;
-}
-/* 混色比例 13% → 10%：12px/600 不算 WCAG 的大字（門檻是 18.66px 粗體或 24px），
-   所以適用 4.5:1，而 13% 的底只到 4.48／4.47——差 0.02 用眼睛看不出來，正是要靠算的那種。
-   這四個標籤是整區唯一講「這一維轉強還是轉弱」的文字。 */
-.strengthen { color: var(--tf-success); background: color-mix(in srgb, var(--tf-success) 10%, var(--tf-surface)); }
-.weaken { color: var(--tf-error); background: color-mix(in srgb, var(--tf-error) 10%, var(--tf-surface)); }
-.diverging { color: var(--tf-gold-text); background: var(--tf-gold-tint); }
-.stable { color: var(--tf-graphite); background: var(--tf-graphite-tint); }
-.insufficient { color: var(--tf-text-muted-aa); background: var(--tf-border-weak); }
-
-.split {
+/* 刻度列：一家券商一根。實心＝有變動（綠升／紅降），空心＝可比但沒動——
+   實心與空心的差別不靠顏色，色覺受限者一樣分得出來。 */
+.tally {
   display: flex;
-  height: 8px;
-  border-radius: var(--tf-radius-pill);
-  overflow: hidden;
-  background: var(--tf-border-weak);
-  margin: 16px 0 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin: 13px 0 9px;
+  min-height: 14px;
 }
-.split span { display: block; height: 100%; }
+/* 5px 而非 4px：空心刻度是 1px 的內環，4px 寬時環幾乎佔滿整根、看起來像沒畫好的
+   毛邊而不是刻意的空心；5px 讓環內留得出 3px 的白，形狀才讀得出來。 */
+.tally i {
+  display: block;
+  width: 5px;
+  height: 14px;
+  border-radius: 2px;
+}
 .up { background: var(--tf-success); }
-.mid { background: var(--tf-text-muted-aa); }
 .down { background: var(--tf-error); }
+/* 空心用 inset ring 而非填色：--tf-graphite-line 這類邊框色在 4px 寬的實心塊上幾乎看不見，
+   而 --tf-text-muted-aa 直接填又會跟有變動的那幾根一樣重。混色取中間那階。 */
+.flat { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tf-text-muted-aa) 52%, var(--tf-surface)); }
+
+/* n=0 的佔位：刻意留一個看得見的破折號而不是空的軌道。改版前這裡是一條
+   --tf-border-weak 的空長條，在白底上根本看不見，那一欄於是在整列裡缺一塊。 */
+.tallyEmpty {
+  display: block;
+  margin: 13px 0 9px;
+  min-height: 14px;
+  line-height: 14px;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--tf-text-muted-aa) 45%, var(--tf-surface));
+}
 
 .counts {
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.45;
   color: var(--tf-text-muted-aa);
   font-variant-numeric: tabular-nums;
+}
+
+/* 髮絲線標的是**來源的交界**：線以上的數字是 Python 算的，線以下這句話是模型改寫的。
+   三行截斷 ＋ title 保留全文：摘述長度不受控，一欄暴衝會把整列的高度一起拉高。 */
+.summary {
+  margin: 13px 0 0;
+  padding-top: 13px;
+  border-top: 1px solid var(--tf-divider);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--tf-text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.caliber {
+  margin: 0;
+  padding: 11px 18px 12px;
+  border-top: 1px solid var(--tf-divider);
+  background: var(--tf-fill-subtle);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--tf-text-muted-aa);
 }
 
 @media (max-width: 1080px) {
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* 340px 才退單欄，不是 560：390px（iPhone 級）必須維持 2x2，四個方位並列本身就是
+   這一區的意思，拆成四列就只是四段文字了。RadarCssContracts 對 350–999px 的單欄
+   收合有一條反向斷言擋著。 */
 @media (max-width: 340px) {
   .grid { grid-template-columns: 1fr; }
 }

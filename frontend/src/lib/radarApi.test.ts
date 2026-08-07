@@ -61,4 +61,28 @@ describe('radarApi', () => {
       { cache: 'no-store', signal },
     )
   })
+
+  it('目錄請求帶排序與立場', () => {
+    getRadarInstruments({ market: 'TW', sort: 'reports', stance: 'bullish' })
+
+    expect(getJSON).toHaveBeenCalledWith(
+      '/api/radar/instruments?market=TW&sort=reports&stance=bullish',
+      expect.anything(),
+      expect.anything(),
+    )
+  })
+
+  /*
+   * 預設排序不進網址：後端的 `sort` 預設就是 `latest`，送與不送逐字等價。
+   * 不這樣做的話，同一個畫面會有兩種網址，而 HTTP 快取與 react-query 都以字串為鍵。
+   */
+  it('不帶排序／立場時網址完全不含這兩個參數', () => {
+    getRadarInstruments({ limit: 50, offset: 0 })
+
+    expect(getJSON).toHaveBeenCalledWith(
+      '/api/radar/instruments?limit=50&offset=0',
+      expect.anything(),
+      expect.anything(),
+    )
+  })
 })

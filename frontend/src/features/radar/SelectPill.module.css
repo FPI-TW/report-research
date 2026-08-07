@@ -1,0 +1,40 @@
+/* 外殼負責長相，原生 select 疊在上面負責行為（見 SelectPill.tsx 的說明）。 */
+.pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px 0 14px;
+  background: var(--tf-surface);
+  border: 1px solid var(--tf-border);
+  border-radius: var(--tf-radius-pill);
+  font-size: 13.5px;
+  white-space: nowrap;
+  transition:
+    border-color var(--tf-dur-2) var(--tf-ease-out),
+    box-shadow var(--tf-dur-2) var(--tf-ease-out);
+}
+.pill:hover { border-color: var(--tf-graphite-line); }
+/* 焦點環畫在外殼上：真正被聚焦的是那顆透明的 select，而它沒有可見的外框可以套。 */
+.pill:has(.select:focus-visible) {
+  border-color: var(--tf-graphite);
+  box-shadow: var(--tf-ring-graphite);
+}
+
+.kicker { color: var(--tf-text-muted-aa); }
+.value { color: var(--tf-text-1); font-weight: 600; }
+.chevron { color: var(--tf-text-muted-aa); flex: none; }
+
+/* 覆蓋整顆膠囊、完全透明：點哪裡都等於點到 select，但看到的一律是上面那三個元素。
+   用 opacity:0 而非 appearance:none ＋ 自繪，是為了保住原生的鍵盤與行動裝置行為。 */
+.select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-family: var(--tf-sans);
+  font-size: 13.5px;
+}

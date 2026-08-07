@@ -138,4 +138,74 @@ describe('useRadar', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
+
+  /*
+   * `sort`／`stance` 沒進 queryKey 的失效方式**完全無聲**：切排序會命中同一筆快取，
+   * 畫面不動、network 沒有請求、console 乾淨（staleTime 30s 讓誤判更頑固），
+   * 看起來就像後端不支援排序。所以這裡驗的是「切了之後真的換了一批資料」。
+   */
+  it('切換排序會重新請求並換掉資料，不吃舊排序的快取', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockImplementation(async params => ({
+      total: 1, limit: 50, offset: 0, has_more: false, next_offset: null,
+      items: [{
+        market: 'TW' as const, market_display: '台股',
+        instrument_code: params.sort ?? 'latest',
+        instrument_name: `依 ${params.sort ?? 'latest'}`,
+        broker_count: 1, report_count: 1, coverage_state: 'ok' as const,
+      }],
+    }))
+
+    const { result, rerender } = renderHook(
+      ({ sort }) => useRadarInstruments({ market: 'TW', sort }),
+      { initialProps: { sort: 'latest' as const }, wrapper: wrapper() },
+    )
+    await waitFor(() => expect(result.current.data?.items[0].instrument_name).toBe('依 latest'))
+
+    rerender({ sort: 'reports' as never })
+    await waitFor(() => expect(result.current.data?.items[0].instrument_name).toBe('依 reports'))
+    expect(radarApi.getRadarInstruments).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sort: 'reports' }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
+
+  it('立場篩選同樣進 queryKey', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockImplementation(async params => ({
+      total: 1, limit: 50, offset: 0, has_more: false, next_offset: null,
+      items: [{
+        market: 'TW' as const, market_display: '台股',
+        instrument_code: '1', instrument_name: params.stance ?? '全部',
+        broker_count: 1, report_count: 1, coverage_state: 'ok' as const,
+      }],
+    }))
+
+    const { result, rerender } = renderHook(
+      ({ stance }) => useRadarInstruments({ market: 'TW', stance }),
+      { initialProps: { stance: undefined as 'bullish' | undefined }, wrapper: wrapper() },
+    )
+    await waitFor(() => expect(result.current.data?.items[0].instrument_name).toBe('全部'))
+
+    rerender({ stance: 'bullish' })
+    await waitFor(() => expect(result.current.data?.items[0].instrument_name).toBe('bullish'))
+  })
+
+  /*
+   * 預設排序不送出去：後端 `sort` 的預設就是 `latest`。若無條件塞鍵，既有那條
+   * 「載入下一頁的參數逐字比對」會紅，而網址也會多出一個等同於預設的參數。
+   */
+  it('預設排序不進請求參數', async () => {
+    vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({
+      total: 0, limit: 50, offset: 0, has_more: false, next_offset: null, items: [],
+    })
+
+    const { result } = renderHook(
+      () => useRadarInstruments({ market: 'TW', sort: 'latest' }),
+      { wrapper: wrapper() },
+    )
+    await waitFor(() => expect(result.current.data).toBeDefined())
+    expect(radarApi.getRadarInstruments).toHaveBeenLastCalledWith(
+      { market: 'TW', q: undefined, sort: undefined, stance: undefined, limit: 50, offset: 0 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
 })

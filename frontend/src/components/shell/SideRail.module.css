@@ -4,8 +4,8 @@
 .rail {
   position: relative; flex: none; height: 100%; width: 272px;
   background: var(--tf-glass);
-  backdrop-filter: var(--tf-glass-filter);
   -webkit-backdrop-filter: var(--tf-glass-filter);
+  backdrop-filter: var(--tf-glass-filter);
   border-right: 1px solid var(--tf-glass-border);
   overflow: hidden;
   transition: width var(--tf-dur-3) var(--tf-ease-out);

@@ -265,7 +265,7 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/brief/latest` | 最新一份每日簡報：markdown 本文 ＋ `report_count`／`signal_count` ＋ 來源研報清單（**由批次決定性記錄，不從 markdown 反推**）。尚未產生過任何簡報時回 200 加 `status="pending"`——**空狀態不是錯誤**，每天早上到批次跑完之前都是這個狀態 |
 | `GET /api/brief/dates` | 有簡報的日期清單（`limit` 預設 30、上限 120）。**這條必須註冊在 `/{brief_date}` 之前**，否則會被參數路由吃掉而 422 |
 | `GET /api/brief/{brief_date}` | 指定日期的簡報；該日無簡報回 404（與 `/latest` 的 pending 刻意不同：指定了不存在的日期就是查無），日期格式不合法回 422 |
-| `GET /api/radar/instruments` | 觀點雷達「選標的」目錄：有可展示訊號的標的清單。參數 `market`／`q`／`limit`（預設 50、上限 100）／`offset`／`with_consensus`（預設 true，當頁每檔附精簡共識預覽，以單次批次查詢算完避免 N+1）|
+| `GET /api/radar/instruments` | 觀點雷達「選標的」目錄：有可展示訊號的標的清單。參數 `market`／`q`／`sort`（`latest`／`reports`／`brokers`／`code`，預設 `latest`）／`stance`（`bullish`／`neutral`／`bearish`，預設不篩）／`limit`（預設 50、上限 100）／`offset`／`with_consensus`（預設 true，當頁每檔附精簡共識預覽，以單次批次查詢算完避免 N+1）。回應另含 `facets`（各市場筆數，受 `q`／`stance` 影響但**不受 `market` 影響**）與 `latest_report_date`（整個篩選結果的最新研報日，非本頁）。**帶 `stance` 時走全量路徑**：中位立場是 Python 算的，SQL 篩不了，故先取回全部符合 `q` 的列、算完共識再篩再分頁 |
 | `GET /api/instrument/{code:path}/radar` | 跨券商總覽：共識快照 ＋ 四維論點 ＋ 近期事件 ＋ 券商清單。`market` **必填**（findb 代碼）、`window` ∈ `30`/`90`/`180`/`all`（預設 `90`）。**讀取零 LLM**——差異全由 `app/services/radar/` 決定性計算。完全查無研報 → 404；有研報但尚未擷取訊號 → 200 的 `pending_extraction` 空狀態（**沒有訊號不是錯誤**）|
 | `GET /api/instrument/{code:path}/radar/events` | 與總覽同源的完整近期事件，提供穩定 offset 分頁（`limit` 預設 12、上限 50）；`market` 必帶 |
 | `GET /api/instrument/{code:path}/radar/brokers/{broker:path}` | 單券商歷程（展開券商列才延遲載入）：全歷程快照 ＋ 相鄰差異；`market` 必帶。**路徑上的 `:path` 是 Starlette 轉換器、不是排版**——它會連 `/` 一起吃進參數，抄路徑時別把它去掉（長度上限由 handler 自行檢查，超過即 422）|

@@ -8,46 +8,44 @@
 /* 精簡導覽列：吸頂之後才實體化成玻璃。
    橫向不做負 margin 出血——RadarPage 的 .scroll 已把內容內縮 32px，
    那圈留白裡不會有任何東西捲過，故導覽列覆蓋內容欄寬就足夠。 */
+/* `top: 0` 是不夠的：sticky 的偏移是從 scrollport 的**內距邊**算起，而 RadarPage 的
+   .scroll 有 28px 上內距，於是吸頂列會停在那圈內距下方，上面留一條「內容照常捲過去、
+   完全看得見」的縫——實測就是券商列的目標價直接壓在麵包屑與標的名上。
+   做法是往上拉滿那圈內距（top 與 margin-top 各 -gutter），再用自身 padding 把內容位置
+   補回原處：吸頂前後內容都在同一個 y，不會在吸附的瞬間跳一下。
+   `var(..., 0px)` 的預設值讓這支元件在沒有宣告 gutter 的容器裡退回原本的行為。 */
 .top {
   position: sticky;
-  top: 0;
+  top: calc(-1 * var(--radar-gutter-top, 0px));
+  margin-top: calc(-1 * var(--radar-gutter-top, 0px));
   z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px 20px;
   flex-wrap: wrap;
-  padding: 8px 0;
+  /* 上下各分一半的 gutter：整條列的**高度不變**（一半＋一半＝原本全放在上面的那些），
+     所以下方的大標題位置一格都不動，但內容從貼著下緣改成置中。全放在上面時，
+     吸頂後那 28px 會變成列內一條解釋不了的空白帶。 */
+  padding: calc(var(--radar-gutter-top, 0px) / 2 + 8px) 0;
   border-bottom: 1px solid transparent;
   transition: background-color var(--tf-dur-2) var(--tf-ease-standard),
     border-color var(--tf-dur-2) var(--tf-ease-standard);
 }
 .topStuck {
   background: var(--tf-glass);
-  backdrop-filter: var(--tf-glass-filter);
   -webkit-backdrop-filter: var(--tf-glass-filter);
+  backdrop-filter: var(--tf-glass-filter);
   border-bottom-color: var(--tf-glass-border);
 }
 
-/* 收進導覽列的標的名：置中於麵包屑與窗期之間，過長以省略號收尾。
-   flex-wrap 之下若讓它換行會改變導覽列高度，故 min-width:0 + nowrap 綁死單行。 */
-.stuckTitle {
-  flex: 1;
-  min-width: 0;
-  text-align: center;
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: -0.01em;
-  color: var(--tf-text-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
+/* 麵包屑：路徑退到背景，「你在哪」跳到前景。舊版整條都是同一個 muted 灰、
+   而末端是代碼（1476），於是最重要的那一項反而是最難讀的那一項。 */
 .crumb {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-size: 13px;
   color: var(--tf-text-muted-aa);
   white-space: nowrap;
@@ -55,6 +53,9 @@
 
 .crumbBtn {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   background: none;
   border: 0;
   padding: 0;
@@ -66,8 +67,40 @@
   min-width: 44px;
 }
 .crumbBtn:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* chevronDown 轉 90° 當作返回的角括號：圖示組沒有 chevronLeft，與其為一個字形
+   新增一個 IconName，不如轉現成的那個。 */
+.crumbIcon { transform: rotate(90deg); color: var(--tf-text-muted-aa); flex: none; }
 
-.sep { color: var(--tf-text-muted-aa); }
+/* 分隔斜線壓到線色：它是標點不是內容，與詞同色會讓路徑讀起來像三個並列的詞。 */
+.sep { color: var(--tf-graphite-line); }
+
+.crumbBadge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--tf-radius-pill);
+  color: var(--badge, var(--mkt-fallback));
+  background: color-mix(in srgb, var(--badge, var(--mkt-fallback)) 12%, var(--tf-surface));
+  border: 1px solid color-mix(in srgb, var(--badge, var(--mkt-fallback)) 26%, transparent);
+}
+
+/* 「你在哪」——整條列上唯一的深色文字。過長以省略號收尾，不讓它把窗期切換擠出去。 */
+.current {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--tf-text-1);
+  letter-spacing: -0.01em;
+}
+.currentCode {
+  font-family: var(--tf-mono);
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+  flex: none;
+}
 
 .titleRow {
   display: flex;
@@ -94,17 +127,6 @@
   color: var(--tf-text-muted-aa);
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: var(--tf-radius-pill);
-  color: var(--badge, var(--mkt-fallback));
-  background: color-mix(in srgb, var(--badge, var(--mkt-fallback)) 12%, var(--tf-surface));
-  border: 1px solid color-mix(in srgb, var(--badge, var(--mkt-fallback)) 26%, transparent);
-}
 
 .meta {
   margin: 0;
@@ -115,6 +137,6 @@
 
 @media (max-width: 720px) {
   .title { font-size: 27px; }
-  /* 窄螢幕的導覽列會換行，塞進標的名會把它撐成兩行——寧可不顯示 */
-  .stuckTitle { display: none; }
+  /* 窄螢幕先犧牲代碼：名字才是識別，代碼在下方大標題那一列還有一份。 */
+  .currentCode { display: none; }
 }

@@ -17,7 +17,11 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 from fastapi.testclient import TestClient  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
-from app.services.radar.queries import CoverageCounts, RadarInstrumentRow  # noqa: E402
+from app.services.radar.queries import (  # noqa: E402
+    CoverageCounts,
+    RadarCatalogPage,
+    RadarInstrumentRow,
+)
 from app.services.radar.types import Signal  # noqa: E402
 from web import deps, server  # noqa: E402
 
@@ -91,6 +95,7 @@ class RadarApiBase(unittest.TestCase):
                 "SessionFactory", "fetch_coverage_counts", "fetch_instrument_signals",
                 "fetch_broker_signals", "list_radar_instruments",
                 "fetch_signals_for_instruments", "fetch_broker_coverage_counts",
+                "fetch_catalog_facets",
             )
         }
         deps.SessionFactory = lambda: _FakeSession()
@@ -374,18 +379,33 @@ class BrokerHistoryTests(RadarApiBase):
         self.assertEqual(body["broker"], "A/B")
 
 
+def _page(rows, total=None, latest=None):
+    return RadarCatalogPage(
+        total=len(rows) if total is None else total,
+        items=list(rows),
+        latest_report_date=latest,
+    )
+
+
+async def _no_facets(*a, **k):
+    return {}
+
+
 class InstrumentCatalogTests(RadarApiBase):
     def test_catalog_200(self):
         async def lst(*a, **k):
-            return 2, [
+            return _page([
                 RadarInstrumentRow("TW", "8046", "南電", 12, 91, date(2026, 7, 11), "partial"),
                 RadarInstrumentRow("TW", "9914", "美利達", 11, 179, date(2026, 7, 9), "partial"),
-            ]
+            ], latest=date(2026, 7, 11))
 
         async def batch(*a, **k):
             return {}  # 無共識資料 → consensus 皆 None
 
-        self._set(list_radar_instruments=lst, fetch_signals_for_instruments=batch)
+        self._set(
+            list_radar_instruments=lst, fetch_signals_for_instruments=batch,
+            fetch_catalog_facets=_no_facets,
+        )
         r = _authed_client().get(
             "/api/radar/instruments?market=TW&q=南電&limit=2&offset=0"
         )
@@ -399,13 +419,14 @@ class InstrumentCatalogTests(RadarApiBase):
         self.assertEqual(body["items"][0]["instrument_code"], "8046")
         self.assertEqual(body["items"][0]["market_display"], "台股")
         self.assertIsNone(body["items"][0]["consensus"])
+        self.assertEqual(body["latest_report_date"], "2026-07-11")
 
     def test_catalog_filtered_total_and_next_offset(self):
         calls = []
 
         async def lst(*a, **k):
             calls.append(k)
-            return 7, [
+            return _page([
                 RadarInstrumentRow(
                     "TW", "8046", "南電", 12, 91,
                     date(2026, 7, 11), "partial",
@@ -414,12 +435,15 @@ class InstrumentCatalogTests(RadarApiBase):
                     "TW", "9914", "美利達", 11, 179,
                     date(2026, 7, 9), "partial",
                 ),
-            ]
+            ], total=7)
 
         async def batch(*a, **k):
             return {}
 
-        self._set(list_radar_instruments=lst, fetch_signals_for_instruments=batch)
+        self._set(
+            list_radar_instruments=lst, fetch_signals_for_instruments=batch,
+            fetch_catalog_facets=_no_facets,
+        )
         r = _authed_client().get(
             "/api/radar/instruments?market=TW&q=南&limit=2&offset=2"
         )
@@ -435,21 +459,25 @@ class InstrumentCatalogTests(RadarApiBase):
 
     def test_catalog_with_consensus(self):
         async def lst(*a, **k):
-            return 1, [
+            return _page([
                 RadarInstrumentRow("TW", "8046", "南電", 12, 91, date(2026, 7, 11), "partial"),
-            ]
+            ])
 
         async def batch(session, keys, **k):
             return {("TW", "8046"): [_sig()]}
 
-        self._set(list_radar_instruments=lst, fetch_signals_for_instruments=batch)
+        self._set(
+            list_radar_instruments=lst, fetch_signals_for_instruments=batch,
+            fetch_catalog_facets=_no_facets,
+        )
         r = _authed_client().get("/api/radar/instruments?market=TW")
         self.assertEqual(r.status_code, 200)
         item = r.json()["items"][0]
         self.assertIsNotNone(item["consensus"])
         self.assertEqual(item["consensus"]["stance"]["rating"], "buy")
         self.assertEqual(item["consensus"]["stance"]["total_rated"], 1)
-        self.assertEqual(item["consensus"]["target"]["currency"], "TWD")
+        # 目標價摘要只有方向：中位數／幣別／幅度連 payload 都不該出現（見 InstrumentTargetBrief）
+        self.assertEqual(item["consensus"]["target"], {"revision_direction": "none"})
 
     def test_catalog_invalid_market_422(self):
         r = _authed_client().get("/api/radar/instruments?market=ZZ")
@@ -457,20 +485,158 @@ class InstrumentCatalogTests(RadarApiBase):
 
     def test_catalog_rejects_unsupported_response_market(self):
         async def lst(*a, **k):
-            return 1, [
+            return _page([
                 RadarInstrumentRow(
                     "UNKNOWN", "8046", "南電", 1, 1,
                     date(2026, 7, 11), "ok",
                 )
-            ]
+            ])
 
         async def batch(*a, **k):
             return {}
 
-        self._set(list_radar_instruments=lst, fetch_signals_for_instruments=batch)
+        self._set(
+            list_radar_instruments=lst, fetch_signals_for_instruments=batch,
+            fetch_catalog_facets=_no_facets,
+        )
 
         with self.assertRaises(ValidationError):
             _authed_client().get("/api/radar/instruments?with_consensus=false")
+
+    def test_catalog_passes_sort_through_and_rejects_unknown(self):
+        calls = []
+
+        async def lst(*a, **k):
+            calls.append(k)
+            return _page([])
+
+        self._set(
+            list_radar_instruments=lst, fetch_signals_for_instruments=_no_facets,
+            fetch_catalog_facets=_no_facets,
+        )
+
+        self.assertEqual(
+            _authed_client().get("/api/radar/instruments?sort=reports").status_code, 200
+        )
+        self.assertEqual(calls[0]["sort"], "reports")
+        # 未列在 CatalogSort 的值不得靜默退回預設——那會讓前端以為排序生效了
+        self.assertEqual(
+            _authed_client().get("/api/radar/instruments?sort=bogus").status_code, 422
+        )
+
+    def test_catalog_returns_market_facets(self):
+        async def lst(*a, **k):
+            return _page([])
+
+        async def facets(session, **k):
+            return {"TW": 41, "US": 8}
+
+        self._set(
+            list_radar_instruments=lst, fetch_signals_for_instruments=_no_facets,
+            fetch_catalog_facets=facets,
+        )
+        body = _authed_client().get("/api/radar/instruments?market=TW").json()
+
+        # market=TW 之下 facets 仍要含 US，否則使用者永遠看不到「切過去有 8 檔」
+        self.assertEqual(body["facets"], {"TW": 41, "US": 8})
+
+
+class CatalogStanceFilterTests(RadarApiBase):
+    """立場篩選：SQL 算不出中位立場，所以這條路徑必須全量取回再篩。"""
+
+    def _rows(self):
+        return [
+            RadarInstrumentRow("TW", "8046", "南電", 2, 9, date(2026, 7, 11), "ok"),
+            RadarInstrumentRow("TW", "9914", "美利達", 2, 9, date(2026, 7, 9), "ok"),
+            RadarInstrumentRow("US", "AAPL", "蘋果", 2, 9, date(2026, 7, 8), "ok"),
+        ]
+
+    def _wire(self, calls):
+        async def lst(*a, **k):
+            calls.append(k)
+            return _page(self._rows(), latest=date(2026, 7, 11))
+
+        async def batch(session, keys, **k):
+            return {
+                ("TW", "8046"): [_sig(code="8046", rating="buy")],
+                ("TW", "9914"): [_sig(code="9914", rating="neutral")],
+                ("US", "AAPL"): [_sig(code="AAPL", market="US", rating="sell")],
+            }
+
+        async def facets(*a, **k):
+            raise AssertionError("立場路徑的 facets 由 Python 算，不得再打一次 SQL")
+
+        self._set(
+            list_radar_instruments=lst, fetch_signals_for_instruments=batch,
+            fetch_catalog_facets=facets,
+        )
+
+    def test_stance_filters_across_all_pages_not_just_current_page(self):
+        calls = []
+        self._wire(calls)
+
+        body = _authed_client().get("/api/radar/instruments?stance=bullish").json()
+
+        # 全量取回：limit=None、market 不進 SQL（留給 Python，否則 facets 會退化）
+        self.assertIsNone(calls[0]["limit"])
+        self.assertIsNone(calls[0]["market"])
+        self.assertEqual([i["instrument_code"] for i in body["items"]], ["8046"])
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["latest_report_date"], "2026-07-11")
+
+    def test_stance_facets_count_only_matching_instruments(self):
+        self._wire([])
+
+        body = _authed_client().get("/api/radar/instruments?stance=bearish").json()
+
+        self.assertEqual(body["facets"], {"US": 1})
+        self.assertEqual([i["instrument_code"] for i in body["items"]], ["AAPL"])
+
+    def test_stance_and_market_compose(self):
+        self._wire([])
+
+        body = _authed_client().get(
+            "/api/radar/instruments?stance=bullish&market=US"
+        ).json()
+
+        self.assertEqual(body["items"], [])
+        self.assertEqual(body["total"], 0)
+        # 市場篩掉了結果，但 facets 仍要說得出「TW 有 1 檔」
+        self.assertEqual(body["facets"], {"TW": 1})
+
+    def test_stance_paginates_after_filtering(self):
+        self._wire([])
+
+        body = _authed_client().get(
+            "/api/radar/instruments?stance=bullish&limit=1&offset=1"
+        ).json()
+
+        self.assertEqual(body["items"], [])
+        self.assertEqual(body["total"], 1)
+        self.assertFalse(body["has_more"])
+
+    def test_stance_ignores_instruments_without_consensus(self):
+        async def lst(*a, **k):
+            return _page(self._rows())
+
+        async def batch(*a, **k):
+            return {}  # 全部沒有共識 → 立場未知 → 任何立場篩選都不該收錄
+
+        self._set(
+            list_radar_instruments=lst, fetch_signals_for_instruments=batch,
+            fetch_catalog_facets=_no_facets,
+        )
+
+        body = _authed_client().get("/api/radar/instruments?stance=neutral").json()
+
+        self.assertEqual(body["items"], [])
+        self.assertEqual(body["facets"], {})
+        self.assertIsNone(body["latest_report_date"])
+
+    def test_invalid_stance_422(self):
+        self.assertEqual(
+            _authed_client().get("/api/radar/instruments?stance=bull").status_code, 422
+        )
 
 
 if __name__ == "__main__":

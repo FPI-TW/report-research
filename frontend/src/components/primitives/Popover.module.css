@@ -6,8 +6,8 @@
   position: absolute;
   z-index: 40;
   background: var(--tf-glass-strong);
-  backdrop-filter: var(--tf-glass-filter);
   -webkit-backdrop-filter: var(--tf-glass-filter);
+  backdrop-filter: var(--tf-glass-filter);
   border-radius: var(--tf-radius-card);
   box-shadow: var(--tf-shadow-pop), var(--tf-glass-sheen);
   padding: 6px;

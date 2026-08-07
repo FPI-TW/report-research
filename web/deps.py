@@ -146,6 +146,7 @@ from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.radar import (  # noqa: E402
     fetch_broker_coverage_counts,
     fetch_broker_signals,
+    fetch_catalog_facets,
     fetch_coverage_counts,
     fetch_instrument_signals,
     fetch_signals_for_instruments,
@@ -189,6 +190,7 @@ __all__ = [
     "fetch_brief_reports",
     "fetch_broker_coverage_counts",
     "fetch_broker_signals",
+    "fetch_catalog_facets",
     "fetch_chunk_content",
     "fetch_coverage_counts",
     "fetch_doc",

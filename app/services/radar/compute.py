@@ -626,10 +626,8 @@ def build_instrument_slim(
         primary = next(
             (g for g in tc.groups if g.currency == tc.primary_currency), tc.groups[0]
         )
-        target = InstrumentTargetBrief(
-            currency=primary.currency, median=primary.median,
-            revision_pct=primary.revision_pct, revision_direction=primary.revision_direction,
-        )
+        # 只取方向。幣別、中位數與修正幅度刻意不進清單 payload（見 InstrumentTargetBrief）。
+        target = InstrumentTargetBrief(revision_direction=primary.revision_direction)
     stance = InstrumentStance(
         rating=rc.median_rating, bullish=rc.bullish, neutral=rc.neutral, bearish=rc.bearish,
         total_rated=rc.total_rated, distribution=rc.distribution,

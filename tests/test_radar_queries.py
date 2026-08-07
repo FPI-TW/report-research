@@ -200,6 +200,11 @@ class _FakeResult:
     def all(self):
         return list(self._rows)
 
+    def mappings(self):
+        # 真 Result 的 .mappings() 回一個新的 MappingResult；這裡的列本身就是 dict，
+        # 回自己即可讓 .mappings().all() 與 .all() 拿到同一份。
+        return self
+
     def scalar_one(self):
         return self._rows[0]
 
@@ -288,10 +293,17 @@ class BatchSignalsTests(unittest.IsolatedAsyncioTestCase):
 
 
 def _cat_row(market="TW", code="8046", name="南電", broker_count=1, report_count=1,
-             latest=date(2026, 7, 11), sig_brokers=1, has_partial=True, total=1):
-    # list_radar_instruments 的分頁 SELECT 欄序；total 由 count(*) OVER () 附在最後一欄
-    return (market, code, name, broker_count, report_count, latest,
-            sig_brokers, has_partial, total)
+             latest=date(2026, 7, 11), sig_brokers=1, has_partial=True, total=1,
+             latest_overall=None):
+    # list_radar_instruments 走 .mappings()，所以這裡也是欄名而非欄序——先前是位置式
+    # tuple，插一欄就得同步改這支 helper，而忘了改的症狀是「值接到隔壁欄位」不是紅燈。
+    return {
+        "market": market, "instrument_code": code, "name": name,
+        "broker_count": broker_count, "report_count": report_count,
+        "latest": latest, "sig_brokers": sig_brokers, "has_partial": has_partial,
+        "total": total,
+        "latest_overall": latest if latest_overall is None else latest_overall,
+    }
 
 
 class CatalogQueryTests(unittest.IsolatedAsyncioTestCase):
@@ -313,11 +325,11 @@ class CatalogQueryTests(unittest.IsolatedAsyncioTestCase):
         """
         session = _QueuedSession([_FakeResult([_cat_row(total=7)])])
 
-        total, rows = await queries.list_radar_instruments(session)
+        page = await queries.list_radar_instruments(session)
 
         self.assertEqual(session.executed, 1)
-        self.assertEqual(total, 7)
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(page.total, 7)
+        self.assertEqual(len(page.items), 1)
         page_sql = str(session.calls[0][0][0])
         self.assertIn("count(*) OVER () AS total", page_sql)
         self.assertNotIn("SELECT count(*) FROM cat", page_sql)
@@ -326,17 +338,86 @@ class CatalogQueryTests(unittest.IsolatedAsyncioTestCase):
         # 零列時沒有任何列可帶 window 的 total —— 不可 IndexError，語意就是 0
         session = _QueuedSession([_FakeResult([])])
 
-        total, rows = await queries.list_radar_instruments(session)
+        page = await queries.list_radar_instruments(session)
 
-        self.assertEqual((total, rows), (0, []))
+        self.assertEqual((page.total, page.items, page.latest_report_date), (0, [], None))
 
     async def test_catalog_partial_signal_forces_partial_row_state(self):
         session = _QueuedSession([_FakeResult([_cat_row(has_partial=True)])])
 
-        total, rows = await queries.list_radar_instruments(session)
+        page = await queries.list_radar_instruments(session)
 
-        self.assertEqual(total, 1)
-        self.assertEqual(rows[0].coverage_state, "partial")
+        self.assertEqual(page.total, 1)
+        self.assertEqual(page.items[0].coverage_state, "partial")
+
+    async def test_catalog_latest_is_window_max_not_first_row(self):
+        """報頭「最新更新」要的是整個結果集的最大值，不是第一列的日期。
+
+        先前呼叫端拿 `items[0].latest_report_date` 當最新日期——那只有在「依最新研報
+        排序」時才碰巧成立。排序一改成研報數，第一列就變成某一檔的日期，而畫面不會
+        有任何異狀。
+        """
+        session = _QueuedSession([
+            _FakeResult([
+                _cat_row(code="8046", latest=date(2026, 7, 1),
+                         latest_overall=date(2026, 8, 7), total=2),
+                _cat_row(code="2330", latest=date(2026, 8, 7),
+                         latest_overall=date(2026, 8, 7), total=2),
+            ])
+        ])
+
+        page = await queries.list_radar_instruments(session, sort="reports")
+
+        self.assertEqual(page.items[0].latest_report_date, date(2026, 7, 1))
+        self.assertEqual(page.latest_report_date, date(2026, 8, 7))
+        self.assertIn("max(cat.latest) OVER () AS latest_overall",
+                      str(session.calls[0][0][0]))
+
+    async def test_catalog_sort_is_whitelisted_not_interpolated(self):
+        """排序鍵直接進 SQL 字面，所以只認白名單；未知值退回預設而不是拼進去。"""
+        session = _QueuedSession([_FakeResult([]), _FakeResult([])])
+
+        await queries.list_radar_instruments(session, sort="reports")
+        self.assertIn("ORDER BY cat.report_count DESC", str(session.calls[0][0][0]))
+
+        await queries.list_radar_instruments(session, sort="'; DROP TABLE x; --")
+        injected = str(session.calls[1][0][0])
+        self.assertNotIn("DROP TABLE", injected)
+        self.assertIn("ORDER BY cat.latest DESC NULLS LAST", injected)
+
+    async def test_every_sort_ends_with_deterministic_tiebreak(self):
+        """並列時沒有決定性尾綴，OFFSET 分頁會讓同一列重複出現或整個消失（且不報錯）。"""
+        for key, clause in queries.CATALOG_SORTS.items():
+            with self.subTest(sort=key):
+                self.assertTrue(
+                    clause.endswith("cat.market, cat.instrument_code"),
+                    f"{key} 少了 (market, instrument_code) 尾綴：{clause}",
+                )
+
+    async def test_catalog_without_limit_omits_pagination_binds(self):
+        """立場篩選走的全量路徑：不能帶 LIMIT/OFFSET，否則篩完只剩第一頁的東西。"""
+        session = _QueuedSession([_FakeResult([])])
+
+        await queries.list_radar_instruments(session, limit=None)
+
+        sql = str(session.calls[0][0][0])
+        self.assertNotIn("LIMIT", sql)
+        self.assertNotIn("OFFSET", sql)
+        self.assertNotIn("limit", session.calls[0][0][1])
+
+    async def test_facets_ignore_market_filter(self):
+        """膠囊上的數字要回答「切過去會看到幾檔」，所以 facets 不得套 market 條件。"""
+        session = _QueuedSession([
+            _FakeResult([{"market": "TW", "n": 41}, {"market": "US", "n": 8}])
+        ])
+
+        facets = await queries.fetch_catalog_facets(session, q="台")
+
+        self.assertEqual(facets, {"TW": 41, "US": 8})
+        sql = str(session.calls[0][0][0])
+        self.assertIn("GROUP BY cat.market", sql)
+        self.assertNotIn("cat.market = :market", sql)
+        self.assertIn("q", session.calls[0][0][1])
 
 
 class BatchSqlStructureTests(unittest.TestCase):

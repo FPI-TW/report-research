@@ -41,6 +41,7 @@ from web import (
 )
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
+from web.routers import brief as brief_routes  # noqa: E402
 from web.routers import health as health_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
@@ -200,6 +201,10 @@ app.include_router(radar_routes.router)
 
 # ───── 研報閱讀頁（/api/reading/*）已拆至 web/routers/reading.py ─────
 app.include_router(reading_routes.router)
+
+
+# ───── 每日簡報（/api/brief/*）：純讀取、零 LLM ─────
+app.include_router(brief_routes.router)
 
 
 

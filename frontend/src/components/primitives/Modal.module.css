@@ -3,16 +3,16 @@
 .scrim {
   position: fixed; inset: 0; z-index: 50;
   background: var(--tf-scrim);
-  backdrop-filter: var(--tf-scrim-filter);
   -webkit-backdrop-filter: var(--tf-scrim-filter);
+  backdrop-filter: var(--tf-scrim-filter);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
 /* 進出場（opacity/translate/scale）改由 Motion 驅動，此處僅留版面。 */
 .panel {
   background: var(--tf-glass-strong);
-  backdrop-filter: var(--tf-glass-filter);
   -webkit-backdrop-filter: var(--tf-glass-filter);
+  backdrop-filter: var(--tf-glass-filter);
   border-radius: var(--tf-radius-panel);
   box-shadow: var(--tf-shadow-modal), var(--tf-glass-sheen);
   width: min(920px, 100%);

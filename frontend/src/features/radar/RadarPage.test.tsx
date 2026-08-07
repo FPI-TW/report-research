@@ -153,7 +153,7 @@ describe('RadarPage', () => {
       }],
     })
     wrap('/radar')
-    expect(screen.getByRole('heading', { name: '廷豐觀點' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '券商觀點' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('南電')).toBeInTheDocument())
     expect(radarApi.getRadarInstruments).toHaveBeenCalled()
   })
@@ -186,7 +186,7 @@ describe('RadarPage', () => {
 
     wrap('/radar?market=ZZ&code=8046')
 
-    expect(screen.getByRole('heading', { name: '廷豐觀點' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '券商觀點' })).toBeInTheDocument()
     await waitFor(() => expect(radarApi.getRadarInstruments).toHaveBeenCalled())
     expect(radarApi.getInstrumentRadar).not.toHaveBeenCalled()
   })

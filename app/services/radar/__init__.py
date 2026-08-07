@@ -16,6 +16,7 @@ from app.services.radar.compute import (  # noqa: F401
 from app.services.radar.queries import (  # noqa: F401
     fetch_broker_coverage_counts,
     fetch_broker_signals,
+    fetch_catalog_facets,
     fetch_coverage_counts,
     fetch_instrument_signals,
     fetch_signals_for_instruments,

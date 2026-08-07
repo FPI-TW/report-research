@@ -1,5 +1,8 @@
 import type { CSSProperties } from 'react'
-import type { Direction, RatingNorm } from '../../lib/radarSchemas'
+import type { Direction, RatingNorm, StanceFilter } from '../../lib/radarSchemas'
+
+/** 立場三桶的前端鍵名。API 參數那層用後端拼法，對接點只有 `BUCKET_TO_STANCE`。 */
+export type Bucket = 'bull' | 'neu' | 'bear'
 
 export const RATING_DISPLAY: Record<RatingNorm, string> = {
   buy: '買進',
@@ -11,7 +14,7 @@ export const RATING_DISPLAY: Record<RatingNorm, string> = {
 }
 
 /** 評等 → 三桶語意（立場詞著色：偏多/中立/偏空）。 */
-export const RATING_BUCKET: Record<RatingNorm, 'bull' | 'neu' | 'bear'> = {
+export const RATING_BUCKET: Record<RatingNorm, Bucket> = {
   buy: 'bull',
   overweight: 'bull',
   neutral: 'neu',
@@ -19,6 +22,35 @@ export const RATING_BUCKET: Record<RatingNorm, 'bull' | 'neu' | 'bear'> = {
   sell: 'bear',
   unknown: 'neu',
 }
+
+/**
+ * 三桶的顯示字樣。與後端 `radar/scale.py` 的 `BUCKET_DISPLAY` 逐字相同，
+ * 差別只在鍵：這邊沿用前端既有的 `bull`/`neu`/`bear`，API 參數那層才用
+ * 後端的 `bullish`/`neutral`/`bearish`（見 `BUCKET_TO_STANCE`）。
+ */
+export const BUCKET_DISPLAY: Record<Bucket, string> = {
+  bull: '偏多',
+  neu: '中立',
+  bear: '偏空',
+}
+
+/** 三桶 → API 的 `stance` 參數值。兩套拼法只在這一處對接。 */
+export const BUCKET_TO_STANCE: Record<Bucket, StanceFilter> = {
+  bull: 'bullish',
+  neu: 'neutral',
+  bear: 'bearish',
+}
+
+/** 三桶的排列順序（偏多→中立→偏空），比例條、圖例、篩選選單共用。 */
+export const BUCKET_ORDER: Bucket[] = ['bull', 'neu', 'bear']
+
+/** 哪些五級評等落在哪一桶——圖例要說得出「偏多」到底包含什麼。 */
+export const BUCKET_MEMBERS: Record<Bucket, RatingNorm[]> = {
+  bull: ['buy', 'overweight'],
+  neu: ['neutral'],
+  bear: ['underweight', 'sell'],
+}
+
 
 /** 市場徽章底色：以 --badge 帶入市場語意色（未知市場退回 fallback）。 */
 export function marketVar(market: string): CSSProperties {
@@ -263,4 +295,84 @@ export function directionIconName(
 export function dash(v: string | number | null | undefined): string {
   if (v == null || v === '') return '—'
   return String(v)
+}
+
+export interface BucketSlice {
+  bucket: Bucket
+  count: number
+  /** 整數百分比，各段**保證加總為 100**（見 `bucketSlices`）。 */
+  pct: number
+}
+
+/**
+ * 五級分佈 → 三桶切片，百分比以最大餘數法配到整數且加總恰為 100。
+ *
+ * 兩個理由要求「加總為 100」而不是各自四捨五入：一是同一列的文字（66% / 27% / 7%）
+ * 印出來會被讀者加起來；二是這組數字同時當比例條的段寬，各自四捨五入會讓條尾差出
+ * 一兩個像素的縫或溢出，而 CSS 不會為此報任何錯。
+ *
+ * 三桶全為 0（有券商但無人給評等）→ 回空陣列，呼叫端據此不渲染整條。
+ */
+export function bucketSlices(stance: {
+  bullish: number
+  neutral: number
+  bearish: number
+}): BucketSlice[] {
+  const raw: Array<{ bucket: Bucket; count: number }> = [
+    { bucket: 'bull', count: stance.bullish },
+    { bucket: 'neu', count: stance.neutral },
+    { bucket: 'bear', count: stance.bearish },
+  ]
+  // 分母用三桶實際加總而非 total_rated：後者不含 unknown，理論上兩者相等，但真要不等時
+  // 該讓比例條填滿它畫得出來的東西，而不是留一段沒有來源的空白。
+  const total = raw.reduce((s, r) => s + r.count, 0)
+  if (total <= 0) return []
+  const exact = raw.map(r => ({ ...r, exact: (r.count / total) * 100 }))
+  const slices = exact.map(r => ({ bucket: r.bucket, count: r.count, pct: Math.floor(r.exact) }))
+  let remainder = 100 - slices.reduce((s, r) => s + r.pct, 0)
+  // 餘數依小數部分由大到小分配；同分時維持 偏多→中立→偏空 的原序（穩定、可預期）。
+  const order = exact
+    .map((r, i) => ({ i, frac: r.exact - Math.floor(r.exact) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i)
+  for (const { i } of order) {
+    if (remainder <= 0) break
+    slices[i].pct += 1
+    remainder -= 1
+  }
+  return slices.filter(s => s.count > 0)
+}
+
+export interface RecentChange {
+  direction: Direction
+  label: string
+  /** 附註（家數）。目標價方向刻意沒有附註——不得顯示幅度。 */
+  detail?: string
+  /** 滑鼠提示；目前只有「幣別不同故不比較目標價」會用到。 */
+  note?: string
+}
+
+/**
+ * 「近期變化」欄的單一結論：評等淨變動優先，評等持平時才看目標價方向。
+ *
+ * 兩個訊號合成一句話而不是並列兩欄，是因為清單頁一列只該有一個結論；
+ * 評等變動比目標價調整更能代表券商立場改變，所以它優先。
+ *
+ * **目標價一律只講方向、不講幅度**：清單頁不得出現目標價的中位數／均值／區間／百分比。
+ */
+export function recentChange(
+  stance: { net_rating: number } | null | undefined,
+  target: { revision_direction: Direction } | null | undefined,
+): RecentChange {
+  const net = stance?.net_rating ?? 0
+  if (net > 0) return { direction: 'up', label: '評等上調', detail: `${net} 家` }
+  if (net < 0) return { direction: 'down', label: '評等下調', detail: `${Math.abs(net)} 家` }
+  const dir = target?.revision_direction
+  if (dir === 'up') return { direction: 'up', label: '目標價上修' }
+  if (dir === 'down') return { direction: 'down', label: '目標價下修' }
+  // incomparable（各家幣別不同）不是「持平」，但評等確實持平——把差別放進提示，
+  // 而不是在這一欄多印一個讀者無從處置的「不可比較」。
+  if (dir === 'incomparable') {
+    return { direction: 'flat', label: '持平', note: TARGET_INCOMPARABLE_NOTE }
+  }
+  return { direction: 'flat', label: '持平' }
 }

@@ -1,0 +1,74 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  height: 7px;
+  width: 100%;
+  border-radius: var(--tf-radius-pill);
+  overflow: hidden;
+  background: var(--tf-border-weak);
+}
+.bar > span { display: block; height: 100%; }
+
+/* 三桶語意色。與 InstrumentCard 舊的五級條同源：偏多＝成功綠、偏空＝錯誤紅、
+   中立＝與內文區隔得開的中性灰（--tf-text-muted-aa 對白 5.30，當填色夠實）。
+   刻意不用 --tf-text-3／--tf-text-4：那兩階淡到與軌道底色（--tf-border-weak）分不開，
+   「中立佔一半」的那一段會看起來像沒有資料。 */
+.bull { background: var(--tf-success); }
+.neu { background: var(--tf-text-muted-aa); }
+.bear { background: var(--tf-error); }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  /* 11px ＋ 10px 欄距：1440 下這一欄約 216px，一項約 93px——兩項 196px 剛好併成一行。
+     退回 11.5/12 會變成每項一行，同一張表的列高於是差出一整行。 */
+  gap: 3px 10px;
+  font-size: 11px;
+  color: var(--tf-text-2);
+  line-height: 1.35;
+}
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: none;
+}
+.pct {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--tf-text-1);
+}
+.n {
+  color: var(--tf-text-muted-aa);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 家數少是常態不是故障，故用 warn 而非 error（同 ConsensusSnapshot 的取捨）。
+   說明句在整條的 aria-label 裡，不另外掛 title——否則同一句話會在 DOM 出現兩次。 */
+.low {
+  color: var(--tf-warn-text);
+  background: var(--tf-warn-bg);
+  border: 1px solid var(--tf-warn-border);
+  border-radius: var(--tf-radius-pill);
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.empty {
+  font-size: 12px;
+  color: var(--tf-text-muted-aa);
+}

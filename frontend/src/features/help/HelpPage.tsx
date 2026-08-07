@@ -41,7 +41,7 @@ const TOC: [string, string][] = [
   ['result', '看懂一筆結果'],
   ['full', '查看完整報告（閱讀頁）'],
   ['ask', '智能問答（向 AI 提問）'],
-  ['radar', '廷豐觀點'],
+  ['radar', '券商觀點'],
   ['monitor', '導入監控（進階）'],
 ]
 
@@ -97,7 +97,7 @@ export default function HelpPage() {
           </h1>
           <p className={styles.lede}>
             廷豐智能研報把券商研報集中起來，用「語意 ＋ 關鍵字」混合搜尋，幾秒內找到相關報告與段落，
-            並可直接閱讀原始 PDF、向 AI 提問、或用廷豐觀點追蹤各券商評等變化。本說明帶你快速上手。
+            並可直接閱讀原始 PDF、向 AI 提問、或用「券商觀點」追蹤各家評等變化。本說明帶你快速上手。
           </p>
         </header>
 
@@ -283,8 +283,8 @@ export default function HelpPage() {
         </section>
 
         <section id="radar" className={styles.section}>
-          <h2 className={styles.h2}><span className={styles.no}>7</span>廷豐觀點</h2>
-          <p><strong>廷豐觀點</strong>把同一標的的各券商研報彙整起來，追蹤一段期間內的<strong>觀點與評等變化</strong>：</p>
+          <h2 className={styles.h2}><span className={styles.no}>7</span>券商觀點</h2>
+          <p><strong>券商觀點</strong>把同一標的的各券商研報彙整起來，追蹤一段期間內的<strong>觀點與評等變化</strong>：</p>
           <ul className={styles.bul}>
             <li>先選一個標的，即可看到<strong>評等共識</strong>，以及<strong>各家目標價／EPS 點圖</strong>——一個點就是一家券商，點下去右側會顯示該券商的數字與報告日期。</li>
             <li>點圖<strong>不算中位數也不平均</strong>；EPS 需先選定同一個財年才比較，不同財年的會標示「未納入目前期間」。</li>

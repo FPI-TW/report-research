@@ -72,7 +72,7 @@ describe('BriefPage', () => {
     expect(await screen.findByRole('heading', { name: '每日簡報' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('2026 年 8 月 7 日')).toBeInTheDocument())
     expect(screen.getByText('新進研報 15 篇')).toBeInTheDocument()
-    expect(screen.getByText('觀點變動 2 筆')).toBeInTheDocument()
+    expect(screen.getByText('已擷取評等訊號 2 筆')).toBeInTheDocument()
     // markdown 有被渲染成結構，不是原樣字串
     expect(screen.getByRole('heading', { name: '今日重點' })).toBeInTheDocument()
     expect(screen.getByText(/記憶體報價續揚/)).toBeInTheDocument()

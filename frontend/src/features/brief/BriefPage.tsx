@@ -123,8 +123,11 @@ export default function BriefPage() {
                 <span className={styles.metaStat}>
                   新進研報 {brief.report_count} 篇
                 </span>
+                {/* 這個數字數的是 report_signal 的結構化擷取結果，不含模型從摘要文字
+                    讀出來的調整（那些在本文裡標「（摘要提及）」）。標籤必須說得出差別，
+                    否則會出現「變動 0 筆」與本文列出六筆並存的畫面。 */}
                 <span className={styles.metaStat}>
-                  觀點變動 {brief.signal_count} 筆
+                  已擷取評等訊號 {brief.signal_count} 筆
                 </span>
               </div>
 

@@ -129,6 +129,18 @@ from app.services.answer import (  # noqa: E402
     log_stopped_qa,
     set_report_offer_declined,
 )
+from app.services.brief import (  # noqa: E402
+    fetch_by_date as fetch_brief_by_date,
+)
+from app.services.brief import (  # noqa: E402
+    fetch_dates as fetch_brief_dates,
+)
+from app.services.brief import (  # noqa: E402
+    fetch_latest as fetch_latest_brief,
+)
+from app.services.brief import (  # noqa: E402
+    fetch_reports_by_ids as fetch_brief_reports,
+)
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.embed import embed_query_cached, embed_texts  # noqa: E402
 from app.services.radar import (  # noqa: E402
@@ -172,6 +184,9 @@ __all__ = [
     "delete_qa",
     "embed_query_cached",
     "embed_texts",
+    "fetch_brief_by_date",
+    "fetch_brief_dates",
+    "fetch_brief_reports",
     "fetch_broker_coverage_counts",
     "fetch_broker_signals",
     "fetch_chunk_content",
@@ -179,6 +194,7 @@ __all__ = [
     "fetch_doc",
     "fetch_instrument_names",
     "fetch_instrument_signals",
+    "fetch_latest_brief",
     "fetch_signals",
     "fetch_signals_for_instruments",
     "fetch_similar",

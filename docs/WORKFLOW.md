@@ -152,7 +152,7 @@ flowchart TD
 
 `claude` CLI 是跨進程共用資源。會 spawn 它的批次——`tag_all_cli.py`（②標註）、`sync_new_reports.py`（增量匯入時的行內標註）、`generate_summaries.py`（⑥）、`generate_titles.py`（⑦）、`extract_takeaways.py`（④）、`extract_signals.py`（⑤）——併發互搶的症狀不是「壞掉」而是**擷取被大量誤標 `rejected`**：資料沒壞、模型也沒壞，只是 CLI 被搶。
 
-規約以前只寫在註解與文件裡，但 `report-mark-sync.timer` 每 3 小時會自動跑「增量匯入 → 摘要 → 標題 → 摘錄 → 訊號」，文件攔不住排程。現在改由鎖強制：
+規約以前只寫在註解與文件裡，但 `report-mark-sync.timer` 每 3 小時會自動跑「增量匯入 → 摘要 → 標題 → 摘錄 → 訊號 → 每日簡報」，文件攔不住排程。現在改由鎖強制：
 
 - **機制**：`fcntl.flock(LOCK_EX | LOCK_NB)` 於鎖檔 `data/.claude_cli.lock`；各批次在 `main` 進入點取一次（**不在 per-report 迴圈內**）。
 - **撞車行為**：後啟動者印出持有者（腳本名／pid／起始時間）並以 **`rc=75`**（`sysexits.h` 的 `EX_TEMPFAIL`）結束——刻意與「批次自己壞了」分開，讓排程殼能分別處置。
@@ -173,6 +173,17 @@ flowchart TD
 - **「一律繁體中文」是 prompt 的機率性保證，確定性收尾在 `app/services/zh_hant.py`**：2026-07-31 的台股頭條就是模型把英文標題翻成了整句簡體（`title_source=translated`）。④⑤⑥⑦ 四支批次的 LLM 轉述文字都過這一關（`title`／`summary`／`claim`／thesis `summary`），**逐字引文與原句刻意不過**（理由見下方工具段）。線上的兩條串流路徑同樣有接：問答（`app/services/answer.py` 的主 RAG 與 overview 收尾，畫面靠 `done` 的加法欄位 `answer` 校正）與深度研報（`app/services/report.py` 的**單次與逐節兩個組裝點**，前端不渲染研報草稿故不需要校正事件）。存量由 `scripts/backfill_traditional.py` 清。比照本 repo 對研報版面的一貫作法：用 Python 收尾，不去改四份平行的 prompt 副本
 - **指令**：`make titles`＝`uv run python scripts/generate_titles.py`；旗標 `[--workers 2] [--limit N] [--excerpt 3000] [--hashes-file PATH]`
 - ⚠️ 同樣受 `claude` CLI 併發之限（互斥由 `scripts/_claude_lock.py` 強制，見下方）：`scripts/sync_new_reports.sh` 在增量匯入後會**自動依序**跑本階段（只補本輪新研報）
+
+### ⑧ 每日簡報 — `scripts/generate_brief.py`（Claude CLI，簡報頁用）
+- **為什麼**：新研報每天進來十幾篇，摘要都在庫裡卻沒有一個「今天發生了什麼」的入口。本階段把窗期內的新研報與夠新的評等變動整理成一段可快速讀完的 markdown
+- **輸入**：**入庫時間**（`research_report.created_at`）落在窗期內的研究報告 ＋ 同窗期新擷取到、且 `report_date` 在 `SIGNAL_MAX_REPORT_AGE_DAYS`（14 天）內的評等／目標價變動。餵給 LLM 的是**既有 `summary`**（覆蓋率 100%），不重讀任何全文
+- **窗期**：上一份簡報的 `window_end` → 現在（無縫接續）；沒有上一份時取近 24 小時，另有 `--max-lookback-days`（7）上限
+- **做什麼**：一天**一次** `claude -p`(Sonnet)，依固定章節產出 markdown → `parse_brief` 收乾淨（剝圍欄、丟掉第一個標題之前的開場白）→ `to_traditional()` → upsert
+- **輸出**：`research.report_brief`（一天一列，`UNIQUE(brief_date)`；`/api/brief/*` 讀取時零 LLM）
+- **指令**：`make brief`＝`uv run python scripts/generate_brief.py`；旗標 `[--date YYYY-MM-DD] [--after-hour 9] [--max-lookback-days 7] [--model M] [--force] [--dry-run]`
+- **排程**：`scripts/sync_new_reports.sh` 每輪呼叫，由腳本自己判斷要不要跑——當日已有列、或本地時間未到 `--after-hour`（預設 9，券商早報上午才進來）→ no-op 退出 0。**窗期內既無新研報也無變動時刻意不寫列**：寫了「今天沒事」會讓當天稍晚真的有素材時再也補不上（UNIQUE 擋著）
+- ⚠️ **三個會靜默出錯的地方**：(a) 窗期用 `created_at` 不是 `report_date`（同 ④ 那個坑）；(b) 變動要同時「這輪才擷取到」與「報告本身夠新」——只看擷取時間，積壓批次翻出來的舊變動會被當成今天的新聞（2026-08-06 實測近 7 天擷取的 423 筆變動裡，報告本身也新的只有 21 筆）；(c) 來源研報清單由 Python 記錄，不從 markdown 反推
+- ⚠️ **鎖只包住那一次 CLI 呼叫**，不在 main 進入點——排程每 3 小時叫它一次而真正呼叫 LLM 的只有一天一次，在入口取鎖會讓其餘七次 no-op 撞鎖 rc=75、把 `data/unit_failures.log`（`OnFailure` 告警的落點）灌成雜訊
 
 ### 編排與離線優化
 - **`scripts/resume_corpus.sh`**：一鍵編排——鎖檔（`data/.resume_corpus.lock` + PID 檢查）防重入，並行起 `tag_all_cli.py` 與 `ingest_all.py`，待首輪導入消化 backlog → 等標註全數完成 → 補跑 catch-up 導入；各階段時間戳記寫 `data/resume_orchestrator_*.log`。`bash scripts/resume_corpus.sh`
@@ -251,6 +262,9 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `GET /api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號。**不含全文**（絕大多數研報直接內嵌 PDF，文字另取）。`file_hash` 格式不符直接 422、查無報告 404。摘錄的 `quote_start`/`quote_end` 在三種情形由**後端**收回為 `null`：錨不到、驗章不過（正典文字已漂移）、落在 `/text` 的截斷範圍之外 —— **錨點有效與否只該有一個真相來源**，消費端不自行判斷截斷。（前端引文跳轉已於 2026-08-03 移除，這三欄目前無讀取路徑；規則與批次寫入都刻意保留）|
 | `GET /api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`），所有 offset 以此為準。超過 40 萬字只回前綴並標 `truncated`，但 `text_sha256`/`text_chars` 一律是**完整**正典文字的值（回截斷版的 sha 會讓前端驗章全滅）。`?chunk=N`＝檢索命中的 `chunk_index`，一併回該段字元區間；錨不到、或錨點落在截斷範圍之外，則為 `None` 且仍回 200（**沒有命中位置不是錯誤**）。**SPA 已不再帶這個參數**（前端命中定位隨文字檢視於 2026-08-03 移除），端點側刻意保留 |
 | `GET /api/reading/{file_hash}/similar` | 相似研報（全篇均勻取樣 probe ＋ 廣度加權的向量近鄰）；`limit` 預設 6、上限 20 |
+| `GET /api/brief/latest` | 最新一份每日簡報：markdown 本文 ＋ `report_count`／`signal_count` ＋ 來源研報清單（**由批次決定性記錄，不從 markdown 反推**）。尚未產生過任何簡報時回 200 加 `status="pending"`——**空狀態不是錯誤**，每天早上到批次跑完之前都是這個狀態 |
+| `GET /api/brief/dates` | 有簡報的日期清單（`limit` 預設 30、上限 120）。**這條必須註冊在 `/{brief_date}` 之前**，否則會被參數路由吃掉而 422 |
+| `GET /api/brief/{brief_date}` | 指定日期的簡報；該日無簡報回 404（與 `/latest` 的 pending 刻意不同：指定了不存在的日期就是查無），日期格式不合法回 422 |
 | `GET /api/radar/instruments` | 觀點雷達「選標的」目錄：有可展示訊號的標的清單。參數 `market`／`q`／`limit`（預設 50、上限 100）／`offset`／`with_consensus`（預設 true，當頁每檔附精簡共識預覽，以單次批次查詢算完避免 N+1）|
 | `GET /api/instrument/{code:path}/radar` | 跨券商總覽：共識快照 ＋ 四維論點 ＋ 近期事件 ＋ 券商清單。`market` **必填**（findb 代碼）、`window` ∈ `30`/`90`/`180`/`all`（預設 `90`）。**讀取零 LLM**——差異全由 `app/services/radar/` 決定性計算。完全查無研報 → 404；有研報但尚未擷取訊號 → 200 的 `pending_extraction` 空狀態（**沒有訊號不是錯誤**）|
 | `GET /api/instrument/{code:path}/radar/events` | 與總覽同源的完整近期事件，提供穩定 offset 分頁（`limit` 預設 12、上限 50）；`market` 必帶 |

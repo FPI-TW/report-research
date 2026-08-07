@@ -402,6 +402,9 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | GET | `/api/reading/{file_hash}` | 閱讀頁骨架：meta ＋ 標籤 ＋ 摘要 ＋ 重點摘錄 ＋ 訊號（**不含全文**） | |
 | GET | `/api/reading/{file_hash}/text` | 正典文字（＝`clean_extracted(full_text)`，所有 offset 以此為準）。SPA 只在**內嵌不了原始檔**時才取；`?chunk=N` 仍支援（回該段字元區間）但前端已不再帶 | |
 | GET | `/api/reading/{file_hash}/similar` | 相似研報（向量近鄰，`limit` 預設 6、上限 20） | |
+| GET | `/api/brief/latest` | 最新一份每日簡報（markdown ＋ 決定性記錄的來源研報清單）。尚未產生過任何簡報時回 200 加 `status="pending"`，**不是 404** | |
+| GET | `/api/brief/dates` | 有簡報的日期清單（`limit` 預設 30、上限 120） | |
+| GET | `/api/brief/{brief_date}` | 指定日期的簡報（ISO 日期；該日無簡報回 404，日期格式不合法回 422） | |
 | POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3；滿載先送 `queued` 事件，排隊逾 `ASK_MAX_QUEUE` 回 429＋`Retry-After`） | SSE |
 | POST | `/api/ask/stop` | 使用者中斷串流時保存部分答案（`stopped=true`），回 `{qa_id}`；帶 `regenerate_of` 同交易停用舊版列、帶 `edit_of` 截斷被編輯輪之後的輪次 | |
 | GET | `/api/qa/{root_qa_id}/versions` | 重生／編輯的版本鏈（**含已標 inactive 的舊版**，歷史 pager 要回看的正是它們） | |
@@ -529,7 +532,7 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 |------|------|
 | 本機 | `make serve` → uvicorn `:8097`（啟動時 warm BGE-M3，免首查延遲）|
 | 生產 Web | systemd `report-mark-web.service`（enabled、自動重啟）；改碼後 `sudo systemctl restart report-mark-web.service` |
-| NAS 增量同步 | systemd `report-mark-sync.timer`（每 3 小時）→ `scripts/sync_new_reports.sh`（drvfs 唯讀掛載 → rsync delta → 增量 extract/tag/ingest → 補摘要 → 補顯示標題 → 補重點摘錄 → 觀點訊號擷取）；手動測試 `make sync-once`。**前三段補缺值的批次吃本輪 `--hashes-file`**（不可改成 `--since-days`，它濾的是 `report_date` 而非入庫時間）；**訊號那段刻意不同**——它排的是跨全語料的積壓，故不綁 `--hashes-file`、也不在「有新研報才跑」的判斷內，改以 `--limit`（`SYNC_SIGNAL_LIMIT`，預設 15）限量，那個上限是安全機制不是效能旋鈕。**這條鏈才是生產實際的入庫路徑**，全量三支腳本只在初次建庫或補跑歷史時用。見 [docs/nas_scheduled_sync_deployment.md](docs/nas_scheduled_sync_deployment.md) |
+| NAS 增量同步 | systemd `report-mark-sync.timer`（每 3 小時）→ `scripts/sync_new_reports.sh`（drvfs 唯讀掛載 → rsync delta → 增量 extract/tag/ingest → 補摘要 → 補顯示標題 → 補重點摘錄 → 觀點訊號擷取 → 每日簡報）；手動測試 `make sync-once`。**前三段補缺值的批次吃本輪 `--hashes-file`**（不可改成 `--since-days`，它濾的是 `report_date` 而非入庫時間）；**訊號那段刻意不同**——它排的是跨全語料的積壓，故不綁 `--hashes-file`、也不在「有新研報才跑」的判斷內，改以 `--limit`（`SYNC_SIGNAL_LIMIT`，預設 15）限量，那個上限是安全機制不是效能旋鈕。**這條鏈才是生產實際的入庫路徑**，全量三支腳本只在初次建庫或補跑歷史時用。見 [docs/nas_scheduled_sync_deployment.md](docs/nas_scheduled_sync_deployment.md) |
 | 對外存取 | Cloudflare Tunnel ＋ nginx 邊緣（`deploy/docker-compose.yml`，無入站埠）：`make up-edge` / `down-edge` / `edge-logs` / `edge-reload`，需 `deploy/.env` 的 `TUNNEL_TOKEN`。見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md) |
 | 深度研報 PDF | 需安裝 Noto Sans CJK 字型；`REPORT_TIMEOUT` 建議 ≥300s。見 [docs/qa_pdf_report_deployment.md](docs/qa_pdf_report_deployment.md) |
 | DB 備份 | systemd `report-mark-backup.timer`（每日 03:30）→ `scripts/db_backup.sh`：`pg_dump -Fc` **只備重建不回來的七張表**（`qa_log` / `report_doc` / `report_rendition` / `report_takeaway` / `report_signal` / `report_run` / `report_section`）到 NAS，保留 7 日 ＋ 4 週；手動跑一次 `make db-backup`。語料層刻意不備（重跑管線可還原）。**還原步驟與已知限制見 [docs/production_resilience.md](docs/production_resilience.md)** |
@@ -548,7 +551,7 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 
 **已上線**：語料管線與混合檢索、設定集中化（M0）、eval harness 與凍結題集（M1／M1b）、cross-encoder rerank（M2）、問答 UX（M3）、五類範圍路由（M4）、受信任時效資料（M4a）、證據帳本（M4b）、agentic 多輪補查（M5）、研報多查詢檢索＋MMR（M6）、逐節生成（M7）、忠實度查核（M8）、Typst 渲染主軌（M9a）、模板 registry 與零 LLM 換皮重出（M9b）、雙語輸出（M10）；另有**觀點雷達**（`report_signal` ＋ `/app/radar`）、研報閱讀頁、React SPA、`server.py` 拆 router、CI 與分支保護、生產韌性與 NAS 定時同步。
 
-**尚未實作**：findb 整合（唯讀 Serve API 取行情／名稱）、每日簡報（`brief.py` ＋ 前端頁）、MCP server、對外 REST `/api/v1/*`（目前全站只有一組共用帳密的 session cookie，無 API key 機制）。**每項在 ROADMAP 都附「前置／阻礙」欄，動手前先看那一欄**。詳見 [docs/ROADMAP.md](docs/ROADMAP.md)。
+**尚未實作**：findb 整合（唯讀 Serve API 取行情／名稱）、MCP server、對外 REST `/api/v1/*`（目前全站只有一組共用帳密的 session cookie，無 API key 機制）。**每項在 ROADMAP 都附「前置／阻礙」欄，動手前先看那一欄**。詳見 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ---
 

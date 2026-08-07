@@ -20,7 +20,7 @@ COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align serve search build-web \
-        stats reset-db clean-data pipeline signals takeaways titles \
+        stats reset-db clean-data pipeline signals takeaways titles brief \
         eval-compare \
         up-edge down-edge edge-logs edge-reload \
         sync-once db-backup freshness
@@ -104,6 +104,9 @@ signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 mak
 
 takeaways:  ## 閱讀頁重點摘錄擷取（近 90 天，冪等可續傳；先 make schema）→ research.report_takeaway
 	uv run python scripts/extract_takeaways.py
+
+brief:  ## 每日簡報（一天一列；當日已有或未到 --after-hour 即 no-op）→ research.report_brief
+	uv run python scripts/generate_brief.py
 
 # ───── 檢索 ─────
 # 刻意**不**讓 serve 相依 build-web：serve 是生產 systemd 的 ExecStart，讓它跑

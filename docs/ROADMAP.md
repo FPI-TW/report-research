@@ -55,6 +55,7 @@
 | **CI 與分支保護** | 每個 PR 跑後端（ruff + pytest）／前端（ESLint + tsc + build + vitest）／schema 契約（pgvector container）／secret 掃描（gitleaks）**四個必要檢查**，main strict + enforce_admins | `.github/workflows/ci.yml`、`db/expected_constraints.txt` |
 | **server.py 拆分** | 單體拆成 11 個 APIRouter ＋ `web/deps.py` 共用綁定層 | `web/routers/` |
 | **生產韌性** | DB 自動重啟、免認證 `/healthz`、`OnFailure` 告警、systemd unit 收回 repo；DB 每日備份至 NAS（七張不可重建的表，已做過還原演練）；批次停更偵測 | `web/routers/health.py`、`deploy/systemd/`、`scripts/db_backup.sh`、`scripts/check_batch_freshness.py`、`docs/production_resilience.md` |
+| **每日簡報** | 決定性收集（新入庫研報 ＋ 夠新的評等變動）→ 一次 Claude 綜述 → `research.report_brief` → `/app/brief`；**一天一次 LLM 呼叫**，讀取零 LLM。無自己的 timer，由 sync 殼每輪呼叫、腳本自判當日是否要跑 | `scripts/generate_brief.py`、`app/services/brief.py`、`web/routers/brief.py`、`frontend/src/features/brief/` |
 | **定時同步** | NAS 增量匯入（3h）→ 補摘要 → 補顯示標題 → 補重點摘錄 → 觀點訊號擷取（限量） | `scripts/sync_new_reports.sh`、`report-mark-sync.timer` |
 
 ---
@@ -64,7 +65,6 @@
 | 項目 | 說明 | 前置／阻礙 |
 |---|---|---|
 | **findb 整合** | 唯讀 Serve API 取行情與名稱，讓雷達能算「相對收盤的 upside」、時效題能引真實數字 | 不只是接線：findb 服務本身要可連（目前 `docker ps` 無 findb-app），且憑證與網路路徑屬跨專案部署問題，第一步不在本 repo |
-| **每日簡報** | `brief.py` ＋ 前端頁 | 無技術前置。成本考量：會再增一條每日 `claude` CLI 批次，與既有的摘要／摘錄排程競爭同一支 CLI |
 | **MCP server** | 把檢索／問答／雷達包成 agent 可消費的工具 | 選型未定：`hybrid_search` 需要**已算好的** query embedding，而 BGE-M3 是 2–4 GB 的行內 CPU 單例——stdio server 每次 spawn 都要重載模型，改走常駐 HTTP 則需先做金鑰認證 |
 | **對外 REST `/api/v1/*`** | 機器可用的認證與 per-key 配額 | 全站目前只有一組共用帳密的 session cookie，無 API key 機制；昂貴端點僅靠 semaphore 擋。且尚無外部消費者的實際需求 |
 | **PDF 內文的無障礙讀取（真正的 text layer）** | 讓螢幕閱讀器讀得到研報內文 | **`@embedpdf/plugin-selection` 已於 2026-08-03 導入，但它解決的是選取與複製，不是無障礙**：`SelectionLayer` 只畫 `pointerEvents:none` 的色塊，DOM 裡沒有任何文字節點，所以 99.77% 的 PDF 研報對輔助技術仍是一片 canvas。EmbedPDF 目前沒有提供 text layer 外掛，要補得自己把 `getSelectedText` 那條抽字管線鋪成可報讀的 DOM，屬獨立工程 |

@@ -8,12 +8,14 @@ import consensusSnapshotCss from './ConsensusSnapshot.module.css?raw'
 import consensusSummaryCss from './ConsensusSummary.module.css?raw'
 import coverageStripCss from './CoverageStrip.module.css?raw'
 import instrumentPickerCss from './InstrumentPicker.module.css?raw'
+import instrumentTableCss from './InstrumentTable.module.css?raw'
 import radarHeaderCss from './RadarHeader.module.css?raw'
 import radarPageCss from './RadarPage.module.css?raw'
 import radarSkeletonCss from './RadarSkeleton.module.css?raw'
 import radarSkeletonSource from './RadarSkeleton.tsx?raw'
 import radarStatesCss from './RadarStates.module.css?raw'
 import recentChangesCss from './RecentChanges.module.css?raw'
+import selectPillCss from './SelectPill.module.css?raw'
 import thesisCompassCss from './ThesisCompass.module.css?raw'
 import windowSegmentedCss from './WindowSegmented.module.css?raw'
 
@@ -153,6 +155,8 @@ describe('Radar 觸控目標契約', () => {
     ['歷史報告連結', brokerTimelineCss, '.link'],
     ['狀態主要／次要操作', radarStatesCss, '.btn, .btnSecondary'],
     ['資料涵蓋說明展開', coverageStripCss, '.toggle'],
+    ['排序／立場下拉', selectPillCss, '.pill'],
+    ['標的列的查看連結', instrumentTableCss, '.go'],
     ['資料範圍切換', consensusSummaryCss, '.segBtn'],
     ['EPS 口徑選擇', consensusSummaryCss, '.fyTrigger'],
     ['切換表格檢視', consensusSummaryCss, '.viewToggle'],

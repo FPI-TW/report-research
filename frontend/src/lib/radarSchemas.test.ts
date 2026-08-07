@@ -197,6 +197,28 @@ describe('radarSchemas', () => {
     expect(parsed.has_more).toBe(false)
   })
 
+  /*
+   * zod 物件預設 `strip`：沒宣告的鍵不會報錯，會被安靜丟掉。監控頁的 takeaway／signal
+   * 覆蓋率就是這樣「後端從 P4 起一直在回、前端好幾個里程碑什麼都沒多出來」。
+   * 這兩個欄位漏宣告的症狀分別是「市場膠囊永遠沒有數字」與「報頭最新更新永遠是 —」，
+   * 兩者都會被當成資料本來就沒有。
+   */
+  it('標的目錄保留 facets 與 latest_report_date', () => {
+    const parsed = radarInstrumentsSchema.parse({
+      total: 2, limit: 50, offset: 0, has_more: false, next_offset: null, items: [],
+      facets: { TW: 41, US: 8 },
+      latest_report_date: '2026-08-07',
+    })
+    expect(parsed.facets).toEqual({ TW: 41, US: 8 })
+    expect(parsed.latest_report_date).toBe('2026-08-07')
+  })
+
+  it('舊後端沒回這兩個欄位時仍能解析（滾動部署）', () => {
+    const parsed = radarInstrumentsSchema.parse({ total: 0, offset: 0, items: [] })
+    expect(parsed.facets).toBeUndefined()
+    expect(parsed.latest_report_date).toBeUndefined()
+  })
+
   it('解析券商歷程', () => {
     const parsed = brokerHistorySchema.parse({
       market: 'TW', instrument_code: '8046',

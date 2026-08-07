@@ -5,7 +5,9 @@ import {
   radarInstrumentsSchema,
   radarOverviewSchema,
   type BrokerHistory,
+  type CatalogSort,
   type Market,
+  type StanceFilter,
   type RadarEvents,
   type RadarInstruments,
   type RadarOverview,
@@ -19,12 +21,16 @@ export interface RadarRequestOptions {
 export function getRadarInstruments(params: {
   market?: Market
   q?: string
+  sort?: CatalogSort
+  stance?: StanceFilter
   limit?: number
   offset?: number
 }, options: RadarRequestOptions = {}): Promise<RadarInstruments> {
   const sp = new URLSearchParams()
   if (params.market) sp.set('market', params.market)
   if (params.q) sp.set('q', params.q)
+  if (params.sort) sp.set('sort', params.sort)
+  if (params.stance) sp.set('stance', params.stance)
   if (params.limit != null) sp.set('limit', String(params.limit))
   if (params.offset != null) sp.set('offset', String(params.offset))
   const qs = sp.toString()

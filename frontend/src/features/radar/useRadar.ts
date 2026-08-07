@@ -6,10 +6,19 @@ import {
   getRadarEvents,
   getRadarInstruments,
 } from '../../lib/radarApi'
-import type { Market, RadarEvents, RadarInstruments, Window } from '../../lib/radarSchemas'
+import type {
+  CatalogSort,
+  Market,
+  RadarEvents,
+  RadarInstruments,
+  StanceFilter,
+  Window,
+} from '../../lib/radarSchemas'
 
 const PAGE_SIZE = 50
 const EVENT_PAGE_SIZE = 12
+/** 與後端 `CatalogSort` 的預設值相同；只用來決定「要不要把它送出去」。 */
+const DEFAULT_SORT: CatalogSort = 'latest'
 
 function nextCatalogOffset(page: RadarInstruments): number | undefined {
   if (page.has_more === false) return undefined
@@ -25,14 +34,22 @@ function nextEventOffset(page: RadarEvents): number | undefined {
 export function useRadarInstruments(opts: {
   market?: Market
   q?: string
+  sort?: CatalogSort
+  stance?: StanceFilter
   enabled?: boolean
 }) {
   const market = opts.market || undefined
   const q = opts.q?.trim() || undefined
+  // 預設排序不進網址也不進請求：後端的 `sort` 預設就是 `latest`（`web/routers/radar.py`
+  // 的 `Query("latest")`），送與不送逐字等價，而不送能讓網址與請求都維持既有形狀。
+  const sort = opts.sort && opts.sort !== DEFAULT_SORT ? opts.sort : undefined
+  const stance = opts.stance || undefined
   const query = useInfiniteQuery({
-    queryKey: ['radar-instruments', market ?? '', q ?? ''],
+    // sort／stance 必須進 queryKey：漏掉的話換排序會命中同一筆快取，畫面一動也不動、
+    // network 也不會有請求（staleTime 30s 讓這個誤判更頑固），看起來就像後端沒支援。
+    queryKey: ['radar-instruments', market ?? '', q ?? '', sort ?? '', stance ?? ''],
     queryFn: ({ pageParam, signal }) => getRadarInstruments(
-      { market, q, limit: PAGE_SIZE, offset: pageParam },
+      { market, q, sort, stance, limit: PAGE_SIZE, offset: pageParam },
       { signal },
     ),
     initialPageParam: 0,

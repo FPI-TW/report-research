@@ -98,5 +98,72 @@ class FallbackReportDateTests(unittest.TestCase):
             path.unlink()
 
 
+class SyncScriptBacklogStepsTests(unittest.TestCase):
+    """排程殼的兩段「跨全語料積壓」必須存在、必須限量、且不能被新研報閘門擋住。
+
+    這兩段的失效方式都是**靜默的**：
+    - 綁到 `--hashes-file` 或縮進 `if [ -s "$HASHES" ]` 裡 → 沒有新研報的日子完全不動，
+      而 sync 仍然 rc=0、unit 不會紅（觀點雷達就是這樣從 2026-07-16 靜止兩週）。
+    - `--limit` 被拿掉 → 連續佔住 claude 鎖數十小時，期間每輪匯入撞鎖 rc=75，
+      那批研報還會從 rsync delta 消失，得靠 `--all-local` 手動補。
+
+    標題那段補的是一年以上的舊檔（2026-08-06 實測 11,879 篇缺 title，近一年只差 1 篇），
+    它們永遠不會出現在任何一輪的 `--hashes-file` 裡——所以「已經有 4b 了」不能取代它。
+    """
+
+    def setUp(self):
+        self.src = (
+            Path(__file__).resolve().parents[1] / "scripts" / "sync_new_reports.sh"
+        ).read_text(encoding="utf-8")
+
+    # 一律錨在「呼叫形式」而不是裸檔名：這幾段的註解本身就會提到 generate_titles.py，
+    # 用裸檔名數出現次數會數到註解（本測試第一版就是這樣紅的）。
+    _INVOKE = "run python scripts/"
+
+    def _invocations(self, script: str) -> list[int]:
+        needle = f"{self._INVOKE}{script}"
+        out, i = [], self.src.find(needle)
+        while i != -1:
+            out.append(i)
+            i = self.src.find(needle, i + 1)
+        return out
+
+    def _title_backlog_call(self) -> str:
+        """第二次呼叫 generate_titles.py 的那段（第一次是 4b 的本輪新研報）。"""
+        calls = self._invocations("generate_titles.py")
+        self.assertEqual(len(calls), 2, "排程殼應有兩段標題批次：本輪新研報 ＋ 歷史積壓")
+        return self.src[calls[1]:calls[1] + 300]
+
+    def test_signal_step_is_limited(self):
+        i = self._invocations("extract_signals.py")[0]
+        self.assertIn("--limit", self.src[i:i + 300])
+        self.assertRegex(self.src, r"SIGNAL_LIMIT=\$\{SYNC_SIGNAL_LIMIT:-\d+\}")
+
+    def test_title_backlog_step_exists_and_is_limited(self):
+        call = self._title_backlog_call()
+        self.assertIn("--limit", call)
+        self.assertRegex(
+            self.src, r"TITLE_BACKLOG_LIMIT=\$\{SYNC_TITLE_BACKLOG_LIMIT:-\d+\}"
+        )
+
+    def test_title_backlog_step_is_not_bound_to_this_round(self):
+        """綁 --hashes-file 就退化成 4b 的重複，舊檔永遠補不到。"""
+        self.assertNotIn("--hashes-file", self._title_backlog_call())
+
+    def test_backlog_steps_run_outside_the_new_reports_gate(self):
+        """兩段都必須在 `if [ -s "$HASHES" ] … else … fi` 之後。
+
+        以 else 分支的 log 字串當錨：它只出現在閘門的 else 裡，排在它之後就代表
+        不在閘門內。縮進閘門裡的話沒有新研報的日子這兩段就完全不跑。
+        """
+        gate_else = self.src.index("本次無新研報入庫")
+        self.assertLess(gate_else, self._invocations("extract_signals.py")[0])
+        self.assertLess(gate_else, self._invocations("generate_titles.py")[1])
+
+    def test_title_backlog_failure_is_recorded(self):
+        """best-effort 不等於無聲：非零退出要留一筆給 /api/progress 的 unit_failures。"""
+        self.assertIn('record_unit_failure "generate_titles_backlog"', self.src)
+
+
 if __name__ == "__main__":
     unittest.main()

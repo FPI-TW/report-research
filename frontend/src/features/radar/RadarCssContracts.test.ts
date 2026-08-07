@@ -166,10 +166,11 @@ describe('Radar 390px 版型契約', () => {
     const top = ruleBlock(radarHeaderCss, '.top')
     // `top:` 一定要錨在宣告開頭——不錨的話 `margin-top: calc(…)` 就會把這條斷言餵飽，
     // 把 top 改回 0 照樣全綠（實測如此，這條守門原本是假的）。
-    expect(top).toMatch(/(?:^|;)\s*top:\s*calc\(-1 \* var\(--radar-gutter-top/)
-    expect(top).toMatch(/(?:^|;)\s*margin-top:\s*calc\(-1 \* var\(--radar-gutter-top/)
-    // 自身內距把內容位置補回原處，否則吸附的瞬間整條列會往上跳一段
-    expect(top).toMatch(/(?:^|;)\s*padding:\s*calc\(var\(--radar-gutter-top/)
+    // 需要 /m：宣告前面可能是註解的 `*/` 而不是上一條宣告的 `;`，只認 `;` 會誤判成缺漏。
+    expect(top).toMatch(/(?:^|;)\s*top:\s*calc\(-1 \* var\(--radar-gutter-top/m)
+    expect(top).toMatch(/(?:^|;)\s*margin-top:\s*calc\(-1 \* var\(--radar-gutter-top/m)
+    // 自身內距把 gutter 分攤到上下，整條列的高度不變、內容置中
+    expect(top).toMatch(/(?:^|;)\s*padding:\s*calc\(var\(--radar-gutter-top/m)
   })
 })
 

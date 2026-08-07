@@ -25,14 +25,6 @@ interface Props {
   onSeeAll: () => void
 }
 
-function monthOf(date: string | null): string {
-  if (!date) return ''
-  const [y, m] = date.slice(0, 10).split('-')
-  return y && m ? `${y} 年 ${Number(m)} 月` : ''
-}
-
-export { monthOf }
-
 /**
  * 瀏覽態的 Bento 簡報牆：頭條大磚（2×2）＋數據磚＋語料庫組成磚＋更多清單磚。
  * 首頁＝每日簡報面，不是行銷招牌——品牌已在左欄 SideRail，此處不重複。

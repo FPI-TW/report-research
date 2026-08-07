@@ -182,5 +182,23 @@ if [ "$SIGNAL_RC" -ne 0 ]; then
   record_unit_failure "extract_signals" "$SIGNAL_RC"
 fi
 
+# 7) 每日簡報（best-effort）。**沒有自己的 timer 是刻意的**：它一天只需要跑一次，
+#    而本殼每 3 小時就會來一趟，由腳本自己判斷「今天要不要跑」（當日已有列、或本地
+#    時間未到 --after-hour → 直接 no-op 退出 0）。多一個 systemd unit 就多一份要
+#    安裝、要跟 deploy/ 對帳的東西，而它換到的只是精確的觸發時刻。
+#
+#    它**不在 $HASHES 判斷之內**：簡報的窗期是「上一份的結尾到現在」，與本輪有沒有
+#    新研報無關——沒有新研報的那一輪照樣可能有前一輪進來的東西還沒被寫進簡報。
+#
+#    排在訊號之後：簡報會讀當輪剛擷取出來的評等變動，先跑訊號才報得到。
+log "每日簡報（一天一次；當日已有或未到時間即 no-op）"
+BRIEF_RC=0
+nice -n 19 ionice -c3 "$UV" run python scripts/generate_brief.py >>"$LOG" 2>&1 \
+  || BRIEF_RC=$?
+if [ "$BRIEF_RC" -ne 0 ]; then
+  log "每日簡報非零退出 rc=${BRIEF_RC}（best-effort，已略過）"
+  record_unit_failure "generate_brief" "$BRIEF_RC"
+fi
+
 rm -f "$DELTA"
 log "=== sync done ==="

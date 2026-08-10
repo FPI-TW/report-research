@@ -309,6 +309,14 @@ describe('Radar 點圖座標與可讀性契約', () => {
     expectDeclaration(consensusSummaryCss, '.table', 'min-width', '620px')
   })
 
+  it('資料檢視在桌面顯示表格、720px 以下改顯示卡片', () => {
+    expectDeclaration(consensusSummaryCss, '.mobileCards', 'display', 'none')
+    const mobile = mediaBlock(consensusSummaryCss, 720)
+    expectDeclaration(mobile, '.tableWrap', 'display', 'none')
+    expectDeclaration(mobile, '.mobileCards', 'display', 'grid')
+    expectDeclaration(mobile, '.mobileCards', 'grid-template-columns', '1fr')
+  })
+
   /*
    * 新鮮度的視覺編碼必須是**填色的有無**（實心／空心），不是色相——否則灰階列印、
    * 色覺缺陷與低對比螢幕上這條資訊直接消失，而需求明文禁止只靠顏色表達新鮮度。

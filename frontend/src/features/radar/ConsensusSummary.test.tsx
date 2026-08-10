@@ -390,6 +390,22 @@ describe('ConsensusSummary', () => {
     expect(within(screen.getByTestId('consensus-selected')).getByText('凱基')).toBeInTheDocument()
   })
 
+  it('資料檢視同時提供行動卡片，且卡片可選取同一家券商', () => {
+    mount(sampleBrokers())
+    fireEvent.click(screen.getByRole('button', { name: '切換表格檢視' }))
+
+    // jsdom 會套用桌面 CSS，因此行動卡片在測試環境中是 display:none；顯示切換由下方
+    // CSS 契約守門，這裡只驗證實際 DOM 內容與它和桌面版共用同一份選取狀態。
+    const cards = screen.getByLabelText('各家目標價與 EPS 行動版')
+    expect(within(cards).getByText('凱基')).toBeInTheDocument()
+    expect(within(cards).getByText('NT$478')).toBeInTheDocument()
+    expect(within(cards).getAllByText('FY26E EPS')).toHaveLength(4)
+    expect(within(cards).getByText(shown(KGI_DATE))).toBeInTheDocument()
+
+    fireEvent.click(within(cards).getByLabelText('選取凱基'))
+    expect(within(screen.getByTestId('consensus-selected')).getByText('凱基')).toBeInTheDocument()
+  })
+
   it('一家券商都沒有時說的是範圍太窄，不是「券商沒提供」', () => {
     // 兩者在畫面上長得一樣，但一個要去查原文、一個要把資料範圍放寬。
     mount([])

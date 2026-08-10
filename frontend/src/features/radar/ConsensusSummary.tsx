@@ -189,7 +189,7 @@ export function ConsensusSummary({
         />
 
         {tableView ? (
-          <BrokerTable
+          <BrokerDataViews
             brokers={visible}
             currency={currency}
             basis={basis}
@@ -357,6 +357,95 @@ interface TableProps {
   basis: EpsBasis | null
   selected: string | null
   onSelect: (key: string) => void
+}
+
+/** 同一份資料的響應式呈現：CSS 決定桌面表格或行動卡片，狀態與格式化邏輯只留一份。 */
+function BrokerDataViews(props: TableProps) {
+  return (
+    <>
+      <BrokerTable {...props} />
+      <BrokerCards {...props} />
+    </>
+  )
+}
+
+function BrokerCards({ brokers, currency, basis, selected, onSelect }: TableProps) {
+  return (
+    <>
+      <ul className={styles.mobileCards} aria-label="各家目標價與 EPS 行動版">
+        {brokers.map(broker => {
+          const key = brokerKey(broker)
+          const freshness = reportFreshness(broker.latest_report_date)
+          const ownCurrency = broker.latest_target_currency?.trim() || null
+          const eps = epsForBasis(broker, basis?.key ?? null)
+          const isSelected = key === selected
+          return (
+            <li
+              key={key}
+              className={`${styles.mobileCard} ${isSelected ? styles.mobileCardOn : ''}`}
+            >
+              <button
+                type="button"
+                className={styles.mobilePick}
+                aria-pressed={isSelected}
+                aria-label={`選取${brokerName(broker)}`}
+                onClick={() => onSelect(key)}
+              >
+                <span>{brokerName(broker)}</span>
+                <span className={styles.mobilePickHint}>{isSelected ? '已選取' : '查看詳情'}</span>
+              </button>
+
+              <dl className={styles.mobileFacts}>
+                <div>
+                  <dt>目標價</dt>
+                  <dd>
+                    {broker.latest_target_price == null ? NOT_PROVIDED : (
+                      <>
+                        {fmtPriceOrNA(broker.latest_target_price, broker.latest_target_currency)}
+                        {ownCurrency !== currency ? (
+                          <span className={styles.mobileNote}>
+                            {ownCurrency ?? '未標示幣別'}，未納入目前口徑
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{basis?.label ? `${basis.label} EPS` : 'EPS'}</dt>
+                  <dd>
+                    {broker.latest_eps_value == null ? NOT_PROVIDED : eps ?? (
+                      <>
+                        {fmtEps(
+                          broker.latest_eps_value,
+                          broker.latest_eps_currency,
+                          broker.latest_eps_fy,
+                          broker.latest_eps_period,
+                          broker.latest_eps_unit,
+                        )}
+                        <span className={styles.mobileNote}>{epsExclusionNote(broker, basis)}</span>
+                      </>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>報告日期</dt>
+                  <dd>{fmtDateOrNA(broker.latest_report_date)}</dd>
+                </div>
+                <div>
+                  <dt>資料新鮮度</dt>
+                  <dd>{FRESHNESS_LABEL[freshness]}</dd>
+                </div>
+              </dl>
+            </li>
+          )
+        })}
+      </ul>
+      {brokers.length === 0 ? (
+        <p className={styles.mobileEmpty}>此範圍內沒有券商資料。</p>
+      ) : null}
+    </>
+  )
 }
 
 /**

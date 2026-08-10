@@ -35,6 +35,7 @@ search-after.yml
 
 # superpowers / SDD 本機 session 狀態（brainstorm/sdd，非原始碼）
 .superpowers/
+.worktrees/
 
 # 對外存取邊緣的秘密（隧道 token / Basic Auth 帳密）
 deploy/.env

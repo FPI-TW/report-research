@@ -197,18 +197,22 @@ describe('Radar 觸控目標契約', () => {
     expectDeclaration(css, selector, 'min-height', '44px')
   })
 
-  /*
-   * 點圖的圓點是唯一刻意**不套** 44px 的可點元素：十四家券商各一列，44px 會讓
-   * 「一屏看完全部券商」這件事直接失效，而那正是這張圖存在的理由。本區塊只做桌機，
-   * 所以退到 WCAG 2.2 的 24px 最小值並在這裡釘住——沒有這條，日後把它縮成 11px
-   * （視覺圓點的大小）不會有任何東西會紅。
-   */
-  it('點圖圓點的命中區至少 24px（桌機專用，刻意不套 44px）', () => {
+  /* 桌面維持緊湊排列；窄螢幕另由媒體查詢放大成完整觸控目標。 */
+  it('點圖圓點的桌面命中區至少 24px', () => {
     const body = ruleBlock(brokerDotPlotCss, '.dot').replace(/\s+/g, ' ')
     const size = /(?:^|[^-])width: (\d+)px;/.exec(body)
     expect(size, '.dot 應明確設定 width').not.toBeNull()
     expect(Number(size![1])).toBeGreaterThanOrEqual(24)
     expectDeclaration(brokerDotPlotCss, '.dot', 'height', '30px')
+  })
+
+  it('點圖圓點在 720px 以下使用 44px 觸控目標，視覺圓點仍維持 11px', () => {
+    const mobile = mediaBlock(brokerDotPlotCss, 720)
+    expectDeclaration(mobile, '.dot', 'width', '44px')
+    expectDeclaration(mobile, '.dot', 'height', '44px')
+    expectDeclaration(mobile, '.track', 'height', '44px')
+    expectDeclaration(brokerDotPlotCss, '.mark', 'width', '11px')
+    expectDeclaration(brokerDotPlotCss, '.mark', 'height', '11px')
   })
 
   it('麵包屑返回在兩軸都至少 44px', () => {
@@ -307,6 +311,14 @@ describe('Radar 點圖座標與可讀性契約', () => {
   it('表格檢視同時具備 overflow-x 與 min-width', () => {
     expectDeclaration(consensusSummaryCss, '.tableWrap', 'overflow-x', 'auto')
     expectDeclaration(consensusSummaryCss, '.table', 'min-width', '620px')
+  })
+
+  it('資料檢視在桌面顯示表格、720px 以下改顯示卡片', () => {
+    expectDeclaration(consensusSummaryCss, '.mobileCards', 'display', 'none')
+    const mobile = mediaBlock(consensusSummaryCss, 720)
+    expectDeclaration(mobile, '.tableWrap', 'display', 'none')
+    expectDeclaration(mobile, '.mobileCards', 'display', 'grid')
+    expectDeclaration(mobile, '.mobileCards', 'grid-template-columns', '1fr')
   })
 
   /*

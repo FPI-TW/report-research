@@ -111,9 +111,8 @@
   z-index: 1;
 }
 
-/* 命中區 30×30（>= WCAG 2.2 的 24px 最小值）；視覺圓點只有 11px，靠 .mark 內縮。
-   桌機專用區塊，故不套用本 repo 觸控目標的 44px 慣例——那會讓十四列的圖長到
-   一屏放不下，而「一屏看完全部券商」正是這張圖存在的理由。 */
+/* 桌面命中區 30×30（>= WCAG 2.2 的 24px 最小值）；視覺圓點只有 11px，靠 .mark 內縮。
+   720px 以下由頁尾媒體查詢放大至 44×44，讓觸控操作不必精準點中視覺圓點。 */
 .dot {
   width: 30px;
   height: 30px;
@@ -219,4 +218,13 @@
   margin: 8px 0 0;
   padding-left: 18px;
   font-size: 12.5px;
+}
+
+@media (max-width: 720px) {
+  .name { line-height: 44px; }
+  .track { height: 44px; }
+  .dot {
+    width: 44px;
+    height: 44px;
+  }
 }

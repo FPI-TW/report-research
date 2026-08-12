@@ -233,12 +233,18 @@ class GatherRuntimeShapeTests(unittest.TestCase):
         self.assertEqual(runtime["unit_failures"]["count_24h"], 0)
 
     def test_runtime_pipelines_cover_every_tracked_batch(self):
-        """六格管線一格都不能少。
+        """七格管線一格都不能少。
 
         `takeaways`／`signals` 是 2026-08-06 補的：兩張覆蓋率卡刻意只量近 30 天，而
         回補歷史積壓時絕大多數研報比 30 天舊（實測缺訊號 13,821 篇裡只有 156 篇在
         窗口內），那兩張卡幾乎不動——這兩格是唯一看得出 `extract_takeaways.py` 與
         `extract_signals.py` 在不在跑的地方。
+
+        `sync_import` 是 2026-08-12 補的，理由同型但更嚴重：`ingest` 掃的是全量
+        `ingest_all.py`，而生產實際的入庫路徑是 `sync_new_reports.py`，先前**完全
+        沒有表徵**——手動補 1,783 筆積壓時整頁六格全滅、`sync` 區塊還停在上一輪
+        排程的「同步已完成」。
+
         用集合相等而非 assertIn：多一格沒同步到前端 ROWS 也該被看見。
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -256,7 +262,7 @@ class GatherRuntimeShapeTests(unittest.TestCase):
 
         self.assertEqual(
             set(runtime["pipelines"]),
-            {"web", "ingest", "tag", "summaries", "takeaways", "signals"},
+            {"web", "ingest", "sync_import", "tag", "summaries", "takeaways", "signals"},
         )
 
     def test_proc_alive_tracks_a_real_process(self):

@@ -566,6 +566,10 @@ def _gather_runtime() -> dict:
             "sync_import": _proc_alive("sync_new_reports.py"),
             "tag": _proc_alive("tag_all_cli.py"),
             "summaries": _proc_alive("generate_summaries.py"),
+            # 顯示標題。排程有兩段會跑它（本輪新檔的缺值 ＋ 跨全語料的歷史積壓，
+            # 後者每輪限量 SYNC_TITLE_BACKLOG_LIMIT），而 title 覆蓋率卡量的是
+            # 近 30 天，歷史積壓跑起來那張卡幾乎不動——少了這格就完全看不出它在跑。
+            "titles": _proc_alive("generate_titles.py"),
             # 摘錄與訊號兩支擷取都沒有進度表徵，只能靠這兩格。兩張覆蓋率卡刻意都只量
             # 近 30 天（見 _fetch_db_stats_snapshot 的註解），而擷取的積壓絕大多數比
             # 30 天舊——2026-08-06 實測缺訊號的 13,821 篇裡只有 156 篇落在窗口內。也

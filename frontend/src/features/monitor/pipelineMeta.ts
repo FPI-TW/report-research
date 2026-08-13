@@ -12,6 +12,7 @@ export const PIPELINE_ROWS: { key: keyof Pipelines; name: string }[] = [
   { key: 'sync_import', name: '增量匯入' },
   { key: 'tag', name: '語意標註' },
   { key: 'summaries', name: '摘要生成' },
+  { key: 'titles', name: '顯示標題' },
   { key: 'takeaways', name: DERIVED_LABEL.takeaways },
   { key: 'signals', name: DERIVED_LABEL.signals },
 ]

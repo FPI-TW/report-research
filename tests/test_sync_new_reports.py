@@ -5,9 +5,14 @@ import unittest
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import sync_new_reports as snr  # noqa: E402
+
+from scripts import _claude_cli as cc  # noqa: E402
 
 
 @dataclass
@@ -163,6 +168,51 @@ class SyncScriptBacklogStepsTests(unittest.TestCase):
     def test_title_backlog_failure_is_recorded(self):
         """best-effort 不等於無聲：非零退出要留一筆給 /api/progress 的 unit_failures。"""
         self.assertIn('record_unit_failure "generate_titles_backlog"', self.src)
+
+
+class TagViaCliFailureReasonTests(unittest.TestCase):
+    """標註失敗必須說得出原因。
+
+    這是本 repo 最貴的靜默失效：標註失敗 ⇒ 該檔記成 `skip_untagged` ⇒ **不入庫**，
+    而排程殼只印一行「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
+    2026-08-12 那輪 rsync 帶進 33 檔全被吞掉，四天後才被發現。
+    """
+
+    def _run_with(self, result):
+        with mock.patch.object(snr, "run_claude", return_value=result):
+            return snr._tag_via_cli("x.pdf", "內文")
+
+    def test_cli_error_is_returned_verbatim(self):
+        tag, err = self._run_with(cc.CliResult(None, "CLI 退出碼 1：Credit balance too low"))
+        self.assertIsNone(tag)
+        self.assertIn("Credit balance", err)
+
+    def test_unparseable_response_is_distinct_from_cli_failure(self):
+        """「CLI 壞了」與「CLI 回了但內容不合格」處置完全不同，不可共用一句話。"""
+        with mock.patch.object(snr, "run_claude", return_value=cc.CliResult("不是 JSON", None)):
+            tag, err = snr._tag_via_cli("x.pdf", "內文")
+        self.assertIsNone(tag)
+        self.assertIn("解析", err)
+        self.assertNotIn("退出碼", err)
+
+    def test_success_returns_tag_and_no_error(self):
+        payload = (
+            '{"market":"TW","is_research":true,"confidence":0.9,'
+            '"instrument_types":["equity"],"relates_stock":true,'
+            '"relates_futures":false,"stock_targets":["2330"],"futures_targets":[]}'
+        )
+        with mock.patch.object(snr, "run_claude", return_value=cc.CliResult(payload, None)):
+            tag, err = snr._tag_via_cli("x.pdf", "內文")
+        self.assertIsNotNone(tag)
+        self.assertIsNone(err)
+
+    def test_missing_cli_propagates_instead_of_becoming_skip_untagged(self):
+        """環境壞了要中止整批，不可讓每一篇都靜靜變成 skip_untagged 然後 rc=0。"""
+        with mock.patch.object(
+            snr, "run_claude", side_effect=cc.CliNotFoundError("不在 PATH")
+        ):
+            with self.assertRaises(cc.CliNotFoundError):
+                snr._tag_via_cli("x.pdf", "內文")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -28,6 +27,8 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
+from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
+from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,30 +94,18 @@ def parse_summary(raw: str) -> Optional[str]:
 
 
 def build_cli_args(prompt: str) -> list[str]:
-    """組 `claude -p` 的 argv。
+    """組 `claude -p` 的 argv（本腳本固定用 MODEL；實作見 scripts/_claude_cli.py）。"""
+    return _build_cli_args(prompt, MODEL)
 
-    `--setting-sources ""`＝不載入任何 settings 來源（user/project/local），
-    連帶略過全域 hooks/plugins/CLAUDE.md。摘要只是單次補全、不需這些，而每次
-    冷啟動載入它們正是磁碟小檔 I/O 的主因（實測加此 flag 後 page fault 降約 74%）。
+
+def call_cli(prompt: str, timeout: int = 180) -> CliResult:
+    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+
+    原本是 `except (subprocess.TimeoutExpired, Exception): return None`——那個
+    tuple 的第二項讓第一項完全沒有意義（Exception 已涵蓋 TimeoutExpired），
+    所有失敗一律塌縮成 None。見 scripts/_claude_cli.py 的四天停擺紀錄。
     """
-    # 去掉 NUL：部分 PDF 抽出的文字含 \x00，POSIX argv 不可含 NUL，否則 subprocess 直接拋
-    prompt = prompt.replace("\x00", "")
-    return ["claude", "-p", prompt, "--model", MODEL, "--setting-sources", ""]
-
-
-def call_cli(prompt: str, timeout: int = 180) -> Optional[str]:
-    try:
-        # cwd 設 /tmp 避免載入專案 CLAUDE.md 拖慢每次呼叫
-        r = subprocess.run(
-            build_cli_args(prompt),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd="/tmp",
-        )
-        return r.stdout if r.returncode == 0 else None
-    except (subprocess.TimeoutExpired, Exception):
-        return None
+    return run_claude(prompt, MODEL, timeout=timeout)
 
 
 async def summarize_one(
@@ -131,12 +120,19 @@ async def summarize_one(
     global _done, _ok, _fail
     prompt = build_prompt(file_name, full_text, excerpt)
     summary: Optional[str] = None
+    # 保留最後一次的失敗原因：log 要分得出「環境壞了」與「回了但解析不採信」
+    last_error = "CLI 無回應"
     async with sem:
         for _ in range(retries + 1):
-            raw = await asyncio.to_thread(call_cli, prompt)
-            summary = parse_summary(raw) if raw else None
-            if summary:
-                break
+            # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
+            res = await asyncio.to_thread(call_cli, prompt)
+            if res.text:
+                summary = parse_summary(res.text)
+                if summary:
+                    break
+                last_error = "回應無法解析為摘要"
+            elif res.error:
+                last_error = res.error
 
     if summary:
         async with SessionFactory() as session:
@@ -148,7 +144,7 @@ async def summarize_one(
         _ok += 1
     else:
         with open(FAIL_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{rid}\t{file_name}\n")
+            f.write(f"{rid}\t{file_name}\t{last_error}\n")
         _fail += 1
 
     _done += 1
@@ -207,9 +203,17 @@ async def main(
         print("nothing to do（皆已有摘要）", flush=True)
         return
     sem = asyncio.Semaphore(workers)
-    await asyncio.gather(
-        *(summarize_one(sem, rid, fn, ft, excerpt, total) for rid, fn, ft in cands)
-    )
+    try:
+        await asyncio.gather(
+            *(summarize_one(sem, rid, fn, ft, excerpt, total) for rid, fn, ft in cands)
+        )
+    except CliNotFoundError as exc:
+        # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷 → 中止並以非零碼收場。
+        # 這一段在排程殼裡是 best-effort（失敗只記 log 不擋下一輪），所以更需要
+        # 讓退出碼說話——否則「跑完 N 次註定失敗、印 ok=0、exit 0」不會留下痕跡。
+        print(f"\n中止：{exc}", flush=True)
+        print(f"（已完成 {_done}/{total}；ok={_ok} fail={_fail}）", flush=True)
+        raise SystemExit(2) from exc
     print(f"\ndone. summarized_ok={_ok} fail={_fail}", flush=True)
 
 

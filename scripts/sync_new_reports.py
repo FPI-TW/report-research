@@ -23,6 +23,7 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scripts._claude_cli import CliNotFoundError, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 SRC_LOCAL = ROOT / "研報自動匯入"
@@ -83,9 +84,12 @@ def _tag_via_cli(
     model: str = "claude-haiku-4-5",
     timeout: int = 150,
 ):
-    """用 claude CLI(Haiku)標註單篇；沿用 tag_all_cli 慣例（剝 NUL、cwd=/tmp）。"""
-    import subprocess
+    """用 claude CLI(Haiku)標註單篇 → (tag, error)。tag 為 None 時 error 說得出為什麼。
 
+    **標註失敗是這條管線最貴的靜默失效**：它讓該檔被記成 `skip_untagged` 而不入庫，
+    而排程殼只印一行「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
+    2026-08-12 那輪 rsync 帶進 33 檔、全被吞掉，四天後才被發現。
+    """
     from app.services.tagging import TAG_INSTRUCTION, parse_tags
 
     body = (text or "")[:excerpt]
@@ -93,20 +97,13 @@ def _tag_via_cli(
         f"{TAG_INSTRUCTION}\n\n檔名：{file_name}\n"
         f"報告內文（前 {excerpt} 字摘錄）：\n{body}\n\n"
         f"請依上述規則只輸出單一 JSON 物件。"
-    ).replace("\x00", "")
-    try:
-        # --setting-sources '' 排除 user/專案設定＋SessionStart hooks＋MCP server，
-        # 避免每篇標註冷啟動載入全部外掛造成小檔 I/O 風暴（對齊 llm.py / generate_summaries.py）
-        r = subprocess.run(
-            ["claude", "-p", prompt, "--model", model, "--setting-sources", ""],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd="/tmp",
-        )
-    except Exception:
-        return None
-    return parse_tags(r.stdout) if r.returncode == 0 else None
+    )
+    # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
+    res = run_claude(prompt, model, timeout=timeout)
+    if not res.text:
+        return None, res.error or "CLI 無回應"
+    tag = parse_tags(res.text)
+    return (tag, None) if tag is not None else (None, "回應無法解析為標籤")
 
 
 def _persist_tag(file_hash: str, tag) -> None:
@@ -257,12 +254,20 @@ async def _run(args) -> None:
                 print(f"  [DRY] would ingest: {path.name[:60]}", flush=True)
                 continue
 
-            tag = load_tag(TAGS_DIR, res.file_hash) or _tag_via_cli(path.name, res.text)
+            tag = load_tag(TAGS_DIR, res.file_hash)
+            tag_error = None
+            if tag is None:
+                tag, tag_error = _tag_via_cli(path.name, res.text)
             if tag is not None:
                 _persist_tag(res.file_hash, tag)
             reason = skip_after_tag(tag)
             if reason:
                 stats[reason] += 1
+                # skip_untagged 先前完全不留痕跡：計數 +1 之後就 continue，
+                # 於是「標註壞了」與「這批本來就沒有研報」在 log 上無從分辨。
+                if reason == "skip_untagged":
+                    with open(FAIL_LOG, "a", encoding="utf-8") as fl:
+                        fl.write(f"{path}\ttag\t{tag_error or '標註失敗'}\n")
                 continue
 
             try:
@@ -367,7 +372,14 @@ def main() -> None:
     # 這支也 spawn claude（行內標註，見 _tag_via_cli），而且它跑在排程路徑上、是三小時
     # 一輪的第一個競爭者——手動批次正在跑時它照樣會被 timer 叫起來。
     with claude_cli_lock_or_exit("sync_new_reports"):
-        asyncio.run(_run(args))
+        try:
+            asyncio.run(_run(args))
+        except CliNotFoundError as exc:
+            # 環境層級失敗：每一篇的標註都會踩到同一顆地雷，整批會被記成
+            # skip_untagged 而「成功」結束（rc=0），排程殼只會印「本次無新研報入庫」。
+            # 以非零碼收場，讓 unit 變紅、record_unit_failure 留下痕跡。
+            print(f"中止：{exc}", flush=True)
+            raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":

@@ -55,12 +55,11 @@ import argparse
 import asyncio
 import hashlib
 import json
-import subprocess
 import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -70,6 +69,7 @@ from app.services.db import SessionFactory  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
+from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -415,65 +415,16 @@ def row_to_params(row: TakeawayRow) -> dict:
     }
 
 
-# ── claude CLI 呼叫（對齊 extract_signals.py / generate_summaries.py）──
-
-def build_cli_args(prompt: str, model: str) -> list[str]:
-    """組 `claude -p` 的 argv。
-
-    `--setting-sources ""`＝不載入任何 settings 來源，連帶略過全域 hooks/plugins/
-    CLAUDE.md —— 每次冷啟動載入它們正是磁碟小檔 I/O 的主因。
-    輸出格式用 CLI 預設的純文字（parse_takeaways 直接吃）：**不要加
-    `--output-format json`**，那會把回應包進一層 CLI envelope，解析會抓到外層物件。
-    """
-    prompt = prompt.replace("\x00", "")  # POSIX argv 不可含 NUL
-    return ["claude", "-p", prompt, "--model", model, "--setting-sources", ""]
-
-
-class CliNotFoundError(RuntimeError):
-    """`claude` 不在 PATH。整批註定全滅 → 由 main 提早中止，不跑完 N 次必然失敗的呼叫。
-
-    這在本專案實際發生過：systemd 的環境與登入 shell 不同，沒有 claude 的 PATH。
-    """
-
-
-class CliResult(NamedTuple):
-    """CLI 呼叫結果。text 為 None 時 error 必有值（且要說得出「為什麼」）。"""
-
-    text: Optional[str]
-    error: Optional[str]
-
+# ── claude CLI 呼叫（實作在 scripts/_claude_cli.py，全批次共用）──
 
 def call_cli(prompt: str, model: str, timeout: int = 180) -> CliResult:
     """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
 
-    **失敗原因必須可區分**：曾經整批 except Exception → return None，於是
-    「claude 不在 PATH」「逾時」「OOM」全被寫成同一句「CLI 無回應或逾時」，
-    整批 549 篇全滅卻還是 exit 0，只留下一行 ok=0 rejected=549 —— 看不出該修 PATH
-    還是該調 timeout。故此處只有 CLI 缺席會往上拋（那是環境壞了，不是這一篇壞了），
-    其餘逐類回具體訊息，讓 data/takeaway_failures.log 說得出真因。
+    實作已抽到 `scripts/_claude_cli.py` 供所有批次共用——這個「失敗原因必須可區分」
+    的設計最早長在這裡，抽出去是為了讓下一支腳本抄得到對的那份（其餘四支曾經各自
+    抄了 `except Exception: return None` 的版本，見該模組 docstring 的四天停擺）。
     """
-    try:
-        r = subprocess.run(
-            build_cli_args(prompt, model),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd="/tmp",  # 避免載入專案 CLAUDE.md
-        )
-    except FileNotFoundError as exc:
-        # 環境層級的失敗：每一篇都會踩到，重試與續跑都沒有意義 → 中止整批
-        raise CliNotFoundError(
-            "`claude` CLI 不在 PATH（systemd 下請補 PATH drop-in；"
-            "互動 shell 請確認 which claude）"
-        ) from exc
-    except subprocess.TimeoutExpired:
-        return CliResult(None, f"CLI 逾時（{timeout}s 內未回應）")
-    except Exception as exc:
-        return CliResult(None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}")
-    if r.returncode != 0:
-        tail = (r.stderr or "").strip().replace("\n", " ")[-200:]
-        return CliResult(None, f"CLI 退出碼 {r.returncode}：{tail or '（無 stderr）'}")
-    return CliResult(r.stdout, None)
+    return run_claude(prompt, model, timeout=timeout)
 
 
 # ── 進度計數 ──

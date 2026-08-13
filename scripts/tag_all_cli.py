@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.tagging import TAG_INSTRUCTION, parse_tags  # noqa: E402
+from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,24 +44,14 @@ def build_prompt(file_name: str, text: str, excerpt: int) -> str:
     )
 
 
-def call_cli(prompt: str, timeout: int = 150) -> str | None:
-    # 去掉 NUL 位元組：部分 PDF 抽出的文字含 \x00，會讓 subprocess 直接拋
-    # ValueError('embedded null byte')（POSIX argv 不可含 NUL），導致該檔永久標註失敗。
-    prompt = prompt.replace("\x00", "")
-    try:
-        # cwd 設 /tmp 避免載入專案 CLAUDE.md 拖慢每次呼叫；
-        # --setting-sources '' 排除 user/專案設定＋SessionStart hooks＋MCP server，
-        # 避免每篇冷啟動載入全部外掛造成小檔 I/O 風暴（對齊 llm.py / generate_summaries.py）
-        r = subprocess.run(
-            ["claude", "-p", prompt, "--model", MODEL, "--setting-sources", ""],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd="/tmp",
-        )
-        return r.stdout if r.returncode == 0 else None
-    except (subprocess.TimeoutExpired, Exception):
-        return None
+def call_cli(prompt: str, timeout: int = 150) -> CliResult:
+    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+
+    實作在 scripts/_claude_cli.py（全批次共用）。標註失敗特別值得說得出原因：
+    它會讓該檔在匯入時被記成 `skip_untagged` 而**不入庫**，而排程 log 只印一行
+    「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
+    """
+    return run_claude(prompt, MODEL, timeout=timeout)
 
 
 def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
@@ -70,9 +60,15 @@ def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
     if out_path.exists() and parse_tags(out_path.read_text(encoding="utf-8")):
         return "skip"
     prompt = build_prompt(rec["file_name"], rec.get("text", ""), excerpt)
+    last_error = "CLI 無回應"
     for _ in range(retries + 1):
-        raw = call_cli(prompt)
-        tag = parse_tags(raw) if raw else None
+        # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
+        res = call_cli(prompt)
+        tag = parse_tags(res.text) if res.text else None
+        if res.text and tag is None:
+            last_error = "回應無法解析為標籤"
+        elif res.error:
+            last_error = res.error
         if tag is not None:
             obj = {
                 "market": tag.market,
@@ -89,7 +85,7 @@ def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
             tmp.rename(out_path)
             return "ok"
     with _lock, open(FAIL_LOG, "a", encoding="utf-8") as f:
-        f.write(f"{h}\t{rec['file_name']}\n")
+        f.write(f"{h}\t{rec['file_name']}\t{last_error}\n")
     return "fail"
 
 
@@ -114,7 +110,16 @@ def main(workers: int, limit: int | None, excerpt: int) -> None:
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(tag_one, r, excerpt): r for r in recs}
         for fut in as_completed(futs):
-            res = fut.result()
+            try:
+                res = fut.result()
+            except CliNotFoundError as exc:
+                # 環境層級失敗：每一篇都會踩到同一顆地雷。取消還沒開始的工作、
+                # 中止並以非零碼收場，而不是把 N 篇全部記成 fail 然後 exit 0。
+                print(f"\n中止：{exc}", flush=True)
+                print(f"（已完成 {_done}/{total}；ok={_ok} fail={_fail}）", flush=True)
+                for pending in futs:
+                    pending.cancel()
+                raise SystemExit(2) from exc
             with _lock:
                 _done += 1
                 if res == "ok":

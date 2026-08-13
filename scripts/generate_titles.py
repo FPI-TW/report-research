@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +39,12 @@ from sqlalchemy import text  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
+from scripts._claude_cli import (  # noqa: E402
+    CliNotFoundError,
+    CliResult,
+    run_claude,
+)
+from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,29 +159,19 @@ def parse_title(raw: str, file_name: str = "") -> Optional[TitleResult]:
 
 
 def build_cli_args(prompt: str) -> list[str]:
-    """組 `claude -p` 的 argv（與 generate_summaries 同策略）。
+    """組 `claude -p` 的 argv（本腳本固定用 MODEL；實作見 scripts/_claude_cli.py）。"""
+    return _build_cli_args(prompt, MODEL)
 
-    `--setting-sources ""`＝不載入任何 settings 來源（user/project/local），連帶略過
-    全域 hooks/plugins/CLAUDE.md —— 每次冷啟動載入它們正是磁碟小檔 I/O 的主因。
+
+def call_cli(prompt: str, timeout: int = 180) -> CliResult:
+    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+
+    原本是 `except (subprocess.TimeoutExpired, Exception): return None` —— 那個
+    tuple 的第二項讓第一項完全沒有意義，所有失敗一律回 None，而 `title_failures.log`
+    連原因欄都沒有，只記 id 與檔名。2026-08 連續四天 titled_ok=0 fail=60 時，
+    那個檔對「為什麼」一個字都說不出來。
     """
-    # 去掉 NUL：部分 PDF 抽出的文字含 \x00，POSIX argv 不可含 NUL，否則 subprocess 直接拋
-    prompt = prompt.replace("\x00", "")
-    return ["claude", "-p", prompt, "--model", MODEL, "--setting-sources", ""]
-
-
-def call_cli(prompt: str, timeout: int = 180) -> Optional[str]:
-    try:
-        # cwd 設 /tmp 避免載入專案 CLAUDE.md 拖慢每次呼叫
-        r = subprocess.run(
-            build_cli_args(prompt),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd="/tmp",
-        )
-        return r.stdout if r.returncode == 0 else None
-    except (subprocess.TimeoutExpired, Exception):
-        return None
+    return run_claude(prompt, MODEL, timeout=timeout)
 
 
 UPDATE_SQL = (
@@ -198,12 +193,21 @@ async def title_one(
     global _done, _ok, _fail
     prompt = build_prompt(file_name, full_text, excerpt)
     result: Optional[TitleResult] = None
+    # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是
+    # 「回了但解析不採信」——後者是資料問題，前者是環境問題，處置完全不同。
+    last_error = "CLI 無回應"
     async with sem:
         for _ in range(retries + 1):
-            raw = await asyncio.to_thread(call_cli, prompt)
-            result = parse_title(raw, file_name) if raw else None
-            if result:
-                break
+            # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
+            # 讓它一路拋到 main 中止整批。
+            res = await asyncio.to_thread(call_cli, prompt)
+            if res.text:
+                result = parse_title(res.text, file_name)
+                if result:
+                    break
+                last_error = "回應無法解析為可採信的標題"
+            elif res.error:
+                last_error = res.error
 
     if result:
         async with SessionFactory() as session:
@@ -219,8 +223,10 @@ async def title_one(
             await session.commit()
         _ok += 1
     else:
+        # 第三欄是 2026-08-13 補的：先前只記 id 與檔名，於是連續四天 fail=60
+        # 時這個檔對「為什麼」一個字都說不出來。
         with open(FAIL_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{rid}\t{file_name}\n")
+            f.write(f"{rid}\t{file_name}\t{last_error}\n")
         _fail += 1
 
     _done += 1
@@ -281,9 +287,16 @@ async def main(
         print("nothing to do（皆已有標題）", flush=True)
         return
     sem = asyncio.Semaphore(workers)
-    await asyncio.gather(
-        *(title_one(sem, rid, fn, ft, excerpt, total) for rid, fn, ft in cands)
-    )
+    try:
+        await asyncio.gather(
+            *(title_one(sem, rid, fn, ft, excerpt, total) for rid, fn, ft in cands)
+        )
+    except CliNotFoundError as exc:
+        # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷 → 中止並以非零碼收場，
+        # 而不是跑完 N 次註定失敗的呼叫、印 titled_ok=0、然後 exit 0。
+        print(f"\n中止：{exc}", flush=True)
+        print(f"（已完成 {_done}/{total}；ok={_ok} fail={_fail}）", flush=True)
+        raise SystemExit(2) from exc
     print(f"\ndone. titled_ok={_ok} fail={_fail}", flush=True)
 
 

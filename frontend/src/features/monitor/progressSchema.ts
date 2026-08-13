@@ -26,8 +26,9 @@ export const summarySchema = z.object({ done: z.number(), total: z.number(), rem
  *
  * `takeaways`／`signals`／`sync_import` 用 optional 的理由同 progressSchema 下方那三塊：
  * 滾動部署期間前端可能先上線，缺鍵就整張監控頁 parse 失敗變空白，代價遠大於少一列。
- * 仍未涵蓋 `generate_titles.py`——它同樣沒有表徵，要補是同一個模式
- * （後端加一格 + 這裡加一個 optional + ROWS 加一列）。
+ * 這個模式（後端加一格 + 這裡加一個 optional + ROWS 加一列）是新增管線列的標準作法；
+ * `titles`／`sync_import` 都是照它補的。三處漏任一個都是**靜默**失效：zod 預設 strip，
+ * 未宣告的鍵會被安靜丟掉，畫面上只是那一列永遠顯示「已停止」。
  *
  * `ingest` 與 `sync_import` 是**兩條不同的管線**，不要合併：前者是全量的
  * `ingest_all.py`（只在初次建庫或補跑歷史時跑），後者是生產實際的入庫路徑
@@ -39,6 +40,7 @@ export const pipelinesSchema = z.object({
   sync_import: z.boolean().optional(),
   tag: z.boolean(),
   summaries: z.boolean(),
+  titles: z.boolean().optional(),
   takeaways: z.boolean().optional(),
   signals: z.boolean().optional(),
 })

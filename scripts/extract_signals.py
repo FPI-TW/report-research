@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -46,6 +45,7 @@ from app.services.signal_extract import (  # noqa: E402
     build_signal_prompt,
     parse_signal,
 )
+from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,23 +161,15 @@ def row_to_params(row: SignalRow) -> dict:
 
 # ── claude CLI 呼叫（對齊 generate_summaries.py）──
 
-def build_cli_args(prompt: str, model: str) -> list[str]:
-    prompt = prompt.replace("\x00", "")  # POSIX argv 不可含 NUL
-    return ["claude", "-p", prompt, "--model", model, "--setting-sources", ""]
+def call_cli(prompt: str, model: str, timeout: int = 180) -> CliResult:
+    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
 
-
-def call_cli(prompt: str, model: str, timeout: int = 180) -> Optional[str]:
-    try:
-        r = subprocess.run(
-            build_cli_args(prompt, model),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd="/tmp",  # 避免載入專案 CLAUDE.md
-        )
-        return r.stdout if r.returncode == 0 else None
-    except Exception:
-        return None
+    實作在 `scripts/_claude_cli.py`（全批次共用）。這裡原本是
+    `except Exception: return None`，於是所有失敗都被寫成同一句「CLI 無回應或逾時」
+    ——`data/signal_failures.log` 累積 9,273 筆全是那一句，2026-08 連續四天 100%
+    失敗時完全看不出該修 PATH、該調 timeout，還是該去看帳號額度。
+    """
+    return run_claude(prompt, model, timeout=timeout)
 
 
 # ── 進度計數 ──
@@ -302,16 +294,22 @@ async def extract_one(
         (item.full_text or "")[:excerpt],
     )
     parsed: Optional[ParsedReportSignals] = None
+    # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
+    last_error = "CLI 無回應"
     async with sem:
         for _ in range(retries + 1):
-            raw = await asyncio.to_thread(call_cli, prompt, model)
-            if raw:
-                parsed = parse_signal(raw, item.requested_codes)
+            # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
+            # 讓它一路拋到 main 中止整批，而不是靜靜地把 N 篇都記成 rejected。
+            res = await asyncio.to_thread(call_cli, prompt, model)
+            if res.text:
+                parsed = parse_signal(res.text, item.requested_codes)
                 if parsed.ok:
                     break
+            elif res.error:
+                last_error = res.error
         if parsed is None:
             # CLI 無回應/逾時 → 落 rejected 列（供之後重跑），並記失敗
-            parsed = ParsedReportSignals(ok=False, error="CLI 無回應或逾時")
+            parsed = ParsedReportSignals(ok=False, error=last_error)
 
     try:
         rows = build_rows(ctx, parsed)
@@ -358,9 +356,17 @@ async def main(args) -> None:
         return
 
     sem = asyncio.Semaphore(args.workers)
-    await asyncio.gather(
-        *(extract_one(sem, item, args.excerpt, args.model, total) for item in worklist)
-    )
+    try:
+        await asyncio.gather(
+            *(extract_one(sem, item, args.excerpt, args.model, total) for item in worklist)
+        )
+    except CliNotFoundError as exc:
+        # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷。中止並以非零退出碼收場 ——
+        # 「跑完 N 次註定失敗的呼叫、印 ok=0 rejected=N、然後 exit 0」是最糟的結局，
+        # 因為排程 unit 仍然是綠的，沒有任何人會知道。
+        print(f"\n中止：{exc}", flush=True)
+        print(f"（已完成 {_done}/{total}；ok={_ok} rejected={_rejected} fail={_fail}）", flush=True)
+        raise SystemExit(2) from exc
     print(f"\ndone. ok={_ok} rejected={_rejected} fail={_fail}", flush=True)
 
 

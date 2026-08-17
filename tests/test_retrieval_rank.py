@@ -191,6 +191,52 @@ class HybridSearchLexStatsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self._run(lex_hits=2000, stats=None))
 
 
+class HybridSearchTimingStatsTests(unittest.IsolatedAsyncioTestCase):
+    """dense 與 lexical 必須分開計時。
+
+    合在一起量的後果不是資訊少一點，是**優化方向可能整個押錯邊**：HNSW 掃描
+    與 57 萬列的 trgm GIN 成本結構完全不同，而 `timer.mark("retrieve")` 把兩者
+    連同 embed 與融合一起塞進同一個數字。
+    """
+
+    @staticmethod
+    async def _run(*, query="台積電", stats=None):
+        from app.services import retrieval as ret
+
+        async def fake_dense(*a, **k):
+            return []
+
+        async def fake_lex(*a, **k):
+            return [], 0
+
+        orig = (ret.search_chunks_meta, ret.search_chunks_lexical)
+        ret.search_chunks_meta = fake_dense
+        ret.search_chunks_lexical = fake_lex
+        try:
+            await ret.hybrid_search(object(), query, [0.0], stats=stats)
+        finally:
+            ret.search_chunks_meta, ret.search_chunks_lexical = orig
+        return stats
+
+    async def test_both_segments_recorded_as_ints(self):
+        stats = await self._run(stats={})
+        self.assertIsInstance(stats["dense_ms"], int)
+        self.assertIsInstance(stats["lex_ms"], int)
+        self.assertGreaterEqual(stats["dense_ms"], 0)
+        self.assertGreaterEqual(stats["lex_ms"], 0)
+
+    async def test_lex_ms_is_zero_when_query_yields_no_terms(self):
+        # 純標點：norm_for_match 後不含任何 [a-z0-9] 或 CJK 段 → terms 為空
+        # → 字面路整段不執行。此時 lex_ms 必須是 0 而非 None，否則 log 會印出
+        # 「lex_ms=None」而讀者無從分辨「沒跑」與「遙測壞了」。
+        stats = await self._run(query="！！！", stats={})
+        self.assertEqual(stats["lex_ms"], 0)
+
+    async def test_stats_none_is_still_accepted(self):
+        # stats 是可選的；不傳不得拋例外（四個生產呼叫端有兩個不傳）
+        self.assertIsNone(await self._run(stats=None))
+
+
 class NullDistanceGuardTests(unittest.IsolatedAsyncioTestCase):
     """`distance is None` 必須降級跳過，不能 `float(None)` 讓整頁 500。
 

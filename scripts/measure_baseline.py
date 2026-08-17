@@ -1,15 +1,25 @@
 """延遲／路由／標的覆蓋率的基準量測（唯讀，零 LLM、零寫入）。
 
 存在理由：2026-08-17 的四項目標路線圖把「取得基準」列為第 0 步——四項裡有三項的
-優先序取決於數字，而那些數字目前只存在於程式碼註解裡（`app/config.py:201` 的
-rerank 50 對 ~34s、`app/services/answer.py:2006` 的檢索 ~48s）。註解是點狀實測，
-不是分佈；沒有分佈就無法判斷「改善了 10 秒」對 p95 有沒有意義。
+優先序取決於數字，而那些數字多數只存在於程式碼註解裡的點狀實測（`app/config.py:201`
+的 rerank 50 對 ~34s、`app/services/answer.py:2006` 的檢索 ~48s）。**延遲是例外**：
+`scripts/analyze_qa_log.py` 已經會算 latency_ms／thinking_ms 的分位數，本腳本不是
+它們的唯一來源——差異見下方「與既有工具的分工」。路由分佈與標的覆蓋率則確實完全
+沒有既有工具在算。
 
 三份報表：
   1. qa_log 的 latency_ms / thinking_ms 分佈（p50/p95/p99/max）
   2. qa_log 的路由分佈（filters->>'path' × filters->>'decided_by'）
      ——`fail_open` 的佔比即分類器失敗率，那個數字現在完全不可觀測。
   3. research_report 的 stock_targets / stock_code 覆蓋率（目標 3 的可行性前提）
+
+與既有工具的分工：`scripts/analyze_qa_log.py`（README 已收錄）也會算
+latency_ms／thinking_ms 的分位數，兩者不是同一支工具的兩個入口，數字也**不可直接
+互相比較**——(a) 那支報 p50/p90/p99，本腳本報 **p95**（路線圖 §4.1 要的是 p95，
+那支沒有這個分位）；(b) 本腳本額外報 n／n_latency／n_thinking 三個母體大小，供讀者
+自行判斷視窗夠不夠長；(c) 路由分佈與標的覆蓋率兩份報表是那支完全沒有的——分類器
+fail_open 率與目標 3 的可行性前提。百分位集合不同代表兩邊的「尾端」數字不是同一個
+統計量，未來若要合併兩支工具，先把分位數集合對齊，不要假設它們現在就是一回事。
 
 刻意不做：
   - 不寫任何表、不呼叫 LLM、不載入 embedding 模型。
@@ -18,7 +28,7 @@ rerank 50 對 ~34s、`app/services/answer.py:2006` 的檢索 ~48s）。註解是
 
 用法：
   uv run python scripts/measure_baseline.py
-  uv run python scripts/measure_baseline.py --days 60
+  uv run python scripts/measure_baseline.py --days 90
   uv run python scripts/measure_baseline.py --json
 
 退出碼：0＝完成；2＝DB 不可用（與 check_batch_freshness.py 同慣例，處置不同故分流）。
@@ -55,7 +65,7 @@ SELECT
   percentile_disc(0.99) WITHIN GROUP (ORDER BY thinking_ms)   AS thinking_p99,
   max(thinking_ms)                                            AS thinking_max
 FROM research.qa_log
-WHERE created_at >= now() - (interval '1 day' * :days)
+WHERE created_at >= now() - make_interval(days => :days)
 """
 
 # path / decided_by 皆為 M4 之後才寫入，舊列沒有這兩個鍵 → COALESCE 成 '(none)'，
@@ -66,7 +76,7 @@ SELECT
   COALESCE(filters->>'decided_by', '(none)')  AS decided_by,
   count(*)                                    AS n
 FROM research.qa_log
-WHERE created_at >= now() - (interval '1 day' * :days)
+WHERE created_at >= now() - make_interval(days => :days)
 GROUP BY 1, 2
 ORDER BY 3 DESC, 1, 2
 """
@@ -169,14 +179,24 @@ def render(report: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="延遲／路由／標的覆蓋率基準量測（唯讀）")
-    parser.add_argument("--days", type=int, default=30, help="qa_log 回溯窗期（天）")
+    # 預設 365 不是 30：spec 記錄的生產量約 0.7 題／天，30 天窗期只有約 21 列，
+    # percentile_disc(0.95) 與 percentile_disc(0.99) 在那個列數下會一起落到
+    # max——印出來像三個獨立數字，其實是同一列被複製了三次。n／n_latency／
+    # n_thinking 三個母體大小仍會印出來，讀者可自行判斷這個視窗夠不夠長。
+    parser.add_argument("--days", type=int, default=365, help="qa_log 回溯窗期（天）")
     parser.add_argument("--json", action="store_true", help="輸出 JSON 而非文字")
     args = parser.parse_args()
 
     try:
         report = asyncio.run(collect(args.days))
     except Exception as exc:  # DB 不可用與查詢失敗都走這裡；訊息原樣印出供診斷
-        print(f"量測失敗（DB 不可用？）：{exc}", file=sys.stderr)
+        # --json 時失敗也要吐 JSON（比照 check_batch_freshness.py 的 payload 形狀）：
+        # 否則 `| jq` 包裝在 rc=2 時只拿到空 stdin，連錯誤訊息都解析不到。
+        payload = {"error": f"{type(exc).__name__}: {exc}"}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+        else:
+            print(f"量測失敗（DB 不可用？）：{payload['error']}", file=sys.stderr)
         return EXIT_UNKNOWN
 
     if args.json:

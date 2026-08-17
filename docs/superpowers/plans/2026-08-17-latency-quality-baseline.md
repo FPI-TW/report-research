@@ -121,7 +121,7 @@ rerank 50 對 ~34s、`app/services/answer.py:2006` 的檢索 ~48s）。註解是
 
 用法：
   uv run python scripts/measure_baseline.py
-  uv run python scripts/measure_baseline.py --days 60
+  uv run python scripts/measure_baseline.py --days 90
   uv run python scripts/measure_baseline.py --json
 
 退出碼：0＝完成；2＝DB 不可用（與 check_batch_freshness.py 同慣例，處置不同故分流）。
@@ -272,7 +272,11 @@ def render(report: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="延遲／路由／標的覆蓋率基準量測（唯讀）")
-    parser.add_argument("--days", type=int, default=30, help="qa_log 回溯窗期（天）")
+    # 預設 365 不是 30：spec 記錄的生產量約 0.7 題／天，30 天窗期只有約 21 列，
+    # percentile_disc(0.95) 與 percentile_disc(0.99) 在那個列數下會一起落到
+    # max——印出來像三個獨立數字，其實是同一列被複製了三次。n／n_latency／
+    # n_thinking 三個母體大小仍會印出來，讀者可自行判斷這個視窗夠不夠長。
+    parser.add_argument("--days", type=int, default=365, help="qa_log 回溯窗期（天）")
     parser.add_argument("--json", action="store_true", help="輸出 JSON 而非文字")
     args = parser.parse_args()
 

@@ -2245,6 +2245,12 @@ async def answer_question(
         truncate_from=truncate_from,
         request_id=request_id,
     )
+    # dense_ms／lex_ms 只涵蓋首輪檢索（timer.mark("retrieve") 同一個範圍）。
+    # agentic 補查（app/services/agentic_qa.py，QA_AGENTIC_ENABLED 預設開、
+    # QA_MAX_ROUNDS=2）呼叫 retrieve_context 時不傳 stats，後續輪次的 dense/lex
+    # 耗時不會累加進這兩個欄位——但同一行的 total_ms 涵蓋全部輪次。用這兩個
+    # 欄位算「dense+lex 佔 total 的比例」會系統性低估；這是既有量測範圍，不是
+    # bug，故不在此改行為。
     logger.info(
         "qa_timing id=%s %s total_ms=%s thinking_ms=%s lex_hits=%s lex_cap=%s"
         " lex_truncated=%s dense_ms=%s lex_ms=%s",

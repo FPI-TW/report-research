@@ -104,7 +104,7 @@ benchmark 的方法論要求：
 
 缺口有二：
 
-1. **`qa_log.thinking_ms` / `latency_ms` 的實際分佈從未統計過。** 可撈窗口約一個月——`logging_setup.py` 於 2026-07-29 修好之前，`qa_timing` 這條 log 完全沒有資料。
+1. **`qa_log.thinking_ms` / `latency_ms` 的實際分佈從未統計過。** 這兩欄是 `_log_qa` 的 INSERT 參數（`app/services/answer.py:959-990`，`:lat`／`:think`），只要那次寫入執行就落欄，與 `logger.info` 有沒有印出無關；`db/schema.sql` 對 `research.qa_log` 未設 TTL 或分區。**可撈窗口是表齡，不是 log 齡。** 真正受 2026-07-29 `logging_setup.py` 修復所限的是 `qa_timing` 這條 **log 本身**——`dense_ms`／`lex_ms`／`route_wait` 等分段遙測只落 log、不落欄位，這些數字的可撈窗口才約一個月。
 2. **`timer.mark("retrieve")` 把 embed → dense HNSW → lexical trgm → 去重融合整段當成一段**（`app/services/retrieval_pipeline.py:111-116`）。dense 與 lexical 各佔多少完全未知，而 `ASK_DENSE_SCAN=400` 的 HNSW 掃描與 57 萬列的 trgm GIN 是兩種完全不同的成本結構。
 
 ### 4.2 品質基準：已過期

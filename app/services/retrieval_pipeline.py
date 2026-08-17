@@ -102,7 +102,8 @@ async def retrieve_context(
     rerank_timeout 未給時退回模組後備值；逾時預算含排隊等待 semaphore 的時間。
 
     `stats` 給定時原樣轉給 hybrid_search 填寫字面路召回遙測（lex_hits／lex_cap／
-    lex_truncated），由呼叫端決定要不要記錄——本函式不 log，避免同一份資訊在管線裡
+    lex_truncated）與兩路的分段耗時（dense_ms／lex_ms，毫秒；字面路未執行時
+    lex_ms 為 0），由呼叫端決定要不要記錄——本函式不 log，避免同一份資訊在管線裡
     出現兩次而對不上。"""
     filters = filters or {}
     qvec = await asyncio.to_thread(embed_query_cached, question)

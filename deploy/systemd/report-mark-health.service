@@ -1,0 +1,42 @@
+[Unit]
+Description=廷豐智能研報 應用層健康探針（本機 /healthz，非 systemd 存活狀態）
+# 為什麼需要它：2026-08-18 的中斷持續 4 小時 50 分，期間 `systemctl is-active` 全程
+# 顯示 active，而實際服務的 HTTP 請求數是 0。uvicorn 先跑 lifespan 再 bind，bind
+# 失敗後行程仍存活約 10 秒（背景載入 BGE-M3），配合 Restart=always／RestartSec=3，
+# 任何時間點查 is-active 都很可能看到 active。**process alive != application healthy。**
+After=network-online.target
+Wants=network-online.target
+# 沿用既有告警鏈，不另建平行機制。**注意**：本探針每 2 分鐘一次，真實中斷期間會
+# 每 2 分鐘留下一筆 unit_failures.log（約 3–5 KB／筆）。那是刻意接受的暫時行為——
+# **通知去重屬於 P5**，在 P5 就位前刻意不設 REPORT_MARK_ALERT_WEBHOOK，
+# 讓這些紀錄只落在 journal 與 log，不會轟炸人。不以降低探測頻率來掩蓋告警噪音：
+# 頻率正是這支探針的全部價值。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h：系統層 unit 的 %h 一律解析為 service manager 的家目錄
+# （/root），**不受 User= 影響**。2026-07-28 sync unit 因此連續 10 輪失敗、整條
+# 入庫管線停擺 24 小時。tests/test_deploy_units.py 靜態守這條。
+Environment=HOME=/home/kashionz
+# 探針只需要 curl／systemctl／coreutils。**刻意不含 nvm 與 uv 的路徑**：
+# 它不得相依 Python／.venv——2026-08-18 的根因正是 venv 損毀，若探針跟著壞掉，
+# 它就會和被監控的服務一起死。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+# 顯式 `bash <script>` 而非直接 exec：不依賴 repo 內的執行位元。2026-08-18 的遷移
+# 才剛因為 /mnt/c（drvfs 一律回報 777）從未記錄過 exec bit 而踩過這個坑。
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/check_web_health.sh"'
+# 退出碼 3＝剛啟動的寬限期內，**不是故障**。用 SuccessExitStatus 而非在腳本裡
+# `|| true`：後者會把真正的失敗一起吞掉，而這裡要的是「只放行這一個碼」。
+# 同目錄的 report-mark-web.service 已用同一手法處理 143（SIGTERM 的正常收場）。
+SuccessExitStatus=3
+# 最壞情況＝3 次探測 × 5 秒逾時 ＋ 2 次 × 15 秒等待 ＝ 45 秒。取 90 秒＝2 倍餘裕，
+# 且**必須嚴格小於 timer 的 120 秒間隔**（不是等於）——取 120 會讓逾時的那一輪
+# 正好撞上下一次觸發。tests 以嚴格不等式釘死這個關係。
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

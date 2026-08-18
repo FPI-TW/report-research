@@ -108,7 +108,7 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_20260729_12000
 ### 安裝／更新
 
 ```bash
-REPO=/mnt/c/Users/User/Desktop/Project/report-mark
+REPO=/home/kashionz/projects/report-mark
 sudo cp "$REPO"/deploy/systemd/report-mark-*.service "$REPO"/deploy/systemd/report-mark-*.timer /etc/systemd/system/
 sudo mkdir -p /etc/systemd/system/report-mark-web.service.d
 sudo cp "$REPO"/deploy/systemd/report-mark-web.service.d/path.conf /etc/systemd/system/report-mark-web.service.d/
@@ -282,7 +282,7 @@ active、`pg_restore` 退出碼是 0，每一個訊號都指向「沒問題」�
 ### 安裝
 
 ```bash
-REPO=/mnt/c/Users/User/Desktop/Project/report-mark
+REPO=/home/kashionz/projects/report-mark
 sudo install -m 0755 -o root -g root "$REPO"/deploy/systemd/mount-nas-backup /usr/local/sbin/
 sudo install -m 0440 -o root -g root "$REPO"/deploy/systemd/report-mark-backup.sudoers \
   /etc/sudoers.d/report-mark-backup
@@ -369,7 +369,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 ### 安裝
 
 ```bash
-REPO=/mnt/c/Users/User/Desktop/Project/report-mark
+REPO=/home/kashionz/projects/report-mark
 sudo cp "$REPO"/deploy/systemd/report-mark-freshness.service \
         "$REPO"/deploy/systemd/report-mark-freshness.timer /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -434,7 +434,7 @@ uv run python scripts/db_audit.py --skip norm_drift    # 跳過取樣那條（�
 ### 安裝
 
 ```bash
-REPO=/mnt/c/Users/User/Desktop/Project/report-mark
+REPO=/home/kashionz/projects/report-mark
 sudo cp "$REPO"/deploy/systemd/report-mark-audit.service \
         "$REPO"/deploy/systemd/report-mark-audit.timer /etc/systemd/system/
 sudo systemctl daemon-reload

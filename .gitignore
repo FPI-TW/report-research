@@ -49,3 +49,13 @@ deploy/secrets/
 # 範本檔以 !.env.example 放行（無斜線，同時涵蓋 deploy/.env.example）。
 .env.*
 !.env.example
+
+# Playwright 視覺稽核產物（2026-08 雷達工作台改版與版面稽核）。衍生物，重跑可得；
+# 未被涵蓋時會有 31 個檔常駐 `git status` 的未追蹤清單，把真正需要注意的變更蓋掉。
+/output/
+
+# 2026-08-07 訊號回填期間的臨時觀測腳本。`data/` 是逐項忽略（不是整目錄），
+# 這三個剛好不在任何既有規則內。刻意只忽略、不刪除——可能還有參考價值。
+data/signal_chain.sh
+data/signal_progress_sampler.sh
+data/signal_progress.tsv

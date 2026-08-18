@@ -463,3 +463,111 @@ systemctl list-timers report-mark-audit.timer                   # 應排在每�
 - **語料層（`research_report` / `report_chunk`）納入備份**：見上面的取捨與已知代價，那是一個容量決定（`full_text` 是全語料原文），不該夾帶在第一版備份裡。
 - **異地／離線副本與加密**：NAS 已經比 pgdata 好一個數量級，但 NAS 本身壞掉仍是單點。
 - **自動還原演練**：真正的驗收是定期把 dump 還原到臨時 DB 比對筆數。這需要排程與判準，先把還原步驟寫成可照抄的指令。
+
+---
+
+## 應用層健康探針（`report-mark-health.timer`）
+
+**`systemctl is-active` 不是應用健康的證據。** 2026-08-18 的中斷持續 4 小時 50 分，
+期間 `systemctl is-active report-mark-web.service` 全程顯示 `active`，而 journal 的
+access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bind，bind 失敗後
+行程仍會存活約 10 秒（背景載入 BGE-M3），配合 `Restart=always` 與 `RestartSec=3`，
+任何時間點去查 `is-active` 都有很高機率看到 `active`。事故全記錄見
+`docs/incidents/`（待整合）。
+
+因此另有一支每 2 分鐘執行的探針：`scripts/check_web_health.sh`，
+由 `report-mark-health.timer` 觸發。
+
+### 它檢查什麼（以及**不**檢查什麼）
+
+它打 `http://127.0.0.1:8097/healthz`，也就是 `web/routers/health.py` 的端點。
+
+**`/healthz` 目前只探 DB**（一次 `SELECT 1`，內部逾時 3 秒，結果快取 5 秒）。
+它**不**代表「所有相依都健康」——不驗 BGE-M3 是否載入、不驗 reranker、不驗 NAS、
+不驗 `claude` CLI。它能證明的是兩件事，而那兩件正好涵蓋 2026-08-18 的失效型態：
+
+1. **uvicorn 真的綁上了 :8097 並且會回應**（探針連得上）
+2. **DB 可用**（回 200 而非 503）
+
+用 `127.0.0.1` 而非 `localhost`：uvicorn 綁的是 `0.0.0.0`（**只有 IPv4**），而
+`localhost` 在多數 glibc 設定下會先解析到 `::1`——那會讓探針自己製造假故障。
+
+### 判定與退出碼
+
+| 退出碼 | 意義 | unit 狀態 |
+|---|---|---|
+| `0` | 健康 | success |
+| `1` | HTTP 探測失敗（非 200／連不上／逾時） | **failed → `OnFailure`** |
+| `2` | web unit 不在 `active` | **failed → `OnFailure`** |
+| `3` | 剛啟動的寬限期內 | success（unit 宣告 `SuccessExitStatus=3`） |
+| `4` | 探針自己不能執行（缺 `curl`） | **failed → `OnFailure`** |
+
+**兩種「連不上」都算失敗**：2026-08-18 的失效型態是 uvicorn 根本沒綁上（連不上），
+不是回 503。實測本機在 WSL mirrored networking 下，連一個沒有 listener 的埠得到的是
+**逾時**（`curl rc=28`）而非拒絕（`rc=7`），因為 Windows 側是丟棄而非拒絕。
+
+### 參數與其依據
+
+| 參數 | 值 | 依據 |
+|---|---|---|
+| 觸發間隔 | 2 分鐘 | 對比中斷 4h50m，最壞偵測延遲降到約 2 分 45 秒 |
+| 單次逾時 | 5 秒 | `/healthz` 內部探測上限 3 秒，留 2 秒餘裕 |
+| 重試 | 3 次，間隔 15 秒 | 跨 30 秒，足以吸收 `systemctl restart` 的空窗（`RestartSec=3` ＋ 實測 bind 僅需 1 秒） |
+| 啟動寬限 | 60 秒 | **實測 bind 只要 1 秒**（模型暖機是背景進行，不阻塞 socket），不需要更長 |
+
+**啟動寬限有三個條件，缺一不可**：unit 目前是 `active`、進入 active 未滿 60 秒、
+**且 `NRestarts == 0`**。第三個條件是關鍵——`Restart=always` ＋ `RestartSec=3` 會讓
+`ActiveEnterTimestamp` 每 3 秒更新一次，只看時間戳的寬限在 crash loop 下**恆為真**，
+會永久抑制告警（2026-08-18 累積 550 次重啟，正是這個形狀）。
+
+### 探針刻意不相依 Python
+
+`scripts/check_web_health.sh` 只用 `curl`／`systemctl`／coreutils，**不用 `uv run`、
+不碰 `.venv`、不 import 任何 `app.*`**。2026-08-18 的根因正是 `/mnt/c`（9p）上的
+venv 損毀，若探針相依 Python 環境，它會與被監控的服務一起死——那時最需要它，
+而它不在。`tests/test_web_health_probe.py` 靜態守這條。
+
+### 通知行為（**目前的暫時狀態**）
+
+本 unit 沿用既有的 `OnFailure=report-mark-alert@%n.service`。`report-mark-alert.sh`
+會寫 journal 與 `data/unit_failures.log`，並**只在 `REPORT_MARK_ALERT_WEBHOOK` 有設定時**
+才送 webhook——而該變數目前**未設定**。
+
+因此真實中斷期間，這支探針會每 2 分鐘留下一筆 `unit_failures.log`（約 3–5 KB／筆，
+一次 5 小時的中斷約增 600 KB）。**這是刻意接受的暫時行為：通知去重屬於 P5。**
+在 P5 的事件狀態機就位前刻意不設 webhook，讓這些紀錄只落在 journal 與 log。
+
+**不以降低探測頻率來掩蓋告警噪音**——頻率正是這支探針的全部價值。
+
+### 安裝
+
+```bash
+REPO=/home/kashionz/projects/report-mark
+sudo cp "$REPO"/deploy/systemd/report-mark-health.service \
+        "$REPO"/deploy/systemd/report-mark-health.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-health.timer
+```
+
+### 觀察
+
+```bash
+# 每次執行的結果（一行一筆 key=value）
+journalctl -u report-mark-health.service --since "24 hours ago" --no-pager | grep 'probe=local_http'
+
+# 統計 ok / fail / grace
+journalctl -u report-mark-health.service --since "24 hours ago" --no-pager -o cat \
+  | grep -oE 'status=[a-z]+' | sort | uniq -c
+
+# 誤報有沒有污染 unit_failures.log（無真實故障時應為 0）
+grep -c 'UNIT=report-mark-health' data/unit_failures.log
+```
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-health.timer
+```
+
+零 application 變更、零資料變更，停用即完全回到沒有探針的狀態。
+

@@ -6,12 +6,24 @@ Description=廷豐智能研報 應用層健康探針（本機 /healthz，非 sys
 # 任何時間點查 is-active 都很可能看到 active。**process alive != application healthy。**
 After=network-online.target
 Wants=network-online.target
-# 沿用既有告警鏈，不另建平行機制。**注意**：本探針每 2 分鐘一次，真實中斷期間會
-# 每 2 分鐘留下一筆 unit_failures.log（約 3–5 KB／筆）。那是刻意接受的暫時行為——
-# **通知去重屬於 P5**，在 P5 就位前刻意不設 REPORT_MARK_ALERT_WEBHOOK，
-# 讓這些紀錄只落在 journal 與 log，不會轟炸人。不以降低探測頻率來掩蓋告警噪音：
-# 頻率正是這支探針的全部價值。
-OnFailure=report-mark-alert@%n.service
+# **刻意不宣告 OnFailure=report-mark-alert@%n.service**，與同目錄其他五支不同。
+#
+# 理由不是「這支不重要」，而是通知的節奏對不上：那五支是日排程或每 3 小時，
+# OnFailure 觸發一次＝一次批次失敗；本探針是每 2 分鐘，同一次中斷會觸發約 30 次
+# ／小時。而 report-mark-alert.sh 的 webhook 只由**單一全域變數**
+# REPORT_MARK_ALERT_WEBHOOK 控制（`[ -n "${REPORT_MARK_ALERT_WEBHOOK:-}" ]`），
+# 一旦有人為了其他 unit 設定它，本探針就會在無人察覺的情況下變成每 2 分鐘一則通知。
+#
+# 那會讓 P4 從「健康偵測」暗中變成「健康偵測 ＋ 不受控通知」——而通知的去重、
+# 提醒節奏與恢復判定需要跨執行狀態，那是 P5 的職責。**這裡把邊界交給架構而不是
+# 設定紀律**：不接告警鏈，P4 就結構上不可能通知，不必依賴任何人記得別設那個變數。
+#
+# 失敗仍然完全可觀測，P5 有足夠的訊號可以消費：
+#   - ActiveState=failed（oneshot 非零退出後會停在 failed，直到下次啟動）
+#   - Result=exit-code、ExecMainStatus=<1|2|4>、ExecMainExitTimestamp=<時間>
+#   - journal 內本次執行的 key=value 單行結果 ＋ stderr 的歸因訊息
+# P5 上線時再由它自己掛上帶去重的處理器（例如 OnFailure=report-mark-incident@%n），
+# 屆時通知行為由 P5 完整擁有。
 
 [Service]
 Type=oneshot

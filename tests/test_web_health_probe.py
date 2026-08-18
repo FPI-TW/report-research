@@ -276,8 +276,22 @@ class SystemdContractTests(unittest.TestCase):
         """寬限退出碼不得讓 unit 變 failed，且必須用 SuccessExitStatus 而非吞掉錯誤。"""
         self.assertIn("3", _directives(SERVICE, "SuccessExitStatus"))
 
-    def test_service_has_onfailure_alert(self):
-        self.assertEqual(_directives(SERVICE, "OnFailure"), ["report-mark-alert@%n.service"])
+    def test_service_declares_no_notification_capable_onfailure(self):
+        """**P4 不得接上任何能送通知的失敗鏈。**
+
+        `report-mark-alert.sh` 的 webhook 只由單一全域變數
+        `REPORT_MARK_ALERT_WEBHOOK` 控制，而 `report-mark-alert@.service` 讀
+        `/etc/default/report-mark-sync`。只要有人為了其他 unit 設定它，本探針
+        每 2 分鐘的失敗就會變成每 2 分鐘一則通知——P4 於是從「健康偵測」暗中
+        變成「健康偵測 ＋ 不受控通知」，而通知去重需要跨執行狀態（屬 P5）。
+
+        這條測試把邊界交給架構而不是設定紀律：不接告警鏈，P4 結構上就不可能通知。
+        """
+        self.assertEqual(
+            _directives(SERVICE, "OnFailure"),
+            [],
+            "P4 不得宣告 OnFailure；通知（含去重與節奏）屬於 P5",
+        )
 
     def test_service_home_is_hardcoded_not_percent_h(self):
         homes = [v for v in _directives(SERVICE, "Environment") if v.startswith("HOME=")]
@@ -309,6 +323,24 @@ class SystemdContractTests(unittest.TestCase):
         """抖動只會讓偵測延遲不可預測，換不到任何東西。"""
         self.assertEqual(_directives(TIMER, "RandomizedDelaySec"), [])
 
+    def test_failure_stays_observable_without_onfailure(self):
+        """移除 OnFailure 的前提：失敗必須仍能被 P5 可靠觀察到。
+
+        對 `Type=oneshot` 而言，非零退出會讓 unit 停在 `failed` 並保留
+        `Result` / `ExecMainStatus` / `ExecMainExitTimestamp`，加上 journal 內
+        本次執行的 key=value 單行結果——這三者足以讓 P5 判定「這一輪失敗了」。
+        因此本 unit 必須是 oneshot，且**不得**宣告會把失敗吞掉的設定。
+        """
+        self.assertEqual(_directives(SERVICE, "Type"), ["oneshot"])
+        # SuccessExitStatus 只准放行寬限碼 3；放行 1/2/4 會讓真失敗變成 success
+        self.assertEqual(_directives(SERVICE, "SuccessExitStatus"), ["3"])
+        for forbidden in ("Restart", "RestartSec"):
+            with self.subTest(directive=forbidden):
+                self.assertEqual(
+                    _directives(SERVICE, forbidden), [],
+                    f"{forbidden} 會讓失敗的探針自動重試，遮蔽 failed 狀態",
+                )
+
     def test_no_stale_mnt_c_runtime_path(self):
         for f in (SERVICE, TIMER, PROBE):
             with self.subTest(file=f.name):
@@ -325,6 +357,17 @@ class BoundaryTests(unittest.TestCase):
         for forbidden in (".incidents", "notify.sh", "FIRING", "RESOLVED", "webhook", "WEBHOOK"):
             with self.subTest(token=forbidden):
                 self.assertNotIn(forbidden, body)
+
+    def test_unit_cannot_reach_the_webhook_alert_chain(self):
+        """unit 層的禁令：不得以任何形式接上 report-mark-alert（它會讀 webhook 變數）。"""
+        for unit in (SERVICE, TIMER):
+            body = "\n".join(
+                ln for ln in unit.read_text(encoding="utf-8").splitlines()
+                if not ln.strip().startswith("#")
+            )
+            with self.subTest(unit=unit.name):
+                self.assertNotIn("report-mark-alert", body)
+                self.assertNotIn("WEBHOOK", body)
 
     def test_probe_does_not_write_any_file(self):
         body = "\n".join(

@@ -527,15 +527,31 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 venv 損毀，若探針相依 Python 環境，它會與被監控的服務一起死——那時最需要它，
 而它不在。`tests/test_web_health_probe.py` 靜態守這條。
 
-### 通知行為（**目前的暫時狀態**）
+### 通知行為：**這支探針不會通知任何人**
 
-本 unit 沿用既有的 `OnFailure=report-mark-alert@%n.service`。`report-mark-alert.sh`
-會寫 journal 與 `data/unit_failures.log`，並**只在 `REPORT_MARK_ALERT_WEBHOOK` 有設定時**
-才送 webhook——而該變數目前**未設定**。
+本 unit **刻意不宣告 `OnFailure=`**，與同目錄其他五支不同。
 
-因此真實中斷期間，這支探針會每 2 分鐘留下一筆 `unit_failures.log`（約 3–5 KB／筆，
-一次 5 小時的中斷約增 600 KB）。**這是刻意接受的暫時行為：通知去重屬於 P5。**
-在 P5 的事件狀態機就位前刻意不設 webhook，讓這些紀錄只落在 journal 與 log。
+理由不是它不重要，而是**通知節奏對不上**：那五支是日排程或每 3 小時，`OnFailure`
+觸發一次＝一次批次失敗；本探針每 2 分鐘一次，同一次中斷會觸發約 30 次／小時。
+而 `report-mark-alert.sh` 的 webhook 只由**單一全域變數** `REPORT_MARK_ALERT_WEBHOOK`
+控制，`report-mark-alert@.service` 又是從 `/etc/default/report-mark-sync` 讀它——
+**只要有人為了其他 unit 設定那個變數，本探針就會在無人察覺的情況下變成每 2 分鐘
+一則通知**。那會讓它從「健康偵測」暗中變成「健康偵測 ＋ 不受控通知」。
+
+通知的去重、提醒節奏與恢復判定都需要跨執行的狀態，那是 P5 的職責。
+**這裡把邊界交給架構而不是設定紀律**：不接告警鏈，這支探針就結構上不可能通知，
+不必依賴任何人記得「別設那個變數」。
+
+失敗仍然完全可觀測：
+
+| 訊號 | 取得方式 |
+|---|---|
+| unit 停在 failed | `systemctl is-failed report-mark-health.service` |
+| 退出碼與時間 | `systemctl show report-mark-health.service -p Result -p ExecMainStatus -p ExecMainExitTimestamp` |
+| 本次結果 | `journalctl -u report-mark-health.service -n 1` 的 key=value 單行 ＋ stderr 歸因訊息 |
+
+P5 上線時再由它自己掛上帶去重的處理器（例如 `OnFailure=report-mark-incident@%n`），
+屆時通知行為由 P5 完整擁有，而不是散在兩處。
 
 **不以降低探測頻率來掩蓋告警噪音**——頻率正是這支探針的全部價值。
 

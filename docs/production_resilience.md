@@ -587,3 +587,104 @@ sudo systemctl disable --now report-mark-health.timer
 
 零 application 變更、零資料變更，停用即完全回到沒有探針的狀態。
 
+---
+
+## 事件偵測與通知（`report-mark-incident.timer`）
+
+健康探針（上一節）**刻意不通知任何人**。這一節的 unit 才是決定「要不要打擾人」的地方。
+
+存在理由：2026-08-18 的中斷期間，告警機制**確實運作了**——`data/unit_failures.log`
+累積了 854 筆完整紀錄——但那個檔案沒有任何消費端，中斷是在一次無關的遷移工作中被
+順帶發現的。那 854 筆同時說明另一件事：**沒有去重就等於沒有告警**。
+
+同一次事件在這裡只會產生：**1 則 FIRING ＋ 每 30 分鐘一則提醒 ＋ 1 則 RESOLVED**。
+以那次 4 小時 50 分的中斷換算＝ **11 則**，而不是 145 則。
+
+### 它怎麼取得訊號
+
+不是掛在探針的 `OnFailure` 上——`OnFailure` 只在失敗時觸發、`ExecStartPost` 只在
+成功時觸發，兩者都看不到完整的狀態轉換，而 `RESOLVED` 必須看得到成功。
+
+改為每 2 分鐘讀 systemd 為探針保留的執行結果：
+
+| 欄位 | 用途 |
+|---|---|
+| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤） |
+| `ExecMainExitTimestampMonotonic` | **單調時鐘**，判斷「是否有新觀測」。用它而非牆鐘，因為 WSL 休眠喚醒與時區調整會讓牆鐘跳動 |
+| `Result` | 附在通知訊息裡供人判讀 |
+
+### 狀態機
+
+```
+healthy + 無事件   → no-op（只更新觀測游標）
+failure + 無事件   → FIRING，立即通知一次
+failure + FIRING   → 抑制；只有距上次通知 ≥ 30 分鐘才送提醒
+healthy + FIRING   → RESOLVED，通知一次，移除狀態檔
+```
+
+### 分級
+
+| 探針退出碼 | 分級 | 語意 |
+|---|---|---|
+| `1` / `2` | **CRITICAL** | 使用者當下無法使用 |
+| `4` | **WARNING** | 探針自己壞了＝「我不知道」，不是「壞了」 |
+| 探針超過 10 分鐘沒有新結果 | **WARNING** | **監控失明**——探針本身停了，這要有自己的訊號 |
+
+刻意不做時間門檻的升級（例如「持續 10 分鐘才升 CRITICAL」）：探針本身已有 3 次
+重試跨 30 秒，再堆延遲會讓真中斷十幾分鐘才通知。
+
+### 狀態檔
+
+`data/.incidents/<component>.state`，key=value 單行格式（shell 可解析，不需 `jq`）。
+
+**刻意不放 DB**：DB 不可用正是要告警的情境之一，把事件狀態放進去等於在最需要
+告警時失去告警。
+
+四個正確性要求：
+
+| 要求 | 做法 |
+|---|---|
+| 原子寫入 | 先寫 `.tmp.$$` 再 `mv -f`（同一檔案系統的 rename 是原子的） |
+| 並發保護 | `flock -n`；撞到就跳過本輪（狀態機的讀-改-寫不是原子的，兩份同時跑會讓「是否已通知」互相覆蓋） |
+| 損毀復原 | 逐鍵解析而**不是 `source`**（後者等於任意程式碼執行）；欄位損毀時 fail-open 回退為新事件——寧可多送一則，不要靜默漏送 |
+| 投遞失敗 | 狀態照常推進，只記錄未送達。反過來（送失敗就不更新狀態）會讓下一輪重送，變成投遞端故障時的通知風暴 |
+
+狀態檔**不進版控也不進備份**（`.gitignore` 有 `data/.incidents/`）：純執行期狀態，
+遺失只會讓下一次失敗重新開一個事件，不影響正確性。
+
+### 通知投遞
+
+沿用既有的 `REPORT_MARK_ALERT_WEBHOOK`（opt-in，URL 不進 repo，寫在
+`/etc/default/report-mark-sync`）。**未設定時仍照常維護 incident 狀態**，只是不投遞
+——這樣日後設定它的當下狀態是一致的，不會突然湧出一批補送。
+
+### 安裝
+
+```bash
+REPO=/home/kashionz/projects/report-mark
+sudo cp "$REPO"/deploy/systemd/report-mark-incident.service \
+        "$REPO"/deploy/systemd/report-mark-incident.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-incident.timer
+```
+
+**部署順序**：探針（P4）先上並觀察 24 小時零誤報，才啟用本 unit。
+沒有那一輪觀察，第一週的誤報會決定這套告警之後有沒有人理它。
+
+### 觀察
+
+```bash
+journalctl -u report-mark-incident.service --since "24 hours ago" --no-pager | grep 'handler=incident'
+# action 的分布：noop 應佔絕大多數
+journalctl -u report-mark-incident.service --since "24 hours ago" --no-pager -o cat \
+  | grep -oE 'action=[a-z]+' | sort | uniq -c
+cat data/.incidents/web.state 2>/dev/null || echo "(無進行中事件)"
+```
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-incident.timer
+rm -f data/.incidents/*.state          # 可選：清掉殘留的事件狀態
+```
+

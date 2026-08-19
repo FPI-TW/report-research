@@ -22,6 +22,8 @@ access log 在 13:40 之前是 **0 筆**。uvicorn 先跑 lifespan 再 bind，bi
 import os
 import re
 import subprocess
+import tempfile
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -105,6 +107,75 @@ class _Server:
         return f"http://127.0.0.1:{self.port}/healthz"
 
 
+class _FakeSystemd:
+    """把受控的 `systemctl` 放進 PATH 前段，讓探針的 L1 判定與**執行主機無關**。
+
+    存在理由是 2026-08-19 CI 首跑的 4 個紅燈（`AssertionError: 2 != 1`）：探針的
+    退出碼同時取決於兩個維度——`EXIT_HTTP` 是「unit 在 active 但 HTTP 失敗」，
+    `EXIT_PROCESS` 是「unit 不在 active」——而當時的測試只控制 HTTP 那一維，
+    另一維由執行主機決定。開發機剛好有一個 active 的 `report-mark-web.service`，
+    CI 沒有，於是同一份測試在兩邊得到不同答案。**那不是測試，是巧合。**
+
+    刻意不只硬編目前這幾個斷言需要的回應：探針讀三個 systemd 事實
+    （`is-active`／`NRestarts`／`ActiveEnterTimestamp`），三個都可從這裡指定，
+    寬限期那條路徑才有辦法被行為測試涵蓋而不是只用靜態比對。
+    """
+
+    def __init__(self, state="active", restarts=0, entered_age=3600, broken=False):
+        # entered_age 預設遠大於 HEALTH_GRACE(60)：長跑後才壞掉的服務才是 L2 的樣子。
+        # 傳 None 代表 systemd 給不出時間戳（探針必須據此判定不在寬限期）。
+        self.state, self.restarts, self.entered_age, self.broken = state, restarts, entered_age, broken
+        self._tmp = None
+
+    def __enter__(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="fake-systemd-")
+        self.dir = Path(self._tmp.name)
+        self.log = self.dir / "calls.log"
+        self.log.write_text("", encoding="utf-8")
+        entered = (
+            ""
+            if self.entered_age is None
+            else time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - self.entered_age))
+        )
+        body = f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "{self.log}"\n'
+        if self.broken:
+            # systemctl 存在但失敗（權限、無 systemd、DBus 不通）。探針對此的契約是
+            # 落入 unit_unknown 而非 EXIT_TOOLING——EXIT_TOOLING 專屬於「缺 curl」。
+            body += "exit 127\n"
+        else:
+            body += (
+                'case "$1" in\n'
+                "  is-active)\n"
+                f"    printf '%s\\n' '{self.state}'\n"
+                f"    [ '{self.state}' = active ] && exit 0 || exit 3\n"
+                "    ;;\n"
+                "  show)\n"
+                '    for a in "$@"; do\n'
+                '      case "$a" in\n'
+                f"        NRestarts) printf '%s\\n' '{self.restarts}'; exit 0 ;;\n"
+                f"        ActiveEnterTimestamp) printf '%s\\n' '{entered}'; exit 0 ;;\n"
+                "      esac\n"
+                "    done\n"
+                "    ;;\n"
+                "esac\n"
+                "exit 0\n"
+            )
+        sc = self.dir / "systemctl"
+        sc.write_text(body, encoding="utf-8")
+        sc.chmod(0o755)
+        return self
+
+    def __exit__(self, *a):
+        self._tmp.cleanup()
+
+    @property
+    def env(self):
+        return {"PATH": f"{self.dir}:{os.environ['PATH']}"}
+
+    def calls(self):
+        return [ln for ln in self.log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
 class ProbeBehaviourTests(unittest.TestCase):
     def test_http_200_is_healthy(self):
         with _Server(200) as s:
@@ -116,9 +187,9 @@ class ProbeBehaviourTests(unittest.TestCase):
 
     def test_http_503_is_failure(self):
         """/healthz 的 503 語意是 DB 不可用——必須算失敗，不能因為「連得上」就放行。"""
-        with _Server(503, b'{"status":"degraded"}') as s:
-            p = run_probe({"HEALTH_URL": s.url})
-        self.assertEqual(p.returncode, EXIT_HTTP)
+        with _FakeSystemd(state="active") as sd, _Server(503, b'{"status":"degraded"}') as s:
+            p = run_probe({"HEALTH_URL": s.url, **sd.env})
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
         f = parse(p.stdout)
         self.assertEqual(f["status"], "fail")
         self.assertEqual(f["http_code"], "503")
@@ -130,17 +201,18 @@ class ProbeBehaviourTests(unittest.TestCase):
         （curl rc=28）而非拒絕（rc=7），因為 Windows 側是丟棄而非拒絕。
         兩種都必須算失敗，斷言刻意不綁定其中一種。
         """
-        p = run_probe({"HEALTH_URL": "http://127.0.0.1:59991/healthz"})
-        self.assertEqual(p.returncode, EXIT_HTTP)
+        with _FakeSystemd(state="active") as sd:
+            p = run_probe({"HEALTH_URL": "http://127.0.0.1:59991/healthz", **sd.env})
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
         f = parse(p.stdout)
         self.assertEqual(f["status"], "fail")
         self.assertEqual(f["http_code"], "000")
         self.assertIn(f["reason"], ("connection_refused", "timeout"))
 
     def test_timeout_is_failure(self):
-        with _Server(200, delay=5.0) as s:
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_TIMEOUT": "1"})
-        self.assertEqual(p.returncode, EXIT_HTTP)
+        with _FakeSystemd(state="active") as sd, _Server(200, delay=5.0) as s:
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_TIMEOUT": "1", **sd.env})
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
         self.assertEqual(parse(p.stdout)["reason"], "timeout")
 
     def test_retry_then_success_is_healthy(self):
@@ -151,10 +223,16 @@ class ProbeBehaviourTests(unittest.TestCase):
         self.assertEqual(parse(p.stdout)["status"], "ok")
 
     def test_all_retries_fail(self):
-        p = run_probe(
-            {"HEALTH_URL": "http://127.0.0.1:59992/healthz", "HEALTH_RETRIES": "2", "HEALTH_RETRY_WAIT": "1"}
-        )
-        self.assertEqual(p.returncode, EXIT_HTTP)
+        with _FakeSystemd(state="active") as sd:
+            p = run_probe(
+                {
+                    "HEALTH_URL": "http://127.0.0.1:59992/healthz",
+                    "HEALTH_RETRIES": "2",
+                    "HEALTH_RETRY_WAIT": "1",
+                    **sd.env,
+                }
+            )
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
         self.assertEqual(parse(p.stdout)["attempts"], "2")
 
     def test_unexpected_body_with_200_is_still_healthy(self):
@@ -189,12 +267,72 @@ class ProbeBehaviourTests(unittest.TestCase):
         self.assertEqual(f["probe"], "local_http")
 
     def test_status_vocabulary_is_closed(self):
-        with _Server(503) as s:
-            fail = parse(run_probe({"HEALTH_URL": s.url}).stdout)["status"]
+        with _FakeSystemd(state="active") as sd, _Server(503) as s:
+            fail = parse(run_probe({"HEALTH_URL": s.url, **sd.env}).stdout)["status"]
         with _Server(200) as s:
             ok = parse(run_probe({"HEALTH_URL": s.url}).stdout)["status"]
         self.assertIn(ok, ("ok", "fail", "grace", "tooling"))
         self.assertIn(fail, ("ok", "fail", "grace", "tooling"))
+
+
+class HostSystemdIsolationTests(unittest.TestCase):
+    """釘死「HTTP 退出碼不得取決於執行主機的 systemd 狀態」這條不變量。
+
+    2026-08-19：#209 的 CI 首跑讓 4 個 `ProbeBehaviourTests` 同時紅在
+    `AssertionError: 2 != 1`。腳本沒有壞——壞的是測試只控制 HTTP 一維，
+    另一維（`systemctl is-active`）默默沿用執行主機的真實狀態。開發機上有
+    active 的 `report-mark-web.service` 所以是 1，CI 上沒有所以是 2。
+    這個類別的每一條都必須在「有 web unit」與「沒有 web unit」的機器上得到同一個答案。
+    """
+
+    # 刻意用一個保證不存在的 unit 名：如果 PATH 注入失效、fake 被繞過，
+    # 真的 systemctl 會回報它不存在 → 探針走 EXIT_PROCESS(2) → 測試紅。
+    # 也就是說這條測試會**證明**答案來自 fake，而不是碰巧與宿主一致。
+    ABSENT_UNIT = "definitely-not-a-real-unit-9f3c1a.service"
+    DEAD_URL = "http://127.0.0.1:59994/healthz"
+
+    def test_http_failure_is_independent_of_host_systemd_state(self):
+        with _FakeSystemd(state="active") as sd:
+            p = run_probe({"HEALTH_URL": self.DEAD_URL, "HEALTH_UNIT": self.ABSENT_UNIT, **sd.env})
+            calls = sd.calls()
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["status"], "fail")
+        # fake 真的被呼叫過——否則上面的斷言可能只是碰巧與宿主狀態一致
+        self.assertTrue(
+            any(c.startswith("is-active") for c in calls),
+            f"探針沒有呼叫注入的 systemctl，PATH 注入可能失效: {calls}",
+        )
+        self.assertTrue(all(self.ABSENT_UNIT in c for c in calls if "is-active" in c))
+
+    def test_inactive_unit_turns_the_same_http_failure_into_process_failure(self):
+        """同一組 HTTP 條件，只翻轉 systemd 那一維，退出碼必須跟著翻轉。
+
+        這正是 CI 與開發機的差異所在；把它寫成測試之後，那個差異不再是環境問題。
+        """
+        with _FakeSystemd(state="inactive") as sd:
+            p = run_probe({"HEALTH_URL": self.DEAD_URL, "HEALTH_UNIT": self.ABSENT_UNIT, **sd.env})
+        self.assertEqual(p.returncode, EXIT_PROCESS, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "unit_inactive")
+
+    def test_systemctl_itself_failing_is_not_a_tooling_exit(self):
+        """systemctl 不可用時退回 unit_unknown，**不是** EXIT_TOOLING。
+
+        EXIT_TOOLING 專屬於「缺 curl」＝探針自己不能探測；systemctl 探不到只是
+        L1 判不出來，此時寧可誤報 L1 也不要因為分不清而放行。
+        """
+        with _FakeSystemd(broken=True) as sd:
+            p = run_probe({"HEALTH_URL": self.DEAD_URL, "HEALTH_UNIT": self.ABSENT_UNIT, **sd.env})
+        self.assertEqual(p.returncode, EXIT_PROCESS, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "unit_unknown")
+
+    def test_healthy_path_never_consults_systemd(self):
+        """200 就直接收工——健康時去查 systemd 只會讓探針多一個壞掉的理由。"""
+        with _FakeSystemd(state="inactive") as sd, _Server(200) as s:
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_UNIT": self.ABSENT_UNIT, **sd.env})
+            calls = sd.calls()
+        # fake 說 unit 不在 active，若成功路徑會查 systemd，這裡就不會是 EXIT_OK
+        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
+        self.assertEqual(calls, [], f"成功路徑不應呼叫 systemctl，實際呼叫: {calls}")
 
 
 class GraceTests(unittest.TestCase):
@@ -217,6 +355,31 @@ class GraceTests(unittest.TestCase):
         self.assertIn("ActiveEnterTimestamp", body)
         # 光是「查了」還不夠：必須真的拿它當條件之一
         self.assertRegex(body, r'\$\{restarts:-0\}"?\s*=\s*"0"')
+
+    def test_fresh_start_within_window_is_grace(self):
+        """人為 restart 後的空窗：active ＋ NRestarts=0 ＋ 剛進 active → 不算故障。"""
+        with _FakeSystemd(state="active", restarts=0, entered_age=1) as sd:
+            p = run_probe({"HEALTH_URL": "http://127.0.0.1:59995/healthz", **sd.env})
+        self.assertEqual(p.returncode, EXIT_GRACE, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["status"], "grace")
+
+    def test_crash_loop_is_not_grace(self):
+        """**本設計最容易寫錯的一條，之前只有靜態比對守著。**
+
+        `Restart=always` ＋ `RestartSec=3` 會讓 ActiveEnterTimestamp 每 3 秒更新，
+        只看時間戳的話寬限恆成立、告警被永久抑制——完整重現 2026-08-18 那次
+        累積 550 次重啟卻沒有人知道的事故。NRestarts 非零就必須離開寬限。
+        """
+        with _FakeSystemd(state="active", restarts=550, entered_age=1) as sd:
+            p = run_probe({"HEALTH_URL": "http://127.0.0.1:59996/healthz", **sd.env})
+        self.assertNotEqual(p.returncode, EXIT_GRACE, p.stdout + p.stderr)
+        self.assertEqual(p.returncode, EXIT_HTTP)
+
+    def test_missing_timestamp_is_not_grace(self):
+        """systemd 給不出 ActiveEnterTimestamp 時不得假設在寬限期內。"""
+        with _FakeSystemd(state="active", restarts=0, entered_age=None) as sd:
+            p = run_probe({"HEALTH_URL": "http://127.0.0.1:59997/healthz", **sd.env})
+        self.assertNotEqual(p.returncode, EXIT_GRACE, p.stdout + p.stderr)
 
     def test_grace_not_applied_when_unit_missing(self):
         """探不到 unit 時不得誤判成寬限——寧可誤報也不要漏報。"""

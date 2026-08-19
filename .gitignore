@@ -21,6 +21,9 @@ data/*.lock
 data/*.pid
 data/.*.pid
 data/.sync_last_hashes
+# 管線心跳（scripts/sync_new_reports.sh 寫、check_batch_freshness.py 讀）。
+# 執行期狀態，不進版控。
+data/.last_successful_sync
 data/sync_delta_*.txt
 data/tags.bak.*/
 
@@ -59,3 +62,7 @@ deploy/secrets/
 data/signal_chain.sh
 data/signal_progress_sampler.sh
 data/signal_progress.tsv
+
+# P5 事件狀態（data/ 是逐項忽略，不是整目錄）。純執行期狀態：遺失只會讓下一次
+# 失敗重新開一個事件，不影響正確性，因此刻意不進版控也不進備份。
+data/.incidents/

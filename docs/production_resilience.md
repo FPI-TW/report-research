@@ -326,7 +326,56 @@ systemctl list-timers report-mark-freshness.timer     # 排程：每日 08:30（
 uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 ```
 
-退出碼：`0`＝新鮮／`1`＝停更／`2`＝查不到（DB 不可用）。**1 與 2 刻意分流**：前者去看批次日誌，後者去看 DB 與 `/healthz`，混成同一個碼等於把「DB 掛了」誤導成「批次壞了」。
+退出碼：`0`＝PASS／`1`＝資產停更（FAIL）／`2`＝查不到（DB 不可用）／`3`＝**管線本身沒跑完（UPSTREAM_STALE）**。**四者刻意分流**：`1` 去看批次日誌、`2` 去看 DB 與 `/healthz`、`3` 去看 sync 殼與 claude 鎖。混成同一個碼等於把「DB 掛了」誤導成「批次壞了」。
+
+### 資料新鮮度 ≠ 管線執行新鮮度
+
+上一節量的是**結果**——四個 `max(created_at)` 有沒有前進。但那組數字回答不了一個問題：**管線最近一次「完整成功跑完」是什麼時候？**
+
+兩件事會分開壞：
+
+| | 症狀 | 偵測者 |
+|---|---|---|
+| 資料停更 | 批次在跑，但產不出東西（模型持續回空、擷取全被 rejected） | 四個 `max(created_at)`（`1`＝FAIL） |
+| **管線停跑** | 管線根本沒有成功跑完，而 systemd 全程正常 | **管線心跳**（`3`＝UPSTREAM_STALE） |
+
+後者為什麼看不見，是兩個刻意設計疊出來的：
+
+1. `sync_new_reports.sh` 有一條 **rc=0 的早退路徑**——PID lock 被佔用時 `exit 0`（那是對的，重入會壞事）。
+2. 下游六段是 **best-effort**，失敗只 `log` 不 `exit`（那也是對的）。
+
+疊起來的後果：整條管線可以連續數天完全沒有成功跑完，而 `systemctl is-active` 與 `OnFailure` 都不會有任何反應。**2026-08-12 的事故正是這個形狀**——所有 `claude` 批次連續 4 天 100% 失敗、入庫歸零、unit 全綠，而症狀長得像「NAS 沒有新檔」。
+
+### 管線心跳
+
+`data/.last_successful_sync`，由 `scripts/sync_new_reports.sh` 在**完整成功**時原子寫入（暫存 → `sync -f` → `mv`）。內容只有 `ts`／`epoch`／`new_reports`／`pid`，**不含任何 secret**；`epoch` 才是機器讀的欄位（`ts` 只給人看，不當備援——多一個格式解析就多一個失效面）。
+
+| 情境 | 更新心跳？ |
+|---|---|
+| 完整成功 | **是** |
+| **完整成功但 0 篇新研報** | **是** ← 見下 |
+| 下游某段回 `rc=75`（claude CLI 被別的批次佔用，`EX_TEMPFAIL`） | **是**——那是常態，不是異常 |
+| PID lock 被佔用而跳過（`exit 0`） | 否 |
+| 掛載／rsync／匯入失敗（`exit 1`） | 否 |
+| 下游某段**異常**失敗（非 0 且非 75） | 否 |
+
+**0 篇新研報仍然更新，是這個設計的關鍵。** 心跳量的是「管線有沒有成功跑完」，不是「有沒有新資料」——週末與連假沒有新稿是常態，用後者當健康指標會製造日曆型假警報。這也是它與上一節的分工：資料面的停更留給那四個 `max(created_at)`。
+
+下游異常失敗不更新心跳，**但仍然不擋 sync、unit 仍然不變紅**——best-effort 的語意一個字都沒有改。改變的只有一件事：持續的下游異常從「躺在 `data/unit_failures.log` 裡等人去看」變成「管線執行新鮮度上的可見事實」。
+
+門檻預設 **9 小時**（`--pipeline-hours`），由排程回推而**不是硬編 12 小時**：
+
+- timer 是 `OnCalendar=*-*-* 00/3:00:00`＝每 3 小時
+- 單輪最壞約 2.5 小時（訊號擷取 100 份實測約 47 分、最壞約 113 分，加上 rsync／匯入／摘要／標題／摘錄）
+- 長輪會讓下一次觸發撞 PID lock 而 `exit 0`（不更新心跳）
+
+一次長輪 ＋ 一次撞鎖跳過 ＋ 一個週期餘裕 ＝ 3 個週期 ＝ 9 小時。2026-08-16..19 生產實測間隔多為 3.0h，另有 10.57h／16.26h 兩個缺口——**那兩個是 08-18 的真實中斷，應該被報出來，不是要被門檻容忍掉**。
+
+心跳缺席、格式損毀、**以及時間戳落在未來**（時鐘回跳或檔案被動過）一律算 UPSTREAM_STALE。未來時間戳特別要擋：把它當成新鮮會讓一個壞掉的時鐘**永久**抑制告警，而抑制是這裡最危險的失效方向。
+
+**管線那一筆不經語料閘。** 語料閘的用意是「沒有新稿時別怪派生批次」，但管線有沒有跑完與有沒有新稿無關；放進閘內會製造致命抑制——連假期間管線整個停掉會被讀成「本來就沒事做」。同理，rc 的優先序是**上游 > 資產**：管線沒跑完時資產「停更」只是症狀，先報症狀會讓人去查錯的地方。
+
+新增 `3` 之前已確認 `report-mark-freshness.service` **沒有宣告 `SuccessExitStatus`**（有測試釘住）——否則真正的 UPSTREAM_STALE 會變成 systemd 眼中的成功，而那個 unit 存在的唯一理由就是觸發 `OnFailure`。
 
 `report-mark-freshness.service` 宣告 `OnFailure=report-mark-alert@%n.service`，**直接復用既有告警鏈、零新管道**（`report-mark-alert.sh` 恆容錯、恆 `exit 0`，被多一個 unit 呼叫是安全的）。
 
@@ -586,4 +635,214 @@ sudo systemctl disable --now report-mark-health.timer
 ```
 
 零 application 變更、零資料變更，停用即完全回到沒有探針的狀態。
+
+---
+
+## 事件偵測與通知（`report-mark-incident.timer`）
+
+健康探針（上一節）**刻意不通知任何人**。這一節的 unit 才是決定「要不要打擾人」的地方。
+
+存在理由：2026-08-18 的中斷期間，告警機制**確實運作了**——`data/unit_failures.log`
+累積了 854 筆完整紀錄——但那個檔案沒有任何消費端，中斷是在一次無關的遷移工作中被
+順帶發現的。那 854 筆同時說明另一件事：**沒有去重就等於沒有告警**。
+
+同一次事件在這裡只會產生：**1 則 FIRING ＋ 每 30 分鐘一則提醒 ＋ 1 則 RESOLVED**。
+以那次 4 小時 50 分的中斷換算＝ **11 則**，而不是 145 則。
+
+### 它怎麼取得訊號
+
+不是掛在探針的 `OnFailure` 上——`OnFailure` 只在失敗時觸發、`ExecStartPost` 只在
+成功時觸發，兩者都看不到完整的狀態轉換，而 `RESOLVED` 必須看得到成功。
+
+改為每 2 分鐘讀 systemd 為探針保留的執行結果：
+
+| 欄位 | 用途 |
+|---|---|
+| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤） |
+| `ExecMainExitTimestampMonotonic` | **單調時鐘**，判斷「是否有新觀測」。用它而非牆鐘，因為 WSL 休眠喚醒與時區調整會讓牆鐘跳動 |
+| `Result` | 附在通知訊息裡供人判讀 |
+
+### systemd **不會**永遠保存 `ExecMain*`
+
+這是本節最容易被誤解的一件事，而誤解的代價是整套告警靜默失效。
+
+`report-mark-health.service` 用預設的 `CollectMode=inactive`。2026-08-19 部署當天
+以隔離的使用者層 unit 做了七組實測，結論是：
+
+| 情境 | `ExecMainExitTimestampMonotonic` | `ActiveState` |
+|---|---|---|
+| 從未執行、無 unit 引用 | **0** | `inactive` |
+| **成功**執行、無 unit 引用 | **0** ← 與上一列**逐欄完全相同** | `inactive` |
+| **失敗**執行、無 unit 引用 | 保留 | `failed` |
+| timer `enabled` ＋ `active` | 保留 | `inactive` |
+| timer `enabled` 但被 `stop` | 保留（timer unit 仍載入著、仍持有引用） | `inactive` |
+| **timer `disable`** | **0 ← 觀測當場消失** | `inactive` |
+
+也就是說：**一次成功的探測與「探針從未執行」在 `systemctl show` 的輸出上無法區分**，
+而 `systemctl disable report-mark-health.timer` 會立刻讓觀測消失。
+
+兩個推論：
+
+- **P5 的可觀測性前提是那個 timer 保持 enabled。** 有人停用它，P5 讀到的不是「失敗」
+  而是**空值**——沒有任何錯誤訊息。
+- 反過來，**失敗永遠看得見**（失敗的 unit 不會被回收），所以真正的 web 故障不會因此漏掉；
+  會漏掉的是「從此不再有任何新觀測」。
+
+另外，`systemctl show` 對**不存在**的 unit 也回 rc=0 加一整組預設值——「查詢成功」
+什麼都不保證，只有 `LoadState` 分得出 unit 到底在不在。
+
+### 監控自己的監控
+
+因此每一輪都先驗證訊號源本身，再談服務健康：
+
+```
+systemctl is-enabled report-mark-health.timer     # enabled / disabled / not-found
+systemctl is-active  report-mark-health.timer     # active / inactive
+systemctl show       report-mark-health.timer -p LoadState -p ActiveEnterTimestampMonotonic
+systemctl show       report-mark-health.service -p LoadState -p Result \
+                     -p ExecMainStatus -p ExecMainExitTimestampMonotonic
+```
+
+結果分成兩類**互相獨立**的事件，各有自己的狀態檔：
+
+| 類別 | 元件 | 來源 |
+|---|---|---|
+| **WEB_HEALTH** | `web` | 探針明確回報 exit 1／2／4 |
+| **MONITOR_BLIND** | `monitor` | timer 被停用／不在 active／unit 不存在／探針 unit 不存在／觀測消失或過期／systemctl 查詢失敗 |
+
+**「監控瞎了」不得覆蓋或解除進行中的 web 事件**，反之亦然。訊號不可信時，handler
+完全不碰 `web.state`，只在輸出裡標記 `action=skip incident=FIRING`——因為
+「我看不見了」不是「已經好了」，把它當成恢復會在真正的中斷中途送出 `RESOLVED`，
+那比完全不告警更糟：它會讓人停止調查。
+
+**訊號缺席永遠不得被當成健康。** 這是本節的硬不變量，也是初版最危險的缺陷：
+初版在「沒有觀測且無進行中事件」時直接 `emit noop probe_never_ran` 並早退，
+而那條路徑同時涵蓋「還沒跑第一輪」與「有人把 timer 停了」。
+
+### bootstrap 與失明的分界
+
+沒有觀測不一定是壞事——剛開機或剛 `enable` 時本來就還沒有。兩者用 **timer 進入
+active 的時間**分辨（`ActiveEnterTimestampMonotonic`），而不是用開機時間，這樣
+「剛開機」與「剛重新啟用」都涵蓋得到。
+
+空窗上限 **300 秒**由 P4 的參數回推：`OnBootSec`(120) ＋ `AccuracySec`(10) ＋
+探針最壞耗時 `TimeoutStartSec`(90) ＝ 220 秒，取 300 秒＝36% 餘裕。
+**沒有沿用初版的 600 秒**——那個值是在還沒有任何實測分布時訂的。
+
+### 觸發間隔的實測分布
+
+**穩態間隔不是 120 秒。** `OnUnitActiveSec` 從 service 進入 active 起算，加上
+`AccuracySec=10s` 的抖動與探針自身耗時。T0（2026-08-19 11:11:39）之後連續 9 個
+間隔實測為 125／132／136／134／135／135／126／126／134 秒——min 125、max 136、
+mean 131.4。把「正常」定成 120 會讓每一輪都看起來遲到。
+
+| 間隔 | 判定 | 處置 |
+|---|---|---|
+| ≤ 150s | 正常 | 實測 max 136 ＋ 約 10% 餘裕 |
+| 150–420s | 容忍 | 單次抖動或系統負載，尚不告警 |
+| > 420s | **失明 WARNING** | ≈3 個週期沒有新結果，不再是抖動 |
+| > 900s | **失明 CRITICAL** | ≈7 個週期，升級 |
+
+升級（WARNING → CRITICAL）**立即通知，不等 30 分鐘的提醒週期**——否則
+「暫時看不見」惡化成「確定被停掉」會被去重機制吞掉最多半小時。
+
+### 恢復語意
+
+`MONITOR_BLIND` 的解除**需要一筆真正新鮮的觀測**，不是只看 `systemctl is-active`。
+timer 可以是 active 卻還沒產出任何東西（剛 enable、或 GC 之後的空窗），那個瞬間
+我們仍然看不見任何東西。只看 `is-active` 就宣告恢復＝把失明當成健康。
+
+### 狀態機
+
+```
+healthy + 無事件   → no-op（只更新觀測游標）
+failure + 無事件   → FIRING，立即通知一次
+failure + FIRING   → 抑制；只有距上次通知 ≥ 30 分鐘才送提醒
+healthy + FIRING   → RESOLVED，通知一次，移除狀態檔
+```
+
+### 分級
+
+| 探針退出碼 | 分級 | 語意 |
+|---|---|---|
+| `1` / `2` | **CRITICAL** | 使用者當下無法使用 |
+| `4` | **WARNING** | 探針自己壞了＝「我不知道」，不是「壞了」 |
+| 探針超過 420 秒沒有新結果 | **WARNING** | **監控失明**——記在 `monitor` 元件，不是 `web` |
+| 探針超過 900 秒沒有新結果 | **CRITICAL** | 失明持續，升級（立即通知，不等提醒週期） |
+| timer 被停用／不在 active／unit 不存在 | **CRITICAL** | 監控被關掉了——**這是最不能只當 INFO 的一種** |
+| `systemctl` 查詢失敗 | **WARNING** | 「我不知道」，不是「壞了」 |
+
+刻意不做時間門檻的升級（例如「持續 10 分鐘才升 CRITICAL」）：探針本身已有 3 次
+重試跨 30 秒，再堆延遲會讓真中斷十幾分鐘才通知。
+
+### 狀態檔
+
+`data/.incidents/<component>.state`，key=value 單行格式（shell 可解析，不需 `jq`）。
+
+**刻意不放 DB**：DB 不可用正是要告警的情境之一，把事件狀態放進去等於在最需要
+告警時失去告警。
+
+四個正確性要求：
+
+| 要求 | 做法 |
+|---|---|
+| 原子寫入 | 先寫 `.tmp.$$` 再 `mv -f`（同一檔案系統的 rename 是原子的） |
+| 並發保護 | `flock -n`；撞到就跳過本輪（狀態機的讀-改-寫不是原子的，兩份同時跑會讓「是否已通知」互相覆蓋） |
+| 損毀復原 | 逐鍵解析而**不是 `source`**（後者等於任意程式碼執行）；**每一個會進入算術展開的欄位都做數值驗證**；`severity` 是封閉詞彙，值不在其中就丟棄。欄位損毀時 fail-open 回退為新事件——寧可多送一則，不要靜默漏送 |
+| 投遞失敗 | 狀態照常推進，只記錄未送達。**通知先送、狀態後寫**：崩潰在兩者之間只會造成重複通知（下一輪重開事件），不會漏送。反過來（先寫狀態再送）會製造「已標記為已通知但其實沒送出」的窗口，那是靜默漏報 |
+
+### 三個不變量（都由反轉實驗驗過）
+
+**1. 觀測身分跨重開機仍正確。** `ExecMainExitTimestampMonotonic` 的 epoch 是「本次開機」，
+狀態檔會一併記錄 `boot_id`；`boot_id` 不同時 `last_obs_monotonic` 直接重置，
+避免上一個 boot 的值與新 boot 的值相比而被誤判成「同一次觀測」。
+
+**2. 已開啟的事件不得被任何早退路徑擱置。** 初版在「探針從未執行」（daemon-reload 後
+屬性被清空、重開機後 P4 還沒跑第一輪、或 P4 的 timer 被停用）時直接早退，
+於是進行中的 FIRING 會永遠卡住——不再有提醒、也不會 RESOLVED。現在那條路徑只在
+**沒有進行中事件**時才早退，有事件時一律落到「監控失明」的 stale 分支並照常發提醒。
+
+**3. 時鐘回跳不得讓提醒靜音。** WSL 休眠喚醒或 NTP 校正會讓牆鐘倒退，
+`now - last_notified` 變成負數而永遠小於門檻 ⇒ 提醒永遠不觸發。負值一律當成到期
+（fail-open）。**判定「是否有新觀測」用單調時鐘，判定「提醒是否到期」用牆鐘**——
+兩者角色不同，不可混用。
+
+狀態檔**不進版控也不進備份**（`.gitignore` 有 `data/.incidents/`）：純執行期狀態，
+遺失只會讓下一次失敗重新開一個事件，不影響正確性。
+
+### 通知投遞
+
+沿用既有的 `REPORT_MARK_ALERT_WEBHOOK`（opt-in，URL 不進 repo，寫在
+`/etc/default/report-mark-sync`）。**未設定時仍照常維護 incident 狀態**，只是不投遞
+——這樣日後設定它的當下狀態是一致的，不會突然湧出一批補送。
+
+### 安裝
+
+```bash
+REPO=/home/kashionz/projects/report-mark
+sudo cp "$REPO"/deploy/systemd/report-mark-incident.service \
+        "$REPO"/deploy/systemd/report-mark-incident.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-incident.timer
+```
+
+**部署順序**：探針（P4）先上並觀察 24 小時零誤報，才啟用本 unit。
+沒有那一輪觀察，第一週的誤報會決定這套告警之後有沒有人理它。
+
+### 觀察
+
+```bash
+journalctl -u report-mark-incident.service --since "24 hours ago" --no-pager | grep 'handler=incident'
+# action 的分布：noop 應佔絕大多數
+journalctl -u report-mark-incident.service --since "24 hours ago" --no-pager -o cat \
+  | grep -oE 'action=[a-z]+' | sort | uniq -c
+cat data/.incidents/web.state 2>/dev/null || echo "(無進行中事件)"
+```
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-incident.timer
+rm -f data/.incidents/*.state          # 可選：清掉殘留的事件狀態
+```
 

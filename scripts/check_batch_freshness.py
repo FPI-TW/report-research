@@ -72,6 +72,24 @@ from sqlalchemy import text  # noqa: E402
 EXIT_OK = 0
 EXIT_STALE = 1
 EXIT_UNKNOWN = 2
+# **上游（管線本身）停跑**。刻意與 EXIT_STALE 分流：資產停更的處置是「去看那支批次」，
+# 管線沒跑完的處置是「去看 sync 殼與 claude 鎖」，兩者完全不同。
+# report-mark-freshness.service 沒有宣告 SuccessExitStatus（已驗），所以 3 會如實
+# 觸發 OnFailure——**新增這個碼之前必須確認這件事**，否則會被靜默吞掉。
+EXIT_UPSTREAM_STALE = 3
+
+# 管線心跳：由 scripts/sync_new_reports.sh 在**完整成功**時原子寫入。
+# 量的是「管線執行新鮮度」，不是「資料新鮮度」——後者才是下面四個 max(created_at)。
+HEARTBEAT_PATH = Path(__file__).resolve().parents[1] / "data" / ".last_successful_sync"
+# SLA 由實際排程回推，**不是硬編 12 小時**：
+#   - timer 是 `OnCalendar=*-*-* 00/3:00:00`＝每 3 小時，帶 Persistent=true
+#   - 單輪最壞可長達約 2.5 小時（訊號擷取 100 份實測約 47 分、最壞約 113 分，
+#     加上 rsync／匯入／摘要／標題／摘錄）
+#   - 長輪會讓下一次觸發撞 PID lock 而 exit 0（不更新心跳）
+# 一次長輪 ＋ 一次撞鎖跳過 ＋ 一個週期的餘裕 ＝ 3 個週期 ＝ 9 小時。
+# 2026-08-16..19 生產實測間隔多為 3.0h，另有 10.57h／16.26h 兩個缺口——那兩個是
+# 08-18 的真實中斷，**應該被報出來**，不是要被門檻容忍掉。
+DEFAULT_PIPELINE_HOURS = 9
 
 # 語料閘：與三支批次實際處理的母體同一組條件（有全文、非行政檔）。用全表
 # `max(created_at)` 會被行政/活動檔拉新，於是「連續幾天只進非研報」會讓抑制失效、
@@ -112,6 +130,13 @@ STATE_FRESH = "fresh"
 STATE_STALE = "stale"
 STATE_SUPPRESSED = "suppressed"
 STATE_DISABLED = "disabled"
+STATE_UPSTREAM_STALE = "upstream_stale"
+
+# 對外的四個狀態（給人與後續工具看的封閉詞彙）：
+#   PASS          全部在門檻內且管線有跑完                     → rc 0
+#   EXPECTED_SKIP 門檻 0（關閉）或被語料閘抑制——**不影響 rc**  → rc 不變
+#   UPSTREAM_STALE 管線本身沒跑完（心跳缺席／過期／損毀）      → rc 3
+#   FAIL          派生資產停更                                 → rc 1
 
 
 @dataclass(frozen=True)
@@ -207,7 +232,80 @@ _STATE_MARK = {
     STATE_STALE: "STALE",
     STATE_SUPPRESSED: "skip",
     STATE_DISABLED: "off ",
+    STATE_UPSTREAM_STALE: "UPSTR",
 }
+
+
+def read_heartbeat(path: Path | None = None) -> tuple[int | None, str | None]:
+    """讀心跳的 epoch。回傳 (epoch, 錯誤原因)；兩者恰有一個為 None。
+
+    **逐鍵解析，絕不 source／eval／json.load**：這個檔由 shell 寫入、落在磁碟上，
+    是外部輸入。也刻意不接受 `ts=` 當備援——那是給人看的，機器只信 `epoch=`，
+    避免時區與格式解析成為第二個失效面。
+    """
+    path = path or HEARTBEAT_PATH
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return None, "從未成功跑完（心跳檔不存在）"
+    except OSError as exc:
+        return None, f"心跳檔讀取失敗（{type(exc).__name__}）"
+    for line in raw.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() != "epoch":
+            continue
+        value = value.strip()
+        if not value or not value.isdigit():   # 空、字母、負號一律當損毀
+            return None, "心跳格式損毀（epoch 非整數）"
+        return int(value), None
+    return None, "心跳格式損毀（缺 epoch）"
+
+
+def assess_pipeline(now: datetime, hours: int, path: Path | None = None) -> Finding:
+    """管線執行新鮮度。**不經語料閘，也不因 DB 狀態改變**。
+
+    語料閘的用意是「沒有新稿時別怪派生批次」，但管線有沒有跑完與有沒有新稿無關——
+    0 篇新研報只要完整跑完也會更新心跳。把它放進閘內會製造一個致命的抑制：
+    連假期間管線整個停掉會被讀成「本來就沒事做」。
+    """
+    now = _as_utc(now) or now
+    epoch, err = read_heartbeat(path)
+    if epoch is None:
+        return Finding("pipeline", "管線執行", STATE_UPSTREAM_STALE, None, None, hours, err or "未知")
+    last = datetime.fromtimestamp(epoch, tz=timezone.utc)
+    age_h = (now - last).total_seconds() / 3600.0
+    iso = last.isoformat()
+    # 未來時間戳＝時鐘異常或狀態檔被動過。**不當成新鮮**：那會讓一個壞掉的時鐘
+    # 永久抑制告警，而抑制是這裡最危險的失效方向。
+    if age_h < 0:
+        return Finding(
+            "pipeline", "管線執行", STATE_UPSTREAM_STALE, iso, age_h / 24.0, hours,
+            f"心跳時間在未來 {abs(age_h):.1f} 小時（時鐘異常或檔案被動過）",
+        )
+    if age_h > hours:
+        return Finding(
+            "pipeline", "管線執行", STATE_UPSTREAM_STALE, iso, age_h / 24.0, hours,
+            f"已 {age_h:.1f} 小時沒有完整成功（門檻 {hours} 小時）",
+        )
+    return Finding("pipeline", "管線執行", STATE_FRESH, iso, age_h / 24.0, hours,
+                   f"{age_h:.1f} 小時前完整成功")
+
+
+def has_upstream_stale(findings: list[Finding]) -> bool:
+    return any(f.state == STATE_UPSTREAM_STALE for f in findings)
+
+
+def exit_code(findings: list[Finding]) -> int:
+    """rc 優先序：上游 > 資產 > 正常。
+
+    上游優先是因果關係決定的：管線沒跑完時，派生資產「停更」只是症狀，
+    先報症狀會讓人去查錯的地方。EXPECTED_SKIP（disabled／suppressed）永不影響 rc。
+    """
+    if has_upstream_stale(findings):
+        return EXIT_UPSTREAM_STALE
+    if has_stale(findings):
+        return EXIT_STALE
+    return EXIT_OK
 
 
 def fmt_report(findings: list[Finding], now: datetime) -> str:
@@ -216,11 +314,16 @@ def fmt_report(findings: list[Finding], now: datetime) -> str:
         latest = f.latest or "（無）"
         lines.append(f"  [{_STATE_MARK.get(f.state, '?'):5}] {f.label:6} {latest}  {f.detail}")
     lines.append("")
-    if has_stale(findings):
+    if has_upstream_stale(findings):
+        why = "；".join(f.detail for f in findings if f.state == STATE_UPSTREAM_STALE)
+        lines.append(f"UPSTREAM_STALE：管線本身沒有完整跑完（{why}）")
+        lines.append("  → 檢查 report-mark-sync.service、data/sync_run_*.log 與 claude 鎖")
+        lines.append("  → 派生資產若同時顯示 STALE，那是症狀不是原因")
+    elif has_stale(findings):
         names = "、".join(f.label for f in findings if f.state == STATE_STALE)
-        lines.append(f"停更：{names} → 檢查 data/sync_run_*.log 與 data/unit_failures.log")
+        lines.append(f"FAIL：{names} 停更 → 檢查 data/sync_run_*.log 與 data/unit_failures.log")
     else:
-        lines.append("全部在門檻內。")
+        lines.append("PASS：全部在門檻內，且管線最近有完整跑完。")
     return "\n".join(lines)
 
 
@@ -231,28 +334,38 @@ async def fetch_latest(session) -> dict[str, datetime | None]:
     return {"corpus": row[0], "summary": row[1], "takeaway": row[2], "signal": row[3]}
 
 
-async def run(thresholds: dict[str, int], json_out: bool) -> int:
+async def run(thresholds: dict[str, int], json_out: bool, pipeline_hours: int) -> int:
     now = datetime.now(timezone.utc)
+
+    # **管線心跳先判，而且不碰 DB。** 順序是刻意的：DB 不可用時仍然要能回答
+    # 「管線最近有沒有跑完」——那兩件事的處置不同，把它綁在 DB 之後會讓
+    # 「DB 掛了」同時掩蓋「管線也停了」。
+    pipeline = assess_pipeline(now, pipeline_hours)
+
     from app.services.db import SessionFactory
 
     try:
         async with SessionFactory() as session:
             latest = await fetch_latest(session)
     except Exception as exc:                       # noqa: BLE001 — 任何連不上都算查不到
-        payload = {"error": f"{type(exc).__name__}: {exc}"}
+        payload = {"error": f"{type(exc).__name__}: {exc}", "findings": [asdict(pipeline)]}
         if json_out:
             print(json.dumps(payload, ensure_ascii=False))
         else:
+            print(fmt_report([pipeline], now))
             print(f"查不到批次新鮮度（DB 不可用）：{payload['error']}", file=sys.stderr)
+        # 刻意仍回 EXIT_UNKNOWN：DB 不可用的處置與其他狀態不同，這個分流是既有設計。
+        # 管線那筆已經印在報告裡，不會因此消失。
         return EXIT_UNKNOWN
 
-    findings = assess(now, latest, thresholds)
+    findings = [pipeline, *assess(now, latest, thresholds)]
     if json_out:
         print(
             json.dumps(
                 {
                     "now": now.isoformat(),
                     "stale": has_stale(findings),
+                    "upstream_stale": has_upstream_stale(findings),
                     "findings": [asdict(f) for f in findings],
                 },
                 ensure_ascii=False,
@@ -260,12 +373,12 @@ async def run(thresholds: dict[str, int], json_out: bool) -> int:
         )
     else:
         print(fmt_report(findings, now))
-    return EXIT_STALE if has_stale(findings) else EXIT_OK
+    return exit_code(findings)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="偵測派生資產是否停更（0＝新鮮／1＝停更／2＝查不到）"
+        description="偵測管線與派生資產是否停更（0＝PASS／1＝資產停更／2＝DB 查不到／3＝管線停跑）"
     )
     for asset, label in ASSETS:
         p.add_argument(
@@ -277,6 +390,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             f"（預設 {DEFAULT_THRESHOLDS[asset]}）",
         )
     p.add_argument("--json", action="store_true", help="輸出 JSON（供後續接監控）")
+    p.add_argument(
+        "--pipeline-hours",
+        type=int,
+        default=DEFAULT_PIPELINE_HOURS,
+        help=f"管線多久沒有完整成功即 UPSTREAM_STALE，單位小時（預設 {DEFAULT_PIPELINE_HOURS}）",
+    )
     return p.parse_args(argv)
 
 
@@ -286,4 +405,6 @@ def thresholds_from_args(args: argparse.Namespace) -> dict[str, int]:
 
 if __name__ == "__main__":
     _args = parse_args()
-    raise SystemExit(asyncio.run(run(thresholds_from_args(_args), _args.json)))
+    raise SystemExit(
+        asyncio.run(run(thresholds_from_args(_args), _args.json, _args.pipeline_hours))
+    )

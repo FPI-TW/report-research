@@ -568,3 +568,5 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 | [docs/production_resilience.md](docs/production_resilience.md) | 生產韌性：重啟策略、健康檢查、失敗告警、systemd unit 還原 |
 | [docs/向量搜索優化報告.md](docs/向量搜索優化報告.md) | 向量檢索優化（混合檢索、HNSW 調校、CJK 正規化）|
 | [AGENTS.md](AGENTS.md) | 貢獻者指南（結構、風格、測試、提交與安全慣例）|
+| [docs/incidents/2026-08-18-wsl-9p-production-outage.md](docs/incidents/2026-08-18-wsl-9p-production-outage.md) | 2026-08-18 生產中斷事故報告：9p 上的 venv 損毀 ＋ 失效 portproxy，4h50m 全鏈路不可用 |
+| [docs/benchmarks/2026-08-18-wsl-ext4-vs-9p.md](docs/benchmarks/2026-08-18-wsl-ext4-vs-9p.md) | ext4 vs 9p 唯讀 benchmark：metadata 幾何平均 549.9x，單次 `stat` 754.5 µs → 1.12 µs |

@@ -1,0 +1,19 @@
+[Unit]
+Description=每 2 分鐘探測應用層健康（本機 /healthz）
+
+[Timer]
+# 開機後給整個堆疊（WSL／Docker／DB／web 暖機）穩定的時間再開始探測。
+OnBootSec=2min
+OnUnitActiveSec=2min
+# **刻意與同目錄三支日排程不同：不設 Persistent=true。**
+# 錯過的健康檢查沒有補跑價值——健康是「此刻」的性質，不是待辦事項。
+# 而且 Persistent=true 會在開機瞬間立刻補跑一次，那正是最容易誤報的時刻。
+#
+# **刻意不設 RandomizedDelaySec。** 同目錄三支設它是為了錯開日排程的尖峰；
+# 對 2 分鐘的探針而言抖動只會讓偵測延遲變得不可預測，沒有換到任何東西。
+#
+# AccuracySec 預設是 1 分鐘，對 2 分鐘的週期而言漂移過大（可能變成 2~3 分鐘）。
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

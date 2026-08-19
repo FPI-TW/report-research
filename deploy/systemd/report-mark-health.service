@@ -1,0 +1,54 @@
+[Unit]
+Description=廷豐智能研報 應用層健康探針（本機 /healthz，非 systemd 存活狀態）
+# 為什麼需要它：2026-08-18 的中斷持續 4 小時 50 分，期間 `systemctl is-active` 全程
+# 顯示 active，而實際服務的 HTTP 請求數是 0。uvicorn 先跑 lifespan 再 bind，bind
+# 失敗後行程仍存活約 10 秒（背景載入 BGE-M3），配合 Restart=always／RestartSec=3，
+# 任何時間點查 is-active 都很可能看到 active。**process alive != application healthy。**
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure=report-mark-alert@%n.service**，與同目錄其他五支不同。
+#
+# 理由不是「這支不重要」，而是通知的節奏對不上：那五支是日排程或每 3 小時，
+# OnFailure 觸發一次＝一次批次失敗；本探針是每 2 分鐘，同一次中斷會觸發約 30 次
+# ／小時。而 report-mark-alert.sh 的 webhook 只由**單一全域變數**
+# REPORT_MARK_ALERT_WEBHOOK 控制（`[ -n "${REPORT_MARK_ALERT_WEBHOOK:-}" ]`），
+# 一旦有人為了其他 unit 設定它，本探針就會在無人察覺的情況下變成每 2 分鐘一則通知。
+#
+# 那會讓 P4 從「健康偵測」暗中變成「健康偵測 ＋ 不受控通知」——而通知的去重、
+# 提醒節奏與恢復判定需要跨執行狀態，那是 P5 的職責。**這裡把邊界交給架構而不是
+# 設定紀律**：不接告警鏈，P4 就結構上不可能通知，不必依賴任何人記得別設那個變數。
+#
+# 失敗仍然完全可觀測，P5 有足夠的訊號可以消費：
+#   - ActiveState=failed（oneshot 非零退出後會停在 failed，直到下次啟動）
+#   - Result=exit-code、ExecMainStatus=<1|2|4>、ExecMainExitTimestamp=<時間>
+#   - journal 內本次執行的 key=value 單行結果 ＋ stderr 的歸因訊息
+# P5 上線時再由它自己掛上帶去重的處理器（例如 OnFailure=report-mark-incident@%n），
+# 屆時通知行為由 P5 完整擁有。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h：系統層 unit 的 %h 一律解析為 service manager 的家目錄
+# （/root），**不受 User= 影響**。2026-07-28 sync unit 因此連續 10 輪失敗、整條
+# 入庫管線停擺 24 小時。tests/test_deploy_units.py 靜態守這條。
+Environment=HOME=/home/kashionz
+# 探針只需要 curl／systemctl／coreutils。**刻意不含 nvm 與 uv 的路徑**：
+# 它不得相依 Python／.venv——2026-08-18 的根因正是 venv 損毀，若探針跟著壞掉，
+# 它就會和被監控的服務一起死。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+# 顯式 `bash <script>` 而非直接 exec：不依賴 repo 內的執行位元。2026-08-18 的遷移
+# 才剛因為 /mnt/c（drvfs 一律回報 777）從未記錄過 exec bit 而踩過這個坑。
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/check_web_health.sh"'
+# 退出碼 3＝剛啟動的寬限期內，**不是故障**。用 SuccessExitStatus 而非在腳本裡
+# `|| true`：後者會把真正的失敗一起吞掉，而這裡要的是「只放行這一個碼」。
+# 同目錄的 report-mark-web.service 已用同一手法處理 143（SIGTERM 的正常收場）。
+SuccessExitStatus=3
+# 最壞情況＝3 次探測 × 5 秒逾時 ＋ 2 次 × 15 秒等待 ＝ 45 秒。取 90 秒＝2 倍餘裕，
+# 且**必須嚴格小於 timer 的 120 秒間隔**（不是等於）——取 120 會讓逾時的那一輪
+# 正好撞上下一次觸發。tests 以嚴格不等式釘死這個關係。
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

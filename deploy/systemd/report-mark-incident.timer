@@ -1,0 +1,16 @@
+[Unit]
+Description=每 2 分鐘消費健康探針結果並維護事件狀態
+
+[Timer]
+# 比 report-mark-health.timer 晚 1 分鐘起跑，讓每一輪探測結果都有機會先落地
+# 再被消費。不是正確性需求（狀態機以 ExecMainExitTimestampMonotonic 判斷新觀測，
+# 錯開與否都不會重複計數），只是讓 journal 的時序讀起來符合因果。
+OnBootSec=3min
+OnUnitActiveSec=2min
+# 與 report-mark-health.timer 同樣刻意不設 Persistent=true：錯過的事件判定沒有
+# 補跑價值（狀態要的是「現在」），且開機補跑正是最容易誤報的時刻。
+# 同樣不設 RandomizedDelaySec：抖動只會讓通知延遲不可預測。
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

@@ -587,3 +587,213 @@ sudo systemctl disable --now report-mark-health.timer
 
 零 application 變更、零資料變更，停用即完全回到沒有探針的狀態。
 
+---
+
+## 事件偵測與通知（`report-mark-incident.timer`）
+
+健康探針（上一節）**刻意不通知任何人**。這一節的 unit 才是決定「要不要打擾人」的地方。
+
+存在理由：2026-08-18 的中斷期間，告警機制**確實運作了**——`data/unit_failures.log`
+累積了 854 筆完整紀錄——但那個檔案沒有任何消費端，中斷是在一次無關的遷移工作中被
+順帶發現的。那 854 筆同時說明另一件事：**沒有去重就等於沒有告警**。
+
+同一次事件在這裡只會產生：**1 則 FIRING ＋ 每 30 分鐘一則提醒 ＋ 1 則 RESOLVED**。
+以那次 4 小時 50 分的中斷換算＝ **11 則**，而不是 145 則。
+
+### 它怎麼取得訊號
+
+不是掛在探針的 `OnFailure` 上——`OnFailure` 只在失敗時觸發、`ExecStartPost` 只在
+成功時觸發，兩者都看不到完整的狀態轉換，而 `RESOLVED` 必須看得到成功。
+
+改為每 2 分鐘讀 systemd 為探針保留的執行結果：
+
+| 欄位 | 用途 |
+|---|---|
+| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤） |
+| `ExecMainExitTimestampMonotonic` | **單調時鐘**，判斷「是否有新觀測」。用它而非牆鐘，因為 WSL 休眠喚醒與時區調整會讓牆鐘跳動 |
+| `Result` | 附在通知訊息裡供人判讀 |
+
+### systemd **不會**永遠保存 `ExecMain*`
+
+這是本節最容易被誤解的一件事，而誤解的代價是整套告警靜默失效。
+
+`report-mark-health.service` 用預設的 `CollectMode=inactive`。2026-08-19 部署當天
+以隔離的使用者層 unit 做了七組實測，結論是：
+
+| 情境 | `ExecMainExitTimestampMonotonic` | `ActiveState` |
+|---|---|---|
+| 從未執行、無 unit 引用 | **0** | `inactive` |
+| **成功**執行、無 unit 引用 | **0** ← 與上一列**逐欄完全相同** | `inactive` |
+| **失敗**執行、無 unit 引用 | 保留 | `failed` |
+| timer `enabled` ＋ `active` | 保留 | `inactive` |
+| timer `enabled` 但被 `stop` | 保留（timer unit 仍載入著、仍持有引用） | `inactive` |
+| **timer `disable`** | **0 ← 觀測當場消失** | `inactive` |
+
+也就是說：**一次成功的探測與「探針從未執行」在 `systemctl show` 的輸出上無法區分**，
+而 `systemctl disable report-mark-health.timer` 會立刻讓觀測消失。
+
+兩個推論：
+
+- **P5 的可觀測性前提是那個 timer 保持 enabled。** 有人停用它，P5 讀到的不是「失敗」
+  而是**空值**——沒有任何錯誤訊息。
+- 反過來，**失敗永遠看得見**（失敗的 unit 不會被回收），所以真正的 web 故障不會因此漏掉；
+  會漏掉的是「從此不再有任何新觀測」。
+
+另外，`systemctl show` 對**不存在**的 unit 也回 rc=0 加一整組預設值——「查詢成功」
+什麼都不保證，只有 `LoadState` 分得出 unit 到底在不在。
+
+### 監控自己的監控
+
+因此每一輪都先驗證訊號源本身，再談服務健康：
+
+```
+systemctl is-enabled report-mark-health.timer     # enabled / disabled / not-found
+systemctl is-active  report-mark-health.timer     # active / inactive
+systemctl show       report-mark-health.timer -p LoadState -p ActiveEnterTimestampMonotonic
+systemctl show       report-mark-health.service -p LoadState -p Result \
+                     -p ExecMainStatus -p ExecMainExitTimestampMonotonic
+```
+
+結果分成兩類**互相獨立**的事件，各有自己的狀態檔：
+
+| 類別 | 元件 | 來源 |
+|---|---|---|
+| **WEB_HEALTH** | `web` | 探針明確回報 exit 1／2／4 |
+| **MONITOR_BLIND** | `monitor` | timer 被停用／不在 active／unit 不存在／探針 unit 不存在／觀測消失或過期／systemctl 查詢失敗 |
+
+**「監控瞎了」不得覆蓋或解除進行中的 web 事件**，反之亦然。訊號不可信時，handler
+完全不碰 `web.state`，只在輸出裡標記 `action=skip incident=FIRING`——因為
+「我看不見了」不是「已經好了」，把它當成恢復會在真正的中斷中途送出 `RESOLVED`，
+那比完全不告警更糟：它會讓人停止調查。
+
+**訊號缺席永遠不得被當成健康。** 這是本節的硬不變量，也是初版最危險的缺陷：
+初版在「沒有觀測且無進行中事件」時直接 `emit noop probe_never_ran` 並早退，
+而那條路徑同時涵蓋「還沒跑第一輪」與「有人把 timer 停了」。
+
+### bootstrap 與失明的分界
+
+沒有觀測不一定是壞事——剛開機或剛 `enable` 時本來就還沒有。兩者用 **timer 進入
+active 的時間**分辨（`ActiveEnterTimestampMonotonic`），而不是用開機時間，這樣
+「剛開機」與「剛重新啟用」都涵蓋得到。
+
+空窗上限 **300 秒**由 P4 的參數回推：`OnBootSec`(120) ＋ `AccuracySec`(10) ＋
+探針最壞耗時 `TimeoutStartSec`(90) ＝ 220 秒，取 300 秒＝36% 餘裕。
+**沒有沿用初版的 600 秒**——那個值是在還沒有任何實測分布時訂的。
+
+### 觸發間隔的實測分布
+
+**穩態間隔不是 120 秒。** `OnUnitActiveSec` 從 service 進入 active 起算，加上
+`AccuracySec=10s` 的抖動與探針自身耗時。T0（2026-08-19 11:11:39）之後連續 9 個
+間隔實測為 125／132／136／134／135／135／126／126／134 秒——min 125、max 136、
+mean 131.4。把「正常」定成 120 會讓每一輪都看起來遲到。
+
+| 間隔 | 判定 | 處置 |
+|---|---|---|
+| ≤ 150s | 正常 | 實測 max 136 ＋ 約 10% 餘裕 |
+| 150–420s | 容忍 | 單次抖動或系統負載，尚不告警 |
+| > 420s | **失明 WARNING** | ≈3 個週期沒有新結果，不再是抖動 |
+| > 900s | **失明 CRITICAL** | ≈7 個週期，升級 |
+
+升級（WARNING → CRITICAL）**立即通知，不等 30 分鐘的提醒週期**——否則
+「暫時看不見」惡化成「確定被停掉」會被去重機制吞掉最多半小時。
+
+### 恢復語意
+
+`MONITOR_BLIND` 的解除**需要一筆真正新鮮的觀測**，不是只看 `systemctl is-active`。
+timer 可以是 active 卻還沒產出任何東西（剛 enable、或 GC 之後的空窗），那個瞬間
+我們仍然看不見任何東西。只看 `is-active` 就宣告恢復＝把失明當成健康。
+
+### 狀態機
+
+```
+healthy + 無事件   → no-op（只更新觀測游標）
+failure + 無事件   → FIRING，立即通知一次
+failure + FIRING   → 抑制；只有距上次通知 ≥ 30 分鐘才送提醒
+healthy + FIRING   → RESOLVED，通知一次，移除狀態檔
+```
+
+### 分級
+
+| 探針退出碼 | 分級 | 語意 |
+|---|---|---|
+| `1` / `2` | **CRITICAL** | 使用者當下無法使用 |
+| `4` | **WARNING** | 探針自己壞了＝「我不知道」，不是「壞了」 |
+| 探針超過 420 秒沒有新結果 | **WARNING** | **監控失明**——記在 `monitor` 元件，不是 `web` |
+| 探針超過 900 秒沒有新結果 | **CRITICAL** | 失明持續，升級（立即通知，不等提醒週期） |
+| timer 被停用／不在 active／unit 不存在 | **CRITICAL** | 監控被關掉了——**這是最不能只當 INFO 的一種** |
+| `systemctl` 查詢失敗 | **WARNING** | 「我不知道」，不是「壞了」 |
+
+刻意不做時間門檻的升級（例如「持續 10 分鐘才升 CRITICAL」）：探針本身已有 3 次
+重試跨 30 秒，再堆延遲會讓真中斷十幾分鐘才通知。
+
+### 狀態檔
+
+`data/.incidents/<component>.state`，key=value 單行格式（shell 可解析，不需 `jq`）。
+
+**刻意不放 DB**：DB 不可用正是要告警的情境之一，把事件狀態放進去等於在最需要
+告警時失去告警。
+
+四個正確性要求：
+
+| 要求 | 做法 |
+|---|---|
+| 原子寫入 | 先寫 `.tmp.$$` 再 `mv -f`（同一檔案系統的 rename 是原子的） |
+| 並發保護 | `flock -n`；撞到就跳過本輪（狀態機的讀-改-寫不是原子的，兩份同時跑會讓「是否已通知」互相覆蓋） |
+| 損毀復原 | 逐鍵解析而**不是 `source`**（後者等於任意程式碼執行）；**每一個會進入算術展開的欄位都做數值驗證**；`severity` 是封閉詞彙，值不在其中就丟棄。欄位損毀時 fail-open 回退為新事件——寧可多送一則，不要靜默漏送 |
+| 投遞失敗 | 狀態照常推進，只記錄未送達。**通知先送、狀態後寫**：崩潰在兩者之間只會造成重複通知（下一輪重開事件），不會漏送。反過來（先寫狀態再送）會製造「已標記為已通知但其實沒送出」的窗口，那是靜默漏報 |
+
+### 三個不變量（都由反轉實驗驗過）
+
+**1. 觀測身分跨重開機仍正確。** `ExecMainExitTimestampMonotonic` 的 epoch 是「本次開機」，
+狀態檔會一併記錄 `boot_id`；`boot_id` 不同時 `last_obs_monotonic` 直接重置，
+避免上一個 boot 的值與新 boot 的值相比而被誤判成「同一次觀測」。
+
+**2. 已開啟的事件不得被任何早退路徑擱置。** 初版在「探針從未執行」（daemon-reload 後
+屬性被清空、重開機後 P4 還沒跑第一輪、或 P4 的 timer 被停用）時直接早退，
+於是進行中的 FIRING 會永遠卡住——不再有提醒、也不會 RESOLVED。現在那條路徑只在
+**沒有進行中事件**時才早退，有事件時一律落到「監控失明」的 stale 分支並照常發提醒。
+
+**3. 時鐘回跳不得讓提醒靜音。** WSL 休眠喚醒或 NTP 校正會讓牆鐘倒退，
+`now - last_notified` 變成負數而永遠小於門檻 ⇒ 提醒永遠不觸發。負值一律當成到期
+（fail-open）。**判定「是否有新觀測」用單調時鐘，判定「提醒是否到期」用牆鐘**——
+兩者角色不同，不可混用。
+
+狀態檔**不進版控也不進備份**（`.gitignore` 有 `data/.incidents/`）：純執行期狀態，
+遺失只會讓下一次失敗重新開一個事件，不影響正確性。
+
+### 通知投遞
+
+沿用既有的 `REPORT_MARK_ALERT_WEBHOOK`（opt-in，URL 不進 repo，寫在
+`/etc/default/report-mark-sync`）。**未設定時仍照常維護 incident 狀態**，只是不投遞
+——這樣日後設定它的當下狀態是一致的，不會突然湧出一批補送。
+
+### 安裝
+
+```bash
+REPO=/home/kashionz/projects/report-mark
+sudo cp "$REPO"/deploy/systemd/report-mark-incident.service \
+        "$REPO"/deploy/systemd/report-mark-incident.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-incident.timer
+```
+
+**部署順序**：探針（P4）先上並觀察 24 小時零誤報，才啟用本 unit。
+沒有那一輪觀察，第一週的誤報會決定這套告警之後有沒有人理它。
+
+### 觀察
+
+```bash
+journalctl -u report-mark-incident.service --since "24 hours ago" --no-pager | grep 'handler=incident'
+# action 的分布：noop 應佔絕大多數
+journalctl -u report-mark-incident.service --since "24 hours ago" --no-pager -o cat \
+  | grep -oE 'action=[a-z]+' | sort | uniq -c
+cat data/.incidents/web.state 2>/dev/null || echo "(無進行中事件)"
+```
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-incident.timer
+rm -f data/.incidents/*.state          # 可選：清掉殘留的事件狀態
+```
+

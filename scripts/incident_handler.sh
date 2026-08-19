@@ -61,6 +61,21 @@ BLIND_CRITICAL_SECONDS="${INCIDENT_BLIND_CRITICAL_SECONDS:-900}"  # ≈7 個週�
 # 探針最壞耗時 TimeoutStartSec(90) ＝ 220s。取 300s＝36% 餘裕，且遠低於 STALE。
 # **刻意不沿用初版的 600s**：那個值是在還沒有任何實測分布時訂的。
 BOOTSTRAP_SECONDS="${INCIDENT_BOOTSTRAP_SECONDS:-300}"
+# 探針單次執行的合理上限，**由 P4 的契約推導而非硬編**：
+# 3 次嘗試 × HEALTH_TIMEOUT(5s) ＋ 2 次 × HEALTH_RETRY_WAIT(15s) = 45s（2026-08-20
+# 中斷期間實測 46s，吻合），而 unit 的硬上限是 TimeoutStartSec=90s。
+# 超過 90s 代表 systemd 應該已經砍掉它卻沒有——那是探針卡住，不是服務故障。
+# 取 120s ＝ 90s ＋ 33% 餘裕。
+PROBE_MAX_INFLIGHT="${INCIDENT_PROBE_MAX_INFLIGHT:-120}"
+# **上一筆已完成的觀測可以被信任多久。** 這不是「過期」門檻，是「有沒有漏讀」門檻：
+# P4 每 ~130s 完成一輪（OnUnitActiveSec=2min ＋ AccuracySec=10s，實測 125–138s），
+# 若 P5 每輪都讀得到，快取最多只會有「一個週期 ＋ 當前執行中」這麼舊：
+#   140s（一個週期上界）＋ 90s（unit TimeoutStartSec）＝ 230s → 取 240s。
+# 超過就代表 **P4 至少完成過一輪而 P5 沒讀到**——那時不能再說「上次是好的」，
+# 因為我們不知道那筆漏掉的觀測是什麼。2026-08-20 的中斷正是這個形狀：
+# 00:49:49 完成一筆 fail，P5 下一次取樣在 00:51:58（快取已 272s），若無此門檻
+# 就會沿用 00:47:26 那筆 OK 而繼續靜默。
+OBS_TRUST_SECONDS="${INCIDENT_OBS_TRUST_SECONDS:-240}"
 WEBHOOK="${REPORT_MARK_ALERT_WEBHOOK:-}"
 
 # repo 根由腳本自身位置推導（與 sync_new_reports.sh 同慣用語）
@@ -101,10 +116,18 @@ log() { echo "$*"; }
 
 # status 與 reason 都是**封閉詞彙**：消費端（人或後續工具）要能窮舉。
 # status ∈ ok | web_incident | monitor_blind | bootstrap | in_flight | tooling
+# current_probe 與 last_completed 是**分開的兩件事**：前者是觀測的生命週期，後者是
+# 最近一次完成的結論。把兩者混成一個欄位正是 2026-08-20 那次中斷的成因——只印
+# `status=in_flight action=skip`，operator 完全看不出「上一次其實是 fail」。
+# current_probe ∈ idle|in_flight ；last_completed ∈ ok|fail|tooling|none
+EMIT_CURRENT_PROBE=idle
+EMIT_LAST_COMPLETED=none
+EMIT_LAST_AGE=-
 emit() {
     # status action severity incident reason notified [component]
-    printf 'ts=%s component=%s handler=incident status=%s action=%s severity=%s incident=%s reason=%s notified=%s\n' \
-        "$(date -Iseconds)" "${7:-$COMPONENT}" "$1" "$2" "$3" "$4" "$5" "$6"
+    printf 'ts=%s component=%s handler=incident status=%s action=%s severity=%s incident=%s reason=%s notified=%s current_probe=%s last_completed=%s last_completed_age=%s\n' \
+        "$(date -Iseconds)" "${7:-$COMPONENT}" "$1" "$2" "$3" "$4" "$5" "$6" \
+        "$EMIT_CURRENT_PROBE" "$EMIT_LAST_COMPLETED" "$EMIT_LAST_AGE"
 }
 
 BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
@@ -166,6 +189,59 @@ write_state() {
     } > "$tmp" && mv -f "$tmp" "$STATE_DIR/$1.state" || {
         rm -f "$tmp" 2>/dev/null
         echo "incident_handler: 狀態寫入失敗" >&2
+        return 1
+    }
+}
+
+# ── 上一筆「已完成」的探針觀測 ────────────────────────────────────────────
+# **為什麼需要快取，以及為什麼不能放進 web.state。**
+#
+# systemd 在 oneshot 啟動時把 ExecMainExitTimestamp* 歸零，直到結束才寫入。所以當
+# 探針正在執行時，「上一筆已完成的結論」**無法從 systemd 取得**——它不是被藏起來，
+# 是真的不存在於可查詢的狀態裡。P5 必須自己記住。
+#
+# 不放進 web.state 的理由很具體：那個檔在 RESOLVED 時會被 `rm -f`，等於**服務恢復的
+# 那一刻把觀測快取一起抹掉**；而且 monitor 元件也要用這筆觀測判新鮮度——兩個消費者
+# 共用一個生命週期，遲早互相污染。
+#
+# 2026-08-20 的真實中斷證明這件事非做不可：P4 在中斷期間每輪執行 46 秒（重試佔絕大
+# 部分），約為 P5 週期的 35%，於是 P5 連續兩次取樣都落在執行窗內、兩次都判 in_flight、
+# **整場 4 分 54 秒的中斷零告警**。timer 抖動只降低碰撞機率，不是正確性機制。
+OBS_CACHE="$STATE_DIR/probe_observation.state"
+obs_mono=0; obs_status=-1; obs_result=
+load_obs_cache() {
+    obs_mono=0; obs_status=-1; obs_result=; _obs_boot=
+    [ -f "$OBS_CACHE" ] || return 0
+    # 逐鍵解析，**絕不 source／eval**：這是落在磁碟上的外部輸入。
+    while IFS='=' read -r k v; do
+        case "$k" in
+            boot_id)   _obs_boot="$v" ;;
+            monotonic) obs_mono="$v" ;;
+            status)    obs_status="$v" ;;
+            result)    obs_result="$v" ;;
+        esac
+    done < "$OBS_CACHE"
+    case "$obs_mono"   in ''|*[!0-9]*) obs_mono=0 ;; esac
+    case "$obs_status" in ''|*[!0-9]*) obs_status=-1 ;; esac
+    # boot_id 只接受 UUID 形狀；格式不符即視為無快取（不猜、不沿用）
+    case "$_obs_boot" in
+        ????????-????-????-????-????????????) ;;
+        *) _obs_boot= ;;
+    esac
+    # **跨開機不得沿用**：單調時鐘的原點是本次開機，舊值無從比較。
+    [ "$_obs_boot" != "$BOOT_ID" ] && { obs_mono=0; obs_status=-1; obs_result=; }
+}
+
+save_obs_cache() {
+    tmp="$OBS_CACHE.tmp.$$"
+    {
+        echo "boot_id=$BOOT_ID"
+        echo "monotonic=$1"
+        echo "status=$2"
+        echo "result=$3"
+    } > "$tmp" && mv -f "$tmp" "$OBS_CACHE" || {
+        rm -f "$tmp" 2>/dev/null
+        echo "incident_handler: 觀測快取寫入失敗" >&2
         return 1
     }
 }
@@ -286,6 +362,21 @@ timer_active="$(systemctl is-active "$TIMER_UNIT" 2>/dev/null || true)"
 probe_state="$(systemctl show "$PROBE_UNIT" -p ActiveState --value 2>/dev/null)" || query_failed=yes
 probe_running=no
 case "$probe_state" in activating|active|reloading|deactivating) probe_running=yes ;; esac
+# 當前這一次呼叫是何時開始的。用來判斷「執行太久＝探針卡住」，門檻由 P4 契約推導。
+probe_start_mono="$(systemctl show "$PROBE_UNIT" -p InactiveExitTimestampMonotonic --value 2>/dev/null)" || query_failed=yes
+case "$probe_start_mono" in ''|*[!0-9]*) probe_start_mono=0 ;; esac
+
+# 上一筆已完成的觀測（P5 自己的記憶；systemd 在探針執行中不提供它）
+load_obs_cache
+_last_label() {
+    case "$1" in 0|3) echo ok ;; 1|2) echo fail ;; 4) echo tooling ;; *) echo none ;; esac
+}
+EMIT_LAST_COMPLETED="$(_last_label "$obs_status")"
+if [ "$obs_mono" -gt 0 ]; then
+    EMIT_LAST_AGE=$(( (now_mono_us - obs_mono) / 1000000 ))
+    [ "$EMIT_LAST_AGE" -lt 0 ] && EMIT_LAST_AGE=0
+fi
+[ "$probe_running" = yes ] && EMIT_CURRENT_PROBE=in_flight
 
 # 全部數值欄位驗證（外部輸入，可能是空字串、字母或負數）
 case "$probe_status"    in ''|*[!0-9]*) probe_status=-1 ;; esac
@@ -295,7 +386,7 @@ case "$timer_enter_mono" in ''|*[!0-9]*) timer_enter_mono=0 ;; esac
 # ── 分類訊號源 ────────────────────────────────────────────────────────────
 # 這一段的唯一職責是回答「我現在看得見嗎」，**不看服務健康與否**。
 signal=ok
-sig_status=ok        # 對外的封閉詞彙，與內部的 signal 分開：ok|bootstrap|in_flight|monitor_blind
+sig_status=ok        # 對外封閉詞彙：ok|bootstrap|in_flight|monitor_blind（內部 signal 另有 cached）
 sig_reason=
 sig_severity=
 sig_detail=
@@ -314,6 +405,40 @@ elif [ "$timer_enabled" = disabled ]; then
 elif [ "$timer_active" != active ]; then
     signal=blind; sig_status=monitor_blind; sig_severity=CRITICAL; sig_reason=timer_inactive
     sig_detail="$TIMER_UNIT 不在 active（state=${timer_active:-unknown}）——不會再觸發探測"
+elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ] \
+     && [ "$probe_start_mono" -gt 0 ] \
+     && [ $(( (now_mono_us - probe_start_mono) / 1000000 )) -gt "$PROBE_MAX_INFLIGHT" ]; then
+    # 探針執行超過契約上限（3×5s ＋ 2×15s = 45s，unit 硬上限 90s）。
+    # systemd 應該已經砍掉它卻沒有 ⇒ 探針本身卡住，是監控故障不是服務故障。
+    inflight_age=$(( (now_mono_us - probe_start_mono) / 1000000 ))
+    signal=blind; sig_status=monitor_blind; sig_severity=CRITICAL; sig_reason=probe_stuck
+    sig_detail="探針已執行 ${inflight_age}s，超過上限 ${PROBE_MAX_INFLIGHT}s（契約最壞 45s、unit 上限 90s）"
+elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ] && [ "$obs_mono" -gt 0 ]; then
+    # ── 這是 2026-08-20 中斷修掉的那一條 ────────────────────────────────
+    # 探針正在執行，但**我們記得上一次的結論**。
+    #
+    # `in_flight` 是觀測的**生命週期**，不是健康結論。舊版把它當結論用
+    # （web action=skip），於是「越是中斷、探針越慢、P5 越容易只看到 in_flight」——
+    # 中斷期間 P4 每輪執行 46 秒（佔 P5 週期 35%），連續兩次撞上就整場靜默。
+    #
+    # 這裡改為沿用上一筆已完成的觀測來判 web，但**仍不解除 monitor 事件**
+    # （「正在跑」不等於「有一筆新的完成觀測」）。
+    obs_age=$(( (now_mono_us - obs_mono) / 1000000 ))
+    [ "$obs_age" -lt 0 ] && obs_age=0
+    if [ "$obs_age" -gt "$BLIND_CRITICAL_SECONDS" ]; then
+        signal=blind; sig_status=monitor_blind; sig_severity=CRITICAL; sig_reason=observation_stale
+        sig_detail="探針執行中，且上一筆完成的觀測已 ${obs_age}s（升級門檻 ${BLIND_CRITICAL_SECONDS}s）"
+    elif [ "$obs_age" -gt "$OBS_TRUST_SECONDS" ]; then
+        # **漏讀，不是過期。** 快取比「一個 P4 週期＋一次執行」還舊 ⇒ P4 至少完成過
+        # 一輪而我們沒讀到，那筆結果是什麼並不知道。此時沿用舊結論等於用一筆可能
+        # 已被推翻的觀測代替現實——2026-08-20 的靜默中斷就是這樣發生的。
+        signal=blind; sig_status=monitor_blind; sig_severity=WARNING; sig_reason=observation_missed
+        sig_detail="探針執行中，且上一筆完成的觀測已 ${obs_age}s > 信任上限 ${OBS_TRUST_SECONDS}s ⇒ 期間至少漏讀一輪"
+    else
+        # **舊的結論仍然有效**：不新鮮到過期，就不該被「有新的一輪正在跑」抹掉。
+        signal=cached; sig_status=in_flight; sig_reason=probe_in_flight
+        sig_detail="探針執行中；沿用 ${obs_age}s 前已完成的觀測（status=$(_last_label "$obs_status")）"
+    fi
 elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ]; then
     # 探針正在執行：ExecMain* 描述的是一次**進行中**的呼叫，不是可消費的觀測。
     #
@@ -360,26 +485,39 @@ case "$signal" in
     ok)        run_state_machine "$MONITOR_COMPONENT" healthy ""             monitor_ok           "$probe_mono" ok            "" ;;
     bootstrap) run_state_machine "$MONITOR_COMPONENT" hold    ""             "$sig_reason"        "$probe_mono" bootstrap     "$sig_detail" ;;
     in_flight) run_state_machine "$MONITOR_COMPONENT" hold    ""             "$sig_reason"        "$probe_mono" in_flight     "$sig_detail" ;;
+    cached)    run_state_machine "$MONITOR_COMPONENT" hold    ""             "$sig_reason"        "$probe_mono" in_flight     "$sig_detail" ;;
     blind)     run_state_machine "$MONITOR_COMPONENT" failing "$sig_severity" "$sig_reason"       "$probe_mono" monitor_blind "$sig_detail" ;;
 esac
 
 # ── 元件二：web 服務 ──────────────────────────────────────────────────────
 # **訊號不可信時完全不碰 web 的狀態檔。** 讓進行中的 web 事件維持 FIRING：
 # 「我看不見了」不是「已經好了」，把它當成恢復會在真正的中斷中途送出 RESOLVED。
-if [ "$signal" != ok ]; then
+if [ "$signal" != ok ] && [ "$signal" != cached ]; then
     load_state "$COMPONENT"
     emit "$sig_status" skip none "$st_state" "signal_$sig_reason" no "$COMPONENT"
     exit "$EXIT_OK"
 fi
 
+# 判 web 用的是哪一筆觀測：signal=ok 用剛讀到的，signal=cached 用記憶中的上一筆。
+# **兩者都帶各自的 monotonic 當游標**，所以同一筆觀測不會在多輪 in-flight 中被重複計數。
+if [ "$signal" = cached ]; then
+    web_status="$obs_status"; web_obs="$obs_mono"; web_result="$obs_result"
+    web_detail_suffix="（沿用執行中前一筆完成的觀測）"
+else
+    web_status="$probe_status"; web_obs="$probe_mono"; web_result="$probe_result"
+    web_detail_suffix=""
+    # 只有真正讀到一筆完成的觀測時才更新記憶
+    save_obs_cache "$probe_mono" "$probe_status" "$probe_result"
+fi
+
 # P4 的退出碼契約：0 健康／3 寬限（視為健康）／1,2 服務故障／4 探針自身錯誤
-case "$probe_status" in
-    0|3) run_state_machine "$COMPONENT" healthy "" healthy "$probe_mono" ok "" ;;
-    1|2) run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_$probe_status" "$probe_mono" web_incident \
-             "探針回報失敗（exit=$probe_status result=$probe_result）" ;;
-    4)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_4" "$probe_mono" web_incident \
-             "探針自己不能執行（exit=4 result=$probe_result）——是「我不知道」不是「壞了」" ;;
-    *)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_unknown" "$probe_mono" web_incident \
-             "探針回報未知退出碼（exit=$probe_status result=$probe_result）" ;;
+case "$web_status" in
+    0|3) run_state_machine "$COMPONENT" healthy "" healthy "$web_obs" ok "" ;;
+    1|2) run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_$web_status" "$web_obs" web_incident \
+             "探針回報失敗（exit=$web_status result=$web_result）${web_detail_suffix}" ;;
+    4)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_4" "$web_obs" web_incident \
+             "探針自己不能執行（exit=4 result=$web_result）——是「我不知道」不是「壞了」${web_detail_suffix}" ;;
+    *)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_unknown" "$web_obs" web_incident \
+             "探針回報未知退出碼（exit=$web_status result=$web_result）${web_detail_suffix}" ;;
 esac
 exit "$EXIT_OK"

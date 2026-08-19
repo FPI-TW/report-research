@@ -136,6 +136,14 @@ class _Harness:
         env.pop("REPORT_MARK_ALERT_WEBHOOK", None)
         if self.webhook:
             env["REPORT_MARK_ALERT_WEBHOOK"] = self.webhook
+        # **空窗上限一律明確宣告，預設壓到 1 秒。**
+        # 這一類錯誤在 2026-08-19 犯了兩次、兩輪 CI 都紅在它：測試用
+        # `timer_enter_mono=1` 表達「timer 早就 active」，於是 bootstrap_age 實際上
+        # 等於**宿主的 uptime**——開發機數十小時遠超 300 秒預設而綠，剛開機的 CI
+        # runner 數十秒卻落在空窗內而紅。逐條修不會收斂（第二次就是在修完第一條之後
+        # 於新測試裡重犯），所以改在 harness 層兜住：任何跑得動測試的機器 uptime 都
+        # 大於 1 秒，判定於是與 uptime 無關；想測 bootstrap 語意的測試自己傳大值覆蓋。
+        env.setdefault("INCIDENT_BOOTSTRAP_SECONDS", "1")
         env.update(env_extra)
         return subprocess.run(
             ["bash", str(HANDLER)], capture_output=True, text=True, env=env, timeout=60
@@ -155,6 +163,26 @@ class _Harness:
     @staticmethod
     def boot_id() -> str:
         return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+    def set_observation_age(self, seconds: float):
+        """把最後一筆觀測設成「距今 N 秒」。
+
+        **不要用 `mono = 1_000_000`（開機後 1 秒）來表達「很舊」**——那個值有多舊
+        取決於宿主 uptime：開發機上是數十小時前，剛開機的 CI runner 上只有數十秒前。
+
+        **也不要 `max(0, ...)` 了事**：單調時鐘的原點是本次開機，所以在剛開機的機器上
+        「一小時前」根本不存在，夾成 0 之後測試會**靜默改成在走 observation_missing
+        分支**——那比紅燈更糟。這裡改成明確斷言，要求年齡必須是這台機器上真的表達得出
+        來的值；配合小門檻使用（例如 age=5 搭 STALE=1）。
+        """
+        now = self._now_mono()
+        need = int(seconds * 1_000_000)
+        assert now > need, (
+            f"無法在此機器上表達「距今 {seconds}s 的觀測」："
+            f"uptime 只有 {now / 1_000_000:.1f}s。請改用更小的年齡與門檻。"
+        )
+        self.mono = now - need
+        self._write_fakes()
 
     def set_timer(self, **kw):
         """翻轉訊號源那一維（enabled/active/load/enter_mono），其餘不動。"""
@@ -283,9 +311,9 @@ class StateMachineTests(unittest.TestCase):
 
     def test_stale_probe_is_a_monitor_incident_not_a_web_incident(self):
         """P4 停止產出＝**監控失明**，不是服務故障。兩者必須是不同元件的事件。"""
-        self.h.mono = 1_000_000          # 開機後 1 秒，距今必然很久
-        self.h._write_fakes()
-        p = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
+        # age=5／STALE=1：小到任何機器的 uptime 都表達得出來，大到穩定超過門檻
+        self.h.set_observation_age(5)
+        p = self.h.run(INCIDENT_STALE_SECONDS="1", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
         m = monitor_emit(p.stdout)
         self.assertEqual(m["status"], "monitor_blind")
         self.assertEqual(m["reason"], "observation_stale")
@@ -297,11 +325,10 @@ class StateMachineTests(unittest.TestCase):
 
     def test_long_blindness_escalates_to_critical(self):
         """「暫時看不見」惡化成「很久看不見」必須升級，而且不能等 30 分鐘的提醒週期。"""
-        self.h.mono = 1_000_000
-        self.h._write_fakes()
-        p1 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
+        self.h.set_observation_age(5)
+        p1 = self.h.run(INCIDENT_STALE_SECONDS="1", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
         self.assertEqual(monitor_emit(p1.stdout)["severity"], "WARNING")
-        p2 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="60")
+        p2 = self.h.run(INCIDENT_STALE_SECONDS="1", INCIDENT_BLIND_CRITICAL_SECONDS="2")
         m = monitor_emit(p2.stdout)
         self.assertEqual(m["action"], "escalated")
         self.assertEqual(m["severity"], "CRITICAL")
@@ -312,7 +339,7 @@ class StateMachineTests(unittest.TestCase):
         self.h.mono = 0
         # timer 剛進入 active（單調時鐘上就在剛才）
         self.h.set_timer(timer_enter_mono=self.h._now_mono())
-        p = self.h.run()
+        p = self.h.run(INCIDENT_BOOTSTRAP_SECONDS="300")
         m = monitor_emit(p.stdout)
         self.assertEqual(m["status"], "bootstrap")
         self.assertEqual(m["reason"], "awaiting_first_probe")
@@ -335,7 +362,7 @@ class StateMachineTests(unittest.TestCase):
         """
         self.h.mono = 0
         self.h.set_timer(timer_enter_mono=1)   # timer 自開機起就 active
-        p = self.h.run(INCIDENT_BOOTSTRAP_SECONDS="1")
+        p = self.h.run()          # 不傳＝用 harness 的預設，證明預設有效
         m = monitor_emit(p.stdout)
         self.assertEqual(m["status"], "monitor_blind", p.stdout)
         self.assertEqual(m["reason"], "observation_missing")
@@ -350,7 +377,7 @@ class StateMachineTests(unittest.TestCase):
         """
         self.h.mono = 0
         self.h.set_timer(timer_enter_mono=1)
-        blind = monitor_emit(self.h.run(INCIDENT_BOOTSTRAP_SECONDS="1").stdout)
+        blind = monitor_emit(self.h.run().stdout)
         self.assertEqual(blind["status"], "monitor_blind")
         h2 = _Harness(webhook="http://example.invalid/hook", mono=0, timer_enter_mono=1)
         self.addCleanup(h2.close)
@@ -587,11 +614,10 @@ class StrandedIncidentTests(unittest.TestCase):
 
     def test_monitor_blind_still_gets_reminders(self):
         """監控失明後，第一則之後不得永遠靜音。"""
-        self.h.mono = 1_000_000
-        self.h._write_fakes()
-        p1 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
+        self.h.set_observation_age(5)
+        p1 = self.h.run(INCIDENT_STALE_SECONDS="1", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
         self.assertEqual(monitor_emit(p1.stdout)["action"], "firing")
-        p2 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="99999999",
+        p2 = self.h.run(INCIDENT_STALE_SECONDS="1", INCIDENT_BLIND_CRITICAL_SECONDS="99999999",
                         INCIDENT_REMINDER_SECONDS="0")
         self.assertEqual(monitor_emit(p2.stdout)["action"], "reminder")
         self.assertEqual(self.h.webhook_calls(), 2)
@@ -808,6 +834,16 @@ class MonitorSignalTests(unittest.TestCase):
         self.assertEqual(m["status"], "monitor_blind")
         self.assertEqual(m["reason"], "observation_missing")
 
+    def test_harness_always_declares_the_bootstrap_window(self):
+        """守住 harness 層的修正：預設不得留給宿主 uptime 決定。
+
+        這條測 harness 自己，不測腳本——因為缺陷兩次都出在 harness 沒宣告維度。
+        """
+        import inspect
+        src = inspect.getsource(_Harness.run)
+        self.assertIn("INCIDENT_BOOTSTRAP_SECONDS", src, "harness.run() 必須明確宣告空窗上限")
+        self.assertIn("setdefault", src, "必須是 setdefault，讓個別測試仍可覆蓋")
+
     def test_timer_has_jitter_to_avoid_systematic_collision(self):
         """P5 的 timer 必須帶抖動：與 P4 同為 2 分鐘週期，實測會系統性同秒觸發。"""
         vals = _directives(TIMER, "RandomizedDelaySec")
@@ -852,7 +888,7 @@ class MonitorSignalTests(unittest.TestCase):
         # timer 回來了，但還沒有觀測（仍在 bootstrap 空窗內）
         self.h.set_timer(timer_enabled="enabled", timer_active="active",
                          timer_enter_mono=self.h._now_mono(), mono=0)
-        p = self.h.run()
+        p = self.h.run(INCIDENT_BOOTSTRAP_SECONDS="300")
         self.assertNotEqual(monitor_emit(p.stdout)["action"], "resolved")
         self.assertEqual(self.h.monitor_state["state"], "FIRING",
                          "沒有新觀測就宣告恢復＝把失明當成健康")
@@ -861,7 +897,7 @@ class MonitorSignalTests(unittest.TestCase):
     def test_reboot_with_no_first_probe_is_bootstrap(self):
         self.h.mono = 0
         self.h.set_timer(timer_enter_mono=self.h._now_mono())
-        p = self.h.run()
+        p = self.h.run(INCIDENT_BOOTSTRAP_SECONDS="300")
         self.assertEqual(monitor_emit(p.stdout)["status"], "bootstrap")
         self.assertEqual(self.h.webhook_calls(), 0)
 

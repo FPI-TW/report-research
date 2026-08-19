@@ -194,7 +194,7 @@ db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日
 # best-effort（失敗只 log、不 exit），所以連續失敗永遠不會讓 unit 變紅 ⇒ OnFailure
 # 一次都不觸發。純 SQL、零 LLM、零寫入，rc 0＝新鮮／1＝停更／2＝查不到（DB 不可用，
 # 處置不同故刻意分流）。平時由 report-mark-freshness.timer 每日 08:30 跑。
-freshness:  ## 批次停更偵測（純 SQL、零 LLM；rc 0 新鮮／1 停更／2 查不到）
+freshness:  ## 管線與批次停更偵測（純 SQL、零 LLM；rc 0 PASS／1 資產停更／2 DB 查不到／3 管線停跑）
 	uv run python scripts/check_batch_freshness.py
 
 # 與 freshness 分工：那支量「批次有沒有在前進」，這支量「已產出的資料有沒有互相

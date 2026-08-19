@@ -1288,6 +1288,34 @@ class InFlightObservationTests(unittest.TestCase):
         self.assertNotEqual(monitor_emit(p4.stdout)["action"], "firing")
         self.assertEqual(self.h.webhook_calls(), 1)
 
+    def test_last_completed_age_describes_the_observation_actually_used(self):
+        """**欄位必須描述本輪實際用的那一筆，不是上一輪消費的那筆。**
+
+        初版在載入快取當下就算好，於是 signal=ok 時顯示的是上一輪的觀測，年齡累積成
+        「上一輪間隔 ＋ 那筆當時的年齡」。2026-08-20 部署後實測顯示 239s／255s，
+        而快取其實完全同步、真實年齡只有 83.6s——逼近 OBS_TRUST=240 的門檻值，
+        會讓人以為觀測已經四分鐘沒更新。
+        """
+        # 先讓快取裡是一筆「很舊」的觀測
+        self.h.seed_observation(0, age_seconds=30, result="success")
+        # 本輪讀到一筆全新的完成觀測（probe idle）
+        self.h.set_timer(probe_state="inactive", exit_status=0, result="success",
+                         mono=self.h._now_mono())
+        w = last_emit(self._run().stdout)
+        self.assertEqual(w["current_probe"], "idle")
+        self.assertEqual(w["last_completed"], "ok")
+        self.assertLess(int(w["last_completed_age"]), 5,
+                        f"應描述本輪那筆新鮮觀測，實得 {w['last_completed_age']}s")
+
+    def test_last_completed_age_uses_cache_when_in_flight(self):
+        self.h.seed_observation(1, age_seconds=2, result="exit-code")
+        self._inflight()
+        w = last_emit(self._run().stdout)
+        self.assertEqual(w["current_probe"], "in_flight")
+        self.assertEqual(w["last_completed"], "fail")
+        self.assertGreaterEqual(int(w["last_completed_age"]), 2)
+        self.assertLess(int(w["last_completed_age"]), 10)
+
     def test_no_scenario_exceeds_a_plausible_ci_uptime(self):
         """**測測試自己。** 這一類錯誤 2026-08 已經犯了三次：
 

@@ -381,6 +381,15 @@ last_completed_age=<秒>|-
 
 只印 `status=in_flight action=skip` 正是 2026-08-20 那次沒有人看得出問題的原因。
 
+**這三個欄位描述「本輪實際使用的那一筆觀測」，不是「快取裡當時放著什麼」，而計算位置必須在 monitor 分派之前。**
+兩者都是實測踩出來的：初版在載入快取當下就算好，於是 `signal=ok`（本輪讀到新鮮觀測）時欄位顯示的是**上一輪消費的那筆**，
+年齡累積成「上一輪間隔 ＋ 那筆當時的年齡」——2026-08-20 實測印出 239s／255s，而快取其實完全同步、真實年齡只有 83.6s。
+第二版把重算放進 web 分派，但 monitor 的狀態機**在那之前**就已經 emit，於是同一輪印出
+`component=web last_completed_age=58` 與 `component=monitor last_completed_age=179` 兩個互相矛盾的數字。
+判斷邏輯兩次都不受影響（`signal=ok` 用的一直是本輪的 `probe_mono`），但那個數字逼近 `OBS_TRUST_SECONDS=240` 的門檻值，
+**會讓人誤判的欄位本身就是缺陷**，而「一半正確的輸出」比全錯更難察覺。`tests/test_incident_handler.py` 的
+`test_both_component_lines_report_the_same_observation` 釘住兩行必須一致。
+
 ## 批次停更偵測（2026-07-30）
 
 ### 為什麼 `OnFailure` 不夠

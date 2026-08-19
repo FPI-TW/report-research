@@ -1288,6 +1288,31 @@ class InFlightObservationTests(unittest.TestCase):
         self.assertNotEqual(monitor_emit(p4.stdout)["action"], "firing")
         self.assertEqual(self.h.webhook_calls(), 1)
 
+    def test_both_component_lines_report_the_same_observation(self):
+        """**兩行描述同一輪，欄位不得互相矛盾。**
+
+        2026-08-20 部署後實測到 `component=web last_completed_age=58` 而
+        `component=monitor` 是 179——因為重算被放在 web 分派裡，monitor 早就 emit 過了。
+        同一個缺陷只修好一半，而「一半正確的輸出」比全錯更難察覺。
+        """
+        self.h.set_timer(probe_state="inactive", exit_status=0, result="success",
+                         mono=self.h._now_mono())
+        out = self._run().stdout
+        w, m = last_emit(out), monitor_emit(out)
+        self.assertEqual(w["last_completed"], m["last_completed"], out)
+        self.assertEqual(w["last_completed_age"], m["last_completed_age"], out)
+        self.assertEqual(w["current_probe"], m["current_probe"])
+        self.assertLess(int(w["last_completed_age"]), 5)
+
+    def test_both_lines_agree_while_in_flight(self):
+        self.h.seed_observation(1, age_seconds=3, result="exit-code")
+        self._inflight()
+        out = self._run().stdout
+        w, m = last_emit(out), monitor_emit(out)
+        self.assertEqual(w["last_completed"], "fail")
+        self.assertEqual(m["last_completed"], "fail")
+        self.assertEqual(w["last_completed_age"], m["last_completed_age"])
+
     def test_last_completed_age_describes_the_observation_actually_used(self):
         """**欄位必須描述本輪實際用的那一筆，不是上一輪消費的那筆。**
 

@@ -20,6 +20,13 @@ dependencies = [
     # 簡體→繁體字形正規化（app/services/zh_hant.py）。純 Python + JSON 詞典，
     # 無 C 擴充；只有批次會用到，web 不載入（轉換器延後建構）。
     "opencc-python-reimplemented>=0.1.7",
+    # torch 必須是 **direct** dependency，否則 [tool.uv.sources] 對它無效。
+    # 實測（2026-08-19，spike/cpu-only-pytorch）：在此之前 torch 只是
+    # FlagEmbedding／sentence-transformers／accelerate／peft 的遞移相依，
+    # uv.lock 裡它來自 pypi.org/simple、`download.pytorch.org` 出現 0 次，
+    # 且連帶鎖進 16 個 nvidia-*／triton 套件（實測佔 3.4 GiB）。
+    # uv 的 sources 只作用在 direct dependency 上，所以那個 pin 從未生效過。
+    "torch>=2.12,<2.13",
 ]
 
 [dependency-groups]

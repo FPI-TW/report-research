@@ -1045,6 +1045,20 @@ class InFlightObservationTests(unittest.TestCase):
         self.h = _Harness(webhook="http://example.invalid/hook")
         self.addCleanup(self.h.close)
 
+    # **所有情境用小尺度表達。** 真實中斷的數字（138s/272s）超過 CI runner 的 uptime
+    # （實測 85.6s），單調時鐘上根本不存在那麼久以前——2026-08-20 這批測試第一次
+    # 送 CI 就是這樣紅的。門檻等比例縮小後，語意完全相同而與 uptime 無關；
+    # 預設值的真實數字改由 test_default_thresholds_are_derived_from_p4_contract 靜態釘住。
+    SCALED = {
+        "INCIDENT_OBS_TRUST_SECONDS": "6",
+        "INCIDENT_BLIND_CRITICAL_SECONDS": "20",
+        "INCIDENT_STALE_SECONDS": "12",
+        "INCIDENT_PROBE_MAX_INFLIGHT": "10",
+    }
+
+    def _run(self, **env):
+        return self.h.run(**{**self.SCALED, **env})
+
     def _inflight(self, **kw):
         """讓探針處於執行中（ExecMain* 被 systemd 歸零）。"""
         kw.setdefault("probe_state", "activating")
@@ -1054,9 +1068,9 @@ class InFlightObservationTests(unittest.TestCase):
 
     # ── CASE 1 ────────────────────────────────────────────────────────────
     def test_completed_ok_then_short_inflight_is_not_an_incident(self):
-        self.h.seed_observation(0, age_seconds=30, result="success")
+        self.h.seed_observation(0, age_seconds=2, result="success")
         self._inflight()
-        p = self.h.run()
+        p = self._run()
         w = last_emit(p.stdout)
         self.assertEqual(w["action"], "noop", p.stdout)
         self.assertEqual(w["incident"], "CLOSED")
@@ -1068,9 +1082,9 @@ class InFlightObservationTests(unittest.TestCase):
     # ── CASE 2：這是修掉真實中斷的那一條 ──────────────────────────────────
     def test_completed_fail_then_inflight_opens_web_incident(self):
         """**絕不能 action=skip 讓 outage 消失。**"""
-        self.h.seed_observation(1, age_seconds=30, result="exit-code")
+        self.h.seed_observation(1, age_seconds=2, result="exit-code")
         self._inflight()
-        p = self.h.run()
+        p = self._run()
         w = last_emit(p.stdout)
         self.assertEqual(w["action"], "firing", p.stdout)
         self.assertEqual(w["severity"], "CRITICAL")
@@ -1082,42 +1096,42 @@ class InFlightObservationTests(unittest.TestCase):
 
     # ── CASE 3 ────────────────────────────────────────────────────────────
     def test_fail_inflight_fail_does_not_duplicate_firing(self):
-        self.h.seed_observation(1, age_seconds=30, result="exit-code")
+        self.h.seed_observation(1, age_seconds=2, result="exit-code")
         self._inflight()
-        self.h.run()
+        self._run()
         self.h.set_timer(probe_state="inactive", exit_status=1, result="exit-code",
                          mono=self.h._now_mono())
-        self.h.run()
+        self._run()
         self.assertEqual(self.h.webhook_calls(), 1, "同一事件重複 FIRING")
         self.assertEqual(self.h.state["state"], "FIRING")
 
     # ── CASE 4 ────────────────────────────────────────────────────────────
     def test_fail_inflight_then_ok_resolves_once(self):
-        self.h.seed_observation(1, age_seconds=30, result="exit-code")
+        self.h.seed_observation(1, age_seconds=2, result="exit-code")
         self._inflight()
-        self.h.run()
+        self._run()
         self.h.set_timer(probe_state="inactive", exit_status=0, result="success",
                          mono=self.h._now_mono())
-        p = self.h.run()
+        p = self._run()
         self.assertEqual(last_emit(p.stdout)["action"], "resolved")
         self.assertEqual(self.h.webhook_calls(), 2)
         self.assertEqual(self.h.state, {})
 
     # ── CASE 5 ────────────────────────────────────────────────────────────
     def test_repeated_short_inflight_after_ok_never_false_positives(self):
-        self.h.seed_observation(0, age_seconds=20, result="success")
+        self.h.seed_observation(0, age_seconds=2, result="success")
         for _ in range(4):
             self._inflight()
-            p = self.h.run()
+            p = self._run()
             self.assertEqual(last_emit(p.stdout)["action"], "noop", p.stdout)
         self.assertEqual(self.h.webhook_calls(), 0)
 
     # ── CASE 6 ────────────────────────────────────────────────────────────
     def test_inflight_beyond_max_duration_is_probe_stuck(self):
         """超過 P4 契約上限（45s，unit 硬上限 90s）代表探針卡住，不是服務故障。"""
-        self.h.seed_observation(0, age_seconds=20, result="success")
-        self._inflight(probe_start_mono=self.h._now_mono() - 200_000_000)  # 已跑 200s
-        p = self.h.run()
+        self.h.seed_observation(0, age_seconds=2, result="success")
+        self._inflight(probe_start_mono=self.h._now_mono() - 20_000_000)  # 已跑 20s > 上限 10s
+        p = self._run()
         m = monitor_emit(p.stdout)
         self.assertEqual(m["status"], "monitor_blind", p.stdout)
         self.assertEqual(m["reason"], "probe_stuck")
@@ -1127,14 +1141,14 @@ class InFlightObservationTests(unittest.TestCase):
     # ── CASE 7／8：無任何已完成觀測 ────────────────────────────────────────
     def test_no_completed_observation_inflight_within_bootstrap(self):
         self._inflight(timer_enter_mono=self.h._now_mono())
-        m = monitor_emit(self.h.run(INCIDENT_BOOTSTRAP_SECONDS="300").stdout)
+        m = monitor_emit(self._run(INCIDENT_BOOTSTRAP_SECONDS="300").stdout)
         self.assertEqual(m["status"], "in_flight")
         self.assertEqual(m["last_completed"], "none")
         self.assertEqual(self.h.webhook_calls(), 0)
 
     def test_no_completed_observation_not_inflight_beyond_bootstrap_is_blind(self):
         self.h.set_timer(probe_state="inactive", mono=0, timer_enter_mono=1)
-        m = monitor_emit(self.h.run().stdout)
+        m = monitor_emit(self._run().stdout)
         self.assertEqual(m["status"], "monitor_blind")
         self.assertEqual(m["reason"], "observation_missing")
 
@@ -1145,9 +1159,9 @@ class InFlightObservationTests(unittest.TestCase):
         00:47:26 讀到 OK；P4 在 00:49:49 完成一筆 fail 而 P5 沒讀到；
         00:51:58 再取樣時快取已 272s。若無信任上限就會沿用那筆 OK 而繼續靜默。
         """
-        self.h.seed_observation(0, age_seconds=272, result="success")
+        self.h.seed_observation(0, age_seconds=10, result="success")   # 真實中斷的 272s，等比縮小
         self._inflight()
-        p = self.h.run()
+        p = self._run()
         m = monitor_emit(p.stdout)
         self.assertEqual(m["status"], "monitor_blind", p.stdout)
         self.assertEqual(m["reason"], "observation_missed")
@@ -1156,16 +1170,16 @@ class InFlightObservationTests(unittest.TestCase):
 
     def test_cache_within_trust_window_is_still_used(self):
         """138s（一個週期內）時沿用 OK 是**正確**的——那當下確實是最新的已完成觀測。"""
-        self.h.seed_observation(0, age_seconds=138, result="success")
+        self.h.seed_observation(0, age_seconds=3, result="success")    # 真實中斷的 138s，等比縮小
         self._inflight()
-        w = last_emit(self.h.run().stdout)
+        w = last_emit(self._run().stdout)
         self.assertEqual(w["action"], "noop")
         self.assertEqual(w["last_completed"], "ok")
 
     def test_very_old_cache_escalates_to_critical(self):
-        self.h.seed_observation(0, age_seconds=1000, result="success")
+        self.h.seed_observation(0, age_seconds=30, result="success")
         self._inflight()
-        m = monitor_emit(self.h.run().stdout)
+        m = monitor_emit(self._run().stdout)
         self.assertEqual(m["reason"], "observation_stale")
         self.assertEqual(m["severity"], "CRITICAL")
 
@@ -1174,7 +1188,7 @@ class InFlightObservationTests(unittest.TestCase):
         self.h.seed_observation(1, age_seconds=30, result="exit-code",
                                 boot_id="00000000-1111-2222-3333-444444444444")
         self._inflight(timer_enter_mono=self.h._now_mono())
-        p = self.h.run(INCIDENT_BOOTSTRAP_SECONDS="300")
+        p = self._run(INCIDENT_BOOTSTRAP_SECONDS="300")
         w = last_emit(p.stdout)
         self.assertEqual(w["last_completed"], "none", "跨開機的快取不得沿用")
         self.assertEqual(w["action"], "skip")
@@ -1190,7 +1204,7 @@ class InFlightObservationTests(unittest.TestCase):
                 self.h.state_dir.mkdir(parents=True, exist_ok=True)
                 (self.h.state_dir / "probe_observation.state").write_text(content, encoding="utf-8")
                 self._inflight(timer_enter_mono=self.h._now_mono())
-                r = self.h.run(INCIDENT_BOOTSTRAP_SECONDS="300")
+                r = self._run(INCIDENT_BOOTSTRAP_SECONDS="300")
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                 self.assertNotIn("uid=", r.stdout, "快取內容被 shell 展開了")
                 self.assertTrue(monitor_emit(r.stdout))
@@ -1205,36 +1219,36 @@ class InFlightObservationTests(unittest.TestCase):
 
     # ── CASE 13／14：兩類事件並存與獨立解除 ────────────────────────────────
     def test_web_incident_from_cache_coexists_with_monitor_blind(self):
-        self.h.seed_observation(1, age_seconds=30, result="exit-code")
+        self.h.seed_observation(1, age_seconds=2, result="exit-code")
         self._inflight()
-        self.h.run()                                   # web FIRING（來自快取）
+        self._run()                                   # web FIRING（來自快取）
         self.assertEqual(self.h.state["state"], "FIRING")
         self.h.set_timer(timer_enabled="disabled", timer_active="inactive",
                          probe_state="inactive", mono=0)
-        self.h.run()                                   # monitor FIRING
+        self._run()                                   # monitor FIRING
         self.assertEqual(self.h.state["state"], "FIRING", "web 事件不得被覆蓋")
         self.assertEqual(self.h.monitor_state["state"], "FIRING")
 
     def test_monitor_recovery_does_not_resolve_web_from_cache(self):
-        self.h.seed_observation(1, age_seconds=30, result="exit-code")
+        self.h.seed_observation(1, age_seconds=2, result="exit-code")
         self._inflight()
-        self.h.run()
+        self._run()
         self.h.set_timer(probe_state="inactive", exit_status=1, result="exit-code",
                          mono=self.h._now_mono())
-        self.h.run()
+        self._run()
         self.assertEqual(self.h.state["state"], "FIRING")
         self.assertEqual(self.h.monitor_state.get("state", "CLOSED"), "CLOSED")
 
     # ── CASE 17：不同的失敗耗時 ───────────────────────────────────────────
     def test_semantics_hold_across_probe_durations(self):
-        for secs in (0.03, 5, 10, 30):
+        for secs in (0.03, 1, 3, 8):
             with self.subTest(inflight_seconds=secs):
                 h = _Harness(webhook="http://example.invalid/hook")
                 self.addCleanup(h.close)
-                h.seed_observation(1, age_seconds=30, result="exit-code")
+                h.seed_observation(1, age_seconds=2, result="exit-code")
                 h.set_timer(probe_state="activating", mono=0,
                             probe_start_mono=h._now_mono() - int(secs * 1_000_000))
-                w = last_emit(h.run().stdout)
+                w = last_emit(h.run(**self.SCALED).stdout)
                 self.assertEqual(w["action"], "firing", f"{secs}s: {w}")
                 self.assertEqual(h.webhook_calls(), 1)
 
@@ -1248,37 +1262,79 @@ class InFlightObservationTests(unittest.TestCase):
         # 第 1 輪：讀到一筆完成的 OK（中斷尚未開始）
         self.h.set_timer(probe_state="inactive", exit_status=0, result="success",
                          mono=self.h._now_mono())
-        self.h.run()
+        self._run()
         self.assertEqual(self.h.webhook_calls(), 0)
         self.assertEqual(self.h.observation_cache["status"], "0")
 
         # 第 2 輪：中斷開始，P5 落在執行窗內；快取 138s（信任窗內）→ 仍判健康，正確
-        self.h.seed_observation(0, age_seconds=138, result="success")
+        self.h.seed_observation(0, age_seconds=3, result="success")    # 真實 138s，信任窗內
         self._inflight()
-        p2 = self.h.run()
+        p2 = self._run()
         self.assertEqual(last_emit(p2.stdout)["action"], "noop")
 
         # 第 3 輪：又落在執行窗內，但快取已 272s → 漏讀 → 必須出聲
-        self.h.seed_observation(0, age_seconds=272, result="success")
+        self.h.seed_observation(0, age_seconds=10, result="success")   # 真實 272s，超過信任上限
         self._inflight()
-        p3 = self.h.run()
+        p3 = self._run()
         m3 = monitor_emit(p3.stdout)
         self.assertEqual(m3["status"], "monitor_blind", p3.stdout)
         self.assertEqual(m3["reason"], "observation_missed")
         self.assertEqual(self.h.webhook_calls(), 1, "漏讀必須且只發一次")
 
         # 第 4 輪：仍漏讀 → 不得重複 FIRING
-        self.h.seed_observation(0, age_seconds=400, result="success")
+        self.h.seed_observation(0, age_seconds=15, result="success")
         self._inflight()
-        p4 = self.h.run()
+        p4 = self._run()
         self.assertNotEqual(monitor_emit(p4.stdout)["action"], "firing")
         self.assertEqual(self.h.webhook_calls(), 1)
 
+    def test_no_scenario_exceeds_a_plausible_ci_uptime(self):
+        """**測測試自己。** 這一類錯誤 2026-08 已經犯了三次：
+
+        用真實世界的秒數（138s／272s／1000s）表達「多久以前」，在開發機（uptime 數十
+        小時）通過，在剛開機的 CI runner（實測 **85.6s**）卻因為單調時鐘上不存在那麼久
+        以前而失敗。`seed_observation` 的斷言會大聲擋下（不會靜默夾成 0），但那仍是紅燈。
+
+        情境一律用小尺度 ＋ 等比縮小的門檻表達；真實數字由
+        `test_default_thresholds_are_derived_from_p4_contract` 靜態釘住。
+        """
+        import re
+
+        src = Path(__file__).read_text(encoding="utf-8")
+        ages = [int(m) for m in re.findall(r"age_seconds=(\d+)", src)]
+        self.assertTrue(ages, "找不到任何 age_seconds，這條守門會失效")
+        self.assertLessEqual(
+            max(ages), 60,
+            f"有情境用了 {max(ages)}s 的年齡；CI runner uptime 實測僅 85.6s，"
+            "情境請改用小尺度並等比縮小門檻",
+        )
+        starts = [int(m) for m in re.findall(r"_now_mono\(\) - (\d[\d_]*)", src)]
+        if starts:
+            self.assertLessEqual(
+                max(starts), 60_000_000,
+                f"有情境用了 {max(starts)/1e6:.0f}s 的執行時長，同上",
+            )
+
+    def test_default_thresholds_are_derived_from_p4_contract(self):
+        """真實數字釘在這裡（情境測試用等比小尺度，因為 CI runner uptime 只有約 85s）。
+
+        OBS_TRUST=240：P4 每 ~130s 完成一輪，一個週期上界 140s ＋ unit 硬上限 90s = 230s。
+        PROBE_MAX_INFLIGHT=120：契約最壞 3×5s ＋ 2×15s = 45s，unit 硬上限 90s。
+        """
+        body = HANDLER.read_text(encoding="utf-8")
+        self.assertIn("INCIDENT_OBS_TRUST_SECONDS:-240", body)
+        self.assertIn("INCIDENT_PROBE_MAX_INFLIGHT:-120", body)
+        probe = (REPO_ROOT / "scripts" / "check_web_health.sh").read_text(encoding="utf-8")
+        self.assertIn("HEALTH_RETRIES:-3", probe, "門檻的推導前提是 3 次重試")
+        self.assertIn("HEALTH_RETRY_WAIT:-15", probe, "推導前提是每次等 15s")
+        unit = (SYSTEMD_DIR / "report-mark-health.service").read_text(encoding="utf-8")
+        self.assertIn("TimeoutStartSec=90", unit, "推導前提是 unit 硬上限 90s")
+
     def test_structured_output_exposes_lifecycle_and_conclusion_separately(self):
         """只印 status=in_flight action=skip 正是 operator 看不出問題的原因。"""
-        self.h.seed_observation(1, age_seconds=30, result="exit-code")
+        self.h.seed_observation(1, age_seconds=2, result="exit-code")
         self._inflight()
-        w = last_emit(self.h.run().stdout)
+        w = last_emit(self._run().stdout)
         for k in ("current_probe", "last_completed", "last_completed_age"):
             self.assertIn(k, w, f"缺欄位 {k}")
         self.assertIn(w["current_probe"], ("idle", "in_flight"))
@@ -1286,21 +1342,21 @@ class InFlightObservationTests(unittest.TestCase):
 
     def test_cache_is_written_only_on_a_completed_observation(self):
         self._inflight(timer_enter_mono=self.h._now_mono())
-        self.h.run(INCIDENT_BOOTSTRAP_SECONDS="300")
+        self._run(INCIDENT_BOOTSTRAP_SECONDS="300")
         self.assertEqual(self.h.observation_cache, {}, "執行中不得寫快取")
         self.h.set_timer(probe_state="inactive", exit_status=0, result="success",
                          mono=self.h._now_mono())
-        self.h.run()
+        self._run()
         self.assertEqual(self.h.observation_cache["status"], "0")
 
     def test_cache_is_a_separate_file_from_web_state(self):
         """web.state 在 RESOLVED 時會被 rm——快取不能跟著被抹掉。"""
         self.h.set_timer(probe_state="inactive", exit_status=1, result="exit-code",
                          mono=self.h._now_mono())
-        self.h.run()
+        self._run()
         self.h.set_timer(probe_state="inactive", exit_status=0, result="success",
                          mono=self.h._now_mono())
-        self.h.run()
+        self._run()
         self.assertEqual(self.h.state, {}, "web.state 應已移除")
         self.assertTrue(self.h.observation_cache, "觀測快取不得被一起刪掉")
 

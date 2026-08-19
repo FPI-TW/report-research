@@ -47,7 +47,10 @@ def _directives(path: Path, key: str) -> list[str]:
 class _Harness:
     """建立臨時的 state dir、fake systemctl 與 fake curl。"""
 
-    def __init__(self, exit_status=0, result="success", mono=None, webhook=None):
+    def __init__(self, exit_status=0, result="success", mono=None, webhook=None,
+                 timer_enabled="enabled", timer_active="active",
+                 timer_load="loaded", service_load="loaded",
+                 timer_enter_mono=0, show_rc=0):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.state_dir = self.root / "incidents"
@@ -56,6 +59,16 @@ class _Harness:
         self.webhook_log = self.root / "webhook.log"
         self.exit_status = exit_status
         self.result = result
+        # 訊號源（P4 timer）的狀態。預設是「健康且已跑很久」——絕大多數測試關心的是
+        # web 的狀態機，不該每一條都被迫宣告 timer；但**它仍是被明確宣告的**，
+        # 不是沿用執行主機的真實 systemd（那正是 P4 測試踩過的坑）。
+        self.timer_enabled = timer_enabled
+        self.timer_active = timer_active
+        self.timer_load = timer_load
+        self.service_load = service_load
+        # 0 = timer 老早就 active（bootstrap 空窗早已過完）
+        self.timer_enter_mono = timer_enter_mono
+        self.show_rc = show_rc
         # 預設用「現在」的單調時鐘，讓觀測看起來是新鮮的
         self.mono = mono if mono is not None else self._now_mono()
         self.webhook = webhook
@@ -68,12 +81,31 @@ class _Harness:
 
     def _write_fakes(self):
         sc = self.bin / "systemctl"
+        # 受控的 systemctl：**同時**表達 service 的執行結果與 timer 的存活狀態。
+        # 兩者缺一不可——2026-08-19 的實測顯示 timer 一旦 disabled，service 的
+        # ExecMain* 會當場被 GC 清空，只看 service 那一維根本分不出「還沒跑」與
+        # 「監控被停掉」。
         sc.write_text(
             "#!/usr/bin/env bash\n"
+            'verb="$1"; shift\n'
+            'unit="${1:-}"\n'
+            'case "$verb" in\n'
+            f'  is-enabled) printf \'%s\\n\' "{self.timer_enabled}"\n'
+            f'    [ "{self.timer_enabled}" = enabled ] && exit 0 || exit 1 ;;\n'
+            f'  is-active) printf \'%s\\n\' "{self.timer_active}"\n'
+            f'    [ "{self.timer_active}" = active ] && exit 0 || exit 3 ;;\n'
+            "esac\n"
+            f'[ "{self.show_rc}" -ne 0 ] && exit {self.show_rc}\n'
             'for a in "$@"; do case "$a" in\n'
-            f'  -p) ;; Result) echo "{self.result}"; exit 0 ;;\n'
-            f'  ExecMainStatus) echo "{self.exit_status}"; exit 0 ;;\n'
-            f'  ExecMainExitTimestampMonotonic) echo "{self.mono}"; exit 0 ;;\n'
+            "  LoadState)\n"
+            '    case "$unit" in\n'
+            f'      *.timer) printf \'%s\\n\' "{self.timer_load}" ;;\n'
+            f'      *)       printf \'%s\\n\' "{self.service_load}" ;;\n'
+            "    esac; exit 0 ;;\n"
+            f'  ActiveEnterTimestampMonotonic) printf \'%s\\n\' "{self.timer_enter_mono}"; exit 0 ;;\n'
+            f'  Result) printf \'%s\\n\' "{self.result}"; exit 0 ;;\n'
+            f'  ExecMainStatus) printf \'%s\\n\' "{self.exit_status}"; exit 0 ;;\n'
+            f'  ExecMainExitTimestampMonotonic) printf \'%s\\n\' "{self.mono}"; exit 0 ;;\n'
             "esac; done\n"
             "exit 0\n",
             encoding="utf-8",
@@ -116,6 +148,24 @@ class _Harness:
     def boot_id() -> str:
         return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
+    def set_timer(self, **kw):
+        """翻轉訊號源那一維（enabled/active/load/enter_mono），其餘不動。"""
+        for k, v in kw.items():
+            setattr(self, k, v)
+        self._write_fakes()
+
+    def state_of(self, component: str) -> dict:
+        f = self.state_dir / f"{component}.state"
+        if not f.is_file():
+            return {}
+        return dict(
+            ln.split("=", 1) for ln in f.read_text(encoding="utf-8").splitlines() if "=" in ln
+        )
+
+    @property
+    def monitor_state(self) -> dict:
+        return self.state_of("monitor")
+
     @property
     def state(self) -> dict:
         f = self.state_dir / "web.state"
@@ -138,9 +188,21 @@ def parse(line: str) -> dict:
     return dict(kv.split("=", 1) for kv in line.strip().split() if "=" in kv)
 
 
-def last_emit(stdout: str) -> dict:
-    lines = [ln for ln in stdout.splitlines() if "handler=incident" in ln]
+def last_emit(stdout: str, component: str = "web") -> dict:
+    """取指定元件的最後一行。
+
+    一輪現在會輸出兩行（monitor 一行、web 一行），因為訊號源本身也是被監控的對象。
+    預設取 web，讓既有的服務狀態機斷言維持原意。
+    """
+    lines = [
+        ln for ln in stdout.splitlines()
+        if "handler=incident" in ln and f"component={component} " in ln
+    ]
     return parse(lines[-1]) if lines else {}
+
+
+def monitor_emit(stdout: str) -> dict:
+    return last_emit(stdout, "monitor")
 
 
 class StateMachineTests(unittest.TestCase):
@@ -211,22 +273,60 @@ class StateMachineTests(unittest.TestCase):
         p = self.h.run()
         self.assertEqual(last_emit(p.stdout)["severity"], "WARNING")
 
-    def test_stale_probe_is_its_own_warning(self):
-        """P4 停止產出＝監控失明，必須有自己的訊號，不能靜默。"""
+    def test_stale_probe_is_a_monitor_incident_not_a_web_incident(self):
+        """P4 停止產出＝**監控失明**，不是服務故障。兩者必須是不同元件的事件。"""
         self.h.mono = 1_000_000          # 開機後 1 秒，距今必然很久
         self.h._write_fakes()
-        p = self.h.run(INCIDENT_STALE_SECONDS="60")
-        e = last_emit(p.stdout)
-        self.assertEqual(e["reason"], "probe_stale")
-        self.assertEqual(e["severity"], "WARNING")
+        p = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
+        m = monitor_emit(p.stdout)
+        self.assertEqual(m["status"], "monitor_blind")
+        self.assertEqual(m["reason"], "observation_stale")
+        self.assertEqual(m["severity"], "WARNING")
+        # web 的狀態機這一輪不得被推進——我們對 web 一無所知
+        w = last_emit(p.stdout)
+        self.assertEqual(w["action"], "skip")
+        self.assertEqual(w["reason"], "signal_observation_stale")
 
-    def test_probe_never_ran_is_noop_not_incident(self):
-        """P4 尚未部署時不得誤報成故障。"""
-        self.h.mono = 0
+    def test_long_blindness_escalates_to_critical(self):
+        """「暫時看不見」惡化成「很久看不見」必須升級，而且不能等 30 分鐘的提醒週期。"""
+        self.h.mono = 1_000_000
         self.h._write_fakes()
+        p1 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
+        self.assertEqual(monitor_emit(p1.stdout)["severity"], "WARNING")
+        p2 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="60")
+        m = monitor_emit(p2.stdout)
+        self.assertEqual(m["action"], "escalated")
+        self.assertEqual(m["severity"], "CRITICAL")
+        self.assertEqual(self.h.webhook_calls(), 2, "升級必須立刻送，不得被去重吞掉")
+
+    def test_no_observation_within_bootstrap_is_not_an_incident(self):
+        """剛開機／剛 enable、還沒跑第一輪：不得誤報。"""
+        self.h.mono = 0
+        # timer 剛進入 active（單調時鐘上就在剛才）
+        self.h.set_timer(timer_enter_mono=self.h._now_mono())
         p = self.h.run()
-        self.assertEqual(last_emit(p.stdout)["reason"], "probe_never_ran")
+        m = monitor_emit(p.stdout)
+        self.assertEqual(m["status"], "bootstrap")
+        self.assertEqual(m["reason"], "awaiting_first_probe")
+        self.assertEqual(m["action"], "noop")
         self.assertEqual(self.h.webhook_calls(), 0)
+
+    def test_no_observation_beyond_bootstrap_is_monitor_blind(self):
+        """**這是初版最危險的那條路徑。**
+
+        timer 看似正常卻始終沒有觀測，超過合理空窗就不能再說「還沒跑」。
+        初版在這裡 `emit noop probe_never_ran` 並早退——監控已經死了，
+        而 P5 每 2 分鐘回報一次沒事。
+        """
+        self.h.mono = 0
+        self.h.set_timer(timer_enter_mono=1)   # timer 早就 active
+        p = self.h.run()
+        m = monitor_emit(p.stdout)
+        self.assertEqual(m["status"], "monitor_blind")
+        self.assertEqual(m["reason"], "observation_missing")
+        self.assertEqual(m["severity"], "CRITICAL")
+        self.assertEqual(m["action"], "firing")
+        self.assertEqual(self.h.webhook_calls(), 1)
 
     def test_same_observation_does_not_double_count(self):
         """P5 的 timer 比 P4 快或抖動時，同一次探測結果不得被算兩次。"""
@@ -432,36 +532,39 @@ class StrandedIncidentTests(unittest.TestCase):
         self.h = _Harness(webhook="http://example.invalid/hook")
         self.addCleanup(self.h.close)
 
-    def test_open_incident_survives_probe_never_ran(self):
+    def test_open_web_incident_is_preserved_when_signal_is_lost(self):
+        """訊號消失時，進行中的 web 事件**既不得被解除、也不得被覆蓋**。
+
+        「我看不見了」不是「已經好了」。把它當成恢復，會在真正的中斷中途送出
+        RESOLVED——那比完全不告警更糟，因為它會讓人停止調查。
+        """
         self.h.mono = 0
-        self.h._write_fakes()
+        self.h.set_timer(timer_enabled="disabled", timer_active="inactive")
         self.h.seed_state(
             f"state=FIRING\nseverity=CRITICAL\nfirst_seen=1\nlast_notified=1\n"
             f"last_obs_monotonic=9\ncount=5\nboot_id={self.h.boot_id()}\n"
         )
         p = self.h.run()
-        e = last_emit(p.stdout)
         self.assertEqual(p.returncode, 0)
-        self.assertEqual(e["reason"], "probe_stale", "既有事件必須落到 stale 分支，不得早退")
-        self.assertEqual(e["action"], "reminder")
-        self.assertEqual(self.h.webhook_calls(), 1)
+        w = last_emit(p.stdout)
+        self.assertEqual(w["action"], "skip")
+        self.assertEqual(w["incident"], "FIRING", "web 事件必須仍然可見")
+        self.assertEqual(self.h.state["state"], "FIRING")
+        self.assertEqual(self.h.state["count"], "5", "web 狀態不得被監控事件改寫")
+        # 而失明本身必須大聲說出來
+        m = monitor_emit(p.stdout)
+        self.assertEqual(m["status"], "monitor_blind")
+        self.assertEqual(m["reason"], "timer_disabled")
 
-    def test_closed_state_with_probe_never_ran_is_still_noop(self):
-        """沒有事件時（例如 P4 尚未部署）仍不得誤報。"""
-        self.h.mono = 0
-        self.h._write_fakes()
-        p = self.h.run()
-        self.assertEqual(last_emit(p.stdout)["reason"], "probe_never_ran")
-        self.assertEqual(self.h.webhook_calls(), 0)
-
-    def test_stale_incident_still_gets_reminders(self):
-        """探針停掉後，第一則之後不得永遠靜音。"""
+    def test_monitor_blind_still_gets_reminders(self):
+        """監控失明後，第一則之後不得永遠靜音。"""
         self.h.mono = 1_000_000
         self.h._write_fakes()
-        p1 = self.h.run(INCIDENT_STALE_SECONDS="60")
-        self.assertEqual(last_emit(p1.stdout)["action"], "firing")
-        p2 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_REMINDER_SECONDS="0")
-        self.assertEqual(last_emit(p2.stdout)["action"], "reminder")
+        p1 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
+        self.assertEqual(monitor_emit(p1.stdout)["action"], "firing")
+        p2 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_BLIND_CRITICAL_SECONDS="99999999",
+                        INCIDENT_REMINDER_SECONDS="0")
+        self.assertEqual(monitor_emit(p2.stdout)["action"], "reminder")
         self.assertEqual(self.h.webhook_calls(), 2)
 
 
@@ -544,6 +647,220 @@ class MaliciousStateTests(unittest.TestCase):
         for field in ("st_first_seen", "st_last_notified", "st_last_obs_monotonic", "st_count"):
             with self.subTest(field=field):
                 self.assertRegex(body, rf'case "\${field}" in')
+
+
+class MonitorSignalTests(unittest.TestCase):
+    """**監控自己的監控。**
+
+    P5 的訊號來源是 P4 留在 systemd 裡的執行結果。2026-08-19 的生產部署實測發現
+    那個來源會消失：成功的 oneshot 在沒有引用時會被 GC，`ExecMainExitTimestampMonotonic`
+    歸 0，輸出與「從未執行過」**逐欄相同**；而 `systemctl disable` 那個 timer
+    會當場造成這件事。初版對此的反應是 `emit noop probe_never_ran` 並早退——
+    監控已經死了，P5 卻每 2 分鐘回報一次沒事。
+
+    這個類別釘死的不變量是：**訊號缺席永遠不得被當成健康。**
+    """
+
+    def setUp(self):
+        self.h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(self.h.close)
+
+    # ── 訊號源健康時 ─────────────────────────────────────────────────────
+    def test_healthy_timer_with_fresh_probe_is_normal(self):
+        p = self.h.run()
+        m = monitor_emit(p.stdout)
+        self.assertEqual(m["status"], "ok")
+        self.assertEqual(m["action"], "noop")
+        self.assertEqual(last_emit(p.stdout)["status"], "ok")
+        self.assertEqual(self.h.webhook_calls(), 0)
+
+    # ── 訊號源壞掉的五種形態 ─────────────────────────────────────────────
+    def _assert_blind(self, reason, severity="CRITICAL", **timer_kw):
+        self.h.set_timer(**timer_kw)
+        p = self.h.run()
+        m = monitor_emit(p.stdout)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(m["status"], "monitor_blind", p.stdout)
+        self.assertEqual(m["reason"], reason)
+        self.assertEqual(m["severity"], severity)
+        self.assertEqual(m["action"], "firing")
+        self.assertEqual(self.h.webhook_calls(), 1)
+        return p
+
+    def test_timer_disabled_is_monitor_blind(self):
+        # disable 會讓 systemd 回收 service 的執行結果——mono 一併歸 0，正如實測
+        self._assert_blind("timer_disabled", timer_enabled="disabled",
+                           timer_active="inactive", mono=0)
+
+    def test_timer_inactive_but_enabled_is_monitor_blind(self):
+        """enabled 但被 stop：實測顯示觀測值仍在，所以只看觀測新鮮度會漏判。
+
+        timer 停著就不會再有新觸發，觀測會慢慢變舊——但在變舊之前有一整段時間
+        看起來完全正常。必須直接檢查 is-active，不能等它過期。
+        """
+        self._assert_blind("timer_inactive", timer_active="inactive")
+
+    def test_timer_missing_is_monitor_blind(self):
+        self._assert_blind("timer_not_found", timer_enabled="not-found",
+                           timer_load="not-found")
+
+    def test_service_missing_is_monitor_blind(self):
+        self._assert_blind("service_not_found", service_load="not-found")
+
+    def test_systemctl_query_failure_is_monitor_blind_warning(self):
+        """查詢失敗是「我不知道」，不是「壞了」——WARNING 而非 CRITICAL。"""
+        self._assert_blind("query_failed", severity="WARNING", show_rc=1)
+
+    def test_missing_systemctl_is_tooling_not_healthy(self):
+        """systemctl 不存在時必須大聲失敗，不得落進任何 noop 分支。"""
+        env = dict(os.environ)
+        env["PATH"] = "/nonexistent"
+        env["INCIDENT_STATE_DIR"] = str(self.h.state_dir)
+        r = subprocess.run(["/usr/bin/bash", str(HANDLER)], capture_output=True,
+                           text=True, env=env, timeout=60)
+        self.assertEqual(r.returncode, 4)
+        self.assertIn("status=tooling", r.stdout)
+        self.assertIn("systemctl_not_found", r.stdout)
+
+    # ── web 事件與監控事件互不干擾 ───────────────────────────────────────
+    def test_web_and_monitor_incidents_coexist(self):
+        self.h.set_probe(1)
+        self.h.run()                                   # web FIRING
+        self.assertEqual(self.h.state["state"], "FIRING")
+        self.h.set_timer(timer_enabled="disabled", timer_active="inactive", mono=0)
+        self.h.run()                                   # monitor FIRING
+        self.assertEqual(self.h.state["state"], "FIRING", "web 事件不得被覆蓋")
+        self.assertEqual(self.h.monitor_state["state"], "FIRING")
+
+    def test_monitor_recovery_does_not_resolve_web_incident(self):
+        """監控恢復只代表「我又看得見了」，不代表服務好了。"""
+        self.h.set_probe(1)
+        self.h.run()
+        self.h.set_timer(timer_enabled="disabled", timer_active="inactive", mono=0)
+        self.h.run()
+        self.assertEqual(self.h.monitor_state["state"], "FIRING")
+        # timer 恢復，而且真的有一筆**新鮮的**觀測（仍是失敗）。
+        # 這裡刻意直接給當下的單調時戳：從 mono=0 累加只會得到「開機後 120 秒」，
+        # 那在開機已數十小時的機器上仍然是過期觀測。
+        self.h.set_timer(timer_enabled="enabled", timer_active="active",
+                         mono=self.h._now_mono(), exit_status=1, result="exit-code")
+        p = self.h.run()
+        self.assertEqual(monitor_emit(p.stdout)["action"], "resolved")
+        self.assertEqual(self.h.monitor_state, {}, "監控事件應已關閉")
+        self.assertEqual(self.h.state["state"], "FIRING", "web 事件必須仍然開著")
+
+    def test_monitor_recovery_requires_a_fresh_observation(self):
+        """**只看 is-active 就宣告恢復是錯的。**
+
+        timer 可以是 active 卻還沒產出任何觀測（剛 enable、或 GC 之後）。
+        那個瞬間我們仍然看不見任何東西，不能說已經恢復。
+        """
+        self.h.set_timer(timer_enabled="disabled", timer_active="inactive", mono=0)
+        self.h.run()
+        self.assertEqual(self.h.monitor_state["state"], "FIRING")
+        # timer 回來了，但還沒有觀測（仍在 bootstrap 空窗內）
+        self.h.set_timer(timer_enabled="enabled", timer_active="active",
+                         timer_enter_mono=self.h._now_mono(), mono=0)
+        p = self.h.run()
+        self.assertNotEqual(monitor_emit(p.stdout)["action"], "resolved")
+        self.assertEqual(self.h.monitor_state["state"], "FIRING",
+                         "沒有新觀測就宣告恢復＝把失明當成健康")
+
+    # ── 重開機 ───────────────────────────────────────────────────────────
+    def test_reboot_with_no_first_probe_is_bootstrap(self):
+        self.h.mono = 0
+        self.h.set_timer(timer_enter_mono=self.h._now_mono())
+        p = self.h.run()
+        self.assertEqual(monitor_emit(p.stdout)["status"], "bootstrap")
+        self.assertEqual(self.h.webhook_calls(), 0)
+
+    def test_reboot_does_not_reuse_previous_boot_monotonic(self):
+        """上一次開機的單調時鐘值可能遠大於現在，直接比對會把舊觀測當成新的。"""
+        (self.h.state_dir).mkdir(parents=True, exist_ok=True)
+        (self.h.state_dir / "monitor.state").write_text(
+            "state=FIRING\nseverity=CRITICAL\nfirst_seen=1\nlast_notified=1\n"
+            "last_obs_monotonic=999999999999999\ncount=3\nboot_id=stale-boot-id\n",
+            encoding="utf-8",
+        )
+        p = self.h.run()
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(monitor_emit(p.stdout)["action"], "resolved")
+
+    # ── 惡意／損毀輸入 ───────────────────────────────────────────────────
+    def test_malformed_systemctl_values_do_not_crash(self):
+        for label, kw in (
+            ("status=abc", {"exit_status": "abc"}),
+            ("mono 空", {"mono": ""}),
+            ("mono 負數", {"mono": "-1"}),
+            ("is-enabled 非預期", {"timer_enabled": "weird-value"}),
+            ("LoadState 非預期", {"timer_load": ";rm -rf /", "service_load": "$(id)"}),
+        ):
+            with self.subTest(case=label):
+                h = _Harness(**kw)
+                self.addCleanup(h.close)
+                r = h.run()
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertTrue(monitor_emit(r.stdout), f"未產生可解析的 monitor 輸出: {r.stdout}")
+                self.assertNotIn("uid=", r.stdout, "systemctl 輸出被 shell 展開了")
+
+    def test_status_vocabulary_is_closed(self):
+        allowed = {"ok", "web_incident", "monitor_blind", "bootstrap", "tooling"}
+        seen = set()
+        for kw, env in (
+            ({}, {}),
+            ({"exit_status": 1}, {}),
+            ({"timer_enabled": "disabled", "timer_active": "inactive", "mono": 0}, {}),
+            ({"mono": 0, "timer_enter_mono": 1}, {}),
+        ):
+            h = _Harness(**kw)
+            self.addCleanup(h.close)
+            if kw.get("timer_enter_mono") == 1:
+                h.timer_enter_mono = 1
+                h._write_fakes()
+            out = h.run(**env).stdout
+            for ln in out.splitlines():
+                if "handler=incident" in ln:
+                    seen.add(parse(ln)["status"])
+        self.assertTrue(seen <= allowed, f"出現封閉詞彙以外的 status: {seen - allowed}")
+
+    def test_webhook_failure_during_blindness_keeps_state_correct(self):
+        """投遞失敗不得讓狀態機退化——否則下一輪會重送，變成通知風暴。"""
+        h = _Harness(webhook="http://example.invalid/hook",
+                     timer_enabled="disabled", timer_active="inactive", mono=0)
+        self.addCleanup(h.close)
+        (h.bin / "curl").write_text("#!/usr/bin/env bash\nexit 7\n", encoding="utf-8")
+        (h.bin / "curl").chmod(0o755)
+        p = h.run()
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(monitor_emit(p.stdout)["notified"], "no")
+        self.assertEqual(h.monitor_state["state"], "FIRING", "投遞失敗仍須記錄事件")
+
+    def test_parallel_handlers_produce_one_monitor_firing(self):
+        """並發下不得兩份 handler 各發一則失明通知。"""
+        h = _Harness(webhook="http://example.invalid/hook",
+                     timer_enabled="disabled", timer_active="inactive", mono=0)
+        self.addCleanup(h.close)
+        env = dict(os.environ)
+        env["PATH"] = f"{h.bin}:{env['PATH']}"
+        env["INCIDENT_STATE_DIR"] = str(h.state_dir)
+        env["REPORT_MARK_ALERT_WEBHOOK"] = h.webhook
+        h.state_dir.mkdir(parents=True, exist_ok=True)
+        procs = [
+            subprocess.Popen(["bash", str(HANDLER)], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, env=env)
+            for _ in range(6)
+        ]
+        for pr in procs:
+            pr.wait(timeout=60)
+        self.assertEqual(h.webhook_calls(), 1, "並發下重複發出失明 FIRING（flock 未涵蓋讀-改-寫）")
+
+    def test_thresholds_are_calibrated_not_inherited(self):
+        """門檻必須反映實測的觸發分布（min 125／max 136／mean 131.4），不是沿用初版。"""
+        body = HANDLER.read_text(encoding="utf-8")
+        self.assertIn("INCIDENT_STALE_SECONDS:-420", body)
+        self.assertIn("INCIDENT_BOOTSTRAP_SECONDS:-300", body)
+        self.assertIn("INCIDENT_BLIND_CRITICAL_SECONDS:-900", body)
+        self.assertNotIn("INCIDENT_STALE_SECONDS:-600", body)
 
 
 class ConcurrencyTests(unittest.TestCase):

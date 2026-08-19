@@ -613,6 +613,96 @@ sudo systemctl disable --now report-mark-health.timer
 | `ExecMainExitTimestampMonotonic` | **單調時鐘**，判斷「是否有新觀測」。用它而非牆鐘，因為 WSL 休眠喚醒與時區調整會讓牆鐘跳動 |
 | `Result` | 附在通知訊息裡供人判讀 |
 
+### systemd **不會**永遠保存 `ExecMain*`
+
+這是本節最容易被誤解的一件事，而誤解的代價是整套告警靜默失效。
+
+`report-mark-health.service` 用預設的 `CollectMode=inactive`。2026-08-19 部署當天
+以隔離的使用者層 unit 做了七組實測，結論是：
+
+| 情境 | `ExecMainExitTimestampMonotonic` | `ActiveState` |
+|---|---|---|
+| 從未執行、無 unit 引用 | **0** | `inactive` |
+| **成功**執行、無 unit 引用 | **0** ← 與上一列**逐欄完全相同** | `inactive` |
+| **失敗**執行、無 unit 引用 | 保留 | `failed` |
+| timer `enabled` ＋ `active` | 保留 | `inactive` |
+| timer `enabled` 但被 `stop` | 保留（timer unit 仍載入著、仍持有引用） | `inactive` |
+| **timer `disable`** | **0 ← 觀測當場消失** | `inactive` |
+
+也就是說：**一次成功的探測與「探針從未執行」在 `systemctl show` 的輸出上無法區分**，
+而 `systemctl disable report-mark-health.timer` 會立刻讓觀測消失。
+
+兩個推論：
+
+- **P5 的可觀測性前提是那個 timer 保持 enabled。** 有人停用它，P5 讀到的不是「失敗」
+  而是**空值**——沒有任何錯誤訊息。
+- 反過來，**失敗永遠看得見**（失敗的 unit 不會被回收），所以真正的 web 故障不會因此漏掉；
+  會漏掉的是「從此不再有任何新觀測」。
+
+另外，`systemctl show` 對**不存在**的 unit 也回 rc=0 加一整組預設值——「查詢成功」
+什麼都不保證，只有 `LoadState` 分得出 unit 到底在不在。
+
+### 監控自己的監控
+
+因此每一輪都先驗證訊號源本身，再談服務健康：
+
+```
+systemctl is-enabled report-mark-health.timer     # enabled / disabled / not-found
+systemctl is-active  report-mark-health.timer     # active / inactive
+systemctl show       report-mark-health.timer -p LoadState -p ActiveEnterTimestampMonotonic
+systemctl show       report-mark-health.service -p LoadState -p Result \
+                     -p ExecMainStatus -p ExecMainExitTimestampMonotonic
+```
+
+結果分成兩類**互相獨立**的事件，各有自己的狀態檔：
+
+| 類別 | 元件 | 來源 |
+|---|---|---|
+| **WEB_HEALTH** | `web` | 探針明確回報 exit 1／2／4 |
+| **MONITOR_BLIND** | `monitor` | timer 被停用／不在 active／unit 不存在／探針 unit 不存在／觀測消失或過期／systemctl 查詢失敗 |
+
+**「監控瞎了」不得覆蓋或解除進行中的 web 事件**，反之亦然。訊號不可信時，handler
+完全不碰 `web.state`，只在輸出裡標記 `action=skip incident=FIRING`——因為
+「我看不見了」不是「已經好了」，把它當成恢復會在真正的中斷中途送出 `RESOLVED`，
+那比完全不告警更糟：它會讓人停止調查。
+
+**訊號缺席永遠不得被當成健康。** 這是本節的硬不變量，也是初版最危險的缺陷：
+初版在「沒有觀測且無進行中事件」時直接 `emit noop probe_never_ran` 並早退，
+而那條路徑同時涵蓋「還沒跑第一輪」與「有人把 timer 停了」。
+
+### bootstrap 與失明的分界
+
+沒有觀測不一定是壞事——剛開機或剛 `enable` 時本來就還沒有。兩者用 **timer 進入
+active 的時間**分辨（`ActiveEnterTimestampMonotonic`），而不是用開機時間，這樣
+「剛開機」與「剛重新啟用」都涵蓋得到。
+
+空窗上限 **300 秒**由 P4 的參數回推：`OnBootSec`(120) ＋ `AccuracySec`(10) ＋
+探針最壞耗時 `TimeoutStartSec`(90) ＝ 220 秒，取 300 秒＝36% 餘裕。
+**沒有沿用初版的 600 秒**——那個值是在還沒有任何實測分布時訂的。
+
+### 觸發間隔的實測分布
+
+**穩態間隔不是 120 秒。** `OnUnitActiveSec` 從 service 進入 active 起算，加上
+`AccuracySec=10s` 的抖動與探針自身耗時。T0（2026-08-19 11:11:39）之後連續 9 個
+間隔實測為 125／132／136／134／135／135／126／126／134 秒——min 125、max 136、
+mean 131.4。把「正常」定成 120 會讓每一輪都看起來遲到。
+
+| 間隔 | 判定 | 處置 |
+|---|---|---|
+| ≤ 150s | 正常 | 實測 max 136 ＋ 約 10% 餘裕 |
+| 150–420s | 容忍 | 單次抖動或系統負載，尚不告警 |
+| > 420s | **失明 WARNING** | ≈3 個週期沒有新結果，不再是抖動 |
+| > 900s | **失明 CRITICAL** | ≈7 個週期，升級 |
+
+升級（WARNING → CRITICAL）**立即通知，不等 30 分鐘的提醒週期**——否則
+「暫時看不見」惡化成「確定被停掉」會被去重機制吞掉最多半小時。
+
+### 恢復語意
+
+`MONITOR_BLIND` 的解除**需要一筆真正新鮮的觀測**，不是只看 `systemctl is-active`。
+timer 可以是 active 卻還沒產出任何東西（剛 enable、或 GC 之後的空窗），那個瞬間
+我們仍然看不見任何東西。只看 `is-active` 就宣告恢復＝把失明當成健康。
+
 ### 狀態機
 
 ```
@@ -628,7 +718,10 @@ healthy + FIRING   → RESOLVED，通知一次，移除狀態檔
 |---|---|---|
 | `1` / `2` | **CRITICAL** | 使用者當下無法使用 |
 | `4` | **WARNING** | 探針自己壞了＝「我不知道」，不是「壞了」 |
-| 探針超過 10 分鐘沒有新結果 | **WARNING** | **監控失明**——探針本身停了，這要有自己的訊號 |
+| 探針超過 420 秒沒有新結果 | **WARNING** | **監控失明**——記在 `monitor` 元件，不是 `web` |
+| 探針超過 900 秒沒有新結果 | **CRITICAL** | 失明持續，升級（立即通知，不等提醒週期） |
+| timer 被停用／不在 active／unit 不存在 | **CRITICAL** | 監控被關掉了——**這是最不能只當 INFO 的一種** |
+| `systemctl` 查詢失敗 | **WARNING** | 「我不知道」，不是「壞了」 |
 
 刻意不做時間門檻的升級（例如「持續 10 分鐘才升 CRITICAL」）：探針本身已有 3 次
 重試跨 30 秒，再堆延遲會讓真中斷十幾分鐘才通知。

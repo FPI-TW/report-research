@@ -317,16 +317,37 @@ class StateMachineTests(unittest.TestCase):
         timer 看似正常卻始終沒有觀測，超過合理空窗就不能再說「還沒跑」。
         初版在這裡 `emit noop probe_never_ran` 並早退——監控已經死了，
         而 P5 每 2 分鐘回報一次沒事。
+
+        **空窗上限必須明確宣告，不能靠「機器已經開機很久」。**
+        初版寫 `timer_enter_mono=1` 就交差，於是 `bootstrap_age` 實際上等於宿主的
+        uptime——在開發機（uptime 數十小時）遠超 300 秒預設而通過，在剛開機的
+        CI runner（uptime 數十秒）卻落在空窗內而被正確判成 bootstrap，測試因此變紅。
+        腳本沒問題，是測試繼承了一個沒有被宣告的維度。這裡把上限壓到 1 秒：
+        任何跑得動測試的機器 uptime 都大於 1 秒，判定於是與 uptime 無關。
         """
         self.h.mono = 0
-        self.h.set_timer(timer_enter_mono=1)   # timer 早就 active
-        p = self.h.run()
+        self.h.set_timer(timer_enter_mono=1)   # timer 自開機起就 active
+        p = self.h.run(INCIDENT_BOOTSTRAP_SECONDS="1")
         m = monitor_emit(p.stdout)
-        self.assertEqual(m["status"], "monitor_blind")
+        self.assertEqual(m["status"], "monitor_blind", p.stdout)
         self.assertEqual(m["reason"], "observation_missing")
         self.assertEqual(m["severity"], "CRITICAL")
         self.assertEqual(m["action"], "firing")
         self.assertEqual(self.h.webhook_calls(), 1)
+
+    def test_bootstrap_classification_does_not_depend_on_host_uptime(self):
+        """釘死上一條的教訓：同一組輸入，只改空窗上限，分類必須跟著翻轉。
+
+        若判定仍受宿主 uptime 影響，這兩個斷言不可能同時成立。
+        """
+        self.h.mono = 0
+        self.h.set_timer(timer_enter_mono=1)
+        blind = monitor_emit(self.h.run(INCIDENT_BOOTSTRAP_SECONDS="1").stdout)
+        self.assertEqual(blind["status"], "monitor_blind")
+        h2 = _Harness(webhook="http://example.invalid/hook", mono=0, timer_enter_mono=1)
+        self.addCleanup(h2.close)
+        boot = monitor_emit(h2.run(INCIDENT_BOOTSTRAP_SECONDS="99999999").stdout)
+        self.assertEqual(boot["status"], "bootstrap")
 
     def test_same_observation_does_not_double_count(self):
         """P5 的 timer 比 P4 快或抖動時，同一次探測結果不得被算兩次。"""

@@ -100,7 +100,7 @@ fi
 log() { echo "$*"; }
 
 # status 與 reason 都是**封閉詞彙**：消費端（人或後續工具）要能窮舉。
-# status ∈ ok | web_incident | monitor_blind | bootstrap | tooling
+# status ∈ ok | web_incident | monitor_blind | bootstrap | in_flight | tooling
 emit() {
     # status action severity incident reason notified [component]
     printf 'ts=%s component=%s handler=incident status=%s action=%s severity=%s incident=%s reason=%s notified=%s\n' \
@@ -278,6 +278,14 @@ probe_status="$(systemctl show "$PROBE_UNIT" -p ExecMainStatus --value 2>/dev/nu
 probe_mono="$(systemctl show "$PROBE_UNIT" -p ExecMainExitTimestampMonotonic --value 2>/dev/null)" || query_failed=yes
 timer_enabled="$(systemctl is-enabled "$TIMER_UNIT" 2>/dev/null || true)"
 timer_active="$(systemctl is-active "$TIMER_UNIT" 2>/dev/null || true)"
+# **探針此刻是否正在執行。** systemd 在 oneshot 啟動時把 ExecMainExitTimestamp* 歸零，
+# 直到執行結束才寫入——所以在執行中讀取必然拿到 0。實測（2026-08-19 生產）：
+# ExecStart 期間 ActiveState=activating、SubState=start、
+# ExecMainExitTimestampMonotonic=0。少了這個判別，P5 會把「這一輪還沒有結果」
+# 誤讀成「沒有任何觀測」。
+probe_state="$(systemctl show "$PROBE_UNIT" -p ActiveState --value 2>/dev/null)" || query_failed=yes
+probe_running=no
+case "$probe_state" in activating|active|reloading|deactivating) probe_running=yes ;; esac
 
 # 全部數值欄位驗證（外部輸入，可能是空字串、字母或負數）
 case "$probe_status"    in ''|*[!0-9]*) probe_status=-1 ;; esac
@@ -287,7 +295,7 @@ case "$timer_enter_mono" in ''|*[!0-9]*) timer_enter_mono=0 ;; esac
 # ── 分類訊號源 ────────────────────────────────────────────────────────────
 # 這一段的唯一職責是回答「我現在看得見嗎」，**不看服務健康與否**。
 signal=ok
-sig_status=ok        # 對外的封閉詞彙，與內部的 signal 分開：ok|bootstrap|monitor_blind
+sig_status=ok        # 對外的封閉詞彙，與內部的 signal 分開：ok|bootstrap|in_flight|monitor_blind
 sig_reason=
 sig_severity=
 sig_detail=
@@ -306,8 +314,25 @@ elif [ "$timer_enabled" = disabled ]; then
 elif [ "$timer_active" != active ]; then
     signal=blind; sig_status=monitor_blind; sig_severity=CRITICAL; sig_reason=timer_inactive
     sig_detail="$TIMER_UNIT 不在 active（state=${timer_active:-unknown}）——不會再觸發探測"
+elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ]; then
+    # 探針正在執行：ExecMain* 描述的是一次**進行中**的呼叫，不是可消費的觀測。
+    #
+    # 2026-08-19 部署當天實測到的真實故障：P4 與 P5 的 timer 週期都是 2 分鐘，
+    # enable 的時機讓它們落在**同一秒**觸發（15:34:22、15:36:28 皆同秒），於是
+    # 勝負由次秒級順序決定——P5 讀在 P4 完成之前就拿到 0、判成 observation_missing
+    # 並開 CRITICAL 事件；下一輪讀在完成之後就 RESOLVED。結果是 FIRING↔RESOLVED
+    # **震盪**，而那正好重現 P5 存在要消除的「一次事件產生大量訊息」。
+    #
+    # 判為 in_flight 而非 blind，且**既不開事件也不解除**：這一輪我們對 web
+    # 一無所知（所以 web 跳過），但監控本身顯然活著（它正在跑）——只是「正在跑」
+    # 不等於「有一筆完成的觀測」，所以也不足以解除進行中的失明事件。
+    # 兩個 timer 的相位會互相漂移（P4 實測間隔 125–138s、P5 為 120s＋抖動），
+    # 所以連續多輪都撞上的機率極低，真正的觀測會在一兩輪內到來。
+    signal=in_flight; sig_status=in_flight; sig_reason=probe_in_flight
+    sig_detail="探針正在執行中（ActiveState=$probe_state），本輪尚無完成的觀測"
 elif [ "$probe_mono" -eq 0 ]; then
-    # 沒有任何觀測。timer 本身健康，所以只可能是「還沒跑第一輪」或「觀測消失了」。
+    # 沒有任何觀測，而且探針不在執行中。timer 本身健康，所以只可能是
+    # 「還沒跑第一輪」或「觀測消失了」。
     # 兩者用 timer 進入 active 的時間分辨：剛 enable／剛開機屬前者。
     bootstrap_age=$(( (now_mono_us - timer_enter_mono) / 1000000 ))
     [ "$bootstrap_age" -lt 0 ] && bootstrap_age=0
@@ -334,6 +359,7 @@ fi
 case "$signal" in
     ok)        run_state_machine "$MONITOR_COMPONENT" healthy ""             monitor_ok           "$probe_mono" ok            "" ;;
     bootstrap) run_state_machine "$MONITOR_COMPONENT" hold    ""             "$sig_reason"        "$probe_mono" bootstrap     "$sig_detail" ;;
+    in_flight) run_state_machine "$MONITOR_COMPONENT" hold    ""             "$sig_reason"        "$probe_mono" in_flight     "$sig_detail" ;;
     blind)     run_state_machine "$MONITOR_COMPONENT" failing "$sig_severity" "$sig_reason"       "$probe_mono" monitor_blind "$sig_detail" ;;
 esac
 

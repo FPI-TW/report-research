@@ -12,5 +12,12 @@ OnUnitActiveSec=2min
 # 同樣不設 RandomizedDelaySec：抖動只會讓通知延遲不可預測。
 AccuracySec=10s
 
+# **刻意加抖動，與 P4 的 health timer 不同。** P4 不加是為了讓偵測延遲可預測；
+# 這裡加是為了避免兩個同為 2 分鐘週期的 timer 系統性地落在同一秒——2026-08-19
+# 實測到那件事真的發生（兩者連續數輪皆同秒觸發），使 P5 有一半機率讀到 P4
+# 執行中的空觀測。腳本已能正確判別 in_flight，這一行是縱深防禦：讓相位盡快分開，
+# 減少白跑的輪次。
+RandomizedDelaySec=20s
+
 [Install]
 WantedBy=timers.target

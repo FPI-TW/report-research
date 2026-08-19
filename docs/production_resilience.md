@@ -308,6 +308,79 @@ ls -lh "$(sed -n 's/^REPORT_MARK_BACKUP_DIR=//p' /etc/default/report-mark-sync)/
 
 **仍待驗**：新 share 的寫入權（首跑就知道）、以及 `docker.exe` 透過 WSL interop 把二進位 dump 送回 WSL 檔案是否位元完整——檔頭魔數 + 大小檢查只擋得住頭尾壞掉，**首次安裝時應該真的做一次上面那節的還原比對**。備份腳本的落點檢查、原子改名、檔頭驗證與輪替已用假 `docker` 二進位在沙箱驗過。
 
+### `in_flight` 是觀測的生命週期，不是健康結論
+
+2026-08-20 有一次 **4 分 54 秒**的生產中斷（00:48:03–00:52:57，P2 換手方法錯誤所致）。
+**P4 正確偵測到，P5 全程零告警。** 那次意外驗收出這一節要修的缺口。
+
+```
+P4  00:49:03 Starting ──────────────► 00:49:49 fail（exit 2）
+                    P5 00:49:44 ▲ 落在執行窗內 → in_flight → web skip
+P4  00:51:13 Starting ──────────────► 00:51:59 fail（exit 2）
+                    P5 00:51:58 ▲ 落在執行窗內 → in_flight → web skip
+```
+
+根因是**探針失敗時執行窗暴增**。健康時整個 oneshot 約 30ms；失敗時走完
+`HEALTH_RETRIES=3` × `HEALTH_TIMEOUT=5s` ＋ 2 × `HEALTH_RETRY_WAIT=15s` ＝ **45 秒**
+（實測 46s），佔 P5 週期（~130s）的 **35%**。連續兩次撞上一點都不意外——
+**timer 的 `RandomizedDelaySec` 只降低碰撞機率，不是正確性機制。**
+
+#### 兩個實測否定的假設
+
+| 假設 | 實測結果 |
+|---|---|
+| in-flight 時可從 `Result` 讀出上一輪結論 | **否**。systemd 在新一輪啟動時把 `Result` 重設為 `success`、`ExecMainStatus` 重設為 `0`，**即使上一輪是 `exit-code`**。照這個假設寫，會在中斷期間讀到「健康」 |
+| 失敗的 unit 不被 GC，所以結論一直讀得到 | 只在**沒有新一輪啟動時**成立。新一輪一開始，`ExecMain*` 就歸零 |
+
+所以「上一筆已完成的結論」只能由 P5 自己記住。
+
+#### 觀測快取
+
+`data/.incidents/probe_observation.state`（`boot_id`／`monotonic`／`status`／`result`）。
+**刻意是獨立檔案，不放進 `web.state`**：後者在 RESOLVED 時會被 `rm -f`，等於**服務恢復
+的那一刻把觀測快取一起抹掉**；而且 `monitor` 元件也要用這筆觀測判新鮮度，兩個消費者
+共用一個生命週期遲早互相污染。
+
+#### 語意
+
+| 情況 | 判定 |
+|---|---|
+| 執行中 ＋ 快取 OK 且在信任窗內 | 沿用「上次健康」，不開事件；輸出仍標明 `current_probe=in_flight` |
+| 執行中 ＋ 快取 **FAIL** | **開／維持 WEB_HEALTH FIRING**——絕不 `skip` 讓中斷消失 |
+| 執行中 ＋ 快取超過**信任上限** | `monitor_blind` `observation_missed`——**漏讀，不是過期** |
+| 執行中 ＋ 快取超過 `BLIND_CRITICAL` | `monitor_blind` `observation_stale`（CRITICAL） |
+| 執行中超過 `PROBE_MAX_INFLIGHT` | `monitor_blind` `probe_stuck`——探針卡住，不是服務故障 |
+| 執行中 ＋ 無任何快取 | 依 bootstrap 窗判 `bootstrap` 或 `monitor_blind` |
+| 快取的 `boot_id` 與本次開機不同 | **一律丟棄**，不跨開機沿用 |
+
+`in_flight` 期間**不解除**進行中的 monitor 事件——「正在跑」不等於「有一筆新的完成觀測」。
+
+#### 信任上限是「有沒有漏讀」，不是「過期」
+
+`INCIDENT_OBS_TRUST_SECONDS`（預設 **240s**）由 P4 節奏推導：P4 每 ~130s 完成一輪
+（`OnUnitActiveSec=2min` ＋ `AccuracySec=10s`，實測 125–138s），若 P5 每輪都讀得到，
+快取最多只會有「一個週期上界 140s ＋ 當前執行中 90s」＝ 230s 這麼舊。**超過就代表
+P4 至少完成過一輪而 P5 沒讀到**，那筆結果是什麼並不知道。
+
+這正是真實中斷的形狀：00:47:26 讀到 OK；P4 在 00:49:49 完成一筆 fail 而 P5 沒讀到；
+00:51:58 再取樣時快取已 **272s**。沒有這個上限就會沿用那筆 OK 而繼續靜默。
+**138s 時沿用 OK 是正確的**（那當下確實是最新的已完成觀測）；272s 時就不是了。
+
+`INCIDENT_PROBE_MAX_INFLIGHT`（預設 **120s**）同樣由契約推導：契約最壞 45s、
+unit 硬上限 `TimeoutStartSec=90s`，超過 90s 代表 systemd 應該已經砍掉它卻沒有。
+
+#### 結構化輸出
+
+每一行多帶三個欄位，讓 operator 一眼看出「現在在跑」與「上次結論」是兩件事：
+
+```
+current_probe=idle|in_flight
+last_completed=ok|fail|tooling|none
+last_completed_age=<秒>|-
+```
+
+只印 `status=in_flight action=skip` 正是 2026-08-20 那次沒有人看得出問題的原因。
+
 ## 批次停更偵測（2026-07-30）
 
 ### 為什麼 `OnFailure` 不夠

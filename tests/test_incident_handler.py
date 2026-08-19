@@ -131,9 +131,16 @@ class _Harness:
         sc.chmod(0o755)
         if self.fake_curl:
             curl = self.bin / "curl"
+            # **必須印出 HTTP 狀態碼。** handler 的成功判準是 `-w %{http_code}` 的
+            # stdout，不是 curl 的 exit code；只 `exit 0` 會讓每一次投遞都被判失敗
+            # （#215 改判準時這支 fake 沒跟上，而當時的狀態機無論成敗都推進，
+            # 所以沒有任何測試看得見）。**刻意不排空 stdin**：URL 走 `-K -` 進來但
+            # 只有幾十位元組，遠小於管線緩衝，上游 printf 不會阻塞也不會 SIGPIPE；
+            # 加 `cat` 反而會在沒有管線的呼叫形狀下卡住整個測試。
             curl.write_text(
                 "#!/usr/bin/env bash\n"
                 f'echo "$@" >> "{self.webhook_log}"\n'
+                'echo "${FAKE_CURL_CODE:-200}"\n'
                 "exit 0\n",
                 encoding="utf-8",
             )
@@ -1256,6 +1263,200 @@ class AlertDeliveryTests(unittest.TestCase):
         self.assertEqual(len(self.rx.requests), 0)
         self.assertEqual(last_emit(p.stdout)["notified"], "no")
         self.assertEqual(h.state["state"], "FIRING", "未設 webhook 仍須維護事件狀態")
+
+
+class DeliveryFailureRetryTests(unittest.TestCase):
+    """**投遞失敗不得被記成「已通知」。**
+
+    通知節流的時鐘是 `last_notified`。把一則根本沒送達的通知寫進去，等於讓 30 分鐘的
+    提醒週期從零開始計時——事故於是靜默到下一個提醒週期為止，而 journal 裡看起來一切
+    正常（`action=firing` 有出現過）。事件本身照記，那是觀測到的事實；只有「已通知」
+    不記。重送不會形成風暴：端點掛著時每一輪都失敗、實際送出 0 則，端點恢復後只送
+    一則，之後去重照常生效。
+    """
+
+    def setUp(self):
+        self.rx = _Receiver()
+        self.addCleanup(self.rx.close)
+        self.h = _Harness(webhook=self.rx.url, fake_curl=False)
+        self.addCleanup(self.h.close)
+        self._tick = 0
+
+    def _obs(self):
+        """每輪給一個不同的觀測時戳，否則會被 new_observation=no 去重。"""
+        self._tick += 1
+        return self.h._now_mono() - self._tick * 1000
+
+    def _fail(self):
+        self.h.set_timer(exit_status=1, result="exit-code", mono=self._obs())
+
+    def _ok(self):
+        self.h.set_timer(exit_status=0, result="success", mono=self._obs())
+
+    def _monitor_state(self):
+        f = self.h.state_dir / "monitor.state"
+        if not f.is_file():
+            return {}
+        return dict(
+            ln.split("=", 1) for ln in f.read_text(encoding="utf-8").splitlines() if "=" in ln
+        )
+
+    def _actions(self, comp="web"):
+        return [d["action"] for d in self.rx.payloads() if d["component"] == comp]
+
+    # ── FIRING ───────────────────────────────────────────────────────────
+    def test_failed_firing_does_not_advance_the_notify_clock(self):
+        self.rx.status = 500
+        self._fail()
+        p = self.h.run()
+        self.assertEqual(last_emit(p.stdout)["notified"], "no")
+        self.assertEqual(self.h.state["state"], "FIRING", "事件本身仍須記錄")
+        self.assertEqual(self.h.state["last_notified"], "0", "沒送到就不能算已通知")
+        self.assertEqual(self.h.state["opened_sent"], "no")
+
+    def test_failed_firing_is_retried_as_firing_not_reminder(self):
+        """重試必須仍是 FIRING。
+
+        若讓它掉進提醒分支，操作者收到的第一則會是「仍未恢復」——而他從沒收到過
+        「開始了」。
+        """
+        self.rx.status = 500
+        self._fail()
+        self.h.run()
+        self.rx.status = 200
+        self._fail()
+        p = self.h.run()
+        self.assertEqual(last_emit(p.stdout)["action"], "firing")
+        self.assertEqual(last_emit(p.stdout)["notified"], "yes")
+        self.assertEqual(self.rx.payloads()[-1]["action"], "FIRING")
+        self.assertEqual(self.h.state["opened_sent"], "yes")
+        self.assertNotEqual(self.h.state["last_notified"], "0")
+
+    def test_delivered_firing_is_never_repeated(self):
+        self._fail()
+        self.h.run()
+        self._fail()
+        self.h.run()
+        self._fail()
+        self.h.run()
+        self.assertEqual(self._actions().count("FIRING"), 1, self.rx.payloads())
+
+    def test_endpoint_down_for_several_rounds_delivers_exactly_one_firing(self):
+        self.rx.status = 500
+        for _ in range(3):
+            self._fail()
+            self.h.run()
+        self.assertEqual(len(self.rx.requests), 3, "每輪都應重試投遞")
+        self.rx.status = 200
+        self._fail()
+        self.h.run()
+        self._fail()
+        self.h.run()
+        self.assertEqual(
+            self._actions().count("FIRING"), 4,
+            "3 次失敗的嘗試 + 1 次成功；成功之後不得再送",
+        )
+        self.assertEqual(self.h.state["opened_sent"], "yes")
+
+    # ── RESOLVED ─────────────────────────────────────────────────────────
+    def test_failed_resolved_keeps_the_incident_open_for_retry(self):
+        self._fail()
+        self.h.run()
+        self.rx.status = 500
+        self._ok()
+        p = self.h.run()
+        self.assertEqual(last_emit(p.stdout)["action"], "resolve_retry")
+        self.assertEqual(self.h.state["state"], "FIRING", "RESOLVED 沒送到就不能關閉事件")
+        self.rx.status = 200
+        self._ok()
+        p2 = self.h.run()
+        self.assertEqual(last_emit(p2.stdout)["action"], "resolved")
+        self.assertEqual(self.h.state, {}, "送達後才刪狀態檔")
+
+    def test_repeated_healthy_after_delivered_resolved_stays_silent(self):
+        self._fail()
+        self.h.run()
+        self._ok()
+        self.h.run()
+        before = len(self.rx.requests)
+        self._ok()
+        self._ok()
+        self.h.run()
+        self.assertEqual(len(self.rx.requests), before, "已關閉的事件不得再送")
+
+    # ── ESCALATED ────────────────────────────────────────────────────────
+    def test_failed_escalation_keeps_severity_at_warning_for_retry(self):
+        """升級沒送到卻把 severity 寫成 CRITICAL，升級條件下一輪就不再成立。"""
+        self.h.set_observation_age(5)
+        self.h.run(INCIDENT_STALE_SECONDS="1", INCIDENT_BLIND_CRITICAL_SECONDS="99999999")
+        self.assertEqual(self._monitor_state()["severity"], "WARNING")
+        self.rx.status = 500
+        self.h.run(INCIDENT_STALE_SECONDS="1", INCIDENT_BLIND_CRITICAL_SECONDS="2")
+        self.assertEqual(
+            self._monitor_state()["severity"], "WARNING",
+            "升級通知沒送到，嚴重度必須留在 WARNING 才會再試",
+        )
+        self.rx.status = 200
+        p = self.h.run(INCIDENT_STALE_SECONDS="1", INCIDENT_BLIND_CRITICAL_SECONDS="2")
+        self.assertEqual(monitor_emit(p.stdout)["action"], "escalated")
+        self.assertEqual(self._monitor_state()["severity"], "CRITICAL")
+
+    # ── REMINDER ─────────────────────────────────────────────────────────
+    def test_failed_reminder_does_not_advance_the_reminder_clock(self):
+        self._fail()
+        self.h.run()
+        notified_after_firing = self.h.state["last_notified"]
+        self.rx.status = 500
+        self._fail()
+        p = self.h.run(INCIDENT_REMINDER_SECONDS="0")
+        self.assertEqual(last_emit(p.stdout)["action"], "reminder")
+        self.assertEqual(
+            self.h.state["last_notified"], notified_after_firing,
+            "提醒沒送到，提醒時鐘不得前進",
+        )
+
+    # ── 未設定 webhook（＝目前生產）─────────────────────────────────────
+    def test_without_webhook_the_incident_still_closes(self):
+        """**沒有 webhook 時「投遞成功」必須真空成立。**
+
+        若把「沒送出」一律當成失敗，未設定 webhook 的部署會永遠關不掉事件——
+        偵測功能被通知功能反噬，而生產目前正是這個狀態。
+        """
+        h = _Harness(webhook=None, fake_curl=False)
+        self.addCleanup(h.close)
+        h.set_timer(exit_status=1, result="exit-code", mono=h._now_mono() - 1000)
+        p1 = h.run()
+        self.assertEqual(last_emit(p1.stdout)["action"], "firing")
+        self.assertEqual(last_emit(p1.stdout)["notified"], "no")
+        self.assertEqual(h.state["opened_sent"], "yes", "沒東西要送＝沒有待投遞的通知")
+        h.set_timer(exit_status=0, result="success", mono=h._now_mono() - 500)
+        p2 = h.run()
+        self.assertEqual(last_emit(p2.stdout)["action"], "resolved")
+        self.assertEqual(h.state, {})
+
+    # ── 與 #216/#217/#218 的偵測語意共存 ────────────────────────────────
+    def test_inflight_with_cached_failure_still_notifies(self):
+        """探針執行中 ＋ 上一筆完成觀測是 FAIL：通知照走，欄位仍描述那筆快取。"""
+        self.h.seed_observation(1, age_seconds=3, result="exit-code")
+        self.h.set_timer(probe_state="activating", exit_status=0, result="success",
+                         mono=0, probe_start_mono=self.h._now_mono() - 2_000_000)
+        p = self.h.run()
+        w = last_emit(p.stdout)
+        self.assertEqual(w["action"], "firing")
+        self.assertEqual(w["current_probe"], "in_flight")
+        self.assertEqual(w["last_completed"], "fail")
+        self.assertEqual(w["notified"], "yes")
+        self.assertEqual(self.rx.payloads()[-1]["component"], "web")
+
+    def test_delivery_does_not_change_the_two_lines_agreement(self):
+        """#218 的不變量在投遞路徑上仍成立。"""
+        self.h.seed_observation(1, age_seconds=3, result="exit-code")
+        self.h.set_timer(probe_state="activating", exit_status=0, result="success",
+                         mono=0, probe_start_mono=self.h._now_mono() - 2_000_000)
+        out = self.h.run().stdout
+        w, m = last_emit(out), monitor_emit(out)
+        self.assertEqual(w["last_completed"], m["last_completed"])
+        self.assertEqual(w["last_completed_age"], m["last_completed_age"])
 
 
 class SecretPlacementTests(unittest.TestCase):

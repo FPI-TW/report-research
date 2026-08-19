@@ -152,6 +152,7 @@ load_state() {
     st_last_notified=0
     st_last_obs_monotonic=0
     st_count=0
+    st_opened_sent=yes
     st_boot_id=
     if [ -f "$st_file" ]; then
         while IFS='=' read -r k v; do
@@ -162,6 +163,7 @@ load_state() {
                 last_notified)       st_last_notified="$v" ;;
                 last_obs_monotonic)  st_last_obs_monotonic="$v" ;;
                 count)               st_count="$v" ;;
+                opened_sent)         st_opened_sent="$v" ;;
                 boot_id)             st_boot_id="$v" ;;
             esac
         done < "$st_file"
@@ -172,6 +174,9 @@ load_state() {
     case "$st_last_notified" in ''|*[!0-9]*) st_last_notified=0 ;; esac
     case "$st_last_obs_monotonic" in ''|*[!0-9]*) st_last_obs_monotonic=0 ;; esac
     case "$st_count" in ''|*[!0-9]*) st_count=0 ;; esac
+    # 缺值一律視為 yes：升級前寫下的狀態檔沒有這個鍵，若當成 no 會讓既有的
+    # 進行中事件在部署當下多送一則 FIRING。
+    case "$st_opened_sent" in yes|no) ;; *) st_opened_sent=yes ;; esac
     # 單調時鐘的 epoch 是「本次開機」。重開機後狀態檔裡的 last_obs_monotonic 來自
     # 上一次開機，數值可能比現在大得多——直接比對會把舊觀測當成未來的新觀測。
     [ "$st_boot_id" != "$BOOT_ID" ] && st_last_obs_monotonic=0
@@ -190,6 +195,7 @@ write_state() {
         echo "last_notified=$5"
         echo "last_obs_monotonic=$6"
         echo "count=$7"
+        echo "opened_sent=${8:-yes}"
         echo "boot_id=$BOOT_ID"
     } > "$tmp" && mv -f "$tmp" "$STATE_DIR/$1.state" || {
         rm -f "$tmp" 2>/dev/null
@@ -262,10 +268,18 @@ save_obs_cache() {
 # 結果經全域 NOTIFY_SENT 回傳，**不用 stdout**：這支腳本的 stdout 是給 journal 與
 # 消費端看的結構化輸出，若 notify 也往 stdout 回傳值，命令替換會把日誌行一起
 # 吃進去，讓 emit 的欄位被汙染（初版就是這樣，被 test_webhook_failure 抓到）。
+# **兩個變數不是同一件事，混用會出兩種相反的錯。**
+#   NOTIFY_SENT ＝ 這一輪有沒有真的送出去（emit 的 notified 欄位用它）
+#   NOTIFY_OK   ＝ 有沒有「該送而沒送到」的通知（狀態機的推進閘用它）
+# 未設定 webhook 時 NOTIFY_SENT=no 但 NOTIFY_OK=yes——沒有東西要送，就沒有東西
+# 沒送到。若讓狀態機改看 NOTIFY_SENT，未設定 webhook 的部署（＝目前生產）會永遠
+# 卡在「RESOLVED 沒送到」而關不掉事件，偵測功能等於被通知功能反噬。
 NOTIFY_SENT=no
+NOTIFY_OK=yes
 notify() {
     local comp="$1" action="$2" severity="$3" summary="$4" reason="${5:-}"
     NOTIFY_SENT=no
+    NOTIFY_OK=yes
     # log 一律不含 URL——journal 是多人可讀的，secret 不進去。
     log "[$severity] $action $comp: $summary"
     [ -n "$WEBHOOK" ] || return 0
@@ -295,10 +309,13 @@ notify() {
     case "$code" in
         2??) NOTIFY_SENT=yes ;;
         *)
-            # 投遞失敗不得影響狀態機的正確性：狀態仍然照常推進，只是這一則沒送到。
-            # 反過來（送失敗就不更新狀態）會讓下一輪重送，變成投遞端故障時的通知風暴。
-            # **刻意不重試**：同一個事件的下一次機會是下一輪提醒，那已經是節流過的節奏。
-            log "webhook 投遞失敗（HTTP ${code:-000}；狀態仍已更新，不重送以免形成風暴）"
+            NOTIFY_OK=no
+            # **事件本身照記，但「已通知」不記。** 兩者分開才對：事件是觀測到的事實，
+            # 通知是投遞結果。把投遞失敗記成已通知，會讓 30 分鐘的提醒節流從一則
+            # 根本沒送達的通知開始計時——事故於是靜默到下一個提醒週期。
+            # 重送不會形成風暴：端點掛著時每一輪都失敗、什麼都沒送出，端點恢復後
+            # 只會送出一則，之後 last_notified 前進、去重照常生效。
+            log "webhook 投遞失敗（HTTP ${code:-000}；事件已記錄，下一輪重試投遞）"
             ;;
     esac
 }
@@ -322,10 +339,17 @@ run_state_machine() {
         if [ "$st_state" = FIRING ]; then
             local dur=$(( now_epoch - st_first_seen ))
             notify "$comp" RESOLVED RESOLVED "已恢復，本次事件持續 ${dur}s、共 ${st_count} 次失敗觀測" "$reason"
-            rm -f "$STATE_DIR/$comp.state" 2>/dev/null
-            emit "$status" resolved RESOLVED CLOSED "$reason" "$NOTIFY_SENT" "$comp"
+            if [ "$NOTIFY_OK" = yes ]; then
+                rm -f "$STATE_DIR/$comp.state" 2>/dev/null
+                emit "$status" resolved RESOLVED CLOSED "$reason" "$NOTIFY_SENT" "$comp"
+            else
+                # 刪掉狀態檔＝「已恢復」永遠不會送達，而操作者最後看到的是 FIRING。
+                # 保留事件，下一輪仍為健康時重試 RESOLVED。
+                write_state "$comp" FIRING "$st_severity" "$st_first_seen" "$st_last_notified" "$obs" "$st_count" "$st_opened_sent"
+                emit "$status" resolve_retry "${st_severity:-WARNING}" FIRING "$reason" no "$comp"
+            fi
         else
-            [ "$new_observation" = yes ] && write_state "$comp" CLOSED "" "$st_first_seen" "$st_last_notified" "$obs" 0
+            [ "$new_observation" = yes ] && write_state "$comp" CLOSED "" "$st_first_seen" "$st_last_notified" "$obs" 0 yes
             emit "$status" noop none CLOSED "$reason" no "$comp"
         fi
         return 0
@@ -338,9 +362,21 @@ run_state_machine() {
     fi
 
     # failing，或 hold 但已有進行中的事件（後者不得因為「這輪不知道」就靜音）
-    if [ "$st_state" = CLOSED ]; then
+    # 第二個條件是重試：事件已記錄但開場通知從未送達。**必須以 FIRING 重送而不是
+    # 讓它掉進提醒分支**——否則操作者收到的第一則是「仍未恢復」，而他從沒收到過
+    # 「開始了」。
+    if [ "$st_state" = CLOSED ] || [ "$st_opened_sent" = no ]; then
         notify "$comp" FIRING "$severity" "$detail" "$reason"
-        write_state "$comp" FIRING "$severity" "$now_epoch" "$now_epoch" "$obs" 1
+        local ffirst="$st_first_seen" fcount=$(( st_count + 1 ))
+        if [ "$st_state" = CLOSED ]; then
+            # CLOSED 的狀態檔可能帶著上一個事件的 first_seen，不能沿用
+            ffirst="$now_epoch"; fcount=1
+        fi
+        if [ "$NOTIFY_OK" = yes ]; then
+            write_state "$comp" FIRING "$severity" "$ffirst" "$now_epoch" "$obs" "$fcount" yes
+        else
+            write_state "$comp" FIRING "$severity" "$ffirst" 0 "$obs" "$fcount" no
+        fi
         emit "$status" firing "$severity" FIRING "$reason" "$NOTIFY_SENT" "$comp"
         return 0
     fi
@@ -354,7 +390,13 @@ run_state_machine() {
     # 惡化成「確定被停掉」這件事會被去重機制吞掉最多 30 分鐘。
     if [ "$eff_severity" = CRITICAL ] && [ "${st_severity:-}" = WARNING ]; then
         notify "$comp" ESCALATED CRITICAL "$detail" "$reason"
-        write_state "$comp" FIRING CRITICAL "$st_first_seen" "$now_epoch" "$obs" "$count"
+        if [ "$NOTIFY_OK" = yes ]; then
+            write_state "$comp" FIRING CRITICAL "$st_first_seen" "$now_epoch" "$obs" "$count" "$st_opened_sent"
+        else
+            # 升級沒送到卻把 severity 記成 CRITICAL，下一輪的升級條件就不再成立，
+            # 「惡化了」這件事於是永遠不會再嘗試送出。停在 WARNING 才能重試。
+            write_state "$comp" FIRING WARNING "$st_first_seen" "$st_last_notified" "$obs" "$count" "$st_opened_sent"
+        fi
         emit "$status" escalated CRITICAL FIRING "$reason" "$NOTIFY_SENT" "$comp"
         return 0
     fi
@@ -366,10 +408,12 @@ run_state_machine() {
     if [ "$since_notify" -ge "$REMINDER_SECONDS" ]; then
         local dur=$(( now_epoch - st_first_seen ))
         notify "$comp" REMINDER "$eff_severity" "仍未恢復，已持續 ${dur}s、共 ${count} 次失敗觀測（${detail}）" "$reason"
-        write_state "$comp" FIRING "$eff_severity" "$st_first_seen" "$now_epoch" "$obs" "$count"
+        local rnotify="$st_last_notified"
+        [ "$NOTIFY_OK" = yes ] && rnotify="$now_epoch"
+        write_state "$comp" FIRING "$eff_severity" "$st_first_seen" "$rnotify" "$obs" "$count" "$st_opened_sent"
         emit "$status" reminder "$eff_severity" FIRING "$reason" "$NOTIFY_SENT" "$comp"
     else
-        write_state "$comp" FIRING "$eff_severity" "$st_first_seen" "$st_last_notified" "$obs" "$count"
+        write_state "$comp" FIRING "$eff_severity" "$st_first_seen" "$st_last_notified" "$obs" "$count" "$st_opened_sent"
         emit "$status" suppress "$eff_severity" FIRING "$reason" no "$comp"
     fi
 }

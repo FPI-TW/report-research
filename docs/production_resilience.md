@@ -429,10 +429,38 @@ sudo systemctl daemon-reload
 | HTTP | `curl -sS -X POST`，`Content-Type: application/json` |
 | connect / overall timeout | `INCIDENT_NOTIFY_CONNECT_TIMEOUT`(5s) / `INCIDENT_NOTIFY_MAX_TIME`(10s) |
 | 成功條件 | **只有 2xx**。刻意不用 `-f`——它把 3xx 當成功，而未跟隨的重導向代表 POST 根本沒到目的地 |
-| retry | **無**。同一事件的下一次機會是下一輪提醒，那已經是節流過的節奏 |
+| retry | **下一輪重試，直到送達為止**（見下方「投遞失敗語意」） |
 | payload | `{"component","action","severity","reason","text"}`；前四個是封閉詞彙，供接收端路由，`text` 給人看 |
 | body 上限 | `INCIDENT_NOTIFY_MAX_SUMMARY`(500 字元) 後截斷 |
-| 投遞失敗 | 狀態照常推進，只是 `notified=no`。反過來（送失敗就不更新狀態）會讓下一輪重送，變成投遞端故障時的通知風暴 |
+| 投遞失敗 | **事件照記，「已通知」不記**。`notified=no`，且通知時鐘不前進 |
+
+#### 投遞失敗語意
+
+**「事件發生了」與「通知送到了」是兩件事，狀態機必須分開記。**
+
+通知節流的時鐘是 `last_notified`。把一則根本沒送達的通知寫進去，等於讓 30 分鐘的提醒
+週期從零開始計時——事故於是靜默到下一個提醒週期為止，而 journal 看起來一切正常
+（`action=firing` 確實出現過）。所以四條路徑一律以「這則有沒有真的送達」為閘：
+
+| 路徑 | 送達 | 沒送達 |
+|---|---|---|
+| FIRING | `last_notified=now`、`opened_sent=yes` | `last_notified=0`、`opened_sent=no`，下一輪**仍以 FIRING 重送** |
+| ESCALATED | `severity=CRITICAL` | **留在 WARNING**，否則升級條件下一輪就不成立、「惡化了」永遠不再嘗試 |
+| REMINDER | `last_notified=now` | 不前進 |
+| RESOLVED | 刪狀態檔 | **保留事件**（`action=resolve_retry`），否則「已恢復」永遠送不出去，而操作者最後看到的是 FIRING |
+
+重試不會形成風暴：端點掛著時每一輪都失敗、實際送出 0 則；端點恢復後只送出一則，
+之後時鐘前進、去重照常生效。重試必須仍是 **FIRING** 而不是掉進提醒分支——否則操作者
+收到的第一則是「仍未恢復」，而他從沒收到過「開始了」。
+
+**`opened_sent` 缺值一律視為 `yes`**：升級前寫下的狀態檔沒有這個鍵，當成 `no` 會讓既有
+的進行中事件在部署當下多送一則 FIRING。
+
+**兩個變數不是同一件事。** `NOTIFY_SENT` ＝這一輪有沒有送出（`emit` 的 `notified` 欄位用它）；
+`NOTIFY_OK` ＝有沒有「該送而沒送到」的通知（狀態機的推進閘用它）。**未設定 webhook 時
+`NOTIFY_SENT=no` 但 `NOTIFY_OK=yes`**——沒有東西要送，就沒有東西沒送到。若讓狀態機改看
+`NOTIFY_SENT`，未設定 webhook 的部署（＝目前生產）會永遠關不掉事件，**偵測功能被通知
+功能反噬**。`test_without_webhook_the_incident_still_closes` 釘住這條。
 
 兩個容易寫錯的地方：
 

@@ -32,8 +32,12 @@ if [ -n "$ROOT" ] && [ -d "$ROOT" ]; then
 fi
 
 # opt-in webhook：未設就完全不做（不留失敗痕跡、不拖慢告警）
+# **URL 不進 argv**：`curl ... "$URL"` 會讓 secret 出現在行程清單裡，任何本機使用者
+# `ps` 就看得到。改用 `-K -` 從 stdin 餵 curl 設定檔，URL 只存在於管線中。
+# 與 scripts/incident_handler.sh 的 notify() 同一種修法——同一個 secret，同一個洩漏面。
 if [ -n "${REPORT_MARK_ALERT_WEBHOOK:-}" ]; then
-    curl -fsS --max-time 10 -X POST "$REPORT_MARK_ALERT_WEBHOOK" \
+    printf 'url = "%s"\n' "$REPORT_MARK_ALERT_WEBHOOK" \
+      | curl -fsS --connect-timeout 5 --max-time 10 -K - -X POST \
         -H "Content-Type: application/json" \
         -d "{\"text\":\"[report-mark] unit failed: ${UNIT} at ${TS}\"}" \
         >/dev/null 2>&1 || logger -t report-mark-alert -p user.warning \

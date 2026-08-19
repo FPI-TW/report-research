@@ -4,7 +4,13 @@ export const meta = {
   phases: [{ title: 'Tag', detail: '平行標註各批研報的市場標籤' }],
 }
 
-const projectRoot = '/mnt/c/Users/User/Desktop/Project/report-mark'
+// Workflow 腳本跑在沙箱裡：沒有 fs／Node API，也沒有 import.meta.url，所以 repo 根
+// 只能是絕對路徑（agent 的 prompt 裡要給可 Read 的完整路徑）。改成可由 args 覆寫，
+// 換機器時不必改這個檔：
+//   Workflow({ name: 'tag-reports', args: { projectRoot: '/path/to/report-mark' } })
+const projectRoot =
+  (typeof args !== 'undefined' && args && args.projectRoot) ||
+  '/home/kashionz/projects/report-mark'
 const tagsDir = 'data/tags'
 const batchFiles = [
   'data/worklist_batch0.json',

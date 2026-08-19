@@ -12,7 +12,7 @@ Type=simple
 User=kashionz
 Group=kashionz
 Environment=HOME=/home/kashionz
-WorkingDirectory=/mnt/c/Users/User/Desktop/Project/report-mark
+WorkingDirectory=/home/kashionz/projects/report-mark
 ExecStart=/home/kashionz/.local/bin/uv run uvicorn web.server:app --host 0.0.0.0 --port 8097
 Restart=always
 RestartSec=3

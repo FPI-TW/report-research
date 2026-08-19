@@ -513,7 +513,9 @@ class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
     決定要不要付排序的代價（加 ORDER BY 會逼掃完全部命中列，見該函式 docstring）。
     """
 
-    async def _ask_with_lex_stats(self, *, lex_hits, cap, truncated):
+    async def _ask_with_lex_stats(
+        self, *, lex_hits, cap, truncated, dense_ms=12, lex_ms=34
+    ):
         import app.services.retrieval_pipeline as rp
         from app.services import answer as ans
 
@@ -523,7 +525,13 @@ class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
             captured["stats_obj"] = stats
             if stats is not None:
                 stats.update(
-                    {"lex_hits": lex_hits, "lex_cap": cap, "lex_truncated": truncated}
+                    {
+                        "lex_hits": lex_hits,
+                        "lex_cap": cap,
+                        "lex_truncated": truncated,
+                        "dense_ms": dense_ms,
+                        "lex_ms": lex_ms,
+                    }
                 )
             return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
 
@@ -570,6 +578,14 @@ class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
             lex_hits=37, cap=2000, truncated=False
         )
         self.assertIn("lex_truncated=False", line)
+
+    async def test_retrieval_segments_land_in_qa_timing(self):
+        """dense/lex 分段耗時必須進 qa_timing——只填進 stats 而不 log 等於沒量。"""
+        _captured, line = await self._ask_with_lex_stats(
+            lex_hits=37, cap=2000, truncated=False, dense_ms=180, lex_ms=1420
+        )
+        self.assertIn("dense_ms=180", line)
+        self.assertIn("lex_ms=1420", line)
 
 
 class StageTimerTests(unittest.TestCase):

@@ -273,6 +273,7 @@ report-mark/
 │   eval_retrieval.py       離線 retrieval 評估（hit rate / 新近度）
 │   eval_compare.py         比較兩份評測結果 JSON，劣化即非零退出（三種形狀通吃）→ make eval-compare
 │   analyze_qa_log.py       問答延遲、引用新近度與回饋分析
+│   measure_baseline.py     延遲分佈（含 p95）／路由分佈／標的覆蓋率基準量測（唯讀，零 LLM、零寫入）
 │   eval_faithfulness.py    M8 查核結果彙總（唯讀）；--claims <id> 逐條主張下鑽
 │   check_batch_freshness.py  批次停更偵測：純 SQL 比最新產出日 vs 門檻（0 新鮮／1 停更／2 查不到）→ make freshness
 │   db_audit.py             資料完整性稽核（唯讀）：孤兒列／NULL embedding／重複 chunk_index／市場不一致／content_norm 漂移 → make db-audit

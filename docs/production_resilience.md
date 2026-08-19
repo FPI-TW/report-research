@@ -308,6 +308,92 @@ ls -lh "$(sed -n 's/^REPORT_MARK_BACKUP_DIR=//p' /etc/default/report-mark-sync)/
 
 **仍待驗**：新 share 的寫入權（首跑就知道）、以及 `docker.exe` 透過 WSL interop 把二進位 dump 送回 WSL 檔案是否位元完整——檔頭魔數 + 大小檢查只擋得住頭尾壞掉，**首次安裝時應該真的做一次上面那節的還原比對**。備份腳本的落點檢查、原子改名、檔頭驗證與輪替已用假 `docker` 二進位在沙箱驗過。
 
+### 通知投遞與 secret 落點
+
+偵測與狀態機從 2026-08-19 起就在生產運作，但 `REPORT_MARK_ALERT_WEBHOOK` 一直沒設，
+所以事件只進 journal 與狀態檔、**沒有任何外部投遞**。去重、提醒節奏、恢復判定都在運作，
+少的只是最後一哩。
+
+#### secret 為什麼**不能**放進 `/etc/default/report-mark-sync`
+
+那是本專案的 canonical 設定來源（7 個 unit 都以 `EnvironmentFile=-` 讀它），但它
+**必須是使用者可讀的**：`scripts/db_backup.sh` 會自己逐鍵讀它，因為手動 `make db-backup`
+完全不經過 systemd 的 `EnvironmentFile`——2026-07-30 就是因為兩條路徑用不同設定而寫錯
+落點。把 webhook URL 放進去等於讓任何本機使用者讀得到；收緊權限則弄壞手動備份。
+**兩者都不可接受。**
+
+所以 secret 有自己的落點：
+
+```bash
+sudo install -d -m 0700 -o root -g root /etc/report-mark
+sudo install -m 0600 -o root -g root /dev/null /etc/report-mark/alert.env
+sudo -e /etc/report-mark/alert.env        # 只寫一行 REPORT_MARK_ALERT_WEBHOOK=...
+sudo systemctl daemon-reload
+```
+
+`report-mark-incident.service` 與 `report-mark-alert@.service` 都以
+`EnvironmentFile=-/etc/report-mark/alert.env` 讀它。**`-` 前綴是刻意的**：secret 尚未
+注入時 unit 不該啟動失敗，所以 unit 可以先部署、secret 後補。systemd 以 PID 1（root）
+讀 `EnvironmentFile`、之後才降權到 `User=kashionz`，因此 0600 root:root 讀得到。
+
+**別把 URL 寫進 repo、tracked `.env`、unit 檔、shell history、journal 或 PR。**
+有測試靜態守著前幾項。
+
+#### 投遞契約
+
+| 項目 | 值 |
+|---|---|
+| HTTP | `curl -sS -X POST`，`Content-Type: application/json` |
+| connect / overall timeout | `INCIDENT_NOTIFY_CONNECT_TIMEOUT`(5s) / `INCIDENT_NOTIFY_MAX_TIME`(10s) |
+| 成功條件 | **只有 2xx**。刻意不用 `-f`——它把 3xx 當成功，而未跟隨的重導向代表 POST 根本沒到目的地 |
+| retry | **無**。同一事件的下一次機會是下一輪提醒，那已經是節流過的節奏 |
+| payload | `{"component","action","severity","reason","text"}`；前四個是封閉詞彙，供接收端路由，`text` 給人看 |
+| body 上限 | `INCIDENT_NOTIFY_MAX_SUMMARY`(500 字元) 後截斷 |
+| 投遞失敗 | 狀態照常推進，只是 `notified=no`。反過來（送失敗就不更新狀態）會讓下一輪重送，變成投遞端故障時的通知風暴 |
+
+兩個容易寫錯的地方：
+
+- **payload 必須跳脫**。`summary` 含 systemctl 讀來的值（`Result`、`ActiveState`…），
+  那是外部輸入；未跳脫的 `"` 或 `\` 會產出格式錯誤的 JSON，接收端回 400，於是
+  「通知送不出去」的真正原因會偽裝成「webhook 壞了」。
+- **URL 不進 argv**。`curl ... "$URL"` 會讓 secret 出現在行程清單裡，任何本機使用者
+  `ps` 就看得到。改用 `-K -` 從 stdin 餵 curl 設定檔。`report-mark-alert.sh` 同樣處理過。
+
+### oneshot 的手動驗證：`Result=success` 不是證據
+
+2026-08-19 部署 P1 時出現過一次假通過。`systemctl start report-mark-freshness.service`
+的終端輸出看起來完全成功——`Result=success`、`ExecMainStatus=0`，還印出一份 freshness
+報告。但 journal 裡該 unit 當日只有 9 行、全屬 08:31 那次自然觸發，
+`ExecMainStartTimestamp` 也是 08:31。**unit 根本沒有執行。**
+
+兩件事疊出來的：
+
+1. `Result=success` 與 `ExecMainStatus=0` 既是**上一次**執行留下的值，也是**從未執行過**
+   的 unit 的預設值——兩者無法區分。
+2. oneshot 在沒有其他 unit 引用時會被 systemd 回收（`CollectMode=inactive`），
+   回收後 `systemctl show` 讀到的是重新載入的乾淨狀態，屬性一律為空。
+
+所以判準只能是「相對於一個**事前基線**的前進」：
+
+```bash
+BASE=$(bash scripts/verify_oneshot_ran.sh baseline report-mark-freshness.service)
+sudo systemctl start report-mark-freshness.service
+bash scripts/verify_oneshot_ran.sh verify report-mark-freshness.service "$BASE"
+```
+
+rc `0`＝`EXECUTION_PROVEN`／`1`＝**`EXECUTION_NOT_PROVEN`**／`2`＝用法或 token 格式錯誤。
+必要條件是 `ExecMainStartTimestampMonotonic` 前進，再加至少一項佐證（journal 行數成長
+或 `ExecMainExitTimestampMonotonic` 前進）。
+
+三個實測逼出來的細節：
+
+- **exit 必須與 exit 比**。初版 token 少了 `exit_mono`，於是拿現在的 exit 去比基線的
+  start——而 exit 本來就晚於 start，那個佐證欄位**恆為 yes**。永遠成立的證據等於沒有證據。
+- **格式錯誤的 token 必須是 rc=2，不能是判定**。初版把非數字欄位一律歸 0，於是隨便一個
+  字串當 token 就讓所有現值看起來「都前進了」→ 假的 `EXECUTION_PROVEN`。
+  **一個會在輸入壞掉時回報成功的驗證器，比沒有驗證器更危險。**
+- journal 成長**單獨不足**——它可能因為 timer 的訊息而長。啟動時間戳前進才是必要條件。
+
 ## 批次停更偵測（2026-07-30）
 
 ### 為什麼 `OnFailure` 不夠

@@ -62,6 +62,11 @@ BLIND_CRITICAL_SECONDS="${INCIDENT_BLIND_CRITICAL_SECONDS:-900}"  # ≈7 個週�
 # **刻意不沿用初版的 600s**：那個值是在還沒有任何實測分布時訂的。
 BOOTSTRAP_SECONDS="${INCIDENT_BOOTSTRAP_SECONDS:-300}"
 WEBHOOK="${REPORT_MARK_ALERT_WEBHOOK:-}"
+# 投遞旋鈕。connect 與 overall 分開：連不上的端點應該快速失敗，而不是佔滿整個
+# overall 預算——handler 的 TimeoutStartSec 是 60s，一輪最多可能發兩則通知。
+NOTIFY_CONNECT_TIMEOUT="${INCIDENT_NOTIFY_CONNECT_TIMEOUT:-5}"
+NOTIFY_MAX_TIME="${INCIDENT_NOTIFY_MAX_TIME:-10}"
+NOTIFY_MAX_SUMMARY="${INCIDENT_NOTIFY_MAX_SUMMARY:-500}"
 
 # repo 根由腳本自身位置推導（與 sync_new_reports.sh 同慣用語）
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -170,25 +175,56 @@ write_state() {
     }
 }
 
+# JSON 字串跳脫。**payload 含 systemctl 讀來的值**（`Result`、`ActiveState`…），那是
+# 外部輸入：未跳脫的 `"` 或 `\` 會產出格式錯誤的 JSON，接收端回 400，於是「通知送不出去」
+# 的真正原因會偽裝成「webhook 壞了」。控制字元直接移除而不是跳脫——summary 一律單行，
+# 移除比跳脫少一個失效面。**刻意只用 tr/sed**，不引入 python（P5 不依賴 venv）。
+_json_escape() {
+    printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
 # 結果經全域 NOTIFY_SENT 回傳，**不用 stdout**：這支腳本的 stdout 是給 journal 與
 # 消費端看的結構化輸出，若 notify 也往 stdout 回傳值，命令替換會把日誌行一起
 # 吃進去，讓 emit 的欄位被汙染（初版就是這樣，被 test_webhook_failure 抓到）。
 NOTIFY_SENT=no
 notify() {
-    local comp="$1" action="$2" severity="$3" summary="$4"
+    local comp="$1" action="$2" severity="$3" summary="$4" reason="${5:-}"
     NOTIFY_SENT=no
+    # log 一律不含 URL——journal 是多人可讀的，secret 不進去。
     log "[$severity] $action $comp: $summary"
-    if [ -n "$WEBHOOK" ]; then
-        # 投遞失敗不得影響狀態機的正確性：狀態仍然照常推進，只是這一則沒送到。
-        # 反過來（送失敗就不更新狀態）會讓下一輪重送，變成投遞端故障時的通知風暴。
-        if curl -fsS --max-time 10 -X POST "$WEBHOOK" \
-            -H 'Content-Type: application/json' \
-            -d "{\"text\":\"[report-mark][$severity] $action $comp: $summary\"}" >/dev/null 2>&1; then
-            NOTIFY_SENT=yes
-        else
-            log "webhook 投遞失敗（狀態仍已更新，不重送以免形成風暴）"
-        fi
+    [ -n "$WEBHOOK" ] || return 0
+
+    # 有界的 body：summary 由 systemd 屬性與計時差組成，長度理論上無上限，
+    # 而接收端多半有 payload 上限。截斷比被對方靜默丟棄好。
+    local trimmed="$summary"
+    if [ "${#trimmed}" -gt "$NOTIFY_MAX_SUMMARY" ]; then
+        trimmed="${trimmed:0:$NOTIFY_MAX_SUMMARY}…"
     fi
+    # 結構化欄位讓接收端能路由（例如只把 CRITICAL 轉呼叫），text 保留給人看。
+    # component/action/severity/reason 皆為封閉詞彙，見檔頭。
+    local payload
+    payload=$(printf '{"component":"%s","action":"%s","severity":"%s","reason":"%s","text":"%s"}' \
+        "$(_json_escape "$comp")" "$(_json_escape "$action")" "$(_json_escape "$severity")" \
+        "$(_json_escape "$reason")" "$(_json_escape "[report-mark][$severity] $action $comp: $trimmed")")
+
+    # **URL 不進 argv。** `curl ... "$WEBHOOK"` 會讓 URL 出現在行程清單裡，任何本機
+    # 使用者 `ps` 就看得到。改用 `-K -` 從 stdin 餵 curl 設定檔，URL 只存在於管線中。
+    # 成功條件**明確定義為 2xx**：不用 `-f`（它把 3xx 當成功，而未跟隨的重導向代表
+    # POST 根本沒到目的地）。連不上時 curl 的 %{http_code} 是 000。
+    local code
+    code="$(printf 'url = "%s"\n' "$WEBHOOK" | curl -sS -o /dev/null -w '%{http_code}' \
+        --connect-timeout "$NOTIFY_CONNECT_TIMEOUT" --max-time "$NOTIFY_MAX_TIME" \
+        -K - -X POST -H 'Content-Type: application/json' \
+        --data-binary "$payload" 2>/dev/null)" || code=000
+    case "$code" in
+        2??) NOTIFY_SENT=yes ;;
+        *)
+            # 投遞失敗不得影響狀態機的正確性：狀態仍然照常推進，只是這一則沒送到。
+            # 反過來（送失敗就不更新狀態）會讓下一輪重送，變成投遞端故障時的通知風暴。
+            # **刻意不重試**：同一個事件的下一次機會是下一輪提醒，那已經是節流過的節奏。
+            log "webhook 投遞失敗（HTTP ${code:-000}；狀態仍已更新，不重送以免形成風暴）"
+            ;;
+    esac
 }
 
 # ── 通用狀態機 ────────────────────────────────────────────────────────────
@@ -209,7 +245,7 @@ run_state_machine() {
     if [ "$verdict" = healthy ]; then
         if [ "$st_state" = FIRING ]; then
             local dur=$(( now_epoch - st_first_seen ))
-            notify "$comp" RESOLVED RESOLVED "已恢復，本次事件持續 ${dur}s、共 ${st_count} 次失敗觀測"
+            notify "$comp" RESOLVED RESOLVED "已恢復，本次事件持續 ${dur}s、共 ${st_count} 次失敗觀測" "$reason"
             rm -f "$STATE_DIR/$comp.state" 2>/dev/null
             emit "$status" resolved RESOLVED CLOSED "$reason" "$NOTIFY_SENT" "$comp"
         else
@@ -227,7 +263,7 @@ run_state_machine() {
 
     # failing，或 hold 但已有進行中的事件（後者不得因為「這輪不知道」就靜音）
     if [ "$st_state" = CLOSED ]; then
-        notify "$comp" FIRING "$severity" "$detail"
+        notify "$comp" FIRING "$severity" "$detail" "$reason"
         write_state "$comp" FIRING "$severity" "$now_epoch" "$now_epoch" "$obs" 1
         emit "$status" firing "$severity" FIRING "$reason" "$NOTIFY_SENT" "$comp"
         return 0
@@ -241,7 +277,7 @@ run_state_machine() {
     # 升級（WARNING → CRITICAL）必須立刻通知，不能等提醒週期——否則「暫時看不見」
     # 惡化成「確定被停掉」這件事會被去重機制吞掉最多 30 分鐘。
     if [ "$eff_severity" = CRITICAL ] && [ "${st_severity:-}" = WARNING ]; then
-        notify "$comp" ESCALATED CRITICAL "$detail"
+        notify "$comp" ESCALATED CRITICAL "$detail" "$reason"
         write_state "$comp" FIRING CRITICAL "$st_first_seen" "$now_epoch" "$obs" "$count"
         emit "$status" escalated CRITICAL FIRING "$reason" "$NOTIFY_SENT" "$comp"
         return 0
@@ -253,7 +289,7 @@ run_state_machine() {
     [ "$since_notify" -lt 0 ] && since_notify="$REMINDER_SECONDS"
     if [ "$since_notify" -ge "$REMINDER_SECONDS" ]; then
         local dur=$(( now_epoch - st_first_seen ))
-        notify "$comp" REMINDER "$eff_severity" "仍未恢復，已持續 ${dur}s、共 ${count} 次失敗觀測（${detail}）"
+        notify "$comp" REMINDER "$eff_severity" "仍未恢復，已持續 ${dur}s、共 ${count} 次失敗觀測（${detail}）" "$reason"
         write_state "$comp" FIRING "$eff_severity" "$st_first_seen" "$now_epoch" "$obs" "$count"
         emit "$status" reminder "$eff_severity" FIRING "$reason" "$NOTIFY_SENT" "$comp"
     else

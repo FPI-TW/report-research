@@ -480,6 +480,30 @@ else
     fi
 fi
 
+# ── 輸出欄位：描述本輪**實際使用**的那一筆觀測 ────────────────────────────
+# **位置很重要，必須在 monitor 分派之前。** 第一版把它放在 web 分派裡重算，於是
+# monitor 那一行仍印載入快取當下的舊值——同一個缺陷只修好一半。2026-08-20 部署後
+# 實測到 `component=web last_completed_age=58` 而 `component=monitor` 是 179，
+# 兩行描述同一輪卻互相矛盾。
+#
+# 而最初的缺陷是：EMIT_LAST_* 在載入快取當下就算好，反映「上一輪消費的那筆」，
+# 年齡累積成「上一輪間隔 ＋ 那筆當時的年齡」（實測 239s／255s，而快取其實完全同步、
+# 真實年齡只有 83.6s）。判斷邏輯不受影響，但那個數字逼近 OBS_TRUST=240 的門檻值，
+# 會讓人以為觀測已四分鐘沒更新——**會讓人誤判的欄位本身就是缺陷**。
+if [ "$signal" = ok ]; then
+    _used_status="$probe_status"; _used_obs="$probe_mono"
+else
+    # cached／bootstrap／blind 一律以記憶中的那筆為準（沒有就是 none）
+    _used_status="$obs_status"; _used_obs="$obs_mono"
+fi
+EMIT_LAST_COMPLETED="$(_last_label "$_used_status")"
+if [ "$_used_obs" -gt 0 ]; then
+    EMIT_LAST_AGE=$(( (now_mono_us - _used_obs) / 1000000 ))
+    [ "$EMIT_LAST_AGE" -lt 0 ] && EMIT_LAST_AGE=0
+else
+    EMIT_LAST_AGE=-
+fi
+
 # ── 元件一：監控本身 ──────────────────────────────────────────────────────
 case "$signal" in
     ok)        run_state_machine "$MONITOR_COMPONENT" healthy ""             monitor_ok           "$probe_mono" ok            "" ;;
@@ -510,19 +534,6 @@ else
     save_obs_cache "$probe_mono" "$probe_status" "$probe_result"
 fi
 
-# **輸出欄位必須描述本輪實際用的那一筆觀測。**
-# 初版在載入快取當下就算好 EMIT_LAST_*，於是 signal=ok（本輪讀到新鮮觀測）時，
-# 欄位顯示的卻是**上一輪消費的那筆**——年齡累積成「上一輪間隔 ＋ 那筆當時的年齡」。
-# 2026-08-20 部署後實測顯示 239s／255s，而快取其實完全同步、真實年齡只有 83.6s。
-# 判斷邏輯不受影響（signal=ok 用的是本輪的 probe_mono），但那個數字會讓人以為
-# 觀測已四分鐘沒更新，而且逼近 OBS_TRUST=240 的門檻值——**會讓人誤判的欄位本身就是缺陷**。
-EMIT_LAST_COMPLETED="$(_last_label "$web_status")"
-if [ "$web_obs" -gt 0 ]; then
-    EMIT_LAST_AGE=$(( (now_mono_us - web_obs) / 1000000 ))
-    [ "$EMIT_LAST_AGE" -lt 0 ] && EMIT_LAST_AGE=0
-else
-    EMIT_LAST_AGE=-
-fi
 
 # P4 的退出碼契約：0 健康／3 寬限（視為健康）／1,2 服務故障／4 探針自身錯誤
 case "$web_status" in

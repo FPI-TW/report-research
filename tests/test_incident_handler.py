@@ -108,6 +108,14 @@ class _Harness:
             self.mono += 120_000_000  # 模擬 P4 又跑了一輪（+2 分鐘）
         self._write_fakes()
 
+    def seed_state(self, text: str):
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        (self.state_dir / "web.state").write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def boot_id() -> str:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
     @property
     def state(self) -> dict:
         f = self.state_dir / "web.state"
@@ -373,6 +381,191 @@ class SystemdContractTests(unittest.TestCase):
 
     def test_state_dir_is_gitignored(self):
         self.assertIn("data/.incidents/", (REPO_ROOT / ".gitignore").read_text(encoding="utf-8"))
+
+
+class ObservationIdentityTests(unittest.TestCase):
+    """新觀測的判定必須在 reboot 之後仍然正確。
+
+    ExecMainExitTimestampMonotonic 的 epoch 是「本次開機」。重開機後狀態檔裡的
+    值來自上一個 boot，與新 boot 的值不可比——兩者相等就會被誤判成「同一次觀測」，
+    使該輪的失敗不被計數。機率極低（要撞到同一微秒），但這個不變量應該是明示且
+    可驗證的，而不是靠運氣。
+    """
+
+    def setUp(self):
+        self.h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(self.h.close)
+
+    def test_state_records_boot_id(self):
+        self.h.set_probe(1)
+        self.h.run()
+        self.assertEqual(self.h.state.get("boot_id"), self.h.boot_id())
+
+    def test_monotonic_from_previous_boot_is_not_reused(self):
+        """同一個 monotonic 值，但 boot_id 不同 ⇒ 必須算成新觀測。"""
+        self.h.set_probe(1)
+        self.h.seed_state(
+            f"state=FIRING\nseverity=CRITICAL\nfirst_seen=1\n"
+            f"last_notified={int(__import__('time').time())}\n"
+            f"last_obs_monotonic={self.h.mono}\ncount=1\nboot_id=OLD-BOOT\n"
+        )
+        self.h.run()
+        self.assertEqual(int(self.h.state["count"]), 2, "跨 boot 的 monotonic 被誤認成同一次觀測")
+
+    def test_same_boot_same_monotonic_is_not_double_counted(self):
+        self.h.set_probe(1)
+        self.h.run()
+        self.h.set_probe(1, bump_mono=False)
+        self.h.run()
+        self.assertEqual(int(self.h.state["count"]), 1)
+
+
+class StrandedIncidentTests(unittest.TestCase):
+    """**已開啟的事件不得被任何早退路徑擱置。**
+
+    初版在「探針從未執行」（probe_mono=0）時直接早退，於是重開機後 P4 還沒跑第一輪、
+    或 P4 的 timer 被停用，都會讓進行中的 FIRING 永遠卡住：不再有提醒、也不會 RESOLVED。
+    對告警系統而言那等於靜音。
+    """
+
+    def setUp(self):
+        self.h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(self.h.close)
+
+    def test_open_incident_survives_probe_never_ran(self):
+        self.h.mono = 0
+        self.h._write_fakes()
+        self.h.seed_state(
+            f"state=FIRING\nseverity=CRITICAL\nfirst_seen=1\nlast_notified=1\n"
+            f"last_obs_monotonic=9\ncount=5\nboot_id={self.h.boot_id()}\n"
+        )
+        p = self.h.run()
+        e = last_emit(p.stdout)
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(e["reason"], "probe_stale", "既有事件必須落到 stale 分支，不得早退")
+        self.assertEqual(e["action"], "reminder")
+        self.assertEqual(self.h.webhook_calls(), 1)
+
+    def test_closed_state_with_probe_never_ran_is_still_noop(self):
+        """沒有事件時（例如 P4 尚未部署）仍不得誤報。"""
+        self.h.mono = 0
+        self.h._write_fakes()
+        p = self.h.run()
+        self.assertEqual(last_emit(p.stdout)["reason"], "probe_never_ran")
+        self.assertEqual(self.h.webhook_calls(), 0)
+
+    def test_stale_incident_still_gets_reminders(self):
+        """探針停掉後，第一則之後不得永遠靜音。"""
+        self.h.mono = 1_000_000
+        self.h._write_fakes()
+        p1 = self.h.run(INCIDENT_STALE_SECONDS="60")
+        self.assertEqual(last_emit(p1.stdout)["action"], "firing")
+        p2 = self.h.run(INCIDENT_STALE_SECONDS="60", INCIDENT_REMINDER_SECONDS="0")
+        self.assertEqual(last_emit(p2.stdout)["action"], "reminder")
+        self.assertEqual(self.h.webhook_calls(), 2)
+
+
+class ClockSafetyTests(unittest.TestCase):
+    def setUp(self):
+        self.h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(self.h.close)
+
+    def test_future_last_notified_does_not_silence_reminders(self):
+        """牆鐘回跳（WSL 休眠喚醒／NTP 校正）或損毀成未來時間戳，會讓
+        `now - last_notified` 變成負數而永遠小於門檻 ⇒ 提醒永遠不觸發、事件無聲卡住。
+        """
+        self.h.set_probe(1)
+        self.h.seed_state(
+            f"state=FIRING\nseverity=CRITICAL\nfirst_seen=1\nlast_notified=9999999999\n"
+            f"last_obs_monotonic=1\ncount=1\nboot_id={self.h.boot_id()}\n"
+        )
+        p = self.h.run()
+        self.assertEqual(last_emit(p.stdout)["action"], "reminder")
+        self.assertEqual(self.h.webhook_calls(), 1)
+
+
+class MaliciousStateTests(unittest.TestCase):
+    """狀態檔是本程式自己寫的，但**必須假設它會損毀或被人手改**。
+
+    以 `source` 讀取等於任意程式碼執行；未驗證的數值欄位進入算術展開，
+    輕則整支腳本靜默死亡（實測 rc=1、stdout/stderr 全空），重則是注入面。
+    """
+
+    def setUp(self):
+        self.h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(self.h.close)
+
+    def _assert_no_exec(self, payload_state):
+        marker = Path("/tmp/p5_pwned_marker")
+        marker.unlink(missing_ok=True)
+        self.h.set_probe(1)
+        self.h.seed_state(payload_state)
+        p = self.h.run(INCIDENT_REMINDER_SECONDS="0")
+        self.assertFalse(marker.exists(), "狀態檔內容被當成程式碼執行")
+        self.assertEqual(p.returncode, 0, f"損毀的狀態不得讓 handler 死掉\n{p.stdout}\n{p.stderr}")
+        self.assertTrue(p.stdout.strip(), "handler 必須仍有結構化輸出")
+        return p
+
+    def test_command_substitution_in_value_is_inert(self):
+        self._assert_no_exec(
+            'state=FIRING\nseverity=$(touch /tmp/p5_pwned_marker)\n'
+            'first_seen=1\nlast_notified=0\nlast_obs_monotonic=1\ncount=0\n'
+        )
+
+    def test_backticks_in_value_is_inert(self):
+        self._assert_no_exec(
+            'state=FIRING\nseverity=CRITICAL\n'
+            'first_seen=`touch /tmp/p5_pwned_marker`\n'
+            'last_notified=0\nlast_obs_monotonic=1\ncount=0\n'
+        )
+
+    def test_non_numeric_first_seen_does_not_kill_handler(self):
+        """**實測過的靜默死亡**：first_seen 是唯一漏做數值驗證的欄位。"""
+        p = self._assert_no_exec(
+            'state=FIRING\nseverity=CRITICAL\nfirst_seen=NOT_A_NUMBER\n'
+            'last_notified=0\nlast_obs_monotonic=1\ncount=0\n'
+        )
+        self.assertIn("handler=incident", p.stdout)
+
+    def test_quote_injection_does_not_break_emit_line(self):
+        self.h.set_probe(1)
+        self.h.seed_state(
+            'state=FIRING\nseverity="; rm -rf /\nfirst_seen=1\n'
+            'last_notified=0\nlast_obs_monotonic=1\ncount=0\n'
+        )
+        p = self.h.run(INCIDENT_REMINDER_SECONDS="0")
+        self.assertEqual(p.returncode, 0)
+        # severity 是封閉詞彙，損毀值必須被丟棄而不是原樣輸出
+        self.assertNotIn("rm -rf", last_emit(p.stdout).get("severity", ""))
+
+    def test_all_numeric_fields_are_validated(self):
+        """靜態：每個進入算術展開的欄位都要有數值驗證。"""
+        body = HANDLER.read_text(encoding="utf-8")
+        for field in ("st_first_seen", "st_last_notified", "st_last_obs_monotonic", "st_count"):
+            with self.subTest(field=field):
+                self.assertRegex(body, rf'case "\${field}" in')
+
+
+class ConcurrencyTests(unittest.TestCase):
+    def test_parallel_handlers_produce_one_firing(self):
+        """反轉可驗的核心守門：兩個 handler 同時看到 CLOSED 不得都發 FIRING。"""
+        h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(h.close)
+        h.set_probe(1)
+        env = dict(os.environ)
+        env["PATH"] = f"{h.bin}:{env['PATH']}"
+        env["INCIDENT_STATE_DIR"] = str(h.state_dir)
+        env["INCIDENT_COMPONENT"] = "web"
+        env["REPORT_MARK_ALERT_WEBHOOK"] = h.webhook
+        h.state_dir.mkdir(parents=True, exist_ok=True)
+        procs = [
+            subprocess.Popen(["bash", str(HANDLER)], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, env=env)
+            for _ in range(6)
+        ]
+        for p in procs:
+            p.wait(timeout=60)
+        self.assertEqual(h.webhook_calls(), 1, "並發下重複發出 FIRING（flock 未涵蓋讀-改-寫）")
 
 
 if __name__ == "__main__":

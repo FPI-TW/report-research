@@ -63,10 +63,11 @@ emit() {
 # ── 狀態檔（key=value，shell 可解析、不需 jq）──────────────────────────────
 st_state=CLOSED
 st_severity=
-st_first_seen=
+st_first_seen=0
 st_last_notified=0
 st_last_obs_monotonic=0
 st_count=0
+st_boot_id=
 
 if [ -f "$STATE_FILE" ]; then
     # 逐鍵讀取而非 `source`：狀態檔是本程式自己寫的，但 source 會把它當 shell
@@ -79,14 +80,29 @@ if [ -f "$STATE_FILE" ]; then
             last_notified)       st_last_notified="$v" ;;
             last_obs_monotonic)  st_last_obs_monotonic="$v" ;;
             count)               st_count="$v" ;;
+            boot_id)             st_boot_id="$v" ;;
         esac
     done < "$STATE_FILE"
 fi
 # 損毀的欄位一律回退到安全預設（fail-open：寧可多送一則，不要靜默漏送）
 case "$st_state" in FIRING|CLOSED) ;; *) st_state=CLOSED ;; esac
+# **每一個會進入算術展開的欄位都必須驗**。漏掉 first_seen 曾讓損毀的狀態檔
+# （first_seen=NOT_A_NUMBER）使整支腳本以 rc=1、stdout/stderr 全空的方式靜默死亡
+# ——對告警器而言那是最糟的失效：它自己死了，而且因為本 unit 刻意不宣告 OnFailure，
+# 沒有任何人會知道。
+case "$st_first_seen" in ''|*[!0-9]*) st_first_seen=0 ;; esac
 case "$st_last_notified" in ''|*[!0-9]*) st_last_notified=0 ;; esac
 case "$st_last_obs_monotonic" in ''|*[!0-9]*) st_last_obs_monotonic=0 ;; esac
 case "$st_count" in ''|*[!0-9]*) st_count=0 ;; esac
+case "$st_severity" in CRITICAL|WARNING|RESOLVED|'') ;; *) st_severity= ;; esac
+
+# 單調時鐘的 epoch 是「本次開機」。重開機後狀態檔裡的 last_obs_monotonic 來自
+# 上一個 boot，與新 boot 的值不可比——兩者相等就會被誤判成「同一次觀測」。
+# 機率極低（要撞到同一微秒），但這個不變量應該是明示且可驗證的，而不是靠運氣。
+BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
+if [ "$st_boot_id" != "$BOOT_ID" ]; then
+    st_last_obs_monotonic=0
+fi
 
 write_state() {
     # 原子寫入：先寫暫存再 rename。同一個檔案系統上 rename 是原子的，
@@ -100,6 +116,7 @@ write_state() {
         echo "last_notified=$4"
         echo "last_obs_monotonic=$5"
         echo "count=$6"
+        echo "boot_id=$BOOT_ID"
     } > "$tmp" && mv -f "$tmp" "$STATE_FILE" || {
         rm -f "$tmp" 2>/dev/null
         echo "incident_handler: 狀態寫入失敗" >&2
@@ -137,17 +154,28 @@ case "$probe_status" in ''|*[!0-9]*) probe_status=-1 ;; esac
 case "$probe_mono"   in ''|*[!0-9]*) probe_mono=0 ;; esac
 
 now_epoch="$(date +%s)"
+# first_seen 若損毀而回退成 0，duration 會從 1970 起算（顯示成 17 億秒）。
+# 這不影響判定，但會讓通知內容變成雜訊——以「現在」為起點才是誠實的近似。
+[ "$st_first_seen" -eq 0 ] && st_first_seen="$now_epoch"
 now_mono_us=$(( $(awk '{printf "%d", $1 * 1000000}' /proc/uptime 2>/dev/null || echo 0) ))
 
-# P4 從未執行過：沒有可消費的訊號，不是故障也不是健康。
-if [ "$probe_mono" -eq 0 ]; then
-    emit noop none "$st_state" probe_never_ran no
+# P4 從未執行過（或 daemon-reload 後屬性被清空）：沒有可消費的訊號。
+# **但不能就此早退**——若已有進行中的事件，早退會讓它永遠卡在 FIRING：
+# 不再有提醒、也不會 RESOLVED。重開機後 P4 尚未跑第一輪、或 P4 的 timer 被停用，
+# 都會落到這條路徑。此時真正的狀況是「監控失明」，交給下面的 stale 分支處理。
+if [ "$probe_mono" -eq 0 ] && [ "$st_state" = CLOSED ]; then
+    emit noop none CLOSED probe_never_ran no
     exit "$EXIT_OK"
 fi
 
 # P4 自己停了：距上次結果超過 STALE_SECONDS。這是**監控失明**，不是服務故障。
-obs_age=$(( (now_mono_us - probe_mono) / 1000000 ))
-[ "$obs_age" -lt 0 ] && obs_age=0
+if [ "$probe_mono" -eq 0 ]; then
+    # 有進行中的事件、但探針沒有任何執行紀錄 ⇒ 一律視為過期（監控失明）
+    obs_age=$(( STALE_SECONDS + 1 ))
+else
+    obs_age=$(( (now_mono_us - probe_mono) / 1000000 ))
+    [ "$obs_age" -lt 0 ] && obs_age=0
+fi
 if [ "$obs_age" -gt "$STALE_SECONDS" ]; then
     if [ "$st_state" = CLOSED ]; then
         notify FIRING WARNING "健康探針已 ${obs_age}s 沒有新結果（門檻 ${STALE_SECONDS}s）——監控本身可能停了"
@@ -155,7 +183,18 @@ if [ "$obs_age" -gt "$STALE_SECONDS" ]; then
         write_state FIRING WARNING "$now_epoch" "$now_epoch" "$st_last_obs_monotonic" 1
         emit firing WARNING FIRING probe_stale "$sent"
     else
-        emit suppress "${st_severity:-WARNING}" FIRING probe_stale no
+        # 已在 FIRING：提醒到期仍要送，否則「探針停掉」這件事會在第一則之後永遠靜音。
+        stale_since=$(( now_epoch - st_last_notified ))
+        [ "$stale_since" -lt 0 ] && stale_since="$REMINDER_SECONDS"
+        if [ "$stale_since" -ge "$REMINDER_SECONDS" ]; then
+            notify REMINDER "${st_severity:-WARNING}" "健康探針仍無新結果（已 ${obs_age}s）"
+            sent="$NOTIFY_SENT"
+            write_state FIRING "${st_severity:-WARNING}" "$st_first_seen" "$now_epoch" \
+                "$st_last_obs_monotonic" "$st_count"
+            emit reminder "${st_severity:-WARNING}" FIRING probe_stale "$sent"
+        else
+            emit suppress "${st_severity:-WARNING}" FIRING probe_stale no
+        fi
     fi
     exit "$EXIT_OK"
 fi
@@ -201,6 +240,9 @@ fi
 count="$st_count"
 [ "$new_observation" = yes ] && count=$(( st_count + 1 ))
 since_notify=$(( now_epoch - st_last_notified ))
+# 牆鐘回跳（WSL 休眠喚醒、NTP 校正）或狀態檔損毀成未來時間戳，會讓這個差值變成
+# 負數，而負數永遠小於門檻 ⇒ 提醒永遠不觸發、事件無聲卡住。fail-open：當成到期。
+[ "$since_notify" -lt 0 ] && since_notify="$REMINDER_SECONDS"
 if [ "$since_notify" -ge "$REMINDER_SECONDS" ]; then
     dur=$(( now_epoch - ${st_first_seen:-$now_epoch} ))
     notify REMINDER "$severity" "仍未恢復，已持續 ${dur}s、共 ${count} 次失敗觀測"

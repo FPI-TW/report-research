@@ -766,12 +766,63 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 `ActiveEnterTimestamp` 每 3 秒更新一次，只看時間戳的寬限在 crash loop 下**恆為真**，
 會永久抑制告警（2026-08-18 累積 550 次重啟，正是這個形狀）。
 
+#### `NRestarts == 0` 是探針的閘，不是健康的定義
+
+**兩者常被混為一談，而混淆的方向是「把正常誤判成異常」。** 探針用它區分「人為
+啟動」與「crash loop」——systemd 在人為 `start`／`restart` 後把計數歸零、自動重啟時
+累加，所以 `0` 代表「這次是人啟動的，給它 60 秒暖機」。
+
+但**驗收腳本與 runbook 不可以把 `NRestarts == 0` 當成健康的判準**。2026-08-20 的 P2
+換裝在 00:48:03–00:52:57 造成 4m54s 中斷（venv console script 的 shebang 指向改名前的
+絕對路徑），計數因此停在：
+
+```
+baseline_nrestarts=84        # 基準時刻 2026-08-20 00:52:57（ActiveEnterTimestamp）
+```
+
+**此後一律看 delta，不看絕對值。** 寫「expected NRestarts=0」的檢查會從那一刻起
+永遠紅，於是被關掉或被忽略——那正是告警失效最常見的死法。
+
+**已知未驗證的一點**：上述「人為重啟歸零」來自 `check_web_health.sh` 的既有註解與
+systemd 行為，本輪**沒有實證**（實證需要重啟生產 web，代價不對等）。所以下次人為
+重啟後要重新記錄基準值，不要假設它仍是 84。同理，`data/unit_failures.log` 在該次
+事故新增約 84 筆，**那是事故證據，不要清檔**；後續一律看「基準之後的新增筆數」。
+
 ### 探針刻意不相依 Python
 
 `scripts/check_web_health.sh` 只用 `curl`／`systemctl`／coreutils，**不用 `uv run`、
 不碰 `.venv`、不 import 任何 `app.*`**。2026-08-18 的根因正是 `/mnt/c`（9p）上的
 venv 損毀，若探針相依 Python 環境，它會與被監控的服務一起死——那時最需要它，
 而它不在。`tests/test_web_health_probe.py` 靜態守這條。
+
+### Python venv 不可搬移——2026-08-20 用 4m54s 學到的
+
+**`.venv` 不能「先在 A 路徑建好、再改名到 B 路徑」。** venv 內的 console script
+（`bin/uvicorn`、`bin/pytest`…）第一行 shebang 寫的是**建置當下的絕對直譯器路徑**，
+改名不會更新它。P2 的 CPU-only torch 換裝就是這樣做的，結果是：
+
+```
+Failed to spawn: uvicorn — No such file or directory
+```
+
+**那句話指的是直譯器，不是 `uvicorn`**——最容易把人帶往完全錯誤的方向（去查
+uvicorn 有沒有裝）。中斷 4m54s，web 累積 84 次自動重啟。
+
+正確做法只有兩條：**在最終的正式路徑上建置**，或使用能驗證的部署機制（symlink
+切換、`--relocatable`、容器）。無論哪條，換裝後的驗收都必須包含「真的起得來」，
+而不只是「檔案在」。
+
+#### 目前的 venv 資產
+
+| 路徑 | 狀態 | 說明 |
+|---|---|---|
+| `.venv` | **ACTIVE／唯一權威** | torch 2.12.1+cpu，`cuda_available=False`，nvidia／triton 套件 0 |
+| `.venv.badpath` | BROKEN | 換裝失敗的搬移產物，console script shebang 指向舊絕對路徑，**不可用** |
+| `.venv.pre-cpu` | **CONTAMINATED** | 混合快照（CPU torch ＋ CUDA/nvidia 殘留），**不是有效的回滾點** |
+
+**要真的回滾到 CUDA，唯一正確路徑是**：checkout P2 之前的 `pyproject.toml`／`uv.lock`
+→ 在正式路徑重新建置 → 驗證 → 受控切換。**不要把 `.venv.pre-cpu` 當回滾用**，
+它裝的已經是 CPU torch。
 
 ### 通知行為：**這支探針不會通知任何人**
 

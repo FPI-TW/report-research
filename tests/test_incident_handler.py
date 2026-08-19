@@ -50,7 +50,7 @@ class _Harness:
     def __init__(self, exit_status=0, result="success", mono=None, webhook=None,
                  timer_enabled="enabled", timer_active="active",
                  timer_load="loaded", service_load="loaded",
-                 timer_enter_mono=0, show_rc=0):
+                 timer_enter_mono=0, show_rc=0, probe_state="inactive"):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.state_dir = self.root / "incidents"
@@ -69,6 +69,9 @@ class _Harness:
         # 0 = timer 老早就 active（bootstrap 空窗早已過完）
         self.timer_enter_mono = timer_enter_mono
         self.show_rc = show_rc
+        # 被觀測 unit 的 ActiveState。預設 inactive＝探針不在執行中（絕大多數情境）；
+        # activating＝ExecStart 正在跑，此時 systemd 已把 ExecMain* 歸零。
+        self.probe_state = probe_state
         # 預設用「現在」的單調時鐘，讓觀測看起來是新鮮的
         self.mono = mono if mono is not None else self._now_mono()
         self.webhook = webhook
@@ -103,6 +106,11 @@ class _Harness:
             f'      *)       printf \'%s\\n\' "{self.service_load}" ;;\n'
             "    esac; exit 0 ;;\n"
             f'  ActiveEnterTimestampMonotonic) printf \'%s\\n\' "{self.timer_enter_mono}"; exit 0 ;;\n'
+            "  ActiveState)\n"
+            '    case "$unit" in\n'
+            f'      *.timer) printf \'%s\\n\' "{self.timer_active}" ;;\n'
+            f'      *)       printf \'%s\\n\' "{self.probe_state}" ;;\n'
+            "    esac; exit 0 ;;\n"
             f'  Result) printf \'%s\\n\' "{self.result}"; exit 0 ;;\n'
             f'  ExecMainStatus) printf \'%s\\n\' "{self.exit_status}"; exit 0 ;;\n'
             f'  ExecMainExitTimestampMonotonic) printf \'%s\\n\' "{self.mono}"; exit 0 ;;\n'
@@ -743,6 +751,68 @@ class MonitorSignalTests(unittest.TestCase):
         self.assertIn("status=tooling", r.stdout)
         self.assertIn("systemctl_not_found", r.stdout)
 
+    # ── 探針執行中（2026-08-19 生產實測到的競態）─────────────────────────
+    def test_probe_in_flight_is_not_monitor_blind(self):
+        """**2026-08-19 部署當天實測到的真實故障。**
+
+        P4 與 P5 的 timer 週期都是 2 分鐘，enable 的時機讓它們落在**同一秒**觸發
+        （15:34:22、15:36:28 皆同秒）。systemd 在 oneshot 啟動時把 ExecMain* 歸零、
+        結束才寫入，所以勝負由次秒級順序決定：P5 讀在 P4 完成之前拿到 0、判成
+        observation_missing 並開 CRITICAL；下一輪讀在完成之後就 RESOLVED。
+        結果是 FIRING↔RESOLVED 震盪——正好重現 P5 存在要消除的那件事。
+
+        實測的執行中狀態：ActiveState=activating、SubState=start、
+        ExecMainExitTimestampMonotonic=0。
+        """
+        self.h.set_timer(probe_state="activating", mono=0, timer_enter_mono=1)
+        p = self.h.run()
+        m = monitor_emit(p.stdout)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(m["status"], "in_flight", p.stdout)
+        self.assertEqual(m["reason"], "probe_in_flight")
+        self.assertEqual(m["action"], "noop", "執行中不得開事件")
+        self.assertEqual(m["severity"], "none")
+        self.assertEqual(self.h.webhook_calls(), 0, "執行中不得發任何通知")
+
+    def test_probe_in_flight_skips_the_web_component(self):
+        """這一輪對 web 一無所知，所以不碰它的狀態機。"""
+        self.h.set_timer(probe_state="activating", mono=0, timer_enter_mono=1)
+        w = last_emit(self.h.run().stdout)
+        self.assertEqual(w["action"], "skip")
+        self.assertEqual(w["reason"], "signal_probe_in_flight")
+
+    def test_probe_in_flight_does_not_resolve_an_open_monitor_incident(self):
+        """「正在跑」不等於「有一筆完成的觀測」，不足以解除進行中的失明事件。
+
+        否則震盪會換一個方向發生：真的失明期間只要撞上一次執行中就被誤判成恢復。
+        """
+        self.h.state_dir.mkdir(parents=True, exist_ok=True)
+        (self.h.state_dir / "monitor.state").write_text(
+            f"state=FIRING\nseverity=CRITICAL\nfirst_seen=1\nlast_notified=1\n"
+            f"last_obs_monotonic=0\ncount=3\nboot_id={self.h.boot_id()}\n",
+            encoding="utf-8",
+        )
+        self.h.set_timer(probe_state="activating", mono=0, timer_enter_mono=1)
+        p = self.h.run()
+        m = monitor_emit(p.stdout)
+        self.assertNotEqual(m["action"], "resolved", "執行中不得解除失明事件")
+        self.assertEqual(self.h.monitor_state["state"], "FIRING")
+
+    def test_in_flight_only_applies_while_actually_running(self):
+        """反面：同樣 mono=0，但探針**不在**執行中，就必須是真的失明。
+
+        這條與上面三條成對——少了它，把 in_flight 寫成無條件放行也會全綠。
+        """
+        self.h.set_timer(probe_state="inactive", mono=0, timer_enter_mono=1)
+        m = monitor_emit(self.h.run().stdout)
+        self.assertEqual(m["status"], "monitor_blind")
+        self.assertEqual(m["reason"], "observation_missing")
+
+    def test_timer_has_jitter_to_avoid_systematic_collision(self):
+        """P5 的 timer 必須帶抖動：與 P4 同為 2 分鐘週期，實測會系統性同秒觸發。"""
+        vals = _directives(TIMER, "RandomizedDelaySec")
+        self.assertTrue(vals, "缺 RandomizedDelaySec，兩個 timer 會維持同相位")
+
     # ── web 事件與監控事件互不干擾 ───────────────────────────────────────
     def test_web_and_monitor_incidents_coexist(self):
         self.h.set_probe(1)
@@ -825,7 +895,7 @@ class MonitorSignalTests(unittest.TestCase):
                 self.assertNotIn("uid=", r.stdout, "systemctl 輸出被 shell 展開了")
 
     def test_status_vocabulary_is_closed(self):
-        allowed = {"ok", "web_incident", "monitor_blind", "bootstrap", "tooling"}
+        allowed = {"ok", "web_incident", "monitor_blind", "bootstrap", "in_flight", "tooling"}
         seen = set()
         for kw, env in (
             ({}, {}),

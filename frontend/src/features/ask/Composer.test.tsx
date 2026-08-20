@@ -1,7 +1,8 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import { useState } from 'react'
 import { expect, test, vi } from 'vitest'
 import { Composer } from './Composer'
+import { setWebSearch } from '../../lib/useWebSearch'
 
 function Harness({ onSubmit }: { onSubmit: (q: string) => void }) {
   const [v, setV] = useState('')
@@ -40,4 +41,27 @@ test('shows stop button when busy and calls onStop', async () => {
   const btn = screen.getByRole('button', { name: /停止/ })
   fireEvent.click(btn)
   expect(onStop).toHaveBeenCalledOnce()
+})
+
+// ── 工具選單（M11）────────────────────────────────────────────────────────
+// 開關本身的行為在 ComposerTools.test.tsx；這裡只驗 Composer 這一層的接線：
+// 工具鈕在最左邊、免責文案隨開關切換。
+
+test('工具鈕排在輸入框之前（版面最左）', () => {
+  setWebSearch(false)
+  const { container } = render(<Composer value="" onChange={() => {}} onSubmit={() => {}} />)
+  const box = container.querySelector('textarea')!.parentElement!
+  // 工具鈕自帶一層定位用的 wrapper（Popover 需要 relative 脈絡），所以比對的是
+  // 「第一個子節點裡有工具鈕」而不是節點本身。
+  expect(box.children[0].contains(screen.getByRole('button', { name: '工具' }))).toBe(true)
+  expect(box.children[1].tagName).toBe('TEXTAREA')
+})
+
+test('底部變體的免責文案隨開關切換（開啟後點明網路資訊非受信任行情來源）', () => {
+  setWebSearch(false)
+  render(<Composer value="" onChange={() => {}} onSubmit={() => {}} />)
+  expect(screen.queryByText(/非受信任行情來源/)).toBeNull()
+  act(() => setWebSearch(true))
+  expect(screen.getByText(/非受信任行情來源/)).toBeTruthy()
+  setWebSearch(false)
 })

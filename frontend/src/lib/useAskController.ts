@@ -9,6 +9,7 @@ import {
 import type { RawSSEEvent } from './readSSE'
 import { ApiError } from './api'
 import { useLocale } from './useLocale'
+import { useWebSearch } from './useWebSearch'
 
 let seq = 0
 const newId = () => `t${Date.now()}_${seq++}`
@@ -39,6 +40,9 @@ export function useAskController(): UseAskController {
   const [state, dispatch] = useReducer(askReducer, initialAskState)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const locale = useLocale()  // M10b：輸出語言，注入 /api/ask 與 /api/report 請求
+  // M11：搜尋網路開關。與 locale 同樣在送出當下取值——切換不影響已在跑的那一輪。
+  // 只注入 /api/ask：研報路徑的網搜由 REPORT_ENABLE_WEB 決定，不歸這個開關管。
+  const web = useWebSearch()
   const qc = useQueryClient()
   const convRef = useRef<string | null>(null)
   const reqId = useRef(0)
@@ -107,7 +111,7 @@ export function useAskController(): UseAskController {
     streamBodyRef.current = { regenerateOf: body.regenerate_of, editOf: body.edit_of }
     void (async () => {
       try {
-        for await (const raw of streamAsk({ ...body, request_id: requestId, locale }, ctrl.signal)) {
+        for await (const raw of streamAsk({ ...body, request_id: requestId, locale, web }, ctrl.signal)) {
           if (my !== reqId.current) return
           const ev = parseAskEvent(raw)
           if (!ev) continue
@@ -135,7 +139,7 @@ export function useAskController(): UseAskController {
         }
       }
     })()
-  }, [abortAsk, qc, locale])
+  }, [abortAsk, qc, locale, web])
 
   const submit = useCallback((question: string) => {
     const q = question.trim()

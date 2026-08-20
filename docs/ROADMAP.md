@@ -31,6 +31,7 @@
 | **M4a** | 受信任時效資料（registry 為空即安全婉拒） | `app/services/trusted_market_data.py` |
 | **M4b** | 證據帳本 | `app/services/evidence.py` |
 | **M5** | Agentic 多輪補查 | `app/services/agentic_qa.py`、`query_planner.py` |
+| **M11** | 問答網路搜尋開關（每題由使用者決定；伺服器總閘 `ASK_ENABLE_WEB`；時效題在開啟時改由網搜作答，受信任 adapter 仍優先） | `app/services/answer.py`、`web/routers/ask.py`、`frontend/src/lib/useWebSearch.ts` |
 
 ### 深度研報
 

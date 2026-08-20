@@ -3,6 +3,8 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
 import { TF_DUR, tfInstant } from '../../lib/motionTokens'
+import { useWebSearch } from '../../lib/useWebSearch'
+import { ComposerTools } from './ComposerTools'
 import styles from './Composer.module.css'
 
 interface Props {
@@ -16,6 +18,10 @@ interface Props {
 
 export function Composer({ value, onChange, onSubmit, disabled, onStop, variant = 'bottom' }: Props) {
   const reduced = useReducedMotion()
+  // 只為了免責文案而讀；開關本身在 ComposerTools 內。直接讀共享 store 而非由
+  // AskPage 往下傳：中央（空狀態）與底部兩個 Composer 實例同時存在時，prop 版會
+  // 各自持有一份、按了哪個就只有那個亮。
+  const web = useWebSearch()
   const ref = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
     const el = ref.current
@@ -36,6 +42,7 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
   return (
     <div className={`${styles.wrap} ${styles[variant]}`}>
       <div className={styles.box}>
+        <ComposerTools />
         <textarea
           ref={ref}
           className={styles.input}
@@ -67,7 +74,11 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
         </Pressable>
       </div>
       {variant === 'bottom' && (
-        <div className={styles.note}>回答由 AI 依券商研報生成，投資決策請以原始研報與公開資訊為準。</div>
+        <div className={styles.note}>
+          {web
+            ? '回答由 AI 依券商研報與網路公開資訊生成，網路資訊非受信任行情來源，投資決策請以原始研報與官方揭露為準。'
+            : '回答由 AI 依券商研報生成，投資決策請以原始研報與公開資訊為準。'}
+        </div>
       )}
     </div>
   )

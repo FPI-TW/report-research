@@ -406,7 +406,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | GET | `/api/brief/latest` | 最新一份每日簡報（markdown ＋ 決定性記錄的來源研報清單）。尚未產生過任何簡報時回 200 加 `status="pending"`，**不是 404** | |
 | GET | `/api/brief/dates` | 有簡報的日期清單（`limit` 預設 30、上限 120） | |
 | GET | `/api/brief/{brief_date}` | 指定日期的簡報（ISO 日期；該日無簡報回 404，日期格式不合法回 422） | |
-| POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3；滿載先送 `queued` 事件，排隊逾 `ASK_MAX_QUEUE` 回 429＋`Retry-After`） | SSE |
+| POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3；滿載先送 `queued` 事件，排隊逾 `ASK_MAX_QUEUE` 回 429＋`Retry-After`）。body 的 `web`（預設 `false`）決定本輪是否開放模型網搜補充最新資訊 | SSE |
 | POST | `/api/ask/stop` | 使用者中斷串流時保存部分答案（`stopped=true`），回 `{qa_id}`；帶 `regenerate_of` 同交易停用舊版列、帶 `edit_of` 截斷被編輯輪之後的輪次 | |
 | GET | `/api/qa/{root_qa_id}/versions` | 重生／編輯的版本鏈（**含已標 inactive 的舊版**，歷史 pager 要回看的正是它們） | |
 | POST | `/api/qa/{qa_id}/report-offer` | 研報邀請的收合／還原（`action: decline\|restore`），讓「暫時不用」跨重整持久；邀請本身由 `get_conversation` 讀取時以 gate 重算 | |

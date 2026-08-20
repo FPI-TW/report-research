@@ -5,7 +5,7 @@ import { conversationTurnSchema, qaVersionSchema, type ConversationTurn, type Qa
 import type { Locale } from './useLocale'
 
 export function streamAsk(
-  body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string; request_id?: string; locale?: Locale },
+  body: { question: string; conversation_id?: string; regenerate_of?: string; edit_of?: string; request_id?: string; locale?: Locale; web?: boolean },
   signal: AbortSignal,
 ): AsyncGenerator<RawSSEEvent> {
   return readSSE('/api/ask', body, signal)

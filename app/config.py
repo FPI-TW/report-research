@@ -67,7 +67,11 @@ class Settings:
     ask_min_reports: int
     ask_stale_age_days: int
     ask_max_stale_reports: int
+    # 使用者可否在問答開啟網搜（伺服器端總閘；關掉即使前端送 web=true 也不生效）
     ask_enable_web: bool
+    # 開啟網搜那一輪的主 LLM 逾時：網搜會讓單題多花數十秒，沿用 llm.py 的 120s
+    # 預設會在「搜到一半」被砍斷，症狀是答案無聲截斷。不開網搜的路徑不受影響。
+    ask_web_timeout: float
     # intent.py
     ask_intent_model: str
     ask_intent_timeout: float
@@ -180,6 +184,7 @@ def _load() -> Settings:
         ask_stale_age_days=int(os.getenv("ASK_STALE_AGE_DAYS", "180")),
         ask_max_stale_reports=int(os.getenv("ASK_MAX_STALE_REPORTS", "4")),
         ask_enable_web=_flag("ASK_ENABLE_WEB", "1"),
+        ask_web_timeout=float(os.getenv("ASK_WEB_TIMEOUT", "240")),
         ask_intent_model=intent_model,
         ask_intent_timeout=float(os.getenv("ASK_INTENT_TIMEOUT", "20")),
         ask_condense_model=os.getenv("ASK_CONDENSE_MODEL", intent_model),

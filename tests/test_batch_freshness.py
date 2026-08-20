@@ -253,10 +253,34 @@ class ExitCodeTests(unittest.IsolatedAsyncioTestCase):
         db.SessionFactory = factory
         self.addCleanup(lambda: setattr(db, "SessionFactory", orig))
 
+    def setUp(self):
+        """**心跳必須被明確宣告，不能沿用 checkout 的實際狀態。**
+
+        `run()` 現在同時判管線心跳與四個資產。這幾條測的是資產那一維，若不把心跳
+        釘成「新鮮」，它們會在沒有心跳檔的 checkout 上一律回 rc=3（UPSTREAM_STALE）
+        ——**測試不會壞掉，只會安靜地改成在測別的東西**。
+        """
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.heartbeat = Path(self._tmp.name) / "hb"
+        self.set_heartbeat_age_hours(1)
+        orig = cbf.HEARTBEAT_PATH
+        cbf.HEARTBEAT_PATH = self.heartbeat
+        self.addCleanup(lambda: setattr(cbf, "HEARTBEAT_PATH", orig))
+
+    def set_heartbeat_age_hours(self, hours: float):
+        import time
+
+        self.heartbeat.write_text(
+            f"epoch={int(time.time() - hours * 3600)}\n", encoding="utf-8"
+        )
+
     async def test_fresh_exits_zero(self):
         fresh = datetime.now(timezone.utc) - timedelta(hours=1)
         self._patch_session(lambda: self._Session((fresh, fresh, fresh, fresh)))
-        rc = await cbf.run({"corpus": 0, "summary": 3, "takeaway": 3, "signal": 0}, False)
+        rc = await cbf.run({"corpus": 0, "summary": 3, "takeaway": 3, "signal": 0}, False, 9)
         self.assertEqual(rc, cbf.EXIT_OK)
 
     async def test_stale_exits_one(self):
@@ -264,15 +288,30 @@ class ExitCodeTests(unittest.IsolatedAsyncioTestCase):
         self._patch_session(
             lambda: self._Session((now, now, now - timedelta(days=8), now))
         )
-        rc = await cbf.run({"corpus": 0, "summary": 3, "takeaway": 3, "signal": 0}, False)
+        rc = await cbf.run({"corpus": 0, "summary": 3, "takeaway": 3, "signal": 0}, False, 9)
         self.assertEqual(rc, cbf.EXIT_STALE)
+
+    async def test_stale_pipeline_exits_three_end_to_end(self):
+        """資產全新鮮但管線沒跑完 → rc=3，而且不得被誤報成 rc=0。"""
+        self.set_heartbeat_age_hours(30)
+        fresh = datetime.now(timezone.utc) - timedelta(hours=1)
+        self._patch_session(lambda: self._Session((fresh, fresh, fresh, fresh)))
+        rc = await cbf.run({"corpus": 0, "summary": 3, "takeaway": 3, "signal": 0}, False, 9)
+        self.assertEqual(rc, cbf.EXIT_UPSTREAM_STALE)
+
+    async def test_missing_heartbeat_exits_three_even_when_assets_fresh(self):
+        self.heartbeat.unlink()
+        fresh = datetime.now(timezone.utc) - timedelta(hours=1)
+        self._patch_session(lambda: self._Session((fresh, fresh, fresh, fresh)))
+        rc = await cbf.run({"corpus": 0, "summary": 3, "takeaway": 3, "signal": 0}, False, 9)
+        self.assertEqual(rc, cbf.EXIT_UPSTREAM_STALE)
 
     async def test_db_failure_exits_two(self):
         def _boom():
             raise OSError("connection refused")
 
         self._patch_session(_boom)
-        rc = await cbf.run(cbf.DEFAULT_THRESHOLDS, False)
+        rc = await cbf.run(cbf.DEFAULT_THRESHOLDS, False, 9)
         self.assertEqual(rc, cbf.EXIT_UNKNOWN)
 
     async def test_json_output_is_parseable(self):
@@ -286,11 +325,14 @@ class ExitCodeTests(unittest.IsolatedAsyncioTestCase):
         )
         buf = io.StringIO()
         with redirect_stdout(buf):
-            rc = await cbf.run({"corpus": 0, "summary": 3, "takeaway": 3, "signal": 0}, True)
+            rc = await cbf.run({"corpus": 0, "summary": 3, "takeaway": 3, "signal": 0}, True, 9)
         payload = json.loads(buf.getvalue())
         self.assertEqual(rc, cbf.EXIT_STALE)
         self.assertTrue(payload["stale"])
-        self.assertEqual(len(payload["findings"]), 4)
+        # 5 而非 4：管線那一筆現在也在報告裡（第一筆）。
+        self.assertEqual(len(payload["findings"]), 5)
+        self.assertEqual(payload["findings"][0]["asset"], "pipeline")
+        self.assertIn("upstream_stale", payload, "JSON 必須能表達上游狀態，否則監控接不到")
 
 
 class SqlShapeTests(unittest.TestCase):

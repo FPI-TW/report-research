@@ -27,8 +27,17 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 # 這個檔）。理由：下面摘要與摘錄兩段是 best-effort，失敗不會讓 unit 變紅，於是
 # `|| log "...已略過"` 等於只寫進當日 sync log，而那個檔沒有任何程式消費端——
 # 2026-07-28 連續 10 輪匯入失敗就是這樣 24 小時沒人察覺。單一位置可查才有意義。
+# 下游段的異常計數。掛在 record_unit_failure 內是刻意的：每一個下游失敗分支都已經
+# 呼叫它，所以這裡一處就涵蓋全部六段**以及未來新增的段**——不必記得在新段裡多寫一行，
+# 而「忘記多寫一行」正是這類計數器最典型的失效方式。
+# **rc=75（claude CLI 被佔用）不算異常**：它是 EX_TEMPFAIL，本 repo 刻意用它與
+# 「批次自己壞了」分流；把它算成異常會讓每次批次撞鎖都抑制心跳。
+DOWNSTREAM_ABNORMAL=0
 record_unit_failure() {
   local stage="$1" rc="$2"
+  if [ "$rc" -ne "$LOCK_BUSY_RC" ]; then
+    DOWNSTREAM_ABNORMAL=$((DOWNSTREAM_ABNORMAL + 1))
+  fi
   {
     echo "=== $(date -Iseconds)  UNIT=report-mark-sync.service  STAGE=${stage}  RC=${rc} ==="
     if [ "$rc" -eq "$LOCK_BUSY_RC" ]; then
@@ -39,6 +48,55 @@ record_unit_failure() {
     tail -n 20 "$LOG" 2>/dev/null || echo "(sync log 讀取失敗)"
     echo
   } >> "$UNIT_FAILURES" 2>/dev/null || true
+}
+
+# ── 管線心跳 ──────────────────────────────────────────────────────────────
+# 存在理由：這支殼有一條 rc=0 的早退路徑（PID lock 被佔用 → exit 0），而下游六段
+# 刻意 best-effort（失敗只 log 不 exit）。兩者合起來的後果是**整條管線可以連續數天
+# 完全沒有成功跑完，而 systemd 全程看起來正常**——2026-08-12 的事故正是這個形狀
+# （所有 claude 批次連續 4 天 100% 失敗、入庫歸零，而 unit 全綠，症狀長得像「NAS
+# 沒有新檔」）。心跳把「管線最近一次完整成功」變成一個可被外部查詢的事實。
+#
+# **它量的是管線執行新鮮度，不是資料新鮮度。** 即使本輪 0 篇新研報，只要完整跑完
+# 就會更新——那是刻意的：週末與連假沒有新稿是常態，用「有沒有新資料」當健康指標
+# 會製造日曆型假警報。資料面的停更另有 check_batch_freshness.py 的四個 max(created_at)。
+# ── 匯入計數（機器可讀）────────────────────────────────────────────────
+# **importer 可以 rc=0 卻沒把該入庫的檔入庫。** 2026-08-20：claude CLI 自我更新到
+# 缺 native artifact 的版本，7 篇新研報全部記成 skip_untagged，importer 照常 rc=0，
+# 這支殼只印「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
+# 那一輪之所以沒有錯誤更新心跳，純粹因為後面的每日簡報剛好 rc=1；若當時不在簡報
+# 的執行時段，7 篇會靜默消失（同一形狀見 2026-08-12）。
+#
+# **刻意不 grep importer 那段給人看的 summary**：那是人類文案，改一個字守門就靜默
+# 失效，而症狀是「心跳照常更新」——與沒有守門完全一樣。改讀 importer 原子寫出的
+# key=value 檔，逐鍵解析、只收非負整數，**不 source、不 eval**（那個檔的內容源自
+# 檔名，而檔名來自 NAS）。
+STATS_FILE="data/.sync_last_stats"
+read_stat() {
+  local key="$1" k val v=""
+  [ -f "$STATS_FILE" ] || return 1
+  while IFS='=' read -r k val; do
+    [ "$k" = "$key" ] && v="$val"
+  done < "$STATS_FILE"
+  case "$v" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$v"
+}
+
+HEARTBEAT="data/.last_successful_sync"
+write_heartbeat() {
+  # 原子寫入：先寫暫存 → fsync → rename。同檔案系統上 rename 是原子的，
+  # 中途崩潰只會留下舊檔或新檔。**不可省 fsync**：freshness 讀到半寫檔會把
+  # 「管線正常」誤判成「格式損毀」，而那兩者的處置完全不同。
+  local tmp="${HEARTBEAT}.tmp.$$"
+  {
+    echo "ts=$(date -Iseconds)"
+    echo "epoch=$(date +%s)"
+    echo "new_reports=${1:-0}"
+    echo "pid=$$"
+  } > "$tmp" 2>/dev/null || { log "心跳暫存寫入失敗（不擋 sync）"; rm -f "$tmp" 2>/dev/null; return 0; }
+  sync -f "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$HEARTBEAT" 2>/dev/null || { log "心跳 rename 失敗（不擋 sync）"; rm -f "$tmp" 2>/dev/null; return 0; }
+  log "心跳已更新：$HEARTBEAT"
 }
 
 mkdir -p data
@@ -85,6 +143,8 @@ if [ "$RC" -ne 0 ]; then log "rsync 失敗 → 結束"; exit 1; fi
 
 # 3) 增量匯入（nice/ionice 降優先序，勿搶線上服務）
 log "增量匯入 delta…"
+# 先刪：importer 中途死掉時舊檔會留著，讀到上一輪的 abnormal=0 就等於守門不存在。
+rm -f "$STATS_FILE"
 IMPORT_RC=0
 nice -n 19 ionice -c3 "$UV" run python scripts/sync_new_reports.py --delta "$DELTA" >>"$LOG" 2>&1 \
   || IMPORT_RC=$?
@@ -101,6 +161,22 @@ if [ "$IMPORT_RC" -ne 0 ]; then
   fi
   log "匯入失敗（保留 delta 供排查）→ 結束"
   exit 1
+fi
+
+# 3b) 匯入 rc=0 不等於完整成功：檢查「本該入庫卻沒進 DB」的計數
+if ABNORMAL=$(read_stat abnormal); then
+  if [ "$ABNORMAL" -gt 0 ]; then
+    log "匯入異常：${ABNORMAL} 篇本該入庫卻沒進 DB（rc 仍為 0）→ 本輪不算完整成功"
+    log "  → 逐筆路徑在 data/sync_failures.log；精準補救（不必掃全庫）："
+    log "     $UV run python scripts/failures_to_delta.py --out data/sync_delta_recover.txt"
+    log "     $UV run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt"
+    record_unit_failure "sync_new_reports(ingest_abnormal)" 1
+  fi
+else
+  # 缺檔或格式壞掉一律保守視為異常：這個判斷的唯一用途就是擋心跳，
+  # 讀不到就當成沒問題，等於在最需要它的時候關掉它。
+  log "匯入計數檔不可讀或格式異常（$STATS_FILE）→ 保守視為匯入異常"
+  record_unit_failure "sync_new_reports(stats_unreadable)" 1
 fi
 
 # 4) 本次有新研報入庫才補摘要（best-effort：失敗只記 log，不擋 sync）
@@ -238,4 +314,17 @@ if [ "$TITLE_BACKLOG_RC" -ne 0 ]; then
 fi
 
 rm -f "$DELTA"
+
+# 心跳只在**完整成功**時更新。走到這裡代表掛載、rsync、匯入都成功（前三者失敗都
+# exit 1，根本到不了這行），所以剩下要判的只有下游是否有異常失敗。
+# 注意：這裡刻意**不改變** best-effort 的語意——下游失敗仍然不擋 sync、unit 仍然不變紅，
+# 只是不更新心跳。持續的下游異常於是變成「管線執行新鮮度」上的可見事實，
+# 而不是只躺在 unit_failures.log 裡等人去看。
+NEW_INGESTED=0
+if [ -s "${HASHES:-}" ]; then NEW_INGESTED=$(grep -c . "$HASHES" 2>/dev/null || echo 0); fi
+if [ "$DOWNSTREAM_ABNORMAL" -eq 0 ]; then
+  write_heartbeat "$NEW_INGESTED"
+else
+  log "本輪有 ${DOWNSTREAM_ABNORMAL} 段異常（匯入或下游）→ **不更新心跳**（rc=${LOCK_BUSY_RC} 不計）"
+fi
 log "=== sync done ==="

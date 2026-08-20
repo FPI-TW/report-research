@@ -23,6 +23,7 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scripts._claude_cli import CliNotFoundError, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 SRC_LOCAL = ROOT / "研報自動匯入"
@@ -30,7 +31,22 @@ TAGS_DIR = ROOT / "data" / "tags"
 ALL_JSONL = ROOT / "data" / "extracted" / "all.jsonl"
 FAIL_LOG = ROOT / "data" / "sync_failures.log"
 INGESTED_HASHES_FILE = ROOT / "data" / ".sync_last_hashes"
+STATS_FILE = ROOT / "data" / ".sync_last_stats"
 EXTS = {".pdf", ".docx", ".doc"}
+
+# **哪些計數器代表「這篇本來該入庫、卻沒進 DB」。**
+#
+# 分界不是看名字，是看「重跑會不會不一樣」：
+#   - `skip_untagged`：標註的前置條件失敗（claude CLI 壞掉、逾時、回應無法解析）。
+#     檔案本身沒問題，環境修好後重跑就會入庫 ⇒ **異常**。
+#   - `fail`：抽字或寫入 DB 拋例外。同上 ⇒ **異常**。
+#   - `skip_admin`／`skip_non_research`：標註成功且明確判定不該入庫 ⇒ 預期。
+#   - `skip_exists`：已在庫，冪等 ⇒ 預期。
+#   - `skip_scanned`：掃描件抽不出文字，是檔案本身的性質，重跑一萬次也一樣。
+#     把它算成異常會讓心跳因為語料裡固定存在的掃描件而**永遠**不更新，
+#     而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）⇒ 預期。
+#     代價是它不留路徑紀錄，屬已知限制，見 docs/production_resilience.md。
+ABNORMAL_COUNTERS = ("fail", "skip_untagged")
 
 
 def parse_rsync_delta(
@@ -83,9 +99,12 @@ def _tag_via_cli(
     model: str = "claude-haiku-4-5",
     timeout: int = 150,
 ):
-    """用 claude CLI(Haiku)標註單篇；沿用 tag_all_cli 慣例（剝 NUL、cwd=/tmp）。"""
-    import subprocess
+    """用 claude CLI(Haiku)標註單篇 → (tag, error)。tag 為 None 時 error 說得出為什麼。
 
+    **標註失敗是這條管線最貴的靜默失效**：它讓該檔被記成 `skip_untagged` 而不入庫，
+    而排程殼只印一行「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
+    2026-08-12 那輪 rsync 帶進 33 檔、全被吞掉，四天後才被發現。
+    """
     from app.services.tagging import TAG_INSTRUCTION, parse_tags
 
     body = (text or "")[:excerpt]
@@ -93,20 +112,13 @@ def _tag_via_cli(
         f"{TAG_INSTRUCTION}\n\n檔名：{file_name}\n"
         f"報告內文（前 {excerpt} 字摘錄）：\n{body}\n\n"
         f"請依上述規則只輸出單一 JSON 物件。"
-    ).replace("\x00", "")
-    try:
-        # --setting-sources '' 排除 user/專案設定＋SessionStart hooks＋MCP server，
-        # 避免每篇標註冷啟動載入全部外掛造成小檔 I/O 風暴（對齊 llm.py / generate_summaries.py）
-        r = subprocess.run(
-            ["claude", "-p", prompt, "--model", model, "--setting-sources", ""],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd="/tmp",
-        )
-    except Exception:
-        return None
-    return parse_tags(r.stdout) if r.returncode == 0 else None
+    )
+    # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
+    res = run_claude(prompt, model, timeout=timeout)
+    if not res.text:
+        return None, res.error or "CLI 無回應"
+    tag = parse_tags(res.text)
+    return (tag, None) if tag is not None else (None, "回應無法解析為標籤")
 
 
 def _persist_tag(file_hash: str, tag) -> None:
@@ -155,6 +167,31 @@ def write_ingested_hashes(path: Path, hashes: list[str]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("\n".join(hashes))
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def write_stats(path: Path, stats: dict) -> None:
+    """把本輪計數器原子寫入 `key=value` 標記檔，供殼層判斷是否為完整成功。
+
+    **殼層不可以去 grep 那段給人看的 `=== sync summary ===`。** 那是人類文案，
+    改一個字就會讓守門靜默失效，而症狀是「心跳照常更新」——與沒有守門完全一樣。
+
+    額外寫出 `abnormal`（＝ABNORMAL_COUNTERS 之和），讓殼層不必知道分類規則；
+    分類是這支腳本的知識，殼層只需要一個數字。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{k}={int(v)}" for k, v in stats.items()]
+    lines.append(f"abnormal={sum(int(stats.get(k, 0)) for k in ABNORMAL_COUNTERS)}")
+    fd, tmp_name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     finally:
         if tmp.exists():
@@ -257,12 +294,20 @@ async def _run(args) -> None:
                 print(f"  [DRY] would ingest: {path.name[:60]}", flush=True)
                 continue
 
-            tag = load_tag(TAGS_DIR, res.file_hash) or _tag_via_cli(path.name, res.text)
+            tag = load_tag(TAGS_DIR, res.file_hash)
+            tag_error = None
+            if tag is None:
+                tag, tag_error = _tag_via_cli(path.name, res.text)
             if tag is not None:
                 _persist_tag(res.file_hash, tag)
             reason = skip_after_tag(tag)
             if reason:
                 stats[reason] += 1
+                # skip_untagged 先前完全不留痕跡：計數 +1 之後就 continue，
+                # 於是「標註壞了」與「這批本來就沒有研報」在 log 上無從分辨。
+                if reason == "skip_untagged":
+                    with open(FAIL_LOG, "a", encoding="utf-8") as fl:
+                        fl.write(f"{path}\ttag\t{tag_error or '標註失敗'}\n")
                 continue
 
             try:
@@ -315,8 +360,12 @@ async def _run(args) -> None:
             except Exception as e:  # noqa: BLE001
                 stats["fail"] += 1
                 await session.rollback()
+                # **格式必須與另外兩處一致：`路徑<TAB>階段<TAB>原因`。**
+                # 初版這裡寫的是 `file_hash<TAB>檔名<TAB>原因`——欄位數相同但語意不同，
+                # 於是拿 sync_failures.log 補救時，第 0 欄拿到的是雜湊而不是路徑，
+                # 這一類漏收**無法**用 --delta 精準補回（2026-08-20 復原時發現）。
                 with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                    fl.write(f"{res.file_hash}\t{path.name}\t{e!r}\n")
+                    fl.write(f"{path}\tingest\t{e!r}\n")
                 continue
 
             stats["ingested"] += 1
@@ -337,6 +386,7 @@ async def _run(args) -> None:
 
     if not args.dry_run:
         write_ingested_hashes(INGESTED_HASHES_FILE, ingested_hashes)
+        write_stats(STATS_FILE, stats)
 
     print("\n=== sync summary ===", flush=True)
     for k, v in stats.items():
@@ -367,7 +417,14 @@ def main() -> None:
     # 這支也 spawn claude（行內標註，見 _tag_via_cli），而且它跑在排程路徑上、是三小時
     # 一輪的第一個競爭者——手動批次正在跑時它照樣會被 timer 叫起來。
     with claude_cli_lock_or_exit("sync_new_reports"):
-        asyncio.run(_run(args))
+        try:
+            asyncio.run(_run(args))
+        except CliNotFoundError as exc:
+            # 環境層級失敗：每一篇的標註都會踩到同一顆地雷，整批會被記成
+            # skip_untagged 而「成功」結束（rc=0），排程殼只會印「本次無新研報入庫」。
+            # 以非零碼收場，讓 unit 變紅、record_unit_failure 留下痕跡。
+            print(f"中止：{exc}", flush=True)
+            raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":

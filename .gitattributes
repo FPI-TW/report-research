@@ -1,0 +1,32 @@
+# 行尾契約。存在理由：2026-08-18 從 /mnt/c（9p）遷到 ext4 時發現，某個 Windows 端
+# 工具把 5 個工作中的檔案改寫成 CRLF，而 index 是 100% LF ⇒ `git diff --stat` 顯示
+# 6,872 insertions / 6,871 deletions，實際的語意改動只有 2 行。那份假 diff 不會讓
+# 任何測試變紅，只會把真正的改動埋起來。在此之前本 repo 完全沒有 .gitattributes，
+# 靠的是「大家都用 LF」的運氣。
+#
+# 加這份檔的當下 index 已驗證是純 LF（779 個 i/lf、13 個二進位／空檔、0 個 CRLF），
+# 所以 `text=auto` 不會觸發任何 renormalize churn。
+* text=auto eol=lf
+
+# shell 腳本額外釘死：CRLF 的 shebang 會讓 kernel 找不到直譯器，錯誤訊息是
+# `bad interpreter: /usr/bin/env bash^M`——與「檔案不存在」長得幾乎一樣。
+# scripts/sync_new_reports.sh 與 deploy/systemd/report-mark-alert.sh 由 systemd
+# 直接 exec（不經 `bash x.sh`），對它們而言這是會壞掉的失效模式而非風格問題。
+*.sh text eol=lf
+
+# 二進位：明確標記，不讓 text=auto 的自動偵測有猜錯的機會。
+*.png  -text
+*.jpg  -text
+*.jpeg -text
+*.gif  -text
+*.ico  -text
+*.pdf  -text
+*.pptx -text
+*.docx -text
+*.xlsx -text
+*.zip  -text
+*.otf  -text
+*.ttf  -text
+*.woff  -text
+*.woff2 -text
+*.wasm -text

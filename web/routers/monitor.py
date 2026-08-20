@@ -554,8 +554,22 @@ def _gather_runtime() -> dict:
         "pipelines": {
             "web": True,
             "ingest": _proc_alive("ingest_all.py"),
+            # 增量匯入。**與上面那格是不同的東西**：`ingest` 掃的是全量腳本
+            # `ingest_all.py`，它只在初次建庫或補跑歷史時才跑；生產實際的入庫路徑
+            # 是 `sync_new_reports.py`（排程殼 sync_new_reports.sh 呼叫它，手動補
+            # 積壓時也是直接跑它）。
+            #
+            # 少了這格，「匯入正在跑」在監控頁上沒有任何表徵：下面的 `sync` 區塊讀的是
+            # **殼層**寫的 data/sync_run_*.log，只在階段邊界更新，而且直接呼叫 .py
+            # 時根本不會被寫到——2026-08-12 手動補 1,783 筆積壓時，整頁六格全滅、
+            # sync 區塊還停在上一輪排程的「同步已完成」，看起來就像什麼都沒在跑。
+            "sync_import": _proc_alive("sync_new_reports.py"),
             "tag": _proc_alive("tag_all_cli.py"),
             "summaries": _proc_alive("generate_summaries.py"),
+            # 顯示標題。排程有兩段會跑它（本輪新檔的缺值 ＋ 跨全語料的歷史積壓，
+            # 後者每輪限量 SYNC_TITLE_BACKLOG_LIMIT），而 title 覆蓋率卡量的是
+            # 近 30 天，歷史積壓跑起來那張卡幾乎不動——少了這格就完全看不出它在跑。
+            "titles": _proc_alive("generate_titles.py"),
             # 摘錄與訊號兩支擷取都沒有進度表徵，只能靠這兩格。兩張覆蓋率卡刻意都只量
             # 近 30 天（見 _fetch_db_stats_snapshot 的註解），而擷取的積壓絕大多數比
             # 30 天舊——2026-08-06 實測缺訊號的 13,821 篇裡只有 156 篇落在窗口內。也

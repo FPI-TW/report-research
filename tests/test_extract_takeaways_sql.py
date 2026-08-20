@@ -32,6 +32,9 @@ et = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = et
 _spec.loader.exec_module(et)
 
+# CLI 呼叫的實作住在共用模組（scripts/_claude_cli.py），所以失敗模式測試要 patch
+# 那裡的 subprocess，不是 et 的——et 已經不再直接 import subprocess。
+from scripts import _claude_cli as cc  # noqa: E402
 
 # ── 測試語料 ──
 # 刻意保留 CJK 字元間空白：research_report.full_text 就長這樣（未清理的原始抽取文字）。
@@ -453,21 +456,10 @@ class RowToParamsTests(unittest.TestCase):
 
 
 class CliArgsTests(unittest.TestCase):
-    def test_cli_args_shape(self):
-        args = et.build_cli_args("prompt", "claude-sonnet-5")
-        self.assertEqual(args[:2], ["claude", "-p"])
-        self.assertIn("--model", args)
-        self.assertEqual(args[args.index("--model") + 1], "claude-sonnet-5")
-        # 不載入 settings/hooks/CLAUDE.md（冷啟動 I/O 的主因）
-        self.assertIn("--setting-sources", args)
-        self.assertEqual(args[args.index("--setting-sources") + 1], "")
-
-    def test_cli_args_strip_nul(self):
-        """部分 PDF 抽出的文字含 \\x00；POSIX argv 不可含 NUL，否則 subprocess 直接拋。"""
-        args = et.build_cli_args("有\x00NUL", "m")
-        self.assertNotIn("\x00", args[2])
-
+    # argv 組裝（旗標、NUL 剝除）已移到 scripts/_claude_cli.py，
+    # 對應斷言在 tests/test_claude_cli.py；這裡只留屬於本腳本的選擇。
     def test_default_model_is_sonnet(self):
+        """逐字引文重準確度（改寫一個字就錨不到）→ 不可退成更小的模型。"""
         self.assertIn("sonnet", et.TAKEAWAY_MODEL_DEFAULT)
 
 
@@ -498,11 +490,11 @@ class CliFailureTests(unittest.TestCase):
     """
 
     def _raises(self, exc):
-        return mock.patch.object(et.subprocess, "run", side_effect=exc)
+        return mock.patch.object(cc.subprocess, "run", side_effect=exc)
 
     def test_success_returns_stdout_and_no_error(self):
         done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
-        with mock.patch.object(et.subprocess, "run", return_value=done):
+        with mock.patch.object(cc.subprocess, "run", return_value=done):
             res = et.call_cli("prompt", "model")
         self.assertEqual(res.text, "OUT")
         self.assertIsNone(res.error)
@@ -528,7 +520,7 @@ class CliFailureTests(unittest.TestCase):
         fail = subprocess.CompletedProcess(
             args=[], returncode=3, stdout="", stderr="usage: unknown flag\n"
         )
-        with mock.patch.object(et.subprocess, "run", return_value=fail):
+        with mock.patch.object(cc.subprocess, "run", return_value=fail):
             res = et.call_cli("prompt", "model")
         self.assertIsNone(res.text)
         self.assertIn("3", res.error)
@@ -548,7 +540,7 @@ class CliFailureTests(unittest.TestCase):
         with self._raises(OSError("boom")):
             other_err = et.call_cli("p", "m").error
         fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="e")
-        with mock.patch.object(et.subprocess, "run", return_value=fail):
+        with mock.patch.object(cc.subprocess, "run", return_value=fail):
             exit_err = et.call_cli("p", "m").error
         self.assertEqual(len({timeout_err, other_err, exit_err}), 3)
 

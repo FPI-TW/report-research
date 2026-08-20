@@ -273,6 +273,7 @@ report-mark/
 │   eval_retrieval.py       離線 retrieval 評估（hit rate / 新近度）
 │   eval_compare.py         比較兩份評測結果 JSON，劣化即非零退出（三種形狀通吃）→ make eval-compare
 │   analyze_qa_log.py       問答延遲、引用新近度與回饋分析
+│   measure_baseline.py     延遲分佈（含 p95）／路由分佈／標的覆蓋率基準量測（唯讀，零 LLM、零寫入）
 │   eval_faithfulness.py    M8 查核結果彙總（唯讀）；--claims <id> 逐條主張下鑽
 │   check_batch_freshness.py  批次停更偵測：純 SQL 比最新產出日 vs 門檻（0 新鮮／1 停更／2 查不到）→ make freshness
 │   db_audit.py             資料完整性稽核（唯讀）：孤兒列／NULL embedding／重複 chunk_index／市場不一致／content_norm 漂移 → make db-audit
@@ -405,7 +406,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | GET | `/api/brief/latest` | 最新一份每日簡報（markdown ＋ 決定性記錄的來源研報清單）。尚未產生過任何簡報時回 200 加 `status="pending"`，**不是 404** | |
 | GET | `/api/brief/dates` | 有簡報的日期清單（`limit` 預設 30、上限 120） | |
 | GET | `/api/brief/{brief_date}` | 指定日期的簡報（ISO 日期；該日無簡報回 404，日期格式不合法回 422） | |
-| POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3；滿載先送 `queued` 事件，排隊逾 `ASK_MAX_QUEUE` 回 429＋`Retry-After`） | SSE |
+| POST | `/api/ask` | RAG 問答（預設 `k=8`，問題上限 2000 字，併發 ≤3；滿載先送 `queued` 事件，排隊逾 `ASK_MAX_QUEUE` 回 429＋`Retry-After`）。body 的 `web`（預設 `false`）決定本輪是否開放模型網搜補充最新資訊 | SSE |
 | POST | `/api/ask/stop` | 使用者中斷串流時保存部分答案（`stopped=true`），回 `{qa_id}`；帶 `regenerate_of` 同交易停用舊版列、帶 `edit_of` 截斷被編輯輪之後的輪次 | |
 | GET | `/api/qa/{root_qa_id}/versions` | 重生／編輯的版本鏈（**含已標 inactive 的舊版**，歷史 pager 要回看的正是它們） | |
 | POST | `/api/qa/{qa_id}/report-offer` | 研報邀請的收合／還原（`action: decline\|restore`），讓「暫時不用」跨重整持久；邀請本身由 `get_conversation` 讀取時以 gate 重算 | |
@@ -567,3 +568,5 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 | [docs/production_resilience.md](docs/production_resilience.md) | 生產韌性：重啟策略、健康檢查、失敗告警、systemd unit 還原 |
 | [docs/向量搜索優化報告.md](docs/向量搜索優化報告.md) | 向量檢索優化（混合檢索、HNSW 調校、CJK 正規化）|
 | [AGENTS.md](AGENTS.md) | 貢獻者指南（結構、風格、測試、提交與安全慣例）|
+| [docs/incidents/2026-08-18-wsl-9p-production-outage.md](docs/incidents/2026-08-18-wsl-9p-production-outage.md) | 2026-08-18 生產中斷事故報告：9p 上的 venv 損毀 ＋ 失效 portproxy，4h50m 全鏈路不可用 |
+| [docs/benchmarks/2026-08-18-wsl-ext4-vs-9p.md](docs/benchmarks/2026-08-18-wsl-ext4-vs-9p.md) | ext4 vs 9p 唯讀 benchmark：metadata 幾何平均 549.9x，單次 `stat` 754.5 µs → 1.12 µs |

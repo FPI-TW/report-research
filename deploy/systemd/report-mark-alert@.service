@@ -9,4 +9,15 @@ User=kashionz
 Group=kashionz
 Environment=HOME=/home/kashionz
 EnvironmentFile=-/etc/default/report-mark-sync
+# ── 通知 secret 的落點 ────────────────────────────────────────────────────
+# **刻意與 /etc/default/report-mark-sync 分開。** 那個檔是 canonical 設定來源，
+# 但它必須是**使用者可讀**的（0755）——`scripts/db_backup.sh` 會自己逐鍵讀它，
+# 因為手動 `make db-backup` 完全不經過 systemd 的 EnvironmentFile，而
+# 2026-07-30 就是因為兩條路徑用不同設定而寫錯落點。把 webhook URL 放進去等於
+# 讓任何本機使用者都讀得到；收緊權限則會弄壞手動備份。二選一都不可接受。
+#
+# 這個檔只放 secret，權限 0600 root:root。systemd 以 PID 1（root）讀
+# EnvironmentFile，之後才降權到 User=kashionz，所以 unit 讀得到、使用者讀不到。
+# `-` 前綴＝檔案不存在不算錯誤，所以 unit 可以先部署、secret 後注入。
+EnvironmentFile=-/etc/report-mark/alert.env
 ExecStart=/usr/bin/bash -lc '"${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/deploy/systemd/report-mark-alert.sh" "%i"'

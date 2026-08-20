@@ -1,0 +1,85 @@
+/* Popover 的 .panel 是 position:absolute，需要這層 relative 當定位脈絡。
+   align-items:center 讓「＋」與膠囊同一條中線；外層 .box 是 flex-end，所以整組
+   會隨輸入框長高而留在底部。 */
+.wrap { position: relative; flex: none; display: flex; align-items: center; gap: 6px; }
+
+/* 無框的圓形圖示鈕（參考 ChatGPT）：它坐在輸入框的圓角邊緣旁，加上邊框會與外框的
+   弧線疊成兩條線。狀態由右邊的膠囊承載，這顆永遠是中性的。 */
+.trigger {
+  width: 30px; height: 30px; flex: none; border-radius: var(--tf-radius-pill);
+  border: none; background: none; color: var(--tf-text-3); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+  transition: background var(--tf-dur-1) var(--tf-ease-out), color var(--tf-dur-1) var(--tf-ease-out);
+}
+.trigger:hover { background: rgba(0, 0, 0, 0.06); color: var(--tf-text-1); }
+
+/* 「＋」與已選工具之間的髮絲線：兩者是不同性質的控制項（一個開選單、一個是狀態）。 */
+.divider { width: 1px; height: 17px; flex: none; background: var(--tf-border); }
+
+/* 已選工具。平時只是圖示＋文字，膠囊外形留到 hover／focus 才出現——它已經與輸入框
+   同處一列，靜態時再加一層底色與邊框會變成版面上第三個框。
+   **但字色維持金色**：這顆的存在理由是「使用者在按送出之前要知道網搜開著」，
+   褪成一般灰就等於把那個訊號拿掉，剩下的只是一段看起來像佔位符的文字。
+   邊框保留 1px transparent 佔位：改成 border:none 會讓 hover 當下寬高各跳 2px。 */
+.chip {
+  height: 26px; flex: none; border-radius: var(--tf-radius-pill);
+  border: 1px solid transparent; background: none;
+  color: var(--tf-gold-text); cursor: pointer;
+  display: flex; align-items: center; gap: 5px; padding: 0 8px;
+  font-size: 12px; line-height: 1; white-space: nowrap; font-family: inherit;
+  transition: background var(--tf-dur-1) var(--tf-ease-out),
+    border-color var(--tf-dur-1) var(--tf-ease-out),
+    color var(--tf-dur-1) var(--tf-ease-out);
+}
+.chip:hover, .chip:focus-visible {
+  background: var(--tf-gold-tint);
+  border-color: var(--tf-gold-line);
+  color: var(--tf-gold-hover);
+}
+/* 圖示與 ✕ 疊在同一格（grid 單格堆疊），尺寸取兩者較大者，所以 hover 互換時
+   膠囊寬度一格都不動——右邊也不必為一個平時看不見的 ✕ 留位。 */
+.chipIcon { display: grid; flex: none; width: 15px; height: 15px; place-items: center; }
+.chipIconDefault, .chipIconHover {
+  grid-area: 1 / 1; display: flex;
+  transition: opacity var(--tf-dur-1) var(--tf-ease-out);
+}
+.chipIconHover { opacity: 0; }
+.chip:hover .chipIconDefault, .chip:focus-visible .chipIconDefault { opacity: 0; }
+.chip:hover .chipIconHover, .chip:focus-visible .chipIconHover { opacity: 1; }
+
+/* 選單向上開（輸入框在畫面底部）；寬度夠放一行說明，不強迫使用者猜工具在做什麼。 */
+/* text-align 必須寫死：空狀態（AskEmptyState）整塊是 text-align:center，選單掛在它
+   底下就會把標題與說明一起置中。.item 自己有 left，漏的是這裡的標題——只在空
+   狀態看得到，進了對話就正常，是那種「本機看沒事」的差異。 */
+.pop { left: 0; bottom: calc(100% + 10px); width: 208px; text-align: left; }
+.head { padding: 6px 10px 8px; font-size: 11.5px; color: var(--tf-text-4); border-bottom: 1px solid var(--tf-glass-border); margin-bottom: 4px; }
+.item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  text-align: left; border: none; background: none; cursor: pointer;
+  padding: 7px 10px; border-radius: var(--tf-radius-md); font-family: inherit;
+  color: var(--tf-text-2); box-sizing: border-box;
+  transition: background-color var(--tf-dur-1) var(--tf-ease-out);
+}
+.item:hover, .item:focus-visible { background: rgba(0, 0, 0, 0.06); }
+.itemIcon { display: flex; flex: none; color: var(--tf-text-3); }
+.item[aria-checked='true'] .itemIcon { color: var(--tf-gold-text); }
+.itemName { flex: 1; min-width: 0; font-size: 13px; color: var(--tf-text-1); }
+/* 開關視覺純裝飾（aria-hidden）：語意由 role=menuitemcheckbox + aria-checked 提供。 */
+.switch {
+  flex: none; width: 30px; height: 18px; border-radius: 999px;
+  background: var(--tf-graphite-line); position: relative;
+  transition: background var(--tf-dur-2) var(--tf-ease-out);
+}
+.switchOn { background: var(--tf-gold-strong); }
+.knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 999px; background: var(--tf-surface);
+  transition: transform var(--tf-dur-2) var(--tf-ease-out);
+}
+.switchOn .knob { transform: translateX(12px); }
+
+/* 窄螢幕：膠囊收成純圖示，文字讓位給輸入框（名稱仍在 aria-label／title）。 */
+@media (max-width: 560px) {
+  .chipLabel { display: none; }
+  .chip { padding: 0 8px; }
+}

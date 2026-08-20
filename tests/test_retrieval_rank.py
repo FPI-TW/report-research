@@ -1,4 +1,5 @@
 # tests/test_retrieval_rank.py
+import asyncio
 import sys
 import unittest
 from datetime import date
@@ -189,6 +190,71 @@ class HybridSearchLexStatsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stats_omitted_is_harmless(self):
         self.assertIsNone(await self._run(lex_hits=2000, stats=None))
+
+
+class HybridSearchTimingStatsTests(unittest.IsolatedAsyncioTestCase):
+    """dense 與 lexical 必須分開計時。
+
+    合在一起量的後果不是資訊少一點，是**優化方向可能整個押錯邊**：HNSW 掃描
+    與 57 萬列的 trgm GIN 成本結構完全不同，而 `timer.mark("retrieve")` 把兩者
+    連同 embed 與融合一起塞進同一個數字。
+    """
+
+    @staticmethod
+    async def _run(*, query="台積電", stats=None, slow_lex=False):
+        """slow_lex=True 時 fake_lex 會睡 0.02s 並把呼叫記進回傳的 calls 清單，
+        供 test_lex_ms_is_zero_when_query_yields_no_terms 拿來證明「沒跑」而不只
+        是「跑得剛好是 0ms」。預設 False（不睡、不記錄）讓其餘測試維持原本的
+        即時往返。"""
+        from app.services import retrieval as ret
+
+        calls: list[str] = []
+
+        async def fake_dense(*a, **k):
+            return []
+
+        async def fake_lex(*a, **k):
+            calls.append("lex")
+            if slow_lex:
+                await asyncio.sleep(0.02)
+            return [], 0
+
+        orig = (ret.search_chunks_meta, ret.search_chunks_lexical)
+        ret.search_chunks_meta = fake_dense
+        ret.search_chunks_lexical = fake_lex
+        try:
+            await ret.hybrid_search(object(), query, [0.0], stats=stats)
+        finally:
+            ret.search_chunks_meta, ret.search_chunks_lexical = orig
+        return stats, calls
+
+    async def test_both_segments_recorded_as_ints(self):
+        stats, calls = await self._run(stats={})
+        self.assertEqual(calls, ["lex"], "此查詢有詞，字面路必須真的跑過一次")
+        self.assertIsInstance(stats["dense_ms"], int)
+        self.assertIsInstance(stats["lex_ms"], int)
+        self.assertGreaterEqual(stats["dense_ms"], 0)
+        self.assertGreaterEqual(stats["lex_ms"], 0)
+
+    async def test_lex_ms_is_zero_when_query_yields_no_terms(self):
+        # 純標點：norm_for_match 後不含任何 [a-z0-9] 或 CJK 段 → terms 為空
+        # → 字面路整段不執行。此時 lex_ms 必須是 0 而非 None，否則 log 會印出
+        # 「lex_ms=None」而讀者無從分辨「沒跑」與「遙測壞了」。
+        #
+        # fake_lex 秒回時，「lex_ms == 0」不管 `if terms:` 守門有沒有生效都會成立
+        # ——測試當時測不出守門失效。改用 slow_lex=True 讓 fake_lex 睡 0.02s，
+        # 這樣只要字面路被誤觸發，lex_ms 就會是非零的整數；同時記錄呼叫次數，
+        # 直接斷言「一次都沒呼叫」。往後若有人覺得 sleep／calls 是多餘裝飾而
+        # 刪掉它們，這條斷言會靜默退化回「怎麼改都測不出來」的樣子——保留這段
+        # 註解，別讓那件事無聲發生。
+        stats, calls = await self._run(query="！！！", stats={}, slow_lex=True)
+        self.assertEqual(calls, [], "terms 為空時 search_chunks_lexical 不該被呼叫")
+        self.assertEqual(stats["lex_ms"], 0)
+
+    async def test_stats_none_is_still_accepted(self):
+        # stats 是可選的；不傳不得拋例外（四個生產呼叫端有兩個不傳）
+        stats, _calls = await self._run(stats=None)
+        self.assertIsNone(stats)
 
 
 class NullDistanceGuardTests(unittest.IsolatedAsyncioTestCase):

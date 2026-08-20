@@ -1,0 +1,46 @@
+[Unit]
+Description=廷豐智能研報 事件偵測與通知（消費健康探針結果，含去重與提醒節奏）
+# 為什麼是輪詢而不是掛在 report-mark-health 的 OnFailure：那支刻意不宣告 OnFailure
+# （理由見該 unit），而且 OnFailure 只在失敗時觸發、ExecStartPost 只在成功時觸發——
+# 兩者都看不到完整的狀態轉換，而 RESOLVED 必須看得到成功。這裡改讀 systemd 為
+# 探針保留的執行結果，以 ExecMainExitTimestampMonotonic 判斷是否有新觀測。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：本 unit 自己就是告警器，失敗再觸發告警會形成遞迴，
+# 且 report-mark-alert@ 會讀同一個 webhook 變數。與 report-mark-alert@.service
+# 同一個理由（那支的註解寫「告警器失敗不該再觸發告警」）。
+# 本 unit 失敗時的可觀測性由 systemd 的 failed 狀態與 journal 承擔。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+# 只需要 systemctl／flock／coreutils／curl。**刻意不含 nvm 與 uv 的路徑**：
+# 與 P4 同一個理由——2026-08-18 的根因是 venv 損毀，相依 Python 的告警器會與
+# 被監控的東西一起死。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# REPORT_MARK_ROOT 與（若有設定的）REPORT_MARK_ALERT_WEBHOOK 都由這個檔提供。
+# **webhook 未設定時本 unit 仍照常維護 incident 狀態**，只是不投遞——這樣日後
+# 設定它的當下狀態是一致的，不會突然湧出一批補送。
+EnvironmentFile=-/etc/default/report-mark-sync
+# ── 通知 secret 的落點 ────────────────────────────────────────────────────
+# **刻意與 /etc/default/report-mark-sync 分開。** 那個檔是 canonical 設定來源，
+# 但它必須是**使用者可讀**的（0755）——`scripts/db_backup.sh` 會自己逐鍵讀它，
+# 因為手動 `make db-backup` 完全不經過 systemd 的 EnvironmentFile，而
+# 2026-07-30 就是因為兩條路徑用不同設定而寫錯落點。把 webhook URL 放進去等於
+# 讓任何本機使用者都讀得到；收緊權限則會弄壞手動備份。二選一都不可接受。
+#
+# 這個檔只放 secret，權限 0600 root:root。systemd 以 PID 1（root）讀
+# EnvironmentFile，之後才降權到 User=kashionz，所以 unit 讀得到、使用者讀不到。
+# `-` 前綴＝檔案不存在不算錯誤，所以 unit 可以先部署、secret 後注入。
+EnvironmentFile=-/etc/report-mark/alert.env
+# 顯式 `bash <script>`，不依賴 repo 內的執行位元（2026-08-18 遷移踩過的坑）。
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/incident_handler.sh"'
+# 最壞情況＝一次 webhook 投遞逾時（10 秒）＋ systemctl 查詢。取 60 秒＝6 倍餘裕，
+# 且嚴格小於 timer 的 120 秒間隔。
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

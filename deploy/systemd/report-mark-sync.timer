@@ -3,7 +3,36 @@ Description=每 3 小時觸發 NAS 增量同步匯入
 
 [Timer]
 OnCalendar=*-*-* 00/3:00:00
-Persistent=true
+# **刻意寫成 false 而不是省略。** 兩者行為相同（實測：回溯 stamp 模擬關機兩天，
+# Persistent=true 在 timer 啟動同秒補跑，false 與省略都只等下一個排程），差別在讀
+# unit 的人看得出這是想過的決定，而不是忘了設。同目錄的 backup／freshness／audit
+# 三支仍是 true，那個非對稱在下面。
+#
+# 為什麼不補跑：補跑的觸發時機必然是「機器剛醒來」，而那正是最可能立刻又被收掉的
+# 一刻。2026-08-17 16:34 的 journal 是完整的一次——16:34:25 開機、16:34:26 timer
+# 起來、16:34:28 補跑開始（此時 mount-nas-research 才在跑）、16:34:53 系統開始收，
+# 服務存活 25 秒。同一形狀 2026-08-18 08:50 再發生一次。
+#
+# 被砍在 rsync 中途的代價**不只是「這輪沒跑」**：rsync 已把部分新檔落到本地，而
+# --size-only 讓下一輪不再把它們列進 delta，而 delta 是匯入的唯一輸入 ⇒ 那批研報
+# 在本地、不在 DB、也不會自己回來，得靠 sync_new_reports.py --all-local 補。
+# sync_delta_20260817_163428.txt 與 sync_delta_20260818_085003.txt 都是 0 bytes，
+# 正是這個指紋（同一個坑另見 scripts/sync_new_reports.sh 的 rc=75 註解）。
+#
+# 更糟的是**那兩次連告警都送不出去**：系統正在關機，systemd 拒絕把 report-mark-alert@
+# 排進已含 stop job 的 transaction，journal 原文 "Failed to enqueue OnFailure= job,
+# ignoring: Transaction ... is destructive"。不是錯誤、不進 data/unit_failures.log。
+# 這不限於本 unit——report-mark-web.service 與 report-mark-audit.service 都中過。
+#
+# 代價很小：這是**每 3 小時**的排程，錯過的那輪最多等到下一個整點，而 rsync 是
+# delta 式的、積壓會自然累加。相對地，漏跑**不再是無聲的**——P1 心跳／freshness
+# 會把它報成 UPSTREAM_STALE（scripts/check_batch_freshness.py，門檻 9 小時＝3 個週期）。
+#
+# 非對稱：每日一次的 backup／freshness／audit **必須**保留 Persistent=true。錯過一次
+# 就是整天沒有備份／沒有停更偵測／沒有耐久性稽核，而那一天無法由下一次涵蓋；且那三支
+# 都短命、唯讀（或原子改名），被砍在中途不會留下半成品。sync 兩個條件都不成立。
+# 這條非對稱由 tests/test_sync_timer_persistence.py 釘住。
+Persistent=false
 
 [Install]
 WantedBy=timers.target

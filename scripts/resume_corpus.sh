@@ -3,7 +3,12 @@
 # → 兩者都結束後，收尾再導入一次，抓標註期間新產生的 tag。
 # 設計為 setsid/nohup 背景長跑，脫離互動 session 也能跑完。
 set -uo pipefail
-cd /mnt/c/Users/User/Desktop/Project/report-mark
+# repo 根由腳本自身位置推導，與 sync_new_reports.sh 同一個慣用語。原本這裡寫死
+# 絕對路徑，2026-08-18 從 /mnt/c 遷到 ext4 時就是壞的——而它「設計為 setsid/nohup
+# 背景長跑」，失敗時沒有人在看終端機。
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$ROOT"
 
 DATE=20260612
 TAG_LOG="data/tag_run_${DATE}.log"

@@ -21,6 +21,14 @@ data/*.lock
 data/*.pid
 data/.*.pid
 data/.sync_last_hashes
+# 匯入計數（PR #221）。與心跳同性質的純執行期狀態：每輪覆寫，遺失只會讓下一輪
+# 的殼保守判成匯入異常，不會壞資料。**data/ 是逐項忽略，新增執行期檔案必須
+# 同步加一行**，否則它會永遠掛在 git status 上，而這個 repo 明令禁止 git add -A
+# 正是因為那種雜訊會讓人開始忽略 status。
+data/.sync_last_stats
+# 管線心跳（scripts/sync_new_reports.sh 寫、check_batch_freshness.py 讀）。
+# 執行期狀態，不進版控。
+data/.last_successful_sync
 data/sync_delta_*.txt
 data/tags.bak.*/
 
@@ -49,3 +57,17 @@ deploy/secrets/
 # 範本檔以 !.env.example 放行（無斜線，同時涵蓋 deploy/.env.example）。
 .env.*
 !.env.example
+
+# Playwright 視覺稽核產物（2026-08 雷達工作台改版與版面稽核）。衍生物，重跑可得；
+# 未被涵蓋時會有 31 個檔常駐 `git status` 的未追蹤清單，把真正需要注意的變更蓋掉。
+/output/
+
+# 2026-08-07 訊號回填期間的臨時觀測腳本。`data/` 是逐項忽略（不是整目錄），
+# 這三個剛好不在任何既有規則內。刻意只忽略、不刪除——可能還有參考價值。
+data/signal_chain.sh
+data/signal_progress_sampler.sh
+data/signal_progress.tsv
+
+# P5 事件狀態（data/ 是逐項忽略，不是整目錄）。純執行期狀態：遺失只會讓下一次
+# 失敗重新開一個事件，不影響正確性，因此刻意不進版控也不進備份。
+data/.incidents/

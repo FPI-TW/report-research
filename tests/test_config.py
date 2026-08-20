@@ -50,6 +50,14 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.report_min_cited, 3)
         self.assertEqual(s.report_long_answer_chars, 400)
 
+    def test_ask_web_defaults_m11(self):
+        """預設是「允許使用者開」而非「一律開」——真正的開關在每個請求的 web 欄位。"""
+        s = get_settings()
+        self.assertTrue(s.ask_enable_web)
+        # 沿用 llm.py 的 120s 會在搜到一半被砍，而逾時對已串流文字是 fail-open：
+        # 症狀是答案無聲截斷，沒有任何錯誤。
+        self.assertEqual(s.ask_web_timeout, 240.0)
+
     def test_rerank_defaults(self):
         s = get_settings()
         self.assertEqual(s.ask_rerank_enabled, True)

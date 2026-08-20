@@ -43,6 +43,9 @@ class AskRequest(BaseModel):
     edit_of: str | None = None
     request_id: str | None = None
     locale: str | None = None  # M10：輸出語言（zh-Hant/en）；未帶/未知 → 預設中文（fail-open）
+    # M11：本輪是否開放網路搜尋補充。**預設 False**——未帶欄位的舊前端行為一字不變。
+    # 伺服器端另有總閘 ASK_ENABLE_WEB（app/config.py），關掉時這裡送 true 也不生效。
+    web: bool = False
 
 
 # 每次提問會 spawn 一個 claude CLI 子程序（CPU-bound 機器），限制同時數避免區網多人同問雪崩。
@@ -57,7 +60,8 @@ async def ask(req: AskRequest):
     """RAG 問答：檢索 → 串流回答（帶 [n] 行內引用）。回 text/event-stream。
 
     事件序：（滿載時先 queued）→ sources（引用清單）→ 多筆 token（文字片段）→
-    done（實際引用的報告 id）。
+    done（實際引用的報告 id）。web=true 時另可能出現 status.searching_web 與
+    ext_sources（外部來源清單）。
     """
     question = (req.question or "").strip()
     if not question:
@@ -108,6 +112,7 @@ async def ask(req: AskRequest):
                     edit_of=req.edit_of,
                     request_id=req.request_id,
                     locale=req.locale,
+                    web=req.web,
                 ):
                     yield deps._sse(event, payload)
             except Exception:

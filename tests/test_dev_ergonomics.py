@@ -96,6 +96,46 @@ class ServeDevTargetTests(unittest.TestCase):
         return "\n".join(out)
 
 
+class ServePreviewTargetTests(unittest.TestCase):
+    """`make serve-preview`（免登入版面預覽）的守門。
+
+    最關鍵的一條是**埠不得共用**：8097 是 systemd 那支對外服務的埠（cloudflared →
+    nginx → 8097）。在它上面開 DEV_NO_AUTH 等於把對外站台的登入關掉，而
+    `web/dev_mode.py` 的代理／loopback 判定在「nginx 與 app 同機直連」的部署下是
+    最後一道、不是唯一一道防線。
+    """
+
+    def setUp(self):
+        self.mk = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        self.helper = ServeDevTargetTests()
+        self.helper.mk = self.mk
+
+    def test_target_exists_and_is_self_documenting(self):
+        self.assertIn("\nserve-preview:", self.mk)
+        line = next(ln for ln in self.mk.splitlines() if ln.startswith("serve-preview:"))
+        self.assertIn("## ", line, "缺少 make help 用的 ## 說明")
+
+    def test_preview_enables_dev_no_auth_and_skips_warmup(self):
+        body = self.helper._recipe("serve-preview")
+        self.assertIn("DEV_NO_AUTH=1", body)
+        self.assertIn("SKIP_WARMUP=1", body)
+
+    def test_preview_uses_its_own_port(self):
+        body = self.helper._recipe("serve-preview")
+        self.assertIn("$(PREVIEW_PORT)", body)
+        self.assertNotIn("$(PORT)", body)
+        self.assertIn("PREVIEW_PORT ?=", self.mk)
+
+    def test_preview_binds_loopback_only(self):
+        self.assertIn("127.0.0.1", self.helper._recipe("serve-preview"))
+
+    def test_serving_targets_never_disable_auth(self):
+        """`serve` 與 `serve-dev` 都不得長出 DEV_NO_AUTH。"""
+        for target in ("serve", "serve-dev"):
+            with self.subTest(target=target):
+                self.assertNotIn("DEV_NO_AUTH", self.helper._recipe(target))
+
+
 class PytestAsyncioStaysOutTests(unittest.TestCase):
     def test_not_declared_as_a_dependency(self):
         pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")

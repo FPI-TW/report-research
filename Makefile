@@ -3,6 +3,8 @@
 # 詳見 docs/WORKFLOW.md
 
 PORT ?= 8097
+# 版面預覽（make serve-preview）專用埠，刻意與 PORT 分開——理由見該 target。
+PREVIEW_PORT ?= 8098
 DB_CONTAINER ?= report-mark-postgres
 DB_NAME ?= research
 DB_PORT ?= 5436
@@ -127,6 +129,12 @@ serve:  ## 啟動查詢網頁（BGE-M3 常駐）→ http://localhost:$(PORT)
 # 所以這裡不會誤判成多 worker。
 serve-dev:  ## 開發用啟動（--reload ＋ 跳過模型暖機；勿用於生產）
 	SKIP_WARMUP=1 uv run uvicorn web.server:app --host 127.0.0.1 --port $(PORT) --reload
+
+# 版面預覽用：另開一個埠、免登入。**刻意不共用 $(PORT)**——8097 是 systemd 那支
+# 對外服務的埠，在它上面開免登入等於把 nginx→cloudflared 後面的站台認證關掉。
+# DEV_NO_AUTH 只在「本機直連且未經代理」時放行，且寫進 .env 不生效（見 web/dev_mode.py）。
+serve-preview:  ## 版面預覽（免登入 ＋ 跳過暖機，另開 $(PREVIEW_PORT) 埠；勿用於生產）
+	DEV_NO_AUTH=1 SKIP_WARMUP=1 uv run uvicorn web.server:app --host 127.0.0.1 --port $(PREVIEW_PORT) --reload
 
 search:  ## CLI 檢索（用法：make search Q="查詢" MARKET=TW）
 	uv run python scripts/search.py "$(Q)" $(if $(MARKET),--market $(MARKET),)

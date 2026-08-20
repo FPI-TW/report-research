@@ -47,7 +47,8 @@ export function ConversationList() {
         {(data ?? []).map((cv) => (
           <motion.div
             key={cv.conversation_id}
-            className={styles.row}
+            className={`${styles.row} ${cv.conversation_id === activeC ? styles.rowActive : ''}`}
+            data-active={cv.conversation_id === activeC ? 'true' : undefined}
             layout="position"
             initial="rest"
             animate="rest"

@@ -7,7 +7,7 @@ import styles from './RadarStates.module.css'
  *
  * 標題用 **h2** 而非 h3：這三個狀態渲染時，RadarOverview 那四個 h2 章節整段都不進 DOM
  * （是三選一的分支），所以文件裡只剩 h1 → h3、中間斷一級，標題大綱出現跳躍。
- * 而全語料只有約 0.68% 的研報有訊號，pending_extraction／window_empty 才是絕大多數標的
+ * 而多數研報尚未擷取訊號，pending_extraction／window_empty 才是絕大多數標的
  * 的實際畫面——也就是「壞掉的階層」是多數使用者遇到的那一份，主要路徑反而是少數。
  * `.title` 的字級與 margin 已寫死在 RadarStates.module.css，不吃 UA 預設，故純語意調整、零視覺變化。
  */

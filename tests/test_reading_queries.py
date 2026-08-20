@@ -313,7 +313,7 @@ class FetchSignalsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out[0].rating_normalized, "buy")
 
     async def test_empty_is_normal(self):
-        # 全語料僅 0.68% 有訊號：空是常態，不是錯誤
+        # 多數研報沒有訊號：空是常態，不是錯誤
         session = _RecordingSession([_FakeResult([])])
         self.assertEqual(await queries.fetch_signals(session, "rep-1"), [])
 

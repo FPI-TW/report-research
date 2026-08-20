@@ -135,11 +135,11 @@ export default function ReportPage() {
             )}
 
             {/* 觀點：無訊號時整區不進 DOM（不是空框、不是骨架）。
-                全語料僅 0.68% 有訊號，這是常態不是錯誤，版面只變短不跳動。 */}
+                多數研報沒有訊號，這是常態不是錯誤，版面只變短不跳動。 */}
             {showSignals && (
               <section className={`${styles.sec} ${styles.foot}`}>
                 <h2 className={styles.secH}>觀點</h2>
-                <p className={styles.signalNote}>本篇已擷取結構化訊號 — 全語料僅 0.68% 有。</p>
+                <p className={styles.signalNote}>本篇已擷取結構化訊號 — 並非每篇研報都有。</p>
                 {d.signals.map(s => (
                   <SignalCard key={`${s.market}-${s.instrument_code}`} signal={s} />
                 ))}

@@ -240,7 +240,7 @@ class ReadingDocShapeTests(ReadingApiBase):
 
 class SignalsStateTests(ReadingApiBase):
     def test_no_signals_state_none(self):
-        # 全語料僅 0.68% 有訊號；前端據此整區不進 DOM（不是空框、不是骨架）
+        # 多數研報沒有訊號；前端據此整區不進 DOM（不是空框、不是骨架）
         body = _authed_client().get(f"/api/reading/{HASH}").json()
         self.assertEqual(body["signals_state"], "none")
         self.assertEqual(body["signals"], [])

@@ -9,6 +9,8 @@
 「CLI 無回應或逾時」——2026-08-08 起連續四天 100% 失敗，事後完全無法診斷。
 （signal_failures.log 累積 9,273 筆全是那一句。）
 """
+import errno
+import os
 import subprocess
 import sys
 import unittest
@@ -61,6 +63,45 @@ class RunClaudeTests(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("claude", msg)
         self.assertIn("PATH", msg)  # 訊息要直接指出真因
+
+    def test_unrunnable_binary_raises_instead_of_becoming_a_per_file_error(self):
+        """**2026-08-20 的實際事故。**
+
+        claude CLI 自我更新到 2.1.237，而該版本的 native artifact 上游沒發布，
+        postinstall 留下 500 bytes、無 shebang 的佔位腳本 ⇒ exec 拋
+        `OSError [Errno 8] ENOEXEC`。初版只接 `FileNotFoundError`（ENOENT），
+        於是這顆完全跑不起來的二進位被當成「這一篇失敗」——7 篇研報記成
+        skip_untagged、整批 rc=0、殼只印「本次無新研報入庫」。
+
+        述詞要問的是「這顆二進位在這個環境裡有沒有可能跑起來」，不是「它存不存在」。
+        """
+        cases = {
+            errno.ENOENT: "ENOENT",
+            errno.ENOEXEC: "ENOEXEC",
+            errno.EACCES: "EACCES",
+            errno.EPERM: "EPERM",
+            errno.EISDIR: "EISDIR",
+        }
+        for code, name in cases.items():
+            with self.subTest(errno=name):
+                with self._raises(OSError(code, os.strerror(code), "claude")):
+                    with self.assertRaises(cc.CliNotFoundError) as ctx:
+                        cc.run_claude("prompt", "model")
+                self.assertIn(name, str(ctx.exception), "訊息要說得出是哪一種")
+
+    def test_transient_oserrors_stay_per_file_errors(self):
+        """**不可寬泛接 OSError。** 資源壓力是暫時的，中止整批反而讓一次尖峰
+        變成一輪完全沒跑——而它下一分鐘可能就好了。
+        """
+        for code in (errno.ENOMEM, errno.ENFILE, errno.EAGAIN):
+            with self.subTest(errno=code):
+                with self._raises(OSError(code, os.strerror(code), "claude")):
+                    res = cc.run_claude("prompt", "model")
+                self.assertIsNone(res.text)
+                # 不比對例外類別名：Python 會把部分 errno 映射成 OSError 的子類
+                # （EAGAIN → BlockingIOError），比對名稱是在測 CPython 的實作細節。
+                self.assertIn("CLI 呼叫失敗", res.error)
+                self.assertIn(str(code), res.error)
 
     def test_timeout_is_reported_as_timeout(self):
         with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):

@@ -19,8 +19,16 @@
   - `CliNotFoundError` **往上拋**。那是環境壞了、每一篇都會踩到，重試與續跑都沒有
     意義——「跑完 549 次註定失敗的呼叫、印 ok=0 rejected=549、然後 exit 0」是最糟的
     結局。呼叫端應在 main 接住它、印訊息、以非零碼收場。
+      **判定依 errno 而不是例外型別。** 初版只接 `FileNotFoundError`（ENOENT），於是
+      2026-08-20 那次「檔案在、但不是可執行檔」完全漏接：claude CLI 自我更新到缺
+      native artifact 的版本，`bin/claude.exe` 成了 500 bytes、無 shebang 的佔位腳本，
+      exec 拋的是 `OSError [Errno 8] ENOEXEC`——不是 `FileNotFoundError`，於是落到
+      下面「回具體訊息」那條路徑、被當成單篇失敗。後果是 7 篇研報記成 skip_untagged
+      而整批 rc=0。**概念對、述詞太窄**：要問的是「這顆二進位在這個環境裡有沒有可能
+      跑起來」，不是「它存不存在」。
   - 其餘（逾時／非零退出／OSError…）回具體訊息，讓各自的 *_failures.log 說得出真因。
 """
+import errno
 import subprocess
 from typing import NamedTuple, Optional
 
@@ -29,11 +37,25 @@ from typing import NamedTuple, Optional
 STDERR_TAIL_CHARS = 200
 
 
-class CliNotFoundError(RuntimeError):
-    """`claude` 不在 PATH。整批註定全滅 → 由 main 提早中止。
+# 「這顆二進位在這個環境裡永遠跑不起來」的 errno。值是給人看的名字，會印進錯誤訊息。
+_UNRUNNABLE_ERRNOS = {
+    errno.ENOENT: "ENOENT 檔案不存在",
+    errno.ENOEXEC: "ENOEXEC 不是可執行格式",
+    errno.EACCES: "EACCES 沒有執行權限",
+    errno.EPERM: "EPERM 不被允許執行",
+    errno.EISDIR: "EISDIR 路徑是目錄",
+}
 
-    這在本專案實際發生過：systemd 的環境與登入 shell 不同，沒有 claude 的 PATH
-    （修法是 deploy/systemd/report-mark-web.service.d/path.conf 那種 drop-in）。
+
+class CliNotFoundError(RuntimeError):
+    """`claude` 無法執行。整批註定全滅 → 由 main 提早中止。
+
+    **名稱是歷史值，語意比名字寬**：涵蓋「不在 PATH」與「檔案在但跑不起來」。
+    兩者在本專案都實際發生過——
+    - ENOENT：systemd 的環境與登入 shell 不同，沒有 claude 的 PATH（修法是
+      deploy/systemd/report-mark-web.service.d/path.conf 那種 drop-in）。
+    - ENOEXEC：2026-08-20，claude CLI 自我更新到 2.1.237，而該版本的 native
+      artifact 上游沒發布，postinstall 留下 500 bytes、無 shebang 的佔位腳本。
     """
 
 
@@ -76,12 +98,17 @@ def run_claude(
             timeout=timeout,
             cwd=cwd,
         )
-    except FileNotFoundError as exc:
-        # 環境層級的失敗：每一篇都會踩到，重試與續跑都沒有意義 → 中止整批
-        raise CliNotFoundError(
-            "`claude` CLI 不在 PATH（systemd 下請補 PATH drop-in；"
-            "互動 shell 請確認 which claude）"
-        ) from exc
+    except OSError as exc:
+        # 環境層級的失敗：每一篇都會踩到，重試與續跑都沒有意義 → 中止整批。
+        # **逐一列舉 errno，不寬泛接 OSError**：ENFILE／ENOMEM 那類是暫時性的資源
+        # 壓力，中止整批反而不對；下列五個則是「這顆二進位永遠跑不起來」。
+        if exc.errno in _UNRUNNABLE_ERRNOS:
+            raise CliNotFoundError(
+                f"`claude` CLI 無法執行（{_UNRUNNABLE_ERRNOS[exc.errno]}）。"
+                f"ENOENT＝不在 PATH（systemd 下請補 PATH drop-in）；"
+                f"ENOEXEC＝檔案在但不是可執行檔（見 2026-08-20 的 native artifact 缺件）"
+            ) from exc
+        return CliResult(None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}")
     except subprocess.TimeoutExpired:
         return CliResult(None, f"CLI 逾時（{timeout}s 內未回應）")
     except Exception as exc:  # noqa: BLE001 — 失敗原因要能寫進 log

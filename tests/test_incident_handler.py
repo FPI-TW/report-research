@@ -81,6 +81,10 @@ class _Harness:
         # 當前呼叫的起始單調時戳（systemd 的 InactiveExitTimestampMonotonic）。
         # 用來判「探針卡住」；0＝不提供（既有測試沿用舊路徑）。
         self.probe_start_mono = probe_start_mono
+        # 讓 fake systemctl 對「接下來 N 次 ExecMainExitTimestampMonotonic 查詢」回 0，
+        # 而 ActiveState 維持 inactive——那正是跨 P4 invocation 邊界的不可能組合。
+        self.torn_file = self.root / "torn_reads"
+        self.torn_reads = 0
         # 預設用「現在」的單調時鐘，讓觀測看起來是新鮮的
         self.mono = mono if mono is not None else self._now_mono()
         self.webhook = webhook
@@ -91,41 +95,91 @@ class _Harness:
         with open("/proc/uptime") as f:
             return int(float(f.read().split()[0]) * 1_000_000)
 
+    _SYSTEMCTL_FAKE = """#!/usr/bin/env bash
+verb="$1"; shift
+unit="${{1:-}}"
+case "$verb" in
+  is-enabled) printf '%s\\n' "{timer_enabled}"
+    [ "{timer_enabled}" = enabled ] && exit 0 || exit 1 ;;
+  is-active) printf '%s\\n' "{timer_active}"
+    [ "{timer_active}" = active ] && exit 0 || exit 3 ;;
+esac
+[ "{show_rc}" -ne 0 ] && exit {show_rc}
+
+# **必須支援多屬性查詢。** 真的 `systemctl show -p A -p B` 輸出 `A=..\\nB=..`；
+# 舊版這支 fake 在第一個匹配屬性就 exit，於是 handler 改用單次快照查詢後只拿得到
+# 一行。那不是 handler 的錯，是 fake 沒跟上 systemctl 的契約。
+value_only=no
+want=()
+for a in "$@"; do
+  case "$a" in
+    --value) value_only=yes ;;
+    LoadState|ActiveState|ActiveEnterTimestampMonotonic|InactiveExitTimestampMonotonic|Result|ExecMainStatus|ExecMainExitTimestampMonotonic)
+      want+=("$a") ;;
+  esac
+done
+
+# 「接下來 N 次 ExecMainExitTimestampMonotonic 查詢回 0」：模擬讀數跨越 P4 的
+# invocation 邊界（state 仍是 inactive，但 exit 時戳被歸零）。
+torn=no
+if [ -f "{torn_file}" ]; then
+  n=$(cat "{torn_file}" 2>/dev/null || echo 0)
+  case "$n" in ""|*[!0-9]*) n=0 ;; esac
+  if [ "$n" -gt 0 ]; then torn=yes; echo $((n-1)) > "{torn_file}"; fi
+fi
+
+emit() {{
+  if [ "$value_only" = yes ]; then printf '%s\\n' "$2"; else printf '%s=%s\\n' "$1" "$2"; fi
+}}
+for k in "${{want[@]}}"; do
+  case "$k" in
+    LoadState)
+      case "$unit" in
+        *.timer) emit LoadState "{timer_load}" ;;
+        *)       emit LoadState "{service_load}" ;;
+      esac ;;
+    ActiveEnterTimestampMonotonic) emit ActiveEnterTimestampMonotonic "{timer_enter_mono}" ;;
+    InactiveExitTimestampMonotonic) emit InactiveExitTimestampMonotonic "{probe_start_mono}" ;;
+    ActiveState)
+      case "$unit" in
+        *.timer) emit ActiveState "{timer_active}" ;;
+        *)       emit ActiveState "{probe_state}" ;;
+      esac ;;
+    Result) emit Result {result_q} ;;
+    ExecMainStatus) emit ExecMainStatus "{exit_status}" ;;
+    ExecMainExitTimestampMonotonic)
+      if [ "$torn" = yes ]; then emit ExecMainExitTimestampMonotonic 0
+      else emit ExecMainExitTimestampMonotonic "{mono}"; fi ;;
+  esac
+done
+exit 0
+"""
+
     def _write_fakes(self):
+        if self.torn_reads > 0:
+            self.torn_file.write_text(str(self.torn_reads), encoding="utf-8")
+        elif self.torn_file.exists():
+            self.torn_file.unlink()
         sc = self.bin / "systemctl"
         # 受控的 systemctl：**同時**表達 service 的執行結果與 timer 的存活狀態。
         # 兩者缺一不可——2026-08-19 的實測顯示 timer 一旦 disabled，service 的
         # ExecMain* 會當場被 GC 清空，只看 service 那一維根本分不出「還沒跑」與
         # 「監控被停掉」。
         sc.write_text(
-            "#!/usr/bin/env bash\n"
-            'verb="$1"; shift\n'
-            'unit="${1:-}"\n'
-            'case "$verb" in\n'
-            f'  is-enabled) printf \'%s\\n\' "{self.timer_enabled}"\n'
-            f'    [ "{self.timer_enabled}" = enabled ] && exit 0 || exit 1 ;;\n'
-            f'  is-active) printf \'%s\\n\' "{self.timer_active}"\n'
-            f'    [ "{self.timer_active}" = active ] && exit 0 || exit 3 ;;\n'
-            "esac\n"
-            f'[ "{self.show_rc}" -ne 0 ] && exit {self.show_rc}\n'
-            'for a in "$@"; do case "$a" in\n'
-            "  LoadState)\n"
-            '    case "$unit" in\n'
-            f'      *.timer) printf \'%s\\n\' "{self.timer_load}" ;;\n'
-            f'      *)       printf \'%s\\n\' "{self.service_load}" ;;\n'
-            "    esac; exit 0 ;;\n"
-            f'  ActiveEnterTimestampMonotonic) printf \'%s\\n\' "{self.timer_enter_mono}"; exit 0 ;;\n'
-            f'  InactiveExitTimestampMonotonic) printf \'%s\\n\' "{self.probe_start_mono}"; exit 0 ;;\n'
-            "  ActiveState)\n"
-            '    case "$unit" in\n'
-            f'      *.timer) printf \'%s\\n\' "{self.timer_active}" ;;\n'
-            f'      *)       printf \'%s\\n\' "{self.probe_state}" ;;\n'
-            "    esac; exit 0 ;;\n"
-            f'  Result) printf \'%s\\n\' {shlex.quote(str(self.result))}; exit 0 ;;\n'
-            f'  ExecMainStatus) printf \'%s\\n\' "{self.exit_status}"; exit 0 ;;\n'
-            f'  ExecMainExitTimestampMonotonic) printf \'%s\\n\' "{self.mono}"; exit 0 ;;\n'
-            "esac; done\n"
-            "exit 0\n",
+            self._SYSTEMCTL_FAKE.format(
+                timer_enabled=self.timer_enabled,
+                timer_active=self.timer_active,
+                show_rc=self.show_rc,
+                timer_load=self.timer_load,
+                service_load=self.service_load,
+                timer_enter_mono=self.timer_enter_mono,
+                probe_start_mono=self.probe_start_mono,
+                probe_state=self.probe_state,
+                result_q=shlex.quote(str(self.result)),
+                exit_status=self.exit_status,
+                mono=self.mono,
+                torn_file=self.torn_file,
+            ),
             encoding="utf-8",
         )
         sc.chmod(0o755)
@@ -200,6 +254,11 @@ class _Harness:
             f"uptime 只有 {now / 1_000_000:.1f}s。請改用更小的年齡與門檻。"
         )
         self.mono = now - need
+        self._write_fakes()
+
+    def set_torn(self, n: int):
+        """接下來 n 次 ExecMainExitTimestampMonotonic 查詢回 0（模擬 torn snapshot）。"""
+        self.torn_reads = n
         self._write_fakes()
 
     def set_timer(self, **kw):
@@ -1457,6 +1516,173 @@ class DeliveryFailureRetryTests(unittest.TestCase):
         w, m = last_emit(out), monitor_emit(out)
         self.assertEqual(w["last_completed"], m["last_completed"])
         self.assertEqual(w["last_completed_age"], m["last_completed_age"])
+
+
+class SnapshotConsistencyTests(unittest.TestCase):
+    """**單次暫態的 systemd 讀數不得直接變成 MONITOR_BLIND。**
+
+    2026-08-20 生產實測三次假 FIRING（04:49／07:09／13:20），全為 monitor 元件、
+    `notified=no`、約 2 分鐘內自行 RESOLVED。而 P4 當日 413 次執行、最大間隔 142 秒、
+    **零次超過 240 秒**——探針從未真的斷過。
+
+    `last_completed_age` 序列 `69→81→89→99→109→249→0→10`：正常每輪增約 10 秒，
+    卻在單一取樣跳 +140（約一個完整 P4 週期），下一輪立即回 0。該輪 `current_probe=idle`，
+    所以不是 #216 修的 in_flight 路徑。
+
+    根因是 handler 對每個屬性各發一次 `systemctl show`（原本 8 次）。兩次查詢之間若
+    跨越 P4 的 invocation 邊界，就會拼出 `ActiveState=inactive` ＋
+    `ExecMainExitTimestampMonotonic=0`——**在單一一致快照中不可能出現的組合**
+    （該 unit 有 timer 引用、不會被 GC，idle 時必定有完成時戳）。
+
+    隔離實驗（user-scope oneshot ＋ timer，804 次取樣）：
+      一次 `show -p A -p B` → 矛盾 0/804 = 0.00%
+      兩次獨立 `show`       → 矛盾 3/804 = 0.37%
+    生產 3 次 ÷ 約 660 個 P5 週期 = 0.45%，同一量級。
+    """
+
+    def setUp(self):
+        self.h = _Harness()
+        self.addCleanup(self.h.close)
+
+    def _run(self, **env):
+        return self.h.run(**env)
+
+    def _idle_fresh(self):
+        """一個乾淨的 idle 觀測：剛完成、有啟動時戳。"""
+        now = self.h._now_mono()
+        self.h.set_timer(probe_state="inactive", exit_status=0, result="success",
+                         mono=now - 5_000_000, probe_start_mono=now - 6_000_000)
+
+    # ── 正常路徑 ────────────────────────────────────────────────────────
+    def test_idle_with_fresh_observation_is_ok(self):
+        self._idle_fresh()
+        m = monitor_emit(self._run().stdout)
+        self.assertEqual(m["status"], "ok")
+        self.assertEqual(m["snapshot"], "stable")
+        self.assertEqual(m["observation_source"], "live")
+
+    def test_never_run_is_bootstrap_not_unstable(self):
+        """**從未跑過（start=0 且 exit=0）是自洽的**，不可被誤判成 torn。"""
+        self.h.set_timer(probe_state="inactive", mono=0, probe_start_mono=0,
+                         timer_enter_mono=self.h._now_mono())
+        m = monitor_emit(self._run(INCIDENT_BOOTSTRAP_SECONDS="99999999").stdout)
+        self.assertEqual(m["status"], "bootstrap")
+        self.assertEqual(m["snapshot"], "stable")
+
+    # ── 暫態 ────────────────────────────────────────────────────────────
+    def test_single_torn_read_is_retried_and_recovers(self):
+        """重讀一次就跨過那個毫秒級窗口 → 仍是 ok，且看得出重讀過。"""
+        self._idle_fresh()
+        self.h.set_torn(1)
+        m = monitor_emit(self._run().stdout)
+        self.assertEqual(m["status"], "ok", "單次暫態不得變成健康結論")
+        self.assertEqual(m["snapshot"], "retried")
+        self.assertEqual(m["snapshot_retries"], "1")
+
+    def test_persistent_torn_falls_back_to_cache_without_firing(self):
+        """重讀後仍矛盾：沿用信任窗內的完成觀測，**不開事件**。"""
+        self.h.seed_observation(0, age_seconds=40, result="success")
+        self._idle_fresh()
+        self.h.set_torn(9)
+        m = monitor_emit(self._run().stdout)
+        self.assertNotEqual(m["action"], "firing")
+        self.assertEqual(m["snapshot"], "unstable")
+        self.assertEqual(m["reason"], "snapshot_unstable")
+        self.assertEqual(m["observation_source"], "cache")
+
+    def test_the_production_false_page_does_not_fire(self):
+        """**真實事故重播。**
+
+        生產序列是 `…→109→249→0`：age 走到 109（仍在 OBS_TRUST=240 內）之後撞上
+        torn read，舊版退回快取並讓 age 跳到 249、越過信任上限而 FIRING。
+
+        這裡用 40s 表達「仍在信任窗內」——**CI runner uptime 實測只有 85.6s，
+        109 這個數字在 CI 上根本表達不出來**（`test_no_scenario_exceeds_a_plausible_ci_uptime`
+        會擋）。真實數字保留在這段文字裡，不進程式碼。
+        """
+        self.h.seed_observation(0, age_seconds=40, result="success")
+        self._idle_fresh()
+        self.h.set_torn(9)
+        out = self._run().stdout
+        m = monitor_emit(out)
+        self.assertNotEqual(m["action"], "firing", out)
+        self.assertNotEqual(m["status"], "monitor_blind", out)
+        self.assertEqual(m["notified"], "no")
+
+    def test_transient_does_not_resolve_an_open_web_incident(self):
+        """快取是 FAIL 時，暫態不得把 WEB_HEALTH 事件錯誤解除。"""
+        self.h.seed_observation(1, age_seconds=30, result="exit-code")
+        self._idle_fresh()
+        self.h.set_torn(9)
+        w = last_emit(self._run().stdout)
+        self.assertEqual(w["last_completed"], "fail")
+        self.assertNotEqual(w["action"], "resolved")
+
+    # ── 真 stale 必須保留 ───────────────────────────────────────────────
+    def test_consistent_but_stale_snapshot_still_fires(self):
+        """快照自洽、但真的沒有新完成觀測 ⇒ 仍須 MONITOR_BLIND。"""
+        # **不可用大的絕對偏移。** CI runner uptime 僅約 85.6s，`now - 900s` 會變成
+        # 負數，被數值驗證判成 malformed 而走進完全不同的分支。改用小尺度 ＋ 縮小門檻。
+        now = self.h._now_mono()
+        self.h.set_timer(probe_state="inactive", exit_status=0, result="success",
+                         mono=now - 30_000_000, probe_start_mono=now - 31_000_000,
+                         timer_enter_mono=1)
+        m = monitor_emit(self._run(INCIDENT_STALE_SECONDS="5").stdout)
+        self.assertEqual(m["status"], "monitor_blind")
+        self.assertEqual(m["snapshot"], "stable", "這不是快照問題，別歸錯因")
+
+    def test_persistent_torn_without_cache_is_blind_with_distinct_reason(self):
+        """持續矛盾且無快取可用：確實看不見，但原因要與真 stale 分得開。"""
+        self._idle_fresh()
+        self.h.set_torn(9)
+        m = monitor_emit(self._run(INCIDENT_BOOTSTRAP_SECONDS="1").stdout)
+        self.assertEqual(m["status"], "monitor_blind")
+        self.assertEqual(m["reason"], "snapshot_unstable")
+        self.assertEqual(m["snapshot"], "unstable")
+
+    # ── 相容性 ──────────────────────────────────────────────────────────
+    def test_in_flight_semantics_unchanged(self):
+        """#216/#217/#218 完全不得回歸。"""
+        self.h.seed_observation(1, age_seconds=3, result="exit-code")
+        self.h.set_timer(probe_state="activating", exit_status=0, result="success",
+                         mono=0, probe_start_mono=self.h._now_mono() - 2_000_000)
+        out = self._run().stdout
+        w, m = last_emit(out), monitor_emit(out)
+        self.assertEqual(w["current_probe"], "in_flight")
+        self.assertEqual(w["last_completed"], "fail")
+        self.assertEqual(w["last_completed_age"], m["last_completed_age"])
+        self.assertEqual(m["snapshot"], "stable", "activating 期間 exit=0 是自洽的")
+
+    def test_retry_is_bounded(self):
+        """重讀有上限，不得變成慢迴圈。"""
+        self._idle_fresh()
+        self.h.set_torn(999)
+        p = self._run(INCIDENT_SNAPSHOT_RETRIES="2", INCIDENT_SNAPSHOT_RETRY_DELAY="0")
+        self.assertEqual(p.returncode, 0)
+        self.assertLessEqual(int(monitor_emit(p.stdout)["snapshot_retries"]), 2)
+
+    def test_query_failure_semantics_preserved(self):
+        self.h.set_timer(show_rc=1)
+        m = monitor_emit(self._run().stdout)
+        self.assertEqual(m["status"], "monitor_blind")
+        self.assertEqual(m["reason"], "query_failed")
+
+    def test_snapshot_values_are_data_not_code(self):
+        """屬性值來自 systemd，解析不得 source/eval。"""
+        canary = self.h.root / "pwned"
+        self.h.set_timer(result=f'$(touch "{canary}")`touch "{canary}"`;id')
+        self._run()
+        self.assertFalse(canary.exists(), "快照值被當成 shell 程式碼求值了")
+
+    def test_handler_makes_one_snapshot_query_per_unit(self):
+        """靜態守門：屬性不得再回到「一個一次」的讀法。"""
+        body = HANDLER.read_text(encoding="utf-8")
+        live = [ln for ln in body.splitlines()
+                if "systemctl show" in ln and not ln.strip().startswith("#")]
+        self.assertLessEqual(
+            len(live), 2,
+            f"每個屬性各發一次 show 正是假 FIRING 的成因；實得 {len(live)} 處：{live}",
+        )
 
 
 class SecretPlacementTests(unittest.TestCase):

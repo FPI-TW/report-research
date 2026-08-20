@@ -281,6 +281,19 @@ class HeartbeatWriteTests(unittest.TestCase):
         self.assertNotIn("No such file or directory", log)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
+    def test_stats_file_is_gitignored(self):
+        """**新增執行期檔案必須同步加 .gitignore。** `data/` 是逐項忽略。
+
+        PR #221 加了 `data/.sync_last_stats` 卻漏了這一行，於是它永遠掛在
+        `git status` 上——而本 repo 明令禁止 `git add -A`，正是因為那種雜訊會讓人
+        開始忽略 status，接著就會漏看真正該看的東西。
+        """
+        ignored = subprocess.run(
+            ["git", "check-ignore", "data/.sync_last_stats"],
+            cwd=REPO_ROOT, capture_output=True, text=True,
+        )
+        self.assertEqual(ignored.returncode, 0, "匯入計數是執行期狀態，必須被 gitignore")
+
     def test_heartbeat_is_gitignored(self):
         ignored = subprocess.run(
             ["git", "check-ignore", HEARTBEAT_REL],

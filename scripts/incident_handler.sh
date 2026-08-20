@@ -76,6 +76,11 @@ PROBE_MAX_INFLIGHT="${INCIDENT_PROBE_MAX_INFLIGHT:-120}"
 # 00:49:49 完成一筆 fail，P5 下一次取樣在 00:51:58（快取已 272s），若無此門檻
 # 就會沿用 00:47:26 那筆 OK 而繼續靜默。
 OBS_TRUST_SECONDS="${INCIDENT_OBS_TRUST_SECONDS:-240}"
+# 快照不一致時的有界重讀。**這不是重試整輪**，只是再抓一次同一組屬性——
+# 實測那個窗口只有毫秒級，一次重讀就足以跨過去。上限刻意很小：handler 的
+# TimeoutStartSec 是 60s，而且拖長只會讓 P5 自己變成慢的那一個。
+SNAPSHOT_RETRIES="${INCIDENT_SNAPSHOT_RETRIES:-1}"
+SNAPSHOT_RETRY_DELAY="${INCIDENT_SNAPSHOT_RETRY_DELAY:-0.3}"
 WEBHOOK="${REPORT_MARK_ALERT_WEBHOOK:-}"
 # 投遞旋鈕。connect 與 overall 分開：連不上的端點應該快速失敗，而不是佔滿整個
 # overall 預算——handler 的 TimeoutStartSec 是 60s，一輪最多可能發兩則通知。
@@ -130,11 +135,15 @@ EMIT_LAST_COMPLETED=none
 EMIT_LAST_AGE=-
 emit() {
     # status action severity incident reason notified [component]
-    printf 'ts=%s component=%s handler=incident status=%s action=%s severity=%s incident=%s reason=%s notified=%s current_probe=%s last_completed=%s last_completed_age=%s\n' \
+    printf 'ts=%s component=%s handler=incident status=%s action=%s severity=%s incident=%s reason=%s notified=%s current_probe=%s last_completed=%s last_completed_age=%s snapshot=%s snapshot_retries=%s observation_source=%s\n' \
         "$(date -Iseconds)" "${7:-$COMPONENT}" "$1" "$2" "$3" "$4" "$5" "$6" \
-        "$EMIT_CURRENT_PROBE" "$EMIT_LAST_COMPLETED" "$EMIT_LAST_AGE"
+        "$EMIT_CURRENT_PROBE" "$EMIT_LAST_COMPLETED" "$EMIT_LAST_AGE" \
+        "${SNAPSHOT_STATE_OUT:-stable}" "${SNAPSHOT_RETRIES_OUT:-0}" "${EMIT_OBS_SOURCE:-live}"
 }
 
+SNAPSHOT_STATE_OUT=stable
+SNAPSHOT_RETRIES_OUT=0
+EMIT_OBS_SOURCE=live
 BOOT_ID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
 now_epoch="$(date +%s)"
 now_mono_us=$(( $(awk '{printf "%d", $1 * 1000000}' /proc/uptime 2>/dev/null || echo 0) ))
@@ -426,12 +435,96 @@ run_state_machine() {
 # 壞掉時仍會一路走到「沒有觀測」而歸因錯誤。`var="$(cmd)"` 的退出碼就是 cmd 的
 # 退出碼，直接接 `||` 才會作用在父 shell。
 query_failed=no
-timer_load="$(systemctl show "$TIMER_UNIT" -p LoadState --value 2>/dev/null)" || query_failed=yes
-timer_enter_mono="$(systemctl show "$TIMER_UNIT" -p ActiveEnterTimestampMonotonic --value 2>/dev/null)" || query_failed=yes
-svc_load="$(systemctl show "$PROBE_UNIT" -p LoadState --value 2>/dev/null)" || query_failed=yes
-probe_result="$(systemctl show "$PROBE_UNIT" -p Result --value 2>/dev/null)" || query_failed=yes
-probe_status="$(systemctl show "$PROBE_UNIT" -p ExecMainStatus --value 2>/dev/null)" || query_failed=yes
-probe_mono="$(systemctl show "$PROBE_UNIT" -p ExecMainExitTimestampMonotonic --value 2>/dev/null)" || query_failed=yes
+
+# ── 觀測快照：一次查詢，一次解析 ──────────────────────────────────────
+# **初版每個屬性各發一次 `systemctl show`，那正是 2026-08-20 三次假 FIRING 的成因。**
+# 兩次查詢之間相隔數毫秒，若剛好跨越 P4 的一次 invocation 邊界，就會拼出
+# `ActiveState=inactive` ＋ `ExecMainExitTimestampMonotonic=0` 這個**在單一一致快照
+# 中不可能出現的組合**（該 unit 有 timer 引用、不會被 GC，idle 時必定有完成時戳）。
+# P5 於是把它讀成「沒有完成觀測」→ 退回快取（已落後一個週期）→ age 跳過信任上限
+# → observation_missing → FIRING；下一輪讀到正常值 → age=0 → RESOLVED。
+#
+# 隔離實驗（user-scope oneshot ＋ timer，804 次取樣）：
+#   一次 `show -p A -p B`      → 矛盾 0/804  = 0.00%
+#   兩次獨立 `show`            → 矛盾 3/804  = 0.37%
+# 生產實測 3 次 FIRING ÷ 約 660 個 P5 週期 = 0.45%，同一量級。
+#
+# **解析刻意不用 `source`／`eval`**：值來自 systemd，`Result` 之類的欄位理論上可含
+# 任意字元。逐行切第一個 `=`，只認白名單鍵，其餘一律忽略。
+_read_service_snapshot() {
+    local out line key val
+    svc_load=; probe_result=; probe_status=
+    probe_mono=; probe_state=; probe_start_mono=
+    out="$(systemctl show "$PROBE_UNIT" \
+        -p LoadState -p ActiveState -p Result -p ExecMainStatus \
+        -p ExecMainExitTimestampMonotonic -p InactiveExitTimestampMonotonic \
+        2>/dev/null)" || return 1
+    while IFS= read -r line; do
+        key="${line%%=*}"
+        val="${line#*=}"
+        case "$key" in
+            LoadState)                      svc_load="$val" ;;
+            ActiveState)                    probe_state="$val" ;;
+            Result)                         probe_result="$val" ;;
+            ExecMainStatus)                 probe_status="$val" ;;
+            ExecMainExitTimestampMonotonic) probe_mono="$val" ;;
+            InactiveExitTimestampMonotonic) probe_start_mono="$val" ;;
+        esac
+    done <<< "$out"
+    return 0
+}
+
+# 快照是否自洽。**只判「不可能同時成立」的組合，不判健康。**
+# 回傳 0＝自洽，1＝矛盾。
+_snapshot_consistent() {
+    local st="$1" exit_m="$2" start_m="$3" status="$4"
+    # 數值欄位必須是數字（空字串／字母／負號都算矛盾）
+    case "$exit_m"  in ''|*[!0-9]*) return 1 ;; esac
+    case "$start_m" in ''|*[!0-9]*) return 1 ;; esac
+    case "$status"  in ''|*[!0-9-]*) return 1 ;; esac
+    case "$st" in
+        inactive|failed)
+            # 已經啟動過（start>0）卻沒有完成時戳，而且不在執行中 ⇒ 讀數跨越邊界。
+            # **從未跑過（start=0 且 exit=0）是自洽的**，交給既有的 bootstrap 分類。
+            [ "$start_m" -gt 0 ] && [ "$exit_m" -eq 0 ] && return 1
+            # 完成早於啟動 ⇒ 兩個欄位來自不同 invocation
+            [ "$exit_m" -gt 0 ] && [ "$exit_m" -lt "$start_m" ] && return 1
+            ;;
+    esac
+    return 0
+}
+
+snapshot_state=stable
+snapshot_retries=0
+_read_service_snapshot || query_failed=yes
+if [ "$query_failed" = no ] && [ "$svc_load" = loaded ]; then
+    while ! _snapshot_consistent "$probe_state" "$probe_mono" "$probe_start_mono" "$probe_status"; do
+        if [ "$snapshot_retries" -ge "$SNAPSHOT_RETRIES" ]; then
+            snapshot_state=unstable
+            break
+        fi
+        snapshot_retries=$(( snapshot_retries + 1 ))
+        sleep "$SNAPSHOT_RETRY_DELAY" 2>/dev/null || true
+        _read_service_snapshot || { query_failed=yes; break; }
+        snapshot_state=retried
+    done
+    # 重讀後仍矛盾才算 unstable；重讀成功則保留 retried
+    if [ "$snapshot_state" = retried ] \
+       && ! _snapshot_consistent "$probe_state" "$probe_mono" "$probe_start_mono" "$probe_status"; then
+        snapshot_state=unstable
+    fi
+fi
+
+# timer 的兩個屬性同樣一次取。與 service 分開是刻意的——不變量講的是「同一筆
+# service 觀測要自洽」，timer 是另一個對象。
+timer_load=; timer_enter_mono=
+_timer_out="$(systemctl show "$TIMER_UNIT" -p LoadState -p ActiveEnterTimestampMonotonic 2>/dev/null)" || query_failed=yes
+while IFS= read -r _tl; do
+    case "${_tl%%=*}" in
+        LoadState)                       timer_load="${_tl#*=}" ;;
+        ActiveEnterTimestampMonotonic)   timer_enter_mono="${_tl#*=}" ;;
+    esac
+done <<< "$_timer_out"
 timer_enabled="$(systemctl is-enabled "$TIMER_UNIT" 2>/dev/null || true)"
 timer_active="$(systemctl is-active "$TIMER_UNIT" 2>/dev/null || true)"
 # **探針此刻是否正在執行。** systemd 在 oneshot 啟動時把 ExecMainExitTimestamp* 歸零，
@@ -439,11 +532,9 @@ timer_active="$(systemctl is-active "$TIMER_UNIT" 2>/dev/null || true)"
 # ExecStart 期間 ActiveState=activating、SubState=start、
 # ExecMainExitTimestampMonotonic=0。少了這個判別，P5 會把「這一輪還沒有結果」
 # 誤讀成「沒有任何觀測」。
-probe_state="$(systemctl show "$PROBE_UNIT" -p ActiveState --value 2>/dev/null)" || query_failed=yes
 probe_running=no
 case "$probe_state" in activating|active|reloading|deactivating) probe_running=yes ;; esac
 # 當前這一次呼叫是何時開始的。用來判斷「執行太久＝探針卡住」，門檻由 P4 契約推導。
-probe_start_mono="$(systemctl show "$PROBE_UNIT" -p InactiveExitTimestampMonotonic --value 2>/dev/null)" || query_failed=yes
 case "$probe_start_mono" in ''|*[!0-9]*) probe_start_mono=0 ;; esac
 
 # 上一筆已完成的觀測（P5 自己的記憶；systemd 在探針執行中不提供它）
@@ -493,7 +584,12 @@ elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ] \
     inflight_age=$(( (now_mono_us - probe_start_mono) / 1000000 ))
     signal=blind; sig_status=monitor_blind; sig_severity=CRITICAL; sig_reason=probe_stuck
     sig_detail="探針已執行 ${inflight_age}s，超過上限 ${PROBE_MAX_INFLIGHT}s（契約最壞 45s、unit 上限 90s）"
-elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ] && [ "$obs_mono" -gt 0 ]; then
+elif { { [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ]; } \
+        || [ "$snapshot_state" = unstable ]; } && [ "$obs_mono" -gt 0 ]; then
+    # 兩種「本輪沒有可消費的新觀測」共用同一套信任窗判斷：
+    #   (a) 探針正在執行（#216 修的那條）
+    #   (b) 快照跨越 invocation 邊界、重讀後仍矛盾（2026-08-20 的假 FIRING）
+    # **刻意不另開一條平行路徑**——信任窗的語意完全相同，複製只會讓兩邊漂移。
     # ── 這是 2026-08-20 中斷修掉的那一條 ────────────────────────────────
     # 探針正在執行，但**我們記得上一次的結論**。
     #
@@ -516,8 +612,14 @@ elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ] && [ "$obs_mono" -gt 
         sig_detail="探針執行中，且上一筆完成的觀測已 ${obs_age}s > 信任上限 ${OBS_TRUST_SECONDS}s ⇒ 期間至少漏讀一輪"
     else
         # **舊的結論仍然有效**：不新鮮到過期，就不該被「有新的一輪正在跑」抹掉。
-        signal=cached; sig_status=in_flight; sig_reason=probe_in_flight
-        sig_detail="探針執行中；沿用 ${obs_age}s 前已完成的觀測（status=$(_last_label "$obs_status")）"
+        signal=cached
+        if [ "$snapshot_state" = unstable ]; then
+            sig_status=in_flight; sig_reason=snapshot_unstable
+            sig_detail="systemd 快照跨越 invocation 邊界（重讀 ${snapshot_retries} 次後仍矛盾）；沿用 ${obs_age}s 前已完成的觀測（status=$(_last_label "$obs_status")）"
+        else
+            sig_status=in_flight; sig_reason=probe_in_flight
+            sig_detail="探針執行中；沿用 ${obs_age}s 前已完成的觀測（status=$(_last_label "$obs_status")）"
+        fi
     fi
 elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ]; then
     # 探針正在執行：ExecMain* 描述的是一次**進行中**的呼叫，不是可消費的觀測。
@@ -535,6 +637,11 @@ elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ]; then
     # 所以連續多輪都撞上的機率極低，真正的觀測會在一兩輪內到來。
     signal=in_flight; sig_status=in_flight; sig_reason=probe_in_flight
     sig_detail="探針正在執行中（ActiveState=$probe_state），本輪尚無完成的觀測"
+elif [ "$snapshot_state" = unstable ]; then
+    # 快照持續矛盾**且沒有可沿用的完成觀測**。這確實看不見，但原因與「真的過期」
+    # 不同——要讓 operator 分得出來，否則排查方向會完全走錯。
+    signal=blind; sig_status=monitor_blind; sig_severity=WARNING; sig_reason=snapshot_unstable
+    sig_detail="systemd 快照自相矛盾（state=${probe_state}, exit=${probe_mono}, start=${probe_start_mono}），重讀 ${snapshot_retries} 次後仍不一致，且無可沿用的完成觀測"
 elif [ "$probe_mono" -eq 0 ]; then
     # 沒有任何觀測，而且探針不在執行中。timer 本身健康，所以只可能是
     # 「還沒跑第一輪」或「觀測消失了」。
@@ -576,6 +683,10 @@ else
     # cached／bootstrap／blind 一律以記憶中的那筆為準（沒有就是 none）
     _used_status="$obs_status"; _used_obs="$obs_mono"
 fi
+SNAPSHOT_STATE_OUT="$snapshot_state"
+SNAPSHOT_RETRIES_OUT="$snapshot_retries"
+# 這一輪的結論是從 systemd 現讀來的，還是沿用記憶中的那一筆
+if [ "$signal" = ok ]; then EMIT_OBS_SOURCE=live; else EMIT_OBS_SOURCE=cache; fi
 EMIT_LAST_COMPLETED="$(_last_label "$_used_status")"
 if [ "$_used_obs" -gt 0 ]; then
     EMIT_LAST_AGE=$(( (now_mono_us - _used_obs) / 1000000 ))

@@ -369,6 +369,42 @@ P4 至少完成過一輪而 P5 沒讀到**，那筆結果是什麼並不知道�
 `INCIDENT_PROBE_MAX_INFLIGHT`（預設 **120s**）同樣由契約推導：契約最壞 45s、
 unit 硬上限 `TimeoutStartSec=90s`，超過 90s 代表 systemd 應該已經砍掉它卻沒有。
 
+#### 觀測快照必須是一次查詢（2026-08-20）
+
+**每個屬性各發一次 `systemctl show` 會拼出不可能存在的組合。**
+
+2026-08-20 出現三次假 `monitor_blind FIRING`（04:49／07:09／13:20，全為 monitor 元件、`notified=no`、約 2 分鐘內自行 RESOLVED）。同日 P4 執行 413 次、**最大間隔 142 秒、零次超過 240 秒**——探針從未真的斷過。
+
+`last_completed_age` 的序列說明一切：
+
+```
+69 → 81 → 89 → 99 → 109 → 249 → 0 → 10
+```
+
+正常每輪只增約 10 秒（P4 與 P5 的相位漂移），卻在**單一取樣**跳 +140（約一個完整 P4 週期），下一輪立即回 0。而該輪 `current_probe=idle`——不是 #216 修的 in_flight 路徑。
+
+成因：handler 原本對六個 service 屬性各發一次查詢。`ExecMainExitTimestampMonotonic` 與 `ActiveState` 之間相隔數毫秒，若剛好跨越 P4 的一次 invocation 邊界，就會得到 `ActiveState=inactive` ＋ `ExecMainExitTimestampMonotonic=0`——**該 unit 有 timer 引用（不會被 GC），idle 時必定有完成時戳，這個組合在單一一致快照中不可能出現**。P5 於是讀成「沒有完成觀測」→ 退回快取（已落後一個週期）→ age 越過 `OBS_TRUST_SECONDS` → FIRING。
+
+隔離實驗（user-scope oneshot ＋ timer，804 次取樣）：
+
+| 讀法 | 矛盾率 |
+|---|---|
+| 一次 `show -p A -p B` | **0 / 804 = 0.00%** |
+| 兩次獨立 `show` | **3 / 804 = 0.37%** |
+
+生產實測 3 次 ÷ 約 660 個 P5 週期 ＝ 0.45%，同一量級。**六輪取樣中 `activating` 一次都沒被直接取樣到**，但矛盾組合仍然出現——那正是「第一次讀落在 activating、第二次讀落在完成後」的簽名。
+
+**明確排除**：`Clock change detected` 不是原因。當日該訊息約 2,724 次（每分鐘數次），任何時間窗都會命中，沒有鑑別力。
+
+##### 現在的契約
+
+- **service 的六個屬性一次查完**（`systemctl show` 從 8 次降到 2 次），逐行切第一個 `=`、只認白名單鍵。**不用 `source`／`eval`**——值來自 systemd，`Result` 之類的欄位理論上可含任意字元。
+- **一致性驗證只判「不可能同時成立」的組合**，不判健康：`inactive`／`failed` 時若 `start>0` 而 `exit=0`，或 `exit<start`，即為矛盾。**從未跑過（`start=0` 且 `exit=0`）是自洽的**，交給既有的 bootstrap 分類。
+- **有界重讀**（`INCIDENT_SNAPSHOT_RETRIES`，預設 1 次、間隔 0.3s）。窗口只有毫秒級，一次重讀就足以跨過去。
+- **重讀後仍矛盾 → 走既有的信任窗分支**（與 in_flight 共用同一段已測過的邏輯，**刻意不另開平行路徑**，複製只會讓兩邊漂移）：信任窗內沿用上一筆完成觀測、不開事件；超過 `OBS_TRUST_SECONDS` 仍報漏讀；超過 `BLIND_CRITICAL_SECONDS` 仍升級。
+- **真 stale 完全不受影響**：快照自洽但確實沒有新完成觀測時，照樣 `monitor_blind`，且 `snapshot=stable` 讓人一眼看出這不是快照問題。
+- **刻意不調大 `OBS_TRUST_SECONDS`**。那會讓真正的漏讀晚 1–2 分鐘才被發現，而且沒有解決任何事——問題從來不是門檻太緊，是讀數本身自相矛盾。
+
 #### 結構化輸出
 
 每一行多帶三個欄位，讓 operator 一眼看出「現在在跑」與「上次結論」是兩件事：

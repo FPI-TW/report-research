@@ -71,3 +71,15 @@ data/signal_progress.tsv
 # P5 事件狀態（data/ 是逐項忽略，不是整目錄）。純執行期狀態：遺失只會讓下一次
 # 失敗重新開一個事件，不影響正確性，因此刻意不進版控也不進備份。
 data/.incidents/
+
+# repo 根的 node_modules。frontend/.gitignore 只涵蓋 frontend/ 底下，而從根目錄跑
+# npx／npm（例如 npx vite）會在這裡再生一份——與上面 /.vite/ 同一個成因。
+# 內容是可重建的依賴衍生物，不進版控。
+/node_modules/
+
+# 2026-08-10 上雲與推論成本評估的簡報交付物與其檢視傾印（`*.inspect.ndjson`）。
+# 一次性產出、非原始碼，且是二進位——一旦進了 git 歷史就只能靠改寫歷史才拿得掉，
+# 而 `git add -A` 正是最可能把它們一起帶進去的方式。刻意只忽略、不刪除：檔案還在
+# 工作目錄，需要入版控時再逐檔 `git add -f`。
+/*.pptx
+/*.pptx.inspect.ndjson

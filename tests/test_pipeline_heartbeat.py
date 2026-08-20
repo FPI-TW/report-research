@@ -57,6 +57,10 @@ class _SyncHarness:
         self.rc_file = self.root / "rcs"
         self.delta_file = self.root / "delta_out"
         self.hashes_file = self.root / "hashes_out"
+        self.stats_file = self.root / "stats_out"
+        # importer 的計數器。None＝importer 什麼都沒寫（模擬工具層異常）；
+        # 字串＝逐字寫出（模擬格式壞掉）。預設是一輪乾淨的匯入。
+        self.stats: dict | str | None = {"ingested": 1, "fail": 0, "skip_untagged": 0}
         self.rsync_rc = 0
         self.rcs: dict[str, int] = {}
         self.delta = ["某券商/報告A.pdf\n"]
@@ -74,6 +78,14 @@ class _SyncHarness:
         )
         self.delta_file.write_text("".join(self.delta), encoding="utf-8")
         self.hashes_file.write_text("".join(self.new_hashes), encoding="utf-8")
+        if self.stats is None:
+            self.stats_file.write_text("", encoding="utf-8")
+        elif isinstance(self.stats, str):
+            self.stats_file.write_text(self.stats, encoding="utf-8")
+        else:
+            body = "".join(f"{k}={v}\n" for k, v in self.stats.items())
+            abn = sum(int(self.stats.get(k, 0)) for k in ("fail", "skip_untagged"))
+            self.stats_file.write_text(body + f"abnormal={abn}\n", encoding="utf-8")
         # 掛載一律視為已掛好——本檔測的是心跳，不是掛載偵測
         self._fake("mountpoint", "exit 0\n")
         self._fake("sudo", "exit 0\n")
@@ -85,9 +97,15 @@ class _SyncHarness:
             'for a in "$@"; do case "$a" in scripts/*.py) S="$a" ;; esac; done\n'
             'N=$(basename "${S:-none}" .py)\n'
             f'if [ "$N" = sync_new_reports ]; then cat "{self.hashes_file}" > data/.sync_last_hashes; fi\n'
+            f'if [ "$N" = sync_new_reports ] && [ -s "{self.stats_file}" ]; then '
+            f'cat "{self.stats_file}" > data/.sync_last_stats; fi\n'
             f'RC=$(grep "^$N=" "{self.rc_file}" 2>/dev/null | head -1 | cut -d= -f2)\n'
             'exit "${RC:-0}"\n',
         )
+
+    def set_stats(self, stats):
+        self.stats = stats
+        self._write_fakes()
 
     def set_rc(self, **kw):
         self.rcs.update(kw)
@@ -269,6 +287,152 @@ class HeartbeatWriteTests(unittest.TestCase):
             cwd=REPO_ROOT, capture_output=True, text=True,
         )
         self.assertEqual(ignored.returncode, 0, "心跳是執行期狀態，必須被 gitignore")
+
+
+class IngestAbnormalTests(unittest.TestCase):
+    """**importer rc=0 不代表該入庫的檔都入庫了。**
+
+    2026-08-20 實測：claude CLI 自我更新到缺 native artifact 的版本，7 篇新研報全部
+    記成 `skip_untagged`，importer 照常 rc=0，殼只印「本次無新研報入庫」——與「NAS
+    真的沒有新檔」在畫面上完全一樣。那一輪之所以沒有錯誤更新心跳，**純粹因為後面
+    的每日簡報剛好 rc=1**；若當時不在簡報的執行時段，7 篇會靜默消失。
+
+    分界不看名字看「重跑會不會不一樣」：`fail`／`skip_untagged` 是前置條件失敗、
+    環境修好重跑就會入庫 ⇒ 異常；`skip_exists`／`skip_admin`／`skip_non_research`
+    是明確判定不該入庫 ⇒ 預期；`skip_scanned` 是檔案本身抽不出文字、重跑一萬次
+    也一樣 ⇒ 預期（算成異常會讓心跳因語料裡固定存在的掃描件而永遠不更新）。
+    """
+
+    def setUp(self):
+        self.h = _SyncHarness()
+        self.addCleanup(self.h.close)
+
+    def _run_ok(self, **stats):
+        base = {"ingested": 0, "fail": 0, "skip_untagged": 0}
+        base.update(stats)
+        self.h.set_stats(base)
+        return self.h.run()
+
+    # ── 正常路徑必須保留 ────────────────────────────────────────────────
+    def test_true_zero_new_reports_still_updates_heartbeat(self):
+        """**NAS 真的沒有新檔仍是完整成功。** 週末沒新稿是常態，不是故障。"""
+        self.h.delta = []
+        self.h.new_hashes = []
+        p = self._run_ok(ingested=0)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertTrue(self.h.heartbeat.is_file(), p.stdout)
+
+    def test_clean_ingest_updates_heartbeat(self):
+        p = self._run_ok(ingested=3)
+        self.assertEqual(p.returncode, 0)
+        self.assertTrue(self.h.heartbeat.is_file())
+
+    def test_expected_skips_do_not_block_heartbeat(self):
+        """預期的 skip 不得誤判成異常，否則心跳會因語料常態而永遠不更新。"""
+        for k in ("skip_exists", "skip_admin", "skip_non_research", "skip_scanned"):
+            with self.subTest(counter=k):
+                h = _SyncHarness()
+                self.addCleanup(h.close)
+                h.set_stats({"ingested": 0, "fail": 0, "skip_untagged": 0, k: 9})
+                h.run()
+                self.assertTrue(h.heartbeat.is_file(), f"{k} 不該擋心跳")
+
+    # ── 異常路徑 ────────────────────────────────────────────────────────
+    def test_untagged_only_blocks_heartbeat(self):
+        """這就是 2026-08-20 的形狀：ingested=0、skip_untagged=7、rc=0。"""
+        p = self._run_ok(ingested=0, skip_untagged=7)
+        self.assertEqual(p.returncode, 0, "殼仍照常跑完，只是不算完整成功")
+        self.assertFalse(self.h.heartbeat.is_file(), p.stdout)
+        self.assertIn("匯入異常", p.stdout)
+
+    def test_mixed_ingest_and_untagged_blocks_heartbeat(self):
+        """部分成功不能沖銷部分漏收——漏的那幾篇不會自己回來。"""
+        p = self._run_ok(ingested=5, skip_untagged=2)
+        self.assertFalse(self.h.heartbeat.is_file(), p.stdout)
+
+    def test_fail_counter_also_blocks_heartbeat(self):
+        """`fail`（抽字或寫入 DB 例外）同樣是 rc=0 的漏收路徑。"""
+        p = self._run_ok(ingested=1, fail=3)
+        self.assertFalse(self.h.heartbeat.is_file(), p.stdout)
+
+    def test_later_downstream_success_cannot_clear_it(self):
+        """異常是黏著的：後面每一段都成功也不能把它抹掉。"""
+        p = self._run_ok(ingested=0, skip_untagged=1)
+        self.assertNotIn("段異常", p.stdout.split("匯入異常")[0])
+        self.assertFalse(self.h.heartbeat.is_file())
+        self.assertIn("不更新心跳", p.stdout)
+
+    def test_abnormal_recorded_even_without_any_downstream_failure(self):
+        """**真實事故的關鍵條件**：沒有任何下游段回非零，仍必須擋住心跳。
+
+        2026-08-20 是靠簡報那段的 rc=1 才救回來的。這個測試把那個巧合拿掉。
+        """
+        self.h.rcs = {}                      # 所有下游段一律 rc=0
+        p = self._run_ok(ingested=0, skip_untagged=7)
+        self.assertFalse(self.h.heartbeat.is_file(), p.stdout)
+        self.assertIn("ingest_abnormal", (self.h.root / "data" / "unit_failures.log")
+                      .read_text(encoding="utf-8"))
+
+    def test_recovery_hint_names_the_targeted_path(self):
+        """提示必須指向精準補救，不能叫人跑 O(全庫) 的 --all-local。"""
+        p = self._run_ok(skip_untagged=1)
+        self.assertIn("failures_to_delta.py", p.stdout)
+        self.assertNotIn("--all-local", p.stdout)
+
+    # ── 計數檔本身壞掉 ──────────────────────────────────────────────────
+    def test_missing_stats_is_conservative_abnormal(self):
+        """讀不到就當沒問題，等於在最需要它的時候把守門關掉。"""
+        self.h.set_stats(None)
+        p = self.h.run()
+        self.assertFalse(self.h.heartbeat.is_file(), p.stdout)
+        self.assertIn("計數檔不可讀", p.stdout)
+
+    def test_malformed_stats_is_conservative_abnormal(self):
+        for body in (
+            "abnormal=\n",        # 空值
+            "abnormal=abc\n",     # 非數字
+            "abnormal=-1\n",      # 負數
+            "garbage\n",          # 沒有這個鍵
+            "\n",                 # 空檔
+        ):
+            with self.subTest(body=body):
+                h = _SyncHarness()
+                self.addCleanup(h.close)
+                h.set_stats(body)
+                p = h.run()
+                self.assertFalse(h.heartbeat.is_file(), f"{body!r}: {p.stdout}")
+
+    def test_stale_stats_from_a_previous_round_cannot_be_reused(self):
+        """importer 中途死掉會留下舊檔；讀到上一輪的 abnormal=0 等於守門不存在。"""
+        (self.h.root / "data").mkdir(exist_ok=True)
+        (self.h.root / "data" / ".sync_last_stats").write_text(
+            "abnormal=0\n", encoding="utf-8"
+        )
+        self.h.set_stats(None)               # 這一輪 importer 沒寫出任何計數
+        p = self.h.run()
+        self.assertFalse(self.h.heartbeat.is_file(), p.stdout)
+
+    def test_stats_file_is_not_sourced_or_evaled(self):
+        """那個檔的內容源自檔名，而檔名來自 NAS。"""
+        canary = self.h.root / "pwned"
+        self.h.set_stats(f'abnormal=$(touch "{canary}")\nabnormal=`touch "{canary}"`\n')
+        self.h.run()
+        self.assertFalse(canary.exists(), "計數檔被當成 shell 程式碼求值了")
+
+    def test_recovery_round_can_update_heartbeat_again(self):
+        """異常不是永久的：補救成功後下一輪必須能恢復。"""
+        self._run_ok(skip_untagged=2)
+        self.assertFalse(self.h.heartbeat.is_file())
+        p = self._run_ok(ingested=2)
+        self.assertEqual(p.returncode, 0)
+        self.assertTrue(self.h.heartbeat.is_file(), p.stdout)
+
+    def test_import_nonzero_rc_behaviour_unchanged(self):
+        """rc!=0 仍走原本的 exit 1 早退，不因新閘而改變。"""
+        self.h.set_rc(sync_new_reports=1)
+        p = self.h.run()
+        self.assertNotEqual(p.returncode, 0)
+        self.assertFalse(self.h.heartbeat.is_file())
 
 
 class InterruptedSyncTests(unittest.TestCase):

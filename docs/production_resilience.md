@@ -576,6 +576,49 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 
 `report-mark-freshness.service` 宣告 `OnFailure=report-mark-alert@%n.service`，**直接復用既有告警鏈、零新管道**（`report-mark-alert.sh` 恆容錯、恆 `exit 0`，被多一個 unit 呼叫是安全的）。
 
+### `rc=0` 不等於「該入庫的都入庫了」（2026-08-20）
+
+**匯入可以完全成功地什麼都沒收進來。** claude CLI 自我更新到缺 native artifact 的版本那次，7 篇新研報全部記成 `skip_untagged`，importer 照常 `rc=0`，排程殼只印一行「本次無新研報入庫」——**與「NAS 真的沒有新檔」在畫面上完全一樣**。
+
+那一輪之所以沒有錯誤更新心跳，**純粹因為後面的每日簡報剛好 `rc=1`**。若當時不在簡報的執行時段、或其他下游段都正常，整輪會被判成完整成功、心跳前進、freshness `PASS`，7 篇靜默消失。同一形狀見 2026-08-12（33 檔、四天後才發現）。
+
+#### 兩層修正
+
+**第一層：環境失敗的述詞從「型別」改成「errno」。** `scripts/_claude_cli.py` 原本只接 `FileNotFoundError`（ENOENT）就拋 `CliNotFoundError` 中止整批——那個機制**本來就存在**，而且註解精準預言了這個失效模式。它漏接的原因是述詞太窄：這次拋的是 `OSError [Errno 8] ENOEXEC`（檔案在，但不是可執行格式），不是 `FileNotFoundError`。現在改判 `errno ∈ {ENOENT, ENOEXEC, EACCES, EPERM, EISDIR}`。**刻意不寬泛接 `OSError`**：ENOMEM／ENFILE 那類是暫時性資源壓力，中止整批會讓一次尖峰變成一輪完全沒跑。
+
+**第二層：`rc=0` 之後仍要看計數。** importer 原子寫出 `data/.sync_last_stats`（`key=value`），殼層逐鍵解析、只收非負整數。分界**不看名字，看「重跑會不會不一樣」**：
+
+| 計數器 | 分類 | 理由 |
+|---|---|---|
+| `fail` | **異常** | 抽字或寫 DB 拋例外；環境修好重跑就會入庫 |
+| `skip_untagged` | **異常** | 標註前置條件失敗；同上 |
+| `skip_admin` | 預期 | 標註成功且明確判定不該入庫 |
+| `skip_non_research` | 預期 | 同上 |
+| `skip_exists` | 預期 | 已在庫，冪等 |
+| `skip_scanned` | 預期 | 掃描件抽不出文字，是**檔案本身的性質**，重跑一萬次也一樣 |
+
+`skip_scanned` 那條是刻意的取捨：算成異常會讓心跳因為語料裡固定存在的掃描件而**永遠**不更新，而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）。代價是它不留路徑紀錄，屬已知限制。
+
+#### 三個容易寫錯的地方
+
+- **殼層不可以 grep importer 那段給人看的 `=== sync summary ===`。** 那是人類文案，改一個字守門就靜默失效，而症狀是「心跳照常更新」——與沒有守門完全一樣。
+- **匯入前要先刪 `data/.sync_last_stats`。** importer 中途死掉會留下舊檔，讀到上一輪的 `abnormal=0` 等於守門不存在。
+- **讀不到或格式壞掉一律保守視為異常。** 這個判斷的唯一用途就是擋心跳，讀不到就當沒問題，等於在最需要它的時候把它關掉。
+
+#### 補救走路徑，不走全庫掃描
+
+三個 `FAIL_LOG` 寫入點的格式現在一致：`絕對路徑<TAB>階段<TAB>原因`（階段為 `extract`／`tag`／`ingest`）。**原本第三處寫的是 `file_hash<TAB>檔名<TAB>原因`**——欄位數相同但語意不同，於是那一類漏收拿不到路徑、無法精準補回。
+
+`scripts/failures_to_delta.py` 把失敗記錄轉成合法的 `--delta` 輸入：只留「真的存在於本地鏡像下」的路徑，對不回檔案的行**計數並印出**而不是靜默丟棄（靜默丟棄會讓「補完了」與「有一半根本沒被看到」長得一樣）。2026-08-20 實測：7 篇、160 chunks、`fail=0`，而 `--all-local` 要對鏡像裡 16,736 個檔逐一抽字再查 DB。
+
+```bash
+uv run python scripts/failures_to_delta.py --out data/sync_delta_recover.txt
+uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt --dry-run   # 先確認 skip_exists=0
+uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
+```
+
+**「NAS 真的沒有新檔」仍是完整成功。** 週末與連假沒有新稿是常態，用「有沒有新資料」當健康指標會製造日曆型假警報——那條設計沒有變，測試釘住。
+
 ### sync timer 刻意不補跑（2026-08-20）
 
 **`report-mark-sync.timer` 是 `Persistent=false`，而同目錄的 backup／freshness／audit 三支是 `true`。那個非對稱是刻意的。**

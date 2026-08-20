@@ -60,6 +60,28 @@ record_unit_failure() {
 # **它量的是管線執行新鮮度，不是資料新鮮度。** 即使本輪 0 篇新研報，只要完整跑完
 # 就會更新——那是刻意的：週末與連假沒有新稿是常態，用「有沒有新資料」當健康指標
 # 會製造日曆型假警報。資料面的停更另有 check_batch_freshness.py 的四個 max(created_at)。
+# ── 匯入計數（機器可讀）────────────────────────────────────────────────
+# **importer 可以 rc=0 卻沒把該入庫的檔入庫。** 2026-08-20：claude CLI 自我更新到
+# 缺 native artifact 的版本，7 篇新研報全部記成 skip_untagged，importer 照常 rc=0，
+# 這支殼只印「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
+# 那一輪之所以沒有錯誤更新心跳，純粹因為後面的每日簡報剛好 rc=1；若當時不在簡報
+# 的執行時段，7 篇會靜默消失（同一形狀見 2026-08-12）。
+#
+# **刻意不 grep importer 那段給人看的 summary**：那是人類文案，改一個字守門就靜默
+# 失效，而症狀是「心跳照常更新」——與沒有守門完全一樣。改讀 importer 原子寫出的
+# key=value 檔，逐鍵解析、只收非負整數，**不 source、不 eval**（那個檔的內容源自
+# 檔名，而檔名來自 NAS）。
+STATS_FILE="data/.sync_last_stats"
+read_stat() {
+  local key="$1" k val v=""
+  [ -f "$STATS_FILE" ] || return 1
+  while IFS='=' read -r k val; do
+    [ "$k" = "$key" ] && v="$val"
+  done < "$STATS_FILE"
+  case "$v" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$v"
+}
+
 HEARTBEAT="data/.last_successful_sync"
 write_heartbeat() {
   # 原子寫入：先寫暫存 → fsync → rename。同檔案系統上 rename 是原子的，
@@ -121,6 +143,8 @@ if [ "$RC" -ne 0 ]; then log "rsync 失敗 → 結束"; exit 1; fi
 
 # 3) 增量匯入（nice/ionice 降優先序，勿搶線上服務）
 log "增量匯入 delta…"
+# 先刪：importer 中途死掉時舊檔會留著，讀到上一輪的 abnormal=0 就等於守門不存在。
+rm -f "$STATS_FILE"
 IMPORT_RC=0
 nice -n 19 ionice -c3 "$UV" run python scripts/sync_new_reports.py --delta "$DELTA" >>"$LOG" 2>&1 \
   || IMPORT_RC=$?
@@ -137,6 +161,22 @@ if [ "$IMPORT_RC" -ne 0 ]; then
   fi
   log "匯入失敗（保留 delta 供排查）→ 結束"
   exit 1
+fi
+
+# 3b) 匯入 rc=0 不等於完整成功：檢查「本該入庫卻沒進 DB」的計數
+if ABNORMAL=$(read_stat abnormal); then
+  if [ "$ABNORMAL" -gt 0 ]; then
+    log "匯入異常：${ABNORMAL} 篇本該入庫卻沒進 DB（rc 仍為 0）→ 本輪不算完整成功"
+    log "  → 逐筆路徑在 data/sync_failures.log；精準補救（不必掃全庫）："
+    log "     $UV run python scripts/failures_to_delta.py --out data/sync_delta_recover.txt"
+    log "     $UV run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt"
+    record_unit_failure "sync_new_reports(ingest_abnormal)" 1
+  fi
+else
+  # 缺檔或格式壞掉一律保守視為異常：這個判斷的唯一用途就是擋心跳，
+  # 讀不到就當成沒問題，等於在最需要它的時候關掉它。
+  log "匯入計數檔不可讀或格式異常（$STATS_FILE）→ 保守視為匯入異常"
+  record_unit_failure "sync_new_reports(stats_unreadable)" 1
 fi
 
 # 4) 本次有新研報入庫才補摘要（best-effort：失敗只記 log，不擋 sync）
@@ -285,6 +325,6 @@ if [ -s "${HASHES:-}" ]; then NEW_INGESTED=$(grep -c . "$HASHES" 2>/dev/null || 
 if [ "$DOWNSTREAM_ABNORMAL" -eq 0 ]; then
   write_heartbeat "$NEW_INGESTED"
 else
-  log "下游有 ${DOWNSTREAM_ABNORMAL} 段異常失敗 → **不更新心跳**（rc=${LOCK_BUSY_RC} 不計）"
+  log "本輪有 ${DOWNSTREAM_ABNORMAL} 段異常（匯入或下游）→ **不更新心跳**（rc=${LOCK_BUSY_RC} 不計）"
 fi
 log "=== sync done ==="

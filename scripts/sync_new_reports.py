@@ -31,7 +31,22 @@ TAGS_DIR = ROOT / "data" / "tags"
 ALL_JSONL = ROOT / "data" / "extracted" / "all.jsonl"
 FAIL_LOG = ROOT / "data" / "sync_failures.log"
 INGESTED_HASHES_FILE = ROOT / "data" / ".sync_last_hashes"
+STATS_FILE = ROOT / "data" / ".sync_last_stats"
 EXTS = {".pdf", ".docx", ".doc"}
+
+# **哪些計數器代表「這篇本來該入庫、卻沒進 DB」。**
+#
+# 分界不是看名字，是看「重跑會不會不一樣」：
+#   - `skip_untagged`：標註的前置條件失敗（claude CLI 壞掉、逾時、回應無法解析）。
+#     檔案本身沒問題，環境修好後重跑就會入庫 ⇒ **異常**。
+#   - `fail`：抽字或寫入 DB 拋例外。同上 ⇒ **異常**。
+#   - `skip_admin`／`skip_non_research`：標註成功且明確判定不該入庫 ⇒ 預期。
+#   - `skip_exists`：已在庫，冪等 ⇒ 預期。
+#   - `skip_scanned`：掃描件抽不出文字，是檔案本身的性質，重跑一萬次也一樣。
+#     把它算成異常會讓心跳因為語料裡固定存在的掃描件而**永遠**不更新，
+#     而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）⇒ 預期。
+#     代價是它不留路徑紀錄，屬已知限制，見 docs/production_resilience.md。
+ABNORMAL_COUNTERS = ("fail", "skip_untagged")
 
 
 def parse_rsync_delta(
@@ -152,6 +167,31 @@ def write_ingested_hashes(path: Path, hashes: list[str]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("\n".join(hashes))
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def write_stats(path: Path, stats: dict) -> None:
+    """把本輪計數器原子寫入 `key=value` 標記檔，供殼層判斷是否為完整成功。
+
+    **殼層不可以去 grep 那段給人看的 `=== sync summary ===`。** 那是人類文案，
+    改一個字就會讓守門靜默失效，而症狀是「心跳照常更新」——與沒有守門完全一樣。
+
+    額外寫出 `abnormal`（＝ABNORMAL_COUNTERS 之和），讓殼層不必知道分類規則；
+    分類是這支腳本的知識，殼層只需要一個數字。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{k}={int(v)}" for k, v in stats.items()]
+    lines.append(f"abnormal={sum(int(stats.get(k, 0)) for k in ABNORMAL_COUNTERS)}")
+    fd, tmp_name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     finally:
         if tmp.exists():
@@ -320,8 +360,12 @@ async def _run(args) -> None:
             except Exception as e:  # noqa: BLE001
                 stats["fail"] += 1
                 await session.rollback()
+                # **格式必須與另外兩處一致：`路徑<TAB>階段<TAB>原因`。**
+                # 初版這裡寫的是 `file_hash<TAB>檔名<TAB>原因`——欄位數相同但語意不同，
+                # 於是拿 sync_failures.log 補救時，第 0 欄拿到的是雜湊而不是路徑，
+                # 這一類漏收**無法**用 --delta 精準補回（2026-08-20 復原時發現）。
                 with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                    fl.write(f"{res.file_hash}\t{path.name}\t{e!r}\n")
+                    fl.write(f"{path}\tingest\t{e!r}\n")
                 continue
 
             stats["ingested"] += 1
@@ -342,6 +386,7 @@ async def _run(args) -> None:
 
     if not args.dry_run:
         write_ingested_hashes(INGESTED_HASHES_FILE, ingested_hashes)
+        write_stats(STATS_FILE, stats)
 
     print("\n=== sync summary ===", flush=True)
     for k, v in stats.items():

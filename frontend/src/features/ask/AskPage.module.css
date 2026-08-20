@@ -4,18 +4,37 @@
 .column { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
 /* 底部留白 = 輸入列高度 + 呼吸空間，確保最後一則訊息不被浮動輸入列蓋住。
    貼底捲動（AskPage.tsx 的 scrollHeight 判斷）把這段留白算在內，行為不變。 */
-.flow { flex: 1; overflow-y: auto; padding: 20px 20px 132px; }
+/* 底部淡出。輸入列不再有底色（見 .composerBar），沒有這道遮罩的話訊息會一路捲到
+   畫面最底、與免責文字疊在一起——實測那行字直接變成不可讀。
+   兩個停點都是量出來的：124px 是輸入列頂端（上內距 12 ＋ 輸入框 46 ＋ 免責 25 ＋
+   下內距 16，再留餘裕），40px 是免責文字的上緣——**必須在那裡就已經全透明**，
+   淡到 100% 才透明的話那行字底下會拖著一層 15% 的殘影，實測就是糊掉。
+   中間那段刻意留著半透明：輸入框是磨砂玻璃，身後全空的話就沒有東西可以糊。
+   底部 padding 的 132px **必須大於 124px**，否則捲到底時最後一則訊息會被自己的遮罩削掉。 */
+.flow {
+  flex: 1; overflow-y: auto; padding: 20px 20px 132px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 124px), transparent calc(100% - 40px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 124px), transparent calc(100% - 40px));
+}
 .flow > :first-child, .flow > div { max-width: 760px; margin-left: auto; margin-right: auto; }
 /* 空狀態（尚無對話）：起始畫面的引導文字與輸入框在可用空間內垂直置中。
    此時不渲染浮動輸入列，故收回為它預留的底部留白。 */
-.flowCentered { display: flex; flex-direction: column; justify-content: center; padding-bottom: 20px; }
+/* 空狀態不渲染輸入列，遮罩要收回——否則會把置中的 hero（連同它裡面的輸入框）
+   下緣一起淡掉。 */
+.flowCentered {
+  display: flex; flex-direction: column; justify-content: center; padding-bottom: 20px;
+  -webkit-mask-image: none; mask-image: none;
+}
 /* flex 子項預設縮成內容寬；補 width:100% 讓 wrap 維持 760/composer 640 原寬 */
 .flowCentered > * { width: 100%; }
+/* 浮在對話流之上，但**自己不畫任何底**：玻璃改由輸入框本身承擔（Composer.module.css
+   的 .box）。原本這一層是整條磨砂帶＋上緣分隔線，視覺上等於在頁面底部橫切一刀；
+   拿掉之後訊息是從輸入框底下捲過去，磨砂只發生在輸入框那個形狀裡。
+   pointer-events:none 讓這層不吃點擊——它現在只是個定位容器，覆蓋住的那片對話
+   內容仍要能選取；輸入框與免責文字再各自收回互動。 */
 .composerBar {
   position: absolute; left: 0; right: 0; bottom: 0;
   padding: 12px 20px 16px;
-  background: var(--tf-glass);
-  -webkit-backdrop-filter: var(--tf-glass-filter);
-  backdrop-filter: var(--tf-glass-filter);
-  border-top: 1px solid var(--tf-glass-border);
+  pointer-events: none;
 }
+.composerBar > * { pointer-events: auto; }

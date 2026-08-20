@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
@@ -6,6 +6,24 @@ import { TF_DUR, tfInstant } from '../../lib/motionTokens'
 import { useWebSearch } from '../../lib/useWebSearch'
 import { ComposerTools } from './ComposerTools'
 import styles from './Composer.module.css'
+
+// 輸入框長高的上限（超過就內部捲動）。CSS 的 max-height 必須與它一致，否則會出現
+// 「捲軸關掉了但內容其實已被 max-height 切掉」——那是完全看不見的截斷。
+const MAX_INPUT_HEIGHT = 140
+
+/** 單行文字的高度（px）。
+ *
+ * `getComputedStyle().lineHeight` 不同引擎回的東西不一樣：瀏覽器多半解析成
+ * `'22.4px'`，jsdom 原樣回 CSS 寫的無單位倍數 `'1.6'`，未設時則是 `'normal'`。
+ * 直接 parseFloat 會在後兩種情況拿到 1.6 或 NaN——1.6 特別惡劣，它不會報錯，
+ * 只會讓「換行了沒」的門檻塌到幾乎恆真，於是輸入框打第一個字就跳成兩列。
+ */
+function lineHeightPx(cs: CSSStyleDeclaration): number {
+  const fontSize = parseFloat(cs.fontSize) || 14
+  const raw = parseFloat(cs.lineHeight)
+  if (!Number.isFinite(raw)) return fontSize * 1.6  // 'normal' 或空字串
+  return raw < 4 ? raw * fontSize : raw             // 小於 4 只可能是無單位倍數
+}
 
 interface Props {
   value: string
@@ -23,11 +41,24 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
   // 各自持有一份、按了哪個就只有那個亮。
   const web = useWebSearch()
   const ref = useRef<HTMLTextAreaElement>(null)
+  // 文字換到第二行之後版面要改成兩列（見 .multiline）。判準只能是**量出來的高度**：
+  // 字數在 CJK／英數混排與不同視窗寬度下換行的時機完全不同，數字數一定會錯。
+  const [multiline, setMultiline] = useState(false)
   useEffect(() => {
     const el = ref.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 140) + 'px'
+    const content = el.scrollHeight
+    el.style.height = Math.min(content, MAX_INPUT_HEIGHT) + 'px'
+    // 沒到上限就關掉捲軸：高度被設成 scrollHeight 之後兩者理論上相等，但行盒是
+    // 22.4px 這種非整數，四捨五入差一點就會讓 textarea 判定「內容超出」而畫出一條
+    // 捲軸（打第一個字就冒出來，看起來像故障）。到上限時才需要真的能捲。
+    el.style.overflowY = content > MAX_INPUT_HEIGHT ? 'auto' : 'hidden'
+    // 門檻由 computed style 推而不是寫死常數：行高與內距都在 Composer.module.css，
+    // 寫死的話那邊一改，這裡就會安靜地變成「永遠單行」或「永遠兩列」。
+    const cs = getComputedStyle(el)
+    const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+    setMultiline(content > lineHeightPx(cs) * 1.5 + pad)  // 1.5 行＝介於一行與兩行之間
   }, [value])
 
   function fire() {
@@ -41,7 +72,7 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
 
   return (
     <div className={`${styles.wrap} ${styles[variant]}`}>
-      <div className={styles.box}>
+      <div className={`${styles.box} ${multiline ? styles.multiline : ''}`}>
         <ComposerTools />
         <textarea
           ref={ref}
@@ -68,7 +99,7 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
               exit={{ opacity: 0 }}
               transition={reduced ? tfInstant : { duration: TF_DUR.d1 }}
             >
-              <Icon name={disabled ? 'x' : 'send'} size={disabled ? 18 : 19} />
+              <Icon name={disabled ? 'x' : 'send'} size={disabled ? 15 : 16} />
             </motion.span>
           </AnimatePresence>
         </Pressable>

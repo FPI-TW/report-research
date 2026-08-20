@@ -1,25 +1,47 @@
 .wrap { margin: 0 auto; width: 100%; }
 .center { max-width: 640px; }
 .bottom { max-width: 760px; }
-/* 輸入框本身維持實白：它是控制項，不是浮層。玻璃在包住它的 .composerBar
-   （AskPage.module.css）——那一層才有訊息從底下捲過去。 */
+/* 輸入框自己就是那片玻璃（2026-08-20 反轉：先前是實白控制項，磨砂在外層的
+   .composerBar，而那一層等於在頁面底部橫切一條白帶）。訊息從它底下捲過去，
+   blur 才有東西可以糊——底色若是實白，backdrop-filter 一點作用都沒有。
+   **半透明的代價要記得**：捲到輸入框底下的文字會透出來，所以底色不能再淡
+   （--tf-glass 0.72 實測游標與 placeholder 會被身後的字干擾），用 strong 0.86
+   ＋ blur(20px)，讀得到材質但讀不到底下的字。 */
+/* 尺寸從文字回推，不是隨手挑的：14px／line-height 1.6 ＝ 22.4px 的行盒，加上輸入框
+   自己的 5px 上下內距（32.4px）與這裡的 6px，單行總高約 46px。圓角 22px 幾乎等於半高
+   ＝近膠囊；**刻意不用 --tf-radius-pill**，那會讓輸入變多行時撐成跑道形。
+   左右內距 8px 是量出來的——兩端 30px 圓鈕與圓角弧線之間要留等寬的呼吸，再小會擦到
+   弧線、再大則兩端空得像少了東西。 */
 .box {
-  background: var(--tf-surface);
-  border: 1px solid var(--tf-border);
-  border-radius: var(--tf-radius-panel);
-  box-shadow: var(--tf-shadow-float);
-  padding: 8px 8px 8px 18px;
-  display: flex; align-items: flex-end; gap: 10px;
+  background: var(--tf-glass-strong);
+  -webkit-backdrop-filter: var(--tf-glass-filter);
+  backdrop-filter: var(--tf-glass-filter);
+  border: 1px solid var(--tf-glass-border);
+  border-radius: 22px;
+  box-shadow: var(--tf-shadow-float), var(--tf-glass-sheen);
+  padding: 6px 8px;
+  display: flex; align-items: flex-end; gap: 6px;
   transition: box-shadow var(--tf-dur-2) var(--tf-ease-out), border-color var(--tf-dur-2) var(--tf-ease-out);
 }
-.box:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite), var(--tf-shadow-float); }
-/* 底部變體外面已經包了一層玻璃列，輸入框自己就不必再投一次重影——
-   兩層陰影疊起來會讓底部糊成一團。 */
-.bottom .box { box-shadow: var(--tf-shadow-xs); }
-.bottom .box:focus-within { box-shadow: var(--tf-ring-graphite), var(--tf-shadow-xs); }
-.input { flex: 1; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.6; color: var(--tf-text-1); max-height: 140px; min-height: 24px; padding: 9px 0; background: none; }
+.box:focus-within { border-color: var(--tf-graphite); box-shadow: var(--tf-ring-graphite), var(--tf-shadow-float), var(--tf-glass-sheen); }
+/* 先前這裡把底部變體的陰影降成 --tf-shadow-xs，理由是「外面已經包了一層玻璃列，
+   不必再投一次重影」。那一層已經拿掉，所以這個減法也跟著移除——現在輸入框是底部
+   唯一的浮層，需要 float 級的陰影才浮得起來。 */
+/* 換行之後改成兩列：輸入框自己佔滿第一列，控制項退到第二列。
+   單行時維持一列（版面參考 ChatGPT）。**沒有這段的症狀**是文字被擠在「＋」與工具
+   膠囊右邊那條窄欄裡，每一行都跟著縮排，而控制項停在最後一行旁邊——愈打愈窄。
+   order:-1 讓輸入框排到控制項之前（DOM 順序不動，鍵盤 Tab 仍是「工具→輸入→送出」）；
+   送出鈕的 margin-left:auto 是因為第二列少了 flex:1 的輸入框把它推到右邊。 */
+.multiline { flex-wrap: wrap; }
+.multiline .input { flex: 1 1 100%; order: -1; padding: 6px 6px 2px; }
+.multiline .send { margin-left: auto; }
+/* 垂直內距 5px：單行高 32.4px，與兩端 30px 圓鈕在底對齊下中線只差約 1px。
+   水平 2px 是與髮絲線／膠囊之間的呼吸，游標不會貼著它們。
+   min-height 跟著行盒走（22px），否則空的輸入框會比一行文字還高。 */
+.input { flex: 1; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.6; color: var(--tf-text-1); max-height: 140px; min-height: 22px; padding: 5px 0 5px 2px; background: none; }
 .input::placeholder { color: var(--tf-text-4); }
-.send { width: 40px; height: 40px; flex: none; border-radius: var(--tf-radius-pill); border: none; background: var(--tf-graphite); color: var(--tf-on-graphite); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+/* 與左端的「＋」同尺寸（30px），兩側邊緣才對稱；它是唯一的實心鈕，重量留給它。 */
+.send { width: 30px; height: 30px; flex: none; border-radius: var(--tf-radius-pill); border: none; background: var(--tf-graphite); color: var(--tf-on-graphite); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .send:hover { background: var(--tf-graphite-hover); }
 .send:disabled { opacity: 0.4; cursor: default; }
 .note { text-align: center; font-size: 11.5px; color: var(--tf-text-4); margin-top: 8px; }

@@ -15,6 +15,10 @@ LOG="data/sync_run_${DATE}.log"
 DELTA="data/sync_delta_$(date +%Y%m%d_%H%M%S).txt"
 LOCK="data/.sync_new_reports.lock"
 UNIT_FAILURES="data/unit_failures.log"
+# 本輪狀態。格式刻意是 key=value 而不是 JSON：bash 這側用 sed 逐鍵取（對機器寫出的檔
+# 下 source/eval 是安靜的地雷），欄位全是純量，JSON 換不到東西。與 data/.last_successful_sync
+# 分工——那個記「最近一次完整成功」，這個記「這一輪的收場」。
+ROUND_STATE="data/sync_round_state"
 
 # scripts/_claude_lock.py 的 EXIT_LOCK_BUSY（sysexits.h EX_TEMPFAIL）。三個階段都會
 # spawn claude CLI，撞到手動批次時會以這個碼結束——刻意與「這支自己壞了」分開，
@@ -22,6 +26,21 @@ UNIT_FAILURES="data/unit_failures.log"
 LOCK_BUSY_RC=75
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+
+# 紀錄標頭的唯一產生點。格式是 web/routers/monitor.py `_UNIT_FAIL_RE` 的契約
+# （UNIT／STAGE／RC 三段，其中 RC 是 optional），現在有兩個寫入端（下面的
+# record_unit_failure 與 report_aborted_round），寫散在兩處遲早會漂掉。
+# **rc 允許是空字串＝不明，那時整段 `RC=` 省略**（前端 progressSchema.ts 的 rc 也是
+# nullable）——被 SIGKILL 收掉的那一輪本來就沒有退出碼，猜一個數字填進去只會讓讀的
+# 人以為那是真的。
+failure_header() {
+  local stage="$1" rc="${2:-}"
+  if [ -n "$rc" ]; then
+    echo "=== $(date -Iseconds)  UNIT=report-mark-sync.service  STAGE=${stage}  RC=${rc} ==="
+  else
+    echo "=== $(date -Iseconds)  UNIT=report-mark-sync.service  STAGE=${stage} ==="
+  fi
+}
 
 # 把失敗留在 OnFailure 告警既有的落點（deploy/systemd/report-mark-alert.sh 寫的也是
 # 這個檔）。理由：下面摘要與摘錄兩段是 best-effort，失敗不會讓 unit 變紅，於是
@@ -39,7 +58,7 @@ record_unit_failure() {
     DOWNSTREAM_ABNORMAL=$((DOWNSTREAM_ABNORMAL + 1))
   fi
   {
-    echo "=== $(date -Iseconds)  UNIT=report-mark-sync.service  STAGE=${stage}  RC=${rc} ==="
+    failure_header "$stage" "$rc"
     if [ "$rc" -eq "$LOCK_BUSY_RC" ]; then
       echo "（rc=${LOCK_BUSY_RC}＝claude CLI 被另一支批次佔用，見 scripts/_claude_lock.py；"
       echo "  不是這支批次壞掉。持有者資訊印在下方 log 尾巴裡。）"
@@ -48,6 +67,91 @@ record_unit_failure() {
     tail -n 20 "$LOG" 2>/dev/null || echo "(sync log 讀取失敗)"
     echo
   } >> "$UNIT_FAILURES" 2>/dev/null || true
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 本輪狀態：為什麼不能只靠 OnFailure=
+# ══════════════════════════════════════════════════════════════════════════════
+# `OnFailure=` 在**系統關機時結構性地不會觸發**。2026-08-17 16:34 與 2026-08-18 08:50
+# 兩次補跑都在 rsync 階段開始後約 25 秒被 SIGTERM 砍掉，而 journal 明說告警排不進去：
+#
+#   report-mark-sync.service: Failed to enqueue OnFailure= job, ignoring:
+#   Transaction for report-mark-alert@report-mark-sync.service.service/start is
+#   destructive (time-set.target has 'stop' job queued, but 'start' is included
+#   in transaction)
+#
+# 也就是「機器關掉時死掉的那一輪」不進 journal ERROR、不進 data/unit_failures.log、
+# webhook 也不會響——**完全無聲**，正是本 repo 一路在對付的那種故障。
+#
+# 對策是不靠 OnFailure：進入點寫一筆 state=running，收尾（含訊號）改寫成終態，
+# 下一輪進來時若看到上一輪停在 running／signalled 就補記一筆到 unit_failures.log
+# （既有落點，/api/progress 的 unit_failures 已經在讀它，零新管道，偵測延遲 ≤3 小時）。
+#
+# **它只覆蓋一半——「下一輪有來」的那一半。** 另一半（下一輪再也沒來）本檔看不見：
+# 沒被執行時它一個字也寫不出來。那一半由下面的管線心跳與 check_batch_freshness.py
+# 的 assess_pipeline（--pipeline-hours）負責，兩者刻意分開、不可互相取代。
+write_round_state() {
+  local state="$1" rc="${2:-}"
+  # `signal=`／`rc=` 即使沒有值也照樣印出來（空值），讓寫出的鍵集合固定——
+  # 讀取端就不必分辨「這個鍵不存在」與「這輪還不知道」。
+  {
+    echo "state=${state}"
+    echo "started_at=${ROUND_STARTED_AT:-}"
+    echo "started_epoch=${ROUND_STARTED_EPOCH:-}"
+    echo "pid=$$"
+    echo "log=${LOG}"
+    echo "signal=${ROUND_STATE_SIGNAL:-}"
+    echo "rc=${rc}"
+    echo "updated_at=$(date -Iseconds)"
+  } > "${ROUND_STATE}.tmp" 2>/dev/null && mv -f "${ROUND_STATE}.tmp" "$ROUND_STATE" 2>/dev/null || true
+}
+
+round_state_key() { sed -n "s/^$1=//p" "$ROUND_STATE" 2>/dev/null | tail -n 1; }
+
+# 補記上一輪的異常收場。**必須在 write_round_state running 之前呼叫**，否則上一輪的
+# 狀態就被本輪抹掉了。只認 running／signalled 兩種：
+#   running   ＝ 連終態都沒寫成（SIGKILL、斷電、WSL 整個被收掉；trap 擋不住）
+#   signalled ＝ 收到 SIGTERM 而 EXIT trap 有跑到；OnFailure 可能有、也可能被關機吃掉
+# failed（乾淨的非零退出）刻意不補記——那條路 unit 會進 failed，OnFailure 正常運作。
+report_aborted_round() {
+  [ -f "$ROUND_STATE" ] || return 0
+  local prev_state prev_started prev_pid prev_signal prev_log prev_rc orphan
+  prev_state=$(round_state_key state)
+  case "$prev_state" in
+    running|signalled) ;;
+    *) return 0 ;;
+  esac
+  prev_started=$(round_state_key started_at)
+  prev_pid=$(round_state_key pid)
+  prev_signal=$(round_state_key signal)
+  prev_log=$(round_state_key log)
+  prev_rc=$(round_state_key rc)
+  orphan=$(ls -1t data/sync_delta_*.txt 2>/dev/null | head -n 3 || true)
+  {
+    failure_header "sync_round(aborted)" "$prev_rc"
+    echo "（本筆是**下一輪 sync 在進入點補記**的，不是 OnFailure 寫的。系統關機時"
+    echo "  systemd 會拒絕把 report-mark-alert@ 排進已含 stop job 的 transaction"
+    echo "  （\"Transaction ... is destructive\"），OnFailure= 於是完全無聲——"
+    echo "  2026-08-17／08-18 兩次補跑就是這樣消失的。）"
+    echo "上一輪：state=${prev_state}  started_at=${prev_started}  pid=${prev_pid}  signal=${prev_signal:-（無；多半是 SIGKILL／斷電／WSL 被收掉）}"
+    echo "影響：rsync 可能已把部分新檔落到本地，而 --size-only 讓下一輪 delta 不再列出"
+    echo "  它們 ⇒ 那批研報不會自己補回來（同型的坑見本檔 rc=${LOCK_BUSY_RC} 那段註解）。"
+    echo "  復原（殘留 delta 由新到舊，最多列三個）："
+    if [ -n "$orphan" ]; then
+      echo "$orphan" | sed "s|^|    uv run python scripts/sync_new_reports.py --delta |"
+    else
+      echo "    （無殘留 delta 檔）"
+    fi
+    echo "    uv run python scripts/sync_new_reports.py --all-local   # delta 不可靠時用這個"
+    echo "--- ${prev_log:-（未紀錄 log 路徑）} (last 20) ---"
+    if [ -n "$prev_log" ] && [ -f "$prev_log" ]; then
+      tail -n 20 "$prev_log" 2>/dev/null || echo "(sync log 讀取失敗)"
+    else
+      echo "(找不到上一輪的 log)"
+    fi
+    echo
+  } >> "$UNIT_FAILURES" 2>/dev/null || true
+  log "上一輪未正常結束（state=${prev_state}，started_at=${prev_started}）→ 已補記入 ${UNIT_FAILURES}"
 }
 
 # ── 管線心跳 ──────────────────────────────────────────────────────────────
@@ -101,6 +205,16 @@ write_heartbeat() {
 
 mkdir -p data
 
+# 系統正在關機就別開工。**這不是本輪狀態機制的替代品，是它的補集**：這條只擋得住
+# 「觸發點恰好落在關機 transaction 裡」，而 SIGTERM 可以在開工後任何一刻到來——實測那
+# 兩次就是開工 25 秒後才被砍的，前置判斷對那種情況無能為力。真正的偵測仍是本輪狀態。
+# 認不出 systemd（手動執行、容器、systemd 未啟用）時一律放行：fail-open。
+SYSTEM_STATE=$(systemctl is-system-running 2>/dev/null || true)
+if [ "$SYSTEM_STATE" = "stopping" ]; then
+  log "系統正在關機（systemctl is-system-running=stopping）→ 不開工，乾淨退出"
+  exit 0
+fi
+
 UV="${UV:-}"
 if [ -z "$UV" ]; then
   UV=$(command -v uv || true)
@@ -115,7 +229,43 @@ if [ -e "$LOCK" ] && kill -0 "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null; then
   log "已有 sync 在跑（lock=$(cat "$LOCK")），本次跳過"; exit 0
 fi
 echo "$$" > "$LOCK"
-trap 'rm -f "$LOCK"' EXIT
+
+# 本輪狀態的生命週期。**三個順序上的要求，動這段之前先讀懂**：
+#   1. 整段必須在**取得 PID lock 之後**：上面那個「已有 sync 在跑就跳過」的分支刻意
+#      在安裝 trap 之前 exit，否則被跳過的那次會把仍在跑的那輪的鎖與狀態一起清掉。
+#   2. report_aborted_round 必須在 write_round_state running **之前**，否則上一輪的
+#      狀態已被本輪覆寫，再也讀不到。
+#   3. 終態一律由 EXIT trap 寫，訊號 trap 只記下是哪個訊號然後 exit——兩邊都寫會產生
+#      互相矛盾的紀錄。訊號 trap 之所以不能省：沒有它，bash 在被 SIGTERM 收掉時走的
+#      是預設處置，`signal=` 就永遠是空的，事後分不出「被砍」與「連 trap 都沒跑到」。
+ROUND_STATE_SIGNAL=""
+ROUND_STARTED_AT=$(date -Iseconds)
+ROUND_STARTED_EPOCH=$(date +%s)
+
+finish_round() {
+  local rc=$?                       # 必須是第一行：下面每一個指令都會蓋掉 $?
+  rm -f "$LOCK"
+  if [ -n "$ROUND_STATE_SIGNAL" ]; then
+    write_round_state signalled "$rc"
+  elif [ "$rc" -eq 0 ]; then
+    write_round_state done "$rc"
+  else
+    write_round_state failed "$rc"
+  fi
+}
+
+on_round_signal() {                  # $1=訊號名 $2=對應退出碼（128+n）
+  ROUND_STATE_SIGNAL="$1"
+  log "收到 SIG$1 → 中止本輪（終態寫入 ${ROUND_STATE}，下一輪會補記告警）"
+  exit "$2"
+}
+
+report_aborted_round
+write_round_state running
+trap finish_round EXIT
+trap 'on_round_signal TERM 143' TERM
+trap 'on_round_signal INT 130' INT
+trap 'on_round_signal HUP 129' HUP
 
 log "=== sync start (pid=$$) ==="
 

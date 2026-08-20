@@ -17,6 +17,12 @@ unit 全綠，症狀長得像「NAS 沒有新檔」）。
 
 殼那一側刻意用**假二進位跑真腳本**而不是靜態比對：心跳的正確性全在「哪些路徑會走到
 那一行」，而那正是靜態比對看不到的東西。
+
+本檔另涵蓋 `data/sync_round_state`（RoundStateTests）。兩者分工，不可互相取代：
+心跳量「最近一次完整成功有多久以前」，本輪狀態量「這一輪是怎麼收場的」。後者存在的
+理由是 `OnFailure=` 在系統關機時**結構性地不會觸發**（systemd 拒絕把告警排進已含
+stop job 的 transaction），於是被關機砍掉的那一輪完全無聲——心跳看得到「久沒成功」，
+但看不到「那一輪被砍在 rsync 中途、新檔已落地而 --size-only 讓下一輪不再列出它們」。
 """
 import os
 import shutil
@@ -39,6 +45,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import check_batch_freshness as cbf  # noqa: E402
 
 HEARTBEAT_REL = "data/.last_successful_sync"
+ROUND_STATE_REL = "data/sync_round_state"
 LOCK_BUSY_RC = 75
 
 
@@ -650,6 +657,155 @@ class FreshnessUnitContractTests(unittest.TestCase):
         codes = {cbf.EXIT_OK, cbf.EXIT_STALE, cbf.EXIT_UNKNOWN, cbf.EXIT_UPSTREAM_STALE}
         self.assertEqual(len(codes), 4, "四個退出碼不得相撞")
         self.assertNotEqual(cbf.EXIT_UPSTREAM_STALE, 0, "UPSTREAM_STALE 必須非零")
+
+
+class RoundStateTests(unittest.TestCase):
+    """`data/sync_round_state`：這一輪是怎麼收場的，以及下一輪要不要補記告警。"""
+
+    def setUp(self):
+        self.h = _SyncHarness()
+        self.addCleanup(self.h.close)
+
+    @property
+    def _state_path(self) -> Path:
+        return self.h.root / ROUND_STATE_REL
+
+    def _state(self) -> dict:
+        if not self._state_path.is_file():
+            return {}
+        return dict(
+            ln.split("=", 1)
+            for ln in self._state_path.read_text(encoding="utf-8").splitlines()
+            if "=" in ln
+        )
+
+    def _seed_state(self, **fields):
+        """偽造上一輪留下的狀態檔。"""
+        body = "".join(f"{k}={v}\n" for k, v in fields.items())
+        self._state_path.write_text(body, encoding="utf-8")
+
+    def _unit_failures(self) -> str:
+        f = self.h.root / "data" / "unit_failures.log"
+        return f.read_text(encoding="utf-8") if f.is_file() else ""
+
+    # ── 終態 ────────────────────────────────────────────────────────────────
+    def test_clean_round_writes_done(self):
+        self.h.run()
+        st = self._state()
+        self.assertEqual(st.get("state"), "done")
+        self.assertEqual(st.get("rc"), "0")
+        self.assertEqual(st.get("signal"), "", "沒被訊號砍時 signal 必須是空字串而非缺鍵")
+
+    def test_failed_round_writes_failed(self):
+        self.h.rsync_rc = 1
+        self.h._write_fakes()
+        self.h.run()
+        st = self._state()
+        self.assertEqual(st.get("state"), "failed")
+        self.assertEqual(st.get("rc"), "1")
+
+    def test_sigterm_writes_signalled_with_signal_name(self):
+        """關機那條路：EXIT trap 有跑到，但終態必須與乾淨失敗分得開。
+
+        `signal=` 不可省——沒有它，事後分不出「被砍」與「連 trap 都沒跑到」。
+        """
+        self.h.run_and_kill(1.0, sig=signal.SIGTERM)
+        st = self._state()
+        self.assertEqual(st.get("state"), "signalled")
+        self.assertEqual(st.get("signal"), "TERM")
+
+    def test_sigkill_leaves_running(self):
+        """SIGKILL 擋不住：狀態停在 running，正是下一輪要補記的那一種。"""
+        self.h.run_and_kill(1.0, sig=signal.SIGKILL)
+        self.assertEqual(self._state().get("state"), "running")
+
+    # ── 下一輪的補記 ────────────────────────────────────────────────────────
+    def test_next_round_backfills_aborted_from_running(self):
+        self._seed_state(state="running", started_at="2026-08-18T08:50:00+08:00",
+                         pid="4242", log="data/sync_run_20260818.log", signal="", rc="")
+        self.h.run()
+        blob = self._unit_failures()
+        self.assertIn("STAGE=sync_round(aborted)", blob)
+        self.assertIn("--all-local", blob, "復原指令不可省：那批新檔不會自己補回來")
+
+    def test_next_round_backfills_aborted_from_signalled(self):
+        self._seed_state(state="signalled", started_at="2026-08-18T08:50:00+08:00",
+                         pid="4242", log="data/sync_run_20260818.log", signal="TERM", rc="143")
+        self.h.run()
+        self.assertIn("STAGE=sync_round(aborted)", self._unit_failures())
+
+    def test_failed_state_is_not_backfilled(self):
+        """乾淨的非零退出不補記——那條路 unit 會變紅，OnFailure 正常運作。
+
+        補記它等於同一次失敗在監控頁記兩筆。
+        """
+        self._seed_state(state="failed", started_at="2026-08-18T08:50:00+08:00",
+                         pid="4242", log="x", signal="", rc="1")
+        self.h.run()
+        self.assertNotIn("sync_round(aborted)", self._unit_failures())
+
+    def test_done_state_is_not_backfilled(self):
+        self._seed_state(state="done", started_at="2026-08-18T08:50:00+08:00",
+                         pid="4242", log="x", signal="", rc="0")
+        self.h.run()
+        self.assertNotIn("sync_round(aborted)", self._unit_failures())
+
+    def test_backfilled_header_parses_as_monitor_record(self):
+        """補記的標頭必須被 monitor 的 `_UNIT_FAIL_RE` 認得，否則寫了也沒有讀取路徑。
+
+        rc 不明時整段 `RC=` 省略而不猜——被 SIGKILL 收掉的那一輪本來就沒有退出碼。
+        """
+        from web.routers.monitor import _UNIT_FAIL_RE
+        self._seed_state(state="running", started_at="2026-08-18T08:50:00+08:00",
+                         pid="4242", log="x", signal="", rc="")
+        self.h.run()
+        headers = [
+            ln.strip() for ln in self._unit_failures().splitlines()
+            if "sync_round(aborted)" in ln
+        ]
+        self.assertTrue(headers, "沒有補記標頭")
+        m = _UNIT_FAIL_RE.match(headers[0])
+        self.assertIsNotNone(m, f"monitor 解析不出這一行：{headers[0]}")
+        self.assertEqual(m.group("stage"), "sync_round(aborted)")
+        self.assertIsNone(m.group("rc"), "rc 不明時不得猜一個數字填進去")
+
+    def test_backfill_happens_before_state_is_overwritten(self):
+        """補記必須早於本輪寫 running，否則上一輪的狀態已被抹掉、永遠讀不到。"""
+        self._seed_state(state="running", started_at="2026-08-18T08:50:00+08:00",
+                         pid="4242", log="x", signal="", rc="")
+        self.h.run()
+        self.assertIn("sync_round(aborted)", self._unit_failures())
+        self.assertEqual(self._state().get("state"), "done", "本輪自己的終態仍要寫出")
+
+    # ── 兩條早退路徑 ────────────────────────────────────────────────────────
+    def test_lock_held_skip_does_not_touch_state(self):
+        """被 PID lock 跳過的那一次，不得動到仍在跑的那一輪的狀態。
+
+        整組 trap 刻意裝在取得 lock 之後；裝在之前的話，被跳過的這次一 exit 就會把
+        別人的鎖與狀態一起清掉——而那一輪還在跑，症狀是憑空多出一筆 aborted。
+        """
+        proc = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(proc.kill)
+        (self.h.root / "data" / ".sync_new_reports.lock").write_text(str(proc.pid))
+        self._seed_state(state="running", started_at="2026-08-18T08:50:00+08:00",
+                         pid=str(proc.pid), log="x", signal="", rc="")
+        r = self.h.run()
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self._state().get("state"), "running", "別人的狀態被覆寫了")
+        self.assertNotIn("sync_round(aborted)", self._unit_failures())
+
+    def test_system_stopping_exits_clean_without_starting(self):
+        """關機中就別開工——這是補集不是替代品，擋得住觸發點落在關機 transaction 裡。"""
+        self.h._fake("systemctl", 'echo stopping\nexit 1\n')
+        r = self.h.run()
+        self.assertEqual(r.returncode, 0)
+        self.assertFalse(self._state_path.is_file(), "不開工就不該留下本輪狀態")
+
+    def test_unknown_systemd_is_fail_open(self):
+        """認不出 systemd（手動執行、容器）一律放行，否則本機根本跑不了。"""
+        self.h._fake("systemctl", 'exit 127\n')
+        self.h.run()
+        self.assertEqual(self._state().get("state"), "done")
 
 
 if __name__ == "__main__":

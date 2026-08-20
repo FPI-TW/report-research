@@ -688,6 +688,39 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 
 **非對稱的理由**：每日一次的 timer 錯過一次就是整天沒有備份／沒有停更偵測／沒有耐久性稽核，而那一天無法由下一次涵蓋；且那三支都短命、唯讀（或原子改名），被砍在中途不會留下半成品。sync 兩個條件都不成立。由 `tests/test_sync_timer_persistence.py` 釘住。
 
+### 被關機砍掉的那一輪：`data/sync_round_state`（2026-08-21）
+
+上一節說明了「關機期間 `OnFailure=` 結構性地送不出去」。**那條缺口本身沒有被上一節補掉**——`Persistent=false` 只讓「開機瞬間補跑」不再發生，但 SIGTERM 可以在開工後任何一刻到來（實測那兩次都是開工約 25 秒後才被砍），而那一輪一樣完全無聲。
+
+心跳看得到的是「久沒有完整成功」，看不到的是「那一輪被砍在 rsync 中途、新檔已落地而 `--size-only` 讓下一輪不再列出它們」——後者需要人去跑 `--all-local`，而沒有任何訊號會提醒他。
+
+機制不靠 `OnFailure`，改由**下一輪自己補記**：
+
+| 時機 | 寫入 |
+|---|---|
+| 取得 PID lock 之後、開工之前 | `state=running` |
+| 正常收場（EXIT trap） | `state=done`＋`rc` |
+| 乾淨的非零退出 | `state=failed`＋`rc` |
+| 收到 SIGTERM／INT／HUP | `state=signalled`＋`signal=TERM`＋`rc` |
+| SIGKILL／斷電／WSL 被收掉 | **寫不出來**——狀態停在 `running`，那正是指紋 |
+
+下一輪進入點讀到上一輪停在 `running` 或 `signalled`，就補一筆 `STAGE=sync_round(aborted)` 到 `data/unit_failures.log`（**既有落點**，`/api/progress` 的 `unit_failures` 已經在讀它，零新管道、零前端改動），內容含殘留 delta 與 `--all-local` 復原指令。偵測延遲 ≤3 小時（下一輪排程）。
+
+**`failed` 刻意不補記**：那條路 unit 會進 failed、`OnFailure` 正常運作，補記它等於同一次失敗記兩筆。
+
+四個順序上的要求，動 `scripts/sync_new_reports.sh` 那段之前先讀懂：
+
+1. **整段必須在取得 PID lock 之後。** 「已有 sync 在跑就跳過」那條分支刻意在安裝 trap 之前 `exit`，否則被跳過的那次會把仍在跑的那輪的鎖與狀態一起清掉——症狀是憑空多出一筆 aborted。
+2. **補記必須早於本輪寫 `running`**，否則上一輪的狀態已被覆寫、永遠讀不到。
+3. **終態一律由 EXIT trap 寫，訊號 trap 只記下訊號名再 `exit`。** 兩邊都寫會產生互相矛盾的紀錄。訊號 trap 不能省：沒有它，bash 走預設處置，`signal=` 永遠是空的，事後分不出「被砍」與「連 trap 都沒跑到」。
+4. **`rc` 不明時整段 `RC=` 省略而不猜。** 被 SIGKILL 收掉的那一輪本來就沒有退出碼，填一個數字只會讓讀的人以為那是真的（`web/routers/monitor.py` 的 `_UNIT_FAIL_RE` 對 `RC=` 本來就是 optional）。
+
+另在進入點加了 `systemctl is-system-running=stopping` 的前置判斷。**它是補集不是替代品**：擋得住「觸發點恰好落在關機 transaction 裡」，擋不住開工後才收到 SIGTERM。認不出 systemd（手動執行、容器）時一律放行。
+
+**已知限制——它只覆蓋一半。** 這支殼沒被執行時一個字也寫不出來，所以「下一輪再也沒來」由管線心跳與 `check_batch_freshness.py` 的 `assess_pipeline`（`--pipeline-hours`）負責。兩者刻意分開，不可互相取代。
+
+狀態檔是純執行期狀態（`.gitignore` 逐項忽略），遺失只會讓下一輪少補記一筆，不壞資料。四條路（done／failed／signalled／running）由 `tests/test_pipeline_heartbeat.py` 的 `RoundStateTests` 以**真的 bash 與真的訊號**走過，並比對 `_UNIT_FAIL_RE` 認不認得補記的標頭。
+
 ### 兩個刻意的預設
 
 - **語料閘（`corpus`）抑制連鎖假警報。** 三支批次都只吃「本輪新入庫」的研報，沒有新研報時它們一行都不會產出——那是正確行為。所以語料自己在同窗期內沒前進時，派生資產的過期一律判 `suppressed`。少了這一層，一個連假就讓三個資產同時亮紅，而「天天假警報」的下一步就是沒人看告警。語料閘的母體刻意與批次一致（`full_text IS NOT NULL AND is_research IS NOT FALSE`）——用全表 `max()` 會被行政／活動檔拉新，抑制就失效了。

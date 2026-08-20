@@ -29,6 +29,9 @@ data/.sync_last_stats
 # 管線心跳（scripts/sync_new_reports.sh 寫、check_batch_freshness.py 讀）。
 # 執行期狀態，不進版控。
 data/.last_successful_sync
+# 本輪狀態（sync 殼在進入點寫 running、EXIT/訊號 trap 寫終態，下一輪自己讀）。
+# 同性質的純執行期狀態：遺失只會讓下一輪少補記一筆告警，不會壞資料。
+data/sync_round_state
 data/sync_delta_*.txt
 data/tags.bak.*/
 

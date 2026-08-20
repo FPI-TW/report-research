@@ -19,6 +19,12 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# dev_mode **必須排在下面那行 load_env_file() 之前被 import**：它在 import 期把
+# DEV_NO_AUTH 的值快照下來，而 load_env_file 會把 repo 根 .env 灌進 os.environ。
+# 順序反過來的話，把 DEV_NO_AUTH=1 寫進 .env 就等於永久關掉這個對外站台的登入——
+# 而且沒有任何錯誤訊息。詳見 web/dev_mode.py 的模組 docstring（放行的三個條件）。
+# tests/test_dev_mode.py 靜態釘住這個順序。
+from web import dev_mode  # noqa: E402
 from web.env_loader import load_env_file  # noqa: E402
 
 load_env_file(Path(__file__).resolve().parents[1] / ".env")
@@ -97,6 +103,8 @@ async def lifespan(app: FastAPI):
     # 記憶體翻倍、研報重連隨機 404。偵測得到就拒絕啟動（fail-closed），偵測不到就
     # 放行——判準與已知缺口見 web/concurrency.py。
     workers = concurrency.assert_single_worker()
+    # 認證關掉這件事一定要在啟動時說出來（開著卻沒人知道是這種旗標最常見的失事方式）。
+    dev_mode.log_banner()
     # 用 warning 而非 info 不是因為它是警告，是因為本 repo 從未初始化 logging，
     # root logger 走 logging.lastResort（level=WARNING）——info 會直接進黑洞。
     # 把「有效上限」印出來，是為了讓「上限是多少」不必再靠讀原始碼推。
@@ -153,6 +161,10 @@ def _auth_allowed(path: str) -> bool:
 async def require_login(request: Request, call_next):
     path = request.url.path
     if _auth_allowed(path):
+        return await call_next(request)
+    # 開發模式：本機直連且未經任何代理時免登入（三個條件見 web/dev_mode.py）。
+    # 刻意不發 session cookie——放行是這一個請求的事，不留下可帶走的憑證。
+    if dev_mode.bypass_allowed(request):
         return await call_next(request)
     now = int(time.time())
     session = auth.parse_token(request.cookies.get(auth.COOKIE_NAME), now)

@@ -170,14 +170,28 @@ class ServerWiringTests(unittest.TestCase):
         i_cfg = _call_line("configure_logging")
         self.assertLess(i_env, i_cfg, "LOG_LEVEL 來自 .env，設定必須晚於載入")
 
-        # `web.env_loader` 刻意在最前面（它就是載 .env 的那支），不算服務模組。
+        # 兩個模組刻意排在 configure_logging 之前，都不是服務模組：
+        #   web.env_loader —— 它就是載 .env 的那支（LOG_LEVEL 從那裡來）。
+        #   web.dev_mode   —— 它必須在 .env 灌進 os.environ **之前**快照 DEV_NO_AUTH，
+        #                     否則 .env 裡一行就能永久關掉生產站的登入（見該檔 docstring）。
+        # 兩者在 import 期都不寫任何日誌（`dictConfig` 設 disable_existing_loggers=False，
+        # 所以先建立的 logger 不會被停用），豁免不會把 logging 那條規則打開一個洞——
+        # tests/test_dev_mode.py 另外靜態釘住 dev_mode import 期無日誌輸出。
+        _PRE_ENV_NAMES = {"dev_mode"}
+
+        def _is_pre_env(node) -> bool:
+            if node.module == "web.env_loader":
+                return True
+            names = {a.name for a in node.names}
+            return node.module == "web" and names <= _PRE_ENV_NAMES
+
         service_imports = [
             (node.lineno, node.module)
             for node in tree.body
             if isinstance(node, ast.ImportFrom)
             and node.module
             and (node.module == "web" or node.module.startswith("web."))
-            and node.module != "web.env_loader"
+            and not _is_pre_env(node)
         ]
         self.assertTrue(service_imports, "web/server.py 竟然沒有任何 web.* import？")
         for lineno, mod in service_imports:

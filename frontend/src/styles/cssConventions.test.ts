@@ -36,6 +36,27 @@ describe('CSS 慣例', () => {
     expect(Object.keys(cssFiles).length).toBeGreaterThan(20)
   })
 
+  /* 同一族的第二個壓縮器陷阱（2026-08-20 實測）：靠重複類名提高特異度的寫法
+     （`.panel.panel { ... }`）會被壓縮器折回單一 `.panel`，特異度一起消失。
+     dev server 不壓縮 ⇒ 覆寫看起來正常；正式站則退回「誰在後面誰贏」的注入順序，
+     而注入順序等於 import 順序，那不是任何人宣告過的契約。
+     要跨 module 覆寫請改用自訂屬性（一邊給值、一邊給 var() fallback），
+     見 primitives/Modal.module.css 的 `--tf-modal-width`。 */
+  it('不得用重複類名（.a.a）提高特異度——壓縮器會折掉', () => {
+    const offenders: string[] = []
+    for (const [path, raw] of Object.entries(cssFiles)) {
+      const noComments = stripComments(raw)
+      for (const m of noComments.matchAll(/(\.[A-Za-z_][\w-]*)\1(?![\w-])/g)) {
+        offenders.push(`${path}: ${m[0]}`)
+      }
+    }
+    expect(
+      offenders,
+      '重複類名在壓縮後會折回單一類名，特異度隨之消失 ⇒ 覆寫只在 dev 有效。'
+      + '改用自訂屬性做跨 module 覆寫。',
+    ).toEqual([])
+  })
+
   it.each([
     ['backdrop-filter', '-webkit-backdrop-filter'],
   ])('%s 一律排在 %s **後面**（壓縮器只留最後一份）', (standard, prefixed) => {

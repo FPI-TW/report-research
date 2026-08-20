@@ -21,6 +21,11 @@ data/*.lock
 data/*.pid
 data/.*.pid
 data/.sync_last_hashes
+# 匯入計數（PR #221）。與心跳同性質的純執行期狀態：每輪覆寫，遺失只會讓下一輪
+# 的殼保守判成匯入異常，不會壞資料。**data/ 是逐項忽略，新增執行期檔案必須
+# 同步加一行**，否則它會永遠掛在 git status 上，而這個 repo 明令禁止 git add -A
+# 正是因為那種雜訊會讓人開始忽略 status。
+data/.sync_last_stats
 # 管線心跳（scripts/sync_new_reports.sh 寫、check_batch_freshness.py 讀）。
 # 執行期狀態，不進版控。
 data/.last_successful_sync

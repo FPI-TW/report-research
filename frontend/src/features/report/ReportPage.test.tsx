@@ -232,7 +232,7 @@ describe('ReportPage', () => {
     spy.mockRestore()
   })
 
-  // 全語料僅 0.68% 有訊號 —— 無訊號是常態不是錯誤，整區不得留下空框或骨架
+  // 多數研報沒有訊號 —— 無訊號是常態不是錯誤，整區不得留下空框或骨架
   it('signals_state 為 none → 觀點區完全不在 DOM', async () => {
     vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc({ signals_state: 'none', signals: [] }))
     wrap(`/report/${HASH}`)
@@ -240,7 +240,7 @@ describe('ReportPage', () => {
     expect(screen.queryByText('觀點')).toBeNull()
     expect(screen.queryByText('評等')).toBeNull()
     expect(screen.queryByText('目標價')).toBeNull()
-    expect(screen.queryByText(/全語料僅 0.68% 有/)).toBeNull()
+    expect(screen.queryByText(/並非每篇研報都有/)).toBeNull()
   })
 
   // 一份研報可能同時對多檔標的有訊號（一列＝一份研報 × 一個標的）。少了抬頭就只剩

@@ -183,7 +183,7 @@ _SIGNALS_SQL = text(
 async def fetch_signals(
     session: AsyncSession, report_id: str, *, statuses=VALID_STATUSES
 ) -> list[Signal]:
-    """依 report_id 取該篇的結構化訊號（全語料僅 0.68% 的報告有，空是常態不是錯誤）。
+    """依 report_id 取該篇的結構化訊號（只有部分研報有，空是常態不是錯誤）。
 
     jsonb 欄位由 SIGNAL_SELECT_COLUMNS 以 ::text 取出、parse_signal_row 解析，
     與觀點雷達共用同一組解析邏輯（避免兩套 jsonb 行為漂移）。
@@ -227,8 +227,8 @@ async def fetch_instrument_names(
 ) -> dict[tuple[str, str], str]:
     """(market, instrument_code) → 公司名。查無名稱的鍵不進 dict（呼叫端回退代號）。
 
-    **keys 為空時完全不打 DB**：全語料僅 0.68% 的研報有訊號，其餘 99.3% 的閱讀頁不該
-    為了這個欄位多付一次 roundtrip。
+    **keys 為空時完全不打 DB**：多數研報沒有訊號，那些閱讀頁不該為了這個欄位
+    多付一次 roundtrip。
 
     空白字串在此就收成「沒有名稱」：SQL 端刻意只濾 NULL（與雷達逐字一致），呈現層拿到
     全空白的名稱會渲染出一塊看不見卻佔位的元素，比沒有名稱更糟。

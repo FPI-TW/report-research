@@ -223,7 +223,7 @@ async def reading_doc(file_hash: str):
         # visible_chars 與 /text 同源：落在截斷範圍外的錨點在此就收回，
         # 骨架與 /text 才不會對同一條摘錄的錨點是否有效給出兩個答案。
         takeaways=_reading_takeaways(takeaway_rows, text_sha256, _visible_chars(canonical)),
-        # 全語料僅 0.68% 有訊號：空是常態不是錯誤，前端據此整區不進 DOM
+        # 多數研報沒有訊號：空是常態不是錯誤，前端據此整區不進 DOM
         signals_state="available" if signals else "none",
         signals=signals,
     )

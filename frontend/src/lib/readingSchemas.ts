@@ -63,7 +63,8 @@ export const epsEstimateSchema = z.object({
 export type EpsEstimate = z.infer<typeof epsEstimateSchema>
 
 /**
- * 一份研報對一個標的的結構化訊號。全語料僅 0.68% 的報告有。
+ * 一份研報對一個標的的結構化訊號。擷取刻意只跑高覆蓋子集，只有部分研報有
+ * （比例隨排程漂移，實測數字見 docs/WORKFLOW.md，不要抄進文案）。
  *
  * 一份研報可能同時對多檔標的有訊號，所以**代號是辨識這張卡在講誰的唯一依據**。
  * instrument_name 由後端另查 research_report.company_name 而來，解析不出公司名的標的

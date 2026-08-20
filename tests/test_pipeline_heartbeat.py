@@ -20,6 +20,7 @@ unit 全綠，症狀長得像「NAS 沒有新檔」）。
 """
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -106,6 +107,31 @@ class _SyncHarness:
             ["bash", "scripts/sync_new_reports.sh"],
             cwd=self.root, capture_output=True, text=True, env=env, timeout=120,
         )
+
+    def run_and_kill(self, after_seconds: float, sig=signal.SIGTERM):
+        """讓 rsync 卡住，在中途送訊號——模擬補跑被關機收掉。
+
+        **這與 `set_rc(rsync=1)` 不是同一件事。** 那個測的是「rsync 回報失敗」，
+        腳本會走到 `exit 1`；這個測的是「腳本連走都沒走完就被砍」，兩者對心跳的
+        影響必須分別驗證，否則「因為沒走到那一行所以沒寫」只是推論而不是事實。
+        """
+        self._fake("rsync", 'sleep 60\nexit 0\n')
+        env = dict(os.environ)
+        env["PATH"] = f"{self.bin}:{env['PATH']}"
+        env["UV"] = str(self.bin / "uv")
+        proc = subprocess.Popen(
+            ["bash", "scripts/sync_new_reports.sh"],
+            cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=env, start_new_session=True,
+        )
+        time.sleep(after_seconds)
+        os.killpg(os.getpgid(proc.pid), sig)
+        try:
+            proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+        return proc.returncode
 
     @property
     def heartbeat(self) -> Path:
@@ -243,6 +269,38 @@ class HeartbeatWriteTests(unittest.TestCase):
             cwd=REPO_ROOT, capture_output=True, text=True,
         )
         self.assertEqual(ignored.returncode, 0, "心跳是執行期狀態，必須被 gitignore")
+
+
+class InterruptedSyncTests(unittest.TestCase):
+    """被關機收掉的那一輪不得留下「成功」的痕跡。
+
+    這是 `Persistent=false` 的另一半理由：補跑在開機後數秒啟動、常在 25 秒內被砍，
+    而那個當下 `OnFailure=` 也送不出去（systemd 拒絕把 alert 排進含 stop job 的
+    transaction）。若心跳還前進，就等於「靜默失敗 ＋ 看起來成功」——最壞的組合。
+    """
+
+    def setUp(self):
+        self.h = _SyncHarness()
+        self.addCleanup(self.h.close)
+
+    def test_sigterm_during_rsync_leaves_no_heartbeat(self):
+        self.h.run_and_kill(1.5)
+        self.assertFalse(self.h.heartbeat.is_file(), "被砍的一輪不得寫心跳")
+
+    def test_sigkill_during_rsync_leaves_no_heartbeat(self):
+        """SIGKILL 連 trap 都不會跑——心跳仍不得出現。"""
+        self.h.run_and_kill(1.5, sig=signal.SIGKILL)
+        self.assertFalse(self.h.heartbeat.is_file())
+
+    def test_previous_heartbeat_is_not_advanced_by_an_interrupted_round(self):
+        first = self.h.run()
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        before = self.h.heartbeat_fields()["epoch"]
+        self.h.run_and_kill(1.5)
+        self.assertEqual(
+            self.h.heartbeat_fields()["epoch"], before,
+            "被中斷的一輪不得覆寫上一次成功的時間戳",
+        )
 
 
 class PipelineFreshnessTests(unittest.TestCase):

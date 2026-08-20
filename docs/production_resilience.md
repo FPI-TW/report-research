@@ -576,6 +576,39 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 
 `report-mark-freshness.service` 宣告 `OnFailure=report-mark-alert@%n.service`，**直接復用既有告警鏈、零新管道**（`report-mark-alert.sh` 恆容錯、恆 `exit 0`，被多一個 unit 呼叫是安全的）。
 
+### sync timer 刻意不補跑（2026-08-20）
+
+**`report-mark-sync.timer` 是 `Persistent=false`，而同目錄的 backup／freshness／audit 三支是 `true`。那個非對稱是刻意的。**
+
+`Persistent=true` 的補跑時機必然是「機器剛醒來」，而那正是最可能立刻又被收掉的一刻。2026-08-17 的生產 journal 是完整的一次：
+
+```
+16:34:25  boot
+16:34:26  Started report-mark-sync.timer
+16:34:28  Starting report-mark-sync.service     ← 補跑，開機後 3 秒
+16:34:28  sudo mount-nas-research               ← 掛載此時才在設定
+16:34:53  Stopped report-mark-sync.service      ← 存活 25 秒
+16:34:53  Failed to enqueue OnFailure= job, ignoring:
+          Transaction for report-mark-alert@... is destructive
+```
+
+同一形狀 2026-08-18 08:50 再發生一次。兩件事同時成立，而且**互相掩蓋**：
+
+1. **關機期間 `OnFailure=` 完全無聲。** systemd 拒絕把 alert unit 排進已含 stop job 的 transaction，訊息是 `Failed to enqueue OnFailure= job, ignoring`——**那不是錯誤**，不進 `data/unit_failures.log`、不會讓 unit 變紅。本機 journal 有 5 次以上，且不限 sync：`report-mark-web.service`、`report-mark-audit.service` 都中過。**這條與 timer 設定無關，是 systemd 的關機語意**——任何 unit 在關機期間失敗，它的 `OnFailure` 都送不出去。
+2. **被砍在 rsync 中途會留下拿不回來的檔案。** rsync 已把部分新檔落到本地，而 `--size-only` 讓下一輪認定它們已同步、**不再列進 delta**——而 delta 是匯入的唯一輸入。檔案在本地、DB 裡沒有、下一輪不會自己補，得靠 `sync_new_reports.py --all-local`。`data/sync_delta_20260817_163428.txt` 與 `data/sync_delta_20260818_085003.txt` 都是 **0 bytes**，正是這個指紋。
+
+隔離實驗（user-scope systemd，未動生產、未關機）確認語意本身：回溯 stamp 檔模擬「關機兩天」後啟動 timer——`Persistent=true` **在同一秒觸發**，`Persistent=false` 與**完全移除該行**都不觸發、只等下一個排程。**寫成 `false` 而不是省略**，是為了讓讀 unit 的人看得出這是想過的決定。
+
+**代價很小，而且不再是無聲的。** 這是每 3 小時的排程，錯過的那輪最多等到下一個整點；漏跑由 P1 心跳／freshness 報成 `UPSTREAM_STALE`（門檻 9 小時＝3 個週期）。
+
+#### 長時間停機後 `UPSTREAM_STALE` 是預期行為
+
+機器關機 12 小時 → 開機後**不**立刻補跑 → 下一個整點的正常排程跑完 → 心跳前進 → 恢復 `PASS`。中間那段報 `UPSTREAM_STALE` 是正確的，因為管線**確實**沒跑。
+
+**不要為了讓狀態看起來綠而手動 `touch` 心跳。** 心跳是「管線完整跑完」的證據，手動蓋掉它就是把唯一能分辨「停機」與「壞掉」的訊號抹平——而那正是 2026-08-12 那次「所有批次連續 4 天失敗而 unit 全綠」能藏四天的原因。
+
+**非對稱的理由**：每日一次的 timer 錯過一次就是整天沒有備份／沒有停更偵測／沒有耐久性稽核，而那一天無法由下一次涵蓋；且那三支都短命、唯讀（或原子改名），被砍在中途不會留下半成品。sync 兩個條件都不成立。由 `tests/test_sync_timer_persistence.py` 釘住。
+
 ### 兩個刻意的預設
 
 - **語料閘（`corpus`）抑制連鎖假警報。** 三支批次都只吃「本輪新入庫」的研報，沒有新研報時它們一行都不會產出——那是正確行為。所以語料自己在同窗期內沒前進時，派生資產的過期一律判 `suppressed`。少了這一層，一個連假就讓三個資產同時亮紅，而「天天假警報」的下一步就是沒人看告警。語料閘的母體刻意與批次一致（`full_text IS NOT NULL AND is_research IS NOT FALSE`）——用全表 `max()` 會被行政／活動檔拉新，抑制就失效了。

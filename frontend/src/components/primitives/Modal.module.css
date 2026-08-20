@@ -1,21 +1,40 @@
 /* 遮罩把底下的內容一起模糊而不只是壓暗——這是 macOS 表單（sheet）的作法，
-   也讓彈窗與背景的層級一眼分得出來。進出場 opacity 由 Motion（Modal.tsx）驅動。 */
+   也讓彈窗與背景的層級一眼分得出來。進出場 opacity 由 Motion（Modal.tsx）驅動。
+   ── 為什麼模糊與底色住在 .scrimLayer 這個子層，而不是直接寫在 .scrim 上 ──
+   `backdrop-filter` 會讓該元素成為後代的 **backdrop root**：後代自己的
+   backdrop-filter 只取樣得到那個已被壓平的結果，等於整個失效。面板原本就巢狀在
+   有 backdrop-filter 的 .scrim 裡，所以 `.panel` 的 blur(20px) 一直是死的——它不是
+   磨砂玻璃，只是一張半透明塑膠片：實測背景色帶的邊界完全沒被糊掉、背後的文字還讀得
+   出來，而 0.86 白疊在 0.22 黑遮罩上讓面板中央只剩 RGB 241（發灰）。把遮罩自身移到
+   同層的 .scrimLayer 之後，.panel 不再是 backdrop-filter 的後代，它的模糊才真的生效。
+   **不要為了少一個節點把這兩條規則合回 .scrim** —— 合回去不會有任何錯誤，只會讓
+   壓克力再次靜默退化成半透明片。 */
 .scrim {
   position: fixed; inset: 0; z-index: 50;
-  background: var(--tf-scrim);
-  -webkit-backdrop-filter: var(--tf-scrim-filter);
-  backdrop-filter: var(--tf-scrim-filter);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
-/* 進出場（opacity/translate/scale）改由 Motion 驅動，此處僅留版面。 */
+.scrimLayer {
+  position: absolute; inset: 0; z-index: 0;
+  background: var(--tf-scrim);
+  -webkit-backdrop-filter: var(--tf-scrim-filter);
+  backdrop-filter: var(--tf-scrim-filter);
+}
+/* 進出場（opacity/translate/scale）改由 Motion 驅動，此處僅留版面。
+   `position: relative` + `z-index: 1` 不是裝飾：.scrimLayer 是絕對定位，若面板維持
+   static，繪製順序會讓遮罩蓋在面板**上面**（定位元素晚於流內元素繪製）。 */
 .panel {
-  background: var(--tf-glass-strong);
-  -webkit-backdrop-filter: var(--tf-glass-filter);
-  backdrop-filter: var(--tf-glass-filter);
+  position: relative; z-index: 1;
+  background: var(--tf-acrylic);
+  -webkit-backdrop-filter: var(--tf-acrylic-filter);
+  backdrop-filter: var(--tf-acrylic-filter);
   border-radius: var(--tf-radius-panel);
-  box-shadow: var(--tf-shadow-modal), var(--tf-glass-sheen);
-  width: min(920px, 100%);
+  box-shadow: var(--tf-shadow-modal), var(--tf-acrylic-sheen);
+  /* 寬度走自訂屬性而非讓呼叫端覆寫 width：兩邊都宣告 width 時特異度相同、誰贏取決於
+     stylesheet 注入順序，而**提高特異度的 `.panel.panel` 寫法會被壓縮器折回單一 class**
+     （dev 有效、正式站失效，與 backdrop-filter 排序同一類缺陷）。改成一邊給值、一邊給
+     fallback，兩者是不同屬性，不存在衝突。 */
+  width: var(--tf-modal-width, min(920px, 100%));
   max-height: 90vh;
   display: flex; flex-direction: column;
   overflow: hidden;

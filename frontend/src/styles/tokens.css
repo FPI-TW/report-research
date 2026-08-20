@@ -49,10 +49,24 @@
   --tf-glass-filter: saturate(180%) blur(20px);
   --tf-glass-border: rgba(0, 0, 0, 0.07);
   --tf-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  /* 遮罩：macOS 的表單／警示會把底下的內容一起模糊，不只是壓暗。
-     只在有彈窗開啟時才存在，故這層額外合成是划算的。 */
+  /* 遮罩：只壓暗，不模糊背景（2026-08-20 依需求關閉背景模糊）。
+     值留在 token 而非直接刪掉 .scrimLayer 的宣告，是為了「要開回來就改這一個值」；
+     下面兩條退場路徑本來就以 none 運作，所以 none 是既有且測過的狀態。
+     **真要恢復背景模糊時，一律加在 .scrimLayer 上、絕不可加回 .scrim** ——
+     .scrim 是面板的祖先，一有 backdrop-filter 就會讓面板的壓克力整個靜默失效，
+     理由寫在 Modal.module.css。 */
   --tf-scrim: rgba(0, 0, 0, 0.22);
-  --tf-scrim-filter: blur(3px);
+  --tf-scrim-filter: none;
+  /* ── 壓克力：只給彈窗面板，與上面的 --tf-glass-* 是兩種材質、不要互相代用 ──
+     玻璃給的是「底下有東西在捲」的常駐 chrome（側欄、吸頂列），底色 0.72/0.86；
+     壓克力給的是「壓在遮罩上、要被讀被按」的臨時面板，所以**刻意更不透明**：
+     面板上有正文與破壞性按鈕，材質不能贏過內容。0.92-0.96 這個區間是量出來的——
+     0.86 疊在 0.22 黑遮罩上，實測面板中央只有 RGB 241 且背景色帶邊界清晰可見。
+     saturate 拉到 190% 是因為它前面還隔著一層被壓暗的遮罩，180% 會偏灰。 */
+  --tf-acrylic: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.92));
+  --tf-acrylic-filter: saturate(190%) blur(34px);
+  --tf-acrylic-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.5);
 
   /* ── 字型（全無襯線；標題與內文同一家族，靠字重與字級拉層級） ── */
   --tf-display: -apple-system, BlinkMacSystemFont, 'SF Pro TC', 'PingFang TC',
@@ -142,6 +156,9 @@
     --tf-glass-filter: none;
     --tf-scrim: rgba(0, 0, 0, 0.34);
     --tf-scrim-filter: none;
+    --tf-acrylic: #ffffff;
+    --tf-acrylic-filter: none;
+    --tf-acrylic-sheen: none;
   }
 }
 
@@ -152,6 +169,9 @@
     --tf-glass-filter: none;
     --tf-scrim: rgba(0, 0, 0, 0.34);
     --tf-scrim-filter: none;
+    --tf-acrylic: #ffffff;
+    --tf-acrylic-filter: none;
+    --tf-acrylic-sheen: none;
   }
 }
 

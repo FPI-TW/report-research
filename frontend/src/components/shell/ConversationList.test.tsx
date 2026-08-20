@@ -32,6 +32,23 @@ test('目前 ?c 對話標示 aria-current', async () => {
   expect(link).toHaveAttribute('aria-current', 'page')
 })
 
+// 底色疊加缺陷：選取態原本畫在 <a>（.item.active）上，而 <a> 只佔那一列的左半，
+// 刪除鈕那一格沒有底色 ⇒ 選取起來的列右端顏色明顯不一樣；hover 更糟，.row 與 .item
+// 各塗一層 rgba，標題那半會疊成約兩倍深。修法是底色一律由 .row 畫、兩個子元素都不
+// 自帶底色，故這裡斷言的是「該列有底色、兩個子元素都沒有」。
+// （jsdom 不算版面，但 getComputedStyle 對 CSS Modules 的 background 是解析得出來的。）
+test('選取的對話：底色畫在整列上，標題與刪除鈕都不自帶底色', async () => {
+  wrap(['/ask?c=c1'])
+  const link = await screen.findByRole('link', { name: 'AI 伺服器供應鏈' })
+  const row = link.parentElement!
+  const del = screen.getByRole('button', { name: '刪除對話' })
+  expect(getComputedStyle(row).backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(getComputedStyle(link).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+  expect(getComputedStyle(del).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+  // 刪除鈕確實與標題同列（不是碰巧兩個都透明）
+  expect(row.contains(del)).toBe(true)
+})
+
 test('刪除：確認→呼叫 deleteConversation；取消→不呼叫', async () => {
   wrap()
   await screen.findByText('AI 伺服器供應鏈')

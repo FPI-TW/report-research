@@ -16,15 +16,20 @@
   font-size: 13px; color: var(--tf-text-2); text-decoration: none;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.item:hover { background: rgba(0, 0, 0, 0.045); color: var(--tf-text-2); }
+.item:hover { color: var(--tf-text-2); }
 
+/* 底色（hover／選取）一律由 .row 這一層畫，.item 與 .del 都不得自帶底色。
+   它們是同一列的兩格：只要其中一格自己也塗一層，兩層 rgba 會疊加，刪除鈕那一小塊
+   就明顯比標題那塊淺——選取態與 hover 都各犯過一次。 */
 .row { display: flex; align-items: center; gap: 2px; border-radius: var(--tf-radius-md); }
 .row:hover { background: rgba(0, 0, 0, 0.045); }
 .row .item { flex: 1; min-width: 0; }
-.item.active { background: rgba(0, 0, 0, 0.07); color: var(--tf-text-1); font-weight: 600; }
+.rowActive, .rowActive:hover { background: rgba(0, 0, 0, 0.07); }
+.item.active { color: var(--tf-text-1); font-weight: 600; }
 /* del 的顯隱位移由 Motion（ConversationList.tsx 的 rest/hover variants + whileFocus）驅動；此處僅留底樣式與 hover 變色。 */
 .del { flex: none; border: none; background: none; color: var(--tf-text-4); border-radius: 6px; padding: 6px; cursor: pointer; }
-.del:hover { color: var(--tf-error); background: rgba(0, 0, 0, 0.05); }
+/* 刪除鈕的 hover 只改字色不加底色——底色歸 .row，見上。 */
+.del:hover { color: var(--tf-error); }
 
 /* 刪除失敗的行內訊息。刻意放在清單之上而非 toast：使用者的視線正在那份清單上，
    而失敗的意思正是「這一列還在」。 */

@@ -6,7 +6,7 @@ interface Props { open: boolean; title: string; body: string; confirmLabel: stri
 
 export function ConfirmDialog({ open, title, body, confirmLabel, onConfirm, onCancel }: Props) {
   return (
-    <Modal open={open} onClose={onCancel} title={title}>
+    <Modal open={open} onClose={onCancel} title={title} className={styles.panel}>
       <p className={styles.body}>{body}</p>
       <div className={styles.actions}>
         <Pressable className={styles.cancel} onClick={onCancel}>取消</Pressable>

@@ -1,0 +1,172 @@
+{
+  "summary": {
+    "faithfulness": 0.8666335914990494,
+    "context_precision": 0.6658758106972393,
+    "answer_relevancy": 0.6349405288934337,
+    "latency_ms_mean": 39138.875,
+    "latency_ms_p50": 32933,
+    "latency_ms_p95": 100596,
+    "n": 8,
+    "n_errors": 0,
+    "n_no_context": 0,
+    "thresholds_pass": false,
+    "thresholds_failed": [
+      "faithfulness",
+      "context_precision"
+    ]
+  },
+  "cases": [
+    {
+      "id": "q001",
+      "question": "台積電最新的營運展望如何",
+      "faithfulness": 1.0,
+      "context_precision": 0.7737698412698413,
+      "answer_relevancy": 0.7005807643913867,
+      "answer_relevancy_questions": [
+        "台積電 2026 年營收成長目標為何大幅上修至超過 40%？主要受惠於哪些市場需求？",
+        "台積電的全球擴產計畫規模有多大？分別在哪些地區新建晶圓廠？",
+        "台積電第二季財報表現如何？毛利率和 EPS 較市場預期的超預期程度有多大？"
+      ],
+      "answer_relevancy_sims": [
+        0.7009,
+        0.6779,
+        0.723
+      ],
+      "n_contexts": 15,
+      "latency_ms": 100596
+    },
+    {
+      "id": "q002",
+      "question": "分析台灣市場",
+      "faithfulness": 0.6216216216216216,
+      "context_precision": 0.8344122147693577,
+      "answer_relevancy": 0.6021827577869,
+      "answer_relevancy_questions": [
+        "台湾股市从2024年5月底到7月底期间的大盘走势如何？经历了哪些关键的短期波动和中期调整？",
+        "凯基证券通过哪些籌碼与资金面指标（如PB<1家数占比、外资成交比重等）来评估台股的市场结构和资金动能？",
+        "台股目前技术面处于什么格局？43,000～46,000点区间的整理中，短期突破关键是什么，需要如何放量才能有效突破？"
+      ],
+      "answer_relevancy_sims": [
+        0.5967,
+        0.6083,
+        0.6015
+      ],
+      "n_contexts": 15,
+      "latency_ms": 56628
+    },
+    {
+      "id": "q003",
+      "question": "材料行業分析報告'",
+      "faithfulness": 0.47368421052631576,
+      "context_precision": 0.5833333333333333,
+      "answer_relevancy": 0.6057510133633334,
+      "answer_relevancy_questions": [
+        "你們有哪些關於台灣PCB、消費性電子和鋼鐵產業的最新研究報告或資料？",
+        "這些材料行業相關的研報資料只包含標題和發布日期，為什麼無法提供具體的產業分析內容？",
+        "台灣材料行業（特別是電子材料和金屬原物料）目前的價格走勢、供需現況和投資前景如何？"
+      ],
+      "answer_relevancy_sims": [
+        0.5573,
+        0.6506,
+        0.6093
+      ],
+      "n_contexts": 3,
+      "latency_ms": 14133
+    },
+    {
+      "id": "q004",
+      "question": "散熱技術的進展如何？",
+      "faithfulness": 1.0,
+      "context_precision": 0.75,
+      "answer_relevancy": 0.5908703113338726,
+      "answer_relevancy_questions": [
+        "AI散熱技術現階段是進行漸進升級還是會有跳躍式變革？主要的技術發展路徑是什麼？",
+        "隨著AI晶片功耗不斷提升，液冷為何成為2026年的主流方案？相比傳統氣冷有什麼性能和成本優勢？",
+        "奇鋐在應對AI伺服器高功耗挑戰下，計劃採取哪些具體的技術升級措施和產能擴張計畫？"
+      ],
+      "answer_relevancy_sims": [
+        0.7616,
+        0.5537,
+        0.4574
+      ],
+      "n_contexts": 4,
+      "latency_ms": 22675
+    },
+    {
+      "id": "q005",
+      "question": "AI 伺服器的最新發展如何？",
+      "faithfulness": 0.9811320754716981,
+      "context_precision": 0.8344122147693577,
+      "answer_relevancy": 0.6757129921143236,
+      "answer_relevancy_questions": [
+        "AI伺服器产业在2026-2027年的营收增长前景如何，缘创和缘盈等主要制造商的预估增长率分别是多少？",
+        "AWS Trainium 3和GB300系列AI伺服器的出货时间表与规模预期是什么，它们对台湾供应链的影响有哪些？",
+        "AI伺服器产业链中面临哪些关键零组件的供给瓶颈，电源、散热、液冷等技术升级如何影响相关公司的投资机会？"
+      ],
+      "answer_relevancy_sims": [
+        0.6913,
+        0.6088,
+        0.7271
+      ],
+      "n_contexts": 15,
+      "latency_ms": 37544
+    },
+    {
+      "id": "q006",
+      "question": "台積電最新展望如何？",
+      "faithfulness": 1.0,
+      "context_precision": 0.8344122147693577,
+      "answer_relevancy": 0.700485701298847,
+      "answer_relevancy_questions": [
+        "台積電 2026 年第二季財報表現如何？毛利率、營益率超過預期多少？全年營收年增率和資本支出展望為何上修至歷史新高？",
+        "台積電為何能持續上修展望？從 2025 年末到 2026 年中期，展望調升的軌跡和主要驅動因素是什麼？",
+        "台積電法說釋出利多後台股反而出現利多出盡走勢，投資者短期應如何操作？晶圓代工及 AI 相關產業鏈有哪些具體的投資機會？"
+      ],
+      "answer_relevancy_sims": [
+        0.7157,
+        0.772,
+        0.6137
+      ],
+      "n_contexts": 15,
+      "latency_ms": 39971
+    },
+    {
+      "id": "q007",
+      "question": "材料行業分析報告",
+      "faithfulness": 0.8888888888888888,
+      "context_precision": 0.0,
+      "answer_relevancy": 0.670441452244916,
+      "answer_relevancy_questions": [
+        "材料行業（塑化、鋼鐵、化學材料、金屬材料等）目前有哪些主要的投資機會和趨勢分析？",
+        "根據中信投顧的投資早報，材料相關上市公司近期有哪些值得關注的個股和投資建議？",
+        "如何使用提供的參考資料評估和對比不同材料產業的投資價值？"
+      ],
+      "answer_relevancy_sims": [
+        0.672,
+        0.6688,
+        0.6705
+      ],
+      "n_contexts": 3,
+      "latency_ms": 8631
+    },
+    {
+      "id": "q008",
+      "question": "台積電先進封裝",
+      "faithfulness": 0.967741935483871,
+      "context_precision": 0.7166666666666668,
+      "answer_relevancy": 0.5334992386138904,
+      "answer_relevancy_questions": [
+        "台積電先進封裝CoWoS技術在2026-2028年間的發展路線和規格升級計畫是什麼？",
+        "英特爾EMIB-T封裝技術相比台積電CoWoS具有什麼成本優勢，為什麼仍難以大規模取代？",
+        "台積電先進封裝需求擴大與產能委外趨勢，對OSAT廠商、IC載板廠商等供應鏈帶來哪些投資機遇？"
+      ],
+      "answer_relevancy_sims": [
+        0.5417,
+        0.4566,
+        0.6021
+      ],
+      "n_contexts": 8,
+      "latency_ms": 32933
+    }
+  ]
+}

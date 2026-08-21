@@ -75,12 +75,30 @@ PROBE_MAX_INFLIGHT="${INCIDENT_PROBE_MAX_INFLIGHT:-120}"
 # 因為我們不知道那筆漏掉的觀測是什麼。2026-08-20 的中斷正是這個形狀：
 # 00:49:49 完成一筆 fail，P5 下一次取樣在 00:51:58（快取已 272s），若無此門檻
 # 就會沿用 00:47:26 那筆 OK 而繼續靜默。
+# ⚠ 上面那段推導**漏了一項**，2026-08-21 實測補正：快取只在 P5 讀到完成觀測時
+# 更新，所以它的年齡上界不是「P4 週期 ＋ 執行時間」，而是「**P5 週期** ＋ P4 週期」
+# ——實測 P5 max 153s ＋ P4 max 140s ＝ 293s，已經超過這裡的 240s。也就是說
+# **健康系統本來就會週期性越線**（實測 230 輪中 14 輪，6.1%）。
+# 這個門檻刻意**不調高**：調高會等比例犧牲真實故障的偵測延遲。改由下面的
+# in-flight 邊界重讀把那些「其實剛完成」的取樣讀回來。兩者的分工是：
+#   重讀   → 處理「P4 已完成，只是這一讀落在歸零窗內」（假陽性）
+#   信任窗 → 處理「P4 真的還在跑，期間確實漏掉一輪」（真故障）
 OBS_TRUST_SECONDS="${INCIDENT_OBS_TRUST_SECONDS:-240}"
 # 快照不一致時的有界重讀。**這不是重試整輪**，只是再抓一次同一組屬性——
 # 實測那個窗口只有毫秒級，一次重讀就足以跨過去。上限刻意很小：handler 的
 # TimeoutStartSec 是 60s，而且拖長只會讓 P5 自己變成慢的那一個。
 SNAPSHOT_RETRIES="${INCIDENT_SNAPSHOT_RETRIES:-1}"
 SNAPSHOT_RETRY_DELAY="${INCIDENT_SNAPSHOT_RETRY_DELAY:-0.3}"
+# **in-flight 邊界的有界重讀。** 與上面那組是不同的問題：那組修的是「不可能同時
+# 成立」的矛盾快照（#223），這組修的是一個**完全自洽**的狀態——P4 正在 running→
+# finished 的轉換點上，ExecMainExitTimestamp* 已歸零而新值尚未寫入。
+# 兩支 timer 同為 2min ＋ AccuracySec 10s，systemd 的合併喚醒讓 P5 偏好落在 P4
+# 執行的那一瞬間：實測命中率 6.1%，而 P4 的 duty cycle 只有 0.8%（執行 max 3s／
+# mean 0.1s），高出約 7 倍——不是隨機取樣的結果。
+# P4 只要 ≤3s 就結束，所以再讀一次幾乎必然拿到已完成的時戳。
+# 設 0 即完全關閉，退回舊行為（出事時不必改程式）。
+INFLIGHT_REREADS="${INCIDENT_INFLIGHT_REREADS:-1}"
+INFLIGHT_REREAD_DELAY="${INCIDENT_INFLIGHT_REREAD_DELAY:-1.0}"
 WEBHOOK="${REPORT_MARK_ALERT_WEBHOOK:-}"
 # 投遞旋鈕。connect 與 overall 分開：連不上的端點應該快速失敗，而不是佔滿整個
 # overall 預算——handler 的 TimeoutStartSec 是 60s，一輪最多可能發兩則通知。
@@ -536,6 +554,49 @@ probe_running=no
 case "$probe_state" in activating|active|reloading|deactivating) probe_running=yes ;; esac
 # 當前這一次呼叫是何時開始的。用來判斷「執行太久＝探針卡住」，門檻由 P4 契約推導。
 case "$probe_start_mono" in ''|*[!0-9]*) probe_start_mono=0 ;; esac
+
+# ── in-flight 邊界的有界重讀（2026-08-21）────────────────────────────────────
+# 這裡處理的狀態**完全自洽**，所以上面 #223 的矛盾偵測看不到它：P4 正好在
+# running→finished 的轉換點上，ExecMain* 已歸零而新值還沒寫入。生產實測 14 次
+# 假 FIRING 中有 13 次，「最近一次 P4 完成」的實際年齡是 0s——P4 剛在同一秒
+# 成功完成，卻因為快取年齡越過信任窗而被判成「期間至少漏讀一輪」。
+#
+# **只在拿得到自洽的完成觀測時才改變結論**；否則原封不動還原，走原本的信任窗
+# 路徑。真實故障因此零影響：2026-08-20 中斷期間 P4 每輪執行 46s，重讀仍是
+# in-flight，照舊 FIRING。
+#
+# 重讀沿用 `_read_service_snapshot`（單次取六屬性），不新增任何 `systemctl show`
+# 呼叫點——`test_handler_makes_one_snapshot_query_per_unit` 靜態釘住那件事。
+_inflight_rereads=0
+if [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ] \
+   && [ "$snapshot_state" = stable ] && [ "$query_failed" = no ] \
+   && [ "$svc_load" = loaded ] && [ "$INFLIGHT_REREADS" -gt 0 ]; then
+    # 還原點：重讀沒收穫時必須讓後續判斷看到與現在**完全相同**的快照。
+    _snap_state="$probe_state"; _snap_mono="$probe_mono"
+    _snap_start="$probe_start_mono"; _snap_status="$probe_status"
+    while [ "$_inflight_rereads" -lt "$INFLIGHT_REREADS" ]; do
+        _inflight_rereads=$(( _inflight_rereads + 1 ))
+        sleep "$INFLIGHT_REREAD_DELAY" 2>/dev/null || true
+        _read_service_snapshot || break
+        case "$probe_mono"       in ''|*[!0-9]*) probe_mono=0 ;; esac
+        case "$probe_start_mono" in ''|*[!0-9]*) probe_start_mono=0 ;; esac
+        case "$probe_status"     in ''|*[!0-9]*) probe_status=-1 ;; esac
+        [ "$probe_mono" -gt 0 ] \
+            && _snapshot_consistent "$probe_state" "$probe_mono" \
+                                    "$probe_start_mono" "$probe_status" \
+            && break
+    done
+    if [ "$probe_mono" -eq 0 ] \
+       || ! _snapshot_consistent "$probe_state" "$probe_mono" \
+                                 "$probe_start_mono" "$probe_status"; then
+        probe_state="$_snap_state"; probe_mono="$_snap_mono"
+        probe_start_mono="$_snap_start"; probe_status="$_snap_status"
+    fi
+    # 快照可能已經換了一筆，`probe_running` 必須跟著重算（判別式與上面同一份）
+    probe_running=no
+    case "$probe_state" in activating|active|reloading|deactivating) probe_running=yes ;; esac
+    [ "$probe_running" = yes ] && EMIT_CURRENT_PROBE=in_flight || EMIT_CURRENT_PROBE=idle
+fi
 
 # 上一筆已完成的觀測（P5 自己的記憶；systemd 在探針執行中不提供它）
 load_obs_cache

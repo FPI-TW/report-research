@@ -16,6 +16,7 @@ Result／ExecMainStatus／ExecMainExitTimestampMonotonic。這是刻意的——
 """
 import json
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -2142,6 +2143,290 @@ class ConcurrencyTests(unittest.TestCase):
         for p in procs:
             p.wait(timeout=60)
         self.assertEqual(h.webhook_calls(), 1, "並發下重複發出 FIRING（flock 未涵蓋讀-改-寫）")
+
+
+HEALTH_TIMER = SYSTEMD_DIR / "report-mark-health.timer"
+
+
+def _systemd_seconds(value: str) -> int:
+    """把 systemd 的時間值（`2min`／`10s`／`20s`／裸數字）換成秒。
+
+    只支援本專案 unit 實際用到的單位。遇到不認得的寫法就拋錯而不是猜——
+    猜出來的數字會讓下面那條跨檔守門靜默失效。
+    """
+    v = value.strip()
+    if not v:
+        raise ValueError("空的時間值")
+    units = (("min", 60), ("ms", 0), ("s", 1))
+    for suffix, mult in units:
+        if v.endswith(suffix):
+            head = v[: -len(suffix)].strip()
+            if not head.isdigit():
+                raise ValueError(f"無法解析的 systemd 時間值：{value!r}")
+            return int(head) * mult
+    if v.isdigit():
+        return int(v)
+    raise ValueError(f"無法解析的 systemd 時間值：{value!r}")
+
+
+def _handler_default(name: str) -> int:
+    """取 handler 內某個門檻的預設值（`NAME="${INCIDENT_X:-123}"` 的 123）。"""
+    body = HANDLER.read_text(encoding="utf-8")
+    m = re.search(rf'^{name}="\$\{{[A-Z_]+:-([0-9]+)\}}"', body, re.M)
+    if not m:
+        raise AssertionError(f"在 {HANDLER.name} 找不到 {name} 的預設值")
+    return int(m.group(1))
+
+
+def _handler_float_default(name: str) -> float:
+    """同上，但值可能帶小數（例如重讀延遲 1.0）。"""
+    body = HANDLER.read_text(encoding="utf-8")
+    m = re.search(rf'^{name}="\$\{{[A-Z_]+:-([0-9.]+)\}}"', body, re.M)
+    if not m:
+        raise AssertionError(f"在 {HANDLER.name} 找不到 {name} 的預設值")
+    return float(m.group(1))
+
+
+def _worst_timer_interval(path) -> int:
+    """一支 timer 兩次觸發之間的最壞間隔（秒）。
+
+    `OnUnitActiveSec` 是基準；`RandomizedDelaySec` 會往後推；`AccuracySec` 是
+    systemd 允許的合併誤差，同樣往後推。**沒宣告的 directive 一律算 0**——
+    `_directives()` 會略過註解，所以「註解說明為什麼不設 X」不會被誤算成有設。
+    """
+    base = _directives(path, "OnUnitActiveSec")
+    assert base, f"{path.name} 沒有 OnUnitActiveSec，這條守門的前提不成立"
+    total = _systemd_seconds(base[0])
+    for key in ("RandomizedDelaySec", "AccuracySec"):
+        vals = _directives(path, key)
+        if vals:
+            total += _systemd_seconds(vals[0])
+    return total
+
+
+class InFlightBoundaryRereadTests(unittest.TestCase):
+    """P4 running→finished 邊界的有界重讀——假 FIRING 的**第二個**類別。
+
+    2026-08-21 生產實測：#223 部署後 8h42m、230 輪，monitor 仍開出 14 次
+    WARNING FIRING，signature 完全一致：
+
+        current_probe=in_flight  last_completed_age=243–254
+        snapshot=stable  snapshot_retries=0  observation_source=cache
+
+    `snapshot=stable` 與 `snapshot_retries=0` 說明 **#223 的機制正常、與這條無關**。
+    逐筆對照 journal：那 14 個時刻「最近一次 P4 完成」的**實際**年齡是 **0s**
+    （13/14；另一筆 130s）——P4 剛在同一秒成功完成，卻被判成「期間至少漏讀一輪」。
+
+    實測數據（同一窗期）：
+      P4  257 輪，執行 max 3s／mean 0.1s，間隔 max 140s
+      P5  241 輪，間隔 max 153s
+
+    根因是兩件事疊加，缺一不可：
+      (A) 兩支 timer 同為 2 分鐘且 AccuracySec 皆 10s，systemd 的合併喚醒讓 P5
+          偏好落在 P4 執行的那一瞬間。實測命中率 6.1%，而 P4 的 duty cycle 只有
+          0.8%——高出約 7 倍，不是隨機取樣的結果。
+      (B) 快取的**合法**年齡上界是「P5 週期 ＋ P4 週期」＝實測 293s，而
+          `OBS_TRUST_SECONDS` 是 240s。健康系統本來就會週期性越線。
+
+    修法刻意**不是**調高信任窗——那會等比例犧牲真實故障的偵測延遲。改成對這個
+    **合法**的 in-flight 邊界沿用 #223 的有界重讀：P4 只要 ≤3s，重讀就拿得到已
+    完成的時戳，本輪於是有真觀測，假陽性從源頭消失。
+
+    **真實故障為什麼不受影響**：2026-08-20 中斷期間 P4 每輪執行 46s（重試佔絕大
+    部分），重讀後仍是 in-flight，於是照舊落回信任窗判斷。兩者的差別不是門檻，
+    是「再讀一次拿不拿得到完成觀測」。
+    """
+
+    # 與 InFlightObservationTests 同一套等比縮小門檻，理由見該類註解（CI runner
+    # 的 uptime 表達不出 240s 前的觀測）。
+    SCALED = {
+        "INCIDENT_OBS_TRUST_SECONDS": "6",
+        "INCIDENT_BLIND_CRITICAL_SECONDS": "20",
+        "INCIDENT_STALE_SECONDS": "12",
+        "INCIDENT_PROBE_MAX_INFLIGHT": "10",
+        # 重讀延遲壓到最小：測試要驗的是語意，不是等待。
+        "INCIDENT_INFLIGHT_REREAD_DELAY": "0",
+    }
+
+    def setUp(self):
+        self.h = _Harness(webhook="http://example.invalid/hook", probe_state="activating")
+        self.addCleanup(self.h.close)
+
+    def _run(self, **env):
+        return self.h.run(**{**self.SCALED, **env})
+
+    def _persistently_inflight(self, h=None, running_for=5):
+        """P4 **真的**還在跑：每一次讀都拿到歸零的 ExecMain*。"""
+        h = h or self.h
+        h.set_timer(mono=0, probe_start_mono=h._now_mono() - running_for * 1_000_000)
+
+    # ── T1：這一條就是生產上的 14 筆 ──────────────────────────────────────
+    def test_t1_completion_boundary_does_not_fire(self):
+        """只有第一次讀落在歸零窗內（P4 已完成）⇒ 重讀拿得到觀測，不得 FIRING。"""
+        self.h.seed_observation(0, age_seconds=8)   # > OBS_TRUST(6)：舊行為必 FIRING
+        self.h.set_torn(1)                          # 第一次讀回 0，第二次回真值
+        p = self._run()
+        m = monitor_emit(p.stdout)
+        self.assertEqual(m["incident"], "CLOSED", p.stdout)
+        self.assertNotEqual(m["reason"], "observation_missed", p.stdout)
+        self.assertEqual(m["status"], "ok", p.stdout)
+        self.assertEqual(self.h.webhook_calls(), 0, "健康邊界不得送出任何通知")
+
+    # ── T2：反向守門，防止把真實故障一起修掉 ──────────────────────────────
+    def test_t2_persistent_inflight_with_stale_cache_still_fires(self):
+        """P4 真的還在跑（重讀也拿不到）＋ 快取過期 ⇒ 必須照舊 FIRING。"""
+        self.h.seed_observation(0, age_seconds=8)
+        self._persistently_inflight()
+        p = self._run()
+        m = monitor_emit(p.stdout)
+        self.assertEqual(m["status"], "monitor_blind", p.stdout)
+        self.assertEqual(m["reason"], "observation_missed", p.stdout)
+        self.assertEqual(m["severity"], "WARNING")
+        self.assertEqual(m["incident"], "FIRING")
+        self.assertEqual(self.h.webhook_calls(), 1, "真實漏讀必須通知")
+
+    # ── T3：信任窗邊界對「真 in-flight」的語意一步都不能動 ────────────────
+    def test_t3_trust_window_boundary_unchanged_for_real_inflight(self):
+        for age, expect in ((5, "probe_in_flight"), (8, "observation_missed")):
+            with self.subTest(age=age):
+                h = _Harness(webhook="http://example.invalid/hook", probe_state="activating")
+                self.addCleanup(h.close)
+                h.seed_observation(0, age_seconds=age)
+                self._persistently_inflight(h)
+                m = monitor_emit(h.run(**self.SCALED).stdout)
+                self.assertEqual(m["reason"], expect)
+
+    # ── T4：卡住的探針優先權更高，不得被重讀吃掉 ──────────────────────────
+    def test_t4_probe_stuck_still_takes_priority(self):
+        """執行超過上限 ⇒ CRITICAL probe_stuck，且重讀不得把它變成別的結論。"""
+        self.h.seed_observation(0, age_seconds=2)
+        self._persistently_inflight(running_for=30)   # > PROBE_MAX_INFLIGHT(10)
+        m = monitor_emit(self._run().stdout)
+        self.assertEqual(m["reason"], "probe_stuck")
+        self.assertEqual(m["severity"], "CRITICAL")
+
+    # ── T5：#223 的快照語意零回歸 ─────────────────────────────────────────
+    def test_t5a_223_contradiction_still_detected_and_retried(self):
+        """`inactive` ＋ exit=0（不可能組合）仍走 #223 的重讀路徑。"""
+        h = _Harness(webhook="http://example.invalid/hook", probe_state="inactive",
+                     probe_start_mono=_Harness._now_mono() - 5_000_000)
+        self.addCleanup(h.close)
+        h.seed_observation(0, age_seconds=2)
+        h.set_torn(1)
+        m = monitor_emit(h.run(**self.SCALED).stdout)
+        self.assertEqual(m["snapshot"], "retried", "#223 的單次 torn 復原路徑被改動了")
+        self.assertEqual(m["incident"], "CLOSED")
+
+    def test_t5b_reread_does_not_run_when_snapshot_is_unstable(self):
+        """快照持續矛盾時，in-flight 重讀不得介入——那是 #223 的地盤。"""
+        h = _Harness(webhook="http://example.invalid/hook", probe_state="inactive",
+                     probe_start_mono=_Harness._now_mono() - 5_000_000)
+        self.addCleanup(h.close)
+        h.seed_observation(0, age_seconds=2)
+        h.set_torn(99)                                 # 永遠矛盾
+        m = monitor_emit(h.run(**self.SCALED).stdout)
+        self.assertEqual(m["snapshot"], "unstable")
+        self.assertEqual(m["reason"], "snapshot_unstable")
+
+    def test_t5c_reread_is_bounded(self):
+        """重讀次數必須有界，否則一輪會拖過 P5 的週期。"""
+        self.h.seed_observation(0, age_seconds=8)
+        self._persistently_inflight()
+        p = self._run(INCIDENT_INFLIGHT_REREADS="2", INCIDENT_INFLIGHT_REREAD_DELAY="0")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        # 永久 in-flight ⇒ 重讀救不回來，結論必須與沒有重讀時完全相同
+        self.assertEqual(monitor_emit(p.stdout)["reason"], "observation_missed")
+
+    def test_t5d_reread_can_be_disabled(self):
+        """設 0 就完全關閉——出事時要能在不改程式的情況下退回舊行為。"""
+        self.h.seed_observation(0, age_seconds=8)
+        self.h.set_torn(1)
+        m = monitor_emit(self._run(INCIDENT_INFLIGHT_REREADS="0").stdout)
+        self.assertEqual(m["reason"], "observation_missed", "關閉後應退回舊行為")
+
+    # ── T7：重讀成功後，該筆觀測必須真的被當成 live 並寫進快取 ────────────
+    def test_t7_successful_reread_is_live_and_refreshes_cache(self):
+        self.h.seed_observation(0, age_seconds=8)
+        self.h.set_torn(1)
+        p = self._run()
+        m = monitor_emit(p.stdout)
+        self.assertEqual(m["observation_source"], "live",
+                         "重讀拿到的是現讀觀測，不是沿用快取")
+        self.assertEqual(self.h.observation_cache.get("monotonic"), str(self.h.mono),
+                         "重讀成功必須更新觀測快取，否則下一輪年齡會繼續累積")
+
+    def test_t7b_web_component_uses_the_reread_observation(self):
+        """web 那一行也要用重讀到的觀測，兩行不得互相矛盾。"""
+        self.h.seed_observation(1, age_seconds=8, result="exit-code")  # 快取是 fail
+        self.h.set_torn(1)                                             # 重讀到的是 ok
+        p = self._run()
+        w = last_emit(p.stdout)
+        self.assertEqual(w["action"], "noop", p.stdout)
+        self.assertEqual(w["incident"], "CLOSED", "重讀到 ok 就不該用快取的 fail 開事件")
+
+
+class TimerCadenceTrustWindowContractTests(unittest.TestCase):
+    """**跨檔耦合的守門：timer 節奏 ↔ 信任窗。**
+
+    這條規約橫跨三個檔案，而且三個都可以獨立修改、互不知情：
+
+        deploy/systemd/report-mark-health.timer     ← P4 節奏
+        deploy/systemd/report-mark-incident.timer   ← P5 節奏
+        scripts/incident_handler.sh                 ← OBS_TRUST_SECONDS
+
+    2026-08-21 的假 FIRING 就是這個耦合被違反的結果：兩支 timer 的宣告值合起來
+    讓快取的**合法**年齡上界超過信任窗，於是健康系統週期性地開 WARNING 事件。
+    在此之前沒有任何東西會因此變紅——`OBS_TRUST_SECONDS=240` 單看毫無問題，
+    兩支 timer 單看也毫無問題。
+
+    所以這裡把它釘成 CI 斷言：**信任窗要嘛涵蓋最壞合法年齡，要嘛必須有 in-flight
+    重讀來補償。兩者皆無就是紅。** 兩條路都留著是刻意的——未來若有人決定改用
+    調高門檻的作法，這條守門不該擋他，只該擋「兩個都沒有」。
+    """
+
+    def test_t6_trust_window_is_reconciled_with_timer_cadence(self):
+        p4 = _worst_timer_interval(HEALTH_TIMER)
+        p5 = _worst_timer_interval(TIMER)
+        worst_legit_age = p4 + p5
+        trust = _handler_default("OBS_TRUST_SECONDS")
+        rereads = _handler_default("INFLIGHT_REREADS")
+
+        if trust >= worst_legit_age:
+            return          # 信任窗自己就涵蓋了最壞情況
+
+        self.assertGreaterEqual(
+            rereads, 1,
+            f"P4 最壞間隔 {p4}s ＋ P5 最壞間隔 {p5}s = {worst_legit_age}s，"
+            f"超過 OBS_TRUST_SECONDS={trust}s，代表**健康**系統的快取會週期性越線。"
+            "此時必須有 in-flight 重讀（INFLIGHT_REREADS ≥ 1）把邊界讀回來，"
+            "否則就會重現 2026-08-21 那 14 次假 FIRING。"
+            "若你剛改了任一支 timer 的節奏，請一併重新推導這個關係。",
+        )
+
+    def test_t6b_reread_delay_fits_inside_the_probe_contract(self):
+        """重讀延遲必須小於 P4 的執行上限，否則等於白等。
+
+        P4 實測 max 3s、mean 0.1s；契約最壞 45s、unit 硬上限 90s。重讀只要
+        涵蓋「剛好完成」那一瞬間即可，不該試圖等完一輪失敗重試。
+        """
+        delay = _handler_float_default("INFLIGHT_REREAD_DELAY")
+        self.assertGreater(delay, 0, "延遲 0 等於沒等，boundary 幾乎必然仍讀到歸零值")
+        self.assertLessEqual(
+            delay, 5.0,
+            "重讀延遲過長會把 P5 的一輪拖久；它只需要涵蓋 P4 的完成瞬間",
+        )
+
+    def test_t6c_reread_cannot_outlast_the_service_timeout(self):
+        """最壞情況（重讀次數 × 延遲）必須遠小於 unit 的 TimeoutStartSec。"""
+        rereads = _handler_default("INFLIGHT_REREADS")
+        delay = _handler_float_default("INFLIGHT_REREAD_DELAY")
+        timeouts = _directives(SERVICE, "TimeoutStartSec")
+        assert timeouts, "incident unit 沒有 TimeoutStartSec，這條守門的前提不成立"
+        budget = _systemd_seconds(timeouts[0])
+        self.assertLess(
+            rereads * delay, budget / 2,
+            f"重讀最壞耗時 {rereads * delay}s 佔 TimeoutStartSec({budget}s) 過半",
+        )
 
 
 if __name__ == "__main__":

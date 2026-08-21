@@ -611,7 +611,32 @@ def select_reports(
         rid: _recency_factor(info["report_date"], now_date, half_life_days)
         for rid, info in reports
     }
-    fresh_count = sum(1 for f in factors.values() if f >= ASK_FRESH_FACTOR)
+    # 過舊軟截斷的啟動條件：「夠新**且夠相關**」的研報達門檻才開啟。
+    #
+    # **相關度那半是 2026-08-21 補上的，先前只數夠新。** 原意寫在 ASK_FRESH_FACTOR
+    # 上方的註解裡——「手上已經有夠多夠新的研報時，才捨得丟掉很舊的」——但 dense 一路
+    # 一次撈 ASK_DENSE_SCAN 個 chunk，裡面幾乎必然有 2 篇以上 90 天內的研報，**哪怕
+    # 全是不相干的投資早報**。於是 cutoff_active 實務上恆為真，「有得挑才挑」這個前提
+    # 從來沒被真正檢查過，等於把軟截斷變成硬性年齡上限：超過約 299 天的研報永遠進不了
+    # 脈絡，即使它是該問題唯一一篇、逐字命中、排序第一。實測（2026-08-21）「分析兆勁」
+    # 語料只有一篇兆勁研報（2025-10-22，303 天），檢索已把它排到第 0 名 tier 2，
+    # 仍被這一關 continue 掉，使用者拿到的是「找不到相關資料」。當時語料 15,023 篇裡
+    # 有 12,808 篇（85.3%）落在 299 天之外。
+    #
+    # 判準**逐字沿用下方選篇迴圈的相關度閘**（tier≥ALL_TERMS 或 best_gate≥floor）。
+    # 兩處必須是同一個條件：這裡數的是「等一下真的會被選進去的夠新研報」，換一套判準
+    # 就會數到選不進去的篇數，前提一樣不成立、而且再也對不起來。
+    def _relevant(info: dict) -> bool:
+        return (
+            info["best_tier"] >= TIER_ALL_TERMS
+            or info["best_gate"] >= relevance_floor
+        )
+
+    fresh_count = sum(
+        1
+        for rid, info in reports
+        if factors[rid] >= ASK_FRESH_FACTOR and _relevant(info)
+    )
     cutoff_active = fresh_count >= ASK_MIN_FRESH_BEFORE_CUTOFF
 
     if mmr_lambda > 0 and chunk_embeddings:

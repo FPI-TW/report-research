@@ -334,3 +334,60 @@ class BuildContextForwardingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# ---------------------------------------------------------------------------
+# 過舊軟截斷的啟動條件：「夠新**且夠相關**」才開啟（2026-08-21）
+#
+# 這一關的原意是「手上已經有夠多夠新的研報時，才捨得丟掉很舊的」，所以它是**軟**的：
+# 湊不出門檻數就完全不截斷，歷史性問題自動保留舊研報。但 fresh_count 先前只數夠新、
+# 不看相關度，而 dense 一路一次撈 ASK_DENSE_SCAN 個 chunk，裡面幾乎必然有 2 篇以上
+# 90 天內的研報——**哪怕全是不相干的投資早報**。於是 cutoff_active 實務上恆為真，
+# 軟截斷變成硬性年齡上限：超過約 299 天的研報永遠進不了脈絡。實測「分析兆勁」語料
+# 只有一篇兆勁研報（2025-10-22，303 天），檢索已排到第 0 名 tier 2 仍被 continue 掉。
+
+_FRESH_D = "2026-07-01"   # 距 _NOW 7 天 → factor 0.95（夠新）
+_STALE_D = "2025-07-01"   # 距 _NOW 372 天 → factor 0.057（過舊，< STALE_FACTOR 0.1）
+
+
+def _fresh(rid, tier, fused):
+    return (tier, fused, _row_src(f"c-{rid}", rid, rdate=_FRESH_D, content=f"{rid} 段"))
+
+
+def _stale(rid, tier, fused):
+    return (tier, fused, _row_src(f"c-{rid}", rid, rdate=_STALE_D, content=f"{rid} 段"))
+
+
+class StaleCutoffActivationTests(unittest.TestCase):
+    def test_fresh_but_irrelevant_reports_do_not_arm_the_cutoff(self):
+        """夠新卻不相關的研報不得啟動截斷——否則舊研報永遠進不來。
+
+        這正是實測的生產行為：候選池裡塞滿當週的投資早報（tier 0、分數低於
+        relevance_floor），它們自己一篇都選不進去，卻足以把唯一一篇逐字命中的
+        舊研報擋在門外，使用者拿到「找不到相關資料」。
+        """
+        scored = [_fresh(f"n{i}", 0, 0.50) for i in range(5)] + [_stale("old", 2, 0.90)]
+        self.assertIn("old", [s.report_id for s in _select(scored)])
+
+    def test_more_fresh_noise_still_does_not_arm_it(self):
+        """雜訊變多也不該改變結論——先前是「越多雜訊越擋得死」。"""
+        scored = [_fresh(f"n{i}", 0, 0.50) for i in range(30)] + [_stale("old", 2, 0.90)]
+        self.assertIn("old", [s.report_id for s in _select(scored)])
+
+    def test_fresh_and_relevant_reports_still_arm_the_cutoff(self):
+        """原設計意圖必須保住：真的有夠新又夠相關的研報時，過舊的照樣讓位。"""
+        scored = [_fresh("a", 0, 0.90), _fresh("b", 0, 0.88), _stale("old", 2, 0.90)]
+        self.assertNotIn("old", [s.report_id for s in _select(scored)])
+
+    def test_relevance_test_matches_the_selection_gate_tier_branch(self):
+        """判準逐字沿用選篇迴圈的相關度閘：tier≥ALL_TERMS 分數再低也算相關。
+
+        兩處若用不同判準，這裡數到的就不是「等一下真的會被選進去的夠新研報」，
+        軟截斷的前提再次不成立、而且再也對不起來。
+        """
+        scored = [_fresh("a", 2, 0.30), _fresh("b", 2, 0.30), _stale("old", 2, 0.90)]
+        self.assertNotIn("old", [s.report_id for s in _select(scored)])
+
+    def test_single_fresh_relevant_report_is_below_the_threshold(self):
+        """門檻是 ASK_MIN_FRESH_BEFORE_CUTOFF（2）：只有一篇時仍然不截斷。"""
+        scored = [_fresh("a", 0, 0.90), _stale("old", 2, 0.90)]
+        self.assertIn("old", [s.report_id for s in _select(scored)])

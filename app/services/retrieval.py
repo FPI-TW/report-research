@@ -18,7 +18,11 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.store import search_chunks_lexical, search_chunks_meta
+from app.services.store import (
+    pick_title_lead_term,
+    search_chunks_lexical,
+    search_chunks_meta,
+)
 from app.services.textnorm import norm_for_match
 
 logger = logging.getLogger(__name__)
@@ -48,6 +52,47 @@ def extract_terms(q: str) -> tuple[str, list[str]]:
     phrase = norm_for_match(q)
     terms = list(dict.fromkeys(_RE_RUN.findall(phrase)))
     return phrase, terms
+
+
+# 純中文重探的候選詞長度範圍。2 起跳＝多數台股標的名的最短長度；6 封頂＝再長就
+# 不是名字而是句子片段，重探必然落空。
+# 「沒觸發重探」與「觸發了但挑不出詞」在遙測上必須分得出來，故用哨兵而非 None。
+_UNSET = object()
+
+_CJK_AFFIX_MIN = 2
+_CJK_AFFIX_MAX = 6
+# 只有「明顯比名字長」的純中文詞才需要重探：長度 4 以下的詞（「兆勁」「台積電」）
+# 本來就已經是可用的查詢詞，落空代表語料真的沒有，再切一次只會製造雜訊。
+_CJK_RUN_MIN = 4
+
+
+def _is_cjk_run(t: str) -> bool:
+    return bool(t) and all("\u3400" <= c <= "\u9fff" for c in t)
+
+
+def cjk_affix_candidates(terms: list[str]) -> list[str]:
+    """純中文查詢詞 → 前後綴候選（依長度由短到長，前綴先於後綴）。
+
+    **這是為了補上「中文不斷詞」這個缺口。** `_RE_RUN` 只在英數↔CJK 交界切開，所以
+    一整串中文會變成單一查詢詞：「分析兆勁」送進字面路就是
+    `content_norm LIKE '%分析兆勁%'`，語料裡當然沒有，**字面召回於是整條失效、只剩
+    dense 一路**（2026-08-21 實測：查「分析兆勁」0 個 chunk 命中，查「兆勁」30 個，
+    正確那篇 tier 2、fused 0.86 排第一）。中文問句把動詞或助詞黏在標的名旁邊是常態，
+    加空格也繞不過去——`norm_for_match` 會把 CJK 之間的空白吃掉。
+
+    切法刻意只取**前後綴**而非全部子字串：中文問句的主語幾乎都在句首（「勝一的獲利
+    表現怎麼樣」）或緊接在一個框架動詞之後（「分析兆勁」），兩端各取幾個長度就涵蓋得到，
+    候選數也才維持在個位數。挑哪一個由 `store.pick_title_lead_term` 依語料標題決定，
+    這裡只負責產生候選、不做任何判斷。
+    """
+    out: list[str] = []
+    for t in terms:
+        if not _is_cjk_run(t) or len(t) < _CJK_RUN_MIN:
+            continue
+        for n in range(_CJK_AFFIX_MIN, min(_CJK_AFFIX_MAX, len(t) - 1) + 1):
+            out.append(t[:n])
+            out.append(t[len(t) - n:])
+    return list(dict.fromkeys(out))
 
 
 def classify_match(phrase: str, terms: list[str], content: str) -> tuple[int, float]:
@@ -113,11 +158,12 @@ async def hybrid_search(
     # 0 而非 None：字面路未執行時 log 會印 `lex_ms=0`，與「遙測沒填」可區分。
     lex_ms = 0
     cap = lex_cap if lex_cap is not None else LEX_CAP
+    lex_row_limit = None if lex_unlimited else (
+        lex_limit if lex_limit is not None else LEX_LIMIT
+    )
+    lex_fallback: str | None | object = _UNSET
     if terms:
         patterns = ["%" + t.translate(_LIKE_ESC) + "%" for t in terms]
-        lex_row_limit = None if lex_unlimited else (
-            lex_limit if lex_limit is not None else LEX_LIMIT
-        )
         _t = time.monotonic()
         lex_rows, lex_hits = await search_chunks_lexical(
             session,
@@ -129,11 +175,41 @@ async def hybrid_search(
             **filters,
         )
         lex_ms = int((time.monotonic() - _t) * 1000)
+
+    # 純中文重探：字面路完全落空、且查詢詞是一整串中文時，改用語料標題挑出來的
+    # 標的名再探一次（見 cjk_affix_candidates / store.pick_title_lead_term）。
+    #
+    # **只在 lex_rows 為空時才跑**——有命中就代表原查詢詞本來就有用，重探只會加雜訊。
+    # 挑中之後 `phrase`／`terms` 一併換成那個詞：原本的整串片語既然一個 chunk 都沒
+    # 命中，拿它算 tier 對每一列都是 0，換掉不損失任何東西，卻能讓真正提到該標的的
+    # chunk 升到 TIER_PHRASE——**只補召回不補排序等於沒補**，撈回來的列會跟雜訊同層。
+    if terms and not lex_rows:
+        candidates = cjk_affix_candidates(terms)
+        if candidates:
+            _t = time.monotonic()
+            picked = await pick_title_lead_term(session, candidates)
+            if picked:
+                lex_rows, lex_hits = await search_chunks_lexical(
+                    session,
+                    query_embedding,
+                    ["%" + picked.translate(_LIKE_ESC) + "%"],
+                    limit=lex_row_limit,
+                    cap=cap,
+                    per_report=lex_per_report,
+                    **filters,
+                )
+                phrase, terms = picked, [picked]
+            lex_ms += int((time.monotonic() - _t) * 1000)
+            lex_fallback = picked
     if stats is not None:
         stats["lex_hits"] = lex_hits
         stats["lex_cap"] = cap
         stats["dense_ms"] = dense_ms
         stats["lex_ms"] = lex_ms
+        # 重探用了哪個詞（None＝沒挑到、缺鍵＝沒觸發重探）。三態刻意可分辨：
+        # 「沒觸發」與「觸發但語料標題挑不出詞」的處置完全不同。
+        if lex_fallback is not _UNSET:
+            stats["lex_fallback_term"] = lex_fallback
         # >= 而非 ==：cap 是 SQL LIMIT，理論上不會超過，但用 >= 讓「cap 改小後拿到舊
         # 計數」這類意外落在保守側（寧可誤報截斷，不可漏報）。
         stats["lex_truncated"] = bool(terms) and lex_hits >= cap

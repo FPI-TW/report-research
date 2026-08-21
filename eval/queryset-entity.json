@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "as_of": "2026-08-21",
+  "_note": "具名標的 × 中文自然問句的檢索標註集。與 eval/queryset.json 分開的理由：那組全是廣泛主題（台積電／AI 伺服器／FOMC），dense 一路就打得到，hit_rate 早已是 1.0，照不出『中文問句把標的名黏在動詞或助詞旁邊』這個缺口——retrieval.extract_terms 的 _RE_RUN 只在英數↔CJK 交界切開，純中文整串會變成單一查詢詞，字面路於是拿 content_norm LIKE '%分析兆勁%' 去找，語料裡當然沒有。本組每一題的標的都確實存在於語料（2026-08-21 以 report_chunk LIKE 逐一確認），所以沒命中就是檢索的問題，不是資料沒有。刻意不設 recency：這組量的是召回，不是新近度，混進來只會讓退化的來源難以歸因。用法同 queryset.json：uv run python scripts/eval_retrieval.py --queryset eval/queryset-entity.json --json",
+  "cases": [
+    {
+      "id": "zhaojin-analyze",
+      "query": "分析兆勁",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["兆勁"], "min_hits": 1 }
+    },
+    {
+      "id": "chinmei-operations",
+      "query": "勤美最近的營運狀況如何",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["勤美"], "min_hits": 1 }
+    },
+    {
+      "id": "shengyi-profit",
+      "query": "勝一的獲利表現怎麼樣",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["勝一"], "min_hits": 1 }
+    },
+    {
+      "id": "taihua-conference",
+      "query": "台驊控股法說會重點是什麼",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["台驊"], "min_hits": 1 }
+    },
+    {
+      "id": "guangyue-orders",
+      "query": "廣越的訂單能見度如何",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["廣越"], "min_hits": 1 }
+    },
+    {
+      "id": "changhong-projects",
+      "query": "長虹建設的推案進度與銷售狀況",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["長虹"], "min_hits": 1 }
+    },
+    {
+      "id": "tengyun-products",
+      "query": "騰雲的產品發展方向",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["騰雲"], "min_hits": 1 }
+    },
+    {
+      "id": "yuqing-outlook",
+      "query": "裕慶的營運展望如何",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["裕慶"], "min_hits": 1 }
+    },
+    {
+      "id": "yili-competitiveness",
+      "query": "奕力的產品線與競爭力",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["奕力"], "min_hits": 1 }
+    },
+    {
+      "id": "hanchuan-recent",
+      "query": "瀚荃近期表現如何",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["瀚荃"], "min_hits": 1 }
+    },
+    {
+      "id": "luosheng-results",
+      "query": "羅昇的業績狀況",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["羅昇"], "min_hits": 1 }
+    },
+    {
+      "id": "guanglong-momentum",
+      "query": "光隆下半年的成長動能",
+      "filters": { "market": "TW" },
+      "expect": { "any_keywords": ["光隆"], "min_hits": 1 }
+    }
+  ]
+}

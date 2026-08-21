@@ -134,6 +134,33 @@ class PromptToolConsistencyTests(unittest.TestCase):
         """既有讀取端（含 test_locale）以 SYSTEM_PROMPT 斷言預設形狀。"""
         self.assertEqual(ans.SYSTEM_PROMPT, ans.ask_system_prompt(False))
 
+    def test_no_data_instruction_never_lives_in_the_shared_rules(self):
+        """「查不到就說找不到」是**終局指令**，留在共同規則會蓋掉網搜那條。
+
+        M11 上線時共同規則第 1 條就是它，而 WEB_POLICY 只說「片段不足才搜尋」——
+        兩條在「片段查無此標的」這個最需要網搜的情境下衝突，模型選了比較明確的那條，
+        於是 web=true 也一次搜尋都不發（2026-08-21 以「分析兆勁」實測）。症狀是靜默的：
+        使用者只看到「找不到相關資料」，與網搜壞掉完全同形。
+        """
+        self.assertNotIn("找不到相關資料", ans.SYSTEM_PROMPT_BASE)
+
+    def test_no_web_variant_still_owns_the_no_data_instruction(self):
+        """搬走不等於刪掉：關網搜那條路徑的行為必須與先前一致。"""
+        self.assertIn("找不到相關資料", ans.ask_system_prompt(False))
+
+    def test_web_variant_makes_search_mandatory_before_giving_up(self):
+        """開網搜時，「片段查不到」的正確動作是先搜，不是直接回找不到。"""
+        p = ans.ask_system_prompt(True)
+        self.assertIn("必須先執行網路搜尋", p)
+        self.assertIn("不可略過搜尋直接回答", p)
+        # 反面也要釘：不得再出現「片段不足才搜尋」那種把搜尋說成可選的措辭。
+        self.assertNotIn("才搜尋，不要無謂搜尋", p)
+
+    def test_web_variant_forbids_narrating_the_search_process(self):
+        """實測模型會先寫一版「找不到」、再搜、再重寫，兩版都留在畫面上。"""
+        p = ans.ask_system_prompt(True)
+        self.assertIn("不要在答案中描述自己的檢索或搜尋流程", p)
+
 
 class CorpusQaWebToggleTests(unittest.IsolatedAsyncioTestCase):
     async def _run(self, *, web, gate=True, decision=None):

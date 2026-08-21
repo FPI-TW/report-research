@@ -421,6 +421,48 @@ async def search_chunks_lexical(
     return [ChunkRow._make(r[:width]) for r in raw], lex_hits
 
 
+async def pick_title_lead_term(
+    session: AsyncSession, candidates: list[str]
+) -> str | None:
+    """從候選詞裡挑一個「像標的名」的詞——依據是語料自己的研報標題，不是外部詞典。
+
+    `retrieval.hybrid_search` 的字面路在純中文問句上必然落空（見
+    `retrieval.cjk_affix_candidates` 的說明），落空後要挑一個較短的詞重探，問題是
+    **怎麼分辨「兆勁」與「分析」**。用外部斷詞詞典要多一個相依、且對繁中與券商用語
+    的覆蓋是未知數；本 repo 也已經有一次「手抄繁中名詞白名單在雙語上線後破功」的
+    紀錄（見 faithfulness.py）。
+
+    這裡改用語料本身：`generate_titles.py` 產出的 `title` 是主題在前的繁中句子
+    （「兆勁法說重點摘要：…」「勝一：法人說明會重點摘要」），所以**「有研報標題以它
+    開頭」就是一個決定性、隨語料自動更新的『這是標的名』訊號**。「分析」「怎麼樣」
+    這類問句框架詞不會出現在標題開頭，自然被濾掉。
+
+    排序是**命中篇數多者優先、同分取較短者**。兩個 tie-break 都是實測逼出來的
+    （2026-08-21，15 題）：取最長會讓「台積電最新的營運展望如何」選到只命中 1 篇的
+    「台積電最」而不是命中 106 篇的「台積電」，而「台驊控股法說會重點是什麼」的
+    五個前綴同為 2 篇、取最長會選到「台驊控股法說」——那串在 chunk 內文裡根本不存在，
+    重探一樣是零命中。
+
+    查不到（全部候選都不是任何標題的開頭）回 None，呼叫端維持現況不重探。
+    """
+    if not candidates:
+        return None
+    row = (
+        await session.execute(
+            text(
+                "SELECT a FROM unnest(CAST(:c AS text[])) AS a "
+                "WHERE EXISTS (SELECT 1 FROM research.research_report r "
+                "              WHERE r.title LIKE a || '%') "
+                "ORDER BY (SELECT count(*) FROM research.research_report r "
+                "          WHERE r.title LIKE a || '%') DESC, length(a) ASC "
+                "LIMIT 1"
+            ),
+            {"c": list(candidates)},
+        )
+    ).first()
+    return str(row[0]) if row else None
+
+
 def _parse_vec_text(s: str) -> list[float]:
     """pgvector '[f1,f2,...]' 文字 → list[float]（純函式，可獨測）。"""
     body = s.strip().strip("[]").strip()

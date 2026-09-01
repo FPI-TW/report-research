@@ -2,7 +2,7 @@
 
 ## 決策
 
-- **直接走 Typst**：捨棄 WeasyPrint 視覺化改版路線（`docs/superpowers/plans/2026-07-08-report-claude-design-backend.md` 的 5-task 計畫不執行），避免產生丟棄工。M9a 依 `docs/IMPLEMENTATION_PLAN.md` 進行，本文件是其前置 spike 的實證結論。
+- **直接走 Typst**：捨棄 WeasyPrint 視覺化改版路線（該 5-task 計畫不執行；原 plan 見 git 歷史 docs/superpowers/plans/2026-07-08-report-claude-design-backend.md），避免產生丟棄工。M9a 依當時的里程碑計畫（原 docs/IMPLEMENTATION_PLAN.md，見 git 歷史）進行，本文件是其前置 spike 的實證結論。
 - **converter 選定 pandoc**（經 `pypandoc-binary` 取得，見下方比較）。
 - **圖表首版直接重用 `chart.py` 的 SVG**（Typst `image()` 原生支援 SVG），不引入 cetz/lilaq，編譯全程零網路、零 `@preview` 套件。
 

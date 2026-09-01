@@ -32,8 +32,7 @@ description = "測試 fixture 的固定假 secret"
 # （包含出現在測試檔裡的）照樣要紅。
 #
 # 這個值在 22 個測試檔 ＋ `tests/conftest.py` 以 `os.environ.setdefault()` 設定
-# （setdefault 而非賦值是刻意的：不覆蓋真實環境變數），另有 2 處出現在
-# `docs/superpowers/plans/` 的歷史設計稿裡。
+# （setdefault 而非賦值是刻意的：不覆蓋真實環境變數）。
 #
 # 字元類刻意收窄成 `[0-9a-z]`：`fixed-test-secret-<某段隨機 base64>` 這種「借用
 # 前綴混進真 secret」的寫法不會被放行。

@@ -1,9 +1,9 @@
 """M5/M6 共用查詢規劃核心：LLM 子查詢分解的型別、解析與正規化。
 
 M5（問答 agentic 迴圈，profile="qa"）與 M6（研報多查詢分解，profile="report"）
-共用本模組（docs/IMPLEMENTATION_PLAN.md 明文）。本檔先落共用核心與兩個 profile
+共用本模組（原 docs/IMPLEMENTATION_PLAN.md 明文，該文件見 git 歷史）。本檔先落共用核心與兩個 profile
 預留區段；prompt 由對應里程碑在各自區段填入，共用核心變更須先合回 main 再雙邊
-rebase（設計見 docs/superpowers/specs/2026-07-15-query-planner-foundation-design.md）。
+rebase（設計見 git 歷史 docs/superpowers/specs/2026-07-15-query-planner-foundation-design.md）。
 
 import 約束：只准 import 葉模組（config/llm/textnorm），禁止 answer/
 retrieval_pipeline/report——retrieval_pipeline 頂層 import answer，本模組必須

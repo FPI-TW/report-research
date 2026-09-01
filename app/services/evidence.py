@@ -10,7 +10,7 @@ evidence_id 為內容定址（sha256 前 16 hex）、不可變：同一來源在
 
 外部來源只能經受控建構器產生：from_trusted_point（M4a adapter）與
 from_ext_source（研報／問答的受控 Web 解析結果）；其他路徑不得自行拼
-external dict。spec: docs/superpowers/specs/2026-07-14-m4b-evidence-ledger-design.md
+external dict。設計 spec 見 git 歷史 docs/superpowers/specs/2026-07-14-m4b-evidence-ledger-design.md
 """
 
 from __future__ import annotations

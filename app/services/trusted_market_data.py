@@ -1,6 +1,6 @@
 """M4a 受信任時效資料契約：time_sensitive 路由唯一合法的外部資料入口。
 
-設計原則（spec: docs/superpowers/specs/2026-07-14-m4a-trusted-data-design.md）：
+設計原則（spec 見 git 歷史 docs/superpowers/specs/2026-07-14-m4a-trusted-data-design.md）：
 - Claude 只決定「是否需要時效資料」（M4 路由已完成）；不能自由挑選網頁或繞過 allowlist。
 - registry 預設為空 → 執行期行為與 M4 相同（安全婉拒）。真實 provider 依本契約
   於部署時註冊；測試一律 fake provider。

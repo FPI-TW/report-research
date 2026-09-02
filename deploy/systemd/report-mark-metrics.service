@@ -1,0 +1,39 @@
+[Unit]
+Description=廷豐智能研報 硬體用量取樣（cgroup v2 + /proc → data/metrics/*.jsonl）
+# 存在理由：上雲選機型要的是分位數與尖峰，而尖峰只出現在 sync（每 3 小時）與
+# 問答／研報生成的那幾分鐘。人工在旁邊看 top 一定會錯過，所以必須常駐取樣。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure=report-mark-alert@%n.service**，與 report-mark-health 同理由：
+# 取樣器停掉不是生產事故（服務照跑，只是少了觀測資料），而 report-mark-alert.sh 的
+# webhook 由單一全域變數控制——把量測工具接上告警鏈，等於讓一支輔助工具有能力
+# 在半夜吵醒人。它是 Type=simple + Restart=always，真的壞掉會停在 failed，
+# `systemctl is-failed` 與 journal 都看得到。
+
+[Service]
+Type=simple
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h：系統層 unit 的 %h 一律解析為 /root，不受 User= 影響
+# （2026-07-28 sync unit 因此連續 10 輪失敗）。tests/test_deploy_units.py 守這條。
+Environment=HOME=/home/kashionz
+# **刻意不含 nvm 與 uv 的路徑，也刻意用 /usr/bin/python3 而不是 .venv**：
+# 與 P4 健康探針同一個理由——2026-08-18 的中斷根因正是 venv 損毀，相依 .venv 的
+# 量測工具會與被監控的東西一起死，而那正是最需要用量資料的時刻。
+# docker（容器名稱解析與 DB 容量查詢）在 /usr/bin 下，這個 PATH 已涵蓋。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+WorkingDirectory=/home/kashionz/projects/report-mark
+# 顯式 `python3 <script>` 而非直接 exec：不依賴 repo 內的執行位元（/mnt/c 的 drvfs
+# 一律回報 777，從未真正記錄過 exec bit）。
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/python3 "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/collect_resource_usage.py" --interval 20 --capacity-interval 600 --retention-days 30'
+Restart=always
+RestartSec=10
+# 取樣器自己也要讓路：它與被量測的服務搶 CPU 的話，量到的就是被自己干擾過的數字。
+Nice=10
+IOSchedulingClass=idle
+# 收到 SIGTERM 後會收尾關檔，正常退出 0；給 20 秒足夠（迴圈每秒醒一次檢查停止旗標）。
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

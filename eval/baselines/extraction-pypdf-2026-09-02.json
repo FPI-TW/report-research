@@ -2,7 +2,7 @@
  "summary": {
   "order_hit_rate": 1.0,
   "order_pair_acc": 0.8045325779036827,
-  "order_pair_acc_within": 0.9322493224932249,
+  "order_pair_acc_within": 0.940379403794038,
   "order_kendall_tau": 0.6090651558073654,
   "order_pair_acc_case_mean": 0.8003885003885004,
   "n_cases_with_order": 15,
@@ -27,7 +27,7 @@
   "two_column": {
    "order_hit_rate": 1.0,
    "order_pair_acc": 0.7979899497487437,
-   "order_pair_acc_within": 0.9377049180327869,
+   "order_pair_acc_within": 0.9475409836065574,
    "order_kendall_tau": 0.5959798994974874,
    "order_pair_acc_case_mean": 0.7824995517303209,
    "n_cases_with_order": 13,
@@ -89,7 +89,7 @@
   "kgi": {
    "order_hit_rate": 1.0,
    "order_pair_acc": 0.7577092511013216,
-   "order_pair_acc_within": 0.9642857142857143,
+   "order_pair_acc_within": 1.0,
    "order_kendall_tau": 0.5154185022026432,
    "order_pair_acc_case_mean": 0.7843822843822844,
    "n_cases_with_order": 4,
@@ -249,10 +249,10 @@
     "n_pairs": 55,
     "n_concordant": 30,
     "n_pairs_within": 20,
-    "n_concordant_within": 17,
+    "n_concordant_within": 20,
     "hit_rate": 1.0,
     "pair_acc": 0.5454545454545454,
-    "pair_acc_within": 0.85,
+    "pair_acc_within": 1.0,
     "kendall_tau": 0.09090909090909091,
     "misses": []
    },

@@ -1,0 +1,1519 @@
+{
+ "version": "extraction-golden-v1",
+ "created": "2026-09-02",
+ "notes": [
+  "docs/EXTRACTION_REDESIGN.md §4.1 E0 的 golden set。第一批 15 份，優先 kgi／masterlink／sinopac／yuanta 四家，另加一份高盛英文版雙欄。",
+  "順序層口徑：每條 `order` 是原文逐字片段（可以是一行、不必是完整句），列出的先後就是紙本閱讀順序。`stream` 標它屬於頁面上哪一條連續文字流（head＝標題區、side＝側欄、main＝主文欄、col2＝正文第二欄、pN＝第 N 頁）。同一 stream 內的先後是無歧義的；跨 stream 的先後採「由左到右、由上到下」慣例——左側欄整體先於主文，右側欄整體後於主文。評測分別報全部配對與同流配對兩個數字。",
+  "比對用 textnorm.norm_for_match（NFKC→小寫→去空白），所以片段可跨行、不必管抽取器的空白習慣；但片段內部的字元順序必須與原文一致。",
+  "欄位層口徑：title／report_date／broker 由 DB 預填（field_sources 標 db_prefill），instruments 的評等／目標價／EPS 由模型看頁面渲染圖與 pdfplumber 逐行文字草標（draft_from_page_render），**不是**從 report_signal 抄來的。目標價保幣別不換算。無目標價的報告 golden 為 null，抽出任何數值都算錯。",
+  "annotation_status＝draft 表示尚未人工覆核；覆核後改 reviewed，並在 annotator_notes 記錄改了什麼。eval_extraction.py 的 --reviewed-only 只吃 reviewed。",
+  "刻意未納入：掃描檔（全語料 0.70%）與亂碼檔（>2% 僅 26 筆）——第一批先量主流版型，這兩類留給第二批。"
+ ],
+ "cases": [
+  {
+   "id": "kgi-2382-daily-story-20260514",
+   "file_hash": "97a6b75ce40ba47cf078d19a1c0002d08838e2c11275cac8ac217b268e579901",
+   "file_name": "daily story_2382_2026_05_14_C_TW.pdf",
+   "file_path": "研報自動匯入/daily story_2382_2026_05_14_C_TW.pdf",
+   "source": "kgi",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 8,
+   "fields": {
+    "title": "廣達：1Q26 EPS超前但獲利率落後，交易模式協商中",
+    "report_date": "2026-05-14",
+    "broker": "kgi",
+    "instruments": [
+     {
+      "code": "2382",
+      "market": "TW",
+      "name": "廣達",
+      "rating": "增加持股",
+      "target_price": {
+       "value": 430.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": 405.0,
+      "eps": {
+       "2026F": 23.13,
+       "2027F": 27.43
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "1Q26 EPS 超前但獲利率落後；交易模式協商中"
+    },
+    {
+     "stream": "side",
+     "text": "增加持股‧維持"
+    },
+    {
+     "stream": "side",
+     "text": "12個月目標價 (NT$) 430.0"
+    },
+    {
+     "stream": "side",
+     "text": "1Q26 EPS 5.5元，優於預期，但獲利率較"
+    },
+    {
+     "stream": "side",
+     "text": "公司正與客戶協商調整 GPU AI 伺服器的"
+    },
+    {
+     "stream": "side",
+     "text": "3M 平均成交量 (百萬股) : 12.21"
+    },
+    {
+     "stream": "main",
+     "text": "1Q26 EPS優於我們預期，惟獲利率承壓。"
+    },
+    {
+     "stream": "main",
+     "text": "2Q26 與 2026 年通用伺服器展望轉佳，AI 伺服器成長依然強勁。"
+    },
+    {
+     "stream": "main",
+     "text": "目標價由上調至 430元(原 405元)，基於 17倍 2026-27年平均 EPS預估。"
+    },
+    {
+     "stream": "main",
+     "text": "筆電需求疲弱、AI伺服器獲利率偏低、電動車/車用營收不振。"
+    },
+    {
+     "stream": "main",
+     "text": "股東權益報酬率 (%) 22.3 29.2 32.2 35.3 38.9"
+    },
+    {
+     "stream": "p2",
+     "text": "圖1：1Q26財報與2Q26財測修正"
+    },
+    {
+     "stream": "p2",
+     "text": "圖2：2026-27年財測修正vs. 市場共識"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "凱基個股動態更新：左側欄（評等／目標價／焦點內容／交易資料）＋右側主文＋頁尾財務表。"
+  },
+  {
+   "id": "kgi-2313-daily-story-20250212",
+   "file_hash": "59279d656821e293736f840c4f50f4033544a4a4d3c4ee706fc7d281b2926912",
+   "file_name": "daily story_2313_2025_02_12_C_TW.pdf",
+   "file_path": "研報自動匯入/daily story_2313_2025_02_12_C_TW.pdf",
+   "source": "kgi",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 6,
+   "fields": {
+    "title": "華通：1Q25 HDI 受惠美系 PC 及中國手機補貼有支撐",
+    "report_date": "2025-02-12",
+    "broker": "kgi",
+    "instruments": [
+     {
+      "code": "2313",
+      "market": "TW",
+      "name": "華通",
+      "rating": "增加持股",
+      "target_price": {
+       "value": 80.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": 86.0,
+      "eps": {
+       "2024F": 4.84,
+       "2025F": 5.74
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "1Q25 HDI 受惠美系 PC 及中國手機補貼有支撐"
+    },
+    {
+     "stream": "side",
+     "text": "增加持股‧維持"
+    },
+    {
+     "stream": "side",
+     "text": "12個月目標價 (NT$) 80.00"
+    },
+    {
+     "stream": "side",
+     "text": "前次目標價 (NT$) 86.00"
+    },
+    {
+     "stream": "side",
+     "text": "4Q24 營收符合預期，受惠美系平板"
+    },
+    {
+     "stream": "side",
+     "text": "3M 平均成交量 (百萬股) : 11.53"
+    },
+    {
+     "stream": "main",
+     "text": "華通 1 月營收 52.8 億元，月減 17.4%，年減 8.7%"
+    },
+    {
+     "stream": "main",
+     "text": "4Q24 營收符合預期，受惠美系平板及筆電訂單HDI稼動維持高檔。"
+    },
+    {
+     "stream": "main",
+     "text": "2025 資料中心營收開始萌芽，泰國新廠產提升衛星營收貢獻。"
+    },
+    {
+     "stream": "main",
+     "text": "維持「增加持股」評等調降目標價至 80"
+    },
+    {
+     "stream": "main",
+     "text": "客戶產品需求不如預期，高階HDI滲透率不如預期。"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "同凱基版型。主文首句的「1」「52.8」是粗體內嵌數字、基線略高，抽取器容易把它們甩出句外。"
+  },
+  {
+   "id": "kgi-radar-monthly-semi-20260312",
+   "file_hash": "ff0930a89784d49e43d3a0524eac5bb3fd85475621fa0f531411586adb224932",
+   "file_name": "Radar Monthly_Semiconductor_2026_03_12_C_TW.pdf",
+   "file_path": "研報自動匯入/Radar Monthly_Semiconductor_2026_03_12_C_TW.pdf",
+   "source": "kgi",
+   "kind": "industry",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 30,
+   "fields": {
+    "title": "半導體產業4Q25美股財報總覽：戰火震盪洗盤，但基本面不變",
+    "report_date": "2026-03-12",
+    "broker": "kgi",
+    "instruments": [
+     {
+      "code": "2330",
+      "market": "TW",
+      "name": "台積電",
+      "rating": "增加持股",
+      "target_price": {
+       "value": 2420.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "3661",
+      "market": "TW",
+      "name": "世芯-KY",
+      "rating": "增加持股",
+      "target_price": {
+       "value": 4590.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "3443",
+      "market": "TW",
+      "name": "創意",
+      "rating": "增加持股",
+      "target_price": null
+     },
+     {
+      "code": "5274",
+      "market": "TW",
+      "name": "信驊",
+      "rating": "增加持股",
+      "target_price": null
+     },
+     {
+      "code": "6515",
+      "market": "TW",
+      "name": "穎崴",
+      "rating": "增加持股",
+      "target_price": null
+     },
+     {
+      "code": "7769",
+      "market": "TW",
+      "name": "鴻勁",
+      "rating": "增加持股",
+      "target_price": null
+     },
+     {
+      "code": "1560",
+      "market": "TW",
+      "name": "中砂",
+      "rating": "增加持股",
+      "target_price": null
+     },
+     {
+      "code": "2344",
+      "market": "TW",
+      "name": "華邦電",
+      "rating": "增加持股",
+      "target_price": null
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "Radar Monthly"
+    },
+    {
+     "stream": "head",
+     "text": "美股財報總覽：戰火震盪洗盤，但基本面不變"
+    },
+    {
+     "stream": "side",
+     "text": "2. 4Q25 美股財報總攬：股價雖受挫但"
+    },
+    {
+     "stream": "side",
+     "text": "3. 3月台股重挫後應逢低布局"
+    },
+    {
+     "stream": "main",
+     "text": "本期報告(收盤價採 3 月 11 日)聚焦於：(1) 2 月營收重點分析；(2)美股"
+    },
+    {
+     "stream": "main",
+     "text": "4Q25 美股財報總攬：股價雖受挫但產業基本面未變。"
+    },
+    {
+     "stream": "main",
+     "text": "3 月台股重挫後應逢低布局。"
+    },
+    {
+     "stream": "main",
+     "text": "隨著台積電資本支出上修，並釋出更多先進製程與先進封裝產能，我們對 AI"
+    },
+    {
+     "stream": "main",
+     "text": "AI關稅議題加劇、資本支出下調、經濟衰退。"
+    },
+    {
+     "stream": "p2",
+     "text": "半導體產業月營收回顧"
+    },
+    {
+     "stream": "p2",
+     "text": "各次產業 tracker"
+    },
+    {
+     "stream": "p2",
+     "text": "2月新聞評論總覽"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "30 頁產業月報。目標價只有 p6「近月主要研究報告彙整」表列出 2330／3661 兩檔；其餘標的只在 p1 內文有評等、無目標價（golden 留 null）。"
+  },
+  {
+   "id": "kgi-weekly-taiex-20251023",
+   "file_hash": "092489d13f64eed29373802674e7f692fc693061fcb86cefb88f17dc623f4732",
+   "file_name": "凱基台股一週大勢20251023-台股創高後回檔  回測10日線支撐.pdf",
+   "file_path": "研報自動匯入/凱基台股一週大勢20251023-台股創高後回檔  回測10日線支撐.pdf",
+   "source": "kgi",
+   "kind": "weekly",
+   "language": "zh",
+   "two_column": false,
+   "page_count": 4,
+   "fields": {
+    "title": "台股創高後回檔 回測10日線支撐 電子權值股漲多休息",
+    "report_date": "2025-10-23",
+    "broker": "kgi",
+    "instruments": []
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "main",
+     "text": "台股一週大勢分析"
+    },
+    {
+     "stream": "main",
+     "text": "台股創高後回檔 回測 10 日線支撐"
+    },
+    {
+     "stream": "main",
+     "text": "電子權值股漲多休息 台股回測10日線支撐"
+    },
+    {
+     "stream": "main",
+     "text": "上周五銀行壞帳擔憂與美中貿易緊張緩解，美股僅費半下跌，其餘三大指數皆收漲。"
+    },
+    {
+     "stream": "main",
+     "text": "來到歷史新高27768.27點。終場收27688.63點，上漲386.26點，成交量4858.59億元。"
+    },
+    {
+     "stream": "main",
+     "text": "回升仍有機會再次挑戰2萬8千點整數關卡。波段支撐暫看10日線。"
+    },
+    {
+     "stream": "main",
+     "text": "櫃買指數站回月線 資金聚焦被動元件、功率半導體與記憶體"
+    },
+    {
+     "stream": "main",
+     "text": "及法人連續買超的強勢股。"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "單欄週報。p1 上半是整頁 K 線圖（無文字），文字從中段開始。無評等／目標價。"
+  },
+  {
+   "id": "masterlink-3105-report-20250502",
+   "file_hash": "17fb6e84d86f2cdb6eb971afbf95b84dc74159fd3b6b4656cdbd2687a01076a0",
+   "file_name": "3105穩懋20250502-報告.pdf",
+   "file_path": "研報自動匯入/3105穩懋20250502-報告.pdf",
+   "source": "masterlink",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 5,
+   "fields": {
+    "title": "穩懋：2Q產能利用率回升惟力道有限",
+    "report_date": "2025-05-02",
+    "broker": "masterlink",
+    "instruments": [
+     {
+      "code": "3105",
+      "market": "TW",
+      "name": "穩懋",
+      "rating": "HOLD",
+      "target_price": {
+       "value": 91.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": 108.0,
+      "eps": {
+       "2025F": 3.24
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "穩懋(3105)"
+    },
+    {
+     "stream": "head",
+     "text": "產能利用率回升惟力道有限"
+    },
+    {
+     "stream": "side",
+     "text": "研究員 蕭淑君 Justina Hsiao"
+    },
+    {
+     "stream": "side",
+     "text": "目標價 (NT$): 91"
+    },
+    {
+     "stream": "side",
+     "text": "52週最高最低(NT$): 74.5-181"
+    },
+    {
+     "stream": "side",
+     "text": "20日平均成交量(仟股): 4,869"
+    },
+    {
+     "stream": "side",
+     "text": "EPS (NT$) 3.24 3.22"
+    },
+    {
+     "stream": "main",
+     "text": "1Q 財報符合預期；2Q 營收 QoQ+10-13%，動能來自"
+    },
+    {
+     "stream": "main",
+     "text": "QoQ+14%，YOY-18%，EPS 0.47元。"
+    },
+    {
+     "stream": "main",
+     "text": "2025 年成長動能來自 5G 手機滲透率提升、WiFi7 帶動"
+    },
+    {
+     "stream": "main",
+     "text": "維持中立評等：1Q 財報低於預期，2Q 營收展望略低於預期，關稅"
+    },
+    {
+     "stream": "main",
+     "text": "與之前預估相當，目標價91元(28X2025EPS)。"
+    },
+    {
+     "stream": "main",
+     "text": "Exhibit 2: TESG企業永續指標"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "元富個股報告：左側欄（研究員／評等／基本資料／Key Changes）＋右側主文。評等原文為英文 HOLD。"
+  },
+  {
+   "id": "masterlink-3665-report-20250224",
+   "file_hash": "031ac1b4bd0162705674669f8a6f805cb8adba259ee50988f525804c8a316611",
+   "file_name": "3665 TT 20250224.pdf",
+   "file_path": "研報自動匯入/3665 TT 20250224.pdf",
+   "source": "masterlink",
+   "kind": "stock",
+   "language": "en",
+   "two_column": true,
+   "page_count": 6,
+   "fields": {
+    "title": "BizLink(3665 TT)：ASIC AI伺服器2025年起量產",
+    "report_date": "2025-02-24",
+    "broker": "masterlink",
+    "instruments": [
+     {
+      "code": "3665",
+      "market": "TW",
+      "name": "BizLink",
+      "rating": "BUY",
+      "target_price": {
+       "value": 800.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": 800.0,
+      "eps": {
+       "2024F": 22.12,
+       "2025F": 34.85
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "BizLink Technology (3665 TT)"
+    },
+    {
+     "stream": "head",
+     "text": "ASIC AI Server Mass Production Starting from 2025"
+    },
+    {
+     "stream": "side",
+     "text": "Analyst: Alice Su"
+    },
+    {
+     "stream": "side",
+     "text": "Target Price (NT$): 800"
+    },
+    {
+     "stream": "side",
+     "text": "52-wk Range (NT$): 224-729"
+    },
+    {
+     "stream": "side",
+     "text": "20d Avg Vol (lots): 4,390"
+    },
+    {
+     "stream": "side",
+     "text": "EPS (NT$) 34.85 34.52"
+    },
+    {
+     "stream": "main",
+     "text": "Jan25 sales hit record high thanks to order ramp-up of the U.S. ASIC"
+    },
+    {
+     "stream": "main",
+     "text": "has increased to 31%, and is expected to further increase in 2025."
+    },
+    {
+     "stream": "main",
+     "text": "Given that BizLink is the exclusive supplier for AEC, it is unlikely that"
+    },
+    {
+     "stream": "main",
+     "text": "that AEC sales will exhibit exponential growth in 2025."
+    },
+    {
+     "stream": "main",
+     "text": "Reiterate BUY with the TP raised to NT$800."
+    },
+    {
+     "stream": "main",
+     "text": "Exhibit 1: Sales and YoY Growth"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "元富英文版個股報告，版型同中文版。"
+  },
+  {
+   "id": "masterlink-3008-flash-20250110",
+   "file_hash": "502993a945b38129bf587c03a5598cd180b8a6532a81700ff43496ef8b61f135",
+   "file_name": "大立光(3008)-20250110-速報.pdf",
+   "file_path": "研報自動匯入/大立光(3008)-20250110-速報.pdf",
+   "source": "masterlink",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 2,
+   "fields": {
+    "title": "大立光：一次性獲利暫已反映，短期轉淡待2H25新動能",
+    "report_date": "2025-01-10",
+    "broker": "masterlink",
+    "instruments": [
+     {
+      "code": "3008",
+      "market": "TW",
+      "name": "大立光",
+      "rating": "中立",
+      "target_price": {
+       "value": 2800.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": 2700.0,
+      "eps": {
+       "2024F": 194.17,
+       "2025F": 172.4
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "公司拜訪快報"
+    },
+    {
+     "stream": "head",
+     "text": "大立光(3008)"
+    },
+    {
+     "stream": "head",
+     "text": "建議：維持中立"
+    },
+    {
+     "stream": "head",
+     "text": "結論：一次性獲利暫已反映，短期轉淡待2H25新動能"
+    },
+    {
+     "stream": "main",
+     "text": "一、本業一次性獲利優於預期，1Q將優於同期"
+    },
+    {
+     "stream": "main",
+     "text": "外匯兌利益15億元，稅後EPS 65.01元優於元富預期。"
+    },
+    {
+     "stream": "main",
+     "text": "競爭增加，預估毛利率49%，預估稅後EPS31.57元。"
+    },
+    {
+     "stream": "main",
+     "text": "二、下一代感光元件尺寸放大潛望鏡提升，機器人目前"
+    },
+    {
+     "stream": "main",
+     "text": "望未明顯變化，AI對鏡片硬體之需求提升有限。"
+    },
+    {
+     "stream": "col2",
+     "text": "三、目前維持潛望鏡主要地位後續對手仍將提升，待2H"
+    },
+    {
+     "stream": "col2",
+     "text": "手機市況轉差近期下修，AI刺激有限，長期公司技術仍"
+    },
+    {
+     "stream": "col2",
+     "text": "標價調整至2,800元(17x PER)。"
+    },
+    {
+     "stream": "col2",
+     "text": "四、維持中立理由"
+    },
+    {
+     "stream": "col2",
+     "text": "Comprehensive Income Statement NT$m"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "元富速報：真正的雙欄正文（左欄一、二段，右欄三、四段），中間夾兩張表。表格字元被逐字空格化（「N et sales」），去空白後仍可比對。目標價從內文「目標價調整至2,800元」取，表頭欄位「目標價 前次 2700 本次 2700」與內文不一致，以內文為準。"
+  },
+  {
+   "id": "masterlink-daily-20250311",
+   "file_hash": "90a88cfa7f454bbb47878ffdbf28d90cdee915862554b4a86177e44f0b8412d8",
+   "file_name": "元富投顧0311每日股市彙報.pdf",
+   "file_path": "研報自動匯入/元富投顧0311每日股市彙報.pdf",
+   "source": "masterlink",
+   "kind": "daily",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 15,
+   "fields": {
+    "title": "2025年3月11日盤面焦點提示",
+    "report_date": "2025-03-13",
+    "broker": "masterlink",
+    "instruments": [
+     {
+      "code": "2330",
+      "market": "TW",
+      "name": "台積電",
+      "rating": null,
+      "target_price": {
+       "value": 1400.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "2454",
+      "market": "TW",
+      "name": "聯發科",
+      "rating": "買進",
+      "target_price": {
+       "value": 2000.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "2357",
+      "market": "TW",
+      "name": "華碩",
+      "rating": "買進",
+      "target_price": {
+       "value": 740.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "2376",
+      "market": "TW",
+      "name": "技嘉",
+      "rating": "買進",
+      "target_price": {
+       "value": 360.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "2015",
+      "market": "TW",
+      "name": "豐興",
+      "rating": "中立",
+      "target_price": {
+       "value": 80.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "2881",
+      "market": "TW",
+      "name": "富邦金",
+      "rating": "中立",
+      "target_price": null
+     },
+     {
+      "code": "2882",
+      "market": "TW",
+      "name": "國泰金",
+      "rating": "中立",
+      "target_price": null
+     },
+     {
+      "code": "3533",
+      "market": "TW",
+      "name": "嘉澤",
+      "rating": "買進",
+      "target_price": {
+       "value": 2350.0,
+       "currency": "TWD"
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "晨訊"
+    },
+    {
+     "stream": "side",
+     "text": "S&P500 5,615 -155.64 -2.70"
+    },
+    {
+     "stream": "side",
+     "text": "費城半導體 4,405 -224.50 -4.85"
+    },
+    {
+     "stream": "side",
+     "text": "美10年債利率 4.220 -0.100 -2.31"
+    },
+    {
+     "stream": "side",
+     "text": "布蘭特原油 70.38 0.89 1.28"
+    },
+    {
+     "stream": "side",
+     "text": "SLC Flash 2Gb 256MBx8 0.87 1.17%"
+    },
+    {
+     "stream": "main",
+     "text": "盤面焦點提示"
+    },
+    {
+     "stream": "main",
+     "text": "美股上下震盪，台股整理架構。外資買買賣賣，融資小幅增減，"
+    },
+    {
+     "stream": "main",
+     "text": "重點新聞解析"
+    },
+    {
+     "stream": "main",
+     "text": "台積(2330)二月營收2600億元，MOM-11.4%，YOY43%，符"
+    },
+    {
+     "stream": "main",
+     "text": "鈊象(3293)公告2月獲利自結，單月稅前EPS 3.73元，略低"
+    },
+    {
+     "stream": "main",
+     "text": "嘉澤(3533) 4Q24 EPS 25.86元，優於預期，維持買進"
+    },
+    {
+     "stream": "main",
+     "text": "速水下基礎建置，維持買進建議"
+    },
+    {
+     "stream": "p3",
+     "text": "25EPS61.5元，TP1400元。"
+    },
+    {
+     "stream": "p3",
+     "text": "EPS 69.67元，投資評等為買進，目標價2000元。"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "元富每日彙報 15 頁：p1 左欄是行情表、右欄是焦點提示；p3 起每檔一段。標的清單只列本人能從 p1／p3／p5／p6／p8／p9 對得上名字的 8 檔，其餘（p4 300／260、p7 1200／55、p8 340、p11 238／339／1032 等）段落標題與目標價句分屬不同行、對應關係待人工覆核後再補。2330 只有「TP1400」沒有評等字樣。"
+  },
+  {
+   "id": "sinopac-2379-focus-20250502",
+   "file_hash": "138e1c03e24c3346cebfcd6a6b21ee724671d6cffa4aef2834fc22357eb23399",
+   "file_name": "CF2379_瑞昱_05022025.pdf",
+   "file_path": "研報自動匯入/CF2379_瑞昱_05022025.pdf",
+   "source": "sinopac",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 10,
+   "fields": {
+    "title": "瑞昱 (2379 TT)：規格升級、殖利率4.8%",
+    "report_date": "2025-05-02",
+    "broker": "sinopac",
+    "instruments": [
+     {
+      "code": "2379",
+      "market": "TW",
+      "name": "瑞昱",
+      "rating": "買進",
+      "target_price": {
+       "value": 600.0,
+       "currency": "TWD"
+      },
+      "eps": {
+       "2025F": 33.37
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "個股聚焦"
+    },
+    {
+     "stream": "head",
+     "text": "瑞昱 (2379 TT)"
+    },
+    {
+     "stream": "head",
+     "text": "規格升級、殖利率 4.8%"
+    },
+    {
+     "stream": "side",
+     "text": "產業類別 IC設計"
+    },
+    {
+     "stream": "side",
+     "text": "52週還原收盤價區間 (NT$) 440.00-569.00"
+    },
+    {
+     "stream": "side",
+     "text": "外資持股 (%) 50.32"
+    },
+    {
+     "stream": "side",
+     "text": "股東權益 (NT$百萬元) 52,948"
+    },
+    {
+     "stream": "side",
+     "text": "瑞昱為全球網通晶片大廠，若以公司營收排"
+    },
+    {
+     "stream": "main",
+     "text": "關稅不確定高，但瑞昱至少有規格升級與殖利率4.8%優勢。"
+    },
+    {
+     "stream": "main",
+     "text": "維持買進：研究處預估瑞昱2025年稅後EPS33.37元(原預估33.32元)。"
+    },
+    {
+     "stream": "main",
+     "text": "持買進評等，目標價維持600元(2025年EPS均值與18倍評價)。"
+    },
+    {
+     "stream": "main",
+     "text": "瑞昱企業永續評鑑整體為 A 等"
+    },
+    {
+     "stream": "main",
+     "text": "註2：永豐投顧已獲SASB授權，於研究中使用SASB重大性地圖之一般議題分類及揭露主題。"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "永豐個股聚焦：左側欄（投資建議／收盤價／目標價／交易資料／公司簡介）＋右側主文＋ESG 雷達圖。"
+  },
+  {
+   "id": "sinopac-2382-focus-20250515",
+   "file_hash": "bac867cd2944cae6f49a7ab0337b19e6e8c7a77e6d5b586f5466aac9e64a5487",
+   "file_name": "CF2382_廣達_05152025.pdf",
+   "file_path": "研報自動匯入/CF2382_廣達_05152025.pdf",
+   "source": "sinopac",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 8,
+   "fields": {
+    "title": "廣達 (2382 TT)：伺服器需求強",
+    "report_date": "2025-05-15",
+    "broker": "sinopac",
+    "instruments": [
+     {
+      "code": "2382",
+      "market": "TW",
+      "name": "廣達",
+      "rating": "買進",
+      "target_price": {
+       "value": 320.0,
+       "currency": "TWD"
+      },
+      "eps": {
+       "2025F": 20.01
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "廣達 (2382 TT)"
+    },
+    {
+     "stream": "head",
+     "text": "伺服器需求強"
+    },
+    {
+     "stream": "side",
+     "text": "產業類別 筆記型電腦"
+    },
+    {
+     "stream": "side",
+     "text": "52週還原收盤價區間 (NT$) 178.50-341.00"
+    },
+    {
+     "stream": "side",
+     "text": "流通在外股數 (百萬股) 3,863.00"
+    },
+    {
+     "stream": "side",
+     "text": "ROE (%) 29.23"
+    },
+    {
+     "stream": "side",
+     "text": "廣達成立於1988年，為全球前三大PC代"
+    },
+    {
+     "stream": "side",
+     "text": "主要競爭對手：鴻海、緯創、緯穎、英業達、"
+    },
+    {
+     "stream": "main",
+     "text": "GB200機櫃放量，伺服器營收占比顯著提升，筆電佔比下降，長期營運正向。"
+    },
+    {
+     "stream": "main",
+     "text": "研究處維持廣達買進建議：廣達1Q25財報優於預期，預期2Q25 GB200 AI伺服"
+    },
+    {
+     "stream": "main",
+     "text": "場估值，調整本益比評價，目標價調整至320元(16 X 2025F EPS)。"
+    },
+    {
+     "stream": "main",
+     "text": "廣達企業永續評鑑整體為B+等，於SASB產業永續議題與跨產業五大永續面向平"
+    },
+    {
+     "stream": "main",
+     "text": "General Issue Categories and Disclosure Topics in our work."
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "同永豐版型。"
+  },
+  {
+   "id": "sinopac-6271-focus-20250418",
+   "file_hash": "611b96251184a17bda72e033049ba35f50224f258e06d83aca95e6198b15c55b",
+   "file_name": "CF6271_同欣電_04182025.pdf",
+   "file_path": "研報自動匯入/CF6271_同欣電_04182025.pdf",
+   "source": "sinopac",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 8,
+   "fields": {
+    "title": "同欣電：1Q25 獲利恐為全年高峰",
+    "report_date": "2025-04-18",
+    "broker": "sinopac",
+    "instruments": [
+     {
+      "code": "6271",
+      "market": "TW",
+      "name": "同欣電",
+      "rating": "中立",
+      "target_price": null,
+      "eps": {
+       "2025F": 7.9
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "同欣電 (6271 TT)"
+    },
+    {
+     "stream": "head",
+     "text": "1Q25 獲利恐為全年高峰"
+    },
+    {
+     "stream": "side",
+     "text": "產業類別 IC封測"
+    },
+    {
+     "stream": "side",
+     "text": "52週還原收盤價區間 (NT$) 83.90-160.00"
+    },
+    {
+     "stream": "side",
+     "text": "融資使用率 (%) 8.05"
+    },
+    {
+     "stream": "side",
+     "text": "淨負債比率 (%) 25.37"
+    },
+    {
+     "stream": "side",
+     "text": "同欣電為國內最大陶瓷基板生產業者，除陶"
+    },
+    {
+     "stream": "side",
+     "text": "主要競爭對手：光頡、大毅"
+    },
+    {
+     "stream": "main",
+     "text": "同欣電1Q25毛利率表現優於預期，長線ADAS滲透率攀升帶動車用CIS價量齊"
+    },
+    {
+     "stream": "main",
+     "text": "同欣電 1Q25 毛利率 27.7%優於預期，惟受制於地緣政治導致 2H25 需求不確定"
+    },
+    {
+     "stream": "main",
+     "text": "廠處分利益0.61元後本業表現持續下修，投資建議維持中立。"
+    },
+    {
+     "stream": "main",
+     "text": "同欣電企業永續評鑑整體為B+等，於SASB產業永續議題與跨產業五大永續面向"
+    },
+    {
+     "stream": "main",
+     "text": "註2：永豐投顧已獲SASB授權，於研究中使用SASB重大性地圖之一般議題分類及揭露主題。"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "同永豐版型；中立評等、目標價欄位空白（golden 為 null，抽出任何數值都算幻覺）。"
+  },
+  {
+   "id": "yuanta-morning-20250226",
+   "file_hash": "176904a330fd252663c249530fb70223456b2581aec82a7fed0ef844438ea0b4",
+   "file_name": "【元大投顧】投資早報 20250226.pdf",
+   "file_path": "研報自動匯入/【元大投顧】投資早報 20250226.pdf",
+   "source": "yuanta",
+   "kind": "daily",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 16,
+   "fields": {
+    "title": "投資早報：電子權值欲振乏力，加權指數開低走低",
+    "report_date": "2025-02-26",
+    "broker": "yuanta",
+    "instruments": [
+     {
+      "code": "6690",
+      "market": "TW",
+      "name": "安碁資訊",
+      "rating": "買進",
+      "target_price": {
+       "value": 265.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "2383",
+      "market": "TW",
+      "name": "台光電",
+      "rating": "買進",
+      "target_price": {
+       "value": 710.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "3036",
+      "market": "TW",
+      "name": "文曄",
+      "rating": "買進",
+      "target_price": {
+       "value": 120.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "5347",
+      "market": "TW",
+      "name": "世界",
+      "rating": "持有-超越同業",
+      "target_price": {
+       "value": 112.0,
+       "currency": "TWD"
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "side",
+     "text": "發布日 報告 評等"
+    },
+    {
+     "stream": "side",
+     "text": "2/26 6690安碁資訊 買進"
+    },
+    {
+     "stream": "side",
+     "text": "2/25 3042晶技 買進"
+    },
+    {
+     "stream": "side",
+     "text": "2/18 2330台積電 買進"
+    },
+    {
+     "stream": "main",
+     "text": "台股盤勢分析"
+    },
+    {
+     "stream": "main",
+     "text": "電子權值欲振乏力 加權指數開低走低"
+    },
+    {
+     "stream": "main",
+     "text": "AI ASIC、800G 仍為今年成長動能來源"
+    },
+    {
+     "stream": "main",
+     "text": "最壞狀況已過，惟需求持續性仍有疑慮"
+    },
+    {
+     "stream": "main",
+     "text": "投資評等說明 / 免責聲明"
+    },
+    {
+     "stream": "p4",
+     "text": "初次報告 - 安碁資訊 (6690 TT，買進) -"
+    },
+    {
+     "stream": "p4",
+     "text": "維持台光電買進評等，目標價 710 元以本益比 19 倍及 2025 年預估稀釋後 EPS 而得，"
+    },
+    {
+     "stream": "p4",
+     "text": "以2025年預估EPS 5.10 元推得目標價112元。"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "元大投資早報 16 頁：p1 左欄近期報告清單、右欄目次；p4–p7 每檔一頁研究報告。四檔目標價分別在 p4／p5／p6／p7 的結論建議。"
+  },
+  {
+   "id": "yuanta-morning-20250711",
+   "file_hash": "532cdb10b4b65027aa6857016c3a7a1e8413d9685b3f0be0aaa953b30d745435",
+   "file_name": "【元大投顧】投資早報 20250711.pdf",
+   "file_path": "研報自動匯入/【元大投顧】投資早報 20250711.pdf",
+   "source": "yuanta",
+   "kind": "daily",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 16,
+   "fields": {
+    "title": "美股多頭延續，台股仍待關稅結果",
+    "report_date": "2025-07-11",
+    "broker": "yuanta",
+    "instruments": [
+     {
+      "code": "6873",
+      "market": "TW",
+      "name": "泓德能源",
+      "rating": "買進",
+      "target_price": {
+       "value": 300.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "2014",
+      "market": "TW",
+      "name": "中鴻",
+      "rating": "持有-超越同業",
+      "target_price": {
+       "value": 15.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "2408",
+      "market": "TW",
+      "name": "南亞科",
+      "rating": "持有-超越同業",
+      "target_price": {
+       "value": 53.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "3008",
+      "market": "TW",
+      "name": "大立光",
+      "rating": "持有-超越同業",
+      "target_price": {
+       "value": 2500.0,
+       "currency": "TWD"
+      }
+     },
+     {
+      "code": "1301",
+      "market": "TW",
+      "name": "台塑",
+      "rating": "買進",
+      "target_price": {
+       "value": 45.0,
+       "currency": "TWD"
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "side",
+     "text": "發布日 報告 評等"
+    },
+    {
+     "stream": "side",
+     "text": "7/11 6873泓德能源 買進"
+    },
+    {
+     "stream": "side",
+     "text": "7/10 6274台燿 買進"
+    },
+    {
+     "stream": "side",
+     "text": "7/1 手機產業 -"
+    },
+    {
+     "stream": "main",
+     "text": "美股多頭延續 台股仍待關稅結果"
+    },
+    {
+     "stream": "main",
+     "text": "2H25 國內工程推進加速，2026 年海外爆發成長"
+    },
+    {
+     "stream": "main",
+     "text": "領先技術迎接規格升級，惟匯率與市場逆風為挑戰"
+    },
+    {
+     "stream": "main",
+     "text": "多數產業受台幣升值影響衝擊，達成率不如預期"
+    },
+    {
+     "stream": "main",
+     "text": "投資評等說明 / 免責聲明"
+    },
+    {
+     "stream": "p4",
+     "text": "泓德能源 (6873 TT，買進)"
+    },
+    {
+     "stream": "p4",
+     "text": "南亞科 (2408 TT，持有-超越同業)"
+    },
+    {
+     "stream": "p4",
+     "text": "本次上調目標價至 53 元，反映後續獲利將持續改善，不過考量未來 DDR4 報價上"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "同元大版型。p1 目次把南亞科／大立光寫成「持有」，p6／p8 報告標題寫「持有-超越同業」，以報告標題為準。台塑 45 元出自 p9 台塑集團產業報告。"
+  },
+  {
+   "id": "yuanta-global-markets-20250820",
+   "file_hash": "39d06dff905b06b48b07dedde0027a09ddedc5586d442c45b2e50919b11bbcf3",
+   "file_name": "國際金融市場焦點 20250820.pdf",
+   "file_path": "研報自動匯入/國際金融市場焦點 20250820.pdf",
+   "source": "yuanta",
+   "kind": "macro",
+   "language": "zh",
+   "two_column": false,
+   "page_count": 12,
+   "fields": {
+    "title": "科技股獲利了結賣壓湧現，美股主要指數普遍下跌",
+    "report_date": "2025-08-20",
+    "broker": "yuanta",
+    "instruments": []
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "main",
+     "text": "國際金融市場焦點"
+    },
+    {
+     "stream": "main",
+     "text": "元大觀點"
+    },
+    {
+     "stream": "main",
+     "text": "科技股獲利了結賣壓湧現，美股主要指數普遍下跌"
+    },
+    {
+     "stream": "main",
+     "text": "美股在高檔狹幅盤整之際，科技股獲利了結賣壓湧現，拖累美股主要指"
+    },
+    {
+     "stream": "main",
+     "text": "市場關注將公布 CPI，對央行升息預期延續，引導日圓小幅升值。"
+    },
+    {
+     "stream": "main",
+     "text": "市場靜候 Jackson Hole 談話，美元指數上漲，台幣走跌。"
+    },
+    {
+     "stream": "main",
+     "text": "市場對烏俄戰爭相關談話進展轉趨樂觀，油價下跌。"
+    },
+    {
+     "stream": "main",
+     "text": "新屋開工反彈，然房貸利率持續壓抑房市前景。"
+    },
+    {
+     "stream": "main",
+     "text": "研究中心 總體經濟組"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "單欄總經日報；p1 上半三個指數的大字數字是逐字分開的字元。無標的。"
+  },
+  {
+   "id": "gs-2330-earnings-review-20260716",
+   "file_hash": "d687fcce85ad96dfe8781c1bb5d7648298e2fd2953191ed79f4fedb0574dfcd6",
+   "file_name": "623132342386950230_260716_gs_TSMC.pdf",
+   "file_path": "研報自動匯入/623132342386950230_260716_gs_TSMC.pdf",
+   "source": "goldman_sachs",
+   "kind": "stock",
+   "language": "en",
+   "two_column": true,
+   "page_count": 14,
+   "fields": {
+    "title": "台積電：2026年AI需求增溫，上調全年營收與資本支出指引",
+    "report_date": "2026-07-16",
+    "broker": "goldman_sachs",
+    "instruments": [
+     {
+      "code": "2330",
+      "market": "TW",
+      "name": "TSMC",
+      "rating": "Buy",
+      "target_price": {
+       "value": 3100.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": 3000.0,
+      "eps": {
+       "2026E": 109.21,
+       "2027E": 140.91
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "db_prefill",
+    "report_date": "db_prefill",
+    "broker": "db_prefill",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "Earnings review: AI demand visibility into 2030 with stronger guidance extends"
+    },
+    {
+     "stream": "head",
+     "text": "TSMC’s lead with higher capacity investment; reiterate Buy"
+    },
+    {
+     "stream": "main",
+     "text": "Upbeat 2026 guidance driven by increased AI demand"
+    },
+    {
+     "stream": "main",
+     "text": "TSMC hosted its 2Q26 analyst meeting on July 16."
+    },
+    {
+     "stream": "main",
+     "text": "spot was 2Q26 GM of 67.7%, beating the company’s guidance but"
+    },
+    {
+     "stream": "main",
+     "text": "rating on TSMC."
+    },
+    {
+     "stream": "main",
+     "text": "Stronger AI demand signals stronger long-term growth"
+    },
+    {
+     "stream": "main",
+     "text": "We believe management’s tone on AI demand was more bullish than"
+    },
+    {
+     "stream": "side",
+     "text": "2330.TW 12m Price Target: NT$3,100.00 Price: NT$2,470.00 Upside: 25.5%"
+    },
+    {
+     "stream": "side",
+     "text": "Market cap: NT$64.0tr / $2.0tr"
+    },
+    {
+     "stream": "side",
+     "text": "GS Forecast"
+    },
+    {
+     "stream": "side",
+     "text": "EPS (NT$) New 66.26 109.21 140.91 180.83"
+    },
+    {
+     "stream": "side",
+     "text": "GS Factor Profile"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "高盛英文版：主文在左、分析師與 Key Data／GS Forecast 側欄在右，故側欄排在主文之後。左側直排浮水印（MOC.OVONEL@ULNIVEK）會混進文字。ADR（TSM，$620）不另列標的。"
+  }
+ ]
+}

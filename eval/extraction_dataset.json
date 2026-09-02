@@ -7,7 +7,8 @@
   "比對用 textnorm.norm_for_match（NFKC→小寫→去空白），所以片段可跨行、不必管抽取器的空白習慣；但片段內部的字元順序必須與原文一致。",
   "欄位層口徑：title／report_date／broker 由 DB 預填（field_sources 標 db_prefill），instruments 的評等／目標價／EPS 由模型看頁面渲染圖與 pdfplumber 逐行文字草標（draft_from_page_render），**不是**從 report_signal 抄來的。目標價保幣別不換算。無目標價的報告 golden 為 null，抽出任何數值都算錯。",
   "annotation_status＝draft 表示尚未人工覆核；覆核後改 reviewed，並在 annotator_notes 記錄改了什麼。eval_extraction.py 的 --reviewed-only 只吃 reviewed。",
-  "刻意未納入：掃描檔（全語料 0.70%）與亂碼檔（>2% 僅 26 筆）——第一批先量主流版型，這兩類留給第二批。"
+  "刻意未納入：掃描檔（全語料 0.70%）與亂碼檔（>2% 僅 26 筆）——第一批先量主流版型，這兩類留給第二批。",
+  "片段在全文出現多次時評測照首次出現算。scripts/review_extraction_golden.py 會把這種片段標黃；若首次出現就是標註者要的位置（目次項、頁首、封面標題在後頁重複）可以不改，否則延長片段到唯一。"
  ],
  "cases": [
   {
@@ -162,7 +163,7 @@
     },
     {
      "stream": "side",
-     "text": "4Q24 營收符合預期，受惠美系平板"
+     "text": "1. 4Q24 營收符合預期，受惠美系平板"
     },
     {
      "stream": "side",
@@ -174,7 +175,7 @@
     },
     {
      "stream": "main",
-     "text": "4Q24 營收符合預期，受惠美系平板及筆電訂單HDI稼動維持高檔。"
+     "text": "4Q24 營收符合預期，受惠美系平板及筆電訂單HDI稼動維持高檔。本季營"
     },
     {
      "stream": "main",
@@ -190,7 +191,7 @@
     }
    ],
    "annotation_status": "draft",
-   "annotator_notes": "同凱基版型。主文首句的「1」「52.8」是粗體內嵌數字、基線略高，抽取器容易把它們甩出句外。"
+   "annotator_notes": "同凱基版型。主文首句的「1」「52.8」是粗體內嵌數字、基線略高，抽取器容易把它們甩出句外。 2026-09-02 覆核工具指出側欄摘要句與主文首句逐字相同（兩處出現），側欄片段加上「1. 」、主文片段延長到「本季營」以各自唯一。"
   },
   {
    "id": "kgi-radar-monthly-semi-20260312",

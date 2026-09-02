@@ -1,0 +1,37 @@
+[Unit]
+Description=LineBot 健康探針（Windows 側 :8000 的 /health，非行程存活狀態）
+# 監控對象是 C:\LineBot 的 line_file_bot.py。它把 LINE 群組裡的研報下載到 NAS，
+# 而那個目錄正是 scripts/sync_new_reports.sh 的 rsync 來源——**它斷掉等於語料
+# 供稿斷掉**。2026-08-13 到 08-31 靜默停擺 18 天，期間少掉約三分之一的每日新
+# 研報，而現有監控沒有任何一條會說話（web 探針與它無關；freshness 的語料閘
+# 刻意讓「沒有新研報」不算停更；另一條供稿管道還在送，所以供稿量也不能當代理
+# 指標）。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**，理由與 report-mark-health.service 逐字相同：本探針
+# 每 2 分鐘一次，同一次中斷會觸發約 30 次／小時，而 report-mark-alert.sh 的
+# webhook 由單一全域變數控制。去重／提醒節奏／恢復判定屬於 P5，由
+# report-mark-linebot-incident.service 承擔。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h：系統層 unit 的 %h 一律解析為 /root，不受 User= 影響
+# （2026-07-28 sync unit 因此連續 10 輪失敗）。tests/test_deploy_units.py 靜態守這條。
+Environment=HOME=/home/kashionz
+# 只需要 curl／coreutils。**刻意不含 nvm 與 uv 的路徑**：探針不得相依 Python／.venv。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+# 顯式 `bash <script>`，不依賴 repo 內的執行位元（/mnt/c 的 drvfs 一律回報 777，
+# 從未記錄過 exec bit）。
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/check_linebot_health.sh"'
+# **刻意沒有 SuccessExitStatus。** 與 web 探針不同，這裡沒有「剛啟動的寬限期」
+# 那一類非故障退出碼：1（沒在跑）與 2（活著但存不了檔）都是真故障，只是處置
+# 不同——前者查工作排程器與 watchdog.log，後者查 NAS 掛載與權限。
+# 最壞情況＝3 次探測 × 5 秒逾時 ＋ 2 次 × 15 秒等待 ＝ 45 秒。取 90 秒＝2 倍餘裕，
+# 且**必須嚴格小於 timer 的 120 秒間隔**（取 120 會讓逾時的那一輪撞上下次觸發）。
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

@@ -118,6 +118,29 @@ METRIC_SPECS: dict[str, Spec] = {
     "pct_over_max_age": Spec(LOWER, ABS, "超過 max_age_days 的引用比例"),
     "n_cited": Spec(INFO, ABS, "引用總數，隨脈絡篇數浮動"),
     "max_age_days": Spec(META, ABS, "queryset 的新近度判定參數；不同則兩份的新近度指標定義不同"),
+    # ── scripts/eval_extraction.py（抽取層 golden set，docs/EXTRACTION_REDESIGN.md §5）──
+    "order_hit_rate": Spec(HIGHER),
+    "order_pair_acc": Spec(HIGHER),
+    "order_pair_acc_within": Spec(HIGHER),
+    "order_kendall_tau": Spec(HIGHER),
+    "order_pair_acc_case_mean": Spec(INFO, ABS, "逐檔平均，僅供對照；判定用配對加總的 order_pair_acc"),
+    "rating_coverage": Spec(HIGHER),
+    "rating_accuracy": Spec(HIGHER),
+    "tp_coverage": Spec(HIGHER),
+    "tp_accuracy": Spec(HIGHER),
+    "hallucination_rate": Spec(LOWER, ABS, "evidence 錨不回比例，prefix 計為錨不回"),
+    # 去空白字元數是健檢：換抽取器本來就會動，方向不能一概而論（多抽到頁首頁尾未必是好事）。
+    "chars_nows_total": Spec(INFO, REL, "文字健檢，非主指標；大幅下降＝新抽取器在吃字"),
+    "n_cases_with_order": Spec(SAMPLE),
+    "n_order_sentences": Spec(SAMPLE),
+    "n_order_pairs": Spec(SAMPLE),
+    "n_order_pairs_within": Spec(SAMPLE),
+    "n_golden_tp": Spec(SAMPLE),
+    "n_evidence": Spec(INFO, ABS, "帶 evidence 的訊號數，隨擷取結果浮動"),
+    "n_evidence_prefix": Spec(INFO, ABS, "以 prefix 層錨定的 evidence 數"),
+    "n_prefilled": Spec(SAMPLE),
+    "n_draft": Spec(SAMPLE),
+    "n_reviewed": Spec(SAMPLE),
 }
 
 STATUS_BETTER = "改善"
@@ -134,6 +157,8 @@ _ARROW = {HIGHER: "↑", LOWER: "↓", FLAG: "旗標", INFO: "—", SAMPLE: "—
 _SHAPE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("ragas", ("faithfulness", "context_precision", "answer_relevancy")),
     ("report", ("ruleset_version", "sufficient_n")),
+    # 抽取層排在 retrieval 之前：它也帶 n_cases，靠 order_* 鍵區分。
+    ("extraction", ("order_pair_acc", "order_hit_rate")),
     ("retrieval", ("hit_rate", "n_cases")),
 )
 
@@ -229,7 +254,8 @@ def sample_facts(summary: dict) -> dict[str, int]:
     `n - n_errors - n_no_context`（baseline-m2 名目 8、實際 7）。
     """
     facts: dict[str, int] = {}
-    for key in ("n", "n_cases"):
+    # 抽取層：draft 與 reviewed 的標註不是同一種東西，覆核筆數不同就不可比。
+    for key in ("n", "n_cases", "n_reviewed", "n_order_sentences"):
         val = summary.get(key)
         if isinstance(val, int) and not isinstance(val, bool):
             facts[key] = val

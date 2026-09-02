@@ -14,6 +14,10 @@ EDGE_COMPOSE ?= deploy/docker-compose.yml
 # eval-compare 的預設容忍值；BASE/CAND 刻意沒有預設，兩份結果檔必須由呼叫者指名
 # （三套評測的形狀不同，猜錯就是拿 RAGAS 去比檢索）。
 TOL ?= 0.03
+# 硬體用量量測（上雲選型）：取樣時長與分析窗期。
+DURATION ?= 3600
+SINCE ?=
+BENCH_ARGS ?= --dry-run
 
 # Docker 二進位自動偵測：可連到 daemon 的 docker 優先；否則若有 docker.exe（WSL+Docker Desktop）就用它；
 # 都沒有時退回 docker，讓指令自己回報真正的 daemon 錯誤（而非 docker.exe: command not found）。
@@ -25,7 +29,8 @@ COMPOSE := $(DOCKER) compose
         stats reset-db clean-data pipeline signals takeaways titles brief \
         eval-compare \
         up-edge down-edge edge-logs edge-reload \
-        sync-once db-backup freshness
+        sync-once db-backup freshness db-audit \
+        metrics metrics-once metrics-collect metrics-bench
 
 help:  ## 顯示可用指令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -211,3 +216,21 @@ freshness:  ## 管線與批次停更偵測（純 SQL、零 LLM；rc 0 PASS／1 �
 # 幾條是 57 萬列全表掃描，腳本內走 relax_statement_timeout，別在對外服務尖峰跑。
 db-audit:  ## 資料完整性稽核（唯讀；rc 0 乾淨／1 有發現／2 DB 不可用）
 	uv run python scripts/db_audit.py
+
+# ───── 硬體用量量測（上雲選型）─────
+# 三支都刻意用 /usr/bin/python3 而非 uv run：量測工具不得相依 .venv——
+# 理由見 scripts/collect_resource_usage.py 的 docstring（2026-08-18 的中斷根因
+# 正是 venv 損毀，相依 .venv 的量測會與被監控的東西一起死）。
+metrics-once:  ## 印一筆硬體用量快照（不寫檔；確認取樣器看得到哪些元件）
+	/usr/bin/python3 scripts/collect_resource_usage.py --once
+
+metrics-collect:  ## 前景取樣（用法：make metrics-collect DURATION=3600）→ data/metrics/
+	/usr/bin/python3 scripts/collect_resource_usage.py --duration $(DURATION)
+
+metrics:  ## 分析取樣結果 → 分位數與上雲選型（用法：make metrics SINCE=24h）
+	/usr/bin/python3 scripts/analyze_resource_usage.py $(if $(SINCE),--since $(SINCE),)
+
+# **這一支會真的消耗 Claude 額度**（每題 spawn claude CLI 數次），故預設題數與併發都最小。
+# 先 --dry-run 看計畫再拿掉；跑完照它印的指令用 --bench 框窗期換算單條成本。
+metrics-bench:  ## 受控負載壓測（會用掉 Claude 額度；用法：make metrics-bench BENCH_ARGS="--limit 4")
+	/usr/bin/python3 scripts/bench_load.py $(BENCH_ARGS)

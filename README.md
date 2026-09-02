@@ -277,6 +277,9 @@ report-mark/
 │   eval_faithfulness.py    M8 查核結果彙總（唯讀）；--claims <id> 逐條主張下鑽
 │   check_batch_freshness.py  批次停更偵測：純 SQL 比最新產出日 vs 門檻（0 新鮮／1 停更／2 查不到）→ make freshness
 │   db_audit.py             資料完整性稽核（唯讀）：孤兒列／NULL embedding／重複 chunk_index／市場不一致／content_norm 漂移 → make db-audit
+│   collect_resource_usage.py  硬體用量取樣（cgroup v2 + /proc；常駐、唯讀、不需 .venv）→ data/metrics/*.jsonl
+│   analyze_resource_usage.py  用量分位數與上雲選型（唯讀，零 LLM）→ make metrics
+│   bench_load.py           受控負載壓測：對真實端點打可控負載，換算單條問答的核心秒與 RAM 增量（**會消耗 Claude 額度**）
 │   sync_new_reports.sh     NAS→本地增量同步 + 增量匯入（drvfs + rsync，三層去重）
 │
 ├─ workflows/
@@ -296,7 +299,7 @@ report-mark/
 ├─ eval/            離線評測 harness：run_ragas.py（M1）、run_report_eval.py（M1b）、凍結題集、baselines/
 ├─ db/schema.sql    research schema：research_report + report_chunk + qa_log + report_doc
 │                   + report_signal + report_run/report_section + report_rendition + report_takeaway
-├─ docs/            WORKFLOW / ROADMAP / EXTERNAL_ACCESS / production_resilience / nas_scheduled_sync / qa_pdf_report / 向量搜索優化報告
+├─ docs/            WORKFLOW / ROADMAP / EXTERNAL_ACCESS / production_resilience / CAPACITY / nas_scheduled_sync / qa_pdf_report / 向量搜索優化報告
 ├─ deploy/          生產部署真相來源：systemd（web / NAS sync / alert ＋ PATH drop-in）、nginx.conf、docker-compose（nginx + cloudflared）
 ├─ tests/           Python 測試（unittest 風格，pytest 執行）
 ├─ 研報自動匯入/     ← 唯讀來源：券商 PDF/docx（~1.5 萬，由 NAS 同步鏡入）
@@ -539,6 +542,7 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 | DB 備份 | systemd `report-mark-backup.timer`（每日 03:30）→ `scripts/db_backup.sh`：`pg_dump -Fc` **只備重建不回來的七張表**（`qa_log` / `report_doc` / `report_rendition` / `report_takeaway` / `report_signal` / `report_run` / `report_section`）到 NAS，保留 7 日 ＋ 4 週；手動跑一次 `make db-backup`。語料層刻意不備（重跑管線可還原）。**還原步驟與已知限制見 [docs/production_resilience.md](docs/production_resilience.md)** |
 | 批次停更偵測 | systemd `report-mark-freshness.timer`（每日 08:30）→ `scripts/check_batch_freshness.py`（純 SQL、零 LLM）：查摘要／重點摘錄／觀點訊號的最新產出日，超過門檻即非零退出 → 走既有 `OnFailure` 告警鏈；手動跑一次 `make freshness`。**存在理由**：sync 殼把摘要／標題／摘錄設成 best-effort（失敗只記 log、不讓 unit 變紅），所以停更**不會**觸發 `OnFailure`——2026-07 實測 takeaway 停更 8 天、signal 停更 12 天都是事後才發現 |
 | 資料完整性稽核 | systemd `report-mark-audit.timer`（每日 08:45，錯開 freshness 的 08:30——兩支都對 `report_chunk` 全表掃描）→ `scripts/db_audit.py`（唯讀、純 SQL、零 LLM）：一組對現況的斷言——孤兒 `report_doc`／`report_run`／`report_rendition`、NULL `embedding`、重複 `chunk_index`、`report_signal.market` 與 `research_report.market` 不一致、有全文卻無 chunk、takeaway 的 `text_sha256` 互相矛盾、`content_norm` 與 `norm_for_match()` 漂移（取樣 500 列）。0 乾淨／1 有發現／2 DB 不可用。**與停更偵測分工**：那支量「批次有沒有在前進」，這支量「已產出的資料有沒有互相矛盾」。**存在理由**：完整性保證幾乎全在「寫入端很小心」而不在 DB 約束裡（三張衍生表刻意無 FK、`embedding` 可 NULL、`market` 是兩份副本），所以壞掉的方式**全部是靜默的**。刻意只讀不修——處置需要人決定。2026-07-30 首跑抓到 2 列孤兒 `report_doc`。**最關鍵的一條是耐久性**：`ingest_lowio.sh` 的 `trap ... EXIT` 擋不住 SIGKILL，而 `ALTER SYSTEM SET fsync=off` 寫進容器內 pgdata 的 postgresql.auto.conf、**重啟也不會恢復** ⇒ DB 無限期跑在無耐久性模式、零症狀，斷電即整個 pgdata 報廢（處置：`make restore-durability`）。timer 的 `Persistent=true` 在這條上特別重要——最可能留下 `fsync=off` 的情境（機器被硬收掉）恰好就是它會被錯過的那一天 |
+| 硬體用量取樣 | systemd `report-mark-metrics.service`（常駐 `Type=simple`，`Nice=10`／`IOSchedulingClass=idle`）→ `scripts/collect_resource_usage.py`：每 20 秒一筆 cgroup v2 ＋ `/proc` 快照、每 10 分鐘一筆容量快照，落 `data/metrics/*.jsonl`（自帶 30 天修剪，約 10 MB／日）；分析走 `make metrics`。**刻意不接 `OnFailure` 告警鏈**——取樣器停掉不是生產事故，而 `report-mark-alert.sh` 的 webhook 由單一全域變數控制，接上去等於讓輔助工具有能力在半夜吵醒人。**存在理由**：上雲選機型要的是分位數與尖峰，而尖峰只出現在 sync（每 3 小時）與問答／研報生成的那幾分鐘，人工看 `top` 一定會錯過。口徑與效力邊界見 [docs/CAPACITY.md](docs/CAPACITY.md) |
 
 對外請求路徑：`Browser ──HTTPS──▶ Cloudflare edge ──tunnel──▶ nginx:80 ──▶ uvicorn:8097`。
 
@@ -567,6 +571,7 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 | [docs/qa_pdf_report_deployment.md](docs/qa_pdf_report_deployment.md) | 深度研報 PDF（CJK 字型）部署 |
 | [docs/production_resilience.md](docs/production_resilience.md) | 生產韌性：重啟策略、健康檢查、失敗告警、systemd unit 還原 |
 | [docs/LINEBOT_ALWAYS_ON.md](docs/LINEBOT_ALWAYS_ON.md) | LineBot 供稿鏈：常駐看門狗、nginx 對外路徑、P4／P5 第二實例監控、安裝步驟與已知限制 |
+| [docs/CAPACITY.md](docs/CAPACITY.md) | 硬體用量量測：取樣口徑（CPU 以核心數計、cgroup 而非 PID、非服務負載扣除）、systemd 安裝、上雲選型的證據基礎與其效力邊界 |
 | [docs/向量搜索優化報告.md](docs/向量搜索優化報告.md) | 向量檢索優化（混合檢索、HNSW 調校、CJK 正規化）|
 | [AGENTS.md](AGENTS.md) | 貢獻者指南（結構、風格、測試、提交與安全慣例）|
 | [docs/incidents/2026-08-18-wsl-9p-production-outage.md](docs/incidents/2026-08-18-wsl-9p-production-outage.md) | 2026-08-18 生產中斷事故報告：9p 上的 venv 損毀 ＋ 失效 portproxy，4h50m 全鏈路不可用 |

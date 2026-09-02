@@ -206,6 +206,19 @@ class DetectColumnsUnitTests(unittest.TestCase):
         self.assertEqual(len(gutters), 1, gutters)
         self.assertTrue(237 < gutters[0] < 300, gutters)
 
+    def test_numeric_value_column_is_merged_into_its_labels(self):
+        """元富個股報告側欄：左邊是標籤、右邊一整排靠右對齊的數值，中間一條稀疏帶。
+
+        數值欄夠寬也夠多詞，寬度與詞數擋不住它；要靠內容——七成以上是數字就不是一欄。
+        整頁應判成兩欄（側欄 vs 主文），溝槽落在數值欄與主文之間。
+        """
+        labels = [self._w(50, 130 if i % 2 else 100, 240 + i * 14) for i in range(40)]
+        values = [dict(self._w(160, 205, 240 + i * 14), text=f"{i * 1.5:.1f}") for i in range(40)]
+        main = [self._w(230, 560, 230 + i * 13) for i in range(60)]
+        gutters = detect_columns(labels + values + main, 595.0, 842.0)
+        self.assertEqual(len(gutters), 1, gutters)
+        self.assertTrue(205 < gutters[0] < 230, gutters)
+
     def test_lopsided_split_is_rejected(self):
         """一側只有幾個詞時，那條空白帶是置中的圖不是欄界。"""
         left = [self._w(40, 250, 200 + i * 12) for i in range(58)]

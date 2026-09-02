@@ -72,15 +72,18 @@ class Block:
     text: str = ""
     table_cells: tuple[tuple[str, ...], ...] = ()
     column: int = 0  # 0-based 欄索引；單欄版面恆為 0
+    # 跨欄帶索引：頁面被跨欄元素（橫幅表格、跨欄大標）切成上下幾段，同一段內才分欄。
+    # 沒有它，頁尾的橫幅表格會因為「跨欄＝第 0 欄」而排到右欄整段之前（E0 實測凱基）。
+    band: int = 0
 
     @property
-    def sort_key(self) -> tuple[int, int, float, float, int]:
-        """全序排序鍵。**最後兩項是 tie-break，不可省**——沒有它們，兩個
-        bbox 完全相同的 Block（實務上出現在重疊的浮水印與正文）順序會依賴
-        `sorted()` 的穩定性，而那取決於它們進 list 的順序。"""
+    def sort_key(self) -> tuple[int, int, int, float, float, int]:
+        """全序排序鍵：頁 → 跨欄帶 → 欄 → y → x → order。**最後兩項是 tie-break，不可省**
+        ——沒有它們，兩個 bbox 完全相同的 Block（實務上出現在重疊的浮水印與正文）順序
+        會依賴 `sorted()` 的穩定性，而那取決於它們進 list 的順序。"""
         x0 = _q(self.bbox[0]) if self.bbox else 0.0
         top = _q(self.bbox[1]) if self.bbox else 0.0
-        return (self.page_no, self.column, top, x0, self.order)
+        return (self.page_no, self.band, self.column, top, x0, self.order)
 
 
 @dataclass(frozen=True)

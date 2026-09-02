@@ -39,7 +39,10 @@ _COLS_BINS = 200
 # 的欄間距在 18–36pt，而同一行內兩個詞之間的空白不會超過幾 pt。
 _MIN_GUTTER_FRAC = 0.04
 # 溝槽必須落在內容寬度的這個區間內。靠邊的空白是頁邊距不是欄界。
-_GUTTER_BAND = (0.18, 0.82)
+# 下限 0.15 不是 0.18：元富英文個股報告的側欄只占內容寬度 33%，溝槽中點落在
+# 35.5%，0.18 會把它擋掉、整頁退回單欄（E0 實測）。內容寬度已經是墨跡的兩端，
+# 15% 仍遠大於任何頁邊距。
+_GUTTER_BAND = (0.15, 0.85)
 # 每一欄至少要分到這麼多比例的詞，否則那條「溝槽」多半是一張置中的圖。
 _MIN_COL_SHARE = 0.15
 # 每一欄的墨跡寬度至少要占內容寬度這麼多，否則它不是一欄、是表格裡的一個窄欄位。
@@ -48,6 +51,11 @@ _MIN_COL_SHARE = 0.15
 # 「買進」被甩到另一條文字流。窄欄不是整頁退回單欄，而是**併回相鄰空隙較小的那一欄**
 # ——那一頁真正的兩欄（清單 vs 目次）仍然要分開。
 _MIN_COL_WIDTH_FRAC = 0.12
+# 一欄裡「數字型 token」占比達此值就不是一欄，是側欄裡標籤右側對齊的數值欄
+# （元富個股報告：目標價／52 週高低／成交量／PER 一整排靠右的數字）。它夠寬、
+# 詞數也夠，寬度與詞數兩條都擋不住；只有內容擋得住——真的文字欄不會七成是數字。
+_NUMERIC_COL_MAX_FRAC = 0.70
+_NUMERIC_TOKEN = re.compile(r"^[\d.,%/()+\-–~:xX]+$")
 # 在溝槽處要有多寬的間隙才算「這裡真的是欄界」，以溝槽最小寬度為單位。
 # 取 0.5 是因為欄界處的實際留白必然接近整條溝槽寬，而跨欄大標在那裡只有
 # 一個字距——兩者相差一個量級，門檻落在中間很安全。
@@ -57,6 +65,16 @@ _MAX_COLS = 3
 # 投影只取版心：頁首、跨欄大標、頁尾都會橫跨溝槽，把它們算進去會讓
 # **每一頁的雙欄都偵測不到**。這是這段最容易犯的錯。
 _BODY_BAND = (0.12, 0.90)
+# 版心帶**內**也會有少數跨欄元素（元富個股報告的結論列、速報中段的橫幅表格）。
+# 投影若是布林「有沒有墨」，4 個跨欄詞就把整條溝槽填滿、整頁退回單欄——E0 實測
+# 元富三份首頁全部如此（跨欄詞占全頁 0.8–2.9%），側欄與主文於是依 y 交錯。
+# 改為計數：一格被不超過這個比例的詞蓋到，仍算空白。散文單欄頁的每一格都被
+# 幾乎每一行蓋到，不會因此冒出假溝槽；跨欄詞本身之後由 _column_of 判成跨欄。
+_GUTTER_MAX_CROSS_FRAC = 0.04
+# 頁首脫離：頁首帶內的右欄區塊，要與同欄下一個區塊相距超過頁高這個比例才歸第 0 欄。
+# 實測元富「公司拜訪快報」到右欄首段相距 111pt（13%）、「個股報告／HOLD」99pt；
+# 而版心從頁頂開始的頁面，右欄首段到次段只有一行高（<2%）。
+_HEADER_DETACH_GAP_FRAC = 0.05
 
 # ── 行與段落 ────────────────────────────────────────────────────────────────
 # 同一行的垂直容差，以該頁字高中位數為單位。
@@ -147,16 +165,34 @@ def detect_columns(words: list[dict], width: float, height: float) -> list[float
     if span <= 0:
         return []
 
-    covered = [False] * _COLS_BINS
+    counts = [0] * _COLS_BINS
     for w in body:
         a = int((w["x0"] - x0) / span * (_COLS_BINS - 1))
         b = int((w["x1"] - x0) / span * (_COLS_BINS - 1))
         for i in range(max(0, a), min(_COLS_BINS - 1, b) + 1):
-            covered[i] = True
+            counts[i] += 1
+    max_cross = int(_GUTTER_MAX_CROSS_FRAC * len(body))
+    covered = [c > max_cross for c in counts]
 
     min_bins = max(1, int(_MIN_GUTTER_FRAC * _COLS_BINS))
     lo = int(_GUTTER_BAND[0] * _COLS_BINS)
     hi = int(_GUTTER_BAND[1] * _COLS_BINS)
+
+    def _gutter_x(a: int, b: int) -> float:
+        # 溝槽位置取 run 內**完全無墨**最長一段的中點，而不是整個 run 的中點：
+        # 容許跨欄詞之後，run 的兩端會含有被項目符號或縮排蓋到的格子，取整段中點
+        # 會把溝槽推進主文的縮排裡，主文首行於是被 _column_of 判成跨欄（E0 實測
+        # 元富穩懋那份就是這樣）。
+        best_a, best_len, cur_a = a, 0, None
+        for i in range(a, b + 1):
+            if i < b and counts[i] == 0:
+                cur_a = i if cur_a is None else cur_a
+                continue
+            if cur_a is not None and i - cur_a > best_len:
+                best_a, best_len = cur_a, i - cur_a
+            cur_a = None
+        mid = (best_a + best_a + best_len) / 2 if best_len else (a + b) / 2
+        return x0 + mid / (_COLS_BINS - 1) * span
 
     gutters: list[float] = []
     run_start: int | None = None
@@ -166,43 +202,58 @@ def detect_columns(words: list[dict], width: float, height: float) -> list[float
             continue
         if run_start is not None:
             if i - run_start >= min_bins and lo <= (run_start + i) // 2 <= hi:
-                gutters.append(x0 + ((run_start + i) / 2) / (_COLS_BINS - 1) * span)
+                gutters.append(_gutter_x(run_start, i))
             run_start = None
     if run_start is not None and _COLS_BINS - run_start >= min_bins:
         mid = (run_start + _COLS_BINS) // 2
         if lo <= mid <= hi:
-            gutters.append(x0 + (mid / (_COLS_BINS - 1)) * span)
+            gutters.append(_gutter_x(run_start, _COLS_BINS))
 
     if not gutters or len(gutters) >= _MAX_COLS:
         return []
 
-    gutters = _merge_narrow_columns(gutters, body, x0, x1)
-    if not gutters:
-        return []
-
-    # 每一欄都要有足量的詞，否則那條空白帶多半是置中的圖或短表。
-    edges = [x0 - 1.0, *gutters, x1 + 1.0]
-    for a, b in zip(edges, edges[1:]):
-        share = sum(1 for w in body if a <= (w["x0"] + w["x1"]) / 2 < b) / len(body)
-        if share < _MIN_COL_SHARE:
-            return []
-    return gutters
+    # 太窄或詞數太少的欄不是一欄——併回鄰欄，**不是整頁退回單欄**：元富英文個股報告
+    # 的側欄裡「標籤…數值」之間有一條稀疏帶，會被投影成第二條溝槽；若因此整頁放棄，
+    # 真正的側欄／主文分界就跟著丟了（E0 實測）。
+    return _merge_weak_columns(gutters, body, x0, x1)
 
 
-def _merge_narrow_columns(gutters: list[float], body: list[dict], x0: float, x1: float) -> list[float]:
-    """把墨跡太窄的欄併回相鄰欄：拿掉它與空隙較小那一側之間的溝槽，直到沒有窄欄。"""
+def _merge_weak_columns(gutters: list[float], body: list[dict], x0: float, x1: float) -> list[float]:
+    """把「弱欄」併回鄰欄，直到每一欄都夠寬（_MIN_COL_WIDTH_FRAC）、夠多詞（_MIN_COL_SHARE）
+    且不是純數值欄（_NUMERIC_COL_MAX_FRAC）。
+
+    併的方向是**空隙較小的那一側**：窄欄通常是表格裡被切出來的一個欄位，它離自己
+    的表比離隔壁欄近。全部併光就回空 list（單欄）。"""
     span = x1 - x0
     gutters = list(gutters)
     while gutters:
         edges = [x0 - 1.0, *gutters, x1 + 1.0]
         ink: list[tuple[float, float] | None] = []
+        shares: list[float] = []
         for a, b in zip(edges, edges[1:]):
             ws = [w for w in body if a <= (w["x0"] + w["x1"]) / 2 < b]
             ink.append((min(w["x0"] for w in ws), max(w["x1"] for w in ws)) if ws else None)
-        narrow = [i for i, k in enumerate(ink) if k is None or (k[1] - k[0]) < _MIN_COL_WIDTH_FRAC * span]
-        if not narrow:
+            shares.append(len(ws) / len(body))
+        numeric: list[float] = []
+        for a, b in zip(edges, edges[1:]):
+            ws = [w for w in body if a <= (w["x0"] + w["x1"]) / 2 < b]
+            numeric.append(sum(1 for w in ws if _NUMERIC_TOKEN.match(w.get("text", ""))) / len(ws) if ws else 0.0)
+        weak = [
+            i
+            for i, k in enumerate(ink)
+            if k is None
+            or (k[1] - k[0]) < _MIN_COL_WIDTH_FRAC * span
+            or shares[i] < _MIN_COL_SHARE
+            or numeric[i] >= _NUMERIC_COL_MAX_FRAC
+        ]
+        if not weak:
             return gutters
-        i = narrow[0]
+        i = weak[0]
+        # 數值欄一律併回**左邊**：它是標籤右側對齊的數值，屬於左邊的標籤，不看空隙
+        # （空隙常常反而是往主文那側較小，實測元富三份都會併錯邊）。
+        if numeric[i] >= _NUMERIC_COL_MAX_FRAC and i > 0:
+            gutters.pop(i - 1)
+            continue
         candidates: list[tuple[float, int]] = []  # (空隙寬, 要移除的溝槽索引)
         if i > 0:
             gap = (ink[i][0] if ink[i] else gutters[i - 1]) - (ink[i - 1][1] if ink[i - 1] else gutters[i - 1])
@@ -503,6 +554,9 @@ def _page_blocks(page: Any, page_no: int) -> tuple[Block, ...]:
             rx1 = max(w["x1"] for w in run)
             by_col.setdefault(_column_of(rx0, rx1, gutters), []).append(run)
 
+    # 候選：(col, bbox, text, size, table_rows)。先全部收齊再決定欄與帶，因為
+    # 「頁首脫離」與「跨欄帶」都需要看到整頁其他區塊的位置。
+    cands: list[tuple[int, tuple[float, float, float, float], str, float, tuple | None]] = []
     for col in sorted(by_col):
         for para in _group_paragraphs(sorted(by_col[col], key=lambda ln: min(w["top"] for w in ln))):
             flat = [w for ln in para for w in ln]
@@ -517,6 +571,41 @@ def _page_blocks(page: Any, page_no: int) -> tuple[Block, ...]:
             )
             psizes = [float(w.get("size") or 0.0) for w in flat if w.get("size")]
             size = statistics.median(psizes) if psizes else med_size
+            cands.append((col, bbox, text, size, None))
+    for bbox, rows in tables:
+        cands.append((_column_of(bbox[0], bbox[2], gutters), bbox, "", med_size, rows))
+
+    # 頁首脫離：頁首帶（版心帶之上）落在右欄、且與同欄下一個區塊有明顯間距的區塊，
+    # 歸第 0 欄——報告類型、券商名這類東西在閱讀上先於任何一欄。「有明顯間距」
+    # 這個條件不可省：版心從頁頂開始的頁面，右欄首段也在頁首帶內，沒有間距條件
+    # 會把它搬到左欄前面。
+    head_limit = _BODY_BAND[0] * height
+    detach_gap = _HEADER_DETACH_GAP_FRAC * height
+    cols_final: list[int] = []
+    for idx, (col, bbox, _text, _size, _rows) in enumerate(cands):
+        if col > 0 and bbox[3] <= head_limit:
+            below = [c[1][1] for j, c in enumerate(cands) if j != idx and c[0] == col and c[1][1] >= bbox[3]]
+            if not below or min(below) - bbox[3] > detach_gap:
+                col = 0
+        cols_final.append(col)
+
+    # 跨欄帶：跨過溝槽的區塊（橫幅表格、跨欄大標）把頁面切成上下幾段，段內才分欄。
+    # 沒有它，「跨欄＝第 0 欄」會讓頁尾的橫幅表格排到右欄整段之前。
+    spanning = sorted(
+        (bbox[1], bbox[3])
+        for (col, bbox, _t, _s, _r) in cands
+        if gutters and any(bbox[0] < g < bbox[2] for g in gutters)
+    )
+
+    def _band(bbox: tuple[float, float, float, float]) -> int:
+        mid = (bbox[1] + bbox[3]) / 2
+        is_span = any(abs(bbox[1] - t) < 1e-6 and abs(bbox[3] - b) < 1e-6 for t, b in spanning)
+        if is_span:
+            return 2 * next(i for i, (t, b) in enumerate(spanning) if abs(bbox[1] - t) < 1e-6) + 1
+        return 2 * sum(1 for _t, b in spanning if b <= mid)
+
+    for (col, bbox, text, size, rows), col_f in zip(cands, cols_final):
+        if rows is None:
             blocks.append(
                 Block(
                     type=_classify(text, bbox, size, med_size, height),
@@ -524,22 +613,22 @@ def _page_blocks(page: Any, page_no: int) -> tuple[Block, ...]:
                     order=order,
                     bbox=bbox,
                     text=text,
-                    column=col,
+                    column=col_f,
+                    band=_band(bbox),
                 )
             )
-            order += 1
-
-    for bbox, rows in tables:
-        blocks.append(
-            Block(
-                type="table",
-                page_no=page_no,
-                order=order,
-                bbox=bbox,
-                table_cells=rows,
-                column=_column_of(bbox[0], bbox[2], gutters),
+        else:
+            blocks.append(
+                Block(
+                    type="table",
+                    page_no=page_no,
+                    order=order,
+                    bbox=bbox,
+                    table_cells=rows,
+                    column=col_f,
+                    band=_band(bbox),
+                )
             )
-        )
         order += 1
 
     blocks.sort(key=lambda b: b.sort_key)

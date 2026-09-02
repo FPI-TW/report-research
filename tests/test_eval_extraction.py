@@ -139,3 +139,11 @@ def test_dataset_shape_and_files_exist():
             assert tp is None or ("value" in tp and "currency" in tp), c["id"]
         if c["annotation_status"] != "prefilled":
             assert len(c["order"]) >= 8, f"{c['id']} 順序層少於 8 條"
+
+
+def test_score_order_ignores_markdown_table_pipes():
+    # 版面抽取器把表格序列化成 markdown；儲存格分隔符不是版面順序資訊，不能扣分
+    text = "| 發布日 | 報告 | 評等 |\n| 2/26 | 6690安碁資訊 | 買進 |\n\n台股盤勢分析"
+    items = _items(("side", "發布日 報告 評等"), ("side", "2/26 6690安碁資訊 買進"), ("main", "台股盤勢分析"))
+    r = ev.score_order(text, items)
+    assert r.n_hit == 3 and r.pair_acc == 1.0

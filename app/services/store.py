@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import date
@@ -33,6 +34,89 @@ class ReportRow:
     stock_targets: Optional[list[str]] = None
     futures_targets: Optional[list[str]] = None
     full_text: Optional[str] = None
+    # ── E1b 抽取層欄位（全部可省，舊呼叫端不動）──
+    extractor: Optional[str] = None
+    extraction_version: Optional[str] = None
+    quality_score: Optional[float] = None
+    quality_flags: Optional[dict] = None
+    page_count: Optional[int] = None
+    pages_failed: Optional[list[int]] = None
+    needs_review: bool = False
+
+
+# extraction_log.stopped_at 的封閉詞彙。**與 db/schema.sql 的 CHECK 逐字一致**
+# （tests/test_extraction_log.py 釘住）；改一邊要一起改，而且 CHECK 在既有庫是 no-op，
+# 得另外寫 ALTER（見 db/expected_constraints.txt 檔頭）。
+STOPPED_AT = ("ingested", "skip_admin", "scanned", "not_research", "extract_error")
+
+
+@dataclass
+class ExtractionLogRow:
+    file_hash: str
+    file_name: str  # 單一檔名；同 hash 的其他檔名由 upsert 併進 file_names 陣列
+    extractor: str
+    extraction_version: str
+    stopped_at: str
+    page_count: Optional[int] = None
+    pages_failed: Optional[list[int]] = None
+    char_count: Optional[int] = None
+    quality_score: Optional[float] = None
+    quality_flags: Optional[dict] = None
+
+
+def needs_review(quality_score: Optional[float], pages_failed: Optional[Sequence[int]], review_min: float) -> bool:
+    """品質閘的判定：只標記不擋。分數低於門檻、或有任何頁級失敗，都算要人看。
+    分數為 None（pypdf 路徑）不算低分——沒量到不是壞。"""
+    if pages_failed:
+        return True
+    return quality_score is not None and quality_score < review_min
+
+
+async def upsert_extraction_log(session: AsyncSession, row: ExtractionLogRow) -> None:
+    """每個進過管線的 file_hash 寫一列；同 hash 再來時覆寫落點與品質欄位、**檔名累加不覆蓋**。
+
+    呼叫端要自己 commit（多半與 research_report 同一個交易）。"""
+    if row.stopped_at not in STOPPED_AT:
+        raise ValueError(f"stopped_at 不在封閉詞彙內：{row.stopped_at!r}")
+    await session.execute(
+        text(
+            """
+            INSERT INTO research.extraction_log
+                (file_hash, file_names, extractor, extraction_version, page_count, pages_failed,
+                 char_count, quality_score, quality_flags, stopped_at, updated_at)
+            VALUES
+                (:file_hash, ARRAY[:file_name]::text[], :extractor, :extraction_version, :page_count,
+                 CAST(:pages_failed AS int[]), :char_count, :quality_score,
+                 CAST(:quality_flags AS jsonb), :stopped_at, now())
+            ON CONFLICT (file_hash) DO UPDATE SET
+                file_names = (
+                    SELECT array_agg(DISTINCT n ORDER BY n)
+                    FROM unnest(research.extraction_log.file_names || EXCLUDED.file_names) AS n
+                ),
+                extractor = EXCLUDED.extractor,
+                extraction_version = EXCLUDED.extraction_version,
+                page_count = EXCLUDED.page_count,
+                pages_failed = EXCLUDED.pages_failed,
+                char_count = EXCLUDED.char_count,
+                quality_score = EXCLUDED.quality_score,
+                quality_flags = EXCLUDED.quality_flags,
+                stopped_at = EXCLUDED.stopped_at,
+                updated_at = now()
+            """
+        ),
+        {
+            "file_hash": row.file_hash,
+            "file_name": row.file_name,
+            "extractor": row.extractor,
+            "extraction_version": row.extraction_version,
+            "page_count": row.page_count,
+            "pages_failed": list(row.pages_failed) if row.pages_failed else None,
+            "char_count": row.char_count,
+            "quality_score": row.quality_score,
+            "quality_flags": json.dumps(row.quality_flags or {}, ensure_ascii=False),
+            "stopped_at": row.stopped_at,
+        },
+    )
 
 
 def _vec_literal(vec: Sequence[float]) -> str:
@@ -60,17 +144,28 @@ async def upsert_report(
                 (id, file_hash, file_name, file_path, market, is_research,
                  confidence, stock_code, company_name, source, report_date,
                  report_type, language, instrument_types, relates_stock,
-                 relates_futures, stock_targets, futures_targets, full_text)
+                 relates_futures, stock_targets, futures_targets, full_text,
+                 extractor, extraction_version, quality_score, quality_flags,
+                 page_count, pages_failed, needs_review)
             VALUES
                 (:id, :file_hash, :file_name, :file_path, :market, :is_research,
                  :confidence, :stock_code, :company_name, :source, :report_date,
                  :report_type, :language, CAST(:instrument_types AS text[]),
                  :relates_stock, :relates_futures,
                  CAST(:stock_targets AS text[]), CAST(:futures_targets AS text[]),
-                 :full_text)
+                 :full_text,
+                 :extractor, :extraction_version, :quality_score, CAST(:quality_flags AS jsonb),
+                 :page_count, CAST(:pages_failed AS int[]), :needs_review)
             """
         ),
-        {"id": report_id, **report.__dict__},
+        {
+            "id": report_id,
+            **report.__dict__,
+            "quality_flags": (
+                json.dumps(report.quality_flags, ensure_ascii=False) if report.quality_flags is not None else None
+            ),
+            "pages_failed": list(report.pages_failed) if report.pages_failed else None,
+        },
     )
 
     chunk_rows = []

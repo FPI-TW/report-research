@@ -232,15 +232,24 @@ async def _run(args) -> None:
 
     from sqlalchemy import text as sql_text
 
+    from app.config import get_settings
     from app.services.chunk import chunk_text
     from app.services.db import SessionFactory, relax_statement_timeout
     from app.services.embed import embed_texts
     from app.services.extract import extract_text
     from app.services.filename import parse_filename, resolve_source
-    from app.services.store import ReportRow, report_exists, upsert_report
+    from app.services.store import (
+        ExtractionLogRow,
+        ReportRow,
+        needs_review,
+        report_exists,
+        upsert_extraction_log,
+        upsert_report,
+    )
     from app.services.tagging import load_tag
     from app.services.textnorm import clean_extracted
 
+    review_min = get_settings().extraction_review_min
     targets = _iter_targets(args)
     if args.limit:
         targets = targets[: args.limit]
@@ -274,6 +283,30 @@ async def _run(args) -> None:
                     fl.write(f"{path}\textract\t{e!r}\n")
                 continue
 
+            def _log(stopped_at: str, _res=res, _path=path) -> ExtractionLogRow:
+                q = dict(_res.quality or {})
+                return ExtractionLogRow(
+                    file_hash=_res.file_hash,
+                    file_name=_path.name,
+                    extractor=_res.extractor,
+                    extraction_version=_res.extraction_version,
+                    stopped_at=stopped_at,
+                    page_count=_res.page_count,
+                    pages_failed=list(_res.pages_failed) or None,
+                    char_count=_res.char_count,
+                    quality_score=q.get("quality_score"),
+                    quality_flags=q,
+                )
+
+            if res.error:
+                # extract_text 自己接住的損毀檔：現況只當 scanned 靜默跳過，這裡留一列。
+                stats["fail"] += 1
+                await upsert_extraction_log(session, _log("extract_error"))
+                await session.commit()
+                with open(FAIL_LOG, "a", encoding="utf-8") as fl:
+                    fl.write(f"{path}\textract\t{res.error}\n")
+                continue
+
             meta = parse_filename(path.name)
             # live sync 沒有可信的「複製發生時間」參照；若 rsync 已保留 NAS 原始 mtime，
             # 這裡應直接信任 mtime，避免今天/近兩天的新報告再度被留成 NULL。
@@ -287,6 +320,13 @@ async def _run(args) -> None:
             reason = skip_before_tag(meta.is_admin, res.scanned, exists)
             if reason:
                 stats[reason] += 1
+                # 每一道閘都寫 extraction_log（§4.2 目標 #1）；已入庫者不重寫。
+                if reason == "skip_admin" and not args.dry_run:
+                    await upsert_extraction_log(session, _log("skip_admin"))
+                    await session.commit()
+                elif reason == "skip_scanned" and not args.dry_run:
+                    await upsert_extraction_log(session, _log("scanned"))
+                    await session.commit()
                 continue
 
             if args.dry_run:
@@ -303,6 +343,9 @@ async def _run(args) -> None:
             reason = skip_after_tag(tag)
             if reason:
                 stats[reason] += 1
+                if reason == "skip_non_research":
+                    await upsert_extraction_log(session, _log("not_research"))
+                    await session.commit()
                 # skip_untagged 先前完全不留痕跡：計數 +1 之後就 continue，
                 # 於是「標註壞了」與「這批本來就沒有研報」在 log 上無從分辨。
                 if reason == "skip_untagged":
@@ -315,6 +358,8 @@ async def _run(args) -> None:
                 chunks = chunk_text(clean_extracted(raw_text))
                 if not chunks:
                     stats["skip_scanned"] += 1
+                    await upsert_extraction_log(session, _log("scanned"))
+                    await session.commit()
                     continue
                 embeddings = embed_texts(chunks, batch_size=args.batch_size)
                 report = ReportRow(
@@ -336,8 +381,19 @@ async def _run(args) -> None:
                     stock_targets=tag.stock_targets,
                     futures_targets=tag.futures_targets,
                     full_text=raw_text,
+                    extractor=res.extractor,
+                    extraction_version=res.extraction_version,
+                    quality_score=(res.quality or {}).get("quality_score"),
+                    quality_flags=dict(res.quality) if res.quality else None,
+                    page_count=res.page_count,
+                    pages_failed=list(res.pages_failed) or None,
+                    needs_review=needs_review(
+                        (res.quality or {}).get("quality_score"), res.pages_failed, review_min
+                    ),
                 )
                 await upsert_report(session, report, chunks, embeddings)
+                await upsert_extraction_log(session, _log("ingested"))
+                await session.commit()
                 _append_all_jsonl(
                     {
                         "file_hash": res.file_hash,

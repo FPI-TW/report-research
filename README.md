@@ -375,7 +375,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 | 表 | 用途 | 關鍵欄位 / 索引 |
 |----|------|------|
-| `research_report` | 報告層，一檔一列（`file_hash` 去重） | `market`、`is_research`、`confidence`、`source`、`report_date`、`instrument_types[]`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`title`/`title_original`/`title_source`（顯示標題，取代檔名）；索引：`market`(btree)、`instrument_types/stock_targets/futures_targets`(GIN) |
+| `research_report` | 報告層，一檔一列（`file_hash` 去重）；E1b 起帶抽取版本與品質欄位（`extractor`、`extraction_version`、`quality_score`、`quality_flags`、`page_count`、`pages_failed`、`needs_review`，只標記不擋） | `market`、`is_research`、`confidence`、`source`、`report_date`、`instrument_types[]`、`stock_targets[]`、`futures_targets[]`、`full_text`、`summary`、`title`/`title_original`/`title_source`（顯示標題，取代檔名）；索引：`market`(btree)、`instrument_types/stock_targets/futures_targets`(GIN) |
 | `report_chunk` | 切塊層，一塊一列 | `embedding vector(1024)`、`content`、`content_norm`(GENERATED)；索引：`embedding`(HNSW cosine)、`content_norm`(GIN trgm)；FK `ON DELETE CASCADE` |
 | `qa_log` | 每次 `/api/ask` 一列（稽核/分析） | `question`、`answer`、`cited_report_ids[]`、`filters`、`latency_ms`、`thinking_ms`、`feedback`、`sources`、`ext_sources`、`conversation_id` |
 | `report_doc` | 生成的深度研報（隨對話保存） | `qa_id`、`conversation_id`、`title`、`markdown`(真相來源)、`pdf_path`、`sources` |
@@ -383,6 +383,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | `report_signal` | 觀點雷達訊號，一列＝一份研報對一個標的的結構化觀點（`make signals` 產出，讀取零 LLM） | `report_id`(FK CASCADE)、`market`/`instrument_code`/`broker`/`report_date`、`rating_raw`＋`rating_normalized`(五級＋`unknown`)、`target_price`(numeric，保幣別)、`eps_estimates`(jsonb)、`thesis_dimensions`(jsonb 四維)、`extraction_status`；`UNIQUE(report_id, market, instrument_code)` |
 | `report_run` / `report_section` | M7 逐節生成狀態機：一次生成一列 run、每節一列 section | run：`request_key`(冪等鍵，UNIQUE)、`status`(`queued`…`completed`/`failed`/`cancelled`)、`outline`、`checkpoint`、`updated_at`(心跳)；section：`position`、`draft_markdown`/`final_markdown`、`evidence_ids[]`；`run_id` FK CASCADE |
 | `report_rendition` | M9b **不可變**渲染產物：同一份 markdown × 渲染器 × 模板各一列，換模板重出走這裡（零 LLM） | `report_id`、`renderer`、`template_id`、`content_hash`(markdown sha256)、`pdf_path`；`report_doc.current_rendition_id` 為原子切換的指標 |
+| `extraction_log` | E1b 抽取層落點：每個進過管線的 `file_hash` 一列，**不管有沒有進 `research_report`**（現況 1,466 筆檔案的落點只存在於腳本的 `if` 分支裡） | `file_hash`(PK)、`file_names text[]`(同內容不同檔名累加)、`extractor`、`extraction_version`、`page_count`、`pages_failed int[]`、`char_count`、`quality_score`、`quality_flags jsonb`、`stopped_at`(`ingested`/`skip_admin`/`scanned`/`not_research`/`extract_error`，CHECK)、`updated_at`；索引 `stopped_at`、`extraction_version` |
 
 > `content_norm` 的 GENERATED 表達式（`lower(regexp_replace(normalize(content, NFKC), '\s+', '', 'g'))`）必須與 `app/services/textnorm.py` 的 `norm_for_match()` 一致。
 

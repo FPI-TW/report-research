@@ -281,6 +281,11 @@ jobs:
       - name: CHECK 約束清單對帳
         run: uv run pytest -q tests/test_schema_constraints.py
 
+      # E1b：extraction_log 的 upsert 與 research_report 新欄位，只有套完 schema 的乾淨庫
+      # 驗得到；本機連到的是生產庫，測試一律 rollback。
+      - name: extraction_log 與抽取欄位對帳
+        run: uv run pytest -q tests/test_extraction_log_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

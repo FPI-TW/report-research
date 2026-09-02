@@ -8,6 +8,11 @@ dependencies = [
     "asyncpg>=0.29",
     "pgvector>=0.3",
     "pypdf>=4.2",
+    # 版面感知抽取（app/services/extraction/）。pdfplumber 連帶帶進 pdfminer.six
+    # （被它釘成 ==，無法獨立升）與 pypdfium2，兩者授權分別是 MIT 與 BSD-3/Apache-2.0。
+    # **刻意不用 PyMuPDF**：它是 AGPL-3.0／商用雙授權，而本站經 Cloudflare Tunnel
+    # 對外服務，AGPL §13 的網路條款會被觸發。詳見 docs/EXTRACTION_REDESIGN.md §3.2。
+    "pdfplumber>=0.11.10",
     "python-docx>=1.1",
     "FlagEmbedding>=1.2",
     "fastapi>=0.136.3",

@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 data/extracted/
+# 抽取層 spike 的唯讀比對產物（scripts/profile_corpus.py／compare_extractors.py），
+# 重跑就有；compare.html 一份就是數 MB。
+data/extraction/
 data/tags/
 data/reports/
 data/*.json

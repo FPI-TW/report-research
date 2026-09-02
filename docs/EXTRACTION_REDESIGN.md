@@ -559,3 +559,26 @@ BGE-M3 在本機實測 **2.9 chunk/s**（20 核、CPU-only torch、batch 8；冷
 | minor | 「前 8 家約 88%」 | 88.45% 是**前 7 家**；第 8 名是 `source` 為空的 331 筆，不是券商（§4.4、附錄 A） |
 | minor | 「表格列一旦被當成 quote，閱讀頁會顯示找不到」 | 只在該列沒有 ≥6 字元 token 時成立。多數券商評等表有（`台積電(2330)`、`1,234.56`），第 2 階會產生一個**沒有唯一性要求**的關鍵字 → 跳到任意一處。兩種退化都寫進 §4.2 |
 | minor | docx（34 篇）走哪條路沒交代 | 補在 §3.2 |
+
+---
+
+## 附錄 D：§9 第 1／3 步的執行結果（2026-09-02）
+
+第 1 步（`scripts/profile_corpus.py`）只跑了每家券商 3 份的抽樣（79 檔），**不是全語料**；第 3 步（`scripts/compare_extractors.py`）跑了 133 檔，報告在 `data/extraction/compare.html`。**第 2 步的 golden set 尚未開始**，所以下面全是語料層級的觀察，不是 §7 的指標。
+
+| 觀察 | 值 |
+|---|---|
+| 閱讀順序相似度 `order_sim` | p05 0.241 / p50 0.583 / p95 0.906（預期：新舊必然不同） |
+| 頁級失敗 | 0 檔 |
+| 亂碼率 | max 0.006 |
+| Block 型別占比 | paragraph 65%、**title 14%**、**footnote 9%**、header 5%、table 3%、figure_caption 2%、footer 1% |
+| 舊判 `scanned`、新抽取器抽到字 | 1 檔（macquarie，42,288 字） |
+
+**三條要在 §9 第 4 步之前處理的發現：**
+
+1. **原始字數比是假訊號。** 133 檔裡 13 檔原始字數比 <0.9（最低 jpmorgan 0.727、宏遠 4 檔 0.79–0.81），逐檔重抽後：宏遠 5 檔、kgi、fubon、凱基期貨雙週報是 `DEFAULT_DROP` 刻意丟掉的頁首頁尾（「Company Report／公司研究報告／免責聲明」每頁重複），其餘 5 檔**去空白後字元數相等或新側更多**（勤誠 5,785＝5,785；中信 4,779＝4,779；MS 54,317 → 54,846；JPM 48,346 → 50,731）。差異全來自 pypdf 對表格每格換行、pdfplumber 序列化成 markdown 一列一行。`compare_extractors.py` 的 `char_ratio` 已改為去空白口徑；**舊報告裡那一欄不要再拿來判漏抽**。
+2. **title／footnote 分類過鬆。** 一份 36 頁的 JPM 報告判出 183 個 title、136 個 footnote；全體 title 占 14%。`_TITLE_SIZE_RATIO=1.15` 與 `_FOOTNOTE_SIZE_RATIO=0.85` 把粗體副標與表格小字都收進去了。現在不影響 `serialize()`（只丟 header／footer），但 `E1` 之後任何拿 title 切章節、拿 footnote 排除的用途都會踩到。**校準要等 golden set，不要憑這 133 檔調門檻。**
+3. **kgi 的「資料來源：Bloomberg、凱基債信團隊彙整」被當 footer 丟掉**（跨頁重複 ＋ 落在頁尾帶）。它是圖表的資料來源說明，對檢索價值低，但屬於「重複的正文」而非樣板——`_mark_repeated_headers_footers` 的兩個條件對這類文字仍會誤判。golden set 標順序層時把這種列標進去，才量得到。
+
+**下一步不變**：先做 §4.1 的 golden set（前 15 份優先 kgi／masterlink／sinopac／yuanta），跑出 pypdf 基準填 §7，再進 §9 第 4 步。
+

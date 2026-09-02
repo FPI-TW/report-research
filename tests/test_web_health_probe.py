@@ -295,7 +295,8 @@ class DependencyCheckTests(unittest.TestCase):
             t = Path(tmp)
             (t / "bin").mkdir()
             dropin = self._dropin(t, f"{t}/bin:/usr/bin")
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9", **sd.env})
+            env = {"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"}
+            p = run_probe({**env, **sd.env})
             calls = sd.calls()
         self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
         f = parse(p.stdout)

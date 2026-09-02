@@ -271,6 +271,7 @@ report-mark/
 │   align_findb_markets.py  中文標籤 → findb 代碼（一次性、冪等）
 │   search.py               CLI 語意檢索（可 --market 過濾）
 │   eval_retrieval.py       離線 retrieval 評估（hit rate / 新近度）
+│   eval_extraction.py      抽取層 golden set 評測（閱讀順序／欄位 coverage／幻覺率；eval/extraction_dataset.json）
 │   eval_compare.py         比較兩份評測結果 JSON，劣化即非零退出（三種形狀通吃）→ make eval-compare
 │   analyze_qa_log.py       問答延遲、引用新近度與回饋分析
 │   measure_baseline.py     延遲分佈（含 p95）／路由分佈／標的覆蓋率基準量測（唯讀，零 LLM、零寫入）

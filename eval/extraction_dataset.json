@@ -103,7 +103,7 @@
      "text": "圖2：2026-27年財測修正vs. 市場共識"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "凱基個股動態更新：左側欄（評等／目標價／焦點內容／交易資料）＋右側主文＋頁尾財務表。"
   },
   {
@@ -190,7 +190,7 @@
      "text": "客戶產品需求不如預期，高階HDI滲透率不如預期。"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "同凱基版型。主文首句的「1」「52.8」是粗體內嵌數字、基線略高，抽取器容易把它們甩出句外。 2026-09-02 覆核工具指出側欄摘要句與主文首句逐字相同（兩處出現），側欄片段加上「1. 」、主文片段延長到「本季營」以各自唯一。"
   },
   {
@@ -328,7 +328,7 @@
      "text": "2月新聞評論總覽"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "30 頁產業月報。目標價只有 p6「近月主要研究報告彙整」表列出 2330／3661 兩檔；其餘標的只在 p1 內文有評等、無目標價（golden 留 null）。"
   },
   {
@@ -387,7 +387,7 @@
      "text": "及法人連續買超的強勢股。"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "單欄週報。p1 上半是整頁 K 線圖（無文字），文字從中段開始。無評等／目標價。"
   },
   {
@@ -481,7 +481,7 @@
      "text": "Exhibit 2: TESG企業永續指標"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "元富個股報告：左側欄（研究員／評等／基本資料／Key Changes）＋右側主文。評等原文為英文 HOLD。"
   },
   {
@@ -576,7 +576,7 @@
      "text": "Exhibit 1: Sales and YoY Growth"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "元富英文版個股報告，版型同中文版。"
   },
   {
@@ -675,7 +675,7 @@
      "text": "Comprehensive Income Statement NT$m"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "元富速報：真正的雙欄正文（左欄一、二段，右欄三、四段），中間夾兩張表。表格字元被逐字空格化（「N et sales」），去空白後仍可比對。目標價從內文「目標價調整至2,800元」取，表頭欄位「目標價 前次 2700 本次 2700」與內文不一致，以內文為準。"
   },
   {
@@ -837,7 +837,7 @@
      "text": "EPS 69.67元，投資評等為買進，目標價2000元。"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "元富每日彙報 15 頁：p1 左欄是行情表、右欄是焦點提示；p3 起每檔一段。標的清單只列本人能從 p1／p3／p5／p6／p8／p9 對得上名字的 8 檔，其餘（p4 300／260、p7 1200／55、p8 340、p11 238／339／1032 等）段落標題與目標價句分屬不同行、對應關係待人工覆核後再補。2330 只有「TP1400」沒有評等字樣。"
   },
   {
@@ -930,7 +930,7 @@
      "text": "註2：永豐投顧已獲SASB授權，於研究中使用SASB重大性地圖之一般議題分類及揭露主題。"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "永豐個股聚焦：左側欄（投資建議／收盤價／目標價／交易資料／公司簡介）＋右側主文＋ESG 雷達圖。"
   },
   {
@@ -1023,7 +1023,7 @@
      "text": "General Issue Categories and Disclosure Topics in our work."
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "同永豐版型。"
   },
   {
@@ -1113,7 +1113,7 @@
      "text": "註2：永豐投顧已獲SASB授權，於研究中使用SASB重大性地圖之一般議題分類及揭露主題。"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "同永豐版型；中立評等、目標價欄位空白（golden 為 null，抽出任何數值都算幻覺）。"
   },
   {
@@ -1229,7 +1229,7 @@
      "text": "以2025年預估EPS 5.10 元推得目標價112元。"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "元大投資早報 16 頁：p1 左欄近期報告清單、右欄目次；p4–p7 每檔一頁研究報告。四檔目標價分別在 p4／p5／p6／p7 的結論建議。"
   },
   {
@@ -1355,7 +1355,7 @@
      "text": "本次上調目標價至 53 元，反映後續獲利將持續改善，不過考量未來 DDR4 報價上"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "同元大版型。p1 目次把南亞科／大立光寫成「持有」，p6／p8 報告標題寫「持有-超越同業」，以報告標題為準。台塑 45 元出自 p9 台塑集團產業報告。"
   },
   {
@@ -1418,7 +1418,7 @@
      "text": "研究中心 總體經濟組"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "單欄總經日報；p1 上半三個指數的大字數字是逐字分開的字元。無標的。"
   },
   {
@@ -1513,7 +1513,7 @@
      "text": "GS Factor Profile"
     }
    ],
-   "annotation_status": "draft",
+   "annotation_status": "reviewed",
    "annotator_notes": "高盛英文版：主文在左、分析師與 Key Data／GS Forecast 側欄在右，故側欄排在主文之後。左側直排浮水印（MOC.OVONEL@ULNIVEK）會混進文字。ADR（TSM，$620）不另列標的。"
   }
  ]

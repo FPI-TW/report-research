@@ -20,8 +20,8 @@
   "chars_nows_total": 260611,
   "n_cases": 15,
   "n_prefilled": 0,
-  "n_draft": 0,
-  "n_reviewed": 15
+  "n_draft": 15,
+  "n_reviewed": 0
  },
  "subsets": {
   "two_column": {
@@ -171,13 +171,14 @@
   "extractor": "pypdf",
   "signals_source": "db",
   "dataset_version": "extraction-golden-v1",
-  "reviewed_only": true,
+  "reviewed_only": false,
   "run_date": "2026-09-02"
  },
  "notes": [
   "順序指標以配對加總計，不是逐檔平均（order_pair_acc_case_mean 才是逐檔平均）。",
   "欄位層的抽取結果來自 --signals（現況為 DB 的 report_signal），與 --extractor 無關。",
-  "幻覺率把 Anchor.method == 'prefix' 計為錨不回（§4.3）。"
+  "幻覺率把 Anchor.method == 'prefix' 計為錨不回（§4.3）。",
+  "15 筆為模型草標（draft），尚未人工覆核；數字暫定。"
  ],
  "cases": [
   {
@@ -185,7 +186,7 @@
    "source": "kgi",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 15977,
    "diag": {
     "scanned": false,
@@ -236,7 +237,7 @@
    "source": "kgi",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 12165,
    "diag": {
     "scanned": false,
@@ -285,7 +286,7 @@
    "source": "kgi",
    "kind": "industry",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 48483,
    "diag": {
     "scanned": false,
@@ -393,7 +394,7 @@
    "source": "kgi",
    "kind": "weekly",
    "two_column": false,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 5331,
    "diag": {
     "scanned": false,
@@ -430,7 +431,7 @@
    "source": "masterlink",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 7775,
    "diag": {
     "scanned": false,
@@ -481,7 +482,7 @@
    "source": "masterlink",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 16076,
    "diag": {
     "scanned": false,
@@ -532,7 +533,7 @@
    "source": "masterlink",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 2781,
    "diag": {
     "scanned": false,
@@ -583,7 +584,7 @@
    "source": "masterlink",
    "kind": "daily",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 21556,
    "diag": {
     "scanned": false,
@@ -704,7 +705,7 @@
    "source": "sinopac",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 15120,
    "diag": {
     "scanned": false,
@@ -755,7 +756,7 @@
    "source": "sinopac",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 12968,
    "diag": {
     "scanned": false,
@@ -806,7 +807,7 @@
    "source": "sinopac",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 12651,
    "diag": {
     "scanned": false,
@@ -851,7 +852,7 @@
    "source": "yuanta",
    "kind": "daily",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 15618,
    "diag": {
     "scanned": false,
@@ -937,7 +938,7 @@
    "source": "yuanta",
    "kind": "daily",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 16677,
    "diag": {
     "scanned": false,
@@ -1034,7 +1035,7 @@
    "source": "yuanta",
    "kind": "macro",
    "two_column": false,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 8367,
    "diag": {
     "scanned": false,
@@ -1071,7 +1072,7 @@
    "source": "goldman_sachs",
    "kind": "stock",
    "two_column": true,
-   "annotation_status": "reviewed",
+   "annotation_status": "draft",
    "chars_nows": 49066,
    "diag": {
     "scanned": false,

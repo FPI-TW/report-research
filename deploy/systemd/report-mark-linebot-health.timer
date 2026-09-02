@@ -1,0 +1,16 @@
+[Unit]
+Description=每 2 分鐘探測 LineBot 健康（Windows 側 :8000 的 /health）
+
+[Timer]
+# 開機後給 Windows 側的工作排程器與看門狗時間把 bot 拉起來再開始探測。
+# 看門狗是登入後 30 秒觸發、之後每 5 分鐘一次，所以 5 分鐘是合理的起步等待。
+OnBootSec=5min
+OnUnitActiveSec=2min
+# **刻意不設 Persistent=true**：錯過的健康檢查沒有補跑價值——健康是「此刻」的
+# 性質，不是待辦事項。而且它會在開機瞬間立刻補跑一次，那正是最容易誤報的時刻。
+# **刻意不設 RandomizedDelaySec**：對 2 分鐘的探針，抖動只會讓偵測延遲變得
+# 不可預測，換不到任何東西。
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

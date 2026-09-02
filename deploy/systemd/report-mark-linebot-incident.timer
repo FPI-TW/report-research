@@ -1,0 +1,12 @@
+[Unit]
+Description=每 2 分鐘消費 LineBot 探針結果（去重、提醒、恢復判定）
+
+[Timer]
+# 比探針晚一分鐘起步：探針 OnBootSec=5min，這裡 6min，讓第一輪消費時已經有
+# 一次真實觀測可讀，而不是落進 bootstrap 分支。
+OnBootSec=6min
+OnUnitActiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

@@ -566,6 +566,7 @@ make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candida
 | [docs/nas_scheduled_sync_deployment.md](docs/nas_scheduled_sync_deployment.md) | NAS 定時增量同步（systemd timer）部署 |
 | [docs/qa_pdf_report_deployment.md](docs/qa_pdf_report_deployment.md) | 深度研報 PDF（CJK 字型）部署 |
 | [docs/production_resilience.md](docs/production_resilience.md) | 生產韌性：重啟策略、健康檢查、失敗告警、systemd unit 還原 |
+| [docs/LINEBOT_ALWAYS_ON.md](docs/LINEBOT_ALWAYS_ON.md) | LineBot 供稿鏈：常駐看門狗、nginx 對外路徑、P4／P5 第二實例監控、安裝步驟與已知限制 |
 | [docs/向量搜索優化報告.md](docs/向量搜索優化報告.md) | 向量檢索優化（混合檢索、HNSW 調校、CJK 正規化）|
 | [AGENTS.md](AGENTS.md) | 貢獻者指南（結構、風格、測試、提交與安全慣例）|
 | [docs/incidents/2026-08-18-wsl-9p-production-outage.md](docs/incidents/2026-08-18-wsl-9p-production-outage.md) | 2026-08-18 生產中斷事故報告：9p 上的 venv 損毀 ＋ 失效 portproxy，4h50m 全鏈路不可用 |

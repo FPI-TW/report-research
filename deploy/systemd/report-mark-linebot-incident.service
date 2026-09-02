@@ -1,0 +1,37 @@
+[Unit]
+Description=LineBot 事件偵測與通知（消費 LineBot 探針結果，含去重與提醒節奏）
+# **這支跑的是與 web 完全相同的 scripts/incident_handler.sh**，只是換一組
+# INCIDENT_* 環境變數。那支腳本從一開始就把 PROBE_UNIT／TIMER_UNIT／COMPONENT／
+# STATE_DIR 全部參數化了，所以多監控一個元件不需要改它一個字——去重、提醒節奏、
+# 恢復判定、以及「監控自己瞎了」的偵測全部原封沿用。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：本 unit 自己就是告警器，失敗再觸發告警會形成遞迴。
+# 與 report-mark-incident.service 同一個理由。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+# webhook secret 的落點，與 report-mark-incident.service 共用同一個檔（0600 root:root）。
+EnvironmentFile=-/etc/report-mark/alert.env
+# ── 指向 LineBot 那一組訊號 ───────────────────────────────────────────────
+Environment=INCIDENT_PROBE_UNIT=report-mark-linebot-health.service
+Environment=INCIDENT_TIMER_UNIT=report-mark-linebot-health.timer
+Environment=INCIDENT_COMPONENT=linebot
+Environment=INCIDENT_MONITOR_COMPONENT=linebot_monitor
+# **狀態目錄必須與 web 那組分開。** 狀態檔本身是以 component 命名不會撞，但
+# `handler.lock` 與 `probe_observation.state` 是固定檔名——共用同一個目錄會讓
+# 兩個實例互相覆寫觀測快取，症狀是「A 元件的探針結果被當成 B 元件的」。
+Environment=INCIDENT_STATE_DIR=/home/kashionz/projects/report-mark/data/.incidents-linebot
+# 探針的 OnBootSec 是 5 分鐘（比 web 那組的 2 分鐘長，要等 Windows 側的看門狗），
+# 所以開機後的合理空窗也要跟著放寬：300 + 90(探針最壞耗時) ≈ 390，取 480。
+Environment=INCIDENT_BOOTSTRAP_SECONDS=480
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/incident_handler.sh"'
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

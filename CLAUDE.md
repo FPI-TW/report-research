@@ -104,7 +104,7 @@ The Q&A path also runs: cross-encoder **rerank** (`rerank.py`, M2)、**agentic �
 
 ## 生產維運（真相來源在 `deploy/`，不是機器上的 `/etc`）
 
-八組 systemd unit 全在 `deploy/systemd/`：`report-mark-web.service`（＋ `claude` PATH drop-in）、`report-mark-sync.timer`（每 3h NAS 同步與增量匯入）、`report-mark-backup.timer`（每日 03:30）、`report-mark-freshness.timer`（每日 08:30）、`report-mark-audit.timer`（每日 08:45）、`report-mark-health.timer`（每 2 分鐘探針）、`report-mark-incident.timer`（每 2 分鐘消費探針結果）、`report-mark-alert@.service`（`OnFailure` 告警鏈）。另有 `mount-nas-research`／`mount-nas-backup` 掛載腳本與兩份 sudoers。**改 `deploy/` 之後要 `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`——直接在主機上改會讓 repo 與主機分岔**（sync unit 就是這樣漂掉的）。
+十組 systemd unit 全在 `deploy/systemd/`：`report-mark-web.service`（＋ `claude` PATH drop-in）、`report-mark-sync.timer`（每 3h NAS 同步與增量匯入）、`report-mark-backup.timer`（每日 03:30）、`report-mark-freshness.timer`（每日 08:30）、`report-mark-audit.timer`（每日 08:45）、`report-mark-health.timer`（每 2 分鐘探針）、`report-mark-incident.timer`（每 2 分鐘消費探針結果）、`report-mark-alert@.service`（`OnFailure` 告警鏈）、`report-mark-linebot-health.timer`／`report-mark-linebot-incident.timer`（LineBot 供稿鏈的 P4／P5 第二實例，探的是 Windows 側 `:8000` 的 `/health`；**LineBot 斷掉等於語料供稿斷掉**，2026-08-13 到 08-31 曾靜默停擺 18 天，見 `docs/LINEBOT_ALWAYS_ON.md`）。另有 `mount-nas-research`／`mount-nas-backup` 掛載腳本與兩份 sudoers。**改 `deploy/` 之後要 `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`——直接在主機上改會讓 repo 與主機分岔**（sync unit 就是這樣漂掉的）。
 
 **`systemctl is-active` 不是應用健康的證據，判定一律打 `/healthz`。** uvicorn 先跑 lifespan 再 bind，bind 失敗後行程仍存活約 10 秒，配合 `Restart=always`／`RestartSec=3`，任何時間點查 `is-active` 都很可能看到 `active`。2026-08-18 的中斷持續 4 小時 50 分，期間 `is-active` 全程綠而服務的 HTTP 請求數是 **0**（`docs/incidents/2026-08-18-wsl-9p-production-outage.md`）。**監控因此分成兩層**：`scripts/check_web_health.sh`（P4，每 2 分鐘探測、只回報「此刻的事實」、**不通知任何人**）與 `scripts/incident_handler.sh`（P5，記住歷史、做去重／提醒節奏／恢復判定、有設定時投遞 webhook）。**沒有去重就等於沒有告警**——那次中斷讓告警檔累積 854 筆同源紀錄而沒有任何消費端，現在同一次事件只產生 1 則 FIRING ＋ 每 30 分鐘一則提醒 ＋ 1 則 RESOLVED。P4 刻意**不用 `uv run`、不碰 `.venv`、不 import `app.*`**，因為那次的根因正是 venv 損毀，相依 Python 的探針會跟被監控的服務一起死。**注意 `/healthz` 只探 DB**，不代表模型、NAS 或 `claude` CLI 健康。
 
@@ -157,6 +157,7 @@ The Q&A path also runs: cross-encoder **rerank** (`rerank.py`, M2)、**agentic �
 - `AGENTS.md` — contributor conventions (structure, style, testing, commits, security).
 - `docs/ROADMAP.md` — 以實際里程碑 **M0–M11** 為準（舊的 Phase 0–3 敘事已作廢）。尚未實作的有四項：findb 整合、MCP server、對外 REST `/api/v1/*`、PDF 內文的無障礙讀取（真正的 text layer）。
 - `docs/production_resilience.md` — `/healthz` 語意、監控兩層（探針／事件）、`OnFailure` 告警、unit 安裝與更新步驟、還原演練。
+- `docs/LINEBOT_ALWAYS_ON.md` — LineBot 供稿鏈的常駐（Windows 側看門狗）、對外路徑（nginx 精確路徑）、P4／P5 第二實例監控、安裝步驟與已知限制。
 - `docs/EXTERNAL_ACCESS.md` — Cloudflare Tunnel + nginx、可信代理的兩條判定與滾動切換步驟。
 - `docs/incidents/` — 事故報告（含 2026-08-18 那次 4h50m 中斷的完整時間線與根因）；`docs/benchmarks/` — WSL 檔案系統等量測。
 - `docs/REPORT_LAYOUT_FIXES.md` — 深度研報版面十項缺陷的逐頁診斷與修法。

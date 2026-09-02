@@ -16,6 +16,6 @@ from __future__ import annotations
 # **改動 layout.py 的排序或分類邏輯、或 model.py 的序列化，就要 bump 這個字串**，
 # 否則同一份 PDF 在不同版本下產生的 full_text 不同、而 DB 說它們是同一版。
 EXTRACTOR_NAME = "pdfplumber"
-EXTRACTION_VERSION = "ext-2026-08-31.v1"
+EXTRACTION_VERSION = "ext-2026-09-02.v2"  # v2：頁首帶重複文字首次出現保留原型別
 
 __all__ = ["EXTRACTOR_NAME", "EXTRACTION_VERSION"]

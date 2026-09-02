@@ -193,6 +193,19 @@ class DetectColumnsUnitTests(unittest.TestCase):
         banner = [self._w(40, 550, 20)]  # 跨欄頁首，落在版心帶之外
         self.assertEqual(len(detect_columns(body + banner, 595.0, 842.0)), 1)
 
+    def test_narrow_rating_column_is_merged_into_its_list(self):
+        """元大投資早報首頁：左側清單的「評等」欄只有 20pt 寬，詞數卻夠多。
+
+        它不是一欄、是清單裡的一個欄位——整頁應判成兩欄（清單 vs 目次），
+        窄欄併回左邊空隙較小的那一欄，而不是切成三欄或整頁退回單欄。
+        """
+        names = [self._w(74, 190 if i % 2 else 140, 260 + i * 20) for i in range(40)]  # 長短名混雜，右緣到 190
+        ratings = [self._w(217, 237, 260 + i * 20) for i in range(40)]
+        toc = [self._w(300, 560, 240 + i * 16) for i in range(40)]
+        gutters = detect_columns(names + ratings + toc, 595.0, 842.0)
+        self.assertEqual(len(gutters), 1, gutters)
+        self.assertTrue(237 < gutters[0] < 300, gutters)
+
     def test_lopsided_split_is_rejected(self):
         """一側只有幾個詞時，那條空白帶是置中的圖不是欄界。"""
         left = [self._w(40, 250, 200 + i * 12) for i in range(58)]
@@ -229,8 +242,14 @@ class HeaderFooterTests(_PdfCase):
         self.assertIn("footer", types, "跨頁重複的頁尾沒有被認出來")
 
         text = serialize(doc)
-        self.assertNotIn("BROKER TEMPLATE HEADER", text)
+        # 頁首帶的重複文字**第一次出現保留**：券商研報的文件標題常同時是後續每頁的
+        # 頁眉，全部丟掉會連首頁真標題一起丟（E0 golden set 實測漏 2 句）。
+        self.assertEqual(text.count("BROKER TEMPLATE HEADER"), 1, "頁首重複文字應保留第一份、丟掉其餘")
         self.assertNotIn("TEMPLATE DISCLAIMER FOOTER", text)
+        first_page_types = [b.type for b in doc.pages[0].blocks if "TEMPLATE HEADER" in b.text]
+        self.assertTrue(first_page_types and all(t != "header" for t in first_page_types), first_page_types)
+        later = [b.type for pg in doc.pages[1:] for b in pg.blocks if "TEMPLATE HEADER" in b.text]
+        self.assertTrue(later and all(t == "header" for t in later), later)
 
     def test_unique_body_is_never_dropped(self):
         """只出現一次的內容不可以因為位置而被當成樣板丟掉。"""

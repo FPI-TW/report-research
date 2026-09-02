@@ -16,6 +16,10 @@
    - `order_kendall_tau`：同一組配對的 (一致 − 不一致) ÷ 總數，[-1, 1]。
    命中用**首次出現位置**。句子在原文出現多次時（表頭、重複的小標）位置會有歧義，
    golden 標註時就該避開這種句子；腳本不猜、照首次算。
+   **比對前會把 `|` 拿掉**：版面抽取器把表格序列化成 markdown（`| a | b |`），
+   golden 裡取自表格列的片段（元大早報的報告清單、高盛的 Key Data）在正規化後
+   會因為儲存格分隔符而對不上。分隔符是序列化的產物不是版面順序的資訊，
+   閱讀順序指標不該被它扣分；pypdf 的輸出沒有 `|`，拿掉對它是 no-op。
 
 2. **欄位 coverage**：golden 有值的（評等、目標價）裡，抽取結果也有值的比例。
 3. **欄位 accuracy**：抽取結果有值的裡，值正確的比例。目標價容差 0.5%，評等比
@@ -134,17 +138,22 @@ class OrderResult:
         return (2 * self.n_concordant - self.n_pairs) / self.n_pairs
 
 
+def _order_norm(s: str) -> str:
+    """順序比對用的正規化：norm_for_match 再拿掉表格儲存格分隔符（見檔頭）。"""
+    return norm_for_match(s).replace("|", "")
+
+
 def score_order(text: str, items: list[dict]) -> OrderResult:
     """`items`：golden 的 `order` 清單，每筆 {text, stream?}。
 
     兩組配對分開算：全部配對（跨 stream 的先後採 golden 的「左到右、上到下」慣例）
     與**同一 stream 內**的配對（先後無歧義，是主指標裡最硬的那一塊）。"""
-    ntext = norm_for_match(text)
+    ntext = _order_norm(text)
     hits: list[tuple[int, str]] = []
     misses: list[str] = []
     for it in items:
         s = it["text"]
-        ns = norm_for_match(s)
+        ns = _order_norm(s)
         pos = ntext.find(ns) if ns else -1
         if pos < 0:
             misses.append(s)

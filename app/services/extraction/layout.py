@@ -42,6 +42,12 @@ _MIN_GUTTER_FRAC = 0.04
 _GUTTER_BAND = (0.18, 0.82)
 # 每一欄至少要分到這麼多比例的詞，否則那條「溝槽」多半是一張置中的圖。
 _MIN_COL_SHARE = 0.15
+# 每一欄的墨跡寬度至少要占內容寬度這麼多，否則它不是一欄、是表格裡的一個窄欄位。
+# 實測元大投資早報首頁：左側報告清單的「評等」欄只有 20pt 寬（買進／持有），
+# 詞數卻夠多（每列一個），通過了 _MIN_COL_SHARE，於是整頁被切成三欄、每列的
+# 「買進」被甩到另一條文字流。窄欄不是整頁退回單欄，而是**併回相鄰空隙較小的那一欄**
+# ——那一頁真正的兩欄（清單 vs 目次）仍然要分開。
+_MIN_COL_WIDTH_FRAC = 0.12
 # 在溝槽處要有多寬的間隙才算「這裡真的是欄界」，以溝槽最小寬度為單位。
 # 取 0.5 是因為欄界處的實際留白必然接近整條溝槽寬，而跨欄大標在那裡只有
 # 一個字距——兩者相差一個量級，門檻落在中間很安全。
@@ -170,12 +176,41 @@ def detect_columns(words: list[dict], width: float, height: float) -> list[float
     if not gutters or len(gutters) >= _MAX_COLS:
         return []
 
+    gutters = _merge_narrow_columns(gutters, body, x0, x1)
+    if not gutters:
+        return []
+
     # 每一欄都要有足量的詞，否則那條空白帶多半是置中的圖或短表。
     edges = [x0 - 1.0, *gutters, x1 + 1.0]
     for a, b in zip(edges, edges[1:]):
         share = sum(1 for w in body if a <= (w["x0"] + w["x1"]) / 2 < b) / len(body)
         if share < _MIN_COL_SHARE:
             return []
+    return gutters
+
+
+def _merge_narrow_columns(gutters: list[float], body: list[dict], x0: float, x1: float) -> list[float]:
+    """把墨跡太窄的欄併回相鄰欄：拿掉它與空隙較小那一側之間的溝槽，直到沒有窄欄。"""
+    span = x1 - x0
+    gutters = list(gutters)
+    while gutters:
+        edges = [x0 - 1.0, *gutters, x1 + 1.0]
+        ink: list[tuple[float, float] | None] = []
+        for a, b in zip(edges, edges[1:]):
+            ws = [w for w in body if a <= (w["x0"] + w["x1"]) / 2 < b]
+            ink.append((min(w["x0"] for w in ws), max(w["x1"] for w in ws)) if ws else None)
+        narrow = [i for i, k in enumerate(ink) if k is None or (k[1] - k[0]) < _MIN_COL_WIDTH_FRAC * span]
+        if not narrow:
+            return gutters
+        i = narrow[0]
+        candidates: list[tuple[float, int]] = []  # (空隙寬, 要移除的溝槽索引)
+        if i > 0:
+            gap = (ink[i][0] if ink[i] else gutters[i - 1]) - (ink[i - 1][1] if ink[i - 1] else gutters[i - 1])
+            candidates.append((gap, i - 1))
+        if i < len(ink) - 1:
+            gap = (ink[i + 1][0] if ink[i + 1] else gutters[i]) - (ink[i][1] if ink[i] else gutters[i])
+            candidates.append((gap, i))
+        gutters.pop(min(candidates)[1])
     return gutters
 
 
@@ -410,6 +445,12 @@ def _mark_repeated_headers_footers(pages: list[Page]) -> list[Page]:
         }
         seen.update(keys)
 
+    # **頁首帶的重複文字，第一次出現的那一份保留原型別。** 券商研報的文件標題
+    # 常常同時是後續每頁的頁眉（凱基「台股一週大勢分析」、元富「公司拜訪快報」）：
+    # 只看「重複＋位置」會把首頁那份真標題一起丟掉，E0 golden set 實測漏掉的
+    # 7 句裡有 2 句正是這樣消失的。第一次出現保留、之後才判 header，標題留一份、
+    # 樣板仍然去掉。頁尾不比照：免責聲明第一次出現也沒有保留價值。
+    header_seen: set[str] = set()
     out: list[Page] = []
     for p in pages:
         blocks = []
@@ -417,7 +458,10 @@ def _mark_repeated_headers_footers(pages: list[Page]) -> list[Page]:
             new_type = b.type
             if b.bbox and b.type != "table" and seen[_norm(b.text)] >= threshold:
                 if b.bbox[3] <= _HEADER_BAND * p.height:
-                    new_type = "header"
+                    key = _norm(b.text)
+                    if key in header_seen:
+                        new_type = "header"
+                    header_seen.add(key)
                 elif b.bbox[1] >= _FOOTER_BAND * p.height:
                     new_type = "footer"
             blocks.append(b if new_type == b.type else Block(**{**b.__dict__, "type": new_type}))

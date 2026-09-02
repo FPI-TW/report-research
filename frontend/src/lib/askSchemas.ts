@@ -41,9 +41,10 @@ const askDoneData = z.object({
   root_qa_id: z.string().nullable().optional(),
   version_count: z.number().optional(),
   notice_kind: noticeKindField,
-  // 校正後的整份答案。**平時不存在**：後端只在簡體→繁體轉換確實改動了內容時才帶
-  // （app/services/answer.py 的 _answer_correction）。串流的 token 是照原樣送的，
-  // 而轉換是整串決定的，所以畫面靠這個欄位收斂到落庫的那一份。
+  // 校正後的整份答案。**平時不存在**：後端只在整串收尾時確實改動了內容才帶
+  // （app/services/answer.py 的 _answer_correction）。目前有兩個來源——簡體→繁體
+  // 轉換，以及棄稿段移除（模型先寫一版「找不到」、再搜網、再從頭重寫）。兩者都是
+  // 整串才判得出來的，串流的 token 一律照原樣送，畫面靠這個欄位收斂到落庫的那一份。
   answer: z.string().optional(),
 })
 export type AskDone = z.infer<typeof askDoneData>

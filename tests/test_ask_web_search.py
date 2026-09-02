@@ -236,6 +236,61 @@ class CorpusQaWebToggleTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(SEARCH_EVENT, body)  # 控制標記不外洩到正文
 
 
+class AbandonedDraftWiringTests(unittest.IsolatedAsyncioTestCase):
+    """棄稿段的移除必須走既有的 done.answer 校正管道，不是在串流中途動手。
+
+    串流當下拿不到整串——模型會不會等一下把整份重寫，寫到一半是判不出來的。中途改判
+    等於把已送出的前半段留在畫面上（比照 zh_hant 的半繁半簡），先緩衝再送則會延後首個
+    token，而 `thinking_ms` 量的正是它。所以 token 照原樣送，結束時由 `done.answer`
+    讓畫面收斂到落庫的那一份。
+
+    這條測試釘的是三件事：畫面收到的仍是原文、`done` 帶了校正、落庫的是校正後的版本。
+    少任何一件都是靜默失效——前端拿不到 answer 就永遠停在棄稿版本。
+    """
+
+    SEAM = "均未提及「兆勁」這家公司。## 兆勁（2444）分析\n\n提供的三篇研報片段均未涵蓋兆勁。"
+
+    async def _run(self, *, web: bool = True):
+        async def seam_stream():
+            yield self.SEAM
+
+        orig_gate = ans.ASK_ENABLE_WEB
+        ans.ASK_ENABLE_WEB = True
+        try:
+            with _CorpusPatch(
+                sr._decision(sr.CORPUS_QA, decided_by=sr.BY_LLM), stream=seam_stream
+            ) as pt:
+                events = [e async for e in ans.answer_question("分析兆勁", web=web)]
+            return events, pt.called
+        finally:
+            ans.ASK_ENABLE_WEB = orig_gate
+
+    async def test_screen_keeps_the_raw_stream(self):
+        events, _called = await self._run()
+        streamed = "".join(p for k, p in events if k == "token")
+        self.assertEqual(streamed, self.SEAM)  # 中途不動手
+
+    async def test_done_carries_the_corrected_answer(self):
+        events, _called = await self._run()
+        done = next(p for k, p in events if k == "done")
+        self.assertIn("answer", done)  # 有變動才會出現這個加法欄位
+        self.assertTrue(done["answer"].startswith("## 兆勁（2444）分析"))
+
+    async def test_persisted_answer_is_the_corrected_one(self):
+        """答案的真相是落庫的那份：引用解析、追問、抽查全部吃它。"""
+        _events, called = await self._run()
+        self.assertTrue(called["answer"].startswith("## 兆勁（2444）分析"))
+        self.assertNotIn("均未提及「兆勁」這家公司。#", called["answer"])
+
+    async def test_web_off_leaves_the_seam_alone(self):
+        """關網搜時不收棄稿段。成因是「搜尋打斷作答」，關網搜沒有那個打斷點；而判準
+        （行中標題記號）在正常答案上仍可能誤判，把第一句連同標題前的內容丟掉。不冒這個險。"""
+        events, called = await self._run(web=False)
+        done = next(p for k, p in events if k == "done")
+        self.assertNotIn("answer", done)            # 沒有校正就不帶這個加法欄位
+        self.assertEqual(called["answer"], self.SEAM)  # 落庫的就是原文
+
+
 def _fresh_point():
     return tmd.TrustedDataPoint(
         value="1085.00", unit="TWD",

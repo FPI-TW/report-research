@@ -892,6 +892,7 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 | `2` | web unit 不在 `active` | **failed → `OnFailure`** |
 | `3` | 剛啟動的寬限期內 | success（unit 宣告 `SuccessExitStatus=3`） |
 | `4` | 探針自己不能執行（缺 `curl`） | **failed → `OnFailure`** |
+| `5` | `/healthz` 正常，但問答相依的 `claude` 不在 web unit 的 PATH drop-in 上（2026-09-02 那種「healthz 綠、問答全壞」） | **failed → `OnFailure`** |
 
 **兩種「連不上」都算失敗**：2026-08-18 的失效型態是 uvicorn 根本沒綁上（連不上），
 不是回 503。實測本機在 WSL mirrored networking 下，連一個沒有 listener 的埠得到的是
@@ -1051,7 +1052,7 @@ sudo systemctl disable --now report-mark-health.timer
 
 | 欄位 | 用途 |
 |---|---|
-| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤） |
+| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤、5 服務降級＝`/healthz` 正常但 `claude` 不在 web unit 的 PATH 上） |
 | `ExecMainExitTimestampMonotonic` | **單調時鐘**，判斷「是否有新觀測」。用它而非牆鐘，因為 WSL 休眠喚醒與時區調整會讓牆鐘跳動 |
 | `Result` | 附在通知訊息裡供人判讀 |
 
@@ -1160,6 +1161,7 @@ healthy + FIRING   → RESOLVED，通知一次，移除狀態檔
 |---|---|---|
 | `1` / `2` | **CRITICAL** | 使用者當下無法使用 |
 | `4` | **WARNING** | 探針自己壞了＝「我不知道」，不是「壞了」 |
+| `5` | **WARNING** | 服務降級：檢索／閱讀／雷達還活著，問答與研報生成壞了；不會自己好，照樣開事件與提醒 |
 | 探針超過 420 秒沒有新結果 | **WARNING** | **監控失明**——記在 `monitor` 元件，不是 `web` |
 | 探針超過 900 秒沒有新結果 | **CRITICAL** | 失明持續，升級（立即通知，不等提醒週期） |
 | timer 被停用／不在 active／unit 不存在 | **CRITICAL** | 監控被關掉了——**這是最不能只當 INFO 的一種** |

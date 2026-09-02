@@ -787,13 +787,18 @@ else
 fi
 
 
-# P4 的退出碼契約：0 健康／3 寬限（視為健康）／1,2 服務故障／4 探針自身錯誤
+# P4 的退出碼契約：0 健康／3 寬限（視為健康）／1,2 服務故障／4 探針自身錯誤／
+# 5 服務降級（/healthz 正常但問答相依 claude 不在 web unit 的 PATH 上）
 case "$web_status" in
     0|3) run_state_machine "$COMPONENT" healthy "" healthy "$web_obs" ok "" ;;
     1|2) run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_$web_status" "$web_obs" web_incident \
              "探針回報失敗（exit=$web_status result=$web_result）${web_detail_suffix}" ;;
     4)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_4" "$web_obs" web_incident \
              "探針自己不能執行（exit=4 result=$web_result）——是「我不知道」不是「壞了」${web_detail_suffix}" ;;
+    # WARNING 而非 CRITICAL：檢索頁、閱讀頁、雷達、簡報都還活著，壞的只有問答與研報
+    # 生成；但它不會自己好，所以照樣開事件、照樣提醒。
+    5)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_5" "$web_obs" web_incident \
+             "服務降級：健康端點正常，但問答相依的 claude CLI 不在 web unit 的 PATH 上（exit=5 result=$web_result）${web_detail_suffix}" ;;
     *)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_unknown" "$web_obs" web_incident \
              "探針回報未知退出碼（exit=$web_status result=$web_result）${web_detail_suffix}" ;;
 esac

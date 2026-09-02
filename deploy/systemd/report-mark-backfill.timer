@@ -1,0 +1,14 @@
+[Unit]
+Description=每晚 01:00 回填既有語料的抽取（E1d，跑完為止再手動 disable）
+
+[Timer]
+# 01:00：避開 report-mark-sync.timer（整點 00/3，含 00:00 與 03:00）的執行窗（實測約 20 分鐘）
+# 與 report-mark-backup.timer（03:30）。240 分鐘的預算到 05:00，03:00 那輪 sync 會與它並行——
+# 兩者都不取 claude 鎖以外的互斥，CPU 互搶但不會互相失敗；03:30 的備份只讀 DB。
+OnCalendar=*-*-* 01:00:00
+# **刻意 Persistent=false**（E1 共識第 7 條）：機器關著而錯過的那一晚不補跑——補跑會落到
+# 白天，與問答互搶 CPU。回填沒有「錯過一天就漏」的問題，隔天 01:00 照排。
+Persistent=false
+
+[Install]
+WantedBy=timers.target

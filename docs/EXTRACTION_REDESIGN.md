@@ -394,7 +394,7 @@ BGE-M3 在本機實測 **2.9 chunk/s**（20 核、CPU-only torch、batch 8；冷
 
 量測工具 `scripts/eval_extraction.py`，golden set `eval/extraction_dataset.json`（15 份：kgi 4／masterlink 4／sinopac 3／yuanta 3／goldman_sachs 1；184 條有序片段、1,059 組配對；欄位層 25 筆目標價、33 筆評等）。結果檔 `eval/baselines/extraction-pypdf-2026-09-02.json`，可用 `make eval-compare` 與後續版本比。
 
-**效力邊界先讀**：15 份全部是 `annotation_status = draft`——順序層與評等／目標價是模型看頁面渲染圖＋ pdfplumber 逐行文字草標的，**尚未人工覆核**。數字是暫定值；覆核後改 `reviewed` 重跑，`eval_compare` 會因 `n_reviewed` 變動判為不可比，那是預期行為。覆核用 `scripts/review_extraction_golden.py`：它把每頁渲染成圖、在圖上框出每條片段並標序號，同時標出 pypdf 找不到（打字有出入）與出現多處（位置有歧義）的片段——後者評測照首次出現算，首次就是要的位置（目次項、頁首、封面標題在後頁重複）可以不改，否則延長到唯一。
+**標註狀態**：15 份已於 2026-09-02 人工覆核（`annotation_status = reviewed`）。覆核以模型草標為底（看頁面渲染圖＋ pdfplumber 逐行文字），覆核未改動任何片段或欄位，數字與草標版相同；草標版結果檔留作 `extraction-pypdf-2026-09-02-draft.json`，兩份因 `n_reviewed` 不同刻意不可比。覆核用 `scripts/review_extraction_golden.py`：它把每頁渲染成圖、在圖上框出每條片段並標序號，同時標出 pypdf 找不到（打字有出入）與出現多處（位置有歧義）的片段——後者評測照首次出現算，首次就是要的位置（目次項、頁首、封面標題在後頁重複）可以不改，否則延長到唯一。
 
 | 指標 | pypdf 6.12.2（現況） | pdfplumber spike（`ext-2026-08-31.v1`，唯讀並排） | E1 | E4 |
 |---|---|---|---|---|
@@ -446,7 +446,7 @@ BGE-M3 在本機實測 **2.9 chunk/s**（20 核、CPU-only torch、batch 8；冷
 ## 9. 開工順序（可直接執行）
 
 1. **`scripts/profile_corpus.py`**——唯讀，不動任何既有路徑。輸出每檔的欄數、亂碼率、頁級失敗、字元密度分佈。附錄 A 的一次性腳本可以直接長成它。**已做（PR #235）。**
-2. **`eval/extraction_dataset.json` 的前 15 份標註**（先窄後寬，優先蓋 kgi／masterlink／sinopac／yuanta 這四家＝77.8% 語料），配 `scripts/eval_extraction.py` 跑出 pypdf 基準，填進 §7。**已做（2026-09-02，draft 標註）**；剩下的是人工覆核 15 份、把 `annotation_status` 改成 `reviewed` 後重跑。
+2. **`eval/extraction_dataset.json` 的前 15 份標註**（先窄後寬，優先蓋 kgi／masterlink／sinopac／yuanta 這四家＝77.8% 語料），配 `scripts/eval_extraction.py` 跑出 pypdf 基準，填進 §7。**已做（2026-09-02，含人工覆核）。**
 3. **`app/services/extraction/layout.py` ＋ `quality.py`，只讀不寫**：對同一批檔案跑新舊兩路，把差異印出來人工看 20 份。**已做（PR #235，`scripts/compare_extractors.py`）**；§7 的 pdfplumber 欄另外指出兩個進 `E1` 前要修的分類問題（真標題被當 header 丟掉、側欄清單被當表格）。
 4. 差異可接受後才動 `app/services/extract.py`、`db/schema.sql`、與抽取快取的 per-hash 轉檔（四個端點，§4.2）。
 5. `E4`。

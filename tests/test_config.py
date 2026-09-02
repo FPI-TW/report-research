@@ -7,7 +7,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.config import _renderer, get_settings  # noqa: E402
+from app.config import _extractor, _renderer, get_settings  # noqa: E402
 
 
 class SettingsDefaultsTests(unittest.TestCase):
@@ -99,6 +99,15 @@ class SettingsDefaultsTests(unittest.TestCase):
         # 渲染器雙軌（M9a 區段；M9a 里程碑只在本方法內加斷言）
         s = get_settings()
         self.assertEqual(s.report_renderer, "typst")
+
+    def test_extractor_default_e1a(self):
+        """E1a：預設維持 pypdf，E1d 才切；typo 退回預設而不是靜默切換。"""
+        s = get_settings()
+        self.assertEqual(s.extractor, "pypdf")
+        with mock.patch.dict(os.environ, {"EXTRACTOR": " PDFPlumber "}):
+            self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pdfplumber")
+        with mock.patch.dict(os.environ, {"EXTRACTOR": "pdfplumbr"}):
+            self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pypdf")
 
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())

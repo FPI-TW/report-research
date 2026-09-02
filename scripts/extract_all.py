@@ -1,4 +1,4 @@
-"""全量平行萃取 研報自動匯入/ → data/extracted/all.jsonl
+"""全量平行萃取 研報自動匯入/ → data/extracted/<file_hash>.json（per-hash 快取，E1c）
 
 - 平行(多進程)抽全文 + 檔名 metadata + file_hash
 - 依 file_hash 去重(保留首個出現)
@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -17,11 +16,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.extract import extract_text  # noqa: E402
+from app.services.extraction import cache  # noqa: E402
 from app.services.filename import parse_filename  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "研報自動匯入"
-OUT = ROOT / "data" / "extracted" / "all.jsonl"
+OUT = cache.CACHE_DIR
 EXTS = {".pdf", ".docx", ".doc"}
 
 
@@ -30,21 +30,7 @@ def _work(path_str: str) -> dict | None:
     try:
         meta = parse_filename(path.name)
         res = extract_text(path)
-        return {
-            "file_hash": res.file_hash,
-            "file_name": path.name,
-            "file_path": str(path),
-            "text": res.text,
-            "char_count": res.char_count,
-            "scanned": res.scanned,
-            "language": res.language,
-            "is_admin": meta.is_admin,
-            "stock_code": meta.stock_code,
-            "company_name": meta.company_name,
-            "source": meta.source,
-            "report_date": meta.report_date.isoformat() if meta.report_date else None,
-            "report_type": meta.report_type,
-        }
+        return cache.record_from_result(res, path, meta, meta.source)
     except Exception as e:  # 單檔壞掉不影響整批
         return {"file_path": str(path), "error": str(e)[:120], "_failed": True}
 
@@ -52,15 +38,13 @@ def _work(path_str: str) -> dict | None:
 def main(workers: int) -> None:
     files = sorted(p for p in SRC.rglob("*") if p.suffix.lower() in EXTS)
     total = len(files)
-    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
 
     seen: set[str] = set()
     n_written = n_dupe = n_admin = n_scanned = n_failed = 0
     n_candidate = 0  # 唯一 且 非admin 且 非scanned
 
-    with open(OUT, "w", encoding="utf-8") as f, ProcessPoolExecutor(
-        max_workers=workers
-    ) as ex:
+    with ProcessPoolExecutor(max_workers=workers) as ex:
         for i, rec in enumerate(ex.map(_work, [str(p) for p in files], chunksize=16), 1):
             if rec is None or rec.get("_failed"):
                 n_failed += 1
@@ -70,7 +54,7 @@ def main(workers: int) -> None:
                     n_dupe += 1
                 else:
                     seen.add(h)
-                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    cache.write_record(rec)  # 同 hash 覆寫：全量重抽本來就該蓋掉舊結果
                     n_written += 1
                     if rec["is_admin"]:
                         n_admin += 1

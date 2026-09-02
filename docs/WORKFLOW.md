@@ -27,7 +27,7 @@ flowchart TD
     DB[("pgvector / PostgreSQL 16<br/>schema research<br/>research_report + report_chunk<br/>qa_log + report_doc<br/>report_signal + report_takeaway<br/>report_run/report_section + report_rendition")]
 
     SRC --> EX
-    EX -->|"data/extracted/all.jsonl"| TG
+    EX -->|"data/extracted/<hash>.json"| TG
     EX -.->|"extracted text"| IN
     TG -->|"data/tags/&lt;file_hash&gt;.json<br/>(市場/商品類型/標的…)"| IN
     IN -->|"BGE-M3 1024d + HNSW + trgm"| DB
@@ -64,7 +64,7 @@ flowchart TD
 | 層 | 位置 | 內容 |
 |----|------|------|
 | 來源 | `研報自動匯入/` | 原始 PDF/docx（唯讀，不更動）|
-| 中繼產物 | `data/` | 抽出文字 JSONL（`all.jsonl`／`sample.jsonl`）、工作清單、tag JSON、執行 log |
+| 中繼產物 | `data/` | 抽取快取 `data/extracted/<hash>.json`（一檔一筆，E1c；舊 `all.jsonl` 由 `scripts/migrate_extraction_cache.py` 轉檔後改名 `.bak`）、工作清單、tag JSON、執行 log |
 | Canonical | `research.research_report` | 每篇一列：市場/商品類型/標的等標籤 ＋ 檔名 metadata ＋ `full_text` ＋ `summary` |
 | 向量 | `research.report_chunk` | 全文切塊 ＋ `vector(1024)`（HNSW cosine）＋ `content_norm`（pg_trgm 字面比對）|
 | 問答紀錄 | `research.qa_log` | 每輪 Q&A 的 question/answer、來源、外部參考、conversation、回饋與延遲 |
@@ -99,11 +99,11 @@ flowchart TD
 - **做什麼**：`ProcessPoolExecutor`（預設 `--workers 16`）並行對每檔抽純文字，依 `file_hash` 去重（保留首見）；單檔失敗不阻斷整批；統計 unique / 重複 / 行政檔 / 掃描空白 / 失敗 / 候選報告數
   - `extract.py`：PDF（pypdf）/docx（python-docx）抽文字、算 SHA256 `file_hash`、偵測掃描檔（可抽文字 < 100 字 → `scanned=true`）、判語言
   - `filename.py`：解析股票代碼、券商來源、報告日期、報告類型、是否行政檔
-- **輸出**：`data/extracted/all.jsonl`（每行一筆，含 text + metadata）
+- **輸出**：`data/extracted/<file_hash>.json`（一檔一筆，含 text + metadata + `extractor`／`extraction_version`／`blocks` 索引；原子寫入）
 - **指令**：`uv run python scripts/extract_all.py [--workers N]`
 
 ### ② 多維標註 — `scripts/tag_all_cli.py`（Claude CLI）
-- **輸入**：`data/extracted/all.jsonl`（候選＝排除 `_failed`／`is_admin`／`scanned`）
+- **輸入**：`data/extracted/<hash>.json`（候選＝排除 `_failed`／`is_admin`／`scanned`）
 - **做什麼**：`ThreadPoolExecutor`（預設 `--workers 8`）；每個 worker 以 subprocess 呼叫 `claude -p <prompt> --model claude-haiku-4-5`（headless、`cwd=/tmp` 避免載入專案 CLAUDE.md），prompt＝`TAG_INSTRUCTION` ＋ 檔名 ＋ 報告文字前 `--excerpt`（預設 10000）字；解析 JSON、正規化各欄、原子寫檔（`.tmp` → rename）
   - 失敗最多重試 2 次；仍失敗則記 `data/tag_failures.log`
   - 已有有效 tag 者跳過（冪等、可續跑）
@@ -112,9 +112,9 @@ flowchart TD
 - **替代（原型）**：`workflows/tag_reports.workflow.js` — 由 Claude Code 以 Workflow 工具執行，5 個 agent 各讀一個 `worklist_batch*.json`、用 Read 開 PDF、Write 寫 tag；標註規則與 CLI 相同。
 
 ### ③ 嵌入入庫 — `scripts/ingest_all.py`
-- **輸入**：`data/extracted/all.jsonl` ＋ `data/tags/*.json`
+- **輸入**：`data/extracted/<hash>.json` ＋ `data/tags/*.json`
 - **過濾串**（各自計數）：`is_admin` → `scanned` → 已在 DB（啟動時一次撈出既有 `file_hash` 集合做 O(1) 比對）→ 無 tag → `is_research=false` 或無 market
-- **做什麼**：串流逐行讀 `all.jsonl`（不整檔載入記憶體）；合格檔以 `chunk.py` 切塊（600 字 / 80 重疊、段落邊界）→ `embed.py` BGE-M3 批次嵌入（1024 維、`--batch-size` 預設 32）→ `store.py` 依 `file_hash` 去重 upsert（先刪後插）寫入 pgvector；每 25 篇印速率/ETA；結束 `ANALYZE report_chunk`
+- **做什麼**：逐檔串流 `data/extracted/<hash>.json`（不整批載入記憶體）；合格檔以 `chunk.py` 切塊（600 字 / 80 重疊、段落邊界）→ `embed.py` BGE-M3 批次嵌入（1024 維、`--batch-size` 預設 32）→ `store.py` 依 `file_hash` 去重 upsert（先刪後插）寫入 pgvector；每 25 篇印速率/ETA；結束 `ANALYZE report_chunk`
   - 單檔錯誤記 `data/ingest_failures.log` 後 rollback 續跑（長跑韌性）；無 `--force`，重灌需先刪列
 - **輸出**：`research.research_report` ＋ `research.report_chunk`
 - **指令**：`uv run python scripts/ingest_all.py [--limit N] [--batch-size 32]`
@@ -309,7 +309,7 @@ uv sync
 #（或用捷徑：make db && make schema && make deps；其餘見 make help）
 
 # 全量生產
-uv run python scripts/extract_all.py             # 並行抽全量文字（去重）→ data/extracted/all.jsonl
+uv run python scripts/extract_all.py             # 並行抽全量文字（去重）→ data/extracted/<hash>.json
 uv run python scripts/tag_all_cli.py --workers 8 # Claude(Haiku) 標多維標籤（需 claude CLI）→ data/tags/*.json
 uv run python scripts/ingest_all.py              # 串流切塊＋嵌入入庫（首次下載 BGE-M3 ~2-4GB）
 #   ↑ 三步可改一鍵編排（標註＋導入並行、可中斷續跑）：

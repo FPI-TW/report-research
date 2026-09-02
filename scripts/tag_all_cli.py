@@ -1,6 +1,6 @@
 """用 `claude -p`(Haiku)對全量候選研報做市場/標的分類 → data/tags/<hash>.json
 
-- 來源:data/extracted/all.jsonl,濾掉 is_admin / scanned 後為候選
+- 來源:data/extracted/<hash>.json（per-hash 快取，E1c）,濾掉 is_admin / scanned 後為候選
 - 每篇用 claude CLI headless(Haiku)分類,parse_tags() 正規化後寫檔
 - 可續傳:已存在且可解析的 tag 直接跳過
 - 並發(ThreadPool),失敗重試,壞檔記錄到 data/tag_failures.log
@@ -23,7 +23,8 @@ from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa:
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-ALL = ROOT / "data" / "extracted" / "all.jsonl"
+from app.services.extraction import cache  # noqa: E402
+
 TAGS_DIR = ROOT / "data" / "tags"
 FAIL_LOG = ROOT / "data" / "tag_failures.log"
 MODEL = "claude-haiku-4-5"
@@ -92,15 +93,16 @@ def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
 def main(workers: int, limit: int | None, excerpt: int) -> None:
     TAGS_DIR.mkdir(parents=True, exist_ok=True)
     recs = []
-    with open(ALL, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            r = json.loads(line)
-            if r.get("_failed") or r.get("is_admin") or r.get("scanned"):
-                continue
-            recs.append(r)
+    n_unreadable = 0
+    for r in cache.iter_records():
+        if r.get("_unreadable"):
+            n_unreadable += 1
+            continue
+        if r.get("_failed") or r.get("is_admin") or r.get("scanned"):
+            continue
+        recs.append(r)
+    if n_unreadable:
+        print(f"warning: {n_unreadable} 個快取檔讀不出來（半寫或非 JSON），已跳過", flush=True)
     if limit:
         recs = recs[:limit]
     total = len(recs)

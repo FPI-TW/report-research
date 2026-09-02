@@ -119,6 +119,137 @@ async def upsert_extraction_log(session: AsyncSession, row: ExtractionLogRow) ->
     )
 
 
+async def replace_report_extraction(
+    session: AsyncSession,
+    report_id: str,
+    *,
+    full_text: str,
+    language: Optional[str],
+    chunks: list[str],
+    embeddings: list[list[float]],
+    fields: dict,
+) -> None:
+    """回填（E1d）：**原地**換掉一份既有研報的全文、chunk 與抽取欄位，report_id 不變。
+
+    刻意不用 upsert_report——那條路徑是 DELETE 再 INSERT 新 id，report_takeaway／
+    report_signal 以 FK CASCADE 掛在舊 id 上，會被連帶清空。這裡只動 report_chunk
+    （重切重嵌）與 research_report 的欄位。呼叫端自己 commit（與重錨定同一個交易）。"""
+    await session.execute(
+        text("DELETE FROM research.report_chunk WHERE report_id = :rid"), {"rid": report_id}
+    )
+    if chunks:
+        await session.execute(
+            text(
+                """
+                INSERT INTO research.report_chunk (id, report_id, chunk_index, content, embedding)
+                VALUES (:id, :report_id, :chunk_index, :content, CAST(:embedding AS vector))
+                """
+            ),
+            [
+                {
+                    "id": str(uuid.uuid4()),
+                    "report_id": report_id,
+                    "chunk_index": i,
+                    "content": c,
+                    "embedding": _vec_literal(e),
+                }
+                for i, (c, e) in enumerate(zip(chunks, embeddings))
+            ],
+        )
+    await session.execute(
+        text(
+            """
+            UPDATE research.research_report SET
+                full_text = :full_text,
+                language = :language,
+                extractor = :extractor,
+                extraction_version = :extraction_version,
+                quality_score = :quality_score,
+                quality_flags = CAST(:quality_flags AS jsonb),
+                page_count = :page_count,
+                pages_failed = CAST(:pages_failed AS int[]),
+                needs_review = :needs_review
+            WHERE id = :rid
+            """
+        ),
+        {
+            "rid": report_id,
+            "full_text": full_text,
+            "language": language,
+            "extractor": fields.get("extractor"),
+            "extraction_version": fields.get("extraction_version"),
+            "quality_score": fields.get("quality_score"),
+            "quality_flags": json.dumps(fields.get("quality_flags") or {}, ensure_ascii=False),
+            "page_count": fields.get("page_count"),
+            "pages_failed": list(fields["pages_failed"]) if fields.get("pages_failed") else None,
+            "needs_review": bool(fields.get("needs_review", False)),
+        },
+    )
+
+
+async def mark_report_extraction(session: AsyncSession, report_id: str, fields: dict) -> None:
+    """回填時新抽取器抽不出字：**保留舊全文與 chunk**，只更新版本與旗標，讓它不再被排進回填。"""
+    await session.execute(
+        text(
+            """
+            UPDATE research.research_report SET
+                extractor = :extractor,
+                extraction_version = :extraction_version,
+                quality_flags = CAST(:quality_flags AS jsonb),
+                needs_review = true
+            WHERE id = :rid
+            """
+        ),
+        {
+            "rid": report_id,
+            "extractor": fields.get("extractor"),
+            "extraction_version": fields.get("extraction_version"),
+            "quality_flags": json.dumps(fields.get("quality_flags") or {}, ensure_ascii=False),
+        },
+    )
+
+
+async def reanchor_takeaways(session: AsyncSession, report_id: str, canonical: str) -> tuple[int, int]:
+    """回填後把該研報既有摘錄的錨點對新正典文字重算（E1 共識第 3 條：不重跑 LLM）。
+
+    `text_sha256` 一律換成新正典文字的 sha——它是「這些錨點是對哪一份文字算的」的驗章；
+    錨不回的列 quote_start／anchor_method 置 NULL（後端本來就會收回這種錨點）。
+    回傳 (總列數, 錨得回的列數)。"""
+    import hashlib
+
+    from app.services.reading.anchor import locate_quote
+
+    rows = (
+        await session.execute(
+            text("SELECT id::text, quote FROM research.report_takeaway WHERE report_id = :rid"),
+            {"rid": report_id},
+        )
+    ).all()
+    sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    anchored = 0
+    for tid, quote in rows:
+        a = locate_quote(canonical, quote or "")
+        if a is not None:
+            anchored += 1
+        await session.execute(
+            text(
+                """
+                UPDATE research.report_takeaway
+                SET quote_start = :qs, quote_end = :qe, anchor_method = :method, text_sha256 = :sha
+                WHERE id = :tid
+                """
+            ),
+            {
+                "tid": tid,
+                "qs": a.start if a else None,
+                "qe": a.end if a else None,
+                "method": a.method if a else None,
+                "sha": sha,
+            },
+        )
+    return len(rows), anchored
+
+
 def _vec_literal(vec: Sequence[float]) -> str:
     return "[" + ",".join(f"{x:.7f}" for x in vec) + "]"
 

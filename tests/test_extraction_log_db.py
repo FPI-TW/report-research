@@ -148,3 +148,58 @@ class ExtractionLogRoundTripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BackfillRoundTripTests(ExtractionLogRoundTripTests):
+    """E1d：原地換文＋重錨定的 SQL 真的能跑（乾淨庫；本機沒套 schema 就 skip）。"""
+
+    def test_replace_in_place_keeps_id_and_reanchors_takeaways(self):
+        from sqlalchemy import text
+
+        h = "test-e1d-" + uuid.uuid4().hex
+
+        async def fn(session):
+            report = store.ReportRow(
+                file_hash=h, file_name="t.pdf", file_path="/tmp/t.pdf", market="TW", is_research=True,
+                confidence=0.9, full_text="舊 文 字", extractor="pypdf", extraction_version="pypdf-legacy",
+            )
+            rid = await store.upsert_report(session, report, ["舊文字"], [[0.0] * 1024])
+            await session.execute(
+                text(
+                    "INSERT INTO research.report_takeaway (report_id, ordinal, claim, quote, text_sha256, "
+                    "extraction_version, extraction_status) VALUES (CAST(:rid AS uuid), 1, 'c', "
+                    "'台積電第三季營收優於預期', 'old', 'v', 'valid')"
+                ),
+                {"rid": rid},
+            )
+            new_text = "前言。台積電第三季營收優於預期，毛利率維持高檔。結語。"
+            await store.replace_report_extraction(
+                session, rid, full_text=new_text, language="zh", chunks=["a", "b"],
+                embeddings=[[0.0] * 1024, [0.1] * 1024],
+                fields={"extractor": "pdfplumber", "extraction_version": "ext-v", "quality_score": 0.8,
+                        "quality_flags": {"x": 1}, "page_count": 2, "pages_failed": [], "needs_review": False},
+            )
+            n, anchored = await store.reanchor_takeaways(session, rid, new_text)
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT r.id::text, r.extraction_version, r.full_text, "
+                        "(SELECT count(*) FROM research.report_chunk c WHERE c.report_id = r.id), "
+                        "t.quote_start, t.anchor_method, t.text_sha256 "
+                        "FROM research.research_report r JOIN research.report_takeaway t ON t.report_id = r.id "
+                        "WHERE r.file_hash = :h"
+                    ),
+                    {"h": h},
+                )
+            ).one()
+            return rid, n, anchored, row
+
+        rid, n, anchored, row = self._run(fn)
+        self.assertEqual(row[0], rid, "report_id 必須不變（摘錄與訊號的 FK 掛在它上面）")
+        self.assertEqual(row[1], "ext-v")
+        self.assertIn("台積電第三季營收優於預期", row[2])
+        self.assertEqual(row[3], 2)
+        self.assertEqual((n, anchored), (1, 1))
+        self.assertEqual(row[4], row[2].index("台積電"))
+        self.assertEqual(row[5], "exact")
+        self.assertNotEqual(row[6], "old")

@@ -146,6 +146,8 @@ class Settings:
     ask_faithfulness_sample_rate: float  # 問答：含數字答案的查核抽樣率（0..1）
     faithfulness_model: str
     faithfulness_timeout: float
+    ask_faithfulness_timeout: float      # 問答抽查專用；刻意與研報那顆分開，見下方註解
+    ask_faithfulness_max_inflight: int   # 同時在背景跑的問答抽查上限；超過即跳過該次抽查
 
     # 執行期可觀測性
     log_level: str
@@ -297,6 +299,20 @@ def _load() -> Settings:
         # judge 復用 haiku（同 planner）；離線批次語氣輕、成本低
         faithfulness_model=os.getenv("FAITHFULNESS_MODEL", intent_model),
         faithfulness_timeout=float(os.getenv("FAITHFULNESS_TIMEOUT", "60")),
+        # 問答抽查的逾時**刻意與研報那顆分開**。`faithfulness_timeout` 不只是逾時，
+        # 它同時是 `report_writer` 的預算前瞻算式的輸入（`grounding_need = 節數 ×
+        # timeout/2`、`fix_need = 節牆鐘 + timeout/2`）——把它放大會讓研報以為
+        # grounding 需要四倍時間，於是提早砍掉動態分析子節。而問答抽查的實測需求
+        # 又確實遠超 60 秒：2026-08-21 以生產原始輸入量到 ground 單次 48–142 秒
+        # （payload 15–19k 字），60 秒必然砍掉其中一題。抽查已改成背景任務、不佔
+        # `/api/ask` 名額，所以這裡放寬是零使用者成本。
+        ask_faithfulness_timeout=float(os.getenv("ASK_FAITHFULNESS_TIMEOUT", "240")),
+        # 抽查改成背景任務後就不再受 `/api/ask` 的併發閘保護：每次抽查 spawn 一個
+        # `claude` CLI 跑 48–142 秒，抽樣率預設 1.0，連續問答時背景行程數會無上界地
+        # 累積。這裡給它自己的上限——超過就**跳過該次抽查**而不是排隊：抽查本來就是
+        # 抽樣的 best-effort，少查一題與抽樣率沒抽中是同一件事，排隊反而會讓抽查對象
+        # 與抽查時間脫節。
+        ask_faithfulness_max_inflight=max(0, int(os.getenv("ASK_FAITHFULNESS_MAX_INFLIGHT", "2"))),
         log_level=_log_level("LOG_LEVEL", "INFO"),
         # ── DB 連線池與逾時（app/services/db.py）─────────────────────────────
         # 池是 **per-process**：生產 web 是單 worker（report-mark-web.service 的

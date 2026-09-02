@@ -18,6 +18,7 @@ from app.services.answer import (  # noqa: E402
     build_history_block,
     build_user_prompt,
     cited_report_ids,
+    drop_abandoned_draft,
     history_item,
     split_external_sources,
 )
@@ -46,6 +47,67 @@ def make_row(report_id, file_name, market, content, report_date=None, distance=0
         content=content,
         distance=distance,
     )
+
+
+class DropAbandonedDraftTests(unittest.TestCase):
+    """棄稿段：模型「先寫一版找不到、再搜、再從頭重寫」，兩版都留在畫面上。
+
+    判準是**標題記號出現在行中**——重寫時新文件直接接在舊句子後面，而 markdown 的
+    ATX 標題一定在行首。刻意用 Python 收而不是再加 prompt 規則：WEB_POLICY 第 9 條
+    已經明文禁止仍壓不住，本 repo 對「prompt 寫了不等於保證」已有兩次紀錄。
+
+    下面兩組樣本都是 2026-08-21 `web=true` 的實際輸出，不是編出來的形狀。
+    """
+
+    # 病灶：`。## 標題` 黏在句尾
+    SEAM_A = (
+        "由於參考片段查無相關資料，依規則需先進行網路搜尋確認是否有此公司或相關資訊。"
+        "## 兆勁（2444）分析\n\n**研報資料說明：** 三篇研報片段均未涵蓋兆勁這家公司。"
+    )
+    SEAM_B = (
+        "均未提及「兆勁」這家公司或相關個股。"
+        "## 兆勁（2444）分析\n\n提供的三篇研報片段（[1][2][3]）均未涵蓋兆勁。"
+    )
+
+    def test_drops_the_preamble_at_the_seam(self):
+        for i, t in enumerate((self.SEAM_A, self.SEAM_B)):
+            with self.subTest(sample=i):
+                out = drop_abandoned_draft(t)
+                self.assertTrue(out.startswith("## 兆勁（2444）分析"))
+                self.assertNotIn("依規則需先進行網路搜尋", out)
+                self.assertNotIn("均未提及「兆勁」這家公司或相關個股。#", out)
+
+    def test_healthy_shapes_are_untouched(self):
+        """五筆健康樣本的形狀，一筆都不許被動到。"""
+        healthy = [
+            # 直接以標題開場
+            "# 兆勁 (2444 TT) 分析\n\n**股價 NT$11.7**[1][2]\n\n## 一、業務概況\n內文。",
+            # 標題緊接標題
+            "# 兆勁 (2444 TT) 分析\n\n## 公司評等與基本狀況\n兆勁目前為未評等個股[1]。",
+            # 開場白＋換行＋章節：**與接縫完全無法區分，所以刻意不碰**
+            "根據所提供的研報片段，未提及勝一，以下改以網路公開資訊補充。"
+            "\n\n## 勝一（1773）近期獲利表現（網路）\n\n- 營收約 30.44 億元。",
+            # 全篇無標題
+            "根據所提供之研報片段，關於勝一（1773）僅出現在三個脈絡中：\n- 外資賣超彙整表[6]。",
+            # 更深層標題（#{1,3} 會從第二個 # 起匹配，那不是接縫）
+            "# 標題\n\n#### 第四層\n內文。",
+        ]
+        for i, t in enumerate(healthy):
+            with self.subTest(sample=i):
+                self.assertEqual(drop_abandoned_draft(t), t)
+
+    def test_never_drops_more_than_it_keeps(self):
+        """守門是「丟掉的不得多於留下的」：不通過就整段不動。
+
+        留下渲染瑕疵，好過吃掉內容——這條路徑沒有任何人會看到它做了什麼。
+        """
+        t = "這是一段很長很長的正文" * 10 + "。## 尾註\n短。"
+        self.assertEqual(drop_abandoned_draft(t), t)
+
+    def test_hash_without_space_is_not_a_heading(self):
+        """`#1` 這種寫法沒有空白，不是標題，不得誤判。"""
+        t = "本季市占率為 #1，詳見下表。\n\n## 明細\n表格。"
+        self.assertEqual(drop_abandoned_draft(t), t)
 
 
 class StreamParseTests(unittest.TestCase):
@@ -791,10 +853,11 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         async def numeric_stream(*a, **k):
             yield "營收年增 30%[1]"
 
-        async def spy_spot(qa_id, answer, manifest):
+        async def spy_spot(qa_id, answer, context):
             spot["called"] = True
             spot["qa_id"] = qa_id
             spot["answer"] = answer
+            spot["context"] = context
 
         saved = (ans.stream_completion, ans._faithfulness_spot_check,
                  ans.ASK_FAITHFULNESS_SAMPLE_RATE)
@@ -803,14 +866,63 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         ans.ASK_FAITHFULNESS_SAMPLE_RATE = 1.0        # 抽樣必中
         try:
             _ = [e async for e in ans.answer_question("可口可樂營收")]
+            # 抽查是**背景任務**（見 _spawn_background）：generator 耗盡時它還沒跑完，
+            # 那正是重點——`/api/ask` 的名額在這裡就放掉了。要斷言就得等它。
+            self.assertFalse(spot["called"])             # 尚未被 await
+            await asyncio.gather(*list(ans._BACKGROUND_TASKS))
         finally:
             (ans.stream_completion, ans._faithfulness_spot_check,
              ans.ASK_FAITHFULNESS_SAMPLE_RATE) = saved
             self._restore(ans, rp, orig)
 
-        self.assertTrue(spot["called"])                  # 抽查確實被 answer_question 呼叫
+        self.assertTrue(spot["called"])                  # 抽查確實被 answer_question 排程
         self.assertTrue(spot.get("qa_id"))               # 帶 qa_id（真 uuid，非空）
         self.assertIn("30%", spot.get("answer", ""))     # 帶答案本文供 grounding
+        # 比對基準是模型當時看到的 context（不是 evidence 帳本回查——那條路的 payload
+        # 是 15 份證據 × 4000 字，實測必然撞上 60 秒逾時）。
+        self.assertIsInstance(spot.get("context"), str)
+
+    async def test_spot_check_skipped_when_background_cap_reached(self):
+        # 抽查脫離 /api/ask 的併發閘之後，唯一的上限是 ASK_FAITHFULNESS_MAX_INFLIGHT：
+        # 已有同數量的抽查在背景跑時，這一題**跳過**（不排隊、不 spawn），且沒有例外。
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, rp, in_domain=True, called=called)
+
+        spot = {"called": False}
+
+        async def numeric_stream(*a, **k):
+            yield "營收年增 30%[1]"
+
+        async def spy_spot(qa_id, answer, context):
+            spot["called"] = True
+
+        release = asyncio.Event()
+
+        async def occupant():
+            await release.wait()
+
+        saved = (ans.stream_completion, ans._faithfulness_spot_check,
+                 ans.ASK_FAITHFULNESS_SAMPLE_RATE, ans.ASK_FAITHFULNESS_MAX_INFLIGHT)
+        ans.stream_completion = numeric_stream
+        ans._faithfulness_spot_check = spy_spot
+        ans.ASK_FAITHFULNESS_SAMPLE_RATE = 1.0
+        ans.ASK_FAITHFULNESS_MAX_INFLIGHT = 1
+        # 先佔住唯一的名額：一個尚未結束、名稱帶同一前綴的背景任務。
+        blocker = ans._spawn_background(occupant(), name="faithfulness:other")
+        try:
+            _ = [e async for e in ans.answer_question("可口可樂營收")]
+            self.assertEqual(ans._BACKGROUND_TASKS, {blocker})  # 沒有新排任何抽查
+        finally:
+            release.set()
+            await blocker
+            (ans.stream_completion, ans._faithfulness_spot_check,
+             ans.ASK_FAITHFULNESS_SAMPLE_RATE, ans.ASK_FAITHFULNESS_MAX_INFLIGHT) = saved
+            self._restore(ans, rp, orig)
+
+        self.assertFalse(spot["called"])
 
     async def test_non_numeric_answer_skips_spot_check(self):
         # 答案無金融數字 → 不觸發抽查（省成本）。
@@ -830,6 +942,7 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         ans.ASK_FAITHFULNESS_SAMPLE_RATE = 1.0
         try:
             _ = [e async for e in ans.answer_question("可口可樂展望")]
+            self.assertEqual(ans._BACKGROUND_TASKS, set())  # 連背景任務都不該排
         finally:
             (ans._faithfulness_spot_check, ans.ASK_FAITHFULNESS_SAMPLE_RATE) = saved
             self._restore(ans, rp, orig)

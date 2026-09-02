@@ -178,7 +178,8 @@ function applyAsk(turn: Turn, ev: AskEvent): Turn {
     case 'done': return {
       ...t,
       phase: t.isOfftopic ? 'notice' : 'done',
-      // 後端只在簡體→繁體轉換改動了內容時才帶 answer；沒帶就維持串流累積的那份。
+      // 後端只在整串收尾改動了內容時才帶 answer（簡繁轉換或棄稿段移除）；沒帶就
+      // 維持串流累積的那份。
       // 這裡是畫面與 qa_log 收斂到同一份文字的唯一時機（見 askSchemas 的欄位註解）。
       answer: ev.data.answer ?? t.answer,
       qaId: ev.data.qa_id ?? t.qaId,

@@ -1,7 +1,7 @@
-"""全量導入：串流 all.jsonl + tags → chunk → BGE-M3 嵌入 → upsert pgvector。
+"""全量導入：串流 per-hash 抽取快取 + tags → chunk → BGE-M3 嵌入 → upsert pgvector。
 
 與 run_ingest.py 的差異：
-- 讀 all.jsonl 且逐行串流（375MB，不整檔載入記憶體）
+- 逐檔串流 data/extracted/<hash>.json（不整批載入記憶體；E1c）
 - 啟動時一次撈出 DB 既有 file_hash 作續傳集合（不必逐筆查 exists）
 - 單筆失敗記錄到 data/ingest_failures.log 後繼續，不中斷長跑
 - 每 25 篇輸出速率與 ETA
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 import time
 from datetime import date
@@ -36,7 +35,7 @@ from app.services.tagging import load_tag  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-ALL = ROOT / "data" / "extracted" / "all.jsonl"
+from app.services.extraction import cache  # noqa: E402
 
 
 def _log_row(rec: dict, stopped_at: str) -> ExtractionLogRow:
@@ -91,108 +90,103 @@ async def main(limit: int | None, batch_size: int) -> None:
 
     review_min = get_settings().extraction_review_min
     async with SessionFactory() as session:
-        with open(ALL, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if rec.get("_failed"):
-                    # 抽取階段就炸掉的紀錄沒有 file_hash，進不了以 hash 為鍵的 extraction_log；
-                    # 它們留在 all.jsonl 的 _failed 列與 extract_all 的統計裡。
-                    continue
-                # 每一道閘都寫 extraction_log（§4.2 目標 #1：落點不能只存在於 if 分支裡）。
-                # 寫入獨立 commit：閘門紀錄不該因為後面的 upsert 失敗而一起回滾。
-                if rec.get("is_admin"):
-                    stats["skip_admin"] += 1
-                    await upsert_extraction_log(session, _log_row(rec, "skip_admin"))
-                    await session.commit()
-                    continue
-                if rec.get("scanned"):
+        for rec in cache.iter_records():
+            if rec.get("_unreadable"):
+                stats["fail"] += 1
+                continue
+            if rec.get("_failed"):
+                # 抽取階段就炸掉的紀錄沒有 file_hash，進不了以 hash 為鍵的 extraction_log；
+                # 它們留在 all.jsonl 的 _failed 列與 extract_all 的統計裡。
+                continue
+            # 每一道閘都寫 extraction_log（§4.2 目標 #1：落點不能只存在於 if 分支裡）。
+            # 寫入獨立 commit：閘門紀錄不該因為後面的 upsert 失敗而一起回滾。
+            if rec.get("is_admin"):
+                stats["skip_admin"] += 1
+                await upsert_extraction_log(session, _log_row(rec, "skip_admin"))
+                await session.commit()
+                continue
+            if rec.get("scanned"):
+                stats["skip_scanned"] += 1
+                await upsert_extraction_log(session, _log_row(rec, "scanned"))
+                await session.commit()
+                continue
+            h = rec["file_hash"]
+            if h in existing:
+                stats["skip_exists"] += 1
+                continue
+            tag = load_tag(TAGS_DIR, h)
+            if tag is None:
+                stats["skip_untagged"] += 1
+                continue
+            if not tag.is_research or not tag.market:
+                stats["skip_non_research"] += 1
+                await upsert_extraction_log(session, _log_row(rec, "not_research"))
+                await session.commit()
+                continue
+
+            try:
+                # full_text 走原始文字（不經 clean_extracted），需單獨剝除 NUL，
+                # 否則含 \x00 的 PDF 會在 upsert 時拋 UTF8 編碼錯誤而永久失敗。
+                raw_text = (rec.get("text") or "").replace("\x00", "")
+                chunks = chunk_text(clean_extracted(raw_text))
+                if not chunks:
                     stats["skip_scanned"] += 1
                     await upsert_extraction_log(session, _log_row(rec, "scanned"))
                     await session.commit()
                     continue
-                h = rec["file_hash"]
-                if h in existing:
-                    stats["skip_exists"] += 1
-                    continue
-                tag = load_tag(TAGS_DIR, h)
-                if tag is None:
-                    stats["skip_untagged"] += 1
-                    continue
-                if not tag.is_research or not tag.market:
-                    stats["skip_non_research"] += 1
-                    await upsert_extraction_log(session, _log_row(rec, "not_research"))
-                    await session.commit()
-                    continue
+                embeddings = embed_texts(chunks, batch_size=batch_size)
+                q = rec.get("quality") or {}
+                report = ReportRow(
+                    file_hash=h,
+                    file_name=rec["file_name"],
+                    file_path=rec["file_path"],
+                    market=tag.market,
+                    is_research=tag.is_research,
+                    confidence=tag.confidence,
+                    stock_code=rec.get("stock_code"),
+                    company_name=rec.get("company_name"),
+                    source=rec.get("source"),
+                    report_date=_parse_date(rec.get("report_date")),
+                    report_type=rec.get("report_type"),
+                    language=rec.get("language"),
+                    instrument_types=tag.instrument_types,
+                    relates_stock=tag.relates_stock,
+                    relates_futures=tag.relates_futures,
+                    stock_targets=tag.stock_targets,
+                    futures_targets=tag.futures_targets,
+                    full_text=raw_text,
+                    extractor=rec.get("extractor") or "pypdf",
+                    extraction_version=rec.get("extraction_version") or "pypdf-legacy",
+                    quality_score=q.get("quality_score"),
+                    quality_flags=q or None,
+                    page_count=rec.get("page_count"),
+                    pages_failed=rec.get("pages_failed") or None,
+                    needs_review=needs_review(q.get("quality_score"), rec.get("pages_failed"), review_min),
+                )
+                await upsert_report(session, report, chunks, embeddings)
+                await upsert_extraction_log(session, _log_row(rec, "ingested"))
+                await session.commit()
+            except Exception as e:  # noqa: BLE001 — 長跑不因單筆中斷
+                stats["fail"] += 1
+                await session.rollback()
+                with open(FAIL_LOG, "a", encoding="utf-8") as fl:
+                    fl.write(f"{h}\t{rec.get('file_name')}\t{e!r}\n")
+                continue
 
-                try:
-                    # full_text 走原始文字（不經 clean_extracted），需單獨剝除 NUL，
-                    # 否則含 \x00 的 PDF 會在 upsert 時拋 UTF8 編碼錯誤而永久失敗。
-                    raw_text = (rec.get("text") or "").replace("\x00", "")
-                    chunks = chunk_text(clean_extracted(raw_text))
-                    if not chunks:
-                        stats["skip_scanned"] += 1
-                        await upsert_extraction_log(session, _log_row(rec, "scanned"))
-                        await session.commit()
-                        continue
-                    embeddings = embed_texts(chunks, batch_size=batch_size)
-                    q = rec.get("quality") or {}
-                    report = ReportRow(
-                        file_hash=h,
-                        file_name=rec["file_name"],
-                        file_path=rec["file_path"],
-                        market=tag.market,
-                        is_research=tag.is_research,
-                        confidence=tag.confidence,
-                        stock_code=rec.get("stock_code"),
-                        company_name=rec.get("company_name"),
-                        source=rec.get("source"),
-                        report_date=_parse_date(rec.get("report_date")),
-                        report_type=rec.get("report_type"),
-                        language=rec.get("language"),
-                        instrument_types=tag.instrument_types,
-                        relates_stock=tag.relates_stock,
-                        relates_futures=tag.relates_futures,
-                        stock_targets=tag.stock_targets,
-                        futures_targets=tag.futures_targets,
-                        full_text=raw_text,
-                        extractor=rec.get("extractor") or "pypdf",
-                        extraction_version=rec.get("extraction_version") or "pypdf-legacy",
-                        quality_score=q.get("quality_score"),
-                        quality_flags=q or None,
-                        page_count=rec.get("page_count"),
-                        pages_failed=rec.get("pages_failed") or None,
-                        needs_review=needs_review(q.get("quality_score"), rec.get("pages_failed"), review_min),
-                    )
-                    await upsert_report(session, report, chunks, embeddings)
-                    await upsert_extraction_log(session, _log_row(rec, "ingested"))
-                    await session.commit()
-                except Exception as e:  # noqa: BLE001 — 長跑不因單筆中斷
-                    stats["fail"] += 1
-                    await session.rollback()
-                    with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                        fl.write(f"{h}\t{rec.get('file_name')}\t{e!r}\n")
-                    continue
-
-                existing.add(h)
-                stats["ingested"] += 1
-                stats["chunks"] += len(chunks)
-                if stats["ingested"] % 25 == 0:
-                    elapsed = time.time() - t0
-                    rate = stats["chunks"] / elapsed if elapsed else 0.0
-                    print(
-                        f"ingested={stats['ingested']} chunks={stats['chunks']} "
-                        f"fail={stats['fail']} rate={rate:.1f}c/s "
-                        f"avg={stats['chunks'] / stats['ingested']:.0f}c/篇",
-                        flush=True,
-                    )
-                if limit and stats["ingested"] >= limit:
-                    break
+            existing.add(h)
+            stats["ingested"] += 1
+            stats["chunks"] += len(chunks)
+            if stats["ingested"] % 25 == 0:
+                elapsed = time.time() - t0
+                rate = stats["chunks"] / elapsed if elapsed else 0.0
+                print(
+                    f"ingested={stats['ingested']} chunks={stats['chunks']} "
+                    f"fail={stats['fail']} rate={rate:.1f}c/s "
+                    f"avg={stats['chunks'] / stats['ingested']:.0f}c/篇",
+                    flush=True,
+                )
+            if limit and stats["ingested"] >= limit:
+                break
 
         if stats["ingested"]:
             # 批量導入後刷新統計，讓 planner 掌握新資料分佈。

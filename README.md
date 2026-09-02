@@ -184,7 +184,7 @@ docker exec -i report-mark-postgres psql -U postgres -d research < db/schema.sql
 ### 2）全量生產管線
 
 ```bash
-uv run python scripts/extract_all.py              # ① 並行抽全量文字（去重）→ data/extracted/all.jsonl
+uv run python scripts/extract_all.py              # ① 並行抽全量文字（去重）→ data/extracted/<hash>.json
 uv run python scripts/tag_all_cli.py --workers 8  # ② Claude(Haiku) 多維標註 → data/tags/*.json（需 claude CLI）
 uv run python scripts/ingest_all.py               # ③ 串流切塊＋嵌入入庫（首次下載 BGE-M3 ~2-4GB）
 

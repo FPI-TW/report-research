@@ -144,6 +144,23 @@ def build_takeaway_prompt(
 
 # ── 正典文字 / 指紋（不變量的唯一入口）──
 
+def excerpt_without_tables(full_text: Optional[str], file_hash: Optional[str], canonical: str) -> str:
+    """餵給 LLM 的文字：依 per-hash 快取的 Block 索引拿掉表格，再做同一套正典化。
+
+    表格列被當成引文時，前端的關鍵字階梯沒有一階會剝掉 `|`，使用者會被帶到任意一處
+    或看到「原文中找不到」。模型看不到表格列就不可能引用它。索引對不上（快取沒有、
+    NUL 剝除改了長度、pypdf 路徑無索引）一律退回 canonical——寧可多看表格，不要切錯。"""
+    from app.services.extraction import cache as extraction_cache
+
+    if not full_text or not file_hash:
+        return canonical
+    rec = extraction_cache.read_record(file_hash)
+    if not rec or not rec.get("blocks"):
+        return canonical
+    stripped = extraction_cache.strip_tables(full_text, rec["blocks"], expected_len=rec.get("char_count"))
+    return clean_extracted(stripped) if stripped is not full_text else canonical
+
+
 def canonical_text(full_text: Optional[str]) -> str:
     """full_text → 正典文字。**本檔取得 full_text 後唯一允許的轉換**。"""
     return clean_extracted(full_text or "")
@@ -176,7 +193,7 @@ def build_reports_sql(by_hashes: bool = False) -> str:
         else "  AND r.report_date >= current_date - CAST(:since_days AS int) "
     )
     return (
-        "SELECT r.id::text, r.file_name, r.report_date, r.source, r.full_text "
+        "SELECT r.id::text, r.file_name, r.report_date, r.source, r.full_text, r.file_hash "
         "FROM research.research_report r "
         "WHERE r.full_text IS NOT NULL "
         "  AND r.full_text <> '' "
@@ -438,15 +455,19 @@ class WorkItem:
     """一份待擷取的研報。canonical 已是正典文字，全程不再碰 full_text。"""
 
     __slots__ = ("report_id", "file_name", "report_date", "source", "canonical",
-                 "text_sha256")
+                 "text_sha256", "excerpt_source")
 
-    def __init__(self, report_id, file_name, report_date, source, canonical, text_sha256):
+    def __init__(self, report_id, file_name, report_date, source, canonical, text_sha256,
+                 excerpt_source=None):
         self.report_id = report_id
         self.file_name = file_name
         self.report_date = report_date
         self.source = source
         self.canonical = canonical
         self.text_sha256 = text_sha256
+        # 餵給 LLM 的文字：表格已拿掉的正典文字（E1c，§4.2「逐字引文的防護」）。
+        # 沒有 Block 索引（pypdf 快取）時就是 canonical 本身。text_sha256 永遠對 canonical 算。
+        self.excerpt_source = excerpt_source if excerpt_source is not None else canonical
 
 
 async def _fetch_reports(session, since_days, hashes: list[str] | None = None):
@@ -516,7 +537,7 @@ async def build_worklist(
         done_map = await _fetch_done_map(session, [r[0] for r in reports])
 
         worklist: list[WorkItem] = []
-        for rid, file_name, report_date, source, full_text in reports:
+        for rid, file_name, report_date, source, full_text, file_hash in reports:
             canonical = canonical_text(full_text)
             if not canonical:
                 continue  # 清理後空白（極端壞檔）→ 沒東西可摘
@@ -524,7 +545,8 @@ async def build_worklist(
             if _is_done(done_map.get(rid, []), sha, reextract):
                 continue
             worklist.append(
-                WorkItem(rid, file_name, report_date, source, canonical, sha)
+                WorkItem(rid, file_name, report_date, source, canonical, sha,
+                         excerpt_source=excerpt_without_tables(full_text, file_hash, canonical))
             )
     return len(reports), worklist
 
@@ -553,7 +575,7 @@ async def extract_one(
     global _done, _ok, _rejected, _fail
     date_str = item.report_date.isoformat() if item.report_date else None
     prompt = build_takeaway_prompt(
-        item.file_name, date_str, item.source, item.canonical[:excerpt]
+        item.file_name, date_str, item.source, item.excerpt_source[:excerpt]
     )
     parsed: Optional[ParsedTakeaways] = None
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的

@@ -23,12 +23,12 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.services.extraction import cache as extraction_cache  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 SRC_LOCAL = ROOT / "研報自動匯入"
 TAGS_DIR = ROOT / "data" / "tags"
-ALL_JSONL = ROOT / "data" / "extracted" / "all.jsonl"
 FAIL_LOG = ROOT / "data" / "sync_failures.log"
 INGESTED_HASHES_FILE = ROOT / "data" / ".sync_last_hashes"
 STATS_FILE = ROOT / "data" / ".sync_last_stats"
@@ -142,13 +142,14 @@ def _persist_tag(file_hash: str, tag) -> None:
     tmp.rename(out)
 
 
-def _append_all_jsonl(rec: dict) -> None:
-    """把成功匯入的紀錄 append 進 all.jsonl，維持與批次工具一致。"""
-    import json
+def _write_cache(res, path: Path, meta, source: str | None, report_date) -> None:
+    """把本輪抽取結果寫進 per-hash 快取（E1c），與 extract_all 同一種紀錄。
 
-    ALL_JSONL.parent.mkdir(parents=True, exist_ok=True)
-    with open(ALL_JSONL, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    report_date 用 sync 這裡決定的值（含 mtime 回退），不是 parse_filename 的原值——
+    快取要記的是「入庫時採用的日期」。"""
+    rec = extraction_cache.record_from_result(res, path, meta, source)
+    rec["report_date"] = report_date.isoformat() if report_date else None
+    extraction_cache.write_record(rec)
 
 
 def write_ingested_hashes(path: Path, hashes: list[str]) -> None:
@@ -394,25 +395,7 @@ async def _run(args) -> None:
                 await upsert_report(session, report, chunks, embeddings)
                 await upsert_extraction_log(session, _log("ingested"))
                 await session.commit()
-                _append_all_jsonl(
-                    {
-                        "file_hash": res.file_hash,
-                        "file_name": path.name,
-                        "file_path": str(path),
-                        "text": res.text,
-                        "char_count": res.char_count,
-                        "scanned": res.scanned,
-                        "language": res.language,
-                        "is_admin": meta.is_admin,
-                        "stock_code": meta.stock_code,
-                        "company_name": meta.company_name,
-                        "source": source,
-                        "report_date": (
-                            report_date.isoformat() if report_date else None
-                        ),
-                        "report_type": meta.report_type,
-                    }
-                )
+                _write_cache(res, path, meta, source, report_date)
             except Exception as e:  # noqa: BLE001
                 stats["fail"] += 1
                 await session.rollback()

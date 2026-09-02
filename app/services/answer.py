@@ -32,7 +32,6 @@ from app.services.evidence import (
 from app.services.faithfulness import (
     check_faithfulness,
     is_numeric_claim,
-    resolve_evidence_texts,
 )
 from app.services.followups import generate_followups
 from app.services.llm import (
@@ -90,6 +89,10 @@ ASK_FAITHFULNESS_ENABLED = _S.ask_faithfulness_enabled
 ASK_FAITHFULNESS_SAMPLE_RATE = _S.ask_faithfulness_sample_rate
 FAITHFULNESS_MODEL = _S.faithfulness_model
 FAITHFULNESS_TIMEOUT = _S.faithfulness_timeout
+# 問答抽查專用（見 config.py 的註解）：研報那顆同時是預算前瞻的輸入，不能共用。
+ASK_FAITHFULNESS_TIMEOUT = _S.ask_faithfulness_timeout
+# 背景抽查的同時上限（見 config.py 的註解與 _spawn_background）。
+ASK_FAITHFULNESS_MAX_INFLIGHT = _S.ask_faithfulness_max_inflight
 
 MAX_REPORTS = _S.ask_max_reports
 MAX_PASSAGES_PER_REPORT = _S.ask_max_passages
@@ -407,6 +410,43 @@ ASK_ENABLE_WEB = _S.ask_enable_web
 ASK_WEB_TIMEOUT = _S.ask_web_timeout
 
 EXT_SENTINEL = "[EXT_SOURCES]"  # 模型在答案末尾以此標記外部來源區塊
+
+# 開網搜時模型偶爾會「先寫一版『找不到相關資料』、再去搜、再從頭重寫一份」，兩版都
+# 留在畫面上（實測 2026-08-21，`web=true` 的「分析兆勁」十餘次裡出現兩次）。
+#
+# **這是用 Python 收，不是再加一條 prompt 規則。** WEB_POLICY 第 9 條已經明文禁止，
+# 仍然壓不住——本 repo 對「prompt 寫了不等於保證」已有 zh_hant 與 faithfulness 兩次
+# 紀錄，再加第十條只是把同一個賭注下大一點。
+#
+# 判準是**標題記號出現在行中**：重寫時模型是直接把新文件接在舊句子後面，所以長成
+# 「…均未提及「兆勁」這家公司。## 兆勁（2444）分析」。markdown 的 ATX 標題一定在
+# 行首，行中出現代表這不是排版、是接縫。**刻意不把「段落＋換行＋標題」也當接縫**：
+# 那個形狀與「一句正常的開場白後接第一個章節」完全無法區分（實測 5 筆健康樣本裡
+# 有 1 筆正是這個形狀），誤判會吃掉真正的內容。
+#
+# 順帶修掉第二個症狀：黏在句尾的 `## ` 本來就渲染不成標題，畫面上會直接看到
+# 「## 兆勁（2444）分析」這串字。
+_ATX_HEADING_RE = re.compile(r"#{1,3}[ \u3000]")
+
+
+def drop_abandoned_draft(text: str) -> str:
+    """丟掉「先寫一版再重寫」留下的棄稿段（純函式）。
+
+    找第一個**行中**（前一個字元不是換行、也不是 `#`）的 ATX 標題記號，把它之前的
+    文字整段丟掉。`#` 也排除是因為 `#{1,3}` 在 `####` 這種更深的標題上會從第二個
+    `#` 起匹配，那不是接縫。
+
+    唯一的守門是**丟掉的不得多於留下的**——不用長度魔數，因為要斷言的正是「後面那份
+    才是答案」。若第一個接縫沒通過這道守門就整段不動：留下渲染瑕疵，好過吃掉內容。
+    """
+    for m in _ATX_HEADING_RE.finditer(text):
+        i = m.start()
+        if i == 0 or text[i - 1] in "\n#":
+            continue
+        head, tail = text[:i], text[i:]
+        return tail.lstrip() if len(head) < len(tail) else text
+    return text
+
 
 
 def split_external_sources(text: str) -> tuple[str, list[dict]]:
@@ -1641,20 +1681,72 @@ async def _update_evaluation(qa_id: str, evaluation: dict) -> None:
         pass
 
 
-async def _faithfulness_spot_check(qa_id: str, answer: str, manifest: dict | None) -> None:
-    """問答迷你忠實度抽查（M8c）：在 done 之後跑，不佔可見答案延遲。
+# 背景任務的強引用。**沒有這個 set，任務會被 GC 掉。** asyncio 只對執行中的 task 持
+# 弱引用，`create_task` 的回傳值一旦沒人拿著，任務可能在任意 await 點被回收——症狀是
+# 抽查隨機地做到一半就消失，而且完全沒有訊息。done callback 負責移除，不會無限長大。
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
-    以 done 時已建的 evidence manifest 回查 corpus 證據 → grounding → 寫 qa_log.evaluation。
+
+def _spawn_background(coro, *, name: str) -> asyncio.Task:
+    """把 best-effort 的收尾工作丟到背景，讓 SSE generator 當場結束。
+
+    **這是為了放掉 `/api/ask` 的併發名額。** 那道閘門只有 3 個名額，而且是由 request
+    handler 持有到 generator 耗盡為止；忠實度抽查掛在 `done` 之後、對使用者不可見，
+    卻會把名額一路佔到查完——實測單次 grounding 要 48–142 秒，等於一題抽查就吃掉
+    三分之一的問答容量三分鐘。
+
+    代價是**行程重啟時未完成的抽查會消失**。可以接受：抽查本來就是 best-effort、
+    抽樣的，結果只落 `qa_log.evaluation` 供事後閱讀，不影響任何已交付的答案。
+    """
+    task = asyncio.create_task(coro, name=name)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
+
+def _background_inflight(prefix: str) -> int:
+    """名稱以 `prefix` 開頭、仍在跑的背景任務數。
+
+    脫離 `/api/ask` 併發閘之後，背景抽查唯一的上限就在這裡：每一次抽查都是一個
+    `claude` CLI 行程跑一到兩分鐘，沒有這個數字，連續問答會讓它們無上界地累積。
+    """
+    return sum(1 for t in _BACKGROUND_TASKS if not t.done() and t.get_name().startswith(prefix))
+
+
+async def _faithfulness_spot_check(qa_id: str, answer: str, context: str) -> None:
+    """問答迷你忠實度抽查（M8c）：在 done 之後、以背景任務跑（見 _spawn_background）。
+
+    不佔可見答案延遲，也不佔 `/api/ask` 的併發名額。
+
+    **比對基準是模型當時真正看到的那份參考片段，不是從 evidence 帳本回查。**
+    先前是後者，兩個缺陷疊在一起，而且都是靜默的（2026-08-21 以生產原始輸入重跑實測）：
+
+    1. **payload 大到必然逾時。** `resolve_evidence_texts` 每份證據取 4000 字，而問答的
+       `MAX_REPORTS` 是 15，`15 × 4000 = 60000` 字——量到的 ground payload 正是
+       59,979／60,176／62,062 字，三次都精準停在 `FAITHFULNESS_TIMEOUT` 的 60.0 秒。
+       證據 4～6 份那幾筆（payload 24k）則 18.9 秒就回來了。逾時有兩種長相：一個字都
+       沒串流出來時是 `LLMUnavailableError`，串到一半被砍則是 `parse_plan_json` 收到
+       截斷的 JSON 拋 `ValueError`（`stream_completion` 對已串流文字的逾時是 fail-open）。
+       兩條路最後都變成 `degraded`——生產 12 筆評估裡有 5 筆（42%）是這樣來的。
+    2. **比對的根本不是答案的來源。** 回查是 `joined[:4000]`＝整篇研報的**前 4000 字**，
+       而語料每篇 chunk 串接後 p50 12,425 字、p90 53,813 字。模型從第 20,000 字附近的
+       片段生成答案，查核卻拿前 4000 字去比——那些主張會被判 unsupported，**而且沒有
+       任何訊號說「我比對的不是同一段文字」**。歷史有一筆 0.208 分很可能就是這樣來的。
+
+    改成直接吃 `context`（`build_context` 產出、上限 `MAX_CONTEXT_CHARS` 20,000 字）
+    同時修掉兩者：payload 回到實測 19 秒的量級，比對基準也回到 RAGAS faithfulness 的
+    定義——對「生成時看到的 context」判 grounding。
+
+    **帳本回查那條路仍然留著**，研報逐節查核靠它（`evidence_ids` 只餵該節分配到的證據，
+    payload 天生就小）；這裡不再用它，但 `evidence_manifest` 照樣落庫，帳本語意不變。
+
     全程 fail-open（含 check_faithfulness 自身的 degraded 語義），不影響已交付的答案。
     呼叫端負責前置閘門（啟用／含數字／抽樣），此處只做查核與落庫。
     """
     try:
-        ledger = EvidenceLedger.load(manifest) if manifest else EvidenceLedger()
-        async with SessionFactory() as session:
-            context_texts = await resolve_evidence_texts(ledger, session)
         result = await check_faithfulness(
-            answer, context_texts,
-            model=FAITHFULNESS_MODEL, timeout=FAITHFULNESS_TIMEOUT,
+            answer, [context] if context and context.strip() else [],
+            model=FAITHFULNESS_MODEL, timeout=ASK_FAITHFULNESS_TIMEOUT,
         )
         await _update_evaluation(qa_id, result.to_evaluation())
     except Exception:
@@ -2014,7 +2106,8 @@ async def _answer_time_sensitive_web(
     # 尾端空白在畫面上看不見，先剪掉再比對，免得 _answer_correction 為了純空白差異
     # 補送一整份答案（那個欄位刻意只在真的有變動時才出現）。
     streamed_body = streamed_body.rstrip()
-    body = to_traditional(streamed_body)  # 簡體收尾；畫面由 done 的 answer 校正
+    # 這條路徑一定開著網搜，棄稿段的成因（搜尋打斷作答）在這裡同樣成立。
+    body = to_traditional(drop_abandoned_draft(streamed_body))  # 畫面由 done 的 answer 校正
     disclaimer = web_answer_disclaimer(locale)
     # 追加而非交給模型：見 WEB_ANSWER_DISCLAIMER 的註解。已經自己寫上就不重複。
     if disclaimer not in body:
@@ -2494,7 +2587,20 @@ async def answer_question(
     body, ext_sources = split_external_sources(raw)
     # 簡體收尾（見 _answer_correction）：此行之後的一切——引用解析、落庫、追問、
     # 忠實度抽查、研報邀請——全部吃轉換後的版本，畫面則由 done 的 answer 校正。
+    # 棄稿段走同一條校正管道（見 drop_abandoned_draft）：它同樣是整串才判得出來的，
+    # 串流中途沒有辦法知道模型等一下會不會把整份重寫。
     streamed_body = body
+    # **只在開網搜時收棄稿段**：成因是「搜尋打斷作答、模型從頭重寫」，關網搜時不存在這個
+    # 打斷點，而 drop_abandoned_draft 的判準（行中標題記號）在正常答案上仍有誤判空間——
+    # 第一句直接黏著 `## ` 的答案會被丟掉第一句，而且沒有任何人看得到。不開網搜就不冒這個險。
+    if web_on:
+        kept = drop_abandoned_draft(body)
+        if kept != body:
+            logger.info(
+                "棄稿段移除 request_id=%s dropped_chars=%d kept_chars=%d",
+                request_id, len(body) - len(kept), len(kept),
+            )
+        body = kept
     body = to_traditional(body)
     cited = cited_report_ids(body, sources)
     yield ("ext_sources", ext_sources)
@@ -2507,10 +2613,10 @@ async def answer_question(
         [asdict(s) for s in sources],
         ext_sources,
         # M4b：corpus 來源 + 受控 [EXT_SOURCES] 解析結果 → 證據帳本 manifest
-        evidence_manifest=(evidence_manifest := manifest_from_answer(
+        evidence_manifest=manifest_from_answer(
             [asdict(s) for s in sources], ext_sources,
             retrieved_at=datetime.now(timezone.utc).isoformat(),
-        )),
+        ),
         conversation_id=conv_id,
         thinking_ms=thinking_ms,
         stages=stages_seen,
@@ -2568,4 +2674,16 @@ async def answer_question(
         and is_numeric_claim(body)
         and random.random() < ASK_FAITHFULNESS_SAMPLE_RATE
     ):
-        await _faithfulness_spot_check(qa_id, body, evidence_manifest)
+        # 不 await：抽查對使用者不可見，卻會把 /api/ask 的名額佔到查完（見 _spawn_background）。
+        # 但背景也要有上限：超過就跳過這一次（抽樣 best-effort，等同沒抽中），不排隊。
+        inflight = _background_inflight("faithfulness:")
+        if inflight >= ASK_FAITHFULNESS_MAX_INFLIGHT:
+            logger.info(
+                "忠實度抽查跳過 qa_id=%s inflight=%d max=%d",
+                qa_id, inflight, ASK_FAITHFULNESS_MAX_INFLIGHT,
+            )
+        else:
+            _spawn_background(
+                _faithfulness_spot_check(qa_id, body, context),
+                name=f"faithfulness:{qa_id}",
+            )

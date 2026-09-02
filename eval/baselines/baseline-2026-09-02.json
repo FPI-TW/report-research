@@ -1,0 +1,180 @@
+{
+ "summary": {
+  "faithfulness": 0.9565002446136558,
+  "context_precision": 0.78533975226413,
+  "answer_relevancy": 0.6232595201731341,
+  "latency_ms_mean": 42946.375,
+  "latency_ms_p50": 36934,
+  "latency_ms_p95": 77718,
+  "n": 8,
+  "n_errors": 0,
+  "n_no_context": 0,
+  "thresholds_pass": false,
+  "thresholds_failed": [
+   "context_precision"
+  ]
+ },
+ "cases": [
+  {
+   "id": "q001",
+   "question": "台積電最新的營運展望如何",
+   "faithfulness": 0.9696969696969697,
+   "context_precision": 0.7205233655233656,
+   "answer_relevancy": 0.6902523873019231,
+   "answer_relevancy_questions": [
+    "台積電2026年全年營收年增率及資本支出指引如何，相比年初預期有何調升？",
+    "台積電未來擴產計畫包括哪些投資規模和地點，涉及哪些製程？",
+    "先進製程產能吃緊的情況何時能緩解，N3製程在2026-2028年的月產能規劃如何？"
+   ],
+   "answer_relevancy_sims": [
+    0.7853,
+    0.7428,
+    0.5427
+   ],
+   "n_contexts": 15,
+   "latency_ms": 49197
+  },
+  {
+   "id": "q002",
+   "question": "分析台灣市場",
+   "faithfulness": 0.7352941176470589,
+   "context_precision": 0.8344122147693577,
+   "answer_relevancy": 0.5946668574898751,
+   "answer_relevancy_questions": [
+    "台股在2026年6月至8月期间的走势如何？目前处于什么样的技术面位置和市场阶段？",
+    "台股目前的籌碼面情况如何？需要重点观察哪些指标来判断市场是否存在过热风险？",
+    "台股电子权值股和AI相关产业链的表现如何？有哪些产业或个股具有投资亮点？"
+   ],
+   "answer_relevancy_sims": [
+    0.5879,
+    0.6332,
+    0.563
+   ],
+   "n_contexts": 15,
+   "latency_ms": 27902
+  },
+  {
+   "id": "q003",
+   "question": "材料行業分析報告'",
+   "faithfulness": 0.9782608695652174,
+   "context_precision": 0.7765792849126183,
+   "answer_relevancy": 0.5516355394657585,
+   "answer_relevancy_questions": [
+    "2026年材料類股主要投資主題有哪些？各主軸的代表公司與成長前景如何？",
+    "先進製程與先進封裝擴產對材料股的帶動有多大？達興材料、創鉅材料、新應材等公司的成長機會是什麼？",
+    "材料行業當前面臨什麼原物料成本壓力？各公司毛利率與獲利前景如何？"
+   ],
+   "answer_relevancy_sims": [
+    0.5427,
+    0.5014,
+    0.6108
+   ],
+   "n_contexts": 11,
+   "latency_ms": 48262
+  },
+  {
+   "id": "q004",
+   "question": "散熱技術的進展如何？",
+   "faithfulness": 1.0,
+   "context_precision": 0.8344122147693577,
+   "answer_relevancy": 0.6034883078299255,
+   "answer_relevancy_questions": [
+    "隨著AI晶片功耗持續攀升（H100→B300→R100），液冷散熱為何逐漸成為AI服務器的必選方案而非選配？",
+    "從氣冷到液冷再到水冷的技術演進路線中，微通道頂蓋（MCL）和In-row CDU等新技術分別處於什麼發展階段？",
+    "散熱產業中的水冷板、均熱片、熱交換器等零組件供應商面臨什麼樣的市場機遇和單價提升空間？"
+   ],
+   "answer_relevancy_sims": [
+    0.6035,
+    0.5611,
+    0.6459
+   ],
+   "n_contexts": 15,
+   "latency_ms": 77718
+  },
+  {
+   "id": "q005",
+   "question": "AI 伺服器的最新發展如何？",
+   "faithfulness": 1.0,
+   "context_precision": 1.0,
+   "answer_relevancy": 0.7291196089378559,
+   "answer_relevancy_questions": [
+    "2026年全球AI伺服器市場規模與出貨量增長預期是多少，主要驅動力來自哪些地區？",
+    "哪些台灣科技廠商將從AI伺服器產業發展中受惠，在供應鏈中扮演什麼角色？",
+    "AI伺服器產業如何從單純GPU算力升級至全方位基礎設施，液冷、電源與光通訊等關鍵技術有什麼重要變化？"
+   ],
+   "answer_relevancy_sims": [
+    0.7312,
+    0.735,
+    0.7211
+   ],
+   "n_contexts": 15,
+   "latency_ms": 39033
+  },
+  {
+   "id": "q006",
+   "question": "台積電最新展望如何？",
+   "faithfulness": 1.0,
+   "context_precision": 0.8087990292535747,
+   "answer_relevancy": 0.7080495089982426,
+   "answer_relevancy_questions": [
+    "台積電2026年營收年增率和資本支出的最新預期分別是多少？",
+    "台積電2Q26季度淨利年增幅和毛利率各達到多少，是否超過預期？",
+    "台積電未來將在台灣、亞利桑那州和日本等地建設哪些新的晶圓廠？"
+   ],
+   "answer_relevancy_sims": [
+    0.7682,
+    0.6751,
+    0.6809
+   ],
+   "n_contexts": 15,
+   "latency_ms": 30021
+  },
+  {
+   "id": "q007",
+   "question": "材料行業分析報告",
+   "faithfulness": 0.96875,
+   "context_precision": 0.5534000721500721,
+   "answer_relevancy": 0.5294481583529803,
+   "answer_relevancy_questions": [
+    "半導體特用化學材料產業的結構性成長動力是什麼，預期成長率如何？",
+    "台灣半導體材料廠商（新應材、達興材料、創鉅材料等）2026-2027年的營收和毛利率成長預估是多少？",
+    "半導體材料產業面臨的主要風險和挑戰有哪些？"
+   ],
+   "answer_relevancy_sims": [
+    0.5477,
+    0.51,
+    0.5306
+   ],
+   "n_contexts": 15,
+   "latency_ms": 34504
+  },
+  {
+   "id": "q008",
+   "question": "台積電先進封裝",
+   "faithfulness": 1.0,
+   "context_precision": 0.7545918367346939,
+   "answer_relevancy": 0.5794157930085116,
+   "answer_relevancy_questions": [
+    "台積電先進封裝產能現況如何？為何出現持續供不應求的現象？",
+    "台積電CoWoS先進封裝技術的發展藍圖與演進方向是什麼？",
+    "英特爾EMIB-T技術相比台積電CoWoS的成本與性能優勢如何？對台積電訂單的威脅程度評估為何？"
+   ],
+   "answer_relevancy_sims": [
+    0.6853,
+    0.6249,
+    0.428
+   ],
+   "n_contexts": 8,
+   "latency_ms": 36934
+  }
+ ],
+ "notes": [
+  "2026-09-02 10:53–11:19 CST，--concurrency 1，窗期內無 sync／backup 批次（上一輪 sync 09:00）。",
+  "main @ 1ae98fc（含 PR #230 中文重探與過舊軟截斷修正、#233 忠實度改背景任務）。與 baseline-2026-08-18 相比 faithfulness 0.867→0.957、context_precision 0.666→0.785，answer_relevancy 持平；門檻只剩 context_precision（<0.8）未過。"
+ ],
+ "config": {
+  "concurrency": 1,
+  "queryset": "eval/ragas_questions.json",
+  "commit": "1ae98fc"
+ }
+}

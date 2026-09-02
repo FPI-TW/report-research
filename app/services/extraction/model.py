@@ -179,5 +179,35 @@ def serialize(doc: Document, drop: Iterable[BlockType] = DEFAULT_DROP) -> str:
     （錨點基準字串／餵 LLM 的 excerpt／API 回傳文字三者同源，清理由
     `textnorm.clean_extracted` 在入庫時統一做）。
     """
-    parts = [block_text(b) for b in doc.blocks(drop=drop)]
-    return "\n\n".join(p for p in parts if p.strip())
+    return serialize_with_index(doc, drop)[0]
+
+
+@dataclass(frozen=True)
+class BlockSpan:
+    """序列化文字裡一個 Block 的落點。E1c 的 per-hash 快取存的就是這個（不存 bbox）：
+    下游只需要「哪一段是表格／標題」，座標要用時重抽比維護一份會漂的大快取便宜。"""
+
+    type: BlockType
+    page_no: int
+    start: int  # 在序列化文字裡的 [start, end) 字元區間
+    end: int
+
+
+def serialize_with_index(
+    doc: Document, drop: Iterable[BlockType] = DEFAULT_DROP
+) -> tuple[str, tuple[BlockSpan, ...]]:
+    """`serialize` 的帶索引版：回傳 (文字, 每個 Block 的字元區間)。兩者必須同源——
+    索引是對**這個**字串算的，任何在外面對字串做的清理都會讓區間失效。"""
+    parts: list[str] = []
+    spans: list[BlockSpan] = []
+    pos = 0
+    for b in doc.blocks(drop=drop):
+        t = block_text(b)
+        if not t.strip():
+            continue
+        if parts:
+            pos += 2  # "\n\n"
+        spans.append(BlockSpan(b.type, b.page_no, pos, pos + len(t)))
+        parts.append(t)
+        pos += len(t)
+    return "\n\n".join(parts), tuple(spans)

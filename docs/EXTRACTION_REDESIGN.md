@@ -448,7 +448,7 @@ BGE-M3 在本機實測 **2.9 chunk/s**（20 核、CPU-only torch、batch 8；冷
 1. **`scripts/profile_corpus.py`**——唯讀，不動任何既有路徑。輸出每檔的欄數、亂碼率、頁級失敗、字元密度分佈。附錄 A 的一次性腳本可以直接長成它。**已做（PR #235）。**
 2. **`eval/extraction_dataset.json` 的前 15 份標註**（先窄後寬，優先蓋 kgi／masterlink／sinopac／yuanta 這四家＝77.8% 語料），配 `scripts/eval_extraction.py` 跑出 pypdf 基準，填進 §7。**已做（2026-09-02，含人工覆核）。**
 3. **`app/services/extraction/layout.py` ＋ `quality.py`，只讀不寫**：對同一批檔案跑新舊兩路，把差異印出來人工看 20 份。**已做（PR #235，`scripts/compare_extractors.py`）**；§7 的 pdfplumber v1 欄指出的三個漏抽成因已於 v2（2026-09-02）修掉，golden set 命中率回到 1.000、同流配對 0.989。
-4. 差異可接受後才動 `app/services/extract.py`、`db/schema.sql`、與抽取快取的 per-hash 轉檔（四個端點，§4.2）。
+4. 差異可接受後才動 `app/services/extract.py`、`db/schema.sql`、與抽取快取的 per-hash 轉檔（四個端點，§4.2）。**拆四個 PR**（E1a 門面與 `EXTRACTOR` 旗標、E1b schema 與 `extraction_log`、E1c per-hash 快取、E1d 切換與回填），前三個合併後生產行為不變。**E1a 已做（2026-09-02）**：`extract_text()` 簽章不變、預設仍 pypdf；`ExtractResult` 加 `extractor`／`extraction_version`／`page_count`／`pages_failed`／`quality`／`blocks`；pypdf 路徑的逐頁例外改記 `pages_failed`；pdfplumber 路徑只在拋例外或低於 `MIN_TEXT_CHARS` 時退回 pypdf 並記原因。
 5. `E4`。
 
 第 3 步的「只讀不寫並排比對」不要跳過。它是唯一能在改動生產路徑**之前**發現「新抽取器在某類檔案上更差」的機會——而實測已經證明 pdfplumber 與 pypdf 的輸出**必然不同**（相似度 0.275–0.884），「不同」不等於「更好」，那正是第 2 步的基準線要回答的。

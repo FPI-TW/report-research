@@ -48,6 +48,26 @@ def _renderer(name: str, default: str) -> str:
     return v
 
 
+_EXTRACTORS = ("pypdf", "pdfplumber")
+
+
+def _extractor(name: str, default: str) -> str:
+    """抽取器名稱；未知值退回預設並警告。
+
+    與 _renderer 同一個理由：`EXTRACTOR=pdfplumbr` 這種 typo 若靜默生效，生產會在
+    沒有任何訊息的情況下切回或切走一條抽取路徑，而兩條路徑的 full_text 不同、
+    extraction_version 也不同——之後的回填會把它們當成兩個版本各自處理。
+    """
+    v = (os.getenv(name, default) or "").strip().lower()
+    if v not in _EXTRACTORS:
+        logging.getLogger(__name__).warning(
+            "%s=%r 不是合法抽取器（可用：%s），退回 %s",
+            name, v, "/".join(_EXTRACTORS), default,
+        )
+        return default
+    return v
+
+
 @dataclass(frozen=True)
 class Settings:
     # ASK_*（answer.py）
@@ -86,6 +106,9 @@ class Settings:
     report_timeout: float
     reports_dir: str
     report_renderer: str
+    # EXTRACTOR（extract.py，E1a）：pypdf＝現況；pdfplumber＝版面層。預設維持 pypdf，
+    # E1d 才由 sync 鏈的環境檔切換（docs/EXTRACTION_REDESIGN.md §9）。
+    extractor: str
     report_enable_web: bool
     report_thin_coverage: int
     # report_gate.py
@@ -199,6 +222,7 @@ def _load() -> Settings:
         report_timeout=float(os.getenv("REPORT_TIMEOUT", "600")),
         reports_dir=os.getenv("REPORTS_DIR", "data/reports"),
         report_renderer=_renderer("REPORT_RENDERER", "typst"),
+        extractor=_extractor("EXTRACTOR", "pypdf"),
         report_enable_web=_flag("REPORT_ENABLE_WEB", "1"),
         report_thin_coverage=int(os.getenv("REPORT_THIN_COVERAGE", "8")),
         report_min_cited=int(os.getenv("REPORT_MIN_CITED", "3")),

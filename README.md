@@ -484,7 +484,7 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 
 > 預設值集中在 **`app/config.py`** 的 `_load()`（frozen dataclass ＋ `os.getenv`），不必設定也能跑。各服務模組保留原常數名但改由 `get_settings()` 取值。
 >
-> 本表僅列常用鍵；`app/config.py` 共約 80 個旋鈕鍵，未列出的還有 `REPORT_RENDERER`(`typst`)、`REPORT_SECTIONED_ENABLED`(1)、`REPORT_DRAFT_BUDGET`(900s)、`REPORT_SECTION_*`、`REPORT_RUN_STALE_SECONDS`(1800s)、`ASK_RERANK_*`、`REPORT_MMR_*`、`QA_AGENTIC_*`、`TRUSTED_DATA_ENABLED` 等，以該檔為準。
+> 本表僅列常用鍵；`app/config.py` 共約 80 個旋鈕鍵，未列出的還有 `EXTRACTOR`(`pypdf`；E1 換 `pdfplumber` 版面層用)、`REPORT_RENDERER`(`typst`)、`REPORT_SECTIONED_ENABLED`(1)、`REPORT_DRAFT_BUDGET`(900s)、`REPORT_SECTION_*`、`REPORT_RUN_STALE_SECONDS`(1800s)、`ASK_RERANK_*`、`REPORT_MMR_*`、`QA_AGENTIC_*`、`TRUSTED_DATA_ENABLED` 等，以該檔為準。
 >
 > **集中化還沒做完，找旋鈕時別只翻 `app/config.py`**：`SSE_HEARTBEAT_INTERVAL`（`web/deps.py`）、`REPORT_SEMAPHORE`／`REPORT_MAX_QUEUE`（`web/routers/report.py` 的 `_REPORT_GATE`，由背景任務持有）、`ASK_MAX_QUEUE`（`web/routers/ask.py` 的 `_ASK_GATE`）、`REPORT_RUN_RETENTION_SECONDS`（`web/report_runs.py`）、`ASK_FOLLOWUP_MODEL`／`ASK_FOLLOWUP_TIMEOUT`（`app/services/followups.py`）、`REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`（`app/services/retrieval_pipeline.py`）、`REPORT_MARK_DB_URL`（`app/services/db.py`）、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`（`web/auth.py`）、`EVAL_JUDGE_MODEL`（`eval/judge.py`）仍是就地 `os.getenv`。另外 `/api/ask` 的併發上限 3 仍是**寫死**在 `web/routers/ask.py` 的 `_ASK_GATE`（沒有對應環境變數；可調的只有排隊上限 `ASK_MAX_QUEUE`）。
 >

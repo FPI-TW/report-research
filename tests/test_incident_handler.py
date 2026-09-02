@@ -414,6 +414,19 @@ class StateMachineTests(unittest.TestCase):
         p = self.h.run()
         self.assertEqual(last_emit(p.stdout)["severity"], "WARNING")
 
+    def test_probe_degraded_exit_opens_warning_incident(self):
+        """exit 5＝/healthz 正常但 claude 不在 web unit 的 PATH 上（2026-09-02 那種中斷）。
+
+        WARNING 而非 CRITICAL：檢索／閱讀／雷達還活著；但它不會自己好，所以必須開事件並通知。
+        """
+        self.h.set_probe(5)
+        p = self.h.run()
+        e = last_emit(p.stdout)
+        self.assertEqual(e["severity"], "WARNING")
+        self.assertEqual(e["action"], "firing")
+        self.assertEqual(e["reason"], "probe_exit_5")
+        self.assertEqual(self.h.webhook_calls(), 1)
+
     def test_stale_probe_is_a_monitor_incident_not_a_web_incident(self):
         """P4 停止產出＝**監控失明**，不是服務故障。兩者必須是不同元件的事件。"""
         # age=5／STALE=1：小到任何機器的 uptime 都表達得出來，大到穩定超過門檻

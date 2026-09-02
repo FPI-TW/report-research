@@ -221,7 +221,7 @@ async def reanchor_takeaways(session: AsyncSession, report_id: str, canonical: s
 
     rows = (
         await session.execute(
-            text("SELECT id::text, quote FROM research.report_takeaway WHERE report_id = :rid"),
+            text("SELECT id::text, quote FROM research.report_takeaway WHERE report_id = CAST(:rid AS uuid)"),
             {"rid": report_id},
         )
     ).all()
@@ -236,7 +236,7 @@ async def reanchor_takeaways(session: AsyncSession, report_id: str, canonical: s
                 """
                 UPDATE research.report_takeaway
                 SET quote_start = :qs, quote_end = :qe, anchor_method = :method, text_sha256 = :sha
-                WHERE id = :tid
+                WHERE id = CAST(:tid AS uuid)
                 """
             ),
             {

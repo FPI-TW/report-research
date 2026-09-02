@@ -166,8 +166,8 @@ class BackfillRoundTripTests(ExtractionLogRoundTripTests):
             rid = await store.upsert_report(session, report, ["舊文字"], [[0.0] * 1024])
             await session.execute(
                 text(
-                    "INSERT INTO research.report_takeaway (report_id, ordinal, claim, quote, text_sha256, "
-                    "extraction_version, extraction_status) VALUES (CAST(:rid AS uuid), 1, 'c', "
+                    "INSERT INTO research.report_takeaway (id, report_id, ordinal, claim, quote, text_sha256, "
+                    "extraction_version, extraction_status) VALUES (gen_random_uuid(), CAST(:rid AS uuid), 1, 'c', "
                     "'台積電第三季營收優於預期', 'old', 'v', 'valid')"
                 ),
                 {"rid": rid},

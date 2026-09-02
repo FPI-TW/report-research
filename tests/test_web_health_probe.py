@@ -35,7 +35,7 @@ SYSTEMD_DIR = REPO_ROOT / "deploy" / "systemd"
 SERVICE = SYSTEMD_DIR / "report-mark-health.service"
 TIMER = SYSTEMD_DIR / "report-mark-health.timer"
 
-EXIT_OK, EXIT_HTTP, EXIT_PROCESS, EXIT_GRACE, EXIT_TOOLING = 0, 1, 2, 3, 4
+EXIT_OK, EXIT_HTTP, EXIT_PROCESS, EXIT_GRACE, EXIT_TOOLING, EXIT_DEGRADED = 0, 1, 2, 3, 4, 5
 
 # stdout 契約：P5 消費的欄位。少一個都會讓告警分級失準且無症狀。
 REQUIRED_FIELDS = ("ts", "component", "probe", "status", "http_code", "latency_ms", "reason")
@@ -271,8 +271,88 @@ class ProbeBehaviourTests(unittest.TestCase):
             fail = parse(run_probe({"HEALTH_URL": s.url, **sd.env}).stdout)["status"]
         with _Server(200) as s:
             ok = parse(run_probe({"HEALTH_URL": s.url}).stdout)["status"]
-        self.assertIn(ok, ("ok", "fail", "grace", "tooling"))
-        self.assertIn(fail, ("ok", "fail", "grace", "tooling"))
+        self.assertIn(ok, ("ok", "fail", "grace", "tooling", "degraded"))
+        self.assertIn(fail, ("ok", "fail", "grace", "tooling", "degraded"))
+
+
+class DependencyCheckTests(unittest.TestCase):
+    """L3：/healthz 綠不代表問答可用。
+
+    2026-09-02 claude CLI 改裝成原生安裝後，web unit 的 PATH drop-in 仍指向 nvm 舊路徑，
+    /api/ask 全數以 FileNotFoundError 失敗三小時，而本探針因為 /healthz 只探 DB 而全程 ok。
+    這裡守的是：探針要讀 drop-in 宣告的 PATH 去找 claude，找不到就退出 5；且這一段
+    **不得呼叫 systemctl**（健康路徑不相依 systemd 的不變量由 HostSystemdIsolationTests 釘住）。
+    """
+
+    def _dropin(self, tmp: Path, path_value: str, quoted=False) -> Path:
+        d = tmp / "path.conf"
+        line = f'Environment="PATH={path_value}"' if quoted else f"Environment=PATH={path_value}"
+        d.write_text(f"[Service]\n# 註解裡的 Environment=PATH=/nope 不算數\n{line}\n", encoding="utf-8")
+        return d
+
+    def test_missing_dependency_on_unit_path_is_degraded(self):
+        with tempfile.TemporaryDirectory() as tmp, _FakeSystemd(state="inactive") as sd, _Server(200) as s:
+            t = Path(tmp)
+            (t / "bin").mkdir()
+            dropin = self._dropin(t, f"{t}/bin:/usr/bin")
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9", **sd.env})
+            calls = sd.calls()
+        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+        f = parse(p.stdout)
+        self.assertEqual(f["status"], "degraded")
+        self.assertEqual(f["http_code"], "200")
+        self.assertEqual(f["reason"], "dep_missing_claude-x9")
+        self.assertEqual(calls, [], "相依檢查不得呼叫 systemctl")
+
+    def test_dependency_present_on_unit_path_is_healthy(self):
+        with tempfile.TemporaryDirectory() as tmp, _Server(200) as s:
+            t = Path(tmp)
+            (t / "bin").mkdir()
+            exe = t / "bin" / "claude-x9"
+            exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            exe.chmod(0o755)
+            dropin = self._dropin(t, f"/nonexistent-dir:{t}/bin", quoted=True)
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"})
+        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["status"], "ok")
+
+    def test_non_executable_file_does_not_count(self):
+        """symlink 斷掉或檔案沒有 exec bit 都等於「找不到」——Popen 一樣會炸。"""
+        with tempfile.TemporaryDirectory() as tmp, _Server(200) as s:
+            t = Path(tmp)
+            (t / "bin").mkdir()
+            (t / "bin" / "claude-x9").symlink_to(t / "gone")
+            dropin = self._dropin(t, f"{t}/bin")
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"})
+        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+
+    def test_missing_dropin_skips_the_check(self):
+        """沒部署的機器（CI）判不出來；「判不出來」不是「壞了」。"""
+        with _Server(200) as s:
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": "/definitely/not/here.conf"})
+        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
+
+    def test_dropin_without_path_line_skips_the_check(self):
+        with tempfile.TemporaryDirectory() as tmp, _Server(200) as s:
+            d = Path(tmp) / "path.conf"
+            d.write_text("[Service]\nEnvironment=HOME=/home/x\n", encoding="utf-8")
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(d)})
+        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
+
+    def test_http_failure_takes_precedence_over_dependency(self):
+        """服務連不上時不做相依檢查——那時退出碼要說的是 L1/L2，不是 L3。"""
+        with tempfile.TemporaryDirectory() as tmp, _FakeSystemd(state="active") as sd, _Server(503) as s:
+            t = Path(tmp)
+            dropin = self._dropin(t, f"{t}/nope")
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), **sd.env})
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
+
+    def test_repo_dropin_declares_native_claude_path_first(self):
+        """repo 內的 drop-in 是真相來源：原生安裝的 ~/.local/bin 必須排在 nvm 之前。"""
+        dropin = SYSTEMD_DIR / "report-mark-web.service.d" / "path.conf"
+        vals = _directives(dropin, "Environment")
+        path = next(v for v in vals if v.startswith("PATH="))[len("PATH="):]
+        self.assertTrue(path.split(":")[0].endswith("/.local/bin"), path)
 
 
 class HostSystemdIsolationTests(unittest.TestCase):

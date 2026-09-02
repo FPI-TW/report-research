@@ -29,6 +29,20 @@ EXIT_HTTP=1      # L2：HTTP 探測失敗（非 200／連不上／逾時）
 EXIT_PROCESS=2   # L1：unit 不在 active
 EXIT_GRACE=3     # 剛啟動的寬限期內，不視為故障（unit 需宣告 SuccessExitStatus=3）
 EXIT_TOOLING=4   # 探針自己不能執行（缺 curl 等）
+EXIT_DEGRADED=5  # L3：HTTP 健康，但問答路徑的必要相依（claude CLI）不在 web unit 的 PATH 上
+
+# ── L3：問答相依檢查的設定 ───────────────────────────────────────────────
+# 為什麼需要它：2026-09-02 claude CLI 從 npm 全域改裝成原生安裝，舊路徑下的
+# 執行檔消失，web unit 的 PATH drop-in 只指向舊路徑，於是 /api/ask 全數以
+# FileNotFoundError: 'claude' 失敗、持續三小時——而 /healthz 只探 DB，本探針全程 ok。
+# **/healthz 綠不代表問答可用**，這一段補的就是那個盲區。
+#
+# 做法刻意不查 systemd、不 spawn claude：讀 web unit 已安裝的 PATH drop-in，
+# 逐目錄檢查有沒有可執行的 claude。drop-in 不存在（CI、沒部署的機器）就跳過——
+# 「判不出來」不是「壞了」。已知盲點：drop-in 改了但還沒 daemon-reload 時，這裡
+# 看到的是檔案、不是 unit 實際載入的值。
+HEALTH_DEP_BIN="${HEALTH_DEP_BIN:-claude}"
+HEALTH_DEP_DROPIN="${HEALTH_DEP_DROPIN:-/etc/systemd/system/report-mark-web.service.d/path.conf}"
 
 # 用 127.0.0.1 而非 localhost：uvicorn 綁的是 0.0.0.0（**只有 IPv4**），而 localhost
 # 在多數 glibc 設定下會先解析到 ::1，curl 會拿到 connection refused——那是探針自己
@@ -36,6 +50,26 @@ EXIT_TOOLING=4   # 探針自己不能執行（缺 curl 等）
 emit() {
     printf 'ts=%s component=web probe=local_http status=%s http_code=%s latency_ms=%s attempts=%s reason=%s\n' \
         "$(date -Iseconds)" "$1" "$2" "$3" "$4" "$5"
+}
+
+# 回傳空字串＝相依正常或無法判定；非空＝reason（封閉詞彙：dep_missing_<bin>）。
+# 只讀檔、只用 shell 內建與 [ -x ]，不呼叫 systemctl——健康路徑不得相依 systemd
+# （tests/test_web_health_probe.py::test_healthy_path_never_consults_systemd）。
+check_unit_dependency() {
+    [ -r "$HEALTH_DEP_DROPIN" ] || return 0
+    local line unit_path="" dir
+    while IFS= read -r line; do
+        case "$line" in
+            Environment=PATH=*) unit_path="${line#Environment=PATH=}" ;;
+            'Environment="PATH='*) unit_path="${line#Environment=\"PATH=}"; unit_path="${unit_path%\"}" ;;
+        esac
+    done < "$HEALTH_DEP_DROPIN"
+    [ -n "$unit_path" ] || return 0
+    local IFS=:
+    for dir in $unit_path; do
+        [ -n "$dir" ] && [ -x "$dir/$HEALTH_DEP_BIN" ] && return 0
+    done
+    printf 'dep_missing_%s' "$HEALTH_DEP_BIN"
 }
 
 command -v curl >/dev/null 2>&1 || {
@@ -64,6 +98,12 @@ while [ "$attempt" -lt "$HEALTH_RETRIES" ]; do
         || curl_rc=$?
     elapsed_ms=$(( ($(date +%s%N) - start_ns) / 1000000 ))
     if [ "$curl_rc" -eq 0 ] && [ "$code" = "200" ]; then
+        dep_reason="$(check_unit_dependency)"
+        if [ -n "$dep_reason" ]; then
+            emit degraded "$code" "$elapsed_ms" "$attempt" "$dep_reason"
+            echo "check_web_health: /healthz 正常，但 $HEALTH_DEP_BIN 不在 $HEALTH_DEP_DROPIN 宣告的 PATH 上（問答路徑會以 FileNotFoundError 失敗）" >&2
+            exit "$EXIT_DEGRADED"
+        fi
         emit ok "$code" "$elapsed_ms" "$attempt" ok
         exit "$EXIT_OK"
     fi

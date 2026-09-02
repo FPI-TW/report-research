@@ -109,6 +109,9 @@ class Settings:
     # EXTRACTOR（extract.py，E1a）：pypdf＝現況；pdfplumber＝版面層。預設維持 pypdf，
     # E1d 才由 sync 鏈的環境檔切換（docs/EXTRACTION_REDESIGN.md §9）。
     extractor: str
+    # EXTRACTION_REVIEW_MIN（store.needs_review，E1b）：quality_score 低於此值標 needs_review。
+    # 只標記不擋（§4.2「一律入庫，只標記不擋」）；pages_failed 非空也標，與分數無關。
+    extraction_review_min: float
     report_enable_web: bool
     report_thin_coverage: int
     # report_gate.py
@@ -223,6 +226,7 @@ def _load() -> Settings:
         reports_dir=os.getenv("REPORTS_DIR", "data/reports"),
         report_renderer=_renderer("REPORT_RENDERER", "typst"),
         extractor=_extractor("EXTRACTOR", "pypdf"),
+        extraction_review_min=float(os.getenv("EXTRACTION_REVIEW_MIN", "0.6")),
         report_enable_web=_flag("REPORT_ENABLE_WEB", "1"),
         report_thin_coverage=int(os.getenv("REPORT_THIN_COVERAGE", "8")),
         report_min_cited=int(os.getenv("REPORT_MIN_CITED", "3")),

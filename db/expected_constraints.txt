@@ -20,3 +20,4 @@ report_signal.report_signal_rating_normalized_check = CHECK ((rating_normalized 
 report_takeaway.ck_report_takeaway_span = CHECK (((quote_start IS NULL) OR ((quote_start >= 0) AND (quote_end > quote_start))))
 report_takeaway.report_takeaway_anchor_method_check = CHECK (((anchor_method IS NULL) OR (anchor_method = ANY (ARRAY['exact'::text, 'normalized'::text, 'prefix'::text]))))
 report_takeaway.report_takeaway_extraction_status_check = CHECK ((extraction_status = ANY (ARRAY['pending'::text, 'valid'::text, 'partial'::text, 'rejected'::text])))
+extraction_log.extraction_log_stopped_at_check = CHECK ((stopped_at = ANY (ARRAY['ingested'::text, 'skip_admin'::text, 'scanned'::text, 'not_research'::text, 'extract_error'::text])))

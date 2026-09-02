@@ -25,12 +25,35 @@ from sqlalchemy import text as sql_text  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
 from app.services.embed import embed_texts  # noqa: E402
-from app.services.store import ReportRow, upsert_report  # noqa: E402
+from app.services.store import (  # noqa: E402
+    ExtractionLogRow,
+    ReportRow,
+    needs_review,
+    upsert_extraction_log,
+    upsert_report,
+)
 from app.services.tagging import load_tag  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 ALL = ROOT / "data" / "extracted" / "all.jsonl"
+
+
+def _log_row(rec: dict, stopped_at: str) -> ExtractionLogRow:
+    """快取紀錄 → extraction_log 列。舊格式（E1c 之前）沒有抽取版本欄位，誠實記 legacy。"""
+    q = rec.get("quality") or {}
+    return ExtractionLogRow(
+        file_hash=rec["file_hash"],
+        file_name=rec["file_name"],
+        extractor=rec.get("extractor") or "pypdf",
+        extraction_version=rec.get("extraction_version") or "pypdf-legacy",
+        stopped_at=stopped_at,
+        page_count=rec.get("page_count"),
+        pages_failed=rec.get("pages_failed") or None,
+        char_count=rec.get("char_count"),
+        quality_score=q.get("quality_score"),
+        quality_flags=q,
+    )
 TAGS_DIR = ROOT / "data" / "tags"
 FAIL_LOG = ROOT / "data" / "ingest_failures.log"
 
@@ -64,6 +87,9 @@ async def main(limit: int | None, batch_size: int) -> None:
     }
     t0 = time.time()
 
+    from app.config import get_settings
+
+    review_min = get_settings().extraction_review_min
     async with SessionFactory() as session:
         with open(ALL, encoding="utf-8") as f:
             for line in f:
@@ -75,12 +101,20 @@ async def main(limit: int | None, batch_size: int) -> None:
                 except json.JSONDecodeError:
                     continue
                 if rec.get("_failed"):
+                    # 抽取階段就炸掉的紀錄沒有 file_hash，進不了以 hash 為鍵的 extraction_log；
+                    # 它們留在 all.jsonl 的 _failed 列與 extract_all 的統計裡。
                     continue
+                # 每一道閘都寫 extraction_log（§4.2 目標 #1：落點不能只存在於 if 分支裡）。
+                # 寫入獨立 commit：閘門紀錄不該因為後面的 upsert 失敗而一起回滾。
                 if rec.get("is_admin"):
                     stats["skip_admin"] += 1
+                    await upsert_extraction_log(session, _log_row(rec, "skip_admin"))
+                    await session.commit()
                     continue
                 if rec.get("scanned"):
                     stats["skip_scanned"] += 1
+                    await upsert_extraction_log(session, _log_row(rec, "scanned"))
+                    await session.commit()
                     continue
                 h = rec["file_hash"]
                 if h in existing:
@@ -92,6 +126,8 @@ async def main(limit: int | None, batch_size: int) -> None:
                     continue
                 if not tag.is_research or not tag.market:
                     stats["skip_non_research"] += 1
+                    await upsert_extraction_log(session, _log_row(rec, "not_research"))
+                    await session.commit()
                     continue
 
                 try:
@@ -101,8 +137,11 @@ async def main(limit: int | None, batch_size: int) -> None:
                     chunks = chunk_text(clean_extracted(raw_text))
                     if not chunks:
                         stats["skip_scanned"] += 1
+                        await upsert_extraction_log(session, _log_row(rec, "scanned"))
+                        await session.commit()
                         continue
                     embeddings = embed_texts(chunks, batch_size=batch_size)
+                    q = rec.get("quality") or {}
                     report = ReportRow(
                         file_hash=h,
                         file_name=rec["file_name"],
@@ -122,8 +161,17 @@ async def main(limit: int | None, batch_size: int) -> None:
                         stock_targets=tag.stock_targets,
                         futures_targets=tag.futures_targets,
                         full_text=raw_text,
+                        extractor=rec.get("extractor") or "pypdf",
+                        extraction_version=rec.get("extraction_version") or "pypdf-legacy",
+                        quality_score=q.get("quality_score"),
+                        quality_flags=q or None,
+                        page_count=rec.get("page_count"),
+                        pages_failed=rec.get("pages_failed") or None,
+                        needs_review=needs_review(q.get("quality_score"), rec.get("pages_failed"), review_min),
                     )
                     await upsert_report(session, report, chunks, embeddings)
+                    await upsert_extraction_log(session, _log_row(rec, "ingested"))
+                    await session.commit()
                 except Exception as e:  # noqa: BLE001 — 長跑不因單筆中斷
                     stats["fail"] += 1
                     await session.rollback()

@@ -427,3 +427,41 @@ CREATE TABLE IF NOT EXISTS research.report_brief (
 
 -- 讀取只有兩種：最新一份（ORDER BY brief_date DESC LIMIT 1）與指定日期，
 -- 兩者都由 uq_report_brief_date 的 UNIQUE 索引支撐。刻意不另建索引。
+
+-- ── 抽取層（E1b，docs/EXTRACTION_REDESIGN.md §4.2）─────────────────────────────
+-- research_report 補七欄：抽取版本可追溯（換 parser 後依 extraction_version 針對性回填）、
+-- 品質可查詢（只標記不擋：needs_review=true 仍入庫、仍可檢索）。皆 ADD COLUMN IF NOT EXISTS。
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS extractor          text;     -- 'pypdf' | 'pdfplumber' | 'python-docx'
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS extraction_version text;     -- 'pypdf-6.12.2' | 'ext-2026-09-02.v3' …
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS quality_score      real;     -- 0-1，§5 加權；pypdf 路徑為 NULL
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS quality_flags      jsonb;    -- {"garbled_ratio":…,"fallback_from":…}
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS page_count         int;
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS pages_failed       int[];    -- 頁級失敗清單，取代 except: continue
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS needs_review       boolean NOT NULL DEFAULT false;
+
+-- 第十一張表：每個進過管線的 file_hash 都有一列，**不管有沒有進 research_report**。
+-- 存在理由：1,466 筆檔案的落點只存在於四支腳本的 if 分支裡（§1.1）。這張表與 P4／P5
+-- 同一種分工——只記錄事實，判定交給消費端。
+--   stopped_at：ingested＝入庫；skip_admin＝行政件（is_admin_doc，最大的單一非研報落點）；
+--   scanned＝抽不出文字；not_research＝標籤判非研報或無市場；extract_error＝抽取拋例外。
+--   file_names 是陣列：鏡像裡有 122 組同內容不同檔名的檔案，以 file_hash 當鍵必然塌成同一列，
+--   用單一 text 會後寫覆蓋前寫、讓其中一個檔名消失。
+CREATE TABLE IF NOT EXISTS research.extraction_log (
+    file_hash          text PRIMARY KEY,
+    file_names         text[] NOT NULL,
+    extractor          text NOT NULL,
+    extraction_version text NOT NULL,
+    page_count         int,
+    pages_failed       int[],
+    char_count         int,
+    quality_score      real,
+    quality_flags      jsonb NOT NULL DEFAULT '{}',
+    stopped_at         text NOT NULL,
+    updated_at         timestamptz NOT NULL DEFAULT now(),
+    CHECK (stopped_at IN ('ingested', 'skip_admin', 'scanned', 'not_research', 'extract_error'))
+);
+-- 消費端的兩個查法：「某個落點有幾筆」與「這個版本抽了幾筆」。
+CREATE INDEX IF NOT EXISTS idx_extraction_log_stopped_at
+    ON research.extraction_log (stopped_at);
+CREATE INDEX IF NOT EXISTS idx_extraction_log_version
+    ON research.extraction_log (extraction_version);

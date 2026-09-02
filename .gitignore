@@ -74,6 +74,7 @@ data/signal_progress.tsv
 # P5 事件狀態（data/ 是逐項忽略，不是整目錄）。純執行期狀態：遺失只會讓下一次
 # 失敗重新開一個事件，不影響正確性，因此刻意不進版控也不進備份。
 data/.incidents/
+data/.incidents-linebot/
 
 # repo 根的 node_modules。frontend/.gitignore 只涵蓋 frontend/ 底下，而從根目錄跑
 # npx／npm（例如 npx vite）會在這裡再生一份——與上面 /.vite/ 同一個成因。

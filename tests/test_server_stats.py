@@ -262,7 +262,7 @@ class GatherRuntimeShapeTests(unittest.TestCase):
 
         self.assertEqual(
             set(runtime["pipelines"]),
-            {"web", "ingest", "sync_import", "tag", "summaries", "titles", "takeaways", "signals"},
+            {"web", "ingest", "sync_import", "tag", "summaries", "titles", "takeaways", "signals", "backfill"},
         )
 
     def test_proc_alive_tracks_a_real_process(self):
@@ -360,6 +360,18 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                 # M8 查核統計：UNION ALL 兩張表 → 兩列 ×（kind + 6 個聚合）。
                 # 必須排在 catch-all 之前（同上），且**不能只回一列**——handler 是
                 # 以 kind 建 dict，少一列會讓某個來源變成缺鍵而非 None。
+                # E1 抽取品質：三段 UNION ALL 併成 (kind, key, count)。必須排在 catch-all
+                # 之前（它也掃 research_report）。
+                if "extraction_log" in sql:
+                    return _RowsResult([
+                        ("version", "ext-2026-09-02.v3", 2),
+                        ("version", "(unknown)", 4),
+                        ("stopped_at", "ingested", 5),
+                        ("stopped_at", "skip_admin", 1),
+                        ("flag", "needs_review", 1),
+                        ("flag", "pages_failed", 0),
+                        ("log_latest", "2026-09-03", 0),
+                    ])
                 if "count(evaluation)" in sql:
                     return _RowsResult([
                         ("qa", 40, 3, 1, 1, 0.5634, date(2026, 7, 28)),
@@ -400,10 +412,18 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
             deps.SessionFactory = orig_session_factory
             monitor._gather_runtime = orig_gather_runtime
 
-        # 10 = 原本 6 + takeaway/signal 覆蓋率各一 + M8 查核統計一（兩張表以 UNION ALL
-        # 併成單次查詢，刻意不拆成兩次）+ 券商分佈一。這個數字守的是「stats 與
-        # progress 共用 _DB_STATS_CACHE、TTL 內只打一次 DB」（見 monitor.py docstring）。
-        self.assertEqual(len(calls), 10)
+        # 11 = 原本 6 + takeaway/signal 覆蓋率各一 + M8 查核統計一（兩張表以 UNION ALL
+        # 併成單次查詢，刻意不拆成兩次）+ 券商分佈一 + E1 抽取品質一（同樣 UNION ALL
+        # 併成單次）。這個數字守的是「stats 與 progress 共用 _DB_STATS_CACHE、TTL 內
+        # 只打一次 DB」（見 monitor.py docstring）。
+        self.assertEqual(len(calls), 11)
+        ext = progress["extraction"]
+        self.assertEqual(ext["backfill"]["done"], 0 if ext["target_version"] != "ext-2026-09-02.v3" else 2)
+        self.assertEqual(ext["backfill"]["total"], 6)
+        self.assertEqual(ext["stopped_at"], {"ingested": 5, "skip_admin": 1})
+        self.assertEqual(ext["needs_review"], 1)
+        self.assertEqual(ext["log_latest"], "2026-09-03")
+        self.assertEqual([v["version"] for v in ext["versions"]], ["(unknown)", "ext-2026-09-02.v3"])
         self.assertEqual(stats["total_reports"], 6)
         self.assertEqual(progress["db"]["reports"], 6)
         self.assertEqual(progress["summary"]["total"], 7)

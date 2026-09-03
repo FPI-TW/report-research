@@ -43,6 +43,8 @@ export const pipelinesSchema = z.object({
   titles: z.boolean().optional(),
   takeaways: z.boolean().optional(),
   signals: z.boolean().optional(),
+  // E1d 深夜回填（backfill_extraction.py）。它不寫任何 log 檔，這格是唯一表徵。
+  backfill: z.boolean().optional(),
 })
 /** 派生資產新鮮度：比 summary 多一個 latest（全表最新產出日）。 */
 export const coverageSchema = summarySchema.extend({ latest: z.string().nullable() })
@@ -101,6 +103,25 @@ export const unitFailuresSchema = z.object({
   recent: z.array(unitFailureEntrySchema),
 })
 
+/**
+ * 抽取品質與回填進度（E1，docs/EXTRACTION_REDESIGN.md §6.5）。
+ *
+ * `backfill` 分母是全表、分子是已達 `target_version` 者——回填要跑十幾個晚上，
+ * 這是唯一不用 SQL 就看得到進度的地方。`stopped_at` 是 extraction_log 的落點分佈
+ * （ingested／skip_admin／scanned／not_research／extract_error），`needs_review` 與
+ * `pages_failed` 是「靜默失敗歸零」的可見面。後端缺表（schema 未套）時整塊為 null。
+ */
+export const extractionVersionSchema = z.object({ version: z.string(), count: z.number() })
+export const extractionSchema = z.object({
+  target_version: z.string(),
+  versions: z.array(extractionVersionSchema),
+  needs_review: z.number(),
+  pages_failed: z.number(),
+  stopped_at: z.record(z.string(), z.number()),
+  log_latest: z.string().nullable(),
+  backfill: coverageSchema,
+})
+
 export const progressSchema = z.object({
   ts: z.string(),
   db: z.object({
@@ -126,10 +147,13 @@ export const progressSchema = z.object({
   // 排程同步（每 3 小時的生產入庫路徑）與 unit 失敗告警。同樣 optional，同樣理由。
   sync: logEntrySchema.nullable().optional(),
   unit_failures: unitFailuresSchema.optional(),
+  // 抽取品質（E1）。optional 同上；nullable 是後端缺表時的降級值。
+  extraction: extractionSchema.nullable().optional(),
 })
 
 export type Progress = z.infer<typeof progressSchema>
 export type Coverage = z.infer<typeof coverageSchema>
+export type Extraction = z.infer<typeof extractionSchema>
 export type Evaluation = z.infer<typeof evaluationSchema>
 export type EvalSource = z.infer<typeof evalSourceSchema>
 export type Tagging = z.infer<typeof taggingSchema>

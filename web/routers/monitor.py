@@ -27,6 +27,7 @@ _gather_runtime，不阻塞事件迴圈。
 """
 import asyncio
 import glob as _glob
+import logging
 import os
 import re
 import time
@@ -37,8 +38,11 @@ from fastapi import APIRouter
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.services.extraction import EXTRACTION_VERSION
 from app.services.filename import source_display
 from web import auth, deps
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -223,8 +227,45 @@ async def _fetch_db_stats_snapshot() -> dict:
             )
         ).all()
 
+        # 抽取品質與回填進度（E1，docs/EXTRACTION_REDESIGN.md §6.5）。**單一查詢**，
+        # 三段 UNION ALL 併成 (kind, key, count) 列——與上面 M8 那條同一個理由：stats 與
+        # progress 共用同一份快照、TTL 內只打一次 DB，查詢數是測試釘住的契約。
+        #
+        # **放在最後、且包 try**：schema 還沒套（E1b 合併後到 make schema 之間）時
+        # extraction_log 不存在，這條會炸；監控頁恰恰是故障時唯一還想打開的東西，
+        # 所以缺表只讓這一張卡降級（extraction=None），不讓整頁 500。放最後是因為
+        # 例外會讓交易進入 aborted 狀態，後面的查詢全部跟著失敗。
+        extraction_rows: list | None
+        try:
+            extraction_rows = (
+                await session.execute(
+                    text(
+                        "SELECT 'version' kind, coalesce(extraction_version, '(unknown)') k, count(*) "
+                        "FROM research.research_report GROUP BY 2 "
+                        "UNION ALL "
+                        "SELECT 'stopped_at', stopped_at, count(*) FROM research.extraction_log GROUP BY 2 "
+                        "UNION ALL "
+                        "SELECT 'flag', 'needs_review', count(*) FILTER (WHERE needs_review) "
+                        "FROM research.research_report "
+                        "UNION ALL "
+                        "SELECT 'flag', 'pages_failed', "
+                        "count(*) FILTER (WHERE coalesce(array_length(pages_failed, 1), 0) > 0) "
+                        "FROM research.research_report "
+                        "UNION ALL "
+                        "SELECT 'log_latest', coalesce(max(updated_at)::date::text, ''), 0 "
+                        "FROM research.extraction_log"
+                    )
+                )
+            ).all()
+        except Exception as exc:  # noqa: BLE001 — 缺表／缺欄：降級成 None，不讓整頁 500
+            logger.warning("extraction stats unavailable (schema not applied?): %s", exc)
+            await session.rollback()
+            extraction_rows = None
+
     def _d(v) -> str | None:
         return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else None)
+
+    extraction = _extraction_block(extraction_rows, int(total_reports))
 
     evals = {
         r[0]: {
@@ -266,6 +307,42 @@ async def _fetch_db_stats_snapshot() -> dict:
             "report": evals.get("report"),
             "min_score": _FAITHFULNESS_MIN,
         },
+        "extraction": extraction,
+    }
+
+
+def _extraction_block(rows: list | None, total_reports: int) -> dict | None:
+    """(kind, key, count) 列 → 抽取品質區塊。rows 為 None（缺表）回 None，前端降級。
+
+    `backfill` 的分母是 `research_report` 全表、分子是已達目標版本者：回填要跑
+    十幾個晚上，這是唯一不用 SQL 就看得到進度的地方。`stopped_at` 分佈與
+    `needs_review`／`pages_failed` 是 §2 目標 #1「靜默失敗歸零」的可見面。"""
+    if rows is None:
+        return None
+    versions: dict[str, int] = {}
+    stopped: dict[str, int] = {}
+    flags: dict[str, int] = {}
+    log_latest: str | None = None
+    for kind, key, count in rows:
+        if kind == "version":
+            versions[str(key)] = int(count)
+        elif kind == "stopped_at":
+            stopped[str(key)] = int(count)
+        elif kind == "flag":
+            flags[str(key)] = int(count)
+        elif kind == "log_latest":
+            log_latest = str(key) or None
+    done = versions.get(EXTRACTION_VERSION, 0)
+    return {
+        "target_version": EXTRACTION_VERSION,
+        "versions": [
+            {"version": v, "count": c} for v, c in sorted(versions.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
+        "needs_review": flags.get("needs_review", 0),
+        "pages_failed": flags.get("pages_failed", 0),
+        "stopped_at": stopped,
+        "log_latest": log_latest,
+        "backfill": _coverage_block(done, total_reports, log_latest),
     }
 
 
@@ -576,6 +653,8 @@ def _gather_runtime() -> dict:
             # 就是說回補歷史時那兩張卡幾乎不動，少了這兩格就完全看不出批次在不在跑。
             "takeaways": _proc_alive("extract_takeaways.py"),
             "signals": _proc_alive("extract_signals.py"),
+            # E1d 深夜回填（每晚 01:00 起最多 4 小時）。它不寫任何 log 檔，這格是唯一表徵。
+            "backfill": _proc_alive("backfill_extraction.py"),
         },
         "orchestrator": _parse_orchestrator_entry(_orchestrator_last()),
         # 生產實際的入庫路徑（每 3 小時）與 unit 失敗告警的第一個讀取端。
@@ -652,6 +731,8 @@ async def progress():
         # （web/、scripts/、frontend/ 各 0 個消費端），等於查核結果只寫不看：
         # judge 壞掉會以 degraded=true 靜默累積，低分回答也沒有任何地方會浮出來。
         "evaluation": snapshot["evaluation"],
+        # 抽取品質與回填進度（E1）。缺表時為 None，前端那張卡降級。
+        "extraction": snapshot.get("extraction"),
         # runtime 展開後另含 tagging / ingest / pipelines / orchestrator 與新增的
         # sync（生產實際入庫路徑的可見度）、unit_failures（OnFailure 告警的第一個
         # 讀取端）。**新增鍵時記得同步改 frontend 的 progressSchema.ts**——zod 物件

@@ -26,10 +26,10 @@ afterEach(() => vi.restoreAllMocks())
 test('成功輪詢 → 頁首副字 + LIVE + 面板', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true, json: async () => fixture })))
   render(wrap(<MonitorPage />))
-  // 7/8＝web+ingest+sync_import+tag+titles+takeaways+signals。這個 7 同時守著 zod：
-  // takeaways／signals／sync_import／titles 任一沒宣告在 pipelinesSchema 上都會被
-  // strip 掉、分子少 1——正是先前 takeaway/signal 被靜默剝除的同一種失效。
-  await waitFor(() => expect(screen.getByText('1,000 篇已導入 · 7/8 條管線執行中')).toBeInTheDocument())
+  // 7/9＝web+ingest+sync_import+tag+titles+takeaways+signals（fixture 沒給 backfill，
+  // 算已停止）。這個 7 同時守著 zod：takeaways／signals／sync_import／titles 任一沒宣告在
+  // pipelinesSchema 上都會被 strip 掉、分子少 1——正是先前 takeaway/signal 被靜默剝除的同一種失效。
+  await waitFor(() => expect(screen.getByText('1,000 篇已導入 · 7/9 條管線執行中')).toBeInTheDocument())
   expect(screen.getByText('LIVE')).toBeInTheDocument()
   expect(screen.getByText('研報導入監控')).toBeInTheDocument()
   expect(screen.getByText('處理管線')).toBeInTheDocument()

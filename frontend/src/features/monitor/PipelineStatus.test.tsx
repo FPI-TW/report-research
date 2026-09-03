@@ -3,36 +3,36 @@ import { render, screen } from '@testing-library/react'
 import { PipelineStatus } from './PipelineStatus'
 import { DERIVED_LABEL, PIPELINE_ROWS } from './pipelineMeta'
 
-test('8 列名稱 + 狀態徽章對應布林', () => {
+test('9 列名稱 + 狀態徽章對應布林', () => {
   render(
     <PipelineStatus
       pipelines={{
         web: true, ingest: false, sync_import: true, tag: true,
-        summaries: false, titles: true, takeaways: true, signals: true,
+        summaries: false, titles: true, takeaways: true, signals: true, backfill: false,
       }}
     />,
   )
-  for (const n of ['Web 服務', '報告導入', '增量匯入', '語意標註', '摘要生成', '顯示標題', '重點摘錄', '觀點訊號']) {
+  for (const n of ['Web 服務', '報告導入', '增量匯入', '語意標註', '摘要生成', '顯示標題', '重點摘錄', '觀點訊號', '抽取回填']) {
     expect(screen.getByText(n)).toBeInTheDocument()
   }
   // web + sync_import + tag + titles + takeaways + signals
   expect(screen.getAllByText('執行中')).toHaveLength(6)
-  expect(screen.getAllByText('已停止')).toHaveLength(2)   // ingest + summaries
+  expect(screen.getAllByText('已停止')).toHaveLength(3)   // ingest + summaries + backfill
 })
 
-test('列順序固定為 web/ingest/sync_import/tag/summaries/titles/takeaways/signals', () => {
+test('列順序固定為 web/ingest/sync_import/tag/summaries/titles/takeaways/signals/backfill', () => {
   const { container } = render(
     <PipelineStatus
       pipelines={{
         web: true, ingest: true, sync_import: true, tag: true,
-        summaries: true, titles: true, takeaways: true, signals: true,
+        summaries: true, titles: true, takeaways: true, signals: true, backfill: true,
       }}
     />,
   )
   const names = [...container.querySelectorAll('[class*="pipeName"]')].map(el => el.textContent)
   expect(names).toEqual([
     'Web 服務', '報告導入', '增量匯入', '語意標註', '摘要生成', '顯示標題',
-    '重點摘錄', '觀點訊號',
+    '重點摘錄', '觀點訊號', '抽取回填',
   ])
 })
 
@@ -45,13 +45,13 @@ test('後端未回 takeaways／signals／sync_import／titles 時四列仍在並
   expect(screen.getByText('觀點訊號')).toBeInTheDocument()
   expect(screen.getByText('增量匯入')).toBeInTheDocument()
   expect(screen.getByText('顯示標題')).toBeInTheDocument()
-  // ingest+sync_import+tag+summaries+titles+takeaways+signals
-  expect(screen.getAllByText('已停止')).toHaveLength(7)
+  // ingest+sync_import+tag+summaries+titles+takeaways+signals+backfill
+  expect(screen.getAllByText('已停止')).toHaveLength(8)
 })
 
 test('PIPELINE_ROWS 是頁首分母的單一來源', () => {
   expect(PIPELINE_ROWS.map(r => r.key)).toEqual([
-    'web', 'ingest', 'sync_import', 'tag', 'summaries', 'titles', 'takeaways', 'signals',
+    'web', 'ingest', 'sync_import', 'tag', 'summaries', 'titles', 'takeaways', 'signals', 'backfill',
   ])
 })
 

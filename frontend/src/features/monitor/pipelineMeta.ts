@@ -15,4 +15,6 @@ export const PIPELINE_ROWS: { key: keyof Pipelines; name: string }[] = [
   { key: 'titles', name: '顯示標題' },
   { key: 'takeaways', name: DERIVED_LABEL.takeaways },
   { key: 'signals', name: DERIVED_LABEL.signals },
+  // E1d 深夜回填：每晚 01:00 起最多 4 小時，零 LLM。不寫 log 檔，這列是唯一表徵。
+  { key: 'backfill', name: '抽取回填' },
 ]

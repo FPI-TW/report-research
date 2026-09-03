@@ -12,6 +12,7 @@ import { MarketDistribution } from './MarketDistribution'
 import { BrokerDistribution } from './BrokerDistribution'
 import { MonitorSkeleton } from './MonitorSkeleton'
 import { FaithfulnessPanel } from './FaithfulnessPanel'
+import { ExtractionPanel } from './ExtractionPanel'
 import { ScheduleHealthPanel } from './ScheduleHealthPanel'
 import { Pulse } from '../../components/primitives/motionLoops'
 import { useScrolled } from '../../lib/useScrolled'
@@ -107,6 +108,13 @@ export default function MonitorPage() {
               <div className={styles.panelGrid}>
                 <ScheduleHealthPanel sync={p.sync} failures={p.unit_failures} />
                 <FaithfulnessPanel evaluation={p.evaluation} />
+              </div>
+              {/*
+                抽取品質與回填進度（E1）。回填要跑十幾個晚上，沒有這張卡只能靠 SQL 看；
+                extraction_log 的落點分佈是「1,466 筆檔案為什麼不在語料庫」第一次有答案的地方。
+              */}
+              <div className={styles.panelGrid}>
+                <ExtractionPanel extraction={p.extraction} />
               </div>
               <MarketDistribution markets={p.db.markets} />
               {/* 券商分佈接在市場分佈之後：兩張卡是同一種東西（語料的組成），

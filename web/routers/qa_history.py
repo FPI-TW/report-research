@@ -8,6 +8,7 @@ delete_qa、list_qa_versions、_valid_uuid、SessionFactory 走 web.deps（測�
 web.deps.X 即涵蓋）。其餘服務函式（record_feedback、history_item、對話串 CRUD、
 OFF_TOPIC_MESSAGES）只有這組用，由 app.services.answer 直接匯入。
 """
+import asyncio
 import logging
 from pathlib import Path
 
@@ -17,14 +18,23 @@ from sqlalchemy import bindparam, text
 
 from app.services.answer import (
     OFF_TOPIC_MESSAGES,
+    DeletedGeneratedObject,
     delete_conversation,
+    deleted_pdf_object_keys,
     deleted_pdf_paths,
     get_conversation,
     history_item,
     list_conversations,
     record_feedback,
 )
-from web import deps
+from app.services.object_storage import (
+    ObjectNotFound,
+    ObjectStorageError,
+    generated_key_has_expected_owner,
+    generated_object_key_for_sha,
+    get_object_storage,
+)
+from web import deps, report_runs
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +62,79 @@ async def _delete_conversation_and_files(conversation_id: str) -> bool:
     檔案刪不掉只 log 不影響回傳——DB 已提交而檔案殘留是可容忍的（`make db-audit`
     看得到）；反過來檔案刪了 DB 沒刪，就是下載端點永久 500。
     """
-    paths = await deleted_pdf_paths(conversation_id)
-    ok = await delete_conversation(conversation_id)
-    if not ok:
-        return False
+    # Tombstone/cancel first and wait for background tasks: otherwise an SSE-decoupled run can
+    # finish after these snapshots and recreate a report_doc or object pointer we just deleted.
+    # The tombstone is provisional until delete_conversation has committed.  Every failed path,
+    # including request cancellation, releases only this request's lease.
+    lease = await report_runs.begin_conversation_deletion(conversation_id)
+    try:
+        paths = await deleted_pdf_paths(conversation_id)
+        object_keys = await deleted_pdf_object_keys(conversation_id)
+        ok = await delete_conversation(conversation_id)
+        if not ok:
+            report_runs.rollback_conversation_deletion(lease)
+            return False
+    except BaseException:
+        report_runs.rollback_conversation_deletion(lease)
+        raise
+
+    # Post-commit cleanup is intentionally outside the rollback scope: DB absence is now the
+    # authoritative state, and lingering local/R2 files are reconcilable orphans rather than a
+    # reason to let a background run recreate the conversation.
+    report_runs.confirm_conversation_deletion(lease)
     for p in paths:
         try:
             Path(p).unlink(missing_ok=True)
         except OSError as exc:
             logger.warning("刪除對話串的 PDF 失敗（DB 已刪，檔案殘留）path=%s %s", p, exc)
+    storage = get_object_storage()
+    if storage.enabled:
+        for object_ref in object_keys:
+            await _delete_validated_generated_object(storage, object_ref)
     return True
+
+
+async def _delete_validated_generated_object(storage, object_ref: DeletedGeneratedObject) -> None:
+    """Delete one post-commit PDF only after validating its immutable DB ownership snapshot.
+
+    The DB row is intentionally already gone here.  Anything that cannot be proved to be this
+    exact report/rendition object is left in R2 as a reconcilable orphan rather than risking a
+    cross-report deletion from a corrupt pointer.
+    """
+    if object_ref.kind == "base" and object_ref.rendition_id is None:
+        rendition_id = None
+    elif object_ref.kind == "rendition" and object_ref.rendition_id:
+        rendition_id = object_ref.rendition_id
+    else:
+        logger.warning("略過不完整的 R2 PDF 清理身分 kind=%s key=%s", object_ref.kind, object_ref.key)
+        return
+    if not generated_key_has_expected_owner(object_ref.key, object_ref.report_id, rendition_id):
+        logger.warning("略過不屬於對話研報的 R2 PDF key=%s report_id=%s", object_ref.key, object_ref.report_id)
+        return
+    try:
+        metadata = await asyncio.to_thread(storage.head_object, object_ref.key)
+    except ObjectNotFound:
+        # The DB is gone and the exact owned key is already absent: cleanup is complete.
+        return
+    except ObjectStorageError as exc:
+        logger.warning("驗證對話串 R2 PDF 失敗（DB 已刪，物件殘留）key=%s %s", object_ref.key, exc)
+        return
+    object_metadata = metadata.get("Metadata") if isinstance(metadata, dict) else None
+    full_sha = (object_metadata or {}).get("sha256") or (object_metadata or {}).get("SHA256")
+    try:
+        canonical_key = generated_object_key_for_sha(object_ref.report_id, full_sha or "", rendition_id)
+    except ValueError:
+        logger.warning("略過缺少或無效 SHA metadata 的 R2 PDF key=%s", object_ref.key)
+        return
+    if object_ref.key != canonical_key:
+        logger.warning("略過 R2 PDF key/SHA 不符 key=%s expected=%s", object_ref.key, canonical_key)
+        return
+    try:
+        # DB is already committed.  Do not retry/delete broadly here; reconciliation reports
+        # a failed one-key cleanup as an orphan for an operator to inspect.
+        await asyncio.to_thread(storage.delete, object_ref.key)
+    except ObjectStorageError as exc:
+        logger.warning("刪除對話串的 R2 PDF 失敗（DB 已刪，物件殘留）key=%s %s", object_ref.key, exc)
 
 
 @router.post("/api/feedback")

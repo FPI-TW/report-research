@@ -59,6 +59,7 @@ class DocRow:
     # 報告內部標題（scripts/generate_titles.py 產出）。None＝尚未產生，呈現層回退檔名。
     title: Optional[str]
     file_path: Optional[str]
+    source_object_key: Optional[str]
     market: Optional[str]
     source: Optional[str]
     report_date: Optional[date]
@@ -107,7 +108,7 @@ class SimilarRow:
 _DOC_SQL = text(
     "SELECT id::text, file_hash, file_name, title, file_path, market, source, "
     "       report_date, report_type, summary, instrument_types, "
-    "       stock_targets, futures_targets, full_text "
+    "       stock_targets, futures_targets, full_text, source_object_key "
     "FROM research.research_report "
     "WHERE file_hash = :file_hash AND is_research IS NOT FALSE"
 )
@@ -128,6 +129,7 @@ async def fetch_doc(session: AsyncSession, file_hash: str) -> Optional[DocRow]:
         file_name=row[2],
         title=row[3],
         file_path=row[4],
+        source_object_key=row[14] if len(row) > 14 else None,
         market=row[5],
         source=row[6],
         report_date=row[7],

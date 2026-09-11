@@ -57,6 +57,22 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(out, b"%PDF-weasy")
         m_weasy.assert_called_once()
 
+    def test_result_reports_actual_weasyprint_after_requested_typst_fallback(self):
+        with patch.object(rpt, "REPORT_RENDERER", "typst"), patch(
+            "app.services.typst_render.render_report_pdf", side_effect=RuntimeError("typst boom")
+        ), patch.object(rpt, "_render_weasyprint", return_value=b"%PDF-weasy"):
+            result = rpt.render_report_pdf(_MD, title="T", meta=_META, return_result=True)
+        self.assertEqual(result.pdf_bytes, b"%PDF-weasy")
+        self.assertEqual(result.renderer, "weasyprint")
+
+    def test_strict_persisted_typst_does_not_fallback_to_weasyprint(self):
+        with patch(
+            "app.services.typst_render.render_report_pdf", side_effect=RuntimeError("typst unavailable")
+        ), patch.object(rpt, "_render_weasyprint") as weasy:
+            with self.assertRaises(rpt.PersistedRendererUnavailableError):
+                rpt.render_report_pdf(_MD, title="T", meta=_META, renderer="typst", strict_renderer=True)
+        weasy.assert_not_called()
+
     def test_fallback_does_not_swallow_weasyprint_failure(self):
         """兩軌都壞就該拋——靜默回空 bytes 會產出壞檔並被當成成功。"""
         with patch.object(rpt, "REPORT_RENDERER", "typst"), patch(

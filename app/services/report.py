@@ -25,8 +25,8 @@ import os
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
-from dataclasses import asdict
+from collections.abc import AsyncIterator, Callable
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -37,6 +37,7 @@ from app.services.db import SessionFactory
 from app.services.evidence import manifest_from_answer
 from app.services.llm import SEARCH_EVENT, stream_completion
 from app.services.locale import DEFAULT_LOCALE, resolve_locale
+from app.services.object_storage import ObjectStorageError, generated_object_key, get_object_storage
 from app.services.pdf import render_report_pdf as _render_weasyprint
 from app.services.pdf import split_long_paragraphs, strip_preamble
 from app.services.query_planner import plan_queries
@@ -264,10 +265,26 @@ def parse_external_refs(markdown: str) -> list[dict]:
     ]
 
 
+class PersistedRendererUnavailableError(RuntimeError):
+    """A historical PDF's exact renderer cannot reproduce its artifact identity."""
+
+
+@dataclass(frozen=True)
+class RenderedPdf:
+    pdf_bytes: bytes
+    renderer: str
+
+
+def rendered_pdf_result(value: bytes | RenderedPdf, requested_renderer: str) -> RenderedPdf:
+    """Normalize legacy byte-return test seams while production captures actual renderer."""
+    return value if isinstance(value, RenderedPdf) else RenderedPdf(value, requested_renderer)
+
+
 def render_report_pdf(
     markdown_text: str, *, title: str, meta: dict, template_id: str | None = None,
-    locale: str = DEFAULT_LOCALE,
-) -> bytes:
+    locale: str = DEFAULT_LOCALE, renderer: str | None = None, strict_renderer: bool = False,
+    return_result: bool = False,
+) -> bytes | RenderedPdf:
     """依 REPORT_RENDERER 分派渲染；Typst 失敗 fail-open 回退 WeasyPrint（M9a T5）。
 
     **兩軌都必須產出含免責的 PDF**：回退路徑存在正是為了應付沒預料到的情況，那恰恰
@@ -277,20 +294,31 @@ def render_report_pdf(
     重建出來的檔案會繞過分派、永遠是 WeasyPrint 版。locale（M10c）決定 chrome 語言，
     兩軌一致；免責回退時同樣隨 locale。
     """
-    if REPORT_RENDERER == "typst":
+    selected_renderer = renderer or REPORT_RENDERER
+    if selected_renderer not in {"typst", "weasyprint"}:
+        if strict_renderer:
+            raise PersistedRendererUnavailableError(f"unknown persisted renderer: {selected_renderer}")
+        selected_renderer = "weasyprint"
+    actual_renderer = selected_renderer
+    if selected_renderer == "typst":
         try:
             # 延遲 import：typst/pypandoc 載入不該計入 web.server 的匯入預算
             from app.services.typst_render import render_report_pdf as _render_typst
 
-            return _render_typst(
+            pdf_bytes = _render_typst(
                 markdown_text, title=title, meta=meta, template_id=template_id,
                 locale=locale,
             )
+            return RenderedPdf(pdf_bytes, actual_renderer) if return_result else pdf_bytes
         except Exception:
+            if strict_renderer:
+                raise PersistedRendererUnavailableError("persisted typst renderer is unavailable") from None
             # 編譯錯誤、模板炸掉、pandoc 異常都在此收斂——研報寧可版型退化，
             # 不可因渲染而完全沒有 PDF（無 PDF＝無持久化＝重建永久 500）。
             logger.warning("typst 渲染失敗，回退 weasyprint", exc_info=True)
-    return _render_weasyprint(markdown_text, title=title, meta=meta, locale=locale)
+            actual_renderer = "weasyprint"
+    pdf_bytes = _render_weasyprint(markdown_text, title=title, meta=meta, locale=locale)
+    return RenderedPdf(pdf_bytes, actual_renderer) if return_result else pdf_bytes
 
 
 def write_report_pdf(report_id: str, pdf_bytes: bytes, *, suffix: str = "") -> str:
@@ -306,22 +334,66 @@ def write_report_pdf(report_id: str, pdf_bytes: bytes, *, suffix: str = "") -> s
     return path
 
 
+async def persist_generated_pdf(
+    report_id: str, pdf_bytes: bytes, *, rendition_id: str | None = None, suffix: str = ""
+) -> tuple[str | None, str | None]:
+    """Persist a generated PDF before its DB row is committed.
+
+    R2 uploads may leave a harmless orphan if the following DB write fails; callers log that
+    failure and the reconciliation command can report it.  R2-only deliberately creates no
+    local PDF, whereas hybrid keeps the legacy local copy as a fallback/backup.
+    """
+    storage = get_object_storage()
+    local_path = None
+    if storage.mode in {"local", "hybrid"}:
+        # Keep the no-suffix call shape stable: several focused tests replace this seam with
+        # the original two-argument helper, and base PDFs never need a suffix.
+        if suffix:
+            local_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes, suffix=suffix)
+        else:
+            local_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
+    if storage.enabled:
+        key = generated_object_key(report_id, pdf_bytes, rendition_id)
+        await asyncio.to_thread(storage.upload_bytes, pdf_bytes, key)
+        return local_path, key
+    return local_path, None
+
+
+def _persistence_allowed(can_persist: Callable[[], bool] | None) -> bool:
+    """Keep web-layer deletion state out of this service while allowing fail-closed checkpoints."""
+    return can_persist is None or can_persist()
+
+
+async def _discard_cancelled_generated_pdf(object_key: str | None) -> None:
+    """Best-effort cleanup of a just-created, deterministic generated object after cancellation."""
+    if not object_key:
+        return
+    storage = get_object_storage()
+    if not storage.enabled:
+        return
+    try:
+        await asyncio.to_thread(storage.delete, object_key)
+    except ObjectStorageError:
+        logger.warning("取消的研報上傳留下 R2 orphan key=%s（可由對帳作業回報）", object_key)
+
+
 async def create_rendition(
     report_id: str, *, renderer: str, template_id: str | None,
-    content_hash: str, pdf_path: str, status: str = "ready",
+    content_hash: str, pdf_path: str | None, status: str = "ready", pdf_object_key: str | None = None,
+    rendition_id: str | None = None,
 ) -> str:
     """寫入一列不可變 report_rendition，回 rendition_id。"""
-    rendition_id = str(uuid.uuid4())
+    rendition_id = rendition_id or str(uuid.uuid4())
     async with SessionFactory() as session:
         await session.execute(
             text(
                 "INSERT INTO research.report_rendition "
-                "(id, report_id, renderer, template_id, content_hash, pdf_path, status) "
-                "VALUES (:id, :rid, :rend, :tid, :ch, :pp, :st)"
+                "(id, report_id, renderer, template_id, content_hash, pdf_path, status, pdf_object_key) "
+                "VALUES (:id, :rid, :rend, :tid, :ch, :pp, :st, :pok)"
             ),
             {
                 "id": rendition_id, "rid": report_id, "rend": renderer,
-                "tid": template_id, "ch": content_hash, "pp": pdf_path, "st": status,
+                "tid": template_id, "ch": content_hash, "pp": pdf_path, "st": status, "pok": pdf_object_key,
             },
         )
         await session.commit()
@@ -340,20 +412,101 @@ async def set_current_rendition(report_id: str, rendition_id: str) -> None:
         await session.commit()
 
 
-async def fetch_current_rendition_pdf(report_id: str) -> str | None:
-    """目前 rendition 的 pdf_path；無 rendition（NULL 指標）→ None（下載回退 report_doc.pdf_path）。"""
+async def update_report_pdf_location(report_id: str, pdf_path: str | None, pdf_object_key: str | None) -> None:
+    """Record an on-demand rebuilt base PDF only after local/R2 persistence succeeded."""
+    async with SessionFactory() as session:
+        await session.execute(
+            text("UPDATE research.report_doc SET pdf_path = :path, pdf_object_key = :key WHERE id = :id"),
+            {"id": report_id, "path": pdf_path, "key": pdf_object_key},
+        )
+        await session.commit()
+
+
+async def update_current_base_pdf_location(
+    report_id: str, pdf_path: str | None, pdf_object_key: str | None,
+) -> bool:
+    """Repair the base artifact only while no rendition has become current (base CAS)."""
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text(
+                "UPDATE research.report_doc SET pdf_path = :path, pdf_object_key = :key "
+                "WHERE id = :id AND current_rendition_id IS NULL"
+            ),
+            {"id": report_id, "path": pdf_path, "key": pdf_object_key},
+        )
+        await session.commit()
+    return getattr(result, "rowcount", 0) == 1
+
+
+async def update_rendition_pdf_location(rendition_id: str, pdf_path: str | None, pdf_object_key: str | None) -> None:
+    """Replace a missing rendition artifact without changing its identity or current pointer."""
+    async with SessionFactory() as session:
+        await session.execute(
+            text("UPDATE research.report_rendition SET pdf_path = :path, pdf_object_key = :key WHERE id = :id"),
+            {"id": rendition_id, "path": pdf_path, "key": pdf_object_key},
+        )
+        await session.commit()
+
+
+async def update_current_rendition_pdf_location(
+    report_id: str, rendition_id: str, pdf_path: str | None, pdf_object_key: str | None,
+) -> bool:
+    """Repair a rendition only while it remains this report's current selection.
+
+    A missing-object repair races a user-triggered rerender.  The conditional update is the
+    compare-and-set: it never changes ``current_rendition_id`` and refuses to mutate the stale
+    rendition row after another request selected a newer one.
+    """
+    async with SessionFactory() as session:
+        result = await session.execute(
+            text(
+                "UPDATE research.report_rendition AS rr SET pdf_path = :path, pdf_object_key = :key "
+                "WHERE rr.id = :rid AND rr.report_id = :report_id "
+                "AND EXISTS (SELECT 1 FROM research.report_doc AS d "
+                "WHERE d.id = :report_id AND d.current_rendition_id = :rid)"
+            ),
+            {"report_id": report_id, "rid": rendition_id, "path": pdf_path, "key": pdf_object_key},
+        )
+        await session.commit()
+    return getattr(result, "rowcount", 0) == 1
+
+
+async def fetch_current_rendition(report_id: str) -> dict | None:
+    """Current rendition including the metadata needed to deterministically rebuild it."""
     async with SessionFactory() as session:
         row = (
             await session.execute(
                 text(
-                    "SELECT r.pdf_path FROM research.report_doc d "
+                    "SELECT r.id::text, r.pdf_path, r.pdf_object_key, r.template_id, r.renderer "
+                    "FROM research.report_doc d JOIN research.report_rendition r "
+                    "ON r.id = d.current_rendition_id WHERE d.id = :id"
+                ),
+                {"id": report_id},
+            )
+        ).first()
+    if not row:
+        return None
+    return {
+        "id": row[0], "pdf_path": row[1], "pdf_object_key": row[2],
+        "template_id": row[3], "renderer": row[4],
+    }
+
+
+async def fetch_current_rendition_pdf(report_id: str) -> tuple[str | None, str | None] | str | None:
+    """目前 rendition 的 legacy path 與 R2 key；無 rendition 指標則回 None。"""
+    async with SessionFactory() as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT r.pdf_path, r.pdf_object_key FROM research.report_doc d "
                     "JOIN research.report_rendition r ON r.id = d.current_rendition_id "
                     "WHERE d.id = :id"
                 ),
                 {"id": report_id},
             )
         ).first()
-    return row[0] if row else None
+    # Keep the legacy scalar result compatible with callers/tests backed by older SQL fakes.
+    return (row[0], row[1]) if row and len(row) > 1 else (row[0] if row else None)
 
 
 async def persist_report_doc(
@@ -367,6 +520,8 @@ async def persist_report_doc(
     evaluation: dict | None = None,
     locale: str | None = None,
     template_id: str | None = None,
+    renderer: str | None = None,
+    pdf_object_key: str | None = None,
 ) -> None:
     """寫入 report_doc。M7 逐節生成另帶 outline/claim_evidence/current_revision_id/
     report_run_id 四欄（單次路徑不傳，寫 NULL、歷史列相容）；M8 另帶 evaluation
@@ -380,18 +535,18 @@ async def persist_report_doc(
         await session.execute(
             text(
                 "INSERT INTO research.report_doc "
-                "(id, qa_id, conversation_id, question, title, markdown, pdf_path, "
+                "(id, qa_id, conversation_id, question, title, markdown, pdf_path, pdf_object_key, "
                 "sources, thinking_ms, evidence_manifest, "
                 "outline, claim_evidence, current_revision_id, report_run_id, evaluation, "
-                "locale, template_id) "
-                "VALUES (:id, :qa_id, :conv, :q, :title, :md, :pdf, "
+                "locale, template_id, renderer) "
+                "VALUES (:id, :qa_id, :conv, :q, :title, :md, :pdf, :pdf_object_key, "
                 "CAST(:src AS jsonb), :tms, CAST(:evm AS jsonb), "
                 "CAST(:outline AS jsonb), CAST(:ce AS jsonb), :crid, :rrid, "
-                "CAST(:eval AS jsonb), :locale, :tpl)"
+                "CAST(:eval AS jsonb), :locale, :tpl, :renderer)"
             ),
             {
                 "id": report_id, "qa_id": qa_id, "conv": conversation_id,
-                "q": question, "title": title, "md": markdown, "pdf": pdf_path,
+                "q": question, "title": title, "md": markdown, "pdf": pdf_path, "pdf_object_key": pdf_object_key,
                 "src": json.dumps(sources, ensure_ascii=False), "tms": thinking_ms,
                 "evm": (
                     json.dumps(evidence_manifest, ensure_ascii=False)
@@ -413,6 +568,7 @@ async def persist_report_doc(
                 ),
                 "locale": locale,
                 "tpl": template_id,
+                "renderer": renderer,
             },
         )
         await session.commit()
@@ -423,8 +579,8 @@ async def fetch_report_doc(report_id: str) -> dict | None:
         row = (
             await session.execute(
                 text(
-                    "SELECT id, title, markdown, pdf_path, question, created_at, "
-                    "       locale, template_id "
+                    "SELECT id, title, markdown, pdf_path, question, created_at, locale, template_id, "
+                    "       pdf_object_key, renderer "
                     "FROM research.report_doc WHERE id = :id"
                 ),
                 {"id": report_id},
@@ -440,10 +596,10 @@ async def fetch_report_doc(report_id: str) -> dict | None:
     )
     return {
         "report_id": str(row[0]), "title": row[1], "markdown": row[2],
-        "pdf_path": row[3], "question": row[4], "date": date,
+        "pdf_path": row[3], "pdf_object_key": row[8] if len(row) > 8 else None, "question": row[4], "date": date,
         # 產出當時的值；歷史列為 NULL → 呼叫端 fail-open（resolve_locale(None)＝zh-Hant、
         # manifest.resolve(None)＝預設模板），恰好就是那些列產出時的實際行為。
-        "locale": row[6], "template_id": row[7],
+        "locale": row[6], "template_id": row[7], "renderer": row[9] if len(row) > 9 else None,
     }
 
 
@@ -519,7 +675,7 @@ async def _finalize_sectioned(
     payload: dict, *, question: str, conversation_id: str | None,
     qa_id: str | None, run_id: str | None, eval_context: str,
     started: float, persist: bool, template_id: str | None = None,
-    locale: str = DEFAULT_LOCALE,
+    locale: str = DEFAULT_LOCALE, can_persist: Callable[[], bool] | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     """逐節 __final__ 收尾：eval 旁路 / 渲染 PDF / 落地 / persist / 收尾 run / done。
 
@@ -562,12 +718,27 @@ async def _finalize_sectioned(
     thinking_ms = int((time.monotonic() - started) * 1000)
     report_id = str(uuid.uuid4())
     today = datetime.now(timezone.utc).date().isoformat()
-    pdf_bytes = await asyncio.to_thread(
+    rendered = await asyncio.to_thread(
         render_report_pdf, markdown, title=title,
         meta={"date": today, "question": question}, template_id=template_id,
-        locale=locale,
+        locale=locale, return_result=True,
     )
-    pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
+    render_result = rendered_pdf_result(rendered, REPORT_RENDERER)
+    pdf_bytes = render_result.pdf_bytes
+    if not _persistence_allowed(can_persist):
+        await _mark_run(run_id, "cancelled", error_detail="conversation deleted before upload")
+        yield ("error", {"detail": "對話串已刪除，研報未儲存"})
+        return
+    try:
+        pdf_path, pdf_object_key = await persist_generated_pdf(report_id, pdf_bytes)
+    except asyncio.CancelledError:
+        logger.warning("研報上傳在取消中斷 report_id=%s；若完成將由對帳作業發現 orphan", report_id)
+        raise
+    if not _persistence_allowed(can_persist):
+        await _discard_cancelled_generated_pdf(pdf_object_key)
+        await _mark_run(run_id, "cancelled", error_detail="conversation deleted after upload")
+        yield ("error", {"detail": "對話串已刪除，研報未儲存"})
+        return
     # M4b：只以實際被 [n] 引用的 corpus 來源建 manifest；模型自報的網路來源經與單次
     # 路徑同一套受控解析後併入（缺 adapter 快照/hash 者由 manifest_from_answer 逐筆
     # 跳過而不污染帳本——M4a/M4b 信任契約）。
@@ -575,6 +746,11 @@ async def _finalize_sectioned(
         final_sources, parse_external_refs(markdown),
         retrieved_at=datetime.now(timezone.utc).isoformat(),
     )
+    if not _persistence_allowed(can_persist):
+        await _discard_cancelled_generated_pdf(pdf_object_key)
+        await _mark_run(run_id, "cancelled", error_detail="conversation deleted before persist")
+        yield ("error", {"detail": "對話串已刪除，研報未儲存"})
+        return
     await persist_report_doc(
         report_id, qa_id, conversation_id, question, title, markdown, pdf_path,
         final_sources, thinking_ms, evidence_manifest,
@@ -583,7 +759,7 @@ async def _finalize_sectioned(
         current_revision_id=payload.get("revision_id"),
         report_run_id=run_id,
         evaluation=payload.get("evaluation") or None,
-        locale=locale, template_id=template_id,
+        locale=locale, template_id=template_id, renderer=render_result.renderer, pdf_object_key=pdf_object_key,
     )
     emh = (
         hashlib.sha256(
@@ -614,7 +790,7 @@ async def generate_report(
     question: str, *, filters: dict | None = None,
     conversation_id: str | None = None, qa_id: str | None = None,
     model: str = REPORT_MODEL, persist: bool = True, template_id: str | None = None,
-    locale: str | None = None,
+    locale: str | None = None, can_persist: Callable[[], bool] | None = None,
 ) -> AsyncIterator[tuple[str, object]]:
     filters = filters or {}
     # locale 解析 fail-open → zh-Hant（未帶/未知一律中文，零回歸）。輸出語言隨此值切換；
@@ -777,7 +953,7 @@ async def generate_report(
                     final_payload, question=question, conversation_id=conversation_id,
                     qa_id=qa_id, run_id=run_id, eval_context=context,
                     started=started, persist=persist, template_id=template_id,
-                    locale=locale,
+                    locale=locale, can_persist=can_persist,
                 ):
                     yield ev
             except asyncio.CancelledError:
@@ -853,22 +1029,39 @@ async def generate_report(
     thinking_ms = int((time.monotonic() - started) * 1000)
     report_id = str(uuid.uuid4())
     today = datetime.now(timezone.utc).date().isoformat()
-    pdf_bytes = await asyncio.to_thread(
+    rendered = await asyncio.to_thread(
         render_report_pdf, markdown, title=title,
         meta={"date": today, "question": question}, template_id=template_id,
-        locale=locale,
+        locale=locale, return_result=True,
     )
-    pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
+    render_result = rendered_pdf_result(rendered, REPORT_RENDERER)
+    pdf_bytes = render_result.pdf_bytes
+    if not _persistence_allowed(can_persist):
+        yield ("error", {"detail": "對話串已刪除，研報未儲存"})
+        return
+    try:
+        pdf_path, pdf_object_key = await persist_generated_pdf(report_id, pdf_bytes)
+    except asyncio.CancelledError:
+        logger.warning("研報上傳在取消中斷 report_id=%s；若完成將由對帳作業發現 orphan", report_id)
+        raise
+    if not _persistence_allowed(can_persist):
+        await _discard_cancelled_generated_pdf(pdf_object_key)
+        yield ("error", {"detail": "對話串已刪除，研報未儲存"})
+        return
     # M4b：corpus 來源 + 受控解析的外部參考 → evidence manifest（無證據時寫 NULL）
     evidence_manifest = manifest_from_answer(
         [asdict(s) for s in sources],
         parse_external_refs(markdown),
         retrieved_at=datetime.now(timezone.utc).isoformat(),
     )
+    if not _persistence_allowed(can_persist):
+        await _discard_cancelled_generated_pdf(pdf_object_key)
+        yield ("error", {"detail": "對話串已刪除，研報未儲存"})
+        return
     await persist_report_doc(
         report_id, qa_id, conversation_id, question, title, markdown, pdf_path,
         [asdict(s) for s in sources], thinking_ms, evidence_manifest,
-        locale=locale, template_id=template_id,
+        locale=locale, template_id=template_id, renderer=render_result.renderer, pdf_object_key=pdf_object_key,
     )
     yield (
         "done",

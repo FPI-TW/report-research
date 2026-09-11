@@ -22,6 +22,7 @@ class ReportRow:
     market: Optional[str]
     is_research: Optional[bool]
     confidence: Optional[float]
+    source_object_key: Optional[str] = None
     stock_code: Optional[str] = None
     company_name: Optional[str] = None
     source: Optional[str] = None
@@ -272,14 +273,14 @@ async def upsert_report(
         text(
             """
             INSERT INTO research.research_report
-                (id, file_hash, file_name, file_path, market, is_research,
+                (id, file_hash, file_name, file_path, source_object_key, market, is_research,
                  confidence, stock_code, company_name, source, report_date,
                  report_type, language, instrument_types, relates_stock,
                  relates_futures, stock_targets, futures_targets, full_text,
                  extractor, extraction_version, quality_score, quality_flags,
                  page_count, pages_failed, needs_review)
             VALUES
-                (:id, :file_hash, :file_name, :file_path, :market, :is_research,
+                (:id, :file_hash, :file_name, :file_path, :source_object_key, :market, :is_research,
                  :confidence, :stock_code, :company_name, :source, :report_date,
                  :report_type, :language, CAST(:instrument_types AS text[]),
                  :relates_stock, :relates_futures,

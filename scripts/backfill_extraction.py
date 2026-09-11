@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -37,9 +39,15 @@ from sqlalchemy import text as sql_text  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
-from app.services.extract import extract_text  # noqa: E402
+from app.services.extract import extract_text, file_sha256  # noqa: E402
 from app.services.extraction import EXTRACTION_VERSION, cache  # noqa: E402
 from app.services.filename import parse_filename  # noqa: E402
+from app.services.object_storage import (  # noqa: E402
+    ObjectNotFound,
+    get_object_storage,
+    original_object_key,
+    verified_file_snapshot,
+)
 from app.services.store import (  # noqa: E402
     ExtractionLogRow,
     mark_report_extraction,
@@ -57,7 +65,7 @@ FAIL_LOG = ROOT / "data" / "backfill_failures.log"
 # 候選：版本不是目標者，新的先。report_date 為 NULL 者排最後（NULLS LAST），不是排除——
 # 它們也要回填，只是優先序最低。
 CANDIDATES_SQL = """
-SELECT r.id::text, r.file_hash, r.file_name, r.file_path, r.report_date
+SELECT r.id::text, r.file_hash, r.file_name, r.file_path, r.source_object_key, r.report_date
 FROM research.research_report r
 WHERE r.extraction_version IS DISTINCT FROM :target
 ORDER BY r.report_date DESC NULLS LAST, r.id
@@ -93,10 +101,78 @@ def _log_failure(file_name: str, stage: str, reason: str) -> None:
 
 async def backfill_one(session, row, extractor: str, target: str, review_min: float, batch_size: int) -> str:
     """回傳結果類別：replaced／kept_previous／missing_file。例外往外拋，由呼叫端記錄。"""
-    rid, file_hash, file_name, file_path, _report_date = row
-    path = resolve_path(file_path, file_name)
+    rid, file_hash, file_name, file_path, source_object_key, _report_date = row
+    storage = get_object_storage()
+    path: Path | None = None
+    temp_dir: TemporaryDirectory | None = None
+    # hybrid deliberately probes R2 first; only a confirmed missing key may fall back to local.
+    # r2 mode never resolves ``file_path`` or the mirror directory.
+    if storage.enabled and source_object_key:
+        # Parser APIs accept only real paths.  Never treat an object key as one: materialize
+        # into an owned TemporaryDirectory and remove it after this one report.
+        temp_dir = TemporaryDirectory(prefix="report-mark-backfill-")
+        path = Path(temp_dir.name) / file_name
+        try:
+            data = await asyncio.to_thread(storage.download_bytes, source_object_key)
+            await asyncio.to_thread(path.write_bytes, data)
+            if hashlib.sha256(data).hexdigest() != file_hash:
+                raise ValueError("R2 source content SHA-256 does not match DB file_hash")
+        except ObjectNotFound:
+            temp_dir.cleanup()
+            temp_dir = None
+            path = None
+            if storage.mode == "r2":
+                return "missing_file"
+        except Exception:
+            temp_dir.cleanup()
+            raise
+
     if path is None:
-        return "missing_file"
+        if storage.mode == "r2":
+            return "missing_file"
+        path = resolve_path(file_path, file_name)
+        if path is None:
+            return "missing_file"
+
+    try:
+        # NAS/local paths are mutable.  Copy once before either upload or parsing so a
+        # replacement cannot make R2 bytes and extracted text disagree.  R2 downloads are
+        # already owned temp files, but taking the same snapshot keeps one invariant for both.
+        with verified_file_snapshot(path, file_hash) as (snapshot, _digest):
+            return await _backfill_path(
+                session, rid, file_hash, file_name, snapshot, extractor, target, review_min, batch_size,
+                expected_source_object_key=source_object_key,
+            )
+    finally:
+        # The parser, embedder, DB update, cache write, and even logging may throw.  This
+        # ownership boundary is deliberately outside all of them so R2 bytes never leak.
+        if temp_dir:
+            temp_dir.cleanup()
+
+
+async def _backfill_path(
+    session, rid, file_hash: str, file_name: str, path: Path, extractor: str,
+    target: str, review_min: float, batch_size: int, *, expected_source_object_key: str | None = None,
+) -> str:
+    """Backfill one concrete local path; caller owns any temporary directory."""
+
+    storage = get_object_storage()
+    if storage.enabled:
+        # A successful upload precedes the transaction that records its key.  If that
+        # transaction later rolls back, the object is an explicitly reconcilable orphan.
+        if file_sha256(path) != file_hash:
+            raise ValueError("source content SHA-256 does not match DB file_hash; refusing R2 upload")
+        source_object_key = original_object_key(file_hash, file_name)
+        await asyncio.to_thread(storage.upload_file, path, source_object_key, expected_sha256=file_hash)
+        result = await session.execute(
+            sql_text(
+                "UPDATE research.research_report SET source_object_key = :key "
+                "WHERE id = :id AND source_object_key IS NOT DISTINCT FROM :expected_old"
+            ),
+            {"id": rid, "key": source_object_key, "expected_old": expected_source_object_key},
+        )
+        if getattr(result, "rowcount", 1) == 0:
+            raise RuntimeError("source_object_key update lost race; uploaded object left for reconciliation")
 
     res = extract_text(path, extractor=extractor)
     meta = parse_filename(path.name)
@@ -188,7 +264,7 @@ async def run(args) -> int:
         print("沒有要回填的研報（全部已是目標版本）。", flush=True)
         return 0
     if args.dry_run:
-        for rid, _h, name, _p, rd in rows[:50]:
+        for _rid, _h, name, _p, _key, rd in rows[:50]:
             print(f"  {rd} {name[:60]}")
         if len(rows) > 50:
             print(f"  … 共 {len(rows)} 篇")

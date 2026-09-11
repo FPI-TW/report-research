@@ -7,10 +7,13 @@
 
 SessionFactory 走 web.deps，故 patch web.deps.SessionFactory 即可注入假 DB。
 """
+import hashlib
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -21,7 +24,9 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.services.object_storage import ObjectNotFound, ObjectStorageError  # noqa: E402
 from web import deps  # noqa: E402
+from web.routers import report_file as report_file_router  # noqa: E402
 from web.server import app  # noqa: E402
 
 
@@ -69,9 +74,11 @@ class ReportFileAuthTests(unittest.TestCase):
 class ReportFileBehaviourTests(unittest.TestCase):
     def setUp(self):
         self._orig = deps.SessionFactory
+        self._orig_storage = report_file_router.get_object_storage
 
     def tearDown(self):
         deps.SessionFactory = self._orig
+        report_file_router.get_object_storage = self._orig_storage
 
     def test_full_returns_404_when_missing(self):
         deps.SessionFactory = lambda: _FakeSession(None)
@@ -112,6 +119,234 @@ class ReportFileBehaviourTests(unittest.TestCase):
         r = _authed().get("/api/report/whatever-id/file")
         self.assertEqual(r.status_code, 200)
         self.assertIn("test_report_file_api", r.headers.get("content-disposition", ""))
+
+    def test_private_r2_file_redirects_without_cache(self):
+        class _Storage:
+            enabled = True
+            mode = "r2"
+
+            def head_object(self, key):
+                self.key = key
+                return {"ContentLength": 1, "Metadata": {"sha256": "a" * 64}}
+
+            def presign_get(self, key):
+                return "https://private.example.test/signed"
+
+        digest = "a" * 64
+        row = (
+            "a.pdf", "TW", "kgi", None, None, "/not-used.pdf", None, None, None,
+            f"originals/aa/{digest}.pdf", digest,
+        )
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: _Storage()
+        r = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.headers["location"], "https://private.example.test/signed")
+        self.assertEqual(r.headers["cache-control"], "no-store")
+
+    def test_original_missing_or_mismatched_metadata_is_503_without_presign_or_hybrid_fallback(self):
+        digest = "a" * 64
+
+        for mode in ("hybrid", "r2"):
+            for metadata in ({}, {"sha256": "b" * 64}):
+                with self.subTest(mode=mode, metadata=metadata):
+                    class _Storage:
+                        enabled = True
+
+                        def head_object(self, _key):
+                            return {"Metadata": metadata}
+
+                        def presign_get(self, _key):
+                            raise AssertionError("invalid original metadata must never be presigned")
+
+                    _Storage.mode = mode
+                    with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+                        local.write(b"%PDF must not fallback")
+                        local.flush()
+                        row = (
+                            "a.pdf", "TW", "kgi", None, None, local.name, None, None, None,
+                            f"originals/aa/{digest}.pdf", digest,
+                        )
+                        deps.SessionFactory = lambda: _FakeSession(row)
+                        report_file_router.get_object_storage = lambda: _Storage()
+                        response = _authed().get("/api/report/rid-r2/file")
+                    self.assertEqual(response.status_code, 503)
+
+    def test_bucket_failure_is_503_and_hybrid_never_falls_back_local(self):
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+            def head_object(self, key):
+                raise ObjectStorageError("NoSuchBucket")
+
+        here = str(Path(__file__).resolve())
+        digest = "a" * 64
+        row = ("self.py", "TW", "kgi", None, None, here, None, None, None, f"originals/aa/{digest}.py", digest)
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: _Storage()
+        r = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(r.status_code, 503)
+
+    def test_confirmed_missing_r2_original_is_404(self):
+        class _Storage:
+            enabled = True
+            mode = "r2"
+
+            def head_object(self, key):
+                raise ObjectNotFound(key)
+
+        digest = "a" * 64
+        row = (
+            "a.pdf", "TW", "kgi", None, None, "/must-not-read.pdf", None, None, None,
+            f"originals/aa/{digest}.pdf", digest,
+        )
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: _Storage()
+        r = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(r.status_code, 404)
+
+    def test_confirmed_missing_hybrid_original_falls_back_to_its_local_file(self):
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+            def head_object(self, key):
+                raise ObjectNotFound(key)
+
+        data = b"%PDF local fallback"
+        digest = hashlib.sha256(data).hexdigest()
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(data)
+            local.flush()
+            row = (
+                "a.pdf", "TW", "kgi", None, None, local.name, None, None, None,
+                f"originals/{digest[:2]}/{digest}.pdf", digest,
+            )
+            deps.SessionFactory = lambda: _FakeSession(row)
+            report_file_router.get_object_storage = lambda: _Storage()
+            response = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, data)
+
+    def test_hybrid_legacy_no_key_matching_local_original_is_served(self):
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+        data = b"%PDF legacy local original"
+        digest = hashlib.sha256(data).hexdigest()
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(data)
+            local.flush()
+            row = ("a.pdf", "TW", "kgi", None, None, local.name, None, None, None, None, digest)
+            deps.SessionFactory = lambda: _FakeSession(row)
+            report_file_router.get_object_storage = lambda: _Storage()
+            response = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, data)
+
+    def test_hybrid_legacy_no_key_mismatched_or_unreadable_local_original_is_503(self):
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+        digest = hashlib.sha256(b"expected legacy original").hexdigest()
+        with self.subTest("mismatch"), tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(b"%PDF stale legacy original")
+            local.flush()
+            row = ("a.pdf", "TW", "kgi", None, None, local.name, None, None, None, None, digest)
+            deps.SessionFactory = lambda: _FakeSession(row)
+            report_file_router.get_object_storage = lambda: _Storage()
+            response = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(response.status_code, 503)
+
+        with self.subTest("unreadable"):
+            row = ("a.pdf", "TW", "kgi", None, None, "/not-readable.pdf", None, None, None, None, digest)
+            deps.SessionFactory = lambda: _FakeSession(row)
+            report_file_router.get_object_storage = lambda: _Storage()
+            with patch.object(report_file_router.os.path, "isfile", return_value=True):
+                response = _authed().get("/api/report/rid-r2/file")
+            self.assertEqual(response.status_code, 503)
+
+        with self.subTest("missing-db-hash"):
+            with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+                local.write(b"%PDF no DB hash")
+                local.flush()
+                row = ("a.pdf", "TW", "kgi", None, None, local.name, None, None, None, None, None)
+                deps.SessionFactory = lambda: _FakeSession(row)
+                report_file_router.get_object_storage = lambda: _Storage()
+                response = _authed().get("/api/report/rid-r2/file")
+            self.assertEqual(response.status_code, 503)
+
+    def test_r2_legacy_no_key_remains_404(self):
+        class _Storage:
+            enabled = True
+            mode = "r2"
+
+        row = ("a.pdf", "TW", "kgi", None, None, "/must-not-read.pdf", None, None, None, None, "a" * 64)
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: _Storage()
+        response = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(response.status_code, 404)
+
+    def test_confirmed_missing_hybrid_original_with_mismatched_local_bytes_is_503(self):
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+            def head_object(self, key):
+                raise ObjectNotFound(key)
+
+        digest = hashlib.sha256(b"expected original").hexdigest()
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(b"%PDF stale original")
+            local.flush()
+            row = (
+                "a.pdf", "TW", "kgi", None, None, local.name, None, None, None,
+                f"originals/{digest[:2]}/{digest}.pdf", digest,
+            )
+            deps.SessionFactory = lambda: _FakeSession(row)
+            report_file_router.get_object_storage = lambda: _Storage()
+            response = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(response.status_code, 503)
+
+    def test_confirmed_missing_hybrid_original_with_unreadable_local_file_is_503(self):
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+            def head_object(self, key):
+                raise ObjectNotFound(key)
+
+        digest = hashlib.sha256(b"expected original").hexdigest()
+        row = (
+            "a.pdf", "TW", "kgi", None, None, "/not-readable.pdf", None, None, None,
+            f"originals/{digest[:2]}/{digest}.pdf", digest,
+        )
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: _Storage()
+        # ``isfile`` can succeed even if a mount/ACL makes the file unreadable; the streaming
+        # hash is the final integrity gate and must fail closed.
+        with patch.object(report_file_router.os.path, "isfile", return_value=True):
+            response = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(response.status_code, 503)
+
+    def test_wrong_original_pointer_is_not_presigned_or_locally_fallback(self):
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+            def head_object(self, _key):
+                raise AssertionError("wrong pointer must fail before HEAD")
+
+        digest = "a" * 64
+        here = str(Path(__file__).resolve())
+        row = ("a.pdf", "TW", "kgi", None, None, here, None, None, None, "originals/bb/other.pdf", digest)
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: _Storage()
+        r = _authed().get("/api/report/rid-r2/file")
+        self.assertEqual(r.status_code, 503)
 
 
 if __name__ == "__main__":

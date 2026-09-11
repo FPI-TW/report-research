@@ -215,8 +215,9 @@ async def reading_doc(file_hash: str):
         instrument_types=doc.instrument_types,
         stock_targets=doc.stock_targets,
         futures_targets=doc.futures_targets,
-        has_file=bool(doc.file_path) and os.path.isfile(doc.file_path),
-        is_pdf=bool(doc.file_path) and doc.file_path.lower().endswith(".pdf"),
+        has_file=bool(doc.source_object_key) or (bool(doc.file_path) and os.path.isfile(doc.file_path)),
+        is_pdf=(bool(doc.source_object_key) and doc.file_name.lower().endswith(".pdf"))
+        or (bool(doc.file_path) and doc.file_path.lower().endswith(".pdf")),
         text_state="ok" if canonical else "missing",
         text_chars=len(canonical),
         text_sha256=text_sha256,

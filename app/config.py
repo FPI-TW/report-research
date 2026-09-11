@@ -49,6 +49,7 @@ def _renderer(name: str, default: str) -> str:
 
 
 _EXTRACTORS = ("pypdf", "pdfplumber")
+_OBJECT_STORAGE_MODES = ("local", "hybrid", "r2")
 
 
 def _extractor(name: str, default: str) -> str:
@@ -66,6 +67,33 @@ def _extractor(name: str, default: str) -> str:
         )
         return default
     return v
+
+
+def _object_storage_mode() -> str:
+    """物件儲存模式；啟用 R2 時缺任一必要設定即拒絕啟動。"""
+    mode = (os.getenv("OBJECT_STORAGE_MODE", "local") or "").strip().lower()
+    if mode not in _OBJECT_STORAGE_MODES:
+        raise ValueError(f"OBJECT_STORAGE_MODE 必須是 {'|'.join(_OBJECT_STORAGE_MODES)}，目前為 {mode!r}")
+    if mode != "local":
+        missing = [
+            key for key in ("R2_ENDPOINT_URL", "R2_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
+            if not (os.getenv(key) or "").strip()
+        ]
+        if missing:
+            raise ValueError(f"OBJECT_STORAGE_MODE={mode} 需要設定：{', '.join(missing)}")
+    return mode
+
+
+def _r2_presign_ttl() -> int:
+    """Private presigned links are bearer credentials and must never outlive one hour."""
+    raw = os.getenv("R2_PRESIGN_TTL_SECONDS", "3600")
+    try:
+        ttl = int(raw)
+    except ValueError as exc:
+        raise ValueError("R2_PRESIGN_TTL_SECONDS 必須是 1..3600 的整數") from exc
+    if not 1 <= ttl <= 3600:
+        raise ValueError("R2_PRESIGN_TTL_SECONDS 必須介於 1..3600 秒")
+    return ttl
 
 
 @dataclass(frozen=True)
@@ -106,6 +134,13 @@ class Settings:
     report_timeout: float
     reports_dir: str
     report_renderer: str
+    # 私有 Cloudflare R2（local 預設不建立 client，也不需要 boto3/credentials）
+    object_storage_mode: str
+    r2_endpoint_url: str
+    r2_bucket: str
+    r2_access_key_id: str
+    r2_secret_access_key: str
+    r2_presign_ttl_seconds: int
     # EXTRACTOR（extract.py，E1a）：pypdf＝現況；pdfplumber＝版面層。預設維持 pypdf，
     # E1d 才由 sync 鏈的環境檔切換（docs/EXTRACTION_REDESIGN.md §9）。
     extractor: str
@@ -225,6 +260,12 @@ def _load() -> Settings:
         report_timeout=float(os.getenv("REPORT_TIMEOUT", "600")),
         reports_dir=os.getenv("REPORTS_DIR", "data/reports"),
         report_renderer=_renderer("REPORT_RENDERER", "typst"),
+        object_storage_mode=_object_storage_mode(),
+        r2_endpoint_url=os.getenv("R2_ENDPOINT_URL", "").strip(),
+        r2_bucket=os.getenv("R2_BUCKET", "").strip(),
+        r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID", "").strip(),
+        r2_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", "").strip(),
+        r2_presign_ttl_seconds=_r2_presign_ttl(),
         extractor=_extractor("EXTRACTOR", "pypdf"),
         extraction_review_min=float(os.getenv("EXTRACTION_REVIEW_MIN", "0.6")),
         report_enable_web=_flag("REPORT_ENABLE_WEB", "1"),

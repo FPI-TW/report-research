@@ -283,7 +283,7 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 
 ### 私有 R2 遷移順序
 
-先保持 `OBJECT_STORAGE_MODE=local`，確認 NAS／本機鏡像與資料庫的 legacy 路徑可讀；接著設定私有 bucket 憑證後，以 `hybrid` 執行 `uv run python scripts/migrate_object_storage.py --dry-run --kind all`，確認計畫再移除 `--dry-run`。此工具只上傳缺少 object key 的 originals、base PDFs、renditions，成功 upload 後才更新相符 DB key；不刪除、不重嵌、不重匯入。它可安全重跑；upload 成功但 DB 更新失敗會列為 `ORPHAN`，交由後續對帳。
+先保持 `OBJECT_STORAGE_MODE=local`，確認 NAS／本機鏡像與資料庫的 legacy 路徑可讀；接著設定目前共用的單一私有 bucket 憑證（暫不區分 staging／production），以 `hybrid` 執行 `uv run python scripts/migrate_object_storage.py --dry-run --kind all`，確認計畫再移除 `--dry-run`。此工具只上傳缺少 object key 的 originals、base PDFs、renditions，成功 upload 後才更新相符 DB key；不刪除、不重嵌、不重匯入。它可安全重跑；upload 成功但 DB 更新失敗會列為 `ORPHAN`，交由後續對帳。
 
 完成遷移後執行 `uv run python scripts/reconcile_object_storage.py --dry-run --kind all`，處理 missing／SHA／orphan 報告，再將服務維持於 `hybrid` 觀察；確認無誤才切換 `OBJECT_STORAGE_MODE=r2`。`--limit` 在兩個工具中皆是 originals、base、renditions 合計的總筆數，並會限制 orphan 判定。
 | `GET /api/history` | 最近的問答歷史（舊單題清單）。`DELETE /api/history/{qa_id}`（或相容 alias `POST /api/history/{qa_id}/delete`）刪除單筆 |

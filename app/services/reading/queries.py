@@ -59,7 +59,6 @@ class DocRow:
     # 報告內部標題（scripts/generate_titles.py 產出）。None＝尚未產生，呈現層回退檔名。
     title: Optional[str]
     file_path: Optional[str]
-    source_object_key: Optional[str]
     market: Optional[str]
     source: Optional[str]
     report_date: Optional[date]
@@ -69,6 +68,9 @@ class DocRow:
     stock_targets: list[str]
     futures_targets: list[str]
     full_text: Optional[str]
+    # 私有物件儲存鍵（OBJECT_STORAGE_MODE 非 local 時才有值）。放在末尾並帶預設，
+    # 讓既有的關鍵字建構點（含測試）不必逐一補這個欄位。
+    source_object_key: Optional[str] = None
 
 
 @dataclass

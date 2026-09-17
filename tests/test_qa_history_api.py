@@ -9,6 +9,7 @@ feedback 的驗證分支。
 record_feedback 等非 deps 的服務函式定義/匯入於 web.routers.qa_history，故 patch
 web.routers.qa_history.X；SessionFactory 等仍走 web.deps。
 """
+import asyncio
 import os
 import sys
 import unittest
@@ -23,6 +24,8 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.services.object_storage import ObjectNotFound, ObjectStorageError, generated_object_key_for_sha  # noqa: E402
+from web import report_runs  # noqa: E402
 from web.routers import qa_history  # noqa: E402
 from web.server import app  # noqa: E402
 
@@ -105,6 +108,10 @@ class ConversationDeleteHttpTests(unittest.TestCase):
     """
 
     def setUp(self):
+        report_runs._DELETED_CONVERSATIONS.clear()
+        report_runs._DELETION_GENERATIONS.clear()
+        report_runs._PENDING_DELETION_LEASES.clear()
+        report_runs._COMPLETED_DELETIONS.clear()
         self._orig = (qa_history.delete_conversation, qa_history.deleted_pdf_paths)
         self.order: list[str] = []
         self.unlinked: list[str] = []
@@ -130,6 +137,10 @@ class ConversationDeleteHttpTests(unittest.TestCase):
     def tearDown(self):
         qa_history.delete_conversation, qa_history.deleted_pdf_paths = self._orig
         qa_history.Path.unlink = self._orig_unlink
+        report_runs._DELETED_CONVERSATIONS.clear()
+        report_runs._DELETION_GENERATIONS.clear()
+        report_runs._PENDING_DELETION_LEASES.clear()
+        report_runs._COMPLETED_DELETIONS.clear()
 
     def test_delete_verb_returns_ok_and_cleans_files(self):
         r = _authed().delete("/api/conversations/c1")
@@ -162,6 +173,17 @@ class ConversationDeleteHttpTests(unittest.TestCase):
         self.assertEqual(r.json(), {"ok": False})
         self.assertEqual(self.unlinked, [])
 
+    def test_committed_delete_keeps_report_endpoint_tombstoned(self):
+        """Only a committed DB deletion gets the durable in-process 404 guard."""
+        conversation_id = "123e4567-e89b-12d3-a456-426614174098"
+        client = _authed()
+        self.assertEqual(client.delete(f"/api/conversations/{conversation_id}").json(), {"ok": True})
+        response = client.post(
+            "/api/report",
+            json={"question": "重試已刪除的對話", "conversation_id": conversation_id},
+        )
+        self.assertEqual(response.status_code, 404)
+
     def test_unlink_failure_does_not_fail_the_request(self):
         """DB 已提交而檔案殘留是可容忍的；反過來（檔案刪了 DB 沒刪）才是永久 500。"""
 
@@ -181,6 +203,296 @@ class ConversationDeleteHttpTests(unittest.TestCase):
             c.post("/api/conversations/c1/delete").status_code, 401
         )
         self.assertEqual(self.order, [], "未認證不得碰到服務層")
+
+
+class ConversationR2CleanupTests(unittest.TestCase):
+    """R2 清理必須在 DB commit 後，再以擷取當時的 immutable identity 驗證。"""
+
+    def setUp(self):
+        report_runs._DELETED_CONVERSATIONS.clear()
+        report_runs._DELETION_GENERATIONS.clear()
+        report_runs._PENDING_DELETION_LEASES.clear()
+        report_runs._COMPLETED_DELETIONS.clear()
+        self.events: list[str] = []
+        self.object_refs = []
+        self._orig = (
+            qa_history.delete_conversation,
+            qa_history.deleted_pdf_paths,
+            qa_history.deleted_pdf_object_keys,
+            qa_history.get_object_storage,
+        )
+
+        async def paths(_cid):
+            return []
+
+        async def object_keys(_cid):
+            return self.object_refs
+
+        async def delete(_cid):
+            self.events.append("db-commit")
+            return True
+
+        qa_history.deleted_pdf_paths = paths
+        qa_history.deleted_pdf_object_keys = object_keys
+        qa_history.delete_conversation = delete
+
+    def tearDown(self):
+        (
+            qa_history.delete_conversation,
+            qa_history.deleted_pdf_paths,
+            qa_history.deleted_pdf_object_keys,
+            qa_history.get_object_storage,
+        ) = self._orig
+        report_runs._DELETED_CONVERSATIONS.clear()
+        report_runs._DELETION_GENERATIONS.clear()
+        report_runs._PENDING_DELETION_LEASES.clear()
+        report_runs._COMPLETED_DELETIONS.clear()
+
+    def test_cross_report_or_corrupt_pointer_never_calls_delete(self):
+        report_id = "123e4567-e89b-12d3-a456-426614174000"
+        key = generated_object_key_for_sha("other-report", "a" * 64)
+        self.object_refs = [
+            qa_history.DeletedGeneratedObject(report_id, "base", None, key),
+        ]
+
+        class _Storage:
+            enabled = True
+
+            def head_object(self, _key):
+                raise AssertionError("cross-report key must not be HEADed")
+
+            def delete(self, _key):
+                raise AssertionError("cross-report key must never be deleted")
+
+        qa_history.get_object_storage = lambda: _Storage()
+        response = _authed().delete("/api/conversations/c1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.events, ["db-commit"])
+
+    def test_metadata_mismatch_or_missing_never_calls_delete(self):
+        report_id = "123e4567-e89b-12d3-a456-426614174000"
+        key = generated_object_key_for_sha(report_id, "a" * 64)
+        self.object_refs = [qa_history.DeletedGeneratedObject(report_id, "base", None, key)]
+
+        for metadata in ({}, {"sha256": "b" * 64}):
+            with self.subTest(metadata=metadata):
+                deleted = []
+
+                class _Storage:
+                    enabled = True
+
+                    def head_object(self, _key):
+                        return {"Metadata": metadata}
+
+                    def delete(self, seen_key):
+                        deleted.append(seen_key)
+
+                qa_history.get_object_storage = lambda: _Storage()
+                response = _authed().delete("/api/conversations/c1")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(deleted, [])
+
+    def test_valid_base_and_rendition_are_deleted_after_db_commit(self):
+        report_id = "123e4567-e89b-12d3-a456-426614174000"
+        base_sha = "a" * 64
+        rendition_sha = "b" * 64
+        base_key = generated_object_key_for_sha(report_id, base_sha)
+        rendition_key = generated_object_key_for_sha(report_id, rendition_sha, "ren-1")
+        self.object_refs = [
+            qa_history.DeletedGeneratedObject(report_id, "base", None, base_key),
+            qa_history.DeletedGeneratedObject(report_id, "rendition", "ren-1", rendition_key),
+        ]
+        events = self.events
+
+        class _Storage:
+            enabled = True
+
+            def head_object(self, key):
+                events.append(f"head:{key}")
+                return {"Metadata": {"sha256": base_sha if key == base_key else rendition_sha}}
+
+            def delete(self, key):
+                events.append(f"delete:{key}")
+
+        storage = _Storage()
+        qa_history.get_object_storage = lambda: storage
+        response = _authed().delete("/api/conversations/c1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.events[0], "db-commit")
+        self.assertEqual(
+            self.events,
+            ["db-commit", f"head:{base_key}", f"delete:{base_key}", f"head:{rendition_key}", f"delete:{rendition_key}"],
+        )
+
+    def test_confirmed_missing_object_is_harmless(self):
+        report_id = "123e4567-e89b-12d3-a456-426614174000"
+        key = generated_object_key_for_sha(report_id, "a" * 64)
+        self.object_refs = [qa_history.DeletedGeneratedObject(report_id, "base", None, key)]
+        deleted = []
+
+        class _Storage:
+            enabled = True
+
+            def head_object(self, seen_key):
+                raise ObjectNotFound(seen_key)
+
+            def delete(self, seen_key):
+                deleted.append(seen_key)
+
+        qa_history.get_object_storage = lambda: _Storage()
+        response = _authed().delete("/api/conversations/c1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(deleted, [])
+
+    def test_head_service_failure_leaves_reconcilable_orphan(self):
+        report_id = "123e4567-e89b-12d3-a456-426614174000"
+        key = generated_object_key_for_sha(report_id, "a" * 64)
+        self.object_refs = [qa_history.DeletedGeneratedObject(report_id, "base", None, key)]
+        deleted = []
+
+        class _Storage:
+            enabled = True
+
+            def head_object(self, _key):
+                raise ObjectStorageError("NoSuchBucket")
+
+            def delete(self, seen_key):
+                deleted.append(seen_key)
+
+        qa_history.get_object_storage = lambda: _Storage()
+        with self.assertLogs("web.routers.qa_history", level="WARNING"):
+            response = _authed().delete("/api/conversations/c1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(deleted, [])
+
+
+class ConversationDeleteTombstoneRollbackTests(unittest.IsolatedAsyncioTestCase):
+    """A failed HTTP deletion must not leave the in-process report-run tombstone behind."""
+
+    CONVERSATION = "123e4567-e89b-12d3-a456-426614174099"
+
+    def setUp(self):
+        report_runs._RUNS.clear()
+        report_runs._BY_KEY.clear()
+        report_runs._DELETED_CONVERSATIONS.clear()
+        report_runs._DELETION_GENERATIONS.clear()
+        report_runs._PENDING_DELETION_LEASES.clear()
+        report_runs._COMPLETED_DELETIONS.clear()
+        self._orig = (
+            qa_history.deleted_pdf_paths,
+            qa_history.deleted_pdf_object_keys,
+            qa_history.delete_conversation,
+        )
+
+        async def paths(_cid):
+            return []
+
+        async def object_keys(_cid):
+            return []
+
+        qa_history.deleted_pdf_paths = paths
+        qa_history.deleted_pdf_object_keys = object_keys
+
+    async def asyncTearDown(self):
+        (
+            qa_history.deleted_pdf_paths,
+            qa_history.deleted_pdf_object_keys,
+            qa_history.delete_conversation,
+        ) = self._orig
+        await report_runs.shutdown()
+
+    @staticmethod
+    def _events():
+        async def events():
+            yield ("done", {})
+
+        return events()
+
+    async def _assert_report_creation_allowed(self):
+        run_id, is_new = report_runs.start_or_attach(
+            question="retry", conversation_id=self.CONVERSATION, qa_id=None, template_id=None,
+            locale="zh-Hant", make_events=self._events,
+        )
+        self.assertTrue(is_new)
+        await report_runs._RUNS[run_id].task
+
+    async def test_false_delete_releases_tombstone_and_allows_report_creation(self):
+        async def no_rows(_cid):
+            return False
+
+        qa_history.delete_conversation = no_rows
+        self.assertFalse(await qa_history._delete_conversation_and_files(self.CONVERSATION))
+        self.assertFalse(report_runs.conversation_deleted(self.CONVERSATION))
+        await self._assert_report_creation_allowed()
+
+    async def test_delete_exception_releases_tombstone(self):
+        async def boom(_cid):
+            raise RuntimeError("db unavailable")
+
+        qa_history.delete_conversation = boom
+        with self.assertRaisesRegex(RuntimeError, "db unavailable"):
+            await qa_history._delete_conversation_and_files(self.CONVERSATION)
+        self.assertFalse(report_runs.conversation_deleted(self.CONVERSATION))
+        await self._assert_report_creation_allowed()
+
+    async def test_cancelled_delete_releases_tombstone(self):
+        entered = asyncio.Event()
+        never = asyncio.Event()
+
+        async def blocked(_cid):
+            entered.set()
+            await never.wait()
+            return True
+
+        qa_history.delete_conversation = blocked
+        task = asyncio.create_task(qa_history._delete_conversation_and_files(self.CONVERSATION))
+        await entered.wait()
+        self.assertTrue(report_runs.conversation_deleted(self.CONVERSATION))
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertFalse(report_runs.conversation_deleted(self.CONVERSATION))
+        await self._assert_report_creation_allowed()
+
+    async def test_cancelling_newer_overlapping_delete_keeps_older_lease_tombstoned(self):
+        entered = [asyncio.Event(), asyncio.Event()]
+        never = asyncio.Event()
+        calls = 0
+
+        async def blocked(_cid):
+            nonlocal calls
+            position = calls
+            calls += 1
+            entered[position].set()
+            await never.wait()
+            return True
+
+        qa_history.delete_conversation = blocked
+        first = asyncio.create_task(qa_history._delete_conversation_and_files(self.CONVERSATION))
+        await entered[0].wait()
+        second = asyncio.create_task(qa_history._delete_conversation_and_files(self.CONVERSATION))
+        await entered[1].wait()
+
+        second.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await second
+        self.assertTrue(report_runs.conversation_deleted(self.CONVERSATION))
+
+        first.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await first
+        self.assertFalse(report_runs.conversation_deleted(self.CONVERSATION))
+        await self._assert_report_creation_allowed()
+
+    async def test_confirmed_delete_keeps_tombstone_and_cannot_be_rolled_back(self):
+        async def committed(_cid):
+            return True
+
+        qa_history.delete_conversation = committed
+        self.assertTrue(await qa_history._delete_conversation_and_files(self.CONVERSATION))
+        self.assertTrue(report_runs.conversation_deleted(self.CONVERSATION))
+        with self.assertRaises(ValueError):
+            await self._assert_report_creation_allowed()
 
 
 if __name__ == "__main__":

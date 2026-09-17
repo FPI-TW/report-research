@@ -12,13 +12,13 @@ READING_TEXT_MAX_CHARS 是本組設定常數，定義在本模組——test_read
 """
 import hashlib
 import logging
-import os
 import re
 import time
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.services.filename import source_display
+from app.services.object_storage import get_object_storage, original_available
 from app.services.reading.anchor import locate_chunk
 from app.services.reading.schemas import (
     EpsEstimate,
@@ -201,6 +201,14 @@ async def reading_doc(file_hash: str):
         )
     canonical, text_sha256 = _canonical_text(doc.full_text)
     signals = _reading_signals(signal_rows, instrument_names)
+    storage = get_object_storage()
+    # r2 模式只認 object key：本機 file_path 即使存在也不會被服務，回 True 只會讓
+    # 前端內嵌一個註定 503 的 PDF。local／hybrid 維持「有 key 或本機檔存在」。
+    has_file = original_available(storage, doc.source_object_key, doc.file_path)
+    if storage.mode == "r2" or doc.source_object_key:
+        is_pdf = doc.file_name.lower().endswith(".pdf")
+    else:
+        is_pdf = bool(doc.file_path) and doc.file_path.lower().endswith(".pdf")
     return ReadingDoc(
         report_id=doc.report_id,
         file_hash=doc.file_hash,
@@ -215,8 +223,8 @@ async def reading_doc(file_hash: str):
         instrument_types=doc.instrument_types,
         stock_targets=doc.stock_targets,
         futures_targets=doc.futures_targets,
-        has_file=bool(doc.file_path) and os.path.isfile(doc.file_path),
-        is_pdf=bool(doc.file_path) and doc.file_path.lower().endswith(".pdf"),
+        has_file=has_file,
+        is_pdf=is_pdf,
         text_state="ok" if canonical else "missing",
         text_chars=len(canonical),
         text_sha256=text_sha256,

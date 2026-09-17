@@ -88,6 +88,29 @@ class _Run:
 _RUNS: dict[str, _Run] = {}
 # 去重鍵 → run_id。只保留 active 的 run；完成即移除，讓同題重送能再跑一次。
 _BY_KEY: dict[str, str] = {}
+# A deleted conversation's UUID cannot legitimately be reused.  This in-process tombstone closes
+# the gap between starting background work and the DB deletion transaction.  A failed deletion
+# relinquishes its own provisional tombstone; a committed deletion keeps it until shutdown.
+_DELETED_CONVERSATIONS: set[str] = set()
+# Each deletion request owns a short-lived lease until its DB transaction has either committed or
+# failed.  A tombstone stays live while *any* lease is pending.  A monotonically increasing token
+# lets a rollback relinquish only itself, not a concurrent request's deletion guard.
+_DELETION_GENERATIONS: dict[str, int] = {}
+_PENDING_DELETION_LEASES: dict[str, set[int]] = {}
+_COMPLETED_DELETIONS: set[str] = set()
+
+
+@dataclass(frozen=True)
+class ConversationDeletionLease:
+    """Identity of one in-process conversation-deletion attempt.
+
+    This is deliberately not a database lock.  It only closes the local gap while the delete
+    transaction is in flight, and makes failure rollback safe when two HTTP requests overlap.
+    """
+
+    conversation_id: str
+    generation: int | None
+    cancelled_runs: int
 
 
 def _dedup_key(
@@ -179,6 +202,86 @@ def active_run_for(
     return run_id if run is not None and run.active else None
 
 
+def conversation_deleted(conversation_id: str | None) -> bool:
+    """Whether this process has begun deletion of a conversation's artifacts."""
+    return conversation_id is not None and (
+        conversation_id in _COMPLETED_DELETIONS
+        or bool(_PENDING_DELETION_LEASES.get(conversation_id))
+    )
+
+
+async def cancel_conversation(conversation_id: str) -> int:
+    """Tombstone and stop all active runs for a conversation before its DB rows are deleted.
+
+    Awaiting task termination is essential: it ensures a run cannot reach a later persistence
+    await after the deletion transaction has removed its existing artifacts.  A blocked worker
+    thread may still finish an in-flight upload, but it has no DB pointer and reconciliation can
+    safely report that exact generated-prefix orphan.
+    """
+    lease = await begin_conversation_deletion(conversation_id)
+    return lease.cancelled_runs
+
+
+async def begin_conversation_deletion(conversation_id: str) -> ConversationDeletionLease:
+    """Tombstone a conversation and await active report runs before DB deletion.
+
+    Call :func:`confirm_conversation_deletion` only after the DB deletion transaction commits;
+    call :func:`rollback_conversation_deletion` for every other exit.  Cancellation while waiting
+    for a run is itself a failed deletion attempt and is rolled back here before it propagates.
+    """
+    if conversation_id in _COMPLETED_DELETIONS:
+        return ConversationDeletionLease(conversation_id, None, 0)
+
+    generation = _DELETION_GENERATIONS.get(conversation_id, 0) + 1
+    _DELETION_GENERATIONS[conversation_id] = generation
+    _PENDING_DELETION_LEASES.setdefault(conversation_id, set()).add(generation)
+    _DELETED_CONVERSATIONS.add(conversation_id)
+    lease = ConversationDeletionLease(conversation_id, generation, 0)
+    tasks = [
+        run.task for run in _RUNS.values()
+        if run.active and run.conversation_id == conversation_id and run.task is not None
+    ]
+    for task in tasks:
+        task.cancel()
+    try:
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                # A cancelled child is expected.  A cancellation delivered to *this* delete
+                # request is not: propagate it so the caller releases the provisional lease.
+                if asyncio.current_task() is not None and asyncio.current_task().cancelling():
+                    raise
+                pass
+            except Exception:
+                logger.warning("刪除對話串時背景研報收尾失敗", exc_info=True)
+    except BaseException:
+        rollback_conversation_deletion(lease)
+        raise
+    return ConversationDeletionLease(conversation_id, generation, len(tasks))
+
+
+def confirm_conversation_deletion(lease: ConversationDeletionLease) -> None:
+    """Retain a tombstone after the caller has confirmed its DB delete committed."""
+    _COMPLETED_DELETIONS.add(lease.conversation_id)
+    _PENDING_DELETION_LEASES.pop(lease.conversation_id, None)
+    _DELETED_CONVERSATIONS.add(lease.conversation_id)
+
+
+def rollback_conversation_deletion(lease: ConversationDeletionLease) -> None:
+    """Release only this failed deletion attempt without reviving another request."""
+    if lease.generation is None or lease.conversation_id in _COMPLETED_DELETIONS:
+        return
+    pending = _PENDING_DELETION_LEASES.get(lease.conversation_id)
+    if pending is None:
+        return
+    pending.discard(lease.generation)
+    if pending:
+        return
+    _PENDING_DELETION_LEASES.pop(lease.conversation_id, None)
+    _DELETED_CONVERSATIONS.discard(lease.conversation_id)
+
+
 def start_or_attach(
     *,
     question: str,
@@ -195,6 +298,8 @@ def start_or_attach(
     必定撞上 `open_run` 的「相同研報請求正在處理」而回錯——使用者看到的是「重試也失敗」。
     """
     _gc()
+    if conversation_deleted(conversation_id):
+        raise ValueError("conversation has been deleted")
     key = _dedup_key(question, conversation_id, template_id, locale)
     existing_id = _BY_KEY.get(key)
     if existing_id:
@@ -314,3 +419,7 @@ async def shutdown() -> None:
             logger.warning("研報背景任務收尾時拋錯", exc_info=True)
     _RUNS.clear()
     _BY_KEY.clear()
+    _DELETED_CONVERSATIONS.clear()
+    _DELETION_GENERATIONS.clear()
+    _PENDING_DELETION_LEASES.clear()
+    _COMPLETED_DELETIONS.clear()

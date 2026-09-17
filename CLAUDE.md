@@ -1,168 +1,131 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+廷豐智能研報——券商研報平台：PDF/docx 抽字 → Claude 標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／可下載深度研報 PDF／觀點雷達／每日簡報／閱讀頁。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
 
-## What this repo is (and is not)
+- **這不是上層目錄 CLAUDE.md 描述的 FinDB**：這裡沒有 Alembic、沒有 `app/api/`、沒有 `NORMALIZER_MAP`，那份文件的指引不適用。本 repo 只把市場代碼對齊 findb（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO`，對照在 `app/services/tagging.py`，`make align` 零 LLM 重對）。
+- 回覆使用者一律繁體中文；不加裝飾性 emoji。
+- **分工鐵律**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），Claude 只做語意（標註、摘要、問答、研報、訊號擷取）。每個管線階段以檔案 SHA256 `file_hash` 為鍵、可斷點續跑。新功能沿用這個分工，並**重用 `hybrid_search`／`retrieval_pipeline`，不另建檢索**。
+- 派生功能（rerank、忠實度、追問、摘錄、換皮、grounding）一律 fail-open 降級，不阻斷主流程。
 
-廷豐智能研報 — a broker research-report platform: extract text from PDFs/docx, tag them with Claude, embed into pgvector, then serve **semantic search / RAG Q&A / downloadable deep-report PDFs / 觀點雷達 / 每日簡報 / 閱讀頁**. Repo dir is `report-mark`; GitHub remote is `FPI-TW/report-research`.
-
-- This is **NOT** the "FinDB" project described in the parent directory's CLAUDE.md. That file's Alembic/normalizer/Source-API guidance does **not** apply here — this repo has no Alembic, no `app/api/`, no `NORMALIZER_MAP`. report-mark only *aligns market codes* to findb.
-- **Answer user-facing questions in Traditional Chinese** (code, identifiers, paths, technical terms stay in their original language).
-- Do not add decorative emoji to code, docs, commits, or output unless explicitly asked.
-
-## Commands
-
-`make help` 是完整清單。以下是最常用的與有陷阱的：
+## 指令
 
 ```bash
-uv sync                              # 安裝相依（uv, Python 3.11+；torch 為 CPU-only）
-make setup                           # 一次到位：相依 + 起 pgvector 容器 + 套 schema
-make serve                           # uvicorn web.server:app on :8097（讀 repo root .env）
-make serve-dev                       # 開發用：--reload + SKIP_WARMUP=1（只綁 127.0.0.1）
-make serve-preview                   # 版面預覽：免登入 + SKIP_WARMUP=1，另開 8098 埠
+uv sync                              # Python 3.11+；torch 為 CPU-only
+make setup                           # 相依 + pgvector 容器 + 套 schema
+make serve                           # :8097，無 --reload；Python 改動要重啟
+make serve-dev                       # --reload + SKIP_WARMUP=1，只綁 127.0.0.1
+make serve-preview                   # 免登入看版面（DEV_NO_AUTH=1），另開 8098
+make build-web                       # 前端改動要跑這個才生效
 
-# 測試與 lint（兩者都在 CI 內）
-uv run pytest -q                     # 後端全部；缺 frontend/dist 會紅（不是 skip）
-uv run ruff check .                  # E,F,I；line-length 120（ruff format 刻意不做）
-SKIP_SPA_TESTS=1 uv run pytest -q    # 真的不想先 build 前端時
+uv run pytest -q                     # 缺 frontend/dist 會紅（不是 skip）
+SKIP_SPA_TESTS=1 uv run pytest -q    # 不想先 build 前端時
+uv run ruff check .                  # E,F,I；120 字元；刻意不跑 ruff format
 cd frontend && npm test              # vitest
 cd frontend && npm run typecheck     # tsc --noEmit
-cd frontend && npm run lint          # eslint（已在 CI 內）
-make build-web                       # 前端改動要跑這個才會生效
+cd frontend && npm run lint          # eslint
 
-# 派生資產批次（都會 spawn claude CLI，彼此以 flock 互斥）
-make summaries / titles / takeaways / signals / brief
-make align                           # 中文標籤 → findb 市場代碼（決定性，零 LLM）
-
-# 維運
-make sync-once                       # 手動跑一次 NAS→本地同步 + 增量匯入（平時 timer 每 3h）
-make db-backup                       # pg_dump 七張不可重建的表 → NAS（平時 timer 每日 03:30）
-make freshness                       # 管線與批次停更偵測（純 SQL 零 LLM）
-make db-audit                        # 資料完整性稽核（唯讀）
-make up-edge / down-edge / edge-logs / edge-reload   # 對外邊緣 nginx + cloudflared
-
-# 全語料管線 — 只有初次建庫或補跑歷史才用（生產入庫走 sync 鏈）
-uv run python scripts/extract_all.py
+make summaries / titles / takeaways / signals / brief   # 批次，都 spawn claude CLI、以 flock 互斥
+make sync-once / db-backup / freshness / db-audit        # 維運
+make up-edge / down-edge / edge-logs / edge-reload       # 對外 nginx + cloudflared
+uv run python scripts/extract_all.py                     # 全語料三支：只在初次建庫或補歷史
 uv run python scripts/tag_all_cli.py --workers 8
-uv run python scripts/ingest_all.py                  # 首次會下載 BGE-M3 ~2-4GB
-
-# 陷阱 target
-make ingest-lowio                    # 關 fsync 加速全量導入（僅限沒對外服務時）
-make restore-durability              # 上一行被 SIGKILL 沒還原時的保險
-make reset-db / clean-data           # 破壞性：除非使用者明講否則不要跑
+uv run python scripts/ingest_all.py
 ```
 
-**`make help` 印出來的東西不等於「可以跑」**——破壞性與陷阱 target 也一併列在裡面。
+`make help` 列出的 target 含破壞性與陷阱 target（`reset-db`／`clean-data`／`ingest-lowio`）；除非使用者明講，不要跑。任何 TRUNCATE／DROP 前先問。
 
-**CI gates every PR**（`.github/workflows/ci.yml`，四個 job 全為必要檢查）：前端（ESLint + tsc + vite build + vitest）、後端（ruff + pytest）、schema 契約（pgvector service container）、secret 掃描（gitleaks）。前端 job 把 `frontend/dist` 當 artifact 傳給後端 job，所以 SPA 測試對**真 build 產物**驗證。**required check 名稱就是 job 的中文 `name`，而分支保護是 repo 設定、不在 repo 檔案裡**——改了 `name` 而沒同步改設定，PR 會等一個永不回報的 check 而卡死。細節見 `AGENTS.md`。
+## 測試與 CI
 
-**本機全綠仍不代表安全**：研報 PDF 的內容測試依賴 CJK 字型，本機沒裝 `fonts-noto-cjk` 時 PDF 照樣編得出來、抽字卻全是 `\x00`，**本機**會 skip 而不是紅。CI 那側以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
+- CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端（ESLint＋tsc＋vite build＋vitest）、後端（ruff＋pytest）、schema 契約（pgvector 容器，套兩次驗冪等）、gitleaks。前端 job 把 `frontend/dist` 傳給後端 job，SPA 測試對真 build 驗證。**required check 名稱＝job 的中文 `name`**，分支保護在 GitHub 設定不在 repo；改了 `name` 沒同步改設定，PR 會永遠等一個不回報的 check。
+- async 測試一律 `unittest.IsolatedAsyncioTestCase`；**不用 pytest-asyncio**（未安裝、刻意不裝）。
+- 測試不連網、不載模型（CI 設 `HF_HUB_OFFLINE=1`）：LLM、嵌入、DB、檔案系統一律用假物件。給函式加參數時同步改假物件簽章——過期的假物件拋 `TypeError` 會被外層 `except` 吞掉，程式靜默走另一條路。
+- 端點走 HTTP 層測，不直接呼叫 handler 物件。router 檔的輔助函式一律放在所有 `@router.*` 裝飾器之上；夾在裝飾器與 handler 之間會讓端點回 422，直呼函式的測試看不到。
+- dataclass 新欄位放末尾並給預設。`rows.ChunkRow` 與 `store._meta_columns` 是位置對齊的：取欄位用 `ChunkRow._fields.index(...)`，不寫數字。
+- **測試絕不可寫 repo 根的真實環境檔**：這台機器 repo root 就是部署目錄，`finally` 擋得住例外、擋不住行程被殺。要驗載入行為餵 `tempfile`。`tests/test_env_loading.py` 與 `tests/conftest.py` 是第二道防線，不是許可證。
+- 本機全綠不代表安全：研報 PDF 內容測試缺 CJK 字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
+- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`。
 
-## Architecture (the parts that span multiple files)
+## 改動對照表（改了 A 就要動 B）
 
-**Two-layer split coupled by `file_hash`.** Python does everything deterministic (parse, extract, chunk, embed, store, retrieve); Claude does everything semantic (tagging, summaries, Q&A, report writing). Every pipeline stage is keyed by a file's SHA256 `file_hash` and is **checkpoint-resumable**. Preserve this when extending — `extract_all.py` -> `data/extracted/<hash>.json`（E1c per-hash 快取，`app/services/extraction/cache.py`；原子寫入；舊 `all.jsonl` 由 `scripts/migrate_extraction_cache.py` 轉檔後改名 `.bak`，**四個端點都只讀寫新格式**）, `tag_all_cli.py` -> `data/tags/<hash>.json`, `ingest_all.py` reads both and upserts. `ingest` gates on `is_research` + `market` before writing chunks.
+| 改了什麼 | 還要做什麼 |
+|---|---|
+| 任何 Python | `sudo systemctl restart report-mark-web.service` |
+| 任何前端 | `make build-web`；`frontend/dist` 不存在時 SPA 回 503 |
+| 改檔名、刪檔、加端點 | `tests/test_docs_contract.py` 會紅：**改文件，不放寬 allowlist**。端點路徑逐字寫進 README 與 `docs/WORKFLOW.md` 的 API 表（含參數名與 `:path`） |
+| 新增後端 SSE 事件或欄位 | 加進 `tests/fixtures/sse_events.json`（兩側測試會指出另一側缺什麼）；`frontend/src/lib/askSchemas.ts` 的 parser／zod 要宣告（zod 預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）；重播白名單在 `web/report_runs.py` 的 `_VOLATILE`／`_SLIM_KEEP`，漏了會「直播看得到、重連看不到」 |
+| `db/schema.sql` | 沒有 migration 工具，冪等只涵蓋 `ADD COLUMN IF NOT EXISTS`；**改 CHECK 約束在既有庫是 no-op**，要另寫給既有庫的 `ALTER`。`db/expected_constraints.txt` 紅了是這個意思，不是改清單；刻意改約束才用 `REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py` 重生 |
+| `content_norm` 或 `textnorm.norm_for_match()` | 兩者必須逐字等價（`tests/test_content_norm_equivalence.py`） |
+| 新旋鈕 | 放 `app/config.py`（frozen dataclass＋`os.getenv`，非 pydantic-settings）。既有散在各檔的 `os.getenv` **不要順手搬**；找旋鈕時 `grep -rn os.getenv app web`。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`）是 live 的，不要改名 |
+| `deploy/` 任何檔 | `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；不要只改機器上的副本。`tests/test_deploy_units.py` 守 unit 檔 |
+| 新 Typst 模板 | `.typ` ＋ `app/templates/manifest.py` registry ＋ `frontend/src/features/ask/TemplateSelector.tsx` 的 `PREVIEW_CLASS` |
+| 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露 |
+| 加 `--workers` 或提高併發閘 | 先照 `.env.example` 的算式重算 DB 連線數（每行程上限 `DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`＝20） |
+| 研報版面問題 | Python 決定性後處理（`pdf.split_long_paragraphs`、`textnorm.soft_break_token`，逐節與單次兩條收尾都要接），**不改 prompt**——四份研報 prompt 是平行手抄副本 |
+| 改 `zh_hant.py`、`faithfulness.is_numeric_claim`、`_SIMILAR_SQL`、`web/report_runs.py` | 先讀該檔開頭的實測紀錄／docstring；參數都是量出來的 |
 
-**Hybrid retrieval** (`app/services/retrieval.py` + `store.py` + `textnorm.py` + `db/schema.sql`): dense recall (BGE-M3 1024-dim cosine via HNSW) plus lexical recall (`pg_trgm` LIKE over the generated `content_norm` column) are merged, deduped, then ranked by tiered fusion (phrase > all-terms > partial)——**`hybrid_search` 的排序鍵只有 `(tier, fused)`**。之後的「相關度分層 → 新近度 → 分數」分成**兩條互不共用的選篇**：檢索頁走同檔的 `rank_reports`（`BAND_WIDTH`，唯一生產消費端是 `web/routers/search.py`），問答／研報走 `answer.select_reports`（自帶 `RELEVANCE_BAND`、`relevance_floor`、過舊軟截斷與過舊配額）。**想調問答的新近度卻去改 `rank_reports`，只會改到檢索頁、問答一點反應都沒有。** The DB's `content_norm` GENERATED expression must stay byte-for-byte equivalent to `textnorm.norm_for_match()`.
+## 架構不變量
 
-**檢索三步收斂在 `app/services/retrieval_pipeline.py`**（問答與研報的唯一入口；檢索頁分頁不經這裡）：`retrieve_context` ＝ embed → `hybrid_search` →（M2 cross-encoder rerank，含 semaphore／deadline／逾時 fail-open）→ `build_context`；`retrieve_context_multi` 是研報專用的 M6 多查詢 fan-out。**它與 `answer.py` 是刻意的循環依賴**：`retrieval_pipeline` 頂層 `from app.services.answer import Source, build_context`，所以 `answer.py`／`agentic_qa.py` 反向取用一律寫成**函式內 import**——提到頂層會在載入期直接循環炸掉。`report.py`／`report_writer.py` 頂層 import `retrieval_pipeline` 沒問題，**但反向那條也是環**（`answer.py` 取用 `report.reports_for_conversation` 同樣要函式內 import）。凡是 `answer`／`retrieval_pipeline`／`report` 三者之間的反向取用，一律函式內 import。
+### 檢索與問答
+- 混合檢索：dense（HNSW 餘弦）＋ lexical（`pg_trgm` over 生成欄 `content_norm`）融合，`hybrid_search` 只以 `(tier, fused)` 排序。之後的選篇分**兩條互不共用**：檢索頁走 `retrieval.rank_reports`（消費端 `web/routers/search.py`），問答／研報走 `answer.select_reports`。調問答新近度改 `rank_reports` 沒有作用。
+- `app/services/retrieval_pipeline.py` 是問答與研報的唯一檢索入口（embed → `hybrid_search` → rerank fail-open → `build_context`）。`answer.py` 自己不呼叫 `hybrid_search`；**要 patch 檢索請 patch `retrieval_pipeline`**。`scripts/eval_retrieval.py` 刻意直呼 `hybrid_search`，管線改動它量不到。
+- **循環依賴是刻意的**：`retrieval_pipeline` 頂層 import `answer`；`answer`／`agentic_qa`／`report` 之間任何反向取用一律函式內 import。
+- 首輪路由順序刻意：確定性 overview（`overview.py`，零 LLM）→ `precheck_route()` 詞表（命中 `time_sensitive` 完全不檢索）→ Haiku 五類分類（`scope_router.py`）與檢索並行、誰先到聽誰。五類與 `decided_by` 全寫進 `qa_log.filters`；fail-open 落點是 `CORPUS_QA`。
+- 網搜每題由使用者決定：`web_on` ＝ 請求的 `web` AND `ASK_ENABLE_WEB`，下游只讀 `web_on`。系統提示與工具授權要一起切（`ask_system_prompt(web)`），逾時只在開網搜時放寬（`ASK_WEB_TIMEOUT`），`qa_log.filters.web` 含 False 也要寫，免責句由 Python 追加（`WEB_ANSWER_DISCLAIMER`），網搜來源不進 evidence ledger。
+- 忠實度抽查在 `done` 後跑背景任務（`answer._spawn_background`），有自己的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是問答抽查與研報修正輪的唯一閘門，漏判是靜默的——寧可多抓不可漏抓。
+- `app/services/llm.py` 以 `claude -p --setting-sources '' --output-format stream-json` spawn CLI，開網搜時加 `--allowedTools WebSearch`；只在 API 529 重試；逾時對已串流文字 fail-open。
 
-**RAG Q&A** (`app/services/answer.py`): `retrieval_pipeline.retrieve_context` -> `llm.stream_completion` -> parse `[n]` citations -> write `qa_log`。**`answer.py` 自己不呼叫 `hybrid_search`**——**要 patch 檢索請 patch `retrieval_pipeline`**。真正的呼叫在三處：`retrieval_pipeline.py`、`web/routers/search.py` 的檢索頁分頁，以及 `scripts/eval_retrieval.py`（**後者刻意直呼、不經 `retrieval_pipeline`，所以沒有 rerank 也沒有 `select_reports`**；改了管線裡的東西再跑它，分數可能一動也不動，那不代表改動無效）。
+### 深度研報
+- 生成跑背景任務（`web/report_runs.py`），`POST /api/report` 只是訂閱端；登錄表是行程內狀態、重啟即滅，`report_writer.open_run` 把久無心跳的 in-flight run 視為可重試。`_REPORT_GATE` 由背景任務持有、不掛在 handler 上。
+- 預設逐節生成（M7）：大綱 → 逐節檢索草稿 → 逐節 grounding 與低分節修正一輪（`_section_needs_fix` 只在數值主張支持率低於 `REPORT_FAITHFULNESS_MIN` 時觸發，`degraded` 不修；修正輪有自己的預算閘 `plan_fix_action`）→ 組裝。狀態機在 `report_run`／`report_section`。
+- 渲染雙軌，Typst 為主、WeasyPrint fail-open 回退。但 `pdf.py` 的文字正規化與免責邏輯**每份 Typst 研報都跑過**。模板契約＝五個匯出函式與其具名引數，以 `typst_render.py` 的 `#import` 為準；少一個只會**靜默退化成 WeasyPrint**。「編譯成功」不是驗收，頁數與逐頁檢視才是。
+- `pdf.py` 的 `inject_kpi`／`inject_charts` 是最後一道且沒被 try 包住：LLM JSON 形狀要逐層 `isinstance` 守，否則無 PDF、無持久化、重建永久 500。
+- **安全邊界：LLM 原文永不直接拼進 Typst 原始碼**（Typst 有 `#eval`／`#read`／`#import`）。只有 pandoc 跳脫後的片段與 JSON 驗證過的型別化資料能通過，其餘經 `_tstr()`；章節標題是唯一未經 pandoc 的 LLM 原文，已用 `_tstr` 封死。編譯 root 是隔離暫存目錄，**不要改成 repo root**。
 
-Two pre-routers：**`scope_router.py`**（**five-way**，不是二元離題閘門 — `OFF_TOPIC`/`OVERVIEW`/`CORPUS_QA`/`TIME_SENSITIVE`/`ADVICE_RISK`）與 `overview.py`（「有哪些券商」這類列舉／聚合題走純 SQL facet aggregation，繞過 top-k）。**首輪有三段、順序是刻意的**：(1) 確定性 overview 判定（零 LLM 零向量）→(2) `precheck_route()` 詞表安全前檢（命中 `time_sensitive` **完全不檢索**、連分類器都不呼叫；命中 `advice_risk` 則照走 RAG 只是省掉那次 Haiku）→(3) Haiku 四類分類與 `retrieve_context` **並行、誰先到聽誰的**（分類先回且判 `off_topic`／`time_sensitive` 就當場 `cancel()` 仍在跑的檢索）。取消不會立刻停掉已送進執行緒的 rerank，但 `_rerank_stage` 帶 deadline，會在批次邊界收手。續問則是先 `condense_and_route` 再檢索。分段耗時 log 的 `route_wait` 與 `embed`／`retrieve` 重疊，加總不等於 total。**五類全部寫進 `qa_log.filters`**：`path`＝落到哪一類、`decided_by`＝誰判的（`precheck`／`overview`／`llm`／`fail_open`／`unknown`）——**fail-open 的落點正是 `CORPUS_QA`**，沒有 `decided_by` 就分不出「分類器判的」與「分類器壞掉猜的」。Multi-turn uses `conversation_id` grouped by `COALESCE(conversation_id, id)`。
+### 閱讀頁、雷達、簡報（讀取零 LLM）
+- 閱讀頁（`app/services/reading/`）：正典文字是 `clean_extracted(full_text)`，`text_sha256` 守不變量；錨點有效與否只在後端判（驗章＋`READING_TEXT_MAX_CHARS` 截斷）。PDF 選取走 `@embedpdf/plugin-selection`，`PagePointerProvider` 要在 `Rotate` 之內；複製走 `frontend/src/lib/clipboard.ts`（區網 HTTP 沒有 `navigator.clipboard`）。`/text` 端點、`anchor.py`、`quote_start`／`quote_end` 是刻意留的可逆性，不要清。
+- 雷達（`app/services/radar/`）：`report_signal` 一列＝研報×標的，擷取只跑高覆蓋子集，**空是常態**（有研報未擷取回 200 `pending_extraction`）。清單 API 目標價只回方向、payload 不得含數值；帶 `stance` 時只能全量取回在 Python 分頁；共識預覽窗期恆 90 天。`STANCE_CONSTRUCTIVENESS`／`THESIS_DIMENSIONS` 由 `signal_extract.py` 定義、三處 import，是共用契約；`radar/schemas.py` 的 `Literal` 前端 zod 逐字鏡像。
+- 簡報（`app/services/brief.py`）：窗期用 `created_at` 不是 `report_date`；變動要同時「這輪才擷取」且「報告夠新」；來源清單由 Python 記錄不從 markdown 反推。鎖只包那一次 CLI 呼叫。
 
-**問答的網搜是「每題由使用者決定」，不是全站設定**（M11）：`/api/ask` 的 `web` 欄位（預設 `false`）與伺服器總閘 `ASK_ENABLE_WEB` 取 AND，結果是 `answer_question` 內的 `web_on`；下游一律讀 `web_on`，**在下游再讀一次 `ASK_ENABLE_WEB` 會把「使用者沒開」誤判成開**。前端偏好在 `frontend/src/lib/useWebSearch.ts`，UI 是輸入框最左的工具選單 `frontend/src/features/ask/ComposerTools.tsx`（**新增工具＝在該檔 `useTools()` 的陣列多加一筆**）。**已開啟的工具必須在收合狀態下就看得見**（選起來的以金色膠囊留在「＋」右邊，膠囊本身即關閉鈕）——收進選單卻不外露，等於讓使用者在不知道資料來源已改變的情況下送出。三件事容易出錯：(a) **系統提示與工具授權必須一起切**——`ask_system_prompt(web)` 在關網搜時明文告訴模型「沒有網路存取能力」；M4 到 M10 之間提示一直寫著「可用網路搜尋補充」而 `allow_web` 寫死 False，模型於是憑記憶寫出像查過網路的句子並標『（網路）』，**沒有任何錯誤訊息**；(b) **逾時只在開網搜時放寬**（`ASK_WEB_TIMEOUT`，預設 240s），沿用 `llm.py` 的 120s 會在搜到一半被砍，而逾時對已串流文字是 fail-open ⇒ 症狀是答案無聲截斷；(c) `qa_log.filters.web` **含 False 也要寫**，理由同 `decided_by`。**時效題在 `web=true` 時不再一律婉拒**：受信任 adapter 仍優先（`_answer_time_sensitive`），adapter 不可用才落到 `_answer_time_sensitive_web`（零檢索、研報片段不得混入），而那條路徑的免責句由 **Python 追加**（`WEB_ANSWER_DISCLAIMER`）而非交給 prompt——它是使用者分辨「adapter 數值」與「網路整理數值」的唯一穩定訊號。網搜來源**仍然不進 evidence ledger**（`manifest_from_answer` 對缺 `snapshot_ref`／`content_hash` 者逐筆跳過）。外部來源區塊的串流切點由 `app/services/stream_sentinel.py` 的增量狀態機處理（跨 chunk 邊界偵測 sentinel）。
+### 抽取與入庫
+- 全語料三支：`scripts/extract_all.py` → `data/extracted/<hash>.json`（per-hash 快取，`app/services/extraction/cache.py`）→ `scripts/tag_all_cli.py` → `data/tags/<hash>.json` → `scripts/ingest_all.py`（gate on `is_research`＋`market`）。生產入庫走 `scripts/sync_new_reports.sh`。
+- E1 抽取層：`extract_text` 門面、pdfplumber 版面層（`app/services/extraction/layout.py`），品質只標記不擋；`extraction_log` 每個進過管線的 `file_hash` 一列，`stopped_at` 詞彙與 `store.STOPPED_AT` 逐字對齊。**刻意不用 PyMuPDF**（AGPL，本站對外服務）。
+- R2 物件儲存（`app/services/object_storage.py`）：`OBJECT_STORAGE_MODE` local（預設，既有行為不變）／hybrid／r2；非 local 缺任一 `R2_*` 啟動即 fail-closed，憑證在 repo root `.env` 與 `/etc/default/report-mark-sync` 各一份、逐字相同。遷移與對帳走 `scripts/migrate_object_storage.py`、`scripts/reconcile_object_storage.py`（順序見 `docs/WORKFLOW.md`），`file_path` 仍指舊掛載點時先跑 `scripts/repoint_file_paths.py`。**瀏覽器端兩個前提**：bucket 要設 CORS（PDF 檢視器是 `fetch` 跟 302 到 presigned URL，沒設就整頁靜默失敗、伺服器零錯誤）；presign 一律帶 `filename`（key 是 hash，跨來源後 `<a download>` 失效）。`r2` 模式下 `has_file` 只認 key（`original_available`），缺 key 即 503 不回退，所以切換前對帳要全零；切換後由 `report-mark-r2-reconcile.timer` 每週對帳接告警鏈，`/healthz` 不探 R2。
 
-The Q&A path also runs: cross-encoder **rerank** (`rerank.py`, M2)、**agentic 多輪補查** (`agentic_qa.py` + `query_planner.py`, M5)、**受信任時效資料** (`trusted_market_data.py`, M4a — registry 為空即安全婉拒)、**證據帳本** (`evidence.py`, M4b)、**忠實度抽查** (`faithfulness.py`, M8c — done 事件之後以**背景任務**跑（`answer._spawn_background`），不佔可見答案延遲、也不佔 `/api/ask` 的併發名額；**因此它有自己的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`，超過就跳過該次而不排隊**，且比對基準是模型當時看到的 context、不是 evidence 帳本回查；結果落 `qa_log.evaluation`)、**追問建議** (`followups.py`)、**輸出語言** (`locale.py`, M10 — fail-open 到 zh-Hant)。
+## 資料層陷阱
+- `research_report.full_text` 是未清理的原始抽取（帶 CJK 字間空白）；顯示一律 `clean_extracted(full_text)`，不是 `clean_text`（後者折掉換行，只適合檢索片段）。
+- `report_chunk.content` 不是 `full_text` 的子字串（overlap merge），錨定一律經 `app/services/reading/anchor.py`。**不要寫批次更新 `report_chunk.content`**（`clean_text` 與 `clean_extracted` 都會破壞段落換行），要動只有重跑 `ingest_all.py`。
+- 簡體字守門在 `app/services/zh_hant.py`：六個寫入點過 `to_traditional()`；串流路徑刻意不中途轉，問答在 `done` 帶只在有變動時出現的 `answer` 欄位收斂（`askSchemas.ts`＋`askReducer.ts` 都要接）。**逐字引文（`report_takeaway.quote`、`thesis_dimensions[*].evidence`）一律不轉**——它是錨定基準與 PDFium 搜尋關鍵字。
+- 顯示名稱走 `title`，缺值回退 `file_name`（`frontend/src/lib/displayTitle.ts`）；title 漸進補齊，NULL 是常態。
+- DB 一律 `from app.services.db import SessionFactory`，不複製預設連線字串（鍵是 `REPORT_MARK_DB_URL`）。長查詢用 `db.relax_statement_timeout()`（`SET LOCAL`）。`DB_IDLE_TX_TIMEOUT_MS` 預設 0 是刻意的：sync 在交易內 spawn CLI 與嵌入。
+- logging 只在 `web/server.py` 初始化（`app/logging_setup.py`，順序契約由 `tests/test_logging_setup.py` 釘住）；批次腳本的 `logger.info` 無聲。
+- 備份只涵蓋七張不可重建的表 → NAS；語料層刻意不備。
 
-**Deep report** (`app/services/report.py` -> `report_writer.py` -> `typst_render.py` / `pdf.py` -> `chart.py`): deeper retrieval -> long-form Claude stream (may emit ```kpi / ```chart blocks) -> branded PDF -> persisted in `report_doc`（markdown 是真相來源，PDF 可重建）。`report_gate.py` decides whether to offer a report after a Q&A turn。
+## Web 與 auth
+- `web/server.py` 只是組合層；路由在 `web/routers/`，共用符號經 `web/deps.py`（測試 patch 的單一位置）。
+- Auth deny-by-default、fail-closed（缺 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 不啟動）。免登入白名單 `/login`、`/healthz`、前綴 `/app/assets/`。外部存取需 `REPORT_MARK_EDGE_SECRET` 或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 任一（刻意 OR，祕密要 repo root 與 `deploy/` 兩份環境檔逐字相同）。Session 7 天滑動、30 天上限；改密碼、`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 都會全員登出，是預期行為。
+- `DEV_NO_AUTH=1` 三條件同時成立才放行（旗標在環境檔載入前已在 `os.environ`、對端 loopback、無代理 header），`web/server.py` 的 import 順序由 `tests/test_dev_mode.py` 釘住。`SKIP_WARMUP` 同樣走 `os.environ` 且判 `== "1"`。兩者都不要寫進環境檔。
+- 併發閘：`/api/ask` 上限 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（無環境變數）；`/api/report` 容量 `REPORT_SEMAPHORE`。都是 `web/concurrency.py` 的 `ConcurrencyGate`（刻意不支援 `async with`）。上限 per-process，lifespan 擋多 worker。
+- `claude` CLI 要在 PATH 上；systemd 靠 `deploy/systemd/report-mark-web.service.d/path.conf`。`llm.py` 刻意不在批次 flock 範圍內（有靜態測試釘住）。
 
-**生成預設為逐節**（M7，`REPORT_SECTIONED_ENABLED=1`）：大綱→逐節檢索與草稿→**逐節 grounding 與低分節修正一輪**（M8b，`verifying` 階段）→單次組裝，狀態機落 `report_run`／`report_section`。grounding 全程 fail-open：每節只餵該節分配到的證據，`_section_needs_fix` 只在「數值主張支持率低於 `REPORT_FAITHFULNESS_MIN` 且確有未支持的數值主張」時觸發（`degraded` 不修）。**修正輪等於再跑一次完整的節重生，所以它有自己的預算閘 `plan_fix_action`**。預算前瞻（`REPORT_DRAFT_BUDGET`）在逾時逼近時只砍動態分析子節、保住五章骨架，仍交付。
+## 生產維運
+- 真相來源在 `deploy/`，不是機器上的 `/etc`。sync 鏈（每 3h）：rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量）。摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉近九成）；後三段的 `--limit` 是安全機制不是效能旋鈕。補救走 `scripts/failures_to_delta.py`，不要 `--all-local`。
+- 會 spawn `claude -p` 的批次在 main 進入點取 `scripts/_claude_lock.py` 的 flock，撞鎖 rc=75 是「不跑」不是「跑壞」。從 worktree 跑批次不與主 checkout 互斥。
+- 健康判定打 `/healthz`（只探 DB），不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`，不看 `Result=success`。監控兩層：`scripts/check_web_health.sh` 只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED。
+- `make freshness` rc 0／1／2／3 分流；`signal` 門檻 0 與語料閘是刻意預設。`make db-audit` 只讀不修，warn 也算失敗。
+- `研報自動匯入/` 唯讀。`make ingest-lowio` 會 `fsync=off` 且 SIGKILL 後不還原；處置 `make restore-durability`。
+- 夜間回填 `report-mark-backfill.timer`（E1d）跑完後由人手動 disable。
 
-**研報生成跑在背景任務，不綁 SSE 連線**（`web/report_runs.py`）：`POST /api/report` 只是訂閱端，斷線／重整不再中止生成；`GET /api/report-runs` 帶 `conversation_id` 探詢進行中的 run、`/api/report-runs/{run_id}/stream` 重連（重播＋直播；**重播刻意不含 `token`**）、`/api/report-runs/{run_id}/cancel` 主動中止。登錄表是**行程內**狀態，重啟即全滅——`report_writer.open_run` 因此把「久無心跳（`REPORT_RUN_STALE_SECONDS`）的 in-flight run」也視為可重試，否則一次 deploy 就讓該冪等鍵永遠卡在「正在處理」。前端進度靠 `outline`（分母）＋ `section_draft`／`section_skipped`（分子）兩類事件（`frontend/src/lib/reportProgress.ts` 是純函式）。
-
-**渲染是雙軌，Typst 為主**（M9a）：`REPORT_RENDERER` 預設 `typst`，`report.render_report_pdf` 分派，Typst 失敗才 fail-open 回退 WeasyPrint（`pdf.py`）。**但 `pdf.py` 不只是回退軌**——`chart_caption`／`_normalize_refs` 由 `typst_render.py` 頂層 import，`report_disclaimer`／`brand_name` 走函式內 import，`strip_preamble`／`split_long_paragraphs` 則在分派層 `report.py`。也就是**每一份 Typst 研報都跑過 `pdf.py` 的文字正規化與免責邏輯**，動它時別以為只影響備援路徑。模板在 `app/templates/*.typ`，由 **`app/templates/manifest.py`** registry 管理（ib-classic／broker-modern／privatebank-dark；新增一款＝加 `.typ` ＋ registry 加一筆 ＋ 在 `frontend/src/features/ask/TemplateSelector.tsx` 的 `PREVIEW_CLASS` 補一筆 CSS 骨架縮圖，漏了不會壞、只會退化成通用骨架），換模板重出走 `report_rendition` 不可變表、零 LLM。**模板契約＝五個匯出函式**（`report`／`section-heading`／`kpi-strip`／`chart-figure`／`refs-block`），**以 `typst_render.py` 的 `#import` 行為準**（部分檔頭註解仍寫「四函式」，是舊值）。**具名引數同樣是契約**：`chart-figure` 要收 `span` 與 `supplement`、`kpi-strip` 要收 `source-label`、`report` 要收 `brand`／`footer-note`／`lang`／`region`／`kpi-source-label`——後面幾個只有 en（M10）會實際帶上，所以少了它們**中文研報照樣編得過、英文研報才炸**。少一個函式或一個引數，Typst 編譯失敗會被分派層 fail-open 接住：**沒有錯誤訊息，只有版型悄悄退化成 WeasyPrint**。
-
-**安全邊界：LLM 原文永不直接拼進 Typst 原始碼。** Typst 有 `#eval`／`#read`／`#import` 且圖靈完備，只有 pandoc 跳脫後的片段與 JSON 驗證過的型別化資料能通過，其餘一律經 `_tstr()` 成為字串常值。**唯一的例外是章節標題**：它刻意在 pandoc 之前被切出來（否則 `## X` 會變成 `== X` 而丟失章節邊界），所以是這條管線上唯一沒被 pandoc 跳脫過的 LLM 原文——改用 `#section-heading[...]` 的 content 語法就是把它當原始碼求值：M9a 審查實測 `## #read("/.env")` **曾**把 repo root 的環境檔（共用帳密＋DB 連線字串）整份渲染進一份可下載的 PDF，現已用 `_tstr` 封死。**縱深防禦的第二層是編譯 root**：`render_report_pdf` 刻意把 root 設成只含模板與生成檔的隔離暫存目錄，不是 repo root——改成 repo root（例如為了讓模板引用 repo 內圖檔）等於把環境檔、券商原始 PDF、任何截圖重新放進射程。**pandoc 是翻譯器、不只是跳脫器**（`![](路徑)` 會被翻成真的檔案讀取，故 `_strip_images` 在 AST 層先拔掉 Image 節點）。
-
-**Reading page** (`app/services/reading/` -> `/api/reading/{file_hash}`, SPA route `/app/report/:hash`, keyed by `file_hash`): one report's text plus everything the corpus knows about it, at a shareable URL. Same split as everywhere else — Claude only ever emits semantics (`scripts/extract_takeaways.py` asks for claim + verbatim quote, never offsets), Python does the anchoring (`anchor.py`) and the reads (`queries.py`, pure SQL). Takeaways are batch-produced into `report_takeaway`, so **serving the page costs zero LLM calls**. The canonical text is `clean_extracted(full_text)`：錨定基準、餵給 LLM 的摘錄、API 回傳的文字必須都是同一個字串，`text_sha256` guards the invariant。**後端收回摘錄錨點有兩個獨立原因**：驗章不符，**以及錨點落在 `READING_TEXT_MAX_CHARS` 的截斷範圍之外**。兩種收回都刻意只在後端做——**錨點有效與否只該有一個真相來源**。
-
-閱讀頁一律內嵌 PDF；點摘錄＝拿逐字引文跑一次 PDFium 搜尋（`frontend/src/features/report/pdf/quoteNeedle.ts` 的關鍵字階梯，全語料實測 99.3%），不再依賴 `quote_start` 錨點。只有 `has_file && is_pdf` 為否時才落到 TextPane 正典文字後備（全語料 34 篇 .docx 屬之），三者皆否則由 PdfPane 給可下載的終態。**選取／複製走 `@embedpdf/plugin-selection`**（＋ peer 相依 `@embedpdf/plugin-interaction-manager`；`PagePointerProvider` 必須放在 `Rotate` **之內**，它的座標轉換假設元素已被視覺旋轉，放外面旋轉後會選錯位置且不報錯）。**但那不是文字層**：`SelectionLayer` 只畫 `pointerEvents:none` 的色塊，DOM 裡沒有文字節點，所以**螢幕閱讀器仍讀不到研報內文**（缺口記在 `docs/ROADMAP.md`）。**複製刻意自理**——套件內建的 `CopyToClipboard` 直接呼叫 `navigator.clipboard`，而區網入口是 HTTP＋私有 IP（非安全情境，該 API 根本不存在）會靜默失敗，故改註冊基礎版並走 `frontend/src/lib/clipboard.ts` 的 `execCommand` 後備。**後端 `/text`、`anchor.py`、`quote_start`／`quote_end` 全數保留且批次照跑**，那是刻意留的可逆性，不要因為「沒有讀取路徑」就順手清掉。側欄的「相似研報」是 `/api/reading/{file_hash}/similar`（`queries.py` 的 `fetch_similar`），有三條**錯了不會報錯、只會靜默變雜訊**的不變量（probe 沿 `chunk_index` 均勻取樣、排序用廣度加權而非最小距離、`ef_search` 需拉高）——動這支查詢前先讀 `_SIMILAR_SQL` 的註解。
-
-**觀點雷達**（`scripts/extract_signals.py` -> `app/services/signal_extract.py` -> `research.report_signal` -> `app/services/radar/` -> `web/routers/radar.py`，SPA 路由 `/app/radar`）：四支 API 全在 `radar.py` —— `/api/radar/instruments`、`/api/instrument/{code:path}/radar`、`/api/instrument/{code:path}/radar/events`、`/api/instrument/{code:path}/radar/brokers/{broker:path}`（後三支 `market` 皆為**必帶** query；`:path` 轉換器不可省——它會把 `/` 一起吃進參數，長度合法性改由 handler 檢查、超過即 422）。與閱讀頁同一種分工——LLM 只依固定 JSON schema 擷取 `rating_normalized`／`target_price`（**保幣別不換算**）／`eps_estimates`／`thesis_dimensions`（outlook・catalyst・risk・valuation 四維），**四分位、跨券商共識、跨期變動全由 Python 決定性計算**（`radar/compute.py`；`radar/schemas.py` 的 `Literal` enum 是前端 zod 必須逐字鏡像的契約），**讀取雷達零 LLM**。一列 `report_signal` ＝一份研報 × 一個標的（`UNIQUE(report_id, market, instrument_code)`、FK CASCADE，重新 ingest 時連帶清除＝要的冪等行為）。**擷取刻意只跑高覆蓋子集**（`--min-brokers`／`--min-reports`／`--top-n`），所以**空是常態不是錯誤**：有研報但尚未擷取時雷達回 200 `pending_extraction`（完全查無研報才 404），閱讀頁則整區不進 DOM。共識一律取「每家券商窗期內最新一筆有效訊號」，不把同券商舊報告累加。`STANCE_CONSTRUCTIVENESS`／`THESIS_DIMENSIONS` 由 `signal_extract.py` 定義、`radar/scale.py`／`compute.py`／`types.py` 三處 import，是**共用契約**，改一邊要一起改。
-
-**雷達首頁是「研究清單工作台」單一表格**（`InstrumentTable.tsx` ＋ `RatingDistBar.tsx` ＋ `SelectPill.tsx`，狀態純函式在 `catalogState.ts`）。四件事在改它之前要先知道：(a) **清單的目標價只回方向、沒有任何數值**（`InstrumentTargetBrief` 只剩 `revision_direction`）——「前端不 render」不是防線，留在 payload 裡的中位數三行就能畫回去而不會有任何測試看見；(b) `/api/radar/instruments` **有兩條取數路徑**，差別只在 `stance` 有沒有帶——中位立場是 `build_instrument_slim()` 算的、SQL 算不出來，所以帶 `stance` 時只能全量取回 → 算共識 → 篩 → 在 Python 分頁，`facets` 與市場條件也一併移到 Python（否則 facets 會退化成恆等於當前市場）；(c) `facets`／`latest_report_date` 是**加法欄位**，`radarSchemas.ts` 沒宣告就會被 zod 靜默 strip 掉，症狀分別是「膠囊永遠沒有數字」與「報頭最新更新永遠是 —」；(d) **共識預覽的窗期恆為 90 天**（handler 不傳 window，吃 `compute.py` 的預設），與網址上的 `window` 無關——欄位提示與頁尾圖例都要說出這個口徑。清單頁的分布條刻意壓成**三桶**（總覽的 `ConsensusSnapshot` 才是五級），五級明細留在 `aria-label` 與 `title`。表格的 `min-width: 940px` 是量出來的：超出時 `.date`／`.go` 不會擠壓、會溢出到隔壁欄再被切掉而 CSS 一個字都不會說。
-
-**每日簡報**（`scripts/generate_brief.py` -> `app/services/brief.py` -> `research.report_brief` -> `web/routers/brief.py`，SPA 路由 `/app/brief`；端點 `/api/brief/latest`、`/api/brief/dates`、`/api/brief/{brief_date}`）：與雷達／閱讀頁同一種分工——**Python 決定「有什麼」，Claude 只負責「怎麼說」**。窗期、來源研報清單、評等變動判定全是 SQL 與純函式，模型拿到的是整理好的素材、只回一段 markdown，**一天只有一次 LLM 呼叫**（素材餵的是既有 `summary`，不重讀任何全文）。三個會靜默出錯的地方：(a) **窗期用入庫時間 `created_at` 不是 `report_date`**（後者是研報自己標的日期，用它界定會漏掉近九成）；(b) **變動要同時「這輪才擷取到」與「報告本身夠新」**（`SIGNAL_MAX_REPORT_AGE_DAYS`）——只看擷取時間會把積壓批次翻出來的舊變動當成今天的新聞；(c) **來源清單由 Python 記錄、不從 markdown 反推**，否則模型漏列一篇不會有任何錯誤訊息。排程不另設 timer，由 sync 殼每輪呼叫、腳本自己判斷「今天要不要跑」（當日已有列或未到 `--after-hour` 即 no-op），**鎖只包住那一次 CLI 呼叫**——在 main 進入點取鎖會讓其餘七次 no-op 撞鎖 rc=75，把 `unit_failures` 這個告警落點灌成雜訊。
-
-**LLM integration** (`app/services/llm.py`): shells out to the **`claude` CLI** (not the SDK) as `claude -p --model <m> --setting-sources '' --output-format stream-json`, parsing `text_delta` events. `--setting-sources ''` is deliberate (excludes user/project settings and SessionStart hooks). Adds `--allowedTools WebSearch` when web is enabled — note the CLI sometimes withholds streamed text and returns the full answer only in the final `result` event, so there is a result/assistant fallback. Retries only on API 529; fail-open on timeout if text already streamed, else raises `LLMUnavailableError`.
-
-**Web composition**（`web/server.py` 已收斂為**組合層**）：路由拆在 `web/routers/`（`ask`／`report`／`report_file`／`search`／`qa_history`／`monitor`／`radar`／`reading`／`brief`／`health`／`auth_pages`／`spa`），跨組共用符號一律經 **`web/deps.py`** 存取（測試 patch 的單一位置）。研報生成跑在 **`web/report_runs.py`** 的行程內登錄表，HTTP 只是訂閱端。Auth 是 deny-by-default middleware（留在 `server.py`）：共用帳密 ＋ HMAC-signed `tf_session` cookie ＋ per-IP login rate limit ＋ localhost-HTTP exception；**免登入白名單為 `/login` 與 `/healthz`，另加前綴 `/app/assets/`**。併發閘兩個：`/api/ask` 上限 3（`web/routers/ask.py` 的 `_ASK_GATE`，**容量寫死**，排隊深度旋鈕 `ASK_MAX_QUEUE` 在同一檔）、`/api/report` 預設序列化（`web/routers/report.py` 的 `_REPORT_GATE`，容量 `REPORT_SEMAPHORE`），**後者由背景任務持有而非 request handler**（掛在 handler 上的話，使用者一斷線就把重負載保護一起放掉了）。兩者都是 `web/concurrency.py` 的 `ConcurrencyGate`（**刻意不支援 `async with`**——舊的 `asyncio.Semaphore` 寫法套上去會 AttributeError 大聲失敗，而不是靜默繞過排隊事件）：需排隊時先送 SSE `queued` 事件，深度超過上限則**在送出 200 之前**回 429＋`Retry-After`。使用者主動停止走 `/api/ask/stop`。**併發上限是 per-process**，lifespan 有 `assert_single_worker()` fail-closed 擋多 worker（認不得的啟動方式**放行並 log**——`--reload` 也走子行程，所以刻意不用 `parent_process()` 偵測）。
-
-**在 router 檔新增輔助函式時，一律放在所有 `@router.*` 裝飾器之上**：夾在裝飾器與 handler 之間會讓裝飾器套到輔助函式，端點對正常請求回 422（2026-07-28 實際事故；直接呼叫函式物件的測試看不到，端點契約要走 HTTP 層測試）。
-
-**Schema** (`db/schema.sql`, applied via `make schema` — **no migration tool**)：十一張表全在 `research` schema —— `research_report`（E1b 起帶 `extractor`／`extraction_version`／`quality_score`／`quality_flags`／`page_count`／`pages_failed`／`needs_review`；**品質只標記不擋**）、`report_chunk`（`vector(1024)` + HNSW + trgm GIN）、`qa_log`、`report_doc`、`report_signal`、`report_run`／`report_section`（M7 逐節狀態機，**對 `research_report` 刻意無 FK**——生成流程史不是語料衍生物）、`report_rendition`（M9b 不可變渲染產物）、`report_takeaway`（`UNIQUE(report_id, ordinal)`、FK CASCADE）、`report_brief`（一天一列 `UNIQUE(brief_date)`；`report_ids uuid[]` **刻意無 FK**）、`extraction_log`（E1b，**每個進過管線的 `file_hash` 一列、不管有沒有進 `research_report`**：`stopped_at` 記落點 `ingested`／`skip_admin`／`scanned`／`not_research`／`extract_error`，詞彙由 `store.STOPPED_AT` 與 schema CHECK 逐字對齊；`file_names text[]` 是陣列因為鏡像有 122 組同內容不同檔名；兩條入庫路徑的每一道閘都寫，漏一道就回到「落點只在 if 分支裡」）。It is idempotent: new columns are added with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`。**但冪等只涵蓋「加欄位」——改 CHECK 約束在既有庫上是完全的 no-op**：`CREATE TABLE IF NOT EXISTS` 對已存在的表什麼都不做，而 CHECK 沒有 `ADD COLUMN` 那種補丁，所以你在 `db/schema.sql` 裡改了約束、`make schema` 照樣安靜成功，生產庫卻一輩子不會生效。守門是 `db/expected_constraints.txt`（golden 清單）＋ `tests/test_schema_constraints.py`——**紅了代表你得另外寫一支給既有庫用的 `ALTER`**，不是把清單改一改了事。刻意改約束時才用 `REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py` 重生清單並連 diff 一起提交。
-
-## 生產維運（真相來源在 `deploy/`，不是機器上的 `/etc`）
-
-十二組 systemd unit 全在 `deploy/systemd/`：`report-mark-web.service`（＋ `claude` PATH drop-in）、`report-mark-sync.timer`（每 3h NAS 同步與增量匯入）、`report-mark-backup.timer`（每日 03:30）、`report-mark-freshness.timer`（每日 08:30）、`report-mark-audit.timer`（每日 08:45）、`report-mark-health.timer`（每 2 分鐘探針）、`report-mark-incident.timer`（每 2 分鐘消費探針結果）、`report-mark-alert@.service`（`OnFailure` 告警鏈）、`report-mark-metrics.service`（常駐硬體用量取樣，**刻意不接告警鏈**）、`report-mark-linebot-health.timer`／`report-mark-linebot-incident.timer`（LineBot 供稿鏈的 P4／P5 第二實例，探的是 Windows 側 `:8000` 的 `/health`；**LineBot 斷掉等於語料供稿斷掉**，2026-08-13 到 08-31 曾靜默停擺 18 天，見 `docs/LINEBOT_ALWAYS_ON.md`）。另有 `report-mark-backfill.timer`（E1d：每晚 01:00 用 pdfplumber 版面層回填既有語料，`--max-minutes 240` 到點收手、每篇一交易、**`Persistent=false`** 刻意不補跑、零 LLM；依 `extraction_version` 判斷還有沒有要做的，全部跑完就是 no-op，由人手動 disable）。另有 `mount-nas-research`／`mount-nas-backup` 掛載腳本與兩份 sudoers。**改 `deploy/` 之後要 `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`——直接在主機上改會讓 repo 與主機分岔**（sync unit 就是這樣漂掉的）。
-
-**`systemctl is-active` 不是應用健康的證據，判定一律打 `/healthz`。** uvicorn 先跑 lifespan 再 bind，bind 失敗後行程仍存活約 10 秒，配合 `Restart=always`／`RestartSec=3`，任何時間點查 `is-active` 都很可能看到 `active`。2026-08-18 的中斷持續 4 小時 50 分，期間 `is-active` 全程綠而服務的 HTTP 請求數是 **0**（`docs/incidents/2026-08-18-wsl-9p-production-outage.md`）。**監控因此分成兩層**：`scripts/check_web_health.sh`（P4，每 2 分鐘探測、只回報「此刻的事實」、**不通知任何人**）與 `scripts/incident_handler.sh`（P5，記住歷史、做去重／提醒節奏／恢復判定、有設定時投遞 webhook）。**沒有去重就等於沒有告警**——那次中斷讓告警檔累積 854 筆同源紀錄而沒有任何消費端，現在同一次事件只產生 1 則 FIRING ＋ 每 30 分鐘一則提醒 ＋ 1 則 RESOLVED。P4 刻意**不用 `uv run`、不碰 `.venv`、不 import `app.*`**，因為那次的根因正是 venv 損毀，相依 Python 的探針會跟被監控的服務一起死。**注意 `/healthz` 只探 DB**，不代表模型、NAS 或 `claude` CLI 健康。
-
-**oneshot unit「跑過了」不能看 `Result=success`**——那是**上一次**執行留下的值，也是從未執行過的 unit 的預設值，兩者無法區分（2026-08-19 實測：終端輸出看起來完全成功，unit 根本沒執行）。判定走 `scripts/verify_oneshot_ran.sh`（唯讀，不啟動任何東西）。
-
-**備份只涵蓋七張不可重建的表**（`qa_log`／`report_doc`／`report_rendition`／`report_takeaway`／`report_signal`／`report_run`／`report_section`）→ NAS，保留 7 日 + 4 週。**落點的 share 與目錄都在 `/etc/default/report-mark-sync`，不在程式裡**——研報來源那個 share 的 NAS 帳號只有讀取權（伺服器端 ACL 在擋，不是 mount 旗標），所以備份落在另一個 share。**語料層（`research_report`／`report_chunk`）刻意不備**——它重跑得回來，但代價是**已知限制**：`report_takeaway`／`report_signal` 以 `report_id` FK 綁 `research_report`，語料層若整個重建，那兩張表的備份就對不回去。**還沒做過還原演練的備份不算備份**。任何 TRUNCATE／DROP 之前仍要先問使用者。
-
-**派生資產「停更」不會讓任何 unit 變紅，所以另有一支偵測器**（`scripts/check_batch_freshness.py`／`make freshness`）：sync 殼刻意把摘要／標題／摘錄設成 best-effort（失敗只 log 不 exit，**那個設計是對的**），代價是連續失敗永遠不會觸發 `OnFailure`。它量的是**結果**（`max(created_at)`）不是過程，純 SQL、零 LLM、零寫入。rc `0`＝PASS／`1`＝資產停更／`2`＝DB 查不到／`3`＝管線停跑（四碼刻意分流，處置不同）。**兩個預設別亂動**：語料閘讓「沒有新研報」不算停更；`signal` 門檻 0＝不告警，因為積壓跑完後 `max(created_at)` 本來就不再前進、與故障無法區分——**訊號改靠 `unit_failures` 失敗記錄偵測，不是靠新鮮度**。
-
-**上雲選型的硬體用量另有一組量測工具**（`scripts/collect_resource_usage.py` 常駐取樣 → `scripts/analyze_resource_usage.py` 算分位數／`make metrics`）：與 P4／P5 同一種分工，取樣器只記錄事實、零門檻零告警，判定全在分析器。**兩支都刻意用 `/usr/bin/python3`、不 import `app.*`、不需要 `.venv`**（同 P4 的理由——2026-08-18 的根因正是 venv 損毀）。四個會被誤讀的口徑：(a) CPU 一律以**核心數**計而非百分比，20 核上的 5% 換到 2 vCPU 機型是 50%；(b) 分元件走 **cgroup v2 而非掃 `/proc/<pid>`**——批次會 fork `claude` CLI 與 BGE-M3 子行程，按 PID 掃必漏，而那正是尖峰來源；(c) **WSL 下開發負載落在 `init.scope` 不是 `user.slice`**，只扣後者會讓開發雜訊變成「無人認領」而看起來像服務吃掉的；(d) 「服務合計」是**每筆樣本先加總再取分位數**，不是各元件 p95 相加（後者系統性高估）。**最重要的限制**：現況幾乎沒有真實負載（2026-08-28 查 `qa_log` 近 21 天只有 7 次問答），被動監控只量得到「閒置＋批次」，**問答與研報的 CPU 尖峰必須另跑受控負載才量得到**——拿沒有負載的窗期去定 vCPU 會嚴重低估。問答已於 2026-09-02 量過（`scripts/bench_load.py`）：併發 1 單條 334.6 核心秒、尖峰 10.45 核；併發 3 單條 568.3 核心秒、把 20 核打滿——**併發閘 3 在這台機器上已是超賣**。研報路徑仍未壓測。細節見 `docs/CAPACITY.md`。
-
-**資料完整性另有一支唯讀稽核**（`scripts/db_audit.py`／`make db-audit`），存在理由是本 repo 的完整性保證幾乎全在「寫入端很小心」而不在 DB 約束裡——三張研報衍生表刻意無 FK、`embedding` 可 NULL、`report_signal.market` 與 `research_report.market` 是兩份各自寫入的副本——所以**壞掉的方式全部是靜默的**。十條 SQL 斷言（5 error／5 warn）＋ `content_norm` 取樣比對；rc `0` 乾淨／`1` 有發現／`2` DB 不可用。**三個刻意的設計**：只讀不修（處置要人決定）；error／warn 只影響閱讀順序、**兩者都算失敗**（「warn 不算失敗」會讓 warn 區永遠有東西、從此無人閱讀）；走 `db.relax_statement_timeout()`，因為幾條是數十萬列全表掃描而引擎層 60s 會把它們砍掉——**被砍掉的稽核等於沒有稽核**。與 `tests/test_content_norm_equivalence.py` 分工：測試驗「表達式定義與 Python 等價」，稽核驗「庫裡實際存的值等價」。
-
-**其中最關鍵的一條是耐久性**：`scripts/ingest_lowio.sh` 會 `ALTER SYSTEM SET fsync=off` 並以 `trap ... EXIT` 還原，**但 trap 擋不住 SIGKILL**（OOM killer、`kill -9`、WSL 整個被收掉），而 `ALTER SYSTEM` 寫進容器內 pgdata 的 postgresql.auto.conf，**重啟也不會恢復**。DB 於是無限期跑在 `fsync=off`：查詢完全正常、零症狀，但一次斷電就可能讓整個 pgdata 報廢。處置是 `make restore-durability`。timer 帶 `Persistent=true` 的理由在這條上特別重要——**最可能留下 `fsync=off` 的情境（機器被硬收掉）恰好就是它會被錯過的那一天**。
-
-## Project-specific gotchas
-
-- **`make serve` has no `--reload`——開發時用 `make serve-dev`**（`--reload` ＋ `SKIP_WARMUP=1`，只綁 `127.0.0.1`）。冷載入 BGE-M3 ＋ reranker 合計約一分鐘，沒有捷徑的話「改一行就重等一分鐘」正是**直接在生產機上改檔然後懶得重啟**的溫床。`SKIP_WARMUP` 刻意走 `os.environ` 而非 `app/config.py`——它是「這次啟動」的一次性選擇，寫進環境檔會讓某次 debug 的旗標永久留在生產機上。**判定是 `== "1"` 而非 truthiness**。Python 改動一律需要重啟（`sudo systemctl restart report-mark-web.service`）。**前端改動需要 `make build-web`**：SPA 由 `frontend/dist` 提供，資產走 `_ImmutableStatic`（一年 immutable）；`web/static/` 現在只剩 `login.html`（`_NoCacheStatic`，即時生效）。`frontend/dist` 不存在時 SPA 直接回 **503**。
-- **`DEV_NO_AUTH=1` 是本機看版面用的免登入旗標，放行需要三個條件同時成立**（`web/dev_mode.py`）：旗標在環境檔被載入**之前**就已在 `os.environ`、TCP 對端是 loopback、且請求不帶任何反向代理 header。**三條都不是裝飾**：這台機器的 repo root 就是部署目錄，第一條擋的是「有人把 `DEV_NO_AUTH=1` 寫進環境檔就永久關掉生產站登入」（快照取在 `load_env_file()` 之前，`web/server.py` 的 import 順序由 `tests/test_dev_mode.py` 靜態釘住，**反過來寫不會壞、不會有訊息**）；第三條擋的是「nginx 與 app 同機直連 127.0.0.1」那種部署下 loopback 判定會把整個外網一起放行。用法是 `make serve-preview`（另開 8098 埠，**刻意不共用 8097**）。放行不發 session cookie，啟動時會 WARNING 一行。
-- **Auth is fail-closed.** The app refuses to start if `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` are unset. 外部存取（Cloudflare Tunnel + nginx）另需請求被認成來自可信代理，否則登入會被判非 HTTPS 而拒絕——**`REPORT_MARK_EDGE_SECRET`（nginx 注入的 `X-Edge-Secret`）或 `REPORT_MARK_TRUSTED_PROXY_CIDRS`，兩者任一即可**。**刻意是 OR 不是取代**：改 nginx 與改 app 之間必然有時間差，只認其一那段窗口會把所有外網使用者擋在門外。CIDR 那條在 WSL 重開機後網段會漂、必然再犯，祕密那條不會——但**祕密要兩邊逐字相同**（repo root 與 `deploy/` 兩份環境檔）。
-- **Session token 有絕對存活上限，撤銷有三把開關。** Cookie 是 `<ver>.<iat>.<exp>.<sig>`，7 天滑動續期但**最長 30 天**（`MAX_ABSOLUTE_TTL`）——滑動若沒有天花板，天天開站的人手上那個 cookie 等於永久憑證。三種撤銷：改密碼（簽章訊息含帳密指紋，即時失效）／改 `REPORT_MARK_SESSION_SECRET`／設 `REPORT_MARK_SESSION_EPOCH` 成任何新值（全員登出，不必動金鑰）。**動 token 格式或上述任一變數都會讓所有人被登出一次**，那是預期行為不是故障。
-- **The `claude` CLI must be on PATH** for tagging, summaries, Q&A, and reports. Under systemd this needs an explicit PATH drop-in — `deploy/systemd/report-mark-web.service.d/path.conf`（`claude` 裝在 nvm 的 node bin；少了它 `/api/ask` 會以 `FileNotFoundError: 'claude'` 失敗，前端只顯示「問答服務發生錯誤」）。
-- **`claude` CLI 是跨進程共用資源，批次之間的互斥由 `scripts/_claude_lock.py` 的 `flock` 強制。** 併發互搶會讓擷取被大量誤標 `rejected`——不是資料壞、也不是模型壞，是 CLI 被搶。**會 spawn `claude -p` 的批次**（`tag_all_cli.py`／`generate_summaries.py`／`generate_titles.py`／`extract_takeaways.py`／`extract_signals.py`／`generate_brief.py`／**`sync_new_reports.py`**——最後一支最容易被漏掉，它是排程路徑上第一個競爭者）全部在 main 進入點取同一把鎖，撞車者印出持有者後以 **rc=75**（`EX_TEMPFAIL`，刻意與「批次自己壞了」分流）結束。所以手動開跑前不必再去確認 sync timer 有沒有在跑——真撞上就是不跑，不是跑壞。**`app/services/llm.py` 刻意不在鎖的範圍內**（有靜態測試反向釘死）：它是 `/api/ask` 與研報生成的同一個 spawn 點，納入鎖會讓一輪數小時的 `tag_all_cli` 把線上問答整個鎖死。已知限制：鎖檔路徑相對於**執行中腳本所在的 checkout**，所以從 git worktree 跑批次不會與主 checkout 互斥。緊急逃生口是 `CLAUDE_LOCK_DISABLE=1`（會印警告）。
-- **不要為了「清理 chunk 空白」再寫一支批次更新 `report_chunk.content`——那正是 `make normalize` 的死法**（已於 2026-07-29 連同腳本一併刪除）。它自稱冪等，實際上用的是 `clean_text`，而 chunk 是 `chunk_text(clean_extracted(...))` 產生的：`clean_text` 把換行折成空格，而 chunk 內的段落正是用**單一換行**接起來的。兩組獨立樣本實測 **95.95% 與 98.66%** 的 chunk 會被改動，而 `norm_for_match` 前後不同者 **0**——也就是 `content_norm` 一個字都不會變＝**純破壞、零收益**，外加表與 HNSW 索引雙倍膨脹。**改用 `clean_extracted` 也不行**：`textnorm._RE_CJK_GAP` 的 `(?<=[CJK])\s+(?=[CJK])` 同樣吃掉段落間那個單一換行，實測仍破壞 51%。要動 chunk 內容只有一條路——重跑 `ingest_all.py`。
-- **The PDF render path is fragile — 兩軌都要逐層 `isinstance` 守。** `pdf.py` 的 `inject_kpi`／`inject_charts` 與 `typst_render.py` 的區塊解析吃的是同一組 ```kpi / ```chart 圍欄。差別在後果：Typst 軌拋例外會被分派層接住、退化成 WeasyPrint 版面；**而 `pdf.py` 是最後一道防線，也是唯一沒被 try 包起來的一段**——它拋出的例外會直接穿出 `render_report_pdf`，結果是無 PDF、無持久化、之後重建永久 500。Always defend against malformed LLM JSON shapes.
-- **研報版面問題一律用 Python 決定性後處理，不要去改 prompt。** 四份研報 prompt（單次 zh/en、逐節 zh/en）是手抄的平行副本，加一條規則要改四處、漏一處就機率性失守。巨型段落走 `pdf.split_long_paragraphs()`（門檻用**顯示寬度**不是句數，CJK 算 2），長檔名／URL 走 `textnorm.soft_break_token()`。**逐節與單次兩條收尾路徑都要接**。另外 **Typst 對版面溢出不報任何錯**：沒有斷行機會的長 token 會被直接畫到欄外並靜默截斷，連 pdftotext 都取不回；`height: 100%` 是整頁不是父容器。**「編譯成功、產出 PDF bytes」不是驗收訊號**——頁數與逐頁渲染檢視才是。逐頁診斷見 `docs/REPORT_LAYOUT_FIXES.md`（**欄寬是量測值不是常數**）。
-- **`faithfulness.is_numeric_claim` 是兩道閘門的唯一依據，漏判是靜默的。** 問答抽查靠它決定要不要查，研報的逐節修正輪更是靠它——`_section_needs_fix` 在 `numeric_support_rate is None` 時直接 `return False`，一條數值主張都沒偵測到就等於 `REPORT_FAITHFULNESS_MIN` 形同虛設、**未獲語料支持的數字直接進可下載的 PDF**。原本的繁中名詞白名單在 M10 雙語上線後破功（英文研報 17/17 主張全判非數值，修正輪從未觸發）。**寧可多抓不可漏抓**；要動這個 regex 前先讀 `faithfulness.py` 開頭那段「刻意不做」的實測紀錄。
-- **`research_report.full_text` holds the *uncleaned* extraction.** `ingest_all.py` writes `full_text=raw_text` but chunks `chunk_text(clean_extracted(raw_text))`，所以 `full_text` 仍帶著 PDF 抽取留下的 CJK 字間空白（「台 積 電」）。**Any UI displaying the full text must render `clean_extracted(full_text)`** — `clean_extracted`，不是 `clean_text`（後者把所有換行折成空格，只適合檢索片段）。
-- **`report_chunk.content` is not a substring of `full_text`.** `chunk.py` 的 overlap merge 會把前一塊的最後 `CHUNK_OVERLAP`(80) 字複製到下一塊開頭，所以直覺的 `full_text.find(chunk.content)` **約 99% 會失敗**（400 樣本實測：raw 3/300、normalized 168/400、normalized ＋ head-drop 400/400）。更糟的是拿 raw `full_text` 錨定**不會回 None**——它會回一個看起來合理、但座標系錯誤的 Anchor。一律經 `app/services/reading/anchor.py`。
-- **研報顯示名稱一律走 `title`，缺值才回退 `file_name`。** 檔名多是券商流水號，對讀者沒有意義；`research_report.title`（`scripts/generate_titles.py` 產出，一律繁體中文）才是要顯示的字。前端統一用 `frontend/src/lib/displayTitle.ts` 的 `displayTitle(row)`（檔名仍留在閱讀頁的文件列與下載連結，那裡指的就是實體檔）。**title 是漸進補的**——批次還沒跑到、或內文抽字損毀而刻意不猜，都會是 NULL，缺值是常態不是錯誤。
-- **「prompt 寫了一律繁體中文」不是保證，簡體字的確定性守門在 `app/services/zh_hant.py`。** **六個寫入點**都過 `to_traditional()`：四支批次（`generate_titles`／`generate_summaries`／`extract_takeaways` **只有 `claim`**／`signal_extract` **只有 thesis `summary`**）＋兩條串流（`answer.py` 主 RAG 與 overview 路徑、`report.py` 的**單次與逐節兩個組裝點**）；存量清理走 `scripts/backfill_traditional.py`（唯讀試跑，`--apply` 才寫）。**四個設計都是實測逼出來的，動之前先讀該檔 docstring**：(a) 判別用 **Big5 可編碼性**而非 opencc 的轉換結果——直接拿 s2tw 掃，10,326 篇摘要有 7,944 篇「命中」，其中「船期干擾」被改成「船期幹擾」＝**把對的改成錯的**；(b) 門檻 **2 個簡體字**——只含 1 個的全是券商自己的寫法（恒耀在 49 篇原文寫「恒」、0 篇寫「恆」），真簡體最少 3 個，中間有乾淨空隙；(c) **另一條密度門檻 5%**——(b) 是拿 25-35 個漢字的標題校準的，放到幾千字的研報 markdown 上形同虛設，密度把它壓到 0.04% 而真簡體文件是 20-50%；(d) 用 **s2tw** 不是 s2t 也不是 s2twp，轉完把「臺」收斂回「台」。
-  - **串流路徑刻意不在中途轉。** 轉換是整串決定的，串流當下拿不到整串：中途改判會讓畫面半繁半簡（比全簡更糟），先緩衝再送則會延後首個 token 而 `thinking_ms` 量的正是它。所以 **token 一律照原樣送**，問答改在 `done` 帶一個**只在真的有變動時才出現**的加法欄位 `answer`（`_answer_correction`），前端據此把畫面收斂到落庫的那一份（`askSchemas.ts` 要有 `answer: z.string().optional()`，`askReducer.ts` 的 `done` 要套用它——少任一個都是靜默失效）。研報**不需要**這個機制：前端根本不渲染研報草稿，使用者拿到的是 PDF 與落庫 markdown。
-  - **逐字引文一律不轉**：`report_takeaway.quote` 與 `thesis_dimensions[*].evidence` 是原句。**第一個理由與任何功能無關**——改一個字它就不再是逐字引文；`quote` 另外還是 `reading/anchor.py` 的錨定基準，而全語料有 63 篇研報**原文本身就是簡體**，轉了就錨不回去。**`quote` 還會被原樣當成 PDFium 的搜尋關鍵字**，所以轉了繁體會讓那 63 篇直接顯示「原文中找不到這段文字」——這條規則的破壞已從靜默升級成使用者看得見。`full_text`／`report_chunk.content` 是語料不是產出，`report_section.draft_markdown` 是「模型當時產出什麼」的紀錄，都不能動。
-- **前端要看到的資料，parser／schema 必須有對應宣告——SSE 與 JSON 各踩過一次。** SSE：`frontend/src/lib/askSchemas.ts` 的 `parseReportEvent`／`parseAskEvent` 對未知 event 一律回 `null` 被靜默丟棄（後端送了 `section_draft` 好幾個里程碑，症狀只是「進度條停在 50% 不動」）。**後端也有一層白名單**：`web/report_runs.py` 的 `_VOLATILE`（`token` 完全不進重播緩衝）與 `_SLIM_KEEP`（`section_draft`／`document_revision` 只保留列出的欄位），所以新增的事件欄位可能「即時訂閱者看得到、斷線重連的重播看不到」。JSON：**zod 物件預設是 `strip`，未宣告的鍵不報錯、直接安靜丟掉**。加後端事件或欄位時**同步加 parser／schema**（新欄位用 `optional()`，讓滾動部署不會整頁 parse 失敗），並用測試釘住。
-- **New `ChunkRow` fields land mid-tuple, and consumers may hardcode indices.** `store._meta_columns` 與 `rows.ChunkRow` 是**位置對齊**的；插入 `file_hash` 把 `content` 從 14 移到 15，靜默地把 `scripts/eval_retrieval.py` 的硬編索引指偏——沒有例外，只有垃圾評測分數。Derive positions via `ChunkRow._fields.index(...)`; never write the number.
-- **`研報自動匯入/` is read-only source input.** Never write to it。**該排程不只是鏡像檔案**：`scripts/sync_new_reports.sh`（每 3 小時）依序做「掛載檢查 → rsync 取 delta → `sync_new_reports.py` 增量匯入 → `generate_summaries.py` → `generate_titles.py` → `extract_takeaways.py` → `extract_signals.py` → `generate_brief.py` → `generate_titles.py` 補標題歷史積壓」。**這條鏈才是生產實際的入庫路徑**，全語料三支腳本只在初次建庫或補跑歷史時才用。摘要／標題／摘錄三段一律吃本輪新入庫的 `--hashes-file`——**不可改成 `--since-days 1`**：它濾的是 `report_date` 而非入庫時間，實測近 10 天入庫的 90 篇有 79 篇（88%）會被靜默漏掉；新增「補缺值」型批次時沿用 `--hashes-file` 這個模式。**最後三段刻意不同**：訊號（`SYNC_SIGNAL_LIMIT`，預設 100）、每日簡報與標題歷史積壓（`SYNC_TITLE_BACKLOG_LIMIT`，預設 60）排的是跨全語料的積壓，故不綁 `--hashes-file`、也不在「有新研報才跑」的判斷之內，改以 `--limit` 限量——**那兩個上限是安全機制不是效能旋鈕**，不設上限會連續佔住 claude 鎖數十小時，期間每輪匯入撞鎖 rc=75，而撞鎖的那批研報會從 delta 消失。單檔失敗不中斷、逐筆記在失敗記錄裡；補救走 `scripts/failures_to_delta.py` 轉成 delta 清單（**不要用 `--all-local`**，那是 O(全部檔) 而鏡像裡有一萬六千多個檔）。**被關機砍掉的那一輪由下一輪補記**（看到上一輪停在 running／signalled 就補一筆到既有落點，`/api/progress` 的 `unit_failures` 已經在讀它）。
-- **測試絕不可改動 repo 根的真實環境檔。** 這台機器上 **repo root 就是部署目錄**（systemd 的 `WorkingDirectory`；`web/server.py` 也從模組自身路徑、不是 cwd 解析），所以任何「寫真檔再於 `finally` 還原」的測試都是拿生產換覆蓋率——`finally` 擋得住例外，擋不住行程被殺（逾時、OOM、CI 取消）。2026-07-29 實際出事：生產帳密與 `REPORT_MARK_SESSION_SECRET` 被換成寫在 repo 裡的測試值，**secret 已知等於 session cookie 可偽造、連登入都不必**。現在有兩道守門（`tests/test_env_loading.py` 的 AST 靜態掃描 ＋ `tests/conftest.py` 的 session fixture），**但那是第二道防線、不是許可證**。**通則：任何「必須改動真實部署檔才驗得到」的測試，都是拿生產換覆蓋率**——要驗載入行為就餵 `tempfile`。
-- **改檔名／刪檔／加端點時 `tests/test_docs_contract.py` 會擋你，那是刻意的。** 它靜態掃五份「對現況做斷言」的文件（`CLAUDE.md`／`AGENTS.md`／`README.md`／`docs/WORKFLOW.md`／`docs/ROADMAP.md`）裡反引號包住的路徑是否指得到真實檔案，並以 AST 比對 `web/routers/*.py` 的路由與 README／WORKFLOW 的 API 表**雙向**是否對得起來。紅了請**先改文件，不要放寬 allowlist**——allowlist 只給「刻意指名不存在的東西」，而且是**逐檔範圍**的。API 表的路徑要**逐字**寫，含參數名與 `:path` 轉換器——`{id}` vs `{report_id}` 照抄就是 404。設計稿／實作計畫／架構檢視報告刻意不在掃描範圍內。
-- **Shared working directory.** Other users may have uncommitted WIP in this tree. Stage explicit paths (`git add <file>`), never `git add -A`／`.`; verify scope with `git diff --staged --stat` before committing.
-- **DB 連線池與查詢逾時都有上界了，但那些數字是「數出來的」不是壓測出來的。** `app/services/db.py` 的池參數與 asyncpg `server_settings` 全走 `app/config.py` 的 `DB_*` 旋鈕：上限 `DB_POOL_SIZE`(5)＋`DB_MAX_OVERFLOW`(15)＝20（**per-process**），`DB_STATEMENT_TIMEOUT_MS` 60000。**連線耗盡的真正成因是「沒有 statement_timeout ⇒ 單一慢查詢無上限佔住一條連線」**，不是「併發使用者太多」。**兩個刻意的預設**：(a) `DB_IDLE_TX_TIMEOUT_MS` 預設 **0（關）**——`scripts/sync_new_reports.py` 會在交易開著時 spawn `claude` CLI 與跑 BGE-M3 嵌入（中間沒有 commit），開了它每 3 小時的生產同步就把報告靜默丟進失敗記錄；要開只能在 web 那份環境檔開（批次不讀 repo 根環境檔）。(b) `statement_timeout` 取 60s 而非更小值，因為雷達目錄／overview 分面／閱讀頁 similar 天生偏慢。維運長查詢用 `db.relax_statement_timeout()`（**`SET LOCAL`**，`SET` 會把豁免跟著池化連線漏給下一個借用者）。**要加 `--workers` 或提高任何併發閘之前，先照 `.env.example` 的算式重算連線數。**
-- **DB 走的是 `db.py` 的預設連線字串，不是環境檔。** fallback 是 `postgresql+asyncpg://postgres:postgres@localhost:5436/research`，生產沒有設 `REPORT_MARK_DB_URL` 覆寫。那是 Postgres 公開預設值且只監聽 localhost，所以不是對外破口；但**不要把這串 URL 複製進新模組或腳本**，要連線一律 `from app.services.db import SessionFactory`。
-- **logging 由 `app/logging_setup.py` 初始化，而它只在 `web/server.py` 被呼叫。** 該設定**宣告 `root`**（關鍵：uvicorn 的 `LOGGING_CONFIG` 沒有 root 鍵，沒有這一步 `app.services.*` 會落到 `logging.lastResort`＝level WARNING，`logger.info` 在呼叫點就被丟棄——2026-07-29 實測生產近 14 天 10 次 `/api/ask` 對應 `qa_timing` **0 筆**）。等級走 `LOG_LEVEL`（預設 INFO）。**呼叫位置有順序契約**：晚於 `load_env_file`、早於任何 `app.services.*` import，`tests/test_logging_setup.py` 靜態釘住。刻意**不宣告 uvicorn 的三個 logger**，否則會蓋掉 access log。**批次腳本（`scripts/*.py`）不走這條路徑**，它們的 `logger.info` 目前仍然無聲。
-- **Config 已集中到 `app/config.py`**（frozen dataclass + `os.getenv`，**非 pydantic-settings**）。**但集中化還沒做完，找旋鈕時別只翻 `config.py`**：`app/services/followups.py`、`app/services/retrieval_pipeline.py`、`app/services/db.py`（鍵是 **`REPORT_MARK_DB_URL`**，`DATABASE_URL` 只是模組常數名）、`web/auth.py`、`web/deps.py`、`web/report_runs.py`、`web/routers/report.py`、`web/routers/ask.py`、`eval/judge.py` **共九個檔**仍自帶 `os.getenv`。另外 `/api/ask` 的併發上限 3 是**寫死**在 `_ASK_GATE`，根本沒有對應的環境變數。
-- **`REPORT_MARK_*` 前綴的規則是只給 auth/DB 那組變數**（`.env.example` 裡帶前綴的也只有這組），其餘旋鈕一律不加前綴——**但現況不只那組**：`web/auth.py` 的 `REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`app/services/retrieval_pipeline.py` 的 `REPORT_MARK_RERANK_WORKERS`／`REPORT_MARK_RERANK_TIMEOUT`，以及 deploy 腳本的 `REPORT_MARK_ROOT`／`REPORT_MARK_ALERT_WEBHOOK`，全都帶前綴且不在 `.env.example`，**是 live 的，不要當成命名錯誤去改掉**；反過來說，把這幾個寫成不帶前綴的名字會被靜默忽略。由 `web/env_loader.py` 於啟動時從 repo-root 環境檔載入。
-- **Market codes align to findb:** `TW US HK CN FX WTX MACRO GLOBAL CRYPTO`（bond -> MACRO、commodity -> GLOBAL）。Mapping in `app/services/tagging.py`; re-map existing rows deterministically with `make align`（no Claude rerun）。
-- Commits follow Conventional Commits with Traditional-Chinese scopes（例如 `feat(report): ...`、`docs: ...`）；inspect `git log` and the staged diff before composing.
+## 慣例
+- Commit：Conventional Commits＋繁中 scope（`feat(報告): ...`、`docs(維運): ...`）。`git add <path>`，不用 `-A`／`.`（共用工作樹，他人有 WIP）。
+- Python：ruff `E,F,I`、120 字元、`E402` 關（import 前 `sys.path.insert`／載環境檔是刻意的）；**不跑 `ruff format`**、無 black／mypy。
+- 前端：React 19＋TypeScript、CSS Modules、TanStack Query、zod 在 API 邊界；`_` 前綴＝刻意不用；`src/components/animate-ui/` 是第三方匯入，不套 lint。
+- 動任何標記「刻意」的設計前先讀該模組 docstring。
 
 ## Where to look
-
-- `README.md` — comprehensive developer guide (architecture diagrams, full API table, env reference, deployment).
-- `docs/WORKFLOW.md` — authoritative end-to-end pipeline, stage I/O, full tag vocabulary, Web API contract.
-- `AGENTS.md` — contributor conventions (structure, style, testing, commits, security).
-- `docs/ROADMAP.md` — 以實際里程碑 **M0–M11** 為準（舊的 Phase 0–3 敘事已作廢）。尚未實作的有四項：findb 整合、MCP server、對外 REST `/api/v1/*`、PDF 內文的無障礙讀取（真正的 text layer）。
-- `docs/production_resilience.md` — `/healthz` 語意、監控兩層（探針／事件）、`OnFailure` 告警、unit 安裝與更新步驟、還原演練。
-- `docs/LINEBOT_ALWAYS_ON.md` — LineBot 供稿鏈的常駐（Windows 側看門狗）、對外路徑（nginx 精確路徑）、P4／P5 第二實例監控、安裝步驟與已知限制。
-- `docs/CAPACITY.md` — 硬體用量量測：取樣口徑（為什麼是核心數、為什麼是 cgroup、為什麼要扣 `init.scope`）、systemd 安裝、以及「沒有負載就量不到尖峰」這條效力邊界。
-- `docs/EXTERNAL_ACCESS.md` — Cloudflare Tunnel + nginx、可信代理的兩條判定與滾動切換步驟。
-- `docs/incidents/` — 事故報告（含 2026-08-18 那次 4h50m 中斷的完整時間線與根因）；`docs/benchmarks/` — WSL 檔案系統等量測。
-- `docs/REPORT_LAYOUT_FIXES.md` — 深度研報版面十項缺陷的逐頁診斷與修法。
-- `docs/ARCHITECTURE_REVIEW_2026-07.md` — 全 repo 架構檢視（**是快照不是現況**，其中數項已修）。**要照它動手前先讀 `docs/ARCHITECTURE_REVIEW_2026-07_VERIFY.md`**：119 條逐條複驗，5 條是錯的、37 條數字或推論需更正，其中兩條的建議修法照做會讓現況變差。
-- `eval/` — 檢索／問答／研報的離線評測 harness（`run_ragas.py`、`run_report_eval.py`、凍結題集、`baselines/`）。**改動檢索或生成品質時用它量測，不要另建一套、也不要憑感覺宣稱改善。** 用法是前後各跑一次，再用 **`make eval-compare BASE=… CAND=…`**（`scripts/eval_compare.py`）比——**退出碼是結論**：0 無劣化／1 有劣化／**2 不可比**（樣本數或 ruleset 變了）／**3 有未分類指標**。新增評測指標時要在 `METRIC_SPECS` 補一筆方向，否則會被報成未分類——**它刻意不猜方向**，因為默默猜就是製造假綠。刻意不接 CI（RAGAS 要 spawn `claude` CLI，而那把 flock 刻意不含 `llm.py`）。**門檻是 F>0.9／CP>0.8／AR>0.55，且是政策決定、不擅自更動**；最新一份乾淨量測 `eval/baselines/baseline-2026-09-02.json`（n=8，main @ 1ae98fc）**只剩 context_precision 0.785 未過**，faithfulness 0.957 與 AR 0.623 已過；前一份 `baseline-2026-08-18.json` 是 F 0.867／CP 0.666 兩項未過，兩者之間的差異來自 PR #230（中文重探、過舊軟截斷）。研報那條 baseline 仍停在 M7 且其 `notes` 自承是混合結果。
+- `README.md`：開發總覽、完整 API 表、環境變數、部署。
+- `docs/WORKFLOW.md`：端到端管線、階段 I/O、標籤詞彙、Web API 契約、R2 遷移順序。
+- `AGENTS.md`：貢獻者慣例（結構、風格、測試、commit、安全）。
+- `docs/ROADMAP.md`：里程碑 M0–M11；未實作四項（findb 整合、MCP server、對外 REST、PDF 無障礙 text layer）。
+- `docs/production_resilience.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/CAPACITY.md`、`docs/EXTERNAL_ACCESS.md`、`docs/incidents/`：維運、監控、容量、外部存取、事故。
+- `docs/EXTRACTION_REDESIGN.md`：抽取重構 E1 的決策；`docs/REPORT_LAYOUT_FIXES.md`：研報版面逐頁診斷。
+- `docs/ARCHITECTURE_REVIEW_2026-07.md` 是快照不是現況，照它動手前先讀 `docs/ARCHITECTURE_REVIEW_2026-07_VERIFY.md`。

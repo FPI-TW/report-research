@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import inspect
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from app.services import store
@@ -74,9 +77,206 @@ class ScriptTests(unittest.TestCase):
             self.assertNotIn(token, src)
 
     def test_each_report_commits_or_rolls_back_on_its_own(self):
-        src = inspect.getsource(bf.backfill_one)
+        src = inspect.getsource(bf._backfill_path)
         self.assertGreaterEqual(src.count("await session.commit()"), 2)
         self.assertIn("await session.rollback()", inspect.getsource(bf.run))
+
+    def test_r2_temp_directory_is_cleaned_when_backfill_raises(self):
+        class _Storage:
+            enabled = True
+
+            def download_bytes(self, key):
+                return b"pdf bytes"
+
+        class _TrackedTemporaryDirectory:
+            instances = []
+
+            def __init__(self, **kwargs):
+                self._real = tempfile.TemporaryDirectory(**kwargs)
+                self.name = self._real.name
+                self.cleaned = False
+                self.instances.append(self)
+
+            def cleanup(self):
+                self.cleaned = True
+                self._real.cleanup()
+
+        async def _boom(*args, **kwargs):
+            raise RuntimeError("extract failed")
+
+        digest = __import__("hashlib").sha256(b"pdf bytes").hexdigest()
+        row = ("rid", digest, "source.pdf", "/does-not-exist", "originals/aa/a.pdf", None)
+        with mock.patch.object(bf, "resolve_path", return_value=None), \
+             mock.patch.object(bf, "get_object_storage", return_value=_Storage()), \
+             mock.patch.object(bf, "TemporaryDirectory", _TrackedTemporaryDirectory), \
+             mock.patch.object(bf, "_backfill_path", _boom):
+            with self.assertRaisesRegex(RuntimeError, "extract failed"):
+                asyncio.run(bf.backfill_one(object(), row, "pypdf", "target", 0.6, 8))
+        self.assertTrue(_TrackedTemporaryDirectory.instances[0].cleaned)
+        self.assertFalse(Path(_TrackedTemporaryDirectory.instances[0].name).exists())
+
+    def test_hybrid_prefers_valid_r2_over_mismatched_local_file(self):
+        expected = __import__("hashlib").sha256(b"remote").hexdigest()
+        captured = {}
+
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+            def download_bytes(self, key):
+                return b"remote"
+
+        async def _capture(_session, _rid, _hash, _name, path, *args, **_kwargs):
+            captured["bytes"] = path.read_bytes()
+            return "replaced"
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(b"stale-local")
+            local.flush()
+            row = ("rid", expected, "source.pdf", local.name, "originals/x/source.pdf", None)
+            with mock.patch.object(bf, "get_object_storage", return_value=_Storage()), \
+                 mock.patch.object(bf, "_backfill_path", _capture):
+                self.assertEqual(asyncio.run(bf.backfill_one(object(), row, "pypdf", "target", 0.6, 8)), "replaced")
+        self.assertEqual(captured["bytes"], b"remote")
+
+    def test_r2_never_falls_back_to_mismatched_local_file(self):
+        expected = __import__("hashlib").sha256(b"remote").hexdigest()
+
+        class _Storage:
+            enabled = True
+            mode = "r2"
+
+            def download_bytes(self, key):
+                from app.services.object_storage import ObjectNotFound
+
+                raise ObjectNotFound(key)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(b"stale-local")
+            local.flush()
+            row = ("rid", expected, "source.pdf", local.name, "originals/x/source.pdf", None)
+            with mock.patch.object(bf, "get_object_storage", return_value=_Storage()), \
+                 mock.patch.object(bf, "_backfill_path") as helper:
+                self.assertEqual(asyncio.run(bf.backfill_one(object(), row, "pypdf", "target", 0.6, 8)), "missing_file")
+        helper.assert_not_called()
+
+    def test_hybrid_refuses_upload_when_local_hash_is_stale(self):
+        expected = __import__("hashlib").sha256(b"expected").hexdigest()
+
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+            uploads = []
+
+            def upload_file(self, path, key, *, expected_sha256):
+                self.uploads.append((path, key))
+
+        storage = _Storage()
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as local:
+            local.write(b"stale")
+            local.flush()
+            with mock.patch.object(bf, "get_object_storage", return_value=storage):
+                with self.assertRaisesRegex(ValueError, "refusing R2 upload"):
+                    asyncio.run(
+                        bf._backfill_path(
+                            object(), "rid", expected, "source.pdf", Path(local.name), "pypdf", "t", 0.6, 8
+                        )
+                    )
+        self.assertEqual(storage.uploads, [])
+
+    def test_local_source_replacement_is_rejected_before_extract_or_upload(self):
+        original = b"original source"
+        digest = __import__("hashlib").sha256(original).hexdigest()
+
+        class _Storage:
+            enabled = False
+            mode = "local"
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as source:
+            source.write(original)
+            source.flush()
+
+            def replace_then_resolve(*_args):
+                Path(source.name).write_bytes(b"replaced source")
+                return Path(source.name)
+
+            row = ("rid", digest, "source.pdf", source.name, None, None)
+            with mock.patch.object(bf, "get_object_storage", return_value=_Storage()), \
+                 mock.patch.object(bf, "resolve_path", side_effect=replace_then_resolve), \
+                 mock.patch.object(bf, "_backfill_path") as backfill:
+                with self.assertRaisesRegex(RuntimeError, "snapshot SHA-256 mismatch"):
+                    asyncio.run(bf.backfill_one(object(), row, "pypdf", "target", 0.6, 8))
+        backfill.assert_not_called()
+
+    def test_source_key_lost_race_is_detected_without_overwrite(self):
+        data = b"verified source"
+        digest = __import__("hashlib").sha256(data).hexdigest()
+        uploads = []
+
+        class _Storage:
+            enabled = True
+
+            def upload_file(self, path, key, *, expected_sha256):
+                uploads.append((Path(path).read_bytes(), key, expected_sha256))
+
+        class _Result:
+            rowcount = 0
+
+        class _Session:
+            calls = []
+
+            async def execute(self, stmt, params):
+                self.calls.append((str(stmt), params))
+                return _Result()
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as source:
+            source.write(data)
+            source.flush()
+            session = _Session()
+            with mock.patch.object(bf, "get_object_storage", return_value=_Storage()):
+                with self.assertRaisesRegex(RuntimeError, "update lost race"):
+                    asyncio.run(
+                        bf._backfill_path(
+                            session, "rid", digest, "source.pdf", Path(source.name), "pypdf", "target", 0.6, 8,
+                            expected_source_object_key=None,
+                        )
+                    )
+        self.assertEqual(uploads[0][2], digest)
+        self.assertIn("IS NOT DISTINCT FROM", session.calls[0][0])
+        self.assertIsNone(session.calls[0][1]["expected_old"])
+
+    def test_dry_run_unpacks_six_columns_without_mutation(self):
+        row = ("rid", "a" * 64, "source.pdf", "/unused", "originals/aa/source.pdf", None)
+
+        class _Result:
+            def __init__(self, value):
+                self.value = value
+
+            def scalar(self):
+                return 1
+
+            def all(self):
+                return [row]
+
+        class _Session:
+            calls = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def execute(self, stmt, params):
+                self.calls.append(str(stmt))
+                return _Result(None)
+
+        session = _Session()
+        args = SimpleNamespace(extractor="pdfplumber", max_minutes=None, dry_run=True, limit=1, batch_size=8)
+        with mock.patch.object(bf, "SessionFactory", lambda: session), \
+             mock.patch.object(bf, "get_object_storage", side_effect=AssertionError("must not touch R2")):
+            self.assertEqual(asyncio.run(bf.run(args)), 0)
+        self.assertEqual(len(session.calls), 2)
 
 
 class StoreTests(unittest.TestCase):

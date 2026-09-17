@@ -24,6 +24,8 @@ from sqlalchemy import text as sql_text  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
 from app.services.embed import embed_texts  # noqa: E402
+from app.services.extract import file_sha256  # noqa: E402
+from app.services.object_storage import get_object_storage, original_object_key  # noqa: E402
 from app.services.store import (  # noqa: E402
     ExtractionLogRow,
     ReportRow,
@@ -67,6 +69,7 @@ def _parse_date(s: str | None) -> date | None:
 
 
 async def main(limit: int | None, batch_size: int) -> None:
+    storage = get_object_storage()
     async with SessionFactory() as session:
         rows = await session.execute(
             sql_text("SELECT file_hash FROM research.research_report")
@@ -135,6 +138,15 @@ async def main(limit: int | None, batch_size: int) -> None:
                     await session.commit()
                     continue
                 embeddings = embed_texts(chunks, batch_size=batch_size)
+                source_object_key = None
+                source_path = Path(rec["file_path"])
+                if storage.enabled:
+                    # Cached extraction is local-only; the original object is uploaded before
+                    # the report row commits so r2 mode never publishes a dangling key.
+                    if file_sha256(source_path) != h:
+                        raise ValueError("source SHA-256 differs from cached extraction record")
+                    source_object_key = original_object_key(h, rec["file_name"])
+                    await asyncio.to_thread(storage.upload_file, source_path, source_object_key, expected_sha256=h)
                 q = rec.get("quality") or {}
                 report = ReportRow(
                     file_hash=h,
@@ -143,6 +155,7 @@ async def main(limit: int | None, batch_size: int) -> None:
                     market=tag.market,
                     is_research=tag.is_research,
                     confidence=tag.confidence,
+                    source_object_key=source_object_key,
                     stock_code=rec.get("stock_code"),
                     company_name=rec.get("company_name"),
                     source=rec.get("source"),

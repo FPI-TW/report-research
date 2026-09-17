@@ -25,20 +25,33 @@ import asyncio
 import hashlib
 import logging
 import os
+import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.services.object_storage import (
+    ObjectNotFound,
+    ObjectStorageError,
+    generated_key_has_expected_owner,
+    generated_object_key_for_sha,
+    get_object_storage,
+)
 from app.services.report import (
     REPORT_RENDERER,
+    PersistedRendererUnavailableError,
     create_rendition,
-    fetch_current_rendition_pdf,
+    fetch_current_rendition,
     fetch_report_doc,
     generate_report,
+    persist_generated_pdf,
     render_report_pdf,
+    rendered_pdf_result,
     set_current_rendition,
+    update_current_base_pdf_location,
+    update_current_rendition_pdf_location,
     write_report_pdf,
 )
 from web import deps, report_runs
@@ -47,6 +60,20 @@ from web.concurrency import ConcurrencyGate
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _local_generated_pdf_matches_key(
+    path: str, object_key: str, report_id: str, rendition_id: str | None,
+) -> bool:
+    """Verify a hybrid fallback PDF is exactly the selected R2 artifact, without buffering it."""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return generated_object_key_for_sha(report_id, digest.hexdigest(), rendition_id) == object_key
+    except (OSError, ValueError):
+        return False
 
 
 # 研報生成比問答重很多（長輸出 + PDF 排版），預設序列化避免區網多人同時生成拖垮機器。
@@ -106,6 +133,8 @@ async def report(req: ReportRequest):
         raise HTTPException(status_code=400, detail="qa_id 格式不正確")
     if req.conversation_id is not None and not deps._valid_uuid(req.conversation_id):
         raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
+    if report_runs.conversation_deleted(req.conversation_id):
+        raise HTTPException(status_code=404, detail="conversation not found")
     # 排隊已滿就在送出 200 之前回 429（SSE 開始串流後改不了 status code）。
     # **接回既有 run 一律豁免**：那條路徑不需要名額（生成早就在跑），把它一起擋掉等於
     # 讓重整過的人在自己的研報快好時被拒於門外。
@@ -135,6 +164,7 @@ async def report(req: ReportRequest):
                         question, filters={},
                         conversation_id=req.conversation_id, qa_id=req.qa_id,
                         template_id=req.template_id, locale=req.locale,
+                        can_persist=lambda: not report_runs.conversation_deleted(req.conversation_id),
                     ):
                         yield (event, payload)
                 except asyncio.CancelledError:
@@ -217,29 +247,44 @@ async def report_doc_rerender(report_id: str, req: RerenderRequest):
     # 正是可轉寄 PDF 上最不該漂移的東西。歷史列為 NULL → fail-open 到 zh-Hant，
     # 恰好就是那些列產出時的實際行為。
     doc_locale = doc.get("locale")
+    doc_renderer = doc.get("renderer") or REPORT_RENDERER
     # template_id 未帶＝維持原模板（不是「換成預設模板」）。
     target_template = req.template_id or doc.get("template_id")
     try:
-        pdf_bytes = await asyncio.to_thread(
+        rendered = await asyncio.to_thread(
             render_report_pdf, doc["markdown"], title=doc["title"],
             meta={"date": doc.get("date") or "", "question": doc.get("question")},
-            template_id=target_template, locale=doc_locale,
+            template_id=target_template, locale=doc_locale, renderer=doc_renderer, return_result=True,
         )
     except Exception:
         # 渲染分派層本身 fail-open 回退 weasyprint；仍拋代表兩軌皆炸 → 保留上一版
         logger.exception("換皮重出渲染失敗，保留上一個 rendition")
         raise HTTPException(status_code=500, detail="重新渲染失敗，已保留上一個版本")
+    render_result = rendered_pdf_result(rendered, doc_renderer)
+    pdf_bytes = render_result.pdf_bytes
     content_hash = hashlib.sha256(doc["markdown"].encode("utf-8")).hexdigest()
     # 先建 rendition_id 再落地（用其短碼當檔名後綴，不覆蓋歷史 PDF），最後原子切換指標
-    rendition_id = await create_rendition(
-        report_id, renderer=REPORT_RENDERER,
-        template_id=(target_template if REPORT_RENDERER == "typst" else None),
-        content_hash=content_hash,
-        pdf_path=await asyncio.to_thread(
-            write_report_pdf, report_id, pdf_bytes,
-            suffix=f"-{hashlib.sha256((report_id + content_hash + (target_template or '')).encode()).hexdigest()[:8]}",
-        ),
-    )
+    suffix = f"-{hashlib.sha256((report_id + content_hash + (target_template or '')).encode()).hexdigest()[:8]}"
+    storage = get_object_storage()
+    if storage.mode == "local":
+        # Preserve the long-standing local helper seam used by render tests.
+        pdf_path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes, suffix=suffix)
+        rendition_id = await create_rendition(
+            report_id, renderer=render_result.renderer,
+            template_id=(target_template if render_result.renderer == "typst" else None),
+            content_hash=content_hash, pdf_path=pdf_path,
+        )
+    else:
+        rendition_id = str(uuid.uuid4())
+        pdf_path, pdf_object_key = await persist_generated_pdf(
+            report_id, pdf_bytes, rendition_id=rendition_id, suffix=suffix,
+        )
+        await create_rendition(
+            report_id, renderer=render_result.renderer,
+            template_id=(target_template if render_result.renderer == "typst" else None),
+            content_hash=content_hash, pdf_path=pdf_path,
+            pdf_object_key=pdf_object_key, rendition_id=rendition_id,
+        )
     await set_current_rendition(report_id, rendition_id)
     return {"rendition_id": rendition_id, "template_id": target_template}
 
@@ -249,24 +294,125 @@ async def report_doc_pdf(report_id: str):
     """下載目前渲染版本的研報 PDF；無 rendition 指標→回退原始 pdf_path，仍不存在→即時重建。"""
     if not deps._valid_uuid(report_id):
         raise HTTPException(status_code=404, detail="report not found")
-    # M9b：優先服務目前 rendition（換皮重出後）；NULL 指標或舊列 → 回退 report_doc.pdf_path
-    path = await fetch_current_rendition_pdf(report_id)
+    # M9b：有 current pointer 時，該 rendition 是唯一可接受的 artifact。不能因它在
+    # R2 遺失就悄悄回退 report_doc 的 base PDF，否則使用者會得到錯誤版型。
+    rendition = await fetch_current_rendition(report_id)
+    path = rendition.get("pdf_path") if rendition else None
+    object_key = rendition.get("pdf_object_key") if rendition else None
     doc = None
-    if not path or not os.path.isfile(path):
+    storage = get_object_storage()
+    # No current rendition means the base PDF remains the selected artifact.  r2-only never
+    # probes legacy local paths; a key-less legacy base is deterministically reconstructible.
+    if not rendition and not object_key and (storage.mode == "r2" or not path or not os.path.isfile(path)):
         doc = await fetch_report_doc(report_id)
         if doc is None:
             raise HTTPException(status_code=404, detail="report not found")
-        path = doc.get("pdf_path")
+        path = None if storage.mode == "r2" else doc.get("pdf_path")
+        object_key = doc.get("pdf_object_key")
+
+    if storage.enabled and object_key:
+        rendition_id = (rendition or {}).get("id")
+        if not generated_key_has_expected_owner(object_key, report_id, rendition_id):
+            raise HTTPException(status_code=503, detail="generated object pointer integrity error")
+        try:
+            metadata = await asyncio.to_thread(storage.head_object, object_key)
+        except ObjectNotFound:
+            # Confirmed missing remains rebuildable below; service/config errors never fall back.
+            metadata = None
+        except ObjectStorageError as exc:
+            logger.warning("R2 generated PDF unavailable key=%s: %s", object_key, exc)
+            raise HTTPException(status_code=503, detail="object storage unavailable") from exc
+        if metadata is not None:
+            object_metadata = metadata.get("Metadata") or {}
+            # S3-compatible implementations normally normalize metadata keys, but accept
+            # the legacy spelling too; absence is still an integrity failure, never a sign.
+            full_sha = object_metadata.get("sha256") or object_metadata.get("SHA256")
+            try:
+                canonical_key = generated_object_key_for_sha(report_id, full_sha or "", rendition_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=503, detail="generated object pointer integrity error") from exc
+            if object_key != canonical_key:
+                raise HTTPException(status_code=503, detail="generated object pointer integrity error")
+            try:
+                url = await asyncio.to_thread(
+                    storage.presign_get, object_key, filename=f"report-{report_id[:8]}.pdf",
+                )
+            except ObjectStorageError as exc:
+                raise HTTPException(status_code=503, detail="object storage unavailable") from exc
+            return RedirectResponse(url=url, status_code=302, headers={"Cache-Control": "no-store"})
+        # Confirmed missing is recoverable from persisted markdown.  Hybrid may use this
+        # *same* artifact's local copy only after proving its full SHA maps to this exact key;
+        # r2 must rebuild/upload without local fallback.
+        if storage.mode == "r2":
+            path = None
+        elif path and not await asyncio.to_thread(
+            _local_generated_pdf_matches_key, path, object_key, report_id, rendition_id,
+        ):
+            path = None
+    elif storage.mode == "r2":
+        # No persisted key: fall through to deterministic markdown rebuild below (without
+        # inspecting a legacy local path).
+        path = None
+
     if not path or not os.path.isfile(path):
-        # 重建也必須沿用產出當時的 locale/template_id（docs/qa_pdf_report_deployment.md
-        # 正是以「PDF 可重建」為由主張 REPORTS_DIR 不需備份——重建出不一樣的東西，
-        # 那個主張就不成立了）。
-        pdf_bytes = await asyncio.to_thread(
-            render_report_pdf, doc["markdown"], title=doc["title"],
-            meta={"date": doc.get("date") or "", "question": doc.get("question")},
-            template_id=doc.get("template_id"), locale=doc.get("locale"),
-        )
-        path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes)
+        if doc is None:
+            doc = await fetch_report_doc(report_id)
+            if doc is None:
+                raise HTTPException(status_code=404, detail="report not found")
+        # Rebuild exactly the selected artifact.  A rendition carries its own template; the
+        # base uses report_doc.template_id.  Both inherit report_doc's output locale.
+        template_id = rendition.get("template_id") if rendition else doc.get("template_id")
+        persisted_renderer = rendition.get("renderer") if rendition else doc.get("renderer")
+        renderer = persisted_renderer or REPORT_RENDERER
+        try:
+            rendered = await asyncio.to_thread(
+                render_report_pdf, doc["markdown"], title=doc["title"],
+                meta={"date": doc.get("date") or "", "question": doc.get("question")},
+                template_id=template_id, locale=doc.get("locale"), renderer=renderer,
+                strict_renderer=persisted_renderer is not None, return_result=True,
+            )
+        except PersistedRendererUnavailableError as exc:
+            raise HTTPException(status_code=503, detail="persisted renderer unavailable") from exc
+        except Exception as exc:
+            if persisted_renderer is not None:
+                raise HTTPException(status_code=503, detail="persisted renderer unavailable") from exc
+            raise
+        pdf_bytes = rendered_pdf_result(rendered, renderer).pdf_bytes
+        if storage.mode == "local":
+            suffix = f"-rendition-{rendition['id'][:8]}" if rendition else ""
+            path = await asyncio.to_thread(write_report_pdf, report_id, pdf_bytes, suffix=suffix)
+            object_key = None
+        else:
+            try:
+                suffix = f"-rendition-{rendition['id'][:8]}" if rendition else ""
+                path, object_key = await persist_generated_pdf(
+                    report_id, pdf_bytes, rendition_id=(rendition or {}).get("id"), suffix=suffix,
+                )
+            except ObjectStorageError as exc:
+                raise HTTPException(status_code=503, detail="object storage unavailable") from exc
+        if rendition:
+            updated = await update_current_rendition_pdf_location(report_id, rendition["id"], path, object_key)
+            if not updated:
+                # A newer rerender won the current-pointer race.  Do not sign this stale
+                # artifact or write the pointer back; the caller can retry for the new current PDF.
+                logger.warning(
+                    "R2 rendition repair lost current-pointer race report_id=%s rendition_id=%s key=%s",
+                    report_id, rendition["id"], object_key,
+                )
+                raise HTTPException(status_code=409, detail="current rendition changed; retry download")
+        else:
+            updated = await update_current_base_pdf_location(report_id, path, object_key)
+            if not updated:
+                logger.warning("R2 base repair lost current-pointer race report_id=%s key=%s", report_id, object_key)
+                raise HTTPException(status_code=409, detail="current rendition changed; retry download")
+        if storage.enabled and object_key:
+            try:
+                url = await asyncio.to_thread(
+                    storage.presign_get, object_key, filename=f"report-{report_id[:8]}.pdf",
+                )
+            except ObjectStorageError as exc:
+                raise HTTPException(status_code=503, detail="object storage unavailable") from exc
+            return RedirectResponse(url=url, status_code=302, headers={"Cache-Control": "no-store"})
     return FileResponse(
         path, media_type="application/pdf",
         filename=f"report-{report_id[:8]}.pdf",

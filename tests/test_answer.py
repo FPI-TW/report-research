@@ -2522,6 +2522,42 @@ class DeletedPdfPathsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out, [])
 
 
+class DeletedPdfObjectKeysTests(unittest.IsolatedAsyncioTestCase):
+    async def test_captures_report_and_rendition_identity_with_key(self):
+        from app.services import answer as ans
+
+        class _Result:
+            def all(self):
+                return [
+                    ("doc-1", "base", None, "generated/doc-1/base-aaaaaaaaaaaa.pdf"),
+                    ("doc-1", "rendition", "ren-1", "generated/doc-1/renditions/ren-1-bbbbbbbbbbbb.pdf"),
+                ]
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def execute(self, *_args, **_kwargs):
+                return _Result()
+
+        original = ans.SessionFactory
+        ans.SessionFactory = lambda: _Session()
+        try:
+            objects = await ans.deleted_pdf_object_keys("c1")
+        finally:
+            ans.SessionFactory = original
+        self.assertEqual(
+            [(item.report_id, item.kind, item.rendition_id, item.key) for item in objects],
+            [
+                ("doc-1", "base", None, "generated/doc-1/base-aaaaaaaaaaaa.pdf"),
+                ("doc-1", "rendition", "ren-1", "generated/doc-1/renditions/ren-1-bbbbbbbbbbbb.pdf"),
+            ],
+        )
+
+
 class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_grouped_rows(self):
         from datetime import datetime, timezone

@@ -63,7 +63,7 @@ flowchart TD
 
 | 層 | 位置 | 內容 |
 |----|------|------|
-| 來源 | `研報自動匯入/` | 原始 PDF/docx（唯讀，不更動）|
+| 來源 | `研報自動匯入/` → 私有 R2 | NAS/本機鏡像仍是上游與備援；`OBJECT_STORAGE_MODE=local`（預設）維持原行為，hybrid 優先讀 R2 並回退鏡像，r2 則只讀私有 bucket。中間抽取快取與 batch checkpoint 一律留本機。|
 | 中繼產物 | `data/` | 抽取快取 `data/extracted/<hash>.json`（一檔一筆，E1c；舊 `all.jsonl` 由 `scripts/migrate_extraction_cache.py` 轉檔後改名 `.bak`）、工作清單、tag JSON、執行 log |
 | Canonical | `research.research_report` | 每篇一列：市場/商品類型/標的等標籤 ＋ 檔名 metadata ＋ `full_text` ＋ `summary` |
 | 向量 | `research.report_chunk` | 全文切塊 ＋ `vector(1024)`（HNSW cosine）＋ `content_norm`（pg_trgm 字面比對）|
@@ -86,7 +86,7 @@ flowchart TD
 
 **`research.report_run` / `report_section`**（M7 逐節生成狀態機）：run 有冪等鍵 `request_key`(UNIQUE)、`status`(`queued`/`retrieving`/`outlining`/`drafting`/`verifying`/`rendering`/`completed`/`failed`/`cancelled`)、`outline`、`checkpoint`(最後一致可續跑點) 與 `input_config` 快照；section 有 `position`(組裝序＝`[n]` 首見序)、`section_key`/`heading`、`draft_markdown`（對應 SSE `section_draft`，可覆寫）與 `final_markdown` 分離、`evidence_ids[]`。**`report_run` 對 `research_report` 刻意無 FK**——生成流程史不是語料衍生物，語料 upsert 先刪後插不該連帶清除它。
 
-**`research.report_rendition` 欄位**（M9b）：`id`、`report_id`(反向連結 `report_doc`，plain uuid 非 FK)、`renderer`(`typst`/`weasyprint`)、`template_id`、`content_hash`(markdown 的 sha256——換皮不重生內容，故同 hash)、`pdf_path`、`status`、`created_at`。每列 `pdf_path` 各異，**不覆蓋歷史 PDF**；重出成功後才原子切換 `report_doc.current_rendition_id`。
+**`research.report_rendition` 欄位**（M9b）：`id`、`report_id`(反向連結 `report_doc`，plain uuid 非 FK)、`renderer`(`typst`/`weasyprint`)、`template_id`、`content_hash`(markdown 的 sha256——換皮不重生內容，故同 hash)、`pdf_path`、`pdf_object_key`、`status`、`created_at`。每列 PDF 各異，**不覆蓋歷史 PDF**；重出成功後才原子切換 `report_doc.current_rendition_id`。
 
 **索引**：`report_chunk.embedding` HNSW(cosine)、`content_norm` GIN(trgm)；`research_report` 的 `market` btree、`instrument_types`/`stock_targets`/`futures_targets` GIN；`qa_log` 依建立時間與對話分組索引（另有 `request_id` 的部分唯一索引）；`report_doc` 依 `qa_id` 與 `conversation_id` 索引；`report_signal` 依 `(market, instrument_code, report_date DESC)`、`(market, instrument_code, broker, report_date DESC)`、`report_id` 與 `extraction_status` 索引；`report_section.evidence_ids` GIN。DB schema 定義於 [`db/schema.sql`](../db/schema.sql)（DDL 皆 `IF NOT EXISTS`，可冪等套用於既有庫）。
 
@@ -279,7 +279,7 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 | `POST /api/report-runs/{run_id}/cancel` | 主動中止背景生成 |
 | `GET /api/report-templates` | 可選研報渲染模板清單（M9b registry：ib-classic／broker-modern／privatebank-dark），每項回 `id`／`name`／`description`／`is_default`／`thumbnail`。**`thumbnail` 目前三款皆為 `null`**——前端版型選擇器的縮圖是用 CSS 畫出各模板的版面骨架（零圖檔、零請求），不是後端供圖，別去補圖片資產 |
 | `POST /api/report-doc/{report_id}/rerender` | 換皮重出（M9b）：用既有 markdown 以另一模板產新 rendition，成功後原子切換 `report_doc.current_rendition_id`——**零 LLM、零重新生成**。body 的 `template_id` 未帶＝維持原模板（不是換成預設）；`locale` 不可指定，一律沿用產出當時的值（否則英文研報會變成「英文內文 ＋ 中文封面／免責」）。渲染兩軌皆炸才回 500，並保留上一個可下載 PDF |
-| `GET /api/report-doc/{report_id}/pdf` | 下載研報 PDF：優先服務目前 rendition（換皮重出後），無指標或檔案不在則回退 `report_doc.pdf_path`；仍缺就由 persisted Markdown 即時重建（**沿用產出當時的 `locale`/`template_id`**，否則重建出來的不是同一份東西）|
+| `GET /api/report-doc/{report_id}/pdf` | 下載研報 PDF：R2 選中物件時以 `302` 導向短效私有 presigned URL（`Cache-Control: no-store`）；hybrid 才回退 local。無可用產物時由 persisted Markdown 即時重建（**沿用產出當時的 `locale`/`template_id`**）。|
 | `GET /api/history` | 最近的問答歷史（舊單題清單）。`DELETE /api/history/{qa_id}`（或相容 alias `POST /api/history/{qa_id}/delete`）刪除單筆 |
 | `GET /api/qa/{root_qa_id}/versions` | 某問題群組的**全部**版本（重生版本鏈：以 `COALESCE(root_qa_id, id)` 分組、由舊到新）。**刻意含已標 `active=false` 的舊版**——歷史 pager 要回看的正是它們；濾 `active` 的是歷史／續問清單，不是這條。DB 出錯 fail-open 回 `[]` |
 | `POST /api/qa/{qa_id}/report-offer` | 研報邀請的收合／還原（body `{"action": "decline"\|"restore"}`，寫 `qa_log.filters` 的 additive 鍵 `report_offer_declined`）。邀請本身**不落庫**：`get_conversation` 讀取時以 `report_gate.should_offer_report` 逐列重算（零 LLM、歷史舊列自動涵蓋），重新整理後邀請卡不再消失；「暫時不用」收合成小入口而非刪除，隨時可還原 |
@@ -295,6 +295,14 @@ findb 無「債券」「原物料」獨立市場 → 歸最接近者（債券→
 
 前端特性：左側導覽軌（可收合成 mini，手機改底部 tab bar）四個入口——**檢索／問答／觀點／監控**；閱讀頁與說明頁不進導覽列。檢索頁固定有搜尋列 ＋ 市場 chip 列 ＋ 已選條件 chips；**無查詢也無篩選的落地態**顯示 Bento 牆（全語料市場組成色譜、最新一批研報等磚塊），此時工具列不渲染——一旦輸入查詢或套上篩選才換成工具列（排序選單／更多篩選 popover／檢視切換）＋結果區，結果區頂端改以 HitBar 顯示**命中集合**的市場組成色譜。結果檢視只有兩種（`ViewSwitch`：**列表**＝高密度單列、**表格**）；依日期(月)分組只出現在「查看全部／已篩選瀏覽」的完整清單，搜尋結果不分組。同篇研報合併、搜尋時列表顯示命中片段＋關鍵字高亮、即打即查（debounce 350ms，Enter 立即送出）、骨架載入；**點任一筆＝導向閱讀頁 `/app/report/:file_hash`**（乾淨網址，不帶 query），不是內嵌 PDF modal。問答模式：RAG 串流回答＋可點引用來源、處理過程面板、側欄對話歷史（可重看／續問／刪除）、外部參考、追問建議、讚倒讚、複製答案，以及深度研報生成卡片（版型選擇器＋逐節進度＋換皮重出＋PDF 下載）。
 
+
+### 私有 R2 遷移順序
+
+先保持 `OBJECT_STORAGE_MODE=local`，確認 NAS／本機鏡像與資料庫的 legacy 路徑可讀；接著設定目前共用的單一私有 bucket 憑證（暫不區分 staging／production），以 `hybrid` 執行 `uv run python scripts/migrate_object_storage.py --dry-run --kind all`，確認計畫再移除 `--dry-run`。此工具只上傳缺少 object key 的 originals、base PDFs、renditions，成功 upload 後才更新相符 DB key；不刪除、不重嵌、不重匯入。它可安全重跑；upload 成功但 DB 更新失敗會列為 `ORPHAN`，交由後續對帳。
+
+完成遷移後執行 `uv run python scripts/reconcile_object_storage.py --dry-run --kind all`，處理 missing／SHA／orphan 報告，再將服務維持於 `hybrid` 觀察；確認無誤才切換 `OBJECT_STORAGE_MODE=r2`。`--limit` 在兩個工具中皆是 originals、base、renditions 合計的總筆數，並會限制 orphan 判定。
+
+**瀏覽器端的兩個前提**：閱讀頁的 PDF 檢視器以 `fetch` 抓 `/api/report/{report_id}/file`，302 到 presigned URL 後是跨來源請求，**bucket 必須設 CORS**（`AllowedMethods` 只開 `GET`／`HEAD`，`AllowedOrigins` 列站台實際來源），否則整頁靜默失敗、伺服器端零錯誤。跨來源重導會讓 `<a download>` 失效，所以 presign 一律帶 `ResponseContentDisposition`（原檔名，PDF 為 inline）。`file_path` 若仍指向舊掛載點（`/mnt/c` 的 9p），先用 `scripts/repoint_file_paths.py` 重指到 ext4 鏡像再遷移；切到 `r2` 之後由 `report-mark-r2-reconcile.timer` 每週對帳，有 missing／SHA 不符／orphan 或連不上 R2 即走 `OnFailure` 告警鏈。
 ---
 
 ## 完整重跑指令

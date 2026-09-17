@@ -63,6 +63,8 @@ ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS title_original tex
 -- 來源：extracted（內文既有中文標題）／translated（英文標題譯為中文）／
 -- generated（內文找不到標題，依重點自擬）。無 CHECK：值由批次寫入，未知一律存 NULL。
 ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS title_source   text;
+-- 私有物件儲存鍵；保留 file_path 讓 local 模式與既有歷史列相容。
+ALTER TABLE research.research_report ADD COLUMN IF NOT EXISTS source_object_key text;
 
 -- is_research 收斂成 NOT NULL DEFAULT true。
 --
@@ -190,6 +192,7 @@ CREATE INDEX IF NOT EXISTS idx_report_doc_conversation
     ON research.report_doc (conversation_id, created_at);
 -- M4b：證據帳本 manifest（與 qa_log 同格式；NULL＝舊列，空帳本語義）
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS evidence_manifest jsonb;
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS pdf_object_key text;
 
 -- ── 觀點雷達訊號層：一列＝「一份研報 × 一個標的」的不可覆寫歷史快照 ──
 -- 報告可涵蓋多個 stock_targets，故每個標的各一列。（研報觀點變化雷達設計規格「資料模型」）
@@ -324,6 +327,9 @@ ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS current_rendition_id uu
 -- 歷史列為 NULL：讀取端一律 fail-open 到 zh-Hant / 預設模板（＝這些列產出時的實際值）。
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS locale text;
 ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS template_id text;
+-- Requested renderer is part of the reproducible PDF contract.  Existing rows NULL → current
+-- configured renderer as legacy fallback; new rows persist typst/weasyprint explicitly.
+ALTER TABLE research.report_doc ADD COLUMN IF NOT EXISTS renderer text;
 
 -- ── M9b 渲染產物層：不可變 rendition（換皮重出的歷史；同內容不同模板各一列）──
 -- 換模板重出＝用既有 markdown 以另一模板產新 rendition，成功後原子切換
@@ -334,12 +340,16 @@ CREATE TABLE IF NOT EXISTS research.report_rendition (
     renderer     text NOT NULL,        -- typst | weasyprint
     template_id  text,                 -- 選用模板（weasyprint 或未指定為 NULL）
     content_hash text NOT NULL,        -- markdown 的 sha256（換皮不重生內容 → 同 hash）
-    pdf_path     text NOT NULL,
+    -- local/hybrid legacy path；r2-only rendition 只存 pdf_object_key，故可為 NULL。
+    pdf_path     text,
     status       text NOT NULL DEFAULT 'ready',
     created_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_report_rendition_report
     ON research.report_rendition (report_id, created_at DESC);
+ALTER TABLE research.report_rendition ADD COLUMN IF NOT EXISTS pdf_object_key text;
+-- CREATE TABLE IF NOT EXISTS 不會改既有欄位；讓已部署資料庫也能寫 r2-only rendition。
+ALTER TABLE research.report_rendition ALTER COLUMN pdf_path DROP NOT NULL;
 
 -- ── 研報重點摘錄層：一列＝「一份研報 × 一條重點」（研報閱讀頁 /app/report/:hash）──
 -- 由 scripts/extract_takeaways.py 以 LLM 回「論點 + 逐字引文」、Python 用

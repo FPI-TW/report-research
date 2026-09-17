@@ -464,6 +464,11 @@ dense（BGE-M3 cosine，HNSW）＋ 字面（pg_trgm，比對 `content_norm`）�
 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` | loopback | 信任的反向代理 CIDR（走 Cloudflare Tunnel 外網時，與下面那個至少要有一個）|
 | `REPORT_MARK_EDGE_SECRET` | 空（停用）| 邊緣共享祕密；與 nginx 注入的 `X-Edge-Secret` 逐字相符即視為可信代理。與 CIDR **並存（OR）**，不受 WSL 重開機換網段影響 |
 | `REPORT_MARK_DB_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5436/research` | DB 連線字串 |
+| `OBJECT_STORAGE_MODE` | `local` | 研報原檔與生成 PDF 的物件儲存：`local`＝只用既有路徑；`hybrid`＝R2 優先、本機回退、生成 PDF 雙寫；`r2`＝只用 R2（缺任一 `R2_*` 啟動即 fail-closed；缺 key 的篇目 503 不回退）。web 讀 repo root `.env`，sync／回填／對帳讀 `/etc/default/report-mark-sync`，兩份要逐字相同 |
+| `R2_ENDPOINT_URL` | 空 | `https://<account-id>.r2.cloudflarestorage.com`，結尾不帶 bucket |
+| `R2_BUCKET` | 空 | 單一私有 bucket；bucket 端要設 CORS（只開 `GET`／`HEAD`、origin 列站台實際來源），否則閱讀頁的 PDF 檢視器跟著 302 到 presigned URL 時會被瀏覽器擋下 |
+| `R2_ACCESS_KEY_ID`／`R2_SECRET_ACCESS_KEY` | 空 | 只給 Object Read & Write 且限單一 bucket 的 token；Cloudflare 的帳號層 API token 程式不讀、不要放進環境檔 |
+| `R2_PRESIGN_TTL_SECONDS` | `3600` | presigned URL 存活秒數，1 到 3600 |
 
 > **session 是可撤銷的**：token 格式為 `<ver>.<iat>.<exp>.<sig>`，簽章訊息含「帳密指紋」與 `REPORT_MARK_SESSION_EPOCH`，所以**換密碼或 bump epoch ＝ 全員登出**（重啟後生效）。滑動到期仍是 7 天，但另有 **30 天絕對上限**（`web/auth.py` 的 `MAX_ABSOLUTE_TTL`）：續期只推遲 `exp`、不重置 `iat`，因此再活躍的 session 也不會變成永久憑證。舊格式（v1）token 一律拒絕並記一行 log——**這次上線會把所有人登出一次**。登入的成功／失敗／鎖定／遭拒都有稽核日誌，細節與查法見 [docs/EXTERNAL_ACCESS.md](docs/EXTERNAL_ACCESS.md)。
 

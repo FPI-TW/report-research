@@ -20,6 +20,8 @@ from sqlalchemy import text as sql_text  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
 from app.services.embed import embed_texts  # noqa: E402
+from app.services.extract import file_sha256  # noqa: E402
+from app.services.object_storage import get_object_storage, original_object_key  # noqa: E402
 from app.services.store import ReportRow, report_exists, upsert_report  # noqa: E402
 from app.services.tagging import load_tag  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
@@ -36,6 +38,27 @@ def _parse_date(s: str | None) -> date | None:
         return date.fromisoformat(s)
     except ValueError:
         return None
+
+
+async def _verified_existing_source_object_key(session, file_hash: str, file_name: str) -> str | None:
+    """Retain only an already-canonical pointer during local ``--force`` reingest."""
+    row = (
+        await session.execute(
+            sql_text(
+                "SELECT file_name, source_object_key FROM research.research_report "
+                "WHERE file_hash = :hash LIMIT 1"
+            ),
+            {"hash": file_hash},
+        )
+    ).first()
+    if not row or not row[1]:
+        return None
+    try:
+        existing_canonical = original_object_key(file_hash, row[0])
+        incoming_canonical = original_object_key(file_hash, file_name)
+    except (TypeError, ValueError):
+        return None
+    return row[1] if row[1] == existing_canonical == incoming_canonical else None
 
 
 async def main(force: bool) -> None:
@@ -55,6 +78,7 @@ async def main(force: bool) -> None:
         "total_chunks": 0,
     }
 
+    storage = get_object_storage()
     async with SessionFactory() as session:
         for rec in records:
             name = rec["file_name"]
@@ -82,6 +106,21 @@ async def main(force: bool) -> None:
                 stats["skip_scanned"] += 1
                 continue
             embeddings = embed_texts(chunks, batch_size=8)
+            source_object_key = None
+            if storage.enabled:
+                source_path = Path(rec["file_path"])
+                if file_sha256(source_path) != rec["file_hash"]:
+                    raise ValueError(f"source SHA-256 differs from extracted record: {source_path}")
+                source_object_key = original_object_key(rec["file_hash"], name)
+                # Upload before upsert_report's commit.  A DB failure can leave an orphan,
+                # but never a committed row pointing at bytes that have not been uploaded.
+                await asyncio.to_thread(
+                    storage.upload_file, source_path, source_object_key, expected_sha256=rec["file_hash"]
+                )
+            elif force:
+                # Local mode must not erase a verified R2 migration pointer merely because a
+                # force reingest rewrites extracted fields.  A malformed/stale key is never kept.
+                source_object_key = await _verified_existing_source_object_key(session, rec["file_hash"], name)
 
             report = ReportRow(
                 file_hash=rec["file_hash"],
@@ -90,6 +129,7 @@ async def main(force: bool) -> None:
                 market=tag.market,
                 is_research=tag.is_research,
                 confidence=tag.confidence,
+                source_object_key=source_object_key,
                 stock_code=rec.get("stock_code"),
                 company_name=rec.get("company_name"),
                 source=rec.get("source"),

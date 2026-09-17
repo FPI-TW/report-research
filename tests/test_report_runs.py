@@ -6,8 +6,10 @@
 import asyncio
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -38,6 +40,10 @@ class RegistryTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         report_runs._RUNS.clear()
         report_runs._BY_KEY.clear()
+        report_runs._DELETED_CONVERSATIONS.clear()
+        report_runs._DELETION_GENERATIONS.clear()
+        report_runs._PENDING_DELETION_LEASES.clear()
+        report_runs._COMPLETED_DELETIONS.clear()
 
     async def asyncTearDown(self):
         await report_runs.shutdown()
@@ -162,6 +168,118 @@ class RegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("error", kinds, "取消也必須有終端事件,否則前端永遠等下去")
         self.assertEqual(report_runs.find_active(CONV), [])
 
+    async def test_cancel_conversation_tombstones_and_waits_for_active_background_run(self):
+        paused = asyncio.Event()
+        release = asyncio.Event()
+        finished = []
+
+        async def run():
+            try:
+                yield ("status", {"stage": "rendering"})
+                paused.set()
+                await release.wait()
+                # This is the point a real run would upload/persist.  Cancellation must make
+                # it unreachable before conversation deletion snapshots DB/R2 artifacts.
+                finished.append("would-persist")
+                yield ("done", {"report_id": "late"})
+            finally:
+                finished.append("closed")
+
+        run_id, _ = report_runs.start_or_attach(
+            question="q", conversation_id=CONV, qa_id=None, template_id=None,
+            locale="zh-Hant", make_events=run,
+        )
+        await paused.wait()
+        self.assertEqual(await report_runs.cancel_conversation(CONV), 1)
+        release.set()  # Resuming the paused producer after deletion cannot reach persistence.
+        with self.assertRaises(asyncio.CancelledError):
+            await report_runs._RUNS[run_id].task
+        self.assertTrue(report_runs.conversation_deleted(CONV))
+        self.assertNotIn("would-persist", finished)
+        self.assertIn("closed", finished)
+        self.assertEqual(report_runs.find_active(CONV), [])
+
+    def _assert_tombstone_blocks_new_report(self):
+        self.assertTrue(report_runs.conversation_deleted(CONV))
+        with self.assertRaises(ValueError):
+            report_runs.start_or_attach(
+                question="q", conversation_id=CONV, qa_id=None, template_id=None,
+                locale="zh-Hant", make_events=_events([]),
+            )
+
+    async def test_second_rollback_keeps_first_pending_delete_tombstoned(self):
+        first = await report_runs.begin_conversation_deletion(CONV)
+        second = await report_runs.begin_conversation_deletion(CONV)
+        report_runs.rollback_conversation_deletion(second)
+        self._assert_tombstone_blocks_new_report()
+        report_runs.confirm_conversation_deletion(first)
+        self._assert_tombstone_blocks_new_report()
+
+    async def test_two_failed_deletions_allow_report_only_after_last_rollback(self):
+        first = await report_runs.begin_conversation_deletion(CONV)
+        second = await report_runs.begin_conversation_deletion(CONV)
+        report_runs.rollback_conversation_deletion(second)
+        self._assert_tombstone_blocks_new_report()
+        report_runs.rollback_conversation_deletion(first)
+        self.assertFalse(report_runs.conversation_deleted(CONV))
+
+    async def test_second_committed_delete_cannot_be_revived_by_first_rollback(self):
+        first = await report_runs.begin_conversation_deletion(CONV)
+        second = await report_runs.begin_conversation_deletion(CONV)
+        report_runs.confirm_conversation_deletion(second)
+        report_runs.rollback_conversation_deletion(first)
+        self._assert_tombstone_blocks_new_report()
+
+    async def test_deletion_between_upload_and_persist_discards_orphan_and_never_writes_report_doc(self):
+        """The service checkpoint complements task cancellation for an upload that already finished."""
+        from app.services import report as report_service
+
+        upload_started = asyncio.Event()
+        resume = asyncio.Event()
+        uploaded = []
+        discarded = []
+        persisted = []
+        key = "generated/temporary/base-aaaaaaaaaaaa.pdf"
+
+        def fake_render(*_args, **_kwargs):
+            return b"%PDF"
+
+        async def fake_persist(_report_id, _pdf):
+            upload_started.set()
+            await resume.wait()
+            uploaded.append(key)
+            return None, key
+
+        async def fake_persist_doc(*_args, **_kwargs):
+            persisted.append(True)
+
+        async def fake_discard(object_key):
+            discarded.append(object_key)
+
+        async def finalize():
+            return [
+                event async for event in report_service._finalize_sectioned(
+                    {"markdown": "# report", "sources": []},
+                    question="q", conversation_id=CONV, qa_id=None, run_id=None,
+                    eval_context="", started=time.monotonic(), persist=True,
+                    can_persist=lambda: not report_runs.conversation_deleted(CONV),
+                )
+            ]
+
+        with patch.object(report_service, "render_report_pdf", fake_render), \
+             patch.object(report_service, "persist_generated_pdf", fake_persist), \
+             patch.object(report_service, "persist_report_doc", fake_persist_doc), \
+             patch.object(report_service, "_discard_cancelled_generated_pdf", fake_discard):
+            task = asyncio.create_task(finalize())
+            await upload_started.wait()
+            await report_runs.cancel_conversation(CONV)
+            resume.set()
+            events = await task
+        self.assertEqual(uploaded, [key])
+        self.assertEqual(discarded, [key])
+        self.assertEqual(persisted, [])
+        self.assertEqual(events[-1], ("error", {"detail": "對話串已刪除，研報未儲存"}))
+
     async def test_generator_exception_becomes_error_event(self):
         async def boom():
             yield ("status", {"stage": "retrieving"})
@@ -196,6 +314,10 @@ class RunEndpointTests(unittest.TestCase):
     def setUp(self):
         report_runs._RUNS.clear()
         report_runs._BY_KEY.clear()
+        report_runs._DELETED_CONVERSATIONS.clear()
+        report_runs._DELETION_GENERATIONS.clear()
+        report_runs._PENDING_DELETION_LEASES.clear()
+        report_runs._COMPLETED_DELETIONS.clear()
 
     def _client(self):
         from fastapi.testclient import TestClient

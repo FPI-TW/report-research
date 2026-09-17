@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import sys
 import tempfile
@@ -237,8 +238,9 @@ async def _run(args) -> None:
     from app.services.chunk import chunk_text
     from app.services.db import SessionFactory, relax_statement_timeout
     from app.services.embed import embed_texts
-    from app.services.extract import extract_text
+    from app.services.extract import extract_text, file_sha256
     from app.services.filename import parse_filename, resolve_source
+    from app.services.object_storage import get_object_storage, original_object_key
     from app.services.store import (
         ExtractionLogRow,
         ReportRow,
@@ -251,6 +253,7 @@ async def _run(args) -> None:
     from app.services.textnorm import clean_extracted
 
     review_min = get_settings().extraction_review_min
+    storage = get_object_storage()
     targets = _iter_targets(args)
     if args.limit:
         targets = targets[: args.limit]
@@ -363,6 +366,19 @@ async def _run(args) -> None:
                     await session.commit()
                     continue
                 embeddings = embed_texts(chunks, batch_size=args.batch_size)
+                # Upload first: a failed DB commit may leave a reconcilable orphan, whereas
+                # committing a key before bytes exist would expose a broken download.
+                source_object_key = None
+                if storage.enabled:
+                    # The extract result was hashed earlier; re-hash at the last possible
+                    # point so a concurrently replaced mirror file cannot overwrite R2 under
+                    # the old DB key.
+                    if file_sha256(path) != res.file_hash:
+                        raise ValueError("source SHA-256 changed before R2 upload")
+                    source_object_key = original_object_key(res.file_hash, path.name)
+                    await asyncio.to_thread(
+                        storage.upload_file, path, source_object_key, expected_sha256=res.file_hash
+                    )
                 report = ReportRow(
                     file_hash=res.file_hash,
                     file_name=path.name,
@@ -370,6 +386,7 @@ async def _run(args) -> None:
                     market=tag.market,
                     is_research=tag.is_research,
                     confidence=tag.confidence,
+                    source_object_key=source_object_key,
                     stock_code=meta.stock_code,
                     company_name=meta.company_name,
                     source=source,

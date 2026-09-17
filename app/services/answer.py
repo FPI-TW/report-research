@@ -1598,6 +1598,53 @@ async def deleted_pdf_paths(conversation_id: str) -> list[str]:
         return []
 
 
+@dataclass(frozen=True)
+class DeletedGeneratedObject:
+    """Immutable ownership snapshot for one post-commit generated-PDF cleanup."""
+
+    report_id: str
+    kind: str
+    rendition_id: str | None
+    key: str
+
+
+async def deleted_pdf_object_keys(conversation_id: str) -> list[DeletedGeneratedObject]:
+    """Generated-PDF identities to consider for deletion *after* the DB transaction commits.
+
+    This mirrors ``deleted_pdf_paths`` but is intentionally a separate read: deleting an R2
+    object before its DB row commits would turn a transaction failure into data loss.  A remote
+    delete failure after commit is a reportable orphan, not a reason to resurrect the chat.
+    Keep the report/rendition identity with each key: a DB key is an untrusted pointer and must
+    be validated against R2 metadata immediately before the eventual delete.
+    """
+    try:
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT d.id::text, 'base'::text, NULL::text, d.pdf_object_key "
+                        "FROM research.report_doc d "
+                        "WHERE d.conversation_id = :cid AND d.pdf_object_key IS NOT NULL "
+                        "UNION ALL "
+                        "SELECT rr.report_id::text, 'rendition'::text, rr.id::text, rr.pdf_object_key "
+                        "FROM research.report_rendition rr "
+                        "JOIN research.report_doc d2 ON d2.id = rr.report_id "
+                        "WHERE d2.conversation_id = :cid AND rr.pdf_object_key IS NOT NULL"
+                    ),
+                    {"cid": conversation_id},
+                )
+            ).all()
+        return [
+            DeletedGeneratedObject(
+                report_id=str(row[0]), kind=str(row[1]), rendition_id=str(row[2]) if row[2] else None, key=row[3]
+            )
+            for row in rows
+            if row[3]
+        ]
+    except Exception:
+        return []
+
+
 async def record_feedback(qa_id: str, value: str) -> bool:
     """記錄使用者對某次回答的讚/倒讚到 research.qa_log.feedback。
 

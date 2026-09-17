@@ -89,7 +89,7 @@ uv run python scripts/ingest_all.py
 ### 抽取與入庫
 - 全語料三支：`scripts/extract_all.py` → `data/extracted/<hash>.json`（per-hash 快取，`app/services/extraction/cache.py`）→ `scripts/tag_all_cli.py` → `data/tags/<hash>.json` → `scripts/ingest_all.py`（gate on `is_research`＋`market`）。生產入庫走 `scripts/sync_new_reports.sh`。
 - E1 抽取層：`extract_text` 門面、pdfplumber 版面層（`app/services/extraction/layout.py`），品質只標記不擋；`extraction_log` 每個進過管線的 `file_hash` 一列，`stopped_at` 詞彙與 `store.STOPPED_AT` 逐字對齊。**刻意不用 PyMuPDF**（AGPL，本站對外服務）。
-- R2 物件儲存（`app/services/object_storage.py`）：`OBJECT_STORAGE_MODE` local（預設，既有行為不變）／hybrid／r2；非 local 缺任一 `R2_*` 啟動即 fail-closed。遷移與對帳走 `scripts/migrate_object_storage.py`、`scripts/reconcile_object_storage.py`，順序見 `docs/WORKFLOW.md`。
+- R2 物件儲存（`app/services/object_storage.py`）：`OBJECT_STORAGE_MODE` local（預設，既有行為不變）／hybrid／r2；非 local 缺任一 `R2_*` 啟動即 fail-closed，憑證在 repo root `.env` 與 `/etc/default/report-mark-sync` 各一份、逐字相同。遷移與對帳走 `scripts/migrate_object_storage.py`、`scripts/reconcile_object_storage.py`（順序見 `docs/WORKFLOW.md`），`file_path` 仍指舊掛載點時先跑 `scripts/repoint_file_paths.py`。**瀏覽器端兩個前提**：bucket 要設 CORS（PDF 檢視器是 `fetch` 跟 302 到 presigned URL，沒設就整頁靜默失敗、伺服器零錯誤）；presign 一律帶 `filename`（key 是 hash，跨來源後 `<a download>` 失效）。`r2` 模式下 `has_file` 只認 key（`original_available`），缺 key 即 503 不回退，所以切換前對帳要全零；切換後由 `report-mark-r2-reconcile.timer` 每週對帳接告警鏈，`/healthz` 不探 R2。
 
 ## 資料層陷阱
 - `research_report.full_text` 是未清理的原始抽取（帶 CJK 字間空白）；顯示一律 `clean_extracted(full_text)`，不是 `clean_text`（後者折掉換行，只適合檢索片段）。

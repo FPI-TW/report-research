@@ -1,0 +1,14 @@
+[Unit]
+Description=每週對帳 R2 物件儲存（DB 產物 vs bucket：missing／SHA／orphan）
+
+[Timer]
+# 週一 07:00：避開夜間回填（01:00–05:00）與備份（03:30），且排在上班時段開頭——
+# 這支的產物是「一筆 unit 失敗紀錄」，要有人當天看到才有用。
+# 其餘既有排程：sync 整點 00/3、freshness 08:30、audit 08:45。
+OnCalendar=Mon *-*-* 07:00:00
+# 機器關著而錯過的那一次，開機後補跑：對帳漏一週就是一週沒人知道 R2 漂了。
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

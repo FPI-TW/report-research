@@ -407,3 +407,63 @@ class ObjectKeyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PresignContentDispositionTests(unittest.TestCase):
+    """跨來源 302 之後 `<a download>` 失效，原檔名只能靠 presign 的 ResponseContentDisposition 帶回。"""
+
+    def _storage(self, captured: dict):
+        class _Client:
+            def generate_presigned_url(self, *args, **kwargs):
+                captured["args"] = args
+                captured.update(kwargs)
+                return "https://private.example.test/presigned"
+
+        storage = storage_module.ObjectStorage()
+        storage.mode = "r2"
+        storage._client = _Client()
+        storage.settings = SimpleNamespace(r2_bucket="bucket", r2_presign_ttl_seconds=3600)
+        return storage
+
+    def test_presign_without_filename_sends_no_disposition(self):
+        captured: dict = {}
+        self._storage(captured).presign_get("originals/aa/" + "a" * 64 + ".pdf")
+        self.assertNotIn("ResponseContentDisposition", captured["Params"])
+
+    def test_presign_with_cjk_filename_uses_rfc5987_and_ascii_fallback(self):
+        captured: dict = {}
+        self._storage(captured).presign_get(
+            "originals/aa/" + "a" * 64 + ".pdf", filename="台積電(2330).pdf", inline=True,
+        )
+        header = captured["Params"]["ResponseContentDisposition"]
+        self.assertTrue(header.startswith("inline; "), header)
+        self.assertIn("filename*=UTF-8''%E5%8F%B0%E7%A9%8D%E9%9B%BB%282330%29.pdf", header)
+        # ASCII 回退不得含非 ASCII 或引號；CJK 全被換成底線但副檔名保留
+        self.assertIn('filename="___(2330).pdf"', header)
+
+    def test_content_disposition_all_non_ascii_falls_back_to_download_with_suffix(self):
+        header = storage_module.content_disposition("研報.docx")
+        self.assertTrue(header.startswith("attachment; "))
+        self.assertIn('filename="download.docx"', header)
+
+    def test_content_disposition_strips_directory_components(self):
+        # 檔名來自 DB，防禦性地只取 basename
+        header = storage_module.content_disposition("../x/evil.pdf")
+        self.assertIn('filename="evil.pdf"', header)
+        self.assertIn("filename*=UTF-8''evil.pdf", header)
+
+
+class OriginalAvailableTests(unittest.TestCase):
+    """r2 模式只認 key：本機檔存在也不算「有檔」，因為 /file 根本不會去讀它。"""
+
+    def test_r2_ignores_existing_local_file(self):
+        storage = SimpleNamespace(mode="r2")
+        self.assertFalse(storage_module.original_available(storage, None, __file__))
+        self.assertTrue(storage_module.original_available(storage, "originals/aa/x.pdf", None))
+
+    def test_hybrid_and_local_accept_key_or_existing_file(self):
+        for mode in ("hybrid", "local"):
+            storage = SimpleNamespace(mode=mode)
+            self.assertTrue(storage_module.original_available(storage, None, __file__), mode)
+            self.assertTrue(storage_module.original_available(storage, "originals/aa/x.pdf", "/nonexistent"), mode)
+            self.assertFalse(storage_module.original_available(storage, None, "/nonexistent"), mode)

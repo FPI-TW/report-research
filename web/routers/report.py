@@ -334,7 +334,9 @@ async def report_doc_pdf(report_id: str):
             if object_key != canonical_key:
                 raise HTTPException(status_code=503, detail="generated object pointer integrity error")
             try:
-                url = await asyncio.to_thread(storage.presign_get, object_key)
+                url = await asyncio.to_thread(
+                    storage.presign_get, object_key, filename=f"report-{report_id[:8]}.pdf",
+                )
             except ObjectStorageError as exc:
                 raise HTTPException(status_code=503, detail="object storage unavailable") from exc
             return RedirectResponse(url=url, status_code=302, headers={"Cache-Control": "no-store"})
@@ -405,7 +407,9 @@ async def report_doc_pdf(report_id: str):
                 raise HTTPException(status_code=409, detail="current rendition changed; retry download")
         if storage.enabled and object_key:
             try:
-                url = await asyncio.to_thread(storage.presign_get, object_key)
+                url = await asyncio.to_thread(
+                    storage.presign_get, object_key, filename=f"report-{report_id[:8]}.pdf",
+                )
             except ObjectStorageError as exc:
                 raise HTTPException(status_code=503, detail="object storage unavailable") from exc
             return RedirectResponse(url=url, status_code=302, headers={"Cache-Control": "no-store"})

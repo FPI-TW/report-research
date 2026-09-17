@@ -405,7 +405,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
             def head_object(self, key):
                 raise ObjectNotFound(key)
 
-            def presign_get(self, key):
+            def presign_get(self, key, **_kwargs):
                 captured["presigned"] = key
                 return "https://private.example.test/rebuilt-base"
 
@@ -490,7 +490,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
             enabled = True
             mode = "r2"
 
-            def presign_get(self, _key):
+            def presign_get(self, _key, **_kwargs):
                 raise AssertionError("lost base repair race must not presign stale base")
 
         async def no_rendition(_rid):
@@ -531,7 +531,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
             def head_object(self, key):
                 raise ObjectNotFound(key)
 
-            def presign_get(self, _key):
+            def presign_get(self, _key, **_kwargs):
                 raise AssertionError("lost repair race must not sign stale rendition")
 
         async def fake_current(_rid):
@@ -605,7 +605,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
             def head_object(self, key):
                 raise ObjectNotFound(key)
 
-            def presign_get(self, key):
+            def presign_get(self, key, **_kwargs):
                 captured["presigned"] = key
                 return "https://private.example.test/base-rebuilt"
 
@@ -648,7 +648,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
             enabled = True
             mode = "r2"
 
-            def presign_get(self, key):
+            def presign_get(self, key, **_kwargs):
                 captured["presigned"] = key
                 return "https://private.example.test/rebuilt"
 
@@ -713,7 +713,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
             def head_object(self, key):
                 raise ObjectNotFound(key)
 
-            def presign_get(self, key):
+            def presign_get(self, key, **_kwargs):
                 captured["presigned"] = key
                 return "https://private.example.test/rendition-rebuilt"
 
@@ -803,7 +803,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
             def head_object(self, key):
                 raise ObjectNotFound(key)
 
-            def presign_get(self, _key):
+            def presign_get(self, _key, **_kwargs):
                 return "https://private.example.test/hybrid-rendition"
 
         async def fake_current(_rid):
@@ -846,7 +846,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
             def head_object(self, _key):
                 raise AssertionError("foreign base pointer must fail before HEAD")
 
-            def presign_get(self, _key):
+            def presign_get(self, _key, **_kwargs):
                 raise AssertionError("foreign base pointer must never be signed")
 
         async def no_rendition(_rid):
@@ -908,7 +908,7 @@ class PdfServesCurrentRenditionTests(unittest.TestCase):
                     raise AssertionError(f"unexpected key: {seen_key}")
                 return {"Metadata": {"sha256": remote_sha}}
 
-            def presign_get(self, _key):
+            def presign_get(self, _key, **_kwargs):
                 raise AssertionError("metadata/key mismatch must never be signed")
 
         async def no_rendition(_rid):

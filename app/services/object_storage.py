@@ -105,6 +105,27 @@ def _is_precondition_failed(exc: Exception) -> bool:
     return code in {"409", "412", "ConditionalRequestConflict", "PreconditionFailed"}
 
 
+def original_available(storage: "ObjectStorage", object_key: str | None, file_path: str | None) -> bool:
+    """Whether ``/file`` can serve this original.  r2 never consults ``file_path``."""
+    import os
+
+    if storage.mode == "r2":
+        return bool(object_key)
+    return bool(object_key) or (bool(file_path) and os.path.isfile(file_path))
+
+
+def content_disposition(filename: str, *, inline: bool = False) -> str:
+    """RFC 6266 header value with an ASCII fallback plus RFC 5987 ``filename*`` for CJK names."""
+    from urllib.parse import quote
+
+    name = Path(filename).name or "download"
+    ascii_name = "".join(ch if 32 < ord(ch) < 127 and ch not in '"\\' else "_" for ch in name)
+    if not Path(ascii_name).stem.strip("_"):
+        ascii_name = "download" + Path(name).suffix
+    kind = "inline" if inline else "attachment"
+    return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name, safe='')}"
+
+
 class ObjectStorage:
     """Singleton-friendly synchronous R2 client with deliberately small surface area."""
 
@@ -290,12 +311,19 @@ class ObjectStorage:
             if not continuation:
                 raise ObjectStorageError("R2 inventory pagination missing continuation token")
 
-    def presign_get(self, key: str) -> str:
+    def presign_get(self, key: str, *, filename: str | None = None, inline: bool = False) -> str:
+        """Short-lived GET URL.  ``filename`` restores the human name on a cross-origin download.
+
+        Object keys are content-addressed (``originals/<hash>.pdf``), so without an explicit
+        ``Content-Disposition`` the browser saves ``<hash>.pdf``; ``<a download>`` cannot fix
+        that because the attribute is ignored once the 302 leaves our origin.
+        """
+        params = {"Bucket": self.settings.r2_bucket, "Key": key}
+        if filename:
+            params["ResponseContentDisposition"] = content_disposition(filename, inline=inline)
         try:
             return self._get_client().generate_presigned_url(
-                "get_object",
-                Params={"Bucket": self.settings.r2_bucket, "Key": key},
-                ExpiresIn=self.settings.r2_presign_ttl_seconds,
+                "get_object", Params=params, ExpiresIn=self.settings.r2_presign_ttl_seconds,
             )
         except Exception as exc:
             raise ObjectStorageError(f"R2 presign failed: {exc}") from exc

@@ -545,3 +545,37 @@ class SimilarTests(ReadingApiBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class R2AvailabilityTests(ReadingApiBase):
+    """r2 模式下 has_file 只認 source_object_key：本機檔存在也不能回 True，
+    否則前端會內嵌一個註定 503 的 PDF。"""
+
+    def _with_storage(self, mode: str):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        storage = SimpleNamespace(mode=mode, enabled=mode != "local")
+        return patch.object(reading_router, "get_object_storage", lambda: storage)
+
+    def test_r2_without_key_has_no_file_even_if_local_exists(self):
+        self._set(fetch_doc=self._async(_doc(file_path=str(Path(__file__).resolve()))))
+        with self._with_storage("r2"):
+            body = _authed_client().get(f"/api/reading/{HASH}").json()
+        self.assertFalse(body["has_file"])
+        self.assertTrue(body["is_pdf"])  # 型別看 file_name，與有沒有檔無關
+
+    def test_r2_with_key_has_file_regardless_of_local_path(self):
+        doc = _doc(file_path="/nonexistent/x.pdf")
+        doc.source_object_key = "originals/aa/" + "a" * 64 + ".pdf"
+        self._set(fetch_doc=self._async(doc))
+        with self._with_storage("r2"):
+            body = _authed_client().get(f"/api/reading/{HASH}").json()
+        self.assertTrue(body["has_file"])
+        self.assertTrue(body["is_pdf"])
+
+    def test_hybrid_without_key_still_uses_local_file(self):
+        self._set(fetch_doc=self._async(_doc(file_path=str(Path(__file__).resolve()))))
+        with self._with_storage("hybrid"):
+            body = _authed_client().get(f"/api/reading/{HASH}").json()
+        self.assertTrue(body["has_file"])

@@ -129,7 +129,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
                 self.key = key
                 return {"ContentLength": 1, "Metadata": {"sha256": "a" * 64}}
 
-            def presign_get(self, key):
+            def presign_get(self, key, **_kwargs):
                 return "https://private.example.test/signed"
 
         digest = "a" * 64
@@ -156,7 +156,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
                         def head_object(self, _key):
                             return {"Metadata": metadata}
 
-                        def presign_get(self, _key):
+                        def presign_get(self, _key, **_kwargs):
                             raise AssertionError("invalid original metadata must never be presigned")
 
                     _Storage.mode = mode
@@ -351,3 +351,77 @@ class ReportFileBehaviourTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class R2OriginalFilenameAndAvailabilityTests(unittest.TestCase):
+    """presign 要帶原檔名；r2 模式的 has_file 只認 key。"""
+
+    def setUp(self):
+        self._orig_session = deps.SessionFactory
+        self._orig_storage = report_file_router.get_object_storage
+
+    def tearDown(self):
+        deps.SessionFactory = self._orig_session
+        report_file_router.get_object_storage = self._orig_storage
+
+    def test_redirect_presigns_with_original_filename_inline_for_pdf(self):
+        captured = {}
+
+        class _Storage:
+            enabled = True
+            mode = "r2"
+
+            def head_object(self, key):
+                return {"ContentLength": 1, "Metadata": {"sha256": "a" * 64}}
+
+            def presign_get(self, key, **kwargs):
+                captured.update(kwargs)
+                return "https://private.example.test/signed"
+
+        digest = "a" * 64
+        row = ("台積電.pdf", "TW", "kgi", None, None, "/not-used.pdf", None, None, None,
+               f"originals/aa/{digest}.pdf", digest)
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: _Storage()
+        r = _authed().get("/api/report/rid-1/file")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(captured, {"filename": "台積電.pdf", "inline": True})
+
+    def test_redirect_presigns_docx_as_attachment(self):
+        captured = {}
+
+        class _Storage:
+            enabled = True
+            mode = "hybrid"
+
+            def head_object(self, key):
+                return {"Metadata": {"sha256": "b" * 64}}
+
+            def presign_get(self, key, **kwargs):
+                captured.update(kwargs)
+                return "https://private.example.test/signed"
+
+        digest = "b" * 64
+        row = ("memo.docx", "TW", "kgi", None, None, "/not-used.docx", None, None, None,
+               f"originals/bb/{digest}.docx", digest)
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: _Storage()
+        r = _authed().get("/api/report/rid-1/file")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(captured, {"filename": "memo.docx", "inline": False})
+
+    def test_full_in_r2_mode_reports_no_file_without_key_even_if_local_exists(self):
+        here = str(Path(__file__).resolve())
+        row = ("self.py", "TW", "kgi", None, None, here, None, None, None, None, "c" * 64)
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: type("S", (), {"enabled": True, "mode": "r2"})()
+        body = _authed().get("/api/report/rid-1/full").json()
+        self.assertFalse(body["has_file"])
+
+    def test_full_in_hybrid_mode_still_counts_existing_local_file(self):
+        here = str(Path(__file__).resolve())
+        row = ("self.py", "TW", "kgi", None, None, here, None, None, None, None, "c" * 64)
+        deps.SessionFactory = lambda: _FakeSession(row)
+        report_file_router.get_object_storage = lambda: type("S", (), {"enabled": True, "mode": "hybrid"})()
+        body = _authed().get("/api/report/rid-1/full").json()
+        self.assertTrue(body["has_file"])

@@ -17,7 +17,13 @@ from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import text
 
 from app.services.filename import source_display
-from app.services.object_storage import ObjectNotFound, ObjectStorageError, get_object_storage, original_object_key
+from app.services.object_storage import (
+    ObjectNotFound,
+    ObjectStorageError,
+    get_object_storage,
+    original_available,
+    original_object_key,
+)
 from web import deps
 
 router = APIRouter()
@@ -70,7 +76,7 @@ async def report_full(report_id: str):
         "summary": summary,
         "report_date": rdate.isoformat() if rdate else None,
         "report_type": rtype,
-        "has_file": bool(object_key) or (bool(fpath) and os.path.isfile(fpath)),
+        "has_file": original_available(get_object_storage(), object_key, fpath),
     }
 
 
@@ -107,7 +113,9 @@ async def report_file(report_id: str):
             metadata_sha = object_metadata.get("sha256") or object_metadata.get("SHA256")
             if not isinstance(metadata_sha, str) or metadata_sha != file_hash:
                 raise HTTPException(status_code=503, detail="original object pointer integrity error")
-            url = await asyncio.to_thread(storage.presign_get, object_key)
+            url = await asyncio.to_thread(
+                storage.presign_get, object_key, filename=row[0], inline=str(row[0]).lower().endswith(".pdf"),
+            )
             return RedirectResponse(url=url, status_code=302, headers={"Cache-Control": "no-store"})
         except ObjectNotFound:
             if storage.mode == "r2":

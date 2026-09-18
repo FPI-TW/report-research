@@ -6,7 +6,8 @@ data/extracted/
 # 重跑就有；compare.html 一份就是數 MB。
 data/extraction/
 data/tags/
-data/reports/
+# 跨文件樣板段落字典（scripts/build_boilerplate.py 產出，一 source 一檔；重跑就有）。
+data/boilerplate/
 data/*.json
 研報自動匯入/
 .uv/

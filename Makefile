@@ -92,6 +92,9 @@ restore-durability:  ## 還原 Postgres 耐久性設定（ingest-lowio 異常中
 align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 	uv run python scripts/align_findb_markets.py
 
+boilerplate:  ## 重建跨文件樣板段落字典 data/boilerplate/（唯讀語料、零 LLM；新券商上線或換版型時跑）
+	uv run python scripts/build_boilerplate.py
+
 # ───── Claude CLI 批次（互斥）─────
 # 下面三支與 tag_all_cli.py／sync_new_reports.py 共五支都 spawn claude CLI，併發互搶
 # 會讓擷取被大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。互斥由
@@ -156,7 +159,7 @@ stats:  ## 看 DB 市場分佈與筆數
 eval-compare:  ## 比較兩份評測結果（BASE=… CAND=… [TOL=0.03]；劣化即非零退出）
 	@test -n "$(BASE)" && test -n "$(CAND)" || { \
 	  echo "用法：make eval-compare BASE=<基準線.json> CAND=<待比較.json> [TOL=0.03]"; \
-	  echo "  兩份必須是同一套評測的產物（RAGAS／研報／檢索三套不能互比）"; \
+	  echo "  兩份必須是同一套評測的產物（RAGAS／檢索／抽取三套不能互比）"; \
 	  echo "  例：make eval-compare BASE=eval/before.json CAND=eval/after.json"; \
 	  exit 2; }
 	uv run python scripts/eval_compare.py --baseline "$(BASE)" --candidate "$(CAND)" --tolerance $(TOL)
@@ -197,8 +200,7 @@ clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）
 sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync）
 	bash scripts/sync_new_reports.sh
 
-# 只備「重建不回來」的七張表（qa_log / report_doc / rendition / takeaway / signal /
-# run / section）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
+# 只備「重建不回來」的四張表（qa_log / takeaway / signal / brief）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
 # 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
 db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
 	bash scripts/db_backup.sh

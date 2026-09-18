@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text as sql_text  # noqa: E402
 
+from app.services.boilerplate import strip_boilerplate  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
 from app.services.embed import embed_texts  # noqa: E402
@@ -101,7 +102,7 @@ async def main(force: bool) -> None:
                 stats["skip_exists"] += 1
                 continue
 
-            chunks = chunk_text(clean_extracted(rec["text"]))
+            chunks = chunk_text(strip_boilerplate(clean_extracted(rec["text"]), rec.get("source"))[0])
             if not chunks:
                 stats["skip_scanned"] += 1
                 continue

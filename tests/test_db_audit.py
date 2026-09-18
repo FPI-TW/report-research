@@ -6,8 +6,8 @@
 「我造得出違反」而不是「稽核器判得對」。判斷邏輯全在 Python（count > 0 ⇒ 失敗、
 退出碼、排序），SQL 則以形狀驗（每條回單一整數、掃對表、方向沒寫反）。
 
-真 DB 那一半靠實跑：2026-07-30 對生產跑過，抓到 2 列孤兒 report_doc（與獨立查詢
-的數字相符），退出碼 1。
+真 DB 那一半靠實跑：2026-07-30 對生產跑過，抓到 2 列孤兒（當時的研報成品表，該表已
+隨功能移除；與獨立查詢的數字相符），退出碼 1。
 """
 import re
 import subprocess
@@ -125,17 +125,6 @@ class CheckShapeTests(unittest.TestCase):
                 continue
             with self.subTest(key=c.key):
                 self.assertIn("NOT EXISTS", c.sql.upper())
-
-    def test_conversation_orphan_checks_use_coalesce_grouping_key(self):
-        """對話串的鍵是 `COALESCE(conversation_id, id)`，不是 `conversation_id`。
-
-        直接比 conversation_id 會把「單題對話」（該欄為 NULL，以自身 id 為群組）
-        全部誤判成孤兒。
-        """
-        for key in ("orphan_report_doc", "orphan_report_run"):
-            c = next(x for x in db_audit.CHECKS if x.key == key)
-            with self.subTest(key=key):
-                self.assertIn("COALESCE(q.conversation_id, q.id)", c.sql)
 
     def test_signal_mismatch_uses_is_distinct_from(self):
         """`!=` 對 NULL 回 NULL＝不算命中，會把「一邊有市場一邊沒有」全部漏掉。"""

@@ -52,7 +52,6 @@ _SNAPSHOT = {
     "evaluation": {
         "qa": {"total": 40, "checked": 3, "degraded": 1, "below_min": 1,
                "avg_score": 0.5634, "latest": "2026-07-28"},
-        "report": None,
         "min_score": 0.9,
     },
 }

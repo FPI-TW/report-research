@@ -56,10 +56,52 @@ _MIN_COL_WIDTH_FRAC = 0.12
 # 詞數也夠，寬度與詞數兩條都擋不住；只有內容擋得住——真的文字欄不會七成是數字。
 _NUMERIC_COL_MAX_FRAC = 0.70
 _NUMERIC_TOKEN = re.compile(r"^[\d.,%/()+\-–~:xX]+$")
+# 帶單位後綴的數值（6M、12M、3.5x、20bp）也算數值 token。單一英文字母不算進分母——
+# 那是圖表座標軸的字距散字（「J a n」「M a r」），不是文字欄的證據，卻會把數值占比
+# 壓到門檻之下：v4 實測凱基美股個股頁的側欄數值欄占比 0.69 對門檻 0.70，差這一點
+# 就被判成獨立一欄，「12 個月目標價」與「47.3」從此分家（全庫 1,177 篇 max_columns=3）。
+_NUMERIC_UNIT_TOKEN = re.compile(r"^[(\[]?[+\-–]?\d[\d.,]*[)\]]?[A-Za-z%]{1,2}$")
+_SINGLE_LETTER = re.compile(r"^[A-Za-z]$")
+# 窄數值側欄：寬度低於內容寬度這個比例、且數值占比達此值，就是側欄裡靠右對齊的數值欄，
+# 一律併回左邊的標籤欄。比 _NUMERIC_COL_MAX_FRAC 寬鬆是因為多了「窄」這個條件。
+_NUMERIC_SIDEBAR_MAX_WIDTH_FRAC = 0.20
+_NUMERIC_SIDEBAR_MIN_FRAC = 0.50
+# 溝槽驗證：兩側都有字的行裡，若超過這個比例是「連續穿過溝槽」（穿越處沒有 min_gap
+# 寬的間隙），那條溝槽是段落內部的稀疏帶不是欄界。投影容許 4% 跨欄詞之後，只有幾行
+# 的段落（大摩首頁右上角的問卷提示）會在自己內部投影出一條假溝槽，段落於是被腰斬成
+# 兩欄。真雙欄頁的穿越行只有跨欄大標，占比遠低於此。
+_GUTTER_CROSSING_MAX_FRAC = 0.5
+# 相鄰詞合併：同一行、水平間隙小於此值（含重疊）的兩個詞是同一個詞。券商 PDF 用
+# 空白字元做右對齊填充，填充的空白會覆蓋在數字上，pdfplumber 把「50,009.35」斷成
+# 「5」與「0,009.35」——v3 全庫抽樣 30 份 277 頁，數值 token 有 16–64% 被切開。
+# 真正的詞距即使在窄體字也有 1pt 以上；0.5pt 以內只可能是同一個詞。
+_TOUCHING_GAP = 0.5
+# 重疊超過這麼多的不是同一個詞被切開，是兩個疊在一起的物件（浮水印壓在正文上）。
+# 填充空白造成的切開只重疊 0.1pt 左右，字距微調（kerning）也在 1pt 內。
+_TOUCHING_MAX_OVERLAP = 1.5
+_TOUCHING_LINE_TOL = 1.0
+# 圖區：曲線、影像、細長矩形（長條圖的 bar）聚成的區域。區域內的短數值 token 是座標軸
+# 刻度、圖例與資料標籤，不是正文：它們讓 chunk 充滿「50 40 30 20 10 0」，也是元大圖表頁
+# 被判成三欄的原因。表格的框線是 line、底色是寬矩形，都不在這裡的取材範圍內；細矩形
+# 還要求高度不一（bar），排除表格窄欄的逐列底色。
+_FIG_MERGE_PAD = 6.0
+_FIG_MIN_CURVES = 8  # 折線／圓餅至少由這麼多段小基元組成；側欄的幾個圓角色塊湊不到
+_FIG_MIN_BARS = 5
+_FIG_MIN_W, _FIG_MIN_H = 50.0, 30.0
+_FIG_MAX_PAGE_FRAC = 0.6  # 超過頁面六成的區域是全頁背景圖，不是圖表
+_FIG_PRIM_MAX_PAGE_FRAC = 0.03  # 單一基元超過頁面 3% 是色塊或裁切路徑，不是圖的一部分
+_FIG_PRIM_MAX_W_FRAC = 0.30  # 小基元：寬度不超過頁寬三成（側欄標題色塊有四成寬）
+_FIG_BAR_MIN_W, _FIG_BAR_MAX_W = 3.0, 25.0  # 1pt 寬的是分隔線，不是 bar
+_FIG_BAR_HEIGHT_SPREAD = 1.5
+# 區域內長度不超過此值的 token 視為刻度、圖例、座標軸標籤（「Nov-24」「FY22」「女裝」），
+# 只留長字串（圖說、資料來源）。散文極少壓在繪圖基元上，代價可接受。
+_FIG_NOISE_MAX_CHARS = 6
 # 在溝槽處要有多寬的間隙才算「這裡真的是欄界」，以溝槽最小寬度為單位。
-# 取 0.5 是因為欄界處的實際留白必然接近整條溝槽寬，而跨欄大標在那裡只有
-# 一個字距——兩者相差一個量級，門檻落在中間很安全。
-_GUTTER_GAP_SLACK = 0.5
+# 跨欄大標在溝槽處只有一個字距（9–12pt 字約 2.5–4pt），而欄界處的留白通常接近整條溝槽寬。
+# v3 取 0.5（A4 約 10pt）；v4 降到 0.3（約 6pt）：分行改用中點分群後，左欄長行與右欄表格列
+# 更常落在同一行，左欄文字侵入溝槽時局部留白只剩 7–8pt，0.5 會讓整行跨欄、整段被排到
+# 跨欄帶之後（元富 3008 快報實測）。6pt 仍是字距的 1.5–2 倍。
+_GUTTER_GAP_SLACK = 0.3
 # 欄數上限。研報實務上是 1 或 2 欄；判到 4 欄幾乎都是表格被誤認。
 _MAX_COLS = 3
 # 投影只取版心：頁首、跨欄大標、頁尾都會橫跨溝槽，把它們算進去會讓
@@ -130,8 +172,50 @@ _TABLE_REGULAR_MIN = 0.80
 # 而被誤判的散文區塊是 40%。**不要改成限制欄數**——同一份檔的真表格有到
 # 17 欄，欄數上限會把真表格一起殺掉。
 _TEXT_TABLE_MAX_EMPTY_ROW_FRAC = 0.15
+# 框線表的兩種已知失敗（v4 實測凱基投資早報）：
+# (a) **殘缺**——框線只圈到表格的一部分，框外同列還有數值（YTD 整欄掉到框外變成獨立段落，
+#     從此與它的列失聯）。判準：同列 y 範圍內、框外 3–60pt 處的數值詞達列數一半。
+# (b) **欄位不足**——框線少於實際欄數，pdfplumber 把四個數值塞進一格
+#     （「| 3.4 6.6 2.6 1.3 |」）。判準：含 3 個以上數值 token 的儲存格占比。
+# 兩種都先用文字對齊策略在（放寬後的）同一區域重抽一次，欄數變多才採用；否則整張
+# 退回文字流——每一列仍是一行、數值仍在自己的列上，比一張少一欄的表格誠實。
+_TABLE_BESIDE_MIN_GAP, _TABLE_BESIDE_MAX_GAP = 3.0, 60.0
+_TABLE_BESIDE_MIN_WORDS = 3
+_TABLE_UNDERSEG_MAX_CELL_FRAC = 0.25
+_CELL_NUMBER = re.compile(r"(?<!\S)[(\-+]?\d[\d,.]*%?\)?(?!\S)")
+# 詞重建表格（_words_table）的欄界：正文列上沒有任何詞跨過、至少這麼寬的垂直空隙。
+# 相鄰欄的數值即使靠右對齊也隔 6pt 以上；同一儲存格內兩個詞之間是一個字距（約 2pt）。
+_TABLE_COL_MIN_GAP = 4.0
 
 _WS = re.compile(r"\s+")
+
+
+def _is_numeric_token(text: str) -> bool:
+    return bool(_NUMERIC_TOKEN.match(text) or _NUMERIC_UNIT_TOKEN.match(text))
+
+
+def _merge_touching_words(words: list[dict]) -> tuple[list[dict], int]:
+    """把同一行、水平間隙落在 (−`_TOUCHING_MAX_OVERLAP`, `_TOUCHING_GAP`) 的相鄰詞合併。
+    回 (詞, 合併次數)。重疊太多的是兩個疊在一起的物件（浮水印壓在正文上），不併。"""
+    ordered = sorted(words, key=lambda w: (round(w["top"], 1), w["x0"]))
+    out: list[dict] = []
+    merged = 0
+    for w in ordered:
+        if out:
+            p = out[-1]
+            gap = w["x0"] - p["x1"]
+            if abs(w["top"] - p["top"]) <= _TOUCHING_LINE_TOL and -_TOUCHING_MAX_OVERLAP < gap < _TOUCHING_GAP:
+                out[-1] = {
+                    **p,
+                    "text": p["text"] + w["text"],
+                    "x1": max(p["x1"], w["x1"]),
+                    "top": min(p["top"], w["top"]),
+                    "bottom": max(p["bottom"], w["bottom"]),
+                }
+                merged += 1
+                continue
+        out.append(dict(w))
+    return out, merged
 
 
 def _norm(s: str) -> str:
@@ -215,7 +299,36 @@ def detect_columns(words: list[dict], width: float, height: float) -> list[float
     # 太窄或詞數太少的欄不是一欄——併回鄰欄，**不是整頁退回單欄**：元富英文個股報告
     # 的側欄裡「標籤…數值」之間有一條稀疏帶，會被投影成第二條溝槽；若因此整頁放棄，
     # 真正的側欄／主文分界就跟著丟了（E0 實測）。
-    return _merge_weak_columns(gutters, body, x0, x1)
+    gutters = _merge_weak_columns(gutters, body, x0, x1)
+    if not gutters:
+        return []
+    # 最後用行級證據驗證：與 `_page_blocks` 同一個 min_gap 口徑。
+    min_gap = _MIN_GUTTER_FRAC * span * _GUTTER_GAP_SLACK
+    return _reject_crossed_gutters(gutters, _group_lines(body), min_gap)
+
+
+def _reject_crossed_gutters(gutters: list[float], lines: list[list[dict]], min_gap: float) -> list[float]:
+    """丟掉被文字連續穿過的溝槽。
+
+    對每條溝槽只看「兩側都有字」的行：若其中超過 `_GUTTER_CROSSING_MAX_FRAC` 的行在
+    穿越處沒有 `min_gap` 寬的間隙（或有詞直接橫跨），那是段落自己的內部空隙被投影
+    成了溝槽。真雙欄頁上兩側都有字的行幾乎是全部的行，而連續穿過的只有跨欄大標。"""
+    kept: list[float] = []
+    for g in gutters:
+        both = crossing = 0
+        for ln in lines:
+            left = [w["x1"] for w in ln if w["x1"] <= g]
+            right = [w["x0"] for w in ln if w["x0"] >= g]
+            spanning = any(w["x0"] < g < w["x1"] for w in ln)
+            if not (spanning or (left and right)):
+                continue
+            both += 1
+            if spanning or (min(right) - max(left)) < min_gap:
+                crossing += 1
+        if both and crossing / both > _GUTTER_CROSSING_MAX_FRAC:
+            continue
+        kept.append(g)
+    return kept
 
 
 def _merge_weak_columns(gutters: list[float], body: list[dict], x0: float, x1: float) -> list[float]:
@@ -236,8 +349,19 @@ def _merge_weak_columns(gutters: list[float], body: list[dict], x0: float, x1: f
             shares.append(len(ws) / len(body))
         numeric: list[float] = []
         for a, b in zip(edges, edges[1:]):
-            ws = [w for w in body if a <= (w["x0"] + w["x1"]) / 2 < b]
-            numeric.append(sum(1 for w in ws if _NUMERIC_TOKEN.match(w.get("text", ""))) / len(ws) if ws else 0.0)
+            # 分母排除單一英文字母（圖表座標軸的字距散字），見 _SINGLE_LETTER 的說明。
+            ws = [
+                w for w in body
+                if a <= (w["x0"] + w["x1"]) / 2 < b and not _SINGLE_LETTER.match(w.get("text", ""))
+            ]
+            numeric.append(sum(1 for w in ws if _is_numeric_token(w.get("text", ""))) / len(ws) if ws else 0.0)
+        narrow_numeric = [
+            i > 0
+            and k is not None
+            and (k[1] - k[0]) < _NUMERIC_SIDEBAR_MAX_WIDTH_FRAC * span
+            and numeric[i] >= _NUMERIC_SIDEBAR_MIN_FRAC
+            for i, k in enumerate(ink)
+        ]
         weak = [
             i
             for i, k in enumerate(ink)
@@ -245,13 +369,14 @@ def _merge_weak_columns(gutters: list[float], body: list[dict], x0: float, x1: f
             or (k[1] - k[0]) < _MIN_COL_WIDTH_FRAC * span
             or shares[i] < _MIN_COL_SHARE
             or numeric[i] >= _NUMERIC_COL_MAX_FRAC
+            or narrow_numeric[i]
         ]
         if not weak:
             return gutters
         i = weak[0]
         # 數值欄一律併回**左邊**：它是標籤右側對齊的數值，屬於左邊的標籤，不看空隙
-        # （空隙常常反而是往主文那側較小，實測元富三份都會併錯邊）。
-        if numeric[i] >= _NUMERIC_COL_MAX_FRAC and i > 0:
+        # （空隙常常反而是往主文那側較小，實測元富三份都會併錯邊）。窄數值側欄同理。
+        if i > 0 and (numeric[i] >= _NUMERIC_COL_MAX_FRAC or narrow_numeric[i]):
             gutters.pop(i - 1)
             continue
         candidates: list[tuple[float, int]] = []  # (空隙寬, 要移除的溝槽索引)
@@ -265,7 +390,13 @@ def _merge_weak_columns(gutters: list[float], body: list[dict], x0: float, x1: f
     return gutters
 
 
-def _column_of(x0: float, x1: float, gutters: list[float]) -> int:
+def _spans(x0: float, x1: float, gutters: list[float], slack: float) -> bool:
+    """區間是否「真的」橫跨溝槽：兩側都要伸出溝槽至少 `slack`。左欄的長行常侵入溝槽幾 pt，
+    沒有這個容差會被當成跨欄元素、整段被排進跨欄帶（元富 3008 快報實測，v4）。"""
+    return any(x0 < g - slack and x1 > g + slack for g in gutters)
+
+
+def _column_of(x0: float, x1: float, gutters: list[float], slack: float = 0.0) -> int:
     """區間 → 欄索引。**橫跨溝槽者一律回 0。**
 
     跨欄元素（大標、橫幅表格）沒有「屬於哪一欄」這回事。回 0 讓它落在左欄
@@ -274,9 +405,9 @@ def _column_of(x0: float, x1: float, gutters: list[float]) -> int:
     分欄帶，那超出本輪範圍）。
 
     **不可以改用中點判定**：橫幅元素的中點必然落在溝槽右側，於是整條大標會
-    被排到右欄最後面。
+    被排到右欄最後面。`slack` 見 `_spans`。
     """
-    if any(x0 < g < x1 for g in gutters):
+    if _spans(x0, x1, gutters, slack):
         return 0
     mid = (x0 + x1) / 2
     idx = 0
@@ -284,6 +415,62 @@ def _column_of(x0: float, x1: float, gutters: list[float]) -> int:
         if mid >= g:
             idx += 1
     return idx
+
+
+def _run_column(run: list[dict], gutters: list[float]) -> int:
+    """一段同行的詞 → 欄索引：詞的中點分布在溝槽兩側才算跨欄（回 0），否則依中點的中位數歸欄。
+    用詞中點而不是區間端點，長行侵入溝槽幾 pt 不會被誤判成跨欄。"""
+    centers = sorted((w["x0"] + w["x1"]) / 2 for w in run)
+    if any(centers[0] < g < centers[-1] for g in gutters):
+        return 0
+    mid = centers[len(centers) // 2]
+    return sum(1 for g in gutters if mid >= g)
+
+
+def _page_lines(words: list[dict], gutters: list[float], min_gap: float) -> list[list[dict]]:
+    """整頁的詞 → 行，先分欄再分行、再把跨欄大標接回來。
+
+    v3 是整頁一起分行、再依溝槽切：不同欄字級不同時（高盛首頁主文 10pt、側欄 Key Data
+    6.7pt 且列距 8pt），主文一行的垂直範圍蓋到側欄兩列，「Market cap」與「Enterprise value」
+    被絞成一行、詞依 x 交錯（v4 實測）。改成：每個詞依中點分到暫定欄，各欄自己分行（行距
+    容差只看該欄自己的字級），最後把相鄰欄「垂直中點一致、且溝槽處留白小於 `min_gap`」的
+    兩行接回一行——那是橫跨兩欄的大標，接回後由 `_split_at_gutters`／`_run_column` 判成跨欄。
+    真雙欄的兩行在溝槽處留白遠大於 `min_gap`，不會被接。"""
+    if not gutters:
+        return _group_lines(words)
+    cols: dict[int, list[dict]] = {}
+    for w in words:
+        cols.setdefault(sum(1 for g in gutters if (w["x0"] + w["x1"]) / 2 >= g), []).append(w)
+    per = {c: _group_lines(ws) for c, ws in cols.items()}
+
+    def _center(ln: list[dict]) -> float:
+        return statistics.median((w["top"] + w["bottom"]) / 2 for w in ln)
+
+    out: list[list[dict]] = []
+    carry = per.get(0, [])
+    for c in range(1, len(gutters) + 1):
+        right = per.get(c, [])
+        taken: set[int] = set()
+        rejoined: list[list[dict]] = []
+        for left in carry:
+            lc = _center(left)
+            tol = _LINE_TOL_FRAC * statistics.median(w["bottom"] - w["top"] for w in left)
+            lx1 = max(w["x1"] for w in left)
+            hit = None
+            for j, rl in enumerate(right):
+                if j in taken:
+                    continue
+                if abs(_center(rl) - lc) <= tol and min(w["x0"] for w in rl) - lx1 < min_gap:
+                    hit = j
+                    break
+            if hit is None:
+                out.append(left)
+            else:
+                taken.add(hit)
+                rejoined.append(left + right[hit])
+        carry = [rl for j, rl in enumerate(right) if j not in taken] + rejoined
+    out.extend(carry)
+    return out
 
 
 # ── 行與段落 ────────────────────────────────────────────────────────────────
@@ -304,7 +491,10 @@ def _split_at_gutters(line: list[dict], gutters: list[float], min_gap: float) ->
     ordered = sorted(line, key=lambda w: w["x0"])
     runs: list[list[dict]] = [[ordered[0]]]
     for prev, cur in zip(ordered, ordered[1:]):
-        crossed = any(prev["x1"] <= g <= cur["x0"] for g in gutters)
+        # 以兩個詞的中點判「分處溝槽兩側」，不要求前一個詞完全在溝槽左邊：左欄的長行
+        # 常侵入溝槽幾 pt，用 x1 判會漏掉，整行於是跨欄（v4 實測）。
+        pm, cm = (prev["x0"] + prev["x1"]) / 2, (cur["x0"] + cur["x1"]) / 2
+        crossed = any(pm < g < cm for g in gutters)
         if crossed and (cur["x0"] - prev["x1"]) >= min_gap:
             runs.append([cur])
         else:
@@ -313,18 +503,28 @@ def _split_at_gutters(line: list[dict], gutters: list[float], min_gap: float) ->
 
 
 def _group_lines(words: list[dict]) -> list[list[dict]]:
-    """同一欄內的詞 → 行。"""
+    """同一欄內的詞 → 行。
+
+    以**垂直中點**對行內中點的**中位數**分群，不比 `top`、也不只比行首詞：同一列裡中文
+    標籤與拉丁數字的字框高度不同（7.6pt 對 9.5pt 的符號字），比 top 會差到門檻邊緣；只比
+    行首詞則一個高字框的雜訊字元（凱基側欄每列前的隱形符號）就把整列拆成兩行，標籤與數值
+    再度分家。用中位數不用平均：平均會被同列的一個高字框（高盛 Key Data 框的邊線字元）
+    拉向下一列，把「Market cap」與「Enterprise value」兩列絞成一行（v4 實測兩者都踩過）。"""
     if not words:
         return []
     heights = [w["bottom"] - w["top"] for w in words if w["bottom"] > w["top"]]
     tol = _LINE_TOL_FRAC * (statistics.median(heights) if heights else 10.0)
-    ordered = sorted(words, key=lambda w: (round(w["top"], 2), round(w["x0"], 2)))
+    ordered = sorted(words, key=lambda w: (round((w["top"] + w["bottom"]) / 2, 2), round(w["x0"], 2)))
     lines: list[list[dict]] = []
+    centers: list[list[float]] = []
     for w in ordered:
-        if lines and abs(w["top"] - lines[-1][0]["top"]) <= tol:
+        c = (w["top"] + w["bottom"]) / 2
+        if lines and abs(c - statistics.median(centers[-1])) <= tol:
             lines[-1].append(w)
+            centers[-1].append(c)
         else:
             lines.append([w])
+            centers.append([c])
     for ln in lines:
         ln.sort(key=lambda w: round(w["x0"], 2))
     return lines
@@ -417,7 +617,79 @@ def _find(page: Any, settings: dict | None) -> list[Any]:
         return []
 
 
-def _extract_tables(page: Any) -> list[tuple[tuple[float, float, float, float], tuple[tuple[str, ...], ...]]]:
+def _numeric_words_beside(bbox: tuple[float, float, float, float], words: list[dict]) -> list[dict]:
+    """同列 y 範圍內、落在框外 3–60pt 處的數值詞——框線表**殘缺**的證據（見 _TABLE_BESIDE_*）。"""
+    out: list[dict] = []
+    for w in words:
+        cy = (w["top"] + w["bottom"]) / 2
+        if not (bbox[1] <= cy <= bbox[3]):
+            continue
+        gap_left = bbox[0] - w["x1"]
+        gap_right = w["x0"] - bbox[2]
+        beside = (
+            _TABLE_BESIDE_MIN_GAP <= gap_left <= _TABLE_BESIDE_MAX_GAP
+            or _TABLE_BESIDE_MIN_GAP <= gap_right <= _TABLE_BESIDE_MAX_GAP
+        )
+        if beside and _is_numeric_token(w.get("text", "")):
+            out.append(w)
+    return out
+
+
+def _underseg_cell_frac(rows: tuple[tuple[str, ...], ...]) -> float:
+    """含 3 個以上數值 token 的儲存格占非空儲存格的比例——**欄位不足**的證據。"""
+    cells = [c for r in rows for c in r if c and c.strip()]
+    if not cells:
+        return 0.0
+    return sum(1 for c in cells if len(_CELL_NUMBER.findall(c)) >= 3) / len(cells)
+
+
+def _words_table(
+    words: list[dict], bbox: tuple[float, float, float, float]
+) -> tuple[tuple[str, ...], ...] | None:
+    """用（已合併的）詞在 bbox 區域重建表格：列＝行，欄＝所有正文列都沒有詞跨過的垂直空隙。
+
+    不用 pdfplumber 的文字策略重抽：它以字元定欄界，右對齊填充的空白字元會讓欄界
+    落在數字中間（「道瓊指數 5 | 0,009.35」，v4 實測）。詞是 `_merge_touching_words`
+    之後的單位，欄界只可能落在詞與詞之間。欄界用第二列起的正文算——表頭常橫跨數欄，
+    算進去會把欄併掉；表頭詞之後依中點歸欄。回 None ＝ 湊不成可接受的表。"""
+    inside = [w for w in words if _inside(w, bbox)]
+    lines = _group_lines(inside)
+    if len(lines) < _TEXT_TABLE_MIN_ROWS:
+        return None
+    body = lines[1:] if len(lines) > 2 else lines
+    x0 = min(w["x0"] for ln in lines for w in ln)
+    x1 = max(w["x1"] for ln in lines for w in ln)
+    res = 0.5
+    n = int((x1 - x0) / res) + 1
+    occ = [False] * n
+    for ln in body:
+        for w in ln:
+            a, b = int((w["x0"] - x0) / res), int((w["x1"] - x0) / res)
+            for i in range(max(0, a), min(n - 1, b) + 1):
+                occ[i] = True
+    bounds: list[float] = []
+    run: int | None = None
+    for i in range(n):
+        if not occ[i]:
+            run = i if run is None else run
+            continue
+        if run is not None and run > 0 and (i - run) * res >= _TABLE_COL_MIN_GAP:
+            bounds.append(x0 + (run + i) / 2 * res)
+        run = None
+    ncols = len(bounds) + 1
+    rows: list[tuple[str, ...]] = []
+    for ln in lines:
+        cells: list[list[str]] = [[] for _ in range(ncols)]
+        for w in sorted(ln, key=lambda w: w["x0"]):
+            c = (w["x0"] + w["x1"]) / 2
+            cells[sum(1 for b in bounds if c >= b)].append(w["text"])
+        rows.append(tuple(" ".join(c) for c in cells))
+    return _accept(rows, _TEXT_TABLE_MIN_ROWS, _TEXT_TABLE_MIN_FILL, need_regular=False)
+
+
+def _extract_tables(
+    page: Any, words: list[dict] | None = None, stats: dict[str, int] | None = None
+) -> list[tuple[tuple[float, float, float, float], tuple[tuple[str, ...], ...]]]:
     """兩種策略依序試：框線優先，再用文字對齊補無框線表。
 
     **券商研報大量使用無框線表格**——實測凱基投資早報 31 頁只有 2 張表有
@@ -427,8 +699,16 @@ def _extract_tables(page: Any) -> list[tuple[tuple[float, float, float, float], 
     代價是文字策略會誤判：它會把「兩段左右並排的文字」看成兩欄表格。所以
     它的驗收比框線策略嚴（要求更多列、更高填充率、且欄數整齊），而且**只
     在不與框線表重疊的區域採用**——框線表是比較可信的證據。
+
+    框線表通過驗收後還要過兩道體檢（殘缺、欄位不足，見 _TABLE_BESIDE_* 的說明）：
+    可疑的先在放寬後的同一區域用文字策略重抽，欄數變多才採用，否則整張退回
+    文字流。`stats` 記 `tables_suspect`／`tables_retried`／`tables_rejected`。
     """
     out: list[tuple[tuple[float, float, float, float], tuple[tuple[str, ...], ...]]] = []
+    if words is None:
+        words = page.extract_words() or []
+    if stats is None:
+        stats = {}
 
     for t in _find(page, None):
         try:
@@ -436,8 +716,28 @@ def _extract_tables(page: Any) -> list[tuple[tuple[float, float, float, float], 
         except Exception:
             continue
         norm = _accept(rows, _TABLE_MIN_ROWS, _TABLE_MIN_FILL, need_regular=False)
-        if norm is not None:
-            out.append((_bbox4(t.bbox), norm))
+        if norm is None:
+            continue
+        bbox = _bbox4(t.bbox)
+        beside = _numeric_words_beside(bbox, words)
+        truncated = len(beside) >= max(_TABLE_BESIDE_MIN_WORDS, len(norm) // 2)
+        underseg = _underseg_cell_frac(norm) >= _TABLE_UNDERSEG_MAX_CELL_FRAC
+        if not (truncated or underseg):
+            out.append((bbox, norm))
+            continue
+        stats["tables_suspect"] = stats.get("tables_suspect", 0) + 1
+        wide = (
+            min([bbox[0], *(w["x0"] for w in beside)]),
+            bbox[1],
+            max([bbox[2], *(w["x1"] for w in beside)]),
+            bbox[3],
+        )
+        retry = _words_table(words, wide)
+        if retry is not None and max(len(r) for r in retry) > max(len(r) for r in norm):
+            out.append((wide, retry))
+            stats["tables_retried"] = stats.get("tables_retried", 0) + 1
+        else:
+            stats["tables_rejected"] = stats.get("tables_rejected", 0) + 1
 
     for t in _find(page, _TEXT_TABLE_SETTINGS):
         bbox = _bbox4(t.bbox)
@@ -458,6 +758,115 @@ def _inside(word: dict, bbox: tuple[float, float, float, float]) -> bool:
     cx = (word["x0"] + word["x1"]) / 2
     cy = (word["top"] + word["bottom"]) / 2
     return bbox[0] <= cx <= bbox[2] and bbox[1] <= cy <= bbox[3]
+
+
+# ── 圖區 ────────────────────────────────────────────────────────────────────
+
+
+_BBox = tuple[float, float, float, float]
+
+
+def _figure_regions(page: Any, exclude: list[_BBox]) -> list[_BBox]:
+    """把頁面上的繪圖基元聚成圖區（見 _FIG_* 的說明）。
+
+    取材：`curves`、斜線（折線圖的資料線在 pdfminer 是一段段 LTLine，寬高皆大於 1pt；
+    表格框線與格線是水平或垂直的，寬或高為 0）、細長矩形（長條圖的 bar）。
+    **刻意不取 `images`**：券商版型把側欄底色做成一張點陣圖墊在文字下面（凱基美股個股頁
+    的整個側欄），把它當圖區會把目標價、市值整排短詞當刻度丟掉（v4 實測）；點陣圖表的
+    刻度文字本來就在圖外，取它也沒有增益。
+    聚合用 12pt 格子的 union-find，等價於「外擴 pad 後重疊就併」，但對上千段折線
+    仍是線性時間。`exclude`（已抽到的表格 bbox）內的基元不取。
+    """
+    pw, ph = float(page.width), float(page.height)
+    page_area = pw * ph
+    if page_area <= 0:
+        return []
+    px0, ptop, px1, pbottom = (float(v) for v in page.bbox)
+    prims: list[tuple[str, tuple[float, float, float, float]]] = []
+
+    def _add(kind: str, objs) -> None:
+        for o in objs or []:
+            try:
+                b = (float(o["x0"]), float(o["top"]), float(o["x1"]), float(o["bottom"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            # 超出頁面的是裁切路徑或背景，不是圖的一部分
+            if b[0] < px0 - 1 or b[1] < ptop - 1 or b[2] > px1 + 1 or b[3] > pbottom + 1:
+                continue
+            if (b[2] - b[0]) * (b[3] - b[1]) > _FIG_PRIM_MAX_PAGE_FRAC * page_area:
+                continue
+            if kind == "curve" and (b[2] - b[0]) > _FIG_PRIM_MAX_W_FRAC * pw:
+                continue
+            if any(_overlaps(b, t) for t in exclude):
+                continue
+            prims.append((kind, b))
+
+    _add("curve", getattr(page, "curves", None))
+    _add(
+        "curve",
+        [
+            ln for ln in (getattr(page, "lines", None) or [])
+            if float(ln["x1"]) - float(ln["x0"]) > 1.0 and float(ln["bottom"]) - float(ln["top"]) > 1.0
+        ],
+    )
+    _add(
+        "bar",
+        [
+            r for r in (getattr(page, "rects", None) or [])
+            if _FIG_BAR_MIN_W <= float(r["x1"]) - float(r["x0"]) <= _FIG_BAR_MAX_W
+            and float(r["bottom"]) - float(r["top"]) > 1.0
+        ],
+    )
+    if not prims:
+        return []
+
+    cell = 12.0
+    pad = _FIG_MERGE_PAD
+    parent = list(range(len(prims)))
+
+    def _find_root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    grid: dict[tuple[int, int], int] = {}
+    for idx, (_kind, b) in enumerate(prims):
+        for gx in range(int((b[0] - pad) // cell), int((b[2] + pad) // cell) + 1):
+            for gy in range(int((b[1] - pad) // cell), int((b[3] + pad) // cell) + 1):
+                other = grid.setdefault((gx, gy), idx)
+                if other != idx:
+                    ra, rb = _find_root(idx), _find_root(other)
+                    if ra != rb:
+                        parent[rb] = ra
+
+    groups: dict[int, list[int]] = {}
+    for idx in range(len(prims)):
+        groups.setdefault(_find_root(idx), []).append(idx)
+
+    out: list[tuple[float, float, float, float]] = []
+    for members in groups.values():
+        boxes = [prims[i][1] for i in members]
+        b = (min(x[0] for x in boxes), min(x[1] for x in boxes), max(x[2] for x in boxes), max(x[3] for x in boxes))
+        if (b[2] - b[0]) < _FIG_MIN_W or (b[3] - b[1]) < _FIG_MIN_H:
+            continue
+        if (b[2] - b[0]) * (b[3] - b[1]) > _FIG_MAX_PAGE_FRAC * page_area:
+            continue
+        kinds = Counter(prims[i][0] for i in members)
+        heights = [prims[i][1][3] - prims[i][1][1] for i in members if prims[i][0] == "bar"]
+        bars_vary = (
+            len(heights) >= _FIG_MIN_BARS
+            and max(heights) / max(min(heights), 0.01) >= _FIG_BAR_HEIGHT_SPREAD
+        )
+        if kinds["curve"] >= _FIG_MIN_CURVES or bars_vary:
+            out.append(b)
+    return out
+
+
+def _is_chart_noise(word: dict) -> bool:
+    """圖區內視為座標軸刻度／圖例散字的詞：數值 token，或長度不超過 _FIG_NOISE_MAX_CHARS。"""
+    t = word.get("text", "")
+    return _is_numeric_token(t) or len(t) <= _FIG_NOISE_MAX_CHARS
 
 
 # ── 型別分類 ────────────────────────────────────────────────────────────────
@@ -523,13 +932,31 @@ def _mark_repeated_headers_footers(pages: list[Page]) -> list[Page]:
 # ── 主入口 ──────────────────────────────────────────────────────────────────
 
 
-def _page_blocks(page: Any, page_no: int) -> tuple[Block, ...]:
+def _page_blocks(page: Any, page_no: int) -> tuple[tuple[Block, ...], dict[str, int]]:
+    """一頁 → (Block, 統計)。統計鍵：words_raw、words_merged、chart_words_dropped、
+    tables_suspect、tables_retried、tables_rejected；由 `extract_document` 加總進
+    `Document.meta["layout"]`，`quality.measure` 再寫進 quality_flags。"""
     width = float(page.width)
     height = float(page.height)
-    words = page.extract_words(extra_attrs=["size"]) or []
+    stats: dict[str, int] = {}
+    raw_words = page.extract_words(extra_attrs=["size"]) or []
+    words, merged = _merge_touching_words(raw_words)
+    stats["words_raw"] = len(raw_words)
+    stats["words_merged"] = merged
 
-    tables = _extract_tables(page)
-    body_words = [w for w in words if not any(_inside(w, bb) for bb, _ in tables)]
+    tables = _extract_tables(page, words, stats)
+    table_boxes = [bb for bb, _ in tables]
+    figures = _figure_regions(page, table_boxes)
+    body_words: list[dict] = []
+    dropped = 0
+    for w in words:
+        if any(_inside(w, bb) for bb in table_boxes):
+            continue
+        if figures and _is_chart_noise(w) and any(_inside(w, fb) for fb in figures):
+            dropped += 1
+            continue
+        body_words.append(w)
+    stats["chart_words_dropped"] = dropped
 
     sizes = [float(w.get("size") or 0.0) for w in body_words if w.get("size")]
     med_size = statistics.median(sizes) if sizes else 0.0
@@ -548,11 +975,9 @@ def _page_blocks(page: Any, page_no: int) -> tuple[Block, ...]:
     )
     min_gap = _MIN_GUTTER_FRAC * span * _GUTTER_GAP_SLACK
     by_col: dict[int, list[list[dict]]] = {}
-    for line in _group_lines(body_words):
+    for line in _page_lines(body_words, gutters, min_gap):
         for run in _split_at_gutters(line, gutters, min_gap):
-            rx0 = min(w["x0"] for w in run)
-            rx1 = max(w["x1"] for w in run)
-            by_col.setdefault(_column_of(rx0, rx1, gutters), []).append(run)
+            by_col.setdefault(_run_column(run, gutters), []).append(run)
 
     # 候選：(col, bbox, text, size, table_rows)。先全部收齊再決定欄與帶，因為
     # 「頁首脫離」與「跨欄帶」都需要看到整頁其他區塊的位置。
@@ -573,7 +998,7 @@ def _page_blocks(page: Any, page_no: int) -> tuple[Block, ...]:
             size = statistics.median(psizes) if psizes else med_size
             cands.append((col, bbox, text, size, None))
     for bbox, rows in tables:
-        cands.append((_column_of(bbox[0], bbox[2], gutters), bbox, "", med_size, rows))
+        cands.append((_column_of(bbox[0], bbox[2], gutters, min_gap), bbox, "", med_size, rows))
 
     # 頁首脫離：頁首帶（版心帶之上）落在右欄、且與同欄下一個區塊有明顯間距的區塊，
     # 歸第 0 欄——報告類型、券商名這類東西在閱讀上先於任何一欄。「有明顯間距」
@@ -594,7 +1019,7 @@ def _page_blocks(page: Any, page_no: int) -> tuple[Block, ...]:
     spanning = sorted(
         (bbox[1], bbox[3])
         for (col, bbox, _t, _s, _r) in cands
-        if gutters and any(bbox[0] < g < bbox[2] for g in gutters)
+        if gutters and _spans(bbox[0], bbox[2], gutters, min_gap)
     )
 
     def _band(bbox: tuple[float, float, float, float]) -> int:
@@ -632,22 +1057,26 @@ def _page_blocks(page: Any, page_no: int) -> tuple[Block, ...]:
         order += 1
 
     blocks.sort(key=lambda b: b.sort_key)
-    return tuple(blocks)
+    return tuple(blocks), stats
 
 
 def extract_document(path: str | Path) -> Document:
-    """PDF → Document。**逐頁失敗不中斷**，失敗的頁以 `failed=True` 留下。"""
+    """PDF → Document。**逐頁失敗不中斷**，失敗的頁以 `failed=True` 留下。
+
+    `Document.meta["layout"]` 是全文件加總的版面統計（鍵見 `_page_blocks`）；它不進序列化，
+    只供 `quality.measure` 寫進 quality_flags。"""
     import pdfplumber  # 函式內 import：web 服務不該為它付載入成本
 
     path = Path(path)
     pages: list[Page] = []
+    layout_stats: Counter[str] = Counter()
     try:
         with pdfplumber.open(str(path)) as pdf:
             for i, page in enumerate(pdf.pages, start=1):
                 try:
-                    pages.append(
-                        Page(i, float(page.width), float(page.height), _page_blocks(page, i))
-                    )
+                    blocks, stats = _page_blocks(page, i)
+                    layout_stats.update(stats)
+                    pages.append(Page(i, float(page.width), float(page.height), blocks))
                 except Exception as exc:
                     # 現況是 `except Exception: continue`——整頁無聲消失。
                     # 這裡把它留成一筆可查詢的失敗（診斷 #2）。
@@ -658,4 +1087,9 @@ def extract_document(path: str | Path) -> Document:
     except Exception as exc:
         return Document(EXTRACTOR_NAME, EXTRACTION_VERSION, (), error=str(exc)[:300])
 
-    return Document(EXTRACTOR_NAME, EXTRACTION_VERSION, tuple(_mark_repeated_headers_footers(pages)))
+    return Document(
+        EXTRACTOR_NAME,
+        EXTRACTION_VERSION,
+        tuple(_mark_repeated_headers_footers(pages)),
+        meta={"layout": dict(layout_stats)},
+    )

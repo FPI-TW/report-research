@@ -46,9 +46,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 「待複核」的分數門檻沿用研報端的 REPORT_FAITHFULNESS_MIN，避免監控頁自成一套標準
-# 而與實際觸發修正的門檻對不上。
-_FAITHFULNESS_MIN = get_settings().report_faithfulness_min
+# 「待複核」的分數門檻與離線評測（scripts/eval_faithfulness.py）共用 FAITHFULNESS_MIN，
+# 避免監控頁自成一套標準。
+_FAITHFULNESS_MIN = get_settings().faithfulness_min
 
 # 15 秒（原 5 秒）：前端每 5 秒輪詢，這一塊是 9 條 DB 查詢，其中市場分佈與商品類型
 # 是全表 GROUP BY。拉到 15 秒讓 DB 負載降為三分之一，而 `ts` 欄與 runtime 區塊仍每次
@@ -190,10 +190,10 @@ async def _fetch_db_stats_snapshot() -> dict:
             )
         ).first()
 
-        # M8 忠實度查核（qa_log.evaluation / report_doc.evaluation）的健康度。
+        # M8 忠實度查核（qa_log.evaluation）的健康度。
         #
-        # **這裡看的不是覆蓋率**：問答端有取樣率、且只查含金融數字的回答，研報端
-        # 也可停用，所以「有 evaluation 的比例」天生就不該是 100%，拿它當訊號只會
+        # **這裡看的不是覆蓋率**：問答端有取樣率、且只查含金融數字的回答，
+        # 所以「有 evaluation 的比例」天生就不該是 100%，拿它當訊號只會
         # 一直亮紅燈（同 takeaway/signal 的教訓）。真正的訊號是另外三個：
         #   degraded  judge 異常時 fail-open 會寫 degraded=true、分數留 None。
         #             這條若衝高，代表查核**還在跑但全部沒查到東西**——最像
@@ -218,9 +218,6 @@ async def _fetch_db_stats_snapshot() -> dict:
             await session.execute(
                 text(
                     f"SELECT 'qa' kind, {_eval_cols} FROM research.qa_log "
-                    "WHERE created_at > now() - interval '30 days' "
-                    "UNION ALL "
-                    f"SELECT 'report', {_eval_cols} FROM research.report_doc "
                     "WHERE created_at > now() - interval '30 days'"
                 ),
                 {"fmin": _FAITHFULNESS_MIN},
@@ -301,10 +298,9 @@ async def _fetch_db_stats_snapshot() -> dict:
         "signal_done_30d": int(sig_done),
         "signal_total_30d": int(sig_total),
         "signal_latest": _d(sig_latest),
-        # M8 查核健康度（近 30 天），依來源分開：問答與研報的閘門與取樣各自不同。
+        # M8 查核健康度（近 30 天）。
         "evaluation": {
             "qa": evals.get("qa"),
-            "report": evals.get("report"),
             "min_score": _FAITHFULNESS_MIN,
         },
         "extraction": extraction,

@@ -1,8 +1,8 @@
-"""M8 忠實度查核結果（qa_log.evaluation / report_doc.evaluation）的讀取路徑。
+"""M8 忠實度查核結果（qa_log.evaluation）的讀取路徑。
 
-M8 從上線起就只寫不看：這兩個 jsonb 欄位在 `web/`、`scripts/`、`frontend/src/` 各有
+M8 從上線起就只寫不看：這個 jsonb 欄位在 `web/`、`scripts/`、`frontend/src/` 各有
 **0 個消費端**。實測（2026-07-28 生產）近 30 天問答查核 3 筆中有 1 筆 degraded、
-平均 0.563，唯一被查核的研報是 0.412——全部沒有任何地方會顯示出來。
+平均 0.563——沒有任何地方會顯示出來。
 
 監控頁的卡片回答「還在跑嗎、有沒有壞」；這支腳本回答「壞在哪一條主張」：
 
@@ -15,7 +15,7 @@ M8 從上線起就只寫不看：這兩個 jsonb 欄位在 `web/`、`scripts/`�
 
   faithfulness_score   有語料支持的主張 / 全部主張
   numeric_support_rate 同上，但只算含金融數字的主張（金額、%、倍數…）
-  citation_coverage    研報端才有；問答端一律 None
+  citation_coverage    問答端一律 None（欄位保留在 to_evaluation 的形狀裡）
   degraded=True        judge 異常時的 fail-open：**該筆實際上沒被查核**，
                        分數欄位皆 None。degraded 不是「分數低」，是「沒量到」，
                        兩者混在一起看會把故障讀成品質問題。
@@ -39,11 +39,10 @@ from sqlalchemy import text  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 
-# 兩張表的欄位名不同（qa_log 是 question/answer，report_doc 是 question/title），
-# 這裡只取共通的識別欄位，讓 summarize 對兩者一視同仁。
+# (表, 識別欄位)。以 dict 保留是為了 summarize／_fetch 對來源一視同仁；
+# 研報 PDF 那一半的來源表已隨功能移除（2026-09）。
 _SOURCES = {
     "qa": ("research.qa_log", "question"),
-    "report": ("research.report_doc", "question"),
 }
 
 
@@ -164,7 +163,7 @@ def _print_claims(kind: str, data: dict) -> None:
 
 def _print_report(agg: dict, worst_rows: dict, min_score: float, days: int) -> None:
     print(f"M8 忠實度查核（近 {days} 天，門檻 {min_score}）")
-    for kind, label in (("qa", "問答"), ("report", "研報")):
+    for kind, label in (("qa", "問答"),):
         a = agg[kind]
         print(f"\n[{label}] 總數 {a['total']}　已查核 {a['checked']}　"
               f"fail-open {a['degraded']}　有分數 {a['scored']}")
@@ -183,12 +182,12 @@ def _print_report(agg: dict, worst_rows: dict, min_score: float, days: int) -> N
 
 
 async def main(args) -> None:
-    min_score = args.min if args.min is not None else get_settings().report_faithfulness_min
+    min_score = args.min if args.min is not None else get_settings().faithfulness_min
 
     if args.claims:
         found = await _fetch_claims(args.claims)
         if found is None:
-            print(f"找不到 id={args.claims}（qa_log 與 report_doc 皆無）")
+            print(f"找不到 id={args.claims}（qa_log 無此列）")
             raise SystemExit(1)
         _print_claims(*found)
         return
@@ -214,7 +213,7 @@ if __name__ == "__main__":
     ap.add_argument("--days", type=int, default=30, help="回看天數（預設 30）")
     ap.add_argument("--limit", type=int, default=10, help="最低分列出筆數（預設 10）")
     ap.add_argument("--min", type=float, default=None,
-                    help="待複核門檻（預設取 REPORT_FAITHFULNESS_MIN）")
-    ap.add_argument("--claims", metavar="ID", help="逐條主張下鑽（qa_log 或 report_doc 的 id）")
+                    help="待複核門檻（預設取 FAITHFULNESS_MIN）")
+    ap.add_argument("--claims", metavar="ID", help="逐條主張下鑽（qa_log 的 id）")
     ap.add_argument("--json", action="store_true", help="輸出 JSON")
     asyncio.run(main(ap.parse_args()))

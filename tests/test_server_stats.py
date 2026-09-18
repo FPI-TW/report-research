@@ -357,9 +357,7 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                     return _FirstResult((4, 10, date(2026, 7, 20)))
                 if "report_signal" in sql:
                     return _FirstResult((1, 10, date(2026, 7, 16)))
-                # M8 查核統計：UNION ALL 兩張表 → 兩列 ×（kind + 6 個聚合）。
-                # 必須排在 catch-all 之前（同上），且**不能只回一列**——handler 是
-                # 以 kind 建 dict，少一列會讓某個來源變成缺鍵而非 None。
+                # M8 查核統計：qa_log 一列 ×（kind + 6 個聚合）。必須排在 catch-all 之前（同上）。
                 # E1 抽取品質：三段 UNION ALL 併成 (kind, key, count)。必須排在 catch-all
                 # 之前（它也掃 research_report）。
                 if "extraction_log" in sql:
@@ -375,7 +373,6 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                 if "count(evaluation)" in sql:
                     return _RowsResult([
                         ("qa", 40, 3, 1, 1, 0.5634, date(2026, 7, 28)),
-                        ("report", 6, 1, 0, 1, 0.4118, date(2026, 7, 28)),
                     ])
                 if "unnest(instrument_types)" in sql:
                     return _RowsResult([("equity", 5)])

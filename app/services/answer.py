@@ -53,7 +53,6 @@ from app.services.overview import (
     merge_request_filters,
     render_overview_text,
 )
-from app.services.report_gate import should_offer_report
 from app.services.scope_router import (
     ADVICE_RISK,
     BY_FAIL_OPEN,
@@ -1408,17 +1407,13 @@ def _conversation_item(row) -> dict:
     """qa_log 一列（15 欄，含版本/思考卡/追問中繼資料）→ 對話重現用 dict。
 
     在 history_item 的基礎欄位上，補 stages/followups/root_qa_id/stopped/
-    version_count 五鍵，供前端重現思考卡、追問 chips 與版本切換；另以
-    cited_report_ids/filters 兩欄**在讀取時重算研報邀請**（offer_report/
-    report_title/report_offer_declined）——邀請原本只活在 SSE done 事件裡，
-    重新整理後就消失，使用者從此失去「要不要生成研報」的選擇權。gate 是
-    純規則零 LLM（report_gate.py），逐列重算零成本，且歷史舊列自動涵蓋、
-    不需回填；唯一要落庫的是婉拒旗標（filters.report_offer_declined，
-    additive JSON 鍵），否則每次重整邀請卡都會復活。
+    version_count 五鍵，供前端重現思考卡、追問 chips 與版本切換。列尾的
+    cited_report_ids/filters 兩欄仍隨 SELECT 取出（保留 15 欄形狀），目前
+    讀取端不再消費。
     """
     (rid, question, answer, created_at, feedback, sources, ext_sources,
      thinking_ms, stages, followups, root_qa_id, stopped, version_count,
-     cited, log_filters) = row
+     _cited, _log_filters) = row
     base = history_item(
         (rid, question, answer, created_at, feedback, sources, ext_sources, thinking_ms)
     )
@@ -1427,18 +1422,6 @@ def _conversation_item(row) -> dict:
     base["root_qa_id"] = str(root_qa_id) if root_qa_id else None
     base["stopped"] = bool(stopped)
     base["version_count"] = int(version_count)
-    base["offer_report"] = False
-    base["report_title"] = None
-    base["report_offer_declined"] = False
-    # 停止的部分答案與離題拒答不邀請（素材不完整／根本沒有答案）
-    if not stopped and not base.get("is_offtopic") and answer:
-        offer, title = should_offer_report(question, list(cited or []), answer)
-        if offer:
-            base["offer_report"] = True
-            base["report_title"] = title
-            base["report_offer_declined"] = bool(
-                (log_filters or {}).get("report_offer_declined")
-            )
     return base
 
 
@@ -1462,13 +1445,7 @@ async def get_conversation(conversation_id: str) -> list[dict]:
                 {"cid": conversation_id},
             )
         ).all()
-    items = [_conversation_item(tuple(r)) for r in rows]
-    from app.services.report import reports_for_conversation  # 延遲 import：避免與 report.py 循環
-
-    reports_by_qa = await reports_for_conversation(conversation_id)
-    for it in items:
-        it["reports"] = reports_by_qa.get(str(it.get("id")), [])
-    return items
+    return [_conversation_item(tuple(r)) for r in rows]
 
 
 async def list_qa_versions(root_qa_id: str) -> list[dict]:
@@ -1515,44 +1492,13 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
 
 
 async def delete_conversation(conversation_id: str) -> bool:
-    """刪整個對話串連同其研報衍生物；刪到 ≥1 列回 True，查無或 DB 異常回 False。
+    """刪整個對話串；刪到 ≥1 列回 True，查無或 DB 異常回 False。
 
-    **原本只刪 `qa_log`**，於是同一對話串產出的 `report_doc` / `report_run` /
-    `report_rendition` 與磁碟上的 PDF 全部變成永久孤兒——三張表刻意都沒有 FK
-    （生成流程史不是語料衍生物），所以 DB 不會替你連刪，而 repo 裡也沒有任何清理
-    路徑。2026-07-30 實測生產 14 列 `report_doc` 有 **2 列**是孤兒（14%）。
-
-    刪除順序是**由葉往根**：`report_rendition` 以 `report_id` 指向 `report_doc`，
-    先刪 doc 就再也找不到要刪哪些 rendition。四個 DELETE 在同一交易內，任一失敗
-    整批回滾——半刪掉的狀態比沒刪更難清。
-
-    磁碟檔不在這裡刪：回傳值只有 bool，而呼叫端（`web/routers/qa_history.py`）是
-    HTTP handler。`deleted_pdf_paths()` 另外提供路徑清單，讓「刪檔」成為可獨立
-    重試的一步——DB 已提交而檔案沒刪掉，是可容忍的殘留（`make db-audit` 看得到）；
-    反過來檔案刪了 DB 沒刪，就是下載端點永久 500。
+    對話串的存在與否由 `qa_log` 定義：以 `COALESCE(conversation_id, id)` 為分組鍵
+    整批刪除。DB 異常不拋、回 False，由呼叫端（`web/routers/qa_history.py`）決定回應碼。
     """
     try:
         async with SessionFactory() as session:
-            # 以 conversation_id 為鍵的三張表，加上 rendition 那層間接。
-            # `report_doc` / `report_run` 的 conversation_id 對齊 qa_log 的
-            # COALESCE 分組鍵（見 schema.sql:159 註解），所以直接等值比對即可。
-            await session.execute(
-                text(
-                    "DELETE FROM research.report_rendition WHERE report_id IN ("
-                    "  SELECT id FROM research.report_doc WHERE conversation_id = :cid"
-                    ")"
-                ),
-                {"cid": conversation_id},
-            )
-            await session.execute(
-                text("DELETE FROM research.report_doc WHERE conversation_id = :cid"),
-                {"cid": conversation_id},
-            )
-            # report_section 以 run_id 指向 report_run（有 FK CASCADE），故只刪 run。
-            await session.execute(
-                text("DELETE FROM research.report_run WHERE conversation_id = :cid"),
-                {"cid": conversation_id},
-            )
             result = await session.execute(
                 text(
                     "DELETE FROM research.qa_log "
@@ -1561,88 +1507,9 @@ async def delete_conversation(conversation_id: str) -> bool:
                 {"cid": conversation_id},
             )
             await session.commit()
-        # 判斷「有沒有刪到」仍只看 qa_log：對話串的存在與否由它定義，研報衍生物
-        # 是可選的。只有 report_doc 而沒有 qa_log 是不可能的狀態（研報由問答產出）。
         return getattr(result, "rowcount", 0) > 0
     except Exception:
         return False
-
-
-async def deleted_pdf_paths(conversation_id: str) -> list[str]:
-    """該對話串的研報 PDF 路徑（`report_doc` ＋ `report_rendition` 兩處）。
-
-    **要在 `delete_conversation` 之前呼叫**——列刪掉之後就查不到路徑了。分成兩個
-    函式而非一個「刪並回傳」，是為了讓刪檔可以獨立重試：DB 已提交而檔案沒刪，是
-    可容忍的殘留；檔案刪了 DB 沒刪，就是下載端點永久 500。
-
-    DB 異常回空 list（呼叫端就當沒有檔案要刪），不拋——刪對話這個動作不該因為
-    「順便查個路徑失敗」而整體失敗。
-    """
-    try:
-        async with SessionFactory() as session:
-            rows = (
-                await session.execute(
-                    text(
-                        "SELECT d.pdf_path FROM research.report_doc d "
-                        "WHERE d.conversation_id = :cid AND d.pdf_path IS NOT NULL "
-                        "UNION "
-                        "SELECT rr.pdf_path FROM research.report_rendition rr "
-                        "JOIN research.report_doc d2 ON d2.id = rr.report_id "
-                        "WHERE d2.conversation_id = :cid"
-                    ),
-                    {"cid": conversation_id},
-                )
-            ).all()
-        return [r[0] for r in rows if r[0]]
-    except Exception:
-        return []
-
-
-@dataclass(frozen=True)
-class DeletedGeneratedObject:
-    """Immutable ownership snapshot for one post-commit generated-PDF cleanup."""
-
-    report_id: str
-    kind: str
-    rendition_id: str | None
-    key: str
-
-
-async def deleted_pdf_object_keys(conversation_id: str) -> list[DeletedGeneratedObject]:
-    """Generated-PDF identities to consider for deletion *after* the DB transaction commits.
-
-    This mirrors ``deleted_pdf_paths`` but is intentionally a separate read: deleting an R2
-    object before its DB row commits would turn a transaction failure into data loss.  A remote
-    delete failure after commit is a reportable orphan, not a reason to resurrect the chat.
-    Keep the report/rendition identity with each key: a DB key is an untrusted pointer and must
-    be validated against R2 metadata immediately before the eventual delete.
-    """
-    try:
-        async with SessionFactory() as session:
-            rows = (
-                await session.execute(
-                    text(
-                        "SELECT d.id::text, 'base'::text, NULL::text, d.pdf_object_key "
-                        "FROM research.report_doc d "
-                        "WHERE d.conversation_id = :cid AND d.pdf_object_key IS NOT NULL "
-                        "UNION ALL "
-                        "SELECT rr.report_id::text, 'rendition'::text, rr.id::text, rr.pdf_object_key "
-                        "FROM research.report_rendition rr "
-                        "JOIN research.report_doc d2 ON d2.id = rr.report_id "
-                        "WHERE d2.conversation_id = :cid AND rr.pdf_object_key IS NOT NULL"
-                    ),
-                    {"cid": conversation_id},
-                )
-            ).all()
-        return [
-            DeletedGeneratedObject(
-                report_id=str(row[0]), kind=str(row[1]), rendition_id=str(row[2]) if row[2] else None, key=row[3]
-            )
-            for row in rows
-            if row[3]
-        ]
-    except Exception:
-        return []
 
 
 async def record_feedback(qa_id: str, value: str) -> bool:
@@ -1663,38 +1530,6 @@ async def record_feedback(qa_id: str, value: str) -> bool:
             result = await session.execute(
                 text("UPDATE research.qa_log SET feedback = :v WHERE id = :id"),
                 {"v": None if value == "none" else value, "id": qa_id},
-            )
-            await session.commit()
-        return getattr(result, "rowcount", 0) == 1
-    except Exception:
-        return False
-
-
-async def set_report_offer_declined(qa_id: str, declined: bool) -> bool:
-    """研報邀請的婉拒旗標（收合／還原）。
-
-    寫進 qa_log.filters 的 additive 鍵 report_offer_declined（jsonb 合併，
-    不動既有遙測鍵）。邀請本身是讀取時由 gate 重算的（見 _conversation_item），
-    這是唯一需要落庫的一片狀態——否則每次重整邀請卡都會復活。
-    更新到一列回 True；查無此列或 DB 異常回 False。
-    """
-    try:
-        async with SessionFactory() as session:
-            result = await session.execute(
-                text(
-                    # CAST(:d AS boolean) 的顯式 cast 是必要的：jsonb_build_object
-                    # 的值參數是 "any" 型參數位，asyncpg prepare 時 PostgreSQL 推
-                    # 不出 $1 的型別，沒有 cast 會炸 IndeterminateDatatypeError——
-                    # mock 測試驗不到，2026-08-03 對真 DB probe 才抓到（與 truncate
-                    # 自傷同一課）。寫成 `:d::boolean` 也不行：SQLAlchemy text() 的
-                    # bind 解析不吃緊接 `::` 的參數，會原樣送出而炸語法錯誤。
-                    "UPDATE research.qa_log SET filters = "
-                    "COALESCE(filters, '{}'::jsonb) "
-                    "|| jsonb_build_object('report_offer_declined', "
-                    "CAST(:d AS boolean)) "
-                    "WHERE id = :id"
-                ),
-                {"d": declined, "id": qa_id},
             )
             await session.commit()
         return getattr(result, "rowcount", 0) == 1
@@ -2693,7 +2528,6 @@ async def answer_question(
     )
     group_key = new_root or qa_id
     version_count = await _count_versions(group_key) if regenerate_of and group_key else 1
-    offer_report, report_title = should_offer_report(question, cited, body)
     yield (
         "done",
         {
@@ -2701,8 +2535,6 @@ async def answer_question(
             "qa_id": qa_id,
             "conversation_id": conv_id,
             "thinking_ms": thinking_ms,
-            "offer_report": offer_report,
-            "report_title": report_title,
             "root_qa_id": group_key,
             "version_count": version_count,
             **_answer_correction(streamed_body, body),

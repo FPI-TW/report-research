@@ -98,8 +98,7 @@ def cjk_affix_candidates(terms: list[str]) -> list[str]:
 def classify_match(phrase: str, terms: list[str], content: str) -> tuple[int, float]:
     """content 相對 (phrase, terms) 的字面命中分層與融合加成 → (tier, bonus)。
 
-    hybrid_search 逐候選呼叫；多查詢合併後以原始主題重算 tier 亦共用此判定
-    （retrieval_pipeline._retier_to_question），確保兩處 phrase/all-terms 尺度不漂移。
+    hybrid_search 逐候選呼叫。
     """
     nc = norm_for_match(content)
     hit_phrase = bool(phrase) and phrase in nc

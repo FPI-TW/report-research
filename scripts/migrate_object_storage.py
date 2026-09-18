@@ -1,4 +1,4 @@
-"""Upload legacy local report/PDF artifacts to private R2 and persist missing object keys.
+"""Upload legacy local report originals to private R2 and persist missing object keys.
 
 This is deliberately separate from ``reconcile_object_storage.py``: it mutates only one
 nullable key field after a successful upload, never deletes or re-ingests anything.  Re-running
@@ -20,7 +20,6 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.object_storage import (  # noqa: E402
-    generated_object_key_for_sha,
     get_object_storage,
     original_object_key,
 )
@@ -29,50 +28,30 @@ from app.services.object_storage import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="將 legacy local artifacts 安全遷移到私有 R2")
     parser.add_argument("--dry-run", action="store_true", help="驗證並列出計畫，不 upload 或更新 DB")
-    parser.add_argument("--kind", choices=("originals", "generated", "all"), default="all")
-    parser.add_argument("--limit", type=int, default=0, help="最多處理幾筆 DB artifacts（所有 kind 合計；0 不限）")
+    # 生成 PDF 那一半移除後只剩 originals；仍收 "all" 讓既有命令列與文件不必改。
+    parser.add_argument("--kind", choices=("originals", "all"), default="all")
+    parser.add_argument("--limit", type=int, default=0, help="最多處理幾筆 DB artifacts（0 不限）")
     parser.add_argument("--concurrency", type=int, default=4, help="hash/upload 併發數")
     return parser.parse_args()
 
 
 async def _rows(kind: str, limit: int) -> list[dict]:
-    """Read only un-migrated rows; limit is global across originals/base/renditions."""
+    """Read only un-migrated original rows."""
     rows: list[dict] = []
-
-    def limited_sql(base: str) -> tuple[str, dict]:
-        remaining = limit - len(rows)
-        if limit and remaining <= 0:
-            return "", {}
-        return (base + " LIMIT :limit", {"limit": remaining}) if limit else (base, {})
-
     async with SessionFactory() as session:
-        if kind in {"originals", "all"}:
-            sql, params = limited_sql(
-                "SELECT id::text, file_hash, file_name, file_path FROM research.research_report "
-                "WHERE source_object_key IS NULL ORDER BY id"
-            )
-            if sql:
-                result = await session.execute(text(sql), params)
-                rows.extend(
-                    {"kind": "original", "id": row[0], "hash": row[1], "name": row[2], "path": row[3]}
-                    for row in result
-                )
-        if kind in {"generated", "all"}:
-            sql, params = limited_sql(
-                "SELECT id::text, pdf_path FROM research.report_doc WHERE pdf_object_key IS NULL ORDER BY id"
-            )
-            if sql:
-                result = await session.execute(text(sql), params)
-                rows.extend({"kind": "base", "id": row[0], "path": row[1]} for row in result)
-            sql, params = limited_sql(
-                "SELECT id::text, report_id::text, pdf_path FROM research.report_rendition "
-                "WHERE pdf_object_key IS NULL ORDER BY id"
-            )
-            if sql:
-                result = await session.execute(text(sql), params)
-                rows.extend(
-                    {"kind": "rendition", "id": row[0], "report_id": row[1], "path": row[2]} for row in result
-                )
+        sql = (
+            "SELECT id::text, file_hash, file_name, file_path FROM research.research_report "
+            "WHERE source_object_key IS NULL ORDER BY id"
+        )
+        params: dict = {}
+        if limit:
+            sql += " LIMIT :limit"
+            params = {"limit": limit}
+        result = await session.execute(text(sql), params)
+        rows.extend(
+            {"kind": "original", "id": row[0], "hash": row[1], "name": row[2], "path": row[3]}
+            for row in result
+        )
     return rows
 
 
@@ -90,26 +69,17 @@ def _verified_key(row: dict) -> tuple[str | None, str | None, str | None]:
     if not path or not Path(path).is_file():
         return None, "MISSING_LOCAL", None
     digest = _file_sha256(path)
-    if row["kind"] == "original":
-        if digest != row["hash"]:
-            return None, f"HASH_MISMATCH expected={row['hash']} actual={digest}", digest
-        return original_object_key(row["hash"], row["name"]), None, digest
-    report_id = row.get("report_id") or row["id"]
-    rendition_id = row["id"] if row["kind"] == "rendition" else None
-    return generated_object_key_for_sha(report_id, digest, rendition_id), None, digest
+    if digest != row["hash"]:
+        return None, f"HASH_MISMATCH expected={row['hash']} actual={digest}", digest
+    return original_object_key(row["hash"], row["name"]), None, digest
 
 
 async def _update_key(row: dict, key: str) -> bool:
     """Set only an as-yet-null key.  Each task owns its own session/transaction."""
-    if row["kind"] == "original":
-        sql = (
-            "UPDATE research.research_report SET source_object_key = :key "
-            "WHERE id = :id AND source_object_key IS NULL"
-        )
-    elif row["kind"] == "base":
-        sql = "UPDATE research.report_doc SET pdf_object_key = :key WHERE id = :id AND pdf_object_key IS NULL"
-    else:
-        sql = "UPDATE research.report_rendition SET pdf_object_key = :key WHERE id = :id AND pdf_object_key IS NULL"
+    sql = (
+        "UPDATE research.research_report SET source_object_key = :key "
+        "WHERE id = :id AND source_object_key IS NULL"
+    )
     async with SessionFactory() as session:
         result = await session.execute(text(sql), {"id": row["id"], "key": key})
         await session.commit()

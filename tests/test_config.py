@@ -7,7 +7,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.config import _extractor, _renderer, get_settings  # noqa: E402
+from app.config import _extractor, _faithfulness_min, get_settings  # noqa: E402
 
 
 class SettingsDefaultsTests(unittest.TestCase):
@@ -36,19 +36,6 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.ask_intent_timeout, 20.0)
         self.assertEqual(s.ask_condense_model, "claude-haiku-4-5")
         self.assertEqual(s.ask_condense_timeout, 20.0)
-        # REPORT_*
-        self.assertEqual(s.report_model, "claude-sonnet-5")
-        self.assertEqual(s.report_deep_k, 30)
-        self.assertEqual(s.report_max_reports, 25)
-        self.assertEqual(s.report_max_passages, 6)
-        self.assertEqual(s.report_max_context_chars, 40000)
-        self.assertEqual(s.report_timeout, 600.0)
-        self.assertEqual(s.reports_dir, "data/reports")
-        self.assertTrue(s.report_enable_web)
-        self.assertEqual(s.report_thin_coverage, 8)
-        # report_gate
-        self.assertEqual(s.report_min_cited, 3)
-        self.assertEqual(s.report_long_answer_chars, 400)
 
     def test_ask_web_defaults_m11(self):
         """預設是「允許使用者開」而非「一律開」——真正的開關在每個請求的 web 欄位。"""
@@ -62,13 +49,10 @@ class SettingsDefaultsTests(unittest.TestCase):
         s = get_settings()
         self.assertEqual(s.ask_rerank_enabled, True)
         self.assertEqual(s.ask_rerank_candidates, 50)
-        self.assertEqual(s.report_rerank_enabled, True)
-        self.assertEqual(s.report_rerank_candidates, 120)
         self.assertEqual(s.rerank_model, "BAAI/bge-reranker-v2-m3")
-        # per-path 逾時：prod 實測 50 對 ~34s、120 對 ~93s（20 核 CPU），
-        # 舊共用 30s 使兩路徑全數逾時（M1b 基準線 notes）。預設須蓋過實測值 + 餘裕。
+        # per-path 逾時：prod 實測 50 對 ~34s（20 核 CPU），舊共用 30s 使全數逾時
+        # （M1b 基準線 notes）。預設須蓋過實測值 + 餘裕。
         self.assertEqual(s.ask_rerank_timeout, 60.0)
-        self.assertEqual(s.report_rerank_timeout, 180.0)
 
     def test_query_planner_defaults_m5(self):
         # agentic_qa / query_planner（M5 區段；M5 里程碑只在本方法內加斷言）
@@ -80,25 +64,6 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.qa_agentic_enabled, True)
         self.assertEqual(s.qa_agentic_timeout, 90.0)
         self.assertEqual(s.qa_subquery_max_reports, 5)
-
-    def test_query_planner_defaults_m6(self):
-        # report 檢索增強 / query_planner（M6 區段；M6 里程碑只在本方法內加斷言）
-        s = get_settings()
-        self.assertEqual(s.report_planner_model, "claude-haiku-4-5")
-        self.assertEqual(s.report_planner_timeout, 30.0)
-        self.assertEqual(s.report_planner_max_subqueries, 8)
-        self.assertEqual(s.report_fanout_concurrency, 3)
-        self.assertEqual(s.report_subquery_dense_scan, 200)
-        self.assertEqual(s.report_total_candidates, 600)
-        self.assertEqual(s.report_mmr_enabled, True)
-        self.assertEqual(s.report_mmr_lambda, 0.7)
-        self.assertEqual(s.report_mmr_max_per_source, 6)
-        self.assertEqual(s.report_mmr_max_per_month, 0)
-
-    def test_renderer_defaults_m9a(self):
-        # 渲染器雙軌（M9a 區段；M9a 里程碑只在本方法內加斷言）
-        s = get_settings()
-        self.assertEqual(s.report_renderer, "typst")
 
     def test_extractor_default_e1a(self):
         """E1a：預設維持 pypdf，E1d 才切；typo 退回預設而不是靜默切換。"""
@@ -113,33 +78,28 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertIs(get_settings(), get_settings())
 
 
-class RendererFlagTests(unittest.TestCase):
-    """_renderer 的 fail-safe：typo 不得靜默把生產切到另一條渲染路徑。"""
+class FaithfulnessMinTests(unittest.TestCase):
+    """FAITHFULNESS_MIN 新名優先、舊名 REPORT_FAITHFULNESS_MIN 退回（生產環境檔可能還設著舊名）。"""
 
-    def _renderer_with(self, value: str | None) -> str:
-        env = {} if value is None else {"REPORT_RENDERER": value}
+    def _with(self, env: dict[str, str]) -> float:
         with mock.patch.dict(os.environ, env, clear=False):
-            if value is None:
-                os.environ.pop("REPORT_RENDERER", None)
-            return _renderer("REPORT_RENDERER", "typst")
+            for k in ("FAITHFULNESS_MIN", "REPORT_FAITHFULNESS_MIN"):
+                if k not in env:
+                    os.environ.pop(k, None)
+            return _faithfulness_min()
 
-    def test_known_values_pass_through(self):
-        self.assertEqual(self._renderer_with("weasyprint"), "weasyprint")
-        self.assertEqual(self._renderer_with("typst"), "typst")
+    def test_default(self):
+        self.assertEqual(self._with({}), 0.9)
+        self.assertEqual(get_settings().faithfulness_min, 0.9)
 
-    def test_case_and_space_tolerated(self):
-        self.assertEqual(self._renderer_with("  WeasyPrint "), "weasyprint")
+    def test_new_name_wins(self):
+        self.assertEqual(self._with({"FAITHFULNESS_MIN": "0.8", "REPORT_FAITHFULNESS_MIN": "0.7"}), 0.8)
 
-    def test_unknown_falls_back_to_default(self):
-        with self.assertLogs("app.config", level="WARNING"):
-            self.assertEqual(self._renderer_with("typoo"), "typst")
+    def test_legacy_name_fallback(self):
+        self.assertEqual(self._with({"REPORT_FAITHFULNESS_MIN": "0.7"}), 0.7)
 
-    def test_empty_falls_back_to_default(self):
-        with self.assertLogs("app.config", level="WARNING"):
-            self.assertEqual(self._renderer_with(""), "typst")
-
-    def test_unset_uses_default(self):
-        self.assertEqual(self._renderer_with(None), "typst")
+    def test_blank_new_name_falls_back_to_legacy(self):
+        self.assertEqual(self._with({"FAITHFULNESS_MIN": " ", "REPORT_FAITHFULNESS_MIN": "0.75"}), 0.75)
 
 
 if __name__ == "__main__":

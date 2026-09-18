@@ -16,10 +16,6 @@ async function* askDone(): AsyncGenerator<RawSSEEvent> {
   yield { event: 'done', data: { qa_id: 'qa1', conversation_id: 'c1' } }
 }
 
-async function* reportDone(): AsyncGenerator<RawSSEEvent> {
-  yield { event: 'done', data: { report_id: 'r1', title: 'T', download_url: '/x' } }
-}
-
 describe('useAskController locale threading (M10b)', () => {
   beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); setLocale('zh-Hant') })
   afterEach(() => { setLocale('zh-Hant'); localStorage.clear() })
@@ -39,14 +35,5 @@ describe('useAskController locale threading (M10b)', () => {
     act(() => { result.current.submit('TSMC outlook') })
     await waitFor(() => expect(askSpy).toHaveBeenCalled())
     expect(askSpy.mock.calls[0][0]).toMatchObject({ locale: 'en' })
-  })
-
-  it('en 也帶進 /api/report', async () => {
-    const repSpy = vi.spyOn(api, 'streamReport').mockReturnValue(reportDone())
-    setLocale('en')
-    const { result } = renderHook(() => useAskController(), { wrapper })
-    act(() => { result.current.generateReport('t1', 'TSMC', null) })
-    await waitFor(() => expect(repSpy).toHaveBeenCalled())
-    expect(repSpy.mock.calls[0][0]).toMatchObject({ locale: 'en' })
   })
 })

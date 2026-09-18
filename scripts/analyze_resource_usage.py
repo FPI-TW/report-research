@@ -739,12 +739,12 @@ def render_text(r: dict) -> str:
     out.append(_head("讀這份報告的三個前提"))
     out.append("1. 「服務合計」是每筆樣本先加總再取分位數，不是各元件 p95 相加（後者系統性高估）。")
     out.append("2. 非服務負載已扣除；這台機器同時是開發機，閒置時全機 CPU 常態就有 1 核以上。")
-    out.append("3. 這是**現況負載**下的用量。窗期內若沒有真實問答／研報生成，尖峰就沒有被觀測到——")
+    out.append("3. 這是**現況負載**下的用量。窗期內若沒有真實問答，尖峰就沒有被觀測到——")
     out.append("   對照下面實際發生的請求數判斷樣本代表性，必要時先跑受控負載再重新分析。")
     if g and g.get("rows_delta"):
         d = g["rows_delta"]
         out.append(
-            f"   窗期內實際發生：問答 {d.get('qa_log', 0)} 次｜研報 {d.get('report_doc', 0)} 份｜"
+            f"   窗期內實際發生：問答 {d.get('qa_log', 0)} 次｜"
             f"新入庫研報 {d.get('research_report', 0)} 篇"
         )
     return "\n".join(out)

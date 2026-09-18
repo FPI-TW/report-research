@@ -87,6 +87,11 @@ class Quality:
     multi_column_pages: int
     layout_coverage: float | None  # None ＝ 沒開 render
     quality_score: float
+    # ── v4 起，來自 layout.py 的統計（Document.meta["layout"]），不進分數、供稽核 ──
+    words_merged_ratio: float = 0.0  # 被 _merge_touching_words 併掉的詞 ÷ 原始詞數
+    chart_words_dropped: int = 0  # 圖區內丟掉的刻度／圖例詞
+    tables_retried: int = 0  # 框線表體檢可疑、以詞重建成功的張數
+    tables_rejected: int = 0  # 體檢可疑且重建失敗、退回文字流的張數
 
     def as_flags(self) -> dict[str, Any]:
         d = asdict(self)
@@ -187,12 +192,20 @@ def measure(doc: Document, renderer: Any | None = None) -> Quality:
     coverage = (ink_hit / ink_total) if (renderer is not None and ink_total) else None
 
     density = min(1.0, chars_pp / _CHARS_PER_PAGE_FLOOR)
-    score = (
-        _W_GARBLED * (1.0 - min(1.0, g * 5))  # 亂碼率 20% 就扣滿
-        + _W_DENSITY * density
-        + _W_FAILED * (1.0 - failed_ratio)
-        + _W_COVERAGE * (coverage if coverage is not None else 1.0)
-    )
+    # 沒量到 coverage 就把它的權重拿掉重新正規化，而不是白送滿分：v3 生產路徑從未傳
+    # renderer，0.15 的權重每篇都送，9,263 篇全部 ≥ 0.9、5,804 篇恰好 1.0，分數毫無鑑別力。
+    terms = [
+        (_W_GARBLED, 1.0 - min(1.0, g * 5)),  # 亂碼率 20% 就扣滿
+        (_W_DENSITY, density),
+        (_W_FAILED, 1.0 - failed_ratio),
+    ]
+    if coverage is not None:
+        terms.append((_W_COVERAGE, coverage))
+    score = sum(w * v for w, v in terms) / sum(w for w, _ in terms)
+
+    layout = doc.meta.get("layout") if isinstance(doc.meta, dict) else None
+    layout = layout if isinstance(layout, dict) else {}
+    words_raw = int(layout.get("words_raw") or 0)
 
     return Quality(
         page_count=n,
@@ -205,4 +218,8 @@ def measure(doc: Document, renderer: Any | None = None) -> Quality:
         multi_column_pages=sum(1 for q in per_page if q.columns > 1),
         layout_coverage=round(coverage, 4) if coverage is not None else None,
         quality_score=round(max(0.0, min(1.0, score)), 4),
+        words_merged_ratio=round(int(layout.get("words_merged") or 0) / words_raw, 4) if words_raw else 0.0,
+        chart_words_dropped=int(layout.get("chart_words_dropped") or 0),
+        tables_retried=int(layout.get("tables_retried") or 0),
+        tables_rejected=int(layout.get("tables_rejected") or 0),
     )

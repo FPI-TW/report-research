@@ -124,9 +124,9 @@ class AssetsMountPrecedesSpaCatchAllTests(unittest.TestCase):
 
 
 class QaVersionsUuidGuardTests(unittest.TestCase):
-    """`_valid_uuid` 被 ask/report/qa_versions 共用，只有這條沒被測到。
+    """`_valid_uuid` 被 ask/qa_versions 共用，只有這條沒被測到。
 
-    此端點對非法 uuid 回 404（與 report_doc_pdf 一致；回 400 的是 POST 端點）。
+    此端點對非法 uuid 回 404（回 400 的是 POST 端點）。
     但「不存在的合法 uuid」同樣會是 404，所以只斷言狀態碼證明不了守衛生效——
     改以哨兵確認**根本沒走到查詢層**，這才鎖得住 `_valid_uuid` 真的擋在前面。
     """

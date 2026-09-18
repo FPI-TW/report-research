@@ -1,4 +1,4 @@
-"""Private S3-compatible object storage for original reports and generated PDFs.
+"""Private S3-compatible object storage for original reports.
 
 Object keys are data, never filesystem paths.  This module intentionally imports boto3 only
 when R2 is enabled so the normal local development path has no network/client side effects.
@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import mimetypes
-import re
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -38,31 +37,6 @@ def original_object_key(file_hash: str, file_name: str) -> str:
     if not file_hash or len(file_hash) < 2 or not suffix:
         raise ValueError("original object key requires file_hash and original extension")
     return f"originals/{file_hash[:2]}/{file_hash}{suffix}"
-
-
-def generated_object_key(report_id: str, pdf_bytes: bytes, rendition_id: str | None = None) -> str:
-    """Canonical key for a generated PDF or its immutable rendition."""
-    return generated_object_key_for_sha(report_id, hashlib.sha256(pdf_bytes).hexdigest(), rendition_id)
-
-
-def generated_object_key_for_sha(report_id: str, pdf_sha256: str, rendition_id: str | None = None) -> str:
-    """Canonical generated key from a verified full PDF digest (without buffering it)."""
-    if len(pdf_sha256) != 64 or any(char not in "0123456789abcdef" for char in pdf_sha256):
-        raise ValueError("generated object key requires a lowercase full SHA-256")
-    digest = pdf_sha256[:12]
-    if rendition_id:
-        return f"generated/{report_id}/renditions/{rendition_id}-{digest}.pdf"
-    return f"generated/{report_id}/base-{digest}.pdf"
-
-
-def generated_key_has_expected_owner(key: str, report_id: str, rendition_id: str | None = None) -> bool:
-    """Cheap pre-HEAD validation for a DB pointer; exact full-SHA validation follows metadata."""
-    if rendition_id:
-        prefix = f"generated/{report_id}/renditions/{rendition_id}-"
-    else:
-        prefix = f"generated/{report_id}/base-"
-    digest = key.removeprefix(prefix).removesuffix(".pdf")
-    return key.startswith(prefix) and key.endswith(".pdf") and bool(re.fullmatch(r"[0-9a-f]{12}", digest))
 
 
 @contextmanager

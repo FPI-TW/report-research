@@ -31,7 +31,7 @@ def _judge(mapping):
 class NumericClaimTests(unittest.TestCase):
     """數值主張偵測。
 
-    漏判的代價不對稱：這是 `_section_needs_fix` 與問答抽查閘門的唯一依據，
+    漏判的代價不對稱：這是問答抽查閘門的唯一依據，
     漏了就等於那道門永遠不開（見 faithfulness.py 的 `_NUMERIC_RE` 註解）。
     所以正例遠多於反例，反例只保留「加了會壞事」的那幾種。
     """
@@ -85,11 +85,10 @@ class NumericClaimTests(unittest.TestCase):
 class NumericGateConsequenceTests(unittest.TestCase):
     """偵測漏判的**後果**：門檻整個失效。
 
-    只測正規表示式會漏掉真正重要的事——`_section_needs_fix` 的第一行是
-    `if result.degraded or result.numeric_support_rate is None: return False`。
-    只要一節裡一條數值主張都沒偵測到，支持率就是 None，那一節**無論多不忠實
-    都不會被修正**。2026-07-29 生產上就是這樣：17/17 主張全判非數值 → 全篇
-    faithfulness 0.412 卻沒有任何一節被修。
+    只測正規表示式會漏掉真正重要的事——只要一份回答裡一條數值主張都沒偵測到，
+    `numeric_support_rate` 就是 None，監控頁的 below_min 與離線評測**無論多不忠實
+    都看不到它**。2026-07-29 生產上就是這樣：17/17 主張全判非數值 → 全篇
+    faithfulness 0.412 卻沒有任何數值支持率可比。
     """
 
     @staticmethod
@@ -100,28 +99,23 @@ class NumericGateConsequenceTests(unittest.TestCase):
             for t in texts
         ]
 
-    def test_unsupported_index_levels_now_trigger_fix(self):
-        from app.services.report_writer import _section_needs_fix
-
+    def test_unsupported_index_levels_now_measurable(self):
         r = F.summarize_claims(
             self._claims(["台指期一度失守45,000點關卡", "44,454點是頸線支撐"], False),
             degraded=False,
         )
         self.assertIsNotNone(r.numeric_support_rate, "偵測不到數值 → 門檻永遠不開")
-        self.assertTrue(_section_needs_fix(r, 0.9))
+        self.assertEqual(r.numeric_support_rate, 0.0)
 
-    def test_degraded_still_never_fixed(self):
-        """fail-open 那筆是「沒量到」，不該被當成低分去觸發修正。"""
-        from app.services.report_writer import _section_needs_fix
-
+    def test_degraded_flag_is_carried(self):
+        """fail-open 那筆是「沒量到」：消費端（監控頁、離線評測）必須先看 degraded 再看分數，
+        summarize_claims 只負責把旗標原樣帶出，不替消費端判斷。"""
         r = F.summarize_claims(self._claims(["毛利率 5%"], False), degraded=True)
-        self.assertFalse(_section_needs_fix(r, 0.9))
+        self.assertTrue(r.degraded)
 
-    def test_all_supported_does_not_trigger_fix(self):
-        from app.services.report_writer import _section_needs_fix
-
+    def test_all_supported_rate_is_one(self):
         r = F.summarize_claims(self._claims(["毛利率 55.2%"], True), degraded=False)
-        self.assertFalse(_section_needs_fix(r, 0.9))
+        self.assertEqual(r.numeric_support_rate, 1.0)
 
 
 class DecomposeGroundTests(unittest.IsolatedAsyncioTestCase):
@@ -260,40 +254,3 @@ class ResolveEvidenceTextsTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class FixRoundBudgetTests(unittest.TestCase):
-    """修正輪的預算閘門（`plan_fix_action`）。
-
-    這條路徑先前是**死的**：數值主張幾乎偵測不到 → fix_positions 恆空 → 一次都沒跑過，
-    所以「沒有預算保護」這件事看不出來。把偵測修好等於同時把它啟動——八節全中
-    就是八次完整的節重生，正是 2026-07-28「逾時全損」的成因。
-    """
-
-    def test_no_budget_mode_never_blocks(self):
-        """eval 路徑（deadline=None）不設界，與 plan_section_action 一致。"""
-        from app.services.report_writer import plan_fix_action
-
-        self.assertTrue(plan_fix_action(budget_on=False, remaining=None, need=999))
-
-    def test_enough_time_runs(self):
-        from app.services.report_writer import plan_fix_action
-
-        self.assertTrue(plan_fix_action(budget_on=True, remaining=200.0, need=120.0))
-
-    def test_exactly_enough_runs(self):
-        """剛好等於所需＝可以跑；否則邊界上會白白少修一節。"""
-        from app.services.report_writer import plan_fix_action
-
-        self.assertTrue(plan_fix_action(budget_on=True, remaining=120.0, need=120.0))
-
-    def test_not_enough_stops(self):
-        from app.services.report_writer import plan_fix_action
-
-        self.assertFalse(plan_fix_action(budget_on=True, remaining=119.9, need=120.0))
-
-    def test_missing_remaining_stops_when_budget_on(self):
-        """開了預算卻拿不到剩餘時間 → 保守停手，不要在不知道時間的情況下重生。"""
-        from app.services.report_writer import plan_fix_action
-
-        self.assertFalse(plan_fix_action(budget_on=True, remaining=None, need=1.0))

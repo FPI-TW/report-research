@@ -26,7 +26,7 @@ sys.stdout.write(json.dumps({"type": "result"}) + "\n")
 
 class RunAttemptLargeLineTests(unittest.IsolatedAsyncioTestCase):
     """回歸：單行 stream-json 事件遠超 asyncio 預設 64KB 上限時，_run_attempt 不得因
-    LimitOverrunError 中斷，須完整讀出文字（長篇深度研報結尾 result 事件的實況）。
+    LimitOverrunError 中斷，須完整讀出文字（長篇回答結尾 result 事件的實況）。
 
     修法＝create_subprocess_exec 傳入較大的 limit（_STDOUT_LINE_LIMIT）。移除該參數
     會使本測試在讀取巨行時拋 ValueError/LimitOverrunError 而失敗。

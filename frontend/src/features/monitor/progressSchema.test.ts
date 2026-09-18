@@ -44,7 +44,6 @@ const derived = {
   signal: { done: 0, total: 10, remaining: 10, pct: 0, latest: null },
   evaluation: {
     qa: { total: 40, checked: 3, degraded: 1, below_min: 1, avg_score: 0.5634, latest: '2026-07-28' },
-    report: null,
     min_score: 0.9,
   },
 }

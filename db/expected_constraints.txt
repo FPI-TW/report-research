@@ -13,11 +13,9 @@
 # 要更新（只在你**刻意**改了約束時）：
 #   REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py
 # 然後把 diff 一起提交，並確認生產庫也套了對應的 ALTER。
-report_run.report_run_status_check = CHECK ((status = ANY (ARRAY['queued'::text, 'retrieving'::text, 'outlining'::text, 'drafting'::text, 'verifying'::text, 'rendering'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
-report_section.report_section_status_check = CHECK ((status = ANY (ARRAY['pending'::text, 'retrieving'::text, 'drafting'::text, 'drafted'::text, 'verifying'::text, 'final'::text, 'failed'::text])))
+extraction_log.extraction_log_stopped_at_check = CHECK ((stopped_at = ANY (ARRAY['ingested'::text, 'skip_admin'::text, 'scanned'::text, 'not_research'::text, 'extract_error'::text])))
 report_signal.report_signal_extraction_status_check = CHECK ((extraction_status = ANY (ARRAY['pending'::text, 'valid'::text, 'partial'::text, 'rejected'::text])))
 report_signal.report_signal_rating_normalized_check = CHECK ((rating_normalized = ANY (ARRAY['buy'::text, 'overweight'::text, 'neutral'::text, 'underweight'::text, 'sell'::text, 'unknown'::text])))
 report_takeaway.ck_report_takeaway_span = CHECK (((quote_start IS NULL) OR ((quote_start >= 0) AND (quote_end > quote_start))))
 report_takeaway.report_takeaway_anchor_method_check = CHECK (((anchor_method IS NULL) OR (anchor_method = ANY (ARRAY['exact'::text, 'normalized'::text, 'prefix'::text]))))
 report_takeaway.report_takeaway_extraction_status_check = CHECK ((extraction_status = ANY (ARRAY['pending'::text, 'valid'::text, 'partial'::text, 'rejected'::text])))
-extraction_log.extraction_log_stopped_at_check = CHECK ((stopped_at = ANY (ARRAY['ingested'::text, 'skip_admin'::text, 'scanned'::text, 'not_research'::text, 'extract_error'::text])))

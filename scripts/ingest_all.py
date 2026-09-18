@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text as sql_text  # noqa: E402
 
+from app.services.boilerplate import strip_boilerplate  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory, relax_statement_timeout  # noqa: E402
 from app.services.embed import embed_texts  # noqa: E402
@@ -131,7 +132,8 @@ async def main(limit: int | None, batch_size: int) -> None:
                 # full_text 走原始文字（不經 clean_extracted），需單獨剝除 NUL，
                 # 否則含 \x00 的 PDF 會在 upsert 時拋 UTF8 編碼錯誤而永久失敗。
                 raw_text = (rec.get("text") or "").replace("\x00", "")
-                chunks = chunk_text(clean_extracted(raw_text))
+                # 樣板段落只從要切塊的文字拿掉，full_text 不動（app/services/boilerplate.py）。
+                chunks = chunk_text(strip_boilerplate(clean_extracted(raw_text), rec.get("source"))[0])
                 if not chunks:
                     stats["skip_scanned"] += 1
                     await upsert_extraction_log(session, _log_row(rec, "scanned"))
@@ -174,7 +176,11 @@ async def main(limit: int | None, batch_size: int) -> None:
                     quality_flags=q or None,
                     page_count=rec.get("page_count"),
                     pages_failed=rec.get("pages_failed") or None,
-                    needs_review=needs_review(q.get("quality_score"), rec.get("pages_failed"), review_min),
+                    needs_review=needs_review(
+                        q.get("quality_score"), rec.get("pages_failed"), review_min, q,
+                        min_coverage=get_settings().extraction_review_min_coverage,
+                        max_garbled=get_settings().extraction_review_max_garbled,
+                    ),
                 )
                 await upsert_report(session, report, chunks, embeddings)
                 await upsert_extraction_log(session, _log_row(rec, "ingested"))

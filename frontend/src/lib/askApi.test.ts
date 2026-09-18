@@ -5,7 +5,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 test('getConversation 解析歷史陣列', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([
-    { id: 'q1', question: 'Q', answer: 'A', created_at: '2026-06-20T00:00:00Z', feedback: null, sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [] },
+    { id: 'q1', question: 'Q', answer: 'A', created_at: '2026-06-20T00:00:00Z', feedback: null, sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null },
   ]), { status: 200 })))
   const turns = await getConversation('c1')
   expect(turns).toHaveLength(1)

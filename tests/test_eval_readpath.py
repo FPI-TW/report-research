@@ -1,7 +1,7 @@
 # tests/test_eval_readpath.py
 """M8 查核結果的讀取路徑（E）：彙總純函式 + `/api/progress` 的 evaluation 區塊。
 
-`qa_log.evaluation` / `report_doc.evaluation` 從 M8 上線起就零消費端，查核只寫不看。
+`qa_log.evaluation` 從 M8 上線起就零消費端，查核只寫不看。
 本檔守住新加的兩條出口，重點在**別把「沒量到」讀成「品質差」**：
 
     degraded=true  judge fail-open，該筆實際未被查核，分數欄位皆 None
@@ -120,7 +120,6 @@ class ProgressHttpTests(unittest.TestCase):
         "evaluation": {
             "qa": {"total": 40, "checked": 3, "degraded": 1, "below_min": 1,
                    "avg_score": 0.5634, "latest": "2026-07-28"},
-            "report": None,
             "min_score": 0.9,
         },
     }
@@ -147,7 +146,7 @@ class ProgressHttpTests(unittest.TestCase):
         ev = r.json()["evaluation"]
         self.assertEqual(ev["qa"]["degraded"], 1)
         self.assertEqual(ev["min_score"], 0.9)
-        self.assertIsNone(ev["report"])
+        self.assertNotIn("report", ev)
 
     def test_takeaway_and_signal_still_present(self):
         """同一個回應裡的既有區塊不得因新增而被擠掉。"""
@@ -164,14 +163,12 @@ class SnapshotShapeTests(unittest.TestCase):
         for key in ("degraded", "below_min", "avg_score", "min_score"):
             self.assertIn(f'"{key}"', src, f"snapshot 缺 {key}")
 
-    def test_threshold_shared_with_report_writer(self):
-        """監控頁的「待複核」門檻必須就是實際觸發修正的門檻，不能自成一套。"""
+    def test_threshold_shared_with_eval_script(self):
+        """監控頁的「待複核」門檻與離線評測（scripts/eval_faithfulness.py）共用同一顆旋鈕。"""
         from app.config import get_settings
         from web.routers import monitor
 
-        self.assertEqual(
-            monitor._FAITHFULNESS_MIN, get_settings().report_faithfulness_min
-        )
+        self.assertEqual(monitor._FAITHFULNESS_MIN, get_settings().faithfulness_min)
 
 
 if __name__ == "__main__":

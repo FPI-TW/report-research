@@ -1,10 +1,9 @@
 # web/routers/report_file.py
 """舊 modal 的原始檔資料源：/api/report/{id}/full（metadata）與 /file（原始檔）。
 
-從 web/server.py 拆出（第三步）。與深度研報組（POST /api/report、
-/api/report-doc/{id}/pdf）**同前綴但不同組**——那組會產生/下載「生成的」研報，
-本組只讀「來源」研報的 metadata 與原始檔。切分依共用碼（本組唯一私有符號
-_fetch_report），不依 URL 前綴。
+從 web/server.py 拆出（第三步）。本組只讀「來源」研報的 metadata 與原始檔；
+`/api/report/` 這個前綴過去也被已移除的生成功能使用（POST /api/report），
+切分依共用碼（本組唯一私有符號 _fetch_report），不依 URL 前綴。
 
 SessionFactory 走 web.deps；file_path 一律由 DB 依 id 取得，無路徑注入。
 """

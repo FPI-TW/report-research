@@ -65,12 +65,40 @@ class ExtractionLogRow:
     quality_flags: Optional[dict] = None
 
 
-def needs_review(quality_score: Optional[float], pages_failed: Optional[Sequence[int]], review_min: float) -> bool:
-    """品質閘的判定：只標記不擋。分數低於門檻、或有任何頁級失敗，都算要人看。
-    分數為 None（pypdf 路徑）不算低分——沒量到不是壞。"""
+# needs_review 的旗標門檻（v4）。quality_score 是加權平均，單一嚴重缺陷會被其他滿分項稀釋
+# （coverage 0.3 的檔分數仍有 0.89），所以除了總分還逐項看：
+# - layout_coverage：抽樣 50 份的分布 p5 0.38–0.46、p25 0.60–0.69、中位 0.72；圖多的頁面
+#   覆蓋率天生偏低，門檻取在 p5 之下，標到的才是「整塊漏抽」而不是「圖多」。
+# - garbled_ratio：v3 全庫 >2% 只有 27 篇，且集中在把 PUA 項目符號算成亂碼的凱基 Takeaway
+#   版型；2% 是「真的有問題才過線」的位置。
+REVIEW_MIN_COVERAGE = 0.30
+REVIEW_MAX_GARBLED = 0.02
+
+
+def needs_review(
+    quality_score: Optional[float],
+    pages_failed: Optional[Sequence[int]],
+    review_min: float,
+    flags: Optional[dict] = None,
+    *,
+    min_coverage: float = REVIEW_MIN_COVERAGE,
+    max_garbled: float = REVIEW_MAX_GARBLED,
+) -> bool:
+    """品質閘的判定：只標記不擋。分數低於門檻、有任何頁級失敗、coverage 低於 `min_coverage`、
+    亂碼率高於 `max_garbled`，都算要人看。分數或旗標為 None（pypdf 路徑、沒 render）不算
+    低分——沒量到不是壞。"""
     if pages_failed:
         return True
-    return quality_score is not None and quality_score < review_min
+    if quality_score is not None and quality_score < review_min:
+        return True
+    if flags:
+        cov = flags.get("layout_coverage")
+        if isinstance(cov, (int, float)) and not isinstance(cov, bool) and cov < min_coverage:
+            return True
+        g = flags.get("garbled_ratio")
+        if isinstance(g, (int, float)) and not isinstance(g, bool) and g > max_garbled:
+            return True
+    return False
 
 
 async def upsert_extraction_log(session: AsyncSession, row: ExtractionLogRow) -> None:

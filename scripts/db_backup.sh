@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
 # 廷豐智能研報：把「重建不回來」的那幾張表 pg_dump 到 NAS。
 #
-# 為什麼只備七張表而不是整庫：語料層（research_report / report_chunk）雖然大，
+# 為什麼只備四張表而不是整庫：語料層（research_report / report_chunk）雖然大，
 # 但確定重跑得回來——研報原檔還在 NAS，extract → tag → ingest 全程 checkpoint 可續。
-# 下面這七張不一樣，它們是「人與 LLM 產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
+# 下面這四張不一樣，它們是「人與 LLM 產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
 #
 #   research.qa_log            每一次提問、當時的來源與證據帳本、使用者的讚／倒讚
-#   research.report_doc        深度研報的 markdown（schema 註解明寫「真相來源」，PDF 由它重建）
-#   research.report_rendition  換皮重出的不可變渲染史
 #   research.report_takeaway   閱讀頁重點摘錄（Sonnet 批次產物，含錨點）
 #   research.report_signal     觀點雷達訊號（Sonnet 批次產物）
-#   research.report_run        逐節生成狀態機的流程史
-#   research.report_section    同上，逐節內容
+#   research.report_brief      每日簡報（Sonnet 批次產物，來源清單由 Python 記錄）
 #
-# 體積小、價值最高 ⇒ 先備這七張。要不要連語料層一起備是另一個（成本）決定，
+# 體積小、價值最高 ⇒ 先備這四張。要不要連語料層一起備是另一個（成本）決定，
 # 連同已知的 report_id 耦合限制寫在 docs/production_resilience.md「備份與還原」。
 #
 # 用法：bash scripts/db_backup.sh   或   make db-backup
@@ -81,12 +78,9 @@ KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-$(_default_key BACKUP_KEEP_WEEKLY)}"
 
 BACKUP_TABLES=(
   research.qa_log
-  research.report_doc
-  research.report_rendition
   research.report_takeaway
   research.report_signal
-  research.report_run
-  research.report_section
+  research.report_brief
 )
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
@@ -181,7 +175,7 @@ fi
 # ── 4) 驗這份 dump 不是空殼 ───────────────────────────────────────────────
 # 備份最惡劣的失敗型態是「檔案在、內容不能用」。兩道最便宜的檢查：
 #   a) 檔頭魔數：pg_dump -Fc 的前五個位元組固定是 PGDMP，被截斷或被 stdout 攪過就對不上
-#   b) 大小下限：七張表的 schema 本身就不只 1KB，比這小一定是空輸出
+#   b) 大小下限：四張表的 schema 本身就不只 1KB，比這小一定是空輸出
 MAGIC="$(head -c 5 "$TMP" 2>/dev/null || true)"
 [ "$MAGIC" = "PGDMP" ] || die "產出的檔案不是 pg_dump custom 格式（檔頭='$MAGIC'）→ 視為失敗。"
 SIZE=0

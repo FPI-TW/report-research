@@ -1,4 +1,4 @@
-"""為缺摘要的研報生成 2-3 句中文摘要 → research_report.summary
+"""為缺摘要的研報產生 2-3 句中文摘要 → research_report.summary
 
 - 來源：DB 既有 full_text（語料已導入，無須重跑 ingest）
 - 每篇用 `claude -p`(Sonnet) headless 產出 JSON {"summary": "..."}，parse_summary() 解析

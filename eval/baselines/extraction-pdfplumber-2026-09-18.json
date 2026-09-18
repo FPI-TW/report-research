@@ -1,0 +1,1448 @@
+{
+ "summary": {
+  "order_hit_rate": 1.0,
+  "order_pair_acc": 0.9471635150166852,
+  "order_pair_acc_within": 1.0,
+  "order_kendall_tau": 0.8943270300333704,
+  "order_pair_acc_case_mean": 0.9421657707371993,
+  "n_cases_with_order": 21,
+  "n_order_sentences": 281,
+  "n_order_pairs": 1798,
+  "n_order_pairs_within": 577,
+  "rating_coverage": 0.5263157894736842,
+  "rating_accuracy": 1.0,
+  "tp_coverage": 0.6333333333333333,
+  "tp_accuracy": 1.0,
+  "n_golden_tp": 30,
+  "hallucination_rate": 0.10526315789473684,
+  "n_evidence": 19,
+  "n_evidence_prefix": 0,
+  "chars_nows_total": 385446,
+  "n_cases": 21,
+  "n_prefilled": 0,
+  "n_draft": 0,
+  "n_reviewed": 21
+ },
+ "subsets": {
+  "two_column": {
+   "order_hit_rate": 1.0,
+   "order_pair_acc": 0.9452133794694348,
+   "order_pair_acc_within": 1.0,
+   "order_kendall_tau": 0.8904267589388697,
+   "order_pair_acc_case_mean": 0.9360779571305887,
+   "n_cases_with_order": 19,
+   "n_order_sentences": 264,
+   "n_order_pairs": 1734,
+   "n_order_pairs_within": 513,
+   "rating_coverage": 0.5263157894736842,
+   "rating_accuracy": 1.0,
+   "tp_coverage": 0.6333333333333333,
+   "tp_accuracy": 1.0,
+   "n_golden_tp": 30,
+   "hallucination_rate": 0.10526315789473684,
+   "n_evidence": 19,
+   "n_evidence_prefix": 0,
+   "chars_nows_total": 370930
+  },
+  "single_column": {
+   "order_hit_rate": 1.0,
+   "order_pair_acc": 1.0,
+   "order_pair_acc_within": 1.0,
+   "order_kendall_tau": 1.0,
+   "order_pair_acc_case_mean": 1.0,
+   "n_cases_with_order": 2,
+   "n_order_sentences": 17,
+   "n_order_pairs": 64,
+   "n_order_pairs_within": 64,
+   "rating_coverage": null,
+   "rating_accuracy": null,
+   "tp_coverage": null,
+   "tp_accuracy": null,
+   "n_golden_tp": 0,
+   "hallucination_rate": null,
+   "n_evidence": 0,
+   "n_evidence_prefix": 0,
+   "chars_nows_total": 14516
+  }
+ },
+ "by_source": {
+  "goldman_sachs": {
+   "order_hit_rate": 1.0,
+   "order_pair_acc": 0.7435897435897436,
+   "order_pair_acc_within": 1.0,
+   "order_kendall_tau": 0.48717948717948717,
+   "order_pair_acc_case_mean": 0.7435897435897436,
+   "n_cases_with_order": 1,
+   "n_order_sentences": 13,
+   "n_order_pairs": 78,
+   "n_order_pairs_within": 26,
+   "rating_coverage": 1.0,
+   "rating_accuracy": 1.0,
+   "tp_coverage": 1.0,
+   "tp_accuracy": 1.0,
+   "n_golden_tp": 1,
+   "hallucination_rate": 1.0,
+   "n_evidence": 1,
+   "n_evidence_prefix": 0,
+   "chars_nows_total": 50413
+  },
+  "kgi": {
+   "order_hit_rate": 1.0,
+   "order_pair_acc": 0.9405034324942791,
+   "order_pair_acc_within": 1.0,
+   "order_kendall_tau": 0.8810068649885584,
+   "order_pair_acc_case_mean": 0.945016095016095,
+   "n_cases_with_order": 6,
+   "n_order_sentences": 74,
+   "n_order_pairs": 437,
+   "n_order_pairs_within": 156,
+   "rating_coverage": 0.4166666666666667,
+   "rating_accuracy": 1.0,
+   "tp_coverage": 0.5,
+   "tp_accuracy": 1.0,
+   "n_golden_tp": 6,
+   "hallucination_rate": 0.0,
+   "n_evidence": 3,
+   "n_evidence_prefix": 0,
+   "chars_nows_total": 109478
+  },
+  "masterlink": {
+   "order_hit_rate": 1.0,
+   "order_pair_acc": 0.9715909090909091,
+   "order_pair_acc_within": 1.0,
+   "order_kendall_tau": 0.9431818181818182,
+   "order_pair_acc_case_mean": 0.967948717948718,
+   "n_cases_with_order": 4,
+   "n_order_sentences": 55,
+   "n_order_pairs": 352,
+   "n_order_pairs_within": 110,
+   "rating_coverage": 0.6,
+   "rating_accuracy": 1.0,
+   "tp_coverage": 0.7777777777777778,
+   "tp_accuracy": 1.0,
+   "n_golden_tp": 9,
+   "hallucination_rate": 0.0,
+   "n_evidence": 7,
+   "n_evidence_prefix": 0,
+   "chars_nows_total": 47759
+  },
+  "morgan_stanley": {
+   "order_hit_rate": 1.0,
+   "order_pair_acc": 1.0,
+   "order_pair_acc_within": 1.0,
+   "order_kendall_tau": 1.0,
+   "order_pair_acc_case_mean": 1.0,
+   "n_cases_with_order": 2,
+   "n_order_sentences": 32,
+   "n_order_pairs": 240,
+   "n_order_pairs_within": 82,
+   "rating_coverage": 1.0,
+   "rating_accuracy": 1.0,
+   "tp_coverage": 1.0,
+   "tp_accuracy": 1.0,
+   "n_golden_tp": 2,
+   "hallucination_rate": 0.0,
+   "n_evidence": 2,
+   "n_evidence_prefix": 0,
+   "chars_nows_total": 72002
+  },
+  "sinopac": {
+   "order_hit_rate": 1.0,
+   "order_pair_acc": 0.8333333333333334,
+   "order_pair_acc_within": 1.0,
+   "order_kendall_tau": 0.6666666666666666,
+   "order_pair_acc_case_mean": 0.8333333333333334,
+   "n_cases_with_order": 3,
+   "n_order_sentences": 39,
+   "n_order_pairs": 234,
+   "n_order_pairs_within": 75,
+   "rating_coverage": 0.6666666666666666,
+   "rating_accuracy": 1.0,
+   "tp_coverage": 1.0,
+   "tp_accuracy": 1.0,
+   "n_golden_tp": 2,
+   "hallucination_rate": 0.5,
+   "n_evidence": 2,
+   "n_evidence_prefix": 0,
+   "chars_nows_total": 41180
+  },
+  "yuanta": {
+   "order_hit_rate": 1.0,
+   "order_pair_acc": 1.0,
+   "order_pair_acc_within": 1.0,
+   "order_kendall_tau": 1.0,
+   "order_pair_acc_case_mean": 1.0,
+   "n_cases_with_order": 5,
+   "n_order_sentences": 68,
+   "n_order_pairs": 457,
+   "n_order_pairs_within": 128,
+   "rating_coverage": 0.4,
+   "rating_accuracy": 1.0,
+   "tp_coverage": 0.4,
+   "tp_accuracy": 1.0,
+   "n_golden_tp": 10,
+   "hallucination_rate": 0.0,
+   "n_evidence": 4,
+   "n_evidence_prefix": 0,
+   "chars_nows_total": 64614
+  }
+ },
+ "config": {
+  "extractor": "pdfplumber",
+  "signals_source": "db",
+  "dataset_version": "extraction-golden-v2",
+  "reviewed_only": true,
+  "run_date": "2026-09-18"
+ },
+ "notes": [
+  "順序指標以配對加總計，不是逐檔平均（order_pair_acc_case_mean 才是逐檔平均）。",
+  "欄位層的抽取結果來自 --signals（現況為 DB 的 report_signal），與 --extractor 無關。",
+  "幻覺率把 Anchor.method == 'prefix' 計為錨不回（§4.3）。"
+ ],
+ "cases": [
+  {
+   "id": "kgi-2382-daily-story-20260514",
+   "source": "kgi",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 16883,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 13,
+    "n_hit": 13,
+    "n_pairs": 78,
+    "n_concordant": 73,
+    "n_pairs_within": 21,
+    "n_concordant_within": 21,
+    "hit_rate": 1.0,
+    "pair_acc": 0.9358974358974359,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.8717948717948718,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "2382",
+      "rating": {
+       "golden": "增加持股",
+       "got": "增加持股",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 430.0,
+       "got": 430.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "kgi-2313-daily-story-20250212",
+   "source": "kgi",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 13159,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 11,
+    "n_hit": 11,
+    "n_pairs": 55,
+    "n_concordant": 50,
+    "n_pairs_within": 20,
+    "n_concordant_within": 20,
+    "hit_rate": 1.0,
+    "pair_acc": 0.9090909090909091,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.8181818181818182,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 0,
+    "ok_rating": 0,
+    "golden_tp": 1,
+    "got_tp": 0,
+    "ok_tp": 0,
+    "n_evidence": 0,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "2313",
+      "rating": {
+       "golden": "增加持股",
+       "got": null
+      },
+      "target_price": {
+       "golden": 80.0,
+       "got": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "kgi-radar-monthly-semi-20260312",
+   "source": "kgi",
+   "kind": "industry",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 46697,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 12,
+    "n_hit": 12,
+    "n_pairs": 66,
+    "n_concordant": 62,
+    "n_pairs_within": 15,
+    "n_concordant_within": 15,
+    "hit_rate": 1.0,
+    "pair_acc": 0.9393939393939394,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.8787878787878788,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 8,
+    "got_rating": 4,
+    "ok_rating": 4,
+    "golden_tp": 2,
+    "got_tp": 2,
+    "ok_tp": 2,
+    "n_evidence": 2,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "2330",
+      "rating": {
+       "golden": "增加持股",
+       "got": "增加持股",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 2420.0,
+       "got": 2420.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "3661",
+      "rating": {
+       "golden": "增加持股",
+       "got": "增加持股",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 4590.0,
+       "got": 4590.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "3443",
+      "rating": {
+       "golden": "增加持股",
+       "got": "增加持股",
+       "ok": true
+      }
+     },
+     {
+      "code": "5274",
+      "rating": {
+       "golden": "增加持股",
+       "got": "增加持股",
+       "ok": true
+      }
+     },
+     {
+      "code": "6515",
+      "rating": {
+       "golden": "增加持股",
+       "got": null
+      }
+     },
+     {
+      "code": "7769",
+      "rating": {
+       "golden": "增加持股",
+       "got": null
+      }
+     },
+     {
+      "code": "1560",
+      "rating": {
+       "golden": "增加持股",
+       "got": null
+      }
+     },
+     {
+      "code": "2344",
+      "rating": {
+       "golden": "增加持股",
+       "got": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "kgi-weekly-taiex-20251023",
+   "source": "kgi",
+   "kind": "weekly",
+   "two_column": false,
+   "annotation_status": "reviewed",
+   "chars_nows": 6001,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 8,
+    "n_hit": 8,
+    "n_pairs": 28,
+    "n_concordant": 28,
+    "n_pairs_within": 28,
+    "n_concordant_within": 28,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 0,
+    "got_rating": 0,
+    "ok_rating": 0,
+    "golden_tp": 0,
+    "got_tp": 0,
+    "ok_tp": 0,
+    "n_evidence": 0,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": []
+   }
+  },
+  {
+   "id": "masterlink-3105-report-20250502",
+   "source": "masterlink",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 7759,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 13,
+    "n_hit": 13,
+    "n_pairs": 78,
+    "n_concordant": 73,
+    "n_pairs_within": 26,
+    "n_concordant_within": 26,
+    "hit_rate": 1.0,
+    "pair_acc": 0.9358974358974359,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.8717948717948718,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "3105",
+      "rating": {
+       "golden": "HOLD",
+       "got": "HOLD",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 91.0,
+       "got": 91.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "masterlink-3665-report-20250224",
+   "source": "masterlink",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 16041,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 13,
+    "n_hit": 13,
+    "n_pairs": 78,
+    "n_concordant": 73,
+    "n_pairs_within": 26,
+    "n_concordant_within": 26,
+    "hit_rate": 1.0,
+    "pair_acc": 0.9358974358974359,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.8717948717948718,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "3665",
+      "rating": {
+       "golden": "BUY",
+       "got": "BUY",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 800.0,
+       "got": 800.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "masterlink-3008-flash-20250110",
+   "source": "masterlink",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 2775,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 14,
+    "n_hit": 14,
+    "n_pairs": 91,
+    "n_concordant": 91,
+    "n_pairs_within": 26,
+    "n_concordant_within": 26,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "3008",
+      "rating": {
+       "golden": "中立",
+       "got": "中立",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 2800.0,
+       "got": 2800.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "masterlink-daily-20250311",
+   "source": "masterlink",
+   "kind": "daily",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 21184,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 15,
+    "n_hit": 15,
+    "n_pairs": 105,
+    "n_concordant": 105,
+    "n_pairs_within": 32,
+    "n_concordant_within": 32,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 7,
+    "got_rating": 3,
+    "ok_rating": 3,
+    "golden_tp": 6,
+    "got_tp": 4,
+    "ok_tp": 4,
+    "n_evidence": 4,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "2330",
+      "target_price": {
+       "golden": 1400.0,
+       "got": 1400.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "2454",
+      "rating": {
+       "golden": "買進",
+       "got": "買進",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 2000.0,
+       "got": 2000.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "2357",
+      "rating": {
+       "golden": "買進",
+       "got": "買進",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 740.0,
+       "got": 740.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "2376",
+      "rating": {
+       "golden": "買進",
+       "got": "買進",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 360.0,
+       "got": 360.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "2015",
+      "rating": {
+       "golden": "中立",
+       "got": null
+      },
+      "target_price": {
+       "golden": 80.0,
+       "got": null
+      }
+     },
+     {
+      "code": "2881",
+      "rating": {
+       "golden": "中立",
+       "got": null
+      }
+     },
+     {
+      "code": "2882",
+      "rating": {
+       "golden": "中立",
+       "got": null
+      }
+     },
+     {
+      "code": "3533",
+      "rating": {
+       "golden": "買進",
+       "got": null
+      },
+      "target_price": {
+       "golden": 2350.0,
+       "got": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "sinopac-2379-focus-20250502",
+   "source": "sinopac",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 15393,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 13,
+    "n_hit": 13,
+    "n_pairs": 78,
+    "n_concordant": 63,
+    "n_pairs_within": 23,
+    "n_concordant_within": 23,
+    "hit_rate": 1.0,
+    "pair_acc": 0.8076923076923077,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.6153846153846154,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 1,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "2379",
+      "rating": {
+       "golden": "買進",
+       "got": "買進",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 600.0,
+       "got": 600.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "sinopac-2382-focus-20250515",
+   "source": "sinopac",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 13052,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 13,
+    "n_hit": 13,
+    "n_pairs": 78,
+    "n_concordant": 66,
+    "n_pairs_within": 26,
+    "n_concordant_within": 26,
+    "hit_rate": 1.0,
+    "pair_acc": 0.8461538461538461,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.6923076923076923,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "2382",
+      "rating": {
+       "golden": "買進",
+       "got": "買進",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 320.0,
+       "got": 320.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "sinopac-6271-focus-20250418",
+   "source": "sinopac",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 12735,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 13,
+    "n_hit": 13,
+    "n_pairs": 78,
+    "n_concordant": 66,
+    "n_pairs_within": 26,
+    "n_concordant_within": 26,
+    "hit_rate": 1.0,
+    "pair_acc": 0.8461538461538461,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.6923076923076923,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 0,
+    "ok_rating": 0,
+    "golden_tp": 0,
+    "got_tp": 0,
+    "ok_tp": 0,
+    "n_evidence": 0,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "6271",
+      "rating": {
+       "golden": "中立",
+       "got": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "yuanta-morning-20250226",
+   "source": "yuanta",
+   "kind": "daily",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 16140,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 12,
+    "n_hit": 12,
+    "n_pairs": 66,
+    "n_concordant": 66,
+    "n_pairs_within": 19,
+    "n_concordant_within": 19,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 4,
+    "got_rating": 2,
+    "ok_rating": 2,
+    "golden_tp": 4,
+    "got_tp": 2,
+    "ok_tp": 2,
+    "n_evidence": 2,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "6690",
+      "rating": {
+       "golden": "買進",
+       "got": null
+      },
+      "target_price": {
+       "golden": 265.0,
+       "got": null
+      }
+     },
+     {
+      "code": "2383",
+      "rating": {
+       "golden": "買進",
+       "got": "買進",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 710.0,
+       "got": 710.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "3036",
+      "rating": {
+       "golden": "買進",
+       "got": null
+      },
+      "target_price": {
+       "golden": 120.0,
+       "got": null
+      }
+     },
+     {
+      "code": "5347",
+      "rating": {
+       "golden": "持有-超越同業",
+       "got": "持有-超越同業",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 112.0,
+       "got": 112.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "yuanta-morning-20250711",
+   "source": "yuanta",
+   "kind": "daily",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 17709,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 12,
+    "n_hit": 12,
+    "n_pairs": 66,
+    "n_concordant": 66,
+    "n_pairs_within": 19,
+    "n_concordant_within": 19,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 5,
+    "got_rating": 2,
+    "ok_rating": 2,
+    "golden_tp": 5,
+    "got_tp": 2,
+    "ok_tp": 2,
+    "n_evidence": 2,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "6873",
+      "rating": {
+       "golden": "買進",
+       "got": null
+      },
+      "target_price": {
+       "golden": 300.0,
+       "got": null
+      }
+     },
+     {
+      "code": "2014",
+      "rating": {
+       "golden": "持有-超越同業",
+       "got": null
+      },
+      "target_price": {
+       "golden": 15.0,
+       "got": null
+      }
+     },
+     {
+      "code": "2408",
+      "rating": {
+       "golden": "持有-超越同業",
+       "got": "持有-超越同業",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 53.0,
+       "got": 53.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "3008",
+      "rating": {
+       "golden": "持有-超越同業",
+       "got": "持有-超越同業",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 2500.0,
+       "got": 2500.0,
+       "ok": true
+      }
+     },
+     {
+      "code": "1301",
+      "rating": {
+       "golden": "買進",
+       "got": null
+      },
+      "target_price": {
+       "golden": 45.0,
+       "got": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "yuanta-global-markets-20250820",
+   "source": "yuanta",
+   "kind": "macro",
+   "two_column": false,
+   "annotation_status": "reviewed",
+   "chars_nows": 8515,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 9,
+    "n_hit": 9,
+    "n_pairs": 36,
+    "n_concordant": 36,
+    "n_pairs_within": 36,
+    "n_concordant_within": 36,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 0,
+    "got_rating": 0,
+    "ok_rating": 0,
+    "golden_tp": 0,
+    "got_tp": 0,
+    "ok_tp": 0,
+    "n_evidence": 0,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": []
+   }
+  },
+  {
+   "id": "gs-2330-earnings-review-20260716",
+   "source": "goldman_sachs",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 50413,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 13,
+    "n_hit": 13,
+    "n_pairs": 78,
+    "n_concordant": 58,
+    "n_pairs_within": 26,
+    "n_concordant_within": 26,
+    "hit_rate": 1.0,
+    "pair_acc": 0.7435897435897436,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.48717948717948717,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 1,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "2330",
+      "rating": {
+       "golden": "Buy",
+       "got": "Buy",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 3100.0,
+       "got": 3100.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "kgi-2344-daily-story-20260123",
+   "source": "kgi",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 14462,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 15,
+    "n_hit": 15,
+    "n_pairs": 105,
+    "n_concordant": 99,
+    "n_pairs_within": 36,
+    "n_concordant_within": 36,
+    "hit_rate": 1.0,
+    "pair_acc": 0.9428571428571428,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.8857142857142857,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 0,
+    "ok_rating": 0,
+    "golden_tp": 1,
+    "got_tp": 0,
+    "ok_tp": 0,
+    "n_evidence": 0,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "2344",
+      "rating": {
+       "golden": "增加持股",
+       "got": null
+      },
+      "target_price": {
+       "golden": 170.0,
+       "got": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "kgi-5289-daily-story-20251212",
+   "source": "kgi",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 12276,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 15,
+    "n_hit": 15,
+    "n_pairs": 105,
+    "n_concordant": 99,
+    "n_pairs_within": 36,
+    "n_concordant_within": 36,
+    "hit_rate": 1.0,
+    "pair_acc": 0.9428571428571428,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 0.8857142857142857,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 0,
+    "ok_rating": 0,
+    "golden_tp": 1,
+    "got_tp": 0,
+    "ok_tp": 0,
+    "n_evidence": 0,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "5289",
+      "rating": {
+       "golden": "增加持股",
+       "got": null
+      },
+      "target_price": {
+       "golden": 800.0,
+       "got": null
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "yuanta-morning-20241216",
+   "source": "yuanta",
+   "kind": "daily",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 11045,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 18,
+    "n_hit": 18,
+    "n_pairs": 153,
+    "n_concordant": 153,
+    "n_pairs_within": 20,
+    "n_concordant_within": 20,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 0,
+    "got_rating": 0,
+    "ok_rating": 0,
+    "golden_tp": 0,
+    "got_tp": 0,
+    "ok_tp": 0,
+    "n_evidence": 0,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": []
+   }
+  },
+  {
+   "id": "ms-6669-report-20250408",
+   "source": "morgan_stanley",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 34877,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 16,
+    "n_hit": 16,
+    "n_pairs": 120,
+    "n_concordant": 120,
+    "n_pairs_within": 39,
+    "n_concordant_within": 39,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "6669",
+      "rating": {
+       "golden": "Overweight",
+       "got": "Overweight",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 3100.0,
+       "got": 3100.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "ms-3034-report-20260804",
+   "source": "morgan_stanley",
+   "kind": "stock",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 37125,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 16,
+    "n_hit": 16,
+    "n_pairs": 120,
+    "n_concordant": 120,
+    "n_pairs_within": 43,
+    "n_concordant_within": 43,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 1,
+    "ok_rating": 1,
+    "golden_tp": 1,
+    "got_tp": 1,
+    "ok_tp": 1,
+    "n_evidence": 1,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "3034",
+      "rating": {
+       "golden": "Underweight",
+       "got": "Underweight",
+       "ok": true
+      },
+      "target_price": {
+       "golden": 414.0,
+       "got": 414.0,
+       "ok": true
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "yuanta-morning-20251231",
+   "source": "yuanta",
+   "kind": "daily",
+   "two_column": true,
+   "annotation_status": "reviewed",
+   "chars_nows": 11205,
+   "diag": {
+    "pages_failed": [],
+    "error": null,
+    "extraction_version": "ext-2026-09-02.v3"
+   },
+   "order": {
+    "n_sentences": 17,
+    "n_hit": 17,
+    "n_pairs": 136,
+    "n_concordant": 136,
+    "n_pairs_within": 34,
+    "n_concordant_within": 34,
+    "hit_rate": 1.0,
+    "pair_acc": 1.0,
+    "pair_acc_within": 1.0,
+    "kendall_tau": 1.0,
+    "misses": []
+   },
+   "fields": {
+    "golden_rating": 1,
+    "got_rating": 0,
+    "ok_rating": 0,
+    "golden_tp": 1,
+    "got_tp": 0,
+    "ok_tp": 0,
+    "n_evidence": 0,
+    "n_unanchored": 0,
+    "n_prefix": 0,
+    "details": [
+     {
+      "code": "1504",
+      "rating": {
+       "golden": "持有-超越同業",
+       "got": null
+      },
+      "target_price": {
+       "golden": 92.0,
+       "got": null
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

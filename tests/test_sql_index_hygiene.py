@@ -34,7 +34,7 @@ def _code_only(path: Path) -> str:
 
     註解裡本來就會逐字寫出被禁的寫法（「不可寫 :code = ANY(...)」正是最該留的說明），
     連註解一起掃會讓這條守門變成「不准解釋為什麼」。以 tokenize 剔除，不用正則猜
-    ——`#` 在別處是合法字元（Typst 片段整篇都是）。
+    ——`#` 在別處是合法字元（字串常值裡的 markdown 標題就是）。
     """
     import io
     import tokenize
@@ -107,14 +107,12 @@ class RedundantIndexTests(unittest.TestCase):
     """完全被 UNIQUE 約束（或其最左前綴）覆蓋的索引不該再宣告。
 
     多餘索引不會讓查詢出錯，只是每次 INSERT/UPDATE 多維護一份、多佔一份空間。
-    這三個是逐欄（含欄序）比對確認的。
+    這兩個是逐欄（含欄序）比對確認的。
     """
 
     def test_indexes_fully_covered_by_unique_constraints_are_gone(self):
         names = _index_names(SCHEMA_SQL)
         for dropped, covering in (
-            # 與 uq_report_section_run_pos UNIQUE (run_id, position) 逐欄相同
-            ("idx_report_section_run", "uq_report_section_run_pos"),
             # 與 uq_report_takeaway_ordinal UNIQUE (report_id, ordinal) 逐欄相同
             ("idx_report_takeaway_report", "uq_report_takeaway_ordinal"),
             # (report_id) 是 uq_report_signal_report_instr 的最左前綴

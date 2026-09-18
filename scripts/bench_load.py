@@ -25,7 +25,6 @@
 用法：
   python3 scripts/bench_load.py --repeat 1 --concurrency 1        # 單條成本（預設）
   python3 scripts/bench_load.py --repeat 2 --concurrency 3        # 打滿併發閘
-  python3 scripts/bench_load.py --endpoint report --repeat 1      # 研報路徑（很慢很重）
   python3 scripts/bench_load.py --dry-run                         # 只印計畫，不送請求
 
 退出碼：0＝全部請求完成；1＝有請求失敗（仍會寫出結果檔）；2＝前置條件不成立
@@ -201,9 +200,6 @@ def percentile(values: list[float], q: float) -> float:
 def run_bench(args) -> dict:
     questions = load_questions(args.limit)
     plan = [questions[i % len(questions)] for i in range(args.repeat * len(questions))]
-    if args.endpoint == "report":
-        # 研報一次數分鐘且 `_REPORT_GATE` 預設序列化，題數刻意壓到最小。
-        plan = plan[: args.repeat]
 
     print(f"題集      {QUESTION_SET.name}（{len(questions)} 題）")
     print(f"端點      /api/{args.endpoint}")
@@ -285,7 +281,7 @@ def run_bench(args) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="受控負載壓測（會消耗 Claude 額度）")
     p.add_argument("--base", default="http://127.0.0.1:8097", help="服務位址")
-    p.add_argument("--endpoint", choices=("ask", "report"), default="ask")
+    p.add_argument("--endpoint", choices=("ask",), default="ask")
     p.add_argument("--repeat", type=int, default=1, help="整份題集重複幾輪（預設 1）")
     p.add_argument("--limit", type=int, default=None, help="只取題集前 N 題")
     p.add_argument("--concurrency", type=int, default=1, help="併發數（/api/ask 的閘上限是 3）")

@@ -89,13 +89,14 @@ jobs:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
       # 本 job 下面那一步保證會裝好 CJK 字型，所以這裡承諾「字型一定在」：
-      # tests/test_rendered_pdf_content.py 的中文那幾組**不准退回 skip**。
+      # tests/test_extraction_layout.py 的 CjkTests（weasyprint 渲染中文測試 PDF 再抽回）
+      # **不准退回 skip**。
       # 語意與 schema job 的 REPORT_MARK_REQUIRE_DB 相同（同樣用 truthiness 判定）。
       # 存在理由是 skip 的靜默性：字型步驟即使 exit 0 也可能沒真的裝到（快取被截斷、
       # 上游改套件名），那時中文那幾組會整批變 skipped、CI 全綠而覆蓋率無聲蒸發。
       # 這條與字型步驟末尾的 fc-list 斷言是**兩道獨立的門**：fc-list 驗「系統認得字型」，
-      # 這條驗「Typst 真的用得到、而且抽得回中文」——前者過而後者不過是可能的
-      # （例如 Typst 找到的字型不含中文字符對應）。
+      # 這條驗「weasyprint 真的用得到、而且抽得回中文」——前者過而後者不過是可能的
+      # （例如找到的字型不含中文字符對應）。
       REPORT_MARK_REQUIRE_CJK: "1"
     steps:
       - uses: actions/checkout@v4
@@ -109,10 +110,10 @@ jobs:
       - name: 安裝 Python 與相依套件
         run: uv sync --frozen
 
-      # 研報 PDF 兩軌（Typst / WeasyPrint）都需要 CJK 字型，生產機也是這個前提
-      # （見 README 部署章節）。runner 預設沒有：PDF 照樣編得出來、頁數也正常，
-      # 但中文字位沒有 ToUnicode 對應，抽字全變 \x00 —— 於是「渲染後 PDF 真的含
-      # 免責」這類內容守門在 CI 上會變成假失敗（或被跳過而失去意義）。
+      # 抽取層 CJK 測試（tests/test_extraction_layout.py 的 CjkTests）用 weasyprint 現場
+      # 渲染中文測試 PDF 再抽回比對，需要 CJK 字型。runner 預設沒有：PDF 照樣編得出來、
+      # 頁數也正常，但中文字位沒有 ToUnicode 對應，抽字全變 \x00 —— 於是這組守門在 CI 上
+      # 會變成假失敗（或被跳過而失去意義）。
       #
       # 2026-08-05 事故：PR #192 只改三個前端 CSS/TSX 檔、**零個後端檔**，卻在這一步紅掉。
       # 鏡像把 61.2MB 的 fonts-noto-cjk 拖了 24.7 分鐘仍未完成，撞上本 job 的
@@ -140,7 +141,7 @@ jobs:
           # 久沒動的 repo 會自己抓回新版，不需要人管。
           key: noto-cjk-deb-${{ runner.os }}-${{ runner.arch }}-v1
 
-      - name: 安裝 CJK 字型（研報 PDF 內容測試需要）
+      - name: 安裝 CJK 字型（抽取層 CJK 測試需要）
         # 正常耗時：快取命中約 5 秒；未命中（apt-get update ＋ 61MB 下載 ＋ dpkg 解壓）約 30 秒。
         # 取 6 分鐘 ≈ 12 倍餘裕，且**必須嚴格小於 job 的 timeout-minutes**，否則先撞到的
         # 是 job 逾時、訊息又退回那句沒有歸屬的 operation was canceled。
@@ -189,12 +190,12 @@ jobs:
           # ── 後置條件斷言（不是重複檢查）──
           # 上面每一步都可能 exit 0 卻沒真的裝到字型：快取命中但 .deb 被截斷、上游改套件名、
           # 裝進 fontconfig 不看的路徑。而「安靜地沒有字型」比整步失敗更糟 ——
-          # tests/test_rendered_pdf_content.py 的 _cjk_extractable() 會把中文那幾組改成
-          # skip，CI 全綠、覆蓋率無聲蒸發（2026-08-05 實測 CI 是 4 skipped，那 4 條是需要
-          # DB 的那兩支，中文那組當時確實有跑）。所以裝完一定要當場證明字型在。
-          # sans 與 serif 兩個都驗：研報標題吃 Noto Serif CJK，缺了是靜默退回 sans。
+          # tests/test_extraction_layout.py 的 CjkTests 在缺字型時會退回 skip，CI 全綠、
+          # 覆蓋率無聲蒸發（2026-08-05 實測 CI 是 4 skipped，那 4 條是需要 DB 的那兩支，
+          # 中文那組當時確實有跑）。所以裝完一定要當場證明字型在。
+          # sans 與 serif 兩個都驗：測試 PDF 的字型回退鏈兩者都可能被挑中，缺了是靜默退回。
           command -v fc-list > /dev/null \
-            || fail "映像上沒有 fontconfig，無法驗證字型（WeasyPrint 那軌也會不能用）"
+            || fail "映像上沒有 fontconfig，無法驗證字型（weasyprint 也會找不到字型）"
           for fam in "noto sans cjk" "noto serif cjk"; do
             fc-list :lang=zh family | grep -qi "$fam" \
               || fail "fc-list 找不到 ${fam}；PDF 中文內容測試會靜默退化成 skip"

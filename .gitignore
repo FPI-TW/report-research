@@ -6,7 +6,6 @@ data/extracted/
 # 重跑就有；compare.html 一份就是數 MB。
 data/extraction/
 data/tags/
-data/reports/
 data/*.json
 研報自動匯入/
 .uv/

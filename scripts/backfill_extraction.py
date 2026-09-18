@@ -37,11 +37,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text as sql_text  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
+from app.services.boilerplate import strip_boilerplate  # noqa: E402
 from app.services.chunk import chunk_text  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.extract import extract_text, file_sha256  # noqa: E402
 from app.services.extraction import EXTRACTION_VERSION, cache  # noqa: E402
-from app.services.filename import parse_filename  # noqa: E402
+from app.services.filename import parse_filename, resolve_source  # noqa: E402
 from app.services.object_storage import (  # noqa: E402
     ObjectNotFound,
     get_object_storage,
@@ -91,6 +92,12 @@ class Budget:
 
     def exhausted(self) -> bool:
         return self.deadline is not None and time.monotonic() >= self.deadline
+
+
+# 本輪摘錄重錨定的加總：回填會改寫正典文字，錨不回的摘錄只在逐篇的 `takeaways=a/b` 裡
+# 看得到；v3 回填 15 晚實測 5,532 條掉了 15%（448/1,116 篇至少掉一條），而總結列沒有這個數字，
+# 沒人注意到。補救走 `scripts/lost_anchors_to_delta.py`。
+_ANCHOR_TALLY = {"total": 0, "anchored": 0}
 
 
 def _log_failure(file_name: str, stage: str, reason: str) -> None:
@@ -196,7 +203,11 @@ async def _backfill_path(
 
     raw = res.text.replace("\x00", "")
     canonical = clean_extracted(raw)
-    chunks = chunk_text(canonical)
+    # 樣板段落只從要切塊的文字拿掉；full_text 與錨定基準（canonical）不動。
+    # source 用與 sync 相同的 resolve_source（檔名＋內文簽名），字典才對得上 sync 入庫時的桶。
+    to_chunk, n_boiler = strip_boilerplate(canonical, resolve_source(path.name, raw) or meta.source)
+    q["boilerplate_paras_dropped"] = n_boiler
+    chunks = chunk_text(to_chunk)
     if not chunks:
         q.update({"backfill": "kept_previous_text", "backfill_reason": "no_chunks"})
         await mark_report_extraction(
@@ -215,7 +226,7 @@ async def _backfill_path(
         "quality_flags": q,
         "page_count": res.page_count,
         "pages_failed": list(res.pages_failed),
-        "needs_review": needs_review(q.get("quality_score"), res.pages_failed, review_min),
+        "needs_review": needs_review(q.get("quality_score"), res.pages_failed, review_min, q),
     }
     await replace_report_extraction(
         session, rid, full_text=raw, language=res.language, chunks=chunks, embeddings=embeddings, fields=fields
@@ -235,9 +246,12 @@ async def _backfill_path(
     cache.write_record(rec)
     print(
         f"  [{res.extractor}] {path.name[:52]} chunks={len(chunks)} takeaways={n_anchored}/{n_tk}"
+        + (f" boilerplate={n_boiler}" if n_boiler else "")
         + (f" pages_failed={list(res.pages_failed)}" if res.pages_failed else ""),
         flush=True,
     )
+    _ANCHOR_TALLY["total"] += n_tk
+    _ANCHOR_TALLY["anchored"] += n_anchored
     return "replaced"
 
 
@@ -290,8 +304,11 @@ async def run(args) -> int:
 
     elapsed = time.time() - t0
     remaining = max(0, total - stats["replaced"] - stats["kept_previous"])
+    tk_total, tk_ok = _ANCHOR_TALLY["total"], _ANCHOR_TALLY["anchored"]
+    tk_rate = f"{tk_ok / tk_total:.1%}" if tk_total else "n/a"
     print(f"=== 本輪：換文 {stats['replaced']}｜保留舊文 {stats['kept_previous']}｜找不到檔 {stats['missing_file']}"
-          f"｜失敗 {stats['failed']}｜{elapsed / 60:.1f} 分鐘｜估計尚餘 {remaining} 篇 ===", flush=True)
+          f"｜失敗 {stats['failed']}｜摘錄錨定 {tk_ok}/{tk_total}（{tk_rate}）"
+          f"｜{elapsed / 60:.1f} 分鐘｜估計尚餘 {remaining} 篇 ===", flush=True)
     return 1 if stats["failed"] else 0
 
 

@@ -235,6 +235,7 @@ async def _run(args) -> None:
     from sqlalchemy import text as sql_text
 
     from app.config import get_settings
+    from app.services.boilerplate import strip_boilerplate
     from app.services.chunk import chunk_text
     from app.services.db import SessionFactory, relax_statement_timeout
     from app.services.embed import embed_texts
@@ -359,7 +360,8 @@ async def _run(args) -> None:
 
             try:
                 raw_text = (res.text or "").replace("\x00", "")
-                chunks = chunk_text(clean_extracted(raw_text))
+                # 樣板段落只從要切塊的文字拿掉，full_text 不動（app/services/boilerplate.py）。
+                chunks = chunk_text(strip_boilerplate(clean_extracted(raw_text), source)[0])
                 if not chunks:
                     stats["skip_scanned"] += 1
                     await upsert_extraction_log(session, _log("scanned"))
@@ -406,7 +408,7 @@ async def _run(args) -> None:
                     page_count=res.page_count,
                     pages_failed=list(res.pages_failed) or None,
                     needs_review=needs_review(
-                        (res.quality or {}).get("quality_score"), res.pages_failed, review_min
+                        (res.quality or {}).get("quality_score"), res.pages_failed, review_min, res.quality or None
                     ),
                 )
                 await upsert_report(session, report, chunks, embeddings)

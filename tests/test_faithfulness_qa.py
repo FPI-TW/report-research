@@ -221,14 +221,11 @@ class BackgroundCapTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AskTimeoutKnobTests(unittest.TestCase):
-    """問答抽查的逾時**刻意與研報那顆分開**。"""
+    """問答抽查的逾時與 judge 通用逾時分開。"""
 
-    def test_ask_knob_is_not_the_report_knob(self):
-        """`faithfulness_timeout` 同時是 report_writer 預算前瞻的輸入。
-
-        `grounding_need = 節數 × timeout/2`、`fix_need = 節牆鐘 + timeout/2`——共用一顆
-        並放大，研報會以為 grounding 需要四倍時間而提早砍掉動態分析子節。
-        """
+    def test_ask_knob_is_not_the_generic_knob(self):
+        """`faithfulness_timeout` 是 judge 單次呼叫的通用逾時（離線評測也用）；
+        問答抽查實測需要遠超 60 秒，所以另有一顆、且必須更大。"""
         self.assertIsNot(A.ASK_FAITHFULNESS_TIMEOUT, None)
         self.assertGreater(A.ASK_FAITHFULNESS_TIMEOUT, A.FAITHFULNESS_TIMEOUT)
 

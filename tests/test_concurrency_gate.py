@@ -17,7 +17,6 @@ os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 import asyncio  # noqa: E402
-import json  # noqa: E402
 import sys  # noqa: E402
 import unittest  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -30,10 +29,9 @@ if str(REPO_ROOT) not in sys.path:
 import httpx  # noqa: E402
 
 import web.server as server  # noqa: E402
-from web import concurrency, deps, report_runs  # noqa: E402
+from web import concurrency, deps  # noqa: E402
 from web.concurrency import ConcurrencyGate  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
-from web.routers import report as report_routes  # noqa: E402
 
 
 async def _wait_until(pred, timeout: float = 5.0) -> None:
@@ -247,114 +245,6 @@ class AskQueuedEventTests(_HttpTestBase):
         self.assertEqual(resp.status_code, 429)
         self.assertEqual(resp.headers.get("Retry-After"), "30")
         self.assertIn("排隊", resp.json()["detail"])
-
-        gate.release()
-        await waiter
-        gate.release()
-
-
-class ReportQueuedEventTests(_HttpTestBase):
-    async def asyncSetUp(self):
-        await super().asyncSetUp()
-        self._orig_gate = report_routes._REPORT_GATE
-        self._orig_generate = report_routes.generate_report
-
-    async def asyncTearDown(self):
-        report_routes._REPORT_GATE = self._orig_gate
-        report_routes.generate_report = self._orig_generate
-        await report_runs.shutdown()
-        await super().asyncTearDown()
-
-    async def test_queued_event_is_sent_and_survives_replay(self):
-        gate = ConcurrencyGate(1, name="report", max_queue=0)
-        report_routes._REPORT_GATE = gate
-        hold = asyncio.Event()
-        first_started = asyncio.Event()
-
-        async def fake_generate(question, **kwargs):
-            if question == "第一份":
-                first_started.set()
-                await hold.wait()
-            yield ("done", {"report_id": "r1", "title": "t", "download_url": "/x"})
-
-        report_routes.generate_report = fake_generate
-
-        first = asyncio.create_task(self._client.post("/api/report", json={"question": "第一份"}))
-        await asyncio.wait_for(first_started.wait(), 5)
-        second = asyncio.create_task(self._client.post("/api/report", json={"question": "第二份"}))
-        await _wait_until(lambda: gate.waiting == 1)
-        hold.set()
-
-        r1, r2 = await asyncio.wait_for(asyncio.gather(first, second), 10)
-        self.assertEqual(r2.status_code, 200)
-        self.assertNotIn("queued", _events(r1.text))
-        # run 必須恆為首事件（前端據此記住 handle），排隊事件排在它之後。
-        self.assertEqual(_events(r2.text)[:2], ["run", "queued"])
-
-        # 重播也要看得到：排隊中重整的人重連後若拿到空重播，就退回本功能要消滅的
-        # 「連上了卻什麼都沒有」。故 queued 刻意不進 web/report_runs.py 的 _VOLATILE。
-        payloads = [
-            json.loads(ln[len("data:"):])
-            for ln in r2.text.splitlines() if ln.startswith("data:")
-        ]
-        run_id = payloads[0]["run_id"]
-        replay = await self._client.get(f"/api/report-runs/{run_id}/stream")
-        self.assertEqual(replay.status_code, 200)
-        self.assertIn("queued", _events(replay.text))
-
-    async def test_returns_429_when_queue_is_full(self):
-        gate = ConcurrencyGate(1, name="report", max_queue=1)
-        report_routes._REPORT_GATE = gate
-        await gate.acquire()
-        waiter = asyncio.create_task(gate.acquire())
-        await _wait_until(lambda: gate.waiting == 1)
-
-        # 同上：沒有逾時的話，429 前檢失效時這題會掛住而不是變紅。
-        resp = await asyncio.wait_for(self._client.post("/api/report", json={"question": "擠不進去"}), 10)
-        self.assertEqual(resp.status_code, 429)
-        self.assertEqual(resp.headers.get("Retry-After"), "120")
-
-        gate.release()
-        await waiter
-        gate.release()
-
-    async def test_attaching_to_an_existing_run_is_exempt_from_429(self):
-        """重整後再按一次生成＝接回，不需要名額。把它一起擋掉就成了『自己的研報快好了
-        卻被拒於門外』。"""
-        gate = ConcurrencyGate(1, name="report", max_queue=1)
-        report_routes._REPORT_GATE = gate
-        finish = asyncio.Event()
-
-        async def events():
-            await finish.wait()
-            yield ("done", {"report_id": "r1", "title": "t", "download_url": "/x"})
-
-        run_id, is_new = report_runs.start_or_attach(
-            question="同一題", conversation_id=None, qa_id=None,
-            template_id=None, locale=None, make_events=events,
-        )
-        self.assertTrue(is_new)
-
-        # 讓閘門滿載（若沒有豁免，這時候的請求會被 429 擋掉）
-        await gate.acquire()
-        waiter = asyncio.create_task(gate.acquire())
-        await _wait_until(lambda: gate.waiting == 1)
-        self.assertTrue(gate.queue_full())
-
-        task = asyncio.create_task(self._client.post("/api/report", json={"question": "同一題"}))
-        # 等到請求真的訂閱上這個 run 才放行。固定 sleep 在這台機器上不夠——實測單次
-        # BaseHTTPMiddleware call_next 可達 0.2s，run 會先跑完，測到的就變成另一回事了
-        # （原本寫 sleep(0.05) 時這題就是這樣假失敗的）。逾時就讓下面的狀態碼斷言說話。
-        try:
-            await _wait_until(lambda: bool(report_runs._RUNS[run_id].subscribers))
-        except AssertionError:
-            pass
-        finish.set()
-        resp = await asyncio.wait_for(task, 10)
-
-        self.assertEqual(resp.status_code, 200)
-        payload = resp.text
-        self.assertIn(run_id, payload)
 
         gate.release()
         await waiter

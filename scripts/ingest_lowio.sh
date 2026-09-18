@@ -7,9 +7,8 @@
 #
 # **舊的安全論證「本 DB 為衍生、可由原始研報重建」已經不成立。** 語料層
 # （research_report / report_chunk）確實重跑得回來，但同一個叢集裡還住著研報原檔
-# 裡沒有的東西：qa_log（問答史、證據帳本、使用者讚／倒讚）、report_doc.markdown
-# （深度研報的真相來源）、report_takeaway / report_signal（Sonnet 批次產物）、
-# report_run / report_section（生成流程史）。那些毀了就是毀了，沒有第二份來源。
+# 裡沒有的東西：qa_log（問答史、證據帳本、使用者讚／倒讚）、report_takeaway /
+# report_signal / report_brief（Sonnet 批次產物）。那些毀了就是毀了，沒有第二份來源。
 # 所以本腳本開頭改為硬閘：沒有 24 小時內的備份就不讓跑（見 scripts/db_backup.sh）。
 #
 # 跑完務必確認已還原（本腳本用 trap 保證還原）。
@@ -43,7 +42,7 @@ if [ -z "$FRESH" ]; then
   {
     echo "!! 找不到 ${BACKUP_MAX_AGE_MIN} 分鐘內的 DB 備份（找過 $BACKUP_DIR/**/*.dump）。"
     echo "   本腳本會關掉 fsync / full_page_writes，崩潰即可能整個 pgdata 報廢，"
-    echo "   而 qa_log / report_doc.markdown / report_takeaway / report_signal 沒有第二份來源。"
+    echo "   而 qa_log / report_takeaway / report_signal / report_brief 沒有第二份來源。"
     echo "   先跑一次：make db-backup"
     echo "   （確定這座 DB 裡沒有不可重建資料——例如正在從零重建語料——才用"
     echo "     ALLOW_STALE_BACKUP=1 make ingest-lowio 略過本檢查。）"

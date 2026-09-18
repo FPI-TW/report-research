@@ -364,9 +364,7 @@ SELECT json_build_object(
   'rows', json_build_object(
      'research_report', (SELECT count(*) FROM research.research_report),
      'report_chunk',    (SELECT count(*) FROM research.report_chunk),
-     'qa_log',          (SELECT count(*) FROM research.qa_log),
-     'report_doc',      (SELECT count(*) FROM research.report_doc),
-     'report_run',      (SELECT count(*) FROM research.report_run)
+     'qa_log',          (SELECT count(*) FROM research.qa_log)
   ))::text
 """
 

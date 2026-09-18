@@ -15,8 +15,8 @@
 2. **`|| RC=$?` 而非裸呼叫 + `RC=$?`**：`set -e` 下裸呼叫失敗會就地中止，緊接其後的
    `RC=$?` 是死碼。`sync_new_reports.sh` 就是這樣讓一次 24 小時的故障「日誌永遠停在
    同一行」、事後完全看不出敗在哪一步。
-3. **備份表清單**：`qa_log` 與 `report_doc` 是整個備份存在的理由（問答史／研報真相
-   來源，研報原檔裡沒有這些東西）。有人為了縮小 dump 把它們拿掉，不會有任何症狀。
+3. **備份表清單**：`qa_log` 與三張 LLM 批次產物表是整個備份存在的理由（問答史／
+   摘錄／訊號／簡報，研報原檔裡沒有這些東西）。有人為了縮小 dump 把它們拿掉，不會有任何症狀。
 4. **`ingest_lowio.sh` 的備份新鮮度硬閘**：那支腳本會關掉 `fsync`，崩潰即可能整個
    pgdata 報廢。它檔頭原本的安全論證「本 DB 為衍生、可由原始研報重建」在 `qa_log`
    等表存在之後已經不成立——閘門與那段論證必須同時在。
@@ -39,15 +39,12 @@ LOWIO_SH = REPO_ROOT / "scripts" / "ingest_lowio.sh"
 BACKUP_SERVICE = SYSTEMD_DIR / "report-mark-backup.service"
 BACKUP_TIMER = SYSTEMD_DIR / "report-mark-backup.timer"
 
-# 「不可重建」的七張表：研報原檔裡沒有、刪了就永遠沒有的東西。
+# 「不可重建」的四張表：研報原檔裡沒有、刪了就永遠沒有的東西。
 REQUIRED_TABLES = (
     "research.qa_log",
-    "research.report_doc",
-    "research.report_rendition",
     "research.report_takeaway",
     "research.report_signal",
-    "research.report_run",
-    "research.report_section",
+    "research.report_brief",
 )
 
 
@@ -280,7 +277,7 @@ class BackupDestinationTests(unittest.TestCase):
 
     def test_interim_destination_is_flagged_as_interim(self) -> None:
         """落點目前在一個名為「會後刪除」的暫存區——那是刻意的過渡，但必須寫明，
-        否則下一個人會以為那裡是永久位置。備份內容（qa_log／report_doc）不可重建。"""
+        否則下一個人會以為那裡是永久位置。備份內容（qa_log／report_takeaway 等）不可重建。"""
         backup_dir = next(
             (ln for ln in _live_lines(self.text) if "REPORT_MARK_BACKUP_DIR=" in ln), ""
         )

@@ -1,4 +1,4 @@
-"""Non-destructive R2 inventory/reconciliation for report originals and generated PDFs.
+"""Non-destructive R2 inventory/reconciliation for report originals.
 
 Examples:
     uv run python scripts/reconcile_object_storage.py --dry-run --kind all
@@ -24,8 +24,6 @@ from app.services.db import SessionFactory  # noqa: E402
 from app.services.object_storage import (  # noqa: E402
     ObjectNotFound,
     ObjectStorageError,
-    generated_key_has_expected_owner,
-    generated_object_key_for_sha,
     get_object_storage,
     original_object_key,
 )
@@ -34,48 +32,29 @@ from app.services.object_storage import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="比對私有 R2 與 report-mark DB（不刪除）")
     parser.add_argument("--dry-run", action="store_true", help="僅列出計畫／差異，不寫 DB 或 R2")
-    parser.add_argument("--kind", choices=("originals", "generated", "all"), default="all")
-    parser.add_argument("--limit", type=int, default=0, help="最多檢查幾筆 DB 產物（所有 kind 合計；0 不限）")
+    # 深度研報移除後只剩 originals；仍收 "all" 讓 report-mark-r2-reconcile.service 的命令列不必改。
+    parser.add_argument("--kind", choices=("originals", "all"), default="all")
+    parser.add_argument("--limit", type=int, default=0, help="最多檢查幾筆 DB 產物（0 不限）")
     parser.add_argument("--concurrency", type=int, default=4, help="R2 查詢併發數")
     return parser.parse_args()
 
 
 async def _rows(kind: str, limit: int) -> list[dict]:
     rows: list[dict] = []
-
-    def limited_sql(base: str) -> tuple[str, dict]:
-        remaining = limit - len(rows)
-        if limit and remaining <= 0:
-            return "", {}
-        return (base + " LIMIT :limit", {"limit": remaining}) if limit else (base, {})
-
     async with SessionFactory() as session:
-        if kind in {"originals", "all"}:
-            sql, params = limited_sql(
-                "SELECT id::text, file_hash, file_name, file_path, source_object_key "
-                "FROM research.research_report ORDER BY id"
-            )
-            if sql:
-                result = await session.execute(text(sql), params)
-                rows.extend(
-                    {"kind": "original", "id": r[0], "hash": r[1], "name": r[2], "path": r[3], "key": r[4]}
-                    for r in result
-                )
-        if kind in {"generated", "all"}:
-            sql, params = limited_sql("SELECT id::text, pdf_path, pdf_object_key FROM research.report_doc ORDER BY id")
-            if sql:
-                result = await session.execute(text(sql), params)
-                rows.extend({"kind": "base", "id": r[0], "path": r[1], "key": r[2]} for r in result)
-            sql, params = limited_sql(
-                "SELECT id::text, report_id::text, pdf_path, pdf_object_key "
-                "FROM research.report_rendition ORDER BY id"
-            )
-            if sql:
-                result = await session.execute(text(sql), params)
-                rows.extend(
-                    {"kind": "rendition", "id": r[0], "report_id": r[1], "path": r[2], "key": r[3]}
-                    for r in result
-                )
+        sql = (
+            "SELECT id::text, file_hash, file_name, file_path, source_object_key "
+            "FROM research.research_report ORDER BY id"
+        )
+        params: dict = {}
+        if limit:
+            sql += " LIMIT :limit"
+            params = {"limit": limit}
+        result = await session.execute(text(sql), params)
+        rows.extend(
+            {"kind": "original", "id": r[0], "hash": r[1], "name": r[2], "path": r[3], "key": r[4]}
+            for r in result
+        )
     return rows
 
 
@@ -90,12 +69,8 @@ def _local_hash(path: str | None) -> tuple[int, str] | None:
 
 
 def _expected_sha(row: dict, key: str) -> str | None:
-    """Originals use DB SHA; generated keys carry a 12-char SHA prefix by contract."""
-    if row["kind"] == "original":
-        return row["hash"]
-    name = Path(key).name
-    stem = name.removesuffix(".pdf")
-    return stem.rsplit("-", 1)[-1] if "-" in stem else None
+    """Originals use the DB SHA (the key itself is derived from it)."""
+    return row["hash"]
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -118,27 +93,16 @@ async def run(args: argparse.Namespace) -> int:
             # A canonical original may already exist after an upload-before-DB failure, but
             # the absent DB pointer is itself non-ready state.  Do not infer it into expected:
             # inventory should still report that object as a recoverable orphan evidence.
-            canonical = (
-                f" canonical={original_object_key(row['hash'], row['name'])}"
-                if row["kind"] == "original" else ""
-            )
+            canonical = f" canonical={original_object_key(row['hash'], row['name'])}"
             print(f"UNKEYED {row['kind']} id={row['id']}{canonical}")
             return
-        if row["kind"] == "original":
-            canonical = original_object_key(row["hash"], row["name"])
-            if key != canonical:
-                stats["key_mismatch"] += 1
-                print(f"KEY_MISMATCH {key} expected={canonical} db_id={row['id']}")
-                return
-        else:
-            rendition_id = row["id"] if row["kind"] == "rendition" else None
-            report_id = row.get("report_id") or row["id"]
-            # Do not contact R2 for a DB pointer that already names another report/rendition.
-            # This also keeps a bad pointer out of the expected inventory set below.
-            if not generated_key_has_expected_owner(key, report_id, rendition_id):
-                stats["key_mismatch"] += 1
-                print(f"KEY_MISMATCH {key} db_id={row['id']} owner/path")
-                return
+        canonical = original_object_key(row["hash"], row["name"])
+        if key != canonical:
+            # Do not contact R2 for a DB pointer that is not the canonical key.  This also
+            # keeps a bad pointer out of the expected inventory set below.
+            stats["key_mismatch"] += 1
+            print(f"KEY_MISMATCH {key} expected={canonical} db_id={row['id']}")
+            return
         async with sem:
             try:
                 metadata = await asyncio.to_thread(storage.head_object, key)
@@ -176,27 +140,13 @@ async def run(args: argparse.Namespace) -> int:
         metadata = metadata.get("Metadata") or {}
         metadata_sha = metadata.get("sha256") or metadata.get("SHA256")
         if not metadata_sha:
-            # Legacy objects cannot prove a full generated-PDF digest from a 12-char key.
-            # Report this explicitly rather than silently treating a matching prefix as PASS.
+            # Legacy uploads without the sha256 metadata cannot prove their digest from
+            # metadata alone.  Report this explicitly rather than silently treating as PASS.
             stats["sha_metadata_missing"] += 1
             print(f"SHA_METADATA_MISSING {key}")
         elif metadata_sha != remote_sha:
             stats["sha_mismatch"] += 1
             print(f"SHA_MISMATCH {key} metadata={metadata_sha} remote={remote_sha}")
-        if row["kind"] != "original":
-            rendition_id = row["id"] if row["kind"] == "rendition" else None
-            report_id = row.get("report_id") or row["id"]
-            if metadata_sha:
-                try:
-                    canonical = generated_object_key_for_sha(report_id, metadata_sha, rendition_id)
-                except ValueError:
-                    stats["key_mismatch"] += 1
-                    print(f"KEY_MISMATCH {key} db_id={row['id']} invalid_metadata_sha")
-                    return
-                if key != canonical:
-                    stats["key_mismatch"] += 1
-                    print(f"KEY_MISMATCH {key} expected={canonical} db_id={row['id']}")
-                    return
         expected.add(key)
         if expected_sha and not remote_sha.startswith(expected_sha):
             stats["sha_mismatch"] += 1
@@ -213,14 +163,11 @@ async def run(args: argparse.Namespace) -> int:
         print("summary " + " ".join(f"{k}={v}" for k, v in stats.items()) + f" dry_run={args.dry_run}")
         return 1 if stats["errors"] or stats["unkeyed"] or stats["key_mismatch"] else 0
 
-    prefixes = ("originals/",) if args.kind == "originals" else (
-        ("generated/",) if args.kind == "generated" else ("originals/", "generated/")
-    )
-    # Inventory only the selected owned prefixes.  It is deliberately reporting-only.
+    # Inventory only the owned originals/ prefix.  It is deliberately reporting-only.
+    # 深度研報移除後 generated/ 前綴不再有 DB 對應列；bucket 裡若還有舊的生成 PDF，
+    # 由人依 docs/WORKFLOW.md 的說明手動清理，這裡不把它們算成 orphan。
     try:
-        remote_keys: set[str] = set()
-        for prefix in prefixes:
-            remote_keys.update(await asyncio.to_thread(storage.list_keys, prefix))
+        remote_keys: set[str] = set(await asyncio.to_thread(storage.list_keys, "originals/"))
         for key in sorted(remote_keys - expected):
             stats["orphans"] += 1
             print(f"ORPHAN {key}")

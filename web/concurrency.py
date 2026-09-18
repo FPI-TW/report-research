@@ -3,15 +3,15 @@
 
 ## 為什麼需要守門
 
-`/api/ask` 與 `/api/report` 的併發上限都是**模組級的 asyncio.Semaphore**，也就是
+`/api/ask` 的併發上限是**模組級的 asyncio.Semaphore**，也就是
 per-process 狀態。目前 `deploy/systemd/report-mark-web.service` 的 ExecStart 沒有
 `--workers`，所以「一個行程＝一個上限」成立——但這個前提在此之前只寫在註解裡。
 任何人為了吞吐量加上 `--workers 2`，同時會發生三件事，而且三件都不會有錯誤訊息：
 
-* 實際併發上限翻倍（問答 3→6、研報 1→2），而上限本來就是照單機 CPU 抓的。
+* 實際併發上限翻倍（問答 3→6），而上限本來就是照單機 CPU 抓的。
 * BGE-M3 與 cross-encoder 是 per-process 常駐，每個 worker 各載一份 → 記憶體翻倍。
-* `web/report_runs.py` 的背景 run 登錄表也是行程內狀態：重連請求有 (N-1)/N 的
-  機率被路由到沒有那個 run 的 worker，前端拿到 404「run not found」。
+* 問答忠實度抽查的背景任務上限（`ASK_FAITHFULNESS_MAX_INFLIGHT`）同樣是行程內
+  狀態，多 worker 會讓同時 spawn 的 `claude` CLI 數翻倍。
 
 所以這裡選擇 fail-closed：偵測得到多 worker 就拒絕啟動，讓改動的人當場看到原因，
 而不是三個月後在「機器怎麼變慢了」裡回推。
@@ -101,9 +101,9 @@ def assert_single_worker(
     workers = detect_worker_count(argv, environ)
     if workers is not None and workers > 1:
         raise RuntimeError(
-            f"偵測到 {workers} 個 worker，但本服務的併發上限（/api/ask、/api/report）與"
-            "背景研報登錄表都是行程內狀態，多 worker 會讓上限翻倍、模型記憶體翻倍，"
-            "且研報重連會隨機 404。要提高吞吐請改動 web/concurrency.py 所述的設計，"
+            f"偵測到 {workers} 個 worker，但本服務的併發上限（/api/ask）與"
+            "背景抽查上限都是行程內狀態，多 worker 會讓上限翻倍、模型記憶體翻倍。"
+            "要提高吞吐請改動 web/concurrency.py 所述的設計，"
             "不要加 --workers。"
         )
     return workers

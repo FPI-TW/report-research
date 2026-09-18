@@ -149,7 +149,7 @@ class ServerWiringTests(unittest.TestCase):
 
         **走 AST 而非字面比對**：原本用 `_SERVER_SRC.index("from web import deps")`，
         而 ruff 的 isort 會把同模組的 from-import 併成一行
-        （`from web import auth, concurrency, deps, report_runs`），於是那個字面
+        （`from web import auth, concurrency, deps`），於是那個字面
         消失、測試紅掉——紅的是格式，不是順序。順序這件事 AST 看得更準也更穩。
         """
         import ast

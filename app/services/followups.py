@@ -24,8 +24,8 @@ _SYSTEM = (
 # M10 遺漏：英文模式下主答案、婉拒、總覽模板都已英文化，唯獨這三顆追問 chip 仍是中文，
 # 而且會經 _update_followups 落 qa_log、一直跟著歷史重播。
 #
-# 用**整份英文變體**而非「中文底稿＋尾部附加覆寫」：後者在逐節研報上實測會機率性
-# 失守（8 節中 1 節整節漂回中文，見 report_writer._build_section_prompt_en）。
+# 用**整份英文變體**而非「中文底稿＋尾部附加覆寫」：後者在長篇生成上實測會機率性
+# 失守（2026-07 深度研報逐節生成時 8 節中 1 節整節漂回中文；該功能已移除，教訓留著）。
 _SYSTEM_EN = (
     "You are a broker-research Q&A assistant. Based on the user's question and the "
     "answer you just gave, propose exactly 3 finance follow-up questions the user is "

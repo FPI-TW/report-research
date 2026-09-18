@@ -134,41 +134,6 @@ class MigrateObjectStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"PLAN original id=r1 key=originals/{digest[:2]}/{digest}.pdf", output)
         self.assertEqual(events, [("rows", "originals", 0)])
 
-    async def test_generated_base_and_rendition_upload_before_matching_key_update(self):
-        events = []
-        with tempfile.TemporaryDirectory() as directory:
-            base = Path(directory) / "base.pdf"
-            rendition = Path(directory) / "rendition.pdf"
-            base.write_bytes(b"base")
-            rendition.write_bytes(b"rendition")
-
-            async def update(row, key):
-                events.append(("update", row["kind"], row["id"], key))
-                return True
-
-            rc, _output = await _run(
-                [
-                    {"kind": "base", "id": "doc-1", "path": str(base)},
-                    {"kind": "rendition", "id": "ren-1", "report_id": "doc-1", "path": str(rendition)},
-                ],
-                _args("generated"), events, update,
-            )
-        self.assertEqual(rc, 0)
-        uploads = [event for event in events if event[0] == "upload"]
-        updates = [event for event in events if event[0] == "update"]
-        expected_keys = {
-            "generated/doc-1/base-cae662172fd4.pdf",
-            "generated/doc-1/renditions/ren-1-0e4d51ac3800.pdf",
-        }
-        self.assertEqual({event[2] for event in uploads}, expected_keys)
-        self.assertEqual({event[1] for event in updates}, {"base", "rendition"})
-        for update_event in updates:
-            upload_index = next(
-                index for index, event in enumerate(events)
-                if event[0] == "upload" and event[2] == update_event[3]
-            )
-            self.assertLess(upload_index, events.index(update_event))
-
     async def test_hash_mismatch_and_missing_file_never_mutate(self):
         events = []
         with tempfile.NamedTemporaryFile(suffix=".pdf") as source:
@@ -182,31 +147,36 @@ class MigrateObjectStorageTests(unittest.IsolatedAsyncioTestCase):
             rc, output = await _run(
                 [
                     {"kind": "original", "id": "bad", "hash": "a" * 64, "name": "bad.pdf", "path": source.name},
-                    {"kind": "base", "id": "missing", "path": "/does/not/exist.pdf"},
+                    {
+                        "kind": "original", "id": "missing", "hash": "b" * 64, "name": "missing.pdf",
+                        "path": "/does/not/exist.pdf",
+                    },
                 ],
                 _args(), events, update,
             )
         self.assertEqual(rc, 0)
         self.assertIn("HASH_MISMATCH expected=", output)
         self.assertIn("original id=bad", output)
-        self.assertIn("MISSING_LOCAL base id=missing", output)
+        self.assertIn("MISSING_LOCAL original id=missing", output)
         self.assertEqual(events, [("rows", "all", 0)])
 
     async def test_db_failure_after_upload_reports_safe_orphan(self):
         events = []
         with tempfile.NamedTemporaryFile(suffix=".pdf") as source:
-            source.write(b"base")
+            source.write(b"original")
             source.flush()
+            digest = hashlib.sha256(b"original").hexdigest()
 
             async def update(*_args):
                 raise RuntimeError("db unavailable")
 
             rc, output = await _run(
-                [{"kind": "base", "id": "doc-1", "path": source.name}], _args("generated"), events, update
+                [{"kind": "original", "id": "r1", "hash": digest, "name": "source.pdf", "path": source.name}],
+                _args("originals"), events, update,
             )
         self.assertEqual(rc, 1)
         self.assertEqual(events[1][0], "upload")
-        self.assertIn("ORPHAN generated/doc-1/base-cae662172fd4.pdf", output)
+        self.assertIn(f"ORPHAN originals/{digest[:2]}/{digest}.pdf", output)
 
     async def test_rerun_with_no_null_key_rows_is_idempotent_skip(self):
         events = []
@@ -219,7 +189,7 @@ class MigrateObjectStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("migrated=0", output)
         self.assertEqual(events, [("rows", "all", 0)])
 
-    async def test_rows_limit_is_total_and_queries_only_unmigrated_keys(self):
+    async def test_rows_limit_applies_and_queries_only_unmigrated_keys(self):
         calls = []
 
         class _Result:
@@ -244,7 +214,7 @@ class MigrateObjectStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("source_object_key IS NULL", calls[0][0])
         self.assertEqual(calls[0][1], {"limit": 1})
 
-    async def test_update_targets_only_the_matching_nullable_key_column(self):
+    async def test_update_targets_only_the_nullable_source_key_column(self):
         calls = []
 
         class _Result:
@@ -264,18 +234,11 @@ class MigrateObjectStorageTests(unittest.IsolatedAsyncioTestCase):
             async def commit(self):
                 return None
 
-        rows = [
-            {"kind": "original", "id": "original-1"},
-            {"kind": "base", "id": "doc-1"},
-            {"kind": "rendition", "id": "ren-1"},
-        ]
         with patch.object(migrate, "SessionFactory", lambda: _Session()):
-            for row in rows:
-                self.assertTrue(await migrate._update_key(row, "generated/test.pdf"))
-        self.assertIn("source_object_key", calls[0][0])
-        self.assertIn("research.report_doc SET pdf_object_key", calls[1][0])
-        self.assertIn("research.report_rendition SET pdf_object_key", calls[2][0])
-        self.assertTrue(all("IS NULL" in statement for statement, _params in calls))
+            self.assertTrue(await migrate._update_key({"kind": "original", "id": "original-1"}, "originals/aa/a.pdf"))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("research.research_report SET source_object_key", calls[0][0])
+        self.assertIn("IS NULL", calls[0][0])
 
 
 if __name__ == "__main__":

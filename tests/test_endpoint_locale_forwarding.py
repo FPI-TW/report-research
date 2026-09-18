@@ -1,7 +1,7 @@
 # tests/test_endpoint_locale_forwarding.py
-"""`/api/ask` 與 `/api/report` 的 locale 轉發（F1），走 **HTTP 層**。
+"""`/api/ask` 的 locale 轉發（F1），走 **HTTP 層**。
 
-兩個端點都有 `locale` 欄位並轉發給服務層，但先前**零測試**。這條縫特別危險，
+端點有 `locale` 欄位並轉發給服務層，但先前**零測試**。這條縫特別危險，
 因為 locale 是 fail-open 的：轉發斷掉時不會有例外、不會 500，只會「英文輸出
 無聲退回中文」——沒有任何訊號。
 
@@ -27,7 +27,6 @@ sys.path.insert(0, str(REPO_ROOT))
 from fastapi.testclient import TestClient  # noqa: E402
 
 from web import deps  # noqa: E402
-from web.routers import report as report_routes  # noqa: E402
 from web.server import app  # noqa: E402
 
 
@@ -78,34 +77,6 @@ class AskLocaleForwardingTests(unittest.TestCase):
         self.assertEqual(seen.get("locale"), "fr")
 
 
-class ReportLocaleForwardingTests(unittest.TestCase):
-    def _capture(self, body):
-        seen = {}
-
-        async def fake_generate(question, **kwargs):
-            seen.update(kwargs)
-            yield ("done", {"report_id": "r1", "title": "T",
-                            "download_url": "/api/report-doc/r1/pdf", "thinking_ms": 1})
-
-        with patch.object(report_routes, "generate_report", fake_generate):
-            code, _ = _drain(_authed(), "/api/report", body)
-        return code, seen
-
-    def test_locale_and_template_both_reach_service(self):
-        code, seen = self._capture(
-            {"question": "TSMC", "locale": "en", "template_id": "broker-modern"}
-        )
-        self.assertEqual(code, 200)
-        self.assertEqual(seen.get("locale"), "en")
-        self.assertEqual(seen.get("template_id"), "broker-modern")
-
-    def test_absent_fields_forward_none(self):
-        code, seen = self._capture({"question": "台積電"})
-        self.assertEqual(code, 200)
-        self.assertIsNone(seen.get("locale"))
-        self.assertIsNone(seen.get("template_id"))
-
-
 class RequestModelContractTests(unittest.TestCase):
     """Pydantic 會**靜默丟棄**未宣告的欄位——欄位不在模型上，請求照樣 200。
 
@@ -116,12 +87,6 @@ class RequestModelContractTests(unittest.TestCase):
         from web.routers.ask import AskRequest
 
         self.assertIn("locale", AskRequest.model_fields)
-
-    def test_report_request_declares_locale_and_template(self):
-        from web.routers.report import ReportRequest
-
-        self.assertIn("locale", ReportRequest.model_fields)
-        self.assertIn("template_id", ReportRequest.model_fields)
 
 
 if __name__ == "__main__":

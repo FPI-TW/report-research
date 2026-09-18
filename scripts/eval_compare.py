@@ -18,8 +18,6 @@
 - **樣本數不同就拒絕給結論（退出碼 2），而不是照算 delta。** RAGAS 題集只有 8 題、
   ±0.05 全在噪音內，且 `run_ragas.aggregate` 會略過 error 題——`baseline-m2` 名目 n=8、
   實際只有 7 題進均值，光看 `n` 看不出來，所以這裡比的是 `n - n_errors - n_no_context`。
-  研報那套自己宣告 `MIN_VALID_QUESTIONS = 6`（`eval/report_metrics.py`），`sufficient_n`
-  為 false 時基準線本來就不得用於比較。
 - **不動任何門檻。** `FAITHFULNESS_MIN` / `CONTEXT_PRECISION_MIN` / `ANSWER_RELEVANCY_MIN`
   是政策決定（量測紀錄在 `eval/run_ragas.py` 的常數旁），本工具只回答「相對於 baseline
   有沒有變差」，不回答「夠不夠好」。
@@ -27,9 +25,9 @@
   那種紅燈只會讓人把工具關掉。[0,1] 尺度的指標與計數用絕對值，非 [0,1] 的用相對值。
 
 吃得下三種結果形狀（都以 `summary` 為根）：
-  1. `eval/run_ragas.py`        平坦數值 + `thresholds_pass`
-  2. `eval/run_report_eval.py`  `{metric: {mean, n_valid}}` 嵌套，**沒有布林門檻**
-  3. `scripts/eval_retrieval.py` 平坦數值（hit_rate / 新近度）
+  1. `eval/run_ragas.py`         平坦數值 + `thresholds_pass`
+  2. `scripts/eval_retrieval.py` 平坦數值（hit_rate / 新近度）
+  3. `scripts/eval_extraction.py` 平坦數值（order_* / rating_* / tp_*）
 
 用法（**兩份必須是同一套評測的產物**，跨套會被形狀指紋擋下）：
   # 檢索：scripts/eval_retrieval.py --json 寫出的前後兩份
@@ -40,7 +38,7 @@
 退出碼：
   0  無劣化
   1  至少一項判定指標劣化超過容忍值
-  2  不可比（樣本數／評分規則版本／queryset 參數不同，或基準線自己宣告有效題數不足）
+  2  不可比（樣本數／評分規則版本／queryset 參數不同）
   3  有未分類指標，因此不敢宣稱沒有回歸（其餘皆無劣化）
 """
 
@@ -89,26 +87,6 @@ METRIC_SPECS: dict[str, Spec] = {
     "n_no_context": Spec(LOWER, ABS, "檢索不到脈絡"),
     "thresholds_pass": Spec(FLAG, ABS, "run_ragas 的三個絕對門檻是否全過"),
     "thresholds_failed": Spec(INFO, ABS, "未達標項目清單（字串）"),
-    # ── eval/run_report_eval.py（M1b 研報，{mean, n_valid} 嵌套）──────────
-    "ruleset_version": Spec(META, ABS, "評分規則版本；v1 與 v2 的指標定義不同，不可直接比"),
-    "sufficient_n": Spec(FLAG, ABS, "有效題數是否達 report_metrics.MIN_VALID_QUESTIONS"),
-    "n_no_data": Spec(INFO, ABS, "題集屬性（安全婉拒題數），不是品質訊號"),
-    # 婉拒的好壞取決於題目：no_data 題婉拒是正確行為，正常題婉拒才是缺陷。
-    # summary 這一層分不出來，所以刻意不判定方向——猜方向會讓「安全行為」被判成回歸。
-    "n_report_declined": Spec(INFO, ABS, "含 no_data 題的正確婉拒，方向有歧義"),
-    "facet_coverage": Spec(HIGHER),
-    "section_coverage": Spec(HIGHER),
-    "evidence_link_coverage": Spec(HIGHER),
-    "citation_validity": Spec(HIGHER),
-    "source_citation_rate": Spec(HIGHER),
-    "external_labeling": Spec(HIGHER),
-    "no_data_handled": Spec(HIGHER),
-    # 來源多樣性是描述統計：MMR 刻意對同一來源設上限，所以「更多」未必更好。
-    "n_reports": Spec(INFO, ABS, "來源多樣性描述統計"),
-    "n_brokers": Spec(INFO, ABS, "來源多樣性描述統計"),
-    "n_markets": Spec(INFO, ABS, "來源多樣性描述統計"),
-    "date_span_days": Spec(INFO, ABS, "日期分佈描述統計"),
-    "n_months": Spec(INFO, ABS, "日期分佈描述統計"),
     # ── scripts/eval_retrieval.py（檢索）──────────────────────────────────
     "n_cases": Spec(SAMPLE),
     "hit_rate": Spec(HIGHER),
@@ -153,10 +131,9 @@ _ARROW = {HIGHER: "↑", LOWER: "↓", FLAG: "旗標", INFO: "—", SAMPLE: "—
 
 
 # 形狀指紋。三套產生器共用 `n` / `n_errors` 這類鍵，所以「有共同的判定指標」不足以
-# 證明兩份可比——RAGAS 結果與研報結果會在 n_errors 上比出一個看起來很正常的 delta。
+# 證明兩份可比——RAGAS 結果與檢索結果會在 n_errors 上比出一個看起來很正常的 delta。
 _SHAPE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("ragas", ("faithfulness", "context_precision", "answer_relevancy")),
-    ("report", ("ruleset_version", "sufficient_n")),
     # 抽取層排在 retrieval 之前：它也帶 n_cases，靠 order_* 鍵區分。
     ("extraction", ("order_pair_acc", "order_hit_rate")),
     ("retrieval", ("hit_rate", "n_cases")),
@@ -180,8 +157,6 @@ class Row:
     spec: Spec
     base: Any
     cand: Any
-    n_base: int | None = None
-    n_cand: int | None = None
     delta: float | None = None
     status: str = STATUS_NONE
     note: str = ""
@@ -238,13 +213,6 @@ def load_result(path: str | Path) -> dict:
     if not isinstance(data, dict) or not isinstance(data.get("summary"), dict):
         raise CompareError(f"{p}：不是評測結果檔（缺 summary 物件）")
     return data
-
-
-def unwrap(raw: Any) -> tuple[Any, int | None]:
-    """回傳 (值, n_valid)。研報那套的指標是 {"mean": x, "n_valid": k} 嵌套形狀。"""
-    if isinstance(raw, dict):
-        return raw.get("mean"), raw.get("n_valid")
-    return raw, None
 
 
 def sample_facts(summary: dict) -> dict[str, int]:
@@ -350,15 +318,8 @@ def build_comparison(
         if not in_base:
             cmp_.only_in_candidate.append(key)
             continue
-        base_val, n_base = unwrap(base[key])
-        cand_val, n_cand = unwrap(cand[key])
-        row = _classify(METRIC_SPECS[key], base_val, cand_val, tolerance, rel_tolerance)
-        row.key, row.n_base, row.n_cand = key, n_base, n_cand
-        # 嵌套形狀每個指標有自己的 n_valid：分母不同的兩個均值不能相減。
-        if n_base != n_cand:
-            row.status = STATUS_UNCOMPARABLE
-            row.regression = False
-            row.note = f"n_valid {n_base} → {n_cand}"
+        row = _classify(METRIC_SPECS[key], base[key], cand[key], tolerance, rel_tolerance)
+        row.key = key
         cmp_.rows.append(row)
 
     cmp_.incomparable = _comparability(base, cand, cmp_)
@@ -369,7 +330,7 @@ def build_comparison(
 
 
 def _as_notes(raw: Any) -> list[str]:
-    """`notes` 兩種形狀都真實存在：report-m1b 是字串陣列，baseline-2026-07-29 是單一
+    """`notes` 兩種形狀都真實存在：舊的研報基準線是字串陣列，baseline-2026-07-29 是單一
     字串。對字串 `for x in raw` 會逐字迭代——不會拋例外，只會印出幾百行單字。"""
     if isinstance(raw, str):
         return [raw] if raw.strip() else []
@@ -391,12 +352,6 @@ def _comparability(base: dict, cand: dict, cmp_: Comparison) -> list[str]:
             continue
         if key in base and key in cand and base[key] != cand[key]:
             reasons.append(f"評分規則／題集參數不同：{key} {base[key]} → {cand[key]}（{spec.why}）")
-    for label, summary in (("baseline", base), ("candidate", cand)):
-        if summary.get("sufficient_n") is False:
-            reasons.append(
-                f"{label} 自己宣告有效題數不足（sufficient_n=false，"
-                "見 eval/report_metrics.py 的 MIN_VALID_QUESTIONS）"
-            )
     if not any(r.gating for r in cmp_.rows):
         reasons.append("兩份檔案沒有任何共同的判定指標——形狀不同？（RAGAS／研報／檢索三套不能互比）")
     return reasons
@@ -456,8 +411,6 @@ def _table(rows: list[Row]) -> list[str]:
     cells = [header]
     for r in rows:
         status = r.status + (f"（{r.note}）" if r.note else "")
-        if r.n_base is not None and r.n_base == r.n_cand:
-            status += f"  n_valid={r.n_base}"
         cells.append(
             (
                 r.key,

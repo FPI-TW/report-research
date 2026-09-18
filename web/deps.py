@@ -60,11 +60,11 @@ SSE_HEARTBEAT_INTERVAL = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "20"))
 async def _with_heartbeat(gen, interval: float = SSE_HEARTBEAT_INTERVAL):
     """事件之間插入 SSE 註解心跳，避免長靜默被反向代理切斷連線。
 
-    nginx 的 proxy_read_timeout 是 60s（deploy/nginx.conf），但兩條生成路徑都有
-    超過它的靜默窗：研報逐節路徑每節的針對性檢索（含 rerank）可達 90s+ 完全無事件，
-    單次路徑的 run-level 檢索亦然。缺了心跳，連線會在生成中途被 nginx 切斷。
+    nginx 的 proxy_read_timeout 是 60s（deploy/nginx.conf），但問答路徑有超過它的
+    靜默窗：agentic 多輪檢索（含 rerank）與網搜可達 60s+ 完全無事件。缺了心跳，
+    連線會在生成中途被 nginx 切斷。
 
-    這條路徑本機看不到：eval 直接呼叫 generate_report、單元測試不走 HTTP、開發時
+    這條路徑本機看不到：單元測試不走 HTTP、開發時
     直連 :8097 也繞過 nginx——只有經 Cloudflare Tunnel + nginx 的實際使用者會遇到，
     且表現為「生成到一半連線就斷」，容易被誤認為偶發網路問題。
 
@@ -101,8 +101,8 @@ async def _with_heartbeat(gen, interval: float = SSE_HEARTBEAT_INTERVAL):
 def _valid_uuid(s) -> bool:
     """路徑/請求體帶進來的 id 是否為合法 UUID。
 
-    ask / report / qa_versions 三組都用它擋非法 id。拆分時若把它跟著其中一組
-    搬走，其餘兩組會 NameError——qa_versions 那條的覆蓋由
+    ask / qa_versions 兩組都用它擋非法 id。拆分時若把它跟著其中一組
+    搬走，另一組會 NameError——qa_versions 那條的覆蓋由
     tests/test_pre_split_guards.py 補上。
     """
     try:
@@ -127,7 +127,6 @@ from app.services.answer import (  # noqa: E402
     delete_qa,
     list_qa_versions,
     log_stopped_qa,
-    set_report_offer_declined,
 )
 from app.services.brief import (  # noqa: E402
     fetch_by_date as fetch_brief_by_date,
@@ -207,5 +206,4 @@ __all__ = [
     "log_stopped_qa",
     "rank_reports",
     "rerank_warmup",
-    "set_report_offer_declined",
 ]

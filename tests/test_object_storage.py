@@ -45,14 +45,8 @@ class ObjectKeyTests(unittest.TestCase):
     def test_canonical_keys(self):
         digest = "a" * 64
         self.assertEqual(storage_module.original_object_key(digest, "source.PDF"), f"originals/aa/{digest}.pdf")
-        self.assertEqual(
-            storage_module.generated_object_key("doc-1", b"pdf"),
-            "generated/doc-1/base-c35b21d6ca39.pdf",
-        )
-        self.assertEqual(
-            storage_module.generated_object_key("doc-1", b"pdf", "ren-1"),
-            "generated/doc-1/renditions/ren-1-c35b21d6ca39.pdf",
-        )
+        with self.assertRaises(ValueError):
+            storage_module.original_object_key(digest, "no-extension")
 
     def test_downloaded_file_is_removed_after_parser_scope(self):
         storage = storage_module.ObjectStorage()
@@ -110,9 +104,9 @@ class ObjectKeyTests(unittest.TestCase):
         storage.mode = "r2"
         storage._client = _Client()
         storage.settings = SimpleNamespace(r2_bucket="bucket")
-        key = storage_module.generated_object_key("doc", b"pdf")
+        key = storage_module.original_object_key("c" * 64, "source.pdf")
         storage.upload_bytes(b"pdf", key)
-        self.assertEqual(key, "generated/doc/base-c35b21d6ca39.pdf")
+        self.assertEqual(key, f"originals/cc/{'c' * 64}.pdf")
         self.assertEqual(
             captured["Metadata"]["sha256"], "c35b21d6ca39aa7cc3b79a705d989f1a6e88b99ab43988d74048799e3db926a3"
         )

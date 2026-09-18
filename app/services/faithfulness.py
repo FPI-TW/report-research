@@ -50,11 +50,9 @@ GROUND_SYS = (
 
 # ── 數值主張偵測（確定性，零 LLM）──
 #
-# 這個判斷是兩道閘門的**唯一依據**，漏判的代價不對稱：
-#   - `report_writer._section_needs_fix`：`numeric_support_rate is None` 直接 return False。
-#     一份研報若一條數值主張都沒偵測到，`REPORT_FAITHFULNESS_MIN` 形同虛設、
-#     逐節修正輪永不觸發，**未獲語料支持的數字就這樣進了可下載的 PDF**。
-#   - `answer._faithfulness_spot_check` 的入口閘門：整份回答判非數值 → 完全不查核。
+# 這個判斷是問答抽查閘門的**唯一依據**，漏判的代價不對稱：
+#   - `answer._faithfulness_spot_check` 的入口閘門：整份回答判非數值 → 完全不查核，
+#     未獲語料支持的數字就這樣靜默交付，監控頁的 below_min 也永遠看不到它。
 # 反之偽陽性只是多跑一次 grounding。所以**寧可多抓，不可漏抓**。
 #
 # 原本只有繁體中文金融名詞白名單，在 M10 雙語上線後破功（2026-07-29 生產實測）：
@@ -110,7 +108,7 @@ class FaithfulnessResult:
     degraded: bool = False
 
     def to_evaluation(self, *, citation_coverage: float | None = None) -> dict:
-        """落庫用 evaluation jsonb（report_doc / qa_log 共用形狀）。"""
+        """落庫用 evaluation jsonb（qa_log.evaluation 的形狀）。"""
         return {
             "citation_coverage": citation_coverage,
             "numeric_support_rate": self.numeric_support_rate,

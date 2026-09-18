@@ -302,7 +302,7 @@ class WiringTests(unittest.TestCase):
         )
 
     def test_llm_service_never_takes_the_lock(self):
-        """反向守門：llm.py 是 /api/ask 與研報生成的 spawn 點。
+        """反向守門：llm.py 是 /api/ask 的 spawn 點。
 
         把它納入這把鎖，一輪 tag_all_cli（數小時）就會把線上問答整個鎖死——
         從「批次慢一點」變成「服務中斷數小時」。這條斷言比五條正向的更重要，

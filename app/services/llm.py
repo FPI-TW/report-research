@@ -24,8 +24,8 @@ DEFAULT_MODEL = "claude-sonnet-5"
 SEARCH_EVENT = "\x00WEBSEARCH\x00"
 
 # claude CLI 的 stream-json 為 NDJSON，逐行讀取。asyncio StreamReader 預設單行上限僅
-# 64KB，但單一事件行（尤其結尾 result 事件含全文）於長篇深度研報可遠超過，會觸發
-# LimitOverrunError 使串流中斷、研報無法完成。提高上限至 16MB 以容納長輸出。
+# 64KB，但單一事件行（尤其結尾 result 事件含全文）於長篇回答可遠超過，會觸發
+# LimitOverrunError 使串流中斷、回答無法完成。提高上限至 16MB 以容納長輸出。
 _STDOUT_LINE_LIMIT = 16 * 1024 * 1024
 
 
@@ -190,7 +190,7 @@ async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIter
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
         cwd="/tmp",
-        limit=_STDOUT_LINE_LIMIT,  # 避免長研報單行超過預設 64KB 觸發 LimitOverrunError
+        limit=_STDOUT_LINE_LIMIT,  # 避免長回答單行超過預設 64KB 觸發 LimitOverrunError
     )
     assert proc.stdin is not None and proc.stdout is not None
 

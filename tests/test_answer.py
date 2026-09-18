@@ -2131,10 +2131,9 @@ class GetConversationTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_rows_via_history_item(self):
         from datetime import date
 
-        import app.services.report as rpt
         from app.services import answer as ans
 
-        # 15 欄須與新 SELECT 順序對齊：id, question, answer, created_at, feedback,
+        # 15 欄須與 SELECT 順序對齊：id, question, answer, created_at, feedback,
         # sources, ext_sources, thinking_ms, stages, followups, root_qa_id,
         # stopped, version_count, cited_report_ids, filters
         rows = [
@@ -2143,118 +2142,14 @@ class GetConversationTests(unittest.IsolatedAsyncioTestCase):
             ("id2", "Q2", "A2", date(2026, 6, 2), "like", None, None,
              None, None, None, None, False, 1, None, None),
         ]
-        async def _no_reports(cid):
-            return {}
-
         orig_sf = ans.SessionFactory
-        orig_rfc = rpt.reports_for_conversation
         ans.SessionFactory = lambda: _RowsSession(rows)
-        rpt.reports_for_conversation = _no_reports  # no-op: no reports in this test
         try:
             out = await ans.get_conversation("c1")
         finally:
             ans.SessionFactory = orig_sf
-            rpt.reports_for_conversation = orig_rfc
         self.assertEqual([t["question"] for t in out], ["Q1", "Q2"])
         self.assertEqual(out[1]["feedback"], "like")
-
-
-class ReportOfferPersistenceTests(unittest.IsolatedAsyncioTestCase):
-    """研報邀請跨重整持久：get_conversation 讀取時以 gate 重算、婉拒旗標落 filters。
-
-    邀請原本只活在 SSE done 事件裡，重整即消失——使用者從此失去「要不要生成
-    研報」的選擇權。gate 純規則零 LLM，逐列重算零成本且舊列自動涵蓋。
-    """
-
-    @staticmethod
-    def _row(*, answer="這是一段夠長的分析回答", question="台積電先進封裝分析",
-             stopped=False, cited=("r1", "r2", "r3"), filters=None):
-        # 15 欄對齊 get_conversation 的 SELECT
-        return ("id1", question, answer, None, None, [], [], 100,
-                [], [], None, stopped, 1, list(cited), filters)
-
-    async def _load(self, row):
-        import app.services.report as rpt
-        from app.services import answer as ans
-
-        class _Rows:
-            def all(self):
-                return [row]
-
-        class _Session:
-            async def __aenter__(self): return self
-            async def __aexit__(self, *a): return False
-            async def execute(self, stmt, params=None): return _Rows()
-            async def commit(self): return None
-
-        async def no_reports(cid):
-            return {}
-
-        orig = (ans.SessionFactory, rpt.reports_for_conversation)
-        ans.SessionFactory = lambda: _Session()
-        rpt.reports_for_conversation = no_reports
-        try:
-            return (await ans.get_conversation("c1"))[0]
-        finally:
-            (ans.SessionFactory, rpt.reports_for_conversation) = orig
-
-    async def test_eligible_turn_offers_after_reload(self):
-        it = await self._load(self._row())
-        self.assertTrue(it["offer_report"])
-        self.assertIn("深度研報", it["report_title"])
-        self.assertFalse(it["report_offer_declined"])
-
-    async def test_declined_flag_survives_reload(self):
-        it = await self._load(self._row(filters={"report_offer_declined": True}))
-        self.assertTrue(it["offer_report"])
-        self.assertTrue(it["report_offer_declined"])
-
-    async def test_stopped_turn_never_offers(self):
-        # 部分答案素材不完整，即使引用夠多也不邀請
-        it = await self._load(self._row(stopped=True))
-        self.assertFalse(it["offer_report"])
-        self.assertIsNone(it["report_title"])
-
-    async def test_insufficient_citations_do_not_offer(self):
-        it = await self._load(self._row(cited=("r1",)))
-        self.assertFalse(it["offer_report"])
-
-    async def test_set_report_offer_declined_merges_jsonb(self):
-        """婉拒旗標必須是 jsonb 合併（additive 鍵），不得整欄覆寫掉既有遙測。"""
-        from app.services import answer as ans
-
-        captured = {}
-
-        class _Result:
-            rowcount = 1
-
-        class _Session:
-            async def __aenter__(self): return self
-            async def __aexit__(self, *a): return False
-            async def execute(self, stmt, params=None):
-                captured["sql"] = str(stmt)
-                captured["params"] = params
-                return _Result()
-            async def commit(self): return None
-
-        orig = ans.SessionFactory
-        ans.SessionFactory = lambda: _Session()
-        try:
-            ok = await ans.set_report_offer_declined("qa-1", True)
-        finally:
-            ans.SessionFactory = orig
-
-        self.assertTrue(ok)
-        self.assertIn("COALESCE(filters, '{}'::jsonb)", captured["sql"])
-        # CAST 是必要的（jsonb_build_object 的 "any" 參數位推不出型別，asyncpg
-        # prepare 直接炸；`:d::boolean` 寫法則過不了 SQLAlchemy 的 bind 解析）
-        # ——這條斷言釘住 cast 不被「清理」掉
-        self.assertIn(
-            "jsonb_build_object('report_offer_declined', CAST(:d AS boolean))",
-            captured["sql"],
-        )
-        self.assertIs(captured["params"]["d"], True)
-        self.assertEqual(captured["params"]["id"], "qa-1")
 
 
 class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
@@ -2287,17 +2182,12 @@ class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
             async def commit(self):
                 return None
 
-        async def no_reports(cid):
-            return {}
-
-        import app.services.report as rpt
-        orig = (ans.SessionFactory, rpt.reports_for_conversation)
+        orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
-        rpt.reports_for_conversation = no_reports
         try:
             items = await ans.get_conversation("c1")
         finally:
-            (ans.SessionFactory, rpt.reports_for_conversation) = orig
+            ans.SessionFactory = orig
 
         it = items[0]
         self.assertEqual(it["stages"], ["understanding", "generating"])
@@ -2372,23 +2262,12 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
             ans.SessionFactory = orig
         self.assertFalse(ok)
 
-    async def test_deletes_report_derivatives_leaf_first(self):
-        """研報衍生物必須一起刪，且順序是由葉往根。
-
-        三張表（`report_doc` / `report_run` / `report_rendition`）刻意都沒有 FK，
-        所以 DB 不會替你連刪；先前只刪 `qa_log` ⇒ 這些列與磁碟 PDF 全變永久孤兒。
-        2026-07-30 實測生產 14 列 `report_doc` 有 2 列是孤兒。
-
-        `report_rendition` 以 `report_id` 指向 `report_doc`——先刪 doc 就再也找不到
-        要刪哪些 rendition，所以順序不是風格問題。
-        """
+    async def test_deletes_qa_log_by_conversation_group_key(self):
+        """對話串以 `COALESCE(conversation_id, id)` 為分組鍵整批刪；只有 qa_log 一張表。"""
         from app.services import answer as ans
 
         class Res:
             rowcount = 1
-
-            def all(self):
-                return []
 
         sqls: list[str] = []
 
@@ -2413,149 +2292,9 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             ans.SessionFactory = orig
         self.assertTrue(ok)
-        joined = "\n".join(sqls)
-        for table in (
-            "research.report_rendition",
-            "research.report_doc",
-            "research.report_run",
-            "research.qa_log",
-        ):
-            self.assertIn(f"DELETE FROM {table}", joined, f"{table} 沒被刪到")
-        i_rend = joined.index("DELETE FROM research.report_rendition")
-        i_doc = joined.index("DELETE FROM research.report_doc")
-        self.assertLess(i_rend, i_doc, "rendition 必須先於 report_doc（否則查不到要刪哪些）")
-
-    async def test_report_section_relies_on_fk_cascade(self):
-        """`report_section` 不直接刪——它以 run_id 對 `report_run` 有 FK CASCADE。
-
-        寫成測試是因為「少一個 DELETE」看起來就像漏掉，下一個人很容易「補上」，
-        而那會變成刪兩次（無害但誤導）或在 run 已刪後對不到列。
-        """
-        from app.services import answer as ans
-
-        class Res:
-            rowcount = 1
-
-            def all(self):
-                return []
-
-        sqls: list[str] = []
-
-        class Sess:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *a):
-                return False
-
-            async def execute(self, stmt, params=None):
-                sqls.append(str(stmt))
-                return Res()
-
-            async def commit(self):
-                return None
-
-        orig = ans.SessionFactory
-        ans.SessionFactory = lambda: Sess()
-        try:
-            await ans.delete_conversation("c1")
-        finally:
-            ans.SessionFactory = orig
-        self.assertNotIn("DELETE FROM research.report_section", "\n".join(sqls))
-
-
-class DeletedPdfPathsTests(unittest.IsolatedAsyncioTestCase):
-    """路徑要在刪除**之前**查——列刪掉之後就查不到了。"""
-
-    @staticmethod
-    def _session(rows, *, boom=False):
-        class Res:
-            def all(self):
-                return rows
-
-        class Sess:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *a):
-                return False
-
-            async def execute(self, *a, **k):
-                if boom:
-                    raise RuntimeError("db down")
-                return Res()
-
-        return Sess
-
-    async def test_collects_from_both_tables(self):
-        from app.services import answer as ans
-
-        orig = ans.SessionFactory
-        ans.SessionFactory = self._session([("/d/a.pdf",), ("/d/b.pdf",)])
-        try:
-            out = await ans.deleted_pdf_paths("c1")
-        finally:
-            ans.SessionFactory = orig
-        self.assertEqual(out, ["/d/a.pdf", "/d/b.pdf"])
-
-    async def test_null_paths_dropped(self):
-        from app.services import answer as ans
-
-        orig = ans.SessionFactory
-        ans.SessionFactory = self._session([(None,), ("/d/x.pdf",), ("",)])
-        try:
-            out = await ans.deleted_pdf_paths("c1")
-        finally:
-            ans.SessionFactory = orig
-        self.assertEqual(out, ["/d/x.pdf"])
-
-    async def test_db_error_returns_empty_not_raise(self):
-        """刪對話不該因為「順便查個路徑失敗」而整體失敗。"""
-        from app.services import answer as ans
-
-        orig = ans.SessionFactory
-        ans.SessionFactory = self._session([], boom=True)
-        try:
-            out = await ans.deleted_pdf_paths("c1")
-        finally:
-            ans.SessionFactory = orig
-        self.assertEqual(out, [])
-
-
-class DeletedPdfObjectKeysTests(unittest.IsolatedAsyncioTestCase):
-    async def test_captures_report_and_rendition_identity_with_key(self):
-        from app.services import answer as ans
-
-        class _Result:
-            def all(self):
-                return [
-                    ("doc-1", "base", None, "generated/doc-1/base-aaaaaaaaaaaa.pdf"),
-                    ("doc-1", "rendition", "ren-1", "generated/doc-1/renditions/ren-1-bbbbbbbbbbbb.pdf"),
-                ]
-
-        class _Session:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                return False
-
-            async def execute(self, *_args, **_kwargs):
-                return _Result()
-
-        original = ans.SessionFactory
-        ans.SessionFactory = lambda: _Session()
-        try:
-            objects = await ans.deleted_pdf_object_keys("c1")
-        finally:
-            ans.SessionFactory = original
-        self.assertEqual(
-            [(item.report_id, item.kind, item.rendition_id, item.key) for item in objects],
-            [
-                ("doc-1", "base", None, "generated/doc-1/base-aaaaaaaaaaaa.pdf"),
-                ("doc-1", "rendition", "ren-1", "generated/doc-1/renditions/ren-1-bbbbbbbbbbbb.pdf"),
-            ],
-        )
+        self.assertEqual(len(sqls), 1)
+        self.assertIn("DELETE FROM research.qa_log", sqls[0])
+        self.assertIn("COALESCE(conversation_id, id) = :cid", sqls[0])
 
 
 class ListConversationsTests(unittest.IsolatedAsyncioTestCase):

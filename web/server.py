@@ -43,7 +43,6 @@ from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
     deps,  # noqa: E402
-    report_runs,  # noqa: E402
 )
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
@@ -53,7 +52,6 @@ from web.routers import monitor as monitor_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
-from web.routers import report as report_routes  # noqa: E402
 from web.routers import report_file as report_file_routes  # noqa: E402
 from web.routers import search as search_routes  # noqa: E402
 from web.routers import spa as spa_routes  # noqa: E402
@@ -84,7 +82,7 @@ async def _warmup_models() -> None:
         # embed 暖機失敗不阻斷 rerank 暖機；embed 無熔斷、首個查詢會 lazy 重試。
         logger.exception("embedding warmup failed")
     _s = get_settings()
-    if _s.ask_rerank_enabled or _s.report_rerank_enabled:
+    if _s.ask_rerank_enabled:
         await asyncio.to_thread(deps.rerank_warmup)  # 失敗由 rerank 模組熔斷處理，不拋
 
 
@@ -128,9 +126,6 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # 研報生成改為背景任務後不再隨請求結束（web/report_runs.py），收工時必須自己
-        # 取消並等它們標記 report_run——否則會留下 in-flight 的列擋住同一冪等鍵。
-        await report_runs.shutdown()
         if not warmup_task.done():
             warmup_task.cancel()
             try:
@@ -244,8 +239,6 @@ _valid_uuid = deps._valid_uuid
 
 
 
-# 深度研報 /api/report、/api/report-doc/{id}/pdf 已拆至 web/routers/report.py
-app.include_router(report_routes.router)
 
 
 

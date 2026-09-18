@@ -1,9 +1,9 @@
 # tests/test_eval_compare.py
 """`scripts/eval_compare.py` 的契約測試。
 
-素材一律用 repo 內既有的五份基準線與 `eval/before.json` / `after.json`——它們是三支
+素材一律用 repo 內既有的四份 RAGAS 基準線與 `eval/before.json` / `after.json`——它們是
 產生器**真實寫出來的形狀**，自己編的 fixture 只能驗到自己想像中的形狀（`notes` 在
-`report-m1b.json` 是陣列、在 `baseline-2026-07-29.json` 是單一字串，這種差異編不出來）。
+`baseline-2026-07-29.json` 是單一字串、在舊基準線是陣列，這種差異編不出來）。
 要造「劣化」時才在 tmpdir 改一份副本，且只動 summary、不動形狀。
 """
 
@@ -28,7 +28,6 @@ RAGAS_CLEAN = BASELINES / "baseline-2026-07-29.json"
 RAGAS_M0 = BASELINES / "baseline-m0.json"
 RAGAS_M2 = BASELINES / "baseline-m2.json"
 RAGAS_M4 = BASELINES / "m4-corpus-qa.json"
-REPORT_M1B = BASELINES / "report-m1b.json"
 RETRIEVAL_BEFORE = REPO_ROOT / "eval" / "before.json"
 RETRIEVAL_AFTER = REPO_ROOT / "eval" / "after.json"
 
@@ -63,7 +62,7 @@ def write_variant(tmpdir: str, name: str, doc: dict, **summary_updates) -> str:
 
 
 class TestShapes(unittest.TestCase):
-    """三種真實形狀都要讀得進來（平坦數值、{mean,n_valid} 嵌套、無布林門檻）。"""
+    """兩種真實形狀都要讀得進來（RAGAS 平坦數值＋布林門檻、檢索平坦數值無門檻）。"""
 
     def test_ragas_flat_shape_self_compare_is_clean(self):
         code, out = run_main(["--baseline", str(RAGAS_CLEAN), "--candidate", str(RAGAS_CLEAN)])
@@ -71,29 +70,14 @@ class TestShapes(unittest.TestCase):
         self.assertIn("faithfulness", out)
         self.assertIn("無劣化", out)
 
-    def test_report_nested_shape_reads_mean_and_n_valid(self):
-        doc = load(REPORT_M1B)
-        cmp_ = compare(doc, doc)
-        self.assertEqual(cmp_.exit_code, 0)
-        r = row(cmp_, "facet_coverage")
-        # 嵌套形狀：值取 mean，n_valid 另存——直接拿 dict 去相減會 TypeError。
-        self.assertEqual(r.base, 1.0)
-        self.assertEqual(r.n_base, 8)
-        self.assertEqual(row(cmp_, "source_citation_rate").n_base, 10)
-
-    def test_report_shape_has_no_thresholds_pass(self):
-        """研報那套沒有布林門檻——比較器不能假設它存在。"""
-        self.assertNotIn("thresholds_pass", load(REPORT_M1B)["summary"])
-        self.assertEqual(compare(load(REPORT_M1B), load(REPORT_M1B)).exit_code, 0)
-
     def test_retrieval_flat_shape(self):
         cmp_ = compare(load(RETRIEVAL_BEFORE), load(RETRIEVAL_AFTER))
         self.assertEqual(cmp_.shape_base, "retrieval")
         self.assertEqual(row(cmp_, "hit_rate").status, ec.STATUS_SAME)
 
     def test_cross_shape_comparison_is_refused(self):
-        """RAGAS 與研報共用 n / n_errors，光看「有共同指標」會比出一個像樣的 delta。"""
-        cmp_ = compare(load(RAGAS_M0), load(REPORT_M1B))
+        """RAGAS 與檢索共用 n_errors 之類的鍵，光看「有共同指標」會比出一個像樣的 delta。"""
+        cmp_ = compare(load(RAGAS_M0), load(RETRIEVAL_BEFORE))
         self.assertEqual(cmp_.exit_code, 2)
         self.assertTrue(any("形狀不同" in r for r in cmp_.incomparable), cmp_.incomparable)
 
@@ -165,12 +149,12 @@ class TestDirectionality(unittest.TestCase):
         self.assertEqual(row(compare(base, slower_b), "latency_ms_mean").status, ec.STATUS_WORSE)
 
     def test_descriptive_metrics_never_gate(self):
-        """來源多樣性方向有歧義（MMR 刻意對同來源設上限），刻意不判定。"""
-        base = load(REPORT_M1B)
+        """引用總數隨脈絡篇數浮動、方向有歧義，刻意不判定。"""
+        base = load(RETRIEVAL_BEFORE)
         with tempfile.TemporaryDirectory() as tmp:
-            fewer = load(write_variant(tmp, "c.json", base, n_reports={"mean": 3.0, "n_valid": 10}))
+            fewer = load(write_variant(tmp, "c.json", base, n_cited=base["summary"]["n_cited"] - 5))
         cmp_ = compare(base, fewer)
-        self.assertFalse(row(cmp_, "n_reports").gating)
+        self.assertFalse(row(cmp_, "n_cited").gating)
         self.assertEqual(cmp_.exit_code, 0)
 
     def test_flag_true_to_false_is_a_regression(self):
@@ -196,36 +180,6 @@ class TestComparability(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             bigger = load(write_variant(tmp, "n.json", base, n=30))
         self.assertEqual(compare(base, bigger).exit_code, 2)
-
-    def test_per_metric_n_valid_change_marks_only_that_metric(self):
-        """嵌套形狀每個指標有自己的分母：n_valid 不同的兩個均值不能相減。"""
-        base = load(REPORT_M1B)
-        with tempfile.TemporaryDirectory() as tmp:
-            moved = load(
-                write_variant(tmp, "v.json", base, facet_coverage={"mean": 0.5, "n_valid": 9})
-            )
-        cmp_ = compare(base, moved)
-        r = row(cmp_, "facet_coverage")
-        self.assertEqual(r.status, ec.STATUS_UNCOMPARABLE)
-        self.assertFalse(r.regression)
-        self.assertIn("n_valid", r.note)
-        self.assertEqual(cmp_.exit_code, 0)  # 其餘指標無劣化
-
-    def test_ruleset_version_change_is_incomparable(self):
-        """report_metrics 自己聲明 v1 基準線不可與 v2 直接比較。"""
-        base = load(REPORT_M1B)
-        with tempfile.TemporaryDirectory() as tmp:
-            v3 = load(write_variant(tmp, "r.json", base, ruleset_version=3))
-        cmp_ = compare(base, v3)
-        self.assertEqual(cmp_.exit_code, 2)
-        self.assertTrue(any("ruleset_version" in r for r in cmp_.incomparable))
-
-    def test_insufficient_n_declared_by_the_result_itself(self):
-        """`sufficient_n=false` 是產生者自己說「這份不得用於比較」。"""
-        base = load(REPORT_M1B)
-        with tempfile.TemporaryDirectory() as tmp:
-            thin = load(write_variant(tmp, "s.json", base, sufficient_n=False))
-        self.assertEqual(compare(base, thin).exit_code, 2)
 
     def test_queryset_parameter_change_is_incomparable(self):
         """max_age_days 變了，recency_pass_rate 與 pct_over_max_age 的定義就變了。"""
@@ -267,7 +221,7 @@ class TestUnclassifiedKeys(unittest.TestCase):
 
     def test_every_key_in_every_shipped_baseline_is_classified(self):
         """方向表必須覆蓋 repo 內所有真實結果檔——否則這支工具第一次跑就是黃燈。"""
-        for path in (RAGAS_CLEAN, RAGAS_M0, RAGAS_M2, RAGAS_M4, REPORT_M1B,
+        for path in (RAGAS_CLEAN, RAGAS_M0, RAGAS_M2, RAGAS_M4,
                      RETRIEVAL_BEFORE, RETRIEVAL_AFTER):
             unknown = sorted(set(load(path)["summary"]) - set(ec.METRIC_SPECS))
             self.assertEqual(unknown, [], f"{path.name} 有未分類的鍵：{unknown}")

@@ -3,11 +3,11 @@
 ════════════════════════════════════════════════════════════════════════
 為什麼需要它
 ════════════════════════════════════════════════════════════════════════
-本 repo 的完整性保證幾乎全在「寫入端很小心」，而不在 DB 的約束裡——三張研報衍生
-表刻意無 FK、`embedding` 可 NULL、`report_signal.market` 與 `research_report.market`
-是兩份各自寫入的副本。這些設計都有理由，代價是**壞掉的方式全部是靜默的**：
+本 repo 的完整性保證幾乎全在「寫入端很小心」，而不在 DB 的約束裡——`embedding`
+可 NULL、`report_signal.market` 與 `research_report.market` 是兩份各自寫入的副本。
+這些設計都有理由，代價是**壞掉的方式全部是靜默的**：
 
-  孤兒 `report_doc`     → 沒有任何讀取路徑會碰到它，永遠不會有人回報
+  孤兒 `report_takeaway` → 沒有任何讀取路徑會碰到它，永遠不會有人回報
   NULL `embedding`      → 檢索少回幾列（PR 之後改為跳過並記數，但仍是召回缺口）
   重複 `chunk_index`    → 閱讀頁錨定跳到錯的位置，看起來只是「引文對不上」
   `market` 兩邊不一致   → 雷達把訊號歸到錯的市場，數字看起來仍然合理
@@ -154,39 +154,6 @@ CHECKS: tuple[Check, ...] = (
         "   AND NOT EXISTS (SELECT 1 FROM research.report_chunk c WHERE c.report_id = r.id)",
         "ingest 只跑了報告層、沒跑到分塊層。這些報告完全不會被檢索到，"
         "但在總覽分面與監控頁的計數裡都在——所以覆蓋率看起來是滿的。",
-    ),
-    Check(
-        "orphan_report_doc",
-        "孤兒 report_doc（對話串已刪）",
-        SEVERITY_WARN,
-        "SELECT count(*) FROM research.report_doc d"
-        " WHERE d.conversation_id IS NOT NULL"
-        "   AND NOT EXISTS ("
-        "     SELECT 1 FROM research.qa_log q"
-        "      WHERE COALESCE(q.conversation_id, q.id) = d.conversation_id)",
-        "刻意無 FK，所以 DB 不會連刪。刪對話串現在會一起刪（見 answer.delete_conversation），"
-        "這裡的數字是那個修正之前累積的殘留，含磁碟上的 PDF。",
-    ),
-    Check(
-        "orphan_report_run",
-        "孤兒 report_run（對話串已刪）",
-        SEVERITY_WARN,
-        "SELECT count(*) FROM research.report_run rn"
-        " WHERE rn.conversation_id IS NOT NULL"
-        "   AND NOT EXISTS ("
-        "     SELECT 1 FROM research.qa_log q"
-        "      WHERE COALESCE(q.conversation_id, q.id) = rn.conversation_id)",
-        "同上。report_section 以 run_id 對它有 FK CASCADE，刪 run 會連帶清掉。",
-    ),
-    Check(
-        "orphan_report_rendition",
-        "孤兒 report_rendition（report_doc 已刪）",
-        SEVERITY_WARN,
-        "SELECT count(*) FROM research.report_rendition rr"
-        " WHERE NOT EXISTS ("
-        "   SELECT 1 FROM research.report_doc d WHERE d.id = rr.report_id)",
-        "rendition 以 report_id 指向 report_doc（plain uuid，非 FK）。"
-        "每列各有自己的 pdf_path，所以孤兒同時是磁碟殘留。",
     ),
     Check(
         "takeaway_sha_disagreement",

@@ -958,8 +958,8 @@ class TestAnswerAgenticWiring(unittest.IsolatedAsyncioTestCase):
         # done payload 形狀不變
         done = events[-1][1]
         self.assertEqual(done["cited"], ["r1", "r2"])
-        for key in ("qa_id", "conversation_id", "thinking_ms", "offer_report",
-                    "report_title", "root_qa_id", "version_count"):
+        for key in ("qa_id", "conversation_id", "thinking_ms",
+                    "root_qa_id", "version_count"):
             self.assertIn(key, done)
         # _log_qa：stages 含 evaluating、manifest 為 manifest_from_answer 形狀
         _args, kwargs = state["log_calls"][0]

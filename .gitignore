@@ -15,8 +15,6 @@ data/*.json
 *.png
 # 說明頁截圖（UI 資產，被 SPA HelpPage 引用，需入版控；其餘 png 仍忽略）
 !frontend/src/assets/help/*.png
-# 設計稿的圖片資產（docs/design/ 是設計交付存檔，非執行期產物）
-!docs/design/**/*.png
 
 # runtime logs / locks / tag backups（執行期產生，非原始碼）
 data/*.log

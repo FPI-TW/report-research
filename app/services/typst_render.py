@@ -43,7 +43,8 @@ _KPI_MAX_ITEMS = 5  # 與 pdf.py:inject_kpi 一致
 
 # pandoc reader 參數：**不可省**。GFM reader 預設把成對 $...$ 當數學模式，財經文本的
 # 美元符號（"$100 美元"、"EPS $14.2"、"$880–$1,088"）會被誤配對成數學式。
-# spike 實測關閉後正確跳脫為字面 \$（docs/typst_spike_m9a.md §pandoc 的兩個已知行為）。
+# spike 實測關閉後正確跳脫為字面 \$（spike 紀錄見 git 歷史 docs/typst_spike_m9a.md；
+# 敵意輸入 fixture 在 tests/fixtures/typst_spike/）。
 _PANDOC_FORMAT = "gfm-tex_math_dollars"
 
 

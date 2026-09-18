@@ -188,7 +188,7 @@ class HostileFixtureTests(unittest.TestCase):
     斷言的正是它們被跳脫成字面文字、不會被 Typst 編譯器執行。
     """
 
-    _FIXTURE = REPO_ROOT / "docs" / "typst_spike" / "fixture_hostile.md"
+    _FIXTURE = REPO_ROOT / "tests" / "fixtures" / "typst_spike" / "fixture_hostile.md"
 
     def setUp(self):
         if not self._FIXTURE.is_file():

@@ -1,6 +1,6 @@
 # 抽取層現況（E1）
 
-本檔描述 `app/services/extraction/` 與 `app/services/extract.py` **現在**的行為，是 `tests/test_docs_contract.py` 掃描的 living doc。它取代 2026-09-18 移出 repo 的重構計畫（原檔名 docs/EXTRACTION_REDESIGN.md，見 git 歷史）；程式碼註解裡的「§N」全部指本檔章節。E1a–E1d 四個里程碑已於 2026-09-02 至 09-03 全部上線，夜間回填由 `report-mark-backfill.timer` 進行。
+本檔描述 `app/services/extraction/` 與 `app/services/extract.py` **現在**的行為，是 `tests/test_docs_contract.py` 掃描的 living doc。它取代 2026-09-18 移出 repo 的重構計畫（原檔名 docs/EXTRACTION_REDESIGN.md，見 git 歷史）；程式碼註解裡的「§N」全部指本檔章節。E1a–E1d 四個里程碑已於 2026-09-02 至 09-03 全部上線，夜間回填由 `report-mark-backfill.timer` 進行。版面層 v4（`ext-2026-09-18.v4`，§4、§10 診斷 #10–#13、§12）修正 v3 全庫實測出的四個系統性缺陷；bump 版本會讓回填把全庫重排一遍。
 
 ## 1. 一句話：文件模型是樞紐
 
@@ -44,9 +44,18 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 - **回退（逐檔）**：pdfplumber 拋例外、整份開不起來、或字數低於 `MIN_TEXT_CHARS` 才退回 pypdf，並在 `quality_flags` 記 `fallback_from` 與 `fallback_reason`（`error: …`／`below_min_chars`／`below_min_chars_both`）。刻意不做「兩邊字數比一比取多的」：原始字數比是假訊號（12 份樣本 11 份字元數逐字相等，差的是順序）。
 - pypdf 路徑的逐頁例外不再無聲：失敗頁碼進 `pages_failed`，並填 `quality["pages_failed_ratio"]`。
 - `.docx`：pypdf 模式用 `python-docx` 段落以單換行接；pdfplumber 模式每段一個 `paragraph` Block、單一 `Page`。`python-docx` 未安裝時回空字串或帶 `error` 的 Document。
-- 版本識別在 `app/services/extraction/__init__.py`：`EXTRACTOR_NAME = "pdfplumber"`、`EXTRACTION_VERSION = "ext-2026-09-02.v3"`。**改動 `layout.py` 的排序或分類邏輯、`model.py` 的序列化、或 `quality.py` 的權重，就要 bump 這個字串**。該 `__init__` 刻意不 import 子模組：`layout` 會拉進 pdfplumber／pdfminer.six，web 服務用不到。
+- 版本識別在 `app/services/extraction/__init__.py`：`EXTRACTOR_NAME = "pdfplumber"`、`EXTRACTION_VERSION = "ext-2026-09-18.v4"`。**改動 `layout.py` 的排序或分類邏輯、`model.py` 的序列化、或 `quality.py` 的權重，就要 bump 這個字串**；回填腳本以「版本不等於目標」挑候選，bump 等於全庫重排。該 `__init__` 刻意不 import 子模組：`layout` 會拉進 pdfplumber／pdfminer.six，web 服務用不到。
 
-版面層 `app/services/extraction/layout.py` 做欄偵測（直方圖投影，最多 3 欄）、行與段落聚合、頁首頁尾（版面帶＋跨頁重複）、標題（字級比 1.15）、註腳、圖說、表格（框線策略與無框線文字策略兩套）。它們錯了不會拋例外，只會讓輸出「比較亂」，所以品質靠 §5 量、不靠例外。
+版面層 `app/services/extraction/layout.py` 每頁依序做：
+
+1. **取詞與相鄰詞合併**（v4）：`extract_words` 之後把同一行、水平間隙落在 (−1.5, 0.5) pt 的相鄰詞併回一個詞。券商 PDF 用空白字元做右對齊填充，填充空白覆蓋在數字上，pdfplumber 把「50,009.35」斷成「5」「0,009.35」；v3 全庫抽樣 30 份 277 頁，數值 token 有 16–64% 被切開（診斷 #10）。重疊超過 1.5pt 的是浮水印壓正文，不併。
+2. **表格**：框線策略優先、文字對齊策略補無框線表。框線表通過驗收後再過兩道體檢（v4，診斷 #11）：同列框外 3–60pt 有數值詞達列數一半＝**殘缺**（YTD 整欄掉在框外）；含 3 個以上數值 token 的儲存格占比 ≥ 25%＝**欄位不足**（四個數值塞一格）。可疑的以合併後的詞在放寬後的區域重建（欄界＝正文列上沒有詞跨過、至少 4pt 寬的垂直空隙，表頭詞依中點歸欄），欄數變多才採用，否則整張退回文字流。刻意不用 pdfplumber 的文字策略重抽：它以字元定欄界，欄界會落在被填充空白切開的數字中間。
+3. **圖區**（v4，診斷 #12）：`curves`、斜線（折線圖的資料段）、細長且高度不一的矩形（bar）以 12pt 格子聚成區域，至少 8 段小曲線或 5 支 bar 才算圖；區域內長度 ≤ 6 的 token 與數值 token（刻度、圖例、「Nov-24」）不進正文。**刻意不取 `images`**：凱基美股個股頁整個側欄墊著一張點陣圖，取它會把目標價整排丟掉。
+4. **欄偵測**（直方圖投影，最多 3 欄）：窄欄與詞數太少的欄併回鄰欄；數值占比 ≥ 70% 的欄、或寬度 < 20% 且數值占比 ≥ 50% 的窄欄，一律併回**左邊**的標籤欄（v4：分母排除單一英文字母，帶單位的 `6M`／`3.5x` 算數值——凱基美股個股頁的側欄數值欄實測 0.69 對門檻 0.70，差這一點就被判成獨立一欄）；最後用行級證據驗證每條溝槽：兩側都有字的行裡超過一半是連續穿過的，那是段落內部的稀疏帶不是欄界（大摩首頁右上角的短段落）。
+5. **行與段落**：分行以詞的垂直中點對行的移動平均分群（v4，不比 `top`：中文標籤與拉丁數字字框高度不同，一個高字框的隱形符號會把整列拆成兩行）；段落依行距與左緣。
+6. **分類**：頁首頁尾（版面帶＋跨頁重複，首頁那份標題保留）、標題（字級比 1.15）、註腳、圖說。
+
+每頁的統計（`words_raw`、`words_merged`、`chart_words_dropped`、`tables_suspect`／`tables_retried`／`tables_rejected`）加總進 `Document.meta["layout"]`，由 §5 寫進 `quality_flags`。這些步驟錯了不會拋例外，只會讓輸出「比較亂」，所以品質靠 §5 量、不靠例外；每個門檻的來由寫在 `layout.py` 的常數註解裡。
 
 ## 5. 品質指標
 
@@ -58,10 +67,11 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 | `garbled_ratio` | 私用區 U+E000–F8FF 與 U+FFFD 的字元占比，偵測 CID 缺 ToUnicode |
 | `pages_failed_ratio` | 頁級失敗數 ÷ 頁數 |
 | `max_columns`、`multi_column_pages` | 版面欄數，界定「雙欄子集」 |
-| `layout_coverage` | 文字 bbox 覆蓋的墨水格比例；只在傳入 pypdfium2 渲染器時計算，否則 `None`（docx 也是 `None`） |
-| `quality_score` | `0.35·(1−min(1, garbled×5)) + 0.25·min(1, chars_per_page/200) + 0.25·(1−failed_ratio) + 0.15·(coverage or 1.0)`，夾到 [0, 1] |
+| `layout_coverage` | 文字 bbox 覆蓋的墨水格比例。v4 起 `extract.py` 對每份 PDF 都開 pypdfium2 算（實測 32 頁多 0.4 秒，抽取本身 4.9 秒）；render 開不起來退回 `None`（docx 恆為 `None`）。抽樣 50 份的分布：p5 0.38–0.46、p25 0.60–0.69、中位 0.72——圖多的頁面天生偏低，絕對值要對著門檻讀 |
+| `quality_score` | 權重 garbled 0.35、density 0.25、failed 0.25、coverage 0.15 的加權平均；**coverage 缺席時把它的權重拿掉重新正規化**（v4），不再白送滿分——v3 生產從未算 coverage，9,263 篇全部 ≥ 0.9、5,804 篇恰好 1.0、`needs_review` 零篇 |
+| `words_merged_ratio`、`chart_words_dropped`、`tables_retried`、`tables_rejected` | v4 版面層統計（§4），不進分數、供稽核：合併率異常高＝該版型大量用填充空白；`tables_rejected` 多＝框線表體檢常失敗，去 `compare_extractors.py` 看 |
 
-`Quality.as_flags()` 的鍵與 `research_report.quality_flags` 對齊。`store.needs_review(quality_score, pages_failed, review_min)`：`pages_failed` 非空或分數低於 `EXTRACTION_REVIEW_MIN`（預設 0.6）即標記；分數 `None`（pypdf 路徑）不算低分。**只標記不擋**。
+`Quality.as_flags()` 的鍵與 `research_report.quality_flags` 對齊。`store.needs_review(quality_score, pages_failed, review_min, flags)`：`pages_failed` 非空、分數低於 `EXTRACTION_REVIEW_MIN`（預設 0.6）、`layout_coverage` 低於 `EXTRACTION_REVIEW_MIN_COVERAGE`（預設 0.30，取在抽樣 p5 之下，標到的是「整塊漏抽」不是「圖多」）、或 `garbled_ratio` 高於 `EXTRACTION_REVIEW_MAX_GARBLED`（預設 0.02，v3 全庫只有 27 篇過線）即標記；分數或旗標 `None` 不算低分。總分是加權平均，單一嚴重缺陷會被稀釋（coverage 0.3 的檔總分仍有 0.89），所以逐項門檻不可省。**只標記不擋**。
 
 ## 6. 快取格式
 
@@ -83,6 +93,8 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 
 監控落點：`web/routers/monitor.py` 的 `/api/progress` 回 `extraction` 區塊（版本分布、`needs_review` 數、回填進度），單一 UNION ALL 查詢；缺表時該區塊為 `null`，前端 `frontend/src/features/monitor/ExtractionPanel.tsx` 降級而非整頁 500。
 
+回填會改寫正典文字，`store.reanchor_takeaways` 重算摘錄錨點時錨不回的置 NULL。v3 回填 15 晚實測 5,532 條摘錄掉了 15%（448／1,116 篇至少掉一條），而總結列沒有這個數字。v4 起 `backfill_extraction.py` 的總結列多印「摘錄錨定 a/b（x%）」；補救走 `scripts/lost_anchors_to_delta.py --out data/takeaway_reanchor_delta.txt`，再 `scripts/extract_takeaways.py --hashes-file 該檔 --reextract`（每篇一次 LLM，可 `--limit` 分批）。
+
 ## 8. golden set 與評測
 
 - 資料集 `eval/extraction_dataset.json`：15 份跨券商樣本，每案帶 `fields`（評等、目標價等欄位真值）、`order`（閱讀順序關鍵句）、`two_column`、`annotation_status`（`prefilled`／`draft`／`reviewed`）。15 份已於 2026-09-02 人工覆核。
@@ -92,8 +104,10 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
   - `order_pair_acc`：命中句子兩兩配對，在抽取文字裡先後與 golden 一致的比例（另有 `order_pair_acc_within` 與 Kendall tau）。
   - 欄位 coverage 與 accuracy 分開看：只看 coverage 獎勵亂猜，只看 accuracy 獎勵什麼都不填。
   - 幻覺率：evidence span 錨不回原文的比例，`Anchor.method == "prefix"` 一律算錨不回。
-- 比較兩份結果用 `scripts/eval_compare.py`（指標方向已登錄在 `METRIC_SPECS`）。基準線在 `eval/baselines/`（`extraction-pypdf-2026-09-02.json`）。**刻意不進 CI**：與定時同步互搶 `claude` CLI。
+- 比較兩份結果用 `scripts/eval_compare.py`（指標方向已登錄在 `METRIC_SPECS`）。基準線在 `eval/baselines/`：`extraction-pypdf-2026-09-02.json`（pypdf）、`extraction-pdfplumber-2026-09-18.json`（版面層 v3，切換生產後補量的基準；v3 上線時沒有留下這一份，v4 才補）。**刻意不進 CI**：與定時同步互搶 `claude` CLI。
 - 文字召回率不是主指標：pdfplumber 與 pypdf 抽出的字元數 12 份裡 11 份逐字相等，它量不到要修的東西。
+- 2026-09-18 實測（15 份 reviewed）：pypdf 配對 0.805／tau 0.609 → v3 0.922／0.843 → v4 0.925／0.851，命中率三者皆 1.0，欄位層與幻覺率不變（`make eval-compare` 退出碼 0）。**順序指標量不到 v4 修的東西**（數字切開、表格欄位、側欄數值歸屬都在同一句之內），所以 v4 的驗收另有 §10 診斷 #10–#13 的抽樣數字；順序評測在這裡的角色是「沒有退化」。
+- 2026-09-18 另加 6 份 `draft`（凱基美股個股版型 2、大摩 2、元大早報 2，`id` 以 `kgi-2344-`、`kgi-5289-`、`ms-`、`yuanta-morning-2024`／`20251231` 開頭）：v3 全庫 1,177 篇 `max_columns=3` 的版型在原 15 份裡是零覆蓋。由模型看頁面圖草標、每句驗證在抽取文字裡恰出現一次，尚未人工覆核；`--reviewed-only` 不吃它們，比較基準線時以 reviewed 為準。覆核時的已知歧義寫在各案 `annotator_notes`（大摩兩份沒有 Risk Reward 三欄頁；元大目次項要抄含頁碼的整行才唯一）。
 
 ## 9. 開工順序與上線步驟（已完成，留作重跑依據）
 
@@ -129,11 +143,15 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 | 4 | 掃描檔是終點站，無回補路徑 | 無 OCR、無重抽佇列 | `extraction_log.stopped_at = scanned`（§7）；OCR 分支未做 |
 | 4b | 三道入庫閘的落點只在 `if` 分支裡，沒有表記得 | 各自 `continue` | `extraction_log`（§7）；重構前 16,555 筆抽取對 15,089 列，1,466 筆中途蒸發 |
 | 5 | 抽到的表格到 chunk 階段還原不回來 | `clean_extracted` 抹掉 CJK 間空白，同時抹掉欄界 | 表格改 markdown（§3） |
-| 6 | 表格被切碎跨 chunk | `chunk_text` 純字元切法 | 延後 |
+| 6 | 表格被切碎跨 chunk | `chunk_text` 純字元切法 | v4：markdown 表格依列切、每塊帶表頭、不套 overlap（§12） |
 | 7 | 欄位擷取漏抽 | 截斷全文餵一次 LLM | 延後（E4「定位 → 局部擷取 → 錨回驗證」未做）；截斷只解釋 1.13% 的漏抽 |
 | 8 | 換 parser 後無法針對性回填 | 抽取層沒有版本欄 | `extraction_version`（§7） |
 | 8b | 快取無法承載同檔重抽 | append-only `all.jsonl` | per-hash 快取（§6） |
 | 9 | 改動只能靠感覺 | 無標註集 | golden set（§8） |
+| 10 | 數字被空白切開（「5 0,009.35」），忠實度數值比對與目標價證據錨不回 | 右對齊填充的空白字元覆蓋在數字上，pdfplumber 斷詞 | v4 相鄰詞合併（§4 步驟 1）；抽樣 30 份數值 token 被切率 16–64% → 0.3% |
+| 11 | 框線表殘缺（YTD 整欄掉到框外）、欄位不足（四個數值塞一格）；側欄「標籤／數值」被判成兩欄，目標價與標籤分家 | 框線只圈到部分表格；數值欄擦邊通過欄偵測門檻 | v4 表格體檢與詞重建、數值側欄併回、溝槽驗證（§4 步驟 2、4）；抽樣 25 份 max_columns=3 的檔 25 → 7，餘下是三欄並排的無框線清單（元大外資／投信買賣超、凱基行事曆），不是誤判 |
+| 12 | 圖表刻度與圖例（「50 40 30 20 10 0」「J a n」）進正文與 chunk，還把圖表頁判成三欄 | 版面層不知道哪裡是圖 | v4 圖區（§4 步驟 3） |
+| 13 | 每篇尾端的據點地址、評等定義、免責聲明整段進 chunk；嚴格樣式命中 12,110 個 chunk | 頁首頁尾偵測只看版面帶與跨頁重複 | v4 跨文件樣板字典（§12） |
 
 ## 11. 明確不做的事
 
@@ -147,3 +165,11 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 | 修 `clean_extracted` 的 CJK 空白邏輯 | 表格改走 markdown 就不需要；且它與 `content_norm` 沒有耦合（後者對應 `norm_for_match`） |
 | 把 `is_admin` 與 `is_research=false` 入庫 | 汙染檢索；改記 `extraction_log` |
 | 抽取評測進 CI | 與定時同步互搶 `claude` CLI |
+| 用 `images` 當圖區、用 pdfplumber 文字策略重抽可疑表格 | 前者把側欄底圖當圖、目標價整排消失；後者以字元定欄界，欄界落在被切開的數字中間（v4 實測，§4） |
+| 樣板段落從 `full_text` 拿掉 | 閱讀頁與摘錄錨點都建立在完整正典文字上；樣板只是不進 chunk（§12） |
+
+## 12. 切塊與樣板（v4）
+
+**表格依列切**（`app/services/chunk.py`）：段落若整段都是 `|` 開頭的行就當 markdown 表格——依列裝到 `CHUNK_SIZE`，每塊重複表頭（首列＋分隔列），單列不切；表格塊不接前一塊的尾巴、也不把尾巴給下一塊。散文之間的 overlap 合併維持原樣（`reading/anchor.py` 的 head-drop 補償依賴它）。判定用內容不用 `blocks` 索引：入庫切的是 `clean_extracted` 之後的正典文字，索引是對原始序列化字串算的，位移對不上。v3 全庫 20,155 個以 `|` 開頭的 chunk 有 18,462 個沒有表頭。
+
+**跨文件樣板字典**（`app/services/boilerplate.py`、`scripts/build_boilerplate.py`）：掃 `data/extracted/` 的 per-hash 快取，段落經 `norm_for_match` 取 hash，同一 `source` 下出現在 ≥ max(8, 0.5%·文件數) 篇、且橫跨 ≥ 3 個不同 `stock_code`（或出現在夠多沒有 `stock_code` 的總經／策略報告）的段落就是樣板，寫成 `data/boilerplate/<source>.json`（gitignored，一 source 一檔，原子寫入）。跨標的那條擋住單一公司的公司簡介。入庫端（`ingest_all.py`、`sync_new_reports.py`、`backfill_extraction.py`、`run_ingest.py`）切塊前 `strip_boilerplate(canonical, source)`；`full_text` 不動。**全部 fail-open**：字典不存在或壞掉不剔除；剔除後剩不到兩成就退回原文（否則全是樣板的檔會被當掃描檔跳過）。字典不進 sync 鏈，`make boilerplate` 手動重建：新券商上線、既有券商換版型時跑一次即可。

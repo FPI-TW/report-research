@@ -1,6 +1,6 @@
 # report-mark 運作流程
 
-券商研報從 `研報自動匯入/` 進來，經過抽文字 → Claude 多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、深度研報 PDF、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
+券商研報從 `研報自動匯入/` 進來，經過抽文字 → Claude 多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
 
 ## 全景流程圖
 
@@ -24,7 +24,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
    └─▶ ⑧ scripts/generate_brief.py        Sonnet → research.report_brief（每日簡報）
    │
    ▼ web/server.py（:8097）
-檢索 /api/search ── 問答 /api/ask ── 研報 /api/report ── 閱讀 /api/reading ── 雷達 /api/radar ── 簡報 /api/brief
+檢索 /api/search ── 問答 /api/ask ── 閱讀 /api/reading ── 雷達 /api/radar ── 簡報 /api/brief
 ```
 
 生產路徑由 `report-mark-sync.timer` 每 3 小時觸發 `scripts/sync_new_reports.sh`，把上面 ① 到 ⑧ 串成一輪（見「生產同步鏈」）。全語料三支（`extract_all` → `tag_all_cli` → `ingest_all`）只在初次建庫或補歷史時跑。
@@ -37,7 +37,6 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | 切塊、嵌入、入庫、去重、斷點續跑 | 摘要、顯示標題（Sonnet） |
 | 混合檢索、tier、選篇、rerank、脈絡組裝 | 問答生成、追問（Sonnet／Haiku） |
 | 路由前檢詞表、overview 統計 | 五類路由分類（Haiku） |
-| 研報大綱骨架、狀態機、預算、渲染、免責 | 大綱子節、逐節草稿、修正輪 |
 | 引文錨定、訊號正規化與狀態判定、共識聚合、窗期 | 摘錄與訊號擷取、簡報撰寫 |
 | 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（Haiku） |
 
@@ -50,13 +49,14 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `研報自動匯入/` | 券商 PDF／docx 原檔（約 1.5 萬份），NAS rsync 鏡像，唯讀 | 否 |
 | `data/extracted/` | 抽取快取 `<file_hash>.json`（`app/services/extraction/cache.py`） | 否 |
 | `data/tags/` | 標註結果 `<file_hash>.json`，resume 依據；監控頁 `scandir` 熱點 | 否 |
-| `data/reports/` | 深度研報 PDF 落地（`REPORTS_DIR`）；`r2`／`hybrid` 模式另上傳 R2 | 否 |
 | `data/metrics/` | 硬體用量取樣 JSONL | 否 |
 | `data/.incidents/` | P5 事件狀態檔 | 否 |
 | `data/*.log`、`data/.last_successful_sync`、`data/sync_round_state` | 執行期日誌、心跳、本輪狀態 | 否 |
-| `research.*`（Postgres ＋ pgvector，容器 `report-mark-postgres`，host port 5436） | 11 張表，`db/schema.sql` | 是 |
+| `research.*`（Postgres ＋ pgvector，容器 `report-mark-postgres`，host port 5436） | 7 張表，`db/schema.sql` | 是 |
 
 `data/` 在 `.gitignore` 是逐項忽略而非整目錄；新增執行期檔案要同步加一行，因為 repo 禁止 `git add -A`。
+
+深度研報生成（`report_doc`／`report_run`／`report_section`／`report_rendition` 四張表、`data/reports/`、bucket 的 `generated/` 前綴）已於 2026-09 移除。`db/schema.sql` 只 `CREATE IF NOT EXISTS`，對既有庫是 no-op，四張表要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`；執行前確認 `make db-audit` 全綠，備份從未涵蓋這四張）。在生產庫執行 DROP 之前，`tests/test_schema_constraints.py` 對著生產庫跑會因多出 `report_run`／`report_section` 的兩條 CHECK 而紅，這是預期的，DROP 後自然轉綠，不要為此重生 `db/expected_constraints.txt`。bucket 裡舊的 `generated/` 生成 PDF 不再算 orphan、由人手動清；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀（新名 `FAITHFULNESS_MIN`）。
 
 ## 逐階段說明
 
@@ -166,31 +166,23 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 `POST /api/ask/stop` 把使用者中止時的部分答案與 `stages` 落 `qa_log`（`stopped=true`），回 `qa_id`。
 
-### 深度研報 `POST /api/report`（SSE）
-
-請求 JSON：`question`、`conversation_id`、`qa_id`、`template_id`、`locale`。首事件恆為 `run{run_id, elapsed_ms}`；之後 `queued` → `status`（`retrieving`、`outlining`、`writing`、`searching_web`、`verifying`、`rendering`）→ `outline{title, sections[{position, section_key, heading}]}`（空陣列＝退回單次生成）→ `sources` → `section_draft{position, section_key, heading, markdown}`／`section_skipped{position, heading}`／`token` → `document_revision` → `done{report_id, title, download_url, thinking_ms}`。
-
-重連 `GET /api/report-runs/{run_id}/stream` 先重播緩衝再直播：`token` 不重播、`section_draft` 重播無 `markdown`。`GET /api/report-runs` 列該對話仍活著的 run，`POST /api/report-runs/{run_id}/cancel` 取消（關分頁不等於取消）。滿載 429 帶 `Retry-After`。
-
-換模板：`GET /api/report-templates` 列 registry，`POST /api/report-doc/{report_id}/rerender` 產新 rendition，`GET /api/report-doc/{report_id}/pdf` 取當前版（`r2`／`hybrid` 模式 302 到 presigned URL）。
-
 ### 契約守門
 
-- `tests/fixtures/sse_events.json` 是後端與前端共吃的單一真相（`tests/test_sse_event_contract.py`、`frontend/src/lib/sseEventContract.test.ts`）。新事件或欄位：fixture、`frontend/src/lib/askSchemas.ts` 的 zod（預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）、`web/report_runs.py` 的 `_VOLATILE`／`_SLIM_KEEP` 三處都要動。
+- `tests/fixtures/sse_events.json` 是後端與前端共吃的單一真相（`tests/test_sse_event_contract.py`、`frontend/src/lib/sseEventContract.test.ts`），現在只剩 `ask` 一組事件。新事件或欄位：fixture 與 `frontend/src/lib/askSchemas.ts` 的 zod（預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）兩處都要動。
 - 雷達 `app/services/radar/schemas.py` 的 `Literal` 與 `frontend/src/lib/radarSchemas.ts` 逐字鏡像；閱讀頁 `app/services/reading/schemas.py` 與 `frontend/src/lib/readingSchemas.ts` 同理；`web/routers/brief.py` 的 pydantic 與 `frontend/src/lib/briefSchemas.ts` 同理。
 - `/api/progress` 新增鍵要同步改 `frontend/src/features/monitor/progressSchema.ts`。
 
 ## 私有 R2 遷移順序
 
-`OBJECT_STORAGE_MODE`：`local`（預設，既有行為）、`hybrid`（R2 優先讀、local 回退、生成 PDF 雙寫）、`r2`（只認 object key，缺 key 即 503 不回退）。非 local 缺任一 `R2_*` 啟動即 fail-closed；憑證在 repo 根 `.env` 與 `/etc/default/report-mark-sync` 各一份、逐字相同。
+`OBJECT_STORAGE_MODE`：`local`（預設，既有行為）、`hybrid`（R2 優先讀、local 回退）、`r2`（只認 object key，缺 key 即 503 不回退）。物件只有研報原檔（`originals/` 前綴）。非 local 缺任一 `R2_*` 啟動即 fail-closed；憑證在 repo 根 `.env` 與 `/etc/default/report-mark-sync` 各一份、逐字相同。
 
 0. `file_path` 若仍指向舊掛載點，先跑 `scripts/repoint_file_paths.py --old-prefix <舊> --mirror-root <ext4 鏡像>`（不帶 `--apply` 只列計畫；只在目標檔存在且大小相同時才改，舊檔 stat 不到用 `--verify-hash`）。
 1. 維持 `local`，確認 legacy 路徑可讀。
-2. 設好憑證，以 `hybrid` 跑 `scripts/migrate_object_storage.py --dry-run --kind all`，確認計畫再去掉 `--dry-run`。只補缺 key 的 originals／base PDF／renditions，上傳成功後才更新 DB key；不刪除、不重嵌、不重匯入；可重跑。
-3. 跑 `scripts/reconcile_object_storage.py --dry-run --kind all` 處理 missing／SHA／orphan，全零才切 `r2`。
+2. 設好憑證，以 `hybrid` 跑 `scripts/migrate_object_storage.py --dry-run --kind all`，確認計畫再去掉 `--dry-run`。只補缺 key 的 originals（`--kind` 仍收 `originals`／`all`，`all` 等同 originals，讓 `report-mark-r2-reconcile.service` 的命令列不必改），上傳成功後才更新 DB key；不刪除、不重嵌、不重匯入；可重跑。
+3. 跑 `scripts/reconcile_object_storage.py --dry-run --kind all` 處理 missing／SHA／orphan，全零才切 `r2`。orphan 掃描只看 `originals/` 前綴；bucket 裡舊的 `generated/` 生成 PDF 不算 orphan，由人手動清。
 4. 切換後 `report-mark-r2-reconcile.timer` 每週一 07:00 對帳接告警鏈；`/healthz` 不探 R2。
 
-瀏覽器端兩個前提：bucket 要設 CORS（只開 GET／HEAD），沒設就閱讀頁 PDF 檢視器整頁靜默失敗、伺服器零錯誤；presign 一律帶 `filename`（key 是 hash，跨來源 302 後 `<a download>` 失效）。`--limit` 在兩個工具中都是三類合計並限制 orphan 判定。
+瀏覽器端兩個前提：bucket 要設 CORS（只開 GET／HEAD），沒設就閱讀頁 PDF 檢視器整頁靜默失敗、伺服器零錯誤；presign 一律帶 `filename`（key 是 hash，跨來源 302 後 `<a download>` 失效）。`--limit` 在兩個工具中都會限制 orphan 判定（沒讀完全部 DB 列就不判 orphan）。
 
 ## 完整重跑指令
 
@@ -231,8 +223,6 @@ make sync-once
 | `/api/progress` 回 422 | router 檔輔助函式夾在裝飾器與 handler 之間 |
 | SPA 回 503 | `frontend/dist` 不存在，`make build-web` |
 | 閱讀頁 PDF 整頁空白、伺服器零錯誤 | R2 bucket CORS |
-| 研報「編譯成功」但版面錯 | 逐頁檢視；Typst 模板少匯出函式會靜默退 WeasyPrint |
-| 研報冪等鍵卡「正在處理」 | 重啟後登錄表全滅，等 `REPORT_RUN_STALE_SECONDS` 或看 `report_run.updated_at` |
 | 訊號大量 `rejected` | 批次併發搶 CLI，不是資料壞 |
 | `make db-audit` 紅 | `fsync=off` 殘留（`make restore-durability`）、孤兒列、`content_norm` 漂移 |
 | 評測退出碼 3 | 新指標未在 `scripts/eval_compare.py` 的 `METRIC_SPECS` 補方向 |

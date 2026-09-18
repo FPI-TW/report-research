@@ -4,12 +4,12 @@ Conventions for contributors and AI agents. Hard rules and the change-impact tab
 
 ## Project Structure & Module Organization
 
-- `app/services/`: extraction (`extract.py`, `extraction/`), tagging, chunking, embeddings, hybrid retrieval (`retrieval.py`, `retrieval_pipeline.py`), RAG answers (`answer.py`), deep reports (`report.py`, `report_writer.py`, `typst_render.py`, `pdf.py`), and the read-only features `reading/`, `radar/`, `brief.py`. `app/config.py` is the only place for new knobs.
-- `web/server.py` is the composition layer only; routes live in `web/routers/*.py` (12 routers, no `APIRouter(prefix=...)`), shared symbols go through `web/deps.py`, background report runs through `web/report_runs.py`.
+- `app/services/`: extraction (`extract.py`, `extraction/`), tagging, chunking, embeddings, hybrid retrieval (`retrieval.py`, `retrieval_pipeline.py`), RAG answers (`answer.py`), and the read-only features `reading/`, `radar/`, `brief.py`. `app/config.py` is the only place for new knobs.
+- `web/server.py` is the composition layer only; routes live in `web/routers/*.py` (11 routers, no `APIRouter(prefix=...)`), shared symbols go through `web/deps.py`.
 - `frontend/`: React 19 + TypeScript + Vite, built to `frontend/dist`. `src/features/*` per page, `src/lib/*` for API boundaries (zod, SSE, reducers). `src/components/animate-ui/` is vendored and excluded from lint.
 - `scripts/`: batch and ops jobs. Anything that spawns `claude -p` takes the flock in `scripts/_claude_lock.py` at its main entry (rc=75 on contention).
 - `deploy/` is the single source of truth for systemd units, nginx and docker-compose; copy to `/etc` after editing, never edit the machine copy only.
-- `db/schema.sql` is applied idempotently by `make schema`; there is no migration tool. `db/expected_constraints.txt` is the CHECK-constraint golden list.
+- `db/schema.sql` is applied idempotently by `make schema`; there is no migration tool, so dropping a table needs its own script (`db/drop_deep_report_tables.sql` is the precedent, run by hand on existing databases). `db/expected_constraints.txt` is the CHECK-constraint golden list.
 - `eval/` holds the offline evaluation harness and baselines, deliberately outside CI.
 - `研報自動匯入/` is a read-only mirror; `data/` holds runtime artefacts. Neither is versioned.
 
@@ -24,9 +24,8 @@ Conventions for contributors and AI agents. Hard rules and the change-impact tab
 
 - Python: ruff `E,F,I`, 120 columns, `E402` off (deliberate `sys.path.insert` and env loading before imports). No `ruff format`, black or mypy. Dataclass fields are appended with defaults; `rows.ChunkRow` and `store._meta_columns` are positionally aligned, so index fields by `ChunkRow._fields.index(...)`.
 - Frontend: CSS Modules, TanStack Query, zod at API edges; `_`-prefixed identifiers are intentionally unused.
-- Determinism boundary: Python decides (parsing, chunking, retrieval, anchoring, aggregation, state machines, rendering); Claude only produces semantics. Derived features fail open.
+- Determinism boundary: Python decides (parsing, chunking, retrieval, anchoring, aggregation, windows); Claude only produces semantics. Derived features fail open.
 - Reuse `hybrid_search` / `retrieval_pipeline`; never build a second retrieval path. Patch `retrieval_pipeline`, not `answer`, when stubbing retrieval.
-- Never interpolate LLM text into Typst source; everything passes pandoc escaping or `_tstr()`.
 
 ## Testing Guidelines
 
@@ -35,7 +34,7 @@ Conventions for contributors and AI agents. Hard rules and the change-impact tab
 - Test endpoints through HTTP (`TestClient`), never by calling handler objects. Router helper functions go above every `@router.*` decorator.
 - Never write the repo-root `.env` from tests; `tests/conftest.py` snapshots and restores it and fails the session if it changed. Use `tempfile`.
 - Contract tests that turn red when you change something elsewhere: `tests/test_docs_contract.py` (paths in living docs exist; every route is documented in `README.md` or `docs/WORKFLOW.md`), `tests/test_schema_constraints.py`, `tests/test_content_norm_equivalence.py`, `tests/test_sse_event_contract.py` with `tests/fixtures/sse_events.json`, `tests/test_deploy_units.py`, `tests/test_env_loading.py`, `tests/test_logging_setup.py`, `tests/test_dev_mode.py`, `tests/test_sql_index_hygiene.py`, `tests/test_secret_scan_config.py`, `tests/test_dev_ergonomics.py`, `tests/test_claude_lock.py`, `tests/test_pre_split_guards.py`, `tests/test_spa_serving.py`. Fix the code or the doc, do not widen allowlists.
-- CJK-dependent PDF tests skip locally without fonts; CI sets `REPORT_MARK_REQUIRE_CJK=1` so they cannot skip there. `REPORT_MARK_WRITE_CONSTRAINTS=1` regenerates the constraint golden list and is only for deliberate schema changes.
+- The extraction-layer CJK tests (`tests/test_extraction_layout.py` CjkTests, which render a Chinese test PDF with weasyprint) skip locally without fonts; CI installs the fonts and sets `REPORT_MARK_REQUIRE_CJK=1` so they cannot skip there. `REPORT_MARK_WRITE_CONSTRAINTS=1` regenerates the constraint golden list and is only for deliberate schema changes.
 - Retrieval or generation quality changes: run the relevant `eval/` harness before and after and compare with `make eval-compare BASE=... CAND=...`; the exit code is the verdict (0 ok, 1 regression, 2 incomparable, 3 unclassified metric).
 
 ## Commit & Pull Request Guidelines

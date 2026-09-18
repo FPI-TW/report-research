@@ -1,11 +1,11 @@
 # CLAUDE.md
 
-廷豐智能研報——券商研報平台：PDF/docx 抽字 → Claude 標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／可下載深度研報 PDF／觀點雷達／每日簡報／閱讀頁。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
+廷豐智能研報——券商研報平台：PDF/docx 抽字 → Claude 標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。深度研報生成已於 2026-09 整個移除（既有庫要手動跑 `db/drop_deep_report_tables.sql`）。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
 
 - **這不是上層目錄 CLAUDE.md 描述的 FinDB**：這裡沒有 Alembic、沒有 `app/api/`、沒有 `NORMALIZER_MAP`，那份文件的指引不適用。本 repo 只把市場代碼對齊 findb（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO`，對照在 `app/services/tagging.py`，`make align` 零 LLM 重對）。
 - 回覆使用者一律繁體中文；不加裝飾性 emoji。
-- **分工鐵律**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），Claude 只做語意（標註、摘要、問答、研報、訊號擷取）。每個管線階段以檔案 SHA256 `file_hash` 為鍵、可斷點續跑。新功能沿用這個分工，並**重用 `hybrid_search`／`retrieval_pipeline`，不另建檢索**。
-- 派生功能（rerank、忠實度、追問、摘錄、換皮、grounding）一律 fail-open 降級，不阻斷主流程。
+- **分工鐵律**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），Claude 只做語意（標註、摘要、問答、訊號擷取）。每個管線階段以檔案 SHA256 `file_hash` 為鍵、可斷點續跑。新功能沿用這個分工，並**重用 `hybrid_search`／`retrieval_pipeline`，不另建檢索**。
+- 派生功能（rerank、忠實度、追問、摘錄、agentic 補查）一律 fail-open 降級，不阻斷主流程。
 
 ## 指令
 
@@ -42,7 +42,7 @@ uv run python scripts/ingest_all.py
 - 端點走 HTTP 層測，不直接呼叫 handler 物件。router 檔的輔助函式一律放在所有 `@router.*` 裝飾器之上；夾在裝飾器與 handler 之間會讓端點回 422，直呼函式的測試看不到。
 - dataclass 新欄位放末尾並給預設。`rows.ChunkRow` 與 `store._meta_columns` 是位置對齊的：取欄位用 `ChunkRow._fields.index(...)`，不寫數字。
 - **測試絕不可寫 repo 根的真實環境檔**：這台機器 repo root 就是部署目錄，`finally` 擋得住例外、擋不住行程被殺。要驗載入行為餵 `tempfile`。`tests/test_env_loading.py` 與 `tests/conftest.py` 是第二道防線，不是許可證。
-- 本機全綠不代表安全：研報 PDF 內容測試缺 CJK 字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
+- 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺 CJK 字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`。
 
 ## 改動對照表（改了 A 就要動 B）
@@ -52,34 +52,25 @@ uv run python scripts/ingest_all.py
 | 任何 Python | `sudo systemctl restart report-mark-web.service` |
 | 任何前端 | `make build-web`；`frontend/dist` 不存在時 SPA 回 503 |
 | 改檔名、刪檔、加端點 | `tests/test_docs_contract.py` 會紅：**改文件，不放寬 allowlist**。端點路徑逐字寫進 README 與 `docs/WORKFLOW.md` 的 API 表（含參數名與 `:path`） |
-| 新增後端 SSE 事件或欄位 | 加進 `tests/fixtures/sse_events.json`（兩側測試會指出另一側缺什麼）；`frontend/src/lib/askSchemas.ts` 的 parser／zod 要宣告（zod 預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）；重播白名單在 `web/report_runs.py` 的 `_VOLATILE`／`_SLIM_KEEP`，漏了會「直播看得到、重連看不到」 |
-| `db/schema.sql` | 沒有 migration 工具，冪等只涵蓋 `ADD COLUMN IF NOT EXISTS`；**改 CHECK 約束在既有庫是 no-op**，要另寫給既有庫的 `ALTER`。`db/expected_constraints.txt` 紅了是這個意思，不是改清單；刻意改約束才用 `REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py` 重生 |
+| 新增後端 SSE 事件或欄位 | 加進 `tests/fixtures/sse_events.json`（兩側測試會指出另一側缺什麼）；`frontend/src/lib/askSchemas.ts` 的 parser／zod 要宣告（zod 預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`） |
+| `db/schema.sql` | 沒有 migration 工具，冪等只涵蓋 `ADD COLUMN IF NOT EXISTS`；**改 CHECK 約束在既有庫是 no-op**，要另寫給既有庫的 `ALTER`；刪表同理，要另給一支 DROP 腳本（先例 `db/drop_deep_report_tables.sql`）。`db/expected_constraints.txt` 紅了是這個意思，不是改清單；刻意改約束才用 `REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py` 重生 |
 | `content_norm` 或 `textnorm.norm_for_match()` | 兩者必須逐字等價（`tests/test_content_norm_equivalence.py`） |
 | 新旋鈕 | 放 `app/config.py`（frozen dataclass＋`os.getenv`，非 pydantic-settings）。既有散在各檔的 `os.getenv` **不要順手搬**；找旋鈕時 `grep -rn os.getenv app web`。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`）是 live 的，不要改名 |
 | `deploy/` 任何檔 | `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；不要只改機器上的副本。`tests/test_deploy_units.py` 守 unit 檔 |
-| 新 Typst 模板 | `.typ` ＋ `app/templates/manifest.py` registry ＋ `frontend/src/features/ask/TemplateSelector.tsx` 的 `PREVIEW_CLASS` |
 | 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露 |
 | 加 `--workers` 或提高併發閘 | 先照 `.env.example` 的算式重算 DB 連線數（每行程上限 `DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`＝20） |
-| 研報版面問題 | Python 決定性後處理（`pdf.split_long_paragraphs`、`textnorm.soft_break_token`，逐節與單次兩條收尾都要接），**不改 prompt**——四份研報 prompt 是平行手抄副本 |
-| 改 `zh_hant.py`、`faithfulness.is_numeric_claim`、`_SIMILAR_SQL`、`web/report_runs.py` | 先讀該檔開頭的實測紀錄／docstring；參數都是量出來的 |
+| 改 `zh_hant.py`、`faithfulness.is_numeric_claim`、`_SIMILAR_SQL` | 先讀該檔開頭的實測紀錄／docstring；參數都是量出來的 |
 
 ## 架構不變量
 
 ### 檢索與問答
-- 混合檢索：dense（HNSW 餘弦）＋ lexical（`pg_trgm` over 生成欄 `content_norm`）融合，`hybrid_search` 只以 `(tier, fused)` 排序。之後的選篇分**兩條互不共用**：檢索頁走 `retrieval.rank_reports`（消費端 `web/routers/search.py`），問答／研報走 `answer.select_reports`。調問答新近度改 `rank_reports` 沒有作用。
-- `app/services/retrieval_pipeline.py` 是問答與研報的唯一檢索入口（embed → `hybrid_search` → rerank fail-open → `build_context`）。`answer.py` 自己不呼叫 `hybrid_search`；**要 patch 檢索請 patch `retrieval_pipeline`**。`scripts/eval_retrieval.py` 刻意直呼 `hybrid_search`，管線改動它量不到。
-- **循環依賴是刻意的**：`retrieval_pipeline` 頂層 import `answer`；`answer`／`agentic_qa`／`report` 之間任何反向取用一律函式內 import。
+- 混合檢索：dense（HNSW 餘弦）＋ lexical（`pg_trgm` over 生成欄 `content_norm`）融合，`hybrid_search` 只以 `(tier, fused)` 排序。之後的選篇分**兩條互不共用**：檢索頁走 `retrieval.rank_reports`（消費端 `web/routers/search.py`），問答走 `answer.select_reports`。調問答新近度改 `rank_reports` 沒有作用。
+- `app/services/retrieval_pipeline.py` 的 `retrieve_context` 是問答的唯一檢索入口（embed → `hybrid_search` → rerank fail-open → `build_context`）。`answer.py` 自己不呼叫 `hybrid_search`；**要 patch 檢索請 patch `retrieval_pipeline`**。`scripts/eval_retrieval.py` 刻意直呼 `hybrid_search`，管線改動它量不到。
+- **循環依賴是刻意的**：`retrieval_pipeline` 頂層 import `answer`；`answer`／`agentic_qa` 之間任何反向取用一律函式內 import。
 - 首輪路由順序刻意：確定性 overview（`overview.py`，零 LLM）→ `precheck_route()` 詞表（命中 `time_sensitive` 完全不檢索）→ Haiku 五類分類（`scope_router.py`）與檢索並行、誰先到聽誰。五類與 `decided_by` 全寫進 `qa_log.filters`；fail-open 落點是 `CORPUS_QA`。
 - 網搜每題由使用者決定：`web_on` ＝ 請求的 `web` AND `ASK_ENABLE_WEB`，下游只讀 `web_on`。系統提示與工具授權要一起切（`ask_system_prompt(web)`），逾時只在開網搜時放寬（`ASK_WEB_TIMEOUT`），`qa_log.filters.web` 含 False 也要寫，免責句由 Python 追加（`WEB_ANSWER_DISCLAIMER`），網搜來源不進 evidence ledger。
-- 忠實度抽查在 `done` 後跑背景任務（`answer._spawn_background`），有自己的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是問答抽查與研報修正輪的唯一閘門，漏判是靜默的——寧可多抓不可漏抓。
+- 忠實度抽查在 `done` 後跑背景任務（`answer._spawn_background`），有自己的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是問答抽查的唯一閘門，漏判是靜默的——寧可多抓不可漏抓。監控頁「待複核」門檻 `FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，生產環境檔可能還設著）。
 - `app/services/llm.py` 以 `claude -p --setting-sources '' --output-format stream-json` spawn CLI，開網搜時加 `--allowedTools WebSearch`；只在 API 529 重試；逾時對已串流文字 fail-open。
-
-### 深度研報
-- 生成跑背景任務（`web/report_runs.py`），`POST /api/report` 只是訂閱端；登錄表是行程內狀態、重啟即滅，`report_writer.open_run` 把久無心跳的 in-flight run 視為可重試。`_REPORT_GATE` 由背景任務持有、不掛在 handler 上。
-- 預設逐節生成（M7）：大綱 → 逐節檢索草稿 → 逐節 grounding 與低分節修正一輪（`_section_needs_fix` 只在數值主張支持率低於 `REPORT_FAITHFULNESS_MIN` 時觸發，`degraded` 不修；修正輪有自己的預算閘 `plan_fix_action`）→ 組裝。狀態機在 `report_run`／`report_section`。
-- 渲染雙軌，Typst 為主、WeasyPrint fail-open 回退。但 `pdf.py` 的文字正規化與免責邏輯**每份 Typst 研報都跑過**。模板契約＝五個匯出函式與其具名引數，以 `typst_render.py` 的 `#import` 為準；少一個只會**靜默退化成 WeasyPrint**。「編譯成功」不是驗收，頁數與逐頁檢視才是。
-- `pdf.py` 的 `inject_kpi`／`inject_charts` 是最後一道且沒被 try 包住：LLM JSON 形狀要逐層 `isinstance` 守，否則無 PDF、無持久化、重建永久 500。
-- **安全邊界：LLM 原文永不直接拼進 Typst 原始碼**（Typst 有 `#eval`／`#read`／`#import`）。只有 pandoc 跳脫後的片段與 JSON 驗證過的型別化資料能通過，其餘經 `_tstr()`；章節標題是唯一未經 pandoc 的 LLM 原文，已用 `_tstr` 封死。編譯 root 是隔離暫存目錄，**不要改成 repo root**。
 
 ### 閱讀頁、雷達、簡報（讀取零 LLM）
 - 閱讀頁（`app/services/reading/`）：正典文字是 `clean_extracted(full_text)`，`text_sha256` 守不變量；錨點有效與否只在後端判（驗章＋`READING_TEXT_MAX_CHARS` 截斷）。PDF 選取走 `@embedpdf/plugin-selection`，`PagePointerProvider` 要在 `Rotate` 之內；複製走 `frontend/src/lib/clipboard.ts`（區網 HTTP 沒有 `navigator.clipboard`）。`/text` 端點、`anchor.py`、`quote_start`／`quote_end` 是刻意留的可逆性，不要清。
@@ -94,17 +85,17 @@ uv run python scripts/ingest_all.py
 ## 資料層陷阱
 - `research_report.full_text` 是未清理的原始抽取（帶 CJK 字間空白）；顯示一律 `clean_extracted(full_text)`，不是 `clean_text`（後者折掉換行，只適合檢索片段）。
 - `report_chunk.content` 不是 `full_text` 的子字串（overlap merge），錨定一律經 `app/services/reading/anchor.py`。**不要寫批次更新 `report_chunk.content`**（`clean_text` 與 `clean_extracted` 都會破壞段落換行），要動只有重跑 `ingest_all.py`。
-- 簡體字守門在 `app/services/zh_hant.py`：六個寫入點過 `to_traditional()`；串流路徑刻意不中途轉，問答在 `done` 帶只在有變動時出現的 `answer` 欄位收斂（`askSchemas.ts`＋`askReducer.ts` 都要接）。**逐字引文（`report_takeaway.quote`、`thesis_dimensions[*].evidence`）一律不轉**——它是錨定基準與 PDFium 搜尋關鍵字。
+- 簡體字守門在 `app/services/zh_hant.py`：四個寫入點過 `to_traditional()`；串流路徑刻意不中途轉，問答在 `done` 帶只在有變動時出現的 `answer` 欄位收斂（`askSchemas.ts`＋`askReducer.ts` 都要接）。**逐字引文（`report_takeaway.quote`、`thesis_dimensions[*].evidence`）一律不轉**——它是錨定基準與 PDFium 搜尋關鍵字。
 - 顯示名稱走 `title`，缺值回退 `file_name`（`frontend/src/lib/displayTitle.ts`）；title 漸進補齊，NULL 是常態。
 - DB 一律 `from app.services.db import SessionFactory`，不複製預設連線字串（鍵是 `REPORT_MARK_DB_URL`）。長查詢用 `db.relax_statement_timeout()`（`SET LOCAL`）。`DB_IDLE_TX_TIMEOUT_MS` 預設 0 是刻意的：sync 在交易內 spawn CLI 與嵌入。
 - logging 只在 `web/server.py` 初始化（`app/logging_setup.py`，順序契約由 `tests/test_logging_setup.py` 釘住）；批次腳本的 `logger.info` 無聲。
-- 備份只涵蓋七張不可重建的表 → NAS；語料層刻意不備。
+- 備份只涵蓋四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）→ NAS；語料層刻意不備。
 
 ## Web 與 auth
 - `web/server.py` 只是組合層；路由在 `web/routers/`，共用符號經 `web/deps.py`（測試 patch 的單一位置）。
 - Auth deny-by-default、fail-closed（缺 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 不啟動）。免登入白名單 `/login`、`/healthz`、前綴 `/app/assets/`。外部存取需 `REPORT_MARK_EDGE_SECRET` 或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 任一（刻意 OR，祕密要 repo root 與 `deploy/` 兩份環境檔逐字相同）。Session 7 天滑動、30 天上限；改密碼、`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 都會全員登出，是預期行為。
 - `DEV_NO_AUTH=1` 三條件同時成立才放行（旗標在環境檔載入前已在 `os.environ`、對端 loopback、無代理 header），`web/server.py` 的 import 順序由 `tests/test_dev_mode.py` 釘住。`SKIP_WARMUP` 同樣走 `os.environ` 且判 `== "1"`。兩者都不要寫進環境檔。
-- 併發閘：`/api/ask` 上限 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（無環境變數）；`/api/report` 容量 `REPORT_SEMAPHORE`。都是 `web/concurrency.py` 的 `ConcurrencyGate`（刻意不支援 `async with`）。上限 per-process，lifespan 擋多 worker。
+- 併發閘只剩一個：`/api/ask` 上限 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（無環境變數；佇列 `ASK_MAX_QUEUE`），是 `web/concurrency.py` 的 `ConcurrencyGate`（刻意不支援 `async with`）。問答忠實度抽查背景任務的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT` 同樣是行程內狀態。上限 per-process，lifespan 擋多 worker。
 - `claude` CLI 要在 PATH 上；systemd 靠 `deploy/systemd/report-mark-web.service.d/path.conf`。`llm.py` 刻意不在批次 flock 範圍內（有靜態測試釘住）。
 
 ## 生產維運

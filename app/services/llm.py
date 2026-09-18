@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from collections.abc import AsyncIterator
 
 DEFAULT_MODEL = "claude-sonnet-5"
@@ -150,10 +151,23 @@ def is_web_search_start(line: str) -> bool:
     )
 
 
+CLAUDE_BIN = "claude"
+
+
+def claude_cli_path() -> str | None:
+    """`claude` 在目前 PATH 上的完整路徑；找不到回 None。
+
+    給啟動期自檢用：CLI 不在 PATH 上時每一題問答都會回 SSE error，而 `/healthz` 只探 DB
+    照樣回 ok（2026-09-02 原生安裝路徑漂移即此型態）。systemd 靠 path.conf drop-in 補 PATH，
+    那是部署設定；這裡是行程自己說得出「我找不到」。
+    """
+    return shutil.which(CLAUDE_BIN)
+
+
 def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
     """組 claude CLI headless 串流指令；allow_web 時加 WebSearch 內建工具。"""
     cmd = [
-        "claude",
+        CLAUDE_BIN,
         "-p",
         "--model",
         model,

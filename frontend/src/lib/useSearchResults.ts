@@ -39,6 +39,8 @@ export interface UseSearchResults {
   loadMore: () => void
 }
 
+const SEARCH_STALE_TIME_MS = 5 * 60_000
+
 export function useSearchResults(s: SearchState): UseSearchResults {
   const query = useInfiniteQuery({
     queryKey: resultsKey(s),
@@ -48,6 +50,10 @@ export function useSearchResults(s: SearchState): UseSearchResults {
       const loaded = allPages.reduce((n, p) => n + p.rows.length, 0)
       return loaded < lastPage.total ? loaded : undefined
     },
+    // infinite query 一旦 stale，重抓的是**已載入的每一頁**（每頁一次嵌入推論＋混合檢索）。
+    // 按過幾次「載入更多」再切分頁回來，就是同樣次數的 /api/search。語料每 3 小時才更新，
+    // 同一組條件的結果在這段時間內不會變。
+    staleTime: SEARCH_STALE_TIME_MS,
   })
   const pages = query.data?.pages ?? []
   const rows = pages.flatMap(p => p.rows)

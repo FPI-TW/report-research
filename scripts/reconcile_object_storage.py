@@ -32,7 +32,7 @@ from app.services.object_storage import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="比對私有 R2 與 report-mark DB（不刪除）")
     parser.add_argument("--dry-run", action="store_true", help="僅列出計畫／差異，不寫 DB 或 R2")
-    # 深度研報移除後只剩 originals；仍收 "all" 讓 report-mark-r2-reconcile.service 的命令列不必改。
+    # 生成 PDF 那一半移除後只剩 originals；仍收 "all" 讓 report-mark-r2-reconcile.service 的命令列不必改。
     parser.add_argument("--kind", choices=("originals", "all"), default="all")
     parser.add_argument("--limit", type=int, default=0, help="最多檢查幾筆 DB 產物（0 不限）")
     parser.add_argument("--concurrency", type=int, default=4, help="R2 查詢併發數")
@@ -164,7 +164,7 @@ async def run(args: argparse.Namespace) -> int:
         return 1 if stats["errors"] or stats["unkeyed"] or stats["key_mismatch"] else 0
 
     # Inventory only the owned originals/ prefix.  It is deliberately reporting-only.
-    # 深度研報移除後 generated/ 前綴不再有 DB 對應列；bucket 裡若還有舊的生成 PDF，
+    # 生成 PDF 功能移除後 generated/ 前綴不再有 DB 對應列；bucket 裡若還有舊的生成 PDF，
     # 由人依 docs/WORKFLOW.md 的說明手動清理，這裡不把它們算成 orphan。
     try:
         remote_keys: set[str] = set(await asyncio.to_thread(storage.list_keys, "originals/"))

@@ -227,7 +227,7 @@ def _load() -> Settings:
         qa_subquery_max_reports=int(os.getenv("QA_SUBQUERY_MAX_REPORTS", "5")),
         # 忠實度查核 / faithfulness（M8 里程碑）
         ask_faithfulness_enabled=_flag("ASK_FAITHFULNESS_ENABLED", "1"),
-        # 新名 FAITHFULNESS_MIN；讀不到時退回舊名 REPORT_FAITHFULNESS_MIN（深度研報移除前的
+        # 新名 FAITHFULNESS_MIN；讀不到時退回舊名 REPORT_FAITHFULNESS_MIN（研報 PDF 功能移除前的
         # 鍵名，生產環境檔可能還設著）。讀者只有監控頁 `_FAITHFULNESS_MIN` 與
         # scripts/eval_faithfulness.py，都是「低於門檻」的判準。
         faithfulness_min=_faithfulness_min(),

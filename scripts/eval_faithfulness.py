@@ -40,7 +40,7 @@ from app.config import get_settings  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 
 # (表, 識別欄位)。以 dict 保留是為了 summarize／_fetch 對來源一視同仁；
-# 深度研報的 report_doc 那半已隨功能移除。
+# 研報 PDF 那一半的來源表已隨功能移除（2026-09）。
 _SOURCES = {
     "qa": ("research.qa_log", "question"),
 }

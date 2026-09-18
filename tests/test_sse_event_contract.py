@@ -4,7 +4,7 @@
 
 同一種漂移在本專案有**兩次有紀錄的實例**：
 
-1. 深度研報（已移除）的 `section_draft` 從 M7 起就在送，但前端 parser 沒有對應 case。
+1. 已移除的研報串流的 `section_draft` 從 M7 起就在送，但前端 parser 沒有對應 case。
    parser 對未知 event 一律回 `null` 被靜默丟棄——沒有錯誤、沒有紅燈，症狀只是
    「進度條停在 50% 不動」，撐了好幾個里程碑。
 2. `/api/progress` 的 takeaway／signal 覆蓋率從 P4 就在回，但 `progressSchema.ts` 沒

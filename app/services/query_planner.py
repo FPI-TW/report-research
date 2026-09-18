@@ -2,7 +2,7 @@
 
 M5（問答 agentic 迴圈，profile="qa"）使用本模組。profile 機制保留：共用核心
 （解析、正規化、fail-open）與 prompt 建構器分離，新增規劃用途時只加一個
-PlannerProfile 區段（M6 的研報 profile 已隨深度研報功能一併移除）。
+PlannerProfile 區段（M6 的研報 profile 已隨該功能一併移除）。
 
 import 約束：只准 import 葉模組（config/llm/textnorm），禁止 answer/
 retrieval_pipeline——retrieval_pipeline 頂層 import answer，本模組必須

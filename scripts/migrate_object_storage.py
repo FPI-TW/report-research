@@ -28,7 +28,7 @@ from app.services.object_storage import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="將 legacy local artifacts 安全遷移到私有 R2")
     parser.add_argument("--dry-run", action="store_true", help="驗證並列出計畫，不 upload 或更新 DB")
-    # 深度研報移除後只剩 originals；仍收 "all" 讓既有命令列與文件不必改。
+    # 生成 PDF 那一半移除後只剩 originals；仍收 "all" 讓既有命令列與文件不必改。
     parser.add_argument("--kind", choices=("originals", "all"), default="all")
     parser.add_argument("--limit", type=int, default=0, help="最多處理幾筆 DB artifacts（0 不限）")
     parser.add_argument("--concurrency", type=int, default=4, help="hash/upload 併發數")

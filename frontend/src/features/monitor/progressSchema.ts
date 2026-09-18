@@ -67,7 +67,6 @@ export const evalSourceSchema = z.object({
 
 export const evaluationSchema = z.object({
   qa: evalSourceSchema.nullable(),
-  report: evalSourceSchema.nullable(),
   min_score: z.number(),
 })
 

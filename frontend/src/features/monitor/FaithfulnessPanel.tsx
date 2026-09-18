@@ -4,10 +4,10 @@ import type { EvalSource, Evaluation } from './progressSchema'
 /**
  * M8 忠實度查核健康度。
  *
- * `qa_log.evaluation` / `report_doc.evaluation` 從 M8 上線起就沒有任何讀取路徑
+ * `qa_log.evaluation` 從 M8 上線起就沒有任何讀取路徑
  * （後端、腳本、前端各 0 個消費端），查核結果只寫不看。這張卡是它的第一個出口。
  *
- * 刻意**不顯示覆蓋率百分比**：問答端有取樣率、且只查含金融數字的回答，研報端可停用，
+ * 刻意**不顯示覆蓋率百分比**：問答端有取樣率、且只查含金融數字的回答，
  * 所以「有查核的比例」天生就低，做成進度條只會長期亮紅燈而失去意義（同 takeaway
  * /signal 的教訓）。這裡呈現的是三個真的會動的訊號：
  *
@@ -49,7 +49,6 @@ export function FaithfulnessPanel({ evaluation }: { evaluation: Evaluation | und
       {evaluation ? (
         <>
           <SourceRow label="問答" d={evaluation.qa} min={evaluation.min_score} />
-          <SourceRow label="研報" d={evaluation.report} min={evaluation.min_score} />
           <div className={styles.prate}>
             低於 {evaluation.min_score} 者列為待複核；fail-open 代表 judge 異常、該筆實際未被查核
           </div>

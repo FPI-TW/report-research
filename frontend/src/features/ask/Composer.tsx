@@ -108,7 +108,7 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
         <div className={styles.note}>
           {web
             ? '回答由 AI 依券商研報與網路公開資訊生成，網路資訊非受信任行情來源，投資決策請以原始研報與官方揭露為準。'
-            : '回答由 AI 依券商研報生成，投資決策請以原始研報與公開資訊為準。'}
+            : '回答由 AI 依券商研報內容生成，投資決策請以原始研報與公開資訊為準。'}
         </div>
       )}
     </div>

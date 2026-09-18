@@ -46,7 +46,7 @@ test('解析多幀、跨 chunk 邊界拼接、丟棄壞幀', async () => {
 
 test('忽略心跳註解幀，不影響事件解析', async () => {
   // web/server.py 的 _with_heartbeat 在長靜默時插 `: keep-alive` 註解幀，避免
-  // nginx proxy_read_timeout(60s) 在研報逐節檢索期間切斷連線。前端必須當它不存在。
+  // nginx proxy_read_timeout(60s) 在長檢索期間切斷連線。前端必須當它不存在。
   vi.stubGlobal(
     'fetch',
     vi.fn(async () =>
@@ -59,7 +59,7 @@ test('忽略心跳註解幀，不影響事件解析', async () => {
       ])
     )
   )
-  const evs = await collect('/api/report', {})
+  const evs = await collect('/api/ask', {})
   expect(evs).toEqual([
     { event: 'status', data: { stage: 'retrieving' } },
     { event: 'token', data: '內文' },

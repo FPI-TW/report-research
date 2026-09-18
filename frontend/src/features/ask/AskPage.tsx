@@ -4,7 +4,6 @@ import { useAskController } from '../../lib/useAskController'
 import { AskEmptyState } from './AskEmptyState'
 import { UserMessage } from './UserMessage'
 import { AssistantMessage } from './AssistantMessage'
-import { DeepReportPanel } from './DeepReportPanel'
 import { SourcesDrawer } from './SourcesDrawer'
 import { Composer } from './Composer'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
@@ -101,13 +100,6 @@ export default function AskPage() {
                       ctrl.setVersion(t.id, i)
                     }
                   }}
-                />
-                <DeepReportPanel
-                  report={t.report}
-                  onGenerate={(templateId) => ctrl.generateReport(t.id, t.question, t.qaId, templateId)}
-                  onDecline={() => ctrl.declineReport(t.id, t.qaId)}
-                  onRestore={() => ctrl.restoreReportOffer(t.id, t.qaId)}
-                  onCancel={(runId) => ctrl.cancelReport(t.id, runId)}
                 />
               </Reveal>
             ))

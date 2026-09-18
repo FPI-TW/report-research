@@ -39,74 +39,6 @@ export function getQaVersions(rootId: string): Promise<QaVersion[]> {
   return getJSON(`/api/qa/${encodeURIComponent(rootId)}/versions`, z.array(qaVersionSchema), { cache: 'no-store' })
 }
 
-export function streamReport(body: { question: string; conversation_id?: string; qa_id?: string; template_id?: string; locale?: Locale }, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {
-  return readSSE('/api/report', body, signal)
-}
-
-// ── 背景研報 run（重整/開新分頁後接回進度）─────────────────────────────────
-// 生成跑在伺服器的背景任務上，HTTP 只是訂閱端：斷線不再中止生成。詳見 web/report_runs.py。
-
-/** 重連一個進行中的 run：先收重播、再接直播。POST 是因為 readSSE 只走 POST（見該檔）。 */
-export function streamReportRun(runId: string, signal: AbortSignal): AsyncGenerator<RawSSEEvent> {
-  return readSSE(`/api/report-runs/${encodeURIComponent(runId)}/stream`, undefined, signal, 'GET')
-}
-
-export const activeReportRunSchema = z.object({
-  run_id: z.string(),
-  qa_id: z.string().nullish(),
-  question: z.string(),
-  elapsed_ms: z.number().default(0),
-})
-export type ActiveReportRun = z.infer<typeof activeReportRunSchema>
-
-/** 某對話目前仍在背景生成的研報。載入對話時據此自動接回進度框。 */
-export function getActiveReportRuns(conversationId: string): Promise<ActiveReportRun[]> {
-  return getJSON(
-    `/api/report-runs?conversation_id=${encodeURIComponent(conversationId)}`,
-    z.object({ runs: z.array(activeReportRunSchema) }),
-    { cache: 'no-store' },
-  ).then((r) => r.runs)
-}
-
-/** 主動中止背景生成。關掉分頁不再等於取消，這是唯一的停止手段。 */
-export async function cancelReportRun(runId: string): Promise<void> {
-  await fetch(`/api/report-runs/${encodeURIComponent(runId)}/cancel`, {
-    method: 'POST',
-    credentials: 'same-origin',
-  })
-}
-
-// M9b：可選研報渲染模板（registry）。前端模板選擇器資料源。
-export const reportTemplateSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  is_default: z.boolean(),
-  thumbnail: z.string().nullable(),
-})
-export type ReportTemplate = z.infer<typeof reportTemplateSchema>
-
-// M9b 換皮重出：用既有 markdown 以另一模板產新 rendition（零 LLM）。
-// locale 不在參數裡——後端一律沿用產出當時存下的值，換皮只換版型、不改輸出語言。
-export async function rerenderReport(
-  reportId: string,
-  templateId: string,
-): Promise<{ rendition_id: string; template_id: string | null }> {
-  const resp = await fetch(`/api/report-doc/${encodeURIComponent(reportId)}/rerender`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ template_id: templateId }),
-    credentials: 'same-origin',
-  })
-  if (!resp.ok) throw new Error(`rerender failed: ${resp.status}`)
-  return resp.json()
-}
-
-export function getReportTemplates(): Promise<ReportTemplate[]> {
-  return getJSON('/api/report-templates', z.object({ templates: z.array(reportTemplateSchema) }), { cache: 'no-store' })
-    .then((r) => r.templates)
-}
-
 export function getConversation(id: string): Promise<ConversationTurn[]> {
   return getJSON(`/api/conversations/${encodeURIComponent(id)}`, z.array(conversationTurnSchema), { cache: 'no-store' })
 }
@@ -139,17 +71,6 @@ export async function deleteConversation(id: string): Promise<void> {
     if (typeof body?.ok === 'boolean') ok = body.ok
   } catch { /* 非 JSON 或空主體：視為成功，理由見上 */ }
   if (!ok) throw new Error('刪除對話失敗：找不到該對話串')
-}
-
-/** 研報邀請的收合（decline）／還原（restore），讓「暫時不用」跨重整持久。
- *  fire-and-forget（比照 sendFeedback）：失敗的代價只是下次重整回到另一態。 */
-export async function setReportOffer(qaId: string, action: 'decline' | 'restore'): Promise<void> {
-  await fetch(`/api/qa/${encodeURIComponent(qaId)}/report-offer`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action }),
-    credentials: 'same-origin',
-  })
 }
 
 /** value 'none' ＝取消評價（後端寫成 NULL）。刻意不是可為 null 的欄位——欄位漏送與

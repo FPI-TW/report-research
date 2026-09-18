@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, test, vi } from 'vitest'
-import { parseAskEvent, parseReportEvent, conversationTurnSchema, sourceSchema } from './askSchemas'
+import { parseAskEvent, conversationTurnSchema, sourceSchema } from './askSchemas'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -11,25 +11,17 @@ test('parseAskEvent 驗證各事件、拒未知/壞形狀', () => {
     .toMatchObject({ event: 'sources' })
   expect(parseAskEvent({ event: 'error', data: { detail: '問答服務發生錯誤' } }))
     .toEqual({ event: 'error', data: { detail: '問答服務發生錯誤' } })
-  // done 路徑差異：允許缺 qa_id/offer_report
+  // done 路徑差異：允許缺 qa_id
   expect(parseAskEvent({ event: 'done', data: { conversation_id: 'c1' } }))
     .toEqual({ event: 'done', data: { conversation_id: 'c1' } })
   expect(parseAskEvent({ event: 'status', data: { stage: 'bogus' } })).toBeNull()
   expect(parseAskEvent({ event: 'unknown', data: 1 })).toBeNull()
 })
 
-test('parseReportEvent 驗證 status/done/error', () => {
-  expect(parseReportEvent({ event: 'status', data: { stage: 'writing' } })).toMatchObject({ event: 'status' })
-  expect(parseReportEvent({ event: 'done', data: { report_id: 'r', title: 't', download_url: '/api/report-doc/r/pdf' } }))
-    .toMatchObject({ event: 'done' })
-  expect(parseReportEvent({ event: 'error', data: { detail: 'x' } })).toMatchObject({ event: 'error' })
-  expect(parseReportEvent({ event: 'done', data: { title: 't' } })).toBeNull() // 缺 report_id
-})
-
 test('conversationTurnSchema 容錯缺欄', () => {
   const t = conversationTurnSchema.parse({
     id: 'q1', question: 'Q', answer: 'A', created_at: '2026-06-20T00:00:00Z',
-    feedback: null, sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [],
+    feedback: null, sources: [], ext_sources: [], is_offtopic: false, thinking_ms: null,
   })
   expect(t.question).toBe('Q')
 })
@@ -53,7 +45,7 @@ test('conversationTurnSchema：sources 含歷史缺欄物件仍可解析（不 t
   const legacySource = { n: 1, report_id: 'r1', file_name: '台積電.pdf', market: 'TW' } // 無 is_latest / report_date
   const t = conversationTurnSchema.parse({
     id: 'q1', question: 'Q', answer: 'A', created_at: '2026-06-20T00:00:00Z',
-    feedback: null, sources: [legacySource], ext_sources: [], is_offtopic: false, thinking_ms: null, reports: [],
+    feedback: null, sources: [legacySource], ext_sources: [], is_offtopic: false, thinking_ms: null,
   })
   expect(t.sources).toHaveLength(1)
   expect(t.sources[0].is_latest).toBe(false)
@@ -104,13 +96,11 @@ describe('askSchemas M3', () => {
   })
 })
 
-test('parseAskEvent／parseReportEvent 認得 queued（未宣告就會被靜默丟棄）', () => {
-  // 本專案踩過：後端送了 section_draft 好幾個里程碑，parser 沒有對應 case 一律回 null，
+test('parseAskEvent 認得 queued（未宣告就會被靜默丟棄）', () => {
+  // 本專案踩過：已移除的功能曾送 section_draft 好幾個里程碑，parser 沒有對應 case 一律回 null，
   // 症狀只是「進度條停在 50% 不動」。新事件一律連同 parser 一起加，並用測試釘住。
   expect(parseAskEvent({ event: 'queued', data: { scope: 'ask', position: 2, capacity: 3 } }))
     .toEqual({ event: 'queued', data: { scope: 'ask', position: 2, capacity: 3 } })
-  expect(parseReportEvent({ event: 'queued', data: { scope: 'report', position: 1, capacity: 1 } }))
-    .toMatchObject({ event: 'queued' })
 })
 
 describe('done.answer：簡體→繁體的畫面校正', () => {
@@ -160,7 +150,7 @@ describe('notice_kind：離題與時效婉拒必須分得開', () => {
     const t = conversationTurnSchema.parse({
       id: 'q1', question: 'Q', answer: 'A', created_at: null, feedback: null,
       sources: [], ext_sources: [], is_offtopic: true, notice_kind: 'off_topic',
-      thinking_ms: null, reports: [], stages: [], followups: [],
+      thinking_ms: null, stages: [], followups: [],
       root_qa_id: null, version_count: 1, stopped: false,
     })
     expect(t.notice_kind).toBe('off_topic')
@@ -183,8 +173,7 @@ describe('丟棄事件不再靜默（rejectEvent）', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(parseAskEvent({ event: 'token', data: 42 })).toBeNull()
     expect(parseAskEvent({ event: 'notice', data: null })).toBeNull()
-    expect(parseReportEvent({ event: 'token', data: {} })).toBeNull()
-    expect(warn).toHaveBeenCalledTimes(3)
+    expect(warn).toHaveBeenCalledTimes(2)
   })
 
   it('未宣告的 event 種類會警告', () => {
@@ -196,17 +185,7 @@ describe('丟棄事件不再靜默（rejectEvent）', () => {
   it('成功解析的事件不留噪音（每個 token 都會經過這條路）', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(parseAskEvent({ event: 'token', data: '片段' })).not.toBeNull()
-    expect(parseReportEvent({ event: 'status', data: { stage: 'writing' } })).not.toBeNull()
-    expect(warn).not.toHaveBeenCalled()
-  })
-
-  it('document_revision 刻意忽略：回 null 但不警告', () => {
-    // 「刻意忽略」與「忘了宣告」在回傳值上完全一樣（都是 null），差別只有這個警告。
-    // 前者是 M7 的純加法事件（前端要的是 done 帶的 download_url），必須是明確的 case。
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    expect(parseReportEvent({
-      event: 'document_revision', data: { revision_id: 'rev-1', revision: 1 },
-    })).toBeNull()
+    expect(parseAskEvent({ event: 'status', data: { stage: 'generating' } })).not.toBeNull()
     expect(warn).not.toHaveBeenCalled()
   })
 })

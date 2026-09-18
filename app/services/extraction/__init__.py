@@ -3,7 +3,7 @@
 本套件目前**不接任何生產路徑**：`app/services/extract.py` 仍是 pypdf，
 `scripts/{extract_all,sync_new_reports,ingest_all}.py` 一個字都沒改。
 這裡的三支模組供 `scripts/profile_corpus.py` 與 `scripts/compare_extractors.py`
-做「只讀不寫的並排比對」用，對應 docs/EXTRACTION_REDESIGN.md §9 的第 1、3 步。
+做「只讀不寫的並排比對」用，對應 docs/EXTRACTION.md §9 的前置工具。
 
 **刻意不在此處 import 子模組**：`layout` 會拉進 pdfplumber／pdfminer.six
 （連帶 cryptography），而 web 服務完全用不到。Python 相依是惰性載入的，

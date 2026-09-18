@@ -7,7 +7,7 @@
    `clean_extracted(full_text)` 的驗章；同一份文件序列化出兩種字串，驗章
    就變成隨機紅燈，而摘錄批次會據此無止境重跑。
 2. **markdown 表格穿得過 `clean_extracted`。** 這是整個「表格改走 markdown」
-   設計的地基（docs/EXTRACTION_REDESIGN.md §4.2）。它若不成立，表格欄界
+   設計的地基（docs/EXTRACTION.md §3）。它若不成立，表格欄界
    仍然會在入庫時被 `_RE_CJK_GAP` 抹掉——而且不會有任何錯誤訊息。
 3. **Block 的全序排序。** 少了 tie-break，兩個 bbox 相同的 Block 順序會取決
    於它們進 list 的先後，於是同一份 PDF 兩次跑出不同的 full_text。

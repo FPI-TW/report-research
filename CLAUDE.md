@@ -125,7 +125,7 @@ uv run python scripts/ingest_all.py
 - `README.md`：開發總覽、完整 API 表、環境變數、部署。
 - `docs/WORKFLOW.md`：端到端管線、階段 I/O、標籤詞彙、Web API 契約、R2 遷移順序。
 - `AGENTS.md`：貢獻者慣例（結構、風格、測試、commit、安全）。
-- `docs/ROADMAP.md`：里程碑 M0–M11；未實作四項（findb 整合、MCP server、對外 REST、PDF 無障礙 text layer）。
 - `docs/production_resilience.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/CAPACITY.md`、`docs/EXTERNAL_ACCESS.md`、`docs/incidents/`：維運、監控、容量、外部存取、事故。
-- `docs/EXTRACTION_REDESIGN.md`：抽取重構 E1 的決策；`docs/REPORT_LAYOUT_FIXES.md`：研報版面逐頁診斷。
-- `docs/ARCHITECTURE_REVIEW_2026-07.md` 是快照不是現況，照它動手前先讀 `docs/ARCHITECTURE_REVIEW_2026-07_VERIFY.md`。
+- `docs/ARCHITECTURE.md`：模組地圖與不變量的完整版（本檔只列鐵律，細節與「刻意」設計的出處都在那裡）。
+- `docs/EXTRACTION.md`：抽取層現況（抽取器選型與授權、文件模型、品質指標、快取、回填）。
+- 歷史規劃、架構檢視快照、版面診斷與設計稿已於 2026-09-18 移出 repo，需要時看 git 歷史（原檔名 docs/EXTRACTION_REDESIGN.md、docs/ARCHITECTURE_REVIEW_2026-07.md 與其 _VERIFY、docs/REPORT_LAYOUT_FIXES.md、docs/design/；刻意不加反引號，免得觸發文件契約測試的路徑檢查）。

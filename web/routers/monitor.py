@@ -227,7 +227,7 @@ async def _fetch_db_stats_snapshot() -> dict:
             )
         ).all()
 
-        # 抽取品質與回填進度（E1，docs/EXTRACTION_REDESIGN.md §6.5）。**單一查詢**，
+        # 抽取品質與回填進度（E1，docs/EXTRACTION.md §7）。**單一查詢**，
         # 三段 UNION ALL 併成 (kind, key, count) 列——與上面 M8 那條同一個理由：stats 與
         # progress 共用同一份快照、TTL 內只打一次 DB，查詢數是測試釘住的契約。
         #

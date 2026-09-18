@@ -1,4 +1,4 @@
-"""抽取快取：`data/extracted/<file_hash>.json`，一檔一筆（E1c，docs/EXTRACTION_REDESIGN.md §4.2）。
+"""抽取快取：`data/extracted/<file_hash>.json`，一檔一筆（E1c，docs/EXTRACTION.md §6）。
 
 取代 422MB append-only 的 `data/extracted/all.jsonl`。那個檔有兩個讀取端、兩個寫入端，
 無去重無版本：同一份 PDF 用新抽取器重抽一次，只能再 append 一行，讀取端拿到哪一行看

@@ -142,7 +142,7 @@ class Settings:
     r2_secret_access_key: str
     r2_presign_ttl_seconds: int
     # EXTRACTOR（extract.py，E1a）：pypdf＝現況；pdfplumber＝版面層。預設維持 pypdf，
-    # E1d 才由 sync 鏈的環境檔切換（docs/EXTRACTION_REDESIGN.md §9）。
+    # E1d 才由 sync 鏈的環境檔切換（docs/EXTRACTION.md §9）。
     extractor: str
     # EXTRACTION_REVIEW_MIN（store.needs_review，E1b）：quality_score 低於此值標 needs_review。
     # 只標記不擋（§4.2「一律入庫，只標記不擋」）；pages_failed 非空也標，與分數無關。

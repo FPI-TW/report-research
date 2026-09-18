@@ -1,6 +1,6 @@
 """golden set 覆核輔助：把每份 case 的頁面渲染成圖，在圖上框出每條 `order` 片段並標序號。
 
-對應 docs/EXTRACTION_REDESIGN.md §4.1 的「順序層必須純人工」——人工的部分是**看**，
+對應 docs/EXTRACTION.md §8 的「順序層必須純人工」——人工的部分是**看**，
 不是翻 PDF 找句子。這支腳本把找的工作做掉：覆核者看序號在版面上是不是依閱讀順序
 遞增、框住的字是不是那一句，再回 `eval/extraction_dataset.json` 改。
 

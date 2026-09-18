@@ -1,6 +1,6 @@
 """pdfplumber／pdfminer.six 版面分析 → `model.Document`。
 
-對應 docs/EXTRACTION_REDESIGN.md 的 `E1`。**本檔目前不接生產路徑**，只給
+對應 docs/EXTRACTION.md §4。生產路徑由 `extract.py` 的 pdfplumber 分支進來；另給
 `scripts/compare_extractors.py` 與 `scripts/profile_corpus.py` 用。
 
 ## 這支模組在修什麼

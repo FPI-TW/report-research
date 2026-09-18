@@ -1,4 +1,4 @@
-"""抽取層評測：對 golden set 算 docs/EXTRACTION_REDESIGN.md §5 驗收層的四項指標。
+"""抽取層評測：對 golden set 算 docs/EXTRACTION.md §8 的四項指標。
 
 對應 §4.1 `E0` 的交付。**唯讀**：不寫 DB、不動 data/extracted、不呼叫 LLM。
 

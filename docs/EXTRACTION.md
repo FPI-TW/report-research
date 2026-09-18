@@ -126,7 +126,7 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
 | 1 | 雙欄左右交錯、表格塌成數字串、頁首頁尾混進正文 | `pypdf.extract_text()` 無版面模型 | 版面層（§4）；12 份樣本去空白後順序相似度只有 0.275–0.884 |
 | 2 | 「抽到 3 頁」與「抽到 30 頁」下游長得一樣 | 逐頁 `except: continue` 靜默吞頁 | `pages_failed` 與 `pages_failed_ratio`（§3、§5） |
 | 3 | subset 字型缺 ToUnicode 回空或私用區亂碼 | 無編碼健檢 | `garbled_ratio`（§5）；實測亂碼率大於 2% 僅 26 筆 |
-| 4 | 掃描檔是終點站，無回補路徑 | 無 OCR、無重抽佇列 | `extraction_log.stopped_at = scanned`（§7）；OCR 仍在 README「尚未實作與暫不納入」 |
+| 4 | 掃描檔是終點站，無回補路徑 | 無 OCR、無重抽佇列 | `extraction_log.stopped_at = scanned`（§7）；OCR 分支未做 |
 | 4b | 三道入庫閘的落點只在 `if` 分支裡，沒有表記得 | 各自 `continue` | `extraction_log`（§7）；重構前 16,555 筆抽取對 15,089 列，1,466 筆中途蒸發 |
 | 5 | 抽到的表格到 chunk 階段還原不回來 | `clean_extracted` 抹掉 CJK 間空白，同時抹掉欄界 | 表格改 markdown（§3） |
 | 6 | 表格被切碎跨 chunk | `chunk_text` 純字元切法 | 延後 |

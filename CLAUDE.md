@@ -122,7 +122,7 @@ uv run python scripts/ingest_all.py
 - 動任何標記「刻意」的設計前先讀該模組 docstring。
 
 ## Where to look
-- `README.md`：開發總覽、完整 API 表、環境變數、部署、尚未實作與暫不納入。
+- `README.md`：開發總覽、完整 API 表、環境變數、部署。
 - `docs/WORKFLOW.md`：端到端管線、階段 I/O、標籤詞彙、Web API 契約、R2 遷移順序。
 - `AGENTS.md`：貢獻者慣例（結構、風格、測試、commit、安全）。
 - `docs/production_resilience.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/CAPACITY.md`、`docs/EXTERNAL_ACCESS.md`、`docs/incidents/`：維運、監控、容量、外部存取、事故。

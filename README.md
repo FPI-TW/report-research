@@ -12,7 +12,6 @@
 - [設定（環境變數）](#設定環境變數)
 - [開發與測試](#開發與測試)
 - [部署與維運](#部署與維運)
-- [尚未實作與暫不納入](#尚未實作與暫不納入)
 - [延伸文件](#延伸文件)
 
 ## 功能總覽
@@ -218,19 +217,6 @@ make eval-compare BASE=eval/baselines/baseline-2026-09-02.json CAND=eval/baselin
 | `report-mark-alert@.service` | `OnFailure` 觸發 | journal ＋ `data/unit_failures.log` ＋ webhook |
 
 對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
-
-## 尚未實作與暫不納入
-
-| 項目 | 說明 | 前置或阻礙 |
-|---|---|---|
-| findb 整合 | 唯讀 Serve API 取行情與名稱，讓雷達能算相對收盤的 upside、時效題能引真實數字 | findb 服務要可連，憑證與網路路徑屬跨專案部署問題；本 repo 只有 `scripts/align_findb_markets.py` 做離線代碼映射，`app/services/trusted_market_data.py` 的 provider 契約已備好 |
-| MCP server | 把檢索、問答、雷達包成 agent 可消費的工具 | `hybrid_search` 需要已算好的 query embedding，BGE-M3 是 2–4 GB 的行內 CPU 單例；stdio server 每次 spawn 都要重載模型，常駐 HTTP 則需先做金鑰認證 |
-| 對外 REST 與 API key | 機器可用的認證與 per-key 配額 | 全站只有一組共用帳密的 session cookie；昂貴端點僅靠 semaphore 擋；尚無外部消費者 |
-| PDF 內文無障礙 text layer | 讓螢幕閱讀器讀得到研報內文 | `@embedpdf/plugin-selection` 解決的是選取與複製，DOM 裡沒有文字節點；EmbedPDF 沒有 text layer 外掛 |
-| E4 欄位擷取「定位 → 局部擷取 → 錨回驗證」 | 訊號漏抽主因是「關鍵詞在視窗內卻沒抽到」而非截斷 | 嚴格錨回會讓 `rejected` 跳升且分不出模型正規化與幻覺，需先設計 `partial` 分級（`docs/EXTRACTION.md` §10） |
-| 表格感知切塊 | `chunk_text` 純字元切法會切碎表格 | 依賴文件模型的 `blocks` 索引，已有基礎 |
-
-暫不納入：掃描檔 OCR（`stopped_at = scanned` 已可查可回收，但無 OCR 分支）、GPU 加速 ingest、多帳號系統、使用者端通知或訂閱（維運告警鏈是另一回事，已上線）。
 
 ## 延伸文件
 

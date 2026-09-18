@@ -92,6 +92,9 @@ restore-durability:  ## 還原 Postgres 耐久性設定（ingest-lowio 異常中
 align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 	uv run python scripts/align_findb_markets.py
 
+boilerplate:  ## 重建跨文件樣板段落字典 data/boilerplate/（唯讀語料、零 LLM；新券商上線或換版型時跑）
+	uv run python scripts/build_boilerplate.py
+
 # ───── Claude CLI 批次（互斥）─────
 # 下面三支與 tag_all_cli.py／sync_new_reports.py 共五支都 spawn claude CLI，併發互搶
 # 會讓擷取被大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。互斥由

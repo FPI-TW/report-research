@@ -104,10 +104,8 @@ extract_text(path: Path, extractor: str | None = None) -> ExtractResult
   - `order_pair_acc`：命中句子兩兩配對，在抽取文字裡先後與 golden 一致的比例（另有 `order_pair_acc_within` 與 Kendall tau）。
   - 欄位 coverage 與 accuracy 分開看：只看 coverage 獎勵亂猜，只看 accuracy 獎勵什麼都不填。
   - 幻覺率：evidence span 錨不回原文的比例，`Anchor.method == "prefix"` 一律算錨不回。
-- 比較兩份結果用 `scripts/eval_compare.py`（指標方向已登錄在 `METRIC_SPECS`）。基準線在 `eval/baselines/`：`extraction-pypdf-2026-09-02.json`（pypdf）、`extraction-pdfplumber-2026-09-18.json`（版面層 v3，切換生產後補量的基準；v3 上線時沒有留下這一份，v4 才補）。**刻意不進 CI**：與定時同步互搶 `claude` CLI。
-- 文字召回率不是主指標：pdfplumber 與 pypdf 抽出的字元數 12 份裡 11 份逐字相等，它量不到要修的東西。
-- 2026-09-18 實測（15 份 reviewed）：pypdf 配對 0.805／tau 0.609 → v3 0.922／0.843 → v4 0.925／0.851，命中率三者皆 1.0，欄位層與幻覺率不變（`make eval-compare` 退出碼 0）。**順序指標量不到 v4 修的東西**（數字切開、表格欄位、側欄數值歸屬都在同一句之內），所以 v4 的驗收另有 §10 診斷 #10–#13 的抽樣數字；順序評測在這裡的角色是「沒有退化」。
-- 2026-09-18 另加 6 份 `draft`（凱基美股個股版型 2、大摩 2、元大早報 2，`id` 以 `kgi-2344-`、`kgi-5289-`、`ms-`、`yuanta-morning-2024`／`20251231` 開頭）：v3 全庫 1,177 篇 `max_columns=3` 的版型在原 15 份裡是零覆蓋。由模型看頁面圖草標、每句驗證在抽取文字裡恰出現一次，尚未人工覆核；`--reviewed-only` 不吃它們，比較基準線時以 reviewed 為準。覆核時的已知歧義寫在各案 `annotator_notes`（大摩兩份沒有 Risk Reward 三欄頁；元大目次項要抄含頁碼的整行才唯一）。
+- 比較兩份結果用 `scripts/eval_compare.py`（指標方向已登錄在 `METRIC_SPECS`）。基準線在 `eval/baselines/`，**現行基準是 21 份 reviewed 的兩份**：`extraction-pypdf-2026-09-18.json`（pypdf）、`extraction-pdfplumber-2026-09-18.json`（版面層 v3，以 v3 程式碼對同一份 21 案資料集量出）；`extraction-pypdf-2026-09-02.json` 是 15 案時期的舊基準，`eval_compare` 對覆核樣本數不同的兩份不給結論，- 2026-09-18 實測（21 份 reviewed）：pypdf 配對 0.820／tau 0.641 → v3 0.947／0.894 → v4 0.949／0.899，命中率三者皆 1.0，欄位層與幻覺率不變（`make eval-compare` 退出碼 0）。**順序指標量不到 v4 修的東西**（數字切開、表格欄位、側欄數值歸屬都在同一句之內），所以 v4 的驗收另有 §10 診斷 #10–#13 的抽樣數字；順序評測在這裡的角色是「沒有退化」。
+- 2026-09-18 新增 6 份（凱基美股個股版型 2、大摩 2、元大早報 2，`id` 以 `kgi-2344-`、`kgi-5289-`、`ms-`、`yuanta-morning-2024`／`20251231` 開頭）：v3 全庫 1,177 篇 `max_columns=3` 的版型在原 15 份裡是零覆蓋。草標由模型看頁面圖產生、每句驗證在抽取文字裡恰出現一次；覆核由**另一個獨立模型**看 `review_extraction_golden.py` 的覆核頁圖核對順序、框選、逐字、欄位後改為 `reviewed`——不是人工，`annotator_notes` 以「AI 覆核」標明並列出改動與未決點（title 一律改 DB 預填的顯示標題、跨頁片段改 `pN`、元大 20251231 補回東元的評等與目標價）。要升級為人工覆核時從那些未決點看起。ed-only` 不吃它們，比較基準線時以 reviewed 為準。覆核時的已知歧義寫在各案 `annotator_notes`（大摩兩份沒有 Risk Reward 三欄頁；元大目次項要抄含頁碼的整行才唯一）。
 
 ## 9. 開工順序與上線步驟（已完成，留作重跑依據）
 

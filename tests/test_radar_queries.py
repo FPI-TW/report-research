@@ -186,6 +186,9 @@ class SqlStructureTests(unittest.TestCase):
         self.assertIn("ILIKE :q", where)
         self.assertEqual(params["market"], "TW")
         self.assertEqual(params["q"], "%台積%")
+        # 使用者輸入的 LIKE 萬用字元要當字面字元：不跳脫的話 "%" 會比對到全部標的。
+        _, esc = queries._catalog_filters(None, "50%_a\\")
+        self.assertEqual(esc["q"], "%50\\%\\_a\\\\%")
         # 無 q/market 仍限制既有支援市場，不能讓未知 DB 值進入 response enum。
         where2, params2 = queries._catalog_filters(None, None)
         self.assertEqual(where2, "")

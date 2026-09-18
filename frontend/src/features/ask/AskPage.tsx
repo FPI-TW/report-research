@@ -1,13 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { useAskController } from '../../lib/useAskController'
 import { AskEmptyState } from './AskEmptyState'
-import { UserMessage } from './UserMessage'
-import { AssistantMessage } from './AssistantMessage'
+import { TurnRow, type TurnActions } from './TurnRow'
 import { SourcesDrawer } from './SourcesDrawer'
 import { Composer } from './Composer'
 import { ReportDetailModal } from '../../components/ReportDetailModal'
-import { Reveal } from '../../components/primitives/Reveal'
 import type { AnswerView } from '../../lib/askReducer'
 import styles from './AskPage.module.css'
 
@@ -63,10 +61,17 @@ export default function AskPage() {
   // 問答串流同時最多一條（useAskController 的 askCtrl 單例），some() 不會多鎖。
   const busy = turns.some(t => t.phase === 'thinking' || t.phase === 'streaming')
 
-  function handleSubmit(q: string) { ctrl.submit(q); setDraft('') }
-  function openSources(view: AnswerView) {
-    setDrawer({ open: true, view })
-  }
+  const { submit, editResubmit, regenerate, setFeedback, setVersion, loadVersions } = ctrl
+  const handleSubmit = useCallback((q: string) => { submit(q); setDraft('') }, [submit])
+  // 交給 TurnRow 的動作必須整包穩定，它的 memo 才擋得住串流期間的逐 token 重 render
+  // （理由見 TurnRow）。controller 的函式都是 useCallback，setState 本來就穩定。
+  const actions = useMemo<TurnActions>(() => ({
+    editResubmit, regenerate, setFeedback, setVersion, loadVersions,
+    submit: handleSubmit,
+    setDraft,
+    openSources: view => setDrawer({ open: true, view }),
+    toggleSources: view => setDrawer(d => d.open ? { open: false, view: null } : { open: true, view }),
+  }), [editResubmit, regenerate, setFeedback, setVersion, loadVersions, handleSubmit])
 
   return (
     <div className={styles.page}>
@@ -75,34 +80,7 @@ export default function AskPage() {
           {turns.length === 0 ? (
             <AskEmptyState value={draft} onChange={setDraft} onSubmit={handleSubmit} />
           ) : (
-            turns.map(t => (
-              <Reveal key={t.id}>
-                <UserMessage text={t.question} onEdit={q => ctrl.editResubmit(t.id, t.qaId, q)} disabled={busy} />
-                <AssistantMessage
-                  turn={t}
-                  onCite={(_n, view) => openSources(view)}
-                  onOpenSources={view => setDrawer(d => d.open ? { open: false, view: null } : { open: true, view })}
-                  onFeedback={v => t.qaId && ctrl.setFeedback(t.id, t.qaId, v)}
-                  onNoticeRetry={() => setDraft(t.question)}
-                  onErrorRetry={() => handleSubmit(t.question)}
-                  onRegenerate={() => ctrl.regenerate(t.id, t.qaId, t.question)}
-                  onFollowup={q => handleSubmit(q)}
-                  disabled={busy}
-                  onSetVersion={i => {
-                    // priorVersions「不完整」（而非只有「全空」）就先補載：歷史多版本輪
-                    // 直接重生後，本地只有剛快照的那一版，中間版本是洞——洞的索引會
-                    // fallback 到 live，pager 顯示的版號與內容對不上。
-                    if (t.rootQaId && t.versionCount > 1 && t.priorVersions.length < t.versionCount - 1) {
-                      void ctrl.loadVersions(t.id, t.rootQaId).then(loaded => {
-                        if (loaded) ctrl.setVersion(t.id, i)
-                      })
-                    } else {
-                      ctrl.setVersion(t.id, i)
-                    }
-                  }}
-                />
-              </Reveal>
-            ))
+            turns.map(t => <TurnRow key={t.id} turn={t} busy={busy} actions={actions} />)
           )}
         </div>
         {turns.length > 0 && (

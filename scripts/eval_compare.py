@@ -118,7 +118,7 @@ METRIC_SPECS: dict[str, Spec] = {
     "pct_over_max_age": Spec(LOWER, ABS, "超過 max_age_days 的引用比例"),
     "n_cited": Spec(INFO, ABS, "引用總數，隨脈絡篇數浮動"),
     "max_age_days": Spec(META, ABS, "queryset 的新近度判定參數；不同則兩份的新近度指標定義不同"),
-    # ── scripts/eval_extraction.py（抽取層 golden set，docs/EXTRACTION_REDESIGN.md §5）──
+    # ── scripts/eval_extraction.py（抽取層 golden set，docs/EXTRACTION.md §8）──
     "order_hit_rate": Spec(HIGHER),
     "order_pair_acc": Spec(HIGHER),
     "order_pair_acc_within": Spec(HIGHER),

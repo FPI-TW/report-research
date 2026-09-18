@@ -1,6 +1,6 @@
 """語料 profiling（唯讀）：新抽取器眼中的語料長什麼樣。
 
-對應 docs/EXTRACTION_REDESIGN.md §9 的第 1 步。**不寫任何生產路徑**：不碰
+對應 docs/EXTRACTION.md §9 的前置第 1 步。**不寫任何生產路徑**：不碰
 `app/services/extract.py`、不碰 DB（只讀）、不碰 `data/extracted/`。
 
 用法：

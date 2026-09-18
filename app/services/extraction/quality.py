@@ -1,4 +1,4 @@
-"""抽取品質指標。docs/EXTRACTION_REDESIGN.md §5 的**唯一計算來源**。
+"""抽取品質指標。docs/EXTRACTION.md §5 的**唯一計算來源**。
 
 兩份實作必然漂移，所以 `scripts/profile_corpus.py`、`scripts/compare_extractors.py`
 以及未來 `E1` 的寫入端全部從這裡取值，不要各自再算一次。

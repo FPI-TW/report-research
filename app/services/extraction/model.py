@@ -1,7 +1,7 @@
 """文件模型（Document → Page → Block）與**決定性**序列化。
 
 現況所有下游都吃同一個 `str`，版面資訊在第一步就永久遺失。這個模型是
-docs/EXTRACTION_REDESIGN.md §3.1 說的樞紐：切塊、欄位擷取、`full_text`
+docs/EXTRACTION.md §1 說的樞紐：切塊、欄位擷取、`full_text`
 各自從它取自己要的東西，而 `full_text` 只是**其中一個序列化 view**。
 
 ## 為什麼序列化必須是決定性的
@@ -23,7 +23,7 @@ docs/EXTRACTION_REDESIGN.md §3.1 說的樞紐：切塊、欄位擷取、`full_t
 `textnorm._RE_CJK_GAP` 是 `(?<=[CJK])\\s+(?=[CJK])`，**只吃空白**。表格若用
 空白對齊欄位，`clean_extracted()` 會把 CJK 儲存格之間的空白全部刪掉，
 「台積電 買進 1200」變成「台積電買進1200」——欄界消失，這正是
-docs/EXTRACTION_REDESIGN.md 診斷 #5。改用可見分隔符 `|` 就穿得過去，
+docs/EXTRACTION.md §10 診斷 #5。改用可見分隔符 `|` 就穿得過去，
 而且**不必動 `clean_extracted`**（動它要重切重嵌 585,942 列 chunk）。
 """
 
@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Literal
 
-# Block 型別。與 docs/EXTRACTION_REDESIGN.md §3 的 [C] 一致。
+# Block 型別。與 docs/EXTRACTION.md §3 一致。
 BlockType = Literal[
     "title",
     "paragraph",
@@ -93,7 +93,7 @@ class Page:
     **這一頁仍然會留在 `Document.pages` 裡**，只是 `blocks` 為空。現況
     `app/services/extract.py` 的 `except Exception: continue` 是直接讓整頁
     消失，於是「抽到 3 頁」與「抽到 30 頁」在下游長得一模一樣
-    （docs/EXTRACTION_REDESIGN.md 診斷 #2）。保留空頁是為了讓
+    （docs/EXTRACTION.md §10 診斷 #2）。保留空頁是為了讓
     `pages_failed` 算得出來。
     """
 

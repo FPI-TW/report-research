@@ -1,7 +1,7 @@
 """既有語料的抽取回填（E1d）：把 `extraction_version` 不是目標版本的研報，用目標抽取器重抽、
 重切、重嵌，**原地**更新（report_id 不變），並把既有摘錄的錨點對新正典文字重算。
 
-E1 共識（docs/EXTRACTION_REDESIGN.md §9、2026-09-02 與使用者逐題確認）：
+E1 共識（docs/EXTRACTION.md §9、2026-09-02 與使用者逐題確認）：
 - 深夜分批、不停服：`report-mark-backfill.timer` 01:00 起跑，`--max-minutes 240` 到點收手。
 - 依 `report_date` 由新到舊（問答最常引用的先修好），不限篇數、限時間（長報告的 chunk
   數差十倍，篇數限不住時間）。

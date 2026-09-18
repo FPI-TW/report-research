@@ -1,6 +1,6 @@
 """文字抽取門面：PDF / docx → 純文字 ＋ 抽取版本 ＋ 品質欄位，並偵測掃描檔。
 
-docs/EXTRACTION_REDESIGN.md §4.2 `E1`。**簽章不變**：`extract_text(path) -> ExtractResult`，
+docs/EXTRACTION.md §4。**簽章不變**：`extract_text(path) -> ExtractResult`，
 既有四個呼叫端（`extract_all`／`sync_new_reports`／`ingest_all` 經快取／`tag_all_cli` 經快取）
 一個字都不用改；新欄位全部有預設值。
 

@@ -1,6 +1,6 @@
 """新舊抽取器並排比對（唯讀）→ 自包含 HTML 報告。
 
-對應 docs/EXTRACTION_REDESIGN.md §9 的第 3 步：「只讀不寫並排比對，人工看
+對應 docs/EXTRACTION.md §9 的前置第 2 步：「只讀不寫並排比對，人工看
 20 份」。**它是唯一能在改動生產路徑之前發現「新抽取器在某類檔案上更差」
 的機會**，所以不要跳過。
 
@@ -282,7 +282,7 @@ def _html(recs: list[dict], meta: dict) -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>抽取器並排比對</title><style>{_CSS}</style></head><body>
 <header><h1>抽取器並排比對：pypdf vs pdfplumber 版面分析</h1>
-<div class="sub">docs/EXTRACTION_REDESIGN.md §9 第 3 步 · 只讀不寫 · {html.escape(meta['generated'])}</div>
+<div class="sub">docs/EXTRACTION.md §9 前置第 2 步 · 只讀不寫 · {html.escape(meta['generated'])}</div>
 <div class="sub">相似度是<b>去除所有空白後</b>前 {_SIM_CHARS} 字元的 difflib ratio
 ——它量的是<b>順序</b>不是品質。低＝兩者差很多，<b>不代表新的比較好</b>，
 那要靠 golden set 回答。</div>

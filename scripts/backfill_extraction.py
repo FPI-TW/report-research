@@ -226,7 +226,11 @@ async def _backfill_path(
         "quality_flags": q,
         "page_count": res.page_count,
         "pages_failed": list(res.pages_failed),
-        "needs_review": needs_review(q.get("quality_score"), res.pages_failed, review_min, q),
+        "needs_review": needs_review(
+            q.get("quality_score"), res.pages_failed, review_min, q,
+            min_coverage=get_settings().extraction_review_min_coverage,
+            max_garbled=get_settings().extraction_review_max_garbled,
+        ),
     }
     await replace_report_extraction(
         session, rid, full_text=raw, language=res.language, chunks=chunks, embeddings=embeddings, fields=fields

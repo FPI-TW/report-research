@@ -75,6 +75,13 @@ class NeedsReviewFlagTests(unittest.TestCase):
         self.assertTrue(store.needs_review(0.95, (3,), 0.6))
         self.assertFalse(store.needs_review(None, None, 0.6))
 
+    def test_settings_expose_the_two_thresholds_with_measured_defaults(self):
+        from app.config import get_settings
+
+        s = get_settings()
+        self.assertAlmostEqual(s.extraction_review_min_coverage, store.REVIEW_MIN_COVERAGE)
+        self.assertAlmostEqual(s.extraction_review_max_garbled, store.REVIEW_MAX_GARBLED)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -131,6 +131,11 @@ class Settings:
     # EXTRACTION_REVIEW_MIN（store.needs_review，E1b）：quality_score 低於此值標 needs_review。
     # 只標記不擋（§4.2「一律入庫，只標記不擋」）；pages_failed 非空也標，與分數無關。
     extraction_review_min: float
+    # EXTRACTION_REVIEW_MIN_COVERAGE／EXTRACTION_REVIEW_MAX_GARBLED（v4，docs/EXTRACTION.md §5）：
+    # 總分是加權平均、單一嚴重缺陷會被稀釋，所以逐項再看 layout_coverage 與 garbled_ratio。
+    # 預設 0.30／0.02 是抽樣量出來的（coverage p5 之下、v3 全庫亂碼 >2% 僅 27 篇）。
+    extraction_review_min_coverage: float
+    extraction_review_max_garbled: float
     # rerank.py（M2）
     ask_rerank_enabled: bool
     ask_rerank_candidates: int
@@ -206,6 +211,8 @@ def _load() -> Settings:
         r2_presign_ttl_seconds=_r2_presign_ttl(),
         extractor=_extractor("EXTRACTOR", "pypdf"),
         extraction_review_min=float(os.getenv("EXTRACTION_REVIEW_MIN", "0.6")),
+        extraction_review_min_coverage=float(os.getenv("EXTRACTION_REVIEW_MIN_COVERAGE", "0.30")),
+        extraction_review_max_garbled=float(os.getenv("EXTRACTION_REVIEW_MAX_GARBLED", "0.02")),
         ask_rerank_enabled=_flag("ASK_RERANK_ENABLED", "1"),
         ask_rerank_candidates=int(os.getenv("ASK_RERANK_CANDIDATES", "50")),
         # per-path 逾時：prod 實測（20 核 CPU）50 對 ~34s、120 對 ~93s；預設須蓋過

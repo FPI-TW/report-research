@@ -253,6 +253,7 @@ async def _run(args) -> None:
     from app.services.tagging import load_tag
     from app.services.textnorm import clean_extracted
 
+    settings = get_settings()
     review_min = get_settings().extraction_review_min
     storage = get_object_storage()
     targets = _iter_targets(args)
@@ -408,7 +409,9 @@ async def _run(args) -> None:
                     page_count=res.page_count,
                     pages_failed=list(res.pages_failed) or None,
                     needs_review=needs_review(
-                        (res.quality or {}).get("quality_score"), res.pages_failed, review_min, res.quality or None
+                        (res.quality or {}).get("quality_score"), res.pages_failed, review_min, res.quality or None,
+                        min_coverage=settings.extraction_review_min_coverage,
+                        max_garbled=settings.extraction_review_max_garbled,
                     ),
                 )
                 await upsert_report(session, report, chunks, embeddings)

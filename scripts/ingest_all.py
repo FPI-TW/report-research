@@ -176,7 +176,11 @@ async def main(limit: int | None, batch_size: int) -> None:
                     quality_flags=q or None,
                     page_count=rec.get("page_count"),
                     pages_failed=rec.get("pages_failed") or None,
-                    needs_review=needs_review(q.get("quality_score"), rec.get("pages_failed"), review_min, q),
+                    needs_review=needs_review(
+                        q.get("quality_score"), rec.get("pages_failed"), review_min, q,
+                        min_coverage=get_settings().extraction_review_min_coverage,
+                        max_garbled=get_settings().extraction_review_max_garbled,
+                    ),
                 )
                 await upsert_report(session, report, chunks, embeddings)
                 await upsert_extraction_log(session, _log_row(rec, "ingested"))

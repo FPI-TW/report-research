@@ -115,7 +115,9 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | 腳本 | 用途 |
 |---|---|
 | `scripts/resume_corpus.sh` | 全語料續跑：`tag_all_cli --workers 8` 與 `ingest_all` 並行，結束後再 ingest 一次收尾 |
-| `scripts/backfill_extraction.py` | E1d 抽取回填（零 LLM，`report-mark-backfill.timer` 01:00） |
+| `scripts/backfill_extraction.py` | 抽取回填（零 LLM，`report-mark-backfill.timer` 01:00）：`extraction_version` 不是目前版本的研報重抽、重切、重嵌、重錨定摘錄；總結列印摘錄錨定率 |
+| `scripts/build_boilerplate.py`（`make boilerplate`） | 跨文件樣板段落字典 → `data/boilerplate/<source>.json`，入庫切塊前剔除（`docs/EXTRACTION.md` §12）；字典不在就不剔除 |
+| `scripts/lost_anchors_to_delta.py` | 回填後摘錄錨點失效的研報 → hashes 檔，餵 `scripts/extract_takeaways.py --hashes-file … --reextract` |
 | `scripts/migrate_extraction_cache.py` | `all.jsonl` → per-hash 快取（一次性） |
 | `scripts/backfill_traditional.py`、`scripts/backfill_report_dates.py`、`scripts/backfill_report_sources.py`、`scripts/backfill_full_text.py` | 一次性回填，預設試跑 |
 | `scripts/align_findb_markets.py`（`make align`） | 舊中文市場標籤重映射為 findb 代碼，冪等 |

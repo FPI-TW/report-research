@@ -173,6 +173,30 @@ def _docx_document(path: Path):
     )
 
 
+def _measure_with_coverage(doc, path: Path):
+    """`quality.measure` 加上 `layout_coverage`：需要 pypdfium2 逐頁 render。
+
+    v3 生產路徑從未傳 renderer，coverage 全庫是 null。實測 32 頁只多 0.4 秒（抽取本身
+    4.9 秒），而它是唯一對「整欄漏抽」敏感的指標。render 開不起來就退回不算 coverage
+    （fail-open）：品質量測不可以擋住抽取。"""
+    from app.services.extraction.quality import measure
+
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(str(path))
+    except Exception as exc:
+        logger.warning("pypdfium2 open failed on %s; layout_coverage skipped: %s", path.name, exc)
+        return measure(doc)
+    try:
+        return measure(doc, renderer=pdf)
+    finally:
+        try:
+            pdf.close()
+        except Exception:  # pragma: no cover — 版本差異
+            pass
+
+
 def _via_pdfplumber(path: Path, file_hash: str, suffix: str) -> ExtractResult:
     from app.services.extraction.model import serialize_with_index
     from app.services.extraction.quality import measure
@@ -189,7 +213,7 @@ def _via_pdfplumber(path: Path, file_hash: str, suffix: str) -> ExtractResult:
         if doc.error:
             raise RuntimeError(doc.error)
         text, spans = serialize_with_index(doc)
-        q = measure(doc)
+        q = _measure_with_coverage(doc, path) if suffix == ".pdf" else measure(doc)
     except Exception as exc:
         # 退回 pypdf。原因記進 quality_flags，extractor 誠實記 pypdf。
         logger.warning("pdfplumber failed on %s, falling back to pypdf: %s", path.name, exc)

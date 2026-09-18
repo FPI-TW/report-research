@@ -47,7 +47,8 @@ LIVING_DOCS = (
     "AGENTS.md",
     "README.md",
     "docs/WORKFLOW.md",
-    "docs/ROADMAP.md",
+    "docs/ARCHITECTURE.md",
+    "docs/EXTRACTION.md",
 )
 
 # 走訪檔案系統時整棵剪掉的目錄（產物、相依、快取、唯讀來源）。
@@ -80,23 +81,14 @@ _GLOBAL_ALLOW = {
 }
 
 # **刻意指名不存在的東西**——只在指定文件裡放行。範圍收到單一文件是重點：
-# `intent.py` 在 ROADMAP 的「前身，已改名」是正確敘述，但同一個字串出現在
-# CLAUDE.md 就是必須抓到的陳舊引用。全域放行等於自廢武功。
+# 例如 CLAUDE.md 拿 `app/api/` 說明「這個 repo 不是 FinDB」是正確敘述，但同一個
+# 字串出現在 README 就是必須抓到的陳舊引用。全域放行等於自廢武功。
 _DOC_ALLOW = {
     "CLAUDE.md": {
         "app/api/",              # 用來說明「這個 repo 不是 FinDB」，正因不存在才要寫
     },
     "README.md": {
         "Project/CLAUDE.md",     # repo 之外的上層專案目錄
-        "brief.py",              # ROADMAP 未實作項（每日簡報）的計畫檔名
-    },
-    "docs/ROADMAP.md": {
-        # 開頭那段在說明舊版 ROADMAP 錯在哪：這三個檔名「從未存在」。
-        "signals.py",
-        "consensus.py",
-        "app/api/auth.py",
-        "intent.py",             # M4 那列註明的前身檔名（已改名為 scope_router.py）
-        "brief.py",              # 未實作項
     },
 }
 

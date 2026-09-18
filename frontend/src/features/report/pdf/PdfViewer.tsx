@@ -492,7 +492,7 @@ function Chrome({
  * `SelectionLayer` 只畫 `pointerEvents:none` 的色塊，DOM 裡沒有任何文字節點 ——
  * 意思是：拖曳選字與複製可用（複製由本檔自理，見 Ctrl/⌘+C 與工具列複製鈕），
  * 但**螢幕閱讀器仍然讀不到研報內文**，瀏覽器原生的選取／複製也一樣無效。
- * 那個缺口不是這個外掛能補的，需要真正的 text layer；已記在 `docs/ROADMAP.md`。
+ * 那個缺口不是這個外掛能補的，需要真正的 text layer；已記在 `README.md` 的「尚未實作與暫不納入」。
  */
 export default function PdfViewer({ url, title, jump = null, onJumpResult }: Props) {
   // WASM 自架，**刻意不用套件預設的 CDN**：本站在 Cloudflare Tunnel ＋ 登入牆之後，

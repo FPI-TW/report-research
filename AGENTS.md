@@ -1,64 +1,55 @@
 # Repository Guidelines
 
+Conventions for contributors and AI agents. Hard rules and the change-impact table live in `CLAUDE.md`; module-level invariants in `docs/ARCHITECTURE.md`. Reply to users in Traditional Chinese; no decorative emoji.
+
 ## Project Structure & Module Organization
 
-`app/services/` contains extraction, filename parsing, tagging, chunking, embeddings, hybrid retrieval, RAG answers, deep report generation, PDF/Typst rendering, and DB access — plus the `radar/`（觀點雷達）and `reading/`（閱讀頁）sub-packages. `app/config.py` centralizes **most** tunables (with the exceptions listed under Coding Style). `app/templates/` holds the Typst report templates and their registry.
-
-`web/server.py` is only the composition layer (app construction + auth middleware); routes live in `web/routers/*.py` and cross-module shared symbols go through `web/deps.py`. `web/report_runs.py` is the background-run registry for deep reports: generation runs in its own `asyncio.Task`, events go into a replay buffer plus one queue per subscriber (tokens are deliberately not buffered — see the module docstring), and `POST /api/report` is merely a subscriber, so a disconnect or refresh no longer aborts generation. **The registry is in-process state; a restart wipes it** — read its module docstring before touching report streaming. `web/auth.py` (fail-closed credentials/session), `web/dev_mode.py` (the local no-auth preview flag), `web/concurrency.py` (`ConcurrencyGate`) and `web/env_loader.py` (loads the repo-root env file at startup) sit in the same layer. `web/static/` contains just `login.html`.
-
-**The frontend is `frontend/` — React 19 + TypeScript + Vite**, built to `frontend/dist`. `scripts/` holds ingestion, tagging, evaluation, summary, signal/takeaway extraction, and maintenance jobs. `eval/` holds the RAGAS/report evaluation harness. `db/schema.sql` defines the `research` PostgreSQL/pgvector schema. `tests/` holds the Python test suite; frontend tests are colocated as `*.test.ts(x)` under `frontend/src/`.
-
-`deploy/` is the **single source of truth for the deployment surface**: `docker-compose.yml` + `nginx.conf` are the public edge (Cloudflare Tunnel + nginx, driven by `make up-edge` / `down-edge` / `edge-logs` / `edge-reload`), and `deploy/systemd/` holds eight unit groups — the web service, the NAS-sync timer, the DB-backup timer, the batch-staleness `report-mark-freshness.timer`, the integrity `report-mark-audit.timer`, the two-minute health probe `report-mark-health.timer`, the event/notification consumer `report-mark-incident.timer`, and the `report-mark-alert@.service` failure chain — plus the NAS mount helpers, their sudoers files, and the drop-in that puts the `claude` CLI on the service `PATH`. **Change deployment settings here and then sync to the machine — never edit only the copy on the box.**
+- `app/services/`: extraction (`extract.py`, `extraction/`), tagging, chunking, embeddings, hybrid retrieval (`retrieval.py`, `retrieval_pipeline.py`), RAG answers (`answer.py`), deep reports (`report.py`, `report_writer.py`, `typst_render.py`, `pdf.py`), and the read-only features `reading/`, `radar/`, `brief.py`. `app/config.py` is the only place for new knobs.
+- `web/server.py` is the composition layer only; routes live in `web/routers/*.py` (12 routers, no `APIRouter(prefix=...)`), shared symbols go through `web/deps.py`, background report runs through `web/report_runs.py`.
+- `frontend/`: React 19 + TypeScript + Vite, built to `frontend/dist`. `src/features/*` per page, `src/lib/*` for API boundaries (zod, SSE, reducers). `src/components/animate-ui/` is vendored and excluded from lint.
+- `scripts/`: batch and ops jobs. Anything that spawns `claude -p` takes the flock in `scripts/_claude_lock.py` at its main entry (rc=75 on contention).
+- `deploy/` is the single source of truth for systemd units, nginx and docker-compose; copy to `/etc` after editing, never edit the machine copy only.
+- `db/schema.sql` is applied idempotently by `make schema`; there is no migration tool. `db/expected_constraints.txt` is the CHECK-constraint golden list.
+- `eval/` holds the offline evaluation harness and baselines, deliberately outside CI.
+- `研報自動匯入/` is a read-only mirror; `data/` holds runtime artefacts. Neither is versioned.
 
 ## Build, Test, and Development Commands
 
-- `uv sync`: install Python dependencies from `pyproject.toml` and `uv.lock`.
-- `make setup`: install deps, start/apply the pgvector schema, and prepare local infrastructure.
-- `make serve`: run FastAPI on `http://localhost:8097`; code changes require a restart. Use `make serve-dev` while developing (`--reload` + `SKIP_WARMUP=1`, loopback only).
-- `uv run pytest -q`: run the Python test suite. Needs `frontend/dist` — `tests/test_spa_serving.py` treats a missing build as **failure, not skip**; run `make build-web` first, or set `SKIP_SPA_TESTS=1` to opt out deliberately.
-- `uv run ruff check .`: lint Python (`E,F,I`, line-length 120) — a CI gate.
-- `npm --prefix frontend test` / `run typecheck` / `run lint`: vitest, `tsc --noEmit`, ESLint — the last two are CI gates.
-- `make build-web`: rebuild `frontend/dist` — **required for any frontend change to take effect**.
-- `make freshness`: pipeline and batch staleness probe (pure SQL, zero LLM; rc `0` pass / `1` derived asset stale / `2` DB unreachable / `3` pipeline stopped).
-- `make db-audit`: read-only integrity audit (rc `0` clean / `1` findings / `2` DB unreachable).
-- `make eval-compare BASE=… CAND=…`: diff two eval result JSONs (`scripts/eval_compare.py`); non-zero exit on regression. Eval itself stays manual — it spawns the `claude` CLI, so it is deliberately out of CI.
-
-**CI gates every PR** (`.github/workflows/ci.yml`): **all four jobs are required checks** — backend (**ruff** + pytest), frontend (ESLint + `tsc` + **`vite build`** + vitest), **schema contract** (a `pgvector/pgvector:pg16` service container: apply `db/schema.sql` twice to prove idempotency, then check `content_norm` equivalence and the CHECK-constraint golden list), and **secret scanning** (gitleaks, required since 2026-07-31; scans full history with `fetch-depth: 0` plus the working tree, and deliberately installs the binary rather than using `gitleaks/gitleaks-action`, which demands a `GITLEAKS_LICENSE` for organization repos and would simply fail here). The frontend job uploads `frontend/dist` as an artifact for the backend job, so SPA serving is verified against a **real build**. The backend job also sets `REPORT_MARK_REQUIRE_CJK=1` so a missing CJK font turns the PDF-content tests red instead of silently skipping them. main has branch protection (strict + enforce_admins).
-
-Note that a required check is identified by the job's Chinese `name`, and branch protection lives in GitHub settings rather than in the repo — rename a job without updating the setting and every PR waits forever on a check that never reports. Running only pytest locally will still fail you on the frontend job.
+- `uv sync` then `make setup` (deps + pgvector container + schema). `cp .env.example .env` and set the three `REPORT_MARK_*` auth values or the server refuses to start.
+- `make serve` (port 8097, no reload, models warmed), `make serve-dev` (reload, `SKIP_WARMUP=1`, loopback only), `make serve-preview` (`DEV_NO_AUTH=1` on 8098). `make build-web` after any frontend change.
+- `uv run pytest -q` (set `SKIP_SPA_TESTS=1` if `frontend/dist` is absent, otherwise those tests fail rather than skip), `uv run ruff check .`, `cd frontend && npm test`, `npm run typecheck`, `npm run lint`.
+- Batch jobs: `make summaries / titles / takeaways / signals / brief`; ops: `make sync-once / db-backup / freshness / db-audit`. Destructive targets (`reset-db`, `clean-data`, `ingest-lowio`) only when explicitly asked; ask before any TRUNCATE or DROP.
 
 ## Coding Style & Naming Conventions
 
-Use Python 3.11+ with explicit types where helpful, dataclasses for small value objects, and async SQLAlchemy sessions for DB work. Keep deterministic pipeline logic in Python; reserve Claude CLI calls for semantic labeling, summaries, Q&A, and generated reports. Frontend code lives in `frontend/src/` (React function components, CSS Modules, TanStack Query, zod at the API boundary).
-
-**Python is linted by ruff in CI; there is no black, mypy, or pre-commit.** The `pyproject.toml` config deliberately enables only `E,F,I` with `line-length = 120` and `extend-ignore = ["E402"]` — dozens of files in this repo do `sys.path.insert` or load the env file before their imports, and that ordering is deliberate, not a style slip. **`ruff format` is deliberately not run**: it reshuffles 60 of 90 files and wipes the blame; if you want it, open a separate formatting-only PR. On the frontend, ESLint (`frontend/eslint.config.js`) **is** a CI gate, invoked as bare `eslint .` — no `--max-warnings 0`, so warnings do not block a merge. One `react-hooks/set-state-in-effect` site carries an inline `eslint-disable` with a stated reason (`AskPage`'s `?q` prefill — it genuinely synchronizes with an external system and must run in an effect).
-
-**New tunables go in `app/config.py`** (a frozen dataclass over `os.getenv`, ~80 fields — not pydantic-settings), not scattered `os.getenv` calls in service modules. That is the rule, not yet the whole truth: `SSE_HEARTBEAT_INTERVAL` (`web/deps.py`), `REPORT_SEMAPHORE` / `REPORT_MAX_QUEUE` (`web/routers/report.py`), `ASK_MAX_QUEUE` (`web/routers/ask.py`), `REPORT_RUN_RETENTION_SECONDS` (`web/report_runs.py`), `ASK_FOLLOWUP_MODEL` / `ASK_FOLLOWUP_TIMEOUT` (`app/services/followups.py`), `REPORT_MARK_RERANK_WORKERS` / `REPORT_MARK_RERANK_TIMEOUT` (`app/services/retrieval_pipeline.py`), `REPORT_MARK_DB_URL` (`app/services/db.py`), the four auth keys plus `REPORT_MARK_MAX_TRACKED_FAIL_IPS` (`web/auth.py`) and `EVAL_JUDGE_MODEL` (`eval/judge.py`) are still read in place — grep those nine files too when a key is not in `config.py`. `/api/ask`'s concurrency limit of 3 is hardcoded in `_ASK_GATE` and has no env key at all.
-
-The `REPORT_MARK_*` prefix is likewise a **rule**: it belongs to the auth/DB variables (seven in `.env.example`, including `REPORT_MARK_SESSION_EPOCH` and `REPORT_MARK_EDGE_SECRET`) and new tunables never take it. **Five** other live keys predate the rule and still carry it — `REPORT_MARK_MAX_TRACKED_FAIL_IPS`, the two `REPORT_MARK_RERANK_*` above, plus `REPORT_MARK_ROOT` / `REPORT_MARK_ALERT_WEBHOOK` in `deploy/systemd/`; they work, so do not "fix" the naming. Everything else (`ASK_*`, `REPORT_*`, `QA_*`, `FAITHFULNESS_*`, …) is unprefixed. All are loaded from the repo-root env file.
+- Python: ruff `E,F,I`, 120 columns, `E402` off (deliberate `sys.path.insert` and env loading before imports). No `ruff format`, black or mypy. Dataclass fields are appended with defaults; `rows.ChunkRow` and `store._meta_columns` are positionally aligned, so index fields by `ChunkRow._fields.index(...)`.
+- Frontend: CSS Modules, TanStack Query, zod at API edges; `_`-prefixed identifiers are intentionally unused.
+- Determinism boundary: Python decides (parsing, chunking, retrieval, anchoring, aggregation, state machines, rendering); Claude only produces semantics. Derived features fail open.
+- Reuse `hybrid_search` / `retrieval_pipeline`; never build a second retrieval path. Patch `retrieval_pipeline`, not `answer`, when stubbing retrieval.
+- Never interpolate LLM text into Typst source; everything passes pandoc escaping or `_tstr()`.
 
 ## Testing Guidelines
 
-Add or update `tests/test_*.py` for service behavior and API contracts. Prefer deterministic tests that mock LLM, embedding, filesystem, and DB boundaries unless the change is integration-level. For frontend code, add `*.test.ts(x)` beside the module under `frontend/src/`. Run the narrow test first, then `uv run pytest -q` and `npm --prefix frontend test`.
-
-Three hard-won rules:
-
-- **Test an API endpoint through HTTP, not by calling the handler object.** Calling `module.handler()` directly bypasses routing — that is how a decorator applied to the wrong function shipped a 422 to production with CI fully green.
-- **When you add a parameter to a function that tests fake, update the fake's signature.** A stale fake raises `TypeError`, which a surrounding `except` swallows, and the code silently takes a different path. This has bitten this repo five times.
-- **A test must never write to the repo-root env file** — on this machine the repo root *is* the deployment directory, and a `finally` restore survives an exception but not a killed process. Feed `load_env_file()` a throwaway file from `tempfile.TemporaryDirectory()` instead, and assert wiring and load order statically via AST. `tests/test_env_loading.py` and the autouse fixture in `tests/conftest.py` will catch you, but they are the second line of defence. The 2026-07-29 incident that produced this rule is in `CLAUDE.md`.
-
-`tests/fixtures/sse_events.json` is the SSE event contract, read from **both** sides: `tests/test_sse_event_contract.py` proves the fixture lists every event kind the backend can emit (AST scan of the service modules' literal `yield (kind, …)`, plus one real `generate_report` run through the existing fakes — never the `claude` CLI), and `frontend/src/lib/sseEventContract.test.ts` proves every listed kind parses to non-null. Adding a backend event means editing that one file; both tests will then tell you what the other side is still missing. Two details worth knowing: the frontend resolves it through the `@fixtures` alias (declared in `frontend/vitest.config.ts` and `frontend/tsconfig.json`) so there is no second copy under `frontend/`; and an entry marked `"frontend": "ignored"` must correspond to an explicit `case` in the parser, because "deliberately ignored" and "forgot to declare" both return `null` and the only observable difference is whether `rejectEvent` warns.
-
-`db/expected_constraints.txt` is the golden list of CHECK constraints, reconciled by `tests/test_schema_constraints.py` in the schema-contract job (a changed CHECK has no idempotent patch path, so `make schema` reports success while production never gets it — see `CLAUDE.md`). When it goes red the fix is usually to **also write the `ALTER` for existing databases**, not to regenerate the list; regenerate only for an intentional change, with `REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py`.
-
-`tests/test_docs_contract.py` keeps the docs honest mechanically: every backtick-quoted path in the five "current-state" docs must resolve to a real file, and the routes in `web/routers/*.py` must match the API tables in `README.md` / `docs/WORKFLOW.md` **in both directions**. When it goes red after a rename or a new endpoint, **fix the doc — do not widen the allowlist**. Write endpoint paths verbatim, including parameter names and the `:path` converter.
-
-`tests/test_deploy_units.py` does the same for `deploy/systemd/`, and `tests/test_web_health_probe.py` / `tests/test_incident_handler.py` cover the two-layer monitoring chain (probe reports facts; the event handler owns deduplication, reminder cadence, and RESOLVED). Note that `systemctl is-active` is not evidence of application health — a probe against `/healthz` is; and an oneshot unit's `Result=success` cannot distinguish "succeeded last time" from "never ran", which is what `scripts/verify_oneshot_ran.sh` exists for.
+- Async tests use `unittest.IsolatedAsyncioTestCase`; pytest-asyncio is intentionally absent.
+- Tests never hit the network, load models, touch the DB or the real filesystem; fake LLM, embeddings, DB and files. When you add a parameter to a function, update its fakes: a stale fake raises `TypeError` that an outer `except` swallows silently.
+- Test endpoints through HTTP (`TestClient`), never by calling handler objects. Router helper functions go above every `@router.*` decorator.
+- Never write the repo-root `.env` from tests; `tests/conftest.py` snapshots and restores it and fails the session if it changed. Use `tempfile`.
+- Contract tests that turn red when you change something elsewhere: `tests/test_docs_contract.py` (paths in living docs exist; every route is documented in `README.md` or `docs/WORKFLOW.md`), `tests/test_schema_constraints.py`, `tests/test_content_norm_equivalence.py`, `tests/test_sse_event_contract.py` with `tests/fixtures/sse_events.json`, `tests/test_deploy_units.py`, `tests/test_env_loading.py`, `tests/test_logging_setup.py`, `tests/test_dev_mode.py`, `tests/test_sql_index_hygiene.py`, `tests/test_secret_scan_config.py`, `tests/test_dev_ergonomics.py`, `tests/test_claude_lock.py`, `tests/test_pre_split_guards.py`, `tests/test_spa_serving.py`. Fix the code or the doc, do not widen allowlists.
+- CJK-dependent PDF tests skip locally without fonts; CI sets `REPORT_MARK_REQUIRE_CJK=1` so they cannot skip there. `REPORT_MARK_WRITE_CONSTRAINTS=1` regenerates the constraint golden list and is only for deliberate schema changes.
+- Retrieval or generation quality changes: run the relevant `eval/` harness before and after and compare with `make eval-compare BASE=... CAND=...`; the exit code is the verdict (0 ok, 1 regression, 2 incomparable, 3 unclassified metric).
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses Conventional Commit style with scopes, often in Traditional Chinese, for example `feat(report): ...`, `fix(sync): ...`, and `docs(sdd): ...`. Before committing, inspect recent commit messages and the staged diff; do not use a plain English sentence. Stage explicit paths (`git add <file>`), never `git add -A` — this is a shared working tree and others may have uncommitted WIP. PRs should explain behavior changes, list validation commands, link issues or plans, and include screenshots for UI changes.
+- Conventional Commits with a Traditional-Chinese scope: `feat(報告): ...`, `fix(閱讀頁): ...`, `docs(維運): ...`. Title under about 70 characters, body explains what and why.
+- Stage explicitly with `git add <path>`; never `git add -A` or `.` (shared working tree, others have WIP). Run ruff and the relevant tests before committing; do not bypass hooks.
+- The four CI jobs are required checks named by their Chinese `name` in `.github/workflows/ci.yml`; renaming a job requires updating branch protection in GitHub settings.
+- Documentation drift is enforced: renaming or deleting a file, or adding an endpoint, turns `tests/test_docs_contract.py` red. Update `README.md`, `docs/WORKFLOW.md`, `docs/ARCHITECTURE.md` or `CLAUDE.md` accordingly.
 
-## Security & Agent-Specific Instructions
+## Security & Configuration Tips
 
-Answer user-facing questions in Traditional Chinese. Do not commit the env file, generated data under `data/`, reports, screenshots, or local tool state. Auth is deny-by-default; keep login/session changes aligned with `web/auth.py` and `docs/EXTERNAL_ACCESS.md`. Treat `研報自動匯入/` as read-only source input. LLM output must never be concatenated into Typst source — see the security boundary section in `CLAUDE.md`.
+- Auth is deny-by-default and fail-closed. Sessions are HMAC cookies with a 7-day sliding and 30-day absolute limit; changing the password, `REPORT_MARK_SESSION_SECRET` or `REPORT_MARK_SESSION_EPOCH` logs everyone out by design.
+- External access requires `REPORT_MARK_EDGE_SECRET` or `REPORT_MARK_TRUSTED_PROXY_CIDRS`; the secret must be byte-identical in the repo-root `.env` and `deploy/.env`. See `docs/EXTERNAL_ACCESS.md`.
+- `DEV_NO_AUTH` and `SKIP_WARMUP` are read only from the process environment and must never be written to an env file.
+- Object storage: non-`local` modes fail closed on any missing `R2_*` value; credentials live in the repo-root `.env` and `/etc/default/report-mark-sync`, byte-identical. Presigned links carry `filename` and expire within an hour.
+- The `claude` CLI must be on PATH; systemd gets it from `deploy/systemd/report-mark-web.service.d/path.conf`. `/healthz` probes only the DB and cannot see a missing CLI; `scripts/check_web_health.sh` rc=5 can.
+- Secrets never enter argv (webhook URLs are fed to curl via stdin); gitleaks runs over full history in CI and `.gitleaks.toml` is guarded by `tests/test_secret_scan_config.py`.

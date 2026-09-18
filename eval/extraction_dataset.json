@@ -1,5 +1,5 @@
 {
- "version": "extraction-golden-v1",
+ "version": "extraction-golden-v1+draft-2026-09-18",
  "created": "2026-09-02",
  "notes": [
   "docs/EXTRACTION_REDESIGN.md §4.1 E0 的 golden set。第一批 15 份，優先 kgi／masterlink／sinopac／yuanta 四家，另加一份高盛英文版雙欄。",
@@ -8,7 +8,8 @@
   "欄位層口徑：title／report_date／broker 由 DB 預填（field_sources 標 db_prefill），instruments 的評等／目標價／EPS 由模型看頁面渲染圖與 pdfplumber 逐行文字草標（draft_from_page_render），**不是**從 report_signal 抄來的。目標價保幣別不換算。無目標價的報告 golden 為 null，抽出任何數值都算錯。",
   "annotation_status＝draft 表示尚未人工覆核；覆核後改 reviewed，並在 annotator_notes 記錄改了什麼。eval_extraction.py 的 --reviewed-only 只吃 reviewed。",
   "刻意未納入：掃描檔（全語料 0.70%）與亂碼檔（>2% 僅 26 筆）——第一批先量主流版型，這兩類留給第二批。",
-  "片段在全文出現多次時評測照首次出現算。scripts/review_extraction_golden.py 會把這種片段標黃；若首次出現就是標註者要的位置（目次項、頁首、封面標題在後頁重複）可以不改，否則延長片段到唯一。"
+  "片段在全文出現多次時評測照首次出現算。scripts/review_extraction_golden.py 會把這種片段標黃；若首次出現就是標註者要的位置（目次項、頁首、封面標題在後頁重複）可以不改，否則延長片段到唯一。",
+  "2026-09-18 新增 6 份 draft（凱基美股個股版型 2、大摩 2、元大早報 2）：v3 全庫 1,177 篇 max_columns=3 的版型在原 15 份裡是零覆蓋；由模型看頁面圖草標、句子逐條驗證 count==1，尚未人工覆核，比較時以 --reviewed-only 為準。"
  ],
  "cases": [
   {
@@ -1515,6 +1516,592 @@
    ],
    "annotation_status": "reviewed",
    "annotator_notes": "高盛英文版：主文在左、分析師與 Key Data／GS Forecast 側欄在右，故側欄排在主文之後。左側直排浮水印（MOC.OVONEL@ULNIVEK）會混進文字。ADR（TSM，$620）不另列標的。"
+  },
+  {
+   "id": "kgi-2344-daily-story-20260123",
+   "file_hash": "69a37c4bdc648fe5e1da93b0d68e6a5534d654c08d479ca01aeda4efe069c47d",
+   "file_name": "daily story_2344_2026_01_23_C_TW.pdf",
+   "file_path": "研報自動匯入/daily story_2344_2026_01_23_C_TW.pdf",
+   "source": "kgi",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 7,
+   "fields": {
+    "title": "多重引擎驅動 2026-27 年獲利強勁成長",
+    "report_date": "2026-01-23",
+    "broker": "kgi",
+    "instruments": [
+     {
+      "code": "2344",
+      "market": "TW",
+      "name": "華邦電",
+      "rating": "增加持股",
+      "target_price": {
+       "value": 170.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": 100.0,
+      "eps": {
+       "2026F": 16.0,
+       "2027F": 20.9
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "draft_from_page_render",
+    "report_date": "draft_from_page_render",
+    "broker": "draft_from_page_render",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "多重引擎驅動 2026-27 年獲利強勁成長"
+    },
+    {
+     "stream": "side",
+     "text": "增加持股‧維持"
+    },
+    {
+     "stream": "side",
+     "text": "12 個月目標價 (NT$) 170.0"
+    },
+    {
+     "stream": "side",
+     "text": "前次目標價 (NT$) 100.00"
+    },
+    {
+     "stream": "side",
+     "text": "1. 上修 DRAM ASP 與位元出貨量預"
+    },
+    {
+     "stream": "side",
+     "text": "2. Flash漲幅遠超預期。"
+    },
+    {
+     "stream": "side",
+     "text": "3M 平均成交量 (百萬股) : 160.2"
+    },
+    {
+     "stream": "main",
+     "text": "凱基預估2026-27年華邦電EPS將分別年增1726%/31%。"
+    },
+    {
+     "stream": "main",
+     "text": "根據凱基供應鏈調查，1Q26 華邦電"
+    },
+    {
+     "stream": "main",
+     "text": "受惠於：(1)中芯、華虹退出 NOR 市場"
+    },
+    {
+     "stream": "main",
+     "text": "我們的供應鏈調查顯示 CUBE進度順利，多個專案將於"
+    },
+    {
+     "stream": "main",
+     "text": "我們維持華邦電「增加持股」評等，目標價上調至 170 元"
+    },
+    {
+     "stream": "main",
+     "text": "CUBE 營收貢獻不如預期。"
+    },
+    {
+     "stream": "main",
+     "text": "股東權益報酬率 (%) (1.2) 0.7 4.2 55.3 46.6"
+    },
+    {
+     "stream": "p2",
+     "text": "圖1：華邦電DRAM季合約價漲幅預估"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "凱基個股動態更新：左側欄（評等／目標價／焦點內容／交易資料）＋右側主文＋頁尾財務表，p2 為圖表頁。側欄焦點句與主文段首粗體句逐字相同（「上修 DRAM ASP…」「Flash 漲幅遠超預期」），側欄片段保留「1. 」「2. 」編號以各自唯一；主文對應段落改取段內第二句。title 取首頁大標原文，未加「華邦電：」前綴（DB 預填慣例為「公司：大標」，覆核時決定）。"
+  },
+  {
+   "id": "kgi-5289-daily-story-20251212",
+   "file_hash": "6f0b1a4c3b9fcf56c577c9fd6ce52ee69d3080aeb74785a80d2589d5cddf7083",
+   "file_name": "daily story_5289_2025_12_12_C_TW.pdf",
+   "file_path": "研報自動匯入/daily story_5289_2025_12_12_C_TW.pdf",
+   "source": "kgi",
+   "kind": "stock",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 6,
+   "fields": {
+    "title": "庫存優勢成為關鍵分水嶺",
+    "report_date": "2025-12-12",
+    "broker": "kgi",
+    "instruments": [
+     {
+      "code": "5289",
+      "market": "TW",
+      "name": "宜鼎",
+      "rating": "增加持股",
+      "target_price": {
+       "value": 800.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": 500.0,
+      "eps": {
+       "2025F": 20.22,
+       "2026F": 40.8
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "draft_from_page_render",
+    "report_date": "draft_from_page_render",
+    "broker": "draft_from_page_render",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "庫存優勢成為關鍵分水嶺"
+    },
+    {
+     "stream": "side",
+     "text": "增加持股‧維持"
+    },
+    {
+     "stream": "side",
+     "text": "12 個月目標價 (NT$) 800"
+    },
+    {
+     "stream": "side",
+     "text": "前次目標價 (NT$) 500.0"
+    },
+    {
+     "stream": "side",
+     "text": "1. 4Q25獲利將大幅優於凱基預期。"
+    },
+    {
+     "stream": "side",
+     "text": "3. 上修 2026 年 EPS 預估至 40.8 元。"
+    },
+    {
+     "stream": "side",
+     "text": "3M 平均成交量 (百萬股) : 3.88"
+    },
+    {
+     "stream": "main",
+     "text": "我們認為市場尚未充分反應宜鼎相較同業更為穩健的庫存優勢。"
+    },
+    {
+     "stream": "main",
+     "text": "宜鼎 10-11 月營收 29.9 億元，累積達成"
+    },
+    {
+     "stream": "main",
+     "text": "我們在《通用型伺服器採購潮點燃記憶體超級週期》"
+    },
+    {
+     "stream": "main",
+     "text": "我們預期 2026年營收將隨 DRAM/NAND合約價上"
+    },
+    {
+     "stream": "main",
+     "text": "凱基維持對宜鼎正向看法，維持「增加持股」評等，上調目標價至 800元"
+    },
+    {
+     "stream": "main",
+     "text": "記憶體供貨短缺。"
+    },
+    {
+     "stream": "main",
+     "text": "股東權益報酬率 (%) 28.5 16.3 15.2 23.8 38.7"
+    },
+    {
+     "stream": "p2",
+     "text": "圖1：4Q25、1Q26財測暨市場共識比較"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "凱基個股動態更新，版型同 2344；股票掛上櫃（5289.TWO）。側欄焦點句「4Q25 獲利將大幅優於凱基預期」與主文段首粗體句逐字相同，側欄片段保留「1. 」編號以唯一。現況抽取器把主文第二段中段「在 4Q25 年 2026 價格將持續上漲下」的粗體內嵌數字甩出句外，該區段刻意不取片段。目標價 800 在側欄無小數位（原文即「800」）。title 取首頁大標原文，未加「宜鼎：」前綴。"
+  },
+  {
+   "id": "yuanta-morning-20241216",
+   "file_hash": "e4e307672e5bec2af7ef7618a7510e4a7b318d76eed9795f052801a7bd0aad5b",
+   "file_name": "【元大投顧】投資早報 20241216.pdf",
+   "file_path": "研報自動匯入/【元大投顧】投資早報 20241216.pdf",
+   "source": "yuanta",
+   "kind": "daily",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 12,
+   "fields": {
+    "title": "投資早報",
+    "report_date": "2024-12-16",
+    "broker": "yuanta",
+    "instruments": []
+   },
+   "field_sources": {
+    "title": "draft_from_page_render",
+    "report_date": "draft_from_page_render",
+    "broker": "draft_from_page_render",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "side",
+     "text": "12/16 6997 博弘 -"
+    },
+    {
+     "stream": "side",
+     "text": "12/13 2383台光電 買進"
+    },
+    {
+     "stream": "side",
+     "text": "12/11 PC下游產業 -"
+    },
+    {
+     "stream": "side",
+     "text": "12/3 8299群聯 持有"
+    },
+    {
+     "stream": "main",
+     "text": "台股盤勢分析 ························ 2"
+    },
+    {
+     "stream": "main",
+     "text": "網路軟體與服務產業 - 博弘 (6997) -"
+    },
+    {
+     "stream": "main",
+     "text": "半導體設備與耗材產業 - 台灣精材 (3467) -"
+    },
+    {
+     "stream": "main",
+     "text": "上週五台股以低盤開出，台塑集團持續探底"
+    },
+    {
+     "stream": "main",
+     "text": "從量價結構來看:依大盤技術線型解讀"
+    },
+    {
+     "stream": "main",
+     "text": "美國 11 月生產者物價指數年增 3%"
+    },
+    {
+     "stream": "main",
+     "text": "道瓊工業指數 43,828.1 -86.06 -0.20%"
+    },
+    {
+     "stream": "main",
+     "text": "費城半導體指數 5,149.8 +167.59 +3.36%"
+    },
+    {
+     "stream": "main",
+     "text": "1 長榮航 19,200 凱基金"
+    },
+    {
+     "stream": "col2",
+     "text": "10,365 鴻海 -8,535"
+    },
+    {
+     "stream": "col2",
+     "text": "3,105 聯陽 -1,493"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "元大投資早報 12 頁：p1 左欄近期報告清單（含評等窄欄）、右欄目次；p2 台股盤勢分析純文字；p3 上半國際股市／法人買賣超表、下半外資與投信買賣超並排（main＝左側外資表、col2＝右側投信表）。目次項「指標觀察台積，操作汰弱留強」「先進耗材市場佈局有成…」在後頁重複，改取含產業名與代碼的目次列。投信表整列（「中信金 10,365 鴻海 -8,535」）被現況抽取器把左側公司欄拆到另一區塊，片段縮為「買超張數 公司 賣超張數」三格。p4–p5 兩檔研究報告皆「未評等」、無目標價，instruments 依綜合日報口徑給空陣列。"
+  },
+  {
+   "id": "ms-6669-report-20250408",
+   "file_hash": "4a9b6446bb7307775234b6a42b4806da56d884b751816cbbe2c58ae79bd2aec2",
+   "file_name": "緯穎(6669)-MS20250408.pdf",
+   "file_path": "研報自動匯入/緯穎(6669)-MS20250408.pdf",
+   "source": "morgan_stanley",
+   "kind": "stock",
+   "language": "en",
+   "two_column": true,
+   "page_count": 9,
+   "fields": {
+    "title": "79% beat in March revenue driven by general servers and ASIC servers",
+    "report_date": "2025-04-08",
+    "broker": "morgan_stanley",
+    "instruments": [
+     {
+      "code": "6669",
+      "market": "TW",
+      "name": "Wiwynn Corp",
+      "rating": "Overweight",
+      "target_price": {
+       "value": 3100.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": null,
+      "eps": {
+       "2025E": 160.53,
+       "2026E": 188.65
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "draft_from_page_render",
+    "report_date": "draft_from_page_render",
+    "broker": "draft_from_page_render",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "Wiwynn Corp | Asia Pacific"
+    },
+    {
+     "stream": "head",
+     "text": "79% beat in March revenue"
+    },
+    {
+     "stream": "head",
+     "text": "driven by general servers and ASIC servers"
+    },
+    {
+     "stream": "main",
+     "text": "Wiwynn reported March revenue of NT$86,632mn (+86% m/m, +227% y/y)"
+    },
+    {
+     "stream": "main",
+     "text": "Stay OW as our Top Pick:"
+    },
+    {
+     "stream": "main",
+     "text": "exempt from tariffs (report here)."
+    },
+    {
+     "stream": "side",
+     "text": "Howard Kao Equity Analyst"
+    },
+    {
+     "stream": "side",
+     "text": "+886 2 2730-2989"
+    },
+    {
+     "stream": "side",
+     "text": "Sharon Shih Equity Analyst"
+    },
+    {
+     "stream": "side",
+     "text": "Wiwynn Corp (6669.TW, 6669 TT)"
+    },
+    {
+     "stream": "side",
+     "text": "Stock Rating Overweight"
+    },
+    {
+     "stream": "side",
+     "text": "Price target NT$3,100.00"
+    },
+    {
+     "stream": "main",
+     "text": "Base case, derived from a residual income (RI) model."
+    },
+    {
+     "stream": "main",
+     "text": "Accelerated demand pull-in from Meta, Microsoft and Amazon"
+    },
+    {
+     "stream": "main",
+     "text": "Delayed AI server penetration"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "大摩 UPDATE 短評 9 頁：p1 主文在左、分析師欄與 Key data（Stock Rating／Price target／Fiscal Year 表）在右，依 dataset 慣例右側欄排在 p1 主文之後、p2 主文之前；p2 為單欄 Valuation Methodology and Risks（Risks to Upside／Downside 清單），p3 起全是 Disclosure。這份沒有 Risk Reward 三欄頁，後段 main 取自 p2。分析師姓名（Howard Kao／Sharon Shih）在 p3 Analyst Certification 重複出現（count 3），故改用「姓名＋Equity Analyst」一行；「Valuation Methodology and Risks」「Wiwynn Corp (6669.TW)」在 Disclosure 也出現，未採用。首頁無 From／To 目標價變動，prev_target_price 為 null；eps 取 Fiscal Year 表 EPS (NT$)** 的 12/25e、12/26e。"
+  },
+  {
+   "id": "ms-3034-report-20260804",
+   "file_hash": "2360fbba5e005a6e6a4b2ab6d7da42e9610812902e29f62b7395f0aec872738a",
+   "file_name": "625887963691614549_260804_ms_novatek.pdf",
+   "file_path": "研報自動匯入/625887963691614549_260804_ms_novatek.pdf",
+   "source": "morgan_stanley",
+   "kind": "stock",
+   "language": "en",
+   "two_column": true,
+   "page_count": 8,
+   "fields": {
+    "title": "2Q Earnings Beat",
+    "report_date": "2026-08-04",
+    "broker": "morgan_stanley",
+    "instruments": [
+     {
+      "code": "3034",
+      "market": "TW",
+      "name": "Novatek",
+      "rating": "Underweight",
+      "target_price": {
+       "value": 414.0,
+       "currency": "TWD"
+      },
+      "prev_target_price": null,
+      "eps": {
+       "2026E": 34.61,
+       "2027E": 35.34
+      }
+     }
+    ]
+   },
+   "field_sources": {
+    "title": "draft_from_page_render",
+    "report_date": "draft_from_page_render",
+    "broker": "draft_from_page_render",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "head",
+     "text": "Novatek | Asia Pacific"
+    },
+    {
+     "stream": "head",
+     "text": "2Q Earnings Beat"
+    },
+    {
+     "stream": "main",
+     "text": "AlphaSignals Earnings Reaction"
+    },
+    {
+     "stream": "main",
+     "text": "Gross margin expanded 3.4ppt Q/Q to 42.4%, exceeding MSe by 0.2ppt and the"
+    },
+    {
+     "stream": "main",
+     "text": "2Q earnings above expectations: EPS was NT$10.4, +68% Q/Q and +69% Y/Y"
+    },
+    {
+     "stream": "main",
+     "text": "Stay UW: We expect 3Q revenue to grow at least 0-5% Q/Q"
+    },
+    {
+     "stream": "main",
+     "text": "Exhibit 1: Novatek 2Q26 Earnings Table"
+    },
+    {
+     "stream": "side",
+     "text": "Daniel Yen, CFA Equity Analyst"
+    },
+    {
+     "stream": "side",
+     "text": "+886 2 2730-2863"
+    },
+    {
+     "stream": "side",
+     "text": "Charlie Chan Equity Analyst"
+    },
+    {
+     "stream": "side",
+     "text": "Novatek (3034.TW, 3034 TT)"
+    },
+    {
+     "stream": "side",
+     "text": "Stock Rating Underweight"
+    },
+    {
+     "stream": "side",
+     "text": "Price target NT$414.00"
+    },
+    {
+     "stream": "main",
+     "text": "Base case, residual income model. Key assumptions: cost of equity constant at 9.8%"
+    },
+    {
+     "stream": "main",
+     "text": "Slower sell-through of foldable products."
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "大摩 UPDATE 短評 8 頁，版型同 6669：p1 主文（AlphaSignals 框、Key Takeaways、正文、Exhibit 1 表）在左，五位分析師欄與 Key data 在右，右側欄依 dataset 慣例排在 p1 主文之後；p2 為單欄 Valuation Methodology and Risks，p3 起 Disclosure；沒有 Risk Reward 三欄頁。分析師姓名在 p3 Analyst Certification 重複（count 3），改用「姓名＋Equity Analyst」一行。抽取器把大標「2Q」拆成「2 Q」、「3pm」拆成「3 pm」，正規化去空白後仍命中。首頁無 From／To 目標價變動，prev_target_price 為 null；eps 取 Fiscal Year 表 EPS (NT$)** 的 12/26e、12/27e。"
+  },
+  {
+   "id": "yuanta-morning-20251231",
+   "file_hash": "52575f427c18367995d8ef66569f297de48e9a73a266b4d1ba0e7d2c16a6bb0d",
+   "file_name": "【元大投顧】投資早報 20251231.pdf",
+   "file_path": "研報自動匯入/【元大投顧】投資早報 20251231.pdf",
+   "source": "yuanta",
+   "kind": "daily",
+   "language": "zh",
+   "two_column": true,
+   "page_count": 11,
+   "fields": {
+    "title": "投資早報",
+    "report_date": "2025-12-31",
+    "broker": "yuanta",
+    "instruments": []
+   },
+   "field_sources": {
+    "title": "draft_from_page_render",
+    "report_date": "draft_from_page_render",
+    "broker": "draft_from_page_render",
+    "instruments": "draft_from_page_render"
+   },
+   "order": [
+    {
+     "stream": "side",
+     "text": "發布日 報告 評等"
+    },
+    {
+     "stream": "side",
+     "text": "12/31 1504 東元 持有"
+    },
+    {
+     "stream": "side",
+     "text": "12/29 1477 聚陽 買進"
+    },
+    {
+     "stream": "side",
+     "text": "12/19 2634 漢翔 持有"
+    },
+    {
+     "stream": "main",
+     "text": "台股盤勢分析 ················ 2"
+    },
+    {
+     "stream": "main",
+     "text": "投資評等說明 / 免責聲明 ······· 11"
+    },
+    {
+     "stream": "main",
+     "text": "週二台股向下開低，所幸大盤在 5 日均線附近有守"
+    },
+    {
+     "stream": "main",
+     "text": "指數 28707.13 -103.76 -0.36%"
+    },
+    {
+     "stream": "main",
+     "text": "道瓊工業指數 48,367.1 -94.87 -0.20%"
+    },
+    {
+     "stream": "col2",
+     "text": "外資及陸資(億) 1,386.28 1,341.55 +44.72"
+    },
+    {
+     "stream": "col2",
+     "text": "上海綜合指數 3,965.1 -0.16 -0.00%"
+    },
+    {
+     "stream": "main",
+     "text": "1 群創 83,153"
+    },
+    {
+     "stream": "main",
+     "text": "10 南茂 7,434"
+    },
+    {
+     "stream": "col2",
+     "text": "32,618 元大金 -24,641"
+    },
+    {
+     "stream": "col2",
+     "text": "3,938 聯電 -6,223"
+    }
+   ],
+   "annotation_status": "draft",
+   "annotator_notes": "元大投資早報 11 頁：p1 左欄近期報告清單（含評等窄欄）、右欄目次；p2 單欄盤勢分析；p3 上方是「金融指標／法人買賣超」與「國際股市」合併的一張表（左半標 main、右半標 col2），下方是外資買賣超（main）與投信買賣超（col2）兩張並排清單。p1 目次項（台股盤勢分析、國際股市暨外資、投信買賣超、FOMC 會議紀錄…）不帶頁碼時都會在後頁標題重複出現（count 2），故連同點線與頁碼一起抄成唯一片段。p3 買賣超清單被現況抽取器拆成錯欄（外資買超／賣超張數／投信分三塊），整列「1 群創 83,153 友達 -32,874」找不到（count 0），改取只跨相鄰儲存格的片段「1 群創 83,153」與「32,618 元大金 -24,641」。首頁大標只有「投資早報」四字，title 未比照 DB 的「投資早報：<盤勢標題>」組合格式。早報無個股目標價，instruments 為空。"
   }
  ]
 }

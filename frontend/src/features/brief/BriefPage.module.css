@@ -104,6 +104,28 @@
   color: var(--tf-text-muted-aa);
 }
 
+/* 複製鈕靠右。尺寸、relative 與 svg 的處理照問答那顆（AssistantMessage.module.css 的 .act，
+   理由都寫在那裡）：relative 是「複製→已複製」換圖時的包含塊，display:block 消掉基線落差。 */
+.copy {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--tf-text-muted-aa);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.copy svg { display: block; width: 15px; height: 15px; stroke-width: 1.8; }
+.copy > span { display: flex; align-items: center; justify-content: center; }
+.copy:hover { background: var(--tf-border); color: var(--tf-graphite); }
+
 /* markdown 本文。renderAnswer 產出的是 h3/h4 + p/ul/ol/table，這裡只負責節奏。 */
 .md {
   color: var(--tf-text-1);

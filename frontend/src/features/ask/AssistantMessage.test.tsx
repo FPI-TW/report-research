@@ -169,17 +169,11 @@ test('「已停止生成」是 block：行內元素會黏到 inline-block 思考
   expect(getComputedStyle(marker).display).toBe('block')
 })
 
-test('複製回答：帶著本文引用到的來源一起走，貼出去之後 [1] 才有意義', async () => {
+test('複製回答：只複製本文，不附來源清單', async () => {
   const clipboard = await import('../../lib/clipboard')
   const spy = vi.spyOn(clipboard, 'copyText').mockResolvedValue()
-  render(<AssistantMessage turn={makeTurn({
-    answer: '展望正向 [1]。',
-    sources: [
-      { n: 1, report_id: 'r1', file_name: 'f.pdf', title: '台積電法說', market: 'TW', report_date: '2026-06-20', is_latest: false },
-      { n: 2, report_id: 'r2', file_name: 'g.pdf', title: '沒被引用的', market: 'TW', report_date: null, is_latest: false },
-    ],
-  })} {...noop} />)
+  render(<AssistantMessage turn={makeTurn({ answer: '展望正向 [1]。' })} {...noop} />)
   fireEvent.click(screen.getByRole('button', { name: '複製回答' }))
-  expect(spy).toHaveBeenCalledWith('展望正向 [1]。\n\n**來源研報**\n[1] 台積電法說（TW，2026-06-20）')
+  expect(spy).toHaveBeenCalledWith('展望正向 [1]。')
   spy.mockRestore()
 })

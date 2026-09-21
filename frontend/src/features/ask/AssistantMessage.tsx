@@ -2,7 +2,6 @@ import { Callout } from '../../components/primitives/Callout'
 import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
 import { CopyButton } from '../../components/animate-ui/components/buttons/copy'
-import { answerMarkdown } from '../../lib/exportMarkdown'
 import { ThinkingSteps } from './ThinkingSteps'
 import { renderAnswer } from '../../lib/askMarkdown'
 import { visibleAnswerView, type AnswerView, type Turn } from '../../lib/askReducer'
@@ -110,11 +109,9 @@ export function AssistantMessage({ turn, onCite, onOpenSources, onFeedback, onNo
               <Pressable className={`${styles.act} ${view.feedback === 'dislike' ? styles.on : ''}`} onClick={() => onFeedback(view.feedback === 'dislike' ? null : 'dislike')} aria-label="倒讚" aria-pressed={view.feedback === 'dislike'}><Icon name="thumbDown" size={15} /></Pressable>
             </>
           )}
-          {/* 複製的是本文＋本文引用到的來源清單：只帶本文的話，貼出去之後 [1]、[2] 沒有
-              任何意義（見 lib/exportMarkdown.ts）。 */}
           {/* 四顆動作鈕都是純圖示且等大：size="xs" 只是讓 animate-ui 自帶的方框接近目標值，
               真正釘死尺寸與圓角的是 .act（見 CSS 註解）。 */}
-          <CopyButton content={answerMarkdown(view)} variant="ghost" size="xs" className={styles.act} hoverScale={1.02} tapScale={0.94} aria-label="複製回答" title="複製回答" />
+          <CopyButton content={view.answer} variant="ghost" size="xs" className={styles.act} hoverScale={1.02} tapScale={0.94} aria-label="複製回答" title="複製回答" />
           <Pressable className={styles.act} onClick={onRegenerate} aria-label="重新生成" title="重新生成" disabled={disabled}><Icon name="refresh" size={15} /></Pressable>
           {refCount > 0 && (
             <>

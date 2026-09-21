@@ -303,6 +303,21 @@ save_obs_cache() {
 # 卡在「RESOLVED 沒送到」而關不掉事件，偵測功能等於被通知功能反噬。
 NOTIFY_SENT=no
 NOTIFY_OK=yes
+
+# curl 退出碼 → 一句人話。只列真的遇過或最常見的幾個；其餘請 operator 查 curl(1)。
+# rc=0 代表 curl 自己成功、是對方回了非 2xx——那時該看的是 HTTP code，不是這裡。
+_curl_rc_hint() {
+    case "$1" in
+        0)  ;;
+        3)  printf '＝URL 格式不合法' ;;
+        6)  printf '＝主機名解析不到' ;;
+        7)  printf '＝連線被拒' ;;
+        28) printf '＝逾時' ;;
+        35|51|58|59|60|77) printf '＝TLS 或憑證問題' ;;
+        *)  printf '＝見 curl(1) EXIT CODES' ;;
+    esac
+}
+
 notify() {
     local comp="$1" action="$2" severity="$3" summary="$4" reason="${5:-}"
     NOTIFY_SENT=no
@@ -310,6 +325,22 @@ notify() {
     # log 一律不含 URL——journal 是多人可讀的，secret 不進去。
     log "[$severity] $action $comp: $summary"
     [ -n "$WEBHOOK" ] || return 0
+
+    # **送之前先看值的形狀。** 2026-09-06 至 09-21 這個值一直是文件裡的佔位字串
+    # （照著安裝步驟整行貼上執行的結果），curl 每一輪都以「URL 格式不合法」拒絕，三筆事件
+    # 因 RESOLVED 送不出去而卡在 FIRING 十五天。形狀不對的值永遠送不出去，與其讓 curl
+    # 每輪回一個看不懂的失敗，不如直接說是設定錯了。**訊息不含值本身**：它可能是貼錯位置
+    # 的 secret。語意比照投遞失敗（NOTIFY_OK=no）：該送而沒送到，事件不得無聲結案。
+    local shape=bad
+    case "$WEBHOOK" in
+        *[[:space:]]*) ;;
+        http://?*|https://?*) shape=ok ;;
+    esac
+    if [ "$shape" != ok ]; then
+        NOTIFY_OK=no
+        log "webhook 設定值不是合法 URL（須以 http:// 或 https:// 開頭且不含空白；檢查 alert.env。事件已記錄，下一輪重試投遞）"
+        return 0
+    fi
 
     # 有界的 body：summary 由 systemd 屬性與計時差組成，長度理論上無上限，
     # 而接收端多半有 payload 上限。截斷比被對方靜默丟棄好。
@@ -328,11 +359,16 @@ notify() {
     # 使用者 `ps` 就看得到。改用 `-K -` 從 stdin 餵 curl 設定檔，URL 只存在於管線中。
     # 成功條件**明確定義為 2xx**：不用 `-f`（它把 3xx 當成功，而未跟隨的重導向代表
     # POST 根本沒到目的地）。連不上時 curl 的 %{http_code} 是 000。
-    local code
+    # **退出碼要留下來。** 舊版 `|| code=000` 把 curl 的退出碼與 stderr 一起丟掉，於是
+    # 「URL 格式不合法」「主機名解析不到」「連線被拒」「逾時」在 log 裡全是同一行
+    # HTTP 000，近萬筆失敗沒有一筆看得出原因。退出碼是封閉的小整數、不含 URL，可以進
+    # journal；stderr 仍然不收——`Could not resolve host: …` 會把主機名寫進多人可讀的 log。
+    local code rc=0
     code="$(printf 'url = "%s"\n' "$WEBHOOK" | curl -sS -o /dev/null -w '%{http_code}' \
         --connect-timeout "$NOTIFY_CONNECT_TIMEOUT" --max-time "$NOTIFY_MAX_TIME" \
         -K - -X POST -H 'Content-Type: application/json' \
-        --data-binary "$payload" 2>/dev/null)" || code=000
+        --data-binary "$payload" 2>/dev/null)" || rc=$?
+    [ "$rc" -eq 0 ] || code=000
     case "$code" in
         2??) NOTIFY_SENT=yes ;;
         *)
@@ -342,7 +378,7 @@ notify() {
             # 根本沒送達的通知開始計時——事故於是靜默到下一個提醒週期。
             # 重送不會形成風暴：端點掛著時每一輪都失敗、什麼都沒送出，端點恢復後
             # 只會送出一則，之後 last_notified 前進、去重照常生效。
-            log "webhook 投遞失敗（HTTP ${code:-000}；事件已記錄，下一輪重試投遞）"
+            log "webhook 投遞失敗（HTTP ${code:-000} curl_rc=${rc}$(_curl_rc_hint "$rc")；事件已記錄，下一輪重試投遞）"
             ;;
     esac
 }

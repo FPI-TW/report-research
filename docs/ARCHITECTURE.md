@@ -16,6 +16,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 |---|---|
 | `app/config.py` | 集中讀環境變數為 frozen dataclass `Settings`（`get_settings()`）。驗證器對 typo 不靜默：`LOG_LEVEL`、`EXTRACTOR`、`OBJECT_STORAGE_MODE` 打錯會警告退回預設或拒絕啟動 |
 | `app/logging_setup.py` | dictConfig 宣告 root logger；刻意不宣告 uvicorn 的三個 logger。只在 `web/server.py` 初始化，順序由 `tests/test_logging_setup.py` 釘住；批次腳本的 `logger.info` 無聲 |
+| `app/request_context.py` | HTTP 請求的日誌關聯 id（`contextvars`；`create_task`／`to_thread` 自動沿用）。handler 上的 `RequestIdFilter` 把它蓋到每筆 record，日誌行以 `rid=` 呈現；批次與啟動期為 `-`。**不是** `qa_log.request_id`（那是前端冪等鍵） |
 
 ### 2.2 `app/services/` 檢索與問答
 
@@ -66,6 +67,8 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
 | `web/auth.py` | 共用帳密、HMAC session、失敗追蹤、可信代理 |
 | `web/concurrency.py` | `ConcurrencyGate`（刻意不支援 `async with`）、單 worker 偵測 |
+| `web/request_log.py` | 純 ASGI middleware（最外層）：設關聯 id、回應帶 `X-Request-Id`（上游給的只在形狀安全時沿用）、`/api/*` 每請求記一行 `status`／`elapsed_ms`；`/healthz`、`/api/progress` 正常時不記，變慢或 5xx 照記。不記 query string |
+| `web/ttl_cache.py` | 有上限、依 key 分格的單行程 TTL 快取；`reset_all()` 由 `tests/conftest.py` 每題清空。目前用在雷達目錄回應 |
 | `web/dev_mode.py` | `DEV_NO_AUTH` 三條件放行 |
 | `web/env_loader.py` | 讀 repo 根 `.env`，不做 shell 展開 |
 
@@ -122,7 +125,8 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 - lifespan：`assert_single_worker`（偵測到多 worker 拒絕啟動，偵測不到放行）→ `assert_pgvector_version`（低於 0.8 fail-closed，連不上 DB 放行交給 `/healthz`）→ `llm.claude_cli_path()` 自檢（找不到只記 ERROR、不擋啟動：讀取類功能不需要 CLI）→ 背景暖機（embed 再 rerank，**必須依序**，兩執行緒同時首次 import transformers 會競態）。
 - 併發閘只剩一個：`/api/ask` 容量 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（佇列 `ASK_MAX_QUEUE`，滿載 429 ＋ `Retry-After: 30`）。問答忠實度抽查背景任務的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT` 同樣是行程內狀態。都是 per-process，lifespan 擋多 worker。
 - SSE：`deps._with_heartbeat` 每 `SSE_HEARTBEAT_INTERVAL`（20 秒）插註解行，因 nginx `proxy_read_timeout` 60 秒；前端 `readSSE.parseFrame` 對無 `data:` 的框回 null。
-- `/healthz` 只探 DB（`SELECT 1`，3 秒逾時，結果快取 5 秒），503 而非 200 加 degraded 欄位。存在理由：登入路徑不碰 DB，DB 掛掉是「假活著」。它必須同時在路由與白名單，只掛路由等於永遠 302。
+- `/healthz` 只探 DB（`SELECT 1`，3 秒逾時，結果快取 5 秒），503 而非 200 加 degraded 欄位。存在理由：登入路徑不碰 DB，DB 掛掉是「假活著」。它必須同時在路由與白名單，只掛路由等於永遠 302。回應只有 `status` 一個鍵是釘死的不變量。
+- `/healthz/storage` 回報物件儲存可達性（`disabled`／`unknown`／`ok`／`degraded`，只有 degraded 回 503）。刻意不併進 `/healthz`：R2 掛掉時其餘功能都活著，對外監控不該因此判站台死亡。它在 auth 白名單裡，但 handler 只回答本機直連（`dev_mode.is_direct_loopback`），經邊緣一律 404。探測是 `ObjectStorage.ping()`（`list_objects_v2` `MaxKeys=1`），成功快取 5 分鐘、失敗 60 秒、連續兩次失敗才翻 degraded。消費端是 `scripts/check_web_health.sh` 退出碼 6。
 - `web/routers/monitor.py`：`/api/stats` 與 `/api/progress` 共用 15 秒 DB 快取（同模組是刻意的，拆開就分裂成兩份）；runtime 區塊 10 秒；`data/tags/` 檔數 60 秒（實測 15,852 檔冷 412 ms，是真正的熱點）。router 檔的輔助函式一律放在所有 `@router.*` 之上，夾在中間會讓端點回 422，只有 HTTP 層測試抓得到。
 - SPA：`/app/assets` 的 Mount 必須贏過 `/app/{spa_path:path}`（`tests/test_pre_split_guards.py`）；`frontend/dist` 不存在回 503；`tests/test_spa_serving.py` 對真 build 驗證，缺 dist 是紅不是 skip（`SKIP_SPA_TESTS=1` 才跳過）。
 
@@ -162,6 +166,7 @@ schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具�
 | rerank | `ASK_RERANK_ENABLED`（1）、`ASK_RERANK_CANDIDATES`（50）、`ASK_RERANK_TIMEOUT`（60；實測 50 對約 34 秒）、`RERANK_MODEL` |
 | 忠實度 M8 | `ASK_FAITHFULNESS_ENABLED`（1）、`FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，讀者只有監控頁 `_FAITHFULNESS_MIN` 與 `scripts/eval_faithfulness.py`）、`ASK_FAITHFULNESS_SAMPLE_RATE`（1.0）、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT`（60）、`ASK_FAITHFULNESS_TIMEOUT`（240，實測 48–142 秒）、`ASK_FAITHFULNESS_MAX_INFLIGHT`（2） |
 | 抽取與儲存 | `EXTRACTOR`（pypdf）、`EXTRACTION_REVIEW_MIN`（0.6）、`EXTRACTION_REVIEW_MIN_COVERAGE`（0.30）、`EXTRACTION_REVIEW_MAX_GARBLED`（0.02）、`OBJECT_STORAGE_MODE`（local）、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS`（3600，上限一小時） |
+| 雷達 | `RADAR_CATALOG_CACHE_TTL`（60 秒；0 停用）：`/api/radar/instruments` 整份回應依查詢參數快取，`report_signal` 每 3 小時才更新 |
 | DB 與嵌入 | `LOG_LEVEL`（INFO）、`DB_POOL_SIZE`（5）、`DB_MAX_OVERFLOW`（15）、`DB_POOL_TIMEOUT`（10）、`DB_POOL_RECYCLE`（1800）、`DB_STATEMENT_TIMEOUT_MS`（60000）、`DB_IDLE_TX_TIMEOUT_MS`（0）、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS`（0）、`EMBED_MAX_CONCURRENCY`（1）、`EMBED_TORCH_THREADS`（0）、`TRUSTED_DATA_ENABLED`（1） |
 
 既有散在各檔的 `os.getenv` **不要順手搬**（`grep -rn os.getenv app web`）：`REPORT_MARK_DB_URL`、`ASK_FOLLOWUP_MODEL`、`ASK_FOLLOWUP_TIMEOUT`、`REPORT_MARK_RERANK_WORKERS`（3）、`REPORT_MARK_RERANK_TIMEOUT`（30）、`ASK_MAX_QUEUE`（20）、`SSE_HEARTBEAT_INTERVAL`（20）、`SKIP_WARMUP`、`DEV_NO_AUTH`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`（4096）與 auth 那組 `REPORT_MARK_*`。`REPORT_MARK_*` 前綴只給 auth／DB，帶前綴的例外是 live 的不要改名。

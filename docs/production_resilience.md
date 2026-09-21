@@ -880,7 +880,7 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 
 **`/healthz` 目前只探 DB**（一次 `SELECT 1`，內部逾時 3 秒，結果快取 5 秒）。
 它**不**代表「所有相依都健康」——不驗 BGE-M3 是否載入、不驗 reranker、不驗 NAS、
-不驗 `claude` CLI。它能證明的是兩件事，而那兩件正好涵蓋 2026-08-18 的失效型態：
+不驗 `claude` CLI、不驗 R2（後兩者由探針另外檢查：退出碼 5 讀 PATH drop-in，退出碼 6 讀只回答本機直連的 `/healthz/storage`）。它能證明的是兩件事，而那兩件正好涵蓋 2026-08-18 的失效型態：
 
 1. **uvicorn 真的綁上了 :8097 並且會回應**（探針連得上）
 2. **DB 可用**（回 200 而非 503）
@@ -898,6 +898,7 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 | `3` | 剛啟動的寬限期內 | success（unit 宣告 `SuccessExitStatus=3`） |
 | `4` | 探針自己不能執行（缺 `curl`） | **failed → `OnFailure`** |
 | `5` | `/healthz` 正常，但問答相依的 `claude` 不在 web unit 的 PATH drop-in 上（2026-09-02 那種「healthz 綠、問答全壞」） | **failed → `OnFailure`** |
+| `6` | `/healthz` 正常，但物件儲存（R2）連不上：`/healthz/storage` 回 503。原檔下載與 PDF 檢視會失敗，其餘功能正常 | **failed → `OnFailure`** |
 
 **兩種「連不上」都算失敗**：2026-08-18 的失效型態是 uvicorn 根本沒綁上（連不上），
 不是回 503。實測本機在 WSL mirrored networking 下，連一個沒有 listener 的埠得到的是
@@ -1057,7 +1058,7 @@ sudo systemctl disable --now report-mark-health.timer
 
 | 欄位 | 用途 |
 |---|---|
-| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤、5 服務降級＝`/healthz` 正常但 `claude` 不在 web unit 的 PATH 上） |
+| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤、5 服務降級＝`/healthz` 正常但 `claude` 不在 web unit 的 PATH 上、6 服務降級＝`/healthz` 正常但 R2 連不上） |
 | `ExecMainExitTimestampMonotonic` | **單調時鐘**，判斷「是否有新觀測」。用它而非牆鐘，因為 WSL 休眠喚醒與時區調整會讓牆鐘跳動 |
 | `Result` | 附在通知訊息裡供人判讀 |
 

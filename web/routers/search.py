@@ -10,6 +10,8 @@ SearchResponse/ReportListItem/ReportListResponse）只有這組用，故一併�
 SEARCH_QUERY_MAX_CHARS 是本組設定，定義/匯入於本模組。
 """
 import asyncio
+import logging
+import time
 from collections import Counter
 
 from fastapi import APIRouter, Query
@@ -21,6 +23,8 @@ from app.services.store import list_reports
 from app.services.tagging import MARKETS
 from app.services.textnorm import clean_text
 from web import deps
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -170,6 +174,7 @@ async def search(
     offset: int = Query(0, ge=0),
     passages: int = Query(3, ge=1, le=6),  # 每篇保留的命中片段數
 ):
+    t0 = time.monotonic()
     mkt = market if market and market != "全部" else None
     instr = instrument_type if instrument_type and instrument_type != "全部" else None
     rtype = report_type if report_type and report_type != "全部" else None
@@ -241,6 +246,18 @@ async def search(
                 passages=ps,
             )
         )
+    # 檢索沒有 qa_log 那樣的落庫紀錄，這一行是唯一的量尺：零命中率、lexical 截斷發生率、
+    # dense／lexical 各花多久、翻到多深。`lexical_truncated` 旗標當初就是為了「先量出發生率」
+    # 而加的，但先前只回給前端、伺服器端不留。stats 由 hybrid_search 填；測試替身不填，故 .get。
+    logger.info(
+        "search q=%r total=%d offset=%d limit=%d market=%s type=%s sort=%s "
+        "lex_hits=%s lex_truncated=%s lex_fallback=%r dense_ms=%s lex_ms=%s elapsed_ms=%.1f",
+        q, total, offset, limit, mkt, rtype, sort,
+        retrieval_stats.get("lex_hits"), bool(retrieval_stats.get("lex_truncated")),
+        retrieval_stats.get("lex_fallback_term", ""),
+        retrieval_stats.get("dense_ms"), retrieval_stats.get("lex_ms"),
+        (time.monotonic() - t0) * 1000,
+    )
     return SearchResponse(
         query=q,
         market=mkt,

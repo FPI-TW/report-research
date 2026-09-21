@@ -30,6 +30,7 @@ EXIT_PROCESS=2   # L1：unit 不在 active
 EXIT_GRACE=3     # 剛啟動的寬限期內，不視為故障（unit 需宣告 SuccessExitStatus=3）
 EXIT_TOOLING=4   # 探針自己不能執行（缺 curl 等）
 EXIT_DEGRADED=5  # L3：HTTP 健康，但問答路徑的必要相依（claude CLI）不在 web unit 的 PATH 上
+EXIT_STORAGE=6   # L3：HTTP 健康，但物件儲存（R2）連不上——原檔與 PDF 全壞，其餘功能正常
 
 # ── L3：問答相依檢查的設定 ───────────────────────────────────────────────
 # 為什麼需要它：2026-09-02 claude CLI 從 npm 全域改裝成原生安裝，舊路徑下的
@@ -43,6 +44,16 @@ EXIT_DEGRADED=5  # L3：HTTP 健康，但問答路徑的必要相依（claude CL
 # 看到的是檔案、不是 unit 實際載入的值。
 HEALTH_DEP_BIN="${HEALTH_DEP_BIN:-claude}"
 HEALTH_DEP_DROPIN="${HEALTH_DEP_DROPIN:-/etc/systemd/system/report-mark-web.service.d/path.conf}"
+
+# ── L3：物件儲存檢查的設定 ───────────────────────────────────────────────
+# 為什麼需要它：OBJECT_STORAGE_MODE=r2 時缺 key 即 503 不回退，bucket 或憑證出問題時
+# 原檔與 PDF 全壞，而 /healthz 只探 DB 照樣綠；在這之前唯一的偵測是每週一次的對帳。
+#
+# 探測本身由 web 行程做（它才有 R2 憑證與 boto），結果經 /healthz/storage 取得——那支
+# 端點只回答本機直連的請求。這裡只認一種訊號：**HTTP 503＝確定連不上**。404（舊版本
+# 沒有這支端點）、連不上、逾時、200 都當作「判不出來或正常」，不開事件——與上面
+# drop-in 不存在就跳過是同一個原則。設成空字串可整段停用。
+HEALTH_STORAGE_URL="${HEALTH_STORAGE_URL-${HEALTH_URL%/}/storage}"
 
 # 用 127.0.0.1 而非 localhost：uvicorn 綁的是 0.0.0.0（**只有 IPv4**），而 localhost
 # 在多數 glibc 設定下會先解析到 ::1，curl 會拿到 connection refused——那是探針自己
@@ -70,6 +81,17 @@ check_unit_dependency() {
         [ -n "$dir" ] && [ -x "$dir/$HEALTH_DEP_BIN" ] && return 0
     done
     printf 'dep_missing_%s' "$HEALTH_DEP_BIN"
+}
+
+# 回傳空字串＝儲存正常、未啟用或無法判定；非空＝reason（封閉詞彙：storage_unreachable）。
+# 只用 curl，不呼叫 systemctl（理由同上）。web 端有快取，這裡每次問都很便宜。
+check_storage() {
+    [ -n "$HEALTH_STORAGE_URL" ] || return 0
+    local scode
+    scode="$(curl -s -o /dev/null -w '%{http_code}' --max-time "$HEALTH_TIMEOUT" "$HEALTH_STORAGE_URL" 2>/dev/null)" \
+        || return 0
+    [ "$scode" = "503" ] && printf 'storage_unreachable'
+    return 0
 }
 
 command -v curl >/dev/null 2>&1 || {
@@ -103,6 +125,12 @@ while [ "$attempt" -lt "$HEALTH_RETRIES" ]; do
             emit degraded "$code" "$elapsed_ms" "$attempt" "$dep_reason"
             echo "check_web_health: /healthz 正常，但 $HEALTH_DEP_BIN 不在 $HEALTH_DEP_DROPIN 宣告的 PATH 上（問答路徑會以 FileNotFoundError 失敗）" >&2
             exit "$EXIT_DEGRADED"
+        fi
+        storage_reason="$(check_storage)"
+        if [ -n "$storage_reason" ]; then
+            emit degraded "$code" "$elapsed_ms" "$attempt" "$storage_reason"
+            echo "check_web_health: /healthz 正常，但物件儲存（R2）連不上（原檔下載與 PDF 檢視會失敗；細節見 web 日誌的「healthz 物件儲存探測失敗」）" >&2
+            exit "$EXIT_STORAGE"
         fi
         emit ok "$code" "$elapsed_ms" "$attempt" ok
         exit "$EXIT_OK"

@@ -164,6 +164,9 @@ class Settings:
     # 執行期可觀測性
     log_level: str
 
+    # 觀點雷達目錄（web/routers/radar.py）的回應快取秒數；0＝停用
+    radar_catalog_cache_ttl: float
+
     # DB 連線池與逾時（app/services/db.py）—— 本區段只放 DB_* 旋鈕
     db_pool_size: int
     db_max_overflow: int
@@ -257,6 +260,10 @@ def _load() -> Settings:
         # 與抽查時間脫節。
         ask_faithfulness_max_inflight=max(0, int(os.getenv("ASK_FAITHFULNESS_MAX_INFLIGHT", "2"))),
         log_level=_log_level("LOG_LEVEL", "INFO"),
+        # 目錄每次請求要跑兩次三層 CTE（清單＋facets，含對 stock_targets 全表 unnest），帶 stance
+        # 時還要全量取回算共識；而 report_signal 每 3 小時才由批次更新一次。60 秒的舊資料
+        # 在這個更新頻率下看不出來，換到的是雷達頁落地、換頁、切市場都不必重算。
+        radar_catalog_cache_ttl=max(0.0, float(os.getenv("RADAR_CATALOG_CACHE_TTL", "60"))),
         # ── DB 連線池與逾時（app/services/db.py）─────────────────────────────
         # 池是 **per-process**：生產 web 是單 worker（report-mark-web.service 的
         # ExecStart 沒有 --workers），批次腳本各自是獨立行程、各自一個池。

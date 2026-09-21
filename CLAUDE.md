@@ -44,6 +44,7 @@ uv run python scripts/ingest_all.py
 - dataclass 新欄位放末尾並給預設。`rows.ChunkRow` 與 `store._meta_columns` 是位置對齊的：取欄位用 `ChunkRow._fields.index(...)`，不寫數字。
 - **測試絕不可寫 repo 根的真實環境檔**：這台機器 repo root 就是部署目錄，`finally` 擋得住例外、擋不住行程被殺。要驗載入行為餵 `tempfile`。`tests/test_env_loading.py` 與 `tests/conftest.py` 是第二道防線，不是許可證。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺 CJK 字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
+- 加相依會過授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件的 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉那個相依，不是加豁免。相依更新由 `.github/dependabot.yml` 每週分組開 PR，`torch` 與 `@embedpdf/*` 刻意排除（理由在該檔）。
 - 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`。
 
 ## 改動對照表（改了 A 就要動 B）
@@ -81,7 +82,7 @@ uv run python scripts/ingest_all.py
 ### 抽取與入庫
 - 全語料三支：`scripts/extract_all.py` → `data/extracted/<hash>.json`（per-hash 快取，`app/services/extraction/cache.py`）→ `scripts/tag_all_cli.py` → `data/tags/<hash>.json` → `scripts/ingest_all.py`（gate on `is_research`＋`market`）。生產入庫走 `scripts/sync_new_reports.sh`。
 - E1 抽取層：`extract_text` 門面、pdfplumber 版面層（`app/services/extraction/layout.py`），品質只標記不擋；`extraction_log` 每個進過管線的 `file_hash` 一列，`stopped_at` 詞彙與 `store.STOPPED_AT` 逐字對齊。**刻意不用 PyMuPDF**（AGPL，本站對外服務）。
-- R2 物件儲存（`app/services/object_storage.py`）：`OBJECT_STORAGE_MODE` local（預設，既有行為不變）／hybrid／r2；非 local 缺任一 `R2_*` 啟動即 fail-closed，憑證在 repo root `.env` 與 `/etc/default/report-mark-sync` 各一份、逐字相同。遷移與對帳走 `scripts/migrate_object_storage.py`、`scripts/reconcile_object_storage.py`（順序見 `docs/WORKFLOW.md`），`file_path` 仍指舊掛載點時先跑 `scripts/repoint_file_paths.py`。**瀏覽器端兩個前提**：bucket 要設 CORS（PDF 檢視器是 `fetch` 跟 302 到 presigned URL，沒設就整頁靜默失敗、伺服器零錯誤）；presign 一律帶 `filename`（key 是 hash，跨來源後 `<a download>` 失效）。`r2` 模式下 `has_file` 只認 key（`original_available`），缺 key 即 503 不回退，所以切換前對帳要全零；切換後由 `report-mark-r2-reconcile.timer` 每週對帳接告警鏈，`/healthz` 不探 R2。
+- R2 物件儲存（`app/services/object_storage.py`）：`OBJECT_STORAGE_MODE` local（預設，既有行為不變）／hybrid／r2；非 local 缺任一 `R2_*` 啟動即 fail-closed，憑證在 repo root `.env` 與 `/etc/default/report-mark-sync` 各一份、逐字相同。遷移與對帳走 `scripts/migrate_object_storage.py`、`scripts/reconcile_object_storage.py`（順序見 `docs/WORKFLOW.md`），`file_path` 仍指舊掛載點時先跑 `scripts/repoint_file_paths.py`。**瀏覽器端兩個前提**：bucket 要設 CORS（PDF 檢視器是 `fetch` 跟 302 到 presigned URL，沒設就整頁靜默失敗、伺服器零錯誤）；presign 一律帶 `filename`（key 是 hash，跨來源後 `<a download>` 失效）。`r2` 模式下 `has_file` 只認 key（`original_available`），缺 key 即 503 不回退，所以切換前對帳要全零；切換後由 `report-mark-r2-reconcile.timer` 每週對帳接告警鏈；`/healthz` 不探 R2（回應只有 `status` 一個鍵是釘死的），bucket／憑證失效由只回答本機直連的 `/healthz/storage` 加探針退出碼 6 偵測。
 
 ## 資料層陷阱
 - `research_report.full_text` 是未清理的原始抽取（帶 CJK 字間空白）；顯示一律 `clean_extracted(full_text)`，不是 `clean_text`（後者折掉換行，只適合檢索片段）。

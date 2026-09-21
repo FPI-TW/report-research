@@ -81,6 +81,24 @@ def _reset_monitor_caches():
 
 
 @pytest.fixture(autouse=True)
+def _reset_ttl_caches():
+    """`web.ttl_cache` 的所有快取每題前後各清一次（理由同上面的監控快取）。
+
+    雷達目錄快取的 key 是查詢參數：兩個測試用同一組參數、不同的假查詢函式打同一支端點時，
+    後者會拿到前者的回應。同樣不主動 import——模組沒載入就沒有快取要清。
+    """
+
+    def _clear() -> None:
+        mod = sys.modules.get("web.ttl_cache")
+        if mod is not None:
+            mod.reset_all()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _clear_trusted_providers():
     """M4a：trusted registry／快取／限流是模組級狀態。每測試後清空，防止
     忘記 tearDown 的註冊型測試讓「空 registry＝安全婉拒」的 M4 回歸誤判。"""

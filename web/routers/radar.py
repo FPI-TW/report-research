@@ -12,6 +12,7 @@ from collections import Counter
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.config import get_settings
 from app.services.radar import (
     build_broker_history,
     build_events_page,
@@ -33,10 +34,20 @@ from app.services.radar.schemas import (
 )
 from app.services.tagging import MARKET_DISPLAY
 from web import deps
+from web.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# 目錄回應快取：key 是整組查詢參數，值是組好的回應物件（pydantic model，唯讀使用）。
+# 快取整份回應而不是個別查詢，是因為最貴的那條路徑（帶 stance：全量取回＋全部算共識）
+# 貴在 Python 端的聚合，只快取 SQL 結果省不到它。理由與數字見 app/config.py。
+# 256 格：使用者在搜尋框逐字輸入時每個前綴各佔一格，上限讓它不會無止境長大。
+_CATALOG_CACHE = TTLCache(
+    ttl=get_settings().radar_catalog_cache_ttl, max_entries=256, name="radar_catalog"
+)
 
 
 def _stance_of(consensus) -> str | None:
@@ -73,6 +84,14 @@ async def radar_instruments(
     （不算就沒有東西可篩），這是刻意的——回一份沒被篩過的清單比多算一次更糟。
     """
     t0 = time.monotonic()
+    cache_key = (market, q, limit, offset, sort, stance, with_consensus)
+    cached = _CATALOG_CACHE.get(cache_key)
+    if cached is not None:
+        logger.info(
+            "radar instruments total=%d q=%s market=%s sort=%s stance=%s consensus=%s cache=hit elapsed_ms=%.1f",
+            cached.total, q, market, sort, stance, with_consensus, (time.monotonic() - t0) * 1000,
+        )
+        return cached
     async with deps.SessionFactory() as session:
         if stance is None:
             page = await deps.list_radar_instruments(
@@ -131,12 +150,12 @@ async def radar_instruments(
         for r in rows
     ]
     logger.info(
-        "radar instruments total=%d q=%s market=%s sort=%s stance=%s consensus=%s elapsed_ms=%.1f",
+        "radar instruments total=%d q=%s market=%s sort=%s stance=%s consensus=%s cache=miss elapsed_ms=%.1f",
         total, q, market, sort, stance, with_consensus, (time.monotonic() - t0) * 1000,
     )
     next_offset = offset + len(items)
     has_more = next_offset < total
-    return RadarInstrumentsResponse(
+    response = RadarInstrumentsResponse(
         total=total,
         limit=limit,
         offset=offset,
@@ -146,6 +165,8 @@ async def radar_instruments(
         facets=dict(facets),
         latest_report_date=latest_overall.isoformat() if latest_overall else None,
     )
+    _CATALOG_CACHE.put(cache_key, response)
+    return response
 
 
 @router.get(

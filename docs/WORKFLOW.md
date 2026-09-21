@@ -182,7 +182,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 1. 維持 `local`，確認 legacy 路徑可讀。
 2. 設好憑證，以 `hybrid` 跑 `scripts/migrate_object_storage.py --dry-run --kind all`，確認計畫再去掉 `--dry-run`。只補缺 key 的 originals（`--kind` 仍收 `originals`／`all`，`all` 等同 originals，讓 `report-mark-r2-reconcile.service` 的命令列不必改），上傳成功後才更新 DB key；不刪除、不重嵌、不重匯入；可重跑。
 3. 跑 `scripts/reconcile_object_storage.py --dry-run --kind all` 處理 missing／SHA／orphan，全零才切 `r2`。orphan 掃描只看 `originals/` 前綴；bucket 裡舊的 `generated/` 生成 PDF 不算 orphan，由人手動清。
-4. 切換後 `report-mark-r2-reconcile.timer` 每週一 07:00 對帳接告警鏈；`/healthz` 不探 R2。
+4. 切換後 `report-mark-r2-reconcile.timer` 每週一 07:00 對帳接告警鏈；`/healthz` 不探 R2，bucket／憑證層級的失效由健康探針經 `/healthz/storage` 偵測（`scripts/check_web_health.sh` 退出碼 6，約 5 分鐘內），個別物件缺漏仍靠對帳。
 
 瀏覽器端兩個前提：bucket 要設 CORS（只開 GET／HEAD），沒設就閱讀頁 PDF 檢視器整頁靜默失敗、伺服器零錯誤；presign 一律帶 `filename`（key 是 hash，跨來源 302 後 `<a download>` 失效）。`--limit` 在兩個工具中都會限制 orphan 判定（沒讀完全部 DB 列就不判 orphan）。
 
@@ -219,6 +219,7 @@ make sync-once
 | 症狀 | 看哪裡 |
 |---|---|
 | 問答無聲中斷、`FileNotFoundError: 'claude'` | web unit 的 PATH drop-in `deploy/systemd/report-mark-web.service.d/path.conf`；`scripts/check_web_health.sh` rc=5 就是這個 |
+| 原檔下載／PDF 檢視全數 503，其餘正常 | R2 bucket 或憑證（repo root `.env` 與 `/etc/default/report-mark-sync` 兩份要逐字相同）；`scripts/check_web_health.sh` rc=6 就是這個，細節在 web 日誌的「healthz 物件儲存探測失敗」 |
 | 摘要、摘錄無聲漏跑 | `/etc/default/report-mark-sync` 的 `SYNC_PATH_EXTRA` 是否指到實際 node 版本目錄 |
 | 批次 rc=75 | 撞 `claude` 鎖，不是錯誤；`make freshness` 判是否停更 |
 | 每個查詢 500 但登入正常 | DB 沒起來（假活著），打 `/healthz` 不看 `systemctl is-active` |

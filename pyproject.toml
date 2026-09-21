@@ -13,6 +13,7 @@ dependencies = [
     # （被它釘成 ==，無法獨立升）與 pypdfium2，兩者授權分別是 MIT 與 BSD-3/Apache-2.0。
     # **刻意不用 PyMuPDF**：它是 AGPL-3.0／商用雙授權，而本站經 Cloudflare Tunnel
     # 對外服務，AGPL §13 的網路條款會被觸發。詳見 docs/EXTRACTION.md §2。
+    # 這條約束由 tests/test_license_guard.py 機械化守門（含遞移相依）。
     "pdfplumber>=0.11.10",
     "python-docx>=1.1",
     "FlagEmbedding>=1.2",

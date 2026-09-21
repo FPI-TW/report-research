@@ -44,6 +44,7 @@ from web import (
     concurrency,  # noqa: E402
     deps,  # noqa: E402
 )
+from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
@@ -151,7 +152,8 @@ app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
 # /healthz 必須免認證：它存在的理由就是讓**外部**監控能分辨「DB 掛了」與「站台正常」。
 # 登入路徑完全不碰 DB，所以 DB 掛掉時登入仍會成功——沒有這個豁免，探測只會拿到
 # 302 導向 /login，與不存在的路由完全相同。回應內容刻意極簡（見 routers/health.py）。
-_AUTH_ALLOWLIST = {"/login", "/healthz"}
+# /healthz/storage 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
+_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
 
 
@@ -189,6 +191,10 @@ async def require_login(request: Request, call_next):
     if path.startswith("/api/"):
         return JSONResponse({"detail": "未登入"}, status_code=401)
     return RedirectResponse("/login", status_code=302)
+
+
+# 最後加＝最外層：401、302 與未捕捉例外的 500 也都拿得到關聯 id、也都記得到一行。
+app.add_middleware(RequestLogMiddleware)
 
 
 

@@ -269,6 +269,18 @@ class ObjectStorage:
     def delete(self, key: str) -> None:
         self._call("delete_object", Bucket=self.settings.r2_bucket, Key=key)
 
+    def ping(self) -> None:
+        """Cheapest call that proves endpoint, credentials and bucket are all usable.
+
+        ``list_objects_v2(MaxKeys=1)`` rather than ``head_object`` on a sentinel key: a HEAD
+        response has no body, so a missing *bucket* and a missing *key* both surface as a bare
+        404 and would be indistinguishable from a healthy "not found".  The list call reports
+        ``NoSuchBucket`` with a body, which ``_call`` raises as ``ObjectStorageError``.  It is
+        also the operation the reconcile job already performs with these credentials, so no
+        additional token permission is required.  Raises on any failure; returns nothing.
+        """
+        self._call("list_objects_v2", Bucket=self.settings.r2_bucket, MaxKeys=1)
+
     def list_keys(self, prefix: str) -> list[str]:
         """List one owned prefix completely; callers must treat results as report-only inventory."""
         keys: list[str] = []

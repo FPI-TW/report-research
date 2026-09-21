@@ -126,6 +126,25 @@ class LexicalTruncationFlagTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIs(resp.lexical_truncated, False)
 
+    async def test_retrieval_telemetry_is_logged_server_side(self):
+        """旗標回給前端不等於量得到發生率——伺服器端要留一行，零命中與截斷才統計得出來。"""
+        with self.assertLogs("web.routers.search", level="INFO") as cm:
+            await self._search_with_stats(
+                lambda s: s.update({
+                    "lex_hits": 8000, "lex_cap": 8000, "lex_truncated": True,
+                    "dense_ms": 41, "lex_ms": 12, "lex_fallback_term": "台積",
+                })
+            )
+        line = "\n".join(cm.output)
+        for part in ("search q='台積電'", "total=0", "lex_hits=8000", "lex_truncated=True",
+                     "lex_fallback='台積'", "dense_ms=41", "lex_ms=12", "elapsed_ms="):
+            self.assertIn(part, line)
+
+    async def test_telemetry_line_survives_a_stand_in_that_fills_nothing(self):
+        with self.assertLogs("web.routers.search", level="INFO") as cm:
+            await self._search_with_stats(lambda s: None)
+        self.assertIn("lex_truncated=False", "\n".join(cm.output))
+
     async def test_handler_actually_passes_a_stats_dict(self):
         """不是 None：hybrid_search 只在 stats is not None 時填，傳 None 等於整條遙測落空。"""
         got = {}

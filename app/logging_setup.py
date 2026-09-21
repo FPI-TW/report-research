@@ -26,11 +26,28 @@ logger 落到 `logging.lastResort`（level=WARNING、格式只有裸訊息），
 
 from __future__ import annotations
 
+import logging
 import logging.config
 
 _CONFIGURED = False
 
-_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+# `rid=`：發起這一行的 HTTP 請求（見 app/request_context.py）；批次與啟動期為 "-"。
+_FORMAT = "%(asctime)s %(levelname)s %(name)s rid=%(request_id)s %(message)s"
+
+
+class RequestIdFilter(logging.Filter):
+    """把目前請求的關聯 id 蓋到每一筆 record 上。
+
+    掛在 **handler** 而不是 logger：logger 的 filter 只作用於「直接對那個 logger 呼叫」的
+    record，經 propagate 冒上來的不會過 root 的 filter；handler 的 filter 則每一筆都過。
+    format 裡用了 `%(request_id)s`，漏蓋任何一筆都會在格式化時 KeyError。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        from app.request_context import current_request_id
+
+        record.request_id = current_request_id()
+        return True
 
 
 def logging_config(level: str) -> dict:
@@ -40,11 +57,13 @@ def logging_config(level: str) -> dict:
         # uvicorn 的 logger 已在本設定之前建立；False 讓它們維持原狀。
         "disable_existing_loggers": False,
         "formatters": {"standard": {"format": _FORMAT}},
+        "filters": {"request_id": {"()": RequestIdFilter}},
         "handlers": {
             "stderr": {
                 "class": "logging.StreamHandler",
                 "stream": "ext://sys.stderr",
                 "formatter": "standard",
+                "filters": ["request_id"],
             }
         },
         # 只補 root——不列 uvicorn.access / uvicorn.error，避免蓋掉它們的既有設定。

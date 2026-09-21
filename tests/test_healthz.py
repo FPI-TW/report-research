@@ -119,3 +119,95 @@ class HealthzTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Storage:
+    def __init__(self, *, enabled=True, fail=False):
+        self.enabled = enabled
+        self.fail = fail
+        self.pings = 0
+
+    def ping(self):
+        self.pings += 1
+        if self.fail:
+            raise RuntimeError("SignatureDoesNotMatch: secret-ish detail")
+
+
+def _local() -> TestClient:
+    return TestClient(
+        app, follow_redirects=False, base_url="http://127.0.0.1", client=("127.0.0.1", 51000)
+    )
+
+
+class HealthzStorageTests(unittest.TestCase):
+    """`/healthz/storage`：R2 可達性，只回答本機直連（設計理由見 routers/health.py）。"""
+
+    def setUp(self):
+        health._storage = health._STORAGE_INITIAL
+        health._storage_task = None
+
+    tearDown = setUp
+
+    def _with(self, storage):
+        return patch.object(health, "get_object_storage", lambda: storage)
+
+    def test_only_direct_loopback_gets_an_answer(self):
+        """它在 auth 白名單裡，所以『對外等於不存在』要靠 handler 自己守住。"""
+        storage = _Storage()
+        with self._with(storage):
+            outside = _client().get("/healthz/storage")  # 對端不是 loopback
+            proxied = _local().get("/healthz/storage", headers={"X-Forwarded-For": "203.0.113.9"})
+            public_host = TestClient(
+                app, base_url="http://research.example.com", client=("127.0.0.1", 51000)
+            ).get("/healthz/storage")
+        for r in (outside, proxied, public_host):
+            self.assertEqual(r.status_code, 404)
+            self.assertNotIn("storage", r.json())
+        self.assertEqual(storage.pings, 0)  # 被拒絕的請求不得觸發計費的 R2 操作
+
+    def test_local_mode_reports_disabled_without_probing(self):
+        storage = _Storage(enabled=False)
+        with self._with(storage):
+            r = _local().get("/healthz/storage")
+        self.assertEqual((r.status_code, r.json()), (200, {"storage": "disabled"}))
+        self.assertEqual(storage.pings, 0)
+
+    def test_reachable_is_ok_and_cached(self):
+        storage = _Storage()
+        with self._with(storage):
+            c = _local()
+            bodies = [c.get("/healthz/storage").json() for _ in range(4)]
+        self.assertEqual(bodies, [{"storage": "ok"}] * 4)
+        self.assertEqual(storage.pings, 1)
+
+    def test_single_failure_is_not_degraded_two_in_a_row_is_503(self):
+        storage = _Storage(fail=True)
+        with self._with(storage):
+            c = _local()
+            first = c.get("/healthz/storage")
+            health._storage = health._storage._replace(expires_at=0.0)  # 失敗 TTL 到期
+            second = c.get("/healthz/storage")
+        self.assertEqual((first.status_code, first.json()), (200, {"storage": "unknown"}))
+        self.assertEqual((second.status_code, second.json()), (503, {"storage": "degraded"}))
+        self.assertNotIn("secret-ish", second.text)  # 例外訊息只進日誌
+
+    def test_recovery_clears_the_failure_streak(self):
+        storage = _Storage(fail=True)
+        with self._with(storage):
+            c = _local()
+            c.get("/healthz/storage")
+            storage.fail = False
+            health._storage = health._storage._replace(expires_at=0.0)
+            r = c.get("/healthz/storage")
+        self.assertEqual((r.status_code, r.json()), (200, {"storage": "ok"}))
+        self.assertEqual(health._storage.consecutive_failures, 0)
+
+    def test_healthz_itself_is_untouched_by_storage_failure(self):
+        """R2 掛掉時檢索、問答、雷達都還活著：對外的 /healthz 不得因此變 503。"""
+        health._cache = (0.0, False)
+        health._storage = health._StorageState("degraded", 5, float("inf"))
+        with self._with(_Storage(fail=True)), \
+                patch.object(health.deps, "SessionFactory", lambda: _FakeSession()):
+            r = _client().get("/healthz")
+        health._cache = (0.0, False)
+        self.assertEqual((r.status_code, r.json()), (200, {"status": "ok"}))

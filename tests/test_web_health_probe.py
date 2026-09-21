@@ -36,6 +36,7 @@ SERVICE = SYSTEMD_DIR / "report-mark-health.service"
 TIMER = SYSTEMD_DIR / "report-mark-health.timer"
 
 EXIT_OK, EXIT_HTTP, EXIT_PROCESS, EXIT_GRACE, EXIT_TOOLING, EXIT_DEGRADED = 0, 1, 2, 3, 4, 5
+EXIT_STORAGE = 6
 
 # stdout 契約：P5 消費的欄位。少一個都會讓告警分級失準且無症狀。
 REQUIRED_FIELDS = ("ts", "component", "probe", "status", "http_code", "latency_ms", "reason")
@@ -75,12 +76,21 @@ def parse(line):
 class _Server:
     """啟一個回固定狀態碼的本機 HTTP 伺服器；用 127.0.0.1 避開 ::1 解析。"""
 
-    def __init__(self, status=200, body=b'{"status":"ok"}', delay=0.0):
+    def __init__(self, status=200, body=b'{"status":"ok"}', delay=0.0, storage_status=None):
         self.status, self.body, self.delay = status, body, delay
+        # /healthz/storage 的狀態碼；None＝與其他路徑相同（既有測試的行為不變）。
+        self.storage_status = storage_status
+        self.paths: list[str] = []
         outer = self
 
         class H(BaseHTTPRequestHandler):
             def do_GET(self):  # noqa: N802
+                outer.paths.append(self.path)
+                if self.path == "/healthz/storage" and outer.storage_status is not None:
+                    self.send_response(outer.storage_status)
+                    self.end_headers()
+                    self.wfile.write(b'{"storage":"x"}')
+                    return
                 if outer.delay:
                     import time
 
@@ -354,6 +364,58 @@ class DependencyCheckTests(unittest.TestCase):
         vals = _directives(dropin, "Environment")
         path = next(v for v in vals if v.startswith("PATH="))[len("PATH="):]
         self.assertTrue(path.split(":")[0].endswith("/.local/bin"), path)
+
+
+class StorageCheckTests(unittest.TestCase):
+    """L3：/healthz 綠不代表原檔拿得到。
+
+    OBJECT_STORAGE_MODE=r2 時缺 key 即 503 不回退；bucket 或憑證出問題時原檔與 PDF 全壞，
+    而 /healthz 只探 DB。探測由 web 行程做，探針只讀 `/healthz/storage` 的狀態碼，
+    且**只認 503**——其他一律當作判不出來，不開事件。
+    """
+
+    def test_storage_503_is_exit_6(self):
+        with _FakeSystemd(state="inactive") as sd, _Server(200, storage_status=503) as s:
+            p = run_probe({"HEALTH_URL": s.url, **sd.env})
+            calls = sd.calls()
+        self.assertEqual(p.returncode, EXIT_STORAGE, p.stdout + p.stderr)
+        f = parse(p.stdout)
+        self.assertEqual((f["status"], f["http_code"], f["reason"]), ("degraded", "200", "storage_unreachable"))
+        self.assertEqual(calls, [], "儲存檢查不得呼叫 systemctl")
+
+    def test_anything_but_503_is_not_an_incident(self):
+        """404＝web 還是沒有這支端點的舊版本；200＝ok／disabled／unknown。都不是故障。"""
+        for status in (200, 404, 500):
+            with _Server(200, storage_status=status) as s:
+                p = run_probe({"HEALTH_URL": s.url})
+            self.assertEqual(p.returncode, EXIT_OK, f"storage={status}: {p.stdout}{p.stderr}")
+
+    def test_storage_url_is_derived_from_health_url(self):
+        with _Server(200, storage_status=200) as s:
+            run_probe({"HEALTH_URL": s.url})
+            self.assertEqual(s.paths, ["/healthz", "/healthz/storage"])
+
+    def test_empty_storage_url_disables_the_check(self):
+        with _Server(200, storage_status=503) as s:
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_STORAGE_URL": ""})
+            self.assertEqual(s.paths, ["/healthz"])
+        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
+
+    def test_db_failure_takes_precedence_and_storage_is_not_asked(self):
+        with _FakeSystemd(state="active") as sd, _Server(503, storage_status=503) as s:
+            p = run_probe({"HEALTH_URL": s.url, **sd.env})
+            self.assertNotIn("/healthz/storage", s.paths)
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
+
+    def test_missing_claude_is_reported_before_storage(self):
+        """兩個都壞時先報問答（影響面較大）；一次只開一個事件，修好一個下一輪就輪到另一個。"""
+        with tempfile.TemporaryDirectory() as tmp, _Server(200, storage_status=503) as s:
+            t = Path(tmp)
+            (t / "bin").mkdir()
+            dropin = t / "path.conf"
+            dropin.write_text(f"[Service]\nEnvironment=PATH={t}/bin\n", encoding="utf-8")
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"})
+        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
 
 
 class HostSystemdIsolationTests(unittest.TestCase):

@@ -541,6 +541,70 @@ class InstrumentCatalogTests(RadarApiBase):
         self.assertEqual(body["facets"], {"TW": 41, "US": 8})
 
 
+class CatalogCacheTests(RadarApiBase):
+    """目錄回應快取：同一組參數在 TTL 內不重算，參數不同各自一格。
+
+    conftest 的 `_reset_ttl_caches` 每題前後清空，所以這裡每一題都從空快取開始。
+    """
+
+    def _counting_fakes(self):
+        calls = {"list": 0, "facets": 0}
+
+        async def lst(*a, **k):
+            calls["list"] += 1
+            return _page([
+                RadarInstrumentRow("TW", "8046", "南電", 12, 91, date(2026, 7, 11), "partial"),
+            ])
+
+        async def facets(*a, **k):
+            calls["facets"] += 1
+            return {"TW": 1}
+
+        async def batch(*a, **k):
+            return {}
+
+        self._set(
+            list_radar_instruments=lst, fetch_catalog_facets=facets,
+            fetch_signals_for_instruments=batch,
+        )
+        return calls
+
+    def test_identical_request_is_served_from_cache(self):
+        calls = self._counting_fakes()
+        c = _authed_client()
+        first = c.get("/api/radar/instruments?market=TW")
+        second = c.get("/api/radar/instruments?market=TW")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        self.assertEqual(calls, {"list": 1, "facets": 1})
+
+    def test_every_query_param_is_part_of_the_key(self):
+        """漏掉任何一個參數，就會把 A 條件的結果回給 B 條件。"""
+        calls = self._counting_fakes()
+        c = _authed_client()
+        variants = (
+            "", "?market=TW", "?q=南", "?limit=10", "?offset=50", "?sort=brokers",
+            "?stance=bullish", "?with_consensus=false",
+        )
+        for qs in variants:
+            self.assertEqual(c.get(f"/api/radar/instruments{qs}").status_code, 200, qs)
+        self.assertEqual(calls["list"], len(variants))
+
+    def test_ttl_zero_disables_caching(self):
+        from web.routers import radar as radar_mod
+
+        calls = self._counting_fakes()
+        orig = radar_mod._CATALOG_CACHE.ttl
+        radar_mod._CATALOG_CACHE.ttl = 0.0
+        try:
+            c = _authed_client()
+            c.get("/api/radar/instruments")
+            c.get("/api/radar/instruments")
+        finally:
+            radar_mod._CATALOG_CACHE.ttl = orig
+        self.assertEqual(calls["list"], 2)
+
+
 class CatalogStanceFilterTests(RadarApiBase):
     """立場篩選：SQL 算不出中位立場，所以這條路徑必須全量取回再篩。"""
 

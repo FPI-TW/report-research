@@ -427,6 +427,20 @@ class StateMachineTests(unittest.TestCase):
         self.assertEqual(e["reason"], "probe_exit_5")
         self.assertEqual(self.h.webhook_calls(), 1)
 
+    def test_probe_storage_exit_opens_warning_incident(self):
+        """exit 6＝/healthz 正常但物件儲存（R2）連不上。
+
+        與 exit 5 同級：壞的只有原檔下載與 PDF 檢視，其餘功能正常，但不會自己好。
+        必須有自己的分派——落進未知退出碼那一支的話，通知文字只會說「未知退出碼」。
+        """
+        self.h.set_probe(6)
+        p = self.h.run()
+        e = last_emit(p.stdout)
+        self.assertEqual(e["severity"], "WARNING")
+        self.assertEqual(e["action"], "firing")
+        self.assertEqual(e["reason"], "probe_exit_6")
+        self.assertEqual(self.h.webhook_calls(), 1)
+
     def test_stale_probe_is_a_monitor_incident_not_a_web_incident(self):
         """P4 停止產出＝**監控失明**，不是服務故障。兩者必須是不同元件的事件。"""
         # age=5／STALE=1：小到任何機器的 uptime 都表達得出來，大到穩定超過門檻

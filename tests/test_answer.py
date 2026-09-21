@@ -2385,6 +2385,47 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("first_answer NOT IN :offtopics", sql)
         self.assertEqual(session.params["offtopics"], list(ans.OFF_TOPIC_MESSAGES))
 
+    async def _capture(self, **kwargs):
+        from app.services import answer as ans
+
+        session = _CaptureRowsSession([])
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: session
+        try:
+            await ans.list_conversations(**kwargs)
+        finally:
+            ans.SessionFactory = orig
+        return " ".join((session.statement_text or "").split()), session.params
+
+    async def test_no_query_means_null_pattern_and_first_page(self):
+        sql, params = await self._capture()
+        self.assertIsNone(params["pattern"])
+        self.assertEqual((params["limit"], params["offset"]), (50, 0))
+        self.assertIn("CAST(:pattern AS text) IS NULL OR matched", sql)
+
+    async def test_query_searches_every_valid_question_not_just_the_title(self):
+        """標題只是第一題；使用者記得的常常是後面追問的那一句。"""
+        sql, params = await self._capture(q="  先進封裝 ", limit=20, offset=40)
+        self.assertEqual(params["pattern"], "%先進封裝%")
+        self.assertEqual((params["limit"], params["offset"]), (20, 40))
+        self.assertIn(
+            "bool_or(question ILIKE CAST(:pattern AS text)) "
+            "FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active)",
+            sql,
+        )
+
+    async def test_like_wildcards_in_query_are_literal(self):
+        _, params = await self._capture(q="50%_a\\")
+        self.assertEqual(params["pattern"], "%50\\%\\_a\\\\%")
+
+    async def test_blank_query_is_no_filter(self):
+        _, params = await self._capture(q="   ")
+        self.assertIsNone(params["pattern"])
+
+    async def test_order_has_a_tiebreaker_so_pages_do_not_overlap(self):
+        sql, _ = await self._capture()
+        self.assertIn("ORDER BY last_at DESC, conv_id DESC LIMIT :limit OFFSET :offset", sql)
+
 
 class ConversationStaticContractTests(unittest.TestCase):
     def test_schema_uses_expression_index_for_conversation_lookup(self):

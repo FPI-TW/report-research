@@ -287,6 +287,11 @@ jobs:
       - name: extraction_log 與抽取欄位對帳
         run: uv run pytest -q tests/test_extraction_log_db.py
 
+      # 對話串清單的搜尋與翻頁：bool_or … FILTER、NULL pattern、ILIKE 跳脫與排序決勝鍵
+      # 只有真的 PostgreSQL 驗得到（tests/test_answer.py 的假 session 只釘 SQL 字串）。
+      - name: 對話串搜尋與翻頁
+        run: uv run pytest -q tests/test_conversations_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

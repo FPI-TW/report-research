@@ -53,6 +53,7 @@ from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
 from web.routers import reading as reading_routes  # noqa: E402
 from web.routers import report_file as report_file_routes  # noqa: E402
+from web.routers import review as review_routes  # noqa: E402
 from web.routers import search as search_routes  # noqa: E402
 from web.routers import spa as spa_routes  # noqa: E402
 
@@ -255,6 +256,9 @@ _valid_uuid = deps._valid_uuid
 
 # 問答歷史/回饋/對話串 9 條路由已拆至 web/routers/qa_history.py
 app.include_router(qa_history_routes.router)
+
+# 待複核佇列（忠實度低分／倒讚／抽取 needs_review）：唯讀、零 LLM
+app.include_router(review_routes.router)
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

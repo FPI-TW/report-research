@@ -62,7 +62,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `web/server.py` | 組合層：載環境檔、初始化 logging、auth middleware、lifespan、掛 router |
-| `web/routers/` | 11 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`、`spa`、`brief`。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
+| `web/routers/` | 12 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`、`spa`、`brief`、`review`（待複核佇列：忠實度低分／倒讚／抽取 `needs_review` 的個體清單，唯讀；刻意不提供「標記已處理」）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
 | `web/auth.py` | 共用帳密、HMAC session、失敗追蹤、可信代理 |
 | `web/concurrency.py` | `ConcurrencyGate`（刻意不支援 `async with`）、單 worker 偵測 |

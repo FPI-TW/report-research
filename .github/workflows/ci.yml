@@ -292,6 +292,10 @@ jobs:
       - name: 對話串搜尋與翻頁
         run: uv run pytest -q tests/test_conversations_db.py
 
+      # 待複核佇列：jsonb 分數的安全 cast、門檻與窗期、count 與當頁同條件。
+      - name: 待複核佇列查詢
+        run: uv run pytest -q tests/test_review_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

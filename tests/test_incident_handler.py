@@ -570,6 +570,49 @@ class RobustnessTests(unittest.TestCase):
         self.assertEqual(h.state["state"], "FIRING")
         self.assertEqual(last_emit(p.stdout)["notified"], "no")
 
+    def test_webhook_failure_logs_curl_exit_code_but_never_the_url(self):
+        """失敗原因要能從 log 讀出來。
+
+        2026-09-06 至 09-21 近萬筆失敗全記成同一行「HTTP 000」，因為 curl 的退出碼被
+        `|| code=000` 丟掉了。退出碼不含 secret，可以進 journal；URL 與主機名不行。
+        """
+        h = _Harness(webhook="http://secret-host.invalid/hook/TOKEN123")
+        self.addCleanup(h.close)
+        h.set_probe(1)
+        (h.bin / "curl").write_text("#!/usr/bin/env bash\nexit 6\n", encoding="utf-8")
+        (h.bin / "curl").chmod(0o755)
+        p = h.run()
+        self.assertEqual(p.returncode, 0)
+        self.assertIn("curl_rc=6", p.stdout)
+        self.assertIn("主機名解析不到", p.stdout)
+        self.assertNotIn("TOKEN123", p.stdout + p.stderr)
+        self.assertNotIn("secret-host", p.stdout + p.stderr)
+
+    def test_placeholder_webhook_value_is_reported_as_misconfiguration(self):
+        """安裝文件的佔位字串被原樣寫進 alert.env——那次事故的實際成因。
+
+        形狀不對的值永遠送不出去：不該呼叫 curl，log 要直說是設定錯了，而且**不得印出
+        值本身**（它可能是貼錯位置的 secret）。語意比照投遞失敗：事件不得無聲結案。
+        """
+        for bad in ("<你的 webhook URL>", "hooks.slack.com/services/T0/B0/SECRETVALUE",
+                    "https://hooks.example.com/x y", "https://"):
+            with self.subTest(value=bad):
+                h = _Harness(webhook=bad)
+                self.addCleanup(h.close)
+                h.set_probe(1)
+                p = h.run()
+                self.assertEqual(p.returncode, 0)
+                self.assertEqual(h.webhook_calls(), 0, "形狀不對的值不該交給 curl")
+                self.assertIn("不是合法 URL", p.stdout)
+                if bad != "https://":  # 這個值本來就出現在固定的說明文字裡
+                    self.assertNotIn(bad, p.stdout + p.stderr)
+                self.assertEqual(h.state["state"], "FIRING")
+                self.assertEqual(last_emit(p.stdout)["notified"], "no")
+                # 恢復後 RESOLVED 同樣送不出去，事件必須留在 FIRING 等人修設定
+                h.set_probe(0)
+                p = h.run()
+                self.assertEqual(last_emit(p.stdout)["action"], "resolve_retry")
+
     def test_uses_monotonic_clock_not_wall_clock_for_observations(self):
         """WSL 休眠喚醒與時區調整會讓牆鐘跳動；觀測游標必須用單調時鐘。"""
         body = HANDLER.read_text(encoding="utf-8")

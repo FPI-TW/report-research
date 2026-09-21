@@ -247,10 +247,30 @@ journalctl -u report-mark-linebot-health.service -n 5 --no-pager
 
 ```bash
 sudo install -d -m 0700 /etc/report-mark
-printf 'REPORT_MARK_ALERT_WEBHOOK=%s\n' '<你的 webhook URL>' | sudo tee /etc/report-mark/alert.env >/dev/null
-sudo chmod 0600 /etc/report-mark/alert.env
+read -rsp '貼上 webhook URL 後按 Enter：' WEBHOOK_URL; echo
+case "$WEBHOOK_URL" in
+  *[[:space:]]*|'') echo '值是空的或含空白，未寫入' >&2 ;;
+  https://?*) printf 'REPORT_MARK_ALERT_WEBHOOK=%s\n' "$WEBHOOK_URL" | sudo tee /etc/report-mark/alert.env >/dev/null \
+                && sudo chmod 0600 /etc/report-mark/alert.env && echo '已寫入' ;;
+  *) echo '不是 https:// 開頭，未寫入' >&2 ;;
+esac
+unset WEBHOOK_URL
 sudo systemctl start report-mark-linebot-incident.service
 ```
+
+URL 用 `read -s` 讀進來而不是寫在指令裡：指令列上沒有可以原樣貼上執行的佔位字串，URL 也不會
+留在 shell history。值不是 `https://` 開頭就不寫檔。
+
+**設定完一定要驗證投遞。** 值寫錯時 unit 照樣 active、`/healthz` 照樣綠，只有 journal 看得出來：
+
+```bash
+journalctl -u report-mark-incident.service -u report-mark-linebot-incident.service --since "-10min" --no-pager \
+  | grep -E "notified=yes|webhook 投遞失敗|不是合法 URL"
+```
+
+`notified=yes` 才算通（當下沒有進行中的事件就不會有東西要送，這時沒有任何一行也是正常的）。
+`不是合法 URL` 是值的形狀錯了；`webhook 投遞失敗` 那一行會帶 `curl_rc=`，對照
+`docs/production_resilience.md` 的「投遞失敗語意」。
 
 這個檔刻意與 `/etc/default/report-mark-sync` 分開（後者必須使用者可讀，見
 `report-mark-incident.service` 的註解）。設定後 **web 那組的告警也會一起開始

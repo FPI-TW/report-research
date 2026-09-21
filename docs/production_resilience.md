@@ -446,9 +446,13 @@ last_completed_age=<秒>|-
 ```bash
 sudo install -d -m 0700 -o root -g root /etc/report-mark
 sudo install -m 0600 -o root -g root /dev/null /etc/report-mark/alert.env
-sudo -e /etc/report-mark/alert.env        # 只寫一行 REPORT_MARK_ALERT_WEBHOOK=...
+sudo -e /etc/report-mark/alert.env        # 只寫一行 REPORT_MARK_ALERT_WEBHOOK=https://...
 sudo systemctl daemon-reload
 ```
+
+值必須是 `https://` 開頭的完整 URL，不加引號、不含空白。**寫完要驗證投遞**：unit 是否 active 與
+`/healthz` 都看不出這個值對不對，只有 journal 的 `notified=yes`（或 `webhook 投遞失敗`／
+`不是合法 URL`）看得出來。2026-09-06 至 09-21 這個檔裡是安裝步驟的佔位字串，期間所有告警都沒送達。
 
 `report-mark-incident.service` 與 `report-mark-alert@.service` 都以
 `EnvironmentFile=-/etc/report-mark/alert.env` 讀它。**`-` 前綴是刻意的**：secret 尚未
@@ -469,6 +473,8 @@ sudo systemctl daemon-reload
 | payload | `{"component","action","severity","reason","text"}`；前四個是封閉詞彙，供接收端路由，`text` 給人看 |
 | body 上限 | `INCIDENT_NOTIFY_MAX_SUMMARY`(500 字元) 後截斷 |
 | 投遞失敗 | **事件照記，「已通知」不記**。`notified=no`，且通知時鐘不前進 |
+| 設定值形狀 | 送之前先檢查：須以 `http://` 或 `https://` 開頭且不含空白。不合就不呼叫 curl，log 記「webhook 設定值不是合法 URL」（**不印值本身**），語意同投遞失敗 |
+| 失敗原因 | log 帶 `HTTP <code> curl_rc=<n>`。`curl_rc` 常見值：3 URL 格式不合法、6 主機名解析不到、7 連線被拒、28 逾時、35／60 TLS 或憑證；`curl_rc=0` 代表對方回了非 2xx，看 HTTP code。curl 的 stderr 刻意不收（會帶主機名）。`report-mark-alert.sh` 同樣記 `curl_rc`，它用 `-f`，對方回 4xx／5xx 時是 22 |
 
 #### 投遞失敗語意
 

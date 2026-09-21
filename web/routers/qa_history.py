@@ -108,7 +108,13 @@ async def conversations(limit: int = Query(50, ge=1, le=200)):
 
 @router.get("/api/conversations/{conversation_id}")
 async def conversation_detail(conversation_id: str):
-    """單一對話全部輪次（由舊到新），供重開重現與續問。"""
+    """單一對話全部輪次（由舊到新），供重開重現與續問。
+
+    conversation_id 進的是 uuid 欄位的 WHERE；非法字串會讓驅動在編碼期拋例外變 500，
+    所以比照 qa_versions 先擋成 404。
+    """
+    if not deps._valid_uuid(conversation_id):
+        raise HTTPException(status_code=404, detail="not found")
     return await get_conversation(conversation_id)
 
 

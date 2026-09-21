@@ -42,6 +42,15 @@ def _local_file_matches_sha256(path: str, expected_sha256: str | None) -> bool:
     return digest.hexdigest() == expected_sha256
 
 
+def _require_report_id(report_id: str) -> None:
+    """id 是 uuid 欄位：非法字串會讓驅動在編碼期拋例外變 500，先擋成與查無此篇相同的 404。
+
+    在開 session 之前呼叫——非法 id 不該佔一條連線。
+    """
+    if not deps._valid_uuid(report_id):
+        raise HTTPException(status_code=404, detail="report not found")
+
+
 async def _fetch_report(session, report_id: str):
     row = (
         await session.execute(
@@ -61,6 +70,7 @@ async def _fetch_report(session, report_id: str):
 @router.get("/api/report/{report_id}/full")
 async def report_full(report_id: str):
     """回傳單篇報告的 metadata 與原始檔狀態（供前端 modal 內嵌 PDF）。"""
+    _require_report_id(report_id)
     async with deps.SessionFactory() as session:
         row = await _fetch_report(session, report_id)
         fn, m, src, rdate, rtype, fpath, _full_text, summary, title = row[:9]
@@ -82,6 +92,7 @@ async def report_full(report_id: str):
 @router.get("/api/report/{report_id}/file")
 async def report_file(report_id: str):
     """提供原始檔（PDF 內嵌、其他下載）。路徑由 DB 依 id 取得，無路徑注入。"""
+    _require_report_id(report_id)
     async with deps.SessionFactory() as session:
         row = await _fetch_report(session, report_id)
     fpath, object_key = row[5], row[9] if len(row) > 9 else None

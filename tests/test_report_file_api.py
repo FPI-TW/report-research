@@ -82,8 +82,18 @@ class ReportFileBehaviourTests(unittest.TestCase):
 
     def test_full_returns_404_when_missing(self):
         deps.SessionFactory = lambda: _FakeSession(None)
-        r = _authed().get("/api/report/does-not-exist/full")
+        r = _authed().get("/api/report/44444444-4444-4444-8444-444444444444/full")
         self.assertEqual(r.status_code, 404)
+
+    def test_malformed_id_is_404_without_touching_db(self):
+        """id 是 uuid 欄位：非法字串若進到 SQL，驅動會在編碼期拋例外變 500。"""
+        def _boom():
+            raise AssertionError("非法 id 不該開 DB session")
+
+        deps.SessionFactory = _boom
+        for suffix in ("full", "file"):
+            r = _authed().get(f"/api/report/not-a-uuid/{suffix}")
+            self.assertEqual(r.status_code, 404, suffix)
 
     def test_full_returns_metadata(self):
         from datetime import date
@@ -93,7 +103,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
         row = ("a.pdf", "TW", "kgi", date(2026, 7, 14), "note",
                "/nonexistent/a.pdf", "全文", "摘要", "內部標題")
         deps.SessionFactory = lambda: _FakeSession(row)
-        r = _authed().get("/api/report/rid-1/full")
+        r = _authed().get("/api/report/11111111-1111-4111-8111-111111111111/full")
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertEqual(body["file_name"], "a.pdf")
@@ -106,7 +116,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
     def test_file_404_when_path_missing_on_disk(self):
         row = ("a.pdf", "TW", "kgi", None, None, "/nonexistent/a.pdf", None, None)
         deps.SessionFactory = lambda: _FakeSession(row)
-        r = _authed().get("/api/report/rid-1/file")
+        r = _authed().get("/api/report/11111111-1111-4111-8111-111111111111/file")
         self.assertEqual(r.status_code, 404)
 
     def test_file_path_comes_from_db_not_url(self):
@@ -116,7 +126,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
         here = str(Path(__file__).resolve())
         row = ("self.py", "TW", "kgi", None, None, here, None, None)
         deps.SessionFactory = lambda: _FakeSession(row)
-        r = _authed().get("/api/report/whatever-id/file")
+        r = _authed().get("/api/report/33333333-3333-4333-8333-333333333333/file")
         self.assertEqual(r.status_code, 200)
         self.assertIn("test_report_file_api", r.headers.get("content-disposition", ""))
 
@@ -139,7 +149,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
         )
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: _Storage()
-        r = _authed().get("/api/report/rid-r2/file")
+        r = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(r.status_code, 302)
         self.assertEqual(r.headers["location"], "https://private.example.test/signed")
         self.assertEqual(r.headers["cache-control"], "no-store")
@@ -169,7 +179,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
                         )
                         deps.SessionFactory = lambda: _FakeSession(row)
                         report_file_router.get_object_storage = lambda: _Storage()
-                        response = _authed().get("/api/report/rid-r2/file")
+                        response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
                     self.assertEqual(response.status_code, 503)
 
     def test_bucket_failure_is_503_and_hybrid_never_falls_back_local(self):
@@ -185,7 +195,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
         row = ("self.py", "TW", "kgi", None, None, here, None, None, None, f"originals/aa/{digest}.py", digest)
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: _Storage()
-        r = _authed().get("/api/report/rid-r2/file")
+        r = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(r.status_code, 503)
 
     def test_confirmed_missing_r2_original_is_404(self):
@@ -203,7 +213,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
         )
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: _Storage()
-        r = _authed().get("/api/report/rid-r2/file")
+        r = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(r.status_code, 404)
 
     def test_confirmed_missing_hybrid_original_falls_back_to_its_local_file(self):
@@ -225,7 +235,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
             )
             deps.SessionFactory = lambda: _FakeSession(row)
             report_file_router.get_object_storage = lambda: _Storage()
-            response = _authed().get("/api/report/rid-r2/file")
+            response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, data)
 
@@ -242,7 +252,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
             row = ("a.pdf", "TW", "kgi", None, None, local.name, None, None, None, None, digest)
             deps.SessionFactory = lambda: _FakeSession(row)
             report_file_router.get_object_storage = lambda: _Storage()
-            response = _authed().get("/api/report/rid-r2/file")
+            response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, data)
 
@@ -258,7 +268,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
             row = ("a.pdf", "TW", "kgi", None, None, local.name, None, None, None, None, digest)
             deps.SessionFactory = lambda: _FakeSession(row)
             report_file_router.get_object_storage = lambda: _Storage()
-            response = _authed().get("/api/report/rid-r2/file")
+            response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(response.status_code, 503)
 
         with self.subTest("unreadable"):
@@ -266,7 +276,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
             deps.SessionFactory = lambda: _FakeSession(row)
             report_file_router.get_object_storage = lambda: _Storage()
             with patch.object(report_file_router.os.path, "isfile", return_value=True):
-                response = _authed().get("/api/report/rid-r2/file")
+                response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
             self.assertEqual(response.status_code, 503)
 
         with self.subTest("missing-db-hash"):
@@ -276,7 +286,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
                 row = ("a.pdf", "TW", "kgi", None, None, local.name, None, None, None, None, None)
                 deps.SessionFactory = lambda: _FakeSession(row)
                 report_file_router.get_object_storage = lambda: _Storage()
-                response = _authed().get("/api/report/rid-r2/file")
+                response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
             self.assertEqual(response.status_code, 503)
 
     def test_r2_legacy_no_key_remains_404(self):
@@ -287,7 +297,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
         row = ("a.pdf", "TW", "kgi", None, None, "/must-not-read.pdf", None, None, None, None, "a" * 64)
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: _Storage()
-        response = _authed().get("/api/report/rid-r2/file")
+        response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(response.status_code, 404)
 
     def test_confirmed_missing_hybrid_original_with_mismatched_local_bytes_is_503(self):
@@ -308,7 +318,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
             )
             deps.SessionFactory = lambda: _FakeSession(row)
             report_file_router.get_object_storage = lambda: _Storage()
-            response = _authed().get("/api/report/rid-r2/file")
+            response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(response.status_code, 503)
 
     def test_confirmed_missing_hybrid_original_with_unreadable_local_file_is_503(self):
@@ -329,7 +339,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
         # ``isfile`` can succeed even if a mount/ACL makes the file unreadable; the streaming
         # hash is the final integrity gate and must fail closed.
         with patch.object(report_file_router.os.path, "isfile", return_value=True):
-            response = _authed().get("/api/report/rid-r2/file")
+            response = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(response.status_code, 503)
 
     def test_wrong_original_pointer_is_not_presigned_or_locally_fallback(self):
@@ -345,7 +355,7 @@ class ReportFileBehaviourTests(unittest.TestCase):
         row = ("a.pdf", "TW", "kgi", None, None, here, None, None, None, "originals/bb/other.pdf", digest)
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: _Storage()
-        r = _authed().get("/api/report/rid-r2/file")
+        r = _authed().get("/api/report/22222222-2222-4222-8222-222222222222/file")
         self.assertEqual(r.status_code, 503)
 
 
@@ -383,7 +393,7 @@ class R2OriginalFilenameAndAvailabilityTests(unittest.TestCase):
                f"originals/aa/{digest}.pdf", digest)
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: _Storage()
-        r = _authed().get("/api/report/rid-1/file")
+        r = _authed().get("/api/report/11111111-1111-4111-8111-111111111111/file")
         self.assertEqual(r.status_code, 302)
         self.assertEqual(captured, {"filename": "台積電.pdf", "inline": True})
 
@@ -406,7 +416,7 @@ class R2OriginalFilenameAndAvailabilityTests(unittest.TestCase):
                f"originals/bb/{digest}.docx", digest)
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: _Storage()
-        r = _authed().get("/api/report/rid-1/file")
+        r = _authed().get("/api/report/11111111-1111-4111-8111-111111111111/file")
         self.assertEqual(r.status_code, 302)
         self.assertEqual(captured, {"filename": "memo.docx", "inline": False})
 
@@ -415,7 +425,7 @@ class R2OriginalFilenameAndAvailabilityTests(unittest.TestCase):
         row = ("self.py", "TW", "kgi", None, None, here, None, None, None, None, "c" * 64)
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: type("S", (), {"enabled": True, "mode": "r2"})()
-        body = _authed().get("/api/report/rid-1/full").json()
+        body = _authed().get("/api/report/11111111-1111-4111-8111-111111111111/full").json()
         self.assertFalse(body["has_file"])
 
     def test_full_in_hybrid_mode_still_counts_existing_local_file(self):
@@ -423,5 +433,5 @@ class R2OriginalFilenameAndAvailabilityTests(unittest.TestCase):
         row = ("self.py", "TW", "kgi", None, None, here, None, None, None, None, "c" * 64)
         deps.SessionFactory = lambda: _FakeSession(row)
         report_file_router.get_object_storage = lambda: type("S", (), {"enabled": True, "mode": "hybrid"})()
-        body = _authed().get("/api/report/rid-1/full").json()
+        body = _authed().get("/api/report/11111111-1111-4111-8111-111111111111/full").json()
         self.assertTrue(body["has_file"])

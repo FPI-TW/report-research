@@ -96,6 +96,34 @@ class ConversationsListTests(unittest.TestCase):
         self.assertEqual(r.json(), [{"conversation_id": "c1", "limit": 7}])
 
 
+class ConversationDetailTests(unittest.TestCase):
+    def setUp(self):
+        self._orig = qa_history.get_conversation
+
+    def tearDown(self):
+        qa_history.get_conversation = self._orig
+
+    def test_detail_passes_through_service(self):
+        cid = "55555555-5555-4555-8555-555555555555"
+
+        async def _fake(conversation_id):
+            return [{"conversation_id": conversation_id}]
+
+        qa_history.get_conversation = _fake
+        r = _authed().get(f"/api/conversations/{cid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), [{"conversation_id": cid}])
+
+    def test_malformed_id_is_404_without_touching_service(self):
+        """conversation_id 進 uuid 欄位的 WHERE；非法字串不擋會變 500。"""
+        async def _boom(conversation_id):
+            raise AssertionError("非法 id 不該進到 service")
+
+        qa_history.get_conversation = _boom
+        r = _authed().get("/api/conversations/not-a-uuid")
+        self.assertEqual(r.status_code, 404)
+
+
 class ConversationDeleteHttpTests(unittest.TestCase):
     """刪對話串的兩支端點都走 HTTP 層驗。
 

@@ -38,7 +38,7 @@ from app.logging_setup import configure_logging  # noqa: E402
 configure_logging()
 
 from app.config import get_settings  # noqa: E402
-from app.services import db  # noqa: E402
+from app.services import db, llm  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
@@ -119,6 +119,16 @@ async def lifespan(app: FastAPI):
         "pgvector 版本：%s",
         pgvector_version or "查不到（DB 不可用，交由 /healthz 回報）",
     )
+    # claude CLI：不在 PATH 上時每一題問答都回 SSE error，而 /healthz 只探 DB 照樣回 ok。
+    # 只說出來、不擋啟動——檢索、閱讀頁、雷達、簡報的讀取都不需要它。
+    claude_path = llm.claude_cli_path()
+    if claude_path:
+        logger.warning("claude CLI：%s", claude_path)
+    else:
+        logger.error(
+            "claude CLI 不在 PATH 上：問答會全數失敗（檢查 report-mark-web.service.d/path.conf）；PATH=%s",
+            os.environ.get("PATH", ""),
+        )
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
     warmup_task = asyncio.create_task(_warmup_models())
     warmup_task.add_done_callback(_log_warmup_result)

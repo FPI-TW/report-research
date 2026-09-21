@@ -1,0 +1,62 @@
+# 相依更新與安全通報。
+#
+# 在此之前 repo 沒有任何自動更新或 CVE 通報路徑：前端四十多個直接相依、後端
+# torch／FlagEmbedding／pdfplumber／boto3，出了漏洞只能靠人剛好看到。
+#
+# 取捨：
+# - **每週一次、依生態系分組成一個 PR**：逐套件開 PR 會把四個必要 CI job 各跑幾十次，
+#   也沒有人會逐個看。安全性更新不受 schedule 與 group 限制，GitHub 會另外即時開
+#   （需在 repo 設定啟用 Dependabot security updates）。
+# - **major 不進分組**：major 升版通常要改程式碼，混在一包裡會讓整包卡住。
+# - 時間選週一早上、台北時區：避開每 3 小時的 sync 沒有意義（CI 不碰生產），只是讓 PR
+#   出現在有人會看的時候。
+#
+# 不自動升、需要人判斷的（見 ignore）：
+# - torch：索引釘在 CPU-only wheel，升版要連帶確認 FlagEmbedding／transformers 相容，
+#   且會改變嵌入數值的風險要用 eval 量過。
+# - @embedpdf/*：十多個套件彼此釘同一版號，必須整組一起升，並人眼驗過 PDF 選取與複製
+#   （jsdom 測不到，見 CLAUDE.md 的閱讀頁不變量）。
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Taipei"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(相依)"
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "torch"
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Taipei"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(相依)"
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "@embedpdf/*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      timezone: "Asia/Taipei"
+    commit-message:
+      prefix: "chore(CI)"
+    groups:
+      actions:
+        patterns: ["*"]

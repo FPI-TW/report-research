@@ -71,6 +71,16 @@ def bypass_allowed(request) -> bool:
     """這個請求可否免登入。旗標只是必要條件，見模組 docstring 的三條。"""
     if not _ENABLED:
         return False
+    return is_direct_loopback(request)
+
+
+def is_direct_loopback(request) -> bool:
+    """請求是否為「本機直連、未經任何代理」——與 DEV_NO_AUTH 旗標無關的那幾個條件。
+
+    獨立出來是因為 `/healthz/storage` 也需要同一個判定（只回答本機探針），而它不該被
+    開發旗標牽動。經邊緣進來的請求一定帶代理 header、對端是 docker 網段、Host 是公開網域，
+    三者任一即否決。
+    """
     headers = request.headers
     if any(h in headers for h in _PROXY_HEADERS):
         return False

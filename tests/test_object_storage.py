@@ -78,6 +78,32 @@ class ObjectKeyTests(unittest.TestCase):
             storage.head_object("originals/aa/a.pdf")
         self.assertNotIsInstance(caught.exception, storage_module.ObjectNotFound)
 
+    def test_ping_is_one_cheap_list_call_and_a_missing_bucket_fails_it(self):
+        """健康探測用的 ping：一次 MaxKeys=1 的 list；bucket 不見必須是失敗，不是「沒有物件」。"""
+        calls = []
+
+        class _ClientError(Exception):
+            response = {"Error": {"Code": "NoSuchBucket"}}
+
+        class _Client:
+            broken = False
+
+            def list_objects_v2(self, **kwargs):
+                calls.append(kwargs)
+                if self.broken:
+                    raise _ClientError("bucket missing")
+                return {"KeyCount": 0}
+
+        storage = storage_module.ObjectStorage()
+        storage.mode = "r2"
+        storage._client = _Client()
+        storage.settings = SimpleNamespace(r2_bucket="bucket")
+        self.assertIsNone(storage.ping())
+        self.assertEqual(calls, [{"Bucket": "bucket", "MaxKeys": 1}])
+        storage._client.broken = True
+        with self.assertRaises(storage_module.ObjectStorageError):
+            storage.ping()
+
     def test_no_such_key_is_confirmed_missing(self):
         class _ClientError(Exception):
             response = {"Error": {"Code": "NoSuchKey"}}

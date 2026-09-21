@@ -366,12 +366,25 @@ class TimeSensitiveWebTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
 
     async def test_web_off_still_declines(self):
-        """零回歸：不開網搜時，時效題行為與 M4 完全相同。"""
+        """不開網搜時，時效題照樣婉拒、不呼叫 LLM——但要告訴使用者有「開網搜」這條路。"""
         self._set_stream(["不該被呼叫"])
         events = [e async for e in ans.answer_question(_TS_Q)]
         self.assertEqual([k for k, _ in events], ["status", "sources", "notice", "done"])
-        self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT)
+        self.assertIn("網路搜尋", events[2][1])
+        self.assertEqual(events[-1][1]["notice_kind"], "time_sensitive")
         self.assertIs(self.logged["filters"]["web"], False)
+
+    async def test_web_off_and_master_switch_off_gives_no_hint(self):
+        """總閘 ASK_ENABLE_WEB 關著時那顆開關按了沒有作用，不該叫人去按。"""
+        self._set_stream(["不該被呼叫"])
+        orig = ans.ASK_ENABLE_WEB
+        ans.ASK_ENABLE_WEB = False
+        try:
+            events = [e async for e in ans.answer_question(_TS_Q)]
+        finally:
+            ans.ASK_ENABLE_WEB = orig
+        self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
 
     async def test_web_on_answers_from_web_with_disclaimer_and_sources(self):
         kw: dict = {}
@@ -453,6 +466,7 @@ class TimeSensitiveWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [k for k, _ in events], ["status", "sources", "notice", "done"]
         )
+        # 已開網搜卻失敗：叫人去開一個已經開著、剛失敗的東西是錯的建議，所以不附提示。
         self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
         self.assertEqual(events[-1][1]["notice_kind"], "time_sensitive")
         self.assertIn("llm_error", self.logged["filters"])

@@ -277,18 +277,35 @@ TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN = (
     "sector, or macro topic."
 )
 
-# 前端歷史重播目前以 is_offtopic 表示「固定 notice」；時效安全說明雖非離題，
-# 也必須走相同呈現，否則重載後會被誤當成一般回答。
-NOTICE_MESSAGES: tuple[str, ...] = (
-    *OFF_TOPIC_MESSAGES,
-    TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
-    TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN,
+# 使用者**沒開網搜**而被婉拒時附上的出路。先前的文案只說「系統尚未接入即時資料來源」，
+# 沒提站上其實有一條路：開啟網搜後，同一題會改走 _answer_time_sensitive_web 由外部網頁回答。
+# 不知道有這個開關的使用者，看到的就是一個死胡同。
+#
+# 做成「原文案＋一句」而不是改寫原文案：原文案的字串本身是 qa_log 歷史重播的比對鍵
+# （NOTICE_MESSAGES），改掉一個字，庫裡既有的婉拒列就會被當成一般回答重播。
+TIME_SENSITIVE_WEB_HINT = (
+    "若需要即時數字，可在輸入框的「＋」開啟「網路搜尋」後再問一次；"
+    "那類回答來自外部網頁，不是研報內容。"
+)
+TIME_SENSITIVE_WEB_HINT_EN = (
+    " If you need live figures, turn on “Web search” from the + menu next to the input "
+    "and ask again; those answers come from external web pages, not from the research reports."
+)
+TIME_SENSITIVE_UNAVAILABLE_WITH_HINT = TIME_SENSITIVE_UNAVAILABLE_MESSAGE + TIME_SENSITIVE_WEB_HINT
+TIME_SENSITIVE_UNAVAILABLE_WITH_HINT_EN = (
+    TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN + TIME_SENSITIVE_WEB_HINT_EN
 )
 
+# 前端歷史重播目前以 is_offtopic 表示「固定 notice」；時效安全說明雖非離題，
+# 也必須走相同呈現，否則重載後會被誤當成一般回答。
 TIME_SENSITIVE_MESSAGES: tuple[str, ...] = (
     TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
     TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN,
+    TIME_SENSITIVE_UNAVAILABLE_WITH_HINT,
+    TIME_SENSITIVE_UNAVAILABLE_WITH_HINT_EN,
 )
+
+NOTICE_MESSAGES: tuple[str, ...] = (*OFF_TOPIC_MESSAGES, *TIME_SENSITIVE_MESSAGES)
 
 
 def notice_kind_for(answer: str) -> str | None:
@@ -335,7 +352,18 @@ def off_topic_message(locale: str) -> str:
     return OFF_TOPIC_MESSAGE_EN if locale == "en" else OFF_TOPIC_MESSAGE
 
 
-def time_sensitive_message(locale: str) -> str:
+def time_sensitive_message(locale: str, *, web_hint: bool = False) -> str:
+    """時效婉拒文案。`web_hint`＝要不要附「可開啟網搜」那一句。
+
+    只有一種情況該附：這一題使用者沒開網搜、而伺服器總閘（ASK_ENABLE_WEB）是開的。
+    已開網搜卻因 LLM 失敗退回婉拒的那條路徑不附——叫人去開一個已經開著、剛失敗的東西
+    是錯的建議；總閘關著時也不附，那顆開關按了沒有作用。
+    """
+    if web_hint:
+        return (
+            TIME_SENSITIVE_UNAVAILABLE_WITH_HINT_EN if locale == "en"
+            else TIME_SENSITIVE_UNAVAILABLE_WITH_HINT
+        )
     return (
         TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN if locale == "en"
         else TIME_SENSITIVE_UNAVAILABLE_MESSAGE
@@ -1808,7 +1836,8 @@ async def _yield_routed_notice(
     done payload 維持既有離題形狀，不含 qa_id（與有答覆路徑的 done 區隔）。
     """
     if decision.scope == TIME_SENSITIVE:
-        message = time_sensitive_message(locale)
+        # 走到這裡代表本輪沒開網搜（開了會改走 _answer_time_sensitive_web），所以只看總閘。
+        message = time_sensitive_message(locale, web_hint=ASK_ENABLE_WEB)
     else:
         message = off_topic_message(locale)
     log_filters = route_log_filters(filters, decision.scope, decision.decided_by)

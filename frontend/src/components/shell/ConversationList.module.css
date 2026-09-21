@@ -10,7 +10,27 @@
 }
 .newBtn:hover { background: var(--tf-surface); box-shadow: var(--tf-shadow-seg); }
 .heading { font-size: 11px; font-weight: 600; color: var(--tf-text-4); letter-spacing: 0.08em; padding: 6px 16px; }
+/* 搜尋框：與清單項同一套半透明底（不是「新對話」的實白），層級上屬於清單的一部分。 */
+.searchWrap { position: relative; margin: 0 10px 6px; }
+.searchIcon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--tf-text-4); pointer-events: none; }
+.search {
+  width: 100%; box-sizing: border-box; padding: 6px 8px 6px 28px;
+  border: 1px solid transparent; border-radius: var(--tf-radius-md);
+  background: rgba(0, 0, 0, 0.045); color: var(--tf-text-1); font: inherit; font-size: 13px;
+}
+.search::placeholder { color: var(--tf-text-4); }
+.search:focus-visible { outline: none; border-color: var(--tf-graphite); background: var(--tf-surface); }
+/* type=search 在 WebKit 自帶的清除鈕與本站風格不一致；輸入框夠短，全選刪除即可。 */
+.search::-webkit-search-cancel-button { appearance: none; }
 .list { flex: 1; overflow-y: auto; padding: 0 10px; }
+.empty { margin: 8px 10px; font-size: 12.5px; line-height: 1.5; color: var(--tf-text-muted-aa); overflow-wrap: anywhere; }
+.more {
+  display: block; width: 100%; margin: 6px 0 10px; padding: 7px 10px;
+  border: none; border-radius: var(--tf-radius-md); background: none;
+  color: var(--tf-text-muted-aa); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.more:hover:not(:disabled) { background: rgba(0, 0, 0, 0.045); color: var(--tf-text-1); }
+.more:disabled { cursor: default; }
 .item {
   display: block; padding: 7px 10px; border-radius: var(--tf-radius-md);
   font-size: 13px; color: var(--tf-text-2); text-decoration: none;

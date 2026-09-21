@@ -35,6 +35,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.services.filename import source_display
+from app.services.store import review_reasons
 from web import deps
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,8 @@ router = APIRouter()
 
 ReviewKind = Literal["faithfulness", "feedback", "extraction"]
 
-_FAITHFULNESS_MIN = get_settings().faithfulness_min
+_SETTINGS = get_settings()
+_FAITHFULNESS_MIN = _SETTINGS.faithfulness_min
 
 # jsonb 一律先以 jsonb_typeof 過濾再 cast：一列畸形的 evaluation 不該讓整支端點 500
 # （與 web/routers/monitor.py 的同一段理由相同）。
@@ -74,6 +76,10 @@ class ReviewItem(BaseModel):
     quality_score: float | None = None
     quality_flags: dict | None = None
     pages_failed: list[int] | None = None
+    # 為什麼被標成 needs_review（`store.REVIEW_REASONS` 的封閉詞彙，可多個）。以**現行門檻**
+    # 重算：入庫之後調過門檻的話，可能與當初被標記的原因不同，甚至是空的——那代表這一篇
+    # 以現在的標準已經不必看了，重跑該篇回填就會解除標記。
+    review_reasons: list[str] | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -104,11 +110,19 @@ def _qa_item(row) -> ReviewItem:
 
 def _extraction_item(row) -> ReviewItem:
     rid, fhash, fname, title, src, rdate, qscore, qflags, pfailed = row
+    flags = qflags if isinstance(qflags, dict) else None
+    reasons = review_reasons(
+        float(qscore) if qscore is not None else None, list(pfailed) if pfailed else None,
+        _SETTINGS.extraction_review_min, flags,
+        min_coverage=_SETTINGS.extraction_review_min_coverage,
+        max_garbled=_SETTINGS.extraction_review_max_garbled,
+    )
     return ReviewItem(
+        review_reasons=reasons,
         report_id=str(rid), file_hash=fhash, file_name=fname, title=title,
         source=source_display(src), report_date=_iso(rdate),
         quality_score=float(qscore) if qscore is not None else None,
-        quality_flags=qflags if isinstance(qflags, dict) else None,
+        quality_flags=flags,
         pages_failed=list(pfailed) if pfailed else None,
     )
 

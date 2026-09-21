@@ -126,11 +126,30 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(item["quality_score"], 0.41)
         self.assertEqual(item["quality_flags"], {"garbled_ratio": 0.05})
         self.assertEqual(item["pages_failed"], [2, 7])
+        # 0.41 低於 EXTRACTION_REVIEW_MIN、有失敗頁、亂碼率 0.05 過線；coverage 沒量到不算。
+        self.assertEqual(item["review_reasons"], ["pages_failed", "low_score", "garbled"])
         self.assertEqual(item["report_date"], "2026-09-01")
         self.assertIsNone(item["qa_id"])
         self.assertIn("WHERE needs_review", session.calls[0][0])
         # needs_review 是研報的現況不是事件：沒有窗期。
         self.assertNotIn("days", session.calls[0][1])
+
+    def test_reasons_explain_a_report_whose_score_is_not_low(self):
+        """全庫實測被標到的研報分數多在 0.87–0.93：原因是 coverage 或亂碼率，不是分數。
+
+        只回分數的話，畫面上是一排不低的數字，看不出為什麼要複核。
+        """
+        row = _RR_ROW[:6] + (0.93, {"layout_coverage": 0.12, "garbled_ratio": 0.001}, None)
+        self._use([1, [row]])
+        item = _authed().get("/api/review/queue?kind=extraction").json()["items"][0]
+        self.assertEqual(item["review_reasons"], ["low_coverage"])
+
+    def test_reasons_can_be_empty_when_thresholds_moved_since_ingest(self):
+        """needs_review 是入庫當時寫下的布林；原因以現行門檻重算，兩者可能不一致。"""
+        row = _RR_ROW[:6] + (0.95, {"layout_coverage": 0.8}, None)
+        self._use([1, [row]])
+        item = _authed().get("/api/review/queue?kind=extraction").json()["items"][0]
+        self.assertEqual(item["review_reasons"], [])
 
     def test_paging_bounds_are_validated(self):
         for qs in ("limit=0", "limit=101", "offset=-1", "days=0", "days=366"):

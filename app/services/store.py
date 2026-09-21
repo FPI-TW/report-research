@@ -75,6 +75,43 @@ REVIEW_MIN_COVERAGE = 0.30
 REVIEW_MAX_GARBLED = 0.02
 
 
+# 要人看的原因（封閉詞彙；前端 lib/reviewSchemas.ts 逐字鏡像）。順序即判定順序。
+REVIEW_REASONS = ("pages_failed", "low_score", "low_coverage", "garbled")
+
+
+def review_reasons(
+    quality_score: Optional[float],
+    pages_failed: Optional[Sequence[int]],
+    review_min: float,
+    flags: Optional[dict] = None,
+    *,
+    min_coverage: float = REVIEW_MIN_COVERAGE,
+    max_garbled: float = REVIEW_MAX_GARBLED,
+) -> list[str]:
+    """這一篇為什麼要人看——`needs_review` 的判定本體，回傳成立的原因（可多個）。
+
+    分數低於門檻、有任何頁級失敗、coverage 低於 `min_coverage`、亂碼率高於 `max_garbled`，
+    都算。分數或旗標為 None（pypdf 路徑、沒 render）不算低分——沒量到不是壞。
+
+    獨立成函式是因為「要不要看」與「為什麼要看」必須是同一份邏輯：待複核佇列要把原因列出來，
+    而全庫實測被標到的研報分數多在 0.87–0.93（是 coverage 或亂碼率過線，不是分數低）——
+    只顯示分數的話，使用者看到的是一排不低的分數、完全看不出為什麼要複核。
+    """
+    reasons: list[str] = []
+    if pages_failed:
+        reasons.append("pages_failed")
+    if quality_score is not None and quality_score < review_min:
+        reasons.append("low_score")
+    if flags:
+        cov = flags.get("layout_coverage")
+        if isinstance(cov, (int, float)) and not isinstance(cov, bool) and cov < min_coverage:
+            reasons.append("low_coverage")
+        g = flags.get("garbled_ratio")
+        if isinstance(g, (int, float)) and not isinstance(g, bool) and g > max_garbled:
+            reasons.append("garbled")
+    return reasons
+
+
 def needs_review(
     quality_score: Optional[float],
     pages_failed: Optional[Sequence[int]],
@@ -84,21 +121,13 @@ def needs_review(
     min_coverage: float = REVIEW_MIN_COVERAGE,
     max_garbled: float = REVIEW_MAX_GARBLED,
 ) -> bool:
-    """品質閘的判定：只標記不擋。分數低於門檻、有任何頁級失敗、coverage 低於 `min_coverage`、
-    亂碼率高於 `max_garbled`，都算要人看。分數或旗標為 None（pypdf 路徑、沒 render）不算
-    低分——沒量到不是壞。"""
-    if pages_failed:
-        return True
-    if quality_score is not None and quality_score < review_min:
-        return True
-    if flags:
-        cov = flags.get("layout_coverage")
-        if isinstance(cov, (int, float)) and not isinstance(cov, bool) and cov < min_coverage:
-            return True
-        g = flags.get("garbled_ratio")
-        if isinstance(g, (int, float)) and not isinstance(g, bool) and g > max_garbled:
-            return True
-    return False
+    """品質閘的判定：只標記不擋。任一原因成立即為 True（原因見 `review_reasons`）。"""
+    return bool(
+        review_reasons(
+            quality_score, pages_failed, review_min, flags,
+            min_coverage=min_coverage, max_garbled=max_garbled,
+        )
+    )
 
 
 async def upsert_extraction_log(session: AsyncSession, row: ExtractionLogRow) -> None:

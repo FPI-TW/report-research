@@ -138,7 +138,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/brief/latest` | — | `{status: ready|pending, brief, available_dates}` | 無簡報回 200 `pending` 不是 404 |
 | GET | `/api/brief/dates` | `limit`（1–120，30） | `{"dates": [...]}` | |
 | GET | `/api/brief/{brief_date}` | — | 同 latest | 該日無簡報 404 |
-| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`、倒讚、抽取 `needs_review`。`days` 只作用於前兩種；門檻與窗期和監控頁的忠實度卡同一套定義 |
+| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`、倒讚、抽取 `needs_review`（每筆附 `review_reasons`：`pages_failed`／`low_score`／`low_coverage`／`garbled`，以現行門檻重算）。`days` 只作用於前兩種；門檻與窗期和監控頁的忠實度卡同一套定義 |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 

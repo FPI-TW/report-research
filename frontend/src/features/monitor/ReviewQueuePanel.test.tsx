@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { ReviewQueuePanel } from './ReviewQueuePanel'
+import { reasonText } from './reviewReasons'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -49,6 +50,7 @@ test('切到抽取品質：以 kind=extraction 重新取數，研報連到閱讀
       ? { body: page('extraction', [{
           report_id: 'r1', file_hash: 'h'.repeat(64), file_name: 'a.pdf', title: null,
           source: '凱基', quality_score: 0.41, pages_failed: [2, 7],
+          review_reasons: ['pages_failed', 'low_score'],
         }]) }
       : { body: page('faithfulness', []) }
   ))
@@ -56,8 +58,8 @@ test('切到抽取品質：以 kind=extraction 重新取數，研報連到閱讀
   fireEvent.click(screen.getByRole('tab', { name: '抽取品質' }))
   const link = await screen.findByRole('link', { name: 'a.pdf' })
   expect(link).toHaveAttribute('href', `/report/${'h'.repeat(64)}`)
-  expect(screen.getByText('0.41')).toBeInTheDocument()
-  expect(screen.getByText('失敗 2 頁')).toBeInTheDocument()
+  expect(screen.getByText('品質分數 0.41')).toBeInTheDocument()
+  expect(screen.getByText('2 頁抽取失敗')).toBeInTheDocument()
   expect(new URL(fetchMock.mock.calls.at(-1)![0] as string, 'http://x').searchParams.get('kind')).toBe('extraction')
 })
 
@@ -92,4 +94,23 @@ test('載入失敗：說出來並給重試，不讓整張卡消失', async () =>
   fail = false
   fireEvent.click(screen.getByRole('button', { name: '重試' }))
   expect(await screen.findByRole('link', { name: '提問 1' })).toBeInTheDocument()
+})
+
+test('原因帶著量到的值：分數不低的研報看得出為什麼在這裡', () => {
+  const item = { quality_score: 0.93, quality_flags: { layout_coverage: 0.12, garbled_ratio: 0.034 }, pages_failed: null }
+  expect(reasonText(item, 'low_coverage')).toBe('版面覆蓋率 12%')
+  expect(reasonText(item, 'garbled')).toBe('亂碼率 3.4%')
+  // 旗標缺值時不編數字；後端新增的未知原因原樣顯示，不讓整列消失。
+  expect(reasonText({ quality_flags: null }, 'low_coverage')).toBe('版面覆蓋率過低')
+  expect(reasonText({}, 'something_new')).toBe('something_new')
+})
+
+test('以現行門檻已不需複核的研報要說出來，不留一格空白', async () => {
+  mount(url => ({
+    body: url.searchParams.get('kind') === 'extraction'
+      ? page('extraction', [{ report_id: 'r9', file_hash: 'a'.repeat(64), file_name: 'z.pdf', review_reasons: [] }])
+      : page('faithfulness', []),
+  }))
+  fireEvent.click(await screen.findByRole('tab', { name: '抽取品質' }))
+  expect(await screen.findByText('現行門檻下已達標')).toBeInTheDocument()
 })

@@ -25,6 +25,9 @@ export const reviewItemSchema = z.object({
   quality_score: z.number().nullish(),
   quality_flags: z.record(z.string(), z.unknown()).nullish(),
   pages_failed: z.array(z.number()).nullish(),
+  // app/services/store.py 的 REVIEW_REASONS。刻意收成 string 而非 enum：後端新增一種原因時，
+  // enum 會讓整頁 parse 失敗；收成 string，畫面只是多一個沒有中文標籤的代碼。
+  review_reasons: z.array(z.string()).nullish(),
 })
 export type ReviewItem = z.infer<typeof reviewItemSchema>
 

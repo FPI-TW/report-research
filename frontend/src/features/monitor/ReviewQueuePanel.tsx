@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { displayTitle } from '../../lib/displayTitle'
 import type { ReviewItem, ReviewKind } from '../../lib/reviewSchemas'
+import { reasonText } from './reviewReasons'
 import { useReviewQueue } from './useReviewQueue'
 import styles from './MonitorPage.module.css'
 
@@ -17,7 +18,7 @@ import styles from './MonitorPage.module.css'
 const TABS: { kind: ReviewKind; label: string; hint: string }[] = [
   { kind: 'faithfulness', label: '忠實度低分', hint: '近 30 天內抽查分數低於門檻的回答，最低分在前' },
   { kind: 'feedback', label: '倒讚', hint: '近 30 天內使用者按了倒讚的回答' },
-  { kind: 'extraction', label: '抽取品質', hint: '抽取品質標為 needs_review 的研報（照樣入庫、可檢索），分數最低在前' },
+  { kind: 'extraction', label: '抽取品質', hint: '抽取品質標為 needs_review 的研報（照樣入庫、可檢索），分數最低在前；右側是被標記的原因' },
 ]
 
 function fmtDay(iso: string | null | undefined): string {
@@ -41,14 +42,18 @@ function QaRow({ item, kind }: { item: ReviewItem; kind: ReviewKind }) {
 }
 
 function ExtractionRow({ item }: { item: ReviewItem }) {
-  const failed = item.pages_failed?.length ?? 0
+  const reasons = item.review_reasons ?? []
   return (
     <li className={styles.rvRow}>
       <Link className={styles.rvLink} to={`/report/${item.file_hash ?? ''}`}>{displayTitle(item)}</Link>
       <span className={styles.rvMeta}>
         {item.source && <span>{item.source}</span>}
-        <span className={styles.fWarn}>{item.quality_score != null ? item.quality_score.toFixed(2) : '無分數'}</span>
-        {failed > 0 && <span>失敗 {failed} 頁</span>}
+        {reasons.length > 0 ? (
+          reasons.map(r => <span key={r} className={styles.fWarn}>{reasonText(item, r)}</span>)
+        ) : (
+          // 原因以現行門檻重算；入庫後調過門檻的話可能一條都不成立。
+          <span title="以現行門檻已不需複核；重跑該篇回填即會解除標記">現行門檻下已達標</span>
+        )}
       </span>
     </li>
   )

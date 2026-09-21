@@ -1368,13 +1368,25 @@ async def load_recent_turns(
         return []
 
 
-async def list_conversations(limit: int = 50) -> list[dict]:
+# 與 retrieval._LIKE_ESC 同一張表；這裡自己留一份而不 import，是因為 retrieval_pipeline 頂層
+# import 本模組（刻意的循環依賴），本模組頂層再 import 檢索層會把那個循環變成真的 ImportError。
+_LIKE_ESC = str.maketrans({"%": r"\%", "_": r"\_", "\\": r"\\"})
+
+
+async def list_conversations(limit: int = 50, offset: int = 0, q: str | None = None) -> list[dict]:
     """對話串清單：每串 {conversation_id, title, last_at, turn_count}。
 
     分組鍵 COALESCE(conversation_id, id)；標題取最早的非離題問題；
     只顯示至少含一輪非離題回答的對話；
     依該串最新時間由新到舊。
+
+    `q`：只留「任一輪有效提問含這段文字」的對話串（不分大小寫；`%`、`_` 當字面字元）。
+    比對的是整串的提問而不只是標題——標題只是第一題，使用者記得的常常是後面追問的那一句。
+    `offset`：翻頁。先前只有 limit（上限 200），第 201 串之後的對話完全找不回來。
+    回傳形狀刻意維持裸陣列：瀏覽器裡還開著的舊 bundle 以 `z.array(...)` 解析這支端點。
     """
+    needle = (q or "").strip()
+    pattern = "%" + needle.translate(_LIKE_ESC) + "%" if needle else None
     async with SessionFactory() as session:
         rows = (
             await session.execute(
@@ -1384,13 +1396,21 @@ async def list_conversations(limit: int = 50) -> list[dict]:
                     "         (array_agg(question ORDER BY created_at) "
                     "             FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active))[1] AS title,"
                     "         max(created_at) AS last_at,"
-                    "         count(*) FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active) AS turn_count"
+                    "         count(*) FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active)"
+                    "             AS turn_count,"
+                    "         COALESCE(bool_or(question ILIKE CAST(:pattern AS text)) "
+                    "             FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active), FALSE) AS matched"
                     "  FROM research.qa_log"
                     "  GROUP BY COALESCE(conversation_id, id)"
-                    ") g WHERE turn_count > 0 "
-                    "ORDER BY last_at DESC LIMIT :limit"
+                    ") g WHERE turn_count > 0 AND (CAST(:pattern AS text) IS NULL OR matched) "
+                    # conv_id 當次序的決勝鍵：last_at 相同時（批次匯入、同秒寫入）沒有它，
+                    # 翻頁之間的相對順序不保證穩定，同一串可能在兩頁各出現一次或整個漏掉。
+                    "ORDER BY last_at DESC, conv_id DESC LIMIT :limit OFFSET :offset"
                 ).bindparams(bindparam("offtopics", expanding=True)),
-                {"offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit},
+                {
+                    "offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit,
+                    "offset": max(0, offset), "pattern": pattern,
+                },
             )
         ).all()
     out: list[dict] = []

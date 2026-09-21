@@ -123,7 +123,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/history` | `limit`（1–200，50） | 最近問答列 | 排除離題婉拒 |
 | DELETE | `/api/history/{qa_id}`；POST `/api/history/{qa_id}/delete` | — | `{"ok"}` | POST 是相容 alias |
 | GET | `/api/qa/{root_qa_id}/versions` | — | 同題所有版本 | 重新生成／編輯後的版本鏈 |
-| GET | `/api/conversations` | `limit`（1–200） | 對話串清單 | |
+| GET | `/api/conversations` | `limit`（1–200）、`offset`、`q`（≤200 字） | 對話串清單（裸陣列，無 total） | `q` 比對整串的有效提問（不只標題），`%`／`_` 為字面字元；前端以「回來的筆數等於 limit」判斷有無下一頁 |
 | GET | `/api/conversations/{conversation_id}` | — | 該對話全部輪次（舊→新） | |
 | DELETE | `/api/conversations/{conversation_id}`；POST `/api/conversations/{conversation_id}/delete` | — | `{"ok"}` | 以 `COALESCE(conversation_id, id)` 整批刪 `qa_log` |
 | GET | `/api/report/{report_id}/full` | — | `report_id`、`file_name`、`title`、`market`、`source`、`summary`、`report_date`、`report_type`、`has_file` | 研報原檔詳情（`web/routers/report_file.py`，與已移除的深度研報無關） |
@@ -138,6 +138,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/brief/latest` | — | `{status: ready|pending, brief, available_dates}` | 無簡報回 200 `pending` 不是 404 |
 | GET | `/api/brief/dates` | `limit`（1–120，30） | `{"dates": [...]}` | |
 | GET | `/api/brief/{brief_date}` | — | 同 latest | 該日無簡報 404 |
+| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`、倒讚、抽取 `needs_review`。`days` 只作用於前兩種；門檻與窗期和監控頁的忠實度卡同一套定義 |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 

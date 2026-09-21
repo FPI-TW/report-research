@@ -168,3 +168,12 @@ test('「已停止生成」是 block：行內元素會黏到 inline-block 思考
   const marker = screen.getByText('已停止生成')
   expect(getComputedStyle(marker).display).toBe('block')
 })
+
+test('複製回答：只複製本文，不附來源清單', async () => {
+  const clipboard = await import('../../lib/clipboard')
+  const spy = vi.spyOn(clipboard, 'copyText').mockResolvedValue()
+  render(<AssistantMessage turn={makeTurn({ answer: '展望正向 [1]。' })} {...noop} />)
+  fireEvent.click(screen.getByRole('button', { name: '複製回答' }))
+  expect(spy).toHaveBeenCalledWith('展望正向 [1]。')
+  spy.mockRestore()
+})

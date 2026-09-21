@@ -44,6 +44,7 @@ from web import (
     concurrency,  # noqa: E402
     deps,  # noqa: E402
 )
+from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
@@ -188,6 +189,10 @@ async def require_login(request: Request, call_next):
     if path.startswith("/api/"):
         return JSONResponse({"detail": "未登入"}, status_code=401)
     return RedirectResponse("/login", status_code=302)
+
+
+# 最後加＝最外層：401、302 與未捕捉例外的 500 也都拿得到關聯 id、也都記得到一行。
+app.add_middleware(RequestLogMiddleware)
 
 
 

@@ -1179,6 +1179,7 @@ async def _log_qa(
                 )
             await session.commit()
     except Exception:
+        logger.exception("qa_log 寫入失敗：答案已送出但這一題沒有留下紀錄")
         return None
     return qa_id
 
@@ -1202,6 +1203,7 @@ async def _load_qa_meta(qa_id: str):
         return (str(root) if root else None,
                 str(conv) if conv else None, created)
     except Exception:
+        logger.warning("qa_log 讀取 meta 失敗（qa_id=%s）", qa_id, exc_info=True)
         return None
 
 
@@ -1226,6 +1228,7 @@ async def _count_versions(group_key: str) -> int:
             ).first()
         return int(row[0]) if row else 1
     except Exception:
+        logger.warning("qa_log 版本數查詢失敗，以 1 代回（group_key=%s）", group_key, exc_info=True)
         return 1
 
 
@@ -1328,6 +1331,7 @@ async def log_stopped_qa(
                 )
             await session.commit()
     except Exception:
+        logger.exception("qa_log 寫入中止紀錄失敗：被停止的這一題沒有留下紀錄")
         return None
     return qa_id
 
@@ -1360,6 +1364,7 @@ async def load_recent_turns(
             ).all()
         return [(q, a) for q, a in reversed(rows)]
     except Exception:
+        logger.warning("qa_log 讀取前幾輪對話失敗，本題當作沒有上文", exc_info=True)
         return []
 
 
@@ -1472,6 +1477,7 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
                 )
             ).all()
     except Exception:
+        logger.warning("qa_log 版本清單查詢失敗（root_qa_id=%s）", root_qa_id, exc_info=True)
         return []
     out = []
     for (qid, answer, sources, ext_sources, thinking_ms, stages, feedback, created,
@@ -1509,6 +1515,7 @@ async def delete_conversation(conversation_id: str) -> bool:
             await session.commit()
         return getattr(result, "rowcount", 0) > 0
     except Exception:
+        logger.warning("qa_log 刪除對話串失敗（conversation_id=%s）", conversation_id, exc_info=True)
         return False
 
 
@@ -1534,6 +1541,7 @@ async def record_feedback(qa_id: str, value: str) -> bool:
             await session.commit()
         return getattr(result, "rowcount", 0) == 1
     except Exception:
+        logger.warning("qa_log 回饋寫入失敗（qa_id=%s）", qa_id, exc_info=True)
         return False
 
 
@@ -1547,7 +1555,7 @@ async def _update_followups(qa_id: str, followups: list[str]) -> None:
             )
             await session.commit()
     except Exception:
-        pass
+        logger.warning("qa_log 追問建議回寫失敗（qa_id=%s）", qa_id, exc_info=True)
 
 
 async def _update_evaluation(qa_id: str, evaluation: dict) -> None:
@@ -1560,7 +1568,7 @@ async def _update_evaluation(qa_id: str, evaluation: dict) -> None:
             )
             await session.commit()
     except Exception:
-        pass
+        logger.warning("qa_log 忠實度結果回寫失敗（qa_id=%s）", qa_id, exc_info=True)
 
 
 # 背景任務的強引用。**沒有這個 set，任務會被 GC 掉。** asyncio 只對執行中的 task 持
@@ -1649,6 +1657,7 @@ async def delete_qa(qa_id: str) -> bool:
             await session.commit()
         return getattr(result, "rowcount", 0) == 1
     except Exception:
+        logger.warning("qa_log 刪除單筆失敗（qa_id=%s）", qa_id, exc_info=True)
         return False
 
 

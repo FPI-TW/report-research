@@ -19,6 +19,7 @@ from app.services.radar.types import (
     Signal,
     parse_signal_row,
 )
+from app.services.retrieval import _LIKE_ESC
 from app.services.tagging import MARKETS
 
 VALID_STATUSES = ["valid", "partial"]
@@ -325,7 +326,8 @@ def _catalog_filters(market: Optional[str], q: Optional[str]) -> tuple[str, dict
         params["market"] = market
     if q:
         conds.append("(cat.instrument_code ILIKE :q OR cat.name ILIKE :q)")
-        params["q"] = f"%{q}%"
+        # 使用者輸入的 % 與 _ 是字面字元不是萬用字元（PostgreSQL LIKE 預設跳脫字元即反斜線）。
+        params["q"] = "%" + q.translate(_LIKE_ESC) + "%"
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
     return where, params
 

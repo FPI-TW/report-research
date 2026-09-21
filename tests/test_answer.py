@@ -1883,6 +1883,51 @@ class SplitExternalSourcesTests(unittest.TestCase):
         self.assertEqual(ext, [{"title": "https://a.com", "url": "https://a.com"}])
 
 
+class QaLogFailureIsLoggedTests(unittest.IsolatedAsyncioTestCase):
+    """qa_log 的 DB 失敗是 best-effort（不影響已送出的答案），但不可以無聲。
+
+    先前這些 except 一律直接 return：寫入層故障時答案照送、qa_log 少一列、/healthz 回 ok，
+    沒有任何訊號。行為不變（回傳值照舊），只要求留下一行日誌。
+    """
+
+    def setUp(self):
+        from app.services import answer as ans
+
+        def _boom():
+            raise RuntimeError("db down")
+
+        self.ans = ans
+        self._orig = ans.SessionFactory
+        ans.SessionFactory = _boom
+
+    def tearDown(self):
+        self.ans.SessionFactory = self._orig
+
+    async def test_log_qa_failure_returns_none_and_logs(self):
+        with self.assertLogs("app.services.answer", level="ERROR") as cm:
+            qid = await self.ans._log_qa("q", "a", [], {}, 5, [])
+        self.assertIsNone(qid)
+        self.assertIn("qa_log 寫入失敗", "\n".join(cm.output))
+
+    async def test_read_and_mutate_failures_keep_return_values_and_log(self):
+        qa_id = "66666666-6666-4666-8666-666666666666"
+        cases = (
+            (self.ans._load_qa_meta(qa_id), None),
+            (self.ans._count_versions(qa_id), 1),
+            (self.ans.list_qa_versions(qa_id), []),
+            (self.ans.delete_conversation(qa_id), False),
+            (self.ans.record_feedback(qa_id, "like"), False),
+            (self.ans.delete_qa(qa_id), False),
+            (self.ans._update_followups(qa_id, ["x"]), None),
+            (self.ans._update_evaluation(qa_id, {"k": 1}), None),
+        )
+        for coro, expected in cases:
+            with self.assertLogs("app.services.answer", level="WARNING") as cm:
+                got = await coro
+            self.assertEqual(got, expected)
+            self.assertIn("qa_log", "\n".join(cm.output))
+
+
 class LogQaSourcesTests(unittest.IsolatedAsyncioTestCase):
     async def test_log_qa_inserts_sources_and_ext_sources_json(self):
         from app.services import answer as ans

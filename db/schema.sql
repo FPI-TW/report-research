@@ -115,6 +115,11 @@ CREATE INDEX IF NOT EXISTS idx_rr_source
     ON research.research_report (source);
 CREATE INDEX IF NOT EXISTS idx_rr_report_type
     ON research.research_report (report_type);
+-- created_at（入庫時間）是每日簡報的窗期鍵：brief.py 的新報告與摘錄兩支查詢都是
+-- `WHERE created_at >= :start AND created_at < :end`，check_batch_freshness.py 取 max(created_at)。
+-- 同上，這是便宜保險不是已量測到的加速；生產同樣先手動 CREATE INDEX CONCURRENTLY。
+CREATE INDEX IF NOT EXISTS idx_rr_created_at
+    ON research.research_report (created_at);
 -- stock_code 是純量欄位，與 stock_targets 的 GIN 互不覆蓋：_COVERAGE_SQL 的
 -- instrument_name 子查詢與 overview 個股條件的 OR 左支用的都是這一欄。
 CREATE INDEX IF NOT EXISTS idx_rr_stock_code

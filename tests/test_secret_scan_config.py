@@ -72,6 +72,56 @@ class ConfigLoadsDefaultRulesTests(unittest.TestCase):
                 self.assertRegex("fixed-test-secret-0123456789", rx)
 
 
+class DeepSeekKeyRuleTests(unittest.TestCase):
+    """內建規則集抓不到 DeepSeek 金鑰（`sk-` ＋ 32 hex），靠這條自訂規則。
+
+    樣本一律在執行期組出來：寫成字面值的話，這個測試檔本身就會被該規則掃到。
+    Python `re` 與 gitleaks 的 RE2 對這個 regex（`\\b`、字元類、量詞）語意相同。
+    """
+
+    HEX32 = "0123456789abcdef" * 2
+
+    @classmethod
+    def setUpClass(cls):
+        cfg = tomllib.loads(CONFIG.read_text(encoding="utf-8"))
+        rules = [r for r in cfg.get("rules", []) if r.get("id") == "deepseek-api-key"]
+        cls.rule = rules[0] if rules else {}
+        cls.allow = cfg.get("allowlist", {}).get("regexes", [])
+
+    def setUp(self):
+        self.assertTrue(self.rule, "缺 id=deepseek-api-key 的自訂規則")
+
+    def test_matches_key_shape(self):
+        import re
+
+        sample = "sk-" + self.HEX32
+        for text in (sample, f"DEEPSEEK_API_KEY={sample}", f'{{"key": "{sample}"}}',
+                     f"Authorization: Bearer {sample}"):
+            with self.subTest(text=text[:20]):
+                self.assertTrue(re.search(self.rule["regex"], text))
+
+    def test_rejects_other_lengths(self):
+        """多一個或少一個字都不算——別家更長的 `sk-` 金鑰不該被歸到這條。"""
+        import re
+
+        for body in (self.HEX32[:-1], self.HEX32 + "a", self.HEX32 + "Z"):
+            with self.subTest(n=len(body)):
+                self.assertIsNone(re.search(self.rule["regex"], "sk-" + body))
+
+    def test_keyword_prefilter_present(self):
+        """gitleaks 先以 keywords 粗篩；缺了它規則照跑但每一行都要跑 regex。"""
+        self.assertIn("sk-", self.rule.get("keywords", []))
+
+    def test_allowlist_does_not_swallow_key(self):
+        """測試假值的放行 regex 不得連真金鑰一起放過。"""
+        import re
+
+        sample = "sk-" + self.HEX32
+        for rx in self.allow:
+            with self.subTest(regex=rx):
+                self.assertIsNone(re.search(rx, sample))
+
+
 class WorkflowWiringTests(unittest.TestCase):
     """比對**解析後的 YAML**，不是原始文字。
 

@@ -225,5 +225,36 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
                 snr._tag_via_cli("x.pdf", "內文")
 
 
+class CacheWriteAfterCommitTests(unittest.TestCase):
+    """審查 L9：抽取快取在 DB commit 之後才寫。它拋例外時，該篇已入庫卻被計成 fail、
+    不進 hashes；重放時又 skip_exists——下游摘要／標題／摘錄永遠漏掉它。"""
+
+    def test_cache_failure_is_fail_open(self):
+        with mock.patch.object(snr, "_write_cache", side_effect=OSError("disk full")), \
+                mock.patch("builtins.print") as printed:
+            ok = snr.write_cache_fail_open(object(), Path("/x/報告.pdf"), None, None, None)
+        self.assertFalse(ok)
+        self.assertIn("WARNING", printed.call_args.args[0])
+        self.assertIn("disk full", printed.call_args.args[0])
+
+    def test_cache_success(self):
+        with mock.patch.object(snr, "_write_cache") as w:
+            self.assertTrue(snr.write_cache_fail_open("res", Path("/x/a.pdf"), "meta", "kgi", None))
+        w.assert_called_once_with("res", Path("/x/a.pdf"), "meta", "kgi", None)
+
+    def test_run_records_hash_before_writing_cache_outside_the_ingest_try(self):
+        """_run 要真 DB，靜態釘住順序：commit → 離開 try → 記 hash → 寫快取（fail-open）。"""
+        src = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+        run = src[src.index("async def _run(args)"):]
+        commit = run.index('await upsert_extraction_log(session, _log("ingested"))')
+        handler = run.index("except Exception as e:", commit)
+        append = run.index("ingested_hashes.append(res.file_hash)")
+        cache = run.index("write_cache_fail_open(res, path, meta, source, report_date)")
+        self.assertLess(commit, handler)
+        self.assertLess(handler, append)   # hash 在 try 之外，入庫的 except 攔不到它
+        self.assertLess(append, cache)     # 先記 hash 再寫快取
+        self.assertNotIn("_write_cache(res", run)  # _run 只經 fail-open 包裝寫快取
+
+
 if __name__ == "__main__":
     unittest.main()

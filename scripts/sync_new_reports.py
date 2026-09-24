@@ -156,6 +156,24 @@ def _write_cache(res, path: Path, meta, source: str | None, report_date) -> None
     extraction_cache.write_record(rec)
 
 
+def write_cache_fail_open(res, path: Path, meta, source: str | None, report_date) -> bool:
+    """入庫 commit **之後**寫抽取快取；失敗只印 WARNING、不拋，回是否寫成。
+
+    快取不是正確性必要的：研報已在庫（full_text 是正典），快取只供全語料重建
+    （tag_all_cli／ingest_all／build_boilerplate）省去重抽，以及摘錄剔除表格列時查
+    block 索引（extract_takeaways 缺快取就退回完整正典文字）。缺一筆的代價是少量品質
+    與重抽時間。反過來，讓它的例外落進入庫的 `except` 會把已 commit 的篇計成 fail、
+    不進 hashes，重放時又 `skip_exists`——下游摘要／標題／摘錄永遠漏掉它（審查 L9，
+    與 partial_hashes_on_abort 同一型）。批次的 logger.info 無聲，所以用 print。
+    """
+    try:
+        _write_cache(res, path, meta, source, report_date)
+        return True
+    except Exception as e:  # noqa: BLE001 — 快取 fail-open，已入庫的篇不能因它掉出 hashes
+        print(f"  WARNING 抽取快取寫入失敗（已入庫、已記入 hashes）：{path.name[:55]} {e!r}", flush=True)
+        return False
+
+
 def write_ingested_hashes(path: Path, hashes: list[str]) -> None:
     """把本輪成功入庫的 file_hash 清單原子寫入標記檔（每行一個，每輪覆寫）。
 
@@ -467,7 +485,6 @@ async def _run(args) -> None:
                     await upsert_report(session, report, chunks, embeddings)
                     await upsert_extraction_log(session, _log("ingested"))
                     await session.commit()
-                    _write_cache(res, path, meta, source, report_date)
                 except Exception as e:  # noqa: BLE001
                     stats["fail"] += 1
                     await session.rollback()
@@ -479,9 +496,11 @@ async def _run(args) -> None:
                         fl.write(f"{path}\tingest\t{e!r}\n")
                     continue
 
+                # commit 成功就立刻記進 hashes，之後的任何步驟（寫快取）都不能讓它掉出去。
+                ingested_hashes.append(res.file_hash)
                 stats["ingested"] += 1
                 stats["chunks"] += len(chunks)
-                ingested_hashes.append(res.file_hash)
+                write_cache_fail_open(res, path, meta, source, report_date)
                 print(f"  [{tag.market}] {path.name[:55]} ({len(chunks)} chunks)", flush=True)
 
             if stats["ingested"] and not args.dry_run:

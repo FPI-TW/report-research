@@ -567,6 +567,20 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
    撤銷舊金鑰時打斷進行中的一輪。
 6. 撤銷舊金鑰。
 
+### DeepSeek 批次的失敗處置
+
+批次走 DeepSeek 時（`scripts/_claude_cli.run_claude` 的 HTTP 路徑），失敗依 kind 分三類處置；失敗原因一律寫成 `API[<kind>] <固定措辭>：<細節>`（單行、不含 TAB），落在各批次的 `*_failures.log`：
+
+| 類別 | kind | 批次行為 |
+|---|---|---|
+| 帳號層級 | `auth`（401）、`quota`（402）、`config`（404、模型不存在） | 整批 **rc=2** 中止；不記跳過名單；**不改走 Claude**（402 的處置是儲值） |
+| 暫時性 | `overloaded`（429、5xx）、`network` | 傳輸層依 `Retry-After` 退避重試 ≤2 次（受總期限限制）；腳本層不再重試；計入斷路器 |
+| 單篇 | `content_filter`、`truncated`、`empty`、`bad_request`、`timeout`、`other` | 這篇這輪只打 1 次；前四種記入 `research.llm_task_failure`（審查與截斷 1 次就跳過，其餘連續 3 輪）；`timeout` 計入斷路器 |
+
+「回應成功但解析失敗」（unparseable）不在上表：腳本層照舊最多 3 次，連續 3 輪才跳過。摘要在 DeepSeek 路徑不接受純文字回應（沒有 JSON 就算解析失敗），CLI 路徑維持原狀。批次的 `timeout`（摘要／標題／摘錄／訊號 180 秒、標註 150 秒、簡報 300 秒）在 HTTP 路徑是**涵蓋傳輸層重試的總期限**，逐行檢查，伺服器排隊送 keep-alive 也延長不了它。
+
+**斷路器**：同一個批次行程裡最近 10 次 DeepSeek 呼叫有 ≥5 次逾時／過載／連線失敗，該段以 **rc=2** 中止，並寫 `data/.llm_breaker`；之後 30 分鐘內，其他**會用到 DeepSeek** 的段在預檢就 rc=2 拒跑（還在用 Claude 的段不受影響）。處置：看 DeepSeek 狀態頁與 sync log；恢復後 `rm data/.llm_breaker`（或等它過期），再依「整批中止後的重放」補跑。
+
 ### oneshot 的手動驗證：`Result=success` 不是證據
 
 2026-08-19 部署 P1 時出現過一次假通過。`systemctl start report-mark-freshness.service`

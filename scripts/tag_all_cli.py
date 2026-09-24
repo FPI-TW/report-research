@@ -25,7 +25,7 @@ load_llm_env()
 
 from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
 from app.services.tagging import TAG_INSTRUCTION, parse_tags  # noqa: E402
-from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
+from scripts._claude_cli import CliNotFoundError, CliResult, is_retryable, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,6 +97,10 @@ def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
             tmp.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
             tmp.rename(out_path)
             return "ok"
+        if res.text is None and not is_retryable(res):
+            # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）。
+            # 本支只寫 log、不接 DB（審查 L5）：原因已在 last_error 的 API[<kind>] 裡。
+            break
     with _lock, open(FAIL_LOG, "a", encoding="utf-8") as f:
         f.write(f"{h}\t{rec['file_name']}\t{last_error}\n")
     return "fail"

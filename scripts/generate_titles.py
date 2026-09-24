@@ -52,6 +52,8 @@ from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_cli import (  # noqa: E402
     CliNotFoundError,
     CliResult,
+    failure_kind,
+    is_retryable,
     run_claude,
 )
 from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
@@ -216,9 +218,9 @@ async def title_one(
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是
     # 「回了但解析不採信」——後者是資料問題，前者是環境問題，處置完全不同。
     last_error = "CLI 無回應"
-    # 本輪有沒有任何一次「回了但不能用」。只有這種才記入跳過名單：逾時、非零退出
-    # 是環境問題，記了會讓一次停機把整批研報打入跳過名單。
-    content_failed = False
+    # 本輪有沒有任何一次「回了但不能用」，值是要記的 reason。只有這種才記入跳過名單：逾時、
+    # 非零退出是環境問題，記了會讓一次停機把整批研報打入跳過名單。
+    fail_reason: Optional[str] = None
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
@@ -229,9 +231,13 @@ async def title_one(
                 if result:
                     break
                 last_error = "回應無法解析為可採信的標題"
-                content_failed = True
+                fail_reason = llm_failures.UNPARSEABLE
             elif res.error:
                 last_error = res.error
+            if res.text is None and not is_retryable(res):
+                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                fail_reason = failure_kind(res) or fail_reason
+                break
 
     if result:
         async with SessionFactory() as session:
@@ -249,8 +255,8 @@ async def title_one(
             await recorder.clear(file_hash)
         _ok += 1
     else:
-        if recorder and content_failed:
-            await recorder.record(file_hash, llm_failures.UNPARSEABLE)
+        if recorder and fail_reason:
+            await recorder.record(file_hash, fail_reason)
         # 第三欄是 2026-08-13 補的：先前只記 id 與檔名，於是連續四天 fail=60
         # 時這個檔對「為什麼」一個字都說不出來。
         with open(FAIL_LOG, "a", encoding="utf-8") as f:

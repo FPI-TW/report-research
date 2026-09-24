@@ -78,7 +78,13 @@ from app.services.llm_models import TASK_TAKEAWAY, resolve_model  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
-from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
+from scripts._claude_cli import (  # noqa: E402
+    CliNotFoundError,
+    CliResult,
+    failure_kind,
+    is_retryable,
+    run_claude,
+)
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -615,6 +621,7 @@ async def extract_one(
     parsed: Optional[ParsedTakeaways] = None
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
     last_error = "CLI 無回應"
+    http_reason: Optional[str] = None  # HTTP 的審查／截斷／空回應／400（failure_kind）
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
@@ -628,9 +635,14 @@ async def extract_one(
                     break
             elif res.error:
                 last_error = res.error
+            if res.text is None and not is_retryable(res):
+                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                http_reason = failure_kind(res) or http_reason
+                break
         # parsed 非 None ＝至少有一次「回了東西」；之後 0 條摘錄就是內容型失敗，
         # 記入跳過名單。全程沒回應（逾時、非零退出）是環境型，不記。
-        content_failed = parsed is not None
+        # HTTP 的內容型失敗是結束這一輪的那一次，取它（截斷、審查 1 次就跳過）。
+        fail_reason = http_reason or (llm_failures.UNPARSEABLE if parsed is not None else None)
         if parsed is None:
             parsed = ParsedTakeaways(ok=False, error=last_error)
 
@@ -641,8 +653,8 @@ async def extract_one(
             # 好的摘錄）。下次批次看不到符合的列/或 sha 仍不符 → 自動重跑。
             _rejected += 1
             _log_failure(item, parsed.error or "0 條摘錄")
-            if recorder and content_failed:
-                await recorder.record(item.file_hash, llm_failures.UNPARSEABLE)
+            if recorder and fail_reason:
+                await recorder.record(item.file_hash, fail_reason)
         else:
             await _replace_rows(item.report_id, rows)
             _ok += 1

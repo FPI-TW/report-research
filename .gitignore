@@ -40,6 +40,10 @@ data/sync_delta_*.txt
 # 下游整批中止（rc=2）時保留的本輪 hashes，以及手動重放 delta 時 --hashes-out 寫出的
 # 那份（scripts/sync_new_reports.sh）。重放補跑完由人刪除。
 data/sync_hashes_retained_*.txt
+# 批次斷路器的標記（scripts/_claude_cli.py 寫、scripts/_llm_env.py 讀；30 分鐘內擋住用到
+# DeepSeek 的段）。確認供應商恢復後由人刪除，或等它過期。
+data/.llm_breaker
+data/.llm_breaker.tmp
 # 硬體用量取樣（scripts/collect_resource_usage.py 每 20 秒一筆，約 10 MB／日，
 # 自帶 --retention-days 修剪）。純執行期量測資料，不進版控——它描述的是
 # 「這台機器這段時間」，換一台機器就完全沒有意義。

@@ -48,14 +48,42 @@ HTTP 路徑的規則（第二版計畫 §4.3、§4.6）：
     這類錯誤每一篇都會踩到，記成 N 筆單篇失敗後 exit 0 正是四天停擺的型態；它們也**不記**
     `research.llm_task_failure`（那不是研報的問題），更**絕不改走 Claude**——402 的處置是儲值，
     換成 Claude 等於繞過預算（docs/production_resilience.md「整批中止後的重放」）。
+
+## 重試分層（第二版計畫 §4.7）
+
+HTTP 路徑的暫時性錯誤（429／5xx／網路）已在傳輸層依 `Retry-After` 退避重試過；截斷、審查、
+空回應、400 則是決定性的，重打同一個 prompt 只是再付一次錢。所以各批次的腳本層重試迴圈要加
+`if res.text is None and not is_retryable(res): break`——`API[` 開頭的失敗一律不在腳本層重試。
+**例外**是「回應成功但解析失敗」（unparseable）：那時 `res.text` 有值，腳本層照舊最多 3 次。
+結果：每篇每輪最多 3 個會產生輸出的請求；截斷與審查只會 1 個。CLI 的失敗（`CLI 逾時`、
+`CLI 退出碼 …`）語意不變，照舊重試。
+
+`failure_kind(res)` 把 HTTP 的內容型失敗對應到 `llm_failures` 的 reason（content_filter、
+truncated、empty、bad_request），各批次記跳過名單時用它；環境型（timeout、overloaded、network）
+回 None——那不是研報的問題。
+
+## 斷路器（只擋 HTTP backend，審查 L9）
+
+DeepSeek 整體變慢或過載時，每篇都要等到總期限才失敗，一段批次可以拖上數小時、每篇還記一筆
+「單篇失敗」。行程範圍的斷路器看**最近 `BREAKER_WINDOW` 次 HTTP 呼叫**，其中逾時／過載／網路
+（`BREAKER_KINDS`）達 `BREAKER_TRIP` 次就拋 `LlmEnvironmentError`（整批 rc=2），並寫
+`data/.llm_breaker`；之後 30 分鐘內，其他會用到 HTTP model 的段在 `require_llm_key` 就以
+rc=2 拒跑（`scripts/_llm_env.py`）。CLI 呼叫不進窗、也不受標記影響：遷移期間還在用 Claude
+的段不該因為 DeepSeek 出事而停。有執行緒鎖（批次以 `asyncio.to_thread`／執行緒池並行呼叫）。
 """
 import errno
+import re
 import subprocess
+import sys
+import threading
 import time
+from collections import deque
+from datetime import datetime, timezone
 from typing import NamedTuple, Optional
 
-from app.services import llm_http
+from app.services import llm_failures, llm_http
 from app.services.llm_models import is_http_model
+from scripts._llm_env import BREAKER_TTL_S, breaker_path
 
 # stderr 只留尾巴：完整 stderr 可能很長，而失敗記錄是給人掃讀的。200 字元夠容納
 # 「usage: unknown flag」「Credit balance too low」這類真正有資訊量的那一行。
@@ -137,6 +165,108 @@ _ACCOUNT_HINTS = {
 }
 
 
+# ── 重試與失敗分類（批次共用） ─────────────────────────────────────────────
+_API_PREFIX = "API["
+_API_KIND = re.compile(r"^API\[([a-z_]+)\]")
+
+# HTTP 失敗 kind → `research.llm_task_failure` 的 reason。只列「這篇研報的內容／輸入」造成的；
+# 不在表上的（timeout、overloaded、network、other；帳號型早已拋出）一律不記。
+_FAILURE_REASONS = {
+    llm_http.CONTENT_FILTER: llm_failures.CONTENT_FILTER,
+    llm_http.TRUNCATED: llm_failures.TRUNCATED,
+    llm_http.EMPTY: llm_failures.EMPTY,
+    llm_http.BAD_REQUEST: llm_failures.BAD_REQUEST,
+}
+
+
+def is_retryable(res: CliResult) -> bool:
+    """腳本層值不值得再打一次：`API[` 開頭＝HTTP 路徑，傳輸層已重試過或本來就是決定性的 → False。"""
+    return not (res.error or "").startswith(_API_PREFIX)
+
+
+def error_kind(error: Optional[str]) -> Optional[str]:
+    """`API[<kind>] …` → kind；CLI 的訊息或 None → None。"""
+    m = _API_KIND.match(error or "")
+    return m.group(1) if m else None
+
+
+def failure_kind(res: CliResult) -> Optional[str]:
+    """這次失敗要以哪個 reason 記入跳過名單；不該記（成功、CLI、環境型）回 None。"""
+    if res.text is not None:
+        return None
+    return _FAILURE_REASONS.get(error_kind(res.error))
+
+
+# ── 斷路器 ───────────────────────────────────────────────────────────────────
+BREAKER_WINDOW = 10
+BREAKER_TRIP = 5
+BREAKER_KINDS = frozenset({llm_http.TIMEOUT, llm_http.OVERLOADED, llm_http.NETWORK})
+
+
+def _warn(msg: str) -> None:
+    # 批次腳本的 logger 無聲（logging 只在 web/server.py 初始化），用 stderr。
+    print(f"[llm] {msg}", file=sys.stderr, flush=True)
+
+
+def _write_breaker_marker(message: str) -> None:
+    """寫 `data/.llm_breaker`（原子寫入）；失敗只警告——標記是給後續段的，這一段照樣中止。"""
+    path = breaker_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(
+            f"ts={datetime.now(timezone.utc).isoformat(timespec='seconds')}\nreason={message}\n",
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    except OSError as exc:
+        _warn(f"斷路器標記寫入失敗（{path}）：{type(exc).__name__}: {exc}")
+
+
+class _Breaker:
+    """行程範圍、執行緒安全的滑動窗。見模組 docstring「斷路器」。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._recent: deque[bool] = deque(maxlen=BREAKER_WINDOW)
+        self._tripped: Optional[str] = None
+
+    def reset(self) -> None:
+        with self._lock:
+            self._recent.clear()
+            self._tripped = None
+
+    def check(self) -> None:
+        """已跳脫就不再送出任何請求。"""
+        if self._tripped is not None:
+            raise LlmEnvironmentError(self._tripped)
+
+    def observe(self, kind: Optional[str]) -> None:
+        """記一次 HTTP 呼叫的結局；這一次讓窗內壞結局達門檻時拋出並寫標記。"""
+        with self._lock:
+            if self._tripped is not None:
+                return  # 別的執行緒已經跳脫：這一篇的結果照常交回，下一次 check 會擋
+            self._recent.append(kind in BREAKER_KINDS)
+            bad = sum(self._recent)
+            if bad < BREAKER_TRIP:
+                return
+            self._tripped = message = (
+                f"LLM 斷路器：最近 {len(self._recent)} 次 DeepSeek 呼叫有 {bad} 次逾時／過載／連線失敗，"
+                f"中止本段。{BREAKER_TTL_S // 60} 分鐘內其他用到 DeepSeek 的段預檢會拒跑（標記 {breaker_path()}）；"
+                "確認供應商恢復後可刪除標記"
+            )
+        _write_breaker_marker(message)
+        raise LlmEnvironmentError(message)
+
+
+_BREAKER = _Breaker()
+
+
+def _reset_state() -> None:
+    """僅供測試：清掉行程範圍的狀態（斷路器）。"""
+    _BREAKER.reset()
+
+
 def run_claude(
     prompt: str,
     model: str,
@@ -164,12 +294,14 @@ def _run_http(
     if max_tokens is None:
         raise ValueError(f"model={model} 走 HTTP，呼叫點必須帶 max_tokens（第二版計畫 §8）")
     task = str(meta.get("task") or "-")
+    _BREAKER.check()
     result = llm_http.complete_chat(
         model, prompt, max_tokens=max_tokens, timeout=float(timeout),
         task=task, user_id=f"batch-{task}", sleep=_http_sleep,
     )
     if result.kind in llm_http.ACCOUNT_KINDS:
         raise LlmEnvironmentError(f"{result.error}。{_ACCOUNT_HINTS[result.kind]}")
+    _BREAKER.observe(result.kind)
     if result.text is None:
         return CliResult(None, result.error)
     return CliResult(result.text, None)

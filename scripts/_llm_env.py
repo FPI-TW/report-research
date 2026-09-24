@@ -27,6 +27,9 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
     kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
     （或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。批次（`run_claude`、`generate_brief`）與
     評測（`stream_completion`）都依白名單分派到 DeepSeek（遷移 PR-12 起），所以兩種入口同一套規則。
+  - 本段會用到白名單模型，而 `data/.llm_breaker`（批次斷路器的標記，`scripts/_claude_cli.py`）
+    在 `BREAKER_TTL_S` 內：前一段剛因 DeepSeek 大量逾時／過載而中止，這一段再跑只是每篇等到逾時。
+    只看「會不會用到 HTTP」，全部用 Claude 的段不受影響（審查 L9）。
   全部解析到 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否
   一致，**永遠不印金鑰本身**。
 
@@ -42,6 +45,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import time
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -54,6 +58,9 @@ DEFAULT_LLM_ENV_FILE = "/etc/default/report-mark-llm"
 EXAMPLE = "deploy/systemd/report-mark-llm.env.example"
 KEY = "DEEPSEEK_API_KEY"
 RC_CONFIG = 2
+# 斷路器標記的有效期：之內其他用到 DeepSeek 的段預檢拒跑。sync 每 3 小時一輪，30 分鐘只擋住
+# 同一輪後面幾段，下一輪自然放行（屆時若仍過載，斷路器會再跳一次）。
+BREAKER_TTL_S = 30 * 60
 
 # 上一次 load_llm_env() 的結果；require_llm_key() 據此給提示。模組層狀態是刻意的：
 # 載入在 import 期、檢查在 main，中間沒有別的地方能放。
@@ -63,6 +70,24 @@ _STATE: dict[str, object] = {}
 def env_file_path() -> Path:
     """`LLM_ENV_FILE` 只給測試用（conftest 指到不存在的路徑）；生產一律用預設路徑。"""
     return Path(os.environ.get("LLM_ENV_FILE") or DEFAULT_LLM_ENV_FILE)
+
+
+def breaker_path() -> Path:
+    """批次斷路器的標記（ROOT 錨點）。`LLM_BREAKER_FILE` 只給測試用（conftest 指到不存在的目錄，
+    測試跳脫時寫不進部署目錄——repo 根就是部署目錄，寫進去會讓排程 30 分鐘拒跑）。"""
+    return Path(os.environ.get("LLM_BREAKER_FILE") or ROOT / "data" / ".llm_breaker")
+
+
+def _fresh_breaker() -> str | None:
+    """標記在有效期內就回它的內容（給人看），否則 None。讀不到一律當作沒有。"""
+    path = breaker_path()
+    try:
+        age = time.time() - path.stat().st_mtime
+        if age >= BREAKER_TTL_S:
+            return None
+        return " ".join(path.read_text(encoding="utf-8", errors="replace").split())[:400] or "（標記是空的）"
+    except OSError:
+        return None
 
 
 def load_llm_env() -> None:
@@ -199,6 +224,12 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
     http = [m for m in names if is_http_model(m)]
     if not http:
         return
+    tripped = _fresh_breaker()
+    if tripped:
+        _fail(
+            f"批次斷路器 {BREAKER_TTL_S // 60} 分鐘內跳脫過（{breaker_path()}：{tripped}）。"
+            f"本段要用 {', '.join(http)}，先不跑；確認 DeepSeek 恢復後刪除該檔，或等標記過期"
+        )
     key = (os.environ.get(KEY) or "").strip()
     if not key:
         sources = sorted({_model_source(t, m) for t, m in pairs if is_http_model(m)})

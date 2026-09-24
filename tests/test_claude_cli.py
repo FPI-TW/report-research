@@ -16,8 +16,12 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import httpx
@@ -25,8 +29,10 @@ import httpx
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.services import llm_failures as lf  # noqa: E402
 from app.services import llm_http as lh  # noqa: E402
 from scripts import _claude_cli as cc  # noqa: E402
+from scripts import _llm_env as le  # noqa: E402
 
 FAKE_KEY = "fixed-test-secret-deepseek0"
 ENV = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": "https://api.example.test"}
@@ -387,6 +393,278 @@ class BatchCallSiteMaxTokensTests(unittest.TestCase):
                     self.assertNotIn(key, found)
                     found[key] = value
         self.assertEqual(found, self.EXPECTED)
+
+
+class RetryClassificationTests(unittest.TestCase):
+    """`is_retryable`／`failure_kind`：腳本層要不要再打、跳過名單記什麼（第二版計畫 §4.7）。"""
+
+    def test_is_retryable(self):
+        R = cc.CliResult
+        self.assertFalse(cc.is_retryable(R(None, lh.error_string(lh.TIMEOUT))))
+        self.assertFalse(cc.is_retryable(R(None, "API[content_filter] 觸發供應商內容審查")))
+        for err in ("CLI 逾時（180s 內未回應）", "CLI 退出碼 1：x", "CLI 呼叫失敗：OSError: boom", None):
+            with self.subTest(err=err):
+                self.assertTrue(cc.is_retryable(R(None, err)))
+        self.assertTrue(cc.is_retryable(R("文字", None)))
+
+    def test_every_http_kind_is_not_retryable(self):
+        for kind in (lh.CONTENT_FILTER, lh.BAD_REQUEST, lh.OVERLOADED, lh.NETWORK, lh.TIMEOUT,
+                     lh.TRUNCATED, lh.EMPTY, lh.OTHER):
+            with self.subTest(kind=kind):
+                self.assertFalse(cc.is_retryable(cc.CliResult(None, lh.error_string(kind, "x"))))
+
+    def test_failure_kind_mapping(self):
+        expected = {
+            lh.CONTENT_FILTER: lf.CONTENT_FILTER,
+            lh.TRUNCATED: lf.TRUNCATED,
+            lh.EMPTY: lf.EMPTY,
+            lh.BAD_REQUEST: lf.BAD_REQUEST,
+            lh.TIMEOUT: None,
+            lh.OVERLOADED: None,
+            lh.NETWORK: None,
+            lh.OTHER: None,
+            lh.AUTH: None,
+            lh.QUOTA: None,
+            lh.CONFIG: None,
+        }
+        for kind, reason in expected.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(cc.failure_kind(cc.CliResult(None, lh.error_string(kind, "d"))), reason)
+                if reason is not None:
+                    self.assertIn(reason, lf.REASONS)
+
+    def test_failure_kind_ignores_cli_and_success(self):
+        self.assertIsNone(cc.failure_kind(cc.CliResult(None, "CLI 逾時（180s 內未回應）")))
+        self.assertIsNone(cc.failure_kind(cc.CliResult("ok", None)))
+        # 內容剛好長得像前綴也不算：只看失敗
+        self.assertIsNone(cc.failure_kind(cc.CliResult("API[content_filter]", None)))
+
+
+def _status(code, message="x", headers=None):
+    return lambda req: httpx.Response(code, json={"error": {"message": message}}, headers=headers or {})
+
+
+def _content_filter(req):
+    return httpx.Response(400, json={"error": {"message": "Content Exists Risk"}})
+
+
+def _connect_error(req):
+    raise httpx.ConnectError("connection refused", request=req)
+
+
+class BreakerTests(_HttpCase):
+    """斷路器（第二版 §4.7、審查 L9）：最近 10 次 HTTP 呼叫中逾時／過載／網路 ≥5 → 整批 rc=2＋標記。"""
+
+    def setUp(self):
+        super().setUp()
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.marker = Path(self._tmpdir.name) / "data" / ".llm_breaker"
+        env = mock.patch.dict(os.environ, {"LLM_BREAKER_FILE": str(self.marker)})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def _calls(self, handler, n):
+        """連續 n 次 run_claude；回每次的結果（跳脫時是例外物件）。"""
+        self.install(handler)
+        out = []
+        for _ in range(n):
+            try:
+                out.append(self.call())
+            except cc.LlmEnvironmentError as exc:
+                out.append(exc)
+        return out
+
+    def test_trips_on_fifth_bad_call(self):
+        res = self._calls(_status(503, "busy"), 4)
+        self.assertTrue(all(isinstance(r, cc.CliResult) for r in res), res)
+        self.assertFalse(self.marker.exists())
+        with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+            self.call()
+        self.assertIsInstance(ctx.exception, cc.CliNotFoundError)
+        self.assertIn("斷路器", str(ctx.exception))
+        self.assertTrue(self.marker.exists(), "要寫標記讓後續段預檢拒跑")
+        self.assertIn("reason=", self.marker.read_text(encoding="utf-8"))
+
+    def test_after_trip_no_more_requests(self):
+        self._calls(_status(503), 5)
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        with self.assertRaises(cc.LlmEnvironmentError):
+            self.call()
+        self.assertEqual(self.requests, [], "跳脫後不得再送出任何請求")
+
+    def test_every_breaker_kind_counts(self):
+        cases = {
+            "overloaded": _status(503),
+            "rate_limited": _status(429),
+            "network": _connect_error,
+        }
+        for name, handler in cases.items():
+            with self.subTest(kind=name):
+                cc._reset_state()
+                res = self._calls(handler, 5)
+                self.assertIsInstance(res[-1], cc.LlmEnvironmentError, name)
+        with self.subTest(kind="timeout"):
+            cc._reset_state()
+            self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+            for i in range(5):
+                if i < 4:
+                    res = self.call(timeout=0)  # 總期限一開始就過了 → API[timeout]
+                    self.assertTrue(res.error.startswith("API[timeout]"), res.error)
+                else:
+                    with self.assertRaises(cc.LlmEnvironmentError):
+                        self.call(timeout=0)
+
+    def test_content_failures_do_not_count(self):
+        """審查、400、截斷、空回應是單篇的事，不代表供應商出問題。"""
+        res = self._calls(_content_filter, 10) + self._calls(_status(400, "bad"), 10)
+        self.assertTrue(all(isinstance(r, cc.CliResult) for r in res))
+        self.assertFalse(self.marker.exists())
+
+    def test_window_slides(self):
+        """最近 10 次：舊的壞結局被 10 次成功推出窗外後不再算數。"""
+        self._calls(_status(503), 4)
+        self._calls(lambda req: httpx.Response(200, content=_ok("ok")), 10)
+        res = self._calls(_status(503), 4)
+        self.assertTrue(all(isinstance(r, cc.CliResult) for r in res), "窗內只有 4 次壞結局，不該跳脫")
+        with self.assertRaises(cc.LlmEnvironmentError):
+            self.call()
+
+    def test_window_is_ten_calls(self):
+        """窗內 10 次裡有 5 次壞就跳：壞與好交錯也算。"""
+        good = lambda req: httpx.Response(200, content=_ok("ok"))  # noqa: E731
+        for _ in range(4):
+            self._calls(_status(503), 1)
+            self._calls(good, 1)
+        self.assertFalse(self.marker.exists())
+        with self.assertRaises(cc.LlmEnvironmentError):
+            self._calls(_status(503), 1)
+            self.call()  # 第 9 次：窗內 5 壞 4 好
+        self.assertTrue(self.marker.exists())
+
+    def test_cli_calls_never_count(self):
+        """L9：還在用 Claude 的段不受 DeepSeek 斷路器影響。"""
+        with mock.patch.object(cc.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 1)):
+            for _ in range(12):
+                res = cc.run_claude("p", "claude-haiku-4-5", timeout=1)
+                self.assertIn("逾時", res.error)
+        self.assertFalse(self.marker.exists())
+        self._calls(_status(503), 4)  # 窗裡沒有 CLI 的 12 次：再 4 次壞仍不跳
+        self.assertFalse(self.marker.exists())
+
+    def test_thread_safe_single_trip(self):
+        self.install(_status(503))
+        errors, results = [], []
+        barrier = threading.Barrier(8)
+
+        def worker():
+            barrier.wait()
+            try:
+                results.append(self.call())
+            except cc.LlmEnvironmentError as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        # 前 4 次回結果；第 5 次跳脫並拋出；其餘被擋（check）或在跳脫後照常交回結果
+        self.assertGreaterEqual(len(errors), 1)
+        self.assertEqual(len(results) + len(errors), 8)
+        self.assertLessEqual(len(self.requests) // 3, 8)
+        with self.assertRaises(cc.LlmEnvironmentError):
+            self.call()
+
+    def test_marker_blocks_later_http_segment_only(self):
+        """跨段：跳脫寫的標記讓下一段預檢 rc=2（會用 DeepSeek 的段）；全用 Claude 的段照跑。"""
+        self._calls(_status(503), 5)
+        self.assertTrue(self.marker.exists())
+        le._STATE.clear()
+        self.addCleanup(le._STATE.clear)
+        with mock.patch.object(le, "_warn_if_not_deploy_root"), \
+             mock.patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()) as err:
+            with self.assertRaises(SystemExit) as ctx:
+                le.require_llm_key({"summary": "deepseek-flash"})
+            self.assertEqual(ctx.exception.code, 2)
+            self.assertIn("斷路器", err.getvalue())
+            le.require_llm_key({"summary": "claude-sonnet-5"})  # 不拋
+
+    def test_marker_write_failure_still_aborts(self):
+        blocker = Path(self._tmpdir.name) / "file"
+        blocker.write_text("", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"LLM_BREAKER_FILE": str(blocker / "x" / ".llm_breaker")}), \
+             mock.patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()):
+            res = self._calls(_status(503), 5)
+        self.assertIsInstance(res[-1], cc.LlmEnvironmentError)
+
+
+class _FakeClock:
+    """`llm_http` 的 monotonic／sleep：伺服器延遲與退避都只推進假時鐘，測試不必真的等。"""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, s):
+        self.now += s
+
+
+class DeadlineTests(_HttpCase):
+    """批次的 `timeout` 是涵蓋傳輸層重試的總期限（第二版 §4.5）：逐行檢查，不靠 httpx 的 read 逾時。"""
+
+    def test_keepalive_cannot_extend_deadline(self):
+        def queued():
+            for _ in range(150):
+                yield b": keep-alive\n\n"
+                time.sleep(0.02)
+
+        self.install(lambda req: httpx.Response(200, content=queued()))
+        t0 = time.monotonic()
+        res = self.call(timeout=0.3)
+        self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertTrue(res.error.startswith("API[timeout]"), res.error)
+
+    def test_deadline_covers_transport_retries(self):
+        """期限從第一次嘗試起算：第二次失敗後，再退避就會超過期限 → 不打第三次。"""
+        clock = _FakeClock()
+
+        def slow_503(req):
+            clock.now += 0.3  # 伺服器花 0.3 秒才回 503
+            return httpx.Response(503, text="busy", headers={"Retry-After": "0.3"})
+
+        self.install(slow_503)
+        with mock.patch.object(lh, "time", SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep)), \
+             mock.patch.object(cc, "_http_sleep", clock.sleep):
+            res = self.call(timeout=1.0)
+        self.assertTrue(res.error.startswith("API[overloaded]"), res.error)
+        self.assertEqual(len(self.requests), 2, "t=0.9 時再退避 0.3 就到期：只能打兩次")
+
+    def test_batch_call_sites_keep_their_timeouts(self):
+        """沿用各批次現行 timeout（摘要／標題／摘錄／訊號 180、標註 150、簡報 300）當總期限。"""
+        from test_batch_http_dispatch import es, et, gb, gs, gt, snr, tac
+
+        seen = {}
+
+        def fake(model, prompt, **kw):
+            seen[kw["task"]] = kw["timeout"]
+            return lh.ChatResult(text="{}", error=None, kind=None)
+
+        with mock.patch.object(cc.llm_http, "complete_chat", side_effect=fake), \
+             mock.patch.object(gs, "MODEL", "deepseek-flash"), mock.patch.object(gt, "MODEL", "deepseek-flash"), \
+             mock.patch.object(tac, "MODEL", "deepseek-flash"):
+            gs.call_cli("p")
+            gt.call_cli("p")
+            et.call_cli("p", "deepseek-flash")
+            es.call_cli("p", "deepseek-flash")
+            tac.call_cli("p")
+            snr._tag_via_cli("x.pdf", "t", model="deepseek-flash")
+            gb.call_cli("p", "deepseek-flash")
+        self.assertEqual(seen, {
+            "summary": 180.0, "title": 180.0, "takeaway": 180.0, "signal": 180.0, "tag": 150.0, "brief": 300.0,
+        })
 
 
 if __name__ == "__main__":

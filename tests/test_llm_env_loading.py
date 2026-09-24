@@ -12,6 +12,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -412,6 +413,61 @@ class HttpModelPrecheckTests(_EnvFileCase):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "require_llm_key":
                     with self.subTest(entry=rel):
                         self.assertNotIn("http_dispatch", {k.arg for k in node.keywords})
+
+
+class BreakerMarkerPrecheckTests(_EnvFileCase):
+    """斷路器標記（`data/.llm_breaker`）30 分鐘內：用到 DeepSeek 的段 rc=2；全用 Claude 的段照跑（L9）。"""
+
+    def setUp(self):
+        super().setUp()
+        self.marker = Path(self._tmp.name) / "data" / ".llm_breaker"
+        env = mock.patch.dict(os.environ, {"LLM_BREAKER_FILE": str(self.marker)})
+        env.start()
+        self.addCleanup(env.stop)
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        le.load_llm_env()
+
+    def _mark(self, age_s: float) -> None:
+        self.marker.parent.mkdir(parents=True, exist_ok=True)
+        self.marker.write_text("ts=2026-09-24T00:00:00+00:00\nreason=最近 10 次有 5 次逾時\n", encoding="utf-8")
+        t = time.time() - age_s
+        os.utime(self.marker, (t, t))
+
+    def test_fresh_marker_blocks_http_segment(self):
+        self._mark(60)
+        code, out = self.require({"summary": "deepseek-flash"})
+        self.assertEqual(code, 2)
+        self.assertIn("斷路器", out)
+        self.assertIn("5 次逾時", out, "要帶出標記內容")
+        self.assertNotIn(FAKE_KEY, out)
+
+    def test_fresh_marker_does_not_block_claude_segment(self):
+        self._mark(60)
+        code, out = self.require({"summary": "claude-sonnet-5", "tag": "claude-haiku-4-5"})
+        self.assertIsNone(code, out)
+
+    def test_marker_expires_after_ttl(self):
+        self._mark(le.BREAKER_TTL_S + 5)
+        code, out = self.require({"summary": "deepseek-flash"})
+        self.assertIsNone(code, out)
+        self._mark(le.BREAKER_TTL_S - 5)
+        code, _ = self.require({"summary": "deepseek-flash"})
+        self.assertEqual(code, 2)
+
+    def test_ttl_is_thirty_minutes(self):
+        self.assertEqual(le.BREAKER_TTL_S, 30 * 60)
+
+    def test_no_marker_passes(self):
+        code, out = self.require({"summary": "deepseek-flash"})
+        self.assertIsNone(code, out)
+
+    def test_default_path_is_repo_data(self):
+        with mock.patch.dict(os.environ, {"LLM_BREAKER_FILE": ""}):
+            self.assertEqual(le.breaker_path(), le.ROOT / "data" / ".llm_breaker")
+
+    def test_conftest_points_marker_away_from_repo(self):
+        """repo 根就是部署目錄：測試讓斷路器跳脫時不得寫進去（排程會 30 分鐘拒跑）。"""
+        self.assertIn("LLM_BREAKER_FILE", (REPO_ROOT / "tests" / "conftest.py").read_text(encoding="utf-8"))
 
 
 class FileKeyFingerprintTests(unittest.TestCase):

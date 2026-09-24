@@ -137,8 +137,10 @@ class HttpMixin:
         self.requests: list[httpx.Request] = []
 
     def install(self, handler):
-        """handler：單一函式（每次都用它），或函式清單（依序各用一次）。"""
+        """handler：單一函式（每次都用它），或函式清單（依序各用一次）。順便清斷路器的窗：
+        同一題的多個 subTest 累積的逾時／過載不該互相影響。"""
         self.requests = []
+        cc._reset_state()
         seq = iter(handler) if isinstance(handler, list) else None
 
         def recording(request):
@@ -339,6 +341,154 @@ class HttpSuccessThroughBatchesTests(HttpMixin, unittest.IsolatedAsyncioTestCase
         self.assertEqual((raw, err), ("## 今日重點\n- 一", None))
         self.assertEqual(self.body()["max_tokens"], gb.MAX_TOKENS)
         self.assertEqual(self.body()["user_id"], "batch-brief")
+
+
+# HTTP 單篇失敗：傳輸層已處理，腳本層一律只打 1 次（第二版 §4.7）。值是跳過名單該記的 reason。
+PER_FILE_FAILURES = {
+    "content_filter": (status(400, "Content Exists Risk"), lf.CONTENT_FILTER),
+    "truncated": (lambda req: httpx.Response(
+        200, content=sse(chunk(content="{\"半"), chunk(content="", finish="length"))), lf.TRUNCATED),
+    "empty": (lambda req: httpx.Response(200, content=sse(chunk(content="", finish="stop"))), lf.EMPTY),
+    "bad_request": (status(400, "Invalid request: prompt too long"), lf.BAD_REQUEST),
+    "overloaded": (status(503, "busy"), None),  # 傳輸層已退避重試 3 次；環境型不記
+}
+
+# 解析不了的回應（「回應成功但解析失敗」）：各批次腳本層照舊重試到 3 次
+UNPARSEABLE_TEXT = "抱歉，我無法處理這份文件。"
+
+
+class ScriptLevelRetryTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
+    """`is_retryable`：`API[...]` 錯誤在 5 支批次都只呼叫 1 次；unparseable 仍重試到 3 次。
+
+    以 `complete_chat` 的呼叫次數量腳本層（傳輸層的重試不算在內）。
+    """
+
+    def spy(self):
+        spy = mock.patch.object(cc.llm_http, "complete_chat", wraps=cc.llm_http.complete_chat)
+        m = spy.start()
+        self.addCleanup(spy.stop)
+        return m
+
+    async def _one(self, script: str):
+        """跑某支批次的單篇函式；回 (跳過名單寫入端或 None, 失敗 log 內容)。"""
+        if script == "summaries":
+            rec = await self.run_title_or_summary(gs, "summarize_one")
+            return rec, (self.tmp / "summarize_one.log").read_text(encoding="utf-8")
+        if script == "titles":
+            rec = await self.run_title_or_summary(gt, "title_one")
+            return rec, (self.tmp / "title_one.log").read_text(encoding="utf-8")
+        if script == "takeaways":
+            rec = await self.run_takeaway()
+            return rec, (self.tmp / "takeaway.log").read_text(encoding="utf-8")
+        if script == "signals":
+            rec = await self.run_signal()
+            return rec, (self.tmp / "signal.log").read_text(encoding="utf-8")
+        if script == "tag_all":
+            self.assertEqual(self.run_tag_all(), "fail")
+            return None, (self.tmp / "tag.log").read_text(encoding="utf-8")
+        raise AssertionError(script)
+
+    SCRIPTS = ("summaries", "titles", "takeaways", "signals", "tag_all")
+
+    async def test_api_errors_called_once_per_script(self):
+        for script in self.SCRIPTS:
+            for case, (handler, reason) in PER_FILE_FAILURES.items():
+                with self.subTest(script=script, case=case):
+                    for f in self.tmp.glob("*.log"):
+                        f.unlink()
+                    self.install(handler)
+                    calls = self.spy()
+                    rec, log = await self._one(script)
+                    self.assertEqual(calls.call_count, 1, f"{script}/{case}：API[...] 不得在腳本層重試")
+                    self.assertIn(f"API[{case if case != 'overloaded' else 'overloaded'}]", log)
+                    if rec is not None:
+                        self.assertEqual(rec.recorded, [("h1", reason)] if reason else [])
+
+    async def test_unparseable_still_retried_three_times(self):
+        for script in self.SCRIPTS:
+            with self.subTest(script=script):
+                for f in self.tmp.glob("*.log"):
+                    f.unlink()
+                self.install(ok(UNPARSEABLE_TEXT if script != "signals" else "不是 JSON"))
+                calls = self.spy()
+                rec, _ = await self._one(script)
+                self.assertEqual(calls.call_count, 3, f"{script}：解析失敗照舊最多 3 次")
+                if rec is not None:
+                    self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
+
+    async def test_unparseable_then_api_error_stops_and_records_last_reason(self):
+        """先解析失敗、再遇到截斷：截斷那次就停，記截斷（1 次就跳過）。"""
+        for script in ("summaries", "titles", "takeaways", "signals"):
+            with self.subTest(script=script):
+                self.install([
+                    ok(UNPARSEABLE_TEXT if script != "signals" else "不是 JSON"),
+                    PER_FILE_FAILURES["truncated"][0],
+                ])
+                calls = self.spy()
+                rec, _ = await self._one(script)
+                self.assertEqual(calls.call_count, 2)
+                self.assertEqual(rec.recorded, [("h1", lf.TRUNCATED)])
+
+    async def test_cli_errors_keep_script_level_retries(self):
+        """CLI 路徑語意不變：`CLI 逾時` 之類照舊重試 3 次、不記跳過名單。"""
+        err = cc.CliResult(None, "CLI 逾時（180s 內未回應）")
+        cases = (
+            (gs, lambda: self.run_title_or_summary(gs, "summarize_one")),
+            (gt, lambda: self.run_title_or_summary(gt, "title_one")),
+            (et, self.run_takeaway),
+            (es, self.run_signal),
+        )
+        for mod, run in cases:
+            with self.subTest(mod=mod.__name__), mock.patch.object(mod, "call_cli", return_value=err) as call:
+                rec = await run()
+                self.assertEqual(call.call_count, 3)
+                self.assertEqual(rec.recorded, [])
+        with mock.patch.object(tac, "call_cli", return_value=err) as call:
+            self.assertEqual(self.run_tag_all(), "fail")
+        self.assertEqual(call.call_count, 3)
+
+
+class SummaryPlainTextFallbackTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
+    """審查 D11：純文字 fallback 只給 CLI；DeepSeek 不守 JSON 格式＝解析失敗（多半是閒聊或拒答）。"""
+
+    def test_parse_summary_flag(self):
+        self.assertEqual(gs.parse_summary("這是一段摘要。"), "這是一段摘要。")
+        self.assertIsNone(gs.parse_summary("這是一段摘要。", allow_plain_text=False))
+        self.assertEqual(gs.parse_summary('{"summary": "摘要"}', allow_plain_text=False), "摘要")
+
+    async def test_http_plain_text_is_unparseable(self):
+        self.install(ok(UNPARSEABLE_TEXT))
+        rec = await self.run_title_or_summary(gs, "summarize_one")
+        self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
+        self.assertEqual(rec.cleared, [])
+        self.assertEqual(len(self.requests), 3)
+
+    async def test_cli_plain_text_still_accepted(self):
+        rec = SpyRecorder()
+        with mock.patch.object(gs, "FAIL_LOG", self.tmp / "s.log"), \
+             mock.patch.object(gs, "MODEL", "claude-sonnet-5"), \
+             mock.patch.object(gs, "SessionFactory", lambda: _FakeSession()), \
+             mock.patch.object(gs, "call_cli", return_value=cc.CliResult("先進製程需求強勁。", None)):
+            await gs.summarize_one(asyncio.Semaphore(1), "rid", "f.pdf", "內文", 3000, 1, file_hash="h1", recorder=rec)
+        self.assertEqual(rec.cleared, ["h1"])
+
+
+class BreakerAbortsBatchTests(HttpMixin, unittest.TestCase):
+    """斷路器跳脫時整批 rc=2（沿用 `except CliNotFoundError`），並寫標記。"""
+
+    def test_summaries_and_sync_abort_on_breaker(self):
+        marker = self.tmp / "data" / ".llm_breaker"
+        for name in ("summaries", "sync"):
+            with self.subTest(batch=name), mock.patch.dict(os.environ, {"LLM_BREAKER_FILE": str(marker)}):
+                cc._reset_state()
+                with contextlib.suppress(FileNotFoundError):
+                    marker.unlink()
+                self.install(status(503, "busy"))
+                code, rec, out = self.main_rc(name)
+                self.assertEqual(code, 2, out)
+                self.assertIn("斷路器", out)
+                self.assertTrue(marker.exists())
+                self.assertEqual(rec.recorded, [], "過載不是研報的問題，不記跳過名單")
 
 
 if __name__ == "__main__":

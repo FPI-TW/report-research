@@ -881,10 +881,11 @@ class CompleteChatEdgeTests(_TransportMixin, unittest.TestCase):
 # ── 依賴方向與測試防線 ───────────────────────────────────────────────────────
 class LeafModuleTests(unittest.TestCase):
     def test_imports_only_stdlib_and_httpx(self):
-        """葉模組：不得 import app.*／web.*／scripts.*。
+        """葉模組：不得 import app.*／web.*／scripts.*，唯一例外是同為葉模組的 llm_models。
 
         `query_planner.py` 開頭的依賴約束與 `retrieval_pipeline`↔`answer` 的刻意循環都經過
-        llm 層；讓這裡往回 import 任何專案模組，就可能在 import 期形成新的循環。
+        llm 層；讓這裡往回 import 任何專案模組，就可能在 import 期形成新的循環。llm_models
+        本身只 import 標準函式庫（tests/test_llm_models.py 釘住），所以不會把循環帶進來。
         """
         tree = ast.parse((REPO_ROOT / "app" / "services" / "llm_http.py").read_text(encoding="utf-8"))
         roots = set()
@@ -894,6 +895,8 @@ class LeafModuleTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 if node.level > 0:
                     roots.add("app")  # 相對 import 必然是專案內模組
+                elif node.module == "app.services.llm_models":
+                    continue
                 elif node.module:
                     roots.add(node.module.split(".")[0])
         project = {"app", "web", "scripts", "eval", "tests"}

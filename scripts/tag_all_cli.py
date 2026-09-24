@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
 from app.services.tagging import TAG_INSTRUCTION, parse_tags  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
@@ -27,7 +28,8 @@ from app.services.extraction import cache  # noqa: E402
 
 TAGS_DIR = ROOT / "data" / "tags"
 FAIL_LOG = ROOT / "data" / "tag_failures.log"
-MODEL = "claude-haiku-4-5"
+# TAG_MODEL 旋鈕（與 sync_new_reports 的行內標註共用），未設時查 LLM_PROVIDER 的預設表。
+MODEL = resolve_model(TASK_TAG)
 
 _lock = threading.Lock()
 _done = 0

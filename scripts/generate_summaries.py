@@ -29,6 +29,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_SUMMARY, resolve_model  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
 from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
@@ -36,7 +37,8 @@ from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "summary_failures.log"
-MODEL = "claude-sonnet-5"
+# SUMMARY_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+MODEL = resolve_model(TASK_SUMMARY)
 MAX_SUMMARY_CHARS = 400  # 安全上限，避免模型暴走輸出整段
 
 PROMPT_INSTRUCTION = (

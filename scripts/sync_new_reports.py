@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.services.extraction import cache as extraction_cache  # noqa: E402
+from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
@@ -51,6 +52,10 @@ EXTS = {".pdf", ".docx", ".doc"}
 #     而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）⇒ 預期。
 #     代價是它不留路徑紀錄，屬已知限制，見 docs/production_resilience.md。
 ABNORMAL_COUNTERS = ("fail", "skip_untagged")
+
+# 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
+# （app/services/llm_models.py；claude_cli 下是 claude-haiku-4-5）。
+TAG_MODEL = resolve_model(TASK_TAG)
 
 
 def parse_rsync_delta(
@@ -100,7 +105,7 @@ def _tag_via_cli(
     file_name: str,
     text: str,
     excerpt: int = 10000,
-    model: str = "claude-haiku-4-5",
+    model: str = TAG_MODEL,
     timeout: int = 150,
 ):
     """用 claude CLI(Haiku)標註單篇 → (tag, error)。tag 為 None 時 error 說得出為什麼。

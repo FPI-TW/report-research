@@ -28,9 +28,14 @@ import logging
 import shutil
 from collections.abc import AsyncIterator
 
+from app.services.llm_models import TASK_ASK_ANSWER, resolve_model
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-5"
+# 主答模型（ASK_ANSWER_MODEL，未設時查 LLM_PROVIDER 的預設表；claude_cli 下是 claude-sonnet-5）。
+# 名稱保留：answer.py 的總覽／主答、faithfulness 的預設參數、eval/run_ragas 的生成端都讀它。
+# import 期解析：web/server.py 在本模組被 import 之前就先載入 repo 根 .env。
+DEFAULT_MODEL = resolve_model(TASK_ASK_ANSWER)
 
 # 串流中表示「模型開始呼叫 WebSearch」的控制標記（NUL 包夾，模型文字不可能等於它）。
 # stream_completion 偵測到 WebSearch 工具起點時 yield 此值，供上層顯示「正在搜尋網路」。

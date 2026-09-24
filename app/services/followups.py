@@ -7,11 +7,14 @@ import os
 import re
 
 from app.services.llm import stream_completion
+from app.services.llm_models import TASK_ASK_FOLLOWUP, resolve_model
 from app.services.locale import DEFAULT_LOCALE
 
 logger = logging.getLogger(__name__)
 
-FOLLOWUP_MODEL = os.getenv("ASK_FOLLOWUP_MODEL", "claude-haiku-4-5-20251001")
+# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查 LLM_PROVIDER 的預設表
+# （claude_cli 下是 claude-haiku-4-5-20251001），claude_only 會忽略這裡填的 DeepSeek 名稱。
+FOLLOWUP_MODEL = resolve_model(TASK_ASK_FOLLOWUP, override=os.getenv("ASK_FOLLOWUP_MODEL"))
 FOLLOWUP_TIMEOUT = float(os.getenv("ASK_FOLLOWUP_TIMEOUT", "15"))
 
 _SYSTEM = (

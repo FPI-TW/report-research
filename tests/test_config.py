@@ -74,6 +74,14 @@ class SettingsDefaultsTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"EXTRACTOR": "pdfplumbr"}):
             self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pypdf")
 
+    def test_llm_model_defaults_match_prior_literals(self):
+        """LLM_PROVIDER 預設 claude_cli：各任務的模型與遷移前寫死的字串相同（完整一覽在 test_llm_models）。"""
+        s = get_settings()
+        self.assertEqual(s.llm_provider, "claude_cli")
+        self.assertEqual(s.ask_answer_model, "claude-sonnet-5")
+        self.assertEqual(s.ask_web_model, "claude-sonnet-5")
+        self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
+
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())
 

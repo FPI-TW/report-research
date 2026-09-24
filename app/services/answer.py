@@ -87,6 +87,10 @@ _S = get_settings()
 ASK_FAITHFULNESS_ENABLED = _S.ask_faithfulness_enabled
 ASK_FAITHFULNESS_SAMPLE_RATE = _S.ask_faithfulness_sample_rate
 FAITHFULNESS_MODEL = _S.faithfulness_model
+# 開網搜那一輪的模型（ASK_WEB_MODEL）。與主答分開一顆旋鈕：DeepSeek 網搜延後到 P9，遷移期
+# 網搜仍走 claude CLI 的 WebSearch，所以即使主答換成 DeepSeek，這一顆在兩張預設表裡都是
+# claude-sonnet-5。時效題網搜與「主答且 web_on」兩處共用。
+ASK_WEB_MODEL = _S.ask_web_model
 FAITHFULNESS_TIMEOUT = _S.faithfulness_timeout
 # 問答抽查專用（見 config.py 的註解）：研報那顆同時是預算前瞻的輸入，不能共用。
 ASK_FAITHFULNESS_TIMEOUT = _S.ask_faithfulness_timeout
@@ -1970,7 +1974,7 @@ async def _answer_time_sensitive_web(
     try:
         async for chunk in stream_completion(
             query,
-            model=DEFAULT_MODEL,  # 與主 RAG 同一支模型；此路徑不另設旋鈕
+            model=ASK_WEB_MODEL,  # 網搜路線（ASK_WEB_MODEL），與主答開網搜同一顆
             system=TIME_SENSITIVE_WEB_SYSTEM_PROMPT + output_directive(locale),
             allow_web=True,
             timeout=ASK_WEB_TIMEOUT,
@@ -2443,7 +2447,8 @@ async def answer_question(
         async for chunk in stream_completion(
             # M11：網搜由使用者每題決定（web_on ＝ 請求的 web ∧ ASK_ENABLE_WEB 總閘）。
             # 逾時只在開網搜時放寬——關著的路徑維持 llm.py 預設，零回歸。
-            user_prompt, model=model, system=system_prompt, allow_web=web_on,
+            # 開網搜時改用 ASK_WEB_MODEL（見模組頂端 ASK_WEB_MODEL 的註解）。
+            user_prompt, model=ASK_WEB_MODEL if web_on else model, system=system_prompt, allow_web=web_on,
             **({"timeout": ASK_WEB_TIMEOUT} if web_on else {}),
         ):
             if chunk == SEARCH_EVENT:

@@ -41,6 +41,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_TITLE, resolve_model  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_cli import (  # noqa: E402
@@ -53,7 +54,8 @@ from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "title_failures.log"
-MODEL = "claude-sonnet-5"
+# TITLE_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+MODEL = resolve_model(TASK_TITLE)
 MAX_TITLE_CHARS = 80  # 安全上限：標題不是摘要，超長多半代表模型把整段抓進來
 TITLE_SOURCES = ("extracted", "translated", "generated")
 

@@ -38,6 +38,22 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 os.environ["DEEPSEEK_API_KEY"] = ""
 os.environ["DEEPSEEK_BASE_URL"] = "http://127.0.0.1:9"
 
+# 模型選擇：同樣**用賦值**，理由同上（部署目錄的 `.env`、執行者 shell 裡的值都擋得住）。
+# 所有任務旋鈕設成 ""——`app/services/llm_models.resolve_model` 把空字串視同未設、改查預設表，
+# 所以測試永遠拿到 claude_cli 預設表的值，與誰的機器、誰的環境檔無關。這一條與
+# `resolve_model` 的「空字串＝未設」寫法必須同進同退：只有前者，模組會拿到空字串的模型名。
+# `LLM_ENV_FILE` 指到不存在的路徑：批次在 import 期載入 LLM 專用環境檔，測試不得讀到本機
+# 真的 `/etc/default/report-mark-llm`。
+# 守門：tests/test_llm_models.py 的 ConftestModelGuardTests（清單直接比對 TASK_ENV）。
+os.environ["LLM_PROVIDER"] = "claude_cli"
+os.environ["LLM_ENV_FILE"] = "/nonexistent/report-mark-llm"
+for _knob in (
+    "ASK_ANSWER_MODEL", "ASK_WEB_MODEL", "ASK_INTENT_MODEL", "ASK_CONDENSE_MODEL",
+    "QA_PLANNER_MODEL", "ASK_FOLLOWUP_MODEL", "FAITHFULNESS_MODEL", "EVAL_JUDGE_MODEL",
+    "TAG_MODEL", "SUMMARY_MODEL", "TITLE_MODEL", "TAKEAWAY_MODEL", "SIGNAL_MODEL", "BRIEF_MODEL",
+):
+    os.environ[_knob] = ""
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _protect_repo_dotenv():

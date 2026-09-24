@@ -2,7 +2,8 @@
 
 本模組只負責「打一次 API、把結果與失敗原因說清楚」，不決定哪個任務用哪個模型、也不做
 呼叫端的重試策略——那兩件事分別在分派層（`llm.stream_completion`、`scripts/_claude_cli.
-run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式庫與 httpx，不 import
+run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式庫與 httpx，專案內唯一的例外
+是同樣只依賴標準函式庫的 `app.services.llm_models`（白名單的所在）；不 import 其他
 `app.*`／`web.*`（`query_planner.py` 開頭的依賴約束、`retrieval_pipeline`↔`answer` 的
 刻意循環都不能被它牽動；由 tests/test_llm_http.py 的 AST 測試釘住）。
 
@@ -52,20 +53,13 @@ from dataclasses import dataclass, field
 
 import httpx
 
+# 走 HTTP 的模型白名單搬到葉模組 llm_models（`app.config` 的 `claude_only` 也要用它，留在這裡會
+# 形成 config ↔ llm_http 的 import 循環）。這裡以原名重新匯出，既有呼叫端與測試不必改。
+from app.services.llm_models import HTTP_MODELS, is_http_model  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-
-# 走 HTTP 的模型**明確白名單**。不在這裡的名稱一律留給 CLI 路徑：若寫成「`claude-` 以外都走
-# HTTP」，CLI 別名（`sonnet`）或打錯的模型名會被送到付費端點、拿到 400 後被當成帳號錯誤
-# 中止整批。`deepseek-v4-flash` 是官方保留的舊名（導向 V4.1-Flash、按 Flash 計價）。
-# 要加新名稱就發 PR——換模型本來就需要重新評測。
-HTTP_MODELS = frozenset({"deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"})
-
-
-def is_http_model(model: str | None) -> bool:
-    return model in HTTP_MODELS
-
 
 # ── 失敗分類 ─────────────────────────────────────────────────────────────────
 AUTH = "auth"                      # 缺金鑰或 401

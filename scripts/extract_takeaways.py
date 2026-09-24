@@ -69,6 +69,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_TAKEAWAY, resolve_model  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
@@ -81,8 +82,9 @@ FAIL_LOG = ROOT / "data" / "takeaway_failures.log"
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（舊列版本不符 → 自動重跑）
 EXTRACTION_VERSION = "takeaway-2026-07-17.v1"
 
-# 逐字引文重準確度（改寫一個字就錨不到）→ 預設 Sonnet；批次可用 --model 覆寫
-TAKEAWAY_MODEL_DEFAULT = "claude-sonnet-5"
+# 逐字引文重準確度（改寫一個字就錨不到）→ 預設 Sonnet；批次可用 --model 覆寫。
+# 來源是 TAKEAWAY_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+TAKEAWAY_MODEL_DEFAULT = resolve_model(TASK_TAKEAWAY)
 
 # 每篇最多幾條（prompt 要 3-5；多回的截掉。少於 3 條不算錯 —— prompt 明說「寧可少一
 # 條也不要編造」，只有 0 條才 rejected）

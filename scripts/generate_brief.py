@@ -45,13 +45,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services import brief as brief_service  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_BRIEF, resolve_model  # noqa: E402
 from app.services.reading.queries import fetch_instrument_names  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "brief_failures.log"
-MODEL = "claude-sonnet-5"
+# BRIEF_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）；--model 可覆寫。
+MODEL = resolve_model(TASK_BRIEF)
 
 # 一次呼叫的逾時。素材是摘要不是全文，正常在一分鐘內回；給 300s 是留給 CLI 冷啟動
 # 與偶發的長素材（NAS 一次倒進大量檔案的日子）。

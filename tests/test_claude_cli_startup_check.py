@@ -57,5 +57,32 @@ class LifespanClaudeCheckTests(unittest.TestCase):
         self.assertNotIn("不在 PATH 上", out)
 
 
+class LifespanLlmModelCheckTests(unittest.TestCase):
+    """自檢依「解析到的模型」決定要檢查什麼（判準的逐列測試在 tests/test_llm_models.py）。"""
+
+    def test_deepseek_without_key_logs_error_but_still_starts(self):
+        a, b, c = _startup()
+        env = {"LLM_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": ""}
+        with a, b, c, patch.dict("os.environ", env), patch.object(llm, "claude_cli_path", return_value="/x"):
+            with self.assertLogs("web.server", level="WARNING") as cm:
+                with TestClient(server.app) as client:
+                    self.assertEqual(client.get("/login").status_code, 200)
+        out = "\n".join(cm.output)
+        self.assertIn("DEEPSEEK_API_KEY 為空", out)
+        self.assertIn("provider=deepseek", out)
+        # 網搜在 DeepSeek 表裡仍是 Claude，所以 CLI 檢查照做
+        self.assertIn("claude CLI：/x", out)
+
+    def test_unknown_model_name_logs_error(self):
+        a, b, c = _startup()
+        with a, b, c, patch.dict("os.environ", {"ASK_INTENT_MODEL": "haiku"}), \
+                patch.object(llm, "claude_cli_path", return_value="/x"):
+            with self.assertLogs("web.server", level="ERROR") as cm:
+                with TestClient(server.app):
+                    pass
+        self.assertIn("未知模型名", "\n".join(cm.output))
+        self.assertIn("ask_intent=haiku", "\n".join(cm.output))
+
+
 if __name__ == "__main__":
     unittest.main()

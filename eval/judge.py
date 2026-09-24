@@ -13,10 +13,13 @@ import os
 import re
 
 from app.services.llm import LLMUnavailableError, stream_completion
+from app.services.llm_models import TASK_EVAL_JUDGE, resolve_model
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "claude-haiku-4-5")
+# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查 LLM_PROVIDER 的預設表。兩張表這列都是
+# claude-haiku-4-5：換 judge＝換量尺，要等校準（PR-26），不隨 LLM_PROVIDER 一起換。
+DEFAULT_JUDGE_MODEL = resolve_model(TASK_EVAL_JUDGE, override=os.getenv("EVAL_JUDGE_MODEL"))
 
 # 逾時 60s 曾讓整份評測不可用：8 題裡 3-5 題失敗，而且**兩種錯誤其實同源**——
 # stream_completion 逾時後「已吐字就 fail-open、沒吐字就 raise」，於是同一個逾時

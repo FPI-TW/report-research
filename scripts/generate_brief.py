@@ -43,6 +43,11 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from app.services import brief as brief_service  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.llm_models import TASK_BRIEF, resolve_model  # noqa: E402
@@ -232,6 +237,9 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="忽略時間閘與既有列，重寫當日")
     ap.add_argument("--dry-run", action="store_true", help="只印素材，不呼叫 LLM、不寫庫")
     args = ap.parse_args()
+    # 模型與金鑰預檢排在 generate() 之前，也就在取鎖之前；--dry-run 不呼叫 LLM，不檢查。
+    if not args.dry_run:
+        require_llm_key([args.model])
     # 取鎖的位置在 generate() 內、只包住 CLI 呼叫（理由見該處註解）。
     return asyncio.run(generate(args))
 

@@ -512,6 +512,50 @@ sudo systemctl daemon-reload
 - **URL 不進 argv**。`curl ... "$URL"` 會讓 secret 出現在行程清單裡，任何本機使用者
   `ps` 就看得到。改用 `-K -` 從 stdin 餵 curl 設定檔。`report-mark-alert.sh` 同樣處理過。
 
+### DeepSeek 金鑰落點與輪替
+
+金鑰有**兩份、逐字相同**：
+
+| 落點 | 讀者 | 權限 |
+|---|---|---|
+| repo 根 `.env` 的 `DEEPSEEK_API_KEY` | web（`web/server.py` 啟動時載入） | 同其他 web secret |
+| `/etc/default/report-mark-llm` | `report-mark-sync.service`（`EnvironmentFile=-`，排在共用檔之後）；手動跑的 LLM 批次與評測由 `scripts/_llm_env.py` 自己讀 | 0640 root:kashionz |
+
+**只有 sync unit 載入 llm 檔**，其他 unit 都不呼叫 LLM——環境變數裡有金鑰的行程越少越好。
+批次的模型旋鈕（`TAG_MODEL`、`SUMMARY_MODEL` 等）與 `LLM_PROVIDER` 也放這份檔，讓手動與排程
+用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（`tests/test_deploy_units.py`
+釘住）。web 讀的是 `.env` 的同名鍵，切換 `LLM_PROVIDER` 要兩邊一起改。
+
+安裝（範例檔檔頭有同樣的指令）：
+
+```bash
+sudo install -m 0640 -o root -g kashionz deploy/systemd/report-mark-llm.env.example /etc/default/report-mark-llm
+sudoedit /etc/default/report-mark-llm      # 填 DEEPSEEK_API_KEY=；不要 echo／tee，也不要 source 這個檔
+sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo systemctl daemon-reload
+```
+
+`scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的
+鍵），並在取批次鎖之前預檢——有白名單模型卻沒金鑰、有未知模型名、或檔內有重複的鍵，一律
+**rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
+執行）。全部用 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
+**重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用
+不同的金鑰，所以直接拒跑。
+
+輪替（不需要 daemon-reload，`EnvironmentFile` 每次啟動重讀）：
+
+1. 在 DeepSeek 主控台發一把新金鑰（舊的先別撤）。
+2. 改兩份檔的 `DEEPSEEK_API_KEY`：**直接改那一行**，不要新增一行。
+3. 重啟 web：`sudo systemctl restart report-mark-web.service`。
+4. 核對兩份指紋相同（只印雜湊前 8 碼）：
+   ```bash
+   grep -h '^DEEPSEEK_API_KEY=' .env | cut -d= -f2- | tr -d '\n' | sha256sum | cut -c1-8
+   grep -h '^DEEPSEEK_API_KEY=' /etc/default/report-mark-llm | cut -d= -f2- | tr -d '\n' | sha256sum | cut -c1-8
+   ```
+   手動跑一支會用到 DeepSeek 的批次時，預檢印出的 `fp=` 也應是同一個值。
+5. 確認 sync 目前沒在跑（`systemctl is-active report-mark-sync.service` 回 `inactive`），避免
+   撤銷舊金鑰時打斷進行中的一輪。
+6. 撤銷舊金鑰。
+
 ### oneshot 的手動驗證：`Result=success` 不是證據
 
 2026-08-19 部署 P1 時出現過一次假通過。`systemctl start report-mark-freshness.service`

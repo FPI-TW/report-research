@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 
 # 主答模型（ASK_ANSWER_MODEL，未設時查 LLM_PROVIDER 的預設表；claude_cli 下是 claude-sonnet-5）。
 # 名稱保留：answer.py 的總覽／主答、faithfulness 的預設參數、eval/run_ragas 的生成端都讀它。
-# import 期解析：web/server.py 在本模組被 import 之前就先載入 repo 根 .env。
+# import 期解析：web/server.py 在本模組被 import 之前就先載入 repo 根 .env；批次與評測入口則先呼叫
+# scripts/_llm_env.load_llm_env()（/etc/default/report-mark-llm）。
 DEFAULT_MODEL = resolve_model(TASK_ASK_ANSWER)
 
 # 串流中表示「模型開始呼叫 WebSearch」的控制標記（NUL 包夾，模型文字不可能等於它）。

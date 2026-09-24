@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -806,8 +807,10 @@ class MainNewFlagsTests(unittest.TestCase):
         try:
             rr.run = fake_run
             sys.argv = ["run_ragas.py", *argv, "--json"]
-            with contextlib.redirect_stdout(io.StringIO()):
+            # 金鑰預檢另有 tests/test_llm_env_loading.py；這裡只記下它被問了哪些模型。
+            with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(rr, "require_llm_key") as req:
                 rr._main()
+            captured["_required_models"] = req.call_args.args[0]
         finally:
             _restore(saved)
             sys.argv = old
@@ -825,6 +828,10 @@ class MainNewFlagsTests(unittest.TestCase):
         self.assertEqual(kw["generator_model"], "deepseek-flash")
         self.assertEqual(kw["repeat"], 3)
         self.assertEqual(kw["dump_dir"], "data/eval_frozen/x")
+
+    def test_key_precheck_covers_generator_and_judge(self):
+        kw = self._main(["--generator-model", "deepseek-flash"])
+        self.assertEqual(kw["_required_models"], ["deepseek-flash", rr.DEFAULT_JUDGE_MODEL])
 
 
 if __name__ == "__main__":

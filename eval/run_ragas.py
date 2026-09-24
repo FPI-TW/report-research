@@ -47,6 +47,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from app.config import get_settings  # noqa: E402
 from app.services.agentic_qa import run_agentic  # noqa: E402
 from app.services.answer import (  # noqa: E402
@@ -747,6 +752,10 @@ def _main() -> None:
                         help="走 M5 agentic 迴圈評測（強制 concurrency=1）")
     parser.add_argument("--json", action="store_true", help="改輸出完整 JSON 到 stdout")
     args = parser.parse_args()
+    # 本次會用到的模型：生成端、judge；agentic 另有查詢規劃與證據評估（QA_PLANNER_MODEL）。
+    require_llm_key(
+        [args.generator_model, args.judge_model] + ([get_settings().qa_planner_model] if args.agentic else [])
+    )
 
     report = asyncio.run(
         run(

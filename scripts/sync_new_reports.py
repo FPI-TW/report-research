@@ -27,6 +27,11 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from app.services.extraction import cache as extraction_cache  # noqa: E402
 from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, run_claude  # noqa: E402
@@ -559,6 +564,9 @@ def main() -> None:
     args = ap.parse_args()
     if not args.delta and not args.all_local:
         ap.error("需指定 --delta <file> 或 --all-local")
+    # 取鎖之前：缺金鑰或模型名打錯是「跑了也白跑」，要在撞鎖（rc=75＝不跑）之前說出來。
+    if not args.dry_run:  # --dry-run 不標註、不呼叫 LLM
+        require_llm_key([TAG_MODEL])
     # 這支也 spawn claude（行內標註，見 _tag_via_cli），而且它跑在排程路徑上、是三小時
     # 一輪的第一個競爭者——手動批次正在跑時它照樣會被 timer 叫起來。
     with claude_cli_lock_or_exit("sync_new_reports"):

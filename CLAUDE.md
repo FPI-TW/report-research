@@ -60,6 +60,8 @@ uv run python scripts/ingest_all.py
 | `content_norm` 或 `textnorm.norm_for_match()` | 兩者必須逐字等價（`tests/test_content_norm_equivalence.py`） |
 | 新旋鈕 | 放 `app/config.py`（frozen dataclass＋`os.getenv`，非 pydantic-settings）。既有散在各檔的 `os.getenv` **不要順手搬**；找旋鈕時 `grep -rn os.getenv app web`。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`）是 live 的，不要改名 |
 | `deploy/` 任何檔 | `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；不要只改機器上的副本。`tests/test_deploy_units.py` 守 unit 檔 |
+| DeepSeek 金鑰 | repo 根 `.env` 與 `/etc/default/report-mark-llm`（0640 root:kashionz，只有 sync unit 載入）逐字相同；改完重啟 web，不需 `daemon-reload`。輪替見 `docs/production_resilience.md` |
+| 新的 LLM 批次或評測入口 | `sys.path.insert` 之後第一個專案 import 必須是 `scripts._llm_env`、緊接 `load_llm_env()`；`require_llm_key(...)` 在取鎖之前（`tests/test_llm_env_loading.py` 掃描入口檔釘住） |
 | 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露 |
 | 加 `--workers` 或提高併發閘 | 先照 `.env.example` 的算式重算 DB 連線數（每行程上限 `DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`＝20） |
 | 改 `zh_hant.py`、`faithfulness.is_numeric_claim`、`_SIMILAR_SQL` | 先讀該檔開頭的實測紀錄／docstring；參數都是量出來的 |

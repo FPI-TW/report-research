@@ -1,7 +1,8 @@
 """/api/ask 在 LLM 不可用時依 `LLMUnavailableError.kind` 給使用者不同的 detail（走 HTTP 層）。
 
-內容審查要讓使用者知道「換個問法就好」；帳號層級（餘額、金鑰、模型名）要說「暫時停用」，
-免得反覆重試；其餘（含 CLI 路徑，kind 未填）維持原本的「問答服務發生錯誤」。
+內容審查要讓使用者知道「換個問法就好」；帳號層級（餘額、金鑰）與設定錯誤（模型名）要說「暫時
+無法使用」，免得反覆重試，且不承諾「已通知管理者」（沒有告警接線）；設定錯誤不說「帳號異常」
+（誤設 ASK_WEB_MODEL 也會觸發）。其餘（含 CLI 路徑，kind 未填）維持原本的「問答服務發生錯誤」。
 """
 
 import json
@@ -61,11 +62,24 @@ class AskLlmErrorDetailTests(unittest.TestCase):
         events = self._ask_with(LLMUnavailableError("HTTP 400 Content Exists Risk", kind="content_filter"))
         self.assertEqual(events, [{"detail": "此題觸發模型供應商的內容審查，可換個問法"}])
 
-    def test_account_kinds_say_service_suspended(self):
-        for kind in ("quota", "auth", "config"):
+    def test_account_kinds_say_unavailable_without_promising_notification(self):
+        for kind in ("quota", "auth"):
             with self.subTest(kind=kind):
                 events = self._ask_with(LLMUnavailableError("x", kind=kind))
-                self.assertEqual(events, [{"detail": "問答服務暫時停用（模型服務帳號異常），已通知管理者"}])
+                self.assertEqual(
+                    events, [{"detail": "問答服務暫時無法使用（模型服務帳號異常），請稍後再試或聯絡管理者"}]
+                )
+
+    def test_config_is_not_called_an_account_problem(self):
+        events = self._ask_with(LLMUnavailableError("x", kind="config"))
+        self.assertEqual(events, [{"detail": "問答服務暫時無法使用（模型設定有誤），請聯絡管理者"}])
+
+    def test_no_detail_promises_notification(self):
+        from web.routers import ask as ask_router
+
+        for kind, detail in ask_router._LLM_ERROR_DETAILS.items():
+            with self.subTest(kind=kind):
+                self.assertNotIn("已通知", detail)
 
     def test_other_kinds_keep_generic_message(self):
         for exc in (

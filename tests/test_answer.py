@@ -3198,6 +3198,24 @@ class MainAnswerTruncationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(phrase, logged[-1]["answer"])
                 self.assertEqual(logged[-1]["filters"]["llm_truncated"], reason)
 
+    async def test_meta_without_reason_is_our_timeout_not_a_dropped_connection(self):
+        """CLI 路徑的逾時截斷只寫 `truncated=True`（不帶原因）：那是我們自己的時限，附註不能說
+        「連線中斷」，落庫記 timeout。"""
+        async def cut(*a, **k):
+            yield "答案前半[1]"
+            k["meta"].update(truncated=True)
+
+        events, logged = await self._run(cut)
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertIn("模型輸出超過時限", tokens)
+        self.assertNotIn("連線", tokens)
+        self.assertIn("模型輸出超過時限", logged[-1]["answer"])
+        self.assertEqual(logged[-1]["filters"]["llm_truncated"], "timeout")
+
+        events, _ = await self._run(cut, locale="en")
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertIn("(Answer cut off here: the model output exceeded the time limit)", tokens)
+
     async def test_english_locale_note(self):
         from app.services.llm import LLMUnavailableError
 

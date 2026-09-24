@@ -364,6 +364,11 @@ _TRUNCATION_NOTES = {
         "回答在此中斷：輸出長度達到上限",
         "Answer cut off here: the output reached its length limit",
     ),
+    # 我們自己的時限到了（CLI 單一 Task 的逾時），不是連線斷掉：不能套下面「連線中斷」那句。
+    "timeout": (
+        "回答在此中斷：模型輸出超過時限",
+        "Answer cut off here: the model output exceeded the time limit",
+    ),
 }
 _TRUNCATION_NOTE_DEFAULT = (
     "回答在此中斷：與模型服務的連線在輸出途中中斷",
@@ -379,7 +384,7 @@ def truncation_note(reason: str, locale: str) -> str:
 
 def _truncated_reason(partial: LLMUnavailableError | None, meta: dict) -> str | None:
     """串流結束後判定這一輪是否被截斷：partial 例外優先，其次 meta（HTTP 的 length、read
-    逾時；CLI 的單一 Task 逾時記 timeout）。"""
+    逾時；CLI 的單一 Task 逾時只寫 `truncated=True`、不帶原因，記 timeout 並用時限那句附註）。"""
     if partial is not None:
         return partial.kind or "other"
     if meta.get("truncated"):

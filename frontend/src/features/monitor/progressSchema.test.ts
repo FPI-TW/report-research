@@ -62,12 +62,17 @@ test('evaluation 的量尺欄位（judge_model／judge_since／other_judge_check
     ...derived,
     evaluation: {
       ...derived.evaluation,
-      qa: { ...derived.evaluation.qa, judge_model: 'claude-haiku-4-5', judge_since: '2026-07-02', other_judge_checked: 2 },
+      qa: {
+        ...derived.evaluation.qa, judge_model: 'claude-haiku-4-5', judge_since: '2026-07-02',
+        other_judge_checked: 2, judge_checked: 3, avg_n: 2,
+      },
     },
   })
   expect(p.evaluation?.qa?.judge_model).toBe('claude-haiku-4-5')
   expect(p.evaluation?.qa?.judge_since).toBe('2026-07-02')
   expect(p.evaluation?.qa?.other_judge_checked).toBe(2)
+  expect(p.evaluation?.qa?.judge_checked).toBe(3)
+  expect(p.evaluation?.qa?.avg_n).toBe(2)
 })
 
 test('三塊皆為 optional：舊後端不會讓整頁 parse 失敗', () => {

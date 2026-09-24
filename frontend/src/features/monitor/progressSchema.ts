@@ -52,9 +52,10 @@ export const coverageSchema = summarySchema.extend({ latest: z.string().nullable
 /**
  * M8 查核健康度（單一來源）。
  *
- * `checked/total` **不是覆蓋率指標**——問答端有取樣率、只查含數字的回答，
+ * `checked/total` **不是要追到 100% 的覆蓋率指標**——問答端有取樣率、只查含數字的回答，
  * 研報端可停用，所以本來就不該是 100%。要看的是 degraded（judge 壞掉時
  * fail-open 的靜默累積）、below_min（待複核）與 latest（是否還在跑）。
+ * checked 計所有 judge（「有沒有在查」），換 judge 時不會驟降；分數類欄位才只計現行 judge。
  */
 export const evalSourceSchema = z.object({
   total: z.number(),
@@ -63,11 +64,15 @@ export const evalSourceSchema = z.object({
   below_min: z.number(),
   avg_score: z.number().nullable(),
   latest: z.string().nullable(),
-  // 量尺（DeepSeek 遷移 PR-07）：checked／degraded／below_min／avg_score 只計 judge_model
-  // 量的列；其他 judge 的筆數在 other_judge_checked。舊後端沒有這三鍵，所以 optional。
+  // 量尺（DeepSeek 遷移 PR-07）：total／checked／latest 計所有 judge（覆蓋率語意，換 judge
+  // 不會驟降）；degraded／below_min／avg_score 與 judge_checked、avg_n（平均的樣本數，不含
+  // degraded）只計 judge_model 量的列；其他 judge 的筆數在 other_judge_checked。
+  // 舊後端沒有這些鍵，所以 optional。
   judge_model: z.string().optional(),
   judge_since: z.string().nullable().optional(),
   other_judge_checked: z.number().optional(),
+  judge_checked: z.number().optional(),
+  avg_n: z.number().optional(),
 })
 
 export const evaluationSchema = z.object({

@@ -159,7 +159,7 @@ def _spawn_cli(prompt: str, model: str, timeout: int) -> tuple[Optional[str], Op
 def record_failure(target: date_cls, reason: str, model: str = "") -> None:
     """`時間<TAB>簡報日期<TAB>原因<TAB>model` 一行。原因去掉 TAB／換行（欄位不能被切開）。
 
-    第四欄 model 是審查低4 補的：`blocked_today` 據此判斷「今天這個 model 已被內容審查擋過」。
+    第四欄 model 是審查低4 補的：`blocked_today` 據此判斷「今天這個 model 已被內容審查擋過或截斷過」。
     """
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     reason = " ".join(str(reason).split())
@@ -167,14 +167,22 @@ def record_failure(target: date_cls, reason: str, model: str = "") -> None:
         handle.write(f"{datetime.now(timezone.utc).isoformat()}\t{target}\t{reason}\t{model}\n")
 
 
-def blocked_today(target: date_cls, model: str) -> bool:
-    """`brief_failures.log` 裡同一個簡報日期、同一個 model 已有內容審查的紀錄 → True（審查低4）。
+# 同一天同一個 model 出現過就不再重打的失敗 kind（`blocked_today`）。
+#   - content_filter：素材是上一次的超集，幾乎一定再被擋。
+#   - truncated（`finish_reason=length`，撞到 MAX_TOKENS）：素材只會更多，同一個上限只會截得更早。
+# **期限型截斷（`timeout_streamed`）刻意不在這裡**：它可能只是 DeepSeek 暫時變慢，下一輪常常就好。
+_BLOCKING_KINDS = frozenset({"content_filter", "truncated"})
 
-    簡報每輪 sync 都會被叫；被審查擋下時不寫列，下一輪窗期只是再往後延、素材是上一次的超集，
-    幾乎一定再被擋——每 3 小時重打一次、每次付一次錢、每次再進告警鏈。同一天同一個 model 擋過
+
+def blocked_today(target: date_cls, model: str) -> bool:
+    """`brief_failures.log` 裡同一個簡報日期、同一個 model 已有內容審查或 `max_tokens` 截斷的紀錄 → True
+    （審查低4；截斷是切換前補的）。
+
+    簡報每輪 sync 都會被叫；被審查擋下或截斷時不寫列，下一輪窗期只是再往後延、素材是上一次的超集，
+    幾乎一定再失敗——每 3 小時重打一次、每次付一次錢、每次再進告警鏈。同一天同一個 model 失敗過
     就不再呼叫（rc 仍是 1，讓「今天沒有簡報」照樣看得見）；隔天、換 model、或 `--force` 會再試。
     讀不到檔一律當作沒有（照打）：這是省錢的閘，不是正確性的一部分。舊格式（三欄、沒有 model）
-    的行不算。
+    的行不算。哪些 kind 算見 `_BLOCKING_KINDS`。
     """
     try:
         lines = FAIL_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -182,7 +190,7 @@ def blocked_today(target: date_cls, model: str) -> bool:
         return False
     for line in lines:
         cols = line.split("\t")
-        if len(cols) >= 4 and cols[1] == str(target) and cols[3] == model and error_kind(cols[2]) == "content_filter":
+        if len(cols) >= 4 and cols[1] == str(target) and cols[3] == model and error_kind(cols[2]) in _BLOCKING_KINDS:
             return True
     return False
 
@@ -255,7 +263,7 @@ async def generate(args) -> int:
 
     if not args.force and blocked_today(target, args.model):
         print(
-            f"[brief] {target} 今日已被模型供應商的內容審查擋過（model={args.model}），略過、不再呼叫"
+            f"[brief] {target} 今日已被模型供應商的內容審查擋過或輸出被截斷（model={args.model}），略過、不再呼叫"
             "（要重試加 --force；處置見 docs/production_resilience.md「DeepSeek 批次的失敗處置」）",
             file=sys.stderr,
         )
@@ -276,6 +284,14 @@ async def generate(args) -> int:
             # unit_failures（OnFailure 告警鏈）。
             print(
                 f"[brief] {target} 觸發模型供應商的內容審查，本次跳過、不寫列"
+                f"（今天不再重試，隔天以新的窗期再試）：{error}",
+                file=sys.stderr,
+            )
+            return 1
+        if error_kind(error) == "truncated":
+            # max_tokens 截斷：同上不寫列、今天不再重打（blocked_today）；處置是看素材量或調 MAX_TOKENS
+            print(
+                f"[brief] {target} 輸出被截斷（撞到 MAX_TOKENS={MAX_TOKENS}），本次跳過、不寫列"
                 f"（今天不再重試，隔天以新的窗期再試）：{error}",
                 file=sys.stderr,
             )

@@ -1118,6 +1118,37 @@ class BriefContentFilterTests(HttpMixin, unittest.TestCase):
         self._generate(force=False, real_log=True)
         self.assertEqual(len(self.requests), 2 * sent, "過載不是審查，下一輪照打")
 
+    def test_truncated_is_not_called_again_same_day(self):
+        """max_tokens 截斷（finish_reason=length）同審查：該次跳過、rc=1、同一天同一個 model 不再重打。"""
+        self.install(lambda req: httpx.Response(200, content=sse(chunk(content="## 今日重點\n- 半"),
+                                                                  chunk(content="", finish="length"))))
+        rc, upsert, _, err = self._generate(force=False, real_log=True)
+        self.assertEqual((rc, len(self.requests)), (1, 1))
+        self.assertIn("MAX_TOKENS=", err)
+        self.assertIn("今天不再重試", err)
+        upsert.assert_not_awaited()
+        rc, upsert, _, err = self._generate(force=False, real_log=True)
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(self.requests), 1, "今日已截斷過：不再送出請求")
+        self.assertIn("今日已被", err)
+        self._generate(force=True, real_log=True)
+        self.assertEqual(len(self.requests), 2, "--force 照打")
+
+    def test_blocked_today_kinds(self):
+        """算「今日已擋」的只有審查與 max_tokens 截斷；期限型截斷（timeout_streamed）與逾時可能只是暫時變慢。"""
+        log = self.tmp / "brief_failures.log"
+        target = gb.date_cls.today()
+        cases = {
+            lh.CONTENT_FILTER: True, lh.TRUNCATED: True,
+            lh.TIMEOUT_STREAMED: False, lh.TIMEOUT: False, lh.OVERLOADED: False, lh.EMPTY: False,
+        }
+        for kind, expected in cases.items():
+            with self.subTest(kind=kind):
+                log.write_text(f"2026-09-24T00:00:00+00:00\t{target}\t{lh.error_string(kind, 'x')}\t{DS}\n",
+                               encoding="utf-8")
+                with mock.patch.object(gb, "FAIL_LOG", log):
+                    self.assertIs(gb.blocked_today(target, DS), expected)
+
     def test_blocked_today_ignores_unreadable_and_old_format(self):
         log = self.tmp / "brief_failures.log"
         target = gb.date_cls.today()

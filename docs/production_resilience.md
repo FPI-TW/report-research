@@ -145,7 +145,7 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 ### 逾時的兩個非對稱決定
 
 - `DB_STATEMENT_TIMEOUT_MS` 預設 **60000**，刻意不取架構檢視建議的 15000：雷達目錄的兩次全表 unnest、overview 一題掃 7 次同一母體、閱讀頁 `similar` 拉高 `ef_search` 的 HNSW 掃描都天生偏慢，15s 有把正常功能打掛的實質風險。60s 比任何已知查詢高一個數量級，仍舊把「無上限」變成有上限。
-- `DB_IDLE_TX_TIMEOUT_MS` 預設 **0（關）**，這是刻意的：`scripts/sync_new_reports.py` 先 `report_exists()` 開了交易，接著才 spawn `claude` CLI 標註（硬逾時 150s）與跑 BGE-M3 嵌入（大檔可達數分鐘），中間完全沒有 commit。設了它＝每 3 小時一次的生產同步會把報告靜默丟進 `data/sync_failures.log`。要開就**只在 web 的 `.env` 開**——批次腳本不讀 repo 根的 `.env`（sync unit 走 `/etc/default/report-mark-sync`），這個切分是天然的。
+- `DB_IDLE_TX_TIMEOUT_MS` 預設 **0（關）**，這是刻意的：`scripts/sync_new_reports.py` 先 `report_exists()` 開了交易，接著才呼叫 LLM 標註（硬逾時 150s）與跑 BGE-M3 嵌入（大檔可達數分鐘），中間完全沒有 commit。設了它＝每 3 小時一次的生產同步會把報告靜默丟進 `data/sync_failures.log`。要開就**只在 web 的 `.env` 開**——批次腳本不讀 repo 根的 `.env`（sync unit 走 `/etc/default/report-mark-sync`），這個切分是天然的。
 
 ### 維運長查詢的豁免
 
@@ -523,12 +523,12 @@ sudo systemctl daemon-reload
 用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（`tests/test_deploy_units.py`
 釘住）。web 讀的是 `.env` 的同名鍵，兩份可以不同。
 
-批次經 `scripts/_claude_cli.run_claude` 依白名單分派（`generate_brief` 的 DeepSeek 分支也交給它）：
-DeepSeek 名稱走 HTTP、`claude-*` 走 CLI。切換批次＝改這份檔的 `LLM_PROVIDER` 或個別旋鈕，下一輪
-sync 生效。**沒有回退**：claude CLI 已於 2026-09-23 永久放棄（OAuth 過期、不再修復登入），`claude_cli`
-與遷移期的 `claude_only` 在生產上都等於 LLM 段全部停擺，生產一律 `LLM_PROVIDER=deepseek`。HTTP 路徑
-遇到 401／402／模型不存在一律整批 **rc=2** 中止（不記跳過名單、不改走 Claude），處置見下方「DeepSeek
-帳號告警與 402／401 處置」與「整批中止後的重放」。
+批次經 `scripts/_claude_cli.run_claude`（名稱是 CLI 時代的歷史值；`generate_brief` 也交給它）只呼叫
+DeepSeek：模型名只接受白名單（`deepseek-flash`、`deepseek-v4-pro`、`deepseek-v4-flash`），其他名稱（含
+`claude-*`）在預檢與呼叫層都以整批 **rc=2** 中止、不送出。換模型＝改這份檔的個別旋鈕，下一輪 sync 生效。
+**沒有回退**：claude CLI 已於 2026-09-23 永久放棄、PR-M 移除 backend，`claude_cli`／`claude_only` 已退役
+（批次預檢 rc=2），生產一律 `LLM_PROVIDER=deepseek`（或不設）。遇到 401／402／模型不存在一律整批 **rc=2**
+中止（不記跳過名單），處置見下方「DeepSeek 帳號告警與 402／401 處置」與「整批中止後的重放」。
 
 安裝（範例檔檔頭有同樣的指令）：
 
@@ -540,23 +540,15 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 
 `scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的
 鍵），並在取批次鎖之前預檢——有白名單模型卻沒金鑰、
-有未知模型名、或檔內有重複的鍵，一律 **rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
-執行）。`LLM_PROVIDER` 非空卻不合法（例如 `claude-cli`）同樣 **rc=2** 並印原始值：web 對它是退回 deepseek，
-但 `claude_cli` 是讓 LLM 停下來的開關，批次拼錯不能變成照常計費。`LLM_PROVIDER` 預設 `deepseek`（未設、空值都是），所以**這份檔不存在時批次照樣解析到
-DeepSeek**，又因批次不讀 repo 根 `.env` 而拿不到金鑰，預檢 **rc=2** 並提示依範例檔安裝——sync 殼把 rc=2
-當帳號／環境型中止告警，不會靜默退回已失效的 CLI。全部用 Claude 時不要求金鑰，但一律印一行 `WARNING`
-（不中止、說出是哪個設定解析成 Claude）：claude CLI 已於 2026-09-23 停用，預設又是 deepseek，全是 Claude
-只會是有人顯式設了 `LLM_PROVIDER=claude_cli`／`claude_only` 或 `claude-*` 旋鈕。通過時印
-`fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
+有不在白名單的模型名（含 `claude-*`）、或檔內有重複的鍵，一律 **rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
+執行）。`LLM_PROVIDER` 非空卻不是 `deepseek`（退役的 `claude_cli`／`claude_only`，或拼錯）同樣 **rc=2** 並印
+原始值：web 對它是記 ERROR、退回 deepseek，但設了退役值的人多半是想讓 LLM 停下來，批次不能把它變成照常計費
+（要停批次請停 `report-mark-sync.timer`）。`LLM_PROVIDER` 預設 `deepseek`（未設、空值都是），所以**這份檔
+不存在時批次照樣解析到 DeepSeek**，又因批次不讀 repo 根 `.env` 而拿不到金鑰，預檢 **rc=2** 並提示依範例檔
+安裝——sync 殼把 rc=2 當帳號／環境型中止告警。通過時印 `fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
 
-**claude CLI 認證失效＝整批中止**：CLI 回報認證失敗（`Failed to authenticate`、`OAuth … expired`、
-`Invalid API key`、`Please run /login` 等，stdout 與 stderr 都看；9/23 的實況是退出碼 1、stderr 空、
-訊息在 stdout）時，各批次（含 `generate_brief` 自己的 CLI 分支）整批 **rc=2**，訊息「claude CLI 認證
-失效；若已切 DeepSeek，檢查 /etc/default/report-mark-llm 是否生效（LLM_PROVIDER=deepseek）」，不記跳過
-名單、不寫單篇失敗紀錄；用量記錄的 `kind` 是 `auth`。修正前它被當成「CLI 退出碼 1：（無 stderr）」逐篇
-記錄、整批 rc=0，9/23、9/24 兩天沒有研報入庫而排程看起來一切正常。線上（`/api/ask` 的 CLI 路徑）同一
-樣式歸 `kind="auth"`、不重試，使用者看到「模型服務帳號異常」。處置：確認該段解析到 DeepSeek（這份檔、
-`LLM_PROVIDER`），再照「整批中止後的重放」補跑。
+PR-M 前這裡還有「claude CLI 認證失效＝整批中止」一段（9/23 OAuth 過期、退出碼 1、訊息在 stdout 的偵測）；
+CLI backend 移除後沒有這條路徑了，同型態的問題（該段設定解析到非 DeepSeek 名稱）由上面的白名單預檢擋下。
 **重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用
 不同的金鑰，所以直接拒跑。
 
@@ -583,11 +575,11 @@ DeepSeek**，又因批次不讀 repo 根 `.env` 而拿不到金鑰，預檢 **rc
 
 ### DeepSeek 批次的失敗處置
 
-批次走 DeepSeek 時（`scripts/_claude_cli.run_claude` 的 HTTP 路徑），失敗依 kind 分三類處置；失敗原因一律寫成 `API[<kind>] <固定措辭>：<細節>`（單行、不含 TAB），落在各批次的 `*_failures.log`：
+批次（`scripts/_claude_cli.run_claude`，只走 DeepSeek）的失敗依 kind 分三類處置；失敗原因一律寫成 `API[<kind>] <固定措辭>：<細節>`（單行、不含 TAB），落在各批次的 `*_failures.log`：
 
 | 類別 | kind | 批次行為 |
 |---|---|---|
-| 帳號層級 | `auth`（401）、`quota`（402）、`config`（404、模型不存在） | 整批 **rc=2** 中止；不記跳過名單；**不改走 Claude**（402 的處置是儲值） |
+| 帳號層級 | `auth`（401）、`quota`（402）、`config`（404、模型不存在；白名單外的名稱在送出前就歸這類） | 整批 **rc=2** 中止；不記跳過名單（402 的處置是儲值） |
 | 暫時性 | `overloaded`（429、5xx）、`network` | 還沒吐字時傳輸層依 `Retry-After` 退避重試 ≤2 次（受總期限限制）；**已吐字（已計費）就不重試**，直接當單篇失敗；腳本層不再重試；計入斷路器 |
 | 單篇 | `content_filter`、`truncated`、`empty`、`bad_request`、`timeout_streamed`、`timeout`、`other` | 這篇這輪只打 1 次；前五種記入 `research.llm_task_failure`（審查與 `truncated` 1 次就跳過，其餘連續 3 輪）；`timeout_streamed` 與 `timeout` 計入斷路器 |
 
@@ -619,9 +611,10 @@ DeepSeek**，又因批次不讀 repo 根 `.env` 而拿不到金鑰，預檢 **rc
 儲值後的餘額都 ≤ ¥350。月上限是人的紀律，不是程式旋鈕，沒有任何東西會替你擋；超過就是失控花費的
 上限被放大。9/24 探測 420 則實扣 ¥0.74，按量計費的正常用量遠低於這兩個數字。
 
-**402 絕不改走 Claude**：claude CLI 已放棄，沒有備援可退；就算有，把 model 改回 Claude 也等於繞過
-預算。402、401、DeepSeek 停機時，問答與 sync 的 LLM 段（行內標註、摘要、標題、摘錄、訊號、簡報）
-全部停擺，直到儲值、換金鑰或服務恢復；檢索、閱讀頁、雷達、既有簡報的讀取不受影響。
+**沒有備援**：claude CLI 已於 PR-M 移除，`claude_only` 緊急回退也隨之退役（設了只會在 web 記 ERROR、在
+批次 rc=2，**不會**讓任何東西改走 Claude）。402、401、DeepSeek 停機時，問答與 sync 的 LLM 段（行內標註、
+摘要、標題、摘錄、訊號、簡報）全部停擺，直到儲值、換金鑰或服務恢復；檢索、閱讀頁、雷達、既有簡報的讀取
+不受影響。`/healthz/llm` 回 503 時問答就是停擺的（只有主答被設成白名單外名稱這種設定錯誤才回 `*_unused`）。
 
 #### 訊號從哪裡來
 
@@ -663,7 +656,7 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 
 402／401 之後的完整步驟：
 
-1. 排除原因（儲值，或換金鑰並核對兩份指紋）。**不要**把任何 model 改成 Claude。
+1. 排除原因（儲值，或換金鑰並核對兩份指紋）。沒有別的 backend 可以改走（改成 `claude-*` 只會 config 失敗）。
 2. 確認 `curl -s http://127.0.0.1:8097/healthz/llm` 回 `{"llm":"ok"}`。web 自己的請求收過 402 時，要等一次
    在那之後開始的成功餘額查詢才會解除（最多 60 秒）；急的話重啟 web 也會清掉。
 3. 停排程：`sudo systemctl stop report-mark-sync.timer`。
@@ -681,8 +674,8 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 `ASK_FAITHFULNESS_ENABLED=0` 暫停抽查；**部署含 PR-26/27 的版本之後**要把它打開：
 
 1. 確認生產沒有覆寫 judge：repo 根 `.env` 裡**不該**有 `FAITHFULNESS_MODEL=claude-…`（有的話刪掉那一行；
-   CLI 已放棄，留著只會每次抽查記一筆 degraded）。`ASK_FAITHFULNESS_TIMEOUT` 若還設著 240 也一併刪掉，
-   讓它用 DeepSeek judge 的預設 90（未設時依 judge 決定，Claude CLI judge 才是 240）。
+   PR-M 起白名單外的 judge 不送出，每次抽查記一筆 degraded(account)）。`ASK_FAITHFULNESS_TIMEOUT` 若還設著 240
+   也一併刪掉，讓它用預設 90（PR-M 前 Claude CLI judge 的預設才是 240）。
 2. 從 repo 根 `.env` **移除** `ASK_FAITHFULNESS_ENABLED=0` 這一行（預設就是開）。
 3. 重啟 web：`sudo systemctl restart report-mark-web.service`（前端卡片文字有改，部署時照例 `make build-web`）。
 4. 問一題含數字的問題，等背景抽查跑完（數十秒內），核對：
@@ -708,9 +701,65 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 （只取 `--since` 預設 2026-09-03 起的抽查——之前比的是帳本前 4000 字；haiku 分數排除 `no_source` 重算，
 被排除的列數與原因會印出來），印 κ、平均偏移、門檻翻轉率；脈絡是重建的，差異同時來自 judge 與脈絡。離峰跑（會在本行程載入 BGE-M3）。
 
-**回退**：沒有可用的 Claude judge（CLI 已放棄）。judge 有系統性問題時只能暫停抽查
+**回退**：沒有可用的 Claude judge（CLI 已於 PR-M 移除）。judge 有系統性問題時只能暫停抽查
 （repo 根 `.env` 設回 `ASK_FAITHFULNESS_ENABLED=0` 並重啟 web），或把 `FAITHFULNESS_MODEL` 換成
 `deepseek-v4-pro`——那又是另一把尺，監控卡會把 flash 的分數歸「其他 judge」。
+
+### PR-M 部署步驟（移除 claude CLI backend）
+
+PR-M 是遷移終局：程式裡的 claude CLI backend、`claude_cli`／`claude_only` 兩個 provider 值、web unit 的 PATH
+drop-in 與探針退出碼 5 全部刪除。**程式先備好、放在獨立分支，條件成立後才合併部署。**
+
+**合併條件**（計畫第四版「緊急直接切換」；全部都要成立）：
+
+1. PR-12 完整版、PR-13（`/healthz/llm`＋探針 7／8）、PR-26＋27（judge 切 DeepSeek）已上線。
+2. 批次連續 1 週沒有 401、402，也沒有大量 content_filter（`make llm-blocked`、`data/unit_failures.log`、
+   各批次 `*_failures.log`）。
+3. 前端網搜開關已隱藏（`WEB_SEARCH_PAUSED`）。
+
+**部署前確認**（在主 checkout）：
+
+```bash
+grep -n '^LLM_PROVIDER=\|^ASK_WEB_MODEL=\|^ASK_ENABLE_WEB=\|^[A-Z_]*_MODEL=claude' .env
+sudo grep -n '^LLM_PROVIDER=\|_MODEL=claude' /etc/default/report-mark-llm
+```
+
+- 兩份檔的 `LLM_PROVIDER` 必須是 `deepseek` 或不設：退役值在 web 只記 ERROR，但批次會 **rc=2** 整批拒跑。
+- 任何 `*_MODEL=claude-…` 都要刪掉：web 那側每次呼叫以「設定有誤」失敗，批次 rc=2。
+- `ASK_ENABLE_WEB=0` 可以留著（預設已改為 0）；設成 1 會讓時效題一律婉拒、開了網搜的主答失敗（啟動自檢記 ERROR）。
+
+**部署**：
+
+```bash
+git pull --ff-only                                   # 主 checkout
+sudo rm /etc/systemd/system/report-mark-web.service.d/path.conf
+sudo rmdir /etc/systemd/system/report-mark-web.service.d 2>/dev/null || true   # 目錄裡沒有別的 drop-in 才會刪
+sudo cp deploy/systemd/report-mark-health.service deploy/systemd/report-mark-sync.service \
+        deploy/systemd/report-mark-audit.service deploy/systemd/report-mark-freshness.service \
+        deploy/systemd/report-mark-backfill.service deploy/systemd/report-mark-backfill.timer \
+        deploy/systemd/report-mark-r2-reconcile.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart report-mark-web.service
+```
+
+`/etc/default/report-mark-sync` 的 `SYNC_PATH_EXTRA` **保留**（sync、audit、freshness、backfill、r2-reconcile
+靠它找 `~/.local/bin` 的 uv）；裡面 nvm 的 node bin 那一段只給 claude CLI 用，可以用 `sudoedit` 刪掉，留著也無害。
+前端沒有改動，不需要 `make build-web`。
+
+**驗收**：
+
+```bash
+grep -rn "claude -p\|claude_cli_path\|_run_cli\|build_cli_args" app web scripts   # 應無結果
+curl -s http://127.0.0.1:8097/healthz                  # {"status":"ok"}
+curl -s http://127.0.0.1:8097/healthz/llm              # {"llm":"ok"}
+sudo systemctl start report-mark-health.service; journalctl -u report-mark-health -n 3 --no-pager   # reason 不得含 dep_missing，退出碼不得是 5
+journalctl -u report-mark-web -b --no-pager | grep -E "LLM 模型|白名單|ASK_ENABLE_WEB|已隨 claude CLI 退役"   # 只該有「LLM 模型：provider=deepseek；…」一行
+```
+
+問一題一般問題（`qa_log.filters.llm_model` 應為 `deepseek-flash`），並等下一輪 sync 看行內標註與摘要照常產出。
+
+**回退**：revert 這個 PR（`git revert` 後重新部署，並把 drop-in 與 health unit 還原）。claude CLI 的登入早已失效，
+回退只恢復程式碼，**不會恢復任何功能**；DeepSeek 停擺時的處置照舊是上一節的儲值／換金鑰。
 
 ### oneshot 的手動驗證：`Result=success` 不是證據
 
@@ -793,7 +842,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 |---|---|
 | 完整成功 | **是** |
 | **完整成功但 0 篇新研報** | **是** ← 見下 |
-| 下游某段回 `rc=75`（claude CLI 被別的批次佔用，`EX_TEMPFAIL`） | **是**——那是常態，不是異常 |
+| 下游某段回 `rc=75`（批次鎖被別的批次佔用，`EX_TEMPFAIL`） | **是**——那是常態，不是異常 |
 | PID lock 被佔用而跳過（`exit 0`） | 否 |
 | 掛載／rsync／匯入失敗（`exit 1`） | 否 |
 | 下游某段**異常**失敗（非 0 且非 75） | 否 |
@@ -826,7 +875,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 
 #### 兩層修正
 
-**第一層：環境失敗的述詞從「型別」改成「errno」。** `scripts/_claude_cli.py` 原本只接 `FileNotFoundError`（ENOENT）就拋 `CliNotFoundError` 中止整批——那個機制**本來就存在**，而且註解精準預言了這個失效模式。它漏接的原因是述詞太窄：這次拋的是 `OSError [Errno 8] ENOEXEC`（檔案在，但不是可執行格式），不是 `FileNotFoundError`。現在改判 `errno ∈ {ENOENT, ENOEXEC, EACCES, EPERM, EISDIR}`。**刻意不寬泛接 `OSError`**：ENOMEM／ENFILE 那類是暫時性資源壓力，中止整批會讓一次尖峰變成一輪完全沒跑。
+**第一層：環境失敗的述詞從「型別」改成「errno」。** `scripts/_claude_cli.py` 原本只接 `FileNotFoundError`（ENOENT）就拋 `CliNotFoundError` 中止整批——那個機制**本來就存在**，而且註解精準預言了這個失效模式。它漏接的原因是述詞太窄：這次拋的是 `OSError [Errno 8] ENOEXEC`（檔案在，但不是可執行格式），不是 `FileNotFoundError`。當時改判 `errno ∈ {ENOENT, ENOEXEC, EACCES, EPERM, EISDIR}`（**刻意不寬泛接 `OSError`**：ENOMEM／ENFILE 那類是暫時性資源壓力，中止整批會讓一次尖峰變成一輪完全沒跑）。PR-M 移除 CLI 後這段 errno 判定隨之刪除；同一個原則（每篇都會踩到的失敗要整批中止）現在由帳號層級錯誤、白名單外的模型名與斷路器承接。
 
 **第二層：`rc=0` 之後仍要看計數。** importer 原子寫出 `data/.sync_last_stats`（`key=value`），殼層逐鍵解析、只收非負整數。分界**不看名字，看「重跑會不會不一樣」**：
 
@@ -883,8 +932,7 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 
 處置步驟（在主 checkout 執行；從 worktree 跑不與排程互斥）：
 
-1. 排除中止原因。rc=2 的來源：claude CLI 找不到（`CliNotFoundError`，見上面 PATH 的兩次漂移）、claude CLI
-   認證失效（訊息以「claude CLI 認證失效」開頭，見「DeepSeek 金鑰落點與輪替」一節），或 DeepSeek 帳號層級錯誤（`LlmEnvironmentError`：401 金鑰、402 餘額、模型不存在；中止訊息以 `API[auth]`／`API[quota]`／`API[config]` 開頭）。**LLM 帳號型中止（例如餘額不足 402）的處置是儲值，絕不把 model 改成 Claude 繞過**——那等於繞過預算。
+1. 排除中止原因。rc=2 的來源：DeepSeek 帳號層級錯誤（`LlmEnvironmentError`：401 金鑰、402 餘額、模型不存在；中止訊息以 `API[auth]`／`API[quota]`／`API[config]` 開頭）、模型名不在白名單（訊息含「不在 DeepSeek 白名單」）、`LLM_PROVIDER` 退役值或拼錯、缺金鑰、斷路器，或 400 升級。**LLM 帳號型中止（例如餘額不足 402）的處置是儲值**；PR-M 起也沒有別的 backend 可以改走。
 2. 停排程，免得重放途中被下一輪搶鎖或覆寫：`sudo systemctl stop report-mark-sync.timer`。
 3. 依殼印出的順序（舊→新）逐份重放 delta，**每重放一份就立刻用它自己的 `--hashes-out` 補跑三段**，再換下一份：
 
@@ -1311,7 +1359,7 @@ sudo systemctl disable --now report-mark-health.timer
 
 | 欄位 | 用途 |
 |---|---|
-| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤、5 服務降級＝`/healthz` 正常但 `claude` 不在 web unit 的 PATH 上、6 服務降級＝`/healthz` 正常但 R2 連不上、7 服務提醒＝`/healthz` 正常但 DeepSeek 餘額低於門檻（尚未停擺）、8 服務降級＝`/healthz` 正常但 DeepSeek 帳號不可用或判斷不出來） |
+| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤、5 已退役（PR-M 前＝`claude` 不在 web unit 的 PATH 上；收到它落未知退出碼）、6 服務降級＝`/healthz` 正常但 R2 連不上、7 服務提醒＝`/healthz` 正常但 DeepSeek 餘額低於門檻（尚未停擺）、8 服務降級＝`/healthz` 正常但 DeepSeek 帳號不可用或判斷不出來） |
 | `ExecMainExitTimestampMonotonic` | **單調時鐘**，判斷「是否有新觀測」。用它而非牆鐘，因為 WSL 休眠喚醒與時區調整會讓牆鐘跳動 |
 | `Result` | 附在通知訊息裡供人判讀 |
 
@@ -1420,7 +1468,7 @@ healthy + FIRING   → RESOLVED，通知一次，移除狀態檔
 |---|---|---|
 | `1` / `2` | **CRITICAL** | 使用者當下無法使用 |
 | `4` | **WARNING** | 探針自己壞了＝「我不知道」，不是「壞了」 |
-| `5` | **WARNING** | 服務降級：檢索／閱讀／雷達還活著，問答壞了；不會自己好，照樣開事件與提醒（已停用，見上） |
+| `5` | **WARNING**（未知退出碼） | 已退役（PR-M）：沒有專屬分派，落「探針回報未知退出碼」——代表跑的是舊版探針 |
 | `6` | **WARNING** | 服務降級：原檔下載與 PDF 檢視壞了，其餘正常 |
 | `7` | **WARNING** | DeepSeek 餘額低於門檻（尚未停擺），請於 3 個工作天內儲值 |
 | `8` | **CRITICAL** | LLM 帳號不可用（餘額用罄／認證失敗／連不上，或判斷不出來），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常。由 7 轉來時立刻送 ESCALATED |

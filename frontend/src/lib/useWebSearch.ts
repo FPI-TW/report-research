@@ -11,14 +11,15 @@ import { useSyncExternalStore } from 'react'
 const KEY = 'tf.webSearch'
 
 /**
- * 網搜暫停中（DeepSeek 遷移 PR-W）。網搜仍解析到 claude CLI（`ASK_WEB_MODEL`），而 CLI 已於
- * 2026-09-23 放棄；生產以伺服器總閘 `ASK_ENABLE_WEB=0` 關閉。暫停期間：
+ * 網搜暫停中（DeepSeek 遷移 PR-W）。網搜原本走 claude CLI 的 WebSearch，CLI 已於 2026-09-23 放棄、
+ * PR-M 移除，所以網搜目前沒有後端：伺服器總閘 `ASK_ENABLE_WEB` 預設關，就算打開，後端也一律以設定錯誤
+ * 拒絕網搜（時效題退回婉拒）。暫停期間：
  * - 問答輸入框不列網搜開關（`ComposerTools` 的 `useTools()`）。
  * - 請求一律送 `web=false`（`useAskController`），免責文案也不提網路資訊（`Composer`）。
  *   localStorage 裡殘留的 `web=true` 不刪、也不送：送了會被總閘擋掉，但 `qa_log.filters.web`
  *   會記到一個使用者看不到的開關狀態。偏好留著，恢復後使用者原本的選擇照舊生效。
  *
- * **接回點**：DeepSeek 版網搜（計畫 P9，Tavily 工具迴圈）完成、生產移除 `ASK_ENABLE_WEB=0` 之後，
+ * **接回點**：DeepSeek 版網搜（計畫 P9，Tavily 工具迴圈）完成、生產把 `ASK_ENABLE_WEB` 打開之後，
  * 把這裡改成 false 即可，上面三處都讀這個常數；store 與開關元件都原樣保留。
  * 型別刻意寫成 boolean：寫成字面量 true 會讓讀它的條件被型別收窄成死碼。
  */

@@ -131,7 +131,7 @@ python3 scripts/analyze_resource_usage.py --json   # 給其他工具消費
 **CPU 幾乎全部花在 cross-encoder rerank**：`qa_timing` 顯示 rerank 27–39 秒、
 retrieve 0.7–9.5 秒、embed 1 毫秒（後者是 `embed_query_cached` 的 lru_cache 命中，
 冷值約 0.16–1.5 秒）。**rerank 是這套服務唯一需要獨立算力的元件**，其餘的本機 CPU
-都是零頭；`app/services/llm.py` 那一段是 spawn `claude` CLI，屬 token 成本不是算力。
+都是零頭；`app/services/llm.py` 那一段當時是 spawn `claude` CLI（PR-M 起是 DeepSeek HTTP 呼叫），屬 token 成本不是算力。
 
 ### 為什麼「峰值 10.4 核」不是「需要 10 顆核心」
 
@@ -235,8 +235,8 @@ HTTP 那一層，繞過去就量不到。題目取自同一份凍結題集 `eval
 
 ## 不在量測範圍內的成本
 
-`app/services/llm.py` 是 spawn `claude` CLI，不是本機推論——**問答的模型成本
-不會出現在任何 CPU 數字裡**。那一側屬於 token／訂閱成本，是既有評估簡報涵蓋的範圍，
+`app/services/llm.py` 不是本機推論（量測時是 spawn `claude` CLI，PR-M 起是 DeepSeek HTTP 呼叫）——**問答的模型成本
+不會出現在任何 CPU 數字裡**。那一側屬於 token 成本（DeepSeek 按量計費），是既有評估簡報涵蓋的範圍，
 兩者不可互相取代：把本機量到的 CPU 拿去推論「模型很便宜」是錯的，反過來也是。
 
 同理，BGE-M3 嵌入與 cross-encoder rerank **確實**是本機 CPU（`torch` CPU-only），

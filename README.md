@@ -46,7 +46,7 @@
 
 分工鐵律：Python 做所有決定性的事，LLM（DeepSeek）只做語意。派生功能一律 fail-open。完整不變量見 `docs/ARCHITECTURE.md`。
 
-技術棧：Python 3.11 ＋ uv、FastAPI ＋ uvicorn、SQLAlchemy async ＋ asyncpg、pgvector（HNSW cosine）＋ pg_trgm、FlagEmbedding（BGE-M3、bge-reranker-v2-m3，torch CPU-only）、pdfplumber ＋ pypdf ＋ python-docx、boto3（R2）、OpenCC（簡→繁）；前端 React 19 ＋ TypeScript ＋ Vite ＋ TanStack Query ＋ zod ＋ EmbedPDF；LLM 預設走 DeepSeek 官方 API（`httpx` 直連，`app/services/llm_http.py`），不用 SDK；網搜仍解析到 `claude` CLI（`claude -p`），而 CLI 已於 2026-09-23 放棄，所以網搜**暫停中**：生產以 `ASK_ENABLE_WEB=0` 關閉，前端不列網搜開關、請求一律送 `web=false`（`frontend/src/lib/useWebSearch.ts` 的 `WEB_SEARCH_PAUSED`）。恢復條件是 DeepSeek 版網搜（Tavily 工具迴圈）完成，屆時移除 `ASK_ENABLE_WEB=0`、把該常數改回 false。
+技術棧：Python 3.11 ＋ uv、FastAPI ＋ uvicorn、SQLAlchemy async ＋ asyncpg、pgvector（HNSW cosine）＋ pg_trgm、FlagEmbedding（BGE-M3、bge-reranker-v2-m3，torch CPU-only）、pdfplumber ＋ pypdf ＋ python-docx、boto3（R2）、OpenCC（簡→繁）；前端 React 19 ＋ TypeScript ＋ Vite ＋ TanStack Query ＋ zod ＋ EmbedPDF；LLM 只走 DeepSeek 官方 API（`httpx` 直連，`app/services/llm_http.py`），不用 SDK；claude CLI 已於 2026-09-23 放棄、PR-M 移除。網搜因此**沒有後端**：`ASK_ENABLE_WEB` 預設 0，前端不列網搜開關、請求一律送 `web=false`（`frontend/src/lib/useWebSearch.ts` 的 `WEB_SEARCH_PAUSED`）。恢復條件是 DeepSeek 版網搜（Tavily 工具迴圈）完成，屆時 `ASK_ENABLE_WEB` 改回 1、把該常數改回 false。
 
 ## 快速開始
 
@@ -161,7 +161,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `EMBED_MAX_CONCURRENCY`、`EMBED_TORCH_THREADS` | 1、0 | 嵌入序列化；`/api/search`、雷達、閱讀頁沒有併發閘 |
 | `LLM_HTTP_TOTAL_TIMEOUT` | `600` | DeepSeek 串流的牆鐘總時限（秒）；吐字後到期＝截斷並附註，CLI 路徑不讀 |
 | `LLM_BUDGET_CURRENCY`、`LLM_BALANCE_FLOOR` | `CNY`、`70` | 只有 web 讀（`/healthz/llm`，設在 repo 根 `.env`）：只看餘額裡這個幣別那一筆，低於門檻回 503 → 探針退出碼 7（用罄、認證失敗等停擺為 8）。月上限 ¥350 是儲值紀律，不是旋鈕（`docs/production_resilience.md`） |
-| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `deepseek`、查表 | 任務旋鈕非空就用，否則查 provider 的預設表（`app/services/llm_models.py`）；`deepseek` 表除網搜外都是 `deepseek-flash`（兩個 judge 自 2026-09 起也是）；未設、空值都當成 `deepseek`，未知值線上當成 `deepseek`（記 ERROR）、批次與評測預檢 rc=2 並印原始值。`claude_cli`（遷移前的表）與 `claude_only`（遷移期的回退值）仍是合法值，但 claude CLI 已於 2026-09-23 放棄，設了等於 LLM 全部停擺。清單與語意見 `.env.example` |
+| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `deepseek`、查表 | 任務旋鈕非空就用，否則查預設表（`app/services/llm_models.py`）：除網搜外都是 `deepseek-flash`（兩個 judge 自 2026-09 起也是），網搜沒有模型（空字串）。`LLM_PROVIDER` 唯一合法值是 `deepseek`（未設、空值同）；PR-M 退役的 `claude_cli`／`claude_only` 與拼錯的值線上當成 `deepseek`（記 ERROR）、批次與評測預檢 rc=2 並印原始值。模型名只接受 DeepSeek 白名單，`claude-*` 等其他名稱線上以設定錯誤失敗、批次 rc=2。清單與語意見 `.env.example` |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` 設定旋鈕 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
 | `ASK_RERANK_*`、`RERANK_MODEL` | 開、50 候選 | rerank fail-open |
 | `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9、`deepseek-flash`（`claude_cli` 表是 `claude-haiku-4-5`）、`ASK_FAITHFULNESS_TIMEOUT` 依 judge（DeepSeek 90、Claude CLI 240） | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 不再沿用 `ASK_INTENT_MODEL`；換掉等於換尺，監控卡、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`，自 judge 切成 DeepSeek 起歸「其他 judge」）。`ASK_FAITHFULNESS_TIMEOUT` 是每次 judge 呼叫的總期限；未設時依 judge 決定（DeepSeek 90，依探測延遲訂；Claude CLI 240；計算在 `app/config.py`），設了就照設的值 |
@@ -208,7 +208,7 @@ Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪�
 
 | Unit | 排程 | 做什麼 |
 |---|---|---|
-| `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --port 8097`，`Restart=always`，PATH drop-in 給 `claude` |
+| `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --port 8097`，`Restart=always`（PR-M 前的 PATH drop-in 已刪除） |
 | `report-mark-sync.timer` | 每 3 小時 | rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量） |
 | `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |

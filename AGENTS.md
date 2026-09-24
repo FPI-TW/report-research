@@ -7,7 +7,7 @@ Conventions for contributors and AI agents. Hard rules and the change-impact tab
 - `app/services/`: extraction (`extract.py`, `extraction/`), tagging, chunking, embeddings, hybrid retrieval (`retrieval.py`, `retrieval_pipeline.py`), RAG answers (`answer.py`), and the read-only features `reading/`, `radar/`, `brief.py`. `app/config.py` is the only place for new knobs.
 - `web/server.py` is the composition layer only; routes live in `web/routers/*.py` (11 routers, no `APIRouter(prefix=...)`), shared symbols go through `web/deps.py`.
 - `frontend/`: React 19 + TypeScript + Vite, built to `frontend/dist`. `src/features/*` per page, `src/lib/*` for API boundaries (zod, SSE, reducers). `src/components/animate-ui/` is vendored and excluded from lint.
-- `scripts/`: batch and ops jobs. Anything that spawns `claude -p` takes the flock in `scripts/_claude_lock.py` at its main entry (rc=75 on contention).
+- `scripts/`: batch and ops jobs. Anything that calls the LLM (via `run_claude` in `scripts/_claude_cli.py`; the `claude` in those names is historical) takes the flock in `scripts/_claude_lock.py` at its main entry (rc=75 on contention).
 - `deploy/` is the single source of truth for systemd units, nginx and docker-compose; copy to `/etc` after editing, never edit the machine copy only.
 - `db/schema.sql` is applied idempotently by `make schema`; there is no migration tool, so dropping a table needs its own script (`db/drop_deep_report_tables.sql` is the precedent, run by hand on existing databases). `db/expected_constraints.txt` is the CHECK-constraint golden list.
 - `eval/` holds the offline evaluation harness and baselines, deliberately outside CI.
@@ -24,7 +24,7 @@ Conventions for contributors and AI agents. Hard rules and the change-impact tab
 
 - Python: ruff `E,F,I`, 120 columns, `E402` off (deliberate `sys.path.insert` and env loading before imports). No `ruff format`, black or mypy. Dataclass fields are appended with defaults; `rows.ChunkRow` and `store._meta_columns` are positionally aligned, so index fields by `ChunkRow._fields.index(...)`.
 - Frontend: CSS Modules, TanStack Query, zod at API edges; `_`-prefixed identifiers are intentionally unused.
-- Determinism boundary: Python decides (parsing, chunking, retrieval, anchoring, aggregation, windows); Claude only produces semantics. Derived features fail open.
+- Determinism boundary: Python decides (parsing, chunking, retrieval, anchoring, aggregation, windows); the LLM (DeepSeek) only produces semantics. Derived features fail open.
 - Reuse `hybrid_search` / `retrieval_pipeline`; never build a second retrieval path. Patch `retrieval_pipeline`, not `answer`, when stubbing retrieval.
 
 ## Testing Guidelines

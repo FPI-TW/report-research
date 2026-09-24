@@ -1,5 +1,5 @@
 # 廷豐研報 運作流程編排
-# 流程：deps/db/schema → sample → extract → worklist → [Claude 標註] → ingest → serve
+# 流程：deps/db/schema → sample → extract → worklist → [LLM 標註] → ingest → serve
 # 詳見 docs/WORKFLOW.md
 
 PORT ?= 8097
@@ -58,7 +58,7 @@ schema: db  ## 套用 DB schema（vector 擴充 + 表 + HNSW 索引）
 
 setup: deps schema  ## 一次完成基礎建設（deps + db + schema）
 
-# ───── 管線（Claude 標註前）─────
+# ───── 管線（LLM 標註前）─────
 sample:  ## ① 分層抽樣 ~80 檔
 	uv run python scripts/select_sample.py
 
@@ -68,14 +68,16 @@ extract:  ## ② 抽文字 + 檔名 metadata
 worklist:  ## ③ 產工作清單 + 分批（resume-aware）
 	uv run python scripts/make_worklist.py
 
-prep: sample extract worklist  ## ①②③ 一次跑完（停在 Claude 標註前）
+prep: sample extract worklist  ## ①②③ 一次跑完（停在 LLM 標註前）
 
-tag-info:  ## ④ 印出 Claude 標註步驟說明
-	@echo "④ 市場標註由 Claude Code 執行（非 make）："
-	@echo "   在 Claude Code 中以 Workflow 工具執行 workflows/tag_reports.workflow.js"
+tag-info:  ## ④ 印出 LLM 標註步驟說明
+	@echo "④ 市場標註走 DeepSeek 批次（非 make）："
+	@echo "   uv run python scripts/extract_all.py && uv run python scripts/tag_all_cli.py --workers 8"
+	@echo "   （tag_all_cli 讀 extract_all 的 data/extracted/<hash>.json 快取；抽樣原型的 worklist 分批檔"
+	@echo "    原本給 Claude Code workflow 用，已隨 PR-M 移除）"
 	@echo "   產出 data/tags/<file_hash>.json，完成後執行：make ingest"
 
-# ───── 管線（Claude 標註後）─────
+# ───── 管線（LLM 標註後）─────
 ingest:  ## ⑤ 切塊 + BGE-M3 嵌入 + upsert pgvector（首次下載模型 ~2-4GB）
 	uv run python scripts/run_ingest.py
 
@@ -95,18 +97,18 @@ align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 boilerplate:  ## 重建跨文件樣板段落字典 data/boilerplate/（唯讀語料、零 LLM；新券商上線或換版型時跑）
 	uv run python scripts/build_boilerplate.py
 
-# ───── Claude CLI 批次（互斥）─────
-# 下面三支與 tag_all_cli.py／sync_new_reports.py 共五支都 spawn claude CLI，併發互搶
-# 會讓擷取被大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。互斥由
+# ───── LLM 批次（互斥）─────
+# 下面幾支與 tag_all_cli.py／sync_new_reports.py 都呼叫 LLM（DeepSeek，按量計費），併發會讓
+# 同一篇研報重複付費、摘錄的 DELETE+INSERT 互相覆寫（CLI 時代還會搶 claude CLI）。互斥由
 # scripts/_claude_lock.py 的 flock 跨進程鎖強制，不再只靠這行註解：撞車時後啟動者
 # 會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，不會產出壞資料。
 # 排程（report-mark-sync.timer，每 3 小時）也走同一把鎖，所以手動開跑前不必再去
 # 確認 timer 有沒有在跑——真撞上就是不跑，不是跑壞。
-summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續傳，補 summary IS NULL）
+summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（DeepSeek，冪等可續傳，補 summary IS NULL）
 	uv run python scripts/generate_summaries.py
 
-# 勿與 make summaries / signals / takeaways 同時跑：多批次併發搶 claude CLI 會大量誤判失敗。
-titles:  ## 產生顯示標題取代檔名（Sonnet，冪等可續傳，補 title IS NULL；新→舊優先）
+# 勿與 make summaries / signals / takeaways 同時跑（批次鎖會擋；理由見上）。
+titles:  ## 產生顯示標題取代檔名（DeepSeek，冪等可續傳，補 title IS NULL；新→舊優先）
 	uv run python scripts/generate_titles.py
 
 signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 make schema）→ research.report_signal
@@ -188,7 +190,7 @@ edge-reload:  ## 重新套用邊緣設定（重建 nginx 容器）
 	$(COMPOSE) -f $(EDGE_COMPOSE) up -d --force-recreate nginx
 
 # ───── 維運 ─────
-pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟
+pipeline: prep tag-info  ## 跑 ①②③ 並提示 LLM 標註步驟
 
 reset-db:  ## 清空 canonical 與向量表（保留 schema）
 	$(DOCKER) exec $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) \
@@ -235,7 +237,7 @@ metrics-collect:  ## 前景取樣（用法：make metrics-collect DURATION=3600�
 metrics:  ## 分析取樣結果 → 分位數與上雲選型（用法：make metrics SINCE=24h）
 	/usr/bin/python3 scripts/analyze_resource_usage.py $(if $(SINCE),--since $(SINCE),)
 
-# **這一支會真的消耗 Claude 額度**（每題 spawn claude CLI 數次），故預設題數與併發都最小。
+# **這一支會真的花錢**（每題呼叫 DeepSeek 數次，按量計費），故預設題數與併發都最小。
 # 先 --dry-run 看計畫再拿掉；跑完照它印的指令用 --bench 框窗期換算單條成本。
-metrics-bench:  ## 受控負載壓測（會用掉 Claude 額度；用法：make metrics-bench BENCH_ARGS="--limit 4")
+metrics-bench:  ## 受控負載壓測（會真的花 DeepSeek 的錢；用法：make metrics-bench BENCH_ARGS="--limit 4")
 	/usr/bin/python3 scripts/bench_load.py $(BENCH_ARGS)

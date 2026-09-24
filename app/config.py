@@ -6,6 +6,7 @@
 """
 
 import logging
+import math
 import os
 from dataclasses import dataclass
 
@@ -96,7 +97,11 @@ def _r2_presign_ttl() -> int:
 
 
 def _positive_float(name: str, default: float) -> float:
-    """正數秒數；空值、非數字或 ≤0 退回預設並警告（0 會讓每一次呼叫都立刻逾時）。"""
+    """正數秒數；空值、非數字、nan／inf 或 ≤0 退回預設並警告。
+
+    0 會讓每一次呼叫都立刻逾時；`float()` 收 `"nan"`／`"inf"`，而 nan 進 `asyncio.timeout_at`
+    時每個比較都為假，每則回答吐第一段就被當成到期截斷。
+    """
     raw = (os.getenv(name) or "").strip()
     if not raw:
         return default
@@ -104,7 +109,7 @@ def _positive_float(name: str, default: float) -> float:
         value = float(raw)
     except ValueError:
         value = 0.0
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         logging.getLogger(__name__).warning("%s=%r 不是正數，退回 %g", name, raw, default)
         return default
     return value

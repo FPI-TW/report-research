@@ -52,6 +52,7 @@ import atexit
 import contextlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -444,10 +445,17 @@ def _url() -> str:
 
 
 def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
-    """`cap`＝剩餘期限（批次）：connect／read／write 都不超過它。"""
+    """`cap`＝剩餘期限（批次）：connect／read／write 都不超過它。
+
+    `DEEPSEEK_CONNECT_TIMEOUT` 非數字、nan／inf 或 ≤0 一律退回 10 秒（同 `app.config._positive_float`；
+    本模組是葉模組，不 import `app.config`）：`float()` 收 `"nan"`／`"inf"`，而 nan、inf、負數都
+    不是合法的 socket 逾時值。
+    """
     try:
         connect = float(os.getenv("DEEPSEEK_CONNECT_TIMEOUT") or 10)
     except ValueError:
+        connect = 10.0
+    if not math.isfinite(connect) or connect <= 0:
         connect = 10.0
     write = _WRITE_TIMEOUT
     if cap is not None:

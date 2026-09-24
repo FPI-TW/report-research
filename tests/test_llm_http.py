@@ -134,6 +134,17 @@ class ParseSseTests(unittest.TestCase):
         self.assertIn("error", lh.parse_sse_line("data: {oops"))
 
 
+class ConnectTimeoutKnobTests(unittest.TestCase):
+    def test_invalid_values_fall_back_to_default(self):
+        """`DEEPSEEK_CONNECT_TIMEOUT` 非數字、nan／inf、≤0 退回 10 秒；合法值照用、仍受 cap 約束。"""
+        for raw, want in (("", 10.0), ("3", 3.0), ("abc", 10.0), ("0", 10.0), ("-1", 10.0),
+                          ("nan", 10.0), ("inf", 10.0), ("-inf", 10.0)):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"DEEPSEEK_CONNECT_TIMEOUT": raw}):
+                self.assertEqual(lh._timeout(60.0).connect, want)
+        with mock.patch.dict(os.environ, {"DEEPSEEK_CONNECT_TIMEOUT": "nan"}):
+            self.assertEqual(lh._timeout(60.0, cap=2.0).connect, 2.0)
+
+
 class ClassifyStatusTests(unittest.TestCase):
     def test_table(self):
         cases = [

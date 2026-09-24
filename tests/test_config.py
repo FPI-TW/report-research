@@ -75,9 +75,10 @@ class SettingsDefaultsTests(unittest.TestCase):
             self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pypdf")
 
     def test_llm_http_total_timeout(self):
-        """DeepSeek 串流的牆鐘總時限：預設 600 秒；0、負數、非數字退回預設（0 會讓每次都立刻逾時）。"""
+        """DeepSeek 串流的牆鐘總時限：預設 600 秒；0、負數、非數字、nan／inf 退回預設（0 會讓每次都立刻逾時）。"""
         self.assertEqual(get_settings().llm_http_total_timeout, 600.0)
-        for raw, want in (("300", 300.0), ("", 600.0), ("0", 600.0), ("-5", 600.0), ("abc", 600.0)):
+        for raw, want in (("300", 300.0), ("", 600.0), ("0", 600.0), ("-5", 600.0), ("abc", 600.0),
+                          ("nan", 600.0), ("inf", 600.0), ("-inf", 600.0), ("NaN", 600.0)):
             with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_HTTP_TOTAL_TIMEOUT": raw}):
                 self.assertEqual(_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0), want)
 

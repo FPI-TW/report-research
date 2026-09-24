@@ -427,6 +427,6 @@ if __name__ == "__main__":
     args = ap.parse_args()
     # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
     if not args.dry_run:  # --dry-run 不呼叫 LLM
-        require_llm_key([args.model])
+        require_llm_key({llm_failures.TASK_SIGNAL: args.model})
     with claude_cli_lock_or_exit("extract_signals"):
         asyncio.run(main(args))

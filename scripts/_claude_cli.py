@@ -32,6 +32,8 @@ import errno
 import subprocess
 from typing import NamedTuple, Optional
 
+from app.services.llm_models import is_http_model
+
 # stderr 只留尾巴：完整 stderr 可能很長，而失敗記錄是給人掃讀的。200 字元夠容納
 # 「usage: unknown flag」「Credit balance too low」這類真正有資訊量的那一行。
 STDERR_TAIL_CHARS = 200
@@ -56,6 +58,18 @@ class CliNotFoundError(RuntimeError):
       deploy/systemd/report-mark-web.service.d/path.conf 那種 drop-in）。
     - ENOEXEC：2026-08-20，claude CLI 自我更新到 2.1.237，而該版本的 native
       artifact 上游沒發布，postinstall 留下 500 bytes、無 shebang 的佔位腳本。
+    """
+
+
+class HttpModelUnsupportedError(CliNotFoundError):
+    """批次收到 DeepSeek 白名單的模型名，而批次還沒有 HTTP 分派（PR-12 才接）。
+
+    與 `CliNotFoundError` 同一類：設定錯了，每一篇都會踩到——`claude --model deepseek-flash`
+    每次都失敗，行內標註全數 `skip_untagged` 等於新研報停止入庫。所以同樣往上拋、由各批次
+    main 以 rc=2 中止整批，**不能**回 `CliResult(None, …)` 被當成單篇失敗：那會讓研報以
+    DeepSeek 的 model 名記進跳過名單（`research.llm_task_failure`）。入口的 `require_llm_key`
+    已先擋一次，這裡是縱深防禦（例如測試或其他入口直接呼叫）。
+    TODO(PR-12)：`run_claude` 依白名單分派到 `llm_http.complete_chat` 後刪掉這個例外。
     """
 
 
@@ -99,7 +113,13 @@ def run_claude(
     """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
 
     `cwd` 預設 /tmp：避免載入專案 CLAUDE.md 拖慢每次呼叫。
+    DeepSeek 白名單的 model 拋 `HttpModelUnsupportedError`（PR-12 之前批次不分派，見該類）。
     """
+    if is_http_model(model):
+        raise HttpModelUnsupportedError(
+            f"批次尚未支援 DeepSeek（待 PR-12）：model={model} 不能交給 claude CLI；"
+            "請改回 Claude 或移除該旋鈕"
+        )
     try:
         r = subprocess.run(
             build_cli_args(prompt, model),

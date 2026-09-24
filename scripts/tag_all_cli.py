@@ -150,7 +150,7 @@ if __name__ == "__main__":
     ap.add_argument("--excerpt", type=int, default=10000)
     args = ap.parse_args()
     # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
-    require_llm_key([MODEL])
+    require_llm_key({TASK_TAG: MODEL})
     # 全語料標註是最長的一支（數小時），也是最容易把排程的匯入／摘要／摘錄擠掉的一支。
     with claude_cli_lock_or_exit("tag_all_cli"):
         main(args.workers, args.limit, args.excerpt)

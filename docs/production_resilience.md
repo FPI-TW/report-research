@@ -524,7 +524,13 @@ sudo systemctl daemon-reload
 **只有 sync unit 載入 llm 檔**，其他 unit 都不呼叫 LLM——環境變數裡有金鑰的行程越少越好。
 批次的模型旋鈕（`TAG_MODEL`、`SUMMARY_MODEL` 等）與 `LLM_PROVIDER` 也放這份檔，讓手動與排程
 用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（`tests/test_deploy_units.py`
-釘住）。web 讀的是 `.env` 的同名鍵，切換 `LLM_PROVIDER` 要兩邊一起改。
+釘住）。web 讀的是 `.env` 的同名鍵，兩份可以不同。
+
+**PR-12 之前批次不能用 DeepSeek**：`run_claude` 與 `generate_brief.call_cli` 只會 spawn claude CLI，
+沒有白名單分派。這份檔的 `LLM_PROVIDER` 維持 `claude_cli`、批次旋鈕只填 `claude-*` 或留空；設了
+`LLM_PROVIDER=deepseek` 或任一批次旋鈕為 DeepSeek 名稱時，批次預檢以 **rc=2** 拒跑並印出是哪個旋鈕
+（行內標註拒跑＝新研報停止入庫，sync 會記進 `unit_failures.log`）。處置：改回 Claude 或刪掉那一行，
+下一輪 sync 生效。線上（`.env`）不受這條限制。
 
 安裝（範例檔檔頭有同樣的指令）：
 
@@ -535,8 +541,8 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 ```
 
 `scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的
-鍵），並在取批次鎖之前預檢——有白名單模型卻沒金鑰、有未知模型名、或檔內有重複的鍵，一律
-**rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
+鍵），並在取批次鎖之前預檢——批次解析到白名單模型（PR-12 之前，見上）、有白名單模型卻沒金鑰、
+有未知模型名、或檔內有重複的鍵，一律 **rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
 執行）。全部用 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
 **重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用
 不同的金鑰，所以直接拒跑。

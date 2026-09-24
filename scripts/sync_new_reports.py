@@ -566,7 +566,7 @@ def main() -> None:
         ap.error("需指定 --delta <file> 或 --all-local")
     # 取鎖之前：缺金鑰或模型名打錯是「跑了也白跑」，要在撞鎖（rc=75＝不跑）之前說出來。
     if not args.dry_run:  # --dry-run 不標註、不呼叫 LLM
-        require_llm_key([TAG_MODEL])
+        require_llm_key({TASK_TAG: TAG_MODEL})
     # 這支也 spawn claude（行內標註，見 _tag_via_cli），而且它跑在排程路徑上、是三小時
     # 一輪的第一個競爭者——手動批次正在跑時它照樣會被 timer 叫起來。
     with claude_cli_lock_or_exit("sync_new_reports"):

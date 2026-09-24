@@ -22,6 +22,10 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
   - 環境檔裡有重複的鍵（審查 L8）：`load_env_file` 先到先贏、systemd 的 EnvironmentFile 後者
     覆蓋——輪替金鑰時新舊兩行並存，sync unit 與手動批次會拿到**不同**的金鑰。
   - 有未知的模型名（不在 DeepSeek 白名單、也不是 `claude-*`；含 CLI 別名 `sonnet`）。
+  - **批次**解析到白名單模型（`http_dispatch=False`，預設）：PR-12 之前批次沒有 HTTP 分派，
+    `run_claude`／`generate_brief.call_cli` 只會 spawn claude CLI，把 `deepseek-flash` 交給 CLI
+    每一篇都會失敗——行內標註全滅＝新研報停止入庫。訊息帶出是哪個旋鈕（或 `LLM_PROVIDER`
+    的預設、`--model`）解析出來的。只有走 `stream_completion` 的評測入口傳 `http_dispatch=True`。
   - 有白名單模型卻沒有金鑰；依原因提示（環境裡已有空值→先 unset；PermissionError→以
     kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。
   全部解析到 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否
@@ -37,10 +41,10 @@ import hashlib
 import os
 import sys
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from app.services.llm_models import is_claude_model, is_http_model
+from app.services.llm_models import TASK_ENV, is_claude_model, is_http_model, provider, resolve_model
 from web.env_loader import _parse_line, load_env_file
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,9 +141,34 @@ def _missing_key_hint(path: Path) -> str:
     return f"{path} 沒有填 {KEY}：用 sudoedit 填（不要 echo／tee，也不要 source 這個檔）"
 
 
-def require_llm_key(models: Iterable[str | None]) -> None:
-    """預檢本次會用到的模型；不通過就 `SystemExit(2)`（說明見模組 docstring）。"""
-    names = sorted({m for m in models if m})
+def _model_source(task: str | None, model: str) -> str:
+    """說出這個模型名是從哪裡來的：任務旋鈕、`LLM_PROVIDER` 的預設表，或 `--model`。"""
+    knob = TASK_ENV.get(task or "")
+    if knob is None:
+        return model
+    raw = (os.environ.get(knob) or "").strip()
+    if raw == model:
+        return f"{knob}={model}"
+    if not raw and resolve_model(task) == model:
+        return f"LLM_PROVIDER={provider()} 的 {task} 預設 {model}"
+    return f"--model {model}（任務 {task}）"
+
+
+def require_llm_key(
+    models: Mapping[str, str | None] | Iterable[str | None],
+    *,
+    http_dispatch: bool = False,
+) -> None:
+    """預檢本次會用到的模型；不通過就 `SystemExit(2)`（說明見模組 docstring）。
+
+    `models`：`{任務: 模型}`（批次；拒收訊息才說得出是哪個旋鈕）或模型名清單。
+    `http_dispatch`：呼叫端的 LLM 呼叫是否經 `stream_completion` 的白名單分派。批次（經
+    `run_claude`／`generate_brief.call_cli`）在 PR-12 之前一律 False。
+    TODO(PR-12)：`run_claude` 接上白名單分派後，批次入口改傳 True（`generate_brief` 同步）。
+    """
+    pairs = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in models]
+    pairs = [(t, m) for t, m in pairs if m]
+    names = sorted({m for _, m in pairs})
     if not _STATE:
         load_llm_env()
     path = _STATE.get("path") or env_file_path()
@@ -152,6 +181,13 @@ def require_llm_key(models: Iterable[str | None]) -> None:
     unknown = [m for m in names if not (is_http_model(m) or is_claude_model(m))]
     if unknown:
         _fail(f"未知模型名：{', '.join(unknown)}（只接受 DeepSeek 白名單或 claude-*）")
+    if not http_dispatch:
+        sources = sorted({_model_source(t, m) for t, m in pairs if is_http_model(m)})
+        if sources:
+            _fail(
+                f"批次尚未支援 DeepSeek（待 PR-12）：{'、'.join(sources)}。"
+                "批次目前只會呼叫 claude CLI，每一篇都會失敗；請改回 Claude 或移除該旋鈕"
+            )
     _warn_if_not_deploy_root()
     http = [m for m in names if is_http_model(m)]
     if not http:

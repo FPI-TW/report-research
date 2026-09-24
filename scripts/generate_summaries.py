@@ -274,7 +274,7 @@ if __name__ == "__main__":
     )
     args = ap.parse_args()
     # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
-    require_llm_key([MODEL])
+    require_llm_key({TASK_SUMMARY: MODEL})
     with claude_cli_lock_or_exit("generate_summaries"):
         asyncio.run(
             main(args.workers, args.limit, args.excerpt, args.hashes_file, args.retry_blocked)

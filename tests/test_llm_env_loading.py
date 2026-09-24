@@ -176,12 +176,13 @@ class _EnvFileCase(unittest.TestCase):
     def write(self, text: str) -> None:
         self.path.write_text(text, encoding="utf-8")
 
-    def require(self, models) -> tuple[int | None, str]:
+    def require(self, models, *, http_dispatch: bool = True) -> tuple[int | None, str]:
+        """預設 `http_dispatch=True`（評測入口的語意）：金鑰那幾條與批次拒收是兩件事，分開測。"""
         err = io.StringIO()
         code = None
         with contextlib.redirect_stderr(err):
             try:
-                le.require_llm_key(models)
+                le.require_llm_key(models, http_dispatch=http_dispatch)
             except SystemExit as exc:
                 code = exc.code
         return code, err.getvalue()
@@ -276,6 +277,80 @@ class RequireTests(_EnvFileCase):
         code, out = self.require(["deepseek-flash"])
         self.assertEqual(code, 2)
         self.assertIn("sudoedit", out)
+
+
+class BatchRejectsHttpModelTests(_EnvFileCase):
+    """PR-12 之前批次沒有 HTTP 分派：解析到 DeepSeek 名稱一律 rc=2，並說出是哪個旋鈕解析出來的。
+
+    不擋的話，`claude --model deepseek-flash` 每一篇都失敗：行內標註全數 skip_untagged＝新研報
+    停止入庫（見 scripts/_claude_cli.py 的 HttpModelUnsupportedError）。
+    """
+
+    def setUp(self):
+        super().setUp()
+        for k in ("LLM_PROVIDER", "TITLE_MODEL", "TAG_MODEL", "SIGNAL_MODEL"):
+            os.environ[k] = ""
+
+    def test_knob_is_named(self):
+        os.environ["TITLE_MODEL"] = "deepseek-flash"
+        le.load_llm_env()
+        code, out = self.require({"title": "deepseek-flash"}, http_dispatch=False)
+        self.assertEqual(code, 2)
+        self.assertIn("PR-12", out)
+        self.assertIn("TITLE_MODEL=deepseek-flash", out)
+
+    def test_provider_default_is_named(self):
+        os.environ["LLM_PROVIDER"] = "deepseek"
+        le.load_llm_env()
+        code, out = self.require({"tag": "deepseek-flash"}, http_dispatch=False)
+        self.assertEqual(code, 2)
+        self.assertIn("LLM_PROVIDER=deepseek", out)
+        self.assertIn("tag", out)
+
+    def test_cli_flag_is_named(self):
+        le.load_llm_env()
+        code, out = self.require({"signal": "deepseek-v4-pro"}, http_dispatch=False)
+        self.assertEqual(code, 2)
+        self.assertIn("--model deepseek-v4-pro", out)
+
+    def test_rejected_even_with_key(self):
+        """有金鑰也擋：擋的理由是批次不會分派，不是缺金鑰。"""
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        le.load_llm_env()
+        code, out = self.require({"title": "deepseek-flash"}, http_dispatch=False)
+        self.assertEqual(code, 2)
+        self.assertIn("PR-12", out)
+        self.assertNotIn("fp=", out)
+        self.assertNotIn(FAKE_KEY, out)
+
+    def test_plain_list_defaults_to_batch(self):
+        """預設是批次語意：忘了傳 http_dispatch 的新入口要被擋，而不是放行。"""
+        le.load_llm_env()
+        code, out = self.require(["deepseek-flash"], http_dispatch=False)
+        self.assertEqual(code, 2)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ctx:
+            le.require_llm_key(["deepseek-flash"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("PR-12", err.getvalue())
+
+    def test_claude_models_pass(self):
+        le.load_llm_env()
+        code, _ = self.require({"title": "claude-sonnet-5", "tag": "claude-haiku-4-5"}, http_dispatch=False)
+        self.assertIsNone(code)
+
+    def test_every_batch_entry_uses_batch_semantics(self):
+        """批次入口不得傳 http_dispatch=True（PR-12 才放開）；評測入口才可以。"""
+        allowed = {"eval/run_ragas.py"}
+        for rel, tree in _entry_files().items():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "require_llm_key":
+                    kws = {k.arg: ast.unparse(k.value) for k in node.keywords}
+                    with self.subTest(entry=rel):
+                        if rel in allowed:
+                            self.assertEqual(kws.get("http_dispatch"), "True")
+                        else:
+                            self.assertNotIn("http_dispatch", kws)
 
 
 class WorktreeWarningTests(unittest.TestCase):

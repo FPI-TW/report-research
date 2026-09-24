@@ -224,6 +224,14 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
             with self.assertRaises(cc.CliNotFoundError):
                 snr._tag_via_cli("x.pdf", "內文")
 
+    def test_deepseek_model_aborts_instead_of_skip_untagged(self):
+        """PR-12 之前：TAG_MODEL 是 DeepSeek 名稱時真的 run_claude 會拒收並往上拋（rc=2），
+        不 spawn CLI、也不讓每一篇變成 skip_untagged。"""
+        with mock.patch.object(cc.subprocess, "run") as run:
+            with self.assertRaises(cc.HttpModelUnsupportedError):
+                snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash")
+        run.assert_not_called()
+
 
 class CacheWriteAfterCommitTests(unittest.TestCase):
     """審查 L9：抽取快取在 DB commit 之後才寫。它拋例外時，該篇已入庫卻被計成 fail、

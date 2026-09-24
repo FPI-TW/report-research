@@ -189,6 +189,56 @@ class CliArgsTests(unittest.TestCase):
         self.assertLess(args.index("--strict-mcp-config"), args.index("--tools"))
 
 
+class DeepSeekModelTests(unittest.TestCase):
+    """PR-12 之前簡報沒有 HTTP 分派：DeepSeek 名稱在預檢就 rc=2；繞過預檢時 call_cli 也拒收，
+    main 同樣 rc=2（不寫 brief_failures.log、不 spawn CLI）。"""
+
+    def _main(self, argv):
+        old = sys.argv
+        sys.argv = ["generate_brief.py", *argv]
+        try:
+            return generate_brief.main()
+        finally:
+            sys.argv = old
+
+    def test_preflight_rejects_before_anything_runs(self):
+        import contextlib
+        import io
+        from unittest import mock
+
+        with mock.patch.object(generate_brief, "generate") as gen, \
+             contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as ctx:
+            self._main(["--model", "deepseek-flash"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("PR-12", err.getvalue())
+        gen.assert_not_called()
+
+    def test_call_cli_rejects_without_spawning(self):
+        from unittest import mock
+
+        with mock.patch.object(generate_brief.subprocess, "run") as run:
+            with self.assertRaises(generate_brief.HttpModelUnsupportedError):
+                generate_brief.call_cli("素材", "deepseek-flash")
+        run.assert_not_called()
+
+    def test_main_returns_2_when_call_cli_rejects(self):
+        import contextlib
+        import io
+        from unittest import mock
+
+        async def fake_generate(args):
+            generate_brief.call_cli("素材", args.model)
+
+        with mock.patch.object(generate_brief, "require_llm_key"), \
+             mock.patch.object(generate_brief, "generate", side_effect=fake_generate), \
+             mock.patch.object(generate_brief, "record_failure") as rec, \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = self._main(["--model", "deepseek-flash"])
+        self.assertEqual(rc, 2)
+        self.assertIn("PR-12", err.getvalue())
+        rec.assert_not_called()
+
+
 class _FakeSession:
     async def __aenter__(self):
         return self

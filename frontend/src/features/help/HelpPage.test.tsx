@@ -28,8 +28,10 @@ test('說明頁揭露 AI 生成內容與資料送往模型供應商', () => {
   render(<HelpPage />)
   expect(screen.getByRole('link', { name: 'AI 生成內容與資料處理' })).toHaveAttribute('href', '#ai')
   const section = document.getElementById('ai')!
-  for (const word of ['DeepSeek', '智能問答', '摘要', '標題', '重點摘錄', '券商觀點', '每日簡報', '可能有誤']) {
+  for (const word of ['智能問答', '摘要', '標題', '重點摘錄', '標註', '券商觀點', '每日簡報', '可能有誤']) {
     expect(section.textContent).toContain(word)
   }
-  expect(section.textContent).toMatch(/送往模型供應商 DeepSeek 處理/)
+  // 既有語料多半是遷移前由 Claude 產出：供應商寫成「目前為」，不說全部出自 DeepSeek
+  expect(section.textContent).toMatch(/大型語言模型（目前為 DeepSeek）自動生成/)
+  expect(section.textContent).toMatch(/提問、回答與相關的研報內容會送往模型供應商（目前為 DeepSeek）處理/)
 })

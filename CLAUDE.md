@@ -64,7 +64,7 @@ uv run python scripts/ingest_all.py
 | 新的 LLM 批次或評測入口 | `sys.path.insert` 之後第一個專案 import 必須是 `scripts._llm_env`、緊接 `load_llm_env()`；`require_llm_key(...)` 在取鎖之前（`tests/test_llm_env_loading.py` 掃描入口檔釘住，只 import `answer`／`retrieval_pipeline` 等間接層的入口也算；不呼叫 LLM 的列在該檔 `NON_LLM_ENTRIES` 並逐一核對取用的名稱）；批次傳 `{任務: 模型}`（缺金鑰時說得出是哪個旋鈕），評測傳模型名清單 |
 | 新增批次 LLM 呼叫點（`run_claude`） | 帶 `max_tokens`（依第二版計畫 §8）與 `meta={"task", "file_hash", "report_id"}`（`tests/test_claude_cli.py` 逐點釘住值）；重試迴圈加 `if res.text is None and not is_retryable(res): break`（`API[...]` 已在傳輸層處理，解析失敗才在腳本層重試），跳過名單的 reason 用 `failure_kind(res)` |
 | 新增 LLM 呼叫點（`stream_completion`） | 帶 `max_tokens`（依第二版計畫 §8）與 `task`（`tests/test_llm.py` 靜態釘住）；同步更新所有假物件簽章；model 只用白名單或 `claude-*` 正式名稱 |
-| 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露 |
+| 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露。網搜暫停中由 `frontend/src/lib/useWebSearch.ts` 的 `WEB_SEARCH_PAUSED` 控制，不要刪 web 項；清單為空時 `ComposerTools` 回 null |
 | 加 `--workers` 或提高併發閘 | 先照 `.env.example` 的算式重算 DB 連線數（每行程上限 `DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`＝20） |
 | 改 `zh_hant.py`、`faithfulness.is_numeric_claim`、`_SIMILAR_SQL` | 先讀該檔開頭的實測紀錄／docstring；參數都是量出來的 |
 

@@ -178,7 +178,8 @@ class CliArgsTests(unittest.TestCase):
         """簡報只要模型回 markdown，不開任何工具；可變長度選項放 argv 最後，不吞 prompt。"""
         args = generate_brief.build_cli_args("素材", "m")
         self.assertEqual(args[2], "素材")
-        self.assertEqual(args[-2:], ["--disallowedTools", "*"])
+        self.assertEqual(args[-2:], ["--tools", ""])
+        self.assertNotIn("--disallowedTools", args)
 
 
 class _FakeSession:

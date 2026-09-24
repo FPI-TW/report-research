@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -51,6 +52,73 @@ class RunAttemptLargeLineTests(unittest.IsolatedAsyncioTestCase):
     def test_limit_constant_exceeds_default_64kb(self):
         # 明示修法意圖：上限須遠大於 asyncio 預設 64KB。
         self.assertGreater(llm._STDOUT_LINE_LIMIT, 64 * 1024)
+
+
+# 假 claude：先送 system/init（工具集由 argv[1] 的 JSON 指定），再送一段文字與 result。
+_FAKE_INIT_SCRIPT = r'''
+import sys, json
+sys.stdin.buffer.read()
+tools = json.loads(sys.argv[1])
+sys.stdout.write(json.dumps({"type": "system", "subtype": "init", "tools": tools}) + "\n")
+sys.stdout.write(json.dumps(
+    {"type": "stream_event",
+     "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}}) + "\n")
+sys.stdout.write(json.dumps({"type": "result"}) + "\n")
+'''
+
+
+def _init(tools) -> str:
+    return json.dumps({"type": "system", "subtype": "init", "tools": tools})
+
+
+class CheckInitToolsTests(unittest.TestCase):
+    """旗標失效要看得見：init 事件回報的工具集與預期不符 → 回說明字串。"""
+
+    def test_no_web_expects_empty(self):
+        self.assertIsNone(llm.check_init_tools(_init([]), False))
+        self.assertIsNotNone(llm.check_init_tools(_init(["Read", "Bash"]), False))
+
+    def test_web_expects_exactly_websearch(self):
+        self.assertIsNone(llm.check_init_tools(_init(["WebSearch"]), True))
+        self.assertIsNotNone(llm.check_init_tools(_init([]), True))
+        self.assertIsNotNone(llm.check_init_tools(_init(["WebSearch", "Read"]), True))
+
+    def test_defensive_on_other_shapes(self):
+        """非 init、沒帶 tools、tools 非 list、壞 JSON 一律不判（事件格式可能變）。"""
+        for line in (
+            "",
+            "not json",
+            json.dumps({"type": "system", "subtype": "init"}),
+            json.dumps({"type": "system", "subtype": "init", "tools": "Read"}),
+            json.dumps({"type": "system", "subtype": "other", "tools": ["Read"]}),
+            json.dumps({"type": "result", "tools": ["Read"]}),
+        ):
+            with self.subTest(line=line):
+                self.assertIsNone(llm.check_init_tools(line, False))
+
+
+class RunAttemptInitToolsTests(unittest.IsolatedAsyncioTestCase):
+    async def _collect(self, tools, allow_web):
+        cmd = [sys.executable, "-c", _FAKE_INIT_SCRIPT, json.dumps(tools)]
+        return [c async for c in llm._run_attempt(cmd, prompt="x", timeout=30.0, allow_web=allow_web)]
+
+    async def test_mismatch_logs_warning_but_still_streams(self):
+        with self.assertLogs("app.services.llm", level="WARNING") as cm:
+            chunks = await self._collect(["Read", "Bash"], False)
+        self.assertEqual(chunks, ["ok"])  # fail-open：照常出字
+        self.assertEqual(len(cm.records), 1)
+        self.assertIn("Read", cm.output[0])
+
+    async def test_match_is_silent(self):
+        with self.assertNoLogs("app.services.llm", level="WARNING"):
+            self.assertEqual(await self._collect([], False), ["ok"])
+            self.assertEqual(await self._collect(["WebSearch"], True), ["ok"])
+
+    async def test_no_check_when_allow_web_not_given(self):
+        with self.assertNoLogs("app.services.llm", level="WARNING"):
+            chunks = [c async for c in llm._run_attempt(
+                [sys.executable, "-c", _FAKE_INIT_SCRIPT, json.dumps(["Read"])], prompt="x", timeout=30.0)]
+        self.assertEqual(chunks, ["ok"])
 
 
 if __name__ == "__main__":

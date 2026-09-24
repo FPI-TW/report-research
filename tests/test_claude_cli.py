@@ -37,9 +37,9 @@ class BuildCliArgsTests(unittest.TestCase):
     def test_disables_all_tools(self):
         """批次只要模型回文字，不開任何工具；旗標是可變長度選項，必須在 prompt 之後、argv 最後。"""
         args = cc.build_cli_args("hello", "m")
-        self.assertEqual(args[-2:], ["--disallowedTools", "*"])
+        self.assertEqual(args[-2:], ["--tools", ""])  # 空字串是獨立引數，不可省
         self.assertEqual(args[2], "hello")
-        self.assertNotIn("--tools", args)
+        self.assertNotIn("--disallowedTools", args)  # "*" 萬用字元語意未記載，很可能無效
         self.assertNotIn("--allowedTools", args)
 
     def test_nul_is_stripped(self):

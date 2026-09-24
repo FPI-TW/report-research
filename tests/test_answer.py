@@ -1838,24 +1838,24 @@ class BuildCmdTests(unittest.TestCase):
     def test_no_web_flag_by_default(self):
         cmd = llm._build_cmd("m", None, False)
         self.assertNotIn("--allowedTools", cmd)
-        self.assertNotIn("--tools", cmd)
 
     def test_no_web_disables_all_tools(self):
-        """不開網搜＝不開任何工具。用文件寫明的 `--disallowedTools "*"`，不用 `--tools ""`。"""
-        cmd = llm._build_cmd("m", None, False)
-        self.assertIn("--disallowedTools", cmd)
-        self.assertEqual(cmd[cmd.index("--disallowedTools") + 1], "*")
+        """不開網搜＝不開任何工具：`--tools ""`（`--help` 寫明）。
 
-    def test_tool_values_are_not_swallowed_by_variadic_options(self):
-        """三個工具旗標都是可變長度選項：值之後必須緊接下一個 `--` 選項或 argv 結尾。"""
-        for web in (True, False):
-            for system in (None, "你是助理"):
-                with self.subTest(web=web, system=system):
-                    cmd = llm._build_cmd("m", system, web)
-                    for flag in ("--tools", "--allowedTools", "--disallowedTools"):
-                        if flag in cmd:
-                            nxt = cmd.index(flag) + 2
-                            self.assertTrue(nxt == len(cmd) or cmd[nxt].startswith("--"), cmd)
+        不用 `--disallowedTools "*"`：本機 CLI 未記載萬用字元語意，看來逐字比對工具名，很可能無效。
+        """
+        for system in (None, "你是助理"):
+            with self.subTest(system=system):
+                cmd = llm._build_cmd("m", system, False)
+                self.assertEqual(cmd[-2:], ["--tools", ""])
+                self.assertNotIn("--disallowedTools", cmd)
+
+    def test_tool_flags_are_last(self):
+        """工具旗標是可變長度選項，會吞掉後面的非選項引數：一律放 argv 最後。"""
+        for system in (None, "你是助理"):
+            with self.subTest(system=system):
+                cmd = llm._build_cmd("m", system, True)
+                self.assertEqual(cmd[-4:], ["--tools", "WebSearch", "--allowedTools", "WebSearch"])
 
     def test_system_prompt_included_when_given(self):
         self.assertIn("--system-prompt", llm._build_cmd("m", "你是助理", False))

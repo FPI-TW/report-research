@@ -6,9 +6,11 @@
 - `--system-prompt`：**取代**預設系統提示 → 不載入 superpowers/skills/全域 CLAUDE.md。
 - `--setting-sources ''`：排除使用者/專案設定（含 SessionStart hooks）。
 - `cwd="/tmp"`：避開專案 CLAUDE.md（同 tag_all_cli）。
-- 工具：開網搜時 `--tools WebSearch --allowedTools WebSearch`，不開時 `--disallowedTools "*"`。
-  `--allowedTools` 只管「免核可」，不限縮可用工具；單用它時 Read、Bash 等內建工具仍在
-  模型手上（headless 下讀 cwd 的檔免核可）。要限縮得靠 `--tools`／`--disallowedTools`。
+- 工具：開網搜時 `--tools WebSearch --allowedTools WebSearch`，不開時 `--tools ""`（CLI `--help`
+  寫明 `""` 停用全部工具）。`--allowedTools` 只管「免核可」，不限縮可用工具；單用它時 Read、
+  Bash 等內建工具仍在模型手上（headless 下讀 cwd 的檔免核可）。刻意不用 `--disallowedTools "*"`：
+  本機 CLI 未記載萬用字元語意，看來是逐字比對工具名，很可能無效。旗標若失效，
+  `system/init` 事件的 `tools` 會對不上預期，`check_init_tools` 記 WARNING（不中斷）。
 
 stream-json 事件：只取 `content_block_delta` 內 `delta.type == "text_delta"` 的文字；
 thinking_delta 等一律忽略。以 `result` 事件或進程結束為終點。
@@ -18,8 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 from collections.abc import AsyncIterator
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
@@ -154,6 +159,30 @@ def is_web_search_start(line: str) -> bool:
     )
 
 
+def check_init_tools(line: str, allow_web: bool) -> str | None:
+    """`{"type":"system","subtype":"init","tools":[...]}` 的工具集與預期不符時回說明，否則 None。
+
+    預期：不開網搜＝空清單；開網搜＝恰好 `["WebSearch"]`。非 init 事件、沒帶 `tools` 欄位或
+    欄位不是 list 一律回 None（CLI 事件格式可能變，這裡只做防禦性觀測，不當閘門）。
+    """
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        obj = json.loads(line)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict) or obj.get("type") != "system" or obj.get("subtype") != "init":
+        return None
+    tools = obj.get("tools")
+    if not isinstance(tools, list):
+        return None
+    expected = ["WebSearch"] if allow_web else []
+    if tools == expected:
+        return None
+    return f"claude CLI 工具集與預期不符（allow_web={allow_web}，預期 {expected}，實際 {tools[:20]}）"
+
+
 CLAUDE_BIN = "claude"
 
 
@@ -170,8 +199,8 @@ def claude_cli_path() -> str | None:
 def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
     """組 claude CLI headless 串流指令；allow_web 時只開 WebSearch，否則不開任何工具。
 
-    `--tools`／`--allowedTools`／`--disallowedTools` 都是可變長度選項，會吞掉後面直到下一個
-    `--` 選項為止的引數；prompt 走 stdin 所以不受影響，但不要在它們後面接位置引數。
+    `--tools`／`--allowedTools` 都是可變長度選項，會吞掉後面直到下一個 `--` 選項為止的引數；
+    prompt 走 stdin 所以不受影響，但仍一律放在 argv 最後，不要在它們後面接位置引數。
     """
     cmd = [
         CLAUDE_BIN,
@@ -185,15 +214,15 @@ def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
         "--verbose",
         "--include-partial-messages",
     ]
+    if system:
+        cmd += ["--system-prompt", system.replace("\x00", "")]
     if allow_web:
         # --tools 把可用工具集縮到只剩 WebSearch；--allowedTools 讓它免核可（headless 無人核可）。
         cmd += ["--tools", "WebSearch", "--allowedTools", "WebSearch"]
     else:
-        # CLI 線上文件寫明 "*" 移除所有工具。不用 `--tools ""`：空字串引數與「沒給值」在
-        # argv 上難以分辨，而線上 CLI reference（2026-09-23 查）未寫明它的語意。
-        cmd += ["--disallowedTools", "*"]
-    if system:
-        cmd += ["--system-prompt", system.replace("\x00", "")]
+        # `--help`（2.1.260）寫明 `--tools ""` 停用全部工具。list 傳參，空字串是獨立引數
+        # （同 `--setting-sources ""`）。不用 `--disallowedTools "*"`：萬用字元語意未記載。
+        cmd += ["--tools", ""]
     return cmd
 
 
@@ -201,8 +230,13 @@ class LLMUnavailableError(RuntimeError):
     """claude CLI 多次重試後仍無有效回應（多為 Anthropic API 過載 529）。"""
 
 
-async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIterator[str]:
+async def _run_attempt(
+    cmd: list[str], prompt: str, timeout: float, allow_web: bool | None = None
+) -> AsyncIterator[str]:
     """跑一次 claude 子程序並串流文字。
+
+    allow_web 非 None 時，比對 `system/init` 事件回報的工具集與預期，不符記 WARNING
+    （fail-open，照常串流）；None＝不比對（直接跑假子程序的測試）。
 
     送出值有三類：
     - 一般文字 chunk（text_delta，逐段；或無 text_delta 時於結尾補一段 fallback）。
@@ -225,6 +259,7 @@ async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIter
     result_error = False
     last_assistant: str | None = None
     timed_out = False
+    init_checked = False
     try:
         async with asyncio.timeout(timeout):
             proc.stdin.write(prompt.encode("utf-8"))
@@ -240,6 +275,12 @@ async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIter
                 if is_web_search_start(line):
                     yield SEARCH_EVENT  # 上層據此顯示「正在搜尋網路」
                     continue
+                # init 是第一個事件；開始出字後就不必再逐行比對
+                if allow_web is not None and not init_checked and not streamed_any:
+                    mismatch = check_init_tools(line, allow_web)
+                    if mismatch:
+                        init_checked = True
+                        logger.warning("%s；工具限縮旗標可能失效", mismatch)
                 at = extract_assistant_text(line)
                 if at:
                     last_assistant = at
@@ -307,7 +348,7 @@ async def stream_completion(
     for attempt in range(retries + 1):
         failed = False
         reason = ""
-        async for chunk in _run_attempt(cmd, prompt, timeout):
+        async for chunk in _run_attempt(cmd, prompt, timeout, allow_web):
             if isinstance(chunk, tuple):  # ("__error__", detail, reason)
                 failed = True
                 last_detail = chunk[1]

@@ -186,6 +186,7 @@ cd frontend && npm run lint            # eslint
 uv run python eval/run_ragas.py --concurrency 1   # 問答評測（會 spawn claude），預設寫 eval/candidate-ragas.json
 uv run python eval/run_ragas.py --generator-model <model> --repeat 3 --dump-io data/eval_frozen/<名稱>
 make eval-compare BASE=<同一版 run_ragas 產出的基準線.json> CAND=eval/candidate-ragas.json
+uv run python scripts/judge_agreement.py --dry-run   # judge 描述性校準（歷史 haiku 判定當參考、只描述；正式跑會呼叫付費 API）
 ```
 
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc ＋ vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。前端 job 把 `frontend/dist` 傳給後端 job，SPA 測試對真 build 驗證；後端設 `HF_HUB_OFFLINE=1`、安裝 CJK 字型並設 `REPORT_MARK_REQUIRE_CJK=1`（`tests/test_extraction_layout.py` 的 CjkTests 用 weasyprint 渲染中文測試 PDF，不准退回 skip）；schema job 套 `db/schema.sql` 兩次驗冪等並對帳 `db/expected_constraints.txt`。required check 名稱等於 job 的中文 `name`，改了要同步 GitHub 分支保護。

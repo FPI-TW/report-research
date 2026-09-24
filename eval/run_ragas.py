@@ -78,6 +78,8 @@ from eval.judge import (  # noqa: E402
     DEFAULT_JUDGE_MODEL,
     DEFAULT_JUDGE_RETRIES,
     DEFAULT_JUDGE_TIMEOUT,
+    JUDGE_MAX_TOKENS,
+    JudgeAccountError,
     JudgeError,
     judge_json,
 )
@@ -86,6 +88,7 @@ from eval.ragas_metrics import (  # noqa: E402
     DECOMPOSE_SYS,
     GENQ_SYS,
     GROUND_SYS,
+    JUDGE_MAX_TOKENS_BY_SYSTEM,
     answer_relevancy_detailed,
     context_precision,
     faithfulness,
@@ -254,6 +257,8 @@ async def eval_question(
     - 檢索或生成異常 → {..., "error": str}（整題 fail-open，不入任何均值）。
     - 某個指標的 judge 異常（JudgeError／JudgeSchemaError／LLMUnavailableError）→ 只有該指標為 None，
       錯誤記在 "judge_errors"（M8，見模組 docstring）。
+    - judge 帳號層級錯誤（JudgeAccountError：401／402／404）→ 原樣拋出、整批中止：每一題都會踩到，
+      記成 N 題 judge_errors 還寫出一份結果檔，只會讓人拿一份沒量到東西的結果去比。
     - 成功時另附私有鍵 "_io"（問題、脈絡、答案、judge 呼叫明細），由 run() 取走供
       --dump-io，不寫進結果檔。
 
@@ -358,6 +363,8 @@ async def eval_question(
             "judge_calls": calls,
         }
         return result
+    except JudgeAccountError:
+        raise  # 帳號層級（401／402／404）：每一題都會失敗，整批中止（_main 以 rc=2 結束）
     except Exception as e:  # noqa: BLE001 — 離線批次逐題 fail-open，不讓單題炸掉整批
         return {**base, "error": f"{type(e).__name__}: {e}"}
 
@@ -540,6 +547,7 @@ def build_config(
     commit: str | None,
     started_at: str,
     finished_at: str | None = None,
+    judge_observed: dict | None = None,
 ) -> dict:
     """結果檔的 config 快照：只供 eval_compare 印差異，不參與判定（不放進 summary，
     否則每個新鍵都會觸發退出碼 3）。
@@ -547,6 +555,9 @@ def build_config(
     models 列出本次會觸發 LLM 的**每一個任務**實際用的 model——生成、四支 judge，以及
     agentic 時的規劃與評估步（兩者都走 `settings.qa_planner_model`）。檢索、rerank、嵌入
     都不呼叫 LLM。
+
+    judge_observed：HTTP judge 實際回報的模型名與 `system_fingerprint`（去重）、請求數與 token 加總
+    （`_JudgeObserver`）。同一個模型名可能在伺服端換了底層，兩份結果的 fingerprint 不同時要先懷疑尺。
     """
     models = {
         "generate": generator_model,
@@ -570,6 +581,8 @@ def build_config(
             "retries": DEFAULT_JUDGE_RETRIES,
             "prompt_sha": judge_prompt_sha(),
             "schema_version": JUDGE_SCHEMA_VERSION,
+            "max_tokens": {_JUDGE_TASKS[k]: v for k, v in JUDGE_MAX_TOKENS_BY_SYSTEM.items()},
+            "observed": judge_observed or {},
         },
         "embed_model": EMBED_MODEL,
         "rerank_top_m": rerank_top_m,
@@ -585,6 +598,35 @@ def build_config(
         "started_at": started_at,
         "finished_at": finished_at,
     }
+
+
+class _JudgeObserver:
+    """收集 HTTP judge 每次呼叫回報的 model、system_fingerprint、請求數與 token（寫進 config.judge.observed）。"""
+
+    def __init__(self) -> None:
+        self.model_resp: set[str] = set()
+        self.fingerprints: set[str] = set()
+        self.requests = 0
+        self.usage: dict[str, int] = {}
+
+    def add(self, meta: dict) -> None:
+        if meta.get("model_resp"):
+            self.model_resp.add(meta["model_resp"])
+        if meta.get("system_fingerprint"):
+            self.fingerprints.add(meta["system_fingerprint"])
+        self.requests += meta.get("requests", 0)
+        for k, v in (meta.get("usage") or {}).items():
+            self.usage[k] = self.usage.get(k, 0) + v
+
+    def snapshot(self) -> dict:
+        if not self.requests:
+            return {}
+        return {
+            "model_resp": sorted(self.model_resp),
+            "system_fingerprint": sorted(self.fingerprints),
+            "requests": self.requests,
+            "usage": dict(sorted(self.usage.items())),
+        }
 
 
 def _dump_name(case_id, run_idx: int, repeat: int) -> str:
@@ -667,8 +709,17 @@ async def run(
 
     retrieval_params = {**RETRIEVAL_PARAMS, "rerank_top_m": rerank_top_m}
 
+    observer = _JudgeObserver()
+
     async def _judge(system: str, user: str):
-        return await judge_json(user, system=system, model=judge_model)
+        meta: dict = {}
+        try:
+            return await judge_json(
+                user, system=system, model=judge_model,
+                max_tokens=JUDGE_MAX_TOKENS_BY_SYSTEM.get(system, JUDGE_MAX_TOKENS), meta=meta,
+            )
+        finally:
+            observer.add(meta)
 
     sem = asyncio.Semaphore(concurrency)
 
@@ -714,6 +765,7 @@ async def run(
         commit=commit,
         started_at=started_at,
         finished_at=datetime.now(timezone.utc).isoformat(),
+        judge_observed=observer.snapshot(),
     )
     report = {"summary": summary, "config": config, "cases": cases}
     if out_path is not None:
@@ -786,21 +838,26 @@ def _main() -> None:
         [args.generator_model, args.judge_model] + ([get_settings().qa_planner_model] if args.agentic else []),
     )
 
-    report = asyncio.run(
-        run(
-            args.dataset,
-            out_path=args.out,
-            judge_model=args.judge_model,
-            limit=args.limit,
-            concurrency=args.concurrency,
-            rerank_top_m=args.rerank_top_m,
-            scope=args.scope,
-            agentic=args.agentic,
-            generator_model=args.generator_model,
-            repeat=args.repeat,
-            dump_dir=args.dump_io,
+    try:
+        report = asyncio.run(
+            run(
+                args.dataset,
+                out_path=args.out,
+                judge_model=args.judge_model,
+                limit=args.limit,
+                concurrency=args.concurrency,
+                rerank_top_m=args.rerank_top_m,
+                scope=args.scope,
+                agentic=args.agentic,
+                generator_model=args.generator_model,
+                repeat=args.repeat,
+                dump_dir=args.dump_io,
+            )
         )
-    )
+    except JudgeAccountError as exc:
+        # 不寫結果檔：一份每題都沒量到的結果檔，比沒有結果檔更容易被拿去比較。
+        print(f"judge 帳號層級錯誤，整批中止（未寫出 {args.out}）：{exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:

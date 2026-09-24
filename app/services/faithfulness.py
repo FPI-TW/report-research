@@ -7,21 +7,26 @@ numeric_support_rate。分數是「來源支持度／待複核」，非真實性
 分層（皆 fail-open：judge 異常／JSON 壞／schema 不合 → 不阻擋交付，僅標 degraded、不加分數）：
 - 純 primitive（judge 注入、零 DB）：decompose_statements / ground_statements /
   faithfulness — 可用假 judge 做決定性單測，eval/ragas_metrics.py 亦復用之。
-- 生產進入點 check_faithfulness（judge 預設走 claude CLI，仍可注入假 judge）。
+- 生產進入點 check_faithfulness（judge 預設依 model 分派：白名單走 DeepSeek 非串流 JSON 模式、
+  其餘走 claude CLI；仍可注入假 judge）。
 - resolve_evidence_texts：把 EvidenceLedger 的 corpus 證據回查成文字（碰 DB，另測）。
   帳本只存來源身分不存文字（見 evidence.py），故 grounding 前必須回查；corpus 的
   chunk_id 實務多為 NULL，回查落在 report_id 粒度——v1 已知限制。
 
 契約 judge：async judge(system: str, user: str) -> dict | list | None。
 
-**重試層數與最壞呼叫次數**（目前有兩到三層各自重試，PR-18 的 LLM adapter 會收斂成單層）：
-- 生產（check_faithfulness，每個階段＝拆解或 grounding 各算一次）：`call_validated` 的
-  schema 重試（1 次）×`stream_completion` 的 529 重試（retries=2，共 3 次）＝**最多 6 次**
-  CLI spawn。預設 judge 失敗回 None 時 `call_validated` 不重試，所以 6 次只出現在「前幾次
-  529、最後回了不合 schema 的東西」這條路徑。逾時不重試（再等一輪無益）。
-- 離線（eval/run_ragas，同一個指標任務）：`call_validated`（2 次）×`eval.judge.judge_json`
-  （EVAL_JUDGE_RETRIES=1，共 2 次，逾時與空回應也重試）＝**最多 4 次** judge 呼叫；每次
-  judge 呼叫底下再有 `stream_completion` 的 529 重試（最多 3 次），CLI spawn 最壞 12 次。
+**重試層數與最壞呼叫次數**（依 judge 走哪條路徑而不同；每個階段＝一次 call_validated，即拆解、
+grounding、CP 或反推問題各算一次）：
+- **HTTP（DeepSeek，遷移 PR-18 起的預設）**：只有一層預算，**每個階段最多 3 個請求**
+  （`judge_schema.HTTP_STAGE_MAX_REQUESTS`，tests/test_faithfulness.py 與 tests/test_eval_judge.py 斷言）。
+  三種重試共用它、不相乘：`llm_http.complete_json` 的截斷（2 倍 max_tokens）／空回應／暫時性重試
+  （每次 judge 呼叫最多 2 個請求）、`call_validated` 的 schema 重試（只拿得到剩下的預算），離線
+  `eval.judge.judge_json` 的暫時性重試在 HTTP 路徑不跑。逾時、審查、帳號錯誤不重試。
+  生產一次抽查（拆解＋grounding）最壞 6 個請求；離線一題（F 兩階段＋CP＋AR）最壞 12 個。
+- **CLI（`LLM_PROVIDER=claude_cli`；CLI 已於 2026-09-23 放棄，只剩測試與回退用）**：維持原樣。
+  生產每個階段 `call_validated` 的 schema 重試（1 次）×`stream_completion` 的 529 重試（共 3 次）
+  ＝最多 6 次 CLI spawn；離線同一指標 `call_validated`（2 次）×`judge_json`（EVAL_JUDGE_RETRIES=1，
+  共 2 次）＝最多 4 次 judge 呼叫，每次底下再有 529 重試，CLI spawn 最壞 12 次。
 """
 from __future__ import annotations
 
@@ -33,15 +38,19 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text as sql_text
 
+from app.services import llm_http
 from app.services.evidence import EvidenceLedger
 from app.services.judge_schema import (
     JUDGE_SCHEMA_VERSION,
     JudgeSchemaError,
     call_validated,
+    http_attempts_allowed,
     parse_statements,
     parse_verdicts,
+    record_http_requests,
 )
 from app.services.llm import DEFAULT_MODEL, UNAVAILABLE_TIMEOUT, LLMUnavailableError, stream_completion
+from app.services.llm_models import is_http_model
 from app.services.query_planner import parse_plan_json
 
 logger = logging.getLogger(__name__)
@@ -130,18 +139,34 @@ class ClaimVerdict:
 #   empty        回應是空的（只有空白）
 #   parse        回應完整但不是 JSON
 #   schema       JSON 合法但不合 schema v2（重試 1 次後），含 grounding 全部缺漏
+#   content_risk 供應商內容審查拒答（HTTP 400 Content Exists Risk、finish_reason=content_filter；不重試）
+#   account      帳號層級：金鑰無效或缺漏（401）、餘額不足（402）、模型或端點設定錯（404）。
+#                每一次抽查都會踩到，不重試；告警走 `/healthz/llm`，這裡只記原因
 #   error        其他例外，或注入的 judge 回 None
+# HTTP 路徑（DeepSeek）的 kind 對應見 `_HTTP_DEGRADED`：截斷是 finish_reason=length（已以 2 倍上限重試），
+# 不是逾時截斷，但同樣是「回應不完整」，沿用 truncated。
 DEGRADED_UNAVAILABLE = "unavailable"
 DEGRADED_TIMEOUT = "timeout"
 DEGRADED_TRUNCATED = "truncated"
 DEGRADED_EMPTY = "empty"
 DEGRADED_PARSE = "parse"
 DEGRADED_SCHEMA = "schema"
+DEGRADED_CONTENT_RISK = "content_risk"
+DEGRADED_ACCOUNT = "account"
 DEGRADED_ERROR = "error"
 DEGRADED_REASONS = frozenset({
     DEGRADED_UNAVAILABLE, DEGRADED_TIMEOUT, DEGRADED_TRUNCATED, DEGRADED_EMPTY,
-    DEGRADED_PARSE, DEGRADED_SCHEMA, DEGRADED_ERROR,
+    DEGRADED_PARSE, DEGRADED_SCHEMA, DEGRADED_CONTENT_RISK, DEGRADED_ACCOUNT, DEGRADED_ERROR,
 })
+
+_HTTP_DEGRADED = {
+    llm_http.TIMEOUT: DEGRADED_TIMEOUT,
+    llm_http.TRUNCATED: DEGRADED_TRUNCATED,
+    llm_http.EMPTY: DEGRADED_EMPTY,
+    llm_http.INVALID_JSON: DEGRADED_PARSE,
+    llm_http.CONTENT_FILTER: DEGRADED_CONTENT_RISK,
+    **{k: DEGRADED_ACCOUNT for k in llm_http.ACCOUNT_KINDS},
+}
 
 
 @dataclass
@@ -151,6 +176,9 @@ class FaithfulnessResult:
     judge_model／degraded_reason／elapsed_ms 由 check_faithfulness 填入（量尺可追溯，
     DeepSeek 遷移 PR-07）；直接用 summarize_claims 組出來的結果這三個是 None。
     n_missing_verdicts：grounding 漏判（缺 idx）而被計為 unsupported 的條數，無缺漏時 0。
+    judge_model_resp／judge_fingerprint／judge_requests／usage：只有 HTTP judge 有值（遷移 PR-18）——
+    API 回報的實際模型與 `system_fingerprint`（同名模型換了底層就看得出來）、實際送出的請求數與
+    token 加總（所有嘗試）。CLI judge 是 None。
     """
 
     faithfulness_score: float | None
@@ -161,6 +189,10 @@ class FaithfulnessResult:
     judge_model: str | None = None
     elapsed_ms: int | None = None
     n_missing_verdicts: int = 0
+    judge_model_resp: str | None = None
+    judge_fingerprint: str | None = None
+    judge_requests: int | None = None
+    usage: dict | None = None
 
     def to_evaluation(self, *, citation_coverage: float | None = None) -> dict:
         """落庫用 evaluation jsonb（qa_log.evaluation 的形狀）。
@@ -186,6 +218,11 @@ class FaithfulnessResult:
             # 漏判而被計為 unsupported 的條數：分數偏低時先看這個，分得出「真的沒佐證」
             # 與「judge 沒判完」（L19 的寬鬆例外留下的痕跡）。
             "n_missing_verdicts": self.n_missing_verdicts,
+            # HTTP judge 的實際模型、指紋、請求數與 token（CLI judge 為 None）。
+            "judge_model_resp": self.judge_model_resp,
+            "judge_fingerprint": self.judge_fingerprint,
+            "judge_requests": self.judge_requests,
+            "usage": self.usage,
         }
 
 
@@ -239,24 +276,92 @@ async def faithfulness(answer: str, contexts: list[str], *, judge) -> float | No
     return supported / len(statements)
 
 
-# ── 生產 judge（drain stream_completion + 容錯 JSON，fail-open）──
+# ── 生產 judge（依 model 分派：DeepSeek 非串流 JSON／claude CLI 串流，fail-open）──
 
-# 輸出上限（只作用在 HTTP 路徑，CLI 忽略）。judge 契約 `judge(system, user)` 分不出拆解還是
-# grounding，先取較大的拆解（8192；grounding 是 2048，第二版計畫 §8）；逐階段的上限隨 PR-18 的
-# DeepSeek judge adapter 一起細分。
-JUDGE_MAX_TOKENS = 8192
+# 各階段的輸出上限（第二版計畫 §6.5）。judge 契約 `judge(system, user)` 分不出階段，所以由系統提示
+# 對應（`JUDGE_MAX_TOKENS_BY_SYSTEM`，離線評測另補 CP 與反推問題兩支）。只作用在 HTTP 路徑，CLI 忽略。
+# 截斷（finish_reason=length）時 `llm_http.complete_json` 以 2 倍上限重試 1 次。
+DECOMPOSE_MAX_TOKENS = 8192
+GROUND_MAX_TOKENS = 2048
+# 對不上任何系統提示時（直接呼叫 judge 的工具）取最大的那個。
+JUDGE_MAX_TOKENS = DECOMPOSE_MAX_TOKENS
+JUDGE_MAX_TOKENS_BY_SYSTEM: dict[str, int] = {
+    DECOMPOSE_SYS: DECOMPOSE_MAX_TOKENS,
+    GROUND_SYS: GROUND_MAX_TOKENS,
+}
+# DeepSeek 的 `user_id`（內容安全與排程隔離；官方格式 [A-Za-z0-9_-]）。離線評測用 eval-judge。
+JUDGE_USER_ID = "web-faithfulness"
+
+
+@dataclass
+class JudgeCallStats:
+    """一次查核（或一批校準）裡 HTTP judge 呼叫的累計：請求數、token、API 回報的模型與指紋。"""
+
+    requests: int = 0
+    usage: dict = field(default_factory=dict)
+    model_resp: str | None = None
+    fingerprints: list[str] = field(default_factory=list)
+
+    def add(self, res: llm_http.JsonResult) -> None:
+        self.requests += res.attempts
+        for k, v in res.usage.items():
+            self.usage[k] = self.usage.get(k, 0) + v
+        if res.outcome.model_resp:
+            self.model_resp = res.outcome.model_resp
+        fp = res.outcome.system_fingerprint
+        if fp and fp not in self.fingerprints:
+            self.fingerprints.append(fp)
+
+
+async def _http_judge(
+    system: str, user: str, *, model: str, timeout: float, max_tokens: int,
+    failures: list[str] | None = None, stats: JudgeCallStats | None = None,
+) -> dict | list | None:
+    """DeepSeek judge：`llm_http.complete_json`（非串流、JSON 模式、t=0、thinking 關）。失敗回 None。
+
+    請求數受本階段預算限制（`judge_schema.http_attempts_allowed`），送出後記帳；這就是 HTTP 路徑
+    唯一的重試層（模組 docstring「重試層數」）。
+    """
+    allowed = http_attempts_allowed(llm_http.JSON_MAX_ATTEMPTS)
+    if allowed <= 0:  # call_validated 在預算用完時不會再呼叫；防禦性保留
+        if failures is not None:
+            failures.append(DEGRADED_ERROR)
+        return None
+    res = await llm_http.complete_json(
+        model, user, system=system, max_tokens=max_tokens, timeout=timeout,
+        task="faithfulness", user_id=JUDGE_USER_ID, max_attempts=allowed,
+    )
+    record_http_requests(res.attempts)
+    if stats is not None:
+        stats.add(res)
+    if res.kind is None:
+        return res.data
+    reason = _HTTP_DEGRADED.get(res.kind, DEGRADED_UNAVAILABLE)
+    log = logger.error if reason == DEGRADED_ACCOUNT else logger.warning
+    log("faithfulness judge failed: %s", res.error)
+    if failures is not None:
+        failures.append(reason)
+    return None
 
 
 async def _default_judge(
-    system: str, user: str, *, model: str, timeout: float, failures: list[str] | None = None
-) -> dict | None:
-    """claude CLI judge：drain 串流 → parse_plan_json。任何異常 → None（fail-open）。
+    system: str, user: str, *, model: str, timeout: float, failures: list[str] | None = None,
+    max_tokens: int = JUDGE_MAX_TOKENS, stats: JudgeCallStats | None = None,
+) -> dict | list | None:
+    """預設 judge：白名單 model 走 `_http_judge`；其餘走 claude CLI（drain 串流 → parse_plan_json）。
+    任何異常 → None（fail-open）。
 
     failures 給定時，把失敗原因（DEGRADED_* 詞彙）附加進去，供 check_faithfulness 記
-    degraded_reason——回傳值維持 None，judge 契約不變。逾時分兩種：沒吐字就逾時
+    degraded_reason——回傳值維持 None，judge 契約不變。CLI 的逾時分兩種：沒吐字就逾時
     （LLMUnavailableError.reason＝timeout）記 timeout；吐到一半被截斷而解析失敗記 truncated，
     不歸成 parse（parse 留給「回應完整卻不是 JSON」，那才是量尺問題）。
+    CLI 路徑維持呼叫模組層的 `stream_completion`（測試的 patch 點不變）。
     """
+    if is_http_model(model):
+        return await _http_judge(
+            system, user, model=model, timeout=timeout, max_tokens=max_tokens, failures=failures, stats=stats,
+        )
+
     def _fail(reason: str) -> None:
         if failures is not None:
             failures.append(reason)
@@ -266,6 +371,8 @@ async def _default_judge(
         parts: list[str] = []
         async for chunk in stream_completion(
             user, model=model, system=system, timeout=timeout, allow_web=False, meta=meta,
+            # CLI 忽略 max_tokens；逐階段上限只作用在 HTTP 路徑（上面的 _http_judge）。這裡維持常數，
+            # tests/test_llm.py 的 CallSiteMaxTokensValuesTests 以模組命名空間求值它。
             max_tokens=JUDGE_MAX_TOKENS, task="faithfulness",
         ):
             parts.append(chunk)
@@ -288,6 +395,25 @@ async def _default_judge(
         return None
 
 
+def make_judge(
+    *, model: str, timeout: float, failures: list[str] | None = None,
+    stats: JudgeCallStats | None = None, max_tokens_by_system: dict[str, int] | None = None,
+):
+    """組出符合 judge 契約 `judge(system, user)` 的預設 judge：依系統提示給該階段的 max_tokens。
+
+    check_faithfulness 用它；校準工具（scripts/judge_agreement.py）用同一個，確保量的是生產那把尺。
+    """
+    table = JUDGE_MAX_TOKENS_BY_SYSTEM if max_tokens_by_system is None else max_tokens_by_system
+
+    async def judge(system: str, user: str):
+        return await _default_judge(
+            system, user, model=model, timeout=timeout, failures=failures,
+            max_tokens=table.get(system, JUDGE_MAX_TOKENS), stats=stats,
+        )
+
+    return judge
+
+
 # ── M8 查核進入點 ──
 
 
@@ -301,26 +427,30 @@ async def check_faithfulness(
 ) -> FaithfulnessResult:
     """對 text 做 grounding 查核。context_texts＝已解析的證據文字（見 resolve_evidence_texts）。
 
-    - judge 未提供 → 走 _default_judge（claude CLI）。
+    - judge 未提供 → 走 _default_judge（白名單 model 走 DeepSeek，其餘 claude CLI）。
     - decompose 失敗 → degraded（fail-open，不阻擋交付）。
     - context_texts 空（無可回查的證據）→ 全主張 no_source。
     - 有 context → ground；supported→supported，其餘→unsupported。
     numeric_support_rate 只計數值主張；無數值主張 → None。
     結果一律帶 judge_model（＝model）與 elapsed_ms；degraded 時另帶 degraded_reason。
+    HTTP judge 另帶 judge_model_resp／judge_fingerprint／judge_requests／usage。
     """
     t0 = time.monotonic()
     failures: list[str] = []
+    stats = JudgeCallStats()
     if judge is None:
-        async def judge(system: str, user: str):
-            return await _default_judge(
-                system, user, model=model, timeout=timeout, failures=failures
-            )
+        judge = make_judge(model=model, timeout=timeout, failures=failures, stats=stats)
 
     def _stamp(result: FaithfulnessResult) -> FaithfulnessResult:
         result.judge_model = model
         result.elapsed_ms = int((time.monotonic() - t0) * 1000)
         if result.degraded and result.degraded_reason is None:
             result.degraded_reason = failures[-1] if failures else DEGRADED_ERROR
+        if stats.requests:
+            result.judge_model_resp = stats.model_resp
+            result.judge_fingerprint = ",".join(stats.fingerprints) or None
+            result.judge_requests = stats.requests
+            result.usage = dict(stats.usage)
         return result
 
     try:

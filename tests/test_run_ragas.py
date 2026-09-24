@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import io
 import json
+import os
 import re
 import sys
 import tempfile
@@ -386,6 +387,10 @@ class MainAgenticFlagTests(unittest.TestCase):
             captured.update(kwargs)
             return {"summary": {}, "cases": []}
 
+        # 預設模型是 deepseek-flash，預檢要金鑰：只給假值（run 已換成假的，不會送出任何請求）
+        env = mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0"})
+        env.start()
+        self.addCleanup(env.stop)
         saved = _install_fakes(["run"])
         argv = sys.argv
         try:
@@ -701,7 +706,7 @@ class MergeRepeatsTests(unittest.TestCase):
 class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
     """run() 的結果檔：summary 的三個 META 鍵、config 快照、repeat 與 --dump-io。"""
 
-    async def _run_with(self, td, *, repeat=1, dump=False, agentic=False, judge_model="claude-haiku-4-5"):
+    async def _run_with(self, td, *, repeat=1, dump=False, agentic=False, judge_model="deepseek-v4-pro"):
         questions = [{"id": "q/1", "question": "題1"}, {"id": "q2", "question": "題2"}]
         ds = Path(td) / "ds.json"
         ds.write_text(json.dumps({"questions": questions}, ensure_ascii=False), encoding="utf-8")
@@ -733,7 +738,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as td:
             report, _seen, _ds = await self._run_with(td)
         s = report["summary"]
-        self.assertEqual(s["judge_model"], "claude-haiku-4-5")
+        self.assertEqual(s["judge_model"], "deepseek-v4-pro")
         self.assertEqual(s["judge_prompt_sha"], rr.judge_prompt_sha())
         self.assertEqual(len(s["judge_prompt_sha"]), 64)
         self.assertEqual(s["judge_schema_version"], rr.JUDGE_SCHEMA_VERSION)
@@ -751,11 +756,11 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cfg["gen_model"], "deepseek-flash")
         self.assertEqual(cfg["models"]["generate"], "deepseek-flash")
         for task in ("judge_decompose", "judge_ground", "judge_context_precision", "judge_answer_relevancy"):
-            self.assertEqual(cfg["models"][task], "claude-haiku-4-5")
+            self.assertEqual(cfg["models"][task], "deepseek-v4-pro")
         self.assertIn("agentic_plan", cfg["models"])     # agentic 才會觸發規劃與評估步
         self.assertIn("agentic_evaluate", cfg["models"])
-        self.assertEqual(cfg["judge"]["model"], "claude-haiku-4-5")
-        self.assertEqual(cfg["judge"]["provider"], "claude_cli")
+        self.assertEqual(cfg["judge"]["model"], "deepseek-v4-pro")
+        self.assertEqual(cfg["judge"]["provider"], "deepseek_http")
         self.assertEqual(cfg["queryset_sha256"], expected_sha)
         self.assertIn("commit", cfg)
         self.assertTrue(cfg["agentic"])
@@ -784,7 +789,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(files, ["q2-r1.json", "q2-r2.json", "q_1-r1.json", "q_1-r2.json"])
         self.assertEqual(doc["answer"], "答 [1]")
         self.assertEqual(doc["gen_model"], "deepseek-flash")
-        self.assertEqual(doc["judge_model"], "claude-haiku-4-5")
+        self.assertEqual(doc["judge_model"], "deepseek-v4-pro")
         self.assertEqual(len(doc["sha256"]), 64)
         self.assertIn("judge_calls", doc)
         self.assertTrue(all("_io" not in r for c in report["cases"] for r in c["runs"]))
@@ -797,7 +802,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         """PR-26/27：DeepSeek judge 是正式的新量尺系譜，不再印「未校準」WARNING；系譜記在
         config.judge.lineage 與頂層 notes（eval_compare 會印），不進 summary（否則要在 METRIC_SPECS 分類）。"""
         for judge, provider, lineage in (("deepseek-flash", "deepseek_http", "deepseek-2026-09"),
-                                         ("claude-haiku-4-5", "claude_cli", "claude-haiku")):
+                                         ("claude-haiku-4-5", "unsupported", "claude-haiku")):
             with self.subTest(judge=judge), tempfile.TemporaryDirectory() as td:
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err):
@@ -827,9 +832,10 @@ class JudgeProviderTests(unittest.TestCase):
             with self.subTest(model=model):
                 self.assertEqual(rr.judge_provider(model), "deepseek_http")
                 self.assertEqual(rr.judge_lineage(model), rr.JUDGE_LINEAGE_DEEPSEEK)
+        # PR-M：白名單外沒有 backend（判 unsupported）；系譜函式照舊把它們歸 Claude 時代（讀舊結果檔用）
         for model in ("claude-haiku-4-5", "claude-sonnet-5"):
             with self.subTest(model=model):
-                self.assertEqual(rr.judge_provider(model), "claude_cli")
+                self.assertEqual(rr.judge_provider(model), "unsupported")
                 self.assertEqual(rr.judge_lineage(model), rr.JUDGE_LINEAGE_CLAUDE)
 
     def test_uncalibrated_warning_is_gone(self):

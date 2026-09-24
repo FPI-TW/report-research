@@ -472,14 +472,12 @@ class CliArgsTests(unittest.TestCase):
     # argv 組裝（旗標、NUL 剝除）已移到 scripts/_claude_cli.py，
     # 對應斷言在 tests/test_claude_cli.py；這裡只留屬於本腳本的選擇。
     def test_default_model_is_anchoring_approved(self):
-        """模組常數（conftest 的 claude_cli 下）與每張預設表的摘錄模型都必須是量過錨定率的模型，
-        不可為空、不可意外變成未量過的模型（理由見 ANCHOR_APPROVED_TAKEAWAY_MODELS 的註解）。"""
+        """模組常數與預設表的摘錄模型都必須是量過錨定率的模型，不可為空、不可意外變成未量過的模型
+        （理由見 ANCHOR_APPROVED_TAKEAWAY_MODELS 的註解）。"""
         from app.services import llm_models as lm
 
         self.assertIn(et.TAKEAWAY_MODEL_DEFAULT, ANCHOR_APPROVED_TAKEAWAY_MODELS)
-        for prov in lm.PROVIDERS:
-            with self.subTest(provider=prov):
-                self.assertIn(lm.default_model(lm.TASK_TAKEAWAY, prov), ANCHOR_APPROVED_TAKEAWAY_MODELS)
+        self.assertIn(lm.default_model(lm.TASK_TAKEAWAY), ANCHOR_APPROVED_TAKEAWAY_MODELS)
 
     def test_production_default_takeaway_model_is_flash(self):
         """生產預設（LLM_PROVIDER 未設＝deepseek）下的摘錄模型：D6 依探測與 D-A 定為 flash。"""

@@ -12,7 +12,7 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
 - **thinking 預設是開的**（官方 thinking_mode 指南）。不關的話 TTFT 變長、token 成本上升，
   `max_tokens` 被推理吃光時 content 會是空的。每個請求都**同時**送兩個開關
   `thinking.type=disabled` 與 `reasoning_effort=none`：文件沒寫兩者衝突時誰優先，只送一個
-  不保證關得掉。`reasoning_content` 一律丟棄、只記長度，比照 CLI 路徑忽略 thinking_delta。
+  不保證關得掉。`reasoning_content` 一律丟棄、只記長度（比照 PR-M 前 CLI 路徑忽略 thinking_delta）。
 - **`max_tokens` 由呼叫端逐點給**，沒有預設值：非 thinking 模式不設時上限只有 8K，多標的
   的訊號擷取會被截斷，而截斷在舊架構裡會被誤判成「JSON 解析失敗」。
 - **錯誤依 HTTP 狀態碼分類**（`classify_status`）。只有兩種情況不得不看訊息文字：審查拒答
@@ -28,7 +28,7 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
     單元測試看到的就是生產行為。
     - 首字之前 httpx 的 read 逾時（伺服器 `_READ_TIMEOUT` 秒沒送任何位元組，連 keep-alive 都沒有）
       歸 `TIMEOUT` 而不是 `NETWORK`：它和首字期限到了是同一件事——伺服器沒回應，再等一輪無益
-      （CLI 路徑同一語意：逾時不重試）。歸 NETWORK 的話外層會重試，主答（首字期限 120 秒）最壞
+      （PR-M 前的 CLI 路徑也是這個語意：逾時不重試）。歸 NETWORK 的話外層會重試，主答（首字期限 120 秒）最壞
       要 3×60 秒加退避才失敗。連線逾時（connect）與其他傳輸錯誤仍是 NETWORK。批次（`complete_chat`）
       刻意不同：它有涵蓋所有嘗試的總期限兜底，沉默在期限內仍歸 NETWORK 重試（`_timed_out_kind`）。
     - 第一個字之後另有寬鬆的**總時限**（`total_timeout`，從呼叫開始算；呼叫端傳
@@ -70,7 +70,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-# 走 HTTP 的模型白名單搬到葉模組 llm_models（`app.config` 的 `claude_only` 也要用它，留在這裡會
+# 走 HTTP 的模型白名單搬到葉模組 llm_models（`app.config` 與批次預檢也要用它，留在這裡會
 # 形成 config ↔ llm_http 的 import 循環）。這裡以原名重新匯出，既有呼叫端與測試不必改。
 from app.services.llm_models import HTTP_MODELS, is_http_model  # noqa: F401
 
@@ -149,8 +149,8 @@ def error_string(kind: str, detail: str = "") -> str:
 def sanitize(text: str) -> str:
     """去 NUL、孤立代理字元換成 U+FFFD。
 
-    PDF 抽出的文字偶有 `\\x00`（CLI 路徑為了 argv 早就剝掉，HTTP 路徑沒有 argv 但仍要剝，
-    否則同一篇研報兩條路徑的輸入不同）；孤立代理字元會讓 UTF-8 編碼直接拋錯。兩者都是
+    PDF 抽出的文字偶有 `\\x00`（PR-M 前的 CLI 路徑為了 argv 剝掉；這裡沒有 argv 但仍要剝，
+    否則同一篇研報與 Claude 時代的輸入不同）；孤立代理字元會讓 UTF-8 編碼直接拋錯。兩者都是
     「單篇輸入造成的失敗」的來源。
     """
     return _LONE_SURROGATE.sub("\ufffd", text.replace("\x00", ""))
@@ -655,7 +655,7 @@ async def astream_chat(
 
     不做重試（重試策略在 `llm.stream_completion`，它才知道「已吐字就不重試」）。任何
     httpx 例外都轉成 outcome，不往外拋；只有 `CancelledError` 原樣傳遞，並經 finally
-    關閉回應，對應 CLI 路徑的 `proc.kill()`。
+    關閉回應。
 
     `total_timeout`：整次呼叫的牆鐘上限（None＝不設）；首字期限取兩者較早的。語意見模組
     docstring 的「逾時語意」。

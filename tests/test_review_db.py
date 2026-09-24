@@ -67,6 +67,13 @@ class ReviewQueueDbTests(unittest.TestCase):
             "low", "ok", "malformed", "no_eval", "inactive", "stopped", "old", "disliked", "liked",
         )}
 
+        from app.config import get_settings
+
+        judge = get_settings().faithfulness_model  # 待複核只計現行 judge（缺 judge_model 的舊列視為 haiku）
+
+        def ev(score):
+            return {"faithfulness_score": score, "judge_model": judge}
+
         async def fn(session):
             async def add(name, *, evaluation=None, feedback=None, active=True, stopped=False, age=1):
                 await session.execute(_INSERT_QA, {
@@ -74,14 +81,14 @@ class ReviewQueueDbTests(unittest.TestCase):
                     "evaluation": json.dumps(evaluation) if evaluation is not None else None, "age": age,
                 })
 
-            await add("low", evaluation={"faithfulness_score": 0.05})
-            await add("ok", evaluation={"faithfulness_score": 0.99})
+            await add("low", evaluation=ev(0.05))
+            await add("ok", evaluation=ev(0.99))
             # 分數不是數字：不該被當成低分，更不該讓查詢拋 cast 例外。
-            await add("malformed", evaluation={"faithfulness_score": "n/a"})
+            await add("malformed", evaluation=ev("n/a"))
             await add("no_eval")
-            await add("inactive", evaluation={"faithfulness_score": 0.01}, active=False)
-            await add("stopped", evaluation={"faithfulness_score": 0.01}, stopped=True)
-            await add("old", evaluation={"faithfulness_score": 0.01}, age=90)
+            await add("inactive", evaluation=ev(0.01), active=False)
+            await add("stopped", evaluation=ev(0.01), stopped=True)
+            await add("old", evaluation=ev(0.01), age=90)
             await add("disliked", feedback="dislike")
             await add("liked", feedback="like")
 

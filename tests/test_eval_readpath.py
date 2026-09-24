@@ -30,14 +30,19 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import eval_faithfulness as ef  # noqa: E402
 
 
-def _ev(score=None, numeric=None, degraded=False, claims=()):
-    return {
+def _ev(score=None, numeric=None, degraded=False, claims=(), judge_model="deepseek-flash"):
+    """預設帶現行 judge（conftest 下 FAITHFULNESS_MODEL＝deepseek-flash）；
+    `judge_model=None`＝缺鍵的舊列（視為 haiku）。"""
+    ev = {
         "faithfulness_score": score,
         "numeric_support_rate": numeric,
         "citation_coverage": None,
         "degraded": degraded,
         "claims": list(claims),
     }
+    if judge_model is not None:
+        ev["judge_model"] = judge_model
+    return ev
 
 
 def _row(i, ev, created="2026-07-28 01:00:00", q="問題"):
@@ -113,9 +118,9 @@ class JudgeFilterTests(unittest.TestCase):
 
     def _rows(self):
         return [
-            _row("old", _ev(score=0.5)),                                  # 缺鍵＝haiku
-            _row("haiku", {**_ev(score=0.7), "judge_model": "claude-haiku-4-5"}),
-            _row("ds", {**_ev(score=0.1), "judge_model": "deepseek-flash"}),
+            _row("old", _ev(score=0.5, judge_model=None)),                # 缺鍵＝haiku
+            _row("haiku", _ev(score=0.7, judge_model="claude-haiku-4-5")),
+            _row("ds", _ev(score=0.1, judge_model="deepseek-flash")),
             _row("none", None),
         ]
 
@@ -147,7 +152,7 @@ class ScaleLineageTests(unittest.TestCase):
 
     def _rows(self):
         return [
-            _row("old", _ev(score=0.5), created="2026-09-20 03:00:00"),
+            _row("old", _ev(score=0.5, judge_model=None), created="2026-09-20 03:00:00"),
             _row("ds1", {**_ev(score=0.8), "judge_model": "deepseek-flash"}, created="2026-09-26 03:00:00"),
             _row("ds0", {**_ev(score=0.95), "judge_model": "deepseek-flash"}, created="2026-09-25 09:00:00"),
         ]

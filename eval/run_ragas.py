@@ -1,7 +1,7 @@
 """M1 eval 編排：讀題集 → 逐題 retrieve→generate→三指標 → aggregate → 寫基準線。
 
 生成端刻意用 build_user_prompt + stream_completion（非 answer_question）以隔離檢索與
-生成、避開 qa_log 寫入/overview/off-topic。有界併發（claude CLI spawn 吃 IO）、逐題
+生成、避開 qa_log 寫入/overview/off-topic。有界併發（限制同時的 DeepSeek 請求數）、逐題
 fail-open（任一階段異常記 error、不計均值、不中斷批次）。
 
 M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--agentic 走 agentic
@@ -84,7 +84,6 @@ from app.services.scope_router import CORPUS_QA, POLICY_FOR_SCOPE, RouteDecision
 from app.services.zh_hant import looks_simplified  # noqa: E402
 from eval.judge import (  # noqa: E402
     DEFAULT_JUDGE_MODEL,
-    DEFAULT_JUDGE_RETRIES,
     DEFAULT_JUDGE_TIMEOUT,
     JUDGE_MAX_TOKENS,
     JudgeAccountError,
@@ -117,10 +116,8 @@ _CTX_SPLIT_RE = re.compile(r"(?=^\[\d+\] )", re.MULTILINE)
 _CITE_RE = re.compile(r"\[(\d+)\]")
 
 # 生成端的逾時。沿用 stream_completion 的預設值（改它等於改被評的東西）。
-# n_truncated 取自 stream_completion 的 `meta["truncated"]`：CLI 路徑逾時後對已吐出的文字
-# fail-open、不拋例外，唯一的訊號是「成功的那次嘗試撞到了這個上限」（每次嘗試各自計時，
-# 529 重試花掉的時間不算）。它只抓得到逾時截斷；輸出長度上限造成的截斷 CLI 看不到，
-# PR-11 接 HTTP 後改用 finish_reason（length）。
+# n_truncated 取自 stream_completion 的 `meta["truncated"]`：已吐字後的截斷（finish_reason=length、
+# read 逾時、總時限）不拋例外，唯一的訊號是 meta（原因在 `meta["truncated_reason"]`）。
 GEN_TIMEOUT = 120.0
 
 # judge 出錯的型別：只有這些讓「該指標」記 None（M8）。其他例外（程式錯誤、嵌入失敗）
@@ -535,8 +532,9 @@ def _sha256_file(path) -> str:
 
 
 def judge_provider(model: str) -> str:
-    """judge 實際走哪個 backend：與 `stream_completion` 同一份白名單分派（`is_http_model`）。"""
-    return "deepseek_http" if is_http_model(model) else "claude_cli"
+    """judge 走哪個 backend。白名單外的 model 已沒有 backend（PR-M 移除 claude CLI；judge 對它拋
+    `JudgeAccountError`、入口預檢先擋），記 `unsupported`。舊結果檔裡的 `claude_cli` 是 CLI 時代的值。"""
+    return "deepseek_http" if is_http_model(model) else "unsupported"
 
 
 # 量尺系譜（PR-26/27；`judge_lineage` 與兩個常數定義在 app/services/llm_models.py，與
@@ -601,7 +599,6 @@ def build_config(
             "provider": judge_provider(judge_model),
             "model": judge_model,
             "timeout": DEFAULT_JUDGE_TIMEOUT,
-            "retries": DEFAULT_JUDGE_RETRIES,
             "prompt_sha": judge_prompt_sha(),
             "schema_version": JUDGE_SCHEMA_VERSION,
             "lineage": judge_lineage(judge_model),
@@ -747,7 +744,7 @@ async def run(
     sem = asyncio.Semaphore(concurrency)
 
     async def _one(q: dict) -> dict:
-        async with sem:  # 限制同時 spawn 的 claude CLI 數，避開 IO 風暴
+        async with sem:  # 限制同時的 LLM 請求數
             return await eval_question(
                 q,
                 judge=_judge,

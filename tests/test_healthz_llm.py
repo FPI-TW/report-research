@@ -36,8 +36,10 @@ PROBE = Path(__file__).resolve().parents[1] / "scripts" / "check_web_health.sh"
 FAKE_KEY = "fixed-test-secret-deepseek0"
 BASE = "https://api.example.test"
 ONLINE = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": BASE, "LLM_PROVIDER": "deepseek"}
-# 線上任務全走 Claude（claude_cli 表），但有金鑰：批次在用 DeepSeek 的情境
-UNUSED = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": BASE, "LLM_PROVIDER": "claude_cli"}
+# 主答沒有解析到 DeepSeek（PR-M 起只剩「ASK_ANSWER_MODEL 設成白名單外的名稱」這種設定錯誤會這樣），
+# 但有金鑰：批次照常在用 DeepSeek 的情境。PR-M 前這裡用 LLM_PROVIDER=claude_cli（退役值現在當成 deepseek）。
+UNUSED = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": BASE, "LLM_PROVIDER": "deepseek",
+          "ASK_ANSWER_MODEL": "claude-sonnet-5"}
 
 
 def _balance(*infos, available=True):
@@ -129,7 +131,7 @@ class AccessTests(_Base):
 
 class DisabledTests(_Base):
     def test_no_key_and_no_online_http_is_disabled_without_query(self):
-        r = self.get({"LLM_PROVIDER": "claude_cli"})
+        r = self.get({"ASK_ANSWER_MODEL": "claude-sonnet-5"})
         self.assertState(r, 200, "disabled")
         self.assertEqual(self.requests, [])
 
@@ -536,7 +538,7 @@ class UnusedTests(_Base):
         self.assertState(self.get(UNUSED), 200, "exhausted_unused")
 
     def test_main_answer_on_deepseek_counts(self):
-        """其他線上任務都在 Claude、只有主答走 DeepSeek：問答會停擺，要 503。"""
+        """主答走 DeepSeek：問答會停擺，要 503。"""
         env = {**UNUSED, "ASK_ANSWER_MODEL": "deepseek-flash"}
         self.reply(402, {})
         self.assertState(self.get(env), 503, "exhausted")
@@ -553,6 +555,15 @@ class UnusedTests(_Base):
                 env = {**UNUSED, **{k: "deepseek-flash" for k in chosen}}
                 self.assertState(self.get(env), 200, "exhausted_unused")
 
+    def test_retired_provider_values_do_not_hide_an_outage(self):
+        """PR-M：`claude_cli`／`claude_only` 已退役、解析成 deepseek——主答照樣走 DeepSeek，帳號停擺要 503，
+        不能像 PR-M 前那樣變成 `_unused`（那時這兩個值真的讓問答走 CLI；現在它們只是會被記 ERROR 的錯值）。"""
+        for value in ("claude_cli", "claude_only"):
+            with self.subTest(value=value):
+                llm_health.reset()
+                self.reply(402, {})
+                self.assertState(self.get({**ONLINE, "LLM_PROVIDER": value}), 503, "exhausted")
+
     def test_deepseek_provider_with_main_answer_pinned_to_claude_is_unused(self):
         """`LLM_PROVIDER=deepseek` 把其餘線上任務都帶到 DeepSeek，但主答釘在 Claude：仍不算用到。"""
         env = {**ONLINE, "ASK_ANSWER_MODEL": "claude-sonnet-5"}
@@ -561,11 +572,10 @@ class UnusedTests(_Base):
 
     def test_missing_key_matters_only_for_the_main_answer(self):
         """沒有金鑰：主答走 DeepSeek 是 auth_failed（503），只有 fail-open 任務走 DeepSeek 是 disabled（200）。"""
-        side = {"LLM_PROVIDER": "claude_cli", "ASK_INTENT_MODEL": "deepseek-flash",
+        side = {"ASK_ANSWER_MODEL": "claude-sonnet-5", "ASK_INTENT_MODEL": "deepseek-flash",
                 "FAITHFULNESS_MODEL": "deepseek-flash"}
         self.assertState(self.get(side), 200, "disabled")
-        self.assertState(self.get({"LLM_PROVIDER": "claude_cli", "ASK_ANSWER_MODEL": "deepseek-flash"}),
-                         503, "auth_failed")
+        self.assertState(self.get({"ASK_ANSWER_MODEL": "deepseek-flash"}), 503, "auth_failed")
         self.assertEqual(self.requests, [])
 
     def test_unused_state_is_logged(self):

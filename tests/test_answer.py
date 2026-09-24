@@ -9,7 +9,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.services import llm  # noqa: E402
 from app.services import scope_router as sr  # noqa: E402
 from app.services.answer import (  # noqa: E402
     Source,
@@ -108,48 +107,6 @@ class DropAbandonedDraftTests(unittest.TestCase):
         """`#1` 這種寫法沒有空白，不是標題，不得誤判。"""
         t = "本季市占率為 #1，詳見下表。\n\n## 明細\n表格。"
         self.assertEqual(drop_abandoned_draft(t), t)
-
-
-class StreamParseTests(unittest.TestCase):
-    def test_text_delta_extracted(self):
-        line = (
-            '{"type":"stream_event","event":{"type":"content_block_delta",'
-            '"delta":{"type":"text_delta","text":"哈囉"}}}'
-        )
-        self.assertEqual(llm.extract_text_delta(line), "哈囉")
-
-    def test_thinking_delta_ignored(self):
-        line = (
-            '{"type":"stream_event","event":{"type":"content_block_delta",'
-            '"delta":{"type":"thinking_delta","thinking":"x"}}}'
-        )
-        self.assertIsNone(llm.extract_text_delta(line))
-
-    def test_non_stream_event_ignored(self):
-        self.assertIsNone(llm.extract_text_delta('{"type":"system","subtype":"init"}'))
-
-    def test_malformed_line_ignored(self):
-        self.assertIsNone(llm.extract_text_delta("not json"))
-        self.assertIsNone(llm.extract_text_delta(""))
-
-    def test_non_dict_stream_json_ignored(self):
-        self.assertIsNone(llm.extract_text_delta('"just text"'))
-        self.assertIsNone(llm.extract_text_delta('["array"]'))
-        self.assertIsNone(
-            llm.extract_text_delta('{"type":"stream_event","event":"oops"}')
-        )
-        self.assertIsNone(
-            llm.extract_text_delta(
-                '{"type":"stream_event","event":{"type":"content_block_delta","delta":"oops"}}'
-            )
-        )
-
-    def test_result_line(self):
-        self.assertTrue(llm.is_result_line('{"type":"result","subtype":"success"}'))
-        self.assertFalse(llm.is_result_line('{"type":"stream_event"}'))
-
-    def test_non_dict_result_line_ignored(self):
-        self.assertFalse(llm.is_result_line("123"))
 
 
 class ScaleUpDefaultsTests(unittest.TestCase):
@@ -1717,38 +1674,6 @@ class AnswerWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("答案[1]。", body)
 
 
-class WebSearchDetectTests(unittest.TestCase):
-    def test_detects_websearch_tool_use(self):
-        line = (
-            '{"type":"stream_event","event":{"type":"content_block_start",'
-            '"content_block":{"type":"tool_use","name":"WebSearch","input":{}}}}'
-        )
-        self.assertTrue(llm.is_web_search_start(line))
-
-    def test_other_tool_not_detected(self):
-        line = (
-            '{"type":"stream_event","event":{"type":"content_block_start",'
-            '"content_block":{"type":"tool_use","name":"ToolSearch","input":{}}}}'
-        )
-        self.assertFalse(llm.is_web_search_start(line))
-
-    def test_text_thinking_and_malformed_not_detected(self):
-        self.assertFalse(
-            llm.is_web_search_start(
-                '{"type":"stream_event","event":{"type":"content_block_start",'
-                '"content_block":{"type":"text","text":""}}}'
-            )
-        )
-        self.assertFalse(
-            llm.is_web_search_start(
-                '{"type":"stream_event","event":{"type":"content_block_delta",'
-                '"delta":{"type":"text_delta","text":"hi"}}}'
-            )
-        )
-        self.assertFalse(llm.is_web_search_start("not json"))
-        self.assertFalse(llm.is_web_search_start(""))
-
-
 class FeedbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_value_rejected_without_db(self):
         # 非 like/dislike/none 一律 False，且不觸碰 DB（純驗證分支）
@@ -1820,70 +1745,6 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
             ans.SessionFactory = orig
 
         self.assertFalse(ok)
-
-
-class BuildCmdTests(unittest.TestCase):
-    def test_web_flag_adds_allowed_tools(self):
-        cmd = llm._build_cmd("m", None, True)
-        self.assertIn("--allowedTools", cmd)
-        self.assertEqual(cmd[cmd.index("--allowedTools") + 1], "WebSearch")
-
-    def test_web_flag_restricts_available_tools(self):
-        """--allowedTools 只管免核可、不限縮可用工具；要把工具集縮到只剩 WebSearch 得靠 --tools。"""
-        cmd = llm._build_cmd("m", None, True)
-        self.assertIn("--tools", cmd)
-        self.assertEqual(cmd[cmd.index("--tools") + 1], "WebSearch")
-        self.assertNotIn("--disallowedTools", cmd)
-
-    def test_no_web_flag_by_default(self):
-        cmd = llm._build_cmd("m", None, False)
-        self.assertNotIn("--allowedTools", cmd)
-
-    def test_no_web_disables_all_tools(self):
-        """不開網搜＝不開任何工具：`--tools ""`（`--help` 寫明）。
-
-        不用 `--disallowedTools "*"`：本機 CLI 未記載萬用字元語意，看來逐字比對工具名，很可能無效。
-        """
-        for system in (None, "你是助理"):
-            with self.subTest(system=system):
-                cmd = llm._build_cmd("m", system, False)
-                self.assertEqual(cmd[-2:], ["--tools", ""])
-                self.assertNotIn("--disallowedTools", cmd)
-
-    def test_tool_flags_are_last(self):
-        """工具旗標是可變長度選項，會吞掉後面的非選項引數：一律放 argv 最後。"""
-        for system in (None, "你是助理"):
-            with self.subTest(system=system):
-                cmd = llm._build_cmd("m", system, True)
-                self.assertEqual(cmd[-4:], ["--tools", "WebSearch", "--allowedTools", "WebSearch"])
-
-    def test_mcp_servers_are_never_loaded(self):
-        """`--tools` 只管內建工具、管不到 MCP；`--strict-mcp-config` 且不帶 `--mcp-config`＝不載 MCP。
-
-        開不開網搜都要有；它是布林旗標，必須在可變長度的 `--tools` 之前，否則會被當成 `--tools` 的值。
-        """
-        for allow_web in (False, True):
-            for system in (None, "你是助理"):
-                with self.subTest(allow_web=allow_web, system=system):
-                    cmd = llm._build_cmd("m", system, allow_web)
-                    self.assertIn("--strict-mcp-config", cmd)
-                    self.assertNotIn("--mcp-config", cmd)
-                    self.assertLess(cmd.index("--strict-mcp-config"), cmd.index("--tools"))
-
-    def test_system_prompt_included_when_given(self):
-        self.assertIn("--system-prompt", llm._build_cmd("m", "你是助理", False))
-        self.assertNotIn("--system-prompt", llm._build_cmd("m", None, False))
-
-    def test_core_flags_present(self):
-        cmd = llm._build_cmd("claude-sonnet-4-6", None, False)
-        for flag in (
-            "claude",
-            "-p",
-            "--model",
-            "stream-json",
-            "--include-partial-messages",
-        ):
-            self.assertIn(flag, cmd)
 
 
 class SplitExternalSourcesTests(unittest.TestCase):
@@ -2894,7 +2755,7 @@ class LlmFailureStillLogsTests(unittest.IsolatedAsyncioTestCase):
         from app.services.llm import LLMUnavailableError
 
         logged: list[dict] = []
-        orig = self._patch(logged, exc=LLMUnavailableError("529 Overloaded"))
+        orig = self._patch(logged, exc=LLMUnavailableError("503 Service Unavailable", kind="overloaded"))
         try:
             with self.assertRaises(LLMUnavailableError):
                 _ = [e async for e in ans.answer_question("台積電展望")]
@@ -3266,38 +3127,32 @@ class LlmErrorKindTests(unittest.TestCase):
     先前兩者在監控上**完全無法區分**——LLM 失敗那輪根本不落庫（`_log_qa` 在串流
     之後），所以兩種情況都是「什麼紀錄都沒有」。
 
-    CLI 路徑仍只分兩類（文字判斷，下面兩條）；HTTP 路徑的例外自帶 `kind`（由狀態碼決定），
-    直接採用、不再解析文字（`test_http_kind_wins_over_text`）。
+    例外自帶 `kind`（由狀態碼、finish_reason 或送出前的 config 判定決定），直接採用。PR-M 移除 CLI 後
+    不再解析訊息文字：沒有 kind 一律 other。
     """
 
-    def test_http_kind_wins_over_text(self):
+    def test_kind_is_used_verbatim(self):
         from app.services import answer as ans
         from app.services.llm import LLMUnavailableError
 
-        for kind in ("quota", "auth", "content_filter", "timeout", "overloaded"):
+        for kind in ("quota", "auth", "config", "content_filter", "timeout", "overloaded", "network"):
             with self.subTest(kind=kind):
                 # 訊息文字刻意與 kind 矛盾：kind 有值時不得再看文字
                 exc = LLMUnavailableError("API Error: 529 Overloaded", kind=kind)
                 self.assertEqual(ans._llm_error_kind(exc), kind)
 
-    def test_unclassified_kind_falls_back_to_text(self):
-        """CLI 不填 kind（預設 other）：維持既有的兩類文字判斷。"""
+    def test_text_is_never_parsed(self):
+        """CLI 時代的文字判斷（`API Error`／`Overloaded` → overloaded）隨 CLI 移除：沒有 kind 就是 other。"""
         from app.services import answer as ans
         from app.services.llm import LLMUnavailableError
 
-        self.assertEqual(ans._llm_error_kind(LLMUnavailableError("529 Overloaded", kind="other")), "overloaded")
-        self.assertEqual(ans._llm_error_kind(RuntimeError("529 Overloaded")), "overloaded")
-        self.assertEqual(ans._llm_error_kind(RuntimeError("boom")), "other")
-
-    def test_overload_detected(self):
-        from app.services import answer as ans
-        from app.services.llm import LLMUnavailableError
-
-        for msg in ("529 Overloaded", "API Error: 529 {\"type\":\"overloaded_error\"}"):
-            with self.subTest(msg=msg):
-                self.assertEqual(
-                    ans._llm_error_kind(LLMUnavailableError(msg)), "overloaded"
-                )
+        for exc in (
+            LLMUnavailableError("529 Overloaded"),
+            LLMUnavailableError("API Error: 529 {\"type\":\"overloaded_error\"}", kind="other"),
+            RuntimeError("529 Overloaded"),
+        ):
+            with self.subTest(exc=repr(exc)):
+                self.assertEqual(ans._llm_error_kind(exc), "other")
 
     def test_other_is_the_fallback_not_overloaded(self):
         """認不出來要落到 other，不能猜成 overloaded。
@@ -3307,9 +3162,9 @@ class LlmErrorKindTests(unittest.TestCase):
         from app.services import answer as ans
         from app.services.llm import LLMUnavailableError
 
-        for msg in ("claude 無有效回應", "", "FileNotFoundError: 'claude'"):
-            with self.subTest(msg=msg):
-                self.assertEqual(ans._llm_error_kind(LLMUnavailableError(msg)), "other")
+        for exc in (LLMUnavailableError("x"), LLMUnavailableError(""), RuntimeError("boom"), ValueError()):
+            with self.subTest(exc=repr(exc)):
+                self.assertEqual(ans._llm_error_kind(exc), "other")
 
 
 class QaVersionsExcludesFailedTurnsTests(unittest.TestCase):

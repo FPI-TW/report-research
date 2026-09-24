@@ -40,17 +40,17 @@ os.environ["DEEPSEEK_BASE_URL"] = "http://127.0.0.1:9"
 
 # 模型選擇：同樣**用賦值**，理由同上（部署目錄的 `.env`、執行者 shell 裡的值都擋得住）。
 # 所有任務旋鈕設成 ""——`app/services/llm_models.resolve_model` 把空字串視同未設、改查預設表，
-# 所以測試永遠拿到 claude_cli 預設表的值（下面強制的 provider），與誰的機器、誰的環境檔無關。這一條與
-# `resolve_model` 的「空字串＝未設」寫法必須同進同退：只有前者，模組會拿到空字串的模型名。
+# 所以測試永遠拿到預設表的值，與誰的機器、誰的環境檔無關。這一條與 `resolve_model` 的
+# 「空字串＝未設」寫法必須同進同退：只有前者，模組會拿到空字串的模型名。
+# `LLM_PROVIDER` 強制成唯一合法值 `deepseek`（PR-M 移除 claude CLI 之前這裡強制 `claude_cli`，讓測試走
+# CLI 假子程序）：擋住部署目錄 `.env` 或 shell 裡的退役值（`claude_only` 等）讓 import 期的 ERROR 日誌
+# 依機器而變。**預設表因此解析到 DeepSeek 白名單模型**：漏了假物件的測試會走 HTTP 路徑，而上面兩道
+# 防線（金鑰強制空、端點不可達）讓它在送出前就以 auth 失敗、絕不打到付費端點——代價是失敗型態可能被
+# fail-open 吞掉，所以要驗 LLM 行為的測試一律自己裝 `httpx.MockTransport` 或 patch 呼叫層。
 # `LLM_ENV_FILE` 指到不存在的路徑：批次在 import 期載入 LLM 專用環境檔，測試不得讀到本機
 # 真的 `/etc/default/report-mark-llm`。
 # 守門：tests/test_llm_models.py 的 ConftestModelGuardTests（清單直接比對 TASK_ENV）。
-# **生產預設已是 deepseek**（遷移 PR-28，`llm_models.DEFAULT_PROVIDER`），這裡刻意仍設 `claude_cli`：
-# 測試不得打付費 API，既有測試的假物件（`asyncio.create_subprocess_exec`、`_claude_cli` 的 spawn）
-# 都接在 CLI 路徑上；改成 deepseek 會讓漏了假物件的測試改走 HTTP 路徑（端點雖指到不可達的本機埠，
-# 失敗型態卻從「假物件沒接上」變成「連線失敗被當成 LLM 不可用」，靜默走另一條路）。
-# 要驗預設值的測試自己在範圍內移除這個鍵（`mock.patch.dict` 後 pop），見 test_llm_models.py。
-os.environ["LLM_PROVIDER"] = "claude_cli"
+os.environ["LLM_PROVIDER"] = "deepseek"
 os.environ["LLM_ENV_FILE"] = "/nonexistent/report-mark-llm"
 for _knob in (
     "ASK_ANSWER_MODEL", "ASK_WEB_MODEL", "ASK_INTENT_MODEL", "ASK_CONDENSE_MODEL",
@@ -179,7 +179,7 @@ def _clear_trusted_providers():
 @pytest.fixture(autouse=True)
 def _stub_followups():
     """預設關閉追問建議（M3）：主 RAG 路徑在 done 之後會呼叫 generate_followups，
-    真跑會外連 claude CLI 並讓事件序尾隨 followups。除非測試明確驗追問，否則一律
+    真跑會走 LLM 呼叫層（金鑰空、以 auth 失敗）並讓事件序尾隨 followups。除非測試明確驗追問，否則一律
     stub 成回 []（不發 followups 事件）。明確驗追問的測試在其函式內自行覆寫 + 還原。"""
     import app.services.answer as ans
 
@@ -199,7 +199,7 @@ def _stub_followups():
 @pytest.fixture(autouse=True)
 def _stub_query_planner_llm():
     """預設關閉查詢規劃 LLM（M5）：qa_agentic_enabled 預設開，answer_question 會
-    並行呼叫 plan_queries，真跑會外連 claude CLI。stub 成回空子查詢陣列——
+    並行呼叫 plan_queries，真跑會走 LLM 呼叫層。stub 成回空子查詢陣列——
     計畫為單一原問題查詢 → run_agentic 走快速路徑，事件序與 M4 完全一致。
     本 fixture 為 M5/M6 唯一共用的 planner stub（M5 spec 凍結契約 4）：M6 report
     profile 沿用同一 stub 點，不得另加第二份 planner fixture；驗規劃／評估行為

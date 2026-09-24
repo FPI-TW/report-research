@@ -536,6 +536,98 @@ class TimeSensitiveWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.logged["filters"]["llm_model"], ans.ASK_WEB_MODEL)
 
 
+class NoWebBackendTests(unittest.IsolatedAsyncioTestCase):
+    """PR-M：網搜沒有後端（claude CLI 的 WebSearch 已移除、DeepSeek 網搜延後到 P9）。
+
+    這裡**不替換** `stream_completion`——用真的那一支，驗證 `allow_web=True` 在送出任何請求之前就拋
+    config 錯誤，而呼叫端安全收場：時效題退回 M4 婉拒並落 `llm_error=config`；主答以 config 錯誤失敗、
+    落遙測列。總閘（`ASK_ENABLE_WEB`）刻意打開：預設關時這兩條路徑根本走不到，要驗的是「有人打開了」。
+    `ASK_WEB_MODEL` 換成任何值（預設的空字串、白名單名稱、Claude 名稱）結果都一樣。
+    """
+
+    def setUp(self):
+        import httpx
+
+        from app.services import llm, llm_http
+
+        tmd.clear_providers()
+        self.requests: list = []
+        llm_http._transport = httpx.MockTransport(lambda req: self.requests.append(req) or httpx.Response(500))
+        llm_http._reset_clients()
+        self._orig = (
+            rp.retrieve_context, ans._log_qa, ans.stream_completion, ans.load_recent_turns,
+            ans.ASK_ENABLE_WEB, ans.ASK_WEB_MODEL,
+        )
+        self.logged: list[dict] = []
+
+        async def fake_retrieve(question, **kw):
+            raise AssertionError("時效題不得觸發 retrieve_context")
+
+        async def fake_log(question, answer, cited, filters, *a, **k):
+            self.logged.append({"answer": answer, "filters": filters})
+            return "qa-no-web"
+
+        async def fake_turns(conv_id, **kw):
+            return []
+
+        rp.retrieve_context = fake_retrieve
+        ans._log_qa = fake_log
+        ans.load_recent_turns = fake_turns
+        ans.stream_completion = llm.stream_completion  # 真的那一支（見類別 docstring）
+        ans.ASK_ENABLE_WEB = True
+
+    def tearDown(self):
+        from app.services import llm_http
+
+        tmd.clear_providers()
+        llm_http._transport = None
+        llm_http._reset_clients()
+        (
+            rp.retrieve_context, ans._log_qa, ans.stream_completion, ans.load_recent_turns,
+            ans.ASK_ENABLE_WEB, ans.ASK_WEB_MODEL,
+        ) = self._orig
+
+    async def test_time_sensitive_web_falls_back_to_m4_notice_for_any_web_model(self):
+        for model in ("", "deepseek-flash", "claude-sonnet-5"):
+            with self.subTest(model=model):
+                self.logged.clear()
+                ans.ASK_WEB_MODEL = model
+                events = [e async for e in ans.answer_question(_TS_Q, web=True)]
+                self.assertEqual([k for k, _ in events], ["status", "sources", "notice", "done"])
+                self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+                self.assertEqual(events[-1][1]["notice_kind"], "time_sensitive")
+                self.assertEqual(len(self.logged), 1)
+                self.assertEqual(self.logged[0]["filters"]["llm_error"], "config")
+                self.assertIs(self.logged[0]["filters"]["web"], True)
+                self.assertEqual(self.requests, [], "網搜不得送出任何 HTTP 請求")
+
+    async def test_main_answer_with_web_is_config_error_and_logged(self):
+        from app.services import llm
+
+        rp.retrieve_context = self._orig[0]  # 主答要走檢索（hybrid_search 由 _CorpusPatch 攔下）
+        with _CorpusPatch(sr._decision(sr.CORPUS_QA, decided_by=sr.BY_LLM)) as pt:
+            ans.stream_completion = llm.stream_completion  # _CorpusPatch 換掉的，再換回真的
+            with self.assertRaises(LLMUnavailableError) as cm:
+                _ = [e async for e in ans.answer_question("台積電展望", web=True)]
+        self.assertEqual(cm.exception.kind, "config")
+        self.assertIsNone(pt.called["answer"], "失敗列不得寫假答案")
+        self.assertEqual(pt.called["log_filters"]["llm_error"], "config")
+        self.assertEqual(self.requests, [])
+
+    def test_defaults_keep_web_off(self):
+        """預設：總閘關、網搜模型空字串（conftest 已清空旋鈕，這裡直接讀預設值）。"""
+        import os
+        from unittest import mock
+
+        from app.config import _load
+
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("ASK_ENABLE_WEB", None)
+            s = _load()
+        self.assertIs(s.ask_enable_web, False)
+        self.assertEqual(s.ask_web_model, "")
+
+
 class AskEndpointWebForwardingTests(unittest.TestCase):
     """`/api/ask` 的 `web` 欄位轉發，走 **HTTP 層**（不呼叫 handler 函式物件）。
 

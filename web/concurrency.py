@@ -11,7 +11,7 @@ per-process 狀態。目前 `deploy/systemd/report-mark-web.service` 的 ExecSta
 * 實際併發上限翻倍（問答 3→6），而上限本來就是照單機 CPU 抓的。
 * BGE-M3 與 cross-encoder 是 per-process 常駐，每個 worker 各載一份 → 記憶體翻倍。
 * 問答忠實度抽查的背景任務上限（`ASK_FAITHFULNESS_MAX_INFLIGHT`）同樣是行程內
-  狀態，多 worker 會讓同時 spawn 的 `claude` CLI 數翻倍。
+  狀態，多 worker 會讓同時的 judge 請求數翻倍。
 
 所以這裡選擇 fail-closed：偵測得到多 worker 就拒絕啟動，讓改動的人當場看到原因，
 而不是三個月後在「機器怎麼變慢了」裡回推。

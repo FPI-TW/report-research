@@ -3,8 +3,8 @@
 
 從 web/server.py 拆出（第三步）。
 
-_ASK_GATE 是模組級狀態，限制同時提問數（每次提問 spawn 一個 claude CLI
-子程序）。它定義在本模組、由本模組的 handler 使用；server.py 以
+_ASK_GATE 是模組級狀態，限制同時提問數（每次提問佔一條 DeepSeek 串流與一輪
+檢索／rerank）。它定義在本模組、由本模組的 handler 使用；server.py 以
 `from web.routers import ask` 單一路徑匯入，故全程只有一個閘門實例——
 若被兩條不同 import 路徑載入會分裂成兩個、併發上限失效。**它同時是 per-process
 的**：多 worker 下上限會直接翻倍，故啟動時有 fail-closed 守門，見 web/concurrency.py。
@@ -49,20 +49,21 @@ class AskRequest(BaseModel):
     web: bool = False
 
 
-# 每次提問會 spawn 一個 claude CLI 子程序（CPU-bound 機器），限制同時數避免區網多人同問雪崩。
+# 每次提問佔一條 LLM 串流與一輪檢索／rerank（CPU-bound 機器），限制同時數避免區網多人同問雪崩。
+# 上限 3 是 CLI 時代照「每題 spawn 一個 claude 子程序」抓的，PR-M 後沿用（rerank 仍吃 CPU）。
 # ASK_MAX_QUEUE 是排隊人數上限（超過即 429，不是排到天荒地老）。預設 20 刻意寬鬆：
 # 上限 3、單題約 60–90s，排到第 21 位表示已是堆積而非尖峰，那時讓人帶著 Retry-After
 # 早點知道，好過在一條開好的 SSE 上等十分鐘。設 0 可退回舊行為（無限排隊）。
 _ASK_GATE = ConcurrencyGate(3, name="ask", max_queue=int(os.getenv("ASK_MAX_QUEUE", "20")))
 
 ASK_ERROR_DETAIL = "問答服務發生錯誤"
-# 依 LLMUnavailableError.kind 給使用者看的訊息（kind 只有 HTTP 路徑會填；CLI 只有認證失效填 auth，其餘落到預設）。
+# 依 LLMUnavailableError.kind 給使用者看的訊息（沒有對應的 kind 落到預設）。
 # 內容審查：同一題換個問法多半就過，要讓使用者知道「可以自己處理」，而不是以為站台壞了。
 # 帳號與設定層級：每一題都會失敗、使用者無能為力，直接說「暫時無法使用」，免得反覆重試；
 # 啟動自檢與 `qa_log.filters.llm_error` 會留下可查的紀錄。**不承諾「已通知管理者」**：quota／auth
 # 雖然會經 `/healthz/llm` → 探針退出碼 8 告警，但那要探針下一輪（約 2 分鐘）、而且只在 Slack 投遞正常
 # 時才成立；config 沒有依 kind 的告警。說了等於讓使用者以為有人在處理。
-# config 與帳號分開措辭：模型名打錯、`ASK_WEB_MODEL` 誤設成 DeepSeek 都會落到 config，那不是帳號問題。
+# config 與帳號分開措辭：模型名不在白名單、網搜總閘開著卻沒有後端都會落到 config，那不是帳號問題。
 _ACCOUNT_ERROR_DETAIL = "問答服務暫時無法使用（模型服務帳號異常），請稍後再試或聯絡管理者"
 _LLM_ERROR_DETAILS = {
     "content_filter": "此題觸發模型供應商的內容審查，可換個問法",

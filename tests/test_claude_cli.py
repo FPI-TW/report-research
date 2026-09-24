@@ -646,8 +646,9 @@ class BreakerTests(_HttpCase):
         with self.assertRaises(cc.LlmEnvironmentError):
             self.call()
 
-    def test_marker_blocks_later_http_segment_only(self):
-        """跨段：跳脫寫的標記讓下一段預檢 rc=2（會用 DeepSeek 的段）；全用 Claude 的段照跑。"""
+    def test_marker_blocks_later_segment(self):
+        """跨段：跳脫寫的標記讓下一段預檢 rc=2。PR-M 前全用 Claude 的段照跑；CLI 移除後沒有那種段了，
+        沒有模型的段（--dry-run 之類）照跑。"""
         self._calls(_status(503), 5)
         self.assertTrue(self.marker.exists())
         le._STATE.clear()
@@ -658,7 +659,7 @@ class BreakerTests(_HttpCase):
                 le.require_llm_key({"summary": "deepseek-flash"})
             self.assertEqual(ctx.exception.code, 2)
             self.assertIn("斷路器", err.getvalue())
-            le.require_llm_key({"summary": "claude-sonnet-5"})  # 不拋
+            le.require_llm_key({"summary": None})  # 不拋
 
     def test_marker_carries_sync_round_id(self):
         """審查中4：在 sync 輪次內跳脫，標記帶 `round=`；同一輪後段拒跑，下一輪的段放行。"""

@@ -8,232 +8,36 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import llm  # noqa: E402
 
-# 假 claude 子程序：讀掉 stdin（_run_attempt 會寫 prompt 後關閉），於子程序內自行組出
-# 一行遠超 64KB 的 text_delta 事件（避免把 300KB 塞進 argv），再補一個 result 終點事件。
-_FAKE_CLAUDE_SCRIPT = r'''
-import sys, json
-sys.stdin.buffer.read()
-big = "台" * 100000  # 台 x 100000 ~= 300KB UTF-8，遠超 asyncio 預設 64KB 行上限
-line = json.dumps(
-    {"type": "stream_event",
-     "event": {"type": "content_block_delta",
-               "delta": {"type": "text_delta", "text": big}}},
-    ensure_ascii=False,
-)
-sys.stdout.write(line + "\n")
-sys.stdout.write(json.dumps({"type": "result"}) + "\n")
-'''
 
-
-class RunAttemptLargeLineTests(unittest.IsolatedAsyncioTestCase):
-    """回歸：單行 stream-json 事件遠超 asyncio 預設 64KB 上限時，_run_attempt 不得因
-    LimitOverrunError 中斷，須完整讀出文字（長篇回答結尾 result 事件的實況）。
-
-    修法＝create_subprocess_exec 傳入較大的 limit（_STDOUT_LINE_LIMIT）。移除該參數
-    會使本測試在讀取巨行時拋 ValueError/LimitOverrunError 而失敗。
-    """
-
-    async def _collect(self, cmd: list[str]) -> list:
-        out: list = []
-        async for chunk in llm._run_attempt(cmd, prompt="x", timeout=30.0):
-            out.append(chunk)
-        return out
-
-    async def test_text_delta_line_over_64kb_is_streamed(self):
-        cmd = [sys.executable, "-c", _FAKE_CLAUDE_SCRIPT]
-        chunks = await self._collect(cmd)
-
-        streamed = "".join(c for c in chunks if isinstance(c, str))
-        expected_big = "台" * 100000
-        self.assertIn(expected_big, streamed)
-        # 未以 ("__error__", ...) tuple 收尾 → 走的是正常串流路徑，非 fallback/失敗
-        self.assertFalse(any(isinstance(c, tuple) for c in chunks))
-
-    def test_limit_constant_exceeds_default_64kb(self):
-        # 明示修法意圖：上限須遠大於 asyncio 預設 64KB。
-        self.assertGreater(llm._STDOUT_LINE_LIMIT, 64 * 1024)
-
-
-# 假 claude：先送 system/init（工具集由 argv[1] 的 JSON 指定），再送一段文字與 result。
-_FAKE_INIT_SCRIPT = r'''
-import sys, json
-sys.stdin.buffer.read()
-tools = json.loads(sys.argv[1])
-sys.stdout.write(json.dumps({"type": "system", "subtype": "init", "tools": tools}) + "\n")
-sys.stdout.write(json.dumps(
-    {"type": "stream_event",
-     "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}}) + "\n")
-sys.stdout.write(json.dumps({"type": "result"}) + "\n")
-'''
-
-
-def _init(tools) -> str:
-    return json.dumps({"type": "system", "subtype": "init", "tools": tools})
-
-
-class CheckInitToolsTests(unittest.TestCase):
-    """旗標失效要看得見：init 事件回報的工具集與預期不符 → 回說明字串。"""
-
-    def test_no_web_expects_empty(self):
-        self.assertIsNone(llm.check_init_tools(_init([]), False))
-        self.assertIsNotNone(llm.check_init_tools(_init(["Read", "Bash"]), False))
-
-    def test_web_expects_exactly_websearch(self):
-        self.assertIsNone(llm.check_init_tools(_init(["WebSearch"]), True))
-        self.assertIsNotNone(llm.check_init_tools(_init([]), True))
-        self.assertIsNotNone(llm.check_init_tools(_init(["WebSearch", "Read"]), True))
-
-    def test_defensive_on_other_shapes(self):
-        """非 init、沒帶 tools、tools 非 list、壞 JSON 一律不判（事件格式可能變）。"""
-        for line in (
-            "",
-            "not json",
-            json.dumps({"type": "system", "subtype": "init"}),
-            json.dumps({"type": "system", "subtype": "init", "tools": "Read"}),
-            json.dumps({"type": "system", "subtype": "other", "tools": ["Read"]}),
-            json.dumps({"type": "result", "tools": ["Read"]}),
-        ):
-            with self.subTest(line=line):
-                self.assertIsNone(llm.check_init_tools(line, False))
-
-
-class RunAttemptInitToolsTests(unittest.IsolatedAsyncioTestCase):
-    async def _collect(self, tools, allow_web):
-        cmd = [sys.executable, "-c", _FAKE_INIT_SCRIPT, json.dumps(tools)]
-        return [c async for c in llm._run_attempt(cmd, prompt="x", timeout=30.0, allow_web=allow_web)]
-
-    async def test_mismatch_logs_warning_but_still_streams(self):
-        with self.assertLogs("app.services.llm", level="WARNING") as cm:
-            chunks = await self._collect(["Read", "Bash"], False)
-        self.assertEqual(chunks, ["ok"])  # fail-open：照常出字
-        self.assertEqual(len(cm.records), 1)
-        self.assertIn("Read", cm.output[0])
-
-    async def test_match_is_silent(self):
-        with self.assertNoLogs("app.services.llm", level="WARNING"):
-            self.assertEqual(await self._collect([], False), ["ok"])
-            self.assertEqual(await self._collect(["WebSearch"], True), ["ok"])
-
-    async def test_no_check_when_allow_web_not_given(self):
-        with self.assertNoLogs("app.services.llm", level="WARNING"):
-            chunks = [c async for c in llm._run_attempt(
-                [sys.executable, "-c", _FAKE_INIT_SCRIPT, json.dumps(["Read"])], prompt="x", timeout=30.0)]
-        self.assertEqual(chunks, ["ok"])
-
-
-# 假 claude：argv[1] 決定行為。
-#   partial  先吐一段字、再卡住（模擬串到一半被逾時截斷）
-#   silent   什麼都不吐就卡住（模擬沒吐字就逾時）
-#   full     吐字後送 result（正常結束）
-#   overload result 事件帶 is_error（模擬 529）
-#   auth     result 事件帶 is_error、文字是認證失效（2026-09-23 的 OAuth 過期）
-#   auth_ok  同上但 result 沒標 is_error（不論 CLI 怎麼標，都不能當答案）
-_FAKE_BEHAVIOR_SCRIPT = r'''
-import sys, json, time
-sys.stdin.buffer.read()
-mode = sys.argv[1]
-def delta(t):
-    return json.dumps({"type": "stream_event",
-                       "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": t}}})
-if mode in ("partial", "full"):
-    sys.stdout.write(delta('{"statements": ["半') + "\n"); sys.stdout.flush()
-if mode == "full":
-    sys.stdout.write(json.dumps({"type": "result"}) + "\n")
-elif mode == "overload":
-    sys.stdout.write(json.dumps({"type": "result", "is_error": True, "result": "API Error: 529 Overloaded"}) + "\n")
-elif mode in ("auth", "auth_ok"):
-    msg = "Failed to authenticate: OAuth session expired and could not be refreshed"
-    sys.stdout.write(json.dumps({"type": "result", "is_error": mode == "auth", "result": msg}) + "\n")
-else:
-    time.sleep(30)
-'''
-
-
-class StreamCompletionSignalTests(unittest.IsolatedAsyncioTestCase):
-    """截斷與失敗原因要讓呼叫端拿得到：CLI 逾時對已吐字 fail-open、不拋例外，
-    沒有 meta 就分不出「完整回應」與「被砍掉一半」。"""
-
-    async def _run(self, mode: str, *, timeout: float = 5.0, meta: dict | None = None):
-        from unittest import mock
-
-        cmd = [sys.executable, "-c", _FAKE_BEHAVIOR_SCRIPT, mode]
-        with mock.patch.object(llm, "_build_cmd", lambda *a, **k: cmd):
-            return [c async for c in llm.stream_completion("x", timeout=timeout, retries=0, meta=meta)]
-
-    async def test_partial_output_cut_by_timeout_is_marked_truncated(self):
-        meta: dict = {}
-        chunks = await self._run("partial", timeout=1.0, meta=meta)
-        self.assertEqual("".join(chunks), '{"statements": ["半')
-        self.assertIs(meta["truncated"], True)
-
-    async def test_normal_completion_is_not_truncated(self):
-        meta: dict = {}
-        await self._run("full", meta=meta)
-        self.assertIs(meta["truncated"], False)
-
-    async def test_meta_is_optional(self):
-        self.assertEqual("".join(await self._run("full")), '{"statements": ["半')
-
-    async def test_silent_timeout_reason(self):
-        with self.assertRaises(llm.LLMUnavailableError) as cm:
-            await self._run("silent", timeout=1.0)
-        self.assertEqual(cm.exception.reason, llm.UNAVAILABLE_TIMEOUT)
-
-    async def test_api_error_reason(self):
-        with self.assertRaises(llm.LLMUnavailableError) as cm:
-            await self._run("overload")
-        self.assertEqual(cm.exception.reason, llm.UNAVAILABLE_API_ERROR)
-
+class LLMUnavailableErrorTests(unittest.TestCase):
     def test_reason_defaults_to_none_for_direct_construction(self):
         self.assertIsNone(llm.LLMUnavailableError("529").reason)
 
     def test_kind_and_partial_defaults(self):
-        """kind 預設 other（未分類）、partial 預設 False；CLI 路徑兩者都不填。"""
+        """kind 預設 other（未分類）、partial 預設 False。"""
         exc = llm.LLMUnavailableError("529")
         self.assertEqual(exc.kind, "other")
         self.assertIs(exc.partial, False)
         exc = llm.LLMUnavailableError("x", kind="quota", partial=True, reason="api_error")
         self.assertEqual((exc.kind, exc.partial, exc.reason), ("quota", True, "api_error"))
 
-    async def test_cli_auth_failure_is_kind_auth(self):
-        """CLI 認證失效：kind=auth（/api/ask 回「帳號異常」），result 沒標 is_error 也一樣。"""
-        for mode in ("auth", "auth_ok"):
-            with self.subTest(mode=mode):
-                with self.assertRaises(llm.LLMUnavailableError) as cm:
-                    await self._run(mode)
-                self.assertEqual(cm.exception.kind, "auth")
-                self.assertEqual(cm.exception.reason, llm.UNAVAILABLE_API_ERROR)
-                self.assertIn("認證失效", str(cm.exception))
-
-    async def test_cli_auth_failure_is_not_retried(self):
-        from unittest import mock
-
-        calls = []
-
-        async def fake_attempt(cmd, prompt, timeout, allow_web=None, meta=None):
-            calls.append(1)
-            yield ("__error__", "Invalid API key · Please run /login", llm.UNAVAILABLE_API_ERROR)
-
-        with mock.patch.object(llm, "_run_attempt", fake_attempt), \
-                mock.patch.object(llm.asyncio, "sleep", mock.AsyncMock()):
-            with self.assertRaises(llm.LLMUnavailableError) as cm:
-                [c async for c in llm.stream_completion("x", model="claude-haiku-4-5", retries=2)]
-        self.assertEqual(len(calls), 1, "認證失效重試無益")
-        self.assertEqual(cm.exception.kind, "auth")
-
     def test_auth_kind_reaches_answer_and_ask_error_detail(self):
         from app.services import answer
         from web.routers import ask
 
-        exc = llm.LLMUnavailableError("claude CLI 認證失效", reason=llm.UNAVAILABLE_API_ERROR, kind="auth")
+        exc = llm.LLMUnavailableError("401", reason=llm.UNAVAILABLE_API_ERROR, kind="auth")
         self.assertEqual(answer._llm_error_kind(exc), "auth")
         self.assertIn("帳號異常", ask._llm_error_detail(exc))
 
-    async def test_cli_failure_leaves_kind_unclassified(self):
-        with self.assertRaises(llm.LLMUnavailableError) as cm:
-            await self._run("overload")
-        self.assertEqual(cm.exception.kind, "other")
-        self.assertIs(cm.exception.partial, False)
+    def test_config_kind_reaches_answer_and_ask_error_detail(self):
+        """白名單外的 model／網搜的 config 錯誤：落庫 llm_error=config、使用者看到「設定有誤」（不是帳號異常）。"""
+        from app.services import answer
+        from web.routers import ask
+
+        exc = llm.LLMUnavailableError("x", reason=llm.UNAVAILABLE_API_ERROR, kind="config")
+        self.assertEqual(answer._llm_error_kind(exc), "config")
+        self.assertIn("模型設定有誤", ask._llm_error_detail(exc))
+        self.assertNotIn("帳號", ask._llm_error_detail(exc))
 
 
 # ── 白名單分派：HTTP 路徑（DeepSeek）────────────────────────────────────────
@@ -338,15 +142,10 @@ class HttpInputSanitizeTests(_HttpCase):
 
 
 class HttpDispatchTests(_HttpCase):
-    async def test_whitelisted_model_goes_http_not_cli(self):
+    async def test_whitelisted_model_goes_http(self):
         self.install(lambda req: httpx.Response(200, content=_ok("台積電", "展望")))
-
-        def no_cli(*a, **k):
-            raise AssertionError("白名單 model 不得 spawn claude CLI")
-
         meta: dict = {}
-        with mock.patch.object(llm, "_build_cmd", no_cli):
-            chunks = await self.collect(system="系統", meta=meta, max_tokens=4096, task="ask_overview")
+        chunks = await self.collect(system="系統", meta=meta, max_tokens=4096, task="ask_overview")
         self.assertEqual(chunks, ["台積電", "展望"])
         self.assertIs(meta["truncated"], False)
         body = json.loads(self.requests[0].content)
@@ -355,32 +154,14 @@ class HttpDispatchTests(_HttpCase):
         self.assertEqual(body["user_id"], "web-ask_overview")
         self.assertEqual(body["messages"][0], {"role": "system", "content": "系統"})
 
-    async def test_claude_model_goes_cli_not_http(self):
-        self.install(lambda req: httpx.Response(200, content=_ok("x")))
-
-        async def fake_attempt(cmd, prompt, timeout, allow_web=None, meta=None):
-            if meta is not None:
-                meta["timed_out"] = False
-            yield "cli"
-
-        with mock.patch.object(llm, "_run_attempt", fake_attempt):
-            chunks = await self.collect(model="claude-sonnet-5", max_tokens=16, task="ask_intent")
-        self.assertEqual(chunks, ["cli"])
-        self.assertEqual(self.requests, [], "CLI model 不得送出 HTTP 請求")
-
-    async def test_near_miss_names_are_not_http(self):
-        """白名單是逐字比對：打錯字或 CLI 別名一律走 CLI（不會被送到付費端點）。"""
-        for name in ("deepseek-flsh", "sonnet", "DeepSeek-Flash"):
+    async def test_every_whitelisted_name_goes_http(self):
+        for name in sorted(llm.HTTP_MODELS if hasattr(llm, "HTTP_MODELS") else lh.HTTP_MODELS):
             with self.subTest(name=name):
-                self.assertFalse(llm.is_http_model(name))
+                self.requests.clear()
+                self.install(lambda req: httpx.Response(200, content=_ok("x")))
+                self.assertEqual(await self.collect(model=name), ["x"])
+                self.assertEqual(json.loads(self.requests[0].content)["model"], name)
 
-    async def test_web_search_with_deepseek_is_config_error(self):
-        self.install(lambda req: httpx.Response(200, content=_ok("x")))
-        with self.assertRaises(llm.LLMUnavailableError) as cm:
-            await self.collect(allow_web=True)
-        self.assertEqual(cm.exception.kind, "config")
-        self.assertIn("ASK_WEB_MODEL", str(cm.exception))
-        self.assertEqual(self.requests, [])
 
     async def test_missing_max_tokens_falls_back_with_warning(self):
         self.install(lambda req: httpx.Response(200, content=_ok("x")))
@@ -397,6 +178,86 @@ class HttpDispatchTests(_HttpCase):
         self.assertIn("llm_call task=ask_followup model=deepseek-flash", text)
         self.assertIn("backend=http", text)
         self.assertNotIn(_FAKE_KEY, text)
+
+
+class NonWhitelistIsConfigErrorTests(_HttpCase):
+    """PR-M：白名單外的 model（含 claude-*、CLI 別名、打錯字、空字串）一律 config 錯誤——不送 HTTP、
+    不 spawn 任何子行程、一個字都不 yield。"""
+
+    NAMES = ("claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-4-5-20251001", "sonnet", "haiku", "",
+             "deepseek-flsh", "DeepSeek-Flash", " deepseek-flash")
+
+    def setUp(self):
+        super().setUp()
+        self.install(lambda req: httpx.Response(200, content=_ok("不該送出")))
+
+        def no_spawn(*a, **k):
+            raise AssertionError("PR-M 後不得 spawn 任何子行程")
+
+        self._spawn = mock.patch.object(asyncio, "create_subprocess_exec", no_spawn)
+        self._spawn.start()
+
+    def tearDown(self):
+        self._spawn.stop()
+        super().tearDown()
+
+    async def _assert_config(self, **kw):
+        got: list = []
+        with self.assertRaises(llm.LLMUnavailableError) as cm:
+            async for c in llm.stream_completion("問題", max_tokens=16, task="ask_intent", **kw):
+                got.append(c)
+        self.assertEqual(got, [], "送出前就該失敗，不得 yield")
+        self.assertEqual(cm.exception.kind, "config")
+        self.assertIs(cm.exception.partial, False)
+        self.assertEqual(cm.exception.reason, llm.UNAVAILABLE_API_ERROR)
+        self.assertEqual(self.requests, [], "不得送到付費端點")
+        return cm.exception
+
+    async def test_non_whitelisted_names(self):
+        for name in self.NAMES:
+            with self.subTest(name=name):
+                exc = await self._assert_config(model=name)
+                self.assertIn("白名單", str(exc))
+                self.assertIn(repr(name), str(exc))
+
+    async def test_near_miss_names_are_not_http(self):
+        for name in ("deepseek-flsh", "sonnet", "DeepSeek-Flash"):
+            with self.subTest(name=name):
+                self.assertFalse(llm.is_http_model(name))
+
+    async def test_web_search_is_config_error_for_any_model(self):
+        """網搜沒有後端：不論 model（白名單、claude-*、空字串＝ASK_WEB_MODEL 的預設）一律 config。"""
+        for name in ("deepseek-flash", "claude-sonnet-5", ""):
+            with self.subTest(name=name):
+                exc = await self._assert_config(model=name, allow_web=True)
+                self.assertIn("網搜", str(exc))
+
+    async def test_default_model_is_whitelisted(self):
+        """conftest 強制 deepseek：主答預設是白名單名稱（否則每個走預設的呼叫點都會 config 失敗）。"""
+        self.assertTrue(llm.is_http_model(llm.DEFAULT_MODEL))
+
+
+class NoCliBackendTests(unittest.TestCase):
+    """PR-M：線上與評測路徑不得殘留 claude CLI backend（驗收 grep 的測試版；批次的在 test_claude_cli.py）。"""
+
+    GONE = ("_build_cmd", "_run_attempt", "claude_cli_path", "CLAUDE_BIN", "check_init_tools",
+            "extract_text_delta", "looks_like_api_error", "_STDOUT_LINE_LIMIT")
+    PATTERNS = ("claude -p", "claude_cli_path", "_run_cli", "build_cli_args", "create_subprocess_exec")
+
+    def test_llm_module_has_no_cli_symbols(self):
+        for name in self.GONE:
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(llm, name), name)
+
+    def test_online_sources_have_no_cli_spawn(self):
+        hits = []
+        for base in ("app", "web", "eval"):
+            for path in sorted((REPO_ROOT / base).rglob("*.py")):
+                text = path.read_text(encoding="utf-8")
+                for pat in self.PATTERNS:
+                    if pat in text:
+                        hits.append(f"{path.relative_to(REPO_ROOT)}: {pat}")
+        self.assertEqual(hits, [])
 
 
 class HttpRetryTests(_HttpCase):
@@ -699,87 +560,11 @@ class HttpTotalTimeoutTests(_HttpCase):
         self.assertEqual(seen["total_timeout"], 123.0)
         self.assertEqual(seen["first_token_timeout"], 120.0)
 
-    async def test_cli_path_ignores_total_timeout(self):
-        """只套 HTTP 路徑：CLI 路徑不讀這個旋鈕（CLI 的逾時語意不動）。"""
-        async def fake_attempt(cmd, prompt, timeout, allow_web=None, meta=None):
-            yield "cli"
-
-        with mock.patch.object(llm, "_run_attempt", fake_attempt), \
-             mock.patch.object(llm, "_http_total_timeout", side_effect=AssertionError("CLI 不該讀總時限")):
-            chunks = [c async for c in llm.stream_completion("q", model="claude-sonnet-5", max_tokens=16, task="t")]
-        self.assertEqual(chunks, ["cli"])
-
-
-class HttpCancelTests(_HttpCase):
-    def _hanging(self, closed: asyncio.Event, started: asyncio.Event, first: bytes | None = None):
-        class Stream(httpx.AsyncByteStream):
-            async def __aiter__(self):
-                if first is not None:
-                    yield first
-                started.set()
-                await asyncio.sleep(10)
-                yield b""
-
-            async def aclose(self):
-                closed.set()
-
-        return Stream()
-
-    async def test_cancel_closes_response(self):
-        closed, started = asyncio.Event(), asyncio.Event()
-        self.install(lambda req: httpx.Response(200, stream=self._hanging(closed, started)))
-
-        async def consume():
-            async for _ in llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t"):
-                pass
-
-        task = asyncio.ensure_future(consume())
-        await started.wait()
-        task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await task
-        self.assertTrue(closed.is_set(), "CancelledError 要原樣上拋，並關閉 HTTP 回應")
-
-    async def test_heartbeat_close_mid_stream_closes_response(self):
-        """用戶端中斷：`_with_heartbeat` 的 finally 會 cancel 未完成的 `__anext__` 再 aclose。"""
-        from web import deps
-
-        closed, started = asyncio.Event(), asyncio.Event()
-        self.install(lambda req: httpx.Response(
-            200, stream=self._hanging(closed, started, first=_sse(_chunk("a"), done=False))))
-        hb = deps._with_heartbeat(
-            llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t"), interval=0.05)
-        first = await hb.__anext__()
-        self.assertEqual(first, "a")
-        self.assertFalse(closed.is_set())
-        await hb.aclose()
-        self.assertTrue(closed.is_set())
-
-
-class HttpEventLoopTests(unittest.TestCase):
-    """批次的 asyncio.run 與測試每次都換 loop；client 綁在舊 loop 上會出錯。"""
-
-    def tearDown(self):
-        lh._transport = None
-        lh._reset_clients()
-
-    def test_two_loops_in_a_row(self):
-        lh._transport = httpx.MockTransport(lambda req: httpx.Response(200, content=_ok("ok")))
-        lh._reset_clients()
-
-        async def once():
-            return [c async for c in llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t")]
-
-        with mock.patch.dict(os.environ, _ENV):
-            for _ in range(2):
-                self.assertEqual(asyncio.run(once()), ["ok"])
-
 
 class CallSitesPassMaxTokensAndTaskTests(unittest.TestCase):
     """每個 `stream_completion` 呼叫點都要帶 `max_tokens` 與 `task`（第二版計畫 §8、§4.8）。
 
-    漏帶不會在 CLI 路徑上出事（CLI 忽略兩者），要等某個任務切到 DeepSeek 才會變成「上限退回
-    保底值、log 認不出任務」——所以在這裡靜態釘住，而不是等切換那天才發現。
+    漏帶的話上限退回保底值、log 認不出任務，而且不會有任何錯誤——所以在這裡靜態釘住。
     """
 
     def test_all_call_sites(self):
@@ -799,14 +584,15 @@ class CallSitesPassMaxTokensAndTaskTests(unittest.TestCase):
                     kws = {k.arg for k in node.keywords}
                     if not {"max_tokens", "task"} <= kws:
                         missing.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
-        self.assertGreaterEqual(seen, 11, "掃描範圍漏掉呼叫點（守門空轉）")
+        self.assertGreaterEqual(seen, 9, "掃描範圍漏掉呼叫點（守門空轉）")
         self.assertEqual(missing, [])
 
 
 class CallSiteMaxTokensValuesTests(unittest.TestCase):
     """各呼叫點實際送出的 `max_tokens` 值（第二版計畫 §8）逐一釘住：上面那組只檢查「有帶」，
-    值被改壞（例如路由 16 改成 1024、追問 512 被刪一位）不會紅，而上限只作用在 HTTP 路徑，
-    CLI 時代完全看不出差別。表格鍵是（檔案, task 的原始碼），多一個或少一個呼叫點也會紅。
+    值被改壞（例如路由 16 改成 1024、追問 512 被刪一位）不會紅。表格鍵是（檔案, task 的原始碼），
+    多一個或少一個呼叫點也會紅。兩個 judge（faithfulness、eval_judge）走 `llm_http.complete_json`、
+    不經 `stream_completion`，上限另在 `JUDGE_MAX_TOKENS_BY_SYSTEM` 釘住。
 
     值以該檔的模組命名空間求值 max_tokens 的運算式（常數、模組常數或 `query_planner.X`），
     所以量到的是呼叫當下真正會送出的數字，不是常數名。改值要同步改這張表，並在 PR 說明理由。
@@ -821,8 +607,6 @@ class CallSiteMaxTokensValuesTests(unittest.TestCase):
         ("app/services/query_planner.py", "'qa_planner'"): 1024,
         ("app/services/agentic_qa.py", "'qa_agentic_eval'"): 1024,
         ("app/services/followups.py", "'ask_followup'"): 512,
-        ("app/services/faithfulness.py", "'faithfulness'"): 8192,
-        ("eval/judge.py", "'eval_judge'"): 8192,
         ("eval/run_ragas.py", "'eval_answer'"): 8192,
     }
 

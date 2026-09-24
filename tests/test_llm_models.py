@@ -1,11 +1,11 @@
-"""app/services/llm_models.py：模型白名單、各任務預設表與 `resolve_model`。
+"""app/services/llm_models.py：模型白名單、預設表與 `resolve_model`。
 
 釘住四件事：
-1. `LLM_PROVIDER` 沒設（或空字串）時解析為 `deepseek`（遷移 PR-28），每個任務拿 DeepSeek 表。
-2. `LLM_PROVIDER=claude_cli`（conftest 強制的測試值）下，每個任務解析出的名稱與遷移前各呼叫點
-   寫死的字串**逐字相同**——包括各模組層常數，不只是表本身。
-3. 三個 provider 的語意（`claude_only` 忽略白名單內的任務旋鈕、未知值退回預設 `deepseek`）。
-4. conftest 把所有模型旋鈕強制成空字串的防線還在，而且清單與 `TASK_ENV` 一致。
+1. 預設表每一列都是白名單名稱（網搜那列刻意是空字串＝沒有後端），模組層常數真的接上了表。
+2. `LLM_PROVIDER` 只剩 `deepseek`：沒設、空字串、大小寫都解析成它；PR-M 退役的 `claude_cli`／`claude_only`
+   與拼錯的值記 ERROR 並當成 deepseek（線上容錯；批次拒跑在 tests/test_llm_env_loading.py）。
+3. 啟動自檢（`diagnose`）：白名單外的名稱（含 claude-*）、缺金鑰、網搜總閘開著都要說出來。
+4. conftest 把所有模型旋鈕強制成空字串、provider 強制成 deepseek 的防線還在，而且清單與 `TASK_ENV` 一致。
 """
 from __future__ import annotations
 
@@ -22,29 +22,16 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import llm_models as lm  # noqa: E402
 
-# 遷移前（2026-09-24，origin/main b3fb0e9）各呼叫點寫死的字串。改這張表＝換生產模型。
-PRE_MIGRATION = {
-    "ask_answer": "claude-sonnet-5",           # llm.py DEFAULT_MODEL
-    "ask_web": "claude-sonnet-5",              # answer.py 時效網搜、主答開網搜（同 DEFAULT_MODEL）
-    "ask_intent": "claude-haiku-4-5",          # config.py ASK_INTENT_MODEL 預設
-    "ask_condense": "claude-haiku-4-5",        # 跟隨 intent
-    "qa_planner": "claude-haiku-4-5",          # 跟隨 intent
-    "ask_followup": "claude-haiku-4-5-20251001",  # followups.py
-    "faithfulness": "claude-haiku-4-5",        # config.py FAITHFULNESS_MODEL 預設
-    "eval_judge": "claude-haiku-4-5",          # eval/judge.py
-    "tag": "claude-haiku-4-5",                 # tag_all_cli.py、sync_new_reports._tag_via_cli
-    "summary": "claude-sonnet-5",
-    "title": "claude-sonnet-5",
-    "takeaway": "claude-sonnet-5",
-    "signal": "claude-sonnet-5",
-    "brief": "claude-sonnet-5",
-}
-
 EMPTY_KNOBS = {k: "" for k in lm.TASK_ENV.values()}
 
 
 def _env(**extra: str) -> dict[str, str]:
-    return {**EMPTY_KNOBS, "LLM_PROVIDER": "claude_cli", **extra}
+    return {**EMPTY_KNOBS, "LLM_PROVIDER": "deepseek", **extra}
+
+
+# 預設表的期望值：網搜以外全是 deepseek-flash（第二版計畫 §8、D6、PR-26/27）。改這張表＝換生產模型。
+EXPECTED_DEFAULTS = {task: "deepseek-flash" for task in lm.TASK_ENV}
+EXPECTED_DEFAULTS["ask_web"] = ""
 
 
 class LeafModuleTests(unittest.TestCase):
@@ -102,33 +89,30 @@ class CliAuthErrorPatternTests(unittest.TestCase):
 
 
 class TableTests(unittest.TestCase):
-    def test_tables_cover_every_task(self):
-        self.assertEqual(set(lm.CLAUDE_DEFAULTS), set(lm.TASK_ENV))
+    def test_table_covers_every_task(self):
         self.assertEqual(set(lm.DEEPSEEK_DEFAULTS), set(lm.TASK_ENV))
-        self.assertEqual(set(PRE_MIGRATION), set(lm.TASK_ENV))
         self.assertEqual(len(lm.TASK_ENV), 14)
 
-    def test_claude_table_equals_pre_migration_literals(self):
-        self.assertEqual(lm.CLAUDE_DEFAULTS, PRE_MIGRATION)
+    def test_table_values(self):
+        self.assertEqual(lm.DEEPSEEK_DEFAULTS, EXPECTED_DEFAULTS)
 
-    def test_deepseek_table_values_are_known(self):
-        """DeepSeek 表裡每個名稱不是白名單就是 claude-*：打錯字在表裡就要紅。"""
+    def test_every_non_web_default_is_whitelisted(self):
+        """打錯字在表裡就要紅：PR-M 起白名單外的名稱沒有 backend，會讓整個任務 config 失敗。"""
         for task, model in lm.DEEPSEEK_DEFAULTS.items():
-            self.assertTrue(lm.is_http_model(model) or lm.is_claude_model(model), (task, model))
+            if task == "ask_web":
+                continue
+            with self.subTest(task=task):
+                self.assertTrue(lm.is_http_model(model), model)
 
-    def test_deepseek_table_keeps_only_web_on_claude(self):
-        """DeepSeek 網搜延後到 P9，網搜那列維持 Claude。"""
-        self.assertEqual(lm.DEEPSEEK_DEFAULTS["ask_web"], lm.CLAUDE_DEFAULTS["ask_web"])
+    def test_web_has_no_model(self):
+        """網搜沒有後端（claude CLI 已移除、DeepSeek 網搜延後到 P9）：預設是空字串，不是 Claude 名稱。"""
+        self.assertEqual(lm.DEEPSEEK_DEFAULTS["ask_web"], "")
+        self.assertFalse(lm.is_http_model(lm.DEEPSEEK_DEFAULTS["ask_web"]))
 
-    def test_deepseek_table_switches_both_judges_to_flash(self):
-        """PR-26/27：judge 依 D-J a 直接切成 DeepSeek（新量尺系譜）；claude_cli 表仍是 haiku。"""
-        for task in ("faithfulness", "eval_judge"):
-            self.assertEqual(lm.DEEPSEEK_DEFAULTS[task], "deepseek-flash", task)
-            self.assertEqual(lm.CLAUDE_DEFAULTS[task], "claude-haiku-4-5", task)
-
-    def test_deepseek_table_uses_flash_elsewhere(self):
-        for task in set(lm.TASK_ENV) - {"ask_web"}:
-            self.assertEqual(lm.DEEPSEEK_DEFAULTS[task], "deepseek-flash", task)
+    def test_claude_table_and_symbols_are_gone(self):
+        for name in ("CLAUDE_DEFAULTS", "PROVIDER_CLAUDE_CLI", "PROVIDER_CLAUDE_ONLY", "is_claude_model"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(lm, name), name)
 
     def test_online_tasks_are_known(self):
         self.assertLessEqual(set(lm.ONLINE_TASKS), set(lm.TASK_ENV))
@@ -139,17 +123,17 @@ class ResolveTests(unittest.TestCase):
     def setUp(self):
         lm._LOGGED.clear()
 
-    def test_claude_cli_resolves_every_task_to_pre_migration(self):
-        for task, expected in PRE_MIGRATION.items():
+    def test_every_task_resolves_to_the_table(self):
+        for task, expected in EXPECTED_DEFAULTS.items():
             self.assertEqual(lm.resolve_model(task, env=_env()), expected, task)
 
-    def test_default_provider_is_deepseek(self):
-        """PR-28：CLI 已放棄，預設改 deepseek——llm 環境檔缺檔時批次不得靜默退回 CLI。"""
+    def test_default_provider_is_the_only_provider(self):
         self.assertEqual(lm.DEFAULT_PROVIDER, "deepseek")
+        self.assertEqual(lm.PROVIDERS, ("deepseek",))
         for env in (dict(EMPTY_KNOBS), {**EMPTY_KNOBS, "LLM_PROVIDER": ""}, {**EMPTY_KNOBS, "LLM_PROVIDER": "  "}):
             with self.subTest(env=env.get("LLM_PROVIDER")):
                 self.assertEqual(lm.provider(env), "deepseek")
-                self.assertEqual(lm.resolve_all(lm.TASK_ENV, env=env), lm.DEEPSEEK_DEFAULTS)
+                self.assertEqual(lm.resolve_all(lm.TASK_ENV, env=env), EXPECTED_DEFAULTS)
 
     def test_unset_provider_in_process_env_resolves_to_deepseek(self):
         """走真正的 os.environ（呼叫點不傳 env）：暫時移除 conftest 強制的 LLM_PROVIDER。"""
@@ -157,72 +141,65 @@ class ResolveTests(unittest.TestCase):
             os.environ.pop("LLM_PROVIDER", None)
             self.assertEqual(lm.provider(), "deepseek")
             self.assertEqual(lm.resolve_model("summary"), "deepseek-flash")
-            self.assertEqual(lm.resolve_model("tag"), "deepseek-flash")
-            self.assertEqual(lm.resolve_model("takeaway"), "deepseek-flash")
-            # judge 自 PR-26/27 起是 DeepSeek；刻意仍是 Claude 的只剩網搜（PR-W／P9）
             self.assertEqual(lm.resolve_model("faithfulness"), "deepseek-flash")
-            self.assertEqual(lm.resolve_model("eval_judge"), "deepseek-flash")
-            self.assertEqual(lm.resolve_model("ask_web"), "claude-sonnet-5")
-        self.assertEqual(os.environ.get("LLM_PROVIDER"), "claude_cli", "patch.dict 結束後還原")
+            self.assertEqual(lm.resolve_model("ask_web"), "")
+        self.assertEqual(os.environ.get("LLM_PROVIDER"), "deepseek", "patch.dict 結束後還原")
 
     def test_task_knob_wins(self):
-        env = _env(SUMMARY_MODEL="deepseek-flash")
-        self.assertEqual(lm.resolve_model("summary", env=env), "deepseek-flash")
+        """任務旋鈕原樣採用（就算不在白名單：解析層不擋，交給呼叫層以 config 失敗、自檢與批次預檢說出來）。"""
+        env = _env(SUMMARY_MODEL="deepseek-v4-pro", TITLE_MODEL="claude-sonnet-5")
+        self.assertEqual(lm.resolve_model("summary", env=env), "deepseek-v4-pro")
         self.assertEqual(lm.resolve_model("title", env=env), "claude-sonnet-5")
+        self.assertEqual(lm.resolve_model("tag", env=env), "deepseek-flash")
 
     def test_empty_or_blank_knob_counts_as_unset(self):
         for value in ("", "  "):
-            self.assertEqual(lm.resolve_model("tag", env=_env(TAG_MODEL=value)), "claude-haiku-4-5")
+            self.assertEqual(lm.resolve_model("tag", env=_env(TAG_MODEL=value)), "deepseek-flash")
 
     def test_knob_value_is_stripped(self):
-        self.assertEqual(lm.resolve_model("tag", env=_env(TAG_MODEL=" deepseek-flash ")), "deepseek-flash")
+        self.assertEqual(lm.resolve_model("tag", env=_env(TAG_MODEL=" deepseek-v4-pro ")), "deepseek-v4-pro")
 
     def test_override_replaces_env_lookup(self):
-        env = _env(ASK_FOLLOWUP_MODEL="claude-sonnet-5")
-        self.assertEqual(lm.resolve_model("ask_followup", override="deepseek-flash", env=env), "deepseek-flash")
-        self.assertEqual(lm.resolve_model("ask_followup", override="", env=env), "claude-haiku-4-5-20251001")
-
-    def test_deepseek_provider_uses_deepseek_table(self):
-        env = _env(LLM_PROVIDER="deepseek")
-        self.assertEqual(lm.resolve_all(lm.TASK_ENV, env=env), lm.DEEPSEEK_DEFAULTS)
-        # 任務旋鈕仍然優先
-        env["TITLE_MODEL"] = "claude-sonnet-5"
-        self.assertEqual(lm.resolve_model("title", env=env), "claude-sonnet-5")
+        env = _env(ASK_FOLLOWUP_MODEL="deepseek-v4-pro")
+        self.assertEqual(lm.resolve_model("ask_followup", override="deepseek-v4-flash", env=env), "deepseek-v4-flash")
+        self.assertEqual(lm.resolve_model("ask_followup", override="", env=env), "deepseek-flash")
 
     def test_provider_is_case_and_space_insensitive(self):
         self.assertEqual(lm.provider(_env(LLM_PROVIDER=" DeepSeek ")), "deepseek")
 
-    def test_claude_only_ignores_whitelisted_knobs(self):
-        env = _env(LLM_PROVIDER="claude_only", SUMMARY_MODEL="deepseek-flash", TITLE_MODEL="claude-opus-5")
-        with self.assertLogs("app.services.llm_models", "WARNING") as cm:
-            self.assertEqual(lm.resolve_model("summary", env=env), "claude-sonnet-5")
-        self.assertIn("SUMMARY_MODEL=deepseek-flash", "\n".join(cm.output))
-        # Claude 名稱照用（那本來就走 CLI）
-        self.assertEqual(lm.resolve_model("title", env=env), "claude-opus-5")
-        # 沒設旋鈕的用 Claude 表
-        self.assertEqual(lm.resolve_all(lm.TASK_ENV, env=_env(LLM_PROVIDER="claude_only")), PRE_MIGRATION)
+    def test_retired_providers_log_error_and_resolve_to_deepseek(self):
+        """PR-M 退役的值：web 記 ERROR（說得出「已退役」）、照常以 deepseek 解析——**不是** Claude 表。"""
+        for value in ("claude_cli", "claude_only", " Claude_Only "):
+            with self.subTest(value=value):
+                lm._LOGGED.clear()
+                env = _env(LLM_PROVIDER=value, SUMMARY_MODEL="deepseek-v4-pro")
+                with self.assertLogs("app.services.llm_models", "ERROR") as cm:
+                    self.assertEqual(lm.provider(env), "deepseek")
+                self.assertIn("已隨 claude CLI 退役", cm.output[0])
+                self.assertEqual(lm.resolve_model("summary", env=env), "deepseek-v4-pro")  # 旋鈕不再被忽略
+                self.assertEqual(lm.resolve_model("title", env=env), "deepseek-flash")
+        self.assertEqual(lm.RETIRED_PROVIDERS, frozenset({"claude_cli", "claude_only"}))
 
-    def test_claude_only_also_applies_to_override(self):
-        env = _env(LLM_PROVIDER="claude_only")
-        self.assertEqual(
-            lm.resolve_model("ask_followup", override="deepseek-flash", env=env), "claude-haiku-4-5-20251001"
-        )
+    def test_resolve_model_reports_retired_provider(self):
+        """各模組在 import 期經 resolve_model 解析：退役值的 ERROR 要在那裡就說出來，不只在自檢。"""
+        with self.assertLogs("app.services.llm_models", "ERROR") as cm:
+            lm.resolve_model("tag", env=_env(LLM_PROVIDER="claude_only"))
+        self.assertIn("claude_only", cm.output[0])
 
-    def test_claude_only_logs_warning_once(self):
+    def test_provider_error_is_logged_once(self):
         env = _env(LLM_PROVIDER="claude_only")
-        with self.assertLogs("app.services.llm_models", "WARNING") as cm:
+        with self.assertLogs("app.services.llm_models", "ERROR") as cm:
             lm.provider(env)
             lm.provider(env)
         self.assertEqual(len(cm.output), 1)
-        self.assertIn("claude_only", cm.output[0])
 
     def test_unknown_provider_logs_error_and_falls_back_to_default(self):
-        """打錯字＝沒設：退回預設 deepseek（PR-28 前退回 claude_cli；CLI 已放棄，退回它等於全部停擺）。"""
         env = _env(LLM_PROVIDER="deepsek")
         with self.assertLogs("app.services.llm_models", "ERROR") as cm:
             self.assertEqual(lm.provider(env), "deepseek")
         self.assertIn("deepsek", cm.output[0])
-        self.assertEqual(lm.resolve_all(lm.TASK_ENV, env=env), lm.DEEPSEEK_DEFAULTS)
+        self.assertNotIn("退役", cm.output[0])
+        self.assertEqual(lm.resolve_all(lm.TASK_ENV, env=env), EXPECTED_DEFAULTS)
 
     def test_unknown_task_raises(self):
         with self.assertRaises(KeyError):
@@ -230,7 +207,7 @@ class ResolveTests(unittest.TestCase):
 
 
 class ModuleConstantsTests(unittest.TestCase):
-    """各呼叫點實際讀到的常數（conftest 已把旋鈕清空、provider=claude_cli——測試值，生產預設是 deepseek）。
+    """各呼叫點實際讀到的常數（conftest 已把旋鈕清空、provider=deepseek）。
 
     表對了不代表呼叫點接上了表：這裡逐一 import 真正的常數比對。
     """
@@ -241,17 +218,17 @@ class ModuleConstantsTests(unittest.TestCase):
         from eval import judge
 
         s = get_settings()
-        self.assertEqual(s.llm_provider, "claude_cli")
-        self.assertEqual(llm.DEFAULT_MODEL, "claude-sonnet-5")
-        self.assertEqual(s.ask_answer_model, "claude-sonnet-5")
-        self.assertEqual(s.ask_web_model, "claude-sonnet-5")
-        self.assertEqual(answer.ASK_WEB_MODEL, "claude-sonnet-5")
-        self.assertEqual(scope_router.ROUTE_MODEL, "claude-haiku-4-5")
-        self.assertEqual(scope_router.CONDENSE_MODEL, "claude-haiku-4-5")
-        self.assertEqual(s.qa_planner_model, "claude-haiku-4-5")
-        self.assertEqual(answer.FAITHFULNESS_MODEL, "claude-haiku-4-5")
-        self.assertEqual(followups.FOLLOWUP_MODEL, "claude-haiku-4-5-20251001")
-        self.assertEqual(judge.DEFAULT_JUDGE_MODEL, "claude-haiku-4-5")
+        self.assertEqual(s.llm_provider, "deepseek")
+        self.assertEqual(llm.DEFAULT_MODEL, "deepseek-flash")
+        self.assertEqual(s.ask_answer_model, "deepseek-flash")
+        self.assertEqual(s.ask_web_model, "")
+        self.assertEqual(answer.ASK_WEB_MODEL, "")
+        self.assertEqual(scope_router.ROUTE_MODEL, "deepseek-flash")
+        self.assertEqual(scope_router.CONDENSE_MODEL, "deepseek-flash")
+        self.assertEqual(s.qa_planner_model, "deepseek-flash")
+        self.assertEqual(answer.FAITHFULNESS_MODEL, "deepseek-flash")
+        self.assertEqual(followups.FOLLOWUP_MODEL, "deepseek-flash")
+        self.assertEqual(judge.DEFAULT_JUDGE_MODEL, "deepseek-flash")
 
     def test_batch_constants(self):
         import inspect
@@ -266,15 +243,15 @@ class ModuleConstantsTests(unittest.TestCase):
             tag_all_cli,
         )
 
-        self.assertEqual(tag_all_cli.MODEL, "claude-haiku-4-5")
-        self.assertEqual(sync_new_reports.TAG_MODEL, "claude-haiku-4-5")
+        self.assertEqual(tag_all_cli.MODEL, "deepseek-flash")
+        self.assertEqual(sync_new_reports.TAG_MODEL, "deepseek-flash")
         default = inspect.signature(sync_new_reports._tag_via_cli).parameters["model"].default
-        self.assertEqual(default, "claude-haiku-4-5")
-        self.assertEqual(generate_summaries.MODEL, "claude-sonnet-5")
-        self.assertEqual(generate_titles.MODEL, "claude-sonnet-5")
-        self.assertEqual(extract_takeaways.TAKEAWAY_MODEL_DEFAULT, "claude-sonnet-5")
-        self.assertEqual(signal_extract.SIGNAL_MODEL_DEFAULT, "claude-sonnet-5")
-        self.assertEqual(generate_brief.MODEL, "claude-sonnet-5")
+        self.assertEqual(default, "deepseek-flash")
+        self.assertEqual(generate_summaries.MODEL, "deepseek-flash")
+        self.assertEqual(generate_titles.MODEL, "deepseek-flash")
+        self.assertEqual(extract_takeaways.TAKEAWAY_MODEL_DEFAULT, "deepseek-flash")
+        self.assertEqual(signal_extract.SIGNAL_MODEL_DEFAULT, "deepseek-flash")
+        self.assertEqual(generate_brief.MODEL, "deepseek-flash")
 
 
 class ConfigResolveTests(unittest.TestCase):
@@ -286,17 +263,17 @@ class ConfigResolveTests(unittest.TestCase):
 
     def test_condense_and_planner_no_longer_follow_intent(self):
         """改寫前未設時跟著 ASK_INTENT_MODEL 走；現在各自查表，換路由模型不會靜默換掉另外兩個任務。"""
-        s = self._load(ASK_INTENT_MODEL="claude-sonnet-5")
-        self.assertEqual(s.ask_intent_model, "claude-sonnet-5")
-        self.assertEqual(s.ask_condense_model, "claude-haiku-4-5")
-        self.assertEqual(s.qa_planner_model, "claude-haiku-4-5")
+        s = self._load(ASK_INTENT_MODEL="deepseek-v4-pro")
+        self.assertEqual(s.ask_intent_model, "deepseek-v4-pro")
+        self.assertEqual(s.ask_condense_model, "deepseek-flash")
+        self.assertEqual(s.qa_planner_model, "deepseek-flash")
 
-    def test_settings_follow_provider(self):
-        s = self._load(LLM_PROVIDER="deepseek")
+    def test_settings_follow_the_table(self):
+        s = self._load()
         self.assertEqual(s.llm_provider, "deepseek")
         self.assertEqual(s.ask_answer_model, "deepseek-flash")
         self.assertEqual(s.ask_intent_model, "deepseek-flash")
-        self.assertEqual(s.ask_web_model, "claude-sonnet-5")
+        self.assertEqual(s.ask_web_model, "")
         self.assertEqual(s.faithfulness_model, "deepseek-flash")
 
 
@@ -304,55 +281,56 @@ class DiagnoseTests(unittest.TestCase):
     def _levels(self, findings):
         return [level for level, _ in findings]
 
-    def test_all_claude_with_cli_present_is_quiet(self):
-        out = lm.diagnose(PRE_MIGRATION, has_key=False, claude_path="/opt/bin/claude")
-        self.assertEqual(self._levels(out), [logging.WARNING])
-        self.assertIn("/opt/bin/claude", out[0][1])
-
-    def test_default_deepseek_table_without_key(self):
-        """預設 deepseek、沒金鑰（web 啟動缺 DEEPSEEK_API_KEY）：記 ERROR 並列出任務；CLI 那條只列
-        刻意仍是 Claude 的網搜（judge 自 PR-26/27 起是 DeepSeek），不再說「問答全數失敗」。"""
+    def test_default_table_with_key_is_quiet(self):
         resolved = {t: lm.DEEPSEEK_DEFAULTS[t] for t in lm.ONLINE_TASKS}
-        out = lm.diagnose(resolved, has_key=False, claude_path=None, path_env="/usr/bin")
-        self.assertEqual(self._levels(out), [logging.ERROR, logging.ERROR])
+        self.assertEqual(lm.diagnose(resolved, has_key=True), [])
+
+    def test_default_table_without_key(self):
+        """沒金鑰（web 啟動缺 DEEPSEEK_API_KEY）：一則 ERROR 列出任務；網搜（空字串）不列、也不算白名單外。"""
+        resolved = {t: lm.DEEPSEEK_DEFAULTS[t] for t in lm.ONLINE_TASKS}
+        out = lm.diagnose(resolved, has_key=False)
+        self.assertEqual(self._levels(out), [logging.ERROR])
         self.assertIn("DEEPSEEK_API_KEY 為空", out[0][1])
         self.assertIn("ask_answer=deepseek-flash", out[0][1])
         self.assertIn("faithfulness=deepseek-flash", out[0][1])
-        self.assertIn("ask_web=claude-sonnet-5", out[1][1])
-        self.assertNotIn("faithfulness", out[1][1])
-        self.assertNotIn("ask_answer", out[1][1])
+        self.assertNotIn("ask_web", out[0][1])
 
-    def test_missing_cli_is_error(self):
-        out = lm.diagnose({"ask_answer": "claude-sonnet-5"}, has_key=True, claude_path=None, path_env="/usr/bin")
+    def test_non_whitelisted_names_are_error(self):
+        """PR-M：claude-* 與打錯字、CLI 別名同一類——不在白名單＝每次呼叫都 config 失敗。"""
+        for name in ("claude-sonnet-5", "claude-haiku-4-5", "sonnet", "deepseek-flsh", "gpt-5", ""):
+            with self.subTest(name=name):
+                out = lm.diagnose({"ask_intent": name}, has_key=True)
+                self.assertEqual(self._levels(out), [logging.ERROR], name)
+                self.assertIn("不在 DeepSeek 白名單", out[0][1])
+                self.assertIn(f"ask_intent={name}", out[0][1])
+
+    def test_web_task_is_never_classified(self):
+        """網搜任務解析到什麼都一樣（沒有後端）：不因它記「白名單外」或「缺金鑰」。"""
+        for name in ("", "deepseek-flash", "claude-sonnet-5"):
+            with self.subTest(name=name):
+                self.assertEqual(lm.diagnose({"ask_web": name}, has_key=False), [])
+
+    def test_web_gate_on_is_error(self):
+        out = lm.diagnose({"ask_answer": "deepseek-flash"}, has_key=True, web_enabled=True)
         self.assertEqual(self._levels(out), [logging.ERROR])
-        self.assertIn("claude CLI 不在 PATH 上", out[0][1])
-        self.assertIn("/usr/bin", out[0][1])
+        self.assertIn("ASK_ENABLE_WEB", out[0][1])
+        self.assertIn("網搜沒有後端", out[0][1])
 
     def test_whitelisted_model_without_key_is_error(self):
-        out = lm.diagnose({"ask_answer": "deepseek-flash"}, has_key=False, claude_path=None)
+        out = lm.diagnose({"ask_answer": "deepseek-flash"}, has_key=False)
         self.assertEqual(self._levels(out), [logging.ERROR])
         self.assertIn("DEEPSEEK_API_KEY", out[0][1])
         self.assertIn("ask_answer=deepseek-flash", out[0][1])
 
-    def test_whitelisted_model_with_key_needs_no_cli(self):
-        self.assertEqual(lm.diagnose({"ask_answer": "deepseek-flash"}, has_key=True, claude_path=None), [])
+    def test_no_claude_path_parameter(self):
+        """PR-M：自檢不再查 claude 在不在 PATH（`claude_path` 參數隨 CLI 移除）。"""
+        import inspect
 
-    def test_web_task_on_deepseek_is_error(self):
-        """DeepSeek 網搜延後到 P9：網搜任務解析到白名單名稱時，每一題開網搜的問答都會失敗。"""
-        out = lm.diagnose({"ask_web": "deepseek-flash"}, has_key=True, claude_path=None)
-        self.assertEqual(self._levels(out), [logging.ERROR])
-        self.assertIn("ASK_WEB_MODEL=deepseek-flash", out[0][1])
-        self.assertIn("網搜尚未支援", out[0][1])
-
-    def test_unknown_names_are_error(self):
-        for name in ("sonnet", "deepseek-flsh", "gpt-5"):
-            out = lm.diagnose({"ask_intent": name}, has_key=True, claude_path="/x")
-            self.assertEqual(self._levels(out), [logging.ERROR], name)
-            self.assertIn("未知模型名", out[0][1])
+        self.assertNotIn("claude_path", inspect.signature(lm.diagnose).parameters)
 
 
 class ConftestModelGuardTests(unittest.TestCase):
-    """conftest 以**賦值**把全部模型旋鈕清空、provider 設 claude_cli（刻意不跟生產預設 deepseek，
+    """conftest 以**賦值**把全部模型旋鈕清空、provider 設 deepseek（擋住部署目錄 `.env` 或 shell 裡的退役值，
     理由見 conftest）、LLM_ENV_FILE 指到不存在的檔。
 
     與 `resolve_model` 的「空字串＝未設」同進同退（審查 L17）：只有前者，模組會拿到空字串的
@@ -362,7 +340,7 @@ class ConftestModelGuardTests(unittest.TestCase):
     def test_runtime_values(self):
         for key in lm.TASK_ENV.values():
             self.assertEqual(os.environ.get(key), "", key)
-        self.assertEqual(os.environ.get("LLM_PROVIDER"), "claude_cli")
+        self.assertEqual(os.environ.get("LLM_PROVIDER"), "deepseek")
         self.assertEqual(os.environ.get("LLM_ENV_FILE"), "/nonexistent/report-mark-llm")
         self.assertFalse(Path(os.environ["LLM_ENV_FILE"]).exists())
 

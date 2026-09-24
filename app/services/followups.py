@@ -1,4 +1,4 @@
-"""追問建議：答完後由 Haiku 產 ≤3 條同語料範疇的財經追問（fail-open）。"""
+"""追問建議：答完後由 LLM 產 ≤3 條同語料範疇的財經追問（fail-open）。"""
 from __future__ import annotations
 
 import json
@@ -12,8 +12,7 @@ from app.services.locale import DEFAULT_LOCALE
 
 logger = logging.getLogger(__name__)
 
-# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查 LLM_PROVIDER 的預設表
-# （預設 deepseek 下是 deepseek-flash），claude_only 會忽略這裡填的 DeepSeek 名稱。
+# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查預設表（deepseek-flash）。
 FOLLOWUP_MODEL = resolve_model(TASK_ASK_FOLLOWUP, override=os.getenv("ASK_FOLLOWUP_MODEL"))
 FOLLOWUP_TIMEOUT = float(os.getenv("ASK_FOLLOWUP_TIMEOUT", "15"))
 

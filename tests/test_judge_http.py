@@ -359,6 +359,86 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
             for n, v in saved.items():
                 setattr(rr, n, v)
 
+    async def _eval_with_generation_error(self, kind: str):
+        from app.services.llm import LLMUnavailableError
+
+        async def fake_retrieve(question, *, filters=None, **params):
+            return [], "[1] 報告：a\n內容"
+
+        async def fake_generate(question, context, *, model):
+            raise LLMUnavailableError(f"API[{kind}] x", kind=kind)
+
+        async def judge(system, user):
+            raise AssertionError("生成失敗後不該再 judge")
+
+        saved = {n: getattr(rr, n) for n in ("retrieve_context", "_generate_answer")}
+        try:
+            rr.retrieve_context = fake_retrieve
+            rr._generate_answer = fake_generate
+            return await rr.eval_question({"id": "q", "question": "Q"}, judge=judge, embed=lambda t: [1.0],
+                                          retrieval_params={})
+        finally:
+            for n, v in saved.items():
+                setattr(rr, n, v)
+
+    async def test_generator_account_errors_abort_the_batch(self):
+        """審查低2：402 多半先在生成端出現。記成單題 error 的話結果檔照寫、比較顯示劣化。"""
+        for kind in sorted(lh.ACCOUNT_KINDS):
+            with self.subTest(kind=kind), self.assertRaises(rr.GeneratorAccountError) as cm:
+                await self._eval_with_generation_error(kind)
+            self.assertIn(f"API[{kind}]", str(cm.exception))
+
+    async def test_other_generator_errors_stay_single_case_errors(self):
+        for kind in ("overloaded", "network", "timeout", "content_filter", "bad_request", "other"):
+            with self.subTest(kind=kind):
+                out = await self._eval_with_generation_error(kind)
+                self.assertIn("LLMUnavailableError", out["error"])
+
+    async def test_run_writes_no_results_on_generator_quota(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def fake_retrieve(question, *, filters=None, **params):
+            return [], "[1] 報告：a\n內容"
+
+        async def fake_generate(question, context, *, model):
+            raise LLMUnavailableError("API[quota] 帳戶餘額不足", kind=lh.QUOTA)
+
+        with tempfile.TemporaryDirectory() as td:
+            ds = Path(td) / "ds.json"
+            ds.write_text(json.dumps({"questions": [{"id": "q1", "question": "Q"}, {"id": "q2", "question": "R"}]}),
+                          encoding="utf-8")
+            out = Path(td) / "out.json"
+            saved = {n: getattr(rr, n) for n in ("retrieve_context", "_generate_answer")}
+            try:
+                rr.retrieve_context = fake_retrieve
+                rr._generate_answer = fake_generate
+                with self.assertRaises(rr.GeneratorAccountError):
+                    await rr.run(ds, out_path=out, concurrency=1, judge_model=MODEL)
+            finally:
+                for n, v in saved.items():
+                    setattr(rr, n, v)
+            self.assertFalse(out.exists())
+
+    def test_main_exits_2_on_generator_account_error(self):
+        async def fake_run(dataset, **kwargs):
+            raise rr.GeneratorAccountError("生成端（deepseek-flash）API[quota] 帳戶餘額不足")
+
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "out.json"
+            saved, old = rr.run, sys.argv
+            try:
+                rr.run = fake_run
+                sys.argv = ["run_ragas.py", "--out", str(out)]
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), mock.patch.object(rr, "require_llm_key"), \
+                        self.assertRaises(SystemExit) as cm:
+                    rr._main()
+            finally:
+                rr.run, sys.argv = saved, old
+            self.assertEqual(cm.exception.code, 2)
+            self.assertFalse(out.exists())
+            self.assertIn("生成端帳號層級錯誤", err.getvalue())
+
     def test_main_exits_2_without_writing_results(self):
         async def fake_run(dataset, **kwargs):
             raise EJ.JudgeAccountError("API[auth] 金鑰無效或缺漏")

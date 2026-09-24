@@ -10,6 +10,16 @@
    近 `--days` 天、每串對話的**首輪**、有未降級分數、`evaluation.judge_model` 缺值或
    `claude-haiku-4-5`（`judge_schema.JUDGE_MODEL_SQL`）的列。低於門檻與邊界帶（<0.95）優先，
    但至少保留三分之一名額給高分帶，否則翻轉率只看得到一個方向。排序以 `md5(id)` 決定，可重現。
+   取回後再篩一輪（`screen_rows`，被排除的列數與原因印在報告與結果檔的 `run.excluded`）：
+   - **`--since` 之前的列排除**（`before_since`）。2026-09-02 之前的問答抽查不是對生成時的脈絡判，
+     而是從證據帳本回查、比的是整篇研報的**前 4000 字**（`answer._faithfulness_spot_check` docstring；
+     2026-08-21 實測、PR #233 於 2026-09-02 09:44 合併）。那些 verdict 與「重建的生成脈絡」不是同一件事，
+     拿來比只會把帳本回查的偏差算成 judge 差異。合併當天何時重啟生效不可考，預設取次日 2026-09-03。
+   - **haiku 分數重算**：`evaluation.faithfulness_score` 是 supported／全部，分母含 `no_source`
+     （脈絡為空時的主張），而 DeepSeek 這邊脈絡為空的題直接略過、不會有 `no_source`——直接拿存的分數
+     比，偏移與翻轉率會系統性偏向「DeepSeek 比較寬鬆」。所以 haiku 分數只用 supported／unsupported
+     重算（`haiku_score`），全是 `no_source` 的列排除（`all_no_source`），沒有可判主張的列排除
+     （`no_graded_claims`）；重算後與存的分數不同的列數記在 `rescored`。帶別也以重算後的分數分。
 2. **重建脈絡**：`retrieve_context`（零 LLM；本機嵌入＋rerank），篩選只取檢索認得的鍵
    （`RETRIEVAL_FILTER_KEYS`，路由遙測鍵剔除）。只取首輪：續問的改寫查詢與 agentic 補查脈絡
    都沒落庫，重建不了。
@@ -33,10 +43,13 @@
 
 會呼叫付費 API：每題最多 3 個階段（E 的拆解、grounding，G 的 grounding），每個階段最多 3 個請求
 （`judge_schema.HTTP_STAGE_MAX_REQUESTS`）。`--max-cases`（預設 60）限題數，`--max-cny`（預設 15）
-限花費：每題開跑前以「已花實額＋下一題估算（取估算與已完成題平均的較大者）」檢查，會超過就停。
+限花費：每題開跑前以「已花實額＋下一題的**最壞**估算（每階段都用滿請求上限、每個請求輸出都到 2 倍
+`max_tokens`，`worst_case_cost`；取它與已完成題平均的較大者）」檢查，會超過就停。已花實額取 API 回報的
+usage；單題出例外時拿不到 usage，以該題最壞估算計入。字元換 token 是估的，所以上限仍是軟性的：
+**最多超出約一題的花費**。
 單價 `--price-in`／`--price-out`（CNY／百萬 token）預設刻意偏高：9/24 探測 420 次呼叫高峰價約
 US$0.761（輸入 236 萬、輸出 9.1 萬 token），依此反推約輸入 2.2、輸出 8.7 CNY／百萬 token，
-預設取約 2 倍（4、16），所以預算只會提早停、不會超支。`--dry-run` 只取樣與估價，不呼叫 LLM、
+預設取約 2 倍（4、16），加上最壞估算，預算實務上會提早停。`--dry-run` 只取樣與估價，不呼叫 LLM、
 不載嵌入模型、不要求金鑰。
 
 **不取 `scripts/_claude_lock.py` 的 flock**，理由同 `eval/run_ragas.py`：那把鎖防的是批次之間
@@ -48,6 +61,8 @@ US$0.761（輸入 236 萬、輸出 9.1 萬 token），依此反推約輸入 2.2�
 
 終端印比較表；完整結果（逐題分數、verdict、統計、參數）寫進 `--out`（預設
 `data/judge_agreement/<UTC 時間>.json`，已 gitignore）。檔內只有 qa_id 與分數，不含問題、答案或脈絡。
+單題出例外（檢索或 judge）不中止整支：記進 `run.errors`（qa_id、階段、例外），照常跑下一題；只有帳號層級
+錯誤（401／402／404）整批中止。
 
     uv run python scripts/judge_agreement.py --dry-run
     uv run python scripts/judge_agreement.py --max-cases 60 --max-cny 15
@@ -64,7 +79,7 @@ import statistics
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import text
@@ -93,12 +108,18 @@ from app.services.faithfulness import (  # noqa: E402
     DEGRADED_ERROR,
     DEGRADED_SCHEMA,
     GROUND_SYS,
+    JUDGE_MAX_TOKENS_BY_SYSTEM,
     JudgeCallStats,
     check_faithfulness,
     ground_statements,
     make_judge,
 )
-from app.services.judge_schema import JUDGE_MODEL_SQL, LEGACY_JUDGE_MODEL, JudgeSchemaError  # noqa: E402
+from app.services.judge_schema import (  # noqa: E402
+    HTTP_STAGE_MAX_REQUESTS,
+    JUDGE_MODEL_SQL,
+    LEGACY_JUDGE_MODEL,
+    JudgeSchemaError,
+)
 from app.services.llm_models import is_http_model  # noqa: E402
 from app.services.retrieval_pipeline import retrieve_context  # noqa: E402
 
@@ -115,6 +136,10 @@ TOKENS_PER_CHAR = 0.7
 TOKENS_PER_VERDICT = 20
 DEFAULT_PRICE_IN = 4.0
 DEFAULT_PRICE_OUT = 16.0
+# `--since` 的預設（見模組 docstring 第 1 點）：PR #233（抽查改對生成時的脈絡判）2026-09-02 合併，取次日。
+DEFAULT_SINCE = date(2026, 9, 3)
+# 日期以台北時間的午夜為界（生產與使用者都在 UTC+8）。
+_TPE = timezone(timedelta(hours=8))
 
 # hybrid_search 認得的篩選鍵（app/services/retrieval.py）。qa_log.filters 另有路由遙測
 # （path、decided_by、web、llm_model、llm_truncated、llm_error…），不能原樣傳進檢索。
@@ -133,8 +158,8 @@ WITH turns AS (
   FROM research.qa_log
   WHERE active
 )
-SELECT q.id, q.question, q.answer, q.filters, q.evaluation,
-       (q.evaluation->>'faithfulness_score')::float AS score
+SELECT q.id, q.created_at, q.question, q.answer, q.filters, q.evaluation,
+       (q.evaluation->>'faithfulness_score')::float AS stored_score
 FROM research.qa_log q JOIN turns t ON t.id = q.id
 WHERE t.turn = 1
   AND q.active AND q.stopped IS NOT TRUE AND q.answer IS NOT NULL
@@ -173,6 +198,67 @@ def retrieval_filters(filters) -> dict:
     if not isinstance(filters, dict):
         return {}
     return {k: filters[k] for k in RETRIEVAL_FILTER_KEYS if filters.get(k) is not None}
+
+
+def haiku_score(evaluation) -> float | None:
+    """haiku 的分數，只用 supported／unsupported 重算（排除 no_source 與畸形條目）；沒有可判主張回 None。
+
+    不用存的 `faithfulness_score`：它的分母含 no_source（見模組 docstring 第 1 點）。
+    """
+    _texts, verdicts = haiku_claims(evaluation)
+    return sum(verdicts) / len(verdicts) if verdicts else None
+
+
+def _aware(ts) -> datetime | None:
+    if not isinstance(ts, datetime):
+        return None
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
+
+
+def screen_rows(rows: Sequence[dict], since: date) -> tuple[list[dict], dict[str, int]]:
+    """取回的列 → (可比的列, 被排除的列數依原因)。可比的列帶重算後的 `score`（見 `haiku_score`）。
+
+    原因：`before_since`（`since` 台北午夜之前，或沒有 created_at）、`all_no_source`、`no_graded_claims`；
+    另記 `rescored`（重算後與存的分數不同、仍保留的列數，不是排除原因）。保留輸入順序。
+    """
+    cutoff = datetime.combine(since, datetime.min.time(), tzinfo=_TPE)
+    kept: list[dict] = []
+    excluded: dict[str, int] = {}
+
+    def _count(reason: str) -> None:
+        excluded[reason] = excluded.get(reason, 0) + 1
+
+    for r in rows:
+        created = _aware(r.get("created_at"))
+        if created is None or created < cutoff:
+            _count("before_since")
+            continue
+        score = haiku_score(r.get("evaluation"))
+        if score is None:
+            claims = (r.get("evaluation") or {}).get("claims") or []
+            no_source = [c for c in claims if isinstance(c, dict) and c.get("verdict") == "no_source"]
+            _count("all_no_source" if no_source else "no_graded_claims")
+            continue
+        stored = r.get("stored_score")
+        if stored is None or not math.isclose(float(stored), score):
+            _count("rescored")
+        kept.append({**r, "score": score})
+    return kept, excluded
+
+
+EXCLUDE_REASONS = {
+    "before_since": "--since 之前（帳本前 4000 字的舊抽查）",
+    "all_no_source": "全是 no_source（當年脈絡為空）",
+    "no_graded_claims": "沒有 supported／unsupported 主張",
+}
+
+
+def _fmt_excluded(excluded: dict[str, int]) -> str:
+    parts = [f"{EXCLUDE_REASONS[k]} {v}" for k, v in excluded.items() if k in EXCLUDE_REASONS]
+    text = "、".join(parts) or "無"
+    if excluded.get("rescored"):
+        text += f"；另有 {excluded['rescored']} 列保留但重算了 haiku 分數（排除 no_source）"
+    return text
 
 
 def haiku_claims(evaluation) -> tuple[list[str], list[bool]]:
@@ -214,6 +300,19 @@ def estimate_case_cost(answer_chars: int, context_chars: int, claims_chars: int,
     tin += t * (len(GROUND_SYS) + context_chars + claims_chars)          # G grounding
     tout = t * answer_chars + 2 * TOKENS_PER_VERDICT * max(n_claims, 1)
     return (tin * prices.input + tout * prices.output) / 1e6
+
+
+def worst_case_cost(answer_chars: int, context_chars: int, claims_chars: int, prices: Prices) -> float:
+    """一題的最壞花費：每個階段都用滿 `HTTP_STAGE_MAX_REQUESTS` 個請求，每個請求的輸出都到 2 倍該階段
+    `max_tokens`（截斷重試的上限；schema 重試從原上限起算，所以這是上界）。預算檢查用它（審查低7）。"""
+    t = TOKENS_PER_CHAR
+    reqs = HTTP_STAGE_MAX_REQUESTS
+    stages = (
+        (t * (len(DECOMPOSE_SYS) + answer_chars), JUDGE_MAX_TOKENS_BY_SYSTEM[DECOMPOSE_SYS]),       # E 拆解
+        (t * (len(GROUND_SYS) + context_chars + answer_chars), JUDGE_MAX_TOKENS_BY_SYSTEM[GROUND_SYS]),  # E grounding
+        (t * (len(GROUND_SYS) + context_chars + claims_chars), JUDGE_MAX_TOKENS_BY_SYSTEM[GROUND_SYS]),  # G grounding
+    )
+    return sum(reqs * (tin * prices.input + 2 * max_out * prices.output) for tin, max_out in stages) / 1e6
 
 
 # ── 統計（純函式）───────────────────────────────────────────────────────────
@@ -442,25 +541,46 @@ async def evaluate_case(row: dict, context: str, *, model: str, timeout: float, 
 async def run_cases(rows: Sequence[dict], *, model: str, timeout: float, fmin: float, prices: Prices,
                     max_cny: float, retrieve: Retrieve = default_retrieve, check=check_faithfulness,
                     ground=ground_statements, log=print) -> tuple[list[CaseResult], dict]:
-    """逐題循序：重建脈絡 → E＋G。每題開跑前檢查預算；帳號錯誤整批中止（AccountError 往外拋）。"""
+    """逐題循序：重建脈絡 → E＋G。每題開跑前以最壞估算檢查預算；帳號錯誤整批中止（AccountError 往外拋）。
+
+    單題的其他例外（檢索或 judge）記進 `errors`、照常跑下一題：一題的怪輸入不該讓前面已付費的結果
+    全部作廢。judge 階段出例外時拿不到 usage，以該題最壞估算計入已花費（寧可提早停）。
+    """
     results: list[CaseResult] = []
     skipped: dict[str, int] = {}
+    errors: list[dict] = []
     spent = 0.0
     stop_reason = None
     for i, row in enumerate(rows, 1):
+        qa_id = str(row.get("id"))
         filters = retrieval_filters(row.get("filters"))
-        context = await retrieve(row["question"], filters)
+        try:
+            context = await retrieve(row["question"], filters)
+        except Exception as exc:  # noqa: BLE001 — 單題 fail-open，見 docstring
+            errors.append({"qa_id": qa_id, "stage": "retrieve", "error": f"{type(exc).__name__}: {exc}"})
+            log(f"[{i}/{len(rows)}] {qa_id[:8]} 重建脈絡失敗：{type(exc).__name__}: {exc}")
+            continue
         if not (context or "").strip():
             skipped["no_context"] = skipped.get("no_context", 0) + 1
             continue
         texts, _ = haiku_claims(row["evaluation"])
-        est = estimate_case_cost(len(row["answer"]), len(context), sum(map(len, texts)), len(texts), prices)
+        worst = worst_case_cost(len(row["answer"]), len(context), sum(map(len, texts)), prices)
         avg = spent / len(results) if results else 0.0
-        if spent + max(est, avg) > max_cny:
-            stop_reason = f"預算上限：已花約 ¥{spent:.3f}，下一題估 ¥{max(est, avg):.3f}，上限 ¥{max_cny:g}"
+        if spent + max(worst, avg) > max_cny:
+            stop_reason = (f"預算上限：已花約 ¥{spent:.3f}，下一題最壞估 ¥{max(worst, avg):.3f}，"
+                           f"上限 ¥{max_cny:g}")
             break
-        case = await evaluate_case(row, context, model=model, timeout=timeout, fmin=fmin, prices=prices,
-                                   check=check, ground=ground)
+        try:
+            case = await evaluate_case(row, context, model=model, timeout=timeout, fmin=fmin, prices=prices,
+                                       check=check, ground=ground)
+        except AccountError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — 單題 fail-open，見 docstring
+            spent += worst
+            errors.append({"qa_id": qa_id, "stage": "judge", "error": f"{type(exc).__name__}: {exc}"})
+            log(f"[{i}/{len(rows)}] {qa_id[:8]} judge 例外（以最壞估算 ¥{worst:.3f} 計入）："
+                f"{type(exc).__name__}: {exc}")
+            continue
         spent += case.cost_cny
         results.append(case)
         log(f"[{i}/{len(rows)}] {case.qa_id[:8]} {case.band:<5} haiku={case.h_score:.3f} "
@@ -468,7 +588,8 @@ async def run_cases(rows: Sequence[dict], *, model: str, timeout: float, fmin: f
             + (f" E降級={case.d_degraded}" if case.d_degraded else "")
             + (f" G降級={case.g_degraded}" if case.g_degraded else "")
             + f" 累計約 ¥{spent:.3f}")
-    return results, {"spent_cny_est": round(spent, 4), "skipped": skipped, "stop_reason": stop_reason}
+    return results, {"spent_cny_est": round(spent, 4), "skipped": skipped, "errors": errors,
+                     "stop_reason": stop_reason}
 
 
 def _fmt(v: float | None, spec: str = ".3f") -> str:
@@ -482,6 +603,13 @@ def print_report(summary: dict, run_meta: dict, *, model: str, fmin: float) -> N
           f"  降級 {summary['degraded'] or '無'}")
     print(f"花費估計 ¥{run_meta['spent_cny_est']}  略過 {run_meta['skipped'] or '無'}"
           + (f"  提前停止：{run_meta['stop_reason']}" if run_meta.get("stop_reason") else ""))
+    print(f"取樣前排除：{_fmt_excluded(run_meta.get('excluded') or {})}（haiku 分數只計 supported／unsupported）")
+    errors = run_meta.get("errors") or []
+    if errors:
+        by_stage: dict[str, int] = {}
+        for err in errors:
+            by_stage[err["stage"]] = by_stage.get(err["stage"], 0) + 1
+        print(f"單題例外 {len(errors)} 題（{by_stage}，未列入比較；明細在結果檔 run.errors）")
     print(f"API 回報 model={run_meta.get('model_resp')}  system_fingerprint={run_meta.get('fingerprints')}")
     print("\n[E 模式] DeepSeek 端到端分數 − haiku 歷史分數")
     ci = e["shift_ci"]
@@ -522,8 +650,11 @@ def _main() -> None:
     ap.add_argument("--model", default=settings.faithfulness_model,
                     help="受測 judge（預設 FAITHFULNESS_MODEL；必須是 DeepSeek 白名單模型）")
     ap.add_argument("--days", type=int, default=120, help="取樣窗期（天）")
+    ap.add_argument("--since", type=date.fromisoformat, default=DEFAULT_SINCE,
+                    help=f"只取這天（台北時間）起的抽查（預設 {DEFAULT_SINCE}；之前的抽查比的是帳本前 4000 字）")
     ap.add_argument("--max-cases", type=int, default=60)
-    ap.add_argument("--max-cny", type=float, default=15.0, help="花費上限（CNY，以保守單價估算）")
+    ap.add_argument("--max-cny", type=float, default=15.0,
+                    help="花費上限（CNY，保守單價、下一題以最壞估算檢查；字元換 token 是估的，最多超出約一題的花費）")
     ap.add_argument("--price-in", type=float, default=DEFAULT_PRICE_IN, help="輸入單價 CNY／百萬 token")
     ap.add_argument("--price-out", type=float, default=DEFAULT_PRICE_OUT, help="輸出單價 CNY／百萬 token")
     ap.add_argument("--timeout", type=float, default=settings.ask_faithfulness_timeout,
@@ -542,19 +673,21 @@ def _main() -> None:
 
     fmin = settings.faithfulness_min
     prices = Prices(args.price_in, args.price_out)
-    rows = pick_cases(asyncio.run(_fetch_rows(args.days, fmin)), args.max_cases, fmin)
+    screened, excluded = screen_rows(asyncio.run(_fetch_rows(args.days, fmin)), args.since)
+    rows = pick_cases(screened, args.max_cases, fmin)
     bands = {b: sum(1 for r in rows if band_of(r["score"], fmin) == b) for b in ("below", "edge", "above")}
+    print(f"取樣前排除：{_fmt_excluded(excluded)}")
     if args.dry_run:
         est = sum(
             estimate_case_cost(len(r["answer"]), MAX_CONTEXT_CHARS, sum(map(len, haiku_claims(r["evaluation"])[0])),
                                len(haiku_claims(r["evaluation"])[0]), prices)
             for r in rows
         )
-        print(f"dry-run：取樣 {len(rows)} 題（{bands}），估計上限約 ¥{est:.2f}"
-              f"（脈絡以 MAX_CONTEXT_CHARS={MAX_CONTEXT_CHARS} 字計），預算上限 ¥{args.max_cny:g}")
+        print(f"dry-run：取樣 {len(rows)} 題（{bands}），估計約 ¥{est:.2f}"
+              f"（脈絡以 MAX_CONTEXT_CHARS={MAX_CONTEXT_CHARS} 字計、不含重試），預算上限 ¥{args.max_cny:g}")
         return
     if not rows:
-        print("沒有符合條件的歷史 haiku 判定（窗期內首輪、未降級、有主張）", file=sys.stderr)
+        print(f"沒有符合條件的歷史 haiku 判定（{args.since} 起、窗期內首輪、未降級、有可判主張）", file=sys.stderr)
         raise SystemExit(1)
 
     try:
@@ -564,6 +697,7 @@ def _main() -> None:
     except AccountError as exc:
         print(f"整批中止：{exc}（儲值／金鑰見 docs/production_resilience.md）", file=sys.stderr)
         raise SystemExit(RC_CONFIG) from None
+    run_meta["excluded"] = excluded
     run_meta["fingerprints"] = sorted({f for c in cases for f in c.fingerprints})
     run_meta["model_resp"] = next((c.model_resp for c in cases if c.model_resp), None)
     summary = summarize(cases, fmin=fmin, n_boot=args.bootstrap, seed=args.seed)
@@ -573,7 +707,8 @@ def _main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     doc = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "params": {"model": args.model, "days": args.days, "max_cases": args.max_cases, "max_cny": args.max_cny,
+        "params": {"model": args.model, "days": args.days, "since": args.since.isoformat(),
+                   "max_cases": args.max_cases, "max_cny": args.max_cny,
                    "prices_cny_per_mtok": asdict(prices), "timeout": args.timeout, "fmin": fmin,
                    "bootstrap": args.bootstrap, "seed": args.seed, "reference_judge": LEGACY_JUDGE_MODEL},
         "run": run_meta,

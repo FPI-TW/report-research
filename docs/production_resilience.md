@@ -706,8 +706,9 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 非串流時多半還在生成，不重送以免重複付費）、`error`（adapter 漏出的意外例外，看 web 日誌的 traceback）。每個階段最多 3 個請求，一次抽查最多 6 個。
 
 **描述性校準**（不是閘門，結果只給人看）：`uv run python scripts/judge_agreement.py --dry-run` 先看取樣數與
-估價，再正式跑（預設 60 題、花費上限 ¥15，保守單價估算）。它拿 `qa_log` 裡歷史的 haiku 判定當參考，
-印 κ、平均偏移、門檻翻轉率；脈絡是重建的，差異同時來自 judge 與脈絡。離峰跑（會在本行程載入 BGE-M3）。
+估價，再正式跑（預設 60 題、花費上限 ¥15，保守單價估算）。它拿 `qa_log` 裡歷史的 haiku 判定當參考
+（只取 `--since` 預設 2026-09-03 起的抽查——之前比的是帳本前 4000 字；haiku 分數排除 `no_source` 重算，
+被排除的列數與原因會印出來），印 κ、平均偏移、門檻翻轉率；脈絡是重建的，差異同時來自 judge 與脈絡。離峰跑（會在本行程載入 BGE-M3）。
 
 **回退**：沒有可用的 Claude judge（CLI 已放棄）。judge 有系統性問題時只能暫停抽查
 （repo 根 `.env` 設回 `ASK_FAITHFULNESS_ENABLED=0` 並重啟 web），或把 `FAITHFULNESS_MODEL` 換成

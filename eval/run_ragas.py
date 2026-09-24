@@ -71,6 +71,7 @@ from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, stream_completion  # noqa: E402
+from app.services.llm_http import ACCOUNT_KINDS  # noqa: E402
 from app.services.llm_models import (  # noqa: E402
     JUDGE_LINEAGE_CLAUDE,  # noqa: F401 — 以原名重新匯出（tests/test_run_ragas.py）
     JUDGE_LINEAGE_DEEPSEEK,
@@ -126,6 +127,20 @@ GEN_TIMEOUT = 120.0
 # 仍讓整題記 error——那不是量尺的問題，吞掉會把 bug 藏成分數缺值。
 # JudgeSchemaError＝JSON 合法但不合 schema v2（已重試 1 次，app/services/judge_schema.py）。
 _JUDGE_FAILURES = (JudgeError, JudgeSchemaError, LLMUnavailableError)
+
+
+
+class GeneratorAccountError(Exception):
+    """生成端帳號層級錯誤（`LLMUnavailableError.kind` 在 `ACCOUNT_KINDS`：auth／quota／config）。
+
+    402 通常**先在生成端**出現（每題先生成、再 judge）：記成單題 error 的話整批照跑完、結果檔照寫，
+    `eval_compare` 看到的是「每題都 error」的劣化，而不是「帳號壞了、這份沒量到東西」。與
+    `JudgeAccountError` 同樣整批中止（`_main` 以 rc=2 結束、不寫結果檔）。
+    """
+
+
+# 整批中止的帳號層級錯誤（judge 或生成端）：eval_question 原樣拋出，_main 以 rc=2 結束。
+_ACCOUNT_ERRORS = (JudgeAccountError, GeneratorAccountError)
 
 # judge 系統提示 → 任務名，供 --dump-io 標記每一次 judge 呼叫屬於哪個指標。
 _JUDGE_TASKS = {
@@ -266,6 +281,8 @@ async def eval_question(
       錯誤記在 "judge_errors"（M8，見模組 docstring）。
     - judge 帳號層級錯誤（JudgeAccountError：401／402／404）→ 原樣拋出、整批中止：每一題都會踩到，
       記成 N 題 judge_errors 還寫出一份結果檔，只會讓人拿一份沒量到東西的結果去比。
+    - 生成端同一類錯誤（`LLMUnavailableError.kind` 在 `ACCOUNT_KINDS`）→ 轉成 GeneratorAccountError
+      整批中止，理由同上（見該類別 docstring）；生成端其他錯誤仍是單題 error。
     - 成功時另附私有鍵 "_io"（問題、脈絡、答案、judge 呼叫明細），由 run() 取走供
       --dump-io，不寫進結果檔。
 
@@ -318,7 +335,12 @@ async def eval_question(
                 question, filters=filters, **retrieval_params
             )
         contexts = split_contexts(context)
-        answer, truncated = await _generate_answer(question, context, model=gen_model)
+        try:
+            answer, truncated = await _generate_answer(question, context, model=gen_model)
+        except LLMUnavailableError as e:
+            if e.kind in ACCOUNT_KINDS:
+                raise GeneratorAccountError(f"生成端（{gen_model}）API[{e.kind}] {e}") from e
+            raise
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         calls: list[dict] = []
@@ -370,7 +392,7 @@ async def eval_question(
             "judge_calls": calls,
         }
         return result
-    except JudgeAccountError:
+    except _ACCOUNT_ERRORS:
         raise  # 帳號層級（401／402／404）：每一題都會失敗，整批中止（_main 以 rc=2 結束）
     except Exception as e:  # noqa: BLE001 — 離線批次逐題 fail-open，不讓單題炸掉整批
         return {**base, "error": f"{type(e).__name__}: {e}"}
@@ -854,9 +876,10 @@ def _main() -> None:
                 dump_dir=args.dump_io,
             )
         )
-    except JudgeAccountError as exc:
+    except _ACCOUNT_ERRORS as exc:
         # 不寫結果檔：一份每題都沒量到的結果檔，比沒有結果檔更容易被拿去比較。
-        print(f"judge 帳號層級錯誤，整批中止（未寫出 {args.out}）：{exc}", file=sys.stderr)
+        who = "judge" if isinstance(exc, JudgeAccountError) else "生成端"
+        print(f"{who}帳號層級錯誤，整批中止（未寫出 {args.out}）：{exc}", file=sys.stderr)
         raise SystemExit(2) from None
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))

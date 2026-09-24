@@ -74,13 +74,21 @@ rc=2 拒跑（`scripts/_llm_env.py`）。CLI 呼叫不進窗、也不受標記�
 ## 400 升級（審查 H2）
 
 一般的 400（`bad_request`）多半是單篇輸入造成的（超長、怪字元），算單篇失敗、記跳過名單
-（連續 3 輪才跳過）。**只有**同一行程裡 ≥2 個不同 `file_hash` 收到**逐字相同**的 400 訊息，
+（連續 3 輪才跳過）。**只有**同一行程裡 ≥2 個不同 `file_hash` 收到**正規化後相同**的 400 訊息，
 才判定是請求本身或設定壞了（每一篇都會踩到），升級成 `BadRequestEscalation`（config 型、整批
 rc=2）。刻意沒有「本輪第一個請求就 400 → 升級」：那篇研報若排在最前面，每一輪都會中止整批、
-而中止不記跳過名單，它永遠不會被跳過——匯入段就等於全站停止入庫。升級前，觸發的那幾篇要先以
-`bad_request` 記入跳過名單（各批次 main 呼叫 `record_escalation`），下一輪才跳得過去；匯入段另把
-它們寫進保留檔（`scripts/sync_new_reports.py`）。身分由 `run_claude(meta={"file_hash": …})` 傳入，
-沒有 file_hash 的呼叫（簡報）不參與。
+而中止不記跳過名單，它永遠不會被跳過——匯入段就等於全站停止入庫。升級前，觸發的那幾篇要先記入
+跳過名單（各批次 main 呼叫 `record_escalation`），而且**直接記到 `SKIP_AFTER_ROUNDS`**
+（`FailureRecorder.record(..., escalated=True)`）：只記一筆的話要連續 3 輪整段 rc=2 才跳得過去。
+匯入段另把它們寫進保留檔（`scripts/sync_new_reports.py`）。修好請求或設定之後，這幾篇要加
+`--retry-blocked` 才會再打。身分由 `run_claude(meta={"file_hash": …})` 傳入，沒有 file_hash 的呼叫
+（簡報）不參與。
+
+比對鍵是**正規化**的訊息（`_escalation_key`）：小寫、長 hex／request id 換成 `<id>`、數字換成 `#`。
+逐字比對的話，DeepSeek 反序列化錯誤帶的 `at line 1 column N`（N 隨 prompt 長度變）會讓全面性的
+400 永遠湊不到兩篇相同，連續 3 輪後把整個工作集打進跳過名單。反過來，**本質上是單篇輸入造成的
+訊息**（上下文長度、輸入過長：`_INPUT_SPECIFIC`）不參與升級——兩篇超長研報正規化後是同一句，
+升級會讓整批為了兩篇研報中止。
 
 ## 用量記錄（第二版計畫 §4.8）
 
@@ -307,9 +315,40 @@ _BREAKER = _Breaker()
 # ── 400 升級 ─────────────────────────────────────────────────────────────────
 BAD_REQUEST_ESCALATE_AT = 2  # 同一訊息出現在幾篇不同研報就升級
 
+# 正規化：先把 id 類的長字串收掉（裡面的數字不該再被拆成 `#`），再把剩下的數字換成 `#`。
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_LONG_HEX = re.compile(r"\b[0-9a-f]{16,}\b")
+# request id 之類：前綴＋分隔＋英數混合，或 16 字元以上、同時有字母與數字的片段
+_REQUEST_ID = re.compile(
+    r"\b(?:req|request|trace|span)[-_ ]?id[:=\s]*[a-z0-9_-]+"
+    r"|\b(?=[a-z0-9_-]*\d)(?=[a-z0-9_-]*[a-z])[a-z0-9_-]{16,}\b"
+)
+_DIGITS = re.compile(r"\d+")
+_SPACES = re.compile(r"\s+")
+# 本質上是單篇輸入造成的 400：不參與升級（見模組 docstring「400 升級」）。只收「輸入太長」這一類；
+# `max_tokens` 參數本身不合法（例如超過上限）是呼叫點的程式錯、每篇都會踩到，**不能**排除。
+_INPUT_SPECIFIC = re.compile(
+    r"context[ _-]?length|maximum context|context window|reduce the length"
+    r"|(?:prompt|input|message|messages|request) (?:is |are )?too long"
+    r"|too many (?:input |prompt )?tokens"
+    r"|(?:prompt|input|messages?) (?:length )?exceeds?"
+)
+
+
+def _escalation_key(detail: str) -> Optional[str]:
+    """400 細節 → 升級比對鍵；單篇輸入造成的訊息回 None（不參與升級）。"""
+    low = (detail or "").lower()
+    if _INPUT_SPECIFIC.search(low):
+        return None
+    low = _UUID.sub("<id>", low)
+    low = _REQUEST_ID.sub("<id>", low)
+    low = _LONG_HEX.sub("<id>", low)
+    low = _DIGITS.sub("#", low)
+    return _SPACES.sub(" ", low).strip()
+
 
 class _BadRequestTracker:
-    """400 訊息 → 收到它的 file_hash 集合（行程範圍、執行緒安全）。"""
+    """400 訊息（正規化後）→ 收到它的 file_hash 集合（行程範圍、執行緒安全）。"""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -322,8 +361,11 @@ class _BadRequestTracker:
     def observe(self, detail: str, file_hash: Optional[str]) -> None:
         if not file_hash:
             return
+        key = _escalation_key(detail)
+        if key is None:
+            return
         with self._lock:
-            hashes = self._seen.setdefault(detail, set())
+            hashes = self._seen.setdefault(key, set())
             hashes.add(file_hash)
             if len(hashes) < BAD_REQUEST_ESCALATE_AT:
                 return
@@ -333,7 +375,7 @@ class _BadRequestTracker:
             llm_http.error_string(
                 llm_http.CONFIG,
                 f"{len(triggered)} 篇不同研報收到相同的 400（{detail[:120]}），判定為請求或設定錯誤而非單篇輸入；"
-                f"觸發研報 {short}（已記入跳過名單 bad_request）",
+                f"觸發研報 {short}（已記入跳過名單，下一輪起跳過）",
             ),
             triggered,
         )
@@ -345,6 +387,8 @@ _BAD_REQUESTS = _BadRequestTracker()
 async def record_escalation(exc: BaseException, recorder) -> None:
     """整批中止前：`BadRequestEscalation` 的觸發研報以 `bad_request` 記入跳過名單（審查 H2）。
 
+    以 `escalated=True` 記：計數直接拉到 `SKIP_AFTER_ROUNDS`，下一輪就跳過（只記一筆的話，觸發篇
+    下一輪還會再打、再升級，連續 3 輪整段 rc=2）。修好之後這幾篇要加 `--retry-blocked`。
     其他中止（帳號層級、斷路器、CLI 找不到）沒有 `file_hashes`，什麼都不做。`recorder` 為 None
     （表不存在）時只印出來。完整 file_hash 印在這裡，錯誤訊息裡只有前 12 碼。
     """
@@ -355,7 +399,7 @@ async def record_escalation(exc: BaseException, recorder) -> None:
     if recorder is None:
         return
     for h in hashes:
-        await recorder.record(h, llm_failures.BAD_REQUEST)
+        await recorder.record(h, llm_failures.BAD_REQUEST, escalated=True)
 
 
 def _reset_state() -> None:

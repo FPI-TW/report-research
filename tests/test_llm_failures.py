@@ -129,6 +129,46 @@ class UpsertSemanticsTests(unittest.TestCase):
         self._record("unparseable", "m2")
         self.assertEqual(self._row(), [("unparseable", "m2", 1, "T1")])
 
+    def _escalate(self, model, inc=1):
+        self.con.execute(
+            lf.ESCALATED_RECORD_SQL,
+            {"file_hash": "h1", "task": "title", "reason": "bad_request", "model": model, "inc": inc},
+        )
+
+    def _skipped(self, model) -> bool:
+        self.con.execute("INSERT OR IGNORE INTO research.research_report VALUES ('h1')")
+        sql = "SELECT count(*) FROM research.research_report r WHERE " + lf.skip_clause_sql("r")
+        return self.con.execute(sql, lf.skip_params("title", model)).fetchone()[0] == 0
+
+    def test_escalated_first_record_skips_next_round(self):
+        """審查中2：400 升級的觸發篇第一次記就達 SKIP_AFTER_ROUNDS，下一輪就跳過（兩邊判斷一致）。"""
+        self._escalate("m1")
+        self.assertEqual(self._row(), [("bad_request", "m1", lf.SKIP_AFTER_ROUNDS, "T0")])
+        self.assertTrue(self._skipped("m1"))
+        self.assertTrue(lf.should_skip(lf.FailureRecord("bad_request", "m1", lf.SKIP_AFTER_ROUNDS), "m1"))
+        self.assertFalse(self._skipped("m2"), "換 model 照舊重試")
+
+    def test_escalated_raises_existing_count_to_floor(self):
+        for before, inc, want in ((1, 1, 3), (1, 0, 3), (2, 1, 3), (3, 0, 3), (3, 1, 4), (5, 1, 6), (5, 0, 5)):
+            with self.subTest(before=before, inc=inc):
+                self.con.execute("DELETE FROM research.llm_task_failure")
+                for _ in range(before):
+                    self._record("unparseable", "m1")
+                self._escalate("m1", inc)
+                self.assertEqual(self._row(), [("bad_request", "m1", want, "T0")])
+                self.assertTrue(self._skipped("m1"))
+
+    def test_escalated_after_model_change_resets_to_floor(self):
+        for _ in range(5):
+            self._record("unparseable", "m1")
+        self._escalate("m2")
+        self.assertEqual(self._row(), [("bad_request", "m2", lf.SKIP_AFTER_ROUNDS, "T1")])
+
+    def test_plain_bad_request_needs_three_rounds(self):
+        """對照組：一般的 bad_request 記一次不跳過（升級那條路徑才是立即跳過）。"""
+        self._record("bad_request", "m1")
+        self.assertFalse(self._skipped("m1"))
+
     def test_clear_deletes_only_that_task(self):
         self._record("unparseable", "m1")
         self.con.execute(
@@ -180,6 +220,18 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
         inserts = [c for c in calls if c[0] != "commit"]
         self.assertEqual([c[1]["file_hash"] for c in inserts], ["h1", "h2"])
 
+    async def test_escalated_record_bypasses_dedupe_without_double_counting(self):
+        """升級那一筆一定要寫（本輪已記過也寫，inc=0）；沒記過的 inc=1；之後同一輪的一般記錄照舊去重。"""
+        calls: list = []
+        rec = lf.FailureRecorder("title", "m1", lambda: _FakeSession(calls))
+        await rec.record("h1", lf.BAD_REQUEST)
+        await rec.record("h1", lf.BAD_REQUEST, escalated=True)
+        await rec.record("h2", lf.BAD_REQUEST, escalated=True)
+        await rec.record("h2", lf.BAD_REQUEST)
+        inserts = [c for c in calls if c[0] != "commit"]
+        self.assertEqual([c[0] for c in inserts], [lf.RECORD_SQL, lf.ESCALATED_RECORD_SQL, lf.ESCALATED_RECORD_SQL])
+        self.assertEqual([(c[1]["file_hash"], c[1]["inc"]) for c in inserts[1:]], [("h1", 0), ("h2", 1)])
+
     async def test_unknown_vocab_raises(self):
         with self.assertRaises(ValueError):
             lf.FailureRecorder("titles", "m1", lambda: _FakeSession([]))
@@ -225,7 +277,7 @@ class _SpyRecorder:
         self.recorded: list = []
         self.cleared: list = []
 
-    async def record(self, file_hash, reason):
+    async def record(self, file_hash, reason, *, escalated=False):
         self.recorded.append((file_hash, reason))
 
     async def clear(self, file_hash):

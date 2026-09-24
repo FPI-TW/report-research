@@ -14,6 +14,10 @@
 - `content_filter`、`truncated`：1 次就跳過。同樣的輸入再送一次，結果不會變。
 - 其他原因：連續 `SKIP_AFTER_ROUNDS` 輪才跳過。「連續」由「成功就刪列」保證。
 - 換 model 會重試：紀錄的 model 與這次要用的不同時不跳過；再失敗時計數歸 1。
+- 400 升級的觸發篇（`record(..., escalated=True)`，`scripts/_claude_cli.record_escalation`）：計數
+  直接拉到 `SKIP_AFTER_ROUNDS`，**下一輪就跳過**。升級代表請求或設定壞了、整批中止；只記一筆的話
+  觸發篇下一輪還會排在前面、再打、再升級，連續 3 輪整段 rc=2 才跳得過去。代價是修好之後這幾篇
+  **要加 `--retry-blocked`** 才會再打（docs/production_resilience.md「400 升級」）。
 - 手動解除：各批次的 `--retry-blocked`，或直接 DELETE 該列。
 
 **跳過鍵只看 model，不看 prompt 或 `EXTRACTION_VERSION`。** 改了 prompt（或解析規則）
@@ -115,6 +119,19 @@ RECORD_SQL = (
     "reason = EXCLUDED.reason, model = EXCLUDED.model, last_at = now()"
 )
 
+# 400 升級的觸發篇：計數至少拉到 SKIP_AFTER_ROUNDS（下一輪就跳過）。`:inc` 是這一輪還沒記過時的 +1
+# （本輪單篇路徑已記過就是 0，不重複累加）。刻意用 CASE 而不是 GREATEST：sqlite 沒有 GREATEST，
+# 語意測試（tests/test_llm_failures.py）要在 sqlite 上跑同一句 SQL。換 model 時同 RECORD_SQL 重設 first_at。
+ESCALATED_RECORD_SQL = (
+    f"INSERT INTO {TABLE} AS f (file_hash, task, reason, model, fail_count) "
+    f"VALUES (:file_hash, :task, :reason, :model, {SKIP_AFTER_ROUNDS}) "
+    "ON CONFLICT (file_hash, task) DO UPDATE SET "
+    f"fail_count = CASE WHEN f.model = EXCLUDED.model AND f.fail_count + :inc > {SKIP_AFTER_ROUNDS} "
+    f"THEN f.fail_count + :inc ELSE {SKIP_AFTER_ROUNDS} END, "
+    "first_at = CASE WHEN f.model = EXCLUDED.model THEN f.first_at ELSE now() END, "
+    "reason = EXCLUDED.reason, model = EXCLUDED.model, last_at = now()"
+)
+
 CLEAR_SQL = f"DELETE FROM {TABLE} WHERE file_hash = :file_hash AND task = :task"
 
 LIST_SQL = (
@@ -156,13 +173,22 @@ class FailureRecorder:
         # 記過（並行的另一篇才觸發升級），main 再記一次會讓「連續 3 輪」少算一輪。
         self._recorded: set[str] = set()
 
-    async def record(self, file_hash: Optional[str], reason: str) -> None:
+    async def record(self, file_hash: Optional[str], reason: str, *, escalated: bool = False) -> None:
+        """記一筆失敗。`escalated=True`（400 升級的觸發篇）：計數拉到 `SKIP_AFTER_ROUNDS`，下一輪就跳過；
+        本輪單篇路徑已記過也照寫（不再 +1），否則那一篇停在 1、下一輪照打。"""
         if reason not in REASONS:
             raise ValueError(f"未知的 reason：{reason!r}")
-        if not file_hash or file_hash in self._recorded:
+        if not file_hash:
+            return
+        params = {"file_hash": file_hash, "task": self.task, "reason": reason, "model": self.model}
+        if escalated:
+            params["inc"] = 0 if file_hash in self._recorded else 1
+            self._recorded.add(file_hash)
+            await self._exec(ESCALATED_RECORD_SQL, params, "記錄")
+            return
+        if file_hash in self._recorded:
             return
         self._recorded.add(file_hash)
-        params = {"file_hash": file_hash, "task": self.task, "reason": reason, "model": self.model}
         await self._exec(RECORD_SQL, params, "記錄")
 
     async def clear(self, file_hash: Optional[str]) -> None:

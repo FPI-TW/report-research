@@ -701,6 +701,34 @@ class BadRequestEscalationTests(_HttpCase):
         res = self.call_for("h2")
         self.assertTrue(res.error.startswith("API[bad_request]"))
 
+    def test_serde_column_differs_per_request_still_escalates(self):
+        """審查實驗 [2]：6 篇收到只差 `column N` 的 422 → 第二篇就升級（修正前 6 篇都不升級）。"""
+        self.install(lambda req: httpx.Response(422, json={"error": {"message": (
+            "Failed to deserialize the JSON body into the target type: reasoning_effort: unknown variant "
+            f"`none`, expected one of `low`, `medium`, `high` at line 1 column {len(req.content)}")}}))
+        results, esc = [], None
+        for i in range(6):
+            try:
+                results.append(self.call(prompt="內文" * (100 + i),
+                                         meta={"task": "title", "file_hash": f"h{i}", "report_id": None}))
+            except cc.BadRequestEscalation as exc:
+                esc = exc
+                break
+        self.assertIsNotNone(esc, [r.error for r in results])
+        self.assertEqual(esc.file_hashes, ("h0", "h1"))
+        self.assertEqual(len({json.loads(r.content)["messages"][0]["content"] for r in self.requests}), 2,
+                         "兩篇 prompt 長度不同（column 不同）")
+
+    def test_context_length_on_two_files_does_not_escalate(self):
+        """兩篇超長研報：正規化後同一句，但它是單篇輸入問題，不得中止整批。"""
+        self.install(lambda req: httpx.Response(400, json={"error": {"message": (
+            "This model's maximum context length is 131072 tokens. However, you requested "
+            f"{131072 + len(req.content)} tokens. Please reduce the length of the messages.")}}))
+        for i in range(2):
+            meta = {"task": "summary", "file_hash": f"h{i}", "report_id": None}
+            res = self.call(prompt="內文" * (100 + i), meta=meta)
+            self.assertTrue(res.error.startswith("API[bad_request]"), res.error)
+
     def test_same_file_twice_does_not_escalate(self):
         self._bad()
         self.call_for("h1")
@@ -720,7 +748,8 @@ class BadRequestEscalationTests(_HttpCase):
             self.assertTrue(self.call_for(h).error.startswith("API[content_filter]"))
 
     def test_record_escalation_records_every_trigger_once(self):
-        """升級前先把觸發的研報以 bad_request 記入跳過名單；同一篇一輪只記一次。"""
+        """升級前先把觸發的研報以 bad_request 記入跳過名單，而且直接記到 SKIP_AFTER_ROUNDS（審查中2）：
+        單篇路徑本輪已記過的那篇也要補上升級那一筆（inc=0，不重複累加），否則它停在 1、下一輪照打。"""
         import asyncio
 
         calls: list = []
@@ -733,7 +762,7 @@ class BadRequestEscalationTests(_HttpCase):
                 return False
 
             async def execute(self, stmt, params=None):
-                calls.append(params)
+                calls.append((str(stmt), params))
 
             async def commit(self):
                 pass
@@ -745,11 +774,72 @@ class BadRequestEscalationTests(_HttpCase):
             await rec.record("h1", lf.BAD_REQUEST)  # 單篇路徑已記過 h1
             await cc.record_escalation(exc, rec)
             await cc.record_escalation(cc.LlmEnvironmentError("API[quota] x"), rec)  # 其他中止：不記
+            await rec.record("h2", lf.BAD_REQUEST)  # 升級後同一輪再記：去重
 
         with mock.patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()):
             asyncio.run(go())
-        self.assertEqual([c["file_hash"] for c in calls], ["h1", "h2"])
-        self.assertEqual({c["reason"] for c in calls}, {lf.BAD_REQUEST})
+        self.assertEqual([p["file_hash"] for _, p in calls], ["h1", "h1", "h2"])
+        self.assertEqual({p["reason"] for _, p in calls}, {lf.BAD_REQUEST})
+        self.assertEqual(calls[0][0], lf.RECORD_SQL)
+        self.assertEqual([sql for sql, _ in calls[1:]], [lf.ESCALATED_RECORD_SQL] * 2)
+        self.assertEqual([p["inc"] for _, p in calls[1:]], [0, 1], "本輪已記過的不再 +1")
+
+    def test_record_escalation_without_recorder_does_not_crash(self):
+        """表不存在（recorder 為 None）時只印出觸發研報，不拋——中止碼要由原本的例外決定。"""
+        import asyncio
+        import io
+
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            asyncio.run(cc.record_escalation(cc.BadRequestEscalation("API[config] x", ("h1", "h2")), None))
+        self.assertIn("h1, h2", out.getvalue())
+
+
+class EscalationKeyTests(unittest.TestCase):
+    """審查中1：400 升級的比對鍵要正規化（數字、id），單篇輸入造成的訊息不參與。"""
+
+    def test_numbers_and_ids_are_normalized(self):
+        same = [
+            ("HTTP 422 Failed to deserialize: unknown variant `none` at line 1 column 1834",
+             "HTTP 422 Failed to deserialize: unknown variant `none` at line 1 column 52"),
+            ("HTTP 400 Invalid request (request id: 9f3a2b7c-1d2e-4f50-8a9b-0c1d2e3f4a5b)",
+             "HTTP 400 Invalid request (request id: 0a1b2c3d-4e5f-4a6b-8c7d-9e8f7a6b5c4d)"),
+            ("HTTP 400 Invalid request, trace 7c1f0e9a2b3d4c5e6f708192a3b4c5d6",
+             "HTTP 400 Invalid request, trace 00ff11ee22dd33cc44bb55aa66997788"),
+            ("HTTP 400 Bad param req_id=Ab12Cd34Ef56Gh78", "HTTP 400 Bad param req_id=Zz98Yy76Xx54Ww32"),
+            ("HTTP 400 INVALID Request", "HTTP 400 invalid request"),
+        ]
+        for a, b in same:
+            with self.subTest(a=a):
+                self.assertIsNotNone(cc._escalation_key(a))
+                self.assertEqual(cc._escalation_key(a), cc._escalation_key(b))
+
+    def test_different_wording_stays_different(self):
+        self.assertNotEqual(cc._escalation_key("HTTP 400 Invalid request: field alpha"),
+                            cc._escalation_key("HTTP 400 Invalid request: field bravo"))
+        self.assertNotEqual(cc._escalation_key("HTTP 400 reasoning_effort unknown"),
+                            cc._escalation_key("HTTP 400 thinking unknown"))
+
+    def test_input_specific_messages_are_excluded(self):
+        for msg in (
+            "HTTP 400 This model's maximum context length is 131072 tokens. However, you requested 140000 tokens.",
+            "HTTP 400 context_length_exceeded",
+            "HTTP 400 Please reduce the length of the messages or completion.",
+            "HTTP 400 Invalid request: prompt too long",
+            "HTTP 400 Input exceeds the model limit",
+            "HTTP 400 too many tokens",
+        ):
+            with self.subTest(msg=msg):
+                self.assertIsNone(cc._escalation_key(msg))
+
+    def test_global_parameter_errors_are_not_excluded(self):
+        """`max_tokens` 參數本身不合法是呼叫點的程式錯、每篇都會踩到：要能升級。"""
+        for msg in (
+            "HTTP 400 Invalid max_tokens value, the valid range of max_tokens is [1, 8192]",
+            "HTTP 422 Failed to deserialize the JSON body into the target type: reasoning_effort: unknown variant",
+        ):
+            with self.subTest(msg=msg):
+                self.assertIsNotNone(cc._escalation_key(msg))
 
 
 USAGE_FIELDS = {

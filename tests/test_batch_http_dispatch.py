@@ -90,12 +90,18 @@ ACCOUNT_CASES = {
 
 
 class SpyRecorder:
+    """簽章與 `llm_failures.FailureRecorder` 同步（加參數時這裡也要加，過期的假物件拋 TypeError
+    會被外層 except 吞掉）。`escalated`：以 `escalated=True` 記的 file_hash（400 升級的觸發篇）。"""
+
     def __init__(self):
         self.recorded: list = []
         self.cleared: list = []
+        self.escalated: list = []
 
-    async def record(self, file_hash, reason):
+    async def record(self, file_hash, reason, *, escalated=False):
         self.recorded.append((file_hash, reason))
+        if escalated:
+            self.escalated.append(file_hash)
 
     async def clear(self, file_hash):
         self.cleared.append(file_hash)
@@ -491,10 +497,28 @@ class BreakerAbortsBatchTests(HttpMixin, unittest.TestCase):
                 self.assertEqual(rec.recorded, [], "過載不是研報的問題，不記跳過名單")
 
 
+_FIELDS = ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel")
+
+
 def _unique_400():
-    """每個請求一則不同的 400 訊息（單篇輸入問題的樣子）。"""
-    n = iter(range(1, 1000))
+    """每個請求一則不同的 400 訊息（單篇輸入問題的樣子）。差異刻意是英文字而不是數字：升級比對會把
+    數字正規化成 `#`（`_claude_cli._escalation_key`），只差數字的訊息算同一則。"""
+    n = iter(_FIELDS)
     return lambda req: httpx.Response(400, json={"error": {"message": f"Invalid request: field {next(n)}"}})
+
+
+def _serde_422(req):
+    """DeepSeek 反序列化錯誤的形狀：`column N` 隨請求 body 長度變（審查實驗 [2]）。"""
+    return httpx.Response(422, json={"error": {"message": (
+        "Failed to deserialize the JSON body into the target type: reasoning_effort: unknown variant `none`, "
+        f"expected one of `low`, `medium`, `high` at line 1 column {len(req.content)}")}})
+
+
+def _context_length_400(req):
+    """單篇輸入太長：訊息裡的數字隨篇變，正規化後兩篇會是同一句——但它不該升級。"""
+    return httpx.Response(400, json={"error": {"message": (
+        "This model's maximum context length is 131072 tokens. However, you requested "
+        f"{131072 + len(req.content)} tokens. Please reduce the length of the messages or completion.")}})
 
 
 class BadRequestEscalationBatchTests(HttpMixin, unittest.TestCase):
@@ -514,6 +538,30 @@ class BadRequestEscalationBatchTests(HttpMixin, unittest.TestCase):
                 self.assertLessEqual({("h1", lf.BAD_REQUEST), ("h2", lf.BAD_REQUEST)}, recorded, out)
                 self.assertEqual({r for _, r in recorded}, {lf.BAD_REQUEST})
                 self.assertIn("h1, h2", out, "完整 file_hash 要印出來")
+                # 觸發篇以 escalated 記（計數直接到 SKIP_AFTER_ROUNDS）：下一輪就跳過，不再連續 3 輪 rc=2
+                self.assertLessEqual({"h1", "h2"}, set(rec.escalated), out)
+
+    def test_messages_differing_only_in_numbers_escalate(self):
+        """審查實驗 [2]：反序列化錯誤帶 `column N`（隨 prompt 長度變），逐字比對永遠不升級。"""
+        for name in self.ASYNC_BATCHES:
+            with self.subTest(batch=name):
+                self.install(_serde_422)
+                code, rec, out = self.main_rc(name)
+                self.assertEqual(code, 2, out)
+                self.assertIn("API[config]", out)
+                self.assertLessEqual(len(self.requests), 3, "第二篇就升級（並行批次上限 3）")
+                self.assertGreaterEqual(len(set(rec.escalated)), 2, out)
+
+    def test_context_length_never_escalates(self):
+        """單篇輸入太長：每篇都是單篇失敗，批次照常跑完、每篇只打 1 次。"""
+        for name in self.ASYNC_BATCHES:
+            with self.subTest(batch=name):
+                self.install(_context_length_400)
+                code, rec, out = self.main_rc(name)
+                self.assertIsNone(code, out)
+                self.assertEqual(sorted(rec.recorded), [(f"h{i}", lf.BAD_REQUEST) for i in range(1, N_ITEMS + 1)])
+                self.assertEqual(rec.escalated, [])
+                self.assertEqual(len(self.requests), N_ITEMS)
 
     def test_different_messages_do_not_escalate(self):
         for name in self.ASYNC_BATCHES:
@@ -664,6 +712,7 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
             await self._run(n=3)
         recorded = set(rec_holder["rec"].recorded)
         self.assertEqual(recorded, {(f"{i:064d}", lf.BAD_REQUEST) for i in (1, 2)})
+        self.assertEqual(sorted(rec_holder["rec"].escalated), [f"{i:064d}" for i in (1, 2)])
 
     async def test_claude_cli_path_unchanged(self):
         """預設 claude_cli：CLI 失敗照舊是 skip_untagged、不記跳過名單、skip_blocked 計數存在但為 0。"""

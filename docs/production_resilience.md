@@ -579,7 +579,7 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 
 「回應成功但解析失敗」（unparseable）不在上表：腳本層照舊最多 3 次，連續 3 輪才跳過。摘要在 DeepSeek 路徑不接受純文字回應（沒有 JSON 就算解析失敗），CLI 路徑維持原狀。批次的 `timeout`（摘要／標題／摘錄／訊號 180 秒、標註 150 秒、簡報 300 秒）在 HTTP 路徑是**涵蓋傳輸層重試的總期限**，逐行檢查，伺服器排隊送 keep-alive 也延長不了它。
 
-**400 升級（審查 H2）**：一般的 400（`bad_request`）算單篇失敗。**只有**同一個批次行程裡 ≥2 篇不同研報收到逐字相同的 400 訊息，才判定是請求或設定壞了、升級成 `API[config]` 整批 **rc=2** 中止；中止前先把觸發的那幾篇以 `bad_request` 記入 `research.llm_task_failure`（完整 file_hash 印在 log 裡）。刻意沒有「第一個請求就 400 就升級」：那篇若排在最前面，每一輪都會中止整批、而中止不記跳過名單，它永遠不會被跳過。匯入段另把觸發研報寫成 `data/sync_bad_request_<時間>.txt`（`file_hash<TAB>路徑`），殼印出內容；**重放本輪 delta 之前先把這些路徑從 delta 拿掉**，否則會再撞一次。處置：看訊息判斷是程式（請求格式）還是設定問題，修好後照「整批中止後的重放」補跑。
+**400 升級（審查 H2）**：一般的 400（`bad_request`）算單篇失敗。**只有**同一個批次行程裡 ≥2 篇不同研報收到相同的 400 訊息（比對前正規化：小寫、數字換 `#`、長 hex／request id 換 `<id>`，所以只差 `column N` 這類數字的訊息算同一則；上下文長度、輸入過長這類本質上是單篇輸入的訊息不參與升級），才判定是請求或設定壞了、升級成 `API[config]` 整批 **rc=2** 中止；中止前先把觸發的那幾篇以 `bad_request` 記入 `research.llm_task_failure`（完整 file_hash 印在 log 裡），而且計數直接記到 3（`SKIP_AFTER_ROUNDS`），**下一輪就跳過**，不會連續 3 輪整段 rc=2。**修好之後，這幾篇要對該批次加 `--retry-blocked`（或 DELETE 那幾列）才會再打**；`make llm-blocked` 列得出來。刻意沒有「第一個請求就 400 就升級」：那篇若排在最前面，每一輪都會中止整批、而中止不記跳過名單，它永遠不會被跳過。匯入段另把觸發研報寫成 `data/sync_bad_request_<時間>.txt`（`file_hash<TAB>路徑`），殼印出內容；**重放本輪 delta 之前先把這些路徑從 delta 拿掉**，否則會再撞一次。處置：看訊息判斷是程式（請求格式）還是設定問題，修好後照「整批中止後的重放」補跑。
 
 **行內標註被內容審查擋下（`skip_blocked`）**：只列清單、交人工，不做新的入庫路徑（9/24 決策）。這類研報不入庫、計入 `skip_blocked`（異常，擋心跳），記進 `research.llm_task_failure`（task=tag、reason=content_filter），並在 `data/sync_failures.log` 留一行階段為 `tag_blocked` 的紀錄（原因欄帶 `file_hash=`）。`failures_to_delta.py` 預設**不撈** `tag_blocked`：同一份輸入再送一次結果不會變。人工處理：
 

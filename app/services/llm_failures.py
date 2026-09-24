@@ -152,12 +152,16 @@ class FailureRecorder:
         self.task = task
         self.model = model
         self._sf = session_factory
+        # 一個 recorder＝一支批次的一輪：同一篇只記一次。400 升級時觸發的研報可能已由單篇路徑
+        # 記過（並行的另一篇才觸發升級），main 再記一次會讓「連續 3 輪」少算一輪。
+        self._recorded: set[str] = set()
 
     async def record(self, file_hash: Optional[str], reason: str) -> None:
         if reason not in REASONS:
             raise ValueError(f"未知的 reason：{reason!r}")
-        if not file_hash:
+        if not file_hash or file_hash in self._recorded:
             return
+        self._recorded.add(file_hash)
         params = {"file_hash": file_hash, "task": self.task, "reason": reason, "model": self.model}
         await self._exec(RECORD_SQL, params, "記錄")
 

@@ -134,6 +134,11 @@ def main(workers: int, limit: int | None, excerpt: int) -> None:
                 # 環境層級失敗：每一篇都會踩到同一顆地雷。取消還沒開始的工作、
                 # 中止並以非零碼收場，而不是把 N 篇全部記成 fail 然後 exit 0。
                 print(f"\n中止：{exc}", flush=True)
+                # 400 升級：觸發的研報寫進 tag_failures.log（本支只寫 log、不接 DB，審查 L5）
+                names = {r["file_hash"]: r["file_name"] for r in recs}
+                with _lock, open(FAIL_LOG, "a", encoding="utf-8") as f:
+                    for h in getattr(exc, "file_hashes", ()):
+                        f.write(f"{h}\t{names.get(h, '-')}\t{exc}\n")
                 print(f"（已完成 {_done}/{total}；ok={_ok} fail={_fail}）", flush=True)
                 for pending in futs:
                     pending.cancel()

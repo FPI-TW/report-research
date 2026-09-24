@@ -41,6 +41,7 @@ from scripts._claude_cli import (  # noqa: E402
     CliResult,
     failure_kind,
     is_retryable,
+    record_escalation,
     run_claude,
 )
 from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
@@ -274,6 +275,8 @@ async def main(
             )
         )
     except CliNotFoundError as exc:
+        # 400 升級：觸發的研報先記入跳過名單，下一輪才跳得過去（審查 H2）
+        await record_escalation(exc, recorder)
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷 → 中止並以非零碼收場。
         # 這一段在排程殼裡是 best-effort（失敗只記 log 不擋下一輪），所以更需要
         # 讓退出碼說話——否則「跑完 N 次註定失敗、印 ok=0、exit 0」不會留下痕跡。

@@ -170,6 +170,16 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[1][0], "commit")
         self.assertIn("DELETE FROM research.llm_task_failure", calls[2][0])
 
+    async def test_same_hash_recorded_once_per_recorder(self):
+        """一個 recorder＝一支批次的一輪：400 升級時 main 補記的研報若單篇路徑已記過，不再累加。"""
+        calls: list = []
+        rec = lf.FailureRecorder("title", "m1", lambda: _FakeSession(calls))
+        await rec.record("h1", lf.BAD_REQUEST)
+        await rec.record("h1", lf.BAD_REQUEST)
+        await rec.record("h2", lf.BAD_REQUEST)
+        inserts = [c for c in calls if c[0] != "commit"]
+        self.assertEqual([c[1]["file_hash"] for c in inserts], ["h1", "h2"])
+
     async def test_unknown_vocab_raises(self):
         with self.assertRaises(ValueError):
             lf.FailureRecorder("titles", "m1", lambda: _FakeSession([]))

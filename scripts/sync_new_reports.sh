@@ -19,6 +19,9 @@ DELTA="data/sync_delta_${ROUND_TS}.txt"
 HASHES=data/.sync_last_hashes
 # importer 中途整批中止時，「已 commit 的那幾篇」的 hashes（正常結束不產生）。
 HASHES_PARTIAL="${HASHES}.partial"
+# importer 因 400 升級中止（≥2 篇不同研報收到相同的 400，審查 H2）時，觸發研報的
+# `file_hash<TAB>路徑`（scripts/sync_new_reports.py 的 BAD_REQUEST_SUFFIX；正常結束不產生）。
+HASHES_BAD_REQUEST="${HASHES}.bad_request"
 LOCK="data/.sync_new_reports.lock"
 UNIT_FAILURES="data/unit_failures.log"
 # 本輪狀態。格式刻意是 key=value 而不是 JSON：bash 這側用 sed 逐鍵取（對機器寫出的檔
@@ -156,6 +159,23 @@ retain_partial_import_hashes() {
   n=$(grep -c . "$dst" 2>/dev/null || echo 0)
   log "  匯入中止前已有 ${n} 篇入庫（重放 delta 時會變 skip_exists）→ 其 hashes 已保留：${dst}"
   print_downstream_replay "$dst"
+}
+
+# importer 因 400 升級中止時寫的觸發研報清單：改名保留、印出來。重放本輪 delta 之前要先把
+# 這些路徑從 delta 拿掉，否則同樣的 400 會再讓匯入中止一次（那幾篇已記入 llm_task_failure）。
+retain_bad_request_hashes() {
+  local dst="data/sync_bad_request_${ROUND_TS}.txt"
+  if [ ! -s "$HASHES_BAD_REQUEST" ]; then
+    return 0
+  fi
+  if ! mv -f "$HASHES_BAD_REQUEST" "$dst" 2>/dev/null; then
+    dst="$HASHES_BAD_REQUEST"
+  fi
+  log "  匯入因 400 升級中止（≥2 篇不同研報收到相同的 400）→ 觸發的研報已保留：${dst}"
+  log "  重放本輪 delta 之前先把下列路徑從 delta 拿掉（處置見 docs/production_resilience.md）："
+  while IFS= read -r line; do
+    log "     ${line}"
+  done < "$dst"
 }
 
 # 殼自己產生的 delta 檔名：sync_delta_<YYYYMMDD>_<HHMMSS>.txt（見檔頭 DELTA）。手動做的
@@ -414,6 +434,8 @@ log "增量匯入 delta…"
 rm -f "$STATS_FILE"
 # .partial 同理：它只該是「這一輪」中止留下的，殘檔會被誤認成本輪已入庫的篇。
 rm -f "$HASHES_PARTIAL"
+# .bad_request 同理：殘檔會被誤認成本輪觸發 400 升級的研報。
+rm -f "$HASHES_BAD_REQUEST"
 IMPORT_RC=0
 nice -n 19 ionice -c3 "$UV" run python scripts/sync_new_reports.py --delta "$DELTA" >>"$LOG" 2>&1 \
   || IMPORT_RC=$?
@@ -437,6 +459,7 @@ if [ "$IMPORT_RC" -ne 0 ]; then
     fi
     list_retained_deltas
     retain_partial_import_hashes
+    retain_bad_request_hashes
   fi
   record_unit_failure "sync_new_reports(import)" "$IMPORT_RC"
   log "匯入失敗（保留 delta 供排查）→ 結束"
@@ -458,6 +481,12 @@ else
   # 讀不到就當成沒問題，等於在最需要它的時候關掉它。
   log "匯入計數檔不可讀或格式異常（$STATS_FILE）→ 保守視為匯入異常"
   record_unit_failure "sync_new_reports(stats_unreadable)" 1
+fi
+# 被內容審查擋下的標註（skip_blocked）算在上面的 abnormal 裡；另外點名，因為它的處置不同：
+# 重跑結果不會變，failures_to_delta.py 預設也不撈它，要人手處理（只列清單、不做新入庫路徑）。
+if BLOCKED=$(read_stat skip_blocked) && [ "$BLOCKED" -gt 0 ]; then
+  log "  其中 ${BLOCKED} 篇的標註被模型供應商的內容審查擋下（skip_blocked）：重跑不會變，不會自動補"
+  log "  → make llm-blocked 列出；人工處置見 docs/production_resilience.md「DeepSeek 批次的失敗處置」"
 fi
 # 抽取快取寫入失敗：研報已入庫、已記進 hashes，下游照常，所以**不算異常、不擋心跳**
 # （分類理由見 sync_new_reports.py 的 ABNORMAL_COUNTERS 註解）。只印出來：持續出現多半是

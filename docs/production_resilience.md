@@ -579,6 +579,15 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 
 「回應成功但解析失敗」（unparseable）不在上表：腳本層照舊最多 3 次，連續 3 輪才跳過。摘要在 DeepSeek 路徑不接受純文字回應（沒有 JSON 就算解析失敗），CLI 路徑維持原狀。批次的 `timeout`（摘要／標題／摘錄／訊號 180 秒、標註 150 秒、簡報 300 秒）在 HTTP 路徑是**涵蓋傳輸層重試的總期限**，逐行檢查，伺服器排隊送 keep-alive 也延長不了它。
 
+**400 升級（審查 H2）**：一般的 400（`bad_request`）算單篇失敗。**只有**同一個批次行程裡 ≥2 篇不同研報收到逐字相同的 400 訊息，才判定是請求或設定壞了、升級成 `API[config]` 整批 **rc=2** 中止；中止前先把觸發的那幾篇以 `bad_request` 記入 `research.llm_task_failure`（完整 file_hash 印在 log 裡）。刻意沒有「第一個請求就 400 就升級」：那篇若排在最前面，每一輪都會中止整批、而中止不記跳過名單，它永遠不會被跳過。匯入段另把觸發研報寫成 `data/sync_bad_request_<時間>.txt`（`file_hash<TAB>路徑`），殼印出內容；**重放本輪 delta 之前先把這些路徑從 delta 拿掉**，否則會再撞一次。處置：看訊息判斷是程式（請求格式）還是設定問題，修好後照「整批中止後的重放」補跑。
+
+**行內標註被內容審查擋下（`skip_blocked`）**：只列清單、交人工，不做新的入庫路徑（9/24 決策）。這類研報不入庫、計入 `skip_blocked`（異常，擋心跳），記進 `research.llm_task_failure`（task=tag、reason=content_filter），並在 `data/sync_failures.log` 留一行階段為 `tag_blocked` 的紀錄（原因欄帶 `file_hash=`）。`failures_to_delta.py` 預設**不撈** `tag_blocked`：同一份輸入再送一次結果不會變。人工處理：
+
+1. `make llm-blocked` 列出（task=`tag`、原因 `content_filter`；還沒入庫所以檔名欄是 `-`），用 file_hash 回查路徑：`grep <file_hash> data/sync_failures.log`。
+2. 判斷要不要收。要收的話，照 `tag_all_cli.py` 的格式手寫 `data/tags/<file_hash>.json`（`market`、`is_research`、`confidence`、`instrument_types`、`relates_stock`、`relates_futures`、`stock_targets`、`futures_targets`）；匯入時 `load_tag` 讀得到就不會再呼叫 LLM。
+3. 單篇重放：`uv run python scripts/failures_to_delta.py --stage tag_blocked --out data/sync_delta_blocked.txt`（或手寫只含那一行相對路徑的 delta），再 `uv run python scripts/sync_new_reports.py --delta data/sync_delta_blocked.txt --hashes-out data/sync_hashes_retained_blocked.txt`，接著用同一份 hashes 補跑摘要、標題、摘錄（`--hashes-file`）。那幾段若也被審查擋下，同樣記進跳過名單，不影響入庫。
+4. 不收的話不用做什麼：下一輪 delta 不會再列出它（rsync `--size-only`），`llm_task_failure` 那一列留著作紀錄，要清就 DELETE。
+
 **斷路器**：同一個批次行程裡最近 10 次 DeepSeek 呼叫有 ≥5 次逾時／過載／連線失敗，該段以 **rc=2** 中止，並寫 `data/.llm_breaker`；之後 30 分鐘內，其他**會用到 DeepSeek** 的段在預檢就 rc=2 拒跑（還在用 Claude 的段不受影響）。處置：看 DeepSeek 狀態頁與 sync log；恢復後 `rm data/.llm_breaker`（或等它過期），再依「整批中止後的重放」補跑。
 
 ### oneshot 的手動驗證：`Result=success` 不是證據
@@ -703,6 +712,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 |---|---|---|
 | `fail` | **異常** | 抽字或寫 DB 拋例外；環境修好重跑就會入庫 |
 | `skip_untagged` | **異常** | 標註前置條件失敗；同上 |
+| `skip_blocked` | **異常** | 行內標註被模型供應商的內容審查擋下；重跑不會變，要人處理（見「DeepSeek 批次的失敗處置」），殼另外點名 `make llm-blocked` |
 | `skip_admin` | 預期 | 標註成功且明確判定不該入庫 |
 | `skip_non_research` | 預期 | 同上 |
 | `skip_exists` | 預期 | 已在庫，冪等 |
@@ -719,7 +729,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 
 #### 補救走路徑，不走全庫掃描
 
-三個 `FAIL_LOG` 寫入點的格式現在一致：`絕對路徑<TAB>階段<TAB>原因`（階段為 `extract`／`tag`／`ingest`）。**原本第三處寫的是 `file_hash<TAB>檔名<TAB>原因`**——欄位數相同但語意不同，於是那一類漏收拿不到路徑、無法精準補回。
+三個 `FAIL_LOG` 寫入點的格式現在一致：`絕對路徑<TAB>階段<TAB>原因`（階段為 `extract`／`tag`／`ingest`；內容審查擋下的標註是 `tag_blocked`，`failures_to_delta.py` 預設不撈）。**原本第三處寫的是 `file_hash<TAB>檔名<TAB>原因`**——欄位數相同但語意不同，於是那一類漏收拿不到路徑、無法精準補回。
 
 `scripts/failures_to_delta.py` 把失敗記錄轉成合法的 `--delta` 輸入：只留「真的存在於本地鏡像下」的路徑，對不回檔案的行**計數並印出**而不是靜默丟棄（靜默丟棄會讓「補完了」與「有一半根本沒被看到」長得一樣）。2026-08-20 實測：7 篇、160 chunks、`fail=0`，而 `--all-local` 要對鏡像裡 16,736 個檔逐一抽字再查 DB。
 
@@ -739,6 +749,7 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 |---|---|---|
 | 匯入段 rc 不是 0 也不是 75 | 本輪 `data/sync_delta_<時間>.txt`（不刪；前幾輪同樣中止的也還在） | 依時間序（舊→新）列出**所有**保留的 delta，每份一條 `--delta … --hashes-out data/sync_hashes_retained_<同一時間>.txt` |
 | 同上，且中止前已有研報入庫 | importer 寫的 `data/.sync_last_hashes.partial` 改名成 `data/sync_hashes_retained_<時間>_partial.txt` | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
+| 匯入段因 400 升級中止 | importer 寫的 `data/.sync_last_hashes.bad_request` 改名成 `data/sync_bad_request_<時間>.txt`（`file_hash<TAB>路徑`） | 逐行印出；重放本輪 delta 前先把這些路徑拿掉 |
 | 下游任一段 rc=2 | 當輪 `data/.sync_last_hashes` 複製成 `data/sync_hashes_retained_<時間>.txt`（一輪一份） | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
 
 全部寫進當日 sync log，也落在 `data/unit_failures.log` 那筆紀錄的 log 尾巴裡。重放清單只列殼自己產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`；`sync_delta_recover.txt` 這類手動檔不列。rc=75（CLI 被別的批次佔用）不在此列，處置照舊（`--all-local`，補完刪掉本輪 delta）。**rc=2 也可能是參數錯誤**（argparse 同樣以 2 退出，例如殼傳了批次不認得的旗標），動手前先看 sync log 確認中止原因。

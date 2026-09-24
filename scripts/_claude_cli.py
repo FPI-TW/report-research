@@ -70,6 +70,17 @@ DeepSeek 整體變慢或過載時，每篇都要等到總期限才失敗，一�
 `data/.llm_breaker`；之後 30 分鐘內，其他會用到 HTTP model 的段在 `require_llm_key` 就以
 rc=2 拒跑（`scripts/_llm_env.py`）。CLI 呼叫不進窗、也不受標記影響：遷移期間還在用 Claude
 的段不該因為 DeepSeek 出事而停。有執行緒鎖（批次以 `asyncio.to_thread`／執行緒池並行呼叫）。
+
+## 400 升級（審查 H2）
+
+一般的 400（`bad_request`）多半是單篇輸入造成的（超長、怪字元），算單篇失敗、記跳過名單
+（連續 3 輪才跳過）。**只有**同一行程裡 ≥2 個不同 `file_hash` 收到**逐字相同**的 400 訊息，
+才判定是請求本身或設定壞了（每一篇都會踩到），升級成 `BadRequestEscalation`（config 型、整批
+rc=2）。刻意沒有「本輪第一個請求就 400 → 升級」：那篇研報若排在最前面，每一輪都會中止整批、
+而中止不記跳過名單，它永遠不會被跳過——匯入段就等於全站停止入庫。升級前，觸發的那幾篇要先以
+`bad_request` 記入跳過名單（各批次 main 呼叫 `record_escalation`），下一輪才跳得過去；匯入段另把
+它們寫進保留檔（`scripts/sync_new_reports.py`）。身分由 `run_claude(meta={"file_hash": …})` 傳入，
+沒有 file_hash 的呼叫（簡報）不參與。
 """
 import errno
 import re
@@ -118,6 +129,18 @@ class LlmEnvironmentError(CliNotFoundError):
     與 `CliNotFoundError` 同一類：每一篇都會踩到，重試與續跑都沒有意義。繼承它是為了讓各批次
     main 既有的 `except CliNotFoundError → rc=2` 原封不動地接住，不必逐支加分支。
     """
+
+
+class BadRequestEscalation(LlmEnvironmentError):
+    """≥2 篇不同研報收到相同的 400 訊息：請求或設定壞了，不是單篇輸入（見模組 docstring）。
+
+    `file_hashes`：觸發升級的研報（排序、去重）。各批次 main 在中止前以 `record_escalation`
+    把它們記成 `bad_request`。
+    """
+
+    def __init__(self, message: str, file_hashes) -> None:
+        super().__init__(message)
+        self.file_hashes: tuple[str, ...] = tuple(file_hashes)
 
 
 class CliResult(NamedTuple):
@@ -262,9 +285,64 @@ class _Breaker:
 _BREAKER = _Breaker()
 
 
+# ── 400 升級 ─────────────────────────────────────────────────────────────────
+BAD_REQUEST_ESCALATE_AT = 2  # 同一訊息出現在幾篇不同研報就升級
+
+
+class _BadRequestTracker:
+    """400 訊息 → 收到它的 file_hash 集合（行程範圍、執行緒安全）。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._seen: dict[str, set[str]] = {}
+
+    def reset(self) -> None:
+        with self._lock:
+            self._seen.clear()
+
+    def observe(self, detail: str, file_hash: Optional[str]) -> None:
+        if not file_hash:
+            return
+        with self._lock:
+            hashes = self._seen.setdefault(detail, set())
+            hashes.add(file_hash)
+            if len(hashes) < BAD_REQUEST_ESCALATE_AT:
+                return
+            triggered = sorted(hashes)
+        short = "、".join(h[:12] for h in triggered)
+        raise BadRequestEscalation(
+            llm_http.error_string(
+                llm_http.CONFIG,
+                f"{len(triggered)} 篇不同研報收到相同的 400（{detail[:120]}），判定為請求或設定錯誤而非單篇輸入；"
+                f"觸發研報 {short}（已記入跳過名單 bad_request）",
+            ),
+            triggered,
+        )
+
+
+_BAD_REQUESTS = _BadRequestTracker()
+
+
+async def record_escalation(exc: BaseException, recorder) -> None:
+    """整批中止前：`BadRequestEscalation` 的觸發研報以 `bad_request` 記入跳過名單（審查 H2）。
+
+    其他中止（帳號層級、斷路器、CLI 找不到）沒有 `file_hashes`，什麼都不做。`recorder` 為 None
+    （表不存在）時只印出來。完整 file_hash 印在這裡，錯誤訊息裡只有前 12 碼。
+    """
+    hashes = getattr(exc, "file_hashes", ())
+    if not hashes:
+        return
+    print(f"觸發 400 升級的研報：{', '.join(hashes)}", flush=True)
+    if recorder is None:
+        return
+    for h in hashes:
+        await recorder.record(h, llm_failures.BAD_REQUEST)
+
+
 def _reset_state() -> None:
-    """僅供測試：清掉行程範圍的狀態（斷路器）。"""
+    """僅供測試：清掉行程範圍的狀態（斷路器、400 升級的計數）。"""
     _BREAKER.reset()
+    _BAD_REQUESTS.reset()
 
 
 def run_claude(
@@ -302,6 +380,8 @@ def _run_http(
     if result.kind in llm_http.ACCOUNT_KINDS:
         raise LlmEnvironmentError(f"{result.error}。{_ACCOUNT_HINTS[result.kind]}")
     _BREAKER.observe(result.kind)
+    if result.kind == llm_http.BAD_REQUEST:
+        _BAD_REQUESTS.observe(result.outcome.detail, meta.get("file_hash"))
     if result.text is None:
         return CliResult(None, result.error)
     return CliResult(result.text, None)

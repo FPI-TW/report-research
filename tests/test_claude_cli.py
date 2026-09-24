@@ -667,5 +667,90 @@ class DeadlineTests(_HttpCase):
         })
 
 
+class BadRequestEscalationTests(_HttpCase):
+    """審查 H2：只有「≥2 個不同 file_hash 收到相同的 400 訊息」才升級成 config 中止。"""
+
+    def _bad(self, message="Invalid request: bad field"):
+        self.install(lambda req: httpx.Response(400, json={"error": {"message": message}}))
+
+    def call_for(self, file_hash, task="summary"):
+        return self.call(meta={"task": task, "file_hash": file_hash, "report_id": None})
+
+    def test_single_file_is_a_per_file_failure(self):
+        self._bad()
+        res = self.call_for("h1")
+        self.assertTrue(res.error.startswith("API[bad_request]"), res.error)
+
+    def test_two_files_same_message_escalates(self):
+        self._bad()
+        self.call_for("h2")
+        with self.assertRaises(cc.BadRequestEscalation) as ctx:
+            self.call_for("h1")
+        exc = ctx.exception
+        self.assertIsInstance(exc, cc.LlmEnvironmentError)
+        self.assertIsInstance(exc, cc.CliNotFoundError)  # 各批次 main 的 rc=2 接法
+        self.assertEqual(exc.file_hashes, ("h1", "h2"))
+        self.assertTrue(str(exc).startswith("API[config]"), str(exc))
+        self.assertNotIn("\t", str(exc))
+        self.assertNotIn("\n", str(exc))
+
+    def test_two_files_different_messages_do_not_escalate(self):
+        self._bad("Invalid request: field a")
+        self.call_for("h1")
+        self._bad("Invalid request: field b")
+        res = self.call_for("h2")
+        self.assertTrue(res.error.startswith("API[bad_request]"))
+
+    def test_same_file_twice_does_not_escalate(self):
+        self._bad()
+        self.call_for("h1")
+        res = self.call_for("h1")
+        self.assertTrue(res.error.startswith("API[bad_request]"))
+
+    def test_calls_without_file_hash_never_escalate(self):
+        """簡報一天一次、沒有單篇身分：不參與升級。"""
+        self._bad()
+        for _ in range(3):
+            res = self.call(meta={"task": "brief"})
+            self.assertTrue(res.error.startswith("API[bad_request]"))
+
+    def test_other_kinds_do_not_escalate(self):
+        self.install(lambda req: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}))
+        for h in ("h1", "h2", "h3"):
+            self.assertTrue(self.call_for(h).error.startswith("API[content_filter]"))
+
+    def test_record_escalation_records_every_trigger_once(self):
+        """升級前先把觸發的研報以 bad_request 記入跳過名單；同一篇一輪只記一次。"""
+        import asyncio
+
+        calls: list = []
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def execute(self, stmt, params=None):
+                calls.append(params)
+
+            async def commit(self):
+                pass
+
+        rec = lf.FailureRecorder("summary", "deepseek-flash", _Session)
+        exc = cc.BadRequestEscalation("API[config] x", ("h1", "h2"))
+
+        async def go():
+            await rec.record("h1", lf.BAD_REQUEST)  # 單篇路徑已記過 h1
+            await cc.record_escalation(exc, rec)
+            await cc.record_escalation(cc.LlmEnvironmentError("API[quota] x"), rec)  # 其他中止：不記
+
+        with mock.patch("sys.stdout", new_callable=lambda: __import__("io").StringIO()):
+            asyncio.run(go())
+        self.assertEqual([c["file_hash"] for c in calls], ["h1", "h2"])
+        self.assertEqual({c["reason"] for c in calls}, {lf.BAD_REQUEST})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -56,6 +56,11 @@ class SyncNewReportsTests(unittest.TestCase):
 
     def test_skip_after_tag(self):
         self.assertEqual(snr.skip_after_tag(None), "skip_untagged")
+        # 只有 DeepSeek 的內容審查才是 skip_blocked；其他失敗（含 CLI、400、截斷）仍是 skip_untagged
+        self.assertEqual(snr.skip_after_tag(None, "API[content_filter] 觸發供應商內容審查：HTTP 400"), "skip_blocked")
+        for err in ("API[bad_request] 請求被拒", "API[truncated] 輸出截斷", "CLI 逾時（150s 內未回應）",
+                    "回應無法解析為標籤", "content_filter", None):
+            self.assertEqual(snr.skip_after_tag(None, err), "skip_untagged", err)
         self.assertEqual(snr.skip_after_tag(_Tag(None, True)), "skip_non_research")
         self.assertEqual(snr.skip_after_tag(_Tag("TW", False)), "skip_non_research")
         self.assertIsNone(snr.skip_after_tag(_Tag("TW", True)))

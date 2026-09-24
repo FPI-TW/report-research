@@ -552,12 +552,15 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 1. 在 DeepSeek 主控台發一把新金鑰（舊的先別撤）。
 2. 改兩份檔的 `DEEPSEEK_API_KEY`：**直接改那一行**，不要新增一行。
 3. 重啟 web：`sudo systemctl restart report-mark-web.service`。
-4. 核對兩份指紋相同（只印雜湊前 8 碼）：
+4. 核對兩份指紋相同（只印雜湊前 8 碼，不印金鑰）。在 repo 根以 kashionz 執行（`/etc/default/report-mark-llm`
+   是 0640 root:kashionz，要有該群組權限才讀得到）：
    ```bash
-   grep -h '^DEEPSEEK_API_KEY=' .env | cut -d= -f2- | tr -d '\n' | sha256sum | cut -c1-8
-   grep -h '^DEEPSEEK_API_KEY=' /etc/default/report-mark-llm | cut -d= -f2- | tr -d '\n' | sha256sum | cut -c1-8
+   uv run python -m scripts._llm_env .env /etc/default/report-mark-llm
    ```
-   手動跑一支會用到 DeepSeek 的批次時，預檢印出的 `fp=` 也應是同一個值。
+   每份印一行 `fp=<前 8 碼>`，rc=0＝兩份都有值且一致，rc=1＝不一致、缺值或讀不到。**不要改用
+   `grep | cut | sha256sum`**：程式讀值時會去 `export `、去成對引號、strip（`web/env_loader._parse_line`），
+   手算的雜湊在值帶引號、尾隨空白或 CRLF 時會把兩份其實相同的金鑰判成不同。
+   經 DeepSeek 的評測（`eval/run_ragas.py` 指定白名單模型）預檢印出的 `fp=` 也應是同一個值。
 5. 確認 sync 目前沒在跑（`systemctl is-active report-mark-sync.service` 回 `inactive`），避免
    撤銷舊金鑰時打斷進行中的一輪。
 6. 撤銷舊金鑰。

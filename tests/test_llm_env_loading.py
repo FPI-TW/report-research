@@ -353,6 +353,50 @@ class BatchRejectsHttpModelTests(_EnvFileCase):
                             self.assertNotIn("http_dispatch", kws)
 
 
+class FileKeyFingerprintTests(unittest.TestCase):
+    """金鑰指紋的比對指令（docs/production_resilience.md）與預檢、web 同一套解析。"""
+
+    def _fp(self, text: str) -> str | None:
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "llm.env"
+            path.write_bytes(text.encode("utf-8"))
+            return le.file_key_fingerprint(path)
+
+    def test_quotes_whitespace_and_crlf_do_not_change_fingerprint(self):
+        want = le.fingerprint(FAKE_KEY)
+        for text in (
+            f"DEEPSEEK_API_KEY={FAKE_KEY}\n",
+            f'DEEPSEEK_API_KEY="{FAKE_KEY}"\n',
+            f"DEEPSEEK_API_KEY='{FAKE_KEY}'\n",
+            f"DEEPSEEK_API_KEY={FAKE_KEY}   \n",
+            f"DEEPSEEK_API_KEY={FAKE_KEY}\r\n",
+            f"export DEEPSEEK_API_KEY={FAKE_KEY}\n",
+            f"# 註解\nOTHER=1\nDEEPSEEK_API_KEY={FAKE_KEY}",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self._fp(text), want)
+
+    def test_missing_or_empty_key_is_none(self):
+        self.assertIsNone(self._fp("OTHER=1\n"))
+        self.assertIsNone(self._fp("DEEPSEEK_API_KEY=\n"))
+        self.assertIsNone(self._fp('DEEPSEEK_API_KEY=""\n'))
+
+    def test_cli_prints_only_prefix_and_rc_reflects_match(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b, c = Path(d) / "web-copy", Path(d) / "llm-copy", Path(d) / "other-copy"
+            a.write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+            b.write_text(f'DEEPSEEK_API_KEY="{FAKE_KEY}"\r\n', encoding="utf-8")
+            c.write_text("DEEPSEEK_API_KEY=fixed-test-secret-deepseek1\n", encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(le.main([str(a), str(b)]), 0)
+            self.assertIn(le.fingerprint(FAKE_KEY), out.getvalue())
+            self.assertNotIn(FAKE_KEY, out.getvalue())
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(le.main([str(a), str(c)]), 1)
+                self.assertEqual(le.main([str(a), str(Path(d) / "missing")]), 1)
+
+
 class WorktreeWarningTests(unittest.TestCase):
     def _warn(self, env: dict, worktree: bool) -> str:
         err = io.StringIO()

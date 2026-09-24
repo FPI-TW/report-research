@@ -31,6 +31,9 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
   全部解析到 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否
   一致，**永遠不印金鑰本身**。
 
+另有 `python -m scripts._llm_env <環境檔> …`（`main`）：比對幾份環境檔的金鑰指紋，與上面同一套
+解析（`file_key_fingerprint`），輪替後核對 `.env` 與 llm 檔用（docs/production_resilience.md）。
+
 從 worktree 跑（`ROOT` 不是部署目錄）時另印警告：flock 以 checkout 為範圍，worktree 的批次
 不與主 checkout 互斥，會把同一批研報再付一次錢。
 """
@@ -99,6 +102,22 @@ def load_llm_env() -> None:
 
 def fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+
+
+def file_key_fingerprint(path: Path | str) -> str | None:
+    """環境檔裡 `DEEPSEEK_API_KEY` 的指紋（前 8 碼）；沒有這個鍵或值為空回 None。
+
+    與預檢、web 看到的值同一套解析（`web.env_loader._parse_line`：去 `export `、去成對引號、
+    strip），所以引號、尾隨空白、CRLF 都不會讓兩份其實相同的金鑰算出不同指紋。重複鍵取第一行
+    （同 `load_env_file`）。讀檔錯誤原樣拋出，交給呼叫端說明（見 docs/production_resilience.md）。
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    for line in text.splitlines():
+        parsed = _parse_line(line)
+        if parsed is not None and parsed[0] == KEY:
+            value = parsed[1].strip()
+            return fingerprint(value) if value else None
+    return None
 
 
 def _say(msg: str) -> None:
@@ -196,3 +215,36 @@ def require_llm_key(
     if not key:
         _fail(f"{', '.join(http)} 需要 {KEY}，但目前沒有值。{_missing_key_hint(Path(str(path)))}")
     _say(f"DeepSeek 金鑰 fp={fingerprint(key)}（模型：{', '.join(http)}）")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """比對幾份環境檔的金鑰指紋（輪替後核對兩份是否逐字相同；只印前 8 碼，不印金鑰）。
+
+    用法：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`
+    rc=0：每份都有值且指紋相同；rc=1：有缺值、讀不到或不一致。
+    """
+    paths = list(sys.argv[1:] if argv is None else argv)
+    if not paths:
+        print("用法：python -m scripts._llm_env <環境檔> [<環境檔> …]", file=sys.stderr)
+        return RC_CONFIG
+    fps: set[str | None] = set()
+    for p in paths:
+        try:
+            fp = file_key_fingerprint(p)
+        except PermissionError:
+            print(f"{p}  讀不到（PermissionError：以 kashionz 執行，或加入該檔的群組）")
+            fps.add(None)
+            continue
+        except OSError as exc:
+            print(f"{p}  讀不到（{type(exc).__name__}）")
+            fps.add(None)
+            continue
+        print(f"{p}  fp={fp}" if fp else f"{p}  （沒有 {KEY} 或值為空）")
+        fps.add(fp)
+    ok = None not in fps and len(fps) == 1
+    print("一致" if ok else "不一致或有缺值")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

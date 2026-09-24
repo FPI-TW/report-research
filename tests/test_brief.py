@@ -173,25 +173,9 @@ class LabelTests(unittest.TestCase):
 
 # ── 端點 ──────────────────────────────────────────────────────────
 
-class CliArgsTests(unittest.TestCase):
-    def test_disables_all_tools_after_prompt(self):
-        """簡報只要模型回 markdown，不開任何工具；可變長度選項放 argv 最後，不吞 prompt。"""
-        args = generate_brief.build_cli_args("素材", "m")
-        self.assertEqual(args[2], "素材")
-        self.assertEqual(args[-2:], ["--tools", ""])
-        self.assertNotIn("--disallowedTools", args)
-
-    def test_no_mcp_servers(self):
-        """`--tools ""` 管不到 MCP；`--strict-mcp-config` 不帶 `--mcp-config`＝不載任何 MCP。"""
-        args = generate_brief.build_cli_args("素材", "m")
-        self.assertIn("--strict-mcp-config", args)
-        self.assertNotIn("--mcp-config", args)
-        self.assertLess(args.index("--strict-mcp-config"), args.index("--tools"))
-
-
 class DeepSeekModelTests(unittest.TestCase):
-    """簡報的 DeepSeek 分支交給 `run_claude` 的 HTTP 路徑（遷移 PR-12）：不 spawn CLI；帳號層級
-    錯誤 main 回 rc=2、不寫 brief_failures.log（那是「這一天產生失敗」的紀錄）。"""
+    """簡報交給 `run_claude`（遷移 PR-12；PR-M 起簡報自己的 CLI 版刪除）：不 spawn 子行程；帳號層級錯誤
+    與白名單外的 model，main 回 rc=2、不寫 brief_failures.log（那是「這一天產生失敗」的紀錄）。"""
 
     def _main(self, argv):
         old = sys.argv
@@ -231,9 +215,39 @@ class DeepSeekModelTests(unittest.TestCase):
         import httpx
 
         self._transport(httpx.Response(401, json={"error": {"message": "Authentication Fails"}}))
-        with mock.patch.dict(os.environ, self._ENV), mock.patch.object(generate_brief.subprocess, "run") as run:
+        with mock.patch.dict(os.environ, self._ENV), mock.patch("subprocess.run") as run:
             with self.assertRaises(generate_brief.CliNotFoundError):
                 generate_brief.call_cli("素材", "deepseek-flash")
+        run.assert_not_called()
+        self.assertFalse(hasattr(generate_brief, "build_cli_args"))
+        self.assertFalse(hasattr(generate_brief, "_spawn_cli"))
+
+    def test_non_whitelisted_model_is_rc_2_without_failure_log(self):
+        """PR-M：claude-*（PR-M 前走簡報自己的 CLI 版）→ 預檢 rc=2；就算繞過預檢，call_cli 也拋整批中止型
+        例外、main 回 rc=2，不記成「這一天產生失敗」。"""
+        import contextlib
+        import io
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, self._ENV), mock.patch.object(generate_brief, "generate") as gen, \
+                contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as ctx:
+            self._main(["--model", "claude-sonnet-5"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("不在 DeepSeek 白名單", err.getvalue())
+        gen.assert_not_called()
+
+        async def fake_generate(args):
+            generate_brief.call_cli("素材", args.model)
+
+        with mock.patch.dict(os.environ, self._ENV), mock.patch("subprocess.run") as run, \
+                mock.patch.object(generate_brief, "require_llm_key"), \
+                mock.patch.object(generate_brief, "generate", side_effect=fake_generate), \
+                mock.patch.object(generate_brief, "record_failure") as rec, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = self._main(["--model", "claude-sonnet-5"])
+        self.assertEqual(rc, 2)
+        self.assertIn("白名單", err.getvalue())
+        rec.assert_not_called()
         run.assert_not_called()
 
     def test_main_returns_2_on_account_error(self):

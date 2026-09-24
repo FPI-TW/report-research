@@ -123,7 +123,7 @@ class EngineKwargsTests(unittest.TestCase):
 
     def test_idle_in_transaction_timeout_is_declared_but_off_by_default(self):
         """預設關是刻意的：sync_new_reports.py 先 report_exists() 開了交易，才去
-        spawn claude CLI（150s）與跑嵌入（大檔數分鐘），中間不 commit。設了它＝
+        呼叫 LLM 標註（150s）與跑嵌入（大檔數分鐘），中間不 commit。設了它＝
         生產同步把報告靜默丟進 FAIL_LOG。鍵仍必須送出，讓部署端可以只在 web 開。"""
         kwargs = _reload_db_capturing()["kwargs"]
         server_settings = kwargs["connect_args"]["server_settings"]

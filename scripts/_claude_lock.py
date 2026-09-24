@@ -1,28 +1,30 @@
-"""claude CLI 的跨進程互斥鎖——**只給 scripts/ 底下的離線批次用**。
+"""LLM 批次的跨進程互斥鎖——**只給 scripts/ 底下的離線批次用**。
+
+**名稱是歷史遺留**：檔名、`claude_cli_lock_or_exit`、鎖檔 `data/.claude_cli.lock`、逃生口
+`CLAUDE_LOCK_DISABLE` 都是 claude CLI 時代的名字。遷移終局 PR-M 移除了 CLI backend，刻意**不改名**：
+LOCKED_SCRIPTS（tests/test_claude_lock.py）、各批次的呼叫點、文件契約與生產機上既有的鎖檔路徑都認這些
+名字，改名的連動遠大於它帶來的清楚。
 
 為什麼需要它
 ────────────
-`claude` CLI 是跨進程共用資源，本 repo 有數支批次會 spawn 它（標註、摘要、標題、
-摘錄、訊號擷取，以及增量匯入時的行內標註；權威清單見 tests/test_claude_lock.py
-的 LOCKED_SCRIPTS）。多支同時跑會互搶，而症狀不是「壞掉」而是
-**擷取被大量誤標 rejected**——資料沒壞、模型也沒壞，只是 CLI 被搶（2026-07 的實際
-事故）。更麻煩的是它已經不只由人手動觸發：`report-mark-sync.timer` 每 3 小時跑
-「增量匯入 → 摘要 → 摘錄」，此時有人手動敲 `make signals` 就撞車。光靠文件警語擋
-不住排程，所以把規約機械化成鎖。
-
-改走 DeepSeek HTTP 之後（遷移 PR-12，`scripts/_claude_cli.run_claude` 依白名單分派）「搶 CLI」
-這個理由消失了，鎖**仍然需要**、名稱也不改（改名會連動 LOCKED_SCRIPTS 與文件契約，留給 PR-M）：
+本 repo 有數支批次會呼叫 LLM（標註、摘要、標題、摘錄、訊號擷取、簡報，以及增量匯入時的行內標註；
+權威清單見 tests/test_claude_lock.py 的 LOCKED_SCRIPTS）。它們已經不只由人手動觸發：
+`report-mark-sync.timer` 每 3 小時跑「增量匯入 → 摘要 → 摘錄 → …」，此時有人手動敲 `make signals`
+就撞車。光靠文件警語擋不住排程，所以把規約機械化成鎖。撞車的代價：
   - **重複付費**：按量計費下，兩支批次同時挑到同一批 `IS NULL` 的研報，就是同一篇付兩次錢。
   - **DELETE+INSERT 互撞**：摘錄每篇在單一交易內先刪後插（`extract_takeaways._replace_rows`），
     兩個行程同時處理同一篇，後 commit 的會蓋掉或與前者交錯；訊號的 upsert 也有同樣的覆寫問題。
   - **DB 連線數**：每個批次行程各有一個連線池（`DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`），併發數的
     算式（`.env.example`）是以「同一時間只有一支 LLM 批次」為前提算的。
 
+CLI 時代還有第四個理由：`claude` CLI 是跨進程共用資源，多支同時跑會互搶，症狀是擷取被大量誤標
+rejected（2026-07 的實際事故）。那個理由隨 CLI 消失，上面三個仍然成立。
+
 app/services/llm.py 絕對不可以取這個鎖
 ──────────────────────────────────────
-那是 web 線上路徑（`/api/ask` 與其背景忠實度抽查）的同一個 spawn 點。把它納入這個鎖，一輪
+那是 web 線上路徑（`/api/ask` 與其背景忠實度抽查）的呼叫層。把它納入這個鎖，一輪
 `tag_all_cli`（數小時）就會把線上問答整個鎖死——把「批次跑得慢一點」換成「服務中斷
-數小時」。鎖的邊界刻意畫在「離線批次之間」，不是「所有 claude 呼叫」：線上路徑寧可
+數小時」。鎖的邊界刻意畫在「離線批次之間」，不是「所有 LLM 呼叫」：線上路徑寧可
 與批次互搶（頂多慢、頂多重試），也不能被批次擋在門外。`tests/test_claude_lock.py`
 有一條靜態測試釘住這件事，避免日後有人「順手把 llm.py 也納進來」。
 
@@ -51,7 +53,7 @@ PID 若被回收給另一個無關行程，`kill -0` 會成功，鎖就永遠解
 設環境變數 `CLAUDE_LOCK_DISABLE=1` 可完全繞過取鎖（會在 stderr 印警告）。刻意**不**
 放進 `.env.example`：批次是 `uv run python scripts/...` 直接跑、根本不載入 `.env`，
 把它寫進去只會養出一個「以為關掉了其實沒關、或以為開著其實永久關掉」的誤解來源。
-它是給「明知對方不會呼叫 CLI、但就是想跑」的當下用的一次性旗標。
+它是給「明知對方不會呼叫 LLM、但就是想跑」的當下用的一次性旗標。
 """
 
 from __future__ import annotations
@@ -72,14 +74,14 @@ LOCK_PATH = ROOT / "data" / ".claude_cli.lock"
 DISABLE_ENV = "CLAUDE_LOCK_DISABLE"
 
 # sysexits.h 的 EX_TEMPFAIL（暫時性失敗、稍後重試）。刻意不用 1：排程殼要能把
-# 「CLI 被別的批次佔用」與「這支批次自己壞了」分開處理與呈報，混用 1 就分不出來。
+# 「鎖被別的批次佔用」與「這支批次自己壞了」分開處理與呈報，混用 1 就分不出來。
 EXIT_LOCK_BUSY = 75
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
 class ClaudeCliBusyError(RuntimeError):
-    """另一支批次正持有 claude CLI 鎖，本次不啟動。
+    """另一支批次正持有 LLM 批次鎖，本次不啟動（類別名是 CLI 時代的歷史值）。
 
     `holder` 是鎖檔裡的 {pid, script, started_at}；讀不到時為 None（見 _read_holder）。
     """
@@ -145,12 +147,12 @@ def _busy_message(lock_path: Path, holder: dict[str, Any] | None) -> str:
     else:
         detail = "另一支批次（持有者資訊讀不到）"
     return (
-        f"claude CLI 正被 {detail} 佔用，本次不啟動。\n"
-        "多支批次併發搶 claude CLI 會讓擷取被大量誤標 rejected（資料與模型都沒壞，"
-        "是 CLI 被搶），所以這裡選擇不跑，而不是跑出一批壞資料。\n"
+        f"LLM 批次鎖正被 {detail} 佔用，本次不啟動。\n"
+        "多支 LLM 批次併發會讓同一篇研報重複付費、摘錄的 DELETE+INSERT 互相覆寫，"
+        "所以這裡選擇不跑，而不是跑出一批重複或互蓋的資料。\n"
         f"等對方結束後直接重跑即可——鎖是 flock，持有者行程一結束（含被 kill）就自動"
         f"釋放，不需要手動刪 {lock_path}。\n"
-        f"確定對方不會呼叫 CLI 而要強行執行：設 {DISABLE_ENV}=1。"
+        f"確定對方不會呼叫 LLM 而要強行執行：設 {DISABLE_ENV}=1。"
     )
 
 
@@ -178,7 +180,7 @@ def _write_holder(fd: int, owner: str) -> None:
 
 @contextmanager
 def claude_cli_lock(owner: str, lock_path: Path | None = None) -> Iterator[Path]:
-    """取得 claude CLI 的獨佔權；取不到就拋 ClaudeCliBusyError。
+    """取得 LLM 批次的獨佔權；取不到就拋 ClaudeCliBusyError（名稱是歷史值）。
 
     `owner` 是顯示給人看的批次名（慣例＝腳本檔名去掉 .py）。
     `lock_path` 只給測試覆寫，正式路徑一律用預設的 data/.claude_cli.lock。
@@ -191,7 +193,7 @@ def claude_cli_lock(owner: str, lock_path: Path | None = None) -> Iterator[Path]
     if _lock_disabled():
         print(
             f"[claude-lock] 警告：{DISABLE_ENV} 已設，{owner} 不取鎖直接執行。"
-            "若此刻另一支批次也在跑，兩邊會互搶 claude CLI，擷取可能被大量誤標 rejected。",
+            "若此刻另一支 LLM 批次也在跑，同一篇研報可能被重複付費處理、摘錄可能互相覆寫。",
             file=sys.stderr,
             flush=True,
         )

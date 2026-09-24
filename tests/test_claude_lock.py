@@ -1,5 +1,5 @@
 # tests/test_claude_lock.py
-"""claude CLI 跨進程鎖（scripts/_claude_lock.py）的行為與接線守門。
+"""LLM 批次的跨進程鎖（scripts/_claude_lock.py；檔名是 claude CLI 時代的歷史值）的行為與接線守門。
 
 為什麼這一支要存在：規約「批次不可同時跑」以前只寫在 Makefile 註解、docstring 與
 CLAUDE.md 裡，而 `report-mark-sync.timer` 每 3 小時自動跑「增量匯入 → 摘要 → 摘錄」，
@@ -8,7 +8,7 @@ CLAUDE.md 裡，而 `report-mark-sync.timer` 每 3 小時自動跑「增量匯�
 1. 鎖真的互斥（同進程異 fd 與跨進程都要擋），且**行程被 SIGKILL 後自動釋放**——
    那正是選 flock 而非 PID 檔的唯一理由，沒測到就等於沒選。
 2. 所有批次入口都取了鎖（清單見 LOCKED_SCRIPTS）。
-3. `app/services/llm.py` **沒有**取鎖。它是 web 線上路徑的 spawn 點，納入鎖等於讓
+3. `app/services/llm.py` **沒有**取鎖。它是 web 線上路徑的呼叫層，納入鎖等於讓
    一輪 tag_all_cli（數小時）把 /api/ask 鎖死——這條反向斷言比正向的五條更重要。
 
 全程用 tempfile 當鎖檔，絕不碰真實的 data/.claude_cli.lock（那是生產路徑上的檔案，
@@ -298,7 +298,7 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(
             missing,
             [],
-            "這些批次會 spawn claude CLI 卻沒取鎖，留下併發缺口：" + ", ".join(missing),
+            "這些批次會呼叫 LLM 卻沒取鎖，留下併發缺口：" + ", ".join(missing),
         )
 
     def test_llm_service_never_takes_the_lock(self):

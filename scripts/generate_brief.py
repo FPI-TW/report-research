@@ -1,7 +1,7 @@
 """每日簡報批次 → research.report_brief（一天一列；閱讀時零 LLM）
 
 素材收集、窗期界定與變動判定全在 app/services/brief.py（純 SQL ＋ 純函式），本檔
-只負責編排：取鎖 → 決定要不要跑 → 一次 `claude -p` → 落庫。
+只負責編排：取鎖 → 決定要不要跑 → 一次 LLM 呼叫 → 落庫。
 
 **一天只有一次 LLM 呼叫**，這是刻意的成本設計：摘要（覆蓋率 100%）與訊號都已經
 批次產好，簡報要做的只是把既有素材組織成一段話，不需要重讀任何全文。
@@ -26,17 +26,15 @@
   uv run python scripts/generate_brief.py --force       # 忽略時間閘與既有列，重寫當日
   uv run python scripts/generate_brief.py --date 2026-08-05
 
-退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（未知模型名、
-缺金鑰、DeepSeek 401／402／模型不存在、claude CLI 認證失效）、75 claude CLI 被其他批次佔用。
+退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（模型名不在 DeepSeek
+白名單、缺金鑰、DeepSeek 401／402／模型不存在、斷路器）、75 批次鎖被其他批次佔用。
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import subprocess
 import sys
-import time
 import uuid
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
@@ -52,28 +50,26 @@ load_llm_env()
 
 from app.services import brief as brief_service  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
-from app.services.llm_models import TASK_BRIEF, is_http_model, resolve_model  # noqa: E402
+from app.services.llm_models import TASK_BRIEF, resolve_model  # noqa: E402
 from app.services.reading.queries import fetch_instrument_names  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_cli import (  # noqa: E402
     CliNotFoundError,
-    cli_auth_error,
     error_kind,
-    record_usage,
     run_claude,
 )
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "brief_failures.log"
-# BRIEF_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）；--model 可覆寫。
+# BRIEF_MODEL 旋鈕，未設時查預設表（app/services/llm_models.py）；--model 可覆寫。
 MODEL = resolve_model(TASK_BRIEF)
 
-# 一次呼叫的逾時。素材是摘要不是全文，正常在一分鐘內回；給 300s 是留給 CLI 冷啟動
+# 一次呼叫的總期限。素材是摘要不是全文，正常在一分鐘內回；300s 是 CLI 時代留給冷啟動
 # 與偶發的長素材（NAS 一次倒進大量檔案的日子）。
 CLI_TIMEOUT = 300
 
-# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。
+# 輸出上限（第二版計畫 §8）。
 MAX_TOKENS = 8192
 
 # 沒有前一份簡報時的預設回看窗，以及任何情況下的回看上限。
@@ -84,76 +80,16 @@ MAX_LOOKBACK_DAYS = 7
 DEFAULT_AFTER_HOUR = 9
 
 
-def build_cli_args(prompt: str, model: str) -> list[str]:
-    """組 `claude -p` 的 argv（對齊其他批次）。
-
-    `--setting-sources ""`＝不載入任何 settings 來源，連帶略過全域 hooks/plugins/
-    CLAUDE.md——每次冷啟動載入它們正是磁碟小檔 I/O 的主因。輸出用 CLI 預設純文字：
-    **不要加 `--output-format json`**，那會把回應包進一層 envelope。
-    `--tools ""` 不開任何工具、`--strict-mcp-config` 不載任何 MCP，理由與位置限制同
-    scripts/_claude_cli.py。
-    """
-    return ["claude", "-p", prompt.replace("\x00", ""), "--model", model,
-            "--setting-sources", "", "--strict-mcp-config", "--tools", ""]
-
-
 def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optional[str], Optional[str]]:
-    """呼叫 LLM，回 (text, None) 或 (None, 可辨識的失敗原因)。
+    """呼叫 LLM，回 (text, None) 或 (None, 可辨識的失敗原因)。名稱是 CLI 時代的歷史值（測試 patch 點）。
 
-    失敗原因必須分得出來：`claude` 不在 PATH（systemd 缺 PATH drop-in）與「這次逾時」
-    的處置完全不同，寫成同一句「CLI 無回應」等於把環境問題偽裝成偶發失敗。
-
-    DeepSeek 白名單的 model 交給 `scripts/_claude_cli.run_claude` 的 HTTP 路徑（與其他批次同一套
-    錯誤分類：失敗回 `API[<kind>] …`，401／402／模型不存在拋 `LlmEnvironmentError`，main 以 rc=2
-    收場）。CLI 路徑刻意**不**改用 `run_claude`：本檔的 CLI 版把 claude 不在 PATH 當成「這一天產生
-    失敗」（rc=1），`run_claude` 會拋 `CliNotFoundError`（rc=2）——換過去會改變生產行為（rc=2 讓排程
-    殼另外保留 hashes），不在這次遷移的範圍。
-
-    **例外是 claude CLI 認證失效**（OAuth 過期等，`_claude_cli.cli_auth_error`）：拋 `LlmEnvironmentError`，
-    main 以 rc=2 收場、不寫 brief_failures.log——與 DeepSeek 401 同一類（rc=2 本來就是「LLM 帳號層級
-    錯誤」），不是「這一天產生失敗」。2026-09-23 起 CLI 永久停用，這時真正要修的通常是環境檔沒讓本段
-    解析到 DeepSeek；記成 rc=1 的單日失敗會把它藏進每日雜訊裡。
+    交給 `scripts/_claude_cli.run_claude`（與其他批次同一套錯誤分類：失敗回 `API[<kind>] …`，401／402／
+    模型不存在、model 不在白名單拋 `LlmEnvironmentError`，main 以 rc=2 收場、不寫 brief_failures.log——
+    那是「這一天產生失敗」的紀錄，帳號與設定問題不是）。PR-M 前本檔另有自己的 CLI 版（claude 不在 PATH
+    記成 rc=1 的單日失敗、CLI 認證失效改拋），隨 CLI 一起移除。
     """
-    if is_http_model(model):
-        res = run_claude(prompt, model, timeout=timeout, max_tokens=MAX_TOKENS, meta={"task": TASK_BRIEF})
-        return res.text, res.error
-    t0 = time.monotonic()
-    try:
-        raw, error = _spawn_cli(prompt, model, timeout)
-    except CliNotFoundError:
-        record_usage(meta={"task": TASK_BRIEF}, backend="cli", model_req=model, prompt=prompt, kind="auth",
-                     total_ms=int((time.monotonic() - t0) * 1000))
-        raise
-    # 用量記錄 CLI 路徑也寫（tokens 為 null），與 run_claude 同一份檔、同一組欄位
-    kind = None if error is None else "timeout" if error.startswith("CLI 逾時") else "cli_error"
-    record_usage(meta={"task": TASK_BRIEF}, backend="cli", model_req=model, prompt=prompt, kind=kind,
-                 total_ms=int((time.monotonic() - t0) * 1000))
-    return raw, error
-
-
-def _spawn_cli(prompt: str, model: str, timeout: int) -> tuple[Optional[str], Optional[str]]:
-    """spawn `claude -p`（簡報自己的 CLI 版，遷移前的 call_cli 本體；認證失效改為拋出，見 call_cli）。"""
-    try:
-        proc = subprocess.run(
-            build_cli_args(prompt, model),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd="/tmp",  # 避免載入專案 CLAUDE.md
-        )
-    except FileNotFoundError:
-        return None, "`claude` CLI 不在 PATH（systemd 下請補 PATH drop-in）"
-    except subprocess.TimeoutExpired:
-        return None, f"CLI 逾時（{timeout}s 內未回應）"
-    except Exception as exc:  # noqa: BLE001 - 失敗原因要能寫進 log
-        return None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}"
-    if proc.returncode != 0:
-        auth = cli_auth_error(proc.stdout, proc.stderr)
-        if auth is not None:
-            raise auth
-        tail = (proc.stderr or "").strip().replace("\n", " ")[-200:]
-        return None, f"CLI 退出碼 {proc.returncode}：{tail or '（無 stderr）'}"
-    return proc.stdout, None
+    res = run_claude(prompt, model, timeout=timeout, max_tokens=MAX_TOKENS, meta={"task": TASK_BRIEF})
+    return res.text, res.error
 
 
 def record_failure(target: date_cls, reason: str, model: str = "") -> None:
@@ -270,7 +206,7 @@ async def generate(args) -> int:
         return 1
 
     prompt = brief_service.build_prompt(target, material)
-    # **鎖只包住 CLI 呼叫本身**：排程每 3 小時叫本檔一次，但真正要呼叫 LLM 的只有
+    # **鎖只包住 LLM 呼叫本身**：排程每 3 小時叫本檔一次，但真正要呼叫 LLM 的只有
     # 一天一次。若照其他批次的慣例在 main 進入點取鎖，其餘七次 no-op 都會在訊號或
     # 標題批次執行中撞鎖 rc=75，於是 unit_failures 每天多七筆「失敗」——那個檔是
     # OnFailure 告警的落點，灌滿雜訊等於把它廢掉。
@@ -344,7 +280,7 @@ def main() -> int:
     # 模型與金鑰預檢排在 generate() 之前，也就在取鎖之前；--dry-run 不呼叫 LLM，不檢查。
     if not args.dry_run:
         require_llm_key({TASK_BRIEF: args.model})
-    # 取鎖的位置在 generate() 內、只包住 CLI 呼叫（理由見該處註解）。
+    # 取鎖的位置在 generate() 內、只包住 LLM 呼叫（理由見該處註解）。
     try:
         return asyncio.run(generate(args))
     except CliNotFoundError as exc:

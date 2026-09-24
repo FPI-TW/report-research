@@ -1,15 +1,15 @@
 """觀點雷達訊號擷取批次（子集先行、冪等可續傳）→ research.report_signal
 
-流程（對齊 scripts/generate_summaries.py 的 asyncio + Semaphore + claude CLI 慣例）：
+流程（對齊 scripts/generate_summaries.py 的 asyncio + Semaphore + `run_claude` 慣例）：
 1. 依券商覆蓋度選「高覆蓋標的」子集（每個 (market, code) 的券商數/報告數達門檻，取 top-N）。
 2. 撈涵蓋子集標的的研報；每份 requested_codes = report.stock_targets ∩ 該 market 子集。
 3. checkpoint-resume：某報告的所有 requested 標的皆已有 valid/partial 列且版本相符 → 跳過。
-4. 逐報告 spawn `claude -p`(Sonnet) 依固定 schema 擷取；Python 正規化（signal_extract）。
+4. 逐報告呼叫 LLM（DeepSeek）依固定 schema 擷取；Python 正規化（signal_extract）。
 5. ON CONFLICT upsert；單筆失敗只寫 data/signal_failures.log，不中斷、不影響檢索/問答。
 6. 有回應卻全數 rejected 的研報記入 research.llm_task_failure，同一 model 連續 3 輪後
    跳過，不再每輪重打（規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）。
 
-**擷取單位＝一份研報**（一次 CLI 呼叫回該報告涵蓋的多標的，Python fan-out 成多列）。
+**擷取單位＝一份研報**（一次 LLM 呼叫回該報告涵蓋的多標的，Python fan-out 成多列）。
 資料源用 DB full_text（天然只涵蓋已入庫、is_research 的語料）。
 
 用法：
@@ -18,8 +18,7 @@
   uv run python scripts/extract_signals.py                    # 全子集
   uv run python scripts/extract_signals.py --reextract        # 版本升級後強制重跑
 
-注意：每份研報都會冷啟動一個 `claude -p`；--workers 越高越容易頂滿磁碟小檔 I/O
-（見 generate_summaries.py 註）。預設壓到 2，子集 + 低併發雙重控制成本。
+注意：--workers 預設壓到 2（見 generate_summaries.py 註），子集 + 低併發雙重控制成本。
 """
 
 from __future__ import annotations
@@ -174,9 +173,9 @@ def row_to_params(row: SignalRow) -> dict:
     }
 
 
-# ── claude CLI 呼叫（對齊 generate_summaries.py）──
+# ── LLM 呼叫（對齊 generate_summaries.py）──
 
-# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。多標的研報一次回好幾組論點與
+# 輸出上限（第二版計畫 §8）。多標的研報一次回好幾組論點與
 # 證據，非 thinking 模式不設上限時只有 8K，會被截斷。
 MAX_TOKENS = 16384
 
@@ -185,7 +184,7 @@ def call_cli(
     prompt: str, model: str, timeout: int = 180, *,
     file_hash: Optional[str] = None, report_id: Optional[str] = None,
 ) -> CliResult:
-    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
+    """呼叫 LLM（`run_claude`，DeepSeek；名稱是 CLI 時代的歷史值）。回 (text, None) 或 (None, 失敗原因)。
 
     實作在 `scripts/_claude_cli.py`（全批次共用）。這裡原本是
     `except Exception: return None`，於是所有失敗都被寫成同一句「CLI 無回應或逾時」
@@ -336,7 +335,7 @@ async def extract_one(
     parsed: Optional[ParsedReportSignals] = None
     used_model: Optional[str] = None  # 產出 parsed 那次回應的模型（raw_payload.model）
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
-    last_error = "CLI 無回應"
+    last_error = "LLM 無回應"
     http_reason: Optional[str] = None  # HTTP 的審查／截斷／空回應／400（failure_kind）
     async with sem:
         for _ in range(retries + 1):
@@ -361,7 +360,7 @@ async def extract_one(
         # HTTP 的內容型失敗是結束這一輪的那一次，取它（截斷、審查 1 次就跳過）。
         fail_reason = http_reason or (llm_failures.UNPARSEABLE if parsed is not None else None)
         if parsed is None:
-            # CLI 無回應/逾時 → 落 rejected 列（供之後重跑），並記失敗
+            # 呼叫失敗（逾時、過載等）→ 落 rejected 列（供之後重跑），並記失敗
             parsed = ParsedReportSignals(ok=False, error=last_error)
 
     try:
@@ -443,7 +442,7 @@ if __name__ == "__main__":
     ap.add_argument("--min-brokers", type=int, default=3, help="子集門檻：券商數下限")
     ap.add_argument("--min-reports", type=int, default=5, help="子集門檻：報告數下限")
     ap.add_argument("--top-n", type=int, default=50, help="子集標的數上限（依覆蓋度）")
-    ap.add_argument("--workers", type=int, default=2, help="同時 claude CLI 呼叫數")
+    ap.add_argument("--workers", type=int, default=2, help="同時的 LLM 呼叫數")
     ap.add_argument("--limit", type=int, default=None, help="最多擷取幾份報告（試跑用）")
     ap.add_argument("--excerpt", type=int, default=16000, help="餵給 LLM 的內文字數上限")
     ap.add_argument("--model", default=SIGNAL_MODEL_DEFAULT)

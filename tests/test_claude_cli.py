@@ -1,4 +1,4 @@
-"""`scripts/_claude_cli.py`：批次共用的 claude CLI 呼叫層。
+"""`scripts/_claude_cli.py`：批次共用的 LLM 呼叫層（檔名是 claude CLI 時代的歷史值）。
 
 這一組測試釘死的是**失敗原因必須互相區分**。原缺陷是每一支批次各自寫了
 
@@ -8,13 +8,15 @@
 於是「claude 不在 PATH」「額度耗盡」「CLI 崩潰」「真的逾時」全部塌縮成同一句
 「CLI 無回應或逾時」——2026-08-08 起連續四天 100% 失敗，事後完全無法診斷。
 （signal_failures.log 累積 9,273 筆全是那一句。）
+
+PR-M 移除 CLI backend 後，這個意圖改由 DeepSeek 路徑承接（`FailureReasonsTests`：每一種失敗的訊息
+互不相同、單行、說得出 kind；帳號與設定層級的失敗整批中止）。CLI 專屬的測試（argv 旗標、errno 判定、
+stderr 尾巴、CLI 認證失效）隨 CLI 一起刪除。
 """
 import ast
-import errno
 import importlib
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import threading
@@ -57,13 +59,14 @@ def _ok(text: str) -> bytes:
 
 
 class _HttpCase(unittest.TestCase):
-    """MockTransport＋假金鑰＋擋住 CLI＋傳輸層退避改成記錄器（不真的等 2／6 秒）。"""
+    """MockTransport＋假金鑰＋擋住任何子行程＋傳輸層退避改成記錄器（不真的等 2／6 秒）。"""
 
     def setUp(self):
         env = mock.patch.dict(os.environ, ENV)
         env.start()
         self.addCleanup(env.stop)
-        spawn = mock.patch.object(cc.subprocess, "run", side_effect=AssertionError("不該 spawn claude"))
+        # PR-M 前擋的是 `cc.subprocess.run`；CLI 移除後本模組不再 import subprocess，改擋全域的
+        spawn = mock.patch("subprocess.run", side_effect=AssertionError("PR-M 後不得 spawn 任何子行程"))
         spawn.start()
         self.addCleanup(spawn.stop)
         self.sleeps: list[float] = []
@@ -97,227 +100,71 @@ class _HttpCase(unittest.TestCase):
         return cc.run_claude(prompt, model, **kw)
 
 
-class BuildCliArgsTests(unittest.TestCase):
-    def test_shape_and_flags(self):
-        args = cc.build_cli_args("hello", "claude-sonnet-5")
-        self.assertEqual(args[:2], ["claude", "-p"])
-        self.assertEqual(args[2], "hello")
-        self.assertIn("--model", args)
-        self.assertEqual(args[args.index("--model") + 1], "claude-sonnet-5")
-        # 空字串引數不可省：`--setting-sources` 後面必須真的有一個空字串
-        self.assertIn("--setting-sources", args)
-        self.assertEqual(args[args.index("--setting-sources") + 1], "")
+class FailureReasonsTests(_HttpCase):
+    """「失敗原因說得出口」（本模組存在的理由）在 DeepSeek 路徑上的版本。
 
-    def test_disables_all_tools(self):
-        """批次只要模型回文字，不開任何工具；旗標是可變長度選項，必須在 prompt 之後、argv 最後。"""
-        args = cc.build_cli_args("hello", "m")
-        self.assertEqual(args[-2:], ["--tools", ""])  # 空字串是獨立引數，不可省
-        self.assertEqual(args[2], "hello")
-        self.assertNotIn("--disallowedTools", args)  # "*" 萬用字元語意未記載，很可能無效
-        self.assertNotIn("--allowedTools", args)
+    - 單篇失敗：各 kind 的訊息**互不相同**、`API[<kind>]` 開頭、單行、不含 TAB（*_failures.log 一列一筆）。
+    - 整批中止：帳號層級（401／402／404）與白名單外的 model 拋 `LlmEnvironmentError`（被各批次 main 的
+      `except CliNotFoundError` 接住 → rc=2），訊息直接指出該修什麼。
+    """
 
-    def test_no_mcp_servers(self):
-        """`--tools ""` 管不到 MCP：另加 `--strict-mcp-config`、不帶 `--mcp-config`＝不載任何 MCP。
-        布林旗標要在 `--tools` 之前，不能被當成 `--tools` 的值。"""
-        args = cc.build_cli_args("hello", "m")
-        self.assertIn("--strict-mcp-config", args)
-        self.assertNotIn("--mcp-config", args)
-        self.assertLess(args.index("--strict-mcp-config"), args.index("--tools"))
-        self.assertEqual(args[2], "hello")
+    PER_FILE = {
+        "content_filter": lambda req: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}),
+        "bad_request": lambda req: httpx.Response(400, json={"error": {"message": "bad input"}}),
+        "truncated": lambda req: httpx.Response(
+            200, content=_sse(_chunk(content="半"), _chunk(content="", finish="length"))),
+        "empty": lambda req: httpx.Response(200, content=_sse(_chunk(content="", finish="stop"))),
+        "overloaded": lambda req: httpx.Response(503, json={"error": {"message": "busy"}}),
+        "network": lambda req: (_ for _ in ()).throw(httpx.ConnectError("refused", request=req)),
+    }
 
-    def test_nul_is_stripped(self):
-        """POSIX argv 不可含 NUL，否則 subprocess 直接拋 ValueError，該檔永久失敗。"""
-        self.assertEqual(cc.build_cli_args("ab\x00cd", "m")[2], "abcd")
-
-    def test_no_output_format_json(self):
-        """加了會把回應包進 CLI envelope，各家 parser 會抓到外層物件而全數解析失敗。"""
-        self.assertNotIn("--output-format", cc.build_cli_args("x", "m"))
-
-
-class RunClaudeTests(unittest.TestCase):
-    def _raises(self, exc):
-        return mock.patch.object(cc.subprocess, "run", side_effect=exc)
-
-    def test_success_returns_stdout_and_no_error(self):
-        done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
-        with mock.patch.object(cc.subprocess, "run", return_value=done):
-            res = cc.run_claude("prompt", "model")
-        self.assertEqual(res.text, "OUT")
-        self.assertIsNone(res.error)
-        self.assertIsNone(res.model_resp)  # CLI 路徑拿不到回應的 model，呼叫端退回請求的
-
-    def test_missing_cli_raises_instead_of_returning_none(self):
-        # 環境層級失敗：每篇都會踩到，必須往上拋以中止整批，
-        # 而不是靜靜地把每一篇都記成 rejected
-        with self._raises(FileNotFoundError(2, "No such file or directory", "claude")):
-            with self.assertRaises(cc.CliNotFoundError) as ctx:
-                cc.run_claude("prompt", "model")
-        msg = str(ctx.exception)
-        self.assertIn("claude", msg)
-        self.assertIn("PATH", msg)  # 訊息要直接指出真因
-
-    def test_unrunnable_binary_raises_instead_of_becoming_a_per_file_error(self):
-        """**2026-08-20 的實際事故。**
-
-        claude CLI 自我更新到 2.1.237，而該版本的 native artifact 上游沒發布，
-        postinstall 留下 500 bytes、無 shebang 的佔位腳本 ⇒ exec 拋
-        `OSError [Errno 8] ENOEXEC`。初版只接 `FileNotFoundError`（ENOENT），
-        於是這顆完全跑不起來的二進位被當成「這一篇失敗」——7 篇研報記成
-        skip_untagged、整批 rc=0、殼只印「本次無新研報入庫」。
-
-        述詞要問的是「這顆二進位在這個環境裡有沒有可能跑起來」，不是「它存不存在」。
-        """
-        cases = {
-            errno.ENOENT: "ENOENT",
-            errno.ENOEXEC: "ENOEXEC",
-            errno.EACCES: "EACCES",
-            errno.EPERM: "EPERM",
-            errno.EISDIR: "EISDIR",
-        }
-        for code, name in cases.items():
-            with self.subTest(errno=name):
-                with self._raises(OSError(code, os.strerror(code), "claude")):
-                    with self.assertRaises(cc.CliNotFoundError) as ctx:
-                        cc.run_claude("prompt", "model")
-                self.assertIn(name, str(ctx.exception), "訊息要說得出是哪一種")
-
-    def test_transient_oserrors_stay_per_file_errors(self):
-        """**不可寬泛接 OSError。** 資源壓力是暫時的，中止整批反而讓一次尖峰
-        變成一輪完全沒跑——而它下一分鐘可能就好了。
-        """
-        for code in (errno.ENOMEM, errno.ENFILE, errno.EAGAIN):
-            with self.subTest(errno=code):
-                with self._raises(OSError(code, os.strerror(code), "claude")):
-                    res = cc.run_claude("prompt", "model")
+    def test_per_file_failures_are_mutually_distinguishable(self):
+        errors = {}
+        for kind, handler in self.PER_FILE.items():
+            with self.subTest(kind=kind):
+                cc._reset_state()  # 過載／網路會進斷路器窗，逐項清掉
+                self.install(handler)
+                res = self.call()
                 self.assertIsNone(res.text)
-                # 不比對例外類別名：Python 會把部分 errno 映射成 OSError 的子類
-                # （EAGAIN → BlockingIOError），比對名稱是在測 CPython 的實作細節。
-                self.assertIn("CLI 呼叫失敗", res.error)
-                self.assertIn(str(code), res.error)
+                self.assertTrue(res.error.startswith(f"API[{kind}]"), res.error)
+                self.assertNotIn("\n", res.error)
+                self.assertNotIn("\t", res.error)
+                errors[kind] = res.error
+        self.assertEqual(len(set(errors.values())), len(self.PER_FILE), "失敗原因不得塌縮成同一句")
 
-    def test_timeout_is_reported_as_timeout(self):
-        with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):
-            res = cc.run_claude("prompt", "model", timeout=180)
-        self.assertIsNone(res.text)
-        self.assertIn("逾時", res.error)
-        self.assertIn("180", res.error)
+    def test_account_errors_say_what_to_fix(self):
+        hints = {401: "DEEPSEEK_API_KEY", 402: "儲值", 404: "模型名"}
+        for code, hint in hints.items():
+            with self.subTest(code=code):
+                self.install(lambda req, c=code: httpx.Response(c, json={"error": {"message": "x"}}))
+                with self.assertRaises(cc.CliNotFoundError) as ctx:
+                    self.call()
+                self.assertIsInstance(ctx.exception, cc.LlmEnvironmentError)
+                self.assertIn(hint, str(ctx.exception))
 
-    def test_nonzero_exit_reports_code_and_stderr(self):
-        fail = subprocess.CompletedProcess(
-            args=[], returncode=3, stdout="", stderr="usage: unknown flag\n"
-        )
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            res = cc.run_claude("prompt", "model")
-        self.assertIsNone(res.text)
-        self.assertIn("3", res.error)
-        self.assertIn("unknown flag", res.error)
+    def test_cli_symbols_are_gone(self):
+        """PR-M：CLI 路徑的殘留不得回來（`build_cli_args`、`_run_cli`、認證失效樣式、errno 表……）。"""
+        for name in ("build_cli_args", "_run_cli", "cli_auth_error", "CLI_AUTH_HINT", "STDERR_TAIL_CHARS",
+                     "_UNRUNNABLE_ERRNOS", "_cli_kind", "subprocess"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(cc, name), name)
+        self.assertNotIn("cwd", __import__("inspect").signature(cc.run_claude).parameters)
 
-    def test_nonzero_exit_without_stderr_still_says_something(self):
-        """空 stderr 不可產出「CLI 退出碼 1：」這種尾巴空著的訊息。"""
-        fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            res = cc.run_claude("p", "m")
-        self.assertIn("無 stderr", res.error)
-
-    def test_stderr_is_tail_truncated_and_single_line(self):
-        """log 是給人掃讀的：不可讓一則失敗灌進數十 KB，也不可把行拆散。"""
-        fail = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="x" * 5000 + "\nTAIL_MARKER"
-        )
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            res = cc.run_claude("p", "m")
-        self.assertIn("TAIL_MARKER", res.error)          # 保留的是尾巴，不是開頭
-        self.assertNotIn("\n", res.error)                # 單行，不破壞 log 的一列一筆
-        self.assertLess(len(res.error), cc.STDERR_TAIL_CHARS + 60)
-
-    def test_other_exception_is_reported_with_its_type(self):
-        with self._raises(OSError("Cannot allocate memory")):
-            res = cc.run_claude("prompt", "model")
-        self.assertIsNone(res.text)
-        self.assertIn("OSError", res.error)
-        self.assertNotIn("逾時", res.error)  # 不得與逾時混為一談
-
-    def test_failure_reasons_are_mutually_distinguishable(self):
-        """四種失敗不可再塌縮成同一句話（這正是原缺陷的本體）。"""
-        with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):
-            timeout_err = cc.run_claude("p", "m").error
-        with self._raises(OSError("boom")):
-            other_err = cc.run_claude("p", "m").error
-        fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="e")
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            exit_err = cc.run_claude("p", "m").error
-        rate = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="Credit balance is too low"
-        )
-        with mock.patch.object(cc.subprocess, "run", return_value=rate):
-            rate_err = cc.run_claude("p", "m").error
-        self.assertEqual(len({timeout_err, other_err, exit_err, rate_err}), 4)
-        # 額度耗盡要能從訊息本身看出來，不必再去翻別的地方
-        self.assertIn("Credit balance", rate_err)
-
-
-class CliAuthFailureTests(unittest.TestCase):
-    """claude CLI 認證失效＝環境壞了：拋 `LlmEnvironmentError`（整批 rc=2），不是單篇失敗（9/23 事故）。"""
-
-    # 實際見過或 CLI 固定措辭的幾種；stdout 與 stderr 都要認
-    AUTH_OUTPUTS = (
-        "Failed to authenticate: OAuth session expired and could not be refreshed",
-        "Failed to authenticate. API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\","
-        "\"message\":\"OAuth token has expired.\"}}",
-        "Invalid API key · Please run /login",
-        "Not logged in · Please run /login",
-        "OAuth token has expired. Please obtain a new token or refresh your existing token.",
-    )
-
-    def _run(self, rc, stdout, stderr):
-        done = subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
-        with mock.patch.object(cc.subprocess, "run", return_value=done):
-            return cc.run_claude("p", "claude-haiku-4-5")
-
-    def test_auth_failure_on_stdout_or_stderr_aborts(self):
-        for text in self.AUTH_OUTPUTS:
-            for stdout, stderr in ((text + "\n", ""), ("", text + "\n")):
-                with self.subTest(text=text[:30], where="stdout" if stdout else "stderr"):
-                    with self.assertRaises(cc.LlmEnvironmentError) as ctx:
-                        self._run(1, stdout, stderr)
-                    self.assertIsInstance(ctx.exception, cc.CliNotFoundError)  # 各批次 main 的 rc=2 接法
-                    msg = str(ctx.exception)
-                    self.assertIn("認證失效", msg)
-                    self.assertIn("/etc/default/report-mark-llm", msg)
-                    self.assertIn("LLM_PROVIDER=deepseek", msg)
-                    self.assertNotIn("\n", msg)
-
-    def test_other_nonzero_exits_stay_per_file(self):
-        for stdout, stderr in (("", "usage: unknown flag"), ("", "Credit balance is too low"),
-                               ("", "API Error: 529 Overloaded"), ("HTTP 401 somewhere else", "")):
-            with self.subTest(stderr=stderr, stdout=stdout):
-                res = self._run(1, stdout, stderr)
-                self.assertIsNone(res.text)
-                self.assertTrue(res.error.startswith("CLI 退出碼 1"), res.error)
-
-    def test_exit_zero_is_output_even_if_it_mentions_auth(self):
-        """成功退出的 stdout 是模型的回答，內文談到 API 金鑰也不是認證失效。"""
-        res = self._run(0, "Invalid API key 是常見的設定錯誤", "")
-        self.assertEqual(res.text, "Invalid API key 是常見的設定錯誤")
-
-    def test_stdout_tail_when_stderr_is_empty(self):
-        """stderr 空時帶出 stdout 的尾巴：9/23 的 log 只剩「（無 stderr）」，完全看不出原因。"""
-        res = self._run(1, "some other failure on stdout\n", "")
-        self.assertIn("some other failure on stdout", res.error)
-        self.assertIn("無 stderr", res.error)
-
-    def test_usage_row_kind_auth(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            log = Path(tmp) / "usage.jsonl"
-            with mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(log)}):
-                with self.assertRaises(cc.LlmEnvironmentError):
-                    self._run(1, self.AUTH_OUTPUTS[0], "")
-            rows = [json.loads(ln) for ln in log.read_text(encoding="utf-8").splitlines()]
-        self.assertEqual([(r["backend"], r["kind"]) for r in rows], [("cli", "auth")])
+    def test_batch_sources_have_no_cli_spawn(self):
+        """驗收 grep 的測試版（批次那一半；線上的在 tests/test_llm.py 的 NoCliBackendTests）。"""
+        hits = []
+        for path in sorted((REPO_ROOT / "scripts").rglob("*")):
+            if path.suffix not in (".py", ".sh"):
+                continue
+            text = path.read_text(encoding="utf-8")
+            for pat in ("claude -p", "claude_cli_path", "_run_cli", "build_cli_args", '"claude", "-p"'):
+                if pat in text:
+                    hits.append(f"{path.relative_to(REPO_ROOT)}: {pat}")
+        self.assertEqual(hits, [])
 
 
 class HttpDispatchTests(_HttpCase):
-    """白名單 model 走 `llm_http.complete_chat`，其餘照舊 spawn CLI（第二版計畫 §4.3）。"""
+    """白名單 model 走 `llm_http.complete_chat`；其餘整批中止（PR-M 前 spawn CLI）。"""
 
     def test_model_resp_is_response_model(self):
         """`model_resp` 取回應的 model 欄，不是請求的（摘錄與訊號記進 raw_payload.model，PR-15）。"""
@@ -348,14 +195,27 @@ class HttpDispatchTests(_HttpCase):
                 self.assertEqual(self.call(model=model).text, "ok")
                 self.assertEqual(len(self.requests), 1)
 
-    def test_claude_model_still_spawns_cli(self):
-        self.install(lambda req: (_ for _ in ()).throw(AssertionError("CLI model 不得打 HTTP")))
-        done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
-        with mock.patch.object(cc.subprocess, "run", return_value=done) as run:
-            res = cc.run_claude("p", "claude-haiku-4-5", max_tokens=1024, meta={"task": "tag"})
-        self.assertEqual(res.text, "OUT")
-        self.assertEqual(run.call_args.args[0][:2], ["claude", "-p"])
+    def test_non_whitelisted_model_aborts_the_batch_without_sending(self):
+        """PR-M：白名單外（含 claude-*、CLI 別名、打錯字、空字串）→ `LlmEnvironmentError`（整批 rc=2），
+        不送出、不寫用量記錄、不進斷路器窗。"""
+        self.install(lambda req: httpx.Response(200, content=_ok("不該送出")))
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "usage.jsonl"
+            with mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(log)}):
+                for model in ("claude-haiku-4-5", "claude-sonnet-5", "sonnet", "deepseek-flsh", ""):
+                    with self.subTest(model=model):
+                        with self.assertRaises(cc.CliNotFoundError) as ctx:
+                            cc.run_claude("p", model, max_tokens=1024, meta={"task": "tag", "file_hash": "h1"})
+                        self.assertIsInstance(ctx.exception, cc.LlmEnvironmentError)
+                        self.assertNotIsInstance(ctx.exception, cc.BadRequestEscalation)
+                        msg = str(ctx.exception)
+                        self.assertIn(repr(model), msg)
+                        self.assertIn("白名單", msg)
+                        self.assertIn("deepseek-flash", msg)  # 說得出可以填什麼
+            self.assertFalse(log.exists(), "沒送出的呼叫不記用量")
         self.assertEqual(self.requests, [])
+        self.assertEqual(sum(cc._BREAKER._recent), 0)
+        self.assertEqual(len(cc._BREAKER._recent), 0)
 
     def test_http_without_max_tokens_is_a_programming_error(self):
         self.install(lambda req: httpx.Response(200, content=_ok("ok")))
@@ -471,7 +331,8 @@ class RetryClassificationTests(unittest.TestCase):
         R = cc.CliResult
         self.assertFalse(cc.is_retryable(R(None, lh.error_string(lh.TIMEOUT))))
         self.assertFalse(cc.is_retryable(R(None, "API[content_filter] 觸發供應商內容審查")))
-        for err in ("CLI 逾時（180s 內未回應）", "CLI 退出碼 1：x", "CLI 呼叫失敗：OSError: boom", None):
+        # 不是 `API[` 開頭的失敗（PR-M 前 CLI 的訊息；現在沒有來源，但規則不變）與成功照舊可重試
+        for err in ("CLI 逾時（180s 內未回應）", None):
             with self.subTest(err=err):
                 self.assertTrue(cc.is_retryable(R(None, err)))
         self.assertTrue(cc.is_retryable(R("文字", None)))
@@ -503,7 +364,7 @@ class RetryClassificationTests(unittest.TestCase):
                 if reason is not None:
                     self.assertIn(reason, lf.REASONS)
 
-    def test_failure_kind_ignores_cli_and_success(self):
+    def test_failure_kind_ignores_non_api_errors_and_success(self):
         self.assertIsNone(cc.failure_kind(cc.CliResult(None, "CLI 逾時（180s 內未回應）")))
         self.assertIsNone(cc.failure_kind(cc.CliResult("ok", None)))
         # 內容剛好長得像前綴也不算：只看失敗
@@ -611,16 +472,6 @@ class BreakerTests(_HttpCase):
             self._calls(_status(503), 1)
             self.call()  # 第 9 次：窗內 5 壞 4 好
         self.assertTrue(self.marker.exists())
-
-    def test_cli_calls_never_count(self):
-        """L9：還在用 Claude 的段不受 DeepSeek 斷路器影響。"""
-        with mock.patch.object(cc.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 1)):
-            for _ in range(12):
-                res = cc.run_claude("p", "claude-haiku-4-5", timeout=1)
-                self.assertIn("逾時", res.error)
-        self.assertFalse(self.marker.exists())
-        self._calls(_status(503), 4)  # 窗裡沒有 CLI 的 12 次：再 4 次壞仍不跳
-        self.assertFalse(self.marker.exists())
 
     def test_thread_safe_single_trip(self):
         self.install(_status(503))
@@ -1065,23 +916,6 @@ class UsageLogTests(_HttpCase):
         with self.assertRaises(cc.LlmEnvironmentError):
             self.call(meta=self.META)
         self.assertEqual(self.rows()[0]["kind"], "quota")
-
-    def test_cli_rows_have_null_tokens(self):
-        done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
-        with mock.patch.object(cc.subprocess, "run", return_value=done):
-            cc.run_claude("p", "claude-haiku-4-5", meta={"task": "tag", "file_hash": "h9"})
-        with mock.patch.object(cc.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 5)):
-            cc.run_claude("p", "claude-haiku-4-5", timeout=5, meta={"task": "tag"})
-        with mock.patch.object(cc.subprocess, "run", side_effect=FileNotFoundError(2, "x", "claude")):
-            with self.assertRaises(cc.CliNotFoundError):
-                cc.run_claude("p", "claude-haiku-4-5", meta={"task": "tag"})
-        ok, timeout, missing = self.rows()
-        for row in (ok, timeout, missing):
-            self.assertEqual(set(row), USAGE_FIELDS)
-            self.assertEqual((row["backend"], row["tokens"]), ("cli", None))
-        self.assertEqual((ok["kind"], ok["file_hash"]), (None, "h9"))
-        self.assertEqual(timeout["kind"], "timeout")
-        self.assertEqual(missing["kind"], "unrunnable")
 
     def test_threads_write_whole_lines(self):
         def worker(i):

@@ -14,7 +14,7 @@
 **題目取自 `eval/ragas_questions.json` 的凍結題集**，不自己造題：repo 的規約是量測不要
 另建一套（見 CLAUDE.md 的 eval 段）。同一份題集也讓不同時間點的壓測可以互相比較。
 
-**這支腳本會真的花錢／額度**：每題會 spawn `claude` CLI 數次（分類器、主回答、忠實度
+**這支腳本會真的花錢**：每題會呼叫 DeepSeek 數次（分類器、主回答、忠實度
 抽查、追問建議）。它刻意沒有預設就跑的模式——題數與併發都要顯式指定或用預設的小值，
 而且會在開跑前把「將發出幾個請求」印出來。
 
@@ -205,7 +205,7 @@ def run_bench(args) -> dict:
     print(f"端點      /api/{args.endpoint}")
     print(f"計畫      {len(plan)} 個請求 × 併發 {args.concurrency}")
     print(f"逾時      {args.timeout:.0f}s／請求")
-    print("提醒      每個請求都會 spawn claude CLI 數次，實際消耗訂閱額度。")
+    print("提醒      每個請求都會呼叫 DeepSeek 數次，實際扣款（按量計費）。")
     if args.dry_run:
         print("（--dry-run：不送出任何請求）")
         return {"kind": "bench", "dry_run": True, "planned": len(plan)}

@@ -15,7 +15,6 @@ import importlib.util
 import io
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -123,14 +122,15 @@ class _FakeSession:
 
 
 class HttpMixin:
-    """裝 MockTransport、給假金鑰、擋住 CLI、把傳輸層退避換成記錄器。"""
+    """裝 MockTransport、給假金鑰、擋住任何子行程、把傳輸層退避換成記錄器。"""
 
     def setUp(self):
         super().setUp()
         env = mock.patch.dict(os.environ, ENV)
         env.start()
         self.addCleanup(env.stop)
-        spawn = mock.patch.object(cc.subprocess, "run", side_effect=AssertionError("不該 spawn claude"))
+        # PR-M 前擋的是 `cc.subprocess.run`；CLI 移除後本模組不再 import subprocess，改擋全域的
+        spawn = mock.patch("subprocess.run", side_effect=AssertionError("PR-M 後不得 spawn 任何子行程"))
         spawn.start()
         self.addCleanup(spawn.stop)
         self.sleeps: list[float] = []
@@ -317,52 +317,29 @@ class AccountErrorAbortsWholeBatchTests(HttpMixin, unittest.TestCase):
 
 
 CLAUDE = "claude-haiku-4-5"
-# 2026-09-23 事故的實際輸出：退出碼 1、stderr 空、訊息在 stdout（見 _claude_cli「兩類失敗刻意分流」）
-CLI_AUTH_OUTPUT = "Failed to authenticate: OAuth session expired and could not be refreshed\n"
 
 
-class CliAuthAbortsWholeBatchTests(HttpMixin, unittest.TestCase):
-    """claude CLI 認證失效：每支批次（含簡報自己的 CLI 分支）整批 rc=2，不記跳過名單、不寫單篇失敗紀錄。
+class NonWhitelistAbortsWholeBatchTests(HttpMixin, unittest.TestCase):
+    """PR-M：model 不在白名單（含 claude-*；PR-M 前走 CLI）→ 每支批次（含簡報）整批 rc=2，不送出、
+    不記跳過名單、不寫單篇失敗紀錄。
 
-    修正前是「CLI 退出碼 1：（無 stderr）」逐篇記成單篇失敗、腳本層再重試、整批 rc=0——9/23、9/24
-    兩天沒有任何研報入庫、排程殼看起來一切正常。
+    這是 PR-M 前「CLI 認證失效整批 rc=2」（9/23 事故）的後繼：設定把某段解析到 Claude 時，不能變成
+    逐篇記「單篇失敗」、整批 rc=0。`main_rc` 對 sync 與簡報已略過預檢（見 `_main`），所以這裡量到的是
+    `run_claude` 本身的防線；預檢那一道在 tests/test_llm_env_loading.py。
     """
 
     def test_every_batch_main_exits_2(self):
-        spawned: list[list[str]] = []
-
-        def fake_run(argv, **kw):
-            spawned.append(argv)
-            return subprocess.CompletedProcess(argv, 1, CLI_AUTH_OUTPUT, "")
-
         for name in BATCHES:
-            with self.subTest(batch=name), mock.patch.object(sys.modules[__name__], "DS", CLAUDE), \
-                    mock.patch.object(cc.subprocess, "run", side_effect=fake_run):
-                spawned.clear()
-                self.install(lambda req: (_ for _ in ()).throw(AssertionError("CLI 模型不該打 HTTP")))
+            with self.subTest(batch=name), mock.patch.object(sys.modules[__name__], "DS", CLAUDE):
+                self.install(lambda req: (_ for _ in ()).throw(AssertionError("白名單外的 model 不該打 HTTP")))
                 code, rec, out = self.main_rc(name)
                 self.assertEqual(code, 2, out)
-                self.assertEqual(rec.recorded, [], "認證失效不記跳過名單")
-                self.assertIn("認證失效", out)
-                self.assertIn("/etc/default/report-mark-llm", out)
-                self.assertIn("LLM_PROVIDER=deepseek", out)
-                limit = N_ITEMS if name == "tag_all" else 2 if name in PARALLEL else 1
-                self.assertGreaterEqual(len(spawned), 1)
-                self.assertLessEqual(len(spawned), limit, f"{N_ITEMS} 篇只該打到第一篇就中止（不做腳本層重試）")
-                self.assertEqual(spawned[0][:2], ["claude", "-p"])
+                self.assertEqual(rec.recorded, [], "設定錯誤不記跳過名單")
+                self.assertIn("不在 DeepSeek 白名單", out)
+                self.assertIn(CLAUDE, out)
+                self.assertEqual(self.requests, [])
                 logs = [p for p in self.tmp.glob("*.log") if p.stat().st_size]
                 self.assertEqual(logs, [], "不寫單篇失敗紀錄")
-
-    def test_stderr_auth_message_also_aborts(self):
-        for stdout, stderr in (("", "Invalid API key · Please run /login"),
-                               ('API Error: 401 {"error":{"type":"authentication_error"}}', "")):
-            with self.subTest(stderr=stderr[:20]), \
-                    mock.patch.object(cc.subprocess, "run",
-                                      return_value=subprocess.CompletedProcess([], 1, stdout, stderr)):
-                with self.assertRaises(cc.LlmEnvironmentError):
-                    cc.run_claude("p", CLAUDE)
-                with self.assertRaises(cc.LlmEnvironmentError):
-                    gb.call_cli("p", CLAUDE)
 
 
 class HttpSuccessThroughBatchesTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
@@ -606,7 +583,8 @@ class BilledRequestsPerFileTests(_OneFileMixin, unittest.IsolatedAsyncioTestCase
 
 
 class SummaryPlainTextFallbackTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
-    """審查 D11：純文字 fallback 只給 CLI；DeepSeek 不守 JSON 格式＝解析失敗（多半是閒聊或拒答）。"""
+    """審查 D11：DeepSeek 不守 JSON 格式＝解析失敗（多半是閒聊或拒答）。純文字 fallback 原本只給 CLI，
+    PR-M 起批次一律不用（解析器的預設值留給直接呼叫的工具）。"""
 
     def test_parse_summary_flag(self):
         self.assertEqual(gs.parse_summary("這是一段摘要。"), "這是一段摘要。")
@@ -620,14 +598,16 @@ class SummaryPlainTextFallbackTests(HttpMixin, unittest.IsolatedAsyncioTestCase)
         self.assertEqual(rec.cleared, [])
         self.assertEqual(len(self.requests), 3)
 
-    async def test_cli_plain_text_still_accepted(self):
+    async def test_plain_text_is_unparseable_whatever_the_model(self):
+        """PR-M 前 claude-* 的純文字會被當成摘要收下；現在批次不看 model，一律嚴格解析。"""
         rec = SpyRecorder()
         with mock.patch.object(gs, "FAIL_LOG", self.tmp / "s.log"), \
              mock.patch.object(gs, "MODEL", "claude-sonnet-5"), \
              mock.patch.object(gs, "SessionFactory", lambda: _FakeSession()), \
              mock.patch.object(gs, "call_cli", return_value=cc.CliResult("先進製程需求強勁。", None)):
             await gs.summarize_one(asyncio.Semaphore(1), "rid", "f.pdf", "內文", 3000, 1, file_hash="h1", recorder=rec)
-        self.assertEqual(rec.cleared, ["h1"])
+        self.assertEqual(rec.cleared, [])
+        self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
 
 
 class BreakerAbortsBatchTests(HttpMixin, unittest.TestCase):
@@ -953,90 +933,29 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recorded, {(f"{i:064d}", lf.BAD_REQUEST) for i in (1, 2)})
         self.assertEqual(sorted(rec_holder["rec"].escalated), [f"{i:064d}" for i in (1, 2)])
 
-    async def test_claude_cli_path_unchanged(self):
-        """conftest 的 claude_cli（測試值；生產預設 deepseek）：CLI 失敗照舊是 skip_untagged、不記跳過名單、
-        skip_blocked 計數存在但為 0。"""
-        import subprocess as sp
-
-        fail = sp.CompletedProcess([], 1, "", "Content Exists Risk")  # CLI 的 stderr 長得像也不算
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            rec = await self._run(n=1, model="claude-haiku-4-5")
-        st = self.stats()
-        self.assertEqual((st["skip_untagged"], st["skip_blocked"], st["skip_truncated"], st["abnormal"]),
-                         ("1", "0", "0", "1"))
-        self.assertEqual(rec.recorded, [])
+    async def test_non_whitelisted_tag_model_aborts_instead_of_skip_untagged(self):
+        """PR-M：行內標註解析到 claude-*（PR-M 前走 CLI、失敗記 skip_untagged）→ 整批中止（main rc=2），
+        不是逐篇 skip_untagged——後者正是 9/23、9/24 兩天零入庫而排程殼看起來正常的型態。"""
+        self.install(lambda req: (_ for _ in ()).throw(AssertionError("白名單外的 model 不該打 HTTP")))
+        with self.assertRaises(cc.LlmEnvironmentError):
+            await self._run(n=2, model="claude-haiku-4-5")
         self.assertEqual(self.requests, [])
-        stage = (self.tmp / "sync_failures.log").read_text(encoding="utf-8").split("\t")[1]
-        self.assertEqual(stage, "tag")
 
-class BriefCliPathTests(HttpMixin, unittest.TestCase):
-    """簡報的 CLI 分支刻意不走 `run_claude`（見 generate_brief.call_cli docstring）：claude 找不到是
-    「這一天產生失敗」rc=1（不是整批中止 rc=2）；用量記錄照寫一行（N01、N02）。"""
 
-    def setUp(self):
-        super().setUp()
-        self.usage = self.tmp / "usage.jsonl"
-        env = mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(self.usage)})
-        env.start()
-        self.addCleanup(env.stop)
+class BriefUsageRowTests(HttpMixin, unittest.TestCase):
+    """簡報交給 `run_claude` 後，用量記錄由呼叫層寫、恰好一行（PR-M 前簡報自己的 CLI 版另寫一行
+    `backend=cli`，N01、N02）。"""
 
-    def rows(self):
-        return [json.loads(ln) for ln in self.usage.read_text(encoding="utf-8").splitlines()] \
-            if self.usage.exists() else []
-
-    def test_missing_claude_is_rc_1_not_batch_abort(self):
-        import errno
-
-        missing = FileNotFoundError(errno.ENOENT, "No such file or directory", "claude")
-        args = argparse.Namespace(date=None, force=True, after_hour=0, dry_run=False, model="claude-sonnet-5",
-                                  max_lookback_days=7)
-        svc = gb.brief_service
-        err = io.StringIO()
-        with contextlib.ExitStack() as st:
-            p = st.enter_context
-            p(mock.patch.object(gb.subprocess, "run", side_effect=missing))
-            p(mock.patch.object(gb, "FAIL_LOG", self.tmp / "brief_failures.log"))
-            p(mock.patch.object(gb, "SessionFactory", lambda: _FakeSession()))
-            p(mock.patch.object(svc, "fetch_by_date", mock.AsyncMock(return_value=None)))
-            p(mock.patch.object(svc, "fetch_latest", mock.AsyncMock(return_value=None)))
-            p(mock.patch.object(svc, "fetch_window_reports",
-                                mock.AsyncMock(return_value=[argparse.Namespace(report_id="r1")])))
-            p(mock.patch.object(svc, "count_window_reports", mock.AsyncMock(return_value=1)))
-            p(mock.patch.object(svc, "fetch_signal_changes", mock.AsyncMock(return_value=[])))
-            p(mock.patch.object(svc, "build_material", return_value="素材"))
-            p(mock.patch.object(svc, "build_prompt", return_value="簡報提示詞"))
-            p(mock.patch.object(gb, "claude_cli_lock_or_exit", lambda name: contextlib.nullcontext()))
-            p(mock.patch.object(gb, "require_llm_key"))
-            p(mock.patch.object(sys, "argv", ["generate_brief.py", "--force", "--model", "claude-sonnet-5"]))
-            p(contextlib.redirect_stdout(io.StringIO()))
-            p(contextlib.redirect_stderr(err))
-            self.assertEqual(asyncio.run(gb.generate(args)), 1)
-            self.assertEqual(gb.main(), 1, err.getvalue())
-        self.assertIn("不在 PATH", err.getvalue())
-        self.assertIn("不在 PATH", (self.tmp / "brief_failures.log").read_text(encoding="utf-8"))
-
-    def test_cli_path_writes_exactly_one_usage_row(self):
-        import subprocess as sp
-
-        cases = (
-            (sp.CompletedProcess([], 0, "## 今日重點\n- 一", ""), None),
-            (sp.TimeoutExpired("claude", 300), "timeout"),
-            (sp.CompletedProcess([], 1, "", "boom"), "cli_error"),
-            (sp.CompletedProcess([], 1, CLI_AUTH_OUTPUT, ""), "auth"),  # 認證失效：拋出前照樣寫一行
-        )
-        for outcome, kind in cases:
-            with self.subTest(kind=kind):
-                self.usage.unlink(missing_ok=True)
-                effect = {"side_effect": outcome} if isinstance(outcome, BaseException) else {"return_value": outcome}
-                with mock.patch.object(gb.subprocess, "run", **effect), \
-                        contextlib.suppress(cc.LlmEnvironmentError):
-                    gb.call_cli("素材", "claude-sonnet-5")
-                rows = self.rows()
-                self.assertEqual(len(rows), 1, rows)
-                row = rows[0]
-                self.assertEqual((row["task"], row["backend"], row["model_req"], row["kind"]),
-                                 ("brief", "cli", "claude-sonnet-5", kind))
-                self.assertIsNone(row["tokens"])
+    def test_http_call_writes_exactly_one_usage_row(self):
+        usage = self.tmp / "usage.jsonl"
+        self.install(ok("## 今日重點\n- 一"))
+        with mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(usage)}):
+            raw, error = gb.call_cli("素材", DS)
+        self.assertIsNone(error)
+        rows = [json.loads(ln) for ln in usage.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual((rows[0]["task"], rows[0]["backend"], rows[0]["model_req"], rows[0]["kind"]),
+                         ("brief", "http", DS, None))
 
 
 class BriefContentFilterTests(HttpMixin, unittest.TestCase):

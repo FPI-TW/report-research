@@ -19,7 +19,7 @@
 
 **靜態（AST）**：掃服務模組裡「yield (字面字串, …)」的第一元素，與 fixture 的
 service-origin 集合**雙向**比對。問答端到端的動態事件序另由 `tests/test_answer.py`
-的 fake 替身覆蓋（絕不 spawn claude CLI）。
+的 fake 替身覆蓋（絕不呼叫真的 LLM）。
 """
 
 import ast

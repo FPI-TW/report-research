@@ -8,8 +8,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from generate_titles import (  # noqa: E402
     MAX_TITLE_CHARS,
-    MODEL,
-    build_cli_args,
     build_prompt,
     parse_title,
 )
@@ -98,22 +96,6 @@ class BuildPromptTests(unittest.TestCase):
         p = build_prompt("624726992507895929_260728_gs_umt.pdf", "內文", excerpt=100)
         self.assertIn("624726992507895929_260728_gs_umt.pdf", p)
         self.assertIn("不可當標題", p)
-
-
-class BuildCliArgsTests(unittest.TestCase):
-    def test_isolates_settings_to_cut_coldstart_io(self):
-        args = build_cli_args("hello")
-        self.assertIn("--setting-sources", args)
-        self.assertEqual(args[args.index("--setting-sources") + 1], "")
-
-    def test_passes_prompt_and_model(self):
-        args = build_cli_args("hello world")
-        self.assertEqual(args[:3], ["claude", "-p", "hello world"])
-        self.assertEqual(args[args.index("--model") + 1], MODEL)
-
-    def test_strips_nul_from_prompt(self):
-        # POSIX argv 不可含 NUL（部分 PDF 抽出的文字含 \x00），否則 subprocess 直接拋
-        self.assertEqual(build_cli_args("ab\x00cd")[2], "abcd")
 
 
 if __name__ == "__main__":

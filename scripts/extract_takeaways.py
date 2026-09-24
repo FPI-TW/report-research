@@ -9,15 +9,15 @@
 「摘錄與全文是否同源」稽核靠它，而事後補算的代價是對 674+ 篇重跑 Sonnet 並搶
 _claude_lock 的 flock。**不要因為「沒有消費端」就把第 4 步拿掉。**
 
-流程（對齊 scripts/extract_signals.py 的 asyncio + Semaphore + claude CLI 慣例）：
+流程（對齊 scripts/extract_signals.py 的 asyncio + Semaphore + `run_claude` 慣例）：
 1. 撈工作集：近 --since-days 天、有全文的研究報告。
 2. checkpoint-resume：該報告已有列、且 extraction_version 與 text_sha256 皆相符、
    且狀態 ∈ (valid, partial) → 跳過。
-3. 逐報告 spawn `claude -p`(Sonnet) 依固定 schema 擷取 {claim, quote}。
+3. 逐報告呼叫 LLM（DeepSeek）依固定 schema 擷取 {claim, quote}。
 4. Python 端用 reading/anchor.locate_quote 把引文確定性錨回正典文字（LLM 不給 offset）。
 5. 每份報告在單一 transaction 內 DELETE + 全量 INSERT（**不是 upsert**，見 _replace_rows）。
 6. 單筆失敗只寫 data/takeaway_failures.log，不中斷、不影響檢索/問答。**例外**：
-   `claude` 不在 PATH 屬環境層級失敗（每篇都會踩），整批立即中止並回非零退出碼。
+   帳號／設定層級失敗（401／402、model 不在白名單、斷路器：每篇都會踩）整批立即中止並回 rc=2。
 7. 有回應卻擷不出摘錄的研報記入 research.llm_task_failure，同一 model 連續 3 輪後
    跳過（規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）。
 
@@ -44,11 +44,10 @@ excerpt 取它的前 N 字、text_sha256 是它的 sha256、locate_quote 也搜�
 成本：--since-days 預設 90（約 549 篇、約 2-3 小時）。全語料 14,575 篇要跑十天以上，
 故預設不跑全量；要補歷史請自行放大 --since-days 並有心理準備。
 
-注意：每份研報都會冷啟動一個 `claude -p`；--workers 越高越容易頂滿磁碟小檔 I/O
-（見 generate_summaries.py 註）。預設壓到 2。**且不可與其他 claude CLI 批次同時跑**
-—— 併發搶 claude CLI 曾導致擷取大量被誤判 rejected（真因不是資料壞、也不是模型壞，
-是搶資源）。這條規約現由 scripts/_claude_lock.py 的跨進程 flock 強制：撞車時本腳本
-會印出持有者並以 rc=75 結束，不會產出壞資料。
+注意：--workers 預設壓到 2（見 generate_summaries.py 註）。**且不可與其他 LLM 批次同時跑**——
+CLI 時代併發搶 claude CLI 曾導致擷取大量被誤判 rejected；PR-M 後理由改為重複付費、本檔的
+DELETE + INSERT 互踩與 DB 連線數（見 scripts/_claude_lock.py）。這條規約由跨進程 flock 強制：撞車時
+本腳本會印出持有者並以 rc=75 結束，不會產出壞資料。
 """
 
 from __future__ import annotations
@@ -102,7 +101,7 @@ TAKEAWAY_MODEL_DEFAULT = resolve_model(TASK_TAKEAWAY)
 # 條也不要編造」，只有 0 條才 rejected）
 MAX_TAKEAWAYS = 5
 
-# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。5 條 claim＋quote 約 1K token，
+# 輸出上限（第二版計畫 §8）。5 條 claim＋quote 約 1K token，
 # 4096 留給偶爾偏長的輸出；截斷會記成 truncated（1 次就跳過），不會混進解析失敗。
 MAX_TOKENS = 4096
 
@@ -388,7 +387,7 @@ def build_rows(
     """ParsedTakeaways → 可寫入的列（含確定性錨定）。無列可寫時回 []（＝rejected）。
 
     `canonical` 必須是 clean_extracted(full_text)，且與 text_sha256 同源。
-    `model`：產出這份回應的模型（HTTP 取回應的 `model` 欄，CLI 退回請求的 model），
+    `model`：產出這份回應的模型（取回應的 `model` 欄，取不到時退回請求的 model），
     記進每列 `raw_payload.model`；None 就不加鍵。
 
     錨定回 None **不是失敗**：該條目照樣寫入（讀者看得到論點與引文），只是
@@ -462,7 +461,7 @@ def call_cli(
     prompt: str, model: str, timeout: int = 180, *,
     file_hash: Optional[str] = None, report_id: Optional[str] = None,
 ) -> CliResult:
-    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
+    """呼叫 LLM（`run_claude`，DeepSeek；名稱是 CLI 時代的歷史值）。回 (text, None) 或 (None, 失敗原因)。
 
     實作已抽到 `scripts/_claude_cli.py` 供所有批次共用——這個「失敗原因必須可區分」
     的設計最早長在這裡，抽出去是為了讓下一支腳本抄得到對的那份（其餘四支曾經各自
@@ -625,7 +624,7 @@ async def extract_one(
     parsed: Optional[ParsedTakeaways] = None
     used_model: Optional[str] = None  # 產出 parsed 那次回應的模型（raw_payload.model）
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
-    last_error = "CLI 無回應"
+    last_error = "LLM 無回應"
     http_reason: Optional[str] = None  # HTTP 的審查／截斷／空回應／400（failure_kind）
     async with sem:
         for _ in range(retries + 1):
@@ -745,7 +744,7 @@ if __name__ == "__main__":
     ap.add_argument("--dry-run", action="store_true", help="只印工作集大小，不呼叫 LLM")
     # --dry-run 也一起擋：鎖的涵蓋範圍若隨旗標而變，日後有人在「不呼叫 LLM」的路徑上
     # 加了一個 LLM 呼叫，就會出現一個沒人發現的洞。要在批次跑到一半時查工作集，
-    # 用 CLAUDE_LOCK_DISABLE=1（它只讀 DB，不搶 CLI）。
+    # 用 CLAUDE_LOCK_DISABLE=1（它只讀 DB，不呼叫 LLM）。
     args = ap.parse_args()
     # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
     if not args.dry_run:  # --dry-run 不呼叫 LLM

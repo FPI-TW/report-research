@@ -200,18 +200,18 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
         with mock.patch.object(snr, "run_claude", return_value=result):
             return snr._tag_via_cli("x.pdf", "內文")
 
-    def test_cli_error_is_returned_verbatim(self):
-        tag, err = self._run_with(cc.CliResult(None, "CLI 退出碼 1：Credit balance too low"))
+    def test_call_error_is_returned_verbatim(self):
+        tag, err = self._run_with(cc.CliResult(None, "API[overloaded] 供應商過載：503"))
         self.assertIsNone(tag)
-        self.assertIn("Credit balance", err)
+        self.assertIn("API[overloaded]", err)
 
-    def test_unparseable_response_is_distinct_from_cli_failure(self):
-        """「CLI 壞了」與「CLI 回了但內容不合格」處置完全不同，不可共用一句話。"""
+    def test_unparseable_response_is_distinct_from_call_failure(self):
+        """「呼叫失敗」與「回了但內容不合格」處置完全不同，不可共用一句話。"""
         with mock.patch.object(snr, "run_claude", return_value=cc.CliResult("不是 JSON", None)):
             tag, err = snr._tag_via_cli("x.pdf", "內文")
         self.assertIsNone(tag)
         self.assertIn("解析", err)
-        self.assertNotIn("退出碼", err)
+        self.assertNotIn("API[", err)
 
     def test_success_returns_tag_and_no_error(self):
         payload = (
@@ -233,7 +233,7 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
                 snr._tag_via_cli("x.pdf", "內文")
 
     def test_deepseek_account_error_aborts_instead_of_skip_untagged(self):
-        """TAG_MODEL 是 DeepSeek 名稱時走 HTTP；401／402／模型不存在往上拋（rc=2），不 spawn CLI、
+        """401／402／模型不存在往上拋（rc=2），不 spawn 任何子行程、
         也不讓每一篇變成 skip_untagged（其餘批次的同一條在 tests/test_batch_http_dispatch.py）。"""
         import httpx
 
@@ -243,7 +243,7 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
         lh._reset_clients()
         self.addCleanup(lambda: (setattr(lh, "_transport", None), lh._reset_clients()))
         env = {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "DEEPSEEK_BASE_URL": "https://api.example.test"}
-        with mock.patch.dict(os.environ, env), mock.patch.object(cc.subprocess, "run") as run:
+        with mock.patch.dict(os.environ, env), mock.patch("subprocess.run") as run:
             with self.assertRaises(cc.LlmEnvironmentError) as ctx:
                 snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash", file_hash="h1")
         run.assert_not_called()

@@ -60,34 +60,6 @@ class LeafModuleTests(unittest.TestCase):
         self.assertEqual(project, {"app.services.llm_models"})
 
 
-class CliAuthErrorPatternTests(unittest.TestCase):
-    """`looks_like_cli_auth_error`：批次（整批中止）與線上（kind=auth）共用的 CLI 認證失效樣式。"""
-
-    def test_positives(self):
-        for text in (
-            "Failed to authenticate: OAuth session expired and could not be refreshed",
-            "failed to authenticate. API Error: 401",
-            "OAuth token has expired. Please obtain a new token",
-            "OAuth session was revoked",
-            "Invalid API key · Please run /login",
-            "Not logged in · Please run /login",
-            'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}',
-        ):
-            with self.subTest(text=text):
-                self.assertTrue(lm.looks_like_cli_auth_error(text))
-
-    def test_negatives(self):
-        for text in (None, "", "API Error: 529 Overloaded", "HTTP 401", "Unauthorized", "Credit balance is too low",
-                     "usage: unknown flag", "OAuth 是一種授權協定"):
-            with self.subTest(text=text):
-                self.assertFalse(lm.looks_like_cli_auth_error(text))
-
-    def test_only_scans_the_head(self):
-        """長回答後段談到 API 金鑰不算：認證錯誤訊息都很短、在最前面。"""
-        self.assertFalse(lm.looks_like_cli_auth_error("x" * 1000 + "Invalid API key"))
-        self.assertTrue(lm.looks_like_cli_auth_error("x" * 100 + "Invalid API key"))
-
-
 class TableTests(unittest.TestCase):
     def test_table_covers_every_task(self):
         self.assertEqual(set(lm.DEEPSEEK_DEFAULTS), set(lm.TASK_ENV))
@@ -110,7 +82,8 @@ class TableTests(unittest.TestCase):
         self.assertFalse(lm.is_http_model(lm.DEEPSEEK_DEFAULTS["ask_web"]))
 
     def test_claude_table_and_symbols_are_gone(self):
-        for name in ("CLAUDE_DEFAULTS", "PROVIDER_CLAUDE_CLI", "PROVIDER_CLAUDE_ONLY", "is_claude_model"):
+        for name in ("CLAUDE_DEFAULTS", "PROVIDER_CLAUDE_CLI", "PROVIDER_CLAUDE_ONLY", "is_claude_model",
+                     "looks_like_cli_auth_error"):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(lm, name), name)
 

@@ -9,7 +9,7 @@
 - generated：內文根本沒有標題（掃描件、純表格日報）→ 依重點自擬一句話標題
 
 - 來源：DB 既有 full_text 的**開頭**（標題在首頁），故摘錄遠比 summaries 短
-- 每篇用 `claude -p`(Sonnet) headless 產出 JSON，parse_title() 解析
+- 每篇呼叫 LLM（DeepSeek，`scripts/_claude_cli.run_claude`）產出 JSON，parse_title() 解析
 - 冪等可續傳：只挑 title IS NULL 者；重跑天然跳過已補的
 - 失敗（含內文抽字損毀而無法辨識）記 data/title_failures.log，title 維持 NULL
   → 前端回退檔名，不會顯示錯的標題
@@ -19,10 +19,8 @@
 用法：uv run python scripts/generate_titles.py [--workers 2] [--limit N] [--excerpt 3000]
       [--hashes-file F] [--exclude-hashes-file F] [--retry-blocked]
 
-注意：每篇都會冷啟動一個 `claude -p` agent；workers 越高、同時冷啟動越多，磁碟
-小檔 I/O 越容易被頂滿（與 generate_summaries.py 同一顆地雷，預設同樣壓到 2）。
-與其他 claude 批次的互斥由 scripts/_claude_lock.py 的 flock 強制（撞鎖以 rc=75
-結束，不是這支壞掉）——不再只靠這行註解。
+注意：workers 預設壓到 2（理由見 generate_summaries.py 的註）。與其他 LLM 批次的互斥由
+scripts/_claude_lock.py 的 flock 強制（撞鎖以 rc=75 結束，不是這支壞掉）——不再只靠這行註解。
 """
 
 from __future__ import annotations
@@ -57,14 +55,13 @@ from scripts._claude_cli import (  # noqa: E402
     record_escalation,
     run_claude,
 )
-from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "title_failures.log"
-# TITLE_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+# TITLE_MODEL 旋鈕，未設時查預設表（app/services/llm_models.py）。
 MODEL = resolve_model(TASK_TITLE)
-# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。一句標題加原文，512 綽綽有餘。
+# 輸出上限（第二版計畫 §8）。一句標題加原文，512 綽綽有餘。
 MAX_TOKENS = 512
 MAX_TITLE_CHARS = 80  # 安全上限：標題不是摘要，超長多半代表模型把整段抓進來
 TITLE_SOURCES = ("extracted", "translated", "generated")
@@ -174,15 +171,10 @@ def parse_title(raw: str, file_name: str = "") -> Optional[TitleResult]:
     return TitleResult(title=title, title_original=original, title_source=source)
 
 
-def build_cli_args(prompt: str) -> list[str]:
-    """組 `claude -p` 的 argv（本腳本固定用 MODEL；實作見 scripts/_claude_cli.py）。"""
-    return _build_cli_args(prompt, MODEL)
-
-
 def call_cli(
     prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
 ) -> CliResult:
-    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
+    """呼叫 LLM（`run_claude`，DeepSeek）。回 (text, None) 或 (None, 失敗原因)。名稱是 CLI 時代的歷史值。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None` —— 那個
     tuple 的第二項讓第一項完全沒有意義，所有失敗一律回 None，而 `title_failures.log`
@@ -218,7 +210,7 @@ async def title_one(
     result: Optional[TitleResult] = None
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是
     # 「回了但解析不採信」——後者是資料問題，前者是環境問題，處置完全不同。
-    last_error = "CLI 無回應"
+    last_error = "LLM 無回應"
     # 本輪有沒有任何一次「回了但不能用」，值是要記的 reason。只有這種才記入跳過名單：逾時、
     # 非零退出是環境問題，記了會讓一次停機把整批研報打入跳過名單。
     fail_reason: Optional[str] = None
@@ -236,7 +228,7 @@ async def title_one(
             elif res.error:
                 last_error = res.error
             if res.text is None and not is_retryable(res):
-                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                # API 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
                 fail_reason = failure_kind(res) or fail_reason
                 break
 

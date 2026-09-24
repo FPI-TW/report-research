@@ -8,7 +8,6 @@ import asyncio
 import importlib.util
 import json
 import re
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -32,8 +31,7 @@ et = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = et
 _spec.loader.exec_module(et)
 
-# CLI 呼叫的實作住在共用模組（scripts/_claude_cli.py），所以失敗模式測試要 patch
-# 那裡的 subprocess，不是 et 的——et 已經不再直接 import subprocess。
+# LLM 呼叫的實作住在共用模組（scripts/_claude_cli.py）；失敗模式的逐種測試在 tests/test_claude_cli.py。
 from scripts import _claude_cli as cc  # noqa: E402
 
 # ── 測試語料 ──
@@ -505,68 +503,27 @@ class PromptTests(unittest.TestCase):
 
 
 class CliFailureTests(unittest.TestCase):
-    """CLI 失敗原因必須可區分。
+    """失敗原因必須可區分、環境層級的失敗要中止整批。
 
     曾經是 `except Exception: return None` —— 於是「claude 不在 PATH」（systemd 下
     實際發生過）、逾時、OOM 全被寫成同一句「CLI 無回應或逾時」，整批 549 篇全滅
     卻還是正常結束、exit 0，只留下一行 ok=0 rejected=549，看不出該修 PATH 還是該
-    調 timeout。
+    調 timeout。實作在共用的 `scripts/_claude_cli.run_claude`（逐種失敗的區分在 tests/test_claude_cli.py
+    的 `FailureReasonsTests`）；這裡只釘住本腳本接上的是它、而且整批中止型失敗不會被吞掉。PR-M 前這組測的是
+    CLI 子行程的各種失敗（ENOENT、逾時、非零退出），隨 CLI 一起改寫。
     """
 
-    def _raises(self, exc):
-        return mock.patch.object(cc.subprocess, "run", side_effect=exc)
+    def test_call_cli_delegates_to_the_shared_layer(self):
+        res = cc.CliResult(None, "API[timeout] x")
+        with mock.patch.object(et, "run_claude", return_value=res) as run:
+            self.assertIs(et.call_cli("prompt", "deepseek-flash", file_hash="h1", report_id="r1"), res)
+        self.assertEqual(run.call_args.args[:2], ("prompt", "deepseek-flash"))
 
-    def test_success_returns_stdout_and_no_error(self):
-        done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
-        with mock.patch.object(cc.subprocess, "run", return_value=done):
-            res = et.call_cli("prompt", "model")
-        self.assertEqual(res.text, "OUT")
-        self.assertIsNone(res.error)
-
-    def test_missing_cli_raises_instead_of_returning_none(self):
-        # 環境層級失敗：每篇都會踩到，必須往上拋以中止整批，
-        # 而不是靜靜地把每一篇都記成 rejected
-        with self._raises(FileNotFoundError(2, "No such file or directory", "claude")):
+    def test_non_whitelisted_model_raises_batch_abort(self):
+        with mock.patch("subprocess.run", side_effect=AssertionError("不得 spawn")):
             with self.assertRaises(et.CliNotFoundError) as ctx:
-                et.call_cli("prompt", "model")
-        msg = str(ctx.exception)
-        self.assertIn("claude", msg)
-        self.assertIn("PATH", msg)  # 訊息要直接指出真因
-
-    def test_timeout_is_reported_as_timeout(self):
-        with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):
-            res = et.call_cli("prompt", "model", timeout=180)
-        self.assertIsNone(res.text)
-        self.assertIn("逾時", res.error)
-        self.assertIn("180", res.error)
-
-    def test_nonzero_exit_reports_code_and_stderr(self):
-        fail = subprocess.CompletedProcess(
-            args=[], returncode=3, stdout="", stderr="usage: unknown flag\n"
-        )
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            res = et.call_cli("prompt", "model")
-        self.assertIsNone(res.text)
-        self.assertIn("3", res.error)
-        self.assertIn("unknown flag", res.error)
-
-    def test_other_exception_is_reported_with_its_type(self):
-        with self._raises(OSError("Cannot allocate memory")):
-            res = et.call_cli("prompt", "model")
-        self.assertIsNone(res.text)
-        self.assertIn("OSError", res.error)
-        self.assertNotIn("逾時", res.error)  # 不得與逾時混為一談
-
-    def test_failure_reasons_are_mutually_distinguishable(self):
-        """三種失敗不可再塌縮成同一句話（這正是原缺陷的本體）。"""
-        with self._raises(subprocess.TimeoutExpired(cmd="claude", timeout=180)):
-            timeout_err = et.call_cli("p", "m").error
-        with self._raises(OSError("boom")):
-            other_err = et.call_cli("p", "m").error
-        fail = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="e")
-        with mock.patch.object(cc.subprocess, "run", return_value=fail):
-            exit_err = et.call_cli("p", "m").error
-        self.assertEqual(len({timeout_err, other_err, exit_err}), 3)
+                et.call_cli("prompt", "claude-sonnet-5")
+        self.assertIn("白名單", str(ctx.exception))
 
 
 class CliAbortTests(unittest.IsolatedAsyncioTestCase):

@@ -55,7 +55,7 @@ EXTS = {".pdf", ".docx", ".doc"}
 # **哪些計數器代表「這篇本來該入庫、卻沒進 DB」。**
 #
 # 分界不是看名字，是看「重跑會不會不一樣」：
-#   - `skip_untagged`：標註的前置條件失敗（claude CLI 壞掉、逾時、回應無法解析）。
+#   - `skip_untagged`：標註的前置條件失敗（逾時、過載、回應無法解析；帳號層級的失敗整批中止）。
 #     檔案本身沒問題，環境修好後重跑就會入庫 ⇒ **異常**。
 #   - `skip_blocked`：行內標註被模型供應商的內容審查擋下（DeepSeek 的 content_filter）。
 #     重跑不會不一樣（同一份輸入再送一次結果不變），但它確實是「本該入庫卻沒進 DB」，要人處理
@@ -156,7 +156,7 @@ def _tag_via_cli(
     *,
     file_hash: str | None = None,
 ):
-    """標註單篇（`run_claude` 依白名單分派 CLI 或 DeepSeek）→ (tag, error)。tag 為 None 時 error
+    """標註單篇（`run_claude`，DeepSeek；名稱是 CLI 時代的歷史值）→ (tag, error)。tag 為 None 時 error
     說得出為什麼。
 
     **標註失敗是這條管線最貴的靜默失效**：它讓該檔被記成 `skip_untagged` 而不入庫，
@@ -177,7 +177,7 @@ def _tag_via_cli(
         meta={"task": TASK_TAG, "file_hash": file_hash, "report_id": None},
     )
     if not res.text:
-        return None, res.error or "CLI 無回應"
+        return None, res.error or "LLM 無回應"
     tag = parse_tags(res.text)
     return (tag, None) if tag is not None else (None, "回應無法解析為標籤")
 
@@ -645,7 +645,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="只印將匯入清單，不呼叫 claude、不寫 DB",
+        help="只印將匯入清單，不呼叫 LLM、不寫 DB",
     )
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=32)

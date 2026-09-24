@@ -1,4 +1,10 @@
-"""批次共用的 `claude -p` 呼叫層：**失敗原因必須說得出口**。
+"""批次共用的 LLM 呼叫層：**失敗原因必須說得出口**。
+
+**名稱是歷史遺留**：檔名 `_claude_cli.py`、函式 `run_claude`、結果型別 `CliResult`、例外基底
+`CliNotFoundError` 都是 claude CLI 時代的名字。遷移終局 PR-M 移除了 CLI backend（CLI 的 OAuth 自
+2026-09-23 過期、不再修復，計畫 D-C），現在只剩 DeepSeek（`llm_http.complete_chat`）。刻意**不改名**：
+呼叫端、測試 patch 點、`tests/test_claude_lock.py` 的 LOCKED_SCRIPTS 與文件契約都認這些名字，改名的
+連動遠大於它帶來的清楚。
 
 存在的理由是一次實際的四天停擺（2026-08-08 → 08-12）：所有 spawn `claude` 的批次
 100% 失敗，而每一支的 `call_cli` 都長這樣——
@@ -12,39 +18,24 @@
 `skip_untagged` ⇒ 研報不入庫，而排程 log 只印一行「本次無新研報入庫」，與「NAS 真的
 沒有新檔」在畫面上一模一樣。
 
-設計取自 `extract_takeaways.py`（本 repo 最早修好這件事的地方），這裡把它抽成單一
-來源，避免下一支腳本再抄到錯的那份。
+那次教訓換到 DeepSeek 上仍然成立，**兩類失敗刻意分流**：
+  - **整批中止**（`CliNotFoundError` 家族，各批次 main 接住後 rc=2）：每一篇都會踩到、重試與續跑都沒有
+    意義的失敗——帳號層級（401／402／config，`LlmEnvironmentError`）、斷路器跳脫、400 升級
+    （`BadRequestEscalation`），以及 **model 不在白名單**（含 `claude-*`；PR-M 起沒有其他 backend，
+    絕不送到付費端點）。「跑完 549 次註定失敗的呼叫、印 ok=0 rejected=549、然後 exit 0」是最糟的結局。
+  - 其餘回 `CliResult(None, "API[<kind>] …")`，讓各自的 *_failures.log 說得出真因。
 
-**兩類失敗刻意分流**：
-  - `CliNotFoundError` **往上拋**。那是環境壞了、每一篇都會踩到，重試與續跑都沒有
-    意義——「跑完 549 次註定失敗的呼叫、印 ok=0 rejected=549、然後 exit 0」是最糟的
-    結局。呼叫端應在 main 接住它、印訊息、以非零碼收場。
-      **判定依 errno 而不是例外型別。** 初版只接 `FileNotFoundError`（ENOENT），於是
-      2026-08-20 那次「檔案在、但不是可執行檔」完全漏接：claude CLI 自我更新到缺
-      native artifact 的版本，`bin/claude.exe` 成了 500 bytes、無 shebang 的佔位腳本，
-      exec 拋的是 `OSError [Errno 8] ENOEXEC`——不是 `FileNotFoundError`，於是落到
-      下面「回具體訊息」那條路徑、被當成單篇失敗。後果是 7 篇研報記成 skip_untagged
-      而整批 rc=0。**概念對、述詞太窄**：要問的是「這顆二進位在這個環境裡有沒有可能
-      跑起來」，不是「它存不存在」。
-  - **claude CLI 認證失效**（OAuth 過期、金鑰無效、要重新 /login）同樣往上拋（`LlmEnvironmentError`）。
-    2026-09-23 起 OAuth 過期，`claude -p` 一律「退出碼 1、stderr 空、訊息在 stdout」，於是每一篇都被
-    記成「CLI 退出碼 1：（無 stderr）」的單篇失敗、腳本層再重試兩次、整批 rc=0——四天停擺的同一型態，
-    而且環境檔沒生效（該切 DeepSeek 卻還在用 Claude）時看起來一模一樣。辨識樣式與線上共用
-    （`llm_models.looks_like_cli_auth_error`），stdout 與 stderr 都看。
-  - 其餘（逾時／非零退出／OSError…）回具體訊息，讓各自的 *_failures.log 說得出真因。
+PR-M 前這裡另有 CLI 路徑（CLI 子行程、`--tools ""`／`--strict-mcp-config` 旗標、ENOENT／ENOEXEC
+的 errno 判定、CLI 認證失效的整批中止）；歷史細節見 git log（`scripts/_claude_cli.py`，PR-M 之前）。
 
-## DeepSeek 分派（遷移 PR-12）
+## 呼叫規則（第二版計畫 §4.3、§4.6）
 
-`run_claude` 依模型名分派：DeepSeek 白名單（`llm_models.is_http_model`）走
-`app.services.llm_http.complete_chat`，其餘照舊 spawn claude CLI（CLI 路徑的程式碼不動，
-搬進 `_run_cli`）。名稱沿用：呼叫端、測試 patch 點與 `tests/test_claude_lock.py` 的
-LOCKED_SCRIPTS 都認這個名字，改名的連動留給 PR-M 決定。
+`run_claude` 只接受 DeepSeek 白名單（`llm_models.is_http_model`）；其他名稱在送出前拋 `LlmEnvironmentError`。
 
-HTTP 路徑的規則（第二版計畫 §4.3、§4.6）：
   - 只送一則 user 訊息、prompt 原樣不動（A/B 只有一個變因）；thinking 兩個開關都關由
     `llm_http.build_body` 負責；`max_tokens` 由每個呼叫點帶（值見第二版 §8，
     tests/test_claude_cli.py 逐點釘住），沒帶是程式錯誤、直接拋 `ValueError`。
-  - `timeout` 沿用各批次現行值，在 HTTP 路徑是**涵蓋傳輸層重試的總期限**（`complete_chat`
+  - `timeout` 沿用各批次現行值，是**涵蓋傳輸層重試的總期限**（`complete_chat`
     以 `time.monotonic()` 逐 chunk 檢查；排隊時的 keep-alive 會一直重置 httpx 的 read 逾時）。
     已吐字後才到期歸 `timeout_streamed`（期限型截斷：計入斷路器、記跳過名單但連續 3 輪才跳過、可重放），
     沒吐字就到期才是 `timeout`。真正的 `finish_reason=length` 才是 `truncated`（1 次就跳過）。
@@ -53,12 +44,12 @@ HTTP 路徑的規則（第二版計畫 §4.3、§4.6）：
   - **帳號層級（401 auth／402 quota／config：404 或模型不存在）拋 `LlmEnvironmentError`**
     （`CliNotFoundError` 的子類），沿用各批次 main「接 `CliNotFoundError` → 整批 rc=2」的接法。
     這類錯誤每一篇都會踩到，記成 N 筆單篇失敗後 exit 0 正是四天停擺的型態；它們也**不記**
-    `research.llm_task_failure`（那不是研報的問題），更**絕不改走 Claude**——402 的處置是儲值，
-    換成 Claude 等於繞過預算（docs/production_resilience.md「整批中止後的重放」）。
+    `research.llm_task_failure`（那不是研報的問題）。402 的處置是儲值（docs/production_resilience.md
+    「整批中止後的重放」）；PR-M 起也沒有 Claude 可以改走。
 
 ## 重試分層（第二版計畫 §4.7）
 
-HTTP 路徑的暫時性錯誤（429／5xx／網路）已在傳輸層依 `Retry-After` 退避重試過；截斷、審查、
+暫時性錯誤（429／5xx／網路）已在傳輸層依 `Retry-After` 退避重試過；截斷、審查、
 空回應、400 則是決定性的，重打同一個 prompt 只是再付一次錢。所以各批次的腳本層重試迴圈要加
 `if res.text is None and not is_retryable(res): break`——`API[` 開頭的失敗一律不在腳本層重試。
 **例外**是「回應成功但解析失敗」（unparseable）：那時 `res.text` 有值，腳本層照舊最多 3 次。
@@ -68,22 +59,22 @@ HTTP 路徑的暫時性錯誤（429／5xx／網路）已在傳輸層依 `Retry-A
 `insufficient_system_resource`、中途斷線都直接以該 kind 回傳，這裡當單篇失敗、`is_retryable` 為
 False、不進 unparseable 重試），腳本層只重試解析失敗。審查中3 之前傳輸層不看 `streamed`，實測
 「每次都吐了字再斷」的一篇一輪打出 9 個已計費請求。tests/test_batch_http_dispatch.py 的
-`BilledRequestsPerFileTests` 釘住這個上限。CLI 的失敗（`CLI 逾時`、`CLI 退出碼 …`）語意不變，照舊重試。
+`BilledRequestsPerFileTests` 釘住這個上限。
 
 `failure_kind(res)` 把 HTTP 的內容型失敗對應到 `llm_failures` 的 reason（content_filter、
 truncated、empty、bad_request、timeout_streamed），各批次記跳過名單時用它；環境型（timeout、overloaded、
 network）回 None——那不是研報的問題。`timeout_streamed` 兩邊都沾：已計費所以記（連續 3 輪才跳過），
 可能是供應商變慢所以也計入斷路器。
 
-## 斷路器（只擋 HTTP backend，審查 L9）
+## 斷路器
 
 DeepSeek 整體變慢或過載時，每篇都要等到總期限才失敗，一段批次可以拖上數小時、每篇還記一筆
 「單篇失敗」。行程範圍的斷路器看**最近 `BREAKER_WINDOW` 次 HTTP 呼叫**，其中逾時（含已吐字後逾時
 `timeout_streamed`）／過載／網路（`BREAKER_KINDS`）達 `BREAKER_TRIP` 次就拋 `LlmEnvironmentError`（整批 rc=2），並寫
 `data/.llm_breaker`（帶 sync 輪次 id `round=`，審查中4）；同一輪 sync 其餘會用到 HTTP model
 的段（手動執行：30 分鐘內）在 `require_llm_key` 就以 rc=2 拒跑，下一輪不受影響
-（`scripts/_llm_env.py`）。CLI 呼叫不進窗、也不受標記影響：遷移期間還在用 Claude 的段不該因為
-DeepSeek 出事而停。有執行緒鎖（批次以 `asyncio.to_thread`／執行緒池並行呼叫）。
+（`scripts/_llm_env.py`）。PR-M 前 CLI 呼叫不進窗（審查 L9：還在用 Claude 的段不該因 DeepSeek 出事而停），
+CLI 移除後每次呼叫都進窗。有執行緒鎖（批次以 `asyncio.to_thread`／執行緒池並行呼叫）。
 
 ## 400 升級（審查 H2）
 
@@ -110,25 +101,24 @@ DeepSeek 出事而停。有執行緒鎖（批次以 `asyncio.to_thread`／執行
 
 ## 用量記錄（第二版計畫 §4.8）
 
-每次呼叫（HTTP 與 CLI 都寫）追加一行 JSON 到 `data/llm_usage.jsonl`（ROOT 錨點；`LLM_USAGE_LOG`
+每次送出的呼叫追加一行 JSON 到 `data/llm_usage.jsonl`（ROOT 錨點；`LLM_USAGE_LOG`
 只給測試用）：`ts, task, file_hash, report_id, backend, model_req, model_resp, prompt_sha256,
 tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, total_ms`。
 摘要、標題、標籤不在 DB 記產出模型，靠這裡的 `file_hash` 回溯；費用真值看餘額差分，這份只拿來
 歸因。規則：
-  - CLI 路徑 `tokens` 為 null（CLI 不回報用量）；`kind` 是 null（成功）、`timeout`、`unrunnable`
-    （`CliNotFoundError`）、`auth`（CLI 認證失效）或 `cli_error`。
-  - HTTP 路徑沒收到 usage（失敗在第一個 chunk 之前）時 `tokens` 為 null；收到了但沒有
+  - `backend` 現在一律是 `http`；PR-M 前的舊行有 `cli`（`tokens` 為 null，`kind` 是 `timeout`、
+    `unrunnable`、`auth` 或 `cli_error`），讀舊檔的工具（eval/observe_switch.py）照舊認得。白名單外的
+    model 不送出、也不記。
+  - 沒收到 usage（失敗在第一個 chunk 之前）時 `tokens` 為 null；收到了但沒有
     `completion_tokens_details`（thinking 關時就是這樣，9/24 探測實測）時 `reasoning` 記 **0**
     ——thinking 關著，推理 token 就是 0，不是「不知道」。
   - 不記 prompt 本身，只記 sha256（研報全文不外流到 log）。
   - 有執行緒鎖（一行一次 write，行不交錯）；寫入失敗 fail-open，只警告一次。
 """
-import errno
 import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 import threading
 import time
@@ -138,41 +128,25 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 
 from app.services import llm_failures, llm_http
-from app.services.llm_models import is_http_model, looks_like_cli_auth_error
+from app.services.llm_models import HTTP_MODELS, is_http_model
 from scripts._llm_env import BREAKER_TTL_S, ROOT, breaker_path, sync_round_id
-
-# stderr 只留尾巴：完整 stderr 可能很長，而失敗記錄是給人掃讀的。200 字元夠容納
-# 「usage: unknown flag」「Credit balance too low」這類真正有資訊量的那一行。
-STDERR_TAIL_CHARS = 200
-
-
-# 「這顆二進位在這個環境裡永遠跑不起來」的 errno。值是給人看的名字，會印進錯誤訊息。
-_UNRUNNABLE_ERRNOS = {
-    errno.ENOENT: "ENOENT 檔案不存在",
-    errno.ENOEXEC: "ENOEXEC 不是可執行格式",
-    errno.EACCES: "EACCES 沒有執行權限",
-    errno.EPERM: "EPERM 不被允許執行",
-    errno.EISDIR: "EISDIR 路徑是目錄",
-}
 
 
 class CliNotFoundError(RuntimeError):
-    """`claude` 無法執行。整批註定全滅 → 由 main 提早中止。
+    """整批中止型失敗的基底：每一篇都會踩到，由 main 提早中止（各批次 main 接它 → rc=2）。
 
-    **名稱是歷史值，語意比名字寬**：涵蓋「不在 PATH」與「檔案在但跑不起來」。
-    兩者在本專案都實際發生過——
-    - ENOENT：systemd 的環境與登入 shell 不同，沒有 claude 的 PATH（修法是
-      deploy/systemd/report-mark-web.service.d/path.conf 那種 drop-in）。
-    - ENOEXEC：2026-08-20，claude CLI 自我更新到 2.1.237，而該版本的 native
-      artifact 上游沒發布，postinstall 留下 500 bytes、無 shebang 的佔位腳本。
+    **名稱是歷史值**（見模組 docstring）：原本專指「`claude` 無法執行」（不在 PATH 的 ENOENT、2026-08-20
+    自我更新後佔位腳本的 ENOEXEC）。PR-M 移除 CLI 後本類別不再直接拋出，只當基底——子類別
+    `LlmEnvironmentError`、`BadRequestEscalation` 沿用各批次 main 既有的 `except CliNotFoundError` 接法。
     """
 
 
 class LlmEnvironmentError(CliNotFoundError):
-    """HTTP 路徑的帳號層級失敗：金鑰無效（401）、餘額不足（402）、模型或端點設定錯（config）。
+    """帳號或設定層級的失敗：金鑰無效（401）、餘額不足（402）、模型或端點設定錯（config）、model 不在
+    白名單（不送出）、斷路器跳脫。
 
-    與 `CliNotFoundError` 同一類：每一篇都會踩到，重試與續跑都沒有意義。繼承它是為了讓各批次
-    main 既有的 `except CliNotFoundError → rc=2` 原封不動地接住，不必逐支加分支。
+    每一篇都會踩到，重試與續跑都沒有意義。繼承 `CliNotFoundError` 是為了讓各批次 main 既有的
+    `except CliNotFoundError → rc=2` 原封不動地接住，不必逐支加分支。
     """
 
 
@@ -189,62 +163,15 @@ class BadRequestEscalation(LlmEnvironmentError):
 
 
 class CliResult(NamedTuple):
-    """CLI 呼叫結果。text 為 None 時 error 必有值（且要說得出「為什麼」）。
+    """呼叫結果（名稱是 CLI 時代的歷史值）。text 為 None 時 error 必有值（且要說得出「為什麼」）。
 
-    `model_resp`：HTTP 路徑回應裡的 `model` 欄（實際產出的模型）；CLI 路徑與取不到時為 None，
-    呼叫端退回請求的 model（摘錄與訊號記進 `raw_payload.model`）。
+    `model_resp`：回應裡的 `model` 欄（實際產出的模型）；取不到時為 None，呼叫端退回請求的 model
+    （摘錄與訊號記進 `raw_payload.model`）。
     """
 
     text: Optional[str]
     error: Optional[str]
     model_resp: Optional[str] = None
-
-
-def build_cli_args(prompt: str, model: str) -> list[str]:
-    """組 `claude -p` 的 argv。
-
-    `--setting-sources ""`＝不載入任何 settings 來源（user/project/local），連帶略過
-    全域 hooks/plugins/CLAUDE.md —— 每次冷啟動載入它們正是磁碟小檔 I/O 的主因
-    （實測加此 flag 後 page fault 降約 74%）。
-
-    去掉 NUL：部分 PDF 抽出的文字含 `\\x00`，POSIX argv 不可含 NUL，否則 subprocess
-    直接拋 ValueError('embedded null byte')，該檔會永久失敗。
-
-    輸出格式用 CLI 預設的純文字（各家 parser 直接吃）：**不要加
-    `--output-format json`**，那會把回應包進一層 CLI envelope，解析會抓到外層物件。
-
-    `--tools ""`＝不開任何工具（`--help` 寫明 `""` 停用全部工具；list 傳參，空字串是獨立
-    引數，同 `--setting-sources ""`）：批次只要模型讀 prompt 回文字，用不到讀檔、執行指令
-    或網搜；工具開著時研報內文裡的指示有機會驅動模型去讀 cwd 的檔。刻意不用
-    `--disallowedTools "*"`：本機 CLI 未記載萬用字元語意，很可能無效。`--tools` 是可變長度
-    選項，會吞掉後面的位置引數，所以必須放在 prompt 之後、argv 的最後。
-
-    `--strict-mcp-config`＝只用 `--mcp-config` 給的 MCP 伺服器；不帶 `--mcp-config` 就是一個
-    都不載。`--tools ""` 只停用內建工具、管不到 MCP，兩者要一起給。它是布林旗標，放在
-    `--tools` 之前（放在後面會被當成 `--tools` 的值）。
-    """
-    prompt = prompt.replace("\x00", "")
-    return ["claude", "-p", prompt, "--model", model, "--setting-sources", "", "--strict-mcp-config", "--tools", ""]
-
-
-# claude CLI 認證失效時的中止訊息（`cli_auth_error`）。CLI 已於 2026-09 永久停用：認證失效最常見的
-# 真因不是「要重新登入」，而是該切 DeepSeek 的段還解析到 Claude（環境檔沒被讀到）。
-CLI_AUTH_HINT = (
-    "claude CLI 認證失效；若已切 DeepSeek，檢查 /etc/default/report-mark-llm 是否生效"
-    "（LLM_PROVIDER=deepseek；手動執行要以 kashionz 身分、讀得到該檔）"
-)
-
-
-def cli_auth_error(stdout: Optional[str], stderr: Optional[str]) -> Optional["LlmEnvironmentError"]:
-    """非零退出的 CLI 輸出若是認證失效，回要拋的例外（呼叫端 `raise`）；否則 None。
-
-    stdout 與 stderr 都看：`claude -p` 純文字模式把認證錯誤印在 stdout（9/23 的 log 全是「無 stderr」）。
-    """
-    for text in (stderr, stdout):
-        if looks_like_cli_auth_error(text):
-            tail = (text or "").strip().replace("\n", " ")[:STDERR_TAIL_CHARS]
-            return LlmEnvironmentError(f"{CLI_AUTH_HINT}。CLI 輸出：{tail}")
-    return None
 
 
 # 傳輸層退避用的 sleep；測試把它換成記錄器，免得真的等 2／6 秒。
@@ -281,13 +208,13 @@ def is_retryable(res: CliResult) -> bool:
 
 
 def error_kind(error: Optional[str]) -> Optional[str]:
-    """`API[<kind>] …` → kind；CLI 的訊息或 None → None。"""
+    """`API[<kind>] …` → kind；其他訊息或 None → None。"""
     m = _API_KIND.match(error or "")
     return m.group(1) if m else None
 
 
 def failure_kind(res: CliResult) -> Optional[str]:
-    """這次失敗要以哪個 reason 記入跳過名單；不該記（成功、CLI、環境型）回 None。"""
+    """這次失敗要以哪個 reason 記入跳過名單；不該記（成功、環境型）回 None。"""
     if res.text is not None:
         return None
     return _FAILURE_REASONS.get(error_kind(res.error))
@@ -452,7 +379,7 @@ async def record_escalation(exc: BaseException, recorder) -> None:
 
     以 `escalated=True` 記：計數直接拉到 `SKIP_AFTER_ROUNDS`，下一輪就跳過（只記一筆的話，觸發篇
     下一輪還會再打、再升級，連續 3 輪整段 rc=2）。修好之後這幾篇要加 `--retry-blocked`。
-    其他中止（帳號層級、斷路器、CLI 找不到）沒有 `file_hashes`，什麼都不做。`recorder` 為 None
+    其他中止（帳號層級、斷路器、白名單外的 model）沒有 `file_hashes`，什麼都不做。`recorder` 為 None
     （表不存在）時只印出來。完整 file_hash 印在這裡，錯誤訊息裡只有前 12 碼。
     """
     hashes = getattr(exc, "file_hashes", ())
@@ -539,43 +466,30 @@ def record_usage(
             _warn(f"用量記錄寫入失敗（之後不再提示）：{type(exc).__name__}: {exc}")
 
 
-def _cli_kind(res: CliResult) -> Optional[str]:
-    if res.text is not None:
-        return None
-    return "timeout" if (res.error or "").startswith("CLI 逾時") else "cli_error"
-
-
 def run_claude(
     prompt: str,
     model: str,
     timeout: int = 180,
-    cwd: str = "/tmp",
     *,
     max_tokens: Optional[int] = None,
     meta: Optional[dict] = None,
 ) -> CliResult:
-    """呼叫 LLM。回 (text, None) 或 (None, 可辨識的失敗原因)。
+    """呼叫 DeepSeek。回 (text, None) 或 (None, 可辨識的失敗原因)；整批中止型失敗往上拋。
 
-    DeepSeek 白名單的 model 走 HTTP（見模組 docstring「DeepSeek 分派」），其餘 spawn `claude -p`。
-    `max_tokens`：HTTP 路徑必填，CLI 忽略。`meta`：`{"task", "file_hash", "report_id"}`，
-    HTTP 路徑用 `task` 標 log 與 `user_id`。
-    `cwd` 預設 /tmp：避免 CLI 載入專案 CLAUDE.md 拖慢每次呼叫（HTTP 路徑不用）。
+    名稱是歷史值（見模組 docstring）。`model` 不在白名單（含 `claude-*`）→ 不送出、拋
+    `LlmEnvironmentError`（整批 rc=2）：PR-M 起沒有其他 backend，而入口預檢
+    （`scripts/_llm_env.require_llm_key`）照理已先擋下，走到這裡代表 `--model` 之類繞過了預檢。
+    `max_tokens` 必填（沒帶拋 `ValueError`）。`meta`：`{"task", "file_hash", "report_id"}`，`task` 標
+    log 與 `user_id`，`file_hash` 參與 400 升級。PR-M 前的 `cwd` 參數（避免 CLI 載入專案 CLAUDE.md）
+    隨 CLI 移除。
     """
     meta = dict(meta or {})
-    if is_http_model(model):
-        return _run_http(prompt, model, timeout, max_tokens, meta)
-    t0 = time.monotonic()
-    try:
-        res = _run_cli(prompt, model, timeout, cwd)
-    except CliNotFoundError as exc:
-        # LlmEnvironmentError 在 CLI 路徑只可能是認證失效（`cli_auth_error`）
-        kind = "auth" if isinstance(exc, LlmEnvironmentError) else "unrunnable"
-        record_usage(meta=meta, backend="cli", model_req=model, prompt=prompt, kind=kind,
-                     total_ms=int((time.monotonic() - t0) * 1000))
-        raise
-    record_usage(meta=meta, backend="cli", model_req=model, prompt=prompt, kind=_cli_kind(res),
-                 total_ms=int((time.monotonic() - t0) * 1000))
-    return res
+    if not is_http_model(model):
+        raise LlmEnvironmentError(
+            f"model={model!r} 不在 DeepSeek 白名單（{'、'.join(sorted(HTTP_MODELS))}）；claude CLI 已於 PR-M 移除，"
+            "沒有其他 backend。檢查該批次的模型旋鈕或 --model"
+        )
+    return _run_http(prompt, model, timeout, max_tokens, meta)
 
 
 def _run_http(
@@ -607,41 +521,3 @@ def _run_http(
     if result.text is None:
         return CliResult(None, result.error)
     return CliResult(result.text, None, out.model_resp)
-
-
-def _run_cli(prompt: str, model: str, timeout: int, cwd: str) -> CliResult:
-    """spawn `claude -p`（遷移前的 `run_claude` 本體；之後只加了認證失效的中止與 stdout 尾巴）。"""
-    try:
-        r = subprocess.run(
-            build_cli_args(prompt, model),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd,
-        )
-    except OSError as exc:
-        # 環境層級的失敗：每一篇都會踩到，重試與續跑都沒有意義 → 中止整批。
-        # **逐一列舉 errno，不寬泛接 OSError**：ENFILE／ENOMEM 那類是暫時性的資源
-        # 壓力，中止整批反而不對；下列五個則是「這顆二進位永遠跑不起來」。
-        if exc.errno in _UNRUNNABLE_ERRNOS:
-            raise CliNotFoundError(
-                f"`claude` CLI 無法執行（{_UNRUNNABLE_ERRNOS[exc.errno]}）。"
-                f"ENOENT＝不在 PATH（systemd 下請補 PATH drop-in）；"
-                f"ENOEXEC＝檔案在但不是可執行檔（見 2026-08-20 的 native artifact 缺件）"
-            ) from exc
-        return CliResult(None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}")
-    except subprocess.TimeoutExpired:
-        return CliResult(None, f"CLI 逾時（{timeout}s 內未回應）")
-    except Exception as exc:  # noqa: BLE001 — 失敗原因要能寫進 log
-        return CliResult(None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}")
-    if r.returncode != 0:
-        auth = cli_auth_error(r.stdout, r.stderr)
-        if auth is not None:
-            raise auth  # 每一篇都會踩到：整批中止（見模組 docstring「兩類失敗刻意分流」）
-        tail = (r.stderr or "").strip().replace("\n", " ")[-STDERR_TAIL_CHARS:]
-        if not tail:
-            # stderr 空時看 stdout：CLI 有些錯誤只印在那裡（9/23 的 log 只剩「無 stderr」）
-            out_tail = (r.stdout or "").strip().replace("\n", " ")[-STDERR_TAIL_CHARS:]
-            tail = f"（無 stderr）stdout：{out_tail}" if out_tail else ""
-        return CliResult(None, f"CLI 退出碼 {r.returncode}：{tail or '（無 stderr）'}")
-    return CliResult(r.stdout, None)

@@ -1,5 +1,4 @@
 """LLM 模型名稱的單一真相來源：走 HTTP 的白名單、各任務的預設表、`resolve_model`。
-另收 claude CLI 認證失效的辨識樣式（`looks_like_cli_auth_error`，批次用，理由見該段註解）。
 
 **葉模組：只 import 標準函式庫**（tests/test_llm_models.py 以 AST 釘住）。理由有二：
 
@@ -40,7 +39,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections.abc import Iterable, Mapping
 
 logger = logging.getLogger(__name__)
@@ -66,31 +64,6 @@ JUDGE_LINEAGE_CLAUDE = "claude-haiku"
 def judge_lineage(model: str | None) -> str:
     """judge 屬於哪個量尺系譜：白名單（DeepSeek）是 PR-26/27 起的新系譜，其餘是 Claude 時代的舊系譜。"""
     return JUDGE_LINEAGE_DEEPSEEK if is_http_model(model) else JUDGE_LINEAGE_CLAUDE
-
-
-# ── claude CLI 認證失效的辨識 ────────────────────────────────────────────────
-# 2026-09-23 起 CLI 的 OAuth 過期（`Failed to authenticate: OAuth session expired and could not be
-# refreshed`），批次的 CLI 呼叫一律「退出碼 1、stderr 空、訊息在 stdout」，被當成單篇失敗逐篇
-# 記錄、整批 rc=0——與四天停擺同一型態。認證失效每一篇都會踩到，批次（`scripts/_claude_cli.py`、
-# `generate_brief.py`）要整批中止、線上（`llm.stream_completion` 的 CLI 路徑）要歸 `kind="auth"`
-# 且不重試。放在這個葉模組：批次與線上兩邊都要用，而批次不該為了一個樣式 import `llm.py`。
-# 樣式刻意收窄到 CLI／API 的固定措辭（不含單獨的 "401"、"unauthorized"：模型回答裡可能出現）。
-_CLI_AUTH_ERROR = re.compile(
-    r"failed to authenticate"
-    r"|oauth (?:session|token)\b[^\n]{0,60}?\b(?:expired|revoked|invalid)"
-    r"|invalid api key"
-    r"|please run /login"
-    r"|not logged in"
-    r"|authentication_error",
-    re.IGNORECASE,
-)
-# 只看開頭這麼多字：認證錯誤訊息都很短；看全文的話，一份碰巧談到 API 金鑰的長回答會被誤判。
-_CLI_AUTH_SCAN_CHARS = 600
-
-
-def looks_like_cli_auth_error(text: str | None) -> bool:
-    """claude CLI 的輸出（stdout、stderr 或 stream-json 的 result 文字）是不是認證失效。"""
-    return bool(text) and bool(_CLI_AUTH_ERROR.search(text[:_CLI_AUTH_SCAN_CHARS]))
 
 
 # ── 任務與旋鈕 ───────────────────────────────────────────────────────────────

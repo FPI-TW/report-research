@@ -20,6 +20,11 @@ class LLMUnavailableErrorTests(unittest.TestCase):
         self.assertIs(exc.partial, False)
         exc = llm.LLMUnavailableError("x", kind="quota", partial=True, reason="api_error")
         self.assertEqual((exc.kind, exc.partial, exc.reason), ("quota", True, "api_error"))
+        # 呼叫端可能把「沒有分類」原樣傳進來（例如 kind=outcome.kind 為 None）：落庫的 llm_error 與使用者
+        # 看到的措辭都靠 kind 查表，None／空字串要收斂成 other，不能讓 None 一路漏到 filters。
+        for falsy in (None, ""):
+            with self.subTest(kind=falsy):
+                self.assertEqual(llm.LLMUnavailableError("x", kind=falsy).kind, "other")
 
     def test_auth_kind_reaches_answer_and_ask_error_detail(self):
         from app.services import answer
@@ -559,6 +564,52 @@ class HttpTotalTimeoutTests(_HttpCase):
             await self.collect()
         self.assertEqual(seen["total_timeout"], 123.0)
         self.assertEqual(seen["first_token_timeout"], 120.0)
+
+
+class HttpCancelTests(_HttpCase):
+    def _hanging(self, closed: asyncio.Event, started: asyncio.Event, first: bytes | None = None):
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                if first is not None:
+                    yield first
+                started.set()
+                await asyncio.sleep(10)
+                yield b""
+
+            async def aclose(self):
+                closed.set()
+
+        return Stream()
+
+    async def test_cancel_closes_response(self):
+        closed, started = asyncio.Event(), asyncio.Event()
+        self.install(lambda req: httpx.Response(200, stream=self._hanging(closed, started)))
+
+        async def consume():
+            async for _ in llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t"):
+                pass
+
+        task = asyncio.ensure_future(consume())
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(closed.is_set(), "CancelledError 要原樣上拋，並關閉 HTTP 回應")
+
+    async def test_heartbeat_close_mid_stream_closes_response(self):
+        """用戶端中斷：`_with_heartbeat` 的 finally 會 cancel 未完成的 `__anext__` 再 aclose。"""
+        from web import deps
+
+        closed, started = asyncio.Event(), asyncio.Event()
+        self.install(lambda req: httpx.Response(
+            200, stream=self._hanging(closed, started, first=_sse(_chunk("a"), done=False))))
+        hb = deps._with_heartbeat(
+            llm.stream_completion("q", model="deepseek-flash", max_tokens=16, task="t"), interval=0.05)
+        first = await hb.__anext__()
+        self.assertEqual(first, "a")
+        self.assertFalse(closed.is_set())
+        await hb.aclose()
+        self.assertTrue(closed.is_set())
 
 
 class CallSitesPassMaxTokensAndTaskTests(unittest.TestCase):

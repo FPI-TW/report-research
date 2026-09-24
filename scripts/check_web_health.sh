@@ -52,7 +52,8 @@ HEALTH_STORAGE_URL="${HEALTH_STORAGE_URL-${HEALTH_URL%/}/storage}"
 # 同樣只認 **HTTP 503**（其餘一律當作判不出來或正常）。503 的本體是 {"llm":"<state>"}，
 # state 併進 reason（llm_exhausted、llm_low…；讀不出來就是 llm_unavailable），**不含任何金額**。
 # 退出碼依 state 分兩種：只有 `llm_low`（餘額低於門檻、尚未停擺）是 7；其餘（exhausted／auth_failed／
-# unreachable／indeterminate，以及本體讀不懂的 llm_unavailable）都是 8——真停擺或判斷不出來，寧可當停擺。
+# unreachable／indeterminate／misconfigured（問答主答模型設定有誤），以及本體讀不懂的 llm_unavailable）
+# 都是 8——真停擺或判斷不出來，寧可當停擺。
 # 設成空字串可整段停用。
 HEALTH_LLM_URL="${HEALTH_LLM_URL-${HEALTH_URL%/}/llm}"
 
@@ -141,7 +142,7 @@ while [ "$attempt" -lt "$HEALTH_RETRIES" ]; do
         [ -n "$storage_reason" ] && echo "check_web_health: /healthz 正常，但物件儲存（R2）連不上（原檔下載與 PDF 檢視會失敗；細節見 web 日誌的「healthz 物件儲存探測失敗」）" >&2
         llm_down=no
         [ -n "$llm_reason" ] && [ "$llm_reason" != llm_low ] && llm_down=yes
-        [ "$llm_down" = yes ] && echo "check_web_health: /healthz 正常，但 LLM 帳號不可用或判斷不出來，問答與批次 LLM 段停擺（$llm_reason；細節見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
+        [ "$llm_down" = yes ] && echo "check_web_health: /healthz 正常，但 LLM 帳號不可用、主答模型設定有誤或判斷不出來，問答停擺（帳號類連批次 LLM 段也停；$llm_reason；細節見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
         [ "$llm_reason" = llm_low ] && echo "check_web_health: /healthz 正常，但 DeepSeek 餘額低於門檻、尚未停擺（$llm_reason；金額見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
         [ "$llm_down" = yes ] && exit "$EXIT_LLM_DOWN"
         [ -n "$storage_reason" ] && exit "$EXIT_STORAGE"

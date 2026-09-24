@@ -167,7 +167,8 @@ def provider(env: Mapping[str, str] | None = None) -> str:
         _log_once(
             logging.ERROR, ("provider", raw),
             "LLM_PROVIDER=%r 已隨 claude CLI 退役（PR-M），沒有可回退的後端；改用 %s。"
-            "要讓線上 LLM 停下來沒有旋鈕可用——刪掉這一行，處置見 docs/production_resilience.md",
+            "它不是停止開關：要讓問答停下來改設 ASK_ANSWER_MODEL 為白名單外名稱或清空 DEEPSEEK_API_KEY"
+            "（見 docs/production_resilience.md「刻意讓 LLM 停下來」），否則刪掉這一行",
             raw, DEFAULT_PROVIDER,
         )
         return DEFAULT_PROVIDER

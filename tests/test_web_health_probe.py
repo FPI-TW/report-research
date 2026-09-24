@@ -408,7 +408,12 @@ class LlmCheckTests(unittest.TestCase):
     """
 
     def test_llm_down_states_are_exit_8_with_state_in_reason(self):
-        for state in ("exhausted", "auth_failed", "unreachable", "indeterminate"):
+        """`/healthz/llm` 會回的每一種 503（low 除外）都是 8——從 `llm_health.FAILING` 取，新 state 自動涵蓋。"""
+        from app.services import llm_health
+
+        states = sorted(llm_health.FAILING - {llm_health.LOW})
+        self.assertIn("misconfigured", states, "主答模型設定有誤＝問答停擺，要開 CRITICAL 事件")
+        for state in states:
             with self.subTest(state=state), _FakeSystemd(state="inactive") as sd, \
                     _Server(200, llm_status=503, llm_body=b'{"llm":"%s"}' % state.encode()) as s:
                 p = run_probe({"HEALTH_URL": s.url, **sd.env})
@@ -431,7 +436,7 @@ class LlmCheckTests(unittest.TestCase):
         self.assertNotIn("LLM 帳號不可用", p.stderr)
 
     def test_only_exact_low_is_exit_7(self):
-        """字首相同的其他 state（未來新增、或 `_unused` 誤回 503）不是 low：當停擺處理。"""
+        """字首相同的其他 state（未來新增、或 PR-M 前的 `_unused` 誤回 503）不是 low：當停擺處理。"""
         for state in (b"low_unused", b"lowish", b"below", b"unknown"):
             with self.subTest(state=state), _Server(200, llm_status=503, llm_body=b'{"llm":"%s"}' % state) as s:
                 p = run_probe({"HEALTH_URL": s.url})
@@ -449,9 +454,9 @@ class LlmCheckTests(unittest.TestCase):
             self.assertEqual(len(p.stdout.strip().splitlines()), 1)
 
     def test_anything_but_503_is_not_an_incident(self):
-        """200＝ok／disabled／unknown／*_unused；404＝web 還是沒有這支端點的舊版本；500 判不出來。"""
+        """200＝ok／unknown；404＝web 還是沒有這支端點的舊版本；500 判不出來。本體寫什麼都不看。"""
         for status in (200, 404, 500):
-            with _Server(200, llm_status=status, llm_body=b'{"llm":"exhausted_unused"}') as s:
+            with _Server(200, llm_status=status, llm_body=b'{"llm":"exhausted"}') as s:
                 p = run_probe({"HEALTH_URL": s.url})
             self.assertEqual(p.returncode, EXIT_OK, f"llm={status}: {p.stdout}{p.stderr}")
 

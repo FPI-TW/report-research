@@ -201,7 +201,6 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 
 | state | HTTP | 條件 |
 |---|---|---|
-| `disabled` | 200 | 問答主答沒有解析到 DeepSeek，且沒有金鑰 |
 | `unknown` | 200 | 還沒有完成過查詢 |
 | `ok` | 200 | 餘額 ≥ `LLM_BALANCE_FLOOR`（預設 70） |
 | `low` | 503 | 0 < 餘額 < 門檻 |
@@ -209,8 +208,9 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 | `auth_failed` | 503 | 查詢回 401，或問答主答走 DeepSeek 卻沒有金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx） |
 | `indeterminate` | 503 | 缺該幣別、其他幣別非零、金額讀不懂、端點設定錯 |
+| `misconfigured` | 503 | 問答主答（`ASK_ANSWER_MODEL`）解析到白名單外的名稱 |
 
-問答主答（`ASK_ANSWER_MODEL`）沒有解析到 DeepSeek 時，後五種改回 200 並加 `_unused` 後綴（審查 M15；其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
+`misconfigured` 時不查餘額（每題都回設定有誤；只看主答，其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
 
 ### 契約守門
 

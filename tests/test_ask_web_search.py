@@ -193,6 +193,23 @@ class CorpusQaWebToggleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw["timeout"], ans.ASK_WEB_TIMEOUT)
         self.assertIs(called["log_filters"]["web"], True)
 
+    async def test_web_on_sends_and_logs_the_ask_web_model(self):
+        """web_on 時主答改用 `ASK_WEB_MODEL`，`filters.llm_model` 記的是它（換模型的階段靠它分組比較）；
+        沒開時照舊是主答模型。兩顆旋鈕換成可區分的值，免得預設值剛好相同而驗不出來。"""
+        orig = ans.ASK_WEB_MODEL
+        ans.ASK_WEB_MODEL = "web-model-under-test"
+        try:
+            on = await self._run(web=True)
+            off = await self._run(web=False)
+            gated = await self._run(web=True, gate=False)
+        finally:
+            ans.ASK_WEB_MODEL = orig
+        self.assertEqual(on["stream_kwargs"]["model"], "web-model-under-test")
+        self.assertEqual(on["log_filters"]["llm_model"], "web-model-under-test")
+        for called in (off, gated):
+            self.assertNotEqual(called["stream_kwargs"]["model"], "web-model-under-test")
+            self.assertEqual(called["log_filters"]["llm_model"], called["stream_kwargs"]["model"])
+
     async def test_server_gate_overrides_request_field(self):
         """ASK_ENABLE_WEB=0 → 前端送 true 也一律關，不必改前端就能整站停用。"""
         called = await self._run(web=True, gate=False)
@@ -612,6 +629,7 @@ class NoWebBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cm.exception.kind, "config")
         self.assertIsNone(pt.called["answer"], "失敗列不得寫假答案")
         self.assertEqual(pt.called["log_filters"]["llm_error"], "config")
+        self.assertEqual(pt.called["log_filters"]["llm_model"], ans.ASK_WEB_MODEL)
         self.assertEqual(self.requests, [])
 
     def test_defaults_keep_web_off(self):

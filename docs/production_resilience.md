@@ -614,21 +614,45 @@ CLI backend 移除後沒有這條路徑了，同型態的問題（該段設定�
 **沒有備援**：claude CLI 已於 PR-M 移除，`claude_only` 緊急回退也隨之退役（設了只會在 web 記 ERROR、在
 批次 rc=2，**不會**讓任何東西改走 Claude）。402、401、DeepSeek 停機時，問答與 sync 的 LLM 段（行內標註、
 摘要、標題、摘錄、訊號、簡報）全部停擺，直到儲值、換金鑰或服務恢復；檢索、閱讀頁、雷達、既有簡報的讀取
-不受影響。`/healthz/llm` 回 503 時問答就是停擺的（只有主答被設成白名單外名稱這種設定錯誤才回 `*_unused`）。
+不受影響。`/healthz/llm` 回 503 時問答就是停擺的（`low` 除外：那是還能用、要儲值）。
+
+#### 刻意讓 LLM 停下來
+
+PR-M 起**沒有**「一個旋鈕停掉全部 LLM」。`LLM_PROVIDER` 的退役值（`claude_cli`／`claude_only`）不是停止開關，
+而且效果依寫在哪份檔而不同：
+
+| 退役值寫在哪 | web（問答） | 批次（sync） |
+|---|---|---|
+| repo 根 `.env` | 記 ERROR、當成 `deepseek`，**照常計費** | **照常計費**：批次不讀 `.env`，只讀 `/etc/default/report-mark-llm` |
+| `/etc/default/report-mark-llm` | 不受影響（web 不讀這份檔），照常計費 | 預檢 **rc=2** 整批拒跑（sync 告警） |
+
+要停，照對象分開做：
+
+- **停問答主答**：repo 根 `.env` 設 `ASK_ANSWER_MODEL=off`（任何白名單外的名稱都行）並重啟 web。每題回
+  「問答服務暫時無法使用（模型設定有誤）」、不送出主答請求；`/healthz/llm` 回 503 `misconfigured` → 探針
+  退出碼 8 → **CRITICAL 事件（「LLM 帳號不可用…」那則措辭，reason 是 `llm_misconfigured`）——刻意停用期間
+  這是預期的**，不是新故障，恢復設定後送 RESOLVED。其餘 fail-open 的線上任務（首輪路由、續問改寫、查詢
+  規劃、追問建議、忠實度抽查）各自解析模型、照常呼叫；要一個都不送，把它們的旋鈕
+  （`ASK_INTENT_MODEL`、`ASK_CONDENSE_MODEL`、`QA_PLANNER_MODEL`、`ASK_FOLLOWUP_MODEL`、`FAITHFULNESS_MODEL`）
+  也設成白名單外名稱（忠實度也可以 `ASK_FAITHFULNESS_ENABLED=0`），或直接把 `.env` 的 `DEEPSEEK_API_KEY=`
+  清空——所有線上呼叫在送出前就以 auth 失敗，`/healthz/llm` 回 503 `auth_failed`（同樣是退出碼 8、預期的）。
+- **停批次**：`sudo systemctl stop report-mark-sync.timer`（要跨重開機再 `disable`）；排程批次裡只有 sync 鏈
+  會呼叫 LLM。停著期間 `make freshness` 會陸續報各段過期，這也是預期的。恢復時 `start`（或 `enable --now`）。
 
 #### 訊號從哪裡來
 
 | 訊號 | 管道 | 多快 |
 |---|---|---|
 | web 的 `/healthz/llm` 回 503 `low` | 探針退出碼 **7** → `incident_handler.sh` 的 `probe_exit_7`（**WARNING**，「DeepSeek 餘額低於門檻（尚未停擺），請於 3 個工作天內儲值」）→ Slack FIRING，每 30 分鐘提醒，恢復送 RESOLVED | 餘額查詢 ok 快取 600 秒，約 12 分鐘內 |
-| web 的 `/healthz/llm` 回 503 `exhausted`／`auth_failed`／`unreachable`／`indeterminate` | 探針退出碼 **8** → `probe_exit_8`（**CRITICAL**，「LLM 帳號不可用（餘額用罄／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常」）→ Slack FIRING；已在 7 的 FIRING 期間轉成 8 時立刻送 **ESCALATED**（不等提醒）；8 → 7（儲值了但仍低於門檻）事件不關、降回 WARNING、不另通知；恢復送 RESOLVED | 問答碰到 402 的下一輪探針（約 2 分鐘）；否則同上 |
+| web 的 `/healthz/llm` 回 503 `exhausted`／`auth_failed`／`unreachable`／`indeterminate`／`misconfigured` | 探針退出碼 **8** → `probe_exit_8`（**CRITICAL**，「LLM 帳號不可用（餘額用罄／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常」）→ Slack FIRING；已在 7 的 FIRING 期間轉成 8 時立刻送 **ESCALATED**（不等提醒）；8 → 7（儲值了但仍低於門檻）事件不關、降回 WARNING、不另通知；恢復送 RESOLVED | 問答碰到 402 的下一輪探針（約 2 分鐘）；否則同上 |
 | 批次碰到 401／402 | 該段整批 rc=2 → sync unit failed → `OnFailure` → Slack | 當輪 |
 
 `/healthz/llm` 只回 `{"llm": state}`，**不回任何金額**；金額與原因在 web 日誌的「healthz LLM 狀態」
 那一行（狀態改變時記一次）。判定細節（只讀 CNY 那一筆、依 `currency` 取值不靠索引、缺 CNY 或出現
 非零 USD 視為判斷不出來、402 閂鎖、連續 2 次才算連不上）在 `app/services/llm_health.py` 的模組
-docstring。問答主答（`ASK_ANSWER_MODEL`）沒有解析到 DeepSeek 時帳號問題只記成 `*_unused`、回 200、不開
-事件（審查 M15）；其他線上任務（路由、續問改寫、查詢規劃、追問、忠實度）都 fail-open，走 DeepSeek 也不算。
+docstring。問答主答（`ASK_ANSWER_MODEL`）解析到白名單外的名稱時不查餘額、直接回 503 `misconfigured`
+（每題都回「設定有誤」，問答停擺；探針退出碼 8）；其他線上任務（路由、續問改寫、查詢規劃、追問、忠實度）
+都 fail-open，解析到什麼都不算。
 **已知限制：web 重啟可能閃一次 RESOLVED。** 狀態只在 web 行程記憶體裡；重啟後第一次餘額查詢若剛好單次
 連不上，仍回 200 `unknown`（連續 2 次才算 unreachable），進行中的 LLM 事件會收到一則 RESOLVED，下一輪若仍
 連不上再 FIRING。402／401／餘額 ≤ 0 不受影響（重啟後第一次查詢就判得出來）。刻意不改：把重啟後的第一次
@@ -644,7 +668,9 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 
 #### 處置
 
-`low` 走探針退出碼 7（WARNING，3 個工作天內儲值即可）；其餘四種走 8（CRITICAL，問答與批次 LLM 段已停擺）。
+`low` 走探針退出碼 7（WARNING，3 個工作天內儲值即可）；其餘五種走 8（CRITICAL；帳號類是問答與批次 LLM 段
+已停擺，`misconfigured` 只停問答主答）。incident handler 的 8 只有一則措辭（「LLM 帳號不可用…」），是哪一種
+看 journal 的 `reason=llm_<state>`。
 
 | state | 意義 | 處置 |
 |---|---|---|
@@ -653,6 +679,7 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 | `auth_failed` | 401，或 web 線上任務走 DeepSeek 卻沒有金鑰 | 看是不是金鑰被撤、貼錯或兩份不一致：依「DeepSeek 金鑰落點與輪替」核對指紋（`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`），必要時輪替 |
 | `unreachable` | 連續 2 次連不上 DeepSeek（網路、逾時、429／5xx） | 看對外網路與 DeepSeek 狀態頁；恢復後自動 RESOLVED |
 | `indeterminate` | 判斷不出來：缺 CNY 那一筆、USD 出現非零餘額（幣別不符）、回應格式變了、端點設定錯 | 到 DeepSeek 後台看帳戶實際幣別與餘額。帳戶若真的改以美元計價，改 repo 根 `.env` 的 `LLM_BUDGET_CURRENCY` 並重訂門檻（重啟 web）；否則是 API 改版或 `DEEPSEEK_BASE_URL` 設錯 |
+| `misconfigured` | 問答主答（`ASK_ANSWER_MODEL`）解析到白名單外的名稱（`claude-*`、打錯字）：每題回「設定有誤」。不是帳號問題，這時不查餘額 | 刻意停用（見「刻意讓 LLM 停下來」）就是預期的，不處置。否則改正 repo 根 `.env` 的 `ASK_ANSWER_MODEL`（或刪掉那一行用預設）並重啟 web；web 日誌的「healthz LLM 狀態」與啟動自檢都會說出是哪個值 |
 
 402／401 之後的完整步驟：
 
@@ -1186,7 +1213,7 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 | `5` | **已退役**（PR-M）：原本是「`/healthz` 正常，但問答相依的 `claude` 不在 web unit 的 PATH drop-in 上」（2026-09-02 那種「healthz 綠、問答全壞」）。CLI 與 drop-in 都已移除，整段刪除、編號不重用；incident handler 收到 5（舊版探針）會落「未知退出碼」 | — |
 | `6` | `/healthz` 正常，但物件儲存（R2）連不上：`/healthz/storage` 回 503。原檔下載與 PDF 檢視會失敗，其餘功能正常 | **failed → `OnFailure`** |
 | `7` | `/healthz` 正常，但 DeepSeek 的 CNY 餘額低於門檻：`/healthz/llm` 回 503 `low`。**尚未停擺**，要儲值。處置見「DeepSeek 帳號告警與 402／401 處置」 | **failed → `OnFailure`** |
-| `8` | `/healthz` 正常，但 DeepSeek 帳號不可用或判斷不出來：`/healthz/llm` 回 `low` 以外的 503（`exhausted`／`auth_failed`／`unreachable`／`indeterminate`，本體讀不懂也算）。問答與批次 LLM 段停擺；檢索、閱讀、雷達正常 | **failed → `OnFailure`** |
+| `8` | `/healthz` 正常，但 DeepSeek 帳號不可用、主答模型設定有誤或判斷不出來：`/healthz/llm` 回 `low` 以外的 503（`exhausted`／`auth_failed`／`unreachable`／`indeterminate`／`misconfigured`，本體讀不懂也算）。問答與批次 LLM 段停擺（`misconfigured` 只停問答主答）；檢索、閱讀、雷達正常 | **failed → `OnFailure`** |
 
 **L3 兩項全查**（`/healthz` 正常時），一行 `reason=` 帶出全部原因（逗號分隔，例如
 `storage_unreachable,llm_low`），退出碼取 **8 → 6 → 7** 最前面的那一個：
@@ -1198,7 +1225,7 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 被蓋住的那一項 reason 仍在 journal 那一行裡，前面那項修好後下一輪退出碼就換成它。web 只有一個 incident
 元件：FIRING 期間退出碼換了不會另開事件；WARNING → CRITICAL（例如 7 → 8、6 → 8）會立刻送 ESCALATED，
 反方向（8 → 6／7）是降級、要等下一則提醒（最多 30 分鐘）才看到新的 exit。只認 HTTP 503：404（舊版 web 沒有
-這支端點）、連不上、200（含 `*_unused`）都不開事件。`HEALTH_LLM_URL` 設空字串可停用 7／8 這一項。
+這支端點）、連不上、200 都不開事件。`HEALTH_LLM_URL` 設空字串可停用 7／8 這一項。
 
 **兩種「連不上」都算失敗**：2026-08-18 的失效型態是 uvicorn 根本沒綁上（連不上），
 不是回 503。實測本機在 WSL mirrored networking 下，連一個沒有 listener 的埠得到的是

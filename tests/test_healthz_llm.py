@@ -3,7 +3,7 @@
 
 設計理由在 `app/services/llm_health.py` 的模組 docstring。這裡守的是判斷邏輯的每一個分支：
 幣別只看 CNY 那一筆且不靠索引、門檻邊界、402 閂鎖與解除條件、連續兩次才算連不上、快取時效、
-審查 M15 的 `_unused`、回應不含任何金額。
+主答設定錯誤的 `misconfigured`（只看主答，審查 M15 的粒度）、回應不含任何金額。
 
 全程不連網：`llm_http._transport` 換成 `httpx.MockTransport`；金鑰只用 gitleaks allowlist 內的假值，
 以 `mock.patch.dict` 限定在單一測試內（conftest 把 `DEEPSEEK_API_KEY` 強制成空字串）。
@@ -36,10 +36,9 @@ PROBE = Path(__file__).resolve().parents[1] / "scripts" / "check_web_health.sh"
 FAKE_KEY = "fixed-test-secret-deepseek0"
 BASE = "https://api.example.test"
 ONLINE = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": BASE, "LLM_PROVIDER": "deepseek"}
-# 主答沒有解析到 DeepSeek（PR-M 起只剩「ASK_ANSWER_MODEL 設成白名單外的名稱」這種設定錯誤會這樣），
-# 但有金鑰：批次照常在用 DeepSeek 的情境。PR-M 前這裡用 LLM_PROVIDER=claude_cli（退役值現在當成 deepseek）。
-UNUSED = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": BASE, "LLM_PROVIDER": "deepseek",
-          "ASK_ANSWER_MODEL": "claude-sonnet-5"}
+# 主答解析到白名單外的名稱（PR-M 起沒有其他 backend：每題都以設定錯誤失敗），金鑰照常有值。
+MISCONF = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": BASE, "LLM_PROVIDER": "deepseek",
+           "ASK_ANSWER_MODEL": "claude-sonnet-5"}
 
 
 def _balance(*infos, available=True):
@@ -129,12 +128,7 @@ class AccessTests(_Base):
         self.assertEqual(req.headers["authorization"], f"Bearer {FAKE_KEY}")
 
 
-class DisabledTests(_Base):
-    def test_no_key_and_no_online_http_is_disabled_without_query(self):
-        r = self.get({"ASK_ANSWER_MODEL": "claude-sonnet-5"})
-        self.assertState(r, 200, "disabled")
-        self.assertEqual(self.requests, [])
-
+class NoKeyTests(_Base):
     def test_no_key_but_online_http_is_auth_failed(self):
         r = self.get({"LLM_PROVIDER": "deepseek"})
         self.assertState(r, 503, "auth_failed")
@@ -504,85 +498,76 @@ class QuotaLatchTests(_Base):
             self.assertState(self.get(), 503, "exhausted")
 
 
-class UnusedTests(_Base):
-    """審查 M15：線上任務沒有用到 DeepSeek 時，帳號問題回 200＋`_unused`，不開事件。"""
+class MisconfiguredTests(_Base):
+    """主答（`ASK_ANSWER`）解析到白名單外的名稱：每題都以設定錯誤失敗＝問答停擺，回 503 `misconfigured`
+    （探針 reason `llm_misconfigured`、退出碼 8），不查餘額。PR-M 前這裡回 200＋`_unused`（那時主答走 CLI）。"""
 
-    def test_failing_states_are_200_with_unused_suffix(self):
-        cases = [
-            ((402, {}), "exhausted_unused"),
-            ((200, _balance(("CNY", "10.00"))), "low_unused"),
-            ((401, {}), "auth_failed_unused"),
-            ((200, _balance(("USD", "0.00"))), "indeterminate_unused"),
-        ]
-        for (status, body), state in cases:
-            with self.subTest(state=state):
+    def test_non_whitelisted_main_answer_is_503_misconfigured_without_query(self):
+        for model in ("claude-sonnet-5", "sonnet", "deepseek-flsh", "off", "DeepSeek-Flash"):
+            with self.subTest(model=model):
                 llm_health.reset()
-                self.reply(status, body)
-                self.assertState(self.get(UNUSED), 200, state)
-        self.assertTrue(self.requests, "有金鑰就照常查詢（批次用得到）")
+                self.assertState(self.get({**MISCONF, "ASK_ANSWER_MODEL": model}), 503, "misconfigured")
+        self.assertEqual(self.requests, [], "設定錯誤時帳號狀態回答不了問答能不能用，不查")
 
-    def test_unreachable_unused(self):
-        def boom(req):
-            raise httpx.ConnectError("down", request=req)
+    def test_misconfigured_wins_over_every_account_state(self):
+        """帳號壞掉、402 閂鎖、沒有金鑰都一樣：先說設定錯誤（修好設定後下一次查詢自然說出帳號狀態）。"""
+        cases = [
+            ("402", lambda: self.reply(402, {}), MISCONF),
+            ("401", lambda: self.reply(401, {}), MISCONF),
+            ("low", lambda: self.reply(200, _balance(("CNY", "10.00"))), MISCONF),
+            ("latch", lambda: setattr(llm_http, "_quota_seen_at", time.monotonic() + 1000), MISCONF),
+            ("no_key", lambda: None, {"ASK_ANSWER_MODEL": "claude-sonnet-5"}),
+        ]
+        for name, arrange, env in cases:
+            with self.subTest(case=name):
+                llm_health.reset()
+                arrange()
+                self.assertState(self.get(env), 503, "misconfigured")
 
-        self.handler = boom
-        self.get(UNUSED)
-        self.expire()
-        self.assertState(self.get(UNUSED), 200, "unreachable_unused")
-
-    def test_healthy_states_have_no_suffix(self):
-        self.assertState(self.get(UNUSED), 200, "ok")
-
-    def test_latch_is_also_unused(self):
-        llm_http._quota_seen_at = time.monotonic() + 1000
-        self.assertState(self.get(UNUSED), 200, "exhausted_unused")
-
-    def test_main_answer_on_deepseek_counts(self):
-        """主答走 DeepSeek：問答會停擺，要 503。"""
-        env = {**UNUSED, "ASK_ANSWER_MODEL": "deepseek-flash"}
+    def test_fixing_the_config_reveals_the_account_state(self):
         self.reply(402, {})
-        self.assertState(self.get(env), 503, "exhausted")
+        self.assertState(self.get(MISCONF), 503, "misconfigured")
+        self.assertState(self.get({**MISCONF, "ASK_ANSWER_MODEL": "deepseek-flash"}), 503, "exhausted")
+        self.assertState(self.get({**MISCONF, "ASK_ANSWER_MODEL": ""}), 503, "exhausted")
+
+    def test_whitelisted_main_answer_is_not_misconfigured(self):
+        for model in ("deepseek-flash", "deepseek-v4-pro", ""):
+            with self.subTest(model=model):
+                llm_health.reset()
+                self.assertState(self.get({**ONLINE, "ASK_ANSWER_MODEL": model}), 200, "ok")
 
     def test_fail_open_online_tasks_do_not_count(self):
-        """審查低2：路由、改寫、規劃、追問、忠實度都 fail-open，它們走 DeepSeek 而帳號壞掉時問答照樣答得
-        出來——不能因此開「問答停擺」的事件。逐一只讓一個走 DeepSeek，也試全部一起。"""
+        """審查低2：路由、改寫、規劃、追問、忠實度、網搜都 fail-open（網搜沒有後端），它們解析到白名單外名稱
+        時問答照樣答得出來——不能因此開「問答停擺」的事件。逐一只讓一個設錯，也試全部一起。"""
         knobs = ("ASK_INTENT_MODEL", "ASK_CONDENSE_MODEL", "QA_PLANNER_MODEL", "ASK_FOLLOWUP_MODEL",
-                 "FAITHFULNESS_MODEL")
+                 "FAITHFULNESS_MODEL", "ASK_WEB_MODEL")
         for chosen in [(k,) for k in knobs] + [knobs]:
             with self.subTest(knobs=chosen):
                 llm_health.reset()
-                self.reply(402, {})
-                env = {**UNUSED, **{k: "deepseek-flash" for k in chosen}}
-                self.assertState(self.get(env), 200, "exhausted_unused")
+                env = {**ONLINE, **{k: "claude-sonnet-5" for k in chosen}}
+                self.assertState(self.get(env), 200, "ok")
 
     def test_retired_provider_values_do_not_hide_an_outage(self):
-        """PR-M：`claude_cli`／`claude_only` 已退役、解析成 deepseek——主答照樣走 DeepSeek，帳號停擺要 503，
-        不能像 PR-M 前那樣變成 `_unused`（那時這兩個值真的讓問答走 CLI；現在它們只是會被記 ERROR 的錯值）。"""
+        """PR-M：`claude_cli`／`claude_only` 已退役、解析成 deepseek——主答照樣走 DeepSeek，帳號停擺要 503
+        `exhausted`，不是 misconfigured（主答名稱本身沒錯）。"""
         for value in ("claude_cli", "claude_only"):
             with self.subTest(value=value):
                 llm_health.reset()
                 self.reply(402, {})
                 self.assertState(self.get({**ONLINE, "LLM_PROVIDER": value}), 503, "exhausted")
 
-    def test_deepseek_provider_with_main_answer_pinned_to_claude_is_unused(self):
-        """`LLM_PROVIDER=deepseek` 把其餘線上任務都帶到 DeepSeek，但主答釘在 Claude：仍不算用到。"""
-        env = {**ONLINE, "ASK_ANSWER_MODEL": "claude-sonnet-5"}
-        self.reply(401, {})
-        self.assertState(self.get(env), 200, "auth_failed_unused")
-
-    def test_missing_key_matters_only_for_the_main_answer(self):
-        """沒有金鑰：主答走 DeepSeek 是 auth_failed（503），只有 fail-open 任務走 DeepSeek 是 disabled（200）。"""
-        side = {"ASK_ANSWER_MODEL": "claude-sonnet-5", "ASK_INTENT_MODEL": "deepseek-flash",
-                "FAITHFULNESS_MODEL": "deepseek-flash"}
-        self.assertState(self.get(side), 200, "disabled")
-        self.assertState(self.get({"ASK_ANSWER_MODEL": "deepseek-flash"}), 503, "auth_failed")
-        self.assertEqual(self.requests, [])
-
-    def test_unused_state_is_logged(self):
-        self.reply(402, {})
+    def test_misconfigured_is_logged_with_the_value(self):
         with self.assertLogs("app.services.llm_health", "WARNING") as cm:
-            self.get(UNUSED)
-        self.assertTrue(any("exhausted_unused" in line for line in cm.output), cm.output)
+            self.get(MISCONF)
+        line = "\n".join(cm.output)
+        self.assertIn("misconfigured", line)
+        self.assertIn("claude-sonnet-5", line)
+
+    def test_probe_reason_is_accepted_and_exit_8(self):
+        """探針的 reason 詞彙封閉規則（`llm_` + 小寫字母與底線、最長 32 字）要接受它，而且不是 low → 8。"""
+        self.assertRegex(llm_health.MISCONFIGURED, r"^[a-z_]{1,32}$")
+        self.assertIn(llm_health.MISCONFIGURED, llm_health.FAILING)
+        self.assertNotEqual(llm_health.MISCONFIGURED, llm_health.LOW)
 
 
 class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):

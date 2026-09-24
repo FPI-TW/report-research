@@ -109,7 +109,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 |---|---|---|---|---|
 | GET | `/healthz` | — | `{"status":"ok"}`；DB 不可用回 503 `{"status":"degraded"}` | 免登入；只探 DB（`SELECT 1`，3 秒逾時）；結果快取 5 秒 |
 | GET | `/healthz/storage` | — | `{"storage":"disabled"\|"unknown"\|"ok"\|"degraded"}`；degraded 回 503 | **只回答本機直連**（對端 loopback、無代理 header、Host 為本機），其餘 404；給 `scripts/check_web_health.sh` 用（退出碼 6） |
-| GET | `/healthz/llm` | — | `{"llm":"disabled"\|"unknown"\|"ok"\|"low"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"}`；後五種回 503，問答主答（`ASK_ANSWER_MODEL`）沒有用到 DeepSeek 時改回 200 並加 `_unused` 後綴。**不回任何金額** | **只回答本機直連**，其餘 404；查 DeepSeek `GET /user/balance`（只看 `LLM_BUDGET_CURRENCY` 那一筆，低於 `LLM_BALANCE_FLOOR` 為 low），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8）。判定細節見 `app/services/llm_health.py` |
+| GET | `/healthz/llm` | — | `{"llm":"unknown"\|"ok"\|"low"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"\|"misconfigured"}`；後六種回 503（`misconfigured`＝問答主答 `ASK_ANSWER_MODEL` 解析到白名單外的名稱，不查餘額）。**不回任何金額** | **只回答本機直連**，其餘 404；查 DeepSeek `GET /user/balance`（只看 `LLM_BUDGET_CURRENCY` 那一筆，低於 `LLM_BALANCE_FLOOR` 為 low），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8）。判定細節見 `app/services/llm_health.py` |
 | GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next` | 302／303 | 登入頁免登入；失敗回 `/login?error=1|locked|insecure` |
 | GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/monitor`、`/app/help` | 舊入口相容 |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |

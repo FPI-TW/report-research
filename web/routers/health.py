@@ -44,7 +44,7 @@ auth 白名單裡，但對外等於不存在。消費端是 `scripts/check_web_h
 
 同樣的理由另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡：問答與批次的 LLM 段全靠 DeepSeek，
 402／401 時問答每題失敗而 `/healthz` 照樣綠。回應只有 `{"llm": state}`，**不回任何金額**（金額只進
-日誌）。狀態、門檻、快取、402 閂鎖與審查 M15 的 `_unused` 規則都在 `app/services/llm_health.py`；
+日誌）。狀態、門檻、快取、402 閂鎖與主答設定錯誤（`misconfigured`）的判定都在 `app/services/llm_health.py`；
 消費端是探針（只認 503，`low` 為退出碼 7、其餘為 8）。
 """
 import asyncio
@@ -170,7 +170,7 @@ async def healthz_llm(request: Request) -> JSONResponse:
     """DeepSeek 帳號可用性。**只回答本機直連的請求**，其餘一律 404。
 
     回 `{"llm": state}`（詞彙見 `app/services/llm_health.py`）；low／exhausted／auth_failed／unreachable／
-    indeterminate 在問答主答走 DeepSeek 時回 503，否則加 `_unused` 回 200。由 `scripts/check_web_health.sh`
+    indeterminate／misconfigured（問答主答解析到白名單外名稱）回 503。由 `scripts/check_web_health.sh`
     消費（low 為退出碼 7，其餘 503 為 8）。
     """
     if not dev_mode.is_direct_loopback(request):

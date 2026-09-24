@@ -13,7 +13,6 @@ Claude CLI 已於 2026-09-23 永久放棄（OAuth 過期、D-C），遷移終局
 
 | state | HTTP | 意義 |
 |---|---|---|
-| `disabled` | 200 | 問答主答沒有解析到 DeepSeek，而且沒有金鑰 |
 | `unknown` | 200 | 還沒有完成過任何一次查詢（或第一次連不上） |
 | `ok` | 200 | 預算幣別的餘額 ≥ 門檻，`is_available=true` |
 | `low` | 503 | 餘額 > 0 但低於門檻（預設 ¥70，約兩週用量）：還能用，但要儲值 |
@@ -22,17 +21,21 @@ Claude CLI 已於 2026-09-23 永久放棄（OAuth 過期、D-C），遷移終局
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx）；單次不算 |
 | `indeterminate` | 503 | 判斷不出來：缺預算幣別那一筆、其他幣別有非零餘額（幣別不符）、金額不是數字、 |
 | | | 同幣別重複、端點設定錯（404 等）、回應不是 JSON 物件 |
+| `misconfigured` | 503 | 問答主答（`ASK_ANSWER` 任務）解析到白名單外的名稱：每題都回「設定有誤」（見下） |
 
 - **幣別只看一筆**（D-O）：`balance_infos` 的順序不固定（9/24 實測 USD、CNY 兩筆會對調），一律依
   `currency` 取值，不靠索引。其他幣別出現非零餘額代表帳戶計價與假設不符，這時「CNY 夠不夠」回答不了
   帳戶夠不夠，所以不猜、直接告警。
-- **M15（審查）**：只有「問答主答（`ASK_ANSWER` 任務）解析到 DeepSeek 模型」時上面的 503 才生效；否則回
-  200，state 加 `_unused` 後綴（例如 `exhausted_unused`），只進日誌。理由：主答沒用到 DeepSeek 時問答不會
-  停擺，讓它開事件等於用一則不實的「問答停擺」蓋掉其他故障。**只看主答**：其他線上任務（首輪路由、續問
-  改寫、查詢規劃、追問建議、忠實度抽查）全部 fail-open，它們走 DeepSeek 而帳號壞掉時問答照樣答得出來；
-  網搜沒有後端（`llm.py` 對 `allow_web=True` 直接拋 config）。仍然照常查詢（只要有金鑰），批次用得到。
-  PR-M 起主答「沒有解析到 DeepSeek」只剩一種來源：`ASK_ANSWER_MODEL` 設成白名單外的名稱——那是設定錯誤
-  （每題回「設定有誤」、啟動自檢記 ERROR），不是帳號問題，所以照舊不讓帳號狀態開事件。
+- **主答設定錯誤＝`misconfigured`（503）**：判定粒度是問答主答（`ASK_ANSWER` 任務，審查 M15）。PR-M 起
+  沒有其他 backend，主答解析到白名單外的名稱（`claude-*`、打錯字）時 `llm.stream_completion` 對每一題都拋
+  config 錯誤——問答停擺，跟帳號壞掉一樣要開事件（探針 reason `llm_misconfigured`、退出碼 8）。這時**不查
+  餘額**、直接回 `misconfigured`：帳號狀態回答不了「問答能不能用」，修好設定後下一次查詢自然會說出帳號狀態
+  （同樣是退出碼 8，事件不會因此斷開）。PR-M 前這種情況回 200＋`_unused` 後綴——那時主答不走 DeepSeek
+  代表它走 Claude CLI、問答照常，現在這條路已不存在，後綴與「沒有金鑰也不用 DeepSeek」的 `disabled` 一併
+  移除。**只看主答**：其他線上任務（首輪路由、續問改寫、查詢規劃、追問建議、忠實度抽查）全部 fail-open，
+  它們解析到什麼都不影響這支端點；網搜沒有後端（`llm.py` 對 `allow_web=True` 直接拋 config），同樣不算。
+  要讓線上 LLM 刻意停下來時把 `ASK_ANSWER_MODEL` 設成白名單外名稱，這個 503 是預期的（見
+  `docs/production_resilience.md`）。
 - **402 閂鎖**：本行程任何一次真實請求收到 402（`llm_http.last_quota_at`），就立刻回 `exhausted`，
   直到一次**開始於那次 402 之後**、成功（HTTP 200）且判定不是 exhausted 的餘額查詢才解除。閂鎖期間
   快取以失敗 TTL 計，所以最慢 60 秒就會重查。401 的結論優先於閂鎖（金鑰壞了是更直接的原因）。
@@ -69,7 +72,6 @@ from app.services import llm_http, llm_models
 
 logger = logging.getLogger(__name__)
 
-DISABLED = "disabled"
 UNKNOWN = "unknown"
 OK = "ok"
 LOW = "low"
@@ -77,9 +79,9 @@ EXHAUSTED = "exhausted"
 AUTH_FAILED = "auth_failed"
 UNREACHABLE = "unreachable"
 INDETERMINATE = "indeterminate"
-# 回 503 的狀態（只在問答主答用 DeepSeek 時；否則加 `_unused` 回 200）。探針：LOW 是 7，其餘是 8
-FAILING = frozenset({LOW, EXHAUSTED, AUTH_FAILED, UNREACHABLE, INDETERMINATE})
-UNUSED_SUFFIX = "_unused"
+MISCONFIGURED = "misconfigured"
+# 回 503 的狀態。探針：LOW 是 7，其餘是 8
+FAILING = frozenset({LOW, EXHAUSTED, AUTH_FAILED, UNREACHABLE, INDETERMINATE, MISCONFIGURED})
 
 OK_TTL = 600.0
 FAIL_TTL = 60.0
@@ -199,16 +201,17 @@ async def _refresh(currency: str, floor: float) -> None:
 ASK_CRITICAL_TASKS: tuple[str, ...] = (llm_models.TASK_ASK_ANSWER,)
 
 
-def ask_uses_http(env=None) -> bool:
-    """web 行程的問答主答有沒有解析到 DeepSeek 白名單模型（其餘 fail-open 的線上任務不算）。"""
-    return any(llm_models.is_http_model(m) for m in llm_models.resolve_all(ASK_CRITICAL_TASKS, env).values())
+def misconfigured_tasks(env=None) -> dict[str, str]:
+    """解析到白名單外名稱的關鍵任務 → 那個名稱（空＝主答設定正常）。其餘 fail-open 的線上任務不算。"""
+    resolved = llm_models.resolve_all(ASK_CRITICAL_TASKS, env)
+    return {t: m for t, m in resolved.items() if not llm_models.is_http_model(m)}
 
 
-async def _account_state(*, online: bool, currency: str, floor: float) -> tuple[str, str]:
-    """未套 M15 的原始狀態與給日誌的原因。"""
+async def _account_state(*, currency: str, floor: float) -> tuple[str, str]:
+    """帳號狀態與給日誌的原因（主答設定正常時才會問到這裡）。"""
     global _task
     if not llm_http.api_key_configured():
-        return (AUTH_FAILED, "問答主答走 DeepSeek 但 DEEPSEEK_API_KEY 為空") if online else (DISABLED, "")
+        return AUTH_FAILED, "問答主答走 DeepSeek 但 DEEPSEEK_API_KEY 為空"
     now = time.monotonic()
     latched = llm_http.last_quota_at() > _snap.cleared_at
     if now >= _snap.expires_at or (latched and now >= _snap.checked_at + FAIL_TTL):
@@ -227,12 +230,13 @@ async def _account_state(*, online: bool, currency: str, floor: float) -> tuple[
 async def report(*, currency: str, floor: float) -> tuple[str, int]:
     """(回應的 state, HTTP 狀態碼)。狀態改變時記一行 WARNING（含原因與金額；回應本身不含）。"""
     global _last_reported
-    online = ask_uses_http()
-    state, detail = await _account_state(online=online, currency=currency, floor=floor)
-    failing = state in FAILING
-    if failing and not online:
-        state += UNUSED_SUFFIX
+    bad = misconfigured_tasks()
+    if bad:
+        state = MISCONFIGURED
+        detail = "、".join(f"{t}={m!r}" for t, m in bad.items()) + " 不在 DeepSeek 白名單，每題都會回設定有誤"
+    else:
+        state, detail = await _account_state(currency=currency, floor=floor)
     if state != _last_reported:
         _last_reported = state
         logger.warning("healthz LLM 狀態：%s（%s）", state, detail or "-")
-    return state, 503 if failing and online else 200
+    return state, 503 if state in FAILING else 200

@@ -284,7 +284,8 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
         )
         _fail(
             f"LLM_PROVIDER={bad_provider!r} {why}。批次不猜：web 對這個值會退回 deepseek 照常計費，但設了它的人"
-            "多半是想讓 LLM 停下來，拒跑才不會變成照常計費（要停批次請停 report-mark-sync.timer）。"
+            "多半是想讓 LLM 停下來，拒跑才不會變成照常計費（它不是停止開關：要停批次請停 report-mark-sync.timer，"
+            "要停問答見 docs/production_resilience.md「刻意讓 LLM 停下來」）。"
             f"檢查 shell、unit 的 Environment= 與 {path}，改正後再執行"
         )
     unknown = [m for m in names if not is_http_model(m)]

@@ -46,7 +46,7 @@ uv run python scripts/ingest_all.py
 - **測試絕不可寫 repo 根的真實環境檔**：這台機器 repo root 就是部署目錄，`finally` 擋得住例外、擋不住行程被殺。要驗載入行為餵 `tempfile`。`tests/test_env_loading.py` 與 `tests/conftest.py` 是第二道防線，不是許可證。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺 CJK 字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 加相依會過授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件的 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉那個相依，不是加豁免。相依更新由 `.github/dependabot.yml` 每週分組開 PR，`torch` 與 `@embedpdf/*` 刻意排除（理由在該檔）。
-- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`。
+- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`（記錄量尺之前的舊檔：judge 三個 META 鍵只有一邊有也回 2，拿新結果比它一律回 2，要比就兩邊同版重跑）。
 
 ## 改動對照表（改了 A 就要動 B）
 

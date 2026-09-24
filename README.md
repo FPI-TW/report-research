@@ -179,14 +179,16 @@ cd frontend && npm test                # vitest
 cd frontend && npm run typecheck       # tsc --noEmit
 cd frontend && npm run lint            # eslint
 
-uv run python eval/run_ragas.py --out eval/baselines/candidate.json   # 問答評測（會 spawn claude）
-make eval-compare BASE=eval/baselines/baseline-2026-09-02.json CAND=eval/baselines/candidate.json
+uv run python eval/run_ragas.py --concurrency 1   # 問答評測（會 spawn claude），預設寫 eval/candidate-ragas.json
+uv run python eval/run_ragas.py --generator-model <model> --repeat 3 --dump-io data/eval_frozen/<名稱>
+make eval-compare BASE=<同一版 run_ragas 產出的基準線.json> CAND=eval/candidate-ragas.json
 ```
 
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc ＋ vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。前端 job 把 `frontend/dist` 傳給後端 job，SPA 測試對真 build 驗證；後端設 `HF_HUB_OFFLINE=1`、安裝 CJK 字型並設 `REPORT_MARK_REQUIRE_CJK=1`（`tests/test_extraction_layout.py` 的 CjkTests 用 weasyprint 渲染中文測試 PDF，不准退回 skip）；schema job 套 `db/schema.sql` 兩次驗冪等並對帳 `db/expected_constraints.txt`。required check 名稱等於 job 的中文 `name`，改了要同步 GitHub 分支保護。
 - 測試不連網、不載模型：LLM、嵌入、DB、檔案系統一律用假物件。async 測試用 `unittest.IsolatedAsyncioTestCase`，不用 pytest-asyncio。端點走 HTTP 層測。
 - 測試絕不可寫 repo 根的真實環境檔（`tests/conftest.py` 會還原並 fail）。
 - 評測 `eval/` 刻意不進 CI（會與 sync timer 搶 `claude` CLI）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策；最新基準線 `eval/baselines/baseline-2026-09-02.json`。
+- `run_ragas` 的結果檔記錄量尺：summary 的 `judge_model`、`judge_prompt_sha`、`judge_schema_version` 是 META 鍵，兩份不同、或**只有一邊有記錄**，`eval-compare` 一律回 2。上面那份最新基準線是在記錄量尺之前產出的，所以**現在拿新結果跟它比一律回 2**，直到用新版重跑出新的基準線為止；要比就兩邊都用同一版重跑。生成端、各任務 model、commit、題集 sha256 記在 `config`（只印差異，不判定）。judge 出錯只讓該指標記 None（`n_judge_errors` 計數），`--repeat` 每題每指標跨次取平均，規則寫在 `eval/run_ragas.py` 的模組 docstring。
 - 改動對照表（改了 A 要動 B）在 `CLAUDE.md`；契約類測試清單在 `AGENTS.md`。
 
 ## 部署與維運

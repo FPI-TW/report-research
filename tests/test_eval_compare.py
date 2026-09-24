@@ -28,6 +28,7 @@ RAGAS_CLEAN = BASELINES / "baseline-2026-07-29.json"
 RAGAS_M0 = BASELINES / "baseline-m0.json"
 RAGAS_M2 = BASELINES / "baseline-m2.json"
 RAGAS_M4 = BASELINES / "m4-corpus-qa.json"
+RAGAS_0902 = BASELINES / "baseline-2026-09-02.json"
 RETRIEVAL_BEFORE = REPO_ROOT / "eval" / "before.json"
 RETRIEVAL_AFTER = REPO_ROOT / "eval" / "after.json"
 
@@ -199,6 +200,89 @@ class TestComparability(unittest.TestCase):
         self.assertEqual(cmp_.exit_code, 0)
 
 
+# run_ragas（PR-06 起）寫出的量尺三鍵與新指標；值取自一份真實的 run 形狀即可。
+_SCALE = {
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha": "a" * 64,
+    "judge_schema_version": 1,
+}
+_NEW_METRICS = {
+    "n_judge_errors": 0,
+    "citation_rate": 1.0,
+    "simplified_residual_rate": 0.0,
+    "n_truncated": 0,
+}
+
+
+class TestJudgeScale(unittest.TestCase):
+    """META 量尺：不同即不可比；**只有一邊有記錄也不可比**（非 META 鍵維持只列出）。"""
+
+    def _variant(self, tmp, name, doc, **updates):
+        return load(write_variant(tmp, name, doc, **updates))
+
+    def test_same_scale_on_both_sides_is_comparable(self):
+        base = load(RAGAS_CLEAN)
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._variant(tmp, "a.json", base, **_SCALE, **_NEW_METRICS)
+            b = self._variant(tmp, "b.json", base, **_SCALE, **_NEW_METRICS)
+        cmp_ = compare(a, b)
+        self.assertEqual(cmp_.exit_code, 0, cmp_.incomparable)
+        self.assertEqual(cmp_.unclassified, [])
+
+    def test_different_judge_model_is_incomparable(self):
+        base = load(RAGAS_CLEAN)
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._variant(tmp, "a.json", base, **_SCALE)
+            b = self._variant(tmp, "b.json", base, **{**_SCALE, "judge_model": "deepseek-flash"})
+        cmp_ = compare(a, b)
+        self.assertEqual(cmp_.exit_code, 2)
+        self.assertTrue(any("judge_model" in r for r in cmp_.incomparable), cmp_.incomparable)
+
+    def test_prompt_or_schema_change_is_incomparable(self):
+        base = load(RAGAS_CLEAN)
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._variant(tmp, "a.json", base, **_SCALE)
+            b = self._variant(tmp, "b.json", base, **{**_SCALE, "judge_prompt_sha": "b" * 64})
+            c = self._variant(tmp, "c.json", base, **{**_SCALE, "judge_schema_version": 2})
+        self.assertEqual(compare(a, b).exit_code, 2)
+        self.assertEqual(compare(a, c).exit_code, 2)
+
+    def test_meta_on_one_side_only_is_incomparable_both_directions(self):
+        """舊基準線沒有記錄量尺：不知道它是哪把尺量的，就不能當成同一把。"""
+        old = load(RAGAS_0902)
+        self.assertNotIn("judge_model", old["summary"])
+        with tempfile.TemporaryDirectory() as tmp:
+            new = self._variant(tmp, "n.json", old, **_SCALE, **_NEW_METRICS)
+        for base, cand, side in ((old, new, "candidate"), (new, old, "baseline")):
+            cmp_ = compare(base, cand)
+            self.assertEqual(cmp_.exit_code, 2)
+            msgs = [r for r in cmp_.incomparable if "量尺只有" in r]
+            self.assertEqual(len(msgs), 3, cmp_.incomparable)
+            self.assertTrue(all(side in m for m in msgs))
+
+    def test_old_vs_old_without_meta_stays_comparable(self):
+        cmp_ = compare(load(RAGAS_M0), load(RAGAS_M4))
+        self.assertEqual(cmp_.exit_code, 0)
+
+    def test_new_metric_directions(self):
+        specs = ec.METRIC_SPECS
+        self.assertEqual(specs["citation_rate"].direction, ec.HIGHER)
+        self.assertEqual(specs["simplified_residual_rate"].direction, ec.LOWER)
+        self.assertEqual(specs["n_truncated"].direction, ec.LOWER)
+        self.assertEqual(specs["n_judge_errors"].direction, ec.LOWER)
+        for key in _SCALE:
+            self.assertEqual(specs[key].direction, ec.META)
+
+    def test_more_judge_errors_is_a_regression(self):
+        base = load(RAGAS_CLEAN)
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._variant(tmp, "a.json", base, **_SCALE, **_NEW_METRICS)
+            b = self._variant(tmp, "b.json", base, **_SCALE, **{**_NEW_METRICS, "n_judge_errors": 1})
+        cmp_ = compare(a, b)
+        self.assertEqual(cmp_.exit_code, 1)
+        self.assertEqual([r.key for r in cmp_.regressions], ["n_judge_errors"])
+
+
 class TestUnclassifiedKeys(unittest.TestCase):
     def test_unknown_key_is_printed_and_blocks_a_clean_pass(self):
         """不認得的鍵不能默默當成「越大越好」——那是製造假綠的主要方式。"""
@@ -221,7 +305,7 @@ class TestUnclassifiedKeys(unittest.TestCase):
 
     def test_every_key_in_every_shipped_baseline_is_classified(self):
         """方向表必須覆蓋 repo 內所有真實結果檔——否則這支工具第一次跑就是黃燈。"""
-        for path in (RAGAS_CLEAN, RAGAS_M0, RAGAS_M2, RAGAS_M4,
+        for path in (RAGAS_CLEAN, RAGAS_M0, RAGAS_M2, RAGAS_M4, RAGAS_0902,
                      RETRIEVAL_BEFORE, RETRIEVAL_AFTER):
             unknown = sorted(set(load(path)["summary"]) - set(ec.METRIC_SPECS))
             self.assertEqual(unknown, [], f"{path.name} 有未分類的鍵：{unknown}")

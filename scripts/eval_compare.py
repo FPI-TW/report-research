@@ -21,6 +21,11 @@
 - **不動任何門檻。** `FAITHFULNESS_MIN` / `CONTEXT_PRECISION_MIN` / `ANSWER_RELEVANCY_MIN`
   是政策決定（量測紀錄在 `eval/run_ragas.py` 的常數旁），本工具只回答「相對於 baseline
   有沒有變差」，不回答「夠不夠好」。
+- **量尺（META）只有一邊有記錄也算不可比（退出碼 2）。** 非 META 鍵只有一邊有時照舊只列出、
+  不判定（例如舊基準線沒有 latency_ms_*）；但 META 鍵缺一邊代表「不知道那一份是用哪把尺量的」，
+  不能當成同一把。後果是明知的：`eval/run_ragas.py` 開始記 `judge_model` 等三個鍵之後，拿新結果
+  比任何舊的 RAGAS 基準線（含 `eval/baselines/baseline-2026-09-02.json`）一律回 2，直到用新版
+  重跑出新的基準線為止。兩份都沒有記錄（舊檔比舊檔）維持可比。
 - **latency 用相對容忍值。** 對 45,387 ms 的均值套絕對 0.03 等於「差 0.03 毫秒就是回歸」，
   那種紅燈只會讓人把工具關掉。[0,1] 尺度的指標與計數用絕對值，非 [0,1] 的用相對值。
 
@@ -38,7 +43,7 @@
 退出碼：
   0  無劣化
   1  至少一項判定指標劣化超過容忍值
-  2  不可比（樣本數／評分規則版本／queryset 參數不同）
+  2  不可比（樣本數／評分規則版本／queryset 參數／judge 量尺不同，或量尺只有一邊有記錄）
   3  有未分類指標，因此不敢宣稱沒有回歸（其餘皆無劣化）
 """
 
@@ -85,8 +90,18 @@ METRIC_SPECS: dict[str, Spec] = {
     # 計數用絕對容忍值：預設 0.03 之下，多一題 error 就是劣化，這是要的行為。
     "n_errors": Spec(LOWER, ABS, "runner 例外／逾時，整題不入均值"),
     "n_no_context": Spec(LOWER, ABS, "檢索不到脈絡"),
+    # judge 出錯只讓該指標為 None（不整題 error、不動 n_effective），所以要另外計數：
+    # 多一次就是劣化，逼人去看是不是量尺壞了，而不是讓均值少一題還照樣比。
+    "n_judge_errors": Spec(LOWER, ABS, "judge 出錯（重試後）的指標數，該指標不入均值"),
+    "citation_rate": Spec(HIGHER, ABS, "答案至少引用一個存在來源 [n] 的題數比例"),
+    "simplified_residual_rate": Spec(LOWER, ABS, "答案整份被判為簡體（zh_hant.looks_simplified）的題數比例"),
+    "n_truncated": Spec(LOWER, ABS, "生成撞到逾時上限、疑似被截斷的題數"),
     "thresholds_pass": Spec(FLAG, ABS, "run_ragas 的三個絕對門檻是否全過"),
     "thresholds_failed": Spec(INFO, ABS, "未達標項目清單（字串）"),
+    # 量尺。judge 換了、提示改了、解讀規則改了，分數就不是同一把尺量的。
+    "judge_model": Spec(META, ABS, "judge 模型不同＝換了尺"),
+    "judge_prompt_sha": Spec(META, ABS, "judge 提示模板（含 payload 版型）改了＝換了尺"),
+    "judge_schema_version": Spec(META, ABS, "judge 回應的解讀規則改了＝換了尺"),
     # ── scripts/eval_retrieval.py（檢索）──────────────────────────────────
     "n_cases": Spec(SAMPLE),
     "hit_rate": Spec(HIGHER),
@@ -352,6 +367,12 @@ def _comparability(base: dict, cand: dict, cmp_: Comparison) -> list[str]:
             continue
         if key in base and key in cand and base[key] != cand[key]:
             reasons.append(f"評分規則／題集參數不同：{key} {base[key]} → {cand[key]}（{spec.why}）")
+        elif (key in base) != (key in cand):
+            side = "baseline" if key in base else "candidate"
+            reasons.append(
+                f"量尺只有 {side} 有記錄：{key}（舊格式結果檔沒有記錄量尺，無法確認兩份用同一把尺；"
+                "請用同一版 run_ragas 重跑兩邊）"
+            )
     if not any(r.gating for r in cmp_.rows):
         reasons.append("兩份檔案沒有任何共同的判定指標——形狀不同？（RAGAS／研報／檢索三套不能互比）")
     return reasons

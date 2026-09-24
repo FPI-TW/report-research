@@ -45,6 +45,11 @@ data/sync_hashes_retained_*.txt
 # 「這台機器這段時間」，換一台機器就完全沒有意義。
 data/metrics/
 data/tags.bak.*/
+# 離線評測的凍結集（eval/run_ragas.py --dump-io）：含研報全文與題目，不進 git，
+# 生成不可重現，所以由人另外打包存到 NAS。
+data/eval_frozen/
+# eval/run_ragas.py 的預設輸出。要升格成基準線時由人複製到 eval/baselines/ 並命名。
+/eval/candidate-ragas.json
 
 # 自動產生 / 一次性 artifact（舊的無障礙樹快照）
 search-after.yml

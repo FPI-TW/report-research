@@ -202,5 +202,36 @@ class RelevancyDetailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(score, d.score)
 
 
+class JudgePromptShaTests(unittest.TestCase):
+    """judge_prompt_sha 是量尺的一部分：系統提示或 payload 版型一動，雜湊就要跟著動。"""
+
+    def test_sha_is_stable_hex(self):
+        from eval import ragas_metrics as rm
+
+        self.assertEqual(rm.judge_prompt_sha(), rm.judge_prompt_sha())
+        self.assertRegex(rm.judge_prompt_sha(), r"^[0-9a-f]{64}$")
+
+    def test_every_judge_prompt_is_covered(self):
+        from app.services import faithfulness as fm
+        from eval import ragas_metrics as rm
+
+        covered = {text for _name, text in rm.JUDGE_PROMPT_TEMPLATES}
+        for tmpl in (fm.DECOMPOSE_SYS, fm.GROUND_SYS, fm.GROUND_ITEM_FMT, fm.GROUND_PAYLOAD_FMT,
+                     rm.CTX_RELEVANCE_SYS, rm.CP_ITEM_FMT, rm.CP_PAYLOAD_FMT, rm.GENQ_SYS):
+            self.assertIn(tmpl, covered)
+
+    def test_changing_a_payload_template_changes_the_sha(self):
+        from unittest import mock
+
+        from eval import ragas_metrics as rm
+
+        before = rm.judge_prompt_sha()
+        changed = tuple(
+            (n, t + "x") if n == "context_precision_item" else (n, t) for n, t in rm.JUDGE_PROMPT_TEMPLATES
+        )
+        with mock.patch.object(rm, "JUDGE_PROMPT_TEMPLATES", changed):
+            self.assertNotEqual(rm.judge_prompt_sha(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

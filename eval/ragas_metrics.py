@@ -8,6 +8,8 @@ embed(text) -> list[float]（1024 維）。
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from dataclasses import dataclass
 
 import numpy as np
@@ -17,6 +19,8 @@ import numpy as np
 # context_precision / answer_relevancy。
 from app.services.faithfulness import (  # noqa: F401  (DECOMPOSE_SYS/GROUND_SYS 供既有測試 import)
     DECOMPOSE_SYS,
+    GROUND_ITEM_FMT,
+    GROUND_PAYLOAD_FMT,
     GROUND_SYS,
     faithfulness,
 )
@@ -35,6 +39,30 @@ GENQ_SYS = (
     "（假設你沒看過原問題）。問題須具體、可獨立理解。\n"
     '只輸出 JSON，格式：{"questions": ["問題1", "問題2", "問題3"]}，不要任何其他文字。'
 )
+
+# context_precision 的 user payload 版型（理由同 faithfulness.GROUND_PAYLOAD_FMT）。
+CP_ITEM_FMT = "[{i}]\n{c}"
+CP_PAYLOAD_FMT = "問題：{question}\n\n回答：{answer}\n\n候選片段：\n{contexts}"
+
+# 算進 `judge_prompt_sha` 的全部模板：四支系統提示＋兩種 payload 版型。decompose 與
+# GENQ 的 user 端就是答案原文，沒有版型。**新增或改動任何一支 judge 提示都要進這張表**，
+# 否則雜湊不變、eval_compare 會把兩把尺當成同一把。順序與名稱也算進雜湊。
+JUDGE_PROMPT_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("decompose_sys", DECOMPOSE_SYS),
+    ("ground_sys", GROUND_SYS),
+    ("ground_item", GROUND_ITEM_FMT),
+    ("ground_payload", GROUND_PAYLOAD_FMT),
+    ("context_precision_sys", CTX_RELEVANCE_SYS),
+    ("context_precision_item", CP_ITEM_FMT),
+    ("context_precision_payload", CP_PAYLOAD_FMT),
+    ("answer_relevancy_sys", GENQ_SYS),
+)
+
+
+def judge_prompt_sha() -> str:
+    """judge 提示模板的 sha256（hex）。離線評測記進 summary 的 META 鍵 `judge_prompt_sha`。"""
+    blob = json.dumps(JUDGE_PROMPT_TEMPLATES, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _cosine(a, b) -> float:
@@ -68,8 +96,8 @@ async def context_precision(
     """逐 context 判相關性 → rank-weighted AP。無 context → 0.0。"""
     if not contexts:
         return 0.0
-    enumerated = "\n\n".join(f"[{i}]\n{c}" for i, c in enumerate(contexts))
-    payload = f"問題：{question}\n\n回答：{answer}\n\n候選片段：\n{enumerated}"
+    enumerated = "\n\n".join(CP_ITEM_FMT.format(i=i, c=c) for i, c in enumerate(contexts))
+    payload = CP_PAYLOAD_FMT.format(question=question, answer=answer, contexts=enumerated)
     res = await judge(CTX_RELEVANCE_SYS, payload)
     verdicts = res.get("verdicts") if isinstance(res, dict) else None
     relmap: dict[int, int] = {}

@@ -47,6 +47,12 @@ GROUND_SYS = (
     "idx 對應主張的 0-based 序號，不要任何其他文字。"
 )
 
+# grounding 的 user payload 版型。抽成常數是為了讓離線評測把它算進 `judge_prompt_sha`
+# （eval/ragas_metrics.py）：payload 的編號與排版跟系統提示一樣是量尺的一部分，
+# 改了卻不改雜湊，就會拿兩把不同的尺比出一個看似可信的 delta。
+GROUND_ITEM_FMT = "{i}. {s}"
+GROUND_PAYLOAD_FMT = "參考片段：\n{contexts}\n\n主張：\n{claims}"
+
 
 # ── 數值主張偵測（確定性，零 LLM）──
 #
@@ -145,8 +151,8 @@ async def ground_statements(
     if not statements:
         return {}
     joined_ctx = "\n\n".join(contexts)
-    enumerated = "\n".join(f"{i}. {s}" for i, s in enumerate(statements))
-    payload = f"參考片段：\n{joined_ctx}\n\n主張：\n{enumerated}"
+    enumerated = "\n".join(GROUND_ITEM_FMT.format(i=i, s=s) for i, s in enumerate(statements))
+    payload = GROUND_PAYLOAD_FMT.format(contexts=joined_ctx, claims=enumerated)
     res = await judge(GROUND_SYS, payload)
     if res is None:
         return None

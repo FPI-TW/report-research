@@ -22,6 +22,10 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
   「跑了也白跑」，後者要先說）。以下情況印出原因並 `SystemExit(2)`：
   - 環境檔裡有重複的鍵（審查 L8）：`load_env_file` 先到先贏、systemd 的 EnvironmentFile 後者
     覆蓋——輪替金鑰時新舊兩行並存，sync unit 與手動批次會拿到**不同**的金鑰。
+  - `LLM_PROVIDER` 非空卻不是合法值（例如 `claude-cli`、`deepseek ` 以外的拼法）：印出原始值拒跑（審查 L1）。
+    web 對同樣的值是退回 deepseek＋ERROR（線上要容錯、不能因一個拼字整站停擺）；批次刻意不同——批次不需要
+    容錯，拒跑不花錢，而 CLI 已放棄後 `claude_cli` 實際上是「讓 LLM 停下來」的開關：有人想關掉 LLM 卻拼錯，
+    退回 deepseek 就變成照常計費。
   - 有未知的模型名（不在 DeepSeek 白名單、也不是 `claude-*`；含 CLI 別名 `sonnet`）。
   - 有白名單模型卻沒有金鑰；依原因提示（環境裡已有空值→先 unset；PermissionError→以
     kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
@@ -63,7 +67,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from app.services.llm_models import TASK_ENV, is_claude_model, is_http_model, provider, resolve_model
+from app.services.llm_models import PROVIDERS, TASK_ENV, is_claude_model, is_http_model, provider, resolve_model
 from web.env_loader import _parse_line, load_env_file
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -250,6 +254,14 @@ def _warn_if_all_claude(pairs: list[tuple[str | None, str]], path: object) -> No
     )
 
 
+def _invalid_provider() -> str | None:
+    """`LLM_PROVIDER` 非空且正規化後（strip＋小寫，同 `llm_models.provider`）不是合法值時回原始值；否則 None。"""
+    raw = os.environ.get("LLM_PROVIDER")
+    if raw is None or not raw.strip():
+        return None
+    return None if raw.strip().lower() in PROVIDERS else raw
+
+
 def _model_source(task: str | None, model: str) -> str:
     """說出這個模型名是從哪裡來的：任務旋鈕、`LLM_PROVIDER` 的預設表，或 `--model`。"""
     knob = TASK_ENV.get(task or "")
@@ -260,7 +272,8 @@ def _model_source(task: str | None, model: str) -> str:
         return f"{knob}={model}"
     if not raw and resolve_model(task) == model:
         prov_raw = (os.environ.get("LLM_PROVIDER") or "").strip()
-        prov = f"LLM_PROVIDER={provider()}" if prov_raw else f"LLM_PROVIDER（未設，預設 {provider()}）"
+        # 印原始值（不是正規化後的 provider()）：人要拿它去對環境檔裡的那一行。
+        prov = f"LLM_PROVIDER={prov_raw}" if prov_raw else f"LLM_PROVIDER（未設，預設 {provider()}）"
         return f"{prov} 的 {task} 預設 {model}"
     return f"--model {model}（任務 {task}）"
 
@@ -281,6 +294,13 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
         _fail(
             f"{path} 有重複的鍵：{', '.join(duplicates)}。systemd 取最後一行、手動批次取第一行，"
             "兩邊會用不同的值；刪掉多餘的行再執行"
+        )
+    bad_provider = _invalid_provider()
+    if bad_provider is not None:
+        _fail(
+            f"LLM_PROVIDER={bad_provider!r} 不是合法值（可用：{'/'.join(PROVIDERS)}）。批次不猜：web 對這個值會"
+            "退回 deepseek 照常計費，但 claude_cli 是讓 LLM 停下來的開關，拼錯不能變成照常計費。"
+            f"檢查 shell、unit 的 Environment= 與 {path}，改正後再執行"
         )
     unknown = [m for m in names if not (is_http_model(m) or is_claude_model(m))]
     if unknown:

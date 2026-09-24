@@ -457,8 +457,9 @@ class RowToParamsTests(unittest.TestCase):
 
 # 摘錄模型守門（原「不可退成更小的模型」，遷移 PR-28 依 D-A 改寫意圖）：逐字引文重準確度，改寫
 # 一個字就錨不到。模型不再以「大小」判斷，而以「任一方式錨定成功率」（exact／normalized／prefix
-# 任一方式錨上都算成功，分母是有 quote 的條目）決定——9/24 探測同一批 200 篇：deepseek-flash
-# 95.0%、Claude 既有摘錄 90.9%（exact 只當觀測值：86.0% vs 39.9%）。
+# 任一方式錨上都算成功，分母是有 quote 的條目數）決定——9/24 探測同批研報：deepseek-flash
+# 190/200 條＝95.0%、Claude 既有摘錄 180/198 條＝90.9%（分母是各自有 quote 的條目數，不是篇數；
+# exact 只當觀測值：86.0% vs 39.9%）。
 # 這張表只收**量過錨定率**的模型。要換成其他模型（包括 haiku 這類更小的模型、或 v4-pro），先依
 # D-A 在探測集上量錨定成功率、差值 ≥ −5pp（D-N），再把結果寫進這張表——不要只為了讓測試綠而加。
 ANCHOR_APPROVED_TAKEAWAY_MODELS = {

@@ -307,6 +307,45 @@ class SimplifiedLookupTests(unittest.TestCase):
         """查不到時回原值大寫：轉過的鍵只用來查表，不外流。"""
         self.assertEqual(normalize_currency("越南盾币"), "越南盾币")
 
+    def test_raw_string_matched_before_conversion(self):
+        """回歸：原字串能命中就不能因轉繁而失手。整串過 opencc 會把表裡的「布局」改成「佈局」，
+        「逢低布局（维持）」在 PR-15 初版因此從 overweight 退成 unknown。"""
+        self.assertEqual(normalize_rating("逢低布局（维持）"), "overweight")
+        self.assertEqual(normalize_rating("逢低布局"), "overweight")
+
+    def test_all_table_keys_match_pre_conversion_behavior(self):
+        """表裡每個鍵（含大寫變體與子字串關鍵字）原樣查詢，結果都與加轉繁之前的實作逐字一致。"""
+        from app.services.signal_extract import _CURRENCY_MAP, RATING_KEYWORDS, RATING_MAP
+
+        def pre_rating(raw):  # 加轉繁前（b1bd81f 之前）的 normalize_rating
+            v = raw.strip().lower()
+            if not v:
+                return "unknown"
+            if v in RATING_MAP:
+                return RATING_MAP[v]
+            for kw, level in RATING_KEYWORDS:
+                if kw in v:
+                    return level
+            return "unknown"
+
+        def pre_currency(raw):  # 加轉繁前的 normalize_currency
+            v = raw.strip()
+            return _CURRENCY_MAP.get(v.lower(), v.upper()) if v else None
+
+        rating_keys = set(RATING_MAP) | {kw for kw, _ in RATING_KEYWORDS}
+        for key in sorted(rating_keys | {k.upper() for k in rating_keys}):
+            with self.subTest(rating=key):
+                self.assertEqual(normalize_rating(key), pre_rating(key))
+        # 表鍵後接簡體字尾（整串因此會被轉繁）：加轉繁前命中的，現在也要命中同一級
+        for key in sorted(rating_keys):
+            with self.subTest(rating_suffixed=key):
+                before = pre_rating(key + "（维持）")
+                if before != "unknown":
+                    self.assertEqual(normalize_rating(key + "（维持）"), before)
+        for key in sorted(set(_CURRENCY_MAP) | {k.upper() for k in _CURRENCY_MAP}):
+            with self.subTest(currency=key):
+                self.assertEqual(normalize_currency(key), pre_currency(key))
+
     def test_row_keeps_raw_values_and_evidence(self):
         sig = _full_signal()
         sig["rating"] = {"raw": "买入", "evidence": "维持买入评级"}

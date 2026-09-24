@@ -102,37 +102,56 @@ _CURRENCY_MAP: dict[str, str] = {
 }
 
 
-def normalize_rating(raw: object) -> str:
-    """券商評等原文 → 五級代碼；未命中一律 'unknown'（不計入分布）。
+def _match_rating(v: str) -> Optional[str]:
+    """已小寫的評等字串查 `RATING_MAP`（整串）再查 `RATING_KEYWORDS`（子字串）；都沒命中回 None。
 
-    查表前先經 `zh_hant.lookup_key` 轉繁：`RATING_MAP`／`RATING_KEYWORDS` 只收繁體詞，
-    原文是簡體（「买入」「减持」）或模型照抄成簡體時，不轉就一律落 unknown。轉換只用在
-    查表，呼叫端存進 `rating_raw` 的仍是原值（逐字照抄研報是 prompt 規則 4 的要求）。
+    回 None 與表裡明寫的 'unknown'（「未評等」）要分開：前者才值得換個鍵再查一次。
     """
-    if not isinstance(raw, str):
-        return "unknown"
-    v = lookup_key(raw.strip()).lower()
-    if not v:
-        return "unknown"
     if v in RATING_MAP:
         return RATING_MAP[v]
     for kw, level in RATING_KEYWORDS:
         if kw in v:
             return level
-    return "unknown"
+    return None
+
+
+def normalize_rating(raw: object) -> str:
+    """券商評等原文 → 五級代碼；未命中一律 'unknown'（不計入分布）。
+
+    **先用原字串查表，查不到才用 `zh_hant.lookup_key` 轉過的鍵再查一次**：`RATING_MAP`／
+    `RATING_KEYWORDS` 只收繁體詞，原文是簡體（「买入」「减持」）或模型照抄成簡體時，不轉就一律
+    落 unknown。順序不能反過來：opencc 會連帶改動表裡本來就有的字（「逢低布局（维持）」整串轉成
+    「逢低佈局（維持）」就對不上「逢低布局」），先查原字串才保證既有命中逐字不變。
+    轉換只用在查表，呼叫端存進 `rating_raw` 的仍是原值（逐字照抄研報是 prompt 規則 4 的要求）。
+    """
+    if not isinstance(raw, str):
+        return "unknown"
+    v = raw.strip()
+    if not v:
+        return "unknown"
+    hit = _match_rating(v.lower())
+    if hit is None:
+        key = lookup_key(v)
+        if key != v:
+            hit = _match_rating(key.lower())
+    return hit or "unknown"
 
 
 def normalize_currency(raw: object) -> Optional[str]:
     """幣別寫法正規化為 ISO 代碼（不換算）；空值 → None；未知 → 原樣大寫。
 
-    查表鍵先轉繁（「人民币」「港币」，同 `normalize_rating`）；查不到時回的是**原值**大寫，不是轉過的鍵。
+    同 `normalize_rating`：先用原字串查表，查不到才用 `lookup_key` 轉過的鍵（「人民币」「港币」）
+    再查；都查不到時回的是**原值**大寫，不是轉過的鍵。
     """
     if not isinstance(raw, str):
         return None
     v = raw.strip()
     if not v:
         return None
-    return _CURRENCY_MAP.get(lookup_key(v).lower(), v.upper())
+    hit = _CURRENCY_MAP.get(v.lower())
+    if hit is None:
+        hit = _CURRENCY_MAP.get(lookup_key(v).lower())
+    return hit or v.upper()
 
 
 def _truncate(value: object, limit: int) -> Optional[str]:

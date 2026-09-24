@@ -13,6 +13,10 @@ delta 與 `data/.sync_last_hashes` 都是「只有這一輪有」的輸入：rsy
   並印出三段 `--hashes-file` 補跑指令；rc=1／rc=75 不保留。
 - `sync_new_reports.py --hashes-out`（審查 M14）：手動重放多份 delta 時每份 hashes
   各寫一份，不互相覆寫，也不動排程殼讀的預設檔。
+- 匯入中途整批中止時，importer 把「已 commit 的篇」寫成 `<hashes_out>.partial`，殼改名
+  保留成 `data/sync_hashes_retained_<ts>_partial.txt` 並印三段補跑指令——那幾篇重放
+  delta 時會變 `skip_exists`，這份是它們跑下游的唯一依據。
+- 只列殼自己產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`，手動做的 delta 不列。
 
 殼那一側沿用 `test_pipeline_heartbeat._SyncHarness`：假二進位跑真腳本。
 """
@@ -33,6 +37,7 @@ import sync_new_reports as snr  # noqa: E402
 from test_pipeline_heartbeat import LOCK_BUSY_RC, _SyncHarness  # noqa: E402
 
 _RETAINED_RE = re.compile(r"^sync_hashes_retained_\d{8}_\d{6}\.txt$")
+_PARTIAL_RE = re.compile(r"^sync_hashes_retained_\d{8}_\d{6}_partial\.txt$")
 
 
 def _plant_delta(h: _SyncHarness, name: str, age_seconds: int) -> str:
@@ -101,17 +106,177 @@ class ImportAbortListsDeltasTests(unittest.TestCase):
         self.assertIn("sync_new_reports.py --delta", blob)
 
     def test_lock_busy_branch_unchanged(self):
-        """rc=75 的處置不在本次範圍：仍是原本的提示，不列 delta。"""
+        """rc=75 仍是原本的 --all-local 提示、不列 delta；補一句補完要刪本輪 delta。"""
         self.h.set_rc(sync_new_reports=LOCK_BUSY_RC)
         p = self.h.run()
         self.assertIn("claude CLI 被另一支批次佔用", p.stdout)
         self.assertEqual(_replay_lines(p.stdout), [])
+        self.assertRegex(p.stdout, r"補完後刪掉本輪 delta（rm -f data/sync_delta_\d{8}_\d{6}\.txt）")
+
+    def test_manual_deltas_are_not_listed(self):
+        """L1：生產上有 sync_delta_recover.txt、sync_delta_rehash_20260917.txt 之類的手動檔，
+        它們不是整批中止保留下來的輪次，不可混進重放清單。"""
+        _plant_delta(self.h, "sync_delta_recover.txt", 7200)
+        _plant_delta(self.h, "sync_delta_rehash_20260917.txt", 5400)
+        kept = _plant_delta(self.h, "sync_delta_20260901_000000.txt", 3600)
+        self.h.set_rc(sync_new_reports=2)
+        p = self.h.run()
+        lines = _replay_lines(p.stdout)
+        self.assertEqual(len(lines), 2, p.stdout)
+        self.assertIn(kept, lines[0])
+        self.assertNotIn("recover", p.stdout)
+        self.assertNotIn("rehash", p.stdout)
+        self.assertIn("刪掉該份 delta", p.stdout)
+
+    def test_rc2_hint_mentions_argument_error(self):
+        """L5：argparse 參數錯誤同樣是 rc=2，提示要叫人先看 log；rc=1 不必。"""
+        self.h.set_rc(sync_new_reports=2)
+        self.assertIn("也可能是參數錯誤", self.h.run().stdout)
+        h = _SyncHarness()
+        self.addCleanup(h.close)
+        h.set_rc(sync_new_reports=1)
+        self.assertNotIn("也可能是參數錯誤", h.run().stdout)
 
     def test_import_abort_does_not_retain_hashes(self):
-        """匯入段自己中止時 .sync_last_hashes 是上一輪或半途的內容，要重放的是 delta。"""
+        """匯入段自己中止時 .sync_last_hashes 是上一輪或半途的內容，要重放的是 delta；
+        importer 沒寫 .partial（一篇都還沒入庫）時也沒有東西要保留。"""
         self.h.set_rc(sync_new_reports=2)
         self.h.run()
         self.assertEqual(list((self.h.root / "data").glob("sync_hashes_retained_*")), [])
+
+
+class ImportAbortRetainsPartialHashesTests(unittest.TestCase):
+    """M2：逐篇各自 commit，hashes 卻只在最後寫——中途中止時已入庫的篇要靠 .partial。"""
+
+    def setUp(self):
+        self.h = _SyncHarness()
+        self.addCleanup(self.h.close)
+        self.partial = ["cc" * 32 + "\n", "dd" * 32 + "\n"]
+
+    def _partials(self, h=None) -> list[Path]:
+        return sorted(((h or self.h).root / "data").glob("sync_hashes_retained_*_partial.txt"))
+
+    def test_partial_is_retained_with_replay_commands(self):
+        for rc in (1, 2):
+            with self.subTest(rc=rc):
+                h = _SyncHarness()
+                self.addCleanup(h.close)
+                h.partial_hashes = self.partial
+                h.set_rc(sync_new_reports=rc)
+                p = h.run()
+                files = self._partials(h)
+                self.assertEqual(len(files), 1, p.stdout)
+                self.assertRegex(files[0].name, _PARTIAL_RE)
+                self.assertEqual(files[0].read_text(encoding="utf-8"), "".join(self.partial))
+                self.assertFalse((h.root / "data" / ".sync_last_hashes.partial").exists(), "要改名，不留原檔")
+                rel = f"data/{files[0].name}"
+                for script in ("generate_summaries.py", "generate_titles.py", "extract_takeaways.py"):
+                    self.assertIn(f"scripts/{script} --hashes-file {rel}", p.stdout)
+                blob = (h.root / "data" / "unit_failures.log").read_text(encoding="utf-8")
+                self.assertIn(rel, blob, "保留位置要落在 unit_failures.log 的紀錄裡")
+
+    def test_partial_name_does_not_collide_with_replay_hashes_out(self):
+        """照指令重放本輪 delta 會寫 sync_hashes_retained_<ts>.txt；partial 若同名就被蓋掉。"""
+        self.h.partial_hashes = self.partial
+        self.h.set_rc(sync_new_reports=2)
+        p = self.h.run()
+        outs = re.findall(r"--hashes-out (data/\S+)", p.stdout)
+        self.assertTrue(outs, p.stdout)
+        self.assertNotIn(f"data/{self._partials()[0].name}", outs)
+
+    def test_stale_partial_is_removed_before_import(self):
+        """殘留的 .partial 不是本輪的：不可被誤認成本輪中止前已入庫的篇。"""
+        (self.h.root / "data" / ".sync_last_hashes.partial").write_text("ee" * 32 + "\n", encoding="utf-8")
+        self.h.set_rc(sync_new_reports=2)
+        self.h.run()
+        self.assertEqual(self._partials(), [])
+
+    def test_success_leaves_no_partial(self):
+        p = self.h.run()
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self._partials(), [])
+        self.assertFalse((self.h.root / "data" / ".sync_last_hashes.partial").exists())
+
+    def test_lock_busy_does_not_retain(self):
+        """rc=75 時 importer 根本沒跑（在取鎖時就退出），不會有 partial。"""
+        self.h.partial_hashes = self.partial
+        self.h.set_rc(sync_new_reports=LOCK_BUSY_RC)
+        self.h.run()
+        self.assertEqual(self._partials(), [])
+
+    def test_partial_hashes_are_gitignored(self):
+        for rel in ("data/.sync_last_hashes.partial", "data/sync_hashes_retained_20260924_120000_partial.txt"):
+            with self.subTest(rel=rel):
+                ignored = subprocess.run(["git", "check-ignore", rel], cwd=REPO_ROOT, capture_output=True, text=True)
+                self.assertEqual(ignored.returncode, 0, "執行期檔案必須被 gitignore")
+
+
+class PartialHashesOnAbortTests(unittest.TestCase):
+    """importer 端：`partial_hashes_on_abort` 在中止時寫出已 commit 的 hashes。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.out = Path(self._tmp.name) / ".sync_last_hashes"
+        self.partial = snr.partial_hashes_path(self.out)
+
+    def test_partial_path_naming(self):
+        self.assertEqual(self.partial.name, ".sync_last_hashes.partial")
+        self.assertEqual(
+            snr.partial_hashes_path(Path("data/sync_hashes_retained_X.txt")),
+            Path("data/sync_hashes_retained_X.txt.partial"),
+        )
+
+    def test_abort_writes_hashes_committed_so_far_and_reraises(self):
+        """CliNotFoundError（→rc=2）與 DB 例外（→rc=1）都要寫出中止當下的清單。"""
+        for exc in (snr.CliNotFoundError("claude 不在 PATH"), RuntimeError("DB 斷線")):
+            with self.subTest(exc=type(exc).__name__):
+                hashes: list[str] = []
+                with self.assertRaises(type(exc)):
+                    with snr.partial_hashes_on_abort(self.out, hashes):
+                        hashes.append("a1")
+                        hashes.append("a2")
+                        raise exc
+                self.assertEqual(self.partial.read_text(encoding="utf-8").splitlines(), ["a1", "a2"])
+                self.assertFalse(self.out.exists(), "中止時不可寫正式的 hashes 檔")
+                self.partial.unlink()
+
+    def test_base_exceptions_also_write(self):
+        hashes = ["a1"]
+        with self.assertRaises(SystemExit):
+            with snr.partial_hashes_on_abort(self.out, hashes):
+                raise SystemExit(2)
+        self.assertTrue(self.partial.exists())
+
+    def test_success_writes_nothing(self):
+        hashes: list[str] = []
+        with snr.partial_hashes_on_abort(self.out, hashes):
+            hashes.append("a1")
+        self.assertFalse(self.partial.exists())
+
+    def test_nothing_committed_or_dry_run_writes_nothing(self):
+        for hashes, enabled in (([], True), (["a1"], False)):
+            with self.subTest(hashes=hashes, enabled=enabled):
+                with self.assertRaises(RuntimeError):
+                    with snr.partial_hashes_on_abort(self.out, hashes, enabled=enabled):
+                        raise RuntimeError("x")
+                self.assertFalse(self.partial.exists())
+
+    def test_write_failure_does_not_mask_original(self):
+        blocker = Path(self._tmp.name) / "not_a_dir"
+        blocker.write_text("", encoding="utf-8")
+        with self.assertRaises(RuntimeError):
+            with snr.partial_hashes_on_abort(blocker / "h.txt", ["a1"]):
+                raise RuntimeError("原本的例外")
+
+    def test_run_wraps_ingest_loop(self):
+        """_run 要真 DB，靜態釘住：逐篇迴圈必須包在 guard 內、共用同一個 ingested_hashes。"""
+        src = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+        guard = src.index("with partial_hashes_on_abort(hashes_out_path(args), ingested_hashes")
+        loop = src.index("async with SessionFactory() as session:")
+        final = src.index("write_ingested_hashes(hashes_out_path(args), ingested_hashes)")
+        self.assertLess(guard, loop)
+        self.assertLess(loop, final)
 
 
 class DownstreamAbortRetainsHashesTests(unittest.TestCase):

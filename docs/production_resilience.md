@@ -668,9 +668,12 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 | 中止在哪 | 保留什麼 | 殼印出什麼 |
 |---|---|---|
 | 匯入段 rc 不是 0 也不是 75 | 本輪 `data/sync_delta_<時間>.txt`（不刪；前幾輪同樣中止的也還在） | 依時間序（舊→新）列出**所有**保留的 delta，每份一條 `--delta … --hashes-out data/sync_hashes_retained_<同一時間>.txt` |
+| 同上，且中止前已有研報入庫 | importer 寫的 `data/.sync_last_hashes.partial` 改名成 `data/sync_hashes_retained_<時間>_partial.txt` | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
 | 下游任一段 rc=2 | 當輪 `data/.sync_last_hashes` 複製成 `data/sync_hashes_retained_<時間>.txt`（一輪一份） | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
 
-兩者都寫進當日 sync log，也落在 `data/unit_failures.log` 那筆紀錄的 log 尾巴裡。rc=75（CLI 被別的批次佔用）不在此列，處置照舊。
+全部寫進當日 sync log，也落在 `data/unit_failures.log` 那筆紀錄的 log 尾巴裡。重放清單只列殼自己產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`；`sync_delta_recover.txt` 這類手動檔不列。rc=75（CLI 被別的批次佔用）不在此列，處置照舊（`--all-local`，補完刪掉本輪 delta）。**rc=2 也可能是參數錯誤**（argparse 同樣以 2 退出，例如殼傳了批次不認得的旗標），動手前先看 sync log 確認中止原因。
+
+**為什麼要 `_partial` 那份**：importer 逐篇各自 commit，但 hashes 清單原本只在最後寫出。中途整批中止（`CliNotFoundError`→rc=2、`report_exists` 之類的 DB 例外→rc=1）時，已入庫的那幾篇不在任何 hashes 裡；重放同一份 delta 時它們又變成 `skip_exists`，重放寫出的 hashes 也沒有它們——摘要、標題、摘錄就永遠漏掉。importer 在中止時把「已 commit 的 hashes」寫到 `<hashes_out>.partial`（正常結束不寫；殼在匯入前先刪殘檔），殼改名保留。檔名刻意帶 `_partial`，才不會被重放本輪 delta 時的 `--hashes-out` 蓋掉。手動加 `--hashes-out X` 重放又中止時，partial 在 `X.partial`，要自己補跑。
 
 **為什麼要 `--hashes-out`（審查 M14）**：`sync_new_reports.py` 預設把入庫 hashes 寫到固定的 `data/.sync_last_hashes`，連續重放多份 delta 時每份都覆寫前一份，只有最後一份的研報會跑到下游。摘要與標題還有全表補的路徑，**摘錄沒有**，會靜默缺漏。`--hashes-out` 讓每份重放各寫一份，而且不動預設檔。
 
@@ -687,8 +690,8 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
    uv run python scripts/extract_takeaways.py --hashes-file data/sync_hashes_retained_<T>.txt
    ```
 
-4. 下游中止保留的每一份 `data/sync_hashes_retained_<時間>.txt`，同樣依序補跑摘要、標題、摘錄（`--hashes-file`）。三段都只挑 `IS NULL`，重跑冪等。
-5. 每份補完、確認 `make freshness` 與 sync log 無新錯誤後，刪掉用過的 delta 與 hashes 檔（兩者都已 gitignore，不刪會一直留在 `data/`）。
+4. 下游中止保留的每一份 `data/sync_hashes_retained_<時間>.txt`，以及匯入中止保留的 `data/sync_hashes_retained_<時間>_partial.txt`，同樣依序補跑摘要、標題、摘錄（`--hashes-file`）。三段都只挑 `IS NULL`，重跑冪等，與第 3 步的先後無關。
+5. 每份補完、確認 `make freshness` 與 sync log 無新錯誤後，刪掉用過的 delta 與 hashes 檔（都已 gitignore；delta 不刪的話，下次整批中止時會再被列進重放清單）。
 6. 重新啟用排程：`sudo systemctl start report-mark-sync.timer`。
 
 ### sync timer 刻意不補跑（2026-08-20）

@@ -65,6 +65,7 @@ class _SyncHarness:
         self.delta_file = self.root / "delta_out"
         self.hashes_file = self.root / "hashes_out"
         self.stats_file = self.root / "stats_out"
+        self.partial_file = self.root / "partial_out"
         # importer 的計數器。None＝importer 什麼都沒寫（模擬工具層異常）；
         # 字串＝逐字寫出（模擬格式壞掉）。預設是一輪乾淨的匯入。
         self.stats: dict | str | None = {"ingested": 1, "fail": 0, "skip_untagged": 0}
@@ -72,6 +73,8 @@ class _SyncHarness:
         self.rcs: dict[str, int] = {}
         self.delta = ["某券商/報告A.pdf\n"]
         self.new_hashes = ["aa" * 32 + "\n"]
+        # importer 中途中止前已 commit 的 hashes（None＝不寫 .partial，正常結束即如此）。
+        self.partial_hashes: list[str] | None = None
         self._write_fakes()
 
     def _fake(self, name: str, body: str):
@@ -85,6 +88,7 @@ class _SyncHarness:
         )
         self.delta_file.write_text("".join(self.delta), encoding="utf-8")
         self.hashes_file.write_text("".join(self.new_hashes), encoding="utf-8")
+        self.partial_file.write_text("".join(self.partial_hashes or []), encoding="utf-8")
         if self.stats is None:
             self.stats_file.write_text("", encoding="utf-8")
         elif isinstance(self.stats, str):
@@ -106,6 +110,8 @@ class _SyncHarness:
             f'if [ "$N" = sync_new_reports ]; then cat "{self.hashes_file}" > data/.sync_last_hashes; fi\n'
             f'if [ "$N" = sync_new_reports ] && [ -s "{self.stats_file}" ]; then '
             f'cat "{self.stats_file}" > data/.sync_last_stats; fi\n'
+            f'if [ "$N" = sync_new_reports ] && [ -s "{self.partial_file}" ]; then '
+            f'cat "{self.partial_file}" > data/.sync_last_hashes.partial; fi\n'
             f'RC=$(grep "^$N=" "{self.rc_file}" 2>/dev/null | head -1 | cut -d= -f2)\n'
             'exit "${RC:-0}"\n',
         )

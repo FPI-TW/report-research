@@ -135,7 +135,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 1. 補記上一輪異常收場；系統關機中或 lock 被佔用退出 0；找不到 `uv` 退出 1。
 2. drvfs 唯讀掛載 NAS（`/usr/local/sbin/mount-nas-research`，sudoers 免密碼）；失敗退出 1。
 3. `rsync -rt --size-only` 到 `研報自動匯入/`，delta 寫 `data/sync_delta_<時間>.txt`。
-4. `scripts/sync_new_reports.py --delta <delta>`（`nice -n 19 ionice -c3`）：逐檔 extract → tag → ingest，每道閘寫 `extraction_log`；失敗記 `data/sync_failures.log`，成功 hash 寫 `data/.sync_last_hashes`，計數寫 `data/.sync_last_stats`。rc=0 不等於成功：`ABNORMAL>0` 時本輪不算完整，補救走 `scripts/failures_to_delta.py --out data/sync_delta_recover.txt` 再餵 `--delta`，**不要 `--all-local`**（那是 O(全部檔)）。匯入 rc 不是 0 也不是 75 時 delta 保留在 `data/`，殼依時間序列出所有保留的 delta 與 `--delta … --hashes-out data/sync_hashes_retained_<時間>.txt` 重放指令（`--hashes-out` 讓每份重放的 hashes 各寫一份，不覆寫 `data/.sync_last_hashes`）。
+4. `scripts/sync_new_reports.py --delta <delta>`（`nice -n 19 ionice -c3`）：逐檔 extract → tag → ingest，每道閘寫 `extraction_log`；失敗記 `data/sync_failures.log`，成功 hash 寫 `data/.sync_last_hashes`，計數寫 `data/.sync_last_stats`。rc=0 不等於成功：`ABNORMAL>0` 時本輪不算完整，補救走 `scripts/failures_to_delta.py --out data/sync_delta_recover.txt` 再餵 `--delta`，**不要 `--all-local`**（那是 O(全部檔)）。匯入 rc 不是 0 也不是 75 時 delta 保留在 `data/`，殼依時間序列出所有保留的 delta 與 `--delta … --hashes-out data/sync_hashes_retained_<時間>.txt` 重放指令（`--hashes-out` 讓每份重放的 hashes 各寫一份，不覆寫 `data/.sync_last_hashes`；只列殼產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`）。中途中止前已入庫的篇，importer 寫到 `<hashes_out>.partial`，殼改名保留成 `data/sync_hashes_retained_<時間>_partial.txt` 並印三段補跑指令（重放時它們會變 `skip_exists`，不會進重放的 hashes）。
 5. 以 `--hashes-file data/.sync_last_hashes` 依序跑摘要、標題、摘錄。**不可改成 `--since-days`**：它濾的是 `report_date`，會漏掉近九成。
 6. 訊號 `--limit ${SYNC_SIGNAL_LIMIT:-100}`，排跨全語料積壓，`--limit` 是安全機制不是效能旋鈕（不限量會佔住 CLI 鎖 80 小時以上）。
 7. 簡報（無參數；沒有自己的 timer 是刻意的，要讀當輪剛擷取的評等變動）。

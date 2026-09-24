@@ -23,6 +23,8 @@ data/*.lock
 data/*.pid
 data/.*.pid
 data/.sync_last_hashes
+# 匯入中途中止時「已 commit 的 hashes」（sync_new_reports.py 寫、殼改名保留）。
+data/.sync_last_hashes.partial
 # 匯入計數（PR #221）。與心跳同性質的純執行期狀態：每輪覆寫，遺失只會讓下一輪
 # 的殼保守判成匯入異常，不會壞資料。**data/ 是逐項忽略，新增執行期檔案必須
 # 同步加一行**，否則它會永遠掛在 git status 上，而這個 repo 明令禁止 git add -A

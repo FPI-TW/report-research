@@ -1857,6 +1857,19 @@ class BuildCmdTests(unittest.TestCase):
                 cmd = llm._build_cmd("m", system, True)
                 self.assertEqual(cmd[-4:], ["--tools", "WebSearch", "--allowedTools", "WebSearch"])
 
+    def test_mcp_servers_are_never_loaded(self):
+        """`--tools` 只管內建工具、管不到 MCP；`--strict-mcp-config` 且不帶 `--mcp-config`＝不載 MCP。
+
+        開不開網搜都要有；它是布林旗標，必須在可變長度的 `--tools` 之前，否則會被當成 `--tools` 的值。
+        """
+        for allow_web in (False, True):
+            for system in (None, "你是助理"):
+                with self.subTest(allow_web=allow_web, system=system):
+                    cmd = llm._build_cmd("m", system, allow_web)
+                    self.assertIn("--strict-mcp-config", cmd)
+                    self.assertNotIn("--mcp-config", cmd)
+                    self.assertLess(cmd.index("--strict-mcp-config"), cmd.index("--tools"))
+
     def test_system_prompt_included_when_given(self):
         self.assertIn("--system-prompt", llm._build_cmd("m", "你是助理", False))
         self.assertNotIn("--system-prompt", llm._build_cmd("m", None, False))

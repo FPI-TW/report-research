@@ -84,9 +84,13 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
     或網搜；工具開著時研報內文裡的指示有機會驅動模型去讀 cwd 的檔。刻意不用
     `--disallowedTools "*"`：本機 CLI 未記載萬用字元語意，很可能無效。`--tools` 是可變長度
     選項，會吞掉後面的位置引數，所以必須放在 prompt 之後、argv 的最後。
+
+    `--strict-mcp-config`＝只用 `--mcp-config` 給的 MCP 伺服器；不帶 `--mcp-config` 就是一個
+    都不載。`--tools ""` 只停用內建工具、管不到 MCP，兩者要一起給。它是布林旗標，放在
+    `--tools` 之前（放在後面會被當成 `--tools` 的值）。
     """
     prompt = prompt.replace("\x00", "")
-    return ["claude", "-p", prompt, "--model", model, "--setting-sources", "", "--tools", ""]
+    return ["claude", "-p", prompt, "--model", model, "--setting-sources", "", "--strict-mcp-config", "--tools", ""]
 
 
 def run_claude(

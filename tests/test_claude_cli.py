@@ -42,6 +42,15 @@ class BuildCliArgsTests(unittest.TestCase):
         self.assertNotIn("--disallowedTools", args)  # "*" 萬用字元語意未記載，很可能無效
         self.assertNotIn("--allowedTools", args)
 
+    def test_no_mcp_servers(self):
+        """`--tools ""` 管不到 MCP：另加 `--strict-mcp-config`、不帶 `--mcp-config`＝不載任何 MCP。
+        布林旗標要在 `--tools` 之前，不能被當成 `--tools` 的值。"""
+        args = cc.build_cli_args("hello", "m")
+        self.assertIn("--strict-mcp-config", args)
+        self.assertNotIn("--mcp-config", args)
+        self.assertLess(args.index("--strict-mcp-config"), args.index("--tools"))
+        self.assertEqual(args[2], "hello")
+
     def test_nul_is_stripped(self):
         """POSIX argv 不可含 NUL，否則 subprocess 直接拋 ValueError，該檔永久失敗。"""
         self.assertEqual(cc.build_cli_args("ab\x00cd", "m")[2], "abcd")

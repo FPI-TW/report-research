@@ -11,6 +11,10 @@
   Bash 等內建工具仍在模型手上（headless 下讀 cwd 的檔免核可）。刻意不用 `--disallowedTools "*"`：
   本機 CLI 未記載萬用字元語意，看來是逐字比對工具名，很可能無效。旗標若失效，
   `system/init` 事件的 `tools` 會對不上預期，`check_init_tools` 記 WARNING（不中斷）。
+- `--strict-mcp-config`（開不開網搜都加）：`--tools` 只管內建工具，管不到 MCP 伺服器；這個旗標
+  讓 CLI 只用 `--mcp-config` 給的 MCP，而我們不帶 `--mcp-config`＝一個 MCP 都不載。
+  `--setting-sources ''` 擋得住使用者／專案設定檔裡的 MCP，擋不住其他來源（`--help` 2.1.260
+  在 `--restricted` 條目明寫要另加此旗標才略過 MCP）。它是布林旗標、不吃引數，放在工具旗標之前。
 
 stream-json 事件：只取 `content_block_delta` 內 `delta.type == "text_delta"` 的文字；
 thinking_delta 等一律忽略。以 `result` 事件或進程結束為終點。
@@ -213,6 +217,9 @@ def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        # 不載任何 MCP：沒有 --mcp-config 時只用它＝空集合（理由見模組 docstring）。
+        # 布林旗標，放在可變長度的工具旗標之前，免得被當成 --tools 的值。
+        "--strict-mcp-config",
     ]
     if system:
         cmd += ["--system-prompt", system.replace("\x00", "")]

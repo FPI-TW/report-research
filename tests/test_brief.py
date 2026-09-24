@@ -181,6 +181,13 @@ class CliArgsTests(unittest.TestCase):
         self.assertEqual(args[-2:], ["--tools", ""])
         self.assertNotIn("--disallowedTools", args)
 
+    def test_no_mcp_servers(self):
+        """`--tools ""` 管不到 MCP；`--strict-mcp-config` 不帶 `--mcp-config`＝不載任何 MCP。"""
+        args = generate_brief.build_cli_args("素材", "m")
+        self.assertIn("--strict-mcp-config", args)
+        self.assertNotIn("--mcp-config", args)
+        self.assertLess(args.index("--strict-mcp-config"), args.index("--tools"))
+
 
 class _FakeSession:
     async def __aenter__(self):

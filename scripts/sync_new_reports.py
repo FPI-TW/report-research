@@ -8,6 +8,8 @@
   uv run python scripts/sync_new_reports.py --delta data/sync_delta.txt
   uv run python scripts/sync_new_reports.py --all-local
   uv run python scripts/sync_new_reports.py --delta data/sync_delta.txt --dry-run
+  uv run python scripts/sync_new_reports.py --delta data/sync_delta_X.txt \
+      --hashes-out data/sync_hashes_retained_X.txt      # 手動重放：hashes 另寫一份
 """
 
 from __future__ import annotations
@@ -198,6 +200,17 @@ def write_stats(path: Path, stats: dict) -> None:
     finally:
         if tmp.exists():
             tmp.unlink()
+
+
+def hashes_out_path(args) -> Path:
+    """本輪入庫 hashes 要寫到哪裡：預設 `data/.sync_last_hashes`（排程殼讀它驅動下游）。
+
+    `--hashes-out` 給手動重放多份保留的 delta 用：固定檔名每重放一份就被覆寫一次，
+    只有最後一份的 hashes 留得下來，前幾份入庫的研報就不會跑摘要、標題、摘錄——
+    摘錄沒有全表補的機制，會靜默缺漏。指定時**只寫這一份**，不動預設檔，免得蓋掉
+    排程殼當輪要用的內容。
+    """
+    return Path(args.hashes_out) if getattr(args, "hashes_out", None) else INGESTED_HASHES_FILE
 
 
 def _iter_targets(args) -> list[Path]:
@@ -446,7 +459,7 @@ async def _run(args) -> None:
             await session.commit()
 
     if not args.dry_run:
-        write_ingested_hashes(INGESTED_HASHES_FILE, ingested_hashes)
+        write_ingested_hashes(hashes_out_path(args), ingested_hashes)
         write_stats(STATS_FILE, stats)
 
     print("\n=== sync summary ===", flush=True)
@@ -455,9 +468,7 @@ async def _run(args) -> None:
     print(f"  elapsed: {time.time() - t0:.0f}s", flush=True)
 
 
-def main() -> None:
-    import asyncio
-
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--delta", help="rsync 傳輸清單檔（本次新傳）")
     ap.add_argument(
@@ -472,6 +483,18 @@ def main() -> None:
     )
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=32)
+    ap.add_argument(
+        "--hashes-out",
+        default=None,
+        help="本輪入庫 hashes 改寫到這個檔（預設 data/.sync_last_hashes）；手動重放多份 delta 時每份各寫一份",
+    )
+    return ap
+
+
+def main() -> None:
+    import asyncio
+
+    ap = build_parser()
     args = ap.parse_args()
     if not args.delta and not args.all_local:
         ap.error("需指定 --delta <file> 或 --all-local")

@@ -12,7 +12,11 @@ SRC="$MOUNT/02.研究資源/研報自動匯入/"
 DST="研報自動匯入/"
 DATE=$(date +%Y%m%d)
 LOG="data/sync_run_${DATE}.log"
-DELTA="data/sync_delta_$(date +%Y%m%d_%H%M%S).txt"
+# 本輪時間戳。delta 與（下游中止時）保留的 hashes 共用同一個，讓人一眼對得上是哪一輪。
+ROUND_TS=$(date +%Y%m%d_%H%M%S)
+DELTA="data/sync_delta_${ROUND_TS}.txt"
+# 本輪成功入庫的 file_hash（importer 每輪覆寫），驅動下游摘要、標題、摘錄。
+HASHES=data/.sync_last_hashes
 LOCK="data/.sync_new_reports.lock"
 UNIT_FAILURES="data/unit_failures.log"
 # 本輪狀態。格式刻意是 key=value 而不是 JSON：bash 這側用 sed 逐鍵取（對機器寫出的檔
@@ -24,6 +28,12 @@ ROUND_STATE="data/sync_round_state"
 # spawn claude CLI，撞到手動批次時會以這個碼結束——刻意與「這支自己壞了」分開，
 # 因為處置完全不同（前者下一輪自然重試，後者要人去看）。
 LOCK_BUSY_RC=75
+
+# 帳號／環境型中止（批次以 SystemExit(2) 收場，例如 claude CLI 不在 PATH）。與 rc=1 分開：
+# 這類中止是**整批一篇都沒做**，而且不寫 data/sync_failures.log、也不進
+# research.llm_task_failure，所以 failures_to_delta.py 撈不到、下一輪也不會自己補。
+# 處置見 docs/production_resilience.md「整批中止後的重放」。
+ENV_ABORT_RC=2
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 
@@ -51,11 +61,17 @@ failure_header() {
 # 而「忘記多寫一行」正是這類計數器最典型的失效方式。
 # **rc=75（claude CLI 被佔用）不算異常**：它是 EX_TEMPFAIL，本 repo 刻意用它與
 # 「批次自己壞了」分流；把它算成異常會讓每次批次撞鎖都抑制心跳。
+#
+# 保留 hashes 也掛在這裡，理由相同：任一下游段以 rc=2 中止都要保留，新段自動涵蓋。
+# 必須在寫紀錄之前呼叫，保留結果與補跑指令才會落在下面那段 log 尾巴裡。
 DOWNSTREAM_ABNORMAL=0
 record_unit_failure() {
   local stage="$1" rc="$2"
   if [ "$rc" -ne "$LOCK_BUSY_RC" ]; then
     DOWNSTREAM_ABNORMAL=$((DOWNSTREAM_ABNORMAL + 1))
+  fi
+  if [ "$rc" -eq "$ENV_ABORT_RC" ]; then
+    retain_hashes_for_replay "$stage"
   fi
   {
     failure_header "$stage" "$rc"
@@ -67,6 +83,67 @@ record_unit_failure() {
     tail -n 20 "$LOG" 2>/dev/null || echo "(sync log 讀取失敗)"
     echo
   } >> "$UNIT_FAILURES" 2>/dev/null || true
+}
+
+# ── 整批中止後要重放的東西 ─────────────────────────────────────────────
+# **delta 與 hashes 都是「只有這一輪有」的輸入**：rsync --size-only 讓下一輪 delta 不再
+# 列出已落地的檔，而 data/.sync_last_hashes 下一輪就被 importer 覆寫。帳號／環境型中止
+# （rc=2）不留逐篇失敗紀錄，這兩份檔就是事後重放的唯一依據，所以要保留、要印出來。
+
+# 匯入段是否已完成。之前的 rc=2（匯入本身）不保留 hashes：那時的 .sync_last_hashes 是
+# 上一輪或半途的內容，要重放的是 delta，不是它。
+IMPORT_DONE=0
+HASHES_RETAINED=""
+
+# 把本輪 hashes 複製成 data/sync_hashes_retained_<本輪時間>.txt，並印出補跑指令。
+# 一輪只複製一次（第二段 rc=2 時只重提位置）。三段補跑都冪等（只挑 IS NULL），
+# 所以即使中止發生在摘錄之後（例如訊號、簡報那幾段），照指令重跑也只是 no-op。
+retain_hashes_for_replay() {
+  local stage="$1" dst="data/sync_hashes_retained_${ROUND_TS}.txt"
+  if [ "$IMPORT_DONE" -ne 1 ]; then
+    return 0
+  fi
+  if [ -n "$HASHES_RETAINED" ]; then
+    log "  ${stage} 也以 rc=${ENV_ABORT_RC} 中止；本輪 hashes 已保留於 ${HASHES_RETAINED}"
+    return 0
+  fi
+  if [ ! -s "$HASHES" ]; then
+    log "  ${stage} 以 rc=${ENV_ABORT_RC} 中止；本輪無新研報入庫，沒有 hashes 需要保留"
+    return 0
+  fi
+  if ! cp -f "$HASHES" "$dst" 2>/dev/null; then
+    log "  ${stage} 以 rc=${ENV_ABORT_RC} 中止，但保留 hashes 失敗（${HASHES} → ${dst}）；"
+    log "  下一輪匯入前手動複製 ${HASHES}，否則本輪新研報的下游要靠全表補"
+    return 0
+  fi
+  HASHES_RETAINED="$dst"
+  log "  ${stage} 以 rc=${ENV_ABORT_RC} 中止（帳號／環境型）→ 本輪 hashes 已保留：${dst}"
+  log "  → 排除中止原因後依序補跑（見 docs/production_resilience.md「整批中止後的重放」）："
+  # 以迴圈組指令而不逐行寫死：本檔的靜態測試以「run python scripts/<名>.py」數呼叫點，
+  # 提示文字若逐字寫出會被數成多一個呼叫。
+  local s
+  for s in generate_summaries generate_titles extract_takeaways; do
+    log "     $UV run python scripts/${s}.py --hashes-file ${dst}"
+  done
+}
+
+# 依時間序（舊→新，依 mtime）列出所有保留的 delta，每份配一條 --delta 重放指令。
+# 每份各自寫一份 --hashes-out，重放多份時才不會互相覆寫 .sync_last_hashes。
+list_retained_deltas() {
+  local deltas d ts
+  deltas=$(ls -1tr data/sync_delta_*.txt 2>/dev/null || true)
+  if [ -z "$deltas" ]; then
+    log "  （找不到任何保留的 delta 檔）"
+    return 0
+  fi
+  log "  保留的 delta（舊→新，逐份重放；每份重放完立刻用它的 hashes 補跑摘要、標題、摘錄）："
+  while IFS= read -r d; do
+    ts=$(basename "$d" .txt)
+    ts=${ts#sync_delta_}
+    log "     $UV run python scripts/sync_new_reports.py --delta ${d} --hashes-out data/sync_hashes_retained_${ts}.txt"
+  done <<< "$deltas"
+  log "  **不要用 --all-local 或 failures_to_delta.py 補救**：整批中止不留逐篇失敗紀錄。"
+  log "  完整步驟見 docs/production_resilience.md「整批中止後的重放」。"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -300,7 +377,7 @@ nice -n 19 ionice -c3 "$UV" run python scripts/sync_new_reports.py --delta "$DEL
   || IMPORT_RC=$?
 log "匯入結束 rc=$IMPORT_RC"
 if [ "$IMPORT_RC" -ne 0 ]; then
-  record_unit_failure "sync_new_reports(import)" "$IMPORT_RC"
+  # 提示寫在 record_unit_failure 之前：那段紀錄帶的是 log 尾巴，順序反了提示就不在裡面。
   if [ "$IMPORT_RC" -eq "$LOCK_BUSY_RC" ]; then
     # 復原提示不可省：rsync 已把新檔落到本地，下一輪 rsync 不會再把它們列進 delta
     # （--size-only 判定為已同步），所以「等下一輪自然補上」是錯的直覺——delta 只有
@@ -308,10 +385,17 @@ if [ "$IMPORT_RC" -ne 0 ]; then
     log "匯入未執行：claude CLI 被另一支批次佔用（rc=$LOCK_BUSY_RC）"
     log "  → 本輪新檔已在本地但未入庫；等該批次結束後跑："
     log "     $UV run python scripts/sync_new_reports.py --all-local"
+  else
+    # 其他非零（rc=2 帳號／環境型、rc=1 未預期例外）：本輪 delta 保留在 data/，而前幾輪
+    # 同樣中止的 delta 也還在——只列本輪那份會讓人漏掉前面的。
+    log "匯入中止 rc=${IMPORT_RC}：本輪新檔已在本地但未入庫，delta 保留待重放"
+    list_retained_deltas
   fi
+  record_unit_failure "sync_new_reports(import)" "$IMPORT_RC"
   log "匯入失敗（保留 delta 供排查）→ 結束"
   exit 1
 fi
+IMPORT_DONE=1
 
 # 3b) 匯入 rc=0 不等於完整成功：檢查「本該入庫卻沒進 DB」的計數
 if ABNORMAL=$(read_stat abnormal); then
@@ -332,7 +416,7 @@ fi
 # 4) 本次有新研報入庫才補摘要（best-effort：失敗只記 log，不擋 sync）
 #    僅針對本輪新匯入的 file_hash（--hashes-file），不掃歷史 NULL 積壓；
 #    歷史積壓另以 `make summaries`（不帶 --hashes-file，補全表 NULL）手動補。
-HASHES=data/.sync_last_hashes
+#    $HASHES 定義在檔頭：下游 rc=2 時 retain_hashes_for_replay 要讀它。
 if [ -s "$HASHES" ]; then
   N=$(grep -c . "$HASHES" 2>/dev/null || echo 0)
   log "本次新增 ${N} 篇 → 生成摘要（Sonnet，僅本輪新研報）"

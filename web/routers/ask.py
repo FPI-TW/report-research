@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.services.llm import LLMUnavailableError
 from web import deps
 from web.concurrency import ConcurrencyGate
 
@@ -53,6 +54,23 @@ class AskRequest(BaseModel):
 # 上限 3、單題約 60–90s，排到第 21 位表示已是堆積而非尖峰，那時讓人帶著 Retry-After
 # 早點知道，好過在一條開好的 SSE 上等十分鐘。設 0 可退回舊行為（無限排隊）。
 _ASK_GATE = ConcurrencyGate(3, name="ask", max_queue=int(os.getenv("ASK_MAX_QUEUE", "20")))
+
+ASK_ERROR_DETAIL = "問答服務發生錯誤"
+# 依 LLMUnavailableError.kind 給使用者看的訊息（kind 只有 HTTP 路徑會填，CLI 一律落到預設）。
+# 內容審查：同一題換個問法多半就過，要讓使用者知道「可以自己處理」，而不是以為站台壞了。
+# 帳號層級（餘額、金鑰、模型名）：每一題都會失敗、使用者無能為力，直接說「暫時停用」，
+# 免得反覆重試；啟動自檢與 `qa_log.filters.llm_error` 會留下可查的紀錄。
+_LLM_ERROR_DETAILS = {
+    "content_filter": "此題觸發模型供應商的內容審查，可換個問法",
+    "quota": "問答服務暫時停用（模型服務帳號異常），已通知管理者",
+    "auth": "問答服務暫時停用（模型服務帳號異常），已通知管理者",
+    "config": "問答服務暫時停用（模型服務帳號異常），已通知管理者",
+}
+
+
+def _llm_error_detail(exc: LLMUnavailableError) -> str:
+    """LLM 不可用時 SSE error 的 detail（放在所有 @router 之上，理由見 CLAUDE.md）。"""
+    return _LLM_ERROR_DETAILS.get(getattr(exc, "kind", None) or "", ASK_ERROR_DETAIL)
 
 
 @router.post("/api/ask")
@@ -115,9 +133,13 @@ async def ask(req: AskRequest):
                     web=req.web,
                 ):
                     yield deps._sse(event, payload)
+            except LLMUnavailableError as exc:
+                # answer_question 已把失敗那輪落庫（filters.llm_error），這裡只負責說人話。
+                logger.exception("ask failed: LLM 不可用 kind=%s", exc.kind)
+                yield deps._sse("error", {"detail": _llm_error_detail(exc)})
             except Exception:
                 logger.exception("ask failed")
-                yield deps._sse("error", {"detail": "問答服務發生錯誤"})
+                yield deps._sse("error", {"detail": ASK_ERROR_DETAIL})
         finally:
             _ASK_GATE.release()
 

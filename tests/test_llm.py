@@ -182,6 +182,20 @@ class StreamCompletionSignalTests(unittest.IsolatedAsyncioTestCase):
     def test_reason_defaults_to_none_for_direct_construction(self):
         self.assertIsNone(llm.LLMUnavailableError("529").reason)
 
+    def test_kind_and_partial_defaults(self):
+        """kind 預設 other（未分類）、partial 預設 False；CLI 路徑兩者都不填。"""
+        exc = llm.LLMUnavailableError("529")
+        self.assertEqual(exc.kind, "other")
+        self.assertIs(exc.partial, False)
+        exc = llm.LLMUnavailableError("x", kind="quota", partial=True, reason="api_error")
+        self.assertEqual((exc.kind, exc.partial, exc.reason), ("quota", True, "api_error"))
+
+    async def test_cli_failure_leaves_kind_unclassified(self):
+        with self.assertRaises(llm.LLMUnavailableError) as cm:
+            await self._run("overload")
+        self.assertEqual(cm.exception.kind, "other")
+        self.assertIs(cm.exception.partial, False)
+
 
 if __name__ == "__main__":
     unittest.main()

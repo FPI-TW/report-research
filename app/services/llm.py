@@ -245,16 +245,36 @@ UNAVAILABLE_TIMEOUT = "timeout"      # 一個字都沒吐就逾時（不重試�
 UNAVAILABLE_EMPTY = "empty"          # 進程結束卻沒有任何文字
 
 
-class LLMUnavailableError(RuntimeError):
-    """claude CLI 多次重試後仍無有效回應（多為 Anthropic API 過載 529）。
+# LLMUnavailableError.kind 的預設值：「未分類」。
+KIND_OTHER = "other"
 
-    `reason` 是最後一次嘗試的失敗原因（`UNAVAILABLE_*`）；外部直接建構時為 None。
-    呼叫端靠它分辨「服務回錯」與「沒吐字就逾時」，不必解析訊息字串。
+
+class LLMUnavailableError(RuntimeError):
+    """LLM 多次重試後仍無有效回應（CLI 多為 Anthropic API 過載 529；HTTP 見 `kind`）。
+
+    三個屬性，粒度不同、並存不互斥：
+
+    - `reason`：CLI 時代的三類（`UNAVAILABLE_*`：服務回錯／沒吐字就逾時／全空），外部直接
+      建構時為 None。既有呼叫端靠它分辨「服務回錯」與「沒吐字就逾時」（faithfulness 的
+      degraded_reason），HTTP 路徑也照同一套詞彙填（逾時→timeout、空回應→empty、其餘→
+      api_error），所以那些呼叫端不必知道底下是哪個 backend。
+    - `kind`：細分類，詞彙同 `llm_http` 的錯誤 kind（auth／quota／config／content_filter／
+      bad_request／overloaded／network／timeout／empty／other），**只有 HTTP 路徑會填**，
+      由狀態碼與 finish_reason 決定、不解析文字。CLI 路徑刻意不填（維持預設 `other`＝
+      未分類）：CLI 透傳的訊息格式不在我們控制之內，細分交給 `answer._llm_error_kind`
+      既有的文字判斷（只分過載／其他兩類）。
+    - `partial`：True＝**已經吐過字**才失敗（目前只有 HTTP 路徑的內容審查截斷會這樣拋）。
+      串流型呼叫端（總覽、時效網搜、主答）據此保留已送出的文字、由 Python 附註中斷原因；
+      收齊型呼叫端照舊 `except Exception` fail-open。
     """
 
-    def __init__(self, *args, reason: str | None = None) -> None:
+    def __init__(
+        self, *args, reason: str | None = None, kind: str = KIND_OTHER, partial: bool = False,
+    ) -> None:
         super().__init__(*args)
         self.reason = reason
+        self.kind = kind or KIND_OTHER
+        self.partial = partial
 
 
 async def _run_attempt(

@@ -3103,11 +3103,33 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LlmErrorKindTests(unittest.TestCase):
-    """`filters.llm_error` 要回答的問題只有一個：Anthropic 過載，還是我們的 bug。
+    """`filters.llm_error` 最初要回答的問題：上游過載，還是我們的 bug。
 
     先前兩者在監控上**完全無法區分**——LLM 失敗那輪根本不落庫（`_log_qa` 在串流
     之後），所以兩種情況都是「什麼紀錄都沒有」。
+
+    CLI 路徑仍只分兩類（文字判斷，下面兩條）；HTTP 路徑的例外自帶 `kind`（由狀態碼決定），
+    直接採用、不再解析文字（`test_http_kind_wins_over_text`）。
     """
+
+    def test_http_kind_wins_over_text(self):
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        for kind in ("quota", "auth", "content_filter", "timeout", "overloaded"):
+            with self.subTest(kind=kind):
+                # 訊息文字刻意與 kind 矛盾：kind 有值時不得再看文字
+                exc = LLMUnavailableError("API Error: 529 Overloaded", kind=kind)
+                self.assertEqual(ans._llm_error_kind(exc), kind)
+
+    def test_unclassified_kind_falls_back_to_text(self):
+        """CLI 不填 kind（預設 other）：維持既有的兩類文字判斷。"""
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        self.assertEqual(ans._llm_error_kind(LLMUnavailableError("529 Overloaded", kind="other")), "overloaded")
+        self.assertEqual(ans._llm_error_kind(RuntimeError("529 Overloaded")), "overloaded")
+        self.assertEqual(ans._llm_error_kind(RuntimeError("boom")), "other")
 
     def test_overload_detected(self):
         from app.services import answer as ans

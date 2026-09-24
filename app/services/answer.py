@@ -1076,11 +1076,19 @@ def history_item(row) -> dict:
     }
 
 
-# LLM 失敗的粗分類。**只分「過載」與「其他」兩類，刻意不解析更細**：訊息文字來自
-# `claude` CLI 透傳的 API 回應，格式不在我們控制之內，分得越細越容易在 CLI 改版後
-# 靜默全部落到「其他」。這個欄位要回答的問題只有一個——**這是 Anthropic 過載還是
-# 我們的 bug**——而那正是先前完全分不出來的事（兩者都是「什麼紀錄都沒有」）。
+# LLM 失敗的分類（`filters.llm_error`）。這個欄位最初要回答的問題只有一個——**這是
+# 上游過載還是我們的 bug**——而那正是先前完全分不出來的事（兩者都是「什麼紀錄都沒有」）。
+#
+# - **HTTP 路徑**：例外自帶 `kind`（`llm_http` 依狀態碼與 finish_reason 決定，不解析文字），
+#   直接採用：quota／auth／content_filter 這些在 DeepSeek 上各有不同的處置，混成一類
+#   就量不出來。
+# - **CLI 路徑仍只分兩類**（`kind` 未填＝`other`，退回文字判斷）：訊息文字來自 `claude`
+#   CLI 透傳的 API 回應，格式不在我們控制之內，分得越細越容易在 CLI 改版後靜默全部落到
+#   「其他」。猜不出來一律 other，不能猜成 overloaded（那會把我們的 bug 記成上游問題）。
 def _llm_error_kind(exc: Exception) -> str:
+    kind = getattr(exc, "kind", None)
+    if isinstance(kind, str) and kind and kind != "other":
+        return kind
     detail = str(exc)
     return "overloaded" if looks_like_api_error(detail) else "other"
 

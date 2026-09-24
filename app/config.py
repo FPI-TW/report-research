@@ -123,8 +123,9 @@ class Settings:
     ask_max_stale_reports: int
     # 使用者可否在問答開啟網搜（伺服器端總閘；關掉即使前端送 web=true 也不生效）
     ask_enable_web: bool
-    # 開啟網搜那一輪的主 LLM 逾時：網搜會讓單題多花數十秒，沿用 llm.py 的 120s
-    # 預設會在「搜到一半」被砍斷，症狀是答案無聲截斷。不開網搜的路徑不受影響。
+    # 開啟網搜那一輪的主 LLM 逾時。經 /api/ask（_with_heartbeat 驅動）時語意是「第一個輸出
+    # （文字或網搜標記）」的期限、不是總時限（理由見 answer.py 的 ASK_WEB_TIMEOUT 註解）：
+    # 網搜可能很久才出第一個字，沿用 llm.py 的 120s 會被誤判逾時。不開網搜的路徑不受影響。
     ask_web_timeout: float
     # intent.py
     ask_intent_model: str

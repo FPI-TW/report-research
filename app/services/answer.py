@@ -407,9 +407,14 @@ RESEARCH_ONLY_POLICY = (
 # 設 ASK_ENABLE_WEB=0 即使前端送 web=true 也一律關閉，不必改前端就能整站停用。
 # 預設 1＝「允許使用者開」，不是「一律開」——請求沒帶 web 時仍是關的。
 ASK_ENABLE_WEB = _S.ask_enable_web
-# 開網搜那一輪的主 LLM 逾時。網搜會讓單題多花數十秒，沿用 llm.py 的 120s 預設會在
-# 「搜到一半」被砍斷，而 stream_completion 對已串流過文字的逾時是 fail-open——
-# 症狀是答案無聲截斷、沒有任何錯誤。不開網搜的路徑維持既有預設，零回歸。
+# 開網搜那一輪的主 LLM 逾時（不開網搜的路徑維持 llm.py 的 120s 預設，零回歸）。
+# **語意是「第一個輸出」的期限，不是總時限**：/api/ask 經 `web.deps._with_heartbeat` 驅動，
+# 它每次 `__anext__` 都開新 Task，而 CLI 路徑的 `asyncio.timeout` 跨越 yield、綁在進入時的
+# Task 上——第一個 yield（文字或網搜標記 SEARCH_EVENT）之後那個 Task 就結束了，逾時不再
+# 生效（2026-09-24 以假 CLI 實測：timeout=0.5、每 0.3 秒一段共 6 段，直接迭代 0.5 秒被截斷，
+# 經 _with_heartbeat 1.8 秒全數吐完）。所以放寬它防的是「搜尋很久才出第一個字」被誤判逾時，
+# 不是「搜到一半被砍」——後者在這條驅動路徑上不會發生。HTTP 路徑刻意做成同樣的首字期限
+# （llm_http 每個 await 各包 timeout_at），首字之後靠 max_tokens 與 read 逾時收尾。
 ASK_WEB_TIMEOUT = _S.ask_web_timeout
 
 EXT_SENTINEL = "[EXT_SOURCES]"  # 模型在答案末尾以此標記外部來源區塊

@@ -38,7 +38,7 @@ from app.logging_setup import configure_logging  # noqa: E402
 configure_logging()
 
 from app.config import get_settings  # noqa: E402
-from app.services import db, llm, llm_models  # noqa: E402
+from app.services import db, llm, llm_http, llm_models  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
@@ -161,6 +161,12 @@ async def lifespan(app: FastAPI):
                 await warmup_task
             except asyncio.CancelledError:
                 pass
+        # DeepSeek 的 AsyncClient 以 event loop 為鍵延遲建立（沒走過 HTTP 路徑就沒有，這行是 no-op）；
+        # loop 關閉前收掉連線池，不留給 GC。失敗只記錄，不擋關機。
+        try:
+            await llm_http.aclose()
+        except Exception:
+            logger.exception("llm_http.aclose 失敗")
 
 
 app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)

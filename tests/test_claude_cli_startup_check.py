@@ -84,5 +84,49 @@ class LifespanLlmModelCheckTests(unittest.TestCase):
         self.assertIn("ask_intent=haiku", "\n".join(cm.output))
 
 
+
+class LifespanClosesLlmHttpTests(unittest.TestCase):
+    """關機時收掉 DeepSeek 的 AsyncClient 連線池（沒走過 HTTP 路徑時是 no-op）。
+
+    pgvector 版本檢查換成立即回傳：這組只驗關機，不該花 DB 連線逾時的時間（沒有 DB 的
+    機器上每次啟動會等 60 秒）。
+    """
+
+    def setUp(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import db
+
+        p = patch.object(db, "assert_pgvector_version", AsyncMock(return_value="0.8.0"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_shutdown_awaits_llm_http_aclose(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import llm_http
+
+        a, b, c = _startup()
+        closer = AsyncMock()
+        with a, b, c, patch.object(llm, "claude_cli_path", return_value="/x"), \
+                patch.object(llm_http, "aclose", closer):
+            with TestClient(server.app):
+                closer.assert_not_awaited()
+        closer.assert_awaited_once()
+
+    def test_aclose_failure_does_not_break_shutdown(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import llm_http
+
+        a, b, c = _startup()
+        with a, b, c, patch.object(llm, "claude_cli_path", return_value="/x"), \
+                patch.object(llm_http, "aclose", AsyncMock(side_effect=RuntimeError("boom"))):
+            with self.assertLogs("web.server", level="ERROR") as cm:
+                with TestClient(server.app):
+                    pass
+        self.assertIn("llm_http.aclose 失敗", "\n".join(cm.output))
+
+
 if __name__ == "__main__":
     unittest.main()

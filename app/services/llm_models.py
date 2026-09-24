@@ -229,6 +229,8 @@ def diagnose(
     - 白名單名稱而 `DEEPSEEK_API_KEY` 為空 → ERROR（那些任務每一次呼叫都會失敗）。
     - `claude-*` → 沿用既有的 claude CLI 路徑檢查（找不到是 ERROR，找到記 WARNING 留路徑）。
     - 其他名稱 → ERROR「未知模型名」（打錯字、CLI 別名）。
+    - 網搜任務（`ask_web`）解析到白名單名稱 → ERROR：DeepSeek 網搜延後到 P9，
+      `llm.stream_completion` 對 `allow_web=True`＋白名單 model 一律拋 config 錯誤。
     都不擋啟動：檢索、閱讀頁、雷達、簡報的讀取都不需要 LLM。
     """
     out: list[tuple[int, str]] = []
@@ -251,6 +253,13 @@ def diagnose(
                 "claude CLI 不在 PATH 上：問答會全數失敗（檢查 report-mark-web.service.d/path.conf）；"
                 f"PATH={path_env}",
             ))
+    web_model = resolved.get(TASK_ASK_WEB)
+    if is_http_model(web_model):
+        out.append((
+            logging.ERROR,
+            f"{TASK_ENV[TASK_ASK_WEB]}={web_model}：DeepSeek 網搜尚未支援（延後到 P9），"
+            "開網搜的問答會全數失敗；網搜模型應維持 Claude",
+        ))
     if by_kind["unknown"]:
         out.append((
             logging.ERROR,

@@ -270,6 +270,13 @@ class DiagnoseTests(unittest.TestCase):
     def test_whitelisted_model_with_key_needs_no_cli(self):
         self.assertEqual(lm.diagnose({"ask_answer": "deepseek-flash"}, has_key=True, claude_path=None), [])
 
+    def test_web_task_on_deepseek_is_error(self):
+        """DeepSeek 網搜延後到 P9：網搜任務解析到白名單名稱時，每一題開網搜的問答都會失敗。"""
+        out = lm.diagnose({"ask_web": "deepseek-flash"}, has_key=True, claude_path=None)
+        self.assertEqual(self._levels(out), [logging.ERROR])
+        self.assertIn("ASK_WEB_MODEL=deepseek-flash", out[0][1])
+        self.assertIn("網搜尚未支援", out[0][1])
+
     def test_unknown_names_are_error(self):
         for name in ("sonnet", "deepseek-flsh", "gpt-5"):
             out = lm.diagnose({"ask_intent": name}, has_key=True, claude_path="/x")

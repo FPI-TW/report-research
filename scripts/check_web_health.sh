@@ -31,6 +31,7 @@ EXIT_GRACE=3     # 剛啟動的寬限期內，不視為故障（unit 需宣告 S
 EXIT_TOOLING=4   # 探針自己不能執行（缺 curl 等）
 EXIT_DEGRADED=5  # L3：HTTP 健康，但問答路徑的必要相依（claude CLI）不在 web unit 的 PATH 上
 EXIT_STORAGE=6   # L3：HTTP 健康，但物件儲存（R2）連不上——原檔與 PDF 全壞，其餘功能正常
+EXIT_LLM=7       # L3：HTTP 健康，但 DeepSeek 帳號不可用或餘額低於門檻——問答與批次 LLM 段停擺（或即將）
 
 # ── L3：問答相依檢查的設定 ───────────────────────────────────────────────
 # 為什麼需要它：2026-09-02 claude CLI 從 npm 全域改裝成原生安裝，舊路徑下的
@@ -54,6 +55,15 @@ HEALTH_DEP_DROPIN="${HEALTH_DEP_DROPIN:-/etc/systemd/system/report-mark-web.serv
 # 沒有這支端點）、連不上、逾時、200 都當作「判不出來或正常」，不開事件——與上面
 # drop-in 不存在就跳過是同一個原則。設成空字串可整段停用。
 HEALTH_STORAGE_URL="${HEALTH_STORAGE_URL-${HEALTH_URL%/}/storage}"
+
+# ── L3：LLM 帳號檢查的設定 ───────────────────────────────────────────────
+# 為什麼需要它：claude CLI 已放棄（2026-09-23 OAuth 過期），問答與 sync 的 LLM 段全靠 DeepSeek、
+# 沒有備援；402（餘額不足）、401（金鑰失效）、連不上時問答每題失敗、sync 整批 rc=2，/healthz 照樣綠。
+# 餘額查詢由 web 行程做（金鑰在它的 .env），結果經 /healthz/llm 取得——同樣只回答本機直連，
+# 同樣只認 **HTTP 503**（其餘一律當作判不出來或正常）。503 的本體是 {"llm":"<state>"}，
+# state 併進 reason（llm_exhausted、llm_low…；讀不出來就是 llm_unavailable），**不含任何金額**。
+# 設成空字串可整段停用。
+HEALTH_LLM_URL="${HEALTH_LLM_URL-${HEALTH_URL%/}/llm}"
 
 # 用 127.0.0.1 而非 localhost：uvicorn 綁的是 0.0.0.0（**只有 IPv4**），而 localhost
 # 在多數 glibc 設定下會先解析到 ::1，curl 會拿到 connection refused——那是探針自己
@@ -94,6 +104,21 @@ check_storage() {
     return 0
 }
 
+# 回傳空字串＝LLM 帳號正常、未啟用或無法判定；非空＝reason（封閉詞彙：llm_<state>，state 只收
+# 小寫字母與底線、最長 32 字；其餘一律 llm_unavailable）。只用 curl 與 sed（理由同上）。
+check_llm() {
+    [ -n "$HEALTH_LLM_URL" ] || return 0
+    local out code body state
+    out="$(curl -s -w ' %{http_code}' --max-time "$HEALTH_TIMEOUT" "$HEALTH_LLM_URL" 2>/dev/null)" \
+        || return 0
+    code="${out##* }"
+    [ "$code" = "503" ] || return 0
+    body="${out% *}"
+    state="$(printf '%s' "$body" | sed -n 's/^.*"llm"[[:space:]]*:[[:space:]]*"\([a-z_]\{1,32\}\)".*$/\1/p')"
+    printf 'llm_%s' "${state:-unavailable}"
+    return 0
+}
+
 command -v curl >/dev/null 2>&1 || {
     emit tooling 000 0 0 curl_not_found
     echo "check_web_health: 找不到 curl，無法探測" >&2
@@ -120,20 +145,31 @@ while [ "$attempt" -lt "$HEALTH_RETRIES" ]; do
         || curl_rc=$?
     elapsed_ms=$(( ($(date +%s%N) - start_ns) / 1000000 ))
     if [ "$curl_rc" -eq 0 ] && [ "$code" = "200" ]; then
+        # L3 三項**全部都查**，一行帶出全部 reason（逗號分隔），退出碼取優先序最高的那一個：
+        #   5（claude 不在 PATH）→ 6（R2 連不上）→ 7（LLM 帳號）。
+        # 7 刻意排最後（審查 M15）：它包含「餘額低於門檻」，那會持續到儲值為止（可能好幾天），
+        # 排前面的話這段期間 5、6 永遠開不了事件；5、6 是本機可以立刻處理的基礎設施故障。
+        # 反過來 7 被 5／6 蓋住時，reason 仍在這一行裡（journal 看得到），而 5／6 修好後下一輪
+        # 退出碼就變成 7。已知限制：web 只有一個 incident 元件，FIRING 期間退出碼從 6 換成 7
+        # 不會另開事件，要等下一則提醒（最多 30 分鐘）才看到新的 exit。
         dep_reason="$(check_unit_dependency)"
-        if [ -n "$dep_reason" ]; then
-            emit degraded "$code" "$elapsed_ms" "$attempt" "$dep_reason"
-            echo "check_web_health: /healthz 正常，但 $HEALTH_DEP_BIN 不在 $HEALTH_DEP_DROPIN 宣告的 PATH 上（問答路徑會以 FileNotFoundError 失敗）" >&2
-            exit "$EXIT_DEGRADED"
-        fi
         storage_reason="$(check_storage)"
-        if [ -n "$storage_reason" ]; then
-            emit degraded "$code" "$elapsed_ms" "$attempt" "$storage_reason"
-            echo "check_web_health: /healthz 正常，但物件儲存（R2）連不上（原檔下載與 PDF 檢視會失敗；細節見 web 日誌的「healthz 物件儲存探測失敗」）" >&2
-            exit "$EXIT_STORAGE"
+        llm_reason="$(check_llm)"
+        reasons=""
+        for r in "$dep_reason" "$storage_reason" "$llm_reason"; do
+            [ -n "$r" ] && reasons="${reasons:+$reasons,}$r"
+        done
+        if [ -z "$reasons" ]; then
+            emit ok "$code" "$elapsed_ms" "$attempt" ok
+            exit "$EXIT_OK"
         fi
-        emit ok "$code" "$elapsed_ms" "$attempt" ok
-        exit "$EXIT_OK"
+        emit degraded "$code" "$elapsed_ms" "$attempt" "$reasons"
+        [ -n "$dep_reason" ] && echo "check_web_health: /healthz 正常，但 $HEALTH_DEP_BIN 不在 $HEALTH_DEP_DROPIN 宣告的 PATH 上（問答路徑會以 FileNotFoundError 失敗）" >&2
+        [ -n "$storage_reason" ] && echo "check_web_health: /healthz 正常，但物件儲存（R2）連不上（原檔下載與 PDF 檢視會失敗；細節見 web 日誌的「healthz 物件儲存探測失敗」）" >&2
+        [ -n "$llm_reason" ] && echo "check_web_health: /healthz 正常，但 LLM 帳號不可用或餘額低於門檻（$llm_reason；細節與金額見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
+        [ -n "$dep_reason" ] && exit "$EXIT_DEGRADED"
+        [ -n "$storage_reason" ] && exit "$EXIT_STORAGE"
+        exit "$EXIT_LLM"
     fi
     [ "$attempt" -lt "$HEALTH_RETRIES" ] && sleep "$HEALTH_RETRY_WAIT"
 done

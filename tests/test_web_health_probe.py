@@ -37,6 +37,7 @@ TIMER = SYSTEMD_DIR / "report-mark-health.timer"
 
 EXIT_OK, EXIT_HTTP, EXIT_PROCESS, EXIT_GRACE, EXIT_TOOLING, EXIT_DEGRADED = 0, 1, 2, 3, 4, 5
 EXIT_STORAGE = 6
+EXIT_LLM = 7
 
 # stdout 契約：P5 消費的欄位。少一個都會讓告警分級失準且無症狀。
 REQUIRED_FIELDS = ("ts", "component", "probe", "status", "http_code", "latency_ms", "reason")
@@ -76,10 +77,12 @@ def parse(line):
 class _Server:
     """啟一個回固定狀態碼的本機 HTTP 伺服器；用 127.0.0.1 避開 ::1 解析。"""
 
-    def __init__(self, status=200, body=b'{"status":"ok"}', delay=0.0, storage_status=None):
+    def __init__(self, status=200, body=b'{"status":"ok"}', delay=0.0, storage_status=None,
+                 llm_status=None, llm_body=b'{"llm":"exhausted"}'):
         self.status, self.body, self.delay = status, body, delay
-        # /healthz/storage 的狀態碼；None＝與其他路徑相同（既有測試的行為不變）。
+        # /healthz/storage、/healthz/llm 的狀態碼；None＝與其他路徑相同（既有測試的行為不變）。
         self.storage_status = storage_status
+        self.llm_status, self.llm_body = llm_status, llm_body
         self.paths: list[str] = []
         outer = self
 
@@ -90,6 +93,11 @@ class _Server:
                     self.send_response(outer.storage_status)
                     self.end_headers()
                     self.wfile.write(b'{"storage":"x"}')
+                    return
+                if self.path == "/healthz/llm" and outer.llm_status is not None:
+                    self.send_response(outer.llm_status)
+                    self.end_headers()
+                    self.wfile.write(outer.llm_body)
                     return
                 if outer.delay:
                     import time
@@ -393,12 +401,12 @@ class StorageCheckTests(unittest.TestCase):
     def test_storage_url_is_derived_from_health_url(self):
         with _Server(200, storage_status=200) as s:
             run_probe({"HEALTH_URL": s.url})
-            self.assertEqual(s.paths, ["/healthz", "/healthz/storage"])
+            self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"])
 
     def test_empty_storage_url_disables_the_check(self):
         with _Server(200, storage_status=503) as s:
             p = run_probe({"HEALTH_URL": s.url, "HEALTH_STORAGE_URL": ""})
-            self.assertEqual(s.paths, ["/healthz"])
+            self.assertEqual(s.paths, ["/healthz", "/healthz/llm"])
         self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
 
     def test_db_failure_takes_precedence_and_storage_is_not_asked(self):
@@ -416,6 +424,113 @@ class StorageCheckTests(unittest.TestCase):
             dropin.write_text(f"[Service]\nEnvironment=PATH={t}/bin\n", encoding="utf-8")
             p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"})
         self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+
+
+class LlmCheckTests(unittest.TestCase):
+    """L3：/healthz 綠不代表 LLM 帳號能用（402、401、連不上、餘額低於門檻）。
+
+    餘額查詢由 web 行程做，探針只讀 `/healthz/llm` 的狀態碼，**只認 503**；503 本體的 state
+    併進 reason（封閉詞彙 `llm_<小寫與底線>`，其餘 `llm_unavailable`）。多項 L3 同時成立時
+    一行帶出全部 reason，退出碼取 5 → 6 → 7 最前面的（審查 M15：7 不得遮蔽 5、6）。
+    """
+
+    def test_llm_503_is_exit_7_with_state_in_reason(self):
+        for state in ("exhausted", "low", "auth_failed", "unreachable", "indeterminate"):
+            with self.subTest(state=state), _FakeSystemd(state="inactive") as sd, \
+                    _Server(200, llm_status=503, llm_body=b'{"llm":"%s"}' % state.encode()) as s:
+                p = run_probe({"HEALTH_URL": s.url, **sd.env})
+                calls = sd.calls()
+            self.assertEqual(p.returncode, EXIT_LLM, p.stdout + p.stderr)
+            f = parse(p.stdout)
+            self.assertEqual((f["status"], f["http_code"], f["reason"]), ("degraded", "200", f"llm_{state}"))
+            self.assertEqual(calls, [], "LLM 檢查不得呼叫 systemctl")
+            self.assertIn("LLM 帳號", p.stderr)
+
+    def test_unparseable_or_hostile_body_is_llm_unavailable(self):
+        for body in (b"", b"<html>oops</html>", b'{"llm":"ok; rm -rf /"}', b'{"llm":"EXHAUSTED"}',
+                     b'{"llm":"' + b"a" * 40 + b'"}', b'{"llm":"low reason=forged"}'):
+            with self.subTest(body=body), _Server(200, llm_status=503, llm_body=body) as s:
+                p = run_probe({"HEALTH_URL": s.url})
+            self.assertEqual(p.returncode, EXIT_LLM, p.stdout + p.stderr)
+            self.assertEqual(parse(p.stdout)["reason"], "llm_unavailable")
+            self.assertEqual(len(p.stdout.strip().splitlines()), 1)
+
+    def test_anything_but_503_is_not_an_incident(self):
+        """200＝ok／disabled／unknown／*_unused；404＝web 還是沒有這支端點的舊版本；500 判不出來。"""
+        for status in (200, 404, 500):
+            with _Server(200, llm_status=status, llm_body=b'{"llm":"exhausted_unused"}') as s:
+                p = run_probe({"HEALTH_URL": s.url})
+            self.assertEqual(p.returncode, EXIT_OK, f"llm={status}: {p.stdout}{p.stderr}")
+
+    def test_unreachable_llm_endpoint_is_not_an_incident(self):
+        with _Server(200) as s:
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_LLM_URL": "http://127.0.0.1:59993/healthz/llm"})
+        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
+
+    def test_empty_llm_url_disables_the_check(self):
+        with _Server(200, llm_status=503) as s:
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_LLM_URL": ""})
+            self.assertEqual(s.paths, ["/healthz", "/healthz/storage"])
+        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
+
+    def test_db_failure_takes_precedence_and_llm_is_not_asked(self):
+        with _FakeSystemd(state="active") as sd, _Server(503, llm_status=503) as s:
+            p = run_probe({"HEALTH_URL": s.url, **sd.env})
+            self.assertNotIn("/healthz/llm", s.paths)
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
+
+    def test_storage_beats_llm_and_both_reasons_are_reported(self):
+        with _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"low"}') as s:
+            p = run_probe({"HEALTH_URL": s.url})
+            self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"])
+        self.assertEqual(p.returncode, EXIT_STORAGE, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_low")
+        self.assertIn("物件儲存", p.stderr)
+        self.assertIn("LLM 帳號", p.stderr)
+
+    def _missing_claude(self, tmp):
+        t = Path(tmp)
+        (t / "bin").mkdir()
+        dropin = t / "path.conf"
+        dropin.write_text(f"[Service]\nEnvironment=PATH={t}/bin\n", encoding="utf-8")
+        return {"HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"}
+
+    def test_dependency_beats_everything_and_all_three_are_reported(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"exhausted"}') as s:
+            p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
+            self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"], "5 成立時仍要查 6、7")
+        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,storage_unreachable,llm_exhausted")
+        self.assertEqual(len(p.stdout.strip().splitlines()), 1, "一行帶出全部 reason")
+
+    def test_dependency_beats_llm(self):
+        with tempfile.TemporaryDirectory() as tmp, _Server(200, llm_status=503) as s:
+            p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
+        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,llm_exhausted")
+
+    def test_dependency_and_storage_report_both(self):
+        with tempfile.TemporaryDirectory() as tmp, _Server(200, storage_status=503) as s:
+            p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
+        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,storage_unreachable")
+
+    def test_worst_case_duration_fits_the_unit_timeout(self):
+        """三次探測 × 逾時 ＋ 兩次等待 ＋ L3 兩支各一次逾時，必須小於 unit 的 TimeoutStartSec。"""
+        timeout = _directives(SERVICE, "TimeoutStartSec")
+        text = PROBE.read_text(encoding="utf-8")
+
+        def default(name):
+            m = re.search(rf'^{name}="\$\{{{name}:-(\d+)\}}"', text, re.M)
+            self.assertIsNotNone(m, name)
+            return int(m.group(1))
+
+        worst = (default("HEALTH_RETRIES") * default("HEALTH_TIMEOUT")
+                 + (default("HEALTH_RETRIES") - 1) * default("HEALTH_RETRY_WAIT")
+                 + 2 * default("HEALTH_TIMEOUT"))
+        self.assertEqual(worst, 55)
+        self.assertLess(worst, int(timeout[0]))
 
 
 class HostSystemdIsolationTests(unittest.TestCase):

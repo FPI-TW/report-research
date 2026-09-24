@@ -115,6 +115,17 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
+def _budget_currency() -> str:
+    """`/healthz/llm` 只讀 `balance_infos` 裡這個幣別的那一筆；三個英文字母，其餘退回 CNY 並警告。"""
+    raw = (os.getenv("LLM_BUDGET_CURRENCY") or "").strip().upper()
+    if not raw:
+        return "CNY"
+    if len(raw) != 3 or not raw.isascii() or not raw.isalpha():
+        logging.getLogger(__name__).warning("LLM_BUDGET_CURRENCY=%r 不是三碼幣別，退回 CNY", raw)
+        return "CNY"
+    return raw
+
+
 def _faithfulness_min() -> float:
     """數值主張支持率門檻。新名 FAITHFULNESS_MIN 優先；缺值時退回舊名 REPORT_FAITHFULNESS_MIN。"""
     v = os.getenv("FAITHFULNESS_MIN")
@@ -224,6 +235,11 @@ class Settings:
     # 每 60 秒內滴一點內容時兩者都收不了。到期且已吐字＝截斷（附註＋filters.llm_truncated）。
     # 寬鬆是刻意的：最長的主答 8192 tokens 正常一兩分鐘內收完。CLI 路徑不受影響。
     llm_http_total_timeout: float = 600.0
+    # DeepSeek 餘額告警（web/routers/health.py 的 /healthz/llm；只有 web 讀，設在 repo 根 .env）。
+    # 只看 `LLM_BUDGET_CURRENCY` 那一筆（D-O：帳戶以人民幣儲值）；低於門檻回 503 → 探針退出碼 7。
+    # 月上限 ¥350 是儲值紀律（docs/production_resilience.md），刻意不寫成程式旋鈕。
+    llm_budget_currency: str = "CNY"
+    llm_balance_floor: float = 70.0
 
 
 def _load() -> Settings:
@@ -381,6 +397,8 @@ def _load() -> Settings:
         ask_answer_model=resolve_model(TASK_ASK_ANSWER),
         ask_web_model=resolve_model(TASK_ASK_WEB),
         llm_http_total_timeout=_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0),
+        llm_budget_currency=_budget_currency(),
+        llm_balance_floor=_positive_float("LLM_BALANCE_FLOOR", 70.0),
     )
 
 

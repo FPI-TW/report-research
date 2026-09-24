@@ -63,7 +63,8 @@ BLIND_CRITICAL_SECONDS="${INCIDENT_BLIND_CRITICAL_SECONDS:-900}"  # ≈7 個週�
 BOOTSTRAP_SECONDS="${INCIDENT_BOOTSTRAP_SECONDS:-300}"
 # 探針單次執行的合理上限，**由 P4 的契約推導而非硬編**：
 # 3 次嘗試 × HEALTH_TIMEOUT(5s) ＋ 2 次 × HEALTH_RETRY_WAIT(15s) = 45s（2026-08-20
-# 中斷期間實測 46s，吻合），而 unit 的硬上限是 TimeoutStartSec=90s。
+# 中斷期間實測 46s，吻合）；第 3 次才成功時再加 L3 的 /healthz/storage 與 /healthz/llm
+# 各一次 HEALTH_TIMEOUT，最壞 55s。unit 的硬上限是 TimeoutStartSec=90s。
 # 超過 90s 代表 systemd 應該已經砍掉它卻沒有——那是探針卡住，不是服務故障。
 # 取 120s ＝ 90s ＋ 33% 餘裕。
 PROBE_MAX_INFLIGHT="${INCIDENT_PROBE_MAX_INFLIGHT:-120}"
@@ -676,11 +677,11 @@ elif [ "$timer_active" != active ]; then
 elif [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ] \
      && [ "$probe_start_mono" -gt 0 ] \
      && [ $(( (now_mono_us - probe_start_mono) / 1000000 )) -gt "$PROBE_MAX_INFLIGHT" ]; then
-    # 探針執行超過契約上限（3×5s ＋ 2×15s = 45s，unit 硬上限 90s）。
+    # 探針執行超過契約上限（3×5s ＋ 2×15s ＋ L3 2×5s = 55s，unit 硬上限 90s）。
     # systemd 應該已經砍掉它卻沒有 ⇒ 探針本身卡住，是監控故障不是服務故障。
     inflight_age=$(( (now_mono_us - probe_start_mono) / 1000000 ))
     signal=blind; sig_status=monitor_blind; sig_severity=CRITICAL; sig_reason=probe_stuck
-    sig_detail="探針已執行 ${inflight_age}s，超過上限 ${PROBE_MAX_INFLIGHT}s（契約最壞 45s、unit 上限 90s）"
+    sig_detail="探針已執行 ${inflight_age}s，超過上限 ${PROBE_MAX_INFLIGHT}s（契約最壞 55s、unit 上限 90s）"
 elif { { [ "$probe_mono" -eq 0 ] && [ "$probe_running" = yes ]; } \
         || [ "$snapshot_state" = unstable ]; } && [ "$obs_mono" -gt 0 ]; then
     # 兩種「本輪沒有可消費的新觀測」共用同一套信任窗判斷：
@@ -826,6 +827,8 @@ fi
 # P4 的退出碼契約：0 健康／3 寬限（視為健康）／1,2 服務故障／4 探針自身錯誤／
 # 5 服務降級（/healthz 正常但問答相依 claude 不在 web unit 的 PATH 上）
 # 6 服務降級（/healthz 正常但物件儲存 R2 連不上）
+# 7 服務降級（/healthz 正常但 DeepSeek 帳號不可用或餘額低於門檻：/healthz/llm 回 503）
+# 多項同時成立時探針回 5→6→7 中最前面那一個（理由見 check_web_health.sh 的 L3 段）。
 case "$web_status" in
     0|3) run_state_machine "$COMPONENT" healthy "" healthy "$web_obs" ok "" ;;
     1|2) run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_$web_status" "$web_obs" web_incident \
@@ -840,6 +843,10 @@ case "$web_status" in
     # 檢索、問答、雷達、簡報都不受影響；也同樣不會自己好。
     6)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_6" "$web_obs" web_incident \
              "服務降級：健康端點正常，但物件儲存（R2）連不上，原檔下載與 PDF 檢視會失敗（exit=6 result=$web_result）${web_detail_suffix}" ;;
+    # 同樣是 WARNING：檢索、閱讀、雷達與既有簡報的讀取都不需要 LLM。沒有備援（claude CLI 已放棄），
+    # 不會自己好——要儲值、換金鑰或等 DeepSeek 恢復；餘額低於門檻時問答與批次還能跑，但照樣開事件。
+    7)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_7" "$web_obs" web_incident \
+             "服務降級：LLM 帳號不可用（餘額不足／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常（exit=7 result=$web_result；餘額低於門檻時尚未停擺，處置見 docs/production_resilience.md）${web_detail_suffix}" ;;
     *)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_unknown" "$web_obs" web_incident \
              "探針回報未知退出碼（exit=$web_status result=$web_result）${web_detail_suffix}" ;;
 esac

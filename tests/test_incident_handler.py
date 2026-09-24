@@ -441,6 +441,22 @@ class StateMachineTests(unittest.TestCase):
         self.assertEqual(e["reason"], "probe_exit_6")
         self.assertEqual(self.h.webhook_calls(), 1)
 
+    def test_probe_llm_exit_opens_warning_incident_and_resolves(self):
+        """exit 7＝/healthz 正常但 DeepSeek 帳號不可用（402／401／連不上）或餘額低於門檻。
+
+        WARNING：檢索、閱讀、雷達還活著；沒有備援、不會自己好，所以開事件、提醒、恢復時送 RESOLVED。
+        必須有自己的分派——落進未知退出碼那一支的話，通知文字只會說「未知退出碼」。
+        """
+        self.h.set_probe(7)
+        p = self.h.run()
+        e = last_emit(p.stdout)
+        self.assertEqual((e["severity"], e["action"], e["reason"]), ("WARNING", "firing", "probe_exit_7"))
+        self.assertEqual(self.h.webhook_calls(), 1)
+        self.h.set_probe(0, result="success")
+        p = self.h.run()
+        self.assertEqual(last_emit(p.stdout)["action"], "resolved")
+        self.assertEqual(self.h.webhook_calls(), 2)
+
     def test_stale_probe_is_a_monitor_incident_not_a_web_incident(self):
         """P4 停止產出＝**監控失明**，不是服務故障。兩者必須是不同元件的事件。"""
         # age=5／STALE=1：小到任何機器的 uptime 都表達得出來，大到穩定超過門檻
@@ -1241,6 +1257,17 @@ class AlertDeliveryTests(unittest.TestCase):
         self.assertEqual(d["severity"], "CRITICAL")
         self.assertEqual(d["reason"], "probe_exit_1")
         self.assertEqual(self.rx.requests[0]["ct"], "application/json")
+
+    def test_llm_exit_text_and_resolved_are_delivered(self):
+        self.h.set_timer(exit_status=7, result="exit-code")
+        self.h.run()
+        d = self.rx.payloads()[0]
+        self.assertEqual((d["action"], d["severity"], d["reason"]), ("FIRING", "WARNING", "probe_exit_7"))
+        self.assertIn("LLM 帳號不可用（餘額不足／認證失敗／連不上），問答與批次 LLM 段停擺；"
+                      "檢索、閱讀、雷達正常", d["text"])
+        self.h.set_timer(exit_status=0, result="success", mono=self.h._now_mono())
+        self.h.run()
+        self.assertEqual([x["action"] for x in self.rx.payloads()], ["FIRING", "RESOLVED"])
 
     def test_same_incident_does_not_resend_firing(self):
         self._fail()

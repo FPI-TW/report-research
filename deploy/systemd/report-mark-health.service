@@ -45,7 +45,8 @@ ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_M
 # `|| true`：後者會把真正的失敗一起吞掉，而這裡要的是「只放行這一個碼」。
 # 同目錄的 report-mark-web.service 已用同一手法處理 143（SIGTERM 的正常收場）。
 SuccessExitStatus=3
-# 最壞情況＝3 次探測 × 5 秒逾時 ＋ 2 次 × 15 秒等待 ＝ 45 秒。取 90 秒＝2 倍餘裕，
+# 最壞情況＝3 次探測 × 5 秒逾時 ＋ 2 次 × 15 秒等待 ＝ 45 秒；第 3 次才成功時再加 L3 的
+# /healthz/storage 與 /healthz/llm 各 5 秒＝55 秒。取 90 秒（45 秒的 2 倍，55 秒仍有 35 秒餘裕），
 # 且**必須嚴格小於 timer 的 120 秒間隔**（不是等於）——取 120 會讓逾時的那一輪
 # 正好撞上下一次觸發。tests 以嚴格不等式釘死這個關係。
 TimeoutStartSec=90

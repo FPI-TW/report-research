@@ -31,7 +31,7 @@ from app.services.llm_models import TASK_EVAL_JUDGE, is_http_model, resolve_mode
 logger = logging.getLogger(__name__)
 
 # 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查 LLM_PROVIDER 的預設表：deepseek 表自 PR-26/27
-# 起是 deepseek-flash（新量尺系譜，見 eval/run_ragas.py 的 `judge_lineage`），claude_cli 表仍是 haiku。
+# 起是 deepseek-flash（新量尺系譜，見 app/services/llm_models.py 的 `judge_lineage`），claude_cli 表仍是 haiku。
 DEFAULT_JUDGE_MODEL = resolve_model(TASK_EVAL_JUDGE, override=os.getenv("EVAL_JUDGE_MODEL"))
 
 # 逾時 60s 曾讓整份評測不可用：8 題裡 3-5 題失敗，而且**兩種錯誤其實同源**——

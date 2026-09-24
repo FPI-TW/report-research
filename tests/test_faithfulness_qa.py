@@ -247,13 +247,37 @@ class AskTimeoutKnobTests(unittest.TestCase):
         self.assertGreaterEqual(A.ASK_FAITHFULNESS_TIMEOUT, required)
 
     def test_ask_knob_default_is_the_deepseek_value(self):
-        """預設 90：夠寬（上一條），也不再是 CLI 時代的 240——後者讓一次卡住的抽查佔住 inflight
-        名額 4 分鐘，而 inflight 上限只有 2。"""
+        """DeepSeek judge 預設 90：夠寬（上一條），也不再是 CLI 時代的 240——後者讓一次卡住的抽查佔住
+        inflight 名額 4 分鐘，而 inflight 上限只有 2。"""
         from app.config import _load
 
-        with patch.dict(os.environ, {"ASK_FAITHFULNESS_TIMEOUT": ""}):
+        with patch.dict(os.environ, {"ASK_FAITHFULNESS_TIMEOUT": "", "LLM_PROVIDER": "deepseek"}):
             os.environ.pop("ASK_FAITHFULNESS_TIMEOUT")
-            self.assertEqual(_load().ask_faithfulness_timeout, 90.0)
+            os.environ.pop("FAITHFULNESS_MODEL", None)
+            s = _load()
+            self.assertEqual(s.faithfulness_model, "deepseek-flash")
+            self.assertEqual(s.ask_faithfulness_timeout, 90.0)
+
+    def test_ask_knob_default_follows_the_judge_backend(self):
+        """審查低4：預設值依 `is_http_model(faithfulness_model)`——Claude CLI judge 仍是 240（ground 單次
+        實測 48–142 秒），不能被 DeepSeek 的 90 一起套上；空字串視同未設；顯式設值一律優先。"""
+        from app.config import _load
+
+        cases = [
+            ({"LLM_PROVIDER": "claude_cli"}, 240.0),                                     # conftest 的預設表
+            ({"LLM_PROVIDER": "deepseek", "FAITHFULNESS_MODEL": "claude-haiku-4-5"}, 240.0),
+            ({"LLM_PROVIDER": "claude_cli", "FAITHFULNESS_MODEL": "deepseek-flash"}, 90.0),
+            ({"LLM_PROVIDER": "deepseek", "ASK_FAITHFULNESS_TIMEOUT": ""}, 90.0),
+            ({"LLM_PROVIDER": "claude_cli", "ASK_FAITHFULNESS_TIMEOUT": "75"}, 75.0),
+            ({"LLM_PROVIDER": "deepseek", "ASK_FAITHFULNESS_TIMEOUT": "300"}, 300.0),
+        ]
+        for env, want in cases:
+            with self.subTest(env=env), patch.dict(os.environ, env):
+                if "ASK_FAITHFULNESS_TIMEOUT" not in env:
+                    os.environ.pop("ASK_FAITHFULNESS_TIMEOUT", None)
+                if "FAITHFULNESS_MODEL" not in env:
+                    os.environ.pop("FAITHFULNESS_MODEL", None)
+                self.assertEqual(_load().ask_faithfulness_timeout, want)
 
 
 if __name__ == "__main__":

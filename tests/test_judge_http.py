@@ -232,6 +232,26 @@ class ProductionJudgeTests(_Http):
         self.assertEqual(r.degraded_reason, F.DEGRADED_ACCOUNT)
         self.assertEqual(self.requests, [])
 
+    async def test_unexpected_exception_is_degraded_error_not_raised(self):
+        """審查低1：HTTP 分支原本在 try 之外。complete_json 漏出任何例外時要落 degraded(error)——
+        拋到 `_faithfulness_spot_check` 只會記日誌、不寫 evaluation，那一題就從監控卡靜默消失。"""
+        async def boom(*_a, **_kw):
+            raise RuntimeError("意料之外")
+
+        with mock.patch.object(lh, "complete_json", boom), self.assertLogs("app.services.faithfulness", "ERROR"):
+            r = await self.check()
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_ERROR)
+        self.assertIsNone(r.faithfulness_score)
+
+    async def test_decoding_error_end_to_end_is_degraded(self):
+        """真實例外走一遍：Content-Encoding 解不開 → adapter 歸 other → degraded，不拋。"""
+        self.install(lambda s, n, b: httpx.Response(
+            200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(b"not gzip")))
+        r = await self.check()
+        self.assertTrue(r.degraded)
+        self.assertEqual((r.degraded_reason, len(self.requests)), (F.DEGRADED_UNAVAILABLE, 1))
+
     async def test_every_http_kind_maps_into_the_closed_vocabulary(self):
         kinds = [v for k, v in vars(lh).items() if k.isupper() and isinstance(v, str) and k in (
             "AUTH", "QUOTA", "CONFIG", "CONTENT_FILTER", "BAD_REQUEST", "OVERLOADED", "NETWORK", "TIMEOUT",

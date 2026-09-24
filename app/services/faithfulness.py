@@ -356,15 +356,25 @@ async def _default_judge(
     （LLMUnavailableError.reason＝timeout）記 timeout；吐到一半被截斷而解析失敗記 truncated，
     不歸成 parse（parse 留給「回應完整卻不是 JSON」，那才是量尺問題）。
     CLI 路徑維持呼叫模組層的 `stream_completion`（測試的 patch 點不變）。
+
+    HTTP 路徑同樣包一層 `except Exception` 記 `error`：`complete_json` 的契約是不拋，但它漏出的任何
+    例外（例如先前沒接到的 httpx.DecodingError）若一路拋到 `_faithfulness_spot_check`，只會記一行
+    日誌、**不寫 evaluation**——那一題就從監控卡的分母裡靜默消失，而不是記成 degraded。
     """
-    if is_http_model(model):
-        return await _http_judge(
-            system, user, model=model, timeout=timeout, max_tokens=max_tokens, failures=failures, stats=stats,
-        )
 
     def _fail(reason: str) -> None:
         if failures is not None:
             failures.append(reason)
+
+    if is_http_model(model):
+        try:
+            return await _http_judge(
+                system, user, model=model, timeout=timeout, max_tokens=max_tokens, failures=failures, stats=stats,
+            )
+        except Exception:
+            logger.exception("faithfulness judge failed (HTTP)")
+            _fail(DEGRADED_ERROR)
+            return None
 
     meta: dict = {}
     try:

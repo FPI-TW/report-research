@@ -279,5 +279,62 @@ class NoRetryTests(_Base):
         self.assertEqual((res.kind, len(self.requests)), (lh.TIMEOUT, 1))
 
 
+class TransportEdgeTests(_Base):
+    """審查低1、低3：httpx 例外的歸類。任何例外都不能漏出 complete_json（契約：失敗都轉成結果）。"""
+
+    async def test_read_timeout_is_timeout_and_not_retried(self):
+        """非串流時伺服器整份生成完才回本體：read 逾時多半是「還在生成、會計費」，重送＝再付一次。"""
+        self.install(httpx.ReadTimeout("silent"), ok(completion()))
+        res = await self.call(timeout=60)
+        self.assertEqual((res.kind, len(self.requests)), (lh.TIMEOUT, 1))
+        self.assertIn("非串流", res.detail)
+
+    async def test_connect_timeout_is_still_network_and_retried(self):
+        """連線逾時沒送到伺服器、不計費：仍照暫時性錯誤重試。"""
+        self.install(httpx.ConnectTimeout("syn"), ok(completion()))
+        res = await self.call(timeout=60)
+        self.assertEqual((res.kind, res.attempts), (None, 2))
+
+    async def test_decoding_error_becomes_other_without_raising(self):
+        """Content-Encoding 解不開（DecodingError 不是 TransportError）：先前會漏出 complete_json。"""
+        # stream= 而不是 content=：後者在建構 Response 時就解碼，例外會在測試本身拋出
+        broken = httpx.Response(200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(b"not gzip"))
+        self.install(broken)
+        res = await self.call()
+        self.assertEqual((res.kind, len(self.requests)), (lh.OTHER, 1))
+        self.assertIn("DecodingError", res.detail)
+
+    async def test_other_http_error_raised_by_transport_is_other(self):
+        self.install(httpx.TooManyRedirects("loop"))
+        res = await self.call()
+        self.assertEqual((res.kind, len(self.requests)), (lh.OTHER, 1))
+
+
+class TruncationRetryTimeTests(_Base):
+    """審查低3：截斷重試前檢查剩餘期限，不夠就記 truncated、不送第二個請求。"""
+
+    async def test_no_retry_when_remaining_time_is_short(self):
+        async def slow_truncated(_request):
+            await asyncio.sleep(0.3)
+            return ok(completion('{"a": [', "length"))
+
+        self.install(slow_truncated, ok(completion()))
+        # 第一次耗時 ~0.3 秒，剩 ~0.2 秒 < 1.5×0.3：不重送
+        res = await self.call(timeout=0.5, max_tokens=1024)
+        self.assertEqual((res.kind, len(self.requests)), (lh.TRUNCATED, 1))
+        self.assertEqual(res.max_tokens, 1024, "沒重送就不該報 2 倍上限")
+        self.assertIn("剩餘期限不足", res.detail)
+
+    async def test_retry_when_enough_time_remains(self):
+        async def slowish_truncated(_request):
+            await asyncio.sleep(0.05)
+            return ok(completion('{"a": [', "length"))
+
+        self.install(slowish_truncated, ok(completion()))
+        res = await self.call(timeout=5, max_tokens=1024)
+        self.assertEqual((res.kind, len(self.requests)), (None, 2))
+        self.assertEqual(self.body(1)["max_tokens"], 2048)
+
+
 if __name__ == "__main__":
     unittest.main()

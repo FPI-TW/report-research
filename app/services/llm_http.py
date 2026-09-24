@@ -1027,6 +1027,8 @@ JSON_MAX_ATTEMPTS = 2
 _JSON_BACKOFF = 2.0
 # judge 是背景抽查與離線評測，等 Retry-After 最多這麼久；再久就放棄這一次（總期限也會先到）。
 _JSON_RETRY_AFTER_CAP = 10.0
+# 截斷重試的時間門檻：剩餘期限 < 這次耗時 × 這個倍數就不重試（見 `complete_json` docstring）。
+_JSON_TRUNC_RETRY_TIME_RATIO = 1.5
 _USAGE_KEYS = ("prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens", "prompt_cache_miss_tokens")
 
 
@@ -1142,12 +1144,25 @@ async def _json_once(
             response = await client.send(request)
     except TimeoutError:
         return _fail(TIMEOUT, f"總期限內未完成（剩 {remaining:.0f}s 時送出）", t0), None
+    except httpx.ReadTimeout as exc:
+        # 請求已送達、伺服器 `_READ_TIMEOUT` 秒沒回任何位元組：非串流時伺服器要整份生成完才回本體，
+        # 生成超過 60 秒又沒送 keep-alive 就會落到這裡（9/24 探測：短回應沒有 keep-alive）。它很可能
+        # 已經在生成、會計費，歸 NETWORK 重試就是同一份輸出再付一次錢，而且第二次多半同樣慢。所以
+        # 歸 TIMEOUT、不重試——與線上 `astream_chat` 首字前的 ReadTimeout 同一個理由。
+        detail = f"伺服器 {_READ_TIMEOUT:g}s 未送出任何位元組（非串流，可能仍在生成）（{type(exc).__name__}）"
+        return _fail(TIMEOUT, detail, t0), None
     except httpx.TimeoutException as exc:
-        # httpx 自己的逾時而總期限未到＝連線沉默（半開連線之類），歸 NETWORK 讓呼叫端照暫時性處理
+        # 連線／寫入／連線池逾時：請求還沒送到伺服器、不會計費，總期限未到時歸 NETWORK 讓呼叫端照暫時性處理
         kind = TIMEOUT if loop.time() >= deadline else NETWORK
         return _fail(kind, _transport_detail(exc), t0), None
     except httpx.TransportError as exc:
         return _fail(NETWORK, _transport_detail(exc), t0), None
+    except httpx.HTTPError as exc:
+        # 其餘 httpx 例外（DecodingError：本體的 Content-Encoding 解不開；TooManyRedirects）：不是傳輸層
+        # 斷線，重送多半得到同一個結果、而且本體已經生成＝已計費，所以歸 OTHER、不重試。同檔另兩條路
+        # （`astream_chat`、`_complete_once`）也接 HTTPError；只接 TransportError 的話它會漏出 complete_json，
+        # 違反「任何失敗都轉成結果」的契約。
+        return _fail(OTHER, _transport_detail(exc), t0), None
     if response.status_code != 200:
         kind, detail = classify_status(response.status_code, response.content)
         return _fail(
@@ -1182,6 +1197,16 @@ async def complete_json(
       `Retry-After`，上限 `_JSON_RETRY_AFTER_CAP`；等待會超過總期限就不等）。
     - 審查、帳號（401／402／404）、400、`INVALID_JSON`、逾時一律不重試：結果不會變，重打只是再付一次錢。
       帳號錯誤要由呼叫端升級（離線整批中止、生產記 degraded），不在這裡處理。
+    - httpx 的 read 逾時（請求已送出、伺服器 60 秒沒回任何位元組）歸 `TIMEOUT`、不重試：非串流時
+      伺服器整份生成完才回本體，這時多半已在生成、會計費（見 `_json_once`）。連線／寫入逾時仍是
+      `NETWORK`（沒送到、不計費）。
+
+    **已知限制**：截斷重試與期限共用同一個 `timeout`。剩餘期限不到這次耗時的
+    `_JSON_TRUNC_RETRY_TIME_RATIO`（1.5）倍時不重試、直接回 `TRUNCATED`（detail 註明）——大上限的
+    階段（拆解 8192 token）一次就可能吃掉大半期限，這時 2 倍上限的重送在期限內幾乎跑不完，送出去
+    只會多付一次錢、再被記成 `TIMEOUT`。門檻是估的（輸出時間大致與 token 數成正比，重送至少要重新
+    生成已截斷的那一段），所以仍可能有重送後逾時的情況；反過來，單次生成超過 60 秒（read 逾時）
+    的階段在這裡拿不到結果，只能記 `TIMEOUT`。
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -1189,8 +1214,10 @@ async def complete_json(
     cur = int(max_tokens)
     attempts = 0
     usage: dict = {}
+    trunc_no_time = False
     while True:
         attempts += 1
+        started = loop.time()
         out, data = await _json_once(
             model, prompt, system=system, max_tokens=cur, user_id=user_id, deadline=deadline,
         )
@@ -1198,6 +1225,13 @@ async def complete_json(
         if out.kind is None or attempts >= budget:
             break
         if out.kind == TRUNCATED:
+            # 以 2 倍上限重送至少要重新生成已截斷的那一段：剩餘期限連這次耗時的
+            # `_JSON_TRUNC_RETRY_TIME_RATIO` 倍都不到，送出去多半只會以逾時收場、白付一次錢，
+            # 而且 degraded_reason 會被記成 timeout、蓋掉真正的原因（截斷）。
+            now = loop.time()
+            if deadline - now < _JSON_TRUNC_RETRY_TIME_RATIO * (now - started):
+                trunc_no_time = True
+                break
             cur *= 2
         elif out.kind == EMPTY:
             pass
@@ -1215,6 +1249,8 @@ async def complete_json(
     if out.kind is None:
         return JsonResult(data=data, kind=None, attempts=attempts, max_tokens=cur, usage=usage, outcome=out)
     detail = f"max_tokens={cur}" if out.kind == TRUNCATED else out.detail
+    if trunc_no_time:
+        detail += "；剩餘期限不足，未以 2 倍上限重試"
     return JsonResult(
         data=None, kind=out.kind, detail=detail, attempts=attempts, max_tokens=cur, usage=usage, outcome=out,
     )

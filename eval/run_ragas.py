@@ -71,7 +71,12 @@ from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, stream_completion  # noqa: E402
-from app.services.llm_models import is_http_model  # noqa: E402
+from app.services.llm_models import (  # noqa: E402
+    JUDGE_LINEAGE_CLAUDE,  # noqa: F401 — 以原名重新匯出（tests/test_run_ragas.py）
+    JUDGE_LINEAGE_DEEPSEEK,
+    is_http_model,
+    judge_lineage,
+)
 from app.services.query_planner import plan_queries  # noqa: E402
 from app.services.retrieval_pipeline import retrieve_context  # noqa: E402
 from app.services.scope_router import CORPUS_QA, POLICY_FOR_SCOPE, RouteDecision  # noqa: E402
@@ -512,17 +517,10 @@ def judge_provider(model: str) -> str:
     return "deepseek_http" if is_http_model(model) else "claude_cli"
 
 
-# 量尺系譜（PR-26/27）：judge 從 Claude haiku 換成 DeepSeek 時開了新系譜（計畫 D-J a：沒有 Claude
-# 對照組可以重跑，照切、門檻數值不變）。記進 config.judge.lineage 與結果檔頂層 notes（eval_compare 會
-# 印出 notes）；**刻意不放進 summary**：summary 的每個鍵都要在 METRIC_SPECS 分類，而跨系譜的比較早已由
-# META 鍵 judge_model 擋下（回 2），再加一個 META 鍵只是重複。
-JUDGE_LINEAGE_DEEPSEEK = "deepseek-2026-09"
-JUDGE_LINEAGE_CLAUDE = "claude-haiku"
-
-
-def judge_lineage(model: str) -> str:
-    """judge 屬於哪個量尺系譜：白名單（DeepSeek）是 PR-26/27 起的新系譜，其餘是 Claude 時代的舊系譜。"""
-    return JUDGE_LINEAGE_DEEPSEEK if judge_provider(model) == "deepseek_http" else JUDGE_LINEAGE_CLAUDE
+# 量尺系譜（PR-26/27；`judge_lineage` 與兩個常數定義在 app/services/llm_models.py，與
+# scripts/eval_faithfulness.py 共用，這裡以原名匯入）。記進 config.judge.lineage 與結果檔頂層 notes
+# （eval_compare 會印出 notes）；**刻意不放進 summary**：summary 的每個鍵都要在 METRIC_SPECS 分類，而跨系譜
+# 的比較早已由 META 鍵 judge_model 擋下（回 2），再加一個 META 鍵只是重複。
 
 
 def lineage_notes(model: str) -> list[str]:

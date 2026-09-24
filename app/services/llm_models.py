@@ -68,6 +68,18 @@ def is_claude_model(model: str | None) -> bool:
     return bool(model) and model.startswith("claude-")
 
 
+# judge 的量尺系譜（PR-26/27）：judge 從 Claude haiku 換成 DeepSeek 時開了新系譜（計畫 D-J a：沒有 Claude
+# 對照組可以重跑，照切、門檻數值不變）。離線評測（`eval/run_ragas.py` 記進 config.judge.lineage 與 notes）
+# 與生產忠實度的離線彙總（`scripts/eval_faithfulness.py`）共用，所以放在這個葉模組。
+JUDGE_LINEAGE_DEEPSEEK = "deepseek-2026-09"
+JUDGE_LINEAGE_CLAUDE = "claude-haiku"
+
+
+def judge_lineage(model: str | None) -> str:
+    """judge 屬於哪個量尺系譜：白名單（DeepSeek）是 PR-26/27 起的新系譜，其餘是 Claude 時代的舊系譜。"""
+    return JUDGE_LINEAGE_DEEPSEEK if is_http_model(model) else JUDGE_LINEAGE_CLAUDE
+
+
 # ── claude CLI 認證失效的辨識 ────────────────────────────────────────────────
 # 2026-09-23 起 CLI 的 OAuth 過期（`Failed to authenticate: OAuth session expired and could not be
 # refreshed`），批次的 `claude -p` 一律「退出碼 1、stderr 空、訊息在 stdout」，被當成單篇失敗逐篇

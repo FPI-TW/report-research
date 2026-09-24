@@ -684,7 +684,7 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 
 1. 確認生產沒有覆寫 judge：repo 根 `.env` 裡**不該**有 `FAITHFULNESS_MODEL=claude-…`（有的話刪掉那一行；
    CLI 已放棄，留著只會每次抽查記一筆 degraded）。`ASK_FAITHFULNESS_TIMEOUT` 若還設著 240 也一併刪掉，
-   讓它用新預設 90。
+   讓它用 DeepSeek judge 的預設 90（未設時依 judge 決定，Claude CLI judge 才是 240）。
 2. 從 repo 根 `.env` **移除** `ASK_FAITHFULNESS_ENABLED=0` 這一行（預設就是開）。
 3. 重啟 web：`sudo systemctl restart report-mark-web.service`（前端卡片文字有改，部署時照例 `make build-web`）。
 4. 問一題含數字的問題，等背景抽查跑完（數十秒內），核對：
@@ -701,8 +701,9 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 
 **degraded_reason 在 DeepSeek judge 下的意義**：`content_risk`（供應商內容審查拒答，不重試）、
 `account`（401／402／404：金鑰、餘額、模型設定；告警走上一節的 `/healthz/llm`，這裡只是抽查沒量到）、
-`truncated`（`finish_reason=length`，已用 2 倍上限重試過）、`timeout`（每次 judge 呼叫的總期限
-`ASK_FAITHFULNESS_TIMEOUT` 到了）。每個階段最多 3 個請求，一次抽查最多 6 個。
+`truncated`（`finish_reason=length`；剩餘期限夠時已用 2 倍上限重試過，不到該次耗時 1.5 倍就不重試）、
+`timeout`（每次 judge 呼叫的總期限 `ASK_FAITHFULNESS_TIMEOUT` 到了，或伺服器 60 秒沒回任何位元組——
+非串流時多半還在生成，不重送以免重複付費）、`error`（adapter 漏出的意外例外，看 web 日誌的 traceback）。每個階段最多 3 個請求，一次抽查最多 6 個。
 
 **描述性校準**（不是閘門，結果只給人看）：`uv run python scripts/judge_agreement.py --dry-run` 先看取樣數與
 估價，再正式跑（預設 60 題、花費上限 ¥15，保守單價估算）。它拿 `qa_log` 裡歷史的 haiku 判定當參考，

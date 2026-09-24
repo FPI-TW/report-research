@@ -24,6 +24,10 @@ M8 從上線起就只寫不看：這個 jsonb 欄位在 `web/`、`scripts/`、`f
 共用 `app/services/judge_schema.py` 的同一條規則，缺 `judge_model` 的舊列視為
 claude-haiku-4-5。其他 judge 的筆數列在 `other_judge_checked` 與 `by_judge`，不混進分數。
 
+**量尺系譜**（PR-26/27）：輸出標出判定尺屬於哪個系譜（`lineage`，`llm_models.judge_lineage`，與
+離線評測同一套）。比照監控卡：判定尺是 DeepSeek、窗期內還有其他判定尺的列時標「新量尺（自
+`judge_since` 起）」（`new_scale`）——切換後頭幾天樣本很小，而且分數與換尺前的不可直接比較。
+
 唯讀，不寫任何資料。
 """
 
@@ -43,6 +47,7 @@ from sqlalchemy import text  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.judge_schema import is_current_judge, judge_model_of  # noqa: E402
+from app.services.llm_models import JUDGE_LINEAGE_DEEPSEEK, judge_lineage  # noqa: E402
 
 # (表, 識別欄位)。以 dict 保留是為了 summarize／_fetch 對來源一視同仁；
 # 研報 PDF 那一半的來源表已隨功能移除（2026-09）。
@@ -88,11 +93,18 @@ def summarize(rows: list[dict], min_score: float, *, judge_model: str | None = N
         for r in checked
         if (n := _num(r["evaluation"].get("numeric_support_rate"))) is not None
     ]
+    other = len(all_checked) - len(checked)
+    lineage = judge_lineage(judge)
     return {
         "judge_model": judge,
+        "lineage": lineage,
+        # 窗期內現行 judge 最早的一筆（日期）；與監控卡的 judge_since 同義。
+        "judge_since": min((str(r["created_at"])[:10] for r in checked), default=None),
+        # 比照監控卡：DeepSeek 系譜且窗期內還有其他判定尺的列＝剛換尺（frontend/src/features/monitor/judgeScale.ts）。
+        "new_scale": lineage == JUDGE_LINEAGE_DEEPSEEK and other > 0,
         "total": total,
         "checked": len(checked),
-        "other_judge_checked": len(all_checked) - len(checked),
+        "other_judge_checked": other,
         "by_judge": dict(sorted(by_judge.items())),
         "degraded": len(degraded),
         "scored": len(scores),
@@ -187,12 +199,21 @@ def _print_claims(kind: str, data: dict) -> None:
         print(f"  {mark}{num} {i:>2}. {(c.get('text') or '')[:90]}")
 
 
+def _scale_label(a: dict) -> str:
+    """判定尺的系譜說明；剛換成 DeepSeek 時比照監控卡標新量尺（日期由資料得出）。"""
+    label = f"系譜 {a['lineage']}"
+    if a["new_scale"]:
+        since = f"自 {a['judge_since']} 起" if a["judge_since"] else "尚無查核"
+        label += f"；新量尺，{since}，分數與換尺前的不可直接比較"
+    return label
+
+
 def _print_report(agg: dict, worst_rows: dict, min_score: float, days: int) -> None:
     print(f"M8 忠實度查核（近 {days} 天，門檻 {min_score}）")
     for kind, label in (("qa", "問答"),):
         a = agg[kind]
-        print(f"\n[{label}] 判定尺 {a['judge_model']}　總數 {a['total']}　已查核 {a['checked']}　"
-              f"fail-open {a['degraded']}　有分數 {a['scored']}")
+        print(f"\n[{label}] 判定尺 {a['judge_model']}（{_scale_label(a)}）　總數 {a['total']}　"
+              f"已查核 {a['checked']}　fail-open {a['degraded']}　有分數 {a['scored']}")
         if a["other_judge_checked"]:
             others = "、".join(f"{k} {v}" for k, v in a["by_judge"].items() if k != a["judge_model"])
             print(f"  另有 {a['other_judge_checked']} 筆其他判定尺的結果未計入（{others}）")

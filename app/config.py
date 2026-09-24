@@ -19,6 +19,7 @@ from app.services.llm_models import (
     TASK_FAITHFULNESS,
     TASK_QA_PLANNER,
     default_model,
+    is_http_model,
     provider,
     resolve_model,
 )
@@ -124,6 +125,24 @@ def _budget_currency() -> str:
         logging.getLogger(__name__).warning("LLM_BUDGET_CURRENCY=%r 不是三碼幣別，退回 CNY", raw)
         return "CNY"
     return raw
+
+
+# 問答抽查逾時的預設值依 judge 走哪條路而定（見 `_load` 裡 ask_faithfulness_timeout 的註解）。
+ASK_FAITHFULNESS_TIMEOUT_HTTP = 90.0
+ASK_FAITHFULNESS_TIMEOUT_CLI = 240.0
+
+
+def _ask_faithfulness_timeout(judge_model: str) -> float:
+    """`ASK_FAITHFULNESS_TIMEOUT` 有設就用它；沒設時 DeepSeek judge 90、Claude CLI judge 240。
+
+    預設值不能不分 provider：若有人把 `FAITHFULNESS_MODEL` 設回 claude-*（或 `LLM_PROVIDER=claude_cli`），
+    固定 90 秒會讓 CLI 的 grounding（單次實測 48–142 秒）大半記成 degraded(timeout)，而且沒有任何訊號
+    說是逾時值跟錯了 judge。空字串視同未設。
+    """
+    raw = (os.getenv("ASK_FAITHFULNESS_TIMEOUT") or "").strip()
+    if raw:
+        return float(raw)
+    return ASK_FAITHFULNESS_TIMEOUT_HTTP if is_http_model(judge_model) else ASK_FAITHFULNESS_TIMEOUT_CLI
 
 
 def _faithfulness_min() -> float:
@@ -323,16 +342,21 @@ def _load() -> Settings:
         faithfulness_timeout=float(os.getenv("FAITHFULNESS_TIMEOUT", "60")),
         # 問答抽查的逾時（每次 judge 呼叫＝一個階段的一次 `llm_http.complete_json`，涵蓋其內
         # 最多 2 個請求與退避的總期限），與 `faithfulness_timeout` 分開。
-        # PR-26/27 依 DeepSeek 重訂為 90（第二版計畫 §6.4：max(ceil(3×p99), 60)，沒有 judge 的 p99
+        # 預設值依 judge 走哪條路而定（`_ask_faithfulness_timeout`，以 `is_http_model(faithfulness_model)`
+        # 判斷）：DeepSeek 90、Claude CLI 240；顯式設了 ASK_FAITHFULNESS_TIMEOUT 就照設的值。
+        # DeepSeek 的 90 是 PR-26/27 重訂的（第二版計畫 §6.4：max(ceil(3×p99), 60)，沒有 judge 的 p99
         # 就用探測資料保守估）：
         #   - 9/24 探測 deepseek-flash、thinking 關：問答（輸入同為 ≤20k 字脈絡、輸出 ~1k token，
         #     與 grounding 的 payload 同量級）p50 5.6／p95 7.0 秒；judge 非串流、輸出更短。
         #   - 沒有 p99：保守取 p99≈2×p95＝14 秒；一次呼叫最多 2 個請求（截斷重試的輸出上限加倍），
         #     單次上限≈2×14＝28 秒；×3＝84 → 取整 90，且 > FAITHFULNESS_TIMEOUT（60）。
-        # CLI 時代的 240（ground 單次實測 48–142 秒）只對 claude_cli 有意義；若改回 Claude judge，
-        # 要同時把這個值設回 240。上線後以 evaluation.elapsed_ms 重量，照同一條公式重訂。
+        # CLI 的 240 沿用 CLI 時代（ground 單次實測 48–142 秒）。
+        # 上線後以日誌 `llm_call task=faithfulness` 的 `total_ms` 重量（每次 judge 呼叫一行，正是這個
+        # 期限涵蓋的範圍；那一行的 total_ms 是最後一個請求的耗時，`attempts=1` 時即整次呼叫，
+        # `attempts=2` 的行要另外看），照同一條公式重訂。**不要拿 `evaluation.elapsed_ms`**：它是
+        # 整次抽查（拆解＋grounding 兩次 judge 呼叫、加上兩者之間的處理），約是單次的兩倍，會把期限估大。
         # 抽查是背景任務、不佔 `/api/ask` 名額，逾時只會記 degraded(timeout)，不是低分。
-        ask_faithfulness_timeout=float(os.getenv("ASK_FAITHFULNESS_TIMEOUT", "90")),
+        ask_faithfulness_timeout=_ask_faithfulness_timeout(resolve_model(TASK_FAITHFULNESS)),
         # 抽查改成背景任務後就不再受 `/api/ask` 的併發閘保護：每次抽查要跑兩個 judge 階段
         # （CLI 時代每次 spawn 一個 `claude` 跑 48–142 秒；DeepSeek 下最多 6 個請求），抽樣率預設
         # 1.0，連續問答時背景任務數會無上界地累積。這裡給它自己的上限——超過就**跳過該次抽查**而不是排隊：抽查本來就是

@@ -27,7 +27,7 @@
   uv run python scripts/generate_brief.py --date 2026-08-05
 
 退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（未知模型名、
-缺金鑰、DeepSeek 401／402／模型不存在）、75 claude CLI 被其他批次佔用。
+缺金鑰、DeepSeek 401／402／模型不存在、claude CLI 認證失效）、75 claude CLI 被其他批次佔用。
 """
 
 from __future__ import annotations
@@ -55,7 +55,13 @@ from app.services.db import SessionFactory  # noqa: E402
 from app.services.llm_models import TASK_BRIEF, is_http_model, resolve_model  # noqa: E402
 from app.services.reading.queries import fetch_instrument_names  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
-from scripts._claude_cli import CliNotFoundError, error_kind, record_usage, run_claude  # noqa: E402
+from scripts._claude_cli import (  # noqa: E402
+    CliNotFoundError,
+    cli_auth_error,
+    error_kind,
+    record_usage,
+    run_claude,
+)
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,12 +108,22 @@ def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optio
     收場）。CLI 路徑刻意**不**改用 `run_claude`：本檔的 CLI 版把 claude 不在 PATH 當成「這一天產生
     失敗」（rc=1），`run_claude` 會拋 `CliNotFoundError`（rc=2）——換過去會改變生產行為（rc=2 讓排程
     殼另外保留 hashes），不在這次遷移的範圍。
+
+    **例外是 claude CLI 認證失效**（OAuth 過期等，`_claude_cli.cli_auth_error`）：拋 `LlmEnvironmentError`，
+    main 以 rc=2 收場、不寫 brief_failures.log——與 DeepSeek 401 同一類（rc=2 本來就是「LLM 帳號層級
+    錯誤」），不是「這一天產生失敗」。2026-09-23 起 CLI 永久停用，這時真正要修的通常是環境檔沒讓本段
+    解析到 DeepSeek；記成 rc=1 的單日失敗會把它藏進每日雜訊裡。
     """
     if is_http_model(model):
         res = run_claude(prompt, model, timeout=timeout, max_tokens=MAX_TOKENS, meta={"task": TASK_BRIEF})
         return res.text, res.error
     t0 = time.monotonic()
-    raw, error = _spawn_cli(prompt, model, timeout)
+    try:
+        raw, error = _spawn_cli(prompt, model, timeout)
+    except CliNotFoundError:
+        record_usage(meta={"task": TASK_BRIEF}, backend="cli", model_req=model, prompt=prompt, kind="auth",
+                     total_ms=int((time.monotonic() - t0) * 1000))
+        raise
     # 用量記錄 CLI 路徑也寫（tokens 為 null），與 run_claude 同一份檔、同一組欄位
     kind = None if error is None else "timeout" if error.startswith("CLI 逾時") else "cli_error"
     record_usage(meta={"task": TASK_BRIEF}, backend="cli", model_req=model, prompt=prompt, kind=kind,
@@ -116,7 +132,7 @@ def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optio
 
 
 def _spawn_cli(prompt: str, model: str, timeout: int) -> tuple[Optional[str], Optional[str]]:
-    """spawn `claude -p`（簡報自己的 CLI 版，遷移前的 call_cli 本體）。"""
+    """spawn `claude -p`（簡報自己的 CLI 版，遷移前的 call_cli 本體；認證失效改為拋出，見 call_cli）。"""
     try:
         proc = subprocess.run(
             build_cli_args(prompt, model),
@@ -132,6 +148,9 @@ def _spawn_cli(prompt: str, model: str, timeout: int) -> tuple[Optional[str], Op
     except Exception as exc:  # noqa: BLE001 - 失敗原因要能寫進 log
         return None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}"
     if proc.returncode != 0:
+        auth = cli_auth_error(proc.stdout, proc.stderr)
+        if auth is not None:
+            raise auth
         tail = (proc.stderr or "").strip().replace("\n", " ")[-200:]
         return None, f"CLI 退出碼 {proc.returncode}：{tail or '（無 stderr）'}"
     return proc.stdout, None

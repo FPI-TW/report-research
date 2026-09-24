@@ -255,6 +255,66 @@ class RunClaudeTests(unittest.TestCase):
         self.assertIn("Credit balance", rate_err)
 
 
+class CliAuthFailureTests(unittest.TestCase):
+    """claude CLI 認證失效＝環境壞了：拋 `LlmEnvironmentError`（整批 rc=2），不是單篇失敗（9/23 事故）。"""
+
+    # 實際見過或 CLI 固定措辭的幾種；stdout 與 stderr 都要認
+    AUTH_OUTPUTS = (
+        "Failed to authenticate: OAuth session expired and could not be refreshed",
+        "Failed to authenticate. API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\","
+        "\"message\":\"OAuth token has expired.\"}}",
+        "Invalid API key · Please run /login",
+        "Not logged in · Please run /login",
+        "OAuth token has expired. Please obtain a new token or refresh your existing token.",
+    )
+
+    def _run(self, rc, stdout, stderr):
+        done = subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
+        with mock.patch.object(cc.subprocess, "run", return_value=done):
+            return cc.run_claude("p", "claude-haiku-4-5")
+
+    def test_auth_failure_on_stdout_or_stderr_aborts(self):
+        for text in self.AUTH_OUTPUTS:
+            for stdout, stderr in ((text + "\n", ""), ("", text + "\n")):
+                with self.subTest(text=text[:30], where="stdout" if stdout else "stderr"):
+                    with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+                        self._run(1, stdout, stderr)
+                    self.assertIsInstance(ctx.exception, cc.CliNotFoundError)  # 各批次 main 的 rc=2 接法
+                    msg = str(ctx.exception)
+                    self.assertIn("認證失效", msg)
+                    self.assertIn("/etc/default/report-mark-llm", msg)
+                    self.assertIn("LLM_PROVIDER=deepseek", msg)
+                    self.assertNotIn("\n", msg)
+
+    def test_other_nonzero_exits_stay_per_file(self):
+        for stdout, stderr in (("", "usage: unknown flag"), ("", "Credit balance is too low"),
+                               ("", "API Error: 529 Overloaded"), ("HTTP 401 somewhere else", "")):
+            with self.subTest(stderr=stderr, stdout=stdout):
+                res = self._run(1, stdout, stderr)
+                self.assertIsNone(res.text)
+                self.assertTrue(res.error.startswith("CLI 退出碼 1"), res.error)
+
+    def test_exit_zero_is_output_even_if_it_mentions_auth(self):
+        """成功退出的 stdout 是模型的回答，內文談到 API 金鑰也不是認證失效。"""
+        res = self._run(0, "Invalid API key 是常見的設定錯誤", "")
+        self.assertEqual(res.text, "Invalid API key 是常見的設定錯誤")
+
+    def test_stdout_tail_when_stderr_is_empty(self):
+        """stderr 空時帶出 stdout 的尾巴：9/23 的 log 只剩「（無 stderr）」，完全看不出原因。"""
+        res = self._run(1, "some other failure on stdout\n", "")
+        self.assertIn("some other failure on stdout", res.error)
+        self.assertIn("無 stderr", res.error)
+
+    def test_usage_row_kind_auth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "usage.jsonl"
+            with mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(log)}):
+                with self.assertRaises(cc.LlmEnvironmentError):
+                    self._run(1, self.AUTH_OUTPUTS[0], "")
+            rows = [json.loads(ln) for ln in log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([(r["backend"], r["kind"]) for r in rows], [("cli", "auth")])
+
+
 class HttpDispatchTests(_HttpCase):
     """白名單 model 走 `llm_http.complete_chat`，其餘照舊 spawn CLI（第二版計畫 §4.3）。"""
 

@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -313,6 +314,55 @@ class AccountErrorAbortsWholeBatchTests(HttpMixin, unittest.TestCase):
         self.assertTrue(issubclass(cc.LlmEnvironmentError, cc.CliNotFoundError))
         for mod in (gs, gt, et, es, tac, snr, gb):
             self.assertIs(mod.CliNotFoundError, cc.CliNotFoundError, mod.__name__)
+
+
+CLAUDE = "claude-haiku-4-5"
+# 2026-09-23 事故的實際輸出：退出碼 1、stderr 空、訊息在 stdout（見 _claude_cli「兩類失敗刻意分流」）
+CLI_AUTH_OUTPUT = "Failed to authenticate: OAuth session expired and could not be refreshed\n"
+
+
+class CliAuthAbortsWholeBatchTests(HttpMixin, unittest.TestCase):
+    """claude CLI 認證失效：每支批次（含簡報自己的 CLI 分支）整批 rc=2，不記跳過名單、不寫單篇失敗紀錄。
+
+    修正前是「CLI 退出碼 1：（無 stderr）」逐篇記成單篇失敗、腳本層再重試、整批 rc=0——9/23、9/24
+    兩天沒有任何研報入庫、排程殼看起來一切正常。
+    """
+
+    def test_every_batch_main_exits_2(self):
+        spawned: list[list[str]] = []
+
+        def fake_run(argv, **kw):
+            spawned.append(argv)
+            return subprocess.CompletedProcess(argv, 1, CLI_AUTH_OUTPUT, "")
+
+        for name in BATCHES:
+            with self.subTest(batch=name), mock.patch.object(sys.modules[__name__], "DS", CLAUDE), \
+                    mock.patch.object(cc.subprocess, "run", side_effect=fake_run):
+                spawned.clear()
+                self.install(lambda req: (_ for _ in ()).throw(AssertionError("CLI 模型不該打 HTTP")))
+                code, rec, out = self.main_rc(name)
+                self.assertEqual(code, 2, out)
+                self.assertEqual(rec.recorded, [], "認證失效不記跳過名單")
+                self.assertIn("認證失效", out)
+                self.assertIn("/etc/default/report-mark-llm", out)
+                self.assertIn("LLM_PROVIDER=deepseek", out)
+                limit = N_ITEMS if name == "tag_all" else 2 if name in PARALLEL else 1
+                self.assertGreaterEqual(len(spawned), 1)
+                self.assertLessEqual(len(spawned), limit, f"{N_ITEMS} 篇只該打到第一篇就中止（不做腳本層重試）")
+                self.assertEqual(spawned[0][:2], ["claude", "-p"])
+                logs = [p for p in self.tmp.glob("*.log") if p.stat().st_size]
+                self.assertEqual(logs, [], "不寫單篇失敗紀錄")
+
+    def test_stderr_auth_message_also_aborts(self):
+        for stdout, stderr in (("", "Invalid API key · Please run /login"),
+                               ('API Error: 401 {"error":{"type":"authentication_error"}}', "")):
+            with self.subTest(stderr=stderr[:20]), \
+                    mock.patch.object(cc.subprocess, "run",
+                                      return_value=subprocess.CompletedProcess([], 1, stdout, stderr)):
+                with self.assertRaises(cc.LlmEnvironmentError):
+                    cc.run_claude("p", CLAUDE)
+                with self.assertRaises(cc.LlmEnvironmentError):
+                    gb.call_cli("p", CLAUDE)
 
 
 class HttpSuccessThroughBatchesTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
@@ -938,12 +988,14 @@ class BriefCliPathTests(HttpMixin, unittest.TestCase):
             (sp.CompletedProcess([], 0, "## 今日重點\n- 一", ""), None),
             (sp.TimeoutExpired("claude", 300), "timeout"),
             (sp.CompletedProcess([], 1, "", "boom"), "cli_error"),
+            (sp.CompletedProcess([], 1, CLI_AUTH_OUTPUT, ""), "auth"),  # 認證失效：拋出前照樣寫一行
         )
         for outcome, kind in cases:
             with self.subTest(kind=kind):
                 self.usage.unlink(missing_ok=True)
                 effect = {"side_effect": outcome} if isinstance(outcome, BaseException) else {"return_value": outcome}
-                with mock.patch.object(gb.subprocess, "run", **effect):
+                with mock.patch.object(gb.subprocess, "run", **effect), \
+                        contextlib.suppress(cc.LlmEnvironmentError):
                     gb.call_cli("素材", "claude-sonnet-5")
                 rows = self.rows()
                 self.assertEqual(len(rows), 1, rows)

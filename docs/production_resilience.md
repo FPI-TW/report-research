@@ -542,7 +542,18 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 `scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的
 鍵），並在取批次鎖之前預檢——有白名單模型卻沒金鑰、
 有未知模型名、或檔內有重複的鍵，一律 **rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
-執行）。全部用 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
+執行）。全部用 Claude 時不要求金鑰；但這份檔不存在或讀不到時印一行 `WARNING`（不中止）——claude CLI
+已於 2026-09-23 停用（OAuth 過期），「全部是 Claude＋檔沒讀到」幾乎一定是切 DeepSeek 沒生效。通過時印
+`fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
+
+**claude CLI 認證失效＝整批中止**：CLI 回報認證失敗（`Failed to authenticate`、`OAuth … expired`、
+`Invalid API key`、`Please run /login` 等，stdout 與 stderr 都看；9/23 的實況是退出碼 1、stderr 空、
+訊息在 stdout）時，各批次（含 `generate_brief` 自己的 CLI 分支）整批 **rc=2**，訊息「claude CLI 認證
+失效；若已切 DeepSeek，檢查 /etc/default/report-mark-llm 是否生效（LLM_PROVIDER=deepseek）」，不記跳過
+名單、不寫單篇失敗紀錄；用量記錄的 `kind` 是 `auth`。修正前它被當成「CLI 退出碼 1：（無 stderr）」逐篇
+記錄、整批 rc=0，9/23、9/24 兩天沒有研報入庫而排程看起來一切正常。線上（`/api/ask` 的 CLI 路徑）同一
+樣式歸 `kind="auth"`、不重試，使用者看到「模型服務帳號異常」。處置：確認該段解析到 DeepSeek（這份檔、
+`LLM_PROVIDER`），再照「整批中止後的重放」補跑。
 **重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用
 不同的金鑰，所以直接拒跑。
 
@@ -767,7 +778,8 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 
 處置步驟（在主 checkout 執行；從 worktree 跑不與排程互斥）：
 
-1. 排除中止原因。rc=2 的來源：claude CLI 找不到（`CliNotFoundError`，見上面 PATH 的兩次漂移），或 DeepSeek 帳號層級錯誤（`LlmEnvironmentError`：401 金鑰、402 餘額、模型不存在；中止訊息以 `API[auth]`／`API[quota]`／`API[config]` 開頭）。**LLM 帳號型中止（例如餘額不足 402）的處置是儲值，絕不把 model 改成 Claude 繞過**——那等於繞過預算。
+1. 排除中止原因。rc=2 的來源：claude CLI 找不到（`CliNotFoundError`，見上面 PATH 的兩次漂移）、claude CLI
+   認證失效（訊息以「claude CLI 認證失效」開頭，見「DeepSeek 金鑰落點與輪替」一節），或 DeepSeek 帳號層級錯誤（`LlmEnvironmentError`：401 金鑰、402 餘額、模型不存在；中止訊息以 `API[auth]`／`API[quota]`／`API[config]` 開頭）。**LLM 帳號型中止（例如餘額不足 402）的處置是儲值，絕不把 model 改成 Claude 繞過**——那等於繞過預算。
 2. 停排程，免得重放途中被下一輪搶鎖或覆寫：`sudo systemctl stop report-mark-sync.timer`。
 3. 依殼印出的順序（舊→新）逐份重放 delta，**每重放一份就立刻用它自己的 `--hashes-out` 補跑三段**，再換下一份：
 

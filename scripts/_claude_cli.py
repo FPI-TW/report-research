@@ -26,6 +26,11 @@
       下面「回具體訊息」那條路徑、被當成單篇失敗。後果是 7 篇研報記成 skip_untagged
       而整批 rc=0。**概念對、述詞太窄**：要問的是「這顆二進位在這個環境裡有沒有可能
       跑起來」，不是「它存不存在」。
+  - **claude CLI 認證失效**（OAuth 過期、金鑰無效、要重新 /login）同樣往上拋（`LlmEnvironmentError`）。
+    2026-09-23 起 OAuth 過期，`claude -p` 一律「退出碼 1、stderr 空、訊息在 stdout」，於是每一篇都被
+    記成「CLI 退出碼 1：（無 stderr）」的單篇失敗、腳本層再重試兩次、整批 rc=0——四天停擺的同一型態，
+    而且環境檔沒生效（該切 DeepSeek 卻還在用 Claude）時看起來一模一樣。辨識樣式與線上共用
+    （`llm_models.looks_like_cli_auth_error`），stdout 與 stderr 都看。
   - 其餘（逾時／非零退出／OSError…）回具體訊息，讓各自的 *_failures.log 說得出真因。
 
 ## DeepSeek 分派（遷移 PR-12）
@@ -105,7 +110,7 @@ tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, t
 摘要、標題、標籤不在 DB 記產出模型，靠這裡的 `file_hash` 回溯；費用真值看餘額差分，這份只拿來
 歸因。規則：
   - CLI 路徑 `tokens` 為 null（CLI 不回報用量）；`kind` 是 null（成功）、`timeout`、`unrunnable`
-    （`CliNotFoundError`）或 `cli_error`。
+    （`CliNotFoundError`）、`auth`（CLI 認證失效）或 `cli_error`。
   - HTTP 路徑沒收到 usage（失敗在第一個 chunk 之前）時 `tokens` 為 null；收到了但沒有
     `completion_tokens_details`（thinking 關時就是這樣，9/24 探測實測）時 `reasoning` 記 **0**
     ——thinking 關著，推理 token 就是 0，不是「不知道」。
@@ -127,7 +132,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 
 from app.services import llm_failures, llm_http
-from app.services.llm_models import is_http_model
+from app.services.llm_models import is_http_model, looks_like_cli_auth_error
 from scripts._llm_env import BREAKER_TTL_S, ROOT, breaker_path, sync_round_id
 
 # stderr 只留尾巴：完整 stderr 可能很長，而失敗記錄是給人掃讀的。200 字元夠容納
@@ -209,6 +214,26 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
     """
     prompt = prompt.replace("\x00", "")
     return ["claude", "-p", prompt, "--model", model, "--setting-sources", "", "--strict-mcp-config", "--tools", ""]
+
+
+# claude CLI 認證失效時的中止訊息（`cli_auth_error`）。CLI 已於 2026-09 永久停用：認證失效最常見的
+# 真因不是「要重新登入」，而是該切 DeepSeek 的段還解析到 Claude（環境檔沒被讀到）。
+CLI_AUTH_HINT = (
+    "claude CLI 認證失效；若已切 DeepSeek，檢查 /etc/default/report-mark-llm 是否生效"
+    "（LLM_PROVIDER=deepseek；手動執行要以 kashionz 身分、讀得到該檔）"
+)
+
+
+def cli_auth_error(stdout: Optional[str], stderr: Optional[str]) -> Optional["LlmEnvironmentError"]:
+    """非零退出的 CLI 輸出若是認證失效，回要拋的例外（呼叫端 `raise`）；否則 None。
+
+    stdout 與 stderr 都看：`claude -p` 純文字模式把認證錯誤印在 stdout（9/23 的 log 全是「無 stderr」）。
+    """
+    for text in (stderr, stdout):
+        if looks_like_cli_auth_error(text):
+            tail = (text or "").strip().replace("\n", " ")[:STDERR_TAIL_CHARS]
+            return LlmEnvironmentError(f"{CLI_AUTH_HINT}。CLI 輸出：{tail}")
+    return None
 
 
 # 傳輸層退避用的 sleep；測試把它換成記錄器，免得真的等 2／6 秒。
@@ -518,8 +543,10 @@ def run_claude(
     t0 = time.monotonic()
     try:
         res = _run_cli(prompt, model, timeout, cwd)
-    except CliNotFoundError:
-        record_usage(meta=meta, backend="cli", model_req=model, prompt=prompt, kind="unrunnable",
+    except CliNotFoundError as exc:
+        # LlmEnvironmentError 在 CLI 路徑只可能是認證失效（`cli_auth_error`）
+        kind = "auth" if isinstance(exc, LlmEnvironmentError) else "unrunnable"
+        record_usage(meta=meta, backend="cli", model_req=model, prompt=prompt, kind=kind,
                      total_ms=int((time.monotonic() - t0) * 1000))
         raise
     record_usage(meta=meta, backend="cli", model_req=model, prompt=prompt, kind=_cli_kind(res),
@@ -556,7 +583,7 @@ def _run_http(
 
 
 def _run_cli(prompt: str, model: str, timeout: int, cwd: str) -> CliResult:
-    """spawn `claude -p`（遷移前的 `run_claude` 本體，未改動）。"""
+    """spawn `claude -p`（遷移前的 `run_claude` 本體；之後只加了認證失效的中止與 stdout 尾巴）。"""
     try:
         r = subprocess.run(
             build_cli_args(prompt, model),
@@ -581,6 +608,13 @@ def _run_cli(prompt: str, model: str, timeout: int, cwd: str) -> CliResult:
     except Exception as exc:  # noqa: BLE001 — 失敗原因要能寫進 log
         return CliResult(None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}")
     if r.returncode != 0:
+        auth = cli_auth_error(r.stdout, r.stderr)
+        if auth is not None:
+            raise auth  # 每一篇都會踩到：整批中止（見模組 docstring「兩類失敗刻意分流」）
         tail = (r.stderr or "").strip().replace("\n", " ")[-STDERR_TAIL_CHARS:]
+        if not tail:
+            # stderr 空時看 stdout：CLI 有些錯誤只印在那裡（9/23 的 log 只剩「無 stderr」）
+            out_tail = (r.stdout or "").strip().replace("\n", " ")[-STDERR_TAIL_CHARS:]
+            tail = f"（無 stderr）stdout：{out_tail}" if out_tail else ""
         return CliResult(None, f"CLI 退出碼 {r.returncode}：{tail or '（無 stderr）'}")
     return CliResult(r.stdout, None)

@@ -27,6 +27,8 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
     kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
     （或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。批次（`run_claude`、`generate_brief`）與
     評測（`stream_completion`）都依白名單分派到 DeepSeek（遷移 PR-12 起），所以兩種入口同一套規則。
+  - （只警告、不中止）全部解析成 Claude，而環境檔不存在或讀不到：CLI 已於 2026-09-23 停用，這幾乎
+    一定是切換沒生效；印一行 WARNING（`_warn_if_claude_without_env_file`）。
   - 本段會用到白名單模型，而 `data/.llm_breaker`（批次斷路器的標記，`scripts/_claude_cli.py`）
     還有效：前一段剛因 DeepSeek 大量逾時／過載而中止，這一段再跑只是每篇等到逾時。
     只看「會不會用到 HTTP」，全部用 Claude 的段不受影響（審查 L9）。「有效」的定義見下一節。
@@ -221,6 +223,25 @@ def _missing_key_hint(path: Path) -> str:
     return f"{path} 沒有填 {KEY}：用 sudoedit 填（不要 echo／tee，也不要 source 這個檔）"
 
 
+def _warn_if_claude_without_env_file(names: list[str], path: object) -> None:
+    """全部解析成 Claude、而 LLM 環境檔不存在或讀不到：印一行醒目的 WARNING（不中止）。
+
+    claude CLI 已於 2026-09-23 起永久停用（OAuth 過期、D-C）；生產的批次應該經這份檔解析到 DeepSeek。
+    「檔沒讀到＋全是 Claude」幾乎一定是切換沒生效（手動執行的身分讀不到 0640 的檔、檔沒裝），接下來
+    每一篇都會撞 CLI 認證失效。不中止：CLI 仍可用的環境（開發機、`claude_only` 回退）照跑，真的撞到
+    認證失效時 `_claude_cli.cli_auth_error` 會整批 rc=2。
+    """
+    err = _STATE.get("error")
+    if not names or not err:
+        return
+    why = {"missing": "不存在", "permission": "讀不到（PermissionError）"}.get(str(err), f"讀取失敗（{err}）")
+    _say(
+        f"WARNING：本段模型全部解析成 Claude（{', '.join(names)}），而 {path} {why}。"
+        "claude CLI 已停用；若已切 DeepSeek，這一段的 LLM_PROVIDER=deepseek 沒有生效——檢查該檔是否安裝、"
+        "是否以 kashionz 執行"
+    )
+
+
 def _model_source(task: str | None, model: str) -> str:
     """說出這個模型名是從哪裡來的：任務旋鈕、`LLM_PROVIDER` 的預設表，或 `--model`。"""
     knob = TASK_ENV.get(task or "")
@@ -257,6 +278,7 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
     _warn_if_not_deploy_root()
     http = [m for m in names if is_http_model(m)]
     if not http:
+        _warn_if_claude_without_env_file(names, path)
         return
     tripped = _fresh_breaker()
     if tripped:

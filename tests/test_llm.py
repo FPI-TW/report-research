@@ -126,6 +126,8 @@ class RunAttemptInitToolsTests(unittest.IsolatedAsyncioTestCase):
 #   silent   什麼都不吐就卡住（模擬沒吐字就逾時）
 #   full     吐字後送 result（正常結束）
 #   overload result 事件帶 is_error（模擬 529）
+#   auth     result 事件帶 is_error、文字是認證失效（2026-09-23 的 OAuth 過期）
+#   auth_ok  同上但 result 沒標 is_error（不論 CLI 怎麼標，都不能當答案）
 _FAKE_BEHAVIOR_SCRIPT = r'''
 import sys, json, time
 sys.stdin.buffer.read()
@@ -139,6 +141,9 @@ if mode == "full":
     sys.stdout.write(json.dumps({"type": "result"}) + "\n")
 elif mode == "overload":
     sys.stdout.write(json.dumps({"type": "result", "is_error": True, "result": "API Error: 529 Overloaded"}) + "\n")
+elif mode in ("auth", "auth_ok"):
+    msg = "Failed to authenticate: OAuth session expired and could not be refreshed"
+    sys.stdout.write(json.dumps({"type": "result", "is_error": mode == "auth", "result": msg}) + "\n")
 else:
     time.sleep(30)
 '''
@@ -189,6 +194,40 @@ class StreamCompletionSignalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(exc.partial, False)
         exc = llm.LLMUnavailableError("x", kind="quota", partial=True, reason="api_error")
         self.assertEqual((exc.kind, exc.partial, exc.reason), ("quota", True, "api_error"))
+
+    async def test_cli_auth_failure_is_kind_auth(self):
+        """CLI 認證失效：kind=auth（/api/ask 回「帳號異常」），result 沒標 is_error 也一樣。"""
+        for mode in ("auth", "auth_ok"):
+            with self.subTest(mode=mode):
+                with self.assertRaises(llm.LLMUnavailableError) as cm:
+                    await self._run(mode)
+                self.assertEqual(cm.exception.kind, "auth")
+                self.assertEqual(cm.exception.reason, llm.UNAVAILABLE_API_ERROR)
+                self.assertIn("認證失效", str(cm.exception))
+
+    async def test_cli_auth_failure_is_not_retried(self):
+        from unittest import mock
+
+        calls = []
+
+        async def fake_attempt(cmd, prompt, timeout, allow_web=None, meta=None):
+            calls.append(1)
+            yield ("__error__", "Invalid API key · Please run /login", llm.UNAVAILABLE_API_ERROR)
+
+        with mock.patch.object(llm, "_run_attempt", fake_attempt), \
+                mock.patch.object(llm.asyncio, "sleep", mock.AsyncMock()):
+            with self.assertRaises(llm.LLMUnavailableError) as cm:
+                [c async for c in llm.stream_completion("x", model="claude-haiku-4-5", retries=2)]
+        self.assertEqual(len(calls), 1, "認證失效重試無益")
+        self.assertEqual(cm.exception.kind, "auth")
+
+    def test_auth_kind_reaches_answer_and_ask_error_detail(self):
+        from app.services import answer
+        from web.routers import ask
+
+        exc = llm.LLMUnavailableError("claude CLI 認證失效", reason=llm.UNAVAILABLE_API_ERROR, kind="auth")
+        self.assertEqual(answer._llm_error_kind(exc), "auth")
+        self.assertIn("帳號異常", ask._llm_error_detail(exc))
 
     async def test_cli_failure_leaves_kind_unclassified(self):
         with self.assertRaises(llm.LLMUnavailableError) as cm:

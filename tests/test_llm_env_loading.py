@@ -368,6 +368,50 @@ class RequireTests(_EnvFileCase):
         self.assertIn("sudoedit", out)
 
 
+class ClaudeWithoutEnvFileWarningTests(_EnvFileCase):
+    """全部解析成 Claude＋LLM 環境檔不存在或讀不到：印一行醒目的 WARNING、不中止（CLI 已於 9/23 停用，
+    這幾乎一定是切 DeepSeek 沒生效）。"""
+
+    def test_missing_file_warns_but_passes(self):
+        le.load_llm_env()
+        code, out = self.require({"summary": "claude-sonnet-5", "title": "claude-sonnet-5"})
+        self.assertIsNone(code)
+        self.assertIn("WARNING", out)
+        self.assertIn(str(self.path), out)
+        self.assertIn("不存在", out)
+        self.assertIn("LLM_PROVIDER=deepseek", out)
+        self.assertEqual(len([ln for ln in out.splitlines() if "WARNING" in ln]), 1, "一行就好")
+
+    def test_unreadable_file_warns(self):
+        self.write("LLM_PROVIDER=deepseek\n")
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+            le.load_llm_env()
+        code, out = self.require(["claude-haiku-4-5"])
+        self.assertIsNone(code)
+        self.assertIn("WARNING", out)
+        self.assertIn("PermissionError", out)
+
+    def test_readable_file_is_quiet(self):
+        self.write("SOMETHING=1\n")
+        le.load_llm_env()
+        code, out = self.require(["claude-haiku-4-5"])
+        self.assertIsNone(code)
+        self.assertNotIn("WARNING", out)
+
+    def test_no_models_is_quiet(self):
+        le.load_llm_env()
+        code, out = self.require({"brief": None})
+        self.assertIsNone(code)
+        self.assertNotIn("WARNING", out)
+
+    def test_http_segment_does_not_get_the_claude_warning(self):
+        """有 DeepSeek 模型的段照原本的金鑰規則（缺檔就 rc=2），不另印這一行。"""
+        le.load_llm_env()
+        code, out = self.require(["deepseek-flash", "claude-haiku-4-5"])
+        self.assertEqual(code, 2)
+        self.assertNotIn("WARNING", out)
+
+
 class HttpModelPrecheckTests(_EnvFileCase):
     """批次與評測都依白名單分派（遷移 PR-12 起）：DeepSeek 名稱只要有金鑰就放行；缺金鑰時 rc=2，
     並說出是哪個旋鈕（或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。"""

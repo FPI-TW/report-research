@@ -17,7 +17,7 @@ from datetime import date
 from typing import Optional
 
 from app.services.llm_models import TASK_SIGNAL, resolve_model
-from app.services.zh_hant import to_traditional
+from app.services.zh_hant import lookup_key, to_traditional
 
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（承載可追溯性、供重跑比較）
 EXTRACTION_VERSION = "sig-2026-07-15.v1"
@@ -103,10 +103,15 @@ _CURRENCY_MAP: dict[str, str] = {
 
 
 def normalize_rating(raw: object) -> str:
-    """券商評等原文 → 五級代碼；未命中一律 'unknown'（不計入分布）。"""
+    """券商評等原文 → 五級代碼；未命中一律 'unknown'（不計入分布）。
+
+    查表前先經 `zh_hant.lookup_key` 轉繁：`RATING_MAP`／`RATING_KEYWORDS` 只收繁體詞，
+    原文是簡體（「买入」「减持」）或模型照抄成簡體時，不轉就一律落 unknown。轉換只用在
+    查表，呼叫端存進 `rating_raw` 的仍是原值（逐字照抄研報是 prompt 規則 4 的要求）。
+    """
     if not isinstance(raw, str):
         return "unknown"
-    v = raw.strip().lower()
+    v = lookup_key(raw.strip()).lower()
     if not v:
         return "unknown"
     if v in RATING_MAP:
@@ -118,13 +123,16 @@ def normalize_rating(raw: object) -> str:
 
 
 def normalize_currency(raw: object) -> Optional[str]:
-    """幣別寫法正規化為 ISO 代碼（不換算）；空值 → None；未知 → 原樣大寫。"""
+    """幣別寫法正規化為 ISO 代碼（不換算）；空值 → None；未知 → 原樣大寫。
+
+    查表鍵先轉繁（「人民币」「港币」，同 `normalize_rating`）；查不到時回的是**原值**大寫，不是轉過的鍵。
+    """
     if not isinstance(raw, str):
         return None
     v = raw.strip()
     if not v:
         return None
-    return _CURRENCY_MAP.get(v.lower(), v.upper())
+    return _CURRENCY_MAP.get(lookup_key(v).lower(), v.upper())
 
 
 def _truncate(value: object, limit: int) -> Optional[str]:
@@ -432,7 +440,19 @@ def _normalize_thesis(obj: object) -> tuple[dict, list[str]]:
     return out, notes
 
 
-def _build_one_row(ctx: ReportContext, code: str, signal: dict) -> SignalRow:
+def _with_model(payload: dict, model: Optional[str]) -> dict:
+    """raw_payload 加上產出模型（`model`）；未知（None）就不加鍵。不改動傳入的 dict。
+
+    `model` 是**實際產出**這份回應的模型：HTTP 路徑取回應的 `model` 欄，CLI 路徑退回請求的
+    model（由批次決定，見 scripts/extract_signals.py）。同名鍵以 Python 記的為準。
+    """
+    out = dict(payload)
+    if model:
+        out["model"] = model
+    return out
+
+
+def _build_one_row(ctx: ReportContext, code: str, signal: dict, model: Optional[str] = None) -> SignalRow:
     """把單一標的的原始 signal 物件正規化成 SignalRow（判 valid/partial）。"""
     rating_obj = signal.get("rating") if isinstance(signal.get("rating"), dict) else {}
     rating_raw = _truncate(rating_obj.get("raw"), RATING_RAW_MAX)
@@ -470,12 +490,14 @@ def _build_one_row(ctx: ReportContext, code: str, signal: dict) -> SignalRow:
         thesis_dimensions=thesis,
         extraction_version=EXTRACTION_VERSION,
         extraction_status=status,
-        raw_payload=signal,  # 保留原始 per-instrument 物件供追溯
+        raw_payload=_with_model(signal, model),  # 保留原始 per-instrument 物件供追溯
         error_detail="；".join(notes) if notes else None,
     )
 
 
-def _rejected_row(ctx: ReportContext, code: str, parsed: ParsedReportSignals) -> SignalRow:
+def _rejected_row(
+    ctx: ReportContext, code: str, parsed: ParsedReportSignals, model: Optional[str] = None
+) -> SignalRow:
     """整份 payload 無法解析 → 該標的 rejected 列（保留原文，不阻塞其他報告）。"""
     return SignalRow(
         report_id=ctx.report_id,
@@ -493,20 +515,25 @@ def _rejected_row(ctx: ReportContext, code: str, parsed: ParsedReportSignals) ->
         thesis_dimensions={},
         extraction_version=EXTRACTION_VERSION,
         extraction_status="rejected",
-        raw_payload={"raw_text": parsed.raw_text},
+        raw_payload=_with_model({"raw_text": parsed.raw_text}, model),
         error_detail=parsed.error or "無法解析",
     )
 
 
-def build_rows(ctx: ReportContext, parsed: ParsedReportSignals) -> list[SignalRow]:
+def build_rows(
+    ctx: ReportContext, parsed: ParsedReportSignals, model: Optional[str] = None
+) -> list[SignalRow]:
     """對 ctx.requested_codes 逐一產列。payload 解析失敗 → 全部 rejected；
-    否則逐標的正規化，requested 但 LLM 未回傳者 → partial 空列。"""
+    否則逐標的正規化，requested 但 LLM 未回傳者 → partial 空列。
+
+    `model`：產出這份回應的模型，記進每列 `raw_payload.model`；沒有回應（全程逾時）時為 None。
+    """
     rows: list[SignalRow] = []
     for code in ctx.requested_codes:
         if not parsed.ok:
-            rows.append(_rejected_row(ctx, code, parsed))
+            rows.append(_rejected_row(ctx, code, parsed, model))
             continue
         # requested 但 LLM 未回傳 → 空物件走正規化，會判為「無可擷取內容」partial（非 rejected）
         signal = parsed.signals.get(code) or {}
-        rows.append(_build_one_row(ctx, code, signal))
+        rows.append(_build_one_row(ctx, code, signal, model))
     return rows

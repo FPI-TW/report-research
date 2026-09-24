@@ -37,6 +37,9 @@
    一則「臺積電」夾在一整排「台積電」裡只會像壞掉。（檯燈／颱風走的是
    opencc 的詞組表，出來就不是「臺」，不受這步影響。）
 
+**查表鍵另走 `lookup_key`**：訊號擷取的評等／幣別詞只有 2-4 個漢字（「买入」只含 1 個簡體字），
+上面的門檻會讓它們永遠轉不動。查表鍵不存檔也不顯示，所以不套門檻；存下來的仍是原值。
+
 **不適用的地方**（各有各的理由，別順手接上去）：
 - `report_takeaway.quote`：**逐字引文**。第一個理由與任何功能無關——改一個字它就不再是
   逐字引文，而「原文就是這麼寫的」正是它存在的全部意義（全語料 63 篇原文本身就是簡體）。
@@ -126,5 +129,22 @@ def to_traditional(text: str) -> str:
     整串轉之所以安全，正是因為門檻已經先判定「這整串是簡體文字」。
     """
     if not text or not looks_simplified(text):
+        return text
+    return _converter().convert(text).replace("臺", "台")
+
+
+def lookup_key(text: str) -> str:
+    """查表用的鍵：含任一「只存在於簡體」的字就整串轉繁體；否則原樣回傳。
+
+    **只給查表用，結果不得存檔或顯示**（例如訊號擷取的評等／幣別：`signal_extract.normalize_rating`
+    拿它對 `RATING_MAP`，存進 DB 的 `rating_raw` 仍是原值）。與 `to_traditional` 刻意不同：
+
+    - **不套字數與密度門檻**。那兩條是為了不改壞「要存下來給人看」的專有名詞；評等詞只有 2-4 個
+      漢字，「买入」「卖出」「减持」各只含 1 個簡體字，套門檻就永遠轉不動——而這正是要對上的情形。
+      查表鍵不會被存下來，改壞專有名詞的風險不存在。
+    - **沒有簡體字就完全不動**：純繁體原文不過 opencc（台→臺、占→佔那一類改動），既有資料的查表
+      結果逐字不變。
+    """
+    if not text or count_simplified(text) == 0:
         return text
     return _converter().convert(text).replace("臺", "台")

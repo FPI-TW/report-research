@@ -284,5 +284,61 @@ class RejectedTests(unittest.TestCase):
         self.assertEqual(rows[0].extraction_status, "rejected")
 
 
+
+class SimplifiedLookupTests(unittest.TestCase):
+    """評等／幣別查表前先轉繁（遷移 PR-15），但存進 DB 的原值與逐字證據一律不轉。"""
+
+    def test_simplified_ratings_classified(self):
+        self.assertEqual(normalize_rating("买入"), "buy")
+        self.assertEqual(normalize_rating("卖出"), "sell")
+        self.assertEqual(normalize_rating("减持"), "underweight")
+        self.assertEqual(normalize_rating("调升评等至买入"), "buy")  # 子字串那一層也吃轉過的鍵
+        self.assertEqual(normalize_rating("区间操作"), "neutral")
+
+    def test_traditional_ratings_unchanged(self):
+        self.assertEqual(normalize_rating("區間操作"), "neutral")
+        self.assertEqual(normalize_rating("優於大盤"), "overweight")
+
+    def test_simplified_currency(self):
+        self.assertEqual(normalize_currency("人民币"), "CNY")
+        self.assertEqual(normalize_currency("港币"), "HKD")
+
+    def test_unknown_currency_returns_original_not_converted(self):
+        """查不到時回原值大寫：轉過的鍵只用來查表，不外流。"""
+        self.assertEqual(normalize_currency("越南盾币"), "越南盾币")
+
+    def test_row_keeps_raw_values_and_evidence(self):
+        sig = _full_signal()
+        sig["rating"] = {"raw": "买入", "evidence": "维持买入评级"}
+        sig["thesis"]["outlook"] = {"stance": "positive", "summary": "需求改善", "evidence": "订单能见度改善"}
+        r = build_rows(_ctx(["2330"]), parse_signal(_raw(sig), ["2330"]))[0]
+        self.assertEqual(r.rating_normalized, "buy")
+        self.assertEqual(r.rating_raw, "买入")  # 存的是原值
+        self.assertEqual(r.thesis_dimensions["outlook"]["evidence"], "订单能见度改善")  # 逐字證據不轉
+        self.assertEqual(r.raw_payload["rating"]["raw"], "买入")
+
+
+class RawPayloadModelTests(unittest.TestCase):
+    """raw_payload.model 記產出模型（遷移 PR-15）。"""
+
+    def test_model_recorded_on_every_row(self):
+        parsed = parse_signal(_raw(_full_signal("2330")), ["2330", "2317"])
+        rows = build_rows(_ctx(["2330", "2317"]), parsed, model="deepseek-flash")
+        self.assertEqual([r.raw_payload["model"] for r in rows], ["deepseek-flash", "deepseek-flash"])
+        self.assertEqual(rows[0].raw_payload["instrument_code"], "2330")  # 原始物件仍在
+        self.assertNotIn("model", parsed.signals["2330"])  # 不改動 parse 結果
+
+    def test_rejected_row_records_model(self):
+        parsed = parse_signal("不是 JSON", ["2330"])
+        r = build_rows(_ctx(["2330"]), parsed, model="deepseek-flash")[0]
+        self.assertEqual(r.extraction_status, "rejected")
+        self.assertEqual(r.raw_payload["model"], "deepseek-flash")
+        self.assertIn("raw_text", r.raw_payload)
+
+    def test_no_model_no_key(self):
+        r = build_rows(_ctx(["2330"]), parse_signal(_raw(_full_signal()), ["2330"]))[0]
+        self.assertNotIn("model", r.raw_payload)
+
+
 if __name__ == "__main__":
     unittest.main()

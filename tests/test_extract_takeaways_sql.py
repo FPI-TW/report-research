@@ -599,5 +599,48 @@ class CliAbortTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("逾時", written)
 
 
+
+class RawPayloadModelTests(unittest.IsolatedAsyncioTestCase):
+    """raw_payload.model 記**實際產出**的模型（遷移 PR-15）：HTTP 取回應的 model 欄，CLI 退回請求的。"""
+
+    def test_build_rows_records_model_and_keeps_quote(self):
+        rows = et.build_rows("r1", CANONICAL, SHA, _parsed({"claim": "毛利率優於預期", "quote": QUOTE_VERBATIM}),
+                             model="deepseek-flash")
+        self.assertEqual(rows[0].raw_payload, {"claim": "毛利率優於預期", "quote": QUOTE_VERBATIM,
+                                               "model": "deepseek-flash"})
+
+    def test_build_rows_without_model_has_no_key(self):
+        rows = et.build_rows("r1", CANONICAL, SHA, _parsed({"claim": "毛利率優於預期", "quote": QUOTE_VERBATIM}))
+        self.assertNotIn("model", rows[0].raw_payload)
+
+    async def _run(self, results):
+        captured = {}
+
+        def fake_build_rows(*a, **k):
+            captured.update(k)
+            return []
+
+        it = iter(results)
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(et, "FAIL_LOG", Path(tmp) / "f.log"), \
+             mock.patch.object(et, "call_cli", side_effect=lambda *a, **k: next(it)), \
+             mock.patch.object(et, "build_rows", side_effect=fake_build_rows):
+            item = et.WorkItem("rep-1", "f.pdf", None, "券商甲", CANONICAL, SHA)
+            await et.extract_one(asyncio.Semaphore(1), item, 24000, "deepseek-flash", 1)
+        return captured.get("model")
+
+    async def test_response_model_wins(self):
+        ok = et.CliResult('{"takeaways": []}', None, "deepseek-flash-0925")
+        self.assertEqual(await self._run([ok]), "deepseek-flash-0925")
+
+    async def test_falls_back_to_requested_model(self):
+        ok = et.CliResult('{"takeaways": []}', None)  # CLI 路徑沒有回應的 model 欄
+        self.assertEqual(await self._run([ok]), "deepseek-flash")
+
+    async def test_no_response_no_model(self):
+        err = et.CliResult(None, "CLI 逾時（180s 內未回應）")
+        self.assertIsNone(await self._run([err, err, err]))
+
+
 if __name__ == "__main__":
     unittest.main()

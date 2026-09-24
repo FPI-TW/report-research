@@ -83,7 +83,7 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
             return [_FakeSource()], ctx
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2):
+                              allow_web=False, retries=2, meta=None):
             for c in ["台積電", "展望", "正向 [1]"]:
                 yield c
 
@@ -193,7 +193,7 @@ class EvalQuestionLatencyTests(unittest.IsolatedAsyncioTestCase):
             return [_FakeSource()], ctx
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2):
+                              allow_web=False, retries=2, meta=None):
             yield "答案 [1]"
 
         async def slow_judge(system, user):
@@ -253,7 +253,7 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
             )
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2):
+                              allow_web=False, retries=2, meta=None):
             received["gen_prompt"] = prompt
             yield "答案 [1][2]"
 
@@ -313,7 +313,7 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("非 agentic 模式不得呼叫 run_agentic")
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2):
+                              allow_web=False, retries=2, meta=None):
             yield "答案 [1]"
 
         saved = _install_fakes(
@@ -407,7 +407,7 @@ async def _one_ctx_retrieve(question, *, filters=None, **params):
 
 
 async def _cited_stream(prompt, *, system=None, model=None, timeout=120.0,
-                        allow_web=False, retries=2):
+                        allow_web=False, retries=2, meta=None):
     yield "答案 [1]"
 
 
@@ -507,7 +507,7 @@ class JudgeErrorIsPerMetricTests(unittest.IsolatedAsyncioTestCase):
         seen = {}
 
         async def stream(prompt, *, system=None, model=None, timeout=120.0,
-                         allow_web=False, retries=2):
+                         allow_web=False, retries=2, meta=None):
             seen["model"] = model
             seen["timeout"] = timeout
             yield "答案 [1]"
@@ -526,20 +526,38 @@ class JudgeErrorIsPerMetricTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_hitting_the_time_budget_marks_truncated(self):
-        async def slow(prompt, *, system=None, model=None, timeout=120.0,
-                       allow_web=False, retries=2):
+    """n_truncated 取 stream_completion 回報的截斷訊號，不再用牆鐘推定（含 529 重試會誤判）。"""
+
+    async def test_truncation_signal_from_stream_completion(self):
+        async def cut(prompt, *, system=None, model=None, timeout=120.0,
+                      allow_web=False, retries=2, meta=None):
             yield "前半"
-            await asyncio.sleep(timeout + 0.02)  # 模擬 CLI 逾時後對已吐字 fail-open
+            meta["truncated"] = True  # CLI 逾時後對已吐字 fail-open，只留這個記號
 
         saved = _install_fakes(["stream_completion"])
         try:
-            rr.stream_completion = slow
-            text, truncated = await rr._generate_answer("q", "ctx", timeout=0.05)
+            rr.stream_completion = cut
+            text, truncated = await rr._generate_answer("q", "ctx", timeout=5.0)
         finally:
             _restore(saved)
         self.assertEqual(text, "前半")
         self.assertTrue(truncated)
+
+    async def test_slow_but_complete_is_not_truncated(self):
+        """含 529 重試的牆鐘可以超過單次逾時，但只要成功那次沒撞到逾時就不是截斷。"""
+        async def slow(prompt, *, system=None, model=None, timeout=120.0,
+                       allow_web=False, retries=2, meta=None):
+            await asyncio.sleep(timeout + 0.02)
+            yield "完整答案"
+            meta["truncated"] = False
+
+        saved = _install_fakes(["stream_completion"])
+        try:
+            rr.stream_completion = slow
+            _text, truncated = await rr._generate_answer("q", "ctx", timeout=0.05)
+        finally:
+            _restore(saved)
+        self.assertFalse(truncated)
 
     async def test_normal_completion_is_not_truncated(self):
         saved = _install_fakes(["stream_completion"])
@@ -577,6 +595,33 @@ class AggregateNewMetricsTests(unittest.TestCase):
         self.assertEqual(agg["n_judge_errors"], 2)
         self.assertEqual(agg["n_no_context"], 1)  # 只有 q4；q3 的 None 是 judge 出錯
         self.assertEqual(agg["n_errors"], 1)
+
+    def test_judged_question_set_is_recorded_per_metric(self):
+        """judge 出錯的題不入該指標均值：入均值的題數與題目集合都要記下來，eval_compare 才
+        分得出「題數相同、題目不同」（審查 M-1）。"""
+        from scripts import eval_compare as ec
+
+        per_q = [
+            {"id": "q1", "faithfulness": 1.0, "context_precision": 0.5, "answer_relevancy": 0.9},
+            {"id": "q2", "faithfulness": None, "context_precision": 0.7, "answer_relevancy": 0.8,
+             "judge_errors": {"faithfulness": "JudgeError: x"}},
+            {"id": "q3", "error": "boom"},
+        ]
+        agg = aggregate(per_q)
+        self.assertEqual(agg["n_effective_faithfulness"], 1)
+        self.assertEqual(agg["n_effective_context_precision"], 2)
+        self.assertEqual(agg["n_effective_answer_relevancy"], 2)
+        self.assertEqual(agg["judged_ids_sha"], ec.judged_ids_sha(per_q))
+        swapped = [dict(per_q[0], faithfulness=None), dict(per_q[1], faithfulness=0.5)]
+        self.assertEqual(aggregate(swapped)["n_effective_faithfulness"], 1)
+        self.assertNotEqual(aggregate(swapped)["judged_ids_sha"], agg["judged_ids_sha"])
+
+    def test_every_summary_key_is_classified_by_eval_compare(self):
+        """run_ragas 新增的 summary 鍵沒在 METRIC_SPECS 補方向，eval_compare 會回 3。"""
+        from scripts import eval_compare as ec
+
+        agg = aggregate([{"id": "q1", "faithfulness": 1.0, "context_precision": 0.5, "answer_relevancy": 0.9}])
+        self.assertEqual(sorted(set(agg) - set(ec.METRIC_SPECS)), [])
 
     def test_old_cases_without_new_fields_yield_none_rates(self):
         agg = aggregate([{"id": "q1", "faithfulness": 1.0}])

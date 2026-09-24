@@ -17,10 +17,12 @@ M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--a
   一律回 2。**所以在新基準線產出之前，拿新結果比 `eval/baselines/baseline-2026-09-02.json`
   （沒有這三個鍵）一律回 2**——那是預期，不是壞掉；要比就兩邊都用本版重跑。
 - **judge 出錯只讓該指標記為 None**，不讓整題記為 error：錯誤訊息記在 case 的
-  `judge_errors`，summary 的 `n_judge_errors` 計總數（越少越好）。檢索或生成失敗才是整題
-  error。這樣一題 CP 的 judge 逾時不會連帶拿掉同一題的 F 與 AR，也不會改變 `n_effective`
-  （否則 eval_compare 直接回 2）。n_effective 仍不同而回 2 時，處置是補跑到兩邊相等，
-  不是放寬比較器。
+  `judge_errors`，summary 的 `n_judge_errors` 計總數（只列出、不判方向：那是量尺故障，不是
+  生成端劣化）。檢索或生成失敗才是整題 error。這樣一題 CP 的 judge 逾時不會連帶拿掉同一題的
+  F 與 AR。但該指標的均值因此少一題，所以 summary 另記三個指標各自的入均值題數
+  `n_effective_<指標>` 與題目集合的雜湊 `judged_ids_sha`（定義在 `scripts/eval_compare.py`，
+  只有那一份）；兩邊不同時 eval_compare 回 2。處置是補跑到兩邊相同題目，或用
+  `eval_compare --common-only` 只在兩邊都有值的題目上比，不是放寬比較器。
 - `--repeat N` 的彙總規則：每題跑 N 次完整流程（檢索＋生成＋judge），**每題每指標跨 repeat
   取平均**（略過 None）；`n`＝題數（不乘 N），`n_errors`＝N 次全部失敗的題數，
   `n_no_context` 與 `n_judge_errors` 只在該指標 N 次都沒有值時計入。計數因此恆為整數，
@@ -82,6 +84,7 @@ from eval.ragas_metrics import (  # noqa: E402
     faithfulness,
     judge_prompt_sha,
 )
+from scripts.eval_compare import JUDGE_METRICS, judged_ids, judged_ids_sha  # noqa: E402
 
 RETRIEVAL_PARAMS = {
     "k": RETRIEVAL_K,
@@ -95,9 +98,11 @@ _CTX_SPLIT_RE = re.compile(r"(?=^\[\d+\] )", re.MULTILINE)
 # 與 app/services/answer.py 的 `_CITE_RE` 同一個樣式（那邊是模組私有名稱，不跨模組取用）。
 _CITE_RE = re.compile(r"\[(\d+)\]")
 
-# 生成端的逾時。沿用 stream_completion 的預設值（改它等於改被評的東西）；明寫出來是因為
-# n_truncated 要拿它判定：CLI 路徑逾時後對已吐出的文字 fail-open、不拋例外也不留記號，
-# 唯一看得到的痕跡就是「生成牆鐘撞到了這個上限」。
+# 生成端的逾時。沿用 stream_completion 的預設值（改它等於改被評的東西）。
+# n_truncated 取自 stream_completion 的 `meta["truncated"]`：CLI 路徑逾時後對已吐出的文字
+# fail-open、不拋例外，唯一的訊號是「成功的那次嘗試撞到了這個上限」（每次嘗試各自計時，
+# 529 重試花掉的時間不算）。它只抓得到逾時截斷；輸出長度上限造成的截斷 CLI 看不到，
+# PR-11 接 HTTP 後改用 finish_reason（length）。
 GEN_TIMEOUT = 120.0
 
 # judge 出錯的型別：只有這些讓「該指標」記 None（M8）。其他例外（程式錯誤、嵌入失敗）
@@ -113,7 +118,7 @@ _JUDGE_TASKS = {
     GENQ_SYS: "answer_relevancy",
 }
 
-_METRICS = ("faithfulness", "context_precision", "answer_relevancy")
+_METRICS = JUDGE_METRICS
 
 # 題集已全標 corpus_qa（凍結題集），--agentic 固定注入此路由決策（設計 §7.2）。
 _CORPUS_QA_DECISION = RouteDecision(
@@ -191,19 +196,18 @@ async def _generate_answer(
 ) -> tuple[str, bool]:
     """以 build_user_prompt + stream_completion 生成答案（跳過 SEARCH_EVENT 控制標記）。
 
-    回 (答案, 是否疑似截斷)。截斷的判準見 GEN_TIMEOUT 旁的註解。
+    回 (答案, 是否被逾時截斷)。截斷的判準見 GEN_TIMEOUT 旁的註解。
     """
     prompt = build_user_prompt(question, context)
     parts: list[str] = []
-    t0 = time.monotonic()
+    meta: dict = {}
     async for chunk in stream_completion(
-        prompt, system=SYSTEM_PROMPT, model=model, timeout=timeout
+        prompt, system=SYSTEM_PROMPT, model=model, timeout=timeout, meta=meta
     ):
         if chunk == SEARCH_EVENT:
             continue
         parts.append(chunk)
-    truncated = time.monotonic() - t0 >= timeout
-    return "".join(parts), truncated
+    return "".join(parts), bool(meta.get("truncated"))
 
 
 def has_valid_citation(answer: str, n_contexts: int) -> bool:
@@ -368,7 +372,9 @@ def aggregate(per_q: list[dict]) -> dict:
     n_no_context 只計「F 為 None 且不是 judge 出錯」的題：judge 出錯另計 n_judge_errors，
     混在一起會把量尺故障讀成檢索沒找到東西。
     citation_rate／simplified_residual_rate 是「答案帶有效引用」「答案整份判為簡體」的
-    題數比例（分母＝有該欄位的非 error 題）；n_truncated 是生成疑似撞到逾時的題數。
+    題數比例（分母＝有該欄位的非 error 題）；n_truncated 是生成被逾時截斷的題數。
+    n_effective_<指標>／judged_ids_sha：三個 judge 指標各自實際入均值的題數與題目集合的雜湊
+    （eval_compare 據此判定兩份是不是在同一組題目上算的均值）。
     """
     f = _mean_of(per_q, "faithfulness")
     cp = _mean_of(per_q, "context_precision")
@@ -410,6 +416,8 @@ def aggregate(per_q: list[dict]) -> dict:
         "n_errors": n_errors,
         "n_no_context": n_no_context,
         "n_judge_errors": n_judge_errors,
+        **{f"n_effective_{m}": len(judged_ids(per_q, m)) for m in JUDGE_METRICS},
+        "judged_ids_sha": judged_ids_sha(per_q),
         "citation_rate": _mean_of(per_q, "cited"),
         "simplified_residual_rate": _mean_of(per_q, "simplified"),
         "n_truncated": n_truncated,

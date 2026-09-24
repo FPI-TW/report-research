@@ -84,7 +84,7 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
             return [_FakeSource()], ctx
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             for c in ["台積電", "展望", "正向 [1]"]:
                 yield c
 
@@ -194,7 +194,7 @@ class EvalQuestionLatencyTests(unittest.IsolatedAsyncioTestCase):
             return [_FakeSource()], ctx
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             yield "答案 [1]"
 
         async def slow_judge(system, user):
@@ -254,7 +254,7 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
             )
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             received["gen_prompt"] = prompt
             yield "答案 [1][2]"
 
@@ -314,7 +314,7 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("非 agentic 模式不得呼叫 run_agentic")
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             yield "答案 [1]"
 
         saved = _install_fakes(
@@ -408,7 +408,7 @@ async def _one_ctx_retrieve(question, *, filters=None, **params):
 
 
 async def _cited_stream(prompt, *, system=None, model=None, timeout=120.0,
-                        allow_web=False, retries=2, meta=None):
+                        allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
     yield "答案 [1]"
 
 
@@ -508,7 +508,7 @@ class JudgeErrorIsPerMetricTests(unittest.IsolatedAsyncioTestCase):
         seen = {}
 
         async def stream(prompt, *, system=None, model=None, timeout=120.0,
-                         allow_web=False, retries=2, meta=None):
+                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             seen["model"] = model
             seen["timeout"] = timeout
             yield "答案 [1]"
@@ -531,7 +531,7 @@ class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_truncation_signal_from_stream_completion(self):
         async def cut(prompt, *, system=None, model=None, timeout=120.0,
-                      allow_web=False, retries=2, meta=None):
+                      allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             yield "前半"
             meta["truncated"] = True  # CLI 逾時後對已吐字 fail-open，只留這個記號
 
@@ -547,7 +547,7 @@ class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
     async def test_slow_but_complete_is_not_truncated(self):
         """含 529 重試的牆鐘可以超過單次逾時，但只要成功那次沒撞到逾時就不是截斷。"""
         async def slow(prompt, *, system=None, model=None, timeout=120.0,
-                       allow_web=False, retries=2, meta=None):
+                       allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             await asyncio.sleep(timeout + 0.02)
             yield "完整答案"
             meta["truncated"] = False

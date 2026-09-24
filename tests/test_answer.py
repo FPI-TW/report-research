@@ -3102,6 +3102,143 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
                           if "SET active = false WHERE id = :id" in s])
 
 
+class MainAnswerTruncationTests(unittest.IsolatedAsyncioTestCase):
+    """主答（#3）：已吐字後被截斷時保留文字、由 Python 附註並寫 filters.llm_truncated（審查 M2）；
+    每次呼叫帶 max_tokens／task，filters.llm_model 記實際送出的模型。"""
+
+    async def _run(self, stream, **kw):
+        from app.services import answer as ans
+        from app.services import retrieval_pipeline as rp
+        from app.services import scope_router as sr
+
+        logged: list[dict] = []
+        self.logged = logged  # 例外往外拋時，測試仍要看得到失敗列
+
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
+
+        async def fake_log(question, answer, cited, filters, latency, sources, *a, **k):
+            logged.append({"answer": answer, "filters": filters, "kwargs": k})
+            return "qa-1"
+
+        async def some_hits(session, q, qvec, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
+
+        async def no_followups(*a, **k):
+            return []
+
+        orig = (
+            rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+            rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+            ans._log_qa, ans.generate_followups,
+        )
+        rp.hybrid_search = some_hits
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_non_overview = fake_route
+        ans._log_qa = fake_log
+        ans.generate_followups = no_followups
+        try:
+            events = [e async for e in ans.answer_question("台積電展望", **kw)]
+        finally:
+            (
+                rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+                ans._log_qa, ans.generate_followups,
+            ) = orig
+        return events, logged
+
+    async def test_passes_max_tokens_task_and_logs_model(self):
+        from app.services import answer as ans
+
+        seen: dict = {}
+
+        async def stream(*a, **k):
+            seen.update(k)
+            yield "答案[1]"
+
+        events, logged = await self._run(stream)
+        self.assertEqual(seen["max_tokens"], ans.ASK_ANSWER_MAX_TOKENS)
+        self.assertEqual(seen["task"], "ask_answer")
+        self.assertEqual(logged[-1]["filters"]["llm_model"], seen["model"])
+        self.assertNotIn("llm_truncated", logged[-1]["filters"])
+
+    async def test_partial_content_filter_keeps_text_notes_and_logs(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def cut(*a, **k):
+            yield "台積電展望正向[1]，但"
+            raise LLMUnavailableError("審查", kind="content_filter", partial=True)
+
+        events, logged = await self._run(cut)
+        kinds = [k for k, _ in events]
+        self.assertIn("done", kinds)
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertIn("台積電展望正向[1]，但", tokens)
+        self.assertIn("內容審查截斷了輸出", tokens)
+        self.assertEqual(len(logged), 1, "partial 照常落一列（不是失敗列）")
+        row = logged[0]
+        self.assertIn("內容審查截斷了輸出", row["answer"])
+        self.assertEqual(row["filters"]["llm_truncated"], "content_filter")
+        self.assertNotIn("llm_error", row["filters"])
+        self.assertNotIn("active", row["kwargs"])  # 預設 active=True
+
+    async def test_meta_length_and_read_timeout_are_noted(self):
+        for reason, phrase in (("length", "輸出長度達到上限"), ("read_timeout", "連線在輸出途中中斷")):
+            with self.subTest(reason=reason):
+                async def cut(*a, _r=reason, **k):
+                    yield "答案前半[1]"
+                    k["meta"].update(truncated=True, truncated_reason=_r)
+
+                events, logged = await self._run(cut)
+                tokens = "".join(p for k, p in events if k == "token")
+                self.assertIn(phrase, tokens)
+                self.assertIn(phrase, logged[-1]["answer"])
+                self.assertEqual(logged[-1]["filters"]["llm_truncated"], reason)
+
+    async def test_english_locale_note(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def cut(*a, **k):
+            yield "Outlook positive [1]"
+            raise LLMUnavailableError("x", kind="content_filter", partial=True)
+
+        events, _ = await self._run(cut, locale="en")
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertIn("(Answer cut off here: the model provider's content moderation", tokens)
+
+    async def test_unstreamed_failure_row_records_model_and_kind(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def blocked(*a, **k):
+            raise LLMUnavailableError("審查", kind="content_filter")
+            yield  # pragma: no cover
+
+        with self.assertRaises(LLMUnavailableError) as cm:
+            await self._run(blocked)
+        self.assertEqual(cm.exception.kind, "content_filter")  # ask.py 依它給「換個問法」
+        self.assertEqual(len(self.logged), 1)
+        row = self.logged[0]
+        self.assertIsNone(row["answer"])
+        self.assertEqual(row["filters"]["llm_error"], "content_filter")
+        self.assertIn("llm_model", row["filters"])
+        self.assertIs(row["kwargs"]["active"], False)
+
+    async def test_note_goes_before_ext_sources_block(self):
+        """截斷發生在 [EXT_SOURCES] 區塊之後：註記接在本文尾端，外部來源照常解析。"""
+        async def cut(*a, **k):
+            yield "本文[1]\n[EXT_SOURCES]\n- 標題 | https://example.com/a\n"
+            k["meta"].update(truncated=True, truncated_reason="length")
+
+        events, logged = await self._run(cut)
+        body = logged[-1]["answer"]
+        self.assertTrue(body.startswith("本文[1]"))
+        self.assertTrue(body.endswith("（回答在此中斷：輸出長度達到上限）"))
+        self.assertNotIn("EXT_SOURCES", body)
+
+
 class LlmErrorKindTests(unittest.TestCase):
     """`filters.llm_error` 最初要回答的問題：上游過載，還是我們的 bug。
 

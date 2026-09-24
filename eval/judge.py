@@ -33,6 +33,10 @@ DEFAULT_JUDGE_MODEL = resolve_model(TASK_EVAL_JUDGE, override=os.getenv("EVAL_JU
 # 同一種形狀的 bug 見 PR #72（rerank 30s 全逾時 → per-path 60/180s）。
 DEFAULT_JUDGE_TIMEOUT = float(os.getenv("EVAL_JUDGE_TIMEOUT", "180"))
 DEFAULT_JUDGE_RETRIES = int(os.getenv("EVAL_JUDGE_RETRIES", "1"))
+# 輸出上限（只作用在 HTTP 路徑，CLI 忽略）。judge 契約 `judge_json(prompt, system=…)` 分不出
+# 是拆解、grounding、CP 還是生成問題，先取其中最大的拆解（8192，第二版計畫 §8）；逐階段的
+# 上限隨 PR-18 的 DeepSeek judge adapter 一起細分。
+JUDGE_MAX_TOKENS = 8192
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
@@ -89,7 +93,8 @@ def _loads_robust(raw: str) -> dict | list:
 async def _judge_once(prompt: str, *, system: str, model: str, timeout: float):
     parts: list[str] = []
     async for chunk in stream_completion(
-        prompt, model=model, system=system, timeout=timeout, allow_web=False
+        prompt, model=model, system=system, timeout=timeout, allow_web=False,
+        max_tokens=JUDGE_MAX_TOKENS, task="eval_judge",
     ):
         parts.append(chunk)
     text = "".join(parts)

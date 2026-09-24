@@ -191,7 +191,8 @@ async def _evaluate(
     async def _collect() -> str:
         parts: list[str] = []
         async for chunk in query_planner.stream_completion(
-            prompt, model=model, system=system, timeout=timeout
+            prompt, model=model, system=system, timeout=timeout,
+            max_tokens=query_planner.PLANNER_MAX_TOKENS, task="qa_agentic_eval",
         ):
             parts.append(chunk)
         return "".join(parts)

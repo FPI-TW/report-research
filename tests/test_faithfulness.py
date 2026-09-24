@@ -371,7 +371,8 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
             return await F.check_faithfulness("營收年增 30%", ["ctx"], model="claude-haiku-4-5", timeout=1.0)
 
     async def test_unavailable(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
             raise F.LLMUnavailableError("529")
             yield  # pragma: no cover
 
@@ -384,7 +385,8 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_parse(self):
         """回應完整（沒撞到逾時）卻不是 JSON：量尺問題。"""
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
             yield "我無法判斷這些主張。"
             meta["truncated"] = False
 
@@ -393,7 +395,8 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_truncated_by_timeout_is_not_parse(self):
         """吐到一半被逾時截斷：JSON 不完整是逾時的結果，不是 judge 回了看不懂的東西。"""
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
             yield '{"statements": ["截斷'
             meta["truncated"] = True
 
@@ -402,7 +405,8 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.to_evaluation()["degraded_reason"], "truncated")
 
     async def test_timeout_without_output(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
             raise F.LLMUnavailableError("claude 無有效回應", reason="timeout")
             yield  # pragma: no cover
 
@@ -416,7 +420,8 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_empty(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
             yield "   "
 
         r = await self._check(stream)

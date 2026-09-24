@@ -593,6 +593,34 @@ class HttpEventLoopTests(unittest.TestCase):
                 self.assertEqual(asyncio.run(once()), ["ok"])
 
 
+class CallSitesPassMaxTokensAndTaskTests(unittest.TestCase):
+    """每個 `stream_completion` 呼叫點都要帶 `max_tokens` 與 `task`（第二版計畫 §8、§4.8）。
+
+    漏帶不會在 CLI 路徑上出事（CLI 忽略兩者），要等某個任務切到 DeepSeek 才會變成「上限退回
+    保底值、log 認不出任務」——所以在這裡靜態釘住，而不是等切換那天才發現。
+    """
+
+    def test_all_call_sites(self):
+        missing = []
+        seen = 0
+        for base in ("app", "eval", "scripts", "web"):
+            for path in sorted((REPO_ROOT / base).rglob("*.py")):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    fn = node.func
+                    name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+                    if name != "stream_completion":
+                        continue
+                    seen += 1
+                    kws = {k.arg for k in node.keywords}
+                    if not {"max_tokens", "task"} <= kws:
+                        missing.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+        self.assertGreaterEqual(seen, 11, "掃描範圍漏掉呼叫點（守門空轉）")
+        self.assertEqual(missing, [])
+
+
 class DependencyDirectionTests(unittest.TestCase):
     """`llm_http`／`llm_models` 是葉模組：不得往回 import 分派層與問答層。
 

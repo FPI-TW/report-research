@@ -81,6 +81,8 @@ async def generate_followups(
         async for chunk in stream_completion(
             prompt, model=model, system=_system_for(locale),
             allow_web=False, timeout=timeout,
+            # ≤3 條短問句的 JSON 陣列；上限只作用在 HTTP 路徑（第二版計畫 §8）
+            max_tokens=512, task="ask_followup",
         ):
             parts.append(chunk)
     except Exception:

@@ -12,7 +12,8 @@ from eval.judge import JudgeError, judge_json  # noqa: E402
 def _fake_stream(chunks):
     """回一個模擬 stream_completion 的 async generator 工廠（忽略引數）。"""
 
-    async def _gen(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2):
+    async def _gen(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2,
+                   max_tokens=None, task=None):
         for c in chunks:
             yield c
 

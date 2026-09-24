@@ -1,7 +1,7 @@
 """RAG 問答服務：重用混合檢索組裝帶編號的引用脈絡，串流回答並寫 qa_log。
 
 流程：embed_query_cached → hybrid_search → build_context（編號脈絡 + 來源清單）→
-stream_completion（claude CLI 串流）→ 解析回答中的 [n] 求實際引用 → 寫 research.qa_log。
+stream_completion（依白名單分派：DeepSeek HTTP 或 claude CLI）→ 解析回答中的 [n] 求實際引用 → 寫 research.qa_log。
 
 answer_question() 為傳輸無關的事件產生器，逐筆 yield ("sources"|"token"|"done", payload)，
 由 web 層轉成 SSE。DB 連線不橫跨 LLM 串流：檢索用一個短連線、寫 log 另開連線。
@@ -10,6 +10,7 @@ answer_question() 為傳輸無關的事件產生器，逐筆 yield ("sources"|"t
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import random
@@ -344,6 +345,46 @@ def time_sensitive_message(locale: str) -> str:
         TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN if locale == "en"
         else TIME_SENSITIVE_UNAVAILABLE_MESSAGE
     )
+
+
+# 各呼叫點的輸出上限（第二版計畫 §8；只作用在 HTTP 路徑，CLI 忽略）。取觀測到的最大輸出約
+# 2 倍再取 2 的冪次：總覽是短段落，主答（含開網搜、時效網搜）要容得下多標的長答案。
+ASK_OVERVIEW_MAX_TOKENS = 4096
+ASK_ANSWER_MAX_TOKENS = 8192
+
+# 已吐字後才中斷時由 Python 追加的一行註記（審查 M2）。**不交給模型、也不靜默**：畫面上的
+# 答案停在半句，使用者要能分辨「模型說完了」與「被截斷了」；落庫另寫 filters.llm_truncated。
+# 鍵是 `llm.stream_completion` 的截斷原因：partial 例外的 kind，或 meta["truncated_reason"]。
+_TRUNCATION_NOTES = {
+    "content_filter": (
+        "回答在此中斷：模型供應商的內容審查截斷了輸出",
+        "Answer cut off here: the model provider's content moderation truncated the output",
+    ),
+    "length": (
+        "回答在此中斷：輸出長度達到上限",
+        "Answer cut off here: the output reached its length limit",
+    ),
+}
+_TRUNCATION_NOTE_DEFAULT = (
+    "回答在此中斷：與模型服務的連線在輸出途中中斷",
+    "Answer cut off here: the connection to the model service dropped mid-output",
+)
+
+
+def truncation_note(reason: str, locale: str) -> str:
+    """截斷註記（含前導空行）。未知原因一律用「連線中斷」那句——寧可說得籠統，不可不說。"""
+    zh, en = _TRUNCATION_NOTES.get(reason, _TRUNCATION_NOTE_DEFAULT)
+    return f"\n\n({en})" if locale == "en" else f"\n\n（{zh}）"
+
+
+def _truncated_reason(partial: LLMUnavailableError | None, meta: dict) -> str | None:
+    """串流結束後判定這一輪是否被截斷：partial 例外優先，其次 meta（HTTP 的 length、read
+    逾時；CLI 的單一 Task 逾時記 timeout）。"""
+    if partial is not None:
+        return partial.kind or "other"
+    if meta.get("truncated"):
+        return meta.get("truncated_reason") or "timeout"
+    return None
 
 
 TRUSTED_ANSWER_DISCLAIMER = "即時資料僅供參考，不構成投資建議；請以來源官方網站為準。"
@@ -1760,25 +1801,46 @@ async def _answer_overview(
 
     raw_parts: list[str] = []
     emitted_token = False
+    llm_meta: dict = {}
+    partial: LLMUnavailableError | None = None
     try:
-        async for chunk in stream_completion(
+        async with contextlib.aclosing(stream_completion(
             user_prompt, model=model,
             system=OVERVIEW_SYSTEM_PROMPT + output_directive(locale), allow_web=False,
-        ):
-            if chunk == SEARCH_EVENT:
-                continue
-            raw_parts.append(chunk)
-            emitted_token = True
-            yield ("token", chunk)
+            meta=llm_meta, max_tokens=ASK_OVERVIEW_MAX_TOKENS, task="ask_overview",
+        )) as chunks:
+            async for chunk in chunks:
+                if chunk == SEARCH_EVENT:
+                    continue
+                raw_parts.append(chunk)
+                emitted_token = True
+                yield ("token", chunk)
+    except LLMUnavailableError as exc:
+        if emitted_token and exc.partial:
+            partial = exc  # 已吐的字保留，下面附註中斷原因
+        elif emitted_token:
+            raise
+        else:
+            raw_parts = []  # 串流異常 → 退回模板
     except Exception:
         if emitted_token:
             raise
         raw_parts = []  # 串流異常 → 退回模板
 
     body = "".join(raw_parts).strip()
+    log_filters = route_log_filters(filters, OVERVIEW, BY_OVERVIEW)
     if not body:
         body = render_overview_text(overview, locale)
         yield ("token", body)
+    else:
+        log_filters["llm_model"] = model
+        truncated = _truncated_reason(partial, llm_meta)
+        if truncated:
+            logger.warning("總覽回答被截斷 truncated=%s model=%s", truncated, model)
+            log_filters["llm_truncated"] = truncated
+            note = truncation_note(truncated, locale)
+            body += note
+            yield ("token", note)
     # 簡體收尾：token 已按原樣送出，落庫改吃轉換後的版本，螢幕上那份由 done 的
     # answer 欄位校正（只在真的有變動時帶）。理由與四支批次相同——prompt 的
     # 「繁體中文」是機率性保證。模板 fallback 走同一條，`to_traditional` 對它是 no-op。
@@ -1787,7 +1849,7 @@ async def _answer_overview(
 
     cited = cited_report_ids(body, sources)
     qa_id = await _log_qa(
-        question, body, cited, route_log_filters(filters, OVERVIEW, BY_OVERVIEW),
+        question, body, cited, log_filters,
         int((time.monotonic() - started) * 1000),
         [asdict(s) for s in sources], [],
         conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
@@ -1963,7 +2025,9 @@ async def _answer_time_sensitive_web(
 
     與受信任路徑的差別必須讓使用者看得見，故 Python 無條件追加 WEB_ANSWER_DISCLAIMER，
     不倚賴 prompt 有沒有照做。LLM 不可用且一個 token 都還沒送出時退回 M4 婉拒文案
-    （事件序與純婉拒路徑相同）；已送出文字則原樣上拋，交由上層處理。
+    （事件序與純婉拒路徑相同）；已送出文字則原樣上拋，交由上層處理——例外是 partial
+    （已吐字後被內容審查截斷，且畫面上已有文字）：保留已送出的文字、附註中斷原因，免責句
+    照樣追加。畫面上還沒有字（全在 [EXT_SOURCES] 解析器保留的尾段裡）時比照未吐字退回婉拒。
     """
     query = fetch_query or question
     yield ("sources", [])  # 研報來源不得混入時效答案
@@ -1984,46 +2048,54 @@ async def _answer_time_sensitive_web(
         out.append(("token", piece))
         return out
 
+    llm_meta: dict = {}
+    partial: LLMUnavailableError | None = None
+    log_filters["llm_model"] = ASK_WEB_MODEL
     try:
-        async for chunk in stream_completion(
+        async with contextlib.aclosing(stream_completion(
             query,
             model=ASK_WEB_MODEL,  # 網搜路線（ASK_WEB_MODEL），與主答開網搜同一顆
             system=TIME_SENSITIVE_WEB_SYSTEM_PROMPT + output_directive(locale),
             allow_web=True,
             timeout=ASK_WEB_TIMEOUT,
-        ):
-            if chunk == SEARCH_EVENT:
-                if not searching_sent:
-                    searching_sent = True
-                    stages_seen.append("searching_web")
-                    yield ("status", {"stage": "searching_web"})
-                continue
-            raw_parts.append(chunk)
-            emit = parser.feed(chunk)
-            if emit:
-                for ev in _emit_token(emit):
-                    yield ev
+            meta=llm_meta, max_tokens=ASK_ANSWER_MAX_TOKENS, task="ask_web",
+        )) as chunks:
+            async for chunk in chunks:
+                if chunk == SEARCH_EVENT:
+                    if not searching_sent:
+                        searching_sent = True
+                        stages_seen.append("searching_web")
+                        yield ("status", {"stage": "searching_web"})
+                    continue
+                raw_parts.append(chunk)
+                emit = parser.feed(chunk)
+                if emit:
+                    for ev in _emit_token(emit):
+                        yield ev
     except LLMUnavailableError as exc:
-        if thinking_ms is not None:
+        if thinking_ms is not None and exc.partial:
+            partial = exc  # 已吐的字保留、附註中斷原因，免責句照樣追加（見下方）
+        elif thinking_ms is not None:
             raise  # 已有可見文字，改送婉拒只會讓畫面自相矛盾
-        # 一個 token 都沒送出：退回 M4 婉拒（使用者仍得到明確答覆），該輪照樣落庫。
-        message = time_sensitive_message(locale)
-        yield ("notice", message)
-        elapsed = int((time.monotonic() - started) * 1000)
-        await _log_qa(
-            question, message, [],
-            {**log_filters, "llm_error": _llm_error_kind(exc)},
-            elapsed, [], [],
-            conversation_id=conv_id, thinking_ms=elapsed, stages=stages_seen,
-            root_qa_id=new_root, deactivate_qa_id=deactivate_qa_id,
-            truncate_from=truncate_from, request_id=request_id,
-        )
-        yield (
-            "done",
-            {"cited": [], "conversation_id": conv_id, "thinking_ms": elapsed,
-             "notice_kind": TIME_SENSITIVE},
-        )
-        return
+        else:
+            # 一個 token 都沒送出：退回 M4 婉拒（使用者仍得到明確答覆），該輪照樣落庫。
+            message = time_sensitive_message(locale)
+            yield ("notice", message)
+            elapsed = int((time.monotonic() - started) * 1000)
+            await _log_qa(
+                question, message, [],
+                {**log_filters, "llm_error": _llm_error_kind(exc)},
+                elapsed, [], [],
+                conversation_id=conv_id, thinking_ms=elapsed, stages=stages_seen,
+                root_qa_id=new_root, deactivate_qa_id=deactivate_qa_id,
+                truncate_from=truncate_from, request_id=request_id,
+            )
+            yield (
+                "done",
+                {"cited": [], "conversation_id": conv_id, "thinking_ms": elapsed,
+                 "notice_kind": TIME_SENSITIVE},
+            )
+            return
 
     tail = parser.flush()
     if tail:
@@ -2034,6 +2106,15 @@ async def _answer_time_sensitive_web(
     # 尾端空白在畫面上看不見，先剪掉再比對，免得 _answer_correction 為了純空白差異
     # 補送一整份答案（那個欄位刻意只在真的有變動時才出現）。
     streamed_body = streamed_body.rstrip()
+    # 截斷註記排在免責句之前：免責句是整段答案的收尾，不能被「回答在此中斷」蓋在後面。
+    truncated = _truncated_reason(partial, llm_meta)
+    if truncated:
+        logger.warning("時效網搜回答被截斷 truncated=%s model=%s", truncated, ASK_WEB_MODEL)
+        log_filters["llm_truncated"] = truncated
+        note = truncation_note(truncated, locale)
+        streamed_body += note
+        for ev in _emit_token(note):
+            yield ev
     # 這條路徑一定開著網搜，棄稿段的成因（搜尋打斷作答）在這裡同樣成立。
     body = to_traditional(drop_abandoned_draft(streamed_body))  # 畫面由 done 的 answer 校正
     disclaimer = web_answer_disclaimer(locale)
@@ -2455,65 +2536,90 @@ async def answer_question(
         out.append(("token", piece))
         return out
 
+    # 開網搜時改用 ASK_WEB_MODEL（見模組頂端 ASK_WEB_MODEL 的註解）。實際送出的模型名落
+    # filters.llm_model：換模型的階段要能從 qa_log 直接分組比較。
+    answer_model = ASK_WEB_MODEL if web_on else model
+    log_filters["llm_model"] = answer_model
+    llm_meta: dict = {}
+    partial: LLMUnavailableError | None = None
     yield _status("reading")  # 步驟3：閱讀重點、整理回答
     try:
-        async for chunk in stream_completion(
+        async with contextlib.aclosing(stream_completion(
             # M11：網搜由使用者每題決定（web_on ＝ 請求的 web ∧ ASK_ENABLE_WEB 總閘）。
             # 逾時只在開網搜時放寬——關著的路徑維持 llm.py 預設，零回歸。
-            # 開網搜時改用 ASK_WEB_MODEL（見模組頂端 ASK_WEB_MODEL 的註解）。
-            user_prompt, model=ASK_WEB_MODEL if web_on else model, system=system_prompt, allow_web=web_on,
+            user_prompt, model=answer_model, system=system_prompt, allow_web=web_on,
+            meta=llm_meta, max_tokens=ASK_ANSWER_MAX_TOKENS, task="ask_web" if web_on else "ask_answer",
             **({"timeout": ASK_WEB_TIMEOUT} if web_on else {}),
-        ):
-            if chunk == SEARCH_EVENT:
-                if not searching_sent:
-                    searching_sent = True
-                    yield _status("searching_web")  # 步驟4：搜尋網路補充
-                continue
-            raw_parts.append(chunk)
-            emit = parser.feed(chunk)
-            if emit:
-                for ev in _emit_token(emit):
-                    yield ev
+        )) as chunks:
+            async for chunk in chunks:
+                if chunk == SEARCH_EVENT:
+                    if not searching_sent:
+                        searching_sent = True
+                        yield _status("searching_web")  # 步驟4：搜尋網路補充
+                    continue
+                raw_parts.append(chunk)
+                emit = parser.feed(chunk)
+                if emit:
+                    for ev in _emit_token(emit):
+                        yield ev
     except LLMUnavailableError as exc:
-        # **這一輪仍然要落庫。** `_log_qa` 在串流之後，所以在此之前 LLM 失敗等於
-        # 該輪問答完全不進 `qa_log`：使用者看到「問答服務發生錯誤」，而監控端
-        # **完全分不出 API 529 過載與程式 bug**——兩者都是「什麼紀錄都沒有」。
-        # 2026-07-30 生產就有一筆這樣的失敗，事後只能從 journald 猜。
-        #
-        # 落一筆 `answer=None` ＋ `filters.llm_error` 的列。刻意不寫假答案：
-        # `answer` 為 NULL 才能讓既有的歷史／統計查詢自然跳過它（它們都以
-        # `answer` 有值為前提），而 `filters` 的遙測欄位又讓失敗率可查。
-        logger.warning("LLM 不可用，該輪仍落庫 conv=%s", conv_id, exc_info=True)
-        await _log_qa(
-            question,
-            None,
-            [],
-            {**log_filters, "llm_error": _llm_error_kind(exc)},
-            int((time.monotonic() - started) * 1000),
-            [asdict(s) for s in sources],
-            [],
-            conversation_id=conv_id,
-            thinking_ms=thinking_ms,
-            stages=stages_seen,
-            root_qa_id=new_root,
-            # 刻意不帶 deactivate_qa_id / truncate_from：docstring 的契約是「新列
-            # **成功**寫入時才停用舊列／截斷後續」。失敗列自己是 active=false 的
-            # 遙測列，若在這裡照常停用，重生撞上 529 會把使用者原本的答案從對話
-            # 歷史藏掉、編輯失敗會把編輯點之後的輪次全部截掉——症狀都是靜默的。
-            request_id=request_id,
-            # active=false 讓四條使用者面讀取路徑中的三條自動跳過它
-            # （condense 脈絡、/api/history、list_conversations 的 FILTER），
-            # 第四條 list_qa_versions 另以 `answer IS NOT NULL` 擋。
-            active=False,
-        )
-        raise
+        if exc.partial:
+            # 已吐字後才被截斷（HTTP 的內容審查）：畫面上已有文字，改送錯誤只會讓畫面自相
+            # 矛盾。保留已送出的文字，下面附註中斷原因後照常落庫（不改走其他模型）。
+            partial = exc
+        else:
+            # **這一輪仍然要落庫。** `_log_qa` 在串流之後，所以在此之前 LLM 失敗等於
+            # 該輪問答完全不進 `qa_log`：使用者看到「問答服務發生錯誤」，而監控端
+            # **完全分不出 API 529 過載與程式 bug**——兩者都是「什麼紀錄都沒有」。
+            # 2026-07-30 生產就有一筆這樣的失敗，事後只能從 journald 猜。
+            #
+            # 落一筆 `answer=None` ＋ `filters.llm_error` 的列。刻意不寫假答案：
+            # `answer` 為 NULL 才能讓既有的歷史／統計查詢自然跳過它（它們都以
+            # `answer` 有值為前提），而 `filters` 的遙測欄位又讓失敗率可查。
+            logger.warning("LLM 不可用，該輪仍落庫 conv=%s", conv_id, exc_info=True)
+            await _log_qa(
+                question,
+                None,
+                [],
+                {**log_filters, "llm_error": _llm_error_kind(exc)},
+                int((time.monotonic() - started) * 1000),
+                [asdict(s) for s in sources],
+                [],
+                conversation_id=conv_id,
+                thinking_ms=thinking_ms,
+                stages=stages_seen,
+                root_qa_id=new_root,
+                # 刻意不帶 deactivate_qa_id / truncate_from：docstring 的契約是「新列
+                # **成功**寫入時才停用舊列／截斷後續」。失敗列自己是 active=false 的
+                # 遙測列，若在這裡照常停用，重生撞上 529 會把使用者原本的答案從對話
+                # 歷史藏掉、編輯失敗會把編輯點之後的輪次全部截掉——症狀都是靜默的。
+                request_id=request_id,
+                # active=false 讓四條使用者面讀取路徑中的三條自動跳過它
+                # （condense 脈絡、/api/history、list_conversations 的 FILTER），
+                # 第四條 list_qa_versions 另以 `answer IS NOT NULL` 擋。
+                active=False,
+            )
+            raise
     tail = parser.flush()
     if tail:
         for ev in _emit_token(tail):
             yield ev
 
+    # 截斷註記（審查 M2）：已吐字後被內容審查、長度上限或斷線截斷時，由 Python 追加一行
+    # 說明，並寫 filters.llm_truncated。放在 [EXT_SOURCES] 切分之後接到本文尾端。
+    truncated = _truncated_reason(partial, llm_meta)
+    note = ""
+    if truncated:
+        logger.warning("主答被截斷 truncated=%s model=%s conv=%s", truncated, answer_model, conv_id)
+        log_filters["llm_truncated"] = truncated
+        note = truncation_note(truncated, locale)
+        for ev in _emit_token(note):
+            yield ev
+
     raw = "".join(raw_parts)
     body, ext_sources = split_external_sources(raw)
+    if note:
+        body = body.rstrip() + note
     # 簡體收尾（見 _answer_correction）：此行之後的一切——引用解析、落庫、追問、
     # 忠實度抽查、研報邀請——全部吃轉換後的版本，畫面則由 done 的 answer 校正。
     # 棄稿段走同一條校正管道（見 drop_abandoned_draft）：它同樣是整串才判得出來的，

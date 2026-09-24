@@ -55,6 +55,7 @@ load_llm_env()
 from app.config import get_settings  # noqa: E402
 from app.services.agentic_qa import run_agentic  # noqa: E402
 from app.services.answer import (  # noqa: E402
+    ASK_ANSWER_MAX_TOKENS,
     ASK_DENSE_SCAN,
     ASK_RERANK_TIMEOUT,
     MAX_CONTEXT_CHARS,
@@ -207,7 +208,9 @@ async def _generate_answer(
     parts: list[str] = []
     meta: dict = {}
     async for chunk in stream_completion(
-        prompt, system=SYSTEM_PROMPT, model=model, timeout=timeout, meta=meta
+        prompt, system=SYSTEM_PROMPT, model=model, timeout=timeout, meta=meta,
+        # 評測生成＝主答（同一個上限，改它等於改被評的東西）
+        max_tokens=ASK_ANSWER_MAX_TOKENS, task="eval_answer",
     ):
         if chunk == SEARCH_EVENT:
             continue

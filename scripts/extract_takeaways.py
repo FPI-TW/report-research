@@ -18,6 +18,8 @@ _claude_lock 的 flock。**不要因為「沒有消費端」就把第 4 步拿�
 5. 每份報告在單一 transaction 內 DELETE + 全量 INSERT（**不是 upsert**，見 _replace_rows）。
 6. 單筆失敗只寫 data/takeaway_failures.log，不中斷、不影響檢索/問答。**例外**：
    `claude` 不在 PATH 屬環境層級失敗（每篇都會踩），整批立即中止並回非零退出碼。
+7. 有回應卻擷不出摘錄的研報記入 research.llm_task_failure，同一 model 連續 3 輪後
+   跳過（規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）。
 
 ════════════════════════════════════════════════════════════════════════
 不可妥協的不變量：正典文字＝clean_extracted(full_text)
@@ -65,6 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text  # noqa: E402
 
+from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
@@ -455,10 +458,10 @@ class WorkItem:
     """一份待擷取的研報。canonical 已是正典文字，全程不再碰 full_text。"""
 
     __slots__ = ("report_id", "file_name", "report_date", "source", "canonical",
-                 "text_sha256", "excerpt_source")
+                 "text_sha256", "excerpt_source", "file_hash")
 
     def __init__(self, report_id, file_name, report_date, source, canonical, text_sha256,
-                 excerpt_source=None):
+                 excerpt_source=None, file_hash=None):
         self.report_id = report_id
         self.file_name = file_name
         self.report_date = report_date
@@ -468,6 +471,7 @@ class WorkItem:
         # 餵給 LLM 的文字：表格已拿掉的正典文字（E1c，§4.2「逐字引文的防護」）。
         # 沒有 Block 索引（pypdf 快取）時就是 canonical 本身。text_sha256 永遠對 canonical 算。
         self.excerpt_source = excerpt_source if excerpt_source is not None else canonical
+        self.file_hash = file_hash  # 跳過名單（llm_task_failure）的鍵
 
 
 async def _fetch_reports(session, since_days, hashes: list[str] | None = None):
@@ -526,15 +530,26 @@ def _is_done(existing: list[tuple[str, str, str]], text_sha256: str, reextract: 
 
 
 async def build_worklist(
-    since_days: int, reextract: bool, hashes: list[str] | None = None
+    since_days: int,
+    reextract: bool,
+    hashes: list[str] | None = None,
+    skip_model: Optional[str] = None,
 ) -> tuple[int, list[WorkItem]]:
     """回傳 (掃描到的報告數, 待擷取的 WorkItem)。
 
     hashes 非 None＝只處理這批 file_hash（定時同步用），忽略 since_days。
+    skip_model 非 None＝套跳過名單：該 model 下 llm_failures.should_skip 為真的研報不排入。
     """
     async with SessionFactory() as session:
         reports = await _fetch_reports(session, since_days, hashes)
         done_map = await _fetch_done_map(session, [r[0] for r in reports])
+        failures = (
+            await llm_failures.fetch_failures(
+                session, llm_failures.TASK_TAKEAWAY, [r[5] for r in reports if r[5]]
+            )
+            if skip_model
+            else {}
+        )
 
         worklist: list[WorkItem] = []
         for rid, file_name, report_date, source, full_text, file_hash in reports:
@@ -544,9 +559,12 @@ async def build_worklist(
             sha = sha256_of(canonical)
             if _is_done(done_map.get(rid, []), sha, reextract):
                 continue
+            if skip_model and llm_failures.should_skip(failures.get(file_hash), skip_model):
+                continue
             worklist.append(
                 WorkItem(rid, file_name, report_date, source, canonical, sha,
-                         excerpt_source=excerpt_without_tables(full_text, file_hash, canonical))
+                         excerpt_source=excerpt_without_tables(full_text, file_hash, canonical),
+                         file_hash=file_hash)
             )
     return len(reports), worklist
 
@@ -570,7 +588,7 @@ def _log_failure(item: WorkItem, reason: str) -> None:
 
 async def extract_one(
     sem: asyncio.Semaphore, item: WorkItem, excerpt: int, model: str, total: int,
-    retries: int = 2,
+    retries: int = 2, recorder: Optional[llm_failures.FailureRecorder] = None,
 ) -> None:
     global _done, _ok, _rejected, _fail
     date_str = item.report_date.isoformat() if item.report_date else None
@@ -591,6 +609,9 @@ async def extract_one(
                     break
             elif res.error:
                 last_error = res.error
+        # parsed 非 None ＝至少有一次「回了東西」；之後 0 條摘錄就是內容型失敗，
+        # 記入跳過名單。全程沒回應（逾時、非零退出）是環境型，不記。
+        content_failed = parsed is not None
         if parsed is None:
             parsed = ParsedTakeaways(ok=False, error=last_error)
 
@@ -601,9 +622,13 @@ async def extract_one(
             # 好的摘錄）。下次批次看不到符合的列/或 sha 仍不符 → 自動重跑。
             _rejected += 1
             _log_failure(item, parsed.error or "0 條摘錄")
+            if recorder and content_failed:
+                await recorder.record(item.file_hash, llm_failures.UNPARSEABLE)
         else:
             await _replace_rows(item.report_id, rows)
             _ok += 1
+            if recorder:
+                await recorder.clear(item.file_hash)
     except Exception as exc:  # 單筆例外只記 log，不中斷長跑
         _fail += 1
         _log_failure(item, f"EXC:{exc}")
@@ -616,7 +641,9 @@ async def extract_one(
 async def main(args) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     hashes = read_hashes_file(args.hashes_file) if args.hashes_file else None
-    scanned, worklist = await build_worklist(args.since_days, args.reextract, hashes)
+    recorder = await llm_failures.open_recorder(llm_failures.TASK_TAKEAWAY, args.model, SessionFactory)
+    skip_model = args.model if recorder is not None and not args.retry_blocked else None
+    scanned, worklist = await build_worklist(args.since_days, args.reextract, hashes, skip_model)
     scope = f"本輪 {len(hashes)} 個 file_hash" if hashes is not None else f"近 {args.since_days} 天"
     print(
         f"{scope}研報：{scanned} 篇｜待擷取：{len(worklist)} 篇"
@@ -638,7 +665,10 @@ async def main(args) -> None:
     sem = asyncio.Semaphore(args.workers)
     try:
         await asyncio.gather(
-            *(extract_one(sem, item, args.excerpt, args.model, total) for item in worklist)
+            *(
+                extract_one(sem, item, args.excerpt, args.model, total, recorder=recorder)
+                for item in worklist
+            )
         )
     except CliNotFoundError as exc:
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷。中止並以非零退出碼收場 ——
@@ -665,6 +695,8 @@ if __name__ == "__main__":
     ap.add_argument("--excerpt", type=int, default=24000, help="餵給 LLM 的正典文字上限")
     ap.add_argument("--model", default=TAKEAWAY_MODEL_DEFAULT)
     ap.add_argument("--reextract", action="store_true", help="忽略 checkpoint，強制重跑")
+    ap.add_argument("--retry-blocked", action="store_true",
+                    help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打")
     ap.add_argument("--dry-run", action="store_true", help="只印工作集大小，不呼叫 LLM")
     # --dry-run 也一起擋：鎖的涵蓋範圍若隨旗標而變，日後有人在「不呼叫 LLM」的路徑上
     # 加了一個 LLM 呼叫，就會出現一個沒人發現的洞。要在批次跑到一半時查工作集，

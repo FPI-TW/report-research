@@ -13,6 +13,8 @@
 - 冪等可續傳：只挑 title IS NULL 者；重跑天然跳過已補的
 - 失敗（含內文抽字損毀而無法辨識）記 data/title_failures.log，title 維持 NULL
   → 前端回退檔名，不會顯示錯的標題
+- 回應解析不出標題的研報記入 research.llm_task_failure，連續 3 輪後不再重打
+  （規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）
 
 用法：uv run python scripts/generate_titles.py [--workers 2] [--limit N] [--excerpt 3000]
 
@@ -36,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text  # noqa: E402
 
+from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
@@ -189,6 +192,8 @@ async def title_one(
     excerpt: int,
     total: int,
     retries: int = 2,
+    file_hash: Optional[str] = None,
+    recorder: Optional[llm_failures.FailureRecorder] = None,
 ) -> None:
     global _done, _ok, _fail
     prompt = build_prompt(file_name, full_text, excerpt)
@@ -196,6 +201,9 @@ async def title_one(
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是
     # 「回了但解析不採信」——後者是資料問題，前者是環境問題，處置完全不同。
     last_error = "CLI 無回應"
+    # 本輪有沒有任何一次「回了但不能用」。只有這種才記入跳過名單：逾時、非零退出
+    # 是環境問題，記了會讓一次停機把整批研報打入跳過名單。
+    content_failed = False
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
@@ -206,6 +214,7 @@ async def title_one(
                 if result:
                     break
                 last_error = "回應無法解析為可採信的標題"
+                content_failed = True
             elif res.error:
                 last_error = res.error
 
@@ -221,8 +230,12 @@ async def title_one(
                 },
             )
             await session.commit()
+        if recorder:
+            await recorder.clear(file_hash)
         _ok += 1
     else:
+        if recorder and content_failed:
+            await recorder.record(file_hash, llm_failures.UNPARSEABLE)
         # 第三欄是 2026-08-13 補的：先前只記 id 與檔名，於是連續四天 fail=60
         # 時這個檔對「為什麼」一個字都說不出來。
         with open(FAIL_LOG, "a", encoding="utf-8") as f:
@@ -240,44 +253,62 @@ def read_hashes_file(path: str) -> list[str]:
     return [h.strip() for h in lines if h.strip()]
 
 
+def build_candidates_sql(by_hashes: bool, skip_blocked: bool, limit: bool) -> str:
+    """待補標題的查詢（純字串，供測試斷言）。skip_blocked 時排除跳過名單上的研報。"""
+    sql = (
+        "SELECT r.id::text, r.file_name, r.full_text, r.file_hash "
+        "FROM research.research_report r "
+        "WHERE r.title IS NULL AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE "
+    )
+    if by_hashes:
+        sql += "AND r.file_hash = ANY(:hashes) "
+    if skip_blocked:
+        sql += "AND " + llm_failures.skip_clause_sql("r") + " "
+    sql += "ORDER BY r.report_date DESC NULLS LAST, r.file_name"
+    if limit:
+        sql += " LIMIT :limit"
+    return sql
+
+
 async def fetch_candidates(
-    limit: Optional[int], hashes: Optional[list[str]] = None
-) -> list[tuple[str, str, str]]:
+    limit: Optional[int], hashes: Optional[list[str]] = None, skip_blocked: bool = False
+) -> list[tuple[str, str, str, str]]:
     """挑待補標題的列：title IS NULL 的研究報告。
 
     hashes 為 None（預設）＝掃全表所有 NULL（手動補積壓 make titles）。
     hashes 為清單＝只補這批 file_hash（定時匯入只針對本輪新研報，避免掃積壓）；
     空清單代表本輪無新研報，直接回空、不查 DB。
+    skip_blocked＝排除 research.llm_task_failure 判定該跳過的研報（同 MODEL）。
 
     排序刻意 report_date DESC：全語料一萬多篇跑不完時，先讓最近的報告有標題。
     """
-    sql = (
-        "SELECT id::text, file_name, full_text "
-        "FROM research.research_report "
-        "WHERE title IS NULL AND full_text IS NOT NULL AND is_research IS NOT FALSE "
-    )
     params: dict = {}
     if hashes is not None:
         if not hashes:
             return []
-        sql += "AND file_hash = ANY(:hashes) "
         params["hashes"] = hashes
-    sql += "ORDER BY report_date DESC NULLS LAST, file_name"
+    if skip_blocked:
+        params.update(llm_failures.skip_params(llm_failures.TASK_TITLE, MODEL))
     if limit:
-        sql += " LIMIT :limit"
         params["limit"] = limit
+    sql = build_candidates_sql(hashes is not None, skip_blocked, bool(limit))
     async with SessionFactory() as session:
         rows = await session.execute(text(sql), params)
-        return [(r[0], r[1], r[2]) for r in rows.all()]
+        return [(r[0], r[1], r[2], r[3]) for r in rows.all()]
 
 
 async def main(
-    workers: int, limit: Optional[int], excerpt: int, hashes_file: Optional[str] = None
+    workers: int,
+    limit: Optional[int],
+    excerpt: int,
+    hashes_file: Optional[str] = None,
+    retry_blocked: bool = False,
 ) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     hashes = read_hashes_file(hashes_file) if hashes_file else None
     scope = f"本輪 {len(hashes)} 篇" if hashes is not None else "全表 NULL"
-    cands = await fetch_candidates(limit, hashes)
+    recorder = await llm_failures.open_recorder(llm_failures.TASK_TITLE, MODEL, SessionFactory)
+    cands = await fetch_candidates(limit, hashes, skip_blocked=recorder is not None and not retry_blocked)
     total = len(cands)
     print(
         f"candidates: {total} | scope: {scope} | workers: {workers} | model: {MODEL}",
@@ -289,7 +320,10 @@ async def main(
     sem = asyncio.Semaphore(workers)
     try:
         await asyncio.gather(
-            *(title_one(sem, rid, fn, ft, excerpt, total) for rid, fn, ft in cands)
+            *(
+                title_one(sem, rid, fn, ft, excerpt, total, file_hash=fh, recorder=recorder)
+                for rid, fn, ft, fh in cands
+            )
         )
     except CliNotFoundError as exc:
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷 → 中止並以非零碼收場，
@@ -310,6 +344,13 @@ if __name__ == "__main__":
         default=None,
         help="只補此檔列出的 file_hash（每行一個）；不給＝補全表所有 title IS NULL",
     )
+    ap.add_argument(
+        "--retry-blocked",
+        action="store_true",
+        help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打",
+    )
     args = ap.parse_args()
     with claude_cli_lock_or_exit("generate_titles"):
-        asyncio.run(main(args.workers, args.limit, args.excerpt, args.hashes_file))
+        asyncio.run(
+            main(args.workers, args.limit, args.excerpt, args.hashes_file, args.retry_blocked)
+        )

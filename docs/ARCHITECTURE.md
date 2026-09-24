@@ -143,6 +143,7 @@ schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具�
 | `report_takeaway` | 閱讀頁重點摘錄與錨點 | FK → `research_report` CASCADE；UNIQUE(report_id, ordinal) |
 | `report_brief` | 每日簡報 | `report_ids uuid[]` 刻意無 FK，讀取端容忍孤兒 |
 | `extraction_log` | 每個進過管線的 `file_hash` 一列 | 無 FK |
+| `llm_task_failure` | LLM 批次的內容型失敗（跳過名單）：解析不了、審查擋下、截斷；成功即刪列，規則在 `app/services/llm_failures.py` | PK(file_hash, task)；刻意無 CHECK、不備份 |
 
 備份只涵蓋四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）→ NAS；語料層刻意不備。
 

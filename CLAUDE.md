@@ -26,6 +26,7 @@ cd frontend && npm run lint          # eslint
 
 make summaries / titles / takeaways / signals / brief   # 批次，都 spawn claude CLI、以 flock 互斥
 make sync-once / db-backup / freshness / db-audit        # 維運
+make llm-blocked                     # LLM 批次跳過名單（唯讀；research.llm_task_failure）
 make boilerplate                     # 重建跨文件樣板字典 data/boilerplate/（入庫切塊前剔除；零 LLM）
 make up-edge / down-edge / edge-logs / edge-reload       # 對外 nginx + cloudflared
 uv run python scripts/extract_all.py                     # 全語料三支：只在初次建庫或補歷史

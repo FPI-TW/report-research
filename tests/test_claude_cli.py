@@ -752,5 +752,123 @@ class BadRequestEscalationTests(_HttpCase):
         self.assertEqual({c["reason"] for c in calls}, {lf.BAD_REQUEST})
 
 
+USAGE_FIELDS = {
+    "ts", "task", "file_hash", "report_id", "backend", "model_req", "model_resp", "prompt_sha256",
+    "tokens", "finish_reason", "kind", "attempts", "ttft_ms", "total_ms",
+}
+
+
+class UsageLogTests(_HttpCase):
+    """`data/llm_usage.jsonl`（第二版計畫 §4.8 批次部分）：HTTP 與 CLI 每次呼叫一行。"""
+
+    def setUp(self):
+        super().setUp()
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.log = Path(self._tmpdir.name) / "data" / "llm_usage.jsonl"
+        env = mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(self.log)})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def rows(self) -> list[dict]:
+        return [json.loads(ln) for ln in self.log.read_text(encoding="utf-8").splitlines()]
+
+    META = {"task": "summary", "file_hash": "h1", "report_id": "r1"}
+
+    def test_http_success_row(self):
+        usage = {"prompt_tokens": 12, "completion_tokens": 3, "prompt_cache_hit_tokens": 2,
+                 "prompt_cache_miss_tokens": 10}  # thinking 關：沒有 completion_tokens_details（9/24 實測）
+        self.install(lambda req: httpx.Response(200, content=_sse(
+            _chunk(content="好", model="deepseek-v4.1-flash"),
+            _chunk(content="", finish="stop", usage=usage, model="deepseek-v4.1-flash"))))
+        self.call("提示詞", meta=self.META)
+        (row,) = self.rows()
+        self.assertEqual(set(row), USAGE_FIELDS)
+        self.assertEqual(row["backend"], "http")
+        self.assertEqual((row["task"], row["file_hash"], row["report_id"]), ("summary", "h1", "r1"))
+        self.assertEqual((row["model_req"], row["model_resp"]), ("deepseek-flash", "deepseek-v4.1-flash"))
+        self.assertEqual(row["prompt_sha256"], __import__("hashlib").sha256("提示詞".encode()).hexdigest())
+        self.assertEqual(row["tokens"], {"hit": 2, "miss": 10, "completion": 3, "reasoning": 0})
+        self.assertEqual((row["finish_reason"], row["kind"], row["attempts"]), ("stop", None, 1))
+        self.assertIsInstance(row["ttft_ms"], int)
+        self.assertIsInstance(row["total_ms"], int)
+        self.assertNotIn("提示詞", self.log.read_text(encoding="utf-8"), "不記 prompt 本身")
+
+    def test_reasoning_tokens_when_present(self):
+        usage = {"completion_tokens": 9, "completion_tokens_details": {"reasoning_tokens": 7}}
+        self.install(lambda req: httpx.Response(200, content=_sse(
+            _chunk(content="好"), _chunk(content="", finish="stop", usage=usage))))
+        self.call(meta=self.META)
+        self.assertEqual(self.rows()[0]["tokens"]["reasoning"], 7)
+
+    def test_http_failures_are_logged_with_kind_and_attempts(self):
+        self.install(lambda req: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}))
+        self.call(meta=self.META)
+        self.install(lambda req: httpx.Response(503, text="busy"))
+        self.call(meta=self.META)
+        first, second = self.rows()
+        self.assertEqual((first["kind"], first["tokens"], first["attempts"]), ("content_filter", None, 1))
+        self.assertEqual((second["kind"], second["attempts"]), ("overloaded", 3))
+
+    def test_account_error_is_logged_before_abort(self):
+        self.install(lambda req: httpx.Response(402, json={"error": {"message": "Insufficient Balance"}}))
+        with self.assertRaises(cc.LlmEnvironmentError):
+            self.call(meta=self.META)
+        self.assertEqual(self.rows()[0]["kind"], "quota")
+
+    def test_cli_rows_have_null_tokens(self):
+        done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
+        with mock.patch.object(cc.subprocess, "run", return_value=done):
+            cc.run_claude("p", "claude-haiku-4-5", meta={"task": "tag", "file_hash": "h9"})
+        with mock.patch.object(cc.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 5)):
+            cc.run_claude("p", "claude-haiku-4-5", timeout=5, meta={"task": "tag"})
+        with mock.patch.object(cc.subprocess, "run", side_effect=FileNotFoundError(2, "x", "claude")):
+            with self.assertRaises(cc.CliNotFoundError):
+                cc.run_claude("p", "claude-haiku-4-5", meta={"task": "tag"})
+        ok, timeout, missing = self.rows()
+        for row in (ok, timeout, missing):
+            self.assertEqual(set(row), USAGE_FIELDS)
+            self.assertEqual((row["backend"], row["tokens"]), ("cli", None))
+        self.assertEqual((ok["kind"], ok["file_hash"]), (None, "h9"))
+        self.assertEqual(timeout["kind"], "timeout")
+        self.assertEqual(missing["kind"], "unrunnable")
+
+    def test_threads_write_whole_lines(self):
+        def worker(i):
+            for j in range(25):
+                cc.record_usage(meta={"task": "tag", "file_hash": f"{i}-{j}"}, backend="http",
+                                model_req="deepseek-flash", prompt="x" * 5000, kind=None, total_ms=1)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        rows = self.rows()  # 任何一行被交錯寫壞，json.loads 就會拋
+        self.assertEqual(len(rows), 200)
+        self.assertEqual(len({r["file_hash"] for r in rows}), 200)
+
+    def test_write_failure_is_fail_open(self):
+        blocker = Path(self._tmpdir.name) / "file"
+        blocker.write_text("", encoding="utf-8")
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        with mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(blocker / "llm_usage.jsonl")}), \
+             mock.patch.object(cc, "_usage_warned", False), \
+             mock.patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()) as err:
+            self.assertEqual(self.call().text, "ok")
+            self.assertEqual(self.call().text, "ok")
+        self.assertEqual(err.getvalue().count("用量記錄寫入失敗"), 1, "只警告一次")
+
+    def test_lone_surrogate_prompt_does_not_break_logging(self):
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        self.assertEqual(self.call("abc\ud800def").text, "ok")
+        self.assertEqual(len(self.rows()), 1)
+
+    def test_default_path_and_conftest_guard(self):
+        with mock.patch.dict(os.environ, {"LLM_USAGE_LOG": ""}):
+            self.assertEqual(cc.usage_log_path(), le.ROOT / "data" / "llm_usage.jsonl")
+        self.assertIn('os.environ["LLM_USAGE_LOG"]', (REPO_ROOT / "tests" / "conftest.py").read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

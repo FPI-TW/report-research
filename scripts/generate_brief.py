@@ -36,6 +36,7 @@ import argparse
 import asyncio
 import subprocess
 import sys
+import time
 import uuid
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
@@ -54,7 +55,7 @@ from app.services.db import SessionFactory  # noqa: E402
 from app.services.llm_models import TASK_BRIEF, is_http_model, resolve_model  # noqa: E402
 from app.services.reading.queries import fetch_instrument_names  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
-from scripts._claude_cli import CliNotFoundError, run_claude  # noqa: E402
+from scripts._claude_cli import CliNotFoundError, error_kind, record_usage, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +106,17 @@ def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optio
     if is_http_model(model):
         res = run_claude(prompt, model, timeout=timeout, max_tokens=MAX_TOKENS, meta={"task": TASK_BRIEF})
         return res.text, res.error
+    t0 = time.monotonic()
+    raw, error = _spawn_cli(prompt, model, timeout)
+    # 用量記錄 CLI 路徑也寫（tokens 為 null），與 run_claude 同一份檔、同一組欄位
+    kind = None if error is None else "timeout" if error.startswith("CLI 逾時") else "cli_error"
+    record_usage(meta={"task": TASK_BRIEF}, backend="cli", model_req=model, prompt=prompt, kind=kind,
+                 total_ms=int((time.monotonic() - t0) * 1000))
+    return raw, error
+
+
+def _spawn_cli(prompt: str, model: str, timeout: int) -> tuple[Optional[str], Optional[str]]:
+    """spawn `claude -p`（簡報自己的 CLI 版，遷移前的 call_cli 本體）。"""
     try:
         proc = subprocess.run(
             build_cli_args(prompt, model),
@@ -206,6 +218,14 @@ async def generate(args) -> int:
         raw, error = call_cli(prompt, args.model)
     if error:
         record_failure(target, error)
+        if error_kind(error) == "content_filter":
+            # 內容審查：一律標記、跳過、交人工（不改走 Claude）。不寫列，下一輪以新的窗期再試；
+            # rc=1 讓排程殼記進 unit_failures（OnFailure 告警鏈），素材若一直觸發審查就會一直紅。
+            print(
+                f"[brief] {target} 觸發模型供應商的內容審查，本次跳過、不寫列（下一輪以新的窗期再試）：{error}",
+                file=sys.stderr,
+            )
+            return 1
         print(f"[brief] 產生失敗：{error}", file=sys.stderr)
         return 1
 

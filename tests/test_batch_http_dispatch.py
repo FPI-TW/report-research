@@ -679,5 +679,50 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         stage = (self.tmp / "sync_failures.log").read_text(encoding="utf-8").split("\t")[1]
         self.assertEqual(stage, "tag")
 
+class BriefContentFilterTests(HttpMixin, unittest.TestCase):
+    """簡報被內容審查擋下：該次跳過、不寫列、rc 非 0（走 OnFailure 告警鏈），並記在輸出與失敗紀錄。"""
+
+    def _generate(self):
+        upsert = mock.AsyncMock()
+        record = mock.MagicMock()
+        svc = gb.brief_service
+        args = argparse.Namespace(date=None, force=True, after_hour=0, dry_run=False, model=DS, max_lookback_days=7)
+        err = io.StringIO()
+        with contextlib.ExitStack() as st:
+            p = st.enter_context
+            p(mock.patch.object(gb, "SessionFactory", lambda: _FakeSession()))
+            p(mock.patch.object(svc, "fetch_by_date", mock.AsyncMock(return_value=None)))
+            p(mock.patch.object(svc, "fetch_latest", mock.AsyncMock(return_value=None)))
+            p(mock.patch.object(svc, "fetch_window_reports",
+                                mock.AsyncMock(return_value=[argparse.Namespace(report_id="r1")])))
+            p(mock.patch.object(svc, "count_window_reports", mock.AsyncMock(return_value=1)))
+            p(mock.patch.object(svc, "fetch_signal_changes", mock.AsyncMock(return_value=[])))
+            p(mock.patch.object(svc, "build_material", return_value="素材"))
+            p(mock.patch.object(svc, "build_prompt", return_value="簡報提示詞"))
+            p(mock.patch.object(svc, "upsert_brief", upsert))
+            p(mock.patch.object(gb, "record_failure", record))
+            p(mock.patch.object(gb, "claude_cli_lock_or_exit", lambda name: contextlib.nullcontext()))
+            p(contextlib.redirect_stdout(io.StringIO()))
+            p(contextlib.redirect_stderr(err))
+            rc = asyncio.run(gb.generate(args))
+        return rc, upsert, record, err.getvalue()
+
+    def test_content_filter_skips_with_nonzero_rc(self):
+        self.install(status(400, "Content Exists Risk"))
+        rc, upsert, record, err = self._generate()
+        self.assertNotEqual(rc, 0)
+        upsert.assert_not_awaited()
+        self.assertIn("內容審查", err)
+        self.assertTrue(record.call_args.args[1].startswith("API[content_filter]"))
+        self.assertEqual(len(self.requests), 1, "審查不重打")
+
+    def test_success_records_the_model_actually_used(self):
+        self.install(ok("## 今日重點\n" + "- 台積電上修目標價，先進製程需求強勁。\n" * 10))
+        rc, upsert, record, _ = self._generate()
+        self.assertEqual(rc, 0)
+        self.assertEqual(upsert.await_args.kwargs["model"], DS)
+        record.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

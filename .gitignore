@@ -47,6 +47,8 @@ data/sync_hashes_retained_*.txt
 # DeepSeek 的段）。確認供應商恢復後由人刪除，或等它過期。
 data/.llm_breaker
 data/.llm_breaker.tmp
+# 批次 LLM 用量記錄（scripts/_claude_cli.record_usage，一次呼叫一行 JSON；費用歸因用，不進版控）。
+data/llm_usage.jsonl
 # 硬體用量取樣（scripts/collect_resource_usage.py 每 20 秒一筆，約 10 MB／日，
 # 自帶 --retention-days 修剪）。純執行期量測資料，不進版控——它描述的是
 # 「這台機器這段時間」，換一台機器就完全沒有意義。

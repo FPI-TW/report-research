@@ -81,8 +81,26 @@ rc=2）。刻意沒有「本輪第一個請求就 400 → 升級」：那篇研�
 `bad_request` 記入跳過名單（各批次 main 呼叫 `record_escalation`），下一輪才跳得過去；匯入段另把
 它們寫進保留檔（`scripts/sync_new_reports.py`）。身分由 `run_claude(meta={"file_hash": …})` 傳入，
 沒有 file_hash 的呼叫（簡報）不參與。
+
+## 用量記錄（第二版計畫 §4.8）
+
+每次呼叫（HTTP 與 CLI 都寫）追加一行 JSON 到 `data/llm_usage.jsonl`（ROOT 錨點；`LLM_USAGE_LOG`
+只給測試用）：`ts, task, file_hash, report_id, backend, model_req, model_resp, prompt_sha256,
+tokens{hit,miss,completion,reasoning}, finish_reason, kind, attempts, ttft_ms, total_ms`。
+摘要、標題、標籤不在 DB 記產出模型，靠這裡的 `file_hash` 回溯；費用真值看餘額差分，這份只拿來
+歸因。規則：
+  - CLI 路徑 `tokens` 為 null（CLI 不回報用量）；`kind` 是 null（成功）、`timeout`、`unrunnable`
+    （`CliNotFoundError`）或 `cli_error`。
+  - HTTP 路徑沒收到 usage（失敗在第一個 chunk 之前）時 `tokens` 為 null；收到了但沒有
+    `completion_tokens_details`（thinking 關時就是這樣，9/24 探測實測）時 `reasoning` 記 **0**
+    ——thinking 關著，推理 token 就是 0，不是「不知道」。
+  - 不記 prompt 本身，只記 sha256（研報全文不外流到 log）。
+  - 有執行緒鎖（一行一次 write，行不交錯）；寫入失敗 fail-open，只警告一次。
 """
 import errno
+import hashlib
+import json
+import os
 import re
 import subprocess
 import sys
@@ -90,11 +108,12 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import NamedTuple, Optional
 
 from app.services import llm_failures, llm_http
 from app.services.llm_models import is_http_model
-from scripts._llm_env import BREAKER_TTL_S, breaker_path
+from scripts._llm_env import BREAKER_TTL_S, ROOT, breaker_path
 
 # stderr 只留尾巴：完整 stderr 可能很長，而失敗記錄是給人掃讀的。200 字元夠容納
 # 「usage: unknown flag」「Credit balance too low」這類真正有資訊量的那一行。
@@ -345,6 +364,80 @@ def _reset_state() -> None:
     _BAD_REQUESTS.reset()
 
 
+# ── 用量記錄 ─────────────────────────────────────────────────────────────────
+_USAGE_LOCK = threading.Lock()
+_usage_warned = False
+
+
+def usage_log_path() -> Path:
+    """`LLM_USAGE_LOG` 只給測試用（conftest 指到 os.devnull）；生產一律 `data/llm_usage.jsonl`。"""
+    return Path(os.environ.get("LLM_USAGE_LOG") or ROOT / "data" / "llm_usage.jsonl")
+
+
+def _tokens(usage: Optional[dict]) -> Optional[dict]:
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("completion_tokens_details") or {}
+    return {
+        "hit": usage.get("prompt_cache_hit_tokens"),
+        "miss": usage.get("prompt_cache_miss_tokens"),
+        "completion": usage.get("completion_tokens"),
+        # thinking 關時 DeepSeek 不回 completion_tokens_details：推理 token 就是 0（見模組 docstring）
+        "reasoning": int(details.get("reasoning_tokens") or 0),
+    }
+
+
+def record_usage(
+    *,
+    meta: dict,
+    backend: str,
+    model_req: str,
+    prompt: str,
+    kind: Optional[str],
+    total_ms: int,
+    model_resp: Optional[str] = None,
+    usage: Optional[dict] = None,
+    finish_reason: Optional[str] = None,
+    attempts: int = 1,
+    ttft_ms: Optional[int] = None,
+) -> None:
+    """追加一行用量紀錄；任何失敗都只警告一次、不拋（fail-open）。"""
+    global _usage_warned
+    try:
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "task": meta.get("task"),
+            "file_hash": meta.get("file_hash"),
+            "report_id": meta.get("report_id"),
+            "backend": backend,
+            "model_req": model_req,
+            "model_resp": model_resp,
+            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8", "surrogatepass")).hexdigest(),
+            "tokens": _tokens(usage) if backend == "http" else None,
+            "finish_reason": finish_reason,
+            "kind": kind,
+            "attempts": attempts,
+            "ttft_ms": ttft_ms,
+            "total_ms": total_ms,
+        }
+        line = json.dumps(row, ensure_ascii=False, default=str) + "\n"
+        path = usage_log_path()
+        with _USAGE_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line)
+    except Exception as exc:  # noqa: BLE001 — 用量記錄是歸因用的，不能擋批次
+        if not _usage_warned:
+            _usage_warned = True
+            _warn(f"用量記錄寫入失敗（之後不再提示）：{type(exc).__name__}: {exc}")
+
+
+def _cli_kind(res: CliResult) -> Optional[str]:
+    if res.text is not None:
+        return None
+    return "timeout" if (res.error or "").startswith("CLI 逾時") else "cli_error"
+
+
 def run_claude(
     prompt: str,
     model: str,
@@ -361,9 +454,19 @@ def run_claude(
     HTTP 路徑用 `task` 標 log 與 `user_id`。
     `cwd` 預設 /tmp：避免 CLI 載入專案 CLAUDE.md 拖慢每次呼叫（HTTP 路徑不用）。
     """
+    meta = dict(meta or {})
     if is_http_model(model):
-        return _run_http(prompt, model, timeout, max_tokens, dict(meta or {}))
-    return _run_cli(prompt, model, timeout, cwd)
+        return _run_http(prompt, model, timeout, max_tokens, meta)
+    t0 = time.monotonic()
+    try:
+        res = _run_cli(prompt, model, timeout, cwd)
+    except CliNotFoundError:
+        record_usage(meta=meta, backend="cli", model_req=model, prompt=prompt, kind="unrunnable",
+                     total_ms=int((time.monotonic() - t0) * 1000))
+        raise
+    record_usage(meta=meta, backend="cli", model_req=model, prompt=prompt, kind=_cli_kind(res),
+                 total_ms=int((time.monotonic() - t0) * 1000))
+    return res
 
 
 def _run_http(
@@ -373,9 +476,16 @@ def _run_http(
         raise ValueError(f"model={model} 走 HTTP，呼叫點必須帶 max_tokens（第二版計畫 §8）")
     task = str(meta.get("task") or "-")
     _BREAKER.check()
+    t0 = time.monotonic()
     result = llm_http.complete_chat(
         model, prompt, max_tokens=max_tokens, timeout=float(timeout),
         task=task, user_id=f"batch-{task}", sleep=_http_sleep,
+    )
+    out = result.outcome
+    record_usage(
+        meta=meta, backend="http", model_req=model, prompt=prompt, kind=result.kind,
+        total_ms=int((time.monotonic() - t0) * 1000), model_resp=out.model_resp, usage=out.usage,
+        finish_reason=out.finish_reason, attempts=result.attempts, ttft_ms=out.ttft_ms,
     )
     if result.kind in llm_http.ACCOUNT_KINDS:
         raise LlmEnvironmentError(f"{result.error}。{_ACCOUNT_HINTS[result.kind]}")

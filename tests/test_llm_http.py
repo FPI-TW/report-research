@@ -703,6 +703,37 @@ class StreamEdgeTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
         texts, out = await _collect(self._stream())
         self.assertEqual((texts, out.kind, out.streamed), (["一半"], lh.NETWORK, True))
 
+    async def test_read_timeout_after_reasoning_names_reasoning(self):
+        """收到 reasoning 後才沉默：detail 要說伺服器回應過（不是「未送出任何位元組」），分類不變。"""
+        self.install(lambda req: httpx.Response(200, stream=_AsyncStream(
+            _sse(_chunk(reasoning="想一想"), done=False), httpx.ReadTimeout("no bytes"))))
+        texts, out = await _collect(self._stream())
+        self.assertEqual((texts, out.kind, out.streamed), ([], lh.TIMEOUT, False))
+        self.assertIn("reasoning", out.detail)
+        self.assertIn("ReadTimeout", out.detail)
+        self.assertNotIn("未送出任何位元組", out.detail)
+        self.assertEqual(out.reasoning_chars, 3)
+
+    async def test_total_timeout_counts_from_call_start_not_first_token(self):
+        """總時限從呼叫開始算：首字 0.3 秒才到、總時限 0.4 秒、之後慢速滴字 → 約 0.4 秒截斷。
+        若在首字時重設期限（從首字起算），會拖到約 0.7 秒。"""
+        async def late_then_drip():
+            await asyncio.sleep(0.3)
+            for i in range(100):
+                yield _sse(_chunk(content=f"{i}"), done=False)
+                await asyncio.sleep(0.05)
+            yield _sse(_chunk(content="", finish="stop"))
+
+        self.install(lambda req: httpx.Response(200, content=late_then_drip()))
+        t0 = time.monotonic()
+        texts, out = await _collect(self._stream(first_token_timeout=5.0, total_timeout=0.4))
+        elapsed = time.monotonic() - t0
+        self.assertGreaterEqual(elapsed, 0.35)
+        self.assertLess(elapsed, 0.6)
+        self.assertTrue(0 < len(texts) < 100)
+        self.assertEqual((out.kind, out.streamed), (lh.TIMEOUT, True))
+        self.assertIn("總時限", out.detail)
+
     async def test_total_timeout_after_text(self):
         """吐字後的牆鐘總時限：到期＝TIMEOUT 且 streamed（呼叫端當截斷）；None＝不設。"""
         async def drip():

@@ -110,15 +110,18 @@ def file_key_fingerprint(path: Path | str) -> str | None:
 
     與預檢、web 看到的值同一套解析（`web.env_loader._parse_line`：去 `export `、去成對引號、
     strip），所以引號、尾隨空白、CRLF 都不會讓兩份其實相同的金鑰算出不同指紋。重複鍵取第一行
-    （同 `load_env_file`）。讀檔錯誤原樣拋出，交給呼叫端說明（見 docs/production_resilience.md）。
+    （同 `load_env_file`）；`main` 另外把重複當成失敗。讀檔錯誤原樣拋出，交給呼叫端說明
+    （見 docs/production_resilience.md）。
     """
+    values = _file_key_values(path)
+    return fingerprint(values[0]) if values and values[0] else None
+
+
+def _file_key_values(path: Path | str) -> list[str]:
+    """環境檔裡每一行 `DEEPSEEK_API_KEY` 的值（依檔內順序、已 strip）。讀檔錯誤原樣拋出。"""
     text = Path(path).read_text(encoding="utf-8")
-    for line in text.splitlines():
-        parsed = _parse_line(line)
-        if parsed is not None and parsed[0] == KEY:
-            value = parsed[1].strip()
-            return fingerprint(value) if value else None
-    return None
+    parsed = (_parse_line(line) for line in text.splitlines())
+    return [p[1].strip() for p in parsed if p is not None and p[0] == KEY]
 
 
 def _say(msg: str) -> None:
@@ -222,16 +225,19 @@ def main(argv: list[str] | None = None) -> int:
     """比對幾份環境檔的金鑰指紋（輪替後核對兩份是否逐字相同；只印前 8 碼，不印金鑰）。
 
     用法：`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`
-    rc=0：每份都有值且指紋相同；rc=1：有缺值、讀不到或不一致。
+    rc=0：每份都有值且指紋相同；rc=1：有缺值、讀不到、不一致，或某份檔裡 `DEEPSEEK_API_KEY`
+    不只一行——systemd 的 EnvironmentFile 取最後一行、`load_env_file` 先到先贏，兩邊會拿到
+    不同的值（同 `require_llm_key` 的重複鍵拒跑），只比第一行會誤報一致。
     """
     paths = list(sys.argv[1:] if argv is None else argv)
     if not paths:
         print("用法：python -m scripts._llm_env <環境檔> [<環境檔> …]", file=sys.stderr)
         return RC_CONFIG
     fps: set[str | None] = set()
+    duplicated = False
     for p in paths:
         try:
-            fp = file_key_fingerprint(p)
+            values = _file_key_values(p)
         except PermissionError:
             print(f"{p}  讀不到（PermissionError：以 kashionz 執行，或加入該檔的群組）")
             fps.add(None)
@@ -240,10 +246,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{p}  讀不到（{type(exc).__name__}）")
             fps.add(None)
             continue
+        fp = fingerprint(values[0]) if values and values[0] else None
         print(f"{p}  fp={fp}" if fp else f"{p}  （沒有 {KEY} 或值為空）")
         fps.add(fp)
-    ok = None not in fps and len(fps) == 1
-    print("一致" if ok else "不一致或有缺值")
+        if len(values) > 1:
+            duplicated = True
+            each = "、".join(f"fp={fingerprint(v)}" if v else "（空值）" for v in values)
+            print(
+                f"{p}  警告：{KEY} 有 {len(values)} 行（{each}）。systemd 的 EnvironmentFile 取最後一行、"
+                "程式（load_env_file）取第一行，兩邊會用不同的金鑰；刪掉多餘的行再核對"
+            )
+    ok = None not in fps and len(fps) == 1 and not duplicated
+    if duplicated:
+        print("有重複的鍵，不能判定一致")
+    else:
+        print("一致" if ok else "不一致或有缺值")
     return 0 if ok else 1
 
 

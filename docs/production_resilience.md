@@ -557,7 +557,10 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
    ```bash
    uv run python -m scripts._llm_env .env /etc/default/report-mark-llm
    ```
-   每份印一行 `fp=<前 8 碼>`，rc=0＝兩份都有值且一致，rc=1＝不一致、缺值或讀不到。**不要改用
+   每份印一行 `fp=<前 8 碼>`，rc=0＝兩份都有值且一致，rc=1＝不一致、缺值、讀不到，或某份檔裡
+   `DEEPSEEK_API_KEY` 不只一行（第 2 步「新增一行」而不是改那一行的後果）。重複時另印一行警告、
+   列出每一行的指紋：systemd 的 `EnvironmentFile` 取最後一行，程式（`load_env_file`）取第一行，
+   兩邊會用不同的金鑰；刪掉多餘的行再核對一次，即使兩行相同也一樣回 rc=1。**不要改用
    `grep | cut | sha256sum`**：程式讀值時會去 `export `、去成對引號、strip（`web/env_loader._parse_line`），
    手算的雜湊在值帶引號、尾隨空白或 CRLF 時會把兩份其實相同的金鑰判成不同。
    經 DeepSeek 的評測（`eval/run_ragas.py` 指定白名單模型）預檢印出的 `fp=` 也應是同一個值。

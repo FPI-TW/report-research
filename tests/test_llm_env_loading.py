@@ -486,6 +486,32 @@ class FileKeyFingerprintTests(unittest.TestCase):
                 self.assertEqual(le.main([str(a), str(Path(d) / "missing")]), 1)
 
 
+    def test_cli_duplicate_key_lines_warn_and_fail(self):
+        """檔內重複的 DEEPSEEK_API_KEY：systemd 取最後一行、load_env_file 取第一行，只比第一行會
+        誤報一致。即使兩行相同也回 rc=1（多餘的行是輪替時忘了刪的舊行，遲早會分歧）。"""
+        other = "fixed-test-secret-deepseek1"
+        with tempfile.TemporaryDirectory() as d:
+            web, llm = Path(d) / "web-copy", Path(d) / "llm-copy"
+            web.write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+            for text in (f"DEEPSEEK_API_KEY={FAKE_KEY}\nDEEPSEEK_API_KEY={other}\n",
+                         f"DEEPSEEK_API_KEY={FAKE_KEY}\nexport DEEPSEEK_API_KEY='{FAKE_KEY}'\n"):
+                with self.subTest(text=text):
+                    llm.write_text(text, encoding="utf-8")
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        self.assertEqual(le.main([str(web), str(llm)]), 1)
+                    printed = out.getvalue()
+                    self.assertIn("有 2 行", printed)
+                    self.assertIn("有重複的鍵", printed)
+                    self.assertNotIn("\n一致", printed)
+                    self.assertNotIn(FAKE_KEY, printed)
+                    self.assertNotIn(other, printed)
+            # 單份檔沒有重複：照舊只看指紋
+            llm.write_text(f"OTHER=1\nDEEPSEEK_API_KEY={FAKE_KEY}\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(le.main([str(web), str(llm)]), 0)
+
+
 class WorktreeWarningTests(unittest.TestCase):
     def _warn(self, env: dict, worktree: bool) -> str:
         err = io.StringIO()

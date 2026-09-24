@@ -559,9 +559,17 @@ def _transport_detail(exc: BaseException) -> str:
     return _one_line(f"{type(exc).__name__}: {exc}")[:200]
 
 
-def _silent_detail(exc: BaseException) -> str:
-    """首字前 read 逾時的 detail：說出是伺服器沉默，不是我們的首字期限。"""
-    return _one_line(f"首字前伺服器 {_READ_TIMEOUT:g}s 未送出任何位元組（{type(exc).__name__}）")[:200]
+def _silent_detail(exc: BaseException, reasoning_chars: int = 0) -> str:
+    """首字前 read 逾時的 detail：說出是伺服器沉默，不是我們的首字期限。
+
+    已收到 reasoning 才沉默時換一種說法：thinking 應已關閉（見模組 docstring），這時伺服器其實
+    回應過，「未送出任何位元組」會把人帶去查連線。分類不變（TIMEOUT、不重試）。
+    """
+    if reasoning_chars > 0:
+        msg = f"reasoning（{reasoning_chars} 字）後伺服器沉默 {_READ_TIMEOUT:g}s、尚未輸出內容"
+    else:
+        msg = f"首字前伺服器 {_READ_TIMEOUT:g}s 未送出任何位元組"
+    return _one_line(f"{msg}（{type(exc).__name__}）")[:200]
 
 
 # ── 線上：非同步串流 ─────────────────────────────────────────────────────────
@@ -663,7 +671,8 @@ async def astream_chat(
                     break
                 except httpx.ReadTimeout as exc:
                     if not got_text:  # 首字前的沉默＝逾時，不是網路錯誤（不重試）
-                        out = _fail(TIMEOUT, _silent_detail(exc), t0)
+                        out = _fail(TIMEOUT, _silent_detail(exc, acc.reasoning_chars), t0,
+                                    reasoning_chars=acc.reasoning_chars)
                     elif acc.finish_reason is None:
                         acc.error = (NETWORK, _transport_detail(exc))
                     break

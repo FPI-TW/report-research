@@ -39,6 +39,9 @@
    水平 2px 是與髮絲線／膠囊之間的呼吸，游標不會貼著它們。
    min-height 跟著行盒走（22px），否則空的輸入框會比一行文字還高。 */
 .input { flex: 1; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.6; color: var(--tf-text-1); max-height: 140px; min-height: 22px; padding: 5px 0 5px 2px; background: none; }
+/* 沒有工具鈕（網搜暫停中，ComposerTools 不渲染）時輸入框是第一個子節點，直接貼著膠囊的圓弧：
+   補回左內距，讓游標與 placeholder 和弧線之間留出與送出鈕那一側相當的呼吸。 */
+.input:first-child { padding-left: 10px; }
 .input::placeholder { color: var(--tf-text-4); }
 /* 與左端的「＋」同尺寸（30px），兩側邊緣才對稱；它是唯一的實心鈕，重量留給它。 */
 .send { width: 30px; height: 30px; flex: none; border-radius: var(--tf-radius-pill); border: none; background: var(--tf-graphite); color: var(--tf-on-graphite); display: flex; align-items: center; justify-content: center; cursor: pointer; }

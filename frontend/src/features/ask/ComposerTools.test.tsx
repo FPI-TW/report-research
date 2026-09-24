@@ -1,10 +1,18 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
-import { expect, test, beforeEach, afterEach } from 'vitest'
+import { describe, expect, test, beforeEach, afterEach, vi } from 'vitest'
 import { ComposerTools } from './ComposerTools'
 import { setWebSearch } from '../../lib/useWebSearch'
 
-beforeEach(() => { setWebSearch(false) })
-afterEach(() => { setWebSearch(false); localStorage.clear() })
+// 網搜暫停（WEB_SEARCH_PAUSED，DeepSeek 遷移 PR-W）以可切換的 getter 模擬：預設走「恢復後」的行為，
+// 讓開關本身的測試在暫停期間繼續守著接回點；暫停中的行為另成一組，把旗標設成 true。
+const paused = vi.hoisted(() => ({ value: false }))
+vi.mock('../../lib/useWebSearch', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../lib/useWebSearch')>()
+  return { ...mod, get WEB_SEARCH_PAUSED() { return paused.value } }
+})
+
+beforeEach(() => { paused.value = false; setWebSearch(false) })
+afterEach(() => { paused.value = false; setWebSearch(false); localStorage.clear() })
 
 const trigger = () => screen.getByRole('button', { name: '工具' })
 const chip = () => screen.queryByRole('button', { name: '關閉網路搜尋' })
@@ -77,4 +85,21 @@ test('多個實例共享開關狀態（中央與底部 Composer 同時存在）'
   fireEvent.click(screen.getAllByRole('button', { name: '工具' })[0])
   fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /網路搜尋/ }))
   expect(screen.getAllByRole('button', { name: '關閉網路搜尋' })).toHaveLength(2)
+})
+
+describe('網搜暫停中（WEB_SEARCH_PAUSED）', () => {
+  beforeEach(() => { paused.value = true })
+
+  test('工具清單不含網路搜尋：沒有任何工具時整個不渲染（不留一顆點開是空選單的「＋」）', () => {
+    const { container } = render(<ComposerTools />)
+    expect(container.firstChild).toBeNull()
+    expect(screen.queryByRole('button', { name: '工具' })).toBeNull()
+    expect(screen.queryByRole('menuitemcheckbox', { name: /網路搜尋/ })).toBeNull()
+  })
+
+  test('localStorage 殘留的開啟狀態不會以膠囊外露', () => {
+    setWebSearch(true)
+    render(<ComposerTools />)
+    expect(chip()).toBeNull()
+  })
 })

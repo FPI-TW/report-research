@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useWebSearch, setWebSearch } from './useWebSearch'
+import { useWebSearch, setWebSearch, WEB_SEARCH_PAUSED } from './useWebSearch'
 
 describe('useWebSearch store', () => {
   beforeEach(() => { localStorage.clear(); setWebSearch(false) })
@@ -51,5 +51,13 @@ describe('useWebSearch store', () => {
     const { result } = renderHook(() => mod.useWebSearch())
     expect(result.current).toBe(false)
     spy.mockRestore()
+  })
+})
+
+// PR-W：網搜暫停中（生產 ASK_ENABLE_WEB=0）。DeepSeek 版網搜（P9）上線、生產開回總閘之後才改成 false，
+// 連同這條一起改——不要只為了讓別的測試綠而改它。
+describe('WEB_SEARCH_PAUSED', () => {
+  it('暫停中', () => {
+    expect(WEB_SEARCH_PAUSED).toBe(true)
   })
 })

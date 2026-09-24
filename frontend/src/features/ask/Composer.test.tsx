@@ -1,8 +1,17 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { useState } from 'react'
-import { expect, test, vi, afterEach } from 'vitest'
+import { expect, test, vi, afterEach, beforeEach } from 'vitest'
 import { AI_NOTE, Composer } from './Composer'
 import { setWebSearch } from '../../lib/useWebSearch'
+
+// 網搜暫停（WEB_SEARCH_PAUSED，DeepSeek 遷移 PR-W）以可切換的 getter 模擬：預設走「恢復後」的行為，
+// 讓開關本身的測試在暫停期間繼續守著接回點；暫停中的行為另成一組，把旗標設成 true。
+const paused = vi.hoisted(() => ({ value: false }))
+vi.mock('../../lib/useWebSearch', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../lib/useWebSearch')>()
+  return { ...mod, get WEB_SEARCH_PAUSED() { return paused.value } }
+})
+beforeEach(() => { paused.value = false })
 
 function Harness({ onSubmit }: { onSubmit: (q: string) => void }) {
   const [v, setV] = useState('')
@@ -63,6 +72,18 @@ test('底部變體的免責文案隨開關切換（開啟後點明網路資訊�
   expect(screen.queryByText(/非受信任行情來源/)).toBeNull()
   act(() => setWebSearch(true))
   expect(screen.getByText(/非受信任行情來源/)).toBeTruthy()
+  setWebSearch(false)
+})
+
+// 網搜暫停中（PR-W）：沒有工具鈕，輸入框是第一個子節點；殘留的開啟偏好不改變免責文案。
+test('網搜暫停中：沒有工具鈕、殘留的開啟偏好不讓文案提網路資訊', () => {
+  paused.value = true
+  setWebSearch(true)
+  const { container } = render(<Composer value="" onChange={() => {}} onSubmit={() => {}} />)
+  expect(screen.queryByRole('button', { name: '工具' })).toBeNull()
+  expect(container.querySelector('textarea')!.parentElement!.children[0].tagName).toBe('TEXTAREA')
+  expect(screen.queryByText(/非受信任行情來源/)).toBeNull()
+  expect(screen.getByText(AI_NOTE)).toBeInTheDocument()
   setWebSearch(false)
 })
 

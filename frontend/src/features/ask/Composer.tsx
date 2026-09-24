@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
 import { TF_DUR, tfInstant } from '../../lib/motionTokens'
-import { useWebSearch } from '../../lib/useWebSearch'
+import { useWebSearch, WEB_SEARCH_PAUSED } from '../../lib/useWebSearch'
 import { ComposerTools } from './ComposerTools'
 import styles from './Composer.module.css'
 
@@ -47,7 +47,8 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
   // 只為了免責文案而讀；開關本身在 ComposerTools 內。直接讀共享 store 而非由
   // AskPage 往下傳：中央（空狀態）與底部兩個 Composer 實例同時存在時，prop 版會
   // 各自持有一份、按了哪個就只有那個亮。
-  const web = useWebSearch()
+  // 網搜暫停期間（WEB_SEARCH_PAUSED）殘留的開啟偏好不算數：請求一律送 web=false，文案也跟著。
+  const web = useWebSearch() && !WEB_SEARCH_PAUSED
   const ref = useRef<HTMLTextAreaElement>(null)
   // 文字換到第二行之後版面要改成兩列（見 .multiline）。判準只能是**量出來的高度**：
   // 字數在 CJK／英數混排與不同視窗寬度下換行的時機完全不同，數字數一定會錯。

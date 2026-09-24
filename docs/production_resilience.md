@@ -583,7 +583,7 @@ CLI backend 移除後沒有這條路徑了，同型態的問題（該段設定�
 | 暫時性 | `overloaded`（429、5xx）、`network` | 還沒吐字時傳輸層依 `Retry-After` 退避重試 ≤2 次（受總期限限制）；**已吐字（已計費）就不重試**，直接當單篇失敗；腳本層不再重試；計入斷路器 |
 | 單篇 | `content_filter`、`truncated`、`empty`、`bad_request`、`timeout_streamed`、`timeout`、`other` | 這篇這輪只打 1 次；前五種記入 `research.llm_task_failure`（審查與 `truncated` 1 次就跳過，其餘連續 3 輪）；`timeout_streamed` 與 `timeout` 計入斷路器 |
 
-「回應成功但解析失敗」（unparseable）不在上表：腳本層照舊最多 3 次，連續 3 輪才跳過。摘要在 DeepSeek 路徑不接受純文字回應（沒有 JSON 就算解析失敗），CLI 路徑維持原狀。批次的 `timeout`（摘要／標題／摘錄／訊號 180 秒、標註 150 秒、簡報 300 秒）在 HTTP 路徑是**涵蓋傳輸層重試的總期限**，每收到一段位元組就檢查，伺服器排隊送 keep-alive 或持續送不換行的位元組都延長不了它。沒吐字就到期是 `timeout`（計入斷路器、不記跳過名單）；**已吐字後才到期是 `timeout_streamed`（期限型截斷），可以重放**：計入斷路器（DeepSeek 整體變慢時整段中止，而不是每篇等到期限），記入跳過名單但**連續 3 輪**才跳過（已計費，真正每次都寫不完的那篇不能每輪重打），行內標註記 `skip_untagged`、階段 `tag`（`failures_to_delta.py` 預設會撈）。它和 `truncated` 刻意分開：`truncated` 只留給 `finish_reason=length`（同一輸入、同一上限重送結果不變，1 次就跳過）；初版把期限型也歸 `truncated`，DeepSeek 暫時變慢一次就會讓整批研報進跳過名單、行內標註進預設不重放的 `tag_truncated`，而且斷路器不跳。已吐字的失敗都不在傳輸層重試。合起來，一篇研報一輪最多 3 個已計費請求（解析失敗的腳本層重試），截斷、期限型截斷與審查只有 1 個。
+「回應成功但解析失敗」（unparseable）不在上表：腳本層照舊最多 3 次，連續 3 輪才跳過。摘要不接受純文字回應（沒有 JSON 就算解析失敗）。批次的 `timeout`（摘要／標題／摘錄／訊號 180 秒、標註 150 秒、簡報 300 秒）在 HTTP 路徑是**涵蓋傳輸層重試的總期限**，每收到一段位元組就檢查，伺服器排隊送 keep-alive 或持續送不換行的位元組都延長不了它。沒吐字就到期是 `timeout`（計入斷路器、不記跳過名單）；**已吐字後才到期是 `timeout_streamed`（期限型截斷），可以重放**：計入斷路器（DeepSeek 整體變慢時整段中止，而不是每篇等到期限），記入跳過名單但**連續 3 輪**才跳過（已計費，真正每次都寫不完的那篇不能每輪重打），行內標註記 `skip_untagged`、階段 `tag`（`failures_to_delta.py` 預設會撈）。它和 `truncated` 刻意分開：`truncated` 只留給 `finish_reason=length`（同一輸入、同一上限重送結果不變，1 次就跳過）；初版把期限型也歸 `truncated`，DeepSeek 暫時變慢一次就會讓整批研報進跳過名單、行內標註進預設不重放的 `tag_truncated`，而且斷路器不跳。已吐字的失敗都不在傳輸層重試。合起來，一篇研報一輪最多 3 個已計費請求（解析失敗的腳本層重試），截斷、期限型截斷與審查只有 1 個。
 
 **400 升級（審查 H2）**：一般的 400（`bad_request`）算單篇失敗。**只有**同一個批次行程裡 ≥2 篇不同研報收到相同的 400 訊息（比對前正規化：小寫、數字換 `#`、長 hex／request id 換 `<id>`，所以只差 `column N` 這類數字的訊息算同一則；上下文長度、輸入過長這類本質上是單篇輸入的訊息不參與升級），**而且本行程內還沒有任何一次 DeepSeek 呼叫成功過**（全面性的 400 會讓每一篇都失敗；有別篇成功過就代表請求與設定沒問題，剩下的是單篇輸入），才判定是請求或設定壞了、升級成 `API[config]` 整批 **rc=2** 中止；中止前先把觸發的那幾篇以 `bad_request` 記入 `research.llm_task_failure`（完整 file_hash 印在 log 裡），而且計數直接記到 3（`SKIP_AFTER_ROUNDS`），**下一輪就跳過**，不會連續 3 輪整段 rc=2。**修好之後，這幾篇要對該批次加 `--retry-blocked`（或 DELETE 那幾列）才會再打**；`make llm-blocked` 列得出來。刻意沒有「第一個請求就 400 就升級」：那篇若排在最前面，每一輪都會中止整批、而中止不記跳過名單，它永遠不會被跳過。匯入段另把觸發研報寫成 `data/sync_bad_request_<時間>.txt`（`file_hash<TAB>路徑`），殼印出內容；**重放本輪 delta 之前先把這些路徑從 delta 拿掉**，否則會再撞一次。處置：看訊息判斷是程式（請求格式）還是設定問題，修好後照「整批中止後的重放」補跑。
 
@@ -598,7 +598,7 @@ CLI backend 移除後沒有這條路徑了，同型態的問題（該段設定�
 
 **簡報被內容審查擋下（或輸出被 `max_tokens` 截斷）**：該次跳過、不寫列，`generate_brief.py` 以 rc=1 收場（排程殼記進 `unit_failures.log`、走告警鏈），原因寫進 `data/brief_failures.log`（`時間<TAB>簡報日期<TAB>原因<TAB>model`）與 sync log。**同一天、同一個 model 之後的輪次不再呼叫**（素材是上一次的超集，幾乎一定再擋；每 3 小時重打只是每次再付一次錢），印「今日已被模型供應商的內容審查擋過，略過」、rc 仍是 1（「今天沒有簡報」照樣看得見）。隔天以新的窗期再試；換 model 或加 `--force` 會當天重打。交人看素材。`finish_reason=length` 的截斷（`API[truncated]`，撞到 `generate_brief.py` 的 `MAX_TOKENS`）同一套處置：素材只會更多，同一個上限只會截得更早；期限型截斷（`API[timeout_streamed]`）與逾時**不算**，下一輪照打（可能只是 DeepSeek 暫時變慢）。
 
-**用量記錄**：批次每次 LLM 呼叫（DeepSeek 與 CLI）在 `data/llm_usage.jsonl` 追加一行 JSON（`task`、`file_hash`、`report_id`、`backend`、`model_req`／`model_resp`、`prompt_sha256`、`tokens{hit,miss,completion,reasoning}`、`finish_reason`、`kind`、`attempts`、`ttft_ms`、`total_ms`；CLI 的 `tokens` 為 null，thinking 關時 `reasoning` 記 0）。摘要、標題、標籤的產出模型靠它以 `file_hash` 回溯；費用真值看 DeepSeek 餘額差分，這份只拿來歸因。寫不進去不影響批次。檔案只增不減，要清就整份搬走。
+**用量記錄**：批次每次 LLM 呼叫在 `data/llm_usage.jsonl` 追加一行 JSON（`task`、`file_hash`、`report_id`、`backend`、`model_req`／`model_resp`、`prompt_sha256`、`tokens{hit,miss,completion,reasoning}`、`finish_reason`、`kind`、`attempts`、`ttft_ms`、`total_ms`；thinking 關時 `reasoning` 記 0；PR-M 前的舊列另有 `backend=cli`、`tokens` 為 null）。摘要、標題、標籤的產出模型靠它以 `file_hash` 回溯；費用真值看 DeepSeek 餘額差分，這份只拿來歸因。寫不進去不影響批次。檔案只增不減，要清就整份搬走。
 
 **斷路器**：同一個批次行程裡最近 10 次 DeepSeek 呼叫有 ≥5 次逾時／過載／連線失敗，該段以 **rc=2** 中止，並寫 `data/.llm_breaker`。標記綁定 sync 輪次：`sync_new_reports.sh` 每輪 export `SYNC_ROUND_ID`（＝`ROUND_TS`），標記帶 `round=`；**同一輪**其餘**會用到 DeepSeek** 的段在預檢就 rc=2 拒跑（不看時間，一輪可超過 2.5 小時），**下一輪不受影響**（上一輪末段的標記不會擋下一輪開頭的匯入；屆時若仍過載，斷路器會再跳一次）。手動執行（沒有輪次 id）或手動執行寫的標記，照 30 分鐘有效期。還在用 Claude 的段不受影響。處置：看 DeepSeek 狀態頁與 sync log；恢復後 `rm data/.llm_breaker`（或等它失效），再依「整批中止後的重放」補跑。
 
@@ -831,7 +831,7 @@ rc `0`＝`EXECUTION_PROVEN`／`1`＝**`EXECUTION_NOT_PROVEN`**／`2`＝用法或
 
 實測後果：2026-07 量到 `report_takeaway` 停更 8 天、`report_signal` 停更 12 天，而覆蓋率量測是事故**之後**才補的。停更的症狀是閱讀頁優雅降級、整區不進 DOM——「最新研報靜默少一個功能」，不會有人回報。
 
-所以停更必須靠**另一個獨立的偵測器**，不能靠 `OnFailure`；而它量的是**結果**不是過程：不管是鎖撞了、`claude` 不在 PATH、timer 沒跑還是 NAS 沒掛上，只要派生資產不再前進就會紅。
+所以停更必須靠**另一個獨立的偵測器**，不能靠 `OnFailure`；而它量的是**結果**不是過程：不管是鎖撞了、LLM 帳號失效、timer 沒跑還是 NAS 沒掛上，只要派生資產不再前進就會紅。
 
 ### 怎麼跑
 
@@ -951,7 +951,7 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 | 匯入段因 400 升級中止 | importer 寫的 `data/.sync_last_hashes.bad_request` 改名成 `data/sync_bad_request_<時間>.txt`（`file_hash<TAB>路徑`） | 逐行印出；重放本輪 delta 前先把這些路徑拿掉 |
 | 下游任一段 rc=2 | 當輪 `data/.sync_last_hashes` 複製成 `data/sync_hashes_retained_<時間>.txt`（一輪一份） | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
 
-全部寫進當日 sync log，也落在 `data/unit_failures.log` 那筆紀錄的 log 尾巴裡。重放清單只列殼自己產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`；`sync_delta_recover.txt` 這類手動檔不列。rc=75（CLI 被別的批次佔用）不在此列，處置照舊（`--all-local`，補完刪掉本輪 delta）。**rc=2 也可能是參數錯誤**（argparse 同樣以 2 退出，例如殼傳了批次不認得的旗標），動手前先看 sync log 確認中止原因。
+全部寫進當日 sync log，也落在 `data/unit_failures.log` 那筆紀錄的 log 尾巴裡。重放清單只列殼自己產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`；`sync_delta_recover.txt` 這類手動檔不列。rc=75（批次鎖被別的批次佔用）不在此列，處置照舊（`--all-local`，補完刪掉本輪 delta）。**rc=2 也可能是參數錯誤**（argparse 同樣以 2 退出，例如殼傳了批次不認得的旗標），動手前先看 sync log 確認中止原因。
 
 **為什麼要 `_partial` 那份**：importer 逐篇各自 commit，但 hashes 清單原本只在最後寫出。中途整批中止（`CliNotFoundError`→rc=2、`report_exists` 之類的 DB 例外→rc=1）時，已入庫的那幾篇不在任何 hashes 裡；重放同一份 delta 時它們又變成 `skip_exists`，重放寫出的 hashes 也沒有它們——摘要、標題、摘錄就永遠漏掉。importer 在中止時把「已 commit 的 hashes」寫到 `<hashes_out>.partial`（正常結束不寫；殼在匯入前先刪殘檔），殼改名保留。檔名刻意帶 `_partial`，才不會被重放本輪 delta 時的 `--hashes-out` 蓋掉。手動加 `--hashes-out X` 重放又中止時，partial 在 `X.partial`，要自己補跑。
 

@@ -470,23 +470,9 @@ class ScriptLevelRetryTests(_OneFileMixin, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(calls.call_count, 2)
                 self.assertEqual(rec.recorded, [("h1", lf.TRUNCATED)])
 
-    async def test_cli_errors_keep_script_level_retries(self):
-        """CLI 路徑語意不變：`CLI 逾時` 之類照舊重試 3 次、不記跳過名單。"""
-        err = cc.CliResult(None, "CLI 逾時（180s 內未回應）")
-        cases = (
-            (gs, lambda: self.run_title_or_summary(gs, "summarize_one")),
-            (gt, lambda: self.run_title_or_summary(gt, "title_one")),
-            (et, self.run_takeaway),
-            (es, self.run_signal),
-        )
-        for mod, run in cases:
-            with self.subTest(mod=mod.__name__), mock.patch.object(mod, "call_cli", return_value=err) as call:
-                rec = await run()
-                self.assertEqual(call.call_count, 3)
-                self.assertEqual(rec.recorded, [])
-        with mock.patch.object(tac, "call_cli", return_value=err) as call:
-            self.assertEqual(self.run_tag_all(), "fail")
-        self.assertEqual(call.call_count, 3)
+    # PR-M 前這裡還有一條「CLI 的非 `API[` 錯誤照舊重試 3 次」：CLI 移除後 `run_claude` 的失敗一律是
+    # `API[<kind>]`（`llm_http.error_string`），那條分支沒有來源，測試隨之刪除。腳本層重試只剩「有回應但
+    # 解析不了」（上面的 unparseable 測試），`API[` 錯誤只打 1 次（本類別開頭）。
 
 
 def _mid_stream_error(req):

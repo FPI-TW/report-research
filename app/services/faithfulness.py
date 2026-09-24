@@ -174,7 +174,7 @@ class FaithfulnessResult:
     n_missing_verdicts：grounding 漏判（缺 idx）而被計為 unsupported 的條數，無缺漏時 0。
     judge_model_resp／judge_fingerprint／judge_requests／usage：只有 HTTP judge 有值（遷移 PR-18）——
     API 回報的實際模型與 `system_fingerprint`（同名模型換了底層就看得出來）、實際送出的請求數與
-    token 加總（所有嘗試）。CLI judge 是 None。
+    token 加總（所有嘗試）。沒有送出請求（白名單外的 judge model）時是 None。
     """
 
     faithfulness_score: float | None
@@ -214,7 +214,7 @@ class FaithfulnessResult:
             # 漏判而被計為 unsupported 的條數：分數偏低時先看這個，分得出「真的沒佐證」
             # 與「judge 沒判完」（L19 的寬鬆例外留下的痕跡）。
             "n_missing_verdicts": self.n_missing_verdicts,
-            # HTTP judge 的實際模型、指紋、請求數與 token（CLI judge 為 None）。
+            # HTTP judge 的實際模型、指紋、請求數與 token（沒有送出請求時為 None）。
             "judge_model_resp": self.judge_model_resp,
             "judge_fingerprint": self.judge_fingerprint,
             "judge_requests": self.judge_requests,

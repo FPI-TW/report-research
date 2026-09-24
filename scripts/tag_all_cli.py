@@ -74,7 +74,7 @@ def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
     if out_path.exists() and parse_tags(out_path.read_text(encoding="utf-8")):
         return "skip"
     prompt = build_prompt(rec["file_name"], rec.get("text", ""), excerpt)
-    last_error = "CLI 無回應"
+    last_error = "LLM 無回應"
     for _ in range(retries + 1):
         # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
         res = call_cli(prompt, file_hash=h)

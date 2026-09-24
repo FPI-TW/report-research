@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from app.services import llm_failures as lf  # noqa: E402
+from app.services import llm_http as lh  # noqa: E402
 
 
 def _load_script(name: str):
@@ -339,14 +340,15 @@ class TitleSummaryRecordingTests(unittest.IsolatedAsyncioTestCase):
     async def test_environment_failure_not_recorded(self):
         for mod, fn in ((gt, "title_one"), (gs, "summarize_one")):
             with self.subTest(mod=fn):
-                err = mod.CliResult(None, "CLI 逾時（180s 內未回應）")
+                err = mod.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))
                 rec = await self._run(mod, fn, [err, err, err])
                 self.assertEqual(rec.recorded, [])
 
     async def test_mixed_round_with_one_unparseable_is_recorded(self):
-        # 實測：同一篇有時解析不了、有時 CLI 退出碼 1。只要本輪有回過不能用的東西就算。
+        # 同一篇有時解析不了、有時傳輸層失敗（CLI 時代實測是退出碼 1）。只要本輪有回過不能用的東西就算；
+        # 傳輸層失敗不在腳本層重試（`API[` 開頭），所以這一輪只打兩次。
         bad = gt.CliResult('{"title": null}', None)
-        err = gt.CliResult(None, "CLI 退出碼 1：（無 stderr）")
+        err = gt.CliResult(None, lh.error_string(lh.OVERLOADED, "HTTP 503"))
         rec = await self._run(gt, "title_one", [bad, err, err])
         self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
 
@@ -388,7 +390,7 @@ class TakeawaySignalRecordingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
 
     async def test_takeaway_env_failure_not_recorded(self):
-        err = et.CliResult(None, "CLI 逾時")
+        err = et.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))
         rec = await self._takeaway([err, err, err], rows=[])
         self.assertEqual(rec.recorded, [])
 
@@ -417,7 +419,7 @@ class TakeawaySignalRecordingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
 
     async def test_signal_env_failure_not_recorded(self):
-        err = es.CliResult(None, "CLI 逾時")
+        err = es.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))
         rec = await self._signal([err, err, err], ["rejected"])
         self.assertEqual(rec.recorded, [])
 

@@ -17,6 +17,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.services import llm_http as lh  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 
 # 以檔案路徑載入 scripts/extract_takeaways.py（scripts 非套件）。
@@ -419,7 +420,7 @@ class AnchorIntegrationTests(unittest.TestCase):
         self.assertEqual(rows[0].extraction_version, et.EXTRACTION_VERSION)
 
     def test_build_rows_returns_empty_when_parse_failed(self):
-        parsed = et.ParsedTakeaways(ok=False, error="CLI 無回應或逾時")
+        parsed = et.ParsedTakeaways(ok=False, error="回應不是合法 JSON")
         self.assertEqual(et.build_rows("r1", CANONICAL, SHA, parsed), [])
 
 
@@ -547,7 +548,7 @@ class CliAbortTests(unittest.IsolatedAsyncioTestCase):
             log = Path(tmp) / "takeaway_failures.log"
             with mock.patch.object(et, "FAIL_LOG", log), \
                  mock.patch.object(et, "call_cli",
-                                   return_value=et.CliResult(None, "CLI 逾時（180s 內未回應）")):
+                                   return_value=et.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))):
                 await et.extract_one(asyncio.Semaphore(1), self._item(), 24000, "m", 1)
             written = log.read_text(encoding="utf-8")
         self.assertIn("rep-1", written)
@@ -556,7 +557,7 @@ class CliAbortTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RawPayloadModelTests(unittest.IsolatedAsyncioTestCase):
-    """raw_payload.model 記**實際產出**的模型（遷移 PR-15）：HTTP 取回應的 model 欄，CLI 退回請求的。"""
+    """raw_payload.model 記**實際產出**的模型（遷移 PR-15）：取回應的 model 欄，取不到時退回請求的。"""
 
     def test_build_rows_records_model_and_keeps_quote(self):
         rows = et.build_rows("r1", CANONICAL, SHA, _parsed({"claim": "毛利率優於預期", "quote": QUOTE_VERBATIM}),
@@ -589,11 +590,11 @@ class RawPayloadModelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._run([ok]), "deepseek-flash-0925")
 
     async def test_falls_back_to_requested_model(self):
-        ok = et.CliResult('{"takeaways": []}', None)  # CLI 路徑沒有回應的 model 欄
+        ok = et.CliResult('{"takeaways": []}', None)  # 回應沒有 model 欄
         self.assertEqual(await self._run([ok]), "deepseek-flash")
 
     async def test_no_response_no_model(self):
-        err = et.CliResult(None, "CLI 逾時（180s 內未回應）")
+        err = et.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))
         self.assertIsNone(await self._run([err, err, err]))
 
 

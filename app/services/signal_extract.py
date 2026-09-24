@@ -462,7 +462,7 @@ def _normalize_thesis(obj: object) -> tuple[dict, list[str]]:
 def _with_model(payload: dict, model: Optional[str]) -> dict:
     """raw_payload 加上產出模型（`model`）；未知（None）就不加鍵。不改動傳入的 dict。
 
-    `model` 是**實際產出**這份回應的模型：HTTP 路徑取回應的 `model` 欄，CLI 路徑退回請求的
+    `model` 是**實際產出**這份回應的模型：取回應的 `model` 欄，取不到時退回請求的
     model（由批次決定，見 scripts/extract_signals.py）。同名鍵以 Python 記的為準。
     """
     out = dict(payload)

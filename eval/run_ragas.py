@@ -414,7 +414,7 @@ def aggregate(per_q: list[dict]) -> dict:
     n_no_context 只計「F 為 None 且不是 judge 出錯」的題：judge 出錯另計 n_judge_errors，
     混在一起會把量尺故障讀成檢索沒找到東西。
     citation_rate／simplified_residual_rate 是「答案帶有效引用」「答案整份判為簡體」的
-    題數比例（分母＝有該欄位的非 error 題）；n_truncated 是生成被逾時截斷的題數。
+    題數比例（分母＝有該欄位的非 error 題）；n_truncated 是生成已吐字後被截斷（長度上限、read 逾時、總時限）的題數。
     n_effective_<指標>／judged_ids_sha：三個 judge 指標各自實際入均值的題數與題目集合的雜湊
     （eval_compare 據此判定兩份是不是在同一組題目上算的均值）。
     """

@@ -37,7 +37,7 @@ vCPU、RAM、磁碟、IOPS 到底要多少，repo 裡從來沒有任何工具在
 
 ### 2. 分元件用 cgroup v2，不掃 `/proc/<pid>`
 
-批次腳本會 fork 出 `claude` CLI 與 BGE-M3 子行程，**按 PID 掃一定會漏掉它們**，
+批次腳本會 fork 出 BGE-M3 子行程（PR-M 前還有 `claude` CLI），**按 PID 掃一定會漏掉它們**，
 而那正是全天尖峰的來源。cgroup 天然把子孫行程算進父 unit。
 
 容器同理，且**直接讀 `/sys/fs/cgroup/docker/<id>/` 而不是 `docker stats`**：實測後者

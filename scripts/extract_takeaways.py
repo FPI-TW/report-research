@@ -654,7 +654,7 @@ async def extract_one(
     try:
         rows = build_rows(item.report_id, item.canonical, item.text_sha256, parsed, model=used_model)
         if not rows:
-            # rejected：**不寫任何列**（也不刪既有列 —— 一次 CLI 抽風不該毀掉上一版
+            # rejected：**不寫任何列**（也不刪既有列 —— 一次 LLM 抽風不該毀掉上一版
             # 好的摘錄）。下次批次看不到符合的列/或 sha 仍不符 → 自動重跑。
             _rejected += 1
             _log_failure(item, parsed.error or "0 條摘錄")

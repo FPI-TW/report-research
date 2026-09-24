@@ -423,7 +423,7 @@ _MIN_BRIEF_CHARS = 40
 
 
 def parse_brief(raw: Optional[str]) -> Optional[str]:
-    """把 CLI 原始輸出收成可落庫的 markdown；不合格回 None（由呼叫端記失敗）。
+    """把 LLM 原始輸出收成可落庫的 markdown；不合格回 None（由呼叫端記失敗）。
 
     **刻意沒有「模型講什麼就存什麼」的寬鬆路徑**：這份文字會直接呈現給讀者，
     一段開場白或半個圍欄都會出現在頁面上，而那種瑕疵不會有任何測試看得到。

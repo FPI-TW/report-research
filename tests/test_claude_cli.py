@@ -331,8 +331,8 @@ class RetryClassificationTests(unittest.TestCase):
         R = cc.CliResult
         self.assertFalse(cc.is_retryable(R(None, lh.error_string(lh.TIMEOUT))))
         self.assertFalse(cc.is_retryable(R(None, "API[content_filter] 觸發供應商內容審查")))
-        # 不是 `API[` 開頭的失敗（PR-M 前 CLI 的訊息；現在沒有來源，但規則不變）與成功照舊可重試
-        for err in ("CLI 逾時（180s 內未回應）", None):
+        # 不是 `API[` 開頭的失敗（PR-M 前 CLI 的訊息；`run_claude` 已不會回，但函式的規則不變）與成功照舊可重試
+        for err in ("非 API 前綴的訊息", None):
             with self.subTest(err=err):
                 self.assertTrue(cc.is_retryable(R(None, err)))
         self.assertTrue(cc.is_retryable(R("文字", None)))
@@ -365,7 +365,7 @@ class RetryClassificationTests(unittest.TestCase):
                     self.assertIn(reason, lf.REASONS)
 
     def test_failure_kind_ignores_non_api_errors_and_success(self):
-        self.assertIsNone(cc.failure_kind(cc.CliResult(None, "CLI 逾時（180s 內未回應）")))
+        self.assertIsNone(cc.failure_kind(cc.CliResult(None, "非 API 前綴的訊息")))
         self.assertIsNone(cc.failure_kind(cc.CliResult("ok", None)))
         # 內容剛好長得像前綴也不算：只看失敗
         self.assertIsNone(cc.failure_kind(cc.CliResult("API[content_filter]", None)))

@@ -17,7 +17,7 @@
      0.35 顆核心。這是為了讓數字可以直接對到雲端機型的 vCPU，不必再乘上
      本機核心數換算——百分比在 20 核機器上量到的 5%，換到 2 vCPU 機型是 50%。
   2. 分元件用的是 **cgroup v2**，不是掃 `/proc/<pid>`：批次腳本會 fork 出
-     `claude` CLI 與 BGE-M3 子行程，按 PID 掃一定會漏掉它們，而那正是尖峰的
+     BGE-M3 子行程（PR-M 前還有 `claude` CLI），按 PID 掃一定會漏掉它們，而那正是尖峰的
      來源。cgroup 天然把子孫行程算進父 unit。
   3. **`user.slice` 也要量並且獨立記錄**。這台機器同時是開發機（Claude Code
      session、Chrome、MCP server 都在 user.slice），不切出來的話「全機 CPU」
@@ -276,7 +276,7 @@ def discover_components(docker_names: dict[str, str]) -> dict[str, Path]:
     """每次取樣都重新探索，不是啟動時探一次。
 
     理由：批次 unit 是 oneshot，它的 cgroup 只在執行期間存在——而那幾分鐘
-    正是全天的資源尖峰（sync 每 3 小時跑一次，內含 BGE-M3 嵌入與 claude CLI）。
+    正是全天的資源尖峰（sync 每 3 小時跑一次，內含 BGE-M3 嵌入與 LLM 呼叫）。
     啟動時探一次的話，尖峰永遠不會被看到。
 
     回傳兩種項目，靠底線前綴區分，**分析端不得把兩者相加**：

@@ -13,6 +13,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.services import llm_http as lh  # noqa: E402
 from app.services.signal_extract import SignalRow  # noqa: E402
 
 # 以檔案路徑載入 scripts/extract_signals.py（scripts 非套件）
@@ -161,7 +162,7 @@ class RawPayloadModelFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._run([es.CliResult('{"signals": []}', None)]), "deepseek-flash")
 
     async def test_no_response_no_model(self):
-        err = es.CliResult(None, "CLI 逾時（180s 內未回應）")
+        err = es.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))
         self.assertIsNone(await self._run([err, err, err]))
 
 

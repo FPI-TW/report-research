@@ -109,7 +109,7 @@ class ImportAbortListsDeltasTests(unittest.TestCase):
         """rc=75 仍是原本的 --all-local 提示、不列 delta；補一句補完要刪本輪 delta。"""
         self.h.set_rc(sync_new_reports=LOCK_BUSY_RC)
         p = self.h.run()
-        self.assertIn("claude CLI 被另一支批次佔用", p.stdout)
+        self.assertIn("批次鎖被另一支批次佔用", p.stdout)
         self.assertEqual(_replay_lines(p.stdout), [])
         self.assertRegex(p.stdout, r"補完後刪掉本輪 delta（rm -f data/sync_delta_\d{8}_\d{6}\.txt）")
 

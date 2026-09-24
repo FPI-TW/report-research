@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""受控負載壓測：量「一條問答／一份研報實際吃掉多少硬體」（會消耗 Claude 額度）。
+"""受控負載壓測：量「一條問答／一份研報實際吃掉多少硬體」（會消耗 DeepSeek 額度）。
 
 存在理由：`scripts/collect_resource_usage.py` 是被動觀測，而 2026-08-28 查 `qa_log`
 近 21 天只有 7 次問答——**被動監控量得到的只有閒置與批次，問答的 CPU 尖峰從來沒有
@@ -279,7 +279,7 @@ def run_bench(args) -> dict:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="受控負載壓測（會消耗 Claude 額度）")
+    p = argparse.ArgumentParser(description="受控負載壓測（會消耗 DeepSeek 額度）")
     p.add_argument("--base", default="http://127.0.0.1:8097", help="服務位址")
     p.add_argument("--endpoint", choices=("ask",), default="ask")
     p.add_argument("--repeat", type=int, default=1, help="整份題集重複幾輪（預設 1）")

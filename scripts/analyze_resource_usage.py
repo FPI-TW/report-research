@@ -705,7 +705,7 @@ def render_text(r: dict) -> str:
                 "分元件    "
                 + "｜".join(f"{n} {v:.1f}" for n, v in list(by.items())[:5])
                 + "（核心秒／請求；`web` 這一份＝BGE-M3 嵌入 ＋ cross-encoder rerank ＋ "
-                "claude CLI 父程序，是問答真正的本機成本）"
+                "LLM 串流（PR-M 前是 claude CLI 父程序），是問答真正的本機成本）"
             )
         # 吞吐量換算：核心秒是可加的，所以「一台機器一小時能服務幾條」可以直接除。
         # 利用率取 0.7——排隊理論上把 CPU 推到 100% 會讓 p95 延遲爆炸，這個折扣

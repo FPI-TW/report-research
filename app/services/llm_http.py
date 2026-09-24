@@ -138,7 +138,7 @@ def _redact(text: str) -> str:
 def error_string(kind: str, detail: str = "") -> str:
     """批次用的失敗原因：`API[<kind>] <固定措辭>：<細節>`。
 
-    前綴 `API[` 是契約：呼叫端靠它分辨「HTTP 路徑已在傳輸層重試過」與 CLI 的訊息。
+    前綴 `API[` 是契約：呼叫端（`scripts/_claude_cli.is_retryable`）靠它判定「傳輸層已重試過或本來就是決定性的」。
     """
     s = f"API[{kind}] {_PHRASES.get(kind, _PHRASES[OTHER])}"
     if detail:

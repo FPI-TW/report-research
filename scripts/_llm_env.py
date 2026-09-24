@@ -13,7 +13,8 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
   下一句**。`app/services/db.py` 在 import 期就 `get_settings()` 並快取，各批次的模型常數
   （`MODEL = resolve_model(...)`）也在 import 期解析；晚一步載入，這些值就已經定型成
   「沒讀到檔」的版本，而且不會有任何錯誤。tests/test_llm_env_loading.py 以 AST 掃描所有
-  入口檔釘住這個順序（不是寫死清單：新入口只要 import 了 LLM 呼叫層就會被掃到）。
+  入口檔釘住這個順序（不是寫死清單：新入口只要 import 了 LLM 呼叫層，或 `answer`、
+  `retrieval_pipeline` 這類間接呼叫 LLM 的服務層，就會被掃到）。
   讀檔用 `web.env_loader.load_env_file` 的語意：**只補還不存在的鍵**——sync unit 已由
   systemd 載入過同一份檔，這裡等於 no-op；shell 裡顯式 export 的值優先於檔案。
   讀不到檔（不存在、權限、其他 OSError）不拋，只記下原因，交給下面那個函式決定要不要擋。

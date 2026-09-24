@@ -742,6 +742,54 @@ class CallSitesPassMaxTokensAndTaskTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
 
+class CallSiteMaxTokensValuesTests(unittest.TestCase):
+    """各呼叫點實際送出的 `max_tokens` 值（第二版計畫 §8）逐一釘住：上面那組只檢查「有帶」，
+    值被改壞（例如路由 16 改成 1024、追問 512 被刪一位）不會紅，而上限只作用在 HTTP 路徑，
+    CLI 時代完全看不出差別。表格鍵是（檔案, task 的原始碼），多一個或少一個呼叫點也會紅。
+
+    值以該檔的模組命名空間求值 max_tokens 的運算式（常數、模組常數或 `query_planner.X`），
+    所以量到的是呼叫當下真正會送出的數字，不是常數名。改值要同步改這張表，並在 PR 說明理由。
+    """
+
+    EXPECTED = {
+        ("app/services/answer.py", "'ask_overview'"): 4096,
+        ("app/services/answer.py", "'ask_web'"): 8192,
+        ("app/services/answer.py", "'ask_web' if web_on else 'ask_answer'"): 8192,
+        ("app/services/scope_router.py", "'ask_intent'"): 16,
+        ("app/services/scope_router.py", "'ask_condense'"): 256,
+        ("app/services/query_planner.py", "'qa_planner'"): 1024,
+        ("app/services/agentic_qa.py", "'qa_agentic_eval'"): 1024,
+        ("app/services/followups.py", "'ask_followup'"): 512,
+        ("app/services/faithfulness.py", "'faithfulness'"): 8192,
+        ("eval/judge.py", "'eval_judge'"): 8192,
+        ("eval/run_ragas.py", "'eval_answer'"): 8192,
+    }
+
+    def test_values(self):
+        import importlib
+
+        found: dict[tuple[str, str], int] = {}
+        for base in ("app", "eval", "scripts", "web"):
+            for path in sorted((REPO_ROOT / base).rglob("*.py")):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                rel = str(path.relative_to(REPO_ROOT))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    fn = node.func
+                    name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+                    if name != "stream_completion":
+                        continue
+                    kws = {k.arg: k.value for k in node.keywords}
+                    module = importlib.import_module(rel[:-3].replace("/", "."))
+                    expr = ast.Expression(kws["max_tokens"])
+                    value = eval(compile(expr, rel, "eval"), vars(module))  # noqa: S307 — 只求值 repo 內常數
+                    key = (rel, ast.unparse(kws["task"]))
+                    self.assertNotIn(key, found, f"同一 task 出現兩個呼叫點：{key}")
+                    found[key] = value
+        self.assertEqual(found, self.EXPECTED)
+
+
 class DependencyDirectionTests(unittest.TestCase):
     """`llm_http`／`llm_models` 是葉模組：不得往回 import 分派層與問答層。
 

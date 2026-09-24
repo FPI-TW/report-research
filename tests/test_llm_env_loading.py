@@ -26,15 +26,33 @@ PROJECT_ROOTS = {"app", "web", "scripts", "eval"}
 
 # 「會呼叫 LLM」的判準：import 了呼叫層（線上串流、HTTP 客戶端、批次 CLI 包裝、批次鎖、評測 judge）。
 # generate_brief.py 自帶 call_cli、不 import run_claude，是靠 `_claude_lock` 被掃到的。
-LLM_MODULES = {
+DIRECT_LLM_MODULES = {
     "app.services.llm", "app.services.llm_http", "scripts._claude_cli", "scripts._claude_lock", "eval.judge",
 }
-LLM_SUBMODULE_NAMES = {"llm", "llm_http", "_claude_cli", "_claude_lock", "judge"}
+# 間接呼叫 LLM 的服務層（審查低 4）：問答受控重播這類入口不直接 import 呼叫層，只 import
+# answer／retrieval_pipeline 等，模型常數卻一樣在 import 期解析——漏掃就會用「沒讀到 llm 檔」的設定。
+INDIRECT_SUBMODULES = {
+    "answer", "retrieval_pipeline", "faithfulness", "scope_router", "query_planner", "agentic_qa", "followups",
+}
+INDIRECT_LLM_MODULES = {f"app.services.{m}" for m in INDIRECT_SUBMODULES}
+LLM_MODULES = DIRECT_LLM_MODULES | INDIRECT_LLM_MODULES
+LLM_SUBMODULE_NAMES = {"llm", "llm_http", "_claude_cli", "_claude_lock", "judge"} | INDIRECT_SUBMODULES
 LLM_SYMBOLS = {"run_claude", "stream_completion"}
 KNOWN_ENTRIES = {
     "scripts/sync_new_reports.py", "scripts/tag_all_cli.py", "scripts/generate_summaries.py",
     "scripts/generate_titles.py", "scripts/extract_takeaways.py", "scripts/extract_signals.py",
     "scripts/generate_brief.py", "eval/run_ragas.py",
+}
+# 被間接層判準掃到、但**不呼叫 LLM** 的入口：只從間接層取常數或純函式。逐檔列出允許取用的名稱
+# （含經模組別名取用的屬性）；一旦取用了其他名稱（例如 answer_question），豁免失效、測試紅，
+# 那時要照規矩載入 llm 檔並預檢，而不是擴充這份清單了事。
+NON_LLM_ENTRIES: dict[str, set[str]] = {
+    "scripts/analyze_qa_log.py": {"NO_CONTEXT_MESSAGE", "OFF_TOPIC_MESSAGES"},
+    "scripts/eval_retrieval.py": {
+        "_as_date", "build_context", "RECENCY_HALF_LIFE_DAYS", "RELEVANCE_BAND", "BAND_EPS", "ASK_DENSE_SCAN",
+        "RETRIEVAL_K",
+    },
+    "eval/dataset.py": {"NO_CONTEXT_MESSAGE", "OFF_TOPIC_MESSAGES", "TIME_SENSITIVE_UNAVAILABLE_MESSAGE"},
 }
 
 
@@ -47,27 +65,64 @@ def _has_main_guard(tree: ast.Module) -> bool:
     return False
 
 
-def _imports_llm(tree: ast.Module) -> bool:
+def _imports_llm(tree: ast.Module, modules=None, submodules=None) -> bool:
+    modules = LLM_MODULES if modules is None else modules
+    submodules = LLM_SUBMODULE_NAMES if submodules is None else submodules
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            if any(a.name in LLM_MODULES for a in node.names):
+            if any(a.name in modules for a in node.names):
                 return True
         elif isinstance(node, ast.ImportFrom) and node.module:
             names = {a.name for a in node.names}
-            if node.module in LLM_MODULES or names & LLM_SYMBOLS:
+            if node.module in modules or names & LLM_SYMBOLS:
                 return True
-            if node.module in {"app.services", "scripts", "eval"} and names & LLM_SUBMODULE_NAMES:
+            if node.module in {"app.services", "scripts", "eval"} and names & submodules:
                 return True
     return False
 
 
-def _entry_files() -> dict[str, ast.Module]:
+def _indirect_names(tree: ast.Module) -> set[str]:
+    """從間接層取用的名稱：`from app.services.answer import X` 的 X，與模組別名上的屬性。"""
+    names: set[str] = set()
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in INDIRECT_LLM_MODULES:
+            names |= {a.name for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module == "app.services":
+            aliases |= {a.asname or a.name for a in node.names if a.name in INDIRECT_SUBMODULES}
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name in INDIRECT_LLM_MODULES:
+                    names.add(f"<import {a.name}>")  # 整條路徑 import：無從逐一核對，一律不豁免
+    accounted: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in aliases:
+            names.add(node.attr)
+            accounted.add(id(node.value))
+        elif (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"
+            and len(node.args) >= 2 and isinstance(node.args[0], ast.Name) and node.args[0].id in aliases
+            and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)
+        ):
+            names.add(node.args[1].value)
+            accounted.add(id(node.args[0]))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in aliases and id(node) not in accounted:
+            names.add(f"<bare {node.id}>")  # 別名整個被傳出去：無從逐一核對
+    return names
+
+
+def _scanned_files() -> dict[str, ast.Module]:
     out = {}
     for path in sorted((REPO_ROOT / "scripts").glob("*.py")) + sorted((REPO_ROOT / "eval").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         if _has_main_guard(tree) and _imports_llm(tree):
             out[str(path.relative_to(REPO_ROOT))] = tree
     return out
+
+
+def _entry_files() -> dict[str, ast.Module]:
+    return {rel: tree for rel, tree in _scanned_files().items() if rel not in NON_LLM_ENTRIES}
 
 
 def _is_sys_path_insert(stmt: ast.stmt) -> bool:
@@ -122,6 +177,40 @@ class LoadOrderAstTests(unittest.TestCase):
     def test_scanner_finds_known_entries(self):
         """掃描器本身的健全性：找不到已知入口代表判準壞了，下面的斷言會空轉。"""
         self.assertLessEqual(KNOWN_ENTRIES, set(_entry_files()))
+
+    def test_scanner_catches_indirect_entries(self):
+        """只 import 間接層（例如之後的問答受控重播腳本）也算入口。"""
+        main = "\nif __name__ == '__main__':\n    pass\n"
+        for src in (
+            "from app.services.retrieval_pipeline import retrieve_context",
+            "from app.services import answer",
+            "from app.services.answer import answer_question",
+            "from app.services.faithfulness import check_answer",
+            "import app.services.scope_router",
+        ):
+            with self.subTest(src=src):
+                self.assertTrue(_imports_llm(ast.parse(src + main)))
+        self.assertFalse(_imports_llm(ast.parse("from app.services.db import SessionFactory" + main)))
+
+    def test_non_llm_exemptions_are_exact_and_still_non_llm(self):
+        """豁免的入口：必須仍被掃到（否則清單過期）、不 import 直接呼叫層、只取用列出的名稱。"""
+        scanned = _scanned_files()
+        for rel, allowed in NON_LLM_ENTRIES.items():
+            with self.subTest(entry=rel):
+                self.assertIn(rel, scanned, "不再被掃到就從 NON_LLM_ENTRIES 移除")
+                tree = scanned[rel]
+                self.assertFalse(
+                    _imports_llm(tree, DIRECT_LLM_MODULES, {"llm", "llm_http", "_claude_cli", "_claude_lock", "judge"}),
+                    "import 了直接呼叫層就不是「不呼叫 LLM」",
+                )
+                self.assertLessEqual(_indirect_names(tree), allowed, "取用了清單外的名稱：改為照規矩載入與預檢")
+
+    def test_indirect_name_collector(self):
+        tree = ast.parse(
+            "from app.services import answer as _a\nfrom app.services.answer import X\n"
+            "print(_a.Y, getattr(_a, 'Z', 1))\nf(_a)\n"
+        )
+        self.assertEqual(_indirect_names(tree), {"X", "Y", "Z", "<bare _a>"})
 
     def test_llm_env_is_first_project_import_and_loaded_immediately(self):
         for rel, tree in _entry_files().items():

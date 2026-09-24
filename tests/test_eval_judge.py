@@ -51,8 +51,16 @@ class JudgeJsonTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(JudgeError):
             await judge_json("x", system="s")
 
-    async def test_default_judge_model_is_haiku(self):
+    async def test_default_judge_model_follows_the_provider_table(self):
+        """PR-26/27：deepseek（生產預設）下是 deepseek-flash（新量尺系譜）；claude_cli（conftest 強制的
+        測試值）下仍是 haiku。模組常數在 import 期解析，所以另以 resolve_model 驗 deepseek 那一側。"""
+        from app.services.llm_models import TASK_EVAL_JUDGE, resolve_model
+
         self.assertEqual(judge_mod.DEFAULT_JUDGE_MODEL, "claude-haiku-4-5")
+        env = {"LLM_PROVIDER": "deepseek", "EVAL_JUDGE_MODEL": ""}
+        self.assertEqual(resolve_model(TASK_EVAL_JUDGE, override="", env=env), "deepseek-flash")
+        self.assertEqual(resolve_model(TASK_EVAL_JUDGE, override="", env={**env, "LLM_PROVIDER": "claude_cli"}),
+                         "claude-haiku-4-5")
 
     async def test_json_with_brackets_in_string_value(self):
         """迴歸測試：JSON 字串值內的括號不應干擾深度計算（不平衡括號需靠 in_str 跳過）。"""

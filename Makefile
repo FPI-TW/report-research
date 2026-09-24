@@ -153,8 +153,8 @@ stats:  ## 看 DB 市場分佈與筆數
 	  -c "select count(*) chunks from research.report_chunk;"
 
 # ───── 離線評測 ─────
-# 刻意**不**接進 CI：跑一輪 RAGAS 會 spawn claude CLI，與每 3 小時的
-# report-mark-sync.timer 搶同一個 CLI（那把 flock 刻意不含 llm.py，而 eval 走 llm.py）。
+# 刻意**不**接進 CI：跑一輪 RAGAS 會呼叫付費 API（生成與 judge 預設都是 DeepSeek），CI 不連網。
+# 它不取批次 flock（那把鎖刻意不含 llm.py，而 eval 走 llm.py）。
 # 這是本機／手動工具：改檢索或生成品質時前後各跑一次，再用 eval-compare 比。
 eval-compare:  ## 比較兩份評測結果（BASE=… CAND=… [TOL=0.03]；劣化即非零退出）
 	@test -n "$(BASE)" && test -n "$(CAND)" || { \

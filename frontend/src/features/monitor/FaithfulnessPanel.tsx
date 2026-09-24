@@ -28,10 +28,23 @@ function fmtScore(v: number | null): string {
   return v === null ? '—' : v.toFixed(3)
 }
 
+/**
+ * 判定尺的說明文字。DeepSeek judge（遷移 PR-26/27 起的新量尺系譜）且窗期內還有舊尺的列時，
+ * 標「新量尺（自 X 起，DeepSeek）」：此時 judge_since（窗期內現行 judge 最早的一筆）就是切換後的
+ * 第一筆，日期由資料得出、不寫死。窗期內已全是新尺時 judge_since 只是窗期起點，不再稱「新」。
+ */
+function scaleLabel(d: EvalSource, other: number): string {
+  const since = d.judge_since ? `自 ${d.judge_since} 起` : null
+  if (d.judge_model?.startsWith('deepseek-') && other > 0) {
+    return `：新量尺（${since ? `${since}，` : '尚無查核，'}DeepSeek）`
+  }
+  return since ? `，${since}` : ''
+}
+
 function JudgeScale({ d }: { d: EvalSource }) {
   if (!d.judge_model) return null
-  const since = d.judge_since ? `，自 ${d.judge_since} 起` : ''
   const other = d.other_judge_checked ?? 0
+  const since = scaleLabel(d, other)
   const counts = [
     d.judge_checked !== undefined ? `該尺已查核 ${d.judge_checked}` : null,
     d.avg_n !== undefined ? `平均樣本數 ${d.avg_n}` : null,

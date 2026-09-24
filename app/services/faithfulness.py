@@ -17,7 +17,7 @@ numeric_support_rate。分數是「來源支持度／待複核」，非真實性
 
 **重試層數與最壞呼叫次數**（依 judge 走哪條路徑而不同；每個階段＝一次 call_validated，即拆解、
 grounding、CP 或反推問題各算一次）：
-- **HTTP（DeepSeek，遷移 PR-18 起的預設）**：只有一層預算，**每個階段最多 3 個請求**
+- **HTTP（DeepSeek；adapter 自遷移 PR-18，judge 預設自 PR-26/27）**：只有一層預算，**每個階段最多 3 個請求**
   （`judge_schema.HTTP_STAGE_MAX_REQUESTS`，tests/test_faithfulness.py 與 tests/test_eval_judge.py 斷言）。
   三種重試共用它、不相乘：`llm_http.complete_json` 的截斷（2 倍 max_tokens）／空回應／暫時性重試
   （每次 judge 呼叫最多 2 個請求）、`call_validated` 的 schema 重試（只拿得到剩下的預算），離線

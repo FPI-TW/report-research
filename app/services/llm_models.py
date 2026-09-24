@@ -19,9 +19,9 @@
 1. 任務旋鈕（`TASK_ENV`）有非空值就用它。**空字串視同未設**：tests/conftest.py 會把所有
    旋鈕強制設成 `""`，擋住部署目錄 `.env` 的值滲進測試。
 2. 否則查 `LLM_PROVIDER` 對應的預設表：
-   - `deepseek`（**預設**，遷移 PR-28 起）：DeepSeek 預設表（第二版計畫 §8）。有兩處**刻意**
-     仍是 Claude，見下方 `DEEPSEEK_DEFAULTS` 的註解：judge 兩列（由 PR-18＋PR-26/27 切換）、
-     網搜那列（生產以 `ASK_ENABLE_WEB=0` 關閉網搜，由 PR-W 處理）。
+   - `deepseek`（**預設**，遷移 PR-28 起）：DeepSeek 預設表（第二版計畫 §8）。只有網搜那列**刻意**
+     仍是 Claude（生產以 `ASK_ENABLE_WEB=0` 關閉網搜，由 PR-W 處理），見下方 `DEEPSEEK_DEFAULTS` 的註解；
+     judge 兩列自 PR-26/27 起是 deepseek-flash（新量尺系譜）。
    - `claude_cli`：遷移前的 Claude 預設表，值與遷移前各呼叫點寫死的字串逐字相同。
    - `claude_only`：遷移期的緊急回退。**任務旋鈕裡白名單內的值一律忽略**，全部用 Claude
      預設表，記 WARNING。旋鈕裡的 Claude 名稱照用（那本來就是 CLI）。
@@ -159,9 +159,11 @@ CLAUDE_DEFAULTS: dict[str, str] = {
 # - 摘錄、訊號要逐字引文：D6 依 9/24 探測與 D-A（主判準＝exact／normalized／prefix 任一方式的
 #   錨定成功率）定為 flash——flash 95.0%，同批研報的 Claude 既有摘錄 90.9%。
 #   tests/test_extract_takeaways_sql.py 以白名單守門，換成未量過錨定率的模型要先量。
-# - judge 兩列**刻意**維持 Claude（CLI 已失效，生產忠實度 judge 現為 fail-open degraded，生產
-#   以 `ASK_FAITHFULNESS_ENABLED=0` 暫停）：換 judge＝換量尺，由 PR-18＋PR-26/27 一起切成
-#   DeepSeek、開新的基準線系譜。
+# - judge 兩列（生產忠實度、離線 RAGAS）自 PR-26/27 起是 flash（thinking 關、t=0、JSON 模式，經
+#   `llm_http.complete_json`）。換 judge＝換量尺：依計畫 D-J a 直接切換、開新的量尺系譜（門檻數值
+#   不變；與 Claude haiku 時代的分數互比不可比，eval_compare 回 2 是預期）。沒有 Claude 對照組可以
+#   重跑（CLI 已放棄），校準改用 qa_log 歷史 haiku 判定做描述性比較（scripts/judge_agreement.py）。
+#   讀分數的三處只計現行 judge（app/services/judge_schema.py），歷史 haiku 列歸「其他 judge」。
 # - 網搜**刻意**維持 Claude：DeepSeek 網搜延後到 P9；`llm.stream_completion` 對
 #   `allow_web=True`＋白名單 model 一律拋 config 錯誤，填 DeepSeek 名稱不會讓網搜變可用。
 #   生產以 `ASK_ENABLE_WEB=0` 關閉網搜，前端開關的隱藏由 PR-W 處理。
@@ -172,8 +174,8 @@ DEEPSEEK_DEFAULTS: dict[str, str] = {
     TASK_ASK_CONDENSE: "deepseek-flash",
     TASK_QA_PLANNER: "deepseek-flash",
     TASK_ASK_FOLLOWUP: "deepseek-flash",
-    TASK_FAITHFULNESS: "claude-haiku-4-5",
-    TASK_EVAL_JUDGE: "claude-haiku-4-5",
+    TASK_FAITHFULNESS: "deepseek-flash",
+    TASK_EVAL_JUDGE: "deepseek-flash",
     TASK_TAG: "deepseek-flash",
     TASK_SUMMARY: "deepseek-flash",
     TASK_TITLE: "deepseek-flash",
@@ -273,7 +275,7 @@ def diagnose(
     - 白名單名稱而 `DEEPSEEK_API_KEY` 為空 → ERROR（那些任務每一次呼叫都會失敗）。
     - `claude-*` → 沿用既有的 claude CLI 路徑檢查（找不到是 ERROR，找到記 WARNING 留路徑），
       兩者都列出解析到 Claude 的任務。CLI 已放棄，找得到也不代表能用（認證失效由呼叫時的
-      `kind="auth"` 回報）；預設 deepseek 下只剩網搜與 judge 會走到這條。
+      `kind="auth"` 回報）；預設 deepseek 下只剩網搜會走到這條。
     - 其他名稱 → ERROR「未知模型名」（打錯字、CLI 別名）。
     - 網搜任務（`ask_web`）解析到白名單名稱 → ERROR：DeepSeek 網搜延後到 P9，
       `llm.stream_completion` 對 `allow_web=True`＋白名單 model 一律拋 config 錯誤。
@@ -291,7 +293,7 @@ def diagnose(
             + "、".join(by_kind["http"]),
         ))
     if by_kind["claude"]:
-        # 列出是哪些任務：預設 deepseek 下只剩網搜與 judge 解析到 Claude，「問答全數失敗」不再成立。
+        # 列出是哪些任務：預設 deepseek 下只剩網搜解析到 Claude，「問答全數失敗」不再成立。
         claude_tasks = "、".join(by_kind["claude"])
         if claude_path:
             out.append((logging.WARNING, f"claude CLI：{claude_path}（{claude_tasks}）"))

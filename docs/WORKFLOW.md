@@ -38,7 +38,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | 混合檢索、tier、選篇、rerank、脈絡組裝 | 問答生成、追問 |
 | 路由前檢詞表、overview 統計 | 五類路由分類 |
 | 引文錨定、訊號正規化與狀態判定、共識聚合、窗期 | 摘錄與訊號擷取、簡報撰寫 |
-| 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（judge 刻意仍是 `claude-haiku-4-5`，待 PR-18＋26/27 切換） |
+| 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（judge 是 `deepseek-flash`，自 2026-09 起的新量尺；舊的 haiku 分數歸「其他 judge」） |
 
 批次以檔案 `file_hash` 為鍵、冪等可續跑；失敗寫 `data/*_failures.log`，不阻斷其他檔。
 

@@ -15,7 +15,7 @@ import styles from './MonitorPage.module.css'
  * 刻意沒有「標記已處理」：那需要狀態欄位與處理人歸因，而本站是共用帳號。
  */
 const TABS: { kind: ReviewKind; label: string; hint: string }[] = [
-  { kind: 'faithfulness', label: '忠實度低分', hint: '近 30 天內抽查分數低於門檻的回答，最低分在前' },
+  { kind: 'faithfulness', label: '忠實度低分', hint: '近 30 天內抽查分數低於門檻的回答，最低分在前；只列現行判定尺量的分數（換尺前的舊分數不列入）' },
   { kind: 'feedback', label: '倒讚', hint: '近 30 天內使用者按了倒讚的回答' },
   { kind: 'extraction', label: '抽取品質', hint: '抽取品質標為 needs_review 的研報（照樣入庫、可檢索），分數最低在前' },
 ]

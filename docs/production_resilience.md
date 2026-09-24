@@ -675,6 +675,43 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
 5. 缺的簡報日子補 `uv run python scripts/generate_brief.py --date YYYY-MM-DD`。
 6. 重新啟用排程：`sudo systemctl start report-mark-sync.timer`。
 
+### 忠實度 judge 走 DeepSeek（新量尺）
+
+生產忠實度 judge（`FAITHFULNESS_MODEL`）與離線評測 judge（`EVAL_JUDGE_MODEL`）在 deepseek 表裡是
+`deepseek-flash`（遷移 PR-26/27，計畫 D-J a：沒有 Claude 對照組可以重跑，直接切換、開新的量尺系譜，
+門檻 `FAITHFULNESS_MIN` 0.9 與 F>0.9／CP>0.8／AR>0.55 數值不變）。CLI 失效期間生產以
+`ASK_FAITHFULNESS_ENABLED=0` 暫停抽查；**部署含 PR-26/27 的版本之後**要把它打開：
+
+1. 確認生產沒有覆寫 judge：repo 根 `.env` 裡**不該**有 `FAITHFULNESS_MODEL=claude-…`（有的話刪掉那一行；
+   CLI 已放棄，留著只會每次抽查記一筆 degraded）。`ASK_FAITHFULNESS_TIMEOUT` 若還設著 240 也一併刪掉，
+   讓它用新預設 90。
+2. 從 repo 根 `.env` **移除** `ASK_FAITHFULNESS_ENABLED=0` 這一行（預設就是開）。
+3. 重啟 web：`sudo systemctl restart report-mark-web.service`（前端卡片文字有改，部署時照例 `make build-web`）。
+4. 問一題含數字的問題，等背景抽查跑完（數十秒內），核對：
+   ```bash
+   docker exec -i report-mark-postgres psql -U postgres -d research -c "SELECT created_at, evaluation->>'judge_model', evaluation->>'judge_fingerprint',
+     evaluation->>'degraded', evaluation->>'degraded_reason', evaluation->>'elapsed_ms'
+     FROM research.qa_log WHERE evaluation IS NOT NULL ORDER BY created_at DESC LIMIT 3"
+   ```
+   `judge_model` 應為 `deepseek-flash`、`judge_fingerprint` 有值、`degraded` 為 false。web 日誌的
+   `llm_call task=faithfulness` 行帶 `fp=`。
+5. 監控頁忠實度卡顯示「判定尺 deepseek-flash：新量尺（自 YYYY-MM-DD 起，DeepSeek）」，日期是資料裡新尺的
+   第一筆（`judge_since`，不是寫死的）；舊的 haiku 分數只計入已查核數、不進 fail-open／待複核／平均，
+   待複核佇列也只列新尺的低分。近 30 天窗期內舊列全部滾出後，卡片不再標「新量尺」。
+
+**degraded_reason 在 DeepSeek judge 下的意義**：`content_risk`（供應商內容審查拒答，不重試）、
+`account`（401／402／404：金鑰、餘額、模型設定；告警走上一節的 `/healthz/llm`，這裡只是抽查沒量到）、
+`truncated`（`finish_reason=length`，已用 2 倍上限重試過）、`timeout`（每次 judge 呼叫的總期限
+`ASK_FAITHFULNESS_TIMEOUT` 到了）。每個階段最多 3 個請求，一次抽查最多 6 個。
+
+**描述性校準**（不是閘門，結果只給人看）：`uv run python scripts/judge_agreement.py --dry-run` 先看取樣數與
+估價，再正式跑（預設 60 題、花費上限 ¥15，保守單價估算）。它拿 `qa_log` 裡歷史的 haiku 判定當參考，
+印 κ、平均偏移、門檻翻轉率；脈絡是重建的，差異同時來自 judge 與脈絡。離峰跑（會在本行程載入 BGE-M3）。
+
+**回退**：沒有可用的 Claude judge（CLI 已放棄）。judge 有系統性問題時只能暫停抽查
+（repo 根 `.env` 設回 `ASK_FAITHFULNESS_ENABLED=0` 並重啟 web），或把 `FAITHFULNESS_MODEL` 換成
+`deepseek-v4-pro`——那又是另一把尺，監控卡會把 flash 的分數歸「其他 judge」。
+
 ### oneshot 的手動驗證：`Result=success` 不是證據
 
 2026-08-19 部署 P1 時出現過一次假通過。`systemctl start report-mark-freshness.service`

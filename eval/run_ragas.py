@@ -16,6 +16,8 @@ M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--a
   的雜湊）、`judge_schema_version`。兩份結果只要量尺不同、或只有一邊有記錄，`eval_compare`
   一律回 2。**所以在新基準線產出之前，拿新結果比 `eval/baselines/baseline-2026-09-02.json`
   （沒有這三個鍵）一律回 2**——那是預期，不是壞掉；要比就兩邊都用本版重跑。
+- **量尺系譜**（PR-26/27）：judge 預設自 2026-09 起是 DeepSeek（`deepseek-2026-09` 系譜），`config.judge`
+  記 `lineage`、結果檔頂層 `notes` 寫明跟誰不可比（`judge_lineage`）。新系譜的第一份結果就是它的起點。
 - **judge 出錯只讓該指標記為 None**，不讓整題記為 error：錯誤訊息記在 case 的
   `judge_errors`，summary 的 `n_judge_errors` 計總數（只列出、不判方向：那是量尺故障，不是
   生成端劣化）。檢索或生成失敗才是整題 error。這樣一題 CP 的 judge 逾時不會連帶拿掉同一題的
@@ -510,27 +512,28 @@ def judge_provider(model: str) -> str:
     return "deepseek_http" if is_http_model(model) else "claude_cli"
 
 
-def uncalibrated_judge_warning(model: str) -> str | None:
-    """judge 指定為白名單模型時的警告文字；Claude judge 回 None。
-
-    PR-26（judge 切 DeepSeek）之前 judge 校準尚未完成，這種結果屬於新的量尺系譜：與既有
-    Claude judge 的結果比，`eval_compare` 因 `judge_model` 不同回 2。不阻擋——校準本身就要
-    這樣跑。TODO(PR-26)：校準完成、judge 正式切換後刪掉這個警告。
-    """
-    if judge_provider(model) != "deepseek_http":
-        return None
-    return (
-        f"WARNING：judge={model} 走 DeepSeek，judge 校準（PR-26）尚未完成。"
-        "本次分數屬於新的量尺系譜，與 Claude judge 的基準線不可比（eval_compare 回 2）；"
-        "不要拿它升格基準線或判定劣化。"
-    )
+# 量尺系譜（PR-26/27）：judge 從 Claude haiku 換成 DeepSeek 時開了新系譜（計畫 D-J a：沒有 Claude
+# 對照組可以重跑，照切、門檻數值不變）。記進 config.judge.lineage 與結果檔頂層 notes（eval_compare 會
+# 印出 notes）；**刻意不放進 summary**：summary 的每個鍵都要在 METRIC_SPECS 分類，而跨系譜的比較早已由
+# META 鍵 judge_model 擋下（回 2），再加一個 META 鍵只是重複。
+JUDGE_LINEAGE_DEEPSEEK = "deepseek-2026-09"
+JUDGE_LINEAGE_CLAUDE = "claude-haiku"
 
 
-def _warn_uncalibrated_judge(model: str) -> None:
-    msg = uncalibrated_judge_warning(model)
-    if msg:
-        bar = "!" * 72
-        print(f"{bar}\n{msg}\n{bar}", file=sys.stderr, flush=True)
+def judge_lineage(model: str) -> str:
+    """judge 屬於哪個量尺系譜：白名單（DeepSeek）是 PR-26/27 起的新系譜，其餘是 Claude 時代的舊系譜。"""
+    return JUDGE_LINEAGE_DEEPSEEK if judge_provider(model) == "deepseek_http" else JUDGE_LINEAGE_CLAUDE
+
+
+def lineage_notes(model: str) -> list[str]:
+    """結果檔頂層 notes：說出這份結果屬於哪個系譜、跟誰不可比。"""
+    lineage = judge_lineage(model)
+    if lineage == JUDGE_LINEAGE_DEEPSEEK:
+        return [
+            f"judge 系譜 {lineage}（judge={model}，自 2026-09 起的新量尺）：與 Claude haiku judge 的結果"
+            "（含 eval/baselines/baseline-2026-09-02.json）不可比，eval_compare 回 2 是預期；門檻數值不變。"
+        ]
+    return [f"judge 系譜 {lineage}（judge={model}，Claude 時代的舊量尺）：與 DeepSeek judge 的結果不可比。"]
 
 
 def build_config(
@@ -581,6 +584,7 @@ def build_config(
             "retries": DEFAULT_JUDGE_RETRIES,
             "prompt_sha": judge_prompt_sha(),
             "schema_version": JUDGE_SCHEMA_VERSION,
+            "lineage": judge_lineage(judge_model),
             "max_tokens": {_JUDGE_TASKS[k]: v for k, v in JUDGE_MAX_TOKENS_BY_SYSTEM.items()},
             "observed": judge_observed or {},
         },
@@ -694,7 +698,6 @@ async def run(
     """
     if repeat < 1:
         raise ValueError("repeat 必須 ≥ 1")
-    _warn_uncalibrated_judge(judge_model)  # 開跑前先說：一輪評測要跑好幾個小時
     started_at = datetime.now(timezone.utc).isoformat()
     commit = _git_commit()
     dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
@@ -767,7 +770,7 @@ async def run(
         finished_at=datetime.now(timezone.utc).isoformat(),
         judge_observed=observer.snapshot(),
     )
-    report = {"summary": summary, "config": config, "cases": cases}
+    report = {"summary": summary, "config": config, "notes": lineage_notes(judge_model), "cases": cases}
     if out_path is not None:
         out = Path(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -799,11 +802,10 @@ def _print_summary(report: dict) -> None:
     print(f"citation_rate     : {fmt(s.get('citation_rate'))}   "
           f"simplified_residual_rate: {fmt(s.get('simplified_residual_rate'))}")
     print(f"judge             : {s.get('judge_model')}  schema v{s.get('judge_schema_version')}  "
-          f"prompt {str(s.get('judge_prompt_sha'))[:12]}")
+          f"prompt {str(s.get('judge_prompt_sha'))[:12]}  系譜 {judge_lineage(str(s.get('judge_model') or ''))}")
     failed = s.get("thresholds_failed") or []
     print(f"thresholds_pass   : {s['thresholds_pass']}"
           + (f"   未達標：{'、'.join(failed)}" if failed else ""))
-    _warn_uncalibrated_judge(str(s.get("judge_model") or ""))  # 看結果的人不一定看過開頭
 
 
 def _main() -> None:

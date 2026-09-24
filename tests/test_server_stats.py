@@ -338,6 +338,7 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stats_and_progress_share_one_db_snapshot_within_ttl(self):
         calls = []
+        eval_params: dict = {}
 
         class FakeSession:
             async def __aenter__(self):
@@ -349,6 +350,8 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
             async def execute(self, stmt, params=None):
                 sql = str(stmt)
                 calls.append(sql)
+                if "count(evaluation)" in sql:
+                    eval_params.update(params or {})
                 if "FILTER (WHERE summary IS NOT NULL)" in sql:
                     return _FirstResult((3, 7))
                 # 這兩個必須排在下方 catch-all「FROM research.research_report」之前:
@@ -371,8 +374,9 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                         ("log_latest", "2026-09-03", 0),
                     ])
                 if "count(evaluation)" in sql:
+                    # kind + 8 個聚合：前 6 個之後是 judge_since、other_judge_checked。
                     return _RowsResult([
-                        ("qa", 40, 3, 1, 1, 0.5634, date(2026, 7, 28)),
+                        ("qa", 40, 3, 1, 1, 0.5634, date(2026, 7, 28), date(2026, 7, 2), 2),
                     ])
                 if "unnest(instrument_types)" in sql:
                     return _RowsResult([("equity", 5)])
@@ -443,6 +447,15 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                 {"source": None, "display": None, "count": 2, "latest": "2026-07-31"},
             ],
         )
+        # M8 查核統計只計現行 judge（app/services/judge_schema.py），並帶出量尺。
+        qa = progress["evaluation"]["qa"]
+        self.assertEqual(qa["checked"], 3)
+        self.assertEqual(qa["judge_model"], monitor._JUDGE_MODEL)
+        self.assertEqual(qa["judge_since"], "2026-07-02")
+        self.assertEqual(qa["other_judge_checked"], 2)
+        self.assertEqual(eval_params["judge_model"], monitor._JUDGE_MODEL)
+        eval_sql = next(c for c in calls if "count(evaluation)" in c)
+        self.assertIn(":judge_model", eval_sql)
 
 
 if __name__ == "__main__":

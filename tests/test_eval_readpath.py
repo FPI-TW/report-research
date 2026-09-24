@@ -108,6 +108,40 @@ class WorstTests(unittest.TestCase):
         self.assertEqual(len(ef.worst(rows, 3)), 3)
 
 
+class JudgeFilterTests(unittest.TestCase):
+    """M11：離線彙總與監控卡、待複核佇列同一條規則——只計現行 judge，舊列視為 haiku。"""
+
+    def _rows(self):
+        return [
+            _row("old", _ev(score=0.5)),                                  # 缺鍵＝haiku
+            _row("haiku", {**_ev(score=0.7), "judge_model": "claude-haiku-4-5"}),
+            _row("ds", {**_ev(score=0.1), "judge_model": "deepseek-flash"}),
+            _row("none", None),
+        ]
+
+    def test_scores_only_from_the_current_judge(self):
+        s = ef.summarize(self._rows(), 0.9, judge_model="claude-haiku-4-5")
+        self.assertEqual(s["judge_model"], "claude-haiku-4-5")
+        self.assertEqual(s["checked"], 2)
+        self.assertAlmostEqual(s["avg_score"], 0.6)  # 0.1 那筆是別把尺量的，不入平均
+        self.assertEqual(s["other_judge_checked"], 1)
+        self.assertEqual(s["by_judge"], {"claude-haiku-4-5": 2, "deepseek-flash": 1})
+        self.assertEqual(s["total"], 4)
+
+    def test_other_judge_can_be_selected(self):
+        s = ef.summarize(self._rows(), 0.9, judge_model="deepseek-flash")
+        self.assertEqual((s["checked"], s["below_min"], s["other_judge_checked"]), (1, 1, 2))
+
+    def test_default_judge_is_the_configured_one(self):
+        from app.config import get_settings
+
+        self.assertEqual(ef.summarize([], 0.9)["judge_model"], get_settings().faithfulness_model)
+
+    def test_worst_ignores_other_judges(self):
+        ids = [w["id"] for w in ef.worst(self._rows(), 10, judge_model="claude-haiku-4-5")]
+        self.assertEqual(ids, ["old", "haiku"])
+
+
 class ProgressHttpTests(unittest.TestCase):
     """經真實 HTTP 請求驗 `/api/progress` 帶出 evaluation 區塊。"""
 
@@ -148,6 +182,20 @@ class ProgressHttpTests(unittest.TestCase):
         self.assertEqual(ev["min_score"], 0.9)
         self.assertNotIn("report", ev)
 
+    def test_judge_scale_fields_pass_through_http(self):
+        """監控卡的量尺欄位（PR-07）經 HTTP 原樣帶出；前端 zod 以 optional() 宣告。"""
+        snap = dict(self._SNAPSHOT)
+        snap["evaluation"] = {
+            "qa": {**self._SNAPSHOT["evaluation"]["qa"], "judge_model": "claude-haiku-4-5",
+                   "judge_since": "2026-07-02", "other_judge_checked": 2},
+            "min_score": 0.9,
+        }
+        with patch.object(self, "_SNAPSHOT", snap):
+            qa = self._get().json()["evaluation"]["qa"]
+        self.assertEqual(qa["judge_model"], "claude-haiku-4-5")
+        self.assertEqual(qa["judge_since"], "2026-07-02")
+        self.assertEqual(qa["other_judge_checked"], 2)
+
     def test_takeaway_and_signal_still_present(self):
         """同一個回應裡的既有區塊不得因新增而被擠掉。"""
         body = self._get().json()
@@ -160,7 +208,8 @@ class SnapshotShapeTests(unittest.TestCase):
 
     def test_router_builds_expected_keys(self):
         src = (REPO_ROOT / "web" / "routers" / "monitor.py").read_text(encoding="utf-8")
-        for key in ("degraded", "below_min", "avg_score", "min_score"):
+        for key in ("degraded", "below_min", "avg_score", "min_score",
+                    "judge_model", "judge_since", "other_judge_checked"):
             self.assertIn(f'"{key}"', src, f"snapshot 缺 {key}")
 
     def test_threshold_shared_with_eval_script(self):

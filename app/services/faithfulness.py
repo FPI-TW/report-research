@@ -18,13 +18,15 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import text as sql_text
 
 from app.services.evidence import EvidenceLedger
-from app.services.llm import DEFAULT_MODEL, stream_completion
+from app.services.judge_schema import JUDGE_SCHEMA_VERSION
+from app.services.llm import DEFAULT_MODEL, LLMUnavailableError, stream_completion
 from app.services.query_planner import parse_plan_json
 
 logger = logging.getLogger(__name__)
@@ -104,17 +106,36 @@ class ClaimVerdict:
     verdict: str  # "supported" | "unsupported" | "no_source"
 
 
+# degraded_reason 的詞彙：degraded 只說「沒量到」，這裡說為什麼沒量到。監控與校準要分得出
+# 「judge 服務掛了」與「judge 回了看不懂的東西」——前者是可用性問題，後者是量尺問題。
+DEGRADED_UNAVAILABLE = "unavailable"  # LLMUnavailableError：API 錯誤、或一個字都沒吐就逾時
+DEGRADED_EMPTY = "empty"              # 回應是空的
+DEGRADED_PARSE = "parse"              # 回應不是 JSON（含串到一半被逾時截斷的 JSON）
+DEGRADED_ERROR = "error"              # 其他例外，或注入的 judge 回 None
+
+
 @dataclass
 class FaithfulnessResult:
-    """一次查核的結果。degraded=True 代表 fail-open（judge 異常），分數欄位皆 None。"""
+    """一次查核的結果。degraded=True 代表 fail-open（judge 異常），分數欄位皆 None。
+
+    judge_model／degraded_reason／elapsed_ms 由 check_faithfulness 填入（量尺可追溯，
+    DeepSeek 遷移 PR-07）；直接用 summarize_claims 組出來的結果這三個是 None。
+    """
 
     faithfulness_score: float | None
     numeric_support_rate: float | None
     claims: list[ClaimVerdict] = field(default_factory=list)
     degraded: bool = False
+    degraded_reason: str | None = None
+    judge_model: str | None = None
+    elapsed_ms: int | None = None
 
     def to_evaluation(self, *, citation_coverage: float | None = None) -> dict:
-        """落庫用 evaluation jsonb（qa_log.evaluation 的形狀）。"""
+        """落庫用 evaluation jsonb（qa_log.evaluation 的形狀）。
+
+        judge_model 與 judge_schema_version 是讀分數時「只計現行 judge」的依據
+        （app/services/judge_schema.py）；缺 judge_model 的舊列視為 claude-haiku-4-5。
+        """
         return {
             "citation_coverage": citation_coverage,
             "numeric_support_rate": self.numeric_support_rate,
@@ -126,6 +147,10 @@ class FaithfulnessResult:
             "note": "來源支持度／待複核，非真實性保證",
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "degraded": self.degraded,
+            "degraded_reason": self.degraded_reason,
+            "judge_model": self.judge_model,
+            "judge_schema_version": JUDGE_SCHEMA_VERSION,
+            "elapsed_ms": self.elapsed_ms,
         }
 
 
@@ -185,9 +210,17 @@ async def faithfulness(answer: str, contexts: list[str], *, judge) -> float | No
 
 
 async def _default_judge(
-    system: str, user: str, *, model: str, timeout: float
+    system: str, user: str, *, model: str, timeout: float, failures: list[str] | None = None
 ) -> dict | None:
-    """claude CLI judge：drain 串流 → parse_plan_json。任何異常 → None（fail-open）。"""
+    """claude CLI judge：drain 串流 → parse_plan_json。任何異常 → None（fail-open）。
+
+    failures 給定時，把失敗原因（DEGRADED_* 詞彙）附加進去，供 check_faithfulness 記
+    degraded_reason——回傳值維持 None，judge 契約不變。
+    """
+    def _fail(reason: str) -> None:
+        if failures is not None:
+            failures.append(reason)
+
     try:
         parts: list[str] = []
         async for chunk in stream_completion(
@@ -196,10 +229,20 @@ async def _default_judge(
             parts.append(chunk)
         raw = "".join(parts).strip()
         if not raw:
+            _fail(DEGRADED_EMPTY)
             return None
         return parse_plan_json(raw)  # {"statements":...} / {"verdicts":...} 皆物件
+    except LLMUnavailableError:
+        logger.exception("faithfulness judge failed")
+        _fail(DEGRADED_UNAVAILABLE)
+        return None
+    except ValueError:
+        logger.exception("faithfulness judge failed")
+        _fail(DEGRADED_PARSE)
+        return None
     except Exception:
         logger.exception("faithfulness judge failed")
+        _fail(DEGRADED_ERROR)
         return None
 
 
@@ -221,28 +264,40 @@ async def check_faithfulness(
     - context_texts 空（無可回查的證據）→ 全主張 no_source。
     - 有 context → ground；supported→supported，其餘→unsupported。
     numeric_support_rate 只計數值主張；無數值主張 → None。
+    結果一律帶 judge_model（＝model）與 elapsed_ms；degraded 時另帶 degraded_reason。
     """
+    t0 = time.monotonic()
+    failures: list[str] = []
     if judge is None:
         async def judge(system: str, user: str):
-            return await _default_judge(system, user, model=model, timeout=timeout)
+            return await _default_judge(
+                system, user, model=model, timeout=timeout, failures=failures
+            )
+
+    def _stamp(result: FaithfulnessResult) -> FaithfulnessResult:
+        result.judge_model = model
+        result.elapsed_ms = int((time.monotonic() - t0) * 1000)
+        if result.degraded and result.degraded_reason is None:
+            result.degraded_reason = failures[-1] if failures else DEGRADED_ERROR
+        return result
 
     statements = await decompose_statements(text, judge=judge)
     if statements is None:
-        return FaithfulnessResult(None, None, [], degraded=True)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=True))
     if not statements:
         # 無事實主張（如「找不到資料」）：非降級，但無分可算
-        return FaithfulnessResult(None, None, [], degraded=False)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=False))
 
     has_context = any((c or "").strip() for c in context_texts)
     if not has_context:
         claims = [
             ClaimVerdict(s, is_numeric_claim(s), "no_source") for s in statements
         ]
-        return summarize_claims(claims, degraded=False)
+        return _stamp(summarize_claims(claims, degraded=False))
 
     supmap = await ground_statements(statements, context_texts, judge=judge)
     if supmap is None:
-        return FaithfulnessResult(None, None, [], degraded=True)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=True))
 
     claims = [
         ClaimVerdict(
@@ -252,7 +307,7 @@ async def check_faithfulness(
         )
         for i, s in enumerate(statements)
     ]
-    return summarize_claims(claims, degraded=False)
+    return _stamp(summarize_claims(claims, degraded=False))
 
 
 def summarize_claims(claims: list[ClaimVerdict], *, degraded: bool) -> FaithfulnessResult:

@@ -244,11 +244,19 @@ def _load() -> Settings:
         ask_faithfulness_sample_rate=float(
             os.getenv("ASK_FAITHFULNESS_SAMPLE_RATE", "1.0")
         ),
-        # judge 復用 haiku（同 planner）；離線批次語氣輕、成本低
-        faithfulness_model=os.getenv("FAITHFULNESS_MODEL", intent_model),
+        # 生產忠實度 judge。**刻意不再沿用 ASK_INTENT_MODEL**（DeepSeek 遷移 PR-07）：
+        # 先前未設時跟著 intent 走，而生產環境檔沒有覆寫——只要哪天把路由模型換掉，
+        # judge 就在同一刻被靜默換掉，監控卡上的分數從此是另一把尺量的，卻沒有任何
+        # 記號。預設字串與改動前的實際值相同（intent 預設 claude-haiku-4-5），所以
+        # 本改動不改變生產實際用的 judge。空字串視同未設（`or`）。
+        # 換 judge 時連帶看 app/services/judge_schema.py：讀分數的三處只計現行 judge。
+        faithfulness_model=os.getenv("FAITHFULNESS_MODEL") or "claude-haiku-4-5",
+        # 沒有現行呼叫端：問答抽查用下面那顆 ask_faithfulness_timeout，
+        # scripts/eval_faithfulness.py 只讀 qa_log、不呼叫 LLM。保留是為了 check_faithfulness
+        # 的其他呼叫者（目前沒有），以及下方「問答那顆必須比它大」的測試基準。
         faithfulness_timeout=float(os.getenv("FAITHFULNESS_TIMEOUT", "60")),
-        # 問答抽查的逾時與 `faithfulness_timeout` 分開：後者是 judge 單次呼叫的通用逾時
-        # （離線批次 scripts/eval_faithfulness.py 也用），而問答抽查的實測需求遠超 60 秒：
+        # 問答抽查的逾時與 `faithfulness_timeout` 分開：後者是 judge 單次呼叫的通用逾時，
+        # 而問答抽查的實測需求遠超 60 秒：
         # 2026-08-21 以生產原始輸入量到 ground 單次 48–142 秒（payload 15–19k 字），
         # 60 秒必然砍掉其中一題。抽查已改成背景任務、不佔 `/api/ask` 名額，所以這裡
         # 放寬是零使用者成本。

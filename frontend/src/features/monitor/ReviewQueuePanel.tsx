@@ -34,6 +34,7 @@ function QaRow({ item, kind }: { item: ReviewItem; kind: ReviewKind }) {
         {kind === 'faithfulness' && item.faithfulness_score != null && (
           <span className={styles.fWarn}>{item.faithfulness_score.toFixed(3)}</span>
         )}
+        {kind === 'faithfulness' && item.judge_model && <span>{item.judge_model}</span>}
         <span>{fmtDay(item.created_at)}</span>
       </span>
     </li>

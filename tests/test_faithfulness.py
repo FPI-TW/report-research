@@ -209,6 +209,58 @@ class CheckFaithfulnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ev["degraded"])
         self.assertIn("非真實性保證", ev["note"])
         self.assertIn("checked_at", ev)
+        # 量尺可追溯（PR-07）：judge 身分、解讀規則版本、耗時；未降級時沒有原因。
+        self.assertEqual(ev["judge_model"], F.DEFAULT_MODEL)
+        self.assertEqual(ev["judge_schema_version"], F.JUDGE_SCHEMA_VERSION)
+        self.assertIsNone(ev["degraded_reason"])
+        self.assertIsInstance(ev["elapsed_ms"], int)
+
+    async def test_judge_model_is_the_model_argument(self):
+        j = _judge({"decompose": {"statements": []}})
+        r = await F.check_faithfulness("找不到資料", ["ctx"], judge=j, model="claude-haiku-4-5")
+        self.assertEqual(r.to_evaluation()["judge_model"], "claude-haiku-4-5")
+
+    async def test_injected_judge_failure_reason_is_error(self):
+        r = await F.check_faithfulness("x", ["ctx"], judge=_judge({"decompose": None}))
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_ERROR)
+
+
+class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
+    """預設 judge 的失敗原因要落到 evaluation.degraded_reason：「服務掛了」與「回了看不懂
+    的東西」一個是可用性問題、一個是量尺問題，監控與校準都要分得開。"""
+
+    async def _check(self, stream):
+        from unittest import mock
+
+        with mock.patch.object(F, "stream_completion", stream):
+            return await F.check_faithfulness("營收年增 30%", ["ctx"], model="claude-haiku-4-5", timeout=1.0)
+
+    async def test_unavailable(self):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2):
+            raise F.LLMUnavailableError("529")
+            yield  # pragma: no cover
+
+        r = await self._check(stream)
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_UNAVAILABLE)
+        ev = r.to_evaluation()
+        self.assertEqual(ev["degraded_reason"], "unavailable")
+        self.assertEqual(ev["judge_model"], "claude-haiku-4-5")
+
+    async def test_parse(self):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2):
+            yield '{"statements": ["截斷'
+
+        r = await self._check(stream)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_PARSE)
+
+    async def test_empty(self):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2):
+            yield "   "
+
+        r = await self._check(stream)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_EMPTY)
 
 
 class ResolveEvidenceTextsTests(unittest.IsolatedAsyncioTestCase):

@@ -40,6 +40,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.services.extraction import EXTRACTION_VERSION
 from app.services.filename import source_display
+from app.services.judge_schema import CURRENT_JUDGE_SQL
 from web import auth, deps
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,9 @@ router = APIRouter()
 # 「待複核」的分數門檻與離線評測（scripts/eval_faithfulness.py）共用 FAITHFULNESS_MIN，
 # 避免監控頁自成一套標準。
 _FAITHFULNESS_MIN = get_settings().faithfulness_min
+# 現行生產 judge。分數類統計只計它量的列（app/services/judge_schema.py），與待複核佇列、
+# scripts/eval_faithfulness.py 同一條規則。
+_JUDGE_MODEL = get_settings().faithfulness_model
 
 # 15 秒（原 5 秒）：前端每 5 秒輪詢，這一塊是 9 條 DB 查詢，其中市場分佈與商品類型
 # 是全表 GROUP BY。拉到 15 秒讓 DB 負載降為三分之一，而 `ts` 欄與 runtime 區塊仍每次
@@ -203,16 +207,25 @@ async def _fetch_db_stats_snapshot() -> dict:
         #
         # jsonb 一律用 jsonb_typeof 過濾後才 cast：畸形一列就讓監控頁 500，
         # 而監控頁恰恰是故障時唯一還想得到要打開的東西。
+        #
+        # **checked／degraded／below_min／avg 只計現行 judge**（CURRENT_JUDGE_SQL，缺
+        # judge_model 的舊列視為 claude-haiku-4-5）：換 judge 之後兩把尺的分數混著平均
+        # 就沒有意義。其他 judge 的筆數另回 other_judge_checked，judge_since 是窗期內
+        # 現行 judge 最早的一筆——切換後頭幾天 n 會很小，卡片要讓人看得出來。
+        # latest 刻意不過濾：它回答「整條抽查路徑還在跑嗎」，與尺無關。
         _score = (
             "CASE WHEN jsonb_typeof(evaluation->'faithfulness_score') = 'number' "
             "THEN (evaluation->>'faithfulness_score')::float END"
         )
+        _cur = CURRENT_JUDGE_SQL
         _eval_cols = (
-            "count(*), count(evaluation), "
-            "count(*) FILTER (WHERE evaluation->'degraded' = 'true'::jsonb), "
-            f"count(*) FILTER (WHERE ({_score}) < :fmin), "
-            f"avg({_score}), "
-            "max(created_at::date) FILTER (WHERE evaluation IS NOT NULL)"
+            f"count(*), count(evaluation) FILTER (WHERE {_cur}), "
+            f"count(*) FILTER (WHERE evaluation->'degraded' = 'true'::jsonb AND {_cur}), "
+            f"count(*) FILTER (WHERE ({_score}) < :fmin AND {_cur}), "
+            f"avg({_score}) FILTER (WHERE {_cur}), "
+            "max(created_at::date) FILTER (WHERE evaluation IS NOT NULL), "
+            f"min(created_at::date) FILTER (WHERE evaluation IS NOT NULL AND {_cur}), "
+            f"count(evaluation) FILTER (WHERE NOT ({_cur}))"
         )
         eval_rows = (
             await session.execute(
@@ -220,7 +233,7 @@ async def _fetch_db_stats_snapshot() -> dict:
                     f"SELECT 'qa' kind, {_eval_cols} FROM research.qa_log "
                     "WHERE created_at > now() - interval '30 days'"
                 ),
-                {"fmin": _FAITHFULNESS_MIN},
+                {"fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_MODEL},
             )
         ).all()
 
@@ -272,6 +285,10 @@ async def _fetch_db_stats_snapshot() -> dict:
             "below_min": int(r[4]),
             "avg_score": round(float(r[5]), 4) if r[5] is not None else None,
             "latest": _d(r[6]),
+            # 量尺：上面的分數類欄位只計這個 judge。
+            "judge_model": _JUDGE_MODEL,
+            "judge_since": _d(r[7]),
+            "other_judge_checked": int(r[8]),
         }
         for r in eval_rows
     }

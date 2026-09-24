@@ -43,6 +43,12 @@ test('預設是忠實度低分：列出提問、分數與日期，並連回那�
   expect(screen.getByText(/門檻 0\.9/)).toBeInTheDocument()
 })
 
+test('忠實度低分列出該筆的判定尺（舊後端沒有這欄時不印）', async () => {
+  mount(() => ({ body: page('faithfulness', [qa(1, { judge_model: 'claude-haiku-4-5' }), qa(2)]) }))
+  await screen.findByRole('link', { name: '提問 1' })
+  expect(screen.getAllByText('claude-haiku-4-5')).toHaveLength(1)
+})
+
 test('切到抽取品質：以 kind=extraction 重新取數，研報連到閱讀頁、標題缺值回退檔名', async () => {
   const fetchMock = mount(url => (
     url.searchParams.get('kind') === 'extraction'

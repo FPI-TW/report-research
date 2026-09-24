@@ -113,7 +113,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/monitor`、`/app/help` | 舊入口相容 |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
 | GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 與 `/api/progress` 共用 15 秒 DB 快取 |
-| GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 監控頁輪詢；`extraction_log` 缺表時 `extraction` 為 null |
+| GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 監控頁輪詢；`extraction_log` 缺表時 `extraction` 為 null。`evaluation.qa` 的 `checked`／`degraded`／`below_min`／`avg_score` 只計現行 judge（`FAITHFULNESS_MODEL`），另帶 `judge_model`、`judge_since`（窗期內現行 judge 最早一筆的日期）、`other_judge_checked`（其他 judge 的筆數） |
 | GET | `/api/markets` | — | `{"markets": [...]}` | 市場代碼清單 |
 | GET | `/api/reports` | `market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`date_desc`）、`limit`（1–100，50）、`offset` | `{total, offset, items[]}` | 瀏覽（無查詢詞） |
 | GET | `/api/search` | `q`（1–500 必填）、同上篩選、`sort`（`relevance`）、`limit`、`offset`、`passages`（1–6，3） | `{query, market, total, market_facets, lexical_truncated, results[]}` | 混合檢索 ＋ `rank_reports` |
@@ -138,7 +138,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/brief/latest` | — | `{status: ready|pending, brief, available_dates}` | 無簡報回 200 `pending` 不是 404 |
 | GET | `/api/brief/dates` | `limit`（1–120，30） | `{"dates": [...]}` | |
 | GET | `/api/brief/{brief_date}` | — | 同 latest | 該日無簡報 404 |
-| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`、倒讚、抽取 `needs_review`。`days` 只作用於前兩種；門檻與窗期和監控頁的忠實度卡同一套定義 |
+| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`（只列現行 judge 量的）、倒讚、抽取 `needs_review`。`days` 只作用於前兩種；門檻、窗期與 judge 過濾和監控頁的忠實度卡同一套定義。問答項目帶 `judge_model`（沒有 evaluation 時為 null） |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 
@@ -160,7 +160,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `EMBED_MAX_CONCURRENCY`、`EMBED_TORCH_THREADS` | 1、0 | 嵌入序列化；`/api/search`、雷達、閱讀頁沒有併發閘 |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` 設定旋鈕 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
 | `ASK_RERANK_*`、`RERANK_MODEL` | 開、50 候選 | rerank fail-open |
-| `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9 | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN` |
+| `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9、`claude-haiku-4-5` | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 不再沿用 `ASK_INTENT_MODEL`；換掉等於換尺，監控卡、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`） |
 | `EXTRACTOR`、`EXTRACTION_REVIEW_MIN`、`EXTRACTION_REVIEW_MIN_COVERAGE`、`EXTRACTION_REVIEW_MAX_GARBLED` | `pypdf`、0.6、0.30、0.02 | 抽取器（生產 sync 環境檔設 `pdfplumber`）與 `needs_review` 三道門檻（只標記不擋，`docs/EXTRACTION.md` §5） |
 | `OBJECT_STORAGE_MODE`、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS` | `local` | 非 local 缺任一 fail-closed；TTL 上限 3600 |
 | `ASK_MAX_QUEUE`、`SSE_HEARTBEAT_INTERVAL` | 20、20 | web 層旋鈕 |

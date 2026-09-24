@@ -45,3 +45,28 @@ test('後端未提供 evaluation → 降級文案，不整張消失', () => {
   render(<FaithfulnessPanel evaluation={undefined} />)
   expect(screen.getByText('此版後端未提供查核統計')).toBeInTheDocument()
 })
+
+test('判定尺、起始日、n 與其他尺筆數都呈現（只計現行 judge）', () => {
+  render(<FaithfulnessPanel evaluation={{
+    ...base,
+    qa: {
+      ...base.qa!, judge_model: 'claude-haiku-4-5', judge_since: '2026-07-02', other_judge_checked: 4,
+    },
+  }} />)
+  expect(screen.getByText(/判定尺 claude-haiku-4-5，自 2026-07-02 起（n=3）/)).toBeInTheDocument()
+  expect(screen.getByText(/另有 4 筆其他判定尺的結果未計入/)).toBeInTheDocument()
+})
+
+test('沒有其他尺的結果 → 不印「另有 0 筆」', () => {
+  render(<FaithfulnessPanel evaluation={{
+    ...base,
+    qa: { ...base.qa!, judge_model: 'claude-haiku-4-5', judge_since: null, other_judge_checked: 0 },
+  }} />)
+  expect(screen.getByText('判定尺 claude-haiku-4-5（n=3）')).toBeInTheDocument()
+  expect(screen.queryByText(/另有/)).not.toBeInTheDocument()
+})
+
+test('舊後端沒有量尺欄位 → 不印判定尺那一行', () => {
+  render(<FaithfulnessPanel evaluation={base} />)
+  expect(screen.queryByText(/判定尺/)).not.toBeInTheDocument()
+})

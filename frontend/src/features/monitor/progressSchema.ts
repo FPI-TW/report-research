@@ -63,6 +63,11 @@ export const evalSourceSchema = z.object({
   below_min: z.number(),
   avg_score: z.number().nullable(),
   latest: z.string().nullable(),
+  // 量尺（DeepSeek 遷移 PR-07）：checked／degraded／below_min／avg_score 只計 judge_model
+  // 量的列；其他 judge 的筆數在 other_judge_checked。舊後端沒有這三鍵，所以 optional。
+  judge_model: z.string().optional(),
+  judge_since: z.string().nullable().optional(),
+  other_judge_checked: z.number().optional(),
 })
 
 export const evaluationSchema = z.object({

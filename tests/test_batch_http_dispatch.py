@@ -198,15 +198,19 @@ class HttpMixin:
             return tac.tag_one(rec, 10000)
 
     # ── 各批次的 main（整批中止要回 rc=2） ───────────────────────────────────
-    def main_rc(self, name: str) -> tuple[int | None, SpyRecorder, str]:
-        """跑某支批次的 main，回 (SystemExit 碼或 main 的回傳值, 跳過名單寫入端, stdout+stderr)。"""
+    def main_rc(self, name: str, *, no_table: bool = False) -> tuple[int | None, SpyRecorder, str]:
+        """跑某支批次的 main，回 (SystemExit 碼或 main 的回傳值, 跳過名單寫入端, stdout+stderr)。
+
+        `no_table=True`：`open_recorder` 回 None（`llm_task_failure` 表不存在，部署漏了 make schema）。
+        """
         rec = SpyRecorder()
         out = io.StringIO()
         code = None
         with contextlib.ExitStack() as stack:
             stack.enter_context(contextlib.redirect_stdout(out))
             stack.enter_context(contextlib.redirect_stderr(out))
-            stack.enter_context(mock.patch.object(lf, "open_recorder", mock.AsyncMock(return_value=rec)))
+            stack.enter_context(mock.patch.object(
+                lf, "open_recorder", mock.AsyncMock(return_value=None if no_table else rec)))
             try:
                 code = self._main(name, stack)
             except SystemExit as exc:
@@ -631,6 +635,18 @@ class BadRequestEscalationBatchTests(HttpMixin, unittest.TestCase):
                 # 觸發篇以 escalated 記（計數直接到 SKIP_AFTER_ROUNDS）：下一輪就跳過，不再連續 3 輪 rc=2
                 self.assertLessEqual({"h1", "h2"}, set(rec.escalated), out)
 
+    def test_escalation_without_failure_table_still_aborts_with_rc_2(self):
+        """N18：表不存在（recorder 為 None）時升級照樣中止、rc=2，觸發研報照樣印出，不因 None 崩潰。"""
+        for name in self.ASYNC_BATCHES:
+            with self.subTest(batch=name):
+                self.install(status(400, "Invalid request: unsupported parameter"))
+                code, rec, out = self.main_rc(name, no_table=True)
+                self.assertEqual(code, 2, out)
+                self.assertIn("API[config]", out)
+                self.assertIn("h1, h2", out)
+                self.assertNotIn("AttributeError", out)
+                self.assertEqual(rec.recorded, [])
+
     def test_messages_differing_only_in_numbers_escalate(self):
         """審查實驗 [2]：反序列化錯誤帶 `column N`（隨 prompt 長度變），逐字比對永遠不升級。"""
         for name in self.ASYNC_BATCHES:
@@ -715,7 +731,7 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         delta.write_text("\n".join(names) + "\n", encoding="utf-8")
         return src, delta
 
-    async def _run(self, n=2, model=DS):
+    async def _run(self, n=2, model=DS, no_table=False):
         from app.services.extract import ExtractResult
 
         src, delta = self._files(n)
@@ -745,7 +761,8 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
             p(mock.patch("app.services.store.upsert_extraction_log", mock.AsyncMock()))
             p(mock.patch("app.services.object_storage.get_object_storage",
                          lambda: argparse.Namespace(enabled=False)))
-            p(mock.patch.object(lf, "open_recorder", mock.AsyncMock(return_value=rec)))
+            self.open_recorder = mock.AsyncMock(return_value=None if no_table else rec)
+            p(mock.patch.object(lf, "open_recorder", self.open_recorder))
             p(contextlib.redirect_stdout(io.StringIO()))
             await snr._run(args)
         return rec
@@ -769,6 +786,27 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
             self.assertTrue(Path(path).is_file())
             self.assertIn("file_hash=", reason)
         self.assertEqual(self.hashes_out.read_text(encoding="utf-8"), "", "不入庫")
+
+    async def test_recorder_is_opened_for_task_tag(self):
+        """N11：行內標註的跳過名單要記在 task=tag、以行內標註的模型為鍵（記到別的 task 會擋錯批次）。"""
+        self.install(status(400, "Content Exists Risk"))
+        await self._run(n=1)
+        self.open_recorder.assert_awaited_once()
+        self.assertEqual(self.open_recorder.await_args.args[:2], (lf.TASK_TAG, snr.TAG_MODEL))
+
+    async def test_no_failure_table_keeps_classifying(self):
+        """表不存在（recorder 為 None）：照樣分流計數、寫 FAIL_LOG，只是不記跳過名單。"""
+        self.install(status(400, "Content Exists Risk"))
+        rec = await self._run(no_table=True)
+        self.assertEqual(self.stats()["skip_blocked"], "2")
+        self.assertEqual(rec.recorded, [])
+
+    async def test_escalation_without_failure_table_still_raises_escalation(self):
+        """N18（匯入段）：表不存在時 400 升級仍寫保留檔、以 BadRequestEscalation 中止，不因 None 崩潰。"""
+        self.install(status(400, "Invalid request: unsupported parameter"))
+        with self.assertRaises(cc.BadRequestEscalation):
+            await self._run(n=3, no_table=True)
+        self.assertTrue(snr.bad_request_path(self.hashes_out).is_file())
 
     async def test_truncated_is_skip_truncated_not_replayed(self):
         """審查低1：截斷另立 skip_truncated／tag_truncated（failures_to_delta 預設不撈），記 truncated。"""
@@ -846,6 +884,74 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.requests, [])
         stage = (self.tmp / "sync_failures.log").read_text(encoding="utf-8").split("\t")[1]
         self.assertEqual(stage, "tag")
+
+class BriefCliPathTests(HttpMixin, unittest.TestCase):
+    """簡報的 CLI 分支刻意不走 `run_claude`（見 generate_brief.call_cli docstring）：claude 找不到是
+    「這一天產生失敗」rc=1（不是整批中止 rc=2）；用量記錄照寫一行（N01、N02）。"""
+
+    def setUp(self):
+        super().setUp()
+        self.usage = self.tmp / "usage.jsonl"
+        env = mock.patch.dict(os.environ, {"LLM_USAGE_LOG": str(self.usage)})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def rows(self):
+        return [json.loads(ln) for ln in self.usage.read_text(encoding="utf-8").splitlines()] \
+            if self.usage.exists() else []
+
+    def test_missing_claude_is_rc_1_not_batch_abort(self):
+        import errno
+
+        missing = FileNotFoundError(errno.ENOENT, "No such file or directory", "claude")
+        args = argparse.Namespace(date=None, force=True, after_hour=0, dry_run=False, model="claude-sonnet-5",
+                                  max_lookback_days=7)
+        svc = gb.brief_service
+        err = io.StringIO()
+        with contextlib.ExitStack() as st:
+            p = st.enter_context
+            p(mock.patch.object(gb.subprocess, "run", side_effect=missing))
+            p(mock.patch.object(gb, "FAIL_LOG", self.tmp / "brief_failures.log"))
+            p(mock.patch.object(gb, "SessionFactory", lambda: _FakeSession()))
+            p(mock.patch.object(svc, "fetch_by_date", mock.AsyncMock(return_value=None)))
+            p(mock.patch.object(svc, "fetch_latest", mock.AsyncMock(return_value=None)))
+            p(mock.patch.object(svc, "fetch_window_reports",
+                                mock.AsyncMock(return_value=[argparse.Namespace(report_id="r1")])))
+            p(mock.patch.object(svc, "count_window_reports", mock.AsyncMock(return_value=1)))
+            p(mock.patch.object(svc, "fetch_signal_changes", mock.AsyncMock(return_value=[])))
+            p(mock.patch.object(svc, "build_material", return_value="素材"))
+            p(mock.patch.object(svc, "build_prompt", return_value="簡報提示詞"))
+            p(mock.patch.object(gb, "claude_cli_lock_or_exit", lambda name: contextlib.nullcontext()))
+            p(mock.patch.object(gb, "require_llm_key"))
+            p(mock.patch.object(sys, "argv", ["generate_brief.py", "--force", "--model", "claude-sonnet-5"]))
+            p(contextlib.redirect_stdout(io.StringIO()))
+            p(contextlib.redirect_stderr(err))
+            self.assertEqual(asyncio.run(gb.generate(args)), 1)
+            self.assertEqual(gb.main(), 1, err.getvalue())
+        self.assertIn("不在 PATH", err.getvalue())
+        self.assertIn("不在 PATH", (self.tmp / "brief_failures.log").read_text(encoding="utf-8"))
+
+    def test_cli_path_writes_exactly_one_usage_row(self):
+        import subprocess as sp
+
+        cases = (
+            (sp.CompletedProcess([], 0, "## 今日重點\n- 一", ""), None),
+            (sp.TimeoutExpired("claude", 300), "timeout"),
+            (sp.CompletedProcess([], 1, "", "boom"), "cli_error"),
+        )
+        for outcome, kind in cases:
+            with self.subTest(kind=kind):
+                self.usage.unlink(missing_ok=True)
+                effect = {"side_effect": outcome} if isinstance(outcome, BaseException) else {"return_value": outcome}
+                with mock.patch.object(gb.subprocess, "run", **effect):
+                    gb.call_cli("素材", "claude-sonnet-5")
+                rows = self.rows()
+                self.assertEqual(len(rows), 1, rows)
+                row = rows[0]
+                self.assertEqual((row["task"], row["backend"], row["model_req"], row["kind"]),
+                                 ("brief", "cli", "claude-sonnet-5", kind))
+                self.assertIsNone(row["tokens"])
+
 
 class BriefContentFilterTests(HttpMixin, unittest.TestCase):
     """簡報被內容審查擋下：該次跳過、不寫列、rc 非 0（走 OnFailure 告警鏈），並記在輸出與失敗紀錄。"""

@@ -170,20 +170,20 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ### 健康端點 `GET /healthz/llm`（只回答本機直連）
 
-回 `{"llm": state}`，**不回任何金額**；只給本機探針 `scripts/check_web_health.sh`（退出碼 7）用，經邊緣一律 404。查 DeepSeek `GET /user/balance`，`balance_infos` 依 `currency` 取值（順序不固定），只看 `LLM_BUDGET_CURRENCY`（預設 CNY）那一筆：
+回 `{"llm": state}`，**不回任何金額**；只給本機探針 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8），經邊緣一律 404。查 DeepSeek `GET /user/balance`，`balance_infos` 依 `currency` 取值（順序不固定），只看 `LLM_BUDGET_CURRENCY`（預設 CNY）那一筆：
 
 | state | HTTP | 條件 |
 |---|---|---|
-| `disabled` | 200 | 沒有線上任務解析到 DeepSeek，且沒有金鑰 |
+| `disabled` | 200 | 問答主答沒有解析到 DeepSeek，且沒有金鑰 |
 | `unknown` | 200 | 還沒有完成過查詢 |
 | `ok` | 200 | 餘額 ≥ `LLM_BALANCE_FLOOR`（預設 70） |
 | `low` | 503 | 0 < 餘額 < 門檻 |
 | `exhausted` | 503 | 查詢回 402、`is_available=false`、餘額 ≤ 0，或本行程的真實請求收過 402 且之後還沒有成功的查詢 |
-| `auth_failed` | 503 | 查詢回 401，或線上任務走 DeepSeek 卻沒有金鑰 |
+| `auth_failed` | 503 | 查詢回 401，或問答主答走 DeepSeek 卻沒有金鑰 |
 | `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx） |
 | `indeterminate` | 503 | 缺該幣別、其他幣別非零、金額讀不懂、端點設定錯 |
 
-線上任務（`llm_models.ONLINE_TASKS`）都沒有解析到 DeepSeek 時，後五種改回 200 並加 `_unused` 後綴（審查 M15）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
+問答主答（`ASK_ANSWER_MODEL`）沒有解析到 DeepSeek 時，後五種改回 200 並加 `_unused` 後綴（審查 M15；其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
 
 ### 契約守門
 

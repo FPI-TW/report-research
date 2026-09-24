@@ -10,9 +10,11 @@
 """
 import asyncio
 import os
+import re
 import time
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from unittest import mock
 
 import httpx
@@ -25,8 +27,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import config  # noqa: E402
 from app.services import llm_health, llm_http  # noqa: E402
+from web import server  # noqa: E402
 from web.routers import health  # noqa: E402
 from web.server import app  # noqa: E402
+
+PROBE = Path(__file__).resolve().parents[1] / "scripts" / "check_web_health.sh"
 
 FAKE_KEY = "fixed-test-secret-deepseek0"
 BASE = "https://api.example.test"
@@ -105,6 +110,15 @@ class AccessTests(_Base):
         r = self.get()
         self.assertState(r, 200, "ok")
 
+    def test_allowlist_is_exact_not_a_healthz_prefix(self):
+        """白名單是精確集合：`/healthz` 開頭的其他路徑照樣要登入（放寬成前綴等於把未來任何
+        `/healthz/*` 端點都免認證對外開放，而只有這三支自己守了本機直連）。"""
+        self.assertEqual(server._AUTH_ALLOWLIST, {"/login", "/healthz", "/healthz/storage", "/healthz/llm"})
+        for path in ("/healthz/llm/", "/healthz/llmx", "/healthz/other", "/healthzz", "/healthz/storage/x"):
+            with self.subTest(path=path):
+                r = _local().get(path)
+                self.assertEqual((r.status_code, r.headers.get("location")), (302, "/login"), path)
+
     def test_query_shape(self):
         self.get()
         self.assertEqual(len(self.requests), 1)
@@ -157,6 +171,26 @@ class BalanceJudgementTests(_Base):
         self.reply(body=_balance(("CNY", "0.01")))
         self.assertState(self.get(), 503, "low")
 
+    def test_currency_code_is_trimmed_and_case_folded(self):
+        """幣別代碼先去空白、轉大寫再比：小寫或帶空白的 CNY 仍是那一筆，不是「缺 CNY」。"""
+        for cur in ("cny", " CNY ", "Cny"):
+            with self.subTest(cur=cur):
+                llm_health.reset()
+                self.reply(body=_balance((cur, "166.04"), ("usd", "0.00")))
+                self.assertState(self.get(), 200, "ok")
+        llm_health.reset()
+        self.reply(body=_balance(("cny", "10.00"), (" usd", "0")))
+        self.assertState(self.get(), 503, "low")
+
+    def test_json_numbers_are_accepted_as_amounts(self):
+        """官方回字串，但 JSON 數字（int／float）同樣是金額；布林與 null 不是。"""
+        for amount, want in ((166.04, (200, "ok")), (100, (200, "ok")), (30, (503, "low")), (0, (503, "exhausted")),
+                             (True, (503, "indeterminate")), (None, (503, "indeterminate"))):
+            with self.subTest(amount=amount):
+                llm_health.reset()
+                self.reply(body=_balance(("CNY", amount), ("USD", 0)))
+                self.assertState(self.get(), *want)
+
     def test_unavailable_account_is_exhausted_even_with_money(self):
         self.reply(body=_balance(("CNY", "166.04"), ("USD", "0.00"), available=False))
         self.assertState(self.get(), 503, "exhausted")
@@ -167,6 +201,9 @@ class BalanceJudgementTests(_Base):
             "空清單": _balance(),
             "非零 USD（幣別不符）": _balance(("CNY", "166.04"), ("USD", "5.00")),
             "非零 USD 在前": _balance(("USD", "5.00"), ("CNY", "166.04")),
+            "負的 USD（欠款）": _balance(("CNY", "166.04"), ("USD", "-1.00")),
+            "CNY 用罄但 USD 非零": _balance(("CNY", "0.00"), ("USD", "5.00")),
+            "CNY 為負但 USD 非零": _balance(("USD", "5.00"), ("CNY", "-3.00")),
             "金額不是數字": _balance(("CNY", "abc"), ("USD", "0.00")),
             "金額是 NaN": _balance(("CNY", "NaN")),
             "USD 金額不是數字": _balance(("CNY", "166.04"), ("USD", "n/a")),
@@ -498,17 +535,117 @@ class UnusedTests(_Base):
         llm_http._quota_seen_at = time.monotonic() + 1000
         self.assertState(self.get(UNUSED), 200, "exhausted_unused")
 
-    def test_any_online_task_on_deepseek_counts(self):
-        """只有一個線上任務（續問改寫）走 DeepSeek 也算用到。"""
-        env = {**UNUSED, "ASK_CONDENSE_MODEL": "deepseek-flash"}
+    def test_main_answer_on_deepseek_counts(self):
+        """其他線上任務都在 Claude、只有主答走 DeepSeek：問答會停擺，要 503。"""
+        env = {**UNUSED, "ASK_ANSWER_MODEL": "deepseek-flash"}
         self.reply(402, {})
         self.assertState(self.get(env), 503, "exhausted")
+
+    def test_fail_open_online_tasks_do_not_count(self):
+        """審查低2：路由、改寫、規劃、追問、忠實度都 fail-open，它們走 DeepSeek 而帳號壞掉時問答照樣答得
+        出來——不能因此開「問答停擺」的事件。逐一只讓一個走 DeepSeek，也試全部一起。"""
+        knobs = ("ASK_INTENT_MODEL", "ASK_CONDENSE_MODEL", "QA_PLANNER_MODEL", "ASK_FOLLOWUP_MODEL",
+                 "FAITHFULNESS_MODEL")
+        for chosen in [(k,) for k in knobs] + [knobs]:
+            with self.subTest(knobs=chosen):
+                llm_health.reset()
+                self.reply(402, {})
+                env = {**UNUSED, **{k: "deepseek-flash" for k in chosen}}
+                self.assertState(self.get(env), 200, "exhausted_unused")
+
+    def test_deepseek_provider_with_main_answer_pinned_to_claude_is_unused(self):
+        """`LLM_PROVIDER=deepseek` 把其餘線上任務都帶到 DeepSeek，但主答釘在 Claude：仍不算用到。"""
+        env = {**ONLINE, "ASK_ANSWER_MODEL": "claude-sonnet-5"}
+        self.reply(401, {})
+        self.assertState(self.get(env), 200, "auth_failed_unused")
+
+    def test_missing_key_matters_only_for_the_main_answer(self):
+        """沒有金鑰：主答走 DeepSeek 是 auth_failed（503），只有 fail-open 任務走 DeepSeek 是 disabled（200）。"""
+        side = {"LLM_PROVIDER": "claude_cli", "ASK_INTENT_MODEL": "deepseek-flash",
+                "FAITHFULNESS_MODEL": "deepseek-flash"}
+        self.assertState(self.get(side), 200, "disabled")
+        self.assertState(self.get({"LLM_PROVIDER": "claude_cli", "ASK_ANSWER_MODEL": "deepseek-flash"}),
+                         503, "auth_failed")
+        self.assertEqual(self.requests, [])
 
     def test_unused_state_is_logged(self):
         self.reply(402, {})
         with self.assertLogs("app.services.llm_health", "WARNING") as cm:
             self.get(UNUSED)
         self.assertTrue(any("exhausted_unused" in line for line in cm.output), cm.output)
+
+
+class ConcurrencyTests(unittest.IsolatedAsyncioTestCase):
+    """真正的並行（同一個 event loop 上同時進行的請求與查詢），不是撥時鐘模擬。"""
+
+    def setUp(self):
+        llm_health.reset()
+        self._quota = llm_http._quota_seen_at
+        llm_http._quota_seen_at = 0.0
+        self.requests: list[httpx.Request] = []
+        self.delay = 0.3
+        self.status, self.body = 200, PROBE_BEFORE
+
+        async def slow(req):
+            self.requests.append(req)
+            await asyncio.sleep(self.delay)
+            return httpx.Response(self.status, json=self.body)
+
+        llm_http._transport = httpx.MockTransport(slow)
+        llm_http._reset_clients()
+        env = mock.patch.dict(os.environ, ONLINE)
+        env.start()
+        self.addCleanup(env.stop)
+
+    async def asyncTearDown(self):
+        await llm_http.aclose()
+
+    def tearDown(self):
+        llm_health.reset()
+        llm_http._quota_seen_at = self._quota
+        llm_http._transport = None
+        llm_http._reset_clients()
+
+    @staticmethod
+    def _report():
+        return llm_health.report(currency="CNY", floor=70.0)
+
+    async def test_402_arriving_while_a_query_is_in_flight_keeps_the_latch(self):
+        """查詢開始之後、結束之前收到 402：那次查詢回 ok 也不得解除閂鎖（以查詢「開始」為界）。"""
+        async def hit_402():
+            await asyncio.sleep(0.1)
+            llm_http._quota_seen_at = time.monotonic()
+
+        (state, status), _ = await asyncio.gather(self._report(), hit_402())
+        self.assertEqual((state, status), ("exhausted", 503))
+        self.assertLess(llm_health._snap.cleared_at, llm_http.last_quota_at())
+        self.assertEqual(await self._report(), ("exhausted", 503), "快取期間閂鎖仍在")
+        self.assertEqual(len(self.requests), 1)
+
+    async def test_concurrent_requests_share_one_query(self):
+        results = await asyncio.gather(self._report(), self._report(), self._report())
+        self.assertEqual(results, [("ok", 200)] * 3)
+        self.assertEqual(len(self.requests), 1, "同時進來的請求要共用同一個查詢 task")
+
+    async def test_slow_query_is_not_cancelled_by_the_wait_limit(self):
+        """等不到（WAIT）就先回上一次的結論，但查詢不能被取消（shield）：它在背景跑完後要更新狀態。"""
+        self.status, self.body = 402, {"error": {"message": "Insufficient Balance"}}
+        with mock.patch.object(llm_health, "WAIT", 0.05):
+            self.assertEqual(await self._report(), ("unknown", 200))
+            await asyncio.sleep(self.delay + 0.2)
+            self.assertEqual(llm_health._snap.state, "exhausted", "背景查詢沒有完成（被 wait_for 取消了？）")
+            self.assertEqual(await self._report(), ("exhausted", 503))
+        self.assertEqual(len(self.requests), 1)
+
+
+class DeadlineOrderTests(unittest.TestCase):
+    def test_fetch_timeout_below_wait_below_probe_curl_timeout(self):
+        """FETCH_TIMEOUT < WAIT < 探針的 HEALTH_TIMEOUT：端點一定在探針的 curl 放棄前回答（否則 curl 逾時
+        被當成「判不出來」、停擺被靜默），而查詢逾時在同一個請求裡就有結論。"""
+        m = re.search(r'^HEALTH_TIMEOUT="\$\{HEALTH_TIMEOUT:-(\d+)\}"', PROBE.read_text(encoding="utf-8"), re.M)
+        self.assertIsNotNone(m)
+        self.assertLess(llm_health.FETCH_TIMEOUT, llm_health.WAIT)
+        self.assertLess(llm_health.WAIT, int(m.group(1)))
 
 
 class QuotaHookTests(unittest.IsolatedAsyncioTestCase):

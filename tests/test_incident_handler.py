@@ -442,9 +442,9 @@ class StateMachineTests(unittest.TestCase):
         self.assertEqual(self.h.webhook_calls(), 1)
 
     def test_probe_llm_exit_opens_warning_incident_and_resolves(self):
-        """exit 7＝/healthz 正常但 DeepSeek 帳號不可用（402／401／連不上）或餘額低於門檻。
+        """exit 7＝/healthz 正常但 DeepSeek 餘額低於門檻（尚未停擺）。
 
-        WARNING：檢索、閱讀、雷達還活著；沒有備援、不會自己好，所以開事件、提醒、恢復時送 RESOLVED。
+        WARNING：問答與批次都還能跑；但不會自己好（要儲值），所以開事件、提醒、恢復時送 RESOLVED。
         必須有自己的分派——落進未知退出碼那一支的話，通知文字只會說「未知退出碼」。
         """
         self.h.set_probe(7)
@@ -456,6 +456,55 @@ class StateMachineTests(unittest.TestCase):
         p = self.h.run()
         self.assertEqual(last_emit(p.stdout)["action"], "resolved")
         self.assertEqual(self.h.webhook_calls(), 2)
+
+    def test_probe_llm_down_exit_opens_critical_incident_and_resolves(self):
+        """exit 8＝DeepSeek 帳號不可用（用罄／401／連不上）或判斷不出來：問答與批次 LLM 段停擺，CRITICAL。"""
+        self.h.set_probe(8)
+        p = self.h.run()
+        e = last_emit(p.stdout)
+        self.assertEqual((e["severity"], e["action"], e["reason"]), ("CRITICAL", "firing", "probe_exit_8"))
+        self.assertEqual(self.h.state["severity"], "CRITICAL")
+        self.assertEqual(self.h.webhook_calls(), 1)
+        self.h.set_probe(0, result="success")
+        p = self.h.run()
+        e = last_emit(p.stdout)
+        self.assertEqual((e["action"], e["incident"]), ("resolved", "CLOSED"))
+        self.assertEqual(self.h.state, {})
+        self.assertEqual(self.h.webhook_calls(), 2)
+
+    def test_low_turning_into_outage_escalates_immediately(self):
+        """審查中2：「餘額低」FIRING 好幾天的期間轉成用罄，必須立刻看得出來（ESCALATED），不等 30 分鐘提醒。"""
+        self.h.set_probe(7)
+        self.h.run()
+        self.h.set_probe(7)
+        self.assertEqual(last_emit(self.h.run().stdout)["action"], "suppress")
+        self.h.set_probe(8)
+        p = self.h.run()
+        e = last_emit(p.stdout)
+        self.assertEqual((e["action"], e["severity"], e["reason"]), ("escalated", "CRITICAL", "probe_exit_8"))
+        self.assertEqual(self.h.webhook_calls(), 2)
+        self.assertEqual((self.h.state["state"], self.h.state["severity"]), ("FIRING", "CRITICAL"))
+        self.h.set_probe(8)
+        self.assertEqual(last_emit(self.h.run().stdout)["action"], "suppress", "升級只送一次")
+        self.assertEqual(self.h.webhook_calls(), 2)
+
+    def test_outage_easing_to_low_stays_open_then_resolves(self):
+        """8→7（例如儲值了但仍低於門檻）：事件不關（餘額低也要處理）、降回 WARNING、不另外通知；7→0 才 RESOLVED。"""
+        self.h.set_probe(8)
+        self.h.run()
+        self.h.set_probe(7)
+        p = self.h.run()
+        e = last_emit(p.stdout)
+        self.assertEqual((e["action"], e["severity"], e["incident"]), ("suppress", "WARNING", "FIRING"))
+        self.assertEqual(self.h.state["severity"], "WARNING")
+        self.assertEqual(self.h.webhook_calls(), 1, "降級不送通知，也不能送 RESOLVED")
+        self.h.set_probe(8)
+        self.assertEqual(last_emit(self.h.run().stdout)["action"], "escalated", "再惡化要能再升級")
+        self.h.set_probe(7)
+        self.h.run()
+        self.h.set_probe(0, result="success")
+        self.assertEqual(last_emit(self.h.run().stdout)["action"], "resolved")
+        self.assertEqual(self.h.webhook_calls(), 3)
 
     def test_stale_probe_is_a_monitor_incident_not_a_web_incident(self):
         """P4 停止產出＝**監控失明**，不是服務故障。兩者必須是不同元件的事件。"""
@@ -1263,11 +1312,25 @@ class AlertDeliveryTests(unittest.TestCase):
         self.h.run()
         d = self.rx.payloads()[0]
         self.assertEqual((d["action"], d["severity"], d["reason"]), ("FIRING", "WARNING", "probe_exit_7"))
-        self.assertIn("LLM 帳號不可用（餘額不足／認證失敗／連不上），問答與批次 LLM 段停擺；"
-                      "檢索、閱讀、雷達正常", d["text"])
+        self.assertIn("DeepSeek 餘額低於門檻（尚未停擺），請於 3 個工作天內儲值", d["text"])
+        self.assertNotIn("停擺；", d["text"])
         self.h.set_timer(exit_status=0, result="success", mono=self.h._now_mono())
         self.h.run()
         self.assertEqual([x["action"] for x in self.rx.payloads()], ["FIRING", "RESOLVED"])
+
+    def test_llm_escalation_text_is_delivered(self):
+        """7 → 8 → 0：Slack 依序收到 FIRING（WARNING）、ESCALATED（CRITICAL，停擺的說法）、RESOLVED。"""
+        self.h.set_timer(exit_status=7, result="exit-code")
+        self.h.run()
+        self.h.set_timer(exit_status=8, result="exit-code", mono=self.h._now_mono())
+        self.h.run()
+        self.h.set_timer(exit_status=0, result="success", mono=self.h._now_mono() + 1)
+        self.h.run()
+        got = [(x["action"], x["severity"], x["reason"]) for x in self.rx.payloads()]
+        self.assertEqual(got, [("FIRING", "WARNING", "probe_exit_7"), ("ESCALATED", "CRITICAL", "probe_exit_8"),
+                               ("RESOLVED", "RESOLVED", "healthy")])
+        self.assertIn("LLM 帳號不可用（餘額用罄／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常",
+                      self.rx.payloads()[1]["text"])
 
     def test_same_incident_does_not_resend_firing(self):
         self._fail()

@@ -37,7 +37,8 @@ TIMER = SYSTEMD_DIR / "report-mark-health.timer"
 
 EXIT_OK, EXIT_HTTP, EXIT_PROCESS, EXIT_GRACE, EXIT_TOOLING, EXIT_DEGRADED = 0, 1, 2, 3, 4, 5
 EXIT_STORAGE = 6
-EXIT_LLM = 7
+EXIT_LLM = 7        # 只有 llm_low：餘額低於門檻、尚未停擺
+EXIT_LLM_DOWN = 8   # low 以外的 503：帳號不可用或判斷不出來
 
 # stdout 契約：P5 消費的欄位。少一個都會讓告警分級失準且無症狀。
 REQUIRED_FIELDS = ("ts", "component", "probe", "status", "http_code", "latency_ms", "reason")
@@ -366,6 +367,37 @@ class DependencyCheckTests(unittest.TestCase):
             p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), **sd.env})
         self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
 
+    def test_empty_dropin_disables_the_check(self):
+        """Claude CLI 已放棄（2026-09-24）：health unit 設 `HEALTH_DEP_DROPIN=`（空值）停用這一段。
+
+        空值必須是「停用」而不是「用預設路徑」——後者在生產機上會讀到真的 drop-in，claude 一旦從 PATH
+        消失就永遠回 5、蓋掉 LLM 告警（審查中1）。CI 沒有 /etc 的 drop-in，行為測試分辨不出兩者，所以
+        另外靜態釘住 `${HEALTH_DEP_DROPIN-…}`（不是 `:-`）。
+        """
+        text = PROBE.read_text(encoding="utf-8")
+        self.assertIsNotNone(re.search(r'^HEALTH_DEP_DROPIN="\$\{HEALTH_DEP_DROPIN-/', text, re.M),
+                             "空值要停用，不是退回預設路徑")
+        with _Server(200) as s:
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": "", "HEALTH_DEP_BIN": "claude-x9"})
+        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "ok")
+
+    def test_empty_dropin_still_reports_every_other_fault(self):
+        """停用的只有 5：6、7、8 照常上報，reason 裡也沒有 dep_missing。"""
+        cases = (
+            ({"storage_status": 503}, EXIT_STORAGE, "storage_unreachable"),
+            ({"llm_status": 503, "llm_body": b'{"llm":"exhausted"}'}, EXIT_LLM_DOWN, "llm_exhausted"),
+            ({"llm_status": 503, "llm_body": b'{"llm":"low"}'}, EXIT_LLM, "llm_low"),
+        )
+        for kw, rc, reason in cases:
+            with self.subTest(reason=reason), _Server(200, **kw) as s:
+                p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": "", "HEALTH_DEP_BIN": "claude-x9"})
+            self.assertEqual(p.returncode, rc, p.stdout + p.stderr)
+            self.assertEqual(parse(p.stdout)["reason"], reason)
+        with _FakeSystemd(state="active") as sd, _Server(503) as s:
+            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": "", **sd.env})
+        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
+
     def test_repo_dropin_declares_native_claude_path_first(self):
         """repo 內的 drop-in 是真相來源：原生安裝的 ~/.local/bin 必須排在 nvm 之前。"""
         dropin = SYSTEMD_DIR / "report-mark-web.service.d" / "path.conf"
@@ -403,6 +435,14 @@ class StorageCheckTests(unittest.TestCase):
             run_probe({"HEALTH_URL": s.url})
             self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"])
 
+    def test_trailing_slash_on_health_url_is_stripped(self):
+        """`HEALTH_URL=…/healthz/` 時 L3 端點不得變成 `//storage`、`//llm`（web 那邊是 404＝靜默不告警）。"""
+        with _Server(200, storage_status=503, llm_status=503) as s:
+            p = run_probe({"HEALTH_URL": s.url + "/"})
+            self.assertEqual(s.paths, ["/healthz/", "/healthz/storage", "/healthz/llm"])
+        self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_exhausted")
+
     def test_empty_storage_url_disables_the_check(self):
         with _Server(200, storage_status=503) as s:
             p = run_probe({"HEALTH_URL": s.url, "HEALTH_STORAGE_URL": ""})
@@ -430,28 +470,49 @@ class LlmCheckTests(unittest.TestCase):
     """L3：/healthz 綠不代表 LLM 帳號能用（402、401、連不上、餘額低於門檻）。
 
     餘額查詢由 web 行程做，探針只讀 `/healthz/llm` 的狀態碼，**只認 503**；503 本體的 state
-    併進 reason（封閉詞彙 `llm_<小寫與底線>`，其餘 `llm_unavailable`）。多項 L3 同時成立時
-    一行帶出全部 reason，退出碼取 5 → 6 → 7 最前面的（審查 M15：7 不得遮蔽 5、6）。
+    併進 reason（封閉詞彙 `llm_<小寫與底線>`，其餘 `llm_unavailable`）。退出碼依 state 分兩種：
+    只有 `llm_low`（尚未停擺）是 7，其餘（含讀不懂的本體）是 8。多項 L3 同時成立時一行帶出全部
+    reason，退出碼取 8 → 5 → 6 → 7 最前面的（8 是最重的故障；審查 M15：7 不得遮蔽 5、6）。
     """
 
-    def test_llm_503_is_exit_7_with_state_in_reason(self):
-        for state in ("exhausted", "low", "auth_failed", "unreachable", "indeterminate"):
+    def test_llm_down_states_are_exit_8_with_state_in_reason(self):
+        for state in ("exhausted", "auth_failed", "unreachable", "indeterminate"):
             with self.subTest(state=state), _FakeSystemd(state="inactive") as sd, \
                     _Server(200, llm_status=503, llm_body=b'{"llm":"%s"}' % state.encode()) as s:
                 p = run_probe({"HEALTH_URL": s.url, **sd.env})
                 calls = sd.calls()
-            self.assertEqual(p.returncode, EXIT_LLM, p.stdout + p.stderr)
+            self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
             f = parse(p.stdout)
             self.assertEqual((f["status"], f["http_code"], f["reason"]), ("degraded", "200", f"llm_{state}"))
             self.assertEqual(calls, [], "LLM 檢查不得呼叫 systemctl")
-            self.assertIn("LLM 帳號", p.stderr)
+            self.assertIn("LLM 帳號不可用", p.stderr)
+            self.assertNotIn("餘額低於門檻", p.stderr)
+
+    def test_low_is_exit_7(self):
+        """餘額低於門檻、尚未停擺：7（incident handler 記 WARNING），訊息不得說成停擺。"""
+        with _FakeSystemd(state="inactive") as sd, _Server(200, llm_status=503, llm_body=b'{"llm":"low"}') as s:
+            p = run_probe({"HEALTH_URL": s.url, **sd.env})
+        self.assertEqual(p.returncode, EXIT_LLM, p.stdout + p.stderr)
+        f = parse(p.stdout)
+        self.assertEqual((f["status"], f["http_code"], f["reason"]), ("degraded", "200", "llm_low"))
+        self.assertIn("餘額低於門檻", p.stderr)
+        self.assertNotIn("LLM 帳號不可用", p.stderr)
+
+    def test_only_exact_low_is_exit_7(self):
+        """字首相同的其他 state（未來新增、或 `_unused` 誤回 503）不是 low：當停擺處理。"""
+        for state in (b"low_unused", b"lowish", b"below", b"unknown"):
+            with self.subTest(state=state), _Server(200, llm_status=503, llm_body=b'{"llm":"%s"}' % state) as s:
+                p = run_probe({"HEALTH_URL": s.url})
+            self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
+            self.assertEqual(parse(p.stdout)["reason"], "llm_" + state.decode())
 
     def test_unparseable_or_hostile_body_is_llm_unavailable(self):
+        """判斷不出來就當停擺（8）：503 已經說了有事，讀不懂本體不能降成「只是餘額低」。"""
         for body in (b"", b"<html>oops</html>", b'{"llm":"ok; rm -rf /"}', b'{"llm":"EXHAUSTED"}',
-                     b'{"llm":"' + b"a" * 40 + b'"}', b'{"llm":"low reason=forged"}'):
+                     b'{"llm":"' + b"a" * 40 + b'"}', b'{"llm":"low reason=forged"}', b'{"llm":"LOW"}'):
             with self.subTest(body=body), _Server(200, llm_status=503, llm_body=body) as s:
                 p = run_probe({"HEALTH_URL": s.url})
-            self.assertEqual(p.returncode, EXIT_LLM, p.stdout + p.stderr)
+            self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
             self.assertEqual(parse(p.stdout)["reason"], "llm_unavailable")
             self.assertEqual(len(p.stdout.strip().splitlines()), 1)
 
@@ -479,14 +540,23 @@ class LlmCheckTests(unittest.TestCase):
             self.assertNotIn("/healthz/llm", s.paths)
         self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
 
-    def test_storage_beats_llm_and_both_reasons_are_reported(self):
+    def test_storage_beats_low_and_both_reasons_are_reported(self):
         with _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"low"}') as s:
             p = run_probe({"HEALTH_URL": s.url})
             self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"])
         self.assertEqual(p.returncode, EXIT_STORAGE, p.stdout + p.stderr)
         self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_low")
         self.assertIn("物件儲存", p.stderr)
-        self.assertIn("LLM 帳號", p.stderr)
+        self.assertIn("餘額低於門檻", p.stderr)
+
+    def test_llm_down_beats_storage_and_both_reasons_are_reported(self):
+        """R2 故障期間 DeepSeek 用罄：要以 8（CRITICAL）出現，不能被 6（WARNING）蓋成「只是 R2」。"""
+        with _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"auth_failed"}') as s:
+            p = run_probe({"HEALTH_URL": s.url})
+        self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_auth_failed")
+        self.assertIn("物件儲存", p.stderr)
+        self.assertIn("LLM 帳號不可用", p.stderr)
 
     def _missing_claude(self, tmp):
         t = Path(tmp)
@@ -495,20 +565,29 @@ class LlmCheckTests(unittest.TestCase):
         dropin.write_text(f"[Service]\nEnvironment=PATH={t}/bin\n", encoding="utf-8")
         return {"HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"}
 
-    def test_dependency_beats_everything_and_all_three_are_reported(self):
+    def test_llm_down_beats_everything_and_all_three_are_reported(self):
+        """8 排第一：尤其不能被 5 蓋住——5 在 health unit 沒重新部署時會永遠成立（審查中1）。"""
         with tempfile.TemporaryDirectory() as tmp, \
                 _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"exhausted"}') as s:
             p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
-            self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"], "5 成立時仍要查 6、7")
-        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+            self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"], "5 成立時仍要查 6、8")
+        self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
         self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,storage_unreachable,llm_exhausted")
         self.assertEqual(len(p.stdout.strip().splitlines()), 1, "一行帶出全部 reason")
 
-    def test_dependency_beats_llm(self):
+    def test_llm_down_beats_dependency(self):
         with tempfile.TemporaryDirectory() as tmp, _Server(200, llm_status=503) as s:
             p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
-        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+        self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
         self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,llm_exhausted")
+
+    def test_dependency_and_storage_beat_low(self):
+        """low 最低：它會持續到儲值為止，不得遮蔽 5、6（審查 M15）。"""
+        with tempfile.TemporaryDirectory() as tmp, \
+                _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"low"}') as s:
+            p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
+        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,storage_unreachable,llm_low")
 
     def test_dependency_and_storage_report_both(self):
         with tempfile.TemporaryDirectory() as tmp, _Server(200, storage_status=503) as s:
@@ -692,6 +771,10 @@ class SystemdContractTests(unittest.TestCase):
     def test_execstart_uses_bash_not_bare_exec(self):
         """走 `bash <script>` 才不依賴 exec bit——2026-08-18 遷移剛因此踩過坑。"""
         self.assertRegex(SERVICE.read_text(encoding="utf-8"), r"ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash ")
+
+    def test_service_disables_the_claude_dependency_check(self):
+        """Claude CLI 已放棄（2026-09-24）：unit 以空值停用退出碼 5（PR-M 時連同那段一起刪）。"""
+        self.assertIn("HEALTH_DEP_DROPIN=", _directives(SERVICE, "Environment"))
 
     def test_service_declares_grace_exit_as_success(self):
         """寬限退出碼不得讓 unit 變 failed，且必須用 SuccessExitStatus 而非吞掉錯誤。"""

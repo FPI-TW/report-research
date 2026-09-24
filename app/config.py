@@ -236,7 +236,7 @@ class Settings:
     # 寬鬆是刻意的：最長的主答 8192 tokens 正常一兩分鐘內收完。CLI 路徑不受影響。
     llm_http_total_timeout: float = 600.0
     # DeepSeek 餘額告警（web/routers/health.py 的 /healthz/llm；只有 web 讀，設在 repo 根 .env）。
-    # 只看 `LLM_BUDGET_CURRENCY` 那一筆（D-O：帳戶以人民幣儲值）；低於門檻回 503 → 探針退出碼 7。
+    # 只看 `LLM_BUDGET_CURRENCY` 那一筆（D-O：帳戶以人民幣儲值）；低於門檻回 503 → 探針退出碼 7（用罄等停擺是 8）。
     # 月上限 ¥350 是儲值紀律（docs/production_resilience.md），刻意不寫成程式旋鈕。
     llm_budget_currency: str = "CNY"
     llm_balance_floor: float = 70.0

@@ -31,7 +31,8 @@ EXIT_GRACE=3     # 剛啟動的寬限期內，不視為故障（unit 需宣告 S
 EXIT_TOOLING=4   # 探針自己不能執行（缺 curl 等）
 EXIT_DEGRADED=5  # L3：HTTP 健康，但問答路徑的必要相依（claude CLI）不在 web unit 的 PATH 上
 EXIT_STORAGE=6   # L3：HTTP 健康，但物件儲存（R2）連不上——原檔與 PDF 全壞，其餘功能正常
-EXIT_LLM=7       # L3：HTTP 健康，但 DeepSeek 帳號不可用或餘額低於門檻——問答與批次 LLM 段停擺（或即將）
+EXIT_LLM=7       # L3：HTTP 健康，但 DeepSeek 餘額低於門檻（llm_low）——尚未停擺，要儲值
+EXIT_LLM_DOWN=8  # L3：HTTP 健康，但 DeepSeek 帳號不可用或判斷不出來（low 以外的 503）——問答與批次 LLM 段停擺
 
 # ── L3：問答相依檢查的設定 ───────────────────────────────────────────────
 # 為什麼需要它：2026-09-02 claude CLI 從 npm 全域改裝成原生安裝，舊路徑下的
@@ -43,8 +44,13 @@ EXIT_LLM=7       # L3：HTTP 健康，但 DeepSeek 帳號不可用或餘額低�
 # 逐目錄檢查有沒有可執行的 claude。drop-in 不存在（CI、沒部署的機器）就跳過——
 # 「判不出來」不是「壞了」。已知盲點：drop-in 改了但還沒 daemon-reload 時，這裡
 # 看到的是檔案、不是 unit 實際載入的值。
+#
+# **Claude CLI 已放棄（2026-09-24 決策），生產端以 health unit 的 `Environment=HEALTH_DEP_DROPIN=`
+# （空值）停用這一段**：問答不再 spawn claude，claude 從 PATH 消失時這裡會永遠回 5、蓋掉 LLM 告警，
+# 訊息也不實。所以 HEALTH_DEP_DROPIN 用 `-` 而不是 `:-`——空值＝停用，未設才用預設路徑。
+# PR-M 時刪除整段（含退出碼 5）。
 HEALTH_DEP_BIN="${HEALTH_DEP_BIN:-claude}"
-HEALTH_DEP_DROPIN="${HEALTH_DEP_DROPIN:-/etc/systemd/system/report-mark-web.service.d/path.conf}"
+HEALTH_DEP_DROPIN="${HEALTH_DEP_DROPIN-/etc/systemd/system/report-mark-web.service.d/path.conf}"
 
 # ── L3：物件儲存檢查的設定 ───────────────────────────────────────────────
 # 為什麼需要它：OBJECT_STORAGE_MODE=r2 時缺 key 即 503 不回退，bucket 或憑證出問題時
@@ -62,6 +68,8 @@ HEALTH_STORAGE_URL="${HEALTH_STORAGE_URL-${HEALTH_URL%/}/storage}"
 # 餘額查詢由 web 行程做（金鑰在它的 .env），結果經 /healthz/llm 取得——同樣只回答本機直連，
 # 同樣只認 **HTTP 503**（其餘一律當作判不出來或正常）。503 的本體是 {"llm":"<state>"}，
 # state 併進 reason（llm_exhausted、llm_low…；讀不出來就是 llm_unavailable），**不含任何金額**。
+# 退出碼依 state 分兩種：只有 `llm_low`（餘額低於門檻、尚未停擺）是 7；其餘（exhausted／auth_failed／
+# unreachable／indeterminate，以及本體讀不懂的 llm_unavailable）都是 8——真停擺或判斷不出來，寧可當停擺。
 # 設成空字串可整段停用。
 HEALTH_LLM_URL="${HEALTH_LLM_URL-${HEALTH_URL%/}/llm}"
 
@@ -146,12 +154,16 @@ while [ "$attempt" -lt "$HEALTH_RETRIES" ]; do
     elapsed_ms=$(( ($(date +%s%N) - start_ns) / 1000000 ))
     if [ "$curl_rc" -eq 0 ] && [ "$code" = "200" ]; then
         # L3 三項**全部都查**，一行帶出全部 reason（逗號分隔），退出碼取優先序最高的那一個：
-        #   5（claude 不在 PATH）→ 6（R2 連不上）→ 7（LLM 帳號）。
-        # 7 刻意排最後（審查 M15）：它包含「餘額低於門檻」，那會持續到儲值為止（可能好幾天），
-        # 排前面的話這段期間 5、6 永遠開不了事件；5、6 是本機可以立刻處理的基礎設施故障。
-        # 反過來 7 被 5／6 蓋住時，reason 仍在這一行裡（journal 看得到），而 5／6 修好後下一輪
-        # 退出碼就變成 7。已知限制：web 只有一個 incident 元件，FIRING 期間退出碼從 6 換成 7
-        # 不會另開事件，要等下一則提醒（最多 30 分鐘）才看到新的 exit。
+        #   8（LLM 停擺）→ 5（claude 不在 PATH）→ 6（R2 連不上）→ 7（LLM 餘額低）。
+        # 依影響面排：8 是問答與批次 LLM 段全停（incident handler 記 CRITICAL），5、6 是局部降級
+        # （WARNING）；8 排第一，事件的嚴重度才等於同時成立的故障裡最重的那一個——6 排在 8 前面的話，
+        # R2 故障期間 DeepSeek 用罄只會以 WARNING 的「R2 連不上」出現。8 也必須排在 5 前面：5 已隨 claude CLI
+        # 放棄而停用，但 health unit 沒重新部署時它會永遠成立，排前面就是永遠蓋掉 LLM 停擺（審查中1）。
+        # 7 刻意排最後（審查 M15）：它是「餘額低於門檻」，會持續到儲值為止（可能好幾天），排前面的話這段
+        # 期間 5、6 永遠開不了事件。被蓋住的那一項 reason 仍在這一行裡（journal 看得到），修好前面那項後
+        # 下一輪退出碼就換成它。已知限制：web 只有一個 incident 元件，FIRING 期間退出碼從 8 換成 6（或 7）
+        # 是降級、不會立刻通知，要等下一則提醒（最多 30 分鐘）；反方向（7／6 → 8）是 WARNING → CRITICAL，
+        # 狀態機立刻送 ESCALATED。
         dep_reason="$(check_unit_dependency)"
         storage_reason="$(check_storage)"
         llm_reason="$(check_llm)"
@@ -166,7 +178,11 @@ while [ "$attempt" -lt "$HEALTH_RETRIES" ]; do
         emit degraded "$code" "$elapsed_ms" "$attempt" "$reasons"
         [ -n "$dep_reason" ] && echo "check_web_health: /healthz 正常，但 $HEALTH_DEP_BIN 不在 $HEALTH_DEP_DROPIN 宣告的 PATH 上（問答路徑會以 FileNotFoundError 失敗）" >&2
         [ -n "$storage_reason" ] && echo "check_web_health: /healthz 正常，但物件儲存（R2）連不上（原檔下載與 PDF 檢視會失敗；細節見 web 日誌的「healthz 物件儲存探測失敗」）" >&2
-        [ -n "$llm_reason" ] && echo "check_web_health: /healthz 正常，但 LLM 帳號不可用或餘額低於門檻（$llm_reason；細節與金額見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
+        llm_down=no
+        [ -n "$llm_reason" ] && [ "$llm_reason" != llm_low ] && llm_down=yes
+        [ "$llm_down" = yes ] && echo "check_web_health: /healthz 正常，但 LLM 帳號不可用或判斷不出來，問答與批次 LLM 段停擺（$llm_reason；細節見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
+        [ "$llm_reason" = llm_low ] && echo "check_web_health: /healthz 正常，但 DeepSeek 餘額低於門檻、尚未停擺（$llm_reason；金額見 web 日誌的「healthz LLM 狀態」，處置見 docs/production_resilience.md）" >&2
+        [ "$llm_down" = yes ] && exit "$EXIT_LLM_DOWN"
         [ -n "$dep_reason" ] && exit "$EXIT_DEGRADED"
         [ -n "$storage_reason" ] && exit "$EXIT_STORAGE"
         exit "$EXIT_LLM"

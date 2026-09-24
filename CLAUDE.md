@@ -108,7 +108,7 @@ uv run python scripts/ingest_all.py
 ## 生產維運
 - 真相來源在 `deploy/`，不是機器上的 `/etc`。sync 鏈（每 3h）：rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量）。摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉近九成）；後三段的 `--limit` 是安全機制不是效能旋鈕。補救走 `scripts/failures_to_delta.py`，不要 `--all-local`。
 - 會 spawn `claude -p` 的批次在 main 進入點取 `scripts/_claude_lock.py` 的 flock，撞鎖 rc=75 是「不跑」不是「跑壞」。從 worktree 跑批次不與主 checkout 互斥。
-- 健康判定打 `/healthz`（只探 DB），不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`，不看 `Result=success`。監控兩層：`scripts/check_web_health.sh` 只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED。DeepSeek 帳號（402／401／連不上／CNY 餘額低於 `LLM_BALANCE_FLOOR`）由只回答本機直連的 `/healthz/llm`（只回 `llm` 一鍵、不含金額）加探針退出碼 7 偵測；L3 三項全查、一行帶全部 reason，退出碼取 5 → 6 → 7 最前面的。402 的處置是儲值，絕不改走 Claude。
+- 健康判定打 `/healthz`（只探 DB），不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`，不看 `Result=success`。監控兩層：`scripts/check_web_health.sh` 只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED。DeepSeek 帳號由只回答本機直連的 `/healthz/llm`（只回 `llm` 一鍵、不含金額）加探針偵測：CNY 餘額低於 `LLM_BALANCE_FLOOR` 為退出碼 7（WARNING），用罄／401／連不上／判斷不出來為 8（CRITICAL）；L3 全查、一行帶全部 reason，退出碼取 8 → 5 → 6 → 7 最前面的。退出碼 5（claude 依賴）已由 health unit 的 `HEALTH_DEP_DROPIN=` 停用，PR-M 刪除。402 的處置是儲值，絕不改走 Claude。
 - `make freshness` rc 0／1／2／3 分流；`signal` 門檻 0 與語料閘是刻意預設。`make db-audit` 只讀不修，warn 也算失敗。
 - `研報自動匯入/` 唯讀。`make ingest-lowio` 會 `fsync=off` 且 SIGKILL 後不還原；處置 `make restore-durability`。
 - 夜間回填 `report-mark-backfill.timer`（E1d）跑完後由人手動 disable。

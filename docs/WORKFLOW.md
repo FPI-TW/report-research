@@ -126,6 +126,22 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `scripts/search.py`（`make search`） | CLI 檢索驗證 |
 | `scripts/analyze_qa_log.py`、`scripts/measure_baseline.py`、`scripts/eval_faithfulness.py` | 唯讀分析 |
 | `scripts/judge_agreement.py` | judge 描述性校準：唯讀取 `qa_log` 歷史 haiku 判定，以 `retrieve_context` 重建脈絡、用 DeepSeek judge 重評，印 κ／偏移／門檻翻轉率（只描述、不判定）；會呼叫付費 API，`--max-cases`／`--max-cny`／`--dry-run` |
+| `eval/observe_switch.py` | DeepSeek 切換後批次產出觀測（零 LLM、唯讀、一次性）：切換前 N 天的 Claude 產出對切換後的 DeepSeek 產出，依計畫 §判準的方向取 CI 端點並標出是否在 D-N／D-A 容差內（只判讀、不切換）；用法與判讀規則見下方「DeepSeek 切換後觀測」 |
+
+### DeepSeek 切換後觀測：`eval/observe_switch.py`
+
+批次在 2026-09 被迫直接從 claude CLI 切到 DeepSeek，切換前的閘門取消、改成切換後觀測。**切換後第 7 天、第 14 天各跑一次**，`--switch-at` 填生產實際開始用 DeepSeek 的時間（部署重啟 web、裝好 `/etc/default/report-mark-llm` 的那一刻；沒帶時區視為台北時間）：
+
+```bash
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --dry-run      # 只印查詢，不連 DB
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 > /tmp/observe-d7.md
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --json --out /tmp/observe-d7.json
+```
+
+- 零 LLM、唯讀：單一交易、第一句 `SET TRANSACTION READ ONLY`，不寫任何表；`data/llm_usage.jsonl` 與 `data/tags/` 只讀，`--out` 不接受 repo 根 `data/`。不取批次鎖，sync 照常跑也可以。
+- 分群：摘錄、訊號看 `raw_payload.model`（沒有這個鍵的舊列算 Claude），標題、摘要、標註看 `data/llm_usage.jsonl` 的成功呼叫，都沒有時依時間（切換前 Claude、切換後 DeepSeek；CLI 已永久失效，切換後的寫入只可能來自 DeepSeek）。對照窗期 `--before-days` 預設 30 天；缺值率不計最近 `--grace-hours`（預設 6）小時入庫、下游批次還沒輪到的研報。
+- 判讀（計畫第四版 §判準；依方向取 CI 端點）：摘錄**任一方式錨定成功率**（exact／normalized／prefix 任一錨上，分母是有 quote 的條目，對 `clean_extracted(full_text)` 重算）是主指標，差值（DeepSeek − Claude）的 CI **下界** ≥ −5pp；摘錄產出率、訊號非 rejected 率、標題／摘要填補率差值的 CI 下界 ≥ −2pp；標註 `skip_non_research` 與 market=None 比例差值的 CI **上界** ≤ 0。CI 端點在容差內＝通過；整條 CI 在容差外＝劣化；跨過容差＝未定（另列點估計是否在容差內）。exact 錨定率、每篇條數、殘留簡體率、長度、stance／market／is_research 分布與跳過名單只列觀測值。
+- 報告只給人判讀、不做任何切換。劣化時能做的只有修 prompt 或把該任務的模型旋鈕換成 `deepseek-v4-pro`（沒有 Claude 可以退回）；跳過名單逐筆看 `make llm-blocked`，is_research 翻轉要逐筆人工看。分群依據與各任務的已知偏差寫在該檔模組 docstring。
 
 **不要再寫一支「清理 chunk 空白」的批次更新**：`clean_text` 與 `clean_extracted` 都會破壞段落換行，2026-07-29 已連同 `make normalize` 一併移除。
 

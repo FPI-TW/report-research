@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -90,6 +91,45 @@ class AttributionTests(unittest.TestCase):
         self.assertEqual(WINDOW.cohort(BEFORE), obs.CLAUDE)
         self.assertEqual(WINDOW.cohort(AFTER), obs.DEEPSEEK)
         self.assertIsNone(WINDOW.cohort(UNTIL - timedelta(hours=1)))
+
+
+GAP_START = SWITCH - timedelta(days=2)  # CLI 失效
+GAP_WINDOW = obs.Window(switch_at=SWITCH, before_start=SWITCH - timedelta(days=30), until=UNTIL,
+                        grace=timedelta(hours=6), claude_until=GAP_START)
+IN_GAP = GAP_START + timedelta(hours=5)
+
+
+class IncidentGapTests(unittest.TestCase):
+    """M2：CLI 失效到切換之間的事故空窗，兩群都不收。"""
+
+    def test_gap_is_excluded_from_both_groups(self):
+        self.assertEqual(GAP_WINDOW.claude_end, GAP_START)
+        self.assertEqual(GAP_WINDOW.gap, (GAP_START, SWITCH))
+        self.assertIsNone(obs.attribute(model_key=None, ts=IN_GAP, window=GAP_WINDOW))
+        self.assertIsNone(obs.attribute(model_key="claude-sonnet-4-5", ts=IN_GAP, window=GAP_WINDOW))
+        self.assertIsNone(GAP_WINDOW.cohort(IN_GAP))
+        self.assertEqual(obs.attribute(model_key=None, ts=GAP_START - timedelta(hours=1), window=GAP_WINDOW),
+                         obs.CLAUDE)
+        self.assertEqual(obs.attribute(model_key=None, ts=AFTER, window=GAP_WINDOW), obs.DEEPSEEK)
+        # 空窗裡的 DeepSeek 明確紀錄照算 DeepSeek（模型紀錄優先於時間）
+        self.assertEqual(obs.attribute(model_key="deepseek-flash", ts=IN_GAP, window=GAP_WINDOW), obs.DEEPSEEK)
+
+    def test_claude_until_after_switch_is_clamped(self):
+        w = obs.Window(switch_at=SWITCH, before_start=SWITCH - timedelta(days=30), until=UNTIL,
+                       claude_until=SWITCH + timedelta(days=1))
+        self.assertEqual(w.claude_end, SWITCH)
+        self.assertIsNone(w.gap)
+
+    def test_gap_reports_not_counted_in_fill_rate(self):
+        reports = [{"file_hash": "g1", "created_at": IN_GAP, "title": None},
+                   {"file_hash": "c1", "created_at": BEFORE, "title": "台積電"}]
+        out = obs.analyze_text_field(reports, GAP_WINDOW, {}, field_name="title", task=obs.TASK_TITLE)
+        self.assertEqual((out["groups"][obs.CLAUDE]["filled"]["k"], out["groups"][obs.CLAUDE]["filled"]["n"]), (1, 1))
+        self.assertEqual(out["groups"][obs.DEEPSEEK]["filled"]["n"], 0)
+
+    def test_default_claude_until_is_cli_failure_time(self):
+        self.assertEqual(obs.parse_switch_at(obs.DEFAULT_CLAUDE_UNTIL),
+                         datetime(2026, 9, 23, 1, 5, tzinfo=UTC))
 
 
 class UsageLogTests(unittest.TestCase):
@@ -225,6 +265,31 @@ class TakeawayTests(unittest.TestCase):
         self.assertEqual(ds["anchor_any"]["n"], 1)
         self.assertEqual(ds["reports"], 2)
 
+    def test_backfilled_report_excluded_even_when_sha_matches(self):
+        # M1：回填經 reanchor_takeaways 把 sha 換成新正典文字的，sha 相符；靠 extraction_log.updated_at 排除
+        rows = [_tk("c1", Q_EXACT, BEFORE), _tk("c2", Q_EXACT, BEFORE)]
+        rows[0]["log_updated_at"] = BEFORE + timedelta(days=1)   # 擷取後被回填
+        rows[1]["log_updated_at"] = BEFORE - timedelta(days=1)   # 入庫在擷取之前：正常
+        out = self._run(rows)
+        cl = out["groups"][obs.CLAUDE]
+        self.assertEqual(cl["backfilled_reports"], 1)
+        self.assertEqual(cl["sha_mismatch_reports"], 0)
+        self.assertEqual(cl["anchor_any"]["n"], 1)
+        self.assertEqual(cl["reports"], 2)
+
+    def test_produced_late_fill_by_deepseek_counts_as_not_produced_for_claude(self):
+        reports = [
+            {"report_id": "c1", "created_at": BEFORE, "has_takeaway": True, "takeaway_at": BEFORE},
+            # Claude 批次、切換後由 DeepSeek 補的摘錄（raw_payload.model）
+            {"report_id": "c2", "created_at": BEFORE, "has_takeaway": True, "takeaway_at": AFTER,
+             "takeaway_model": "deepseek-flash"},
+            # 沒有 model 鍵但寫入時間在切換後：依時間也是 DeepSeek
+            {"report_id": "c3", "created_at": BEFORE, "has_takeaway": True, "takeaway_at": AFTER},
+        ]
+        out = self._run([], reports=reports, texts={})
+        cl = out["produced"][obs.CLAUDE]
+        self.assertEqual((cl["k"], cl["n"], cl["late_fill"]), (1, 3, 2))
+
     def test_da_verdict_fails_on_big_drop(self):
         rows = []
         for i in range(30):
@@ -245,9 +310,10 @@ class TakeawayTests(unittest.TestCase):
 
     def test_produced_rate_by_ingest_cohort(self):
         reports = [
-            {"report_id": "c1", "created_at": BEFORE, "has_takeaway": True},
+            {"report_id": "c1", "created_at": BEFORE, "has_takeaway": True, "takeaway_at": BEFORE},
             {"report_id": "c2", "created_at": BEFORE, "has_takeaway": False},
-            {"report_id": "d1", "created_at": AFTER, "has_takeaway": True},
+            {"report_id": "d1", "created_at": AFTER, "has_takeaway": True, "takeaway_at": AFTER,
+             "takeaway_model": "deepseek-flash"},
             {"report_id": "d2", "created_at": UNTIL - timedelta(hours=1), "has_takeaway": False},  # grace 內
         ]
         out = self._run([], reports=reports, texts={})
@@ -297,7 +363,10 @@ class TextFieldTests(unittest.TestCase):
         usage = {(obs.TASK_TITLE, "c3"): obs.UsageHit(AFTER, "deepseek-flash")}
         out = obs.analyze_text_field(reports, WINDOW, usage, field_name="title", task=obs.TASK_TITLE)
         cl, ds = out["groups"][obs.CLAUDE], out["groups"][obs.DEEPSEEK]
-        self.assertEqual((cl["missing"]["k"], cl["missing"]["n"]), (1, 3))
+        # c3 由 DeepSeek 後補：Claude 批次算未填（M2），另列後補
+        self.assertEqual((cl["missing"]["k"], cl["missing"]["n"]), (2, 3))
+        self.assertEqual((cl["filled"]["k"], cl["late_fill"]), (1, 1))
+        self.assertEqual(ds["late_fill"], 0)
         self.assertEqual((ds["missing"]["k"], ds["missing"]["n"]), (0, 2))
         self.assertEqual((ds["simplified"]["k"], ds["simplified"]["n"]), (1, 3))
         self.assertEqual((cl["simplified"]["k"], cl["simplified"]["n"]), (0, 1))
@@ -340,6 +409,139 @@ class SkipListTests(unittest.TestCase):
         self.assertEqual((by[("title", "unparseable")]["count"], by[("title", "unparseable")]["skipping"]), (2, 1))
         self.assertEqual(out["total"], 3)
         self.assertFalse(obs.analyze_skip_list(None)["table_ready"])
+
+
+def _u(ts, task="title", kind=None, fh="h1", backend="http", tokens=None):
+    return {"ts": ts.isoformat(), "task": task, "file_hash": fh, "kind": kind, "backend": backend,
+            "model_req": "deepseek-flash", "model_resp": "deepseek-flash" if kind is None else None,
+            "tokens": tokens}
+
+
+def _write_jsonl(d, rows, extra=""):
+    path = Path(d) / "llm_usage.jsonl"
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n" + extra, encoding="utf-8")
+    return path
+
+
+class UsageHealthTests(unittest.TestCase):
+    """M3：用量紀錄零 LLM 算 content_filter、截斷、401／402。"""
+
+    def test_read_rows_keeps_only_http_after_switch(self):
+        rows = [_u(AFTER), _u(BEFORE), _u(AFTER, backend="cli"), _u(UNTIL + timedelta(hours=1))]
+        with tempfile.TemporaryDirectory() as d:
+            got, stats = obs.read_usage_rows(_write_jsonl(d, rows, "{壞行\n"), WINDOW)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(stats["bad_lines"], 1)
+        self.assertTrue(stats["exists"])
+        got, stats = obs.read_usage_rows(Path("/nonexistent/x.jsonl"), WINDOW)
+        self.assertEqual((got, stats["exists"]), ([], False))
+
+    def _health(self, rows, skip_rows=()):
+        with tempfile.TemporaryDirectory() as d:
+            got, stats = obs.read_usage_rows(_write_jsonl(d, rows), WINDOW)
+        return obs.analyze_usage_health(got, stats, None if skip_rows is None else list(skip_rows))
+
+    def test_content_filter_denominator_excludes_non_content_kinds(self):
+        rows = [_u(AFTER, task="tag", fh=f"t{i}") for i in range(8)]
+        rows += [_u(AFTER, task="tag", kind="content_filter", fh="cf1"),
+                 _u(AFTER, task="tag", kind="content_filter", fh="cf1"),
+                 _u(AFTER, task="tag", kind="timeout", fh="x"),
+                 _u(AFTER, task="tag", kind="overloaded", fh="x"),
+                 _u(AFTER, task="tag", kind="truncated", fh="tr")]
+        h = self._health(rows)
+        cf = h["tasks"]["tag"]["content_filter"]
+        self.assertEqual((cf["k"], cf["n"], cf["reports"]), (2, 11, 1))
+        self.assertEqual(cf["judgement"]["end"], "比例 CI 上界")
+        self.assertEqual(h["tasks"]["tag"]["calls"], 13)
+
+    def test_judge_rate_cap_uses_wilson_upper(self):
+        self.assertEqual(obs.judge_rate_cap(0, 400, 0.01)["verdict"], obs.VERDICT_PASS)
+        self.assertEqual(obs.judge_rate_cap(0, 10, 0.01)["verdict"], obs.VERDICT_UNSURE)  # 小樣本未定
+        self.assertEqual(obs.judge_rate_cap(50, 100, 0.01)["verdict"], obs.VERDICT_FAIL)
+        self.assertEqual(obs.judge_rate_cap(0, 0, 0.01)["verdict"], obs.VERDICT_NO_DATA)
+
+    def test_truncated_vs_timeout_streamed_and_account_errors(self):
+        rows = [_u(AFTER, kind="truncated", fh="a"), _u(AFTER, kind="timeout_streamed", fh="b"),
+                _u(AFTER, kind="timeout_streamed", fh="c"), _u(AFTER, kind="auth", fh="d"),
+                _u(AFTER, kind="quota", fh="e"), _u(AFTER, kind="quota", fh="f")]
+        h = self._health(rows)
+        self.assertEqual((h["truncated"], h["timeout_streamed"], h["auth_401"], h["quota_402"]), (1, 2, 1, 2))
+        self.assertEqual(obs.judge_zero(h["truncated"]), obs.VERDICT_FAIL)
+        self.assertEqual(obs.judge_zero(0), obs.VERDICT_PASS)
+        self.assertEqual(obs.judge_zero(None), obs.VERDICT_NO_DATA)
+
+    def test_truncation_cross_checked_against_skip_list(self):
+        t0 = AFTER
+        rows = [_u(t0, kind="truncated", fh="rec"),
+                _u(t0, kind="truncated", fh="fixed"), _u(t0 + timedelta(hours=3), fh="fixed"),
+                _u(t0, kind="truncated", fh="lost"),
+                _u(t0, task="brief", kind="truncated", fh=None)]
+        skip = [{"task": "title", "file_hash": "rec", "reason": "truncated", "model": "deepseek-flash",
+                 "fail_count": 1}]
+        tc = self._health(rows, skip)["truncation_skip_check"]
+        self.assertEqual((tc["recorded"], tc["later_success"], tc["no_file_hash"]), (1, 1, 1))
+        self.assertEqual(tc["unrecorded"], [{"task": "title", "file_hash": "lost"}])
+        tc = self._health(rows, None)["truncation_skip_check"]  # 跳過名單表不存在
+        self.assertEqual(tc["unknown"], 3)
+
+    def test_daily_tokens_by_taipei_date(self):
+        tok = {"hit": 10, "miss": 5, "completion": 7, "reasoning": 0}
+        late_utc = datetime(2026, 9, 26, 17, 0, tzinfo=UTC)  # 台北 9/27 01:00
+        h = self._health([_u(late_utc, tokens=tok), _u(late_utc, tokens=tok), _u(AFTER, kind="network")])
+        self.assertEqual(h["daily_tokens"]["2026-09-27"], {"calls": 2, "hit": 20, "miss": 10, "completion": 14,
+                                                           "reasoning": 0})
+
+    def test_missing_log_is_no_data(self):
+        h = obs.analyze_usage_health([], {"exists": False}, [])
+        self.assertFalse(h["available"])
+        self.assertIsNone(h["truncated"])
+        self.assertIsNone(h["auth_401"])
+
+
+class BreakerTests(unittest.TestCase):
+    def test_read_and_judge(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".llm_breaker"
+            path.write_text(f"ts={AFTER.isoformat()}\nround=20260928_030000\nreason=5/10 逾時\n", encoding="utf-8")
+            marker = obs.read_breaker(path)
+            self.assertEqual((marker["ts"], marker["round"], marker["reason"]), (AFTER, "20260928_030000", "5/10 逾時"))
+            self.assertEqual(obs.judge_breaker(marker, WINDOW), obs.VERDICT_FAIL)
+            path.write_text(f"ts={BEFORE.isoformat()}\nreason=x\n", encoding="utf-8")
+            self.assertEqual(obs.judge_breaker(obs.read_breaker(path), WINDOW), obs.VERDICT_PASS)
+            path.write_text("", encoding="utf-8")
+            self.assertTrue(obs.judge_breaker(obs.read_breaker(path), WINDOW).startswith("未定"))
+        missing = obs.read_breaker(Path("/nonexistent/.llm_breaker"))
+        self.assertFalse(missing["exists"])
+        self.assertEqual(obs.judge_breaker(missing, WINDOW), obs.VERDICT_PASS)
+
+
+class RepoRootsTests(unittest.TestCase):
+    """L6：worktree 的 `.git` 檔指回主 checkout；兩者底下都不收 --out。"""
+
+    def test_worktree_git_file_points_to_main_checkout(self):
+        with tempfile.TemporaryDirectory() as d:
+            main = Path(d) / "main"
+            wt = main / ".claude" / "worktrees" / "w1"
+            (main / ".git" / "worktrees" / "w1").mkdir(parents=True)
+            wt.mkdir(parents=True)
+            (wt / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'w1'}\n", encoding="utf-8")
+            self.assertEqual(obs.repo_roots(wt), [wt.resolve(), main.resolve()])
+            self.assertEqual(obs.repo_roots(main), [main.resolve()])  # 主 checkout 的 .git 是目錄
+            with mock.patch.object(obs, "repo_roots", return_value=[wt.resolve(), main.resolve()]):
+                self.assertFalse(obs._out_allowed(main / "data" / "x.md"))
+                self.assertFalse(obs._out_allowed(main / "README.md"))
+                self.assertFalse(obs._out_allowed(wt / "eval" / "x.md"))
+                self.assertTrue(obs._out_allowed(Path(d) / "elsewhere.md"))
+
+    def test_deploy_hint_only_for_missing_default_in_worktree(self):
+        main = Path("/srv/main")
+        with mock.patch.object(obs, "repo_roots", return_value=[obs.ROOT, main]):
+            hint = obs._deploy_hint(obs.DEFAULT_USAGE_LOG, obs.DEFAULT_USAGE_LOG)
+            if not obs.DEFAULT_USAGE_LOG.exists():
+                self.assertEqual(hint, str(main / "data" / "llm_usage.jsonl"))
+            self.assertIsNone(obs._deploy_hint(obs.DEFAULT_USAGE_LOG, Path("/other/llm_usage.jsonl")))
+        with mock.patch.object(obs, "repo_roots", return_value=[obs.ROOT]):
+            self.assertIsNone(obs._deploy_hint(obs.DEFAULT_USAGE_LOG, obs.DEFAULT_USAGE_LOG))
 
 
 # ── 唯讀取數（假 session）──────────────────────────────────────────────────────
@@ -399,7 +601,7 @@ def _canned():
         obs.SIGNAL_SQL: [{"file_hash": "a", "extraction_status": "valid", "thesis_dimensions": {},
                           "created_at": BEFORE, "model": None}],
         obs.REPORT_SQL: [{"report_id": "c1", "file_hash": "h-c1", "created_at": BEFORE, "title": "標題",
-                          "summary": "摘要", "has_takeaway": True}],
+                          "summary": "摘要", "has_takeaway": True, "takeaway_at": BEFORE}],
         obs.TAG_SQL: [{"file_hash": "h-c1", "stopped_at": "ingested", "at": BEFORE, "market": "TW",
                        "is_research": True}],
         obs.SKIP_LIST_SQL: [{"task": "tag", "reason": "content_filter", "model": "deepseek-flash",
@@ -473,14 +675,29 @@ class MainTests(unittest.TestCase):
             obs.main([], session_factory=_no_db)
 
     def test_rejects_until_before_switch(self):
-        rc, _, err = self._main("--switch-at", "2026-09-25T10:00", "--until", "2026-09-20T10:00", "--dry-run")
+        rc, _, err = self._main("--switch-at", "2026-09-25T10:00", "--until", "2026-09-20T10:00",
+                                session=_FakeSession(_canned()))
         self.assertEqual(rc, obs.RC_CONFIG)
+        self.assertIn("--until", err)
+
+    def test_dry_run_skips_until_check(self):
+        # L3：切換時點在未來（until 預設現在）也能先看查詢
+        rc, out, _ = self._main("--switch-at", "2099-01-01T10:00", "--usage-log", "/nonexistent/x", "--dry-run")
+        self.assertEqual(rc, obs.RC_OK)
+        self.assertIn("SET TRANSACTION READ ONLY;", out)
 
     def test_rejects_out_under_repo_data(self):
         rc, _, err = self._main("--switch-at", "2026-09-25T10:00", "--until", "2026-10-02T10:00",
                                 "--out", str(REPO_ROOT / "data" / "observe.md"), "--dry-run")
         self.assertEqual(rc, obs.RC_CONFIG)
-        self.assertIn("data", err)
+        self.assertIn("repo 外", err)
+
+    def test_rejects_out_onto_tracked_file(self):
+        # L6：不只 data/，repo 內任何路徑（例如已追蹤的 README）都拒收
+        for target in (REPO_ROOT / "README.md", REPO_ROOT / "eval" / "new-report.md"):
+            rc, _, _ = self._main("--switch-at", "2026-09-25T10:00", "--until", "2026-10-02T10:00",
+                                  "--out", str(target), "--dry-run")
+            self.assertEqual(rc, obs.RC_CONFIG, target)
 
     def test_markdown_and_json_end_to_end(self):
         args = ("--switch-at", SWITCH.isoformat(), "--until", UNTIL.isoformat(), "--usage-log", "/nonexistent/x",
@@ -491,11 +708,36 @@ class MainTests(unittest.TestCase):
         self.assertIn("摘錄：任一方式錨定成功率（主，D-A）", md)
         self.assertIn("差值 CI 下界", md)
         self.assertIn("只輸出判讀，不做任何切換", md)
+        self.assertIn("判讀總表全部通過不等於批次 A 觀測完成", md.split("## 判讀總表")[0])
+        self.assertIn("未涵蓋：幻覺率", md)
+        self.assertIn("## 用量紀錄判準", md)
+        self.assertIn("事故空窗", md)  # 預設 --claude-until 早於 SWITCH
         rc, js, _ = self._main(*args, "--json", session=_FakeSession(_canned()))
         rep = json.loads(js)
         self.assertEqual(rep["verdicts"][0]["end"], "差值 CI 下界")
         self.assertEqual(rep["takeaway"]["groups"]["deepseek"]["anchor_any"]["k"], 1)
         self.assertTrue(any("用量紀錄" in x for x in rep["limitations"]))
+        self.assertTrue(any(x.startswith("幻覺率") for x in rep["uncovered"]))
+        self.assertEqual(rep["window"]["claude_end"], "2026-09-23T09:05:00+08:00")
+
+    def test_usage_verdicts_end_to_end(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = _write_jsonl(d, [_u(AFTER, task="tag", fh="a"), _u(AFTER, task="tag", kind="content_filter",
+                                                                    fh="b"), _u(AFTER, kind="quota", fh="c")])
+            breaker = Path(d) / ".llm_breaker"
+            breaker.write_text(f"ts={AFTER.isoformat()}\nreason=過載\n", encoding="utf-8")
+            rc, js, _ = self._main("--switch-at", SWITCH.isoformat(), "--until", UNTIL.isoformat(),
+                                   "--usage-log", str(log), "--breaker-file", str(breaker), "--json",
+                                   "--bootstrap", "20", session=_FakeSession(_canned()))
+        self.assertEqual(rc, obs.RC_OK)
+        rep = json.loads(js)
+        by = {v["metric"]: v for v in rep["usage_verdicts"]}
+        self.assertEqual((by["content_filter 比例：tag"]["value"]["k"], by["content_filter 比例：tag"]["value"]["n"]),
+                         (1, 2))
+        self.assertEqual(by["402（quota）"]["verdict"], obs.VERDICT_FAIL)
+        self.assertEqual(by["401（auth）"]["verdict"], obs.VERDICT_PASS)
+        self.assertEqual(by["截斷（truncated，finish_reason=length）"]["verdict"], obs.VERDICT_PASS)
+        self.assertEqual(by["斷路器標記"]["verdict"], obs.VERDICT_FAIL)
 
     def test_out_file_elsewhere(self):
         with tempfile.TemporaryDirectory() as d:

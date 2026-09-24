@@ -130,17 +130,27 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ### DeepSeek 切換後觀測：`eval/observe_switch.py`
 
-批次在 2026-09 被迫直接從 claude CLI 切到 DeepSeek，切換前的閘門取消、改成切換後觀測。**切換後第 7 天、第 14 天各跑一次**，`--switch-at` 填生產實際開始用 DeepSeek 的時間（部署重啟 web、裝好 `/etc/default/report-mark-llm` 的那一刻；沒帶時區視為台北時間）：
+批次在 2026-09 被迫直接從 claude CLI 切到 DeepSeek，切換前的閘門取消、改成切換後觀測。**切換後第 7 天、第 14 天各跑一次**，`--switch-at` 填生產實際開始用 DeepSeek 的時間（部署重啟 web、裝好 `/etc/default/report-mark-llm` 的那一刻；沒帶時區視為台北時間）。**全庫回填（`scripts/backfill_extraction.py`、`report-mark-backfill.timer`）期間不要跑**：回填改寫全文、重算摘錄錨點，回填中途的篇數一直在變，兩次報告不可比。
 
 ```bash
-uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --dry-run      # 只印查詢，不連 DB
-uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 > /tmp/observe-d7.md
-uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --json --out /tmp/observe-d7.json
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --dry-run      # 只印查詢，不連 DB（不檢查 --until）
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-10-02T10:00 > /tmp/observe-d7.md
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-10-09T10:00 --json --out /tmp/observe-d14.json
+# 從 worktree 跑：三個只讀的檔案要指到部署目錄（預設是本 checkout 的 data/，worktree 裡沒有生產資料）
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-10-02T10:00 \
+    --usage-log <部署目錄>/data/llm_usage.jsonl \
+    --tags-dir <部署目錄>/data/tags \
+    --breaker-file <部署目錄>/data/.llm_breaker > /tmp/observe-d7.md
 ```
 
-- 零 LLM、唯讀：單一交易、第一句 `SET TRANSACTION READ ONLY`，不寫任何表；`data/llm_usage.jsonl` 與 `data/tags/` 只讀，`--out` 不接受 repo 根 `data/`。不取批次鎖，sync 照常跑也可以。
-- 分群：摘錄、訊號看 `raw_payload.model`（沒有這個鍵的舊列算 Claude），標題、摘要、標註看 `data/llm_usage.jsonl` 的成功呼叫，都沒有時依時間（切換前 Claude、切換後 DeepSeek；CLI 已永久失效，切換後的寫入只可能來自 DeepSeek）。對照窗期 `--before-days` 預設 30 天；缺值率不計最近 `--grace-hours`（預設 6）小時入庫、下游批次還沒輪到的研報。
-- 判讀（計畫第四版 §判準；依方向取 CI 端點）：摘錄**任一方式錨定成功率**（exact／normalized／prefix 任一錨上，分母是有 quote 的條目，對 `clean_extracted(full_text)` 重算）是主指標，差值（DeepSeek − Claude）的 CI **下界** ≥ −5pp；摘錄產出率、訊號非 rejected 率、標題／摘要填補率差值的 CI 下界 ≥ −2pp；標註 `skip_non_research` 與 market=None 比例差值的 CI **上界** ≤ 0。CI 端點在容差內＝通過；整條 CI 在容差外＝劣化；跨過容差＝未定（另列點估計是否在容差內）。exact 錨定率、每篇條數、殘留簡體率、長度、stance／market／is_research 分布與跳過名單只列觀測值。
+- **判讀總表全部通過不等於批次 A 觀測完成**：幻覺率（需人工抽查）、每日花費金額（看 DeepSeek 後台／`/healthz/llm`）、content_filter 是否集中在特定題材、is_research 翻轉、`skip_blocked` 處置等量不到的項目，報告最後「未涵蓋項目」逐條列出。
+- 零 LLM、唯讀：單一交易、第一句 `SET TRANSACTION READ ONLY`，不寫任何表；用量紀錄、`data/tags/`、斷路器標記只讀；`--out` 只接受 repo 外的路徑（本 checkout 與主 checkout 底下一律拒收）。不取批次鎖，sync 照常跑也可以。
+- 窗期：Claude 群＝切換前 `--before-days`（預設 30）天起、到 `--claude-until`（預設 `2026-09-23T09:05+08:00`，claude CLI 失效的時點）為止；`--claude-until` 到 `--switch-at` 之間是**事故空窗**（CLI 已失效、DeepSeek 還沒上線，下游批次全失敗），兩群都不收，報告註明。DeepSeek 群＝`--switch-at` 到 `--until`（預設現在）。
+- 分群：摘錄看 `raw_payload.model`，沒有這個鍵的列依 `created_at`（Claude 窗期內算 Claude、切換後算 DeepSeek、空窗不收）；訊號看 `raw_payload.model`，沒有鍵時先看用量紀錄（切換後有成功呼叫＝DeepSeek 重寫過）、再依 `created_at`；標題、摘要、標註看用量紀錄的成功呼叫，沒有時依時間。CLI 已永久失效，切換後的寫入只可能來自 DeepSeek。
+- 缺值率／產出率看入庫批次，**已填只算該批次自己的模型產出的**：標題積壓 `ORDER BY report_date DESC`，切換後會先補近 30 天 Claude 失敗的那些，所以 Claude 批次裡由 DeepSeek 後補的標題、摘要、摘錄算未填，另列「後補」篇數（標題、摘要靠用量紀錄分辨，沒有用量紀錄時分不出）。缺值率不計最近 `--grace-hours`（預設 6）小時入庫、下游批次還沒輪到的研報。
+- 判讀（計畫第四版 §判準；依方向取 CI 端點）：摘錄**任一方式錨定成功率**（exact／normalized／prefix 任一錨上，分母是有 quote 的條目，對 `clean_extracted(full_text)` 重算；兩群都重算，所以不會重現 9/24 探測讀存下的 `anchor_method` 得到的數字）是主指標，差值（DeepSeek − Claude）的 CI **下界** ≥ −5pp；摘錄產出率、訊號非 rejected 率、標題／摘要填補率差值的 CI 下界 ≥ −2pp；標註 `skip_non_research` 與 market=None 比例差值的 CI **上界** ≤ 0（market=None 的分母含非研報，小樣本下常判「未定」屬預期）。CI 端點在容差內＝通過；整條 CI 在容差外＝劣化；跨過容差＝未定（另列點估計是否在容差內）。exact 錨定率、每篇條數、殘留簡體率、長度、stance／market／is_research 分布與跳過名單只列觀測值。
+- 摘錄錨定不計兩種研報、另列篇數：擷取後被回填過的（`extraction_log.updated_at` 晚於摘錄 `created_at`；回填經 `store.reanchor_takeaways` 把 `text_sha256` 換成新文字的 sha，只看 sha 擋不到），與 `text_sha256` 跟現在正典文字對不上的。
+- 用量紀錄判準（切換後 `backend="http"` 的列，零 LLM）：各 task 的 content_filter 比例看 Wilson CI 上界 ≤ 1%（分母扣掉 auth／quota／config／timeout／overloaded／network）；截斷 `truncated`（`finish_reason=length`）、401（`auth`）、402（`quota`）判準 0，期限型截斷 `timeout_streamed` 只列觀測；截斷對照跳過名單列出「沒記入也沒有後續成功」的篇；斷路器看標記檔（只留最後一次跳脫，`ts` 在切換後就算觸發過）；另列每日 token（觀測）。
 - 報告只給人判讀、不做任何切換。劣化時能做的只有修 prompt 或把該任務的模型旋鈕換成 `deepseek-v4-pro`（沒有 Claude 可以退回）；跳過名單逐筆看 `make llm-blocked`，is_research 翻轉要逐筆人工看。分群依據與各任務的已知偏差寫在該檔模組 docstring。
 
 **不要再寫一支「清理 chunk 空白」的批次更新**：`clean_text` 與 `clean_extracted` 都會破壞段落換行，2026-07-29 已連同 `make normalize` 一併移除。

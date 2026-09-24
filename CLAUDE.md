@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-廷豐智能研報——券商研報平台：PDF/docx 抽字 → Claude 標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。深度研報生成已於 2026-09 整個移除（既有庫要手動跑 `db/drop_deep_report_tables.sql`）。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
+廷豐智能研報——券商研報平台：PDF/docx 抽字 → LLM（DeepSeek）標註 → BGE-M3 嵌入 pgvector → 語意檢索／RAG 問答／觀點雷達／每日簡報／閱讀頁。深度研報生成已於 2026-09 整個移除（既有庫要手動跑 `db/drop_deep_report_tables.sql`）。Repo 目錄是 `report-mark`，GitHub 是 `FPI-TW/report-research`。
 
 - **這不是上層目錄 CLAUDE.md 描述的 FinDB**：這裡沒有 Alembic、沒有 `app/api/`、沒有 `NORMALIZER_MAP`，那份文件的指引不適用。本 repo 只把市場代碼對齊 findb（`TW US HK CN FX WTX MACRO GLOBAL CRYPTO`，對照在 `app/services/tagging.py`，`make align` 零 LLM 重對）。
 - 回覆使用者一律繁體中文；不加裝飾性 emoji。
-- **分工鐵律**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），Claude 只做語意（標註、摘要、問答、訊號擷取）。每個管線階段以檔案 SHA256 `file_hash` 為鍵、可斷點續跑。新功能沿用這個分工，並**重用 `hybrid_search`／`retrieval_pipeline`，不另建檢索**。
+- **分工鐵律**：Python 做所有決定性的事（解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期），LLM（DeepSeek）只做語意（標註、摘要、問答、訊號擷取）。每個管線階段以檔案 SHA256 `file_hash` 為鍵、可斷點續跑。新功能沿用這個分工，並**重用 `hybrid_search`／`retrieval_pipeline`，不另建檢索**。
 - 派生功能（rerank、忠實度、追問、摘錄、agentic 補查）一律 fail-open 降級，不阻斷主流程。
 
 ## 指令
@@ -24,7 +24,7 @@ cd frontend && npm test              # vitest
 cd frontend && npm run typecheck     # tsc --noEmit
 cd frontend && npm run lint          # eslint
 
-make summaries / titles / takeaways / signals / brief   # 批次，都 spawn claude CLI、以 flock 互斥
+make summaries / titles / takeaways / signals / brief   # 批次，都呼叫 LLM（預設 DeepSeek）、以 flock 互斥
 make sync-once / db-backup / freshness / db-audit        # 維運
 make llm-blocked                     # LLM 批次跳過名單（唯讀；research.llm_task_failure）
 make boilerplate                     # 重建跨文件樣板字典 data/boilerplate/（入庫切塊前剔除；零 LLM）
@@ -74,9 +74,10 @@ uv run python scripts/ingest_all.py
 - 混合檢索：dense（HNSW 餘弦）＋ lexical（`pg_trgm` over 生成欄 `content_norm`）融合，`hybrid_search` 只以 `(tier, fused)` 排序。之後的選篇分**兩條互不共用**：檢索頁走 `retrieval.rank_reports`（消費端 `web/routers/search.py`），問答走 `answer.select_reports`。調問答新近度改 `rank_reports` 沒有作用。
 - `app/services/retrieval_pipeline.py` 的 `retrieve_context` 是問答的唯一檢索入口（embed → `hybrid_search` → rerank fail-open → `build_context`）。`answer.py` 自己不呼叫 `hybrid_search`；**要 patch 檢索請 patch `retrieval_pipeline`**。`scripts/eval_retrieval.py` 刻意直呼 `hybrid_search`，管線改動它量不到。
 - **循環依賴是刻意的**：`retrieval_pipeline` 頂層 import `answer`；`answer`／`agentic_qa` 之間任何反向取用一律函式內 import。
-- 首輪路由順序刻意：確定性 overview（`overview.py`，零 LLM）→ `precheck_route()` 詞表（命中 `time_sensitive` 完全不檢索）→ Haiku 五類分類（`scope_router.py`）與檢索並行、誰先到聽誰。五類與 `decided_by` 全寫進 `qa_log.filters`；fail-open 落點是 `CORPUS_QA`。
+- 首輪路由順序刻意：確定性 overview（`overview.py`，零 LLM）→ `precheck_route()` 詞表（命中 `time_sensitive` 完全不檢索）→ LLM 五類分類（`scope_router.py`）與檢索並行、誰先到聽誰。五類與 `decided_by` 全寫進 `qa_log.filters`；fail-open 落點是 `CORPUS_QA`。
 - 網搜每題由使用者決定：`web_on` ＝ 請求的 `web` AND `ASK_ENABLE_WEB`，下游只讀 `web_on`。系統提示與工具授權要一起切（`ask_system_prompt(web)`），逾時只在開網搜時放寬（`ASK_WEB_TIMEOUT`），`qa_log.filters.web` 含 False 也要寫，免責句由 Python 追加（`WEB_ANSWER_DISCLAIMER`），網搜來源不進 evidence ledger。
 - 忠實度抽查在 `done` 後跑背景任務（`answer._spawn_background`），有自己的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是問答抽查的唯一閘門，漏判是靜默的——寧可多抓不可漏抓。監控頁「待複核」門檻 `FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，生產環境檔可能還設著）。
+- `LLM_PROVIDER` 預設 `deepseek`（未設、空值、未知值都是；`/etc/default/report-mark-llm` 缺檔時批次因缺金鑰 rc=2，不退回 CLI）。claude CLI 已於 2026-09-23 放棄：`claude_cli`／`claude_only` 仍是合法值但已無可用後端；DeepSeek 表裡網搜與兩個 judge 刻意仍是 Claude（生產關網搜 `ASK_ENABLE_WEB=0`，judge 待 PR-18＋26/27）。`tests/conftest.py` 刻意強制 `claude_cli`（測試不打付費 API），要驗預設值的測試自己移除該鍵。
 - `app/services/llm.py` 的 `stream_completion` **依白名單分派**：DeepSeek（`llm_models.HTTP_MODELS`）走 `llm_http`，其餘走 CLI；呼叫點一律帶 `max_tokens` 與 `task`。HTTP 錯誤處置：只有 overloaded／network 且尚未吐字才重試；未吐字失敗拋 `LLMUnavailableError(kind=…)`，`/api/ask` 依 kind 給訊息（內容審查請使用者換個問法、quota／auth 說帳號異常、config 說設定有誤，都不承諾已通知）；首字前 httpx read 逾時歸 timeout 不重試；已吐字後被內容審查拋 `partial=True`、`length`／read 逾時／總時限（`LLM_HTTP_TOTAL_TIMEOUT`）正常結束帶 `meta["truncated_reason"]`，總覽／時效／主答保留已吐的字、由 Python 附註中斷原因並寫 `filters.llm_truncated`；內容審查**不改走 Claude**。`allow_web` 配 DeepSeek 直接拋 `kind=config`（網搜延後，`ASK_WEB_MODEL` 維持 Claude）。`timeout` 經 `_with_heartbeat` 驅動時兩條路徑實際都是首字期限。CLI 路徑以 `claude -p --setting-sources '' --output-format stream-json` spawn CLI，開網搜時加 `--tools WebSearch --allowedTools WebSearch`、不開時 `--tools ""`，兩者都加 `--strict-mcp-config`（不帶 `--mcp-config`＝不載 MCP；`--tools` 管不到 MCP）（`--allowedTools` 只管免核可、不限縮工具；`--disallowedTools "*"` 萬用字元未記載、不用；批次 `scripts/_claude_cli.py` 與簡報同樣不開任何工具、不載 MCP；旗標放 argv 最後；init 事件工具集不符記 WARNING）；只在 API 529 重試；逾時對已串流文字 fail-open。
 
 ### 閱讀頁、雷達、簡報（讀取零 LLM）
@@ -103,7 +104,7 @@ uv run python scripts/ingest_all.py
 - Auth deny-by-default、fail-closed（缺 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 不啟動）。免登入白名單 `/login`、`/healthz`、前綴 `/app/assets/`；`/healthz/storage`、`/healthz/llm` 也在白名單但只回答本機直連（其餘 404）。外部存取需 `REPORT_MARK_EDGE_SECRET` 或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 任一（刻意 OR，祕密要 repo root 與 `deploy/` 兩份環境檔逐字相同）。Session 7 天滑動、30 天上限；改密碼、`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 都會全員登出，是預期行為。
 - `DEV_NO_AUTH=1` 三條件同時成立才放行（旗標在環境檔載入前已在 `os.environ`、對端 loopback、無代理 header），`web/server.py` 的 import 順序由 `tests/test_dev_mode.py` 釘住。`SKIP_WARMUP` 同樣走 `os.environ` 且判 `== "1"`。兩者都不要寫進環境檔。
 - 併發閘只剩一個：`/api/ask` 上限 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（無環境變數；佇列 `ASK_MAX_QUEUE`），是 `web/concurrency.py` 的 `ConcurrencyGate`（刻意不支援 `async with`）。問答忠實度抽查背景任務的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT` 同樣是行程內狀態。上限 per-process，lifespan 擋多 worker。
-- `claude` CLI 要在 PATH 上；systemd 靠 `deploy/systemd/report-mark-web.service.d/path.conf`。`llm.py` 刻意不在批次 flock 範圍內（有靜態測試釘住）。
+- `claude` CLI 只剩解析到 Claude 的任務（網搜、judge）會用到，要在 PATH 上；systemd 靠 `deploy/systemd/report-mark-web.service.d/path.conf`（PR-M 移除）。`llm.py` 刻意不在批次 flock 範圍內（有靜態測試釘住）。
 
 ## 生產維運
 - 真相來源在 `deploy/`，不是機器上的 `/etc`。sync 鏈（每 3h）：rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量）。摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉近九成）；後三段的 `--limit` 是安全機制不是效能旋鈕。補救走 `scripts/failures_to_delta.py`，不要 `--all-local`。

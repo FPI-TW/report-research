@@ -1,6 +1,6 @@
 # 廷豐智能研報（report-mark）
 
-券商研報平台：把 `研報自動匯入/` 的 PDF／docx 抽字、以 Claude 標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達與每日簡報。單機部署（WSL2 ＋ Docker Postgres），經 Cloudflare Tunnel 對外，共用帳密登入。GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。
+券商研報平台：把 `研報自動匯入/` 的 PDF／docx 抽字、以 LLM（DeepSeek）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達與每日簡報。單機部署（WSL2 ＋ Docker Postgres），經 Cloudflare Tunnel 對外，共用帳密登入。GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。
 
 ## 目錄
 
@@ -29,24 +29,24 @@
 
 ```
                     ┌──────────────── 離線批次（systemd timer / make）────────────────┐
-研報自動匯入/ ──▶ extract_all ──▶ tag_all_cli(Haiku) ──▶ ingest_all ──▶ pgvector      │
+研報自動匯入/ ──▶ extract_all ──▶ tag_all_cli(Flash) ──▶ ingest_all ──▶ pgvector      │
                     │  data/extracted/  data/tags/          research_report            │
                     │                                       report_chunk (HNSW+trgm)   │
                     │  extract_takeaways / extract_signals / generate_summaries /       │
-                    │  generate_titles / generate_brief（Sonnet，flock 互斥）            │
+                    │  generate_titles / generate_brief（Flash，flock 互斥）             │
                     └──────────────────────────────────────────────────────────────────┘
                                                   │
      瀏覽器 ── Cloudflare Tunnel ── nginx ── uvicorn web/server.py（單 worker，:8097）
                                                   │
                      web/routers/* ── app/services/*（檢索、問答、閱讀、雷達、簡報）
                                                   │
-                     claude -p（Sonnet／Haiku）    BGE-M3 ＋ bge-reranker（CPU 常駐）
+                     DeepSeek API（flash）         BGE-M3 ＋ bge-reranker（CPU 常駐）
                      R2（可選，研報原檔）
 ```
 
-分工鐵律：Python 做所有決定性的事，Claude 只做語意。派生功能一律 fail-open。完整不變量見 `docs/ARCHITECTURE.md`。
+分工鐵律：Python 做所有決定性的事，LLM（DeepSeek）只做語意。派生功能一律 fail-open。完整不變量見 `docs/ARCHITECTURE.md`。
 
-技術棧：Python 3.11 ＋ uv、FastAPI ＋ uvicorn、SQLAlchemy async ＋ asyncpg、pgvector（HNSW cosine）＋ pg_trgm、FlagEmbedding（BGE-M3、bge-reranker-v2-m3，torch CPU-only）、pdfplumber ＋ pypdf ＋ python-docx、boto3（R2）、OpenCC（簡→繁）；前端 React 19 ＋ TypeScript ＋ Vite ＋ TanStack Query ＋ zod ＋ EmbedPDF；LLM 一律經 `claude` CLI（`claude -p`），不用 SDK。
+技術棧：Python 3.11 ＋ uv、FastAPI ＋ uvicorn、SQLAlchemy async ＋ asyncpg、pgvector（HNSW cosine）＋ pg_trgm、FlagEmbedding（BGE-M3、bge-reranker-v2-m3，torch CPU-only）、pdfplumber ＋ pypdf ＋ python-docx、boto3（R2）、OpenCC（簡→繁）；前端 React 19 ＋ TypeScript ＋ Vite ＋ TanStack Query ＋ zod ＋ EmbedPDF；LLM 預設走 DeepSeek 官方 API（`httpx` 直連，`app/services/llm_http.py`），不用 SDK；網搜與忠實度 judge 仍解析到 `claude` CLI（`claude -p`），而 CLI 已於 2026-09-23 放棄，生產關閉網搜，judge 待切換。
 
 ## 快速開始
 
@@ -67,7 +67,7 @@ make serve-preview            # DEV_NO_AUTH=1 免登入看版面，另開 8098
 make search Q="AI 伺服器散熱" MARKET=TW   # CLI 檢索
 ```
 
-`claude` CLI 要在 PATH 上；systemd 環境靠 `deploy/systemd/report-mark-web.service.d/path.conf`。
+DeepSeek 金鑰 `DEEPSEEK_API_KEY` 放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同。`claude` CLI 的 PATH drop-in `deploy/systemd/report-mark-web.service.d/path.conf` 留到 PR-M 移除。
 
 ## 專案結構
 
@@ -161,7 +161,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `EMBED_MAX_CONCURRENCY`、`EMBED_TORCH_THREADS` | 1、0 | 嵌入序列化；`/api/search`、雷達、閱讀頁沒有併發閘 |
 | `LLM_HTTP_TOTAL_TIMEOUT` | `600` | DeepSeek 串流的牆鐘總時限（秒）；吐字後到期＝截斷並附註，CLI 路徑不讀 |
 | `LLM_BUDGET_CURRENCY`、`LLM_BALANCE_FLOOR` | `CNY`、`70` | 只有 web 讀（`/healthz/llm`，設在 repo 根 `.env`）：只看餘額裡這個幣別那一筆，低於門檻回 503 → 探針退出碼 7（用罄、認證失敗等停擺為 8）。月上限 ¥350 是儲值紀律，不是旋鈕（`docs/production_resilience.md`） |
-| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `claude_cli`、查表 | 任務旋鈕非空就用，否則查 provider 的預設表（`app/services/llm_models.py`）；`claude_cli` 與遷移前逐字相同；`claude_only` 是遷移期的回退值，claude CLI 已於 2026-09-23 放棄，設了等於 LLM 全部停擺。清單與語意見 `.env.example` |
+| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `deepseek`、查表 | 任務旋鈕非空就用，否則查 provider 的預設表（`app/services/llm_models.py`）；`deepseek` 表除網搜與兩個 judge 外都是 `deepseek-flash`；未設、空值、未知值都當成 `deepseek`。`claude_cli`（遷移前的表）與 `claude_only`（遷移期的回退值）仍是合法值，但 claude CLI 已於 2026-09-23 放棄，設了等於 LLM 全部停擺。清單與語意見 `.env.example` |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` 設定旋鈕 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
 | `ASK_RERANK_*`、`RERANK_MODEL` | 開、50 候選 | rerank fail-open |
 | `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9、`claude-haiku-4-5` | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 不再沿用 `ASK_INTENT_MODEL`；換掉等於換尺，監控卡、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`） |

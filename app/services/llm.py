@@ -3,7 +3,8 @@ headless 串流（stream-json）。
 
 分派（`stream_completion`）：`llm_models.is_http_model(model)` 為真走 `llm_http.astream_chat`
 （首字期限、錯誤 kind、partial，見 `_stream_http`）；否則走下面的 CLI 路徑，與分派前逐行相同。
-預設 `LLM_PROVIDER=claude_cli` 下所有任務都解析到 Claude，HTTP 路徑不會被走到。
+預設 `LLM_PROVIDER=deepseek`（遷移 PR-28 起）下，除網搜與忠實度 judge 外的線上任務都走 HTTP 路徑；
+claude CLI 已於 2026-09-23 放棄，CLI 路徑只剩那兩個任務（及 `claude_cli`／`claude_only`）會走到。
 
 以下是 CLI 路徑：
 對齊 scripts/tag_all_cli.py 的 CLI 子程序模式（沿用訂閱、不另計費），但改為**非同步逐段串流**，
@@ -41,7 +42,7 @@ from app.services.llm_models import TASK_ASK_ANSWER, is_http_model, looks_like_c
 
 logger = logging.getLogger(__name__)
 
-# 主答模型（ASK_ANSWER_MODEL，未設時查 LLM_PROVIDER 的預設表；claude_cli 下是 claude-sonnet-5）。
+# 主答模型（ASK_ANSWER_MODEL，未設時查 LLM_PROVIDER 的預設表；預設 deepseek 下是 deepseek-flash）。
 # 名稱保留：answer.py 的總覽／主答、faithfulness 的預設參數、eval/run_ragas 的生成端都讀它。
 # import 期解析：web/server.py 在本模組被 import 之前就先載入 repo 根 .env；批次與評測入口則先呼叫
 # scripts/_llm_env.load_llm_env()（/etc/default/report-mark-llm）。

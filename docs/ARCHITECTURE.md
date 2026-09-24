@@ -4,7 +4,7 @@
 
 ## 1. 分工鐵律
 
-Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期。Claude 只做語意：標註、摘要、問答、訊號擷取、追問、忠實度評審。每個管線階段以檔案 SHA256 `file_hash` 為鍵、可斷點續跑。派生功能（rerank、忠實度、追問、摘錄、agentic 補查）一律 fail-open 降級，不阻斷主流程。
+Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、檢索、錨定、聚合、窗期。LLM（DeepSeek）只做語意：標註、摘要、問答、訊號擷取、追問、忠實度評審。每個管線階段以檔案 SHA256 `file_hash` 為鍵、可斷點續跑。派生功能（rerank、忠實度、追問、摘錄、agentic 補查）一律 fail-open 降級，不阻斷主流程。
 
 深度研報生成（含四張 `report_doc`／`report_run`／`report_section`／`report_rendition` 表與所有 `REPORT_*` 旋鈕）已於 2026-09 整個移除，本檔不再描述；既有庫要手動跑 `db/drop_deep_report_tables.sql`，`REPORT_FAITHFULNESS_MIN` 舊名仍可讀（見 §9）。
 
@@ -122,7 +122,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 - `web/server.py` import 順序有三道守門：`dev_mode` 必須在 `load_env_file` 之前（`tests/test_dev_mode.py`）；`configure_logging` 必須在讀 `.env` 之後、任何 `app.services.*` 之前（`tests/test_logging_setup.py`）；`tests/test_env_loading.py` 守 loader 接線。
 - Auth deny-by-default、fail-closed：缺 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 在 import 期 RuntimeError。免登入只有 `/login`、`/healthz`、前綴 `/app/assets/`；`/healthz/storage`、`/healthz/llm` 也在白名單，但只回答本機直連（其餘 404）。`/api/` 未登入回 401 JSON，其餘 302。Session cookie `tf_session`：HMAC token v2 `<ver>.<iat>.<exp>.<sig>`，簽章訊息含帳密指紋與 `REPORT_MARK_SESSION_EPOCH`，7 天滑動、30 天絕對上限；改密碼、`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 都會全員登出。登入失敗 5 次／300 秒鎖 IP（記憶體內）。外部存取 `from_trusted_proxy = edge_secret_ok OR is_trusted_proxy`，刻意 OR（nginx 與 app 滾動切換窗口）；祕密要 repo 根 `.env` 與 `deploy/.env` 逐字相同。
 - `DEV_NO_AUTH=1` 三條件同時成立才放行：旗標在環境檔載入前已在 `os.environ`、對端與 URL hostname 皆 loopback、無任何代理 header；放行時刻意不發 cookie。`SKIP_WARMUP` 同樣走 `os.environ` 且判 `== "1"`。兩者都不要寫進環境檔。
-- lifespan：`assert_single_worker`（偵測到多 worker 拒絕啟動，偵測不到放行）→ `assert_pgvector_version`（低於 0.8 fail-closed，連不上 DB 放行交給 `/healthz`）→ `llm.claude_cli_path()` 自檢（找不到只記 ERROR、不擋啟動：讀取類功能不需要 CLI）→ 背景暖機（embed 再 rerank，**必須依序**，兩執行緒同時首次 import transformers 會競態）。
+- lifespan：`assert_single_worker`（偵測到多 worker 拒絕啟動，偵測不到放行）→ `assert_pgvector_version`（低於 0.8 fail-closed，連不上 DB 放行交給 `/healthz`）→ LLM 自檢（`_check_llm_models`：依解析結果檢查 `DEEPSEEK_API_KEY` 有無值、解析到 Claude 的任務才探 `llm.claude_cli_path()`、未知模型名；只記 ERROR、不擋啟動：讀取類功能不需要 LLM）→ 背景暖機（embed 再 rerank，**必須依序**，兩執行緒同時首次 import transformers 會競態）。
 - 併發閘只剩一個：`/api/ask` 容量 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（佇列 `ASK_MAX_QUEUE`，滿載 429 ＋ `Retry-After: 30`）。問答忠實度抽查背景任務的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT` 同樣是行程內狀態。都是 per-process，lifespan 擋多 worker。
 - SSE：`deps._with_heartbeat` 每 `SSE_HEARTBEAT_INTERVAL`（20 秒）插註解行，因 nginx `proxy_read_timeout` 60 秒；前端 `readSSE.parseFrame` 對無 `data:` 的框回 null。
 - `/healthz` 只探 DB（`SELECT 1`，3 秒逾時，結果快取 5 秒），503 而非 200 加 degraded 欄位。存在理由：登入路徑不碰 DB，DB 掛掉是「假活著」。它必須同時在路由與白名單，只掛路由等於永遠 302。回應只有 `status` 一個鍵是釘死的不變量。
@@ -163,8 +163,8 @@ schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具�
 |---|---|
 | 問答脈絡 | `ASK_MAX_REPORTS`（15）、`ASK_MAX_PASSAGES`（4）、`ASK_MAX_CONTEXT_CHARS`（20000）、`ASK_RETRIEVAL_K`（15）、`ASK_DENSE_SCAN`（400） |
 | 問答選篇 | `ASK_RECENCY_WEIGHT`（0.06）、`ASK_RECENCY_HALF_LIFE_DAYS`（90）、`ASK_RELEVANCE_BAND`（0.10）、`ASK_BAND_EPS`（0.03）、`ASK_FRESH_FACTOR`（0.5）、`ASK_STALE_FACTOR`（0.1）、`ASK_MIN_FRESH_BEFORE_CUTOFF`（2）、`ASK_RELEVANCE_FLOOR`（0.62）、`ASK_MIN_REPORTS`（3）、`ASK_STALE_AGE_DAYS`（180）、`ASK_MAX_STALE_REPORTS`（4） |
-| LLM 模型 | `LLM_PROVIDER`（`claude_cli`；另有 `deepseek`、緊急回退 `claude_only`）與 14 個任務旋鈕 `*_MODEL`，一律經 `app/services/llm_models.py` 的 `resolve_model`：非空的任務旋鈕優先，否則查該 provider 的預設表；空字串視同未設。`claude_cli` 表與遷移前各呼叫點逐字相同（`tests/test_llm_models.py`）。`claude_only` 忽略旋鈕裡的 DeepSeek 白名單名稱。DeepSeek 表裡網搜與兩個 judge 仍是 Claude。白名單 `HTTP_MODELS` 住在這個只依賴標準函式庫的葉模組（`app/config.py` 與 `llm_http` 都 import 它，避免循環）。啟動自檢依解析結果檢查 claude CLI 路徑、`DEEPSEEK_API_KEY` 有無值、未知模型名，不擋啟動 |
-| 問答模型與網搜 | `ASK_INTENT_MODEL`（claude-haiku-4-5）、`ASK_INTENT_TIMEOUT`（20）、`ASK_CONDENSE_MODEL`（查表，不再跟隨 intent）、`ASK_CONDENSE_TIMEOUT`（20）、`ASK_ENABLE_WEB`（1）、`ASK_WEB_TIMEOUT`（240） |
+| LLM 模型 | `LLM_PROVIDER`（`deepseek`；另有 `claude_cli`、遷移期回退 `claude_only`）與 14 個任務旋鈕 `*_MODEL`，一律經 `app/services/llm_models.py` 的 `resolve_model`：非空的任務旋鈕優先，否則查該 provider 的預設表；空字串視同未設，`LLM_PROVIDER` 未設、空值、未知值都當成 `deepseek`（所以 `/etc/default/report-mark-llm` 缺檔時批次解析到 DeepSeek、因缺金鑰預檢 rc=2，不會退回 CLI）。DeepSeek 表裡網搜與兩個 judge 刻意仍是 Claude（網搜由 PR-W、judge 由 PR-18＋26/27 處理）。`claude_cli` 表與遷移前各呼叫點逐字相同（`tests/test_llm_models.py`；測試以 conftest 強制 `claude_cli` 跑，不打付費 API）。`claude_only` 忽略旋鈕裡的 DeepSeek 白名單名稱。claude CLI 已於 2026-09-23 放棄，`claude_cli`／`claude_only` 仍是合法值但已無可用後端（PR-M 決定去留）。白名單 `HTTP_MODELS` 住在這個只依賴標準函式庫的葉模組（`app/config.py` 與 `llm_http` 都 import 它，避免循環）。啟動自檢依解析結果檢查 claude CLI 路徑、`DEEPSEEK_API_KEY` 有無值、未知模型名，不擋啟動 |
+| 問答模型與網搜 | `ASK_INTENT_MODEL`（查表，預設 `deepseek-flash`）、`ASK_INTENT_TIMEOUT`（20）、`ASK_CONDENSE_MODEL`（查表，不再跟隨 intent）、`ASK_CONDENSE_TIMEOUT`（20）、`ASK_ENABLE_WEB`（1）、`ASK_WEB_TIMEOUT`（240） |
 | M5／M6 規劃 | `QA_PLANNER_MODEL`（查表，不再跟隨 intent）、`QA_PLANNER_TIMEOUT`（45，冷啟動 ttft 約 10 秒）、`QA_PLANNER_MAX_SUBQUERIES`（3）、`QA_MAX_ROUNDS`（2）、`QA_AGENTIC_ENABLED`（1）、`QA_AGENTIC_TIMEOUT`（90）、`QA_SUBQUERY_MAX_REPORTS`（5） |
 | rerank | `ASK_RERANK_ENABLED`（1）、`ASK_RERANK_CANDIDATES`（50）、`ASK_RERANK_TIMEOUT`（60；實測 50 對約 34 秒）、`RERANK_MODEL` |
 | 忠實度 M8 | `ASK_FAITHFULNESS_ENABLED`（1）、`FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，讀者只有監控頁 `_FAITHFULNESS_MIN` 與 `scripts/eval_faithfulness.py`）、`ASK_FAITHFULNESS_SAMPLE_RATE`（1.0）、`FAITHFULNESS_MODEL`（`claude-haiku-4-5`，刻意不沿用 `ASK_INTENT_MODEL`：換路由模型不得靜默換尺；讀分數三處只計現行 judge，見 `app/services/judge_schema.py`）、`FAITHFULNESS_TIMEOUT`（60，目前沒有呼叫端）、`ASK_FAITHFULNESS_TIMEOUT`（240，實測 48–142 秒）、`ASK_FAITHFULNESS_MAX_INFLIGHT`（2） |

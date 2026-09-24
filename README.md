@@ -67,7 +67,7 @@ make serve-preview            # DEV_NO_AUTH=1 免登入看版面，另開 8098
 make search Q="AI 伺服器散熱" MARKET=TW   # CLI 檢索
 ```
 
-DeepSeek 金鑰 `DEEPSEEK_API_KEY` 放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同。`claude` CLI 的 PATH drop-in `deploy/systemd/report-mark-web.service.d/path.conf` 留到 PR-M 移除。
+DeepSeek 金鑰 `DEEPSEEK_API_KEY` 放 repo 根 `.env`（web）與 `/etc/default/report-mark-llm`（批次），兩份逐字相同。claude CLI 已於 PR-M 移除（連同 web unit 的 PATH drop-in），LLM 只剩 DeepSeek。
 
 ## 專案結構
 

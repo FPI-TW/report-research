@@ -104,12 +104,12 @@ uv run python scripts/ingest_all.py
 - Auth deny-by-default、fail-closed（缺 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 不啟動）。免登入白名單 `/login`、`/healthz`、前綴 `/app/assets/`；`/healthz/storage`、`/healthz/llm` 也在白名單但只回答本機直連（其餘 404）。外部存取需 `REPORT_MARK_EDGE_SECRET` 或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 任一（刻意 OR，祕密要 repo root 與 `deploy/` 兩份環境檔逐字相同）。Session 7 天滑動、30 天上限；改密碼、`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 都會全員登出，是預期行為。
 - `DEV_NO_AUTH=1` 三條件同時成立才放行（旗標在環境檔載入前已在 `os.environ`、對端 loopback、無代理 header），`web/server.py` 的 import 順序由 `tests/test_dev_mode.py` 釘住。`SKIP_WARMUP` 同樣走 `os.environ` 且判 `== "1"`。兩者都不要寫進環境檔。
 - 併發閘只剩一個：`/api/ask` 上限 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（無環境變數；佇列 `ASK_MAX_QUEUE`），是 `web/concurrency.py` 的 `ConcurrencyGate`（刻意不支援 `async with`）。問答忠實度抽查背景任務的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT` 同樣是行程內狀態。上限 per-process，lifespan 擋多 worker。
-- `claude` CLI 只剩解析到 Claude 的任務（網搜）會用到，要在 PATH 上；systemd 靠 `deploy/systemd/report-mark-web.service.d/path.conf`（PR-M 移除）。`llm.py` 刻意不在批次 flock 範圍內（有靜態測試釘住）。
+- claude CLI 已於 PR-M 移除（連同 web unit 的 PATH drop-in 與探針退出碼 5），不必再在 PATH 上。`llm.py` 刻意不在批次 flock 範圍內（有靜態測試釘住）。
 
 ## 生產維運
 - 真相來源在 `deploy/`，不是機器上的 `/etc`。sync 鏈（每 3h）：rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量）。摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉近九成）；後三段的 `--limit` 是安全機制不是效能旋鈕。補救走 `scripts/failures_to_delta.py`，不要 `--all-local`。
 - 會 spawn `claude -p` 的批次在 main 進入點取 `scripts/_claude_lock.py` 的 flock，撞鎖 rc=75 是「不跑」不是「跑壞」。從 worktree 跑批次不與主 checkout 互斥。
-- 健康判定打 `/healthz`（只探 DB），不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`，不看 `Result=success`。監控兩層：`scripts/check_web_health.sh` 只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED。DeepSeek 帳號由只回答本機直連的 `/healthz/llm`（只回 `llm` 一鍵、不含金額）加探針偵測：CNY 餘額低於 `LLM_BALANCE_FLOOR` 為退出碼 7（WARNING），用罄／401／連不上／判斷不出來為 8（CRITICAL）；L3 全查、一行帶全部 reason，退出碼取 8 → 5 → 6 → 7 最前面的。退出碼 5（claude 依賴）已由 health unit 的 `HEALTH_DEP_DROPIN=` 停用，PR-M 刪除。402 的處置是儲值，絕不改走 Claude。
+- 健康判定打 `/healthz`（只探 DB），不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`，不看 `Result=success`。監控兩層：`scripts/check_web_health.sh` 只回報事實（刻意不用 `uv run`、不 import `app.*`），`scripts/incident_handler.sh` 做去重與 RESOLVED。DeepSeek 帳號由只回答本機直連的 `/healthz/llm`（只回 `llm` 一鍵、不含金額）加探針偵測：CNY 餘額低於 `LLM_BALANCE_FLOOR` 為退出碼 7（WARNING），用罄／401／連不上／判斷不出來為 8（CRITICAL）；L3 全查、一行帶全部 reason，退出碼取 8 → 6 → 7 最前面的（5 是 PR-M 退役的 claude 依賴檢查，編號不重用）。402 的處置是儲值（沒有備援可以改走）。
 - `make freshness` rc 0／1／2／3 分流；`signal` 門檻 0 與語料閘是刻意預設。`make db-audit` 只讀不修，warn 也算失敗。
 - `研報自動匯入/` 唯讀。`make ingest-lowio` 會 `fsync=off` 且 SIGKILL 後不還原；處置 `make restore-durability`。
 - 夜間回填 `report-mark-backfill.timer`（E1d）跑完後由人手動 disable。

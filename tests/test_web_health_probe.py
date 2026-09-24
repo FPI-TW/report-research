@@ -35,7 +35,7 @@ SYSTEMD_DIR = REPO_ROOT / "deploy" / "systemd"
 SERVICE = SYSTEMD_DIR / "report-mark-health.service"
 TIMER = SYSTEMD_DIR / "report-mark-health.timer"
 
-EXIT_OK, EXIT_HTTP, EXIT_PROCESS, EXIT_GRACE, EXIT_TOOLING, EXIT_DEGRADED = 0, 1, 2, 3, 4, 5
+EXIT_OK, EXIT_HTTP, EXIT_PROCESS, EXIT_GRACE, EXIT_TOOLING = 0, 1, 2, 3, 4
 EXIT_STORAGE = 6
 EXIT_LLM = 7        # 只有 llm_low：餘額低於門檻、尚未停擺
 EXIT_LLM_DOWN = 8   # low 以外的 503：帳號不可用或判斷不出來
@@ -294,116 +294,57 @@ class ProbeBehaviourTests(unittest.TestCase):
         self.assertIn(fail, ("ok", "fail", "grace", "tooling", "degraded"))
 
 
-class DependencyCheckTests(unittest.TestCase):
-    """L3：/healthz 綠不代表問答可用。
+def _missing_claude_dropin(tmp) -> dict:
+    """PR-M 前會讓探針回 5 的環境：drop-in 宣告的 PATH 上找不到那顆執行檔。PR-M 後必須被完全忽略。"""
+    t = Path(tmp)
+    (t / "bin").mkdir()
+    dropin = t / "path.conf"
+    dropin.write_text(f"[Service]\nEnvironment=PATH={t}/bin:/usr/bin\n", encoding="utf-8")
+    return {"HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"}
 
-    2026-09-02 claude CLI 改裝成原生安裝後，web unit 的 PATH drop-in 仍指向 nvm 舊路徑，
-    /api/ask 全數以 FileNotFoundError 失敗三小時，而本探針因為 /healthz 只探 DB 而全程 ok。
-    這裡守的是：探針要讀 drop-in 宣告的 PATH 去找 claude，找不到就退出 5；且這一段
-    **不得呼叫 systemctl**（健康路徑不相依 systemd 的不變量由 HostSystemdIsolationTests 釘住）。
+
+class RetiredDependencyCheckTests(unittest.TestCase):
+    """PR-M：退出碼 5（問答相依的 claude CLI 不在 web unit 的 PATH drop-in 上）整段刪除。
+
+    PR-M 前這裡釘的是「讀 drop-in 宣告的 PATH 找 claude，找不到退出 5、不得呼叫 systemctl」（2026-09-02
+    原生安裝路徑漂移、問答全壞三小時而 /healthz 綠）。CLI 與 drop-in 都移除後，那段檢查只會永遠成立、
+    蓋掉真正的故障，所以刪除；這組測試釘住它不會回來，而且舊的環境變數被完全忽略。
     """
 
-    def _dropin(self, tmp: Path, path_value: str, quoted=False) -> Path:
-        d = tmp / "path.conf"
-        line = f'Environment="PATH={path_value}"' if quoted else f"Environment=PATH={path_value}"
-        d.write_text(f"[Service]\n# 註解裡的 Environment=PATH=/nope 不算數\n{line}\n", encoding="utf-8")
-        return d
-
-    def test_missing_dependency_on_unit_path_is_degraded(self):
+    def test_old_dependency_env_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmp, _FakeSystemd(state="inactive") as sd, _Server(200) as s:
-            t = Path(tmp)
-            (t / "bin").mkdir()
-            dropin = self._dropin(t, f"{t}/bin:/usr/bin")
-            env = {"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"}
-            p = run_probe({**env, **sd.env})
+            p = run_probe({"HEALTH_URL": s.url, **_missing_claude_dropin(tmp), **sd.env})
             calls = sd.calls()
-        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
-        f = parse(p.stdout)
-        self.assertEqual(f["status"], "degraded")
-        self.assertEqual(f["http_code"], "200")
-        self.assertEqual(f["reason"], "dep_missing_claude-x9")
-        self.assertEqual(calls, [], "相依檢查不得呼叫 systemctl")
-
-    def test_dependency_present_on_unit_path_is_healthy(self):
-        with tempfile.TemporaryDirectory() as tmp, _Server(200) as s:
-            t = Path(tmp)
-            (t / "bin").mkdir()
-            exe = t / "bin" / "claude-x9"
-            exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            exe.chmod(0o755)
-            dropin = self._dropin(t, f"/nonexistent-dir:{t}/bin", quoted=True)
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"})
-        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
-        self.assertEqual(parse(p.stdout)["status"], "ok")
-
-    def test_non_executable_file_does_not_count(self):
-        """symlink 斷掉或檔案沒有 exec bit 都等於「找不到」——Popen 一樣會炸。"""
-        with tempfile.TemporaryDirectory() as tmp, _Server(200) as s:
-            t = Path(tmp)
-            (t / "bin").mkdir()
-            (t / "bin" / "claude-x9").symlink_to(t / "gone")
-            dropin = self._dropin(t, f"{t}/bin")
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"})
-        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
-
-    def test_missing_dropin_skips_the_check(self):
-        """沒部署的機器（CI）判不出來；「判不出來」不是「壞了」。"""
-        with _Server(200) as s:
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": "/definitely/not/here.conf"})
-        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
-
-    def test_dropin_without_path_line_skips_the_check(self):
-        with tempfile.TemporaryDirectory() as tmp, _Server(200) as s:
-            d = Path(tmp) / "path.conf"
-            d.write_text("[Service]\nEnvironment=HOME=/home/x\n", encoding="utf-8")
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(d)})
-        self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
-
-    def test_http_failure_takes_precedence_over_dependency(self):
-        """服務連不上時不做相依檢查——那時退出碼要說的是 L1/L2，不是 L3。"""
-        with tempfile.TemporaryDirectory() as tmp, _FakeSystemd(state="active") as sd, _Server(503) as s:
-            t = Path(tmp)
-            dropin = self._dropin(t, f"{t}/nope")
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), **sd.env})
-        self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
-
-    def test_empty_dropin_disables_the_check(self):
-        """Claude CLI 已放棄（2026-09-24）：health unit 設 `HEALTH_DEP_DROPIN=`（空值）停用這一段。
-
-        空值必須是「停用」而不是「用預設路徑」——後者在生產機上會讀到真的 drop-in，claude 一旦從 PATH
-        消失就永遠回 5、蓋掉 LLM 告警（審查中1）。CI 沒有 /etc 的 drop-in，行為測試分辨不出兩者，所以
-        另外靜態釘住 `${HEALTH_DEP_DROPIN-…}`（不是 `:-`）。
-        """
-        text = PROBE.read_text(encoding="utf-8")
-        self.assertIsNotNone(re.search(r'^HEALTH_DEP_DROPIN="\$\{HEALTH_DEP_DROPIN-/', text, re.M),
-                             "空值要停用，不是退回預設路徑")
-        with _Server(200) as s:
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": "", "HEALTH_DEP_BIN": "claude-x9"})
         self.assertEqual(p.returncode, EXIT_OK, p.stdout + p.stderr)
         self.assertEqual(parse(p.stdout)["reason"], "ok")
+        self.assertEqual(calls, [], "健康路徑不得呼叫 systemctl")
 
-    def test_empty_dropin_still_reports_every_other_fault(self):
-        """停用的只有 5：6、7、8 照常上報，reason 裡也沒有 dep_missing。"""
+    def test_every_other_fault_is_still_reported_without_dep_reason(self):
         cases = (
             ({"storage_status": 503}, EXIT_STORAGE, "storage_unreachable"),
             ({"llm_status": 503, "llm_body": b'{"llm":"exhausted"}'}, EXIT_LLM_DOWN, "llm_exhausted"),
             ({"llm_status": 503, "llm_body": b'{"llm":"low"}'}, EXIT_LLM, "llm_low"),
         )
         for kw, rc, reason in cases:
-            with self.subTest(reason=reason), _Server(200, **kw) as s:
-                p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": "", "HEALTH_DEP_BIN": "claude-x9"})
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp, _Server(200, **kw) as s:
+                p = run_probe({"HEALTH_URL": s.url, **_missing_claude_dropin(tmp)})
             self.assertEqual(p.returncode, rc, p.stdout + p.stderr)
             self.assertEqual(parse(p.stdout)["reason"], reason)
         with _FakeSystemd(state="active") as sd, _Server(503) as s:
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": "", **sd.env})
+            p = run_probe({"HEALTH_URL": s.url, **sd.env})
         self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
 
-    def test_repo_dropin_declares_native_claude_path_first(self):
-        """repo 內的 drop-in 是真相來源：原生安裝的 ~/.local/bin 必須排在 nvm 之前。"""
-        dropin = SYSTEMD_DIR / "report-mark-web.service.d" / "path.conf"
-        vals = _directives(dropin, "Environment")
-        path = next(v for v in vals if v.startswith("PATH="))[len("PATH="):]
-        self.assertTrue(path.split(":")[0].endswith("/.local/bin"), path)
+    def test_script_has_no_dependency_check_left(self):
+        text = PROBE.read_text(encoding="utf-8")
+        live = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+        for needle in ("HEALTH_DEP", "dep_missing", "check_unit_dependency", "EXIT_DEGRADED", "claude"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(needle, live)
+        self.assertIsNone(re.search(r"\bexit\s+5\b|=5\s", live), "退出碼 5 已退役，不得重用")
+
+    def test_web_dropin_is_gone(self):
+        """repo 內的 PATH drop-in 隨 CLI 移除；部署步驟見 docs/production_resilience.md「PR-M 部署步驟」。"""
+        self.assertFalse((SYSTEMD_DIR / "report-mark-web.service.d").exists())
 
 
 class StorageCheckTests(unittest.TestCase):
@@ -455,16 +396,6 @@ class StorageCheckTests(unittest.TestCase):
             self.assertNotIn("/healthz/storage", s.paths)
         self.assertEqual(p.returncode, EXIT_HTTP, p.stdout + p.stderr)
 
-    def test_missing_claude_is_reported_before_storage(self):
-        """兩個都壞時先報問答（影響面較大）；一次只開一個事件，修好一個下一輪就輪到另一個。"""
-        with tempfile.TemporaryDirectory() as tmp, _Server(200, storage_status=503) as s:
-            t = Path(tmp)
-            (t / "bin").mkdir()
-            dropin = t / "path.conf"
-            dropin.write_text(f"[Service]\nEnvironment=PATH={t}/bin\n", encoding="utf-8")
-            p = run_probe({"HEALTH_URL": s.url, "HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"})
-        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
-
 
 class LlmCheckTests(unittest.TestCase):
     """L3：/healthz 綠不代表 LLM 帳號能用（402、401、連不上、餘額低於門檻）。
@@ -472,7 +403,8 @@ class LlmCheckTests(unittest.TestCase):
     餘額查詢由 web 行程做，探針只讀 `/healthz/llm` 的狀態碼，**只認 503**；503 本體的 state
     併進 reason（封閉詞彙 `llm_<小寫與底線>`，其餘 `llm_unavailable`）。退出碼依 state 分兩種：
     只有 `llm_low`（尚未停擺）是 7，其餘（含讀不懂的本體）是 8。多項 L3 同時成立時一行帶出全部
-    reason，退出碼取 8 → 5 → 6 → 7 最前面的（8 是最重的故障；審查 M15：7 不得遮蔽 5、6）。
+    reason，退出碼取 8 → 6 → 7 最前面的（8 是最重的故障；審查 M15：7 不得遮蔽 6）。PR-M 前 8 與 6 之間
+    還有 5（claude CLI 相依），已退役。
     """
 
     def test_llm_down_states_are_exit_8_with_state_in_reason(self):
@@ -558,42 +490,20 @@ class LlmCheckTests(unittest.TestCase):
         self.assertIn("物件儲存", p.stderr)
         self.assertIn("LLM 帳號不可用", p.stderr)
 
-    def _missing_claude(self, tmp):
-        t = Path(tmp)
-        (t / "bin").mkdir()
-        dropin = t / "path.conf"
-        dropin.write_text(f"[Service]\nEnvironment=PATH={t}/bin\n", encoding="utf-8")
-        return {"HEALTH_DEP_DROPIN": str(dropin), "HEALTH_DEP_BIN": "claude-x9"}
-
-    def test_llm_down_beats_everything_and_all_three_are_reported(self):
-        """8 排第一：尤其不能被 5 蓋住——5 在 health unit 沒重新部署時會永遠成立（審查中1）。"""
-        with tempfile.TemporaryDirectory() as tmp, \
-                _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"exhausted"}') as s:
-            p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
-            self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"], "5 成立時仍要查 6、8")
+    def test_llm_down_beats_everything_and_all_reasons_are_reported(self):
+        with _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"exhausted"}') as s:
+            p = run_probe({"HEALTH_URL": s.url})
+            self.assertEqual(s.paths, ["/healthz", "/healthz/storage", "/healthz/llm"], "L3 全查")
         self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
-        self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,storage_unreachable,llm_exhausted")
+        self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_exhausted")
         self.assertEqual(len(p.stdout.strip().splitlines()), 1, "一行帶出全部 reason")
 
-    def test_llm_down_beats_dependency(self):
-        with tempfile.TemporaryDirectory() as tmp, _Server(200, llm_status=503) as s:
-            p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
-        self.assertEqual(p.returncode, EXIT_LLM_DOWN, p.stdout + p.stderr)
-        self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,llm_exhausted")
-
-    def test_dependency_and_storage_beat_low(self):
-        """low 最低：它會持續到儲值為止，不得遮蔽 5、6（審查 M15）。"""
-        with tempfile.TemporaryDirectory() as tmp, \
-                _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"low"}') as s:
-            p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
-        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
-        self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,storage_unreachable,llm_low")
-
-    def test_dependency_and_storage_report_both(self):
-        with tempfile.TemporaryDirectory() as tmp, _Server(200, storage_status=503) as s:
-            p = run_probe({"HEALTH_URL": s.url, **self._missing_claude(tmp)})
-        self.assertEqual(p.returncode, EXIT_DEGRADED, p.stdout + p.stderr)
-        self.assertEqual(parse(p.stdout)["reason"], "dep_missing_claude-x9,storage_unreachable")
+    def test_storage_beats_low(self):
+        """low 最低：它會持續到儲值為止，不得遮蔽 6（審查 M15）。"""
+        with _Server(200, storage_status=503, llm_status=503, llm_body=b'{"llm":"low"}') as s:
+            p = run_probe({"HEALTH_URL": s.url})
+        self.assertEqual(p.returncode, EXIT_STORAGE, p.stdout + p.stderr)
+        self.assertEqual(parse(p.stdout)["reason"], "storage_unreachable,llm_low")
 
     def test_worst_case_duration_fits_the_unit_timeout(self):
         """三次探測 × 逾時 ＋ 兩次等待 ＋ L3 兩支各一次逾時，必須小於 unit 的 TimeoutStartSec。"""
@@ -772,9 +682,9 @@ class SystemdContractTests(unittest.TestCase):
         """走 `bash <script>` 才不依賴 exec bit——2026-08-18 遷移剛因此踩過坑。"""
         self.assertRegex(SERVICE.read_text(encoding="utf-8"), r"ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash ")
 
-    def test_service_disables_the_claude_dependency_check(self):
-        """Claude CLI 已放棄（2026-09-24）：unit 以空值停用退出碼 5（PR-M 時連同那段一起刪）。"""
-        self.assertIn("HEALTH_DEP_DROPIN=", _directives(SERVICE, "Environment"))
+    def test_service_no_longer_mentions_the_dependency_check(self):
+        """PR-M：`Environment=HEALTH_DEP_DROPIN=`（停用退出碼 5 的那一行）隨探針那段一起刪除。"""
+        self.assertFalse(any(v.startswith("HEALTH_DEP") for v in _directives(SERVICE, "Environment")))
 
     def test_service_declares_grace_exit_as_success(self):
         """寬限退出碼不得讓 unit 變 failed，且必須用 SuccessExitStatus 而非吞掉錯誤。"""

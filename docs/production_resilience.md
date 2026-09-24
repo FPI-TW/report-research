@@ -70,7 +70,6 @@ uvicorn 收到 `SIGTERM` 後以 143（128+15）退出，這是**正常收場**�
 | 檔案 | 用途 |
 |---|---|
 | `report-mark-web.service` | web 服務（與主機版逐字對齊，另加 `OnFailure` / `SuccessExitStatus`） |
-| `report-mark-web.service.d/path.conf` | PATH drop-in。**`claude` CLI 在 nvm 的 node bin，不在 systemd 預設 PATH**；少了它 `/api/ask` 會以 `FileNotFoundError: 'claude'` 失敗 |
 | `report-mark-sync.service` / `.timer` | NAS 增量同步 |
 | `report-mark-alert@.service` / `report-mark-alert.sh` | 失敗告警 |
 | `report-mark-sync.env.example` | → `/etc/default/report-mark-sync` |
@@ -97,7 +96,7 @@ sudo "$EDITOR" /etc/default/report-mark-sync        # 確認 REPORT_MARK_ROOT �
 
 而且**日誌完全看不出敗在哪一步**：`scripts/sync_new_reports.sh` 開頭是 `set -euo pipefail`，裸呼叫失敗會就地中止，緊接其後的 `RC=$?` / `log "匯入結束 rc=..."` 根本執行不到——日誌永遠停在「增量匯入 delta…」。現已改為 `|| RC=$?` 形式。
 
-三處都已修正並由 `tests/test_deploy_units.py` 機械化守門（`%h` 禁用、三支 unit 的 `HOME` 必須一致、web drop-in 與 sync env 的 nvm 路徑必須逐字相同）。**升級 nvm node 版本時，`report-mark-web.service.d/path.conf` 與 `report-mark-sync.env.example` 兩處要一起改**，該測試會擋住漏改。
+三處都已修正並由 `tests/test_deploy_units.py` 機械化守門（`%h` 禁用、三支 unit 的 `HOME` 必須一致）。當時另有一條「web 的 PATH drop-in 與 sync env 的 nvm 路徑必須逐字相同」，PR-M 移除 claude CLI 後 drop-in 刪除、`SYNC_PATH_EXTRA` 只剩 uv 所在的 `~/.local/bin`，守門改成「deploy/ 不得再出現 nvm 路徑」。
 
 補跑破口期間漏掉的匯入（rsync 已落地、delta 檔留在 `data/`）：
 
@@ -110,8 +109,6 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_20260729_12000
 ```bash
 REPO=/home/kashionz/projects/report-mark
 sudo cp "$REPO"/deploy/systemd/report-mark-*.service "$REPO"/deploy/systemd/report-mark-*.timer /etc/systemd/system/
-sudo mkdir -p /etc/systemd/system/report-mark-web.service.d
-sudo cp "$REPO"/deploy/systemd/report-mark-web.service.d/path.conf /etc/systemd/system/report-mark-web.service.d/
 sudo systemctl daemon-reload
 sudo systemctl restart report-mark-web.service
 systemctl status report-mark-web.service --no-pager
@@ -1020,7 +1017,7 @@ systemctl show report-mark-freshness.service -p OnFailure --value   # 應非空
 tail -20 data/unit_failures.log                                     # 停更時應多一筆
 ```
 
-它沿用 `/etc/default/report-mark-sync`（`REPORT_MARK_ROOT` 與 `SYNC_PATH_EXTRA` 都在裡面）。`SYNC_PATH_EXTRA` 在這支只是為了找到 **`uv`**（在 `~/.local/bin`）——它零 LLM，所以 nvm 那段 PATH 漂掉不影響它。
+它沿用 `/etc/default/report-mark-sync`（`REPORT_MARK_ROOT` 與 `SYNC_PATH_EXTRA` 都在裡面）。`SYNC_PATH_EXTRA` 是為了找到 **`uv`**（在 `~/.local/bin`）。
 
 **待驗（本輪未在主機上執行）**：timer 是否真的每日觸發、`OnFailure` 是否真的把停更寫進 `data/unit_failures.log`。腳本本身的三條退出路徑（新鮮／停更／DB 不可用）已對生產 DB 以唯讀查詢實測過。
 
@@ -1121,7 +1118,7 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 
 **`/healthz` 目前只探 DB**（一次 `SELECT 1`，內部逾時 3 秒，結果快取 5 秒）。
 它**不**代表「所有相依都健康」——不驗 BGE-M3 是否載入、不驗 reranker、不驗 NAS、
-不驗 `claude` CLI、不驗 R2、不驗 DeepSeek 帳號（這三者由探針另外檢查：退出碼 5 讀 PATH drop-in（已停用，見下），退出碼 6 讀只回答本機直連的 `/healthz/storage`，退出碼 7／8 讀同樣只回答本機直連的 `/healthz/llm`）。它能證明的是兩件事，而那兩件正好涵蓋 2026-08-18 的失效型態：
+不驗 R2、不驗 DeepSeek 帳號（這兩者由探針另外檢查：退出碼 6 讀只回答本機直連的 `/healthz/storage`，退出碼 7／8 讀同樣只回答本機直連的 `/healthz/llm`）。它能證明的是兩件事，而那兩件正好涵蓋 2026-08-18 的失效型態：
 
 1. **uvicorn 真的綁上了 :8097 並且會回應**（探針連得上）
 2. **DB 可用**（回 200 而非 503）
@@ -1138,18 +1135,17 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 | `2` | web unit 不在 `active` | **failed → `OnFailure`** |
 | `3` | 剛啟動的寬限期內 | success（unit 宣告 `SuccessExitStatus=3`） |
 | `4` | 探針自己不能執行（缺 `curl`） | **failed → `OnFailure`** |
-| `5` | `/healthz` 正常，但問答相依的 `claude` 不在 web unit 的 PATH drop-in 上（2026-09-02 那種「healthz 綠、問答全壞」）。**已停用**：Claude CLI 已放棄（2026-09-24 決策），health unit 設 `Environment=HEALTH_DEP_DROPIN=`（空值＝不檢查）；PR-M 時刪除整段 rc 5 | **failed → `OnFailure`** |
+| `5` | **已退役**（PR-M）：原本是「`/healthz` 正常，但問答相依的 `claude` 不在 web unit 的 PATH drop-in 上」（2026-09-02 那種「healthz 綠、問答全壞」）。CLI 與 drop-in 都已移除，整段刪除、編號不重用；incident handler 收到 5（舊版探針）會落「未知退出碼」 | — |
 | `6` | `/healthz` 正常，但物件儲存（R2）連不上：`/healthz/storage` 回 503。原檔下載與 PDF 檢視會失敗，其餘功能正常 | **failed → `OnFailure`** |
 | `7` | `/healthz` 正常，但 DeepSeek 的 CNY 餘額低於門檻：`/healthz/llm` 回 503 `low`。**尚未停擺**，要儲值。處置見「DeepSeek 帳號告警與 402／401 處置」 | **failed → `OnFailure`** |
 | `8` | `/healthz` 正常，但 DeepSeek 帳號不可用或判斷不出來：`/healthz/llm` 回 `low` 以外的 503（`exhausted`／`auth_failed`／`unreachable`／`indeterminate`，本體讀不懂也算）。問答與批次 LLM 段停擺；檢索、閱讀、雷達正常 | **failed → `OnFailure`** |
 
-**L3 三項全查**（`/healthz` 正常時），一行 `reason=` 帶出全部原因（逗號分隔，例如
-`storage_unreachable,llm_low`），退出碼取 **8 → 5 → 6 → 7** 最前面的那一個：
+**L3 兩項全查**（`/healthz` 正常時），一行 `reason=` 帶出全部原因（逗號分隔，例如
+`storage_unreachable,llm_low`），退出碼取 **8 → 6 → 7** 最前面的那一個：
 
 - **8 排第一**：它是最重的（問答與批次 LLM 段全停，CRITICAL），事件的嚴重度才等於同時成立的故障裡最重的
-  那一個——6 排在前面的話，R2 故障期間 DeepSeek 用罄只會以 WARNING 的「R2 連不上」出現。也必須排在 5 前面：
-  5 在 health unit 沒重新部署（`HEALTH_DEP_DROPIN=` 還沒生效）時會永遠成立，排前面就是永遠蓋掉 LLM 停擺。
-- **7 排最後**（審查 M15）：「餘額低於門檻」會持續到儲值為止（可能好幾天），排前面的話這段期間 5、6 開不了事件。
+  那一個——6 排在前面的話，R2 故障期間 DeepSeek 用罄只會以 WARNING 的「R2 連不上」出現。
+- **7 排最後**（審查 M15）：「餘額低於門檻」會持續到儲值為止（可能好幾天），排前面的話這段期間 6 開不了事件。
 
 被蓋住的那一項 reason 仍在 journal 那一行裡，前面那項修好後下一輪退出碼就換成它。web 只有一個 incident
 元件：FIRING 期間退出碼換了不會另開事件；WARNING → CRITICAL（例如 7 → 8、6 → 8）會立刻送 ESCALATED，

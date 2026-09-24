@@ -28,7 +28,7 @@ Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # 沿用 sync 的環境檔（REPORT_MARK_ROOT / SYNC_PATH_EXTRA 都在裡面）。
 EnvironmentFile=-/etc/default/report-mark-sync
 # SYNC_PATH_EXTRA 是為了找到 **uv**（在 ~/.local/bin，不在 systemd 預設 PATH）。
-# 這支不需要 claude——它零 LLM，所以 nvm 那段 PATH 漂掉也不影響它。
+# 這支零 LLM。
 # 用 bash -c 而非 -lc：-l 會去讀登入 shell 的 profile，讓 PATH 來源變得不可預期。
 ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/db_audit.py'
 # 幾條是 57 萬列的全表掃描，腳本內走 relax_statement_timeout（引擎層 60s 會砍掉它們，

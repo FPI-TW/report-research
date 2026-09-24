@@ -17,7 +17,7 @@ Environment=HOME=/home/kashionz
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # 沿用 sync 的環境檔：REPORT_MARK_ROOT／SYNC_PATH_EXTRA（找 uv 用）／EXTRACTOR 都在裡面。
 EnvironmentFile=-/etc/default/report-mark-sync
-# 零 LLM，不需要 claude；吃的是 BGE-M3 的 CPU。Nice 讓白天萬一撞上問答時讓路。
+# 零 LLM；吃的是 BGE-M3 的 CPU。Nice 讓白天萬一撞上問答時讓路。
 Nice=10
 # --extractor 顯式給 pdfplumber：回填目標不該跟著環境檔的 EXTRACTOR 漂（E1d 切換前
 # 環境檔仍是 pypdf，回填照樣要往版面層走）。--max-minutes 240 是 E1 共識第 2 條。

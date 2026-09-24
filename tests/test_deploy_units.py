@@ -11,10 +11,10 @@ EACCES），整條 NAS 入庫管線停擺約 24 小時。rsync 那一段照常�
 同目錄另外兩支 unit 早就硬編碼 `/home/kashionz`，唯獨 sync 用 `%h`，是同一份
 部署裡兩種寫法並存、其中一種壞掉。
 
-第二條規約來自 `report-mark-web.service.d/path.conf` 的註解「日後用 nvm 升級 node
-需同步更新此處的版本路徑」——它有兩處（web 的 drop-in 與 sync 的 env example），
-漏改一處的症狀是 `claude` 找不到；而 sync 那一側的兩段批次掛在 `|| log` 之後，
-只會留下一行「best-effort，已略過」，unit 不會變紅（無聲漏跑）。
+第二條規約原本來自 `report-mark-web.service.d/path.conf` 的註解「日後用 nvm 升級 node
+需同步更新此處的版本路徑」——web 的 drop-in 與 sync 的 env example 兩處的 nvm 路徑必須一致，
+漏改一處的症狀是 `claude` 找不到。PR-M 移除 claude CLI 後 drop-in 刪除、sync 的 PATH 只剩 uv
+（`SyncPathTests`）。
 """
 import re
 import unittest
@@ -72,49 +72,33 @@ class SystemUnitHomeTests(unittest.TestCase):
         )
 
 
-class NvmPathAlignmentTests(unittest.TestCase):
-    """`claude` 的 nvm bin 路徑在兩處出現，必須逐字一致。"""
+class SyncPathTests(unittest.TestCase):
+    """`SYNC_PATH_EXTRA` 只為找到 uv（sync、audit、freshness、backfill、r2-reconcile 都靠它）。
 
-    NVM_BIN = re.compile(r"/home/[^:\s'\"]+/\.nvm/versions/node/[^:\s'\"]+/bin")
+    PR-M 前它還帶 nvm 的 node bin 給 claude CLI，並且必須與 web 的 PATH drop-in 逐字一致
+    （`NvmPathAlignmentTests`）；CLI 移除後 drop-in 刪除、nvm 那段不再需要。
+    """
 
-    def _nvm_paths(self, path: Path) -> set[str]:
-        text = path.read_text(encoding="utf-8")
-        # 只看實際生效的設定行，註解裡的示例不算
-        live = "\n".join(
-            ln for ln in text.splitlines() if not ln.strip().startswith("#")
-        )
-        return set(self.NVM_BIN.findall(live))
+    NVM_BIN = re.compile(r"/\.nvm/versions/node/")
 
-    def test_web_dropin_and_sync_env_use_same_node_bin(self) -> None:
-        web = self._nvm_paths(SYSTEMD_DIR / "report-mark-web.service.d" / "path.conf")
-        sync = self._nvm_paths(SYSTEMD_DIR / "report-mark-sync.env.example")
-        self.assertTrue(web, "path.conf 應含 nvm node bin（claude 所在）")
-        self.assertTrue(sync, "sync env example 應含 nvm node bin（claude 所在）")
-        self.assertEqual(
-            web,
-            sync,
-            "web drop-in 與 sync 的 SYNC_PATH_EXTRA 指向不同 node 版本；"
-            "升級 nvm node 時兩處必須一起改，否則 sync 那側的摘要／摘錄會"
-            "以 FileNotFoundError 無聲略過。",
-        )
+    def _live(self, path: Path) -> str:
+        return "\n".join(ln for ln in path.read_text(encoding="utf-8").splitlines() if not ln.strip().startswith("#"))
 
-    def test_no_nvm_current_symlink_assumed(self) -> None:
-        """nvm 沒有 `current` 這個符號連結（那是 n / nodenv 的慣例）。"""
+    def test_sync_path_still_finds_uv(self):
+        live = self._live(SYSTEMD_DIR / "report-mark-sync.env.example")
+        m = re.search(r"^SYNC_PATH_EXTRA=(.+)$", live, re.M)
+        self.assertIsNotNone(m, "SYNC_PATH_EXTRA 不能刪：五支 unit 靠它找 uv")
+        self.assertIn("/home/kashionz/.local/bin", m.group(1).split(":"))
+
+    def test_no_nvm_or_claude_left_in_deploy(self):
         offenders = []
-        for path in [
-            SYSTEMD_DIR / "report-mark-web.service.d" / "path.conf",
-            SYSTEMD_DIR / "report-mark-sync.env.example",
-        ]:
-            if "/node/current/" in "\n".join(
-                ln for ln in path.read_text(encoding="utf-8").splitlines()
-                if not ln.strip().startswith("#")
-            ):
+        for path in sorted(SYSTEMD_DIR.rglob("*")):
+            if path.is_file() and self.NVM_BIN.search(self._live(path)):
                 offenders.append(path.name)
-        self.assertEqual(
-            offenders,
-            [],
-            "nvm 路徑寫成 node/current/bin 會整段落空，claude 將找不到。",
-        )
+        self.assertEqual(offenders, [], "nvm 的 node bin 只給 claude CLI 用，PR-M 後不該再出現")
+
+    def test_web_path_dropin_is_gone(self):
+        self.assertFalse((SYSTEMD_DIR / "report-mark-web.service.d").exists())
 
 
 LLM_ENV_EXAMPLE = SYSTEMD_DIR / "report-mark-llm.env.example"

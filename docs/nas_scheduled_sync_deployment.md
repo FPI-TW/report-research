@@ -23,7 +23,7 @@ sudoedit /etc/default/report-mark-sync
 至少確認兩個值：
 
 - `REPORT_MARK_ROOT`：本機 repo 根目錄。
-- `SYNC_PATH_EXTRA`：讓 service 找得到 `claude` / `uv` 的額外 bin 目錄。
+- `SYNC_PATH_EXTRA`：讓 service 找得到 `uv` 的額外 bin 目錄（`~/.local/bin`）。
 
 ## 實測 drvfs 掛載（關鍵：確認免密碼讀得到）
 
@@ -66,6 +66,7 @@ make stats            # 確認 reports 篇數有隨新檔增加
 - 掛載偶發失敗：service 會記 log 並早退、不動 DB；下次 timer 自動再試。
 - 單檔失敗：見 data/sync_failures.log；修因後可 `make sync-once` 或
   `uv run python scripts/sync_new_reports.py --all-local` 全本地對 DB 補漏。
-- claude CLI 找不到：確認 service 的 PATH drop-in 含 node bin 目錄。
+- LLM 段整批 rc=2：看 `/etc/default/report-mark-llm`（金鑰、`LLM_PROVIDER=deepseek`）與 `/healthz/llm`，
+  處置見 `docs/production_resilience.md`。
 - service 啟不來：先看 `/etc/default/report-mark-sync` 的 `REPORT_MARK_ROOT` 與
   `SYNC_PATH_EXTRA` 是否指到實機正確路徑。

@@ -825,29 +825,25 @@ fi
 
 
 # P4 的退出碼契約：0 健康／3 寬限（視為健康）／1,2 服務故障／4 探針自身錯誤／
-# 5 服務降級（/healthz 正常但問答相依 claude 不在 web unit 的 PATH 上）
+# （5 已退役：PR-M 前是「問答相依的 claude CLI 不在 web unit 的 PATH 上」；收到它落下面的未知退出碼）
 # 6 服務降級（/healthz 正常但物件儲存 R2 連不上）
 # 7 服務提醒（/healthz 正常但 DeepSeek 餘額低於門檻、尚未停擺：/healthz/llm 回 503 llm_low）
 # 8 服務降級（/healthz 正常但 DeepSeek 帳號不可用或判斷不出來：/healthz/llm 回 low 以外的 503）
-# 多項同時成立時探針回 8→5→6→7 中最前面那一個（理由見 check_web_health.sh 的 L3 段）。
+# 多項同時成立時探針回 8→6→7 中最前面那一個（理由見 check_web_health.sh 的 L3 段）。
 case "$web_status" in
     0|3) run_state_machine "$COMPONENT" healthy "" healthy "$web_obs" ok "" ;;
     1|2) run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_$web_status" "$web_obs" web_incident \
              "探針回報失敗（exit=$web_status result=$web_result）${web_detail_suffix}" ;;
     4)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_4" "$web_obs" web_incident \
              "探針自己不能執行（exit=4 result=$web_result）——是「我不知道」不是「壞了」${web_detail_suffix}" ;;
-    # WARNING 而非 CRITICAL：檢索頁、閱讀頁、雷達、簡報都還活著，壞的只有問答與研報
-    # 生成；但它不會自己好，所以照樣開事件、照樣提醒。
-    5)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_5" "$web_obs" web_incident \
-             "服務降級：健康端點正常，但問答相依的 claude CLI 不在 web unit 的 PATH 上（exit=5 result=$web_result）${web_detail_suffix}" ;;
-    # 同樣是 WARNING：壞的只有原檔下載與 PDF 檢視（r2 模式缺 key 即 503 不回退），
+    # WARNING 而非 CRITICAL：壞的只有原檔下載與 PDF 檢視（r2 模式缺 key 即 503 不回退），
     # 檢索、問答、雷達、簡報都不受影響；也同樣不會自己好。
     6)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_6" "$web_obs" web_incident \
              "服務降級：健康端點正常，但物件儲存（R2）連不上，原檔下載與 PDF 檢視會失敗（exit=6 result=$web_result）${web_detail_suffix}" ;;
     # WARNING：餘額低於門檻、問答與批次都還能跑，但不會自己好（要儲值），而且可能持續好幾天。
     7)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_7" "$web_obs" web_incident \
              "DeepSeek 餘額低於門檻（尚未停擺），請於 3 個工作天內儲值（exit=7 result=$web_result；處置見 docs/production_resilience.md）${web_detail_suffix}" ;;
-    # CRITICAL：問答每題失敗、sync 的 LLM 段整批中止，沒有備援（claude CLI 已放棄）。檢索、閱讀、雷達與
+    # CRITICAL：問答每題失敗、sync 的 LLM 段整批中止，沒有備援（claude CLI 已於 PR-M 移除）。檢索、閱讀、雷達與
     # 既有簡報的讀取不需要 LLM，但問答是主要功能。與 7 分開、而且嚴重度不同，是為了讓「餘額低」FIRING
     # 好幾天的期間轉成真停擺時看得出來：同一個 web 事件 WARNING → CRITICAL 會立刻送 ESCALATED
     # （run_state_machine 的升級分支），不必等 30 分鐘的提醒。判斷不出來（indeterminate、本體讀不懂）也算這裡。

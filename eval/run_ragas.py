@@ -69,6 +69,7 @@ from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, stream_completion  # noqa: E402
+from app.services.llm_models import is_http_model  # noqa: E402
 from app.services.query_planner import plan_queries  # noqa: E402
 from app.services.retrieval_pipeline import retrieve_context  # noqa: E402
 from app.services.scope_router import CORPUS_QA, POLICY_FOR_SCOPE, RouteDecision  # noqa: E402
@@ -498,8 +499,31 @@ def _sha256_file(path) -> str:
 
 
 def judge_provider(model: str) -> str:
-    """judge 走哪個 backend。現階段只有 claude CLI；DeepSeek adapter（PR-18）接上後在此分流。"""
-    return "claude_cli"
+    """judge 實際走哪個 backend：與 `stream_completion` 同一份白名單分派（`is_http_model`）。"""
+    return "deepseek_http" if is_http_model(model) else "claude_cli"
+
+
+def uncalibrated_judge_warning(model: str) -> str | None:
+    """judge 指定為白名單模型時的警告文字；Claude judge 回 None。
+
+    PR-26（judge 切 DeepSeek）之前 judge 校準尚未完成，這種結果屬於新的量尺系譜：與既有
+    Claude judge 的結果比，`eval_compare` 因 `judge_model` 不同回 2。不阻擋——校準本身就要
+    這樣跑。TODO(PR-26)：校準完成、judge 正式切換後刪掉這個警告。
+    """
+    if judge_provider(model) != "deepseek_http":
+        return None
+    return (
+        f"WARNING：judge={model} 走 DeepSeek，judge 校準（PR-26）尚未完成。"
+        "本次分數屬於新的量尺系譜，與 Claude judge 的基準線不可比（eval_compare 回 2）；"
+        "不要拿它升格基準線或判定劣化。"
+    )
+
+
+def _warn_uncalibrated_judge(model: str) -> None:
+    msg = uncalibrated_judge_warning(model)
+    if msg:
+        bar = "!" * 72
+        print(f"{bar}\n{msg}\n{bar}", file=sys.stderr, flush=True)
 
 
 def build_config(
@@ -628,6 +652,7 @@ async def run(
     """
     if repeat < 1:
         raise ValueError("repeat 必須 ≥ 1")
+    _warn_uncalibrated_judge(judge_model)  # 開跑前先說：一輪評測要跑好幾個小時
     started_at = datetime.now(timezone.utc).isoformat()
     commit = _git_commit()
     dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
@@ -726,6 +751,7 @@ def _print_summary(report: dict) -> None:
     failed = s.get("thresholds_failed") or []
     print(f"thresholds_pass   : {s['thresholds_pass']}"
           + (f"   未達標：{'、'.join(failed)}" if failed else ""))
+    _warn_uncalibrated_judge(str(s.get("judge_model") or ""))  # 看結果的人不一定看過開頭
 
 
 def _main() -> None:

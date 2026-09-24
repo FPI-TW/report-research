@@ -156,18 +156,21 @@ class JudgeRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls["n"], 1)
 
     async def test_only_transient_llm_failures_are_retried(self):
-        """暫時性（過載、網路、逾時、CLI 的 529）重試；帳號層級、內容審查、單篇輸入錯誤、空回應
-        與無從判斷的不重試——結果不會變，重打只是再付一次錢。"""
+        """暫時性（過載、網路、逾時、CLI 的 529、CLI 無輸出退出）重試；帳號層級、內容審查、單篇
+        輸入錯誤、HTTP 的空回應與無從判斷的不重試——結果不會變，重打只是再付一次錢。
+
+        ("other", "empty") 是 CLI 的形狀（子程序沒吐字就結束），("empty", "empty") 是 HTTP 的形狀
+        （API 正常結束卻沒有 content）；兩者只差在 kind，見 eval/judge.py 的 `_is_retryable` 註解。"""
         from app.services.llm import LLMUnavailableError
 
         retried = [
             ("overloaded", "api_error"), ("network", "api_error"), ("timeout", "timeout"),
-            ("other", "api_error"), ("other", "timeout"),
+            ("other", "api_error"), ("other", "timeout"), ("other", "empty"),
         ]
         not_retried = [
             ("quota", "api_error"), ("auth", "api_error"), ("config", "api_error"),
             ("content_filter", "api_error"), ("bad_request", "api_error"),
-            ("empty", "empty"), ("other", "empty"), ("other", None),
+            ("empty", "empty"), ("other", None),
         ]
         for (kind, reason), want in [(c, 2) for c in retried] + [(c, 1) for c in not_retried]:
             with self.subTest(kind=kind, reason=reason):

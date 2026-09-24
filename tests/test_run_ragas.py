@@ -701,7 +701,7 @@ class MergeRepeatsTests(unittest.TestCase):
 class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
     """run() 的結果檔：summary 的三個 META 鍵、config 快照、repeat 與 --dump-io。"""
 
-    async def _run_with(self, td, *, repeat=1, dump=False, agentic=False):
+    async def _run_with(self, td, *, repeat=1, dump=False, agentic=False, judge_model="claude-haiku-4-5"):
         questions = [{"id": "q/1", "question": "題1"}, {"id": "q2", "question": "題2"}]
         ds = Path(td) / "ds.json"
         ds.write_text(json.dumps({"questions": questions}, ensure_ascii=False), encoding="utf-8")
@@ -722,7 +722,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
             rr.eval_question = fake_eval_question
             report = await rr.run(
                 ds, out_path=Path(td) / "out.json", concurrency=1, repeat=repeat,
-                generator_model="deepseek-flash", judge_model="claude-haiku-4-5",
+                generator_model="deepseek-flash", judge_model=judge_model,
                 dump_dir=(Path(td) / "frozen") if dump else None, agentic=agentic,
             )
         finally:
@@ -792,6 +792,53 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
     async def test_repeat_must_be_positive(self):
         with self.assertRaises(ValueError):
             await rr.run("unused.json", out_path=None, repeat=0)
+
+    async def test_deepseek_judge_is_labelled_and_warned_but_not_blocked(self):
+        """白名單 judge 實際經 stream_completion 走 HTTP：provider 標 deepseek_http；PR-26 之前
+        judge 未校準，開跑時在 stderr 印 WARNING，但照樣跑完、寫出結果。Claude judge 不警告。"""
+        for judge, provider, warned in (("deepseek-flash", "deepseek_http", True),
+                                        ("claude-haiku-4-5", "claude_cli", False)):
+            with self.subTest(judge=judge), tempfile.TemporaryDirectory() as td:
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    report, seen, _ds = await self._run_with(td, judge_model=judge)
+                self.assertEqual(seen["calls"], 2)
+                self.assertEqual(report["config"]["judge"]["provider"], provider)
+                self.assertEqual(report["summary"]["judge_model"], judge)
+                self.assertEqual("WARNING" in err.getvalue(), warned)
+                if warned:
+                    self.assertIn("PR-26", err.getvalue())
+                    self.assertIn(judge, err.getvalue())
+
+
+class JudgeProviderTests(unittest.TestCase):
+    def test_provider_follows_the_http_whitelist(self):
+        from app.services.llm_models import HTTP_MODELS
+
+        for model in sorted(HTTP_MODELS):
+            with self.subTest(model=model):
+                self.assertEqual(rr.judge_provider(model), "deepseek_http")
+                self.assertIsNotNone(rr.uncalibrated_judge_warning(model))
+        for model in ("claude-haiku-4-5", "claude-sonnet-5"):
+            with self.subTest(model=model):
+                self.assertEqual(rr.judge_provider(model), "claude_cli")
+                self.assertIsNone(rr.uncalibrated_judge_warning(model))
+
+    def test_printed_summary_repeats_the_warning(self):
+        """一輪評測跑好幾個小時，開頭的警告早就捲走；印結果時再說一次。"""
+        summary = {
+            "faithfulness": 0.9, "context_precision": 0.8, "answer_relevancy": 0.6,
+            "n": 1, "n_errors": 0, "n_no_context": 0, "thresholds_pass": True,
+            "judge_model": "deepseek-flash", "judge_schema_version": 2, "judge_prompt_sha": "x" * 64,
+        }
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rr._print_summary({"summary": summary})
+        self.assertIn("WARNING", err.getvalue())
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rr._print_summary({"summary": {**summary, "judge_model": "claude-haiku-4-5"}})
+        self.assertEqual(err.getvalue(), "")
 
 
 class MainNewFlagsTests(unittest.TestCase):

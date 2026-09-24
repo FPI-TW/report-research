@@ -13,7 +13,9 @@ import os
 import re
 
 from app.services.llm import (
+    KIND_OTHER,
     UNAVAILABLE_API_ERROR,
+    UNAVAILABLE_EMPTY,
     UNAVAILABLE_TIMEOUT,
     LLMUnavailableError,
     stream_completion,
@@ -53,8 +55,13 @@ class JudgeError(Exception):
 # 值得重試的 LLM 失敗：再打一次有機會過的那幾種。依 LLMUnavailableError 的既有欄位判斷——
 # - kind：HTTP 路徑的細分類；CLI 路徑一律 other（未分類）。overloaded／network 是暫時性；
 #   timeout（HTTP 首字期限）與 CLI 的逾時同源，是這個重試存在的理由（見 judge_json docstring）。
-# - reason：CLI 時代的三類，兩條路徑都填。只有逾時與 API 快速回錯（529 等）算暫時性；
-#   empty（成功結束卻沒內容）重打多半一樣。
+# - reason：CLI 時代的三類，兩條路徑都填。逾時與 API 快速回錯（529 等）算暫時性。
+# - empty 依路徑分兩種，形狀互不重疊（`llm._reason_for` 只把 HTTP 的 kind=empty 對到 reason=empty，
+#   HTTP 的 kind=other 一律是 reason=api_error）：
+#   - CLI：`kind=other, reason=empty`＝子程序結束卻一個字都沒吐（異常退出、被殺），與逾時一樣是
+#     行程層的偶發故障，**重試**——也與 `JudgeError("empty judge response")`（吐了空白）一致。
+#   - HTTP：`kind=empty, reason=empty`＝API 正常結束（finish_reason=stop）卻沒有 content。同一份
+#     prompt 重打多半一樣，而且每次都計費，**不重試**。
 # 帳號層級（quota／auth／config）、內容審查、單篇輸入錯誤（bad_request）一律不重試：結果不會變，
 # 重打只是再付一次錢（DeepSeek 按量計費）。reason 為 None＝外部直接建構、無從判斷，不重試。
 _RETRYABLE_KINDS = frozenset({"overloaded", "network", "timeout", "other"})
@@ -64,11 +71,11 @@ _RETRYABLE_REASONS = frozenset({UNAVAILABLE_TIMEOUT, UNAVAILABLE_API_ERROR})
 def _is_retryable(exc: Exception) -> bool:
     if isinstance(exc, JudgeError):  # 空回應或截斷 JSON：與逾時同源（見 judge_json docstring）
         return True
-    return (
-        isinstance(exc, LLMUnavailableError)
-        and exc.kind in _RETRYABLE_KINDS
-        and exc.reason in _RETRYABLE_REASONS
-    )
+    if not isinstance(exc, LLMUnavailableError):
+        return False
+    if exc.kind == KIND_OTHER and exc.reason == UNAVAILABLE_EMPTY:  # CLI 無輸出退出（見上）
+        return True
+    return exc.kind in _RETRYABLE_KINDS and exc.reason in _RETRYABLE_REASONS
 
 
 def _loads_robust(raw: str) -> dict | list:

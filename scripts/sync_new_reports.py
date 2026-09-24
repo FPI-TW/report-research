@@ -63,10 +63,12 @@ EXTS = {".pdf", ".docx", ".doc"}
 #     另記進 research.llm_task_failure（task=tag, reason=content_filter），`make llm-blocked` 列出；
 #     路徑寫進 FAIL_LOG 的 `tag_blocked` 階段（failures_to_delta 預設不撈它）。處置見
 #     docs/production_resilience.md「DeepSeek 批次的失敗處置」。
-#   - `skip_truncated`：行內標註被截斷（DeepSeek 的 truncated：`max_tokens` 用完，或已吐字後碰到總期限）。
+#   - `skip_truncated`：行內標註被截斷（DeepSeek 的 truncated＝`finish_reason=length`，`max_tokens` 用完）。
 #     同 skip_blocked：重跑不會不一樣（同一份輸入、同一個上限），重送只是再付一次錢 ⇒ **異常**，
 #     記進 llm_task_failure（reason=truncated），FAIL_LOG 階段 `tag_truncated`（failures_to_delta 預設
 #     不撈）。處置是調 TAG_MAX_TOKENS 或手寫 tags 後用 `--stage tag_truncated` 單篇重放。
+#     **期限型截斷（`timeout_streamed`：已吐字後碰到總期限）不算**，留在 skip_untagged／階段 `tag`：它可能只是
+#     DeepSeek 暫時變慢，下一輪常常就好，歸 tag_truncated 會被 failures_to_delta 預設排除、永遠不重放。
 #     空回應與一般 400 **刻意留在 skip_untagged**（補救指令會重送）：空回應多半是供應商端的偶發狀況，
 #     下一輪常常就好了；400 在送出時就被拒、不產生輸出，重送幾乎不花錢，而且可能是修好請求之後
 #     本來就該重打的那一批。
@@ -136,6 +138,7 @@ def skip_after_tag(tag, tag_error: str | None = None) -> str | None:
         kind = error_kind(tag_error)
         if kind == "content_filter":
             return "skip_blocked"
+        # 只認 finish_reason=length 的 truncated；期限型截斷（timeout_streamed）刻意落到 skip_untagged（可重放）
         if kind == "truncated":
             return "skip_truncated"
         return "skip_untagged"

@@ -64,6 +64,11 @@ CASES = [
     (("title", "bad_request", "m1", 2), "m1", False),
     (("title", "content_filter", "m1", 1), "m1", True),
     (("title", "truncated", "m1", 1), "m1", True),
+    # 期限型截斷：連續 3 輪才跳過（不在 SKIP_IMMEDIATELY）
+    (("title", "timeout_streamed", "m1", 1), "m1", False),
+    (("title", "timeout_streamed", "m1", 2), "m1", False),
+    (("title", "timeout_streamed", "m1", 3), "m1", True),
+    (("title", "timeout_streamed", "m1", 3), "m2", False),
     (("title", "content_filter", "m1", 1), "m2", False),  # 換 model 會重試
     (("title", "unparseable", "m1", 9), "m2", False),
     (("summary", "content_filter", "m1", 1), "m1", False),  # 別的任務的紀錄不影響
@@ -98,6 +103,11 @@ class SkipRuleEquivalenceTests(unittest.TestCase):
 
     def test_immediate_reasons_are_known_reasons(self):
         self.assertTrue(lf.SKIP_IMMEDIATELY <= lf.REASONS)
+
+    def test_timeout_streamed_is_a_reason_but_not_immediate(self):
+        self.assertIn(lf.TIMEOUT_STREAMED, lf.REASONS)
+        self.assertNotIn(lf.TIMEOUT_STREAMED, lf.SKIP_IMMEDIATELY)
+        self.assertEqual(lf.SKIP_IMMEDIATELY, frozenset({lf.CONTENT_FILTER, lf.TRUNCATED}))
 
 
 class UpsertSemanticsTests(unittest.TestCase):

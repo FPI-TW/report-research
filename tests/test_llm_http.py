@@ -1076,23 +1076,24 @@ class CompleteChatStreamedTests(_TransportMixin, unittest.TestCase):
                 self.assertEqual(len(self.requests), 3, name)
                 self.assertFalse(res.outcome.streamed)
 
-    def test_deadline_after_text_is_truncated_not_timeout(self):
-        """低2：已吐字後才到期 → truncated（1 次就跳過、不計斷路器），細節說總期限而不是 max_tokens。"""
+    def test_deadline_after_text_is_timeout_streamed(self):
+        """已吐字後才到期 → timeout_streamed（期限型截斷：可重放、計入斷路器），不是 truncated 也不是 timeout；
+        細節說總期限而不是 max_tokens。"""
         stream = _ClockStream(self.clock, 4.0, _sse(_chunk(content="長輸出"), done=False),
                               *[_sse(_chunk(content="。"), done=False)] * 20)
         self.install(lambda req: httpx.Response(200, stream=stream))
         res = self._call(timeout=10.0)
         self.assertIsNone(res.text)
-        self.assertEqual(res.kind, lh.TRUNCATED)
-        self.assertTrue(res.error.startswith("API[truncated]"), res.error)
+        self.assertEqual(res.kind, lh.TIMEOUT_STREAMED)
+        self.assertTrue(res.error.startswith("API[timeout_streamed]"), res.error)
         self.assertIn("總期限", res.error)
         self.assertNotIn("max_tokens", res.error)
         self.assertTrue(res.outcome.streamed)
         self.assertEqual(len(self.requests), 1)
 
     def test_read_timeout_after_text(self):
-        """低2：已吐字後 httpx 讀取逾時——期限到了是 truncated；期限還早是 network（不重試）。"""
-        for budget, kind in ((5.0, lh.TRUNCATED), (600.0, lh.NETWORK)):
+        """已吐字後 httpx 讀取逾時——期限到了是 timeout_streamed；期限還早是 network（不重試）。"""
+        for budget, kind in ((5.0, lh.TIMEOUT_STREAMED), (600.0, lh.NETWORK)):
             with self.subTest(budget=budget):
                 stream = _ClockStream(self.clock, 10.0, _sse(_chunk(content="半"), done=False),
                                       httpx.ReadTimeout("silent"))

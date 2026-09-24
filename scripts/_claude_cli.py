@@ -46,7 +46,8 @@ HTTP 路徑的規則（第二版計畫 §4.3、§4.6）：
     tests/test_claude_cli.py 逐點釘住），沒帶是程式錯誤、直接拋 `ValueError`。
   - `timeout` 沿用各批次現行值，在 HTTP 路徑是**涵蓋傳輸層重試的總期限**（`complete_chat`
     以 `time.monotonic()` 逐 chunk 檢查；排隊時的 keep-alive 會一直重置 httpx 的 read 逾時）。
-    已吐字後才到期歸 `truncated`（不計入斷路器、1 次就跳過），沒吐字就到期才是 `timeout`。
+    已吐字後才到期歸 `timeout_streamed`（期限型截斷：計入斷路器、記跳過名單但連續 3 輪才跳過、可重放），
+    沒吐字就到期才是 `timeout`。真正的 `finish_reason=length` 才是 `truncated`（1 次就跳過）。
   - 失敗回 `CliResult(None, "API[<kind>] <固定措辭>：<細節>")`（`llm_http.error_string`，單行、
     不含 TAB）。前綴 `API[` 是契約：`is_retryable` 靠它分辨「傳輸層已重試過」。
   - **帳號層級（401 auth／402 quota／config：404 或模型不存在）拋 `LlmEnvironmentError`**
@@ -70,14 +71,15 @@ False、不進 unparseable 重試），腳本層只重試解析失敗。審查�
 `BilledRequestsPerFileTests` 釘住這個上限。CLI 的失敗（`CLI 逾時`、`CLI 退出碼 …`）語意不變，照舊重試。
 
 `failure_kind(res)` 把 HTTP 的內容型失敗對應到 `llm_failures` 的 reason（content_filter、
-truncated、empty、bad_request），各批次記跳過名單時用它；環境型（timeout、overloaded、network）
-回 None——那不是研報的問題。
+truncated、empty、bad_request、timeout_streamed），各批次記跳過名單時用它；環境型（timeout、overloaded、
+network）回 None——那不是研報的問題。`timeout_streamed` 兩邊都沾：已計費所以記（連續 3 輪才跳過），
+可能是供應商變慢所以也計入斷路器。
 
 ## 斷路器（只擋 HTTP backend，審查 L9）
 
 DeepSeek 整體變慢或過載時，每篇都要等到總期限才失敗，一段批次可以拖上數小時、每篇還記一筆
-「單篇失敗」。行程範圍的斷路器看**最近 `BREAKER_WINDOW` 次 HTTP 呼叫**，其中逾時／過載／網路
-（`BREAKER_KINDS`）達 `BREAKER_TRIP` 次就拋 `LlmEnvironmentError`（整批 rc=2），並寫
+「單篇失敗」。行程範圍的斷路器看**最近 `BREAKER_WINDOW` 次 HTTP 呼叫**，其中逾時（含已吐字後逾時
+`timeout_streamed`）／過載／網路（`BREAKER_KINDS`）達 `BREAKER_TRIP` 次就拋 `LlmEnvironmentError`（整批 rc=2），並寫
 `data/.llm_breaker`（帶 sync 輪次 id `round=`，審查中4）；同一輪 sync 其餘會用到 HTTP model
 的段（手動執行：30 分鐘內）在 `require_llm_key` 就以 rc=2 拒跑，下一輪不受影響
 （`scripts/_llm_env.py`）。CLI 呼叫不進窗、也不受標記影響：遷移期間還在用 Claude 的段不該因為
@@ -87,14 +89,18 @@ DeepSeek 出事而停。有執行緒鎖（批次以 `asyncio.to_thread`／執行
 
 一般的 400（`bad_request`）多半是單篇輸入造成的（超長、怪字元），算單篇失敗、記跳過名單
 （連續 3 輪才跳過）。**只有**同一行程裡 ≥2 個不同 `file_hash` 收到**正規化後相同**的 400 訊息，
-才判定是請求本身或設定壞了（每一篇都會踩到），升級成 `BadRequestEscalation`（config 型、整批
-rc=2）。刻意沒有「本輪第一個請求就 400 → 升級」：那篇研報若排在最前面，每一輪都會中止整批、
-而中止不記跳過名單，它永遠不會被跳過——匯入段就等於全站停止入庫。升級前，觸發的那幾篇要先記入
+**而且本行程內還沒有任何一次 HTTP 呼叫成功過**，才判定是請求本身或設定壞了（每一篇都會踩到），
+升級成 `BadRequestEscalation`（config 型、整批 rc=2）。刻意沒有「本輪第一個請求就 400 → 升級」：
+那篇研報若排在最前面，每一輪都會中止整批、而中止不記跳過名單，它永遠不會被跳過——匯入段就等於全站停止入庫。升級前，觸發的那幾篇要先記入
 跳過名單（各批次 main 呼叫 `record_escalation`），而且**直接記到 `SKIP_AFTER_ROUNDS`**
 （`FailureRecorder.record(..., escalated=True)`）：只記一筆的話要連續 3 輪整段 rc=2 才跳得過去。
 匯入段另把它們寫進保留檔（`scripts/sync_new_reports.py`）。修好請求或設定之後，這幾篇要加
 `--retry-blocked` 才會再打。身分由 `run_claude(meta={"file_hash": …})` 傳入，沒有 file_hash 的呼叫
 （簡報）不參與。
+
+「還沒有任何成功」這一條是後加的：全面性的 400 會讓**每一篇**都失敗，只要有別篇成功過，就代表請求格式與
+設定沒問題、剩下的 400 是那幾篇自己的事——升級只會讓整批為了幾篇怪輸入中止。只算伺服器真的回了 400
+（`outcome.status` 有值）的；本機編碼就失敗的 `bad_request`（`UnicodeError`）是單篇輸入，不參與。
 
 比對鍵是**正規化**的訊息（`_escalation_key`）：小寫、長 hex／request id 換成 `<id>`、數字換成 `#`。
 逐字比對的話，DeepSeek 反序列化錯誤帶的 `at line 1 column N`（N 隨 prompt 長度變）會讓全面性的
@@ -258,6 +264,9 @@ _FAILURE_REASONS = {
     llm_http.TRUNCATED: llm_failures.TRUNCATED,
     llm_http.EMPTY: llm_failures.EMPTY,
     llm_http.BAD_REQUEST: llm_failures.BAD_REQUEST,
+    # 期限型截斷歸回「可重放」的類別（連續 3 輪才跳過），**不要**併進 TRUNCATED：那會 1 次就跳過，
+    # 行內標註還會進 `tag_truncated`（failures_to_delta 預設不撈）——DeepSeek 暫時變慢就全進跳過名單。
+    llm_http.TIMEOUT_STREAMED: llm_failures.TIMEOUT_STREAMED,
 }
 
 
@@ -282,7 +291,8 @@ def failure_kind(res: CliResult) -> Optional[str]:
 # ── 斷路器 ───────────────────────────────────────────────────────────────────
 BREAKER_WINDOW = 10
 BREAKER_TRIP = 5
-BREAKER_KINDS = frozenset({llm_http.TIMEOUT, llm_http.OVERLOADED, llm_http.NETWORK})
+# TIMEOUT_STREAMED 也算：已吐字後才到期，多半是供應商整體變慢（每篇都在期限內寫不完）。
+BREAKER_KINDS = frozenset({llm_http.TIMEOUT, llm_http.TIMEOUT_STREAMED, llm_http.OVERLOADED, llm_http.NETWORK})
 
 
 def _warn(msg: str) -> None:
@@ -387,15 +397,24 @@ def _escalation_key(detail: str) -> Optional[str]:
 
 
 class _BadRequestTracker:
-    """400 訊息（正規化後）→ 收到它的 file_hash 集合（行程範圍、執行緒安全）。"""
+    """400 訊息（正規化後）→ 收到它的 file_hash 集合（行程範圍、執行緒安全）。
+
+    另記「本行程內有沒有任何 HTTP 呼叫成功過」（`mark_success`）：有的話不升級（見模組 docstring）。
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._seen: dict[str, set[str]] = {}
+        self._any_success = False
 
     def reset(self) -> None:
         with self._lock:
             self._seen.clear()
+            self._any_success = False
+
+    def mark_success(self) -> None:
+        with self._lock:
+            self._any_success = True
 
     def observe(self, detail: str, file_hash: Optional[str]) -> None:
         if not file_hash:
@@ -406,7 +425,7 @@ class _BadRequestTracker:
         with self._lock:
             hashes = self._seen.setdefault(key, set())
             hashes.add(file_hash)
-            if len(hashes) < BAD_REQUEST_ESCALATE_AT:
+            if len(hashes) < BAD_REQUEST_ESCALATE_AT or self._any_success:
                 return
             triggered = sorted(hashes)
         short = "、".join(h[:12] for h in triggered)
@@ -575,8 +594,11 @@ def _run_http(
     if result.kind in llm_http.ACCOUNT_KINDS:
         raise LlmEnvironmentError(f"{result.error}。{_ACCOUNT_HINTS[result.kind]}")
     _BREAKER.observe(result.kind)
-    if result.kind == llm_http.BAD_REQUEST:
-        _BAD_REQUESTS.observe(result.outcome.detail, meta.get("file_hash"))
+    if result.kind is None:
+        _BAD_REQUESTS.mark_success()
+    elif result.kind == llm_http.BAD_REQUEST and out.status is not None:
+        # 只有伺服器真的回了 400 才參與升級；本機編碼失敗（status 為 None）是單篇輸入
+        _BAD_REQUESTS.observe(out.detail, meta.get("file_hash"))
     if result.text is None:
         return CliResult(None, result.error)
     return CliResult(result.text, None)

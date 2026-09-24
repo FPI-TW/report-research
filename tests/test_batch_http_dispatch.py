@@ -576,8 +576,9 @@ class BilledRequestsPerFileTests(_OneFileMixin, unittest.IsolatedAsyncioTestCase
                 self.assertEqual(call.call_count, 2)
                 self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
 
-    async def test_deadline_after_text_records_truncated(self):
-        """低2：已吐字後才到總期限＝截斷：記 truncated（1 次就跳過）、不進斷路器的窗。"""
+    async def test_deadline_after_text_records_timeout_streamed(self):
+        """已吐字後才到總期限＝期限型截斷：記 timeout_streamed（連續 3 輪才跳過、不是 truncated 的 1 次就跳過），
+        而且**計入斷路器**——DeepSeek 暫時變慢時整段中止，而不是整批研報一輪就進跳過名單。"""
         clock = {"t": 1000.0}
 
         def drip(req):
@@ -590,12 +591,18 @@ class BilledRequestsPerFileTests(_OneFileMixin, unittest.IsolatedAsyncioTestCase
 
         fake_time = mock.Mock(monotonic=lambda: clock["t"], sleep=lambda s: None)
         with mock.patch.object(lh, "time", fake_time):
-            for i in range(cc.BREAKER_TRIP + 1):
-                self.install(drip)
+            self.install(drip)  # 只在這裡清一次斷路器的窗：接下來的呼叫要累積
+            for i in range(cc.BREAKER_TRIP - 1):
+                self.requests.clear()
                 rec = await self.run_title_or_summary(gs, "summarize_one", file_hash=f"h{i}")
-                self.assertEqual(rec.recorded, [(f"h{i}", lf.TRUNCATED)])
-                self.assertEqual(len(self.requests), 1)
-                self.assertEqual(sum(cc._BREAKER._recent), 0, "截斷不是供應商沒回應，不計入斷路器")
+                self.assertEqual(rec.recorded, [(f"h{i}", lf.TIMEOUT_STREAMED)])
+                self.assertEqual(len(self.requests), 1, "已吐字不在傳輸層重試")
+                self.assertEqual(sum(cc._BREAKER._recent), i + 1, "期限型截斷計入斷路器")
+                one_round = lf.FailureRecord(lf.TIMEOUT_STREAMED, DS, 1)
+                self.assertFalse(lf.should_skip(one_round, DS), "1 次不跳過：可能只是暫時變慢")
+            with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+                await self.run_title_or_summary(gs, "summarize_one", file_hash="hx")
+            self.assertIn("斷路器", str(ctx.exception))
 
 
 class SummaryPlainTextFallbackTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
@@ -736,6 +743,17 @@ class BadRequestEscalationBatchTests(HttpMixin, unittest.TestCase):
         self.assertEqual(rec.recorded, [("h1", lf.BAD_REQUEST)])
         self.assertEqual(len(rec.cleared), N_ITEMS - 1)
 
+    def test_lone_surrogate_prompts_do_not_abort_the_batch(self):
+        """低2：編碼錯誤（孤立代理字元繞過 sanitize）只是單篇 bad_request：整批不中止、每篇記入跳過名單。
+        修正前歸 CONFIG → 第一篇就整批 rc=2、不留任何紀錄，下一輪同一篇再中止一次。"""
+        for name in self.ASYNC_BATCHES:
+            with self.subTest(batch=name), mock.patch.object(lh, "sanitize", lambda text: text + "\ud800"):
+                self.install(ok("{}"))
+                code, rec, out = self.main_rc(name)
+                self.assertNotEqual(code, 2, out)
+                self.assertEqual(sorted(rec.recorded), [(f"h{i}", lf.BAD_REQUEST) for i in range(1, N_ITEMS + 1)])
+                self.assertEqual(self.requests, [])
+
     def test_tag_all_logs_triggers_without_db(self):
         """全語料標註只寫 log、不接 DB（審查 L5）：觸發研報寫進 tag_failures.log。"""
         self.install(status(400, "Invalid request: unsupported parameter"))
@@ -872,6 +890,21 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         ftd = _load_script("failures_to_delta")
         ok, _ = ftd.parse_failures(lines, self.tmp / "src")
         self.assertEqual(ok, [], "補救指令不得把截斷的再送一次")
+
+    async def test_deadline_truncation_stays_untagged_and_replayable(self):
+        """期限型截斷（timeout_streamed）不是 skip_truncated：記 skip_untagged、階段 tag（補救指令會撈），
+        跳過名單記 timeout_streamed。歸 tag_truncated 的話 DeepSeek 暫時變慢一次，那幾篇就永遠不重放。"""
+        timed_out = cc.CliResult(None, lh.error_string(lh.TIMEOUT_STREAMED, "已吐字 12 字後超過總期限"))
+        with mock.patch.object(snr, "run_claude", return_value=timed_out):
+            rec = await self._run()
+        st = self.stats()
+        self.assertEqual((st["skip_untagged"], st["skip_truncated"]), ("2", "0"))
+        self.assertEqual(sorted(rec.recorded), [(f"{i:064d}", lf.TIMEOUT_STREAMED) for i in (1, 2)])
+        lines = (self.tmp / "sync_failures.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual([ln.split("\t")[1] for ln in lines], ["tag"] * 2)
+        ftd = _load_script("failures_to_delta")
+        ok, _ = ftd.parse_failures(lines, self.tmp / "src")
+        self.assertEqual(len(ok), 2, "補救指令要撈得到")
 
     async def test_empty_stays_untagged_and_replayable(self):
         """空回應維持 skip_untagged（階段 tag）：多半是供應商端偶發，補救指令會重送。"""

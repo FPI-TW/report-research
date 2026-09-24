@@ -10,8 +10,13 @@
 環境型失敗（逾時、CLI 非零退出、網路、帳號、額度）**刻意不記**：那不是這篇研報的
 問題，記了會讓一次停機把整批研報永久打入跳過名單。
 
+例外是 `timeout_streamed`（批次 HTTP 路徑已吐字後才碰到總期限，「期限型截斷」）：已經計費，
+不記的話真正每次都寫不完的那篇每輪都重打；但它也可能只是供應商暫時變慢，所以**不**立即跳過，
+走「連續 `SKIP_AFTER_ROUNDS` 輪」、可重放（行內標註記 `skip_untagged`、階段 `tag`）。整體變慢時
+由批次斷路器中止整段（`scripts/_claude_cli.BREAKER_KINDS`），不會把整批一輪就打進名單。
+
 跳過規則（以同一個 model 計）：
-- `content_filter`、`truncated`：1 次就跳過。同樣的輸入再送一次，結果不會變。
+- `content_filter`、`truncated`（`finish_reason=length`）：1 次就跳過。同樣的輸入再送一次，結果不會變。
 - 其他原因：連續 `SKIP_AFTER_ROUNDS` 輪才跳過。「連續」由「成功就刪列」保證。
 - 換 model 會重試：紀錄的 model 與這次要用的不同時不跳過；再失敗時計數歸 1。
 - 400 升級的觸發篇（`record(..., escalated=True)`，`scripts/_claude_cli.record_escalation`）：計數
@@ -60,8 +65,10 @@ CONTENT_FILTER = "content_filter"  # 供應商內容審查（400 Content Exists 
 TRUNCATED = "truncated"            # finish_reason=length
 EMPTY = "empty"                    # 成功結束卻沒有 content
 BAD_REQUEST = "bad_request"        # 其他 400／422，多半是單篇輸入造成
-REASONS = frozenset({UNPARSEABLE, CONTENT_FILTER, TRUNCATED, EMPTY, BAD_REQUEST})
+TIMEOUT_STREAMED = "timeout_streamed"  # 已吐字後才碰到總期限（期限型截斷；可重放，見模組 docstring）
+REASONS = frozenset({UNPARSEABLE, CONTENT_FILTER, TRUNCATED, EMPTY, BAD_REQUEST, TIMEOUT_STREAMED})
 
+# TIMEOUT_STREAMED 刻意不在這裡：期限型截斷可能只是供應商暫時變慢，要連續 3 輪才跳過。
 SKIP_IMMEDIATELY = frozenset({CONTENT_FILTER, TRUNCATED})
 SKIP_AFTER_ROUNDS = 3
 

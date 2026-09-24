@@ -315,6 +315,28 @@ class _HttpCase(unittest.IsolatedAsyncioTestCase):
         return [c async for c in llm.stream_completion("問題", **kw)]
 
 
+class HttpInputSanitizeTests(_HttpCase):
+    """線上 HTTP 路徑同樣清掉 NUL／孤立代理字元（prompt 與 system 都要）；清不到的編碼錯誤是 bad_request。"""
+
+    async def test_prompt_and_system_are_sanitized(self):
+        self.install(lambda req: httpx.Response(200, content=_ok("好")))
+        chunks = [c async for c in llm.stream_completion(
+            "問\x00題\ud800", model="deepseek-flash", system="系\x00統", max_tokens=64, task="ask_answer")]
+        self.assertEqual(chunks, ["好"])
+        self.assertNotIn(b"\x00", self.requests[0].content)
+        body = json.loads(self.requests[0].content)
+        self.assertEqual(body["messages"], [{"role": "system", "content": "系統"},
+                                            {"role": "user", "content": "問題\ufffd"}])
+
+    async def test_unicode_error_is_bad_request_not_config(self):
+        self.install(lambda req: httpx.Response(200, content=_ok("好")))
+        with mock.patch.object(lh, "sanitize", lambda text: text):
+            with self.assertRaises(llm.LLMUnavailableError) as cm:
+                await self.collect(system="孤立\ud800代理")  # 繞過 sanitize：編碼時才失敗
+        self.assertEqual(cm.exception.kind, lh.BAD_REQUEST)
+        self.assertEqual(self.requests, [])
+
+
 class HttpDispatchTests(_HttpCase):
     async def test_whitelisted_model_goes_http_not_cli(self):
         self.install(lambda req: httpx.Response(200, content=_ok("台積電", "展望")))

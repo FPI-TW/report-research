@@ -469,7 +469,7 @@ class RetryClassificationTests(unittest.TestCase):
 
     def test_every_http_kind_is_not_retryable(self):
         for kind in (lh.CONTENT_FILTER, lh.BAD_REQUEST, lh.OVERLOADED, lh.NETWORK, lh.TIMEOUT,
-                     lh.TRUNCATED, lh.EMPTY, lh.OTHER):
+                     lh.TRUNCATED, lh.TIMEOUT_STREAMED, lh.EMPTY, lh.OTHER):
             with self.subTest(kind=kind):
                 self.assertFalse(cc.is_retryable(cc.CliResult(None, lh.error_string(kind, "x"))))
 
@@ -477,6 +477,7 @@ class RetryClassificationTests(unittest.TestCase):
         expected = {
             lh.CONTENT_FILTER: lf.CONTENT_FILTER,
             lh.TRUNCATED: lf.TRUNCATED,
+            lh.TIMEOUT_STREAMED: lf.TIMEOUT_STREAMED,  # 期限型截斷：記，但不併進 truncated
             lh.EMPTY: lf.EMPTY,
             lh.BAD_REQUEST: lf.BAD_REQUEST,
             lh.TIMEOUT: None,
@@ -816,6 +817,44 @@ class BadRequestEscalationTests(_HttpCase):
         res = self.call_for("h1")
         self.assertTrue(res.error.startswith("API[bad_request]"))
 
+    def test_no_escalation_once_any_call_succeeded(self):
+        """本行程內有任何一次 HTTP 呼叫成功過：請求格式與設定沒問題，之後相同的 400 是單篇問題，不升級。"""
+        bad = lambda req: httpx.Response(400, json={"error": {"message": "Invalid request: bad field"}})  # noqa: E731
+        self.install([lambda req: httpx.Response(200, content=_ok("ok")), bad, bad, bad])
+        self.assertEqual(self.call_for("h0").text, "ok")
+        for h in ("h1", "h2", "h3"):
+            res = self.call_for(h)
+            self.assertTrue(res.error.startswith("API[bad_request]"), res.error)
+
+    def test_success_flag_is_reset_between_processes(self):
+        """`_reset_state`（測試用；等同新行程）連成功紀錄一起清：清掉後照常升級。"""
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        self.call_for("h0")
+        cc._reset_state()
+        self._bad()
+        self.call_for("h1")
+        with self.assertRaises(cc.BadRequestEscalation):
+            self.call_for("h2")
+
+    def test_failed_calls_do_not_count_as_success(self):
+        """審查、截斷之類「有回應但失敗」不算成功：之後的相同 400 照樣升級。"""
+        bad = lambda req: httpx.Response(400, json={"error": {"message": "Invalid request: bad field"}})  # noqa: E731
+        self.install([_content_filter, bad, bad])
+        self.call_for("h0")
+        self.call_for("h1")
+        with self.assertRaises(cc.BadRequestEscalation):
+            self.call_for("h2")
+
+    def test_local_encoding_failure_never_escalates(self):
+        """本機編碼就失敗（孤立代理字元繞過 sanitize）：單篇 bad_request，status 為 None、不參與升級、不中止。"""
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        with mock.patch.object(lh, "sanitize", lambda text: text):
+            for h in ("h1", "h2", "h3"):
+                res = self.call(prompt="孤立\ud800代理", meta={"task": "summary", "file_hash": h, "report_id": None})
+                self.assertTrue(res.error.startswith("API[bad_request]"), res.error)
+                self.assertEqual(cc.failure_kind(res), lf.BAD_REQUEST)
+        self.assertEqual(self.requests, [], "沒送出任何請求")
+
     def test_calls_without_file_hash_never_escalate(self):
         """簡報一天一次、沒有單篇身分：不參與升級。"""
         self._bad()
@@ -927,6 +966,36 @@ USAGE_FIELDS = {
     "ts", "task", "file_hash", "report_id", "backend", "model_req", "model_resp", "prompt_sha256",
     "tokens", "finish_reason", "kind", "attempts", "ttft_ms", "total_ms",
 }
+
+
+class InputSanitizeTests(_HttpCase):
+    """HTTP 路徑的輸入清理（低1、低2）：NUL 去掉、孤立代理字元換 U+FFFD，與 CLI 路徑（argv 去 NUL）一致；
+    清理不到的編碼錯誤也只是單篇失敗，不是 CONFIG 整批中止。"""
+
+    def test_nul_and_lone_surrogate_are_cleaned_before_sending(self):
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        res = self.call(prompt="研報\x00內文\ud800結尾")
+        self.assertEqual(res.text, "ok")
+        self.assertNotIn(b"\x00", self.requests[0].content)
+        self.assertNotIn(b"\\u0000", self.requests[0].content)
+        self.assertEqual(self.body()["messages"][-1]["content"], "研報內文\ufffd結尾")
+
+    def test_unicode_error_is_bad_request_not_config(self):
+        """`UnicodeError` 歸 bad_request（單篇、記跳過名單），不是 CONFIG（整批 rc=2、不留紀錄）。"""
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        with mock.patch.object(lh, "sanitize", lambda text: text):
+            res = self.call(prompt="孤立\ud800代理")
+        self.assertIsNone(res.text)
+        self.assertTrue(res.error.startswith("API[bad_request]"), res.error)
+        self.assertIn("UnicodeEncodeError", res.error)
+
+    def test_invalid_url_is_still_config(self):
+        """組請求時的 InvalidURL 仍是設定錯（CONFIG、整批中止）：只有 UnicodeError 改歸單篇。"""
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        with mock.patch.object(httpx.Client, "build_request", side_effect=httpx.InvalidURL("bad url")):
+            with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+                self.call()
+        self.assertTrue(str(ctx.exception).startswith("API[config]"), str(ctx.exception))
 
 
 class UsageLogTests(_HttpCase):

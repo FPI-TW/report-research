@@ -403,6 +403,152 @@ class WorklistSkipTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(select.rstrip().endswith("r.file_hash"))
 
 
+class TitleExcludeHashesTests(unittest.IsolatedAsyncioTestCase):
+    """審查 L2：sync 的標題積壓段排掉本輪 4b 剛打過的新研報，失敗才不會一輪記兩次。"""
+
+    def test_sql_excludes_only_when_requested(self):
+        plain = gt.build_candidates_sql(by_hashes=False, skip_blocked=True, limit=True)
+        self.assertNotIn(":exclude", plain)
+        sql = gt.build_candidates_sql(by_hashes=False, skip_blocked=True, limit=True, exclude=True)
+        self.assertIn("AND NOT (r.file_hash = ANY(:exclude))", sql)
+        self.assertLess(sql.index(":exclude"), sql.index("ORDER BY"))
+
+    async def _fetch(self, exclude_hashes):
+        sess = _FakeSession([])
+        with mock.patch.object(gt, "SessionFactory", lambda: sess):
+            await gt.fetch_candidates(60, None, skip_blocked=False, exclude_hashes=exclude_hashes)
+        return sess.calls[0]
+
+    async def test_empty_or_none_adds_no_condition(self):
+        for excl in (None, []):
+            with self.subTest(excl=excl):
+                sql, params = await self._fetch(excl)
+                self.assertNotIn(":exclude", sql)
+                self.assertNotIn("exclude", params)
+
+    async def test_exclude_list_is_bound(self):
+        sql, params = await self._fetch(["h1", "h2"])
+        self.assertIn("ANY(:exclude)", sql)
+        self.assertEqual(params["exclude"], ["h1", "h2"])
+
+
+class _Recorder:
+    """main() 接線測試用的假 recorder（只看有沒有被傳進逐篇函式）。"""
+
+
+def _bound(fn, call) -> dict:
+    """把 mock 收到的呼叫依真函式簽章綁回參數名，位置或關鍵字都能斷言。"""
+    import inspect
+
+    bound = inspect.signature(fn).bind(*call.args, **call.kwargs)
+    bound.apply_defaults()
+    return dict(bound.arguments)
+
+
+class MainWiringTests(unittest.IsolatedAsyncioTestCase):
+    """審查 L3：四支批次 main() 的接線——跳過參數、--retry-blocked、recorder 傳遞。
+
+    不連 DB：open_recorder、候選查詢與逐篇函式全部 patch。open_recorder 回 None
+    （表不存在、DB 掛）時一律不套跳過條件，行為退回沒有這張表之前。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.fail_log = Path(self._tmp.name) / "fail.log"
+
+    # ── 標題、摘要：SQL 端跳過（fetch_candidates 的 skip_blocked） ──
+
+    async def _run_sql_side(self, mod, one_name, recorder, retry_blocked, **extra):
+        fetch = mock.AsyncMock(return_value=[("rid", "f.pdf", "內文", "h1")])
+        one = mock.AsyncMock()
+        opener = mock.AsyncMock(return_value=recorder)
+        with mock.patch.object(mod, "FAIL_LOG", self.fail_log), \
+             mock.patch.object(mod.llm_failures, "open_recorder", opener), \
+             mock.patch.object(mod, "fetch_candidates", fetch), \
+             mock.patch.object(mod, one_name, one), \
+             redirect_stderr(io.StringIO()), mock.patch("builtins.print"):
+            await mod.main(2, None, 3000, None, retry_blocked, **extra)
+        return opener, fetch, one
+
+    async def test_titles_and_summaries(self):
+        cases = [
+            # (recorder, retry_blocked, 期望 skip_blocked)
+            (_Recorder(), False, True),
+            (_Recorder(), True, False),
+            (None, False, False),
+            (None, True, False),
+        ]
+        for mod, one_name, task in ((gt, "title_one", lf.TASK_TITLE), (gs, "summarize_one", lf.TASK_SUMMARY)):
+            for rec, retry, want_skip in cases:
+                with self.subTest(mod=mod.__name__, recorder=rec is not None, retry=retry):
+                    opener, fetch, one = await self._run_sql_side(mod, one_name, rec, retry)
+                    self.assertEqual(opener.await_args.args[:2], (task, mod.MODEL))
+                    self.assertIs(_bound(mod.fetch_candidates, fetch.await_args)["skip_blocked"], want_skip)
+                    self.assertEqual(one.await_count, 1)
+                    self.assertIs(one.await_args.kwargs["recorder"], rec)
+                    self.assertEqual(one.await_args.kwargs["file_hash"], "h1")
+
+    async def test_titles_pass_exclude_hashes(self):
+        excl = Path(self._tmp.name) / "excl.txt"
+        excl.write_text("hA\n\nhB\n", encoding="utf-8")
+        _, fetch, _ = await self._run_sql_side(gt, "title_one", _Recorder(), False, exclude_hashes_file=str(excl))
+        self.assertEqual(_bound(gt.fetch_candidates, fetch.await_args)["exclude_hashes"], ["hA", "hB"])
+        _, fetch, _ = await self._run_sql_side(gt, "title_one", _Recorder(), False)
+        self.assertIsNone(_bound(gt.fetch_candidates, fetch.await_args)["exclude_hashes"])
+
+    # ── 摘錄、訊號：Python 端跳過（build_worklist 的 skip_model） ──
+
+    def _takeaway_args(self, **kw):
+        base = dict(hashes_file=None, model="m", retry_blocked=False, reextract=False, since_days=90,
+                    dry_run=False, limit=None, workers=1, excerpt=24000)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def _signal_args(self, **kw):
+        base = dict(model="m", retry_blocked=False, reextract=False, min_brokers=3, min_reports=5,
+                    top_n=50, dry_run=False, limit=None, workers=1, excerpt=16000)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    async def _run_py_side(self, mod, args, recorder, worklist_ret):
+        build = mock.AsyncMock(return_value=worklist_ret)
+        one = mock.AsyncMock()
+        opener = mock.AsyncMock(return_value=recorder)
+        with mock.patch.object(mod, "FAIL_LOG", self.fail_log), \
+             mock.patch.object(mod.llm_failures, "open_recorder", opener), \
+             mock.patch.object(mod, "build_worklist", build), \
+             mock.patch.object(mod, "extract_one", one), \
+             redirect_stderr(io.StringIO()), mock.patch("builtins.print"):
+            await mod.main(args)
+        return opener, build, one
+
+    async def test_takeaways_and_signals(self):
+        item = SimpleNamespace(file_hash="h1")
+        cases = [
+            # (recorder, retry_blocked, reextract, 期望 skip_model)
+            (_Recorder(), False, False, "m"),
+            (_Recorder(), True, False, None),
+            (_Recorder(), False, True, None),  # 審查 L4：--reextract 隱含 --retry-blocked
+            (None, False, False, None),
+        ]
+        runs = (
+            (et, self._takeaway_args, (1, [item]), lf.TASK_TAKEAWAY),
+            (es, self._signal_args, ([("2330", "TW", 5, 9)], [item]), lf.TASK_SIGNAL),
+        )
+        for mod, make_args, ret, task in runs:
+            for rec, retry, reextract, want in cases:
+                with self.subTest(mod=mod.__name__, recorder=rec is not None, retry=retry, reextract=reextract):
+                    args = make_args(retry_blocked=retry, reextract=reextract)
+                    opener, build, one = await self._run_py_side(mod, args, rec, ret)
+                    self.assertEqual(opener.await_args.args[:2], (task, "m"))
+                    bound = _bound(mod.build_worklist, build.await_args)
+                    self.assertEqual(bound["skip_model"], want)
+                    self.assertIs(bound["reextract"], reextract)
+                    self.assertEqual(one.await_count, 1)
+                    self.assertIs(one.await_args.kwargs["recorder"], rec)
+
+
 class LlmBlockedListingTests(unittest.TestCase):
     def _row(self, task, reason, n, model="m"):
         ts = datetime(2026, 9, 24, 8, 0)

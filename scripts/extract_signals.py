@@ -357,7 +357,11 @@ async def extract_one(
 async def main(args) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     recorder = await llm_failures.open_recorder(llm_failures.TASK_SIGNAL, args.model, SessionFactory)
-    skip_model = args.model if recorder is not None and not args.retry_blocked else None
+    # --reextract 隱含 --retry-blocked：跳過鍵只看 model、不看 prompt／EXTRACTION_VERSION，
+    # 改了 prompt 或版本而強制重跑時，舊 prompt 下累計的失敗不該繼續把研報擋在外面。
+    skip_model = (
+        args.model if recorder is not None and not (args.retry_blocked or args.reextract) else None
+    )
     subset, worklist = await build_worklist(
         args.min_brokers, args.min_reports, args.top_n, args.reextract, skip_model
     )
@@ -408,9 +412,11 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=None, help="最多擷取幾份報告（試跑用）")
     ap.add_argument("--excerpt", type=int, default=16000, help="餵給 LLM 的內文字數上限")
     ap.add_argument("--model", default=SIGNAL_MODEL_DEFAULT)
-    ap.add_argument("--reextract", action="store_true", help="忽略 checkpoint，強制重跑")
+    ap.add_argument("--reextract", action="store_true",
+                    help="忽略 checkpoint，強制重跑（隱含 --retry-blocked）")
     ap.add_argument("--retry-blocked", action="store_true",
-                    help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打")
+                    help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打；"
+                         "改 prompt 後要加")
     ap.add_argument("--dry-run", action="store_true", help="只印子集與工作項數，不呼叫 LLM")
     # --dry-run 也一起擋，理由同 extract_takeaways.py：鎖的涵蓋範圍不隨旗標而變。
     with claude_cli_lock_or_exit("extract_signals"):

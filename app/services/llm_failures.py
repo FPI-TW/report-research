@@ -16,6 +16,10 @@
 - 換 model 會重試：紀錄的 model 與這次要用的不同時不跳過；再失敗時計數歸 1。
 - 手動解除：各批次的 `--retry-blocked`，或直接 DELETE 該列。
 
+**跳過鍵只看 model，不看 prompt 或 `EXTRACTION_VERSION`。** 改了 prompt（或解析規則）
+之後，舊 prompt 下累計的失敗仍會把研報擋在外面——**改 prompt 後要加 `--retry-blocked`**
+重跑一次。摘錄與訊號的 `--reextract` 隱含 `--retry-blocked`（強制重跑本來就是要重打）。
+
 以 `file_hash` 為鍵，不用 `report_id`：重新 ingest 後 `report_id` 會換，行內標註時
 研報也還沒有 `report_id`。
 

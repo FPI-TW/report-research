@@ -582,11 +582,19 @@ fi
 #
 #    排在最後：訊號的時效性較高、簡報有「當日」期限，而這段是沒有期限的長工。
 #    三者搶同一支 claude CLI，先跑的那個吃掉的是後面那個的預算。
+#
+#    **排除本輪 4b 已打過的新研報**（--exclude-hashes-file）：積壓段依 report_date DESC 取，
+#    本輪新研報恰好排最前面；4b 失敗的那篇會被這段再打一次，失敗在跳過名單
+#    （research.llm_task_failure）裡一輪記兩次，「連續 3 輪才跳過」實際約 2 輪就跳。
+#    它下一輪就不在 --hashes-file 裡了，自然回到積壓段，不會漏。
 TITLE_BACKLOG_LIMIT=${SYNC_TITLE_BACKLOG_LIMIT:-60}
+TITLE_BACKLOG_EXCLUDE=""
+if [ -s "$HASHES" ]; then TITLE_BACKLOG_EXCLUDE="$HASHES"; fi
 log "補顯示標題的歷史積壓（每輪最多 ${TITLE_BACKLOG_LIMIT} 份，新→舊；冪等，無缺值即 no-op）"
 TITLE_BACKLOG_RC=0
 nice -n 19 ionice -c3 "$UV" run python scripts/generate_titles.py \
   --limit "$TITLE_BACKLOG_LIMIT" \
+  ${TITLE_BACKLOG_EXCLUDE:+--exclude-hashes-file "$TITLE_BACKLOG_EXCLUDE"} \
   ${SYNC_TITLE_WORKERS:+--workers "$SYNC_TITLE_WORKERS"} >>"$LOG" 2>&1 \
   || TITLE_BACKLOG_RC=$?
 if [ "$TITLE_BACKLOG_RC" -ne 0 ]; then

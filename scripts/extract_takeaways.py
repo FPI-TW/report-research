@@ -642,7 +642,11 @@ async def main(args) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     hashes = read_hashes_file(args.hashes_file) if args.hashes_file else None
     recorder = await llm_failures.open_recorder(llm_failures.TASK_TAKEAWAY, args.model, SessionFactory)
-    skip_model = args.model if recorder is not None and not args.retry_blocked else None
+    # --reextract 隱含 --retry-blocked：跳過鍵只看 model、不看 prompt／EXTRACTION_VERSION，
+    # 改了 prompt 或版本而強制重跑時，舊 prompt 下累計的失敗不該繼續把研報擋在外面。
+    skip_model = (
+        args.model if recorder is not None and not (args.retry_blocked or args.reextract) else None
+    )
     scanned, worklist = await build_worklist(args.since_days, args.reextract, hashes, skip_model)
     scope = f"本輪 {len(hashes)} 個 file_hash" if hashes is not None else f"近 {args.since_days} 天"
     print(
@@ -694,9 +698,11 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=None, help="最多擷取幾篇（試跑用）")
     ap.add_argument("--excerpt", type=int, default=24000, help="餵給 LLM 的正典文字上限")
     ap.add_argument("--model", default=TAKEAWAY_MODEL_DEFAULT)
-    ap.add_argument("--reextract", action="store_true", help="忽略 checkpoint，強制重跑")
+    ap.add_argument("--reextract", action="store_true",
+                    help="忽略 checkpoint，強制重跑（隱含 --retry-blocked）")
     ap.add_argument("--retry-blocked", action="store_true",
-                    help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打")
+                    help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打；"
+                         "改 prompt 後要加")
     ap.add_argument("--dry-run", action="store_true", help="只印工作集大小，不呼叫 LLM")
     # --dry-run 也一起擋：鎖的涵蓋範圍若隨旗標而變，日後有人在「不呼叫 LLM」的路徑上
     # 加了一個 LLM 呼叫，就會出現一個沒人發現的洞。要在批次跑到一半時查工作集，

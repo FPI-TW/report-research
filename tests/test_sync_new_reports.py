@@ -165,6 +165,16 @@ class SyncScriptBacklogStepsTests(unittest.TestCase):
         self.assertLess(gate_else, self._invocations("extract_signals.py")[0])
         self.assertLess(gate_else, self._invocations("generate_titles.py")[1])
 
+    def test_title_backlog_excludes_this_rounds_hashes(self):
+        """審查 L2：積壓段依 report_date DESC 取，本輪新研報恰好排最前；不排除的話 4b
+        失敗的那篇同一輪會被打兩次、跳過名單記兩次，「連續 3 輪」實際約 2 輪就跳。
+
+        只在 $HASHES 非空時才帶（空檔或不存在時 read_hashes_file 沒東西可排）。"""
+        call = self._title_backlog_call()
+        self.assertIn('--exclude-hashes-file "$TITLE_BACKLOG_EXCLUDE"', call)
+        self.assertIn('${TITLE_BACKLOG_EXCLUDE:+', call)
+        self.assertIn('if [ -s "$HASHES" ]; then TITLE_BACKLOG_EXCLUDE="$HASHES"; fi', self.src)
+
     def test_title_backlog_failure_is_recorded(self):
         """best-effort 不等於無聲：非零退出要留一筆給 /api/progress 的 unit_failures。"""
         self.assertIn('record_unit_failure "generate_titles_backlog"', self.src)

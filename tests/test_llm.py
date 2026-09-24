@@ -121,5 +121,67 @@ class RunAttemptInitToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks, ["ok"])
 
 
+# 假 claude：argv[1] 決定行為。
+#   partial  先吐一段字、再卡住（模擬串到一半被逾時截斷）
+#   silent   什麼都不吐就卡住（模擬沒吐字就逾時）
+#   full     吐字後送 result（正常結束）
+#   overload result 事件帶 is_error（模擬 529）
+_FAKE_BEHAVIOR_SCRIPT = r'''
+import sys, json, time
+sys.stdin.buffer.read()
+mode = sys.argv[1]
+def delta(t):
+    return json.dumps({"type": "stream_event",
+                       "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": t}}})
+if mode in ("partial", "full"):
+    sys.stdout.write(delta('{"statements": ["半') + "\n"); sys.stdout.flush()
+if mode == "full":
+    sys.stdout.write(json.dumps({"type": "result"}) + "\n")
+elif mode == "overload":
+    sys.stdout.write(json.dumps({"type": "result", "is_error": True, "result": "API Error: 529 Overloaded"}) + "\n")
+else:
+    time.sleep(30)
+'''
+
+
+class StreamCompletionSignalTests(unittest.IsolatedAsyncioTestCase):
+    """截斷與失敗原因要讓呼叫端拿得到：CLI 逾時對已吐字 fail-open、不拋例外，
+    沒有 meta 就分不出「完整回應」與「被砍掉一半」。"""
+
+    async def _run(self, mode: str, *, timeout: float = 5.0, meta: dict | None = None):
+        from unittest import mock
+
+        cmd = [sys.executable, "-c", _FAKE_BEHAVIOR_SCRIPT, mode]
+        with mock.patch.object(llm, "_build_cmd", lambda *a, **k: cmd):
+            return [c async for c in llm.stream_completion("x", timeout=timeout, retries=0, meta=meta)]
+
+    async def test_partial_output_cut_by_timeout_is_marked_truncated(self):
+        meta: dict = {}
+        chunks = await self._run("partial", timeout=1.0, meta=meta)
+        self.assertEqual("".join(chunks), '{"statements": ["半')
+        self.assertIs(meta["truncated"], True)
+
+    async def test_normal_completion_is_not_truncated(self):
+        meta: dict = {}
+        await self._run("full", meta=meta)
+        self.assertIs(meta["truncated"], False)
+
+    async def test_meta_is_optional(self):
+        self.assertEqual("".join(await self._run("full")), '{"statements": ["半')
+
+    async def test_silent_timeout_reason(self):
+        with self.assertRaises(llm.LLMUnavailableError) as cm:
+            await self._run("silent", timeout=1.0)
+        self.assertEqual(cm.exception.reason, llm.UNAVAILABLE_TIMEOUT)
+
+    async def test_api_error_reason(self):
+        with self.assertRaises(llm.LLMUnavailableError) as cm:
+            await self._run("overload")
+        self.assertEqual(cm.exception.reason, llm.UNAVAILABLE_API_ERROR)
+
+    def test_reason_defaults_to_none_for_direct_construction(self):
+        self.assertIsNone(llm.LLMUnavailableError("529").reason)
+
+
 if __name__ == "__main__":
     unittest.main()

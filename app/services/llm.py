@@ -233,17 +233,33 @@ def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
     return cmd
 
 
+# LLMUnavailableError.reason 的詞彙（最後一次嘗試為什麼失敗）。
+UNAVAILABLE_API_ERROR = "api_error"  # API 快速回錯（529 等），已依 retries 重試
+UNAVAILABLE_TIMEOUT = "timeout"      # 一個字都沒吐就逾時（不重試）
+UNAVAILABLE_EMPTY = "empty"          # 進程結束卻沒有任何文字
+
+
 class LLMUnavailableError(RuntimeError):
-    """claude CLI 多次重試後仍無有效回應（多為 Anthropic API 過載 529）。"""
+    """claude CLI 多次重試後仍無有效回應（多為 Anthropic API 過載 529）。
+
+    `reason` 是最後一次嘗試的失敗原因（`UNAVAILABLE_*`）；外部直接建構時為 None。
+    呼叫端靠它分辨「服務回錯」與「沒吐字就逾時」，不必解析訊息字串。
+    """
+
+    def __init__(self, *args, reason: str | None = None) -> None:
+        super().__init__(*args)
+        self.reason = reason
 
 
 async def _run_attempt(
-    cmd: list[str], prompt: str, timeout: float, allow_web: bool | None = None
+    cmd: list[str], prompt: str, timeout: float, allow_web: bool | None = None,
+    meta: dict | None = None,
 ) -> AsyncIterator[str]:
     """跑一次 claude 子程序並串流文字。
 
     allow_web 非 None 時，比對 `system/init` 事件回報的工具集與預期，不符記 WARNING
     （fail-open，照常串流）；None＝不比對（直接跑假子程序的測試）。
+    meta 給定時，結束後寫入 `meta["timed_out"]`（本次是否撞到逾時）。
 
     送出值有三類：
     - 一般文字 chunk（text_delta，逐段；或無 text_delta 時於結尾補一段 fallback）。
@@ -306,6 +322,8 @@ async def _run_attempt(
                 await proc.wait()
             except Exception:
                 pass
+        if meta is not None:
+            meta["timed_out"] = timed_out
 
     if streamed_any:
         return  # 已逐段送出真實文字，最佳路徑
@@ -319,11 +337,11 @@ async def _run_attempt(
     #   api_error = API 快速回錯（如 529 Overloaded）→ 短暫退避後重試多半會過
     #   timeout   = API 無回應拖到逾時 → 再等一輪無益，快速失敗
     if result_error or looks_like_api_error(candidate):
-        reason = "api_error"
+        reason = UNAVAILABLE_API_ERROR
     elif timed_out:
-        reason = "timeout"
+        reason = UNAVAILABLE_TIMEOUT
     else:
-        reason = "empty"
+        reason = UNAVAILABLE_EMPTY
     yield ("__error__", candidate, reason)
 
 
@@ -335,6 +353,7 @@ async def stream_completion(
     timeout: float = 120.0,
     allow_web: bool = False,
     retries: int = 2,
+    meta: dict | None = None,
 ) -> AsyncIterator[str]:
     """串流呼叫 claude CLI，逐段 yield 回答文字。
 
@@ -346,16 +365,23 @@ async def stream_completion(
     - 串流期間有任何 text_delta → 直接逐段送出（最佳路徑）。
     - 一段 text_delta 都沒有時，依序以 result 文字 → 最後一則 assistant 文字 fallback。
     - fallback 是 API 錯誤（如 529 Overloaded）或全空 → 短暫退避後重試，最多 retries 次；
-      仍失敗則拋 LLMUnavailableError，由上層回友善提示。
+      仍失敗則拋 LLMUnavailableError（`reason` 帶最後一次的原因），由上層回友善提示。
+
+    meta（選填、呼叫端給的空 dict）：串流正常結束後寫入 `meta["truncated"]`——成功的那次
+    嘗試是否撞到逾時（已吐的字照常送出，但後面被砍掉了）。這是 CLI 路徑唯一的截斷訊號：
+    逾時對已串流文字 fail-open，不拋例外。每次嘗試各自計時，前面 529 重試花掉的時間不算。
+    撞到逾時但 result 事件剛好已到的邊界情況不會發生（讀到 result 就結束讀取）。
     """
     prompt = prompt.replace("\x00", "")
     cmd = _build_cmd(model, system, allow_web)
 
     last_detail: str | None = None
+    reason = ""
     for attempt in range(retries + 1):
         failed = False
         reason = ""
-        async for chunk in _run_attempt(cmd, prompt, timeout, allow_web):
+        attempt_meta: dict = {}
+        async for chunk in _run_attempt(cmd, prompt, timeout, allow_web, attempt_meta):
             if isinstance(chunk, tuple):  # ("__error__", detail, reason)
                 failed = True
                 last_detail = chunk[1]
@@ -363,11 +389,13 @@ async def stream_completion(
                 break
             yield chunk
         if not failed:
+            if meta is not None:
+                meta["truncated"] = bool(attempt_meta.get("timed_out"))
             return  # 本次有有效輸出（串流或 fallback），完成
         # 只對「快速 API 錯誤（529 等）」重試；逾時=API 無回應，再等無益→快速失敗
-        if reason == "api_error" and attempt < retries:
+        if reason == UNAVAILABLE_API_ERROR and attempt < retries:
             await asyncio.sleep(1.5 * (attempt + 1))
             continue
         break
 
-    raise LLMUnavailableError(last_detail or "claude 無有效回應")
+    raise LLMUnavailableError(last_detail or "claude 無有效回應", reason=reason or None)

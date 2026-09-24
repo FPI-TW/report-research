@@ -34,6 +34,14 @@ class BuildCliArgsTests(unittest.TestCase):
         self.assertIn("--setting-sources", args)
         self.assertEqual(args[args.index("--setting-sources") + 1], "")
 
+    def test_disables_all_tools(self):
+        """批次只要模型回文字，不開任何工具；旗標是可變長度選項，必須在 prompt 之後、argv 最後。"""
+        args = cc.build_cli_args("hello", "m")
+        self.assertEqual(args[-2:], ["--disallowedTools", "*"])
+        self.assertEqual(args[2], "hello")
+        self.assertNotIn("--tools", args)
+        self.assertNotIn("--allowedTools", args)
+
     def test_nul_is_stripped(self):
         """POSIX argv 不可含 NUL，否則 subprocess 直接拋 ValueError，該檔永久失敗。"""
         self.assertEqual(cc.build_cli_args("ab\x00cd", "m")[2], "abcd")

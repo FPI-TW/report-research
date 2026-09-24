@@ -78,9 +78,13 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
 
     輸出格式用 CLI 預設的純文字（各家 parser 直接吃）：**不要加
     `--output-format json`**，那會把回應包進一層 CLI envelope，解析會抓到外層物件。
+
+    `--disallowedTools "*"`＝不開任何工具：批次只要模型讀 prompt 回文字，用不到讀檔、
+    執行指令或網搜；工具開著時研報內文裡的指示有機會驅動模型去讀 cwd 的檔。它是可變
+    長度選項，會吞掉後面的位置引數，所以必須放在 prompt 之後、argv 的最後。
     """
     prompt = prompt.replace("\x00", "")
-    return ["claude", "-p", prompt, "--model", model, "--setting-sources", ""]
+    return ["claude", "-p", prompt, "--model", model, "--setting-sources", "", "--disallowedTools", "*"]
 
 
 def run_claude(

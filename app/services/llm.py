@@ -6,6 +6,9 @@
 - `--system-prompt`：**取代**預設系統提示 → 不載入 superpowers/skills/全域 CLAUDE.md。
 - `--setting-sources ''`：排除使用者/專案設定（含 SessionStart hooks）。
 - `cwd="/tmp"`：避開專案 CLAUDE.md（同 tag_all_cli）。
+- 工具：開網搜時 `--tools WebSearch --allowedTools WebSearch`，不開時 `--disallowedTools "*"`。
+  `--allowedTools` 只管「免核可」，不限縮可用工具；單用它時 Read、Bash 等內建工具仍在
+  模型手上（headless 下讀 cwd 的檔免核可）。要限縮得靠 `--tools`／`--disallowedTools`。
 
 stream-json 事件：只取 `content_block_delta` 內 `delta.type == "text_delta"` 的文字；
 thinking_delta 等一律忽略。以 `result` 事件或進程結束為終點。
@@ -165,7 +168,11 @@ def claude_cli_path() -> str | None:
 
 
 def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
-    """組 claude CLI headless 串流指令；allow_web 時加 WebSearch 內建工具。"""
+    """組 claude CLI headless 串流指令；allow_web 時只開 WebSearch，否則不開任何工具。
+
+    `--tools`／`--allowedTools`／`--disallowedTools` 都是可變長度選項，會吞掉後面直到下一個
+    `--` 選項為止的引數；prompt 走 stdin 所以不受影響，但不要在它們後面接位置引數。
+    """
     cmd = [
         CLAUDE_BIN,
         "-p",
@@ -179,7 +186,12 @@ def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
         "--include-partial-messages",
     ]
     if allow_web:
-        cmd += ["--allowedTools", "WebSearch"]
+        # --tools 把可用工具集縮到只剩 WebSearch；--allowedTools 讓它免核可（headless 無人核可）。
+        cmd += ["--tools", "WebSearch", "--allowedTools", "WebSearch"]
+    else:
+        # CLI 線上文件寫明 "*" 移除所有工具。不用 `--tools ""`：空字串引數與「沒給值」在
+        # argv 上難以分辨，而線上 CLI reference（2026-09-23 查）未寫明它的語意。
+        cmd += ["--disallowedTools", "*"]
     if system:
         cmd += ["--system-prompt", system.replace("\x00", "")]
     return cmd

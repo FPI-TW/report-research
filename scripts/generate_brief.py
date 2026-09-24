@@ -71,9 +71,10 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
     `--setting-sources ""`＝不載入任何 settings 來源，連帶略過全域 hooks/plugins/
     CLAUDE.md——每次冷啟動載入它們正是磁碟小檔 I/O 的主因。輸出用 CLI 預設純文字：
     **不要加 `--output-format json`**，那會把回應包進一層 envelope。
+    `--disallowedTools "*"` 不開任何工具，理由與位置限制同 scripts/_claude_cli.py。
     """
     return ["claude", "-p", prompt.replace("\x00", ""), "--model", model,
-            "--setting-sources", ""]
+            "--setting-sources", "", "--disallowedTools", "*"]
 
 
 def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optional[str], Optional[str]]:

@@ -173,6 +173,14 @@ class LabelTests(unittest.TestCase):
 
 # ── 端點 ──────────────────────────────────────────────────────────
 
+class CliArgsTests(unittest.TestCase):
+    def test_disables_all_tools_after_prompt(self):
+        """簡報只要模型回 markdown，不開任何工具；可變長度選項放 argv 最後，不吞 prompt。"""
+        args = generate_brief.build_cli_args("素材", "m")
+        self.assertEqual(args[2], "素材")
+        self.assertEqual(args[-2:], ["--disallowedTools", "*"])
+
+
 class _FakeSession:
     async def __aenter__(self):
         return self

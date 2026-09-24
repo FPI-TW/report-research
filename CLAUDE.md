@@ -73,7 +73,7 @@ uv run python scripts/ingest_all.py
 - 首輪路由順序刻意：確定性 overview（`overview.py`，零 LLM）→ `precheck_route()` 詞表（命中 `time_sensitive` 完全不檢索）→ Haiku 五類分類（`scope_router.py`）與檢索並行、誰先到聽誰。五類與 `decided_by` 全寫進 `qa_log.filters`；fail-open 落點是 `CORPUS_QA`。
 - 網搜每題由使用者決定：`web_on` ＝ 請求的 `web` AND `ASK_ENABLE_WEB`，下游只讀 `web_on`。系統提示與工具授權要一起切（`ask_system_prompt(web)`），逾時只在開網搜時放寬（`ASK_WEB_TIMEOUT`），`qa_log.filters.web` 含 False 也要寫，免責句由 Python 追加（`WEB_ANSWER_DISCLAIMER`），網搜來源不進 evidence ledger。
 - 忠實度抽查在 `done` 後跑背景任務（`answer._spawn_background`），有自己的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是問答抽查的唯一閘門，漏判是靜默的——寧可多抓不可漏抓。監控頁「待複核」門檻 `FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，生產環境檔可能還設著）。
-- `app/services/llm.py` 以 `claude -p --setting-sources '' --output-format stream-json` spawn CLI，開網搜時加 `--allowedTools WebSearch`；只在 API 529 重試；逾時對已串流文字 fail-open。
+- `app/services/llm.py` 以 `claude -p --setting-sources '' --output-format stream-json` spawn CLI，開網搜時加 `--tools WebSearch --allowedTools WebSearch`、不開時 `--disallowedTools "*"`（`--allowedTools` 只管免核可、不限縮工具；批次 `scripts/_claude_cli.py` 與簡報同樣不開任何工具）；只在 API 529 重試；逾時對已串流文字 fail-open。
 
 ### 閱讀頁、雷達、簡報（讀取零 LLM）
 - 閱讀頁（`app/services/reading/`）：正典文字是 `clean_extracted(full_text)`，`text_sha256` 守不變量；錨點有效與否只在後端判（驗章＋`READING_TEXT_MAX_CHARS` 截斷）。PDF 選取走 `@embedpdf/plugin-selection`，`PagePointerProvider` 要在 `Rotate` 之內；複製走 `frontend/src/lib/clipboard.ts`（區網 HTTP 沒有 `navigator.clipboard`）。`/text` 端點、`anchor.py`、`quote_start`／`quote_end` 是刻意留的可逆性，不要清。

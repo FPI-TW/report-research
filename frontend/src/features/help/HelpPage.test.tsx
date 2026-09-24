@@ -22,3 +22,14 @@ test('說明頁描述的是研報閱讀頁，不是已移除的彈出視窗', ()
   expect(screen.queryByText(/彈出視窗/)).toBeNull()
   expect(screen.queryByText(/點視窗外的灰色區域/)).toBeNull()
 })
+
+// DeepSeek 條款要求向終端使用者揭露 AI 生成（遷移 PR-U）：說明頁要列出生成的功能與資料去向。
+test('說明頁揭露 AI 生成內容與資料送往模型供應商', () => {
+  render(<HelpPage />)
+  expect(screen.getByRole('link', { name: 'AI 生成內容與資料處理' })).toHaveAttribute('href', '#ai')
+  const section = document.getElementById('ai')!
+  for (const word of ['DeepSeek', '智能問答', '摘要', '標題', '重點摘錄', '券商觀點', '每日簡報', '可能有誤']) {
+    expect(section.textContent).toContain(word)
+  }
+  expect(section.textContent).toMatch(/送往模型供應商 DeepSeek 處理/)
+})

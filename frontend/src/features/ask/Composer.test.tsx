@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { useState } from 'react'
 import { expect, test, vi, afterEach } from 'vitest'
-import { Composer } from './Composer'
+import { AI_NOTE, Composer } from './Composer'
 import { setWebSearch } from '../../lib/useWebSearch'
 
 function Harness({ onSubmit }: { onSubmit: (q: string) => void }) {
@@ -64,6 +64,17 @@ test('底部變體的免責文案隨開關切換（開啟後點明網路資訊�
   act(() => setWebSearch(true))
   expect(screen.getByText(/非受信任行情來源/)).toBeTruthy()
   setWebSearch(false)
+})
+
+// AI 生成揭露（DeepSeek 遷移 PR-U）：條款要求標示 AI 生成。空狀態的中央輸入框是第一題送出前
+// 唯一看得到的那個，所以兩個變體都要有。
+test.each(['center', 'bottom'] as const)('%s 變體揭露回答由 AI（DeepSeek）生成、可能有誤', (variant) => {
+  setWebSearch(false)
+  render(<Composer value="" onChange={() => {}} onSubmit={() => {}} variant={variant} />)
+  expect(screen.getByText(AI_NOTE)).toBeInTheDocument()
+  expect(AI_NOTE).toMatch(/AI（DeepSeek）/)
+  expect(AI_NOTE).toMatch(/可能有誤/)
+  expect(AI_NOTE).toMatch(/原始研報/)
 })
 
 // ── 換行後的版面（M11）──────────────────────────────────────────────────────

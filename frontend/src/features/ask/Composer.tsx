@@ -11,6 +11,14 @@ import styles from './Composer.module.css'
 // 「捲軸關掉了但內容其實已被 max-height 切掉」——那是完全看不見的截斷。
 const MAX_INPUT_HEIGHT = 140
 
+// AI 生成揭露（DeepSeek 遷移 PR-U）：DeepSeek 條款要求向終端使用者揭露並標示 AI 生成，
+// 所以兩個變體都顯示——空狀態（中央）是第一題送出前唯一看得到的輸入框。
+// 網搜版不寫供應商：網搜仍走另一個模型（`ASK_WEB_MODEL`），寫 DeepSeek 會是錯的。
+export const AI_NOTE =
+  '回答由 AI（DeepSeek）依券商研報內容生成，可能有誤，投資決策請以原始研報與公開資訊為準。'
+export const AI_NOTE_WEB =
+  '回答由 AI 依券商研報與網路公開資訊生成，可能有誤；網路資訊非受信任行情來源，投資決策請以原始研報與官方揭露為準。'
+
 /** 單行文字的高度（px）。
  *
  * `getComputedStyle().lineHeight` 不同引擎回的東西不一樣：瀏覽器多半解析成
@@ -104,13 +112,7 @@ export function Composer({ value, onChange, onSubmit, disabled, onStop, variant 
           </AnimatePresence>
         </Pressable>
       </div>
-      {variant === 'bottom' && (
-        <div className={styles.note}>
-          {web
-            ? '回答由 AI 依券商研報與網路公開資訊生成，網路資訊非受信任行情來源，投資決策請以原始研報與官方揭露為準。'
-            : '回答由 AI 依券商研報內容生成，投資決策請以原始研報與公開資訊為準。'}
-        </div>
-      )}
+      <div className={styles.note}>{web ? AI_NOTE_WEB : AI_NOTE}</div>
     </div>
   )
 }

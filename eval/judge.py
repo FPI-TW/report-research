@@ -12,7 +12,12 @@ import logging
 import os
 import re
 
-from app.services.llm import LLMUnavailableError, stream_completion
+from app.services.llm import (
+    UNAVAILABLE_API_ERROR,
+    UNAVAILABLE_TIMEOUT,
+    LLMUnavailableError,
+    stream_completion,
+)
 from app.services.llm_models import TASK_EVAL_JUDGE, resolve_model
 
 logger = logging.getLogger(__name__)
@@ -43,6 +48,27 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 class JudgeError(Exception):
     """評審回應為空或無法解析為 JSON。"""
+
+
+# 值得重試的 LLM 失敗：再打一次有機會過的那幾種。依 LLMUnavailableError 的既有欄位判斷——
+# - kind：HTTP 路徑的細分類；CLI 路徑一律 other（未分類）。overloaded／network 是暫時性；
+#   timeout（HTTP 首字期限）與 CLI 的逾時同源，是這個重試存在的理由（見 judge_json docstring）。
+# - reason：CLI 時代的三類，兩條路徑都填。只有逾時與 API 快速回錯（529 等）算暫時性；
+#   empty（成功結束卻沒內容）重打多半一樣。
+# 帳號層級（quota／auth／config）、內容審查、單篇輸入錯誤（bad_request）一律不重試：結果不會變，
+# 重打只是再付一次錢（DeepSeek 按量計費）。reason 為 None＝外部直接建構、無從判斷，不重試。
+_RETRYABLE_KINDS = frozenset({"overloaded", "network", "timeout", "other"})
+_RETRYABLE_REASONS = frozenset({UNAVAILABLE_TIMEOUT, UNAVAILABLE_API_ERROR})
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, JudgeError):  # 空回應或截斷 JSON：與逾時同源（見 judge_json docstring）
+        return True
+    return (
+        isinstance(exc, LLMUnavailableError)
+        and exc.kind in _RETRYABLE_KINDS
+        and exc.reason in _RETRYABLE_REASONS
+    )
 
 
 def _loads_robust(raw: str) -> dict | list:
@@ -116,7 +142,8 @@ async def judge_json(
     **逾時是暫時性的，所以要重試**：evaluation 的每一題只要有一次 judge 呼叫失敗，
     整題就記成 error 而被排除在指標之外——n=8 的題集掉 3-5 題，剩下的平均值毫無意義
     （2026-07-29 就是這樣連續兩次跑出不可用的 baseline）。重試次數有界，仍失敗照樣拋，
-    不會把真正的故障吞掉。
+    不會把真正的故障吞掉。只重試暫時性失敗（`_is_retryable`）：餘額不足、金鑰錯、內容審查
+    重打結果不會變，只是再付一次錢。
     """
     last: Exception | None = None
     for attempt in range(retries + 1):
@@ -126,6 +153,8 @@ async def judge_json(
             )
         except (JudgeError, LLMUnavailableError) as e:
             last = e
+            if not _is_retryable(e):
+                raise
             if attempt < retries:
                 logger.warning(
                     "judge 第 %d 次失敗（%s），重試：%s",

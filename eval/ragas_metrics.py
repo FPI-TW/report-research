@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,14 +25,21 @@ from app.services.faithfulness import (  # noqa: F401  (DECOMPOSE_SYS/GROUND_SYS
     GROUND_SYS,
     faithfulness,
 )
+from app.services.judge_schema import (
+    JudgeSchemaError,
+    call_validated,
+    parse_questions,
+    parse_verdicts,
+)
 
 # --- Prompt 常數（評測專用；一律要求 JSON-only 輸出）---
 
 CTX_RELEVANCE_SYS = (
     "你是 RAG 檢索精準度評審。給定『問題』『回答』與一組候選片段，逐一判斷每個片段"
     "是否與回答此問題相關（relevant）——即該片段是否提供了回答問題所需的資訊。\n"
-    '只輸出 JSON，格式：{"verdicts": [{"idx": 0, "relevant": true}, ...]}，'
-    "idx 對應候選片段的 0-based 序號，不要任何其他文字。"
+    '只輸出 JSON，格式：{"verdicts": [{"idx": 1, "relevant": true}, ...]}，'
+    "idx 為候選片段開頭方括號內的編號（從 1 起算，與回答中的引用編號相同），"
+    "每個片段恰好一筆，不要任何其他文字。"
 )
 
 GENQ_SYS = (
@@ -41,7 +49,15 @@ GENQ_SYS = (
 )
 
 # context_precision 的 user payload 版型（理由同 faithfulness.GROUND_PAYLOAD_FMT）。
-CP_ITEM_FMT = "[{i}]\n{c}"
+#
+# **候選片段 1 起編號，並剝掉片段自帶的 `[n] ` 前綴**（審查 M12，schema v2）。v1 是外層
+# `[i]`（0 起）套在已經帶 `[n] 報告：`（1 起，answer.build_context 的編號）的片段外面，
+# 同一個片段身上有兩個差一的號碼，而回答裡的引用 `[n]` 用的是內層那個——judge 只要照
+# 引用編號填 idx，就整體錯位一格，v1 不報錯、只靜默算出錯的 CP。選「統一」而不是只剝
+# 內層：只剝內層仍留下 0 起的外層編號與回答的 1 起引用互相矛盾；統一成片段自己的號碼
+# 之後，候選標籤、回答引用、idx 三者是同一個數字，judge 看哪一個填都對。
+CP_ITEM_FMT = "[{n}] {c}"
+_LEADING_CITE_RE = re.compile(r"^\[\d+\]\s*")
 CP_PAYLOAD_FMT = "問題：{question}\n\n回答：{answer}\n\n候選片段：\n{contexts}"
 
 # 算進 `judge_prompt_sha` 的全部模板：四支系統提示＋兩種 payload 版型。decompose 與
@@ -90,21 +106,34 @@ def _average_precision(rel: list[int]) -> float:
     return score / total_relevant
 
 
+def context_precision_payload(question: str, answer: str, contexts: list[str]) -> str:
+    """CP 的 user payload：候選片段依序標 [1]..[n]，片段自帶的前導 [n] 剝掉（見 CP_ITEM_FMT）。"""
+    enumerated = "\n\n".join(
+        CP_ITEM_FMT.format(n=i, c=_LEADING_CITE_RE.sub("", c, count=1))
+        for i, c in enumerate(contexts, start=1)
+    )
+    return CP_PAYLOAD_FMT.format(question=question, answer=answer, contexts=enumerated)
+
+
 async def context_precision(
     question: str, answer: str, contexts: list[str], *, judge
 ) -> float:
-    """逐 context 判相關性 → rank-weighted AP。無 context → 0.0。"""
+    """逐 context 判相關性 → rank-weighted AP。無 context → 0.0。
+
+    schema v2：idx 必須恰好是 1..len(contexts)，relevant 必須是 bool；不合格重試 1 次後拋
+    JudgeSchemaError（run_ragas 記成該指標的 judge_errors）。
+    """
     if not contexts:
         return 0.0
-    enumerated = "\n\n".join(CP_ITEM_FMT.format(i=i, c=c) for i, c in enumerate(contexts))
-    payload = CP_PAYLOAD_FMT.format(question=question, answer=answer, contexts=enumerated)
-    res = await judge(CTX_RELEVANCE_SYS, payload)
-    verdicts = res.get("verdicts") if isinstance(res, dict) else None
-    relmap: dict[int, int] = {}
-    for v in verdicts or []:
-        if isinstance(v, dict) and isinstance(v.get("idx"), int):
-            relmap[v["idx"]] = 1 if v.get("relevant") is True else 0
-    rel = [relmap.get(i, 0) for i in range(len(contexts))]
+    payload = context_precision_payload(question, answer, contexts)
+    parsed = await call_validated(
+        judge, CTX_RELEVANCE_SYS, payload,
+        lambda res: parse_verdicts(res, len(contexts), "relevant", first=1),
+    )
+    if parsed is None:
+        raise JudgeSchemaError("judge 沒有回應")
+    relmap = parsed[0]
+    rel = [1 if relmap[i] else 0 for i in range(len(contexts))]
     return _average_precision(rel)
 
 
@@ -125,12 +154,14 @@ class RelevancyDetail:
 async def answer_relevancy_detailed(
     question: str, answer: str, *, judge, embed
 ) -> RelevancyDetail:
-    """由回答反推 3 個問題 → 各與原問題的 embedding cosine 取平均，連中間產物一起回。"""
-    out = await judge(GENQ_SYS, answer)
-    gen = out.get("questions") if isinstance(out, dict) else None
-    gen = [q for q in (gen or []) if isinstance(q, str) and q.strip()]
-    if not gen:
-        return RelevancyDetail(0.0)
+    """由回答反推 3 個問題 → 各與原問題的 embedding cosine 取平均，連中間產物一起回。
+
+    schema v2：取不到任何問題是 schema 錯（重試 1 次後拋 JudgeSchemaError），不再記 0.0——
+    「judge 沒答」與「答非所問」在 v1 是同一個分數。
+    """
+    gen = await call_validated(judge, GENQ_SYS, answer, parse_questions)
+    if gen is None:
+        raise JudgeSchemaError("judge 沒有回應")
     qv = await asyncio.to_thread(embed, question)
     sims = []
     for g in gen:

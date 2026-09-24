@@ -59,7 +59,7 @@ from app.services.answer import (  # noqa: E402
 )
 from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
-from app.services.judge_schema import JUDGE_SCHEMA_VERSION  # noqa: E402
+from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, stream_completion  # noqa: E402
 from app.services.query_planner import plan_queries  # noqa: E402
 from app.services.retrieval_pipeline import retrieve_context  # noqa: E402
@@ -102,7 +102,8 @@ GEN_TIMEOUT = 120.0
 
 # judge 出錯的型別：只有這些讓「該指標」記 None（M8）。其他例外（程式錯誤、嵌入失敗）
 # 仍讓整題記 error——那不是量尺的問題，吞掉會把 bug 藏成分數缺值。
-_JUDGE_FAILURES = (JudgeError, LLMUnavailableError)
+# JudgeSchemaError＝JSON 合法但不合 schema v2（已重試 1 次，app/services/judge_schema.py）。
+_JUDGE_FAILURES = (JudgeError, JudgeSchemaError, LLMUnavailableError)
 
 # judge 系統提示 → 任務名，供 --dump-io 標記每一次 judge 呼叫屬於哪個指標。
 _JUDGE_TASKS = {
@@ -238,7 +239,7 @@ async def eval_question(
     """單題：retrieve→generate→三指標。
 
     - 檢索或生成異常 → {..., "error": str}（整題 fail-open，不入任何均值）。
-    - 某個指標的 judge 異常（JudgeError／LLMUnavailableError）→ 只有該指標為 None，
+    - 某個指標的 judge 異常（JudgeError／JudgeSchemaError／LLMUnavailableError）→ 只有該指標為 None，
       錯誤記在 "judge_errors"（M8，見模組 docstring）。
     - 成功時另附私有鍵 "_io"（問題、脈絡、答案、judge 呼叫明細），由 run() 取走供
       --dump-io，不寫進結果檔。

@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -92,7 +93,7 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
             if "佐證" in system:
                 return {"verdicts": [{"idx": 0, "supported": True}]}
             if "精準度" in system:
-                return {"verdicts": [{"idx": 0, "relevant": True}]}
+                return {"verdicts": [{"idx": 1, "relevant": True}]}  # CP 候選 1 起編號（schema v2）
             if "反推" in system:
                 return {"questions": ["台積電展望如何"]}
             raise AssertionError(system[:30])
@@ -165,13 +166,17 @@ class AggregateLatencyTests(unittest.TestCase):
 
 
 async def _metrics_judge(system, user):
-    """與 smoke 測試同款的三指標假 judge（回單一 statement/verdict/question）。"""
+    """與 smoke 測試同款的三指標假 judge（回單一 statement/verdict/question）。
+
+    CP 依 payload 裡實際的候選數回判定：schema v2 要求 idx 恰好是 1..n，多一個少一個都是錯。
+    """
     if "拆解" in system:
         return {"statements": ["陳述"]}
     if "佐證" in system:
         return {"verdicts": [{"idx": 0, "supported": True}]}
     if "精準度" in system:
-        return {"verdicts": [{"idx": 0, "relevant": True}, {"idx": 1, "relevant": True}]}
+        labels = re.findall(r"^\[(\d+)\] ", user, re.MULTILINE)
+        return {"verdicts": [{"idx": int(n), "relevant": True} for n in labels]}
     if "反推" in system:
         return {"questions": ["反推問題"]}
     raise AssertionError(system[:30])
@@ -450,6 +455,33 @@ class JudgeErrorIsPerMetricTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agg["n_no_context"], 0)
         self.assertEqual(agg["n_judge_errors"], 1)
         self.assertEqual(agg["n_errors"], 0)
+
+    async def test_schema_error_only_nulls_that_metric(self):
+        """schema v2：CP 照 0 起編號（v1 雙重編號的典型錯位）→ 重試後仍錯，只有 CP 為 None。"""
+        calls = {"cp": 0}
+
+        async def judge(system, user):
+            if "精準度" in system:
+                calls["cp"] += 1
+                return {"verdicts": [{"idx": 0, "relevant": True}]}
+            return await _metrics_judge(system, user)
+
+        out = await self._eval(judge)
+        self.assertNotIn("error", out)
+        self.assertIsNone(out["context_precision"])
+        self.assertIn("JudgeSchemaError", out["judge_errors"]["context_precision"])
+        self.assertAlmostEqual(out["faithfulness"], 1.0)
+        self.assertEqual(calls["cp"], 2)  # schema 錯重試 1 次
+
+    async def test_answer_relevancy_without_questions_is_a_judge_error_not_zero(self):
+        async def judge(system, user):
+            if "反推" in system:
+                return {"questions": []}
+            return await _metrics_judge(system, user)
+
+        out = await self._eval(judge)
+        self.assertIsNone(out["answer_relevancy"])
+        self.assertIn("answer_relevancy", out["judge_errors"])
 
     async def test_non_judge_exception_still_fails_the_whole_case(self):
         """程式錯誤不是量尺問題，吞成 None 會把 bug 藏成缺值。"""

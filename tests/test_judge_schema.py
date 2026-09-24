@@ -45,6 +45,27 @@ class FaithfulnessModelDefaultTests(unittest.TestCase):
         )
 
 
+class SchemaVersionTests(unittest.TestCase):
+    def test_strict_validation_is_version_2(self):
+        """v2 改變了 Claude 路徑的判分行為，必須排在 B0 之前並記進量尺。"""
+        self.assertEqual(js.JUDGE_SCHEMA_VERSION, 2)
+
+    def test_schema_error_is_not_a_value_error(self):
+        """解析層的 `except ValueError`（JSON 壞掉）不得把「JSON 合法但不合格」吞成另一種錯。"""
+        self.assertFalse(issubclass(js.JudgeSchemaError, ValueError))
+
+    def test_parse_verdicts_reports_positions_zero_based(self):
+        out, missing = js.parse_verdicts(
+            {"verdicts": [{"idx": 2, "relevant": False}, {"idx": 1, "relevant": True}]}, 2, "relevant", first=1
+        )
+        self.assertEqual((out, missing), ({0: True, 1: False}, []))
+
+    def test_non_object_response_is_schema_error(self):
+        for bad in ([1, 2], "x", None, 3):
+            with self.subTest(bad=bad), self.assertRaises(js.JudgeSchemaError):
+                js.parse_statements(bad)
+
+
 class JudgeIdentityTests(unittest.TestCase):
     def test_legacy_rows_are_haiku(self):
         """缺 judge_model 的舊列一律歸給 claude-haiku-4-5（M11）。這個常數不跟著生產預設改。"""

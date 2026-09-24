@@ -4,7 +4,7 @@
 （supported / unsupported / no_source），分開記錄 faithfulness_score 與
 numeric_support_rate。分數是「來源支持度／待複核」，非真實性保證。
 
-分層（皆 fail-open：judge 異常／JSON 壞 → 不阻擋交付，僅標 degraded、不加分數）：
+分層（皆 fail-open：judge 異常／JSON 壞／schema 不合 → 不阻擋交付，僅標 degraded、不加分數）：
 - 純 primitive（judge 注入、零 DB）：decompose_statements / ground_statements /
   faithfulness — 可用假 judge 做決定性單測，eval/ragas_metrics.py 亦復用之。
 - 生產進入點 check_faithfulness（judge 預設走 claude CLI，仍可注入假 judge）。
@@ -25,7 +25,13 @@ from datetime import datetime, timezone
 from sqlalchemy import text as sql_text
 
 from app.services.evidence import EvidenceLedger
-from app.services.judge_schema import JUDGE_SCHEMA_VERSION
+from app.services.judge_schema import (
+    JUDGE_SCHEMA_VERSION,
+    JudgeSchemaError,
+    call_validated,
+    parse_statements,
+    parse_verdicts,
+)
 from app.services.llm import DEFAULT_MODEL, LLMUnavailableError, stream_completion
 from app.services.query_planner import parse_plan_json
 
@@ -112,6 +118,7 @@ DEGRADED_UNAVAILABLE = "unavailable"  # LLMUnavailableError：API 錯誤、或�
 DEGRADED_EMPTY = "empty"              # 回應是空的
 DEGRADED_PARSE = "parse"              # 回應不是 JSON（含串到一半被逾時截斷的 JSON）
 DEGRADED_ERROR = "error"              # 其他例外，或注入的 judge 回 None
+DEGRADED_SCHEMA = "schema"            # JSON 合法但不合 schema v2（重試 1 次後）
 
 
 @dataclass
@@ -158,18 +165,21 @@ class FaithfulnessResult:
 
 
 async def decompose_statements(text: str, *, judge) -> list[str] | None:
-    """回答 → 原子主張清單。judge 異常/畸形 → None（fail-open，呼叫端標 degraded）。"""
-    dec = await judge(DECOMPOSE_SYS, text)
-    if dec is None:
-        return None
-    statements = dec.get("statements") if isinstance(dec, dict) else None
-    return [s for s in (statements or []) if isinstance(s, str) and s.strip()]
+    """回答 → 原子主張清單。judge 自身失敗（回 None）→ None（fail-open，呼叫端標 degraded）。
+
+    回應不合 schema v2（statements 不是 list[str]）重試 1 次後拋 JudgeSchemaError。
+    """
+    return await call_validated(judge, DECOMPOSE_SYS, text, parse_statements)
 
 
 async def ground_statements(
-    statements: list[str], contexts: list[str], *, judge
+    statements: list[str], contexts: list[str], *, judge, strict: bool = True
 ) -> dict[int, bool] | None:
-    """逐條主張對 contexts 判 supported → {idx: bool}。judge 異常 → None。
+    """逐條主張對 contexts 判 supported → {idx: bool}。judge 自身失敗 → None。
+
+    schema v2：idx 集合必須恰好是 range(len(statements))，型別嚴格；不合格重試 1 次後拋
+    JudgeSchemaError。strict=False 只放寬「缺 idx」一項——缺的不出現在回傳的 dict 裡，
+    由呼叫端計為 unsupported（生產端，審查 L19），並記 WARNING。
 
     payload 格式與 eval 版本逐字一致，避免 eval 基準線漂移。
     """
@@ -178,23 +188,18 @@ async def ground_statements(
     joined_ctx = "\n\n".join(contexts)
     enumerated = "\n".join(GROUND_ITEM_FMT.format(i=i, s=s) for i, s in enumerate(statements))
     payload = GROUND_PAYLOAD_FMT.format(contexts=joined_ctx, claims=enumerated)
-    res = await judge(GROUND_SYS, payload)
-    if res is None:
-        return None
-    verdicts = res.get("verdicts") if isinstance(res, dict) else None
-    supmap: dict[int, bool] = {}
-    for v in verdicts or []:
-        if isinstance(v, dict) and isinstance(v.get("idx"), int):
-            idx = v["idx"]
-            if 0 <= idx < len(statements):
-                supmap[idx] = v.get("supported") is True
-    return supmap
+    parsed = await call_validated(
+        judge, GROUND_SYS, payload,
+        lambda res: parse_verdicts(res, len(statements), "supported", allow_missing=not strict),
+    )
+    return None if parsed is None else parsed[0]
 
 
 async def faithfulness(answer: str, contexts: list[str], *, judge) -> float | None:
     """eval 相容：拆解 → 逐條佐證於 contexts。supported/total；total==0 → None。
 
-    行為與原 eval/ragas_metrics.faithfulness 一致（eval 改 import 本函式）。
+    離線端一律嚴格（缺 idx 也是 schema 錯）：JudgeSchemaError 往上拋，由 run_ragas 記成
+    該指標的 judge_errors。
     """
     statements = await decompose_statements(answer, judge=judge)
     if not statements:
@@ -281,7 +286,11 @@ async def check_faithfulness(
             result.degraded_reason = failures[-1] if failures else DEGRADED_ERROR
         return result
 
-    statements = await decompose_statements(text, judge=judge)
+    try:
+        statements = await decompose_statements(text, judge=judge)
+    except JudgeSchemaError:
+        logger.warning("忠實度抽查：拆解結果不合 schema，標 degraded", exc_info=True)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=True, degraded_reason=DEGRADED_SCHEMA))
     if statements is None:
         return _stamp(FaithfulnessResult(None, None, [], degraded=True))
     if not statements:
@@ -295,7 +304,12 @@ async def check_faithfulness(
         ]
         return _stamp(summarize_claims(claims, degraded=False))
 
-    supmap = await ground_statements(statements, context_texts, judge=judge)
+    # strict=False：缺 idx 仍計為 unsupported（L19）；越界、重複、型別錯才算 schema 錯。
+    try:
+        supmap = await ground_statements(statements, context_texts, judge=judge, strict=False)
+    except JudgeSchemaError:
+        logger.warning("忠實度抽查：grounding 結果不合 schema，標 degraded", exc_info=True)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=True, degraded_reason=DEGRADED_SCHEMA))
     if supmap is None:
         return _stamp(FaithfulnessResult(None, None, [], degraded=True))
 

@@ -526,11 +526,10 @@ sudo systemctl daemon-reload
 用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（`tests/test_deploy_units.py`
 釘住）。web 讀的是 `.env` 的同名鍵，兩份可以不同。
 
-**PR-12 之前批次不能用 DeepSeek**：`run_claude` 與 `generate_brief.call_cli` 只會 spawn claude CLI，
-沒有白名單分派。這份檔的 `LLM_PROVIDER` 維持 `claude_cli`、批次旋鈕只填 `claude-*` 或留空；設了
-`LLM_PROVIDER=deepseek` 或任一批次旋鈕為 DeepSeek 名稱時，批次預檢以 **rc=2** 拒跑並印出是哪個旋鈕
-（行內標註拒跑＝新研報停止入庫，sync 會記進 `unit_failures.log`）。處置：改回 Claude 或刪掉那一行，
-下一輪 sync 生效。線上（`.env`）不受這條限制。
+批次經 `scripts/_claude_cli.run_claude` 依白名單分派（`generate_brief` 的 DeepSeek 分支也交給它）：
+DeepSeek 名稱走 HTTP、`claude-*` 走 CLI。切換批次＝改這份檔的 `LLM_PROVIDER` 或個別旋鈕，下一輪
+sync 生效；回退＝刪掉那幾行（或設 `LLM_PROVIDER=claude_only`）。HTTP 路徑遇到 401／402／模型不存在
+一律整批 **rc=2** 中止（不記跳過名單、不改走 Claude），處置見下方「整批中止後的重放」。
 
 安裝（範例檔檔頭有同樣的指令）：
 
@@ -541,7 +540,7 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 ```
 
 `scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的
-鍵），並在取批次鎖之前預檢——批次解析到白名單模型（PR-12 之前，見上）、有白名單模型卻沒金鑰、
+鍵），並在取批次鎖之前預檢——有白名單模型卻沒金鑰、
 有未知模型名、或檔內有重複的鍵，一律 **rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
 執行）。全部用 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
 **重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用
@@ -736,7 +735,7 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 
 處置步驟（在主 checkout 執行；從 worktree 跑不與排程互斥）：
 
-1. 排除中止原因。現在 rc=2 的來源是 claude CLI 找不到（`CliNotFoundError`，見上面 PATH 的兩次漂移）。**LLM 帳號型中止（例如餘額不足 402）的處置是儲值，絕不把 model 改成 Claude 繞過**——那等於繞過預算。
+1. 排除中止原因。rc=2 的來源：claude CLI 找不到（`CliNotFoundError`，見上面 PATH 的兩次漂移），或 DeepSeek 帳號層級錯誤（`LlmEnvironmentError`：401 金鑰、402 餘額、模型不存在；中止訊息以 `API[auth]`／`API[quota]`／`API[config]` 開頭）。**LLM 帳號型中止（例如餘額不足 402）的處置是儲值，絕不把 model 改成 Claude 繞過**——那等於繞過預算。
 2. 停排程，免得重放途中被下一輪搶鎖或覆寫：`sudo systemctl stop report-mark-sync.timer`。
 3. 依殼印出的順序（舊→新）逐份重放 delta，**每重放一份就立刻用它自己的 `--hashes-out` 補跑三段**，再換下一份：
 

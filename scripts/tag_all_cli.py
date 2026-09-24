@@ -35,6 +35,8 @@ TAGS_DIR = ROOT / "data" / "tags"
 FAIL_LOG = ROOT / "data" / "tag_failures.log"
 # TAG_MODEL 旋鈕（與 sync_new_reports 的行內標註共用），未設時查 LLM_PROVIDER 的預設表。
 MODEL = resolve_model(TASK_TAG)
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）；與 sync 的行內標註同值。
+MAX_TOKENS = 1024
 
 _lock = threading.Lock()
 _done = 0
@@ -52,14 +54,17 @@ def build_prompt(file_name: str, text: str, excerpt: int) -> str:
     )
 
 
-def call_cli(prompt: str, timeout: int = 150) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+def call_cli(prompt: str, timeout: int = 150, *, file_hash: str | None = None) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     實作在 scripts/_claude_cli.py（全批次共用）。標註失敗特別值得說得出原因：
     它會讓該檔在匯入時被記成 `skip_untagged` 而**不入庫**，而排程 log 只印一行
     「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
     """
-    return run_claude(prompt, MODEL, timeout=timeout)
+    return run_claude(
+        prompt, MODEL, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": TASK_TAG, "file_hash": file_hash, "report_id": None},
+    )
 
 
 def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
@@ -71,7 +76,7 @@ def tag_one(rec: dict, excerpt: int, retries: int = 2) -> str:
     last_error = "CLI 無回應"
     for _ in range(retries + 1):
         # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
-        res = call_cli(prompt)
+        res = call_cli(prompt, file_hash=h)
         tag = parse_tags(res.text) if res.text else None
         if res.text and tag is None:
             last_error = "回應無法解析為標籤"

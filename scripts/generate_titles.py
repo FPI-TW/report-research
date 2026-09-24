@@ -61,6 +61,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "title_failures.log"
 # TITLE_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
 MODEL = resolve_model(TASK_TITLE)
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。一句標題加原文，512 綽綽有餘。
+MAX_TOKENS = 512
 MAX_TITLE_CHARS = 80  # 安全上限：標題不是摘要，超長多半代表模型把整段抓進來
 TITLE_SOURCES = ("extracted", "translated", "generated")
 
@@ -174,15 +176,20 @@ def build_cli_args(prompt: str) -> list[str]:
     return _build_cli_args(prompt, MODEL)
 
 
-def call_cli(prompt: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+def call_cli(
+    prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None` —— 那個
     tuple 的第二項讓第一項完全沒有意義，所有失敗一律回 None，而 `title_failures.log`
     連原因欄都沒有，只記 id 與檔名。2026-08 連續四天 titled_ok=0 fail=60 時，
     那個檔對「為什麼」一個字都說不出來。
     """
-    return run_claude(prompt, MODEL, timeout=timeout)
+    return run_claude(
+        prompt, MODEL, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": TASK_TITLE, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 UPDATE_SQL = (
@@ -216,7 +223,7 @@ async def title_one(
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
             # 讓它一路拋到 main 中止整批。
-            res = await asyncio.to_thread(call_cli, prompt)
+            res = await asyncio.to_thread(call_cli, prompt, file_hash=file_hash, report_id=rid)
             if res.text:
                 result = parse_title(res.text, file_name)
                 if result:

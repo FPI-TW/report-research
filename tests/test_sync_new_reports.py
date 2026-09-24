@@ -224,13 +224,23 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
             with self.assertRaises(cc.CliNotFoundError):
                 snr._tag_via_cli("x.pdf", "內文")
 
-    def test_deepseek_model_aborts_instead_of_skip_untagged(self):
-        """PR-12 之前：TAG_MODEL 是 DeepSeek 名稱時真的 run_claude 會拒收並往上拋（rc=2），
-        不 spawn CLI、也不讓每一篇變成 skip_untagged。"""
-        with mock.patch.object(cc.subprocess, "run") as run:
-            with self.assertRaises(cc.HttpModelUnsupportedError):
-                snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash")
+    def test_deepseek_account_error_aborts_instead_of_skip_untagged(self):
+        """TAG_MODEL 是 DeepSeek 名稱時走 HTTP；401／402／模型不存在往上拋（rc=2），不 spawn CLI、
+        也不讓每一篇變成 skip_untagged（其餘批次的同一條在 tests/test_batch_http_dispatch.py）。"""
+        import httpx
+
+        from app.services import llm_http as lh
+
+        lh._transport = httpx.MockTransport(lambda req: httpx.Response(402, json={"error": {"message": "x"}}))
+        lh._reset_clients()
+        self.addCleanup(lambda: (setattr(lh, "_transport", None), lh._reset_clients()))
+        env = {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "DEEPSEEK_BASE_URL": "https://api.example.test"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(cc.subprocess, "run") as run:
+            with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+                snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash", file_hash="h1")
         run.assert_not_called()
+        self.assertTrue(str(ctx.exception).startswith("API[quota]"))
+        self.assertIsInstance(ctx.exception, cc.CliNotFoundError)
 
 
 class CacheWriteAfterCommitTests(unittest.TestCase):

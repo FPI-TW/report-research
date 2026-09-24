@@ -169,15 +169,26 @@ def row_to_params(row: SignalRow) -> dict:
 
 # ── claude CLI 呼叫（對齊 generate_summaries.py）──
 
-def call_cli(prompt: str, model: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。多標的研報一次回好幾組論點與
+# 證據，非 thinking 模式不設上限時只有 8K，會被截斷。
+MAX_TOKENS = 16384
+
+
+def call_cli(
+    prompt: str, model: str, timeout: int = 180, *,
+    file_hash: Optional[str] = None, report_id: Optional[str] = None,
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     實作在 `scripts/_claude_cli.py`（全批次共用）。這裡原本是
     `except Exception: return None`，於是所有失敗都被寫成同一句「CLI 無回應或逾時」
     ——`data/signal_failures.log` 累積 9,273 筆全是那一句，2026-08 連續四天 100%
     失敗時完全看不出該修 PATH、該調 timeout，還是該去看帳號額度。
     """
-    return run_claude(prompt, model, timeout=timeout)
+    return run_claude(
+        prompt, model, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": llm_failures.TASK_SIGNAL, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 # ── 進度計數 ──
@@ -322,7 +333,9 @@ async def extract_one(
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
             # 讓它一路拋到 main 中止整批，而不是靜靜地把 N 篇都記成 rejected。
-            res = await asyncio.to_thread(call_cli, prompt, model)
+            res = await asyncio.to_thread(
+                call_cli, prompt, model, file_hash=item.file_hash, report_id=item.report_id
+            )
             if res.text:
                 parsed = parse_signal(res.text, item.requested_codes)
                 if parsed.ok:

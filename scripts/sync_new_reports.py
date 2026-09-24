@@ -65,6 +65,8 @@ ABNORMAL_COUNTERS = ("fail", "skip_untagged")
 # 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
 # （app/services/llm_models.py；claude_cli 下是 claude-haiku-4-5）。
 TAG_MODEL = resolve_model(TASK_TAG)
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）；與 tag_all_cli 同值。
+TAG_MAX_TOKENS = 1024
 
 
 def parse_rsync_delta(
@@ -116,8 +118,11 @@ def _tag_via_cli(
     excerpt: int = 10000,
     model: str = TAG_MODEL,
     timeout: int = 150,
+    *,
+    file_hash: str | None = None,
 ):
-    """用 claude CLI(Haiku)標註單篇 → (tag, error)。tag 為 None 時 error 說得出為什麼。
+    """標註單篇（`run_claude` 依白名單分派 CLI 或 DeepSeek）→ (tag, error)。tag 為 None 時 error
+    說得出為什麼。
 
     **標註失敗是這條管線最貴的靜默失效**：它讓該檔被記成 `skip_untagged` 而不入庫，
     而排程殼只印一行「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
@@ -132,7 +137,10 @@ def _tag_via_cli(
         f"請依上述規則只輸出單一 JSON 物件。"
     )
     # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
-    res = run_claude(prompt, model, timeout=timeout)
+    res = run_claude(
+        prompt, model, timeout=timeout, max_tokens=TAG_MAX_TOKENS,
+        meta={"task": TASK_TAG, "file_hash": file_hash, "report_id": None},
+    )
     if not res.text:
         return None, res.error or "CLI 無回應"
     tag = parse_tags(res.text)
@@ -426,7 +434,7 @@ async def _run(args) -> None:
                 tag = load_tag(TAGS_DIR, res.file_hash)
                 tag_error = None
                 if tag is None:
-                    tag, tag_error = _tag_via_cli(path.name, res.text)
+                    tag, tag_error = _tag_via_cli(path.name, res.text, file_hash=res.file_hash)
                 if tag is not None:
                     _persist_tag(res.file_hash, tag)
                 reason = skip_after_tag(tag)

@@ -9,7 +9,10 @@
 「CLI 無回應或逾時」——2026-08-08 起連續四天 100% 失敗，事後完全無法診斷。
 （signal_failures.log 累積 9,273 筆全是那一句。）
 """
+import ast
 import errno
+import importlib
+import json
 import os
 import subprocess
 import sys
@@ -17,10 +20,75 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import httpx
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from app.services import llm_http as lh  # noqa: E402
 from scripts import _claude_cli as cc  # noqa: E402
+
+FAKE_KEY = "fixed-test-secret-deepseek0"
+ENV = {"DEEPSEEK_API_KEY": FAKE_KEY, "DEEPSEEK_BASE_URL": "https://api.example.test"}
+
+
+def _sse(*events, done: bool = True) -> bytes:
+    out = []
+    for ev in events:
+        out += ["data: " + json.dumps(ev, ensure_ascii=False), ""]
+    if done:
+        out += ["data: [DONE]", ""]
+    return ("\n".join(out) + "\n").encode("utf-8")
+
+
+def _chunk(content=None, finish=None, usage=None, model="deepseek-flash"):
+    delta = {} if content is None else {"content": content}
+    return {"model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}], "usage": usage}
+
+
+def _ok(text: str) -> bytes:
+    return _sse(_chunk(content=text), _chunk(content="", finish="stop"))
+
+
+class _HttpCase(unittest.TestCase):
+    """MockTransport＋假金鑰＋擋住 CLI＋傳輸層退避改成記錄器（不真的等 2／6 秒）。"""
+
+    def setUp(self):
+        env = mock.patch.dict(os.environ, ENV)
+        env.start()
+        self.addCleanup(env.stop)
+        spawn = mock.patch.object(cc.subprocess, "run", side_effect=AssertionError("不該 spawn claude"))
+        spawn.start()
+        self.addCleanup(spawn.stop)
+        self.sleeps: list[float] = []
+        sleeper = mock.patch.object(cc, "_http_sleep", self.sleeps.append)
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
+        self.addCleanup(self._uninstall)
+        self.requests: list[httpx.Request] = []
+
+    def install(self, handler):
+        self.requests = []
+        seq = iter(handler) if isinstance(handler, list) else None
+
+        def recording(request):
+            self.requests.append(request)
+            return (next(seq) if seq is not None else handler)(request)
+
+        lh._transport = httpx.MockTransport(recording)
+        lh._reset_clients()
+
+    def _uninstall(self):
+        lh._transport = None
+        lh._reset_clients()
+
+    def body(self, i: int = 0) -> dict:
+        return json.loads(self.requests[i].content)
+
+    def call(self, prompt="標註這篇", model="deepseek-flash", **kw):
+        kw.setdefault("max_tokens", 1024)
+        kw.setdefault("meta", {"task": "tag", "file_hash": "h1", "report_id": None})
+        return cc.run_claude(prompt, model, **kw)
 
 
 class BuildCliArgsTests(unittest.TestCase):
@@ -63,17 +131,6 @@ class BuildCliArgsTests(unittest.TestCase):
 class RunClaudeTests(unittest.TestCase):
     def _raises(self, exc):
         return mock.patch.object(cc.subprocess, "run", side_effect=exc)
-
-    def test_deepseek_model_aborts_batch_without_spawning(self):
-        """PR-12 之前批次沒有 HTTP 分派：白名單名稱交給 CLI 每一篇都會失敗，要當環境型錯誤拋出
-        （各批次 main 接 CliNotFoundError → rc=2），不能回 CliResult 被當成單篇失敗。"""
-        for model in ("deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"):
-            with self.subTest(model=model), mock.patch.object(cc.subprocess, "run") as run:
-                with self.assertRaises(cc.CliNotFoundError) as ctx:
-                    cc.run_claude("prompt", model)
-                run.assert_not_called()
-                self.assertIsInstance(ctx.exception, cc.HttpModelUnsupportedError)
-                self.assertIn("PR-12", str(ctx.exception))
 
     def test_success_returns_stdout_and_no_error(self):
         done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
@@ -190,6 +247,146 @@ class RunClaudeTests(unittest.TestCase):
         self.assertEqual(len({timeout_err, other_err, exit_err, rate_err}), 4)
         # 額度耗盡要能從訊息本身看出來，不必再去翻別的地方
         self.assertIn("Credit balance", rate_err)
+
+
+class HttpDispatchTests(_HttpCase):
+    """白名單 model 走 `llm_http.complete_chat`，其餘照舊 spawn CLI（第二版計畫 §4.3）。"""
+
+    def test_http_success_request_shape(self):
+        """批次只送一則 user、prompt 原樣不動、thinking 兩個開關都關、max_tokens 照呼叫點給。"""
+        self.install(lambda req: httpx.Response(200, content=_ok('{"a": 1}')))
+        prompt = "規則\n\n檔名：x.pdf\n內文"
+        res = self.call(prompt, max_tokens=16384, meta={"task": "signal", "file_hash": "h1", "report_id": "r1"})
+        self.assertEqual(res, cc.CliResult('{"a": 1}', None))
+        body = self.body()
+        self.assertEqual(body["messages"], [{"role": "user", "content": prompt}])
+        self.assertEqual(body["max_tokens"], 16384)
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertEqual(body["reasoning_effort"], "none")
+        self.assertEqual(body["user_id"], "batch-signal")
+        self.assertEqual(body["model"], "deepseek-flash")
+
+    def test_every_whitelisted_name_goes_http(self):
+        for model in ("deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"):
+            with self.subTest(model=model):
+                self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+                self.assertEqual(self.call(model=model).text, "ok")
+                self.assertEqual(len(self.requests), 1)
+
+    def test_claude_model_still_spawns_cli(self):
+        self.install(lambda req: (_ for _ in ()).throw(AssertionError("CLI model 不得打 HTTP")))
+        done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
+        with mock.patch.object(cc.subprocess, "run", return_value=done) as run:
+            res = cc.run_claude("p", "claude-haiku-4-5", max_tokens=1024, meta={"task": "tag"})
+        self.assertEqual(res.text, "OUT")
+        self.assertEqual(run.call_args.args[0][:2], ["claude", "-p"])
+        self.assertEqual(self.requests, [])
+
+    def test_http_without_max_tokens_is_a_programming_error(self):
+        self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+        with self.assertRaises(ValueError):
+            cc.run_claude("p", "deepseek-flash", meta={"task": "tag"})
+        self.assertEqual(self.requests, [])
+
+    def test_timeout_is_passed_as_total_deadline(self):
+        with mock.patch.object(cc.llm_http, "complete_chat", wraps=cc.llm_http.complete_chat) as cc_call:
+            self.install(lambda req: httpx.Response(200, content=_ok("ok")))
+            self.call(timeout=150)
+        self.assertEqual(cc_call.call_args.kwargs["timeout"], 150.0)
+
+    def test_account_errors_raise_batch_abort(self):
+        """401／402／404／模型不存在：`LlmEnvironmentError`，被各批次的 `except CliNotFoundError` 接住。"""
+        cases = [
+            (401, "Authentication Fails", "API[auth]"),
+            (402, "Insufficient Balance", "API[quota]"),
+            (404, "Not Found", "API[config]"),
+            (400, "Model Not Exist", "API[config]"),
+        ]
+        for code, message, prefix in cases:
+            with self.subTest(code=code, message=message):
+                self.install(lambda req, c=code, m=message: httpx.Response(c, json={"error": {"message": m}}))
+                try:
+                    self.call()
+                except cc.CliNotFoundError as exc:  # 各批次 main 接的就是這個型別
+                    self.assertIsInstance(exc, cc.LlmEnvironmentError)
+                    self.assertTrue(str(exc).startswith(prefix), str(exc))
+                    self.assertNotIn("\t", str(exc))
+                    self.assertNotIn("\n", str(exc))
+                else:
+                    self.fail("帳號層級錯誤必須拋出")
+                self.assertEqual(len(self.requests), 1, "帳號錯誤不重試")
+
+    def test_quota_hint_never_suggests_claude(self):
+        self.install(lambda req: httpx.Response(402, json={"error": {"message": "Insufficient Balance"}}))
+        with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+            self.call()
+        self.assertIn("儲值", str(ctx.exception))
+
+    def test_per_file_failures_are_results_with_api_prefix(self):
+        cases = [
+            (lambda req: httpx.Response(400, json={"error": {"message": "Content Exists Risk"}}),
+             "API[content_filter]"),
+            (lambda req: httpx.Response(400, json={"error": {"message": "bad\tinput\nhere"}}), "API[bad_request]"),
+            (lambda req: httpx.Response(200, content=_sse(_chunk(content="半"), _chunk(content="", finish="length"))),
+             "API[truncated]"),
+            (lambda req: httpx.Response(200, content=_sse(_chunk(content="", finish="stop"))), "API[empty]"),
+        ]
+        for handler, prefix in cases:
+            with self.subTest(prefix=prefix):
+                self.install(handler)
+                res = self.call()
+                self.assertIsNone(res.text)
+                self.assertTrue(res.error.startswith(prefix), res.error)
+                self.assertNotIn("\t", res.error)
+                self.assertNotIn("\n", res.error)
+                self.assertEqual(len(self.requests), 1)
+
+
+class BatchCallSiteMaxTokensTests(unittest.TestCase):
+    """批次各呼叫點送出的 `max_tokens`（第二版計畫 §8）與 `meta` 逐點釘住。
+
+    值只作用在 HTTP 路徑，CLI 時代完全看不出差別；漏帶則要等某個任務切到 DeepSeek 那天才以
+    `ValueError` 爆開。以該檔模組命名空間求值 `max_tokens` 的運算式，量的是真正會送出的數字。
+    表格鍵是（檔案, meta 的 task 原始碼），多一個或少一個呼叫點都會紅。
+    """
+
+    EXPECTED = {
+        ("scripts/generate_summaries.py", "TASK_SUMMARY"): 1024,
+        ("scripts/generate_titles.py", "TASK_TITLE"): 512,
+        ("scripts/extract_takeaways.py", "TASK_TAKEAWAY"): 4096,
+        ("scripts/extract_signals.py", "llm_failures.TASK_SIGNAL"): 16384,
+        ("scripts/tag_all_cli.py", "TASK_TAG"): 1024,
+        ("scripts/sync_new_reports.py", "TASK_TAG"): 1024,
+        ("scripts/generate_brief.py", "TASK_BRIEF"): 8192,
+    }
+
+    def test_values_and_meta(self):
+        found: dict[tuple[str, str], int] = {}
+        for base in ("app", "eval", "scripts", "web"):
+            for path in sorted((REPO_ROOT / base).rglob("*.py")):
+                rel = str(path.relative_to(REPO_ROOT))
+                if rel == "scripts/_claude_cli.py":
+                    continue
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    fn = node.func
+                    name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+                    if name != "run_claude":
+                        continue
+                    kws = {k.arg: k.value for k in node.keywords}
+                    self.assertIn("max_tokens", kws, f"{rel}:{node.lineno}")
+                    self.assertIsInstance(kws.get("meta"), ast.Dict, f"{rel}:{node.lineno} 要帶 meta 字面值")
+                    meta = {ast.literal_eval(k): v for k, v in zip(kws["meta"].keys, kws["meta"].values)}
+                    if rel != "scripts/generate_brief.py":  # 簡報一天一次、沒有單篇身分
+                        self.assertLessEqual({"task", "file_hash", "report_id"}, set(meta), rel)
+                    module = importlib.import_module(rel[:-3].replace("/", "."))
+                    value = eval(compile(ast.Expression(kws["max_tokens"]), rel, "eval"), vars(module))  # noqa: S307
+                    key = (rel, ast.unparse(meta["task"]))
+                    self.assertNotIn(key, found)
+                    found[key] = value
+        self.assertEqual(found, self.EXPECTED)
 
 
 if __name__ == "__main__":

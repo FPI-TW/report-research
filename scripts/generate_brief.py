@@ -26,8 +26,8 @@
   uv run python scripts/generate_brief.py --force       # 忽略時間閘與既有列，重寫當日
   uv run python scripts/generate_brief.py --date 2026-08-05
 
-退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定錯誤（例如 PR-12 之前設了 DeepSeek
-名稱）、75 claude CLI 被其他批次佔用。
+退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（未知模型名、
+缺金鑰、DeepSeek 401／402／模型不存在）、75 claude CLI 被其他批次佔用。
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from app.services.db import SessionFactory  # noqa: E402
 from app.services.llm_models import TASK_BRIEF, is_http_model, resolve_model  # noqa: E402
 from app.services.reading.queries import fetch_instrument_names  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
-from scripts._claude_cli import CliNotFoundError, HttpModelUnsupportedError  # noqa: E402
+from scripts._claude_cli import CliNotFoundError, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +65,9 @@ MODEL = resolve_model(TASK_BRIEF)
 # 一次呼叫的逾時。素材是摘要不是全文，正常在一分鐘內回；給 300s 是留給 CLI 冷啟動
 # 與偶發的長素材（NAS 一次倒進大量檔案的日子）。
 CLI_TIMEOUT = 300
+
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。
+MAX_TOKENS = 8192
 
 # 沒有前一份簡報時的預設回看窗，以及任何情況下的回看上限。
 DEFAULT_LOOKBACK_HOURS = 24
@@ -88,20 +91,20 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
 
 
 def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optional[str], Optional[str]]:
-    """呼叫 CLI，回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+    """呼叫 LLM，回 (text, None) 或 (None, 可辨識的失敗原因)。
 
     失敗原因必須分得出來：`claude` 不在 PATH（systemd 缺 PATH drop-in）與「這次逾時」
     的處置完全不同，寫成同一句「CLI 無回應」等於把環境問題偽裝成偶發失敗。
 
-    DeepSeek 白名單的 model 拋 `HttpModelUnsupportedError`，不回失敗原因：那是設定錯，不是
-    這一次失敗（理由見 scripts/_claude_cli.py 的同名例外；main 以 rc=2 收場）。
-    TODO(PR-12)：簡報接上白名單分派後刪掉這個檢查。
+    DeepSeek 白名單的 model 交給 `scripts/_claude_cli.run_claude` 的 HTTP 路徑（與其他批次同一套
+    錯誤分類：失敗回 `API[<kind>] …`，401／402／模型不存在拋 `LlmEnvironmentError`，main 以 rc=2
+    收場）。CLI 路徑刻意**不**改用 `run_claude`：本檔的 CLI 版把 claude 不在 PATH 當成「這一天產生
+    失敗」（rc=1），`run_claude` 會拋 `CliNotFoundError`（rc=2）——換過去會改變生產行為（rc=2 讓排程
+    殼另外保留 hashes），不在這次遷移的範圍。
     """
     if is_http_model(model):
-        raise HttpModelUnsupportedError(
-            f"批次尚未支援 DeepSeek（待 PR-12）：model={model} 不能交給 claude CLI；"
-            "請改回 Claude 或移除 BRIEF_MODEL"
-        )
+        res = run_claude(prompt, model, timeout=timeout, max_tokens=MAX_TOKENS, meta={"task": TASK_BRIEF})
+        return res.text, res.error
     try:
         proc = subprocess.run(
             build_cli_args(prompt, model),

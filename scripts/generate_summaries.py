@@ -44,6 +44,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "summary_failures.log"
 # SUMMARY_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
 MODEL = resolve_model(TASK_SUMMARY)
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。摘要約 150 字，1024 已留兩倍以上。
+MAX_TOKENS = 1024
 MAX_SUMMARY_CHARS = 400  # 安全上限，避免模型暴走輸出整段
 
 PROMPT_INSTRUCTION = (
@@ -108,14 +110,19 @@ def build_cli_args(prompt: str) -> list[str]:
     return _build_cli_args(prompt, MODEL)
 
 
-def call_cli(prompt: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+def call_cli(
+    prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None`——那個
     tuple 的第二項讓第一項完全沒有意義（Exception 已涵蓋 TimeoutExpired），
     所有失敗一律塌縮成 None。見 scripts/_claude_cli.py 的四天停擺紀錄。
     """
-    return run_claude(prompt, MODEL, timeout=timeout)
+    return run_claude(
+        prompt, MODEL, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": TASK_SUMMARY, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 async def summarize_one(
@@ -139,7 +146,7 @@ async def summarize_one(
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
-            res = await asyncio.to_thread(call_cli, prompt)
+            res = await asyncio.to_thread(call_cli, prompt, file_hash=file_hash, report_id=rid)
             if res.text:
                 summary = parse_summary(res.text)
                 if summary:

@@ -27,11 +27,34 @@
       而整批 rc=0。**概念對、述詞太窄**：要問的是「這顆二進位在這個環境裡有沒有可能
       跑起來」，不是「它存不存在」。
   - 其餘（逾時／非零退出／OSError…）回具體訊息，讓各自的 *_failures.log 說得出真因。
+
+## DeepSeek 分派（遷移 PR-12）
+
+`run_claude` 依模型名分派：DeepSeek 白名單（`llm_models.is_http_model`）走
+`app.services.llm_http.complete_chat`，其餘照舊 spawn claude CLI（CLI 路徑的程式碼不動，
+搬進 `_run_cli`）。名稱沿用：呼叫端、測試 patch 點與 `tests/test_claude_lock.py` 的
+LOCKED_SCRIPTS 都認這個名字，改名的連動留給 PR-M 決定。
+
+HTTP 路徑的規則（第二版計畫 §4.3、§4.6）：
+  - 只送一則 user 訊息、prompt 原樣不動（A/B 只有一個變因）；thinking 兩個開關都關由
+    `llm_http.build_body` 負責；`max_tokens` 由每個呼叫點帶（值見第二版 §8，
+    tests/test_claude_cli.py 逐點釘住），沒帶是程式錯誤、直接拋 `ValueError`。
+  - `timeout` 沿用各批次現行值，在 HTTP 路徑是**涵蓋傳輸層重試的總期限**（`complete_chat`
+    以 `time.monotonic()` 逐行檢查；排隊時的 keep-alive 會一直重置 httpx 的 read 逾時）。
+  - 失敗回 `CliResult(None, "API[<kind>] <固定措辭>：<細節>")`（`llm_http.error_string`，單行、
+    不含 TAB）。前綴 `API[` 是契約：`is_retryable` 靠它分辨「傳輸層已重試過」。
+  - **帳號層級（401 auth／402 quota／config：404 或模型不存在）拋 `LlmEnvironmentError`**
+    （`CliNotFoundError` 的子類），沿用各批次 main「接 `CliNotFoundError` → 整批 rc=2」的接法。
+    這類錯誤每一篇都會踩到，記成 N 筆單篇失敗後 exit 0 正是四天停擺的型態；它們也**不記**
+    `research.llm_task_failure`（那不是研報的問題），更**絕不改走 Claude**——402 的處置是儲值，
+    換成 Claude 等於繞過預算（docs/production_resilience.md「整批中止後的重放」）。
 """
 import errno
 import subprocess
+import time
 from typing import NamedTuple, Optional
 
+from app.services import llm_http
 from app.services.llm_models import is_http_model
 
 # stderr 只留尾巴：完整 stderr 可能很長，而失敗記錄是給人掃讀的。200 字元夠容納
@@ -61,15 +84,11 @@ class CliNotFoundError(RuntimeError):
     """
 
 
-class HttpModelUnsupportedError(CliNotFoundError):
-    """批次收到 DeepSeek 白名單的模型名，而批次還沒有 HTTP 分派（PR-12 才接）。
+class LlmEnvironmentError(CliNotFoundError):
+    """HTTP 路徑的帳號層級失敗：金鑰無效（401）、餘額不足（402）、模型或端點設定錯（config）。
 
-    與 `CliNotFoundError` 同一類：設定錯了，每一篇都會踩到——`claude --model deepseek-flash`
-    每次都失敗，行內標註全數 `skip_untagged` 等於新研報停止入庫。所以同樣往上拋、由各批次
-    main 以 rc=2 中止整批，**不能**回 `CliResult(None, …)` 被當成單篇失敗：那會讓研報以
-    DeepSeek 的 model 名記進跳過名單（`research.llm_task_failure`）。入口的 `require_llm_key`
-    已先擋一次，這裡是縱深防禦（例如測試或其他入口直接呼叫）。
-    TODO(PR-12)：`run_claude` 依白名單分派到 `llm_http.complete_chat` 後刪掉這個例外。
+    與 `CliNotFoundError` 同一類：每一篇都會踩到，重試與續跑都沒有意義。繼承它是為了讓各批次
+    main 既有的 `except CliNotFoundError → rc=2` 原封不動地接住，不必逐支加分支。
     """
 
 
@@ -107,19 +126,57 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
     return ["claude", "-p", prompt, "--model", model, "--setting-sources", "", "--strict-mcp-config", "--tools", ""]
 
 
-def run_claude(
-    prompt: str, model: str, timeout: int = 180, cwd: str = "/tmp"
-) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+# 傳輸層退避用的 sleep；測試把它換成記錄器，免得真的等 2／6 秒。
+_http_sleep = time.sleep
 
-    `cwd` 預設 /tmp：避免載入專案 CLAUDE.md 拖慢每次呼叫。
-    DeepSeek 白名單的 model 拋 `HttpModelUnsupportedError`（PR-12 之前批次不分派，見該類）。
+# 帳號層級錯誤的處置提示（接在 `API[<kind>]` 錯誤字串後面，一起印進中止訊息）。
+_ACCOUNT_HINTS = {
+    llm_http.AUTH: "檢查 DEEPSEEK_API_KEY（repo 根 .env 與 /etc/default/report-mark-llm 兩份逐字相同）",
+    llm_http.QUOTA: "儲值後重跑；不要把 model 改成 Claude 繞過（那等於繞過預算）",
+    llm_http.CONFIG: "檢查模型名與 DEEPSEEK_BASE_URL",
+}
+
+
+def run_claude(
+    prompt: str,
+    model: str,
+    timeout: int = 180,
+    cwd: str = "/tmp",
+    *,
+    max_tokens: Optional[int] = None,
+    meta: Optional[dict] = None,
+) -> CliResult:
+    """呼叫 LLM。回 (text, None) 或 (None, 可辨識的失敗原因)。
+
+    DeepSeek 白名單的 model 走 HTTP（見模組 docstring「DeepSeek 分派」），其餘 spawn `claude -p`。
+    `max_tokens`：HTTP 路徑必填，CLI 忽略。`meta`：`{"task", "file_hash", "report_id"}`，
+    HTTP 路徑用 `task` 標 log 與 `user_id`。
+    `cwd` 預設 /tmp：避免 CLI 載入專案 CLAUDE.md 拖慢每次呼叫（HTTP 路徑不用）。
     """
     if is_http_model(model):
-        raise HttpModelUnsupportedError(
-            f"批次尚未支援 DeepSeek（待 PR-12）：model={model} 不能交給 claude CLI；"
-            "請改回 Claude 或移除該旋鈕"
-        )
+        return _run_http(prompt, model, timeout, max_tokens, dict(meta or {}))
+    return _run_cli(prompt, model, timeout, cwd)
+
+
+def _run_http(
+    prompt: str, model: str, timeout: float, max_tokens: Optional[int], meta: dict
+) -> CliResult:
+    if max_tokens is None:
+        raise ValueError(f"model={model} 走 HTTP，呼叫點必須帶 max_tokens（第二版計畫 §8）")
+    task = str(meta.get("task") or "-")
+    result = llm_http.complete_chat(
+        model, prompt, max_tokens=max_tokens, timeout=float(timeout),
+        task=task, user_id=f"batch-{task}", sleep=_http_sleep,
+    )
+    if result.kind in llm_http.ACCOUNT_KINDS:
+        raise LlmEnvironmentError(f"{result.error}。{_ACCOUNT_HINTS[result.kind]}")
+    if result.text is None:
+        return CliResult(None, result.error)
+    return CliResult(result.text, None)
+
+
+def _run_cli(prompt: str, model: str, timeout: int, cwd: str) -> CliResult:
+    """spawn `claude -p`（遷移前的 `run_claude` 本體，未改動）。"""
     try:
         r = subprocess.run(
             build_cli_args(prompt, model),

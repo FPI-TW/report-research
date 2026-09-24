@@ -95,6 +95,10 @@ TAKEAWAY_MODEL_DEFAULT = resolve_model(TASK_TAKEAWAY)
 # 條也不要編造」，只有 0 條才 rejected）
 MAX_TAKEAWAYS = 5
 
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。5 條 claim＋quote 約 1K token，
+# 4096 留給偶爾偏長的輸出；截斷會記成 truncated（1 次就跳過），不會混進解析失敗。
+MAX_TOKENS = 4096
+
 # 文字安全上限（防模型暴走輸出整段）。prompt 規定 claim ≤ 60 字、quote 15-60 字，
 # 這裡放寬到約兩倍才截，避免把「只超標一點」的正常輸出攔腰砍斷。
 CLAIM_MAX = 120
@@ -444,14 +448,20 @@ def row_to_params(row: TakeawayRow) -> dict:
 
 # ── claude CLI 呼叫（實作在 scripts/_claude_cli.py，全批次共用）──
 
-def call_cli(prompt: str, model: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+def call_cli(
+    prompt: str, model: str, timeout: int = 180, *,
+    file_hash: Optional[str] = None, report_id: Optional[str] = None,
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     實作已抽到 `scripts/_claude_cli.py` 供所有批次共用——這個「失敗原因必須可區分」
     的設計最早長在這裡，抽出去是為了讓下一支腳本抄得到對的那份（其餘四支曾經各自
     抄了 `except Exception: return None` 的版本，見該模組 docstring 的四天停擺）。
     """
-    return run_claude(prompt, model, timeout=timeout)
+    return run_claude(
+        prompt, model, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": TASK_TAKEAWAY, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 # ── 進度計數 ──
@@ -609,7 +619,9 @@ async def extract_one(
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
             # 讓它一路拋到 main 中止整批，而不是靜靜地把 N 篇都記成 rejected。
-            res = await asyncio.to_thread(call_cli, prompt, model)
+            res = await asyncio.to_thread(
+                call_cli, prompt, model, file_hash=item.file_hash, report_id=item.report_id
+            )
             if res.text:
                 parsed = parse_takeaways(res.text)
                 if parsed.ok:

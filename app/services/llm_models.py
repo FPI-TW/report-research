@@ -21,7 +21,6 @@
    - `claude_cli`（預設）：現行 Claude 預設表，值與遷移前各呼叫點寫死的字串逐字相同。
    - `deepseek`：DeepSeek 預設表（第二版計畫 §8）。judge 兩列仍是 Claude——judge 要等校準
      後由 PR-26／PR-27 才換；網搜那列也仍是 Claude（DeepSeek 網搜延後到 P9）。
-     **PR-12 之前只能給 web 用**：這張表的批次列是 DeepSeek 名稱，而批次還沒有分派（見下）。
    - `claude_only`：緊急回退。**任務旋鈕裡白名單內的值一律忽略**，全部用 Claude 預設表，
      記 WARNING。所以任何階段只要改這一個鍵就能全部回到 CLI，不必逐一清掉任務旋鈕。
      旋鈕裡的 Claude 名稱照用（那本來就是 CLI）。
@@ -30,12 +29,8 @@
 注意：預設表只決定「名稱」。名稱在白名單內時實際走不走 HTTP，由分派層決定：
 
 - 線上與評測經 `llm.stream_completion` 依白名單分派。
-- **批次在 PR-12 之前沒有分派**：`scripts/_claude_cli.run_claude` 與 `generate_brief.call_cli`
-  只會 spawn claude CLI，收到白名單名稱一律拋 `HttpModelUnsupportedError`（整批 rc=2）；入口的
-  `scripts/_llm_env.require_llm_key` 也在取鎖前先以 rc=2 拒跑，並說出是哪個旋鈕解析出來的。
-  所以 PR-12 之前，sync 讀的 `/etc/default/report-mark-llm` 不可設 `LLM_PROVIDER=deepseek`，
-  批次旋鈕也不可填白名單名稱——否則行內標註拒跑、新研報停止入庫。
-  TODO(PR-12)：`run_claude` 接上分派後改寫這段。
+- 批次經 `scripts/_claude_cli.run_claude` 依白名單分派（遷移 PR-12）；`generate_brief.call_cli` 的
+  DeepSeek 分支也交給它。入口的 `scripts/_llm_env.require_llm_key` 只擋未知名稱與缺金鑰。
 """
 
 from __future__ import annotations

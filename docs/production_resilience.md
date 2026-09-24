@@ -691,6 +691,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 | `skip_non_research` | 預期 | 同上 |
 | `skip_exists` | 預期 | 已在庫，冪等 |
 | `skip_scanned` | 預期 | 掃描件抽不出文字，是**檔案本身的性質**，重跑一萬次也一樣 |
+| `cache_fail` | 不算異常，殼層印 WARNING | 入庫 commit 之後寫抽取快取失敗：研報已在 DB、已記進 hashes，下游照常；重放補救對它無效（會 `skip_exists`）。持續出現多半是磁碟滿或 `data/extracted` 權限 |
 
 `skip_scanned` 那條是刻意的取捨：算成異常會讓心跳因為語料裡固定存在的掃描件而**永遠**不更新，而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）。代價是它不留路徑紀錄，屬已知限制。
 

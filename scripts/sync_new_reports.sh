@@ -459,6 +459,12 @@ else
   log "匯入計數檔不可讀或格式異常（$STATS_FILE）→ 保守視為匯入異常"
   record_unit_failure "sync_new_reports(stats_unreadable)" 1
 fi
+# 抽取快取寫入失敗：研報已入庫、已記進 hashes，下游照常，所以**不算異常、不擋心跳**
+# （分類理由見 sync_new_reports.py 的 ABNORMAL_COUNTERS 註解）。只印出來：持續出現多半是
+# 磁碟滿或 data/extracted 權限，那時全語料重建（tag_all_cli／ingest_all）會缺快取而重抽。
+if CACHE_FAIL=$(read_stat cache_fail) && [ "$CACHE_FAIL" -gt 0 ]; then
+  log "WARNING 抽取快取寫入失敗 ${CACHE_FAIL} 篇（已入庫；檢查磁碟空間與 data/extracted 權限）"
+fi
 
 # 4) 本次有新研報入庫才補摘要（best-effort：失敗只記 log，不擋 sync）
 #    僅針對本輪新匯入的 file_hash（--hashes-file），不掃歷史 NULL 積壓；

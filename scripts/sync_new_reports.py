@@ -56,6 +56,10 @@ EXTS = {".pdf", ".docx", ".doc"}
 #     把它算成異常會讓心跳因為語料裡固定存在的掃描件而**永遠**不更新，
 #     而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）⇒ 預期。
 #     代價是它不留路徑紀錄，屬已知限制，見 docs/production_resilience.md。
+#   - `cache_fail`：入庫 commit 之後寫抽取快取失敗（write_cache_fail_open）。**這篇已經在 DB、
+#     也已記進 hashes**，下游照常；它不是「該入庫卻沒進 DB」，補救指令（failures_to_delta →
+#     重放）對它無效（重放會 skip_exists）。算成異常會擋心跳、印出錯的補救指令 ⇒ **不算異常**，
+#     只寫進 .sync_last_stats，由殼層在 >0 時印 WARNING（持續出現多半是磁碟滿或權限）。
 ABNORMAL_COUNTERS = ("fail", "skip_untagged")
 
 # 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
@@ -347,6 +351,7 @@ async def _run(args) -> None:
             "skip_untagged",
             "skip_non_research",
             "fail",
+            "cache_fail",
         )
     }
     ingested_hashes: list[str] = []
@@ -510,7 +515,8 @@ async def _run(args) -> None:
                 ingested_hashes.append(res.file_hash)
                 stats["ingested"] += 1
                 stats["chunks"] += len(chunks)
-                write_cache_fail_open(res, path, meta, source, report_date)
+                if not write_cache_fail_open(res, path, meta, source, report_date):
+                    stats["cache_fail"] += 1  # 不算異常（見 ABNORMAL_COUNTERS 註解），但要看得到
                 print(f"  [{tag.market}] {path.name[:55]} ({len(chunks)} chunks)", flush=True)
 
             if stats["ingested"] and not args.dry_run:

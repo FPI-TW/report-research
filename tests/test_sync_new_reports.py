@@ -263,6 +263,14 @@ class CacheWriteAfterCommitTests(unittest.TestCase):
         self.assertLess(append, cache)     # 先記 hash 再寫快取
         self.assertNotIn("_write_cache(res", run)  # _run 只經 fail-open 包裝寫快取
 
+    def test_cache_failure_is_counted_in_stats(self):
+        """快取寫失敗只剩 print 的話，持續失敗（磁碟滿）在計數檔裡完全看不到：回傳值要進 stats。"""
+        src = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+        run = src[src.index("async def _run(args)"):]
+        self.assertIn('"cache_fail",', run[: run.index("ingested_hashes: list")])  # 計數器有初始值（每輪都寫出）
+        call = run.index("if not write_cache_fail_open(res, path, meta, source, report_date):")
+        self.assertIn('stats["cache_fail"] += 1', run[call: call + 200])
+
 
 if __name__ == "__main__":
     unittest.main()

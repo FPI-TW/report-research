@@ -370,6 +370,9 @@ _TRUNCATION_NOTES = {
         "Answer cut off here: the model output exceeded the time limit",
     ),
 }
+# HTTP 路徑的牆鐘總時限（LLM_HTTP_TOTAL_TIMEOUT）同樣是我們自己的時限，措辭相同；落庫的原因
+# 仍分開（`total_timeout`），看得出是哪條路徑。
+_TRUNCATION_NOTES["total_timeout"] = _TRUNCATION_NOTES["timeout"]
 _TRUNCATION_NOTE_DEFAULT = (
     "回答在此中斷：與模型服務的連線在輸出途中中斷",
     "Answer cut off here: the connection to the model service dropped mid-output",

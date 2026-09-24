@@ -95,6 +95,21 @@ def _r2_presign_ttl() -> int:
 
 
 
+def _positive_float(name: str, default: float) -> float:
+    """正數秒數；空值、非數字或 ≤0 退回預設並警告（0 會讓每一次呼叫都立刻逾時）。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        logging.getLogger(__name__).warning("%s=%r 不是正數，退回 %g", name, raw, default)
+        return default
+    return value
+
+
 def _faithfulness_min() -> float:
     """數值主張支持率門檻。新名 FAITHFULNESS_MIN 優先；缺值時退回舊名 REPORT_FAITHFULNESS_MIN。"""
     v = os.getenv("FAITHFULNESS_MIN")
@@ -199,6 +214,11 @@ class Settings:
     llm_provider: str = DEFAULT_PROVIDER
     ask_answer_model: str = CLAUDE_DEFAULTS[TASK_ASK_ANSWER]   # 總覽、主答（不開網搜）、評測生成
     ask_web_model: str = CLAUDE_DEFAULTS[TASK_ASK_WEB]         # 時效題網搜、主答開網搜
+    # DeepSeek 串流（llm.stream_completion 的 HTTP 路徑）的牆鐘總時限（秒，從呼叫開始算）。
+    # 只是最後一道上限：首字前有首字期限，吐字後正常靠 max_tokens 與 read 逾時收尾；伺服器
+    # 每 60 秒內滴一點內容時兩者都收不了。到期且已吐字＝截斷（附註＋filters.llm_truncated）。
+    # 寬鬆是刻意的：最長的主答 8192 tokens 正常一兩分鐘內收完。CLI 路徑不受影響。
+    llm_http_total_timeout: float = 600.0
 
 
 def _load() -> Settings:
@@ -355,6 +375,7 @@ def _load() -> Settings:
         llm_provider=provider(),
         ask_answer_model=resolve_model(TASK_ASK_ANSWER),
         ask_web_model=resolve_model(TASK_ASK_WEB),
+        llm_http_total_timeout=_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0),
     )
 
 

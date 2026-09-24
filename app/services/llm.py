@@ -35,6 +35,7 @@ import logging
 import shutil
 from collections.abc import AsyncIterator
 
+from app.config import get_settings
 from app.services import llm_http
 from app.services.llm_models import TASK_ASK_ANSWER, is_http_model, resolve_model
 
@@ -392,7 +393,13 @@ _retry_sleep = asyncio.sleep
 TRUNCATED_LENGTH = "length"              # finish_reason=length（撞到 max_tokens）
 TRUNCATED_READ_TIMEOUT = "read_timeout"  # 首字之後 read 逾時（伺服器沉默超過 60 秒）
 TRUNCATED_NETWORK = "network"            # 首字之後斷線、串流沒收到結束訊號
+TRUNCATED_TOTAL_TIMEOUT = "total_timeout"  # 首字之後撞到 LLM_HTTP_TOTAL_TIMEOUT（我們自己的時限）
 TRUNCATED_CONTENT_FILTER = "content_filter"  # 這個以 partial 例外拋出，不走 meta
+
+
+def _http_total_timeout() -> float:
+    """`LLM_HTTP_TOTAL_TIMEOUT`（app/config.py）。呼叫時才讀：本模組在 import 期不碰 Settings。"""
+    return get_settings().llm_http_total_timeout
 
 
 def _reason_for(kind: str) -> str:
@@ -407,6 +414,8 @@ def _reason_for(kind: str) -> str:
 def _truncated_reason(out: llm_http.ChatOutcome) -> str:
     if out.kind == llm_http.TRUNCATED:
         return TRUNCATED_LENGTH
+    if out.kind == llm_http.TIMEOUT:  # 已吐字才逾時只可能是總時限（首字期限只管首字之前）
+        return TRUNCATED_TOTAL_TIMEOUT
     if out.kind == llm_http.NETWORK:
         # detail 是 llm_http._transport_detail 組的 `<例外類名>: …`（我們自己的格式，不是供應商文字）
         return TRUNCATED_READ_TIMEOUT if out.detail.startswith("ReadTimeout") else TRUNCATED_NETWORK
@@ -433,12 +442,13 @@ async def _stream_http(
 
     - `timeout` 是**首字期限**（每次嘗試各自計時）：llm_http 在第一個 content 字到達前的每個
       await 各自包 `asyncio.timeout_at`、絕不跨越 yield，所以經 `_with_heartbeat` 驅動（每次
-      `__anext__` 開新 Task）也準時生效；第一個字之後不設牆鐘上限，靠 `max_tokens` 與 httpx
-      read=60 收尾。
+      `__anext__` 開新 Task）也準時生效。首字前伺服器 60 秒完全沉默（httpx read 逾時）同樣歸
+      timeout、不重試。第一個字之後正常靠 `max_tokens` 與 httpx read=60 收尾，另有寬鬆的牆鐘
+      總時限 `LLM_HTTP_TOTAL_TIMEOUT`（每次嘗試各自從頭算；到期＝截斷，reason `total_timeout`）。
     - 只有 overloaded／network 且**還沒吐字**才重試；已吐字重試會讓畫面上出現兩份答案。
     - 還沒吐字就失敗 → 拋 `LLMUnavailableError(kind=…)`。
     - 已吐字後：內容審查 → 拋 `partial=True`（呼叫端保留已送出的文字並附註）；其他（`length`、
-      read 逾時、斷線）→ 正常結束，`meta["truncated"]=True` 與 `meta["truncated_reason"]`。
+      read 逾時、斷線、總時限）→ 正常結束，`meta["truncated"]=True` 與 `meta["truncated_reason"]`。
     - 任何非預期例外一律包成 `LLMUnavailableError`；`CancelledError` 原樣上拋，並經
       `contextlib.aclosing` 關閉 httpx 回應（對應 CLI 路徑的 `proc.kill()`）。
     """
@@ -448,6 +458,7 @@ async def _stream_http(
             "stream_completion task=%s model=%s 未給 max_tokens，改用 %d", task, model, _HTTP_FALLBACK_MAX_TOKENS,
         )
         tokens = _HTTP_FALLBACK_MAX_TOKENS
+    total_timeout = _http_total_timeout()
 
     for attempt in range(retries + 1):
         streamed = False
@@ -455,7 +466,7 @@ async def _stream_http(
         try:
             async with contextlib.aclosing(llm_http.astream_chat(
                 model, prompt, max_tokens=tokens, first_token_timeout=timeout,
-                system=system, task=task, user_id=_user_id(task),
+                system=system, task=task, user_id=_user_id(task), total_timeout=total_timeout,
             )) as agen:
                 async for item in agen:
                     if isinstance(item, llm_http.ChatOutcome):

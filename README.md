@@ -158,6 +158,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `DB_POOL_SIZE`、`DB_MAX_OVERFLOW`、`DB_POOL_TIMEOUT`、`DB_POOL_RECYCLE` | 5、15、10、1800 | per-process 上限 20；改併發前依 `.env.example` 算式重算 |
 | `DB_STATEMENT_TIMEOUT_MS`、`DB_IDLE_TX_TIMEOUT_MS`、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS` | 60000、0、0 | idle 預設 0 是刻意的（sync 在交易內 spawn CLI）；維運長查詢走 `relax_statement_timeout()` |
 | `EMBED_MAX_CONCURRENCY`、`EMBED_TORCH_THREADS` | 1、0 | 嵌入序列化；`/api/search`、雷達、閱讀頁沒有併發閘 |
+| `LLM_HTTP_TOTAL_TIMEOUT` | `600` | DeepSeek 串流的牆鐘總時限（秒）；吐字後到期＝截斷並附註，CLI 路徑不讀 |
 | `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `claude_cli`、查表 | 任務旋鈕非空就用，否則查 provider 的預設表（`app/services/llm_models.py`）；`claude_cli` 與遷移前逐字相同，`claude_only` 是緊急回退。清單與語意見 `.env.example` |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` 設定旋鈕 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
 | `ASK_RERANK_*`、`RERANK_MODEL` | 開、50 候選 | rerank fail-open |

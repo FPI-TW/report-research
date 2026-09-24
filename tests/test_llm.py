@@ -379,6 +379,48 @@ class HttpRetryTests(_HttpCase):
         self.assertEqual(await self.collect(), ["ok"])
         self.assertEqual(len(self.requests), 2)
 
+    async def test_silent_server_before_first_token_is_timeout_not_retried(self):
+        """首字前伺服器 60 秒沒送任何位元組（httpx ReadTimeout）＝逾時，與首字期限到了同一件事，
+        不重試。歸 network 的話主答最壞要 3×60 秒加退避才失敗（與「首字逾時不重試」矛盾）。
+        兩個時點都要：等標頭（`client.send`）與標頭之後、首字之前（讀 body）。"""
+
+        class SilentBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b": keep-alive\n\n"
+                raise httpx.ReadTimeout("read timed out")
+
+        def silent_headers(req):
+            raise httpx.ReadTimeout("read timed out", request=req)
+
+        for name, handler in (
+            ("send", silent_headers),
+            ("body", lambda req: httpx.Response(200, stream=SilentBody())),
+        ):
+            with self.subTest(at=name):
+                self.requests.clear()
+                self.sleeps.clear()
+                self.install(handler)
+                with self.assertRaises(llm.LLMUnavailableError) as cm:
+                    await self.collect(retries=2)
+                self.assertEqual(len(self.requests), 1, "首字前沉默不重試")
+                self.assertEqual(self.sleeps, [])
+                self.assertEqual((cm.exception.kind, cm.exception.reason), ("timeout", llm.UNAVAILABLE_TIMEOUT))
+                self.assertIs(cm.exception.partial, False)
+
+    async def test_connect_timeout_is_still_retried_as_network(self):
+        """只有 read 逾時改判：連線逾時（connect=10 秒）照樣是暫時性網路錯誤。"""
+        calls = []
+
+        def handler(req):
+            calls.append(req)
+            if len(calls) == 1:
+                raise httpx.ConnectTimeout("slow", request=req)
+            return httpx.Response(200, content=_ok("ok"))
+
+        self.install(handler)
+        self.assertEqual(await self.collect(), ["ok"])
+        self.assertEqual(len(self.requests), 2)
+
     async def test_account_and_input_errors_are_not_retried(self):
         cases = [
             (402, {"error": {"message": "Insufficient Balance"}}, "quota"),
@@ -526,6 +568,85 @@ class HttpFirstTokenDeadlineTests(_HttpCase):
             "q", model="deepseek-flash", timeout=0.15, meta=meta, max_tokens=16, task="t"))
         self.assertEqual(items, ["第一段", "第二段"])
         self.assertIs(meta["truncated"], False)
+
+
+class HttpTotalTimeoutTests(_HttpCase):
+    """吐字後的牆鐘總時限（`LLM_HTTP_TOTAL_TIMEOUT`）：伺服器每 60 秒內滴一點內容時，read 逾時與
+    max_tokens 都收不了。到期比照 read 逾時：已吐字＝正常結束、標截斷原因（呼叫端附註）。
+    要在生產的驅動方式（`_with_heartbeat`，每次 `__anext__` 開新 Task）下生效。"""
+
+    patch_sleep = False
+
+    async def _drive(self, gen, interval=0.05):
+        from web import deps
+
+        items = []
+        async for item in deps._with_heartbeat(gen, interval=interval):
+            if not item.startswith(": keep-alive"):
+                items.append(item)
+        return items
+
+    def _dripping(self, closed: asyncio.Event | None = None):
+        class Drip(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                # 有上限：期限機制若被改壞，測試要以斷言失敗收場，而不是卡住整個 pytest
+                for i in range(60):
+                    yield _sse(_chunk(f"段{i}"), done=False)
+                    await asyncio.sleep(0.05)
+                yield _sse(_chunk("", finish="stop"))
+
+            async def aclose(self):
+                if closed is not None:
+                    closed.set()
+
+        return Drip()
+
+    async def test_total_timeout_after_text_marks_truncated_under_heartbeat(self):
+        closed = asyncio.Event()
+        self.install(lambda req: httpx.Response(200, stream=self._dripping(closed)))
+        meta: dict = {}
+        t0 = time.monotonic()
+        with mock.patch.object(llm, "_http_total_timeout", return_value=0.4):
+            items = await self._drive(llm.stream_completion(
+                "q", model="deepseek-flash", timeout=5, retries=2, meta=meta, max_tokens=16, task="t"))
+        self.assertLess(time.monotonic() - t0, 2.0, "總時限要在新 Task 驅動下照樣生效")
+        self.assertTrue(items and items[0] == "段0")
+        self.assertLess(len(items), 60)
+        self.assertEqual(meta, {"truncated": True, "truncated_reason": llm.TRUNCATED_TOTAL_TIMEOUT})
+        self.assertEqual(len(self.requests), 1, "已吐字不重試")
+        self.assertTrue(closed.is_set(), "到期要關掉 httpx 回應")
+
+    async def test_generous_total_timeout_does_not_cut_normal_stream(self):
+        self.install(lambda req: httpx.Response(200, stream=self._dripping()))
+        meta: dict = {}
+        with mock.patch.object(llm, "_http_total_timeout", return_value=30.0):
+            items = await self._drive(llm.stream_completion(
+                "q", model="deepseek-flash", timeout=5, meta=meta, max_tokens=16, task="t"))
+        self.assertEqual(len(items), 60)
+        self.assertIs(meta["truncated"], False)
+
+    async def test_total_timeout_reaches_the_http_request_from_settings(self):
+        seen: dict = {}
+
+        async def fake(*a, **k):
+            seen.update(k)
+            yield lh.ChatOutcome(kind=None)
+
+        with mock.patch.object(lh, "astream_chat", fake), \
+             mock.patch.object(llm, "get_settings", return_value=mock.Mock(llm_http_total_timeout=123.0)):
+            await self.collect()
+        self.assertEqual(seen["total_timeout"], 123.0)
+        self.assertEqual(seen["first_token_timeout"], 120.0)
+
+    async def test_cli_path_ignores_total_timeout(self):
+        """只套 HTTP 路徑：CLI 路徑不讀這個旋鈕（CLI 的逾時語意不動）。"""
+        async def fake_attempt(cmd, prompt, timeout, allow_web=None, meta=None):
+            yield "cli"
+
+        with mock.patch.object(llm, "_run_attempt", fake_attempt), \
+             mock.patch.object(llm, "_http_total_timeout", side_effect=AssertionError("CLI 不該讀總時限")):
+            chunks = [c async for c in llm.stream_completion("q", model="claude-sonnet-5", max_tokens=16, task="t")]
+        self.assertEqual(chunks, ["cli"])
 
 
 class HttpCancelTests(_HttpCase):

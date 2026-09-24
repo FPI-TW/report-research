@@ -53,6 +53,8 @@ for _knob in (
     "TAG_MODEL", "SUMMARY_MODEL", "TITLE_MODEL", "TAKEAWAY_MODEL", "SIGNAL_MODEL", "BRIEF_MODEL",
 ):
     os.environ[_knob] = ""
+# DeepSeek 串流的牆鐘總時限：空字串＝預設 600（app/config._positive_float），部署目錄 `.env` 的值不滲進測試。
+os.environ["LLM_HTTP_TOTAL_TIMEOUT"] = ""
 
 
 @pytest.fixture(scope="session", autouse=True)

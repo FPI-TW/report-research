@@ -3186,7 +3186,10 @@ class MainAnswerTruncationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("active", row["kwargs"])  # 預設 active=True
 
     async def test_meta_length_and_read_timeout_are_noted(self):
-        for reason, phrase in (("length", "輸出長度達到上限"), ("read_timeout", "連線在輸出途中中斷")):
+        for reason, phrase in (
+            ("length", "輸出長度達到上限"), ("read_timeout", "連線在輸出途中中斷"),
+            ("total_timeout", "模型輸出超過時限"),  # HTTP 牆鐘總時限＝我們自己的時限，不說連線中斷
+        ):
             with self.subTest(reason=reason):
                 async def cut(*a, _r=reason, **k):
                     yield "答案前半[1]"

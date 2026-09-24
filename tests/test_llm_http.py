@@ -668,6 +668,71 @@ class StreamEdgeTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.kind, lh.NETWORK)
         self.assertTrue(out.streamed)
 
+    async def test_read_timeout_before_first_token_is_timeout(self):
+        """首字前伺服器沉默（httpx read 逾時）歸 TIMEOUT：外層不重試（見模組 docstring）。
+        標頭之前與標頭之後、首字之前兩個時點都一樣；首字之後的 read 逾時仍是 NETWORK（截斷）。"""
+
+        def silent_headers(req):
+            raise httpx.ReadTimeout("no bytes", request=req)
+
+        for name, handler in (
+            ("send", silent_headers),
+            ("body", lambda req: httpx.Response(
+                200, stream=_AsyncStream(b": keep-alive\n\n", httpx.ReadTimeout("no bytes")))),
+        ):
+            with self.subTest(at=name):
+                self.install(handler)
+                texts, out = await _collect(self._stream())
+                self.assertEqual(texts, [])
+                self.assertEqual(out.kind, lh.TIMEOUT)
+                self.assertFalse(out.streamed)
+                self.assertIn("ReadTimeout", out.detail)
+        self.install(lambda req: httpx.Response(
+            200, stream=_AsyncStream(_sse(_chunk(content="一半"), done=False), httpx.ReadTimeout("no bytes"))))
+        texts, out = await _collect(self._stream())
+        self.assertEqual((texts, out.kind, out.streamed), (["一半"], lh.NETWORK, True))
+
+    async def test_total_timeout_after_text(self):
+        """吐字後的牆鐘總時限：到期＝TIMEOUT 且 streamed（呼叫端當截斷）；None＝不設。"""
+        async def drip():
+            for i in range(100):
+                yield _sse(_chunk(content=f"{i}"), done=False)
+                await asyncio.sleep(0.02)
+            yield _sse(_chunk(content="", finish="stop"))
+
+        self.install(lambda req: httpx.Response(200, content=drip()))
+        t0 = time.monotonic()
+        texts, out = await _collect(self._stream(total_timeout=0.3))
+        self.assertLess(time.monotonic() - t0, 1.5)
+        self.assertTrue(0 < len(texts) < 100)
+        self.assertEqual(out.kind, lh.TIMEOUT)
+        self.assertTrue(out.streamed)
+        self.assertIn("總時限", out.detail)
+
+    async def test_total_timeout_after_finish_reason_keeps_success(self):
+        """finish_reason 已到、只差 [DONE] 時到期：答案完整，以 finish_reason 為準。"""
+        async def finished_then_hang():
+            yield _sse(_chunk(content="完整"), _chunk(content="", finish="stop"), done=False)
+            await asyncio.sleep(5)
+            yield b""
+
+        self.install(lambda req: httpx.Response(200, content=finished_then_hang()))
+        texts, out = await _collect(self._stream(total_timeout=0.2))
+        self.assertEqual(texts, ["完整"])
+        self.assertIsNone(out.kind)
+
+    async def test_total_timeout_shorter_than_first_token_bounds_first_token(self):
+        async def queued():
+            for _ in range(100):
+                yield b": keep-alive\n\n"
+                await asyncio.sleep(0.02)
+
+        self.install(lambda req: httpx.Response(200, content=queued()))
+        t0 = time.monotonic()
+        texts, out = await _collect(self._stream(first_token_timeout=5.0, total_timeout=0.2))
+        self.assertLess(time.monotonic() - t0, 1.5)
+        self.assertEqual((texts, out.kind, out.streamed), ([], lh.TIMEOUT, False))
+
     async def test_first_token_deadline_covers_send(self):
         """TLS 或代理卡在標頭之前：也要受首字期限約束，不是等 connect／read 逾時。"""
 

@@ -46,7 +46,7 @@ uv run python scripts/ingest_all.py
 - **測試絕不可寫 repo 根的真實環境檔**：這台機器 repo root 就是部署目錄，`finally` 擋得住例外、擋不住行程被殺。要驗載入行為餵 `tempfile`。`tests/test_env_loading.py` 與 `tests/conftest.py` 是第二道防線，不是許可證。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺 CJK 字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 加相依會過授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件的 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉那個相依，不是加豁免。相依更新由 `.github/dependabot.yml` 每週分組開 PR，`torch` 與 `@embedpdf/*` 刻意排除（理由在該檔）。
-- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`（記錄量尺之前的舊檔：judge 三個 META 鍵只有一邊有也回 2，拿新結果比它一律回 2，要比就兩邊同版重跑）。
+- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`（Claude haiku judge 的舊系譜、記錄量尺之前的舊檔：拿新結果比它一律回 2）。judge 自 2026-09 起是 DeepSeek（新系譜 `deepseek-2026-09`，門檻數值不變），**新系譜尚無基準線**：第一次 `uv run python eval/run_ragas.py --concurrency 1 --repeat 3 --out eval/baselines/baseline-YYYY-MM-DD-jdsflash-gdsflash.json` 的結果就是起點（README「測試」一節）。
 
 ## 改動對照表（改了 A 就要動 B）
 
@@ -77,7 +77,7 @@ uv run python scripts/ingest_all.py
 - 首輪路由順序刻意：確定性 overview（`overview.py`，零 LLM）→ `precheck_route()` 詞表（命中 `time_sensitive` 完全不檢索）→ LLM 五類分類（`scope_router.py`）與檢索並行、誰先到聽誰。五類與 `decided_by` 全寫進 `qa_log.filters`；fail-open 落點是 `CORPUS_QA`。
 - 網搜每題由使用者決定：`web_on` ＝ 請求的 `web` AND `ASK_ENABLE_WEB`，下游只讀 `web_on`。系統提示與工具授權要一起切（`ask_system_prompt(web)`），逾時只在開網搜時放寬（`ASK_WEB_TIMEOUT`），`qa_log.filters.web` 含 False 也要寫，免責句由 Python 追加（`WEB_ANSWER_DISCLAIMER`），網搜來源不進 evidence ledger。
 - 忠實度抽查在 `done` 後跑背景任務（`answer._spawn_background`），有自己的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是問答抽查的唯一閘門，漏判是靜默的——寧可多抓不可漏抓。監控頁「待複核」門檻 `FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，生產環境檔可能還設著）。
-- `LLM_PROVIDER` 預設 `deepseek`（未設、空值、未知值都是；`/etc/default/report-mark-llm` 缺檔時批次因缺金鑰 rc=2，不退回 CLI）。claude CLI 已於 2026-09-23 放棄：`claude_cli`／`claude_only` 仍是合法值但已無可用後端；DeepSeek 表裡網搜與兩個 judge 刻意仍是 Claude（生產關網搜 `ASK_ENABLE_WEB=0`，judge 待 PR-18＋26/27）。`tests/conftest.py` 刻意強制 `claude_cli`（測試不打付費 API），要驗預設值的測試自己移除該鍵。
+- `LLM_PROVIDER` 預設 `deepseek`（未設、空值、未知值都是；`/etc/default/report-mark-llm` 缺檔時批次因缺金鑰 rc=2，不退回 CLI）。claude CLI 已於 2026-09-23 放棄：`claude_cli`／`claude_only` 仍是合法值但已無可用後端；DeepSeek 表裡只有網搜刻意仍是 Claude（生產關網搜 `ASK_ENABLE_WEB=0`）；兩個 judge 是 `deepseek-flash`（新量尺，讀分數三處只計現行 judge，歷史 haiku 列歸「其他 judge」；judge 走 `llm_http.complete_json`，每階段最多 3 個請求）。`tests/conftest.py` 刻意強制 `claude_cli`（測試不打付費 API），要驗預設值的測試自己移除該鍵。
 - `app/services/llm.py` 的 `stream_completion` **依白名單分派**：DeepSeek（`llm_models.HTTP_MODELS`）走 `llm_http`，其餘走 CLI；呼叫點一律帶 `max_tokens` 與 `task`。HTTP 錯誤處置：只有 overloaded／network 且尚未吐字才重試；未吐字失敗拋 `LLMUnavailableError(kind=…)`，`/api/ask` 依 kind 給訊息（內容審查請使用者換個問法、quota／auth 說帳號異常、config 說設定有誤，都不承諾已通知）；首字前 httpx read 逾時歸 timeout 不重試；已吐字後被內容審查拋 `partial=True`、`length`／read 逾時／總時限（`LLM_HTTP_TOTAL_TIMEOUT`）正常結束帶 `meta["truncated_reason"]`，總覽／時效／主答保留已吐的字、由 Python 附註中斷原因並寫 `filters.llm_truncated`；內容審查**不改走 Claude**。`allow_web` 配 DeepSeek 直接拋 `kind=config`（網搜延後，`ASK_WEB_MODEL` 維持 Claude）。`timeout` 經 `_with_heartbeat` 驅動時兩條路徑實際都是首字期限。CLI 路徑以 `claude -p --setting-sources '' --output-format stream-json` spawn CLI，開網搜時加 `--tools WebSearch --allowedTools WebSearch`、不開時 `--tools ""`，兩者都加 `--strict-mcp-config`（不帶 `--mcp-config`＝不載 MCP；`--tools` 管不到 MCP）（`--allowedTools` 只管免核可、不限縮工具；`--disallowedTools "*"` 萬用字元未記載、不用；批次 `scripts/_claude_cli.py` 與簡報同樣不開任何工具、不載 MCP；旗標放 argv 最後；init 事件工具集不符記 WARNING）；只在 API 529 重試；逾時對已串流文字 fail-open。
 
 ### 閱讀頁、雷達、簡報（讀取零 LLM）
@@ -104,7 +104,7 @@ uv run python scripts/ingest_all.py
 - Auth deny-by-default、fail-closed（缺 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 不啟動）。免登入白名單 `/login`、`/healthz`、前綴 `/app/assets/`；`/healthz/storage`、`/healthz/llm` 也在白名單但只回答本機直連（其餘 404）。外部存取需 `REPORT_MARK_EDGE_SECRET` 或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 任一（刻意 OR，祕密要 repo root 與 `deploy/` 兩份環境檔逐字相同）。Session 7 天滑動、30 天上限；改密碼、`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 都會全員登出，是預期行為。
 - `DEV_NO_AUTH=1` 三條件同時成立才放行（旗標在環境檔載入前已在 `os.environ`、對端 loopback、無代理 header），`web/server.py` 的 import 順序由 `tests/test_dev_mode.py` 釘住。`SKIP_WARMUP` 同樣走 `os.environ` 且判 `== "1"`。兩者都不要寫進環境檔。
 - 併發閘只剩一個：`/api/ask` 上限 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（無環境變數；佇列 `ASK_MAX_QUEUE`），是 `web/concurrency.py` 的 `ConcurrencyGate`（刻意不支援 `async with`）。問答忠實度抽查背景任務的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT` 同樣是行程內狀態。上限 per-process，lifespan 擋多 worker。
-- `claude` CLI 只剩解析到 Claude 的任務（網搜、judge）會用到，要在 PATH 上；systemd 靠 `deploy/systemd/report-mark-web.service.d/path.conf`（PR-M 移除）。`llm.py` 刻意不在批次 flock 範圍內（有靜態測試釘住）。
+- `claude` CLI 只剩解析到 Claude 的任務（網搜）會用到，要在 PATH 上；systemd 靠 `deploy/systemd/report-mark-web.service.d/path.conf`（PR-M 移除）。`llm.py` 刻意不在批次 flock 範圍內（有靜態測試釘住）。
 
 ## 生產維運
 - 真相來源在 `deploy/`，不是機器上的 `/etc`。sync 鏈（每 3h）：rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量）。摘要／標題／摘錄吃 `--hashes-file`，**不可改成 `--since-days`**（濾的是 `report_date`，會漏掉近九成）；後三段的 `--limit` 是安全機制不是效能旋鈕。補救走 `scripts/failures_to_delta.py`，不要 `--all-local`。

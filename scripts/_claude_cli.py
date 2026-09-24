@@ -40,7 +40,8 @@ HTTP 路徑的規則（第二版計畫 §4.3、§4.6）：
     `llm_http.build_body` 負責；`max_tokens` 由每個呼叫點帶（值見第二版 §8，
     tests/test_claude_cli.py 逐點釘住），沒帶是程式錯誤、直接拋 `ValueError`。
   - `timeout` 沿用各批次現行值，在 HTTP 路徑是**涵蓋傳輸層重試的總期限**（`complete_chat`
-    以 `time.monotonic()` 逐行檢查；排隊時的 keep-alive 會一直重置 httpx 的 read 逾時）。
+    以 `time.monotonic()` 逐 chunk 檢查；排隊時的 keep-alive 會一直重置 httpx 的 read 逾時）。
+    已吐字後才到期歸 `truncated`（不計入斷路器、1 次就跳過），沒吐字就到期才是 `timeout`。
   - 失敗回 `CliResult(None, "API[<kind>] <固定措辭>：<細節>")`（`llm_http.error_string`，單行、
     不含 TAB）。前綴 `API[` 是契約：`is_retryable` 靠它分辨「傳輸層已重試過」。
   - **帳號層級（401 auth／402 quota／config：404 或模型不存在）拋 `LlmEnvironmentError`**
@@ -55,8 +56,13 @@ HTTP 路徑的暫時性錯誤（429／5xx／網路）已在傳輸層依 `Retry-A
 空回應、400 則是決定性的，重打同一個 prompt 只是再付一次錢。所以各批次的腳本層重試迴圈要加
 `if res.text is None and not is_retryable(res): break`——`API[` 開頭的失敗一律不在腳本層重試。
 **例外**是「回應成功但解析失敗」（unparseable）：那時 `res.text` 有值，腳本層照舊最多 3 次。
-結果：每篇每輪最多 3 個會產生輸出的請求；截斷與審查只會 1 個。CLI 的失敗（`CLI 逾時`、
-`CLI 退出碼 …`）語意不變，照舊重試。
+
+不變量：**每篇每輪最多 3 個會產生輸出（已計費）的請求；截斷與審查只會 1 個。** 它靠兩層一起成立：
+傳輸層只重試**還沒吐字**的失敗（`complete_chat` 在 `outcome.streamed` 時不重試：串流中途的錯誤物件、
+`insufficient_system_resource`、中途斷線都直接以該 kind 回傳，這裡當單篇失敗、`is_retryable` 為
+False、不進 unparseable 重試），腳本層只重試解析失敗。審查中3 之前傳輸層不看 `streamed`，實測
+「每次都吐了字再斷」的一篇一輪打出 9 個已計費請求。tests/test_batch_http_dispatch.py 的
+`BilledRequestsPerFileTests` 釘住這個上限。CLI 的失敗（`CLI 逾時`、`CLI 退出碼 …`）語意不變，照舊重試。
 
 `failure_kind(res)` 把 HTTP 的內容型失敗對應到 `llm_failures` 的 reason（content_filter、
 truncated、empty、bad_request），各批次記跳過名單時用它；環境型（timeout、overloaded、network）

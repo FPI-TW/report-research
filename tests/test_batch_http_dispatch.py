@@ -363,11 +363,8 @@ PER_FILE_FAILURES = {
 UNPARSEABLE_TEXT = "抱歉，我無法處理這份文件。"
 
 
-class ScriptLevelRetryTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
-    """`is_retryable`：`API[...]` 錯誤在 5 支批次都只呼叫 1 次；unparseable 仍重試到 3 次。
-
-    以 `complete_chat` 的呼叫次數量腳本層（傳輸層的重試不算在內）。
-    """
+class _OneFileMixin(HttpMixin):
+    """跑各批次的單篇函式（HTTP model），回跳過名單寫入端與失敗 log。"""
 
     def spy(self):
         spy = mock.patch.object(cc.llm_http, "complete_chat", wraps=cc.llm_http.complete_chat)
@@ -395,6 +392,13 @@ class ScriptLevelRetryTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         raise AssertionError(script)
 
     SCRIPTS = ("summaries", "titles", "takeaways", "signals", "tag_all")
+
+
+class ScriptLevelRetryTests(_OneFileMixin, unittest.IsolatedAsyncioTestCase):
+    """`is_retryable`：`API[...]` 錯誤在 5 支批次都只呼叫 1 次；unparseable 仍重試到 3 次。
+
+    以 `complete_chat` 的呼叫次數量腳本層（傳輸層的重試不算在內）。
+    """
 
     async def test_api_errors_called_once_per_script(self):
         for script in self.SCRIPTS:
@@ -452,6 +456,92 @@ class ScriptLevelRetryTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(tac, "call_cli", return_value=err) as call:
             self.assertEqual(self.run_tag_all(), "fail")
         self.assertEqual(call.call_count, 3)
+
+
+def _mid_stream_error(req):
+    """吐了字、再以串流中的錯誤物件結束（→ overloaded）：這個請求已經計費。"""
+    body = sse(chunk(content='{"summary": "半'), {"error": {"message": "server error"}}, done=False)
+    return httpx.Response(200, content=body)
+
+
+class BilledRequestsPerFileTests(_OneFileMixin, unittest.IsolatedAsyncioTestCase):
+    """審查中3：每篇每輪最多 3 個已計費（吐了字）的請求；截斷與審查只有 1 個。
+
+    修正前傳輸層不看 `streamed`：審查實驗 [1] 的「吐字後斷 ×2、第三次解析不了」×3 輪一篇打出 9 個
+    已計費請求。這裡以實際送出的請求數量（不是 complete_chat 的呼叫次數）驗證。
+    """
+
+    ASYNC_SCRIPTS = ("summaries", "titles", "takeaways", "signals")
+
+    def _unparseable(self, script):
+        return ok(UNPARSEABLE_TEXT if script != "signals" else "不是 JSON")
+
+    async def test_reviewer_experiment_1(self):
+        for script in self.ASYNC_SCRIPTS:
+            with self.subTest(script=script):
+                self.install([_mid_stream_error, _mid_stream_error, self._unparseable(script)] * 3)
+                rec, log = await self._one(script)
+                self.assertEqual(len(self.requests), 1, "吐字後出事：傳輸層與腳本層都不重打")
+                self.assertEqual(rec.recorded, [], "過載是環境型，不記跳過名單")
+                self.assertIn("API[overloaded]", log)
+
+    async def test_at_most_three_billed_requests(self):
+        """解析失敗兩次、第三次吐字後斷：3 個已計費請求就停，記 unparseable（先前的原因不被環境型蓋掉）。"""
+        for script in self.ASYNC_SCRIPTS:
+            with self.subTest(script=script):
+                self.install([self._unparseable(script)] * 2 + [_mid_stream_error] * 10)
+                rec, _ = await self._one(script)
+                self.assertEqual(len(self.requests), 3)
+                self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
+
+    async def test_truncated_and_content_filter_single_request(self):
+        for script in self.ASYNC_SCRIPTS:
+            for case in ("truncated", "content_filter"):
+                with self.subTest(script=script, case=case):
+                    self.install(PER_FILE_FAILURES[case][0])
+                    await self._one(script)
+                    self.assertEqual(len(self.requests), 1)
+
+    async def test_unparseable_then_timeout_records_unparseable(self):
+        """N08／N09：先解析失敗、再逾時（環境型）→ 記 unparseable，不因最後一次是環境型就什麼都不記。"""
+        timeout = cc.CliResult(None, lh.error_string(lh.TIMEOUT, "超過總期限"))
+        seq = [cc.CliResult(UNPARSEABLE_TEXT, None), timeout]
+        cases = (
+            (gs, lambda: self.run_title_or_summary(gs, "summarize_one")),
+            (gt, lambda: self.run_title_or_summary(gt, "title_one")),
+        )
+        for mod, run in cases:
+            with self.subTest(mod=mod.__name__), mock.patch.object(mod, "call_cli", side_effect=list(seq)) as call:
+                rec = await run()
+                self.assertEqual(call.call_count, 2, "逾時（API[...]）之後不再重試")
+                self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
+        for mod, run in ((et, self.run_takeaway), (es, self.run_signal)):
+            with self.subTest(mod=mod.__name__), \
+                    mock.patch.object(mod, "call_cli", side_effect=[cc.CliResult("不是 JSON", None), timeout]) as call:
+                rec = await run()
+                self.assertEqual(call.call_count, 2)
+                self.assertEqual(rec.recorded, [("h1", lf.UNPARSEABLE)])
+
+    async def test_deadline_after_text_records_truncated(self):
+        """低2：已吐字後才到總期限＝截斷：記 truncated（1 次就跳過）、不進斷路器的窗。"""
+        clock = {"t": 1000.0}
+
+        def drip(req):
+            def gen():
+                yield sse(chunk(content='{"summary": "很長'), done=False)
+                for _ in range(400):
+                    clock["t"] += 1.0
+                    yield sse(chunk(content="。"), done=False)
+            return httpx.Response(200, content=gen())
+
+        fake_time = mock.Mock(monotonic=lambda: clock["t"], sleep=lambda s: None)
+        with mock.patch.object(lh, "time", fake_time):
+            for i in range(cc.BREAKER_TRIP + 1):
+                self.install(drip)
+                rec = await self.run_title_or_summary(gs, "summarize_one", file_hash=f"h{i}")
+                self.assertEqual(rec.recorded, [(f"h{i}", lf.TRUNCATED)])
+                self.assertEqual(len(self.requests), 1)
+                self.assertEqual(sum(cc._BREAKER._recent), 0, "截斷不是供應商沒回應，不計入斷路器")
 
 
 class SummaryPlainTextFallbackTests(HttpMixin, unittest.IsolatedAsyncioTestCase):

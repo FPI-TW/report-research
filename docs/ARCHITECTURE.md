@@ -107,7 +107,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 
 事件序（services 層 yield 的 kind）：`status`（stage：`understanding`、`retrieved`、`generating`、`reading`、`searching_web`、`evaluating`）、`sources`、`token`、`notice`、`ext_sources`、`followups`、`done`（`cited`、`qa_id`、`conversation_id`、`thinking_ms`、`root_qa_id`、`version_count`；簡→繁有變動時多帶 `answer`；婉拒版帶 `notice_kind` 且無 `qa_id`）。web 層補 `queued` 與 `error`。契約在 `tests/fixtures/sse_events.json`。
 
-忠實度抽查在 `done` 後以 `answer._spawn_background` 跑：四閘 `ASK_FAITHFULNESS_ENABLED`、有 `qa_id`、`is_numeric_claim(body)`、抽樣率；in-flight 超過 `ASK_FAITHFULNESS_MAX_INFLIGHT` 就跳過不排隊。結果落 `qa_log.evaluation`，judge 異常標 `degraded` 不加分數。
+忠實度抽查在 `done` 後以 `answer._spawn_background` 跑：四閘 `ASK_FAITHFULNESS_ENABLED`、有 `qa_id`、`is_numeric_claim(body)`、抽樣率；in-flight 超過 `ASK_FAITHFULNESS_MAX_INFLIGHT` 就跳過不排隊。結果落 `qa_log.evaluation`，judge 異常標 `degraded` 不加分數（原因記 `degraded_reason`）。judge 呼叫目前有兩到三層各自重試：生產每個階段（拆解、grounding）最壞 6 次 CLI spawn（schema 重試 1 次 × 529 重試共 3 次），離線同一指標任務最壞 4 次 judge 呼叫（schema 重試 × `EVAL_JUDGE_RETRIES`）；PR-18 的 LLM adapter 會收斂成單層，細節在 `app/services/faithfulness.py` 模組 docstring。
 
 簡繁守門 `zh_hant.to_traditional` 的四個寫入點：`answer.py` 三處（overview 回答、網搜答案、主答案收斂）、`signal_extract.py` 一處（訊號 summary）。串流路徑刻意不中途轉。**逐字引文不轉**：`report_takeaway.quote`、`thesis_dimensions[*].evidence`、`full_text`、`report_chunk.content`。
 

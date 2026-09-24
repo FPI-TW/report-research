@@ -60,6 +60,15 @@ class SchemaVersionTests(unittest.TestCase):
         )
         self.assertEqual((out, missing), ({0: True, 1: False}, []))
 
+    def test_all_missing_is_an_error_even_when_missing_is_allowed(self):
+        """allow_missing 只放寬「漏判幾條」；一條都沒判是 judge 沒回答（審查 L3）。"""
+        with self.assertRaises(js.JudgeSchemaError):
+            js.parse_verdicts({"verdicts": []}, 2, "supported", allow_missing=True)
+        out, missing = js.parse_verdicts({"verdicts": [{"idx": 1, "supported": True}]}, 2, "supported",
+                                         allow_missing=True)
+        self.assertEqual((out, missing), ({1: True}, [0]))
+        self.assertEqual(js.parse_verdicts({"verdicts": []}, 0, "supported"), ({}, []))
+
     def test_non_object_response_is_schema_error(self):
         for bad in ([1, 2], "x", None, 3):
             with self.subTest(bad=bad), self.assertRaises(js.JudgeSchemaError):

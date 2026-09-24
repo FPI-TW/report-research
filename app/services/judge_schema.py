@@ -12,7 +12,8 @@
 - 2（DeepSeek 遷移 PR-08）：嚴格驗證，見下方 `parse_*`。違反一律拋 `JudgeSchemaError`，
   由 `call_validated` 重試 1 次；仍不合格時離線記該指標 None（run_ragas 的 judge_errors），
   生產記 `degraded_reason="schema"`。唯一的寬鬆例外是**生產端的 grounding 缺 idx**：仍計為
-  unsupported、另記 WARNING（審查 L19——改成 degraded 等於那一題沒查，方向是漏抓）。
+  unsupported、另記 WARNING，缺幾條記進 `evaluation.n_missing_verdicts`（審查 L19——改成
+  degraded 等於那一題沒查，方向是漏抓）；但**全部缺漏**仍是 schema 錯（見 `parse_verdicts`）。
   CP 的候選片段同時改為 1 起編號、與脈絡本身的 `[n]` 及答案的引用一致（審查 M12）。
 
 **judge 身分**：`qa_log.evaluation` 自 DeepSeek 遷移 PR-07 起帶 `judge_model`。讀分數的三處
@@ -104,6 +105,8 @@ def parse_verdicts(
     - `key`（supported／relevant）必須是 bool；`"true"`、1 都不算。
     - idx 集合必須**恰好等於** range(first, first + n)：越界、重複一律錯；缺漏預設也是錯，
       `allow_missing=True`（只給生產 grounding，L19）時改為回報缺漏的位置、記 WARNING。
+      **全部缺漏**（n>0 卻一條都沒判，典型是 `{"verdicts": []}`）即使 allow_missing 也是錯：
+      那不是漏判幾條，是 judge 根本沒回答，全計 unsupported 會讓整題變 0 分、灌進待複核佇列。
     """
     vs = _obj(res, "verdicts").get("verdicts")
     if not isinstance(vs, list):
@@ -126,6 +129,8 @@ def parse_verdicts(
         out[pos] = val
     missing = [i for i in range(n) if i not in out]
     if missing:
+        if not out:
+            raise JudgeSchemaError(f"verdicts 全部缺漏（應有 {n} 條，實際 0 條）")
         if not allow_missing:
             raise JudgeSchemaError(f"缺 idx {[i + first for i in missing][:10]}（共 {len(missing)} 個）")
         logger.warning("judge 漏判 %d/%d 條（idx %s），計為 unsupported", len(missing), n,

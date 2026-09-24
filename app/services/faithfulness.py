@@ -13,6 +13,15 @@ numeric_support_rate。分數是「來源支持度／待複核」，非真實性
   chunk_id 實務多為 NULL，回查落在 report_id 粒度——v1 已知限制。
 
 契約 judge：async judge(system: str, user: str) -> dict | list | None。
+
+**重試層數與最壞呼叫次數**（目前有兩到三層各自重試，PR-18 的 LLM adapter 會收斂成單層）：
+- 生產（check_faithfulness，每個階段＝拆解或 grounding 各算一次）：`call_validated` 的
+  schema 重試（1 次）×`stream_completion` 的 529 重試（retries=2，共 3 次）＝**最多 6 次**
+  CLI spawn。預設 judge 失敗回 None 時 `call_validated` 不重試，所以 6 次只出現在「前幾次
+  529、最後回了不合 schema 的東西」這條路徑。逾時不重試（再等一輪無益）。
+- 離線（eval/run_ragas，同一個指標任務）：`call_validated`（2 次）×`eval.judge.judge_json`
+  （EVAL_JUDGE_RETRIES=1，共 2 次，逾時與空回應也重試）＝**最多 4 次** judge 呼叫；每次
+  judge 呼叫底下再有 `stream_completion` 的 529 重試（最多 3 次），CLI spawn 最壞 12 次。
 """
 from __future__ import annotations
 
@@ -32,7 +41,7 @@ from app.services.judge_schema import (
     parse_statements,
     parse_verdicts,
 )
-from app.services.llm import DEFAULT_MODEL, LLMUnavailableError, stream_completion
+from app.services.llm import DEFAULT_MODEL, UNAVAILABLE_TIMEOUT, LLMUnavailableError, stream_completion
 from app.services.query_planner import parse_plan_json
 
 logger = logging.getLogger(__name__)
@@ -112,13 +121,27 @@ class ClaimVerdict:
     verdict: str  # "supported" | "unsupported" | "no_source"
 
 
-# degraded_reason 的詞彙：degraded 只說「沒量到」，這裡說為什麼沒量到。監控與校準要分得出
-# 「judge 服務掛了」與「judge 回了看不懂的東西」——前者是可用性問題，後者是量尺問題。
-DEGRADED_UNAVAILABLE = "unavailable"  # LLMUnavailableError：API 錯誤、或一個字都沒吐就逾時
-DEGRADED_EMPTY = "empty"              # 回應是空的
-DEGRADED_PARSE = "parse"              # 回應不是 JSON（含串到一半被逾時截斷的 JSON）
-DEGRADED_ERROR = "error"              # 其他例外，或注入的 judge 回 None
-DEGRADED_SCHEMA = "schema"            # JSON 合法但不合 schema v2（重試 1 次後）
+# degraded_reason 的詞彙（`evaluation.degraded_reason`；只在 degraded=true 時有值）。
+# degraded 只說「沒量到」，這裡說為什麼沒量到。監控與校準要分得出「judge 服務掛了／太慢」
+# 與「judge 回了看不懂的東西」——前者是可用性問題，後者是量尺問題：
+#   unavailable  LLMUnavailableError：API 錯誤（529 等，已重試）或進程沒吐任何字就結束
+#   timeout      一個字都沒吐就逾時（LLMUnavailableError.reason == "timeout"）
+#   truncated    吐到一半被逾時截斷（stream_completion 的 meta["truncated"]），剩下的不是完整 JSON
+#   empty        回應是空的（只有空白）
+#   parse        回應完整但不是 JSON
+#   schema       JSON 合法但不合 schema v2（重試 1 次後），含 grounding 全部缺漏
+#   error        其他例外，或注入的 judge 回 None
+DEGRADED_UNAVAILABLE = "unavailable"
+DEGRADED_TIMEOUT = "timeout"
+DEGRADED_TRUNCATED = "truncated"
+DEGRADED_EMPTY = "empty"
+DEGRADED_PARSE = "parse"
+DEGRADED_SCHEMA = "schema"
+DEGRADED_ERROR = "error"
+DEGRADED_REASONS = frozenset({
+    DEGRADED_UNAVAILABLE, DEGRADED_TIMEOUT, DEGRADED_TRUNCATED, DEGRADED_EMPTY,
+    DEGRADED_PARSE, DEGRADED_SCHEMA, DEGRADED_ERROR,
+})
 
 
 @dataclass
@@ -127,6 +150,7 @@ class FaithfulnessResult:
 
     judge_model／degraded_reason／elapsed_ms 由 check_faithfulness 填入（量尺可追溯，
     DeepSeek 遷移 PR-07）；直接用 summarize_claims 組出來的結果這三個是 None。
+    n_missing_verdicts：grounding 漏判（缺 idx）而被計為 unsupported 的條數，無缺漏時 0。
     """
 
     faithfulness_score: float | None
@@ -136,6 +160,7 @@ class FaithfulnessResult:
     degraded_reason: str | None = None
     judge_model: str | None = None
     elapsed_ms: int | None = None
+    n_missing_verdicts: int = 0
 
     def to_evaluation(self, *, citation_coverage: float | None = None) -> dict:
         """落庫用 evaluation jsonb（qa_log.evaluation 的形狀）。
@@ -158,6 +183,9 @@ class FaithfulnessResult:
             "judge_model": self.judge_model,
             "judge_schema_version": JUDGE_SCHEMA_VERSION,
             "elapsed_ms": self.elapsed_ms,
+            # 漏判而被計為 unsupported 的條數：分數偏低時先看這個，分得出「真的沒佐證」
+            # 與「judge 沒判完」（L19 的寬鬆例外留下的痕跡）。
+            "n_missing_verdicts": self.n_missing_verdicts,
         }
 
 
@@ -179,7 +207,7 @@ async def ground_statements(
 
     schema v2：idx 集合必須恰好是 range(len(statements))，型別嚴格；不合格重試 1 次後拋
     JudgeSchemaError。strict=False 只放寬「缺 idx」一項——缺的不出現在回傳的 dict 裡，
-    由呼叫端計為 unsupported（生產端，審查 L19），並記 WARNING。
+    由呼叫端計為 unsupported（生產端，審查 L19），並記 WARNING；全部缺漏仍是 schema 錯。
 
     payload 格式與 eval 版本逐字一致，避免 eval 基準線漂移。
     """
@@ -220,16 +248,19 @@ async def _default_judge(
     """claude CLI judge：drain 串流 → parse_plan_json。任何異常 → None（fail-open）。
 
     failures 給定時，把失敗原因（DEGRADED_* 詞彙）附加進去，供 check_faithfulness 記
-    degraded_reason——回傳值維持 None，judge 契約不變。
+    degraded_reason——回傳值維持 None，judge 契約不變。逾時分兩種：沒吐字就逾時
+    （LLMUnavailableError.reason＝timeout）記 timeout；吐到一半被截斷而解析失敗記 truncated，
+    不歸成 parse（parse 留給「回應完整卻不是 JSON」，那才是量尺問題）。
     """
     def _fail(reason: str) -> None:
         if failures is not None:
             failures.append(reason)
 
+    meta: dict = {}
     try:
         parts: list[str] = []
         async for chunk in stream_completion(
-            user, model=model, system=system, timeout=timeout, allow_web=False
+            user, model=model, system=system, timeout=timeout, allow_web=False, meta=meta
         ):
             parts.append(chunk)
         raw = "".join(parts).strip()
@@ -237,13 +268,13 @@ async def _default_judge(
             _fail(DEGRADED_EMPTY)
             return None
         return parse_plan_json(raw)  # {"statements":...} / {"verdicts":...} 皆物件
-    except LLMUnavailableError:
+    except LLMUnavailableError as e:
         logger.exception("faithfulness judge failed")
-        _fail(DEGRADED_UNAVAILABLE)
+        _fail(DEGRADED_TIMEOUT if e.reason == UNAVAILABLE_TIMEOUT else DEGRADED_UNAVAILABLE)
         return None
     except ValueError:
         logger.exception("faithfulness judge failed")
-        _fail(DEGRADED_PARSE)
+        _fail(DEGRADED_TRUNCATED if meta.get("truncated") else DEGRADED_PARSE)
         return None
     except Exception:
         logger.exception("faithfulness judge failed")
@@ -321,7 +352,10 @@ async def check_faithfulness(
         )
         for i, s in enumerate(statements)
     ]
-    return _stamp(summarize_claims(claims, degraded=False))
+    result = summarize_claims(claims, degraded=False)
+    # 缺 idx 的條數（全部缺漏已在 parse_verdicts 判為 schema 錯，走不到這裡）。
+    result.n_missing_verdicts = len(statements) - len(supmap)
+    return _stamp(result)
 
 
 def summarize_claims(claims: list[ClaimVerdict], *, degraded: bool) -> FaithfulnessResult:

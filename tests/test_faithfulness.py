@@ -242,6 +242,26 @@ class CheckFaithfulnessSchemaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c.verdict for c in r.claims], ["supported", "unsupported"])
         self.assertEqual(r.faithfulness_score, 0.5)
         self.assertTrue(any("漏判" in m for m in logs.output))
+        # 缺幾條要落庫，不能只在 WARNING 裡：分數偏低時才分得出「沒佐證」與「judge 沒判完」。
+        self.assertEqual(r.n_missing_verdicts, 1)
+        self.assertEqual(r.to_evaluation()["n_missing_verdicts"], 1)
+
+    async def test_all_verdicts_missing_is_schema_not_zero_score(self):
+        """`{"verdicts": []}` 是 judge 沒回答，不是全部不支持：全計 unsupported 會讓整題 0 分、
+        灌進待複核佇列。改判 degraded(schema)，且照 schema 錯的規則重試 1 次。"""
+        calls = {"ground": 0}
+
+        async def judge(system, user):
+            if system.startswith("你是 RAG 評測助手"):
+                return {"statements": ["營收年增 30%", "毛利率 50%"]}
+            calls["ground"] += 1
+            return {"verdicts": []}
+
+        r = await F.check_faithfulness("x", ["ctx"], judge=judge)
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_SCHEMA)
+        self.assertIsNone(r.faithfulness_score)
+        self.assertEqual(calls["ground"], 2)
 
     async def test_string_statements_degrade_with_schema_reason(self):
         j = _judge({"decompose": {"statements": "一段字串"}})
@@ -327,6 +347,7 @@ class CheckFaithfulnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ev["judge_schema_version"], F.JUDGE_SCHEMA_VERSION)
         self.assertIsNone(ev["degraded_reason"])
         self.assertIsInstance(ev["elapsed_ms"], int)
+        self.assertEqual(ev["n_missing_verdicts"], 0)
 
     async def test_judge_model_is_the_model_argument(self):
         j = _judge({"decompose": {"statements": []}})
@@ -350,7 +371,7 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
             return await F.check_faithfulness("營收年增 30%", ["ctx"], model="claude-haiku-4-5", timeout=1.0)
 
     async def test_unavailable(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
             raise F.LLMUnavailableError("529")
             yield  # pragma: no cover
 
@@ -362,14 +383,40 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ev["judge_model"], "claude-haiku-4-5")
 
     async def test_parse(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2):
-            yield '{"statements": ["截斷'
+        """回應完整（沒撞到逾時）卻不是 JSON：量尺問題。"""
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
+            yield "我無法判斷這些主張。"
+            meta["truncated"] = False
 
         r = await self._check(stream)
         self.assertEqual(r.degraded_reason, F.DEGRADED_PARSE)
 
+    async def test_truncated_by_timeout_is_not_parse(self):
+        """吐到一半被逾時截斷：JSON 不完整是逾時的結果，不是 judge 回了看不懂的東西。"""
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
+            yield '{"statements": ["截斷'
+            meta["truncated"] = True
+
+        r = await self._check(stream)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_TRUNCATED)
+        self.assertEqual(r.to_evaluation()["degraded_reason"], "truncated")
+
+    async def test_timeout_without_output(self):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
+            raise F.LLMUnavailableError("claude 無有效回應", reason="timeout")
+            yield  # pragma: no cover
+
+        r = await self._check(stream)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_TIMEOUT)
+
+    def test_vocabulary_is_closed(self):
+        self.assertEqual(
+            F.DEGRADED_REASONS,
+            {"unavailable", "timeout", "truncated", "empty", "parse", "schema", "error"},
+        )
+
     async def test_empty(self):
-        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None):
             yield "   "
 
         r = await self._check(stream)

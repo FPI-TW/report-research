@@ -588,11 +588,13 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 3. 單篇重放：`uv run python scripts/failures_to_delta.py --stage tag_blocked --out data/sync_delta_blocked.txt`（或手寫只含那一行相對路徑的 delta），再 `uv run python scripts/sync_new_reports.py --delta data/sync_delta_blocked.txt --hashes-out data/sync_hashes_retained_blocked.txt`，接著用同一份 hashes 補跑摘要、標題、摘錄（`--hashes-file`）。那幾段若也被審查擋下，同樣記進跳過名單，不影響入庫。
 4. 不收的話不用做什麼：下一輪 delta 不會再列出它（rsync `--size-only`），`llm_task_failure` 那一列留著作紀錄，要清就 DELETE。
 
-**簡報被內容審查擋下**：該次跳過、不寫列，`generate_brief.py` 以 rc=1 收場（排程殼記進 `unit_failures.log`、走告警鏈），原因寫進 `data/brief_failures.log` 與 sync log；下一輪以新的窗期再試。一直擋就一直紅，交人看素材。
+**行內標註被截斷（`skip_truncated`）**：DeepSeek 回 `truncated`（`max_tokens` 用完，或已吐字後碰到總期限）的標註同上處置：不入庫、計入 `skip_truncated`（異常，擋心跳），記進 `research.llm_task_failure`（reason=truncated），`data/sync_failures.log` 的階段是 `tag_truncated`，`failures_to_delta.py` 預設**不撈**（同一份輸入、同一個上限重送結果不變）。處置：看是不是 `TAG_MAX_TOKENS`（`scripts/sync_new_reports.py`）不夠——調高後以 `--stage tag_truncated` 取出單篇重放；或照上面第 2 步手寫 tags。空回應與一般 400 **刻意仍記 `skip_untagged`**（階段 `tag`，補救指令會重送）：空回應多半是供應商端偶發、下一輪常常就好；400 在送出時就被拒、不產生輸出，重送幾乎不花錢。
+
+**簡報被內容審查擋下**：該次跳過、不寫列，`generate_brief.py` 以 rc=1 收場（排程殼記進 `unit_failures.log`、走告警鏈），原因寫進 `data/brief_failures.log`（`時間<TAB>簡報日期<TAB>原因<TAB>model`）與 sync log。**同一天、同一個 model 之後的輪次不再呼叫**（素材是上一次的超集，幾乎一定再擋；每 3 小時重打只是每次再付一次錢），印「今日已被模型供應商的內容審查擋過，略過」、rc 仍是 1（「今天沒有簡報」照樣看得見）。隔天以新的窗期再試；換 model 或加 `--force` 會當天重打。交人看素材。
 
 **用量記錄**：批次每次 LLM 呼叫（DeepSeek 與 CLI）在 `data/llm_usage.jsonl` 追加一行 JSON（`task`、`file_hash`、`report_id`、`backend`、`model_req`／`model_resp`、`prompt_sha256`、`tokens{hit,miss,completion,reasoning}`、`finish_reason`、`kind`、`attempts`、`ttft_ms`、`total_ms`；CLI 的 `tokens` 為 null，thinking 關時 `reasoning` 記 0）。摘要、標題、標籤的產出模型靠它以 `file_hash` 回溯；費用真值看 DeepSeek 餘額差分，這份只拿來歸因。寫不進去不影響批次。檔案只增不減，要清就整份搬走。
 
-**斷路器**：同一個批次行程裡最近 10 次 DeepSeek 呼叫有 ≥5 次逾時／過載／連線失敗，該段以 **rc=2** 中止，並寫 `data/.llm_breaker`；之後 30 分鐘內，其他**會用到 DeepSeek** 的段在預檢就 rc=2 拒跑（還在用 Claude 的段不受影響）。處置：看 DeepSeek 狀態頁與 sync log；恢復後 `rm data/.llm_breaker`（或等它過期），再依「整批中止後的重放」補跑。
+**斷路器**：同一個批次行程裡最近 10 次 DeepSeek 呼叫有 ≥5 次逾時／過載／連線失敗，該段以 **rc=2** 中止，並寫 `data/.llm_breaker`。標記綁定 sync 輪次：`sync_new_reports.sh` 每輪 export `SYNC_ROUND_ID`（＝`ROUND_TS`），標記帶 `round=`；**同一輪**其餘**會用到 DeepSeek** 的段在預檢就 rc=2 拒跑（不看時間，一輪可超過 2.5 小時），**下一輪不受影響**（上一輪末段的標記不會擋下一輪開頭的匯入；屆時若仍過載，斷路器會再跳一次）。手動執行（沒有輪次 id）或手動執行寫的標記，照 30 分鐘有效期。還在用 Claude 的段不受影響。處置：看 DeepSeek 狀態頁與 sync log；恢復後 `rm data/.llm_breaker`（或等它失效），再依「整批中止後的重放」補跑。
 
 ### oneshot 的手動驗證：`Result=success` 不是證據
 
@@ -717,6 +719,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 | `fail` | **異常** | 抽字或寫 DB 拋例外；環境修好重跑就會入庫 |
 | `skip_untagged` | **異常** | 標註前置條件失敗；同上 |
 | `skip_blocked` | **異常** | 行內標註被模型供應商的內容審查擋下；重跑不會變，要人處理（見「DeepSeek 批次的失敗處置」），殼另外點名 `make llm-blocked` |
+| `skip_truncated` | **異常** | 行內標註輸出被截斷；重跑不會變（補救指令不撈），要人處理（見「DeepSeek 批次的失敗處置」），殼另外點名 `make llm-blocked` |
 | `skip_admin` | 預期 | 標註成功且明確判定不該入庫 |
 | `skip_non_research` | 預期 | 同上 |
 | `skip_exists` | 預期 | 已在庫，冪等 |

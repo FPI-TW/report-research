@@ -63,6 +63,13 @@ EXTS = {".pdf", ".docx", ".doc"}
 #     另記進 research.llm_task_failure（task=tag, reason=content_filter），`make llm-blocked` 列出；
 #     路徑寫進 FAIL_LOG 的 `tag_blocked` 階段（failures_to_delta 預設不撈它）。處置見
 #     docs/production_resilience.md「DeepSeek 批次的失敗處置」。
+#   - `skip_truncated`：行內標註被截斷（DeepSeek 的 truncated：`max_tokens` 用完，或已吐字後碰到總期限）。
+#     同 skip_blocked：重跑不會不一樣（同一份輸入、同一個上限），重送只是再付一次錢 ⇒ **異常**，
+#     記進 llm_task_failure（reason=truncated），FAIL_LOG 階段 `tag_truncated`（failures_to_delta 預設
+#     不撈）。處置是調 TAG_MAX_TOKENS 或手寫 tags 後用 `--stage tag_truncated` 單篇重放。
+#     空回應與一般 400 **刻意留在 skip_untagged**（補救指令會重送）：空回應多半是供應商端的偶發狀況，
+#     下一輪常常就好了；400 在送出時就被拒、不產生輸出，重送幾乎不花錢，而且可能是修好請求之後
+#     本來就該重打的那一批。
 #   - `fail`：抽字或寫入 DB 拋例外。同上 ⇒ **異常**。
 #   - `skip_admin`／`skip_non_research`：標註成功且明確判定不該入庫 ⇒ 預期。
 #   - `skip_exists`：已在庫，冪等 ⇒ 預期。
@@ -74,7 +81,7 @@ EXTS = {".pdf", ".docx", ".doc"}
 #     也已記進 hashes**，下游照常；它不是「該入庫卻沒進 DB」，補救指令（failures_to_delta →
 #     重放）對它無效（重放會 skip_exists）。算成異常會擋心跳、印出錯的補救指令 ⇒ **不算異常**，
 #     只寫進 .sync_last_stats，由殼層在 >0 時印 WARNING（持續出現多半是磁碟滿或權限）。
-ABNORMAL_COUNTERS = ("fail", "skip_untagged", "skip_blocked")
+ABNORMAL_COUNTERS = ("fail", "skip_untagged", "skip_blocked", "skip_truncated")
 
 # 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
 # （app/services/llm_models.py；claude_cli 下是 claude-haiku-4-5）。
@@ -123,11 +130,14 @@ def skip_before_tag(is_admin: bool, scanned: bool, exists: bool) -> str | None:
 
 
 def skip_after_tag(tag, tag_error: str | None = None) -> str | None:
-    """標註後過濾：無 tag → skip_untagged（被內容審查擋下 → skip_blocked）；非研究/無市場 →
-    skip_non_research；否則 None。"""
+    """標註後過濾：無 tag → skip_untagged（被內容審查擋下 → skip_blocked；被截斷 → skip_truncated）；
+    非研究/無市場 → skip_non_research；否則 None。"""
     if tag is None:
-        if error_kind(tag_error) == "content_filter":
+        kind = error_kind(tag_error)
+        if kind == "content_filter":
             return "skip_blocked"
+        if kind == "truncated":
+            return "skip_truncated"
         return "skip_untagged"
     if not tag.is_research or not tag.market:
         return "skip_non_research"
@@ -398,6 +408,7 @@ async def _run(args) -> None:
             "skip_exists",
             "skip_untagged",
             "skip_blocked",
+            "skip_truncated",
             "skip_non_research",
             "fail",
             "cache_fail",
@@ -507,11 +518,12 @@ async def _run(args) -> None:
                     if reason == "skip_untagged":
                         with open(FAIL_LOG, "a", encoding="utf-8") as fl:
                             fl.write(f"{path}\ttag\t{tag_error or '標註失敗'}\n")
-                    elif reason == "skip_blocked":
-                        # 階段刻意叫 tag_blocked：failures_to_delta 預設不撈（重打結果不會變）。
+                    elif reason in ("skip_blocked", "skip_truncated"):
+                        # 階段刻意叫 tag_blocked／tag_truncated：failures_to_delta 預設不撈（重打結果不會變）。
                         # 原因欄帶 file_hash，`make llm-blocked` 列出的 hash 可以 grep 回路徑。
+                        stage = "tag_blocked" if reason == "skip_blocked" else "tag_truncated"
                         with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                            fl.write(f"{path}\ttag_blocked\t{tag_error}（file_hash={res.file_hash}）\n")
+                            fl.write(f"{path}\t{stage}\t{tag_error}（file_hash={res.file_hash}）\n")
                     # DeepSeek 的內容型失敗（審查、截斷、空回應、400）記入跳過名單供 make llm-blocked
                     # 列出；行內標註不讀它（被擋的檔不會自己再出現在 delta 裡）。
                     fail_reason = failure_kind(CliResult(None, tag_error)) if tag is None else None

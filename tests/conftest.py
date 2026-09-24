@@ -59,6 +59,9 @@ os.environ["LLM_HTTP_TOTAL_TIMEOUT"] = ""
 # 目錄——測試讓斷路器跳脫時寫進去，生產排程會 30 分鐘拒跑。指到不存在的目錄：寫入 fail-open
 # 失敗、讀取當作沒有。要驗標記的測試用 mock.patch.dict 指到自己的 tempfile。
 os.environ["LLM_BREAKER_FILE"] = "/nonexistent/report-mark-llm-breaker/.llm_breaker"
+# sync 輪次 id（scripts/sync_new_reports.sh 每輪 export）：斷路器標記的有效範圍依它判斷。從排程環境
+# 裡跑測試時不得沾到那一輪的 id；要驗輪次行為的測試用 mock.patch.dict 自己給。
+os.environ.pop("SYNC_ROUND_ID", None)
 # 批次用量記錄（scripts/_claude_cli.usage_log_path）：同理不得寫進部署目錄的 data/llm_usage.jsonl
 # （那是費用歸因的依據）。指到 os.devnull：寫得進去、什麼都不留；要驗內容的測試自己指到 tempfile。
 os.environ["LLM_USAGE_LOG"] = os.devnull

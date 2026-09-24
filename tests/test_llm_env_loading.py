@@ -427,11 +427,77 @@ class BreakerMarkerPrecheckTests(_EnvFileCase):
         self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
         le.load_llm_env()
 
-    def _mark(self, age_s: float) -> None:
+    def _mark(self, age_s: float, round_id: str | None = None, text: str | None = None) -> None:
         self.marker.parent.mkdir(parents=True, exist_ok=True)
-        self.marker.write_text("ts=2026-09-24T00:00:00+00:00\nreason=最近 10 次有 5 次逾時\n", encoding="utf-8")
+        if text is None:
+            text = "ts=2026-09-24T00:00:00+00:00\n"
+            if round_id:
+                text += f"round={round_id}\n"
+            text += "reason=最近 10 次有 5 次逾時\n"
+        self.marker.write_text(text, encoding="utf-8")
         t = time.time() - age_s
         os.utime(self.marker, (t, t))
+
+    def require_in_round(self, round_id, models):
+        env = {"SYNC_ROUND_ID": round_id} if round_id else {}
+        with mock.patch.dict(os.environ, env):
+            if not round_id:
+                os.environ.pop("SYNC_ROUND_ID", None)
+            return self.require(models)
+
+    def test_previous_round_marker_does_not_block_next_round(self):
+        """審查中4：上一輪末段跳脫的標記（10 分鐘前）不得擋下一輪的匯入。"""
+        self._mark(600, round_id="20260924_090000")
+        code, out = self.require_in_round("20260924_120000", {"tag": "deepseek-flash"})
+        self.assertIsNone(code, out)
+
+    def test_same_round_marker_blocks_regardless_of_age(self):
+        """同一輪的標記一直擋到這一輪結束：一輪可超過 2.5 小時，30 分鐘規則擋不住後段。"""
+        for age in (60, le.BREAKER_TTL_S + 5, 3 * 3600):
+            with self.subTest(age=age):
+                self._mark(age, round_id="20260924_090000")
+                code, out = self.require_in_round("20260924_090000", {"summary": "deepseek-flash"})
+                self.assertEqual(code, 2, out)
+                self.assertIn("本輪 sync", out)
+
+    def test_manual_run_keeps_thirty_minute_rule(self):
+        """手動執行（沒有輪次 id）：不管標記有沒有輪次，都照 30 分鐘規則。"""
+        for round_id in ("20260924_090000", None):
+            with self.subTest(marker_round=round_id):
+                self._mark(60, round_id=round_id)
+                code, out = self.require_in_round(None, {"summary": "deepseek-flash"})
+                self.assertEqual(code, 2, out)
+                self.assertIn("30 分鐘內", out)
+                self._mark(le.BREAKER_TTL_S + 5, round_id=round_id)
+                code, out = self.require_in_round(None, {"summary": "deepseek-flash"})
+                self.assertIsNone(code, out)
+
+    def test_roundless_marker_in_a_round_keeps_thirty_minute_rule(self):
+        """排程輪次讀到手動執行寫的標記（沒有輪次 id）：照 30 分鐘規則。"""
+        self._mark(60)
+        code, _ = self.require_in_round("20260924_120000", {"summary": "deepseek-flash"})
+        self.assertEqual(code, 2)
+        self._mark(le.BREAKER_TTL_S + 5)
+        code, out = self.require_in_round("20260924_120000", {"summary": "deepseek-flash"})
+        self.assertIsNone(code, out)
+
+    def test_empty_marker_blocks_within_ttl(self):
+        """空標記檔（寫到一半、被清空）：沒有輪次 id，照 30 分鐘規則擋，訊息說明是空的（N07）。"""
+        for round_id in (None, "20260924_120000"):
+            with self.subTest(current_round=round_id):
+                self._mark(60, text="")
+                code, out = self.require_in_round(round_id, {"summary": "deepseek-flash"})
+                self.assertEqual(code, 2, out)
+                self.assertIn("標記是空的", out)
+                self._mark(le.BREAKER_TTL_S + 5, text="")
+                code, out = self.require_in_round(round_id, {"summary": "deepseek-flash"})
+                self.assertIsNone(code, out)
+
+    def test_round_id_is_single_line(self):
+        with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "  20260924_090000\nx=1 "}):
+            self.assertEqual(le.sync_round_id(), "20260924_090000")
+        with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "  "}):
+            self.assertIsNone(le.sync_round_id())
 
     def test_fresh_marker_blocks_http_segment(self):
         self._mark(60)

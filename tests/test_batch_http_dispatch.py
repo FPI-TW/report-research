@@ -770,6 +770,34 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
             self.assertIn("file_hash=", reason)
         self.assertEqual(self.hashes_out.read_text(encoding="utf-8"), "", "不入庫")
 
+    async def test_truncated_is_skip_truncated_not_replayed(self):
+        """審查低1：截斷另立 skip_truncated／tag_truncated（failures_to_delta 預設不撈），記 truncated。"""
+        self.install(PER_FILE_FAILURES["truncated"][0])
+        rec = await self._run()
+        st = self.stats()
+        self.assertEqual((st["skip_truncated"], st["skip_untagged"], st["skip_blocked"]), ("2", "0", "0"))
+        self.assertEqual(st["abnormal"], "2")
+        self.assertEqual(sorted(rec.recorded), [(f"{i:064d}", lf.TRUNCATED) for i in (1, 2)])
+        lines = (self.tmp / "sync_failures.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual([ln.split("\t")[1] for ln in lines], ["tag_truncated"] * 2)
+        self.assertIn("file_hash=", lines[0])
+        ftd = _load_script("failures_to_delta")
+        ok, _ = ftd.parse_failures(lines, self.tmp / "src")
+        self.assertEqual(ok, [], "補救指令不得把截斷的再送一次")
+
+    async def test_empty_stays_untagged_and_replayable(self):
+        """空回應維持 skip_untagged（階段 tag）：多半是供應商端偶發，補救指令會重送。"""
+        self.install(PER_FILE_FAILURES["empty"][0])
+        rec = await self._run()
+        st = self.stats()
+        self.assertEqual((st["skip_untagged"], st["skip_truncated"]), ("2", "0"))
+        self.assertEqual(sorted(rec.recorded), [(f"{i:064d}", lf.EMPTY) for i in (1, 2)])
+        lines = (self.tmp / "sync_failures.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual([ln.split("\t")[1] for ln in lines], ["tag"] * 2)
+        ftd = _load_script("failures_to_delta")
+        ok, _ = ftd.parse_failures(lines, self.tmp / "src")
+        self.assertEqual(len(ok), 2)
+
     async def test_other_http_content_failures_stay_untagged_but_recorded(self):
         self.install(_unique_400())
         rec = await self._run()
@@ -812,7 +840,8 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(cc.subprocess, "run", return_value=fail):
             rec = await self._run(n=1, model="claude-haiku-4-5")
         st = self.stats()
-        self.assertEqual((st["skip_untagged"], st["skip_blocked"], st["abnormal"]), ("1", "0", "1"))
+        self.assertEqual((st["skip_untagged"], st["skip_blocked"], st["skip_truncated"], st["abnormal"]),
+                         ("1", "0", "0", "1"))
         self.assertEqual(rec.recorded, [])
         self.assertEqual(self.requests, [])
         stage = (self.tmp / "sync_failures.log").read_text(encoding="utf-8").split("\t")[1]
@@ -821,14 +850,18 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
 class BriefContentFilterTests(HttpMixin, unittest.TestCase):
     """簡報被內容審查擋下：該次跳過、不寫列、rc 非 0（走 OnFailure 告警鏈），並記在輸出與失敗紀錄。"""
 
-    def _generate(self):
+    def _generate(self, *, force=True, model=DS, real_log=False, date=None):
+        """跑一次 generate。`real_log=True`：不 patch record_failure，失敗紀錄寫進 tmp 的 brief_failures.log
+        （同一個測試裡多次呼叫共用，驗「今日已被擋」）；FAIL_LOG 一律指到 tmp，不讀部署目錄的檔。"""
         upsert = mock.AsyncMock()
-        record = mock.MagicMock()
+        record = mock.MagicMock(wraps=gb.record_failure) if real_log else mock.MagicMock()
         svc = gb.brief_service
-        args = argparse.Namespace(date=None, force=True, after_hour=0, dry_run=False, model=DS, max_lookback_days=7)
+        args = argparse.Namespace(date=date, force=force, after_hour=0, dry_run=False, model=model,
+                                  max_lookback_days=7)
         err = io.StringIO()
         with contextlib.ExitStack() as st:
             p = st.enter_context
+            p(mock.patch.object(gb, "FAIL_LOG", self.tmp / "brief_failures.log"))
             p(mock.patch.object(gb, "SessionFactory", lambda: _FakeSession()))
             p(mock.patch.object(svc, "fetch_by_date", mock.AsyncMock(return_value=None)))
             p(mock.patch.object(svc, "fetch_latest", mock.AsyncMock(return_value=None)))
@@ -861,6 +894,48 @@ class BriefContentFilterTests(HttpMixin, unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(upsert.await_args.kwargs["model"], DS)
         record.assert_not_called()
+
+    def test_blocked_today_is_not_called_again(self):
+        """審查低4：同一天同一個 model 已被審查擋過 → 之後的輪次不再呼叫、rc 仍非 0、訊息說明。"""
+        self.install(status(400, "Content Exists Risk"))
+        rc, _, _, _ = self._generate(force=False, real_log=True)
+        self.assertEqual((rc, len(self.requests)), (1, 1))
+        line = (self.tmp / "brief_failures.log").read_text(encoding="utf-8").splitlines()[0].split("\t")
+        self.assertEqual(len(line), 4, line)
+        self.assertEqual(line[3], DS)
+        rc, upsert, _, err = self._generate(force=False, real_log=True)
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(self.requests), 1, "今日已被擋：不再送出請求")
+        self.assertIn("今日已被", err)
+        upsert.assert_not_awaited()
+
+    def test_blocked_today_scope(self):
+        """只擋「同一天、同一個 model、內容審查」：換 model、--force、別天、別種失敗都照打。"""
+        self.install(status(400, "Content Exists Risk"))
+        self._generate(force=False, real_log=True)
+        self.assertEqual(len(self.requests), 1)
+        self._generate(force=True, real_log=True)
+        self.assertEqual(len(self.requests), 2, "--force 照打")
+        self._generate(force=False, real_log=True, model="deepseek-v4-pro")
+        self.assertEqual(len(self.requests), 3, "換 model 照打")
+        self._generate(force=False, real_log=True, date="2020-01-01")
+        self.assertEqual(len(self.requests), 4, "別天照打")
+        (self.tmp / "brief_failures.log").unlink()
+        self.install(status(503, "busy"))
+        self._generate(force=False, real_log=True)
+        sent = len(self.requests)
+        self._generate(force=False, real_log=True)
+        self.assertEqual(len(self.requests), 2 * sent, "過載不是審查，下一輪照打")
+
+    def test_blocked_today_ignores_unreadable_and_old_format(self):
+        log = self.tmp / "brief_failures.log"
+        target = gb.date_cls.today()
+        log.write_text(f"2026-09-24T00:00:00+00:00\t{target}\tAPI[content_filter] 觸發供應商內容審查\n",
+                       encoding="utf-8")
+        with mock.patch.object(gb, "FAIL_LOG", log):
+            self.assertFalse(gb.blocked_today(target, DS), "三欄舊格式沒有 model，不算")
+        with mock.patch.object(gb, "FAIL_LOG", self.tmp / "missing" / "x.log"):
+            self.assertFalse(gb.blocked_today(target, DS))
 
 
 if __name__ == "__main__":

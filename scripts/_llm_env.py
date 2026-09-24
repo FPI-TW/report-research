@@ -28,8 +28,18 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
     （或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。批次（`run_claude`、`generate_brief`）與
     評測（`stream_completion`）都依白名單分派到 DeepSeek（遷移 PR-12 起），所以兩種入口同一套規則。
   - 本段會用到白名單模型，而 `data/.llm_breaker`（批次斷路器的標記，`scripts/_claude_cli.py`）
-    在 `BREAKER_TTL_S` 內：前一段剛因 DeepSeek 大量逾時／過載而中止，這一段再跑只是每篇等到逾時。
-    只看「會不會用到 HTTP」，全部用 Claude 的段不受影響（審查 L9）。
+    還有效：前一段剛因 DeepSeek 大量逾時／過載而中止，這一段再跑只是每篇等到逾時。
+    只看「會不會用到 HTTP」，全部用 Claude 的段不受影響（審查 L9）。「有效」的定義見下一節。
+
+## 斷路器標記綁定 sync 輪次（審查中4）
+
+`scripts/sync_new_reports.sh` 每輪 export `SYNC_ROUND_ID`（＝該輪的 `ROUND_TS`），跳脫時寫進標記的
+`round=` 行。預檢時：
+  - 預檢方與標記**都有**輪次 id：只有**同一輪**的標記才拒跑，不看時間。一輪最長可超過 2.5 小時，
+    單靠 30 分鐘有效期擋不住同一輪後段；反過來上一輪末段跳脫的標記會擋下一輪的**匯入**（下一輪
+    開頭就是匯入），delta 得靠人工重放——所以跨輪一律放行，下一輪若仍過載，斷路器會再跳一次。
+  - 任一方沒有輪次 id（手動執行、或手動執行寫的標記）：維持 `BREAKER_TTL_S`（30 分鐘）規則。
+  - 空標記檔（寫到一半被清空之類）沒有輪次 id，照 30 分鐘規則擋，訊息寫「標記是空的」。
   全部解析到 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否
   一致，**永遠不印金鑰本身**。
 
@@ -58,9 +68,12 @@ DEFAULT_LLM_ENV_FILE = "/etc/default/report-mark-llm"
 EXAMPLE = "deploy/systemd/report-mark-llm.env.example"
 KEY = "DEEPSEEK_API_KEY"
 RC_CONFIG = 2
-# 斷路器標記的有效期：之內其他用到 DeepSeek 的段預檢拒跑。sync 每 3 小時一輪，30 分鐘只擋住
-# 同一輪後面幾段，下一輪自然放行（屆時若仍過載，斷路器會再跳一次）。
+# 斷路器標記的有效期（沒有 sync 輪次 id 時）：之內其他用到 DeepSeek 的段預檢拒跑。排程裡的段
+# 改看輪次 id（見模組 docstring「斷路器標記綁定 sync 輪次」），這個值只管手動執行。
 BREAKER_TTL_S = 30 * 60
+# sync 殼每輪 export 的輪次 id（scripts/sync_new_reports.sh 的 ROUND_TS）；手動執行沒有。
+ROUND_ENV = "SYNC_ROUND_ID"
+_ROUND_PREFIX = "round="
 
 # 上一次 load_llm_env() 的結果；require_llm_key() 據此給提示。模組層狀態是刻意的：
 # 載入在 import 期、檢查在 main，中間沒有別的地方能放。
@@ -78,16 +91,37 @@ def breaker_path() -> Path:
     return Path(os.environ.get("LLM_BREAKER_FILE") or ROOT / "data" / ".llm_breaker")
 
 
+def sync_round_id() -> str | None:
+    """本行程所屬的 sync 輪次 id（`SYNC_ROUND_ID`）；手動執行回 None。只取單行、去空白。"""
+    raw = (os.environ.get(ROUND_ENV) or "").strip()
+    return raw.splitlines()[0].strip() if raw else None
+
+
+def _marker_round(text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith(_ROUND_PREFIX):
+            return line[len(_ROUND_PREFIX):].strip() or None
+    return None
+
+
 def _fresh_breaker() -> str | None:
-    """標記在有效期內就回它的內容（給人看），否則 None。讀不到一律當作沒有。"""
+    """標記還有效就回它的內容（給人看），否則 None。讀不到一律當作沒有。
+
+    有效＝同一個 sync 輪次（兩邊都有輪次 id 時），否則 `BREAKER_TTL_S` 內（見模組 docstring）。
+    """
     path = breaker_path()
     try:
         age = time.time() - path.stat().st_mtime
-        if age >= BREAKER_TTL_S:
-            return None
-        return " ".join(path.read_text(encoding="utf-8", errors="replace").split())[:400] or "（標記是空的）"
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+    marked, current = _marker_round(text), sync_round_id()
+    if marked and current:
+        if marked != current:
+            return None
+    elif age >= BREAKER_TTL_S:
+        return None
+    return " ".join(text.split())[:400] or "（標記是空的）"
 
 
 def load_llm_env() -> None:
@@ -226,8 +260,9 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
         return
     tripped = _fresh_breaker()
     if tripped:
+        when = f"本輪 sync（{sync_round_id()}）" if sync_round_id() else f"{BREAKER_TTL_S // 60} 分鐘內"
         _fail(
-            f"批次斷路器 {BREAKER_TTL_S // 60} 分鐘內跳脫過（{breaker_path()}：{tripped}）。"
+            f"批次斷路器{when}跳脫過（{breaker_path()}：{tripped}）。"
             f"本段要用 {', '.join(http)}，先不跑；確認 DeepSeek 恢復後刪除該檔，或等標記過期"
         )
     key = (os.environ.get(KEY) or "").strip()

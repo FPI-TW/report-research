@@ -73,9 +73,10 @@ truncated、empty、bad_request），各批次記跳過名單時用它；環境�
 DeepSeek 整體變慢或過載時，每篇都要等到總期限才失敗，一段批次可以拖上數小時、每篇還記一筆
 「單篇失敗」。行程範圍的斷路器看**最近 `BREAKER_WINDOW` 次 HTTP 呼叫**，其中逾時／過載／網路
 （`BREAKER_KINDS`）達 `BREAKER_TRIP` 次就拋 `LlmEnvironmentError`（整批 rc=2），並寫
-`data/.llm_breaker`；之後 30 分鐘內，其他會用到 HTTP model 的段在 `require_llm_key` 就以
-rc=2 拒跑（`scripts/_llm_env.py`）。CLI 呼叫不進窗、也不受標記影響：遷移期間還在用 Claude
-的段不該因為 DeepSeek 出事而停。有執行緒鎖（批次以 `asyncio.to_thread`／執行緒池並行呼叫）。
+`data/.llm_breaker`（帶 sync 輪次 id `round=`，審查中4）；同一輪 sync 其餘會用到 HTTP model
+的段（手動執行：30 分鐘內）在 `require_llm_key` 就以 rc=2 拒跑，下一輪不受影響
+（`scripts/_llm_env.py`）。CLI 呼叫不進窗、也不受標記影響：遷移期間還在用 Claude 的段不該因為
+DeepSeek 出事而停。有執行緒鎖（批次以 `asyncio.to_thread`／執行緒池並行呼叫）。
 
 ## 400 升級（審查 H2）
 
@@ -127,7 +128,7 @@ from typing import NamedTuple, Optional
 
 from app.services import llm_failures, llm_http
 from app.services.llm_models import is_http_model
-from scripts._llm_env import BREAKER_TTL_S, ROOT, breaker_path
+from scripts._llm_env import BREAKER_TTL_S, ROOT, breaker_path, sync_round_id
 
 # stderr 只留尾巴：完整 stderr 可能很長，而失敗記錄是給人掃讀的。200 字元夠容納
 # 「usage: unknown flag」「Credit balance too low」這類真正有資訊量的那一行。
@@ -265,13 +266,19 @@ def _warn(msg: str) -> None:
 
 
 def _write_breaker_marker(message: str) -> None:
-    """寫 `data/.llm_breaker`（原子寫入）；失敗只警告——標記是給後續段的，這一段照樣中止。"""
+    """寫 `data/.llm_breaker`（原子寫入）；失敗只警告——標記是給後續段的，這一段照樣中止。
+
+    在 sync 輪次內（`SYNC_ROUND_ID`）另寫 `round=<id>`：預檢只拿它擋同一輪的段（`_llm_env._fresh_breaker`）。
+    """
     path = breaker_path()
+    round_id = sync_round_id()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_text(
-            f"ts={datetime.now(timezone.utc).isoformat(timespec='seconds')}\nreason={message}\n",
+            f"ts={datetime.now(timezone.utc).isoformat(timespec='seconds')}\n"
+            + (f"round={round_id}\n" if round_id else "")
+            + f"reason={message}\n",
             encoding="utf-8",
         )
         tmp.replace(path)
@@ -308,7 +315,8 @@ class _Breaker:
                 return
             self._tripped = message = (
                 f"LLM 斷路器：最近 {len(self._recent)} 次 DeepSeek 呼叫有 {bad} 次逾時／過載／連線失敗，"
-                f"中止本段。{BREAKER_TTL_S // 60} 分鐘內其他用到 DeepSeek 的段預檢會拒跑（標記 {breaker_path()}）；"
+                f"中止本段。{'本輪 sync' if sync_round_id() else f'{BREAKER_TTL_S // 60} 分鐘內'}"
+                f"其他用到 DeepSeek 的段預檢會拒跑（標記 {breaker_path()}）；"
                 "確認供應商恢復後可刪除標記"
             )
         _write_breaker_marker(message)

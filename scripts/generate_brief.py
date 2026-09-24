@@ -137,10 +137,35 @@ def _spawn_cli(prompt: str, model: str, timeout: int) -> tuple[Optional[str], Op
     return proc.stdout, None
 
 
-def record_failure(target: date_cls, reason: str) -> None:
+def record_failure(target: date_cls, reason: str, model: str = "") -> None:
+    """`時間<TAB>簡報日期<TAB>原因<TAB>model` 一行。原因去掉 TAB／換行（欄位不能被切開）。
+
+    第四欄 model 是審查低4 補的：`blocked_today` 據此判斷「今天這個 model 已被內容審查擋過」。
+    """
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
+    reason = " ".join(str(reason).split())
     with FAIL_LOG.open("a", encoding="utf-8") as handle:
-        handle.write(f"{datetime.now(timezone.utc).isoformat()}\t{target}\t{reason}\n")
+        handle.write(f"{datetime.now(timezone.utc).isoformat()}\t{target}\t{reason}\t{model}\n")
+
+
+def blocked_today(target: date_cls, model: str) -> bool:
+    """`brief_failures.log` 裡同一個簡報日期、同一個 model 已有內容審查的紀錄 → True（審查低4）。
+
+    簡報每輪 sync 都會被叫；被審查擋下時不寫列，下一輪窗期只是再往後延、素材是上一次的超集，
+    幾乎一定再被擋——每 3 小時重打一次、每次付一次錢、每次再進告警鏈。同一天同一個 model 擋過
+    就不再呼叫（rc 仍是 1，讓「今天沒有簡報」照樣看得見）；隔天、換 model、或 `--force` 會再試。
+    讀不到檔一律當作沒有（照打）：這是省錢的閘，不是正確性的一部分。舊格式（三欄、沒有 model）
+    的行不算。
+    """
+    try:
+        lines = FAIL_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        cols = line.split("\t")
+        if len(cols) >= 4 and cols[1] == str(target) and cols[3] == model and error_kind(cols[2]) == "content_filter":
+            return True
+    return False
 
 
 def resolve_window(
@@ -209,6 +234,14 @@ async def generate(args) -> int:
         print(material)
         return 0
 
+    if not args.force and blocked_today(target, args.model):
+        print(
+            f"[brief] {target} 今日已被模型供應商的內容審查擋過（model={args.model}），略過、不再呼叫"
+            "（要重試加 --force；處置見 docs/production_resilience.md「DeepSeek 批次的失敗處置」）",
+            file=sys.stderr,
+        )
+        return 1
+
     prompt = brief_service.build_prompt(target, material)
     # **鎖只包住 CLI 呼叫本身**：排程每 3 小時叫本檔一次，但真正要呼叫 LLM 的只有
     # 一天一次。若照其他批次的慣例在 main 進入點取鎖，其餘七次 no-op 都會在訊號或
@@ -217,12 +250,14 @@ async def generate(args) -> int:
     with claude_cli_lock_or_exit("generate_brief"):
         raw, error = call_cli(prompt, args.model)
     if error:
-        record_failure(target, error)
+        record_failure(target, error, args.model)
         if error_kind(error) == "content_filter":
-            # 內容審查：一律標記、跳過、交人工（不改走 Claude）。不寫列，下一輪以新的窗期再試；
-            # rc=1 讓排程殼記進 unit_failures（OnFailure 告警鏈），素材若一直觸發審查就會一直紅。
+            # 內容審查：一律標記、跳過、交人工（不改走 Claude）。不寫列；同一天同一個 model 之後的
+            # 輪次由 blocked_today 略過、不再呼叫（隔天以新的窗期再試）。rc=1 讓排程殼記進
+            # unit_failures（OnFailure 告警鏈）。
             print(
-                f"[brief] {target} 觸發模型供應商的內容審查，本次跳過、不寫列（下一輪以新的窗期再試）：{error}",
+                f"[brief] {target} 觸發模型供應商的內容審查，本次跳過、不寫列"
+                f"（今天不再重試，隔天以新的窗期再試）：{error}",
                 file=sys.stderr,
             )
             return 1
@@ -231,7 +266,7 @@ async def generate(args) -> int:
 
     markdown = brief_service.parse_brief(raw)
     if not markdown:
-        record_failure(target, "模型輸出無法解析為簡報 markdown")
+        record_failure(target, "模型輸出無法解析為簡報 markdown", args.model)
         print("[brief] 產生失敗：模型輸出無法解析", file=sys.stderr)
         return 1
 

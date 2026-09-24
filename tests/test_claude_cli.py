@@ -590,6 +590,27 @@ class BreakerTests(_HttpCase):
             self.assertIn("斷路器", err.getvalue())
             le.require_llm_key({"summary": "claude-sonnet-5"})  # 不拋
 
+    def test_marker_carries_sync_round_id(self):
+        """審查中4：在 sync 輪次內跳脫，標記帶 `round=`；同一輪後段拒跑，下一輪的段放行。"""
+        with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "20260924_090000"}):
+            self._calls(_status(503), 5)
+        self.assertIn("round=20260924_090000\n", self.marker.read_text(encoding="utf-8"))
+        le._STATE.clear()
+        self.addCleanup(le._STATE.clear)
+        with mock.patch.object(le, "_warn_if_not_deploy_root"), \
+             mock.patch("sys.stderr", new_callable=lambda: __import__("io").StringIO()):
+            with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "20260924_090000"}), \
+                 self.assertRaises(SystemExit):
+                le.require_llm_key({"summary": "deepseek-flash"})
+            with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "20260924_120000"}):
+                le.require_llm_key({"tag": "deepseek-flash"})  # 下一輪：不拋
+
+    def test_marker_without_round_outside_sync(self):
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("SYNC_ROUND_ID", None)
+            self._calls(_status(503), 5)
+        self.assertNotIn("round=", self.marker.read_text(encoding="utf-8"))
+
     def test_marker_write_failure_still_aborts(self):
         blocker = Path(self._tmpdir.name) / "file"
         blocker.write_text("", encoding="utf-8")

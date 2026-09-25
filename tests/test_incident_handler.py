@@ -590,6 +590,118 @@ class StateMachineTests(unittest.TestCase):
         self.assertEqual(int(self.h.state["count"]), 1)
 
 
+class HoldExitCodeTests(unittest.TestCase):
+    """`INCIDENT_HOLD_EXIT_CODES`：列出的退出碼走 hold（既不開也不關事件）。
+
+    為什麼要有：邊緣探針的 exit 3＝「對外失敗，但本機 origin 也壞了」，交給 web 元件。
+    handler 預設把 3 當健康（web 探針的 3 是啟動寬限），於是進行中的 edge 事件會在 web
+    重啟那一輪被 RESOLVED 關掉、狀態檔被刪——一則不實的「已恢復」。edge 那一組 unit 設
+    這個旋鈕為 3；web 與 LineBot 不設，行為不變。
+    """
+
+    HOLD = {"INCIDENT_HOLD_EXIT_CODES": "3"}
+
+    def setUp(self):
+        self.h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(self.h.close)
+
+    def _open_incident(self):
+        self.h.set_probe(1)
+        p = self.h.run(**self.HOLD)
+        self.assertEqual(last_emit(p.stdout)["action"], "firing", p.stdout + p.stderr)
+        self.assertEqual(self.h.webhook_calls(), 1)
+
+    def test_held_exit_does_not_resolve_an_open_incident(self):
+        self._open_incident()
+        self.h.set_probe(3, result="success")
+        p = self.h.run(**self.HOLD)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        e = last_emit(p.stdout)
+        self.assertEqual(e["status"], "held")
+        self.assertNotEqual(e["action"], "resolved")
+        self.assertEqual(e["incident"], "FIRING")
+        self.assertEqual(self.h.state["state"], "FIRING", "hold 期間狀態檔不得被刪")
+        self.assertEqual(self.h.state["severity"], "CRITICAL")
+        self.assertEqual(self.h.webhook_calls(), 1, "hold 不得送出 RESOLVED")
+        # 對外真的回 200 才關
+        self.h.set_probe(0, result="success")
+        p = self.h.run(**self.HOLD)
+        self.assertEqual(last_emit(p.stdout)["action"], "resolved")
+        self.assertEqual(self.h.state, {})
+        self.assertEqual(self.h.webhook_calls(), 2)
+
+    def test_held_exit_keeps_reminders_with_original_severity(self):
+        """hold 是「這輪不知道」，不是靜音：進行中的事件照常提醒，嚴重度沿用。"""
+        self._open_incident()
+        self.h.set_probe(3, result="success")
+        p = self.h.run(INCIDENT_REMINDER_SECONDS="0", **self.HOLD)
+        e = last_emit(p.stdout)
+        self.assertEqual(e["action"], "reminder")
+        self.assertEqual(e["severity"], "CRITICAL")
+        self.assertEqual(self.h.webhook_calls(), 2)
+
+    def test_held_exit_without_incident_opens_nothing(self):
+        self.h.set_probe(3, result="success")
+        p = self.h.run(**self.HOLD)
+        e = last_emit(p.stdout)
+        self.assertEqual(e["status"], "held")
+        self.assertEqual(e["action"], "noop")
+        self.assertEqual(e["incident"], "CLOSED")
+        self.assertEqual(self.h.webhook_calls(), 0)
+
+    def test_undelivered_firing_is_retried_with_its_severity_during_hold(self):
+        """開場通知沒送到、下一輪剛好 hold：重送的 FIRING 不得帶空的嚴重度。"""
+        self.h.set_probe(1)
+        self.h.run(FAKE_CURL_CODE="500", **self.HOLD)
+        self.assertEqual(self.h.state["opened_sent"], "no")
+        self.h.set_probe(3, result="success")
+        p = self.h.run(**self.HOLD)
+        e = last_emit(p.stdout)
+        self.assertEqual(e["action"], "firing")
+        self.assertEqual(e["severity"], "CRITICAL")
+        self.assertEqual(self.h.state["severity"], "CRITICAL")
+        self.assertEqual(self.h.state["opened_sent"], "yes")
+
+    def test_without_knob_exit_3_still_resolves(self):
+        """旋鈕為空（web、LineBot 兩組）時 3 仍是健康——既有行為不變。"""
+        for knob in (None, "", "   "):
+            with self.subTest(knob=knob):
+                h = _Harness(webhook="http://example.invalid/hook")
+                self.addCleanup(h.close)
+                env = {} if knob is None else {"INCIDENT_HOLD_EXIT_CODES": knob}
+                h.set_probe(1)
+                h.run(**env)
+                h.set_probe(3, result="success")
+                p = h.run(**env)
+                e = last_emit(p.stdout)
+                self.assertEqual(e["status"], "ok")
+                self.assertEqual(e["action"], "resolved")
+                self.assertEqual(h.state, {})
+
+    def test_knob_parsing(self):
+        """逗號或空白分隔、可多值；非數字項目忽略，不得讓 handler 死掉。"""
+        cases = (
+            ("3", 3, "held"),
+            ("3,5", 5, "held"),
+            (" 5 ,\t3 ", 3, "held"),
+            ("7 5", 5, "held"),
+            ("abc,3x,*", 3, "ok"),      # 全是垃圾＝沒有 hold，3 照舊當健康
+            ("abc, 3", 3, "held"),      # 垃圾旁邊的合法值仍生效
+            ("03", 3, "held"),
+            ("33", 3, "ok"),            # 不得以子字串比對
+            ("3", 1, "web_incident"),   # 沒列到的退出碼照常分級
+        )
+        for knob, exit_status, want in cases:
+            with self.subTest(knob=knob, exit_status=exit_status):
+                result = "success" if exit_status in (0, 3) else "exit-code"
+                h = _Harness(exit_status=exit_status, result=result)
+                self.addCleanup(h.close)
+                p = h.run(INCIDENT_HOLD_EXIT_CODES=knob)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                self.assertEqual(p.stderr, "")
+                self.assertEqual(last_emit(p.stdout)["status"], want, p.stdout)
+
+
 class RobustnessTests(unittest.TestCase):
     def setUp(self):
         self.h = _Harness(webhook="http://example.invalid/hook")
@@ -1171,11 +1283,12 @@ class MonitorSignalTests(unittest.TestCase):
                 self.assertNotIn("uid=", r.stdout, "systemctl 輸出被 shell 展開了")
 
     def test_status_vocabulary_is_closed(self):
-        allowed = {"ok", "web_incident", "monitor_blind", "bootstrap", "in_flight", "tooling"}
+        allowed = {"ok", "web_incident", "monitor_blind", "bootstrap", "in_flight", "tooling", "held"}
         seen = set()
         for kw, env in (
             ({}, {}),
             ({"exit_status": 1}, {}),
+            ({"exit_status": 3}, {"INCIDENT_HOLD_EXIT_CODES": "3"}),
             ({"timer_enabled": "disabled", "timer_active": "inactive", "mono": 0}, {}),
             ({"mono": 0, "timer_enter_mono": 1}, {}),
         ):

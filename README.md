@@ -215,6 +215,7 @@ Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪�
 | `report-mark-audit.timer` | 08:45 | `make db-audit`，唯讀，warn 也算失敗 |
 | `report-mark-health.timer`、`report-mark-incident.timer` | 每 2 分鐘 | P4 探針 `scripts/check_web_health.sh`（只回報事實）與 P5 `scripts/incident_handler.sh`（去重、30 分鐘提醒、RESOLVED），webhook opt-in |
 | `report-mark-linebot-health.timer`、`report-mark-linebot-incident.timer` | 每 2 分鐘 | LineBot 側同一套 |
+| `report-mark-edge-health.timer`、`report-mark-edge-incident.timer` | 每 2 分鐘 | 對外邊緣同一套：`scripts/check_edge_health.sh` 打對外網址的 `/healthz`（`EDGE_HEALTH_URL`，在 `/etc/default/report-mark-sync`），本機 origin 健康而對外失敗才算邊緣故障 |
 | `report-mark-backfill.timer` | 01:00 | E1d 抽取回填，跑完手動 disable |
 | `report-mark-r2-reconcile.timer` | 週一 07:00 | R2 對帳（唯讀） |
 | `report-mark-metrics.service` | 常駐 | 硬體用量取樣 → `data/metrics/`（`make metrics`） |

@@ -110,7 +110,7 @@ make up-edge              # 啟動 nginx + cloudflared
 make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel connection" 即成功）
 ```
 
-> 提醒：請確保既有檢索服務 `make serve` 也在執行，否則 nginx 會回 502。
+> 提醒：請確保 web 服務（生產為 `report-mark-web.service`）在執行、本機 `/healthz` 回 200，否則 nginx 會回 502。
 
 ### 5) 外網實測
 
@@ -126,10 +126,36 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 | 啟動邊緣 | `make up-edge` |
 | 關閉邊緣 | `make down-edge` |
 | 看日誌 | `make edge-logs` |
-| 換登入帳密 | 編輯 `.env` 的帳密 → 重啟 `make serve` |
+| 換登入帳密 | 編輯 `.env` 的帳密 → `sudo systemctl restart report-mark-web.service` |
 | 重啟 nginx | `make edge-reload` |
 
-重開機後：邊緣的兩個容器（nginx + cloudflared）為 `restart: unless-stopped`，Docker 會自動拉起，**無需重設 portproxy**。但檢索服務 `make serve` 是 host 上的原生 uvicorn 程序、**不是容器，不會自動復活**——重開機後必須手動重跑 `make serve`，否則外網會一直回 502。若想免手動，可考慮把 `make serve` 掛到 process manager（如 WSL 的 systemd、或開機腳本）常駐。
+重開機後：邊緣的兩個容器（nginx + cloudflared）為 `restart: unless-stopped`，Docker 會自動拉起，**無需重設 portproxy**；但單檔 bind mount 掛載失敗時 nginx 不會被拉起（見疑難排解第一列），由下方的邊緣探針告警。web 服務在生產由 systemd 的 `report-mark-web.service` 常駐、開機自動啟動；要重啟用 `sudo systemctl restart report-mark-web.service`，健康與否打本機 `/healthz` 判定（不看 `systemctl is-active`）。`make serve` 只用於開發機手動啟動。
+
+## 監控
+
+`report-mark-edge-health.timer` 每 2 分鐘從本機打**對外網址**的 `/healthz`（`scripts/check_edge_health.sh`），`report-mark-edge-incident.timer` 以元件 `edge` 開事件、走與 web 相同的告警鏈。本機的 `report-mark-health` 只看得到 `:8097`，nginx 或隧道壞了它照樣是綠的——2026-09-24 nginx 容器停了約 36 小時沒有任何告警，就是這個盲區。
+
+| 探針退出碼 | 意思 | 事件 |
+|---|---|---|
+| 0 | 對外 200 | 無 |
+| 1 | 對外拿到非 200（502／530…），本機 origin 健康＝壞在 nginx 或隧道 | CRITICAL |
+| 3 | 對外失敗，但本機 origin 也不健康＝web 自己壞了 | **hold**：不開也不關（由 web 元件負責，避免重複通知；進行中的 edge 事件維持 FIRING、照常提醒，對外回 200 才 RESOLVED） |
+| 4 | 沒有 HTTP 回應（本機網路／DNS）、未設 `EDGE_HEALTH_URL`、缺 curl＝判不出來 | WARNING |
+
+3 的 hold 來自 edge incident unit 的 `INCIDENT_HOLD_EXIT_CODES=3`。handler 預設把 3 當健康（web 探針的 3 是啟動寬限），沒有這個旋鈕時，web 重啟那一輪會把進行中的 edge 事件以 RESOLVED 關掉，送出不實的「已恢復」。
+
+### P5 報 `edge`／`edge_monitor` 時看哪裡
+
+Slack 上只有通用訊息（`探針回報失敗（exit=1 result=exit-code）` 這類），**歸因在探針自己的 journal**：`journalctl -u report-mark-edge-health.service -n 20` 找 `reason=` 那一行與其後的 stderr 處置提示。journal 裡**根本沒有** `reason=` 那一行＝腳本沒跑起來（`REPORT_MARK_ROOT` 未設、腳本不在、逾時被砍），這時 Slack 上的 exit 會是 1、127 或未知值而不是 4，一律先看同一段 journal 的 unit 啟動錯誤。
+
+| 症狀 | 先看 |
+|---|---|
+| `edge` FIRING CRITICAL（探針 exit 1） | reason `edge_http_NNN`：502／504 多半是 nginx 容器沒在跑（`docker ps -a \| grep deploy-nginx`、`make edge-reload`，見疑難排解第一列）；530 是隧道斷了（`make edge-logs`、`make up-edge`）；其他碼先看 `make edge-logs`，啟用 Access 時確認 `/healthz` 有 Bypass（3d） |
+| `edge` FIRING WARNING（探針 exit 4） | 同時涵蓋兩種：**對外沒有 HTTP 回應**（reason `edge_curl_rc_N`，本機 DNS／網路，origin 是好的）與**探針不能執行**（reason `edge_url_unset`、`curl_not_found`）。前者先從本機 `curl -sS "$EDGE_HEALTH_URL"` 看 DNS 與連線，後者補 `/etc/default/report-mark-sync` 的 `EDGE_HEALTH_URL` 或 unit 的 `PATH` |
+| `edge` 事件 FIRING 期間 journal 出現 `origin_http_NNN` | 探針 exit 3＝本機 origin 也壞了，edge 這組 hold、由 `web` 事件負責；先處理 web（`/healthz`、`sudo systemctl restart report-mark-web.service`） |
+| `edge_monitor` | 邊緣探針 timer 被停／不存在／觀測過期——**監控自己瞎了**，不是站台的問題。`systemctl status report-mark-edge-health.timer` |
+
+對外網址寫在 `/etc/default/report-mark-sync` 的 `EDGE_HEALTH_URL`，網域不進 repo。啟用 Cloudflare Access 時 `/healthz` 要有 Bypass（見 3d），否則探針會拿到 302 而告警。
 
 ## 安全備註
 
@@ -161,7 +187,8 @@ sudo journalctl -u report-mark-web.service | grep -E "登入成功|登入失敗|
 
 | 症狀 | 可能原因 / 處置 |
 |------|----------------|
-| 外網開站一直 502 | host uvicorn 沒在跑 → `make serve`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在）。**uvicorn 明明活著就先看 nginx 有沒有起來**：`docker compose -f deploy/docker-compose.yml logs --tail=60 nginx` |
+| 外網 502，`docker ps -a` 看到 `deploy-nginx-1` 為 `Exited (127)`、日誌是 `error mounting ... not a directory` | Docker Desktop 重啟後單檔 bind mount（`nginx.conf` → 模板）掛不上，`restart: unless-stopped` 不會重試這種失敗。主機上的 `deploy/nginx.conf` 其實完好，`make edge-reload` 重建容器即可 |
+| 外網開站一直 502 | web 服務沒在跑或不健康（本機 `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8097/healthz` 不是 200）→ `sudo systemctl restart report-mark-web.service`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在）。**uvicorn 明明活著就先看 nginx 有沒有起來**：`docker compose -f deploy/docker-compose.yml logs --tail=60 nginx` |
 | nginx 重啟後 `[emerg] unknown "edge_secret" variable` | envsubst 沒代換掉 `${EDGE_SECRET}`（nginx 查變數會轉小寫，故訊息是 `edge_secret`）——容器環境裡沒有那個變數。成因是 `docker compose restart` **不套用 compose 的 `environment:` 變更**，而長跑的容器建立於該變數加入之前。處置：`make edge-reload`（已改為重建容器）。**這類雷是延遲引爆的**：模板改了但沒重啟，容器內跑的仍是舊渲染結果，要到下一次重啟才炸 |
 | 外網頁面資產隨機 503／`.css` 報「MIME type ('text/html')」 | nginx `limit_req` 超限（預設就是回 503，錯誤頁是 HTML）。SPA 冷載要抓數十個資產，硬重載時全部同時發出。`/app/assets/` 已於 2026-07-31 排除在限流之外（`nginx.conf` 的 `map $uri $rl_key`）；若再出現請看 burst 是否又被調小。**被擋掉的請求不會進 uvicorn 日誌**，從 app 側查會完全看不到 |
 | 內網直接打 `http://<LAN-IP>:8097` 一直回登入頁 | 這是刻意的：非 localhost 的明文 HTTP 不接受登入 session → 請改走 Cloudflare HTTPS 網址；只有本機開發可用 `http://localhost:8097` |

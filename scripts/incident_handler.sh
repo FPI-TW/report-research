@@ -49,6 +49,20 @@ COMPONENT="${INCIDENT_COMPONENT:-web}"
 MONITOR_COMPONENT="${INCIDENT_MONITOR_COMPONENT:-monitor}"
 STATE_DIR="${INCIDENT_STATE_DIR:-}"
 REMINDER_SECONDS="${INCIDENT_REMINDER_SECONDS:-1800}"   # 30 分鐘
+# **哪些探針退出碼代表「這個元件判不出來」**（逗號或空白分隔；預設空＝沒有）。
+# 命中時走狀態機的 hold：**既不開也不關**，已有的事件照常提醒。
+# 為什麼需要：邊緣探針的 exit 3＝「對外失敗，但本機 origin 也壞了」，那是 web 元件的
+# 事件，邊緣這一組判不出邊緣層本身好不好。若沿用 web 探針「3＝寬限＝健康」的語意，
+# 進行中的 edge 事件會在 web 重啟那一輪被 RESOLVED 關掉並刪掉狀態檔——送出一則不實的
+# 「已恢復」。web 與 LineBot 兩組不設這個旋鈕，行為不變（3 仍視為健康）。
+# 非數字的項目一律忽略（與其他旋鈕同樣 fail-open：寫錯不得讓 handler 死掉）。
+HOLD_EXIT_CODES=" "
+IFS=$', \t\n' read -r -a _hold_items <<< "${INCIDENT_HOLD_EXIT_CODES:-}" || true
+for _c in "${_hold_items[@]+"${_hold_items[@]}"}"; do
+    case "$_c" in ''|*[!0-9]*) continue ;; esac
+    HOLD_EXIT_CODES="$HOLD_EXIT_CODES$(( 10#$_c )) "
+done
+unset _c _hold_items
 
 # ── 門檻：全部由 2026-08-19 的生產實測校準，不是猜的 ──────────────────────
 # P4 的穩態間隔**不是 120 秒**。OnUnitActiveSec 從 service 進入 active 起算，
@@ -144,7 +158,8 @@ fi
 log() { echo "$*"; }
 
 # status 與 reason 都是**封閉詞彙**：消費端（人或後續工具）要能窮舉。
-# status ∈ ok | web_incident | monitor_blind | bootstrap | in_flight | tooling
+# status ∈ ok | web_incident | monitor_blind | bootstrap | in_flight | tooling | held
+# （held＝探針退出碼列於 INCIDENT_HOLD_EXIT_CODES，本輪不開也不關）
 # current_probe 與 last_completed 是**分開的兩件事**：前者是觀測的生命週期，後者是
 # 最近一次完成的結論。把兩者混成一個欄位正是 2026-08-20 那次中斷的成因——只印
 # `status=in_flight action=skip`，operator 完全看不出「上一次其實是 fail」。
@@ -424,6 +439,10 @@ run_state_machine() {
         emit "$status" noop none CLOSED "$reason" no "$comp"
         return 0
     fi
+
+    # hold 不帶自己的嚴重度（它只知道「這輪不知道」），一律沿用進行中事件的那一個。
+    # 不在這裡補，開場通知的重送分支會以空的 severity 送出 FIRING 並寫進狀態檔。
+    [ "$verdict" = hold ] && severity="${st_severity:-WARNING}"
 
     # failing，或 hold 但已有進行中的事件（後者不得因為「這輪不知道」就靜音）
     # 第二個條件是重試：事件已記錄但開場通知從未送達。**必須以 FIRING 重送而不是
@@ -830,6 +849,13 @@ fi
 # 7 服務提醒（/healthz 正常但 DeepSeek 餘額低於門檻、尚未停擺：/healthz/llm 回 503 llm_low）
 # 8 服務降級（/healthz 正常但 DeepSeek 帳號不可用或判斷不出來：/healthz/llm 回 low 以外的 503）
 # 多項同時成立時探針回 8→5→6→7 中最前面那一個（理由見 check_web_health.sh 的 L3 段）。
+# INCIDENT_HOLD_EXIT_CODES 命中時優先於下面的分級（例如邊緣那一組的 3）。
+case "$HOLD_EXIT_CODES" in
+    *" $web_status "*)
+        run_state_machine "$COMPONENT" hold "" "probe_exit_$web_status" "$web_obs" held \
+            "探針回報 exit=$web_status（列於 INCIDENT_HOLD_EXIT_CODES＝此元件判不出來；本輪不開也不關事件，result=$web_result）${web_detail_suffix}"
+        exit "$EXIT_OK" ;;
+esac
 case "$web_status" in
     0|3) run_state_machine "$COMPONENT" healthy "" healthy "$web_obs" ok "" ;;
     1|2) run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_$web_status" "$web_obs" web_incident \

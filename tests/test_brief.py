@@ -173,6 +173,22 @@ class LabelTests(unittest.TestCase):
 
 # ── 端點 ──────────────────────────────────────────────────────────
 
+class CliArgsTests(unittest.TestCase):
+    def test_disables_all_tools_after_prompt(self):
+        """簡報只要模型回 markdown，不開任何工具；可變長度選項放 argv 最後，不吞 prompt。"""
+        args = generate_brief.build_cli_args("素材", "m")
+        self.assertEqual(args[2], "素材")
+        self.assertEqual(args[-2:], ["--tools", ""])
+        self.assertNotIn("--disallowedTools", args)
+
+    def test_no_mcp_servers(self):
+        """`--tools ""` 管不到 MCP；`--strict-mcp-config` 不帶 `--mcp-config`＝不載任何 MCP。"""
+        args = generate_brief.build_cli_args("素材", "m")
+        self.assertIn("--strict-mcp-config", args)
+        self.assertNotIn("--mcp-config", args)
+        self.assertLess(args.index("--strict-mcp-config"), args.index("--tools"))
+
+
 class _FakeSession:
     async def __aenter__(self):
         return self

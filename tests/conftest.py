@@ -25,6 +25,19 @@ os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
 os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
+# LLM 付費 API：**刻意用賦值，不用上面那種 setdefault**。
+# 兩道要擋的來源：
+# 1. repo root 就是部署目錄，`web/server.py`、`web/deps.py` 在 import 期把真的 `.env` 灌進
+#    os.environ；`web.env_loader.load_env_file` 只補「還不存在」的鍵（空字串也算存在），
+#    所以這裡先佔位就擋得住——這一點 setdefault 也做得到。
+# 2. **執行者的環境裡本來就有真金鑰**（shell 已 export、或先載入過部署環境檔）。這是
+#    setdefault 擋不住、只有賦值擋得住的情況：漏了假物件的測試會真的打付費端點，而 CI 的
+#    runner 沒有金鑰、永遠看不到這個差異。
+# 端點指到不可達的本機埠是第二道防線。需要金鑰的測試用 mock.patch.dict 在自己的範圍內給假值。
+# 守門：tests/test_llm_http.py 的 ConftestGuardTests（含靜態釘住「賦值而非 setdefault」）。
+os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ["DEEPSEEK_BASE_URL"] = "http://127.0.0.1:9"
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _protect_repo_dotenv():

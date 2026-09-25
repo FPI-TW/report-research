@@ -18,7 +18,7 @@ Conventions for contributors and AI agents. Hard rules and the change-impact tab
 - `uv sync` then `make setup` (deps + pgvector container + schema). `cp .env.example .env` and set the three `REPORT_MARK_*` auth values or the server refuses to start.
 - `make serve` (port 8097, no reload, models warmed), `make serve-dev` (reload, `SKIP_WARMUP=1`, loopback only), `make serve-preview` (`DEV_NO_AUTH=1` on 8098). `make build-web` after any frontend change.
 - `uv run pytest -q` (set `SKIP_SPA_TESTS=1` if `frontend/dist` is absent, otherwise those tests fail rather than skip), `uv run ruff check .`, `cd frontend && npm test`, `npm run typecheck`, `npm run lint`.
-- Batch jobs: `make summaries / titles / takeaways / signals / brief`; ops: `make sync-once / db-backup / freshness / db-audit`. Destructive targets (`reset-db`, `clean-data`, `ingest-lowio`) only when explicitly asked; ask before any TRUNCATE or DROP.
+- Batch jobs: `make summaries / titles / takeaways / signals / brief`; ops: `make sync-once / db-backup / freshness / db-audit / llm-blocked`. Destructive targets (`reset-db`, `clean-data`, `ingest-lowio`) only when explicitly asked; ask before any TRUNCATE or DROP.
 
 ## Coding Style & Naming Conventions
 

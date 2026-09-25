@@ -661,6 +661,39 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 
 **「NAS 真的沒有新檔」仍是完整成功。** 週末與連假沒有新稿是常態，用「有沒有新資料」當健康指標會製造日曆型假警報——那條設計沒有變，測試釘住。
 
+### 整批中止後的重放
+
+**帳號／環境型中止（批次 rc=2）是整批一篇都沒做，而且不留逐篇失敗紀錄**：不寫 `data/sync_failures.log`、不進 `research.llm_task_failure`。所以 `failures_to_delta.py` 撈不到任何東西，`--all-local` 是 O(全部檔)——**這類中止兩者都不能用**。能重放的只有兩份「只有那一輪有」的檔，`scripts/sync_new_reports.sh` 在中止時保留它們：
+
+| 中止在哪 | 保留什麼 | 殼印出什麼 |
+|---|---|---|
+| 匯入段 rc 不是 0 也不是 75 | 本輪 `data/sync_delta_<時間>.txt`（不刪；前幾輪同樣中止的也還在） | 依時間序（舊→新）列出**所有**保留的 delta，每份一條 `--delta … --hashes-out data/sync_hashes_retained_<同一時間>.txt` |
+| 同上，且中止前已有研報入庫 | importer 寫的 `data/.sync_last_hashes.partial` 改名成 `data/sync_hashes_retained_<時間>_partial.txt` | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
+| 下游任一段 rc=2 | 當輪 `data/.sync_last_hashes` 複製成 `data/sync_hashes_retained_<時間>.txt`（一輪一份） | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
+
+全部寫進當日 sync log，也落在 `data/unit_failures.log` 那筆紀錄的 log 尾巴裡。重放清單只列殼自己產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`；`sync_delta_recover.txt` 這類手動檔不列。rc=75（CLI 被別的批次佔用）不在此列，處置照舊（`--all-local`，補完刪掉本輪 delta）。**rc=2 也可能是參數錯誤**（argparse 同樣以 2 退出，例如殼傳了批次不認得的旗標），動手前先看 sync log 確認中止原因。
+
+**為什麼要 `_partial` 那份**：importer 逐篇各自 commit，但 hashes 清單原本只在最後寫出。中途整批中止（`CliNotFoundError`→rc=2、`report_exists` 之類的 DB 例外→rc=1）時，已入庫的那幾篇不在任何 hashes 裡；重放同一份 delta 時它們又變成 `skip_exists`，重放寫出的 hashes 也沒有它們——摘要、標題、摘錄就永遠漏掉。importer 在中止時把「已 commit 的 hashes」寫到 `<hashes_out>.partial`（正常結束不寫；殼在匯入前先刪殘檔），殼改名保留。檔名刻意帶 `_partial`，才不會被重放本輪 delta 時的 `--hashes-out` 蓋掉。手動加 `--hashes-out X` 重放又中止時，partial 在 `X.partial`，要自己補跑。
+
+**為什麼要 `--hashes-out`（審查 M14）**：`sync_new_reports.py` 預設把入庫 hashes 寫到固定的 `data/.sync_last_hashes`，連續重放多份 delta 時每份都覆寫前一份，只有最後一份的研報會跑到下游。摘要與標題還有全表補的路徑，**摘錄沒有**，會靜默缺漏。`--hashes-out` 讓每份重放各寫一份，而且不動預設檔。
+
+處置步驟（在主 checkout 執行；從 worktree 跑不與排程互斥）：
+
+1. 排除中止原因。現在 rc=2 的來源是 claude CLI 找不到（`CliNotFoundError`，見上面 PATH 的兩次漂移）。**LLM 帳號型中止（例如餘額不足 402）的處置是儲值，絕不把 model 改成 Claude 繞過**——那等於繞過預算。
+2. 停排程，免得重放途中被下一輪搶鎖或覆寫：`sudo systemctl stop report-mark-sync.timer`。
+3. 依殼印出的順序（舊→新）逐份重放 delta，**每重放一份就立刻用它自己的 `--hashes-out` 補跑三段**，再換下一份：
+
+   ```bash
+   uv run python scripts/sync_new_reports.py --delta data/sync_delta_<T>.txt --hashes-out data/sync_hashes_retained_<T>.txt
+   uv run python scripts/generate_summaries.py --hashes-file data/sync_hashes_retained_<T>.txt
+   uv run python scripts/generate_titles.py --hashes-file data/sync_hashes_retained_<T>.txt
+   uv run python scripts/extract_takeaways.py --hashes-file data/sync_hashes_retained_<T>.txt
+   ```
+
+4. 下游中止保留的每一份 `data/sync_hashes_retained_<時間>.txt`，以及匯入中止保留的 `data/sync_hashes_retained_<時間>_partial.txt`，同樣依序補跑摘要、標題、摘錄（`--hashes-file`）。三段都只挑 `IS NULL`，重跑冪等，與第 3 步的先後無關。
+5. 每份補完、確認 `make freshness` 與 sync log 無新錯誤後，刪掉用過的 delta 與 hashes 檔（都已 gitignore；delta 不刪的話，下次整批中止時會再被列進重放清單）。
+6. 重新啟用排程：`sudo systemctl start report-mark-sync.timer`。
+
 ### sync timer 刻意不補跑（2026-08-20）
 
 **`report-mark-sync.timer` 是 `Persistent=false`，而同目錄的 backup／freshness／audit 三支是 `true`。那個非對稱是刻意的。**

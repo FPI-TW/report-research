@@ -6,6 +6,15 @@
 - `--system-prompt`：**取代**預設系統提示 → 不載入 superpowers/skills/全域 CLAUDE.md。
 - `--setting-sources ''`：排除使用者/專案設定（含 SessionStart hooks）。
 - `cwd="/tmp"`：避開專案 CLAUDE.md（同 tag_all_cli）。
+- 工具：開網搜時 `--tools WebSearch --allowedTools WebSearch`，不開時 `--tools ""`（CLI `--help`
+  寫明 `""` 停用全部工具）。`--allowedTools` 只管「免核可」，不限縮可用工具；單用它時 Read、
+  Bash 等內建工具仍在模型手上（headless 下讀 cwd 的檔免核可）。刻意不用 `--disallowedTools "*"`：
+  本機 CLI 未記載萬用字元語意，看來是逐字比對工具名，很可能無效。旗標若失效，
+  `system/init` 事件的 `tools` 會對不上預期，`check_init_tools` 記 WARNING（不中斷）。
+- `--strict-mcp-config`（開不開網搜都加）：`--tools` 只管內建工具，管不到 MCP 伺服器；這個旗標
+  讓 CLI 只用 `--mcp-config` 給的 MCP，而我們不帶 `--mcp-config`＝一個 MCP 都不載。
+  `--setting-sources ''` 擋得住使用者／專案設定檔裡的 MCP，擋不住其他來源（`--help` 2.1.260
+  在 `--restricted` 條目明寫要另加此旗標才略過 MCP）。它是布林旗標、不吃引數，放在工具旗標之前。
 
 stream-json 事件：只取 `content_block_delta` 內 `delta.type == "text_delta"` 的文字；
 thinking_delta 等一律忽略。以 `result` 事件或進程結束為終點。
@@ -15,8 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 from collections.abc import AsyncIterator
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
@@ -151,6 +163,30 @@ def is_web_search_start(line: str) -> bool:
     )
 
 
+def check_init_tools(line: str, allow_web: bool) -> str | None:
+    """`{"type":"system","subtype":"init","tools":[...]}` 的工具集與預期不符時回說明，否則 None。
+
+    預期：不開網搜＝空清單；開網搜＝恰好 `["WebSearch"]`。非 init 事件、沒帶 `tools` 欄位或
+    欄位不是 list 一律回 None（CLI 事件格式可能變，這裡只做防禦性觀測，不當閘門）。
+    """
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        obj = json.loads(line)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict) or obj.get("type") != "system" or obj.get("subtype") != "init":
+        return None
+    tools = obj.get("tools")
+    if not isinstance(tools, list):
+        return None
+    expected = ["WebSearch"] if allow_web else []
+    if tools == expected:
+        return None
+    return f"claude CLI 工具集與預期不符（allow_web={allow_web}，預期 {expected}，實際 {tools[:20]}）"
+
+
 CLAUDE_BIN = "claude"
 
 
@@ -165,7 +201,11 @@ def claude_cli_path() -> str | None:
 
 
 def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
-    """組 claude CLI headless 串流指令；allow_web 時加 WebSearch 內建工具。"""
+    """組 claude CLI headless 串流指令；allow_web 時只開 WebSearch，否則不開任何工具。
+
+    `--tools`／`--allowedTools` 都是可變長度選項，會吞掉後面直到下一個 `--` 選項為止的引數；
+    prompt 走 stdin 所以不受影響，但仍一律放在 argv 最後，不要在它們後面接位置引數。
+    """
     cmd = [
         CLAUDE_BIN,
         "-p",
@@ -177,20 +217,49 @@ def _build_cmd(model: str, system: str | None, allow_web: bool) -> list[str]:
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        # 不載任何 MCP：沒有 --mcp-config 時只用它＝空集合（理由見模組 docstring）。
+        # 布林旗標，放在可變長度的工具旗標之前，免得被當成 --tools 的值。
+        "--strict-mcp-config",
     ]
-    if allow_web:
-        cmd += ["--allowedTools", "WebSearch"]
     if system:
         cmd += ["--system-prompt", system.replace("\x00", "")]
+    if allow_web:
+        # --tools 把可用工具集縮到只剩 WebSearch；--allowedTools 讓它免核可（headless 無人核可）。
+        cmd += ["--tools", "WebSearch", "--allowedTools", "WebSearch"]
+    else:
+        # `--help`（2.1.260）寫明 `--tools ""` 停用全部工具。list 傳參，空字串是獨立引數
+        # （同 `--setting-sources ""`）。不用 `--disallowedTools "*"`：萬用字元語意未記載。
+        cmd += ["--tools", ""]
     return cmd
 
 
+# LLMUnavailableError.reason 的詞彙（最後一次嘗試為什麼失敗）。
+UNAVAILABLE_API_ERROR = "api_error"  # API 快速回錯（529 等），已依 retries 重試
+UNAVAILABLE_TIMEOUT = "timeout"      # 一個字都沒吐就逾時（不重試）
+UNAVAILABLE_EMPTY = "empty"          # 進程結束卻沒有任何文字
+
+
 class LLMUnavailableError(RuntimeError):
-    """claude CLI 多次重試後仍無有效回應（多為 Anthropic API 過載 529）。"""
+    """claude CLI 多次重試後仍無有效回應（多為 Anthropic API 過載 529）。
+
+    `reason` 是最後一次嘗試的失敗原因（`UNAVAILABLE_*`）；外部直接建構時為 None。
+    呼叫端靠它分辨「服務回錯」與「沒吐字就逾時」，不必解析訊息字串。
+    """
+
+    def __init__(self, *args, reason: str | None = None) -> None:
+        super().__init__(*args)
+        self.reason = reason
 
 
-async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIterator[str]:
+async def _run_attempt(
+    cmd: list[str], prompt: str, timeout: float, allow_web: bool | None = None,
+    meta: dict | None = None,
+) -> AsyncIterator[str]:
     """跑一次 claude 子程序並串流文字。
+
+    allow_web 非 None 時，比對 `system/init` 事件回報的工具集與預期，不符記 WARNING
+    （fail-open，照常串流）；None＝不比對（直接跑假子程序的測試）。
+    meta 給定時，結束後寫入 `meta["timed_out"]`（本次是否撞到逾時）。
 
     送出值有三類：
     - 一般文字 chunk（text_delta，逐段；或無 text_delta 時於結尾補一段 fallback）。
@@ -213,6 +282,7 @@ async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIter
     result_error = False
     last_assistant: str | None = None
     timed_out = False
+    init_checked = False
     try:
         async with asyncio.timeout(timeout):
             proc.stdin.write(prompt.encode("utf-8"))
@@ -228,6 +298,12 @@ async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIter
                 if is_web_search_start(line):
                     yield SEARCH_EVENT  # 上層據此顯示「正在搜尋網路」
                     continue
+                # init 是第一個事件；開始出字後就不必再逐行比對
+                if allow_web is not None and not init_checked and not streamed_any:
+                    mismatch = check_init_tools(line, allow_web)
+                    if mismatch:
+                        init_checked = True
+                        logger.warning("%s；工具限縮旗標可能失效", mismatch)
                 at = extract_assistant_text(line)
                 if at:
                     last_assistant = at
@@ -246,6 +322,8 @@ async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIter
                 await proc.wait()
             except Exception:
                 pass
+        if meta is not None:
+            meta["timed_out"] = timed_out
 
     if streamed_any:
         return  # 已逐段送出真實文字，最佳路徑
@@ -259,11 +337,11 @@ async def _run_attempt(cmd: list[str], prompt: str, timeout: float) -> AsyncIter
     #   api_error = API 快速回錯（如 529 Overloaded）→ 短暫退避後重試多半會過
     #   timeout   = API 無回應拖到逾時 → 再等一輪無益，快速失敗
     if result_error or looks_like_api_error(candidate):
-        reason = "api_error"
+        reason = UNAVAILABLE_API_ERROR
     elif timed_out:
-        reason = "timeout"
+        reason = UNAVAILABLE_TIMEOUT
     else:
-        reason = "empty"
+        reason = UNAVAILABLE_EMPTY
     yield ("__error__", candidate, reason)
 
 
@@ -275,6 +353,7 @@ async def stream_completion(
     timeout: float = 120.0,
     allow_web: bool = False,
     retries: int = 2,
+    meta: dict | None = None,
 ) -> AsyncIterator[str]:
     """串流呼叫 claude CLI，逐段 yield 回答文字。
 
@@ -286,16 +365,23 @@ async def stream_completion(
     - 串流期間有任何 text_delta → 直接逐段送出（最佳路徑）。
     - 一段 text_delta 都沒有時，依序以 result 文字 → 最後一則 assistant 文字 fallback。
     - fallback 是 API 錯誤（如 529 Overloaded）或全空 → 短暫退避後重試，最多 retries 次；
-      仍失敗則拋 LLMUnavailableError，由上層回友善提示。
+      仍失敗則拋 LLMUnavailableError（`reason` 帶最後一次的原因），由上層回友善提示。
+
+    meta（選填、呼叫端給的空 dict）：串流正常結束後寫入 `meta["truncated"]`——成功的那次
+    嘗試是否撞到逾時（已吐的字照常送出，但後面被砍掉了）。這是 CLI 路徑唯一的截斷訊號：
+    逾時對已串流文字 fail-open，不拋例外。每次嘗試各自計時，前面 529 重試花掉的時間不算。
+    撞到逾時但 result 事件剛好已到的邊界情況不會發生（讀到 result 就結束讀取）。
     """
     prompt = prompt.replace("\x00", "")
     cmd = _build_cmd(model, system, allow_web)
 
     last_detail: str | None = None
+    reason = ""
     for attempt in range(retries + 1):
         failed = False
         reason = ""
-        async for chunk in _run_attempt(cmd, prompt, timeout):
+        attempt_meta: dict = {}
+        async for chunk in _run_attempt(cmd, prompt, timeout, allow_web, attempt_meta):
             if isinstance(chunk, tuple):  # ("__error__", detail, reason)
                 failed = True
                 last_detail = chunk[1]
@@ -303,11 +389,13 @@ async def stream_completion(
                 break
             yield chunk
         if not failed:
+            if meta is not None:
+                meta["truncated"] = bool(attempt_meta.get("timed_out"))
             return  # 本次有有效輸出（串流或 fallback），完成
         # 只對「快速 API 錯誤（529 等）」重試；逾時=API 無回應，再等無益→快速失敗
-        if reason == "api_error" and attempt < retries:
+        if reason == UNAVAILABLE_API_ERROR and attempt < retries:
             await asyncio.sleep(1.5 * (attempt + 1))
             continue
         break
 
-    raise LLMUnavailableError(last_detail or "claude 無有效回應")
+    raise LLMUnavailableError(last_detail or "claude 無有效回應", reason=reason or None)

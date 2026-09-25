@@ -4,7 +4,7 @@
 （supported / unsupported / no_source），分開記錄 faithfulness_score 與
 numeric_support_rate。分數是「來源支持度／待複核」，非真實性保證。
 
-分層（皆 fail-open：judge 異常／JSON 壞 → 不阻擋交付，僅標 degraded、不加分數）：
+分層（皆 fail-open：judge 異常／JSON 壞／schema 不合 → 不阻擋交付，僅標 degraded、不加分數）：
 - 純 primitive（judge 注入、零 DB）：decompose_statements / ground_statements /
   faithfulness — 可用假 judge 做決定性單測，eval/ragas_metrics.py 亦復用之。
 - 生產進入點 check_faithfulness（judge 預設走 claude CLI，仍可注入假 judge）。
@@ -13,18 +13,35 @@ numeric_support_rate。分數是「來源支持度／待複核」，非真實性
   chunk_id 實務多為 NULL，回查落在 report_id 粒度——v1 已知限制。
 
 契約 judge：async judge(system: str, user: str) -> dict | list | None。
+
+**重試層數與最壞呼叫次數**（目前有兩到三層各自重試，PR-18 的 LLM adapter 會收斂成單層）：
+- 生產（check_faithfulness，每個階段＝拆解或 grounding 各算一次）：`call_validated` 的
+  schema 重試（1 次）×`stream_completion` 的 529 重試（retries=2，共 3 次）＝**最多 6 次**
+  CLI spawn。預設 judge 失敗回 None 時 `call_validated` 不重試，所以 6 次只出現在「前幾次
+  529、最後回了不合 schema 的東西」這條路徑。逾時不重試（再等一輪無益）。
+- 離線（eval/run_ragas，同一個指標任務）：`call_validated`（2 次）×`eval.judge.judge_json`
+  （EVAL_JUDGE_RETRIES=1，共 2 次，逾時與空回應也重試）＝**最多 4 次** judge 呼叫；每次
+  judge 呼叫底下再有 `stream_completion` 的 529 重試（最多 3 次），CLI spawn 最壞 12 次。
 """
 from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import text as sql_text
 
 from app.services.evidence import EvidenceLedger
-from app.services.llm import DEFAULT_MODEL, stream_completion
+from app.services.judge_schema import (
+    JUDGE_SCHEMA_VERSION,
+    JudgeSchemaError,
+    call_validated,
+    parse_statements,
+    parse_verdicts,
+)
+from app.services.llm import DEFAULT_MODEL, UNAVAILABLE_TIMEOUT, LLMUnavailableError, stream_completion
 from app.services.query_planner import parse_plan_json
 
 logger = logging.getLogger(__name__)
@@ -46,6 +63,12 @@ GROUND_SYS = (
     '只輸出 JSON，格式：{"verdicts": [{"idx": 0, "supported": true}, ...]}，'
     "idx 對應主張的 0-based 序號，不要任何其他文字。"
 )
+
+# grounding 的 user payload 版型。抽成常數是為了讓離線評測把它算進 `judge_prompt_sha`
+# （eval/ragas_metrics.py）：payload 的編號與排版跟系統提示一樣是量尺的一部分，
+# 改了卻不改雜湊，就會拿兩把不同的尺比出一個看似可信的 delta。
+GROUND_ITEM_FMT = "{i}. {s}"
+GROUND_PAYLOAD_FMT = "參考片段：\n{contexts}\n\n主張：\n{claims}"
 
 
 # ── 數值主張偵測（確定性，零 LLM）──
@@ -98,17 +121,53 @@ class ClaimVerdict:
     verdict: str  # "supported" | "unsupported" | "no_source"
 
 
+# degraded_reason 的詞彙（`evaluation.degraded_reason`；只在 degraded=true 時有值）。
+# degraded 只說「沒量到」，這裡說為什麼沒量到。監控與校準要分得出「judge 服務掛了／太慢」
+# 與「judge 回了看不懂的東西」——前者是可用性問題，後者是量尺問題：
+#   unavailable  LLMUnavailableError：API 錯誤（529 等，已重試）或進程沒吐任何字就結束
+#   timeout      一個字都沒吐就逾時（LLMUnavailableError.reason == "timeout"）
+#   truncated    吐到一半被逾時截斷（stream_completion 的 meta["truncated"]），剩下的不是完整 JSON
+#   empty        回應是空的（只有空白）
+#   parse        回應完整但不是 JSON
+#   schema       JSON 合法但不合 schema v2（重試 1 次後），含 grounding 全部缺漏
+#   error        其他例外，或注入的 judge 回 None
+DEGRADED_UNAVAILABLE = "unavailable"
+DEGRADED_TIMEOUT = "timeout"
+DEGRADED_TRUNCATED = "truncated"
+DEGRADED_EMPTY = "empty"
+DEGRADED_PARSE = "parse"
+DEGRADED_SCHEMA = "schema"
+DEGRADED_ERROR = "error"
+DEGRADED_REASONS = frozenset({
+    DEGRADED_UNAVAILABLE, DEGRADED_TIMEOUT, DEGRADED_TRUNCATED, DEGRADED_EMPTY,
+    DEGRADED_PARSE, DEGRADED_SCHEMA, DEGRADED_ERROR,
+})
+
+
 @dataclass
 class FaithfulnessResult:
-    """一次查核的結果。degraded=True 代表 fail-open（judge 異常），分數欄位皆 None。"""
+    """一次查核的結果。degraded=True 代表 fail-open（judge 異常），分數欄位皆 None。
+
+    judge_model／degraded_reason／elapsed_ms 由 check_faithfulness 填入（量尺可追溯，
+    DeepSeek 遷移 PR-07）；直接用 summarize_claims 組出來的結果這三個是 None。
+    n_missing_verdicts：grounding 漏判（缺 idx）而被計為 unsupported 的條數，無缺漏時 0。
+    """
 
     faithfulness_score: float | None
     numeric_support_rate: float | None
     claims: list[ClaimVerdict] = field(default_factory=list)
     degraded: bool = False
+    degraded_reason: str | None = None
+    judge_model: str | None = None
+    elapsed_ms: int | None = None
+    n_missing_verdicts: int = 0
 
     def to_evaluation(self, *, citation_coverage: float | None = None) -> dict:
-        """落庫用 evaluation jsonb（qa_log.evaluation 的形狀）。"""
+        """落庫用 evaluation jsonb（qa_log.evaluation 的形狀）。
+
+        judge_model 與 judge_schema_version 是讀分數時「只計現行 judge」的依據
+        （app/services/judge_schema.py）；缺 judge_model 的舊列視為 claude-haiku-4-5。
+        """
         return {
             "citation_coverage": citation_coverage,
             "numeric_support_rate": self.numeric_support_rate,
@@ -120,6 +179,13 @@ class FaithfulnessResult:
             "note": "來源支持度／待複核，非真實性保證",
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "degraded": self.degraded,
+            "degraded_reason": self.degraded_reason,
+            "judge_model": self.judge_model,
+            "judge_schema_version": JUDGE_SCHEMA_VERSION,
+            "elapsed_ms": self.elapsed_ms,
+            # 漏判而被計為 unsupported 的條數：分數偏低時先看這個，分得出「真的沒佐證」
+            # 與「judge 沒判完」（L19 的寬鬆例外留下的痕跡）。
+            "n_missing_verdicts": self.n_missing_verdicts,
         }
 
 
@@ -127,43 +193,41 @@ class FaithfulnessResult:
 
 
 async def decompose_statements(text: str, *, judge) -> list[str] | None:
-    """回答 → 原子主張清單。judge 異常/畸形 → None（fail-open，呼叫端標 degraded）。"""
-    dec = await judge(DECOMPOSE_SYS, text)
-    if dec is None:
-        return None
-    statements = dec.get("statements") if isinstance(dec, dict) else None
-    return [s for s in (statements or []) if isinstance(s, str) and s.strip()]
+    """回答 → 原子主張清單。judge 自身失敗（回 None）→ None（fail-open，呼叫端標 degraded）。
+
+    回應不合 schema v2（statements 不是 list[str]）重試 1 次後拋 JudgeSchemaError。
+    """
+    return await call_validated(judge, DECOMPOSE_SYS, text, parse_statements)
 
 
 async def ground_statements(
-    statements: list[str], contexts: list[str], *, judge
+    statements: list[str], contexts: list[str], *, judge, strict: bool = True
 ) -> dict[int, bool] | None:
-    """逐條主張對 contexts 判 supported → {idx: bool}。judge 異常 → None。
+    """逐條主張對 contexts 判 supported → {idx: bool}。judge 自身失敗 → None。
+
+    schema v2：idx 集合必須恰好是 range(len(statements))，型別嚴格；不合格重試 1 次後拋
+    JudgeSchemaError。strict=False 只放寬「缺 idx」一項——缺的不出現在回傳的 dict 裡，
+    由呼叫端計為 unsupported（生產端，審查 L19），並記 WARNING；全部缺漏仍是 schema 錯。
 
     payload 格式與 eval 版本逐字一致，避免 eval 基準線漂移。
     """
     if not statements:
         return {}
     joined_ctx = "\n\n".join(contexts)
-    enumerated = "\n".join(f"{i}. {s}" for i, s in enumerate(statements))
-    payload = f"參考片段：\n{joined_ctx}\n\n主張：\n{enumerated}"
-    res = await judge(GROUND_SYS, payload)
-    if res is None:
-        return None
-    verdicts = res.get("verdicts") if isinstance(res, dict) else None
-    supmap: dict[int, bool] = {}
-    for v in verdicts or []:
-        if isinstance(v, dict) and isinstance(v.get("idx"), int):
-            idx = v["idx"]
-            if 0 <= idx < len(statements):
-                supmap[idx] = v.get("supported") is True
-    return supmap
+    enumerated = "\n".join(GROUND_ITEM_FMT.format(i=i, s=s) for i, s in enumerate(statements))
+    payload = GROUND_PAYLOAD_FMT.format(contexts=joined_ctx, claims=enumerated)
+    parsed = await call_validated(
+        judge, GROUND_SYS, payload,
+        lambda res: parse_verdicts(res, len(statements), "supported", allow_missing=not strict),
+    )
+    return None if parsed is None else parsed[0]
 
 
 async def faithfulness(answer: str, contexts: list[str], *, judge) -> float | None:
     """eval 相容：拆解 → 逐條佐證於 contexts。supported/total；total==0 → None。
 
-    行為與原 eval/ragas_metrics.faithfulness 一致（eval 改 import 本函式）。
+    離線端一律嚴格（缺 idx 也是 schema 錯）：JudgeSchemaError 往上拋，由 run_ragas 記成
+    該指標的 judge_errors。
     """
     statements = await decompose_statements(answer, judge=judge)
     if not statements:
@@ -179,21 +243,42 @@ async def faithfulness(answer: str, contexts: list[str], *, judge) -> float | No
 
 
 async def _default_judge(
-    system: str, user: str, *, model: str, timeout: float
+    system: str, user: str, *, model: str, timeout: float, failures: list[str] | None = None
 ) -> dict | None:
-    """claude CLI judge：drain 串流 → parse_plan_json。任何異常 → None（fail-open）。"""
+    """claude CLI judge：drain 串流 → parse_plan_json。任何異常 → None（fail-open）。
+
+    failures 給定時，把失敗原因（DEGRADED_* 詞彙）附加進去，供 check_faithfulness 記
+    degraded_reason——回傳值維持 None，judge 契約不變。逾時分兩種：沒吐字就逾時
+    （LLMUnavailableError.reason＝timeout）記 timeout；吐到一半被截斷而解析失敗記 truncated，
+    不歸成 parse（parse 留給「回應完整卻不是 JSON」，那才是量尺問題）。
+    """
+    def _fail(reason: str) -> None:
+        if failures is not None:
+            failures.append(reason)
+
+    meta: dict = {}
     try:
         parts: list[str] = []
         async for chunk in stream_completion(
-            user, model=model, system=system, timeout=timeout, allow_web=False
+            user, model=model, system=system, timeout=timeout, allow_web=False, meta=meta
         ):
             parts.append(chunk)
         raw = "".join(parts).strip()
         if not raw:
+            _fail(DEGRADED_EMPTY)
             return None
         return parse_plan_json(raw)  # {"statements":...} / {"verdicts":...} 皆物件
+    except LLMUnavailableError as e:
+        logger.exception("faithfulness judge failed")
+        _fail(DEGRADED_TIMEOUT if e.reason == UNAVAILABLE_TIMEOUT else DEGRADED_UNAVAILABLE)
+        return None
+    except ValueError:
+        logger.exception("faithfulness judge failed")
+        _fail(DEGRADED_TRUNCATED if meta.get("truncated") else DEGRADED_PARSE)
+        return None
     except Exception:
         logger.exception("faithfulness judge failed")
+        _fail(DEGRADED_ERROR)
         return None
 
 
@@ -215,28 +300,49 @@ async def check_faithfulness(
     - context_texts 空（無可回查的證據）→ 全主張 no_source。
     - 有 context → ground；supported→supported，其餘→unsupported。
     numeric_support_rate 只計數值主張；無數值主張 → None。
+    結果一律帶 judge_model（＝model）與 elapsed_ms；degraded 時另帶 degraded_reason。
     """
+    t0 = time.monotonic()
+    failures: list[str] = []
     if judge is None:
         async def judge(system: str, user: str):
-            return await _default_judge(system, user, model=model, timeout=timeout)
+            return await _default_judge(
+                system, user, model=model, timeout=timeout, failures=failures
+            )
 
-    statements = await decompose_statements(text, judge=judge)
+    def _stamp(result: FaithfulnessResult) -> FaithfulnessResult:
+        result.judge_model = model
+        result.elapsed_ms = int((time.monotonic() - t0) * 1000)
+        if result.degraded and result.degraded_reason is None:
+            result.degraded_reason = failures[-1] if failures else DEGRADED_ERROR
+        return result
+
+    try:
+        statements = await decompose_statements(text, judge=judge)
+    except JudgeSchemaError:
+        logger.warning("忠實度抽查：拆解結果不合 schema，標 degraded", exc_info=True)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=True, degraded_reason=DEGRADED_SCHEMA))
     if statements is None:
-        return FaithfulnessResult(None, None, [], degraded=True)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=True))
     if not statements:
         # 無事實主張（如「找不到資料」）：非降級，但無分可算
-        return FaithfulnessResult(None, None, [], degraded=False)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=False))
 
     has_context = any((c or "").strip() for c in context_texts)
     if not has_context:
         claims = [
             ClaimVerdict(s, is_numeric_claim(s), "no_source") for s in statements
         ]
-        return summarize_claims(claims, degraded=False)
+        return _stamp(summarize_claims(claims, degraded=False))
 
-    supmap = await ground_statements(statements, context_texts, judge=judge)
+    # strict=False：缺 idx 仍計為 unsupported（L19）；越界、重複、型別錯才算 schema 錯。
+    try:
+        supmap = await ground_statements(statements, context_texts, judge=judge, strict=False)
+    except JudgeSchemaError:
+        logger.warning("忠實度抽查：grounding 結果不合 schema，標 degraded", exc_info=True)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=True, degraded_reason=DEGRADED_SCHEMA))
     if supmap is None:
-        return FaithfulnessResult(None, None, [], degraded=True)
+        return _stamp(FaithfulnessResult(None, None, [], degraded=True))
 
     claims = [
         ClaimVerdict(
@@ -246,7 +352,10 @@ async def check_faithfulness(
         )
         for i, s in enumerate(statements)
     ]
-    return summarize_claims(claims, degraded=False)
+    result = summarize_claims(claims, degraded=False)
+    # 缺 idx 的條數（全部缺漏已在 parse_verdicts 判為 schema 錯，走不到這裡）。
+    result.n_missing_verdicts = len(statements) - len(supmap)
+    return _stamp(result)
 
 
 def summarize_claims(claims: list[ClaimVerdict], *, degraded: bool) -> FaithfulnessResult:

@@ -42,7 +42,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `locale.py` | `zh-Hant`／`en`，未知一律回中文；預設 locale 不改動任何既有 prompt |
 | `zh_hant.py` | 簡→繁（s2tw）；判別用 Big5 可編碼性，門檻「至少 2 字且密度 5%」缺一不可 |
 | `trusted_market_data.py` | 受信任時效資料 provider 契約；任何失敗收斂為 `TrustedDataUnavailable` |
-| `llm.py` | 以 `claude -p --setting-sources '' --output-format stream-json --verbose --include-partial-messages` spawn CLI，`cwd=/tmp`，prompt 走 stdin；開網搜加 `--allowedTools WebSearch`；只對 API 錯誤重試，逾時對已串流文字 fail-open |
+| `llm.py` | 以 `claude -p --setting-sources '' --output-format stream-json --verbose --include-partial-messages` spawn CLI，`cwd=/tmp`，prompt 走 stdin；開網搜加 `--tools WebSearch --allowedTools WebSearch`（`--tools` 把可用工具縮到只剩 WebSearch，`--allowedTools` 只管免核可），不開網搜加 `--tools ""` 不開任何工具（`--help` 寫明；批次的 `scripts/_claude_cli.py` 與 `scripts/generate_brief.py` 同樣；刻意不用 `--disallowedTools "*"`，萬用字元語意未記載）；三處一律加 `--strict-mcp-config` 且不帶 `--mcp-config`＝不載任何 MCP 伺服器（`--tools` 只管內建工具，`--setting-sources ''` 只擋設定檔來源）；工具旗標是可變長度選項，一律放 argv 最後，布林旗標放在它們之前；`system/init` 事件回報的工具集與預期不符時記 WARNING（`check_init_tools`，fail-open）；只對 API 錯誤重試，逾時對已串流文字 fail-open |
 
 ### 2.3 `app/services/` 讀取零 LLM 的功能
 
@@ -107,7 +107,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 
 事件序（services 層 yield 的 kind）：`status`（stage：`understanding`、`retrieved`、`generating`、`reading`、`searching_web`、`evaluating`）、`sources`、`token`、`notice`、`ext_sources`、`followups`、`done`（`cited`、`qa_id`、`conversation_id`、`thinking_ms`、`root_qa_id`、`version_count`；簡→繁有變動時多帶 `answer`；婉拒版帶 `notice_kind` 且無 `qa_id`）。web 層補 `queued` 與 `error`。契約在 `tests/fixtures/sse_events.json`。
 
-忠實度抽查在 `done` 後以 `answer._spawn_background` 跑：四閘 `ASK_FAITHFULNESS_ENABLED`、有 `qa_id`、`is_numeric_claim(body)`、抽樣率；in-flight 超過 `ASK_FAITHFULNESS_MAX_INFLIGHT` 就跳過不排隊。結果落 `qa_log.evaluation`，judge 異常標 `degraded` 不加分數。
+忠實度抽查在 `done` 後以 `answer._spawn_background` 跑：四閘 `ASK_FAITHFULNESS_ENABLED`、有 `qa_id`、`is_numeric_claim(body)`、抽樣率；in-flight 超過 `ASK_FAITHFULNESS_MAX_INFLIGHT` 就跳過不排隊。結果落 `qa_log.evaluation`，judge 異常標 `degraded` 不加分數（原因記 `degraded_reason`）。judge 呼叫目前有兩到三層各自重試：生產每個階段（拆解、grounding）最壞 6 次 CLI spawn（schema 重試 1 次 × 529 重試共 3 次），離線同一指標任務最壞 4 次 judge 呼叫（schema 重試 × `EVAL_JUDGE_RETRIES`）；PR-18 的 LLM adapter 會收斂成單層，細節在 `app/services/faithfulness.py` 模組 docstring。
 
 簡繁守門 `zh_hant.to_traditional` 的四個寫入點：`answer.py` 三處（overview 回答、網搜答案、主答案收斂）、`signal_extract.py` 一處（訊號 summary）。串流路徑刻意不中途轉。**逐字引文不轉**：`report_takeaway.quote`、`thesis_dimensions[*].evidence`、`full_text`、`report_chunk.content`。
 
@@ -143,6 +143,7 @@ schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具�
 | `report_takeaway` | 閱讀頁重點摘錄與錨點 | FK → `research_report` CASCADE；UNIQUE(report_id, ordinal) |
 | `report_brief` | 每日簡報 | `report_ids uuid[]` 刻意無 FK，讀取端容忍孤兒 |
 | `extraction_log` | 每個進過管線的 `file_hash` 一列 | 無 FK |
+| `llm_task_failure` | LLM 批次的內容型失敗（跳過名單）：解析不了、審查擋下、截斷；成功即刪列，規則在 `app/services/llm_failures.py` | PK(file_hash, task)；刻意無 CHECK、不備份 |
 
 備份只涵蓋四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）→ NAS；語料層刻意不備。
 
@@ -164,7 +165,7 @@ schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具�
 | 問答模型與網搜 | `ASK_INTENT_MODEL`（claude-haiku-4-5）、`ASK_INTENT_TIMEOUT`（20）、`ASK_CONDENSE_MODEL`、`ASK_CONDENSE_TIMEOUT`（20）、`ASK_ENABLE_WEB`（1）、`ASK_WEB_TIMEOUT`（240） |
 | M5／M6 規劃 | `QA_PLANNER_MODEL`、`QA_PLANNER_TIMEOUT`（45，冷啟動 ttft 約 10 秒）、`QA_PLANNER_MAX_SUBQUERIES`（3）、`QA_MAX_ROUNDS`（2）、`QA_AGENTIC_ENABLED`（1）、`QA_AGENTIC_TIMEOUT`（90）、`QA_SUBQUERY_MAX_REPORTS`（5） |
 | rerank | `ASK_RERANK_ENABLED`（1）、`ASK_RERANK_CANDIDATES`（50）、`ASK_RERANK_TIMEOUT`（60；實測 50 對約 34 秒）、`RERANK_MODEL` |
-| 忠實度 M8 | `ASK_FAITHFULNESS_ENABLED`（1）、`FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，讀者只有監控頁 `_FAITHFULNESS_MIN` 與 `scripts/eval_faithfulness.py`）、`ASK_FAITHFULNESS_SAMPLE_RATE`（1.0）、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT`（60）、`ASK_FAITHFULNESS_TIMEOUT`（240，實測 48–142 秒）、`ASK_FAITHFULNESS_MAX_INFLIGHT`（2） |
+| 忠實度 M8 | `ASK_FAITHFULNESS_ENABLED`（1）、`FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，讀者只有監控頁 `_FAITHFULNESS_MIN` 與 `scripts/eval_faithfulness.py`）、`ASK_FAITHFULNESS_SAMPLE_RATE`（1.0）、`FAITHFULNESS_MODEL`（`claude-haiku-4-5`，刻意不沿用 `ASK_INTENT_MODEL`：換路由模型不得靜默換尺；讀分數三處只計現行 judge，見 `app/services/judge_schema.py`）、`FAITHFULNESS_TIMEOUT`（60，目前沒有呼叫端）、`ASK_FAITHFULNESS_TIMEOUT`（240，實測 48–142 秒）、`ASK_FAITHFULNESS_MAX_INFLIGHT`（2） |
 | 抽取與儲存 | `EXTRACTOR`（pypdf）、`EXTRACTION_REVIEW_MIN`（0.6）、`EXTRACTION_REVIEW_MIN_COVERAGE`（0.30）、`EXTRACTION_REVIEW_MAX_GARBLED`（0.02）、`OBJECT_STORAGE_MODE`（local）、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS`（3600，上限一小時） |
 | 雷達 | `RADAR_CATALOG_CACHE_TTL`（60 秒；0 停用）：`/api/radar/instruments` 整份回應依查詢參數快取，`report_signal` 每 3 小時才更新 |
 | DB 與嵌入 | `LOG_LEVEL`（INFO）、`DB_POOL_SIZE`（5）、`DB_MAX_OVERFLOW`（15）、`DB_POOL_TIMEOUT`（10）、`DB_POOL_RECYCLE`（1800）、`DB_STATEMENT_TIMEOUT_MS`（60000）、`DB_IDLE_TX_TIMEOUT_MS`（0）、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS`（0）、`EMBED_MAX_CONCURRENCY`（1）、`EMBED_TORCH_THREADS`（0）、`TRUSTED_DATA_ENABLED`（1） |

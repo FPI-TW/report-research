@@ -1828,9 +1828,47 @@ class BuildCmdTests(unittest.TestCase):
         self.assertIn("--allowedTools", cmd)
         self.assertEqual(cmd[cmd.index("--allowedTools") + 1], "WebSearch")
 
+    def test_web_flag_restricts_available_tools(self):
+        """--allowedTools 只管免核可、不限縮可用工具；要把工具集縮到只剩 WebSearch 得靠 --tools。"""
+        cmd = llm._build_cmd("m", None, True)
+        self.assertIn("--tools", cmd)
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "WebSearch")
+        self.assertNotIn("--disallowedTools", cmd)
+
     def test_no_web_flag_by_default(self):
         cmd = llm._build_cmd("m", None, False)
         self.assertNotIn("--allowedTools", cmd)
+
+    def test_no_web_disables_all_tools(self):
+        """不開網搜＝不開任何工具：`--tools ""`（`--help` 寫明）。
+
+        不用 `--disallowedTools "*"`：本機 CLI 未記載萬用字元語意，看來逐字比對工具名，很可能無效。
+        """
+        for system in (None, "你是助理"):
+            with self.subTest(system=system):
+                cmd = llm._build_cmd("m", system, False)
+                self.assertEqual(cmd[-2:], ["--tools", ""])
+                self.assertNotIn("--disallowedTools", cmd)
+
+    def test_tool_flags_are_last(self):
+        """工具旗標是可變長度選項，會吞掉後面的非選項引數：一律放 argv 最後。"""
+        for system in (None, "你是助理"):
+            with self.subTest(system=system):
+                cmd = llm._build_cmd("m", system, True)
+                self.assertEqual(cmd[-4:], ["--tools", "WebSearch", "--allowedTools", "WebSearch"])
+
+    def test_mcp_servers_are_never_loaded(self):
+        """`--tools` 只管內建工具、管不到 MCP；`--strict-mcp-config` 且不帶 `--mcp-config`＝不載 MCP。
+
+        開不開網搜都要有；它是布林旗標，必須在可變長度的 `--tools` 之前，否則會被當成 `--tools` 的值。
+        """
+        for allow_web in (False, True):
+            for system in (None, "你是助理"):
+                with self.subTest(allow_web=allow_web, system=system):
+                    cmd = llm._build_cmd("m", system, allow_web)
+                    self.assertIn("--strict-mcp-config", cmd)
+                    self.assertNotIn("--mcp-config", cmd)
+                    self.assertLess(cmd.index("--strict-mcp-config"), cmd.index("--tools"))
 
     def test_system_prompt_included_when_given(self):
         self.assertIn("--system-prompt", llm._build_cmd("m", "你是助理", False))

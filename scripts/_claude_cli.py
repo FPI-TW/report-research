@@ -78,9 +78,19 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
 
     輸出格式用 CLI 預設的純文字（各家 parser 直接吃）：**不要加
     `--output-format json`**，那會把回應包進一層 CLI envelope，解析會抓到外層物件。
+
+    `--tools ""`＝不開任何工具（`--help` 寫明 `""` 停用全部工具；list 傳參，空字串是獨立
+    引數，同 `--setting-sources ""`）：批次只要模型讀 prompt 回文字，用不到讀檔、執行指令
+    或網搜；工具開著時研報內文裡的指示有機會驅動模型去讀 cwd 的檔。刻意不用
+    `--disallowedTools "*"`：本機 CLI 未記載萬用字元語意，很可能無效。`--tools` 是可變長度
+    選項，會吞掉後面的位置引數，所以必須放在 prompt 之後、argv 的最後。
+
+    `--strict-mcp-config`＝只用 `--mcp-config` 給的 MCP 伺服器；不帶 `--mcp-config` 就是一個
+    都不載。`--tools ""` 只停用內建工具、管不到 MCP，兩者要一起給。它是布林旗標，放在
+    `--tools` 之前（放在後面會被當成 `--tools` 的值）。
     """
     prompt = prompt.replace("\x00", "")
-    return ["claude", "-p", prompt, "--model", model, "--setting-sources", ""]
+    return ["claude", "-p", prompt, "--model", model, "--setting-sources", "", "--strict-mcp-config", "--tools", ""]
 
 
 def run_claude(

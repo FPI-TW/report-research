@@ -224,7 +224,7 @@ class AskTimeoutKnobTests(unittest.TestCase):
     """問答抽查的逾時與 judge 通用逾時分開。"""
 
     def test_ask_knob_is_not_the_generic_knob(self):
-        """`faithfulness_timeout` 是 judge 單次呼叫的通用逾時（離線評測也用）；
+        """`faithfulness_timeout` 是 judge 單次呼叫的通用逾時；
         問答抽查實測需要遠超 60 秒，所以另有一顆、且必須更大。"""
         self.assertIsNot(A.ASK_FAITHFULNESS_TIMEOUT, None)
         self.assertGreater(A.ASK_FAITHFULNESS_TIMEOUT, A.FAITHFULNESS_TIMEOUT)

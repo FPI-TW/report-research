@@ -135,13 +135,13 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 1. 補記上一輪異常收場；系統關機中或 lock 被佔用退出 0；找不到 `uv` 退出 1。
 2. drvfs 唯讀掛載 NAS（`/usr/local/sbin/mount-nas-research`，sudoers 免密碼）；失敗退出 1。
 3. `rsync -rt --size-only` 到 `研報自動匯入/`，delta 寫 `data/sync_delta_<時間>.txt`。
-4. `scripts/sync_new_reports.py --delta <delta>`（`nice -n 19 ionice -c3`）：逐檔 extract → tag → ingest，每道閘寫 `extraction_log`；失敗記 `data/sync_failures.log`，成功 hash 寫 `data/.sync_last_hashes`，計數寫 `data/.sync_last_stats`。rc=0 不等於成功：`ABNORMAL>0` 時本輪不算完整，補救走 `scripts/failures_to_delta.py --out data/sync_delta_recover.txt` 再餵 `--delta`，**不要 `--all-local`**（那是 O(全部檔)）。
+4. `scripts/sync_new_reports.py --delta <delta>`（`nice -n 19 ionice -c3`）：逐檔 extract → tag → ingest，每道閘寫 `extraction_log`；失敗記 `data/sync_failures.log`，成功 hash 寫 `data/.sync_last_hashes`，計數寫 `data/.sync_last_stats`。rc=0 不等於成功：`ABNORMAL>0` 時本輪不算完整，補救走 `scripts/failures_to_delta.py --out data/sync_delta_recover.txt` 再餵 `--delta`，**不要 `--all-local`**（那是 O(全部檔)）。匯入 rc 不是 0 也不是 75 時 delta 保留在 `data/`，殼依時間序列出所有保留的 delta 與 `--delta … --hashes-out data/sync_hashes_retained_<時間>.txt` 重放指令（`--hashes-out` 讓每份重放的 hashes 各寫一份，不覆寫 `data/.sync_last_hashes`；只列殼產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`）。中途中止前已入庫的篇，importer 寫到 `<hashes_out>.partial`，殼改名保留成 `data/sync_hashes_retained_<時間>_partial.txt` 並印三段補跑指令（重放時它們會變 `skip_exists`，不會進重放的 hashes）。
 5. 以 `--hashes-file data/.sync_last_hashes` 依序跑摘要、標題、摘錄。**不可改成 `--since-days`**：它濾的是 `report_date`，會漏掉近九成。
 6. 訊號 `--limit ${SYNC_SIGNAL_LIMIT:-100}`，排跨全語料積壓，`--limit` 是安全機制不是效能旋鈕（不限量會佔住 CLI 鎖 80 小時以上）。
 7. 簡報（無參數；沒有自己的 timer 是刻意的，要讀當輪剛擷取的評等變動）。
 8. 標題積壓 `--limit ${SYNC_TITLE_BACKLOG_LIMIT:-60}`，補一年以上舊檔（永遠不會進 `--hashes-file`）。
 
-第 5 到 8 段 best-effort：失敗只記 `data/unit_failures.log`，rc=75 不計入異常。心跳 `data/.last_successful_sync` 只在完整成功時更新，`scripts/check_batch_freshness.py` 據此判管線停跑。環境檔 `/etc/default/report-mark-sync`（範本 `deploy/systemd/report-mark-sync.env.example`）：`REPORT_MARK_ROOT`、`SYNC_PATH_EXTRA`（nvm 沒有 `current` 連結，寫錯會讓 claude 找不到而無聲漏跑）、`EXTRACTOR`、備份與 R2 變數。
+第 5 到 8 段 best-effort：失敗只記 `data/unit_failures.log`，rc=75 不計入異常；任一段 rc=2（帳號／環境型中止）時，當輪 `data/.sync_last_hashes` 複製保留成 `data/sync_hashes_retained_<時間>.txt`，並印出摘要、標題、摘錄各自的 `--hashes-file` 補跑指令。整批中止的重放步驟見 `docs/production_resilience.md`「整批中止後的重放」，**不能**用 `failures_to_delta.py` 或 `--all-local` 補救（整批中止不留逐篇失敗紀錄）。摘要、標題、摘錄、訊號遇到「LLM 有回應但不能用」的研報會記入 `research.llm_task_failure`：同一 model 下審查擋下或截斷 1 次、其他原因連續 3 輪就不再重打，成功即刪列；`make llm-blocked` 唯讀列出（`--all` 連累計中的也列），要重試就對該批次加 `--retry-blocked` 或 DELETE 那一列；跳過鍵只看 model、不看 prompt 或 `EXTRACTION_VERSION`，**改 prompt 後要加 `--retry-blocked`**（摘錄與訊號的 `--reextract` 隱含它）。第 8 段標題積壓以 `--exclude-hashes-file data/.sync_last_hashes` 排掉本輪 4b 剛打過的新研報，免得同一篇一輪打兩次、失敗記兩次。逾時、CLI 非零退出這類環境型失敗不記。心跳 `data/.last_successful_sync` 只在完整成功時更新，`scripts/check_batch_freshness.py` 據此判管線停跑。環境檔 `/etc/default/report-mark-sync`（範本 `deploy/systemd/report-mark-sync.env.example`）：`REPORT_MARK_ROOT`、`SYNC_PATH_EXTRA`（nvm 沒有 `current` 連結，寫錯會讓 claude 找不到而無聲漏跑）、`EXTRACTOR`、備份與 R2 變數。
 
 ## 標籤維度（對齊 findb）
 
@@ -173,6 +173,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 - `tests/fixtures/sse_events.json` 是後端與前端共吃的單一真相（`tests/test_sse_event_contract.py`、`frontend/src/lib/sseEventContract.test.ts`），現在只剩 `ask` 一組事件。新事件或欄位：fixture 與 `frontend/src/lib/askSchemas.ts` 的 zod（預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）兩處都要動。
 - 雷達 `app/services/radar/schemas.py` 的 `Literal` 與 `frontend/src/lib/radarSchemas.ts` 逐字鏡像；閱讀頁 `app/services/reading/schemas.py` 與 `frontend/src/lib/readingSchemas.ts` 同理；`web/routers/brief.py` 的 pydantic 與 `frontend/src/lib/briefSchemas.ts` 同理。
 - `/api/progress` 新增鍵要同步改 `frontend/src/features/monitor/progressSchema.ts`。
+- 忠實度分數的讀取端（`/api/progress` 的 `evaluation.qa`、`/api/review/queue?kind=faithfulness`、`scripts/eval_faithfulness.py`）的分數類統計只計現行 judge（監控卡的已查核數 `checked` 例外：它是覆蓋率語意，計所有 judge），共用 `app/services/judge_schema.py` 的過濾；`qa_log.evaluation` 帶 `judge_model`、`judge_schema_version`、`degraded_reason`（`unavailable`／`timeout`／`truncated`／`empty`／`parse`／`schema`／`error`，詞彙在 `app/services/faithfulness.py`）、`elapsed_ms`、`n_missing_verdicts`（grounding 漏判而計為 unsupported 的條數），缺 `judge_model` 的舊列視為 `claude-haiku-4-5`。judge 回應走 schema v2 嚴格驗證（同一模組），不合格重試 1 次後生產記 `degraded_reason=schema`；生產 grounding 缺 idx 仍計 unsupported，但一條都沒判（`{"verdicts": []}`）算 schema 錯。
 
 ## 私有 R2 遷移順序
 
@@ -229,3 +230,4 @@ make sync-once
 | 訊號大量 `rejected` | 批次併發搶 CLI，不是資料壞 |
 | `make db-audit` 紅 | `fsync=off` 殘留（`make restore-durability`）、孤兒列、`content_norm` 漂移 |
 | 評測退出碼 3 | 新指標未在 `scripts/eval_compare.py` 的 `METRIC_SPECS` 補方向 |
+| 評測退出碼 2，訊息是「量尺只有 … 有記錄」 | 一邊是記錄量尺之前的舊結果檔（例如 `eval/baselines/baseline-2026-09-02.json`）；兩邊都用同一版 `eval/run_ragas.py` 重跑，不是放寬比較器 |

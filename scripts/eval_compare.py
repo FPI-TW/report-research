@@ -11,7 +11,15 @@
 刻意的設計取捨（改動前先讀）：
 
 - **只讀 `summary`，一個指標都不重算。** 重算等於在這裡複製一份評分規則，兩邊定義漂掉時
-  比較器會理直氣壯地說謊。逐題資料仍在 `cases`，要下鑽請讀原始檔。
+  比較器會理直氣壯地說謊。逐題資料仍在 `cases`，要下鑽請讀原始檔。唯一例外是使用者明講的
+  `--common-only`：只把 F／CP／AR 三個 judge 指標在「兩邊都有值的題目」上重取平均（run_ragas
+  的均值本來就是逐題分數的算術平均，逐題分數本身不重算），門檻旗標在該模式下不判定。
+- **judge 指標的題目集合必須相同（退出碼 2）。** judge 出錯只讓該題該指標記 None（run_ragas
+  M8），於是兩邊出錯題數相同、題目不同時，F／CP／AR 的均值是在不同題集上算的。summary 帶
+  `n_effective_<指標>`（入均值的題數）與 `judged_ids_sha`（三個指標各自入均值的題目 id 集合的
+  雜湊），任一不同即不可比；訊息會列出差在哪幾題（讀 `cases`，只做集合比對）。處置是補跑到
+  兩邊相同題目，或加 `--common-only`。`n_judge_errors` 因此只列出、不判方向：judge 偶發出錯
+  是量尺故障，不是生成端劣化，拿它回 1 會把「尺壞了」誤報成「東西變差了」。
 - **方向表是白名單，不是預設值。** 不認得的鍵一律印進「未分類」並讓退出碼變 3，不當成
   「越大越好」——`n_errors`、`median_cited_age`、`latency_ms_*` 都是越小越好，猜錯方向
   就是製造假綠。新增指標時請同時在 `METRIC_SPECS` 補一筆。
@@ -21,6 +29,11 @@
 - **不動任何門檻。** `FAITHFULNESS_MIN` / `CONTEXT_PRECISION_MIN` / `ANSWER_RELEVANCY_MIN`
   是政策決定（量測紀錄在 `eval/run_ragas.py` 的常數旁），本工具只回答「相對於 baseline
   有沒有變差」，不回答「夠不夠好」。
+- **量尺（META）只有一邊有記錄也算不可比（退出碼 2）。** 非 META 鍵只有一邊有時照舊只列出、
+  不判定（例如舊基準線沒有 latency_ms_*）；但 META 鍵缺一邊代表「不知道那一份是用哪把尺量的」，
+  不能當成同一把。後果是明知的：`eval/run_ragas.py` 開始記 `judge_model` 等三個鍵之後，拿新結果
+  比任何舊的 RAGAS 基準線（含 `eval/baselines/baseline-2026-09-02.json`）一律回 2，直到用新版
+  重跑出新的基準線為止。兩份都沒有記錄（舊檔比舊檔）維持可比。
 - **latency 用相對容忍值。** 對 45,387 ms 的均值套絕對 0.03 等於「差 0.03 毫秒就是回歸」，
   那種紅燈只會讓人把工具關掉。[0,1] 尺度的指標與計數用絕對值，非 [0,1] 的用相對值。
 
@@ -34,19 +47,24 @@
   uv run python scripts/eval_compare.py --baseline eval/before.json --candidate eval/after.json
   # 問答：eval/run_ragas.py --out 寫出的兩份（跑的時候記得 --concurrency 1）
   make eval-compare BASE=eval/baselines/baseline-2026-07-29.json CAND=eval/candidate-ragas.json
+  # 兩邊 judge 出錯的題目不同時，只在兩邊都有值的題目上比 F／CP／AR
+  uv run python scripts/eval_compare.py --baseline A.json --candidate B.json --common-only
 
 退出碼：
   0  無劣化
   1  至少一項判定指標劣化超過容忍值
-  2  不可比（樣本數／評分規則版本／queryset 參數不同）
+  2  不可比（樣本數／judge 指標的題目集合／評分規則版本／queryset 參數／judge 量尺不同，
+     或量尺只有一邊有記錄）
   3  有未分類指標，因此不敢宣稱沒有回歸（其餘皆無劣化）
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import unicodedata
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -85,8 +103,22 @@ METRIC_SPECS: dict[str, Spec] = {
     # 計數用絕對容忍值：預設 0.03 之下，多一題 error 就是劣化，這是要的行為。
     "n_errors": Spec(LOWER, ABS, "runner 例外／逾時，整題不入均值"),
     "n_no_context": Spec(LOWER, ABS, "檢索不到脈絡"),
+    # judge 出錯只讓該題該指標為 None。**不判方向**：judge 偶發出錯是量尺故障，不是生成端
+    # 劣化；它造成的後果（入均值的題目變了）由下面的 n_effective_*／judged_ids_sha 擋成不可比。
+    "n_judge_errors": Spec(INFO, ABS, "judge 出錯（重試後）的指標數；影響由題目集合檢查負責"),
+    "n_effective_faithfulness": Spec(SAMPLE, ABS, "實際入 faithfulness 均值的題數"),
+    "n_effective_context_precision": Spec(SAMPLE, ABS, "實際入 context_precision 均值的題數"),
+    "n_effective_answer_relevancy": Spec(SAMPLE, ABS, "實際入 answer_relevancy 均值的題數"),
+    "judged_ids_sha": Spec(SAMPLE, ABS, "三個 judge 指標各自入均值的題目 id 集合的雜湊"),
+    "citation_rate": Spec(HIGHER, ABS, "答案至少引用一個存在來源 [n] 的題數比例"),
+    "simplified_residual_rate": Spec(LOWER, ABS, "答案整份被判為簡體（zh_hant.looks_simplified）的題數比例"),
+    "n_truncated": Spec(LOWER, ABS, "生成撞到逾時、已吐的字被截斷的題數（stream_completion 回報）"),
     "thresholds_pass": Spec(FLAG, ABS, "run_ragas 的三個絕對門檻是否全過"),
     "thresholds_failed": Spec(INFO, ABS, "未達標項目清單（字串）"),
+    # 量尺。judge 換了、提示改了、解讀規則改了，分數就不是同一把尺量的。
+    "judge_model": Spec(META, ABS, "judge 模型不同＝換了尺"),
+    "judge_prompt_sha": Spec(META, ABS, "judge 提示模板（含 payload 版型）改了＝換了尺"),
+    "judge_schema_version": Spec(META, ABS, "judge 回應的解讀規則改了＝換了尺"),
     # ── scripts/eval_retrieval.py（檢索）──────────────────────────────────
     "n_cases": Spec(SAMPLE),
     "hit_rate": Spec(HIGHER),
@@ -151,6 +183,103 @@ class CompareError(Exception):
     """輸入不是評測結果檔（缺 summary 之類）。呼叫端轉成退出碼 2。"""
 
 
+# ── judge 指標的題目集合（run_ragas 寫入、這裡比對；定義只有這一份）──────────────
+JUDGE_METRICS = ("faithfulness", "context_precision", "answer_relevancy")
+# 兩邊都有這些鍵才做題目集合的檢查與提示；只有一邊有時由「樣本數不同」照常擋下。
+_N_EFFECTIVE_KEYS = tuple(f"n_effective_{m}" for m in JUDGE_METRICS)
+_JUDGED_SET_KEYS = _N_EFFECTIVE_KEYS + ("judged_ids_sha",)
+
+
+def case_key(case: dict) -> str:
+    """一題的識別：題集的 id；舊題集沒有 id 時退回問題文字。"""
+    cid = case.get("id")
+    return str(cid) if cid is not None else str(case.get("question"))
+
+
+def judged_ids(cases: list, metric: str) -> list[str]:
+    """實際入 metric 均值的題目（非 error、值不為 None），排序後回傳。
+
+    與 run_ragas 的 `_mean_of` 同一條規則：error 題與 None 不入均值。"""
+    return sorted(
+        case_key(c)
+        for c in cases
+        if isinstance(c, dict) and "error" not in c and c.get(metric) is not None
+    )
+
+
+def _sha_of_sets(sets: dict[str, list[str]]) -> str:
+    blob = json.dumps(
+        {m: sorted(sets[m]) for m in JUDGE_METRICS}, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def judged_ids_sha(cases: list) -> str:
+    """三個 judge 指標各自入均值的題目集合 → sha256。run_ragas 寫進 summary 的就是這個值。"""
+    return _sha_of_sets({m: judged_ids(cases, m) for m in JUDGE_METRICS})
+
+
+def _cases_of(doc: dict) -> list | None:
+    cases = doc.get("cases")
+    return cases if isinstance(cases, list) else None
+
+
+def judged_set_diff(base_doc: dict, cand_doc: dict) -> list[str]:
+    """兩份的 judge 題目集合差在哪（每個指標一行）。任一份沒有 cases 就回空。"""
+    base_cases, cand_cases = _cases_of(base_doc), _cases_of(cand_doc)
+    if base_cases is None or cand_cases is None:
+        return []
+    out = []
+    for m in JUDGE_METRICS:
+        b, c = set(judged_ids(base_cases, m)), set(judged_ids(cand_cases, m))
+        if b != c:
+            only_b = "、".join(sorted(b - c)) or "無"
+            only_c = "、".join(sorted(c - b)) or "無"
+            out.append(f"{m}：只在 baseline 入均值 {only_b}；只在 candidate 入均值 {only_c}")
+    return out
+
+
+def restrict_to_common(base_doc: dict, cand_doc: dict) -> tuple[dict, dict, list[str]]:
+    """`--common-only`：F／CP／AR 只在兩邊都有值的題目上重取平均。回（新 base, 新 cand, 說明）。
+
+    只重取平均、不重算逐題分數；run_ragas 的均值本來就是逐題值的算術平均（--repeat 時逐題
+    值已是跨次平均）。門檻旗標（thresholds_pass／thresholds_failed）是在原題集上算的，
+    這個模式下兩邊都移除、不判定。其餘指標（延遲、引用率、計數）照舊取 summary。
+    缺 cases、或題目識別重複時拋 CompareError（無法可靠對齊）。
+    """
+    docs = []
+    for label, doc in (("baseline", base_doc), ("candidate", cand_doc)):
+        cases = _cases_of(doc)
+        if cases is None:
+            raise CompareError(f"--common-only 需要逐題明細，{label} 沒有 cases")
+        keys = [case_key(c) for c in cases if isinstance(c, dict)]
+        if len(keys) != len(set(keys)):
+            raise CompareError(f"--common-only：{label} 的題目 id 有重複，無法對齊")
+        docs.append(deepcopy(doc))
+    new_base, new_cand = docs
+    notes = []
+    common_sets: dict[str, list[str]] = {}
+    for m in JUDGE_METRICS:
+        common = set(judged_ids(base_doc["cases"], m)) & set(judged_ids(cand_doc["cases"], m))
+        for doc in (new_base, new_cand):
+            vals = [
+                float(c[m]) for c in doc["cases"]
+                if isinstance(c, dict) and "error" not in c and c.get(m) is not None and case_key(c) in common
+            ]
+            doc["summary"][m] = sum(vals) / len(vals) if vals else None
+            doc["summary"][f"n_effective_{m}"] = len(vals)
+        common_sets[m] = sorted(common)
+        notes.append(f"{m}：只取兩邊都有值的 {len(common)} 題重取平均")
+    # 兩邊的題目集合在此模式下相同；以共同集合重寫雜湊，兩邊逐字一致。
+    common_sha = _sha_of_sets(common_sets)
+    for doc in (new_base, new_cand):
+        doc["summary"]["judged_ids_sha"] = common_sha
+        doc["summary"].pop("thresholds_pass", None)
+        doc["summary"].pop("thresholds_failed", None)
+    notes.append("thresholds_pass／thresholds_failed 是在原題集上算的，此模式不判定")
+    return new_base, new_cand, notes
+
+
 @dataclass
 class Row:
     key: str
@@ -185,6 +314,7 @@ class Comparison:
     config_diff: list[tuple[str, Any, Any]] = field(default_factory=list)
     notes_base: list[str] = field(default_factory=list)
     notes_cand: list[str] = field(default_factory=list)
+    common_only: list[str] = field(default_factory=list)
 
     @property
     def regressions(self) -> list[Row]:
@@ -215,18 +345,23 @@ def load_result(path: str | Path) -> dict:
     return data
 
 
-def sample_facts(summary: dict) -> dict[str, int]:
+def sample_facts(summary: dict) -> dict[str, Any]:
     """抽出決定可比性的樣本數。
 
     `n` 是名目題數，會騙人：`aggregate` 略過 error 與無脈絡題，所以真正進均值的是
     `n - n_errors - n_no_context`（baseline-m2 名目 8、實際 7）。
+    judge 出錯的題不在這個數字裡（只讓該指標為 None），所以另外帶三個 judge 指標各自的
+    入均值題數，以及入均值題目集合的雜湊 `judged_ids_sha`（字串）——題數相同、題目不同也不可比。
     """
-    facts: dict[str, int] = {}
+    facts: dict[str, Any] = {}
     # 抽取層：draft 與 reviewed 的標註不是同一種東西，覆核筆數不同就不可比。
-    for key in ("n", "n_cases", "n_reviewed", "n_order_sentences"):
+    for key in ("n", "n_cases", "n_reviewed", "n_order_sentences") + _N_EFFECTIVE_KEYS:
         val = summary.get(key)
         if isinstance(val, int) and not isinstance(val, bool):
             facts[key] = val
+    sha = summary.get("judged_ids_sha")
+    if isinstance(sha, str):
+        facts["judged_ids_sha"] = sha
     if "n" in facts:
         effective = facts["n"]
         for key in ("n_errors", "n_no_context"):
@@ -323,6 +458,16 @@ def build_comparison(
         cmp_.rows.append(row)
 
     cmp_.incomparable = _comparability(base, cand, cmp_)
+    if any(base.get(k) != cand.get(k) for k in _JUDGED_SET_KEYS) and all(
+        k in base and k in cand for k in _JUDGED_SET_KEYS
+    ):
+        detail = judged_set_diff(base_doc, cand_doc)
+        cmp_.incomparable.append(
+            "judge 指標入均值的題目不同（judge 出錯或無脈絡的題目兩邊不一樣），F／CP／AR 的均值"
+            "不是在同一組題目上算的"
+            + ("：" + "；".join(detail) if detail else "")
+            + "。補跑到兩邊相同題目，或用 --common-only 只在兩邊都有的題目上重算"
+        )
     cmp_.config_diff = _config_diff(base_doc.get("config"), cand_doc.get("config"))
     cmp_.notes_base = _as_notes(base_doc.get("notes"))
     cmp_.notes_cand = _as_notes(cand_doc.get("notes"))
@@ -346,12 +491,18 @@ def _comparability(base: dict, cand: dict, cmp_: Comparison) -> list[str]:
     for key in sorted(set(cmp_.sample_base) | set(cmp_.sample_cand)):
         b, c = cmp_.sample_base.get(key), cmp_.sample_cand.get(key)
         if b != c:
-            reasons.append(f"樣本數不同：{key} {b} → {c}")
+            reasons.append(f"樣本數不同：{key} {_short(b)} → {_short(c)}")
     for key, spec in METRIC_SPECS.items():
         if spec.direction != META:
             continue
         if key in base and key in cand and base[key] != cand[key]:
             reasons.append(f"評分規則／題集參數不同：{key} {base[key]} → {cand[key]}（{spec.why}）")
+        elif (key in base) != (key in cand):
+            side = "baseline" if key in base else "candidate"
+            reasons.append(
+                f"量尺只有 {side} 有記錄：{key}（舊格式結果檔沒有記錄量尺，無法確認兩份用同一把尺；"
+                "請用同一版 run_ragas 重跑兩邊）"
+            )
     if not any(r.gating for r in cmp_.rows):
         reasons.append("兩份檔案沒有任何共同的判定指標——形狀不同？（RAGAS／研報／檢索三套不能互比）")
     return reasons
@@ -369,6 +520,11 @@ def _config_diff(base_cfg: Any, cand_cfg: Any) -> list[tuple[str, Any, Any]]:
 
 
 # ── 輸出 ────────────────────────────────────────────────────────────────────
+def _short(v: Any) -> str:
+    """雜湊類長字串只印前 12 碼（sha256 全長會把對照表撐爆）。"""
+    return f"{v[:12]}…" if isinstance(v, str) and len(v) > 24 else str(v)
+
+
 def fmt_value(v: Any) -> str:
     if v is None:
         return "n/a"
@@ -378,7 +534,7 @@ def fmt_value(v: Any) -> str:
         return f"{v:.4f}" if abs(v) < 1000 else f"{v:,.0f}"
     if isinstance(v, list):
         return "、".join(str(x) for x in v) if v else "（無）"
-    return str(v)
+    return _short(v)
 
 
 def fmt_delta(row: Row) -> str:
@@ -440,8 +596,8 @@ def _table(rows: list[Row]) -> list[str]:
 
 
 def render(cmp_: Comparison) -> str:
-    def sample_str(facts: dict[str, int]) -> str:
-        return "、".join(f"{k}={v}" for k, v in facts.items()) or "未知"
+    def sample_str(facts: dict[str, Any]) -> str:
+        return "、".join(f"{k}={_short(v)}" for k, v in facts.items()) or "未知"
 
     out = [
         "=== eval 結果比較 ===",
@@ -451,6 +607,10 @@ def render(cmp_: Comparison) -> str:
         f"樣本     : {sample_str(cmp_.sample_base)}  →  {sample_str(cmp_.sample_cand)}",
         f"容忍值   : 絕對 {cmp_.tolerance}；相對 {cmp_.rel_tolerance:.0%}（僅非 [0,1] 尺度指標）",
     ]
+
+    if cmp_.common_only:
+        out += ["", "【--common-only】judge 指標只在兩邊都有值的題目上比："]
+        out += [f"  - {n}" for n in cmp_.common_only]
 
     if cmp_.incomparable:
         out += ["", "【不可比】以下 delta 僅供參考，不構成通過／失敗結論："]
@@ -517,6 +677,7 @@ def to_json(cmp_: Comparison) -> dict:
         "shape": {"baseline": cmp_.shape_base, "candidate": cmp_.shape_cand},
         "sample": {"baseline": cmp_.sample_base, "candidate": cmp_.sample_cand},
         "incomparable": cmp_.incomparable,
+        "common_only": cmp_.common_only,
         "metrics": [
             {
                 "key": r.key,
@@ -554,11 +715,19 @@ def main(argv: list[str] | None = None) -> int:
         help="相對容忍值（latency 等非 [0,1] 尺度指標），預設 0.25",
     )
     parser.add_argument("--json", action="store_true", help="輸出機器可讀 JSON 而非對照表")
+    parser.add_argument(
+        "--common-only",
+        action="store_true",
+        help="F／CP／AR 只在兩邊都有值的題目上重取平均（兩邊 judge 出錯的題目不同時用；門檻旗標不判定）",
+    )
     args = parser.parse_args(argv)
 
+    common_notes: list[str] = []
     try:
         base_doc = load_result(args.baseline)
         cand_doc = load_result(args.candidate)
+        if args.common_only:
+            base_doc, cand_doc, common_notes = restrict_to_common(base_doc, cand_doc)
     except CompareError as e:
         print(f"錯誤：{e}")
         return 2
@@ -571,6 +740,7 @@ def main(argv: list[str] | None = None) -> int:
         tolerance=args.tolerance,
         rel_tolerance=args.rel_tolerance,
     )
+    cmp_.common_only = common_notes
     print(json.dumps(to_json(cmp_), ensure_ascii=False, indent=2) if args.json else render(cmp_))
     return cmp_.exit_code
 

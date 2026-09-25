@@ -308,9 +308,13 @@ class WiringTests(unittest.TestCase):
         從「批次慢一點」變成「服務中斷數小時」。這條斷言比五條正向的更重要，
         因為誤加的人會覺得自己在把防護做得更完整。
         """
-        src = (REPO_ROOT / "app" / "services" / "llm.py").read_text(encoding="utf-8")
-        self.assertNotIn("_claude_lock", src)
-        self.assertNotIn("claude_cli_lock", src)
+        # llm_http.py 是 web 與批次共用的 HTTP 客戶端：鎖只能在批次腳本的 main 取，
+        # 放進客戶端就等於讓 /api/ask 也去搶它。
+        for name in ("llm.py", "llm_http.py"):
+            with self.subTest(module=name):
+                src = (REPO_ROOT / "app" / "services" / name).read_text(encoding="utf-8")
+                self.assertNotIn("_claude_lock", src)
+                self.assertNotIn("claude_cli_lock", src)
 
     def test_no_web_module_takes_the_lock(self):
         """同理推廣到整個線上路徑：web/ 底下任何檔案都不該取這把鎖。"""

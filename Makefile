@@ -29,7 +29,7 @@ COMPOSE := $(DOCKER) compose
         stats reset-db clean-data pipeline signals takeaways titles brief \
         eval-compare \
         up-edge down-edge edge-logs edge-reload \
-        sync-once db-backup freshness db-audit \
+        sync-once db-backup freshness db-audit llm-blocked \
         metrics metrics-once metrics-collect metrics-bench
 
 help:  ## 顯示可用指令
@@ -218,6 +218,9 @@ freshness:  ## 管線與批次停更偵測（純 SQL、零 LLM；rc 0 PASS／1 �
 # 幾條是 57 萬列全表掃描，腳本內走 relax_statement_timeout，別在對外服務尖峰跑。
 db-audit:  ## 資料完整性稽核（唯讀；rc 0 乾淨／1 有發現／2 DB 不可用）
 	uv run python scripts/db_audit.py
+
+llm-blocked:  ## 列出 LLM 批次的跳過名單（唯讀、零 LLM；--all 連累計中的也列）
+	uv run python scripts/llm_blocked.py
 
 # ───── 硬體用量量測（上雲選型）─────
 # 三支都刻意用 /usr/bin/python3 而非 uv run：量測工具不得相依 .venv——

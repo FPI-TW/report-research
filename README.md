@@ -113,7 +113,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/monitor`、`/app/help` | 舊入口相容 |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
 | GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 與 `/api/progress` 共用 15 秒 DB 快取 |
-| GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 監控頁輪詢；`extraction_log` 缺表時 `extraction` 為 null |
+| GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 監控頁輪詢；`extraction_log` 缺表時 `extraction` 為 null。`evaluation.qa` 的 `total`／`checked`／`latest` 計所有 judge（覆蓋率語意，換 judge 不會驟降）；分數類 `judge_checked`／`degraded`／`below_min`／`avg_score`／`avg_n`（平均的樣本數，不含 degraded）只計現行 judge（`FAITHFULNESS_MODEL`），另帶 `judge_model`、`judge_since`（窗期內現行 judge 最早一筆的日期）、`other_judge_checked`（其他 judge 的筆數） |
 | GET | `/api/markets` | — | `{"markets": [...]}` | 市場代碼清單 |
 | GET | `/api/reports` | `market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`date_desc`）、`limit`（1–100，50）、`offset` | `{total, offset, items[]}` | 瀏覽（無查詢詞） |
 | GET | `/api/search` | `q`（1–500 必填）、同上篩選、`sort`（`relevance`）、`limit`、`offset`、`passages`（1–6，3） | `{query, market, total, market_facets, lexical_truncated, results[]}` | 混合檢索 ＋ `rank_reports` |
@@ -138,7 +138,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/brief/latest` | — | `{status: ready|pending, brief, available_dates}` | 無簡報回 200 `pending` 不是 404 |
 | GET | `/api/brief/dates` | `limit`（1–120，30） | `{"dates": [...]}` | |
 | GET | `/api/brief/{brief_date}` | — | 同 latest | 該日無簡報 404 |
-| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`、倒讚、抽取 `needs_review`。`days` 只作用於前兩種；門檻與窗期和監控頁的忠實度卡同一套定義 |
+| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`（只列現行 judge 量的）、倒讚、抽取 `needs_review`。`days` 只作用於前兩種；門檻、窗期與 judge 過濾和監控頁的忠實度卡同一套定義。問答項目帶 `judge_model`（沒有 evaluation 時為 null） |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 
@@ -160,7 +160,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `EMBED_MAX_CONCURRENCY`、`EMBED_TORCH_THREADS` | 1、0 | 嵌入序列化；`/api/search`、雷達、閱讀頁沒有併發閘 |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` 設定旋鈕 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
 | `ASK_RERANK_*`、`RERANK_MODEL` | 開、50 候選 | rerank fail-open |
-| `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9 | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN` |
+| `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9、`claude-haiku-4-5` | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 不再沿用 `ASK_INTENT_MODEL`；換掉等於換尺，監控卡、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`） |
 | `EXTRACTOR`、`EXTRACTION_REVIEW_MIN`、`EXTRACTION_REVIEW_MIN_COVERAGE`、`EXTRACTION_REVIEW_MAX_GARBLED` | `pypdf`、0.6、0.30、0.02 | 抽取器（生產 sync 環境檔設 `pdfplumber`）與 `needs_review` 三道門檻（只標記不擋，`docs/EXTRACTION.md` §5） |
 | `OBJECT_STORAGE_MODE`、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS` | `local` | 非 local 缺任一 fail-closed；TTL 上限 3600 |
 | `ASK_MAX_QUEUE`、`SSE_HEARTBEAT_INTERVAL` | 20、20 | web 層旋鈕 |
@@ -179,14 +179,17 @@ cd frontend && npm test                # vitest
 cd frontend && npm run typecheck       # tsc --noEmit
 cd frontend && npm run lint            # eslint
 
-uv run python eval/run_ragas.py --out eval/baselines/candidate.json   # 問答評測（會 spawn claude）
-make eval-compare BASE=eval/baselines/baseline-2026-09-02.json CAND=eval/baselines/candidate.json
+uv run python eval/run_ragas.py --concurrency 1   # 問答評測（會 spawn claude），預設寫 eval/candidate-ragas.json
+uv run python eval/run_ragas.py --generator-model <model> --repeat 3 --dump-io data/eval_frozen/<名稱>
+make eval-compare BASE=<同一版 run_ragas 產出的基準線.json> CAND=eval/candidate-ragas.json
 ```
 
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc ＋ vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。前端 job 把 `frontend/dist` 傳給後端 job，SPA 測試對真 build 驗證；後端設 `HF_HUB_OFFLINE=1`、安裝 CJK 字型並設 `REPORT_MARK_REQUIRE_CJK=1`（`tests/test_extraction_layout.py` 的 CjkTests 用 weasyprint 渲染中文測試 PDF，不准退回 skip）；schema job 套 `db/schema.sql` 兩次驗冪等並對帳 `db/expected_constraints.txt`。required check 名稱等於 job 的中文 `name`，改了要同步 GitHub 分支保護。
 - 測試不連網、不載模型：LLM、嵌入、DB、檔案系統一律用假物件。async 測試用 `unittest.IsolatedAsyncioTestCase`，不用 pytest-asyncio。端點走 HTTP 層測。
 - 測試絕不可寫 repo 根的真實環境檔（`tests/conftest.py` 會還原並 fail）。
 - 評測 `eval/` 刻意不進 CI（會與 sync timer 搶 `claude` CLI）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策；最新基準線 `eval/baselines/baseline-2026-09-02.json`。
+- `run_ragas` 的結果檔記錄量尺：summary 的 `judge_model`、`judge_prompt_sha`、`judge_schema_version` 是 META 鍵，兩份不同、或**只有一邊有記錄**，`eval-compare` 一律回 2。上面那份最新基準線是在記錄量尺之前產出的，所以**現在拿新結果跟它比一律回 2**，直到用新版重跑出新的基準線為止；要比就兩邊都用同一版重跑。生成端、各任務 model、commit、題集 sha256 記在 `config`（只印差異，不判定）。judge 出錯只讓該指標記 None（`n_judge_errors` 計數，只列出、不判方向），但 summary 另記三個 judge 指標各自入均值的題數 `n_effective_<指標>` 與題目集合雜湊 `judged_ids_sha`：兩邊的題目集合不同（例如各錯一題但題目不同）`eval-compare` 回 2，處置是補跑到兩邊相同題目，或直接跑 `uv run python scripts/eval_compare.py … --common-only` 只在兩邊都有值的題目上重取平均（門檻旗標在此模式下不判定）。`n_truncated` 取自 `stream_completion` 回報的逾時截斷（成功那次嘗試撞到逾時、已吐的字被砍掉；529 重試的時間不算）；輸出長度上限造成的截斷 CLI 看不到，PR-11 接 HTTP 後改用 `finish_reason`。`--repeat` 每題每指標跨次取平均，規則寫在 `eval/run_ragas.py` 的模組 docstring。
+- judge 回應以 schema v2 嚴格驗證（`app/services/judge_schema.py`：`statements` 必須是字串陣列、`idx` 必須恰好覆蓋全部條目且不收布林、判定值必須是布林、AR 取不到問題算錯），不合格重試 1 次；離線仍不合格記該指標 None，生產記 `degraded_reason=schema`，唯獨生產 grounding 缺 idx 仍計 unsupported 並記 WARNING（條數記進 `evaluation.n_missing_verdicts`；一條都沒判算 schema 錯）。CP 候選片段改為 1 起編號、與脈絡的 `[n]` 和答案引用一致。
 - 改動對照表（改了 A 要動 B）在 `CLAUDE.md`；契約類測試清單在 `AGENTS.md`。
 
 ## 部署與維運
@@ -210,6 +213,8 @@ Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪�
 | `report-mark-alert@.service` | `OnFailure` 觸發 | journal ＋ `data/unit_failures.log` ＋ webhook |
 
 對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
+
+LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_failure` 判定跳過的研報（零 LLM；要連累計中未達門檻的也列，直接跑 `uv run python scripts/llm_blocked.py --all`）。要重打就對該批次加 `--retry-blocked`；跳過鍵只看 model、不看 prompt，**改 prompt 後也要加**（摘錄與訊號的 `--reextract` 隱含它）。部署這張表要先 `make schema`。
 
 ## 延伸文件
 

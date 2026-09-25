@@ -338,6 +338,7 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stats_and_progress_share_one_db_snapshot_within_ttl(self):
         calls = []
+        eval_params: dict = {}
 
         class FakeSession:
             async def __aenter__(self):
@@ -349,6 +350,8 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
             async def execute(self, stmt, params=None):
                 sql = str(stmt)
                 calls.append(sql)
+                if "count(evaluation)" in sql:
+                    eval_params.update(params or {})
                 if "FILTER (WHERE summary IS NOT NULL)" in sql:
                     return _FirstResult((3, 7))
                 # 這兩個必須排在下方 catch-all「FROM research.research_report」之前:
@@ -371,9 +374,13 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                         ("log_latest", "2026-09-03", 0),
                     ])
                 if "count(evaluation)" in sql:
-                    return _RowsResult([
-                        ("qa", 40, 3, 1, 1, 0.5634, date(2026, 7, 28)),
-                    ])
+                    # kind + monitor._EVAL_COLUMNS 的欄位（依宣告順序）。
+                    vals = {
+                        "total": 40, "checked": 5, "judge_checked": 3, "degraded": 1, "below_min": 1,
+                        "avg_score": 0.5634, "avg_n": 2, "latest": date(2026, 7, 28),
+                        "judge_since": date(2026, 7, 2), "other_judge_checked": 2,
+                    }
+                    return _RowsResult([("qa", *(vals[k] for k, _sql in monitor._EVAL_COLUMNS))])
                 if "unnest(instrument_types)" in sql:
                     return _RowsResult([("equity", 5)])
                 if "GROUP BY report_type" in sql:
@@ -443,6 +450,64 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
                 {"source": None, "display": None, "count": 2, "latest": "2026-07-31"},
             ],
         )
+        # M8 查核統計：已查核數是覆蓋率（所有 judge），分數類只計現行 judge，並帶出量尺。
+        qa = progress["evaluation"]["qa"]
+        self.assertEqual(qa["checked"], 5)
+        self.assertEqual(qa["judge_checked"], 3)
+        self.assertEqual(qa["avg_n"], 2)
+        self.assertEqual(qa["avg_score"], 0.5634)
+        self.assertEqual(qa["judge_model"], monitor._JUDGE_MODEL)
+        self.assertEqual(qa["judge_since"], "2026-07-02")
+        self.assertEqual(qa["other_judge_checked"], 2)
+        self.assertEqual(qa["latest"], "2026-07-28")
+        self.assertEqual(eval_params["judge_model"], monitor._JUDGE_MODEL)
+        eval_sql = next(c for c in calls if "count(evaluation)" in c)
+        # 送出的 SQL 就是 _EVAL_COLUMNS 逐欄組成的（逐欄的過濾條件由下面的測試核對）
+        for key, col_sql in monitor._EVAL_COLUMNS:
+            self.assertIn(col_sql, eval_sql, key)
+
+
+class EvalColumnsJudgeFilterTests(unittest.TestCase):
+    """審查 L8：只斷言整條 SQL 有 `:judge_model`，漏掉任何一欄的條件都照樣綠。逐欄核對。"""
+
+    def _cols(self) -> dict[str, str]:
+        return dict(monitor._EVAL_COLUMNS)
+
+    def test_score_columns_are_exactly_the_expected_set(self):
+        self.assertEqual(
+            monitor._EVAL_CURRENT_JUDGE_KEYS,
+            {"judge_checked", "degraded", "below_min", "avg_score", "avg_n", "judge_since"},
+        )
+        self.assertLessEqual(monitor._EVAL_CURRENT_JUDGE_KEYS, set(self._cols()))
+
+    def test_every_score_column_filters_on_the_current_judge(self):
+        from app.services.judge_schema import CURRENT_JUDGE_SQL
+
+        cols = self._cols()
+        for key in sorted(monitor._EVAL_CURRENT_JUDGE_KEYS):
+            with self.subTest(key=key):
+                sql = cols[key]
+                self.assertIn("FILTER (WHERE ", sql)
+                # 條件出現在 FILTER 子句內（不是別處），且不是被 NOT 反轉的那種
+                filt = sql[sql.index("FILTER (WHERE "):]
+                self.assertIn(CURRENT_JUDGE_SQL, filt)
+                self.assertNotIn(f"NOT ({CURRENT_JUDGE_SQL})", filt)
+
+    def test_coverage_columns_count_every_judge(self):
+        """主數字是覆蓋率：換 judge 之後不能驟降、看起來像抽查路徑崩了（審查 L6）。"""
+        from app.services.judge_schema import CURRENT_JUDGE_SQL
+
+        cols = self._cols()
+        for key in ("total", "checked", "latest"):
+            with self.subTest(key=key):
+                self.assertNotIn(CURRENT_JUDGE_SQL, cols[key])
+        self.assertIn(f"NOT ({CURRENT_JUDGE_SQL})", cols["other_judge_checked"])
+
+    def test_average_and_its_sample_size_exclude_degraded(self):
+        cols = self._cols()
+        for key in ("avg_score", "avg_n"):
+            with self.subTest(key=key):
+                self.assertIn(monitor._EVAL_NOT_DEGRADED_SQL, cols[key])
 
 
 if __name__ == "__main__":

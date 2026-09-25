@@ -26,6 +26,7 @@ cd frontend && npm run lint          # eslint
 
 make summaries / titles / takeaways / signals / brief   # 批次，都 spawn claude CLI、以 flock 互斥
 make sync-once / db-backup / freshness / db-audit        # 維運
+make llm-blocked                     # LLM 批次跳過名單（唯讀；research.llm_task_failure）
 make boilerplate                     # 重建跨文件樣板字典 data/boilerplate/（入庫切塊前剔除；零 LLM）
 make up-edge / down-edge / edge-logs / edge-reload       # 對外 nginx + cloudflared
 uv run python scripts/extract_all.py                     # 全語料三支：只在初次建庫或補歷史
@@ -45,7 +46,7 @@ uv run python scripts/ingest_all.py
 - **測試絕不可寫 repo 根的真實環境檔**：這台機器 repo root 就是部署目錄，`finally` 擋得住例外、擋不住行程被殺。要驗載入行為餵 `tempfile`。`tests/test_env_loading.py` 與 `tests/conftest.py` 是第二道防線，不是許可證。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺 CJK 字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 加相依會過授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件的 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉那個相依，不是加豁免。相依更新由 `.github/dependabot.yml` 每週分組開 PR，`torch` 與 `@embedpdf/*` 刻意排除（理由在該檔）。
-- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`。
+- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`（記錄量尺之前的舊檔：judge 三個 META 鍵只有一邊有也回 2，拿新結果比它一律回 2，要比就兩邊同版重跑）。
 
 ## 改動對照表（改了 A 就要動 B）
 
@@ -72,7 +73,7 @@ uv run python scripts/ingest_all.py
 - 首輪路由順序刻意：確定性 overview（`overview.py`，零 LLM）→ `precheck_route()` 詞表（命中 `time_sensitive` 完全不檢索）→ Haiku 五類分類（`scope_router.py`）與檢索並行、誰先到聽誰。五類與 `decided_by` 全寫進 `qa_log.filters`；fail-open 落點是 `CORPUS_QA`。
 - 網搜每題由使用者決定：`web_on` ＝ 請求的 `web` AND `ASK_ENABLE_WEB`，下游只讀 `web_on`。系統提示與工具授權要一起切（`ask_system_prompt(web)`），逾時只在開網搜時放寬（`ASK_WEB_TIMEOUT`），`qa_log.filters.web` 含 False 也要寫，免責句由 Python 追加（`WEB_ANSWER_DISCLAIMER`），網搜來源不進 evidence ledger。
 - 忠實度抽查在 `done` 後跑背景任務（`answer._spawn_background`），有自己的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是問答抽查的唯一閘門，漏判是靜默的——寧可多抓不可漏抓。監控頁「待複核」門檻 `FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，生產環境檔可能還設著）。
-- `app/services/llm.py` 以 `claude -p --setting-sources '' --output-format stream-json` spawn CLI，開網搜時加 `--allowedTools WebSearch`；只在 API 529 重試；逾時對已串流文字 fail-open。
+- `app/services/llm.py` 以 `claude -p --setting-sources '' --output-format stream-json` spawn CLI，開網搜時加 `--tools WebSearch --allowedTools WebSearch`、不開時 `--tools ""`，兩者都加 `--strict-mcp-config`（不帶 `--mcp-config`＝不載 MCP；`--tools` 管不到 MCP）（`--allowedTools` 只管免核可、不限縮工具；`--disallowedTools "*"` 萬用字元未記載、不用；批次 `scripts/_claude_cli.py` 與簡報同樣不開任何工具、不載 MCP；旗標放 argv 最後；init 事件工具集不符記 WARNING）；只在 API 529 重試；逾時對已串流文字 fail-open。
 
 ### 閱讀頁、雷達、簡報（讀取零 LLM）
 - 閱讀頁（`app/services/reading/`）：正典文字是 `clean_extracted(full_text)`，`text_sha256` 守不變量；錨點有效與否只在後端判（驗章＋`READING_TEXT_MAX_CHARS` 截斷）。PDF 選取走 `@embedpdf/plugin-selection`，`PagePointerProvider` 要在 `Rotate` 之內；複製走 `frontend/src/lib/clipboard.ts`（區網 HTTP 沒有 `navigator.clipboard`）。`/text` 端點、`anchor.py`、`quote_start`／`quote_end` 是刻意留的可逆性，不要清。

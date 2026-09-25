@@ -25,6 +25,8 @@ export const reviewItemSchema = z.object({
   quality_score: z.number().nullish(),
   quality_flags: z.record(z.string(), z.unknown()).nullish(),
   pages_failed: z.array(z.number()).nullish(),
+  // qa 列的 evaluation 是哪個 judge 量的（舊列＝claude-haiku-4-5；沒有 evaluation＝null）。
+  judge_model: z.string().nullish(),
 })
 export type ReviewItem = z.infer<typeof reviewItemSchema>
 

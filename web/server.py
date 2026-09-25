@@ -175,8 +175,8 @@ app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
 # /healthz 必須免認證：它存在的理由就是讓**外部**監控能分辨「DB 掛了」與「站台正常」。
 # 登入路徑完全不碰 DB，所以 DB 掛掉時登入仍會成功——沒有這個豁免，探測只會拿到
 # 302 導向 /login，與不存在的路由完全相同。回應內容刻意極簡（見 routers/health.py）。
-# /healthz/storage 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
-_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage"}
+# /healthz/storage、/healthz/llm 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
+_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
 
 

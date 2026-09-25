@@ -39,6 +39,13 @@ auth 白名單裡，但對外等於不存在。消費端是 `scripts/check_web_h
 
 抗打的方式與上面相同但時間尺度不同：成功快取 5 分鐘（每次探測是一個計費的 R2 list 操作，
 每月約 8,600 次），失敗快取 60 秒並要求連續兩次才翻 degraded。
+
+## `/healthz/llm`：DeepSeek 帳號（餘額、金鑰、連線）
+
+同樣的理由另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡：問答與批次的 LLM 段全靠 DeepSeek，
+402／401 時問答每題失敗而 `/healthz` 照樣綠。回應只有 `{"llm": state}`，**不回任何金額**（金額只進
+日誌）。狀態、門檻、快取、402 閂鎖與審查 M15 的 `_unused` 規則都在 `app/services/llm_health.py`；
+消費端是探針（只認 503，`low` 為退出碼 7、其餘為 8）。
 """
 import asyncio
 import logging
@@ -49,6 +56,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.config import get_settings
+from app.services import llm_health
 from app.services.object_storage import get_object_storage
 from web import deps, dev_mode
 
@@ -154,3 +163,20 @@ async def healthz_storage(request: Request) -> JSONResponse:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     state = await _storage_state()
     return JSONResponse({"storage": state}, status_code=503 if state == "degraded" else 200)
+
+
+@router.get("/healthz/llm")
+async def healthz_llm(request: Request) -> JSONResponse:
+    """DeepSeek 帳號可用性。**只回答本機直連的請求**，其餘一律 404。
+
+    回 `{"llm": state}`（詞彙見 `app/services/llm_health.py`）；low／exhausted／auth_failed／unreachable／
+    indeterminate 在問答主答走 DeepSeek 時回 503，否則加 `_unused` 回 200。由 `scripts/check_web_health.sh`
+    消費（low 為退出碼 7，其餘 503 為 8）。
+    """
+    if not dev_mode.is_direct_loopback(request):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    settings = get_settings()
+    state, status = await llm_health.report(
+        currency=settings.llm_budget_currency, floor=settings.llm_balance_floor,
+    )
+    return JSONResponse({"llm": state}, status_code=status)

@@ -415,8 +415,25 @@ def _fail(kind: str, detail: str, t0: float, **kw) -> ChatOutcome:
     return ChatOutcome(kind=kind, detail=detail, total_ms=int((time.monotonic() - t0) * 1000), **kw)
 
 
+# 本行程最近一次真實請求收到 402 的時刻（monotonic；0＝從未）。`/healthz/llm` 據此在餘額查詢之間
+# 就翻成 exhausted，直到一次「開始於這個時刻之後」的成功餘額查詢才解除（`app/services/llm_health.py`）。
+# 只記本行程：web 的問答碰到 402 立刻看得到；批次行程的 402 由它自己的整批 rc=2 → OnFailure 告警，
+# web 端等餘額查詢的快取到期才會知道（取捨見 llm_health 的模組 docstring）。
+_quota_seen_at: float = 0.0
+
+
+def last_quota_at() -> float:
+    return _quota_seen_at
+
+
 def _log_call(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> None:
-    """每次呼叫一行結構化 log（不含 prompt、不含 header）。"""
+    """每次呼叫一行結構化 log（不含 prompt、不含 header）；402 另記下時刻（見 `_quota_seen_at`）。
+
+    放在這裡是因為它是線上（`astream_chat`）與批次（`complete_chat`）共同的收尾點，每次呼叫恰好一次。
+    """
+    global _quota_seen_at
+    if out.kind == QUOTA:
+        _quota_seen_at = time.monotonic()
     usage = out.usage or {}
     details = usage.get("completion_tokens_details") or {}
     logger.info(
@@ -455,9 +472,17 @@ def _api_key() -> str:
     return (os.getenv("DEEPSEEK_API_KEY") or "").strip()
 
 
+def _base_url() -> str:
+    return ((os.getenv("DEEPSEEK_BASE_URL") or "").strip() or DEFAULT_BASE_URL).rstrip("/")
+
+
 def _url() -> str:
-    base = (os.getenv("DEEPSEEK_BASE_URL") or "").strip() or DEFAULT_BASE_URL
-    return base.rstrip("/") + "/chat/completions"
+    return _base_url() + "/chat/completions"
+
+
+def api_key_configured() -> bool:
+    """`DEEPSEEK_API_KEY` 有沒有值（不看內容；`/healthz/llm` 判 disabled 用）。"""
+    return bool(_api_key())
 
 
 def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
@@ -729,6 +754,60 @@ async def astream_chat(
         out = _outcome(acc, got_text, t0, ttft_ms)
     _log_call(task, model, out)
     yield out
+
+
+# ── 餘額查詢（`/healthz/llm`）────────────────────────────────────────────────
+BALANCE_TIMEOUT = 4.0
+
+
+@dataclass
+class BalanceResult:
+    """`GET /user/balance` 的結果。
+
+    `kind is None`＝HTTP 200 且本體是 JSON 物件，`body` 原樣交給呼叫端判讀（幣別、門檻是呼叫端的
+    事，這裡不解讀金額）；否則 `kind` 是本模組的錯誤 kind：401→AUTH、402→QUOTA、429／5xx→OVERLOADED、
+    連線→NETWORK、逾時→TIMEOUT、端點設定錯→CONFIG、200 但不是 JSON 物件→OTHER。
+    """
+
+    kind: str | None
+    detail: str = ""
+    status: int | None = None
+    body: dict | None = None
+
+
+async def fetch_balance(timeout: float = BALANCE_TIMEOUT) -> BalanceResult:
+    """查一次帳戶餘額（官方 `GET /user/balance`；9/24 實測不扣費）。任何失敗都轉成結果，不往外拋。
+
+    `timeout` 是整次的牆鐘上限（連線、讀取、DNS 全算在內），呼叫端是每 2 分鐘一次的本機探針，
+    它的 curl 只等 5 秒。不重試：下一輪探針就是重試，連續失敗的判定在呼叫端。
+    """
+    t0 = time.monotonic()
+    pre = _preflight(t0)
+    if isinstance(pre, ChatOutcome):
+        return BalanceResult(pre.kind, pre.detail)
+    key, _chat_url = pre
+    headers = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+    try:
+        async with asyncio.timeout(timeout):
+            response = await _async_client().get(
+                _base_url() + "/user/balance", headers=headers, timeout=_timeout(timeout, cap=timeout),
+            )
+    except (TimeoutError, httpx.TimeoutException) as exc:
+        return BalanceResult(TIMEOUT, f"餘額查詢 {timeout:g}s 內未完成（{type(exc).__name__}）")
+    except httpx.TransportError as exc:
+        return BalanceResult(NETWORK, _transport_detail(exc))
+    except (httpx.InvalidURL, ValueError) as exc:
+        return BalanceResult(CONFIG, _transport_detail(exc))
+    if response.status_code != 200:
+        kind, detail = classify_status(response.status_code, response.content)
+        return BalanceResult(kind, detail, status=response.status_code)
+    try:
+        body = response.json()
+    except ValueError:
+        return BalanceResult(OTHER, "餘額回應不是 JSON", status=200)
+    if not isinstance(body, dict):
+        return BalanceResult(OTHER, "餘額回應不是 JSON 物件", status=200)
+    return BalanceResult(None, "", status=200, body=body)
 
 
 # ── 批次：同步呼叫 ───────────────────────────────────────────────────────────

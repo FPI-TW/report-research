@@ -168,6 +168,23 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 `POST /api/ask/stop` 把使用者中止時的部分答案與 `stages` 落 `qa_log`（`stopped=true`），回 `qa_id`。
 
+### 健康端點 `GET /healthz/llm`（只回答本機直連）
+
+回 `{"llm": state}`，**不回任何金額**；只給本機探針 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8），經邊緣一律 404。查 DeepSeek `GET /user/balance`，`balance_infos` 依 `currency` 取值（順序不固定），只看 `LLM_BUDGET_CURRENCY`（預設 CNY）那一筆：
+
+| state | HTTP | 條件 |
+|---|---|---|
+| `disabled` | 200 | 問答主答沒有解析到 DeepSeek，且沒有金鑰 |
+| `unknown` | 200 | 還沒有完成過查詢 |
+| `ok` | 200 | 餘額 ≥ `LLM_BALANCE_FLOOR`（預設 70） |
+| `low` | 503 | 0 < 餘額 < 門檻 |
+| `exhausted` | 503 | 查詢回 402、`is_available=false`、餘額 ≤ 0，或本行程的真實請求收過 402 且之後還沒有成功的查詢 |
+| `auth_failed` | 503 | 查詢回 401，或問答主答走 DeepSeek 卻沒有金鑰 |
+| `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx） |
+| `indeterminate` | 503 | 缺該幣別、其他幣別非零、金額讀不懂、端點設定錯 |
+
+問答主答（`ASK_ANSWER_MODEL`）沒有解析到 DeepSeek 時，後五種改回 200 並加 `_unused` 後綴（審查 M15；其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
+
 ### 契約守門
 
 - `tests/fixtures/sse_events.json` 是後端與前端共吃的單一真相（`tests/test_sse_event_contract.py`、`frontend/src/lib/sseEventContract.test.ts`），現在只剩 `ask` 一組事件。新事件或欄位：fixture 與 `frontend/src/lib/askSchemas.ts` 的 zod（預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）兩處都要動。

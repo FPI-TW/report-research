@@ -109,6 +109,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 |---|---|---|---|---|
 | GET | `/healthz` | — | `{"status":"ok"}`；DB 不可用回 503 `{"status":"degraded"}` | 免登入；只探 DB（`SELECT 1`，3 秒逾時）；結果快取 5 秒 |
 | GET | `/healthz/storage` | — | `{"storage":"disabled"\|"unknown"\|"ok"\|"degraded"}`；degraded 回 503 | **只回答本機直連**（對端 loopback、無代理 header、Host 為本機），其餘 404；給 `scripts/check_web_health.sh` 用（退出碼 6） |
+| GET | `/healthz/llm` | — | `{"llm":"disabled"\|"unknown"\|"ok"\|"low"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"}`；後五種回 503，問答主答（`ASK_ANSWER_MODEL`）沒有用到 DeepSeek 時改回 200 並加 `_unused` 後綴。**不回任何金額** | **只回答本機直連**，其餘 404；查 DeepSeek `GET /user/balance`（只看 `LLM_BUDGET_CURRENCY` 那一筆，低於 `LLM_BALANCE_FLOOR` 為 low），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8）。判定細節見 `app/services/llm_health.py` |
 | GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next` | 302／303 | 登入頁免登入；失敗回 `/login?error=1|locked|insecure` |
 | GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/monitor`、`/app/help` | 舊入口相容 |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
@@ -159,7 +160,8 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `DB_STATEMENT_TIMEOUT_MS`、`DB_IDLE_TX_TIMEOUT_MS`、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS` | 60000、0、0 | idle 預設 0 是刻意的（sync 在交易內 spawn CLI）；維運長查詢走 `relax_statement_timeout()` |
 | `EMBED_MAX_CONCURRENCY`、`EMBED_TORCH_THREADS` | 1、0 | 嵌入序列化；`/api/search`、雷達、閱讀頁沒有併發閘 |
 | `LLM_HTTP_TOTAL_TIMEOUT` | `600` | DeepSeek 串流的牆鐘總時限（秒）；吐字後到期＝截斷並附註，CLI 路徑不讀 |
-| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `claude_cli`、查表 | 任務旋鈕非空就用，否則查 provider 的預設表（`app/services/llm_models.py`）；`claude_cli` 與遷移前逐字相同，`claude_only` 是緊急回退。清單與語意見 `.env.example` |
+| `LLM_BUDGET_CURRENCY`、`LLM_BALANCE_FLOOR` | `CNY`、`70` | 只有 web 讀（`/healthz/llm`，設在 repo 根 `.env`）：只看餘額裡這個幣別那一筆，低於門檻回 503 → 探針退出碼 7（用罄、認證失敗等停擺為 8）。月上限 ¥350 是儲值紀律，不是旋鈕（`docs/production_resilience.md`） |
+| `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `claude_cli`、查表 | 任務旋鈕非空就用，否則查 provider 的預設表（`app/services/llm_models.py`）；`claude_cli` 與遷移前逐字相同；`claude_only` 是遷移期的回退值，claude CLI 已於 2026-09-23 放棄，設了等於 LLM 全部停擺。清單與語意見 `.env.example` |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` 設定旋鈕 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
 | `ASK_RERANK_*`、`RERANK_MODEL` | 開、50 候選 | rerank fail-open |
 | `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9、`claude-haiku-4-5` | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 不再沿用 `ASK_INTENT_MODEL`；換掉等於換尺，監控卡、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`） |

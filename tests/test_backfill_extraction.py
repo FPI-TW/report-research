@@ -74,8 +74,9 @@ class ScriptTests(unittest.TestCase):
     def test_no_llm_and_no_claude_lock(self):
         src = inspect.getsource(bf)
         # `llm.` 比對不到 `llm_http`：HTTP 客戶端的符號要另外列，否則這條守門對新路徑空轉。
+        # 批次呼叫層 `_claude_cli`（run_claude 的 HTTP 分派、斷路器、is_retryable）同理另列。
         for token in ("run_claude", "claude_cli_lock", "stream_completion", "llm.",
-                      "llm_http", "complete_chat", "astream_chat"):
+                      "llm_http", "complete_chat", "astream_chat", "_claude_cli"):
             self.assertNotIn(token, src)
 
     def test_each_report_commits_or_rolls_back_on_its_own(self):

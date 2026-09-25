@@ -56,6 +56,14 @@ class SyncNewReportsTests(unittest.TestCase):
 
     def test_skip_after_tag(self):
         self.assertEqual(snr.skip_after_tag(None), "skip_untagged")
+        # DeepSeek 的內容審查 → skip_blocked、截斷 → skip_truncated（審查低1：重送結果不變）；
+        # 其他失敗（含 CLI、400、空回應）仍是 skip_untagged（補救指令會重送）
+        self.assertEqual(snr.skip_after_tag(None, "API[content_filter] 觸發供應商內容審查：HTTP 400"), "skip_blocked")
+        self.assertEqual(snr.skip_after_tag(None, "API[truncated] 輸出截斷：max_tokens=1024"), "skip_truncated")
+        for err in ("API[bad_request] 請求被拒", "API[empty] 空回應", "CLI 逾時（150s 內未回應）",
+                    "API[timeout_streamed] 已吐字後逾時：已吐字 3 字後超過總期限",  # 期限型截斷可重放
+                    "回應無法解析為標籤", "content_filter", "truncated", None):
+            self.assertEqual(snr.skip_after_tag(None, err), "skip_untagged", err)
         self.assertEqual(snr.skip_after_tag(_Tag(None, True)), "skip_non_research")
         self.assertEqual(snr.skip_after_tag(_Tag("TW", False)), "skip_non_research")
         self.assertIsNone(snr.skip_after_tag(_Tag("TW", True)))
@@ -224,13 +232,23 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
             with self.assertRaises(cc.CliNotFoundError):
                 snr._tag_via_cli("x.pdf", "內文")
 
-    def test_deepseek_model_aborts_instead_of_skip_untagged(self):
-        """PR-12 之前：TAG_MODEL 是 DeepSeek 名稱時真的 run_claude 會拒收並往上拋（rc=2），
-        不 spawn CLI、也不讓每一篇變成 skip_untagged。"""
-        with mock.patch.object(cc.subprocess, "run") as run:
-            with self.assertRaises(cc.HttpModelUnsupportedError):
-                snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash")
+    def test_deepseek_account_error_aborts_instead_of_skip_untagged(self):
+        """TAG_MODEL 是 DeepSeek 名稱時走 HTTP；401／402／模型不存在往上拋（rc=2），不 spawn CLI、
+        也不讓每一篇變成 skip_untagged（其餘批次的同一條在 tests/test_batch_http_dispatch.py）。"""
+        import httpx
+
+        from app.services import llm_http as lh
+
+        lh._transport = httpx.MockTransport(lambda req: httpx.Response(402, json={"error": {"message": "x"}}))
+        lh._reset_clients()
+        self.addCleanup(lambda: (setattr(lh, "_transport", None), lh._reset_clients()))
+        env = {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "DEEPSEEK_BASE_URL": "https://api.example.test"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(cc.subprocess, "run") as run:
+            with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+                snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash", file_hash="h1")
         run.assert_not_called()
+        self.assertTrue(str(ctx.exception).startswith("API[quota]"))
+        self.assertIsInstance(ctx.exception, cc.CliNotFoundError)
 
 
 class CacheWriteAfterCommitTests(unittest.TestCase):

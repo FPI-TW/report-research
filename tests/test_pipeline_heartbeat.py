@@ -35,6 +35,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYNC = REPO_ROOT / "scripts" / "sync_new_reports.sh"
@@ -66,6 +67,7 @@ class _SyncHarness:
         self.hashes_file = self.root / "hashes_out"
         self.stats_file = self.root / "stats_out"
         self.partial_file = self.root / "partial_out"
+        self.bad_request_file = self.root / "bad_request_out"
         # importer 的計數器。None＝importer 什麼都沒寫（模擬工具層異常）；
         # 字串＝逐字寫出（模擬格式壞掉）。預設是一輪乾淨的匯入。
         self.stats: dict | str | None = {"ingested": 1, "fail": 0, "skip_untagged": 0}
@@ -75,6 +77,8 @@ class _SyncHarness:
         self.new_hashes = ["aa" * 32 + "\n"]
         # importer 中途中止前已 commit 的 hashes（None＝不寫 .partial，正常結束即如此）。
         self.partial_hashes: list[str] | None = None
+        # importer 因 400 升級中止時觸發研報的 `hash<TAB>路徑`（None＝不寫，正常結束即如此）。
+        self.bad_request_lines: list[str] | None = None
         self._write_fakes()
 
     def _fake(self, name: str, body: str):
@@ -89,13 +93,14 @@ class _SyncHarness:
         self.delta_file.write_text("".join(self.delta), encoding="utf-8")
         self.hashes_file.write_text("".join(self.new_hashes), encoding="utf-8")
         self.partial_file.write_text("".join(self.partial_hashes or []), encoding="utf-8")
+        self.bad_request_file.write_text("".join(self.bad_request_lines or []), encoding="utf-8")
         if self.stats is None:
             self.stats_file.write_text("", encoding="utf-8")
         elif isinstance(self.stats, str):
             self.stats_file.write_text(self.stats, encoding="utf-8")
         else:
             body = "".join(f"{k}={v}\n" for k, v in self.stats.items())
-            abn = sum(int(self.stats.get(k, 0)) for k in ("fail", "skip_untagged"))
+            abn = sum(int(self.stats.get(k, 0)) for k in ("fail", "skip_untagged", "skip_blocked", "skip_truncated"))
             self.stats_file.write_text(body + f"abnormal={abn}\n", encoding="utf-8")
         # 掛載一律視為已掛好——本檔測的是心跳，不是掛載偵測
         self._fake("mountpoint", "exit 0\n")
@@ -107,11 +112,14 @@ class _SyncHarness:
             'S=""\n'
             'for a in "$@"; do case "$a" in scripts/*.py) S="$a" ;; esac; done\n'
             'N=$(basename "${S:-none}" .py)\n'
+            'echo "$N ${SYNC_ROUND_ID:-}" >> round_ids\n'
             f'if [ "$N" = sync_new_reports ]; then cat "{self.hashes_file}" > data/.sync_last_hashes; fi\n'
             f'if [ "$N" = sync_new_reports ] && [ -s "{self.stats_file}" ]; then '
             f'cat "{self.stats_file}" > data/.sync_last_stats; fi\n'
             f'if [ "$N" = sync_new_reports ] && [ -s "{self.partial_file}" ]; then '
             f'cat "{self.partial_file}" > data/.sync_last_hashes.partial; fi\n'
+            f'if [ "$N" = sync_new_reports ] && [ -s "{self.bad_request_file}" ]; then '
+            f'cat "{self.bad_request_file}" > data/.sync_last_hashes.bad_request; fi\n'
             f'RC=$(grep "^$N=" "{self.rc_file}" 2>/dev/null | head -1 | cut -d= -f2)\n'
             'exit "${RC:-0}"\n',
         )
@@ -187,6 +195,27 @@ class HeartbeatWriteTests(unittest.TestCase):
     def setUp(self):
         self.h = _SyncHarness()
         self.addCleanup(self.h.close)
+
+    def test_every_segment_sees_the_same_round_id(self):
+        """審查中4：殼每輪 export SYNC_ROUND_ID（＝ROUND_TS），每一段都看得到同一個值；
+        外面帶進來的舊值不得沿用（斷路器標記靠它分辨是不是同一輪）。"""
+        # 兩種起點：環境裡沒有這個變數（排程的正常情況；沒 export 的話子行程看不到）、
+        # 外面帶進來一個舊值（沒覆寫的話會沿用舊輪次）。
+        for outside in (None, "stale-from-outside"):
+            with self.subTest(outside=outside):
+                (self.h.root / "round_ids").unlink(missing_ok=True)
+                env = {"SYNC_ROUND_ID": outside} if outside else {}
+                with mock.patch.dict(os.environ, {}):
+                    os.environ.pop("SYNC_ROUND_ID", None)
+                    p = self.h.run(**env)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                rows = [ln.split(" ", 1)
+                        for ln in (self.h.root / "round_ids").read_text(encoding="utf-8").splitlines()]
+                self.assertIn("sync_new_reports", [n for n, _ in rows])
+                self.assertGreaterEqual(len(rows), 3)
+                ids = {rid for _, rid in rows}
+                self.assertEqual(len(ids), 1, rows)
+                self.assertRegex(ids.pop(), r"^\d{8}_\d{6}$")
 
     def test_successful_sync_updates_heartbeat(self):
         p = self.h.run()
@@ -362,6 +391,29 @@ class IngestAbnormalTests(unittest.TestCase):
                 h.set_stats({"ingested": 0, "fail": 0, "skip_untagged": 0, k: 9})
                 h.run()
                 self.assertTrue(h.heartbeat.is_file(), f"{k} 不該擋心跳")
+
+    def test_skip_blocked_blocks_heartbeat_and_points_to_runbook(self):
+        """行內標註被內容審查擋下：本該入庫卻沒進 DB（異常、擋心跳），而且重跑不會變——
+        要點名 make llm-blocked，不能只丟一句 failures_to_delta。"""
+        p = self._run_ok(ingested=2, skip_blocked=1)
+        self.assertFalse(self.h.heartbeat.is_file(), p.stdout)
+        self.assertIn("匯入異常", p.stdout)
+        self.assertIn("skip_blocked", p.stdout)
+        self.assertIn("make llm-blocked", p.stdout)
+
+    def test_zero_skip_blocked_is_silent(self):
+        p = self._run_ok(ingested=2, skip_blocked=0)
+        self.assertTrue(self.h.heartbeat.is_file(), p.stdout)
+        self.assertNotIn("skip_blocked", p.stdout)
+
+    def test_skip_truncated_blocks_heartbeat_and_is_named(self):
+        """審查低1：截斷的標註同 skip_blocked——異常、擋心跳，另外點名（補救指令不撈它）。"""
+        p = self._run_ok(ingested=2, skip_truncated=1)
+        self.assertFalse(self.h.heartbeat.is_file(), p.stdout)
+        self.assertIn("skip_truncated", p.stdout)
+        self.assertIn("make llm-blocked", p.stdout)
+        p = self._run_ok(ingested=2, skip_truncated=0)
+        self.assertNotIn("skip_truncated", p.stdout)
 
     def test_cache_fail_warns_but_does_not_block_heartbeat(self):
         """抽取快取寫失敗：研報已入庫，不擋心跳；但要印出來（持續出現多半是磁碟滿）。"""

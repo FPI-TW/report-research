@@ -56,7 +56,7 @@ class AskRequest(BaseModel):
 _ASK_GATE = ConcurrencyGate(3, name="ask", max_queue=int(os.getenv("ASK_MAX_QUEUE", "20")))
 
 ASK_ERROR_DETAIL = "問答服務發生錯誤"
-# 依 LLMUnavailableError.kind 給使用者看的訊息（kind 只有 HTTP 路徑會填，CLI 一律落到預設）。
+# 依 LLMUnavailableError.kind 給使用者看的訊息（kind 只有 HTTP 路徑會填；CLI 只有認證失效填 auth，其餘落到預設）。
 # 內容審查：同一題換個問法多半就過，要讓使用者知道「可以自己處理」，而不是以為站台壞了。
 # 帳號與設定層級：每一題都會失敗、使用者無能為力，直接說「暫時無法使用」，免得反覆重試；
 # 啟動自檢與 `qa_log.filters.llm_error` 會留下可查的紀錄。**不承諾「已通知管理者」**：目前

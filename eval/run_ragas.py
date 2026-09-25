@@ -784,8 +784,6 @@ def _main() -> None:
     # 本次會用到的模型：生成端、judge；agentic 另有查詢規劃與證據評估（QA_PLANNER_MODEL）。
     require_llm_key(
         [args.generator_model, args.judge_model] + ([get_settings().qa_planner_model] if args.agentic else []),
-        # 評測的 LLM 呼叫都經 stream_completion 的白名單分派，DeepSeek 名稱可以放行
-        http_dispatch=True,
     )
 
     report = asyncio.run(

@@ -26,8 +26,8 @@
   uv run python scripts/generate_brief.py --force       # 忽略時間閘與既有列，重寫當日
   uv run python scripts/generate_brief.py --date 2026-08-05
 
-退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定錯誤（例如 PR-12 之前設了 DeepSeek
-名稱）、75 claude CLI 被其他批次佔用。
+退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（未知模型名、
+缺金鑰、DeepSeek 401／402／模型不存在、claude CLI 認證失效）、75 claude CLI 被其他批次佔用。
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ import argparse
 import asyncio
 import subprocess
 import sys
+import time
 import uuid
 from datetime import date as date_cls
 from datetime import datetime, timedelta, timezone
@@ -54,7 +55,13 @@ from app.services.db import SessionFactory  # noqa: E402
 from app.services.llm_models import TASK_BRIEF, is_http_model, resolve_model  # noqa: E402
 from app.services.reading.queries import fetch_instrument_names  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
-from scripts._claude_cli import CliNotFoundError, HttpModelUnsupportedError  # noqa: E402
+from scripts._claude_cli import (  # noqa: E402
+    CliNotFoundError,
+    cli_auth_error,
+    error_kind,
+    record_usage,
+    run_claude,
+)
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +72,9 @@ MODEL = resolve_model(TASK_BRIEF)
 # 一次呼叫的逾時。素材是摘要不是全文，正常在一分鐘內回；給 300s 是留給 CLI 冷啟動
 # 與偶發的長素材（NAS 一次倒進大量檔案的日子）。
 CLI_TIMEOUT = 300
+
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。
+MAX_TOKENS = 8192
 
 # 沒有前一份簡報時的預設回看窗，以及任何情況下的回看上限。
 DEFAULT_LOOKBACK_HOURS = 24
@@ -88,20 +98,41 @@ def build_cli_args(prompt: str, model: str) -> list[str]:
 
 
 def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optional[str], Optional[str]]:
-    """呼叫 CLI，回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+    """呼叫 LLM，回 (text, None) 或 (None, 可辨識的失敗原因)。
 
     失敗原因必須分得出來：`claude` 不在 PATH（systemd 缺 PATH drop-in）與「這次逾時」
     的處置完全不同，寫成同一句「CLI 無回應」等於把環境問題偽裝成偶發失敗。
 
-    DeepSeek 白名單的 model 拋 `HttpModelUnsupportedError`，不回失敗原因：那是設定錯，不是
-    這一次失敗（理由見 scripts/_claude_cli.py 的同名例外；main 以 rc=2 收場）。
-    TODO(PR-12)：簡報接上白名單分派後刪掉這個檢查。
+    DeepSeek 白名單的 model 交給 `scripts/_claude_cli.run_claude` 的 HTTP 路徑（與其他批次同一套
+    錯誤分類：失敗回 `API[<kind>] …`，401／402／模型不存在拋 `LlmEnvironmentError`，main 以 rc=2
+    收場）。CLI 路徑刻意**不**改用 `run_claude`：本檔的 CLI 版把 claude 不在 PATH 當成「這一天產生
+    失敗」（rc=1），`run_claude` 會拋 `CliNotFoundError`（rc=2）——換過去會改變生產行為（rc=2 讓排程
+    殼另外保留 hashes），不在這次遷移的範圍。
+
+    **例外是 claude CLI 認證失效**（OAuth 過期等，`_claude_cli.cli_auth_error`）：拋 `LlmEnvironmentError`，
+    main 以 rc=2 收場、不寫 brief_failures.log——與 DeepSeek 401 同一類（rc=2 本來就是「LLM 帳號層級
+    錯誤」），不是「這一天產生失敗」。2026-09-23 起 CLI 永久停用，這時真正要修的通常是環境檔沒讓本段
+    解析到 DeepSeek；記成 rc=1 的單日失敗會把它藏進每日雜訊裡。
     """
     if is_http_model(model):
-        raise HttpModelUnsupportedError(
-            f"批次尚未支援 DeepSeek（待 PR-12）：model={model} 不能交給 claude CLI；"
-            "請改回 Claude 或移除 BRIEF_MODEL"
-        )
+        res = run_claude(prompt, model, timeout=timeout, max_tokens=MAX_TOKENS, meta={"task": TASK_BRIEF})
+        return res.text, res.error
+    t0 = time.monotonic()
+    try:
+        raw, error = _spawn_cli(prompt, model, timeout)
+    except CliNotFoundError:
+        record_usage(meta={"task": TASK_BRIEF}, backend="cli", model_req=model, prompt=prompt, kind="auth",
+                     total_ms=int((time.monotonic() - t0) * 1000))
+        raise
+    # 用量記錄 CLI 路徑也寫（tokens 為 null），與 run_claude 同一份檔、同一組欄位
+    kind = None if error is None else "timeout" if error.startswith("CLI 逾時") else "cli_error"
+    record_usage(meta={"task": TASK_BRIEF}, backend="cli", model_req=model, prompt=prompt, kind=kind,
+                 total_ms=int((time.monotonic() - t0) * 1000))
+    return raw, error
+
+
+def _spawn_cli(prompt: str, model: str, timeout: int) -> tuple[Optional[str], Optional[str]]:
+    """spawn `claude -p`（簡報自己的 CLI 版，遷移前的 call_cli 本體；認證失效改為拋出，見 call_cli）。"""
     try:
         proc = subprocess.run(
             build_cli_args(prompt, model),
@@ -117,15 +148,51 @@ def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optio
     except Exception as exc:  # noqa: BLE001 - 失敗原因要能寫進 log
         return None, f"CLI 呼叫失敗：{type(exc).__name__}: {exc}"
     if proc.returncode != 0:
+        auth = cli_auth_error(proc.stdout, proc.stderr)
+        if auth is not None:
+            raise auth
         tail = (proc.stderr or "").strip().replace("\n", " ")[-200:]
         return None, f"CLI 退出碼 {proc.returncode}：{tail or '（無 stderr）'}"
     return proc.stdout, None
 
 
-def record_failure(target: date_cls, reason: str) -> None:
+def record_failure(target: date_cls, reason: str, model: str = "") -> None:
+    """`時間<TAB>簡報日期<TAB>原因<TAB>model` 一行。原因去掉 TAB／換行（欄位不能被切開）。
+
+    第四欄 model 是審查低4 補的：`blocked_today` 據此判斷「今天這個 model 已被內容審查擋過或截斷過」。
+    """
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
+    reason = " ".join(str(reason).split())
     with FAIL_LOG.open("a", encoding="utf-8") as handle:
-        handle.write(f"{datetime.now(timezone.utc).isoformat()}\t{target}\t{reason}\n")
+        handle.write(f"{datetime.now(timezone.utc).isoformat()}\t{target}\t{reason}\t{model}\n")
+
+
+# 同一天同一個 model 出現過就不再重打的失敗 kind（`blocked_today`）。
+#   - content_filter：素材是上一次的超集，幾乎一定再被擋。
+#   - truncated（`finish_reason=length`，撞到 MAX_TOKENS）：素材只會更多，同一個上限只會截得更早。
+# **期限型截斷（`timeout_streamed`）刻意不在這裡**：它可能只是 DeepSeek 暫時變慢，下一輪常常就好。
+_BLOCKING_KINDS = frozenset({"content_filter", "truncated"})
+
+
+def blocked_today(target: date_cls, model: str) -> bool:
+    """`brief_failures.log` 裡同一個簡報日期、同一個 model 已有內容審查或 `max_tokens` 截斷的紀錄 → True
+    （審查低4；截斷是切換前補的）。
+
+    簡報每輪 sync 都會被叫；被審查擋下或截斷時不寫列，下一輪窗期只是再往後延、素材是上一次的超集，
+    幾乎一定再失敗——每 3 小時重打一次、每次付一次錢、每次再進告警鏈。同一天同一個 model 失敗過
+    就不再呼叫（rc 仍是 1，讓「今天沒有簡報」照樣看得見）；隔天、換 model、或 `--force` 會再試。
+    讀不到檔一律當作沒有（照打）：這是省錢的閘，不是正確性的一部分。舊格式（三欄、沒有 model）
+    的行不算。哪些 kind 算見 `_BLOCKING_KINDS`。
+    """
+    try:
+        lines = FAIL_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        cols = line.split("\t")
+        if len(cols) >= 4 and cols[1] == str(target) and cols[3] == model and error_kind(cols[2]) in _BLOCKING_KINDS:
+            return True
+    return False
 
 
 def resolve_window(
@@ -194,6 +261,14 @@ async def generate(args) -> int:
         print(material)
         return 0
 
+    if not args.force and blocked_today(target, args.model):
+        print(
+            f"[brief] {target} 今日已被模型供應商的內容審查擋過或輸出被截斷（model={args.model}），略過、不再呼叫"
+            "（要重試加 --force；處置見 docs/production_resilience.md「DeepSeek 批次的失敗處置」）",
+            file=sys.stderr,
+        )
+        return 1
+
     prompt = brief_service.build_prompt(target, material)
     # **鎖只包住 CLI 呼叫本身**：排程每 3 小時叫本檔一次，但真正要呼叫 LLM 的只有
     # 一天一次。若照其他批次的慣例在 main 進入點取鎖，其餘七次 no-op 都會在訊號或
@@ -202,13 +277,31 @@ async def generate(args) -> int:
     with claude_cli_lock_or_exit("generate_brief"):
         raw, error = call_cli(prompt, args.model)
     if error:
-        record_failure(target, error)
+        record_failure(target, error, args.model)
+        if error_kind(error) == "content_filter":
+            # 內容審查：一律標記、跳過、交人工（不改走 Claude）。不寫列；同一天同一個 model 之後的
+            # 輪次由 blocked_today 略過、不再呼叫（隔天以新的窗期再試）。rc=1 讓排程殼記進
+            # unit_failures（OnFailure 告警鏈）。
+            print(
+                f"[brief] {target} 觸發模型供應商的內容審查，本次跳過、不寫列"
+                f"（今天不再重試，隔天以新的窗期再試）：{error}",
+                file=sys.stderr,
+            )
+            return 1
+        if error_kind(error) == "truncated":
+            # max_tokens 截斷：同上不寫列、今天不再重打（blocked_today）；處置是看素材量或調 MAX_TOKENS
+            print(
+                f"[brief] {target} 輸出被截斷（撞到 MAX_TOKENS={MAX_TOKENS}），本次跳過、不寫列"
+                f"（今天不再重試，隔天以新的窗期再試）：{error}",
+                file=sys.stderr,
+            )
+            return 1
         print(f"[brief] 產生失敗：{error}", file=sys.stderr)
         return 1
 
     markdown = brief_service.parse_brief(raw)
     if not markdown:
-        record_failure(target, "模型輸出無法解析為簡報 markdown")
+        record_failure(target, "模型輸出無法解析為簡報 markdown", args.model)
         print("[brief] 產生失敗：模型輸出無法解析", file=sys.stderr)
         return 1
 

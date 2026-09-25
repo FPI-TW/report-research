@@ -52,6 +52,9 @@ from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_cli import (  # noqa: E402
     CliNotFoundError,
     CliResult,
+    failure_kind,
+    is_retryable,
+    record_escalation,
     run_claude,
 )
 from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
@@ -61,6 +64,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "title_failures.log"
 # TITLE_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
 MODEL = resolve_model(TASK_TITLE)
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。一句標題加原文，512 綽綽有餘。
+MAX_TOKENS = 512
 MAX_TITLE_CHARS = 80  # 安全上限：標題不是摘要，超長多半代表模型把整段抓進來
 TITLE_SOURCES = ("extracted", "translated", "generated")
 
@@ -174,15 +179,20 @@ def build_cli_args(prompt: str) -> list[str]:
     return _build_cli_args(prompt, MODEL)
 
 
-def call_cli(prompt: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+def call_cli(
+    prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None` —— 那個
     tuple 的第二項讓第一項完全沒有意義，所有失敗一律回 None，而 `title_failures.log`
     連原因欄都沒有，只記 id 與檔名。2026-08 連續四天 titled_ok=0 fail=60 時，
     那個檔對「為什麼」一個字都說不出來。
     """
-    return run_claude(prompt, MODEL, timeout=timeout)
+    return run_claude(
+        prompt, MODEL, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": TASK_TITLE, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 UPDATE_SQL = (
@@ -209,22 +219,26 @@ async def title_one(
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是
     # 「回了但解析不採信」——後者是資料問題，前者是環境問題，處置完全不同。
     last_error = "CLI 無回應"
-    # 本輪有沒有任何一次「回了但不能用」。只有這種才記入跳過名單：逾時、非零退出
-    # 是環境問題，記了會讓一次停機把整批研報打入跳過名單。
-    content_failed = False
+    # 本輪有沒有任何一次「回了但不能用」，值是要記的 reason。只有這種才記入跳過名單：逾時、
+    # 非零退出是環境問題，記了會讓一次停機把整批研報打入跳過名單。
+    fail_reason: Optional[str] = None
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
             # 讓它一路拋到 main 中止整批。
-            res = await asyncio.to_thread(call_cli, prompt)
+            res = await asyncio.to_thread(call_cli, prompt, file_hash=file_hash, report_id=rid)
             if res.text:
                 result = parse_title(res.text, file_name)
                 if result:
                     break
                 last_error = "回應無法解析為可採信的標題"
-                content_failed = True
+                fail_reason = llm_failures.UNPARSEABLE
             elif res.error:
                 last_error = res.error
+            if res.text is None and not is_retryable(res):
+                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                fail_reason = failure_kind(res) or fail_reason
+                break
 
     if result:
         async with SessionFactory() as session:
@@ -242,8 +256,8 @@ async def title_one(
             await recorder.clear(file_hash)
         _ok += 1
     else:
-        if recorder and content_failed:
-            await recorder.record(file_hash, llm_failures.UNPARSEABLE)
+        if recorder and fail_reason:
+            await recorder.record(file_hash, fail_reason)
         # 第三欄是 2026-08-13 補的：先前只記 id 與檔名，於是連續四天 fail=60
         # 時這個檔對「為什麼」一個字都說不出來。
         with open(FAIL_LOG, "a", encoding="utf-8") as f:
@@ -350,6 +364,8 @@ async def main(
             )
         )
     except CliNotFoundError as exc:
+        # 400 升級：觸發的研報先記入跳過名單，下一輪才跳得過去（審查 H2）
+        await record_escalation(exc, recorder)
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷 → 中止並以非零碼收場，
         # 而不是跑完 N 次註定失敗的呼叫、印 titled_ok=0、然後 exit 0。
         print(f"\n中止：{exc}", flush=True)

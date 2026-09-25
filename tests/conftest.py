@@ -55,6 +55,16 @@ for _knob in (
     os.environ[_knob] = ""
 # DeepSeek 串流的牆鐘總時限：空字串＝預設 600（app/config._positive_float），部署目錄 `.env` 的值不滲進測試。
 os.environ["LLM_HTTP_TOTAL_TIMEOUT"] = ""
+# 批次斷路器的標記（scripts/_llm_env.breaker_path）：預設落在 repo 根的 data/，而 repo 根就是部署
+# 目錄——測試讓斷路器跳脫時寫進去，生產排程會 30 分鐘拒跑。指到不存在的目錄：寫入 fail-open
+# 失敗、讀取當作沒有。要驗標記的測試用 mock.patch.dict 指到自己的 tempfile。
+os.environ["LLM_BREAKER_FILE"] = "/nonexistent/report-mark-llm-breaker/.llm_breaker"
+# sync 輪次 id（scripts/sync_new_reports.sh 每輪 export）：斷路器標記的有效範圍依它判斷。從排程環境
+# 裡跑測試時不得沾到那一輪的 id；要驗輪次行為的測試用 mock.patch.dict 自己給。
+os.environ.pop("SYNC_ROUND_ID", None)
+# 批次用量記錄（scripts/_claude_cli.usage_log_path）：同理不得寫進部署目錄的 data/llm_usage.jsonl
+# （那是費用歸因的依據）。指到 os.devnull：寫得進去、什麼都不留；要驗內容的測試自己指到 tempfile。
+os.environ["LLM_USAGE_LOG"] = os.devnull
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -105,6 +115,24 @@ def _reset_monitor_caches():
         mod = sys.modules.get("web.routers.monitor")
         if mod is not None and hasattr(mod, "reset_caches"):
             mod.reset_caches()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_batch_state():
+    """`scripts._claude_cli` 的行程範圍狀態（斷路器的滑動窗與跳脫旗標）每題前後各清一次。
+
+    沒有這層的話，前一題留下的幾次逾時會讓下一題莫名跳脫（或反過來，把該跳脫的推回門檻下）。
+    同樣不主動 import——模組沒載入就沒有狀態要清。
+    """
+
+    def _clear() -> None:
+        mod = sys.modules.get("scripts._claude_cli")
+        if mod is not None and hasattr(mod, "_reset_state"):
+            mod._reset_state()
 
     _clear()
     yield

@@ -37,8 +37,11 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
       到期時已吐字＝`TIMEOUT` 且 `streamed=True`（呼叫端當截斷處理），已收到 finish_reason 則以
       它為準。
   - 批次（`complete_chat`）的 `timeout` 是涵蓋傳輸層重試的**總期限**，用 `time.monotonic()`
-    逐行檢查。httpx 的 read 逾時會被伺服器排隊時的 `: keep-alive` 一直重置（官方：最長 10
-    分鐘），不能拿來當總時限。
+    **逐 chunk** 檢查（不是逐行：伺服器持續送沒有換行的位元組時一行永遠湊不滿）。httpx 的 read
+    逾時會被伺服器排隊時的 `: keep-alive` 一直重置（官方：最長 10 分鐘），不能拿來當總時限。
+    已吐字後才到期歸 `TIMEOUT_STREAMED`（期限型截斷：可重放、連續 3 輪才跳過、計入斷路器；**不是**
+    `TRUNCATED`，那只留給 `finish_reason=length`）；已吐字後的任何失敗都不在傳輸層重試
+    （`complete_chat` docstring）。
 - **金鑰在呼叫時才讀 `os.environ`**，不進 Settings：批次腳本不讀 repo 根 `.env`，而
   `get_settings()` 是 import 期就快取的單例（`app/services/db.py`），先快取到空值就一路空到底。
 - **不用 openai SDK**：它內建的重試會吃掉失敗原因，違反 `scripts/_claude_cli.py` 開頭四天
@@ -81,7 +84,8 @@ BAD_REQUEST = "bad_request"        # 其他 400／422：多半是單篇輸入造
 OVERLOADED = "overloaded"          # 429、5xx、insufficient_system_resource
 NETWORK = "network"                # 連線、DNS、TLS、串流中途斷線
 TIMEOUT = "timeout"                # 首字期限（串流）或總期限（批次）到了
-TRUNCATED = "truncated"            # finish_reason=length
+TRUNCATED = "truncated"            # finish_reason=length（決定性：同一輸入、同一上限重送結果不變）
+TIMEOUT_STREAMED = "timeout_streamed"  # 批次：已吐字後總期限才到（期限型截斷，見 `_deadline_after_text`）
 EMPTY = "empty"                    # 成功結束卻沒有 content（包括只有 reasoning）
 OTHER = "other"
 
@@ -100,6 +104,7 @@ _PHRASES = {
     NETWORK: "連線失敗",
     TIMEOUT: "逾時",
     TRUNCATED: "輸出截斷",
+    TIMEOUT_STREAMED: "已吐字後逾時",
     EMPTY: "空回應",
     OTHER: "未預期錯誤",
 }
@@ -296,9 +301,20 @@ async def _aiter_sse_lines(response: httpx.Response) -> AsyncIterator[str]:
         yield line
 
 
-def _iter_sse_lines(response: httpx.Response):
+class _DeadlineExceeded(Exception):
+    """批次的總期限在串流中到了（`_iter_sse_lines` 逐 chunk 檢查）。"""
+
+
+def _iter_sse_lines(response: httpx.Response, deadline: float | None = None):
+    """同步版分行。`deadline`（monotonic）：**每收到一個 chunk 就檢查**，到了拋 `_DeadlineExceeded`。
+
+    不能只在湊滿一行時檢查：伺服器持續送沒有換行的位元組時一行永遠湊不滿，期限就被無限延長
+    （httpx 的 read 逾時也會被這些位元組一直重置）。
+    """
     splitter = _LineSplitter()
     for text in response.iter_text():
+        if deadline is not None and time.monotonic() > deadline:
+            raise _DeadlineExceeded
         yield from splitter.feed(text)
     yield from splitter.flush()
 
@@ -628,7 +644,9 @@ async def astream_chat(
             request = client.build_request(
                 "POST", url, json=body, headers=_headers(key), timeout=_timeout(_READ_TIMEOUT)
             )
-        except (httpx.InvalidURL, ValueError, UnicodeError) as exc:
+        except UnicodeError as exc:  # 先於 ValueError（它是子類）：單篇輸入的編碼問題，見 `_complete_once`
+            out = _fail(BAD_REQUEST, _transport_detail(exc), t0)
+        except (httpx.InvalidURL, ValueError) as exc:
             out = _fail(CONFIG, _transport_detail(exc), t0)
         else:
             try:
@@ -732,6 +750,24 @@ def _timed_out_kind(deadline: float) -> str:
     return TIMEOUT if time.monotonic() >= deadline else NETWORK
 
 
+def _deadline_after_text(acc: _Acc, t0: float, ttft_ms: int | None, chars: int) -> ChatOutcome:
+    """已吐字後總期限才到：`TIMEOUT_STREAMED`（期限型截斷、`streamed=True`），不是 `TIMEOUT` 也不是 `TRUNCATED`。
+
+    - 不是 `TRUNCATED`：`finish_reason=length` 是決定性的（同一輸入、同一上限重送結果不變，1 次就跳過），
+      期限型不是——「DeepSeek 暫時變慢」時它會落在每一篇上。初版歸 `TRUNCATED`，於是一次變慢就讓整批
+      研報 1 次進跳過名單、行內標註進 `tag_truncated`（`failures_to_delta` 預設不撈），而且斷路器不跳。
+    - 不是 `TIMEOUT`：已吐字＝已計費，要記跳過名單（連續 3 輪才跳過，`llm_failures.TIMEOUT_STREAMED`），
+      否則真正「每次都寫不完」的那篇每輪都重打、每輪都付一次錢。
+    - **計入斷路器**（`_claude_cli.BREAKER_KINDS`）：供應商整體變慢時整段中止，而不是每篇都等到期限。
+    - 已吐字，照樣不在傳輸層重試（`complete_chat`）。
+    線上的 `astream_chat` 沒有這個 kind：總時限到時已吐字是 `TIMEOUT`＋`streamed=True`，呼叫端當截斷附註。
+    """
+    return _fail(
+        TIMEOUT_STREAMED, f"已吐字 {chars} 字後超過總期限", t0, streamed=True, usage=acc.usage,
+        model_resp=acc.model_resp, reasoning_chars=acc.reasoning_chars, ttft_ms=ttft_ms,
+    )
+
+
 def _complete_once(
     model: str, prompt: str, *, max_tokens: int, system: str | None,
     user_id: str | None, deadline: float,
@@ -748,14 +784,19 @@ def _complete_once(
     try:
         body = build_body(model, prompt, max_tokens=max_tokens, system=system, user_id=user_id)
         client = _sync_client()
-        # 各項逾時都不超過剩餘期限。逐行的期限檢查只在收到一行時才執行，所以伺服器中途完全
-        # 沉默時，最多會超出期限 min(60 秒, 剩餘期限)——這是刻意接受的上限：同步 httpx 無法
+        # 各項逾時都不超過剩餘期限。逐 chunk 的期限檢查只在收到位元組時才執行，所以伺服器中途
+        # 完全沉默時，最多會超出期限 min(60 秒, 剩餘期限)——這是刻意接受的上限：同步 httpx 無法
         # 從外部可靠地打斷阻塞中的讀取（另開執行緒關 socket 在 Linux 上不保證喚醒 recv）。
         request = client.build_request(
             "POST", url, json=body, headers=_headers(key),
             timeout=_timeout(_READ_TIMEOUT, cap=remaining),
         )
-    except (httpx.InvalidURL, ValueError, UnicodeError) as exc:
+    except UnicodeError as exc:
+        # 單篇輸入的編碼問題（孤立代理字元之類；`build_body` 已經 `sanitize`，照理不會再發生）：單篇失敗、
+        # 記跳過名單。歸 CONFIG 的話一篇怪字元就整批 rc=2 中止、而且不留紀錄，下一輪同一篇再中止一次。
+        # 必須在 ValueError 之前：UnicodeError 是 ValueError 的子類。status 為 None（本機就失敗），不參與 400 升級。
+        return _fail(BAD_REQUEST, _transport_detail(exc), t0), ""
+    except (httpx.InvalidURL, ValueError) as exc:
         return _fail(CONFIG, _transport_detail(exc), t0), ""
     try:
         response = client.send(request, stream=True)
@@ -780,9 +821,7 @@ def _complete_once(
                 retry_after=_retry_after(response.headers),
             ), ""
         try:
-            for line in _iter_sse_lines(response):
-                if time.monotonic() > deadline:
-                    return _fail(TIMEOUT, "超過總期限", t0), ""
+            for line in _iter_sse_lines(response, deadline):
                 event = parse_sse_line(line)
                 if event is None:
                     continue
@@ -800,9 +839,21 @@ def _complete_once(
                     if ttft_ms is None:
                         ttft_ms = int((time.monotonic() - t0) * 1000)
                     parts.append(text)
+        except _DeadlineExceeded:
+            if acc.finish_reason is None:
+                if parts:
+                    return _deadline_after_text(acc, t0, ttft_ms, sum(map(len, parts))), ""
+                return _fail(TIMEOUT, "超過總期限", t0, usage=acc.usage, model_resp=acc.model_resp), ""
         except httpx.TimeoutException as exc:
             if acc.finish_reason is None:
-                return _fail(_timed_out_kind(deadline), _transport_detail(exc), t0), ""
+                kind = _timed_out_kind(deadline)
+                if parts and kind == TIMEOUT:
+                    return _deadline_after_text(acc, t0, ttft_ms, sum(map(len, parts))), ""
+                # 已吐字但期限未到的沉默：NETWORK，且 streamed=True——complete_chat 不在傳輸層重試
+                return _fail(
+                    kind, _transport_detail(exc), t0, streamed=bool(parts), usage=acc.usage,
+                    model_resp=acc.model_resp, ttft_ms=ttft_ms,
+                ), ""
         except httpx.HTTPError as exc:
             if acc.finish_reason is None:
                 acc.error = (NETWORK, _transport_detail(exc))
@@ -826,10 +877,15 @@ def complete_chat(
 ) -> ChatResult:
     """同步呼叫（批次用）。回完整文字，或 `API[<kind>]` 開頭、說得出原因的錯誤。
 
-    - `timeout` 是涵蓋所有嘗試的總期限。
+    - `timeout` 是涵蓋所有嘗試的總期限（每收到一個 chunk 檢查一次）。
     - 只對暫時性錯誤（429、5xx、網路）退避重試，最多 `retries` 次：優先照 `Retry-After`
       （上限 60 秒），否則 2／6 秒加抖動；等待會超過期限就不等了。
+    - **已吐字（`outcome.streamed`）就不在傳輸層重試**，不管 kind 是什麼：那一次已經計費，串流中途
+      的錯誤物件、`insufficient_system_resource`、中途斷線照 kind 回傳，批次當單篇失敗（`API[` 前綴，
+      腳本層也不重試）。否則一篇一輪最多 3（傳輸）×3（腳本層的解析重試）＝9 個已計費請求（審查中3）。
+      線上路徑（`astream_chat`）本來就是已吐字不重試。
     - 截斷、審查、空回應、400、帳號錯誤一律不重試：重打同一個 prompt 只是再付一次錢。
+    - 已吐字後總期限才到＝`TIMEOUT_STREAMED`（見 `_deadline_after_text`），不是 `TIMEOUT`／`TRUNCATED`。
     - 批次沒有「部分成功」：串流中途出事就整篇失敗。
     """
     deadline = time.monotonic() + timeout
@@ -844,7 +900,7 @@ def complete_chat(
         )
         if out.kind is None:
             break
-        if out.kind not in TRANSIENT_KINDS or attempt >= retries:
+        if out.kind not in TRANSIENT_KINDS or out.streamed or attempt >= retries:
             break
         if out.retry_after is not None:
             wait = min(out.retry_after, _RETRY_AFTER_CAP)
@@ -857,7 +913,7 @@ def complete_chat(
     if out.kind is None:
         return ChatResult(text=text, error=None, kind=None, attempts=attempts, outcome=out)
     detail = out.detail
-    if out.kind == TRUNCATED:
+    if out.kind == TRUNCATED and out.finish_reason == "length":
         detail = f"max_tokens={max_tokens}"
     return ChatResult(
         text=None, error=error_string(out.kind, detail), kind=out.kind,

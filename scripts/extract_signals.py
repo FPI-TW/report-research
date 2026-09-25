@@ -53,7 +53,14 @@ from app.services.signal_extract import (  # noqa: E402
     build_signal_prompt,
     parse_signal,
 )
-from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
+from scripts._claude_cli import (  # noqa: E402
+    CliNotFoundError,
+    CliResult,
+    failure_kind,
+    is_retryable,
+    record_escalation,
+    run_claude,
+)
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -169,15 +176,26 @@ def row_to_params(row: SignalRow) -> dict:
 
 # ── claude CLI 呼叫（對齊 generate_summaries.py）──
 
-def call_cli(prompt: str, model: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。多標的研報一次回好幾組論點與
+# 證據，非 thinking 模式不設上限時只有 8K，會被截斷。
+MAX_TOKENS = 16384
+
+
+def call_cli(
+    prompt: str, model: str, timeout: int = 180, *,
+    file_hash: Optional[str] = None, report_id: Optional[str] = None,
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     實作在 `scripts/_claude_cli.py`（全批次共用）。這裡原本是
     `except Exception: return None`，於是所有失敗都被寫成同一句「CLI 無回應或逾時」
     ——`data/signal_failures.log` 累積 9,273 筆全是那一句，2026-08 連續四天 100%
     失敗時完全看不出該修 PATH、該調 timeout，還是該去看帳號額度。
     """
-    return run_claude(prompt, model, timeout=timeout)
+    return run_claude(
+        prompt, model, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": llm_failures.TASK_SIGNAL, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 # ── 進度計數 ──
@@ -318,20 +336,28 @@ async def extract_one(
     parsed: Optional[ParsedReportSignals] = None
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
     last_error = "CLI 無回應"
+    http_reason: Optional[str] = None  # HTTP 的審查／截斷／空回應／400（failure_kind）
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
             # 讓它一路拋到 main 中止整批，而不是靜靜地把 N 篇都記成 rejected。
-            res = await asyncio.to_thread(call_cli, prompt, model)
+            res = await asyncio.to_thread(
+                call_cli, prompt, model, file_hash=item.file_hash, report_id=item.report_id
+            )
             if res.text:
                 parsed = parse_signal(res.text, item.requested_codes)
                 if parsed.ok:
                     break
             elif res.error:
                 last_error = res.error
+            if res.text is None and not is_retryable(res):
+                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                http_reason = failure_kind(res) or http_reason
+                break
         # parsed 非 None ＝至少有一次「回了東西」；之後全數 rejected 就是內容型失敗，
         # 記入跳過名單。全程沒回應（逾時、非零退出）是環境型，不記。
-        content_failed = parsed is not None
+        # HTTP 的內容型失敗是結束這一輪的那一次，取它（截斷、審查 1 次就跳過）。
+        fail_reason = http_reason or (llm_failures.UNPARSEABLE if parsed is not None else None)
         if parsed is None:
             # CLI 無回應/逾時 → 落 rejected 列（供之後重跑），並記失敗
             parsed = ParsedReportSignals(ok=False, error=last_error)
@@ -343,8 +369,8 @@ async def extract_one(
             _rejected += 1
             with open(FAIL_LOG, "a", encoding="utf-8") as f:
                 f.write(f"{item.report_id}\t{item.file_name}\t{parsed.error or 'rejected'}\n")
-            if recorder and content_failed:
-                await recorder.record(item.file_hash, llm_failures.UNPARSEABLE)
+            if recorder and fail_reason:
+                await recorder.record(item.file_hash, fail_reason)
         else:
             _ok += 1
             if recorder:
@@ -399,6 +425,8 @@ async def main(args) -> None:
             )
         )
     except CliNotFoundError as exc:
+        # 400 升級：觸發的研報先記入跳過名單，下一輪才跳得過去（審查 H2）
+        await record_escalation(exc, recorder)
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷。中止並以非零退出碼收場 ——
         # 「跑完 N 次註定失敗的呼叫、印 ok=0 rejected=N、然後 exit 0」是最糟的結局，
         # 因為排程 unit 仍然是綠的，沒有任何人會知道。

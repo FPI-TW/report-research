@@ -211,6 +211,45 @@ class ImportAbortRetainsPartialHashesTests(unittest.TestCase):
                 self.assertEqual(ignored.returncode, 0, "執行期檔案必須被 gitignore")
 
 
+class ImportAbortRetainsBadRequestTests(unittest.TestCase):
+    """審查 H2：匯入因 400 升級中止時，觸發研報（`hash<TAB>路徑`）改名保留並印出——重放本輪 delta
+    前要先把它們拿掉，否則同樣的 400 會再讓匯入中止一次。"""
+
+    LINES = ["aa" * 32 + "\t/x/研報自動匯入/A.pdf\n", "bb" * 32 + "\t/x/研報自動匯入/B.pdf\n"]
+
+    def _retained(self, h) -> list[Path]:
+        return sorted((h.root / "data").glob("sync_bad_request_*.txt"))
+
+    def test_retained_and_printed(self):
+        h = _SyncHarness()
+        self.addCleanup(h.close)
+        h.bad_request_lines = self.LINES
+        h.set_rc(sync_new_reports=2)
+        p = h.run()
+        files = self._retained(h)
+        self.assertEqual(len(files), 1, p.stdout)
+        self.assertRegex(files[0].name, r"^sync_bad_request_\d{8}_\d{6}\.txt$")
+        self.assertEqual(files[0].read_text(encoding="utf-8"), "".join(self.LINES))
+        self.assertFalse((h.root / "data" / ".sync_last_hashes.bad_request").exists())
+        self.assertIn("/x/研報自動匯入/A.pdf", p.stdout)
+        self.assertIn("400 升級", p.stdout)
+
+    def test_stale_file_removed_and_success_leaves_none(self):
+        h = _SyncHarness()
+        self.addCleanup(h.close)
+        (h.root / "data" / ".sync_last_hashes.bad_request").write_text(self.LINES[0], encoding="utf-8")
+        p = h.run()
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self._retained(h), [])
+        self.assertFalse((h.root / "data" / ".sync_last_hashes.bad_request").exists())
+
+    def test_gitignored(self):
+        for rel in ("data/.sync_last_hashes.bad_request", "data/sync_bad_request_20260924_120000.txt"):
+            with self.subTest(rel=rel):
+                ignored = subprocess.run(["git", "check-ignore", rel], cwd=REPO_ROOT, capture_output=True, text=True)
+                self.assertEqual(ignored.returncode, 0)
+
+
 class PartialHashesOnAbortTests(unittest.TestCase):
     """importer 端：`partial_hashes_on_abort` 在中止時寫出已 commit 的 hashes。"""
 

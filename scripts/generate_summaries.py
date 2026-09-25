@@ -34,9 +34,16 @@ from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
-from app.services.llm_models import TASK_SUMMARY, resolve_model  # noqa: E402
+from app.services.llm_models import TASK_SUMMARY, is_http_model, resolve_model  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
-from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
+from scripts._claude_cli import (  # noqa: E402
+    CliNotFoundError,
+    CliResult,
+    failure_kind,
+    is_retryable,
+    record_escalation,
+    run_claude,
+)
 from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
@@ -44,6 +51,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "summary_failures.log"
 # SUMMARY_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
 MODEL = resolve_model(TASK_SUMMARY)
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。摘要約 150 字，1024 已留兩倍以上。
+MAX_TOKENS = 1024
 MAX_SUMMARY_CHARS = 400  # 安全上限，避免模型暴走輸出整段
 
 PROMPT_INSTRUCTION = (
@@ -70,11 +79,16 @@ def build_prompt(file_name: str, full_text: str, excerpt: int) -> str:
     )
 
 
-def parse_summary(raw: str) -> Optional[str]:
-    """容錯解析 Claude 回應，取出 summary 純文字。
+def parse_summary(raw: str, *, allow_plain_text: bool = True) -> Optional[str]:
+    """容錯解析 LLM 回應，取出 summary 純文字。
 
     優先解析 {"summary": "..."} JSON（容忍 ``` 圍欄與前後雜訊）；
     若回應根本沒有大括號則退而把整段文字當摘要。JSON 在但解析失敗 → None。
+
+    `allow_plain_text=False`（DeepSeek 路徑，審查 D11）：沒有大括號也算解析失敗。純文字 fallback
+    是給 CLI 時代偶爾不守格式的 Claude 用的；DeepSeek 不守 JSON 格式時多半是在閒聊或拒答
+    （「抱歉，我無法……」），把那段話當摘要寫進 DB 比沒有摘要更糟。CLI 路徑維持原狀，
+    免得遷移前後同一篇研報的結果因解析規則而不同。
     """
     if not raw:
         return None
@@ -83,6 +97,8 @@ def parse_summary(raw: str) -> Optional[str]:
         s = s.strip("`").strip()
     # 有大括號 → 視為應輸出 JSON：解析失敗/欄位不對一律當壞檔回 None；
     # 完全沒有大括號才退而把整段純文字當摘要。
+    if "{" not in s and not allow_plain_text:
+        return None
     if "{" in s:
         start, end = s.find("{"), s.rfind("}")
         if start == -1 or end == -1 or end <= start:
@@ -108,14 +124,19 @@ def build_cli_args(prompt: str) -> list[str]:
     return _build_cli_args(prompt, MODEL)
 
 
-def call_cli(prompt: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+def call_cli(
+    prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None`——那個
     tuple 的第二項讓第一項完全沒有意義（Exception 已涵蓋 TimeoutExpired），
     所有失敗一律塌縮成 None。見 scripts/_claude_cli.py 的四天停擺紀錄。
     """
-    return run_claude(prompt, MODEL, timeout=timeout)
+    return run_claude(
+        prompt, MODEL, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": TASK_SUMMARY, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 async def summarize_one(
@@ -134,20 +155,26 @@ async def summarize_one(
     summary: Optional[str] = None
     # 保留最後一次的失敗原因：log 要分得出「環境壞了」與「回了但解析不採信」
     last_error = "CLI 無回應"
-    # 只有「回了但不能用」才記入跳過名單；環境型失敗不記（見 llm_failures 模組說明）
-    content_failed = False
+    # 只有「回了但不能用」才記入跳過名單；環境型失敗不記（見 llm_failures 模組說明）。
+    # 值是要記的 reason：解析失敗＝unparseable；HTTP 的審查／截斷／空回應／400 取 failure_kind。
+    fail_reason: Optional[str] = None
+    strict = is_http_model(MODEL)
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
-            res = await asyncio.to_thread(call_cli, prompt)
+            res = await asyncio.to_thread(call_cli, prompt, file_hash=file_hash, report_id=rid)
             if res.text:
-                summary = parse_summary(res.text)
+                summary = parse_summary(res.text, allow_plain_text=not strict)
                 if summary:
                     break
                 last_error = "回應無法解析為摘要"
-                content_failed = True
+                fail_reason = llm_failures.UNPARSEABLE
             elif res.error:
                 last_error = res.error
+            if res.text is None and not is_retryable(res):
+                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                fail_reason = failure_kind(res) or fail_reason
+                break
 
     if summary:
         async with SessionFactory() as session:
@@ -160,8 +187,8 @@ async def summarize_one(
             await recorder.clear(file_hash)
         _ok += 1
     else:
-        if recorder and content_failed:
-            await recorder.record(file_hash, llm_failures.UNPARSEABLE)
+        if recorder and fail_reason:
+            await recorder.record(file_hash, fail_reason)
         with open(FAIL_LOG, "a", encoding="utf-8") as f:
             f.write(f"{rid}\t{file_name}\t{last_error}\n")
         _fail += 1
@@ -248,6 +275,8 @@ async def main(
             )
         )
     except CliNotFoundError as exc:
+        # 400 升級：觸發的研報先記入跳過名單，下一輪才跳得過去（審查 H2）
+        await record_escalation(exc, recorder)
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷 → 中止並以非零碼收場。
         # 這一段在排程殼裡是 best-effort（失敗只記 log 不擋下一輪），所以更需要
         # 讓退出碼說話——否則「跑完 N 次註定失敗、印 ok=0、exit 0」不會留下痕跡。

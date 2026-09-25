@@ -88,6 +88,27 @@ class ParseFailuresTests(unittest.TestCase):
         ok, _ = ftd.parse_failures(lines, self.mirror, stages={"tag"})
         self.assertEqual(ok, ["A.pdf"])
 
+    def test_content_filter_blocked_is_excluded_by_default(self):
+        """tag_blocked（內容審查擋下）重打結果不會變：預設不撈，人工處置時才明確取出。"""
+        a, b = self._mk("A.pdf"), self._mk("B.pdf")
+        lines = [f"{a}\ttag\tCLI 逾時", f"{b}\ttag_blocked\tAPI[content_filter] 觸發供應商內容審查"]
+        ok, bad = ftd.parse_failures(lines, self.mirror)
+        self.assertEqual((ok, bad), (["A.pdf"], []))
+        ok, _ = ftd.parse_failures(lines, self.mirror, stages={"tag_blocked"})
+        self.assertEqual(ok, ["B.pdf"])
+
+    def test_truncated_is_excluded_by_default(self):
+        """審查低1：tag_truncated（輸出截斷）同一份輸入、同一個上限重送結果不變：預設不撈。
+        空回應與 400 仍在 tag 階段，照舊會被撈出來重送。"""
+        a, b, c = self._mk("A.pdf"), self._mk("B.pdf"), self._mk("C.pdf")
+        lines = [f"{a}\ttag\tAPI[empty] 空回應", f"{b}\ttag_truncated\tAPI[truncated] 輸出截斷",
+                 f"{c}\ttag\tAPI[bad_request] 請求被拒"]
+        ok, bad = ftd.parse_failures(lines, self.mirror)
+        self.assertEqual((ok, bad), (["A.pdf", "C.pdf"], []))
+        ok, _ = ftd.parse_failures(lines, self.mirror, stages={"tag_truncated"})
+        self.assertEqual(ok, ["B.pdf"])
+        self.assertEqual(ftd.DEFAULT_EXCLUDED_STAGES, frozenset({"tag_blocked", "tag_truncated"}))
+
     def test_non_report_extension_is_rejected(self):
         p = self.mirror / "note.txt"
         p.write_text("x", encoding="utf-8")
@@ -177,8 +198,25 @@ class ImporterContractTests(unittest.TestCase):
 
         self.snr = snr
 
-    def test_abnormal_counters_are_exactly_fail_and_untagged(self):
-        self.assertEqual(set(self.snr.ABNORMAL_COUNTERS), {"fail", "skip_untagged"})
+    def test_abnormal_counters_are_exactly_fail_untagged_and_blocked(self):
+        # skip_blocked／skip_truncated：行內標註被內容審查擋下／被截斷，本該入庫卻沒進 DB（遷移 PR-12）
+        self.assertEqual(
+            set(self.snr.ABNORMAL_COUNTERS), {"fail", "skip_untagged", "skip_blocked", "skip_truncated"}
+        )
+
+    def test_skip_truncated_counts_as_abnormal_in_stats(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / ".sync_last_stats"
+            self.snr.write_stats(out, {"ingested": 2, "fail": 0, "skip_untagged": 1, "skip_truncated": 2})
+            body = dict(ln.split("=", 1) for ln in out.read_text(encoding="utf-8").splitlines())
+            self.assertEqual(body["abnormal"], "3")
+
+    def test_skip_blocked_counts_as_abnormal_in_stats(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / ".sync_last_stats"
+            self.snr.write_stats(out, {"ingested": 2, "fail": 0, "skip_untagged": 0, "skip_blocked": 3})
+            body = dict(ln.split("=", 1) for ln in out.read_text(encoding="utf-8").splitlines())
+            self.assertEqual(body["abnormal"], "3")
 
     def test_expected_skips_are_not_abnormal(self):
         for k in ("skip_admin", "skip_exists", "skip_non_research", "skip_scanned"):
@@ -215,13 +253,14 @@ class ImporterContractTests(unittest.TestCase):
         """四個寫入點的欄位語意必須一致，否則補救時第 0 欄拿到的不是路徑。
 
         E1b 起第四個寫入點：extract_text 自己接住的損毀檔（res.error）也留一行，
-        階段同樣是 extract。
+        階段同樣是 extract。遷移 PR-12 起第五個：行內標註被內容審查擋下（tag_blocked）或被截斷
+        （tag_truncated），兩者共用同一行寫入。
         """
         body = IMPORTER.read_text(encoding="utf-8")
         writes = [
             ln.strip() for ln in body.splitlines() if "fl.write(" in ln
         ]
-        self.assertEqual(len(writes), 4, writes)
+        self.assertEqual(len(writes), 5, writes)
         for w in writes:
             self.assertIn("{path}", w, f"第 0 欄不是路徑：{w}")
 

@@ -12,6 +12,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -25,7 +26,7 @@ FAKE_KEY = "fixed-test-secret-deepseek0"
 PROJECT_ROOTS = {"app", "web", "scripts", "eval"}
 
 # 「會呼叫 LLM」的判準：import 了呼叫層（線上串流、HTTP 客戶端、批次 CLI 包裝、批次鎖、評測 judge）。
-# generate_brief.py 自帶 call_cli、不 import run_claude，是靠 `_claude_lock` 被掃到的。
+# generate_brief.py 自帶 call_cli（DeepSeek 分支才交給 run_claude），也靠 `_claude_lock` 被掃到。
 DIRECT_LLM_MODULES = {
     "app.services.llm", "app.services.llm_http", "scripts._claude_cli", "scripts._claude_lock", "eval.judge",
 }
@@ -265,13 +266,12 @@ class _EnvFileCase(unittest.TestCase):
     def write(self, text: str) -> None:
         self.path.write_text(text, encoding="utf-8")
 
-    def require(self, models, *, http_dispatch: bool = True) -> tuple[int | None, str]:
-        """預設 `http_dispatch=True`（評測入口的語意）：金鑰那幾條與批次拒收是兩件事，分開測。"""
+    def require(self, models) -> tuple[int | None, str]:
         err = io.StringIO()
         code = None
         with contextlib.redirect_stderr(err):
             try:
-                le.require_llm_key(models, http_dispatch=http_dispatch)
+                le.require_llm_key(models)
             except SystemExit as exc:
                 code = exc.code
         return code, err.getvalue()
@@ -368,78 +368,216 @@ class RequireTests(_EnvFileCase):
         self.assertIn("sudoedit", out)
 
 
-class BatchRejectsHttpModelTests(_EnvFileCase):
-    """PR-12 之前批次沒有 HTTP 分派：解析到 DeepSeek 名稱一律 rc=2，並說出是哪個旋鈕解析出來的。
+class ClaudeWithoutEnvFileWarningTests(_EnvFileCase):
+    """全部解析成 Claude＋LLM 環境檔不存在或讀不到：印一行醒目的 WARNING、不中止（CLI 已於 9/23 停用，
+    這幾乎一定是切 DeepSeek 沒生效）。"""
 
-    不擋的話，`claude --model deepseek-flash` 每一篇都失敗：行內標註全數 skip_untagged＝新研報
-    停止入庫（見 scripts/_claude_cli.py 的 HttpModelUnsupportedError）。
-    """
+    def test_missing_file_warns_but_passes(self):
+        le.load_llm_env()
+        code, out = self.require({"summary": "claude-sonnet-5", "title": "claude-sonnet-5"})
+        self.assertIsNone(code)
+        self.assertIn("WARNING", out)
+        self.assertIn(str(self.path), out)
+        self.assertIn("不存在", out)
+        self.assertIn("LLM_PROVIDER=deepseek", out)
+        self.assertEqual(len([ln for ln in out.splitlines() if "WARNING" in ln]), 1, "一行就好")
+
+    def test_unreadable_file_warns(self):
+        self.write("LLM_PROVIDER=deepseek\n")
+        with mock.patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+            le.load_llm_env()
+        code, out = self.require(["claude-haiku-4-5"])
+        self.assertIsNone(code)
+        self.assertIn("WARNING", out)
+        self.assertIn("PermissionError", out)
+
+    def test_readable_file_is_quiet(self):
+        self.write("SOMETHING=1\n")
+        le.load_llm_env()
+        code, out = self.require(["claude-haiku-4-5"])
+        self.assertIsNone(code)
+        self.assertNotIn("WARNING", out)
+
+    def test_no_models_is_quiet(self):
+        le.load_llm_env()
+        code, out = self.require({"brief": None})
+        self.assertIsNone(code)
+        self.assertNotIn("WARNING", out)
+
+    def test_http_segment_does_not_get_the_claude_warning(self):
+        """有 DeepSeek 模型的段照原本的金鑰規則（缺檔就 rc=2），不另印這一行。"""
+        le.load_llm_env()
+        code, out = self.require(["deepseek-flash", "claude-haiku-4-5"])
+        self.assertEqual(code, 2)
+        self.assertNotIn("WARNING", out)
+
+
+class HttpModelPrecheckTests(_EnvFileCase):
+    """批次與評測都依白名單分派（遷移 PR-12 起）：DeepSeek 名稱只要有金鑰就放行；缺金鑰時 rc=2，
+    並說出是哪個旋鈕（或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。"""
 
     def setUp(self):
         super().setUp()
         for k in ("LLM_PROVIDER", "TITLE_MODEL", "TAG_MODEL", "SIGNAL_MODEL"):
             os.environ[k] = ""
 
-    def test_knob_is_named(self):
+    def test_batch_http_model_with_key_passes(self):
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        le.load_llm_env()
+        code, out = self.require({"title": "deepseek-flash", "tag": "claude-haiku-4-5"})
+        self.assertIsNone(code, out)
+        self.assertIn("fp=", out)
+        self.assertNotIn(FAKE_KEY, out)
+
+    def test_missing_key_names_the_knob(self):
         os.environ["TITLE_MODEL"] = "deepseek-flash"
         le.load_llm_env()
-        code, out = self.require({"title": "deepseek-flash"}, http_dispatch=False)
+        code, out = self.require({"title": "deepseek-flash"})
         self.assertEqual(code, 2)
-        self.assertIn("PR-12", out)
         self.assertIn("TITLE_MODEL=deepseek-flash", out)
+        self.assertIn("DEEPSEEK_API_KEY", out)
 
-    def test_provider_default_is_named(self):
+    def test_missing_key_names_provider_default(self):
         os.environ["LLM_PROVIDER"] = "deepseek"
         le.load_llm_env()
-        code, out = self.require({"tag": "deepseek-flash"}, http_dispatch=False)
+        code, out = self.require({"tag": "deepseek-flash"})
         self.assertEqual(code, 2)
         self.assertIn("LLM_PROVIDER=deepseek", out)
-        self.assertIn("tag", out)
 
-    def test_cli_flag_is_named(self):
+    def test_missing_key_names_cli_flag(self):
         le.load_llm_env()
-        code, out = self.require({"signal": "deepseek-v4-pro"}, http_dispatch=False)
+        code, out = self.require({"signal": "deepseek-v4-pro"})
         self.assertEqual(code, 2)
         self.assertIn("--model deepseek-v4-pro", out)
 
-    def test_rejected_even_with_key(self):
-        """有金鑰也擋：擋的理由是批次不會分派，不是缺金鑰。"""
-        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
-        le.load_llm_env()
-        code, out = self.require({"title": "deepseek-flash"}, http_dispatch=False)
-        self.assertEqual(code, 2)
-        self.assertIn("PR-12", out)
-        self.assertNotIn("fp=", out)
-        self.assertNotIn(FAKE_KEY, out)
-
-    def test_plain_list_defaults_to_batch(self):
-        """預設是批次語意：忘了傳 http_dispatch 的新入口要被擋，而不是放行。"""
-        le.load_llm_env()
-        code, out = self.require(["deepseek-flash"], http_dispatch=False)
-        self.assertEqual(code, 2)
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ctx:
-            le.require_llm_key(["deepseek-flash"])
-        self.assertEqual(ctx.exception.code, 2)
-        self.assertIn("PR-12", err.getvalue())
-
-    def test_claude_models_pass(self):
-        le.load_llm_env()
-        code, _ = self.require({"title": "claude-sonnet-5", "tag": "claude-haiku-4-5"}, http_dispatch=False)
-        self.assertIsNone(code)
-
-    def test_every_batch_entry_uses_batch_semantics(self):
-        """批次入口不得傳 http_dispatch=True（PR-12 才放開）；評測入口才可以。"""
-        allowed = {"eval/run_ragas.py"}
+    def test_no_entry_passes_http_dispatch_any_more(self):
+        """PR-12 前的 `http_dispatch` 參數已移除：批次與評測同一套規則，傳了會 TypeError。"""
         for rel, tree in _entry_files().items():
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "require_llm_key":
-                    kws = {k.arg: ast.unparse(k.value) for k in node.keywords}
                     with self.subTest(entry=rel):
-                        if rel in allowed:
-                            self.assertEqual(kws.get("http_dispatch"), "True")
-                        else:
-                            self.assertNotIn("http_dispatch", kws)
+                        self.assertNotIn("http_dispatch", {k.arg for k in node.keywords})
+
+
+class BreakerMarkerPrecheckTests(_EnvFileCase):
+    """斷路器標記（`data/.llm_breaker`）30 分鐘內：用到 DeepSeek 的段 rc=2；全用 Claude 的段照跑（L9）。"""
+
+    def setUp(self):
+        super().setUp()
+        self.marker = Path(self._tmp.name) / "data" / ".llm_breaker"
+        env = mock.patch.dict(os.environ, {"LLM_BREAKER_FILE": str(self.marker)})
+        env.start()
+        self.addCleanup(env.stop)
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        le.load_llm_env()
+
+    def _mark(self, age_s: float, round_id: str | None = None, text: str | None = None) -> None:
+        self.marker.parent.mkdir(parents=True, exist_ok=True)
+        if text is None:
+            text = "ts=2026-09-24T00:00:00+00:00\n"
+            if round_id:
+                text += f"round={round_id}\n"
+            text += "reason=最近 10 次有 5 次逾時\n"
+        self.marker.write_text(text, encoding="utf-8")
+        t = time.time() - age_s
+        os.utime(self.marker, (t, t))
+
+    def require_in_round(self, round_id, models):
+        env = {"SYNC_ROUND_ID": round_id} if round_id else {}
+        with mock.patch.dict(os.environ, env):
+            if not round_id:
+                os.environ.pop("SYNC_ROUND_ID", None)
+            return self.require(models)
+
+    def test_previous_round_marker_does_not_block_next_round(self):
+        """審查中4：上一輪末段跳脫的標記（10 分鐘前）不得擋下一輪的匯入。"""
+        self._mark(600, round_id="20260924_090000")
+        code, out = self.require_in_round("20260924_120000", {"tag": "deepseek-flash"})
+        self.assertIsNone(code, out)
+
+    def test_same_round_marker_blocks_regardless_of_age(self):
+        """同一輪的標記一直擋到這一輪結束：一輪可超過 2.5 小時，30 分鐘規則擋不住後段。"""
+        for age in (60, le.BREAKER_TTL_S + 5, 3 * 3600):
+            with self.subTest(age=age):
+                self._mark(age, round_id="20260924_090000")
+                code, out = self.require_in_round("20260924_090000", {"summary": "deepseek-flash"})
+                self.assertEqual(code, 2, out)
+                self.assertIn("本輪 sync", out)
+
+    def test_manual_run_keeps_thirty_minute_rule(self):
+        """手動執行（沒有輪次 id）：不管標記有沒有輪次，都照 30 分鐘規則。"""
+        for round_id in ("20260924_090000", None):
+            with self.subTest(marker_round=round_id):
+                self._mark(60, round_id=round_id)
+                code, out = self.require_in_round(None, {"summary": "deepseek-flash"})
+                self.assertEqual(code, 2, out)
+                self.assertIn("30 分鐘內", out)
+                self._mark(le.BREAKER_TTL_S + 5, round_id=round_id)
+                code, out = self.require_in_round(None, {"summary": "deepseek-flash"})
+                self.assertIsNone(code, out)
+
+    def test_roundless_marker_in_a_round_keeps_thirty_minute_rule(self):
+        """排程輪次讀到手動執行寫的標記（沒有輪次 id）：照 30 分鐘規則。"""
+        self._mark(60)
+        code, _ = self.require_in_round("20260924_120000", {"summary": "deepseek-flash"})
+        self.assertEqual(code, 2)
+        self._mark(le.BREAKER_TTL_S + 5)
+        code, out = self.require_in_round("20260924_120000", {"summary": "deepseek-flash"})
+        self.assertIsNone(code, out)
+
+    def test_empty_marker_blocks_within_ttl(self):
+        """空標記檔（寫到一半、被清空）：沒有輪次 id，照 30 分鐘規則擋，訊息說明是空的（N07）。"""
+        for round_id in (None, "20260924_120000"):
+            with self.subTest(current_round=round_id):
+                self._mark(60, text="")
+                code, out = self.require_in_round(round_id, {"summary": "deepseek-flash"})
+                self.assertEqual(code, 2, out)
+                self.assertIn("標記是空的", out)
+                self._mark(le.BREAKER_TTL_S + 5, text="")
+                code, out = self.require_in_round(round_id, {"summary": "deepseek-flash"})
+                self.assertIsNone(code, out)
+
+    def test_round_id_is_single_line(self):
+        with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "  20260924_090000\nx=1 "}):
+            self.assertEqual(le.sync_round_id(), "20260924_090000")
+        with mock.patch.dict(os.environ, {"SYNC_ROUND_ID": "  "}):
+            self.assertIsNone(le.sync_round_id())
+
+    def test_fresh_marker_blocks_http_segment(self):
+        self._mark(60)
+        code, out = self.require({"summary": "deepseek-flash"})
+        self.assertEqual(code, 2)
+        self.assertIn("斷路器", out)
+        self.assertIn("5 次逾時", out, "要帶出標記內容")
+        self.assertNotIn(FAKE_KEY, out)
+
+    def test_fresh_marker_does_not_block_claude_segment(self):
+        self._mark(60)
+        code, out = self.require({"summary": "claude-sonnet-5", "tag": "claude-haiku-4-5"})
+        self.assertIsNone(code, out)
+
+    def test_marker_expires_after_ttl(self):
+        self._mark(le.BREAKER_TTL_S + 5)
+        code, out = self.require({"summary": "deepseek-flash"})
+        self.assertIsNone(code, out)
+        self._mark(le.BREAKER_TTL_S - 5)
+        code, _ = self.require({"summary": "deepseek-flash"})
+        self.assertEqual(code, 2)
+
+    def test_ttl_is_thirty_minutes(self):
+        self.assertEqual(le.BREAKER_TTL_S, 30 * 60)
+
+    def test_no_marker_passes(self):
+        code, out = self.require({"summary": "deepseek-flash"})
+        self.assertIsNone(code, out)
+
+    def test_default_path_is_repo_data(self):
+        with mock.patch.dict(os.environ, {"LLM_BREAKER_FILE": ""}):
+            self.assertEqual(le.breaker_path(), le.ROOT / "data" / ".llm_breaker")
+
+    def test_conftest_points_marker_away_from_repo(self):
+        """repo 根就是部署目錄：測試讓斷路器跳脫時不得寫進去（排程會 30 分鐘拒跑）。"""
+        self.assertIn("LLM_BREAKER_FILE", (REPO_ROOT / "tests" / "conftest.py").read_text(encoding="utf-8"))
 
 
 class FileKeyFingerprintTests(unittest.TestCase):

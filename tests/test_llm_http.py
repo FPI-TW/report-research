@@ -921,6 +921,7 @@ class CompleteChatEdgeTests(_TransportMixin, unittest.TestCase):
                 res = self._call()
                 self.assertIsNone(res.text)
                 self.assertTrue(res.error.startswith("API[network]"), res.error)
+                self.assertEqual(len(self.requests), 1, "已吐字不在傳輸層重試（審查中3）")
 
     def test_disconnect_after_finish_reason_is_success(self):
         self.install(lambda req: httpx.Response(200, stream=_SyncStream(
@@ -983,6 +984,157 @@ class CompleteChatEdgeTests(_TransportMixin, unittest.TestCase):
                 self.assertEqual(len(self.sleeps), 2)
                 self.assertTrue(1.6 <= self.sleeps[0] <= 2.4, self.sleeps)
                 self.assertTrue(4.8 <= self.sleeps[1] <= 7.2, self.sleeps)
+
+
+class _Clock:
+    """`llm_http.time` 的替身：伺服器每送一段只推進假時鐘，測試不必真的等。"""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, s):
+        self.now += s
+
+
+class _ClockStream(httpx.SyncByteStream):
+    """依序吐出 chunks，每吐一段把假時鐘推進 `step` 秒；例外物件就拋出。`consumed` 記吐了幾段。"""
+
+    def __init__(self, clock, step, *chunks):
+        self.clock, self.step, self.chunks = clock, step, chunks
+        self.consumed = 0
+
+    def __iter__(self):
+        for c in self.chunks:
+            if isinstance(c, BaseException):
+                raise c
+            self.consumed += 1
+            yield c
+            self.clock.now += self.step
+
+
+class CompleteChatStreamedTests(_TransportMixin, unittest.TestCase):
+    """審查中3、低2、低3：已吐字不在傳輸層重試；已吐字後到期＝截斷；期限逐 chunk 檢查。"""
+
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ, ENV)
+        self._env.start()
+        self.sleeps: list[float] = []
+        self.clock = _Clock()
+        self._time = mock.patch.object(lh, "time", mock.Mock(monotonic=self.clock.monotonic, sleep=self.clock.sleep))
+        self._time.start()
+
+    def tearDown(self):
+        self._time.stop()
+        self._env.stop()
+        self.uninstall()
+
+    def _call(self, **kw):
+        kw.setdefault("max_tokens", 512)
+        kw.setdefault("timeout", 30.0)
+        kw.setdefault("sleep", self.sleeps.append)
+        return lh.complete_chat("deepseek-flash", "標註這篇", **kw)
+
+    def test_failures_after_text_are_not_retried(self):
+        """中3：每一種「吐了字才出事」都只打 1 次、照 kind 回傳，且 outcome.streamed 為真。"""
+        text = _sse(_chunk(content='{"summary": "半'), done=False)
+        cases = {
+            "error_object": (lambda: httpx.Response(200, content=text + _sse({"error": {"message": "server error"}},
+                                                                             done=False)), "API[overloaded]"),
+            "insufficient_resource": (lambda: httpx.Response(200, content=_sse(
+                _chunk(content="半"), _chunk(content="", finish="insufficient_system_resource"))), "API[overloaded]"),
+            "read_error": (lambda: httpx.Response(200, stream=_SyncStream(text, httpx.ReadError("reset"))),
+                           "API[network]"),
+            "no_done": (lambda: httpx.Response(200, content=text), "API[network]"),
+        }
+        for name, (make, prefix) in cases.items():
+            with self.subTest(case=name):
+                self.sleeps.clear()
+                self.install(lambda req, m=make: m())
+                res = self._call()
+                self.assertTrue(res.error.startswith(prefix), res.error)
+                self.assertEqual(len(self.requests), 1, "已吐字＝已計費，不得在傳輸層重打")
+                self.assertEqual(res.attempts, 1)
+                self.assertEqual(self.sleeps, [])
+                self.assertTrue(res.outcome.streamed)
+
+    def test_same_failures_before_text_are_still_retried(self):
+        """對照組：還沒吐字的暫時性失敗照舊重試 3 次（不能因為修中3 把重試整個拿掉）。"""
+        cases = {
+            "error_object": lambda: httpx.Response(200, content=_sse({"error": {"message": "server error"}},
+                                                                     done=False)),
+            "insufficient_resource": lambda: httpx.Response(200, content=_sse(
+                _chunk(content="", finish="insufficient_system_resource"))),
+            "read_error": lambda: httpx.Response(200, stream=_SyncStream(httpx.ReadError("reset"))),
+        }
+        for name, make in cases.items():
+            with self.subTest(case=name):
+                self.install(lambda req, m=make: m())
+                res = self._call()
+                self.assertEqual(len(self.requests), 3, name)
+                self.assertFalse(res.outcome.streamed)
+
+    def test_deadline_after_text_is_timeout_streamed(self):
+        """已吐字後才到期 → timeout_streamed（期限型截斷：可重放、計入斷路器），不是 truncated 也不是 timeout；
+        細節說總期限而不是 max_tokens。"""
+        stream = _ClockStream(self.clock, 4.0, _sse(_chunk(content="長輸出"), done=False),
+                              *[_sse(_chunk(content="。"), done=False)] * 20)
+        self.install(lambda req: httpx.Response(200, stream=stream))
+        res = self._call(timeout=10.0)
+        self.assertIsNone(res.text)
+        self.assertEqual(res.kind, lh.TIMEOUT_STREAMED)
+        self.assertTrue(res.error.startswith("API[timeout_streamed]"), res.error)
+        self.assertIn("總期限", res.error)
+        self.assertNotIn("max_tokens", res.error)
+        self.assertTrue(res.outcome.streamed)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_read_timeout_after_text(self):
+        """已吐字後 httpx 讀取逾時——期限到了是 timeout_streamed；期限還早是 network（不重試）。"""
+        for budget, kind in ((5.0, lh.TIMEOUT_STREAMED), (600.0, lh.NETWORK)):
+            with self.subTest(budget=budget):
+                stream = _ClockStream(self.clock, 10.0, _sse(_chunk(content="半"), done=False),
+                                      httpx.ReadTimeout("silent"))
+                self.install(lambda req, st=stream: httpx.Response(200, stream=st))
+                res = self._call(timeout=budget)
+                self.assertEqual(res.kind, kind, res.error)
+                self.assertEqual(len(self.requests), 1)
+
+    def test_deadline_before_text_is_timeout(self):
+        """沒吐字就到期仍是 timeout（計入斷路器）：只有已吐字才改判截斷。"""
+        stream = _ClockStream(self.clock, 4.0, *[b": keep-alive\n\n"] * 20)
+        self.install(lambda req: httpx.Response(200, stream=stream))
+        res = self._call(timeout=10.0)
+        self.assertEqual(res.kind, lh.TIMEOUT, res.error)
+
+    def test_read_timeout_past_deadline_is_timeout_not_network(self):
+        """期限已到的 httpx 讀取逾時（送出時或串流中、還沒吐字）是 TIMEOUT：不重試、不歸 NETWORK。"""
+
+        def at_send(req):
+            self.clock.now += 100.0
+            raise httpx.ReadTimeout("no bytes")
+
+        cases = {
+            "send": at_send,
+            "stream": lambda req: httpx.Response(200, stream=_ClockStream(
+                self.clock, 100.0, b": keep-alive\n\n", httpx.ReadTimeout("silent"))),
+        }
+        for name, handler in cases.items():
+            with self.subTest(case=name):
+                self.install(handler)
+                res = self._call(timeout=30.0)
+                self.assertEqual(res.kind, lh.TIMEOUT, res.error)
+                self.assertEqual(res.attempts, 1)
+
+    def test_deadline_checked_per_chunk_not_per_line(self):
+        """低3：伺服器持續送沒有換行的位元組，一行永遠湊不滿——期限仍要在下一個 chunk 生效。"""
+        stream = _ClockStream(self.clock, 1.0, b'data: {"choices": [{"delta": {"content": "', *[b"x" * 10] * 200)
+        self.install(lambda req: httpx.Response(200, stream=stream))
+        res = self._call(timeout=5.0)
+        self.assertEqual(res.kind, lh.TIMEOUT, res.error)
+        self.assertLessEqual(stream.consumed, 8, "到期後不得再讀")
 
 
 # ── 依賴方向與測試防線 ───────────────────────────────────────────────────────

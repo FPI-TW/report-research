@@ -23,12 +23,25 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
   - 環境檔裡有重複的鍵（審查 L8）：`load_env_file` 先到先贏、systemd 的 EnvironmentFile 後者
     覆蓋——輪替金鑰時新舊兩行並存，sync unit 與手動批次會拿到**不同**的金鑰。
   - 有未知的模型名（不在 DeepSeek 白名單、也不是 `claude-*`；含 CLI 別名 `sonnet`）。
-  - **批次**解析到白名單模型（`http_dispatch=False`，預設）：PR-12 之前批次沒有 HTTP 分派，
-    `run_claude`／`generate_brief.call_cli` 只會 spawn claude CLI，把 `deepseek-flash` 交給 CLI
-    每一篇都會失敗——行內標註全滅＝新研報停止入庫。訊息帶出是哪個旋鈕（或 `LLM_PROVIDER`
-    的預設、`--model`）解析出來的。只有走 `stream_completion` 的評測入口傳 `http_dispatch=True`。
   - 有白名單模型卻沒有金鑰；依原因提示（環境裡已有空值→先 unset；PermissionError→以
-    kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。
+    kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
+    （或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。批次（`run_claude`、`generate_brief`）與
+    評測（`stream_completion`）都依白名單分派到 DeepSeek（遷移 PR-12 起），所以兩種入口同一套規則。
+  - （只警告、不中止）全部解析成 Claude，而環境檔不存在或讀不到：CLI 已於 2026-09-23 停用，這幾乎
+    一定是切換沒生效；印一行 WARNING（`_warn_if_claude_without_env_file`）。
+  - 本段會用到白名單模型，而 `data/.llm_breaker`（批次斷路器的標記，`scripts/_claude_cli.py`）
+    還有效：前一段剛因 DeepSeek 大量逾時／過載而中止，這一段再跑只是每篇等到逾時。
+    只看「會不會用到 HTTP」，全部用 Claude 的段不受影響（審查 L9）。「有效」的定義見下一節。
+
+## 斷路器標記綁定 sync 輪次（審查中4）
+
+`scripts/sync_new_reports.sh` 每輪 export `SYNC_ROUND_ID`（＝該輪的 `ROUND_TS`），跳脫時寫進標記的
+`round=` 行。預檢時：
+  - 預檢方與標記**都有**輪次 id：只有**同一輪**的標記才拒跑，不看時間。一輪最長可超過 2.5 小時，
+    單靠 30 分鐘有效期擋不住同一輪後段；反過來上一輪末段跳脫的標記會擋下一輪的**匯入**（下一輪
+    開頭就是匯入），delta 得靠人工重放——所以跨輪一律放行，下一輪若仍過載，斷路器會再跳一次。
+  - 任一方沒有輪次 id（手動執行、或手動執行寫的標記）：維持 `BREAKER_TTL_S`（30 分鐘）規則。
+  - 空標記檔（寫到一半被清空之類）沒有輪次 id，照 30 分鐘規則擋，訊息寫「標記是空的」。
   全部解析到 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否
   一致，**永遠不印金鑰本身**。
 
@@ -44,6 +57,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import time
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -56,6 +70,12 @@ DEFAULT_LLM_ENV_FILE = "/etc/default/report-mark-llm"
 EXAMPLE = "deploy/systemd/report-mark-llm.env.example"
 KEY = "DEEPSEEK_API_KEY"
 RC_CONFIG = 2
+# 斷路器標記的有效期（沒有 sync 輪次 id 時）：之內其他用到 DeepSeek 的段預檢拒跑。排程裡的段
+# 改看輪次 id（見模組 docstring「斷路器標記綁定 sync 輪次」），這個值只管手動執行。
+BREAKER_TTL_S = 30 * 60
+# sync 殼每輪 export 的輪次 id（scripts/sync_new_reports.sh 的 ROUND_TS）；手動執行沒有。
+ROUND_ENV = "SYNC_ROUND_ID"
+_ROUND_PREFIX = "round="
 
 # 上一次 load_llm_env() 的結果；require_llm_key() 據此給提示。模組層狀態是刻意的：
 # 載入在 import 期、檢查在 main，中間沒有別的地方能放。
@@ -65,6 +85,45 @@ _STATE: dict[str, object] = {}
 def env_file_path() -> Path:
     """`LLM_ENV_FILE` 只給測試用（conftest 指到不存在的路徑）；生產一律用預設路徑。"""
     return Path(os.environ.get("LLM_ENV_FILE") or DEFAULT_LLM_ENV_FILE)
+
+
+def breaker_path() -> Path:
+    """批次斷路器的標記（ROOT 錨點）。`LLM_BREAKER_FILE` 只給測試用（conftest 指到不存在的目錄，
+    測試跳脫時寫不進部署目錄——repo 根就是部署目錄，寫進去會讓排程 30 分鐘拒跑）。"""
+    return Path(os.environ.get("LLM_BREAKER_FILE") or ROOT / "data" / ".llm_breaker")
+
+
+def sync_round_id() -> str | None:
+    """本行程所屬的 sync 輪次 id（`SYNC_ROUND_ID`）；手動執行回 None。只取單行、去空白。"""
+    raw = (os.environ.get(ROUND_ENV) or "").strip()
+    return raw.splitlines()[0].strip() if raw else None
+
+
+def _marker_round(text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith(_ROUND_PREFIX):
+            return line[len(_ROUND_PREFIX):].strip() or None
+    return None
+
+
+def _fresh_breaker() -> str | None:
+    """標記還有效就回它的內容（給人看），否則 None。讀不到一律當作沒有。
+
+    有效＝同一個 sync 輪次（兩邊都有輪次 id 時），否則 `BREAKER_TTL_S` 內（見模組 docstring）。
+    """
+    path = breaker_path()
+    try:
+        age = time.time() - path.stat().st_mtime
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    marked, current = _marker_round(text), sync_round_id()
+    if marked and current:
+        if marked != current:
+            return None
+    elif age >= BREAKER_TTL_S:
+        return None
+    return " ".join(text.split())[:400] or "（標記是空的）"
 
 
 def load_llm_env() -> None:
@@ -164,6 +223,25 @@ def _missing_key_hint(path: Path) -> str:
     return f"{path} 沒有填 {KEY}：用 sudoedit 填（不要 echo／tee，也不要 source 這個檔）"
 
 
+def _warn_if_claude_without_env_file(names: list[str], path: object) -> None:
+    """全部解析成 Claude、而 LLM 環境檔不存在或讀不到：印一行醒目的 WARNING（不中止）。
+
+    claude CLI 已於 2026-09-23 起永久停用（OAuth 過期、D-C）；生產的批次應該經這份檔解析到 DeepSeek。
+    「檔沒讀到＋全是 Claude」幾乎一定是切換沒生效（手動執行的身分讀不到 0640 的檔、檔沒裝），接下來
+    每一篇都會撞 CLI 認證失效。不中止：CLI 仍可用的環境（開發機、`claude_only` 回退）照跑，真的撞到
+    認證失效時 `_claude_cli.cli_auth_error` 會整批 rc=2。
+    """
+    err = _STATE.get("error")
+    if not names or not err:
+        return
+    why = {"missing": "不存在", "permission": "讀不到（PermissionError）"}.get(str(err), f"讀取失敗（{err}）")
+    _say(
+        f"WARNING：本段模型全部解析成 Claude（{', '.join(names)}），而 {path} {why}。"
+        "claude CLI 已停用；若已切 DeepSeek，這一段的 LLM_PROVIDER=deepseek 沒有生效——檢查該檔是否安裝、"
+        "是否以 kashionz 執行"
+    )
+
+
 def _model_source(task: str | None, model: str) -> str:
     """說出這個模型名是從哪裡來的：任務旋鈕、`LLM_PROVIDER` 的預設表，或 `--model`。"""
     knob = TASK_ENV.get(task or "")
@@ -177,17 +255,10 @@ def _model_source(task: str | None, model: str) -> str:
     return f"--model {model}（任務 {task}）"
 
 
-def require_llm_key(
-    models: Mapping[str, str | None] | Iterable[str | None],
-    *,
-    http_dispatch: bool = False,
-) -> None:
+def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> None:
     """預檢本次會用到的模型；不通過就 `SystemExit(2)`（說明見模組 docstring）。
 
-    `models`：`{任務: 模型}`（批次；拒收訊息才說得出是哪個旋鈕）或模型名清單。
-    `http_dispatch`：呼叫端的 LLM 呼叫是否經 `stream_completion` 的白名單分派。批次（經
-    `run_claude`／`generate_brief.call_cli`）在 PR-12 之前一律 False。
-    TODO(PR-12)：`run_claude` 接上白名單分派後，批次入口改傳 True（`generate_brief` 同步）。
+    `models`：`{任務: 模型}`（批次；缺金鑰的訊息才說得出是哪個旋鈕）或模型名清單（評測）。
     """
     pairs = list(models.items()) if isinstance(models, Mapping) else [(None, m) for m in models]
     pairs = [(t, m) for t, m in pairs if m]
@@ -204,20 +275,24 @@ def require_llm_key(
     unknown = [m for m in names if not (is_http_model(m) or is_claude_model(m))]
     if unknown:
         _fail(f"未知模型名：{', '.join(unknown)}（只接受 DeepSeek 白名單或 claude-*）")
-    if not http_dispatch:
-        sources = sorted({_model_source(t, m) for t, m in pairs if is_http_model(m)})
-        if sources:
-            _fail(
-                f"批次尚未支援 DeepSeek（待 PR-12）：{'、'.join(sources)}。"
-                "批次目前只會呼叫 claude CLI，每一篇都會失敗；請改回 Claude 或移除該旋鈕"
-            )
     _warn_if_not_deploy_root()
     http = [m for m in names if is_http_model(m)]
     if not http:
+        _warn_if_claude_without_env_file(names, path)
         return
+    tripped = _fresh_breaker()
+    if tripped:
+        when = f"本輪 sync（{sync_round_id()}）" if sync_round_id() else f"{BREAKER_TTL_S // 60} 分鐘內"
+        _fail(
+            f"批次斷路器{when}跳脫過（{breaker_path()}：{tripped}）。"
+            f"本段要用 {', '.join(http)}，先不跑；確認 DeepSeek 恢復後刪除該檔，或等標記過期"
+        )
     key = (os.environ.get(KEY) or "").strip()
     if not key:
-        _fail(f"{', '.join(http)} 需要 {KEY}，但目前沒有值。{_missing_key_hint(Path(str(path)))}")
+        sources = sorted({_model_source(t, m) for t, m in pairs if is_http_model(m)})
+        _fail(
+            f"{'、'.join(sources)} 需要 {KEY}，但目前沒有值。{_missing_key_hint(Path(str(path)))}"
+        )
     _say(f"DeepSeek 金鑰 fp={fingerprint(key)}（模型：{', '.join(http)}）")
 
 

@@ -1139,6 +1139,7 @@ def history_item(row) -> dict:
 # - **CLI 路徑仍只分兩類**（`kind` 未填＝`other`，退回文字判斷）：訊息文字來自 `claude`
 #   CLI 透傳的 API 回應，格式不在我們控制之內，分得越細越容易在 CLI 改版後靜默全部落到
 #   「其他」。猜不出來一律 other，不能猜成 overloaded（那會把我們的 bug 記成上游問題）。
+#   例外：CLI 認證失效由 `llm.stream_completion` 直接填 `kind="auth"`，走上面那條。
 def _llm_error_kind(exc: Exception) -> str:
     kind = getattr(exc, "kind", None)
     if isinstance(kind, str) and kind and kind != "other":

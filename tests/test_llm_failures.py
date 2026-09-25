@@ -64,6 +64,11 @@ CASES = [
     (("title", "bad_request", "m1", 2), "m1", False),
     (("title", "content_filter", "m1", 1), "m1", True),
     (("title", "truncated", "m1", 1), "m1", True),
+    # 期限型截斷：連續 3 輪才跳過（不在 SKIP_IMMEDIATELY）
+    (("title", "timeout_streamed", "m1", 1), "m1", False),
+    (("title", "timeout_streamed", "m1", 2), "m1", False),
+    (("title", "timeout_streamed", "m1", 3), "m1", True),
+    (("title", "timeout_streamed", "m1", 3), "m2", False),
     (("title", "content_filter", "m1", 1), "m2", False),  # 換 model 會重試
     (("title", "unparseable", "m1", 9), "m2", False),
     (("summary", "content_filter", "m1", 1), "m1", False),  # 別的任務的紀錄不影響
@@ -99,6 +104,11 @@ class SkipRuleEquivalenceTests(unittest.TestCase):
     def test_immediate_reasons_are_known_reasons(self):
         self.assertTrue(lf.SKIP_IMMEDIATELY <= lf.REASONS)
 
+    def test_timeout_streamed_is_a_reason_but_not_immediate(self):
+        self.assertIn(lf.TIMEOUT_STREAMED, lf.REASONS)
+        self.assertNotIn(lf.TIMEOUT_STREAMED, lf.SKIP_IMMEDIATELY)
+        self.assertEqual(lf.SKIP_IMMEDIATELY, frozenset({lf.CONTENT_FILTER, lf.TRUNCATED}))
+
 
 class UpsertSemanticsTests(unittest.TestCase):
     """RECORD_SQL：同 model 累加、換 model 歸 1；CLEAR_SQL 刪列。"""
@@ -128,6 +138,46 @@ class UpsertSemanticsTests(unittest.TestCase):
         self._record("unparseable", "m1")
         self._record("unparseable", "m2")
         self.assertEqual(self._row(), [("unparseable", "m2", 1, "T1")])
+
+    def _escalate(self, model, inc=1):
+        self.con.execute(
+            lf.ESCALATED_RECORD_SQL,
+            {"file_hash": "h1", "task": "title", "reason": "bad_request", "model": model, "inc": inc},
+        )
+
+    def _skipped(self, model) -> bool:
+        self.con.execute("INSERT OR IGNORE INTO research.research_report VALUES ('h1')")
+        sql = "SELECT count(*) FROM research.research_report r WHERE " + lf.skip_clause_sql("r")
+        return self.con.execute(sql, lf.skip_params("title", model)).fetchone()[0] == 0
+
+    def test_escalated_first_record_skips_next_round(self):
+        """審查中2：400 升級的觸發篇第一次記就達 SKIP_AFTER_ROUNDS，下一輪就跳過（兩邊判斷一致）。"""
+        self._escalate("m1")
+        self.assertEqual(self._row(), [("bad_request", "m1", lf.SKIP_AFTER_ROUNDS, "T0")])
+        self.assertTrue(self._skipped("m1"))
+        self.assertTrue(lf.should_skip(lf.FailureRecord("bad_request", "m1", lf.SKIP_AFTER_ROUNDS), "m1"))
+        self.assertFalse(self._skipped("m2"), "換 model 照舊重試")
+
+    def test_escalated_raises_existing_count_to_floor(self):
+        for before, inc, want in ((1, 1, 3), (1, 0, 3), (2, 1, 3), (3, 0, 3), (3, 1, 4), (5, 1, 6), (5, 0, 5)):
+            with self.subTest(before=before, inc=inc):
+                self.con.execute("DELETE FROM research.llm_task_failure")
+                for _ in range(before):
+                    self._record("unparseable", "m1")
+                self._escalate("m1", inc)
+                self.assertEqual(self._row(), [("bad_request", "m1", want, "T0")])
+                self.assertTrue(self._skipped("m1"))
+
+    def test_escalated_after_model_change_resets_to_floor(self):
+        for _ in range(5):
+            self._record("unparseable", "m1")
+        self._escalate("m2")
+        self.assertEqual(self._row(), [("bad_request", "m2", lf.SKIP_AFTER_ROUNDS, "T1")])
+
+    def test_plain_bad_request_needs_three_rounds(self):
+        """對照組：一般的 bad_request 記一次不跳過（升級那條路徑才是立即跳過）。"""
+        self._record("bad_request", "m1")
+        self.assertFalse(self._skipped("m1"))
 
     def test_clear_deletes_only_that_task(self):
         self._record("unparseable", "m1")
@@ -169,6 +219,28 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0][1], {"file_hash": "h1", "task": "title", "reason": "unparseable", "model": "m1"})
         self.assertEqual(calls[1][0], "commit")
         self.assertIn("DELETE FROM research.llm_task_failure", calls[2][0])
+
+    async def test_same_hash_recorded_once_per_recorder(self):
+        """一個 recorder＝一支批次的一輪：400 升級時 main 補記的研報若單篇路徑已記過，不再累加。"""
+        calls: list = []
+        rec = lf.FailureRecorder("title", "m1", lambda: _FakeSession(calls))
+        await rec.record("h1", lf.BAD_REQUEST)
+        await rec.record("h1", lf.BAD_REQUEST)
+        await rec.record("h2", lf.BAD_REQUEST)
+        inserts = [c for c in calls if c[0] != "commit"]
+        self.assertEqual([c[1]["file_hash"] for c in inserts], ["h1", "h2"])
+
+    async def test_escalated_record_bypasses_dedupe_without_double_counting(self):
+        """升級那一筆一定要寫（本輪已記過也寫，inc=0）；沒記過的 inc=1；之後同一輪的一般記錄照舊去重。"""
+        calls: list = []
+        rec = lf.FailureRecorder("title", "m1", lambda: _FakeSession(calls))
+        await rec.record("h1", lf.BAD_REQUEST)
+        await rec.record("h1", lf.BAD_REQUEST, escalated=True)
+        await rec.record("h2", lf.BAD_REQUEST, escalated=True)
+        await rec.record("h2", lf.BAD_REQUEST)
+        inserts = [c for c in calls if c[0] != "commit"]
+        self.assertEqual([c[0] for c in inserts], [lf.RECORD_SQL, lf.ESCALATED_RECORD_SQL, lf.ESCALATED_RECORD_SQL])
+        self.assertEqual([(c[1]["file_hash"], c[1]["inc"]) for c in inserts[1:]], [("h1", 0), ("h2", 1)])
 
     async def test_unknown_vocab_raises(self):
         with self.assertRaises(ValueError):
@@ -215,7 +287,7 @@ class _SpyRecorder:
         self.recorded: list = []
         self.cleared: list = []
 
-    async def record(self, file_hash, reason):
+    async def record(self, file_hash, reason, *, escalated=False):
         self.recorded.append((file_hash, reason))
 
     async def clear(self, file_hash):
@@ -354,62 +426,6 @@ class TakeawaySignalRecordingTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(es, "parse_signal", return_value=SimpleNamespace(ok=True, error=None)):
             rec = await self._signal([good], ["valid"])
         self.assertEqual((rec.recorded, rec.cleared), ([], ["h1"]))
-
-
-class HttpModelAbortsBatchNotRecordedTests(unittest.IsolatedAsyncioTestCase):
-    """PR-12 之前批次收到 DeepSeek 名稱：`run_claude` 拋 `HttpModelUnsupportedError`（環境型，
-    `CliNotFoundError` 的子類），從單篇函式一路拋到 main 以 rc=2 中止——**不能**被當成單篇失敗
-    記進跳過名單（否則研報會以 DeepSeek 的 model 名被擋在外面），也不能真的 spawn CLI。"""
-
-    def setUp(self):
-        from scripts import _claude_cli as cc
-
-        self.cc = cc
-        run = mock.patch.object(cc.subprocess, "run", side_effect=AssertionError("不該 spawn claude"))
-        self.spawn = run.start()
-        self.addCleanup(run.stop)
-
-    async def test_titles_and_summaries(self):
-        for mod, fn in ((gt, "title_one"), (gs, "summarize_one")):
-            with self.subTest(mod=fn):
-                rec = _SpyRecorder()
-                with tempfile.TemporaryDirectory() as tmp, \
-                     mock.patch.object(mod, "FAIL_LOG", Path(tmp) / "f.log"), \
-                     mock.patch.object(mod, "MODEL", "deepseek-flash"), \
-                     mock.patch.object(mod, "SessionFactory", _NoDbSessionFactory()):
-                    with self.assertRaises(self.cc.HttpModelUnsupportedError):
-                        await getattr(mod, fn)(
-                            asyncio.Semaphore(1), "rid", "f.pdf", "內文" * 50, 3000, 1,
-                            file_hash="h1", recorder=rec,
-                        )
-                    self.assertFalse((Path(tmp) / "f.log").exists(), "不寫單篇失敗紀錄")
-                self.assertEqual((rec.recorded, rec.cleared), ([], []))
-
-    async def test_takeaways_and_signals(self):
-        cases = (
-            (et, et.WorkItem("rep-1", "f.pdf", None, "券商甲", "正典文字", "sha", file_hash="h1"), 24000,
-             "_replace_rows"),
-            (es, es.WorkItem("rep-1", "TW", "券商甲", None, "f.pdf", "內文", ["2330"], file_hash="h1"), 16000,
-             "_upsert_rows"),
-        )
-        for mod, item, excerpt, writer in cases:
-            with self.subTest(mod=mod.__name__):
-                rec = _SpyRecorder()
-                write = mock.AsyncMock()
-                with tempfile.TemporaryDirectory() as tmp, \
-                     mock.patch.object(mod, "FAIL_LOG", Path(tmp) / "f.log"), \
-                     mock.patch.object(mod, writer, new=write):
-                    with self.assertRaises(self.cc.HttpModelUnsupportedError):
-                        await mod.extract_one(asyncio.Semaphore(1), item, excerpt, "deepseek-flash", 1, recorder=rec)
-                    self.assertFalse((Path(tmp) / "f.log").exists())
-                self.assertEqual(rec.recorded, [])
-                write.assert_not_awaited()
-
-    def test_exception_is_the_batch_abort_type(self):
-        """各批次 main 只接 `CliNotFoundError`（→ rc=2）；子類關係斷了就會變成未處理例外（rc=1）。"""
-        self.assertTrue(issubclass(self.cc.HttpModelUnsupportedError, self.cc.CliNotFoundError))
-        for mod in (gt, gs, et, es):
-            self.assertIs(mod.CliNotFoundError, self.cc.CliNotFoundError)
 
 
 class _Ctx:

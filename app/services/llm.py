@@ -37,7 +37,7 @@ from collections.abc import AsyncIterator
 
 from app.config import get_settings
 from app.services import llm_http
-from app.services.llm_models import TASK_ASK_ANSWER, is_http_model, resolve_model
+from app.services.llm_models import TASK_ASK_ANSWER, is_http_model, looks_like_cli_auth_error, resolve_model
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +271,9 @@ class LLMUnavailableError(RuntimeError):
       bad_request／overloaded／network／timeout／empty／other），**只有 HTTP 路徑會填**，
       由狀態碼與 finish_reason 決定、不解析文字。CLI 路徑刻意不填（維持預設 `other`＝
       未分類）：CLI 透傳的訊息格式不在我們控制之內，細分交給 `answer._llm_error_kind`
-      既有的文字判斷（只分過載／其他兩類）。
+      既有的文字判斷（只分過載／其他兩類）。**唯一例外是 CLI 認證失效**（OAuth 過期等，
+      `llm_models.looks_like_cli_auth_error`）填 `auth`、不重試：它每一題都會失敗，使用者該看到
+      「帳號異常」而不是泛用錯誤（2026-09-23 事故）。
     - `partial`：True＝**已經吐過字**才失敗（目前只有 HTTP 路徑的內容審查截斷會這樣拋）。
       串流型呼叫端（總覽、時效網搜、主答）據此保留已送出的文字、由 Python 附註中斷原因；
       收齊型呼叫端照舊 `except Exception` fail-open。
@@ -365,7 +367,9 @@ async def _run_attempt(
 
     # 無任何 text_delta：以 result 文字優先、其次最後一則 assistant 文字作 fallback
     candidate = result_text or last_assistant
-    if candidate and not result_error and not looks_like_api_error(candidate):
+    # 認證失效的訊息不論 result 有沒有標 is_error 都不能當答案（見 stream_completion 的 kind="auth"）
+    if (candidate and not result_error and not looks_like_api_error(candidate)
+            and not looks_like_cli_auth_error(candidate)):
         yield candidate
         return
     # 失敗：標記原因供上層決定是否重試
@@ -596,6 +600,12 @@ async def stream_completion(
             if meta is not None:
                 meta["truncated"] = bool(attempt_meta.get("timed_out"))
             return  # 本次有有效輸出（串流或 fallback），完成
+        # CLI 認證失效（OAuth 過期等）：每一題都會失敗、重試無益；歸 kind="auth" 讓 /api/ask 回
+        # 「帳號異常」而不是泛用的錯誤（2026-09-23 起 CLI 永久停用，見 llm_models.looks_like_cli_auth_error）
+        if looks_like_cli_auth_error(last_detail):
+            raise LLMUnavailableError(
+                f"claude CLI 認證失效：{last_detail}", reason=UNAVAILABLE_API_ERROR, kind="auth",
+            )
         # 只對「快速 API 錯誤（529 等）」重試；逾時=API 無回應，再等無益→快速失敗
         if reason == UNAVAILABLE_API_ERROR and attempt < retries:
             await asyncio.sleep(1.5 * (attempt + 1))

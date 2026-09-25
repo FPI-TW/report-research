@@ -6,6 +6,8 @@
 3. checkpoint-resume：某報告的所有 requested 標的皆已有 valid/partial 列且版本相符 → 跳過。
 4. 逐報告 spawn `claude -p`(Sonnet) 依固定 schema 擷取；Python 正規化（signal_extract）。
 5. ON CONFLICT upsert；單筆失敗只寫 data/signal_failures.log，不中斷、不影響檢索/問答。
+6. 有回應卻全數 rejected 的研報記入 research.llm_task_failure，同一 model 連續 3 輪後
+   跳過，不再每輪重打（規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）。
 
 **擷取單位＝一份研報**（一次 CLI 呼叫回該報告涵蓋的多標的，Python fan-out 成多列）。
 資料源用 DB full_text（天然只涵蓋已入庫、is_research 的語料）。
@@ -32,8 +34,14 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from sqlalchemy import text  # noqa: E402
 
+from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.signal_extract import (  # noqa: E402
     EXTRACTION_VERSION,
@@ -45,7 +53,14 @@ from app.services.signal_extract import (  # noqa: E402
     build_signal_prompt,
     parse_signal,
 )
-from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
+from scripts._claude_cli import (  # noqa: E402
+    CliNotFoundError,
+    CliResult,
+    failure_kind,
+    is_retryable,
+    record_escalation,
+    run_claude,
+)
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,7 +93,7 @@ def build_reports_sql() -> str:
     """撈某 market 內涵蓋子集標的的研報（陣列重疊 && 走 idx_rr_stock_targets GIN）。"""
     return (
         "SELECT r.id::text, r.source, r.report_date, r.market, "
-        "       r.file_name, r.full_text, r.stock_targets "
+        "       r.file_name, r.full_text, r.stock_targets, r.file_hash "
         "FROM research.research_report r "
         "WHERE r.market = :market "
         "  AND r.stock_targets && CAST(:codes AS text[]) "
@@ -161,15 +176,26 @@ def row_to_params(row: SignalRow) -> dict:
 
 # ── claude CLI 呼叫（對齊 generate_summaries.py）──
 
-def call_cli(prompt: str, model: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。多標的研報一次回好幾組論點與
+# 證據，非 thinking 模式不設上限時只有 8K，會被截斷。
+MAX_TOKENS = 16384
+
+
+def call_cli(
+    prompt: str, model: str, timeout: int = 180, *,
+    file_hash: Optional[str] = None, report_id: Optional[str] = None,
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     實作在 `scripts/_claude_cli.py`（全批次共用）。這裡原本是
     `except Exception: return None`，於是所有失敗都被寫成同一句「CLI 無回應或逾時」
     ——`data/signal_failures.log` 累積 9,273 筆全是那一句，2026-08 連續四天 100%
     失敗時完全看不出該修 PATH、該調 timeout，還是該去看帳號額度。
     """
-    return run_claude(prompt, model, timeout=timeout)
+    return run_claude(
+        prompt, model, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": llm_failures.TASK_SIGNAL, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 # ── 進度計數 ──
@@ -183,10 +209,10 @@ class WorkItem:
     """一份待擷取的研報 + 其 requested 標的清單。"""
 
     __slots__ = ("report_id", "market", "broker", "report_date", "file_name",
-                 "full_text", "requested_codes")
+                 "full_text", "requested_codes", "file_hash")
 
     def __init__(self, report_id, market, broker, report_date, file_name,
-                 full_text, requested_codes):
+                 full_text, requested_codes, file_hash=None):
         self.report_id = report_id
         self.market = market
         self.broker = broker
@@ -194,6 +220,7 @@ class WorkItem:
         self.file_name = file_name
         self.full_text = full_text
         self.requested_codes = requested_codes
+        self.file_hash = file_hash  # 跳過名單（llm_task_failure）的鍵
 
 
 async def _fetch_subset(session, min_brokers, min_reports, top_n):
@@ -244,8 +271,11 @@ def _is_done(requested_codes, existing: dict, reextract: bool) -> bool:
     return True
 
 
-async def build_worklist(min_brokers, min_reports, top_n, reextract):
-    """回傳 (subset, worklist)：subset 供 dry-run 顯示，worklist 為需擷取的報告。"""
+async def build_worklist(min_brokers, min_reports, top_n, reextract, skip_model=None):
+    """回傳 (subset, worklist)：subset 供 dry-run 顯示，worklist 為需擷取的報告。
+
+    skip_model 非 None＝套跳過名單：該 model 下 llm_failures.should_skip 為真的研報不排入。
+    """
     async with SessionFactory() as session:
         subset = await _fetch_subset(session, min_brokers, min_reports, top_n)
         subset_by_market: dict[str, set[str]] = {}
@@ -257,14 +287,24 @@ async def build_worklist(min_brokers, min_reports, top_n, reextract):
             reports = await _fetch_reports(session, market, codes)
             ids = [r[0] for r in reports]
             done_map = await _fetch_done_map(session, ids)
-            for rid, source, report_date, mkt, file_name, full_text, targets in reports:
+            failures = (
+                await llm_failures.fetch_failures(
+                    session, llm_failures.TASK_SIGNAL, [r[7] for r in reports if r[7]]
+                )
+                if skip_model
+                else {}
+            )
+            for rid, source, report_date, mkt, file_name, full_text, targets, fh in reports:
                 requested = sorted(set(targets or []) & codes)
                 if not requested:
                     continue
                 if _is_done(requested, done_map.get(rid, {}), reextract):
                     continue
+                if skip_model and llm_failures.should_skip(failures.get(fh), skip_model):
+                    continue
                 worklist.append(
-                    WorkItem(rid, mkt, source, report_date, file_name, full_text, requested)
+                    WorkItem(rid, mkt, source, report_date, file_name, full_text, requested,
+                             file_hash=fh)
                 )
     return subset, worklist
 
@@ -278,7 +318,7 @@ async def _upsert_rows(rows: list[SignalRow]) -> None:
 
 async def extract_one(
     sem: asyncio.Semaphore, item: WorkItem, excerpt: int, model: str, total: int,
-    retries: int = 2,
+    retries: int = 2, recorder: Optional[llm_failures.FailureRecorder] = None,
 ) -> None:
     global _done, _ok, _rejected, _fail
     ctx = ReportContext(
@@ -294,32 +334,49 @@ async def extract_one(
         (item.full_text or "")[:excerpt],
     )
     parsed: Optional[ParsedReportSignals] = None
+    used_model: Optional[str] = None  # 產出 parsed 那次回應的模型（raw_payload.model）
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
     last_error = "CLI 無回應"
+    http_reason: Optional[str] = None  # HTTP 的審查／截斷／空回應／400（failure_kind）
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
             # 讓它一路拋到 main 中止整批，而不是靜靜地把 N 篇都記成 rejected。
-            res = await asyncio.to_thread(call_cli, prompt, model)
+            res = await asyncio.to_thread(
+                call_cli, prompt, model, file_hash=item.file_hash, report_id=item.report_id
+            )
             if res.text:
                 parsed = parse_signal(res.text, item.requested_codes)
+                used_model = res.model_resp or model
                 if parsed.ok:
                     break
             elif res.error:
                 last_error = res.error
+            if res.text is None and not is_retryable(res):
+                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                http_reason = failure_kind(res) or http_reason
+                break
+        # parsed 非 None ＝至少有一次「回了東西」；之後全數 rejected 就是內容型失敗，
+        # 記入跳過名單。全程沒回應（逾時、非零退出）是環境型，不記。
+        # HTTP 的內容型失敗是結束這一輪的那一次，取它（截斷、審查 1 次就跳過）。
+        fail_reason = http_reason or (llm_failures.UNPARSEABLE if parsed is not None else None)
         if parsed is None:
             # CLI 無回應/逾時 → 落 rejected 列（供之後重跑），並記失敗
             parsed = ParsedReportSignals(ok=False, error=last_error)
 
     try:
-        rows = build_rows(ctx, parsed)
+        rows = build_rows(ctx, parsed, model=used_model)
         await _upsert_rows(rows)
         if all(r.extraction_status == "rejected" for r in rows):
             _rejected += 1
             with open(FAIL_LOG, "a", encoding="utf-8") as f:
                 f.write(f"{item.report_id}\t{item.file_name}\t{parsed.error or 'rejected'}\n")
+            if recorder and fail_reason:
+                await recorder.record(item.file_hash, fail_reason)
         else:
             _ok += 1
+            if recorder:
+                await recorder.clear(item.file_hash)
     except Exception as exc:  # 單筆例外只記 log，不中斷長跑
         _fail += 1
         with open(FAIL_LOG, "a", encoding="utf-8") as f:
@@ -332,8 +389,14 @@ async def extract_one(
 
 async def main(args) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
+    recorder = await llm_failures.open_recorder(llm_failures.TASK_SIGNAL, args.model, SessionFactory)
+    # --reextract 隱含 --retry-blocked：跳過鍵只看 model、不看 prompt／EXTRACTION_VERSION，
+    # 改了 prompt 或版本而強制重跑時，舊 prompt 下累計的失敗不該繼續把研報擋在外面。
+    skip_model = (
+        args.model if recorder is not None and not (args.retry_blocked or args.reextract) else None
+    )
     subset, worklist = await build_worklist(
-        args.min_brokers, args.min_reports, args.top_n, args.reextract
+        args.min_brokers, args.min_reports, args.top_n, args.reextract, skip_model
     )
     print(
         f"子集：{len(subset)} 個 (market, code)｜待擷取報告：{len(worklist)} 份"
@@ -358,9 +421,14 @@ async def main(args) -> None:
     sem = asyncio.Semaphore(args.workers)
     try:
         await asyncio.gather(
-            *(extract_one(sem, item, args.excerpt, args.model, total) for item in worklist)
+            *(
+                extract_one(sem, item, args.excerpt, args.model, total, recorder=recorder)
+                for item in worklist
+            )
         )
     except CliNotFoundError as exc:
+        # 400 升級：觸發的研報先記入跳過名單，下一輪才跳得過去（審查 H2）
+        await record_escalation(exc, recorder)
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷。中止並以非零退出碼收場 ——
         # 「跑完 N 次註定失敗的呼叫、印 ok=0 rejected=N、然後 exit 0」是最糟的結局，
         # 因為排程 unit 仍然是綠的，沒有任何人會知道。
@@ -379,8 +447,16 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=None, help="最多擷取幾份報告（試跑用）")
     ap.add_argument("--excerpt", type=int, default=16000, help="餵給 LLM 的內文字數上限")
     ap.add_argument("--model", default=SIGNAL_MODEL_DEFAULT)
-    ap.add_argument("--reextract", action="store_true", help="忽略 checkpoint，強制重跑")
+    ap.add_argument("--reextract", action="store_true",
+                    help="忽略 checkpoint，強制重跑（隱含 --retry-blocked）")
+    ap.add_argument("--retry-blocked", action="store_true",
+                    help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打；"
+                         "改 prompt 後要加")
     ap.add_argument("--dry-run", action="store_true", help="只印子集與工作項數，不呼叫 LLM")
     # --dry-run 也一起擋，理由同 extract_takeaways.py：鎖的涵蓋範圍不隨旗標而變。
+    args = ap.parse_args()
+    # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
+    if not args.dry_run:  # --dry-run 不呼叫 LLM
+        require_llm_key({llm_failures.TASK_SIGNAL: args.model})
     with claude_cli_lock_or_exit("extract_signals"):
-        asyncio.run(main(ap.parse_args()))
+        asyncio.run(main(args))

@@ -118,7 +118,7 @@ export default function MonitorPage() {
                 <ExtractionPanel extraction={p.extraction} />
                 {/* 上面兩張卡（忠實度、抽取品質）只有筆數；這張列出是哪幾筆，外加倒讚。
                     自己取數、不吃 /api/progress 的輪詢（理由見 useReviewQueue）。 */}
-                <ReviewQueuePanel />
+                <ReviewQueuePanel scale={p.evaluation?.qa ?? null} />
               </div>
               <MarketDistribution markets={p.db.markets} />
               {/* 券商分佈接在市場分佈之後：兩張卡是同一種東西（語料的組成），

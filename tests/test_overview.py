@@ -366,6 +366,75 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
             (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
              ans.stream_completion, ans._log_qa, ans.SessionFactory) = orig
 
+    def _drive_logged(self, stream):
+        """換上指定的串流，回 (events, _log_qa 收到的 (answer, filters))。"""
+        logged: dict = {}
+
+        async def fake_log(question, answer, cited, filters, *a, **k):
+            logged["answer"], logged["filters"] = answer, filters
+            return "qa-id"
+
+        orig = (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
+                ans.stream_completion, ans._log_qa, ans.SessionFactory)
+        try:
+            self._patch_common()
+            ans.stream_completion = stream
+            ans._log_qa = fake_log
+            events = self._drive("給我所有元大的報告種類")
+        finally:
+            (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
+             ans.stream_completion, ans._log_qa, ans.SessionFactory) = orig
+        return events, logged
+
+    def test_overview_passes_max_tokens_task_and_logs_model(self):
+        seen: dict = {}
+
+        async def stream(*a, **k):
+            seen.update(k)
+            yield "共有 734 篇研報。[1]"
+
+        _, logged = self._drive_logged(stream)
+        self.assertEqual(seen["max_tokens"], ans.ASK_OVERVIEW_MAX_TOKENS)
+        self.assertEqual(seen["task"], "ask_overview")
+        self.assertEqual(logged["filters"]["llm_model"], seen["model"])
+        self.assertNotIn("llm_truncated", logged["filters"])
+
+    def test_overview_partial_content_filter_keeps_text_and_notes(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def cut(*a, **k):
+            yield "共有 734 篇"
+            raise LLMUnavailableError("審查", kind="content_filter", partial=True)
+
+        events, logged = self._drive_logged(cut)
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertEqual(events[-1][0], "done")
+        self.assertIn("共有 734 篇", tokens)
+        self.assertIn("內容審查截斷了輸出", tokens)
+        self.assertIn("內容審查截斷了輸出", logged["answer"])
+        self.assertNotIn("元大-台積電", logged["answer"], "已吐字時不得退回模板")
+        self.assertEqual(logged["filters"]["llm_truncated"], "content_filter")
+
+    def test_overview_meta_read_timeout_is_noted(self):
+        async def cut(*a, **k):
+            yield "共有 734 篇"
+            k["meta"].update(truncated=True, truncated_reason="read_timeout")
+
+        events, logged = self._drive_logged(cut)
+        self.assertIn("連線在輸出途中中斷", "".join(p for k, p in events if k == "token"))
+        self.assertEqual(logged["filters"]["llm_truncated"], "read_timeout")
+
+    def test_overview_template_fallback_has_no_llm_model(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def blocked(*a, **k):
+            raise LLMUnavailableError("審查", kind="content_filter")
+            yield  # pragma: no cover
+
+        events, logged = self._drive_logged(blocked)
+        self.assertEqual(events[-1][0], "done")
+        self.assertNotIn("llm_model", logged["filters"], "答案來自模板，不是模型")
+
     def test_overview_partial_stream_failure_propagates(self):
         orig = (rp.hybrid_search, rp.embed_query_cached, ans.aggregate_facets,
                 ans.stream_completion, ans._log_qa, ans.SessionFactory)

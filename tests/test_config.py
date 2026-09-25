@@ -7,7 +7,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.config import _extractor, _faithfulness_min, get_settings  # noqa: E402
+from app.config import _extractor, _faithfulness_min, _positive_float, get_settings  # noqa: E402
 
 
 class SettingsDefaultsTests(unittest.TestCase):
@@ -73,6 +73,44 @@ class SettingsDefaultsTests(unittest.TestCase):
             self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pdfplumber")
         with mock.patch.dict(os.environ, {"EXTRACTOR": "pdfplumbr"}):
             self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pypdf")
+
+    def test_llm_http_total_timeout(self):
+        """DeepSeek 串流的牆鐘總時限：預設 600 秒；0、負數、非數字、nan／inf 退回預設（0 會讓每次都立刻逾時）。"""
+        self.assertEqual(get_settings().llm_http_total_timeout, 600.0)
+        for raw, want in (("300", 300.0), ("", 600.0), ("0", 600.0), ("-5", 600.0), ("abc", 600.0),
+                          ("nan", 600.0), ("inf", 600.0), ("-inf", 600.0), ("NaN", 600.0)):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_HTTP_TOTAL_TIMEOUT": raw}):
+                self.assertEqual(_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0), want)
+
+    def test_llm_model_defaults_match_prior_literals(self):
+        """conftest 強制 LLM_PROVIDER=claude_cli（測試值，生產預設是 deepseek）：各任務的模型與遷移前
+        寫死的字串相同（完整一覽在 test_llm_models）。本檔其他斷言裡的 claude-haiku-4-5 也來自這個測試值。"""
+        s = get_settings()
+        self.assertEqual(s.llm_provider, "claude_cli")
+        self.assertEqual(s.ask_answer_model, "claude-sonnet-5")
+        self.assertEqual(s.ask_web_model, "claude-sonnet-5")
+        self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
+
+    def test_llm_provider_unset_defaults_to_deepseek(self):
+        """PR-28：LLM_PROVIDER 沒設時 Settings 解析為 deepseek；網搜刻意仍是 Claude，生產忠實度 judge
+        自 PR-26/27 起是 deepseek-flash。"""
+        from app import config
+
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("LLM_PROVIDER", None)
+            s = config._load()
+        self.assertEqual(s.llm_provider, "deepseek")
+        self.assertEqual(s.ask_answer_model, "deepseek-flash")
+        self.assertEqual(s.ask_intent_model, "deepseek-flash")
+        self.assertEqual(s.ask_condense_model, "deepseek-flash")
+        self.assertEqual(s.qa_planner_model, "deepseek-flash")
+        self.assertEqual(s.ask_web_model, "claude-sonnet-5")
+        self.assertEqual(s.faithfulness_model, "deepseek-flash")
+        # dataclass 欄位預設與 DEFAULT_PROVIDER 的表一致（直接建構時不自相矛盾）
+        fields = config.Settings.__dataclass_fields__
+        self.assertEqual(fields["llm_provider"].default, "deepseek")
+        self.assertEqual(fields["ask_answer_model"].default, "deepseek-flash")
+        self.assertEqual(fields["ask_web_model"].default, "claude-sonnet-5")
 
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())

@@ -152,6 +152,10 @@ CONDENSE_TIMEOUT = _S.ask_condense_timeout
 
 ROUTE_MODEL = INTENT_MODEL
 ROUTE_TIMEOUT = INTENT_TIMEOUT
+# 輸出上限（只作用在 HTTP 路徑，CLI 忽略；第二版計畫 §8）：分類只要一個 token，改寫是一句
+# 獨立查詢加一行分類。
+ROUTE_MAX_TOKENS = 16
+CONDENSE_MAX_TOKENS = 256
 
 # 判準是這條路徑上唯一的槓桿——只有 Haiku 讀得到它，單元測試測不了模型判斷，
 # 所以每次改動都要拿真實分類器 A/B 量測，不能用猜的。
@@ -225,7 +229,8 @@ async def classify_non_overview(
     try:
         parts: list[str] = []
         async for chunk in stream_completion(
-            question, model=model, system=ROUTE_SYSTEM_PROMPT, timeout=timeout
+            question, model=model, system=ROUTE_SYSTEM_PROMPT, timeout=timeout,
+            max_tokens=ROUTE_MAX_TOKENS, task="ask_intent",
         ):
             parts.append(chunk)
         scope = parse_route("".join(parts))
@@ -304,7 +309,8 @@ async def condense_and_route(
     try:
         parts: list[str] = []
         async for chunk in stream_completion(
-            prompt, model=model, system=CONDENSE_ROUTE_SYSTEM_PROMPT, timeout=timeout
+            prompt, model=model, system=CONDENSE_ROUTE_SYSTEM_PROMPT, timeout=timeout,
+            max_tokens=CONDENSE_MAX_TOKENS, task="ask_condense",
         ):
             parts.append(chunk)
         query, scope = parse_condense_route("".join(parts))

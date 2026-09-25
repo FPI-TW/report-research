@@ -56,6 +56,14 @@ class SyncNewReportsTests(unittest.TestCase):
 
     def test_skip_after_tag(self):
         self.assertEqual(snr.skip_after_tag(None), "skip_untagged")
+        # DeepSeek 的內容審查 → skip_blocked、截斷 → skip_truncated（審查低1：重送結果不變）；
+        # 其他失敗（含 CLI、400、空回應）仍是 skip_untagged（補救指令會重送）
+        self.assertEqual(snr.skip_after_tag(None, "API[content_filter] 觸發供應商內容審查：HTTP 400"), "skip_blocked")
+        self.assertEqual(snr.skip_after_tag(None, "API[truncated] 輸出截斷：max_tokens=1024"), "skip_truncated")
+        for err in ("API[bad_request] 請求被拒", "API[empty] 空回應", "CLI 逾時（150s 內未回應）",
+                    "API[timeout_streamed] 已吐字後逾時：已吐字 3 字後超過總期限",  # 期限型截斷可重放
+                    "回應無法解析為標籤", "content_filter", "truncated", None):
+            self.assertEqual(snr.skip_after_tag(None, err), "skip_untagged", err)
         self.assertEqual(snr.skip_after_tag(_Tag(None, True)), "skip_non_research")
         self.assertEqual(snr.skip_after_tag(_Tag("TW", False)), "skip_non_research")
         self.assertIsNone(snr.skip_after_tag(_Tag("TW", True)))
@@ -165,6 +173,16 @@ class SyncScriptBacklogStepsTests(unittest.TestCase):
         self.assertLess(gate_else, self._invocations("extract_signals.py")[0])
         self.assertLess(gate_else, self._invocations("generate_titles.py")[1])
 
+    def test_title_backlog_excludes_this_rounds_hashes(self):
+        """審查 L2：積壓段依 report_date DESC 取，本輪新研報恰好排最前；不排除的話 4b
+        失敗的那篇同一輪會被打兩次、跳過名單記兩次，「連續 3 輪」實際約 2 輪就跳。
+
+        只在 $HASHES 非空時才帶（空檔或不存在時 read_hashes_file 沒東西可排）。"""
+        call = self._title_backlog_call()
+        self.assertIn('--exclude-hashes-file "$TITLE_BACKLOG_EXCLUDE"', call)
+        self.assertIn('${TITLE_BACKLOG_EXCLUDE:+', call)
+        self.assertIn('if [ -s "$HASHES" ]; then TITLE_BACKLOG_EXCLUDE="$HASHES"; fi', self.src)
+
     def test_title_backlog_failure_is_recorded(self):
         """best-effort 不等於無聲：非零退出要留一筆給 /api/progress 的 unit_failures。"""
         self.assertIn('record_unit_failure "generate_titles_backlog"', self.src)
@@ -213,6 +231,63 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
         ):
             with self.assertRaises(cc.CliNotFoundError):
                 snr._tag_via_cli("x.pdf", "內文")
+
+    def test_deepseek_account_error_aborts_instead_of_skip_untagged(self):
+        """TAG_MODEL 是 DeepSeek 名稱時走 HTTP；401／402／模型不存在往上拋（rc=2），不 spawn CLI、
+        也不讓每一篇變成 skip_untagged（其餘批次的同一條在 tests/test_batch_http_dispatch.py）。"""
+        import httpx
+
+        from app.services import llm_http as lh
+
+        lh._transport = httpx.MockTransport(lambda req: httpx.Response(402, json={"error": {"message": "x"}}))
+        lh._reset_clients()
+        self.addCleanup(lambda: (setattr(lh, "_transport", None), lh._reset_clients()))
+        env = {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "DEEPSEEK_BASE_URL": "https://api.example.test"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(cc.subprocess, "run") as run:
+            with self.assertRaises(cc.LlmEnvironmentError) as ctx:
+                snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash", file_hash="h1")
+        run.assert_not_called()
+        self.assertTrue(str(ctx.exception).startswith("API[quota]"))
+        self.assertIsInstance(ctx.exception, cc.CliNotFoundError)
+
+
+class CacheWriteAfterCommitTests(unittest.TestCase):
+    """審查 L9：抽取快取在 DB commit 之後才寫。它拋例外時，該篇已入庫卻被計成 fail、
+    不進 hashes；重放時又 skip_exists——下游摘要／標題／摘錄永遠漏掉它。"""
+
+    def test_cache_failure_is_fail_open(self):
+        with mock.patch.object(snr, "_write_cache", side_effect=OSError("disk full")), \
+                mock.patch("builtins.print") as printed:
+            ok = snr.write_cache_fail_open(object(), Path("/x/報告.pdf"), None, None, None)
+        self.assertFalse(ok)
+        self.assertIn("WARNING", printed.call_args.args[0])
+        self.assertIn("disk full", printed.call_args.args[0])
+
+    def test_cache_success(self):
+        with mock.patch.object(snr, "_write_cache") as w:
+            self.assertTrue(snr.write_cache_fail_open("res", Path("/x/a.pdf"), "meta", "kgi", None))
+        w.assert_called_once_with("res", Path("/x/a.pdf"), "meta", "kgi", None)
+
+    def test_run_records_hash_before_writing_cache_outside_the_ingest_try(self):
+        """_run 要真 DB，靜態釘住順序：commit → 離開 try → 記 hash → 寫快取（fail-open）。"""
+        src = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+        run = src[src.index("async def _run(args)"):]
+        commit = run.index('await upsert_extraction_log(session, _log("ingested"))')
+        handler = run.index("except Exception as e:", commit)
+        append = run.index("ingested_hashes.append(res.file_hash)")
+        cache = run.index("write_cache_fail_open(res, path, meta, source, report_date)")
+        self.assertLess(commit, handler)
+        self.assertLess(handler, append)   # hash 在 try 之外，入庫的 except 攔不到它
+        self.assertLess(append, cache)     # 先記 hash 再寫快取
+        self.assertNotIn("_write_cache(res", run)  # _run 只經 fail-open 包裝寫快取
+
+    def test_cache_failure_is_counted_in_stats(self):
+        """快取寫失敗只剩 print 的話，持續失敗（磁碟滿）在計數檔裡完全看不到：回傳值要進 stats。"""
+        src = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+        run = src[src.index("async def _run(args)"):]
+        self.assertIn('"cache_fail",', run[: run.index("ingested_hashes: list")])  # 計數器有初始值（每輪都寫出）
+        call = run.index("if not write_cache_fail_open(res, path, meta, source, report_date):")
+        self.assertIn('stats["cache_fail"] += 1', run[call: call + 200])
 
 
 if __name__ == "__main__":

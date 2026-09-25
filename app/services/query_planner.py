@@ -52,6 +52,11 @@ class QueryPlan:
     degraded: bool = False
 
 
+# 規劃與 agentic 證據評估的輸出上限（只作用在 HTTP 路徑，CLI 忽略；第二版計畫 §8）：
+# 兩者都是幾條子查詢的小 JSON。agentic_qa 經本模組屬性取用（與 stream_completion 同一個 stub 點）。
+PLANNER_MAX_TOKENS = 1024
+
+
 @dataclass(frozen=True)
 class PlannerProfile:
     """一個規劃 profile 的預設參數與 prompt 建構器。
@@ -195,6 +200,8 @@ async def plan_queries(
             model=model or spec.model,
             system=system,
             timeout=timeout if timeout is not None else spec.timeout,
+            max_tokens=PLANNER_MAX_TOKENS,
+            task="qa_planner",
         ):
             parts.append(chunk)
         data = parse_plan_json("".join(parts))

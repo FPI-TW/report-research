@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
+import type { EvalSource } from './progressSchema'
 import { ReviewQueuePanel } from './ReviewQueuePanel'
 import { reasonText } from './reviewReasons'
 
@@ -9,7 +10,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 type Handler = (url: URL) => { status?: number; body: unknown }
 
-function mount(handler: Handler) {
+function mount(handler: Handler, scale: EvalSource | null = null) {
   const fetchMock = vi.fn(async (input: string) => {
     const { status = 200, body } = handler(new URL(input, 'http://x'))
     return new Response(JSON.stringify(body), { status })
@@ -17,7 +18,9 @@ function mount(handler: Handler) {
   vi.stubGlobal('fetch', fetchMock)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
-    <QueryClientProvider client={qc}><MemoryRouter><ReviewQueuePanel /></MemoryRouter></QueryClientProvider>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter><ReviewQueuePanel scale={scale} /></MemoryRouter>
+    </QueryClientProvider>,
   )
   return fetchMock
 }
@@ -42,6 +45,12 @@ test('預設是忠實度低分：列出提問、分數與日期，並連回那�
   expect(screen.getByText('2026-09-20')).toBeInTheDocument()
   expect(screen.getByRole('tab', { name: '忠實度低分' })).toHaveAttribute('aria-selected', 'true')
   expect(screen.getByText(/門檻 0\.9/)).toBeInTheDocument()
+})
+
+test('忠實度低分列出該筆的判定尺（舊後端沒有這欄時不印）', async () => {
+  mount(() => ({ body: page('faithfulness', [qa(1, { judge_model: 'claude-haiku-4-5' }), qa(2)]) }))
+  await screen.findByRole('link', { name: '提問 1' })
+  expect(screen.getAllByText('claude-haiku-4-5')).toHaveLength(1)
 })
 
 test('切到抽取品質：以 kind=extraction 重新取數，研報連到閱讀頁、標題缺值回退檔名', async () => {
@@ -113,4 +122,36 @@ test('以現行門檻已不需複核的研報要說出來，不留一格空白',
   }))
   fireEvent.click(await screen.findByRole('tab', { name: '抽取品質' }))
   expect(await screen.findByText('現行門檻下已達標')).toBeInTheDocument()
+})
+
+const scaleBase: EvalSource = {
+  total: 9, checked: 9, degraded: 0, below_min: 1, avg_score: 0.95, latest: '2026-09-26',
+  judge_model: 'deepseek-flash', judge_since: '2026-09-25', other_judge_checked: 6, judge_checked: 3, avg_n: 3,
+}
+
+test('判定尺剛換成 DeepSeek、窗期內還有舊尺 → 忠實度分頁比照監控卡標新量尺', async () => {
+  mount(() => ({ body: page('faithfulness', [qa(1)]) }), scaleBase)
+  await screen.findByRole('link', { name: '提問 1' })
+  expect(screen.getByText(/判定尺 deepseek-flash 是新量尺（自 2026-09-25 起，DeepSeek）/)).toBeInTheDocument()
+})
+
+test('新尺尚無查核 → 新量尺但不編日期', async () => {
+  mount(() => ({ body: page('faithfulness', []) }), { ...scaleBase, judge_since: null, judge_checked: 0 })
+  await screen.findByText('沒有待複核的項目')
+  expect(screen.getByText(/新量尺（尚無查核，DeepSeek）/)).toBeInTheDocument()
+})
+
+test('窗期內已全是新尺、或沒有量尺資料 → 不標新量尺', async () => {
+  mount(() => ({ body: page('faithfulness', []) }), { ...scaleBase, other_judge_checked: 0 })
+  await screen.findByText('沒有待複核的項目')
+  expect(screen.queryByText(/新量尺/)).not.toBeInTheDocument()
+})
+
+test('新量尺標示只在忠實度分頁：切到倒讚就不印', async () => {
+  mount(url => ({
+    body: url.searchParams.get('kind') === 'feedback' ? page('feedback', []) : page('faithfulness', []),
+  }), scaleBase)
+  expect(await screen.findByText(/新量尺/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('tab', { name: '倒讚' }))
+  await waitFor(() => expect(screen.queryByText(/新量尺/)).not.toBeInTheDocument())
 })

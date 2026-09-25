@@ -12,7 +12,8 @@ from eval.judge import JudgeError, judge_json  # noqa: E402
 def _fake_stream(chunks):
     """回一個模擬 stream_completion 的 async generator 工廠（忽略引數）。"""
 
-    async def _gen(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2):
+    async def _gen(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2,
+                   max_tokens=None, task=None):
         for c in chunks:
             yield c
 
@@ -50,8 +51,16 @@ class JudgeJsonTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(JudgeError):
             await judge_json("x", system="s")
 
-    async def test_default_judge_model_is_haiku(self):
+    async def test_default_judge_model_follows_the_provider_table(self):
+        """PR-26/27：deepseek（生產預設）下是 deepseek-flash（新量尺系譜）；claude_cli（conftest 強制的
+        測試值）下仍是 haiku。模組常數在 import 期解析，所以另以 resolve_model 驗 deepseek 那一側。"""
+        from app.services.llm_models import TASK_EVAL_JUDGE, resolve_model
+
         self.assertEqual(judge_mod.DEFAULT_JUDGE_MODEL, "claude-haiku-4-5")
+        env = {"LLM_PROVIDER": "deepseek", "EVAL_JUDGE_MODEL": ""}
+        self.assertEqual(resolve_model(TASK_EVAL_JUDGE, override="", env=env), "deepseek-flash")
+        self.assertEqual(resolve_model(TASK_EVAL_JUDGE, override="", env={**env, "LLM_PROVIDER": "claude_cli"}),
+                         "claude-haiku-4-5")
 
     async def test_json_with_brackets_in_string_value(self):
         """迴歸測試：JSON 字串值內的括號不應干擾深度計算（不平衡括號需靠 in_str 跳過）。"""
@@ -109,9 +118,10 @@ class JudgeRetryTests(unittest.IsolatedAsyncioTestCase):
         return factory, calls
 
     async def test_retries_after_llm_unavailable(self):
-        from app.services.llm import LLMUnavailableError
+        from app.services.llm import UNAVAILABLE_TIMEOUT, LLMUnavailableError
 
-        gen, calls = self._flaky(1, LLMUnavailableError("claude 無有效回應"),
+        # CLI 的逾時（kind 未分類、reason=timeout）：這個重試存在的理由
+        gen, calls = self._flaky(1, LLMUnavailableError("claude 無有效回應", reason=UNAVAILABLE_TIMEOUT),
                                  ['{"statements": ["a"]}'])
         judge_mod.stream_completion = gen
         out = await judge_json("x", system="s")
@@ -147,11 +157,41 @@ class JudgeRetryTests(unittest.IsolatedAsyncioTestCase):
     async def test_retries_zero_disables_retry(self):
         from app.services.llm import LLMUnavailableError
 
-        gen, calls = self._flaky(1, LLMUnavailableError("boom"), ['{"a": 1}'])
+        gen, calls = self._flaky(1, LLMUnavailableError("boom", reason="api_error"), ['{"a": 1}'])
         judge_mod.stream_completion = gen
         with self.assertRaises(LLMUnavailableError):
             await judge_json("x", system="s", retries=0)
         self.assertEqual(calls["n"], 1)
+
+    async def test_only_transient_llm_failures_are_retried(self):
+        """暫時性（過載、網路、逾時、CLI 的 529、CLI 無輸出退出）重試；帳號層級、內容審查、單篇
+        輸入錯誤、HTTP 的空回應與無從判斷的不重試——結果不會變，重打只是再付一次錢。
+
+        ("other", "empty") 是 CLI 的形狀（子程序沒吐字就結束），("empty", "empty") 是 HTTP 的形狀
+        （API 正常結束卻沒有 content）；兩者只差在 kind，見 eval/judge.py 的 `_is_retryable` 註解。"""
+        from app.services.llm import LLMUnavailableError
+
+        retried = [
+            ("overloaded", "api_error"), ("network", "api_error"), ("timeout", "timeout"),
+            ("other", "api_error"), ("other", "timeout"), ("other", "empty"),
+        ]
+        not_retried = [
+            ("quota", "api_error"), ("auth", "api_error"), ("config", "api_error"),
+            ("content_filter", "api_error"), ("bad_request", "api_error"),
+            ("empty", "empty"), ("other", None),
+        ]
+        for (kind, reason), want in [(c, 2) for c in retried] + [(c, 1) for c in not_retried]:
+            with self.subTest(kind=kind, reason=reason):
+                exc = LLMUnavailableError("x", kind=kind, reason=reason)
+                gen, calls = self._flaky(1, exc, ['{"a": 1}'])
+                judge_mod.stream_completion = gen
+                if want == 2:
+                    self.assertEqual(await judge_json("x", system="s", retries=1), {"a": 1})
+                else:
+                    with self.assertRaises(LLMUnavailableError) as cm:
+                        await judge_json("x", system="s", retries=1)
+                    self.assertIs(cm.exception, exc)
+                self.assertEqual(calls["n"], want)
 
     def test_default_timeout_is_evidence_based(self):
         """60s 是失敗的那個值；預設必須明顯高於實測的 22-33s 正常耗時。"""

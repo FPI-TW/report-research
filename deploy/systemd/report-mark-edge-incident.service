@@ -1,0 +1,31 @@
+[Unit]
+Description=對外邊緣事件偵測與通知（消費邊緣探針結果，含去重與提醒節奏）
+# 跑的是與 web、LineBot 完全相同的 scripts/incident_handler.sh，只換一組 INCIDENT_* 環境變數。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：本 unit 自己就是告警器，失敗再觸發告警會形成遞迴。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+# webhook secret 的落點，與 report-mark-incident.service 共用同一個檔（0600 root:root）。
+EnvironmentFile=-/etc/report-mark/alert.env
+# ── 指向邊緣那一組訊號 ───────────────────────────────────────────────────
+Environment=INCIDENT_PROBE_UNIT=report-mark-edge-health.service
+Environment=INCIDENT_TIMER_UNIT=report-mark-edge-health.timer
+Environment=INCIDENT_COMPONENT=edge
+Environment=INCIDENT_MONITOR_COMPONENT=edge_monitor
+# **狀態目錄必須與其他組分開**：`handler.lock` 與 `probe_observation.state` 是固定檔名，
+# 共用目錄會讓實例互相覆寫觀測快取。
+Environment=INCIDENT_STATE_DIR=/home/kashionz/projects/report-mark/data/.incidents-edge
+# 探針 OnBootSec=5min，開機後的合理空窗 300 + 90（探針最壞耗時）≈ 390，取 480（同 LineBot 那組）。
+Environment=INCIDENT_BOOTSTRAP_SECONDS=480
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/incident_handler.sh"'
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

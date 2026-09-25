@@ -24,6 +24,12 @@ Environment=INCIDENT_MONITOR_COMPONENT=edge_monitor
 Environment=INCIDENT_STATE_DIR=/home/kashionz/projects/report-mark/data/.incidents-edge
 # 探針 OnBootSec=5min，開機後的合理空窗 300 + 90（探針最壞耗時）≈ 390，取 480（同 LineBot 那組）。
 Environment=INCIDENT_BOOTSTRAP_SECONDS=480
+# **邊緣探針的 exit 3 是 hold（不開也不關），不是健康。** 3＝「對外失敗，但本機 origin
+# 也不健康」，那是 web 元件的事件，這一組判不出邊緣層本身好不好。handler 預設把 3 當
+# 健康（web 探針的 3 是啟動寬限），沿用那個語意會讓進行中的 edge 事件在 web 重啟那一輪
+# 被 RESOLVED 關掉並刪掉狀態檔——送出一則不實的「已恢復」。hold 讓事件保持 FIRING、
+# 照常提醒，等對外真的回 200（exit 0）才關。web 與 LineBot 兩組不設這個旋鈕。
+Environment=INCIDENT_HOLD_EXIT_CODES=3
 ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/incident_handler.sh"'
 TimeoutStartSec=60
 

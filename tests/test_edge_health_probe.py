@@ -201,6 +201,44 @@ class EdgeProbeStaticTests(unittest.TestCase):
         self.assertNotIn(env["INCIDENT_STATE_DIR"], others)
         self.assertNotEqual(env["INCIDENT_STATE_DIR"].rstrip("/").rsplit("/", 1)[-1], ".incidents")
 
+    def test_incident_unit_holds_on_origin_exit(self) -> None:
+        """exit 3＝origin 也壞了、交給 web 元件：edge 這組必須 hold，不得當健康關事件。
+
+        handler 預設把 3 當健康（web 探針的 3 是啟動寬限）；少了這一行，進行中的 edge 事件會在
+        web 重啟那一輪被 RESOLVED 關掉並刪掉狀態檔，送出不實的「已恢復」。
+        """
+        env = dict(v.split("=", 1) for v in _directives(INCIDENT_SERVICE, "Environment"))
+        codes = env.get("INCIDENT_HOLD_EXIT_CODES", "").replace(",", " ").split()
+        self.assertIn(str(EXIT_ORIGIN), codes)
+        # 反向：web 與 LineBot 兩組不得設（它們的 3 仍是健康）
+        for unit in SYSTEMD_DIR.glob("*incident.service"):
+            if unit == INCIDENT_SERVICE:
+                continue
+            with self.subTest(unit=unit.name):
+                self.assertEqual(
+                    [v for v in _directives(unit, "Environment") if v.startswith("INCIDENT_HOLD_EXIT_CODES=")], []
+                )
+
+    def test_incident_unit_declares_no_onfailure(self) -> None:
+        """本 unit 自己就是告警器，失敗再觸發告警會形成遞迴。"""
+        self.assertEqual(_directives(INCIDENT_SERVICE, "OnFailure"), [])
+
+    def test_incident_components_are_unique_across_instances(self) -> None:
+        """每個 incident 實例的 COMPONENT／MONITOR_COMPONENT 不得重名。
+
+        元件名是 webhook payload 的 `component` 與狀態檔名；重名會讓兩組的告警在 Slack 上
+        分不出來。沒設的實例用 handler 的預設值（web／monitor）。
+        """
+        seen: dict[str, str] = {}
+        units = sorted(SYSTEMD_DIR.glob("*incident.service"))
+        self.assertGreaterEqual(len(units), 3)
+        for unit in units:
+            env = dict(v.split("=", 1) for v in _directives(unit, "Environment") if "=" in v)
+            for key, default in (("INCIDENT_COMPONENT", "web"), ("INCIDENT_MONITOR_COMPONENT", "monitor")):
+                name = env.get(key, default)
+                self.assertNotIn(name, seen, f"{unit.name} 的 {key}={name} 與 {seen.get(name)} 重名")
+                seen[name] = f"{unit.name} {key}"
+
 
 if __name__ == "__main__":
     unittest.main()

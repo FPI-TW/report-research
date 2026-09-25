@@ -14,8 +14,8 @@
 #
 # 職責邊界（與 check_web_health.sh 相同）：本檔只回報「此刻的事實」。incident
 # 狀態、去重、提醒節奏、恢復判定、webhook 投遞全部屬於 P5，**本檔不得實作任何
-# 跨執行的狀態**。P5 不改一個字，跑第二個實例即可（見
-# deploy/systemd/report-mark-edge-incident.service）。
+# 跨執行的狀態**。P5 跑另一個實例即可，只多設一個旋鈕 `INCIDENT_HOLD_EXIT_CODES=3`
+# （見 deploy/systemd/report-mark-edge-incident.service）。
 #
 # 刻意不用 Python／uv／.venv：與 P4 同一個理由（2026-08-18 的根因是 venv 損毀）。
 # 這裡只用 curl／coreutils。
@@ -31,7 +31,8 @@ EDGE_HEALTH_RETRIES="${EDGE_HEALTH_RETRIES:-3}"
 EDGE_HEALTH_RETRY_WAIT="${EDGE_HEALTH_RETRY_WAIT:-15}"
 EDGE_ORIGIN_TIMEOUT="${EDGE_ORIGIN_TIMEOUT:-5}"
 
-# 退出碼契約（P5 依此分級：1 為 CRITICAL、4 為 WARNING、0/3 視為健康）
+# 退出碼契約（P5 依此分級：1 為 CRITICAL、4 為 WARNING、0 為健康；3 在 edge 實例是 hold
+# ——不開也不關，因為 origin 壞時判不出邊緣層本身好不好，見 edge incident unit 的註解）
 EXIT_OK=0        # 對外 /healthz 回 200
 EXIT_DOWN=1      # 拿到 HTTP 回應但不是 200，且本機 origin 健康＝邊緣層壞了（nginx／隧道）
 EXIT_ORIGIN=3    # 對外失敗，但本機 origin 也不健康＝web 自己壞了，由 web 元件負責（unit 需宣告 SuccessExitStatus=3）
@@ -78,7 +79,8 @@ done
 
 # ── 失敗歸因 ──────────────────────────────────────────────────────────────
 # origin 先壞：web 自己不健康時，對外一定也失敗（nginx 回 502／503）。那是 web 元件的事件，
-# 這裡再開一個只會重複通知同一件事。回 3（視為健康）並把原因寫進 reason。
+# 這裡再開一個只會重複通知同一件事。回 3 並把原因寫進 reason；edge 那組 P5 以
+# INCIDENT_HOLD_EXIT_CODES=3 把它當 hold（不開也不關），進行中的 edge 事件不會因此被關掉。
 # 本機 origin 連不上、逾時、非 200 都算「origin 不健康」——與 check_web_health.sh 的判準一致。
 origin_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "$EDGE_ORIGIN_TIMEOUT" "$EDGE_ORIGIN_URL" 2>/dev/null)" \
     || origin_code=000

@@ -83,12 +83,33 @@ class SettingsDefaultsTests(unittest.TestCase):
                 self.assertEqual(_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0), want)
 
     def test_llm_model_defaults_match_prior_literals(self):
-        """LLM_PROVIDER 預設 claude_cli：各任務的模型與遷移前寫死的字串相同（完整一覽在 test_llm_models）。"""
+        """conftest 強制 LLM_PROVIDER=claude_cli（測試值，生產預設是 deepseek）：各任務的模型與遷移前
+        寫死的字串相同（完整一覽在 test_llm_models）。本檔其他斷言裡的 claude-haiku-4-5 也來自這個測試值。"""
         s = get_settings()
         self.assertEqual(s.llm_provider, "claude_cli")
         self.assertEqual(s.ask_answer_model, "claude-sonnet-5")
         self.assertEqual(s.ask_web_model, "claude-sonnet-5")
         self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
+
+    def test_llm_provider_unset_defaults_to_deepseek(self):
+        """PR-28：LLM_PROVIDER 沒設時 Settings 解析為 deepseek；網搜與 judge 刻意仍是 Claude。"""
+        from app import config
+
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("LLM_PROVIDER", None)
+            s = config._load()
+        self.assertEqual(s.llm_provider, "deepseek")
+        self.assertEqual(s.ask_answer_model, "deepseek-flash")
+        self.assertEqual(s.ask_intent_model, "deepseek-flash")
+        self.assertEqual(s.ask_condense_model, "deepseek-flash")
+        self.assertEqual(s.qa_planner_model, "deepseek-flash")
+        self.assertEqual(s.ask_web_model, "claude-sonnet-5")
+        self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
+        # dataclass 欄位預設與 DEFAULT_PROVIDER 的表一致（直接建構時不自相矛盾）
+        fields = config.Settings.__dataclass_fields__
+        self.assertEqual(fields["llm_provider"].default, "deepseek")
+        self.assertEqual(fields["ask_answer_model"].default, "deepseek-flash")
+        self.assertEqual(fields["ask_web_model"].default, "claude-sonnet-5")
 
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())

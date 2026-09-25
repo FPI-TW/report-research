@@ -11,7 +11,6 @@ import os
 from dataclasses import dataclass
 
 from app.services.llm_models import (
-    CLAUDE_DEFAULTS,
     DEFAULT_PROVIDER,
     TASK_ASK_ANSWER,
     TASK_ASK_CONDENSE,
@@ -19,6 +18,7 @@ from app.services.llm_models import (
     TASK_ASK_WEB,
     TASK_FAITHFULNESS,
     TASK_QA_PLANNER,
+    default_model,
     provider,
     resolve_model,
 )
@@ -227,9 +227,10 @@ class Settings:
 
     # LLM 供應商與線上任務的模型（app/services/llm_models.py 的 resolve_model；旋鈕名見其
     # TASK_ENV）。ask_intent_model 等既有欄位也經同一張表解析，放在各自原本的區段。
+    # 欄位預設跟著 DEFAULT_PROVIDER 的表（`_load` 一律顯式傳值，這裡只管直接建構時不自相矛盾）。
     llm_provider: str = DEFAULT_PROVIDER
-    ask_answer_model: str = CLAUDE_DEFAULTS[TASK_ASK_ANSWER]   # 總覽、主答（不開網搜）、評測生成
-    ask_web_model: str = CLAUDE_DEFAULTS[TASK_ASK_WEB]         # 時效題網搜、主答開網搜
+    ask_answer_model: str = default_model(TASK_ASK_ANSWER)   # 總覽、主答（不開網搜）、評測生成
+    ask_web_model: str = default_model(TASK_ASK_WEB)         # 時效題網搜、主答開網搜
     # DeepSeek 串流（llm.stream_completion 的 HTTP 路徑）的牆鐘總時限（秒，從呼叫開始算）。
     # 只是最後一道上限：首字前有首字期限，吐字後正常靠 max_tokens 與 read 逾時收尾；伺服器
     # 每 60 秒內滴一點內容時兩者都收不了。到期且已吐字＝截斷（附註＋filters.llm_truncated）。
@@ -265,8 +266,8 @@ def _load() -> Settings:
         # 模型旋鈕一律經 llm_models.resolve_model：非空的任務旋鈕優先，否則查 LLM_PROVIDER 的
         # 預設表；空字串視同未設（tests/conftest.py 把全部旋鈕強制成 ""）。
         # 改寫前 ASK_CONDENSE_MODEL／QA_PLANNER_MODEL 未設時會跟著 ASK_INTENT_MODEL 走；
-        # 現在各自查表（claude_cli 下三者同為 claude-haiku-4-5，生產環境檔沒有設這三個鍵，
-        # 行為不變）。理由同 FAITHFULNESS_MODEL 的解耦：換一個旋鈕不該靜默換掉另一個任務。
+        # 現在各自查表（claude_cli 表三者同為 claude-haiku-4-5、deepseek 表三者同為 deepseek-flash，
+        # 生產環境檔沒有設這三個鍵）。理由同 FAITHFULNESS_MODEL 的解耦：換一個旋鈕不該靜默換掉另一個任務。
         ask_intent_model=resolve_model(TASK_ASK_INTENT),
         ask_intent_timeout=float(os.getenv("ASK_INTENT_TIMEOUT", "20")),
         ask_condense_model=resolve_model(TASK_ASK_CONDENSE),

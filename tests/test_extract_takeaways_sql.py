@@ -455,12 +455,37 @@ class RowToParamsTests(unittest.TestCase):
         self.assertNotEqual(et.row_to_params(row)["id"], et.row_to_params(row)["id"])
 
 
+# 摘錄模型守門（原「不可退成更小的模型」，遷移 PR-28 依 D-A 改寫意圖）：逐字引文重準確度，改寫
+# 一個字就錨不到。模型不再以「大小」判斷，而以「任一方式錨定成功率」（exact／normalized／prefix
+# 任一方式錨上都算成功，分母是有 quote 的條目）決定——9/24 探測同一批 200 篇：deepseek-flash
+# 95.0%、Claude 既有摘錄 90.9%（exact 只當觀測值：86.0% vs 39.9%）。
+# 這張表只收**量過錨定率**的模型。要換成其他模型（包括 haiku 這類更小的模型、或 v4-pro），先依
+# D-A 在探測集上量錨定成功率、差值 ≥ −5pp（D-N），再把結果寫進這張表——不要只為了讓測試綠而加。
+ANCHOR_APPROVED_TAKEAWAY_MODELS = {
+    "deepseek-flash": "9/24 探測：任一方式錨定 95.0%（190/200）",
+    "claude-sonnet-5": "9/24 探測：同批研報既有摘錄任一方式錨定 90.9%（180/198）；遷移前的基準",
+}
+
+
 class CliArgsTests(unittest.TestCase):
     # argv 組裝（旗標、NUL 剝除）已移到 scripts/_claude_cli.py，
     # 對應斷言在 tests/test_claude_cli.py；這裡只留屬於本腳本的選擇。
-    def test_default_model_is_sonnet(self):
-        """逐字引文重準確度（改寫一個字就錨不到）→ 不可退成更小的模型。"""
-        self.assertIn("sonnet", et.TAKEAWAY_MODEL_DEFAULT)
+    def test_default_model_is_anchoring_approved(self):
+        """模組常數（conftest 的 claude_cli 下）與每張預設表的摘錄模型都必須是量過錨定率的模型，
+        不可為空、不可意外變成未量過的模型（理由見 ANCHOR_APPROVED_TAKEAWAY_MODELS 的註解）。"""
+        from app.services import llm_models as lm
+
+        self.assertIn(et.TAKEAWAY_MODEL_DEFAULT, ANCHOR_APPROVED_TAKEAWAY_MODELS)
+        for prov in lm.PROVIDERS:
+            with self.subTest(provider=prov):
+                self.assertIn(lm.default_model(lm.TASK_TAKEAWAY, prov), ANCHOR_APPROVED_TAKEAWAY_MODELS)
+
+    def test_production_default_takeaway_model_is_flash(self):
+        """生產預設（LLM_PROVIDER 未設＝deepseek）下的摘錄模型：D6 依探測與 D-A 定為 flash。"""
+        from app.services import llm_models as lm
+
+        env = {k: "" for k in lm.TASK_ENV.values()}
+        self.assertEqual(lm.resolve_model(lm.TASK_TAKEAWAY, env=env), "deepseek-flash")
 
 
 class PromptTests(unittest.TestCase):

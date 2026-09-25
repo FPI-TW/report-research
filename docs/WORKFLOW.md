@@ -1,6 +1,6 @@
 # report-mark 運作流程
 
-券商研報從 `研報自動匯入/` 進來，經過抽文字 → Claude 多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
+券商研報從 `研報自動匯入/` 進來，經過抽文字 → LLM（DeepSeek）多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
 
 ## 全景流程圖
 
@@ -10,18 +10,18 @@
    ▼ ① scripts/extract_all.py             pdfplumber 版面層 / pypdf 回退 / python-docx
 data/extracted/<file_hash>.json            per-hash 快取（text、blocks 索引、quality）
    │
-   ▼ ② scripts/tag_all_cli.py             claude -p（Haiku）市場 / 商品類型 / 標的
+   ▼ ② scripts/tag_all_cli.py             LLM（deepseek-flash）市場 / 商品類型 / 標的
 data/tags/<file_hash>.json
    │
    ▼ ③ scripts/ingest_all.py              gate: is_research 且 market 非空
 research.research_report ──── research.report_chunk（BGE-M3 dense + content_norm）
 research.extraction_log（每個 hash 一列，含未入庫者）
    │
-   ├─▶ ④ scripts/extract_takeaways.py     Sonnet → research.report_takeaway（閱讀頁）
-   ├─▶ ⑤ scripts/extract_signals.py       Sonnet → research.report_signal（觀點雷達）
-   ├─▶ ⑥ scripts/generate_summaries.py    Sonnet → research_report.summary
-   ├─▶ ⑦ scripts/generate_titles.py       Sonnet → research_report.title
-   └─▶ ⑧ scripts/generate_brief.py        Sonnet → research.report_brief（每日簡報）
+   ├─▶ ④ scripts/extract_takeaways.py     Flash → research.report_takeaway（閱讀頁）
+   ├─▶ ⑤ scripts/extract_signals.py       Flash → research.report_signal（觀點雷達）
+   ├─▶ ⑥ scripts/generate_summaries.py    Flash → research_report.summary
+   ├─▶ ⑦ scripts/generate_titles.py       Flash → research_report.title
+   └─▶ ⑧ scripts/generate_brief.py        Flash → research.report_brief（每日簡報）
    │
    ▼ web/server.py（:8097）
 檢索 /api/search ── 問答 /api/ask ── 閱讀 /api/reading ── 雷達 /api/radar ── 簡報 /api/brief
@@ -31,14 +31,14 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ## 責任分工
 
-| 決定性（Python） | 語意（Claude） |
+| 決定性（Python） | 語意（LLM，預設 `deepseek-flash`） |
 |---|---|
-| 檔案雜湊、檔名解析、抽取、版面分析、品質評分 | 市場與標的標註（Haiku） |
-| 切塊、嵌入、入庫、去重、斷點續跑 | 摘要、顯示標題（Sonnet） |
-| 混合檢索、tier、選篇、rerank、脈絡組裝 | 問答生成、追問（Sonnet／Haiku） |
-| 路由前檢詞表、overview 統計 | 五類路由分類（Haiku） |
+| 檔案雜湊、檔名解析、抽取、版面分析、品質評分 | 市場與標的標註 |
+| 切塊、嵌入、入庫、去重、斷點續跑 | 摘要、顯示標題 |
+| 混合檢索、tier、選篇、rerank、脈絡組裝 | 問答生成、追問 |
+| 路由前檢詞表、overview 統計 | 五類路由分類 |
 | 引文錨定、訊號正規化與狀態判定、共識聚合、窗期 | 摘錄與訊號擷取、簡報撰寫 |
-| 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（Haiku） |
+| 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（judge 刻意仍是 `claude-haiku-4-5`，待 PR-18＋26/27 切換） |
 
 批次以檔案 `file_hash` 為鍵、冪等可續跑；失敗寫 `data/*_failures.log`，不阻斷其他檔。
 
@@ -67,9 +67,9 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 - 快取鍵含 `is_admin`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`（檔名解析）與 `extractor`、`extraction_version`、`quality`、`blocks`。
 - 細節與診斷紀錄見 `docs/EXTRACTION.md`。
 
-### ② 多維標註：`scripts/tag_all_cli.py`（Claude CLI）
+### ② 多維標註：`scripts/tag_all_cli.py`（LLM）
 
-- 輸入 `data/extracted/`，輸出 `data/tags/<file_hash>.json`；已有標籤檔即跳過。`--workers`（預設 8）、`--limit`、`--excerpt`（預設 10000 字）。模型 `claude-haiku-4-5`。
+- 輸入 `data/extracted/`，輸出 `data/tags/<file_hash>.json`；已有標籤檔即跳過。`--workers`（預設 8）、`--limit`、`--excerpt`（預設 10000 字）。模型 `TAG_MODEL`（未設查表，預設 `deepseek-flash`）。
 - 標籤 schema（`app/services/tagging.py`）：`market`（findb 代碼）、`is_research`、`confidence`、`instrument_types`、`relates_stock`、`relates_futures`、`stock_targets`（四碼數字，最多 8 個）、`futures_targets`（小詞表）。Python 端 `parse_tags` 正規化：舊中文標籤經 `LEGACY_TO_FINDB` 對照，詞表外的值丟棄。
 - 取 `scripts/_claude_lock.py` 的 flock，撞鎖 rc=75。
 - 提高 `--workers` 前依 `.env.example` 算式重算 DB 連線數。
@@ -81,27 +81,27 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 - 收尾 `ANALYZE research.report_chunk`（可能久於 60 秒，走 `relax_statement_timeout`）。
 - `make ingest-lowio` 會關 `fsync`，SIGKILL 後不還原；處置 `make restore-durability`。除非使用者明講不要跑。
 
-### ④ 重點摘錄：`scripts/extract_takeaways.py`（Claude CLI，閱讀頁用）
+### ④ 重點摘錄：`scripts/extract_takeaways.py`（LLM，閱讀頁用）
 
 - 輸入 `research_report.full_text`（經 `clean_extracted`，表格區塊用 `cache.strip_tables` 拿掉），輸出 `research.report_takeaway`。每篇 3–5 條 `{claim, quote}`，`quote` 逐字不轉繁、由 `reading/anchor.locate_quote` 錨回正典文字，`claim` 過 `to_traditional`。
 - 每份報告單一交易內 DELETE ＋ 全量 INSERT（不是 upsert）；`text_sha256` 對 canonical 全文算，是錨點有效性的守門。
-- `--since-days`（預設 90，濾 `report_date`）、`--hashes-file`（生產用）、`--workers`（2）、`--limit`、`--excerpt`（24000）、`--reextract`、`--dry-run`（也取鎖）。模型 `claude-sonnet-5`。
+- `--since-days`（預設 90，濾 `report_date`）、`--hashes-file`（生產用）、`--workers`（2）、`--limit`、`--excerpt`（24000）、`--reextract`、`--dry-run`（也取鎖）。模型 `TAKEAWAY_MODEL`（預設 `deepseek-flash`：依「任一方式錨定成功率」選定，9/24 探測 95.0%，Claude 既有摘錄 90.9%）。
 
-### ⑤ 訊號擷取：`scripts/extract_signals.py`（Claude CLI，觀點雷達用）
+### ⑤ 訊號擷取：`scripts/extract_signals.py`（LLM，觀點雷達用）
 
 - 輸入 `full_text`，輸出 `research.report_signal`（一列＝研報 × 標的）。LLM 依固定 schema 擷取 `rating_raw`、目標價與 evidence、EPS 估計、四維論點（`outlook`、`catalyst`、`risk`、`valuation`）；Python 正規化評等（`buy`／`overweight`／`neutral`／`underweight`／`sell`／`unknown`）、幣別、判 `extraction_status`（`valid`／`partial`／`rejected`）。`thesis_dimensions[*].evidence` 逐字不轉繁。
 - 只跑高覆蓋子集：`--min-brokers`（3）、`--min-reports`（5）、`--top-n`（50）；`--workers`（2）、`--limit`、`--excerpt`（16000）、`--reextract`、`--dry-run`。`EXTRACTION_VERSION = "sig-2026-07-15.v1"`。
 - 空是常態：雷達 API 對未擷取的研報回 `pending_extraction`。
 
-### ⑥ 摘要：`scripts/generate_summaries.py`（Claude CLI）
+### ⑥ 摘要：`scripts/generate_summaries.py`（LLM）
 
 - 補 `summary IS NULL` 的研報 2–3 句中文摘要（最多 400 字，過 `to_traditional`）。`--workers`（2）、`--limit`、`--excerpt`（12000）、`--hashes-file`。
 
-### ⑦ 顯示標題：`scripts/generate_titles.py`（Claude CLI）
+### ⑦ 顯示標題：`scripts/generate_titles.py`（LLM）
 
 - 補 `title IS NULL`：`title_source` 三值 `extracted`（原文標題）、`translated`（英文譯中）、`generated`（無標題時生成）；`title_original` 留原文。失敗維持 NULL，前端回退檔名。`--workers`（2）、`--limit`、`--excerpt`（3000）、`--hashes-file`。
 
-### ⑧ 每日簡報：`scripts/generate_brief.py`（Claude CLI，簡報頁用）
+### ⑧ 每日簡報：`scripts/generate_brief.py`（LLM，簡報頁用）
 
 - 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7），用 `created_at` 界定。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
 - `--date`、`--after-hour`（9，未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 CLI 呼叫。來源清單由 Python 記錄。

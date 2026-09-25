@@ -86,7 +86,7 @@ EXTS = {".pdf", ".docx", ".doc"}
 ABNORMAL_COUNTERS = ("fail", "skip_untagged", "skip_blocked", "skip_truncated")
 
 # 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
-# （app/services/llm_models.py；claude_cli 下是 claude-haiku-4-5）。
+# （app/services/llm_models.py；預設 deepseek 下是 deepseek-flash）。
 TAG_MODEL = resolve_model(TASK_TAG)
 # 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）；與 tag_all_cli 同值。
 TAG_MAX_TOKENS = 1024

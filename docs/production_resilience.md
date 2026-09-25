@@ -544,8 +544,11 @@ sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo sys
 `scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的
 鍵），並在取批次鎖之前預檢——有白名單模型卻沒金鑰、
 有未知模型名、或檔內有重複的鍵，一律 **rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
-執行）。全部用 Claude 時不要求金鑰；但這份檔不存在或讀不到時印一行 `WARNING`（不中止）——claude CLI
-已於 2026-09-23 停用（OAuth 過期），「全部是 Claude＋檔沒讀到」幾乎一定是切 DeepSeek 沒生效。通過時印
+執行）。`LLM_PROVIDER` 預設 `deepseek`（未設、空值、未知值都是），所以**這份檔不存在時批次照樣解析到
+DeepSeek**，又因批次不讀 repo 根 `.env` 而拿不到金鑰，預檢 **rc=2** 並提示依範例檔安裝——sync 殼把 rc=2
+當帳號／環境型中止告警，不會靜默退回已失效的 CLI。全部用 Claude 時不要求金鑰，但一律印一行 `WARNING`
+（不中止、說出是哪個設定解析成 Claude）：claude CLI 已於 2026-09-23 停用，預設又是 deepseek，全是 Claude
+只會是有人顯式設了 `LLM_PROVIDER=claude_cli`／`claude_only` 或 `claude-*` 旋鈕。通過時印
 `fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
 
 **claude CLI 認證失效＝整批中止**：CLI 回報認證失敗（`Failed to authenticate`、`OAuth … expired`、

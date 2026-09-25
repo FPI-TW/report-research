@@ -954,7 +954,8 @@ class SyncInlineTagTests(HttpMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(rec_holder["rec"].escalated), [f"{i:064d}" for i in (1, 2)])
 
     async def test_claude_cli_path_unchanged(self):
-        """預設 claude_cli：CLI 失敗照舊是 skip_untagged、不記跳過名單、skip_blocked 計數存在但為 0。"""
+        """conftest 的 claude_cli（測試值；生產預設 deepseek）：CLI 失敗照舊是 skip_untagged、不記跳過名單、
+        skip_blocked 計數存在但為 0。"""
         import subprocess as sp
 
         fail = sp.CompletedProcess([], 1, "", "Content Exists Risk")  # CLI 的 stderr 長得像也不算

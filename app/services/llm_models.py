@@ -19,13 +19,21 @@
 1. 任務旋鈕（`TASK_ENV`）有非空值就用它。**空字串視同未設**：tests/conftest.py 會把所有
    旋鈕強制設成 `""`，擋住部署目錄 `.env` 的值滲進測試。
 2. 否則查 `LLM_PROVIDER` 對應的預設表：
-   - `claude_cli`（預設）：現行 Claude 預設表，值與遷移前各呼叫點寫死的字串逐字相同。
-   - `deepseek`：DeepSeek 預設表（第二版計畫 §8）。judge 兩列仍是 Claude——judge 要等校準
-     後由 PR-26／PR-27 才換；網搜那列也仍是 Claude（DeepSeek 網搜延後到 P9）。
-   - `claude_only`：緊急回退。**任務旋鈕裡白名單內的值一律忽略**，全部用 Claude 預設表，
-     記 WARNING。所以任何階段只要改這一個鍵就能全部回到 CLI，不必逐一清掉任務旋鈕。
-     旋鈕裡的 Claude 名稱照用（那本來就是 CLI）。
-   - 未知值記 ERROR 並當成 `claude_cli`：打錯字不得讓任何任務被送到付費端點。
+   - `deepseek`（**預設**，遷移 PR-28 起）：DeepSeek 預設表（第二版計畫 §8）。有兩處**刻意**
+     仍是 Claude，見下方 `DEEPSEEK_DEFAULTS` 的註解：judge 兩列（由 PR-18＋PR-26/27 切換）、
+     網搜那列（生產以 `ASK_ENABLE_WEB=0` 關閉網搜，由 PR-W 處理）。
+   - `claude_cli`：遷移前的 Claude 預設表，值與遷移前各呼叫點寫死的字串逐字相同。
+   - `claude_only`：遷移期的緊急回退。**任務旋鈕裡白名單內的值一律忽略**，全部用 Claude
+     預設表，記 WARNING。旋鈕裡的 Claude 名稱照用（那本來就是 CLI）。
+   - 未知值記 ERROR 並當成預設（`deepseek`）：打錯字的效果與沒設相同。
+3. 空值（沒設或空字串）＝預設 `deepseek`。所以 `/etc/default/report-mark-llm` 缺檔時批次仍解析
+   到 DeepSeek，並因批次不讀 repo 根 `.env`、拿不到金鑰而在預檢以 rc=2 明確失敗
+   （`scripts/_llm_env.require_llm_key`），不會退回已失效的 CLI。
+
+**claude CLI 已於 2026-09-23 永久放棄**（OAuth 過期、不再修復登入，計畫 D-C）：`claude_cli` 與
+`claude_only` 兩個值仍是合法值、解析規則不變（留到 PR-M 再決定去留），但**實際上已沒有可用的
+後端**——設了等於解析到 CLI 的任務全部失敗。回退只剩「修 prompt 或換 `deepseek-v4-pro`」。
+測試仍以 `claude_cli` 跑（tests/conftest.py 強制設定，理由見該檔），不代表生產預設。
 
 注意：預設表只決定「名稱」。名稱在白名單內時實際走不走 HTTP，由分派層決定：
 
@@ -147,12 +155,16 @@ CLAUDE_DEFAULTS: dict[str, str] = {
     TASK_BRIEF: "claude-sonnet-5",
 }
 
-# DeepSeek 表（第二版計畫 §8；thinking 一律由 llm_http 關掉）。
-# - 摘錄、訊號要逐字引文，D6 在 P2 比對後才拍板 flash 或 v4-pro；拍板前先填 flash，
-#   PR-28 翻轉預設時依 D6 更新（tests/test_extract_takeaways_sql.py 的「不可退成小模型」
-#   屆時改寫意圖）。
-# - judge 兩列維持 Claude：換 judge＝換量尺，要等校準（PR-26 離線、PR-27 生產）。
-# - 網搜維持 Claude：DeepSeek 網搜（Tavily 工具迴圈）延後到 P9，遷移期網搜仍走 CLI。
+# DeepSeek 表（第二版計畫 §8；thinking 一律由 llm_http 關掉）。自 PR-28 起是預設表。
+# - 摘錄、訊號要逐字引文：D6 依 9/24 探測與 D-A（主判準＝exact／normalized／prefix 任一方式的
+#   錨定成功率）定為 flash——flash 95.0%，同批研報的 Claude 既有摘錄 90.9%。
+#   tests/test_extract_takeaways_sql.py 以白名單守門，換成未量過錨定率的模型要先量。
+# - judge 兩列**刻意**維持 Claude（CLI 已失效，生產忠實度 judge 現為 fail-open degraded，生產
+#   以 `ASK_FAITHFULNESS_ENABLED=0` 暫停）：換 judge＝換量尺，由 PR-18＋PR-26/27 一起切成
+#   DeepSeek、開新的基準線系譜。
+# - 網搜**刻意**維持 Claude：DeepSeek 網搜延後到 P9；`llm.stream_completion` 對
+#   `allow_web=True`＋白名單 model 一律拋 config 錯誤，填 DeepSeek 名稱不會讓網搜變可用。
+#   生產以 `ASK_ENABLE_WEB=0` 關閉網搜，前端開關的隱藏由 PR-W 處理。
 DEEPSEEK_DEFAULTS: dict[str, str] = {
     TASK_ASK_ANSWER: "deepseek-flash",
     TASK_ASK_WEB: "claude-sonnet-5",
@@ -174,7 +186,9 @@ PROVIDER_CLAUDE_CLI = "claude_cli"
 PROVIDER_DEEPSEEK = "deepseek"
 PROVIDER_CLAUDE_ONLY = "claude_only"
 PROVIDERS = (PROVIDER_CLAUDE_CLI, PROVIDER_DEEPSEEK, PROVIDER_CLAUDE_ONLY)
-DEFAULT_PROVIDER = PROVIDER_CLAUDE_CLI
+# PR-28：預設改 deepseek。CLI 已放棄，預設留在 claude_cli 的話，`/etc/default/report-mark-llm`
+# 缺檔（sync unit 是 `EnvironmentFile=-`，缺檔照跑）時批次會靜默退回失效的 CLI。
+DEFAULT_PROVIDER = PROVIDER_DEEPSEEK
 
 # 同一則警告在一個行程裡只說一次：各模組在 import 期各自解析，不去重會一口氣印十幾行。
 _LOGGED: set[tuple[str, ...]] = set()
@@ -188,7 +202,7 @@ def _log_once(level: int, key: tuple[str, ...], msg: str, *args: object) -> None
 
 
 def provider(env: Mapping[str, str] | None = None) -> str:
-    """`LLM_PROVIDER` 正規化後的值；空值＝預設，未知值記 ERROR 並當成 `claude_cli`。"""
+    """`LLM_PROVIDER` 正規化後的值；空值＝預設（`deepseek`），未知值記 ERROR 並當成預設。"""
     env = os.environ if env is None else env
     raw = (env.get("LLM_PROVIDER") or "").strip().lower()
     if not raw:
@@ -257,7 +271,9 @@ def diagnose(
     """啟動自檢：解析結果 → [(logging level, 訊息)]。純函式，web/server.py 負責記錄。
 
     - 白名單名稱而 `DEEPSEEK_API_KEY` 為空 → ERROR（那些任務每一次呼叫都會失敗）。
-    - `claude-*` → 沿用既有的 claude CLI 路徑檢查（找不到是 ERROR，找到記 WARNING 留路徑）。
+    - `claude-*` → 沿用既有的 claude CLI 路徑檢查（找不到是 ERROR，找到記 WARNING 留路徑），
+      兩者都列出解析到 Claude 的任務。CLI 已放棄，找得到也不代表能用（認證失效由呼叫時的
+      `kind="auth"` 回報）；預設 deepseek 下只剩網搜與 judge 會走到這條。
     - 其他名稱 → ERROR「未知模型名」（打錯字、CLI 別名）。
     - 網搜任務（`ask_web`）解析到白名單名稱 → ERROR：DeepSeek 網搜延後到 P9，
       `llm.stream_completion` 對 `allow_web=True`＋白名單 model 一律拋 config 錯誤。
@@ -275,13 +291,15 @@ def diagnose(
             + "、".join(by_kind["http"]),
         ))
     if by_kind["claude"]:
+        # 列出是哪些任務：預設 deepseek 下只剩網搜與 judge 解析到 Claude，「問答全數失敗」不再成立。
+        claude_tasks = "、".join(by_kind["claude"])
         if claude_path:
-            out.append((logging.WARNING, f"claude CLI：{claude_path}"))
+            out.append((logging.WARNING, f"claude CLI：{claude_path}（{claude_tasks}）"))
         else:
             out.append((
                 logging.ERROR,
-                "claude CLI 不在 PATH 上：問答會全數失敗（檢查 report-mark-web.service.d/path.conf）；"
-                f"PATH={path_env}",
+                f"claude CLI 不在 PATH 上，這些任務會失敗：{claude_tasks}"
+                f"（檢查 report-mark-web.service.d/path.conf）；PATH={path_env}",
             ))
     web_model = resolved.get(TASK_ASK_WEB)
     if is_http_model(web_model):

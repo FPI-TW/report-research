@@ -40,6 +40,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.services.extraction import EXTRACTION_VERSION
 from app.services.filename import source_display
+from app.services.judge_schema import CURRENT_JUDGE_SQL
 from web import auth, deps
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,41 @@ router = APIRouter()
 # 「待複核」的分數門檻與離線評測（scripts/eval_faithfulness.py）共用 FAITHFULNESS_MIN，
 # 避免監控頁自成一套標準。
 _FAITHFULNESS_MIN = get_settings().faithfulness_min
+# 現行生產 judge。分數類統計只計它量的列（app/services/judge_schema.py），與待複核佇列、
+# scripts/eval_faithfulness.py 同一條規則。
+_JUDGE_MODEL = get_settings().faithfulness_model
+
+# M8 查核統計的欄位：(回應鍵, SQL 聚合)。抽成常數讓測試逐欄核對過濾條件——只斷言
+# 「整條 SQL 有 :judge_model」的話，漏掉任何一欄的條件都照樣綠。
+#
+# 兩種語意刻意分開：
+# - **覆蓋率類**（total、checked、latest）計所有 judge：換 judge 之後「有沒有在查」這件事
+#   沒有變，主數字不能因為換尺就驟降，看起來像抽查路徑崩了。
+# - **分數類**（judge_checked、degraded、below_min、avg_score、avg_n、judge_since）只計現行
+#   judge（CURRENT_JUDGE_SQL，缺 judge_model 的舊列視為 claude-haiku-4-5）：兩把尺的分數混著
+#   平均、混著排待複核就沒有意義。avg_score 與它的樣本數 avg_n 另排除 degraded 列（沒有分數）。
+# other_judge_checked＝checked − judge_checked，卡片據此說明有多少筆不計入分數類統計。
+_EVAL_SCORE_SQL = (
+    "CASE WHEN jsonb_typeof(evaluation->'faithfulness_score') = 'number' "
+    "THEN (evaluation->>'faithfulness_score')::float END"
+)
+_EVAL_NOT_DEGRADED_SQL = "evaluation->'degraded' IS DISTINCT FROM 'true'::jsonb"
+_EVAL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("total", "count(*)"),
+    ("checked", "count(evaluation)"),
+    ("judge_checked", f"count(evaluation) FILTER (WHERE {CURRENT_JUDGE_SQL})"),
+    ("degraded", f"count(*) FILTER (WHERE evaluation->'degraded' = 'true'::jsonb AND {CURRENT_JUDGE_SQL})"),
+    ("below_min", f"count(*) FILTER (WHERE ({_EVAL_SCORE_SQL}) < :fmin AND {CURRENT_JUDGE_SQL})"),
+    ("avg_score", f"avg({_EVAL_SCORE_SQL}) FILTER (WHERE {CURRENT_JUDGE_SQL} AND {_EVAL_NOT_DEGRADED_SQL})"),
+    ("avg_n", f"count({_EVAL_SCORE_SQL}) FILTER (WHERE {CURRENT_JUDGE_SQL} AND {_EVAL_NOT_DEGRADED_SQL})"),
+    ("latest", "max(created_at::date) FILTER (WHERE evaluation IS NOT NULL)"),
+    ("judge_since", f"min(created_at::date) FILTER (WHERE evaluation IS NOT NULL AND {CURRENT_JUDGE_SQL})"),
+    ("other_judge_checked", f"count(evaluation) FILTER (WHERE NOT ({CURRENT_JUDGE_SQL}))"),
+)
+# 只計現行 judge 的欄位（測試逐一核對它們的 SQL 帶 CURRENT_JUDGE_SQL、其餘不帶）。
+_EVAL_CURRENT_JUDGE_KEYS = frozenset(
+    {"judge_checked", "degraded", "below_min", "avg_score", "avg_n", "judge_since"}
+)
 
 # 15 秒（原 5 秒）：前端每 5 秒輪詢，這一塊是 9 條 DB 查詢，其中市場分佈與商品類型
 # 是全表 GROUP BY。拉到 15 秒讓 DB 負載降為三分之一，而 `ts` 欄與 runtime 區塊仍每次
@@ -203,24 +239,17 @@ async def _fetch_db_stats_snapshot() -> dict:
         #
         # jsonb 一律用 jsonb_typeof 過濾後才 cast：畸形一列就讓監控頁 500，
         # 而監控頁恰恰是故障時唯一還想得到要打開的東西。
-        _score = (
-            "CASE WHEN jsonb_typeof(evaluation->'faithfulness_score') = 'number' "
-            "THEN (evaluation->>'faithfulness_score')::float END"
-        )
-        _eval_cols = (
-            "count(*), count(evaluation), "
-            "count(*) FILTER (WHERE evaluation->'degraded' = 'true'::jsonb), "
-            f"count(*) FILTER (WHERE ({_score}) < :fmin), "
-            f"avg({_score}), "
-            "max(created_at::date) FILTER (WHERE evaluation IS NOT NULL)"
-        )
+        #
+        # 哪些欄位只計現行 judge、哪些計所有 judge：見模組頂端的 _EVAL_COLUMNS。
+        # judge_since 是窗期內現行 judge 最早的一筆——切換後頭幾天樣本很小，卡片要讓人看得出來。
+        _eval_cols = ", ".join(sql for _key, sql in _EVAL_COLUMNS)
         eval_rows = (
             await session.execute(
                 text(
                     f"SELECT 'qa' kind, {_eval_cols} FROM research.qa_log "
                     "WHERE created_at > now() - interval '30 days'"
                 ),
-                {"fmin": _FAITHFULNESS_MIN},
+                {"fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_MODEL},
             )
         ).all()
 
@@ -264,17 +293,25 @@ async def _fetch_db_stats_snapshot() -> dict:
 
     extraction = _extraction_block(extraction_rows, int(total_reports))
 
-    evals = {
-        r[0]: {
-            "total": int(r[1]),
-            "checked": int(r[2]),
-            "degraded": int(r[3]),
-            "below_min": int(r[4]),
-            "avg_score": round(float(r[5]), 4) if r[5] is not None else None,
-            "latest": _d(r[6]),
+    def _eval_block(row) -> dict:
+        v = dict(zip((key for key, _sql in _EVAL_COLUMNS), row[1:]))
+        return {
+            # 覆蓋率類：所有 judge。
+            "total": int(v["total"]),
+            "checked": int(v["checked"]),
+            "latest": _d(v["latest"]),
+            # 分數類：只計現行 judge（judge_model）。
+            "judge_model": _JUDGE_MODEL,
+            "judge_checked": int(v["judge_checked"]),
+            "degraded": int(v["degraded"]),
+            "below_min": int(v["below_min"]),
+            "avg_score": round(float(v["avg_score"]), 4) if v["avg_score"] is not None else None,
+            "avg_n": int(v["avg_n"]),
+            "judge_since": _d(v["judge_since"]),
+            "other_judge_checked": int(v["other_judge_checked"]),
         }
-        for r in eval_rows
-    }
+
+    evals = {r[0]: _eval_block(r) for r in eval_rows}
 
     return {
         "total_reports": total_reports,

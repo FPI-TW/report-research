@@ -19,6 +19,9 @@
   共用帳號；先讓東西看得見。低分的回答處理方式是重問或回報，抽取問題是重跑該篇回填。
 - `faithfulness` 與 `feedback` 只看有效列（`active`、非中止），並限制在 `days` 天內：
   門檻與窗期沿用監控頁那張卡的定義（`FAITHFULNESS_MIN`、30 天），兩邊的數字才對得起來。
+- `faithfulness` 只列**現行 judge** 量出來的低分（`app/services/judge_schema.py` 的
+  `CURRENT_JUDGE_SQL`，與監控卡同一條規則；缺 `judge_model` 的舊列視為 claude-haiku-4-5）。
+  每一列另帶 `judge_model`（沒有 evaluation 的倒讚列為 None）。
 - `extraction` 沒有窗期：`needs_review` 是研報的現況，不是事件。
 
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
@@ -35,6 +38,8 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.services.filename import source_display
+from app.services.judge_schema import CURRENT_JUDGE_SQL, JUDGE_MODEL_SQL
+from app.services.store import review_reasons
 from web import deps
 
 logger = logging.getLogger(__name__)
@@ -43,7 +48,9 @@ router = APIRouter()
 
 ReviewKind = Literal["faithfulness", "feedback", "extraction"]
 
-_FAITHFULNESS_MIN = get_settings().faithfulness_min
+_SETTINGS = get_settings()
+_FAITHFULNESS_MIN = _SETTINGS.faithfulness_min
+_JUDGE_MODEL = _SETTINGS.faithfulness_model
 
 # jsonb 一律先以 jsonb_typeof 過濾再 cast：一列畸形的 evaluation 不該讓整支端點 500
 # （與 web/routers/monitor.py 的同一段理由相同）。
@@ -52,6 +59,8 @@ _SCORE = (
     "THEN (evaluation->>'faithfulness_score')::float END"
 )
 _QA_VALID = "active AND stopped IS NOT TRUE AND created_at > now() - make_interval(days => :days)"
+# 該列 evaluation 的 judge；沒有 evaluation 就是 NULL（JUDGE_MODEL_SQL 本身會把 NULL 補成舊預設）。
+_ROW_JUDGE = f"CASE WHEN evaluation IS NULL THEN NULL ELSE {JUDGE_MODEL_SQL} END"
 
 
 class ReviewItem(BaseModel):
@@ -74,6 +83,12 @@ class ReviewItem(BaseModel):
     quality_score: float | None = None
     quality_flags: dict | None = None
     pages_failed: list[int] | None = None
+    # qa：這筆 evaluation 是哪個 judge 量的（缺鍵的舊列＝claude-haiku-4-5；沒有 evaluation＝None）
+    judge_model: str | None = None
+    # extraction：為什麼被標成 needs_review（`store.REVIEW_REASONS` 的封閉詞彙，可多個）。以**現行門檻**
+    # 重算：入庫之後調過門檻的話，可能與當初被標記的原因不同，甚至是空的——那代表這一篇
+    # 以現在的標準已經不必看了，重跑該篇回填就會解除標記。
+    review_reasons: list[str] | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -93,22 +108,31 @@ def _iso(v) -> str | None:
 
 
 def _qa_item(row) -> ReviewItem:
-    qa_id, conv_id, question, created_at, score, feedback = row
+    qa_id, conv_id, question, created_at, score, feedback, judge_model = row
     return ReviewItem(
         qa_id=str(qa_id), conversation_id=str(conv_id), question=question,
         created_at=_iso(created_at),
         faithfulness_score=float(score) if score is not None else None,
         feedback=feedback,
+        judge_model=judge_model,
     )
 
 
 def _extraction_item(row) -> ReviewItem:
     rid, fhash, fname, title, src, rdate, qscore, qflags, pfailed = row
+    flags = qflags if isinstance(qflags, dict) else None
+    reasons = review_reasons(
+        float(qscore) if qscore is not None else None, list(pfailed) if pfailed else None,
+        _SETTINGS.extraction_review_min, flags,
+        min_coverage=_SETTINGS.extraction_review_min_coverage,
+        max_garbled=_SETTINGS.extraction_review_max_garbled,
+    )
     return ReviewItem(
+        review_reasons=reasons,
         report_id=str(rid), file_hash=fhash, file_name=fname, title=title,
         source=source_display(src), report_date=_iso(rdate),
         quality_score=float(qscore) if qscore is not None else None,
-        quality_flags=qflags if isinstance(qflags, dict) else None,
+        quality_flags=flags,
         pages_failed=list(pfailed) if pfailed else None,
     )
 
@@ -133,9 +157,9 @@ async def _fetch(session, kind: str, *, limit: int, offset: int, days: int):
         return int(total), [_extraction_item(tuple(r)) for r in rows]
 
     if kind == "faithfulness":
-        where = f"{_QA_VALID} AND ({_SCORE}) < :fmin"
+        where = f"{_QA_VALID} AND ({_SCORE}) < :fmin AND {CURRENT_JUDGE_SQL}"
         order = f"({_SCORE}) ASC, created_at DESC, id"
-        params = {"days": days, "fmin": _FAITHFULNESS_MIN}
+        params = {"days": days, "fmin": _FAITHFULNESS_MIN, "judge_model": _JUDGE_MODEL}
     else:  # feedback
         where = f"{_QA_VALID} AND feedback = 'dislike'"
         order = "created_at DESC, id"
@@ -145,7 +169,8 @@ async def _fetch(session, kind: str, *, limit: int, offset: int, days: int):
     )).scalar_one()
     rows = (await session.execute(
         text(
-            f"SELECT id, COALESCE(conversation_id, id), question, created_at, ({_SCORE}), feedback "
+            f"SELECT id, COALESCE(conversation_id, id), question, created_at, ({_SCORE}), feedback, "
+            f"({_ROW_JUDGE}) "
             f"FROM research.qa_log WHERE {where} ORDER BY {order} LIMIT :limit OFFSET :offset"
         ),
         {**params, **page},

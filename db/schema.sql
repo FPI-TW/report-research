@@ -363,3 +363,21 @@ CREATE INDEX IF NOT EXISTS idx_extraction_log_stopped_at
     ON research.extraction_log (stopped_at);
 CREATE INDEX IF NOT EXISTS idx_extraction_log_version
     ON research.extraction_log (extraction_version);
+
+-- ── LLM 批次的內容型失敗（跳過名單）──────────────────────────────────────────
+-- 同一篇每輪都失敗、每輪都重打：2026-09 實測 6 篇標題一天白打約 144 次。這張表記下
+-- 「LLM 回了東西但不能用」的研報，讓批次依規則跳過；成功就刪列，所以 fail_count 是
+-- 連續失敗輪數。規則與詞彙在 app/services/llm_failures.py。
+--   以 file_hash 為鍵：重新 ingest 後 report_id 會換，行內標註時也還沒有 report_id。
+--   刻意不設 CHECK：既有庫上改 CHECK 是 no-op，詞彙由程式常數守住。
+--   可重建、不進備份：丟了只是讓那幾篇多重試幾輪。
+CREATE TABLE IF NOT EXISTS research.llm_task_failure (
+    file_hash   text NOT NULL,
+    task        text NOT NULL,                 -- tag | summary | title | takeaway | signal
+    reason      text NOT NULL,                 -- unparseable | content_filter | truncated | empty | bad_request
+    model       text NOT NULL,
+    fail_count  int  NOT NULL DEFAULT 1,
+    first_at    timestamptz NOT NULL DEFAULT now(),
+    last_at     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (file_hash, task)
+);

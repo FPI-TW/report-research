@@ -308,9 +308,26 @@ class WiringTests(unittest.TestCase):
         從「批次慢一點」變成「服務中斷數小時」。這條斷言比五條正向的更重要，
         因為誤加的人會覺得自己在把防護做得更完整。
         """
-        src = (REPO_ROOT / "app" / "services" / "llm.py").read_text(encoding="utf-8")
-        self.assertNotIn("_claude_lock", src)
+        # llm_http.py 是 web 與批次共用的 HTTP 客戶端：鎖只能在批次腳本的 main 取，
+        # 放進客戶端就等於讓 /api/ask 也去搶它。
+        for name in ("llm.py", "llm_http.py", "llm_models.py", "llm_failures.py"):
+            with self.subTest(module=name):
+                src = (REPO_ROOT / "app" / "services" / name).read_text(encoding="utf-8")
+                self.assertNotIn("_claude_lock", src)
+                self.assertNotIn("claude_cli_lock", src)
+
+    def test_batch_call_layer_never_takes_the_lock(self):
+        """`scripts/_claude_cli.py`（run_claude、HTTP 分派、斷路器）是在鎖**裡面**被呼叫的：批次 main
+        已持有這把 flock，呼叫層再取一次會在同一行程裡以另一個 fd 等自己——永久卡死。"""
+        src = (REPO_ROOT / "scripts" / "_claude_cli.py").read_text(encoding="utf-8")
         self.assertNotIn("claude_cli_lock", src)
+        # 只看 import（docstring 會提到 tests/test_claude_lock.py 這個檔名）
+        imported = {
+            n.module if isinstance(n, ast.ImportFrom) else a.name
+            for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))
+            for a in n.names
+        }
+        self.assertFalse({m for m in imported if m and "_claude_lock" in m}, imported)
 
     def test_no_web_module_takes_the_lock(self):
         """同理推廣到整個線上路徑：web/ 底下任何檔案都不該取這把鎖。"""

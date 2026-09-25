@@ -13,8 +13,11 @@
 - 冪等可續傳：只挑 title IS NULL 者；重跑天然跳過已補的
 - 失敗（含內文抽字損毀而無法辨識）記 data/title_failures.log，title 維持 NULL
   → 前端回退檔名，不會顯示錯的標題
+- 回應解析不出標題的研報記入 research.llm_task_failure，連續 3 輪後不再重打
+  （規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）
 
 用法：uv run python scripts/generate_titles.py [--workers 2] [--limit N] [--excerpt 3000]
+      [--hashes-file F] [--exclude-hashes-file F] [--retry-blocked]
 
 注意：每篇都會冷啟動一個 `claude -p` agent；workers 越高、同時冷啟動越多，磁碟
 小檔 I/O 越容易被頂滿（與 generate_summaries.py 同一顆地雷，預設同樣壓到 2）。
@@ -34,14 +37,24 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from sqlalchemy import text  # noqa: E402
 
+from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_TITLE, resolve_model  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_cli import (  # noqa: E402
     CliNotFoundError,
     CliResult,
+    failure_kind,
+    is_retryable,
+    record_escalation,
     run_claude,
 )
 from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
@@ -49,7 +62,10 @@ from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "title_failures.log"
-MODEL = "claude-sonnet-5"
+# TITLE_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+MODEL = resolve_model(TASK_TITLE)
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。一句標題加原文，512 綽綽有餘。
+MAX_TOKENS = 512
 MAX_TITLE_CHARS = 80  # 安全上限：標題不是摘要，超長多半代表模型把整段抓進來
 TITLE_SOURCES = ("extracted", "translated", "generated")
 
@@ -163,15 +179,20 @@ def build_cli_args(prompt: str) -> list[str]:
     return _build_cli_args(prompt, MODEL)
 
 
-def call_cli(prompt: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+def call_cli(
+    prompt: str, timeout: int = 180, *, file_hash: Optional[str] = None, report_id: Optional[str] = None
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     原本是 `except (subprocess.TimeoutExpired, Exception): return None` —— 那個
     tuple 的第二項讓第一項完全沒有意義，所有失敗一律回 None，而 `title_failures.log`
     連原因欄都沒有，只記 id 與檔名。2026-08 連續四天 titled_ok=0 fail=60 時，
     那個檔對「為什麼」一個字都說不出來。
     """
-    return run_claude(prompt, MODEL, timeout=timeout)
+    return run_claude(
+        prompt, MODEL, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": TASK_TITLE, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 UPDATE_SQL = (
@@ -189,6 +210,8 @@ async def title_one(
     excerpt: int,
     total: int,
     retries: int = 2,
+    file_hash: Optional[str] = None,
+    recorder: Optional[llm_failures.FailureRecorder] = None,
 ) -> None:
     global _done, _ok, _fail
     prompt = build_prompt(file_name, full_text, excerpt)
@@ -196,18 +219,26 @@ async def title_one(
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是
     # 「回了但解析不採信」——後者是資料問題，前者是環境問題，處置完全不同。
     last_error = "CLI 無回應"
+    # 本輪有沒有任何一次「回了但不能用」，值是要記的 reason。只有這種才記入跳過名單：逾時、
+    # 非零退出是環境問題，記了會讓一次停機把整批研報打入跳過名單。
+    fail_reason: Optional[str] = None
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
             # 讓它一路拋到 main 中止整批。
-            res = await asyncio.to_thread(call_cli, prompt)
+            res = await asyncio.to_thread(call_cli, prompt, file_hash=file_hash, report_id=rid)
             if res.text:
                 result = parse_title(res.text, file_name)
                 if result:
                     break
                 last_error = "回應無法解析為可採信的標題"
+                fail_reason = llm_failures.UNPARSEABLE
             elif res.error:
                 last_error = res.error
+            if res.text is None and not is_retryable(res):
+                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                fail_reason = failure_kind(res) or fail_reason
+                break
 
     if result:
         async with SessionFactory() as session:
@@ -221,8 +252,12 @@ async def title_one(
                 },
             )
             await session.commit()
+        if recorder:
+            await recorder.clear(file_hash)
         _ok += 1
     else:
+        if recorder and fail_reason:
+            await recorder.record(file_hash, fail_reason)
         # 第三欄是 2026-08-13 補的：先前只記 id 與檔名，於是連續四天 fail=60
         # 時這個檔對「為什麼」一個字都說不出來。
         with open(FAIL_LOG, "a", encoding="utf-8") as f:
@@ -240,44 +275,78 @@ def read_hashes_file(path: str) -> list[str]:
     return [h.strip() for h in lines if h.strip()]
 
 
+def build_candidates_sql(by_hashes: bool, skip_blocked: bool, limit: bool, exclude: bool = False) -> str:
+    """待補標題的查詢（純字串，供測試斷言）。skip_blocked 時排除跳過名單上的研報；
+    exclude 時排除 `:exclude` 列出的 file_hash（空清單時呼叫端不開它）。"""
+    sql = (
+        "SELECT r.id::text, r.file_name, r.full_text, r.file_hash "
+        "FROM research.research_report r "
+        "WHERE r.title IS NULL AND r.full_text IS NOT NULL AND r.is_research IS NOT FALSE "
+    )
+    if by_hashes:
+        sql += "AND r.file_hash = ANY(:hashes) "
+    if exclude:
+        sql += "AND NOT (r.file_hash = ANY(:exclude)) "
+    if skip_blocked:
+        sql += "AND " + llm_failures.skip_clause_sql("r") + " "
+    sql += "ORDER BY r.report_date DESC NULLS LAST, r.file_name"
+    if limit:
+        sql += " LIMIT :limit"
+    return sql
+
+
 async def fetch_candidates(
-    limit: Optional[int], hashes: Optional[list[str]] = None
-) -> list[tuple[str, str, str]]:
+    limit: Optional[int],
+    hashes: Optional[list[str]] = None,
+    skip_blocked: bool = False,
+    exclude_hashes: Optional[list[str]] = None,
+) -> list[tuple[str, str, str, str]]:
     """挑待補標題的列：title IS NULL 的研究報告。
 
     hashes 為 None（預設）＝掃全表所有 NULL（手動補積壓 make titles）。
     hashes 為清單＝只補這批 file_hash（定時匯入只針對本輪新研報，避免掃積壓）；
     空清單代表本輪無新研報，直接回空、不查 DB。
+    skip_blocked＝排除 research.llm_task_failure 判定該跳過的研報（同 MODEL）。
+    exclude_hashes＝排除這批 file_hash（sync 積壓段排掉本輪 4b 剛打過的新研報）；
+    None 或空清單不加條件。
 
     排序刻意 report_date DESC：全語料一萬多篇跑不完時，先讓最近的報告有標題。
     """
-    sql = (
-        "SELECT id::text, file_name, full_text "
-        "FROM research.research_report "
-        "WHERE title IS NULL AND full_text IS NOT NULL AND is_research IS NOT FALSE "
-    )
     params: dict = {}
     if hashes is not None:
         if not hashes:
             return []
-        sql += "AND file_hash = ANY(:hashes) "
         params["hashes"] = hashes
-    sql += "ORDER BY report_date DESC NULLS LAST, file_name"
+    if skip_blocked:
+        params.update(llm_failures.skip_params(llm_failures.TASK_TITLE, MODEL))
+    if exclude_hashes:
+        params["exclude"] = exclude_hashes
     if limit:
-        sql += " LIMIT :limit"
         params["limit"] = limit
+    sql = build_candidates_sql(hashes is not None, skip_blocked, bool(limit), bool(exclude_hashes))
     async with SessionFactory() as session:
         rows = await session.execute(text(sql), params)
-        return [(r[0], r[1], r[2]) for r in rows.all()]
+        return [(r[0], r[1], r[2], r[3]) for r in rows.all()]
 
 
 async def main(
-    workers: int, limit: Optional[int], excerpt: int, hashes_file: Optional[str] = None
+    workers: int,
+    limit: Optional[int],
+    excerpt: int,
+    hashes_file: Optional[str] = None,
+    retry_blocked: bool = False,
+    exclude_hashes_file: Optional[str] = None,
 ) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     hashes = read_hashes_file(hashes_file) if hashes_file else None
+    exclude = read_hashes_file(exclude_hashes_file) if exclude_hashes_file else None
     scope = f"本輪 {len(hashes)} 篇" if hashes is not None else "全表 NULL"
-    cands = await fetch_candidates(limit, hashes)
+    if exclude:
+        scope += f"（排除 {len(exclude)} 篇）"
+    recorder = await llm_failures.open_recorder(llm_failures.TASK_TITLE, MODEL, SessionFactory)
+    cands = await fetch_candidates(
+        limit, hashes, skip_blocked=recorder is not None and not retry_blocked, exclude_hashes=exclude
+    )
     total = len(cands)
     print(
         f"candidates: {total} | scope: {scope} | workers: {workers} | model: {MODEL}",
@@ -289,9 +358,14 @@ async def main(
     sem = asyncio.Semaphore(workers)
     try:
         await asyncio.gather(
-            *(title_one(sem, rid, fn, ft, excerpt, total) for rid, fn, ft in cands)
+            *(
+                title_one(sem, rid, fn, ft, excerpt, total, file_hash=fh, recorder=recorder)
+                for rid, fn, ft, fh in cands
+            )
         )
     except CliNotFoundError as exc:
+        # 400 升級：觸發的研報先記入跳過名單，下一輪才跳得過去（審查 H2）
+        await record_escalation(exc, recorder)
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷 → 中止並以非零碼收場，
         # 而不是跑完 N 次註定失敗的呼叫、印 titled_ok=0、然後 exit 0。
         print(f"\n中止：{exc}", flush=True)
@@ -310,6 +384,26 @@ if __name__ == "__main__":
         default=None,
         help="只補此檔列出的 file_hash（每行一個）；不給＝補全表所有 title IS NULL",
     )
+    ap.add_argument(
+        "--exclude-hashes-file",
+        default=None,
+        help=(
+            "排除此檔列出的 file_hash（每行一個）。sync 的標題積壓段傳本輪 .sync_last_hashes："
+            "同一輪 4b 剛打過的新研報不再打第二次，失敗也不會一輪記兩次"
+        ),
+    )
+    ap.add_argument(
+        "--retry-blocked",
+        action="store_true",
+        help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打",
+    )
     args = ap.parse_args()
+    # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
+    require_llm_key({TASK_TITLE: MODEL})
     with claude_cli_lock_or_exit("generate_titles"):
-        asyncio.run(main(args.workers, args.limit, args.excerpt, args.hashes_file))
+        asyncio.run(
+            main(
+                args.workers, args.limit, args.excerpt, args.hashes_file, args.retry_blocked,
+                exclude_hashes_file=args.exclude_hashes_file,
+            )
+        )

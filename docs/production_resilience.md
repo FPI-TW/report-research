@@ -512,6 +512,209 @@ sudo systemctl daemon-reload
 - **URL 不進 argv**。`curl ... "$URL"` 會讓 secret 出現在行程清單裡，任何本機使用者
   `ps` 就看得到。改用 `-K -` 從 stdin 餵 curl 設定檔。`report-mark-alert.sh` 同樣處理過。
 
+### DeepSeek 金鑰落點與輪替
+
+金鑰有**兩份、逐字相同**：
+
+| 落點 | 讀者 | 權限 |
+|---|---|---|
+| repo 根 `.env` 的 `DEEPSEEK_API_KEY` | web（`web/server.py` 啟動時載入） | 同其他 web secret |
+| `/etc/default/report-mark-llm` | `report-mark-sync.service`（`EnvironmentFile=-`，排在共用檔之後）；手動跑的 LLM 批次與評測由 `scripts/_llm_env.py` 自己讀 | 0640 root:kashionz |
+
+**只有 sync unit 載入 llm 檔**，其他 unit 都不呼叫 LLM——環境變數裡有金鑰的行程越少越好。
+批次的模型旋鈕（`TAG_MODEL`、`SUMMARY_MODEL` 等）與 `LLM_PROVIDER` 也放這份檔，讓手動與排程
+用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（`tests/test_deploy_units.py`
+釘住）。web 讀的是 `.env` 的同名鍵，兩份可以不同。
+
+批次經 `scripts/_claude_cli.run_claude` 依白名單分派（`generate_brief` 的 DeepSeek 分支也交給它）：
+DeepSeek 名稱走 HTTP、`claude-*` 走 CLI。切換批次＝改這份檔的 `LLM_PROVIDER` 或個別旋鈕，下一輪
+sync 生效。**沒有回退**：claude CLI 已於 2026-09-23 永久放棄（OAuth 過期、不再修復登入），`claude_cli`
+與遷移期的 `claude_only` 在生產上都等於 LLM 段全部停擺，生產一律 `LLM_PROVIDER=deepseek`。HTTP 路徑
+遇到 401／402／模型不存在一律整批 **rc=2** 中止（不記跳過名單、不改走 Claude），處置見下方「DeepSeek
+帳號告警與 402／401 處置」與「整批中止後的重放」。
+
+安裝（範例檔檔頭有同樣的指令）：
+
+```bash
+sudo install -m 0640 -o root -g kashionz deploy/systemd/report-mark-llm.env.example /etc/default/report-mark-llm
+sudoedit /etc/default/report-mark-llm      # 填 DEEPSEEK_API_KEY=；不要 echo／tee，也不要 source 這個檔
+sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo systemctl daemon-reload
+```
+
+`scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的
+鍵），並在取批次鎖之前預檢——有白名單模型卻沒金鑰、
+有未知模型名、或檔內有重複的鍵，一律 **rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
+執行）。`LLM_PROVIDER` 非空卻不合法（例如 `claude-cli`）同樣 **rc=2** 並印原始值：web 對它是退回 deepseek，
+但 `claude_cli` 是讓 LLM 停下來的開關，批次拼錯不能變成照常計費。`LLM_PROVIDER` 預設 `deepseek`（未設、空值都是），所以**這份檔不存在時批次照樣解析到
+DeepSeek**，又因批次不讀 repo 根 `.env` 而拿不到金鑰，預檢 **rc=2** 並提示依範例檔安裝——sync 殼把 rc=2
+當帳號／環境型中止告警，不會靜默退回已失效的 CLI。全部用 Claude 時不要求金鑰，但一律印一行 `WARNING`
+（不中止、說出是哪個設定解析成 Claude）：claude CLI 已於 2026-09-23 停用，預設又是 deepseek，全是 Claude
+只會是有人顯式設了 `LLM_PROVIDER=claude_cli`／`claude_only` 或 `claude-*` 旋鈕。通過時印
+`fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
+
+**claude CLI 認證失效＝整批中止**：CLI 回報認證失敗（`Failed to authenticate`、`OAuth … expired`、
+`Invalid API key`、`Please run /login` 等，stdout 與 stderr 都看；9/23 的實況是退出碼 1、stderr 空、
+訊息在 stdout）時，各批次（含 `generate_brief` 自己的 CLI 分支）整批 **rc=2**，訊息「claude CLI 認證
+失效；若已切 DeepSeek，檢查 /etc/default/report-mark-llm 是否生效（LLM_PROVIDER=deepseek）」，不記跳過
+名單、不寫單篇失敗紀錄；用量記錄的 `kind` 是 `auth`。修正前它被當成「CLI 退出碼 1：（無 stderr）」逐篇
+記錄、整批 rc=0，9/23、9/24 兩天沒有研報入庫而排程看起來一切正常。線上（`/api/ask` 的 CLI 路徑）同一
+樣式歸 `kind="auth"`、不重試，使用者看到「模型服務帳號異常」。處置：確認該段解析到 DeepSeek（這份檔、
+`LLM_PROVIDER`），再照「整批中止後的重放」補跑。
+**重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用
+不同的金鑰，所以直接拒跑。
+
+輪替（不需要 daemon-reload，`EnvironmentFile` 每次啟動重讀）：
+
+1. 在 DeepSeek 主控台發一把新金鑰（舊的先別撤）。
+2. 改兩份檔的 `DEEPSEEK_API_KEY`：**直接改那一行**，不要新增一行。
+3. 重啟 web：`sudo systemctl restart report-mark-web.service`。
+4. 核對兩份指紋相同（只印雜湊前 8 碼，不印金鑰）。在 repo 根以 kashionz 執行（`/etc/default/report-mark-llm`
+   是 0640 root:kashionz，要有該群組權限才讀得到）：
+   ```bash
+   uv run python -m scripts._llm_env .env /etc/default/report-mark-llm
+   ```
+   每份印一行 `fp=<前 8 碼>`，rc=0＝兩份都有值且一致，rc=1＝不一致、缺值、讀不到，或某份檔裡
+   `DEEPSEEK_API_KEY` 不只一行（第 2 步「新增一行」而不是改那一行的後果）。重複時另印一行警告、
+   列出每一行的指紋：systemd 的 `EnvironmentFile` 取最後一行，程式（`load_env_file`）取第一行，
+   兩邊會用不同的金鑰；刪掉多餘的行再核對一次，即使兩行相同也一樣回 rc=1。**不要改用
+   `grep | cut | sha256sum`**：程式讀值時會去 `export `、去成對引號、strip（`web/env_loader._parse_line`），
+   手算的雜湊在值帶引號、尾隨空白或 CRLF 時會把兩份其實相同的金鑰判成不同。
+   經 DeepSeek 的評測（`eval/run_ragas.py` 指定白名單模型）預檢印出的 `fp=` 也應是同一個值。
+5. 確認 sync 目前沒在跑（`systemctl is-active report-mark-sync.service` 回 `inactive`），避免
+   撤銷舊金鑰時打斷進行中的一輪。
+6. 撤銷舊金鑰。
+
+### DeepSeek 批次的失敗處置
+
+批次走 DeepSeek 時（`scripts/_claude_cli.run_claude` 的 HTTP 路徑），失敗依 kind 分三類處置；失敗原因一律寫成 `API[<kind>] <固定措辭>：<細節>`（單行、不含 TAB），落在各批次的 `*_failures.log`：
+
+| 類別 | kind | 批次行為 |
+|---|---|---|
+| 帳號層級 | `auth`（401）、`quota`（402）、`config`（404、模型不存在） | 整批 **rc=2** 中止；不記跳過名單；**不改走 Claude**（402 的處置是儲值） |
+| 暫時性 | `overloaded`（429、5xx）、`network` | 還沒吐字時傳輸層依 `Retry-After` 退避重試 ≤2 次（受總期限限制）；**已吐字（已計費）就不重試**，直接當單篇失敗；腳本層不再重試；計入斷路器 |
+| 單篇 | `content_filter`、`truncated`、`empty`、`bad_request`、`timeout_streamed`、`timeout`、`other` | 這篇這輪只打 1 次；前五種記入 `research.llm_task_failure`（審查與 `truncated` 1 次就跳過，其餘連續 3 輪）；`timeout_streamed` 與 `timeout` 計入斷路器 |
+
+「回應成功但解析失敗」（unparseable）不在上表：腳本層照舊最多 3 次，連續 3 輪才跳過。摘要在 DeepSeek 路徑不接受純文字回應（沒有 JSON 就算解析失敗），CLI 路徑維持原狀。批次的 `timeout`（摘要／標題／摘錄／訊號 180 秒、標註 150 秒、簡報 300 秒）在 HTTP 路徑是**涵蓋傳輸層重試的總期限**，每收到一段位元組就檢查，伺服器排隊送 keep-alive 或持續送不換行的位元組都延長不了它。沒吐字就到期是 `timeout`（計入斷路器、不記跳過名單）；**已吐字後才到期是 `timeout_streamed`（期限型截斷），可以重放**：計入斷路器（DeepSeek 整體變慢時整段中止，而不是每篇等到期限），記入跳過名單但**連續 3 輪**才跳過（已計費，真正每次都寫不完的那篇不能每輪重打），行內標註記 `skip_untagged`、階段 `tag`（`failures_to_delta.py` 預設會撈）。它和 `truncated` 刻意分開：`truncated` 只留給 `finish_reason=length`（同一輸入、同一上限重送結果不變，1 次就跳過）；初版把期限型也歸 `truncated`，DeepSeek 暫時變慢一次就會讓整批研報進跳過名單、行內標註進預設不重放的 `tag_truncated`，而且斷路器不跳。已吐字的失敗都不在傳輸層重試。合起來，一篇研報一輪最多 3 個已計費請求（解析失敗的腳本層重試），截斷、期限型截斷與審查只有 1 個。
+
+**400 升級（審查 H2）**：一般的 400（`bad_request`）算單篇失敗。**只有**同一個批次行程裡 ≥2 篇不同研報收到相同的 400 訊息（比對前正規化：小寫、數字換 `#`、長 hex／request id 換 `<id>`，所以只差 `column N` 這類數字的訊息算同一則；上下文長度、輸入過長這類本質上是單篇輸入的訊息不參與升級），**而且本行程內還沒有任何一次 DeepSeek 呼叫成功過**（全面性的 400 會讓每一篇都失敗；有別篇成功過就代表請求與設定沒問題，剩下的是單篇輸入），才判定是請求或設定壞了、升級成 `API[config]` 整批 **rc=2** 中止；中止前先把觸發的那幾篇以 `bad_request` 記入 `research.llm_task_failure`（完整 file_hash 印在 log 裡），而且計數直接記到 3（`SKIP_AFTER_ROUNDS`），**下一輪就跳過**，不會連續 3 輪整段 rc=2。**修好之後，這幾篇要對該批次加 `--retry-blocked`（或 DELETE 那幾列）才會再打**；`make llm-blocked` 列得出來。刻意沒有「第一個請求就 400 就升級」：那篇若排在最前面，每一輪都會中止整批、而中止不記跳過名單，它永遠不會被跳過。匯入段另把觸發研報寫成 `data/sync_bad_request_<時間>.txt`（`file_hash<TAB>路徑`），殼印出內容；**重放本輪 delta 之前先把這些路徑從 delta 拿掉**，否則會再撞一次。處置：看訊息判斷是程式（請求格式）還是設定問題，修好後照「整批中止後的重放」補跑。
+
+**行內標註被內容審查擋下（`skip_blocked`）**：只列清單、交人工，不做新的入庫路徑（9/24 決策）。這類研報不入庫、計入 `skip_blocked`（異常，擋心跳），記進 `research.llm_task_failure`（task=tag、reason=content_filter），並在 `data/sync_failures.log` 留一行階段為 `tag_blocked` 的紀錄（原因欄帶 `file_hash=`）。`failures_to_delta.py` 預設**不撈** `tag_blocked`：同一份輸入再送一次結果不會變。人工處理：
+
+1. `make llm-blocked` 列出（task=`tag`、原因 `content_filter`；還沒入庫所以檔名欄是 `-`），用 file_hash 回查路徑：`grep <file_hash> data/sync_failures.log`。
+2. 判斷要不要收。要收的話，照 `tag_all_cli.py` 的格式手寫 `data/tags/<file_hash>.json`（`market`、`is_research`、`confidence`、`instrument_types`、`relates_stock`、`relates_futures`、`stock_targets`、`futures_targets`）；匯入時 `load_tag` 讀得到就不會再呼叫 LLM。
+3. 單篇重放：`uv run python scripts/failures_to_delta.py --stage tag_blocked --out data/sync_delta_blocked.txt`（或手寫只含那一行相對路徑的 delta），再 `uv run python scripts/sync_new_reports.py --delta data/sync_delta_blocked.txt --hashes-out data/sync_hashes_retained_blocked.txt`，接著用同一份 hashes 補跑摘要、標題、摘錄（`--hashes-file`）。那幾段若也被審查擋下，同樣記進跳過名單，不影響入庫。
+4. 不收的話不用做什麼：下一輪 delta 不會再列出它（rsync `--size-only`），`llm_task_failure` 那一列留著作紀錄，要清就 DELETE。
+
+**行內標註被截斷（`skip_truncated`）**：DeepSeek 回 `truncated`（`finish_reason=length`，`max_tokens` 用完；已吐字後碰到總期限的 `timeout_streamed` **不算**，它記 `skip_untagged`、可重放）的標註同上處置：不入庫、計入 `skip_truncated`（異常，擋心跳），記進 `research.llm_task_failure`（reason=truncated），`data/sync_failures.log` 的階段是 `tag_truncated`，`failures_to_delta.py` 預設**不撈**（同一份輸入、同一個上限重送結果不變）。處置：看是不是 `TAG_MAX_TOKENS`（`scripts/sync_new_reports.py`）不夠——調高後以 `--stage tag_truncated` 取出單篇重放；或照上面第 2 步手寫 tags。空回應與一般 400 **刻意仍記 `skip_untagged`**（階段 `tag`，補救指令會重送）：空回應多半是供應商端偶發、下一輪常常就好；400 在送出時就被拒、不產生輸出，重送幾乎不花錢。
+
+**簡報被內容審查擋下（或輸出被 `max_tokens` 截斷）**：該次跳過、不寫列，`generate_brief.py` 以 rc=1 收場（排程殼記進 `unit_failures.log`、走告警鏈），原因寫進 `data/brief_failures.log`（`時間<TAB>簡報日期<TAB>原因<TAB>model`）與 sync log。**同一天、同一個 model 之後的輪次不再呼叫**（素材是上一次的超集，幾乎一定再擋；每 3 小時重打只是每次再付一次錢），印「今日已被模型供應商的內容審查擋過，略過」、rc 仍是 1（「今天沒有簡報」照樣看得見）。隔天以新的窗期再試；換 model 或加 `--force` 會當天重打。交人看素材。`finish_reason=length` 的截斷（`API[truncated]`，撞到 `generate_brief.py` 的 `MAX_TOKENS`）同一套處置：素材只會更多，同一個上限只會截得更早；期限型截斷（`API[timeout_streamed]`）與逾時**不算**，下一輪照打（可能只是 DeepSeek 暫時變慢）。
+
+**用量記錄**：批次每次 LLM 呼叫（DeepSeek 與 CLI）在 `data/llm_usage.jsonl` 追加一行 JSON（`task`、`file_hash`、`report_id`、`backend`、`model_req`／`model_resp`、`prompt_sha256`、`tokens{hit,miss,completion,reasoning}`、`finish_reason`、`kind`、`attempts`、`ttft_ms`、`total_ms`；CLI 的 `tokens` 為 null，thinking 關時 `reasoning` 記 0）。摘要、標題、標籤的產出模型靠它以 `file_hash` 回溯；費用真值看 DeepSeek 餘額差分，這份只拿來歸因。寫不進去不影響批次。檔案只增不減，要清就整份搬走。
+
+**斷路器**：同一個批次行程裡最近 10 次 DeepSeek 呼叫有 ≥5 次逾時／過載／連線失敗，該段以 **rc=2** 中止，並寫 `data/.llm_breaker`。標記綁定 sync 輪次：`sync_new_reports.sh` 每輪 export `SYNC_ROUND_ID`（＝`ROUND_TS`），標記帶 `round=`；**同一輪**其餘**會用到 DeepSeek** 的段在預檢就 rc=2 拒跑（不看時間，一輪可超過 2.5 小時），**下一輪不受影響**（上一輪末段的標記不會擋下一輪開頭的匯入；屆時若仍過載，斷路器會再跳一次）。手動執行（沒有輪次 id）或手動執行寫的標記，照 30 分鐘有效期。還在用 Claude 的段不受影響。處置：看 DeepSeek 狀態頁與 sync log；恢復後 `rm data/.llm_breaker`（或等它失效），再依「整批中止後的重放」補跑。
+
+### DeepSeek 帳號告警與 402／401 處置
+
+**負責人（D-O，2026-09-24 使用者明示）**：儲值、DeepSeek 帳號持有、金鑰輪替都由 **Kashionz 一人**負責，
+**不設代理人**。付款幣別 **CNY**（帳戶實際以人民幣儲值；9/24 查到 CNY 166.04、USD 0.00）。
+
+**儲值紀律**：告警門檻 **¥70**（約兩週用量，`LLM_BALANCE_FLOOR`）；月上限 **¥350**——每月儲值總額與
+儲值後的餘額都 ≤ ¥350。月上限是人的紀律，不是程式旋鈕，沒有任何東西會替你擋；超過就是失控花費的
+上限被放大。9/24 探測 420 則實扣 ¥0.74，按量計費的正常用量遠低於這兩個數字。
+
+**402 絕不改走 Claude**：claude CLI 已放棄，沒有備援可退；就算有，把 model 改回 Claude 也等於繞過
+預算。402、401、DeepSeek 停機時，問答與 sync 的 LLM 段（行內標註、摘要、標題、摘錄、訊號、簡報）
+全部停擺，直到儲值、換金鑰或服務恢復；檢索、閱讀頁、雷達、既有簡報的讀取不受影響。
+
+#### 訊號從哪裡來
+
+| 訊號 | 管道 | 多快 |
+|---|---|---|
+| web 的 `/healthz/llm` 回 503 `low` | 探針退出碼 **7** → `incident_handler.sh` 的 `probe_exit_7`（**WARNING**，「DeepSeek 餘額低於門檻（尚未停擺），請於 3 個工作天內儲值」）→ Slack FIRING，每 30 分鐘提醒，恢復送 RESOLVED | 餘額查詢 ok 快取 600 秒，約 12 分鐘內 |
+| web 的 `/healthz/llm` 回 503 `exhausted`／`auth_failed`／`unreachable`／`indeterminate` | 探針退出碼 **8** → `probe_exit_8`（**CRITICAL**，「LLM 帳號不可用（餘額用罄／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常」）→ Slack FIRING；已在 7 的 FIRING 期間轉成 8 時立刻送 **ESCALATED**（不等提醒）；8 → 7（儲值了但仍低於門檻）事件不關、降回 WARNING、不另通知；恢復送 RESOLVED | 問答碰到 402 的下一輪探針（約 2 分鐘）；否則同上 |
+| 批次碰到 401／402 | 該段整批 rc=2 → sync unit failed → `OnFailure` → Slack | 當輪 |
+
+`/healthz/llm` 只回 `{"llm": state}`，**不回任何金額**；金額與原因在 web 日誌的「healthz LLM 狀態」
+那一行（狀態改變時記一次）。判定細節（只讀 CNY 那一筆、依 `currency` 取值不靠索引、缺 CNY 或出現
+非零 USD 視為判斷不出來、402 閂鎖、連續 2 次才算連不上）在 `app/services/llm_health.py` 的模組
+docstring。問答主答（`ASK_ANSWER_MODEL`）沒有解析到 DeepSeek 時帳號問題只記成 `*_unused`、回 200、不開
+事件（審查 M15）；其他線上任務（路由、續問改寫、查詢規劃、追問、忠實度）都 fail-open，走 DeepSeek 也不算。
+**已知限制：web 重啟可能閃一次 RESOLVED。** 狀態只在 web 行程記憶體裡；重啟後第一次餘額查詢若剛好單次
+連不上，仍回 200 `unknown`（連續 2 次才算 unreachable），進行中的 LLM 事件會收到一則 RESOLVED，下一輪若仍
+連不上再 FIRING。402／401／餘額 ≤ 0 不受影響（重啟後第一次查詢就判得出來）。刻意不改：把重啟後的第一次
+失敗當 503，每次重啟碰上單次抖動都會開假事件；現在的代價只是多一則 RESOLVED＋FIRING，不會漏報。
+**已知延遲**：批次行程的 402 web 看不到，要等 web 自己的餘額查詢快取到期（最長 600 秒）；那一側由
+sync 的 `OnFailure` 即時告警。
+
+```bash
+curl -s http://127.0.0.1:8097/healthz/llm          # {"llm":"ok"}；只回答本機直連
+journalctl -u report-mark-web.service --since "1 hour ago" | grep "healthz LLM 狀態"   # 原因與金額
+journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（多項故障時逗號分隔）
+```
+
+#### 處置
+
+`low` 走探針退出碼 7（WARNING，3 個工作天內儲值即可）；其餘四種走 8（CRITICAL，問答與批次 LLM 段已停擺）。
+
+| state | 意義 | 處置 |
+|---|---|---|
+| `low` | CNY 餘額 > 0 但低於 ¥70：還能用 | 依儲值紀律儲值（儲值後餘額 ≤ ¥350）。事件在下一次查詢（失敗快取 60 秒）回 ok 後 RESOLVED |
+| `exhausted` | 402、`is_available=false` 或 CNY ≤ 0 | 儲值 → 確認 `/healthz/llm` 回 ok → 依下方步驟重放 |
+| `auth_failed` | 401，或 web 線上任務走 DeepSeek 卻沒有金鑰 | 看是不是金鑰被撤、貼錯或兩份不一致：依「DeepSeek 金鑰落點與輪替」核對指紋（`uv run python -m scripts._llm_env .env /etc/default/report-mark-llm`），必要時輪替 |
+| `unreachable` | 連續 2 次連不上 DeepSeek（網路、逾時、429／5xx） | 看對外網路與 DeepSeek 狀態頁；恢復後自動 RESOLVED |
+| `indeterminate` | 判斷不出來：缺 CNY 那一筆、USD 出現非零餘額（幣別不符）、回應格式變了、端點設定錯 | 到 DeepSeek 後台看帳戶實際幣別與餘額。帳戶若真的改以美元計價，改 repo 根 `.env` 的 `LLM_BUDGET_CURRENCY` 並重訂門檻（重啟 web）；否則是 API 改版或 `DEEPSEEK_BASE_URL` 設錯 |
+
+402／401 之後的完整步驟：
+
+1. 排除原因（儲值，或換金鑰並核對兩份指紋）。**不要**把任何 model 改成 Claude。
+2. 確認 `curl -s http://127.0.0.1:8097/healthz/llm` 回 `{"llm":"ok"}`。web 自己的請求收過 402 時，要等一次
+   在那之後開始的成功餘額查詢才會解除（最多 60 秒）；急的話重啟 web 也會清掉。
+3. 停排程：`sudo systemctl stop report-mark-sync.timer`。
+4. 依「整批中止後的重放」逐份重放 sync 殼保留的 delta（`--delta … --hashes-out …`），每份接著用它自己的
+   hashes 補跑摘要、標題、摘錄（`--hashes-file`）；下游中止保留的 `data/sync_hashes_retained_<時間>.txt`
+   同樣補跑。**不能**用 `failures_to_delta.py` 或 `--all-local`（整批中止不留逐篇失敗紀錄）。
+5. 缺的簡報日子補 `uv run python scripts/generate_brief.py --date YYYY-MM-DD`。
+6. 重新啟用排程：`sudo systemctl start report-mark-sync.timer`。
+
+### 忠實度 judge 走 DeepSeek（新量尺）
+
+生產忠實度 judge（`FAITHFULNESS_MODEL`）與離線評測 judge（`EVAL_JUDGE_MODEL`）在 deepseek 表裡是
+`deepseek-flash`（遷移 PR-26/27，計畫 D-J a：沒有 Claude 對照組可以重跑，直接切換、開新的量尺系譜，
+門檻 `FAITHFULNESS_MIN` 0.9 與 F>0.9／CP>0.8／AR>0.55 數值不變）。CLI 失效期間生產以
+`ASK_FAITHFULNESS_ENABLED=0` 暫停抽查；**部署含 PR-26/27 的版本之後**要把它打開：
+
+1. 確認生產沒有覆寫 judge：repo 根 `.env` 裡**不該**有 `FAITHFULNESS_MODEL=claude-…`（有的話刪掉那一行；
+   CLI 已放棄，留著只會每次抽查記一筆 degraded）。`ASK_FAITHFULNESS_TIMEOUT` 若還設著 240 也一併刪掉，
+   讓它用 DeepSeek judge 的預設 90（未設時依 judge 決定，Claude CLI judge 才是 240）。
+2. 從 repo 根 `.env` **移除** `ASK_FAITHFULNESS_ENABLED=0` 這一行（預設就是開）。
+3. 重啟 web：`sudo systemctl restart report-mark-web.service`（前端卡片文字有改，部署時照例 `make build-web`）。
+4. 問一題含數字的問題，等背景抽查跑完（數十秒內），核對：
+   ```bash
+   docker exec -i report-mark-postgres psql -U postgres -d research -c "SELECT created_at, evaluation->>'judge_model', evaluation->>'judge_fingerprint',
+     evaluation->>'degraded', evaluation->>'degraded_reason', evaluation->>'elapsed_ms'
+     FROM research.qa_log WHERE evaluation IS NOT NULL ORDER BY created_at DESC LIMIT 3"
+   ```
+   `judge_model` 應為 `deepseek-flash`、`judge_fingerprint` 有值、`degraded` 為 false。web 日誌的
+   `llm_call task=faithfulness` 行帶 `fp=`。
+5. 監控頁忠實度卡顯示「判定尺 deepseek-flash：新量尺（自 YYYY-MM-DD 起，DeepSeek）」，日期是資料裡新尺的
+   第一筆（`judge_since`，不是寫死的）；舊的 haiku 分數只計入已查核數、不進 fail-open／待複核／平均，
+   待複核佇列也只列新尺的低分。近 30 天窗期內舊列全部滾出後，卡片不再標「新量尺」。
+
+**degraded_reason 在 DeepSeek judge 下的意義**：`content_risk`（供應商內容審查拒答，不重試）、
+`account`（401／402／404：金鑰、餘額、模型設定；告警走上一節的 `/healthz/llm`，這裡只是抽查沒量到）、
+`truncated`（`finish_reason=length`；剩餘期限夠時已用 2 倍上限重試過，不到該次耗時 1.5 倍就不重試）、
+`timeout`（每次 judge 呼叫的總期限 `ASK_FAITHFULNESS_TIMEOUT` 到了，或伺服器 60 秒沒回任何位元組——
+非串流時多半還在生成，不重送以免重複付費）、`error`（adapter 漏出的意外例外，看 web 日誌的 traceback）。每個階段最多 3 個請求，一次抽查最多 6 個。
+
+**描述性校準**（不是閘門，結果只給人看）：`uv run python scripts/judge_agreement.py --dry-run` 先看取樣數與
+估價，再正式跑（預設 60 題、花費上限 ¥15，保守單價估算）。它拿 `qa_log` 裡歷史的 haiku 判定當參考
+（只取 `--since` 預設 2026-09-03 起的抽查——之前比的是帳本前 4000 字；haiku 分數排除 `no_source` 重算，
+被排除的列數與原因會印出來），印 κ、平均偏移、門檻翻轉率；脈絡是重建的，差異同時來自 judge 與脈絡。離峰跑（會在本行程載入 BGE-M3）。
+
+**回退**：沒有可用的 Claude judge（CLI 已放棄）。judge 有系統性問題時只能暫停抽查
+（repo 根 `.env` 設回 `ASK_FAITHFULNESS_ENABLED=0` 並重啟 web），或把 `FAITHFULNESS_MODEL` 換成
+`deepseek-v4-pro`——那又是另一把尺，監控卡會把 flash 的分數歸「其他 judge」。
+
 ### oneshot 的手動驗證：`Result=success` 不是證據
 
 2026-08-19 部署 P1 時出現過一次假通過。`systemctl start report-mark-freshness.service`
@@ -634,10 +837,13 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 |---|---|---|
 | `fail` | **異常** | 抽字或寫 DB 拋例外；環境修好重跑就會入庫 |
 | `skip_untagged` | **異常** | 標註前置條件失敗；同上 |
+| `skip_blocked` | **異常** | 行內標註被模型供應商的內容審查擋下；重跑不會變，要人處理（見「DeepSeek 批次的失敗處置」），殼另外點名 `make llm-blocked` |
+| `skip_truncated` | **異常** | 行內標註輸出被截斷；重跑不會變（補救指令不撈），要人處理（見「DeepSeek 批次的失敗處置」），殼另外點名 `make llm-blocked` |
 | `skip_admin` | 預期 | 標註成功且明確判定不該入庫 |
 | `skip_non_research` | 預期 | 同上 |
 | `skip_exists` | 預期 | 已在庫，冪等 |
 | `skip_scanned` | 預期 | 掃描件抽不出文字，是**檔案本身的性質**，重跑一萬次也一樣 |
+| `cache_fail` | 不算異常，殼層印 WARNING | 入庫 commit 之後寫抽取快取失敗：研報已在 DB、已記進 hashes，下游照常；重放補救對它無效（會 `skip_exists`）。持續出現多半是磁碟滿或 `data/extracted` 權限 |
 
 `skip_scanned` 那條是刻意的取捨：算成異常會讓心跳因為語料裡固定存在的掃描件而**永遠**不更新，而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）。代價是它不留路徑紀錄，屬已知限制。
 
@@ -649,7 +855,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 
 #### 補救走路徑，不走全庫掃描
 
-三個 `FAIL_LOG` 寫入點的格式現在一致：`絕對路徑<TAB>階段<TAB>原因`（階段為 `extract`／`tag`／`ingest`）。**原本第三處寫的是 `file_hash<TAB>檔名<TAB>原因`**——欄位數相同但語意不同，於是那一類漏收拿不到路徑、無法精準補回。
+三個 `FAIL_LOG` 寫入點的格式現在一致：`絕對路徑<TAB>階段<TAB>原因`（階段為 `extract`／`tag`／`ingest`；內容審查擋下的標註是 `tag_blocked`，`failures_to_delta.py` 預設不撈）。**原本第三處寫的是 `file_hash<TAB>檔名<TAB>原因`**——欄位數相同但語意不同，於是那一類漏收拿不到路徑、無法精準補回。
 
 `scripts/failures_to_delta.py` 把失敗記錄轉成合法的 `--delta` 輸入：只留「真的存在於本地鏡像下」的路徑，對不回檔案的行**計數並印出**而不是靜默丟棄（靜默丟棄會讓「補完了」與「有一半根本沒被看到」長得一樣）。2026-08-20 實測：7 篇、160 chunks、`fail=0`，而 `--all-local` 要對鏡像裡 16,736 個檔逐一抽字再查 DB。
 
@@ -660,6 +866,41 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 ```
 
 **「NAS 真的沒有新檔」仍是完整成功。** 週末與連假沒有新稿是常態，用「有沒有新資料」當健康指標會製造日曆型假警報——那條設計沒有變，測試釘住。
+
+### 整批中止後的重放
+
+**帳號／環境型中止（批次 rc=2）是整批一篇都沒做，而且不留逐篇失敗紀錄**：不寫 `data/sync_failures.log`、不進 `research.llm_task_failure`。所以 `failures_to_delta.py` 撈不到任何東西，`--all-local` 是 O(全部檔)——**這類中止兩者都不能用**。能重放的只有兩份「只有那一輪有」的檔，`scripts/sync_new_reports.sh` 在中止時保留它們：
+
+| 中止在哪 | 保留什麼 | 殼印出什麼 |
+|---|---|---|
+| 匯入段 rc 不是 0 也不是 75 | 本輪 `data/sync_delta_<時間>.txt`（不刪；前幾輪同樣中止的也還在） | 依時間序（舊→新）列出**所有**保留的 delta，每份一條 `--delta … --hashes-out data/sync_hashes_retained_<同一時間>.txt` |
+| 同上，且中止前已有研報入庫 | importer 寫的 `data/.sync_last_hashes.partial` 改名成 `data/sync_hashes_retained_<時間>_partial.txt` | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
+| 匯入段因 400 升級中止 | importer 寫的 `data/.sync_last_hashes.bad_request` 改名成 `data/sync_bad_request_<時間>.txt`（`file_hash<TAB>路徑`） | 逐行印出；重放本輪 delta 前先把這些路徑拿掉 |
+| 下游任一段 rc=2 | 當輪 `data/.sync_last_hashes` 複製成 `data/sync_hashes_retained_<時間>.txt`（一輪一份） | 摘要、標題、摘錄各一條 `--hashes-file` 補跑指令 |
+
+全部寫進當日 sync log，也落在 `data/unit_failures.log` 那筆紀錄的 log 尾巴裡。重放清單只列殼自己產生的 `sync_delta_<YYYYMMDD>_<HHMMSS>.txt`；`sync_delta_recover.txt` 這類手動檔不列。rc=75（CLI 被別的批次佔用）不在此列，處置照舊（`--all-local`，補完刪掉本輪 delta）。**rc=2 也可能是參數錯誤**（argparse 同樣以 2 退出，例如殼傳了批次不認得的旗標），動手前先看 sync log 確認中止原因。
+
+**為什麼要 `_partial` 那份**：importer 逐篇各自 commit，但 hashes 清單原本只在最後寫出。中途整批中止（`CliNotFoundError`→rc=2、`report_exists` 之類的 DB 例外→rc=1）時，已入庫的那幾篇不在任何 hashes 裡；重放同一份 delta 時它們又變成 `skip_exists`，重放寫出的 hashes 也沒有它們——摘要、標題、摘錄就永遠漏掉。importer 在中止時把「已 commit 的 hashes」寫到 `<hashes_out>.partial`（正常結束不寫；殼在匯入前先刪殘檔），殼改名保留。檔名刻意帶 `_partial`，才不會被重放本輪 delta 時的 `--hashes-out` 蓋掉。手動加 `--hashes-out X` 重放又中止時，partial 在 `X.partial`，要自己補跑。
+
+**為什麼要 `--hashes-out`（審查 M14）**：`sync_new_reports.py` 預設把入庫 hashes 寫到固定的 `data/.sync_last_hashes`，連續重放多份 delta 時每份都覆寫前一份，只有最後一份的研報會跑到下游。摘要與標題還有全表補的路徑，**摘錄沒有**，會靜默缺漏。`--hashes-out` 讓每份重放各寫一份，而且不動預設檔。
+
+處置步驟（在主 checkout 執行；從 worktree 跑不與排程互斥）：
+
+1. 排除中止原因。rc=2 的來源：claude CLI 找不到（`CliNotFoundError`，見上面 PATH 的兩次漂移）、claude CLI
+   認證失效（訊息以「claude CLI 認證失效」開頭，見「DeepSeek 金鑰落點與輪替」一節），或 DeepSeek 帳號層級錯誤（`LlmEnvironmentError`：401 金鑰、402 餘額、模型不存在；中止訊息以 `API[auth]`／`API[quota]`／`API[config]` 開頭）。**LLM 帳號型中止（例如餘額不足 402）的處置是儲值，絕不把 model 改成 Claude 繞過**——那等於繞過預算。
+2. 停排程，免得重放途中被下一輪搶鎖或覆寫：`sudo systemctl stop report-mark-sync.timer`。
+3. 依殼印出的順序（舊→新）逐份重放 delta，**每重放一份就立刻用它自己的 `--hashes-out` 補跑三段**，再換下一份：
+
+   ```bash
+   uv run python scripts/sync_new_reports.py --delta data/sync_delta_<T>.txt --hashes-out data/sync_hashes_retained_<T>.txt
+   uv run python scripts/generate_summaries.py --hashes-file data/sync_hashes_retained_<T>.txt
+   uv run python scripts/generate_titles.py --hashes-file data/sync_hashes_retained_<T>.txt
+   uv run python scripts/extract_takeaways.py --hashes-file data/sync_hashes_retained_<T>.txt
+   ```
+
+4. 下游中止保留的每一份 `data/sync_hashes_retained_<時間>.txt`，以及匯入中止保留的 `data/sync_hashes_retained_<時間>_partial.txt`，同樣依序補跑摘要、標題、摘錄（`--hashes-file`）。三段都只挑 `IS NULL`，重跑冪等，與第 3 步的先後無關。
+5. 每份補完、確認 `make freshness` 與 sync log 無新錯誤後，刪掉用過的 delta 與 hashes 檔（都已 gitignore；delta 不刪的話，下次整批中止時會再被列進重放清單）。
+6. 重新啟用排程：`sudo systemctl start report-mark-sync.timer`。
 
 ### sync timer 刻意不補跑（2026-08-20）
 
@@ -880,7 +1121,7 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 
 **`/healthz` 目前只探 DB**（一次 `SELECT 1`，內部逾時 3 秒，結果快取 5 秒）。
 它**不**代表「所有相依都健康」——不驗 BGE-M3 是否載入、不驗 reranker、不驗 NAS、
-不驗 `claude` CLI、不驗 R2（後兩者由探針另外檢查：退出碼 5 讀 PATH drop-in，退出碼 6 讀只回答本機直連的 `/healthz/storage`）。它能證明的是兩件事，而那兩件正好涵蓋 2026-08-18 的失效型態：
+不驗 `claude` CLI、不驗 R2、不驗 DeepSeek 帳號（這三者由探針另外檢查：退出碼 5 讀 PATH drop-in（已停用，見下），退出碼 6 讀只回答本機直連的 `/healthz/storage`，退出碼 7／8 讀同樣只回答本機直連的 `/healthz/llm`）。它能證明的是兩件事，而那兩件正好涵蓋 2026-08-18 的失效型態：
 
 1. **uvicorn 真的綁上了 :8097 並且會回應**（探針連得上）
 2. **DB 可用**（回 200 而非 503）
@@ -897,8 +1138,23 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 | `2` | web unit 不在 `active` | **failed → `OnFailure`** |
 | `3` | 剛啟動的寬限期內 | success（unit 宣告 `SuccessExitStatus=3`） |
 | `4` | 探針自己不能執行（缺 `curl`） | **failed → `OnFailure`** |
-| `5` | `/healthz` 正常，但問答相依的 `claude` 不在 web unit 的 PATH drop-in 上（2026-09-02 那種「healthz 綠、問答全壞」） | **failed → `OnFailure`** |
+| `5` | `/healthz` 正常，但問答相依的 `claude` 不在 web unit 的 PATH drop-in 上（2026-09-02 那種「healthz 綠、問答全壞」）。**已停用**：Claude CLI 已放棄（2026-09-24 決策），health unit 設 `Environment=HEALTH_DEP_DROPIN=`（空值＝不檢查）；PR-M 時刪除整段 rc 5 | **failed → `OnFailure`** |
 | `6` | `/healthz` 正常，但物件儲存（R2）連不上：`/healthz/storage` 回 503。原檔下載與 PDF 檢視會失敗，其餘功能正常 | **failed → `OnFailure`** |
+| `7` | `/healthz` 正常，但 DeepSeek 的 CNY 餘額低於門檻：`/healthz/llm` 回 503 `low`。**尚未停擺**，要儲值。處置見「DeepSeek 帳號告警與 402／401 處置」 | **failed → `OnFailure`** |
+| `8` | `/healthz` 正常，但 DeepSeek 帳號不可用或判斷不出來：`/healthz/llm` 回 `low` 以外的 503（`exhausted`／`auth_failed`／`unreachable`／`indeterminate`，本體讀不懂也算）。問答與批次 LLM 段停擺；檢索、閱讀、雷達正常 | **failed → `OnFailure`** |
+
+**L3 三項全查**（`/healthz` 正常時），一行 `reason=` 帶出全部原因（逗號分隔，例如
+`storage_unreachable,llm_low`），退出碼取 **8 → 5 → 6 → 7** 最前面的那一個：
+
+- **8 排第一**：它是最重的（問答與批次 LLM 段全停，CRITICAL），事件的嚴重度才等於同時成立的故障裡最重的
+  那一個——6 排在前面的話，R2 故障期間 DeepSeek 用罄只會以 WARNING 的「R2 連不上」出現。也必須排在 5 前面：
+  5 在 health unit 沒重新部署（`HEALTH_DEP_DROPIN=` 還沒生效）時會永遠成立，排前面就是永遠蓋掉 LLM 停擺。
+- **7 排最後**（審查 M15）：「餘額低於門檻」會持續到儲值為止（可能好幾天），排前面的話這段期間 5、6 開不了事件。
+
+被蓋住的那一項 reason 仍在 journal 那一行裡，前面那項修好後下一輪退出碼就換成它。web 只有一個 incident
+元件：FIRING 期間退出碼換了不會另開事件；WARNING → CRITICAL（例如 7 → 8、6 → 8）會立刻送 ESCALATED，
+反方向（8 → 6／7）是降級、要等下一則提醒（最多 30 分鐘）才看到新的 exit。只認 HTTP 503：404（舊版 web 沒有
+這支端點）、連不上、200（含 `*_unused`）都不開事件。`HEALTH_LLM_URL` 設空字串可停用 7／8 這一項。
 
 **兩種「連不上」都算失敗**：2026-08-18 的失效型態是 uvicorn 根本沒綁上（連不上），
 不是回 503。實測本機在 WSL mirrored networking 下，連一個沒有 listener 的埠得到的是
@@ -909,7 +1165,8 @@ access log 在恢復前是 **0 筆**。原因是 uvicorn 先跑 lifespan 再 bin
 | 參數 | 值 | 依據 |
 |---|---|---|
 | 觸發間隔 | 2 分鐘 | 對比中斷 4h50m，最壞偵測延遲降到約 2 分 45 秒 |
-| 單次逾時 | 5 秒 | `/healthz` 內部探測上限 3 秒，留 2 秒餘裕 |
+| 單次逾時 | 5 秒 | `/healthz` 內部探測上限 3 秒，留 2 秒餘裕；`/healthz/llm` 內部最多等 4 秒 |
+| 最壞耗時 | 55 秒 | 3 × 5 秒 ＋ 2 × 15 秒 ＝ 45 秒，第 3 次才成功時再加 `/healthz/storage`、`/healthz/llm` 各 5 秒；unit `TimeoutStartSec=90` |
 | 重試 | 3 次，間隔 15 秒 | 跨 30 秒，足以吸收 `systemctl restart` 的空窗（`RestartSec=3` ＋ 實測 bind 僅需 1 秒） |
 | 啟動寬限 | 60 秒 | **實測 bind 只要 1 秒**（模型暖機是背景進行，不阻塞 socket），不需要更長 |
 
@@ -1058,7 +1315,7 @@ sudo systemctl disable --now report-mark-health.timer
 
 | 欄位 | 用途 |
 |---|---|
-| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤、5 服務降級＝`/healthz` 正常但 `claude` 不在 web unit 的 PATH 上、6 服務降級＝`/healthz` 正常但 R2 連不上） |
+| `ExecMainStatus` | 探針的退出碼（0/3 健康、1/2 服務故障、4 探針自身錯誤、5 服務降級＝`/healthz` 正常但 `claude` 不在 web unit 的 PATH 上、6 服務降級＝`/healthz` 正常但 R2 連不上、7 服務提醒＝`/healthz` 正常但 DeepSeek 餘額低於門檻（尚未停擺）、8 服務降級＝`/healthz` 正常但 DeepSeek 帳號不可用或判斷不出來） |
 | `ExecMainExitTimestampMonotonic` | **單調時鐘**，判斷「是否有新觀測」。用它而非牆鐘，因為 WSL 休眠喚醒與時區調整會讓牆鐘跳動 |
 | `Result` | 附在通知訊息裡供人判讀 |
 
@@ -1167,7 +1424,10 @@ healthy + FIRING   → RESOLVED，通知一次，移除狀態檔
 |---|---|---|
 | `1` / `2` | **CRITICAL** | 使用者當下無法使用 |
 | `4` | **WARNING** | 探針自己壞了＝「我不知道」，不是「壞了」 |
-| `5` | **WARNING** | 服務降級：檢索／閱讀／雷達還活著，問答壞了；不會自己好，照樣開事件與提醒 |
+| `5` | **WARNING** | 服務降級：檢索／閱讀／雷達還活著，問答壞了；不會自己好，照樣開事件與提醒（已停用，見上） |
+| `6` | **WARNING** | 服務降級：原檔下載與 PDF 檢視壞了，其餘正常 |
+| `7` | **WARNING** | DeepSeek 餘額低於門檻（尚未停擺），請於 3 個工作天內儲值 |
+| `8` | **CRITICAL** | LLM 帳號不可用（餘額用罄／認證失敗／連不上，或判斷不出來），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常。由 7 轉來時立刻送 ESCALATED |
 | 探針超過 420 秒沒有新結果 | **WARNING** | **監控失明**——記在 `monitor` 元件，不是 `web` |
 | 探針超過 900 秒沒有新結果 | **CRITICAL** | 失明持續，升級（立即通知，不等提醒週期） |
 | timer 被停用／不在 active／unit 不存在 | **CRITICAL** | 監控被關掉了——**這是最不能只當 INFO 的一種** |

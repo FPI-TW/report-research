@@ -25,6 +25,56 @@ os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
 os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
+# LLM 付費 API：**刻意用賦值，不用上面那種 setdefault**。
+# 兩道要擋的來源：
+# 1. repo root 就是部署目錄，`web/server.py`、`web/deps.py` 在 import 期把真的 `.env` 灌進
+#    os.environ；`web.env_loader.load_env_file` 只補「還不存在」的鍵（空字串也算存在），
+#    所以這裡先佔位就擋得住——這一點 setdefault 也做得到。
+# 2. **執行者的環境裡本來就有真金鑰**（shell 已 export、或先載入過部署環境檔）。這是
+#    setdefault 擋不住、只有賦值擋得住的情況：漏了假物件的測試會真的打付費端點，而 CI 的
+#    runner 沒有金鑰、永遠看不到這個差異。
+# 端點指到不可達的本機埠是第二道防線。需要金鑰的測試用 mock.patch.dict 在自己的範圍內給假值。
+# 守門：tests/test_llm_http.py 的 ConftestGuardTests（含靜態釘住「賦值而非 setdefault」）。
+os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ["DEEPSEEK_BASE_URL"] = "http://127.0.0.1:9"
+
+# 模型選擇：同樣**用賦值**，理由同上（部署目錄的 `.env`、執行者 shell 裡的值都擋得住）。
+# 所有任務旋鈕設成 ""——`app/services/llm_models.resolve_model` 把空字串視同未設、改查預設表，
+# 所以測試永遠拿到 claude_cli 預設表的值（下面強制的 provider），與誰的機器、誰的環境檔無關。這一條與
+# `resolve_model` 的「空字串＝未設」寫法必須同進同退：只有前者，模組會拿到空字串的模型名。
+# `LLM_ENV_FILE` 指到不存在的路徑：批次在 import 期載入 LLM 專用環境檔，測試不得讀到本機
+# 真的 `/etc/default/report-mark-llm`。
+# 守門：tests/test_llm_models.py 的 ConftestModelGuardTests（清單直接比對 TASK_ENV）。
+# **生產預設已是 deepseek**（遷移 PR-28，`llm_models.DEFAULT_PROVIDER`），這裡刻意仍設 `claude_cli`：
+# 測試不得打付費 API，既有測試的假物件（`asyncio.create_subprocess_exec`、`_claude_cli` 的 spawn）
+# 都接在 CLI 路徑上；改成 deepseek 會讓漏了假物件的測試改走 HTTP 路徑（端點雖指到不可達的本機埠，
+# 失敗型態卻從「假物件沒接上」變成「連線失敗被當成 LLM 不可用」，靜默走另一條路）。
+# 要驗預設值的測試自己在範圍內移除這個鍵（`mock.patch.dict` 後 pop），見 test_llm_models.py。
+os.environ["LLM_PROVIDER"] = "claude_cli"
+os.environ["LLM_ENV_FILE"] = "/nonexistent/report-mark-llm"
+for _knob in (
+    "ASK_ANSWER_MODEL", "ASK_WEB_MODEL", "ASK_INTENT_MODEL", "ASK_CONDENSE_MODEL",
+    "QA_PLANNER_MODEL", "ASK_FOLLOWUP_MODEL", "FAITHFULNESS_MODEL", "EVAL_JUDGE_MODEL",
+    "TAG_MODEL", "SUMMARY_MODEL", "TITLE_MODEL", "TAKEAWAY_MODEL", "SIGNAL_MODEL", "BRIEF_MODEL",
+):
+    os.environ[_knob] = ""
+# DeepSeek 串流的牆鐘總時限：空字串＝預設 600（app/config._positive_float），部署目錄 `.env` 的值不滲進測試。
+os.environ["LLM_HTTP_TOTAL_TIMEOUT"] = ""
+# /healthz/llm 的預算幣別與門檻（app/config.py）：同上，空字串＝預設（CNY、70），部署目錄 `.env` 的值
+# 不滲進測試（否則 ok／low 的邊界測試會依機器而變）。守門：tests/test_healthz_llm.py 的 KnobTests。
+os.environ["LLM_BUDGET_CURRENCY"] = ""
+os.environ["LLM_BALANCE_FLOOR"] = ""
+# 批次斷路器的標記（scripts/_llm_env.breaker_path）：預設落在 repo 根的 data/，而 repo 根就是部署
+# 目錄——測試讓斷路器跳脫時寫進去，生產排程會 30 分鐘拒跑。指到不存在的目錄：寫入 fail-open
+# 失敗、讀取當作沒有。要驗標記的測試用 mock.patch.dict 指到自己的 tempfile。
+os.environ["LLM_BREAKER_FILE"] = "/nonexistent/report-mark-llm-breaker/.llm_breaker"
+# sync 輪次 id（scripts/sync_new_reports.sh 每輪 export）：斷路器標記的有效範圍依它判斷。從排程環境
+# 裡跑測試時不得沾到那一輪的 id；要驗輪次行為的測試用 mock.patch.dict 自己給。
+os.environ.pop("SYNC_ROUND_ID", None)
+# 批次用量記錄（scripts/_claude_cli.usage_log_path）：同理不得寫進部署目錄的 data/llm_usage.jsonl
+# （那是費用歸因的依據）。指到 os.devnull：寫得進去、什麼都不留；要驗內容的測試自己指到 tempfile。
+os.environ["LLM_USAGE_LOG"] = os.devnull
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _protect_repo_dotenv():
@@ -74,6 +124,24 @@ def _reset_monitor_caches():
         mod = sys.modules.get("web.routers.monitor")
         if mod is not None and hasattr(mod, "reset_caches"):
             mod.reset_caches()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_batch_state():
+    """`scripts._claude_cli` 的行程範圍狀態（斷路器的滑動窗與跳脫旗標）每題前後各清一次。
+
+    沒有這層的話，前一題留下的幾次逾時會讓下一題莫名跳脫（或反過來，把該跳脫的推回門檻下）。
+    同樣不主動 import——模組沒載入就沒有狀態要清。
+    """
+
+    def _clear() -> None:
+        mod = sys.modules.get("scripts._claude_cli")
+        if mod is not None and hasattr(mod, "_reset_state"):
+            mod._reset_state()
 
     _clear()
     yield

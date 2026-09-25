@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { displayTitle } from '../../lib/displayTitle'
 import type { ReviewItem, ReviewKind } from '../../lib/reviewSchemas'
+import { isNewDeepSeekScale, newScaleText } from './judgeScale'
+import type { EvalSource } from './progressSchema'
+import { reasonText } from './reviewReasons'
 import { useReviewQueue } from './useReviewQueue'
 import styles from './MonitorPage.module.css'
 
@@ -13,11 +16,15 @@ import styles from './MonitorPage.module.css'
  * 研報連到閱讀頁。
  *
  * 刻意沒有「標記已處理」：那需要狀態欄位與處理人歸因，而本站是共用帳號。
+ *
+ * `scale` 是監控頁 `/api/progress` 的問答忠實度統計（與忠實度卡同一份）：判定尺剛換成 DeepSeek、
+ * 窗期內還有舊尺的列時，忠實度分頁比照忠實度卡標「新量尺」——換尺頭幾天佇列近乎是空的，不說清楚
+ * 會被讀成「低分變少了」。佇列本身仍自己取數、不跟 5 秒輪詢（理由見 useReviewQueue）。
  */
 const TABS: { kind: ReviewKind; label: string; hint: string }[] = [
-  { kind: 'faithfulness', label: '忠實度低分', hint: '近 30 天內抽查分數低於門檻的回答，最低分在前' },
+  { kind: 'faithfulness', label: '忠實度低分', hint: '近 30 天內抽查分數低於門檻的回答，最低分在前；只列現行判定尺量的分數（換尺前的舊分數不列入）' },
   { kind: 'feedback', label: '倒讚', hint: '近 30 天內使用者按了倒讚的回答' },
-  { kind: 'extraction', label: '抽取品質', hint: '抽取品質標為 needs_review 的研報（照樣入庫、可檢索），分數最低在前' },
+  { kind: 'extraction', label: '抽取品質', hint: '抽取品質標為 needs_review 的研報（照樣入庫、可檢索），分數最低在前；右側是被標記的原因' },
 ]
 
 function fmtDay(iso: string | null | undefined): string {
@@ -34,6 +41,7 @@ function QaRow({ item, kind }: { item: ReviewItem; kind: ReviewKind }) {
         {kind === 'faithfulness' && item.faithfulness_score != null && (
           <span className={styles.fWarn}>{item.faithfulness_score.toFixed(3)}</span>
         )}
+        {kind === 'faithfulness' && item.judge_model && <span>{item.judge_model}</span>}
         <span>{fmtDay(item.created_at)}</span>
       </span>
     </li>
@@ -41,20 +49,32 @@ function QaRow({ item, kind }: { item: ReviewItem; kind: ReviewKind }) {
 }
 
 function ExtractionRow({ item }: { item: ReviewItem }) {
-  const failed = item.pages_failed?.length ?? 0
+  const reasons = item.review_reasons ?? []
   return (
     <li className={styles.rvRow}>
       <Link className={styles.rvLink} to={`/report/${item.file_hash ?? ''}`}>{displayTitle(item)}</Link>
       <span className={styles.rvMeta}>
         {item.source && <span>{item.source}</span>}
-        <span className={styles.fWarn}>{item.quality_score != null ? item.quality_score.toFixed(2) : '無分數'}</span>
-        {failed > 0 && <span>失敗 {failed} 頁</span>}
+        {reasons.length > 0 ? (
+          reasons.map(r => <span key={r} className={styles.fWarn}>{reasonText(item, r)}</span>)
+        ) : (
+          // 原因以現行門檻重算；入庫後調過門檻的話可能一條都不成立。
+          <span title="以現行門檻已不需複核；重跑該篇回填即會解除標記">現行門檻下已達標</span>
+        )}
       </span>
     </li>
   )
 }
 
-export function ReviewQueuePanel() {
+function NewScaleNote({ scale }: { scale: EvalSource }) {
+  return (
+    <div className={styles.prate}>
+      {`判定尺 ${scale.judge_model} 是${newScaleText(scale)}：分數與換尺前的不可直接比較`}
+    </div>
+  )
+}
+
+export function ReviewQueuePanel({ scale = null }: { scale?: EvalSource | null } = {}) {
   const [kind, setKind] = useState<ReviewKind>('faithfulness')
   const q = useReviewQueue(kind)
   const tab = TABS.find(t => t.kind === kind)!
@@ -106,6 +126,7 @@ export function ReviewQueuePanel() {
           {tab.hint}
           {kind === 'faithfulness' && q.minScore != null ? `（門檻 ${q.minScore}）` : ''}
         </div>
+        {kind === 'faithfulness' && scale && isNewDeepSeekScale(scale) && <NewScaleNote scale={scale} />}
       </div>
     </div>
   )

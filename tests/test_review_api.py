@@ -59,7 +59,7 @@ def _authed() -> TestClient:
 
 _TS = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
 _QA_ROW = ("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
-           "台積電目標價多少", _TS, 0.208, None)
+           "台積電目標價多少", _TS, 0.208, None, "claude-haiku-4-5")
 _RR_ROW = ("33333333-3333-4333-8333-333333333333", "h" * 64, "a.pdf", "標題", "kgi",
            date(2026, 9, 1), 0.41, {"garbled_ratio": 0.05}, [2, 7])
 
@@ -103,19 +103,27 @@ class ReviewQueueTests(unittest.TestCase):
         count_sql, count_params = session.calls[0]
         self.assertIn("< :fmin", count_sql)
         self.assertIn("active AND stopped IS NOT TRUE", count_sql)
-        self.assertEqual(count_params, {"days": 30, "fmin": review._FAITHFULNESS_MIN})
+        self.assertEqual(
+            count_params, {"days": 30, "fmin": review._FAITHFULNESS_MIN, "judge_model": review._JUDGE_MODEL}
+        )
+        # 只列現行 judge 的低分：與監控卡同一段過濾（app/services/judge_schema.py）。
+        self.assertIn("= :judge_model", count_sql)
+        self.assertEqual(item["judge_model"], "claude-haiku-4-5")
         # count 與當頁必須是同一個 WHERE，否則 total 與實際翻得到的筆數會對不上。
         page_sql = session.calls[1][0]
         self.assertIn(count_sql.split("WHERE", 1)[1].strip(), page_sql)
 
     def test_feedback_filters_dislike_and_last_page_has_no_next(self):
-        session = self._use([1, [_QA_ROW[:5] + ("dislike",)]])
+        session = self._use([1, [_QA_ROW[:5] + ("dislike", None)]])
         body = _authed().get("/api/review/queue?kind=feedback&days=7").json()
         self.assertEqual((body["total"], body["has_more"], body["next_offset"]), (1, False, None))
         self.assertIsNone(body["min_score"])
         self.assertEqual(body["items"][0]["feedback"], "dislike")
         self.assertIn("feedback = 'dislike'", session.calls[0][0])
         self.assertEqual(session.calls[0][1], {"days": 7})
+        # 倒讚列不一定有 evaluation；沒有就是 None，不是被補成舊預設的 judge。
+        self.assertIsNone(body["items"][0]["judge_model"])
+        self.assertNotIn(":judge_model", session.calls[0][0])
 
     def test_extraction_lists_needs_review_reports(self):
         session = self._use([1, [_RR_ROW]])
@@ -126,11 +134,30 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(item["quality_score"], 0.41)
         self.assertEqual(item["quality_flags"], {"garbled_ratio": 0.05})
         self.assertEqual(item["pages_failed"], [2, 7])
+        # 0.41 低於 EXTRACTION_REVIEW_MIN、有失敗頁、亂碼率 0.05 過線；coverage 沒量到不算。
+        self.assertEqual(item["review_reasons"], ["pages_failed", "low_score", "garbled"])
         self.assertEqual(item["report_date"], "2026-09-01")
         self.assertIsNone(item["qa_id"])
         self.assertIn("WHERE needs_review", session.calls[0][0])
         # needs_review 是研報的現況不是事件：沒有窗期。
         self.assertNotIn("days", session.calls[0][1])
+
+    def test_reasons_explain_a_report_whose_score_is_not_low(self):
+        """全庫實測被標到的研報分數多在 0.87–0.93：原因是 coverage 或亂碼率，不是分數。
+
+        只回分數的話，畫面上是一排不低的數字，看不出為什麼要複核。
+        """
+        row = _RR_ROW[:6] + (0.93, {"layout_coverage": 0.12, "garbled_ratio": 0.001}, None)
+        self._use([1, [row]])
+        item = _authed().get("/api/review/queue?kind=extraction").json()["items"][0]
+        self.assertEqual(item["review_reasons"], ["low_coverage"])
+
+    def test_reasons_can_be_empty_when_thresholds_moved_since_ingest(self):
+        """needs_review 是入庫當時寫下的布林；原因以現行門檻重算，兩者可能不一致。"""
+        row = _RR_ROW[:6] + (0.95, {"layout_coverage": 0.8}, None)
+        self._use([1, [row]])
+        item = _authed().get("/api/review/queue?kind=extraction").json()["items"][0]
+        self.assertEqual(item["review_reasons"], [])
 
     def test_paging_bounds_are_validated(self):
         for qs in ("limit=0", "limit=101", "offset=-1", "days=0", "days=366"):

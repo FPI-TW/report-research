@@ -120,9 +120,21 @@ class NumericGateConsequenceTests(unittest.TestCase):
 
 class DecomposeGroundTests(unittest.IsolatedAsyncioTestCase):
     async def test_decompose_filters_blanks(self):
-        j = _judge({"decompose": {"statements": ["a", "  ", "", "b", 5]}})
+        j = _judge({"decompose": {"statements": ["a", "  ", "", "b"]}})
         out = await F.decompose_statements("x", judge=j)
         self.assertEqual(out, ["a", "b"])
+
+    async def test_decompose_non_string_element_is_schema_error(self):
+        """schema v2：statements 必須是 list[str]。v1 會把 5 靜默丟掉。"""
+        j = _judge({"decompose": {"statements": ["a", 5]}})
+        with self.assertRaises(F.JudgeSchemaError):
+            await F.decompose_statements("x", judge=j)
+
+    async def test_decompose_string_is_not_iterated_per_character(self):
+        """v1 的潛在 bug：`{"statements": "一段字串"}` 會逐字迭代，每個字變成一條主張。"""
+        j = _judge({"decompose": {"statements": "台積電展望正向"}})
+        with self.assertRaises(F.JudgeSchemaError):
+            await F.decompose_statements("x", judge=j)
 
     async def test_decompose_judge_none_returns_none(self):
         out = await F.decompose_statements("x", judge=_judge({"decompose": None}))
@@ -151,6 +163,127 @@ class DecomposeGroundTests(unittest.IsolatedAsyncioTestCase):
     async def test_faithfulness_no_statements_returns_none(self):
         j = _judge({"decompose": {"statements": []}})
         self.assertIsNone(await F.faithfulness("找不到資料", ["ctx"], judge=j))
+
+
+class GroundSchemaV2Tests(unittest.IsolatedAsyncioTestCase):
+    """schema v2 的 grounding 驗證：idx 覆蓋、排除 bool、supported 必須是布林。"""
+
+    async def _ground(self, verdicts, n=2, strict=True):
+        j = _judge({"ground": {"verdicts": verdicts}})
+        return await F.ground_statements([f"s{i}" for i in range(n)], ["ctx"], judge=j, strict=strict)
+
+    async def test_bool_idx_is_rejected(self):
+        """isinstance(True, int) 為真——v1 會把 True 當成 idx 1。"""
+        with self.assertRaises(F.JudgeSchemaError):
+            await self._ground([{"idx": 0, "supported": True}, {"idx": True, "supported": True}])
+
+    async def test_string_idx_and_string_supported_are_rejected(self):
+        for verdicts in (
+            [{"idx": "0", "supported": True}, {"idx": 1, "supported": True}],
+            [{"idx": 0, "supported": "true"}, {"idx": 1, "supported": True}],
+            [{"idx": 0, "supported": 1}, {"idx": 1, "supported": True}],
+        ):
+            with self.subTest(verdicts=verdicts), self.assertRaises(F.JudgeSchemaError):
+                await self._ground(verdicts)
+
+    async def test_idx_set_must_be_exactly_range_n(self):
+        for verdicts in (
+            [{"idx": 0, "supported": True}],                                   # 缺
+            [{"idx": 0, "supported": True}, {"idx": 0, "supported": True}],    # 重複
+            [{"idx": 0, "supported": True}, {"idx": 2, "supported": True}],    # 越界
+            [{"idx": 1, "supported": True}, {"idx": 2, "supported": True}],    # 1 起算
+        ):
+            with self.subTest(verdicts=verdicts), self.assertRaises(F.JudgeSchemaError):
+                await self._ground(verdicts)
+
+    async def test_non_strict_only_relaxes_missing_idx(self):
+        out = await self._ground([{"idx": 1, "supported": True}], n=3, strict=False)
+        self.assertEqual(out, {1: True})
+        with self.assertRaises(F.JudgeSchemaError):  # 越界在寬鬆模式下照樣是錯
+            await self._ground([{"idx": 7, "supported": True}], n=3, strict=False)
+
+    async def test_schema_error_is_retried_once(self):
+        calls = {"n": 0}
+
+        async def judge(system, user):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"verdicts": [{"idx": True, "supported": True}]}
+            return {"verdicts": [{"idx": 0, "supported": True}]}
+
+        out = await F.ground_statements(["s0"], ["ctx"], judge=judge)
+        self.assertEqual(out, {0: True})
+        self.assertEqual(calls["n"], 2)
+
+    async def test_schema_error_retry_is_bounded(self):
+        calls = {"n": 0}
+
+        async def judge(system, user):
+            calls["n"] += 1
+            return {"verdicts": "壞掉"}
+
+        with self.assertRaises(F.JudgeSchemaError):
+            await F.ground_statements(["s0"], ["ctx"], judge=judge)
+        self.assertEqual(calls["n"], 2)  # 原本 1 次＋重試 1 次
+
+
+class CheckFaithfulnessSchemaTests(unittest.IsolatedAsyncioTestCase):
+    """生產端：schema 錯 → degraded(schema)；缺 idx 仍計 unsupported（審查 L19）。"""
+
+    async def test_missing_idx_still_counts_unsupported_not_degraded(self):
+        """L19：把缺 idx 改成 degraded 等於那一題沒查——方向是漏抓。生產端維持計為 unsupported。"""
+        j = _judge({
+            "decompose": {"statements": ["台積電是晶圓代工廠", "毛利率達 90%"]},
+            "ground": {"verdicts": [{"idx": 0, "supported": True}]},
+        })
+        with self.assertLogs("app.services.judge_schema", level="WARNING") as logs:
+            r = await F.check_faithfulness("x", ["ctx"], judge=j)
+        self.assertFalse(r.degraded)
+        self.assertEqual([c.verdict for c in r.claims], ["supported", "unsupported"])
+        self.assertEqual(r.faithfulness_score, 0.5)
+        self.assertTrue(any("漏判" in m for m in logs.output))
+        # 缺幾條要落庫，不能只在 WARNING 裡：分數偏低時才分得出「沒佐證」與「judge 沒判完」。
+        self.assertEqual(r.n_missing_verdicts, 1)
+        self.assertEqual(r.to_evaluation()["n_missing_verdicts"], 1)
+
+    async def test_all_verdicts_missing_is_schema_not_zero_score(self):
+        """`{"verdicts": []}` 是 judge 沒回答，不是全部不支持：全計 unsupported 會讓整題 0 分、
+        灌進待複核佇列。改判 degraded(schema)，且照 schema 錯的規則重試 1 次。"""
+        calls = {"ground": 0}
+
+        async def judge(system, user):
+            if system.startswith("你是 RAG 評測助手"):
+                return {"statements": ["營收年增 30%", "毛利率 50%"]}
+            calls["ground"] += 1
+            return {"verdicts": []}
+
+        r = await F.check_faithfulness("x", ["ctx"], judge=judge)
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_SCHEMA)
+        self.assertIsNone(r.faithfulness_score)
+        self.assertEqual(calls["ground"], 2)
+
+    async def test_string_statements_degrade_with_schema_reason(self):
+        j = _judge({"decompose": {"statements": "一段字串"}})
+        r = await F.check_faithfulness("x", ["ctx"], judge=j)
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_SCHEMA)
+        self.assertIsNone(r.faithfulness_score)
+        self.assertEqual(r.to_evaluation()["degraded_reason"], "schema")
+
+    async def test_bad_verdict_types_degrade_with_schema_reason(self):
+        j = _judge({
+            "decompose": {"statements": ["a", "b"]},
+            "ground": {"verdicts": [{"idx": 0, "supported": "yes"}, {"idx": 1, "supported": True}]},
+        })
+        r = await F.check_faithfulness("x", ["ctx"], judge=j)
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_SCHEMA)
+
+    async def test_evaluation_records_schema_version_2(self):
+        j = _judge({"decompose": {"statements": []}})
+        r = await F.check_faithfulness("找不到資料", ["ctx"], judge=j)
+        self.assertEqual(r.to_evaluation()["judge_schema_version"], 2)
 
 
 class CheckFaithfulnessTests(unittest.IsolatedAsyncioTestCase):
@@ -209,6 +342,90 @@ class CheckFaithfulnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ev["degraded"])
         self.assertIn("非真實性保證", ev["note"])
         self.assertIn("checked_at", ev)
+        # 量尺可追溯（PR-07）：judge 身分、解讀規則版本、耗時；未降級時沒有原因。
+        self.assertEqual(ev["judge_model"], F.DEFAULT_MODEL)
+        self.assertEqual(ev["judge_schema_version"], F.JUDGE_SCHEMA_VERSION)
+        self.assertIsNone(ev["degraded_reason"])
+        self.assertIsInstance(ev["elapsed_ms"], int)
+        self.assertEqual(ev["n_missing_verdicts"], 0)
+
+    async def test_judge_model_is_the_model_argument(self):
+        j = _judge({"decompose": {"statements": []}})
+        r = await F.check_faithfulness("找不到資料", ["ctx"], judge=j, model="claude-haiku-4-5")
+        self.assertEqual(r.to_evaluation()["judge_model"], "claude-haiku-4-5")
+
+    async def test_injected_judge_failure_reason_is_error(self):
+        r = await F.check_faithfulness("x", ["ctx"], judge=_judge({"decompose": None}))
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_ERROR)
+
+
+class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
+    """預設 judge 的失敗原因要落到 evaluation.degraded_reason：「服務掛了」與「回了看不懂
+    的東西」一個是可用性問題、一個是量尺問題，監控與校準都要分得開。"""
+
+    async def _check(self, stream):
+        from unittest import mock
+
+        with mock.patch.object(F, "stream_completion", stream):
+            return await F.check_faithfulness("營收年增 30%", ["ctx"], model="claude-haiku-4-5", timeout=1.0)
+
+    async def test_unavailable(self):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
+            raise F.LLMUnavailableError("529")
+            yield  # pragma: no cover
+
+        r = await self._check(stream)
+        self.assertTrue(r.degraded)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_UNAVAILABLE)
+        ev = r.to_evaluation()
+        self.assertEqual(ev["degraded_reason"], "unavailable")
+        self.assertEqual(ev["judge_model"], "claude-haiku-4-5")
+
+    async def test_parse(self):
+        """回應完整（沒撞到逾時）卻不是 JSON：量尺問題。"""
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
+            yield "我無法判斷這些主張。"
+            meta["truncated"] = False
+
+        r = await self._check(stream)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_PARSE)
+
+    async def test_truncated_by_timeout_is_not_parse(self):
+        """吐到一半被逾時截斷：JSON 不完整是逾時的結果，不是 judge 回了看不懂的東西。"""
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
+            yield '{"statements": ["截斷'
+            meta["truncated"] = True
+
+        r = await self._check(stream)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_TRUNCATED)
+        self.assertEqual(r.to_evaluation()["degraded_reason"], "truncated")
+
+    async def test_timeout_without_output(self):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
+            raise F.LLMUnavailableError("claude 無有效回應", reason="timeout")
+            yield  # pragma: no cover
+
+        r = await self._check(stream)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_TIMEOUT)
+
+    def test_vocabulary_is_closed(self):
+        self.assertEqual(
+            F.DEGRADED_REASONS,
+            {"unavailable", "timeout", "truncated", "empty", "parse", "schema", "content_risk", "account", "error"},
+        )
+
+    async def test_empty(self):
+        async def stream(prompt, *, model=None, system=None, timeout=None, allow_web=False, retries=2, meta=None,
+                         max_tokens=None, task=None):
+            yield "   "
+
+        r = await self._check(stream)
+        self.assertEqual(r.degraded_reason, F.DEGRADED_EMPTY)
 
 
 class ResolveEvidenceTextsTests(unittest.IsolatedAsyncioTestCase):

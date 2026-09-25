@@ -25,6 +25,11 @@ export const reviewItemSchema = z.object({
   quality_score: z.number().nullish(),
   quality_flags: z.record(z.string(), z.unknown()).nullish(),
   pages_failed: z.array(z.number()).nullish(),
+  // qa 列的 evaluation 是哪個 judge 量的（舊列＝claude-haiku-4-5；沒有 evaluation＝null）。
+  judge_model: z.string().nullish(),
+  // extraction 列：app/services/store.py 的 REVIEW_REASONS。刻意收成 string 而非 enum：後端新增一種原因時，
+  // enum 會讓整頁 parse 失敗；收成 string，畫面只是多一個沒有中文標籤的代碼。
+  review_reasons: z.array(z.string()).nullish(),
 })
 export type ReviewItem = z.infer<typeof reviewItemSchema>
 

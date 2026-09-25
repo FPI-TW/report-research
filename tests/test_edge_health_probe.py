@@ -239,6 +239,19 @@ class EdgeProbeStaticTests(unittest.TestCase):
                 self.assertNotIn(name, seen, f"{unit.name} 的 {key}={name} 與 {seen.get(name)} 重名")
                 seen[name] = f"{unit.name} {key}"
 
+    def test_every_incident_state_dir_is_gitignored(self) -> None:
+        """狀態目錄是純執行期狀態；repo 根就是部署目錄，沒忽略就會以未追蹤檔出現在 git status。"""
+        ignored = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        repo_prefix = "/home/kashionz/projects/report-mark/"
+        for unit in sorted(SYSTEMD_DIR.glob("*incident.service")):
+            for v in _directives(unit, "Environment"):
+                if not v.startswith("INCIDENT_STATE_DIR="):
+                    continue
+                path = v.split("=", 1)[1]
+                with self.subTest(unit=unit.name):
+                    self.assertTrue(path.startswith(repo_prefix), path)
+                    self.assertIn(path[len(repo_prefix):].rstrip("/") + "/", ignored)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -134,6 +134,17 @@ class ParseSseTests(unittest.TestCase):
         self.assertIn("error", lh.parse_sse_line("data: {oops"))
 
 
+class ConnectTimeoutKnobTests(unittest.TestCase):
+    def test_invalid_values_fall_back_to_default(self):
+        """`DEEPSEEK_CONNECT_TIMEOUT` 非數字、nan／inf、≤0 退回 10 秒；合法值照用、仍受 cap 約束。"""
+        for raw, want in (("", 10.0), ("3", 3.0), ("abc", 10.0), ("0", 10.0), ("-1", 10.0),
+                          ("nan", 10.0), ("inf", 10.0), ("-inf", 10.0)):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"DEEPSEEK_CONNECT_TIMEOUT": raw}):
+                self.assertEqual(lh._timeout(60.0).connect, want)
+        with mock.patch.dict(os.environ, {"DEEPSEEK_CONNECT_TIMEOUT": "nan"}):
+            self.assertEqual(lh._timeout(60.0, cap=2.0).connect, 2.0)
+
+
 class ClassifyStatusTests(unittest.TestCase):
     def test_table(self):
         cases = [
@@ -668,6 +679,102 @@ class StreamEdgeTests(_TransportMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.kind, lh.NETWORK)
         self.assertTrue(out.streamed)
 
+    async def test_read_timeout_before_first_token_is_timeout(self):
+        """首字前伺服器沉默（httpx read 逾時）歸 TIMEOUT：外層不重試（見模組 docstring）。
+        標頭之前與標頭之後、首字之前兩個時點都一樣；首字之後的 read 逾時仍是 NETWORK（截斷）。"""
+
+        def silent_headers(req):
+            raise httpx.ReadTimeout("no bytes", request=req)
+
+        for name, handler in (
+            ("send", silent_headers),
+            ("body", lambda req: httpx.Response(
+                200, stream=_AsyncStream(b": keep-alive\n\n", httpx.ReadTimeout("no bytes")))),
+        ):
+            with self.subTest(at=name):
+                self.install(handler)
+                texts, out = await _collect(self._stream())
+                self.assertEqual(texts, [])
+                self.assertEqual(out.kind, lh.TIMEOUT)
+                self.assertFalse(out.streamed)
+                self.assertIn("ReadTimeout", out.detail)
+        self.install(lambda req: httpx.Response(
+            200, stream=_AsyncStream(_sse(_chunk(content="一半"), done=False), httpx.ReadTimeout("no bytes"))))
+        texts, out = await _collect(self._stream())
+        self.assertEqual((texts, out.kind, out.streamed), (["一半"], lh.NETWORK, True))
+
+    async def test_read_timeout_after_reasoning_names_reasoning(self):
+        """收到 reasoning 後才沉默：detail 要說伺服器回應過（不是「未送出任何位元組」），分類不變。"""
+        self.install(lambda req: httpx.Response(200, stream=_AsyncStream(
+            _sse(_chunk(reasoning="想一想"), done=False), httpx.ReadTimeout("no bytes"))))
+        texts, out = await _collect(self._stream())
+        self.assertEqual((texts, out.kind, out.streamed), ([], lh.TIMEOUT, False))
+        self.assertIn("reasoning", out.detail)
+        self.assertIn("ReadTimeout", out.detail)
+        self.assertNotIn("未送出任何位元組", out.detail)
+        self.assertEqual(out.reasoning_chars, 3)
+
+    async def test_total_timeout_counts_from_call_start_not_first_token(self):
+        """總時限從呼叫開始算：首字 0.3 秒才到、總時限 0.4 秒、之後慢速滴字 → 約 0.4 秒截斷。
+        若在首字時重設期限（從首字起算），會拖到約 0.7 秒。"""
+        async def late_then_drip():
+            await asyncio.sleep(0.3)
+            for i in range(100):
+                yield _sse(_chunk(content=f"{i}"), done=False)
+                await asyncio.sleep(0.05)
+            yield _sse(_chunk(content="", finish="stop"))
+
+        self.install(lambda req: httpx.Response(200, content=late_then_drip()))
+        t0 = time.monotonic()
+        texts, out = await _collect(self._stream(first_token_timeout=5.0, total_timeout=0.4))
+        elapsed = time.monotonic() - t0
+        self.assertGreaterEqual(elapsed, 0.35)
+        self.assertLess(elapsed, 0.6)
+        self.assertTrue(0 < len(texts) < 100)
+        self.assertEqual((out.kind, out.streamed), (lh.TIMEOUT, True))
+        self.assertIn("總時限", out.detail)
+
+    async def test_total_timeout_after_text(self):
+        """吐字後的牆鐘總時限：到期＝TIMEOUT 且 streamed（呼叫端當截斷）；None＝不設。"""
+        async def drip():
+            for i in range(100):
+                yield _sse(_chunk(content=f"{i}"), done=False)
+                await asyncio.sleep(0.02)
+            yield _sse(_chunk(content="", finish="stop"))
+
+        self.install(lambda req: httpx.Response(200, content=drip()))
+        t0 = time.monotonic()
+        texts, out = await _collect(self._stream(total_timeout=0.3))
+        self.assertLess(time.monotonic() - t0, 1.5)
+        self.assertTrue(0 < len(texts) < 100)
+        self.assertEqual(out.kind, lh.TIMEOUT)
+        self.assertTrue(out.streamed)
+        self.assertIn("總時限", out.detail)
+
+    async def test_total_timeout_after_finish_reason_keeps_success(self):
+        """finish_reason 已到、只差 [DONE] 時到期：答案完整，以 finish_reason 為準。"""
+        async def finished_then_hang():
+            yield _sse(_chunk(content="完整"), _chunk(content="", finish="stop"), done=False)
+            await asyncio.sleep(5)
+            yield b""
+
+        self.install(lambda req: httpx.Response(200, content=finished_then_hang()))
+        texts, out = await _collect(self._stream(total_timeout=0.2))
+        self.assertEqual(texts, ["完整"])
+        self.assertIsNone(out.kind)
+
+    async def test_total_timeout_shorter_than_first_token_bounds_first_token(self):
+        async def queued():
+            for _ in range(100):
+                yield b": keep-alive\n\n"
+                await asyncio.sleep(0.02)
+
+        self.install(lambda req: httpx.Response(200, content=queued()))
+        t0 = time.monotonic()
+        texts, out = await _collect(self._stream(first_token_timeout=5.0, total_timeout=0.2))
+        self.assertLess(time.monotonic() - t0, 1.5)
+        self.assertEqual((texts, out.kind, out.streamed), ([], lh.TIMEOUT, False))
+
     async def test_first_token_deadline_covers_send(self):
         """TLS 或代理卡在標頭之前：也要受首字期限約束，不是等 connect／read 逾時。"""
 
@@ -881,10 +988,11 @@ class CompleteChatEdgeTests(_TransportMixin, unittest.TestCase):
 # ── 依賴方向與測試防線 ───────────────────────────────────────────────────────
 class LeafModuleTests(unittest.TestCase):
     def test_imports_only_stdlib_and_httpx(self):
-        """葉模組：不得 import app.*／web.*／scripts.*。
+        """葉模組：不得 import app.*／web.*／scripts.*，唯一例外是同為葉模組的 llm_models。
 
         `query_planner.py` 開頭的依賴約束與 `retrieval_pipeline`↔`answer` 的刻意循環都經過
-        llm 層；讓這裡往回 import 任何專案模組，就可能在 import 期形成新的循環。
+        llm 層；讓這裡往回 import 任何專案模組，就可能在 import 期形成新的循環。llm_models
+        本身只 import 標準函式庫（tests/test_llm_models.py 釘住），所以不會把循環帶進來。
         """
         tree = ast.parse((REPO_ROOT / "app" / "services" / "llm_http.py").read_text(encoding="utf-8"))
         roots = set()
@@ -894,6 +1002,8 @@ class LeafModuleTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 if node.level > 0:
                     roots.add("app")  # 相對 import 必然是專案內模組
+                elif node.module == "app.services.llm_models":
+                    continue
                 elif node.module:
                     roots.add(node.module.split(".")[0])
         project = {"app", "web", "scripts", "eval", "tests"}

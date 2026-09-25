@@ -38,7 +38,7 @@ from app.logging_setup import configure_logging  # noqa: E402
 configure_logging()
 
 from app.config import get_settings  # noqa: E402
-from app.services import db, llm  # noqa: E402
+from app.services import db, llm, llm_http, llm_models  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
@@ -88,6 +88,30 @@ async def _warmup_models() -> None:
         await asyncio.to_thread(deps.rerank_warmup)  # 失敗由 rerank 模組熔斷處理，不拋
 
 
+def _check_llm_models() -> None:
+    """啟動自檢：線上任務解析到的模型各自需要什麼，缺了就說出來（不擋啟動）。
+
+    `/healthz` 只探 DB。claude 不在 PATH 上（2026-09-02 原生安裝路徑漂移）、DeepSeek 金鑰沒填、
+    模型名打錯，三種都會讓每一題問答回 SSE error 而健康檢查照樣 ok。判準在
+    `llm_models.diagnose`（純函式）；金鑰只看有沒有值，不記任何內容。
+    """
+    resolved = llm_models.resolve_all(llm_models.ONLINE_TASKS)
+    logger.warning(
+        "LLM 模型：provider=%s；%s",
+        llm_models.provider(),
+        "、".join(f"{task}={model}" for task, model in resolved.items()),
+    )
+    has_claude = any(llm_models.is_claude_model(m) for m in resolved.values())
+    findings = llm_models.diagnose(
+        resolved,
+        has_key=bool((os.environ.get("DEEPSEEK_API_KEY") or "").strip()),
+        claude_path=llm.claude_cli_path() if has_claude else None,
+        path_env=os.environ.get("PATH", ""),
+    )
+    for level, message in findings:
+        logger.log(level, "%s", message)
+
+
 def _log_warmup_result(task: asyncio.Task[None]) -> None:
     try:
         task.result()
@@ -121,16 +145,9 @@ async def lifespan(app: FastAPI):
         "pgvector 版本：%s",
         pgvector_version or "查不到（DB 不可用，交由 /healthz 回報）",
     )
-    # claude CLI：不在 PATH 上時每一題問答都回 SSE error，而 /healthz 只探 DB 照樣回 ok。
-    # 只說出來、不擋啟動——檢索、閱讀頁、雷達、簡報的讀取都不需要它。
-    claude_path = llm.claude_cli_path()
-    if claude_path:
-        logger.warning("claude CLI：%s", claude_path)
-    else:
-        logger.error(
-            "claude CLI 不在 PATH 上：問答會全數失敗（檢查 report-mark-web.service.d/path.conf）；PATH=%s",
-            os.environ.get("PATH", ""),
-        )
+    # LLM 自檢（claude CLI 路徑、DeepSeek 金鑰、未知模型名）：問答壞掉時 /healthz 只探 DB
+    # 照樣回 ok。只說出來、不擋啟動——檢索、閱讀頁、雷達、簡報的讀取都不需要 LLM。
+    _check_llm_models()
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
     warmup_task = asyncio.create_task(_warmup_models())
     warmup_task.add_done_callback(_log_warmup_result)
@@ -144,6 +161,12 @@ async def lifespan(app: FastAPI):
                 await warmup_task
             except asyncio.CancelledError:
                 pass
+        # DeepSeek 的 AsyncClient 以 event loop 為鍵延遲建立（沒走過 HTTP 路徑就沒有，這行是 no-op）；
+        # loop 關閉前收掉連線池，不留給 GC。失敗只記錄，不擋關機。
+        try:
+            await llm_http.aclose()
+        except Exception:
+            logger.exception("llm_http.aclose 失敗")
 
 
 app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)

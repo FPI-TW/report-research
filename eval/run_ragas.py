@@ -47,9 +47,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from app.config import get_settings  # noqa: E402
 from app.services.agentic_qa import run_agentic  # noqa: E402
 from app.services.answer import (  # noqa: E402
+    ASK_ANSWER_MAX_TOKENS,
     ASK_DENSE_SCAN,
     ASK_RERANK_TIMEOUT,
     MAX_CONTEXT_CHARS,
@@ -63,6 +69,7 @@ from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, stream_completion  # noqa: E402
+from app.services.llm_models import is_http_model  # noqa: E402
 from app.services.query_planner import plan_queries  # noqa: E402
 from app.services.retrieval_pipeline import retrieve_context  # noqa: E402
 from app.services.scope_router import CORPUS_QA, POLICY_FOR_SCOPE, RouteDecision  # noqa: E402
@@ -202,7 +209,9 @@ async def _generate_answer(
     parts: list[str] = []
     meta: dict = {}
     async for chunk in stream_completion(
-        prompt, system=SYSTEM_PROMPT, model=model, timeout=timeout, meta=meta
+        prompt, system=SYSTEM_PROMPT, model=model, timeout=timeout, meta=meta,
+        # 評測生成＝主答（同一個上限，改它等於改被評的東西）
+        max_tokens=ASK_ANSWER_MAX_TOKENS, task="eval_answer",
     ):
         if chunk == SEARCH_EVENT:
             continue
@@ -490,8 +499,31 @@ def _sha256_file(path) -> str:
 
 
 def judge_provider(model: str) -> str:
-    """judge 走哪個 backend。現階段只有 claude CLI；DeepSeek adapter（PR-18）接上後在此分流。"""
-    return "claude_cli"
+    """judge 實際走哪個 backend：與 `stream_completion` 同一份白名單分派（`is_http_model`）。"""
+    return "deepseek_http" if is_http_model(model) else "claude_cli"
+
+
+def uncalibrated_judge_warning(model: str) -> str | None:
+    """judge 指定為白名單模型時的警告文字；Claude judge 回 None。
+
+    PR-26（judge 切 DeepSeek）之前 judge 校準尚未完成，這種結果屬於新的量尺系譜：與既有
+    Claude judge 的結果比，`eval_compare` 因 `judge_model` 不同回 2。不阻擋——校準本身就要
+    這樣跑。TODO(PR-26)：校準完成、judge 正式切換後刪掉這個警告。
+    """
+    if judge_provider(model) != "deepseek_http":
+        return None
+    return (
+        f"WARNING：judge={model} 走 DeepSeek，judge 校準（PR-26）尚未完成。"
+        "本次分數屬於新的量尺系譜，與 Claude judge 的基準線不可比（eval_compare 回 2）；"
+        "不要拿它升格基準線或判定劣化。"
+    )
+
+
+def _warn_uncalibrated_judge(model: str) -> None:
+    msg = uncalibrated_judge_warning(model)
+    if msg:
+        bar = "!" * 72
+        print(f"{bar}\n{msg}\n{bar}", file=sys.stderr, flush=True)
 
 
 def build_config(
@@ -620,6 +652,7 @@ async def run(
     """
     if repeat < 1:
         raise ValueError("repeat 必須 ≥ 1")
+    _warn_uncalibrated_judge(judge_model)  # 開跑前先說：一輪評測要跑好幾個小時
     started_at = datetime.now(timezone.utc).isoformat()
     commit = _git_commit()
     dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
@@ -718,6 +751,7 @@ def _print_summary(report: dict) -> None:
     failed = s.get("thresholds_failed") or []
     print(f"thresholds_pass   : {s['thresholds_pass']}"
           + (f"   未達標：{'、'.join(failed)}" if failed else ""))
+    _warn_uncalibrated_judge(str(s.get("judge_model") or ""))  # 看結果的人不一定看過開頭
 
 
 def _main() -> None:
@@ -747,6 +781,12 @@ def _main() -> None:
                         help="走 M5 agentic 迴圈評測（強制 concurrency=1）")
     parser.add_argument("--json", action="store_true", help="改輸出完整 JSON 到 stdout")
     args = parser.parse_args()
+    # 本次會用到的模型：生成端、judge；agentic 另有查詢規劃與證據評估（QA_PLANNER_MODEL）。
+    require_llm_key(
+        [args.generator_model, args.judge_model] + ([get_settings().qa_planner_model] if args.agentic else []),
+        # 評測的 LLM 呼叫都經 stream_completion 的白名單分派，DeepSeek 名稱可以放行
+        http_dispatch=True,
+    )
 
     report = asyncio.run(
         run(

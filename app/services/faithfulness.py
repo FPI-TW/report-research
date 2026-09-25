@@ -241,6 +241,11 @@ async def faithfulness(answer: str, contexts: list[str], *, judge) -> float | No
 
 # ── 生產 judge（drain stream_completion + 容錯 JSON，fail-open）──
 
+# 輸出上限（只作用在 HTTP 路徑，CLI 忽略）。judge 契約 `judge(system, user)` 分不出拆解還是
+# grounding，先取較大的拆解（8192；grounding 是 2048，第二版計畫 §8）；逐階段的上限隨 PR-18 的
+# DeepSeek judge adapter 一起細分。
+JUDGE_MAX_TOKENS = 8192
+
 
 async def _default_judge(
     system: str, user: str, *, model: str, timeout: float, failures: list[str] | None = None
@@ -260,7 +265,8 @@ async def _default_judge(
     try:
         parts: list[str] = []
         async for chunk in stream_completion(
-            user, model=model, system=system, timeout=timeout, allow_web=False, meta=meta
+            user, model=model, system=system, timeout=timeout, allow_web=False, meta=meta,
+            max_tokens=JUDGE_MAX_TOKENS, task="faithfulness",
         ):
             parts.append(chunk)
         raw = "".join(parts).strip()

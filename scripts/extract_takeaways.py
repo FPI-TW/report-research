@@ -65,10 +65,16 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_TAKEAWAY, resolve_model  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
@@ -81,8 +87,9 @@ FAIL_LOG = ROOT / "data" / "takeaway_failures.log"
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（舊列版本不符 → 自動重跑）
 EXTRACTION_VERSION = "takeaway-2026-07-17.v1"
 
-# 逐字引文重準確度（改寫一個字就錨不到）→ 預設 Sonnet；批次可用 --model 覆寫
-TAKEAWAY_MODEL_DEFAULT = "claude-sonnet-5"
+# 逐字引文重準確度（改寫一個字就錨不到）→ 預設 Sonnet；批次可用 --model 覆寫。
+# 來源是 TAKEAWAY_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+TAKEAWAY_MODEL_DEFAULT = resolve_model(TASK_TAKEAWAY)
 
 # 每篇最多幾條（prompt 要 3-5；多回的截掉。少於 3 條不算錯 —— prompt 明說「寧可少一
 # 條也不要編造」，只有 0 條才 rejected）
@@ -707,5 +714,9 @@ if __name__ == "__main__":
     # --dry-run 也一起擋：鎖的涵蓋範圍若隨旗標而變，日後有人在「不呼叫 LLM」的路徑上
     # 加了一個 LLM 呼叫，就會出現一個沒人發現的洞。要在批次跑到一半時查工作集，
     # 用 CLAUDE_LOCK_DISABLE=1（它只讀 DB，不搶 CLI）。
+    args = ap.parse_args()
+    # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
+    if not args.dry_run:  # --dry-run 不呼叫 LLM
+        require_llm_key({TASK_TAKEAWAY: args.model})
     with claude_cli_lock_or_exit("extract_takeaways"):
-        asyncio.run(main(ap.parse_args()))
+        asyncio.run(main(args))

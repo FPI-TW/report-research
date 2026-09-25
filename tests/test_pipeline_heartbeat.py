@@ -363,6 +363,15 @@ class IngestAbnormalTests(unittest.TestCase):
                 h.run()
                 self.assertTrue(h.heartbeat.is_file(), f"{k} 不該擋心跳")
 
+    def test_cache_fail_warns_but_does_not_block_heartbeat(self):
+        """抽取快取寫失敗：研報已入庫，不擋心跳；但要印出來（持續出現多半是磁碟滿）。"""
+        p = self._run_ok(ingested=3, cache_fail=3)
+        self.assertTrue(self.h.heartbeat.is_file(), p.stdout)
+        self.assertIn("抽取快取寫入失敗 3 篇", p.stdout)
+        self.assertNotIn("匯入異常", p.stdout)
+        p = self._run_ok(ingested=3, cache_fail=0)
+        self.assertNotIn("抽取快取寫入失敗", p.stdout)
+
     # ── 異常路徑 ────────────────────────────────────────────────────────
     def test_untagged_only_blocks_heartbeat(self):
         """這就是 2026-08-20 的形狀：ingested=0、skip_untagged=7、rc=0。"""

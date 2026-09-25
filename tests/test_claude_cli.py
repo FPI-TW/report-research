@@ -64,6 +64,17 @@ class RunClaudeTests(unittest.TestCase):
     def _raises(self, exc):
         return mock.patch.object(cc.subprocess, "run", side_effect=exc)
 
+    def test_deepseek_model_aborts_batch_without_spawning(self):
+        """PR-12 之前批次沒有 HTTP 分派：白名單名稱交給 CLI 每一篇都會失敗，要當環境型錯誤拋出
+        （各批次 main 接 CliNotFoundError → rc=2），不能回 CliResult 被當成單篇失敗。"""
+        for model in ("deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"):
+            with self.subTest(model=model), mock.patch.object(cc.subprocess, "run") as run:
+                with self.assertRaises(cc.CliNotFoundError) as ctx:
+                    cc.run_claude("prompt", model)
+                run.assert_not_called()
+                self.assertIsInstance(ctx.exception, cc.HttpModelUnsupportedError)
+                self.assertIn("PR-12", str(ctx.exception))
+
     def test_success_returns_stdout_and_no_error(self):
         done = subprocess.CompletedProcess(args=[], returncode=0, stdout="OUT", stderr="")
         with mock.patch.object(cc.subprocess, "run", return_value=done):

@@ -34,6 +34,11 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
@@ -419,5 +424,9 @@ if __name__ == "__main__":
                          "改 prompt 後要加")
     ap.add_argument("--dry-run", action="store_true", help="只印子集與工作項數，不呼叫 LLM")
     # --dry-run 也一起擋，理由同 extract_takeaways.py：鎖的涵蓋範圍不隨旗標而變。
+    args = ap.parse_args()
+    # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
+    if not args.dry_run:  # --dry-run 不呼叫 LLM
+        require_llm_key({llm_failures.TASK_SIGNAL: args.model})
     with claude_cli_lock_or_exit("extract_signals"):
-        asyncio.run(main(ap.parse_args()))
+        asyncio.run(main(args))

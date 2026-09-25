@@ -194,6 +194,17 @@ class ImporterContractTests(unittest.TestCase):
             self.assertEqual(body["abnormal"], "4")
             self.assertEqual(body["ingested"], "2")
 
+    def test_cache_fail_is_reported_but_not_abnormal(self):
+        """快取寫失敗的篇已入庫、已記進 hashes：寫進計數檔讓人看得到，但不算「該入庫卻沒進 DB」
+        （算了會擋心跳、印出對它無效的重放補救指令）。"""
+        self.assertNotIn("cache_fail", self.snr.ABNORMAL_COUNTERS)
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / ".sync_last_stats"
+            self.snr.write_stats(out, {"ingested": 2, "fail": 0, "skip_untagged": 0, "cache_fail": 2})
+            body = dict(ln.split("=", 1) for ln in out.read_text(encoding="utf-8").splitlines())
+            self.assertEqual(body["cache_fail"], "2")
+            self.assertEqual(body["abnormal"], "0")
+
     def test_stats_write_is_atomic_and_leaves_no_temp(self):
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / ".sync_last_stats"

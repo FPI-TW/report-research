@@ -26,7 +26,8 @@
   uv run python scripts/generate_brief.py --force       # 忽略時間閘與既有列，重寫當日
   uv run python scripts/generate_brief.py --date 2026-08-05
 
-退出碼：0 正常（含「今天不用跑」）、1 產生失敗、75 claude CLI 被其他批次佔用。
+退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定錯誤（例如 PR-12 之前設了 DeepSeek
+名稱）、75 claude CLI 被其他批次佔用。
 """
 
 from __future__ import annotations
@@ -43,15 +44,23 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from app.services import brief as brief_service  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_BRIEF, is_http_model, resolve_model  # noqa: E402
 from app.services.reading.queries import fetch_instrument_names  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
+from scripts._claude_cli import CliNotFoundError, HttpModelUnsupportedError  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "brief_failures.log"
-MODEL = "claude-sonnet-5"
+# BRIEF_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）；--model 可覆寫。
+MODEL = resolve_model(TASK_BRIEF)
 
 # 一次呼叫的逾時。素材是摘要不是全文，正常在一分鐘內回；給 300s 是留給 CLI 冷啟動
 # 與偶發的長素材（NAS 一次倒進大量檔案的日子）。
@@ -83,7 +92,16 @@ def call_cli(prompt: str, model: str, timeout: int = CLI_TIMEOUT) -> tuple[Optio
 
     失敗原因必須分得出來：`claude` 不在 PATH（systemd 缺 PATH drop-in）與「這次逾時」
     的處置完全不同，寫成同一句「CLI 無回應」等於把環境問題偽裝成偶發失敗。
+
+    DeepSeek 白名單的 model 拋 `HttpModelUnsupportedError`，不回失敗原因：那是設定錯，不是
+    這一次失敗（理由見 scripts/_claude_cli.py 的同名例外；main 以 rc=2 收場）。
+    TODO(PR-12)：簡報接上白名單分派後刪掉這個檢查。
     """
+    if is_http_model(model):
+        raise HttpModelUnsupportedError(
+            f"批次尚未支援 DeepSeek（待 PR-12）：model={model} 不能交給 claude CLI；"
+            "請改回 Claude 或移除 BRIEF_MODEL"
+        )
     try:
         proc = subprocess.run(
             build_cli_args(prompt, model),
@@ -230,8 +248,17 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="忽略時間閘與既有列，重寫當日")
     ap.add_argument("--dry-run", action="store_true", help="只印素材，不呼叫 LLM、不寫庫")
     args = ap.parse_args()
+    # 模型與金鑰預檢排在 generate() 之前，也就在取鎖之前；--dry-run 不呼叫 LLM，不檢查。
+    if not args.dry_run:
+        require_llm_key({TASK_BRIEF: args.model})
     # 取鎖的位置在 generate() 內、只包住 CLI 呼叫（理由見該處註解）。
-    return asyncio.run(generate(args))
+    try:
+        return asyncio.run(generate(args))
+    except CliNotFoundError as exc:
+        # 環境／設定層級：不寫 brief_failures.log（那是「這一天產生失敗」的紀錄），以 rc=2 讓
+        # 排程殼記進 unit_failures（與其他批次的 CliNotFoundError 同一個退出碼）。
+        print(f"[brief] 中止：{exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

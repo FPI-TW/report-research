@@ -117,5 +117,72 @@ class NvmPathAlignmentTests(unittest.TestCase):
         )
 
 
+LLM_ENV_EXAMPLE = SYSTEMD_DIR / "report-mark-llm.env.example"
+SYNC_ENV_EXAMPLE = SYSTEMD_DIR / "report-mark-sync.env.example"
+LLM_ENV_PATH = "-/etc/default/report-mark-llm"
+
+
+def _live_lines(path: Path) -> list[str]:
+    return [
+        ln for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+
+
+class LlmEnvFileTests(unittest.TestCase):
+    """DeepSeek 金鑰檔（PR-10）：只給 sync unit、格式兩種讀者都讀得懂、範例檔不帶金鑰。"""
+
+    def test_only_sync_unit_loads_llm_env(self) -> None:
+        """環境變數裡有金鑰的行程越少越好：其他 unit 都不呼叫 LLM。"""
+        loaders = sorted(
+            unit.name for unit in _units()
+            if any("report-mark-llm" in v for v in _directives(unit, "EnvironmentFile"))
+        )
+        self.assertEqual(loaders, ["report-mark-sync.service"])
+
+    def test_sync_loads_llm_env_after_shared_file(self) -> None:
+        files = _directives(SYSTEMD_DIR / "report-mark-sync.service", "EnvironmentFile")
+        self.assertIn(LLM_ENV_PATH, files, "要用 `-` 前綴：金鑰檔還沒安裝時 unit 仍要能啟動")
+        self.assertIn("-/etc/default/report-mark-sync", files)
+        self.assertLess(files.index("-/etc/default/report-mark-sync"), files.index(LLM_ENV_PATH))
+
+    def test_llm_example_key_is_empty(self) -> None:
+        keys = [ln.partition("=")[2] for ln in _live_lines(LLM_ENV_EXAMPLE) if ln.startswith("DEEPSEEK_API_KEY=")]
+        self.assertEqual(keys, [""], "範例檔的金鑰必須存在且為空")
+
+    def test_llm_example_has_no_inline_comment_quotes_or_duplicates(self) -> None:
+        """systemd 不剝行尾註解（# 之後會成為值），引號兩種讀者的處理也不同；重複鍵兩者取值相反。"""
+        keys = []
+        for ln in _live_lines(LLM_ENV_EXAMPLE):
+            key, sep, value = ln.partition("=")
+            self.assertTrue(sep, ln)
+            self.assertNotIn("#", value, ln)
+            self.assertFalse(any(q in value for q in "\"'"), ln)
+            self.assertEqual(key, key.strip(), ln)
+            keys.append(key)
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_llm_example_has_no_retired_fallback_knob(self) -> None:
+        self.assertNotIn("LLM_CONTENT_FALLBACK", LLM_ENV_EXAMPLE.read_text(encoding="utf-8"))
+
+    def test_llm_example_header_has_install_instructions(self) -> None:
+        text = LLM_ENV_EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn(
+            "sudo install -m 0640 -o root -g kashionz deploy/systemd/report-mark-llm.env.example"
+            " /etc/default/report-mark-llm",
+            text,
+        )
+        self.assertIn("sudoedit", text)
+        self.assertIn("source", text)
+
+    def test_sync_example_has_no_llm_keys(self) -> None:
+        """金鑰與模型旋鈕只放 llm 檔：共用檔是其他 unit 也讀、`db_backup.sh` 會逐鍵讀的檔。"""
+        offenders = [
+            ln for ln in _live_lines(SYNC_ENV_EXAMPLE)
+            if re.match(r"(DEEPSEEK_|LLM_|[A-Z_]+_MODEL=)", ln)
+        ]
+        self.assertEqual(offenders, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,13 +16,15 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
+from app.services.llm_models import TASK_SIGNAL, resolve_model
 from app.services.zh_hant import to_traditional
 
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（承載可追溯性、供重跑比較）
 EXTRACTION_VERSION = "sig-2026-07-15.v1"
 
-# 數值/證據擷取重準確度 → 預設 Sonnet（現代世代 sonnet-5；批次可用 --model 覆寫）
-SIGNAL_MODEL_DEFAULT = "claude-sonnet-5"
+# 數值/證據擷取重準確度 → 預設 Sonnet（現代世代 sonnet-5；批次可用 --model 覆寫）。
+# 來源是 SIGNAL_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+SIGNAL_MODEL_DEFAULT = resolve_model(TASK_SIGNAL)
 
 # 文字截斷上限（防模型暴走輸出整段）
 RATING_RAW_MAX = 100

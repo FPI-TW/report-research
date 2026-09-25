@@ -18,6 +18,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
+from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
 from app.services.tagging import TAG_INSTRUCTION, parse_tags  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
@@ -27,7 +33,8 @@ from app.services.extraction import cache  # noqa: E402
 
 TAGS_DIR = ROOT / "data" / "tags"
 FAIL_LOG = ROOT / "data" / "tag_failures.log"
-MODEL = "claude-haiku-4-5"
+# TAG_MODEL 旋鈕（與 sync_new_reports 的行內標註共用），未設時查 LLM_PROVIDER 的預設表。
+MODEL = resolve_model(TASK_TAG)
 
 _lock = threading.Lock()
 _done = 0
@@ -142,6 +149,8 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--excerpt", type=int, default=10000)
     args = ap.parse_args()
+    # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
+    require_llm_key({TASK_TAG: MODEL})
     # 全語料標註是最長的一支（數小時），也是最容易把排程的匯入／摘要／摘錄擠掉的一支。
     with claude_cli_lock_or_exit("tag_all_cli"):
         main(args.workers, args.limit, args.excerpt)

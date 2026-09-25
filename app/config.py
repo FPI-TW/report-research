@@ -6,8 +6,22 @@
 """
 
 import logging
+import math
 import os
 from dataclasses import dataclass
+
+from app.services.llm_models import (
+    CLAUDE_DEFAULTS,
+    DEFAULT_PROVIDER,
+    TASK_ASK_ANSWER,
+    TASK_ASK_CONDENSE,
+    TASK_ASK_INTENT,
+    TASK_ASK_WEB,
+    TASK_FAITHFULNESS,
+    TASK_QA_PLANNER,
+    provider,
+    resolve_model,
+)
 
 
 def _flag(name: str, default: str) -> bool:
@@ -82,6 +96,25 @@ def _r2_presign_ttl() -> int:
 
 
 
+def _positive_float(name: str, default: float) -> float:
+    """正數秒數；空值、非數字、nan／inf 或 ≤0 退回預設並警告。
+
+    0 會讓每一次呼叫都立刻逾時；`float()` 收 `"nan"`／`"inf"`，而 nan 進 `asyncio.timeout_at`
+    時每個比較都為假，每則回答吐第一段就被當成到期截斷。
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not math.isfinite(value) or value <= 0:
+        logging.getLogger(__name__).warning("%s=%r 不是正數，退回 %g", name, raw, default)
+        return default
+    return value
+
+
 def _faithfulness_min() -> float:
     """數值主張支持率門檻。新名 FAITHFULNESS_MIN 優先；缺值時退回舊名 REPORT_FAITHFULNESS_MIN。"""
     v = os.getenv("FAITHFULNESS_MIN")
@@ -110,8 +143,9 @@ class Settings:
     ask_max_stale_reports: int
     # 使用者可否在問答開啟網搜（伺服器端總閘；關掉即使前端送 web=true 也不生效）
     ask_enable_web: bool
-    # 開啟網搜那一輪的主 LLM 逾時：網搜會讓單題多花數十秒，沿用 llm.py 的 120s
-    # 預設會在「搜到一半」被砍斷，症狀是答案無聲截斷。不開網搜的路徑不受影響。
+    # 開啟網搜那一輪的主 LLM 逾時。經 /api/ask（_with_heartbeat 驅動）時語意是「第一個輸出
+    # （文字或網搜標記）」的期限、不是總時限（理由見 answer.py 的 ASK_WEB_TIMEOUT 註解）：
+    # 網搜可能很久才出第一個字，沿用 llm.py 的 120s 會被誤判逾時。不開網搜的路徑不受影響。
     ask_web_timeout: float
     # intent.py
     ask_intent_model: str
@@ -180,9 +214,19 @@ class Settings:
     embed_max_concurrency: int
     embed_torch_threads: int
 
+    # LLM 供應商與線上任務的模型（app/services/llm_models.py 的 resolve_model；旋鈕名見其
+    # TASK_ENV）。ask_intent_model 等既有欄位也經同一張表解析，放在各自原本的區段。
+    llm_provider: str = DEFAULT_PROVIDER
+    ask_answer_model: str = CLAUDE_DEFAULTS[TASK_ASK_ANSWER]   # 總覽、主答（不開網搜）、評測生成
+    ask_web_model: str = CLAUDE_DEFAULTS[TASK_ASK_WEB]         # 時效題網搜、主答開網搜
+    # DeepSeek 串流（llm.stream_completion 的 HTTP 路徑）的牆鐘總時限（秒，從呼叫開始算）。
+    # 只是最後一道上限：首字前有首字期限，吐字後正常靠 max_tokens 與 read 逾時收尾；伺服器
+    # 每 60 秒內滴一點內容時兩者都收不了。到期且已吐字＝截斷（附註＋filters.llm_truncated）。
+    # 寬鬆是刻意的：最長的主答 8192 tokens 正常一兩分鐘內收完。CLI 路徑不受影響。
+    llm_http_total_timeout: float = 600.0
+
 
 def _load() -> Settings:
-    intent_model = os.getenv("ASK_INTENT_MODEL", "claude-haiku-4-5")
     return Settings(
         ask_max_reports=int(os.getenv("ASK_MAX_REPORTS", "15")),
         ask_max_passages=int(os.getenv("ASK_MAX_PASSAGES", "4")),
@@ -202,9 +246,14 @@ def _load() -> Settings:
         ask_max_stale_reports=int(os.getenv("ASK_MAX_STALE_REPORTS", "4")),
         ask_enable_web=_flag("ASK_ENABLE_WEB", "1"),
         ask_web_timeout=float(os.getenv("ASK_WEB_TIMEOUT", "240")),
-        ask_intent_model=intent_model,
+        # 模型旋鈕一律經 llm_models.resolve_model：非空的任務旋鈕優先，否則查 LLM_PROVIDER 的
+        # 預設表；空字串視同未設（tests/conftest.py 把全部旋鈕強制成 ""）。
+        # 改寫前 ASK_CONDENSE_MODEL／QA_PLANNER_MODEL 未設時會跟著 ASK_INTENT_MODEL 走；
+        # 現在各自查表（claude_cli 下三者同為 claude-haiku-4-5，生產環境檔沒有設這三個鍵，
+        # 行為不變）。理由同 FAITHFULNESS_MODEL 的解耦：換一個旋鈕不該靜默換掉另一個任務。
+        ask_intent_model=resolve_model(TASK_ASK_INTENT),
         ask_intent_timeout=float(os.getenv("ASK_INTENT_TIMEOUT", "20")),
-        ask_condense_model=os.getenv("ASK_CONDENSE_MODEL", intent_model),
+        ask_condense_model=resolve_model(TASK_ASK_CONDENSE),
         ask_condense_timeout=float(os.getenv("ASK_CONDENSE_TIMEOUT", "20")),
         object_storage_mode=_object_storage_mode(),
         r2_endpoint_url=os.getenv("R2_ENDPOINT_URL", "").strip(),
@@ -224,7 +273,7 @@ def _load() -> Settings:
         rerank_model=os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3"),
         trusted_data_enabled=_flag("TRUSTED_DATA_ENABLED", "1"),
         # agentic_qa / query_planner（M5）—— M5 里程碑只在本區段內加鍵
-        qa_planner_model=os.getenv("QA_PLANNER_MODEL", intent_model),
+        qa_planner_model=resolve_model(TASK_QA_PLANNER),
         # 20 秒過緊：prod 實測 claude CLI 光冷啟動的 ttft 就約 10s（每次呼叫都重付
         # ~24K token 系統提示），規劃 prompt 比分類長，於是每一題都逾時 →
         # LLMUnavailableError → agentic 永遠 degraded，M5 形同關閉。
@@ -248,9 +297,10 @@ def _load() -> Settings:
         # 先前未設時跟著 intent 走，而生產環境檔沒有覆寫——只要哪天把路由模型換掉，
         # judge 就在同一刻被靜默換掉，監控卡上的分數從此是另一把尺量的，卻沒有任何
         # 記號。預設字串與改動前的實際值相同（intent 預設 claude-haiku-4-5），所以
-        # 本改動不改變生產實際用的 judge。空字串視同未設（`or`）。
+        # 本改動不改變生產實際用的 judge。空字串視同未設。DeepSeek 預設表裡這列仍是
+        # claude-haiku-4-5：換 judge 要等校準（PR-27），不隨 LLM_PROVIDER 一起換。
         # 換 judge 時連帶看 app/services/judge_schema.py：讀分數的三處只計現行 judge。
-        faithfulness_model=os.getenv("FAITHFULNESS_MODEL") or "claude-haiku-4-5",
+        faithfulness_model=resolve_model(TASK_FAITHFULNESS),
         # 沒有現行呼叫端：問答抽查用下面那顆 ask_faithfulness_timeout，
         # scripts/eval_faithfulness.py 只讀 qa_log、不呼叫 LLM。保留是為了 check_faithfulness
         # 的其他呼叫者（目前沒有），以及下方「問答那顆必須比它大」的測試基準。
@@ -327,6 +377,10 @@ def _load() -> Settings:
         db_maintenance_statement_timeout_ms=int(
             os.getenv("DB_MAINTENANCE_STATEMENT_TIMEOUT_MS", "0")
         ),
+        llm_provider=provider(),
+        ask_answer_model=resolve_model(TASK_ASK_ANSWER),
+        ask_web_model=resolve_model(TASK_ASK_WEB),
+        llm_http_total_timeout=_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0),
     )
 
 

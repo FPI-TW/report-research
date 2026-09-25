@@ -7,7 +7,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.config import _extractor, _faithfulness_min, get_settings  # noqa: E402
+from app.config import _extractor, _faithfulness_min, _positive_float, get_settings  # noqa: E402
 
 
 class SettingsDefaultsTests(unittest.TestCase):
@@ -73,6 +73,22 @@ class SettingsDefaultsTests(unittest.TestCase):
             self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pdfplumber")
         with mock.patch.dict(os.environ, {"EXTRACTOR": "pdfplumbr"}):
             self.assertEqual(_extractor("EXTRACTOR", "pypdf"), "pypdf")
+
+    def test_llm_http_total_timeout(self):
+        """DeepSeek 串流的牆鐘總時限：預設 600 秒；0、負數、非數字、nan／inf 退回預設（0 會讓每次都立刻逾時）。"""
+        self.assertEqual(get_settings().llm_http_total_timeout, 600.0)
+        for raw, want in (("300", 300.0), ("", 600.0), ("0", 600.0), ("-5", 600.0), ("abc", 600.0),
+                          ("nan", 600.0), ("inf", 600.0), ("-inf", 600.0), ("NaN", 600.0)):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_HTTP_TOTAL_TIMEOUT": raw}):
+                self.assertEqual(_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0), want)
+
+    def test_llm_model_defaults_match_prior_literals(self):
+        """LLM_PROVIDER 預設 claude_cli：各任務的模型與遷移前寫死的字串相同（完整一覽在 test_llm_models）。"""
+        s = get_settings()
+        self.assertEqual(s.llm_provider, "claude_cli")
+        self.assertEqual(s.ask_answer_model, "claude-sonnet-5")
+        self.assertEqual(s.ask_web_model, "claude-sonnet-5")
+        self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
 
     def test_singleton(self):
         self.assertIs(get_settings(), get_settings())

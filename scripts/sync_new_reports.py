@@ -27,7 +27,13 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from app.services.extraction import cache as extraction_cache  # noqa: E402
+from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, run_claude  # noqa: E402
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
@@ -50,7 +56,15 @@ EXTS = {".pdf", ".docx", ".doc"}
 #     把它算成異常會讓心跳因為語料裡固定存在的掃描件而**永遠**不更新，
 #     而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）⇒ 預期。
 #     代價是它不留路徑紀錄，屬已知限制，見 docs/production_resilience.md。
+#   - `cache_fail`：入庫 commit 之後寫抽取快取失敗（write_cache_fail_open）。**這篇已經在 DB、
+#     也已記進 hashes**，下游照常；它不是「該入庫卻沒進 DB」，補救指令（failures_to_delta →
+#     重放）對它無效（重放會 skip_exists）。算成異常會擋心跳、印出錯的補救指令 ⇒ **不算異常**，
+#     只寫進 .sync_last_stats，由殼層在 >0 時印 WARNING（持續出現多半是磁碟滿或權限）。
 ABNORMAL_COUNTERS = ("fail", "skip_untagged")
+
+# 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
+# （app/services/llm_models.py；claude_cli 下是 claude-haiku-4-5）。
+TAG_MODEL = resolve_model(TASK_TAG)
 
 
 def parse_rsync_delta(
@@ -100,7 +114,7 @@ def _tag_via_cli(
     file_name: str,
     text: str,
     excerpt: int = 10000,
-    model: str = "claude-haiku-4-5",
+    model: str = TAG_MODEL,
     timeout: int = 150,
 ):
     """用 claude CLI(Haiku)標註單篇 → (tag, error)。tag 為 None 時 error 說得出為什麼。
@@ -337,6 +351,7 @@ async def _run(args) -> None:
             "skip_untagged",
             "skip_non_research",
             "fail",
+            "cache_fail",
         )
     }
     ingested_hashes: list[str] = []
@@ -500,7 +515,8 @@ async def _run(args) -> None:
                 ingested_hashes.append(res.file_hash)
                 stats["ingested"] += 1
                 stats["chunks"] += len(chunks)
-                write_cache_fail_open(res, path, meta, source, report_date)
+                if not write_cache_fail_open(res, path, meta, source, report_date):
+                    stats["cache_fail"] += 1  # 不算異常（見 ABNORMAL_COUNTERS 註解），但要看得到
                 print(f"  [{tag.market}] {path.name[:55]} ({len(chunks)} chunks)", flush=True)
 
             if stats["ingested"] and not args.dry_run:
@@ -554,6 +570,9 @@ def main() -> None:
     args = ap.parse_args()
     if not args.delta and not args.all_local:
         ap.error("需指定 --delta <file> 或 --all-local")
+    # 取鎖之前：缺金鑰或模型名打錯是「跑了也白跑」，要在撞鎖（rc=75＝不跑）之前說出來。
+    if not args.dry_run:  # --dry-run 不標註、不呼叫 LLM
+        require_llm_key({TASK_TAG: TAG_MODEL})
     # 這支也 spawn claude（行內標註，見 _tag_via_cli），而且它跑在排程路徑上、是三小時
     # 一輪的第一個競爭者——手動批次正在跑時它照樣會被 timer 叫起來。
     with claude_cli_lock_or_exit("sync_new_reports"):

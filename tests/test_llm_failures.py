@@ -356,6 +356,62 @@ class TakeawaySignalRecordingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((rec.recorded, rec.cleared), ([], ["h1"]))
 
 
+class HttpModelAbortsBatchNotRecordedTests(unittest.IsolatedAsyncioTestCase):
+    """PR-12 之前批次收到 DeepSeek 名稱：`run_claude` 拋 `HttpModelUnsupportedError`（環境型，
+    `CliNotFoundError` 的子類），從單篇函式一路拋到 main 以 rc=2 中止——**不能**被當成單篇失敗
+    記進跳過名單（否則研報會以 DeepSeek 的 model 名被擋在外面），也不能真的 spawn CLI。"""
+
+    def setUp(self):
+        from scripts import _claude_cli as cc
+
+        self.cc = cc
+        run = mock.patch.object(cc.subprocess, "run", side_effect=AssertionError("不該 spawn claude"))
+        self.spawn = run.start()
+        self.addCleanup(run.stop)
+
+    async def test_titles_and_summaries(self):
+        for mod, fn in ((gt, "title_one"), (gs, "summarize_one")):
+            with self.subTest(mod=fn):
+                rec = _SpyRecorder()
+                with tempfile.TemporaryDirectory() as tmp, \
+                     mock.patch.object(mod, "FAIL_LOG", Path(tmp) / "f.log"), \
+                     mock.patch.object(mod, "MODEL", "deepseek-flash"), \
+                     mock.patch.object(mod, "SessionFactory", _NoDbSessionFactory()):
+                    with self.assertRaises(self.cc.HttpModelUnsupportedError):
+                        await getattr(mod, fn)(
+                            asyncio.Semaphore(1), "rid", "f.pdf", "內文" * 50, 3000, 1,
+                            file_hash="h1", recorder=rec,
+                        )
+                    self.assertFalse((Path(tmp) / "f.log").exists(), "不寫單篇失敗紀錄")
+                self.assertEqual((rec.recorded, rec.cleared), ([], []))
+
+    async def test_takeaways_and_signals(self):
+        cases = (
+            (et, et.WorkItem("rep-1", "f.pdf", None, "券商甲", "正典文字", "sha", file_hash="h1"), 24000,
+             "_replace_rows"),
+            (es, es.WorkItem("rep-1", "TW", "券商甲", None, "f.pdf", "內文", ["2330"], file_hash="h1"), 16000,
+             "_upsert_rows"),
+        )
+        for mod, item, excerpt, writer in cases:
+            with self.subTest(mod=mod.__name__):
+                rec = _SpyRecorder()
+                write = mock.AsyncMock()
+                with tempfile.TemporaryDirectory() as tmp, \
+                     mock.patch.object(mod, "FAIL_LOG", Path(tmp) / "f.log"), \
+                     mock.patch.object(mod, writer, new=write):
+                    with self.assertRaises(self.cc.HttpModelUnsupportedError):
+                        await mod.extract_one(asyncio.Semaphore(1), item, excerpt, "deepseek-flash", 1, recorder=rec)
+                    self.assertFalse((Path(tmp) / "f.log").exists())
+                self.assertEqual(rec.recorded, [])
+                write.assert_not_awaited()
+
+    def test_exception_is_the_batch_abort_type(self):
+        """各批次 main 只接 `CliNotFoundError`（→ rc=2）；子類關係斷了就會變成未處理例外（rc=1）。"""
+        self.assertTrue(issubclass(self.cc.HttpModelUnsupportedError, self.cc.CliNotFoundError))
+        for mod in (gt, gs, et, es):
+            self.assertIs(mod.CliNotFoundError, self.cc.CliNotFoundError)
+
+
 class _Ctx:
     async def __aenter__(self):
         return self

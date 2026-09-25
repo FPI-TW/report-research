@@ -57,5 +57,76 @@ class LifespanClaudeCheckTests(unittest.TestCase):
         self.assertNotIn("不在 PATH 上", out)
 
 
+class LifespanLlmModelCheckTests(unittest.TestCase):
+    """自檢依「解析到的模型」決定要檢查什麼（判準的逐列測試在 tests/test_llm_models.py）。"""
+
+    def test_deepseek_without_key_logs_error_but_still_starts(self):
+        a, b, c = _startup()
+        env = {"LLM_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": ""}
+        with a, b, c, patch.dict("os.environ", env), patch.object(llm, "claude_cli_path", return_value="/x"):
+            with self.assertLogs("web.server", level="WARNING") as cm:
+                with TestClient(server.app) as client:
+                    self.assertEqual(client.get("/login").status_code, 200)
+        out = "\n".join(cm.output)
+        self.assertIn("DEEPSEEK_API_KEY 為空", out)
+        self.assertIn("provider=deepseek", out)
+        # 網搜在 DeepSeek 表裡仍是 Claude，所以 CLI 檢查照做
+        self.assertIn("claude CLI：/x", out)
+
+    def test_unknown_model_name_logs_error(self):
+        a, b, c = _startup()
+        with a, b, c, patch.dict("os.environ", {"ASK_INTENT_MODEL": "haiku"}), \
+                patch.object(llm, "claude_cli_path", return_value="/x"):
+            with self.assertLogs("web.server", level="ERROR") as cm:
+                with TestClient(server.app):
+                    pass
+        self.assertIn("未知模型名", "\n".join(cm.output))
+        self.assertIn("ask_intent=haiku", "\n".join(cm.output))
+
+
+
+class LifespanClosesLlmHttpTests(unittest.TestCase):
+    """關機時收掉 DeepSeek 的 AsyncClient 連線池（沒走過 HTTP 路徑時是 no-op）。
+
+    pgvector 版本檢查換成立即回傳：這組只驗關機，不該花 DB 連線逾時的時間（沒有 DB 的
+    機器上每次啟動會等 60 秒）。
+    """
+
+    def setUp(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import db
+
+        p = patch.object(db, "assert_pgvector_version", AsyncMock(return_value="0.8.0"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_shutdown_awaits_llm_http_aclose(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import llm_http
+
+        a, b, c = _startup()
+        closer = AsyncMock()
+        with a, b, c, patch.object(llm, "claude_cli_path", return_value="/x"), \
+                patch.object(llm_http, "aclose", closer):
+            with TestClient(server.app):
+                closer.assert_not_awaited()
+        closer.assert_awaited_once()
+
+    def test_aclose_failure_does_not_break_shutdown(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import llm_http
+
+        a, b, c = _startup()
+        with a, b, c, patch.object(llm, "claude_cli_path", return_value="/x"), \
+                patch.object(llm_http, "aclose", AsyncMock(side_effect=RuntimeError("boom"))):
+            with self.assertLogs("web.server", level="ERROR") as cm:
+                with TestClient(server.app):
+                    pass
+        self.assertIn("llm_http.aclose 失敗", "\n".join(cm.output))
+
+
 if __name__ == "__main__":
     unittest.main()

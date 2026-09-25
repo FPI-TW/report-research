@@ -224,6 +224,14 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
             with self.assertRaises(cc.CliNotFoundError):
                 snr._tag_via_cli("x.pdf", "內文")
 
+    def test_deepseek_model_aborts_instead_of_skip_untagged(self):
+        """PR-12 之前：TAG_MODEL 是 DeepSeek 名稱時真的 run_claude 會拒收並往上拋（rc=2），
+        不 spawn CLI、也不讓每一篇變成 skip_untagged。"""
+        with mock.patch.object(cc.subprocess, "run") as run:
+            with self.assertRaises(cc.HttpModelUnsupportedError):
+                snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash")
+        run.assert_not_called()
+
 
 class CacheWriteAfterCommitTests(unittest.TestCase):
     """審查 L9：抽取快取在 DB commit 之後才寫。它拋例外時，該篇已入庫卻被計成 fail、
@@ -254,6 +262,14 @@ class CacheWriteAfterCommitTests(unittest.TestCase):
         self.assertLess(handler, append)   # hash 在 try 之外，入庫的 except 攔不到它
         self.assertLess(append, cache)     # 先記 hash 再寫快取
         self.assertNotIn("_write_cache(res", run)  # _run 只經 fail-open 包裝寫快取
+
+    def test_cache_failure_is_counted_in_stats(self):
+        """快取寫失敗只剩 print 的話，持續失敗（磁碟滿）在計數檔裡完全看不到：回傳值要進 stats。"""
+        src = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+        run = src[src.index("async def _run(args)"):]
+        self.assertIn('"cache_fail",', run[: run.index("ingested_hashes: list")])  # 計數器有初始值（每輪都寫出）
+        call = run.index("if not write_cache_fail_open(res, path, meta, source, report_date):")
+        self.assertIn('stats["cache_fail"] += 1', run[call: call + 200])
 
 
 if __name__ == "__main__":

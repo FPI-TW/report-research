@@ -2,7 +2,8 @@
 
 本模組只負責「打一次 API、把結果與失敗原因說清楚」，不決定哪個任務用哪個模型、也不做
 呼叫端的重試策略——那兩件事分別在分派層（`llm.stream_completion`、`scripts/_claude_cli.
-run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式庫與 httpx，不 import
+run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式庫與 httpx，專案內唯一的例外
+是同樣只依賴標準函式庫的 `app.services.llm_models`（白名單的所在）；不 import 其他
 `app.*`／`web.*`（`query_planner.py` 開頭的依賴約束、`retrieval_pipeline`↔`answer` 的
 刻意循環都不能被它牽動；由 tests/test_llm_http.py 的 AST 測試釘住）。
 
@@ -24,7 +25,17 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
     `_with_heartbeat` 每次 `__anext__` 都開新 Task，而 `asyncio.timeout` 綁定進入時的 Task：
     跨 yield 的逾時在生產上第一個 token 之後就失效（本機重現：0.5 秒逾時、6 段每 0.2 秒
     一段，經新 Task 驅動時 1.2 秒全吐完）。每個 await 自己包，任何驅動方式下行為都一樣，
-    單元測試看到的就是生產行為。第一個字之後不設牆鐘上限，由 `max_tokens` 與 read 逾時收尾。
+    單元測試看到的就是生產行為。
+    - 首字之前 httpx 的 read 逾時（伺服器 `_READ_TIMEOUT` 秒沒送任何位元組，連 keep-alive 都沒有）
+      歸 `TIMEOUT` 而不是 `NETWORK`：它和首字期限到了是同一件事——伺服器沒回應，再等一輪無益
+      （CLI 路徑同一語意：逾時不重試）。歸 NETWORK 的話外層會重試，主答（首字期限 120 秒）最壞
+      要 3×60 秒加退避才失敗。連線逾時（connect）與其他傳輸錯誤仍是 NETWORK。批次（`complete_chat`）
+      刻意不同：它有涵蓋所有嘗試的總期限兜底，沉默在期限內仍歸 NETWORK 重試（`_timed_out_kind`）。
+    - 第一個字之後另有寬鬆的**總時限**（`total_timeout`，從呼叫開始算；呼叫端傳
+      `LLM_HTTP_TOTAL_TIMEOUT`），同樣每個 await 各自包 `timeout_at`、不跨 yield。它只是最後一道
+      牆鐘上限：正常收尾靠 `max_tokens` 與 read 逾時，而伺服器每 60 秒內滴一點內容時兩者都收不了。
+      到期時已吐字＝`TIMEOUT` 且 `streamed=True`（呼叫端當截斷處理），已收到 finish_reason 則以
+      它為準。
   - 批次（`complete_chat`）的 `timeout` 是涵蓋傳輸層重試的**總期限**，用 `time.monotonic()`
     逐行檢查。httpx 的 read 逾時會被伺服器排隊時的 `: keep-alive` 一直重置（官方：最長 10
     分鐘），不能拿來當總時限。
@@ -41,6 +52,7 @@ import atexit
 import contextlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -52,20 +64,13 @@ from dataclasses import dataclass, field
 
 import httpx
 
+# 走 HTTP 的模型白名單搬到葉模組 llm_models（`app.config` 的 `claude_only` 也要用它，留在這裡會
+# 形成 config ↔ llm_http 的 import 循環）。這裡以原名重新匯出，既有呼叫端與測試不必改。
+from app.services.llm_models import HTTP_MODELS, is_http_model  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-
-# 走 HTTP 的模型**明確白名單**。不在這裡的名稱一律留給 CLI 路徑：若寫成「`claude-` 以外都走
-# HTTP」，CLI 別名（`sonnet`）或打錯的模型名會被送到付費端點、拿到 400 後被當成帳號錯誤
-# 中止整批。`deepseek-v4-flash` 是官方保留的舊名（導向 V4.1-Flash、按 Flash 計價）。
-# 要加新名稱就發 PR——換模型本來就需要重新評測。
-HTTP_MODELS = frozenset({"deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash"})
-
-
-def is_http_model(model: str | None) -> bool:
-    return model in HTTP_MODELS
-
 
 # ── 失敗分類 ─────────────────────────────────────────────────────────────────
 AUTH = "auth"                      # 缺金鑰或 401
@@ -440,10 +445,17 @@ def _url() -> str:
 
 
 def _timeout(read: float, cap: float | None = None) -> httpx.Timeout:
-    """`cap`＝剩餘期限（批次）：connect／read／write 都不超過它。"""
+    """`cap`＝剩餘期限（批次）：connect／read／write 都不超過它。
+
+    `DEEPSEEK_CONNECT_TIMEOUT` 非數字、nan／inf 或 ≤0 一律退回 10 秒（同 `app.config._positive_float`；
+    本模組是葉模組，不 import `app.config`）：`float()` 收 `"nan"`／`"inf"`，而 nan、inf、負數都
+    不是合法的 socket 逾時值。
+    """
     try:
         connect = float(os.getenv("DEEPSEEK_CONNECT_TIMEOUT") or 10)
     except ValueError:
+        connect = 10.0
+    if not math.isfinite(connect) or connect <= 0:
         connect = 10.0
     write = _WRITE_TIMEOUT
     if cap is not None:
@@ -547,6 +559,19 @@ def _transport_detail(exc: BaseException) -> str:
     return _one_line(f"{type(exc).__name__}: {exc}")[:200]
 
 
+def _silent_detail(exc: BaseException, reasoning_chars: int = 0) -> str:
+    """首字前 read 逾時的 detail：說出是伺服器沉默，不是我們的首字期限。
+
+    已收到 reasoning 才沉默時換一種說法：thinking 應已關閉（見模組 docstring），這時伺服器其實
+    回應過，「未送出任何位元組」會把人帶去查連線。分類不變（TIMEOUT、不重試）。
+    """
+    if reasoning_chars > 0:
+        msg = f"reasoning（{reasoning_chars} 字）後伺服器沉默 {_READ_TIMEOUT:g}s、尚未輸出內容"
+    else:
+        msg = f"首字前伺服器 {_READ_TIMEOUT:g}s 未送出任何位元組"
+    return _one_line(f"{msg}（{type(exc).__name__}）")[:200]
+
+
 # ── 線上：非同步串流 ─────────────────────────────────────────────────────────
 async def _drain(lines) -> None:
     """[DONE] 之後把 chunked 結尾讀完，連線才能回池；有界、任何錯誤都忽略。"""
@@ -565,15 +590,24 @@ async def astream_chat(
     system: str | None = None,
     task: str = "-",
     user_id: str | None = None,
+    total_timeout: float | None = None,
 ) -> AsyncIterator[str | ChatOutcome]:
     """串流呼叫：逐段 yield content 文字，最後 yield 一個 `ChatOutcome`（恰好一次）。
 
     不做重試（重試策略在 `llm.stream_completion`，它才知道「已吐字就不重試」）。任何
     httpx 例外都轉成 outcome，不往外拋；只有 `CancelledError` 原樣傳遞，並經 finally
     關閉回應，對應 CLI 路徑的 `proc.kill()`。
+
+    `total_timeout`：整次呼叫的牆鐘上限（None＝不設）；首字期限取兩者較早的。語意見模組
+    docstring 的「逾時語意」。
     """
     t0 = time.monotonic()
-    deadline = asyncio.get_running_loop().time() + first_token_timeout
+    started = asyncio.get_running_loop().time()
+    deadline = started + first_token_timeout
+    total_deadline = None if total_timeout is None else started + total_timeout
+    if total_deadline is not None and total_deadline < deadline:
+        deadline = total_deadline
+        first_token_timeout = total_timeout
     pre = _preflight(t0)
     if isinstance(pre, ChatOutcome):
         _log_call(task, model, pre)
@@ -602,6 +636,8 @@ async def astream_chat(
                     response = await client.send(request, stream=True)
             except TimeoutError:
                 out = _fail(TIMEOUT, f"首字期限 {first_token_timeout:g}s 內未收到回應", t0)
+            except httpx.ReadTimeout as exc:  # 伺服器沉默（首字前）＝逾時，不重試（見模組 docstring）
+                out = _fail(TIMEOUT, _silent_detail(exc), t0)
             except httpx.TransportError as exc:
                 out = _fail(NETWORK, _transport_detail(exc), t0)
 
@@ -620,16 +656,25 @@ async def astream_chat(
             lines = _aiter_sse_lines(response)
             while True:
                 try:
-                    if got_text:
+                    # 每個 await 各自包期限，不跨越 yield（見模組 docstring）：首字前是首字期限，
+                    # 之後是總時限（None＝不設）。
+                    async with asyncio.timeout_at(total_deadline if got_text else deadline):
                         line = await anext(lines)
-                    else:
-                        # 首字前：每個 await 各自包期限，不跨越 yield（見模組 docstring）
-                        async with asyncio.timeout_at(deadline):
-                            line = await anext(lines)
                 except StopAsyncIteration:
                     break
                 except TimeoutError:
-                    out = _fail(TIMEOUT, f"首字期限 {first_token_timeout:g}s 內未收到內容", t0)
+                    if not got_text:
+                        out = _fail(TIMEOUT, f"首字期限 {first_token_timeout:g}s 內未收到內容", t0)
+                    elif acc.finish_reason is None:
+                        # 已吐字才到總時限：與 read 逾時同樣是「中途收掉」，呼叫端當截斷處理
+                        acc.error = (TIMEOUT, f"總時限 {total_timeout:g}s 到期（已吐字）")
+                    break
+                except httpx.ReadTimeout as exc:
+                    if not got_text:  # 首字前的沉默＝逾時，不是網路錯誤（不重試）
+                        out = _fail(TIMEOUT, _silent_detail(exc, acc.reasoning_chars), t0,
+                                    reasoning_chars=acc.reasoning_chars)
+                    elif acc.finish_reason is None:
+                        acc.error = (NETWORK, _transport_detail(exc))
                     break
                 except httpx.HTTPError as exc:
                     # 已經收到 finish_reason 才斷線：答案本身已完整，以 finish_reason 為準

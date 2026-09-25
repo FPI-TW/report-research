@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -83,7 +84,7 @@ class EvalQuestionTests(unittest.IsolatedAsyncioTestCase):
             return [_FakeSource()], ctx
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             for c in ["台積電", "展望", "正向 [1]"]:
                 yield c
 
@@ -193,7 +194,7 @@ class EvalQuestionLatencyTests(unittest.IsolatedAsyncioTestCase):
             return [_FakeSource()], ctx
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             yield "答案 [1]"
 
         async def slow_judge(system, user):
@@ -253,7 +254,7 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
             )
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             received["gen_prompt"] = prompt
             yield "答案 [1][2]"
 
@@ -313,7 +314,7 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
             raise AssertionError("非 agentic 模式不得呼叫 run_agentic")
 
         async def fake_stream(prompt, *, system=None, model=None, timeout=120.0,
-                              allow_web=False, retries=2, meta=None):
+                              allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             yield "答案 [1]"
 
         saved = _install_fakes(
@@ -407,7 +408,7 @@ async def _one_ctx_retrieve(question, *, filters=None, **params):
 
 
 async def _cited_stream(prompt, *, system=None, model=None, timeout=120.0,
-                        allow_web=False, retries=2, meta=None):
+                        allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
     yield "答案 [1]"
 
 
@@ -507,7 +508,7 @@ class JudgeErrorIsPerMetricTests(unittest.IsolatedAsyncioTestCase):
         seen = {}
 
         async def stream(prompt, *, system=None, model=None, timeout=120.0,
-                         allow_web=False, retries=2, meta=None):
+                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             seen["model"] = model
             seen["timeout"] = timeout
             yield "答案 [1]"
@@ -530,7 +531,7 @@ class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_truncation_signal_from_stream_completion(self):
         async def cut(prompt, *, system=None, model=None, timeout=120.0,
-                      allow_web=False, retries=2, meta=None):
+                      allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             yield "前半"
             meta["truncated"] = True  # CLI 逾時後對已吐字 fail-open，只留這個記號
 
@@ -546,7 +547,7 @@ class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
     async def test_slow_but_complete_is_not_truncated(self):
         """含 529 重試的牆鐘可以超過單次逾時，但只要成功那次沒撞到逾時就不是截斷。"""
         async def slow(prompt, *, system=None, model=None, timeout=120.0,
-                       allow_web=False, retries=2, meta=None):
+                       allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
             await asyncio.sleep(timeout + 0.02)
             yield "完整答案"
             meta["truncated"] = False
@@ -700,7 +701,7 @@ class MergeRepeatsTests(unittest.TestCase):
 class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
     """run() 的結果檔：summary 的三個 META 鍵、config 快照、repeat 與 --dump-io。"""
 
-    async def _run_with(self, td, *, repeat=1, dump=False, agentic=False):
+    async def _run_with(self, td, *, repeat=1, dump=False, agentic=False, judge_model="claude-haiku-4-5"):
         questions = [{"id": "q/1", "question": "題1"}, {"id": "q2", "question": "題2"}]
         ds = Path(td) / "ds.json"
         ds.write_text(json.dumps({"questions": questions}, ensure_ascii=False), encoding="utf-8")
@@ -721,7 +722,7 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
             rr.eval_question = fake_eval_question
             report = await rr.run(
                 ds, out_path=Path(td) / "out.json", concurrency=1, repeat=repeat,
-                generator_model="deepseek-flash", judge_model="claude-haiku-4-5",
+                generator_model="deepseek-flash", judge_model=judge_model,
                 dump_dir=(Path(td) / "frozen") if dump else None, agentic=agentic,
             )
         finally:
@@ -792,6 +793,53 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await rr.run("unused.json", out_path=None, repeat=0)
 
+    async def test_deepseek_judge_is_labelled_and_warned_but_not_blocked(self):
+        """白名單 judge 實際經 stream_completion 走 HTTP：provider 標 deepseek_http；PR-26 之前
+        judge 未校準，開跑時在 stderr 印 WARNING，但照樣跑完、寫出結果。Claude judge 不警告。"""
+        for judge, provider, warned in (("deepseek-flash", "deepseek_http", True),
+                                        ("claude-haiku-4-5", "claude_cli", False)):
+            with self.subTest(judge=judge), tempfile.TemporaryDirectory() as td:
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    report, seen, _ds = await self._run_with(td, judge_model=judge)
+                self.assertEqual(seen["calls"], 2)
+                self.assertEqual(report["config"]["judge"]["provider"], provider)
+                self.assertEqual(report["summary"]["judge_model"], judge)
+                self.assertEqual("WARNING" in err.getvalue(), warned)
+                if warned:
+                    self.assertIn("PR-26", err.getvalue())
+                    self.assertIn(judge, err.getvalue())
+
+
+class JudgeProviderTests(unittest.TestCase):
+    def test_provider_follows_the_http_whitelist(self):
+        from app.services.llm_models import HTTP_MODELS
+
+        for model in sorted(HTTP_MODELS):
+            with self.subTest(model=model):
+                self.assertEqual(rr.judge_provider(model), "deepseek_http")
+                self.assertIsNotNone(rr.uncalibrated_judge_warning(model))
+        for model in ("claude-haiku-4-5", "claude-sonnet-5"):
+            with self.subTest(model=model):
+                self.assertEqual(rr.judge_provider(model), "claude_cli")
+                self.assertIsNone(rr.uncalibrated_judge_warning(model))
+
+    def test_printed_summary_repeats_the_warning(self):
+        """一輪評測跑好幾個小時，開頭的警告早就捲走；印結果時再說一次。"""
+        summary = {
+            "faithfulness": 0.9, "context_precision": 0.8, "answer_relevancy": 0.6,
+            "n": 1, "n_errors": 0, "n_no_context": 0, "thresholds_pass": True,
+            "judge_model": "deepseek-flash", "judge_schema_version": 2, "judge_prompt_sha": "x" * 64,
+        }
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rr._print_summary({"summary": summary})
+        self.assertIn("WARNING", err.getvalue())
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rr._print_summary({"summary": {**summary, "judge_model": "claude-haiku-4-5"}})
+        self.assertEqual(err.getvalue(), "")
+
 
 class MainNewFlagsTests(unittest.TestCase):
     def _main(self, argv):
@@ -806,8 +854,10 @@ class MainNewFlagsTests(unittest.TestCase):
         try:
             rr.run = fake_run
             sys.argv = ["run_ragas.py", *argv, "--json"]
-            with contextlib.redirect_stdout(io.StringIO()):
+            # 金鑰預檢另有 tests/test_llm_env_loading.py；這裡只記下它被問了哪些模型。
+            with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(rr, "require_llm_key") as req:
                 rr._main()
+            captured["_required_models"] = req.call_args.args[0]
         finally:
             _restore(saved)
             sys.argv = old
@@ -825,6 +875,10 @@ class MainNewFlagsTests(unittest.TestCase):
         self.assertEqual(kw["generator_model"], "deepseek-flash")
         self.assertEqual(kw["repeat"], 3)
         self.assertEqual(kw["dump_dir"], "data/eval_frozen/x")
+
+    def test_key_precheck_covers_generator_and_judge(self):
+        kw = self._main(["--generator-model", "deepseek-flash"])
+        self.assertEqual(kw["_required_models"], ["deepseek-flash", rr.DEFAULT_JUDGE_MODEL])
 
 
 if __name__ == "__main__":

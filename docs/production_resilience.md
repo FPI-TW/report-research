@@ -512,6 +512,62 @@ sudo systemctl daemon-reload
 - **URL 不進 argv**。`curl ... "$URL"` 會讓 secret 出現在行程清單裡，任何本機使用者
   `ps` 就看得到。改用 `-K -` 從 stdin 餵 curl 設定檔。`report-mark-alert.sh` 同樣處理過。
 
+### DeepSeek 金鑰落點與輪替
+
+金鑰有**兩份、逐字相同**：
+
+| 落點 | 讀者 | 權限 |
+|---|---|---|
+| repo 根 `.env` 的 `DEEPSEEK_API_KEY` | web（`web/server.py` 啟動時載入） | 同其他 web secret |
+| `/etc/default/report-mark-llm` | `report-mark-sync.service`（`EnvironmentFile=-`，排在共用檔之後）；手動跑的 LLM 批次與評測由 `scripts/_llm_env.py` 自己讀 | 0640 root:kashionz |
+
+**只有 sync unit 載入 llm 檔**，其他 unit 都不呼叫 LLM——環境變數裡有金鑰的行程越少越好。
+批次的模型旋鈕（`TAG_MODEL`、`SUMMARY_MODEL` 等）與 `LLM_PROVIDER` 也放這份檔，讓手動與排程
+用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（`tests/test_deploy_units.py`
+釘住）。web 讀的是 `.env` 的同名鍵，兩份可以不同。
+
+**PR-12 之前批次不能用 DeepSeek**：`run_claude` 與 `generate_brief.call_cli` 只會 spawn claude CLI，
+沒有白名單分派。這份檔的 `LLM_PROVIDER` 維持 `claude_cli`、批次旋鈕只填 `claude-*` 或留空；設了
+`LLM_PROVIDER=deepseek` 或任一批次旋鈕為 DeepSeek 名稱時，批次預檢以 **rc=2** 拒跑並印出是哪個旋鈕
+（行內標註拒跑＝新研報停止入庫，sync 會記進 `unit_failures.log`）。處置：改回 Claude 或刪掉那一行，
+下一輪 sync 生效。線上（`.env`）不受這條限制。
+
+安裝（範例檔檔頭有同樣的指令）：
+
+```bash
+sudo install -m 0640 -o root -g kashionz deploy/systemd/report-mark-llm.env.example /etc/default/report-mark-llm
+sudoedit /etc/default/report-mark-llm      # 填 DEEPSEEK_API_KEY=；不要 echo／tee，也不要 source 這個檔
+sudo cp deploy/systemd/report-mark-sync.service /etc/systemd/system/ && sudo systemctl daemon-reload
+```
+
+`scripts/_llm_env.py` 的行為：入口檔在第一個專案 import 之前載入這份檔（只補環境裡還不存在的
+鍵），並在取批次鎖之前預檢——批次解析到白名單模型（PR-12 之前，見上）、有白名單模型卻沒金鑰、
+有未知模型名、或檔內有重複的鍵，一律 **rc=2** 並說出原因（環境裡有空值要先 `unset DEEPSEEK_API_KEY`；PermissionError 要以 kashionz
+執行）。全部用 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>`，不印金鑰本身。
+**重複鍵特別危險**：systemd 取最後一行、手動批次取第一行，輪替時新舊兩行並存會讓兩條路徑用
+不同的金鑰，所以直接拒跑。
+
+輪替（不需要 daemon-reload，`EnvironmentFile` 每次啟動重讀）：
+
+1. 在 DeepSeek 主控台發一把新金鑰（舊的先別撤）。
+2. 改兩份檔的 `DEEPSEEK_API_KEY`：**直接改那一行**，不要新增一行。
+3. 重啟 web：`sudo systemctl restart report-mark-web.service`。
+4. 核對兩份指紋相同（只印雜湊前 8 碼，不印金鑰）。在 repo 根以 kashionz 執行（`/etc/default/report-mark-llm`
+   是 0640 root:kashionz，要有該群組權限才讀得到）：
+   ```bash
+   uv run python -m scripts._llm_env .env /etc/default/report-mark-llm
+   ```
+   每份印一行 `fp=<前 8 碼>`，rc=0＝兩份都有值且一致，rc=1＝不一致、缺值、讀不到，或某份檔裡
+   `DEEPSEEK_API_KEY` 不只一行（第 2 步「新增一行」而不是改那一行的後果）。重複時另印一行警告、
+   列出每一行的指紋：systemd 的 `EnvironmentFile` 取最後一行，程式（`load_env_file`）取第一行，
+   兩邊會用不同的金鑰；刪掉多餘的行再核對一次，即使兩行相同也一樣回 rc=1。**不要改用
+   `grep | cut | sha256sum`**：程式讀值時會去 `export `、去成對引號、strip（`web/env_loader._parse_line`），
+   手算的雜湊在值帶引號、尾隨空白或 CRLF 時會把兩份其實相同的金鑰判成不同。
+   經 DeepSeek 的評測（`eval/run_ragas.py` 指定白名單模型）預檢印出的 `fp=` 也應是同一個值。
+5. 確認 sync 目前沒在跑（`systemctl is-active report-mark-sync.service` 回 `inactive`），避免
+   撤銷舊金鑰時打斷進行中的一輪。
+6. 撤銷舊金鑰。
+
 ### oneshot 的手動驗證：`Result=success` 不是證據
 
 2026-08-19 部署 P1 時出現過一次假通過。`systemctl start report-mark-freshness.service`
@@ -638,6 +694,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 | `skip_non_research` | 預期 | 同上 |
 | `skip_exists` | 預期 | 已在庫，冪等 |
 | `skip_scanned` | 預期 | 掃描件抽不出文字，是**檔案本身的性質**，重跑一萬次也一樣 |
+| `cache_fail` | 不算異常，殼層印 WARNING | 入庫 commit 之後寫抽取快取失敗：研報已在 DB、已記進 hashes，下游照常；重放補救對它無效（會 `skip_exists`）。持續出現多半是磁碟滿或 `data/extracted` 權限 |
 
 `skip_scanned` 那條是刻意的取捨：算成異常會讓心跳因為語料裡固定存在的掃描件而**永遠**不更新，而永遠紅的告警兩週內就會被當背景噪音（本 repo 已有兩次前例）。代價是它不留路徑紀錄，屬已知限制。
 

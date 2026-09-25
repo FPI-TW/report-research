@@ -25,10 +25,16 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from sqlalchemy import text  # noqa: E402
 
 from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_SUMMARY, resolve_model  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
 from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
 from scripts._claude_cli import build_cli_args as _build_cli_args  # noqa: E402
@@ -36,7 +42,8 @@ from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "summary_failures.log"
-MODEL = "claude-sonnet-5"
+# SUMMARY_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+MODEL = resolve_model(TASK_SUMMARY)
 MAX_SUMMARY_CHARS = 400  # 安全上限，避免模型暴走輸出整段
 
 PROMPT_INSTRUCTION = (
@@ -266,6 +273,8 @@ if __name__ == "__main__":
         help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打",
     )
     args = ap.parse_args()
+    # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
+    require_llm_key({TASK_SUMMARY: MODEL})
     with claude_cli_lock_or_exit("generate_summaries"):
         asyncio.run(
             main(args.workers, args.limit, args.excerpt, args.hashes_file, args.retry_blocked)

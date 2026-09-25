@@ -5,7 +5,7 @@ import { parseAskEvent } from './askSchemas'
 import { streamAsk, getConversation, sendFeedback, stopAsk, getQaVersions } from './askApi'
 import { ApiError } from './api'
 import { useLocale } from './useLocale'
-import { useWebSearch } from './useWebSearch'
+import { useWebSearch, WEB_SEARCH_PAUSED } from './useWebSearch'
 
 let seq = 0
 const newId = () => `t${Date.now()}_${seq++}`
@@ -32,7 +32,8 @@ export function useAskController(): UseAskController {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const locale = useLocale()  // M10b：輸出語言，注入 /api/ask 請求
   // M11：搜尋網路開關。與 locale 同樣在送出當下取值——切換不影響已在跑的那一輪。
-  const web = useWebSearch()
+  // 網搜暫停期間一律送 false（理由見 WEB_SEARCH_PAUSED）；hook 照呼叫，恢復時只改常數。
+  const web = useWebSearch() && !WEB_SEARCH_PAUSED
   const qc = useQueryClient()
   const convRef = useRef<string | null>(null)
   const reqId = useRef(0)

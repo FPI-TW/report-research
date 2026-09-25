@@ -382,11 +382,14 @@ def parse_takeaways(raw: str) -> ParsedTakeaways:
 
 
 def build_rows(
-    report_id: str, canonical: str, text_sha256: str, parsed: ParsedTakeaways
+    report_id: str, canonical: str, text_sha256: str, parsed: ParsedTakeaways,
+    model: Optional[str] = None,
 ) -> list[TakeawayRow]:
     """ParsedTakeaways → 可寫入的列（含確定性錨定）。無列可寫時回 []（＝rejected）。
 
     `canonical` 必須是 clean_extracted(full_text)，且與 text_sha256 同源。
+    `model`：產出這份回應的模型（HTTP 取回應的 `model` 欄，CLI 退回請求的 model），
+    記進每列 `raw_payload.model`；None 就不加鍵。
 
     錨定回 None **不是失敗**：該條目照樣寫入（讀者看得到論點與引文），只是
     quote_start/anchor_method 為 NULL、前端不給跳。整份報告的狀態：
@@ -417,7 +420,7 @@ def build_rows(
                 text_sha256=text_sha256,
                 extraction_version=EXTRACTION_VERSION,
                 extraction_status="valid",  # 下方依整份錨定結果覆寫
-                raw_payload=dict(item),
+                raw_payload={**item, "model": model} if model else dict(item),
                 error_detail=error_detail,
             )
         )
@@ -620,6 +623,7 @@ async def extract_one(
         item.file_name, date_str, item.source, item.excerpt_source[:excerpt]
     )
     parsed: Optional[ParsedTakeaways] = None
+    used_model: Optional[str] = None  # 產出 parsed 那次回應的模型（raw_payload.model）
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
     last_error = "CLI 無回應"
     http_reason: Optional[str] = None  # HTTP 的審查／截斷／空回應／400（failure_kind）
@@ -632,6 +636,7 @@ async def extract_one(
             )
             if res.text:
                 parsed = parse_takeaways(res.text)
+                used_model = res.model_resp or model
                 if parsed.ok:
                     break
             elif res.error:
@@ -648,7 +653,7 @@ async def extract_one(
             parsed = ParsedTakeaways(ok=False, error=last_error)
 
     try:
-        rows = build_rows(item.report_id, item.canonical, item.text_sha256, parsed)
+        rows = build_rows(item.report_id, item.canonical, item.text_sha256, parsed, model=used_model)
         if not rows:
             # rejected：**不寫任何列**（也不刪既有列 —— 一次 CLI 抽風不該毀掉上一版
             # 好的摘錄）。下次批次看不到符合的列/或 sha 仍不符 → 自動重跑。

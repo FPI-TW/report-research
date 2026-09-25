@@ -144,6 +144,7 @@ class RunClaudeTests(unittest.TestCase):
             res = cc.run_claude("prompt", "model")
         self.assertEqual(res.text, "OUT")
         self.assertIsNone(res.error)
+        self.assertIsNone(res.model_resp)  # CLI 路徑拿不到回應的 model，呼叫端退回請求的
 
     def test_missing_cli_raises_instead_of_returning_none(self):
         # 環境層級失敗：每篇都會踩到，必須往上拋以中止整批，
@@ -318,12 +319,20 @@ class CliAuthFailureTests(unittest.TestCase):
 class HttpDispatchTests(_HttpCase):
     """白名單 model 走 `llm_http.complete_chat`，其餘照舊 spawn CLI（第二版計畫 §4.3）。"""
 
+    def test_model_resp_is_response_model(self):
+        """`model_resp` 取回應的 model 欄，不是請求的（摘錄與訊號記進 raw_payload.model，PR-15）。"""
+        body = _sse(_chunk(content="ok", model="deepseek-flash-0925"),
+                    _chunk(content="", finish="stop", model="deepseek-flash-0925"))
+        self.install(lambda req: httpx.Response(200, content=body))
+        res = self.call()
+        self.assertEqual((res.text, res.model_resp), ("ok", "deepseek-flash-0925"))
+
     def test_http_success_request_shape(self):
         """批次只送一則 user、prompt 原樣不動、thinking 兩個開關都關、max_tokens 照呼叫點給。"""
         self.install(lambda req: httpx.Response(200, content=_ok('{"a": 1}')))
         prompt = "規則\n\n檔名：x.pdf\n內文"
         res = self.call(prompt, max_tokens=16384, meta={"task": "signal", "file_hash": "h1", "report_id": "r1"})
-        self.assertEqual(res, cc.CliResult('{"a": 1}', None))
+        self.assertEqual(res, cc.CliResult('{"a": 1}', None, "deepseek-flash"))
         body = self.body()
         self.assertEqual(body["messages"], [{"role": "user", "content": prompt}])
         self.assertEqual(body["max_tokens"], 16384)

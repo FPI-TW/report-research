@@ -163,7 +163,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ### 問答 `POST /api/ask`（SSE）
 
-請求 JSON：`question`（≤2000）、`conversation_id`、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`k`（夾到 1–20）、`regenerate_of`、`edit_of`、`request_id`（冪等鍵，`qa_log.request_id` UNIQUE）、`locale`（`zh-Hant`／`en`）、`web`（每題決定）。
+請求 JSON：`question`（≤2000）、`conversation_id`、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`k`（夾到 1–20）、`regenerate_of`、`edit_of`、`request_id`（冪等鍵，`qa_log.request_id` UNIQUE）、`locale`（`zh-Hant`／`en`）、`web`（每題決定；網搜暫停中，前端一律送 `false`、生產 `ASK_ENABLE_WEB=0`，DeepSeek 版網搜完成後恢復）。
 
 事件序：`queued`（排隊時，`scope`、`position`、`capacity`）→ `status`（`stage`、`thinking_ms`）→ `sources`（`n`、`report_id`、`file_name`、`title`、`market`、`report_date`、`is_latest`）→ `ext_sources`（網搜或受信任資料，`title`、`url`）→ `token`… → `followups` → `done`。婉拒（離題、時效、建議風險）走 `notice` 再 `done{notice_kind}`。傳輸層錯誤 `error{detail}`。心跳每 20 秒一行 SSE 註解。
 

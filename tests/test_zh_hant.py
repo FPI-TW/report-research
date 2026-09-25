@@ -14,6 +14,7 @@ from app.services.zh_hant import (
     count_simplified,
     is_simplified_only,
     looks_simplified,
+    lookup_key,
     to_traditional,
 )
 
@@ -234,6 +235,26 @@ class TestWriteSiteWiring(unittest.TestCase):
         )
         self.assertEqual(out["outlook"]["summary"], "群聯營收創同期新高")
         self.assertEqual(out["outlook"]["evidence"], "群联营收创同期新高")
+
+
+
+class TestLookupKey(unittest.TestCase):
+    """查表鍵（遷移 PR-15）：評等詞只有 1 個簡體字也要轉，但純繁體一個字都不動。"""
+
+    def test_single_simplified_char_converts(self):
+        """「买入」只有 1 個簡體字：`to_traditional` 的門檻刻意不轉它，查表鍵要轉。"""
+        self.assertEqual(to_traditional("买入"), "买入")
+        self.assertEqual(lookup_key("买入"), "買入")
+        self.assertEqual(lookup_key("减持"), "減持")
+        self.assertEqual(lookup_key("人民币"), "人民幣")
+
+    def test_pure_traditional_untouched(self):
+        """沒有簡體字就不過 opencc：台→臺、占→佔那一類改動不會發生，既有查表結果逐字不變。"""
+        for s in ("區間操作", "優於大盤", "占比提升", "船期干擾", "Buy", ""):
+            self.assertEqual(lookup_key(s), s)
+
+    def test_tai_folded_back(self):
+        self.assertEqual(lookup_key("台湾"), "台灣")
 
 
 if __name__ == "__main__":

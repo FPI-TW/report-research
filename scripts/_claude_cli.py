@@ -189,10 +189,15 @@ class BadRequestEscalation(LlmEnvironmentError):
 
 
 class CliResult(NamedTuple):
-    """CLI 呼叫結果。text 為 None 時 error 必有值（且要說得出「為什麼」）。"""
+    """CLI 呼叫結果。text 為 None 時 error 必有值（且要說得出「為什麼」）。
+
+    `model_resp`：HTTP 路徑回應裡的 `model` 欄（實際產出的模型）；CLI 路徑與取不到時為 None，
+    呼叫端退回請求的 model（摘錄與訊號記進 `raw_payload.model`）。
+    """
 
     text: Optional[str]
     error: Optional[str]
+    model_resp: Optional[str] = None
 
 
 def build_cli_args(prompt: str, model: str) -> list[str]:
@@ -601,7 +606,7 @@ def _run_http(
         _BAD_REQUESTS.observe(out.detail, meta.get("file_hash"))
     if result.text is None:
         return CliResult(None, result.error)
-    return CliResult(result.text, None)
+    return CliResult(result.text, None, out.model_resp)
 
 
 def _run_cli(prompt: str, model: str, timeout: int, cwd: str) -> CliResult:

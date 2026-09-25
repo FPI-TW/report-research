@@ -20,7 +20,7 @@
    旋鈕強制設成 `""`，擋住部署目錄 `.env` 的值滲進測試。
 2. 否則查 `LLM_PROVIDER` 對應的預設表：
    - `deepseek`（**預設**，遷移 PR-28 起）：DeepSeek 預設表（第二版計畫 §8）。只有網搜那列**刻意**
-     仍是 Claude（生產以 `ASK_ENABLE_WEB=0` 關閉網搜，由 PR-W 處理），見下方 `DEEPSEEK_DEFAULTS` 的註解；
+     仍是 Claude（網搜暫停中：生產以 `ASK_ENABLE_WEB=0` 關閉、前端隱藏開關，PR-W），見下方 `DEEPSEEK_DEFAULTS` 的註解；
      judge 兩列自 PR-26/27 起是 deepseek-flash（新量尺系譜）。
    - `claude_cli`：遷移前的 Claude 預設表，值與遷移前各呼叫點寫死的字串逐字相同。
    - `claude_only`：遷移期的緊急回退。**任務旋鈕裡白名單內的值一律忽略**，全部用 Claude

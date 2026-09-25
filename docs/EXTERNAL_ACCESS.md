@@ -131,6 +131,19 @@ make edge-logs            # 觀察隧道是否連上（看到 "Registered tunnel
 
 重開機後：邊緣的兩個容器（nginx + cloudflared）為 `restart: unless-stopped`，Docker 會自動拉起，**無需重設 portproxy**。但檢索服務 `make serve` 是 host 上的原生 uvicorn 程序、**不是容器，不會自動復活**——重開機後必須手動重跑 `make serve`，否則外網會一直回 502。若想免手動，可考慮把 `make serve` 掛到 process manager（如 WSL 的 systemd、或開機腳本）常駐。
 
+## 監控
+
+`report-mark-edge-health.timer` 每 2 分鐘從本機打**對外網址**的 `/healthz`（`scripts/check_edge_health.sh`），`report-mark-edge-incident.timer` 以元件 `edge` 開事件、走與 web 相同的告警鏈。本機的 `report-mark-health` 只看得到 `:8097`，nginx 或隧道壞了它照樣是綠的——2026-09-24 nginx 容器停了約 36 小時沒有任何告警，就是這個盲區。
+
+| 探針退出碼 | 意思 | 事件 |
+|---|---|---|
+| 0 | 對外 200 | 無 |
+| 1 | 對外拿到非 200（502／530…），本機 origin 健康＝壞在 nginx 或隧道 | CRITICAL |
+| 3 | 對外失敗，但本機 origin 也不健康＝web 自己壞了 | 不開（由 web 元件負責，避免重複通知） |
+| 4 | 沒有 HTTP 回應（本機網路／DNS）、未設 `EDGE_HEALTH_URL`、缺 curl＝判不出來 | WARNING |
+
+對外網址寫在 `/etc/default/report-mark-sync` 的 `EDGE_HEALTH_URL`，網域不進 repo。啟用 Cloudflare Access 時 `/healthz` 要有 Bypass（見 3d），否則探針會拿到 302 而告警。
+
 ## 安全備註
 
 - 登入為**共用帳密**,App 以 hmac 簽章 session cookie 維持登入(7 天滑動到期、**30 天絕對上限**),並對登入失敗做每 IP 限流。請定期更換 `.env` 的密碼。
@@ -161,6 +174,7 @@ sudo journalctl -u report-mark-web.service | grep -E "登入成功|登入失敗|
 
 | 症狀 | 可能原因 / 處置 |
 |------|----------------|
+| 外網 502，`docker ps -a` 看到 `deploy-nginx-1` 為 `Exited (127)`、日誌是 `error mounting ... not a directory` | Docker Desktop 重啟後單檔 bind mount（`nginx.conf` → 模板）掛不上，`restart: unless-stopped` 不會重試這種失敗。主機上的 `deploy/nginx.conf` 其實完好，`make edge-reload` 重建容器即可 |
 | 外網開站一直 502 | host uvicorn 沒在跑 → `make serve`；或 `host.docker.internal` 不通（確認 compose 的 `extra_hosts: host-gateway` 存在）。**uvicorn 明明活著就先看 nginx 有沒有起來**：`docker compose -f deploy/docker-compose.yml logs --tail=60 nginx` |
 | nginx 重啟後 `[emerg] unknown "edge_secret" variable` | envsubst 沒代換掉 `${EDGE_SECRET}`（nginx 查變數會轉小寫，故訊息是 `edge_secret`）——容器環境裡沒有那個變數。成因是 `docker compose restart` **不套用 compose 的 `environment:` 變更**，而長跑的容器建立於該變數加入之前。處置：`make edge-reload`（已改為重建容器）。**這類雷是延遲引爆的**：模板改了但沒重啟，容器內跑的仍是舊渲染結果，要到下一次重啟才炸 |
 | 外網頁面資產隨機 503／`.css` 報「MIME type ('text/html')」 | nginx `limit_req` 超限（預設就是回 503，錯誤頁是 HTML）。SPA 冷載要抓數十個資產，硬重載時全部同時發出。`/app/assets/` 已於 2026-07-31 排除在限流之外（`nginx.conf` 的 `map $uri $rl_key`）；若再出現請看 burst 是否又被調小。**被擋掉的請求不會進 uvicorn 日誌**，從 app 側查會完全看不到 |

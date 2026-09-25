@@ -30,6 +30,27 @@ from web import auth, deps  # noqa: E402
 from web.routers import monitor  # noqa: E402
 from web.server import app  # noqa: E402
 
+try:
+    from fastapi.routing import iter_route_contexts  # FastAPI ≥ 0.137.2
+except ImportError:  # 更舊的版本：app.routes 本身就是攤平的清單
+    iter_route_contexts = None
+
+
+def _app_routes() -> list:
+    """全 app 攤平後的有效路由，每個元素都有 `path` 與 `endpoint`。
+
+    FastAPI 0.137.0 起 `include_router()` 不再把子路由複製進 `app.routes`，改放一個
+    `_IncludedRouter` 包裝節點（`path`／`endpoint` 皆為 None），`app.routes` 變成樹。
+    直接迭代它只看得到 `/docs` 那幾條：dependabot 把 FastAPI 升到 0.141.1 時，本檔
+    「輔助函式不得成為端點」的守門因此**靜默空轉**——輔助函式被裝飾成端點也照樣全綠。
+    官方替代是 0.137.2 起的 `iter_route_contexts()`；pyproject 的 fastapi 下限升到
+    0.137.2 以上之後，回退分支才可以拿掉。
+    """
+    if iter_route_contexts is None:
+        return list(app.routes)
+    return list(iter_route_contexts(app.routes))
+
+
 _SNAPSHOT = {
     "total_reports": 6,
     "total_chunks": 12,
@@ -114,11 +135,15 @@ class ProgressHttpTests(unittest.TestCase):
 
     def test_coverage_block_is_not_a_route(self):
         """契約：輔助函式不得成為路由（否則就是裝飾器又套錯了）。"""
-        paths = {getattr(r, "path", None) for r in app.routes}
+        routes = _app_routes()
+        paths = {getattr(r, "path", None) for r in routes}
         self.assertIn("/api/progress", paths)
         self.assertIn("/api/stats", paths)
+        endpoints = {getattr(r, "endpoint", None) for r in routes}
+        # 正向對照：真正的 handler 必須是端點。裝飾器套錯時 `progress` 不會被註冊；
+        # 列舉方式失效時（見 _app_routes）這裡也會紅，而不是讓下一行空轉通過。
+        self.assertIn(monitor.progress, endpoints)
         # 沒有任何路由的 endpoint 是輔助函式
-        endpoints = {getattr(r, "endpoint", None) for r in app.routes}
         self.assertNotIn(monitor._coverage_block, endpoints)
 
     def test_no_private_helper_is_a_route(self):
@@ -126,7 +151,10 @@ class ProgressHttpTests(unittest.TestCase):
 
         只釘 `_coverage_block` 的話，下一支插錯位置的輔助函式又會是同一個 422。
         """
-        endpoints = {getattr(r, "endpoint", None) for r in app.routes}
+        endpoints = {getattr(r, "endpoint", None) for r in _app_routes()}
+        # 正向對照：列舉必須真的看得到本模組的端點，否則下面的 offenders 恆為空，
+        # 這條測試永遠綠（FastAPI 0.141.1 直接迭代 app.routes 時正是如此）。
+        self.assertIn(monitor.stats, endpoints)
         offenders = [
             name
             for name, obj in vars(monitor).items()

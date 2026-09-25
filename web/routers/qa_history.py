@@ -101,9 +101,17 @@ async def qa_versions(root_qa_id: str):
 
 
 @router.get("/api/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200)):
-    """對話串清單（首題非離題者）；唯讀，供側欄。"""
-    return await list_conversations(limit)
+async def conversations(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None, max_length=200),
+):
+    """對話串清單（首題非離題者）；唯讀，供側欄。
+
+    `q` 搜尋整串的提問、`offset` 翻頁。回應維持裸陣列（沒有 total）：前端以
+    「回來的筆數等於 limit」判斷還有沒有下一頁，舊 bundle 也照樣解析得了。
+    """
+    return await list_conversations(limit, offset, q)
 
 
 @router.get("/api/conversations/{conversation_id}")

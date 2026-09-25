@@ -5,6 +5,7 @@ import { MotionLink } from '../primitives/MotionLink'
 import { Icon } from '../primitives/Icon'
 import { ConfirmDialog } from '../primitives/ConfirmDialog'
 import { useConversations } from '../../lib/useConversations'
+import { useDebouncedValue } from '../../lib/useDebouncedValue'
 import { useDeleteConversation } from '../../lib/useDeleteConversation'
 import styles from './ConversationList.module.css'
 
@@ -15,7 +16,11 @@ const delVariants = {
 }
 
 export function ConversationList() {
-  const { data } = useConversations()
+  const [search, setSearch] = useState('')
+  // 250ms：逐字輸入（含注音／倉頡組字過程）不要每個字都打一次 API。
+  const q = useDebouncedValue(search, 250)
+  const { items, isLoading, hasMore, isFetchingMore, loadMore } = useConversations(q)
+  const searching = q.trim() !== ''
   const [params] = useSearchParams()
   const activeC = params.get('c')
   const navigate = useNavigate()
@@ -35,6 +40,18 @@ export function ConversationList() {
         <MotionLink to="/ask" className={styles.newBtn} whileTap={{ scale: 0.97 }}><Icon name="plus" size={17} /> 新對話</MotionLink>
       </div>
       <div className={styles.heading}>歷史對話</div>
+      <div className={styles.searchWrap}>
+        <Icon name="search" size={14} className={styles.searchIcon} />
+        <input
+          type="search"
+          className={styles.search}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="搜尋提問"
+          aria-label="搜尋歷史對話"
+          maxLength={200}
+        />
+      </div>
       {del.isError && (
         // 只讓 deleteConversation throw 還不夠——沒有任何畫面反應等於仍是靜默失敗，
         // 而使用者的下一步是再按一次刪除。role="alert" 讓螢幕閱讀器也收得到。
@@ -44,7 +61,7 @@ export function ConversationList() {
       )}
       <div className={`${styles.list} tf-scroll`}>
         <AnimatePresence initial={false}>
-        {(data ?? []).map((cv) => (
+        {items.map((cv) => (
           <motion.div
             key={cv.conversation_id}
             className={`${styles.row} ${cv.conversation_id === activeC ? styles.rowActive : ''}`}
@@ -76,6 +93,16 @@ export function ConversationList() {
           </motion.div>
         ))}
         </AnimatePresence>
+        {/* 搜尋沒有結果要說出來：空白的清單看起來與「還在載入」「壞了」沒有差別。
+            沒在搜尋時的空清單（全新帳號）則維持原樣不加字。 */}
+        {searching && !isLoading && items.length === 0 && (
+          <p className={styles.empty} role="status">沒有提問包含「{q.trim()}」的對話</p>
+        )}
+        {hasMore && (
+          <button type="button" className={styles.more} onClick={loadMore} disabled={isFetchingMore}>
+            {isFetchingMore ? '載入中…' : '載入更多'}
+          </button>
+        )}
       </div>
       <ConfirmDialog
         open={pending !== null}

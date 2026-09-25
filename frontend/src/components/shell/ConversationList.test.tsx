@@ -106,3 +106,59 @@ test('刪除成功：不顯示錯誤訊息', async () => {
   await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith('c1'))
   expect(screen.queryByRole('alert')).toBeNull()
 })
+
+function wrapWith(handler: (url: URL) => unknown[]) {
+  const fetchMock = vi.fn(async (input: string) =>
+    new Response(JSON.stringify(handler(new URL(input, 'http://x'))), { status: 200 }))
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/ask']}><ConversationList /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+  return fetchMock
+}
+
+const conv = (i: number) => ({ conversation_id: `c${i}`, title: `對話 ${i}` })
+
+test('搜尋：停止輸入後才帶 q 查詢，且從第一頁開始', async () => {
+  const fetchMock = wrapWith(url => (url.searchParams.get('q') === '先進封裝' ? [conv(7)] : [conv(1)]))
+  await screen.findByText('對話 1')
+  fireEvent.change(screen.getByRole('searchbox', { name: '搜尋歷史對話' }), { target: { value: '先進封裝' } })
+  expect(await screen.findByText('對話 7')).toBeInTheDocument()
+  // 舊的那一列由 AnimatePresence 播完退場才離開 DOM，所以要等。
+  await waitFor(() => expect(screen.queryByText('對話 1')).not.toBeInTheDocument())
+  const last = new URL(fetchMock.mock.calls.at(-1)![0] as string, 'http://x')
+  expect(last.searchParams.get('q')).toBe('先進封裝')
+  expect(last.searchParams.get('offset')).toBe('0')
+  // debounce：逐字輸入不該每個字各打一次——這裡只有「初次載入」與「搜尋」兩次。
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})
+
+test('搜尋沒有結果要說出來，而不是一片空白', async () => {
+  wrapWith(url => (url.searchParams.get('q') ? [] : [conv(1)]))
+  await screen.findByText('對話 1')
+  fireEvent.change(screen.getByRole('searchbox', { name: '搜尋歷史對話' }), { target: { value: '不存在的詞' } })
+  expect(await screen.findByRole('status')).toHaveTextContent('沒有提問包含「不存在的詞」的對話')
+})
+
+test('這一頁是滿的才出現「載入更多」，按下後以 offset 接續並累加', async () => {
+  const fetchMock = wrapWith(url => {
+    const offset = Number(url.searchParams.get('offset'))
+    return offset === 0 ? Array.from({ length: 50 }, (_, i) => conv(i)) : [conv(50), conv(51)]
+  })
+  await screen.findByText('對話 0')
+  fireEvent.click(screen.getByRole('button', { name: '載入更多' }))
+  expect(await screen.findByText('對話 51')).toBeInTheDocument()
+  expect(screen.getByText('對話 0')).toBeInTheDocument() // 累加，不是換頁
+  expect(new URL(fetchMock.mock.calls.at(-1)![0] as string, 'http://x').searchParams.get('offset')).toBe('50')
+  // 第二頁沒滿 → 沒有下一頁了
+  await waitFor(() => expect(screen.queryByRole('button', { name: '載入更多' })).not.toBeInTheDocument())
+})
+
+test('不滿一頁時沒有「載入更多」', async () => {
+  wrapWith(() => [conv(1), conv(2)])
+  await screen.findByText('對話 1')
+  expect(screen.queryByRole('button', { name: '載入更多' })).not.toBeInTheDocument()
+})

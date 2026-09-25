@@ -35,6 +35,7 @@ class _LoggingSandbox(unittest.TestCase):
         self._handlers = root.handlers[:]
         self._level = root.level
         self._disabled = root.manager.disable
+        self._httpx_level = logging.getLogger("httpx").level
         _reset_for_tests()
 
     def tearDown(self):
@@ -42,6 +43,7 @@ class _LoggingSandbox(unittest.TestCase):
         root.handlers[:] = self._handlers
         root.setLevel(self._level)
         root.manager.disable = self._disabled
+        logging.getLogger("httpx").setLevel(self._httpx_level)
         _reset_for_tests()
 
 
@@ -73,6 +75,18 @@ class ConfigShapeTests(unittest.TestCase):
 
 
 class ConfigureLoggingTests(_LoggingSandbox):
+    def test_httpx_request_lines_are_quieted(self):
+        """httpx 在 INFO 會為每個請求記一行 URL；LLM 呼叫已有自己的 `llm_call` 行。
+
+        必須是 configure_logging 裡的 getLogger 設定，而不是 dictConfig 的 `loggers` 鍵
+        （見 test_does_not_declare_uvicorn_loggers）。
+        """
+        configure_logging("INFO")
+        httpx_logger = logging.getLogger("httpx")
+        self.assertFalse(httpx_logger.isEnabledFor(logging.INFO))
+        self.assertTrue(httpx_logger.isEnabledFor(logging.WARNING))
+        self.assertTrue(logging.getLogger("app.services.llm_http").isEnabledFor(logging.INFO))
+
     def test_app_logger_info_is_emitted_after_configure(self):
         """這一題就是缺陷本體的反面：設定前 INFO 被丟棄，設定後收得到。"""
         logger = logging.getLogger("app.services.answer")

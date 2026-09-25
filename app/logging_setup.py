@@ -84,6 +84,11 @@ def configure_logging(level: str | None = None) -> None:
 
         level = get_settings().log_level
     logging.config.dictConfig(logging_config(level))
+    # httpx 在 INFO 會為每個請求記一行 `HTTP Request: POST <url>`：LLM 呼叫已有自己的
+    # `llm_call` 結構化行（app/services/llm_http.py），這一行只是重複的噪音。刻意用
+    # getLogger 設定而不寫進 dictConfig：`loggers` 鍵會被 tests/test_logging_setup.py 擋下
+    # （宣告 logger 容易順手蓋掉 uvicorn 的設定）。
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     _CONFIGURED = True
 
 

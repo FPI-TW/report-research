@@ -20,6 +20,11 @@ dependencies = [
     "fastapi>=0.136.3",
     "uvicorn>=0.48.0",
     "python-multipart>=0.0.9",
+    # LLM HTTP 客戶端（DeepSeek API）。先前只是 huggingface-hub／datasets 的遞移相依；
+    # 程式直接 import 它就必須是 direct dependency，否則上游換掉 HTTP 層時它會從鎖檔
+    # 靜默消失。刻意不用 openai SDK：它內建的重試會吃掉失敗原因（scripts/_claude_cli.py
+    # 開頭的四天停擺紀錄），而且發版頻繁、每週 dependabot 都會帶到。BSD-3-Clause。
+    "httpx>=0.28,<1",
     # 簡體→繁體字形正規化（app/services/zh_hant.py）。純 Python + JSON 詞典，
     # 無 C 擴充；只有批次會用到，web 不載入（轉換器延後建構）。
     "opencc-python-reimplemented>=0.1.7",

@@ -48,6 +48,14 @@ describe('catalogPatch', () => {
 })
 
 describe('instrumentHref', () => {
+  it('換到另一檔時不帶著上一檔展開的券商', () => {
+    const href = instrumentHref(new URLSearchParams('market=TW&code=2330&broker=kgi&q=台'), 'TW', '2317')
+    const sp = new URL(href, 'http://x').searchParams
+    expect(sp.get('broker')).toBeNull()
+    expect(sp.get('code')).toBe('2317')
+    expect(sp.get('q')).toBe('台') // 清單篩選照舊一路帶著
+  })
+
   /*
    * 詳情連結以當前網址為基底，篩選條件才會一路帶著；不這樣做的話，從詳情按返回
    * 會回到一個沒有搜尋、沒有排序、沒有立場的清單，而使用者剛剛才設好它們。

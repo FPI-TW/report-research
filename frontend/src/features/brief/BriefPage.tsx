@@ -1,11 +1,13 @@
 import { useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
+import { CopyButton } from '../../components/animate-ui/components/buttons/copy'
 import { ApiError } from '../../lib/api'
 import { renderAnswer } from '../../lib/askMarkdown'
 import { getBriefByDate, getLatestBrief } from '../../lib/briefApi'
 import type { BriefEnvelope, BriefReportRef } from '../../lib/briefSchemas'
 import { displayTitle } from '../../lib/displayTitle'
+import { briefMarkdown } from '../../lib/exportMarkdown'
 import { marketLabel as marketLabelOf } from '../../lib/meta'
 import styles from './BriefPage.module.css'
 
@@ -129,6 +131,15 @@ export default function BriefPage() {
                 <span className={styles.metaStat}>
                   已擷取評等訊號 {brief.signal_count} 筆
                 </span>
+                {/* 簡報的用途就是被貼進晨會筆記或轉寄；帶著來源清單一起走（lib/exportMarkdown.ts）。 */}
+                <CopyButton
+                  content={briefMarkdown(brief)}
+                  variant="ghost"
+                  size="xs"
+                  className={styles.copy}
+                  aria-label="複製簡報（Markdown）"
+                  title="複製簡報（Markdown）"
+                />
               </div>
 
               <div className={styles.md}>{body}</div>

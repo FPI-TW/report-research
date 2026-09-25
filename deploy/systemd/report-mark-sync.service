@@ -18,6 +18,11 @@ Group=kashionz
 Environment=HOME=/home/kashionz
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-/etc/default/report-mark-sync
+# LLM 專用環境檔（DeepSeek 金鑰與批次模型旋鈕，0640 root:kashionz）。**只有這支 unit 載入**：
+# 環境變數裡有金鑰的行程越少越好，其他 unit 都不呼叫 LLM。排在共用檔之後——同名鍵以後者為準，
+# 但兩份檔本來就不該有重疊的鍵（tests/test_deploy_units.py 釘住）。`-`：金鑰檔還沒安裝時 unit
+# 仍能啟動，全用 Claude 的批次照跑；用到 DeepSeek 的批次會在取鎖前以 rc=2 說出缺什麼。
+EnvironmentFile=-/etc/default/report-mark-llm
 # 用 bash -c 而非 -lc：-l 會去讀登入 shell 的 profile，HOME 錯時只會製造
 # 「/root/.bash_profile: Permission denied」這種噪音，且讓 PATH 來源變得不可預期。
 # claude/uv 的路徑一律由 SYNC_PATH_EXTRA 顯式提供（見 report-mark-sync.env.example）。

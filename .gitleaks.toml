@@ -22,6 +22,20 @@
 [extend]
 useDefault = true
 
+# DeepSeek API 金鑰（`sk-` ＋ 32 個小寫 hex）。**內建規則集沒有它**：OpenAI 規則靠
+# 特定標記比對、對不上這個形狀；`generic-api-key` 只在 `KEY=值` 這類指派語境下才
+# 可能命中，貼在 JSON、log、`Authorization: Bearer` 裡的裸值會漏——而除錯時把請求
+# 內容、錯誤回應或 header 貼進測試、文件、issue，正是這種祕密外洩最常見的路徑。
+#
+# 兩側 `\b` 是刻意的：少一個字或多一個字（例如更長的 `sk-` 開頭金鑰）都不算，
+# 避免與其他供應商的 `sk-` 金鑰互相誤判。形狀由 tests/test_secret_scan_config.py
+# 以執行期組出的樣本守住（樣本若寫成字面值，測試檔本身就會被這條規則抓到）。
+[[rules]]
+id = "deepseek-api-key"
+description = "DeepSeek API key"
+regex = '''\b(sk-[0-9a-f]{32})\b'''
+keywords = ["sk-"]
+
 [allowlist]
 description = "測試 fixture 的固定假 secret"
 

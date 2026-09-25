@@ -7,11 +7,14 @@ import os
 import re
 
 from app.services.llm import stream_completion
+from app.services.llm_models import TASK_ASK_FOLLOWUP, resolve_model
 from app.services.locale import DEFAULT_LOCALE
 
 logger = logging.getLogger(__name__)
 
-FOLLOWUP_MODEL = os.getenv("ASK_FOLLOWUP_MODEL", "claude-haiku-4-5-20251001")
+# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查 LLM_PROVIDER 的預設表
+# （預設 deepseek 下是 deepseek-flash），claude_only 會忽略這裡填的 DeepSeek 名稱。
+FOLLOWUP_MODEL = resolve_model(TASK_ASK_FOLLOWUP, override=os.getenv("ASK_FOLLOWUP_MODEL"))
 FOLLOWUP_TIMEOUT = float(os.getenv("ASK_FOLLOWUP_TIMEOUT", "15"))
 
 _SYSTEM = (
@@ -78,6 +81,8 @@ async def generate_followups(
         async for chunk in stream_completion(
             prompt, model=model, system=_system_for(locale),
             allow_web=False, timeout=timeout,
+            # ≤3 條短問句的 JSON 陣列；上限只作用在 HTTP 路徑（第二版計畫 §8）
+            max_tokens=512, task="ask_followup",
         ):
             parts.append(chunk)
     except Exception:

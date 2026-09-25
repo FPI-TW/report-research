@@ -20,6 +20,14 @@ M8 從上線起就只寫不看：這個 jsonb 欄位在 `web/`、`scripts/`、`f
                        分數欄位皆 None。degraded 不是「分數低」，是「沒量到」，
                        兩者混在一起看會把故障讀成品質問題。
 
+**只計現行 judge**（`FAITHFULNESS_MODEL`，可用 --judge 指定別的）：與監控卡、待複核佇列
+共用 `app/services/judge_schema.py` 的同一條規則，缺 `judge_model` 的舊列視為
+claude-haiku-4-5。其他 judge 的筆數列在 `other_judge_checked` 與 `by_judge`，不混進分數。
+
+**量尺系譜**（PR-26/27）：輸出標出判定尺屬於哪個系譜（`lineage`，`llm_models.judge_lineage`，與
+離線評測同一套）。比照監控卡：判定尺是 DeepSeek、窗期內還有其他判定尺的列時標「新量尺（自
+`judge_since` 起）」（`new_scale`）——切換後頭幾天樣本很小，而且分數與換尺前的不可直接比較。
+
 唯讀，不寫任何資料。
 """
 
@@ -38,6 +46,8 @@ from sqlalchemy import text  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.judge_schema import is_current_judge, judge_model_of  # noqa: E402
+from app.services.llm_models import JUDGE_LINEAGE_DEEPSEEK, judge_lineage  # noqa: E402
 
 # (表, 識別欄位)。以 dict 保留是為了 summarize／_fetch 對來源一視同仁；
 # 研報 PDF 那一半的來源表已隨功能移除（2026-09）。
@@ -51,14 +61,26 @@ def _num(v) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
-def summarize(rows: list[dict], min_score: float) -> dict:
+def _current_judge(judge_model: str | None) -> str:
+    return judge_model or get_settings().faithfulness_model
+
+
+def summarize(rows: list[dict], min_score: float, *, judge_model: str | None = None) -> dict:
     """把原始列彙整成指標（純函式，便於單元測試）。
 
     `rows` 每筆需有 `evaluation`（dict 或 None）。**分數統計只納入非 degraded 的筆數**：
     degraded 代表沒量到，把它的 None 當 0 會憑空拉低平均，當成「有查核」則會高估覆蓋。
+    **也只納入 judge_model 量的列**（未給＝現行 FAITHFULNESS_MODEL）；其他 judge 的
+    筆數另計 other_judge_checked，逐 judge 的筆數在 by_judge。
     """
+    judge = _current_judge(judge_model)
     total = len(rows)
-    checked = [r for r in rows if isinstance(r.get("evaluation"), dict)]
+    all_checked = [r for r in rows if isinstance(r.get("evaluation"), dict)]
+    checked = [r for r in all_checked if is_current_judge(r["evaluation"], judge)]
+    by_judge: dict[str, int] = {}
+    for r in all_checked:
+        name = judge_model_of(r["evaluation"])
+        by_judge[name] = by_judge.get(name, 0) + 1
     degraded = [r for r in checked if r["evaluation"].get("degraded") is True]
     scored = [
         (r, s)
@@ -71,9 +93,19 @@ def summarize(rows: list[dict], min_score: float) -> dict:
         for r in checked
         if (n := _num(r["evaluation"].get("numeric_support_rate"))) is not None
     ]
+    other = len(all_checked) - len(checked)
+    lineage = judge_lineage(judge)
     return {
+        "judge_model": judge,
+        "lineage": lineage,
+        # 窗期內現行 judge 最早的一筆（日期）；與監控卡的 judge_since 同義。
+        "judge_since": min((str(r["created_at"])[:10] for r in checked), default=None),
+        # 比照監控卡：DeepSeek 系譜且窗期內還有其他判定尺的列＝剛換尺（frontend/src/features/monitor/judgeScale.ts）。
+        "new_scale": lineage == JUDGE_LINEAGE_DEEPSEEK and other > 0,
         "total": total,
         "checked": len(checked),
+        "other_judge_checked": other,
+        "by_judge": dict(sorted(by_judge.items())),
         "degraded": len(degraded),
         "scored": len(scores),
         "below_min": sum(1 for s in scores if s < min_score),
@@ -87,12 +119,15 @@ def summarize(rows: list[dict], min_score: float) -> dict:
     }
 
 
-def worst(rows: list[dict], limit: int) -> list[dict]:
-    """分數最低的前 N 筆。degraded 排除——它沒有分數，不是「最差」而是「沒量」。"""
+def worst(rows: list[dict], limit: int, *, judge_model: str | None = None) -> list[dict]:
+    """分數最低的前 N 筆。degraded 排除——它沒有分數，不是「最差」而是「沒量」。
+    只看 judge_model（未給＝現行 judge）量的列，理由同 summarize。"""
+    judge = _current_judge(judge_model)
     scored = [
         (s, r)
         for r in rows
         if isinstance(r.get("evaluation"), dict)
+        and is_current_judge(r["evaluation"], judge)
         and (s := _num(r["evaluation"].get("faithfulness_score"))) is not None
     ]
     scored.sort(key=lambda t: t[0])
@@ -150,9 +185,12 @@ def _print_claims(kind: str, data: dict) -> None:
         return
     print(f"[{kind}] {(data.get('question') or '')[:80]}")
     print(f"  faithfulness={ev.get('faithfulness_score')} "
-          f"numeric={ev.get('numeric_support_rate')} degraded={ev.get('degraded')}")
+          f"numeric={ev.get('numeric_support_rate')} degraded={ev.get('degraded')} "
+          f"judge={judge_model_of(ev)}")
     if ev.get("degraded"):
-        print("  ※ degraded＝judge 異常 fail-open，這筆實際未被查核")
+        reason = ev.get("degraded_reason")
+        print("  ※ degraded＝judge 異常 fail-open，這筆實際未被查核"
+              + (f"（{reason}）" if reason else ""))
     for i, c in enumerate(ev.get("claims") or [], 1):
         if not isinstance(c, dict):
             continue
@@ -161,12 +199,24 @@ def _print_claims(kind: str, data: dict) -> None:
         print(f"  {mark}{num} {i:>2}. {(c.get('text') or '')[:90]}")
 
 
+def _scale_label(a: dict) -> str:
+    """判定尺的系譜說明；剛換成 DeepSeek 時比照監控卡標新量尺（日期由資料得出）。"""
+    label = f"系譜 {a['lineage']}"
+    if a["new_scale"]:
+        since = f"自 {a['judge_since']} 起" if a["judge_since"] else "尚無查核"
+        label += f"；新量尺，{since}，分數與換尺前的不可直接比較"
+    return label
+
+
 def _print_report(agg: dict, worst_rows: dict, min_score: float, days: int) -> None:
     print(f"M8 忠實度查核（近 {days} 天，門檻 {min_score}）")
     for kind, label in (("qa", "問答"),):
         a = agg[kind]
-        print(f"\n[{label}] 總數 {a['total']}　已查核 {a['checked']}　"
-              f"fail-open {a['degraded']}　有分數 {a['scored']}")
+        print(f"\n[{label}] 判定尺 {a['judge_model']}（{_scale_label(a)}）　總數 {a['total']}　"
+              f"已查核 {a['checked']}　fail-open {a['degraded']}　有分數 {a['scored']}")
+        if a["other_judge_checked"]:
+            others = "、".join(f"{k} {v}" for k, v in a["by_judge"].items() if k != a["judge_model"])
+            print(f"  另有 {a['other_judge_checked']} 筆其他判定尺的結果未計入（{others}）")
         if a["scored"]:
             print(f"  平均 {a['avg_score']}　中位 {a['median_score']}　"
                   f"最低 {a['min_score_seen']}　數值支持率 {a['avg_numeric_support']}")
@@ -195,8 +245,8 @@ async def main(args) -> None:
     agg, worst_rows = {}, {}
     for kind in _SOURCES:
         rows = await _fetch(kind, args.days)
-        agg[kind] = summarize(rows, min_score)
-        worst_rows[kind] = worst(rows, args.limit)
+        agg[kind] = summarize(rows, min_score, judge_model=args.judge)
+        worst_rows[kind] = worst(rows, args.limit, judge_model=args.judge)
 
     if args.json:
         print(json.dumps(
@@ -215,5 +265,7 @@ if __name__ == "__main__":
     ap.add_argument("--min", type=float, default=None,
                     help="待複核門檻（預設取 FAITHFULNESS_MIN）")
     ap.add_argument("--claims", metavar="ID", help="逐條主張下鑽（qa_log 的 id）")
+    ap.add_argument("--judge", default=None,
+                    help="只統計這個 judge 量的列（預設取 FAITHFULNESS_MODEL；缺鍵的舊列視為 claude-haiku-4-5）")
     ap.add_argument("--json", action="store_true", help="輸出 JSON")
     asyncio.run(main(ap.parse_args()))

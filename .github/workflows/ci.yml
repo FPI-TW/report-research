@@ -33,9 +33,9 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -64,7 +64,7 @@ jobs:
       # tests/test_pre_split_guards.py 用合成 dist 骨架守「mount 順序」那條，
       # 這裡守的是另一半：真產物的 serving 與快取契約。
       - name: 上傳 dist 給後端 job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-dist
           path: frontend/dist
@@ -99,10 +99,10 @@ jobs:
       # （例如找到的字型不含中文字符對應）。
       REPORT_MARK_REQUIRE_CJK: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 安裝 uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -127,7 +127,7 @@ jobs:
       #                            （61.2MB / 24.7 分鐘 ≈ 40KB/s），apt 的任何逾時設定
       #                            對它完全無效 —— 理由見下面 Acquire::http::Timeout 那條。
       - name: 還原 CJK 字型 .deb 快取
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         # 快取服務本身也是網路呼叫（要拉 61MB），沒有上界的話它也能吃掉整個 job 的 25 分鐘
         # —— 與這次事故同型。服務不可用時 actions/cache 是 warning 不是失敗，會自然退回下載路徑。
         timeout-minutes: 5
@@ -203,7 +203,7 @@ jobs:
 
       # 沒有這一步，tests/test_spa_serving.py 依賴 dist 的那題會 skip 而非跑。
       - name: 取回前端 dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: frontend/dist
@@ -247,10 +247,10 @@ jobs:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 安裝 uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -287,6 +287,15 @@ jobs:
       - name: extraction_log 與抽取欄位對帳
         run: uv run pytest -q tests/test_extraction_log_db.py
 
+      # 對話串清單的搜尋與翻頁：bool_or … FILTER、NULL pattern、ILIKE 跳脫與排序決勝鍵
+      # 只有真的 PostgreSQL 驗得到（tests/test_answer.py 的假 session 只釘 SQL 字串）。
+      - name: 對話串搜尋與翻頁
+        run: uv run pytest -q tests/test_conversations_db.py
+
+      # 待複核佇列：jsonb 分數的安全 cast、門檻與窗期、count 與當頁同條件。
+      - name: 待複核佇列查詢
+        run: uv run pytest -q tests/test_review_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest
@@ -296,7 +305,7 @@ jobs:
     steps:
       # fetch-depth: 0 是必要的——掃全歷史才抓得到「同一個 PR 裡先 commit 再移除」
       # 的 secret。淺 clone 只看得到最終樹，那種 secret 仍然留在 git 物件裡。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

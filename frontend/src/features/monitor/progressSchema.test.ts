@@ -56,6 +56,25 @@ test('takeaway/signal/evaluation 不會被 zod 剝除', () => {
   expect(p.evaluation?.min_score).toBe(0.9)
 })
 
+test('evaluation 的量尺欄位（judge_model／judge_since／other_judge_checked）不會被 zod 剝除', () => {
+  const p = progressSchema.parse({
+    ...full,
+    ...derived,
+    evaluation: {
+      ...derived.evaluation,
+      qa: {
+        ...derived.evaluation.qa, judge_model: 'claude-haiku-4-5', judge_since: '2026-07-02',
+        other_judge_checked: 2, judge_checked: 3, avg_n: 2,
+      },
+    },
+  })
+  expect(p.evaluation?.qa?.judge_model).toBe('claude-haiku-4-5')
+  expect(p.evaluation?.qa?.judge_since).toBe('2026-07-02')
+  expect(p.evaluation?.qa?.other_judge_checked).toBe(2)
+  expect(p.evaluation?.qa?.judge_checked).toBe(3)
+  expect(p.evaluation?.qa?.avg_n).toBe(2)
+})
+
 test('三塊皆為 optional：舊後端不會讓整頁 parse 失敗', () => {
   // 滾動部署期間前端可能先上線。缺鍵就整張監控頁變空白，代價遠大於少一張卡。
   const p = progressSchema.parse(full)

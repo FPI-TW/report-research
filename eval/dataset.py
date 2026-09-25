@@ -21,7 +21,7 @@ from sqlalchemy import text  # noqa: E402
 from app.services.answer import (  # noqa: E402
     NO_CONTEXT_MESSAGE,
     OFF_TOPIC_MESSAGES,
-    TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
+    TIME_SENSITIVE_MESSAGES,
 )
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.textnorm import norm_for_match  # noqa: E402
@@ -61,7 +61,7 @@ def select_questions(rows: list[dict], *, per_market_cap: int, target: int) -> l
         filters = r.get("filters") or {}
         if not q or len(q) < MIN_QUESTION_LEN:
             continue
-        if a in (*OFF_TOPIC_MESSAGES, NO_CONTEXT_MESSAGE, TIME_SENSITIVE_UNAVAILABLE_MESSAGE):
+        if a in (*OFF_TOPIC_MESSAGES, NO_CONTEXT_MESSAGE, *TIME_SENSITIVE_MESSAGES):
             continue
         # overview 走純 SQL、time_sensitive 走 adapter/婉拒——皆非 corpus RAG，
         # 不進題集（時效成功答案是模板文字，不會被上面的固定文案比對攔下）

@@ -27,9 +27,19 @@ class FaithfulnessModelDefaultTests(unittest.TestCase):
             return config._load()
 
     def test_default_is_haiku_and_equals_the_legacy_judge(self):
-        """改動前生產實際用的就是 haiku（沿用 intent 預設），預設值不得因解耦而改變。"""
+        """claude_cli 表（conftest 強制的測試值）：解耦前生產實際用的就是 haiku（沿用 intent 預設），
+        解耦不得改變它。生產預設 deepseek 下的值見下一條。"""
         self.assertEqual(self._load({}).faithfulness_model, "claude-haiku-4-5")
         self.assertEqual(self._load({}).faithfulness_model, js.LEGACY_JUDGE_MODEL)
+
+    def test_deepseek_provider_switches_judge_and_legacy_rows_become_other(self):
+        """PR-26/27：生產預設（deepseek）的 judge 是 deepseek-flash；缺 judge_model 的舊列（haiku）
+        從此不是現行 judge——監控卡、待複核、eval_faithfulness 都把它們歸「其他 judge」。"""
+        s = self._load({"LLM_PROVIDER": "deepseek"})
+        self.assertEqual(s.faithfulness_model, "deepseek-flash")
+        self.assertFalse(js.is_current_judge({"faithfulness_score": 0.5}, s.faithfulness_model))
+        self.assertTrue(js.is_current_judge({"judge_model": "deepseek-flash"}, s.faithfulness_model))
+        self.assertEqual(js.LEGACY_JUDGE_MODEL, "claude-haiku-4-5", "舊列仍是 haiku 量的，常數不跟著改")
 
     def test_no_longer_follows_intent_model(self):
         s = self._load({"ASK_INTENT_MODEL": "deepseek-flash"})

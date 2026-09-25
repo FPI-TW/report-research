@@ -38,7 +38,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | 混合檢索、tier、選篇、rerank、脈絡組裝 | 問答生成、追問 |
 | 路由前檢詞表、overview 統計 | 五類路由分類 |
 | 引文錨定、訊號正規化與狀態判定、共識聚合、窗期 | 摘錄與訊號擷取、簡報撰寫 |
-| 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（judge 刻意仍是 `claude-haiku-4-5`，待 PR-18＋26/27 切換） |
+| 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（judge 是 `deepseek-flash`，自 2026-09 起的新量尺；舊的 haiku 分數歸「其他 judge」） |
 
 批次以檔案 `file_hash` 為鍵、冪等可續跑；失敗寫 `data/*_failures.log`，不阻斷其他檔。
 
@@ -125,6 +125,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `scripts/select_sample.py`、`scripts/extract_batch.py`、`scripts/make_worklist.py`、`scripts/run_ingest.py` | 抽樣原型路徑（`make prep`、`make ingest`） |
 | `scripts/search.py`（`make search`） | CLI 檢索驗證 |
 | `scripts/analyze_qa_log.py`、`scripts/measure_baseline.py`、`scripts/eval_faithfulness.py` | 唯讀分析 |
+| `scripts/judge_agreement.py` | judge 描述性校準：唯讀取 `qa_log` 歷史 haiku 判定，以 `retrieve_context` 重建脈絡、用 DeepSeek judge 重評，印 κ／偏移／門檻翻轉率（只描述、不判定）；會呼叫付費 API，`--max-cases`／`--max-cny`／`--dry-run` |
 
 **不要再寫一支「清理 chunk 空白」的批次更新**：`clean_text` 與 `clean_extracted` 都會破壞段落換行，2026-07-29 已連同 `make normalize` 一併移除。
 
@@ -190,7 +191,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 - `tests/fixtures/sse_events.json` 是後端與前端共吃的單一真相（`tests/test_sse_event_contract.py`、`frontend/src/lib/sseEventContract.test.ts`），現在只剩 `ask` 一組事件。新事件或欄位：fixture 與 `frontend/src/lib/askSchemas.ts` 的 zod（預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）兩處都要動。
 - 雷達 `app/services/radar/schemas.py` 的 `Literal` 與 `frontend/src/lib/radarSchemas.ts` 逐字鏡像；閱讀頁 `app/services/reading/schemas.py` 與 `frontend/src/lib/readingSchemas.ts` 同理；`web/routers/brief.py` 的 pydantic 與 `frontend/src/lib/briefSchemas.ts` 同理。
 - `/api/progress` 新增鍵要同步改 `frontend/src/features/monitor/progressSchema.ts`。
-- 忠實度分數的讀取端（`/api/progress` 的 `evaluation.qa`、`/api/review/queue?kind=faithfulness`、`scripts/eval_faithfulness.py`）的分數類統計只計現行 judge（監控卡的已查核數 `checked` 例外：它是覆蓋率語意，計所有 judge），共用 `app/services/judge_schema.py` 的過濾；`qa_log.evaluation` 帶 `judge_model`、`judge_schema_version`、`degraded_reason`（`unavailable`／`timeout`／`truncated`／`empty`／`parse`／`schema`／`error`，詞彙在 `app/services/faithfulness.py`）、`elapsed_ms`、`n_missing_verdicts`（grounding 漏判而計為 unsupported 的條數），缺 `judge_model` 的舊列視為 `claude-haiku-4-5`。judge 回應走 schema v2 嚴格驗證（同一模組），不合格重試 1 次後生產記 `degraded_reason=schema`；生產 grounding 缺 idx 仍計 unsupported，但一條都沒判（`{"verdicts": []}`）算 schema 錯。
+- 忠實度分數的讀取端（`/api/progress` 的 `evaluation.qa`、`/api/review/queue?kind=faithfulness`、`scripts/eval_faithfulness.py`）的分數類統計只計現行 judge（監控卡的已查核數 `checked` 例外：它是覆蓋率語意，計所有 judge），共用 `app/services/judge_schema.py` 的過濾；`qa_log.evaluation` 帶 `judge_model`、`judge_schema_version`、`degraded_reason`（`unavailable`／`timeout`／`truncated`／`empty`／`parse`／`schema`／`content_risk`／`account`／`error`，詞彙在 `app/services/faithfulness.py`）、`elapsed_ms`、`n_missing_verdicts`（grounding 漏判而計為 unsupported 的條數），DeepSeek judge 另帶 `judge_model_resp`、`judge_fingerprint`、`judge_requests`、`usage`；缺 `judge_model` 的舊列視為 `claude-haiku-4-5`。judge 回應走 schema v2 嚴格驗證（同一模組），不合格重試 1 次後生產記 `degraded_reason=schema`；生產 grounding 缺 idx 仍計 unsupported，但一條都沒判（`{"verdicts": []}`）算 schema 錯。
 
 ## 私有 R2 遷移順序
 

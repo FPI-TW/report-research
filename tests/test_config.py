@@ -92,7 +92,8 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
 
     def test_llm_provider_unset_defaults_to_deepseek(self):
-        """PR-28：LLM_PROVIDER 沒設時 Settings 解析為 deepseek；網搜與 judge 刻意仍是 Claude。"""
+        """PR-28：LLM_PROVIDER 沒設時 Settings 解析為 deepseek；網搜刻意仍是 Claude，生產忠實度 judge
+        自 PR-26/27 起是 deepseek-flash。"""
         from app import config
 
         with mock.patch.dict(os.environ, {}):
@@ -104,7 +105,7 @@ class SettingsDefaultsTests(unittest.TestCase):
         self.assertEqual(s.ask_condense_model, "deepseek-flash")
         self.assertEqual(s.qa_planner_model, "deepseek-flash")
         self.assertEqual(s.ask_web_model, "claude-sonnet-5")
-        self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
+        self.assertEqual(s.faithfulness_model, "deepseek-flash")
         # dataclass 欄位預設與 DEFAULT_PROVIDER 的表一致（直接建構時不自相矛盾）
         fields = config.Settings.__dataclass_fields__
         self.assertEqual(fields["llm_provider"].default, "deepseek")

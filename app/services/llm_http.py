@@ -46,6 +46,9 @@ run_claude`）與各呼叫點。刻意是**葉模組**：只 import 標準函式
   `get_settings()` 是 import 期就快取的單例（`app/services/db.py`），先快取到空值就一路空到底。
 - **不用 openai SDK**：它內建的重試會吃掉失敗原因，違反 `scripts/_claude_cli.py` 開頭四天
   停擺紀錄的教訓（失敗原因必須說得出口）。
+- **judge 走非串流 JSON 模式**（`complete_json`，遷移 PR-18）：judge 不需要串流，而非串流回應才帶
+  `system_fingerprint`（9/24 探測）。重試只在這一層、有界（`JSON_MAX_ATTEMPTS`），呼叫端再依自己的
+  預算壓低，不另外疊一層（app/services/faithfulness.py 模組 docstring 的「重試層數」）。
 """
 
 from __future__ import annotations
@@ -87,6 +90,7 @@ TIMEOUT = "timeout"                # 首字期限（串流）或總期限（批�
 TRUNCATED = "truncated"            # finish_reason=length（決定性：同一輸入、同一上限重送結果不變）
 TIMEOUT_STREAMED = "timeout_streamed"  # 批次：已吐字後總期限才到（期限型截斷，見 `_deadline_after_text`）
 EMPTY = "empty"                    # 成功結束卻沒有 content（包括只有 reasoning）
+INVALID_JSON = "invalid_json"      # JSON 模式（`complete_json`）：finish_reason=stop 但 content 不是合法 JSON
 OTHER = "other"
 
 # 帳號層級：每一篇都會踩到，批次應中止整批而不是記 N 筆單篇失敗後 exit 0。
@@ -106,6 +110,7 @@ _PHRASES = {
     TRUNCATED: "輸出截斷",
     TIMEOUT_STREAMED: "已吐字後逾時",
     EMPTY: "空回應",
+    INVALID_JSON: "回應不是合法 JSON",
     OTHER: "未預期錯誤",
 }
 
@@ -166,8 +171,14 @@ def build_body(
     system: str | None = None,
     stream: bool = True,
     user_id: str | None = None,
+    temperature: float | None = None,
+    response_format: dict | None = None,
 ) -> dict:
-    """組請求 body（純函式）。thinking 一律關：兩個開關都送，見模組 docstring。"""
+    """組請求 body（純函式）。thinking 一律關：兩個開關都送，見模組 docstring。
+
+    `temperature`／`response_format` 預設不送（沿用伺服器預設）；judge（`complete_json`）送
+    `temperature=0` 與 `{"type": "json_object"}`。
+    """
     messages = []
     if system:
         messages.append({"role": "system", "content": sanitize(system)})
@@ -182,6 +193,10 @@ def build_body(
     }
     if stream:
         body["stream_options"] = {"include_usage": True}
+    if temperature is not None:
+        body["temperature"] = temperature
+    if response_format is not None:
+        body["response_format"] = response_format
     uid = _user_id(user_id)
     if uid:
         body["user_id"] = uid
@@ -375,6 +390,9 @@ class ChatOutcome:
     reasoning_chars: int = 0
     ttft_ms: int | None = None
     total_ms: int = 0
+    # 非串流回應才有（`complete_json`；9/24 探測實測有值）。同一個模型名可能在伺服端換了底層模型，
+    # judge 靠它與 `model_resp` 事後分辨「量尺是不是悄悄換了」。
+    system_fingerprint: str | None = None
 
 
 def _final_kind(acc: _Acc, got_text: bool) -> tuple[str | None, str]:
@@ -438,11 +456,11 @@ def _log_call(task: str, model: str, out: ChatOutcome, attempts: int = 1) -> Non
     details = usage.get("completion_tokens_details") or {}
     logger.info(
         "llm_call task=%s model=%s model_resp=%s backend=http kind=%s finish=%s attempts=%d "
-        "ttft_ms=%s total_ms=%d hit=%s miss=%s out=%s reasoning=%s",
+        "ttft_ms=%s total_ms=%d hit=%s miss=%s out=%s reasoning=%s fp=%s",
         task, model, out.model_resp, out.kind or "ok", out.finish_reason, attempts,
         out.ttft_ms, out.total_ms, usage.get("prompt_cache_hit_tokens"),
         usage.get("prompt_cache_miss_tokens"), usage.get("completion_tokens"),
-        details.get("reasoning_tokens"),
+        details.get("reasoning_tokens"), out.system_fingerprint,
     )
 
 
@@ -997,4 +1015,242 @@ def complete_chat(
     return ChatResult(
         text=None, error=error_string(out.kind, detail), kind=out.kind,
         attempts=attempts, outcome=out,
+    )
+
+
+# ── judge：非串流 JSON 模式（DeepSeek 遷移 PR-18）──────────────────────────────
+# 一次 `complete_json` 最多送出的請求數（首次＋1 次重試）。三種可重試的結局共用這 1 次：
+# finish_reason=length（以 2 倍 max_tokens 重送）、空 content（官方文件記載 JSON 模式偶發）、暫時性錯誤
+# （429／5xx／網路）。呼叫端可再壓低（`max_attempts`）：judge 的「單層重試」就是由呼叫端依剩餘預算
+# 傳入，見 app/services/judge_schema.py 的 `HTTP_STAGE_MAX_REQUESTS`。
+JSON_MAX_ATTEMPTS = 2
+_JSON_BACKOFF = 2.0
+# judge 是背景抽查與離線評測，等 Retry-After 最多這麼久；再久就放棄這一次（總期限也會先到）。
+_JSON_RETRY_AFTER_CAP = 10.0
+# 截斷重試的時間門檻：剩餘期限 < 這次耗時 × 這個倍數就不重試（見 `complete_json` docstring）。
+_JSON_TRUNC_RETRY_TIME_RATIO = 1.5
+_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens", "prompt_cache_miss_tokens")
+
+
+@dataclass
+class JsonResult:
+    """`complete_json` 的結果。`kind is None`＝成功，`data` 是解析後的 JSON（dict 或 list）。
+
+    - `attempts`：實際送出的請求數（含重試）。judge 的重試預算據此扣。
+    - `max_tokens`：最後一次請求用的上限（截斷重試後是 2 倍）。
+    - `usage`：**所有嘗試**的 token 加總（每次嘗試都計費）；`outcome.usage` 只是最後一次。
+    - `outcome`：最後一次嘗試的結局（`model_resp`、`system_fingerprint`、`finish_reason`、`status`）。
+    """
+
+    data: dict | list | None
+    kind: str | None
+    detail: str = ""
+    attempts: int = 0
+    max_tokens: int = 0
+    usage: dict = field(default_factory=dict)
+    outcome: ChatOutcome = field(default_factory=lambda: ChatOutcome(kind=None))
+
+    @property
+    def error(self) -> str | None:
+        return None if self.kind is None else error_string(self.kind, self.detail)
+
+
+def _json_headers(key: str) -> dict:
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json", "Accept": "application/json"}
+
+
+def _add_usage(total: dict, usage: dict | None) -> None:
+    for k in _USAGE_KEYS:
+        v = (usage or {}).get(k)
+        if isinstance(v, int) and not isinstance(v, bool):
+            total[k] = total.get(k, 0) + v
+
+
+def _parse_json_response(raw: bytes, t0: float) -> tuple[ChatOutcome, object]:
+    """HTTP 200 的本體 → (outcome, data)。finish_reason 必須是 stop 且 content 是合法 JSON 才算成功。"""
+    try:
+        # 伺服器排隊時在本體前送空行保持連線（官方文件）；JSON 允許前導空白，不必先剝。
+        obj = json.loads(raw)
+    except ValueError:
+        return _fail(OTHER, "回應本體不是 JSON", t0, status=200), None
+    if not isinstance(obj, dict):
+        return _fail(OTHER, "回應本體不是 JSON 物件", t0, status=200), None
+    if obj.get("error") is not None:
+        message = _error_message(json.dumps({"error": obj["error"]}))
+        kind = CONTENT_FILTER if _is_content_risk(message) else OVERLOADED
+        return _fail(kind, _redact(f"response error {message}"), t0, status=200), None
+    choices = obj.get("choices") or []
+    choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    content = message.get("content") if isinstance(message.get("content"), str) else ""
+    reasoning = message.get("reasoning_content")
+    finish = choice.get("finish_reason")
+    fp = obj.get("system_fingerprint")
+    meta = dict(
+        status=200, finish_reason=finish,
+        usage=obj.get("usage") if isinstance(obj.get("usage"), dict) else None,
+        model_resp=obj.get("model") if isinstance(obj.get("model"), str) else None,
+        reasoning_chars=len(reasoning) if isinstance(reasoning, str) else 0,
+        system_fingerprint=fp if isinstance(fp, str) else None,
+    )
+    if finish == "content_filter":
+        return _fail(CONTENT_FILTER, "finish_reason=content_filter", t0, **meta), None
+    if finish == "length":
+        return _fail(TRUNCATED, "finish_reason=length", t0, **meta), None
+    if finish == "insufficient_system_resource":
+        return _fail(OVERLOADED, "finish_reason=insufficient_system_resource", t0, **meta), None
+    if finish != "stop":
+        return _fail(OTHER, f"finish_reason={finish}", t0, **meta), None
+    if not content.strip():
+        detail = "只有 reasoning、沒有 content" if meta["reasoning_chars"] else "沒有 content"
+        return _fail(EMPTY, detail, t0, **meta), None
+    try:
+        data = json.loads(content)
+    except ValueError:
+        return _fail(INVALID_JSON, f"content 不是合法 JSON（{len(content)} 字）", t0, **meta), None
+    if not isinstance(data, (dict, list)):
+        return _fail(INVALID_JSON, f"content 是 JSON 純量（{type(data).__name__}）", t0, **meta), None
+    return ChatOutcome(kind=None, total_ms=int((time.monotonic() - t0) * 1000), **meta), data
+
+
+async def _json_once(
+    model: str, prompt: str, *, system: str | None, max_tokens: int, user_id: str | None, deadline: float,
+) -> tuple[ChatOutcome, object]:
+    t0 = time.monotonic()
+    pre = _preflight(t0)
+    if isinstance(pre, ChatOutcome):
+        return pre, None
+    key, url = pre
+    loop = asyncio.get_running_loop()
+    remaining = deadline - loop.time()
+    if remaining <= 0:
+        return _fail(TIMEOUT, "總期限已過", t0), None
+    try:
+        body = build_body(
+            model, prompt, max_tokens=max_tokens, system=system, stream=False, user_id=user_id,
+            temperature=0, response_format={"type": "json_object"},
+        )
+        client = _async_client()
+        request = client.build_request(
+            "POST", url, json=body, headers=_json_headers(key), timeout=_timeout(_READ_TIMEOUT, cap=remaining),
+        )
+    except UnicodeError as exc:  # 先於 ValueError（它是子類）：單篇輸入的編碼問題，見 `_complete_once`
+        return _fail(BAD_REQUEST, _transport_detail(exc), t0), None
+    except (httpx.InvalidURL, ValueError) as exc:
+        return _fail(CONFIG, _transport_detail(exc), t0), None
+    try:
+        # 總期限用 asyncio 的期限包住整次請求：伺服器排隊時持續送空行，httpx 的 read 逾時會一直被重置。
+        async with asyncio.timeout_at(deadline):
+            response = await client.send(request)
+    except TimeoutError:
+        return _fail(TIMEOUT, f"總期限內未完成（剩 {remaining:.0f}s 時送出）", t0), None
+    except httpx.ReadTimeout as exc:
+        # 請求已送達、伺服器 `_READ_TIMEOUT` 秒沒回任何位元組：非串流時伺服器要整份生成完才回本體，
+        # 生成超過 60 秒又沒送 keep-alive 就會落到這裡（9/24 探測：短回應沒有 keep-alive）。它很可能
+        # 已經在生成、會計費，歸 NETWORK 重試就是同一份輸出再付一次錢，而且第二次多半同樣慢。所以
+        # 歸 TIMEOUT、不重試——與線上 `astream_chat` 首字前的 ReadTimeout 同一個理由。
+        detail = f"伺服器 {_READ_TIMEOUT:g}s 未送出任何位元組（非串流，可能仍在生成）（{type(exc).__name__}）"
+        return _fail(TIMEOUT, detail, t0), None
+    except httpx.TimeoutException as exc:
+        # 連線／寫入／連線池逾時：請求還沒送到伺服器、不會計費，總期限未到時歸 NETWORK 讓呼叫端照暫時性處理
+        kind = TIMEOUT if loop.time() >= deadline else NETWORK
+        return _fail(kind, _transport_detail(exc), t0), None
+    except httpx.TransportError as exc:
+        return _fail(NETWORK, _transport_detail(exc), t0), None
+    except httpx.HTTPError as exc:
+        # 其餘 httpx 例外（DecodingError：本體的 Content-Encoding 解不開；TooManyRedirects）：不是傳輸層
+        # 斷線，重送多半得到同一個結果、而且本體已經生成＝已計費，所以歸 OTHER、不重試。同檔另兩條路
+        # （`astream_chat`、`_complete_once`）也接 HTTPError；只接 TransportError 的話它會漏出 complete_json，
+        # 違反「任何失敗都轉成結果」的契約。
+        return _fail(OTHER, _transport_detail(exc), t0), None
+    if response.status_code != 200:
+        kind, detail = classify_status(response.status_code, response.content)
+        return _fail(
+            kind, detail, t0, status=response.status_code, retry_after=_retry_after(response.headers),
+        ), None
+    return _parse_json_response(response.content, t0)
+
+
+async def complete_json(
+    model: str,
+    prompt: str,
+    *,
+    max_tokens: int,
+    timeout: float,
+    system: str | None = None,
+    task: str = "-",
+    user_id: str | None = None,
+    max_attempts: int = JSON_MAX_ATTEMPTS,
+    sleep=asyncio.sleep,
+) -> JsonResult:
+    """非串流、JSON 模式的單次呼叫（judge 用）。任何失敗都轉成結果，不往外拋（`CancelledError` 除外）。
+
+    請求固定 `stream=false`、`response_format={"type":"json_object"}`、`temperature=0`、thinking 兩個開關
+    都關（`build_body`）。JSON 模式要求 prompt 含「json」字樣：9/24 探測實測大寫 `JSON` 也算數，現行四支
+    judge 系統提示都有「只輸出 JSON」，所以不必改提示（改了就是換尺，`judge_prompt_sha` 會變）。
+
+    - `timeout`：涵蓋所有嘗試（含退避）的**總期限**，以 asyncio 期限實作（見 `_json_once`）。
+    - 回應必須 `finish_reason=stop` 且 content 是 JSON 物件或陣列，否則照 kind 回傳：
+      `length`→`TRUNCATED`、`content_filter`→`CONTENT_FILTER`、空 content→`EMPTY`、不是 JSON→`INVALID_JSON`。
+    - 重試（最多 `max_attempts`，預設 `JSON_MAX_ATTEMPTS`＝2 個請求）只給三種：`TRUNCATED` 以 2 倍
+      `max_tokens` 重送、`EMPTY` 原樣重送、暫時性錯誤（`TRANSIENT_KINDS`）退避後重送（優先照
+      `Retry-After`，上限 `_JSON_RETRY_AFTER_CAP`；等待會超過總期限就不等）。
+    - 審查、帳號（401／402／404）、400、`INVALID_JSON`、逾時一律不重試：結果不會變，重打只是再付一次錢。
+      帳號錯誤要由呼叫端升級（離線整批中止、生產記 degraded），不在這裡處理。
+    - httpx 的 read 逾時（請求已送出、伺服器 60 秒沒回任何位元組）歸 `TIMEOUT`、不重試：非串流時
+      伺服器整份生成完才回本體，這時多半已在生成、會計費（見 `_json_once`）。連線／寫入逾時仍是
+      `NETWORK`（沒送到、不計費）。
+
+    **已知限制**：截斷重試與期限共用同一個 `timeout`。剩餘期限不到這次耗時的
+    `_JSON_TRUNC_RETRY_TIME_RATIO`（1.5）倍時不重試、直接回 `TRUNCATED`（detail 註明）——大上限的
+    階段（拆解 8192 token）一次就可能吃掉大半期限，這時 2 倍上限的重送在期限內幾乎跑不完，送出去
+    只會多付一次錢、再被記成 `TIMEOUT`。門檻是估的（輸出時間大致與 token 數成正比，重送至少要重新
+    生成已截斷的那一段），所以仍可能有重送後逾時的情況；反過來，單次生成超過 60 秒（read 逾時）
+    的階段在這裡拿不到結果，只能記 `TIMEOUT`。
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    budget = max(1, int(max_attempts))
+    cur = int(max_tokens)
+    attempts = 0
+    usage: dict = {}
+    trunc_no_time = False
+    while True:
+        attempts += 1
+        started = loop.time()
+        out, data = await _json_once(
+            model, prompt, system=system, max_tokens=cur, user_id=user_id, deadline=deadline,
+        )
+        _add_usage(usage, out.usage)
+        if out.kind is None or attempts >= budget:
+            break
+        if out.kind == TRUNCATED:
+            # 以 2 倍上限重送至少要重新生成已截斷的那一段：剩餘期限連這次耗時的
+            # `_JSON_TRUNC_RETRY_TIME_RATIO` 倍都不到，送出去多半只會以逾時收場、白付一次錢，
+            # 而且 degraded_reason 會被記成 timeout、蓋掉真正的原因（截斷）。
+            now = loop.time()
+            if deadline - now < _JSON_TRUNC_RETRY_TIME_RATIO * (now - started):
+                trunc_no_time = True
+                break
+            cur *= 2
+        elif out.kind == EMPTY:
+            pass
+        elif out.kind in TRANSIENT_KINDS:
+            if out.retry_after is not None:
+                wait = min(out.retry_after, _JSON_RETRY_AFTER_CAP)
+            else:
+                wait = _JSON_BACKOFF * random.uniform(0.8, 1.2)
+            if loop.time() + wait >= deadline:
+                break
+            await sleep(wait)
+        else:
+            break
+    _log_call(task, model, out, attempts)
+    if out.kind is None:
+        return JsonResult(data=data, kind=None, attempts=attempts, max_tokens=cur, usage=usage, outcome=out)
+    detail = f"max_tokens={cur}" if out.kind == TRUNCATED else out.detail
+    if trunc_no_time:
+        detail += "；剩餘期限不足，未以 2 倍上限重試"
+    return JsonResult(
+        data=None, kind=out.kind, detail=detail, attempts=attempts, max_tokens=cur, usage=usage, outcome=out,
     )

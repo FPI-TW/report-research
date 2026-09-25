@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextvars import ContextVar
 
 logger = logging.getLogger(__name__)
 
@@ -154,21 +155,59 @@ def parse_questions(res) -> list[str]:
 
 SCHEMA_RETRIES = 1
 
+# ── HTTP judge 的單層重試預算（DeepSeek 遷移 PR-18）────────────────────────────
+# 一個階段（一次 call_validated：拆解、grounding、CP 或反推問題）在 HTTP 路徑上最多送出的請求數。
+# 三種重試共用這個預算、不相乘：call_validated 的 schema 重試（1 次）、`llm_http.complete_json` 的
+# 截斷／空回應／暫時性重試（每次呼叫最多 2 個請求）、`eval.judge.judge_json` 的暫時性重試（HTTP 路徑
+# 不跑）。首次 judge 呼叫最多用 2 個，schema 重試只拿得到剩下的，所以一個階段最壞 3 個請求。
+# 預算以 contextvar 傳遞：judge 契約是 `judge(system, user)`，不能為了它改所有假 judge 的簽章；
+# call_validated 與 judge 在同一個 Task 裡 await，contextvar 天然界定「這一個階段」。
+# CLI 路徑不記帳（claude_cli 表的行為維持原樣，最壞次數見 faithfulness.py 模組 docstring）。
+HTTP_STAGE_MAX_REQUESTS = 3
+_stage_requests: ContextVar[list[int] | None] = ContextVar("judge_stage_requests", default=None)
+
+
+def http_attempts_allowed(per_call: int) -> int:
+    """本次 HTTP judge 呼叫可送出的請求數：min(per_call, 本階段剩餘預算)，不在 call_validated 內時就是 per_call。"""
+    used = _stage_requests.get()
+    if used is None:
+        return per_call
+    return max(0, min(per_call, HTTP_STAGE_MAX_REQUESTS - used[0]))
+
+
+def record_http_requests(n: int) -> None:
+    """HTTP judge 送出 n 個請求後記帳（不在 call_validated 內時不記）。"""
+    used = _stage_requests.get()
+    if used is not None:
+        used[0] += n
+
+
+def _stage_budget_left() -> bool:
+    used = _stage_requests.get()
+    return used is None or used[0] < HTTP_STAGE_MAX_REQUESTS
+
 
 async def call_validated(judge, system: str, user: str, parse, *, retries: int = SCHEMA_RETRIES):
     """呼叫 judge 並以 parse 驗證；JudgeSchemaError 時重試 retries 次，仍失敗就拋。
 
     judge 回 None（生產 judge 自身失敗的 fail-open 約定）原樣回 None、不重試——那不是
     schema 問題，原因由 judge 自己記。回傳 parse 的結果。
+
+    HTTP 路徑的 schema 重試另受本階段請求預算限制（`HTTP_STAGE_MAX_REQUESTS`）：預算用完就不重試、
+    直接拋，讓最壞請求數是一個寫得出來的數字，而不是各層重試次數相乘。
     """
-    for attempt in range(retries + 1):
-        res = await judge(system, user)
-        if res is None:
-            return None
-        try:
-            return parse(res)
-        except JudgeSchemaError as e:
-            if attempt >= retries:
-                raise
-            logger.warning("judge 回應不合 schema v%d，重試：%s", JUDGE_SCHEMA_VERSION, e)
-    raise AssertionError("unreachable")  # pragma: no cover
+    token = _stage_requests.set([0])
+    try:
+        for attempt in range(retries + 1):
+            res = await judge(system, user)
+            if res is None:
+                return None
+            try:
+                return parse(res)
+            except JudgeSchemaError as e:
+                if attempt >= retries or not _stage_budget_left():
+                    raise
+                logger.warning("judge 回應不合 schema v%d，重試：%s", JUDGE_SCHEMA_VERSION, e)
+        raise AssertionError("unreachable")  # pragma: no cover
+    finally:
+        _stage_requests.reset(token)

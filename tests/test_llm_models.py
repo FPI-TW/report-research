@@ -116,13 +116,18 @@ class TableTests(unittest.TestCase):
         for task, model in lm.DEEPSEEK_DEFAULTS.items():
             self.assertTrue(lm.is_http_model(model) or lm.is_claude_model(model), (task, model))
 
-    def test_deepseek_table_keeps_judges_and_web_on_claude(self):
-        """judge 換了就是換量尺（等 PR-26/27 校準）；DeepSeek 網搜延後到 P9。"""
-        for task in ("faithfulness", "eval_judge", "ask_web"):
-            self.assertEqual(lm.DEEPSEEK_DEFAULTS[task], lm.CLAUDE_DEFAULTS[task], task)
+    def test_deepseek_table_keeps_only_web_on_claude(self):
+        """DeepSeek 網搜延後到 P9，網搜那列維持 Claude。"""
+        self.assertEqual(lm.DEEPSEEK_DEFAULTS["ask_web"], lm.CLAUDE_DEFAULTS["ask_web"])
+
+    def test_deepseek_table_switches_both_judges_to_flash(self):
+        """PR-26/27：judge 依 D-J a 直接切成 DeepSeek（新量尺系譜）；claude_cli 表仍是 haiku。"""
+        for task in ("faithfulness", "eval_judge"):
+            self.assertEqual(lm.DEEPSEEK_DEFAULTS[task], "deepseek-flash", task)
+            self.assertEqual(lm.CLAUDE_DEFAULTS[task], "claude-haiku-4-5", task)
 
     def test_deepseek_table_uses_flash_elsewhere(self):
-        for task in set(lm.TASK_ENV) - {"faithfulness", "eval_judge", "ask_web"}:
+        for task in set(lm.TASK_ENV) - {"ask_web"}:
             self.assertEqual(lm.DEEPSEEK_DEFAULTS[task], "deepseek-flash", task)
 
     def test_online_tasks_are_known(self):
@@ -154,8 +159,9 @@ class ResolveTests(unittest.TestCase):
             self.assertEqual(lm.resolve_model("summary"), "deepseek-flash")
             self.assertEqual(lm.resolve_model("tag"), "deepseek-flash")
             self.assertEqual(lm.resolve_model("takeaway"), "deepseek-flash")
-            # 刻意仍是 Claude 的兩處：judge（PR-18＋26/27）、網搜（PR-W／P9）
-            self.assertEqual(lm.resolve_model("faithfulness"), "claude-haiku-4-5")
+            # judge 自 PR-26/27 起是 DeepSeek；刻意仍是 Claude 的只剩網搜（PR-W／P9）
+            self.assertEqual(lm.resolve_model("faithfulness"), "deepseek-flash")
+            self.assertEqual(lm.resolve_model("eval_judge"), "deepseek-flash")
             self.assertEqual(lm.resolve_model("ask_web"), "claude-sonnet-5")
         self.assertEqual(os.environ.get("LLM_PROVIDER"), "claude_cli", "patch.dict 結束後還原")
 
@@ -291,7 +297,7 @@ class ConfigResolveTests(unittest.TestCase):
         self.assertEqual(s.ask_answer_model, "deepseek-flash")
         self.assertEqual(s.ask_intent_model, "deepseek-flash")
         self.assertEqual(s.ask_web_model, "claude-sonnet-5")
-        self.assertEqual(s.faithfulness_model, "claude-haiku-4-5")
+        self.assertEqual(s.faithfulness_model, "deepseek-flash")
 
 
 class DiagnoseTests(unittest.TestCase):
@@ -305,14 +311,15 @@ class DiagnoseTests(unittest.TestCase):
 
     def test_default_deepseek_table_without_key(self):
         """預設 deepseek、沒金鑰（web 啟動缺 DEEPSEEK_API_KEY）：記 ERROR 並列出任務；CLI 那條只列
-        刻意仍是 Claude 的網搜與 judge，不再說「問答全數失敗」。"""
+        刻意仍是 Claude 的網搜（judge 自 PR-26/27 起是 DeepSeek），不再說「問答全數失敗」。"""
         resolved = {t: lm.DEEPSEEK_DEFAULTS[t] for t in lm.ONLINE_TASKS}
         out = lm.diagnose(resolved, has_key=False, claude_path=None, path_env="/usr/bin")
         self.assertEqual(self._levels(out), [logging.ERROR, logging.ERROR])
         self.assertIn("DEEPSEEK_API_KEY 為空", out[0][1])
         self.assertIn("ask_answer=deepseek-flash", out[0][1])
+        self.assertIn("faithfulness=deepseek-flash", out[0][1])
         self.assertIn("ask_web=claude-sonnet-5", out[1][1])
-        self.assertIn("faithfulness=claude-haiku-4-5", out[1][1])
+        self.assertNotIn("faithfulness", out[1][1])
         self.assertNotIn("ask_answer", out[1][1])
 
     def test_missing_cli_is_error(self):

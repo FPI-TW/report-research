@@ -368,6 +368,55 @@ class RequireTests(_EnvFileCase):
         self.assertIn("sudoedit", out)
 
 
+class InvalidProviderTests(_EnvFileCase):
+    """審查 L1：`LLM_PROVIDER` 非空且不合法時批次預檢 rc=2 並印原始值（web 才退回 deepseek＋ERROR）。
+
+    CLI 已放棄後 `claude_cli` 是「讓 LLM 停下來」的開關；拼錯成 `claude-cli` 若照 web 的規則退回 deepseek，
+    就變成照常計費——而批次拒跑不花錢，沒有容錯的理由。"""
+
+    def test_invalid_provider_is_rc2_with_raw_value_even_with_key(self):
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        le.load_llm_env()
+        for raw in ("claude-cli", "DeepSeek-v4", " claude cli "):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_PROVIDER": raw}):
+                code, out = self.require({"summary": "deepseek-flash"})
+                self.assertEqual(code, 2)
+                self.assertIn(f"LLM_PROVIDER={raw!r}", out)
+                self.assertNotIn("fp=", out, "拒跑要在印金鑰指紋、放行之前")
+
+    def test_invalid_provider_from_the_env_file_is_rc2(self):
+        """值寫在 /etc/default/report-mark-llm 裡同樣拒跑（load_llm_env 把它補進 os.environ）。"""
+        os.environ.pop("LLM_PROVIDER", None)
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\nLLM_PROVIDER=claude-cli\n")
+        le.load_llm_env()
+        try:
+            code, out = self.require(["claude-haiku-4-5"])
+        finally:
+            os.environ.pop("LLM_PROVIDER", None)
+        self.assertEqual(code, 2)
+        self.assertIn("LLM_PROVIDER='claude-cli'", out)
+
+    def test_valid_spellings_pass(self):
+        """合法值（含大小寫、前後空白，與 llm_models.provider 的正規化一致）與空值照常放行。"""
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        le.load_llm_env()
+        for raw in ("deepseek", "DeepSeek", " claude_cli ", "claude_only", ""):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_PROVIDER": raw}):
+                code, out = self.require({"summary": "deepseek-flash"})
+                self.assertIsNone(code, out)
+
+    def test_web_still_falls_back_for_the_same_value(self):
+        """對照：線上解析（llm_models.provider）對同一個值仍是退回 deepseek，不拋。"""
+        from app.services import llm_models
+
+        self.assertEqual(llm_models.provider({"LLM_PROVIDER": "claude-cli"}), llm_models.PROVIDER_DEEPSEEK)
+
+    def test_model_source_prints_the_raw_provider_value(self):
+        with mock.patch.dict(os.environ, {"LLM_PROVIDER": " DeepSeek ", "SUMMARY_MODEL": ""}):
+            self.assertEqual(le._model_source("summary", "deepseek-flash"),
+                             "LLM_PROVIDER=DeepSeek 的 summary 預設 deepseek-flash")
+
+
 class AllClaudeWarningTests(_EnvFileCase):
     """全部解析成 Claude：印一行醒目的 WARNING、不中止。
 

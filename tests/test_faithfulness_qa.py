@@ -6,6 +6,7 @@
 answer_question（那由既有 test_answer 的 SSE 契約覆蓋）。
 """
 import asyncio
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -230,8 +231,53 @@ class AskTimeoutKnobTests(unittest.TestCase):
         self.assertGreater(A.ASK_FAITHFULNESS_TIMEOUT, A.FAITHFULNESS_TIMEOUT)
 
     def test_ask_knob_covers_the_measured_range(self):
-        """實測 ground 單次 48–142 秒（payload 15–19k 字），60 秒必然砍掉長的那些。"""
-        self.assertGreaterEqual(A.ASK_FAITHFULNESS_TIMEOUT, 150)
+        """下限依 DeepSeek 的實測重寫（PR-26/27；CLI 時代的依據是 ground 單次 48–142 秒、下限 150）。
+
+        第二版計畫 §6.4 的規則 `max(ceil(3×p99), 60)`；judge 還沒有自己的 p99，用 9/24 探測的問答
+        （deepseek-flash、thinking 關，脈絡 ≤20k 字，與 grounding payload 同量級）p95＝7.0 秒保守估：
+        p99≈2×p95，一次 judge 呼叫最多 `llm_http.JSON_MAX_ATTEMPTS` 個請求，都算在同一個總期限內。
+        上線後以 evaluation.elapsed_ms 的真 p99 重量、照同一條公式改這裡。"""
+        import math
+
+        from app.services import llm_http
+
+        probe_ask_p95_s = 7.0
+        p99_est = 2 * probe_ask_p95_s
+        required = max(math.ceil(3 * llm_http.JSON_MAX_ATTEMPTS * p99_est), 60)
+        self.assertGreaterEqual(A.ASK_FAITHFULNESS_TIMEOUT, required)
+
+    def test_ask_knob_default_is_the_deepseek_value(self):
+        """DeepSeek judge 預設 90：夠寬（上一條），也不再是 CLI 時代的 240——後者讓一次卡住的抽查佔住
+        inflight 名額 4 分鐘，而 inflight 上限只有 2。"""
+        from app.config import _load
+
+        with patch.dict(os.environ, {"ASK_FAITHFULNESS_TIMEOUT": "", "LLM_PROVIDER": "deepseek"}):
+            os.environ.pop("ASK_FAITHFULNESS_TIMEOUT")
+            os.environ.pop("FAITHFULNESS_MODEL", None)
+            s = _load()
+            self.assertEqual(s.faithfulness_model, "deepseek-flash")
+            self.assertEqual(s.ask_faithfulness_timeout, 90.0)
+
+    def test_ask_knob_default_follows_the_judge_backend(self):
+        """審查低4：預設值依 `is_http_model(faithfulness_model)`——Claude CLI judge 仍是 240（ground 單次
+        實測 48–142 秒），不能被 DeepSeek 的 90 一起套上；空字串視同未設；顯式設值一律優先。"""
+        from app.config import _load
+
+        cases = [
+            ({"LLM_PROVIDER": "claude_cli"}, 240.0),                                     # conftest 的預設表
+            ({"LLM_PROVIDER": "deepseek", "FAITHFULNESS_MODEL": "claude-haiku-4-5"}, 240.0),
+            ({"LLM_PROVIDER": "claude_cli", "FAITHFULNESS_MODEL": "deepseek-flash"}, 90.0),
+            ({"LLM_PROVIDER": "deepseek", "ASK_FAITHFULNESS_TIMEOUT": ""}, 90.0),
+            ({"LLM_PROVIDER": "claude_cli", "ASK_FAITHFULNESS_TIMEOUT": "75"}, 75.0),
+            ({"LLM_PROVIDER": "deepseek", "ASK_FAITHFULNESS_TIMEOUT": "300"}, 300.0),
+        ]
+        for env, want in cases:
+            with self.subTest(env=env), patch.dict(os.environ, env):
+                if "ASK_FAITHFULNESS_TIMEOUT" not in env:
+                    os.environ.pop("ASK_FAITHFULNESS_TIMEOUT", None)
+                if "FAITHFULNESS_MODEL" not in env:
+                    os.environ.pop("FAITHFULNESS_MODEL", None)
+                self.assertEqual(_load().ask_faithfulness_timeout, want)
 
 
 if __name__ == "__main__":

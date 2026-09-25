@@ -16,6 +16,8 @@ M5 起：每 case 記 latency_ms（檢索＋生成牆鐘，排除 judge）；--a
   的雜湊）、`judge_schema_version`。兩份結果只要量尺不同、或只有一邊有記錄，`eval_compare`
   一律回 2。**所以在新基準線產出之前，拿新結果比 `eval/baselines/baseline-2026-09-02.json`
   （沒有這三個鍵）一律回 2**——那是預期，不是壞掉；要比就兩邊都用本版重跑。
+- **量尺系譜**（PR-26/27）：judge 預設自 2026-09 起是 DeepSeek（`deepseek-2026-09` 系譜），`config.judge`
+  記 `lineage`、結果檔頂層 `notes` 寫明跟誰不可比（`judge_lineage`）。新系譜的第一份結果就是它的起點。
 - **judge 出錯只讓該指標記為 None**，不讓整題記為 error：錯誤訊息記在 case 的
   `judge_errors`，summary 的 `n_judge_errors` 計總數（只列出、不判方向：那是量尺故障，不是
   生成端劣化）。檢索或生成失敗才是整題 error。這樣一題 CP 的 judge 逾時不會連帶拿掉同一題的
@@ -69,7 +71,13 @@ from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, LLMUnavailableError, stream_completion  # noqa: E402
-from app.services.llm_models import is_http_model  # noqa: E402
+from app.services.llm_http import ACCOUNT_KINDS  # noqa: E402
+from app.services.llm_models import (  # noqa: E402
+    JUDGE_LINEAGE_CLAUDE,  # noqa: F401 — 以原名重新匯出（tests/test_run_ragas.py）
+    JUDGE_LINEAGE_DEEPSEEK,
+    is_http_model,
+    judge_lineage,
+)
 from app.services.query_planner import plan_queries  # noqa: E402
 from app.services.retrieval_pipeline import retrieve_context  # noqa: E402
 from app.services.scope_router import CORPUS_QA, POLICY_FOR_SCOPE, RouteDecision  # noqa: E402
@@ -78,6 +86,8 @@ from eval.judge import (  # noqa: E402
     DEFAULT_JUDGE_MODEL,
     DEFAULT_JUDGE_RETRIES,
     DEFAULT_JUDGE_TIMEOUT,
+    JUDGE_MAX_TOKENS,
+    JudgeAccountError,
     JudgeError,
     judge_json,
 )
@@ -86,6 +96,7 @@ from eval.ragas_metrics import (  # noqa: E402
     DECOMPOSE_SYS,
     GENQ_SYS,
     GROUND_SYS,
+    JUDGE_MAX_TOKENS_BY_SYSTEM,
     answer_relevancy_detailed,
     context_precision,
     faithfulness,
@@ -116,6 +127,20 @@ GEN_TIMEOUT = 120.0
 # 仍讓整題記 error——那不是量尺的問題，吞掉會把 bug 藏成分數缺值。
 # JudgeSchemaError＝JSON 合法但不合 schema v2（已重試 1 次，app/services/judge_schema.py）。
 _JUDGE_FAILURES = (JudgeError, JudgeSchemaError, LLMUnavailableError)
+
+
+
+class GeneratorAccountError(Exception):
+    """生成端帳號層級錯誤（`LLMUnavailableError.kind` 在 `ACCOUNT_KINDS`：auth／quota／config）。
+
+    402 通常**先在生成端**出現（每題先生成、再 judge）：記成單題 error 的話整批照跑完、結果檔照寫，
+    `eval_compare` 看到的是「每題都 error」的劣化，而不是「帳號壞了、這份沒量到東西」。與
+    `JudgeAccountError` 同樣整批中止（`_main` 以 rc=2 結束、不寫結果檔）。
+    """
+
+
+# 整批中止的帳號層級錯誤（judge 或生成端）：eval_question 原樣拋出，_main 以 rc=2 結束。
+_ACCOUNT_ERRORS = (JudgeAccountError, GeneratorAccountError)
 
 # judge 系統提示 → 任務名，供 --dump-io 標記每一次 judge 呼叫屬於哪個指標。
 _JUDGE_TASKS = {
@@ -254,6 +279,10 @@ async def eval_question(
     - 檢索或生成異常 → {..., "error": str}（整題 fail-open，不入任何均值）。
     - 某個指標的 judge 異常（JudgeError／JudgeSchemaError／LLMUnavailableError）→ 只有該指標為 None，
       錯誤記在 "judge_errors"（M8，見模組 docstring）。
+    - judge 帳號層級錯誤（JudgeAccountError：401／402／404）→ 原樣拋出、整批中止：每一題都會踩到，
+      記成 N 題 judge_errors 還寫出一份結果檔，只會讓人拿一份沒量到東西的結果去比。
+    - 生成端同一類錯誤（`LLMUnavailableError.kind` 在 `ACCOUNT_KINDS`）→ 轉成 GeneratorAccountError
+      整批中止，理由同上（見該類別 docstring）；生成端其他錯誤仍是單題 error。
     - 成功時另附私有鍵 "_io"（問題、脈絡、答案、judge 呼叫明細），由 run() 取走供
       --dump-io，不寫進結果檔。
 
@@ -306,7 +335,12 @@ async def eval_question(
                 question, filters=filters, **retrieval_params
             )
         contexts = split_contexts(context)
-        answer, truncated = await _generate_answer(question, context, model=gen_model)
+        try:
+            answer, truncated = await _generate_answer(question, context, model=gen_model)
+        except LLMUnavailableError as e:
+            if e.kind in ACCOUNT_KINDS:
+                raise GeneratorAccountError(f"生成端（{gen_model}）API[{e.kind}] {e}") from e
+            raise
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         calls: list[dict] = []
@@ -358,6 +392,8 @@ async def eval_question(
             "judge_calls": calls,
         }
         return result
+    except _ACCOUNT_ERRORS:
+        raise  # 帳號層級（401／402／404）：每一題都會失敗，整批中止（_main 以 rc=2 結束）
     except Exception as e:  # noqa: BLE001 — 離線批次逐題 fail-open，不讓單題炸掉整批
         return {**base, "error": f"{type(e).__name__}: {e}"}
 
@@ -503,27 +539,21 @@ def judge_provider(model: str) -> str:
     return "deepseek_http" if is_http_model(model) else "claude_cli"
 
 
-def uncalibrated_judge_warning(model: str) -> str | None:
-    """judge 指定為白名單模型時的警告文字；Claude judge 回 None。
-
-    PR-26（judge 切 DeepSeek）之前 judge 校準尚未完成，這種結果屬於新的量尺系譜：與既有
-    Claude judge 的結果比，`eval_compare` 因 `judge_model` 不同回 2。不阻擋——校準本身就要
-    這樣跑。TODO(PR-26)：校準完成、judge 正式切換後刪掉這個警告。
-    """
-    if judge_provider(model) != "deepseek_http":
-        return None
-    return (
-        f"WARNING：judge={model} 走 DeepSeek，judge 校準（PR-26）尚未完成。"
-        "本次分數屬於新的量尺系譜，與 Claude judge 的基準線不可比（eval_compare 回 2）；"
-        "不要拿它升格基準線或判定劣化。"
-    )
+# 量尺系譜（PR-26/27；`judge_lineage` 與兩個常數定義在 app/services/llm_models.py，與
+# scripts/eval_faithfulness.py 共用，這裡以原名匯入）。記進 config.judge.lineage 與結果檔頂層 notes
+# （eval_compare 會印出 notes）；**刻意不放進 summary**：summary 的每個鍵都要在 METRIC_SPECS 分類，而跨系譜
+# 的比較早已由 META 鍵 judge_model 擋下（回 2），再加一個 META 鍵只是重複。
 
 
-def _warn_uncalibrated_judge(model: str) -> None:
-    msg = uncalibrated_judge_warning(model)
-    if msg:
-        bar = "!" * 72
-        print(f"{bar}\n{msg}\n{bar}", file=sys.stderr, flush=True)
+def lineage_notes(model: str) -> list[str]:
+    """結果檔頂層 notes：說出這份結果屬於哪個系譜、跟誰不可比。"""
+    lineage = judge_lineage(model)
+    if lineage == JUDGE_LINEAGE_DEEPSEEK:
+        return [
+            f"judge 系譜 {lineage}（judge={model}，自 2026-09 起的新量尺）：與 Claude haiku judge 的結果"
+            "（含 eval/baselines/baseline-2026-09-02.json）不可比，eval_compare 回 2 是預期；門檻數值不變。"
+        ]
+    return [f"judge 系譜 {lineage}（judge={model}，Claude 時代的舊量尺）：與 DeepSeek judge 的結果不可比。"]
 
 
 def build_config(
@@ -540,6 +570,7 @@ def build_config(
     commit: str | None,
     started_at: str,
     finished_at: str | None = None,
+    judge_observed: dict | None = None,
 ) -> dict:
     """結果檔的 config 快照：只供 eval_compare 印差異，不參與判定（不放進 summary，
     否則每個新鍵都會觸發退出碼 3）。
@@ -547,6 +578,9 @@ def build_config(
     models 列出本次會觸發 LLM 的**每一個任務**實際用的 model——生成、四支 judge，以及
     agentic 時的規劃與評估步（兩者都走 `settings.qa_planner_model`）。檢索、rerank、嵌入
     都不呼叫 LLM。
+
+    judge_observed：HTTP judge 實際回報的模型名與 `system_fingerprint`（去重）、請求數與 token 加總
+    （`_JudgeObserver`）。同一個模型名可能在伺服端換了底層，兩份結果的 fingerprint 不同時要先懷疑尺。
     """
     models = {
         "generate": generator_model,
@@ -570,6 +604,9 @@ def build_config(
             "retries": DEFAULT_JUDGE_RETRIES,
             "prompt_sha": judge_prompt_sha(),
             "schema_version": JUDGE_SCHEMA_VERSION,
+            "lineage": judge_lineage(judge_model),
+            "max_tokens": {_JUDGE_TASKS[k]: v for k, v in JUDGE_MAX_TOKENS_BY_SYSTEM.items()},
+            "observed": judge_observed or {},
         },
         "embed_model": EMBED_MODEL,
         "rerank_top_m": rerank_top_m,
@@ -585,6 +622,35 @@ def build_config(
         "started_at": started_at,
         "finished_at": finished_at,
     }
+
+
+class _JudgeObserver:
+    """收集 HTTP judge 每次呼叫回報的 model、system_fingerprint、請求數與 token（寫進 config.judge.observed）。"""
+
+    def __init__(self) -> None:
+        self.model_resp: set[str] = set()
+        self.fingerprints: set[str] = set()
+        self.requests = 0
+        self.usage: dict[str, int] = {}
+
+    def add(self, meta: dict) -> None:
+        if meta.get("model_resp"):
+            self.model_resp.add(meta["model_resp"])
+        if meta.get("system_fingerprint"):
+            self.fingerprints.add(meta["system_fingerprint"])
+        self.requests += meta.get("requests", 0)
+        for k, v in (meta.get("usage") or {}).items():
+            self.usage[k] = self.usage.get(k, 0) + v
+
+    def snapshot(self) -> dict:
+        if not self.requests:
+            return {}
+        return {
+            "model_resp": sorted(self.model_resp),
+            "system_fingerprint": sorted(self.fingerprints),
+            "requests": self.requests,
+            "usage": dict(sorted(self.usage.items())),
+        }
 
 
 def _dump_name(case_id, run_idx: int, repeat: int) -> str:
@@ -652,7 +718,6 @@ async def run(
     """
     if repeat < 1:
         raise ValueError("repeat 必須 ≥ 1")
-    _warn_uncalibrated_judge(judge_model)  # 開跑前先說：一輪評測要跑好幾個小時
     started_at = datetime.now(timezone.utc).isoformat()
     commit = _git_commit()
     dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
@@ -667,8 +732,17 @@ async def run(
 
     retrieval_params = {**RETRIEVAL_PARAMS, "rerank_top_m": rerank_top_m}
 
+    observer = _JudgeObserver()
+
     async def _judge(system: str, user: str):
-        return await judge_json(user, system=system, model=judge_model)
+        meta: dict = {}
+        try:
+            return await judge_json(
+                user, system=system, model=judge_model,
+                max_tokens=JUDGE_MAX_TOKENS_BY_SYSTEM.get(system, JUDGE_MAX_TOKENS), meta=meta,
+            )
+        finally:
+            observer.add(meta)
 
     sem = asyncio.Semaphore(concurrency)
 
@@ -714,8 +788,9 @@ async def run(
         commit=commit,
         started_at=started_at,
         finished_at=datetime.now(timezone.utc).isoformat(),
+        judge_observed=observer.snapshot(),
     )
-    report = {"summary": summary, "config": config, "cases": cases}
+    report = {"summary": summary, "config": config, "notes": lineage_notes(judge_model), "cases": cases}
     if out_path is not None:
         out = Path(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -747,11 +822,10 @@ def _print_summary(report: dict) -> None:
     print(f"citation_rate     : {fmt(s.get('citation_rate'))}   "
           f"simplified_residual_rate: {fmt(s.get('simplified_residual_rate'))}")
     print(f"judge             : {s.get('judge_model')}  schema v{s.get('judge_schema_version')}  "
-          f"prompt {str(s.get('judge_prompt_sha'))[:12]}")
+          f"prompt {str(s.get('judge_prompt_sha'))[:12]}  系譜 {judge_lineage(str(s.get('judge_model') or ''))}")
     failed = s.get("thresholds_failed") or []
     print(f"thresholds_pass   : {s['thresholds_pass']}"
           + (f"   未達標：{'、'.join(failed)}" if failed else ""))
-    _warn_uncalibrated_judge(str(s.get("judge_model") or ""))  # 看結果的人不一定看過開頭
 
 
 def _main() -> None:
@@ -786,21 +860,27 @@ def _main() -> None:
         [args.generator_model, args.judge_model] + ([get_settings().qa_planner_model] if args.agentic else []),
     )
 
-    report = asyncio.run(
-        run(
-            args.dataset,
-            out_path=args.out,
-            judge_model=args.judge_model,
-            limit=args.limit,
-            concurrency=args.concurrency,
-            rerank_top_m=args.rerank_top_m,
-            scope=args.scope,
-            agentic=args.agentic,
-            generator_model=args.generator_model,
-            repeat=args.repeat,
-            dump_dir=args.dump_io,
+    try:
+        report = asyncio.run(
+            run(
+                args.dataset,
+                out_path=args.out,
+                judge_model=args.judge_model,
+                limit=args.limit,
+                concurrency=args.concurrency,
+                rerank_top_m=args.rerank_top_m,
+                scope=args.scope,
+                agentic=args.agentic,
+                generator_model=args.generator_model,
+                repeat=args.repeat,
+                dump_dir=args.dump_io,
+            )
         )
-    )
+    except _ACCOUNT_ERRORS as exc:
+        # 不寫結果檔：一份每題都沒量到的結果檔，比沒有結果檔更容易被拿去比較。
+        who = "judge" if isinstance(exc, JudgeAccountError) else "生成端"
+        print(f"{who}帳號層級錯誤，整批中止（未寫出 {args.out}）：{exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:

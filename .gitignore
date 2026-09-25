@@ -57,6 +57,8 @@ data/tags.bak.*/
 # 離線評測的凍結集（eval/run_ragas.py --dump-io）：含研報全文與題目，不進 git，
 # 生成不可重現，所以由人另外打包存到 NAS。
 data/eval_frozen/
+# judge 描述性校準（scripts/judge_agreement.py）的結果檔：只有 qa_id 與分數，但屬生產問答的衍生資料。
+data/judge_agreement/
 # eval/run_ragas.py 的預設輸出。要升格成基準線時由人複製到 eval/baselines/ 並命名。
 /eval/candidate-ragas.json
 

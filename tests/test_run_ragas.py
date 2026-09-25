@@ -793,52 +793,58 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await rr.run("unused.json", out_path=None, repeat=0)
 
-    async def test_deepseek_judge_is_labelled_and_warned_but_not_blocked(self):
-        """白名單 judge 實際經 stream_completion 走 HTTP：provider 標 deepseek_http；PR-26 之前
-        judge 未校準，開跑時在 stderr 印 WARNING，但照樣跑完、寫出結果。Claude judge 不警告。"""
-        for judge, provider, warned in (("deepseek-flash", "deepseek_http", True),
-                                        ("claude-haiku-4-5", "claude_cli", False)):
+    async def test_judge_lineage_is_labelled_in_config_and_notes_without_warning(self):
+        """PR-26/27：DeepSeek judge 是正式的新量尺系譜，不再印「未校準」WARNING；系譜記在
+        config.judge.lineage 與頂層 notes（eval_compare 會印），不進 summary（否則要在 METRIC_SPECS 分類）。"""
+        for judge, provider, lineage in (("deepseek-flash", "deepseek_http", "deepseek-2026-09"),
+                                         ("claude-haiku-4-5", "claude_cli", "claude-haiku")):
             with self.subTest(judge=judge), tempfile.TemporaryDirectory() as td:
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err):
                     report, seen, _ds = await self._run_with(td, judge_model=judge)
+                    written = json.loads((Path(td) / "out.json").read_text(encoding="utf-8"))
                 self.assertEqual(seen["calls"], 2)
                 self.assertEqual(report["config"]["judge"]["provider"], provider)
+                self.assertEqual(report["config"]["judge"]["lineage"], lineage)
                 self.assertEqual(report["summary"]["judge_model"], judge)
-                self.assertEqual("WARNING" in err.getvalue(), warned)
-                if warned:
-                    self.assertIn("PR-26", err.getvalue())
-                    self.assertIn(judge, err.getvalue())
+                self.assertNotIn("lineage", report["summary"])
+                self.assertNotIn("judge_lineage", report["summary"])
+                self.assertEqual(written["notes"], report["notes"])
+                self.assertIn(lineage, report["notes"][0])
+                self.assertNotIn("WARNING", err.getvalue())
+
+    def test_deepseek_notes_say_old_baseline_is_not_comparable(self):
+        note = rr.lineage_notes("deepseek-flash")[0]
+        self.assertIn("baseline-2026-09-02.json", note)
+        self.assertIn("回 2", note)
 
 
 class JudgeProviderTests(unittest.TestCase):
-    def test_provider_follows_the_http_whitelist(self):
+    def test_provider_and_lineage_follow_the_http_whitelist(self):
         from app.services.llm_models import HTTP_MODELS
 
         for model in sorted(HTTP_MODELS):
             with self.subTest(model=model):
                 self.assertEqual(rr.judge_provider(model), "deepseek_http")
-                self.assertIsNotNone(rr.uncalibrated_judge_warning(model))
+                self.assertEqual(rr.judge_lineage(model), rr.JUDGE_LINEAGE_DEEPSEEK)
         for model in ("claude-haiku-4-5", "claude-sonnet-5"):
             with self.subTest(model=model):
                 self.assertEqual(rr.judge_provider(model), "claude_cli")
-                self.assertIsNone(rr.uncalibrated_judge_warning(model))
+                self.assertEqual(rr.judge_lineage(model), rr.JUDGE_LINEAGE_CLAUDE)
 
-    def test_printed_summary_repeats_the_warning(self):
-        """一輪評測跑好幾個小時，開頭的警告早就捲走；印結果時再說一次。"""
+    def test_uncalibrated_warning_is_gone(self):
+        """TODO(PR-26) 的警告在 judge 正式切換後刪除；印結果時改印系譜。"""
+        self.assertFalse(hasattr(rr, "uncalibrated_judge_warning"))
         summary = {
             "faithfulness": 0.9, "context_precision": 0.8, "answer_relevancy": 0.6,
             "n": 1, "n_errors": 0, "n_no_context": 0, "thresholds_pass": True,
             "judge_model": "deepseek-flash", "judge_schema_version": 2, "judge_prompt_sha": "x" * 64,
         }
-        err = io.StringIO()
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             rr._print_summary({"summary": summary})
-        self.assertIn("WARNING", err.getvalue())
-        err = io.StringIO()
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            rr._print_summary({"summary": {**summary, "judge_model": "claude-haiku-4-5"}})
         self.assertEqual(err.getvalue(), "")
+        self.assertIn("系譜 deepseek-2026-09", out.getvalue())
 
 
 class MainNewFlagsTests(unittest.TestCase):

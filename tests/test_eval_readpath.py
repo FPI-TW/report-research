@@ -142,6 +142,47 @@ class JudgeFilterTests(unittest.TestCase):
         self.assertEqual(ids, ["old", "haiku"])
 
 
+class ScaleLineageTests(unittest.TestCase):
+    """審查低5：比照監控卡標出系譜與新量尺；判準同 frontend/src/features/monitor/judgeScale.ts。"""
+
+    def _rows(self):
+        return [
+            _row("old", _ev(score=0.5), created="2026-09-20 03:00:00"),
+            _row("ds1", {**_ev(score=0.8), "judge_model": "deepseek-flash"}, created="2026-09-26 03:00:00"),
+            _row("ds0", {**_ev(score=0.95), "judge_model": "deepseek-flash"}, created="2026-09-25 09:00:00"),
+        ]
+
+    def test_new_deepseek_scale_with_legacy_rows_in_window(self):
+        s = ef.summarize(self._rows(), 0.9, judge_model="deepseek-flash")
+        self.assertEqual((s["lineage"], s["new_scale"], s["judge_since"]), ("deepseek-2026-09", True, "2026-09-25"))
+        self.assertIn("新量尺，自 2026-09-25 起", ef._scale_label(s))
+        self.assertIn("系譜 deepseek-2026-09", ef._scale_label(s))
+
+    def test_all_rows_on_the_new_scale_is_not_new(self):
+        s = ef.summarize(self._rows()[1:], 0.9, judge_model="deepseek-flash")
+        self.assertFalse(s["new_scale"])
+        self.assertNotIn("新量尺", ef._scale_label(s))
+
+    def test_new_scale_without_checks_yet(self):
+        s = ef.summarize(self._rows()[:1], 0.9, judge_model="deepseek-flash")
+        self.assertEqual((s["new_scale"], s["judge_since"]), (True, None))
+        self.assertIn("新量尺，尚無查核", ef._scale_label(s))
+
+    def test_claude_judge_is_the_legacy_lineage_never_new(self):
+        s = ef.summarize(self._rows(), 0.9, judge_model="claude-haiku-4-5")
+        self.assertEqual((s["lineage"], s["new_scale"]), ("claude-haiku", False))
+
+    def test_report_prints_the_label(self):
+        import contextlib
+        import io
+
+        s = ef.summarize(self._rows(), 0.9, judge_model="deepseek-flash")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ef._print_report({"qa": s}, {"qa": []}, 0.9, 30)
+        self.assertIn("判定尺 deepseek-flash（系譜 deepseek-2026-09；新量尺，自 2026-09-25 起", out.getvalue())
+
+
 class ProgressHttpTests(unittest.TestCase):
     """經真實 HTTP 請求驗 `/api/progress` 帶出 evaluation 區塊。"""
 

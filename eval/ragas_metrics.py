@@ -25,6 +25,7 @@ from app.services.faithfulness import (  # noqa: F401  (DECOMPOSE_SYS/GROUND_SYS
     GROUND_SYS,
     faithfulness,
 )
+from app.services.faithfulness import JUDGE_MAX_TOKENS_BY_SYSTEM as _PROD_MAX_TOKENS
 from app.services.judge_schema import (
     JudgeSchemaError,
     call_validated,
@@ -73,6 +74,18 @@ JUDGE_PROMPT_TEMPLATES: tuple[tuple[str, str], ...] = (
     ("context_precision_payload", CP_PAYLOAD_FMT),
     ("answer_relevancy_sys", GENQ_SYS),
 )
+
+
+# 各階段的輸出上限（HTTP judge；第二版計畫 §6.5）：拆解 8192、grounding 2048 沿用生產那兩支，
+# CP 2048、反推問題 1024。judge 契約分不出階段，run_ragas 依系統提示查這張表傳給 `judge_json`。
+# 不算進 judge_prompt_sha：它只決定會不會截斷（截斷另以 2 倍上限重試），不改變判分規則。
+CP_MAX_TOKENS = 2048
+GENQ_MAX_TOKENS = 1024
+JUDGE_MAX_TOKENS_BY_SYSTEM: dict[str, int] = {
+    **_PROD_MAX_TOKENS,
+    CTX_RELEVANCE_SYS: CP_MAX_TOKENS,
+    GENQ_SYS: GENQ_MAX_TOKENS,
+}
 
 
 def judge_prompt_sha() -> str:

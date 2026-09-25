@@ -416,7 +416,7 @@ class DefaultJudgeDegradedReasonTests(unittest.IsolatedAsyncioTestCase):
     def test_vocabulary_is_closed(self):
         self.assertEqual(
             F.DEGRADED_REASONS,
-            {"unavailable", "timeout", "truncated", "empty", "parse", "schema", "error"},
+            {"unavailable", "timeout", "truncated", "empty", "parse", "schema", "content_risk", "account", "error"},
         )
 
     async def test_empty(self):

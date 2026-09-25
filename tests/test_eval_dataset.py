@@ -8,6 +8,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from app.services.answer import (  # noqa: E402
     NO_CONTEXT_MESSAGE,
     OFF_TOPIC_MESSAGES,
+    TIME_SENSITIVE_MESSAGES,
     TIME_SENSITIVE_UNAVAILABLE_MESSAGE,
 )
 from eval.dataset import select_questions  # noqa: E402
@@ -30,6 +31,8 @@ class SelectQuestionsTests(unittest.TestCase):
             _row("有沒有火星股票", answer=NO_CONTEXT_MESSAGE),
             _row("舊版離題問題", answer=OFF_TOPIC_MESSAGES[-1]),
             _row("時間敏感問題", answer=TIME_SENSITIVE_UNAVAILABLE_MESSAGE),
+            # 每一種時效婉拒文案都要排除（英文版與帶網搜提示的新版先前會漏進題集）。
+            *[_row(f"時效婉拒文案第 {i} 種", answer=m) for i, m in enumerate(TIME_SENSITIVE_MESSAGES)],
         ]
         out = select_questions(rows, per_market_cap=10, target=10)
         self.assertEqual([q["question"] for q in out], ["台積電先進製程展望如何"])

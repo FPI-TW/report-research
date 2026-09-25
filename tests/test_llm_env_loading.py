@@ -53,7 +53,7 @@ NON_LLM_ENTRIES: dict[str, set[str]] = {
         "_as_date", "build_context", "RECENCY_HALF_LIFE_DAYS", "RELEVANCE_BAND", "BAND_EPS", "ASK_DENSE_SCAN",
         "RETRIEVAL_K",
     },
-    "eval/dataset.py": {"NO_CONTEXT_MESSAGE", "OFF_TOPIC_MESSAGES", "TIME_SENSITIVE_UNAVAILABLE_MESSAGE"},
+    "eval/dataset.py": {"NO_CONTEXT_MESSAGE", "OFF_TOPIC_MESSAGES", "TIME_SENSITIVE_MESSAGES"},
 }
 
 

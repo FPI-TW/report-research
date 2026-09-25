@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useWebSearch, setWebSearch, WEB_SEARCH_PAUSED } from './useWebSearch'
+import { useWebSearch, setWebSearch, WEB_SEARCH_PAUSED, noticeDisplayText, TIME_SENSITIVE_WEB_HINTS } from './useWebSearch'
 
 describe('useWebSearch store', () => {
   beforeEach(() => { localStorage.clear(); setWebSearch(false) })
@@ -59,5 +59,21 @@ describe('useWebSearch store', () => {
 describe('WEB_SEARCH_PAUSED', () => {
   it('暫停中', () => {
     expect(WEB_SEARCH_PAUSED).toBe(true)
+  })
+})
+
+// 後端附不附「可開網搜」只看伺服器總閘；前端暫停時開關不在畫面上，顯示時要剝掉那一句。
+describe('noticeDisplayText', () => {
+  const [zhHint, enHint] = TIME_SENSITIVE_WEB_HINTS
+  it('暫停中：時效婉拒剝掉提示（中、英）', () => {
+    expect(noticeDisplayText('無法驗證最新數字。' + zhHint, 'time_sensitive', true)).toBe('無法驗證最新數字。')
+    expect(noticeDisplayText('Cannot verify.' + enHint, 'time_sensitive', true)).toBe('Cannot verify.')
+  })
+  it('未暫停：原樣顯示', () => {
+    expect(noticeDisplayText('無法驗證。' + zhHint, 'time_sensitive', false)).toBe('無法驗證。' + zhHint)
+  })
+  it('沒有提示的婉拒、離題婉拒：原樣顯示', () => {
+    expect(noticeDisplayText('無法驗證最新數字。', 'time_sensitive', true)).toBe('無法驗證最新數字。')
+    expect(noticeDisplayText('離題。' + zhHint, 'off_topic', true)).toBe('離題。' + zhHint)
   })
 })

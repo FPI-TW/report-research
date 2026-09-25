@@ -87,13 +87,26 @@ class ConversationsListTests(unittest.TestCase):
         qa_history.list_conversations = self._orig
 
     def test_list_passes_through_service(self):
-        async def _fake(limit):
-            return [{"conversation_id": "c1", "limit": limit}]
+        async def _fake(limit, offset, q):
+            return [{"conversation_id": "c1", "limit": limit, "offset": offset, "q": q}]
 
         qa_history.list_conversations = _fake
         r = _authed().get("/api/conversations?limit=7")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json(), [{"conversation_id": "c1", "limit": 7}])
+        # 回應維持裸陣列：瀏覽器裡還開著的舊 bundle 以 z.array(...) 解析這支端點。
+        self.assertEqual(r.json(), [{"conversation_id": "c1", "limit": 7, "offset": 0, "q": None}])
+
+    def test_search_and_paging_params_reach_the_service(self):
+        async def _fake(limit, offset, q):
+            return [{"limit": limit, "offset": offset, "q": q}]
+
+        qa_history.list_conversations = _fake
+        r = _authed().get("/api/conversations", params={"limit": 20, "offset": 40, "q": "先進封裝"})
+        self.assertEqual(r.json(), [{"limit": 20, "offset": 40, "q": "先進封裝"}])
+
+    def test_bad_paging_params_are_422(self):
+        for qs in ("offset=-1", "limit=0", "limit=201", "q=" + "x" * 201):
+            self.assertEqual(_authed().get(f"/api/conversations?{qs}").status_code, 422, qs)
 
 
 class ConversationDetailTests(unittest.TestCase):

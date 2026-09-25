@@ -10,6 +10,14 @@
 「增量匯入 → 摘要 → 摘錄」，此時有人手動敲 `make signals` 就撞車。光靠文件警語擋
 不住排程，所以把規約機械化成鎖。
 
+改走 DeepSeek HTTP 之後（遷移 PR-12，`scripts/_claude_cli.run_claude` 依白名單分派）「搶 CLI」
+這個理由消失了，鎖**仍然需要**、名稱也不改（改名會連動 LOCKED_SCRIPTS 與文件契約，留給 PR-M）：
+  - **重複付費**：按量計費下，兩支批次同時挑到同一批 `IS NULL` 的研報，就是同一篇付兩次錢。
+  - **DELETE+INSERT 互撞**：摘錄每篇在單一交易內先刪後插（`extract_takeaways._replace_rows`），
+    兩個行程同時處理同一篇，後 commit 的會蓋掉或與前者交錯；訊號的 upsert 也有同樣的覆寫問題。
+  - **DB 連線數**：每個批次行程各有一個連線池（`DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`），併發數的
+    算式（`.env.example`）是以「同一時間只有一支 LLM 批次」為前提算的。
+
 app/services/llm.py 絕對不可以取這個鎖
 ──────────────────────────────────────
 那是 web 線上路徑（`/api/ask` 與其背景忠實度抽查）的同一個 spawn 點。把它納入這個鎖，一輪

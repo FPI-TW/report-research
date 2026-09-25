@@ -28,6 +28,11 @@ ROOT = Path(__file__).resolve().parents[1]
 FAIL_LOG = ROOT / "data" / "sync_failures.log"
 SRC_LOCAL = ROOT / "研報自動匯入"
 EXTS = {".pdf", ".docx", ".doc"}
+# 預設不撈的階段：`tag_blocked`＝行內標註被模型供應商的內容審查擋下（sync_new_reports 的
+# skip_blocked）、`tag_truncated`＝行內標註被截斷（skip_truncated）。同一份輸入再送一次結果不會變，
+# 重放只是再付一次錢、再擋一次；人工處置（手寫 data/tags/<hash>.json、或調高 TAG_MAX_TOKENS 後
+# 單篇重放）時用 `--stage tag_blocked`／`--stage tag_truncated` 明確取出。
+DEFAULT_EXCLUDED_STAGES = frozenset({"tag_blocked", "tag_truncated"})
 
 
 def parse_failures(
@@ -49,6 +54,8 @@ def parse_failures(
         candidate = parts[0]
         stage = parts[1] if len(parts) > 1 else ""
         if stages is not None and stage not in stages:
+            continue
+        if stages is None and stage in DEFAULT_EXCLUDED_STAGES:
             continue
         p = Path(candidate)
         try:
@@ -73,7 +80,8 @@ def main() -> None:
     ap.add_argument(
         "--stage",
         default=None,
-        help="只取這些階段（逗號分隔，例如 tag,extract,ingest）；預設全取",
+        help="只取這些階段（逗號分隔，例如 tag,extract,ingest）；預設全取，但不含 tag_blocked（內容審查擋下）"
+        "與 tag_truncated（輸出截斷）",
     )
     ap.add_argument("--mirror", default=str(SRC_LOCAL), help="本地鏡像根目錄")
     args = ap.parse_args()

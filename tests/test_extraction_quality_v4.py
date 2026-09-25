@@ -83,5 +83,39 @@ class NeedsReviewFlagTests(unittest.TestCase):
         self.assertAlmostEqual(s.extraction_review_max_garbled, store.REVIEW_MAX_GARBLED)
 
 
+
+class ReviewReasonsTests(unittest.TestCase):
+    """`review_reasons` 是 `needs_review` 的判定本體：要不要看與為什麼要看必須是同一份邏輯。"""
+
+    def test_each_gate_has_its_own_reason_and_they_accumulate(self):
+        self.assertEqual(store.review_reasons(0.95, (), 0.6, {}), [])
+        self.assertEqual(store.review_reasons(0.95, (3,), 0.6, None), ["pages_failed"])
+        self.assertEqual(store.review_reasons(0.41, (), 0.6, None), ["low_score"])
+        self.assertEqual(store.review_reasons(0.95, (), 0.6, {"layout_coverage": 0.2}), ["low_coverage"])
+        self.assertEqual(store.review_reasons(0.95, (), 0.6, {"garbled_ratio": 0.05}), ["garbled"])
+        self.assertEqual(
+            store.review_reasons(0.1, (1,), 0.6, {"layout_coverage": 0.1, "garbled_ratio": 0.5}),
+            list(store.REVIEW_REASONS),
+        )
+
+    def test_needs_review_is_exactly_non_empty_reasons(self):
+        cases = [
+            (0.95, (), {}), (0.41, (), None), (None, (), None), (0.95, (2,), None),
+            (0.95, (), {"layout_coverage": 0.2}), (0.95, (), {"layout_coverage": None}),
+            (0.95, (), {"garbled_ratio": 0.021}), (0.95, (), {"garbled_ratio": True}),
+        ]
+        for score, failed, flags in cases:
+            self.assertEqual(
+                store.needs_review(score, failed, 0.6, flags),
+                bool(store.review_reasons(score, failed, 0.6, flags)),
+                (score, failed, flags),
+            )
+
+    def test_thresholds_are_passed_through(self):
+        flags = {"layout_coverage": 0.25, "garbled_ratio": 0.03}
+        self.assertEqual(store.review_reasons(0.95, (), 0.6, flags), ["low_coverage", "garbled"])
+        self.assertEqual(store.review_reasons(0.95, (), 0.6, flags, min_coverage=0.2, max_garbled=0.05), [])
+
+
 if __name__ == "__main__":
     unittest.main()

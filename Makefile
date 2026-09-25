@@ -29,7 +29,7 @@ COMPOSE := $(DOCKER) compose
         stats reset-db clean-data pipeline signals takeaways titles brief \
         eval-compare \
         up-edge down-edge edge-logs edge-reload \
-        sync-once db-backup freshness db-audit \
+        sync-once db-backup freshness db-audit llm-blocked \
         metrics metrics-once metrics-collect metrics-bench
 
 help:  ## 顯示可用指令
@@ -153,8 +153,8 @@ stats:  ## 看 DB 市場分佈與筆數
 	  -c "select count(*) chunks from research.report_chunk;"
 
 # ───── 離線評測 ─────
-# 刻意**不**接進 CI：跑一輪 RAGAS 會 spawn claude CLI，與每 3 小時的
-# report-mark-sync.timer 搶同一個 CLI（那把 flock 刻意不含 llm.py，而 eval 走 llm.py）。
+# 刻意**不**接進 CI：跑一輪 RAGAS 會呼叫付費 API（生成與 judge 預設都是 DeepSeek），CI 不連網。
+# 它不取批次 flock（那把鎖刻意不含 llm.py，而 eval 走 llm.py）。
 # 這是本機／手動工具：改檢索或生成品質時前後各跑一次，再用 eval-compare 比。
 eval-compare:  ## 比較兩份評測結果（BASE=… CAND=… [TOL=0.03]；劣化即非零退出）
 	@test -n "$(BASE)" && test -n "$(CAND)" || { \
@@ -218,6 +218,9 @@ freshness:  ## 管線與批次停更偵測（純 SQL、零 LLM；rc 0 PASS／1 �
 # 幾條是 57 萬列全表掃描，腳本內走 relax_statement_timeout，別在對外服務尖峰跑。
 db-audit:  ## 資料完整性稽核（唯讀；rc 0 乾淨／1 有發現／2 DB 不可用）
 	uv run python scripts/db_audit.py
+
+llm-blocked:  ## 列出 LLM 批次的跳過名單（唯讀、零 LLM；--all 連累計中的也列）
+	uv run python scripts/llm_blocked.py
 
 # ───── 硬體用量量測（上雲選型）─────
 # 三支都刻意用 /usr/bin/python3 而非 uv run：量測工具不得相依 .venv——

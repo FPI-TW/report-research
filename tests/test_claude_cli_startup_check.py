@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -55,6 +56,109 @@ class LifespanClaudeCheckTests(unittest.TestCase):
         out = "\n".join(cm.output)
         self.assertIn("/opt/bin/claude", out)
         self.assertNotIn("不在 PATH 上", out)
+
+
+class LifespanLlmModelCheckTests(unittest.TestCase):
+    """自檢依「解析到的模型」決定要檢查什麼（判準的逐列測試在 tests/test_llm_models.py）。"""
+
+    def test_deepseek_without_key_logs_error_but_still_starts(self):
+        a, b, c = _startup()
+        env = {"LLM_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": ""}
+        with a, b, c, patch.dict("os.environ", env), patch.object(llm, "claude_cli_path", return_value="/x"):
+            with self.assertLogs("web.server", level="WARNING") as cm:
+                with TestClient(server.app) as client:
+                    self.assertEqual(client.get("/login").status_code, 200)
+        out = "\n".join(cm.output)
+        self.assertIn("DEEPSEEK_API_KEY 為空", out)
+        self.assertIn("provider=deepseek", out)
+        # 網搜在 DeepSeek 表裡仍是 Claude，所以 CLI 檢查照做
+        self.assertIn("claude CLI：/x", out)
+
+    def test_unset_provider_defaults_to_deepseek_at_startup(self):
+        """審查 L2：conftest 強制 claude_cli，這裡移除 LLM_PROVIDER 驗 PR-28 的預設（deepseek）下的自檢：
+        線上任務解析到 deepseek-flash（judge 也是）、缺金鑰記 ERROR、只剩網搜要 claude CLI，App 照樣起得來。"""
+        a, b, c = _startup()
+        with a, b, c, patch.dict("os.environ", {"DEEPSEEK_API_KEY": ""}), \
+                patch.object(llm, "claude_cli_path", return_value="/x"):
+            os.environ.pop("LLM_PROVIDER", None)
+            with self.assertLogs("web.server", level="WARNING") as cm:
+                with TestClient(server.app) as client:
+                    self.assertEqual(client.get("/login").status_code, 200)
+        out = "\n".join(cm.output)
+        self.assertIn("provider=deepseek", out)
+        for task in ("ask_answer", "ask_intent", "faithfulness"):
+            self.assertIn(f"{task}=deepseek-flash", out)
+        self.assertIn("ask_web=claude-sonnet-5", out)
+        errors = [r for r in cm.records if r.levelname == "ERROR"]
+        self.assertTrue(any("DEEPSEEK_API_KEY 為空" in r.getMessage() for r in errors), out)
+        self.assertIn("claude CLI：/x（ask_web", out)
+
+    def test_unset_provider_with_key_has_no_key_error(self):
+        a, b, c = _startup()
+        with a, b, c, patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0"}), \
+                patch.object(llm, "claude_cli_path", return_value="/x"):
+            os.environ.pop("LLM_PROVIDER", None)
+            with self.assertLogs("web.server", level="WARNING") as cm:
+                with TestClient(server.app):
+                    pass
+        out = "\n".join(cm.output)
+        self.assertIn("provider=deepseek", out)
+        self.assertNotIn("DEEPSEEK_API_KEY 為空", out)
+        self.assertNotIn("fixed-test-secret-deepseek0", out)
+
+    def test_unknown_model_name_logs_error(self):
+        a, b, c = _startup()
+        with a, b, c, patch.dict("os.environ", {"ASK_INTENT_MODEL": "haiku"}), \
+                patch.object(llm, "claude_cli_path", return_value="/x"):
+            with self.assertLogs("web.server", level="ERROR") as cm:
+                with TestClient(server.app):
+                    pass
+        self.assertIn("未知模型名", "\n".join(cm.output))
+        self.assertIn("ask_intent=haiku", "\n".join(cm.output))
+
+
+
+class LifespanClosesLlmHttpTests(unittest.TestCase):
+    """關機時收掉 DeepSeek 的 AsyncClient 連線池（沒走過 HTTP 路徑時是 no-op）。
+
+    pgvector 版本檢查換成立即回傳：這組只驗關機，不該花 DB 連線逾時的時間（沒有 DB 的
+    機器上每次啟動會等 60 秒）。
+    """
+
+    def setUp(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import db
+
+        p = patch.object(db, "assert_pgvector_version", AsyncMock(return_value="0.8.0"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_shutdown_awaits_llm_http_aclose(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import llm_http
+
+        a, b, c = _startup()
+        closer = AsyncMock()
+        with a, b, c, patch.object(llm, "claude_cli_path", return_value="/x"), \
+                patch.object(llm_http, "aclose", closer):
+            with TestClient(server.app):
+                closer.assert_not_awaited()
+        closer.assert_awaited_once()
+
+    def test_aclose_failure_does_not_break_shutdown(self):
+        from unittest.mock import AsyncMock
+
+        from app.services import llm_http
+
+        a, b, c = _startup()
+        with a, b, c, patch.object(llm, "claude_cli_path", return_value="/x"), \
+                patch.object(llm_http, "aclose", AsyncMock(side_effect=RuntimeError("boom"))):
+            with self.assertLogs("web.server", level="ERROR") as cm:
+                with TestClient(server.app):
+                    pass
+        self.assertIn("llm_http.aclose 失敗", "\n".join(cm.output))
 
 
 if __name__ == "__main__":

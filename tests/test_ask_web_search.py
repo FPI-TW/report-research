@@ -366,12 +366,35 @@ class TimeSensitiveWebTests(unittest.IsolatedAsyncioTestCase):
         ans.stream_completion = fake_stream
 
     async def test_web_off_still_declines(self):
-        """零回歸：不開網搜時，時效題行為與 M4 完全相同。"""
+        """不開網搜時，時效題照樣婉拒、不呼叫 LLM——但要告訴使用者有「開網搜」這條路。"""
         self._set_stream(["不該被呼叫"])
         events = [e async for e in ans.answer_question(_TS_Q)]
         self.assertEqual([k for k, _ in events], ["status", "sources", "notice", "done"])
-        self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT)
+        self.assertIn("網路搜尋", events[2][1])
+        self.assertEqual(events[-1][1]["notice_kind"], "time_sensitive")
         self.assertIs(self.logged["filters"]["web"], False)
+
+    async def test_web_off_and_master_switch_off_gives_no_hint(self):
+        """總閘 ASK_ENABLE_WEB 關著時那顆開關按了沒有作用，不該叫人去按。"""
+        self._set_stream(["不該被呼叫"])
+        orig = ans.ASK_ENABLE_WEB
+        ans.ASK_ENABLE_WEB = False
+        try:
+            events = [e async for e in ans.answer_question(_TS_Q)]
+        finally:
+            ans.ASK_ENABLE_WEB = orig
+        self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+
+    def test_web_hint_mirrored_verbatim_in_frontend(self):
+        """前端網搜暫停時在顯示端剝掉這一句（useWebSearch.ts 的 TIME_SENSITIVE_WEB_HINTS）。
+
+        後端改了文案而前端沒跟上，endsWith 比不到，提示就會在暫停期間原樣露出——沒有錯誤，
+        只是叫使用者去開一顆看不到的開關。所以逐字釘住。
+        """
+        src = (REPO_ROOT / "frontend" / "src" / "lib" / "useWebSearch.ts").read_text(encoding="utf-8")
+        for hint in (ans.TIME_SENSITIVE_WEB_HINT, ans.TIME_SENSITIVE_WEB_HINT_EN):
+            self.assertIn(f"'{hint}'", src)
 
     async def test_web_on_answers_from_web_with_disclaimer_and_sources(self):
         kw: dict = {}
@@ -453,10 +476,88 @@ class TimeSensitiveWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [k for k, _ in events], ["status", "sources", "notice", "done"]
         )
+        # 已開網搜卻失敗：叫人去開一個已經開著、剛失敗的東西是錯的建議，所以不附提示。
         self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
         self.assertEqual(events[-1][1]["notice_kind"], "time_sensitive")
         self.assertIn("llm_error", self.logged["filters"])
         self.assertIs(self.logged["filters"]["web"], True)
+
+
+    async def test_passes_max_tokens_task_and_logs_model(self):
+        kw: dict = {}
+        self._set_stream(["收盤 1085 元。"], kwargs_sink=kw)
+        _ = [e async for e in ans.answer_question(_TS_Q, web=True)]
+        self.assertEqual(kw["max_tokens"], ans.ASK_ANSWER_MAX_TOKENS)
+        self.assertEqual(kw["task"], "ask_web")
+        self.assertEqual(self.logged["filters"]["llm_model"], ans.ASK_WEB_MODEL)
+        self.assertNotIn("llm_truncated", self.logged["filters"])
+
+    async def test_partial_content_filter_keeps_text_notes_and_keeps_disclaimer(self):
+        """已吐字後被內容審查截斷：保留已送出的文字、附註中斷原因，免責句**照樣**追加。"""
+        # 要長過 [EXT_SOURCES] 解析器保留的尾段，才算「畫面上已有文字」
+        async def cut(*a, **k):
+            yield "台積電 8/19 收盤 1085 元，較前一日上漲 15 元，成交量放大。"
+            raise LLMUnavailableError("審查", kind="content_filter", partial=True)
+
+        ans.stream_completion = cut
+        events = [e async for e in ans.answer_question(_TS_Q, web=True)]
+        kinds = [k for k, _ in events]
+        self.assertNotIn("notice", kinds)
+        self.assertEqual(kinds[-1], "done")
+        body = "".join(p for k, p in events if k == "token")
+        self.assertIn("台積電 8/19 收盤 1085 元", body)
+        self.assertIn("內容審查截斷了輸出", body)
+        self.assertIn(ans.WEB_ANSWER_DISCLAIMER, body)
+        self.assertLess(body.index("內容審查截斷了輸出"), body.index(ans.WEB_ANSWER_DISCLAIMER),
+                        "免責句是整段答案的收尾，截斷註記要在它之前")
+        self.assertIn(ans.WEB_ANSWER_DISCLAIMER, self.logged["answer"])
+        self.assertIn("內容審查截斷了輸出", self.logged["answer"])
+        self.assertEqual(self.logged["filters"]["llm_truncated"], "content_filter")
+        self.assertNotIn("llm_error", self.logged["filters"])
+
+    async def test_meta_length_truncation_is_noted(self):
+        async def long(*a, **k):
+            yield "很長的答案"
+            k["meta"].update(truncated=True, truncated_reason="length")
+
+        ans.stream_completion = long
+        events = [e async for e in ans.answer_question(_TS_Q, web=True)]
+        body = "".join(p for k, p in events if k == "token")
+        self.assertIn("輸出長度達到上限", body)
+        self.assertIn(ans.WEB_ANSWER_DISCLAIMER, body)
+        self.assertEqual(self.logged["filters"]["llm_truncated"], "length")
+
+    async def test_non_partial_failure_after_text_still_raises(self):
+        """partial 以外的「已吐字後失敗」維持原樣上拋（不改變既有語意）。"""
+        async def cut(*a, **k):
+            yield "台積電 8/19 收盤 1085 元，較前一日上漲 15 元，成交量放大。"
+            raise LLMUnavailableError("x")
+
+        ans.stream_completion = cut
+        with self.assertRaises(LLMUnavailableError):
+            _ = [e async for e in ans.answer_question(_TS_Q, web=True)]
+
+    async def test_partial_without_visible_text_falls_back_to_notice(self):
+        """畫面上還沒有字（全在解析器保留的尾段裡）就被截斷：比照未吐字，退回 M4 婉拒。"""
+        async def cut(*a, **k):
+            yield "收盤"
+            raise LLMUnavailableError("審查", kind="content_filter", partial=True)
+
+        ans.stream_completion = cut
+        events = [e async for e in ans.answer_question(_TS_Q, web=True)]
+        self.assertEqual([k for k, _ in events], ["status", "sources", "notice", "done"])
+        self.assertEqual(self.logged["filters"]["llm_error"], "content_filter")
+
+    async def test_content_filter_before_text_falls_back_to_notice_with_kind(self):
+        async def blocked(*a, **k):
+            raise LLMUnavailableError("審查", kind="content_filter")
+            yield  # pragma: no cover
+
+        ans.stream_completion = blocked
+        events = [e async for e in ans.answer_question(_TS_Q, web=True)]
+        self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(self.logged["filters"]["llm_error"], "content_filter")
+        self.assertEqual(self.logged["filters"]["llm_model"], ans.ASK_WEB_MODEL)
 
 
 class AskEndpointWebForwardingTests(unittest.TestCase):

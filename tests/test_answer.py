@@ -1284,7 +1284,7 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         kinds = [k for k, _ in events]
         self.assertEqual(kinds, ["status", "sources", "notice", "done"])
         self.assertEqual(events[1], ("sources", []))
-        self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE))
+        self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT))
         self.assertFalse(called.get("search"))  # 檢索未起跑
         self.assertFalse(called.get("embed"))   # 連 embed 都不必
         self.assertFalse(called.get("route"))   # 前檢已定案，分類器不必呼叫
@@ -1474,7 +1474,7 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(called["search"])  # retrieve_context 未被呼叫
         self.assertFalse(called["embed"])
         notice = next(p for k, p in events if k == "notice")
-        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT)
         self.assertEqual(events[1], ("sources", []))
 
 
@@ -1828,9 +1828,47 @@ class BuildCmdTests(unittest.TestCase):
         self.assertIn("--allowedTools", cmd)
         self.assertEqual(cmd[cmd.index("--allowedTools") + 1], "WebSearch")
 
+    def test_web_flag_restricts_available_tools(self):
+        """--allowedTools 只管免核可、不限縮可用工具；要把工具集縮到只剩 WebSearch 得靠 --tools。"""
+        cmd = llm._build_cmd("m", None, True)
+        self.assertIn("--tools", cmd)
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "WebSearch")
+        self.assertNotIn("--disallowedTools", cmd)
+
     def test_no_web_flag_by_default(self):
         cmd = llm._build_cmd("m", None, False)
         self.assertNotIn("--allowedTools", cmd)
+
+    def test_no_web_disables_all_tools(self):
+        """不開網搜＝不開任何工具：`--tools ""`（`--help` 寫明）。
+
+        不用 `--disallowedTools "*"`：本機 CLI 未記載萬用字元語意，看來逐字比對工具名，很可能無效。
+        """
+        for system in (None, "你是助理"):
+            with self.subTest(system=system):
+                cmd = llm._build_cmd("m", system, False)
+                self.assertEqual(cmd[-2:], ["--tools", ""])
+                self.assertNotIn("--disallowedTools", cmd)
+
+    def test_tool_flags_are_last(self):
+        """工具旗標是可變長度選項，會吞掉後面的非選項引數：一律放 argv 最後。"""
+        for system in (None, "你是助理"):
+            with self.subTest(system=system):
+                cmd = llm._build_cmd("m", system, True)
+                self.assertEqual(cmd[-4:], ["--tools", "WebSearch", "--allowedTools", "WebSearch"])
+
+    def test_mcp_servers_are_never_loaded(self):
+        """`--tools` 只管內建工具、管不到 MCP；`--strict-mcp-config` 且不帶 `--mcp-config`＝不載 MCP。
+
+        開不開網搜都要有；它是布林旗標，必須在可變長度的 `--tools` 之前，否則會被當成 `--tools` 的值。
+        """
+        for allow_web in (False, True):
+            for system in (None, "你是助理"):
+                with self.subTest(allow_web=allow_web, system=system):
+                    cmd = llm._build_cmd("m", system, allow_web)
+                    self.assertIn("--strict-mcp-config", cmd)
+                    self.assertNotIn("--mcp-config", cmd)
+                    self.assertLess(cmd.index("--strict-mcp-config"), cmd.index("--tools"))
 
     def test_system_prompt_included_when_given(self):
         self.assertIn("--system-prompt", llm._build_cmd("m", "你是助理", False))
@@ -2057,6 +2095,25 @@ class HistoryItemTests(unittest.TestCase):
         self.assertIsNone(normal["notice_kind"])
         self.assertTrue(off["is_offtopic"])
         self.assertTrue(ts["is_offtopic"])  # 兩者的舊布林一樣，故前端分不出來
+
+    def test_both_old_and_hinted_time_sensitive_texts_replay_as_notices(self):
+        """文案字串本身是重播的比對鍵：加了網搜提示的新文案與庫裡既有的舊文案都要認得。
+
+        少認一種，那些列就會被當成一般回答重播（附讚／倒讚與重新生成），而不是婉拒框。
+        """
+        from app.services import answer as ans
+
+        for text_ in (
+            ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN,
+            ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT, ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT_EN,
+        ):
+            item = history_item(("idk", "q", text_, date(2026, 6, 1), None, None, None))
+            self.assertEqual(item["notice_kind"], "time_sensitive", text_[:20])
+            self.assertTrue(item["is_offtopic"])
+        # 新文案是「舊文案＋一句」，舊文案一個字都沒動。
+        self.assertTrue(
+            ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT.startswith(ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        )
 
     def test_every_notice_message_maps_to_a_kind(self):
         """新增婉拒文案卻忘了給 kind → 前端悄悄退回離題那顆警告框，不會報錯。"""
@@ -2384,6 +2441,47 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("WHERE turn_count > 0", sql)
         self.assertNotIn("first_answer NOT IN :offtopics", sql)
         self.assertEqual(session.params["offtopics"], list(ans.OFF_TOPIC_MESSAGES))
+
+    async def _capture(self, **kwargs):
+        from app.services import answer as ans
+
+        session = _CaptureRowsSession([])
+        orig = ans.SessionFactory
+        ans.SessionFactory = lambda: session
+        try:
+            await ans.list_conversations(**kwargs)
+        finally:
+            ans.SessionFactory = orig
+        return " ".join((session.statement_text or "").split()), session.params
+
+    async def test_no_query_means_null_pattern_and_first_page(self):
+        sql, params = await self._capture()
+        self.assertIsNone(params["pattern"])
+        self.assertEqual((params["limit"], params["offset"]), (50, 0))
+        self.assertIn("CAST(:pattern AS text) IS NULL OR matched", sql)
+
+    async def test_query_searches_every_valid_question_not_just_the_title(self):
+        """標題只是第一題；使用者記得的常常是後面追問的那一句。"""
+        sql, params = await self._capture(q="  先進封裝 ", limit=20, offset=40)
+        self.assertEqual(params["pattern"], "%先進封裝%")
+        self.assertEqual((params["limit"], params["offset"]), (20, 40))
+        self.assertIn(
+            "bool_or(question ILIKE CAST(:pattern AS text)) "
+            "FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active)",
+            sql,
+        )
+
+    async def test_like_wildcards_in_query_are_literal(self):
+        _, params = await self._capture(q="50%_a\\")
+        self.assertEqual(params["pattern"], "%50\\%\\_a\\\\%")
+
+    async def test_blank_query_is_no_filter(self):
+        _, params = await self._capture(q="   ")
+        self.assertIsNone(params["pattern"])
+
+    async def test_order_has_a_tiebreaker_so_pages_do_not_overlap(self):
+        sql, _ = await self._capture()
+        self.assertIn("ORDER BY last_at DESC, conv_id DESC LIMIT :limit OFFSET :offset", sql)
 
 
 class ConversationStaticContractTests(unittest.TestCase):
@@ -3023,12 +3121,192 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
                           if "SET active = false WHERE id = :id" in s])
 
 
+class MainAnswerTruncationTests(unittest.IsolatedAsyncioTestCase):
+    """主答（#3）：已吐字後被截斷時保留文字、由 Python 附註並寫 filters.llm_truncated（審查 M2）；
+    每次呼叫帶 max_tokens／task，filters.llm_model 記實際送出的模型。"""
+
+    async def _run(self, stream, **kw):
+        from app.services import answer as ans
+        from app.services import retrieval_pipeline as rp
+        from app.services import scope_router as sr
+
+        logged: list[dict] = []
+        self.logged = logged  # 例外往外拋時，測試仍要看得到失敗列
+
+        async def fake_route(question, **k):
+            return sr._decision(sr.CORPUS_QA)
+
+        async def fake_log(question, answer, cited, filters, latency, sources, *a, **k):
+            logged.append({"answer": answer, "filters": filters, "kwargs": k})
+            return "qa-1"
+
+        async def some_hits(session, q, qvec, **k):
+            return [(0, 0.80, make_row("r1", "x.pdf", "TW", "內容。", date(2026, 6, 1)))]
+
+        async def no_followups(*a, **k):
+            return []
+
+        orig = (
+            rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+            rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+            ans._log_qa, ans.generate_followups,
+        )
+        rp.hybrid_search = some_hits
+        rp.embed_query_cached = lambda q: [0.0]
+        ans.stream_completion = stream
+        rp.SessionFactory = lambda: _FakeSession()
+        ans.SessionFactory = lambda: _FakeSession()
+        ans.classify_non_overview = fake_route
+        ans._log_qa = fake_log
+        ans.generate_followups = no_followups
+        try:
+            events = [e async for e in ans.answer_question("台積電展望", **kw)]
+        finally:
+            (
+                rp.hybrid_search, rp.embed_query_cached, ans.stream_completion,
+                rp.SessionFactory, ans.SessionFactory, ans.classify_non_overview,
+                ans._log_qa, ans.generate_followups,
+            ) = orig
+        return events, logged
+
+    async def test_passes_max_tokens_task_and_logs_model(self):
+        from app.services import answer as ans
+
+        seen: dict = {}
+
+        async def stream(*a, **k):
+            seen.update(k)
+            yield "答案[1]"
+
+        events, logged = await self._run(stream)
+        self.assertEqual(seen["max_tokens"], ans.ASK_ANSWER_MAX_TOKENS)
+        self.assertEqual(seen["task"], "ask_answer")
+        self.assertEqual(logged[-1]["filters"]["llm_model"], seen["model"])
+        self.assertNotIn("llm_truncated", logged[-1]["filters"])
+
+    async def test_partial_content_filter_keeps_text_notes_and_logs(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def cut(*a, **k):
+            yield "台積電展望正向[1]，但"
+            raise LLMUnavailableError("審查", kind="content_filter", partial=True)
+
+        events, logged = await self._run(cut)
+        kinds = [k for k, _ in events]
+        self.assertIn("done", kinds)
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertIn("台積電展望正向[1]，但", tokens)
+        self.assertIn("內容審查截斷了輸出", tokens)
+        self.assertEqual(len(logged), 1, "partial 照常落一列（不是失敗列）")
+        row = logged[0]
+        self.assertIn("內容審查截斷了輸出", row["answer"])
+        self.assertEqual(row["filters"]["llm_truncated"], "content_filter")
+        self.assertNotIn("llm_error", row["filters"])
+        self.assertNotIn("active", row["kwargs"])  # 預設 active=True
+
+    async def test_meta_length_and_read_timeout_are_noted(self):
+        for reason, phrase in (
+            ("length", "輸出長度達到上限"), ("read_timeout", "連線在輸出途中中斷"),
+            ("total_timeout", "模型輸出超過時限"),  # HTTP 牆鐘總時限＝我們自己的時限，不說連線中斷
+        ):
+            with self.subTest(reason=reason):
+                async def cut(*a, _r=reason, **k):
+                    yield "答案前半[1]"
+                    k["meta"].update(truncated=True, truncated_reason=_r)
+
+                events, logged = await self._run(cut)
+                tokens = "".join(p for k, p in events if k == "token")
+                self.assertIn(phrase, tokens)
+                self.assertIn(phrase, logged[-1]["answer"])
+                self.assertEqual(logged[-1]["filters"]["llm_truncated"], reason)
+
+    async def test_meta_without_reason_is_our_timeout_not_a_dropped_connection(self):
+        """CLI 路徑的逾時截斷只寫 `truncated=True`（不帶原因）：那是我們自己的時限，附註不能說
+        「連線中斷」，落庫記 timeout。"""
+        async def cut(*a, **k):
+            yield "答案前半[1]"
+            k["meta"].update(truncated=True)
+
+        events, logged = await self._run(cut)
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertIn("模型輸出超過時限", tokens)
+        self.assertNotIn("連線", tokens)
+        self.assertIn("模型輸出超過時限", logged[-1]["answer"])
+        self.assertEqual(logged[-1]["filters"]["llm_truncated"], "timeout")
+
+        events, _ = await self._run(cut, locale="en")
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertIn("(Answer cut off here: the model output exceeded the time limit)", tokens)
+
+    async def test_english_locale_note(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def cut(*a, **k):
+            yield "Outlook positive [1]"
+            raise LLMUnavailableError("x", kind="content_filter", partial=True)
+
+        events, _ = await self._run(cut, locale="en")
+        tokens = "".join(p for k, p in events if k == "token")
+        self.assertIn("(Answer cut off here: the model provider's content moderation", tokens)
+
+    async def test_unstreamed_failure_row_records_model_and_kind(self):
+        from app.services.llm import LLMUnavailableError
+
+        async def blocked(*a, **k):
+            raise LLMUnavailableError("審查", kind="content_filter")
+            yield  # pragma: no cover
+
+        with self.assertRaises(LLMUnavailableError) as cm:
+            await self._run(blocked)
+        self.assertEqual(cm.exception.kind, "content_filter")  # ask.py 依它給「換個問法」
+        self.assertEqual(len(self.logged), 1)
+        row = self.logged[0]
+        self.assertIsNone(row["answer"])
+        self.assertEqual(row["filters"]["llm_error"], "content_filter")
+        self.assertIn("llm_model", row["filters"])
+        self.assertIs(row["kwargs"]["active"], False)
+
+    async def test_note_goes_before_ext_sources_block(self):
+        """截斷發生在 [EXT_SOURCES] 區塊之後：註記接在本文尾端，外部來源照常解析。"""
+        async def cut(*a, **k):
+            yield "本文[1]\n[EXT_SOURCES]\n- 標題 | https://example.com/a\n"
+            k["meta"].update(truncated=True, truncated_reason="length")
+
+        events, logged = await self._run(cut)
+        body = logged[-1]["answer"]
+        self.assertTrue(body.startswith("本文[1]"))
+        self.assertTrue(body.endswith("（回答在此中斷：輸出長度達到上限）"))
+        self.assertNotIn("EXT_SOURCES", body)
+
+
 class LlmErrorKindTests(unittest.TestCase):
-    """`filters.llm_error` 要回答的問題只有一個：Anthropic 過載，還是我們的 bug。
+    """`filters.llm_error` 最初要回答的問題：上游過載，還是我們的 bug。
 
     先前兩者在監控上**完全無法區分**——LLM 失敗那輪根本不落庫（`_log_qa` 在串流
     之後），所以兩種情況都是「什麼紀錄都沒有」。
+
+    CLI 路徑仍只分兩類（文字判斷，下面兩條）；HTTP 路徑的例外自帶 `kind`（由狀態碼決定），
+    直接採用、不再解析文字（`test_http_kind_wins_over_text`）。
     """
+
+    def test_http_kind_wins_over_text(self):
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        for kind in ("quota", "auth", "content_filter", "timeout", "overloaded"):
+            with self.subTest(kind=kind):
+                # 訊息文字刻意與 kind 矛盾：kind 有值時不得再看文字
+                exc = LLMUnavailableError("API Error: 529 Overloaded", kind=kind)
+                self.assertEqual(ans._llm_error_kind(exc), kind)
+
+    def test_unclassified_kind_falls_back_to_text(self):
+        """CLI 不填 kind（預設 other）：維持既有的兩類文字判斷。"""
+        from app.services import answer as ans
+        from app.services.llm import LLMUnavailableError
+
+        self.assertEqual(ans._llm_error_kind(LLMUnavailableError("529 Overloaded", kind="other")), "overloaded")
+        self.assertEqual(ans._llm_error_kind(RuntimeError("529 Overloaded")), "overloaded")
+        self.assertEqual(ans._llm_error_kind(RuntimeError("boom")), "other")
 
     def test_overload_detected(self):
         from app.services import answer as ans

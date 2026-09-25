@@ -18,7 +18,7 @@ Conventions for contributors and AI agents. Hard rules and the change-impact tab
 - `uv sync` then `make setup` (deps + pgvector container + schema). `cp .env.example .env` and set the three `REPORT_MARK_*` auth values or the server refuses to start.
 - `make serve` (port 8097, no reload, models warmed), `make serve-dev` (reload, `SKIP_WARMUP=1`, loopback only), `make serve-preview` (`DEV_NO_AUTH=1` on 8098). `make build-web` after any frontend change.
 - `uv run pytest -q` (set `SKIP_SPA_TESTS=1` if `frontend/dist` is absent, otherwise those tests fail rather than skip), `uv run ruff check .`, `cd frontend && npm test`, `npm run typecheck`, `npm run lint`.
-- Batch jobs: `make summaries / titles / takeaways / signals / brief`; ops: `make sync-once / db-backup / freshness / db-audit`. Destructive targets (`reset-db`, `clean-data`, `ingest-lowio`) only when explicitly asked; ask before any TRUNCATE or DROP.
+- Batch jobs: `make summaries / titles / takeaways / signals / brief`; ops: `make sync-once / db-backup / freshness / db-audit / llm-blocked`. Destructive targets (`reset-db`, `clean-data`, `ingest-lowio`) only when explicitly asked; ask before any TRUNCATE or DROP.
 
 ## Coding Style & Naming Conventions
 
@@ -50,5 +50,5 @@ Conventions for contributors and AI agents. Hard rules and the change-impact tab
 - External access requires `REPORT_MARK_EDGE_SECRET` or `REPORT_MARK_TRUSTED_PROXY_CIDRS`; the secret must be byte-identical in the repo-root `.env` and `deploy/.env`. See `docs/EXTERNAL_ACCESS.md`.
 - `DEV_NO_AUTH` and `SKIP_WARMUP` are read only from the process environment and must never be written to an env file.
 - Object storage: non-`local` modes fail closed on any missing `R2_*` value; credentials live in the repo-root `.env` and `/etc/default/report-mark-sync`, byte-identical. Presigned links carry `filename` and expire within an hour.
-- The `claude` CLI must be on PATH; systemd gets it from `deploy/systemd/report-mark-web.service.d/path.conf`. `/healthz` probes only the DB and cannot see a missing CLI; `scripts/check_web_health.sh` rc=5 can. Likewise R2: `/healthz` never probes it; the probe reads loopback-only `/healthz/storage` and exits 6 when the bucket or credentials are unusable.
+- The `claude` CLI must be on PATH; systemd gets it from `deploy/systemd/report-mark-web.service.d/path.conf`. `/healthz` probes only the DB and cannot see a missing CLI; `scripts/check_web_health.sh` rc=5 can. Likewise R2: `/healthz` never probes it; the probe reads loopback-only `/healthz/storage` and exits 6 when the bucket or credentials are unusable. The DeepSeek account is read from loopback-only `/healthz/llm`: balance below the CNY floor exits 7 (WARNING), exhausted/401/unreachable/indeterminate exits 8 (CRITICAL); the probe checks all three, reports every reason on one line, and exits with the first of 8 → 5 → 6 → 7. The Claude CLI was abandoned, so the health unit disables rc 5 with an empty `HEALTH_DEP_DROPIN=` (removed in PR-M).
 - Secrets never enter argv (webhook URLs are fed to curl via stdin); gitleaks runs over full history in CI and `.gitleaks.toml` is guarded by `tests/test_secret_scan_config.py`.

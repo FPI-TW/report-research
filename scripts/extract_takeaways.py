@@ -18,6 +18,8 @@ _claude_lock 的 flock。**不要因為「沒有消費端」就把第 4 步拿�
 5. 每份報告在單一 transaction 內 DELETE + 全量 INSERT（**不是 upsert**，見 _replace_rows）。
 6. 單筆失敗只寫 data/takeaway_failures.log，不中斷、不影響檢索/問答。**例外**：
    `claude` 不在 PATH 屬環境層級失敗（每篇都會踩），整批立即中止並回非零退出碼。
+7. 有回應卻擷不出摘錄的研報記入 research.llm_task_failure，同一 model 連續 3 輪後
+   跳過（規則見 app/services/llm_failures.py；`--retry-blocked` 手動解除）。
 
 ════════════════════════════════════════════════════════════════════════
 不可妥協的不變量：正典文字＝clean_extracted(full_text)
@@ -63,13 +65,27 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
+
+# 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
+load_llm_env()
+
 from sqlalchemy import text  # noqa: E402
 
+from app.services import llm_failures  # noqa: E402
 from app.services.db import SessionFactory  # noqa: E402
+from app.services.llm_models import TASK_TAKEAWAY, resolve_model  # noqa: E402
 from app.services.reading.anchor import locate_quote  # noqa: E402
 from app.services.textnorm import clean_extracted  # noqa: E402
 from app.services.zh_hant import to_traditional  # noqa: E402
-from scripts._claude_cli import CliNotFoundError, CliResult, run_claude  # noqa: E402
+from scripts._claude_cli import (  # noqa: E402
+    CliNotFoundError,
+    CliResult,
+    failure_kind,
+    is_retryable,
+    record_escalation,
+    run_claude,
+)
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,12 +94,17 @@ FAIL_LOG = ROOT / "data" / "takeaway_failures.log"
 # 擷取 schema / prompt 版本；schema 或 prompt 一改就 bump（舊列版本不符 → 自動重跑）
 EXTRACTION_VERSION = "takeaway-2026-07-17.v1"
 
-# 逐字引文重準確度（改寫一個字就錨不到）→ 預設 Sonnet；批次可用 --model 覆寫
-TAKEAWAY_MODEL_DEFAULT = "claude-sonnet-5"
+# 逐字引文重準確度（改寫一個字就錨不到）→ 預設 Sonnet；批次可用 --model 覆寫。
+# 來源是 TAKEAWAY_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）。
+TAKEAWAY_MODEL_DEFAULT = resolve_model(TASK_TAKEAWAY)
 
 # 每篇最多幾條（prompt 要 3-5；多回的截掉。少於 3 條不算錯 —— prompt 明說「寧可少一
 # 條也不要編造」，只有 0 條才 rejected）
 MAX_TAKEAWAYS = 5
+
+# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）。5 條 claim＋quote 約 1K token，
+# 4096 留給偶爾偏長的輸出；截斷會記成 truncated（1 次就跳過），不會混進解析失敗。
+MAX_TOKENS = 4096
 
 # 文字安全上限（防模型暴走輸出整段）。prompt 規定 claim ≤ 60 字、quote 15-60 字，
 # 這裡放寬到約兩倍才截，避免把「只超標一點」的正常輸出攔腰砍斷。
@@ -361,11 +382,14 @@ def parse_takeaways(raw: str) -> ParsedTakeaways:
 
 
 def build_rows(
-    report_id: str, canonical: str, text_sha256: str, parsed: ParsedTakeaways
+    report_id: str, canonical: str, text_sha256: str, parsed: ParsedTakeaways,
+    model: Optional[str] = None,
 ) -> list[TakeawayRow]:
     """ParsedTakeaways → 可寫入的列（含確定性錨定）。無列可寫時回 []（＝rejected）。
 
     `canonical` 必須是 clean_extracted(full_text)，且與 text_sha256 同源。
+    `model`：產出這份回應的模型（HTTP 取回應的 `model` 欄，CLI 退回請求的 model），
+    記進每列 `raw_payload.model`；None 就不加鍵。
 
     錨定回 None **不是失敗**：該條目照樣寫入（讀者看得到論點與引文），只是
     quote_start/anchor_method 為 NULL、前端不給跳。整份報告的狀態：
@@ -396,7 +420,7 @@ def build_rows(
                 text_sha256=text_sha256,
                 extraction_version=EXTRACTION_VERSION,
                 extraction_status="valid",  # 下方依整份錨定結果覆寫
-                raw_payload=dict(item),
+                raw_payload={**item, "model": model} if model else dict(item),
                 error_detail=error_detail,
             )
         )
@@ -434,14 +458,20 @@ def row_to_params(row: TakeawayRow) -> dict:
 
 # ── claude CLI 呼叫（實作在 scripts/_claude_cli.py，全批次共用）──
 
-def call_cli(prompt: str, model: str, timeout: int = 180) -> CliResult:
-    """呼叫 `claude -p`。回 (stdout, None) 或 (None, 可辨識的失敗原因)。
+def call_cli(
+    prompt: str, model: str, timeout: int = 180, *,
+    file_hash: Optional[str] = None, report_id: Optional[str] = None,
+) -> CliResult:
+    """呼叫 LLM（`run_claude` 依白名單分派 CLI 或 DeepSeek）。回 (text, None) 或 (None, 失敗原因)。
 
     實作已抽到 `scripts/_claude_cli.py` 供所有批次共用——這個「失敗原因必須可區分」
     的設計最早長在這裡，抽出去是為了讓下一支腳本抄得到對的那份（其餘四支曾經各自
     抄了 `except Exception: return None` 的版本，見該模組 docstring 的四天停擺）。
     """
-    return run_claude(prompt, model, timeout=timeout)
+    return run_claude(
+        prompt, model, timeout=timeout, max_tokens=MAX_TOKENS,
+        meta={"task": TASK_TAKEAWAY, "file_hash": file_hash, "report_id": report_id},
+    )
 
 
 # ── 進度計數 ──
@@ -455,10 +485,10 @@ class WorkItem:
     """一份待擷取的研報。canonical 已是正典文字，全程不再碰 full_text。"""
 
     __slots__ = ("report_id", "file_name", "report_date", "source", "canonical",
-                 "text_sha256", "excerpt_source")
+                 "text_sha256", "excerpt_source", "file_hash")
 
     def __init__(self, report_id, file_name, report_date, source, canonical, text_sha256,
-                 excerpt_source=None):
+                 excerpt_source=None, file_hash=None):
         self.report_id = report_id
         self.file_name = file_name
         self.report_date = report_date
@@ -468,6 +498,7 @@ class WorkItem:
         # 餵給 LLM 的文字：表格已拿掉的正典文字（E1c，§4.2「逐字引文的防護」）。
         # 沒有 Block 索引（pypdf 快取）時就是 canonical 本身。text_sha256 永遠對 canonical 算。
         self.excerpt_source = excerpt_source if excerpt_source is not None else canonical
+        self.file_hash = file_hash  # 跳過名單（llm_task_failure）的鍵
 
 
 async def _fetch_reports(session, since_days, hashes: list[str] | None = None):
@@ -526,15 +557,26 @@ def _is_done(existing: list[tuple[str, str, str]], text_sha256: str, reextract: 
 
 
 async def build_worklist(
-    since_days: int, reextract: bool, hashes: list[str] | None = None
+    since_days: int,
+    reextract: bool,
+    hashes: list[str] | None = None,
+    skip_model: Optional[str] = None,
 ) -> tuple[int, list[WorkItem]]:
     """回傳 (掃描到的報告數, 待擷取的 WorkItem)。
 
     hashes 非 None＝只處理這批 file_hash（定時同步用），忽略 since_days。
+    skip_model 非 None＝套跳過名單：該 model 下 llm_failures.should_skip 為真的研報不排入。
     """
     async with SessionFactory() as session:
         reports = await _fetch_reports(session, since_days, hashes)
         done_map = await _fetch_done_map(session, [r[0] for r in reports])
+        failures = (
+            await llm_failures.fetch_failures(
+                session, llm_failures.TASK_TAKEAWAY, [r[5] for r in reports if r[5]]
+            )
+            if skip_model
+            else {}
+        )
 
         worklist: list[WorkItem] = []
         for rid, file_name, report_date, source, full_text, file_hash in reports:
@@ -544,9 +586,12 @@ async def build_worklist(
             sha = sha256_of(canonical)
             if _is_done(done_map.get(rid, []), sha, reextract):
                 continue
+            if skip_model and llm_failures.should_skip(failures.get(file_hash), skip_model):
+                continue
             worklist.append(
                 WorkItem(rid, file_name, report_date, source, canonical, sha,
-                         excerpt_source=excerpt_without_tables(full_text, file_hash, canonical))
+                         excerpt_source=excerpt_without_tables(full_text, file_hash, canonical),
+                         file_hash=file_hash)
             )
     return len(reports), worklist
 
@@ -570,7 +615,7 @@ def _log_failure(item: WorkItem, reason: str) -> None:
 
 async def extract_one(
     sem: asyncio.Semaphore, item: WorkItem, excerpt: int, model: str, total: int,
-    retries: int = 2,
+    retries: int = 2, recorder: Optional[llm_failures.FailureRecorder] = None,
 ) -> None:
     global _done, _ok, _rejected, _fail
     date_str = item.report_date.isoformat() if item.report_date else None
@@ -578,32 +623,49 @@ async def extract_one(
         item.file_name, date_str, item.source, item.excerpt_source[:excerpt]
     )
     parsed: Optional[ParsedTakeaways] = None
+    used_model: Optional[str] = None  # 產出 parsed 那次回應的模型（raw_payload.model）
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
     last_error = "CLI 無回應"
+    http_reason: Optional[str] = None  # HTTP 的審查／截斷／空回應／400（failure_kind）
     async with sem:
         for _ in range(retries + 1):
             # CliNotFoundError 刻意不接：那是環境壞了（每篇都會踩），
             # 讓它一路拋到 main 中止整批，而不是靜靜地把 N 篇都記成 rejected。
-            res = await asyncio.to_thread(call_cli, prompt, model)
+            res = await asyncio.to_thread(
+                call_cli, prompt, model, file_hash=item.file_hash, report_id=item.report_id
+            )
             if res.text:
                 parsed = parse_takeaways(res.text)
+                used_model = res.model_resp or model
                 if parsed.ok:
                     break
             elif res.error:
                 last_error = res.error
+            if res.text is None and not is_retryable(res):
+                # HTTP 失敗：傳輸層已重試過，或本來就是決定性的（見 scripts/_claude_cli.py）
+                http_reason = failure_kind(res) or http_reason
+                break
+        # parsed 非 None ＝至少有一次「回了東西」；之後 0 條摘錄就是內容型失敗，
+        # 記入跳過名單。全程沒回應（逾時、非零退出）是環境型，不記。
+        # HTTP 的內容型失敗是結束這一輪的那一次，取它（截斷、審查 1 次就跳過）。
+        fail_reason = http_reason or (llm_failures.UNPARSEABLE if parsed is not None else None)
         if parsed is None:
             parsed = ParsedTakeaways(ok=False, error=last_error)
 
     try:
-        rows = build_rows(item.report_id, item.canonical, item.text_sha256, parsed)
+        rows = build_rows(item.report_id, item.canonical, item.text_sha256, parsed, model=used_model)
         if not rows:
             # rejected：**不寫任何列**（也不刪既有列 —— 一次 CLI 抽風不該毀掉上一版
             # 好的摘錄）。下次批次看不到符合的列/或 sha 仍不符 → 自動重跑。
             _rejected += 1
             _log_failure(item, parsed.error or "0 條摘錄")
+            if recorder and fail_reason:
+                await recorder.record(item.file_hash, fail_reason)
         else:
             await _replace_rows(item.report_id, rows)
             _ok += 1
+            if recorder:
+                await recorder.clear(item.file_hash)
     except Exception as exc:  # 單筆例外只記 log，不中斷長跑
         _fail += 1
         _log_failure(item, f"EXC:{exc}")
@@ -616,7 +678,13 @@ async def extract_one(
 async def main(args) -> None:
     FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
     hashes = read_hashes_file(args.hashes_file) if args.hashes_file else None
-    scanned, worklist = await build_worklist(args.since_days, args.reextract, hashes)
+    recorder = await llm_failures.open_recorder(llm_failures.TASK_TAKEAWAY, args.model, SessionFactory)
+    # --reextract 隱含 --retry-blocked：跳過鍵只看 model、不看 prompt／EXTRACTION_VERSION，
+    # 改了 prompt 或版本而強制重跑時，舊 prompt 下累計的失敗不該繼續把研報擋在外面。
+    skip_model = (
+        args.model if recorder is not None and not (args.retry_blocked or args.reextract) else None
+    )
+    scanned, worklist = await build_worklist(args.since_days, args.reextract, hashes, skip_model)
     scope = f"本輪 {len(hashes)} 個 file_hash" if hashes is not None else f"近 {args.since_days} 天"
     print(
         f"{scope}研報：{scanned} 篇｜待擷取：{len(worklist)} 篇"
@@ -638,9 +706,14 @@ async def main(args) -> None:
     sem = asyncio.Semaphore(args.workers)
     try:
         await asyncio.gather(
-            *(extract_one(sem, item, args.excerpt, args.model, total) for item in worklist)
+            *(
+                extract_one(sem, item, args.excerpt, args.model, total, recorder=recorder)
+                for item in worklist
+            )
         )
     except CliNotFoundError as exc:
+        # 400 升級：觸發的研報先記入跳過名單，下一輪才跳得過去（審查 H2）
+        await record_escalation(exc, recorder)
         # 環境層級失敗：剩下的每一篇都會踩到同一顆地雷。中止並以非零退出碼收場 ——
         # 「跑完 549 次註定失敗的呼叫、印 ok=0 rejected=549、然後 exit 0」是最糟的結局。
         print(f"\n中止：{exc}", flush=True)
@@ -664,10 +737,18 @@ if __name__ == "__main__":
     ap.add_argument("--limit", type=int, default=None, help="最多擷取幾篇（試跑用）")
     ap.add_argument("--excerpt", type=int, default=24000, help="餵給 LLM 的正典文字上限")
     ap.add_argument("--model", default=TAKEAWAY_MODEL_DEFAULT)
-    ap.add_argument("--reextract", action="store_true", help="忽略 checkpoint，強制重跑")
+    ap.add_argument("--reextract", action="store_true",
+                    help="忽略 checkpoint，強制重跑（隱含 --retry-blocked）")
+    ap.add_argument("--retry-blocked", action="store_true",
+                    help="不套跳過名單（research.llm_task_failure），連已判定跳過的研報也重打；"
+                         "改 prompt 後要加")
     ap.add_argument("--dry-run", action="store_true", help="只印工作集大小，不呼叫 LLM")
     # --dry-run 也一起擋：鎖的涵蓋範圍若隨旗標而變，日後有人在「不呼叫 LLM」的路徑上
     # 加了一個 LLM 呼叫，就會出現一個沒人發現的洞。要在批次跑到一半時查工作集，
     # 用 CLAUDE_LOCK_DISABLE=1（它只讀 DB，不搶 CLI）。
+    args = ap.parse_args()
+    # 取鎖之前預檢模型與金鑰（缺金鑰是「跑了也白跑」，要在撞鎖 rc=75 之前說出來）。
+    if not args.dry_run:  # --dry-run 不呼叫 LLM
+        require_llm_key({TASK_TAKEAWAY: args.model})
     with claude_cli_lock_or_exit("extract_takeaways"):
-        asyncio.run(main(ap.parse_args()))
+        asyncio.run(main(args))

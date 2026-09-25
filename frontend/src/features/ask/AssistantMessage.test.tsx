@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { AssistantMessage } from './AssistantMessage'
 import type { Turn } from '../../lib/askReducer'
+import { TIME_SENSITIVE_WEB_HINTS, WEB_SEARCH_PAUSED } from '../../lib/useWebSearch'
 
 function makeTurn(over: Partial<Turn>): Turn {
   return {
@@ -62,6 +63,13 @@ test('時效婉拒不給「換個說法重新提問」：缺的是資料不是�
   render(<AssistantMessage turn={makeTurn({ phase: 'notice', isOfftopic: true, noticeKind: 'time_sensitive', noticeText: '需要即時行情或最新公告資料', qaId: null })} {...noop} />)
   expect(screen.getByText('需要即時行情或最新公告資料')).toBeTruthy()
   expect(screen.queryByRole('button', { name: '換個說法重新提問' })).toBeNull()
+})
+
+test('網搜暫停中：時效婉拒不叫使用者去開一顆畫面上沒有的網搜開關', () => {
+  const base = '需要即時行情或最新公告資料。'
+  render(<AssistantMessage turn={makeTurn({ phase: 'notice', isOfftopic: true, noticeKind: 'time_sensitive', noticeText: base + TIME_SENSITIVE_WEB_HINTS[0], qaId: null })} {...noop} />)
+  expect(screen.queryByText(/網路搜尋/) === null).toBe(WEB_SEARCH_PAUSED)
+  expect(screen.getByText(new RegExp(base))).toBeTruthy()
 })
 
 test('notice：Callout warning + 換個說法重新提問', () => {

@@ -386,6 +386,16 @@ class TimeSensitiveWebTests(unittest.IsolatedAsyncioTestCase):
             ans.ASK_ENABLE_WEB = orig
         self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
 
+    def test_web_hint_mirrored_verbatim_in_frontend(self):
+        """前端網搜暫停時在顯示端剝掉這一句（useWebSearch.ts 的 TIME_SENSITIVE_WEB_HINTS）。
+
+        後端改了文案而前端沒跟上，endsWith 比不到，提示就會在暫停期間原樣露出——沒有錯誤，
+        只是叫使用者去開一顆看不到的開關。所以逐字釘住。
+        """
+        src = (REPO_ROOT / "frontend" / "src" / "lib" / "useWebSearch.ts").read_text(encoding="utf-8")
+        for hint in (ans.TIME_SENSITIVE_WEB_HINT, ans.TIME_SENSITIVE_WEB_HINT_EN):
+            self.assertIn(f"'{hint}'", src)
+
     async def test_web_on_answers_from_web_with_disclaimer_and_sources(self):
         kw: dict = {}
         self._set_stream(

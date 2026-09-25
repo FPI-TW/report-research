@@ -1,4 +1,5 @@
 import styles from './MonitorPage.module.css'
+import { isNewDeepSeekScale, newScaleText } from './judgeScale'
 import type { EvalSource, Evaluation } from './progressSchema'
 
 /**
@@ -28,10 +29,19 @@ function fmtScore(v: number | null): string {
   return v === null ? '—' : v.toFixed(3)
 }
 
+/**
+ * 判定尺的說明文字。DeepSeek judge（遷移 PR-26/27 起的新量尺系譜）且窗期內還有舊尺的列時，
+ * 標「新量尺（自 X 起，DeepSeek）」；判準與待複核佇列共用（judgeScale.ts）。
+ */
+function scaleLabel(d: EvalSource): string {
+  if (isNewDeepSeekScale(d)) return `：${newScaleText(d)}`
+  return d.judge_since ? `，自 ${d.judge_since} 起` : ''
+}
+
 function JudgeScale({ d }: { d: EvalSource }) {
   if (!d.judge_model) return null
-  const since = d.judge_since ? `，自 ${d.judge_since} 起` : ''
   const other = d.other_judge_checked ?? 0
+  const since = scaleLabel(d)
   const counts = [
     d.judge_checked !== undefined ? `該尺已查核 ${d.judge_checked}` : null,
     d.avg_n !== undefined ? `平均樣本數 ${d.avg_n}` : null,

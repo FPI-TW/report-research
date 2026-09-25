@@ -1284,7 +1284,7 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         kinds = [k for k, _ in events]
         self.assertEqual(kinds, ["status", "sources", "notice", "done"])
         self.assertEqual(events[1], ("sources", []))
-        self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE))
+        self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT))
         self.assertFalse(called.get("search"))  # 檢索未起跑
         self.assertFalse(called.get("embed"))   # 連 embed 都不必
         self.assertFalse(called.get("route"))   # 前檢已定案，分類器不必呼叫
@@ -1474,7 +1474,7 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(called["search"])  # retrieve_context 未被呼叫
         self.assertFalse(called["embed"])
         notice = next(p for k, p in events if k == "notice")
-        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT)
         self.assertEqual(events[1], ("sources", []))
 
 
@@ -2095,6 +2095,25 @@ class HistoryItemTests(unittest.TestCase):
         self.assertIsNone(normal["notice_kind"])
         self.assertTrue(off["is_offtopic"])
         self.assertTrue(ts["is_offtopic"])  # 兩者的舊布林一樣，故前端分不出來
+
+    def test_both_old_and_hinted_time_sensitive_texts_replay_as_notices(self):
+        """文案字串本身是重播的比對鍵：加了網搜提示的新文案與庫裡既有的舊文案都要認得。
+
+        少認一種，那些列就會被當成一般回答重播（附讚／倒讚與重新生成），而不是婉拒框。
+        """
+        from app.services import answer as ans
+
+        for text_ in (
+            ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE_EN,
+            ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT, ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT_EN,
+        ):
+            item = history_item(("idk", "q", text_, date(2026, 6, 1), None, None, None))
+            self.assertEqual(item["notice_kind"], "time_sensitive", text_[:20])
+            self.assertTrue(item["is_offtopic"])
+        # 新文案是「舊文案＋一句」，舊文案一個字都沒動。
+        self.assertTrue(
+            ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT.startswith(ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        )
 
     def test_every_notice_message_maps_to_a_kind(self):
         """新增婉拒文案卻忘了給 kind → 前端悄悄退回離題那顆警告框，不會報錯。"""

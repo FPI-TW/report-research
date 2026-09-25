@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -72,6 +73,38 @@ class LifespanLlmModelCheckTests(unittest.TestCase):
         self.assertIn("provider=deepseek", out)
         # 網搜在 DeepSeek 表裡仍是 Claude，所以 CLI 檢查照做
         self.assertIn("claude CLI：/x", out)
+
+    def test_unset_provider_defaults_to_deepseek_at_startup(self):
+        """審查 L2：conftest 強制 claude_cli，這裡移除 LLM_PROVIDER 驗 PR-28 的預設（deepseek）下的自檢：
+        線上任務解析到 deepseek-flash（judge 也是）、缺金鑰記 ERROR、只剩網搜要 claude CLI，App 照樣起得來。"""
+        a, b, c = _startup()
+        with a, b, c, patch.dict("os.environ", {"DEEPSEEK_API_KEY": ""}), \
+                patch.object(llm, "claude_cli_path", return_value="/x"):
+            os.environ.pop("LLM_PROVIDER", None)
+            with self.assertLogs("web.server", level="WARNING") as cm:
+                with TestClient(server.app) as client:
+                    self.assertEqual(client.get("/login").status_code, 200)
+        out = "\n".join(cm.output)
+        self.assertIn("provider=deepseek", out)
+        for task in ("ask_answer", "ask_intent", "faithfulness"):
+            self.assertIn(f"{task}=deepseek-flash", out)
+        self.assertIn("ask_web=claude-sonnet-5", out)
+        errors = [r for r in cm.records if r.levelname == "ERROR"]
+        self.assertTrue(any("DEEPSEEK_API_KEY 為空" in r.getMessage() for r in errors), out)
+        self.assertIn("claude CLI：/x（ask_web", out)
+
+    def test_unset_provider_with_key_has_no_key_error(self):
+        a, b, c = _startup()
+        with a, b, c, patch.dict("os.environ", {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0"}), \
+                patch.object(llm, "claude_cli_path", return_value="/x"):
+            os.environ.pop("LLM_PROVIDER", None)
+            with self.assertLogs("web.server", level="WARNING") as cm:
+                with TestClient(server.app):
+                    pass
+        out = "\n".join(cm.output)
+        self.assertIn("provider=deepseek", out)
+        self.assertNotIn("DEEPSEEK_API_KEY 為空", out)
+        self.assertNotIn("fixed-test-secret-deepseek0", out)
 
     def test_unknown_model_name_logs_error(self):
         a, b, c = _startup()

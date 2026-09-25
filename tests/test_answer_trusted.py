@@ -118,7 +118,7 @@ class TrustedAnswerFlowTests(unittest.IsolatedAsyncioTestCase):
         kinds = [e[0] for e in events]
         self.assertIn("notice", kinds)
         notices = [p for (k, p) in events if k == "notice"]
-        self.assertEqual(notices[0], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(notices[0], ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT)
         self.assertNotIn("token", kinds)
 
     async def test_provider_answers_with_time_and_source(self):
@@ -235,7 +235,7 @@ class TrustedAnswerFlowTests(unittest.IsolatedAsyncioTestCase):
 
         events = [e async for e in ans.answer_question(_Q)]
         notices = [p for (k, p) in events if k == "notice"]
-        self.assertEqual(notices, [ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE])
+        self.assertEqual(notices, [ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT])
 
 
 if __name__ == "__main__":

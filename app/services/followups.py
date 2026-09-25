@@ -13,7 +13,7 @@ from app.services.locale import DEFAULT_LOCALE
 logger = logging.getLogger(__name__)
 
 # 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查 LLM_PROVIDER 的預設表
-# （claude_cli 下是 claude-haiku-4-5-20251001），claude_only 會忽略這裡填的 DeepSeek 名稱。
+# （預設 deepseek 下是 deepseek-flash），claude_only 會忽略這裡填的 DeepSeek 名稱。
 FOLLOWUP_MODEL = resolve_model(TASK_ASK_FOLLOWUP, override=os.getenv("ASK_FOLLOWUP_MODEL"))
 FOLLOWUP_TIMEOUT = float(os.getenv("ASK_FOLLOWUP_TIMEOUT", "15"))
 

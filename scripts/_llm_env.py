@@ -22,13 +22,17 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
   「跑了也白跑」，後者要先說）。以下情況印出原因並 `SystemExit(2)`：
   - 環境檔裡有重複的鍵（審查 L8）：`load_env_file` 先到先贏、systemd 的 EnvironmentFile 後者
     覆蓋——輪替金鑰時新舊兩行並存，sync unit 與手動批次會拿到**不同**的金鑰。
+  - `LLM_PROVIDER` 非空卻不是合法值（例如 `claude-cli`、`deepseek ` 以外的拼法）：印出原始值拒跑（審查 L1）。
+    web 對同樣的值是退回 deepseek＋ERROR（線上要容錯、不能因一個拼字整站停擺）；批次刻意不同——批次不需要
+    容錯，拒跑不花錢，而 CLI 已放棄後 `claude_cli` 實際上是「讓 LLM 停下來」的開關：有人想關掉 LLM 卻拼錯，
+    退回 deepseek 就變成照常計費。
   - 有未知的模型名（不在 DeepSeek 白名單、也不是 `claude-*`；含 CLI 別名 `sonnet`）。
   - 有白名單模型卻沒有金鑰；依原因提示（環境裡已有空值→先 unset；PermissionError→以
     kashionz 執行；檔案不存在→依範例檔檔頭安裝；檔裡沒填→sudoedit）。訊息帶出是哪個旋鈕
     （或 `LLM_PROVIDER` 的預設、`--model`）解析出來的。批次（`run_claude`、`generate_brief`）與
     評測（`stream_completion`）都依白名單分派到 DeepSeek（遷移 PR-12 起），所以兩種入口同一套規則。
-  - （只警告、不中止）全部解析成 Claude，而環境檔不存在或讀不到：CLI 已於 2026-09-23 停用，這幾乎
-    一定是切換沒生效；印一行 WARNING（`_warn_if_claude_without_env_file`）。
+  - （只警告、不中止）全部解析成 Claude：CLI 已於 2026-09-23 停用，而 `LLM_PROVIDER` 自 PR-28 起
+    預設 deepseek，所以這只會是有人顯式設成 Claude；印一行 WARNING 說出來源（`_warn_if_all_claude`）。
   - 本段會用到白名單模型，而 `data/.llm_breaker`（批次斷路器的標記，`scripts/_claude_cli.py`）
     還有效：前一段剛因 DeepSeek 大量逾時／過載而中止，這一段再跑只是每篇等到逾時。
     只看「會不會用到 HTTP」，全部用 Claude 的段不受影響（審查 L9）。「有效」的定義見下一節。
@@ -42,8 +46,9 @@ systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動�
     開頭就是匯入），delta 得靠人工重放——所以跨輪一律放行，下一輪若仍過載，斷路器會再跳一次。
   - 任一方沒有輪次 id（手動執行、或手動執行寫的標記）：維持 `BREAKER_TTL_S`（30 分鐘）規則。
   - 空標記檔（寫到一半被清空之類）沒有輪次 id，照 30 分鐘規則擋，訊息寫「標記是空的」。
-  全部解析到 Claude 時不要求金鑰。通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否
-  一致，**永遠不印金鑰本身**。
+  全部解析到 Claude 時不要求金鑰。環境檔缺失**不會**讓批次落到 Claude：`LLM_PROVIDER` 未設＝deepseek，
+  而批次不讀 repo 根 `.env`，所以缺檔時是「缺金鑰 rc=2＋安裝提示」的明確失敗。
+  通過時印 `fp=<金鑰 sha256 前 8 碼>` 供比對兩份金鑰是否一致，**永遠不印金鑰本身**。
 
 另有 `python -m scripts._llm_env <環境檔> …`（`main`）：比對幾份環境檔的金鑰指紋，與上面同一套
 解析（`file_key_fingerprint`），輪替後核對 `.env` 與 llm 檔用（docs/production_resilience.md）。
@@ -62,7 +67,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from app.services.llm_models import TASK_ENV, is_claude_model, is_http_model, provider, resolve_model
+from app.services.llm_models import PROVIDERS, TASK_ENV, is_claude_model, is_http_model, provider, resolve_model
 from web.env_loader import _parse_line, load_env_file
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -223,23 +228,38 @@ def _missing_key_hint(path: Path) -> str:
     return f"{path} 沒有填 {KEY}：用 sudoedit 填（不要 echo／tee，也不要 source 這個檔）"
 
 
-def _warn_if_claude_without_env_file(names: list[str], path: object) -> None:
-    """全部解析成 Claude、而 LLM 環境檔不存在或讀不到：印一行醒目的 WARNING（不中止）。
+def _warn_if_all_claude(pairs: list[tuple[str | None, str]], path: object) -> None:
+    """本段模型全部解析成 Claude：印一行醒目的 WARNING（不中止）。
 
-    claude CLI 已於 2026-09-23 起永久停用（OAuth 過期、D-C）；生產的批次應該經這份檔解析到 DeepSeek。
-    「檔沒讀到＋全是 Claude」幾乎一定是切換沒生效（手動執行的身分讀不到 0640 的檔、檔沒裝），接下來
-    每一篇都會撞 CLI 認證失效。不中止：CLI 仍可用的環境（開發機、`claude_only` 回退）照跑，真的撞到
-    認證失效時 `_claude_cli.cli_auth_error` 會整批 rc=2。
+    PR-28 之前預設是 `claude_cli`，這一行只在「環境檔缺失或讀不到」時印，用來抓「切 DeepSeek 沒生效」。
+    PR-28 起 `LLM_PROVIDER` 預設 deepseek：環境檔缺失時批次解析到 DeepSeek、因缺金鑰 rc=2（明確失敗），
+    不會再落到 Claude。所以「全部解析成 Claude」只剩一種來源——有人**顯式**設了 `LLM_PROVIDER=claude_cli`
+    ／`claude_only`、`claude-*` 的任務旋鈕或 `--model`（shell export、unit 的 `Environment=`，或環境檔本身），
+    與環境檔讀不讀得到無關，因此不再以檔案狀態為條件；檔案沒讀到時一併說明。claude CLI 已於 2026-09-23
+    永久放棄，這一段每一篇都會撞認證失效。不中止：這兩個值在 PR-M 之前仍合法，真的撞到認證失效時
+    `_claude_cli.cli_auth_error` 會整批 rc=2。
     """
-    err = _STATE.get("error")
-    if not names or not err:
+    if not pairs:
         return
-    why = {"missing": "不存在", "permission": "讀不到（PermissionError）"}.get(str(err), f"讀取失敗（{err}）")
+    sources = sorted({_model_source(t, m) for t, m in pairs})
+    err = _STATE.get("error")
+    file_note = ""
+    if err:
+        why = {"missing": "不存在", "permission": "讀不到（PermissionError）"}.get(str(err), f"讀取失敗（{err}）")
+        file_note = f"；另外 {path} {why}"
     _say(
-        f"WARNING：本段模型全部解析成 Claude（{', '.join(names)}），而 {path} {why}。"
-        "claude CLI 已停用；若已切 DeepSeek，這一段的 LLM_PROVIDER=deepseek 沒有生效——檢查該檔是否安裝、"
-        "是否以 kashionz 執行"
+        f"WARNING：本段模型全部解析成 Claude（{'、'.join(sources)}）。claude CLI 已於 2026-09-23 停用，"
+        f"這一段每一篇都會失敗；生產應為 LLM_PROVIDER=deepseek——檢查 shell、unit 的 Environment= 或 {path} "
+        f"是否把 LLM_PROVIDER 或任務旋鈕設成了 Claude{file_note}"
     )
+
+
+def _invalid_provider() -> str | None:
+    """`LLM_PROVIDER` 非空且正規化後（strip＋小寫，同 `llm_models.provider`）不是合法值時回原始值；否則 None。"""
+    raw = os.environ.get("LLM_PROVIDER")
+    if raw is None or not raw.strip():
+        return None
+    return None if raw.strip().lower() in PROVIDERS else raw
 
 
 def _model_source(task: str | None, model: str) -> str:
@@ -251,7 +271,10 @@ def _model_source(task: str | None, model: str) -> str:
     if raw == model:
         return f"{knob}={model}"
     if not raw and resolve_model(task) == model:
-        return f"LLM_PROVIDER={provider()} 的 {task} 預設 {model}"
+        prov_raw = (os.environ.get("LLM_PROVIDER") or "").strip()
+        # 印原始值（不是正規化後的 provider()）：人要拿它去對環境檔裡的那一行。
+        prov = f"LLM_PROVIDER={prov_raw}" if prov_raw else f"LLM_PROVIDER（未設，預設 {provider()}）"
+        return f"{prov} 的 {task} 預設 {model}"
     return f"--model {model}（任務 {task}）"
 
 
@@ -272,13 +295,20 @@ def require_llm_key(models: Mapping[str, str | None] | Iterable[str | None]) -> 
             f"{path} 有重複的鍵：{', '.join(duplicates)}。systemd 取最後一行、手動批次取第一行，"
             "兩邊會用不同的值；刪掉多餘的行再執行"
         )
+    bad_provider = _invalid_provider()
+    if bad_provider is not None:
+        _fail(
+            f"LLM_PROVIDER={bad_provider!r} 不是合法值（可用：{'/'.join(PROVIDERS)}）。批次不猜：web 對這個值會"
+            "退回 deepseek 照常計費，但 claude_cli 是讓 LLM 停下來的開關，拼錯不能變成照常計費。"
+            f"檢查 shell、unit 的 Environment= 與 {path}，改正後再執行"
+        )
     unknown = [m for m in names if not (is_http_model(m) or is_claude_model(m))]
     if unknown:
         _fail(f"未知模型名：{', '.join(unknown)}（只接受 DeepSeek 白名單或 claude-*）")
     _warn_if_not_deploy_root()
     http = [m for m in names if is_http_model(m)]
     if not http:
-        _warn_if_claude_without_env_file(names, path)
+        _warn_if_all_claude(pairs, path)
         return
     tripped = _fresh_breaker()
     if tripped:

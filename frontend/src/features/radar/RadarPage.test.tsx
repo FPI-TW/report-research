@@ -141,6 +141,47 @@ beforeEach(() => {
   vi.resetAllMocks()
 })
 
+function SearchProbe() {
+  const location = useLocation()
+  return <div data-testid="radar-search">{location.search}</div>
+}
+
+function wrapWithProbe(entry: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route path="/radar" element={<><RadarPage /><SearchProbe /></>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe('展開的券商進網址', () => {
+  it('網址帶 broker：進頁就展開那一家（貼連結給別人看得到同一個畫面）', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
+    vi.mocked(radarApi.getBrokerHistory).mockReturnValue(new Promise(() => {}))
+    wrapWithProbe('/radar?market=TW&code=8046&window=90&broker=daiwa')
+    const toggle = await screen.findByTestId('broker-row-daiwa')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('展開與收合都寫回網址，且用 replace 不堆歷史', async () => {
+    vi.mocked(radarApi.getInstrumentRadar).mockResolvedValue(overview())
+    vi.mocked(radarApi.getBrokerHistory).mockReturnValue(new Promise(() => {}))
+    wrapWithProbe('/radar?market=TW&code=8046&window=90')
+    const toggle = await screen.findByTestId('broker-row-daiwa')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).toContain('broker=daiwa'))
+    expect(screen.getByTestId('broker-row-daiwa')).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(screen.getByTestId('broker-row-daiwa'))
+    await waitFor(() => expect(screen.getByTestId('radar-search').textContent).not.toContain('broker='))
+  })
+})
+
 describe('RadarPage', () => {
   it('無 code 時顯示選標的清單', async () => {
     vi.mocked(radarApi.getRadarInstruments).mockResolvedValue({

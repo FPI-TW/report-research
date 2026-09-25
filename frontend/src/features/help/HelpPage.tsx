@@ -43,6 +43,7 @@ const TOC: [string, string][] = [
   ['ask', '智能問答（向 AI 提問）'],
   ['radar', '券商觀點'],
   ['monitor', '導入監控（進階）'],
+  ['ai', 'AI 生成內容與資料處理'],
 ]
 
 function CopyUrlButton({ url }: { url: string }) {
@@ -307,6 +308,25 @@ export default function HelpPage() {
             alt="導入監控畫面"
             caption="導入監控：已導入報告／片段／標註／摘要進度、四條處理管線狀態，與市場分佈長條圖"
           />
+        </section>
+
+        {/* AI 生成揭露（DeepSeek 遷移 PR-U）：DeepSeek 條款要求向終端使用者揭露並標示 AI 生成。
+            只寫確定的事實：哪些功能由它生成、資料會送去哪裡；供應商怎麼處理以其條款為準，這裡不代為承諾。
+            供應商寫成「目前為」：既有的摘要、標題、摘錄與標註多半是遷移前由 Claude 產出，不能說全部出自 DeepSeek。 */}
+        <section id="ai" className={styles.section}>
+          <h2 className={styles.h2}><span className={styles.no}>9</span>AI 生成內容與資料處理</h2>
+          <p>本站以下內容由<strong>大型語言模型</strong>（目前為 DeepSeek）<strong>自動生成</strong>，不是人工撰寫：</p>
+          <ul className={styles.bul}>
+            <li><strong>智能問答</strong>的回答。</li>
+            <li>研報的<strong>摘要</strong>、<strong>標題</strong>與<strong>重點摘錄</strong>的論點。</li>
+            <li>研報的<strong>標註</strong>（市場、商品類型、標的標籤）。</li>
+            <li><strong>券商觀點</strong>的評等、目標價、EPS 與論點擷取。</li>
+            <li><strong>每日簡報</strong>。</li>
+          </ul>
+          <p>生成時，你的<strong>提問</strong>、<strong>回答</strong>與相關的<strong>研報內容</strong>會送往模型供應商（目前為 DeepSeek）處理，並依其服務條款處理。</p>
+          <div className={styles.note}>
+            AI 生成的內容<strong>可能有誤</strong>（包括數字與引用），投資決策請以<strong>原始研報</strong>與公開資訊為準。重點摘錄的<strong>引文</strong>由 AI 從原文摘出，可在閱讀頁用「在原文中尋找」對照原始 PDF 核對。
+          </div>
         </section>
 
         <footer className={styles.foot}>廷豐金融科技 · 廷豐智能研報</footer>

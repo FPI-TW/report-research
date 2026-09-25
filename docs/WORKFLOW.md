@@ -1,6 +1,6 @@
 # report-mark 運作流程
 
-券商研報從 `研報自動匯入/` 進來，經過抽文字 → Claude 多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
+券商研報從 `研報自動匯入/` 進來，經過抽文字 → LLM（DeepSeek）多維標註 → 切塊嵌入 → pgvector 入庫，再由多個離線批次補齊摘要、標題、摘錄、訊號、簡報，最後由 web 服務提供語意檢索、RAG 問答、閱讀頁、觀點雷達與每日簡報。本檔描述每個階段的輸入、輸出與指令，以及 Web API 契約；架構不變量在 `docs/ARCHITECTURE.md`，抽取層細節在 `docs/EXTRACTION.md`。
 
 ## 全景流程圖
 
@@ -10,18 +10,18 @@
    ▼ ① scripts/extract_all.py             pdfplumber 版面層 / pypdf 回退 / python-docx
 data/extracted/<file_hash>.json            per-hash 快取（text、blocks 索引、quality）
    │
-   ▼ ② scripts/tag_all_cli.py             claude -p（Haiku）市場 / 商品類型 / 標的
+   ▼ ② scripts/tag_all_cli.py             LLM（deepseek-flash）市場 / 商品類型 / 標的
 data/tags/<file_hash>.json
    │
    ▼ ③ scripts/ingest_all.py              gate: is_research 且 market 非空
 research.research_report ──── research.report_chunk（BGE-M3 dense + content_norm）
 research.extraction_log（每個 hash 一列，含未入庫者）
    │
-   ├─▶ ④ scripts/extract_takeaways.py     Sonnet → research.report_takeaway（閱讀頁）
-   ├─▶ ⑤ scripts/extract_signals.py       Sonnet → research.report_signal（觀點雷達）
-   ├─▶ ⑥ scripts/generate_summaries.py    Sonnet → research_report.summary
-   ├─▶ ⑦ scripts/generate_titles.py       Sonnet → research_report.title
-   └─▶ ⑧ scripts/generate_brief.py        Sonnet → research.report_brief（每日簡報）
+   ├─▶ ④ scripts/extract_takeaways.py     Flash → research.report_takeaway（閱讀頁）
+   ├─▶ ⑤ scripts/extract_signals.py       Flash → research.report_signal（觀點雷達）
+   ├─▶ ⑥ scripts/generate_summaries.py    Flash → research_report.summary
+   ├─▶ ⑦ scripts/generate_titles.py       Flash → research_report.title
+   └─▶ ⑧ scripts/generate_brief.py        Flash → research.report_brief（每日簡報）
    │
    ▼ web/server.py（:8097）
 檢索 /api/search ── 問答 /api/ask ── 閱讀 /api/reading ── 雷達 /api/radar ── 簡報 /api/brief
@@ -31,14 +31,14 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ## 責任分工
 
-| 決定性（Python） | 語意（Claude） |
+| 決定性（Python） | 語意（LLM，預設 `deepseek-flash`） |
 |---|---|
-| 檔案雜湊、檔名解析、抽取、版面分析、品質評分 | 市場與標的標註（Haiku） |
-| 切塊、嵌入、入庫、去重、斷點續跑 | 摘要、顯示標題（Sonnet） |
-| 混合檢索、tier、選篇、rerank、脈絡組裝 | 問答生成、追問（Sonnet／Haiku） |
-| 路由前檢詞表、overview 統計 | 五類路由分類（Haiku） |
+| 檔案雜湊、檔名解析、抽取、版面分析、品質評分 | 市場與標的標註 |
+| 切塊、嵌入、入庫、去重、斷點續跑 | 摘要、顯示標題 |
+| 混合檢索、tier、選篇、rerank、脈絡組裝 | 問答生成、追問 |
+| 路由前檢詞表、overview 統計 | 五類路由分類 |
 | 引文錨定、訊號正規化與狀態判定、共識聚合、窗期 | 摘錄與訊號擷取、簡報撰寫 |
-| 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（Haiku） |
+| 忠實度閘門（`is_numeric_claim`）、分數彙總 | 主張拆解與 grounding 評審（judge 是 `deepseek-flash`，自 2026-09 起的新量尺；舊的 haiku 分數歸「其他 judge」） |
 
 批次以檔案 `file_hash` 為鍵、冪等可續跑；失敗寫 `data/*_failures.log`，不阻斷其他檔。
 
@@ -67,9 +67,9 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 - 快取鍵含 `is_admin`、`stock_code`、`company_name`、`source`、`report_date`、`report_type`（檔名解析）與 `extractor`、`extraction_version`、`quality`、`blocks`。
 - 細節與診斷紀錄見 `docs/EXTRACTION.md`。
 
-### ② 多維標註：`scripts/tag_all_cli.py`（Claude CLI）
+### ② 多維標註：`scripts/tag_all_cli.py`（LLM）
 
-- 輸入 `data/extracted/`，輸出 `data/tags/<file_hash>.json`；已有標籤檔即跳過。`--workers`（預設 8）、`--limit`、`--excerpt`（預設 10000 字）。模型 `claude-haiku-4-5`。
+- 輸入 `data/extracted/`，輸出 `data/tags/<file_hash>.json`；已有標籤檔即跳過。`--workers`（預設 8）、`--limit`、`--excerpt`（預設 10000 字）。模型 `TAG_MODEL`（未設查表，預設 `deepseek-flash`）。
 - 標籤 schema（`app/services/tagging.py`）：`market`（findb 代碼）、`is_research`、`confidence`、`instrument_types`、`relates_stock`、`relates_futures`、`stock_targets`（四碼數字，最多 8 個）、`futures_targets`（小詞表）。Python 端 `parse_tags` 正規化：舊中文標籤經 `LEGACY_TO_FINDB` 對照，詞表外的值丟棄。
 - 取 `scripts/_claude_lock.py` 的 flock，撞鎖 rc=75。
 - 提高 `--workers` 前依 `.env.example` 算式重算 DB 連線數。
@@ -81,27 +81,27 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 - 收尾 `ANALYZE research.report_chunk`（可能久於 60 秒，走 `relax_statement_timeout`）。
 - `make ingest-lowio` 會關 `fsync`，SIGKILL 後不還原；處置 `make restore-durability`。除非使用者明講不要跑。
 
-### ④ 重點摘錄：`scripts/extract_takeaways.py`（Claude CLI，閱讀頁用）
+### ④ 重點摘錄：`scripts/extract_takeaways.py`（LLM，閱讀頁用）
 
 - 輸入 `research_report.full_text`（經 `clean_extracted`，表格區塊用 `cache.strip_tables` 拿掉），輸出 `research.report_takeaway`。每篇 3–5 條 `{claim, quote}`，`quote` 逐字不轉繁、由 `reading/anchor.locate_quote` 錨回正典文字，`claim` 過 `to_traditional`。
 - 每份報告單一交易內 DELETE ＋ 全量 INSERT（不是 upsert）；`text_sha256` 對 canonical 全文算，是錨點有效性的守門。
-- `--since-days`（預設 90，濾 `report_date`）、`--hashes-file`（生產用）、`--workers`（2）、`--limit`、`--excerpt`（24000）、`--reextract`、`--dry-run`（也取鎖）。模型 `claude-sonnet-5`。
+- `--since-days`（預設 90，濾 `report_date`）、`--hashes-file`（生產用）、`--workers`（2）、`--limit`、`--excerpt`（24000）、`--reextract`、`--dry-run`（也取鎖）。模型 `TAKEAWAY_MODEL`（預設 `deepseek-flash`：依「任一方式錨定成功率」選定，9/24 探測 95.0%，Claude 既有摘錄 90.9%）。
 
-### ⑤ 訊號擷取：`scripts/extract_signals.py`（Claude CLI，觀點雷達用）
+### ⑤ 訊號擷取：`scripts/extract_signals.py`（LLM，觀點雷達用）
 
 - 輸入 `full_text`，輸出 `research.report_signal`（一列＝研報 × 標的）。LLM 依固定 schema 擷取 `rating_raw`、目標價與 evidence、EPS 估計、四維論點（`outlook`、`catalyst`、`risk`、`valuation`）；Python 正規化評等（`buy`／`overweight`／`neutral`／`underweight`／`sell`／`unknown`）、幣別、判 `extraction_status`（`valid`／`partial`／`rejected`）。`thesis_dimensions[*].evidence` 逐字不轉繁。
 - 只跑高覆蓋子集：`--min-brokers`（3）、`--min-reports`（5）、`--top-n`（50）；`--workers`（2）、`--limit`、`--excerpt`（16000）、`--reextract`、`--dry-run`。`EXTRACTION_VERSION = "sig-2026-07-15.v1"`。
 - 空是常態：雷達 API 對未擷取的研報回 `pending_extraction`。
 
-### ⑥ 摘要：`scripts/generate_summaries.py`（Claude CLI）
+### ⑥ 摘要：`scripts/generate_summaries.py`（LLM）
 
 - 補 `summary IS NULL` 的研報 2–3 句中文摘要（最多 400 字，過 `to_traditional`）。`--workers`（2）、`--limit`、`--excerpt`（12000）、`--hashes-file`。
 
-### ⑦ 顯示標題：`scripts/generate_titles.py`（Claude CLI）
+### ⑦ 顯示標題：`scripts/generate_titles.py`（LLM）
 
 - 補 `title IS NULL`：`title_source` 三值 `extracted`（原文標題）、`translated`（英文譯中）、`generated`（無標題時生成）；`title_original` 留原文。失敗維持 NULL，前端回退檔名。`--workers`（2）、`--limit`、`--excerpt`（3000）、`--hashes-file`。
 
-### ⑧ 每日簡報：`scripts/generate_brief.py`（Claude CLI，簡報頁用）
+### ⑧ 每日簡報：`scripts/generate_brief.py`（LLM，簡報頁用）
 
 - 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7），用 `created_at` 界定。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
 - `--date`、`--after-hour`（9，未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 CLI 呼叫。來源清單由 Python 記錄。
@@ -125,6 +125,33 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `scripts/select_sample.py`、`scripts/extract_batch.py`、`scripts/make_worklist.py`、`scripts/run_ingest.py` | 抽樣原型路徑（`make prep`、`make ingest`） |
 | `scripts/search.py`（`make search`） | CLI 檢索驗證 |
 | `scripts/analyze_qa_log.py`、`scripts/measure_baseline.py`、`scripts/eval_faithfulness.py` | 唯讀分析 |
+| `scripts/judge_agreement.py` | judge 描述性校準：唯讀取 `qa_log` 歷史 haiku 判定，以 `retrieve_context` 重建脈絡、用 DeepSeek judge 重評，印 κ／偏移／門檻翻轉率（只描述、不判定）；會呼叫付費 API，`--max-cases`／`--max-cny`／`--dry-run` |
+| `eval/observe_switch.py` | DeepSeek 切換後批次產出觀測（零 LLM、唯讀、一次性）：切換前 N 天的 Claude 產出對切換後的 DeepSeek 產出，依計畫 §判準的方向取 CI 端點並標出是否在 D-N／D-A 容差內（只判讀、不切換）；用法與判讀規則見下方「DeepSeek 切換後觀測」 |
+
+### DeepSeek 切換後觀測：`eval/observe_switch.py`
+
+批次在 2026-09 被迫直接從 claude CLI 切到 DeepSeek，切換前的閘門取消、改成切換後觀測。**切換後第 7 天、第 14 天各跑一次**，`--switch-at` 填生產實際開始用 DeepSeek 的時間（部署重啟 web、裝好 `/etc/default/report-mark-llm` 的那一刻；沒帶時區視為台北時間）。**全庫回填（`scripts/backfill_extraction.py`、`report-mark-backfill.timer`）期間不要跑**：回填改寫全文、重算摘錄錨點，回填中途的篇數一直在變，兩次報告不可比。
+
+```bash
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --dry-run      # 只印查詢，不連 DB（不檢查 --until）
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-10-02T10:00 > /tmp/observe-d7.md
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-10-09T10:00 --json --out /tmp/observe-d14.json
+# 從 worktree 跑：三個只讀的檔案要指到部署目錄（預設是本 checkout 的 data/，worktree 裡沒有生產資料）
+uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-10-02T10:00 \
+    --usage-log <部署目錄>/data/llm_usage.jsonl \
+    --tags-dir <部署目錄>/data/tags \
+    --breaker-file <部署目錄>/data/.llm_breaker > /tmp/observe-d7.md
+```
+
+- **判讀總表全部通過不等於批次 A 觀測完成**：幻覺率（需人工抽查）、每日花費金額（看 DeepSeek 後台／`/healthz/llm`）、content_filter 是否集中在特定題材、is_research 翻轉、`skip_blocked` 處置等量不到的項目，報告最後「未涵蓋項目」逐條列出。
+- 零 LLM、唯讀：單一交易、第一句 `SET TRANSACTION READ ONLY`，不寫任何表；用量紀錄、`data/tags/`、斷路器標記只讀；`--out` 只接受 repo 外的路徑（本 checkout 與主 checkout 底下一律拒收）。不取批次鎖，sync 照常跑也可以。
+- 窗期：Claude 群＝切換前 `--before-days`（預設 30）天起、到 `--claude-until`（預設 `2026-09-23T09:05+08:00`，claude CLI 失效的時點）為止；`--claude-until` 到 `--switch-at` 之間是**事故空窗**（CLI 已失效、DeepSeek 還沒上線，下游批次全失敗），兩群都不收，報告註明。DeepSeek 群＝`--switch-at` 到 `--until`（預設現在）。
+- 分群：摘錄看 `raw_payload.model`，沒有這個鍵的列依 `created_at`（Claude 窗期內算 Claude、切換後算 DeepSeek、空窗不收）；訊號看 `raw_payload.model`，沒有鍵時先看用量紀錄（切換後有成功呼叫＝DeepSeek 重寫過）、再依 `created_at`；標題、摘要、標註看用量紀錄的成功呼叫，沒有時依時間。CLI 已永久失效，切換後的寫入只可能來自 DeepSeek。
+- 缺值率／產出率看入庫批次，**已填只算該批次自己的模型產出的**：標題積壓 `ORDER BY report_date DESC`，切換後會先補近 30 天 Claude 失敗的那些，所以 Claude 批次裡由 DeepSeek 後補的標題、摘要、摘錄算未填，另列「後補」篇數（標題、摘要靠用量紀錄分辨，沒有用量紀錄時分不出）。缺值率不計最近 `--grace-hours`（預設 6）小時入庫、下游批次還沒輪到的研報。
+- 判讀（計畫第四版 §判準；依方向取 CI 端點）：摘錄**任一方式錨定成功率**（exact／normalized／prefix 任一錨上，分母是有 quote 的條目，對 `clean_extracted(full_text)` 重算；兩群都重算，所以不會重現 9/24 探測讀存下的 `anchor_method` 得到的數字）是主指標，差值（DeepSeek − Claude）的 CI **下界** ≥ −5pp；摘錄產出率、訊號非 rejected 率、標題／摘要填補率差值的 CI 下界 ≥ −2pp；標註 `skip_non_research` 與 market=None 比例差值的 CI **上界** ≤ 0（market=None 的分母含非研報，小樣本下常判「未定」屬預期）。CI 端點在容差內＝通過；整條 CI 在容差外＝劣化；跨過容差＝未定（另列點估計是否在容差內）。exact 錨定率、每篇條數、殘留簡體率、長度、stance／market／is_research 分布與跳過名單只列觀測值。
+- 摘錄錨定不計兩種研報、另列篇數：擷取後被回填過的（`extraction_log.updated_at` 晚於摘錄 `created_at`；回填經 `store.reanchor_takeaways` 把 `text_sha256` 換成新文字的 sha，只看 sha 擋不到），與 `text_sha256` 跟現在正典文字對不上的。
+- 用量紀錄判準（切換後 `backend="http"` 的列，零 LLM）：各 task 的 content_filter 比例看 Wilson CI 上界 ≤ 1%（分母扣掉 auth／quota／config／timeout／overloaded／network）；截斷 `truncated`（`finish_reason=length`）、401（`auth`）、402（`quota`）判準 0，期限型截斷 `timeout_streamed` 只列觀測；截斷對照跳過名單列出「沒記入也沒有後續成功」的篇；斷路器看標記檔（只留最後一次跳脫，`ts` 在切換後就算觸發過）；另列每日 token（觀測）。
+- 報告只給人判讀、不做任何切換。劣化時能做的只有修 prompt 或把該任務的模型旋鈕換成 `deepseek-v4-pro`（沒有 Claude 可以退回）；跳過名單逐筆看 `make llm-blocked`，is_research 翻轉要逐筆人工看。分群依據與各任務的已知偏差寫在該檔模組 docstring。
 
 **不要再寫一支「清理 chunk 空白」的批次更新**：`clean_text` 與 `clean_extracted` 都會破壞段落換行，2026-07-29 已連同 `make normalize` 一併移除。
 
@@ -162,18 +189,35 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 
 ### 問答 `POST /api/ask`（SSE）
 
-請求 JSON：`question`（≤2000）、`conversation_id`、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`k`（夾到 1–20）、`regenerate_of`、`edit_of`、`request_id`（冪等鍵，`qa_log.request_id` UNIQUE）、`locale`（`zh-Hant`／`en`）、`web`（每題決定）。
+請求 JSON：`question`（≤2000）、`conversation_id`、`market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`k`（夾到 1–20）、`regenerate_of`、`edit_of`、`request_id`（冪等鍵，`qa_log.request_id` UNIQUE）、`locale`（`zh-Hant`／`en`）、`web`（每題決定；網搜暫停中，前端一律送 `false`、生產 `ASK_ENABLE_WEB=0`，DeepSeek 版網搜完成後恢復）。
 
 事件序：`queued`（排隊時，`scope`、`position`、`capacity`）→ `status`（`stage`、`thinking_ms`）→ `sources`（`n`、`report_id`、`file_name`、`title`、`market`、`report_date`、`is_latest`）→ `ext_sources`（網搜或受信任資料，`title`、`url`）→ `token`… → `followups` → `done`。婉拒（離題、時效、建議風險）走 `notice` 再 `done{notice_kind}`。傳輸層錯誤 `error{detail}`。心跳每 20 秒一行 SSE 註解。
 
 `POST /api/ask/stop` 把使用者中止時的部分答案與 `stages` 落 `qa_log`（`stopped=true`），回 `qa_id`。
+
+### 健康端點 `GET /healthz/llm`（只回答本機直連）
+
+回 `{"llm": state}`，**不回任何金額**；只給本機探針 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8），經邊緣一律 404。查 DeepSeek `GET /user/balance`，`balance_infos` 依 `currency` 取值（順序不固定），只看 `LLM_BUDGET_CURRENCY`（預設 CNY）那一筆：
+
+| state | HTTP | 條件 |
+|---|---|---|
+| `disabled` | 200 | 問答主答沒有解析到 DeepSeek，且沒有金鑰 |
+| `unknown` | 200 | 還沒有完成過查詢 |
+| `ok` | 200 | 餘額 ≥ `LLM_BALANCE_FLOOR`（預設 70） |
+| `low` | 503 | 0 < 餘額 < 門檻 |
+| `exhausted` | 503 | 查詢回 402、`is_available=false`、餘額 ≤ 0，或本行程的真實請求收過 402 且之後還沒有成功的查詢 |
+| `auth_failed` | 503 | 查詢回 401，或問答主答走 DeepSeek 卻沒有金鑰 |
+| `unreachable` | 503 | 連續 2 次連不上（網路、逾時、429／5xx） |
+| `indeterminate` | 503 | 缺該幣別、其他幣別非零、金額讀不懂、端點設定錯 |
+
+問答主答（`ASK_ANSWER_MODEL`）沒有解析到 DeepSeek 時，後五種改回 200 並加 `_unused` 後綴（審查 M15；其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
 
 ### 契約守門
 
 - `tests/fixtures/sse_events.json` 是後端與前端共吃的單一真相（`tests/test_sse_event_contract.py`、`frontend/src/lib/sseEventContract.test.ts`），現在只剩 `ask` 一組事件。新事件或欄位：fixture 與 `frontend/src/lib/askSchemas.ts` 的 zod（預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）兩處都要動。
 - 雷達 `app/services/radar/schemas.py` 的 `Literal` 與 `frontend/src/lib/radarSchemas.ts` 逐字鏡像；閱讀頁 `app/services/reading/schemas.py` 與 `frontend/src/lib/readingSchemas.ts` 同理；`web/routers/brief.py` 的 pydantic 與 `frontend/src/lib/briefSchemas.ts` 同理。
 - `/api/progress` 新增鍵要同步改 `frontend/src/features/monitor/progressSchema.ts`。
-- 忠實度分數的讀取端（`/api/progress` 的 `evaluation.qa`、`/api/review/queue?kind=faithfulness`、`scripts/eval_faithfulness.py`）的分數類統計只計現行 judge（監控卡的已查核數 `checked` 例外：它是覆蓋率語意，計所有 judge），共用 `app/services/judge_schema.py` 的過濾；`qa_log.evaluation` 帶 `judge_model`、`judge_schema_version`、`degraded_reason`（`unavailable`／`timeout`／`truncated`／`empty`／`parse`／`schema`／`error`，詞彙在 `app/services/faithfulness.py`）、`elapsed_ms`、`n_missing_verdicts`（grounding 漏判而計為 unsupported 的條數），缺 `judge_model` 的舊列視為 `claude-haiku-4-5`。judge 回應走 schema v2 嚴格驗證（同一模組），不合格重試 1 次後生產記 `degraded_reason=schema`；生產 grounding 缺 idx 仍計 unsupported，但一條都沒判（`{"verdicts": []}`）算 schema 錯。
+- 忠實度分數的讀取端（`/api/progress` 的 `evaluation.qa`、`/api/review/queue?kind=faithfulness`、`scripts/eval_faithfulness.py`）的分數類統計只計現行 judge（監控卡的已查核數 `checked` 例外：它是覆蓋率語意，計所有 judge），共用 `app/services/judge_schema.py` 的過濾；`qa_log.evaluation` 帶 `judge_model`、`judge_schema_version`、`degraded_reason`（`unavailable`／`timeout`／`truncated`／`empty`／`parse`／`schema`／`content_risk`／`account`／`error`，詞彙在 `app/services/faithfulness.py`）、`elapsed_ms`、`n_missing_verdicts`（grounding 漏判而計為 unsupported 的條數），DeepSeek judge 另帶 `judge_model_resp`、`judge_fingerprint`、`judge_requests`、`usage`；缺 `judge_model` 的舊列視為 `claude-haiku-4-5`。judge 回應走 schema v2 嚴格驗證（同一模組），不合格重試 1 次後生產記 `degraded_reason=schema`；生產 grounding 缺 idx 仍計 unsupported，但一條都沒判（`{"verdicts": []}`）算 schema 錯。
 
 ## 私有 R2 遷移順序
 

@@ -334,6 +334,7 @@ async def extract_one(
         (item.full_text or "")[:excerpt],
     )
     parsed: Optional[ParsedReportSignals] = None
+    used_model: Optional[str] = None  # 產出 parsed 那次回應的模型（raw_payload.model）
     # 保留最後一次的失敗原因：三次都沒回應時，log 要寫得出是逾時、非零退出碼還是別的
     last_error = "CLI 無回應"
     http_reason: Optional[str] = None  # HTTP 的審查／截斷／空回應／400（failure_kind）
@@ -346,6 +347,7 @@ async def extract_one(
             )
             if res.text:
                 parsed = parse_signal(res.text, item.requested_codes)
+                used_model = res.model_resp or model
                 if parsed.ok:
                     break
             elif res.error:
@@ -363,7 +365,7 @@ async def extract_one(
             parsed = ParsedReportSignals(ok=False, error=last_error)
 
     try:
-        rows = build_rows(ctx, parsed)
+        rows = build_rows(ctx, parsed, model=used_model)
         await _upsert_rows(rows)
         if all(r.extraction_status == "rejected" for r in rows):
             _rejected += 1

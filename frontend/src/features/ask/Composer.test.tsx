@@ -1,8 +1,17 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { useState } from 'react'
-import { expect, test, vi, afterEach } from 'vitest'
-import { Composer } from './Composer'
+import { expect, test, vi, afterEach, beforeEach } from 'vitest'
+import { AI_NOTE, Composer } from './Composer'
 import { setWebSearch } from '../../lib/useWebSearch'
+
+// 網搜暫停（WEB_SEARCH_PAUSED，DeepSeek 遷移 PR-W）以可切換的 getter 模擬：預設走「恢復後」的行為，
+// 讓開關本身的測試在暫停期間繼續守著接回點；暫停中的行為另成一組，把旗標設成 true。
+const paused = vi.hoisted(() => ({ value: false }))
+vi.mock('../../lib/useWebSearch', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../lib/useWebSearch')>()
+  return { ...mod, get WEB_SEARCH_PAUSED() { return paused.value } }
+})
+beforeEach(() => { paused.value = false })
 
 function Harness({ onSubmit }: { onSubmit: (q: string) => void }) {
   const [v, setV] = useState('')
@@ -64,6 +73,29 @@ test('底部變體的免責文案隨開關切換（開啟後點明網路資訊�
   act(() => setWebSearch(true))
   expect(screen.getByText(/非受信任行情來源/)).toBeTruthy()
   setWebSearch(false)
+})
+
+// 網搜暫停中（PR-W）：沒有工具鈕，輸入框是第一個子節點；殘留的開啟偏好不改變免責文案。
+test('網搜暫停中：沒有工具鈕、殘留的開啟偏好不讓文案提網路資訊', () => {
+  paused.value = true
+  setWebSearch(true)
+  const { container } = render(<Composer value="" onChange={() => {}} onSubmit={() => {}} />)
+  expect(screen.queryByRole('button', { name: '工具' })).toBeNull()
+  expect(container.querySelector('textarea')!.parentElement!.children[0].tagName).toBe('TEXTAREA')
+  expect(screen.queryByText(/非受信任行情來源/)).toBeNull()
+  expect(screen.getByText(AI_NOTE)).toBeInTheDocument()
+  setWebSearch(false)
+})
+
+// AI 生成揭露（DeepSeek 遷移 PR-U）：條款要求標示 AI 生成。空狀態的中央輸入框是第一題送出前
+// 唯一看得到的那個，所以兩個變體都要有。
+test.each(['center', 'bottom'] as const)('%s 變體揭露回答由 AI（DeepSeek）生成、可能有誤', (variant) => {
+  setWebSearch(false)
+  render(<Composer value="" onChange={() => {}} onSubmit={() => {}} variant={variant} />)
+  expect(screen.getByText(AI_NOTE)).toBeInTheDocument()
+  expect(AI_NOTE).toMatch(/AI（DeepSeek）/)
+  expect(AI_NOTE).toMatch(/可能有誤/)
+  expect(AI_NOTE).toMatch(/原始研報/)
 })
 
 // ── 換行後的版面（M11）──────────────────────────────────────────────────────

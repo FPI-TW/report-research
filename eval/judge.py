@@ -1,8 +1,12 @@
-"""評審 LLM 原語：drain claude CLI 串流 + robust JSON 解析。
+"""評審 LLM 原語：依 model 分派——白名單走 DeepSeek 非串流 JSON 模式，其餘 drain claude CLI 串流。
 
-沿用 intent.py 的 drain 慣例（parts=[] async for ... "".join(parts)）。judge 不上網
-（allow_web=False）。解析容忍 ```json 圍欄、前後散文，取第一個平衡的 {..}/[..]；
-空回應或解析失敗一律 raise JudgeError，交由 run_ragas 逐題 fail-open。
+- HTTP（DeepSeek，遷移 PR-18）：`llm_http.complete_json`（stream=false、json_object、t=0、thinking 關）。
+  重試只在 adapter 那一層、受本階段請求預算限制（`judge_schema.HTTP_STAGE_MAX_REQUESTS`），
+  `judge_json` 自己的重試迴圈在這條路徑不跑。帳號層級錯誤（401／402／404）拋 `JudgeAccountError`：
+  每一題都會踩到，run_ragas 整批中止（rc=2），不記成 N 題 judge_errors。
+- CLI：沿用 intent.py 的 drain 慣例（parts=[] async for ... "".join(parts)）。judge 不上網
+  （allow_web=False）。解析容忍 ```json 圍欄、前後散文，取第一個平衡的 {..}/[..]；
+  空回應或解析失敗一律 raise JudgeError，交由 run_ragas 逐題 fail-open。
 """
 
 from __future__ import annotations
@@ -12,6 +16,8 @@ import logging
 import os
 import re
 
+from app.services import llm_http
+from app.services.judge_schema import http_attempts_allowed, record_http_requests
 from app.services.llm import (
     KIND_OTHER,
     UNAVAILABLE_API_ERROR,
@@ -20,12 +26,12 @@ from app.services.llm import (
     LLMUnavailableError,
     stream_completion,
 )
-from app.services.llm_models import TASK_EVAL_JUDGE, resolve_model
+from app.services.llm_models import TASK_EVAL_JUDGE, is_http_model, resolve_model
 
 logger = logging.getLogger(__name__)
 
-# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查 LLM_PROVIDER 的預設表。兩張表這列都是
-# claude-haiku-4-5：換 judge＝換量尺，要等校準（PR-26），不隨 LLM_PROVIDER 一起換。
+# 旋鈕的 os.getenv 留在本檔；空字串視同未設，未設時查 LLM_PROVIDER 的預設表：deepseek 表自 PR-26/27
+# 起是 deepseek-flash（新量尺系譜，見 app/services/llm_models.py 的 `judge_lineage`），claude_cli 表仍是 haiku。
 DEFAULT_JUDGE_MODEL = resolve_model(TASK_EVAL_JUDGE, override=os.getenv("EVAL_JUDGE_MODEL"))
 
 # 逾時 60s 曾讓整份評測不可用：8 題裡 3-5 題失敗，而且**兩種錯誤其實同源**——
@@ -40,16 +46,25 @@ DEFAULT_JUDGE_MODEL = resolve_model(TASK_EVAL_JUDGE, override=os.getenv("EVAL_JU
 # 同一種形狀的 bug 見 PR #72（rerank 30s 全逾時 → per-path 60/180s）。
 DEFAULT_JUDGE_TIMEOUT = float(os.getenv("EVAL_JUDGE_TIMEOUT", "180"))
 DEFAULT_JUDGE_RETRIES = int(os.getenv("EVAL_JUDGE_RETRIES", "1"))
-# 輸出上限（只作用在 HTTP 路徑，CLI 忽略）。judge 契約 `judge_json(prompt, system=…)` 分不出
-# 是拆解、grounding、CP 還是生成問題，先取其中最大的拆解（8192，第二版計畫 §8）；逐階段的
-# 上限隨 PR-18 的 DeepSeek judge adapter 一起細分。
+# 輸出上限的預設（只作用在 HTTP 路徑，CLI 忽略）：取四個階段裡最大的拆解（8192）。逐階段的值
+# 由呼叫端傳入（run_ragas 依系統提示查 `eval.ragas_metrics.JUDGE_MAX_TOKENS_BY_SYSTEM`）。
 JUDGE_MAX_TOKENS = 8192
+# DeepSeek 的 `user_id`（內容安全與排程隔離）；生產忠實度抽查是 web-faithfulness。
+JUDGE_USER_ID = "eval-judge"
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 
 class JudgeError(Exception):
     """評審回應為空或無法解析為 JSON。"""
+
+
+class JudgeAccountError(Exception):
+    """DeepSeek 帳號層級錯誤（401 金鑰、402 餘額、404 模型／端點）：每一次 judge 呼叫都會失敗。
+
+    刻意不繼承 JudgeError／LLMUnavailableError：run_ragas 只把那兩類（加 JudgeSchemaError）當成
+    「該指標記 None」，這一類要讓整批中止，而不是記成 8 題 judge_errors 後照樣寫出一份結果檔。
+    """
 
 
 # 值得重試的 LLM 失敗：再打一次有機會過的那幾種。依 LLMUnavailableError 的既有欄位判斷——
@@ -123,10 +138,47 @@ def _loads_robust(raw: str) -> dict | list:
     raise JudgeError(f"unbalanced JSON in judge output: {raw[:120]!r}")
 
 
-async def _judge_once(prompt: str, *, system: str, model: str, timeout: float):
+_HTTP_REASON = {llm_http.TIMEOUT: UNAVAILABLE_TIMEOUT, llm_http.EMPTY: UNAVAILABLE_EMPTY}
+
+
+async def _judge_http(
+    prompt: str, *, system: str, model: str, timeout: float, max_tokens: int, meta: dict | None,
+):
+    """DeepSeek judge 的一次呼叫：成功回解析後的 JSON；失敗依 kind 拋三種例外之一（見模組 docstring）。"""
+    res = await llm_http.complete_json(
+        model, prompt, system=system, max_tokens=max_tokens, timeout=timeout, task="eval_judge",
+        user_id=JUDGE_USER_ID, max_attempts=max(1, http_attempts_allowed(llm_http.JSON_MAX_ATTEMPTS)),
+    )
+    record_http_requests(res.attempts)
+    if meta is not None:
+        meta["requests"] = meta.get("requests", 0) + res.attempts
+        meta["model_resp"] = res.outcome.model_resp
+        meta["system_fingerprint"] = res.outcome.system_fingerprint
+        usage = meta.setdefault("usage", {})
+        for k, v in res.usage.items():
+            usage[k] = usage.get(k, 0) + v
+    if res.kind is None:
+        return res.data
+    if res.kind in llm_http.ACCOUNT_KINDS:
+        raise JudgeAccountError(res.error)
+    if res.kind == llm_http.INVALID_JSON:
+        raise JudgeError(res.error)
+    raise LLMUnavailableError(res.error, reason=_HTTP_REASON.get(res.kind, UNAVAILABLE_API_ERROR), kind=res.kind)
+
+
+async def _judge_once(
+    prompt: str, *, system: str, model: str, timeout: float, max_tokens: int = JUDGE_MAX_TOKENS,
+    meta: dict | None = None,
+):
+    if is_http_model(model):
+        return await _judge_http(
+            prompt, system=system, model=model, timeout=timeout, max_tokens=max_tokens, meta=meta,
+        )
     parts: list[str] = []
     async for chunk in stream_completion(
         prompt, model=model, system=system, timeout=timeout, allow_web=False,
+        # CLI 忽略 max_tokens；逐階段上限只作用在 HTTP 路徑（_judge_http）。維持常數：
+        # tests/test_llm.py 的 CallSiteMaxTokensValuesTests 以模組命名空間求值它。
         max_tokens=JUDGE_MAX_TOKENS, task="eval_judge",
     ):
         parts.append(chunk)
@@ -143,8 +195,14 @@ async def judge_json(
     model: str = DEFAULT_JUDGE_MODEL,
     timeout: float = DEFAULT_JUDGE_TIMEOUT,
     retries: int = DEFAULT_JUDGE_RETRIES,
+    max_tokens: int = JUDGE_MAX_TOKENS,
+    meta: dict | None = None,
 ) -> dict | list:
-    """drain stream_completion 取全文 → robust 解析為 JSON。空/畸形 → JudgeError。
+    """呼叫 judge 取 JSON。CLI：drain stream_completion 取全文 → robust 解析；空/畸形 → JudgeError。
+
+    **HTTP 路徑不在這裡重試**（`retries` 忽略）：重試只在 `llm_http.complete_json` 那一層，受本階段
+    請求預算限制，這裡再包一層就是相乘（模組 docstring）。`meta` 給定時填入 HTTP 回應的
+    `model_resp`、`system_fingerprint`、`requests` 與 `usage`（run_ragas 寫進結果檔的 config）。
 
     **逾時是暫時性的，所以要重試**：evaluation 的每一題只要有一次 judge 呼叫失敗，
     整題就記成 error 而被排除在指標之外——n=8 的題集掉 3-5 題，剩下的平均值毫無意義
@@ -152,11 +210,13 @@ async def judge_json(
     不會把真正的故障吞掉。只重試暫時性失敗（`_is_retryable`）：餘額不足、金鑰錯、內容審查
     重打結果不會變，只是再付一次錢。
     """
+    if is_http_model(model):
+        retries = 0
     last: Exception | None = None
     for attempt in range(retries + 1):
         try:
             return await _judge_once(
-                prompt, system=system, model=model, timeout=timeout
+                prompt, system=system, model=model, timeout=timeout, max_tokens=max_tokens, meta=meta,
             )
         except (JudgeError, LLMUnavailableError) as e:
             last = e

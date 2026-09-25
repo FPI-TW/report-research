@@ -1,11 +1,14 @@
 # tests/test_extract_signals_sql.py
 """純字串/結構斷言 extract_signals 的 SQL builder 與 row 序列化（不連 DB、不呼叫 LLM）。"""
+import asyncio
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -127,6 +130,39 @@ class CheckpointTests(unittest.TestCase):
     def test_reextract_forces_redo(self):
         existing = {"2330": ("valid", es.EXTRACTION_VERSION)}
         self.assertFalse(es._is_done(["2330"], existing, reextract=True))
+
+
+
+class RawPayloadModelFlowTests(unittest.IsolatedAsyncioTestCase):
+    """extract_one 把產出模型交給 build_rows（遷移 PR-15）：回應的 model 欄優先，缺時退回請求的。"""
+
+    async def _run(self, results):
+        captured = {}
+
+        def fake_build_rows(*a, **k):
+            captured.update(k)
+            return []
+
+        it = iter(results)
+        item = es.WorkItem("rep-1", "TW", "券商甲", None, "f.pdf", "內文", ["2330"], file_hash="h1")
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(es, "FAIL_LOG", Path(tmp) / "f.log"), \
+             mock.patch.object(es, "call_cli", side_effect=lambda *a, **k: next(it)), \
+             mock.patch.object(es, "build_rows", side_effect=fake_build_rows), \
+             mock.patch.object(es, "_upsert_rows", new=mock.AsyncMock()):
+            await es.extract_one(asyncio.Semaphore(1), item, 16000, "deepseek-flash", 1)
+        return captured.get("model")
+
+    async def test_response_model_wins(self):
+        ok = es.CliResult('{"signals": []}', None, "deepseek-flash-0925")
+        self.assertEqual(await self._run([ok]), "deepseek-flash-0925")
+
+    async def test_falls_back_to_requested_model(self):
+        self.assertEqual(await self._run([es.CliResult('{"signals": []}', None)]), "deepseek-flash")
+
+    async def test_no_response_no_model(self):
+        err = es.CliResult(None, "CLI 逾時（180s 內未回應）")
+        self.assertIsNone(await self._run([err, err, err]))
 
 
 if __name__ == "__main__":

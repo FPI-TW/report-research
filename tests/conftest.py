@@ -40,11 +40,16 @@ os.environ["DEEPSEEK_BASE_URL"] = "http://127.0.0.1:9"
 
 # 模型選擇：同樣**用賦值**，理由同上（部署目錄的 `.env`、執行者 shell 裡的值都擋得住）。
 # 所有任務旋鈕設成 ""——`app/services/llm_models.resolve_model` 把空字串視同未設、改查預設表，
-# 所以測試永遠拿到 claude_cli 預設表的值，與誰的機器、誰的環境檔無關。這一條與
+# 所以測試永遠拿到 claude_cli 預設表的值（下面強制的 provider），與誰的機器、誰的環境檔無關。這一條與
 # `resolve_model` 的「空字串＝未設」寫法必須同進同退：只有前者，模組會拿到空字串的模型名。
 # `LLM_ENV_FILE` 指到不存在的路徑：批次在 import 期載入 LLM 專用環境檔，測試不得讀到本機
 # 真的 `/etc/default/report-mark-llm`。
 # 守門：tests/test_llm_models.py 的 ConftestModelGuardTests（清單直接比對 TASK_ENV）。
+# **生產預設已是 deepseek**（遷移 PR-28，`llm_models.DEFAULT_PROVIDER`），這裡刻意仍設 `claude_cli`：
+# 測試不得打付費 API，既有測試的假物件（`asyncio.create_subprocess_exec`、`_claude_cli` 的 spawn）
+# 都接在 CLI 路徑上；改成 deepseek 會讓漏了假物件的測試改走 HTTP 路徑（端點雖指到不可達的本機埠，
+# 失敗型態卻從「假物件沒接上」變成「連線失敗被當成 LLM 不可用」，靜默走另一條路）。
+# 要驗預設值的測試自己在範圍內移除這個鍵（`mock.patch.dict` 後 pop），見 test_llm_models.py。
 os.environ["LLM_PROVIDER"] = "claude_cli"
 os.environ["LLM_ENV_FILE"] = "/nonexistent/report-mark-llm"
 for _knob in (
@@ -55,6 +60,10 @@ for _knob in (
     os.environ[_knob] = ""
 # DeepSeek 串流的牆鐘總時限：空字串＝預設 600（app/config._positive_float），部署目錄 `.env` 的值不滲進測試。
 os.environ["LLM_HTTP_TOTAL_TIMEOUT"] = ""
+# /healthz/llm 的預算幣別與門檻（app/config.py）：同上，空字串＝預設（CNY、70），部署目錄 `.env` 的值
+# 不滲進測試（否則 ok／low 的邊界測試會依機器而變）。守門：tests/test_healthz_llm.py 的 KnobTests。
+os.environ["LLM_BUDGET_CURRENCY"] = ""
+os.environ["LLM_BALANCE_FLOOR"] = ""
 # 批次斷路器的標記（scripts/_llm_env.breaker_path）：預設落在 repo 根的 data/，而 repo 根就是部署
 # 目錄——測試讓斷路器跳脫時寫進去，生產排程會 30 分鐘拒跑。指到不存在的目錄：寫入 fail-open
 # 失敗、讀取當作沒有。要驗標記的測試用 mock.patch.dict 指到自己的 tempfile。

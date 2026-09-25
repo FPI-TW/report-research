@@ -53,7 +53,7 @@ NON_LLM_ENTRIES: dict[str, set[str]] = {
         "_as_date", "build_context", "RECENCY_HALF_LIFE_DAYS", "RELEVANCE_BAND", "BAND_EPS", "ASK_DENSE_SCAN",
         "RETRIEVAL_K",
     },
-    "eval/dataset.py": {"NO_CONTEXT_MESSAGE", "OFF_TOPIC_MESSAGES", "TIME_SENSITIVE_UNAVAILABLE_MESSAGE"},
+    "eval/dataset.py": {"NO_CONTEXT_MESSAGE", "OFF_TOPIC_MESSAGES", "TIME_SENSITIVE_MESSAGES"},
 }
 
 
@@ -368,9 +368,61 @@ class RequireTests(_EnvFileCase):
         self.assertIn("sudoedit", out)
 
 
-class ClaudeWithoutEnvFileWarningTests(_EnvFileCase):
-    """全部解析成 Claude＋LLM 環境檔不存在或讀不到：印一行醒目的 WARNING、不中止（CLI 已於 9/23 停用，
-    這幾乎一定是切 DeepSeek 沒生效）。"""
+class InvalidProviderTests(_EnvFileCase):
+    """審查 L1：`LLM_PROVIDER` 非空且不合法時批次預檢 rc=2 並印原始值（web 才退回 deepseek＋ERROR）。
+
+    CLI 已放棄後 `claude_cli` 是「讓 LLM 停下來」的開關；拼錯成 `claude-cli` 若照 web 的規則退回 deepseek，
+    就變成照常計費——而批次拒跑不花錢，沒有容錯的理由。"""
+
+    def test_invalid_provider_is_rc2_with_raw_value_even_with_key(self):
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        le.load_llm_env()
+        for raw in ("claude-cli", "DeepSeek-v4", " claude cli "):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_PROVIDER": raw}):
+                code, out = self.require({"summary": "deepseek-flash"})
+                self.assertEqual(code, 2)
+                self.assertIn(f"LLM_PROVIDER={raw!r}", out)
+                self.assertNotIn("fp=", out, "拒跑要在印金鑰指紋、放行之前")
+
+    def test_invalid_provider_from_the_env_file_is_rc2(self):
+        """值寫在 /etc/default/report-mark-llm 裡同樣拒跑（load_llm_env 把它補進 os.environ）。"""
+        os.environ.pop("LLM_PROVIDER", None)
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\nLLM_PROVIDER=claude-cli\n")
+        le.load_llm_env()
+        try:
+            code, out = self.require(["claude-haiku-4-5"])
+        finally:
+            os.environ.pop("LLM_PROVIDER", None)
+        self.assertEqual(code, 2)
+        self.assertIn("LLM_PROVIDER='claude-cli'", out)
+
+    def test_valid_spellings_pass(self):
+        """合法值（含大小寫、前後空白，與 llm_models.provider 的正規化一致）與空值照常放行。"""
+        self.write(f"DEEPSEEK_API_KEY={FAKE_KEY}\n")
+        le.load_llm_env()
+        for raw in ("deepseek", "DeepSeek", " claude_cli ", "claude_only", ""):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"LLM_PROVIDER": raw}):
+                code, out = self.require({"summary": "deepseek-flash"})
+                self.assertIsNone(code, out)
+
+    def test_web_still_falls_back_for_the_same_value(self):
+        """對照：線上解析（llm_models.provider）對同一個值仍是退回 deepseek，不拋。"""
+        from app.services import llm_models
+
+        self.assertEqual(llm_models.provider({"LLM_PROVIDER": "claude-cli"}), llm_models.PROVIDER_DEEPSEEK)
+
+    def test_model_source_prints_the_raw_provider_value(self):
+        with mock.patch.dict(os.environ, {"LLM_PROVIDER": " DeepSeek ", "SUMMARY_MODEL": ""}):
+            self.assertEqual(le._model_source("summary", "deepseek-flash"),
+                             "LLM_PROVIDER=DeepSeek 的 summary 預設 deepseek-flash")
+
+
+class AllClaudeWarningTests(_EnvFileCase):
+    """全部解析成 Claude：印一行醒目的 WARNING、不中止。
+
+    PR-28 前預設 claude_cli，這行只在環境檔缺失／讀不到時印（抓「切 DeepSeek 沒生效」）。PR-28 起
+    預設 deepseek，缺檔改由缺金鑰 rc=2 明確失敗（見 DefaultProviderMissingFileTests），全部解析成
+    Claude 只會是顯式設定——與檔案讀不讀得到無關，一律警告並說出來源。"""
 
     def test_missing_file_warns_but_passes(self):
         le.load_llm_env()
@@ -391,12 +443,26 @@ class ClaudeWithoutEnvFileWarningTests(_EnvFileCase):
         self.assertIn("WARNING", out)
         self.assertIn("PermissionError", out)
 
-    def test_readable_file_is_quiet(self):
+    def test_readable_file_still_warns_without_file_note(self):
+        """檔案讀得到、卻仍全是 Claude：顯式設定（shell、unit 或檔案本身），照樣警告，不提檔案狀態。"""
         self.write("SOMETHING=1\n")
         le.load_llm_env()
         code, out = self.require(["claude-haiku-4-5"])
         self.assertIsNone(code)
-        self.assertNotIn("WARNING", out)
+        self.assertIn("WARNING", out)
+        self.assertNotIn("不存在", out)
+        self.assertNotIn("讀不到", out)
+
+    def test_names_the_source(self):
+        """說出是哪個設定把它變成 Claude：LLM_PROVIDER 的預設表或任務旋鈕。"""
+        with mock.patch.dict(os.environ, {"LLM_PROVIDER": "claude_only", "SUMMARY_MODEL": "", "TITLE_MODEL": ""}):
+            le.load_llm_env()
+            code, out = self.require({"summary": "claude-sonnet-5"})
+        self.assertIsNone(code)
+        self.assertIn("LLM_PROVIDER=claude_only 的 summary 預設 claude-sonnet-5", out)
+        with mock.patch.dict(os.environ, {"LLM_PROVIDER": "", "TITLE_MODEL": "claude-sonnet-5"}):
+            code, out = self.require({"title": "claude-sonnet-5"})
+        self.assertIn("TITLE_MODEL=claude-sonnet-5", out)
 
     def test_no_models_is_quiet(self):
         le.load_llm_env()
@@ -409,6 +475,28 @@ class ClaudeWithoutEnvFileWarningTests(_EnvFileCase):
         le.load_llm_env()
         code, out = self.require(["deepseek-flash", "claude-haiku-4-5"])
         self.assertEqual(code, 2)
+        self.assertNotIn("WARNING", out)
+
+
+class DefaultProviderMissingFileTests(_EnvFileCase):
+    """PR-28 的目的：`/etc/default/report-mark-llm` 缺檔時批次不得退回已失效的 CLI。
+
+    LLM_PROVIDER 未設＝deepseek → 模型解析成 deepseek-flash → 批次不讀 repo 根 `.env`、拿不到金鑰 →
+    預檢 rc=2 並提示安裝（sync 殼把 rc=2 當帳號／環境型中止告警）。"""
+
+    def test_unset_provider_and_missing_file_is_rc2(self):
+        from app.services.llm_models import resolve_model
+
+        with mock.patch.dict(os.environ, {"SUMMARY_MODEL": "", "TITLE_MODEL": ""}):
+            os.environ.pop("LLM_PROVIDER", None)
+            le.load_llm_env()  # 檔案不存在
+            models = {"summary": resolve_model("summary"), "title": resolve_model("title")}
+            self.assertEqual(models, {"summary": "deepseek-flash", "title": "deepseek-flash"})
+            code, out = self.require(models)
+        self.assertEqual(code, 2)
+        self.assertIn("DEEPSEEK_API_KEY", out)
+        self.assertIn("report-mark-llm.env.example", out)
+        self.assertIn("LLM_PROVIDER（未設，預設 deepseek）", out)
         self.assertNotIn("WARNING", out)
 
 

@@ -11,7 +11,6 @@ import os
 from dataclasses import dataclass
 
 from app.services.llm_models import (
-    CLAUDE_DEFAULTS,
     DEFAULT_PROVIDER,
     TASK_ASK_ANSWER,
     TASK_ASK_CONDENSE,
@@ -19,6 +18,8 @@ from app.services.llm_models import (
     TASK_ASK_WEB,
     TASK_FAITHFULNESS,
     TASK_QA_PLANNER,
+    default_model,
+    is_http_model,
     provider,
     resolve_model,
 )
@@ -113,6 +114,35 @@ def _positive_float(name: str, default: float) -> float:
         logging.getLogger(__name__).warning("%s=%r 不是正數，退回 %g", name, raw, default)
         return default
     return value
+
+
+def _budget_currency() -> str:
+    """`/healthz/llm` 只讀 `balance_infos` 裡這個幣別的那一筆；三個英文字母，其餘退回 CNY 並警告。"""
+    raw = (os.getenv("LLM_BUDGET_CURRENCY") or "").strip().upper()
+    if not raw:
+        return "CNY"
+    if len(raw) != 3 or not raw.isascii() or not raw.isalpha():
+        logging.getLogger(__name__).warning("LLM_BUDGET_CURRENCY=%r 不是三碼幣別，退回 CNY", raw)
+        return "CNY"
+    return raw
+
+
+# 問答抽查逾時的預設值依 judge 走哪條路而定（見 `_load` 裡 ask_faithfulness_timeout 的註解）。
+ASK_FAITHFULNESS_TIMEOUT_HTTP = 90.0
+ASK_FAITHFULNESS_TIMEOUT_CLI = 240.0
+
+
+def _ask_faithfulness_timeout(judge_model: str) -> float:
+    """`ASK_FAITHFULNESS_TIMEOUT` 有設就用它；沒設時 DeepSeek judge 90、Claude CLI judge 240。
+
+    預設值不能不分 provider：若有人把 `FAITHFULNESS_MODEL` 設回 claude-*（或 `LLM_PROVIDER=claude_cli`），
+    固定 90 秒會讓 CLI 的 grounding（單次實測 48–142 秒）大半記成 degraded(timeout)，而且沒有任何訊號
+    說是逾時值跟錯了 judge。空字串視同未設。
+    """
+    raw = (os.getenv("ASK_FAITHFULNESS_TIMEOUT") or "").strip()
+    if raw:
+        return float(raw)
+    return ASK_FAITHFULNESS_TIMEOUT_HTTP if is_http_model(judge_model) else ASK_FAITHFULNESS_TIMEOUT_CLI
 
 
 def _faithfulness_min() -> float:
@@ -216,14 +246,20 @@ class Settings:
 
     # LLM 供應商與線上任務的模型（app/services/llm_models.py 的 resolve_model；旋鈕名見其
     # TASK_ENV）。ask_intent_model 等既有欄位也經同一張表解析，放在各自原本的區段。
+    # 欄位預設跟著 DEFAULT_PROVIDER 的表（`_load` 一律顯式傳值，這裡只管直接建構時不自相矛盾）。
     llm_provider: str = DEFAULT_PROVIDER
-    ask_answer_model: str = CLAUDE_DEFAULTS[TASK_ASK_ANSWER]   # 總覽、主答（不開網搜）、評測生成
-    ask_web_model: str = CLAUDE_DEFAULTS[TASK_ASK_WEB]         # 時效題網搜、主答開網搜
+    ask_answer_model: str = default_model(TASK_ASK_ANSWER)   # 總覽、主答（不開網搜）、評測生成
+    ask_web_model: str = default_model(TASK_ASK_WEB)         # 時效題網搜、主答開網搜
     # DeepSeek 串流（llm.stream_completion 的 HTTP 路徑）的牆鐘總時限（秒，從呼叫開始算）。
     # 只是最後一道上限：首字前有首字期限，吐字後正常靠 max_tokens 與 read 逾時收尾；伺服器
     # 每 60 秒內滴一點內容時兩者都收不了。到期且已吐字＝截斷（附註＋filters.llm_truncated）。
     # 寬鬆是刻意的：最長的主答 8192 tokens 正常一兩分鐘內收完。CLI 路徑不受影響。
     llm_http_total_timeout: float = 600.0
+    # DeepSeek 餘額告警（web/routers/health.py 的 /healthz/llm；只有 web 讀，設在 repo 根 .env）。
+    # 只看 `LLM_BUDGET_CURRENCY` 那一筆（D-O：帳戶以人民幣儲值）；低於門檻回 503 → 探針退出碼 7（用罄等停擺是 8）。
+    # 月上限 ¥350 是儲值紀律（docs/production_resilience.md），刻意不寫成程式旋鈕。
+    llm_budget_currency: str = "CNY"
+    llm_balance_floor: float = 70.0
 
 
 def _load() -> Settings:
@@ -249,8 +285,8 @@ def _load() -> Settings:
         # 模型旋鈕一律經 llm_models.resolve_model：非空的任務旋鈕優先，否則查 LLM_PROVIDER 的
         # 預設表；空字串視同未設（tests/conftest.py 把全部旋鈕強制成 ""）。
         # 改寫前 ASK_CONDENSE_MODEL／QA_PLANNER_MODEL 未設時會跟著 ASK_INTENT_MODEL 走；
-        # 現在各自查表（claude_cli 下三者同為 claude-haiku-4-5，生產環境檔沒有設這三個鍵，
-        # 行為不變）。理由同 FAITHFULNESS_MODEL 的解耦：換一個旋鈕不該靜默換掉另一個任務。
+        # 現在各自查表（claude_cli 表三者同為 claude-haiku-4-5、deepseek 表三者同為 deepseek-flash，
+        # 生產環境檔沒有設這三個鍵）。理由同 FAITHFULNESS_MODEL 的解耦：換一個旋鈕不該靜默換掉另一個任務。
         ask_intent_model=resolve_model(TASK_ASK_INTENT),
         ask_intent_timeout=float(os.getenv("ASK_INTENT_TIMEOUT", "20")),
         ask_condense_model=resolve_model(TASK_ASK_CONDENSE),
@@ -296,24 +332,34 @@ def _load() -> Settings:
         # 生產忠實度 judge。**刻意不再沿用 ASK_INTENT_MODEL**（DeepSeek 遷移 PR-07）：
         # 先前未設時跟著 intent 走，而生產環境檔沒有覆寫——只要哪天把路由模型換掉，
         # judge 就在同一刻被靜默換掉，監控卡上的分數從此是另一把尺量的，卻沒有任何
-        # 記號。預設字串與改動前的實際值相同（intent 預設 claude-haiku-4-5），所以
-        # 本改動不改變生產實際用的 judge。空字串視同未設。DeepSeek 預設表裡這列仍是
-        # claude-haiku-4-5：換 judge 要等校準（PR-27），不隨 LLM_PROVIDER 一起換。
-        # 換 judge 時連帶看 app/services/judge_schema.py：讀分數的三處只計現行 judge。
+        # 記號。空字串視同未設。DeepSeek 預設表裡這列自 PR-26/27 起是 deepseek-flash（新量尺
+        # 系譜，claude_cli 表仍是 claude-haiku-4-5）。換 judge 時連帶看 app/services/judge_schema.py：
+        # 讀分數的三處只計現行 judge，舊尺的列歸「其他 judge」。
         faithfulness_model=resolve_model(TASK_FAITHFULNESS),
         # 沒有現行呼叫端：問答抽查用下面那顆 ask_faithfulness_timeout，
         # scripts/eval_faithfulness.py 只讀 qa_log、不呼叫 LLM。保留是為了 check_faithfulness
         # 的其他呼叫者（目前沒有），以及下方「問答那顆必須比它大」的測試基準。
         faithfulness_timeout=float(os.getenv("FAITHFULNESS_TIMEOUT", "60")),
-        # 問答抽查的逾時與 `faithfulness_timeout` 分開：後者是 judge 單次呼叫的通用逾時，
-        # 而問答抽查的實測需求遠超 60 秒：
-        # 2026-08-21 以生產原始輸入量到 ground 單次 48–142 秒（payload 15–19k 字），
-        # 60 秒必然砍掉其中一題。抽查已改成背景任務、不佔 `/api/ask` 名額，所以這裡
-        # 放寬是零使用者成本。
-        ask_faithfulness_timeout=float(os.getenv("ASK_FAITHFULNESS_TIMEOUT", "240")),
-        # 抽查改成背景任務後就不再受 `/api/ask` 的併發閘保護：每次抽查 spawn 一個
-        # `claude` CLI 跑 48–142 秒，抽樣率預設 1.0，連續問答時背景行程數會無上界地
-        # 累積。這裡給它自己的上限——超過就**跳過該次抽查**而不是排隊：抽查本來就是
+        # 問答抽查的逾時（每次 judge 呼叫＝一個階段的一次 `llm_http.complete_json`，涵蓋其內
+        # 最多 2 個請求與退避的總期限），與 `faithfulness_timeout` 分開。
+        # 預設值依 judge 走哪條路而定（`_ask_faithfulness_timeout`，以 `is_http_model(faithfulness_model)`
+        # 判斷）：DeepSeek 90、Claude CLI 240；顯式設了 ASK_FAITHFULNESS_TIMEOUT 就照設的值。
+        # DeepSeek 的 90 是 PR-26/27 重訂的（第二版計畫 §6.4：max(ceil(3×p99), 60)，沒有 judge 的 p99
+        # 就用探測資料保守估）：
+        #   - 9/24 探測 deepseek-flash、thinking 關：問答（輸入同為 ≤20k 字脈絡、輸出 ~1k token，
+        #     與 grounding 的 payload 同量級）p50 5.6／p95 7.0 秒；judge 非串流、輸出更短。
+        #   - 沒有 p99：保守取 p99≈2×p95＝14 秒；一次呼叫最多 2 個請求（截斷重試的輸出上限加倍），
+        #     單次上限≈2×14＝28 秒；×3＝84 → 取整 90，且 > FAITHFULNESS_TIMEOUT（60）。
+        # CLI 的 240 沿用 CLI 時代（ground 單次實測 48–142 秒）。
+        # 上線後以日誌 `llm_call task=faithfulness` 的 `total_ms` 重量（每次 judge 呼叫一行，正是這個
+        # 期限涵蓋的範圍；那一行的 total_ms 是最後一個請求的耗時，`attempts=1` 時即整次呼叫，
+        # `attempts=2` 的行要另外看），照同一條公式重訂。**不要拿 `evaluation.elapsed_ms`**：它是
+        # 整次抽查（拆解＋grounding 兩次 judge 呼叫、加上兩者之間的處理），約是單次的兩倍，會把期限估大。
+        # 抽查是背景任務、不佔 `/api/ask` 名額，逾時只會記 degraded(timeout)，不是低分。
+        ask_faithfulness_timeout=_ask_faithfulness_timeout(resolve_model(TASK_FAITHFULNESS)),
+        # 抽查改成背景任務後就不再受 `/api/ask` 的併發閘保護：每次抽查要跑兩個 judge 階段
+        # （CLI 時代每次 spawn 一個 `claude` 跑 48–142 秒；DeepSeek 下最多 6 個請求），抽樣率預設
+        # 1.0，連續問答時背景任務數會無上界地累積。這裡給它自己的上限——超過就**跳過該次抽查**而不是排隊：抽查本來就是
         # 抽樣的 best-effort，少查一題與抽樣率沒抽中是同一件事，排隊反而會讓抽查對象
         # 與抽查時間脫節。
         ask_faithfulness_max_inflight=max(0, int(os.getenv("ASK_FAITHFULNESS_MAX_INFLIGHT", "2"))),
@@ -381,6 +427,8 @@ def _load() -> Settings:
         ask_answer_model=resolve_model(TASK_ASK_ANSWER),
         ask_web_model=resolve_model(TASK_ASK_WEB),
         llm_http_total_timeout=_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0),
+        llm_budget_currency=_budget_currency(),
+        llm_balance_floor=_positive_float("LLM_BALANCE_FLOOR", 70.0),
     )
 
 

@@ -40,9 +40,11 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -682,6 +684,13 @@ class _JudgeObserver:
         for k, v in (meta.get("usage") or {}).items():
             self.usage[k] = self.usage.get(k, 0) + v
 
+    def merge(self, snapshot: dict) -> None:
+        self.model_resp.update(snapshot.get("model_resp") or [])
+        self.fingerprints.update(snapshot.get("system_fingerprint") or [])
+        self.requests += snapshot.get("requests", 0)
+        for k, v in (snapshot.get("usage") or {}).items():
+            self.usage[k] = self.usage.get(k, 0) + v
+
     def snapshot(self) -> dict:
         if not self.requests:
             return {}
@@ -696,6 +705,45 @@ class _JudgeObserver:
 def _dump_name(case_id, run_idx: int, repeat: int) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", str(case_id)) or "case"
     return f"{safe}-r{run_idx + 1}.json" if repeat > 1 else f"{safe}.json"
+
+
+def _write_checkpoint(path: Path, payload: dict) -> None:
+    """同目錄原子寫入，行程中斷時不留下看似完整的付費結果。"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, prefix=".partial-", delete=False,
+    ) as stream:
+        temporary = Path(stream.name)
+        json.dump(payload, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def _prepare_checkpoints(directory: Path, identity: dict, questions: list[dict], repeat: int) -> dict:
+    """付費呼叫前核對所有舊檢查點；設定漂移或檔案損壞直接停止。"""
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    manifest = directory / "manifest.json"
+    if manifest.exists():
+        if json.loads(manifest.read_text(encoding="utf-8")) != identity:
+            raise ValueError("檢查點設定不符，不能沿用先前的付費結果")
+    else:
+        if any(directory.iterdir()):
+            raise ValueError("檢查點目錄已有檔案但缺 manifest，不能安全續跑")
+        _write_checkpoint(manifest, identity)
+    cached = {}
+    for q in questions:
+        for run_idx in range(repeat):
+            path = directory / _dump_name(q["id"], run_idx, repeat)
+            if not path.exists():
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if (payload.get("id") != q["id"] or payload.get("run") != run_idx + 1 or
+                    not isinstance(payload.get("result"), dict) or
+                    not isinstance(payload.get("judge_observed"), dict)):
+                raise ValueError(f"檢查點內容不符：{path}")
+            cached[(q["id"], run_idx)] = payload
+    return cached
 
 
 def dump_io(
@@ -750,6 +798,7 @@ async def run(
     corpus_id: str | None = None,
     match_baseline=None,
     complete_only: bool = False,
+    checkpoint_dir=None,
 ) -> dict:
     """讀題集 → 有界併發 eval_question → aggregate → 寫報表（{summary, config, cases}）。
 
@@ -792,23 +841,40 @@ async def run(
 
     retrieval_params = {**RETRIEVAL_PARAMS, "rerank_top_m": rerank_top_m}
 
+    checkpoint_path = Path(checkpoint_dir) if checkpoint_dir is not None else None
+    cached = {}
+    if checkpoint_path is not None:
+        identity = build_config(
+            dataset_path=dataset_path, generator_model=generator_model, judge_model=judge_model,
+            concurrency=concurrency, repeat=repeat, rerank_top_m=rerank_top_m, scope=scope,
+            limit=limit, agentic=agentic, commit=commit, started_at="", corpus_id=corpus_id,
+        )
+        identity = {"version": 1, "config": identity, "out_path": str(Path(out_path).resolve()) if out_path else None,
+                    "question_ids": [q["id"] for q in questions]}
+        cached = _prepare_checkpoints(checkpoint_path, identity, questions, repeat)
+
     observer = _JudgeObserver()
-
-    async def _judge(system: str, user: str):
-        meta: dict = {}
-        try:
-            return await judge_json(
-                user, system=system, model=judge_model,
-                max_tokens=JUDGE_MAX_TOKENS_BY_SYSTEM.get(system, JUDGE_MAX_TOKENS), meta=meta,
-            )
-        finally:
-            observer.add(meta)
-
     sem = asyncio.Semaphore(concurrency)
 
-    async def _one(q: dict) -> dict:
+    async def _one(q: dict, run_idx: int) -> tuple[dict, dict]:
+        saved = cached.get((q["id"], run_idx))
+        if saved is not None:
+            print(f"續跑 {q['id']} #{run_idx + 1}/{repeat}", file=sys.stderr, flush=True)
+            return saved["result"], saved["judge_observed"]
         async with sem:  # 限制同時 spawn 的 claude CLI 數，避開 IO 風暴
-            return await eval_question(
+            local_observer = _JudgeObserver()
+
+            async def _judge(system: str, user: str):
+                meta: dict = {}
+                try:
+                    return await judge_json(
+                        user, system=system, model=judge_model,
+                        max_tokens=JUDGE_MAX_TOKENS_BY_SYSTEM.get(system, JUDGE_MAX_TOKENS), meta=meta,
+                    )
+                finally:
+                    local_observer.add(meta)
+
+            result = await eval_question(
                 q,
                 judge=_judge,
                 embed=embed_query_cached,
@@ -816,8 +882,20 @@ async def run(
                 agentic=agentic,
                 gen_model=generator_model,
             )
+            observed = local_observer.snapshot()
+            if checkpoint_path is not None:
+                _write_checkpoint(
+                    checkpoint_path / _dump_name(q["id"], run_idx, repeat),
+                    {"id": q["id"], "run": run_idx + 1, "result": result,
+                     "judge_observed": observed, "completed_at": datetime.now(timezone.utc).isoformat()},
+                )
+                print(f"完成 {q['id']} #{run_idx + 1}/{repeat}", file=sys.stderr, flush=True)
+            return result, observed
 
-    flat = await asyncio.gather(*[_one(q) for q in questions for _ in range(repeat)])
+    completed = await asyncio.gather(*[_one(q, run_idx) for q in questions for run_idx in range(repeat)])
+    flat = [result for result, _observed in completed]
+    for _result, observed in completed:
+        observer.merge(observed)
     cases: list[dict] = []
     for qi in range(len(questions)):
         runs = list(flat[qi * repeat : (qi + 1) * repeat])
@@ -910,6 +988,8 @@ def _main() -> None:
                         help="每題重跑次數；>1 時每題每指標跨次取平均（彙總規則見模組 docstring）")
     parser.add_argument("--dump-io", default=None, metavar="DIR",
                         help="逐題寫出問題／脈絡／答案／judge 回應（建議 data/eval_frozen/<名稱>）")
+    parser.add_argument("--checkpoint-dir", default=None, metavar="DIR",
+                        help="逐題逐次原子保存結果；設定相同時可安全續跑付費評測")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--concurrency", type=int, default=3)
     parser.add_argument(
@@ -947,6 +1027,7 @@ def _main() -> None:
                 generator_model=args.generator_model,
                 repeat=args.repeat,
                 dump_dir=args.dump_io,
+                checkpoint_dir=args.checkpoint_dir,
                 corpus_id=args.corpus_id,
                 match_baseline=args.match_baseline,
                 complete_only=args.complete_only,

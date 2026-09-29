@@ -205,14 +205,15 @@ uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # De
   BASELINE=eval/baselines/baseline-YYYY-MM-DD-jdsflash-gdsflash.json
   uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \
     --generator-model deepseek-flash --judge-model deepseek-flash --concurrency 1 --repeat 3 \
-    --complete-only --out "$BASELINE"
+    --complete-only --checkpoint-dir data/eval_frozen/deepseek-baseline-checkpoints --out "$BASELINE"
   uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \
     --generator-model deepseek-flash --judge-model deepseek-flash --concurrency 1 --repeat 3 \
-    --match-baseline "$BASELINE" --out eval/candidate-ragas.json
+    --match-baseline "$BASELINE" --checkpoint-dir data/eval_frozen/deepseek-candidate-checkpoints \
+    --out eval/candidate-ragas.json
   make eval-compare BASE="$BASELINE" CAND=eval/candidate-ragas.json
   ```
 
-  `--complete-only` 要求所有題目都有來源、生成成功，且 F／CP／AR 三項 judge 分數全數有效；否則不寫結果。正式基準流程也拒絕覆寫既有輸出。`--match-baseline` 在付費呼叫前比對題集 SHA256、語料快照 ID、模型、judge prompt／schema、檢索設定、重跑次數與併發，執行後再比對 API 回報的 judge model／system fingerprint；缺少既有設定也拒絕。若 API 未提供 fingerprint，結果只記空值，需人工確認服務端模型版本。將首份完整結果升格後，更新本段與 `CLAUDE.md` 的「最新基準線」記載。
+  `--complete-only` 要求所有題目都有來源、生成成功，且 F／CP／AR 三項 judge 分數全數有效；否則不寫結果。正式基準流程也拒絕覆寫既有輸出。`--checkpoint-dir` 逐題逐次原子保存付費結果；同一輸出路徑、commit、語料快照與設定重跑時自動續跑，設定漂移則在付費前停止；基準與候選必須用不同目錄。檢查點含研報片段與答案，只放在未版控的 `data/eval_frozen/`。`--match-baseline` 在付費呼叫前比對題集 SHA256、語料快照 ID、模型、judge prompt／schema、檢索設定、重跑次數與併發，執行後再比對 API 回報的 judge model／system fingerprint；缺少既有設定也拒絕。若 API 未提供 fingerprint，結果只記空值，需人工確認服務端模型版本。將首份完整結果升格後，更新本段與 `CLAUDE.md` 的「最新基準線」記載。
 - `run_ragas` 的結果檔記錄量尺：summary 的 `judge_model`、`judge_prompt_sha`、`judge_schema_version` 是 META 鍵，兩份不同、或**只有一邊有記錄**，`eval-compare` 一律回 2。上面那份最新基準線是在記錄量尺之前產出的，所以**現在拿新結果跟它比一律回 2**，直到用新版重跑出新的基準線為止；要比就兩邊都用同一版重跑。生成端、各任務 model、commit、題集 sha256 記在 `config`（只印差異，不判定）。judge 出錯只讓該指標記 None（`n_judge_errors` 計數，只列出、不判方向），但 summary 另記三個 judge 指標各自入均值的題數 `n_effective_<指標>` 與題目集合雜湊 `judged_ids_sha`：兩邊的題目集合不同（例如各錯一題但題目不同）`eval-compare` 回 2，處置是補跑到兩邊相同題目，或直接跑 `uv run python scripts/eval_compare.py … --common-only` 只在兩邊都有值的題目上重取平均（門檻旗標在此模式下不判定）。`n_truncated` 取自 `stream_completion` 回報的逾時截斷（成功那次嘗試撞到逾時、已吐的字被砍掉；529 重試的時間不算）；輸出長度上限造成的截斷 CLI 看不到，PR-11 接 HTTP 後改用 `finish_reason`。`--repeat` 每題每指標跨次取平均，規則寫在 `eval/run_ragas.py` 的模組 docstring。
 - judge 回應以 schema v2 嚴格驗證（`app/services/judge_schema.py`：`statements` 必須是字串陣列、`idx` 必須恰好覆蓋全部條目且不收布林、判定值必須是布林、AR 取不到問題算錯），不合格重試 1 次；離線仍不合格記該指標 None，生產記 `degraded_reason=schema`，唯獨生產 grounding 缺 idx 仍計 unsupported 並記 WARNING（條數記進 `evaluation.n_missing_verdicts`；一條都沒判算 schema 錯）。CP 候選片段改為 1 起編號、與脈絡的 `[n]` 和答案引用一致。
 - 改動對照表（改了 A 要動 B）在 `CLAUDE.md`；契約類測試清單在 `AGENTS.md`。

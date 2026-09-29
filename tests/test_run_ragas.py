@@ -810,6 +810,53 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("judge_calls", doc)
         self.assertTrue(all("_io" not in r for c in report["cases"] for r in c["runs"]))
 
+    async def test_checkpoint_resumes_without_repeating_paid_calls(self):
+        with tempfile.TemporaryDirectory() as td:
+            questions = [
+                {"id": "q001", "question": "台積電營運展望如何", "filters": {}, "scope": "corpus_qa"},
+                {"id": "q002", "question": "聯發科成長動能如何", "filters": {}, "scope": "corpus_qa"},
+            ]
+            ds = Path(td) / "questions.json"
+            ds.write_text(json.dumps({
+                "version": 2, "generated_at": "2026-09-29T00:00:00+08:00",
+                "count": 2, "questions": questions,
+            }, ensure_ascii=False), encoding="utf-8")
+            output = Path(td) / "result.json"
+            checkpoints = Path(td) / "checkpoints"
+            calls = []
+            interrupt = True
+
+            async def fake_eval(q, **kwargs):
+                calls.append(q["id"])
+                if q["id"] == "q002" and interrupt:
+                    raise RuntimeError("模擬執行中斷")
+                return _run(id=q["id"], question=q["question"])
+
+            with mock.patch.object(rr, "eval_question", fake_eval):
+                with self.assertRaisesRegex(RuntimeError, "執行中斷"):
+                    await rr.run(ds, out_path=output, concurrency=1, checkpoint_dir=checkpoints)
+                self.assertTrue((checkpoints / "q001.json").exists())
+                self.assertFalse(output.exists())
+                interrupt = False
+                report = await rr.run(ds, out_path=output, concurrency=1, checkpoint_dir=checkpoints)
+                self.assertEqual(calls, ["q001", "q002", "q002"])
+                self.assertEqual(report["summary"]["n"], 2)
+                with self.assertRaisesRegex(ValueError, "檢查點設定不符"):
+                    await rr.run(ds, out_path=output, concurrency=1, rerank_top_m=2,
+                                 checkpoint_dir=checkpoints)
+                self.assertEqual(calls, ["q001", "q002", "q002"])
+
+    def test_judge_observation_merges_across_checkpoint_runs(self):
+        observer = rr._JudgeObserver()
+        observer.merge({"model_resp": ["m"], "system_fingerprint": ["f"],
+                        "requests": 2, "usage": {"prompt_tokens": 30}})
+        observer.merge({"model_resp": ["m"], "system_fingerprint": ["g"],
+                        "requests": 1, "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+        self.assertEqual(observer.snapshot(), {
+            "model_resp": ["m"], "system_fingerprint": ["f", "g"],
+            "requests": 3, "usage": {"completion_tokens": 5, "prompt_tokens": 40},
+        })
+
     async def test_repeat_must_be_positive(self):
         with self.assertRaises(ValueError):
             await rr.run("unused.json", out_path=None, repeat=0)

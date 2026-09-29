@@ -67,6 +67,7 @@ from app.services.answer import (  # noqa: E402
     SYSTEM_PROMPT,
     build_user_prompt,
 )
+from app.services.citation_filter import filter_unknown_citations  # noqa: E402
 from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
@@ -242,7 +243,8 @@ async def _generate_answer(
         if chunk == SEARCH_EVENT:
             continue
         parts.append(chunk)
-    return "".join(parts), bool(meta.get("truncated"))
+    answer = filter_unknown_citations("".join(parts), range(1, len(split_contexts(context)) + 1))
+    return answer, bool(meta.get("truncated"))
 
 
 def has_valid_citation(answer: str, n_contexts: int) -> bool:

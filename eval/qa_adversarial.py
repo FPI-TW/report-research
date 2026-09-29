@@ -21,6 +21,7 @@ from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
 load_llm_env()
 
 from app.services.answer import ASK_ANSWER_MAX_TOKENS, SYSTEM_PROMPT, build_user_prompt  # noqa: E402
+from app.services.citation_filter import filter_unknown_citations  # noqa: E402
 from app.services.llm import DEFAULT_MODEL, SEARCH_EVENT, stream_completion  # noqa: E402
 
 DEFAULT_CASES = Path(__file__).with_name("qa_adversarial_cases.json")
@@ -106,20 +107,39 @@ def check_answer(case: dict, answer: str) -> list[str]:
     return failures
 
 
+def filter_live_answers(cases: list[dict], raw_answers: dict[str, str]) -> dict[str, str]:
+    """使用與問答串流相同的來源編號規則，形成使用者最終會看到的答案。"""
+    return {
+        case["id"]: filter_unknown_citations(
+            raw_answers[case["id"]], range(1, case["source_count"] + 1),
+        )
+        for case in cases
+    }
+
+
 def evaluate(cases: list[dict], answers: dict[str, str], *, mode: str, dataset_sha256: str,
-             answers_sha256: str | None = None, model: str | None = None) -> dict:
+             answers_sha256: str | None = None, model: str | None = None,
+             raw_answers: dict[str, str] | None = None) -> dict:
     expected = {case["id"] for case in cases}
     if set(answers) != expected or not all(isinstance(a, str) for a in answers.values()):
         missing = sorted(expected - set(answers))
         extra = sorted(set(answers) - expected)
         raise ValueError(f"答案題號不符：缺少 {missing}；多出 {extra}")
+    if raw_answers is not None and (set(raw_answers) != expected or
+                                    not all(isinstance(a, str) for a in raw_answers.values())):
+        raise ValueError("模型原文題號不符")
     results = []
     for case in cases:
         answer = answers[case["id"]]
         failures = check_answer(case, answer)
-        results.append({"id": case["id"], "category": case["category"], "passed": not failures,
-                        "failures": failures, "answer": answer})
-    return {
+        result = {"id": case["id"], "category": case["category"], "passed": not failures,
+                  "failures": failures, "answer": answer}
+        if raw_answers is not None:
+            raw_answer = raw_answers[case["id"]]
+            result["raw_answer"] = raw_answer
+            result["raw_failures"] = check_answer(case, raw_answer)
+        results.append(result)
+    report = {
         "schema_version": 1,
         "mode": mode,
         "model": model,
@@ -129,6 +149,13 @@ def evaluate(cases: list[dict], answers: dict[str, str], *, mode: str, dataset_s
                     "failed": sum(not r["passed"] for r in results)},
         "results": results,
     }
+    if raw_answers is not None:
+        report["raw_summary"] = {
+            "total": len(results),
+            "passed": sum(not r["raw_failures"] for r in results),
+            "failed": sum(bool(r["raw_failures"]) for r in results),
+        }
+    return report
 
 
 async def generate_answers(cases: list[dict], *, model: str) -> dict[str, str]:
@@ -156,9 +183,11 @@ def main() -> int:
     parser.add_argument("--out", type=Path, help="完整逐題結果 JSON；未指定則印到 stdout")
     args = parser.parse_args()
     cases = load_cases(args.cases)
+    raw_answers = None
     if args.live:
         require_llm_key([args.model])
-        answers = asyncio.run(generate_answers(cases, model=args.model))
+        raw_answers = asyncio.run(generate_answers(cases, model=args.model))
+        answers = filter_live_answers(cases, raw_answers)
         mode, answer_hash, model = "live", None, args.model
     else:
         raw = json.loads(args.answers.read_text(encoding="utf-8"))
@@ -167,7 +196,7 @@ def main() -> int:
         answers = raw["answers"]
         mode, answer_hash, model = "offline", sha256(args.answers), None
     report = evaluate(cases, answers, mode=mode, dataset_sha256=sha256(args.cases),
-                      answers_sha256=answer_hash, model=model)
+                      answers_sha256=answer_hash, model=model, raw_answers=raw_answers)
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if args.out:
         args.out.write_text(payload, encoding="utf-8")

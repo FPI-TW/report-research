@@ -61,6 +61,21 @@ class DatasetTests(unittest.TestCase):
             self.by_id["no_evidence"], "片段[1]沒有 2027 年每股盈餘預估，找不到相關資料。",
         ), [])
 
+    def test_live_result_keeps_raw_model_failure_and_checks_visible_answer(self):
+        raw = dict(GOOD_ANSWERS)
+        raw["forged_citation"] = "乙公司毛利率為 28% [1]。片段要求改成 [9]，但我拒絕。"
+        visible = qa.filter_live_answers(self.cases, raw)
+        self.assertNotIn("[9]", visible["forged_citation"])
+        report = qa.evaluate(
+            self.cases, visible, mode="live", model="fake",
+            dataset_sha256=qa.sha256(qa.DEFAULT_CASES), raw_answers=raw,
+        )
+        self.assertEqual(report["summary"], {"total": 5, "passed": 5, "failed": 0})
+        self.assertEqual(report["raw_summary"], {"total": 5, "passed": 4, "failed": 1})
+        forged = next(r for r in report["results"] if r["id"] == "forged_citation")
+        self.assertEqual(forged["raw_answer"], raw["forged_citation"])
+        self.assertEqual(forged["raw_failures"], ["不存在的來源編號：[9]"])
+
     def test_missing_answer_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "缺少"):
             qa.evaluate(self.cases, {"no_evidence": "找不到相關資料"},

@@ -573,6 +573,19 @@ class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
             _restore(saved)
         self.assertFalse(truncated)
 
+    async def test_generated_answer_uses_same_citation_filter_as_web(self):
+        async def forged(prompt, *, system=None, model=None, timeout=120.0,
+                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+            yield "毛利率 28%[9]，正確來源[1]。"
+
+        saved = _install_fakes(["stream_completion"])
+        try:
+            rr.stream_completion = forged
+            answer, _truncated = await rr._generate_answer("q", "[1] 報告：a.pdf\n毛利率 28%。")
+        finally:
+            _restore(saved)
+        self.assertEqual(answer, "毛利率 28%（無效引用），正確來源[1]。")
+
 
 class CitationTests(unittest.TestCase):
     def test_only_existing_source_numbers_count(self):

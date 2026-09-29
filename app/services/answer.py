@@ -24,6 +24,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import bindparam, text
 
 from app.config import get_settings
+from app.services.citation_filter import CitationStreamFilter, count_unknown_citations, filter_unknown_citations
 from app.services.db import SessionFactory
 from app.services.evidence import (
     EvidenceLedger,
@@ -2561,6 +2562,7 @@ async def answer_question(
     user_prompt = build_user_prompt(question, context, history_block)
     raw_parts: list[str] = []
     parser = SentinelStreamParser(EXT_SENTINEL)
+    citation_filter = CitationStreamFilter(s.n for s in sources)
     searching_sent = False
     thinking_ms: int | None = None
 
@@ -2596,7 +2598,7 @@ async def answer_question(
                         yield _status("searching_web")  # 步驟4：搜尋網路補充
                     continue
                 raw_parts.append(chunk)
-                emit = parser.feed(chunk)
+                emit = citation_filter.feed(parser.feed(chunk))
                 if emit:
                     for ev in _emit_token(emit):
                         yield ev
@@ -2638,7 +2640,7 @@ async def answer_question(
                 active=False,
             )
             raise
-    tail = parser.flush()
+    tail = citation_filter.feed(parser.flush()) + citation_filter.flush()
     if tail:
         for ev in _emit_token(tail):
             yield ev
@@ -2658,6 +2660,11 @@ async def answer_question(
     body, ext_sources = split_external_sources(raw)
     if note:
         body = body.rstrip() + note
+    invalid_citations = count_unknown_citations(body, (s.n for s in sources))
+    if invalid_citations:
+        log_filters["invalid_citation_count"] = invalid_citations
+        logger.warning("問答輸出含不存在的來源編號 count=%d request_id=%s", invalid_citations, request_id)
+    body = filter_unknown_citations(body, (s.n for s in sources))
     # 簡體收尾（見 _answer_correction）：此行之後的一切——引用解析、落庫、追問、
     # 忠實度抽查、研報邀請——全部吃轉換後的版本，畫面則由 done 的 answer 校正。
     # 棄稿段走同一條校正管道（見 drop_abandoned_draft）：它同樣是整串才判得出來的，

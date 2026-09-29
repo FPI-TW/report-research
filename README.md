@@ -183,9 +183,10 @@ cd frontend && npm test                # vitest
 cd frontend && npm run typecheck       # tsc --noEmit
 cd frontend && npm run lint            # eslint
 
-uv run python eval/run_ragas.py --concurrency 1   # 問答評測（生成與 judge 預設都呼叫 DeepSeek 付費 API），預設寫 eval/candidate-ragas.json
-uv run python eval/run_ragas.py --generator-model <model> --repeat 3 --dump-io data/eval_frozen/<名稱>
-make eval-compare BASE=<同一版 run_ragas 產出的基準線.json> CAND=eval/candidate-ragas.json
+python3 eval/question_contract.py eval/ragas_questions.json  # 零 LLM：驗題集契約並印 sha256
+uv run python eval/run_ragas.py --concurrency 1   # 探索性問答評測，預設寫 eval/candidate-ragas.json；會呼叫付費 API
+uv run python eval/run_ragas.py --generator-model deepseek-flash --repeat 3 --dump-io data/eval_frozen/example
+make eval-compare BASE=eval/baselines/example.json CAND=eval/candidate-ragas.json
 uv run python scripts/judge_agreement.py --dry-run   # judge 描述性校準（歷史 haiku 判定當參考、只描述；正式跑會呼叫付費 API）
 uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # DeepSeek 切換後批次產出觀測（零 LLM、唯讀；去掉 --dry-run 出報告）
 ```
@@ -195,7 +196,22 @@ uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # De
 - 測試絕不可寫 repo 根的真實環境檔（`tests/conftest.py` 會還原並 fail）。
 - 評測 `eval/` 刻意不進 CI（會呼叫付費 API；CI 不連網）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策；最新基準線 `eval/baselines/baseline-2026-09-02.json`（Claude haiku judge 的舊量尺系譜）。
 - **DeepSeek 切換後觀測**（`eval/observe_switch.py`，零 LLM、唯讀）：切換後第 7 天、第 14 天各跑一次，比切換前 30 天的 Claude 產出與切換後的 DeepSeek 產出。主指標是摘錄的任一方式錨定成功率（差值 CI 下界 ≥ −5pp）；摘錄產出率、訊號非 rejected 率、標題／摘要填補率差值 CI 下界 ≥ −2pp；標註 `skip_non_research`／market=None 比例差值 CI 上界 ≤ 0。另以用量紀錄零 LLM 判 content_filter 比例（Wilson 上界 ≤ 1%）、截斷／401／402 為 0 與斷路器標記。Claude 群排除 CLI 失效到切換的事故空窗（`--claude-until`），缺值率只把該批次自己模型的產出算已填；摘錄錨定排除擷取後被回填的研報，全庫回填期間不要跑。**總表全部通過不等於批次 A 觀測完成**（幻覺率、花費金額等見報告「未涵蓋項目」）。只輸出判讀、不做任何切換；劣化時只能修 prompt 或換 `deepseek-v4-pro`。從 worktree 跑時用 `--usage-log`／`--tags-dir`／`--breaker-file` 指到部署目錄。細節見 `docs/WORKFLOW.md`「DeepSeek 切換後觀測」。
-- **judge 自 2026-09 起是 DeepSeek（`deepseek-flash`，新量尺系譜 `deepseek-2026-09`），新系譜目前還沒有基準線。** 跟舊基準線比一律回 2 是預期（門檻數值不變）。產出方式：在不改檢索與生成的 commit 上跑 `uv run python eval/run_ragas.py --concurrency 1 --repeat 3 --out eval/baselines/baseline-YYYY-MM-DD-jdsflash-gdsflash.json`（結果檔的 `config.judge.lineage` 與頂層 `notes` 標出系譜），這第一份就是新系譜的起點，之後的改動都跟它比；升格時把這裡與 `CLAUDE.md` 的「最新基準線」一起改。
+- **judge 自 2026-09 起是 DeepSeek（`deepseek-flash`，新量尺系譜 `deepseek-2026-09`），新系譜目前還沒有基準線。** 舊 Claude haiku 結果不能相比（回 2；門檻數值不變）。`eval/ragas_questions.json` v2 有 18 題 corpus QA，先用 `python3 eval/question_contract.py` 驗結構；契約通過只代表題目格式正確，**不代表正式語料有來源**。在正式環境先凍結可重現的 DB／report_chunk 快照，逐題確認能取到可用研報來源，記下不可變的快照 ID、題集 SHA256、commit、生成與 judge 模型，再在該快照上執行以下兩次評測。此 checkout 沒有 `.env`／`data`，所以尚無實測分數或可升格的 DeepSeek 基準線。
+
+  ```bash
+  # 兩次執行使用同一個正式語料快照；SNAPSHOT_ID 填實際備份 ID 或內容雜湊。
+  SNAPSHOT_ID=actual-immutable-corpus-snapshot-id
+  BASELINE=eval/baselines/baseline-YYYY-MM-DD-jdsflash-gdsflash.json
+  uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \
+    --generator-model deepseek-flash --judge-model deepseek-flash --concurrency 1 --repeat 3 \
+    --complete-only --out "$BASELINE"
+  uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \
+    --generator-model deepseek-flash --judge-model deepseek-flash --concurrency 1 --repeat 3 \
+    --match-baseline "$BASELINE" --out eval/candidate-ragas.json
+  make eval-compare BASE="$BASELINE" CAND=eval/candidate-ragas.json
+  ```
+
+  `--complete-only` 要求所有題目都有來源、生成成功，且 F／CP／AR 三項 judge 分數全數有效；否則不寫結果。正式基準流程也拒絕覆寫既有輸出。`--match-baseline` 在付費呼叫前比對題集 SHA256、語料快照 ID、模型、judge prompt／schema、檢索設定、重跑次數與併發，執行後再比對 API 回報的 judge model／system fingerprint；缺少既有設定也拒絕。若 API 未提供 fingerprint，結果只記空值，需人工確認服務端模型版本。將首份完整結果升格後，更新本段與 `CLAUDE.md` 的「最新基準線」記載。
 - `run_ragas` 的結果檔記錄量尺：summary 的 `judge_model`、`judge_prompt_sha`、`judge_schema_version` 是 META 鍵，兩份不同、或**只有一邊有記錄**，`eval-compare` 一律回 2。上面那份最新基準線是在記錄量尺之前產出的，所以**現在拿新結果跟它比一律回 2**，直到用新版重跑出新的基準線為止；要比就兩邊都用同一版重跑。生成端、各任務 model、commit、題集 sha256 記在 `config`（只印差異，不判定）。judge 出錯只讓該指標記 None（`n_judge_errors` 計數，只列出、不判方向），但 summary 另記三個 judge 指標各自入均值的題數 `n_effective_<指標>` 與題目集合雜湊 `judged_ids_sha`：兩邊的題目集合不同（例如各錯一題但題目不同）`eval-compare` 回 2，處置是補跑到兩邊相同題目，或直接跑 `uv run python scripts/eval_compare.py … --common-only` 只在兩邊都有值的題目上重取平均（門檻旗標在此模式下不判定）。`n_truncated` 取自 `stream_completion` 回報的逾時截斷（成功那次嘗試撞到逾時、已吐的字被砍掉；529 重試的時間不算）；輸出長度上限造成的截斷 CLI 看不到，PR-11 接 HTTP 後改用 `finish_reason`。`--repeat` 每題每指標跨次取平均，規則寫在 `eval/run_ragas.py` 的模組 docstring。
 - judge 回應以 schema v2 嚴格驗證（`app/services/judge_schema.py`：`statements` 必須是字串陣列、`idx` 必須恰好覆蓋全部條目且不收布林、判定值必須是布林、AR 取不到問題算錯），不合格重試 1 次；離線仍不合格記該指標 None，生產記 `degraded_reason=schema`，唯獨生產 grounding 缺 idx 仍計 unsupported 並記 WARNING（條數記進 `evaluation.n_missing_verdicts`；一條都沒判算 schema 錯）。CP 候選片段改為 1 起編號、與脈絡的 `[n]` 和答案引用一致。
 - 改動對照表（改了 A 要動 B）在 `CLAUDE.md`；契約類測試清單在 `AGENTS.md`。

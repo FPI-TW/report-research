@@ -405,8 +405,13 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as td:
             ds = Path(td) / "ds.json"
-            ds.write_text(json.dumps({"questions": [{"id": "q1", "question": "Q"}, {"id": "q2", "question": "R"}]}),
-                          encoding="utf-8")
+            ds.write_text(json.dumps({
+                "version": 2, "generated_at": "2026-09-29T00:00:00+08:00", "count": 2,
+                "questions": [
+                    {"id": "q001", "question": "台積電營運展望如何", "filters": {}, "scope": "corpus_qa"},
+                    {"id": "q002", "question": "聯發科成長動能如何", "filters": {}, "scope": "corpus_qa"},
+                ],
+            }, ensure_ascii=False), encoding="utf-8")
             out = Path(td) / "out.json"
             saved = {n: getattr(rr, n) for n in ("retrieve_context", "_generate_answer")}
             try:
@@ -464,7 +469,10 @@ class RunRagasAccountAbortTests(unittest.IsolatedAsyncioTestCase):
         seen: list[tuple[str, int]] = []
         with tempfile.TemporaryDirectory() as td:
             ds = Path(td) / "ds.json"
-            ds.write_text(json.dumps({"questions": [{"id": "q1", "question": "Q"}]}), encoding="utf-8")
+            ds.write_text(json.dumps({
+                "version": 2, "generated_at": "2026-09-29T00:00:00+08:00", "count": 1,
+                "questions": [{"id": "q001", "question": "台積電營運展望如何", "filters": {}, "scope": "corpus_qa"}],
+            }, ensure_ascii=False), encoding="utf-8")
 
             async def fake_eval_question(q, *, judge, embed, retrieval_params, agentic=False, gen_model=None):
                 for system in (RM.DECOMPOSE_SYS, RM.GROUND_SYS, RM.CTX_RELEVANCE_SYS, RM.GENQ_SYS):

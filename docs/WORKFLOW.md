@@ -128,6 +128,17 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `scripts/judge_agreement.py` | judge 描述性校準：唯讀取 `qa_log` 歷史 haiku 判定，以 `retrieve_context` 重建脈絡、用 DeepSeek judge 重評，印 κ／偏移／門檻翻轉率（只描述、不判定）；會呼叫付費 API，`--max-cases`／`--max-cny`／`--dry-run` |
 | `eval/observe_switch.py` | DeepSeek 切換後批次產出觀測（零 LLM、唯讀、一次性）：切換前 N 天的 Claude 產出對切換後的 DeepSeek 產出，依計畫 §判準的方向取 CI 端點並標出是否在 D-N／D-A 容差內（只判讀、不切換）；用法與判讀規則見下方「DeepSeek 切換後觀測」 |
 
+### 問答對抗集：`eval/qa_adversarial.py`
+
+`eval/qa_adversarial_cases.json` 固定五種合成研報情境：片段內惡意指令、偽造來源編號、跨日期衝突、數值單位及沒有證據的問題。每題自帶預期事實、禁語與局部引用規則，不讀取真實研報或資料庫。離線答案檔格式為 `{"answers":{"prompt_injection":"...", ...}}`，須包含所有題號；缺題或多題直接拒絕。
+
+```bash
+uv run python eval/qa_adversarial.py --answers /tmp/qa-answers.json --out /tmp/qa-adversarial-offline.json
+uv run python eval/qa_adversarial.py --live --out /tmp/qa-adversarial-live.json
+```
+
+離線模式只檢查輸入答案，供假 LLM 或人工候選答案重播；`--live` 會預檢生成模型金鑰，使用與問答主答相同的 `SYSTEM_PROMPT`、`build_user_prompt`、`stream_completion` 和 token 上限，逐題把固定片段送給模型。它刻意隔離檢索、路由、證據帳本與資料庫，所以結果只代表「已提供此片段時的生成行為」。沒有金鑰時預檢以 rc=2 結束，不產生正式模型結果。逐題答案與失敗原因、題集和離線答案檔的 SHA256 存在結果 JSON；所有規則通過為 rc=0，有失敗為 rc=1。檢查器能抓到指定錯誤數值、洩漏誘導字串、虛構來源及事實旁缺正確引用；正規表示式無法完整判斷語意、否定句或其他未列出的幻覺，正式結果仍須人工複核。這套分數與 `run_ragas` 的 F／CP／AR 量尺不同，勿送進 `eval-compare` 比較。
+
 ### DeepSeek 切換後觀測：`eval/observe_switch.py`
 
 批次在 2026-09 被迫直接從 claude CLI 切到 DeepSeek，切換前的閘門取消、改成切換後觀測。**切換後第 7 天、第 14 天各跑一次**，`--switch-at` 填生產實際開始用 DeepSeek 的時間（部署重啟 web、裝好 `/etc/default/report-mark-llm` 的那一刻；沒帶時區視為台北時間）。**全庫回填（`scripts/backfill_extraction.py`、`report-mark-backfill.timer`）期間不要跑**：回填改寫全文、重算摘錄錨點，回填中途的篇數一直在變，兩次報告不可比。

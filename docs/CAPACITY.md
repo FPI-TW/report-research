@@ -178,7 +178,7 @@ retrieve 0.7–9.5 秒、embed 1 毫秒（後者是 `embed_query_cached` 的 lru
 
 ## 受控負載：把「單條問答吃多少硬體」量出來
 
-`scripts/bench_load.py` 對**真實端點**打可控負載，跑完用分析器框出那段窗期：
+`scripts/bench_load.py` 的 HTTP 模式對**真實端點**打可控負載，跑完用分析器框出那段窗期：
 
 ```bash
 python3 scripts/bench_load.py --dry-run --limit 4          # 先看計畫
@@ -233,10 +233,50 @@ HTTP 那一層，繞過去就量不到。題目取自同一份凍結題集 `eval
 
 ---
 
+## 問答 rerank 延遲重測（2026-09-29）
+
+本工作樹沒有 repo 根 `.env` 與研報語料。`python3 scripts/bench_load.py --dry-run --limit 4`
+能讀凍結題集並列出計畫；本機既有 8097 服務的 `/healthz` 回 200（未確認部署的是本工作樹）。
+但執行一題 HTTP 壓測時，腳本在讀不到
+`REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 的前置檢查停下，沒有送出問答請求。
+因此本次沒有新的端到端延遲、首 token、吞吐量或核心秒數據；上面的 2026-09-02
+結果是舊環境的歷史觀測，不能拿來計算本次改動的端到端加速。
+
+新 `qa_timing` 欄位把 rerank semaphore 排隊（`rerank_queue_ms`）與交給執行緒後的耗時
+（`rerank_compute_ms`）分開，另記 `rerank_applied` 與 `rerank_timed_out`。
+`compute_ms` 含 `asyncio.to_thread` 的排程等待；若已逾時，背景推論可能在 log 後才結束，
+該欄位可能為空。這些欄位只涵蓋首輪檢索；agentic 補查沒有累計進來。
+
+唯一的推論改動是 CPU cross-encoder 由 `torch.no_grad()` 改用
+`torch.inference_mode()`；tokenizer、batch 大小、候選順序、分數計算與排序規則不變。
+可用已快取的模型完全離線重測（沒有 DB、語料、HTTP 或 LLM 呼叫）：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run python scripts/bench_load.py \
+  --offline-rerank --limit 8 --repeat 5 --torch-threads 4
+```
+
+微基準固定 8 個合成片段與問題，模型先暖機一次，再交錯跑舊路徑與現行路徑；結果 JSON
+含每輪秒數、各自中位數、逐筆最大分數差與名次是否完全一致。這是單一模型、單一 CPU
+執行緒配置的推論測試；排序一致只對該合成樣本成立，不能代替 `eval/run_ragas.py` 的
+真實語料品質評測。也不能從微基準推算端到端問答速度。
+
+本機 Intel Core i7-14700、PyTorch 4 執行緒、快取的 `BAAI/bge-reranker-v2-m3`：
+
+| 指標 | 舊 `no_grad` | 現行 `inference_mode` |
+|---|---:|---:|
+| 5 輪秒數 | 6.662、6.503、5.535、5.098、4.950 | 6.230、6.196、5.196、4.730、4.861 |
+| 中位數 | 5.535s | 5.196s |
+
+微基準中位數差為 0.339s（6.1%）；五組配對測量皆為現行路徑較快。8 筆逐筆分數的最大
+絕對差為 **0**，完整名次一致。CPU 背景負載與模型暖機後狀態仍使各輪時間波動，這個
+百分比只描述本機這組合成輸入與配置。
+
 ## 不在量測範圍內的成本
 
-`app/services/llm.py` 是 spawn `claude` CLI，不是本機推論——**問答的模型成本
-不會出現在任何 CPU 數字裡**。那一側屬於 token／訂閱成本，是既有評估簡報涵蓋的範圍，
+現行問答 LLM 是遠端 DeepSeek API，不是本機推論；上表 2026-09-02 的舊量測則含當時的
+Claude CLI 父程序。**問答的模型成本不會出現在任何 CPU 數字裡**。
+那一側屬於 token／API 成本，是既有評估簡報涵蓋的範圍，
 兩者不可互相取代：把本機量到的 CPU 拿去推論「模型很便宜」是錯的，反過來也是。
 
 同理，BGE-M3 嵌入與 cross-encoder rerank **確實**是本機 CPU（`torch` CPU-only），

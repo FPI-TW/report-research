@@ -648,6 +648,10 @@ class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("dense_ms=180", line)
         self.assertIn("lex_ms=1420", line)
+        self.assertIn("rerank_queue_ms=", line)
+        self.assertIn("rerank_compute_ms=", line)
+        self.assertIn("rerank_applied=", line)
+        self.assertIn("rerank_timed_out=", line)
 
 
 class StageTimerTests(unittest.TestCase):

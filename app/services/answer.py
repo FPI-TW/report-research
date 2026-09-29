@@ -2706,7 +2706,8 @@ async def answer_question(
     # bug，故不在此改行為。
     logger.info(
         "qa_timing id=%s %s total_ms=%s thinking_ms=%s lex_hits=%s lex_cap=%s"
-        " lex_truncated=%s dense_ms=%s lex_ms=%s",
+        " lex_truncated=%s dense_ms=%s lex_ms=%s rerank_queue_ms=%s"
+        " rerank_compute_ms=%s rerank_applied=%s rerank_timed_out=%s",
         qa_id,
         timer.stage_str(),
         timer.total_ms(),
@@ -2716,6 +2717,10 @@ async def answer_question(
         retrieval_stats.get("lex_truncated"),
         retrieval_stats.get("dense_ms"),
         retrieval_stats.get("lex_ms"),
+        retrieval_stats.get("rerank_queue_ms"),
+        retrieval_stats.get("rerank_compute_ms"),
+        retrieval_stats.get("rerank_applied"),
+        retrieval_stats.get("rerank_timed_out"),
     )
     group_key = new_root or qa_id
     version_count = await _count_versions(group_key) if regenerate_of and group_key else 1

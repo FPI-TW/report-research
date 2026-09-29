@@ -1,6 +1,9 @@
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getJSON } from '../../lib/api'
-import { reviewQueueSchema, type ReviewItem, type ReviewKind } from '../../lib/reviewSchemas'
+import {
+  reviewQueueSchema, reviewStateSchema,
+  type ReviewItem, type ReviewKind, type ReviewStatus, type ReviewVerification,
+} from '../../lib/reviewSchemas'
 
 const PAGE_SIZE = 10
 
@@ -14,6 +17,8 @@ export interface UseReviewQueue {
   isFetchingMore: boolean
   loadMore: () => void
   refetch: () => void
+  save: (id: string, update: { status: ReviewStatus; note: string; verification: ReviewVerification }) => Promise<void>
+  isSaving: boolean
 }
 
 /**
@@ -22,15 +27,23 @@ export interface UseReviewQueue {
  * 刻意**不跟著監控頁的 5 秒輪詢走**：佇列是給人逐筆點進去看的，清單在手上被換掉
  * 比晚一分鐘看到新項目糟得多。staleTime 60 秒＋切換分頁籤／重新進頁才更新。
  */
-export function useReviewQueue(kind: ReviewKind): UseReviewQueue {
+export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 'open'): UseReviewQueue {
+  const client = useQueryClient()
   const query = useInfiniteQuery({
-    queryKey: ['review-queue', kind],
+    queryKey: ['review-queue', kind, status],
     initialPageParam: 0,
     queryFn: ({ pageParam }) =>
-      getJSON(`/api/review/queue?kind=${kind}&limit=${PAGE_SIZE}&offset=${pageParam}`, reviewQueueSchema),
+      getJSON(`/api/review/queue?kind=${kind}&status=${status}&limit=${PAGE_SIZE}&offset=${pageParam}`, reviewQueueSchema),
     getNextPageParam: last => last.next_offset ?? undefined,
     staleTime: 60_000,
     retry: false,
+  })
+  const mutation = useMutation({
+    mutationFn: ({ id, update }: { id: string; update: { status: ReviewStatus; note: string; verification: ReviewVerification } }) =>
+      getJSON(`/api/review/${kind}/${encodeURIComponent(id)}`, reviewStateSchema, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update),
+      }),
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['review-queue'] }) },
   })
   const pages = query.data?.pages ?? []
   return {
@@ -43,5 +56,7 @@ export function useReviewQueue(kind: ReviewKind): UseReviewQueue {
     isFetchingMore: query.isFetchingNextPage,
     loadMore: () => { void query.fetchNextPage() },
     refetch: () => { void query.refetch() },
+    save: async (id, update) => { await mutation.mutateAsync({ id, update }) },
+    isSaving: mutation.isPending,
   }
 }

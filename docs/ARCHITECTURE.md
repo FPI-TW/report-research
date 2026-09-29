@@ -63,7 +63,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `web/server.py` | 組合層：載環境檔、初始化 logging、auth middleware、lifespan、掛 router |
-| `web/routers/` | 12 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`、`spa`、`brief`、`review`（待複核佇列：忠實度低分／倒讚／抽取 `needs_review` 的個體清單，唯讀；刻意不提供「標記已處理」）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
+| `web/routers/` | 12 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
 | `web/auth.py` | 共用帳密、HMAC session、失敗追蹤、可信代理 |
 | `web/concurrency.py` | `ConcurrencyGate`（刻意不支援 `async with`）、單 worker 偵測 |
@@ -133,7 +133,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 
 ## 8. 資料層
 
-schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具，冪等只涵蓋 `ADD COLUMN IF NOT EXISTS`；改 CHECK 約束在既有庫是 no-op，要另寫 `ALTER`，`db/expected_constraints.txt` 由 `tests/test_schema_constraints.py` 對帳。刪表同理：深度研報的四張表已從 `db/schema.sql` 拿掉，既有庫要手動跑 `db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`）；DROP 之前對生產庫跑約束測試會多出 `report_run`／`report_section` 的兩條 CHECK 而紅，是預期的。
+schema 名 `research`，沒有 migration 工具；新增的 `review_state` 由 `make schema` 以 `CREATE TABLE IF NOT EXISTS` 建立。既有欄位冪等只涵蓋 `ADD COLUMN IF NOT EXISTS`；改 CHECK 約束在既有庫是 no-op，要另寫 `ALTER`，`db/expected_constraints.txt` 由 `tests/test_schema_constraints.py` 對帳。刪表同理：深度研報的四張表已從 `db/schema.sql` 拿掉，既有庫要手動跑 `db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`）；DROP 之前對生產庫跑約束測試會多出 `report_run`／`report_section` 的兩條 CHECK 而紅，是預期的。
 
 | 表 | 用途 | 關係 |
 |---|---|---|
@@ -145,8 +145,11 @@ schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具�
 | `report_brief` | 每日簡報 | `report_ids uuid[]` 刻意無 FK，讀取端容忍孤兒 |
 | `extraction_log` | 每個進過管線的 `file_hash` 一列 | 無 FK |
 | `llm_task_failure` | LLM 批次的內容型失敗（跳過名單）：解析不了、審查擋下、截斷；成功即刪列，規則在 `app/services/llm_failures.py` | PK(file_hash, task)；刻意無 CHECK、不備份 |
+| `review_state` | 人工複核的狀態、註記、驗證結果、更新時間；未建列視為 `open` | PK(kind, subject_id)；subject_id 指向 `qa_log.id` 或 `research_report.id`，不設跨表 FK；共用帳號不記 reviewer |
 
-備份只涵蓋四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）→ NAS；語料層刻意不備。
+待複核 API 以原始品質條件查詢，再以 `review_state` 篩選 `open`／`resolved`／`dismissed`／`all`；寫入狀態不改 `qa_log` 或 `research_report` 的品質訊號。人工驗證欄位只記錄人工結果，不會重跑評測或抽取。
+
+備份涵蓋五張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`）→ NAS；語料層刻意不備。
 
 資料陷阱：
 - `full_text` 是未清理原始抽取（帶 CJK 字間空白），顯示一律 `clean_extracted`，不是 `clean_text`。

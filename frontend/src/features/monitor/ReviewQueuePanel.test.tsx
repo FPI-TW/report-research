@@ -8,11 +8,11 @@ import { reasonText } from './reviewReasons'
 
 afterEach(() => vi.unstubAllGlobals())
 
-type Handler = (url: URL) => { status?: number; body: unknown }
+type Handler = (url: URL, init?: RequestInit) => { status?: number; body: unknown }
 
 function mount(handler: Handler, scale: EvalSource | null = null) {
-  const fetchMock = vi.fn(async (input: string) => {
-    const { status = 200, body } = handler(new URL(input, 'http://x'))
+  const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    const { status = 200, body } = handler(new URL(input, 'http://x'), init)
     return new Response(JSON.stringify(body), { status })
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -103,6 +103,43 @@ test('載入失敗：說出來並給重試，不讓整張卡消失', async () =>
   fail = false
   fireEvent.click(screen.getByRole('button', { name: '重試' }))
   expect(await screen.findByRole('link', { name: '提問 1' })).toBeInTheDocument()
+})
+
+test('記錄人工驗證、已處理後從待處理消失，並可重新打開', async () => {
+  let current = { status: 'open', note: '', verification: 'untested', updated_at: '2026-09-20T03:00:00Z' }
+  const fetchMock = mount((url, init) => {
+    if (init?.method === 'PUT') {
+      current = { ...current, ...JSON.parse(init.body as string), updated_at: '2026-09-21T03:00:00Z' }
+      return { body: { kind: 'feedback', subject_id: 'qa3', ...current } }
+    }
+    if (url.searchParams.get('kind') !== 'feedback') return { body: page('faithfulness', []) }
+    const status = url.searchParams.get('status')
+    return { body: page('feedback', status === current.status || status === 'all'
+      ? [qa(3, { review_status: current.status, review_note: current.note,
+        verification: current.verification, reviewed_at: current.updated_at })] : []) }
+  })
+  fireEvent.click(await screen.findByRole('tab', { name: '倒讚' }))
+  await screen.findByRole('link', { name: '提問 3' })
+  fireEvent.change(screen.getByLabelText('處理狀態'), { target: { value: 'resolved' } })
+  fireEvent.change(screen.getByLabelText('人工驗證'), { target: { value: 'passed' } })
+  fireEvent.change(screen.getByLabelText('處理註記'), { target: { value: '已核對原文' } })
+  fireEvent.click(screen.getByRole('button', { name: '儲存' }))
+  await waitFor(() => expect(screen.queryByRole('link', { name: '提問 3' })).not.toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: '已處理' }))
+  await screen.findByRole('link', { name: '提問 3' })
+  expect(screen.getByLabelText('處理註記')).toHaveValue('已核對原文')
+  expect(screen.getByLabelText('人工驗證')).toHaveValue('passed')
+  fireEvent.change(screen.getByLabelText('處理狀態'), { target: { value: 'open' } })
+  fireEvent.click(screen.getByRole('button', { name: '儲存' }))
+  await waitFor(() => expect(screen.queryByRole('link', { name: '提問 3' })).not.toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: '待處理' }))
+  await screen.findByRole('link', { name: '提問 3' })
+  const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')
+  expect(writes).toHaveLength(2)
+  expect(JSON.parse(writes[0][1]!.body as string)).toEqual({
+    status: 'resolved', note: '已核對原文', verification: 'passed',
+  })
+  expect(JSON.parse(writes[1][1]!.body as string).status).toBe('open')
 })
 
 test('原因帶著量到的值：分數不低的研報看得出為什麼在這裡', () => {

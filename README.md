@@ -139,7 +139,8 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/brief/latest` | — | `{status: ready|pending, brief, available_dates}` | 無簡報回 200 `pending` 不是 404 |
 | GET | `/api/brief/dates` | `limit`（1–120，30） | `{"dates": [...]}` | |
 | GET | `/api/brief/{brief_date}` | — | 同 latest | 該日無簡報 404 |
-| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`（只列現行 judge 量的）、倒讚、抽取 `needs_review`。`days` 只作用於前兩種；門檻、窗期與 judge 過濾和監控頁的忠實度卡同一套定義。問答項目帶 `judge_model`（沒有 evaluation 時為 null）；抽取項目帶 `review_reasons`（`pages_failed`／`low_score`／`low_coverage`／`garbled`，以現行門檻重算） |
+| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`status`（`open`／`resolved`／`dismissed`／`all`，預設 `open`）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 忠實度低分（只列現行 judge）、倒讚與抽取 `needs_review` 的佇列；`days` 只作用於前兩種。每筆帶 `review_status`、`review_note`、`verification`、`reviewed_at`；未處理的列視為 `open`。問答另帶 `judge_model`，抽取另帶以現行門檻重算的 `review_reasons`。原始品質訊號不因處理狀態改變 |
+| PUT | `/api/review/{kind}/{subject_id}` | `kind` 同上；`subject_id` 為 UUID；JSON `status`（必填：`open`／`resolved`／`dismissed`）、`note`（最多 1000 字）、`verification`（`untested`／`passed`／`failed`） | `{kind, subject_id, status, note, verification, updated_at}` | 記錄人工處理結果；送 `open` 可重新打開。驗證結果由人填寫，不會重跑評測或抽取；共用帳號不記處理人。不存在的項目回 404 |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 
@@ -220,13 +221,13 @@ uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # De
 
 真相來源在 `deploy/`，不是機器上的 `/etc`；改了 unit 要 `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`。
 
-Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪等），沒有 migration 工具，刪表要另給腳本。深度研報生成已於 2026-09 移除，既有庫要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql` 清掉 `report_doc`／`report_run`／`report_section`／`report_rendition` 四張表（執行前確認 `make db-audit` 全綠；備份從未涵蓋這四張，不必先備）。同時：R2 bucket 裡舊的 `generated/` 生成 PDF 不再由對帳工具管，可手動清理；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀，新名是 `FAITHFULNESS_MIN`。
+Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪等），沒有 migration 工具，刪表要另給腳本。部署待複核處理前須先跑 `make schema` 建 `review_state`，再啟動新 API 與備份。深度研報生成已於 2026-09 移除，既有庫要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql` 清掉 `report_doc`／`report_run`／`report_section`／`report_rendition` 四張表（執行前確認 `make db-audit` 全綠；備份從未涵蓋這四張，不必先備）。同時：R2 bucket 裡舊的 `generated/` 生成 PDF 不再由對帳工具管，可手動清理；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀，新名是 `FAITHFULNESS_MIN`。
 
 | Unit | 排程 | 做什麼 |
 |---|---|---|
 | `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --port 8097`，`Restart=always`，PATH drop-in 給 `claude` |
 | `report-mark-sync.timer` | 每 3 小時 | rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量） |
-| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
+| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：五張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |
 | `report-mark-audit.timer` | 08:45 | `make db-audit`，唯讀，warn 也算失敗 |
 | `report-mark-health.timer`、`report-mark-incident.timer` | 每 2 分鐘 | P4 探針 `scripts/check_web_health.sh`（只回報事實）與 P5 `scripts/incident_handler.sh`（去重、30 分鐘提醒、RESOLVED），webhook opt-in |

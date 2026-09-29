@@ -562,7 +562,7 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
             ) = orig
 
         self.assertEqual(captured.get("top_m"), ans.ASK_RERANK_TOP_M)
-        self.assertEqual(ans.ASK_RERANK_TOP_M, 50)  # 預設啟用
+        self.assertEqual(ans.ASK_RERANK_TOP_M, 16)  # 預設啟用；避免併發時重排超時
         self.assertIsNotNone(captured.get("deadline"))  # 問答路徑逾時 → deadline 傳遞
         self.assertEqual(ans.ASK_RERANK_TIMEOUT, 60.0)  # 預設 60s（實測 50 對 ~34s + 餘裕）
 

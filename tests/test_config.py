@@ -48,7 +48,7 @@ class SettingsDefaultsTests(unittest.TestCase):
     def test_rerank_defaults(self):
         s = get_settings()
         self.assertEqual(s.ask_rerank_enabled, True)
-        self.assertEqual(s.ask_rerank_candidates, 50)
+        self.assertEqual(s.ask_rerank_candidates, 16)
         self.assertEqual(s.rerank_model, "BAAI/bge-reranker-v2-m3")
         # per-path 逾時：prod 實測 50 對 ~34s（20 核 CPU），舊共用 30s 使全數逾時
         # （M1b 基準線 notes）。預設須蓋過實測值 + 餘裕。

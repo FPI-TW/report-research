@@ -24,6 +24,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import bindparam, text
 
 from app.config import get_settings
+from app.services.citation_filter import CitationStreamFilter, count_unknown_citations, filter_unknown_citations
 from app.services.db import SessionFactory
 from app.services.evidence import (
     EvidenceLedger,
@@ -107,7 +108,7 @@ RETRIEVAL_K = _S.ask_retrieval_k
 ASK_DENSE_SCAN = _S.ask_dense_scan
 # rerank（M2）：問答路徑保守候選上限；旗標關時 0＝不重排
 ASK_RERANK_TOP_M = _S.ask_rerank_candidates if _S.ask_rerank_enabled else 0
-# 問答路徑 rerank 逾時（prod 實測 50 對 ~34s；30s 共用預設曾使 rerank 靜默全關）
+# 問答路徑 rerank 逾時（50 候選曾需 ~34s；30s 共用預設會讓重排靜默全關）
 ASK_RERANK_TIMEOUT = _S.ask_rerank_timeout
 
 # 多輪對話脈絡：帶進 prompt 的近輪數與舊答案截斷長度（控 prompt 大小/延遲）
@@ -2561,6 +2562,7 @@ async def answer_question(
     user_prompt = build_user_prompt(question, context, history_block)
     raw_parts: list[str] = []
     parser = SentinelStreamParser(EXT_SENTINEL)
+    citation_filter = CitationStreamFilter(s.n for s in sources)
     searching_sent = False
     thinking_ms: int | None = None
 
@@ -2596,7 +2598,7 @@ async def answer_question(
                         yield _status("searching_web")  # 步驟4：搜尋網路補充
                     continue
                 raw_parts.append(chunk)
-                emit = parser.feed(chunk)
+                emit = citation_filter.feed(parser.feed(chunk))
                 if emit:
                     for ev in _emit_token(emit):
                         yield ev
@@ -2638,7 +2640,7 @@ async def answer_question(
                 active=False,
             )
             raise
-    tail = parser.flush()
+    tail = citation_filter.feed(parser.flush()) + citation_filter.flush()
     if tail:
         for ev in _emit_token(tail):
             yield ev
@@ -2658,6 +2660,11 @@ async def answer_question(
     body, ext_sources = split_external_sources(raw)
     if note:
         body = body.rstrip() + note
+    invalid_citations = count_unknown_citations(body, (s.n for s in sources))
+    if invalid_citations:
+        log_filters["invalid_citation_count"] = invalid_citations
+        logger.warning("問答輸出含不存在的來源編號 count=%d request_id=%s", invalid_citations, request_id)
+    body = filter_unknown_citations(body, (s.n for s in sources))
     # 簡體收尾（見 _answer_correction）：此行之後的一切——引用解析、落庫、追問、
     # 忠實度抽查、研報邀請——全部吃轉換後的版本，畫面則由 done 的 answer 校正。
     # 棄稿段走同一條校正管道（見 drop_abandoned_draft）：它同樣是整串才判得出來的，
@@ -2706,7 +2713,8 @@ async def answer_question(
     # bug，故不在此改行為。
     logger.info(
         "qa_timing id=%s %s total_ms=%s thinking_ms=%s lex_hits=%s lex_cap=%s"
-        " lex_truncated=%s dense_ms=%s lex_ms=%s",
+        " lex_truncated=%s dense_ms=%s lex_ms=%s rerank_queue_ms=%s"
+        " rerank_compute_ms=%s rerank_applied=%s rerank_timed_out=%s",
         qa_id,
         timer.stage_str(),
         timer.total_ms(),
@@ -2716,6 +2724,10 @@ async def answer_question(
         retrieval_stats.get("lex_truncated"),
         retrieval_stats.get("dense_ms"),
         retrieval_stats.get("lex_ms"),
+        retrieval_stats.get("rerank_queue_ms"),
+        retrieval_stats.get("rerank_compute_ms"),
+        retrieval_stats.get("rerank_applied"),
+        retrieval_stats.get("rerank_timed_out"),
     )
     group_key = new_root or qa_id
     version_count = await _count_versions(group_key) if regenerate_of and group_key else 1

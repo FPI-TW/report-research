@@ -139,7 +139,8 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/brief/latest` | — | `{status: ready|pending, brief, available_dates}` | 無簡報回 200 `pending` 不是 404 |
 | GET | `/api/brief/dates` | `limit`（1–120，30） | `{"dates": [...]}` | |
 | GET | `/api/brief/{brief_date}` | — | 同 latest | 該日無簡報 404 |
-| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 待複核佇列，唯讀零 LLM：忠實度低於 `FAITHFULNESS_MIN`（只列現行 judge 量的）、倒讚、抽取 `needs_review`。`days` 只作用於前兩種；門檻、窗期與 judge 過濾和監控頁的忠實度卡同一套定義。問答項目帶 `judge_model`（沒有 evaluation 時為 null）；抽取項目帶 `review_reasons`（`pages_failed`／`low_score`／`low_coverage`／`garbled`，以現行門檻重算） |
+| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`status`（`open`／`resolved`／`dismissed`／`all`，預設 `open`）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 忠實度低分（只列現行 judge）、倒讚與抽取 `needs_review` 的佇列；`days` 只作用於前兩種。每筆帶 `review_status`、`review_note`、`verification`、`reviewed_at`；未處理的列視為 `open`。問答另帶 `judge_model`，抽取另帶以現行門檻重算的 `review_reasons`。原始品質訊號不因處理狀態改變 |
+| PUT | `/api/review/{kind}/{subject_id}` | `kind` 同上；`subject_id` 為 UUID；JSON `status`（必填：`open`／`resolved`／`dismissed`）、`note`（最多 1000 字）、`verification`（`untested`／`passed`／`failed`） | `{kind, subject_id, status, note, verification, updated_at}` | 記錄人工處理結果；送 `open` 可重新打開。驗證結果由人填寫，不會重跑評測或抽取；共用帳號不記處理人。不存在的項目回 404 |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 
@@ -163,7 +164,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `LLM_BUDGET_CURRENCY`、`LLM_BALANCE_FLOOR` | `CNY`、`70` | 只有 web 讀（`/healthz/llm`，設在 repo 根 `.env`）：只看餘額裡這個幣別那一筆，低於門檻回 503 → 探針退出碼 7（用罄、認證失敗等停擺為 8）。月上限 ¥350 是儲值紀律，不是旋鈕（`docs/production_resilience.md`） |
 | `LLM_PROVIDER`、各任務 `*_MODEL`（`ASK_ANSWER_MODEL`、`ASK_WEB_MODEL`、`TAG_MODEL`、`SUMMARY_MODEL` 等 14 個） | `deepseek`、查表 | 任務旋鈕非空就用，否則查 provider 的預設表（`app/services/llm_models.py`）；`deepseek` 表除網搜外都是 `deepseek-flash`（兩個 judge 自 2026-09 起也是）；未設、空值都當成 `deepseek`，未知值線上當成 `deepseek`（記 ERROR）、批次與評測預檢 rc=2 並印原始值。`claude_cli`（遷移前的表）與 `claude_only`（遷移期的回退值）仍是合法值，但 claude CLI 已於 2026-09-23 放棄，設了等於 LLM 全部停擺。清單與語意見 `.env.example` |
 | `ASK_*`、`QA_*` | 見 `docs/ARCHITECTURE.md` 設定旋鈕 | 問答脈絡、選篇、路由模型、網搜（`ASK_ENABLE_WEB`、`ASK_WEB_TIMEOUT`）、agentic 補查 |
-| `ASK_RERANK_*`、`RERANK_MODEL` | 開、50 候選 | rerank fail-open |
+| `ASK_RERANK_*`、`RERANK_MODEL` | 開、16 候選 | rerank fail-open；50 候選在 2026-09-29 的線上壓測易逾時 |
 | `ASK_FAITHFULNESS_*`、`FAITHFULNESS_MIN`、`FAITHFULNESS_MODEL`、`FAITHFULNESS_TIMEOUT` | 開、0.9、`deepseek-flash`（`claude_cli` 表是 `claude-haiku-4-5`）、`ASK_FAITHFULNESS_TIMEOUT` 依 judge（DeepSeek 90、Claude CLI 240） | 問答忠實度抽查；關掉或壞掉都不會有錯誤訊息，只標 `degraded`（`evaluation.degraded_reason` 說原因）。`FAITHFULNESS_MIN` 讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`。`FAITHFULNESS_MODEL` 不再沿用 `ASK_INTENT_MODEL`；換掉等於換尺，監控卡、待複核與 `scripts/eval_faithfulness.py` 只計現行 judge（缺 `judge_model` 的舊列視為 `claude-haiku-4-5`，自 judge 切成 DeepSeek 起歸「其他 judge」）。`ASK_FAITHFULNESS_TIMEOUT` 是每次 judge 呼叫的總期限；未設時依 judge 決定（DeepSeek 90，依探測延遲訂；Claude CLI 240；計算在 `app/config.py`），設了就照設的值 |
 | `EXTRACTOR`、`EXTRACTION_REVIEW_MIN`、`EXTRACTION_REVIEW_MIN_COVERAGE`、`EXTRACTION_REVIEW_MAX_GARBLED` | `pypdf`、0.6、0.30、0.02 | 抽取器（生產 sync 環境檔設 `pdfplumber`）與 `needs_review` 三道門檻（只標記不擋，`docs/EXTRACTION.md` §5） |
 | `OBJECT_STORAGE_MODE`、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS` | `local` | 非 local 缺任一 fail-closed；TTL 上限 3600 |
@@ -183,9 +184,10 @@ cd frontend && npm test                # vitest
 cd frontend && npm run typecheck       # tsc --noEmit
 cd frontend && npm run lint            # eslint
 
-uv run python eval/run_ragas.py --concurrency 1   # 問答評測（生成與 judge 預設都呼叫 DeepSeek 付費 API），預設寫 eval/candidate-ragas.json
-uv run python eval/run_ragas.py --generator-model <model> --repeat 3 --dump-io data/eval_frozen/<名稱>
-make eval-compare BASE=<同一版 run_ragas 產出的基準線.json> CAND=eval/candidate-ragas.json
+python3 eval/question_contract.py eval/ragas_questions.json  # 零 LLM：驗題集契約並印 sha256
+uv run python eval/run_ragas.py --concurrency 1   # 探索性問答評測，預設寫 eval/candidate-ragas.json；會呼叫付費 API
+uv run python eval/run_ragas.py --generator-model deepseek-flash --repeat 3 --dump-io data/eval_frozen/example
+make eval-compare BASE=eval/baselines/example.json CAND=eval/candidate-ragas.json
 uv run python scripts/judge_agreement.py --dry-run   # judge 描述性校準（歷史 haiku 判定當參考、只描述；正式跑會呼叫付費 API）
 uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # DeepSeek 切換後批次產出觀測（零 LLM、唯讀；去掉 --dry-run 出報告）
 ```
@@ -193,10 +195,26 @@ uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # De
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc ＋ vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。前端 job 把 `frontend/dist` 傳給後端 job，SPA 測試對真 build 驗證；後端設 `HF_HUB_OFFLINE=1`、安裝 CJK 字型並設 `REPORT_MARK_REQUIRE_CJK=1`（`tests/test_extraction_layout.py` 的 CjkTests 用 weasyprint 渲染中文測試 PDF，不准退回 skip）；schema job 套 `db/schema.sql` 兩次驗冪等並對帳 `db/expected_constraints.txt`。required check 名稱等於 job 的中文 `name`，改了要同步 GitHub 分支保護。
 - 測試不連網、不載模型：LLM、嵌入、DB、檔案系統一律用假物件。async 測試用 `unittest.IsolatedAsyncioTestCase`，不用 pytest-asyncio。端點走 HTTP 層測。
 - 測試絕不可寫 repo 根的真實環境檔（`tests/conftest.py` 會還原並 fail）。
-- 評測 `eval/` 刻意不進 CI（會呼叫付費 API；CI 不連網）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策；最新基準線 `eval/baselines/baseline-2026-09-02.json`（Claude haiku judge 的舊量尺系譜）。
+- 評測 `eval/` 刻意不進 CI（會呼叫付費 API；CI 不連網）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策；最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge）。
 - **DeepSeek 切換後觀測**（`eval/observe_switch.py`，零 LLM、唯讀）：切換後第 7 天、第 14 天各跑一次，比切換前 30 天的 Claude 產出與切換後的 DeepSeek 產出。主指標是摘錄的任一方式錨定成功率（差值 CI 下界 ≥ −5pp）；摘錄產出率、訊號非 rejected 率、標題／摘要填補率差值 CI 下界 ≥ −2pp；標註 `skip_non_research`／market=None 比例差值 CI 上界 ≤ 0。另以用量紀錄零 LLM 判 content_filter 比例（Wilson 上界 ≤ 1%）、截斷／401／402 為 0 與斷路器標記。Claude 群排除 CLI 失效到切換的事故空窗（`--claude-until`），缺值率只把該批次自己模型的產出算已填；摘錄錨定排除擷取後被回填的研報，全庫回填期間不要跑。**總表全部通過不等於批次 A 觀測完成**（幻覺率、花費金額等見報告「未涵蓋項目」）。只輸出判讀、不做任何切換；劣化時只能修 prompt 或換 `deepseek-v4-pro`。從 worktree 跑時用 `--usage-log`／`--tags-dir`／`--breaker-file` 指到部署目錄。細節見 `docs/WORKFLOW.md`「DeepSeek 切換後觀測」。
-- **judge 自 2026-09 起是 DeepSeek（`deepseek-flash`，新量尺系譜 `deepseek-2026-09`），新系譜目前還沒有基準線。** 跟舊基準線比一律回 2 是預期（門檻數值不變）。產出方式：在不改檢索與生成的 commit 上跑 `uv run python eval/run_ragas.py --concurrency 1 --repeat 3 --out eval/baselines/baseline-YYYY-MM-DD-jdsflash-gdsflash.json`（結果檔的 `config.judge.lineage` 與頂層 `notes` 標出系譜），這第一份就是新系譜的起點，之後的改動都跟它比；升格時把這裡與 `CLAUDE.md` 的「最新基準線」一起改。
-- `run_ragas` 的結果檔記錄量尺：summary 的 `judge_model`、`judge_prompt_sha`、`judge_schema_version` 是 META 鍵，兩份不同、或**只有一邊有記錄**，`eval-compare` 一律回 2。上面那份最新基準線是在記錄量尺之前產出的，所以**現在拿新結果跟它比一律回 2**，直到用新版重跑出新的基準線為止；要比就兩邊都用同一版重跑。生成端、各任務 model、commit、題集 sha256 記在 `config`（只印差異，不判定）。judge 出錯只讓該指標記 None（`n_judge_errors` 計數，只列出、不判方向），但 summary 另記三個 judge 指標各自入均值的題數 `n_effective_<指標>` 與題目集合雜湊 `judged_ids_sha`：兩邊的題目集合不同（例如各錯一題但題目不同）`eval-compare` 回 2，處置是補跑到兩邊相同題目，或直接跑 `uv run python scripts/eval_compare.py … --common-only` 只在兩邊都有值的題目上重取平均（門檻旗標在此模式下不判定）。`n_truncated` 取自 `stream_completion` 回報的逾時截斷（成功那次嘗試撞到逾時、已吐的字被砍掉；529 重試的時間不算）；輸出長度上限造成的截斷 CLI 看不到，PR-11 接 HTTP 後改用 `finish_reason`。`--repeat` 每題每指標跨次取平均，規則寫在 `eval/run_ragas.py` 的模組 docstring。
+- **judge 自 2026-09 起是 DeepSeek（`deepseek-flash`，量尺系譜 `deepseek-2026-09`）。** 舊 Claude haiku 結果不能相比（回 2；門檻數值不變）。`eval/ragas_questions.json` v2 有 18 題 corpus QA；2026-09-29 從正式庫凍結 15,255 份研報／616,769 個 chunk（快照 ID `sha256:969ba5277b99fb57d05262d19ceeb9fffe813c2f2ac7e0cc9ab6c87a7768373d`），在隔離 PostgreSQL 逐題確認 18/18 題有來源。基準線每題重跑 3 次，F=0.967、CP=0.873、AR=0.691，無錯誤、無缺來源；同快照獨立候選比較退出碼 0。這組評測設定是 `rerank_top_m=0`、`agentic=false`，只量固定脈絡下的答案品質；線上含重排與補查的整體延遲要另用 `scripts/bench_load.py` 走 HTTP 量。快照原檔和含研報片段的檢查點留在未版控資料目錄，版控只保留摘要分數與設定。
+
+  ```bash
+  # 兩次執行使用同一個正式語料快照；SNAPSHOT_ID 填實際備份 ID 或內容雜湊。
+  SNAPSHOT_ID=actual-immutable-corpus-snapshot-id
+  BASELINE=eval/baselines/baseline-YYYY-MM-DD-jdsflash-gdsflash.json
+  uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \
+    --generator-model deepseek-flash --judge-model deepseek-flash --concurrency 1 --repeat 3 \
+    --complete-only --checkpoint-dir data/eval_frozen/deepseek-baseline-checkpoints --out "$BASELINE"
+  uv run python eval/run_ragas.py --dataset eval/ragas_questions.json --corpus-id "$SNAPSHOT_ID" \
+    --generator-model deepseek-flash --judge-model deepseek-flash --concurrency 1 --repeat 3 \
+    --match-baseline "$BASELINE" --checkpoint-dir data/eval_frozen/deepseek-candidate-checkpoints \
+    --out eval/candidate-ragas.json
+  make eval-compare BASE="$BASELINE" CAND=eval/candidate-ragas.json
+  ```
+
+  `--complete-only` 要求所有題目都有來源、生成成功，且 F／CP／AR 三項 judge 分數全數有效；否則不寫結果。正式基準流程也拒絕覆寫既有輸出。`--checkpoint-dir` 逐題逐次原子保存付費結果；同一輸出路徑、commit、語料快照與設定重跑時自動續跑，設定漂移則在付費前停止；基準與候選必須用不同目錄。檢查點含研報片段與答案，只放在未版控的 `data/eval_frozen/`。`--match-baseline` 在付費呼叫前比對題集 SHA256、語料快照 ID、模型、judge prompt／schema、檢索設定、重跑次數與併發，執行後再比對 API 回報的 judge model／system fingerprint；缺少既有設定也拒絕。若 API 未提供 fingerprint，結果只記空值，需人工確認服務端模型版本。
+- `run_ragas` 的結果檔記錄量尺：summary 的 `judge_model`、`judge_prompt_sha`、`judge_schema_version` 是 META 鍵，兩份不同、或**只有一邊有記錄**，`eval-compare` 一律回 2。舊的 `eval/baselines/baseline-2026-09-02.json` 是記錄量尺之前的 Claude judge 結果，拿新結果跟它比一律回 2；新結果應與上面的 DeepSeek 基準線比較。生成端、各任務 model、commit、題集 sha256 記在 `config`（只印差異，不判定）。judge 出錯只讓該指標記 None（`n_judge_errors` 計數，只列出、不判方向），但 summary 另記三個 judge 指標各自入均值的題數 `n_effective_<指標>` 與題目集合雜湊 `judged_ids_sha`：兩邊的題目集合不同（例如各錯一題但題目不同）`eval-compare` 回 2，處置是補跑到兩邊相同題目，或直接跑 `uv run python scripts/eval_compare.py … --common-only` 只在兩邊都有值的題目上重取平均（門檻旗標在此模式下不判定）。`n_truncated` 取自 `stream_completion` 回報的逾時截斷（成功那次嘗試撞到逾時、已吐的字被砍掉；529 重試的時間不算）；輸出長度上限造成的截斷 CLI 看不到，PR-11 接 HTTP 後改用 `finish_reason`。`--repeat` 每題每指標跨次取平均，規則寫在 `eval/run_ragas.py` 的模組 docstring。
 - judge 回應以 schema v2 嚴格驗證（`app/services/judge_schema.py`：`statements` 必須是字串陣列、`idx` 必須恰好覆蓋全部條目且不收布林、判定值必須是布林、AR 取不到問題算錯），不合格重試 1 次；離線仍不合格記該指標 None，生產記 `degraded_reason=schema`，唯獨生產 grounding 缺 idx 仍計 unsupported 並記 WARNING（條數記進 `evaluation.n_missing_verdicts`；一條都沒判算 schema 錯）。CP 候選片段改為 1 起編號、與脈絡的 `[n]` 和答案引用一致。
 - 改動對照表（改了 A 要動 B）在 `CLAUDE.md`；契約類測試清單在 `AGENTS.md`。
 
@@ -204,13 +222,15 @@ uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # De
 
 真相來源在 `deploy/`，不是機器上的 `/etc`；改了 unit 要 `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`。
 
-Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪等），沒有 migration 工具，刪表要另給腳本。深度研報生成已於 2026-09 移除，既有庫要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql` 清掉 `report_doc`／`report_run`／`report_section`／`report_rendition` 四張表（執行前確認 `make db-audit` 全綠；備份從未涵蓋這四張，不必先備）。同時：R2 bucket 裡舊的 `generated/` 生成 PDF 不再由對帳工具管，可手動清理；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀，新名是 `FAITHFULNESS_MIN`。
+Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪等），沒有 migration 工具，刪表要另給腳本。部署待複核處理前須先跑 `make schema` 建 `review_state`，再啟動新 API 與備份。深度研報生成已於 2026-09 移除，既有庫要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql` 清掉 `report_doc`／`report_run`／`report_section`／`report_rendition` 四張表（執行前確認 `make db-audit` 全綠；備份從未涵蓋這四張，不必先備）。同時：R2 bucket 裡舊的 `generated/` 生成 PDF 不再由對帳工具管，可手動清理；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀，新名是 `FAITHFULNESS_MIN`。
+
+本次問答與待複核整合上線時，先確認最近的 NAS 備份能由 `pg_restore -l` 讀取；更新部署 checkout 後依序跑 `make schema`、`make build-web`，再重啟 `report-mark-web.service`。驗收 `/healthz`、帶登入的 `/api/review/queue?kind=extraction` 與一筆 `/api/ask` 串流後，執行 `make db-backup`，確認新備份清單含 `review_state` 等五張表。Schema 是新增表，若需回退應回退程式版本並保留表與人工複核資料；不要用 DROP 當回退步驟。
 
 | Unit | 排程 | 做什麼 |
 |---|---|---|
 | `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --port 8097`，`Restart=always`，PATH drop-in 給 `claude` |
 | `report-mark-sync.timer` | 每 3 小時 | rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量） |
-| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
+| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：五張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |
 | `report-mark-audit.timer` | 08:45 | `make db-audit`，唯讀，warn 也算失敗 |
 | `report-mark-health.timer`、`report-mark-incident.timer` | 每 2 分鐘 | P4 探針 `scripts/check_web_health.sh`（只回報事實）與 P5 `scripts/incident_handler.sh`（去重、30 分鐘提醒、RESOLVED），webhook opt-in |

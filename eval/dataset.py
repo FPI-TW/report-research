@@ -25,6 +25,7 @@ from app.services.answer import (  # noqa: E402
 )
 from app.services.db import SessionFactory  # noqa: E402
 from app.services.textnorm import norm_for_match  # noqa: E402
+from eval.question_contract import validate_dataset  # noqa: E402
 
 MIN_QUESTION_LEN = 6
 
@@ -51,7 +52,7 @@ def _clean_filters(filters: dict) -> dict:
 def select_questions(rows: list[dict], *, per_market_cap: int, target: int) -> list[dict]:
     """純函式：濾 off-topic/no-context/overview/過短、去重（正規化）、市場多樣抽樣。
 
-    rows: [{"question","answer","filters"}]（filters 為 dict）。回 [{"id","question","filters"}]。
+    rows: [{"question","answer","filters"}]（filters 為 dict）。回傳題目另含 corpus_qa scope。
     """
     seen: set[str] = set()
     per_market: "OrderedDict[str, list[dict]]" = OrderedDict()
@@ -92,7 +93,7 @@ def select_questions(rows: list[dict], *, per_market_cap: int, target: int) -> l
             break
 
     return [
-        {"id": f"q{n:03d}", "question": it["question"], "filters": it["filters"]}
+        {"id": f"q{n:03d}", "question": it["question"], "filters": it["filters"], "scope": "corpus_qa"}
         for n, it in enumerate(result, start=1)
     ]
 
@@ -113,7 +114,7 @@ async def build_dataset(*, target: int, per_market_cap: int) -> dict:
         ]
     questions = select_questions(rows, per_market_cap=per_market_cap, target=target)
     return {
-        "version": 1,
+        "version": 2,
         "generated_at": None,
         "count": len(questions),
         "questions": questions,
@@ -131,6 +132,7 @@ def _main() -> None:
         build_dataset(target=args.target, per_market_cap=args.per_market_cap)
     )
     dataset["generated_at"] = datetime.now(timezone.utc).isoformat()
+    validate_dataset(dataset)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(

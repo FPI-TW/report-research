@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -469,6 +471,32 @@ class BenchEnvParsingTests(unittest.TestCase):
         self.path.write_text(original, encoding="utf-8")
         bench_load.read_env_file(self.path)
         self.assertEqual(self.path.read_text(encoding="utf-8"), original)
+
+
+class BenchOfflineModeTests(unittest.TestCase):
+    def test_offline_mode_skips_login_and_writes_separate_result(self):
+        result = {
+            "kind": "rerank_micro", "legacy_median_s": 1.0, "current_median_s": 0.9,
+            "max_abs_score_delta": 0.0, "ranking_identical": True,
+        }
+        with tempfile.TemporaryDirectory() as folder, \
+             mock.patch.object(bench_load, "run_offline_rerank", return_value=result) as run, \
+             mock.patch.object(bench_load, "resolve_credentials", side_effect=AssertionError("login")):
+            rc = bench_load.main([
+                "--offline-rerank", "--limit", "8", "--repeat", "2", "--torch-threads", "4",
+                "--out-dir", folder,
+            ])
+            outputs = list(Path(folder).glob("bench-rerank-*.json"))
+            self.assertEqual(len(outputs), 1)
+            self.assertEqual(json.loads(outputs[0].read_text(encoding="utf-8")), result)
+        self.assertEqual(rc, 0)
+        run.assert_called_once_with(repeat=2, threads=4, pairs=8)
+
+    def test_invalid_offline_limit_stops_before_model_load(self):
+        with mock.patch.object(bench_load, "run_offline_rerank") as run:
+            self.assertEqual(bench_load.main(["--offline-rerank", "--limit", "51"]), 2)
+            self.assertEqual(bench_load.main(["--offline-rerank", "--limit", "0"]), 2)
+        run.assert_not_called()
 
 
 class CgroupParsingTests(unittest.TestCase):

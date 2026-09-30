@@ -1,5 +1,5 @@
 # web/routers/review.py
-"""待複核佇列：`GET /api/review/queue`（唯讀、零 LLM）。
+"""待複核佇列與人工處理紀錄（零 LLM）。
 
 系統已經偵測到、也存在庫裡，但先前**看不到是哪幾筆**的三種東西：
 
@@ -13,10 +13,11 @@
 三條品質迴路的共同缺口是「偵測到了但沒有人看得到個體」，所以收進同一支端點、同一種分頁
 形狀（與雷達目錄一致：`total／limit／offset／has_more／next_offset／items`）。
 
+處理狀態寫入獨立的 `review_state`，原始品質訊號保持不變。共用帳號無法辨識個人，
+所以只記狀態、註記、人工驗證結果與更新時間，不記虛構的 reviewer。
+
 刻意的範圍：
 
-- **只讀**。這裡不提供「標記為已處理」——那需要新的狀態欄位與誰處理的歸因，而本站是
-  共用帳號；先讓東西看得見。低分的回答處理方式是重問或回報，抽取問題是重跑該篇回填。
 - `faithfulness` 與 `feedback` 只看有效列（`active`、非中止），並限制在 `days` 天內：
   門檻與窗期沿用監控頁那張卡的定義（`FAITHFULNESS_MIN`、30 天），兩邊的數字才對得起來。
 - `faithfulness` 只列**現行 judge** 量出來的低分（`app/services/judge_schema.py` 的
@@ -31,9 +32,10 @@ from __future__ import annotations
 import logging
 import time
 from typing import Literal
+from uuid import UUID
 
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.config import get_settings
@@ -47,6 +49,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ReviewKind = Literal["faithfulness", "feedback", "extraction"]
+ReviewStatus = Literal["open", "resolved", "dismissed"]
+Verification = Literal["untested", "passed", "failed"]
 
 _SETTINGS = get_settings()
 _FAITHFULNESS_MIN = _SETTINGS.faithfulness_min
@@ -89,6 +93,10 @@ class ReviewItem(BaseModel):
     # 重算：入庫之後調過門檻的話，可能與當初被標記的原因不同，甚至是空的——那代表這一篇
     # 以現在的標準已經不必看了，重跑該篇回填就會解除標記。
     review_reasons: list[str] | None = None
+    review_status: ReviewStatus = "open"
+    review_note: str = ""
+    verification: Verification = "untested"
+    reviewed_at: str | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -103,23 +111,37 @@ class ReviewQueueResponse(BaseModel):
     items: list[ReviewItem]
 
 
+class ReviewUpdate(BaseModel):
+    status: ReviewStatus
+    note: str = Field(default="", max_length=1000)
+    verification: Verification = "untested"
+
+
+class ReviewStateResponse(ReviewUpdate):
+    kind: ReviewKind
+    subject_id: UUID
+    updated_at: str
+
+
 def _iso(v) -> str | None:
     return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v is not None else None)
 
 
 def _qa_item(row) -> ReviewItem:
-    qa_id, conv_id, question, created_at, score, feedback, judge_model = row
+    qa_id, conv_id, question, created_at, score, feedback, judge_model, status, note, verification, reviewed_at = row
     return ReviewItem(
         qa_id=str(qa_id), conversation_id=str(conv_id), question=question,
         created_at=_iso(created_at),
         faithfulness_score=float(score) if score is not None else None,
         feedback=feedback,
         judge_model=judge_model,
+        review_status=status or "open", review_note=note or "",
+        verification=verification or "untested", reviewed_at=_iso(reviewed_at),
     )
 
 
 def _extraction_item(row) -> ReviewItem:
-    rid, fhash, fname, title, src, rdate, qscore, qflags, pfailed = row
+    rid, fhash, fname, title, src, rdate, qscore, qflags, pfailed, status, note, verification, reviewed_at = row
     flags = qflags if isinstance(qflags, dict) else None
     reasons = review_reasons(
         float(qscore) if qscore is not None else None, list(pfailed) if pfailed else None,
@@ -134,25 +156,34 @@ def _extraction_item(row) -> ReviewItem:
         quality_score=float(qscore) if qscore is not None else None,
         quality_flags=flags,
         pages_failed=list(pfailed) if pfailed else None,
+        review_status=status or "open", review_note=note or "",
+        verification=verification or "untested", reviewed_at=_iso(reviewed_at),
     )
 
 
-async def _fetch(session, kind: str, *, limit: int, offset: int, days: int):
+async def _fetch(session, kind: str, *, limit: int, offset: int, days: int, status: str = "open"):
     """回 (total, items)。每個 kind 兩條查詢：count 與當頁。"""
     page = {"limit": limit, "offset": offset}
+    state_filter = "" if status == "all" else " AND COALESCE(rv.status, 'open') = :review_status"
+    state_params = {} if status == "all" else {"review_status": status}
+    state_cols = "rv.status, rv.note, rv.verification, rv.updated_at"
     if kind == "extraction":
         total = (await session.execute(
-            text("SELECT count(*) FROM research.research_report WHERE needs_review")
+            text("SELECT count(*) FROM research.research_report rr "
+                 "LEFT JOIN research.review_state rv ON rv.kind = 'extraction' AND rv.subject_id = rr.id "
+                 f"WHERE rr.needs_review{state_filter}"), state_params,
         )).scalar_one()
         rows = (await session.execute(
             text(
-                "SELECT id, file_hash, file_name, title, source, report_date, "
-                "quality_score, quality_flags, pages_failed "
-                "FROM research.research_report WHERE needs_review "
+                "SELECT rr.id, rr.file_hash, rr.file_name, rr.title, rr.source, rr.report_date, "
+                f"rr.quality_score, rr.quality_flags, rr.pages_failed, {state_cols} "
+                "FROM research.research_report rr "
+                "LEFT JOIN research.review_state rv ON rv.kind = 'extraction' AND rv.subject_id = rr.id "
+                f"WHERE rr.needs_review{state_filter} "
                 # 分數低的在前（NULL＝算不出分數，排最後）；id 當決勝鍵讓翻頁穩定。
-                "ORDER BY quality_score ASC NULLS LAST, id LIMIT :limit OFFSET :offset"
+                "ORDER BY rr.quality_score ASC NULLS LAST, rr.id LIMIT :limit OFFSET :offset"
             ),
-            page,
+            {**page, **state_params},
         )).all()
         return int(total), [_extraction_item(tuple(r)) for r in rows]
 
@@ -164,16 +195,19 @@ async def _fetch(session, kind: str, *, limit: int, offset: int, days: int):
         where = f"{_QA_VALID} AND feedback = 'dislike'"
         order = "created_at DESC, id"
         params = {"days": days}
+    join = f"LEFT JOIN research.review_state rv ON rv.kind = '{kind}' AND rv.subject_id = qa_log.id"
     total = (await session.execute(
-        text(f"SELECT count(*) FROM research.qa_log WHERE {where}"), params
+        text(f"SELECT count(*) FROM research.qa_log {join} WHERE {where}{state_filter}"),
+        {**params, **state_params},
     )).scalar_one()
     rows = (await session.execute(
         text(
             f"SELECT id, COALESCE(conversation_id, id), question, created_at, ({_SCORE}), feedback, "
-            f"({_ROW_JUDGE}) "
-            f"FROM research.qa_log WHERE {where} ORDER BY {order} LIMIT :limit OFFSET :offset"
+            f"({_ROW_JUDGE}), {state_cols} "
+            f"FROM research.qa_log {join} WHERE {where}{state_filter} "
+            f"ORDER BY {order} LIMIT :limit OFFSET :offset"
         ),
-        {**params, **page},
+        {**params, **page, **state_params},
     )).all()
     return int(total), [_qa_item(tuple(r)) for r in rows]
 
@@ -184,11 +218,12 @@ async def review_queue(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     days: int = Query(30, ge=1, le=365),
+    status: Literal["open", "resolved", "dismissed", "all"] = Query("open"),
 ):
     """待複核佇列的一頁。`days` 只作用於 faithfulness／feedback。"""
     t0 = time.monotonic()
     async with deps.SessionFactory() as session:
-        total, items = await _fetch(session, kind, limit=limit, offset=offset, days=days)
+        total, items = await _fetch(session, kind, limit=limit, offset=offset, days=days, status=status)
     next_offset = offset + len(items)
     has_more = next_offset < total
     logger.info(
@@ -200,4 +235,31 @@ async def review_queue(
         next_offset=next_offset if has_more else None,
         min_score=_FAITHFULNESS_MIN if kind == "faithfulness" else None,
         items=items,
+    )
+
+
+@router.put("/api/review/{kind}/{subject_id}", response_model=ReviewStateResponse)
+async def update_review(kind: ReviewKind, subject_id: UUID, body: ReviewUpdate):
+    """記錄人工處理結果；verification 是人工確認，不會偷偷重跑評測或抽取。"""
+    table = "research.research_report" if kind == "extraction" else "research.qa_log"
+    async with deps.SessionFactory() as session:
+        exists = (await session.execute(
+            text(f"SELECT EXISTS (SELECT 1 FROM {table} WHERE id = :id)"), {"id": subject_id},
+        )).scalar_one()
+        if not exists:
+            raise HTTPException(status_code=404, detail="待複核項目不存在")
+        row = (await session.execute(text(
+            "INSERT INTO research.review_state (kind, subject_id, status, note, verification) "
+            "VALUES (:kind, :id, :status, :note, :verification) "
+            "ON CONFLICT (kind, subject_id) DO UPDATE SET status = EXCLUDED.status, "
+            "note = EXCLUDED.note, verification = EXCLUDED.verification, updated_at = now() "
+            "RETURNING updated_at"
+        ), {
+            "kind": kind, "id": subject_id, "status": body.status,
+            "note": body.note.strip(), "verification": body.verification,
+        })).scalar_one()
+        await session.commit()
+    return ReviewStateResponse(
+        kind=kind, subject_id=subject_id, status=body.status,
+        note=body.note.strip(), verification=body.verification, updated_at=_iso(row),
     )

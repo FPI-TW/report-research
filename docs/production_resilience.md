@@ -70,7 +70,7 @@ uvicorn 收到 `SIGTERM` 後以 143（128+15）退出，這是**正常收場**�
 | 檔案 | 用途 |
 |---|---|
 | `report-mark-web.service` | web 服務（與主機版逐字對齊，另加 `OnFailure` / `SuccessExitStatus`） |
-| `report-mark-web.service.d/path.conf` | PATH drop-in。**`claude` CLI 在 nvm 的 node bin，不在 systemd 預設 PATH**；少了它 `/api/ask` 會以 `FileNotFoundError: 'claude'` 失敗 |
+| `report-mark-web.service.d/path.conf` | PATH drop-in，讓 web 找得到 `claude` CLI。CLI 已於 2026-09-23 放棄，現在只剩網搜（暫停中）會用到；PR-M 移除 |
 | `report-mark-sync.service` / `.timer` | NAS 增量同步 |
 | `report-mark-alert@.service` / `report-mark-alert.sh` | 失敗告警 |
 | `report-mark-sync.env.example` | → `/etc/default/report-mark-sync` |
@@ -148,7 +148,7 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 ### 逾時的兩個非對稱決定
 
 - `DB_STATEMENT_TIMEOUT_MS` 預設 **60000**，刻意不取架構檢視建議的 15000：雷達目錄的兩次全表 unnest、overview 一題掃 7 次同一母體、閱讀頁 `similar` 拉高 `ef_search` 的 HNSW 掃描都天生偏慢，15s 有把正常功能打掛的實質風險。60s 比任何已知查詢高一個數量級，仍舊把「無上限」變成有上限。
-- `DB_IDLE_TX_TIMEOUT_MS` 預設 **0（關）**，這是刻意的：`scripts/sync_new_reports.py` 先 `report_exists()` 開了交易，接著才 spawn `claude` CLI 標註（硬逾時 150s）與跑 BGE-M3 嵌入（大檔可達數分鐘），中間完全沒有 commit。設了它＝每 3 小時一次的生產同步會把報告靜默丟進 `data/sync_failures.log`。要開就**只在 web 的 `.env` 開**——批次腳本不讀 repo 根的 `.env`（sync unit 走 `/etc/default/report-mark-sync`），這個切分是天然的。
+- `DB_IDLE_TX_TIMEOUT_MS` 預設 **0（關）**，這是刻意的：`scripts/sync_new_reports.py` 先 `report_exists()` 開了交易，接著才做 LLM 標註（預設 DeepSeek HTTP）與跑 BGE-M3 嵌入（大檔可達數分鐘），中間完全沒有 commit。設了它＝每 3 小時一次的生產同步會把報告靜默丟進 `data/sync_failures.log`。要開就**只在 web 的 `.env` 開**——批次腳本不讀 repo 根的 `.env`（sync unit 走 `/etc/default/report-mark-sync`），這個切分是天然的。
 
 ### 維運長查詢的豁免
 
@@ -770,7 +770,7 @@ systemctl list-timers report-mark-freshness.timer     # 排程：每日 08:30（
 uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 ```
 
-退出碼：`0`＝PASS／`1`＝資產停更（FAIL）／`2`＝查不到（DB 不可用）／`3`＝**管線本身沒跑完（UPSTREAM_STALE）**。**四者刻意分流**：`1` 去看批次日誌、`2` 去看 DB 與 `/healthz`、`3` 去看 sync 殼與 claude 鎖。混成同一個碼等於把「DB 掛了」誤導成「批次壞了」。
+退出碼：`0`＝PASS／`1`＝資產停更（FAIL）／`2`＝查不到（DB 不可用）／`3`＝**管線本身沒跑完（UPSTREAM_STALE）**。**四者刻意分流**：`1` 去看批次日誌、`2` 去看 DB 與 `/healthz`、`3` 去看 sync 殼與 LLM 批次鎖。混成同一個碼等於把「DB 掛了」誤導成「批次壞了」。
 
 ### 資料新鮮度 ≠ 管線執行新鮮度
 
@@ -798,7 +798,7 @@ uv run python scripts/check_batch_freshness.py --json # 供後續接監控
 |---|---|
 | 完整成功 | **是** |
 | **完整成功但 0 篇新研報** | **是** ← 見下 |
-| 下游某段回 `rc=75`（claude CLI 被別的批次佔用，`EX_TEMPFAIL`） | **是**——那是常態，不是異常 |
+| 下游某段回 `rc=75`（LLM 批次鎖被別的批次佔用，`EX_TEMPFAIL`） | **是**——那是常態，不是異常 |
 | PID lock 被佔用而跳過（`exit 0`） | 否 |
 | 掛載／rsync／匯入失敗（`exit 1`） | 否 |
 | 下游某段**異常**失敗（非 0 且非 75） | 否 |

@@ -8,6 +8,10 @@ import { z } from 'zod'
  */
 export const reviewKindSchema = z.enum(['faithfulness', 'feedback', 'extraction'])
 export type ReviewKind = z.infer<typeof reviewKindSchema>
+export const reviewStatusSchema = z.enum(['open', 'resolved', 'dismissed'])
+export type ReviewStatus = z.infer<typeof reviewStatusSchema>
+export const reviewVerificationSchema = z.enum(['untested', 'passed', 'failed'])
+export type ReviewVerification = z.infer<typeof reviewVerificationSchema>
 
 export const reviewItemSchema = z.object({
   qa_id: z.string().nullish(),
@@ -30,6 +34,10 @@ export const reviewItemSchema = z.object({
   // extraction 列：app/services/store.py 的 REVIEW_REASONS。刻意收成 string 而非 enum：後端新增一種原因時，
   // enum 會讓整頁 parse 失敗；收成 string，畫面只是多一個沒有中文標籤的代碼。
   review_reasons: z.array(z.string()).nullish(),
+  review_status: reviewStatusSchema.optional(),
+  review_note: z.string().optional(),
+  verification: reviewVerificationSchema.optional(),
+  reviewed_at: z.string().nullish(),
 })
 export type ReviewItem = z.infer<typeof reviewItemSchema>
 
@@ -44,3 +52,12 @@ export const reviewQueueSchema = z.object({
   items: z.array(reviewItemSchema),
 })
 export type ReviewQueue = z.infer<typeof reviewQueueSchema>
+
+export const reviewStateSchema = z.object({
+  kind: reviewKindSchema,
+  subject_id: z.string(),
+  status: reviewStatusSchema,
+  note: z.string(),
+  verification: reviewVerificationSchema,
+  updated_at: z.string(),
+})

@@ -562,7 +562,7 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
             ) = orig
 
         self.assertEqual(captured.get("top_m"), ans.ASK_RERANK_TOP_M)
-        self.assertEqual(ans.ASK_RERANK_TOP_M, 50)  # 預設啟用
+        self.assertEqual(ans.ASK_RERANK_TOP_M, 16)  # 預設啟用；避免併發時重排超時
         self.assertIsNotNone(captured.get("deadline"))  # 問答路徑逾時 → deadline 傳遞
         self.assertEqual(ans.ASK_RERANK_TIMEOUT, 60.0)  # 預設 60s（實測 50 對 ~34s + 餘裕）
 
@@ -648,6 +648,10 @@ class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("dense_ms=180", line)
         self.assertIn("lex_ms=1420", line)
+        self.assertIn("rerank_queue_ms=", line)
+        self.assertIn("rerank_compute_ms=", line)
+        self.assertIn("rerank_applied=", line)
+        self.assertIn("rerank_timed_out=", line)
 
 
 class StageTimerTests(unittest.TestCase):
@@ -972,6 +976,42 @@ class AnswerGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("qa_id", events[-1][1])  # done 帶 qa_id 供前端掛回饋
         self.assertIn("conversation_id", events[-1][1])
         self.assertTrue(called["llm"])  # 有跑主 LLM
+
+    async def test_unknown_citation_is_filtered_before_stream_and_persist(self):
+        import app.services.retrieval_pipeline as rp
+        from app.services import answer as ans
+
+        called = {"llm": False, "intent": False}
+        orig = self._patch(ans, rp, in_domain=True, called=called)
+        saved = self._patch_simplified_stream(ans, "")
+        saved_log = ans._log_qa
+        logged = {}
+
+        async def fake_stream(*a, **k):
+            for piece in ("毛利率 28%[", "9]，實際來源[", "1]。"):
+                yield piece
+
+        async def spy_log(question, body, *a, **k):
+            logged["body"] = body
+            logged["filters"] = a[1]
+            return "qa-1"
+
+        ans.stream_completion = fake_stream
+        ans._log_qa = spy_log
+        try:
+            events = [e async for e in ans.answer_question("可口可樂毛利率")]
+        finally:
+            ans._log_qa = saved_log
+            self._restore_simplified_stream(ans, saved)
+            self._restore(ans, rp, orig)
+
+        expected = "毛利率 28%（無效引用），實際來源[1]。"
+        self.assertEqual("".join(p for k, p in events if k == "token"), expected)
+        self.assertEqual(logged["body"], expected)
+        self.assertEqual(logged["filters"]["invalid_citation_count"], 1)
+        done = next(p for k, p in events if k == "done")
+        self.assertEqual(done["cited"], ["r1"])
+        self.assertNotIn("answer", done)
 
     def _patch_simplified_stream(self, ans, text: str):
         """把主 LLM 換成吐指定字串的串流，並關掉 done 之後的兩個外呼。

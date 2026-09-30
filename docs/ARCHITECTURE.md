@@ -63,7 +63,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `web/server.py` | 組合層：載環境檔、初始化 logging、auth middleware、lifespan、掛 router |
-| `web/routers/` | 12 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`、`spa`、`brief`、`review`（待複核佇列：忠實度低分／倒讚／抽取 `needs_review` 的個體清單，唯讀；刻意不提供「標記已處理」）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
+| `web/routers/` | 12 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
 | `web/auth.py` | 共用帳密、HMAC session、失敗追蹤、可信代理 |
 | `web/concurrency.py` | `ConcurrencyGate`（刻意不支援 `async with`）、單 worker 偵測 |
@@ -133,7 +133,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 
 ## 8. 資料層
 
-schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具，冪等只涵蓋 `ADD COLUMN IF NOT EXISTS`；改 CHECK 約束在既有庫是 no-op，要另寫 `ALTER`，`db/expected_constraints.txt` 由 `tests/test_schema_constraints.py` 對帳。刪表同理：深度研報的四張表已從 `db/schema.sql` 拿掉，既有庫要手動跑 `db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`）；DROP 之前對生產庫跑約束測試會多出 `report_run`／`report_section` 的兩條 CHECK 而紅，是預期的。
+schema 名 `research`，沒有 migration 工具；新增的 `review_state` 由 `make schema` 以 `CREATE TABLE IF NOT EXISTS` 建立。既有欄位冪等只涵蓋 `ADD COLUMN IF NOT EXISTS`；改 CHECK 約束在既有庫是 no-op，要另寫 `ALTER`，`db/expected_constraints.txt` 由 `tests/test_schema_constraints.py` 對帳。刪表同理：深度研報的四張表已從 `db/schema.sql` 拿掉，既有庫要手動跑 `db/drop_deep_report_tables.sql`（依相依順序 `DROP TABLE IF EXISTS`）；DROP 之前對生產庫跑約束測試會多出 `report_run`／`report_section` 的兩條 CHECK 而紅，是預期的。
 
 | 表 | 用途 | 關係 |
 |---|---|---|
@@ -145,8 +145,11 @@ schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具�
 | `report_brief` | 每日簡報 | `report_ids uuid[]` 刻意無 FK，讀取端容忍孤兒 |
 | `extraction_log` | 每個進過管線的 `file_hash` 一列 | 無 FK |
 | `llm_task_failure` | LLM 批次的內容型失敗（跳過名單）：解析不了、審查擋下、截斷；成功即刪列，規則在 `app/services/llm_failures.py` | PK(file_hash, task)；刻意無 CHECK、不備份 |
+| `review_state` | 人工複核的狀態、註記、驗證結果、更新時間；未建列視為 `open` | PK(kind, subject_id)；subject_id 指向 `qa_log.id` 或 `research_report.id`，不設跨表 FK；共用帳號不記 reviewer |
 
-備份只涵蓋四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）→ NAS；語料層刻意不備。
+待複核 API 以原始品質條件查詢，再以 `review_state` 篩選 `open`／`resolved`／`dismissed`／`all`；寫入狀態不改 `qa_log` 或 `research_report` 的品質訊號。人工驗證欄位只記錄人工結果，不會重跑評測或抽取。
+
+備份涵蓋五張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`）→ NAS；語料層刻意不備。
 
 資料陷阱：
 - `full_text` 是未清理原始抽取（帶 CJK 字間空白），顯示一律 `clean_extracted`，不是 `clean_text`。
@@ -166,7 +169,7 @@ schema 名 `research`，7 張表（`db/schema.sql`），沒有 migration 工具�
 | LLM 模型 | `LLM_PROVIDER`（`deepseek`；另有 `claude_cli`、遷移期回退 `claude_only`）與 14 個任務旋鈕 `*_MODEL`，一律經 `app/services/llm_models.py` 的 `resolve_model`：非空的任務旋鈕優先，否則查該 provider 的預設表；空字串視同未設，`LLM_PROVIDER` 未設、空值都當成 `deepseek`；未知值在線上也當成 `deepseek`（記 ERROR），批次與評測的預檢（`scripts/_llm_env.py`）則印原始值 rc=2——`claude_cli` 是讓 LLM 停下來的開關，拼錯不能變成照常計費（所以 `/etc/default/report-mark-llm` 缺檔時批次解析到 DeepSeek、因缺金鑰預檢 rc=2，不會退回 CLI）。DeepSeek 表裡只有網搜刻意仍是 Claude，所以網搜暫停中（生產 `ASK_ENABLE_WEB=0`；前端 `WEB_SEARCH_PAUSED` 隱藏開關、請求一律送 `web=false`，DeepSeek 版網搜完成後恢復）；兩個 judge 自 PR-26/27 起是 `deepseek-flash`（新量尺系譜，門檻數值不變）。`claude_cli` 表與遷移前各呼叫點逐字相同（`tests/test_llm_models.py`；測試以 conftest 強制 `claude_cli` 跑，不打付費 API）。`claude_only` 忽略旋鈕裡的 DeepSeek 白名單名稱。claude CLI 已於 2026-09-23 放棄，`claude_cli`／`claude_only` 仍是合法值但已無可用後端（PR-M 決定去留）。白名單 `HTTP_MODELS` 住在這個只依賴標準函式庫的葉模組（`app/config.py` 與 `llm_http` 都 import 它，避免循環）。啟動自檢依解析結果檢查 claude CLI 路徑、`DEEPSEEK_API_KEY` 有無值、未知模型名，不擋啟動 |
 | 問答模型與網搜 | `ASK_INTENT_MODEL`（查表，預設 `deepseek-flash`）、`ASK_INTENT_TIMEOUT`（20）、`ASK_CONDENSE_MODEL`（查表，不再跟隨 intent）、`ASK_CONDENSE_TIMEOUT`（20）、`ASK_ENABLE_WEB`（1）、`ASK_WEB_TIMEOUT`（240） |
 | M5／M6 規劃 | `QA_PLANNER_MODEL`（查表，不再跟隨 intent）、`QA_PLANNER_TIMEOUT`（45，冷啟動 ttft 約 10 秒）、`QA_PLANNER_MAX_SUBQUERIES`（3）、`QA_MAX_ROUNDS`（2）、`QA_AGENTIC_ENABLED`（1）、`QA_AGENTIC_TIMEOUT`（90）、`QA_SUBQUERY_MAX_REPORTS`（5） |
-| rerank | `ASK_RERANK_ENABLED`（1）、`ASK_RERANK_CANDIDATES`（50）、`ASK_RERANK_TIMEOUT`（60；實測 50 對約 34 秒）、`RERANK_MODEL` |
+| rerank | `ASK_RERANK_ENABLED`（1）、`ASK_RERANK_CANDIDATES`（16；50 候選在 2026-09-29 線上三併發易逾時）、`ASK_RERANK_TIMEOUT`（60）、`RERANK_MODEL` |
 | 忠實度 M8 | `ASK_FAITHFULNESS_ENABLED`（1）、`FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`，讀者只有監控頁 `_FAITHFULNESS_MIN` 與 `scripts/eval_faithfulness.py`）、`ASK_FAITHFULNESS_SAMPLE_RATE`（1.0）、`FAITHFULNESS_MODEL`（deepseek 表 `deepseek-flash`、`claude_cli` 表 `claude-haiku-4-5`，刻意不沿用 `ASK_INTENT_MODEL`：換路由模型不得靜默換尺；讀分數三處只計現行 judge，見 `app/services/judge_schema.py`）、`FAITHFULNESS_TIMEOUT`（60，目前沒有呼叫端）、`ASK_FAITHFULNESS_TIMEOUT`（每次 judge 呼叫的總期限；未設時依 judge 走哪條路：DeepSeek 90，依探測延遲以 max(ceil(3×p99), 60) 估算；Claude CLI 240）、`ASK_FAITHFULNESS_MAX_INFLIGHT`（2） |
 | 抽取與儲存 | `EXTRACTOR`（pypdf）、`EXTRACTION_REVIEW_MIN`（0.6）、`EXTRACTION_REVIEW_MIN_COVERAGE`（0.30）、`EXTRACTION_REVIEW_MAX_GARBLED`（0.02）、`OBJECT_STORAGE_MODE`（local）、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS`（3600，上限一小時） |
 | 雷達 | `RADAR_CATALOG_CACHE_TTL`（60 秒；0 停用）：`/api/radar/instruments` 整份回應依查詢參數快取，`report_signal` 每 3 小時才更新 |

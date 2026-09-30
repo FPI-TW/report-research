@@ -40,9 +40,11 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +69,7 @@ from app.services.answer import (  # noqa: E402
     SYSTEM_PROMPT,
     build_user_prompt,
 )
+from app.services.citation_filter import filter_unknown_citations  # noqa: E402
 from app.services.embed import MODEL_NAME as EMBED_MODEL  # noqa: E402
 from app.services.embed import embed_query_cached  # noqa: E402
 from app.services.judge_schema import JUDGE_SCHEMA_VERSION, JudgeSchemaError  # noqa: E402
@@ -91,6 +94,7 @@ from eval.judge import (  # noqa: E402
     JudgeError,
     judge_json,
 )
+from eval.question_contract import load_dataset  # noqa: E402
 from eval.ragas_metrics import (  # noqa: E402
     CTX_RELEVANCE_SYS,
     DECOMPOSE_SYS,
@@ -241,7 +245,8 @@ async def _generate_answer(
         if chunk == SEARCH_EVENT:
             continue
         parts.append(chunk)
-    return "".join(parts), bool(meta.get("truncated"))
+    answer = filter_unknown_citations("".join(parts), range(1, len(split_contexts(context)) + 1))
+    return answer, bool(meta.get("truncated"))
 
 
 def has_valid_citation(answer: str, n_contexts: int) -> bool:
@@ -571,6 +576,7 @@ def build_config(
     started_at: str,
     finished_at: str | None = None,
     judge_observed: dict | None = None,
+    corpus_id: str | None = None,
 ) -> dict:
     """結果檔的 config 快照：只供 eval_compare 印差異，不參與判定（不放進 summary，
     否則每個新鍵都會觸發退出碼 3）。
@@ -616,12 +622,48 @@ def build_config(
         "repeat": repeat,
         "queryset": str(dataset_path),
         "queryset_sha256": _sha256_file(dataset_path),
+        "corpus_id": corpus_id,
         "scope": scope,
         "limit": limit,
         "commit": commit,
         "started_at": started_at,
         "finished_at": finished_at,
     }
+
+
+def check_baseline_config(baseline: dict, current: dict) -> None:
+    """付費呼叫前檢查同題集、同模型及同執行設定；舊結果沒有欄位也拒絕。"""
+    base = baseline.get("config")
+    if not isinstance(base, dict):
+        raise ValueError("基準線缺 config")
+    keys = (
+        "gen_model", "gen_timeout", "models", "embed_model", "rerank_top_m", "rerank_model",
+        "agentic", "concurrency", "repeat", "queryset_sha256", "scope", "limit", "corpus_id",
+    )
+    changed = [key for key in keys if base.get(key) != current.get(key) or key not in base]
+    base_judge, current_judge = base.get("judge"), current["judge"]
+    if not isinstance(base_judge, dict):
+        changed.append("judge")
+    else:
+        changed += [
+            f"judge.{key}" for key in ("provider", "model", "timeout", "retries", "prompt_sha",
+                                       "schema_version", "lineage", "max_tokens")
+            if key not in base_judge or base_judge[key] != current_judge[key]
+        ]
+    if changed:
+        raise ValueError("基準線設定不可比：" + "、".join(changed))
+
+
+def require_complete(report: dict, expected: int) -> None:
+    """正式基準線每題每個指標都要有值；缺來源與 judge 故障不當作分數。"""
+    summary = report.get("summary", {})
+    missing = [
+        key for key in ("n", "n_effective_faithfulness", "n_effective_context_precision",
+                        "n_effective_answer_relevancy") if summary.get(key) != expected
+    ]
+    missing += [key for key in ("n_errors", "n_no_context", "n_judge_errors") if summary.get(key) != 0]
+    if missing:
+        raise ValueError("評測不完整，不能升格基準線：" + "、".join(missing))
 
 
 class _JudgeObserver:
@@ -642,6 +684,13 @@ class _JudgeObserver:
         for k, v in (meta.get("usage") or {}).items():
             self.usage[k] = self.usage.get(k, 0) + v
 
+    def merge(self, snapshot: dict) -> None:
+        self.model_resp.update(snapshot.get("model_resp") or [])
+        self.fingerprints.update(snapshot.get("system_fingerprint") or [])
+        self.requests += snapshot.get("requests", 0)
+        for k, v in (snapshot.get("usage") or {}).items():
+            self.usage[k] = self.usage.get(k, 0) + v
+
     def snapshot(self) -> dict:
         if not self.requests:
             return {}
@@ -656,6 +705,45 @@ class _JudgeObserver:
 def _dump_name(case_id, run_idx: int, repeat: int) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", str(case_id)) or "case"
     return f"{safe}-r{run_idx + 1}.json" if repeat > 1 else f"{safe}.json"
+
+
+def _write_checkpoint(path: Path, payload: dict) -> None:
+    """同目錄原子寫入，行程中斷時不留下看似完整的付費結果。"""
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, prefix=".partial-", delete=False,
+    ) as stream:
+        temporary = Path(stream.name)
+        json.dump(payload, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def _prepare_checkpoints(directory: Path, identity: dict, questions: list[dict], repeat: int) -> dict:
+    """付費呼叫前核對所有舊檢查點；設定漂移或檔案損壞直接停止。"""
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    manifest = directory / "manifest.json"
+    if manifest.exists():
+        if json.loads(manifest.read_text(encoding="utf-8")) != identity:
+            raise ValueError("檢查點設定不符，不能沿用先前的付費結果")
+    else:
+        if any(directory.iterdir()):
+            raise ValueError("檢查點目錄已有檔案但缺 manifest，不能安全續跑")
+        _write_checkpoint(manifest, identity)
+    cached = {}
+    for q in questions:
+        for run_idx in range(repeat):
+            path = directory / _dump_name(q["id"], run_idx, repeat)
+            if not path.exists():
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if (payload.get("id") != q["id"] or payload.get("run") != run_idx + 1 or
+                    not isinstance(payload.get("result"), dict) or
+                    not isinstance(payload.get("judge_observed"), dict)):
+                raise ValueError(f"檢查點內容不符：{path}")
+            cached[(q["id"], run_idx)] = payload
+    return cached
 
 
 def dump_io(
@@ -707,6 +795,10 @@ async def run(
     generator_model: str = DEFAULT_MODEL,
     repeat: int = 1,
     dump_dir=None,
+    corpus_id: str | None = None,
+    match_baseline=None,
+    complete_only: bool = False,
+    checkpoint_dir=None,
 ) -> dict:
     """讀題集 → 有界併發 eval_question → aggregate → 寫報表（{summary, config, cases}）。
 
@@ -718,10 +810,16 @@ async def run(
     """
     if repeat < 1:
         raise ValueError("repeat 必須 ≥ 1")
+    if match_baseline is not None or complete_only:
+        if not corpus_id or not corpus_id.strip():
+            raise ValueError("正式基準流程必須提供 --corpus-id")
+        if limit is not None or scope is not None:
+            raise ValueError("正式基準流程須執行完整題集，不可設定 --limit 或 --scope")
+        if out_path is not None and Path(out_path).exists():
+            raise ValueError(f"正式基準流程不覆寫既有結果：{out_path}")
     started_at = datetime.now(timezone.utc).isoformat()
     commit = _git_commit()
-    dataset = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
-    questions = dataset.get("questions", [])
+    questions, _dataset_sha = load_dataset(dataset_path)
     if scope:
         questions = [q for q in questions if q.get("scope", "corpus_qa") == scope]
     if limit is not None:
@@ -730,25 +828,53 @@ async def run(
     if agentic:
         concurrency = 1
 
+    baseline = None
+    if match_baseline is not None:
+        baseline = json.loads(Path(match_baseline).read_text(encoding="utf-8"))
+        require_complete(baseline, len(questions))
+        current = build_config(
+            dataset_path=dataset_path, generator_model=generator_model, judge_model=judge_model,
+            concurrency=concurrency, repeat=repeat, rerank_top_m=rerank_top_m, scope=scope,
+            limit=limit, agentic=agentic, commit=commit, started_at=started_at, corpus_id=corpus_id,
+        )
+        check_baseline_config(baseline, current)
+
     retrieval_params = {**RETRIEVAL_PARAMS, "rerank_top_m": rerank_top_m}
 
+    checkpoint_path = Path(checkpoint_dir) if checkpoint_dir is not None else None
+    cached = {}
+    if checkpoint_path is not None:
+        identity = build_config(
+            dataset_path=dataset_path, generator_model=generator_model, judge_model=judge_model,
+            concurrency=concurrency, repeat=repeat, rerank_top_m=rerank_top_m, scope=scope,
+            limit=limit, agentic=agentic, commit=commit, started_at="", corpus_id=corpus_id,
+        )
+        identity = {"version": 1, "config": identity, "out_path": str(Path(out_path).resolve()) if out_path else None,
+                    "question_ids": [q["id"] for q in questions]}
+        cached = _prepare_checkpoints(checkpoint_path, identity, questions, repeat)
+
     observer = _JudgeObserver()
-
-    async def _judge(system: str, user: str):
-        meta: dict = {}
-        try:
-            return await judge_json(
-                user, system=system, model=judge_model,
-                max_tokens=JUDGE_MAX_TOKENS_BY_SYSTEM.get(system, JUDGE_MAX_TOKENS), meta=meta,
-            )
-        finally:
-            observer.add(meta)
-
     sem = asyncio.Semaphore(concurrency)
 
-    async def _one(q: dict) -> dict:
+    async def _one(q: dict, run_idx: int) -> tuple[dict, dict]:
+        saved = cached.get((q["id"], run_idx))
+        if saved is not None:
+            print(f"續跑 {q['id']} #{run_idx + 1}/{repeat}", file=sys.stderr, flush=True)
+            return saved["result"], saved["judge_observed"]
         async with sem:  # 限制同時 spawn 的 claude CLI 數，避開 IO 風暴
-            return await eval_question(
+            local_observer = _JudgeObserver()
+
+            async def _judge(system: str, user: str):
+                meta: dict = {}
+                try:
+                    return await judge_json(
+                        user, system=system, model=judge_model,
+                        max_tokens=JUDGE_MAX_TOKENS_BY_SYSTEM.get(system, JUDGE_MAX_TOKENS), meta=meta,
+                    )
+                finally:
+                    local_observer.add(meta)
+
+            result = await eval_question(
                 q,
                 judge=_judge,
                 embed=embed_query_cached,
@@ -756,8 +882,20 @@ async def run(
                 agentic=agentic,
                 gen_model=generator_model,
             )
+            observed = local_observer.snapshot()
+            if checkpoint_path is not None:
+                _write_checkpoint(
+                    checkpoint_path / _dump_name(q["id"], run_idx, repeat),
+                    {"id": q["id"], "run": run_idx + 1, "result": result,
+                     "judge_observed": observed, "completed_at": datetime.now(timezone.utc).isoformat()},
+                )
+                print(f"完成 {q['id']} #{run_idx + 1}/{repeat}", file=sys.stderr, flush=True)
+            return result, observed
 
-    flat = await asyncio.gather(*[_one(q) for q in questions for _ in range(repeat)])
+    completed = await asyncio.gather(*[_one(q, run_idx) for q in questions for run_idx in range(repeat)])
+    flat = [result for result, _observed in completed]
+    for _result, observed in completed:
+        observer.merge(observed)
     cases: list[dict] = []
     for qi in range(len(questions)):
         runs = list(flat[qi * repeat : (qi + 1) * repeat])
@@ -789,8 +927,17 @@ async def run(
         started_at=started_at,
         finished_at=datetime.now(timezone.utc).isoformat(),
         judge_observed=observer.snapshot(),
+        corpus_id=corpus_id,
     )
     report = {"summary": summary, "config": config, "notes": lineage_notes(judge_model), "cases": cases}
+    if complete_only or match_baseline is not None:
+        require_complete(report, len(questions))
+    if baseline is not None:
+        base_observed = baseline["config"]["judge"].get("observed", {})
+        observed = config["judge"]["observed"]
+        for key in ("model_resp", "system_fingerprint"):
+            if base_observed.get(key) != observed.get(key):
+                raise ValueError(f"judge 實際回報的 {key} 與基準線不同，不能視為同量尺")
     if out_path is not None:
         out = Path(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -841,6 +988,8 @@ def _main() -> None:
                         help="每題重跑次數；>1 時每題每指標跨次取平均（彙總規則見模組 docstring）")
     parser.add_argument("--dump-io", default=None, metavar="DIR",
                         help="逐題寫出問題／脈絡／答案／judge 回應（建議 data/eval_frozen/<名稱>）")
+    parser.add_argument("--checkpoint-dir", default=None, metavar="DIR",
+                        help="逐題逐次原子保存結果；設定相同時可安全續跑付費評測")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--concurrency", type=int, default=3)
     parser.add_argument(
@@ -854,6 +1003,10 @@ def _main() -> None:
     parser.add_argument("--agentic", action="store_true",
                         help="走 M5 agentic 迴圈評測（強制 concurrency=1）")
     parser.add_argument("--json", action="store_true", help="改輸出完整 JSON 到 stdout")
+    parser.add_argument("--corpus-id", default=None, help="正式語料快照的不可變識別碼；同量尺比較須相同")
+    parser.add_argument("--complete-only", action="store_true", help="要求全題、全指標有效，否則不寫結果")
+    parser.add_argument("--match-baseline", default=None, metavar="JSON",
+                        help="付費執行前核對基準線設定，執行後核對 judge 實際模型與指紋")
     args = parser.parse_args()
     # 本次會用到的模型：生成端、judge；agentic 另有查詢規劃與證據評估（QA_PLANNER_MODEL）。
     require_llm_key(
@@ -874,12 +1027,19 @@ def _main() -> None:
                 generator_model=args.generator_model,
                 repeat=args.repeat,
                 dump_dir=args.dump_io,
+                checkpoint_dir=args.checkpoint_dir,
+                corpus_id=args.corpus_id,
+                match_baseline=args.match_baseline,
+                complete_only=args.complete_only,
             )
         )
     except _ACCOUNT_ERRORS as exc:
         # 不寫結果檔：一份每題都沒量到的結果檔，比沒有結果檔更容易被拿去比較。
         who = "judge" if isinstance(exc, JudgeAccountError) else "生成端"
         print(f"{who}帳號層級錯誤，整批中止（未寫出 {args.out}）：{exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"評測前檢／完整性檢查失敗（未寫出 {args.out}）：{exc}", file=sys.stderr)
         raise SystemExit(2) from None
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))

@@ -8,11 +8,11 @@ import { reasonText } from './reviewReasons'
 
 afterEach(() => vi.unstubAllGlobals())
 
-type Handler = (url: URL) => { status?: number; body: unknown }
+type Handler = (url: URL, init?: RequestInit) => { status?: number; body: unknown }
 
 function mount(handler: Handler, scale: EvalSource | null = null) {
-  const fetchMock = vi.fn(async (input: string) => {
-    const { status = 200, body } = handler(new URL(input, 'http://x'))
+  const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    const { status = 200, body } = handler(new URL(input, 'http://x'), init)
     return new Response(JSON.stringify(body), { status })
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -103,6 +103,98 @@ test('載入失敗：說出來並給重試，不讓整張卡消失', async () =>
   fail = false
   fireEvent.click(screen.getByRole('button', { name: '重試' }))
   expect(await screen.findByRole('link', { name: '提問 1' })).toBeInTheDocument()
+})
+
+test('記錄人工驗證、已處理後從待處理消失，並可重新打開', async () => {
+  let current = { status: 'open', note: '', verification: 'untested', updated_at: '2026-09-20T03:00:00Z' }
+  const fetchMock = mount((url, init) => {
+    if (init?.method === 'PUT') {
+      current = { ...current, ...JSON.parse(init.body as string), updated_at: '2026-09-21T03:00:00Z' }
+      return { body: { kind: 'feedback', subject_id: 'qa3', ...current } }
+    }
+    if (url.searchParams.get('kind') !== 'feedback') return { body: page('faithfulness', []) }
+    const status = url.searchParams.get('status')
+    return { body: page('feedback', status === current.status || status === 'all'
+      ? [qa(3, { review_status: current.status, review_note: current.note,
+        verification: current.verification, reviewed_at: current.updated_at })] : []) }
+  })
+  fireEvent.click(await screen.findByRole('tab', { name: '倒讚' }))
+  await screen.findByRole('link', { name: '提問 3' })
+  fireEvent.change(screen.getByLabelText('處理狀態'), { target: { value: 'resolved' } })
+  fireEvent.change(screen.getByLabelText('人工驗證'), { target: { value: 'passed' } })
+  fireEvent.change(screen.getByLabelText('處理註記'), { target: { value: '已核對原文' } })
+  fireEvent.click(screen.getByRole('button', { name: '儲存' }))
+  await waitFor(() => expect(screen.queryByRole('link', { name: '提問 3' })).not.toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: '已處理' }))
+  await screen.findByRole('link', { name: '提問 3' })
+  expect(screen.getByLabelText('處理註記')).toHaveValue('已核對原文')
+  expect(screen.getByLabelText('人工驗證')).toHaveValue('passed')
+  fireEvent.change(screen.getByLabelText('處理狀態'), { target: { value: 'open' } })
+  fireEvent.click(screen.getByRole('button', { name: '儲存' }))
+  await waitFor(() => expect(screen.queryByRole('link', { name: '提問 3' })).not.toBeInTheDocument())
+  fireEvent.click(screen.getByRole('button', { name: '待處理' }))
+  await screen.findByRole('link', { name: '提問 3' })
+  const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')
+  expect(writes).toHaveLength(2)
+  expect(JSON.parse(writes[0][1]!.body as string)).toEqual({
+    status: 'resolved', note: '已核對原文', verification: 'passed',
+  })
+  expect(JSON.parse(writes[1][1]!.body as string).status).toBe('open')
+})
+
+test('展開五頁後儲存只刷新首頁，後續分頁不漏掉因結案而前移的項目', async () => {
+  let items = Array.from({ length: 41 }, (_, i) => qa(i + 1))
+  const fetchMock = mount((url, init) => {
+    if (init?.method === 'PUT') {
+      const id = url.pathname.split('/').at(-1)
+      items = items.filter(item => item.qa_id !== id)
+      return { body: { kind: 'faithfulness', subject_id: id, ...JSON.parse(init.body as string),
+        updated_at: '2026-09-21T03:00:00Z' } }
+    }
+    const offset = Number(url.searchParams.get('offset'))
+    const next = offset + 10
+    return { body: page('faithfulness', items.slice(offset, next), {
+      total: items.length, offset, has_more: next < items.length,
+      next_offset: next < items.length ? next : null,
+    }) }
+  })
+  await screen.findByRole('link', { name: '提問 1' })
+  for (let i = 1; i <= 4; i++) {
+    fireEvent.click(screen.getByRole('button', { name: '載入更多（共 41 筆）' }))
+    await screen.findByRole('link', { name: `提問 ${i * 10 + 1}` })
+  }
+  await waitFor(() => expect(screen.queryByRole('button', { name: /載入更多/ })).not.toBeInTheDocument())
+  fetchMock.mockClear()
+  fireEvent.change(screen.getAllByLabelText('處理狀態')[10], { target: { value: 'resolved' } })
+  fireEvent.click(screen.getAllByRole('button', { name: '儲存' })[10])
+  const more = await screen.findByRole('button', { name: '載入更多（共 40 筆）' })
+  await waitFor(() => expect(screen.getAllByRole('button', { name: '儲存' })[0]).toBeEnabled())
+  const reads = fetchMock.mock.calls.filter(([, init]) => init?.method !== 'PUT')
+  expect(reads.map(([url]) => new URL(url, 'http://x').searchParams.get('offset'))).toEqual(['0'])
+  expect(screen.getAllByRole('link')).toHaveLength(10)
+  fireEvent.click(more)
+  await screen.findByRole('link', { name: '提問 12' })
+  expect(await screen.findByRole('link', { name: '提問 21' })).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: '提問 11' })).not.toBeInTheDocument()
+})
+
+test('儲存失敗保留已展開的頁面，不重新查詢清單', async () => {
+  const fetchMock = mount((url, init) => {
+    if (init?.method === 'PUT') return { status: 500, body: {} }
+    const offset = Number(url.searchParams.get('offset'))
+    return { body: page('faithfulness', [qa(offset + 1)], {
+      total: 2, offset, has_more: offset === 0, next_offset: offset === 0 ? 1 : null,
+    }) }
+  })
+  fireEvent.click(await screen.findByRole('button', { name: '載入更多（共 2 筆）' }))
+  await screen.findByRole('link', { name: '提問 2' })
+  fetchMock.mockClear()
+  fireEvent.click(screen.getAllByRole('button', { name: '儲存' })[0])
+  expect(await screen.findByRole('alert')).toHaveTextContent('儲存失敗，請重試')
+  expect(screen.getByRole('link', { name: '提問 1' })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: '提問 2' })).toBeInTheDocument()
+  expect(fetchMock.mock.calls).toHaveLength(1)
+  expect(fetchMock.mock.calls[0][1]?.method).toBe('PUT')
 })
 
 test('原因帶著量到的值：分數不低的研報看得出為什麼在這裡', () => {

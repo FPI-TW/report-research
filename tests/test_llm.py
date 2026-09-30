@@ -824,6 +824,7 @@ class CallSiteMaxTokensValuesTests(unittest.TestCase):
         ("app/services/faithfulness.py", "'faithfulness'"): 8192,
         ("eval/judge.py", "'eval_judge'"): 8192,
         ("eval/run_ragas.py", "'eval_answer'"): 8192,
+        ("eval/qa_adversarial.py", "'eval_answer'"): 8192,
     }
 
     def test_values(self):

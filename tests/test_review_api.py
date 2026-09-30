@@ -38,6 +38,7 @@ class _Session:
     def __init__(self, results):
         self._results = list(results)
         self.calls: list[tuple[str, dict]] = []
+        self.commits = 0
 
     async def __aenter__(self):
         return self
@@ -49,6 +50,9 @@ class _Session:
         self.calls.append((" ".join(str(getattr(stmt, "text", stmt)).split()), dict(params or {})))
         return _Result(self._results.pop(0))
 
+    async def commit(self):
+        self.commits += 1
+
 
 def _authed() -> TestClient:
     c = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
@@ -59,9 +63,9 @@ def _authed() -> TestClient:
 
 _TS = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
 _QA_ROW = ("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
-           "台積電目標價多少", _TS, 0.208, None, "claude-haiku-4-5")
+           "台積電目標價多少", _TS, 0.208, None, "claude-haiku-4-5", None, None, None, None)
 _RR_ROW = ("33333333-3333-4333-8333-333333333333", "h" * 64, "a.pdf", "標題", "kgi",
-           date(2026, 9, 1), 0.41, {"garbled_ratio": 0.05}, [2, 7])
+           date(2026, 9, 1), 0.41, {"garbled_ratio": 0.05}, [2, 7], None, None, None, None)
 
 
 class ReviewQueueTests(unittest.TestCase):
@@ -77,8 +81,9 @@ class ReviewQueueTests(unittest.TestCase):
         return session
 
     def test_requires_login(self):
-        r = TestClient(app, follow_redirects=False).get("/api/review/queue?kind=faithfulness")
-        self.assertEqual(r.status_code, 401)
+        client = TestClient(app, follow_redirects=False)
+        self.assertEqual(client.get("/api/review/queue?kind=faithfulness").status_code, 401)
+        self.assertEqual(client.put(f"/api/review/feedback/{_QA_ROW[0]}", json={"status": "resolved"}).status_code, 401)
 
     def test_kind_is_required_and_closed(self):
         self.assertEqual(_authed().get("/api/review/queue").status_code, 422)
@@ -104,7 +109,8 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertIn("< :fmin", count_sql)
         self.assertIn("active AND stopped IS NOT TRUE", count_sql)
         self.assertEqual(
-            count_params, {"days": 30, "fmin": review._FAITHFULNESS_MIN, "judge_model": review._JUDGE_MODEL}
+            count_params, {"days": 30, "fmin": review._FAITHFULNESS_MIN,
+                           "judge_model": review._JUDGE_MODEL, "review_status": "open"}
         )
         # 只列現行 judge 的低分：與監控卡同一段過濾（app/services/judge_schema.py）。
         self.assertIn("= :judge_model", count_sql)
@@ -114,13 +120,13 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertIn(count_sql.split("WHERE", 1)[1].strip(), page_sql)
 
     def test_feedback_filters_dislike_and_last_page_has_no_next(self):
-        session = self._use([1, [_QA_ROW[:5] + ("dislike", None)]])
+        session = self._use([1, [_QA_ROW[:5] + ("dislike", None) + _QA_ROW[7:]]])
         body = _authed().get("/api/review/queue?kind=feedback&days=7").json()
         self.assertEqual((body["total"], body["has_more"], body["next_offset"]), (1, False, None))
         self.assertIsNone(body["min_score"])
         self.assertEqual(body["items"][0]["feedback"], "dislike")
         self.assertIn("feedback = 'dislike'", session.calls[0][0])
-        self.assertEqual(session.calls[0][1], {"days": 7})
+        self.assertEqual(session.calls[0][1], {"days": 7, "review_status": "open"})
         # 倒讚列不一定有 evaluation；沒有就是 None，不是被補成舊預設的 judge。
         self.assertIsNone(body["items"][0]["judge_model"])
         self.assertNotIn(":judge_model", session.calls[0][0])
@@ -138,7 +144,7 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(item["review_reasons"], ["pages_failed", "low_score", "garbled"])
         self.assertEqual(item["report_date"], "2026-09-01")
         self.assertIsNone(item["qa_id"])
-        self.assertIn("WHERE needs_review", session.calls[0][0])
+        self.assertIn("WHERE rr.needs_review", session.calls[0][0])
         # needs_review 是研報的現況不是事件：沒有窗期。
         self.assertNotIn("days", session.calls[0][1])
 
@@ -147,14 +153,14 @@ class ReviewQueueTests(unittest.TestCase):
 
         只回分數的話，畫面上是一排不低的數字，看不出為什麼要複核。
         """
-        row = _RR_ROW[:6] + (0.93, {"layout_coverage": 0.12, "garbled_ratio": 0.001}, None)
+        row = _RR_ROW[:6] + (0.93, {"layout_coverage": 0.12, "garbled_ratio": 0.001}, None) + _RR_ROW[9:]
         self._use([1, [row]])
         item = _authed().get("/api/review/queue?kind=extraction").json()["items"][0]
         self.assertEqual(item["review_reasons"], ["low_coverage"])
 
     def test_reasons_can_be_empty_when_thresholds_moved_since_ingest(self):
         """needs_review 是入庫當時寫下的布林；原因以現行門檻重算，兩者可能不一致。"""
-        row = _RR_ROW[:6] + (0.95, {"layout_coverage": 0.8}, None)
+        row = _RR_ROW[:6] + (0.95, {"layout_coverage": 0.8}, None) + _RR_ROW[9:]
         self._use([1, [row]])
         item = _authed().get("/api/review/queue?kind=extraction").json()["items"][0]
         self.assertEqual(item["review_reasons"], [])
@@ -163,6 +169,55 @@ class ReviewQueueTests(unittest.TestCase):
         for qs in ("limit=0", "limit=101", "offset=-1", "days=0", "days=366"):
             r = _authed().get(f"/api/review/queue?kind=feedback&{qs}")
             self.assertEqual(r.status_code, 422, qs)
+
+    def test_review_state_update_and_reopen(self):
+        session = self._use([True, _TS, True, _TS])
+        path = f"/api/review/feedback/{_QA_ROW[0]}"
+        r = _authed().put(path, json={"status": "resolved", "note": " 已重新查核 ", "verification": "passed"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["note"], "已重新查核")
+        self.assertEqual(session.commits, 1)
+        self.assertIn("ON CONFLICT", session.calls[1][0])
+        self.assertEqual(session.calls[1][1]["verification"], "passed")
+        reopened = _authed().put(path, json={"status": "open", "note": "重新確認", "verification": "failed"})
+        self.assertEqual(reopened.status_code, 200)
+        self.assertEqual((reopened.json()["status"], reopened.json()["verification"]), ("open", "failed"))
+        self.assertEqual(session.commits, 2)
+        self.assertEqual(session.calls[3][1]["status"], "open")
+
+    def test_review_update_rejects_unknown_subject_and_bad_values(self):
+        path = f"/api/review/feedback/{_QA_ROW[0]}"
+        self.assertEqual(_authed().put(path, json={"status": "invented"}).status_code, 422)
+        self.assertEqual(_authed().put(path, json={"status": "open", "note": "x" * 1001}).status_code, 422)
+        session = self._use([False])
+        self.assertEqual(_authed().put(path, json={"status": "open"}).status_code, 404)
+        self.assertEqual(session.commits, 0)
+
+    def test_status_filter_is_applied_to_count_and_page(self):
+        session = self._use([1, [_QA_ROW[:7] + ("resolved", "查過", "passed", _TS)]])
+        body = _authed().get("/api/review/queue?kind=faithfulness&status=resolved").json()
+        self.assertEqual(body["items"][0]["review_status"], "resolved")
+        self.assertEqual(body["items"][0]["verification"], "passed")
+        self.assertIn("COALESCE(rv.status, 'open') = :review_status", session.calls[0][0])
+        self.assertIn("COALESCE(rv.status, 'open') = :review_status", session.calls[1][0])
+
+    def test_extraction_status_filter_and_saved_state(self):
+        session = self._use([1, [_RR_ROW[:9] + ("dismissed", "版面已確認", "passed", _TS)]])
+        body = _authed().get("/api/review/queue?kind=extraction&status=dismissed").json()
+        self.assertEqual(body["items"][0]["review_status"], "dismissed")
+        self.assertEqual(body["items"][0]["review_note"], "版面已確認")
+        self.assertEqual(body["items"][0]["reviewed_at"], _TS.isoformat())
+        for sql, params in session.calls:
+            self.assertIn("COALESCE(rv.status, 'open') = :review_status", sql)
+            self.assertEqual(params["review_status"], "dismissed")
+
+    def test_all_status_has_no_state_filter_and_invalid_status_is_rejected(self):
+        session = self._use([1, [_QA_ROW]])
+        body = _authed().get("/api/review/queue?kind=feedback&status=all").json()
+        self.assertEqual(body["items"][0]["review_status"], "open")
+        self.assertNotIn(":review_status", session.calls[0][0])
+        self.assertNotIn(":review_status", session.calls[1][0])
+        self.assertEqual(_authed().get("/api/review/queue?kind=feedback&status=invalid").status_code, 422)
 
 
 if __name__ == "__main__":

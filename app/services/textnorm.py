@@ -14,7 +14,10 @@ _RE_PARA = re.compile(r"\n\s*\n")
 
 
 def clean_text(s: str) -> str:
-    """顯示用清理：移除 CJK 間空白、收斂其餘空白、折疊換行。冪等。"""
+    """檢索片段用清理：移除 CJK 間空白、收斂其餘空白、折疊換行。冪等。
+
+    會折掉換行，不可用於閱讀頁等需要段落的顯示——那裡一律 `clean_extracted`。
+    """
     s = _RE_CJK_GAP.sub("", s)
     s = _RE_WS.sub(" ", s)
     s = re.sub(r"\s*\n\s*", " ", s)

@@ -1,4 +1,4 @@
-"""追問建議：答完後由 Haiku 產 ≤3 條同語料範疇的財經追問（fail-open）。"""
+"""追問建議：答完後由 LLM（`ASK_FOLLOWUP_MODEL`，預設 DeepSeek flash）產 ≤3 條同語料範疇的財經追問（fail-open）。"""
 from __future__ import annotations
 
 import json

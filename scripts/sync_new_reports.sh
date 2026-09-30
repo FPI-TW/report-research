@@ -509,7 +509,7 @@ fi
 #    $HASHES 定義在檔頭：下游 rc=2 時 retain_hashes_for_replay 要讀它。
 if [ -s "$HASHES" ]; then
   N=$(grep -c . "$HASHES" 2>/dev/null || echo 0)
-  log "本次新增 ${N} 篇 → 生成摘要（Sonnet，僅本輪新研報）"
+  log "本次新增 ${N} 篇 → 生成摘要（LLM，僅本輪新研報）"
   SUMMARY_RC=0
   nice -n 19 ionice -c3 "$UV" run python scripts/generate_summaries.py \
     --hashes-file "$HASHES" \

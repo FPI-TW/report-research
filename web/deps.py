@@ -88,7 +88,7 @@ async def _with_heartbeat(gen, interval: float = SSE_HEARTBEAT_INTERVAL):
                 return
     finally:
         # 用戶端中斷時，先收掉尚未完成的 __anext__，再讓底層產生器跑自己的 finally
-        # （研報逐節路徑靠它 kill 子程序）。
+        # （LLM 串流靠它關閉底層連線或子程序）。
         if pending is not None:
             pending.cancel()
             with _suppress(BaseException):

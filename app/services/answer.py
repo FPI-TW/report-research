@@ -2207,7 +2207,7 @@ async def answer_question(
     """產生 ("sources"|"status"|"token"|"notice"|"ext_sources"|"done", payload) 事件序列。
 
     首輪（未帶 conversation_id）：意圖判定與檢索並行（省延遲）。
-    續問（帶 conversation_id）：先載近輪歷史，一次 Haiku 改寫追問為獨立查詢並判定意圖，
+    續問（帶 conversation_id）：先載近輪歷史，一次 LLM 改寫追問為獨立查詢並判定意圖，
     再以改寫後查詢檢索；先前對話內嵌進 prompt。所有 done 事件回傳 conversation_id。
     regenerate_of 有值時：讀舊列群組鍵、沿用其 conversation_id；新列成功寫入時才停用舊列，
     新列與舊列同組（root_qa_id），done 事件回傳 root_qa_id 與 version_count。
@@ -2275,7 +2275,7 @@ async def answer_question(
     today = datetime.now(timezone.utc).date()
     decision: RouteDecision | None = None
 
-    # 多輪：一次 Haiku 改寫＋分類（內含改寫後 overview/前檢重判）；首輪延後並行判定
+    # 多輪：一次 LLM 改寫＋分類（內含改寫後 overview/前檢重判）；首輪延後並行判定
     if turns:
         standalone_query, decision = await condense_and_route(
             history_block, question, today=today
@@ -2341,7 +2341,7 @@ async def answer_question(
     # time_sensitive 就完全不檢索——先前是「分類與檢索並行、檢索跑完才 await 路由」，
     # 於是這類題每一題都付了完整的 embed＋hybrid＋rerank 才把結果整包丟掉，而 rerank
     # 的 semaphore 預設只有一個名額，這份白工還會擋住後面排隊的人。
-    # 命中 advice_risk 則不短路（它照常走 RAG），只是省掉分類器那次 Haiku 呼叫。
+    # 命中 advice_risk 則不短路（它照常走 RAG），只是省掉分類器那次 LLM 呼叫。
     if not turns and decision is None:
         decision = precheck_route(question)
         if decision is not None and decision.scope == TIME_SENSITIVE:
@@ -2352,7 +2352,7 @@ async def answer_question(
                 yield ev
             return
 
-    # M5 agentic：規劃與第一輪檢索並行（Haiku 規劃藏在檢索影子裡，設計 §5.1）；
+    # M5 agentic：規劃與第一輪檢索並行（LLM 規劃藏在檢索影子裡，設計 §5.1）；
     # 首輪 decision 未知一律建，續問僅 corpus_qa/advice_risk 建。新符號一律函式內
     # import——本函式以上的頂層 import 區塊屬凍結範圍（契約 3）。
     plan_task: asyncio.Task | None = None
@@ -2389,7 +2389,7 @@ async def answer_question(
             yield _status("retrieved")
             sources, context = await _retrieve(standalone_query)
         else:
-            # 分類與檢索並行，但**誰先到就聽誰的**。分類是一次 Haiku（秒級），檢索
+            # 分類與檢索並行，但**誰先到就聽誰的**。分類是一次 LLM（秒級），檢索
             # 含 rerank 是數十秒；先前寫成「await 檢索 → await 路由」，等於離題題
             # 一律付完整檢索成本才把結果丟掉（離題的量遠大於時效題，白工主要在這裡）。
             # 取消不會立刻停掉已送進執行緒的 rerank CPU 工作，但 _rerank_stage 帶

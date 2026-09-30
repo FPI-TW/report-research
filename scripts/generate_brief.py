@@ -1,7 +1,7 @@
 """每日簡報批次 → research.report_brief（一天一列；閱讀時零 LLM）
 
 素材收集、窗期界定與變動判定全在 app/services/brief.py（純 SQL ＋ 純函式），本檔
-只負責編排：取鎖 → 決定要不要跑 → 一次 `claude -p` → 落庫。
+只負責編排：決定要不要跑 → 一次 LLM 呼叫（預設 DeepSeek HTTP，見 `call_cli`；鎖只包這一次呼叫）→ 落庫。
 
 **一天只有一次 LLM 呼叫**，這是刻意的成本設計：摘要（覆蓋率 100%）與訊號都已經
 批次產好，簡報要做的只是把既有素材組織成一段話，不需要重讀任何全文。
@@ -27,7 +27,7 @@
   uv run python scripts/generate_brief.py --date 2026-08-05
 
 退出碼：0 正常（含「今天不用跑」）、1 產生失敗、2 模型設定或 LLM 帳號層級錯誤（未知模型名、
-缺金鑰、DeepSeek 401／402／模型不存在、claude CLI 認證失效）、75 claude CLI 被其他批次佔用。
+缺金鑰、DeepSeek 401／402／模型不存在、claude CLI 認證失效）、75 LLM 批次鎖被其他批次佔用。
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ FAIL_LOG = ROOT / "data" / "brief_failures.log"
 # BRIEF_MODEL 旋鈕，未設時查 LLM_PROVIDER 的預設表（app/services/llm_models.py）；--model 可覆寫。
 MODEL = resolve_model(TASK_BRIEF)
 
-# 一次呼叫的逾時。素材是摘要不是全文，正常在一分鐘內回；給 300s 是留給 CLI 冷啟動
+# 一次呼叫的逾時。素材是摘要不是全文，正常在一分鐘內回；給 300s 是留給首字延遲（CLI 時代的冷啟動）
 # 與偶發的長素材（NAS 一次倒進大量檔案的日子）。
 CLI_TIMEOUT = 300
 
@@ -270,7 +270,7 @@ async def generate(args) -> int:
         return 1
 
     prompt = brief_service.build_prompt(target, material)
-    # **鎖只包住 CLI 呼叫本身**：排程每 3 小時叫本檔一次，但真正要呼叫 LLM 的只有
+    # **鎖只包住 LLM 呼叫本身**：排程每 3 小時叫本檔一次，但真正要呼叫 LLM 的只有
     # 一天一次。若照其他批次的慣例在 main 進入點取鎖，其餘七次 no-op 都會在訊號或
     # 標題批次執行中撞鎖 rc=75，於是 unit_failures 每天多七筆「失敗」——那個檔是
     # OnFailure 告警的落點，灌滿雜訊等於把它廢掉。

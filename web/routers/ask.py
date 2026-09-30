@@ -3,8 +3,8 @@
 
 從 web/server.py 拆出（第三步）。
 
-_ASK_GATE 是模組級狀態，限制同時提問數（每次提問 spawn 一個 claude CLI
-子程序）。它定義在本模組、由本模組的 handler 使用；server.py 以
+_ASK_GATE 是模組級狀態，限制同時提問數（每次提問會發出數次 LLM 串流呼叫，
+並佔用檢索與 rerank 的 CPU）。它定義在本模組、由本模組的 handler 使用；server.py 以
 `from web.routers import ask` 單一路徑匯入，故全程只有一個閘門實例——
 若被兩條不同 import 路徑載入會分裂成兩個、併發上限失效。**它同時是 per-process
 的**：多 worker 下上限會直接翻倍，故啟動時有 fail-closed 守門，見 web/concurrency.py。
@@ -49,7 +49,7 @@ class AskRequest(BaseModel):
     web: bool = False
 
 
-# 每次提問會 spawn 一個 claude CLI 子程序（CPU-bound 機器），限制同時數避免區網多人同問雪崩。
+# 每次提問會發出數次 LLM 串流呼叫並佔用檢索與 rerank 的 CPU，限制同時數避免區網多人同問雪崩。
 # ASK_MAX_QUEUE 是排隊人數上限（超過即 429，不是排到天荒地老）。預設 20 刻意寬鬆：
 # 上限 3、單題約 60–90s，排到第 21 位表示已是堆積而非尖峰，那時讓人帶著 Retry-After
 # 早點知道，好過在一條開好的 SSE 上等十分鐘。設 0 可退回舊行為（無限排隊）。

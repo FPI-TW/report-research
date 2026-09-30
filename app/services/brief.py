@@ -1,9 +1,9 @@
-"""每日簡報：決定性收集 → 一次 Claude 綜述 → research.report_brief（讀取零 LLM）。
+"""每日簡報：決定性收集 → 一次 LLM 綜述 → research.report_brief（讀取零 LLM）。
 
-與觀點雷達／閱讀頁摘錄同一種分工——**Python 決定「有什麼」，Claude 只負責「怎麼說」**：
+與觀點雷達／閱讀頁摘錄同一種分工——**Python 決定「有什麼」，LLM 只負責「怎麼說」**：
 
 - 窗期界定、來源研報清單、評等變動的判定與計數，全部是這裡的 SQL 與純函式；
-- Claude 拿到的是一份已經整理好的素材，只回一段 markdown 綜述；
+- LLM 拿到的是一份已經整理好的素材，只回一段 markdown 綜述；
 - 落 `research.report_brief` 一天一列，`/api/brief/*` 只做 SELECT。
 
 ## 三個刻意的決定

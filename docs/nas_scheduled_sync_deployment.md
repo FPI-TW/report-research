@@ -23,7 +23,10 @@ sudoedit /etc/default/report-mark-sync
 至少確認兩個值：
 
 - `REPORT_MARK_ROOT`：本機 repo 根目錄。
-- `SYNC_PATH_EXTRA`：讓 service 找得到 `claude` / `uv` 的額外 bin 目錄。
+- `SYNC_PATH_EXTRA`：讓 service 找得到 `uv` 的額外 bin 目錄。
+
+LLM 批次預設走 DeepSeek HTTP，金鑰另放 `/etc/default/report-mark-llm`（0640 root:kashionz，
+只有 sync unit 載入），安裝與輪替見 `docs/production_resilience.md`「DeepSeek 金鑰落點與輪替」。
 
 ## 實測 drvfs 掛載（關鍵：確認免密碼讀得到）
 
@@ -64,8 +67,10 @@ make stats            # 確認 reports 篇數有隨新檔增加
 - 502 / 線上變慢：匯入跑在 nice -n 19 + ionice -c3；量大時段可把 timer 改較少頻率
   （改 OnCalendar，如每日凌晨 `*-*-* 03:00:00`）。
 - 掛載偶發失敗：service 會記 log 並早退、不動 DB；下次 timer 自動再試。
-- 單檔失敗：見 data/sync_failures.log；修因後可 `make sync-once` 或
-  `uv run python scripts/sync_new_reports.py --all-local` 全本地對 DB 補漏。
-- claude CLI 找不到：確認 service 的 PATH drop-in 含 node bin 目錄。
+- 單檔失敗：見 data/sync_failures.log；修因後用 `scripts/failures_to_delta.py` 轉 delta 重放，
+  不要 `--all-local`（只有匯入撞鎖或上一輪被砍且 delta 不可靠時才用；整批中止的重放見
+  `docs/production_resilience.md`）。
+- LLM 段整批 rc=2：多半是 DeepSeek 金鑰或餘額（401／402），處置見 `docs/production_resilience.md`
+  「DeepSeek 批次的失敗處置」；402 是儲值，不改走 Claude。
 - service 啟不來：先看 `/etc/default/report-mark-sync` 的 `REPORT_MARK_ROOT` 與
   `SYNC_PATH_EXTRA` 是否指到實機正確路徑。

@@ -201,7 +201,7 @@ jobs:
               || fail "fc-list 找不到 ${fam}；PDF 中文內容測試會靜默退化成 skip"
           done
 
-      # 沒有這一步，tests/test_spa_serving.py 依賴 dist 的那題會 skip 而非跑。
+      # 沒有這一步，tests/test_spa_serving.py 依賴 dist 的那幾題會直接紅（缺 dist 是 fail 不是 skip）。
       - name: 取回前端 dist
         uses: actions/download-artifact@v8
         with:

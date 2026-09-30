@@ -32,7 +32,7 @@
 以 `file_hash` 為鍵，不用 `report_id`：重新 ingest 後 `report_id` 會換，行內標註時
 研報也還沒有 `report_id`。
 
-刻意不設 CHECK 約束：既有庫上改 CHECK 是 no-op（見 CLAUDE.md 的 schema 條目），
+刻意不設 CHECK 約束：既有庫上改 CHECK 是 no-op（見 AGENTS.md 改動對照表的 schema 條目），
 詞彙改由本模組的常數守住，`record()` 收到未知值直接拋 `ValueError`。
 
 `should_skip()`（Python 端判斷，摘錄與訊號用）與 `skip_clause_sql()`（SQL 端判斷，

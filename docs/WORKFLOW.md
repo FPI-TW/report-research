@@ -104,11 +104,11 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 ### ⑧ 每日簡報：`scripts/generate_brief.py`（LLM，簡報頁用）
 
 - 一天一列 `research.report_brief`；窗期是上一份的 `window_end` 到現在（沒有上一份取 24 小時，上限 `--max-lookback-days` 7），用 `created_at` 界定。素材：窗期新入庫研報（prompt 最多 40 篇）與評等或目標價變動（與該券商前一次比，目標價變動門檻 1%）。
-- `--date`、`--after-hour`（9，未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 CLI 呼叫。來源清單由 Python 記錄。
+- `--date`、`--after-hour`（9，未到即 no-op）、`--force`、`--dry-run`。當日已有即 no-op 退出 0。鎖只包那一次 LLM 呼叫。來源清單由 Python 記錄。
 
-### claude CLI 批次互斥：`scripts/_claude_lock.py`
+### LLM 批次互斥：`scripts/_claude_lock.py`
 
-會 spawn `claude -p` 的批次（`tag_all_cli`、`sync_new_reports`、`generate_summaries`、`generate_titles`、`extract_takeaways`、`extract_signals`、`generate_brief`）在 main 進入點取 `data/.claude_cli.lock` 的 flock；撞鎖 rc=75 是「不跑」不是「跑壞」，sync 殼不把它計入異常。併發搶 CLI 會讓擷取被大量誤標 `rejected`。`app/services/llm.py` 刻意不在鎖範圍內（`tests/test_claude_lock.py` 釘住）。從 worktree 跑批次不與主 checkout 互斥。
+呼叫 LLM 的批次（`tag_all_cli`、`sync_new_reports`、`generate_summaries`、`generate_titles`、`extract_takeaways`、`extract_signals`、`generate_brief`；權威清單是 `tests/test_claude_lock.py` 的 `LOCKED_SCRIPTS`）取 `data/.claude_cli.lock` 的 flock（名稱是 CLI 時代的遺留）；除 `generate_brief` 只包那一次 LLM 呼叫外，都在 main 進入點取鎖。撞鎖 rc=75 是「不跑」不是「跑壞」，sync 殼不把它計入異常。互斥現在防的是重複計費、摘錄 DELETE+INSERT 互撞與 DB 連線數。`app/services/llm.py` 刻意不在鎖範圍內（`tests/test_claude_lock.py` 釘住）。從 worktree 跑批次不與主 checkout 互斥。
 
 ### 編排與離線工具
 
@@ -274,10 +274,10 @@ make sync-once
 
 | 症狀 | 看哪裡 |
 |---|---|
-| 問答無聲中斷、`FileNotFoundError: 'claude'` | web unit 的 PATH drop-in `deploy/systemd/report-mark-web.service.d/path.conf`；`scripts/check_web_health.sh` rc=5 就是這個 |
+| 網搜問答失敗、`FileNotFoundError: 'claude'` | 只有解析到 Claude 的任務（網搜，目前暫停）還走 CLI；web unit 的 PATH drop-in `deploy/systemd/report-mark-web.service.d/path.conf`。`scripts/check_web_health.sh` 的 rc=5 已由 health unit 的空 `HEALTH_DEP_DROPIN=` 停用 |
 | 原檔下載／PDF 檢視全數 503，其餘正常 | R2 bucket 或憑證（repo root `.env` 與 `/etc/default/report-mark-sync` 兩份要逐字相同）；`scripts/check_web_health.sh` rc=6 就是這個，細節在 web 日誌的「healthz 物件儲存探測失敗」 |
-| 摘要、摘錄無聲漏跑 | `/etc/default/report-mark-sync` 的 `SYNC_PATH_EXTRA` 是否指到實際 node 版本目錄 |
-| 批次 rc=75 | 撞 `claude` 鎖，不是錯誤；`make freshness` 判是否停更 |
+| 摘要、摘錄無聲漏跑 | `make llm-blocked`（跳過名單）與各批次 `*_failures.log`；DeepSeek 帳號狀態看 `scripts/check_web_health.sh` rc=7／8 |
+| 批次 rc=75 | 撞 LLM 批次鎖，不是錯誤；`make freshness` 判是否停更 |
 | 每個查詢 500 但登入正常 | DB 沒起來（假活著），打 `/healthz` 不看 `systemctl is-active` |
 | `/api/progress` 回 422 | router 檔輔助函式夾在裝飾器與 handler 之間 |
 | SPA 回 503 | `frontend/dist` 不存在，`make build-web` |

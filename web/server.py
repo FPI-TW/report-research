@@ -286,7 +286,7 @@ _valid_uuid = deps._valid_uuid
 # 問答歷史/回饋/對話串 9 條路由已拆至 web/routers/qa_history.py
 app.include_router(qa_history_routes.router)
 
-# 待複核佇列（忠實度低分／倒讚／抽取 needs_review）：唯讀、零 LLM
+# 待複核佇列（忠實度低分／倒讚／抽取 needs_review）：零 LLM；PUT 只寫 review_state，不改品質訊號
 app.include_router(review_routes.router)
 
 

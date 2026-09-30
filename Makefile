@@ -25,8 +25,9 @@ DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command
 COMPOSE := $(DOCKER) compose
 
 .PHONY: help deps db schema setup sample extract worklist prep tag-info \
-        ingest ingest-lowio restore-durability align serve search build-web \
-        stats reset-db clean-data pipeline signals takeaways titles brief \
+        ingest ingest-lowio restore-durability align boilerplate \
+        serve serve-dev serve-preview search build-web \
+        stats reset-db clean-data pipeline summaries signals takeaways titles brief \
         eval-compare \
         up-edge down-edge edge-logs edge-reload \
         sync-once db-backup freshness db-audit llm-blocked \
@@ -95,18 +96,18 @@ align:  ## 把中文標籤重映射為 findb 代碼（一次性、冪等）
 boilerplate:  ## 重建跨文件樣板段落字典 data/boilerplate/（唯讀語料、零 LLM；新券商上線或換版型時跑）
 	uv run python scripts/build_boilerplate.py
 
-# ───── Claude CLI 批次（互斥）─────
-# 下面三支與 tag_all_cli.py／sync_new_reports.py 共五支都 spawn claude CLI，併發互搶
-# 會讓擷取被大量誤標 rejected（不是資料壞、也不是模型壞，是 CLI 被搶）。互斥由
-# scripts/_claude_lock.py 的 flock 跨進程鎖強制，不再只靠這行註解：撞車時後啟動者
-# 會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，不會產出壞資料。
+# ───── LLM 批次（互斥）─────
+# 下面五支與 tag_all_cli.py／sync_new_reports.py 都呼叫 LLM（預設 DeepSeek HTTP；名稱裡的
+# claude 是 CLI 時代的遺留），互斥防的是重複計費、摘錄 DELETE+INSERT 互撞與 DB 連線數。
+# 互斥由 scripts/_claude_lock.py 的 flock 跨進程鎖強制（清單見 tests/test_claude_lock.py 的
+# LOCKED_SCRIPTS）：撞車時後啟動者會印出持有者（腳本名／pid／起始時間）並以 rc=75 結束，
+# 不會產出壞資料。
 # 排程（report-mark-sync.timer，每 3 小時）也走同一把鎖，所以手動開跑前不必再去
 # 確認 timer 有沒有在跑——真撞上就是不跑，不是跑壞。
-summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（Sonnet，冪等可續傳，補 summary IS NULL）
+summaries:  ## 為缺摘要的報告生成 2-3 句中文摘要（LLM，冪等可續傳，補 summary IS NULL）
 	uv run python scripts/generate_summaries.py
 
-# 勿與 make summaries / signals / takeaways 同時跑：多批次併發搶 claude CLI 會大量誤判失敗。
-titles:  ## 產生顯示標題取代檔名（Sonnet，冪等可續傳，補 title IS NULL；新→舊優先）
+titles:  ## 產生顯示標題取代檔名（LLM，冪等可續傳，補 title IS NULL；新→舊優先）
 	uv run python scripts/generate_titles.py
 
 signals:  ## 觀點雷達訊號擷取（子集先行，冪等可續傳；先 make schema）→ research.report_signal
@@ -200,7 +201,7 @@ clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）
 sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync）
 	bash scripts/sync_new_reports.sh
 
-# 只備「重建不回來」的四張表（qa_log / takeaway / signal / brief）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
+# 只備「重建不回來」的五張表（qa_log / takeaway / signal / brief / review_state）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
 # 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
 db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
 	bash scripts/db_backup.sh
@@ -235,7 +236,7 @@ metrics-collect:  ## 前景取樣（用法：make metrics-collect DURATION=3600�
 metrics:  ## 分析取樣結果 → 分位數與上雲選型（用法：make metrics SINCE=24h）
 	/usr/bin/python3 scripts/analyze_resource_usage.py $(if $(SINCE),--since $(SINCE),)
 
-# **這一支會真的消耗 Claude 額度**（每題 spawn claude CLI 數次），故預設題數與併發都最小。
+# **這一支會真的消耗 LLM 額度**（每題打真實 /api/ask，一題含數次 LLM 呼叫），故預設題數與併發都最小。
 # 先 --dry-run 看計畫再拿掉；跑完照它印的指令用 --bench 框窗期換算單條成本。
-metrics-bench:  ## 受控負載壓測（會用掉 Claude 額度；用法：make metrics-bench BENCH_ARGS="--limit 4")
+metrics-bench:  ## 受控負載壓測（會用掉 LLM 額度；用法：make metrics-bench BENCH_ARGS="--limit 4")
 	/usr/bin/python3 scripts/bench_load.py $(BENCH_ARGS)

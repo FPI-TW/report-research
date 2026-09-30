@@ -1,7 +1,7 @@
-"""用 `claude -p`(Haiku)對全量候選研報做市場/標的分類 → data/tags/<hash>.json
+"""用 LLM（`resolve_model(TASK_TAG)`，預設 DeepSeek flash）對全量候選研報做市場/標的分類 → data/tags/<hash>.json
 
 - 來源:data/extracted/<hash>.json（per-hash 快取，E1c）,濾掉 is_admin / scanned 後為候選
-- 每篇用 claude CLI headless(Haiku)分類,parse_tags() 正規化後寫檔
+- 每篇經 `run_claude`（依白名單分派；名稱是 CLI 時代的遺留）分類,parse_tags() 正規化後寫檔
 - 可續傳:已存在且可解析的 tag 直接跳過
 - 並發(ThreadPool),失敗重試,壞檔記錄到 data/tag_failures.log
 用法:uv run python scripts/tag_all_cli.py [--workers 8] [--limit N] [--excerpt 10000]

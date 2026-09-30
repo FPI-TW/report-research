@@ -52,7 +52,7 @@
 - `report_signal.thesis_dimensions[*].evidence`：同理，是原句。
 - `research_report.full_text` / `report_chunk.content`：語料本身（全語料 63 篇
   原文就是簡體）。不是 LLM 產出，動它等於竄改來源；chunk 更是碰不得
-  （見 CLAUDE.md 對 `make normalize` 死法的記載）。
+  （見 docs/WORKFLOW.md 對 `make normalize` 死法的記載）。
 """
 
 from __future__ import annotations

@@ -324,7 +324,7 @@ async def run_agentic(
                 calls += 1
                 executed_keys.add(norm_for_match(q))
                 try:
-                    # 依序而非並行：rerank semaphore=1，並行只會把排隊時間吃進
+                    # 依序而非並行：rerank 名額有限（REPORT_MARK_RERANK_WORKERS），並行只會把排隊時間吃進
                     # 彼此的 rerank 逾時預算。wait_for(remaining) 使 deadline 成為
                     # 硬上限（retrieve_context 取消路徑已 shield＋consume）。
                     batch = await asyncio.wait_for(

@@ -312,7 +312,8 @@ def _load() -> Settings:
         qa_planner_model=resolve_model(TASK_QA_PLANNER),
         # 20 秒過緊：prod 實測 claude CLI 光冷啟動的 ttft 就約 10s（每次呼叫都重付
         # ~24K token 系統提示），規劃 prompt 比分類長，於是每一題都逾時 →
-        # LLMUnavailableError → agentic 永遠 degraded，M5 形同關閉。
+        # LLMUnavailableError → agentic 永遠 degraded，M5 形同關閉。（CLI 時代的量測；改走
+        # DeepSeek 後未重量，調低前先量。）
         qa_planner_timeout=float(os.getenv("QA_PLANNER_TIMEOUT", "45")),
         qa_planner_max_subqueries=int(os.getenv("QA_PLANNER_MAX_SUBQUERIES", "3")),
         qa_max_rounds=int(os.getenv("QA_MAX_ROUNDS", "2")),
@@ -323,8 +324,8 @@ def _load() -> Settings:
         # 忠實度查核 / faithfulness（M8 里程碑）
         ask_faithfulness_enabled=_flag("ASK_FAITHFULNESS_ENABLED", "1"),
         # 新名 FAITHFULNESS_MIN；讀不到時退回舊名 REPORT_FAITHFULNESS_MIN（研報 PDF 功能移除前的
-        # 鍵名，生產環境檔可能還設著）。讀者只有監控頁 `_FAITHFULNESS_MIN` 與
-        # scripts/eval_faithfulness.py，都是「低於門檻」的判準。
+        # 鍵名，保留相容）。讀者是監控頁與待複核佇列的 `_FAITHFULNESS_MIN`（web/routers/
+        # monitor.py、review.py）與 scripts/eval_faithfulness.py，都是「低於門檻」的判準。
         faithfulness_min=_faithfulness_min(),
         ask_faithfulness_sample_rate=float(
             os.getenv("ASK_FAITHFULNESS_SAMPLE_RATE", "1.0")
@@ -409,7 +410,7 @@ def _load() -> Settings:
         db_statement_timeout_ms=int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "60000")),
         # **預設 0（關）是刻意的，不是漏設。** 批次匯入會在交易開著的情況下做長時間
         # 的非 DB 工作：scripts/sync_new_reports.py 先 report_exists() 開了交易，接著
-        # 才 spawn claude CLI 標註（硬逾時 150s）與 BGE-M3 嵌入（大檔可達數分鐘），
+        # 才做 LLM 標註（預設 DeepSeek HTTP）與 BGE-M3 嵌入（大檔可達數分鐘），
         # 中間完全沒有 commit。設了這個值＝生產每 3 小時一次的同步會把報告靜默丟進
         # FAIL_LOG。web 行程沒有這個形態（2026-07-29 的 AST 複驗：44 個
         # `async with SessionFactory()` 區塊沒有一個含 yield 或 LLM 串流），所以要開就

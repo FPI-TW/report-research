@@ -6,9 +6,9 @@
 # 下面這五張不一樣，它們是「人與 LLM 產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
 #
 #   research.qa_log            每一次提問、當時的來源與證據帳本、使用者的讚／倒讚
-#   research.report_takeaway   閱讀頁重點摘錄（Sonnet 批次產物，含錨點）
-#   research.report_signal     觀點雷達訊號（Sonnet 批次產物）
-#   research.report_brief      每日簡報（Sonnet 批次產物，來源清單由 Python 記錄）
+#   research.report_takeaway   閱讀頁重點摘錄（LLM 批次產物，含錨點）
+#   research.report_signal     觀點雷達訊號（LLM 批次產物）
+#   research.report_brief      每日簡報（LLM 批次產物，來源清單由 Python 記錄）
 #   research.review_state      待複核人工處理狀態、註記與驗證結果
 #
 # 體積小、價值最高 ⇒ 先備這五張。要不要連語料層一起備是另一個（成本）決定，

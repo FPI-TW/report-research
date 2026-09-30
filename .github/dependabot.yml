@@ -15,7 +15,7 @@
 # - torch：索引釘在 CPU-only wheel，升版要連帶確認 FlagEmbedding／transformers 相容，
 #   且會改變嵌入數值的風險要用 eval 量過。
 # - @embedpdf/*：十多個套件彼此釘同一版號，必須整組一起升，並人眼驗過 PDF 選取與複製
-#   （jsdom 測不到，見 CLAUDE.md 的閱讀頁不變量）。
+#   （jsdom 測不到，見 AGENTS.md 的閱讀頁不變量）。
 version: 2
 updates:
   - package-ecosystem: "uv"

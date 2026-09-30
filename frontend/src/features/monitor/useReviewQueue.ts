@@ -1,8 +1,8 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import { getJSON } from '../../lib/api'
 import {
   reviewQueueSchema, reviewStateSchema,
-  type ReviewItem, type ReviewKind, type ReviewStatus, type ReviewVerification,
+  type ReviewItem, type ReviewKind, type ReviewQueue, type ReviewStatus, type ReviewVerification,
 } from '../../lib/reviewSchemas'
 
 const PAGE_SIZE = 10
@@ -43,7 +43,17 @@ export function useReviewQueue(kind: ReviewKind, status: ReviewStatus | 'all' = 
       getJSON(`/api/review/${kind}/${encodeURIComponent(id)}`, reviewStateSchema, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update),
       }),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ['review-queue'] }) },
+    onSuccess: async saved => {
+      const filter = { queryKey: ['review-queue', saved.kind] }
+      await client.cancelQueries(filter)
+      // 狀態變更會讓 OFFSET 位移；回到首頁重新取數，避免跳過項目，
+      // 也避免 infinite query 逐頁重查所有已展開的頁面。
+      client.setQueriesData<InfiniteData<ReviewQueue, number>>(filter, data => data && ({
+        pages: data.pages.slice(0, 1),
+        pageParams: data.pageParams.slice(0, 1),
+      }))
+      await client.invalidateQueries(filter)
+    },
   })
   const pages = query.data?.pages ?? []
   return {

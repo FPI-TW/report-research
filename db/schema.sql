@@ -381,3 +381,16 @@ CREATE TABLE IF NOT EXISTS research.llm_task_failure (
     last_at     timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (file_hash, task)
 );
+
+-- 待複核處理紀錄。原始品質訊號仍留在 qa_log / research_report；這裡只記人工處理結果。
+-- 共用帳號不能辨識個人，因此不虛構 reviewer 欄。不存在的列視為 open。
+-- subject_id 是 qa_log.id 或 research_report.id；避免跨兩張表的虛假 FK。
+CREATE TABLE IF NOT EXISTS research.review_state (
+    kind          text NOT NULL,
+    subject_id    uuid NOT NULL,
+    status        text NOT NULL,
+    note          text NOT NULL DEFAULT '',
+    verification  text NOT NULL DEFAULT 'untested',
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (kind, subject_id)
+);

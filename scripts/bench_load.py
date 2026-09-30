@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""受控負載壓測：量「一條問答／一份研報實際吃掉多少硬體」（會消耗 Claude 額度）。
+"""受控負載壓測與離線 rerank 微基準。
 
 存在理由：`scripts/collect_resource_usage.py` 是被動觀測，而 2026-08-28 查 `qa_log`
 近 21 天只有 7 次問答——**被動監控量得到的只有閒置與批次，問答的 CPU 尖峰從來沒有
@@ -14,9 +14,8 @@
 **題目取自 `eval/ragas_questions.json` 的凍結題集**，不自己造題：repo 的規約是量測不要
 另建一套（見 CLAUDE.md 的 eval 段）。同一份題集也讓不同時間點的壓測可以互相比較。
 
-**這支腳本會真的花錢／額度**：每題會 spawn `claude` CLI 數次（分類器、主回答、忠實度
-抽查、追問建議）。它刻意沒有預設就跑的模式——題數與併發都要顯式指定或用預設的小值，
-而且會在開跑前把「將發出幾個請求」印出來。
+HTTP 模式會真的消耗 LLM 額度；`--offline-rerank` 只用本機模型與固定合成片段，
+沒有資料庫、語料或網路請求。兩種結果不能互相當作端到端延遲。
 
 認證：讀 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`，環境變數沒有就從 repo 根 `.env`
 **唯讀**取得。密碼不會出現在任何輸出或錯誤訊息裡。**本檔絕不寫入 `.env`**（那條規約的
@@ -37,6 +36,7 @@ import argparse
 import http.cookiejar
 import json
 import os
+import statistics
 import sys
 import threading
 import time
@@ -197,6 +197,77 @@ def percentile(values: list[float], q: float) -> float:
     return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
 
 
+def run_offline_rerank(*, repeat: int, threads: int, pairs: int) -> dict:
+    """同一個離線模型比較舊 no_grad 與現行 inference_mode，並逐分檢查排序。"""
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    sys.path.insert(0, str(REPO_ROOT))
+    import torch
+
+    from app.services import rerank
+
+    torch.set_num_threads(threads)
+    model = rerank._get_model()
+    if model is None:
+        raise RuntimeError("本機沒有可用的 rerank 模型快取")
+
+    question = "台積電的先進製程資本支出與營收展望如何？"
+    phrases = (
+        "台積電先進製程需求強勁，資本支出逐年增加。",
+        "全球半導體產業受庫存去化影響，短期營收承壓。",
+        "人工智慧伺服器需求帶動高頻寬記憶體成長。",
+        "公司毛利率受匯率與產品組合影響。",
+    )
+    passages = [
+        (phrases[i % len(phrases)] * (1 + (i * 13) % 45))[:80 + (i * 137) % 520]
+        for i in range(pairs)
+    ]
+
+    def score(*, legacy: bool) -> tuple[float, list[float]]:
+        started = time.perf_counter()
+        scores = []
+        for start in range(0, len(passages), rerank._BATCH_SIZE):
+            batch = [(question, passage) for passage in passages[start:start + rerank._BATCH_SIZE]]
+            if legacy:
+                # 保留變更前的運算路徑；微基準不覆寫產品程式。
+                with torch.no_grad():
+                    inputs = model._tokenizer(
+                        batch, padding=True, truncation=True,
+                        max_length=model._max_length, return_tensors="pt",
+                    )
+                    logits = model._model(**inputs, return_dict=True).logits.view(-1).float()
+                    scores.extend(torch.sigmoid(logits).tolist())
+            else:
+                scores.extend(model.compute_score(batch, normalize=True))
+        return time.perf_counter() - started, scores
+
+    # 暖機結果不計時；交錯順序減少 CPU 溫度與背景負載的單向偏差。
+    score(legacy=True)
+    timings = {"legacy": [], "current": []}
+    outputs = {}
+    for iteration in range(repeat):
+        for name in (("legacy", "current") if iteration % 2 == 0 else ("current", "legacy")):
+            elapsed, values = score(legacy=name == "legacy")
+            timings[name].append(round(elapsed, 3))
+            outputs[name] = values
+
+    before, after = outputs["legacy"], outputs["current"]
+
+    def order(values):
+        return sorted(range(len(values)), key=lambda i: values[i], reverse=True)
+
+    return {
+        "kind": "rerank_micro", "offline": True, "pairs": pairs, "repeat": repeat,
+        "torch_threads": threads, "batch_size": rerank._BATCH_SIZE,
+        "model": str(getattr(model._model.config, "_name_or_path", "unknown")),
+        "legacy_s": timings["legacy"], "current_s": timings["current"],
+        "legacy_median_s": round(statistics.median(timings["legacy"]), 3),
+        "current_median_s": round(statistics.median(timings["current"]), 3),
+        "max_abs_score_delta": max(abs(a - b) for a, b in zip(before, after)),
+        "ranking_identical": order(before) == order(after),
+    }
+
+
 def run_bench(args) -> dict:
     questions = load_questions(args.limit)
     plan = [questions[i % len(questions)] for i in range(args.repeat * len(questions))]
@@ -205,7 +276,7 @@ def run_bench(args) -> dict:
     print(f"端點      /api/{args.endpoint}")
     print(f"計畫      {len(plan)} 個請求 × 併發 {args.concurrency}")
     print(f"逾時      {args.timeout:.0f}s／請求")
-    print("提醒      每個請求都會 spawn claude CLI 數次，實際消耗訂閱額度。")
+    print("提醒      每個請求會呼叫 LLM，實際消耗 API 額度。")
     if args.dry_run:
         print("（--dry-run：不送出任何請求）")
         return {"kind": "bench", "dry_run": True, "planned": len(plan)}
@@ -279,7 +350,7 @@ def run_bench(args) -> dict:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="受控負載壓測（會消耗 Claude 額度）")
+    p = argparse.ArgumentParser(description="問答 HTTP 壓測或離線 rerank 微基準")
     p.add_argument("--base", default="http://127.0.0.1:8097", help="服務位址")
     p.add_argument("--endpoint", choices=("ask",), default="ask")
     p.add_argument("--repeat", type=int, default=1, help="整份題集重複幾輪（預設 1）")
@@ -288,11 +359,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=float, default=600.0, help="單一請求逾時秒數")
     p.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR), help="結果檔輸出目錄")
     p.add_argument("--dry-run", action="store_true", help="只印計畫，不送請求")
+    p.add_argument("--offline-rerank", action="store_true", help="本機模型微基準，不送 HTTP 請求")
+    p.add_argument("--torch-threads", type=int, default=4, help="離線微基準的 PyTorch 執行緒數")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.offline_rerank:
+        pair_count = args.limit if args.limit is not None else 24
+        if args.repeat < 1 or args.torch_threads < 1 or not 1 <= pair_count <= 50:
+            print("離線模式需要 repeat、torch-threads >= 1 且 1 <= limit <= 50", file=sys.stderr)
+            return 2
+        try:
+            result = run_offline_rerank(
+                repeat=args.repeat, threads=args.torch_threads, pairs=pair_count,
+            )
+        except (RuntimeError, OSError) as exc:
+            print(f"離線微基準無法執行：{exc}", file=sys.stderr)
+            return 2
+        out_dir = Path(args.out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"bench-rerank-{datetime.now():%Y%m%d-%H%M%S}.json"
+        out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"舊路徑中位數 {result['legacy_median_s']}s；現行 {result['current_median_s']}s")
+        print(f"最大分數差 {result['max_abs_score_delta']:.8g}；名次一致 {result['ranking_identical']}")
+        print(f"結果 {out_path}")
+        return 0 if result["ranking_identical"] else 1
     try:
         result = run_bench(args)
     except RuntimeError as exc:

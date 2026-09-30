@@ -46,7 +46,7 @@ uv run python scripts/ingest_all.py
 - **測試絕不可寫 repo 根的真實環境檔**：這台機器 repo root 就是部署目錄，`finally` 擋得住例外、擋不住行程被殺。要驗載入行為餵 `tempfile`。`tests/test_env_loading.py` 與 `tests/conftest.py` 是第二道防線，不是許可證。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺 CJK 字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 加相依會過授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件的 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉那個相依，不是加豁免。相依更新由 `.github/dependabot.yml` 每週分組開 PR，`torch` 與 `@embedpdf/*` 刻意排除（理由在該檔）。
-- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-02.json`（Claude haiku judge 的舊系譜、記錄量尺之前的舊檔：拿新結果比它一律回 2）。judge 自 2026-09 起是 DeepSeek（新系譜 `deepseek-2026-09`，門檻數值不變），**新系譜尚無基準線**：第一次 `uv run python eval/run_ragas.py --concurrency 1 --repeat 3 --out eval/baselines/baseline-YYYY-MM-DD-jdsflash-gdsflash.json` 的結果就是起點（README「測試」一節）。
+- 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改；最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge，系譜 `deepseek-2026-09`，18 題×3 次，固定正式語料快照）。舊 `eval/baselines/baseline-2026-09-02.json` 是 Claude haiku judge 的舊系譜，拿新結果比它一律回 2；快照 ID 與結果見 README「測試」一節。
 
 ## 改動對照表（改了 A 就要動 B）
 
@@ -97,7 +97,7 @@ uv run python scripts/ingest_all.py
 - 顯示名稱走 `title`，缺值回退 `file_name`（`frontend/src/lib/displayTitle.ts`）；title 漸進補齊，NULL 是常態。
 - DB 一律 `from app.services.db import SessionFactory`，不複製預設連線字串（鍵是 `REPORT_MARK_DB_URL`）。長查詢用 `db.relax_statement_timeout()`（`SET LOCAL`）。`DB_IDLE_TX_TIMEOUT_MS` 預設 0 是刻意的：sync 在交易內 spawn CLI 與嵌入。
 - logging 只在 `web/server.py` 初始化（`app/logging_setup.py`，順序契約由 `tests/test_logging_setup.py` 釘住）；批次腳本的 `logger.info` 無聲。
-- 備份只涵蓋四張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`）→ NAS；語料層刻意不備。
+- 備份涵蓋五張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`）→ NAS；語料層刻意不備。
 
 ## Web 與 auth
 - `web/server.py` 只是組合層；路由在 `web/routers/`，共用符號經 `web/deps.py`（測試 patch 的單一位置）。

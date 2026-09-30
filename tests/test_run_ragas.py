@@ -340,7 +340,10 @@ class EvalQuestionAgenticTests(unittest.IsolatedAsyncioTestCase):
 
 class RunAgenticSerialTests(unittest.IsolatedAsyncioTestCase):
     async def test_agentic_forces_concurrency_one_and_passes_flag(self):
-        questions = [{"id": f"q{i}", "question": f"題{i}"} for i in range(3)]
+        questions = [
+            {"id": f"q{i:03d}", "question": f"這是第{i}題評測問題", "filters": {}, "scope": "corpus_qa"}
+            for i in range(1, 4)
+        ]
         seen = {"active": 0, "max_active": 0, "agentic": []}
 
         async def fake_eval_question(q, *, judge, embed, retrieval_params, agentic=False,
@@ -360,7 +363,8 @@ class RunAgenticSerialTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as td:
             ds = Path(td) / "ds.json"
             ds.write_text(
-                json.dumps({"questions": questions}, ensure_ascii=False),
+                json.dumps({"version": 2, "generated_at": "2026-09-29T00:00:00+08:00",
+                            "count": 3, "questions": questions}, ensure_ascii=False),
                 encoding="utf-8",
             )
             saved = _install_fakes(["eval_question"])
@@ -569,6 +573,19 @@ class GenerateTruncationTests(unittest.IsolatedAsyncioTestCase):
             _restore(saved)
         self.assertFalse(truncated)
 
+    async def test_generated_answer_uses_same_citation_filter_as_web(self):
+        async def forged(prompt, *, system=None, model=None, timeout=120.0,
+                         allow_web=False, retries=2, meta=None, max_tokens=None, task=None):
+            yield "毛利率 28%[9]，正確來源[1]。"
+
+        saved = _install_fakes(["stream_completion"])
+        try:
+            rr.stream_completion = forged
+            answer, _truncated = await rr._generate_answer("q", "[1] 報告：a.pdf\n毛利率 28%。")
+        finally:
+            _restore(saved)
+        self.assertEqual(answer, "毛利率 28%（無效引用），正確來源[1]。")
+
 
 class CitationTests(unittest.TestCase):
     def test_only_existing_source_numbers_count(self):
@@ -702,9 +719,13 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
     """run() 的結果檔：summary 的三個 META 鍵、config 快照、repeat 與 --dump-io。"""
 
     async def _run_with(self, td, *, repeat=1, dump=False, agentic=False, judge_model="claude-haiku-4-5"):
-        questions = [{"id": "q/1", "question": "題1"}, {"id": "q2", "question": "題2"}]
+        questions = [
+            {"id": "q001", "question": "台積電營運展望如何", "filters": {}, "scope": "corpus_qa"},
+            {"id": "q002", "question": "聯發科成長動能如何", "filters": {}, "scope": "corpus_qa"},
+        ]
         ds = Path(td) / "ds.json"
-        ds.write_text(json.dumps({"questions": questions}, ensure_ascii=False), encoding="utf-8")
+        ds.write_text(json.dumps({"version": 2, "generated_at": "2026-09-29T00:00:00+08:00",
+                                  "count": 2, "questions": questions}, ensure_ascii=False), encoding="utf-8")
         seen = {"gen_model": [], "calls": 0}
 
         async def fake_eval_question(q, *, judge, embed, retrieval_params, agentic=False,
@@ -780,8 +801,8 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as td:
             report, _seen, _ds = await self._run_with(td, repeat=2, dump=True)
             files = sorted(p.name for p in (Path(td) / "frozen").iterdir())
-            doc = json.loads((Path(td) / "frozen" / "q_1-r1.json").read_text(encoding="utf-8"))
-        self.assertEqual(files, ["q2-r1.json", "q2-r2.json", "q_1-r1.json", "q_1-r2.json"])
+            doc = json.loads((Path(td) / "frozen" / "q001-r1.json").read_text(encoding="utf-8"))
+        self.assertEqual(files, ["q001-r1.json", "q001-r2.json", "q002-r1.json", "q002-r2.json"])
         self.assertEqual(doc["answer"], "答 [1]")
         self.assertEqual(doc["gen_model"], "deepseek-flash")
         self.assertEqual(doc["judge_model"], "claude-haiku-4-5")
@@ -789,9 +810,113 @@ class RunTraceabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("judge_calls", doc)
         self.assertTrue(all("_io" not in r for c in report["cases"] for r in c["runs"]))
 
+    async def test_checkpoint_resumes_without_repeating_paid_calls(self):
+        with tempfile.TemporaryDirectory() as td:
+            questions = [
+                {"id": "q001", "question": "台積電營運展望如何", "filters": {}, "scope": "corpus_qa"},
+                {"id": "q002", "question": "聯發科成長動能如何", "filters": {}, "scope": "corpus_qa"},
+            ]
+            ds = Path(td) / "questions.json"
+            ds.write_text(json.dumps({
+                "version": 2, "generated_at": "2026-09-29T00:00:00+08:00",
+                "count": 2, "questions": questions,
+            }, ensure_ascii=False), encoding="utf-8")
+            output = Path(td) / "result.json"
+            checkpoints = Path(td) / "checkpoints"
+            calls = []
+            interrupt = True
+
+            async def fake_eval(q, **kwargs):
+                calls.append(q["id"])
+                if q["id"] == "q002" and interrupt:
+                    raise RuntimeError("模擬執行中斷")
+                return _run(id=q["id"], question=q["question"])
+
+            with mock.patch.object(rr, "eval_question", fake_eval):
+                with self.assertRaisesRegex(RuntimeError, "執行中斷"):
+                    await rr.run(ds, out_path=output, concurrency=1, checkpoint_dir=checkpoints)
+                self.assertTrue((checkpoints / "q001.json").exists())
+                self.assertFalse(output.exists())
+                interrupt = False
+                report = await rr.run(ds, out_path=output, concurrency=1, checkpoint_dir=checkpoints)
+                self.assertEqual(calls, ["q001", "q002", "q002"])
+                self.assertEqual(report["summary"]["n"], 2)
+                with self.assertRaisesRegex(ValueError, "檢查點設定不符"):
+                    await rr.run(ds, out_path=output, concurrency=1, rerank_top_m=2,
+                                 checkpoint_dir=checkpoints)
+                self.assertEqual(calls, ["q001", "q002", "q002"])
+
+    def test_judge_observation_merges_across_checkpoint_runs(self):
+        observer = rr._JudgeObserver()
+        observer.merge({"model_resp": ["m"], "system_fingerprint": ["f"],
+                        "requests": 2, "usage": {"prompt_tokens": 30}})
+        observer.merge({"model_resp": ["m"], "system_fingerprint": ["g"],
+                        "requests": 1, "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+        self.assertEqual(observer.snapshot(), {
+            "model_resp": ["m"], "system_fingerprint": ["f", "g"],
+            "requests": 3, "usage": {"completion_tokens": 5, "prompt_tokens": 40},
+        })
+
     async def test_repeat_must_be_positive(self):
         with self.assertRaises(ValueError):
             await rr.run("unused.json", out_path=None, repeat=0)
+
+    async def test_formal_baseline_requires_corpus_id_and_complete_questions(self):
+        with self.assertRaisesRegex(ValueError, "corpus-id"):
+            await rr.run("unused.json", out_path=None, complete_only=True)
+        with self.assertRaisesRegex(ValueError, "完整題集"):
+            await rr.run("unused.json", out_path=None, complete_only=True, corpus_id="snapshot-1", limit=1)
+        with tempfile.TemporaryDirectory() as td:
+            existing = Path(td) / "baseline.json"
+            existing.write_text("keep", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "不覆寫"):
+                await rr.run("unused.json", out_path=existing, complete_only=True, corpus_id="snapshot-1")
+            self.assertEqual(existing.read_text(encoding="utf-8"), "keep")
+
+    async def test_mismatched_baseline_stops_before_evaluation(self):
+        with tempfile.TemporaryDirectory() as td:
+            ds = Path(td) / "questions.json"
+            ds.write_text(json.dumps({
+                "version": 2, "generated_at": "2026-09-29T00:00:00+08:00", "count": 1,
+                "questions": [{"id": "q001", "question": "台積電展望如何呢", "filters": {}, "scope": "corpus_qa"}],
+            }, ensure_ascii=False), encoding="utf-8")
+            cfg = rr.build_config(
+                dataset_path=ds, generator_model=rr.DEFAULT_MODEL, judge_model=rr.DEFAULT_JUDGE_MODEL,
+                concurrency=1, repeat=1, rerank_top_m=0, scope=None, limit=None, agentic=False,
+                commit=None, started_at="2026-09-29T00:00:00+08:00", corpus_id="other-snapshot",
+            )
+            baseline = Path(td) / "baseline.json"
+            baseline.write_text(json.dumps({"config": cfg, "summary": {
+                "n": 1, "n_errors": 0, "n_no_context": 0, "n_judge_errors": 0,
+                "n_effective_faithfulness": 1, "n_effective_context_precision": 1,
+                "n_effective_answer_relevancy": 1,
+            }}), encoding="utf-8")
+            with mock.patch.object(rr, "eval_question", side_effect=AssertionError("付費階段不應執行")):
+                with self.assertRaisesRegex(ValueError, "corpus_id"):
+                    await rr.run(ds, out_path=None, concurrency=1, corpus_id="snapshot-1", match_baseline=baseline)
+
+    def test_baseline_config_and_complete_coverage_guard(self):
+        cfg = {key: None for key in (
+            "gen_model", "gen_timeout", "models", "embed_model", "rerank_top_m", "rerank_model",
+            "agentic", "concurrency", "repeat", "queryset_sha256", "scope", "limit", "corpus_id",
+        )}
+        cfg.update(queryset_sha256="same", corpus_id="snapshot-1")
+        cfg["judge"] = {key: None for key in (
+            "provider", "model", "timeout", "retries", "prompt_sha", "schema_version", "lineage", "max_tokens",
+        )}
+        cfg["judge"].update(model="deepseek-flash", prompt_sha="a")
+        rr.check_baseline_config({"config": cfg}, cfg)
+        changed = json.loads(json.dumps(cfg))
+        changed["corpus_id"] = "snapshot-2"
+        with self.assertRaisesRegex(ValueError, "corpus_id"):
+            rr.check_baseline_config({"config": cfg}, changed)
+        report = {"summary": {"n": 2, "n_errors": 0, "n_no_context": 0, "n_judge_errors": 0,
+                              "n_effective_faithfulness": 2, "n_effective_context_precision": 2,
+                              "n_effective_answer_relevancy": 2}}
+        rr.require_complete(report, 2)
+        report["summary"]["n_effective_faithfulness"] = 1
+        with self.assertRaisesRegex(ValueError, "n_effective_faithfulness"):
+            rr.require_complete(report, 2)
 
     async def test_judge_lineage_is_labelled_in_config_and_notes_without_warning(self):
         """PR-26/27：DeepSeek judge 是正式的新量尺系譜，不再印「未校準」WARNING；系譜記在

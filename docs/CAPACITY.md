@@ -178,7 +178,7 @@ retrieve 0.7–9.5 秒、embed 1 毫秒（後者是 `embed_query_cached` 的 lru
 
 ## 受控負載：把「單條問答吃多少硬體」量出來
 
-`scripts/bench_load.py` 對**真實端點**打可控負載，跑完用分析器框出那段窗期：
+`scripts/bench_load.py` 的 HTTP 模式對**真實端點**打可控負載，跑完用分析器框出那段窗期：
 
 ```bash
 python3 scripts/bench_load.py --dry-run --limit 4          # 先看計畫
@@ -233,10 +233,64 @@ HTTP 那一層，繞過去就量不到。題目取自同一份凍結題集 `eval
 
 ---
 
+## 問答 rerank 延遲重測（2026-09-29）
+
+從正式庫凍結 15,255 篇研報／616,769 個 chunk，還原到隔離 PostgreSQL；在本工作樹
+`127.0.0.1:8099` 啟動單 worker API，載入既有 DeepSeek 設定，對同一組前 8 題各送
+一次真實登入後的 `/api/ask` SSE 請求。依序量單併發、三併發，再把預設
+`ASK_RERANK_CANDIDATES` 從 50 改為 16，重跑相同兩輪；其餘設定、語料和主機不變。
+結果原檔在未版控的 `data/eval_frozen/metrics/`，以下秒數是這四輪的實測：
+
+| 指標 | 50 候選，併發 1 | 16 候選，併發 1 | 50 候選，併發 3 | 16 候選，併發 3 |
+|---|---:|---:|---:|---:|
+| 成功／錯誤 | 8/0 | 8/0 | 8/0 | 8/0 |
+| 全請求 p50 | 45.81 | 19.65 | 71.00 | 31.06 |
+| 全請求 p95 | 135.59 | 47.68 | 160.67 | 63.38 |
+| 首 token p50 | 39.71 | 14.85 | 66.47 | 26.87 |
+
+50 候選的 `qa_timing` 首輪重排約需 36–54 秒，補查重排有兩筆耗盡 90 秒期限；三併發
+也觀察到首輪重排逾時、退回融合排序。16 候選的 16 筆請求首輪重排全數實際套用，
+沒有超時。另以相同快照、前 8 題、`--agentic` 與 DeepSeek judge 比對兩個候選上限：
+50 候選 F/CP/AR = 0.984/0.849/0.686、檢索加生成平均 54.9 秒；16 候選為
+0.968/0.852/0.713、平均 23.2 秒。`make eval-compare` 退出碼 0，三項仍過既定門檻。
+這是 8 題、單次重跑的探索性對照；正式 18 題×3 次品質基準刻意關閉重排與補查，
+兩者不可混成一個分數。本輪未同步採樣 cgroup，**不能從延遲推算核心秒、吞吐量或雲端機型**。
+
+新 `qa_timing` 欄位把 rerank semaphore 排隊（`rerank_queue_ms`）與交給執行緒後的耗時
+（`rerank_compute_ms`）分開，另記 `rerank_applied` 與 `rerank_timed_out`。
+`compute_ms` 含 `asyncio.to_thread` 的排程等待；若已逾時，背景推論可能在 log 後才結束，
+該欄位可能為空。這些欄位只涵蓋首輪檢索；agentic 補查沒有累計進來。
+
+唯一的推論改動是 CPU cross-encoder 由 `torch.no_grad()` 改用
+`torch.inference_mode()`；tokenizer、batch 大小、候選順序、分數計算與排序規則不變。
+可用已快取的模型完全離線重測（沒有 DB、語料、HTTP 或 LLM 呼叫）：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run python scripts/bench_load.py \
+  --offline-rerank --limit 8 --repeat 5 --torch-threads 4
+```
+
+微基準固定 8 個合成片段與問題，模型先暖機一次，再交錯跑舊路徑與現行路徑；結果 JSON
+含每輪秒數、各自中位數、逐筆最大分數差與名次是否完全一致。這是單一模型、單一 CPU
+執行緒配置的推論測試；排序一致只對該合成樣本成立，不能代替 `eval/run_ragas.py` 的
+真實語料品質評測。也不能從微基準推算端到端問答速度。
+
+本機 Intel Core i7-14700、PyTorch 4 執行緒、快取的 `BAAI/bge-reranker-v2-m3`：
+
+| 指標 | 舊 `no_grad` | 現行 `inference_mode` |
+|---|---:|---:|
+| 5 輪秒數 | 6.662、6.503、5.535、5.098、4.950 | 6.230、6.196、5.196、4.730、4.861 |
+| 中位數 | 5.535s | 5.196s |
+
+微基準中位數差為 0.339s（6.1%）；五組配對測量皆為現行路徑較快。8 筆逐筆分數的最大
+絕對差為 **0**，完整名次一致。CPU 背景負載與模型暖機後狀態仍使各輪時間波動，這個
+百分比只描述本機這組合成輸入與配置。
+
 ## 不在量測範圍內的成本
 
-`app/services/llm.py` 是 spawn `claude` CLI，不是本機推論——**問答的模型成本
-不會出現在任何 CPU 數字裡**。那一側屬於 token／訂閱成本，是既有評估簡報涵蓋的範圍，
+現行問答 LLM 是遠端 DeepSeek API，不是本機推論；上表 2026-09-02 的舊量測則含當時的
+Claude CLI 父程序。**問答的模型成本不會出現在任何 CPU 數字裡**。
+那一側屬於 token／API 成本，是既有評估簡報涵蓋的範圍，
 兩者不可互相取代：把本機量到的 CPU 拿去推論「模型很便宜」是錯的，反過來也是。
 
 同理，BGE-M3 嵌入與 cross-encoder rerank **確實**是本機 CPU（`torch` CPU-only），

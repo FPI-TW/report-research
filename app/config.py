@@ -302,7 +302,7 @@ def _load() -> Settings:
         extraction_review_min_coverage=float(os.getenv("EXTRACTION_REVIEW_MIN_COVERAGE", "0.30")),
         extraction_review_max_garbled=float(os.getenv("EXTRACTION_REVIEW_MAX_GARBLED", "0.02")),
         ask_rerank_enabled=_flag("ASK_RERANK_ENABLED", "1"),
-        ask_rerank_candidates=int(os.getenv("ASK_RERANK_CANDIDATES", "50")),
+        ask_rerank_candidates=int(os.getenv("ASK_RERANK_CANDIDATES", "16")),
         # per-path 逾時：prod 實測（20 核 CPU）50 對 ~34s、120 對 ~93s；預設須蓋過
         # 實測值 + 忙碌餘裕，否則 rerank 靜默 fail-open 形同全關（M1b 基準線 10/10 逾時）。
         ask_rerank_timeout=float(os.getenv("ASK_RERANK_TIMEOUT", "60")),

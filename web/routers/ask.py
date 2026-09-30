@@ -73,7 +73,7 @@ _LLM_ERROR_DETAILS = {
 
 
 def _llm_error_detail(exc: LLMUnavailableError) -> str:
-    """LLM 不可用時 SSE error 的 detail（放在所有 @router 之上，理由見 CLAUDE.md）。"""
+    """LLM 不可用時 SSE error 的 detail（放在所有 @router 之上，理由見 AGENTS.md）。"""
     return _LLM_ERROR_DETAILS.get(getattr(exc, "kind", None) or "", ASK_ERROR_DETAIL)
 
 

@@ -113,7 +113,7 @@ CHECKS: tuple[Check, ...] = (
         "SELECT count(*) FROM research.report_chunk WHERE embedding IS NULL",
         "字面路會召回到它們而 dense 距離為 NULL。檢索端已改為跳過並記數，"
         "但那是降級不是修復——這些 chunk 對語意檢索完全不存在。"
-        "處置：對相關報告重跑 ingest_all.py（`make normalize` 那種就地更新是陷阱，見 CLAUDE.md）。",
+        "處置：對相關報告重跑 ingest_all.py（`make normalize` 那種就地更新是陷阱，見 docs/WORKFLOW.md）。",
     ),
     Check(
         "duplicate_chunk_index",

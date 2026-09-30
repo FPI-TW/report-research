@@ -1,6 +1,6 @@
 # 架構：模組地圖與不變量
 
-本檔是 `CLAUDE.md` 架構不變量的完整版：每個模組負責什麼、誰 import 誰、哪些設計是「刻意」的以及出處。它從程式碼讀出（2026-09-18），是 `tests/test_docs_contract.py` 掃描的 living doc；改名或刪檔要同步改這裡。
+本檔是 `AGENTS.md` 架構不變量摘要的完整版：每個模組負責什麼、誰 import 誰、哪些設計是「刻意」的以及出處。它從程式碼讀出（2026-09-18），是 `tests/test_docs_contract.py` 掃描的 living doc；改名或刪檔要同步改這裡。
 
 ## 1. 分工鐵律
 

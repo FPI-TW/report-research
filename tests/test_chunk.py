@@ -9,7 +9,7 @@
 
     **`report_chunk.content` 不是 `full_text` 的子字串**
 
-400 樣本實測（記錄在 CLAUDE.md 與 `reading/anchor.py`）：raw 3/300、normalized
+400 樣本實測（記錄在 docs/ARCHITECTURE.md 與 `reading/anchor.py`）：raw 3/300、normalized
 168/400、normalized ＋ head-drop 400/400。更糟的是拿原始 `full_text` 去錨定**不會**
 回 None——它會回一個看起來很合理但座標系錯誤的 Anchor。
 

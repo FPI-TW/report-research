@@ -1,13 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Staging EC2 and RDS PostgreSQL foundation — isolates the database in private
-  subnets and assigns a stable Elastic IP to an ingress-free SSM-managed host
+  subnets and assigns a stable Elastic IP to an SSM-managed host that accepts
+  HTTPS from Cloudflare edges only
 
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@2
   com.aws.cloudformation.Context:
-    arch: EIP -> public EC2 (0 ingress, SSM only) -> private Single-AZ RDS; 2 AZ subnet layout; no NAT
+    arch: Cloudflare proxy -> EIP -> public EC2 (443 from Cloudflare only, admin via SSM) -> private Single-AZ RDS; 2 AZ subnet layout; no NAT
     must:
       - Deploy only in the explicitly selected account and ap-southeast-1
       - No app checkout, app service, schema migration, or data migration in this stack
@@ -214,17 +215,58 @@ Resources:
       RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref PrivateDbSubnetB
 
+  CloudflareOriginPrefixList:
+    Type: AWS::EC2::PrefixList
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: research.tingfong.com is a proxied (orange-cloud) A record; only Cloudflare edges may reach the origin
+        must:
+          - Entries mirror https://www.cloudflare.com/ips-v4 exactly (checked 2026-10-02)
+          - IPv4 only; the VPC has no IPv6 and the hostname has no origin AAAA record
+        mutable: change-with-constraints
+    Properties:
+      PrefixListName: !Sub '${AWS::StackName}-cloudflare-ipv4'
+      AddressFamily: IPv4
+      # An SG rule that references a prefix list consumes MaxEntries rules from the SG quota.
+      MaxEntries: 20
+      Entries:
+        - { Cidr: 173.245.48.0/20, Description: Cloudflare }
+        - { Cidr: 103.21.244.0/22, Description: Cloudflare }
+        - { Cidr: 103.22.200.0/22, Description: Cloudflare }
+        - { Cidr: 103.31.4.0/22, Description: Cloudflare }
+        - { Cidr: 141.101.64.0/18, Description: Cloudflare }
+        - { Cidr: 108.162.192.0/18, Description: Cloudflare }
+        - { Cidr: 190.93.240.0/20, Description: Cloudflare }
+        - { Cidr: 188.114.96.0/20, Description: Cloudflare }
+        - { Cidr: 197.234.240.0/22, Description: Cloudflare }
+        - { Cidr: 198.41.128.0/17, Description: Cloudflare }
+        - { Cidr: 162.158.0.0/15, Description: Cloudflare }
+        - { Cidr: 104.16.0.0/13, Description: Cloudflare }
+        - { Cidr: 104.24.0.0/14, Description: Cloudflare }
+        - { Cidr: 172.64.0.0/13, Description: Cloudflare }
+        - { Cidr: 131.0.72.0/22, Description: Cloudflare }
+      Tags:
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
   Ec2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Metadata:
       com.aws.cloudformation.Context:
-        why: SSM-managed admin host needs outbound access but no internet-initiated path
+        why: SSM-managed host; the only internet-initiated path is HTTPS from Cloudflare edges to the origin nginx
         must:
-          - Keep SecurityGroupIngress absent
-          - Never add SSH or public ingress
+          - Ingress is exactly TCP/443 from CloudflareOriginPrefixList
+          - Never add SSH, TCP/80, TCP/8097, or 0.0.0.0/0 ingress
+          - Keep GroupDescription unchanged; changing it replaces the SG (and its RDS reference)
         mutable: change-with-constraints
     Properties:
       GroupDescription: Ingress-free EC2 security group; outbound supports SSM, packages, and RDS
+      SecurityGroupIngress:
+        - Description: HTTPS from Cloudflare edges to origin nginx
+          FromPort: 443
+          IpProtocol: tcp
+          SourcePrefixListId: !Ref CloudflareOriginPrefixList
+          ToPort: 443
       SecurityGroupEgress:
         - CidrIp: 0.0.0.0/0
           Description: Outbound HTTPS, package repositories, DNS, and stateful DB responses
@@ -312,7 +354,9 @@ Resources:
       AllocatedStorage: '100'
       AllowMajorVersionUpgrade: false
       AutoMinorVersionUpgrade: true
-      BackupRetentionPeriod: 1
+      # 7 天：staging 自己產生的 qa_log、review_state 等表無法從語料重建（2026-10-02 由 1 天調高）。
+      # 非零 → 非零的調整不中斷服務；改成 0 會停用自動備份並刪除既有的自動快照。
+      BackupRetentionPeriod: 7
       CopyTagsToSnapshot: true
       DBInstanceClass: !Ref DbInstanceClass
       DBInstanceIdentifier: !Sub '${AWS::StackName}-postgres'
@@ -518,8 +562,11 @@ Outputs:
     Description: Second private RDS subnet ID.
     Value: !Ref PrivateDbSubnetB
   Ec2SecurityGroupId:
-    Description: Ingress-free EC2 security group ID.
+    Description: EC2 security group ID; ingress is TCP/443 from the Cloudflare prefix list only.
     Value: !Ref Ec2SecurityGroup
+  CloudflareOriginPrefixListId:
+    Description: Managed prefix list of Cloudflare IPv4 ranges admitted to TCP/443.
+    Value: !Ref CloudflareOriginPrefixList
   RdsSecurityGroupId:
     Description: RDS security group ID allowing PostgreSQL only from EC2.
     Value: !Ref RdsSecurityGroup

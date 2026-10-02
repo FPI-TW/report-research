@@ -241,6 +241,13 @@ Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪�
 | `report-mark-metrics.service` | 常駐 | 硬體用量取樣 → `data/metrics/`（`make metrics`） |
 | `report-mark-alert@.service` | `OnFailure` 觸發 | journal ＋ `data/unit_failures.log` ＋ webhook |
 
+非辦公室主機（EC2 staging：RDS PostgreSQL、共用 production 的 R2 bucket）：
+
+- unit 用 `sudo deploy/install_units.sh --user <使用者> --root <repo 根> <unit…>` 安裝：repo 裡的 unit 維持辦公室主機的字面值，這支在安裝時代換使用者、HOME 與 repo 路徑，只複製與 `daemon-reload`，不 enable。只適用辦公室的不裝：`report-mark-backup`（NAS）、`report-mark-linebot-*`、`report-mark-metrics`（docker cgroup）、`report-mark-backfill`。
+- DB：`REPORT_MARK_DB_URL=postgresql+asyncpg://…@<RDS 端點>:5432/research?ssl=verify-full`，並設 `PGSSLROOTCERT=<RDS CA bundle>`（asyncpg 從環境讀；URL 裡寫 `sslmode=`／`sslrootcert=` 會讓 asyncpg 拋 `TypeError`）。repo 根 `.env` 與 `/etc/default/report-mark-sync` 兩處都要設。`make schema`、`make db-backup`、`make ingest-lowio` 走 `docker exec`，在 RDS 上不適用（RDS 的耐久性參數只能改 parameter group）。
+- 新研報：辦公室主機的 `/etc/default/report-mark-sync` 設 `SYNC_INBOX_PUSH=1`，staging 設 `SYNC_SOURCE=r2-inbox`（見 `docs/WORKFLOW.md`「生產同步鏈」）。兩邊入庫同一份檔得到同一個 `originals/` key（create-only、SHA 驗證），不會互相覆寫。
+- 對外：另開一條 Cloudflare Tunnel，**不可**共用辦公室主機那條的 token（同一條 tunnel 的多個 connector 會分流，請求會隨機落到兩個不同的 DB）。
+
 對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
 
 LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_failure` 判定跳過的研報（零 LLM；要連累計中未達門檻的也列，直接跑 `uv run python scripts/llm_blocked.py --all`）。要重打就對該批次加 `--retry-blocked`；跳過鍵只看 model、不看 prompt，**改 prompt 後也要加**（摘錄與訊號的 `--reextract` 隱含它）。部署這張表要先 `make schema`。

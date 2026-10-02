@@ -71,6 +71,17 @@ class ConfigLoadsDefaultRulesTests(unittest.TestCase):
                 # 22 個測試檔會全部誤報
                 self.assertRegex("fixed-test-secret-0123456789", rx)
 
+    def test_stopwords_are_specific_identifiers(self):
+        """stopwords 是子字串比對：短字或常見字（`key`、`test`）會讓大量真 secret 被放過。
+
+        只准逐字列出具體的誤報識別字（英數字、夠長），每個都要在檔內註明出處。
+        """
+        raw = CONFIG.read_text(encoding="utf-8")
+        for word in self.cfg.get("allowlist", {}).get("stopwords", []):
+            with self.subTest(word=word):
+                self.assertRegex(word, r"^[A-Za-z0-9]{10,}$", "stopword 要是夠長的具體識別字")
+                self.assertGreaterEqual(raw.count(word), 2, "stopword 要在註解裡寫明出處")
+
 
 class DeepSeekKeyRuleTests(unittest.TestCase):
     """內建規則集抓不到 DeepSeek 金鑰（`sk-` ＋ 32 hex），靠這條自訂規則。

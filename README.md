@@ -258,4 +258,5 @@ LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_f
 | `docs/nas_scheduled_sync_deployment.md` | NAS 定時同步的掛載、sudoers、timer 安裝 |
 | `docs/LINEBOT_ALWAYS_ON.md` | LineBot 常駐與監控 |
 | `docs/CAPACITY.md` | 硬體用量量測與上雲選型 |
+| [AWS staging 基礎設施](deploy/aws/README.md) | CloudFormation 管理的 EC2／RDS staging、change set 與驗收流程 |
 | `docs/incidents/` 與 `docs/benchmarks/` | 事故報告與基準量測 |

@@ -354,7 +354,9 @@ Resources:
       AllocatedStorage: '100'
       AllowMajorVersionUpgrade: false
       AutoMinorVersionUpgrade: true
-      BackupRetentionPeriod: 1
+      # 7 天：staging 自己產生的 qa_log、review_state 等表無法從語料重建（2026-10-02 由 1 天調高）。
+      # 非零 → 非零的調整不中斷服務；改成 0 會停用自動備份並刪除既有的自動快照。
+      BackupRetentionPeriod: 7
       CopyTagsToSnapshot: true
       DBInstanceClass: !Ref DbInstanceClass
       DBInstanceIdentifier: !Sub '${AWS::StackName}-postgres'

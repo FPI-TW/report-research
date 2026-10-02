@@ -35,6 +35,7 @@ rule database_has_deletion_safeguards {
   Resources.Database.DeletionPolicy == "Retain"
   Resources.Database.UpdateReplacePolicy == "Retain"
   Resources.Database.Properties.DeletionProtection == true
+  Resources.Database.Properties.BackupRetentionPeriod >= 7
 }
 
 rule database_uses_managed_credentials_and_tls {

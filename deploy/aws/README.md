@@ -32,7 +32,7 @@ Cloudflare DNS 由 Cloudflare 控制台另行管理。應用程式、服務、`d
 - 入站：只有 TCP/443，來源限定 Cloudflare IPv4 範圍（managed prefix list `CloudflareOriginPrefixList`）；
   不開 SSH、TCP/80、TCP/8097、RDS/5432 或 `0.0.0.0/0`
 - 公網位址：由同一個 stack 管理並綁定 EC2 的 Elastic IP；`research.tingfong.com` 的橘雲 A record 指向它
-- RDS：PostgreSQL 16、`db.m7g.large`、Single-AZ、100 GiB encrypted gp3、上限 500 GiB
+- RDS：PostgreSQL 16、`db.m7g.large`、Single-AZ、100 GiB encrypted gp3、上限 500 GiB、自動備份保留 7 天
 - VPC：`10.20.0.0/16`；EC2 在 public subnet，RDS 在跨兩 AZ 的 private subnet group
 - Stack：`report-research-staging`；stack 與 RDS 均啟用刪除保護
 

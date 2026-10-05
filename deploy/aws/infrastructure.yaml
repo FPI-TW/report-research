@@ -6,7 +6,7 @@ Description: >-
 
 Metadata:
   AWSToolsMetrics:
-    AWSAgentToolkit: aws-cloudformation@2
+    AWSAgentToolkit: aws-cloudformation@3
   com.aws.cloudformation.Context:
     arch: Cloudflare proxy -> EIP -> public EC2 (443 from Cloudflare only, admin via SSM) -> private Single-AZ RDS; 2 AZ subnet layout; no NAT
     must:
@@ -435,7 +435,8 @@ Resources:
       com.aws.cloudformation.Context:
         why: x86 CPU host selected for reranker; public IP supplies outbound SSM/package access without NAT
         must:
-          - No key pair and no inbound SG rules
+          - No key pair; administration via SSM only
+          - The only inbound SG rule is TCP/443 from CloudflareOriginPrefixList
           - IMDSv2 required; encrypted gp3 root
           - Bootstrap installs infra validation tools only, never the application
         mutable: change-with-constraints

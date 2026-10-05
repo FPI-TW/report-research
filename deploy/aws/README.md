@@ -56,7 +56,7 @@ EC2 instance role 可以讀取這一個 RDS managed master secret，因此具備
 
 Stack outputs 是資源 ID、endpoint 與 managed secret ARN 的權威來源；不要把 secret value 寫入文件或命令列。
 外部 DNS 由 Cloudflare 管理（本 AWS 帳號沒有 Route 53 hosted zone）；建立 A record 前必須確認完整網域名稱，
-並將目標設為 `Ec2ElasticIpAddress`。目前 EC2 SG 仍為零 ingress，因此 DNS 可解析不代表 HTTP/HTTPS 可連線。
+並將目標設為 `Ec2ElasticIpAddress`。2026-10-01 當時 EC2 SG 為零 ingress，因此 DNS 可解析不代表 HTTP/HTTPS 可連線。
 
 Cloudflare DNS 由帳號管理者手動設定，使用者指定來源為 `A research.tingfong.com -> 13.215.135.59`。
 2026-10-02 公開測試已確認此 hostname 使用 Cloudflare 代理（橘雲）；以下紀錄取代原本先使用
@@ -109,7 +109,8 @@ Cloudflare 到來源站的網路放行，再驗收代理流量。
 若直連路徑使用 Cloudflare Origin CA，灰雲直連會失去瀏覽器信任；見
 [Cloudflare Origin CA 的代理前提](https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/)。
 
-目前尚未完成網站部署驗收，後續必要流程如下（尚未執行）：
+以下是 2026-10-02 核對時尚未執行的部署待辦；入口已於後續選定 A record＋橘雲（見「對外入口決定」），
+應用與 AWS 即時狀態仍須以此次部署驗收為準：
 
 1. Cloudflare 控制台的來源記錄及 SSL/TLS 模式仍待核對；AWS 帳號、stack outputs、Elastic IP
    綁定、EC2／SSM 與安全群組的唯讀核對已完成。
@@ -135,7 +136,8 @@ Cloudflare 到來源站的網路放行，再驗收代理流量。
 
 ### Tunnel 與 A record 的差異
 
-目前對外入口尚未選定。A record 是 DNS 記錄類型，橘雲／灰雲是代理狀態，兩者不可混為一談：
+比較下列路徑時尚未選定入口；後續已選定 A record＋橘雲（見「對外入口決定」）。
+A record 是 DNS 記錄類型，橘雲／灰雲是代理狀態，兩者不可混為一談：
 目前的 A record 開啟橘雲，因此訪客仍先經過 Cloudflare，再由 Cloudflare 連到 EIP；
 Tunnel 的 hostname 則以代理 CNAME 指向 Tunnel，Cloudflare 透過 cloudflared 主動建立的連線到來源站。
 
@@ -191,7 +193,9 @@ EC2 上的 nginx（來源站 TLS）→ `127.0.0.1:8097`。
 預期變更為新增 `CloudflareOriginPrefixList`（Add）與修改 `Ec2SecurityGroup`（Modify、
 `Replacement=False`），外加 stack description 與 outputs。本範本也把 RDS 自動備份保留期從 1 天
 提高為 7 天；若現有 stack 仍為 1 天，應另有 `Database` Modify、`Replacement=False`，且唯一屬性
-變更是 `BackupRetentionPeriod`；若已是 7 天則無此項。出現其他項目就停止。最後在 Cloudflare 控制台
+變更是 `BackupRetentionPeriod`；若已是 7 天則無此項。修正 EC2 的設計註記也可能另有 `Ec2Instance`
+Modify，此項必須僅修改 Metadata、`Replacement=False`，不得修改 ImageId 或其他 Properties。
+出現其他項目就停止。最後在 Cloudflare 控制台
 確認 Full (strict) 與 Always Use HTTPS，從外部打 `https://research.tingfong.com/healthz` 驗收。
 
 ## 前置與唯讀檢查

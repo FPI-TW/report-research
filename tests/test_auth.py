@@ -1,16 +1,16 @@
 # tests/test_auth.py
 import ast
+import asyncio
 import os
 import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-# web.auth 匯入時即讀取共用帳密(fail-closed),故須在匯入前設好測試用值。
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
+# web.auth 匯入時即讀取 cookie 簽章金鑰，須在匯入前設好測試用值。
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
+from fake_accounts import FakeAccounts, install  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from web import (
@@ -19,24 +19,43 @@ from web import (
 )
 from web.server import app  # noqa: E402
 
+SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class TokenTests(unittest.TestCase):
     def test_valid_token_round_trips(self):
         now = 1_000_000
-        tok = auth.issue_token(now)
-        self.assertTrue(auth.verify_token(tok, now + 10))
+        tok = auth.issue_token(now, session_id=SID)
+        session = auth.parse_token(tok, now + 10)
+        self.assertIsNotNone(session)
+        self.assertEqual(session.session_id, SID)
 
     def test_expired_token_rejected(self):
         now = 1_000_000
-        tok = auth.issue_token(now)
+        tok = auth.issue_token(now, session_id=SID)
         self.assertFalse(auth.verify_token(tok, now + auth.SESSION_TTL + 1))
 
     def test_tampered_signature_rejected(self):
         now = 1_000_000
-        tok = auth.issue_token(now)
+        tok = auth.issue_token(now, session_id=SID)
         self.assertFalse(auth.verify_token(tok + "x", now + 10))
+
+    def test_swapped_session_id_rejected(self):
+        # 換掉 sid 就是冒用別人的 session：sid 在簽章訊息裡，簽章必然對不上
+        now = 1_000_000
+        tok = auth.issue_token(now, session_id=SID)
+        other = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+        self.assertFalse(auth.verify_token(tok.replace(SID, other), now + 10))
+
+    def test_non_canonical_session_id_rejected(self):
+        # 大寫、無連字號的 UUID 簽章自洽也不收：同一個 session 不該有多種字面表示
+        now = 1_000_000
+        for sid in (SID.upper(), SID.replace("-", ""), "not-a-uuid"):
+            body = f"{auth.TOKEN_VERSION}.{sid}.{now}.{now + 100}"
+            forged = f"{body}.{auth._sign(auth._token_message(sid, now, now + 100))}"
+            self.assertFalse(auth.verify_token(forged, now + 1), sid)
 
     def test_garbage_and_empty_token_rejected(self):
         self.assertFalse(auth.verify_token("not-a-token", 1_000_000))
@@ -49,10 +68,10 @@ class TokenTests(unittest.TestCase):
 
 
 class TokenRevocationTests(unittest.TestCase):
-    """token 格式 `<ver>.<iat>.<exp>.<sig>` 帶來的三種撤銷手段 + 絕對存活上限。
+    """token 格式 `<ver>.<sid>.<iat>.<exp>.<sig>` 的版本判定、全員登出開關與絕對存活上限。
 
-    在此之前:簽章訊息只有到期秒數,換密碼不會登出任何人、沒有任何撤銷開關,
-    而 middleware 每個請求都重簽 7 天 ⇒ 一個活躍中的 session 永遠不會過期。
+    逐一撤銷（登出、強制登出、停用、重設密碼）在 DB，見下方 AuthFlowTests 與
+    tests/test_admin_api.py；這裡只驗 cookie 本身。
     """
 
     def test_v1_token_rejected_and_logged(self):
@@ -64,56 +83,54 @@ class TokenRevocationTests(unittest.TestCase):
             self.assertFalse(auth.verify_token(v1, now))
         self.assertTrue(any("舊版" in line for line in cm.output), cm.output)
 
+    def test_v2_shared_account_token_rejected_and_logged(self):
+        # 共用帳密時代的 cookie:上線後全員重登一次,日誌要說得出為什麼
+        now = 1_000_000
+        body = f"2.{now}.{now + 100}"
+        v2 = f"{body}.{auth._sign(body)}"
+        with self.assertLogs("web.auth", level="INFO") as cm:
+            self.assertFalse(auth.verify_token(v2, now))
+        self.assertTrue(any("v2" in line for line in cm.output), cm.output)
+
     def test_unknown_version_rejected_and_logged(self):
         now = 1_000_000
         iat, exp = now, now + 100
-        body = f"3.{iat}.{exp}"
+        body = f"4.{SID}.{iat}.{exp}"
         forged = f"{body}.{auth._sign(body)}"  # 簽章自洽,但版本不是現行版
         with self.assertLogs("web.auth", level="INFO") as cm:
             self.assertFalse(auth.verify_token(forged, now))
-        self.assertTrue(any("version=3" in line for line in cm.output), cm.output)
-
-    def test_password_change_invalidates_existing_tokens(self):
-        now = 1_000_000
-        tok = auth.issue_token(now)
-        self.assertTrue(auth.verify_token(tok, now + 10))
-        orig = auth._PASSWORD_B
-        auth._PASSWORD_B = b"rotated-password"
-        try:
-            self.assertFalse(auth.verify_token(tok, now + 10))
-        finally:
-            auth._PASSWORD_B = orig
-        self.assertTrue(auth.verify_token(tok, now + 10), "還原密碼後原 token 應再度有效")
+        self.assertTrue(any("version=4" in line for line in cm.output), cm.output)
 
     def test_session_epoch_change_invalidates_everything(self):
         now = 1_000_000
-        tok = auth.issue_token(now)
+        tok = auth.issue_token(now, session_id=SID)
         orig = auth._SESSION_EPOCH
         auth._SESSION_EPOCH = "2026-07-30"
         try:
             self.assertFalse(auth.verify_token(tok, now + 10))
             # bump 之後新簽發的 token 仍正常運作(這是登出開關,不是壞掉開關)
-            self.assertTrue(auth.verify_token(auth.issue_token(now), now + 10))
+            self.assertTrue(auth.verify_token(auth.issue_token(now, session_id=SID), now + 10))
         finally:
             auth._SESSION_EPOCH = orig
 
-    def test_token_body_does_not_expose_credential_fingerprint(self):
-        # 指紋只進簽章訊息;cookie 外流不得附贈任何密碼衍生值
-        tok = auth.issue_token(1_000_000)
-        self.assertNotIn(auth._identity_fingerprint(), tok)
+    def test_token_body_carries_no_identity(self):
+        # cookie 只帶 session id;帳號、角色都在 DB,外流的 cookie 不附贈任何身分資訊
+        tok = auth.issue_token(1_000_000, session_id=SID)
+        self.assertNotIn("tester", tok)
+        self.assertNotIn("admin", tok)
 
     def test_absolute_cap_rejects_old_iat_even_with_future_exp(self):
         now = 2_000_000
         iat = now - auth.MAX_ABSOLUTE_TTL - 10
         exp = now + 3600  # 到期時間還很遠,只有 iat 過老
-        forged = f"{auth.TOKEN_VERSION}.{iat}.{exp}.{auth._sign(auth._token_message(iat, exp))}"
+        forged = f"{auth.TOKEN_VERSION}.{SID}.{iat}.{exp}.{auth._sign(auth._token_message(SID, iat, exp))}"
         self.assertFalse(auth.verify_token(forged, now))
 
     def test_daily_sliding_renewal_dies_at_absolute_cap(self):
         # 每天續期一次:第 29 天仍活著,第 30 天(＝MAX_ABSOLUTE_TTL)起一定死
         t0 = 3_000_000
         day = 24 * 3600
-        tok = auth.issue_token(t0)
+        tok = auth.issue_token(t0, session_id=SID)
         last_alive = None
         for d in range(1, 41):
             now = t0 + d * day
@@ -121,13 +138,13 @@ class TokenRevocationTests(unittest.TestCase):
             if session is None:
                 break
             last_alive = d
-            tok = auth.issue_token(now, issued_at=session.issued_at)
+            tok = auth.issue_token(now, session_id=session.session_id, issued_at=session.issued_at)
         self.assertEqual(last_alive, 29)
 
     def test_renewal_preserves_issued_at(self):
         now = 4_000_000
         iat = now - 3 * 24 * 3600
-        tok = auth.issue_token(now, issued_at=iat)
+        tok = auth.issue_token(now, session_id=SID, issued_at=iat)
         session = auth.parse_token(tok, now + 5)
         self.assertIsNotNone(session)
         self.assertEqual(session.issued_at, iat)
@@ -142,7 +159,7 @@ class TokenRevocationTests(unittest.TestCase):
             resp.cookies[name] = kw
 
         resp.set_cookie = _set_cookie
-        auth.set_session_cookie(resp, now, secure=False, issued_at=iat)
+        auth.set_session_cookie(resp, now, session_id=SID, secure=False, issued_at=iat)
         self.assertEqual(resp.cookies[auth.COOKIE_NAME]["max_age"], 600)
 
 
@@ -182,24 +199,6 @@ class ConstantTimeComparisonTests(unittest.TestCase):
 
     def test_edge_secret_compared_in_constant_time(self):
         self._assert_constant_time("_edge_secret_ok", {"presented", "_EDGE_SECRET"})
-
-
-class CredentialTests(unittest.TestCase):
-    def test_correct_credentials_accepted(self):
-        self.assertTrue(auth.check_credentials("tester", "testpass"))
-
-    def test_wrong_password_rejected(self):
-        self.assertFalse(auth.check_credentials("tester", "nope"))
-
-    def test_wrong_username_rejected(self):
-        self.assertFalse(auth.check_credentials("nobody", "testpass"))
-
-    def test_empty_credentials_rejected(self):
-        self.assertFalse(auth.check_credentials("", ""))
-
-    def test_non_ascii_credentials_rejected(self):
-        # 含中文/非 ASCII 的帳密不應崩潰,應回 False
-        self.assertFalse(auth.check_credentials("使用者", "密碼"))
 
 
 class RateLimitTests(unittest.TestCase):
@@ -443,7 +442,7 @@ class LoginAuditLogTests(unittest.TestCase):
         self.assertEqual(len(hits), 1, cm.output)
         # 失敗是異常事件 → WARNING，才能在 LOG_LEVEL=WARNING 的環境活下來
         self.assertEqual(hits[0].levelname, "WARNING")
-        self.assertIn("帳號相符=True", hits[0].getMessage())
+        self.assertIn("帳號存在=True", hits[0].getMessage())
         self._assert_no_secrets(cm.output)
 
     def test_failure_log_does_not_echo_submitted_username(self):
@@ -453,7 +452,7 @@ class LoginAuditLogTests(unittest.TestCase):
             client.post("/login", data={"username": self.BAD_PASSWORD, "password": "x"})
         self._assert_no_secrets(cm.output)
         hits = [rec for rec in cm.records if "登入失敗" in rec.getMessage()]
-        self.assertIn("帳號相符=False", hits[0].getMessage())
+        self.assertIn("帳號存在=False", hits[0].getMessage())
 
     def test_lockout_logged_at_warning(self):
         client = _client()
@@ -566,33 +565,158 @@ class EdgeProxyConfigTests(unittest.TestCase):
 
 
 class SlidingRenewalWiringTests(unittest.TestCase):
-    """middleware 續期時必須沿用原 iat，否則絕對存活上限每個請求都被重置。"""
+    """middleware 續期時必須沿用原 iat 與 session id，否則絕對存活上限每個請求都被重置。"""
 
     def test_middleware_renews_with_original_issued_at(self):
+        store = FakeAccounts()
+        uid = store.add_user("alice", "alice-password")
         now = int(time.time())
         iat = now - 3 * 24 * 3600
-        token = auth.issue_token(now, issued_at=iat)
         seen = {}
         orig = auth.set_session_cookie
 
-        def _spy(response, at, *, secure, issued_at=None):
+        def _spy(response, at, *, session_id, secure, issued_at=None):
             seen["issued_at"] = issued_at
-            return orig(response, at, secure=secure, issued_at=issued_at)
+            seen["session_id"] = session_id
+            return orig(response, at, session_id=session_id, secure=secure, issued_at=issued_at)
 
-        auth.set_session_cookie = _spy
-        try:
-            client = TestClient(
-                app,
-                cookies={auth.COOKIE_NAME: token},
-                follow_redirects=False,
-                base_url="http://127.0.0.1",
-            )
-            r = client.get("/")
-        finally:
-            auth.set_session_cookie = orig
+        with install(store):
+            sid = asyncio.run(store.create_session(uid, max_age_seconds=auth.MAX_ABSOLUTE_TTL))
+            token = auth.issue_token(now, session_id=sid, issued_at=iat)
+            auth.set_session_cookie = _spy
+            try:
+                client = TestClient(
+                    app,
+                    cookies={auth.COOKIE_NAME: token},
+                    follow_redirects=False,
+                    base_url="http://127.0.0.1",
+                )
+                r = client.get("/")
+            finally:
+                auth.set_session_cookie = orig
         self.assertEqual(r.status_code, 302)
         self.assertEqual(r.headers["location"], "/app/search")
         self.assertEqual(seen.get("issued_at"), iat)
+        self.assertEqual(seen.get("session_id"), sid)
+
+
+class IndividualAccountFlowTests(unittest.TestCase):
+    """個別帳號＋可撤銷 session：撤銷與停用都要在**下一個請求**就生效。"""
+
+    def setUp(self):
+        auth._FAILS.clear()
+        self.store = FakeAccounts()
+        self.alice = self.store.add_user("alice", "alice-password")
+        self.admin = self.store.add_user("root", "root-password", "admin")
+        self._ctx = install(self.store)
+        self._ctx.__enter__()
+
+    def tearDown(self):
+        self._ctx.__exit__(None, None, None)
+        auth._FAILS.clear()
+
+    def _login(self, username="alice", password="alice-password"):
+        client = _client()
+        r = client.post("/login", data={"username": username, "password": password})
+        self.assertEqual(r.status_code, 303, r.headers.get("location"))
+        self.assertIn(auth.COOKIE_NAME, r.cookies)
+        return client
+
+    def test_login_creates_one_db_session(self):
+        self._login()
+        live = [s for s in self.store.sessions.values() if s.user_id == self.alice and not s.revoked]
+        self.assertEqual(len(live), 1)
+
+    def test_username_is_case_insensitive(self):
+        self._login(username="ALICE")
+
+    def test_logout_revokes_session_server_side(self):
+        # 只清 cookie 不夠：事先複製走的 cookie 在登出後也必須失效
+        client = self._login()
+        stolen = client.cookies.get(auth.COOKIE_NAME)
+        client.post("/logout")
+        thief = TestClient(app, cookies={auth.COOKIE_NAME: stolen}, follow_redirects=False,
+                           base_url="http://127.0.0.1")
+        self.assertEqual(thief.get("/api/stats").status_code, 401)
+
+    def test_disabled_account_loses_access_on_next_request(self):
+        client = self._login()
+        self.assertEqual(client.get("/api/me").status_code, 200)
+        self.store.users[self.alice].enabled = False  # 不經過撤銷 session，只改帳號狀態
+        r = client.get("/api/me")
+        self.assertEqual(r.status_code, 401)
+        # 簽章仍有效但 DB 不認的 cookie 會被順手清掉
+        self.assertIn(auth.COOKIE_NAME, r.headers.get("set-cookie", ""))
+
+    def test_revoked_session_redirects_pages_to_login(self):
+        client = self._login()
+        for s in self.store.sessions.values():
+            s.revoked = True
+        r = client.get("/")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.headers["location"], "/login")
+
+    def test_login_page_does_not_loop_on_revoked_cookie(self):
+        # 簽章有效但已撤銷的 cookie：登入頁若只看簽章就導回首頁，middleware 又導回登入頁
+        client = self._login()
+        for s in self.store.sessions.values():
+            s.revoked = True
+        r = client.get("/login")
+        self.assertEqual(r.status_code, 200)
+
+    def test_disabled_account_with_right_password_gets_disabled_error(self):
+        self.store.users[self.alice].enabled = False
+        r = _client().post("/login", data={"username": "alice", "password": "alice-password"})
+        self.assertIn("error=disabled", r.headers["location"])
+        self.assertNotIn(auth.COOKIE_NAME, r.cookies)
+
+    def test_disabled_account_with_wrong_password_looks_like_wrong_password(self):
+        # 不知道密碼的人看不出帳號是不是被停用了
+        self.store.users[self.alice].enabled = False
+        r = _client().post("/login", data={"username": "alice", "password": "nope"})
+        self.assertIn("error=1", r.headers["location"])
+
+    def test_unknown_user_and_wrong_password_look_identical(self):
+        a = _client().post("/login", data={"username": "nobody", "password": "x"})
+        b = _client().post("/login", data={"username": "alice", "password": "x"})
+        self.assertEqual(a.headers["location"], b.headers["location"])
+
+    def test_account_service_down_returns_503_not_login_redirect(self):
+        client = self._login()
+        self.store.fail_with = RuntimeError("db down")
+        with self.assertLogs("web.server", level="ERROR"):
+            api = client.get("/api/me")
+            page = client.get("/")
+        self.assertEqual(api.status_code, 503)
+        self.assertEqual(page.status_code, 503)
+
+    def test_account_service_down_at_login_is_not_counted_as_failure(self):
+        self.store.fail_with = RuntimeError("db down")
+        with self.assertLogs("web.routers.auth_pages", level="ERROR"):
+            r = _client().post("/login", data={"username": "alice", "password": "alice-password"})
+        self.assertIn("error=unavailable", r.headers["location"])
+        self.assertEqual(auth.failure_count("127.0.0.1", int(time.time())), 0)
+
+    def test_me_reports_role(self):
+        self.assertEqual(self._login().get("/api/me").json()["role"], "user")
+        body = self._login("root", "root-password").get("/api/me").json()
+        self.assertEqual((body["username"], body["role"]), ("root", "admin"))
+        self.assertEqual(body["id"], self.admin)
+
+    def test_stats_reports_current_username(self):
+        from web.routers import monitor
+
+        async def fake_snapshot():
+            return {"total_reports": 0, "total_chunks": 0, "markets": [], "instrument_types": [],
+                    "report_types": []}
+
+        orig = monitor._db_stats_snapshot
+        monitor._db_stats_snapshot = fake_snapshot
+        try:
+            body = self._login().get("/api/stats").json()
+        finally:
+            monitor._db_stats_snapshot = orig
+        self.assertEqual(body["username"], "alice")
 
 
 class HistoryDeleteApiTests(unittest.TestCase):

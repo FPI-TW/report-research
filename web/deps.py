@@ -18,18 +18,18 @@ patch 會**安靜落空**（不是報錯，是測試照樣綠但根本沒 patch 
 
 ## 為什麼這裡自己載 .env
 
-web/auth.py 在 import 時就 fail-closed 檢查 REPORT_MARK_ACCESS_USERNAME/_PASSWORD
-（見 web/auth.py 開頭），所以 .env 必須早於它被載入。原本這個順序只由
-web/server.py 開頭的 load_env_file 保證；一旦路由模組可以被獨立 import（拆分後
-必然如此），先碰到 auth 的那條路徑就會在 import 期 RuntimeError。
+web/auth.py 與 app.services.db 在 import 時就讀環境變數（session 簽章金鑰、DB
+連線字串），所以 .env 必須早於它們被載入。原本這個順序只由 web/server.py 開頭的
+load_env_file 保證；一旦路由模組可以被獨立 import（拆分後必然如此），先碰到它們的
+那條路徑就會拿到預設值——簽章金鑰變成隨機值、DB 連到預設庫，而且沒有任何錯誤。
 
 load_env_file 預設 override=False（只填未存在的鍵），重複呼叫無副作用，故這裡
 直接自備一份，讓任何 import 順序都安全，而不是依賴呼叫端的紀律。
 
 驗證這件事時注意：**git worktree 內沒有 .env**（它被 gitignore，不隨 worktree
 複製），load_env_file 遇不到檔案會直接 return，於是「先 import deps」與「不 import
-deps」都會 fail-closed 失敗——看起來像機制無效，其實只是沒檔案可載。要在 worktree
-裡驗，得先把 .env 複製進來。
+deps」的結果一樣——看起來像機制無效，其實只是沒檔案可載。要在 worktree 裡驗，得先
+把 .env 複製進來。
 """
 from __future__ import annotations
 
@@ -122,6 +122,9 @@ def _valid_uuid(s) -> bool:
 #
 # 只放「測試會 mock 的服務函式」；純資料轉換（source_display / clean_text /
 # MARKETS 等，測試不 mock）仍由各處直接 import，不進這裡。
+# 帳號服務以「模組物件」整個放進依賴面：middleware、登入頁與管理端點都呼叫
+# deps.accounts.X，測試只要換掉這一個名字（tests/fake_accounts.py）就整組接管。
+from app.services import accounts  # noqa: E402
 from app.services.answer import (  # noqa: E402
     answer_question,
     delete_qa,
@@ -180,6 +183,7 @@ __all__ = [
     "_sse",
     "_valid_uuid",
     "_with_heartbeat",
+    "accounts",
     "answer_question",
     "delete_qa",
     "embed_query_cached",

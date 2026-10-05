@@ -13,8 +13,8 @@
 三條品質迴路的共同缺口是「偵測到了但沒有人看得到個體」，所以收進同一支端點、同一種分頁
 形狀（與雷達目錄一致：`total／limit／offset／has_more／next_offset／items`）。
 
-處理狀態寫入獨立的 `review_state`，原始品質訊號保持不變。共用帳號無法辨識個人，
-所以只記狀態、註記、人工驗證結果與更新時間，不記虛構的 reviewer。
+處理狀態寫入獨立的 `review_state`，原始品質訊號保持不變。整組端點限管理員
+（`authz.require_admin`）：佇列會列出所有使用者的提問原文。
 
 刻意的範圍：
 
@@ -34,7 +34,7 @@ import time
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -42,11 +42,12 @@ from app.config import get_settings
 from app.services.filename import source_display
 from app.services.judge_schema import CURRENT_JUDGE_SQL, JUDGE_MODEL_SQL
 from app.services.store import review_reasons
-from web import deps
+from web import authz, deps
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# 整組限管理員：待複核佇列會列出所有人的提問原文，一般使用者不該看得到別人問了什麼。
+router = APIRouter(dependencies=[Depends(authz.require_admin)])
 
 ReviewKind = Literal["faithfulness", "feedback", "extraction"]
 ReviewStatus = Literal["open", "resolved", "dismissed"]

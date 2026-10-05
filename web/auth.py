@@ -1,11 +1,17 @@
 # web/auth.py
-"""App 層登入認證:共用帳密驗證、hmac 簽章 session cookie、每 IP 失敗限流。
+"""App 層登入認證的原語：session cookie 的簽章與驗證、每 IP 失敗限流、可信代理判定。
+
+帳號與 session 的**狀態**在 DB（`app/services/accounts.py`：`research.app_user`／
+`user_session`），這裡只負責 cookie 本身。cookie 帶的是 session id，不是身分：
+撤銷、停用、改角色都在 DB 生效，middleware 每個請求都會去查（`web/server.py`）。
 
 設定來自環境變數(沿用本專案 os.environ 慣例):
-  REPORT_MARK_ACCESS_USERNAME / REPORT_MARK_ACCESS_PASSWORD  共用帳密(未設則 fail-closed 報錯)
-  REPORT_MARK_SESSION_SECRET                                  cookie 簽章金鑰(未設則隨機,重啟登出所有人)
-  REPORT_MARK_SESSION_EPOCH                                   全員登出開關:改成任何新值即讓所有既發 token 失效
-  REPORT_MARK_EDGE_SECRET                                     邊緣 nginx 注入的共享祕密,與 CIDR 並存判定可信代理
+  REPORT_MARK_SESSION_SECRET  cookie 簽章金鑰(未設則隨機,重啟登出所有人)
+  REPORT_MARK_SESSION_EPOCH   全員登出開關:改成任何新值即讓所有既發 token 失效
+  REPORT_MARK_EDGE_SECRET     邊緣 nginx 注入的共享祕密,與 CIDR 並存判定可信代理
+
+舊的共用帳密（REPORT_MARK_ACCESS_USERNAME／_PASSWORD）已不再讀取；帳號改由
+`scripts/create_admin.py` 建立（`--from-env` 可把舊共用帳密轉成第一個管理員）。
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ import ipaddress
 import logging
 import os
 import secrets
+import uuid
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -25,27 +32,13 @@ COOKIE_NAME = "tf_session"
 SESSION_TTL = 7 * 24 * 3600  # 7 天;滑動到期由 middleware 每次回應刷新
 # 絕對存活上限:滑動續期若沒有天花板,一個從未過期的 cookie 等於永久憑證——只要
 # 使用者天天開站,7 天的 exp 每次請求都被推遠,竊得的 cookie 也一樣被推遠。
-# 取 30 天的理由:本站是少數同事在用的研究工具,「每月重登一次」是可接受的摩擦,
-# 而它剛好對齊「定期更換密碼」的節奏(換密碼已能即時撤銷,見 _identity_fingerprint);
-# 這條上限是「密碼與金鑰都沒換、但 cookie 外流」情境下的最後止血點。
+# 取 30 天的理由:本站是少數同事在用的研究工具,「每月重登一次」是可接受的摩擦。
+# 個別帳號上線後已有逐一撤銷的手段（管理頁的強制登出、重設密碼、停用），這條上限是
+# 「沒有人發現 cookie 外流」情境下的最後止血點。DB 端的 user_session.expires_at 用同一個值。
 MAX_ABSOLUTE_TTL = 30 * 24 * 3600
 MAX_FAILS = 5                # 視窗內允許的最大登入失敗次數
 FAIL_WINDOW = 300            # 失敗計數視窗(秒)
 MAX_TRACKED_IPS = max(1, int(os.environ.get("REPORT_MARK_MAX_TRACKED_FAIL_IPS", "4096")))
-
-_USERNAME = os.environ.get("REPORT_MARK_ACCESS_USERNAME", "")
-_PASSWORD = os.environ.get("REPORT_MARK_ACCESS_PASSWORD", "")
-if not _USERNAME or not _PASSWORD:
-    raise RuntimeError(
-        "REPORT_MARK_ACCESS_USERNAME 與 REPORT_MARK_ACCESS_PASSWORD 必須設定(fail-closed)"
-    )
-
-_USERNAME_B = _USERNAME.encode()
-_PASSWORD_B = _PASSWORD.encode()
-
-# 共用帳號名稱（公開常數）：供前端在側欄底部顯示「目前登入帳號」。
-# 本專案為單一共用帳號，session cookie 不帶個別身分，故此值對所有人相同。
-ACCESS_USERNAME = _USERNAME
 
 _SECRET = os.environ.get("REPORT_MARK_SESSION_SECRET", "")
 if not _SECRET:
@@ -53,8 +46,8 @@ if not _SECRET:
     logger.warning("REPORT_MARK_SESSION_SECRET 未設定,已隨機產生(重啟將登出所有人)")
 
 # 全員登出開關:值進入簽章訊息,所以改成任何新字串都會讓既發 token 一次失效。
-# 存在的理由是「不想換密碼、也不想換簽章金鑰,但要把所有 session 踢掉」——
-# 換金鑰同樣有效,但金鑰是機密、輪替流程比較重;這個旋鈕可以隨手 bump。
+# 存在的理由是「不想換簽章金鑰,但要把所有 session 踢掉」——換金鑰同樣有效,但金鑰是
+# 機密、輪替流程比較重;這個旋鈕可以隨手 bump。踢單一帳號用管理頁的「強制登出」。
 _SESSION_EPOCH = os.environ.get("REPORT_MARK_SESSION_EPOCH", "")
 
 _TRUSTED_PROXY_CIDRS = os.environ.get(
@@ -92,46 +85,44 @@ def _sign(msg: str) -> str:
     return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
-def _identity_fingerprint() -> str:
-    """目前帳密的指紋(sha256 前 16 hex),用來讓「換密碼」等同「全員登出」。
+# token 版本。格式為 `<ver>.<sid>.<iat>.<exp>.<sig>`;v2 是共用帳密時代的
+# `<ver>.<iat>.<exp>.<sig>`、v1 是更早的 `<exp>.<sig>`。版本欄位讓格式變更時能對舊格式
+# **明確**拒絕(並記一筆),而不是靠簽章比對碰巧失敗。
+TOKEN_VERSION = 3
 
-    為什麼要有:帳密與簽章金鑰原本互相獨立,換掉密碼對既發 token 一點影響都沒有——
-    也就是「懷疑密碼外流」時除了換金鑰之外沒有任何撤銷手段。把指紋放進**簽章訊息**
-    (不是 token 本體)後,舊 token 的簽章對不上新的訊息,自然全部失效。
 
-    刻意每次呼叫重算而非啟動時算一次:成本是一次短字串 sha256(微秒級),換來的是
-    「憑證是唯一真相來源」——測試可以直接替換 _PASSWORD_B 驗證輪替行為,不會有
-    一份啟動時複製的快取在旁邊說謊。
+def _token_message(session_id: str, iat: int, exp: int) -> str:
+    """簽章訊息:版本、session id、簽發時刻、到期時刻、登出 epoch。
+
+    epoch 刻意**不放進 token 本體**——它是伺服器端狀態,只要參與簽章就足以讓「bump
+    epoch」成為全員登出的手段。分隔符用 `.` 不會有歧義:session id 是 UUID(只有 hex 與
+    `-`),只有最後一欄(epoch)是自由字串。
     """
-    return hashlib.sha256(_USERNAME_B + b"\x00" + _PASSWORD_B).hexdigest()[:16]
-
-
-# token 版本。格式為 `<ver>.<iat>.<exp>.<sig>`;v1 是舊的 `<exp>.<sig>`。
-# 版本欄位的用途是**讓下一次格式變更不必再全員登出一次**:verify 認得版本就能
-# 對舊格式明確拒絕(而不是靠簽章比對碰巧失敗),也能在需要時同時接受新舊兩版。
-TOKEN_VERSION = 2
-
-
-def _token_message(iat: int, exp: int) -> str:
-    """簽章訊息:版本、簽發時刻、到期時刻、帳密指紋、登出 epoch。
-
-    後兩項刻意**不放進 token 本體**——它們是伺服器端狀態,只要參與簽章就足以讓
-    「換帳密」與「bump epoch」成為撤銷手段,同時 cookie 不會外洩任何密碼衍生值。
-    分隔符用 `.` 不會有歧義:只有最後一欄(epoch)是自由字串,前面全是數字與 hex。
-    """
-    return f"{TOKEN_VERSION}.{iat}.{exp}.{_identity_fingerprint()}.{_SESSION_EPOCH}"
+    return f"{TOKEN_VERSION}.{session_id}.{iat}.{exp}.{_SESSION_EPOCH}"
 
 
 @dataclass(frozen=True)
 class Session:
-    """一個已驗章、未過期的 session。issued_at 是滑動續期必須沿用的原始簽發時刻。"""
+    """一個已驗章、未過期的 cookie。帳號與撤銷狀態還要由 DB 判(accounts.resolve_session)。
 
+    issued_at 是滑動續期必須沿用的原始簽發時刻。
+    """
+
+    session_id: str
     issued_at: int
     expires_at: int
 
 
-def issue_token(now: int, *, issued_at: int | None = None) -> str:
-    """簽發 `<ver>.<iat>.<exp>.<sig>`。
+def _canonical_uuid(value: str) -> bool:
+    """只收 `str(uuid.UUID(...))` 的正規寫法:同一個 session 不該有多種字面表示。"""
+    try:
+        return str(uuid.UUID(value)) == value
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def issue_token(now: int, *, session_id: str, issued_at: int | None = None) -> str:
+    """簽發 `<ver>.<sid>.<iat>.<exp>.<sig>`。
 
     issued_at 用於滑動續期:續期只推遲 exp,**iat 必須沿用原值**,否則絕對存活
     上限會被每次續期重置,等於沒有上限。
@@ -140,7 +131,7 @@ def issue_token(now: int, *, issued_at: int | None = None) -> str:
     # exp 同時受滑動視窗與絕對上限夾擊,取小者;絕對上限另有 parse_token 再驗一次
     # (縱深防禦:即使日後有人繞過這裡直接組 token,驗證端仍會擋)。
     exp = min(now + SESSION_TTL, iat + MAX_ABSOLUTE_TTL)
-    return f"{TOKEN_VERSION}.{iat}.{exp}.{_sign(_token_message(iat, exp))}"
+    return f"{TOKEN_VERSION}.{session_id}.{iat}.{exp}.{_sign(_token_message(session_id, iat, exp))}"
 
 
 def parse_token(token: str | None, now: int) -> Session | None:
@@ -148,10 +139,10 @@ def parse_token(token: str | None, now: int) -> Session | None:
     if not token:
         return None
     parts = token.split(".")
-    if len(parts) != 4:
+    if len(parts) != 5:
         _log_legacy_token(parts)
         return None
-    ver_s, iat_s, exp_s, sig = parts
+    ver_s, sid, iat_s, exp_s, sig = parts
     # 只收正規十進位表示:int() 會接受 "1_0"、" 10"、"+10" 等變體,雖然簽章仍對得上
     # (訊息以解析後的整數重組),但讓同一個 session 有多種字面表示沒有好處。
     if not (ver_s.isdigit() and iat_s.isdigit() and exp_s.isdigit()):
@@ -160,19 +151,23 @@ def parse_token(token: str | None, now: int) -> Session | None:
     if ver != TOKEN_VERSION:
         logger.info("拒絕非現行版本的 session token(version=%s,現行=%s)", ver, TOKEN_VERSION)
         return None
-    if not hmac.compare_digest(sig.encode(), _sign(_token_message(iat, exp)).encode()):
+    if not _canonical_uuid(sid):
+        return None
+    if not hmac.compare_digest(sig.encode(), _sign(_token_message(sid, iat, exp)).encode()):
         return None
     if exp <= now:
         return None
     if iat + MAX_ABSOLUTE_TTL <= now:
         return None
-    return Session(issued_at=iat, expires_at=exp)
+    return Session(session_id=sid, issued_at=iat, expires_at=exp)
 
 
 def _log_legacy_token(parts: list[str]) -> None:
     """認得出來的舊格式明確記一筆;認不出來的雜訊靜默丟棄(避免被灌日誌)。"""
     if len(parts) == 2 and parts[0].isdigit():
-        logger.info("拒絕舊版(v1)session token——格式已改為 <ver>.<iat>.<exp>.<sig>")
+        logger.info("拒絕舊版(v1)session token——格式已改為 <ver>.<sid>.<iat>.<exp>.<sig>")
+    elif len(parts) == 4 and parts[0] == "2":
+        logger.info("拒絕共用帳密時代(v2)的 session token——個別帳號上線後需重新登入")
 
 
 def verify_token(token: str | None, now: int) -> bool:
@@ -180,22 +175,8 @@ def verify_token(token: str | None, now: int) -> bool:
     return parse_token(token, now) is not None
 
 
-def check_credentials(username: str, password: str) -> bool:
-    """常數時間比對帳號與密碼(先各算再 AND,不短路,避免時序側信道)。
-    以 bytes 比對:compare_digest 對含非 ASCII 的 str 會丟 TypeError,
-    統一編碼成 bytes,讓中文/任意字元帳密一律安全比對而非崩潰。"""
-    u_ok = hmac.compare_digest((username or "").encode(), _USERNAME_B)
-    p_ok = hmac.compare_digest((password or "").encode(), _PASSWORD_B)
-    return u_ok and p_ok
-
-
-def username_matches(username: str) -> bool:
-    """只比帳號(常數時間)。供稽核日誌區分「打錯密碼」與「亂猜帳號的掃描流量」,
-    不必把使用者送來的字串原樣寫進日誌——那個欄位很常被誤填成密碼。"""
-    return hmac.compare_digest((username or "").encode(), _USERNAME_B)
-
-
-def set_session_cookie(response, now: int, *, secure: bool, issued_at: int | None = None) -> None:
+def set_session_cookie(response, now: int, *, session_id: str, secure: bool,
+                       issued_at: int | None = None) -> None:
     """設定 session cookie。issued_at 由滑動續期端帶入原始簽發時刻(見 issue_token)。"""
     iat = now if issued_at is None else issued_at
     # cookie 的 max_age 也要吃絕對上限,否則瀏覽器會抱著一個伺服器早就拒收的
@@ -203,7 +184,7 @@ def set_session_cookie(response, now: int, *, secure: bool, issued_at: int | Non
     max_age = max(0, min(SESSION_TTL, iat + MAX_ABSOLUTE_TTL - now))
     response.set_cookie(
         COOKIE_NAME,
-        issue_token(now, issued_at=iat),
+        issue_token(now, session_id=session_id, issued_at=iat),
         max_age=max_age,
         httponly=True,
         samesite="lax",

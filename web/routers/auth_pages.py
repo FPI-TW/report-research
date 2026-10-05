@@ -1,5 +1,5 @@
 # web/routers/auth_pages.py
-"""登入流程頁面路由：GET/POST /login、POST /logout。
+"""登入流程頁面路由：GET/POST /login、POST /logout，以及目前登入身分 GET /api/me。
 
 從 web/server.py 拆出（收尾）。認證的 deny-by-default middleware（require_login）
 與其 _auth_allowed 白名單仍在 server.py——middleware 必須註冊在 app 上、且要包住
@@ -18,17 +18,23 @@ INFO**。失敗／鎖定／遭拒是異常，值得在把 `LOG_LEVEL` 調成 WAR
 **代價寫在這裡**：`LOG_LEVEL=WARNING` 會失去「誰在何時登入」的那一半稽核，只剩
 攻擊面那一半（`.env.example` 的 LOG_LEVEL 註解同步寫了這條）。
 
-**絕對不記密碼，連長度都不記**：長度會把暴力破解的搜尋空間直接縮小。帳號也不記
-原樣字串——那個欄位很常被誤填成密碼——只記 `auth.username_matches()` 的布林結果。
+**絕對不記密碼，連長度都不記**：長度會把暴力破解的搜尋空間直接縮小。失敗時帳號也
+不記原樣字串——那個欄位很常被誤填成密碼——只記「帳號是否存在」的布林結果；成功時
+帳號已證實是帳號，才記名稱。
+
+帳號與 session 都在 DB（`deps.accounts`）：登入成功＝開一個 `user_session`，登出＝
+撤銷那一個 session（其他裝置不受影響）。帳號服務掛掉時導向 `?error=unavailable`，
+不記成登入失敗、也不計入限流——那不是使用者打錯。
 """
 import logging
 import time
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
-from web import auth, deps
+from app.services.accounts import User
+from web import auth, authz, deps
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +65,26 @@ def _static_page(name: str) -> FileResponse:
     return FileResponse(deps.STATIC_DIR / name, headers={"Cache-Control": "no-cache"})
 
 
+async def _cookie_user(request: Request) -> User | None:
+    """cookie 對應的使用者（簽章有效且 DB 仍認可）；任何失敗都當作沒登入。
+
+    只看簽章不夠：已撤銷的 cookie 簽章照樣有效，登入頁若據此導向首頁，middleware 又會
+    把它導回登入頁——無限迴圈。
+    """
+    session = auth.parse_token(request.cookies.get(auth.COOKIE_NAME), int(time.time()))
+    if session is None:
+        return None
+    try:
+        return await deps.accounts.resolve_session(session.session_id)
+    except Exception:
+        logger.warning("登入頁 session 查驗失敗（視為未登入）", exc_info=True)
+        return None
+
+
 @router.get("/login")
 async def login_page(request: Request):
     nxt = _safe_next(request.query_params.get("next"))
-    if auth.verify_token(request.cookies.get(auth.COOKIE_NAME), int(time.time())):
+    if await _cookie_user(request) is not None:
         return RedirectResponse(nxt, status_code=302)
     return _static_page("login.html")
 
@@ -92,24 +114,60 @@ async def login_submit(
     if auth.is_locked(ip, now):
         logger.warning("登入遭限流鎖定 ip=%s 視窗內失敗次數=%s", ip, auth.failure_count(ip, now))
         return RedirectResponse(f"/login?error=locked{err_q}", status_code=303)
-    if auth.check_credentials(username, password):
+    try:
+        result = await deps.accounts.authenticate(username, password)
+        session_id = None
+        if result.user is not None and result.user.id is not None:
+            session_id = await deps.accounts.create_session(
+                result.user.id,
+                max_age_seconds=auth.MAX_ABSOLUTE_TTL,
+                ip=ip,
+                user_agent=request.headers.get("user-agent"),
+            )
+    except Exception:
+        logger.exception("登入失敗：帳號服務無法使用 ip=%s", ip)
+        return RedirectResponse(f"/login?error=unavailable{err_q}", status_code=303)
+    if result.user is not None and session_id is not None:
         auth.reset(ip)
-        logger.info("登入成功 ip=%s peer=%s", ip, auth.peer_ip(request))
+        logger.info(
+            "登入成功 ip=%s peer=%s user=%s role=%s",
+            ip, auth.peer_ip(request), result.user.username, result.user.role,
+        )
         resp = RedirectResponse(nxt, status_code=303)
-        auth.set_session_cookie(resp, now, secure=auth.request_is_secure(request))
+        auth.set_session_cookie(
+            resp, now, session_id=session_id, secure=auth.request_is_secure(request),
+        )
         return resp
     auth.record_failure(ip, now)
+    if result.reason == "disabled":
+        # 只有密碼正確才會走到這裡，所以告訴對方「已停用」不會洩漏給亂猜的人。
+        logger.warning("登入遭拒：帳號已停用 ip=%s 視窗內失敗次數=%s", ip, auth.failure_count(ip, now))
+        return RedirectResponse(f"/login?error=disabled{err_q}", status_code=303)
     logger.warning(
-        "登入失敗 ip=%s 帳號相符=%s 視窗內失敗次數=%s",
+        "登入失敗 ip=%s 帳號存在=%s 視窗內失敗次數=%s",
         ip,
-        auth.username_matches(username),
+        result.reason == "bad_password",
         auth.failure_count(ip, now),
     )
     return RedirectResponse(f"/login?error=1{err_q}", status_code=303)
 
 
 @router.post("/logout")
-async def logout():
+async def logout(request: Request):
+    session = auth.parse_token(request.cookies.get(auth.COOKIE_NAME), int(time.time()))
+    if session is not None:
+        try:
+            await deps.accounts.revoke_session(session.session_id)
+        except Exception:
+            # cookie 照樣清掉；DB 那一列會在絕對存活上限到期後失效。
+            logger.warning("登出時撤銷 session 失敗", exc_info=True)
     resp = RedirectResponse("/login", status_code=303)
     auth.clear_session_cookie(resp)
     return resp
+
+
+@router.get("/api/me")
+async def me(user: User = Depends(authz.current_user)):
+    """目前登入的身分。前端據此顯示帳號名稱與決定要不要露出管理頁入口——
+    那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。"""
+    return {"id": user.id, "username": user.username, "role": user.role}

@@ -2,7 +2,7 @@
 pytest 測試環境初始化。
 
 1. 將 repo root 加入 sys.path（pytest 預設不加），讓 `web`、`app` 等頂層套件可被匯入。
-2. 為 web.auth fail-closed env var 設定測試預設值（individual 測試可在匯入前覆蓋）。
+2. 固定 cookie 簽章金鑰，並把帳號服務換成記憶體假物件（見 _fake_accounts）。
 """
 
 from __future__ import annotations
@@ -18,11 +18,8 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-# web.auth is fail-closed: raise RuntimeError if these are unset at import time.
-# These defaults are applied before any test module is imported, so per-module
-# setdefault() calls (e.g. in test_auth.py) intentionally defer to these values.
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
+# cookie 簽章金鑰：固定值讓 token 測試可重現（未設時 web.auth 會隨機產生並記 warning）。
+# 帳號不再來自環境變數：見下方 _fake_accounts（tester／testpass 管理員）。
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 # LLM 付費 API：**刻意用賦值，不用上面那種 setdefault**。
@@ -105,6 +102,33 @@ def _protect_repo_dotenv():
         f"有測試改動了 repo 根的 {env_path.name}（已自動還原）。"
         "測試不得改動真實部署檔——見 tests/test_env_loading.py 的模組 docstring。"
     )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _fake_accounts():
+    """整個 session 把 `web.deps.accounts` 換成記憶體假帳號庫（`tests/fake_accounts.py`）。
+
+    個別帳號上線後登入要查 DB；測試不連 DB，而既有約三十支測試以 tester／testpass 走
+    `/login`。預設這份放一個同名的**管理員**（待複核等管理端點的測試也照樣能打）。
+    要驗一般使用者、停用、跨使用者隔離的測試用 `fake_accounts.install()` 換上自己的一份。
+
+    session 範圍而非每題：有些測試在 setUpClass 就登入，每題換一份會讓那個 session 失效。
+    **刻意不主動 import** `web.deps`（理由同下方的監控快取）；測試模組在收集階段就 import
+    了 web.server，所以這裡跑的時候它已經在 sys.modules 裡。真的帳號 SQL 由
+    `tests/test_accounts_db.py` 對 PostgreSQL 驗。
+    """
+    mod = sys.modules.get("web.deps")
+    if mod is None:
+        yield None
+        return
+    from fake_accounts import default_accounts
+
+    orig = mod.accounts
+    mod.accounts = default_accounts()
+    try:
+        yield mod.accounts
+    finally:
+        mod.accounts = orig
 
 
 @pytest.fixture(autouse=True)

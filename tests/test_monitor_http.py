@@ -17,8 +17,6 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +24,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from web import auth, deps  # noqa: E402
+from web import deps  # noqa: E402
 from web.routers import monitor  # noqa: E402
 from web.server import app  # noqa: E402
 
@@ -248,7 +246,8 @@ class StatsHttpTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text[:300])
         body = r.json()
         self.assertEqual(body["total_reports"], 6)
-        self.assertEqual(body["username"], auth.ACCESS_USERNAME)
+        # 目前登入者（conftest 的假帳號庫：tester），不再是全站共用的一個名字
+        self.assertEqual(body["username"], "tester")
 
 
 if __name__ == "__main__":

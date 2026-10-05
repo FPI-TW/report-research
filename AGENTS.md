@@ -152,7 +152,7 @@ uv run python scripts/ingest_all.py
 - **網搜暫停中**：生產 `ASK_ENABLE_WEB=0`，前端 `WEB_SEARCH_PAUSED` 隱藏開關、請求一律送 `web=false`；DeepSeek 版網搜完成後兩處一起恢復。
 - **夜間回填** `report-mark-backfill.timer`（E1d）仍 enabled，跑完（journal 的「估計尚餘」歸零）後由人手動 disable。
 - **深度研報已移除**（2026-09）：既有庫要手動跑 `db/drop_deep_report_tables.sql`。
-- **個別帳號取代共用帳密（2026-10 開發中，尚未部署）**：部署順序 `make schema` → `scripts/create_admin.py --from-env`（或 `--username`）→ `make build-web` → 重啟 web → 在管理頁為每位同事與 LINE bot 等外部程式建帳號 → 刪掉環境檔的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（還在時啟動記 warning）。生產庫套 schema 前，本機 `tests/test_schema_constraints.py` 對生產庫對帳會紅（多了 `app_user` 的 CHECK）。部署完成後改寫這一條。
+- **個別帳號取代共用帳密（2026-10 開發中，尚未部署）**：部署順序 `make schema` → `scripts/create_admin.py --from-env`（或 `--username`）→ `make build-web` → 重啟 web → 在管理頁為每位同事建帳號（LINE bot 只從 LINE 群組下載研報到 NAS、不呼叫平台 API，不需要帳號） → 刪掉環境檔的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（還在時啟動記 warning）。生產庫套 schema 前，本機 `tests/test_schema_constraints.py` 對生產庫對帳會紅（多了 `app_user` 的 CHECK）。部署完成後改寫這一條。
 
 ## 慣例
 

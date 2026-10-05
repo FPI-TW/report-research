@@ -234,7 +234,7 @@ Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪�
 
 本次問答與待複核整合上線時，先確認最近的 NAS 備份能由 `pg_restore -l` 讀取；更新部署 checkout 後依序跑 `make schema`、`make build-web`，再重啟 `report-mark-web.service`。驗收 `/healthz`、帶登入的 `/api/review/queue?kind=extraction` 與一筆 `/api/ask` 串流後，執行 `make db-backup`，確認新備份清單含 `review_state` 等表。Schema 是新增表，若需回退應回退程式版本並保留表與人工複核資料；不要用 DROP 當回退步驟。
 
-**個別帳號上線（取代共用帳密）**的順序不可對調，否則沒有人登得進去：(1) `make schema`（建 `app_user`、`user_session`、`admin_audit_log`，`qa_log` 加 `user_id`、`review_state` 加 `reviewer_user_id`）；(2) 建第一位管理員——`uv run python scripts/create_admin.py --from-env`（把 `.env` 裡的舊共用帳密轉成管理員；舊密碼不足 10 字元時改用 `--username <名稱>` 互動設定）；(3) `make build-web` 後重啟 web；(4) 登入後在「管理 → 帳號」為每位同事建帳號，LINE bot 等以帳密登入的外部程式改用各自的一般帳號；(5) 刪掉環境檔裡的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`。上線當下所有人會被登出一次（舊 cookie 是 v2 格式，明確拒收）。既有問答歷史的擁有者是 NULL（無從判斷是誰問的），一般介面看不到；管理員仍可經待複核佇列看到其中的低分與倒讚。忘記密碼或管理員全被停用時的救援：`scripts/create_admin.py --username <名稱> --reset-password`。`app_user` 進了備份（含 Argon2id 雜湊），NAS 上的備份檔要當機密看待。
+**個別帳號上線（取代共用帳密）**的順序不可對調，否則沒有人登得進去：(1) `make schema`（建 `app_user`、`user_session`、`admin_audit_log`，`qa_log` 加 `user_id`、`review_state` 加 `reviewer_user_id`）；(2) 建第一位管理員——`uv run python scripts/create_admin.py --from-env`（把 `.env` 裡的舊共用帳密轉成管理員；舊密碼不足 10 字元時改用 `--username <名稱>` 互動設定）；(3) `make build-web` 後重啟 web；(4) 登入後在「管理 → 帳號」為每位同事建帳號（LINE bot 只下載研報到 NAS、不呼叫平台 API，不受影響）；(5) 刪掉環境檔裡的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`。上線當下所有人會被登出一次（舊 cookie 是 v2 格式，明確拒收）。既有問答歷史的擁有者是 NULL（無從判斷是誰問的），一般介面看不到；管理員仍可經待複核佇列看到其中的低分與倒讚。忘記密碼或管理員全被停用時的救援：`scripts/create_admin.py --username <名稱> --reset-password`。`app_user` 進了備份（含 Argon2id 雜湊），NAS 上的備份檔要當機密看待。
 
 | Unit | 排程 | 做什麼 |
 |---|---|---|

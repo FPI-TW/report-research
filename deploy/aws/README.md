@@ -24,6 +24,69 @@ outputs 作為資源 ID、RDS endpoint 與 managed secret ARN 的來源。既有
 Cloudflare DNS 由 Cloudflare 控制台另行管理。應用程式、服務、`db/schema.sql` 與語料／狀態資料也在此 stack
 之外部署或處理；修改這些部分不會因 CloudFormation stack 更新而自動完成。
 
+## Staging 更新與驗收紀錄（2026-10-05）
+
+本節是 2026-10-05 的操作紀錄；以下通過項目不代表所有上線待辦都已完成。
+
+- EC2 checkout 已由 `be12fd3` fast-forward 到 main 的 `0f6fad8`（PR #290），工作目錄乾淨。
+  此次差異沒有應用 Python、前端或相依套件修改，未重建前端或重啟 Web；同步腳本修正已落地。
+  `deploy/nginx-origin.conf` 與 `/etc/nginx/sites-available/report-mark` 逐位元相同，nginx 驗證通過。
+- Web、nginx、同步／健康／freshness timer 均為 active。本機 DB、R2、LLM 健康端點均通過；
+  `SYNC_SOURCE=r2-inbox`，同步成功心跳已存在。
+- 公開 HTTPS 登入、受保護 API 與 `/app/` 通過，session cookie 的 Secure、HttpOnly、SameSite=Lax
+  均符合要求。匿名 API 回 401，公開 `/healthz` 回 200；R2／LLM 健康端點對外回 404。
+- RDS 應用帳號為 `report_mark`，不是 PostgreSQL superuser 或 `rds_superuser` 成員；
+  連線使用 `ssl=verify-full`、RDS CA bundle 與 TLS 1.3。RDS parameter group 為 `in-sync`，
+  AWS API 顯示 `rds.force_ssl=1`；此參數不透過應用 SQL session 的 `SHOW` 取值。
+- 真實問答經 Cloudflare／nginx 完成 SSE：收到 sources、538 個 token 事件、done 與一個心跳，
+  約 28 秒完成。R2 inbox 有三個來源物件；選取既有 PDF 下載至暫存鏡像，大小、PDF 簽章、
+  mtime 均符合，第二次 pull 正確略過。此檢查未上傳測試物件或觸發研報匯入。
+- RDS 自動備份已透過 `ModifyDBInstance` 從一天提高到七天，修改前確認沒有 pending modifications。
+  更新後為 available、pending 為空，`DbiResourceId` 仍是 `db-N6NICH6JJTKAXVW6LR7CYIDLUE`，
+  deletion protection、private、storage encryption 均保留。EC2 與 RDS 未被替換。
+
+### 尚未完成的 CloudFormation 與 Cloudflare 設定
+
+目前登入 profile 是 `PowerUserAccess-607063196781`，不是下方歷史命令使用的 `report-research`。
+正常 UPDATE change set 除 EC2 Metadata 外，將 RDS `BackupRetentionPeriod` 的 1 → 7 標為
+`Replacement=Conditional`，並列出 EC2 role 的 managed secret 參照更新；此計畫**未執行且已刪除**。
+本機 cfn-lint、九項 Guard 規則與 AWS `validate-template` 已通過，正常計畫的 validation events 無錯誤。
+
+為完成已授權的備份調整，先使用 RDS API 原地修改保留期，再建立比對實際狀態的 drift-aware change set。
+AWS 官方說明指出，範本更新成與實際狀態相符時，可同步 drift 狀態而不修改該資源；但此次計畫在
+讀取 EC2 role 時因 `iam:GetRole` 不足而失敗，未進入執行。
+參考 [RDS 非零保留期更新語意](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ModifyDBInstance.html)
+與 [drift-aware change sets](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/drift-aware-change-sets.html)。
+
+因此 **RDS 實際保留期為七天，但 CloudFormation 已部署範本仍記錄一天**；EC2 的 Metadata 修正亦尚未套用。
+不要執行舊計畫，也不要把此次紀錄當成 stack 已完成更新。後續步驟：
+
+1. 由 IAM 管理者將 [staging-state-read-policy.json](staging-state-read-policy.json) 的補充唯讀權限
+   加入部署操作身分，不是加入 EC2 role。這份檔案只對現有 staging role／instance profile 開放讀取；
+   不賦予 IAM 寫入或 PassRole。重新佈建 SSO permission set 後取得新 session。
+2. 重新建立唯一命名的 UPDATE change set，保留六個參數，加入 `--deployment-mode REVERT_DRIFT`。
+   核對完整 actual／previous／desired state、AMI resolved value 與 validation events；不得替換 EC2／RDS，
+   也不得修改 IAM 權限。若仍缺其他權限或出現未預期項目，停止並處理原因，不執行原先的 Conditional 計畫。
+3. 執行審查通過的計畫並等待 `stack-update-complete`，再確認已部署範本、實際保留期與物理 ID。
+
+Cloudflare 的兩個待辦也尚未完成：
+
+- HTTP 請求仍回 522，HTTPS 正常。只對此 hostname 新增 Single Redirect：Request URL 為
+  `http://research.tingfong.com/*`、Target URL 為 `https://research.tingfong.com/${1}`、301、
+  保留 query string。驗收 HTTP `/healthz?accept=290` 應回 301 且 Location 保留路徑與查詢字串。
+  見 [Cloudflare Redirect Rules 操作](https://developers.cloudflare.com/rules/url-forwarding/single-redirects/create-dashboard/)。
+- PDF 的 R2 presigned Range GET 回 206、簽章與 inline filename 正常，但沒有允許
+  `https://research.tingfong.com` 的 CORS response header，自訂 PDF viewer 仍會被瀏覽器攔阻。
+  應用 R2 憑證對 `GetBucketCors` 回 403 AccessDenied，不能修改 bucket 設定。
+  在 Cloudflare R2 的目標 bucket → Settings → CORS Policy，將
+  [r2-cors-research.json](../r2-cors-research.json) 的規則**加入現有規則**，保留其他部署的既有 origins。
+  此檔案是可追加的單一網站規則，不能直接取代未知的整份 bucket policy。
+  設定後重新取得 presigned URL，驗證 GET／OPTIONS 的 `Access-Control-Allow-Origin`、Range 與 exposed headers。
+  見 [Cloudflare R2 CORS](https://developers.cloudflare.com/r2/buckets/cors/)。
+
+此次帳號沒有 CloudTrail trail（`describe-trails` 為空），未另行建立 audit infrastructure。
+上述 API／SSM 結果用於此次驗收；CloudFormation 更新與 Cloudflare 待辦仍須各自驗證完成。
+
 ## 固定邊界
 
 - AWS account：`607063196781`

@@ -188,8 +188,10 @@ EC2 上的 nginx（來源站 TLS）→ `127.0.0.1:8097`。
   不是本網域的請求。要更嚴格可以另開 Cloudflare Authenticated Origin Pulls（mTLS），目前未啟用。
 
 上線順序：先在 EC2 上確認 nginx 與 web 本機可用，再以下方「既有 stack 更新」流程建立 change set。
-預期變更只有新增 `CloudflareOriginPrefixList`（Add）與修改 `Ec2SecurityGroup`（Modify、
-`Replacement=False`），外加 stack description 與 outputs；出現其他項目就停止。最後在 Cloudflare 控制台
+預期變更為新增 `CloudflareOriginPrefixList`（Add）與修改 `Ec2SecurityGroup`（Modify、
+`Replacement=False`），外加 stack description 與 outputs。本範本也把 RDS 自動備份保留期從 1 天
+提高為 7 天；若現有 stack 仍為 1 天，應另有 `Database` Modify、`Replacement=False`，且唯一屬性
+變更是 `BackupRetentionPeriod`；若已是 7 天則無此項。出現其他項目就停止。最後在 Cloudflare 控制台
 確認 Full (strict) 與 Always Use HTTPS，從外部打 `https://research.tingfong.com/healthz` 驗收。
 
 ## 前置與唯讀檢查

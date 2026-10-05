@@ -52,7 +52,7 @@
 
 ```bash
 uv sync                       # Python 3.11+；torch 走 CPU-only index
-make setup                    # 相依 + pgvector 容器（host port 5436）+ 套 db/schema.sql
+make setup                    # 相依 + pgvector 容器（host port 5436）+ alembic upgrade head
 cp .env.example .env          # 填 REPORT_MARK_SESSION_SECRET（未設則每次重啟全員登出）
 uv run python scripts/create_admin.py --username <名稱>   # 第一位管理員（套完 schema 之後）
 
@@ -94,7 +94,8 @@ frontend/src/
   lib/                    API 邊界：zod schema、readSSE、askReducer、hooks
   components/{shell,primitives,animate-ui}
 scripts/                  批次與維運（50 支），會 spawn claude 的取 _claude_lock.py
-db/schema.sql, db/expected_constraints.txt, db/drop_deep_report_tables.sql（既有庫手動執行）
+db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision）、db/expected_constraints.txt、
+                          db/align_baseline_indexes.sql 與 db/drop_deep_report_tables.sql（既有庫手動執行）
 deploy/                   systemd unit、nginx、docker-compose（部署真相來源）
 eval/                     離線評測 harness 與基準線（刻意不進 CI）
 tests/                    pytest（unittest 風格）＋ fixtures/sse_events.json
@@ -200,7 +201,7 @@ uv run python scripts/judge_agreement.py --dry-run   # judge 描述性校準（�
 uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # DeepSeek 切換後批次產出觀測（零 LLM、唯讀；去掉 --dry-run 出報告）
 ```
 
-- CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc ＋ vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。前端 job 把 `frontend/dist` 傳給後端 job，SPA 測試對真 build 驗證；後端設 `HF_HUB_OFFLINE=1`、安裝 CJK 字型並設 `REPORT_MARK_REQUIRE_CJK=1`（`tests/test_extraction_layout.py` 的 CjkTests 用 weasyprint 渲染中文測試 PDF，不准退回 skip）；schema job 套 `db/schema.sql` 兩次驗冪等並對帳 `db/expected_constraints.txt`。required check 名稱等於 job 的中文 `name`，改了要同步 GitHub 分支保護。
+- CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：前端測試（tsc ＋ vitest）、後端測試（pytest）、schema 契約（PostgreSQL）、secret 掃描（gitleaks）。前端 job 把 `frontend/dist` 傳給後端 job，SPA 測試對真 build 驗證；後端設 `HF_HUB_OFFLINE=1`、安裝 CJK 字型並設 `REPORT_MARK_REQUIRE_CJK=1`（`tests/test_extraction_layout.py` 的 CjkTests 用 weasyprint 渲染中文測試 PDF，不准退回 skip）；schema job 對空庫跑 `alembic upgrade head`（含單一 head、drift checker 自我一致、既有庫 stamp 演練）並對帳 `db/expected_constraints.txt`。required check 名稱等於 job 的中文 `name`，改了要同步 GitHub 分支保護。
 - 測試不連網、不載模型：LLM、嵌入、DB、檔案系統一律用假物件。async 測試用 `unittest.IsolatedAsyncioTestCase`，不用 pytest-asyncio。端點走 HTTP 層測。
 - 測試絕不可寫 repo 根的真實環境檔（`tests/conftest.py` 會還原並 fail）。
 - 評測 `eval/` 刻意不進 CI（會呼叫付費 API；CI 不連網）。`make eval-compare` 退出碼是結論：0 無劣化、1 劣化、2 不可比、3 有未分類指標。門檻 F>0.9／CP>0.8／AR>0.55 是政策；最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge）。
@@ -230,7 +231,7 @@ uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # De
 
 真相來源在 `deploy/`，不是機器上的 `/etc`；改了 unit 要 `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`。
 
-Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪等），沒有 migration 工具，刪表要另給腳本。部署待複核處理前須先跑 `make schema` 建 `review_state`，再啟動新 API 與備份。深度研報生成已於 2026-09 移除，既有庫要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql` 清掉 `report_doc`／`report_run`／`report_section`／`report_rendition` 四張表（執行前確認 `make db-audit` 全綠；備份從未涵蓋這四張，不必先備）。同時：R2 bucket 裡舊的 `generated/` 生成 PDF 不再由對帳工具管，可手動清理；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀，新名是 `FAITHFULNESS_MIN`。
+Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPORT_MARK_DB_URL`；已有資料的庫要 `CONFIRM=<host:port/db>` 逐字確認目標）。`db/schema.sql` 是凍結的 baseline（revision 0001），只接受空庫；之後的變更寫在 `db/migrations/versions/`。尚未接管的既有庫先 `make schema-check`（`scripts/schema_baseline.py`，嚴格比對系統目錄，零 drift 才算通過），再 `make schema-stamp-baseline CONFIRM=… DUMP_DIR=…`（受保護的庫強制先做全庫 `pg_dump -Fc` 並驗證可讀）；已知的索引差異以 `db/align_baseline_indexes.sql` 修正。以下幾段的 `make schema` 是導入 Alembic 前的歷史部署步驟。部署待複核處理前須先跑 `make schema` 建 `review_state`，再啟動新 API 與備份。深度研報生成已於 2026-09 移除，既有庫要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql` 清掉 `report_doc`／`report_run`／`report_section`／`report_rendition` 四張表（執行前確認 `make db-audit` 全綠；備份從未涵蓋這四張，不必先備）。同時：R2 bucket 裡舊的 `generated/` 生成 PDF 不再由對帳工具管，可手動清理；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀，新名是 `FAITHFULNESS_MIN`。
 
 本次問答與待複核整合上線時，先確認最近的 NAS 備份能由 `pg_restore -l` 讀取；更新部署 checkout 後依序跑 `make schema`、`make build-web`，再重啟 `report-mark-web.service`。驗收 `/healthz`、帶登入的 `/api/review/queue?kind=extraction` 與一筆 `/api/ask` 串流後，執行 `make db-backup`，確認新備份清單含 `review_state` 等表。Schema 是新增表，若需回退應回退程式版本並保留表與人工複核資料；不要用 DROP 當回退步驟。
 

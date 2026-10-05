@@ -18,13 +18,21 @@ TOL ?= 0.03
 DURATION ?= 3600
 SINCE ?=
 BENCH_ARGS ?= --dry-run
+# migration 的目標確認（host:port/dbname，逐字）。刻意沒有預設：對已有資料的庫做變更必須由
+# 呼叫者親手寫出目標，見 app/services/schema_migrations.py。
+CONFIRM ?=
+# schema-stamp-baseline：全庫備份落點；只有非受保護的庫可用 NO_DUMP=1 明確略過。
+DUMP_DIR ?=
+NO_DUMP ?=
+# 全庫備份以 docker exec 在這個容器裡跑 pg_dump；DB 不在容器（staging 的 RDS）時設成空值改用主機的 pg_dump。
+DUMP_CONTAINER ?= $(DB_CONTAINER)
 
 # Docker 二進位自動偵測：可連到 daemon 的 docker 優先；否則若有 docker.exe（WSL+Docker Desktop）就用它；
 # 都沒有時退回 docker，讓指令自己回報真正的 daemon 錯誤（而非 docker.exe: command not found）。
 DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command -v docker.exe >/dev/null 2>&1; then echo docker.exe; else echo docker; fi)
 COMPOSE := $(DOCKER) compose
 
-.PHONY: help deps db schema setup sample extract worklist prep tag-info \
+.PHONY: help deps db schema schema-check schema-stamp-baseline setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align boilerplate \
         serve serve-dev serve-preview search build-web \
         stats reset-db clean-data pipeline summaries signals takeaways titles brief \
@@ -53,9 +61,16 @@ db:  ## 起 pgvector 容器（已存在則啟動）
 	@# 站台開得起來、登入還會成功（登入路徑不碰 DB）、每個查詢 500。
 	$(DOCKER) update --restart unless-stopped $(DB_CONTAINER) >/dev/null
 
-schema: db  ## 套用 DB schema（vector 擴充 + 表 + HNSW 索引）
+schema: db  ## 套用 DB migration（alembic upgrade head；已有資料的庫要 CONFIRM=host:port/db）
 	@for i in $$(seq 1 30); do $(DOCKER) exec $(DB_CONTAINER) pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
-	$(DOCKER) exec -i $(DB_CONTAINER) psql -U postgres -d $(DB_NAME) < db/schema.sql
+	$(if $(CONFIRM),REPORT_MARK_MIGRATE_CONFIRM="$(CONFIRM)" ,)uv run alembic upgrade head
+
+schema-check:  ## 嚴格比對 DB 結構與 migration 基準（零 drift＝0、有 drift＝1；會在同伺服器建刪暫存庫）
+	uv run python scripts/schema_baseline.py check
+
+schema-stamp-baseline:  ## 既有庫導入 Alembic：零 drift＋全庫備份才 stamp（CONFIRM=… DUMP_DIR=…）
+	$(if $(CONFIRM),REPORT_MARK_MIGRATE_CONFIRM="$(CONFIRM)" ,)uv run python scripts/schema_baseline.py stamp \
+	  $(if $(NO_DUMP),--no-dump,--dump-dir "$(DUMP_DIR)" $(if $(DUMP_CONTAINER),--dump-container $(DUMP_CONTAINER),))
 
 setup: deps schema  ## 一次完成基礎建設（deps + db + schema）
 

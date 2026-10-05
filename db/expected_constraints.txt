@@ -1,10 +1,9 @@
 # research schema 的 CHECK 約束清單（golden）。由 tests/test_schema_constraints.py 對帳。
 #
-# 這份檔案關掉的破口：db/schema.sql 用的是 `CREATE TABLE IF NOT EXISTS`，對**既有**表
-# 是完全的 no-op。新增欄位有 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 補，但 CHECK
-# 約束沒有對應的補丁——所以改了 schema.sql 裡的 CHECK，在既有庫（＝生產）上永遠不會
-# 生效，而 `make schema` 照樣安靜地成功。這裡逐行釘住「一個乾淨的庫套完 schema.sql
-# 之後該有的約束」，任何變更都會在 CI 變紅，逼你同時寫出給既有庫用的 ALTER。
+# 緣起：導入 Alembic 前 db/schema.sql 只靠 `CREATE TABLE IF NOT EXISTS`，改了 CHECK 在既有庫
+# （＝生產）永遠不會生效、`make schema` 卻照樣成功。現在約束變更寫在 revision 裡，既有庫與空庫
+# 跑同一段 SQL；這份 golden 仍逐行釘住「空庫 `alembic upgrade head` 之後該有的約束」，讓約束
+# 變更在 diff 裡被看見。
 #
 # 格式：`表名.約束名 = pg_get_constraintdef(oid)`，以 Python `sorted()` 排序（不用 SQL
 # 的 ORDER BY，避免 collation locale 影響順序）。定義是 PostgreSQL 反解析出來的字面，
@@ -12,7 +11,7 @@
 #
 # 要更新（只在你**刻意**改了約束時）：
 #   REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py
-# 然後把 diff 一起提交，並確認生產庫也套了對應的 ALTER。
+# （REPORT_MARK_DB_URL 指向剛 upgrade head 的全新空庫），把 diff 與 revision 一起提交。
 app_user.app_user_role_check = CHECK ((role = ANY (ARRAY['admin'::text, 'user'::text])))
 extraction_log.extraction_log_stopped_at_check = CHECK ((stopped_at = ANY (ARRAY['ingested'::text, 'skip_admin'::text, 'scanned'::text, 'not_research'::text, 'extract_error'::text])))
 report_signal.report_signal_extraction_status_check = CHECK ((extraction_status = ANY (ARRAY['pending'::text, 'valid'::text, 'partial'::text, 'rejected'::text])))

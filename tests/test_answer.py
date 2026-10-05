@@ -2526,7 +2526,9 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
 
 class ConversationStaticContractTests(unittest.TestCase):
     def test_schema_uses_expression_index_for_conversation_lookup(self):
-        schema = (REPO_ROOT / "db/schema.sql").read_text(encoding="utf-8")
+        from app.services.schema_migrations import schema_source_text
+
+        schema = schema_source_text()
         self.assertRegex(
             " ".join(schema.split()),
             r"CREATE INDEX IF NOT EXISTS idx_qa_log_conversation ON research\.qa_log \(\(COALESCE\(conversation_id, id\)\), created_at\);",  # noqa: E501

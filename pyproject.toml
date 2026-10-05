@@ -37,6 +37,8 @@ dependencies = [
     "torch>=2.12,<2.13",
     # 個別帳號的密碼雜湊（app/services/passwords.py，Argon2id）。MIT。
     "argon2-cffi>=23.1",
+    # DB migration（db/migrations/，手寫 SQL、不用 autogenerate：repo 沒有 ORM model）。MIT。
+    "alembic>=1.16",
 ]
 
 [dependency-groups]

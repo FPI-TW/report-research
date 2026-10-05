@@ -53,7 +53,9 @@ class SchemaExpressionContractTests(unittest.TestCase):
     """靜態契約：schema 的運算式與 textnorm 的 docstring 必須指向同一個定義。"""
 
     def test_schema_still_uses_expected_expression(self):
-        schema = (REPO_ROOT / "db" / "schema.sql").read_text(encoding="utf-8")
+        from app.services.schema_migrations import schema_source_text
+
+        schema = schema_source_text()
         self.assertIn("normalize(content, NFKC)", schema)
         self.assertIn("regexp_replace", schema)
         self.assertIn("lower(", schema)

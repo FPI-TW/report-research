@@ -13,9 +13,11 @@ import unittest
 from pathlib import Path
 
 from app.services import store
+from app.services.schema_migrations import schema_source_text
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA = (ROOT / "db" / "schema.sql").read_text(encoding="utf-8")
+# baseline（db/schema.sql）＋所有 revision 的 SQL（之後改詞彙的是新 revision）。
+SCHEMA = schema_source_text()
 GOLDEN = (ROOT / "db" / "expected_constraints.txt").read_text(encoding="utf-8")
 INGEST = (ROOT / "scripts" / "ingest_all.py").read_text(encoding="utf-8")
 SYNC = (ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")

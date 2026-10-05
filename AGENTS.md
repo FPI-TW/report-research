@@ -22,7 +22,9 @@
 uv sync                              # Python 3.11+；torch 為 CPU-only
 cp .env.example .env                 # 務必改掉 REPORT_MARK_SESSION_SECRET 的佔位值
 uv run python scripts/create_admin.py --username <名稱>   # 套完 schema 後建第一位管理員（密碼互動輸入，不經 argv）
-make setup                           # 相依 + pgvector 容器 + 套 schema
+make setup                           # 相依 + pgvector 容器 + alembic upgrade head（空庫）
+make schema CONFIRM=<host:port/db>   # 已有資料的庫做 migration：逐字確認目標（本機預設庫就是生產庫）
+make schema-check                    # 嚴格 drift 比對（零＝0、有＝1）；既有庫導入見「改動對照表」
 make serve                           # :8097，無 --reload；Python 改動要重啟
 make serve-dev                       # --reload + SKIP_WARMUP=1，只綁 127.0.0.1
 make serve-preview                   # 免登入看版面（DEV_NO_AUTH=1），另開 8098
@@ -47,7 +49,7 @@ uv run python scripts/ingest_all.py
 
 ## 測試與 CI
 
-- CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：`前端測試（tsc + vitest）`（實際另跑 ESLint 與 vite build，並把 `frontend/dist` 傳給後端 job）、`後端測試（pytest）`（ruff＋pytest，SPA 測試對真 build 驗證）、`schema 契約（PostgreSQL）`（套兩次驗冪等，再以 `REPORT_MARK_REQUIRE_DB=1` 跑 DB 契約測試）、`secret 掃描（gitleaks）`。**required check 名稱＝job 的 `name`**，分支保護在 GitHub 設定不在 repo；改了 `name` 沒同步改設定，PR 會永遠等一個不回報的 check。
+- CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：`前端測試（tsc + vitest）`（實際另跑 ESLint 與 vite build，並把 `frontend/dist` 傳給後端 job）、`後端測試（pytest）`（ruff＋pytest，SPA 測試對真 build 驗證）、`schema 契約（PostgreSQL）`（空庫 `alembic upgrade head`、單一 head、drift 自我一致、既有庫 stamp 演練，再以 `REPORT_MARK_REQUIRE_DB=1` 跑 DB 契約測試）、`secret 掃描（gitleaks）`。**required check 名稱＝job 的 `name`**，分支保護在 GitHub 設定不在 repo；改了 `name` 沒同步改設定，PR 會永遠等一個不回報的 check。
 - async 測試一律 `unittest.IsolatedAsyncioTestCase`；**不用 pytest-asyncio**（未安裝、刻意不裝，`tests/test_dev_ergonomics.py` 守門）。
 - 測試不連網、不載模型（CI 設 `HF_HUB_OFFLINE=1`）：LLM、嵌入、檔案系統一律用假物件。給函式加參數時同步改假物件簽章——過期的假物件拋 `TypeError` 會被外層 `except` 吞掉，程式靜默走另一條路。
 - 例外是七支 DB 契約測試（`tests/test_schema_constraints.py`、`tests/test_content_norm_equivalence.py`、`tests/test_extraction_log_db.py`、`tests/test_conversations_db.py`、`tests/test_review_db.py`、`tests/test_accounts_db.py`、`tests/test_qa_isolation_db.py`）：連得上 DB 就真的連（**本機預設庫就是生產庫**，一律 rollback 不 commit），連不上就 skip；CI 設 `REPORT_MARK_REQUIRE_DB=1` 禁止 skip。
@@ -58,7 +60,7 @@ uv run python scripts/ingest_all.py
 - 帳號：`tests/conftest.py` 整個 session 把 `web.deps.accounts` 換成記憶體假帳號庫（`tests/fake_accounts.py`，預設一位 tester／testpass **管理員**），既有測試照常 POST `/login`。要驗一般使用者、停用、跨使用者隔離的測試用 `fake_accounts.install()` 換上自己的一份；只需要「已登入」用 `session_cookies()`。conftest 也預設把問答的擁有權檢查（`deps.conversation_is_foreign`／`deps.qa_is_foreign`）stub 成「不是別人的」，要驗 404 的測試自行覆寫。改了 `app/services/accounts.py` 的語意要同步改假物件——`tests/test_accounts_db.py` 同一組情境兩邊各跑一次。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉相依，不是加豁免。Dependabot 自動更新 PR 已停用，相依更新改由人工審查；更新 `torch` 時須確認 CPU-only wheel、FlagEmbedding／transformers 相容性並跑 eval，`@embedpdf/*` 必須整組升版並人眼驗證 PDF 選取與複製。
-- 契約類測試（改了別處會紅，修程式或文件，不放寬 allowlist）：`tests/test_docs_contract.py`、`tests/test_schema_constraints.py`、`tests/test_content_norm_equivalence.py`、`tests/test_sse_event_contract.py`、`tests/test_radar_contract.py`、`tests/test_deploy_units.py`、`tests/test_sync_timer_persistence.py`、`tests/test_env_loading.py`、`tests/test_llm_env_loading.py`、`tests/test_logging_setup.py`、`tests/test_dev_mode.py`、`tests/test_claude_lock.py`、`tests/test_claude_cli.py`、`tests/test_llm.py`、`tests/test_llm_models.py`、`tests/test_sql_index_hygiene.py`、`tests/test_secret_scan_config.py`、`tests/test_license_guard.py`、`tests/test_dev_ergonomics.py`、`tests/test_pre_split_guards.py`、`tests/test_spa_serving.py`、`tests/test_eval_question_contract.py`、`tests/test_db_backup.py`、`tests/test_authz.py`、`tests/test_accounts_db.py`、`tests/test_qa_isolation.py`、`tests/test_qa_isolation_db.py`。
+- 契約類測試（改了別處會紅，修程式或文件，不放寬 allowlist）：`tests/test_docs_contract.py`、`tests/test_schema_constraints.py`、`tests/test_schema_migrations.py`、`tests/test_schema_baseline.py`、`tests/test_content_norm_equivalence.py`、`tests/test_sse_event_contract.py`、`tests/test_radar_contract.py`、`tests/test_deploy_units.py`、`tests/test_sync_timer_persistence.py`、`tests/test_env_loading.py`、`tests/test_llm_env_loading.py`、`tests/test_logging_setup.py`、`tests/test_dev_mode.py`、`tests/test_claude_lock.py`、`tests/test_claude_cli.py`、`tests/test_llm.py`、`tests/test_llm_models.py`、`tests/test_sql_index_hygiene.py`、`tests/test_secret_scan_config.py`、`tests/test_license_guard.py`、`tests/test_dev_ergonomics.py`、`tests/test_pre_split_guards.py`、`tests/test_spa_serving.py`、`tests/test_eval_question_contract.py`、`tests/test_db_backup.py`、`tests/test_authz.py`、`tests/test_accounts_db.py`、`tests/test_qa_isolation.py`、`tests/test_qa_isolation_db.py`。
 - 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改。最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge，系譜 `deepseek-2026-09`，18 題×3 次，固定正式語料快照；快照 ID 見 README「開發與測試」）；舊的 `eval/baselines/baseline-2026-09-02.json` 是 haiku judge 系譜，拿新結果比一律回 2。正式 `eval/run_ragas.py` 帶 `--checkpoint-dir` 才能續跑。`eval/ragas_questions.json` 是凍結題集（`eval/question_contract.py` 守，`scripts/bench_load.py` 共用），改題集就失去與基準線的可比性。
 
 ## 改動對照表（改了 A 就要動 B）
@@ -70,10 +72,11 @@ uv run python scripts/ingest_all.py
 | 改檔名、刪檔、加端點 | `tests/test_docs_contract.py` 會紅：**改文件，不放寬 allowlist**。living docs 是本檔、`README.md`、`docs/WORKFLOW.md`、`docs/ARCHITECTURE.md`、`docs/EXTRACTION.md`（新增這類文件要加進該測試的 `LIVING_DOCS`）。端點路徑逐字寫進 README 的 API 表（`docs/WORKFLOW.md` 有契約細節時也寫），含參數名與 `:path` |
 | 新增後端 SSE 事件 | 加進 `tests/fixtures/sse_events.json`（兩側測試會指出另一側缺什麼） |
 | 新增 SSE 事件欄位 | 契約測試**抓不到**欄位漏宣告：自己在 `frontend/src/lib/askSchemas.ts` 用 `optional()` 宣告（zod 預設 strip，未宣告鍵靜默丟掉），並在 `askSchemas.test.ts` 補斷言 |
-| `db/schema.sql` | 沒有 migration 工具，冪等只涵蓋 `ADD COLUMN IF NOT EXISTS` 與「先回填再 `SET DEFAULT`／`SET NOT NULL`」；**改 CHECK 約束在既有庫是 no-op**，要另寫給既有庫的 `ALTER`；刪表同理要另給 DROP 腳本（先例 `db/drop_deep_report_tables.sql`）。`db/expected_constraints.txt` 紅了是這個意思，不是改清單；刻意改約束才用 `REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py` 重生——**先把 `REPORT_MARK_DB_URL` 指向剛套完 schema 的全新空庫**，對既有庫重生只會得到舊約束 |
+| schema 變更 | 一律寫新 revision：`uv run alembic revision --rev-id 00NN -m "..."`，SQL 放模組常數 `UPGRADE_SQL`（手寫、不用 autogenerate，`tests/test_schema_migrations.py` 守）；`db/schema.sql` 是**凍結的 baseline**（revision 0001，SHA-256 釘住），不再修改。平行分支各長一個 revision 會分岔成多個 head，整合時把 `down_revision` 改成線性。對已有資料的庫跑 migration 要 `CONFIRM=<host:port/db>`；worktree 開發把 `REPORT_MARK_DB_URL` 指向 devdb。改了約束要對**剛 `upgrade head` 的全新空庫**跑 `REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py` 重生 `db/expected_constraints.txt`（對既有庫重生只會得到舊約束）。刪表在 revision 裡寫 DROP |
+| 既有庫導入 Alembic（尚未 stamp 的庫） | baseline 只接受空庫，`make schema` 對既有庫會拒絕。順序：`make schema-check`（`scripts/schema_baseline.py`，在同伺服器建暫存庫逐項比對系統目錄）必須零 drift——有 drift 先修（已知差異的修正在 `db/align_baseline_indexes.sql`）→ `make schema-stamp-baseline CONFIRM=… DUMP_DIR=…`（受保護的庫強制全庫 `pg_dump -Fc` preflight：空間、時限、PGDMP 檔頭、`pg_restore -l`）。DB 不在容器（staging 的 RDS）時加 `DUMP_CONTAINER=`，並以 `REPORT_MARK_PROTECTED_DB_TARGETS` 把它列為受保護 |
 | 新增不可重建的表 | `scripts/db_backup.sh` 的 `BACKUP_TABLES`、`tests/test_db_backup.py` 的清單、README／`docs/ARCHITECTURE.md`／`docs/production_resilience.md`／本檔「資料層陷阱」的表數字樣一起改 |
 | 新增管理端點 | 路徑放 `/api/admin/` 或 `/api/review/` 底下、router 層掛 `authz.require_admin`（`tests/test_authz.py` 結構性檢查每一條）；帳號規則寫在 `app/services/accounts.py` 而不是路由層（CLI 也要受約束）；會改資料的管理動作在同一筆交易寫 `admin_audit_log`，`detail` 不得含密碼或註記全文 |
-| `review_state` 詞彙（kind／status／verification） | `web/routers/review.py` 的 `Literal` 與 `frontend/src/lib/reviewSchemas.ts` 的 zod enum 逐字一致（**沒有測試守門**）；`db/schema.sql` 只有 `verification` 的預設值 `untested` 要跟著改（表刻意無 CHECK、無 FK）；部署順序 `make schema` → `make build-web` → 重啟 web |
+| `review_state` 詞彙（kind／status／verification） | `web/routers/review.py` 的 `Literal` 與 `frontend/src/lib/reviewSchemas.ts` 的 zod enum 逐字一致（**沒有測試守門**）；`verification` 的預設值 `untested` 改了要寫 revision（表刻意無 CHECK、無 FK）；部署順序 `make schema` → `make build-web` → 重啟 web |
 | `content_norm` 或 `textnorm.norm_for_match()` | 兩者逐字等價（`tests/test_content_norm_equivalence.py`；已知 6 個分歧字元由該測試鎖住範圍，不可擴大） |
 | 新旋鈕 | 放 `app/config.py`（frozen dataclass＋`os.getenv`，非 pydantic-settings）。既有散在各檔的讀取**不要順手搬**；找旋鈕要同時搜 `os.getenv` 與 `os.environ`（範圍 `app web scripts eval`；只搜前者會漏掉 `web/auth.py` 等處）。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`、`REPORT_MARK_BACKUP_*`，測試用的 `REPORT_MARK_REQUIRE_*`、`REPORT_MARK_WRITE_CONSTRAINTS`）是 live 的，不要改名 |
 | `deploy/systemd/` 的 unit 與 `report-mark-web.service.d/` | `sudo cp` 到 `/etc/systemd/system/` 再 `daemon-reload`；`*.env.example` 對應 `/etc/default/`（`report-mark-llm` 必須 `install -m 0640 -o root -g kashionz`，`cp` 會讓金鑰全員可讀），`*.sudoers` 以 `install -m 0440` 裝進 `/etc/sudoers.d/` 且目的檔名不帶副檔名（sudo 忽略含 `.` 的檔名），`mount-nas-*` 裝到 `/usr/local/sbin/`，`report-mark-alert.sh` 就地執行。`deploy/docker-compose.yml`、`deploy/nginx.conf` 走 `make up-edge`／`edge-reload`。不要只改機器上的副本；`tests/test_deploy_units.py` 守 unit 檔 |
@@ -152,6 +155,7 @@ uv run python scripts/ingest_all.py
 - **網搜暫停中**：生產 `ASK_ENABLE_WEB=0`，前端 `WEB_SEARCH_PAUSED` 隱藏開關、請求一律送 `web=false`；DeepSeek 版網搜完成後兩處一起恢復。
 - **夜間回填** `report-mark-backfill.timer`（E1d）仍 enabled，跑完（journal 的「估計尚餘」歸零）後由人手動 disable。
 - **深度研報已移除**（2026-09）：既有庫要手動跑 `db/drop_deep_report_tables.sql`。
+- **Alembic 導入（P0）**：既有的三個庫（devdb → staging → 生產）尚未 stamp；在那之前 `make schema` 對它們會被 baseline 拒絕，schema 變更無法部署。每一站都以 `make schema-check` 零 drift（生產另加全庫備份 preflight）為人工放行點；2026-10-05 生產與 devdb 預覽各有 3 項索引 drift，修正在 `db/align_baseline_indexes.sql`。staging 要先補齊個別帳號的 schema。全部 stamp 後改寫這一條。
 - **個別帳號取代共用帳密（2026-10 開發中，尚未部署）**：部署順序 `make schema` → `scripts/create_admin.py --from-env`（或 `--username`）→ `make build-web` → 重啟 web → 在管理頁為每位同事建帳號（LINE bot 只從 LINE 群組下載研報到 NAS、不呼叫平台 API，不需要帳號） → 刪掉環境檔的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（還在時啟動記 warning）。生產庫套 schema 前，本機 `tests/test_schema_constraints.py` 對生產庫對帳會紅（多了 `app_user` 的 CHECK）。部署完成後改寫這一條。
 
 ## 慣例
@@ -164,6 +168,6 @@ uv run python scripts/ingest_all.py
 
 - `app/services/`：抽取（`extract.py`、`extraction/`）、標註、切塊、嵌入、混合檢索（`retrieval.py`、`retrieval_pipeline.py`）、RAG 問答（`answer.py`），以及 `reading/`、`radar/`、`brief.py`。`app/config.py` 是新旋鈕唯一去處。
 - `web/`：`server.py` 組合層、`routers/`、`deps.py`。`frontend/`：`src/features/*` 每頁一個、`src/lib/*` 是 API 邊界（zod、SSE、reducer）。
-- `scripts/`：批次與維運；`deploy/`：systemd、nginx、docker-compose 的真相來源；`db/`：`schema.sql` 與約束 golden；`eval/`：離線評測與基準線（不進 CI）。`研報自動匯入/`（唯讀鏡像）與 `data/`（執行期產物）不進版控。
+- `scripts/`：批次與維運；`deploy/`：systemd、nginx、docker-compose 的真相來源；`db/`：`schema.sql`（凍結的 baseline）、`migrations/`（Alembic，設定在 repo 根 `alembic.ini`）與約束 golden；`eval/`：離線評測與基準線（不進 CI）。`研報自動匯入/`（唯讀鏡像）與 `data/`（執行期產物）不進版控。
 - 文件：`README.md`（開發總覽、完整 API 表、環境變數、部署）、`docs/ARCHITECTURE.md`（模組地圖與不變量完整版）、`docs/WORKFLOW.md`（端到端管線、階段 I/O、標籤詞彙、API 契約、R2 遷移順序）、`docs/EXTRACTION.md`（抽取層）；維運類 `docs/production_resilience.md`、`docs/LINEBOT_ALWAYS_ON.md`、`docs/CAPACITY.md`、`docs/EXTERNAL_ACCESS.md`、`docs/nas_scheduled_sync_deployment.md`、`docs/incidents/`、`docs/benchmarks/`。
 - 文件只描述現況；歷史規劃、架構檢視快照、版面診斷與設計稿已於 2026-09-18 移出 repo，需要時看 git 歷史（原檔名 docs/EXTRACTION_REDESIGN.md、docs/ARCHITECTURE_REVIEW_2026-07.md 與其 _VERIFY、docs/REPORT_LAYOUT_FIXES.md、docs/design/；刻意不加反引號，免得觸發文件契約測試的路徑檢查）。

@@ -260,19 +260,45 @@ jobs:
 
       # runner 映像目前自帶 psql，但那不是契約（映像內容會變）。明確裝一次，
       # 否則哪天不見了會表現為「schema job 突然找不到指令」而不是可讀的訊息。
-      - name: 安裝 psql（套 schema 用）
+      # 下面的 stamp 演練要用它以舊流程建庫。
+      - name: 安裝 psql（stamp 演練用）
         run: |
           command -v psql >/dev/null || {
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends postgresql-client
           }
 
-      # 跑兩次驗冪等：db/schema.sql 沒有 migration 工具，它自稱冪等是被依賴的
-      # 前提（`make schema` 在既有庫上會被重複執行）。第二次要一樣安靜地成功。
-      - name: 套用 db/schema.sql（兩次，驗冪等）
+      # 空庫 upgrade head（與新機器、災難還原同一條路）。第二次是對「已有資料的庫」：
+      # 必須帶確認才放行，且無事可做。revision 鏈必須只有一個 head（平行分支合併後最常壞在這）。
+      - name: 套用 migration（空庫 upgrade head）
         run: |
-          psql -h localhost -U postgres -d research -v ON_ERROR_STOP=1 -f db/schema.sql
-          psql -h localhost -U postgres -d research -v ON_ERROR_STOP=1 -f db/schema.sql
+          uv run alembic upgrade head
+          if uv run alembic upgrade head; then
+            echo "::error::已有資料的庫沒帶 REPORT_MARK_MIGRATE_CONFIRM 卻放行了"; exit 1
+          fi
+          REPORT_MARK_MIGRATE_CONFIRM=localhost:5432/research uv run alembic upgrade head
+          test "$(uv run alembic heads | grep -c '(head)')" = 1
+
+      # checker 自己的一致性：剛升級的庫對同一台伺服器上重建的基準必須零 drift。
+      # 這一步紅＝checker 有假陽性，那麼它對生產說的「有 drift」也不可信。
+      - name: schema drift 自我一致
+        run: uv run python scripts/schema_baseline.py check
+
+      # 既有庫導入 Alembic 的完整演練（P0-ops 的同一條路）：以舊流程（psql 套 baseline）建庫
+      # → upgrade 必須拒絕（baseline 只接受空庫）→ 零 drift → stamp → 讀回 0001。
+      - name: 既有庫 stamp 演練
+        env:
+          REPORT_MARK_DB_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/legacy
+          REPORT_MARK_MIGRATE_CONFIRM: localhost:5432/legacy
+        run: |
+          psql -h localhost -U postgres -d research -c "CREATE DATABASE legacy"
+          psql -h localhost -U postgres -d legacy -q -v ON_ERROR_STOP=1 -f db/schema.sql
+          if uv run alembic upgrade head; then
+            echo "::error::baseline 不該套在已有物件的庫上（必須走 drift 驗證＋stamp）"; exit 1
+          fi
+          uv run python scripts/schema_baseline.py check
+          uv run python scripts/schema_baseline.py stamp --no-dump
+          test "$(uv run alembic current 2>/dev/null | awk '{print $1}')" = 0001
 
       # 這兩支測試在本機一律走 skip 路徑（沒有 CI 的 DB 就驗不到），所以它們
       # 存在但等於沒跑。這個 job 就是為了讓它們真的跑起來。

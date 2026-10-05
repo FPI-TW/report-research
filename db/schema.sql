@@ -1,5 +1,9 @@
--- 研報市場標籤 + 向量資料庫 schema（原型）
--- 套用：docker exec -i report-mark-postgres psql -U postgres -d research < db/schema.sql
+-- 研報市場標籤 + 向量資料庫 schema —— **Alembic baseline（revision 0001），已凍結**
+-- 本檔＝導入 Alembic 當下 main 的完整 schema。之後的變更一律寫新 revision
+-- （db/migrations/versions/），**不要再改本檔**：tests/test_schema_migrations.py 以 SHA-256 釘住，
+-- 改了 baseline 等於讓已 stamp 的庫與空庫長得不一樣，而 alembic 完全不會察覺。
+-- 套用：`make schema`（alembic upgrade head）。0001 只接受空庫；既有庫先 `make schema-check`
+-- 確認零 drift，再 `make schema-stamp-baseline`（流程見 AGENTS.md「改動對照表」）。
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE SCHEMA IF NOT EXISTS research;

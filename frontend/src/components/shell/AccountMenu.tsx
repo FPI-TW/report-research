@@ -4,6 +4,7 @@ import { Popover } from '../primitives/Popover'
 import { Pressable } from '../primitives/Pressable'
 import { Icon } from '../primitives/Icon'
 import { preloadRoute } from '../../lib/routePreload'
+import { useIsAdmin } from '../../lib/useMe'
 import { useStats } from '../../lib/useStats'
 import { useLocale, setLocale, type Locale } from '../../lib/useLocale'
 import styles from './AccountMenu.module.css'
@@ -18,6 +19,8 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
   const name = data?.username ?? '分析師'
   const [open, setOpen] = useState(false)
   const locale = useLocale()
+  // 管理後台的唯一入口：與研報平台分開的外殼（/admin/*），主導覽刻意不放。只是顯示層，授權在後端。
+  const isAdmin = useIsAdmin()
 
   return (
     <div className={styles.wrap}>
@@ -65,6 +68,16 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
         >
           <Icon name="info" size={16} />使用說明
         </Link>
+        {isAdmin && (
+          <Link
+            to="/admin/users"
+            className={styles.menuItem}
+            onClick={() => setOpen(false)}
+            onPointerEnter={() => { preloadRoute('adminShell'); preloadRoute('adminUsers') }}
+          >
+            <Icon name="shield" size={16} />管理後台
+          </Link>
+        )}
         <form method="post" action="/logout">
           <Pressable type="submit" className={styles.logout}>登出</Pressable>
         </form>

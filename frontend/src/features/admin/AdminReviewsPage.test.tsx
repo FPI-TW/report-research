@@ -6,7 +6,7 @@ import AdminReviewsPage from './AdminReviewsPage'
 
 afterEach(() => vi.unstubAllGlobals())
 
-test('管理員看到待複核佇列與管理分頁；/api/progress 只取一次、不輪詢', async () => {
+test('管理員看到待複核頁首與佇列；/api/progress 只取一次、不輪詢', async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === '/api/me') return new Response(JSON.stringify({ id: 'u1', username: 'root', role: 'admin' }), { status: 200 })
     if (url.startsWith('/api/review/queue')) {
@@ -25,7 +25,7 @@ test('管理員看到待複核佇列與管理分頁；/api/progress 只取一次
   )
   expect(await screen.findByText('待複核佇列')).toBeInTheDocument()
   expect(await screen.findByText('沒有待複核的項目')).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: '待複核' })).toHaveAttribute('aria-current', 'page')
-  expect(screen.getByRole('link', { name: '帳號管理' })).toHaveAttribute('href', '/admin/users')
+  // 切頁導覽在外殼（AdminShell），頁面本身只有標題
+  expect(screen.getByRole('heading', { name: '待複核', level: 1 })).toBeInTheDocument()
   expect(fetchMock.mock.calls.filter(([u]) => u === '/api/progress')).toHaveLength(1)
 })

@@ -4,9 +4,9 @@ import { Modal } from '../../components/primitives/Modal'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
 import type { AdminUser, Role } from '../../lib/adminSchemas'
 import { useMe } from '../../lib/useMe'
-import { AdminHeader } from './AdminTabs'
-import { actionLabel, actorLabel, auditSummary, fmtDateTime, roleLabel } from './auditLabels'
-import { AUDIT_PAGE_SIZE, useAdminActions, useAdminAudit, useAdminUsers } from './useAdmin'
+import { AdminHeader } from './AdminHeader'
+import { fmtDateTime, roleLabel } from './auditLabels'
+import { useAdminActions, useAdminUsers } from './useAdmin'
 import styles from './Admin.module.css'
 
 /** 錯誤物件 → 給人看的訊息。後端 400／409 的 detail 由 requestJSON 放進 message，原樣顯示。 */
@@ -245,61 +245,18 @@ function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) =
   )
 }
 
-function AuditLog() {
-  const [offset, setOffset] = useState(0)
-  const q = useAdminAudit(offset)
-  return (
-    <section className={styles.card} aria-labelledby="admin-audit-title">
-      <h2 id="admin-audit-title" className={styles.ctitle}>管理操作紀錄</h2>
-      {q.isPending ? (
-        <p className={styles.idle}>載入中…</p>
-      ) : q.isError ? (
-        <p className={styles.error} role="alert">操作紀錄載入失敗：{messageOf(q.error)}</p>
-      ) : q.data.items.length === 0 ? (
-        <p className={styles.idle}>還沒有任何管理操作</p>
-      ) : (
-        <>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead><tr><th>時間</th><th>操作者</th><th>動作</th><th>內容</th></tr></thead>
-              <tbody>
-                {q.data.items.map(e => (
-                  <tr key={e.id}>
-                    <td className={styles.num}>{fmtDateTime(e.created_at)}</td>
-                    <td className={e.actor_username ? undefined : styles.muted}>{actorLabel(e)}</td>
-                    <td>{actionLabel(e.action)}</td>
-                    <td>{auditSummary(e)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className={styles.pager}>
-            <button type="button" className={styles.action} disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - AUDIT_PAGE_SIZE))}>上一頁</button>
-            <span>{`第 ${offset + 1}–${offset + q.data.items.length} 筆，共 ${q.data.total} 筆`}</span>
-            <button type="button" className={styles.action} disabled={q.data.next_offset == null}
-              onClick={() => { if (q.data.next_offset != null) setOffset(q.data.next_offset) }}>下一頁</button>
-          </div>
-        </>
-      )}
-    </section>
-  )
-}
-
 function AdminUsers() {
   const [notice, setNotice] = useState<{ msg: string; isError: boolean } | null>(null)
   const onNotice = (msg: string, isError = false) => setNotice({ msg, isError })
   return (
     <div className={styles.page}>
       <div className={styles.inner}>
-        <AdminHeader subtitle="建立帳號、切換角色、停用、重設密碼與強制登出；每一筆操作都會留下紀錄。" />
+        <AdminHeader title="帳號管理" subtitle="建立帳號、切換角色、停用、重設密碼與強制登出；每一筆操作都會留在「操作紀錄」。" />
         {notice && (
           <p className={notice.isError ? styles.error : styles.ok} role={notice.isError ? 'alert' : 'status'}>{notice.msg}</p>
         )}
         <CreateUserForm onDone={msg => onNotice(msg)} />
         <UsersTable onNotice={onNotice} />
-        <AuditLog />
       </div>
     </div>
   )

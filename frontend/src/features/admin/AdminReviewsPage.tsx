@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
 import { getJSON } from '../../lib/api'
 import { progressSchema } from '../monitor/progressSchema'
-import { AdminHeader } from './AdminTabs'
+import { AdminHeader } from './AdminHeader'
 import { ReviewQueuePanel } from './ReviewQueuePanel'
 import styles from './Admin.module.css'
 
@@ -22,7 +22,7 @@ function AdminReviews() {
   return (
     <div className={styles.page}>
       <div className={styles.inner}>
-        <AdminHeader subtitle="系統偵測到需要人看的問答與研報；處理狀態、註記與處理人另存，原始品質訊號不變。" />
+        <AdminHeader title="待複核" subtitle="系統偵測到需要人看的問答與研報；處理狀態、註記與處理人另存，原始品質訊號不變。" />
         <ReviewQueuePanel scale={progress.data?.evaluation?.qa ?? null} />
       </div>
     </div>

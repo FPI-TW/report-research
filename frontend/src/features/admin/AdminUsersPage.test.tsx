@@ -73,7 +73,7 @@ function mount(opts: { role?: 'admin' | 'user'; users?: User[]; override?: Overr
 const writes = (fetchMock: ReturnType<typeof mount>) =>
   fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== 'GET')
 
-/** 帳號清單裡某個帳號的那一列（只在帳號表裡找：稽核表的內容欄也會出現帳號名）。 */
+/** 帳號清單裡某個帳號的那一列。 */
 async function row(name: string) {
   const table = within(await screen.findByRole('region', { name: '帳號清單' }))
   const cell = await table.findByRole('cell', { name: new RegExp(`^${name}`) })
@@ -99,7 +99,7 @@ test('帳號表格列出角色、狀態與有效 session；自己那列的停用
   expect(alice.getByRole('button', { name: '停用' })).toBeEnabled()
 })
 
-test('建立帳號：送出 username／password／role，成功後清單與稽核都更新', async () => {
+test('建立帳號：送出 username／password／role，成功後清單更新', async () => {
   const fetchMock = mount()
   await row('alice')
   fireEvent.change(screen.getByLabelText('帳號'), { target: { value: '  bob  ' } })
@@ -111,8 +111,6 @@ test('建立帳號：送出 username／password／role，成功後清單與稽�
   const post = writes(fetchMock)[0]
   expect(post[0]).toBe('/api/admin/users')
   expect(JSON.parse(post[1]!.body as string)).toEqual({ username: 'bob', password: 'bob-password-1', role: 'admin' })
-  // 稽核表重抓到新那一筆，action 轉成中文
-  expect(await screen.findByRole('cell', { name: '建立帳號' })).toBeInTheDocument()
   expect(screen.getByLabelText('帳號')).toHaveValue('')
 })
 
@@ -207,27 +205,4 @@ test('強制登出：確認後 POST logout，回報撤銷數；沒有 session �
   fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '強制登出' }))
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已強制登出「alice」（2 個 session）'))
   expect(writes(fetchMock)[0][0]).toBe('/api/admin/users/u2/logout')
-})
-
-test('稽核表：CLI 操作顯示為指令列、未知 action 原樣顯示、可翻頁', async () => {
-  const items = [
-    { id: 2, actor_user_id: null, actor_username: null, action: 'user.create', target_type: 'user', target_id: 'u1',
-      detail: { username: 'root', role: 'admin', via: 'cli' }, created_at: '2026-10-05T01:00:00Z' },
-    { id: 1, actor_user_id: 'me', actor_username: 'root', action: 'user.something_new', target_type: 'user',
-      target_id: 'u2', detail: { username: 'alice' }, created_at: '2026-10-05T00:00:00Z' },
-  ]
-  const fetchMock = mount({ override: p => {
-    if (!p.startsWith('/api/admin/audit')) return undefined
-    const offset = Number(new URL(p, 'http://x').searchParams.get('offset'))
-    return { body: offset === 0
-      ? { total: 21, limit: 20, offset: 0, has_more: true, next_offset: 20, items }
-      : { total: 21, limit: 20, offset: 20, has_more: false, next_offset: null, items: [items[1]] } }
-  } })
-  expect(await screen.findByRole('cell', { name: '指令列（CLI）' })).toBeInTheDocument()
-  expect(screen.getByRole('cell', { name: 'root・管理員・經指令列' })).toBeInTheDocument()
-  expect(screen.getByRole('cell', { name: 'user.something_new' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: '上一頁' })).toBeDisabled()
-  fireEvent.click(screen.getByRole('button', { name: '下一頁' }))
-  await screen.findByText('第 21–21 筆，共 21 筆')
-  expect(fetchMock.mock.calls.some(([p]) => String(p).includes('offset=20'))).toBe(true)
 })

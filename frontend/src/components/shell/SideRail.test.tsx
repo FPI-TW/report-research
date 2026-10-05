@@ -6,13 +6,13 @@ import { SideRail } from './SideRail'
 
 afterEach(() => vi.unstubAllGlobals())
 
-function renderRail(collapsed: boolean, role: 'admin' | 'user' = 'user') {
+function renderRail(collapsed: boolean) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) =>
     url.includes('/api/conversations')
       ? new Response(JSON.stringify([]), { status: 200 })
-      : url.includes('/api/me')
-        ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role }), { status: 200 })
-        : new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 }),
+      : url === '/api/me'
+      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin' }), { status: 200 })
+      : new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 }),
   ))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -33,18 +33,6 @@ test('展開態顯示站名與四導覽 label', () => {
   expect(screen.getByRole('link', { name: /監控/ })).toBeInTheDocument()
 })
 
-test('管理員才看得到「管理」入口，連到帳號管理', async () => {
-  renderRail(false, 'admin')
-  const link = await screen.findByRole('link', { name: /管理/ })
-  expect(link).toHaveAttribute('href', '/admin/users')
-})
-
-test('一般使用者完全看不到「管理」入口', async () => {
-  renderRail(false, 'user')
-  await screen.findByText('analyst')
-  expect(screen.queryByRole('link', { name: /管理/ })).not.toBeInTheDocument()
-})
-
 test('收合態：迷你軌可存取、完整態內容移出無障礙樹', () => {
   renderRail(true)
   // 兩態層皆恆掛載（供跨態寬度／淡入淡出動畫），但完整態層 aria-hidden＋inert → 不在無障礙樹
@@ -56,4 +44,10 @@ test('展開態：完整態可存取、迷你軌移出無障礙樹', () => {
   renderRail(false)
   expect(screen.getByRole('button', { name: '收合側欄' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '展開側欄' })).not.toBeInTheDocument()
+})
+
+test('管理後台與研報平台分開：即使是管理員，側欄也沒有「管理」入口', async () => {
+  renderRail(false)
+  await screen.findByText('analyst')
+  expect(screen.queryByRole('link', { name: /管理/ })).not.toBeInTheDocument()
 })

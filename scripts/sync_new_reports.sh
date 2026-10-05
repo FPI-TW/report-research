@@ -424,7 +424,12 @@ if [ "$SYNC_SOURCE" = r2-inbox ]; then
   "$UV" run python scripts/r2_inbox.py pull --delta "$DELTA" >>"$LOG" 2>&1 || RC=$?
   NEW=$(grep -cvE '/$' "$DELTA" 2>/dev/null || echo 0)
   log "R2 inbox rc=$RC，本次新落地檔≈${NEW}"
-  if [ "$RC" -ne 0 ]; then log "R2 inbox 拉取失敗 → 結束"; exit 1; fi
+  if [ "$RC" -eq 1 ] && [ -f "$DELTA" ]; then
+    log "R2 inbox 部分拉取失敗：已落地的照常匯入，失敗檔下一輪重拉"
+    record_unit_failure "r2_inbox(pull)" "$RC"
+  elif [ "$RC" -ne 0 ]; then
+    log "R2 inbox 拉取失敗 → 結束"; exit 1
+  fi
 else
   # 1) 確保 NAS 已掛載（未掛則用 root 包裝以快取憑證 drvfs 掛載；需 NOPASSWD sudoers）
   if ! mountpoint -q "$MOUNT"; then
@@ -454,6 +459,14 @@ else
     PUSH_RC=0
     "$UV" run python scripts/r2_inbox.py push --delta "$DELTA" >>"$LOG" 2>&1 || PUSH_RC=$?
     log "R2 inbox 推送 rc=$PUSH_RC（best-effort）"
+    if [ "$PUSH_RC" -ne 0 ]; then
+      INBOX_REPLAY="data/inbox_delta_retained_${ROUND_TS}.txt"
+      cp -- "$DELTA" "$INBOX_REPLAY"
+      log "R2 inbox 推送失敗，補傳 delta 保留在 ${INBOX_REPLAY}："
+      log "  $UV run python scripts/r2_inbox.py push --delta ${INBOX_REPLAY}"
+      log "  補傳成功後刪掉該份 delta：rm -f ${INBOX_REPLAY}"
+      record_unit_failure "r2_inbox(push)" "$PUSH_RC"
+    fi
   fi
 fi
 
@@ -673,8 +686,8 @@ fi
 
 rm -f "$DELTA"
 
-# 心跳只在**完整成功**時更新。走到這裡代表掛載、rsync、匯入都成功（前三者失敗都
-# exit 1，根本到不了這行），所以剩下要判的只有下游是否有異常失敗。
+# 心跳只在**完整成功**時更新。R2 inbox 部分拉取／推送失敗與下游異常都會抑制心跳，
+# 但已落地的檔仍照常匯入。
 # 注意：這裡刻意**不改變** best-effort 的語意——下游失敗仍然不擋 sync、unit 仍然不變紅，
 # 只是不更新心跳。持續的下游異常於是變成「管線執行新鮮度」上的可見事實，
 # 而不是只躺在 unit_failures.log 裡等人去看。

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from app.services.object_storage import ObjectStorageError
 from scripts import r2_inbox
@@ -113,6 +115,18 @@ class PushPullTests(unittest.TestCase):
         storage = FakeStorage(fail_keys={"inbox/券商A/報告.pdf"})
         pushed, failed = r2_inbox.push(storage, ["券商A/報告.pdf", "不存在.pdf"], self.src)
         self.assertEqual((pushed, failed), (0, 1))
+
+
+class MainTests(unittest.TestCase):
+    def test_partial_pull_signals_failure_and_keeps_successful_delta(self):
+        with (
+            mock.patch.object(sys, "argv", ["r2_inbox", "pull", "--delta", "fake-delta"]),
+            mock.patch.object(r2_inbox, "get_object_storage", return_value=FakeStorage()),
+            mock.patch.object(r2_inbox, "pull", return_value=(["券商A/報告.pdf"], 1)),
+            mock.patch.object(r2_inbox, "Path") as fake_path,
+        ):
+            self.assertEqual(r2_inbox.main(), 1)
+            fake_path.return_value.write_text.assert_called_once_with("券商A/報告.pdf\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

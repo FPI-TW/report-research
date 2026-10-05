@@ -123,8 +123,9 @@ def main() -> int:
     # delta 一律寫出（空也寫）：殼以檔案行數計新檔數，與 rsync 那條路徑相同。
     Path(args.delta).write_text("".join(f"{name}\n" for name in landed), encoding="utf-8")
     print(f"[pull] 新落地 {len(landed)} 檔、失敗 {failed}", file=sys.stderr)
-    # 部分失敗仍回 0：已落地的照常匯入，失敗的下一輪大小對不上會自然重拉（與 rsync 不同，不會漏）。
-    return 0
+    # 部分失敗回 1，但仍寫出成功落地的 delta；殼繼續匯入並抑制完整成功心跳。
+    # 失敗的下一輪大小對不上會自然重拉。
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

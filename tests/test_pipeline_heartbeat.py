@@ -113,6 +113,9 @@ class _SyncHarness:
             'for a in "$@"; do case "$a" in scripts/*.py) S="$a" ;; esac; done\n'
             'N=$(basename "${S:-none}" .py)\n'
             'echo "$N ${SYNC_ROUND_ID:-}" >> round_ids\n'
+            'if [ "$N" = r2_inbox ] && [ "${4:-}" = pull ]; then\n'
+            f'  cat "{self.delta_file}" > "$6"\n'
+            'fi\n'
             f'if [ "$N" = sync_new_reports ]; then cat "{self.hashes_file}" > data/.sync_last_hashes; fi\n'
             f'if [ "$N" = sync_new_reports ] && [ -s "{self.stats_file}" ]; then '
             f'cat "{self.stats_file}" > data/.sync_last_stats; fi\n'
@@ -187,6 +190,48 @@ class _SyncHarness:
 
     def close(self):
         self.tmp.cleanup()
+
+
+class InboxFailureTests(unittest.TestCase):
+    def setUp(self):
+        self.h = _SyncHarness()
+        self.addCleanup(self.h.close)
+
+    def test_push_failure_keeps_replay_delta_and_continues_import(self):
+        self.h.set_rc(r2_inbox=1)
+        p = self.h.run(SYNC_SOURCE="nas", SYNC_INBOX_PUSH="1")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        retained = list((self.h.root / "data").glob("inbox_delta_retained_*.txt"))
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(retained[0].read_text(encoding="utf-8"), "".join(self.h.delta))
+        self.assertEqual(list((self.h.root / "data").glob("sync_delta_*.txt")), [])
+        self.assertIn(f"push --delta data/{retained[0].name}", p.stdout)
+        self.assertIn("匯入結束 rc=0", p.stdout)
+        self.assertFalse(self.h.heartbeat.exists())
+        failures = (self.h.root / "data" / "unit_failures.log").read_text(encoding="utf-8")
+        self.assertIn("STAGE=r2_inbox(push)  RC=1", failures)
+        self.assertIn(retained[0].name, failures)
+
+    def test_partial_pull_continues_import_and_suppresses_heartbeat(self):
+        self.h.set_rc(r2_inbox=1)
+        p = self.h.run(SYNC_SOURCE="r2-inbox", SYNC_INBOX_PUSH="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("匯入結束 rc=0", p.stdout)
+        self.assertFalse(self.h.heartbeat.exists())
+        failures = (self.h.root / "data" / "unit_failures.log").read_text(encoding="utf-8")
+        self.assertIn("STAGE=r2_inbox(pull)  RC=1", failures)
+
+    def test_pull_failure_without_delta_stops_before_import(self):
+        self.h._fake("uv", "exit 1\n")
+        p = self.h.run(SYNC_SOURCE="r2-inbox", SYNC_INBOX_PUSH="0")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertNotIn("匯入結束", p.stdout)
+        self.assertFalse(self.h.heartbeat.exists())
+
+    def test_successful_inbox_pull_updates_heartbeat(self):
+        p = self.h.run(SYNC_SOURCE="r2-inbox", SYNC_INBOX_PUSH="0")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertTrue(self.h.heartbeat.exists())
 
 
 class HeartbeatWriteTests(unittest.TestCase):

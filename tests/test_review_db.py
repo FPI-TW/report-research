@@ -114,6 +114,42 @@ class ReviewQueueDbTests(unittest.TestCase):
         # 單題對話沒有 conversation_id，回退到自己的 id——前端要靠它連回 /ask?c=。
         self.assertEqual(low.conversation_id, low.qa_id)
 
+    def test_reviewer_and_asker_resolve_to_usernames(self):
+        """處理人與提問者以純量子查詢補帳號名；舊資料（NULL）是 None，不是整列消失。"""
+        asker, reviewer = uuid.uuid4(), uuid.uuid4()
+        owned, legacy = uuid.uuid4(), uuid.uuid4()
+        suffix = uuid.uuid4().hex[:8]
+
+        async def fn(session):
+            for uid, name in ((asker, f"asker_{suffix}"), (reviewer, f"rev_{suffix}")):
+                await session.execute(
+                    text("INSERT INTO research.app_user (id, username, password_hash) VALUES (:id, :u, 'x')"),
+                    {"id": uid, "u": name},
+                )
+            for qid in (owned, legacy):
+                await session.execute(_INSERT_QA, {
+                    "id": qid, "q": "誰問的", "active": True, "stopped": False, "feedback": "dislike",
+                    "evaluation": None, "age": 1,
+                })
+            await session.execute(
+                text("UPDATE research.qa_log SET user_id = :u WHERE id = :id"), {"u": asker, "id": owned},
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO research.review_state (kind, subject_id, status, reviewer_user_id) "
+                    "VALUES ('feedback', :id, 'resolved', :r)"
+                ),
+                {"id": owned, "r": reviewer},
+            )
+            _total, items = await review._fetch(session, "feedback", limit=200, offset=0, days=30, status="all")
+            return {i.qa_id: i for i in items if i.qa_id in (str(owned), str(legacy))}
+
+        got = self._run(fn)
+        self.assertEqual(got[str(owned)].asked_by, f"asker_{suffix}")
+        self.assertEqual(got[str(owned)].reviewer, f"rev_{suffix}")
+        self.assertIsNone(got[str(legacy)].asked_by)
+        self.assertIsNone(got[str(legacy)].reviewer)
+
     def test_extraction_query_runs_and_only_returns_flagged_reports(self):
         async def fn(session):
             total, items = await review._fetch(session, "extraction", limit=5, offset=0, days=30)

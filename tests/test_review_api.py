@@ -60,10 +60,11 @@ def _authed() -> TestClient:
 
 
 _TS = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
+# 欄位序：…, status, note, verification, reviewed_at, reviewer[, asked_by]（問答類才有 asked_by）
 _QA_ROW = ("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
-           "台積電目標價多少", _TS, 0.208, None, "claude-haiku-4-5", None, None, None, None)
+           "台積電目標價多少", _TS, 0.208, None, "claude-haiku-4-5", None, None, None, None, None, "alice")
 _RR_ROW = ("33333333-3333-4333-8333-333333333333", "h" * 64, "a.pdf", "標題", "kgi",
-           date(2026, 9, 1), 0.41, {"garbled_ratio": 0.05}, [2, 7], None, None, None, None)
+           date(2026, 9, 1), 0.41, {"garbled_ratio": 0.05}, [2, 7], None, None, None, None, None)
 
 
 class ReviewQueueTests(unittest.TestCase):
@@ -169,7 +170,8 @@ class ReviewQueueTests(unittest.TestCase):
             self.assertEqual(r.status_code, 422, qs)
 
     def test_review_state_update_and_reopen(self):
-        session = self._use([True, _TS, True, _TS])
+        # 每次 PUT：存在檢查、upsert、稽核三條
+        session = self._use([True, _TS, None, True, _TS, None])
         path = f"/api/review/feedback/{_QA_ROW[0]}"
         r = _authed().put(path, json={"status": "resolved", "note": " 已重新查核 ", "verification": "passed"})
         self.assertEqual(r.status_code, 200)
@@ -181,7 +183,27 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(reopened.status_code, 200)
         self.assertEqual((reopened.json()["status"], reopened.json()["verification"]), ("open", "failed"))
         self.assertEqual(session.commits, 2)
-        self.assertEqual(session.calls[3][1]["status"], "open")
+        self.assertEqual(session.calls[4][1]["status"], "open")
+
+    def test_review_update_records_reviewer_and_audit(self):
+        from fake_accounts import _default_user_id
+
+        session = self._use([True, _TS, None])
+        r = _authed().put(f"/api/review/faithfulness/{_QA_ROW[0]}",
+                          json={"status": "dismissed", "note": "誤判", "verification": "passed"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["reviewer"], "tester")
+        upsert_sql, upsert_params = session.calls[1]
+        self.assertIn("reviewer_user_id = EXCLUDED.reviewer_user_id", upsert_sql)
+        self.assertEqual(upsert_params["reviewer"], _default_user_id())
+        audit_sql, audit_params = session.calls[2]
+        self.assertIn("INSERT INTO research.admin_audit_log", audit_sql)
+        self.assertEqual(audit_params["action"], "review.update")
+        self.assertEqual(audit_params["actor"], _default_user_id())
+        self.assertEqual(audit_params["tid"], _QA_ROW[0])
+        # 稽核留「誰在何時改成什麼」，不留註記全文
+        self.assertNotIn("誤判", audit_params["detail"])
+        self.assertIn('"kind": "faithfulness"', audit_params["detail"])
 
     def test_review_update_rejects_unknown_subject_and_bad_values(self):
         path = f"/api/review/feedback/{_QA_ROW[0]}"
@@ -192,15 +214,17 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(session.commits, 0)
 
     def test_status_filter_is_applied_to_count_and_page(self):
-        session = self._use([1, [_QA_ROW[:7] + ("resolved", "查過", "passed", _TS)]])
+        session = self._use([1, [_QA_ROW[:7] + ("resolved", "查過", "passed", _TS, "root", None)]])
         body = _authed().get("/api/review/queue?kind=faithfulness&status=resolved").json()
         self.assertEqual(body["items"][0]["review_status"], "resolved")
         self.assertEqual(body["items"][0]["verification"], "passed")
+        self.assertEqual(body["items"][0]["reviewer"], "root")
+        self.assertIsNone(body["items"][0]["asked_by"])  # 共用帳號時期的舊提問
         self.assertIn("COALESCE(rv.status, 'open') = :review_status", session.calls[0][0])
         self.assertIn("COALESCE(rv.status, 'open') = :review_status", session.calls[1][0])
 
     def test_extraction_status_filter_and_saved_state(self):
-        session = self._use([1, [_RR_ROW[:9] + ("dismissed", "版面已確認", "passed", _TS)]])
+        session = self._use([1, [_RR_ROW[:9] + ("dismissed", "版面已確認", "passed", _TS, None)]])
         body = _authed().get("/api/review/queue?kind=extraction&status=dismissed").json()
         self.assertEqual(body["items"][0]["review_status"], "dismissed")
         self.assertEqual(body["items"][0]["review_note"], "版面已確認")

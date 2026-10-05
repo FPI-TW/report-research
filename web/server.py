@@ -45,6 +45,7 @@ from web import (
     deps,  # noqa: E402
 )
 from web.request_log import RequestLogMiddleware  # noqa: E402
+from web.routers import admin as admin_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
@@ -333,6 +334,9 @@ app.include_router(qa_history_routes.router)
 
 # 待複核佇列（忠實度低分／倒讚／抽取 needs_review）：零 LLM；PUT 只寫 review_state，不改品質訊號
 app.include_router(review_routes.router)
+
+# 管理後台（/api/admin/*：帳號管理與稽核）。與待複核同樣整組限管理員（router 層 require_admin）
+app.include_router(admin_routes.router)
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

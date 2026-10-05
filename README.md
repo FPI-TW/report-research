@@ -140,8 +140,14 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/brief/latest` | — | `{status: ready|pending, brief, available_dates}` | 無簡報回 200 `pending` 不是 404 |
 | GET | `/api/brief/dates` | `limit`（1–120，30） | `{"dates": [...]}` | |
 | GET | `/api/brief/{brief_date}` | — | 同 latest | 該日無簡報 404 |
-| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`status`（`open`／`resolved`／`dismissed`／`all`，預設 `open`）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 忠實度低分（只列現行 judge）、倒讚與抽取 `needs_review` 的佇列；`days` 只作用於前兩種。每筆帶 `review_status`、`review_note`、`verification`、`reviewed_at`；未處理的列視為 `open`。問答另帶 `judge_model`，抽取另帶以現行門檻重算的 `review_reasons`。原始品質訊號不因處理狀態改變 |
-| PUT | `/api/review/{kind}/{subject_id}` | `kind` 同上；`subject_id` 為 UUID；JSON `status`（必填：`open`／`resolved`／`dismissed`）、`note`（最多 1000 字）、`verification`（`untested`／`passed`／`failed`） | `{kind, subject_id, status, note, verification, updated_at}` | 記錄人工處理結果；送 `open` 可重新打開。驗證結果由人填寫，不會重跑評測或抽取；共用帳號不記處理人。不存在的項目回 404 |
+| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`status`（`open`／`resolved`／`dismissed`／`all`，預設 `open`）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 限管理員。忠實度低分（只列現行 judge）、倒讚與抽取 `needs_review` 的佇列；`days` 只作用於前兩種。每筆帶 `review_status`、`review_note`、`verification`、`reviewed_at`、`reviewer`（最後處理人帳號，舊資料為 null）；未處理的列視為 `open`。問答另帶 `judge_model` 與 `asked_by`（提問者帳號，個別帳號上線前的共用歷史為 null），抽取另帶以現行門檻重算的 `review_reasons`。原始品質訊號不因處理狀態改變 |
+| PUT | `/api/review/{kind}/{subject_id}` | `kind` 同上；`subject_id` 為 UUID；JSON `status`（必填：`open`／`resolved`／`dismissed`）、`note`（最多 1000 字）、`verification`（`untested`／`passed`／`failed`） | `{kind, subject_id, status, note, verification, updated_at, reviewer}` | 記錄人工處理結果；送 `open` 可重新打開。限管理員。驗證結果由人填寫，不會重跑評測或抽取；記下處理人（`reviewer_user_id`）並寫一列 `admin_audit_log`（`review.update`，不含註記全文）。不存在的項目回 404 |
+| GET | `/api/admin/users` | — | `{items: [{id, username, role, enabled, created_at, updated_at, password_changed_at, last_login_at, last_seen_at, active_sessions}]}` | 限管理員。不含任何密碼衍生值 |
+| POST | `/api/admin/users` | JSON `username`（2–64 字元，文字、數字與 `. _ @ -`，不分大小寫唯一）、`password`（10–256 字元、前後不可空白）、`role`（`admin`／`user`，預設 `user`） | 201 帳號一列 | 限管理員。400 輸入不合法、409 帳號已存在 |
+| PATCH | `/api/admin/users/{user_id}` | JSON `role`、`enabled`（至少一個） | 帳號一列 | 限管理員。停用時撤銷該帳號所有 session；409：最後一位啟用中的管理員不能停用或降級、不能停用自己或拿掉自己的管理員權限；404 帳號不存在 |
+| POST | `/api/admin/users/{user_id}/password` | JSON `password` | 帳號一列 | 限管理員。重設密碼並撤銷該帳號所有 session |
+| POST | `/api/admin/users/{user_id}/logout` | — | `{revoked}` | 限管理員。強制登出（撤銷所有 session，帳號仍可重新登入） |
+| GET | `/api/admin/audit` | `limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{id, actor_user_id, actor_username, action, target_type, target_id, detail, created_at}]}` | 限管理員。新的在前；`actor_user_id` 為 null 表示 CLI（`scripts/create_admin.py`）。`action`：`user.create`、`user.set_role`、`user.enable`、`user.disable`、`user.reset_password`、`user.force_logout`、`review.update` |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 

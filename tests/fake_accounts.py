@@ -281,3 +281,13 @@ def session_cookies(username: str = "tester") -> dict[str, str]:
         raise KeyError(f"假帳號庫裡沒有 {username}")
     sid = asyncio.run(store.create_session(row.id, max_age_seconds=auth.MAX_ABSOLUTE_TTL))
     return {auth.COOKIE_NAME: auth.issue_token(int(time.time()), session_id=sid)}
+
+
+def _default_user_id(username: str = "tester") -> str:
+    """目前裝上的假帳號庫裡某帳號的 id（預設 conftest 那位 tester）。"""
+    from web import deps
+
+    row = deps.accounts._by_name(username)
+    if row is None:
+        raise KeyError(username)
+    return row.id

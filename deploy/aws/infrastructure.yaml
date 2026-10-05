@@ -1,0 +1,593 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Staging EC2 and RDS PostgreSQL foundation — isolates the database in private
+  subnets and assigns a stable Elastic IP to an SSM-managed host that accepts
+  HTTPS from Cloudflare edges only
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@2
+  com.aws.cloudformation.Context:
+    arch: Cloudflare proxy -> EIP -> public EC2 (443 from Cloudflare only, admin via SSM) -> private Single-AZ RDS; 2 AZ subnet layout; no NAT
+    must:
+      - Deploy only in the explicitly selected account and ap-southeast-1
+      - No app checkout, app service, schema migration, or data migration in this stack
+      - RDS stays private; TCP/5432 source is EC2 SG only
+    ref:
+      - at: deploy/aws/README.md
+        has: provisioning, validation, and lifecycle runbook
+        scope: stack
+
+Parameters:
+  Environment:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - staging
+    Description: Cost allocation and environment tag.
+  Ec2InstanceType:
+    Type: String
+    Default: c7i.xlarge
+    AllowedValues:
+      - c7i.xlarge
+      - c7i.2xlarge
+    Description: EC2 size; c7i.2xlarge is the documented scale-up path.
+  Ec2SubnetChoice:
+    Type: String
+    Default: a
+    AllowedValues:
+      - a
+      - b
+    Description: Selects the first or second stack AZ for EC2 placement.
+  DbInstanceClass:
+    Type: String
+    Default: db.m7g.large
+    AllowedValues:
+      - db.m7g.large
+      - db.m7g.xlarge
+    Description: RDS size; db.m7g.xlarge is the documented scale-up path.
+  DbEngineVersion:
+    Type: String
+    AllowedPattern: '^16\.[0-9]+$'
+    ConstraintDescription: Supply an exact orderable PostgreSQL 16 minor such as 16.15.
+    Description: Exact PostgreSQL 16 engine version verified as orderable in ap-southeast-1.
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Canonical Ubuntu 24.04 LTS amd64 AMI resolved in the deployment Region.
+
+Conditions:
+  UseSecondAzForEc2: !Equals [!Ref Ec2SubnetChoice, b]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: dedicated boundary avoids inheriting routes and SG changes from unrelated workloads
+        must:
+          - CIDR stays non-overlapping with future VPN or peering networks
+        mutable: review-required
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-vpc' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-igw' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: outbound path for the SSM-managed host; public IP does not imply inbound access
+        must:
+          - EC2 SG has zero ingress
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.20.0.0/24
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-public-a' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: alternate EC2 AZ for capacity fallback without redesigning the VPC
+        must:
+          - EC2 SG has zero ingress
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.20.1.0/24
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-public-b' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  PrivateDbSubnetA:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: one half of the mandatory cross-AZ RDS subnet group; no internet route
+        must:
+          - MapPublicIpOnLaunch remains false
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.20.10.0/24
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-db-a' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  PrivateDbSubnetB:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: second AZ required by the RDS subnet group while the DB remains Single-AZ
+        must:
+          - MapPublicIpOnLaunch remains false
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.20.11.0/24
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-db-b' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-public' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetA
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetB
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: gives DB subnets only the VPC-local route; NAT intentionally omitted for cost and isolation
+        must:
+          - Do not add 0.0.0.0/0 without a separate network review
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-private-db' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  PrivateDbSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateDbSubnetA
+
+  PrivateDbSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateDbSubnetB
+
+  CloudflareOriginPrefixList:
+    Type: AWS::EC2::PrefixList
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: research.tingfong.com is a proxied (orange-cloud) A record; only Cloudflare edges may reach the origin
+        must:
+          - Entries mirror https://www.cloudflare.com/ips-v4 exactly (checked 2026-10-02)
+          - IPv4 only; the VPC has no IPv6 and the hostname has no origin AAAA record
+        mutable: change-with-constraints
+    Properties:
+      PrefixListName: !Sub '${AWS::StackName}-cloudflare-ipv4'
+      AddressFamily: IPv4
+      # An SG rule that references a prefix list consumes MaxEntries rules from the SG quota.
+      MaxEntries: 20
+      Entries:
+        - { Cidr: 173.245.48.0/20, Description: Cloudflare }
+        - { Cidr: 103.21.244.0/22, Description: Cloudflare }
+        - { Cidr: 103.22.200.0/22, Description: Cloudflare }
+        - { Cidr: 103.31.4.0/22, Description: Cloudflare }
+        - { Cidr: 141.101.64.0/18, Description: Cloudflare }
+        - { Cidr: 108.162.192.0/18, Description: Cloudflare }
+        - { Cidr: 190.93.240.0/20, Description: Cloudflare }
+        - { Cidr: 188.114.96.0/20, Description: Cloudflare }
+        - { Cidr: 197.234.240.0/22, Description: Cloudflare }
+        - { Cidr: 198.41.128.0/17, Description: Cloudflare }
+        - { Cidr: 162.158.0.0/15, Description: Cloudflare }
+        - { Cidr: 104.16.0.0/13, Description: Cloudflare }
+        - { Cidr: 104.24.0.0/14, Description: Cloudflare }
+        - { Cidr: 172.64.0.0/13, Description: Cloudflare }
+        - { Cidr: 131.0.72.0/22, Description: Cloudflare }
+      Tags:
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  Ec2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: SSM-managed host; the only internet-initiated path is HTTPS from Cloudflare edges to the origin nginx
+        must:
+          - Ingress is exactly TCP/443 from CloudflareOriginPrefixList
+          - Never add SSH, TCP/80, TCP/8097, or 0.0.0.0/0 ingress
+          - Keep GroupDescription unchanged; changing it replaces the SG (and its RDS reference)
+        mutable: change-with-constraints
+    Properties:
+      GroupDescription: Ingress-free EC2 security group; outbound supports SSM, packages, and RDS
+      SecurityGroupIngress:
+        - Description: HTTPS from Cloudflare edges to origin nginx
+          FromPort: 443
+          IpProtocol: tcp
+          SourcePrefixListId: !Ref CloudflareOriginPrefixList
+          ToPort: 443
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Outbound HTTPS, package repositories, DNS, and stateful DB responses
+          IpProtocol: '-1'
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-ec2' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+      VpcId: !Ref Vpc
+
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: admits PostgreSQL only from the dedicated EC2 SG; CIDR rules rejected to limit blast radius
+        must:
+          - TCP/5432 source remains Ec2SecurityGroup only
+          - Never add public CIDR ingress
+        mutable: change-with-constraints
+    Properties:
+      GroupDescription: PostgreSQL from the stack EC2 security group only
+      SecurityGroupIngress:
+        - Description: PostgreSQL from SSM-managed EC2 host
+          FromPort: 5432
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref Ec2SecurityGroup
+          ToPort: 5432
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-rds' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+      VpcId: !Ref Vpc
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: RDS requires subnets in >=2 AZ even though this cost-first instance is Single-AZ
+        must:
+          - Include private subnets only
+    Properties:
+      DBSubnetGroupDescription: Private cross-AZ subnet group for report-research staging
+      DBSubnetGroupName: !Sub '${AWS::StackName}-db'
+      SubnetIds:
+        - !Ref PrivateDbSubnetA
+        - !Ref PrivateDbSubnetB
+      Tags:
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  DbParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: makes the PostgreSQL 16 TLS requirement explicit and drift-detectable
+        must:
+          - rds.force_ssl remains 1
+    Properties:
+      Description: PostgreSQL 16 parameters with TLS required
+      Family: postgres16
+      Parameters:
+        rds.force_ssl: '1'
+      Tags:
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: managed PostgreSQL foundation sized from measured workload; Single-AZ chosen to cap staging cost
+        must:
+          - DeletionProtection true; retain on delete and replacement
+          - Private only; encrypted storage; managed master secret
+          - No application schema or data migration in this stack
+        mutable: review-required
+        mutability:
+          AllocatedStorage: change-with-constraints
+          MaxAllocatedStorage: change-with-constraints
+          DBInstanceClass: change-with-constraints
+          MultiAZ: review-required
+    Properties:
+      AllocatedStorage: '100'
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      # 7 天：staging 自己產生的 qa_log、review_state 等表無法從語料重建（2026-10-02 由 1 天調高）。
+      # 非零 → 非零的調整不中斷服務；改成 0 會停用自動備份並刪除既有的自動快照。
+      BackupRetentionPeriod: 7
+      CopyTagsToSnapshot: true
+      DBInstanceClass: !Ref DbInstanceClass
+      DBInstanceIdentifier: !Sub '${AWS::StackName}-postgres'
+      DBName: research
+      DBParameterGroupName: !Ref DbParameterGroup
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      DeletionProtection: true
+      EnableIAMDatabaseAuthentication: false
+      EnablePerformanceInsights: false
+      Engine: postgres
+      EngineVersion: !Ref DbEngineVersion
+      ManageMasterUserPassword: true
+      MasterUsername: report_admin
+      MaxAllocatedStorage: 500
+      MultiAZ: false
+      NetworkType: IPV4
+      Port: 5432
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      StorageType: gp3
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-postgres' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: created_by, Value: rds-oss-skill }
+        - { Key: generation_model, Value: codex }
+      VPCSecurityGroups:
+        - !Ref RdsSecurityGroup
+
+  Ec2Role:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: grants SSM management plus read of exactly the RDS-managed master secret for connectivity validation
+        must:
+          - Secret access stays scoped to Database.MasterUserSecret.SecretArn
+          - Do not add application permissions in this infrastructure-only round
+        mutable: change-with-constraints
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadManagedRdsMasterSecret
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadOnlyTheManagedDatabaseSecret
+                Effect: Allow
+                Action:
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:GetSecretValue
+                Resource: !GetAtt Database.MasterUserSecret.SecretArn
+      Tags:
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref Ec2Role
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - VpcGatewayAttachment
+      - Database
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: x86 CPU host selected for reranker; public IP supplies outbound SSM/package access without NAT
+        must:
+          - No key pair and no inbound SG rules
+          - IMDSv2 required; encrypted gp3 root
+          - Bootstrap installs infra validation tools only, never the application
+        mutable: change-with-constraints
+        mutability:
+          InstanceType: change-with-constraints
+          ImageId: review-required
+    Properties:
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 100
+            VolumeType: gp3
+      EbsOptimized: true
+      IamInstanceProfile: !Ref Ec2InstanceProfile
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref Ec2InstanceType
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpProtocolIpv6: disabled
+        HttpPutResponseHopLimit: 2
+        HttpTokens: required
+        InstanceMetadataTags: disabled
+      Monitoring: false
+      PropagateTagsToVolumeOnCreation: true
+      SecurityGroupIds:
+        - !Ref Ec2SecurityGroup
+      SourceDestCheck: true
+      SubnetId: !If [UseSecondAzForEc2, !Ref PublicSubnetB, !Ref PublicSubnetA]
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-ec2' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+      Tenancy: default
+      UserData:
+        Fn::Base64: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          updated=0
+          for attempt in 1 2 3; do
+            if apt-get update; then
+              updated=1
+              break
+            fi
+            sleep 15
+          done
+          test "$updated" -eq 1
+          apt-get install -y ca-certificates curl jq postgresql-client unzip
+
+          aws_cli_installer="$(mktemp -d /tmp/awscliv2.XXXXXX)"
+          trap 'rm -rf "$aws_cli_installer"' EXIT
+          curl --fail --silent --show-error --location \
+            https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip \
+            --output "$aws_cli_installer/awscliv2.zip"
+          unzip -q "$aws_cli_installer/awscliv2.zip" -d "$aws_cli_installer"
+          "$aws_cli_installer/aws/install" --update
+
+          install -d -m 0755 /opt/report-research-infra
+          curl --fail --silent --show-error --location \
+            https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+            --output /opt/report-research-infra/rds-global-bundle.pem
+          chmod 0644 /opt/report-research-infra/rds-global-bundle.pem
+
+          if systemctl list-unit-files snap.amazon-ssm-agent.amazon-ssm-agent.service \
+              --no-legend 2>/dev/null | grep -q amazon-ssm-agent; then
+            systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+          elif systemctl list-unit-files amazon-ssm-agent.service \
+              --no-legend 2>/dev/null | grep -q amazon-ssm-agent; then
+            systemctl enable --now amazon-ssm-agent.service
+          else
+            echo "amazon-ssm-agent service is missing" >&2
+            exit 1
+          fi
+
+          date --iso-8601=seconds > /opt/report-research-infra/bootstrap-complete
+
+  Ec2ElasticIp:
+    Type: AWS::EC2::EIP
+    DependsOn: VpcGatewayAttachment
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: stable public IPv4 target for external DNS while preserving SSM-only administration
+        must:
+          - Domain remains vpc
+          - Do not treat allocation as authorization to add public ingress
+        mutable: review-required
+    Properties:
+      Domain: vpc
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-ec2-eip' }
+        - { Key: Project, Value: report-research }
+        - { Key: Environment, Value: !Ref Environment }
+
+  Ec2ElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: attaches the stable address without replacing or otherwise modifying the EC2 instance
+        must:
+          - Association target remains Ec2Instance
+          - AllocationId remains Ec2ElasticIp.AllocationId
+        mutable: change-with-constraints
+    Properties:
+      AllocationId: !GetAtt Ec2ElasticIp.AllocationId
+      InstanceId: !Ref Ec2Instance
+
+Outputs:
+  VpcId:
+    Description: Dedicated staging VPC ID.
+    Value: !Ref Vpc
+  PublicSubnetAId:
+    Description: First public subnet ID.
+    Value: !Ref PublicSubnetA
+  PublicSubnetBId:
+    Description: Second public subnet ID.
+    Value: !Ref PublicSubnetB
+  PrivateDbSubnetAId:
+    Description: First private RDS subnet ID.
+    Value: !Ref PrivateDbSubnetA
+  PrivateDbSubnetBId:
+    Description: Second private RDS subnet ID.
+    Value: !Ref PrivateDbSubnetB
+  Ec2SecurityGroupId:
+    Description: EC2 security group ID; ingress is TCP/443 from the Cloudflare prefix list only.
+    Value: !Ref Ec2SecurityGroup
+  CloudflareOriginPrefixListId:
+    Description: Managed prefix list of Cloudflare IPv4 ranges admitted to TCP/443.
+    Value: !Ref CloudflareOriginPrefixList
+  RdsSecurityGroupId:
+    Description: RDS security group ID allowing PostgreSQL only from EC2.
+    Value: !Ref RdsSecurityGroup
+  Ec2InstanceId:
+    Description: SSM-managed EC2 instance ID.
+    Value: !Ref Ec2Instance
+  Ec2ElasticIpAddress:
+    Description: Stable public IPv4 address for the EC2 instance and external DNS A record.
+    Value: !Ref Ec2ElasticIp
+  Ec2ElasticIpAllocationId:
+    Description: Elastic IP allocation ID managed by this stack.
+    Value: !GetAtt Ec2ElasticIp.AllocationId
+  RdsEndpointAddress:
+    Description: Private RDS endpoint hostname.
+    Value: !GetAtt Database.Endpoint.Address
+  RdsEndpointPort:
+    Description: PostgreSQL endpoint port.
+    Value: !GetAtt Database.Endpoint.Port
+  RdsMasterSecretArn:
+    Description: ARN only; retrieve the secret value through authorized AWS APIs.
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+  RdsDbInstanceIdentifier:
+    Description: RDS DB instance identifier.
+    Value: !Ref Database

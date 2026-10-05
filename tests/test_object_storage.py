@@ -104,6 +104,47 @@ class ObjectKeyTests(unittest.TestCase):
         with self.assertRaises(storage_module.ObjectStorageError):
             storage.ping()
 
+    def test_list_objects_follows_pagination_and_returns_sizes(self):
+        """R2 inbox 以大小比對決定要不要拉：翻頁要跟完，大小要轉成 int。"""
+        pages = [
+            {"Contents": [{"Key": "inbox/a.pdf", "Size": 3}], "IsTruncated": True, "NextContinuationToken": "t"},
+            {"Contents": [{"Key": "inbox/b.pdf", "Size": "5"}], "IsTruncated": False},
+        ]
+        calls = []
+
+        class _Client:
+            def list_objects_v2(self, **kwargs):
+                calls.append(kwargs)
+                return pages[len(calls) - 1]
+
+        storage = storage_module.ObjectStorage()
+        storage.mode = "r2"
+        storage._client = _Client()
+        storage.settings = SimpleNamespace(r2_bucket="bucket")
+        self.assertEqual(storage.list_objects("inbox/"), [("inbox/a.pdf", 3), ("inbox/b.pdf", 5)])
+        self.assertEqual(calls[1]["ContinuationToken"], "t")
+
+    def test_transport_upload_carries_metadata_and_is_not_create_only(self):
+        """inbox 是傳輸用的副本：可覆寫（不帶 IfNoneMatch），metadata 帶 mtime 給拉的那端。"""
+        captured = {}
+
+        class _Client:
+            def upload_file(self, **kwargs):
+                captured.update(kwargs)
+
+        storage = storage_module.ObjectStorage()
+        storage.mode = "r2"
+        storage._client = _Client()
+        storage.settings = SimpleNamespace(r2_bucket="bucket")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "報告.pdf"
+            path.write_bytes(b"%PDF")
+            storage.put_transport_file(path, "inbox/報告.pdf", metadata={"mtime": "1700000000"})
+        self.assertEqual(captured["Key"], "inbox/報告.pdf")
+        self.assertEqual(captured["ExtraArgs"]["Metadata"], {"mtime": "1700000000"})
+        self.assertEqual(captured["ExtraArgs"]["ContentType"], "application/pdf")
+        self.assertNotIn("IfNoneMatch", captured["ExtraArgs"])
+
     def test_no_such_key_is_confirmed_missing(self):
         class _ClientError(Exception):
             response = {"Error": {"Code": "NoSuchKey"}}

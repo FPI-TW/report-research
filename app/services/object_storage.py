@@ -297,6 +297,38 @@ class ObjectStorage:
             if not continuation:
                 raise ObjectStorageError("R2 inventory pagination missing continuation token")
 
+    def list_objects(self, prefix: str) -> list[tuple[str, int]]:
+        """``(key, size)`` for one prefix; the R2 inbox compares sizes the way rsync --size-only does."""
+        out: list[tuple[str, int]] = []
+        continuation: str | None = None
+        while True:
+            kwargs = {"Bucket": self.settings.r2_bucket, "Prefix": prefix}
+            if continuation:
+                kwargs["ContinuationToken"] = continuation
+            page = self._call("list_objects_v2", **kwargs)
+            out.extend((item["Key"], int(item["Size"])) for item in page.get("Contents", []))
+            if not page.get("IsTruncated"):
+                return out
+            continuation = page.get("NextContinuationToken")
+            if not continuation:
+                raise ObjectStorageError("R2 inventory pagination missing continuation token")
+
+    def put_transport_file(self, path: str | Path, key: str, *, metadata: dict[str, str]) -> None:
+        """Overwritable upload for transport prefixes (``inbox/``) only.
+
+        ``originals/`` must keep going through ``upload_file``: it is create-only and SHA-pinned.
+        A transport object is just a copy in flight, so re-pushing the same path replaces it.
+        """
+        p = Path(path)
+        extra: dict = {"Metadata": metadata}
+        content_type, _ = mimetypes.guess_type(p.name)
+        if content_type:
+            extra["ContentType"] = content_type
+        self._call("upload_file", Filename=str(p), Bucket=self.settings.r2_bucket, Key=key, ExtraArgs=extra)
+
+    def download_to(self, key: str, target: str | Path) -> None:
+        self._call("download_file", Bucket=self.settings.r2_bucket, Key=key, Filename=str(target))
+
     def presign_get(self, key: str, *, filename: str | None = None, inline: bool = False) -> str:
         """Short-lived GET URL.  ``filename`` restores the human name on a cross-origin download.
 

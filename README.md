@@ -1,6 +1,6 @@
 # 廷豐智能研報（report-mark）
 
-券商研報平台：把 `研報自動匯入/` 的 PDF／docx 抽字、以 LLM（DeepSeek）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達與每日簡報。單機部署（WSL2 ＋ Docker Postgres），經 Cloudflare Tunnel 對外，共用帳密登入。GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。
+券商研報平台：把 `研報自動匯入/` 的 PDF／docx 抽字、以 LLM（DeepSeek）標註市場與標的、以 BGE-M3 嵌入 pgvector，提供語意檢索、RAG 問答、研報閱讀頁、券商觀點雷達與每日簡報。單機部署（WSL2 ＋ Docker Postgres），經 Cloudflare Tunnel 對外，個別帳號登入（管理員／一般使用者兩種角色）。GitHub 為 `FPI-TW/report-research`，目錄名沿用 `report-mark`。
 
 ## 目錄
 
@@ -53,7 +53,8 @@
 ```bash
 uv sync                       # Python 3.11+；torch 走 CPU-only index
 make setup                    # 相依 + pgvector 容器（host port 5436）+ 套 db/schema.sql
-cp .env.example .env          # 填 REPORT_MARK_ACCESS_USERNAME / _PASSWORD / _SESSION_SECRET，未設拒絕啟動
+cp .env.example .env          # 填 REPORT_MARK_SESSION_SECRET（未設則每次重啟全員登出）
+uv run python scripts/create_admin.py --username <名稱>   # 第一位管理員（套完 schema 之後）
 
 # 全語料三支（初次建庫；生產增量走 sync 鏈）
 uv run python scripts/extract_all.py
@@ -103,30 +104,31 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 
 ## Web 介面與 API
 
-所有路徑除 `/login`、`/healthz`、`/app/assets/` 外都要登入；`/api/` 未登入回 401，其餘 302 到 `/login`。SSE 端點每 20 秒送一行心跳註解。
+所有路徑除 `/login`、`/healthz`、`/app/assets/` 外都要登入；`/api/` 未登入回 401，其餘 302 到 `/login`。登入是個別帳號（`research.app_user`），每個請求都查 DB 的 session 狀態：帳號停用、強制登出、重設密碼都在下一個請求生效；帳號服務（DB）不可用時回 503 而不是導回登入頁。`/api/review/*` 與 `/api/admin/*` 限管理員（一般使用者回 403）。SSE 端點每 20 秒送一行心跳註解。
 
 | 方法 | 路徑 | 參數 | 回應 | 備註 |
 |---|---|---|---|---|
 | GET | `/healthz` | — | `{"status":"ok"}`；DB 不可用回 503 `{"status":"degraded"}` | 免登入；只探 DB（`SELECT 1`，3 秒逾時）；結果快取 5 秒 |
 | GET | `/healthz/storage` | — | `{"storage":"disabled"\|"unknown"\|"ok"\|"degraded"}`；degraded 回 503 | **只回答本機直連**（對端 loopback、無代理 header、Host 為本機），其餘 404；給 `scripts/check_web_health.sh` 用（退出碼 6） |
 | GET | `/healthz/llm` | — | `{"llm":"disabled"\|"unknown"\|"ok"\|"low"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"}`；後五種回 503，問答主答（`ASK_ANSWER_MODEL`）沒有用到 DeepSeek 時改回 200 並加 `_unused` 後綴。**不回任何金額** | **只回答本機直連**，其餘 404；查 DeepSeek `GET /user/balance`（只看 `LLM_BUDGET_CURRENCY` 那一筆，低於 `LLM_BALANCE_FLOOR` 為 low），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8）。判定細節見 `app/services/llm_health.py` |
-| GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next` | 302／303 | 登入頁免登入；失敗回 `/login?error=1|locked|insecure` |
+| GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next` | 302／303 | 登入頁免登入；帳號不分大小寫。失敗回 `/login?error=1|locked|insecure|disabled|unavailable`（`disabled` 只在密碼正確時出現）。登出只撤銷這一個 session |
+| GET | `/api/me` | — | `{id, username, role}` | 目前登入身分；`role` 為 `admin`／`user`。免登入開發模式回 `{id: null, username: "dev", role: "admin"}` |
 | GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/monitor`、`/app/help` | 舊入口相容 |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
-| GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 與 `/api/progress` 共用 15 秒 DB 快取 |
+| GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 與 `/api/progress` 共用 15 秒 DB 快取；`username` 是目前登入者 |
 | GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 監控頁輪詢；`extraction_log` 缺表時 `extraction` 為 null。`evaluation.qa` 的 `total`／`checked`／`latest` 計所有 judge（覆蓋率語意，換 judge 不會驟降）；分數類 `judge_checked`／`degraded`／`below_min`／`avg_score`／`avg_n`（平均的樣本數，不含 degraded）只計現行 judge（`FAITHFULNESS_MODEL`），另帶 `judge_model`、`judge_since`（窗期內現行 judge 最早一筆的日期）、`other_judge_checked`（其他 judge 的筆數） |
 | GET | `/api/markets` | — | `{"markets": [...]}` | 市場代碼清單 |
 | GET | `/api/reports` | `market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`date_desc`）、`limit`（1–100，50）、`offset` | `{total, offset, items[]}` | 瀏覽（無查詢詞） |
 | GET | `/api/search` | `q`（1–500 必填）、同上篩選、`sort`（`relevance`）、`limit`、`offset`、`passages`（1–6，3） | `{query, market, total, market_facets, lexical_truncated, results[]}` | 混合檢索 ＋ `rank_reports` |
-| POST | `/api/ask` | JSON `question`（≤2000）、`conversation_id`、篩選欄位、`k`（1–20，8）、`regenerate_of`、`edit_of`、`request_id`、`locale`、`web` | SSE：`queued`→`status`→`sources`→`ext_sources`→`token`…→`followups`→`done`；婉拒走 `notice` | 併發上限 3、佇列 20（滿載 429 ＋ `Retry-After: 30`） |
-| POST | `/api/ask/stop` | JSON `question`、`conversation_id`、`partial_answer`、`sources`、`ext_sources`、`stages`、`regenerate_of`、`edit_of`、`request_id` | `{"qa_id"}` | 中止時把部分答案落 `qa_log` |
-| POST | `/api/feedback` | JSON `qa_id`、`value`（`like`／`dislike`／`none`） | `{"ok"}` | |
-| GET | `/api/history` | `limit`（1–200，50） | 最近問答列 | 排除離題婉拒 |
-| DELETE | `/api/history/{qa_id}`；POST `/api/history/{qa_id}/delete` | — | `{"ok"}` | POST 是相容 alias |
-| GET | `/api/qa/{root_qa_id}/versions` | — | 同題所有版本 | 重新生成／編輯後的版本鏈 |
-| GET | `/api/conversations` | `limit`（1–200）、`offset`、`q`（≤200 字） | 對話串清單（裸陣列，無 total） | `q` 比對整串的有效提問（不只標題），`%`／`_` 為字面字元；前端以「回來的筆數等於 limit」判斷有無下一頁 |
-| GET | `/api/conversations/{conversation_id}` | — | 該對話全部輪次（舊→新） | |
-| DELETE | `/api/conversations/{conversation_id}`；POST `/api/conversations/{conversation_id}/delete` | — | `{"ok"}` | 以 `COALESCE(conversation_id, id)` 整批刪 `qa_log` |
+| POST | `/api/ask` | JSON `question`（≤2000）、`conversation_id`、篩選欄位、`k`（1–20，8）、`regenerate_of`、`edit_of`、`request_id`、`locale`、`web` | SSE：`queued`→`status`→`sources`→`ext_sources`→`token`…→`followups`→`done`；婉拒走 `notice` | 併發上限 3、佇列 20（滿載 429 ＋ `Retry-After: 30`）。寫入的擁有者是目前登入者；帶別人的 `conversation_id`／`regenerate_of`／`edit_of`（含共用歷史）在開始串流前回 404，擁有權檢查失敗回 503，`conversation_id` 格式錯誤回 400；找不到的參照照舊當新題／新串 |
+| POST | `/api/ask/stop` | JSON `question`、`conversation_id`、`partial_answer`、`sources`、`ext_sources`、`stages`、`regenerate_of`、`edit_of`、`request_id` | `{"qa_id"}` | 中止時把部分答案落 `qa_log`（擁有者為目前登入者）。參照規則同 `/api/ask`：別人的 `conversation_id`／`regenerate_of`／`edit_of` 回 404、擁有權檢查失敗回 503、格式錯誤 400 |
+| POST | `/api/feedback` | JSON `qa_id`、`value`（`like`／`dislike`／`none`） | `{"ok"}` | 只能評自己的問答；別人的或不存在的回 `{"ok": false}`（兩者看不出差別） |
+| GET | `/api/history` | `limit`（1–200，50） | 最近問答列 | 只回自己的（個別帳號上線前的共用歷史不顯示）；排除離題婉拒 |
+| DELETE | `/api/history/{qa_id}`；POST `/api/history/{qa_id}/delete` | — | `{"ok"}` | POST 是相容 alias；別人的或不存在的回 `{"ok": false}` |
+| GET | `/api/qa/{root_qa_id}/versions` | — | 同題所有版本 | 重新生成／編輯後的版本鏈；看不到任何一列（不存在或別人的）回 404 |
+| GET | `/api/conversations` | `limit`（1–200）、`offset`、`q`（≤200 字） | 對話串清單（裸陣列，無 total） | `q` 比對整串的有效提問（不只標題），`%`／`_` 為字面字元；前端以「回來的筆數等於 limit」判斷有無下一頁；只列自己的對話串 |
+| GET | `/api/conversations/{conversation_id}` | — | 該對話全部輪次（舊→新） | 看不到任何一列（不存在或別人的）回 404；前端遇 404 改當新對話 |
+| DELETE | `/api/conversations/{conversation_id}`；POST `/api/conversations/{conversation_id}/delete` | — | `{"ok"}` | 以 `COALESCE(conversation_id, id)` 整批刪自己的 `qa_log`；別人的或不存在的回 `{"ok": false}` |
 | GET | `/api/report/{report_id}/full` | — | `report_id`、`file_name`、`title`、`market`、`source`、`summary`、`report_date`、`report_type`、`has_file` | 研報原檔詳情（`web/routers/report_file.py`，與已移除的深度研報無關） |
 | GET | `/api/report/{report_id}/file` | — | 原檔（PDF inline）或 302 到 presigned URL | `r2` 模式缺 key 回 503 |
 | GET | `/api/reading/{file_hash}` | — | `ReadingDoc`（metadata ＋ 重點摘錄 ＋ 訊號，不含全文） | `file_hash` 須 64 hex |
@@ -139,8 +141,14 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/brief/latest` | — | `{status: ready|pending, brief, available_dates}` | 無簡報回 200 `pending` 不是 404 |
 | GET | `/api/brief/dates` | `limit`（1–120，30） | `{"dates": [...]}` | |
 | GET | `/api/brief/{brief_date}` | — | 同 latest | 該日無簡報 404 |
-| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`status`（`open`／`resolved`／`dismissed`／`all`，預設 `open`）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 忠實度低分（只列現行 judge）、倒讚與抽取 `needs_review` 的佇列；`days` 只作用於前兩種。每筆帶 `review_status`、`review_note`、`verification`、`reviewed_at`；未處理的列視為 `open`。問答另帶 `judge_model`，抽取另帶以現行門檻重算的 `review_reasons`。原始品質訊號不因處理狀態改變 |
-| PUT | `/api/review/{kind}/{subject_id}` | `kind` 同上；`subject_id` 為 UUID；JSON `status`（必填：`open`／`resolved`／`dismissed`）、`note`（最多 1000 字）、`verification`（`untested`／`passed`／`failed`） | `{kind, subject_id, status, note, verification, updated_at}` | 記錄人工處理結果；送 `open` 可重新打開。驗證結果由人填寫，不會重跑評測或抽取；共用帳號不記處理人。不存在的項目回 404 |
+| GET | `/api/review/queue` | `kind`（`faithfulness`／`feedback`／`extraction`，必填）、`status`（`open`／`resolved`／`dismissed`／`all`，預設 `open`）、`limit`（1–100，20）、`offset`、`days`（1–365，30） | `{kind, total, limit, offset, has_more, next_offset, min_score, items}` | 限管理員。忠實度低分（只列現行 judge）、倒讚與抽取 `needs_review` 的佇列；`days` 只作用於前兩種。每筆帶 `review_status`、`review_note`、`verification`、`reviewed_at`、`reviewer`（最後處理人帳號，舊資料為 null）；未處理的列視為 `open`。問答另帶 `judge_model` 與 `asked_by`（提問者帳號，個別帳號上線前的共用歷史為 null），抽取另帶以現行門檻重算的 `review_reasons`。原始品質訊號不因處理狀態改變 |
+| PUT | `/api/review/{kind}/{subject_id}` | `kind` 同上；`subject_id` 為 UUID；JSON `status`（必填：`open`／`resolved`／`dismissed`）、`note`（最多 1000 字）、`verification`（`untested`／`passed`／`failed`） | `{kind, subject_id, status, note, verification, updated_at, reviewer}` | 記錄人工處理結果；送 `open` 可重新打開。限管理員。驗證結果由人填寫，不會重跑評測或抽取；記下處理人（`reviewer_user_id`）並寫一列 `admin_audit_log`（`review.update`，不含註記全文）。不存在的項目回 404 |
+| GET | `/api/admin/users` | — | `{items: [{id, username, role, enabled, created_at, updated_at, password_changed_at, last_login_at, last_seen_at, active_sessions}]}` | 限管理員。不含任何密碼衍生值 |
+| POST | `/api/admin/users` | JSON `username`（2–64 字元，文字、數字與 `. _ @ -`，不分大小寫唯一）、`password`（10–256 字元、前後不可空白）、`role`（`admin`／`user`，預設 `user`） | 201 帳號一列 | 限管理員。400 輸入不合法、409 帳號已存在 |
+| PATCH | `/api/admin/users/{user_id}` | JSON `role`、`enabled`（至少一個） | 帳號一列 | 限管理員。停用時撤銷該帳號所有 session；409：最後一位啟用中的管理員不能停用或降級、不能停用自己或拿掉自己的管理員權限；404 帳號不存在 |
+| POST | `/api/admin/users/{user_id}/password` | JSON `password` | 帳號一列 | 限管理員。重設密碼並撤銷該帳號所有 session |
+| POST | `/api/admin/users/{user_id}/logout` | — | `{revoked}` | 限管理員。強制登出（撤銷所有 session，帳號仍可重新登入） |
+| GET | `/api/admin/audit` | `limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{id, actor_user_id, actor_username, action, target_type, target_id, detail, created_at}]}` | 限管理員。新的在前；`actor_user_id` 為 null 表示 CLI（`scripts/create_admin.py`）。`action`：`user.create`、`user.set_role`、`user.enable`、`user.disable`、`user.reset_password`、`user.force_logout`、`review.update` |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 
@@ -150,7 +158,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 
 | 變數 | 預設 | 說明 |
 |---|---|---|
-| `REPORT_MARK_ACCESS_USERNAME`、`REPORT_MARK_ACCESS_PASSWORD` | 無 | 共用帳密；未設拒絕啟動（fail-closed）。換密碼全員登出 |
+| `REPORT_MARK_BENCH_USERNAME`、`REPORT_MARK_BENCH_PASSWORD` | 無 | 只給 `scripts/bench_load.py` 登入用（建議開一個壓測專用的一般帳號）。帳號本身在 `research.app_user`，由 `scripts/create_admin.py` 或管理頁建立；舊的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 已不再讀取，還留著的話啟動時記 warning |
 | `REPORT_MARK_SESSION_SECRET` | 隨機 | HMAC 金鑰；未設則每次重啟登出所有人 |
 | `REPORT_MARK_SESSION_EPOCH` | 空 | 改任何新值即全員登出 |
 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` | `127.0.0.1/32,::1/128` | 可信代理網段；走 Cloudflare Tunnel 時必填（WSL 的 docker 網段） |
@@ -224,13 +232,15 @@ uv run python eval/observe_switch.py --switch-at <切換時點> --dry-run   # De
 
 Schema 由 `make schema` 套 `db/schema.sql`（只 `CREATE IF NOT EXISTS`，冪等），沒有 migration 工具，刪表要另給腳本。部署待複核處理前須先跑 `make schema` 建 `review_state`，再啟動新 API 與備份。深度研報生成已於 2026-09 移除，既有庫要由人手動執行 `docker exec -i report-mark-postgres psql -U postgres -d research < db/drop_deep_report_tables.sql` 清掉 `report_doc`／`report_run`／`report_section`／`report_rendition` 四張表（執行前確認 `make db-audit` 全綠；備份從未涵蓋這四張，不必先備）。同時：R2 bucket 裡舊的 `generated/` 生成 PDF 不再由對帳工具管，可手動清理；環境檔裡的 `REPORT_FAITHFULNESS_MIN` 舊名仍可讀，新名是 `FAITHFULNESS_MIN`。
 
-本次問答與待複核整合上線時，先確認最近的 NAS 備份能由 `pg_restore -l` 讀取；更新部署 checkout 後依序跑 `make schema`、`make build-web`，再重啟 `report-mark-web.service`。驗收 `/healthz`、帶登入的 `/api/review/queue?kind=extraction` 與一筆 `/api/ask` 串流後，執行 `make db-backup`，確認新備份清單含 `review_state` 等五張表。Schema 是新增表，若需回退應回退程式版本並保留表與人工複核資料；不要用 DROP 當回退步驟。
+本次問答與待複核整合上線時，先確認最近的 NAS 備份能由 `pg_restore -l` 讀取；更新部署 checkout 後依序跑 `make schema`、`make build-web`，再重啟 `report-mark-web.service`。驗收 `/healthz`、帶登入的 `/api/review/queue?kind=extraction` 與一筆 `/api/ask` 串流後，執行 `make db-backup`，確認新備份清單含 `review_state` 等表。Schema 是新增表，若需回退應回退程式版本並保留表與人工複核資料；不要用 DROP 當回退步驟。
+
+**個別帳號上線（取代共用帳密）**的順序不可對調，否則沒有人登得進去：(1) `make schema`（建 `app_user`、`user_session`、`admin_audit_log`，`qa_log` 加 `user_id`、`review_state` 加 `reviewer_user_id`）；(2) 建第一位管理員——`uv run python scripts/create_admin.py --from-env`（把 `.env` 裡的舊共用帳密轉成管理員；舊密碼不足 10 字元時改用 `--username <名稱>` 互動設定）；(3) `make build-web` 後重啟 web；(4) 登入後在「管理 → 帳號」為每位同事建帳號（LINE bot 只下載研報到 NAS、不呼叫平台 API，不受影響）；(5) 刪掉環境檔裡的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`。上線當下所有人會被登出一次（舊 cookie 是 v2 格式，明確拒收）。既有問答歷史的擁有者是 NULL（無從判斷是誰問的），一般介面看不到；管理員仍可經待複核佇列看到其中的低分與倒讚。忘記密碼或管理員全被停用時的救援：`scripts/create_admin.py --username <名稱> --reset-password`。`app_user` 進了備份（含 Argon2id 雜湊），NAS 上的備份檔要當機密看待。
 
 | Unit | 排程 | 做什麼 |
 |---|---|---|
 | `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --port 8097`，`Restart=always`，PATH drop-in 給 `claude` |
 | `report-mark-sync.timer` | 每 3 小時 | rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量） |
-| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：五張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
+| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：七張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |
 | `report-mark-audit.timer` | 08:45 | `make db-audit`，唯讀，warn 也算失敗 |
 | `report-mark-health.timer`、`report-mark-incident.timer` | 每 2 分鐘 | P4 探針 `scripts/check_web_health.sh`（只回報事實）與 P5 `scripts/incident_handler.sh`（去重、30 分鐘提醒、RESOLVED），webhook opt-in |

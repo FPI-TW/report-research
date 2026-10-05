@@ -17,8 +17,10 @@
 HTTP 模式會真的消耗 LLM 額度；`--offline-rerank` 只用本機模型與固定合成片段，
 沒有資料庫、語料或網路請求。兩種結果不能互相當作端到端延遲。
 
-認證：讀 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`，環境變數沒有就從 repo 根 `.env`
-**唯讀**取得。密碼不會出現在任何輸出或錯誤訊息裡。**本檔絕不寫入 `.env`**（那條規約的
+認證：以一個個別帳號登入，讀 `REPORT_MARK_BENCH_USERNAME`／`_PASSWORD`（建議用
+`scripts/create_admin.py --role user` 開一個壓測專用的一般帳號，問答紀錄會落在它名下、
+不混進任何人的歷史），環境變數沒有就從 repo 根 `.env` **唯讀**取得。
+密碼不會出現在任何輸出或錯誤訊息裡。**本檔絕不寫入 `.env`**（那條規約的
 血淋淋前例見 `tests/test_env_loading.py` 的 docstring）。
 
 用法：
@@ -73,13 +75,13 @@ def read_env_file(path: Path) -> dict[str, str]:
 
 def resolve_credentials() -> tuple[str, str]:
     env = os.environ
-    user = env.get("REPORT_MARK_ACCESS_USERNAME")
-    pw = env.get("REPORT_MARK_ACCESS_PASSWORD")
+    user = env.get("REPORT_MARK_BENCH_USERNAME")
+    pw = env.get("REPORT_MARK_BENCH_PASSWORD")
     if user and pw:
         return user, pw
     dotenv = read_env_file(REPO_ROOT / ".env")
-    user = user or dotenv.get("REPORT_MARK_ACCESS_USERNAME", "")
-    pw = pw or dotenv.get("REPORT_MARK_ACCESS_PASSWORD", "")
+    user = user or dotenv.get("REPORT_MARK_BENCH_USERNAME", "")
+    pw = pw or dotenv.get("REPORT_MARK_BENCH_PASSWORD", "")
     return user, pw
 
 
@@ -284,7 +286,8 @@ def run_bench(args) -> dict:
     user, password = resolve_credentials()
     if not user or not password:
         raise RuntimeError(
-            "找不到 REPORT_MARK_ACCESS_USERNAME／_PASSWORD（環境變數或 repo 根 .env）"
+            "找不到 REPORT_MARK_BENCH_USERNAME／_PASSWORD（環境變數或 repo 根 .env）；"
+            "先用 scripts/create_admin.py --role user 開一個壓測帳號"
         )
     cookie = login(args.base, user, password, args.timeout)
     del password  # 之後的流程不再需要它

@@ -34,14 +34,15 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.services.accounts import User
 from app.services.extraction import EXTRACTION_VERSION
 from app.services.filename import source_display
 from app.services.judge_schema import CURRENT_JUDGE_SQL
-from web import auth, deps
+from web import authz, deps
 
 logger = logging.getLogger(__name__)
 
@@ -392,7 +393,7 @@ async def _db_stats_snapshot() -> dict:
 
 
 @router.get("/api/stats")
-async def stats():
+async def stats(user: User = Depends(authz.current_user)):
     snapshot = await _db_stats_snapshot()
     return {
         "total_reports": snapshot["total_reports"],
@@ -400,7 +401,9 @@ async def stats():
         "markets": snapshot["markets"],
         "instrument_types": snapshot["instrument_types"],
         "report_types": snapshot["report_types"],
-        "username": auth.ACCESS_USERNAME,
+        # 目前登入者（側欄底部顯示）。快照是全站共用的快取，這一鍵每個請求各自帶，
+        # 不進 _DB_STATS_CACHE。角色等身分資訊走 /api/me。
+        "username": user.username,
     }
 
 

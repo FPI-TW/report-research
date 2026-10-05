@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { displayTitle } from '../../lib/displayTitle'
 import type { ReviewItem, ReviewKind, ReviewStatus, ReviewVerification } from '../../lib/reviewSchemas'
-import { isNewDeepSeekScale, newScaleText } from './judgeScale'
-import type { EvalSource } from './progressSchema'
+import { isNewDeepSeekScale, newScaleText } from '../monitor/judgeScale'
+import type { EvalSource } from '../monitor/progressSchema'
 import { reasonText } from './reviewReasons'
 import { useReviewQueue } from './useReviewQueue'
-import styles from './MonitorPage.module.css'
+import styles from './ReviewQueue.module.css'
 
 /**
  * 待複核佇列。
@@ -15,7 +15,10 @@ import styles from './MonitorPage.module.css'
  * 連筆數都沒有出口。這張卡把三者的個體列出來，每一筆都連得回去：問答連到那一串對話，
  * 研報連到閱讀頁。
  *
- * 人工處理狀態、註記與驗證結果另存；本站是共用帳號，不顯示處理人。
+ * 人工處理狀態、註記與驗證結果另存。個別帳號上線後，問答列帶提問者（`asked_by`）、
+ * 每列帶最後處理人（`reviewer`）。兩者在共用帳號時期的舊資料都是 null：提問者標「共用帳號」，
+ * 處理人不顯示。
+ * 整張卡限管理員（後端 `/api/review/*` 對一般使用者回 403），所以只出現在管理頁。
  *
  * `scale` 是監控頁 `/api/progress` 的問答忠實度統計（與忠實度卡同一份）：判定尺剛換成 DeepSeek、
  * 窗期內還有舊尺的列時，忠實度分頁比照忠實度卡標「新量尺」——換尺頭幾天佇列近乎是空的，不說清楚
@@ -66,6 +69,12 @@ function ReviewEditor({ item, id, save, disabled }: {
   )
 }
 
+/** 最後處理人與時間；沒處理過（或共用帳號時期處理的）就不印。 */
+function ReviewedBy({ item }: { item: ReviewItem }) {
+  if (!item.reviewer) return null
+  return <span className={styles.who}>{`處理人 ${item.reviewer}（${fmtDay(item.reviewed_at)}）`}</span>
+}
+
 function QaRow({ item, kind, save, disabled }: {
   item: ReviewItem; kind: ReviewKind; save: ReviewSave; disabled: boolean
 }) {
@@ -80,7 +89,10 @@ function QaRow({ item, kind, save, disabled }: {
             <span className={styles.fWarn}>{item.faithfulness_score.toFixed(3)}</span>
           )}
           {kind === 'faithfulness' && item.judge_model && <span>{item.judge_model}</span>}
+          {/* 共用帳號時期的舊提問沒有擁有者（null），標「共用帳號」而不是留白，免得被讀成資料缺漏 */}
+          <span className={styles.who}>{`提問者 ${item.asked_by ?? '共用帳號'}`}</span>
           <span>{fmtDay(item.created_at)}</span>
+          <ReviewedBy item={item} />
         </span>
       </div>
       <ReviewEditor item={item} id={item.qa_id ?? ''} save={save} disabled={disabled} />
@@ -101,6 +113,7 @@ function ExtractionRow({ item, save, disabled }: { item: ReviewItem; save: Revie
           ) : (
             <span title="以現行門檻已不需複核；重跑該篇回填即會解除標記">現行門檻下已達標</span>
           )}
+          <ReviewedBy item={item} />
         </span>
       </div>
       <ReviewEditor item={item} id={item.report_id ?? ''} save={save} disabled={disabled} />

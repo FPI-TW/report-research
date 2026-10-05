@@ -10,6 +10,8 @@ function renderRail(collapsed: boolean) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) =>
     url.includes('/api/conversations')
       ? new Response(JSON.stringify([]), { status: 200 })
+      : url === '/api/me'
+      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin' }), { status: 200 })
       : new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 }),
   ))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -42,4 +44,10 @@ test('展開態：完整態可存取、迷你軌移出無障礙樹', () => {
   renderRail(false)
   expect(screen.getByRole('button', { name: '收合側欄' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '展開側欄' })).not.toBeInTheDocument()
+})
+
+test('管理後台與研報平台分開：即使是管理員，側欄也沒有「管理」入口', async () => {
+  renderRail(false)
+  await screen.findByText('analyst')
+  expect(screen.queryByRole('link', { name: /管理/ })).not.toBeInTheDocument()
 })

@@ -93,6 +93,10 @@
         ? "嘗試次數過多,請稍後再試。"
         : p.get("error") === "insecure"
         ? "此登入只接受 HTTPS 或本機 localhost，請改走受保護入口。"
+        : p.get("error") === "disabled"
+        ? "此帳號已停用，請聯絡管理者。"
+        : p.get("error") === "unavailable"
+        ? "登入服務暫時無法使用，請稍後再試。"
         : "帳號或密碼錯誤。";
       el.style.display = "block";
     }

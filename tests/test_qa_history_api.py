@@ -17,14 +17,21 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from web import deps  # noqa: E402
 from web.routers import qa_history  # noqa: E402
 from web.server import app  # noqa: E402
+
+Q1 = "11111111-1111-4111-8111-111111111111"
+C1 = "22222222-2222-4222-8222-222222222222"
+
+
+def _tester_id() -> str:
+    """conftest 預設假帳號庫裡 tester 的 id——服務層應該收到的 user_id。"""
+    return next(u.id for u in deps.accounts.users.values() if u.username == "tester")
 
 
 def _authed():
@@ -50,8 +57,8 @@ class FeedbackValidationTests(unittest.TestCase):
         self._orig = qa_history.record_feedback
         self.calls = []
 
-        async def _fake(qa_id, value):
-            self.calls.append((qa_id, value))
+        async def _fake(qa_id, value, *, user_id):
+            self.calls.append((qa_id, value, user_id))
             return True
 
         qa_history.record_feedback = _fake
@@ -61,22 +68,27 @@ class FeedbackValidationTests(unittest.TestCase):
 
     def test_bad_value_rejected_before_record(self):
         # value 非 like/dislike → 400，且不呼叫 record_feedback（驗證擋在前）
-        r = _authed().post("/api/feedback", json={"qa_id": "q1", "value": "love"})
+        r = _authed().post("/api/feedback", json={"qa_id": Q1, "value": "love"})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(self.calls, [])
 
     def test_valid_value_records(self):
-        r = _authed().post("/api/feedback", json={"qa_id": "q1", "value": "dislike"})
+        r = _authed().post("/api/feedback", json={"qa_id": Q1, "value": "dislike"})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"ok": True})
-        self.assertEqual(self.calls, [("q1", "dislike")])
+        self.assertEqual(self.calls, [(Q1, "dislike", _tester_id())])
+
+    def test_malformed_qa_id_is_false_without_touching_service(self):
+        r = _authed().post("/api/feedback", json={"qa_id": "q1", "value": "like"})
+        self.assertEqual(r.json(), {"ok": False})
+        self.assertEqual(self.calls, [])
 
     def test_none_accepted_as_clear(self):
         # 'none'＝再點一次已亮起的那顆＝取消。若端點仍只收 like/dislike，取消會回 400，
         # 而前端的回饋失敗刻意不打擾使用者——按鈕看起來熄了，DB 裡的評價卻還在。
-        r = _authed().post("/api/feedback", json={"qa_id": "q1", "value": "none"})
+        r = _authed().post("/api/feedback", json={"qa_id": Q1, "value": "none"})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(self.calls, [("q1", "none")])
+        self.assertEqual(self.calls, [(Q1, "none", _tester_id())])
 
 
 class ConversationsListTests(unittest.TestCase):
@@ -87,17 +99,19 @@ class ConversationsListTests(unittest.TestCase):
         qa_history.list_conversations = self._orig
 
     def test_list_passes_through_service(self):
-        async def _fake(limit, offset, q):
-            return [{"conversation_id": "c1", "limit": limit, "offset": offset, "q": q}]
+        async def _fake(limit, offset, q, *, user_id):
+            return [{"conversation_id": "c1", "limit": limit, "offset": offset, "q": q, "uid": user_id}]
 
         qa_history.list_conversations = _fake
         r = _authed().get("/api/conversations?limit=7")
         self.assertEqual(r.status_code, 200)
         # 回應維持裸陣列：瀏覽器裡還開著的舊 bundle 以 z.array(...) 解析這支端點。
-        self.assertEqual(r.json(), [{"conversation_id": "c1", "limit": 7, "offset": 0, "q": None}])
+        self.assertEqual(
+            r.json(), [{"conversation_id": "c1", "limit": 7, "offset": 0, "q": None, "uid": _tester_id()}]
+        )
 
     def test_search_and_paging_params_reach_the_service(self):
-        async def _fake(limit, offset, q):
+        async def _fake(limit, offset, q, *, user_id):
             return [{"limit": limit, "offset": offset, "q": q}]
 
         qa_history.list_conversations = _fake
@@ -119,17 +133,26 @@ class ConversationDetailTests(unittest.TestCase):
     def test_detail_passes_through_service(self):
         cid = "55555555-5555-4555-8555-555555555555"
 
-        async def _fake(conversation_id):
-            return [{"conversation_id": conversation_id}]
+        async def _fake(conversation_id, *, user_id):
+            return [{"conversation_id": conversation_id, "uid": user_id}]
 
         qa_history.get_conversation = _fake
         r = _authed().get(f"/api/conversations/{cid}")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json(), [{"conversation_id": cid}])
+        self.assertEqual(r.json(), [{"conversation_id": cid, "uid": _tester_id()}])
+
+    def test_no_visible_turns_is_404(self):
+        """不存在與別人的對話一樣：服務層回 []（只查自己的列）→ 404，看不出差別。"""
+        async def _empty(conversation_id, *, user_id):
+            return []
+
+        qa_history.get_conversation = _empty
+        r = _authed().get(f"/api/conversations/{C1}")
+        self.assertEqual(r.status_code, 404)
 
     def test_malformed_id_is_404_without_touching_service(self):
         """conversation_id 進 uuid 欄位的 WHERE；非法字串不擋會變 500。"""
-        async def _boom(conversation_id):
+        async def _boom(conversation_id, **_k):
             raise AssertionError("非法 id 不該進到 service")
 
         qa_history.get_conversation = _boom
@@ -149,8 +172,8 @@ class ConversationDeleteHttpTests(unittest.TestCase):
         self._orig = qa_history.delete_conversation
         self.order: list[str] = []
 
-        async def _fake_delete(cid):
-            self.order.append(f"delete:{cid}")
+        async def _fake_delete(cid, *, user_id):
+            self.order.append(f"delete:{cid}:{user_id == _tester_id()}")
             return True
 
         qa_history.delete_conversation = _fake_delete
@@ -159,25 +182,31 @@ class ConversationDeleteHttpTests(unittest.TestCase):
         qa_history.delete_conversation = self._orig
 
     def test_delete_verb_returns_ok(self):
-        r = _authed().delete("/api/conversations/c1")
+        r = _authed().delete(f"/api/conversations/{C1}")
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json(), {"ok": True})
-        self.assertEqual(self.order, ["delete:c1"])
+        self.assertEqual(self.order, [f"delete:{C1}:True"])
 
     def test_post_alias_behaves_the_same(self):
-        r = _authed().post("/api/conversations/c1/delete")
+        r = _authed().post(f"/api/conversations/{C1}/delete")
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json(), {"ok": True})
-        self.assertEqual(self.order, ["delete:c1"])
+        self.assertEqual(self.order, [f"delete:{C1}:True"])
 
     def test_nothing_deleted_reports_false(self):
-        async def _no_rows(cid):
+        async def _no_rows(cid, *, user_id):
             self.order.append(f"delete:{cid}")
             return False
 
         qa_history.delete_conversation = _no_rows
+        r = _authed().delete(f"/api/conversations/{C1}")
+        self.assertEqual(r.json(), {"ok": False})
+        self.assertEqual(self.order, [f"delete:{C1}"])
+
+    def test_malformed_id_is_false_without_touching_service(self):
         r = _authed().delete("/api/conversations/c1")
         self.assertEqual(r.json(), {"ok": False})
+        self.assertEqual(self.order, [])
 
     def test_requires_login(self):
         c = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")

@@ -1,0 +1,51 @@
+/* 管理後台外殼：頂列＋左側管理導覽。刻意與 AppShell 的磨砂側欄不同調（實底、較緊湊），
+   讓人一眼分得出「現在在後台」而不是研報平台的某一頁。 */
+.shell { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--tf-canvas); }
+
+.topbar {
+  flex: none; height: 56px; padding: 0 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--tf-surface, #fff); border-bottom: 1px solid var(--tf-border-weak);
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brandName { font-family: var(--tf-display); font-weight: 600; font-size: 15px; color: var(--tf-text-1); white-space: nowrap; }
+.badge {
+  font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: var(--tf-radius-pill);
+  background: var(--tf-graphite); color: var(--tf-on-graphite); white-space: nowrap;
+}
+.topActions { display: flex; align-items: center; gap: 10px; }
+.who { font-size: 13px; color: var(--tf-text-3); white-space: nowrap; }
+.back, .logout {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md);
+  background: none; color: var(--tf-text-1); font: inherit; font-size: 13px; cursor: pointer;
+  text-decoration: none; white-space: nowrap;
+}
+.back:hover, .logout:hover { border-color: var(--tf-graphite); }
+
+.body { flex: 1; min-height: 0; display: flex; }
+.nav {
+  flex: none; width: 200px; padding: 16px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  border-right: 1px solid var(--tf-border-weak);
+}
+.navItem {
+  display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px;
+  border-radius: var(--tf-radius-md); color: var(--tf-text-2); font-size: 14px; text-decoration: none;
+}
+.navItem:hover { background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); }
+.navOn, .navOn:hover { background: var(--tf-graphite); color: var(--tf-on-graphite); }
+.main { flex: 1; min-width: 0; min-height: 0; }
+.routeReveal { height: 100%; min-height: 0; }
+
+/* 手機：導覽改成頂列下方的一排分頁，頂列只留品牌與兩顆按鈕（帳號名稱藏起來）。 */
+@media (max-width: 767px) {
+  .topbar { padding: 0 12px; }
+  .brandName, .who { display: none; }
+  .body { flex-direction: column; }
+  .nav {
+    width: auto; flex-direction: row; gap: 4px; padding: 8px 12px; overflow-x: auto;
+    border-right: none; border-bottom: 1px solid var(--tf-border-weak);
+  }
+  .navItem { height: 34px; padding: 0 12px; white-space: nowrap; font-size: 13px; }
+}

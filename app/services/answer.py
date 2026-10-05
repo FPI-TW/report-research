@@ -1177,6 +1177,21 @@ def _llm_error_kind(exc: Exception) -> str:
     return "overloaded" if looks_like_api_error(detail) else "other"
 
 
+# 擁有者條件（research.qa_log.user_id）。用 `IS NOT DISTINCT FROM`：免登入開發模式的
+# user_id 是 None，要對得到 NULL 擁有者的列；正式帳號一定有 id，所以永遠對不到個別帳號
+# 上線前的 NULL 共用歷史——那批無法判斷是誰問的，一般介面一律看不到。
+_OWNER = "user_id IS NOT DISTINCT FROM :uid"
+
+# request_id 唯一索引收斂（同一輪的完成與停止兩個請求寫成同一列）只在同一擁有者之間成立：
+# 撞上別人的 request_id 時 DO UPDATE 的 WHERE 不成立、RETURNING 無列，`scalar_one()` 拋例外
+# → 寫入失敗回 None，不會把別人那一列的 qa_id 回給這個請求。
+_REQUEST_ID_CONFLICT = (
+    " ON CONFLICT (request_id) WHERE request_id IS NOT NULL "
+    "DO UPDATE SET request_id = EXCLUDED.request_id "
+    "WHERE research.qa_log.user_id IS NOT DISTINCT FROM EXCLUDED.user_id RETURNING id"
+)
+
+
 async def _log_qa(
     question: str,
     answer: str | None,
@@ -1192,6 +1207,7 @@ async def _log_qa(
     stages: list[str] | None = None,
     followups: list[str] | None = None,
     request_id: str | None = None,
+    user_id: str | None,
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     evidence_manifest: dict | None = None,
@@ -1201,6 +1217,9 @@ async def _log_qa(
 
     回傳已提交的列 id；寫入失敗時回 None。若指定 replacement metadata，INSERT 與
     active 狀態轉換共用同一筆 transaction，避免生成失敗時先隱藏舊歷史。
+    user_id 是擁有者（必填、可為 None＝免登入開發模式）；停用舊版／截斷後續兩個
+    UPDATE 也只動同一擁有者的列，request_id 衝突到別人的列時寫入失敗回 None
+    （見 `_REQUEST_ID_CONFLICT`）。
     sources/ext_sources 為當時完整來源，供歷史重現可點 [n] 與保留外部參考。
     conversation_id 將多輪問答歸為同一串。root_qa_id 將同題多版本歸為同一群組。
     stages/followups 供歷史重現思考卡與追問 chips。
@@ -1215,17 +1234,14 @@ async def _log_qa(
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
                     "sources, ext_sources, conversation_id, thinking_ms, "
                     "root_qa_id, active, stages, followups, request_id, "
-                    "evidence_manifest) "
+                    "evidence_manifest, user_id) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
                     ":sources, :ext_sources, :conv, :think, "
                     ":root, :active, :stages, :followups, :request_id, "
-                    ":evidence_manifest)"
+                    ":evidence_manifest, :uid)"
                 )
             if request_id is not None:
-                stmt = text(
-                    f"{stmt.text} ON CONFLICT (request_id) WHERE request_id IS NOT NULL "
-                    "DO UPDATE SET request_id = EXCLUDED.request_id RETURNING id"
-                )
+                stmt = text(stmt.text + _REQUEST_ID_CONFLICT)
             result = await session.execute(
                 stmt,
                 {
@@ -1249,14 +1265,15 @@ async def _log_qa(
                     "evidence_manifest": json.dumps(
                         evidence_manifest, ensure_ascii=False
                     ) if evidence_manifest is not None else None,
+                    "uid": user_id,
                 },
             )
             if request_id is not None:
                 qa_id = str(result.scalar_one())
             if deactivate_qa_id is not None:
                 await session.execute(
-                    text("UPDATE research.qa_log SET active = false WHERE id = :id"),
-                    {"id": deactivate_qa_id},
+                    text(f"UPDATE research.qa_log SET active = false WHERE id = :id AND {_OWNER}"),
+                    {"id": deactivate_qa_id, "uid": user_id},
                 )
             if truncate_from is not None:
                 conversation_id, created_at = truncate_from
@@ -1269,9 +1286,9 @@ async def _log_qa(
                     text(
                         "UPDATE research.qa_log SET active = false "
                         "WHERE COALESCE(conversation_id, id) = :cid "
-                        "AND created_at >= :ts AND id <> :self"
+                        f"AND created_at >= :ts AND id <> :self AND {_OWNER}"
                     ),
-                    {"cid": conversation_id, "ts": created_at, "self": qa_id},
+                    {"cid": conversation_id, "ts": created_at, "self": qa_id, "uid": user_id},
                 )
             await session.commit()
     except Exception:
@@ -1280,17 +1297,17 @@ async def _log_qa(
     return qa_id
 
 
-async def _load_qa_meta(qa_id: str):
-    """讀一列的 (root_qa_id, conversation_id, created_at)；查無/錯誤回 None。"""
+async def _load_qa_meta(qa_id: str, *, user_id: str | None):
+    """讀一列的 (root_qa_id, conversation_id, created_at)；查無、不是自己的、錯誤都回 None。"""
     try:
         async with SessionFactory() as session:
             row = (
                 await session.execute(
                     text(
                         "SELECT root_qa_id, conversation_id, created_at "
-                        "FROM research.qa_log WHERE id = :id"
+                        f"FROM research.qa_log WHERE id = :id AND {_OWNER}"
                     ),
-                    {"id": qa_id},
+                    {"id": qa_id, "uid": user_id},
                 )
             ).first()
         if row is None:
@@ -1303,7 +1320,7 @@ async def _load_qa_meta(qa_id: str):
         return None
 
 
-async def _count_versions(group_key: str) -> int:
+async def _count_versions(group_key: str, *, user_id: str | None) -> int:
     """某群組（COALESCE(root_qa_id, id)）的版本總數（含 inactive）。
 
     `AND answer IS NOT NULL` 與 `list_qa_versions` 同一道濾網：LLM 失敗的遙測列
@@ -1317,9 +1334,9 @@ async def _count_versions(group_key: str) -> int:
                     text(
                         "SELECT count(*) FROM research.qa_log "
                         "WHERE COALESCE(root_qa_id, id) = :gk "
-                        "AND answer IS NOT NULL"
+                        f"AND answer IS NOT NULL AND {_OWNER}"
                     ),
-                    {"gk": group_key},
+                    {"gk": group_key, "uid": user_id},
                 )
             ).first()
         return int(row[0]) if row else 1
@@ -1339,8 +1356,12 @@ async def log_stopped_qa(
     regenerate_of: str | None = None,
     edit_of: str | None = None,
     request_id: str | None = None,
+    user_id: str | None,
 ) -> str | None:
     """寫一列停止的部分答案（stopped=true, active=true）；回新 qa_id。
+
+    user_id 是擁有者（必填）；regenerate_of／edit_of 只認自己的列（別人的視同不存在），
+    停用與截斷也只動自己的列。
 
     regenerate_of 有值時：解析其群組鍵作 root_qa_id（續版本鏈），並在同一筆
     transaction 內把舊版列停用（active=false）——與完成路徑 `_log_qa` 的
@@ -1356,13 +1377,13 @@ async def log_stopped_qa(
     root_qa_id: str | None = None
     truncate_from: tuple[str, object] | None = None
     if regenerate_of:
-        meta = await _load_qa_meta(regenerate_of)
+        meta = await _load_qa_meta(regenerate_of, user_id=user_id)
         if meta is not None:
             old_root, old_conv, _ = meta
             root_qa_id = old_root or regenerate_of
             conversation_id = conversation_id or old_conv
     elif edit_of:
-        meta = await _load_qa_meta(edit_of)
+        meta = await _load_qa_meta(edit_of, user_id=user_id)
         if meta is not None:
             _old_root, old_conv, old_created = meta
             conversation_id = conversation_id or old_conv
@@ -1375,16 +1396,13 @@ async def log_stopped_qa(
                     "INSERT INTO research.qa_log "
                     "(id, question, answer, cited_report_ids, filters, latency_ms, "
                     "sources, ext_sources, conversation_id, thinking_ms, "
-                    "root_qa_id, active, stages, followups, stopped, request_id) "
+                    "root_qa_id, active, stages, followups, stopped, request_id, user_id) "
                     "VALUES (:id, :q, :a, :cited, :filters, :lat, "
                     ":sources, :ext_sources, :conv, :think, "
-                    ":root, true, :stages, NULL, true, :request_id)"
+                    ":root, true, :stages, NULL, true, :request_id, :uid)"
                 )
             if request_id is not None:
-                stmt = text(
-                    f"{stmt.text} ON CONFLICT (request_id) WHERE request_id IS NOT NULL "
-                    "DO UPDATE SET request_id = EXCLUDED.request_id RETURNING id"
-                )
+                stmt = text(stmt.text + _REQUEST_ID_CONFLICT)
             result = await session.execute(
                 stmt,
                 {
@@ -1402,6 +1420,7 @@ async def log_stopped_qa(
                     "stages": json.dumps(stages, ensure_ascii=False)
                     if stages is not None else None,
                     "request_id": request_id,
+                    "uid": user_id,
                 },
             )
             if request_id is not None:
@@ -1410,8 +1429,8 @@ async def log_stopped_qa(
                 # qa_id == regenerate_of 只會發生在 request_id 收斂到「舊列自己」的
                 # 理論極端；此時停用等於把唯一一列藏掉，故跳過。
                 await session.execute(
-                    text("UPDATE research.qa_log SET active = false WHERE id = :id"),
-                    {"id": regenerate_of},
+                    text(f"UPDATE research.qa_log SET active = false WHERE id = :id AND {_OWNER}"),
+                    {"id": regenerate_of, "uid": user_id},
                 )
             if truncate_from is not None:
                 t_cid, t_ts = truncate_from
@@ -1421,9 +1440,9 @@ async def log_stopped_qa(
                     text(
                         "UPDATE research.qa_log SET active = false "
                         "WHERE COALESCE(conversation_id, id) = :cid "
-                        "AND created_at >= :ts AND id <> :self"
+                        f"AND created_at >= :ts AND id <> :self AND {_OWNER}"
                     ),
-                    {"cid": t_cid, "ts": t_ts, "self": qa_id},
+                    {"cid": t_cid, "ts": t_ts, "self": qa_id, "uid": user_id},
                 )
             await session.commit()
     except Exception:
@@ -1432,10 +1451,44 @@ async def log_stopped_qa(
     return qa_id
 
 
+async def qa_is_foreign(qa_id: str, *, user_id: str | None) -> bool:
+    """這一列存在、但擁有者不是 user_id（含 NULL 共用歷史）時回 True。
+
+    不存在回 False：regenerate_of／edit_of 找不到時 `answer_question` 本來就當新題處理，
+    而 `_log_qa` 是 best-effort——上一輪寫入失敗後的重生／編輯不該被擋成 404。
+    DB 異常往上拋（呼叫端回 503）：這是授權判斷，不 fail-open。
+    """
+    async with SessionFactory() as session:
+        return bool((await session.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM research.qa_log "
+                "WHERE id = :id AND user_id IS DISTINCT FROM :uid)"
+            ),
+            {"id": qa_id, "uid": user_id},
+        )).scalar_one())
+
+
+async def conversation_is_foreign(conversation_id: str, *, user_id: str | None) -> bool:
+    """這個對話串裡有任何一列不屬於 user_id（含 NULL 共用歷史）時回 True。
+
+    整串都不存在回 False（理由同 `qa_is_foreign`：寫入失敗後的續問不擋）。DB 異常往上拋。
+    """
+    async with SessionFactory() as session:
+        return bool((await session.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM research.qa_log "
+                "WHERE COALESCE(conversation_id, id) = :cid AND user_id IS DISTINCT FROM :uid)"
+            ),
+            {"cid": conversation_id, "uid": user_id},
+        )).scalar_one())
+
+
 async def load_recent_turns(
-    conversation_id: str, *, limit: int = MAX_HISTORY_TURNS
+    conversation_id: str, *, user_id: str | None, limit: int = MAX_HISTORY_TURNS
 ) -> list[tuple[str, str]]:
     """取該對話最近 limit 輪 (question, answer)，回傳由舊到新；排除離題列。
+
+    只取 user_id 自己的輪次：別人的對話內容絕不能被拼進這個人的 prompt。
 
     以 COALESCE(conversation_id, id) 分組，相容舊 NULL 列（其自身 id 即對話 id）。
     任何 DB 錯誤 → 回 []（fail-open，不擋作答）。
@@ -1448,11 +1501,12 @@ async def load_recent_turns(
                         "SELECT question, answer FROM research.qa_log "
                         "WHERE COALESCE(conversation_id, id) = :cid "
                         "AND COALESCE(answer NOT IN :offtopics, TRUE) "
-                        "AND active AND stopped IS NOT TRUE "
+                        f"AND active AND stopped IS NOT TRUE AND {_OWNER} "
                         "ORDER BY created_at DESC LIMIT :limit"
                     ).bindparams(bindparam("offtopics", expanding=True)),
                     {
                         "cid": conversation_id,
+                        "uid": user_id,
                         "offtopics": list(OFF_TOPIC_MESSAGES),
                         "limit": limit,
                     },
@@ -1469,8 +1523,10 @@ async def load_recent_turns(
 _LIKE_ESC = str.maketrans({"%": r"\%", "_": r"\_", "\\": r"\\"})
 
 
-async def list_conversations(limit: int = 50, offset: int = 0, q: str | None = None) -> list[dict]:
-    """對話串清單：每串 {conversation_id, title, last_at, turn_count}。
+async def list_conversations(
+    limit: int = 50, offset: int = 0, q: str | None = None, *, user_id: str | None
+) -> list[dict]:
+    """對話串清單：每串 {conversation_id, title, last_at, turn_count}；只列 user_id 自己的。
 
     分組鍵 COALESCE(conversation_id, id)；標題取最早的非離題問題；
     只顯示至少含一輪非離題回答的對話；
@@ -1496,7 +1552,7 @@ async def list_conversations(limit: int = 50, offset: int = 0, q: str | None = N
                     "             AS turn_count,"
                     "         COALESCE(bool_or(question ILIKE CAST(:pattern AS text)) "
                     "             FILTER (WHERE COALESCE(answer NOT IN :offtopics, TRUE) AND active), FALSE) AS matched"
-                    "  FROM research.qa_log"
+                    f"  FROM research.qa_log WHERE {_OWNER}"
                     "  GROUP BY COALESCE(conversation_id, id)"
                     ") g WHERE turn_count > 0 AND (CAST(:pattern AS text) IS NULL OR matched) "
                     # conv_id 當次序的決勝鍵：last_at 相同時（批次匯入、同秒寫入）沒有它，
@@ -1505,7 +1561,7 @@ async def list_conversations(limit: int = 50, offset: int = 0, q: str | None = N
                 ).bindparams(bindparam("offtopics", expanding=True)),
                 {
                     "offtopics": list(OFF_TOPIC_MESSAGES), "limit": limit,
-                    "offset": max(0, offset), "pattern": pattern,
+                    "offset": max(0, offset), "pattern": pattern, "uid": user_id,
                 },
             )
         ).all()
@@ -1546,8 +1602,12 @@ def _conversation_item(row) -> dict:
     return base
 
 
-async def get_conversation(conversation_id: str) -> list[dict]:
-    """該對話全部有效輪次（由舊到新），供重開重現與續問。"""
+async def get_conversation(conversation_id: str, *, user_id: str | None) -> list[dict]:
+    """該對話中 user_id 自己的全部有效輪次（由舊到新），供重開重現與續問。
+
+    別人的對話與不存在的對話一樣回 []（呼叫端據此回 404，兩者無從分辨）。版本數只算
+    自己的列。
+    """
     async with SessionFactory() as session:
         rows = (
             await session.execute(
@@ -1556,21 +1616,23 @@ async def get_conversation(conversation_id: str) -> list[dict]:
                     "q.sources, q.ext_sources, q.thinking_ms, q.stages, q.followups, "
                     "q.root_qa_id, q.stopped, "
                     "(SELECT count(*) FROM research.qa_log v "
-                    " WHERE COALESCE(v.root_qa_id, v.id) = COALESCE(q.root_qa_id, q.id)) "
+                    " WHERE COALESCE(v.root_qa_id, v.id) = COALESCE(q.root_qa_id, q.id) "
+                    " AND v.user_id IS NOT DISTINCT FROM :uid) "
                     "AS version_count, "
                     "q.cited_report_ids, q.filters "
                     "FROM research.qa_log q "
                     "WHERE COALESCE(q.conversation_id, q.id) = :cid AND q.active "
+                    "AND q.user_id IS NOT DISTINCT FROM :uid "
                     "ORDER BY q.created_at ASC"
                 ),
-                {"cid": conversation_id},
+                {"cid": conversation_id, "uid": user_id},
             )
         ).all()
     return [_conversation_item(tuple(r)) for r in rows]
 
 
-async def list_qa_versions(root_qa_id: str) -> list[dict]:
-    """某問題群組的全部版本（含 inactive），由舊到新，供歷史 pager 回看。
+async def list_qa_versions(root_qa_id: str, *, user_id: str | None) -> list[dict]:
+    """某問題群組中 user_id 自己的全部版本（含 inactive），由舊到新，供歷史 pager 回看。
 
     任何 DB 錯誤 → 回 []（fail-open）。
     """
@@ -1587,9 +1649,10 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
                         # 使用者面路徑（版本 pager 刻意顯示所有版本），所以要自己擋，
                         # 否則會渲染出一則空答案。
                         "AND answer IS NOT NULL "
+                        f"AND {_OWNER} "
                         "ORDER BY created_at ASC"
                     ),
-                    {"root": root_qa_id},
+                    {"root": root_qa_id, "uid": user_id},
                 )
             ).all()
     except Exception:
@@ -1613,8 +1676,8 @@ async def list_qa_versions(root_qa_id: str) -> list[dict]:
     return out
 
 
-async def delete_conversation(conversation_id: str) -> bool:
-    """刪整個對話串；刪到 ≥1 列回 True，查無或 DB 異常回 False。
+async def delete_conversation(conversation_id: str, *, user_id: str | None) -> bool:
+    """刪整個對話串中 user_id 自己的列；刪到 ≥1 列回 True，查無、別人的或 DB 異常回 False。
 
     對話串的存在與否由 `qa_log` 定義：以 `COALESCE(conversation_id, id)` 為分組鍵
     整批刪除。DB 異常不拋、回 False，由呼叫端（`web/routers/qa_history.py`）決定回應碼。
@@ -1624,9 +1687,9 @@ async def delete_conversation(conversation_id: str) -> bool:
             result = await session.execute(
                 text(
                     "DELETE FROM research.qa_log "
-                    "WHERE COALESCE(conversation_id, id) = :cid"
+                    f"WHERE COALESCE(conversation_id, id) = :cid AND {_OWNER}"
                 ),
-                {"cid": conversation_id},
+                {"cid": conversation_id, "uid": user_id},
             )
             await session.commit()
         return getattr(result, "rowcount", 0) > 0
@@ -1635,10 +1698,11 @@ async def delete_conversation(conversation_id: str) -> bool:
         return False
 
 
-async def record_feedback(qa_id: str, value: str) -> bool:
+async def record_feedback(qa_id: str, value: str, *, user_id: str | None) -> bool:
     """記錄使用者對某次回答的讚/倒讚到 research.qa_log.feedback。
 
-    value 限 'like'/'dislike'/'none'；其餘回 False。寫入失敗（含 DB 異常）回 False。
+    value 限 'like'/'dislike'/'none'；其餘回 False。只能評自己的回答：別人的列與不存在
+    一樣回 False。寫入失敗（含 DB 異常）回 False。
 
     **'none' 寫入的是 SQL NULL，不是字串 'none'**——使用者再點一次已亮起的讚/倒讚
     即為取消，而讀取端（/api/history、/api/qa/{root_qa_id}/versions 與前端 zod）認的是
@@ -1651,8 +1715,8 @@ async def record_feedback(qa_id: str, value: str) -> bool:
     try:
         async with SessionFactory() as session:
             result = await session.execute(
-                text("UPDATE research.qa_log SET feedback = :v WHERE id = :id"),
-                {"v": None if value == "none" else value, "id": qa_id},
+                text(f"UPDATE research.qa_log SET feedback = :v WHERE id = :id AND {_OWNER}"),
+                {"v": None if value == "none" else value, "id": qa_id, "uid": user_id},
             )
             await session.commit()
         return getattr(result, "rowcount", 0) == 1
@@ -1759,16 +1823,16 @@ async def _faithfulness_spot_check(qa_id: str, answer: str, context: str) -> Non
         logger.exception("問答忠實度抽查失敗（fail-open，不影響答案）")
 
 
-async def delete_qa(qa_id: str) -> bool:
+async def delete_qa(qa_id: str, *, user_id: str | None) -> bool:
     """刪除一列 research.qa_log（使用者清除單筆歷史問答）。
 
-    成功刪除一列回 True；查無此列、qa_id 非合法 UUID 或 DB 異常皆回 False。
+    成功刪除一列回 True；查無此列、不是自己的、qa_id 非合法 UUID 或 DB 異常皆回 False。
     """
     try:
         async with SessionFactory() as session:
             result = await session.execute(
-                text("DELETE FROM research.qa_log WHERE id = :id"),
-                {"id": qa_id},
+                text(f"DELETE FROM research.qa_log WHERE id = :id AND {_OWNER}"),
+                {"id": qa_id, "uid": user_id},
             )
             await session.commit()
         return getattr(result, "rowcount", 0) == 1
@@ -1790,6 +1854,7 @@ async def _answer_overview(
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     request_id: str | None = None,
+    user_id: str | None = None,
     locale: str = DEFAULT_LOCALE,
 ) -> AsyncIterator[tuple[str, object]]:
     """總覽路徑：分面聚合 → LLM 用算好的數字潤飾 → 失敗退回模板。事件序列同主路徑。"""
@@ -1814,10 +1879,10 @@ async def _answer_overview(
             thinking_ms, [], [],
             conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
             root_qa_id=root_qa_id, deactivate_qa_id=deactivate_qa_id,
-            truncate_from=truncate_from, request_id=request_id,
+            truncate_from=truncate_from, request_id=request_id, user_id=user_id,
         )
         group_key = root_qa_id or qa_id
-        version_count = await _count_versions(group_key) if root_qa_id and group_key else 1
+        version_count = await _count_versions(group_key, user_id=user_id) if root_qa_id and group_key else 1
         yield ("done", {"cited": [], "qa_id": qa_id,
                         "conversation_id": conv_id, "thinking_ms": thinking_ms,
                         "root_qa_id": group_key, "version_count": version_count})
@@ -1892,14 +1957,14 @@ async def _answer_overview(
         [asdict(s) for s in sources], [],
         conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
         root_qa_id=root_qa_id, deactivate_qa_id=deactivate_qa_id,
-        truncate_from=truncate_from, request_id=request_id,
+        truncate_from=truncate_from, request_id=request_id, user_id=user_id,
         evidence_manifest=manifest_from_answer(
             [asdict(s) for s in sources], [],
             retrieved_at=datetime.now(timezone.utc).isoformat(),
         ),
     )
     group_key = root_qa_id or qa_id
-    version_count = await _count_versions(group_key) if root_qa_id and group_key else 1
+    version_count = await _count_versions(group_key, user_id=user_id) if root_qa_id and group_key else 1
     yield ("done", {"cited": cited, "qa_id": qa_id,
                     "conversation_id": conv_id, "thinking_ms": thinking_ms,
                     "root_qa_id": group_key, "version_count": version_count,
@@ -1917,6 +1982,7 @@ async def _yield_routed_notice(
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     request_id: str | None = None,
+    user_id: str | None = None,
     locale: str = DEFAULT_LOCALE,
 ) -> AsyncIterator[tuple[str, object]]:
     """no-answer 終端路由（off_topic / time_sensitive）：固定文案、不檢索、不呼叫主 LLM。
@@ -1947,7 +2013,7 @@ async def _yield_routed_notice(
         root_qa_id=new_root,
         deactivate_qa_id=deactivate_qa_id,
         truncate_from=truncate_from,
-        request_id=request_id,
+        request_id=request_id, user_id=user_id,
     )
     yield (
         "done",
@@ -1969,6 +2035,7 @@ async def _answer_time_sensitive(
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     request_id: str | None = None,
+    user_id: str | None = None,
     fetch_query: str | None = None,
     locale: str = DEFAULT_LOCALE,
     web: bool = False,
@@ -1991,14 +2058,14 @@ async def _answer_time_sensitive(
         if web:
             async for ev in _answer_time_sensitive_web(
                 decision, question, filters, conv_id, started, stages_seen, new_root,
-                deactivate_qa_id, truncate_from, request_id,
+                deactivate_qa_id, truncate_from, request_id, user_id=user_id,
                 fetch_query=fetch_query, locale=locale,
             ):
                 yield ev
             return
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id, locale=locale,
+            deactivate_qa_id, truncate_from, request_id, user_id=user_id, locale=locale,
         ):
             yield ev
         return
@@ -2029,11 +2096,11 @@ async def _answer_time_sensitive(
         root_qa_id=new_root,
         deactivate_qa_id=deactivate_qa_id,
         truncate_from=truncate_from,
-        request_id=request_id,
+        request_id=request_id, user_id=user_id,
         evidence_manifest=ledger.to_manifest(),
     )
     group_key = new_root or qa_id
-    version_count = await _count_versions(group_key) if new_root and group_key else 1
+    version_count = await _count_versions(group_key, user_id=user_id) if new_root and group_key else 1
     yield (
         "done",
         {"cited": [], "qa_id": qa_id, "conversation_id": conv_id,
@@ -2053,6 +2120,7 @@ async def _answer_time_sensitive_web(
     deactivate_qa_id: str | None = None,
     truncate_from: tuple[str, object] | None = None,
     request_id: str | None = None,
+    user_id: str | None = None,
     fetch_query: str | None = None,
     locale: str = DEFAULT_LOCALE,
 ) -> AsyncIterator[tuple[str, object]]:
@@ -2127,7 +2195,7 @@ async def _answer_time_sensitive_web(
                 elapsed, [], [],
                 conversation_id=conv_id, thinking_ms=elapsed, stages=stages_seen,
                 root_qa_id=new_root, deactivate_qa_id=deactivate_qa_id,
-                truncate_from=truncate_from, request_id=request_id,
+                truncate_from=truncate_from, request_id=request_id, user_id=user_id,
             )
             yield (
                 "done",
@@ -2176,10 +2244,10 @@ async def _answer_time_sensitive_web(
         ),
         conversation_id=conv_id, thinking_ms=thinking_ms, stages=stages_seen,
         root_qa_id=new_root, deactivate_qa_id=deactivate_qa_id,
-        truncate_from=truncate_from, request_id=request_id,
+        truncate_from=truncate_from, request_id=request_id, user_id=user_id,
     )
     group_key = new_root or qa_id
-    version_count = await _count_versions(group_key) if new_root and group_key else 1
+    version_count = await _count_versions(group_key, user_id=user_id) if new_root and group_key else 1
     yield (
         "done",
         {"cited": [], "qa_id": qa_id, "conversation_id": conv_id,
@@ -2201,6 +2269,7 @@ async def answer_question(
     regenerate_of: str | None = None,
     edit_of: str | None = None,
     request_id: str | None = None,
+    user_id: str | None = None,
     locale: str | None = None,
     web: bool = False,
 ) -> AsyncIterator[tuple[str, object]]:
@@ -2217,6 +2286,9 @@ async def answer_question(
     web 為真且伺服器總閘 ASK_ENABLE_WEB 開啟時（M11）：主 LLM 取得 WebSearch 工具、
     系統提示換上網路那組規則，時效題也改由網搜作答（受信任 adapter 仍優先）。
     未帶或總閘關閉 → 行為與 M4 起的既有路徑完全相同。overview 與 off_topic 不受影響。
+    user_id 是提問者（`web/routers/ask.py` 從 session 取；None＝免登入開發模式）：寫入的
+    每一列都帶它，續問的歷史、regenerate_of／edit_of 的舊列、版本數也只認它自己的列。
+    參照別人的列由路由在串流前擋成 404；這裡的過濾是第二道防線。
     """
     filters = filters or {}
     # locale 解析 fail-open → zh-Hant（未帶/未知一律中文，零回歸）。輸出語言隨此值切換；
@@ -2234,14 +2306,14 @@ async def answer_question(
     deactivate_qa_id: str | None = None
     truncate_from: tuple[str, object] | None = None
     if regenerate_of:
-        _meta = await _load_qa_meta(regenerate_of)
+        _meta = await _load_qa_meta(regenerate_of, user_id=user_id)
         if _meta is not None:
             _old_root, _old_conv, _ = _meta
             conv_id = _old_conv or conv_id
             new_root = _old_root or regenerate_of
             deactivate_qa_id = regenerate_of
     elif edit_of:
-        _meta = await _load_qa_meta(edit_of)
+        _meta = await _load_qa_meta(edit_of, user_id=user_id)
         if _meta is not None:
             _old_root, _old_conv, _old_created = _meta
             conv_id = _old_conv or conv_id
@@ -2269,7 +2341,7 @@ async def answer_question(
     yield _status("understanding")  # 步驟1：理解問題（含意圖判定/改寫）
 
     # 僅「續問」才載歷史；首輪無歷史，維持並行意圖判定
-    turns = await load_recent_turns(conv_id) if conversation_id else []
+    turns = await load_recent_turns(conv_id, user_id=user_id) if conversation_id else []
     history_block = build_history_block(turns)
 
     today = datetime.now(timezone.utc).date()
@@ -2296,7 +2368,7 @@ async def answer_question(
                 question, standalone_query, ov_filters, filters,
                 conv_id=conv_id, model=model, started=started, root_qa_id=new_root,
                 deactivate_qa_id=deactivate_qa_id, truncate_from=truncate_from,
-                request_id=request_id, locale=locale,
+                request_id=request_id, user_id=user_id, locale=locale,
             ):
                 produced = True
                 yield ev
@@ -2322,7 +2394,7 @@ async def answer_question(
     if decision is not None and decision.scope == TIME_SENSITIVE:
         async for ev in _answer_time_sensitive(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id,
+            deactivate_qa_id, truncate_from, request_id, user_id=user_id,
             fetch_query=standalone_query, locale=locale, web=web_on,
         ):
             yield ev
@@ -2332,7 +2404,7 @@ async def answer_question(
     if decision is not None and decision.scope == OFF_TOPIC:
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id, locale=locale,
+            deactivate_qa_id, truncate_from, request_id, user_id=user_id, locale=locale,
         ):
             yield ev
         return
@@ -2347,7 +2419,7 @@ async def answer_question(
         if decision is not None and decision.scope == TIME_SENSITIVE:
             async for ev in _answer_time_sensitive(
                 decision, question, filters, conv_id, started, stages_seen, new_root,
-                deactivate_qa_id, truncate_from, request_id, locale=locale, web=web_on,
+                deactivate_qa_id, truncate_from, request_id, user_id=user_id, locale=locale, web=web_on,
             ):
                 yield ev
             return
@@ -2439,7 +2511,7 @@ async def answer_question(
             plan_task.cancel()  # 已被路由走：規劃結果不再被消費
         async for ev in _answer_time_sensitive(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id, locale=locale, web=web_on,
+            deactivate_qa_id, truncate_from, request_id, user_id=user_id, locale=locale, web=web_on,
         ):
             yield ev
         return
@@ -2450,7 +2522,7 @@ async def answer_question(
             plan_task.cancel()  # 已被路由走：規劃結果不再被消費
         async for ev in _yield_routed_notice(
             decision, question, filters, conv_id, started, stages_seen, new_root,
-            deactivate_qa_id, truncate_from, request_id, locale=locale,
+            deactivate_qa_id, truncate_from, request_id, user_id=user_id, locale=locale,
         ):
             yield ev
         return
@@ -2546,7 +2618,7 @@ async def answer_question(
             root_qa_id=new_root,
             deactivate_qa_id=deactivate_qa_id,
             truncate_from=truncate_from,
-            request_id=request_id,
+            request_id=request_id, user_id=user_id,
         )
         yield (
             "done",
@@ -2633,7 +2705,7 @@ async def answer_question(
                 # **成功**寫入時才停用舊列／截斷後續」。失敗列自己是 active=false 的
                 # 遙測列，若在這裡照常停用，重生撞上 529 會把使用者原本的答案從對話
                 # 歷史藏掉、編輯失敗會把編輯點之後的輪次全部截掉——症狀都是靜默的。
-                request_id=request_id,
+                request_id=request_id, user_id=user_id,
                 # active=false 讓四條使用者面讀取路徑中的三條自動跳過它
                 # （condense 脈絡、/api/history、list_conversations 的 FILTER），
                 # 第四條 list_qa_versions 另以 `answer IS NOT NULL` 擋。
@@ -2703,7 +2775,7 @@ async def answer_question(
         root_qa_id=new_root,
         deactivate_qa_id=deactivate_qa_id,
         truncate_from=truncate_from,
-        request_id=request_id,
+        request_id=request_id, user_id=user_id,
     )
     # dense_ms／lex_ms 只涵蓋首輪檢索（timer.mark("retrieve") 同一個範圍）。
     # agentic 補查（app/services/agentic_qa.py，QA_AGENTIC_ENABLED 預設開、
@@ -2730,7 +2802,7 @@ async def answer_question(
         retrieval_stats.get("rerank_timed_out"),
     )
     group_key = new_root or qa_id
-    version_count = await _count_versions(group_key) if regenerate_of and group_key else 1
+    version_count = await _count_versions(group_key, user_id=user_id) if regenerate_of and group_key else 1
     yield (
         "done",
         {

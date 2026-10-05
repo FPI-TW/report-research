@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -38,13 +38,14 @@ from app.logging_setup import configure_logging  # noqa: E402
 configure_logging()
 
 from app.config import get_settings  # noqa: E402
-from app.services import db, llm, llm_http, llm_models  # noqa: E402
+from app.services import accounts, db, llm, llm_http, llm_models  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
     deps,  # noqa: E402
 )
 from web.request_log import RequestLogMiddleware  # noqa: E402
+from web.routers import admin as admin_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
@@ -121,6 +122,28 @@ def _log_warmup_result(task: asyncio.Task[None]) -> None:
         logger.exception("model warmup failed")
 
 
+async def _check_accounts() -> None:
+    """個別帳號自檢：只說出來、不擋啟動（與 _check_llm_models 同一個原則）。
+
+    - 舊的共用帳密環境變數還在：已不再讀取，留著只會讓人以為改它有用。
+    - 沒有任何啟用中的管理員：站台照樣起得來，但沒有人能登入或管理帳號——部署順序是
+      `make schema` → `scripts/create_admin.py` → 重啟，漏了中間那步就會停在這裡。
+    """
+    for key in ("REPORT_MARK_ACCESS_USERNAME", "REPORT_MARK_ACCESS_PASSWORD"):
+        if os.environ.get(key):
+            logger.warning("%s 已不再使用（已改為個別帳號），請從環境檔移除", key)
+    try:
+        admins = await deps.accounts.count_enabled_admins()
+    except Exception:
+        logger.warning("帳號自檢：查不到 research.app_user（DB 不可用或尚未套 schema）", exc_info=True)
+        return
+    if admins == 0:
+        logger.error(
+            "沒有任何啟用中的管理員，沒有人能登入：請執行 "
+            "uv run python scripts/create_admin.py --username <名稱>（舊共用帳密可用 --from-env 轉入）"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 併發上限與背景 run 登錄表都是 per-process 狀態，多 worker 會讓上限翻倍、模型
@@ -148,6 +171,7 @@ async def lifespan(app: FastAPI):
     # LLM 自檢（claude CLI 路徑、DeepSeek 金鑰、未知模型名）：問答壞掉時 /healthz 只探 DB
     # 照樣回 ok。只說出來、不擋啟動——檢索、閱讀頁、雷達、簡報的讀取都不需要 LLM。
     _check_llm_models()
+    await _check_accounts()
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
     warmup_task = asyncio.create_task(_warmup_models())
     warmup_task.add_done_callback(_log_warmup_result)
@@ -173,8 +197,9 @@ app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
 
 # ───── 認證閘門(deny-by-default;白名單僅 /login 與 /healthz)─────
 # /healthz 必須免認證：它存在的理由就是讓**外部**監控能分辨「DB 掛了」與「站台正常」。
-# 登入路徑完全不碰 DB，所以 DB 掛掉時登入仍會成功——沒有這個豁免，探測只會拿到
-# 302 導向 /login，與不存在的路由完全相同。回應內容刻意極簡（見 routers/health.py）。
+# 個別帳號上線後登入與每個請求的 session 查驗都要碰 DB，DB 掛掉時一律 503——沒有
+# /healthz 這個豁免，探測只會拿到 302 導向 /login，與不存在的路由完全相同。
+# 回應內容刻意極簡（見 routers/health.py）。
 # /healthz/storage、/healthz/llm 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
 _AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
@@ -195,25 +220,46 @@ async def require_login(request: Request, call_next):
         return await call_next(request)
     # 開發模式：本機直連且未經任何代理時免登入（三個條件見 web/dev_mode.py）。
     # 刻意不發 session cookie——放行是這一個請求的事，不留下可帶走的憑證。
+    # 身分是 accounts.DEV_USER（管理員、id=None）：寫入的問答擁有者是 NULL。
     if dev_mode.bypass_allowed(request):
+        request.state.user = accounts.DEV_USER
         return await call_next(request)
     now = int(time.time())
     session = auth.parse_token(request.cookies.get(auth.COOKIE_NAME), now)
     if session is not None:
-        response = await call_next(request)
-        if path != "/logout":  # 登出會清 cookie,勿在此又刷新蓋回
-            # issued_at 必須沿用原 token 的簽發時刻:滑動續期只推遲 exp,重置 iat
-            # 會讓 auth.MAX_ABSOLUTE_TTL 的絕對上限每次請求都歸零＝形同不存在。
-            auth.set_session_cookie(
-                response,
-                now,
-                secure=auth.request_is_secure(request),
-                issued_at=session.issued_at,
-            )
-        return response
+        # 簽章只證明 cookie 是我們發的；撤銷、停用、角色都在 DB，每個請求都要查，
+        # 「停用帳號／強制登出立即生效」靠的就是這一步（見 app/services/accounts.py）。
+        try:
+            user = await deps.accounts.resolve_session(session.session_id)
+        except Exception:
+            logger.exception("session 查驗失敗：帳號服務無法使用")
+            # 不導回登入頁：DB 掛掉時登入一樣不會成功，導回去只會讓人以為密碼錯了。
+            if path.startswith("/api/"):
+                return JSONResponse({"detail": "認證服務暫時無法使用"}, status_code=503)
+            return PlainTextResponse("登入服務暫時無法使用，請稍後再試。", status_code=503)
+        if user is not None:
+            request.state.user = user
+            response = await call_next(request)
+            if path != "/logout":  # 登出會清 cookie,勿在此又刷新蓋回
+                # issued_at 必須沿用原 token 的簽發時刻:滑動續期只推遲 exp,重置 iat
+                # 會讓 auth.MAX_ABSOLUTE_TTL 的絕對上限每次請求都歸零＝形同不存在。
+                auth.set_session_cookie(
+                    response,
+                    now,
+                    session_id=session.session_id,
+                    secure=auth.request_is_secure(request),
+                    issued_at=session.issued_at,
+                )
+            return response
     if path.startswith("/api/"):
-        return JSONResponse({"detail": "未登入"}, status_code=401)
-    return RedirectResponse("/login", status_code=302)
+        response = JSONResponse({"detail": "未登入"}, status_code=401)
+    else:
+        response = RedirectResponse("/login", status_code=302)
+    if session is not None:
+        # 簽章有效但 DB 不認（已撤銷、帳號停用、過了絕對上限）：順手清掉，免得瀏覽器
+        # 一直帶著一張注定被拒的 cookie。
+        auth.clear_session_cookie(response)
+    return response
 
 
 # 最後加＝最外層：401、302 與未捕捉例外的 500 也都拿得到關聯 id、也都記得到一行。
@@ -288,6 +334,9 @@ app.include_router(qa_history_routes.router)
 
 # 待複核佇列（忠實度低分／倒讚／抽取 needs_review）：零 LLM；PUT 只寫 review_state，不改品質訊號
 app.include_router(review_routes.router)
+
+# 管理後台（/api/admin/*：帳號管理與稽核）。與待複核同樣整組限管理員（router 層 require_admin）
+app.include_router(admin_routes.router)
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

@@ -207,6 +207,8 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 
 `POST /api/ask/stop` 把使用者中止時的部分答案與 `stages` 落 `qa_log`（`stopped=true`），回 `qa_id`。
 
+**擁有者**：兩支端點寫入的 `qa_log.user_id` 是目前登入者（免登入開發模式為 NULL）。NULL 是個別帳號上線前的共用歷史，一般介面不可見。隔離有兩道：路由在開始串流前以 `deps.conversation_is_foreign`／`deps.qa_is_foreign` 檢查參照（列存在但不是你的＝404；查詢失敗＝503，不 fail-open；不存在照舊當新題／新串，因為 `_log_qa` 是 best-effort，寫入失敗後的續問不能被擋）；服務層每條 qa_log SQL 帶 `user_id IS NOT DISTINCT FROM :uid`（續問歷史、舊列 meta、版本數、停用／截斷 UPDATE 都只認自己的列），`request_id` 的收斂也只限同一擁有者（撞到別人的 `request_id` 寫入失敗）。`tests/test_qa_isolation.py` 以 AST 守門要求每個 qa_log 函式呼叫都帶 `user_id=`。
+
 ### 健康端點 `GET /healthz/llm`（只回答本機直連）
 
 回 `{"llm": state}`，**不回任何金額**；只給本機探針 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8），經邊緣一律 404。查 DeepSeek `GET /user/balance`，`balance_infos` 依 `currency` 取值（順序不固定），只看 `LLM_BUDGET_CURRENCY`（預設 CNY）那一筆：
@@ -248,7 +250,8 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 ```bash
 # 基礎建設（一次）
 make setup                                   # uv sync + pgvector 容器 + 套 schema
-cp .env.example .env                         # 填 REPORT_MARK_ACCESS_USERNAME/PASSWORD/SESSION_SECRET
+cp .env.example .env                         # 填 REPORT_MARK_SESSION_SECRET
+uv run python scripts/create_admin.py --username <名稱>   # 第一位管理員（之後在管理頁建其他帳號）
 
 # 全語料三支（初次建庫或補歷史）
 uv run python scripts/extract_all.py

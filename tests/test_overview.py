@@ -309,7 +309,7 @@ class AnswerQuestionOverviewBranchTests(unittest.TestCase):
                 captured["prompt"] = prompt
                 yield "元大共有 734 篇研報。[1]"
 
-            async def fake_load_recent_turns(_conv_id):
+            async def fake_load_recent_turns(_conv_id, *, user_id):
                 return [("前一題", "前一答")]
 
             async def fake_condense(_history, _question, **kw):

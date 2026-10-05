@@ -100,14 +100,17 @@ class ListConversationsDbTests(unittest.TestCase):
                 yield session
 
             with mock.patch.object(ans, "SessionFactory", _same_session):
-                hits = await ans.list_conversations(limit=50, q=tag)
+                hits = await ans.list_conversations(limit=50, q=tag, user_id=None)
                 ids = [h["conversation_id"] for h in hits]
                 pages = [
-                    [h["conversation_id"] for h in await ans.list_conversations(limit=2, offset=off, q=tag)]
+                    [
+                        h["conversation_id"]
+                        for h in await ans.list_conversations(limit=2, offset=off, q=tag, user_id=None)
+                    ]
                     for off in (0, 2, 4)
                 ]
-                literal = await ans.list_conversations(limit=50, q=f"{tag} 成長 50%")
-                as_wildcard = await ans.list_conversations(limit=50, q=f"{tag} 成長 5_%")
+                literal = await ans.list_conversations(limit=50, q=f"{tag} 成長 50%", user_id=None)
+                as_wildcard = await ans.list_conversations(limit=50, q=f"{tag} 成長 5_%", user_id=None)
             return ids, pages, literal, as_wildcard, {
                 "title": str(title_hit), "followup": str(followup_hit), "inactive": str(inactive_only),
                 "offtopic": str(offtopic_only), "wildcard": str(wildcard),

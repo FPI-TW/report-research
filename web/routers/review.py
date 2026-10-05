@@ -13,8 +13,11 @@
 三條品質迴路的共同缺口是「偵測到了但沒有人看得到個體」，所以收進同一支端點、同一種分頁
 形狀（與雷達目錄一致：`total／limit／offset／has_more／next_offset／items`）。
 
-處理狀態寫入獨立的 `review_state`，原始品質訊號保持不變。共用帳號無法辨識個人，
-所以只記狀態、註記、人工驗證結果與更新時間，不記虛構的 reviewer。
+處理狀態寫入獨立的 `review_state`，原始品質訊號保持不變。整組端點限管理員
+（`authz.require_admin`）：佇列會列出所有使用者的提問原文。每次處理記下處理人
+（`review_state.reviewer_user_id`，回應的 `reviewer`）並寫一列 `admin_audit_log`；
+問答類另帶提問者（`asked_by`）。兩者在個別帳號上線前的舊資料都是 None——那時是
+共用帳號，無從辨識是誰。
 
 刻意的範圍：
 
@@ -34,19 +37,21 @@ import time
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.services.accounts import User, record_audit
 from app.services.filename import source_display
 from app.services.judge_schema import CURRENT_JUDGE_SQL, JUDGE_MODEL_SQL
 from app.services.store import review_reasons
-from web import deps
+from web import authz, deps
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# 整組限管理員：待複核佇列會列出所有人的提問原文，一般使用者不該看得到別人問了什麼。
+router = APIRouter(dependencies=[Depends(authz.require_admin)])
 
 ReviewKind = Literal["faithfulness", "feedback", "extraction"]
 ReviewStatus = Literal["open", "resolved", "dismissed"]
@@ -65,6 +70,10 @@ _SCORE = (
 _QA_VALID = "active AND stopped IS NOT TRUE AND created_at > now() - make_interval(days => :days)"
 # 該列 evaluation 的 judge；沒有 evaluation 就是 NULL（JUDGE_MODEL_SQL 本身會把 NULL 補成舊預設）。
 _ROW_JUDGE = f"CASE WHEN evaluation IS NULL THEN NULL ELSE {JUDGE_MODEL_SQL} END"
+# 帳號名稱用純量子查詢而不是 JOIN：app_user 也有 id／created_at，JOIN 進來會讓下面那些
+# 沒加表名的欄位（id、created_at、feedback 的 ORDER BY）變成 ambiguous。
+_REVIEWER = "(SELECT u.username FROM research.app_user u WHERE u.id = rv.reviewer_user_id)"
+_ASKED_BY = "(SELECT u.username FROM research.app_user u WHERE u.id = qa_log.user_id)"
 
 
 class ReviewItem(BaseModel):
@@ -97,6 +106,10 @@ class ReviewItem(BaseModel):
     review_note: str = ""
     verification: Verification = "untested"
     reviewed_at: str | None = None
+    # 最後一次處理的人；None＝沒人處理過，或是個別帳號上線前（共用帳號時期）處理的。
+    reviewer: str | None = None
+    # qa：提問者帳號；None＝個別帳號上線前的共用歷史（或免登入開發模式寫入的列）。
+    asked_by: str | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -121,6 +134,7 @@ class ReviewStateResponse(ReviewUpdate):
     kind: ReviewKind
     subject_id: UUID
     updated_at: str
+    reviewer: str | None = None
 
 
 def _iso(v) -> str | None:
@@ -128,7 +142,8 @@ def _iso(v) -> str | None:
 
 
 def _qa_item(row) -> ReviewItem:
-    qa_id, conv_id, question, created_at, score, feedback, judge_model, status, note, verification, reviewed_at = row
+    (qa_id, conv_id, question, created_at, score, feedback, judge_model, status, note, verification,
+     reviewed_at, reviewer, asked_by) = row
     return ReviewItem(
         qa_id=str(qa_id), conversation_id=str(conv_id), question=question,
         created_at=_iso(created_at),
@@ -137,11 +152,13 @@ def _qa_item(row) -> ReviewItem:
         judge_model=judge_model,
         review_status=status or "open", review_note=note or "",
         verification=verification or "untested", reviewed_at=_iso(reviewed_at),
+        reviewer=reviewer, asked_by=asked_by,
     )
 
 
 def _extraction_item(row) -> ReviewItem:
-    rid, fhash, fname, title, src, rdate, qscore, qflags, pfailed, status, note, verification, reviewed_at = row
+    (rid, fhash, fname, title, src, rdate, qscore, qflags, pfailed, status, note, verification,
+     reviewed_at, reviewer) = row
     flags = qflags if isinstance(qflags, dict) else None
     reasons = review_reasons(
         float(qscore) if qscore is not None else None, list(pfailed) if pfailed else None,
@@ -158,6 +175,7 @@ def _extraction_item(row) -> ReviewItem:
         pages_failed=list(pfailed) if pfailed else None,
         review_status=status or "open", review_note=note or "",
         verification=verification or "untested", reviewed_at=_iso(reviewed_at),
+        reviewer=reviewer,
     )
 
 
@@ -166,7 +184,7 @@ async def _fetch(session, kind: str, *, limit: int, offset: int, days: int, stat
     page = {"limit": limit, "offset": offset}
     state_filter = "" if status == "all" else " AND COALESCE(rv.status, 'open') = :review_status"
     state_params = {} if status == "all" else {"review_status": status}
-    state_cols = "rv.status, rv.note, rv.verification, rv.updated_at"
+    state_cols = f"rv.status, rv.note, rv.verification, rv.updated_at, {_REVIEWER}"
     if kind == "extraction":
         total = (await session.execute(
             text("SELECT count(*) FROM research.research_report rr "
@@ -203,7 +221,7 @@ async def _fetch(session, kind: str, *, limit: int, offset: int, days: int, stat
     rows = (await session.execute(
         text(
             f"SELECT id, COALESCE(conversation_id, id), question, created_at, ({_SCORE}), feedback, "
-            f"({_ROW_JUDGE}), {state_cols} "
+            f"({_ROW_JUDGE}), {state_cols}, {_ASKED_BY} "
             f"FROM research.qa_log {join} WHERE {where}{state_filter} "
             f"ORDER BY {order} LIMIT :limit OFFSET :offset"
         ),
@@ -239,9 +257,16 @@ async def review_queue(
 
 
 @router.put("/api/review/{kind}/{subject_id}", response_model=ReviewStateResponse)
-async def update_review(kind: ReviewKind, subject_id: UUID, body: ReviewUpdate):
-    """記錄人工處理結果；verification 是人工確認，不會偷偷重跑評測或抽取。"""
+async def update_review(
+    kind: ReviewKind, subject_id: UUID, body: ReviewUpdate, user: User = Depends(authz.current_user),
+):
+    """記錄人工處理結果；verification 是人工確認，不會偷偷重跑評測或抽取。
+
+    處理人與稽核和處理狀態同一筆交易寫入。稽核只記狀態與驗證結果，不記註記全文
+    （註記本身就在 review_state，稽核留的是「誰在何時改成什麼」）。
+    """
     table = "research.research_report" if kind == "extraction" else "research.qa_log"
+    note = body.note.strip()
     async with deps.SessionFactory() as session:
         exists = (await session.execute(
             text(f"SELECT EXISTS (SELECT 1 FROM {table} WHERE id = :id)"), {"id": subject_id},
@@ -249,17 +274,25 @@ async def update_review(kind: ReviewKind, subject_id: UUID, body: ReviewUpdate):
         if not exists:
             raise HTTPException(status_code=404, detail="待複核項目不存在")
         row = (await session.execute(text(
-            "INSERT INTO research.review_state (kind, subject_id, status, note, verification) "
-            "VALUES (:kind, :id, :status, :note, :verification) "
+            "INSERT INTO research.review_state (kind, subject_id, status, note, verification, reviewer_user_id) "
+            "VALUES (:kind, :id, :status, :note, :verification, :reviewer) "
             "ON CONFLICT (kind, subject_id) DO UPDATE SET status = EXCLUDED.status, "
-            "note = EXCLUDED.note, verification = EXCLUDED.verification, updated_at = now() "
+            "note = EXCLUDED.note, verification = EXCLUDED.verification, "
+            "reviewer_user_id = EXCLUDED.reviewer_user_id, updated_at = now() "
             "RETURNING updated_at"
         ), {
             "kind": kind, "id": subject_id, "status": body.status,
-            "note": body.note.strip(), "verification": body.verification,
+            "note": note, "verification": body.verification, "reviewer": user.id,
         })).scalar_one()
+        await record_audit(
+            session, actor_id=user.id, action="review.update", target_type="review",
+            target_id=str(subject_id),
+            detail={"kind": kind, "status": body.status, "verification": body.verification,
+                    "has_note": bool(note)},
+        )
         await session.commit()
     return ReviewStateResponse(
         kind=kind, subject_id=subject_id, status=body.status,
-        note=body.note.strip(), verification=body.verification, updated_at=_iso(row),
+        note=note, verification=body.verification, updated_at=_iso(row),
+        reviewer=user.username,
     )

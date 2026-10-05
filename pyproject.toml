@@ -35,6 +35,8 @@ dependencies = [
     # 且連帶鎖進 16 個 nvidia-*／triton 套件（實測佔 3.4 GiB）。
     # uv 的 sources 只作用在 direct dependency 上，所以那個 pin 從未生效過。
     "torch>=2.12,<2.13",
+    # 個別帳號的密碼雜湊（app/services/passwords.py，Argon2id）。MIT。
+    "argon2-cffi>=23.1",
 ]
 
 [dependency-groups]

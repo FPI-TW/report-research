@@ -20,7 +20,8 @@
 
 ```bash
 uv sync                              # Python 3.11+；torch 為 CPU-only
-cp .env.example .env                 # 務必改掉 REPORT_MARK_ACCESS_USERNAME／_PASSWORD／_SESSION_SECRET 的佔位值（前兩者為空時不啟動）
+cp .env.example .env                 # 務必改掉 REPORT_MARK_SESSION_SECRET 的佔位值
+uv run python scripts/create_admin.py --username <名稱>   # 套完 schema 後建第一位管理員（密碼互動輸入，不經 argv）
 make setup                           # 相依 + pgvector 容器 + 套 schema
 make serve                           # :8097，無 --reload；Python 改動要重啟
 make serve-dev                       # --reload + SKIP_WARMUP=1，只綁 127.0.0.1
@@ -49,14 +50,15 @@ uv run python scripts/ingest_all.py
 - CI 四個 job 全為必要檢查（`.github/workflows/ci.yml`）：`前端測試（tsc + vitest）`（實際另跑 ESLint 與 vite build，並把 `frontend/dist` 傳給後端 job）、`後端測試（pytest）`（ruff＋pytest，SPA 測試對真 build 驗證）、`schema 契約（PostgreSQL）`（套兩次驗冪等，再以 `REPORT_MARK_REQUIRE_DB=1` 跑 DB 契約測試）、`secret 掃描（gitleaks）`。**required check 名稱＝job 的 `name`**，分支保護在 GitHub 設定不在 repo；改了 `name` 沒同步改設定，PR 會永遠等一個不回報的 check。
 - async 測試一律 `unittest.IsolatedAsyncioTestCase`；**不用 pytest-asyncio**（未安裝、刻意不裝，`tests/test_dev_ergonomics.py` 守門）。
 - 測試不連網、不載模型（CI 設 `HF_HUB_OFFLINE=1`）：LLM、嵌入、檔案系統一律用假物件。給函式加參數時同步改假物件簽章——過期的假物件拋 `TypeError` 會被外層 `except` 吞掉，程式靜默走另一條路。
-- 例外是五支 DB 契約測試（`tests/test_schema_constraints.py`、`tests/test_content_norm_equivalence.py`、`tests/test_extraction_log_db.py`、`tests/test_conversations_db.py`、`tests/test_review_db.py`）：連得上 DB 就真的連（**本機預設庫就是生產庫**，一律 rollback 不 commit），連不上就 skip；CI 設 `REPORT_MARK_REQUIRE_DB=1` 禁止 skip。
+- 例外是七支 DB 契約測試（`tests/test_schema_constraints.py`、`tests/test_content_norm_equivalence.py`、`tests/test_extraction_log_db.py`、`tests/test_conversations_db.py`、`tests/test_review_db.py`、`tests/test_accounts_db.py`、`tests/test_qa_isolation_db.py`）：連得上 DB 就真的連（**本機預設庫就是生產庫**，一律 rollback 不 commit），連不上就 skip；CI 設 `REPORT_MARK_REQUIRE_DB=1` 禁止 skip。
 - 端點走 HTTP 層測（`TestClient`），不直接呼叫 handler 物件。router 檔的輔助函式一律放在所有 `@router.*` 裝飾器之上；夾在裝飾器與 handler 之間會讓端點回 422，直呼函式的測試看不到。
 - **測試絕不可寫 repo 根的真實環境檔**：`finally` 擋得住例外、擋不住行程被殺，要驗載入行為餵 `tempfile`。`tests/conftest.py`（快照並還原 `.env`，變動即讓整個 session 失敗）與 `tests/test_env_loading.py` 是第二道防線，不是許可證。
 - 任何預設寫進 repo 根 `data/` 的新狀態檔，要在 `tests/conftest.py` 以**賦值**（不是 `setdefault`）導向不存在的路徑或 `os.devnull`，比照 `LLM_BREAKER_FILE`、`LLM_USAGE_LOG`。回應隨查詢參數變的 TTL 快取走 `web/ttl_cache.py`（conftest 每題前後 `reset_all()`）；其他模組級快取要在 conftest 加每題前後的重設（比照 monitor 的快取），否則測試互相污染。
 - `tests/conftest.py` 刻意強制 `LLM_PROVIDER=claude_cli`（測試不打付費 API）；要驗預設值的測試自己移除該鍵。
+- 帳號：`tests/conftest.py` 整個 session 把 `web.deps.accounts` 換成記憶體假帳號庫（`tests/fake_accounts.py`，預設一位 tester／testpass **管理員**），既有測試照常 POST `/login`。要驗一般使用者、停用、跨使用者隔離的測試用 `fake_accounts.install()` 換上自己的一份；只需要「已登入」用 `session_cookies()`。conftest 也預設把問答的擁有權檢查（`deps.conversation_is_foreign`／`deps.qa_is_foreign`）stub 成「不是別人的」，要驗 404 的測試自行覆寫。改了 `app/services/accounts.py` 的語意要同步改假物件——`tests/test_accounts_db.py` 同一組情境兩邊各跑一次。
 - 本機全綠不代表安全：抽取層 CJK 測試（`tests/test_extraction_layout.py` 的 CjkTests，用 weasyprint 渲染中文測試 PDF）缺字型時本機 skip，CI 以 `REPORT_MARK_REQUIRE_CJK=1` 封死。
 - 授權守門 `tests/test_license_guard.py`：帶網路條款的 copyleft（AGPL／SSPL）一律紅，掃已安裝套件 metadata、`uv.lock` 名稱黑名單與 `frontend/package-lock.json`。紅了是換掉相依，不是加豁免。Dependabot 自動更新 PR 已停用，相依更新改由人工審查；更新 `torch` 時須確認 CPU-only wheel、FlagEmbedding／transformers 相容性並跑 eval，`@embedpdf/*` 必須整組升版並人眼驗證 PDF 選取與複製。
-- 契約類測試（改了別處會紅，修程式或文件，不放寬 allowlist）：`tests/test_docs_contract.py`、`tests/test_schema_constraints.py`、`tests/test_content_norm_equivalence.py`、`tests/test_sse_event_contract.py`、`tests/test_radar_contract.py`、`tests/test_deploy_units.py`、`tests/test_sync_timer_persistence.py`、`tests/test_env_loading.py`、`tests/test_llm_env_loading.py`、`tests/test_logging_setup.py`、`tests/test_dev_mode.py`、`tests/test_claude_lock.py`、`tests/test_claude_cli.py`、`tests/test_llm.py`、`tests/test_llm_models.py`、`tests/test_sql_index_hygiene.py`、`tests/test_secret_scan_config.py`、`tests/test_license_guard.py`、`tests/test_dev_ergonomics.py`、`tests/test_pre_split_guards.py`、`tests/test_spa_serving.py`、`tests/test_eval_question_contract.py`、`tests/test_db_backup.py`。
+- 契約類測試（改了別處會紅，修程式或文件，不放寬 allowlist）：`tests/test_docs_contract.py`、`tests/test_schema_constraints.py`、`tests/test_content_norm_equivalence.py`、`tests/test_sse_event_contract.py`、`tests/test_radar_contract.py`、`tests/test_deploy_units.py`、`tests/test_sync_timer_persistence.py`、`tests/test_env_loading.py`、`tests/test_llm_env_loading.py`、`tests/test_logging_setup.py`、`tests/test_dev_mode.py`、`tests/test_claude_lock.py`、`tests/test_claude_cli.py`、`tests/test_llm.py`、`tests/test_llm_models.py`、`tests/test_sql_index_hygiene.py`、`tests/test_secret_scan_config.py`、`tests/test_license_guard.py`、`tests/test_dev_ergonomics.py`、`tests/test_pre_split_guards.py`、`tests/test_spa_serving.py`、`tests/test_eval_question_contract.py`、`tests/test_db_backup.py`、`tests/test_authz.py`、`tests/test_accounts_db.py`、`tests/test_qa_isolation.py`、`tests/test_qa_isolation_db.py`。
 - 評測（`eval/`）刻意不進 CI。改檢索或生成品質時前後各跑一次、用 `make eval-compare BASE=… CAND=…` 比，**退出碼是結論**：0 無劣化／1 劣化／2 不可比／3 有未分類指標（新指標要在 `METRIC_SPECS` 補方向）。門檻 F>0.9／CP>0.8／AR>0.55 是政策，不擅自改。最新基準線 `eval/baselines/baseline-2026-09-29-jdsflash-gdsflash.json`（DeepSeek judge，系譜 `deepseek-2026-09`，18 題×3 次，固定正式語料快照；快照 ID 見 README「開發與測試」）；舊的 `eval/baselines/baseline-2026-09-02.json` 是 haiku judge 系譜，拿新結果比一律回 2。正式 `eval/run_ragas.py` 帶 `--checkpoint-dir` 才能續跑。`eval/ragas_questions.json` 是凍結題集（`eval/question_contract.py` 守，`scripts/bench_load.py` 共用），改題集就失去與基準線的可比性。
 
 ## 改動對照表（改了 A 就要動 B）
@@ -70,6 +72,7 @@ uv run python scripts/ingest_all.py
 | 新增 SSE 事件欄位 | 契約測試**抓不到**欄位漏宣告：自己在 `frontend/src/lib/askSchemas.ts` 用 `optional()` 宣告（zod 預設 strip，未宣告鍵靜默丟掉），並在 `askSchemas.test.ts` 補斷言 |
 | `db/schema.sql` | 沒有 migration 工具，冪等只涵蓋 `ADD COLUMN IF NOT EXISTS` 與「先回填再 `SET DEFAULT`／`SET NOT NULL`」；**改 CHECK 約束在既有庫是 no-op**，要另寫給既有庫的 `ALTER`；刪表同理要另給 DROP 腳本（先例 `db/drop_deep_report_tables.sql`）。`db/expected_constraints.txt` 紅了是這個意思，不是改清單；刻意改約束才用 `REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py` 重生——**先把 `REPORT_MARK_DB_URL` 指向剛套完 schema 的全新空庫**，對既有庫重生只會得到舊約束 |
 | 新增不可重建的表 | `scripts/db_backup.sh` 的 `BACKUP_TABLES`、`tests/test_db_backup.py` 的清單、README／`docs/ARCHITECTURE.md`／`docs/production_resilience.md`／本檔「資料層陷阱」的表數字樣一起改 |
+| 新增管理端點 | 路徑放 `/api/admin/` 或 `/api/review/` 底下、router 層掛 `authz.require_admin`（`tests/test_authz.py` 結構性檢查每一條）；帳號規則寫在 `app/services/accounts.py` 而不是路由層（CLI 也要受約束）；會改資料的管理動作在同一筆交易寫 `admin_audit_log`，`detail` 不得含密碼或註記全文 |
 | `review_state` 詞彙（kind／status／verification） | `web/routers/review.py` 的 `Literal` 與 `frontend/src/lib/reviewSchemas.ts` 的 zod enum 逐字一致（**沒有測試守門**）；`db/schema.sql` 只有 `verification` 的預設值 `untested` 要跟著改（表刻意無 CHECK、無 FK）；部署順序 `make schema` → `make build-web` → 重啟 web |
 | `content_norm` 或 `textnorm.norm_for_match()` | 兩者逐字等價（`tests/test_content_norm_equivalence.py`；已知 6 個分歧字元由該測試鎖住範圍，不可擴大） |
 | 新旋鈕 | 放 `app/config.py`（frozen dataclass＋`os.getenv`，非 pydantic-settings）。既有散在各檔的讀取**不要順手搬**；找旋鈕要同時搜 `os.getenv` 與 `os.environ`（範圍 `app web scripts eval`；只搜前者會漏掉 `web/auth.py` 等處）。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`、`REPORT_MARK_BACKUP_*`，測試用的 `REPORT_MARK_REQUIRE_*`、`REPORT_MARK_WRITE_CONSTRAINTS`）是 live 的，不要改名 |
@@ -119,13 +122,14 @@ uv run python scripts/ingest_all.py
 - dataclass 新欄位放末尾並給預設。但 `rows.ChunkRow` 是與 `store._meta_columns` 位置對齊的 NamedTuple：新欄位**插中段、絕不 append**，取欄位用 `ChunkRow._fields.index(...)`，不寫數字。
 - DB 一律 `from app.services.db import SessionFactory`，不複製預設連線字串（鍵是 `REPORT_MARK_DB_URL`）。長查詢用 `db.relax_statement_timeout()`（`SET LOCAL`）。`DB_IDLE_TX_TIMEOUT_MS` 預設 0 是刻意的：sync 在交易內做 LLM 標註與嵌入。SQL bind 參數轉型寫 `CAST(:x AS text[])`，不可寫 `:x::text[]`（`::` 緊貼參數名會讓 `text()` 綁錯參數）；標的過濾寫 containment（`@>`）才吃得到 GIN（`tests/test_sql_index_hygiene.py`）。
 - logging 只在 `web/server.py` 初始化（`app/logging_setup.py`，順序由 `tests/test_logging_setup.py` 釘住）；批次腳本的 `logger.info` 無聲。
-- 備份涵蓋五張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`）→ NAS；語料層刻意不備。
+- 備份涵蓋七張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`）→ NAS；語料層與 `user_session` 刻意不備。`app_user` 含密碼雜湊，備份檔當機密看待。
+- 問答紀錄每列有擁有者 `qa_log.user_id`：所有面向使用者的讀寫（歷史、對話串、版本、刪除、回饋、續問與重生的舊列）一律帶 user 條件，不靠前端隔離；NULL＝個別帳號上線前的共用歷史，一般介面看不到。管理面（待複核、監控聚合、離線分析）刻意看全部。兩道隔離：路由在串流前檢查參照擁有權（別人的＝404、查詢失敗＝503），服務層 SQL 帶 `user_id IS NOT DISTINCT FROM :uid`；`app/services/answer.py` 的 qa_log 讀寫函式 `user_id` 是必填關鍵字參數，`tests/test_qa_isolation.py` 以 AST 守門每個呼叫點。
 
 ## Web、auth 與安全（§7）
 
 - `web/server.py` 是組合層（加上 auth middleware 與白名單）；路由在 `web/routers/`（無 `APIRouter(prefix=...)`），共用符號經 `web/deps.py`（測試 patch 的單一位置）。
-- Auth deny-by-default、fail-closed：缺 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 不啟動；`REPORT_MARK_SESSION_SECRET` 未設會用隨機值（每次重啟全員登出），生產必須設。免登入白名單 `/login`、`/healthz`、前綴 `/app/assets/`；`/healthz/storage`、`/healthz/llm` 也在白名單但只回答本機直連（其餘 404）。
-- 外部存取需 `REPORT_MARK_EDGE_SECRET` 或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 任一（刻意 OR；祕密在 repo 根 `.env` 與 `deploy/.env` 逐字相同，後者鍵名不帶前綴），見 `docs/EXTERNAL_ACCESS.md`。Session 是 HMAC cookie，7 天滑動、30 天上限；改密碼、`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 都會全員登出，是預期行為。
+- Auth deny-by-default、fail-closed：個別帳號（`research.app_user`，Argon2id；只停用不刪除），middleware 驗完 cookie 簽章後**每個請求查 DB**（`deps.accounts.resolve_session`，刻意不快取：停用、強制登出、重設密碼、降級都要下一個請求就生效），身分放 `request.state.user`；查 DB 失敗回 503 不導回登入頁。授權只在後端 `web/authz.py`（`current_user`／`require_admin`）：`/api/review/*`、`/api/admin/*` 整組限管理員，前端的管理後台是獨立外殼（`AdminShell`，`/app/admin/*`），主平台只在帳號選單留入口；`RequireAdmin` 與入口顯示都只是顯示層。舊的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 已不讀取；救援入口是 `scripts/create_admin.py --reset-password`。`REPORT_MARK_SESSION_SECRET` 未設會用隨機值（每次重啟全員登出），生產必須設。免登入白名單 `/login`、`/healthz`、前綴 `/app/assets/`；`/healthz/storage`、`/healthz/llm` 也在白名單但只回答本機直連（其餘 404）。
+- 外部存取需 `REPORT_MARK_EDGE_SECRET` 或 `REPORT_MARK_TRUSTED_PROXY_CIDRS` 任一（刻意 OR；祕密在 repo 根 `.env` 與 `deploy/.env` 逐字相同，後者鍵名不帶前綴），見 `docs/EXTERNAL_ACCESS.md`。Session 是 HMAC cookie（v3，只帶 `user_session.id`），7 天滑動、30 天上限；`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 會全員登出，是預期行為；單一帳號的撤銷走管理頁。
 - `DEV_NO_AUTH=1` 三條件同時成立才放行（旗標在環境檔載入前已在 `os.environ`、對端與 URL hostname 皆 loopback、無代理 header），import 順序由 `tests/test_dev_mode.py` 釘住。`SKIP_WARMUP` 在 lifespan 才讀、判 `== "1"`，寫進 `.env` **會生效**。兩者都不要寫進環境檔。
 - 併發閘只剩一個：`/api/ask` 上限 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`（佇列 `ASK_MAX_QUEUE`），是 `web/concurrency.py` 的 `ConcurrencyGate`（刻意不支援 `async with`）。上限 per-process，lifespan 擋多 worker。
 - 祕密不進 argv（webhook URL 經 stdin 餵給 curl）；gitleaks 掃全歷史，`.gitleaks.toml` 由 `tests/test_secret_scan_config.py` 守。
@@ -148,6 +152,7 @@ uv run python scripts/ingest_all.py
 - **網搜暫停中**：生產 `ASK_ENABLE_WEB=0`，前端 `WEB_SEARCH_PAUSED` 隱藏開關、請求一律送 `web=false`；DeepSeek 版網搜完成後兩處一起恢復。
 - **夜間回填** `report-mark-backfill.timer`（E1d）仍 enabled，跑完（journal 的「估計尚餘」歸零）後由人手動 disable。
 - **深度研報已移除**（2026-09）：既有庫要手動跑 `db/drop_deep_report_tables.sql`。
+- **個別帳號取代共用帳密（2026-10 開發中，尚未部署）**：部署順序 `make schema` → `scripts/create_admin.py --from-env`（或 `--username`）→ `make build-web` → 重啟 web → 在管理頁為每位同事建帳號（LINE bot 只從 LINE 群組下載研報到 NAS、不呼叫平台 API，不需要帳號） → 刪掉環境檔的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD`（還在時啟動記 warning）。生產庫套 schema 前，本機 `tests/test_schema_constraints.py` 對生產庫對帳會紅（多了 `app_user` 的 CHECK）。部署完成後改寫這一條。
 
 ## 慣例
 

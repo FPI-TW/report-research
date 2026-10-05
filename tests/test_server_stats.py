@@ -6,8 +6,6 @@ import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-os.environ.setdefault("REPORT_MARK_ACCESS_USERNAME", "tester")
-os.environ.setdefault("REPORT_MARK_ACCESS_PASSWORD", "testpass")
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 # stats/progress 及其快取、進度解析 helper 已拆到 web.routers.monitor；服務綁定
 # （SessionFactory）仍在 web.deps。故 handler/快取/常數的覆寫指向 monitor 模組。
+from app.services.accounts import DEV_USER  # noqa: E402
 from web import deps  # noqa: E402
 from web.routers import monitor  # noqa: E402
 
@@ -410,7 +409,7 @@ class StatsCacheTests(unittest.IsolatedAsyncioTestCase):
             "orchestrator": None,
         }
         try:
-            stats = await monitor.stats()
+            stats = await monitor.stats(DEV_USER)
             progress = await monitor.progress()
         finally:
             deps.SessionFactory = orig_session_factory

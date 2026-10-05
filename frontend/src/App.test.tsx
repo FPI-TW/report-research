@@ -28,3 +28,35 @@ test('/search 落在檢索頁且側欄可見', async () => {
   expect(screen.getByRole('heading', { level: 1, name: '廷豐智能研報' })).toBeInTheDocument()
   expect(screen.getByTitle('收合側欄')).toBeInTheDocument()
 }, 15000)
+
+function stubAs(role: 'admin' | 'user') {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.includes('/api/conversations')) return new Response(JSON.stringify([]), { status: 200 })
+    if (url.includes('/api/me')) return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role }), { status: 200 })
+    if (url.startsWith('/api/admin/users')) return new Response(JSON.stringify({ items: [] }), { status: 200 })
+    if (url.startsWith('/api/admin/audit')) {
+      return new Response(JSON.stringify({ total: 0, limit: 20, offset: 0, has_more: false, next_offset: null, items: [] }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+test('/admin 導向帳號管理（管理員）', async () => {
+  stubAs('admin')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 2, name: '帳號清單' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(router.state.location.pathname).toBe('/admin/users')
+}, 15000)
+
+test('一般使用者直接開 /admin/reviews：無權限頁，不打待複核與管理 API', async () => {
+  const fetchMock = stubAs('user')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/reviews'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { name: '需要管理員權限' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/review') || String(u).startsWith('/api/admin'))).toBe(false)
+}, 15000)

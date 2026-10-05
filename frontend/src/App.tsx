@@ -12,6 +12,12 @@ const RadarPage = lazy(routeLoaders.radar)
 const BriefPage = lazy(routeLoaders.brief)
 const HelpPage = lazy(routeLoaders.help)
 const ReportPage = lazy(routeLoaders.report)
+// 管理後台：外殼 AdminShell 與各頁 default export 都包 RequireAdmin（顯示層守門）；
+// 授權在後端 /api/admin/*、/api/review/*。
+const AdminShell = lazy(routeLoaders.adminShell)
+const AdminUsersPage = lazy(routeLoaders.adminUsers)
+const AdminReviewsPage = lazy(routeLoaders.adminReviews)
+const AdminAuditPage = lazy(routeLoaders.adminAudit)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -38,6 +44,25 @@ export const routes = [
           { path: '/help', element: <Suspense><HelpPage /></Suspense> },
           // 研報閱讀頁：從檢索進入的詳情頁，不進導覽列（照 /help 慣例）。須排在 '*' 之前。
           { path: '/report/:hash', element: <Suspense><ReportPage /></Suspense> },
+          { path: '*', element: <NotFound /> },
+        ],
+      },
+    ],
+  },
+  {
+    // 管理後台：與研報平台完全分開的另一組 layout route（自己的外殼與導覽，沒有研報側欄、
+    // 歷史對話）。同一套 SPA、同一個 build；主平台只在帳號選單留管理員入口。
+    path: '/admin',
+    element: <Suspense><AdminShell /></Suspense>,
+    errorElement: <RouteError standalone />,
+    children: [
+      {
+        errorElement: <RouteError />,
+        children: [
+          { index: true, element: <Navigate to="/admin/users" replace /> },
+          { path: 'users', element: <Suspense><AdminUsersPage /></Suspense> },
+          { path: 'reviews', element: <Suspense><AdminReviewsPage /></Suspense> },
+          { path: 'audit', element: <Suspense><AdminAuditPage /></Suspense> },
           { path: '*', element: <NotFound /> },
         ],
       },

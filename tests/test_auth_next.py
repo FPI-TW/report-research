@@ -1,5 +1,4 @@
-import time
-
+from fake_accounts import FakeAccounts, install, session_cookies
 from fastapi.testclient import TestClient
 
 from web import auth
@@ -35,34 +34,40 @@ def test_unauthed_page_redirects_to_plain_login():
     assert resp.headers["location"] == "/login"
 
 
+def _store_with_x() -> FakeAccounts:
+    store = FakeAccounts()
+    store.add_user("x", "y-password", "user")
+    return store
+
+
 def test_login_post_honors_safe_next(monkeypatch):
-    monkeypatch.setattr(auth, "check_credentials", lambda u, p: True)
     monkeypatch.setattr(auth, "login_allowed", lambda r: True)
-    client = TestClient(app)
-    resp = client.post(
-        "/login",
-        data={"username": "x", "password": "y", "next": "/monitor"},
-        follow_redirects=False,
-    )
+    with install(_store_with_x()):
+        client = TestClient(app)
+        resp = client.post(
+            "/login",
+            data={"username": "x", "password": "y-password", "next": "/monitor"},
+            follow_redirects=False,
+        )
     assert resp.status_code == 303
     assert resp.headers["location"] == "/monitor"
 
 
 def test_login_post_ignores_evil_next(monkeypatch):
-    monkeypatch.setattr(auth, "check_credentials", lambda u, p: True)
     monkeypatch.setattr(auth, "login_allowed", lambda r: True)
-    client = TestClient(app)
-    resp = client.post(
-        "/login",
-        data={"username": "x", "password": "y", "next": "https://evil.com"},
-        follow_redirects=False,
-    )
+    with install(_store_with_x()):
+        client = TestClient(app)
+        resp = client.post(
+            "/login",
+            data={"username": "x", "password": "y-password", "next": "https://evil.com"},
+            follow_redirects=False,
+        )
     assert resp.headers["location"] == "/"
 
 
 def test_authed_login_get_honors_safe_next():
-    # 用真 token 而非 stub 掉 verify_token：middleware 與 /login 是兩個不同的驗證
-    # 呼叫點，stub 其中一個只會在下次改認證時無聲失準（本檔曾因此紅）。
+    # 用真 session（假帳號庫裡真的開一個）而非 stub 掉驗證：middleware 與 /login 是兩個
+    # 不同的驗證呼叫點，stub 其中一個只會在下次改認證時無聲失準（本檔曾因此紅）。
     client = TestClient(app, cookies=_auth_cookies())
     # valid same-origin next: should redirect there
     resp = client.get("/login?next=/monitor", follow_redirects=False)
@@ -83,7 +88,7 @@ def test_authed_root_redirects_to_spa():
 
 
 def _auth_cookies() -> dict[str, str]:
-    return {auth.COOKIE_NAME: auth.issue_token(int(time.time()))}
+    return session_cookies()
 
 
 def test_authed_monitor_redirects_to_spa():

@@ -204,7 +204,16 @@ export function useAskController(): UseAskController {
       const items = await getConversation(id)
       if (my !== reqId.current) return
       dispatch({ type: 'load', turns: items.map(turnFromHistory) })
-    } catch { /* 載入失敗不破壞現況 */ }
+    } catch (err) {
+      // 404＝這串不存在或不是你的（後端兩者回同一個 404，看不出差別）。若還掛著這個
+      // conversation_id，下一題送出時 /api/ask 也會回 404、畫面卡死——改當新對話。
+      if (my === reqId.current && err instanceof ApiError && err.status === 404) {
+        convRef.current = null
+        setConversationId(null)
+        dispatch({ type: 'reset' })
+      }
+      /* 其他失敗不破壞現況 */
+    }
   }, [abortAsk])
 
   const newConversation = useCallback(() => {

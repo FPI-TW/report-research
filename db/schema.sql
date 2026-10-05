@@ -177,6 +177,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_qa_log_request_id
     ON research.qa_log (request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_qa_log_root
     ON research.qa_log ((COALESCE(root_qa_id, id)), created_at);
+-- 擁有者（research.app_user.id）。NULL＝個別帳號上線前的共用歷史：無法判斷是誰問的，
+-- 一般介面一律看不到（讀取一律帶 user_id 條件）。刻意無 FK（同 review_state）：qa_log
+-- 是備份表，還原時不該被 app_user 的還原順序綁住。
+ALTER TABLE research.qa_log ADD COLUMN IF NOT EXISTS user_id uuid;
+CREATE INDEX IF NOT EXISTS idx_qa_log_user_created
+    ON research.qa_log (user_id, created_at DESC);
 
 -- ── 觀點雷達訊號層：一列＝「一份研報 × 一個標的」的不可覆寫歷史快照 ──
 -- 報告可涵蓋多個 stock_targets，故每個標的各一列。（研報觀點變化雷達設計規格「資料模型」）
@@ -383,7 +389,7 @@ CREATE TABLE IF NOT EXISTS research.llm_task_failure (
 );
 
 -- 待複核處理紀錄。原始品質訊號仍留在 qa_log / research_report；這裡只記人工處理結果。
--- 共用帳號不能辨識個人，因此不虛構 reviewer 欄。不存在的列視為 open。
+-- 不存在的列視為 open。
 -- subject_id 是 qa_log.id 或 research_report.id；避免跨兩張表的虛假 FK。
 CREATE TABLE IF NOT EXISTS research.review_state (
     kind          text NOT NULL,
@@ -394,3 +400,57 @@ CREATE TABLE IF NOT EXISTS research.review_state (
     updated_at    timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (kind, subject_id)
 );
+-- 最後一次處理的人（research.app_user.id）。NULL＝個別帳號上線前的共用帳號時期，
+-- 當時無法辨識個人。刻意無 FK，理由同 qa_log.user_id。
+ALTER TABLE research.review_state ADD COLUMN IF NOT EXISTS reviewer_user_id uuid;
+
+-- ───── 個別帳號與 session（web/auth.py、app/services/accounts.py）─────
+-- 帳號只停用、不刪除：qa_log.user_id、review_state.reviewer_user_id、admin_audit_log 都指向它，
+-- 刪掉會讓歷史失去擁有者。username 不分大小寫唯一（lower 唯一索引）。password_hash 是
+-- Argon2id 的 PHC 字串（含參數與鹽，見 app/services/passwords.py），絕不存明文。
+-- 不可重建：與 admin_audit_log 一起在 scripts/db_backup.sh 的 BACKUP_TABLES。
+CREATE TABLE IF NOT EXISTS research.app_user (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    username            text NOT NULL,
+    password_hash       text NOT NULL,
+    role                text NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+    enabled             boolean NOT NULL DEFAULT true,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    updated_at          timestamptz NOT NULL DEFAULT now(),
+    password_changed_at timestamptz NOT NULL DEFAULT now(),
+    last_login_at       timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_username_lower
+    ON research.app_user (lower(username));
+
+-- 可撤銷 session：cookie 只帶 session id 與簽章（web/auth.py），撤銷＝在這裡蓋 revoked_at，
+-- 停用帳號＝app_user.enabled=false，兩者每個請求都查，所以都是立即生效。
+-- expires_at 是絕對存活上限（簽發＋30 天）；7 天滑動到期由 cookie 內簽過章的 exp 負責。
+-- 刻意不備份：遺失的代價只是全員重新登入。
+CREATE TABLE IF NOT EXISTS research.user_session (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      uuid NOT NULL REFERENCES research.app_user (id) ON DELETE CASCADE,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    last_seen_at timestamptz NOT NULL DEFAULT now(),
+    expires_at   timestamptz NOT NULL,
+    revoked_at   timestamptz,
+    ip           text,
+    user_agent   text
+);
+CREATE INDEX IF NOT EXISTS idx_user_session_user_live
+    ON research.user_session (user_id) WHERE revoked_at IS NULL;
+
+-- 管理操作稽核（建立帳號、改角色、停用、重設密碼、強制登出、處理待複核）。
+-- actor_user_id NULL＝非網頁來源（scripts/create_admin.py），detail 會寫 via。
+-- 與被變更的資料在同一筆交易寫入：改了卻沒留紀錄、或留了紀錄卻沒改，兩種都不會發生。
+CREATE TABLE IF NOT EXISTS research.admin_audit_log (
+    id            bigserial PRIMARY KEY,
+    actor_user_id uuid,
+    action        text NOT NULL,
+    target_type   text NOT NULL,
+    target_id     text,
+    detail        jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_log_created
+    ON research.admin_audit_log (created_at DESC);

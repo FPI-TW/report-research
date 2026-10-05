@@ -296,6 +296,11 @@ jobs:
       - name: 待複核佇列查詢
         run: uv run pytest -q tests/test_review_db.py
 
+      # 個別帳號：大小寫不分的唯一帳號、session 撤銷與停用立即生效、最後一位管理員的
+      # 列鎖、稽核與變更同交易。空庫才驗得到「最後一位管理員」那一題（本機生產庫會 skip）。
+      - name: 帳號與 session
+        run: uv run pytest -q tests/test_accounts_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

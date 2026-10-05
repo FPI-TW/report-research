@@ -28,9 +28,11 @@ Cloudflare DNS 由 Cloudflare 控制台另行管理。應用程式、服務、`d
 
 - AWS account：`607063196781`
 - Region：`ap-southeast-1`
-- EC2：`c7i.xlarge`、Ubuntu 24.04 LTS amd64、100 GiB encrypted gp3、零 ingress、SSM only
-- 公網位址：由同一個 stack 管理並綁定 EC2 的 Elastic IP；僅供穩定 DNS A record，並不開放 ingress
-- RDS：PostgreSQL 16、`db.m7g.large`、Single-AZ、100 GiB encrypted gp3、上限 500 GiB
+- EC2：`c7i.xlarge`、Ubuntu 24.04 LTS amd64、100 GiB encrypted gp3、管理只走 SSM（無 SSH、無 key pair）
+- 入站：只有 TCP/443，來源限定 Cloudflare IPv4 範圍（managed prefix list `CloudflareOriginPrefixList`）；
+  不開 SSH、TCP/80、TCP/8097、RDS/5432 或 `0.0.0.0/0`
+- 公網位址：由同一個 stack 管理並綁定 EC2 的 Elastic IP；`research.tingfong.com` 的橘雲 A record 指向它
+- RDS：PostgreSQL 16、`db.m7g.large`、Single-AZ、100 GiB encrypted gp3、上限 500 GiB、自動備份保留 7 天
 - VPC：`10.20.0.0/16`；EC2 在 public subnet，RDS 在跨兩 AZ 的 private subnet group
 - Stack：`report-research-staging`；stack 與 RDS 均啟用刪除保護
 
@@ -160,6 +162,37 @@ PDF 目前使用 R2 presigned URL，原檔下載走瀏覽器到 R2，不因 Web 
 [Tunnel replicas](https://developers.cloudflare.com/tunnel/configuration/)、
 [橘雲／灰雲](https://developers.cloudflare.com/dns/proxy-status/)、
 [Full (strict)](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)。
+
+## 對外入口決定：A record＋橘雲直連（2026-10-02）
+
+上節的兩條路徑選定 **A record＋橘雲**，不走 Tunnel。訪客 → Cloudflare（訪客端 TLS）→ EIP:443 →
+EC2 上的 nginx（來源站 TLS）→ `127.0.0.1:8097`。
+
+| 層 | 設定 | 管理位置 |
+|---|---|---|
+| Security Group | 只放行 `CloudflareOriginPrefixList` 的 TCP/443 | 本範本（`Ec2SecurityGroup`、`security.guard` 的 `ec2_inbound_is_only_https_from_cloudflare`） |
+| 來源站憑證 | Cloudflare Origin CA，SAN `research.tingfong.com`，效期至 2041-09-28 | EC2 的 `/etc/ssl/report-mark/`（私鑰 0600 root），不進 repo |
+| nginx | 非此網域的 TLS 握手一律拒絕；只信任 Cloudflare 範圍的 `CF-Connecting-IP` | 應用 repo 的 `deploy/nginx-origin.conf` |
+| Cloudflare | SSL/TLS 模式 **Full (strict)**；**Always Use HTTPS** 開啟（來源站不聽 80） | Cloudflare 控制台 |
+
+刻意的取捨與限制：
+
+- **橘雲不能關**：Origin CA 憑證只有 Cloudflare 信任，改成灰雲時瀏覽器會報憑證錯誤。
+- **SG 的 `GroupDescription` 刻意不改**（字面上仍寫 Ingress-free）：改它會替換整個 SG，連帶影響
+  RDS SG 的來源參照。實際規則以 `SecurityGroupIngress` 與 Guard 規則為準。
+- **只開 IPv4**：VPC 沒有 IPv6、網域沒有來源 AAAA record，Cloudflare 以 IPv4 回源。
+- **prefix list 的 `MaxEntries` 是 20**：SG 規則引用 prefix list 時，以 `MaxEntries` 計入 SG 規則配額。
+- **Cloudflare IP 範圍會變**：以 <https://www.cloudflare.com/ips-v4> 為準。有變動時，本範本的 prefix list
+  與 nginx 的 `set_real_ip_from` 要一起改；只改 SG 的話，限流與登入失敗追蹤會算在 Cloudflare 節點頭上。
+- 任何 Cloudflare 客戶都能把自己的網域指向這個 EIP、從 Cloudflare 範圍連進來，nginx 會以拒絕握手擋掉
+  不是本網域的請求。要更嚴格可以另開 Cloudflare Authenticated Origin Pulls（mTLS），目前未啟用。
+
+上線順序：先在 EC2 上確認 nginx 與 web 本機可用，再以下方「既有 stack 更新」流程建立 change set。
+預期變更為新增 `CloudflareOriginPrefixList`（Add）與修改 `Ec2SecurityGroup`（Modify、
+`Replacement=False`），外加 stack description 與 outputs。本範本也把 RDS 自動備份保留期從 1 天
+提高為 7 天；若現有 stack 仍為 1 天，應另有 `Database` Modify、`Replacement=False`，且唯一屬性
+變更是 `BackupRetentionPeriod`；若已是 7 天則無此項。出現其他項目就停止。最後在 Cloudflare 控制台
+確認 Full (strict) 與 Always Use HTTPS，從外部打 `https://research.tingfong.com/healthz` 驗收。
 
 ## 前置與唯讀檢查
 
@@ -353,7 +386,7 @@ AWS RDS CA bundle 與 `sslmode=verify-full` 連線，建立 `vector`／`pg_trgm`
 - database 為 `research`
 - TLS 連線成立且 `rds.force_ssl=on`
 - pgvector 版本至少 0.8
-- EC2 沒有專案 checkout、Docker、nginx 或 cloudflared
+- EC2 沒有專案 checkout、Docker、nginx 或 cloudflared（只適用初次建立；應用部署後這項必然不成立）
 
 所有驗收通過後啟用 stack termination protection：
 
@@ -364,7 +397,8 @@ aws cloudformation update-termination-protection \
   --enable-termination-protection
 ```
 
-最後再次確認 RDS `DeletionProtection=true`、`PubliclyAccessible=false`、`MultiAZ=false`，EC2 SG 零 ingress，
+最後再次確認 RDS `DeletionProtection=true`、`PubliclyAccessible=false`、`MultiAZ=false`，EC2 SG 的入站只有
+`CloudflareOriginPrefixList` 的 TCP/443，
 且 RDS SG 的 TCP/5432 唯一來源為 EC2 SG。資源驗收後保持運行並持續計費。
 
 ## 刪除與成本警告

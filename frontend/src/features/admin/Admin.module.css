@@ -33,10 +33,10 @@
 .error { font-size: 13px; color: var(--tf-error-text); background: var(--tf-error-bg); border-radius: 6px; padding: 8px 12px; margin: 0; }
 .ok { font-size: 13px; color: var(--tf-text-2); margin: 0; }
 
-.tableWrap { overflow-x: auto; }
+.tableWrap { overflow-x: auto; container-type: inline-size; }
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table th { text-align: left; font-weight: 500; font-size: 12px; color: var(--tf-text-4); padding: 6px 8px; border-bottom: 1px solid var(--tf-border-weak); white-space: nowrap; }
-.table td { padding: 9px 8px; border-bottom: 1px solid var(--tf-border-weak); color: var(--tf-text-1); vertical-align: middle; }
+.table td { padding: 9px 8px; border-bottom: 1px solid var(--tf-border-weak); color: var(--tf-text-1); vertical-align: middle; white-space: nowrap; }
 .table tr:last-child td { border-bottom: none; }
 .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .muted { color: var(--tf-text-4); }
@@ -44,7 +44,13 @@
 .badgeOff { background: var(--tf-error-bg); color: var(--tf-error-text); }
 .self { font-size: 11.5px; color: var(--tf-text-4); margin-left: 6px; }
 
-.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* 操作欄固定兩欄格狀：四顆按鈕排成 2×2，欄寬隨字數，不被擠成一顆一行或裁掉 */
+.actionsCell { white-space: normal; }
+.actions { display: grid; grid-template-columns: repeat(2, max-content); gap: 6px; }
+/* 卡片窄（側欄展開的筆電寬度）時改單欄直排：寧可列高一點，也不要按鈕被裁到橫捲軸外 */
+@container (max-width: 700px) {
+  .actions { grid-template-columns: max-content; }
+}
 .action {
   border: 1px solid var(--tf-border-weak); border-radius: 6px; background: var(--tf-surface, white);
   color: var(--tf-text-1); font: inherit; font-size: 12px; padding: 4px 9px; cursor: pointer; white-space: nowrap;

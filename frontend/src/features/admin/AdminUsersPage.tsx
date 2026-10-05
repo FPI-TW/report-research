@@ -182,7 +182,7 @@ function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) =
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>帳號</th><th>角色</th><th>狀態</th><th>最後登入</th><th>最後活動</th><th>有效 session</th><th>操作</th>
+                <th>帳號</th><th>角色</th><th>狀態</th><th>最後登入／活動</th><th>session</th><th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -196,10 +196,13 @@ function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) =
                     <td>
                       <span className={`${styles.badge} ${u.enabled ? '' : styles.badgeOff}`}>{u.enabled ? '啟用' : '停用'}</span>
                     </td>
-                    <td className={styles.num}>{fmtDateTime(u.last_login_at)}</td>
-                    <td className={styles.num}>{fmtDateTime(u.last_seen_at)}</td>
-                    <td className={styles.num}>{u.active_sessions}</td>
-                    <td>
+                    {/* 兩個時間疊成一欄：管理頁卡片在一般筆電寬度只有 ~600px，分兩欄會把操作按鈕擠出去 */}
+                    <td className={styles.num}>
+                      <div title="最後登入">{fmtDateTime(u.last_login_at)}</div>
+                      <div className={styles.muted} title="最後活動">{fmtDateTime(u.last_seen_at)}</div>
+                    </td>
+                    <td className={styles.num} title="有效 session 數">{u.active_sessions}</td>
+                    <td className={styles.actionsCell}>
                       <div className={styles.actions}>
                         {u.role === 'admin' ? (
                           <button type="button" className={styles.action} disabled={busy || isSelf} title={selfHint}

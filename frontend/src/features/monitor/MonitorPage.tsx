@@ -13,7 +13,6 @@ import { BrokerDistribution } from './BrokerDistribution'
 import { MonitorSkeleton } from './MonitorSkeleton'
 import { FaithfulnessPanel } from './FaithfulnessPanel'
 import { ExtractionPanel } from './ExtractionPanel'
-import { ReviewQueuePanel } from './ReviewQueuePanel'
 import { ScheduleHealthPanel } from './ScheduleHealthPanel'
 import { Pulse } from '../../components/primitives/motionLoops'
 import { useScrolled } from '../../lib/useScrolled'
@@ -114,11 +113,10 @@ export default function MonitorPage() {
                 抽取品質與回填進度（E1）。回填要跑十幾個晚上，沒有這張卡只能靠 SQL 看；
                 extraction_log 的落點分佈是「1,466 筆檔案為什麼不在語料庫」第一次有答案的地方。
               */}
-              <div className={styles.panelGrid}>
+              {/* 「是哪幾筆」的待複核佇列在管理頁（/admin/reviews）：它列出所有人的提問原文，
+                  後端限管理員；監控頁對所有人開放，放在這裡一般使用者只會看到 403。 */}
+              <div className={styles.panelSingle}>
                 <ExtractionPanel extraction={p.extraction} />
-                {/* 上面兩張卡（忠實度、抽取品質）只有筆數；這張列出是哪幾筆，外加倒讚。
-                    自己取數、不吃 /api/progress 的輪詢（理由見 useReviewQueue）。 */}
-                <ReviewQueuePanel scale={p.evaluation?.qa ?? null} />
               </div>
               <MarketDistribution markets={p.db.markets} />
               {/* 券商分佈接在市場分佈之後：兩張卡是同一種東西（語料的組成），

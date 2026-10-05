@@ -8,11 +8,15 @@ interface NavItemProps {
   icon: IconName
   label: string
   variant: 'mini' | 'row' | 'mobile'
+  /** 有子路由的入口（管理頁 /admin/*）：pathname 等於它或在它底下就算 active；未給則必須與 to 完全相等。 */
+  activePrefix?: string
 }
 
-export function NavItem({ to, icon, label, variant }: NavItemProps) {
+export function NavItem({ to, icon, label, variant, activePrefix }: NavItemProps) {
   const { pathname } = useLocation()
-  const active = pathname === to
+  const active = activePrefix
+    ? pathname === activePrefix || pathname.startsWith(activePrefix + '/')
+    : pathname === to
   return (
     <MotionLink
       to={to}

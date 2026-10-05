@@ -1,0 +1,9 @@
+.wrap { max-width: 1120px; margin: 0 auto; padding: 32px; display: flex; flex-direction: column; gap: 14px; }
+.card {
+  background: var(--tf-surface); border-radius: var(--tf-radius-card); box-shadow: var(--tf-shadow-xs);
+  padding: 32px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; color: var(--tf-text-2);
+}
+.title { font-family: var(--tf-display); font-weight: 600; font-size: 22px; letter-spacing: -0.01em; color: var(--tf-text-1); margin: 0; }
+.body { font-size: 14px; color: var(--tf-text-muted-aa); margin: 0; }
+.back { font-size: 13px; color: var(--tf-text-2); text-decoration: underline; }
+@media (max-width: 600px) { .wrap { padding: 16px; } .card { padding: 20px; } }

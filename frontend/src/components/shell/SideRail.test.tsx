@@ -6,11 +6,13 @@ import { SideRail } from './SideRail'
 
 afterEach(() => vi.unstubAllGlobals())
 
-function renderRail(collapsed: boolean) {
+function renderRail(collapsed: boolean, role: 'admin' | 'user' = 'user') {
   vi.stubGlobal('fetch', vi.fn(async (url: string) =>
     url.includes('/api/conversations')
       ? new Response(JSON.stringify([]), { status: 200 })
-      : new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 }),
+      : url.includes('/api/me')
+        ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role }), { status: 200 })
+        : new Response(JSON.stringify({ total_reports: 0, total_chunks: 0, markets: [], instrument_types: [], report_types: [], username: 'analyst' }), { status: 200 }),
   ))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
@@ -29,6 +31,18 @@ test('展開態顯示站名與四導覽 label', () => {
   expect(screen.getByRole('link', { name: /問答/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /觀點/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /監控/ })).toBeInTheDocument()
+})
+
+test('管理員才看得到「管理」入口，連到帳號管理', async () => {
+  renderRail(false, 'admin')
+  const link = await screen.findByRole('link', { name: /管理/ })
+  expect(link).toHaveAttribute('href', '/admin/users')
+})
+
+test('一般使用者完全看不到「管理」入口', async () => {
+  renderRail(false, 'user')
+  await screen.findByText('analyst')
+  expect(screen.queryByRole('link', { name: /管理/ })).not.toBeInTheDocument()
 })
 
 test('收合態：迷你軌可存取、完整態內容移出無障礙樹', () => {

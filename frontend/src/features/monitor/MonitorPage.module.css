@@ -47,6 +47,7 @@
 
 /* 面板 */
 .panelGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px; }
+.panelSingle { margin-top: 12px; }
 .panel { padding: 20px; }
 .ptitle { font-family: var(--tf-display); font-weight: 600; font-size: 16px; letter-spacing: -0.01em; color: var(--tf-text-1); margin-bottom: 14px; }
 .pmain { display: flex; align-items: baseline; gap: 6px; margin-bottom: 12px; }
@@ -131,35 +132,3 @@
 .failRow { display: flex; gap: 10px; align-items: baseline; }
 .failTs { font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-text-4); flex: none; font-variant-numeric: tabular-nums; }
 .failWhat { font-size: 12.5px; color: var(--tf-text-2); overflow-wrap: anywhere; }
-
-/* ── 待複核佇列（ReviewQueuePanel）────────────────────────────────────── */
-.rvTabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
-.rvTab {
-  border: 1px solid var(--tf-border); background: none; color: var(--tf-text-2);
-  border-radius: var(--tf-radius-pill); font: inherit; font-size: 12.5px; font-weight: 500;
-  padding: 5px 12px; cursor: pointer;
-}
-.rvTab:hover { border-color: var(--tf-graphite); color: var(--tf-graphite); }
-/* 選取態歸石墨（tokens.css 的慣例），與問答的讚／倒讚亮起態同一套。 */
-.rvTabOn, .rvTabOn:hover { background: var(--tf-graphite); border-color: var(--tf-graphite); color: var(--tf-on-graphite); }
-.rvList { list-style: none; margin: 0; padding: 0; }
-.rvRow { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--tf-border-weak); }
-.rvRow:last-child { border-bottom: none; }
-.rvMain { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-/* 提問與標題可能很長：單行截斷，完整內容點進去看。min-width:0 是 flex 子項能截斷的前提。 */
-.rvLink { flex: 1; min-width: 0; font-size: 13px; color: var(--tf-text-1); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rvLink:hover { text-decoration: underline; }
-.rvMeta { flex: none; display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
-.rvMore, .rvRetry { border: none; background: none; color: var(--tf-text-2); font: inherit; font-size: 12.5px; cursor: pointer; padding: 6px 0; text-decoration: underline; }
-.rvMore { display: block; margin-top: 6px; }
-.rvRetry { margin-left: 6px; }
-.rvMore:disabled { cursor: default; text-decoration: none; }
-.rvEditor { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; font-size: 12px; color: var(--tf-text-4); }
-.rvEditor label { display: flex; flex-direction: column; gap: 3px; }
-.rvEditor select, .rvEditor textarea { border: 1px solid var(--tf-border-weak); border-radius: 4px; background: var(--tf-surface, white); color: var(--tf-text-1); font: inherit; padding: 5px; }
-.rvEditor select { min-width: 85px; }
-.rvNote { flex: 1; min-width: 180px; }
-.rvNote textarea { resize: vertical; width: 100%; box-sizing: border-box; }
-.rvEditor button { border: 1px solid var(--tf-border-weak); border-radius: 4px; background: var(--tf-surface, white); color: var(--tf-text-1); padding: 6px 10px; cursor: pointer; }
-.rvEditor button:disabled { cursor: default; opacity: .55; }
-@media (max-width: 600px) { .rvMain { flex-wrap: wrap; } .rvMeta { flex-wrap: wrap; } }

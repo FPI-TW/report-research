@@ -118,7 +118,7 @@ export default function HelpPage() {
             <span className={styles.url}>{ACCESS_URL}</span>
             <CopyUrlButton url={ACCESS_URL} />
           </p>
-          <p>首次進入需以共用帳號登入，之後整個操作都在瀏覽器完成，不需要安裝任何東西。</p>
+          <p>首次進入請以管理者配發的個人帳號登入，之後整個操作都在瀏覽器完成，不需要安裝任何東西。</p>
         </section>
 
         <section id="search" className={styles.section}>

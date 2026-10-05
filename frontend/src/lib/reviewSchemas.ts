@@ -38,6 +38,10 @@ export const reviewItemSchema = z.object({
   review_note: z.string().optional(),
   verification: reviewVerificationSchema.optional(),
   reviewed_at: z.string().nullish(),
+  // 個別帳號上線後新增：最後處理人、問答的提問者（帳號名）。共用帳號時期的舊資料是 null；
+  // 舊後端沒有這兩鍵時是 undefined——一律 nullish，兩種都當「不知道是誰」。
+  reviewer: z.string().nullish(),
+  asked_by: z.string().nullish(),
 })
 export type ReviewItem = z.infer<typeof reviewItemSchema>
 
@@ -60,4 +64,5 @@ export const reviewStateSchema = z.object({
   note: z.string(),
   verification: reviewVerificationSchema,
   updated_at: z.string(),
+  reviewer: z.string().nullish(),
 })

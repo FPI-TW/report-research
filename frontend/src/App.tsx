@@ -12,6 +12,9 @@ const RadarPage = lazy(routeLoaders.radar)
 const BriefPage = lazy(routeLoaders.brief)
 const HelpPage = lazy(routeLoaders.help)
 const ReportPage = lazy(routeLoaders.report)
+// 管理頁的 default export 已包 RequireAdmin（顯示層守門）；授權在後端 /api/admin/*、/api/review/*。
+const AdminUsersPage = lazy(routeLoaders.adminUsers)
+const AdminReviewsPage = lazy(routeLoaders.adminReviews)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -38,6 +41,9 @@ export const routes = [
           { path: '/help', element: <Suspense><HelpPage /></Suspense> },
           // 研報閱讀頁：從檢索進入的詳情頁，不進導覽列（照 /help 慣例）。須排在 '*' 之前。
           { path: '/report/:hash', element: <Suspense><ReportPage /></Suspense> },
+          { path: '/admin', element: <Navigate to="/admin/users" replace /> },
+          { path: '/admin/users', element: <Suspense><AdminUsersPage /></Suspense> },
+          { path: '/admin/reviews', element: <Suspense><AdminReviewsPage /></Suspense> },
           { path: '*', element: <NotFound /> },
         ],
       },

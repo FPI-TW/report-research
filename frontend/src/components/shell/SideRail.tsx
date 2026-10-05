@@ -6,6 +6,7 @@ import { NavItem } from './NavItem'
 import { ConversationList } from './ConversationList'
 import { AccountMenu } from './AccountMenu'
 import { springHover } from '../../lib/motionTokens'
+import { useIsAdmin } from '../../lib/useMe'
 import styles from './SideRail.module.css'
 
 // 收合態品牌標記：hover 時 logo 淡出縮小、展開圖示淡入放大（原 CSS crossfade 改由 Motion variants 驅動）
@@ -23,6 +24,8 @@ interface SideRailProps {
  * 非當前態的層 aria-hidden＋inert：移出無障礙樹與 tab 序、且不可互動。
  */
 export function SideRail({ collapsed, onToggle }: SideRailProps) {
+  // 「管理」只對管理員露出；這只是顯示，管理端點本身由後端限管理員。
+  const isAdmin = useIsAdmin()
   return (
     <div className={styles.rail} data-collapsed={collapsed}>
       <div className={styles.full} aria-hidden={collapsed} inert={collapsed}>
@@ -40,6 +43,7 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
           <NavItem to="/radar" icon="compass" label="觀點" variant="row" />
           <NavItem to="/brief" icon="fileText" label="簡報" variant="row" />
           <NavItem to="/monitor" icon="activity" label="監控" variant="row" />
+          {isAdmin && <NavItem to="/admin/users" activePrefix="/admin" icon="shield" label="管理" variant="row" />}
         </nav>
         <div className={styles.divider} />
         <ConversationList />
@@ -73,6 +77,7 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
           <NavItem to="/radar" icon="compass" label="觀點" variant="mini" />
           <NavItem to="/brief" icon="fileText" label="簡報" variant="mini" />
           <NavItem to="/monitor" icon="activity" label="監控" variant="mini" />
+          {isAdmin && <NavItem to="/admin/users" activePrefix="/admin" icon="shield" label="管理" variant="mini" />}
         </nav>
         <div className={styles.spacer} />
         <AccountMenu variant="mini" />

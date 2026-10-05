@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react'
 
-export type RouteKey = 'search' | 'ask' | 'monitor' | 'radar' | 'brief' | 'help' | 'report'
+export type RouteKey =
+  | 'search' | 'ask' | 'monitor' | 'radar' | 'brief' | 'help' | 'report' | 'adminUsers' | 'adminReviews'
 
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
@@ -11,6 +12,9 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   brief: () => import('../features/brief/BriefPage'),
   help: () => import('../features/help/HelpPage'),
   report: () => import('../features/report/ReportPage'),
+  // 管理頁：只有管理員會進來，刻意不放進 App 的閒置預載清單。
+  adminUsers: () => import('../features/admin/AdminUsersPage'),
+  adminReviews: () => import('../features/admin/AdminReviewsPage'),
 }
 
 const started = new Set<RouteKey>()

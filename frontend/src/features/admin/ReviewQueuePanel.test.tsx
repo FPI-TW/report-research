@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
-import type { EvalSource } from './progressSchema'
+import type { EvalSource } from '../monitor/progressSchema'
 import { ReviewQueuePanel } from './ReviewQueuePanel'
 import { reasonText } from './reviewReasons'
 
@@ -204,6 +204,29 @@ test('原因帶著量到的值：分數不低的研報看得出為什麼在這�
   // 旗標缺值時不編數字；後端新增的未知原因原樣顯示，不讓整列消失。
   expect(reasonText({ quality_flags: null }, 'low_coverage')).toBe('版面覆蓋率過低')
   expect(reasonText({}, 'something_new')).toBe('something_new')
+})
+
+test('問答列顯示提問者與處理人；共用帳號時期的舊列標「共用帳號」、沒處理過不印處理人', async () => {
+  mount(() => ({ body: page('faithfulness', [
+    qa(1, { asked_by: 'alice', reviewer: 'root', reviewed_at: '2026-10-04T08:00:00Z', review_status: 'resolved' }),
+    qa(2, { asked_by: null, reviewer: null }),
+  ]) }))
+  await screen.findByRole('link', { name: '提問 1' })
+  expect(screen.getByText('提問者 alice')).toBeInTheDocument()
+  expect(screen.getByText('處理人 root（2026-10-04）')).toBeInTheDocument()
+  expect(screen.getByText('提問者 共用帳號')).toBeInTheDocument()
+  expect(screen.getAllByText(/^處理人 /)).toHaveLength(1)
+})
+
+test('研報列也顯示處理人', async () => {
+  mount(url => ({
+    body: url.searchParams.get('kind') === 'extraction'
+      ? page('extraction', [{ report_id: 'r9', file_hash: 'a'.repeat(64), file_name: 'z.pdf', review_reasons: [],
+        reviewer: 'bob', reviewed_at: '2026-10-03T01:00:00Z' }])
+      : page('faithfulness', []),
+  }))
+  fireEvent.click(await screen.findByRole('tab', { name: '抽取品質' }))
+  expect(await screen.findByText('處理人 bob（2026-10-03）')).toBeInTheDocument()
 })
 
 test('以現行門檻已不需複核的研報要說出來，不留一格空白', async () => {

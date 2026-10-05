@@ -1794,9 +1794,9 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
         # 非 like/dislike/none 一律 False，且不觸碰 DB（純驗證分支）
         from app.services.answer import record_feedback
 
-        self.assertFalse(await record_feedback("any-id", "love"))
-        self.assertFalse(await record_feedback("any-id", ""))
-        self.assertFalse(await record_feedback("any-id", "null"))
+        self.assertFalse(await record_feedback("any-id", "love", user_id=None))
+        self.assertFalse(await record_feedback("any-id", "", user_id=None))
+        self.assertFalse(await record_feedback("any-id", "null", user_id=None))
 
     async def test_none_binds_sql_null_not_the_string(self):
         # 'none'＝使用者再點一次取消。必須綁 SQL NULL：讀取端（/api/history、
@@ -1826,7 +1826,7 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            ok = await ans.record_feedback("q1", "none")
+            ok = await ans.record_feedback("q1", "none", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -1855,7 +1855,7 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            ok = await ans.record_feedback("missing-id", "like")
+            ok = await ans.record_feedback("missing-id", "like", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -1983,19 +1983,19 @@ class QaLogFailureIsLoggedTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_log_qa_failure_returns_none_and_logs(self):
         with self.assertLogs("app.services.answer", level="ERROR") as cm:
-            qid = await self.ans._log_qa("q", "a", [], {}, 5, [])
+            qid = await self.ans._log_qa("q", "a", [], {}, 5, [], user_id=None)
         self.assertIsNone(qid)
         self.assertIn("qa_log 寫入失敗", "\n".join(cm.output))
 
     async def test_read_and_mutate_failures_keep_return_values_and_log(self):
         qa_id = "66666666-6666-4666-8666-666666666666"
         cases = (
-            (self.ans._load_qa_meta(qa_id), None),
-            (self.ans._count_versions(qa_id), 1),
-            (self.ans.list_qa_versions(qa_id), []),
-            (self.ans.delete_conversation(qa_id), False),
-            (self.ans.record_feedback(qa_id, "like"), False),
-            (self.ans.delete_qa(qa_id), False),
+            (self.ans._load_qa_meta(qa_id, user_id=None), None),
+            (self.ans._count_versions(qa_id, user_id=None), 1),
+            (self.ans.list_qa_versions(qa_id, user_id=None), []),
+            (self.ans.delete_conversation(qa_id, user_id=None), False),
+            (self.ans.record_feedback(qa_id, "like", user_id=None), False),
+            (self.ans.delete_qa(qa_id, user_id=None), False),
             (self.ans._update_followups(qa_id, ["x"]), None),
             (self.ans._update_evaluation(qa_id, {"k": 1}), None),
         )
@@ -2035,7 +2035,7 @@ class LogQaSourcesTests(unittest.IsolatedAsyncioTestCase):
                 {},
                 5,
                 [{"n": 1, "report_id": "r1"}],
-                [{"title": "外部", "url": "https://x.com"}],
+                [{"title": "外部", "url": "https://x.com"}], user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -2212,7 +2212,7 @@ class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _RowsSession(rows)
         try:
-            turns = await ans.load_recent_turns("c1")
+            turns = await ans.load_recent_turns("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertEqual(turns, [("舊問", "舊答"), ("新問", "新答")])
@@ -2227,7 +2227,7 @@ class LoadRecentTurnsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = Boom()
         try:
-            turns = await ans.load_recent_turns("c1")
+            turns = await ans.load_recent_turns("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertEqual(turns, [])
@@ -2261,7 +2261,7 @@ class ActiveFilterTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            await ans.load_recent_turns("c1")
+            await ans.load_recent_turns("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2287,7 +2287,7 @@ class GetConversationTests(unittest.IsolatedAsyncioTestCase):
         orig_sf = ans.SessionFactory
         ans.SessionFactory = lambda: _RowsSession(rows)
         try:
-            out = await ans.get_conversation("c1")
+            out = await ans.get_conversation("c1", user_id=None)
         finally:
             ans.SessionFactory = orig_sf
         self.assertEqual([t["question"] for t in out], ["Q1", "Q2"])
@@ -2327,7 +2327,7 @@ class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            items = await ans.get_conversation("c1")
+            items = await ans.get_conversation("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2366,7 +2366,7 @@ class ConversationVersionTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            out = await ans.list_qa_versions("root1")
+            out = await ans.list_qa_versions("root1", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2399,7 +2399,7 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            ok = await ans.delete_conversation("c1")
+            ok = await ans.delete_conversation("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertFalse(ok)
@@ -2430,7 +2430,7 @@ class DeleteConversationTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: Sess()
         try:
-            ok = await ans.delete_conversation("c1")
+            ok = await ans.delete_conversation("c1", user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertTrue(ok)
@@ -2451,7 +2451,7 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _RowsSession(rows)
         try:
-            out = await ans.list_conversations()
+            out = await ans.list_conversations(user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertEqual(out[0]["conversation_id"], "c1")
@@ -2469,7 +2469,7 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: session
         try:
-            await ans.list_conversations()
+            await ans.list_conversations(user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -2489,7 +2489,7 @@ class ListConversationsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: session
         try:
-            await ans.list_conversations(**kwargs)
+            await ans.list_conversations(**kwargs, user_id=None)
         finally:
             ans.SessionFactory = orig
         return " ".join((session.statement_text or "").split()), session.params
@@ -2805,7 +2805,7 @@ class LogQaColumnsTests(unittest.IsolatedAsyncioTestCase):
                 "問題", "答案", [], {}, 10, [], [],
                 conversation_id="c1", thinking_ms=5,
                 root_qa_id="root1", stages=["understanding", "generating"],
-                followups=["追問A", "追問B"],
+                followups=["追問A", "追問B"], user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -2836,7 +2836,7 @@ class LogQaColumnsTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            await ans._log_qa("q", "a", [], {}, 1, [], [])
+            await ans._log_qa("q", "a", [], {}, 1, [], [], user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -3007,7 +3007,7 @@ class LlmFailureStillLogsTests(unittest.IsolatedAsyncioTestCase):
         logged: list[dict] = []
         orig = self._patch(logged, exc=LLMUnavailableError("529 Overloaded"))
 
-        async def meta(qid):
+        async def meta(qid, *, user_id):
             return (None, "conv-1", None)
 
         orig_meta = ans._load_qa_meta
@@ -3055,7 +3055,7 @@ class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = self._cap(cap)
         try:
-            await ans._log_qa("q", "a", [], {}, 1, [])
+            await ans._log_qa("q", "a", [], {}, 1, [], user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertIs(cap["params"]["active"], True)
@@ -3067,7 +3067,7 @@ class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = self._cap(cap)
         try:
-            await ans._log_qa("q", None, [], {"llm_error": "overloaded"}, 1, [], active=False)
+            await ans._log_qa("q", None, [], {"llm_error": "overloaded"}, 1, [], active=False, user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertIs(cap["params"]["active"], False)
@@ -3083,7 +3083,7 @@ class LogQaActiveFlagTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = self._cap(cap)
         try:
-            qa_id = await ans._log_qa("q", None, [], {}, 1, [], active=False)
+            qa_id = await ans._log_qa("q", None, [], {}, 1, [], active=False, user_id=None)
         finally:
             ans.SessionFactory = orig
         self.assertTrue(qa_id)
@@ -3119,7 +3119,7 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
         try:
             qa_id = await ans._log_qa(
                 "編輯後問題", "編輯後答案", [], {}, 1, [],
-                conversation_id="c1", truncate_from=("c1", "TS"),
+                conversation_id="c1", truncate_from=("c1", "TS"), user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -3136,7 +3136,7 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
 
         executed: list[tuple[str, dict]] = []
 
-        async def meta(qid):
+        async def meta(qid, *, user_id):
             return (None, "c1", "TS")
 
         orig = (ans.SessionFactory, ans._load_qa_meta)
@@ -3144,7 +3144,7 @@ class LogQaTruncateExcludesSelfTests(unittest.IsolatedAsyncioTestCase):
         ans._load_qa_meta = meta
         try:
             qa_id = await ans.log_stopped_qa(
-                "編輯後問題", "部分答案", edit_of="edited-1",
+                "編輯後問題", "部分答案", edit_of="edited-1", user_id=None,
             )
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
@@ -3414,7 +3414,7 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
         try:
             qa_id = await ans.log_stopped_qa(
                 "問題", "部分答", conversation_id="c1",
-                sources=[{"n": 1}], stages=["understanding", "generating"],
+                sources=[{"n": 1}], stages=["understanding", "generating"], user_id=None,
             )
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
@@ -3437,14 +3437,14 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
                 return None
             async def commit(self): return None
 
-        async def meta(qid):
+        async def meta(qid, *, user_id):
             return ("root-x", "c1", None)  # 舊列已有 root
 
         orig = (ans.SessionFactory, ans._load_qa_meta)
         ans.SessionFactory = lambda: _CapSession()
         ans._load_qa_meta = meta
         try:
-            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1")
+            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1", user_id=None)
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
 
@@ -3470,14 +3470,14 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
                 return None
             async def commit(self): return None
 
-        async def meta(qid):
+        async def meta(qid, *, user_id):
             return (None, "c1", None)  # 舊列無 root → 以自身為群組鍵
 
         orig = (ans.SessionFactory, ans._load_qa_meta)
         ans.SessionFactory = lambda: _CapSession()
         ans._load_qa_meta = meta
         try:
-            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1")
+            await ans.log_stopped_qa("q", "部分", regenerate_of="old-1", user_id=None)
         finally:
             (ans.SessionFactory, ans._load_qa_meta) = orig
 
@@ -3502,7 +3502,7 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
         orig = ans.SessionFactory
         ans.SessionFactory = lambda: _CapSession()
         try:
-            await ans.log_stopped_qa("q", "部分", conversation_id="c1")
+            await ans.log_stopped_qa("q", "部分", conversation_id="c1", user_id=None)
         finally:
             ans.SessionFactory = orig
 
@@ -3529,7 +3529,7 @@ class StopLogTests(unittest.IsolatedAsyncioTestCase):
         ans.SessionFactory = lambda: _CapSession()
         try:
             qa_id = await ans.log_stopped_qa(
-                "問題", "部分答", request_id="123e4567-e89b-42d3-a456-426614174000",
+                "問題", "部分答", request_id="123e4567-e89b-42d3-a456-426614174000", user_id=None,
             )
         finally:
             ans.SessionFactory = orig
@@ -3623,7 +3623,7 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
 
         state = {"logged": False}
 
-        async def fake_meta(qid): return (None, "c1", None)
+        async def fake_meta(qid, *, user_id): return (None, "c1", None)
         async def failed_search(*a, **k): raise RuntimeError("retrieval failed")
         async def fake_route(q, **k): return sr._decision(sr.CORPUS_QA)
         async def fake_log(*a, **k):
@@ -3652,10 +3652,10 @@ class RegenerateTests(unittest.IsolatedAsyncioTestCase):
 
         state = {"logged_root": "unset", "deactivate": None}
 
-        async def fake_meta(qid):
+        async def fake_meta(qid, *, user_id):
             return (None, "c1", None)  # 舊列無 root → 群組=舊 id
 
-        async def fake_count(gk):
+        async def fake_count(gk, *, user_id):
             return 2
 
         async def fake_log(*a, **k):
@@ -3710,7 +3710,7 @@ class EditResubmitTests(unittest.IsolatedAsyncioTestCase):
 
         state = {"truncated": None}
 
-        async def fake_meta(qid):
+        async def fake_meta(qid, *, user_id):
             return (None, "c1", "TS")  # created_at 標記
 
         async def fake_search(*a, **k):

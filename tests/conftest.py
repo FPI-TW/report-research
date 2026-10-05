@@ -240,3 +240,29 @@ def _stub_query_planner_llm():
         yield
     finally:
         qp.stream_completion = orig
+
+
+@pytest.fixture(autouse=True)
+def _stub_ask_ownership_checks():
+    """`/api/ask`、`/api/ask/stop` 在串流前會查「參照的對話串／回答是不是別人的」
+    （`deps.conversation_is_foreign`、`deps.qa_is_foreign`，真的實作會連 DB）。
+
+    測試不連 DB：預設 stub 成「不是別人的」，帶 conversation_id／regenerate_of 的既有
+    測試照舊走到 answer_question。要驗 404 的測試在自己範圍內覆寫（tests/test_qa_isolation.py）。
+    同樣不主動 import——web.deps 沒載入就沒有東西要 stub。
+    """
+    mod = sys.modules.get("web.deps")
+    if mod is None:
+        yield
+        return
+
+    async def _not_foreign(*_a, **_k):
+        return False
+
+    orig = (mod.conversation_is_foreign, mod.qa_is_foreign)
+    mod.conversation_is_foreign = _not_foreign
+    mod.qa_is_foreign = _not_foreign
+    try:
+        yield
+    finally:
+        mod.conversation_is_foreign, mod.qa_is_foreign = orig

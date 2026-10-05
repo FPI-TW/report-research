@@ -127,9 +127,11 @@ def _valid_uuid(s) -> bool:
 from app.services import accounts  # noqa: E402
 from app.services.answer import (  # noqa: E402
     answer_question,
+    conversation_is_foreign,
     delete_qa,
     list_qa_versions,
     log_stopped_qa,
+    qa_is_foreign,
 )
 from app.services.brief import (  # noqa: E402
     fetch_by_date as fetch_brief_by_date,
@@ -185,6 +187,7 @@ __all__ = [
     "_with_heartbeat",
     "accounts",
     "answer_question",
+    "conversation_is_foreign",
     "delete_qa",
     "embed_query_cached",
     "embed_texts",
@@ -208,6 +211,7 @@ __all__ = [
     "list_qa_versions",
     "list_radar_instruments",
     "log_stopped_qa",
+    "qa_is_foreign",
     "rank_reports",
     "rerank_warmup",
 ]

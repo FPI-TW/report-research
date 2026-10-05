@@ -730,8 +730,9 @@ class HistoryDeleteApiTests(unittest.TestCase):
 
         seen = {}
 
-        async def fake_delete_qa(qa_id: str):
+        async def fake_delete_qa(qa_id: str, *, user_id):
             seen["qa_id"] = qa_id
+            seen["user_id"] = user_id
             return True
 
         orig = deps.delete_qa
@@ -792,8 +793,9 @@ class InputLimitTests(unittest.TestCase):
 
         seen = {}
 
-        async def fake_delete_qa(qa_id: str):
+        async def fake_delete_qa(qa_id: str, *, user_id):
             seen["qa_id"] = qa_id
+            seen["user_id"] = user_id
             return True
 
         orig = deps.delete_qa

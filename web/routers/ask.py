@@ -9,18 +9,24 @@ _ASK_GATE 是模組級狀態，限制同時提問數（每次提問會發出數�
 若被兩條不同 import 路徑載入會分裂成兩個、併發上限失效。**它同時是 per-process
 的**：多 worker 下上限會直接翻倍，故啟動時有 fail-closed 守門，見 web/concurrency.py。
 
-answer_question、log_stopped_qa、_valid_uuid、_sse、_with_heartbeat 走 web.deps
-（測試 patch web.deps.X 即涵蓋）。
+answer_question、log_stopped_qa、qa_is_foreign、conversation_is_foreign、_valid_uuid、
+_sse、_with_heartbeat 走 web.deps（測試 patch web.deps.X 即涵蓋）。
+
+**每人資料隔離**：提問者取自 session（`authz.current_user`），寫入的每一列都帶 user_id。
+請求帶的 conversation_id／regenerate_of／edit_of 若指到別人的列（含個別帳號上線前的
+NULL 共用歷史），在開始串流**之前**回 404——SSE 一旦送出 200 就改不了狀態碼。
+找不到的參照照舊放行（當新題／新串），理由見 `answer.qa_is_foreign`。
 """
 import logging
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.services.accounts import User
 from app.services.llm import LLMUnavailableError
-from web import deps
+from web import authz, deps
 from web.concurrency import ConcurrencyGate
 
 logger = logging.getLogger(__name__)
@@ -77,8 +83,37 @@ def _llm_error_detail(exc: LLMUnavailableError) -> str:
     return _LLM_ERROR_DETAILS.get(getattr(exc, "kind", None) or "", ASK_ERROR_DETAIL)
 
 
+def _check_ref_formats(*, conversation_id, regenerate_of, edit_of, request_id) -> None:
+    """四個 id 欄位都進 uuid 欄位的 WHERE：非法字串會讓驅動在編碼期拋例外，先擋成 400。"""
+    for name, value in (
+        ("conversation_id", conversation_id), ("regenerate_of", regenerate_of),
+        ("edit_of", edit_of), ("request_id", request_id),
+    ):
+        if value is not None and not deps._valid_uuid(value):
+            raise HTTPException(status_code=400, detail=f"{name} 格式不正確")
+
+
+async def _reject_foreign_refs(user: User, *, conversation_id, regenerate_of, edit_of) -> None:
+    """參照到別人的對話串或回答 → 404（與不存在的資源同一個回應，看不出差別）。
+
+    DB 異常回 503：這是授權判斷，不 fail-open。
+    """
+    try:
+        foreign = conversation_id is not None and await deps.conversation_is_foreign(
+            conversation_id, user_id=user.id
+        )
+        for ref in (regenerate_of, edit_of):
+            if not foreign and ref is not None:
+                foreign = await deps.qa_is_foreign(ref, user_id=user.id)
+    except Exception:
+        logger.exception("問答擁有權檢查失敗")
+        raise HTTPException(status_code=503, detail="問答服務暫時無法使用") from None
+    if foreign:
+        raise HTTPException(status_code=404, detail="not found")
+
+
 @router.post("/api/ask")
-async def ask(req: AskRequest):
+async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
     """RAG 問答：檢索 → 串流回答（帶 [n] 行內引用）。回 text/event-stream。
 
     事件序：（滿載時先 queued）→ sources（引用清單）→ 多筆 token（文字片段）→
@@ -103,12 +138,13 @@ async def ask(req: AskRequest):
         report_type=rtype,
     )
     k = max(1, min(req.k, 20))
-    if req.regenerate_of is not None and not deps._valid_uuid(req.regenerate_of):
-        raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
-    if req.edit_of is not None and not deps._valid_uuid(req.edit_of):
-        raise HTTPException(status_code=400, detail="edit_of 格式不正確")
-    if req.request_id is not None and not deps._valid_uuid(req.request_id):
-        raise HTTPException(status_code=400, detail="request_id 格式不正確")
+    _check_ref_formats(
+        conversation_id=req.conversation_id, regenerate_of=req.regenerate_of,
+        edit_of=req.edit_of, request_id=req.request_id,
+    )
+    await _reject_foreign_refs(
+        user, conversation_id=req.conversation_id, regenerate_of=req.regenerate_of, edit_of=req.edit_of,
+    )
     # 唯一能回 429 的位置：SSE 一旦送出 200 就改不了 status code（見 ConcurrencyGate.queue_full）。
     if _ASK_GATE.queue_full():
         raise HTTPException(
@@ -135,6 +171,7 @@ async def ask(req: AskRequest):
                     request_id=req.request_id,
                     locale=req.locale,
                     web=req.web,
+                    user_id=user.id,
                 ):
                     yield deps._sse(event, payload)
             except LLMUnavailableError as exc:
@@ -169,16 +206,15 @@ class StopRequest(BaseModel):
 
 
 @router.post("/api/ask/stop")
-async def ask_stop(req: StopRequest):
+async def ask_stop(req: StopRequest, user: User = Depends(authz.current_user)):
     """使用者中斷串流時保存部分答案（stopped=true）。回 {qa_id}。"""
-    if req.regenerate_of is not None and not deps._valid_uuid(req.regenerate_of):
-        raise HTTPException(status_code=400, detail="regenerate_of 格式不正確")
-    if req.edit_of is not None and not deps._valid_uuid(req.edit_of):
-        raise HTTPException(status_code=400, detail="edit_of 格式不正確")
-    if req.conversation_id is not None and not deps._valid_uuid(req.conversation_id):
-        raise HTTPException(status_code=400, detail="conversation_id 格式不正確")
-    if req.request_id is not None and not deps._valid_uuid(req.request_id):
-        raise HTTPException(status_code=400, detail="request_id 格式不正確")
+    _check_ref_formats(
+        conversation_id=req.conversation_id, regenerate_of=req.regenerate_of,
+        edit_of=req.edit_of, request_id=req.request_id,
+    )
+    await _reject_foreign_refs(
+        user, conversation_id=req.conversation_id, regenerate_of=req.regenerate_of, edit_of=req.edit_of,
+    )
     qa_id = await deps.log_stopped_qa(
         (req.question or "").strip(),
         req.partial_answer or "",
@@ -189,6 +225,7 @@ async def ask_stop(req: StopRequest):
         regenerate_of=req.regenerate_of,
         edit_of=req.edit_of,
         request_id=req.request_id,
+        user_id=user.id,
     )
     if qa_id is None:
         raise HTTPException(status_code=503, detail="停止的回答暫時無法保存")

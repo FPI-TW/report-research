@@ -301,6 +301,10 @@ jobs:
       - name: 帳號與 session
         run: uv run pytest -q tests/test_accounts_db.py
 
+      # 問答紀錄依使用者隔離：兩個使用者加 NULL 舊歷史，服務層 SQL 與 HTTP 都只看得到自己的。
+      - name: 問答紀錄每人隔離
+        run: uv run pytest -q tests/test_qa_isolation_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

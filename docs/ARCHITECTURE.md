@@ -42,6 +42,8 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `locale.py` | `zh-Hant`／`en`，未知一律回中文；預設 locale 不改動任何既有 prompt |
 | `zh_hant.py` | 簡→繁（s2tw）；判別用 Big5 可編碼性，門檻「至少 2 字且密度 5%」缺一不可 |
 | `trusted_market_data.py` | 受信任時效資料 provider 契約；任何失敗收斂為 `TrustedDataUnavailable` |
+| `accounts.py` | 個別帳號、可撤銷 session、管理稽核的全部 SQL（`app_user`／`user_session`／`admin_audit_log`）。`resolve_session` 每個請求都查、刻意不快取（停用與撤銷要立即生效）；最後一位管理員與「不能鎖死自己」兩道保護在這一層（CLI 也受約束）；稽核與變更同一筆交易。web 層只經 `web.deps.accounts` 呼叫，測試以 `tests/fake_accounts.py` 整組替換，兩者語意由 `tests/test_accounts_db.py` 的同一組情境對照 |
+| `passwords.py` | Argon2id 雜湊／驗證／`needs_rehash`（argon2-cffi 預設參數，登入成功時就地升級）、密碼政策（10–256 字元、前後不可空白）、`burn_verify`（帳號不存在時也算一次，回應時間不洩漏帳號清單） |
 | `llm.py` | `stream_completion` **依白名單分派**：`llm_models.is_http_model(model)` 走 `llm_http.astream_chat`（DeepSeek），其餘走 CLI；`allow_web` 配白名單 model 直接拋 `kind=config`（DeepSeek 網搜延後到 P9）。HTTP 路徑：只有 overloaded／network 且尚未吐字才重試（Retry-After 優先、上限 10 秒，否則 1.5／3 秒）；非預期例外一律包成 `LLMUnavailableError`（`kind`、`partial`），`CancelledError` 原樣上拋並經 `aclosing` 關閉回應；已吐字後內容審查拋 `partial=True`，`length`／read 逾時／斷線／總時限（`LLM_HTTP_TOTAL_TIMEOUT`，預設 600 秒，每個 await 各包 `timeout_at`）正常結束並寫 `meta["truncated_reason"]`；首字前伺服器 60 秒沉默（httpx read 逾時）歸 `timeout`、不重試。`timeout` 在兩條路徑經 `_with_heartbeat` 驅動時實際都是**首字期限**（CLI 的 `asyncio.timeout` 跨越 yield、綁在已結束的 Task 上；HTTP 刻意每個 await 各包 `timeout_at`、不跨 yield），只有單一 Task 收齊的呼叫端 CLI 才是總時限。**CLI 已於 2026-09-23 放棄、無可用後端**，現在只有 `ASK_WEB_MODEL`（網搜，暫停中）會解析到它，程式碼留到 PR-M 移除。CLI 路徑：以 `claude -p --setting-sources '' --output-format stream-json --verbose --include-partial-messages` spawn CLI，`cwd=/tmp`，prompt 走 stdin；開網搜加 `--tools WebSearch --allowedTools WebSearch`（`--tools` 把可用工具縮到只剩 WebSearch，`--allowedTools` 只管免核可），不開網搜加 `--tools ""` 不開任何工具（`--help` 寫明；批次的 `scripts/_claude_cli.py` 與 `scripts/generate_brief.py` 同樣；刻意不用 `--disallowedTools "*"`，萬用字元語意未記載）；三處一律加 `--strict-mcp-config` 且不帶 `--mcp-config`＝不載任何 MCP 伺服器（`--tools` 只管內建工具，`--setting-sources ''` 只擋設定檔來源）；工具旗標是可變長度選項，一律放 argv 最後，布林旗標放在它們之前；`system/init` 事件回報的工具集與預期不符時記 WARNING（`check_init_tools`，fail-open）；只對 API 錯誤重試，逾時對已串流文字 fail-open（實務上只發生在單一 Task 收齊的呼叫端） |
 | `llm_models.py` | 模型名稱的單一真相來源：白名單 `HTTP_MODELS`／`is_http_model`、各 provider 預設表（`DEEPSEEK_DEFAULTS` 等）、`resolve_model(task)`（空字串視同未設）。葉模組，只 import 標準函式庫（`tests/test_llm_models.py` 釘住） |
 | `llm_http.py` | DeepSeek Chat Completions 的 HTTP 客戶端（`astream_chat`、`complete_json`、`fetch_balance`）；`max_tokens` 由呼叫端逐點給；錯誤依狀態碼分類（`classify_status`）。葉模組（`tests/test_llm_http.py` 釘住） |
@@ -70,9 +72,10 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `web/server.py` | 組合層：載環境檔、初始化 logging、auth middleware、lifespan、掛 router |
-| `web/routers/` | 12 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
+| `web/routers/` | 13 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入、登出、`/api/me`）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理與稽核，限管理員）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
-| `web/auth.py` | 共用帳密、HMAC session、失敗追蹤、可信代理 |
+| `web/auth.py` | session cookie 的簽章與驗證（只帶 session id）、失敗追蹤、可信代理。帳號與 session 狀態不在這裡，在 `app/services/accounts.py` |
+| `web/authz.py` | `current_user`／`require_admin`（FastAPI dependency）：唯一的授權判斷點；前端 route guard 只是顯示層 |
 | `web/concurrency.py` | `ConcurrencyGate`（刻意不支援 `async with`）、單 worker 偵測 |
 | `web/request_log.py` | 純 ASGI middleware（最外層）：設關聯 id、回應帶 `X-Request-Id`（上游給的只在形狀安全時沿用）、`/api/*` 每請求記一行 `status`／`elapsed_ms`；`/healthz`、`/api/progress` 正常時不記，變慢或 5xx 照記。不記 query string |
 | `web/ttl_cache.py` | 有上限、依 key 分格的單行程 TTL 快取；`reset_all()` 由 `tests/conftest.py` 每題清空。目前用在雷達目錄回應 |
@@ -81,7 +84,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 
 ### 2.5 `frontend/src/`
 
-React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面分：`search`、`ask`、`monitor`、`radar`、`report`（閱讀頁，含 `report/pdf` 的 EmbedPDF 檢視器）、`brief`、`help`。`lib/` 放 API 邊界（zod schema、SSE 讀取、reducer、hooks）。`components/shell/`（外框、側欄、行動版分頁列）與 `components/primitives/`（Modal、Popover 等）是自製元件；`components/animate-ui/` 及其依賴的 `hooks/use-controlled-state.tsx`、`hooks/use-is-in-view.tsx`、`lib/get-strict-context.tsx` 是第三方匯入，不套 lint。待複核佇列的 UI 在 `features/monitor/ReviewQueuePanel.tsx`，沒有獨立頁面。路由表在 `frontend/src/App.tsx`。
+React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面分：`search`、`ask`、`monitor`、`radar`、`report`（閱讀頁，含 `report/pdf` 的 EmbedPDF 檢視器）、`brief`、`help`、`admin`（管理後台：帳號管理與待複核，`/app/admin/*`）。`lib/` 放 API 邊界（zod schema、SSE 讀取、reducer、hooks）。`components/shell/`（外框、側欄、行動版分頁列）與 `components/primitives/`（Modal、Popover 等）是自製元件；`components/animate-ui/` 及其依賴的 `hooks/use-controlled-state.tsx`、`hooks/use-is-in-view.tsx`、`lib/get-strict-context.tsx` 是第三方匯入，不套 lint。待複核佇列的 UI 在 `features/admin/ReviewQueuePanel.tsx`（`/app/admin/reviews`；監控頁對一般使用者開放，所以不放那裡）。管理頁外面包 `components/shell/RequireAdmin.tsx`，「管理」導覽只對管理員露出——兩者都只是顯示層，授權一律由後端 `web/authz.py` 判。路由表在 `frontend/src/App.tsx`。
 
 ## 3. import 方向
 
@@ -130,17 +133,17 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 ## 7. Web 層
 
 - `web/server.py` import 順序有三道守門：`dev_mode` 必須在 `load_env_file` 之前（`tests/test_dev_mode.py`）；`configure_logging` 必須在讀 `.env` 之後、任何 `app.services.*` 之前（`tests/test_logging_setup.py`）；`tests/test_env_loading.py` 守 loader 接線。
-- Auth deny-by-default、fail-closed：缺 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 在 import 期 RuntimeError。免登入只有 `/login`、`/healthz`、`/app/assets` 與前綴 `/app/assets/`（`/static` 需登入）；POST `/login` 只在 HTTPS（含可信代理的 `X-Forwarded-Proto: https`）或本機時受理，否則 303 `?error=insecure`；`/healthz/storage`、`/healthz/llm` 也在白名單，但只回答本機直連（其餘 404）。`/api/` 未登入回 401 JSON，其餘 302。Session cookie `tf_session`：HMAC token v2 `<ver>.<iat>.<exp>.<sig>`，簽章訊息含帳密指紋與 `REPORT_MARK_SESSION_EPOCH`，7 天滑動、30 天絕對上限；改密碼、`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 都會全員登出。登入失敗 5 次／300 秒鎖 IP（記憶體內）。外部存取 `from_trusted_proxy = edge_secret_ok OR is_trusted_proxy`，刻意 OR（nginx 與 app 滾動切換窗口）；祕密要 repo 根 `.env` 與 `deploy/.env` 逐字相同。
+- Auth deny-by-default、fail-closed：個別帳號（`research.app_user`，Argon2id），舊的 `REPORT_MARK_ACCESS_USERNAME`／`_PASSWORD` 已不讀取（還在環境裡時 lifespan 記 warning；沒有任何啟用中的管理員時記 ERROR、照樣啟動）。`require_login` middleware 先驗 cookie 簽章，再以 `deps.accounts.resolve_session` 查 DB（未撤銷、未過 `expires_at`、帳號啟用），通過才把 `accounts.User` 放進 `request.state.user`；查 DB 失敗回 503（不導回登入頁），簽章有效但 DB 不認的 cookie 會被清掉。授權在 `web/authz.py`：`/api/review/*`、`/api/admin/*` 以 router 層 `require_admin` 整組限管理員（`tests/test_authz.py` 結構性檢查每條路由）。免登入開發模式的身分是 `accounts.DEV_USER`（管理員、id=None，寫入的問答擁有者為 NULL）。免登入只有 `/login`、`/healthz`、`/app/assets` 與前綴 `/app/assets/`（`/static` 需登入）；POST `/login` 只在 HTTPS（含可信代理的 `X-Forwarded-Proto: https`）或本機時受理，否則 303 `?error=insecure`；`/healthz/storage`、`/healthz/llm` 也在白名單，但只回答本機直連（其餘 404）。`/api/` 未登入回 401 JSON，其餘 302。Session cookie `tf_session`：HMAC token v3 `<ver>.<sid>.<iat>.<exp>.<sig>`（`sid` 是 `user_session.id`，只收正規 UUID 字面），簽章訊息含 `REPORT_MARK_SESSION_EPOCH`，7 天滑動、30 天絕對上限（DB 端 `expires_at` 同值）；v1／v2 舊 cookie 明確拒收並記一筆。撤銷單一 session（登出）、單一帳號（停用、強制登出、重設密碼）在 DB、下一個請求生效；`REPORT_MARK_SESSION_SECRET`、`REPORT_MARK_SESSION_EPOCH` 是全員登出。登入成功記帳號名稱，失敗只記「帳號是否存在」；停用帳號只在密碼正確時回 `?error=disabled`。登入失敗 5 次／300 秒鎖 IP（記憶體內）。外部存取 `from_trusted_proxy = edge_secret_ok OR is_trusted_proxy`，刻意 OR（nginx 與 app 滾動切換窗口）；祕密要 repo 根 `.env` 與 `deploy/.env` 逐字相同。
 - `DEV_NO_AUTH=1` 三條件同時成立才放行：旗標在環境檔載入前已在 `os.environ`、對端與 URL hostname 皆 loopback、無任何代理 header；放行時刻意不發 cookie。`SKIP_WARMUP` 在 lifespan 讀 `os.environ`、判 `== "1"`，晚於載入 `.env`，所以寫進 `.env` 會生效（沒有快照保護）。兩者都不要寫進環境檔。
 - lifespan：`assert_single_worker`（偵測到多 worker 拒絕啟動，偵測不到放行）→ `dev_mode.log_banner()` 與併發設定日誌 → `assert_pgvector_version`（低於 0.8 fail-closed，連不上 DB 放行交給 `/healthz`）→ LLM 自檢（`_check_llm_models`：WARNING 記 provider 與各任務解析結果；缺 `DEEPSEEK_API_KEY`、未知模型名、網搜解析到白名單模型記 ERROR；解析到 Claude 的任務才探 `llm.claude_cli_path()`——DeepSeek 表的網搜仍是 Claude，所以 PR-M 合併前每次啟動都會探；不擋啟動：讀取類功能不需要 LLM）→ 背景暖機（embed 再 rerank，**必須依序**，兩執行緒同時首次 import transformers 會競態）。關機時取消暖機並 `llm_http.aclose()`。
 - 併發閘只剩一個：`/api/ask` 容量 3 寫死在 `web/routers/ask.py` 的 `_ASK_GATE`：超過容量先排隊（SSE 先送 `queued` 事件），排隊人數達 `ASK_MAX_QUEUE`（預設 20，0＝不限）才在送出 200 之前回 429 ＋ `Retry-After: 30`（SSE 開始後改不了狀態碼）。問答忠實度抽查背景任務的上限 `ASK_FAITHFULNESS_MAX_INFLIGHT` 同樣是行程內狀態。都是 per-process，lifespan 擋多 worker。
 - SSE：`deps._with_heartbeat` 每 `SSE_HEARTBEAT_INTERVAL`（20 秒）插註解行，因 nginx `proxy_read_timeout` 60 秒；前端 `readSSE.parseFrame` 對無 `data:` 的框回 null。
-- `/healthz` 只探 DB（`SELECT 1`，3 秒逾時，結果快取 5 秒），503 而非 200 加 degraded 欄位。存在理由：登入路徑不碰 DB，DB 掛掉是「假活著」。它必須同時在路由與白名單，只掛路由等於永遠 302。回應只有 `status` 一個鍵是釘死的不變量。消費端有兩個：本機 `scripts/check_web_health.sh`，以及從本機打對外網址、再以本機 origin 做失敗歸因的 `scripts/check_edge_health.sh`（細節見 `docs/EXTERNAL_ACCESS.md`）。
+- `/healthz` 只探 DB（`SELECT 1`，3 秒逾時，結果快取 5 秒），503 而非 200 加 degraded 欄位。存在理由：讓外部監控分辨「DB 掛了」與「站台正常」（個別帳號上線後登入與每個請求的 session 查驗都要 DB，DB 掛掉時其餘路徑一律 503 或登入失敗）。它必須同時在路由與白名單，只掛路由等於永遠 302。回應只有 `status` 一個鍵是釘死的不變量。消費端有兩個：本機 `scripts/check_web_health.sh`，以及從本機打對外網址、再以本機 origin 做失敗歸因的 `scripts/check_edge_health.sh`（細節見 `docs/EXTERNAL_ACCESS.md`）。
 - `/healthz/storage` 回報物件儲存可達性（`disabled`／`unknown`／`ok`／`degraded`，只有 degraded 回 503）。刻意不併進 `/healthz`：R2 掛掉時其餘功能都活著，對外監控不該因此判站台死亡。它在 auth 白名單裡，但 handler 只回答本機直連（`dev_mode.is_direct_loopback`），經邊緣一律 404。探測是 `ObjectStorage.ping()`（`list_objects_v2` `MaxKeys=1`），成功快取 5 分鐘、失敗 60 秒、連續兩次失敗才翻 degraded。消費端是 `scripts/check_web_health.sh` 退出碼 6。
 - `/healthz/llm` 回報 DeepSeek 帳號（`app/services/llm_health.py`）：同樣在白名單、只回答本機直連、回應只有 `llm` 一鍵且不含金額。查 `GET /user/balance`，只讀 `LLM_BUDGET_CURRENCY`（CNY）那一筆、依 `currency` 取值不靠索引；低於 `LLM_BALANCE_FLOOR`（70）為 low，缺該幣別或其他幣別非零為 indeterminate。本行程真實請求的 402（`llm_http.last_quota_at`）立刻翻 exhausted，直到一次之後開始的成功查詢。只有問答主答（`ASK_ANSWER` 任務）解析到 DeepSeek 時才回 503（審查 M15；其他線上任務都 fail-open，不算），否則加 `_unused` 回 200。消費端是探針：`low` 為退出碼 7（WARNING），其餘 503 為 8（CRITICAL，停擺或判斷不出來）；探針三項 L3 全查、一行帶出全部 reason，退出碼取 8 → 5 → 6 → 7 最前面的（8 是最重的故障；7 可能持續到儲值，不能遮蔽 5、6）。狀態只在行程記憶體裡，web 重啟時可能閃一次 RESOLVED（`llm_health` docstring）。
 - `web/routers/monitor.py`：`/api/stats` 與 `/api/progress` 共用 15 秒 DB 快取（同模組是刻意的，拆開就分裂成兩份）；runtime 區塊 10 秒；`data/tags/` 檔數 60 秒（實測 15,852 檔冷 412 ms，是真正的熱點）。router 檔的輔助函式一律放在所有 `@router.*` 之上，夾在中間會讓端點回 422，只有 HTTP 層測試抓得到。
 - SPA：`/app/assets` 的 Mount 必須贏過 `/app/{spa_path:path}`（`tests/test_pre_split_guards.py`）；`frontend/dist` 不存在回 503；`tests/test_spa_serving.py` 對真 build 驗證，缺 dist 是紅不是 skip（`SKIP_SPA_TESTS=1` 才跳過）。Mount 只在啟動時 `frontend/dist` 底下的 assets 目錄已存在才掛；先起 web 再首次 `make build-web`，資產請求會落進 catch-all 拿到 index.html，要重啟。
-- 待複核（`web/routers/review.py`，`/api/review/queue`、`/api/review/{kind}/{subject_id}`）：佇列每次從原始品質條件重算，再 LEFT JOIN `review_state`（沒有列一律視為 `open`）。PUT 只檢查主體還在不在 `qa_log`／`research_report`，不檢查它是否仍在佇列裡；寫入是 upsert，`note` 會 strip。`review_state` 不設 FK，所以有兩種孤兒：刪問答歷史或對話串是對 `qa_log` 硬 DELETE；重跑入庫（`upsert_report`）先 DELETE 再以新 uuid 重建，舊的抽取複核狀態留成孤兒、該篇重新以 `open` 出現（E1d 回填走 `replace_report_extraction` 原地更新，id 不變、狀態保留）。
+- 待複核（`web/routers/review.py`，`/api/review/queue`、`/api/review/{kind}/{subject_id}`，整組限管理員）：佇列每次從原始品質條件重算，再 LEFT JOIN `review_state`（沒有列一律視為 `open`）。PUT 只檢查主體還在不在 `qa_log`／`research_report`，不檢查它是否仍在佇列裡；寫入是 upsert，`note` 會 strip，記下處理人並在同一筆交易寫 `admin_audit_log`（`review.update`，不含註記全文）；每筆帶 `reviewer` 與問答類的 `asked_by`，以純量子查詢取帳號名（JOIN `app_user` 會讓既有未加表名的欄位 ambiguous）。`review_state` 不設 FK，所以有兩種孤兒：刪問答歷史或對話串是對 `qa_log` 硬 DELETE；重跑入庫（`upsert_report`）先 DELETE 再以新 uuid 重建，舊的抽取複核狀態留成孤兒、該篇重新以 `open` 出現（E1d 回填走 `replace_report_extraction` 原地更新，id 不變、狀態保留）。
 - 問答歷史（`web/routers/qa_history.py`）：刪除是硬刪，查無或 DB 異常回 200 `{"ok": false}` 不是 404；DELETE 另有 POST 的 `/delete` 別名（邊緣對 DELETE 不穩時用）；`/api/conversations` 回裸陣列、不帶 total，前端以筆數等於 `limit` 判斷有沒有下一頁；回饋送 `none` 寫成 NULL。
 
 ## 8. 資料層
@@ -151,17 +154,20 @@ schema 名 `research`，沒有 migration 工具；新增的 `review_state` 由 `
 |---|---|---|
 | `research_report` | 研報主檔：檔案、標籤、`full_text`、`summary`、顯示標題三欄（`title`／`title_original`／`title_source`）、抽取七欄、`source_object_key` | `file_hash` UNIQUE；`is_research` NOT NULL DEFAULT true |
 | `report_chunk` | 切塊、`embedding vector(1024)`（HNSW cosine）、生成欄 `content_norm`（GIN trgm） | FK → `research_report` CASCADE |
-| `qa_log` | 問答紀錄：`filters`、`sources`、`ext_sources`、`stages`、`followups`、`evidence_manifest`、`evaluation`、版本鏈 `root_qa_id`、`request_id` UNIQUE | `conversation_id` 軟連結 |
+| `qa_log` | 問答紀錄：`filters`、`sources`、`ext_sources`、`stages`、`followups`、`evidence_manifest`、`evaluation`、版本鏈 `root_qa_id`、`request_id` UNIQUE、擁有者 `user_id` | `conversation_id` 軟連結；`user_id` → `app_user.id` 刻意無 FK（備份表不被還原順序綁住），NULL＝個別帳號上線前的共用歷史，一般介面看不到 |
 | `report_signal` | 雷達訊號（研報 × 標的） | FK → `research_report` CASCADE；UNIQUE(report_id, market, instrument_code) |
 | `report_takeaway` | 閱讀頁重點摘錄與錨點 | FK → `research_report` CASCADE；UNIQUE(report_id, ordinal) |
 | `report_brief` | 每日簡報 | UNIQUE(brief_date)；`report_ids uuid[]` 刻意無 FK，讀取端容忍孤兒 |
 | `extraction_log` | 每個進過管線的 `file_hash` 一列 | PK `file_hash`；CHECK `stopped_at` 與 `store.STOPPED_AT` 逐字對齊；無 FK |
 | `llm_task_failure` | LLM 批次的內容型失敗（跳過名單）：解析不了、審查擋下、截斷、空回應、其他 400／422、已吐字後逾時（`timeout_streamed`，連續 3 輪才跳過）；成功即刪列，規則在 `app/services/llm_failures.py` | PK(file_hash, task)；刻意無 CHECK、不備份 |
-| `review_state` | 人工複核的狀態、註記、驗證結果、更新時間；未建列視為 `open` | PK(kind, subject_id)；subject_id 指向 `qa_log.id` 或 `research_report.id`，不設跨表 FK；共用帳號不記 reviewer |
+| `review_state` | 人工複核的狀態、註記、驗證結果、更新時間、處理人 `reviewer_user_id`；未建列視為 `open` | PK(kind, subject_id)；subject_id 指向 `qa_log.id` 或 `research_report.id`，不設跨表 FK；`reviewer_user_id` 同樣無 FK，NULL＝共用帳號時期 |
+| `app_user` | 個別帳號：`username`（`lower()` 唯一）、Argon2id `password_hash`、`role`（CHECK `admin`／`user`）、`enabled`、登入與改密碼時間 | 只停用不刪除（歷史擁有者、處理人、稽核都指向它） |
+| `user_session` | 可撤銷 session：`revoked_at`、絕對上限 `expires_at`、`last_seen_at`（超過 5 分鐘才回寫）、`ip`、`user_agent` | FK → `app_user` CASCADE；刻意不備份 |
+| `admin_audit_log` | 管理操作稽核：`actor_user_id`（NULL＝CLI）、`action`、`target_type`、`target_id`、`detail` jsonb；不含任何密碼衍生值 | 與變更同交易寫入；無 FK |
 
 待複核 API 以原始品質條件查詢，再以 `review_state` 篩選 `open`／`resolved`／`dismissed`／`all`；寫入狀態不改 `qa_log` 或 `research_report` 的品質訊號。人工驗證欄位只記錄人工結果，不會重跑評測或抽取。
 
-備份涵蓋五張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`）→ NAS；語料層刻意不備。
+備份涵蓋七張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`）→ NAS；語料層與 `user_session` 刻意不備。
 
 資料陷阱：
 - `full_text` 是未清理原始抽取（帶 CJK 字間空白），顯示一律 `clean_extracted`，不是 `clean_text`。
@@ -205,6 +211,8 @@ DB 連線數算式（`.env.example`）：`worker 數 × (DB_POOL_SIZE + DB_MAX_O
 | `ASK_*` 逾時、`DB_*` 逾時的數字 | `app/config.py` 逐條註解 |
 | `zh_hant.py` 的判別法與門檻、`faithfulness.is_numeric_claim`、`reading/queries.py` 的 `_SIMILAR_SQL`、`ASK_RERANK_CANDIDATES` | `zh_hant.py` 模組 docstring、`faithfulness.py` 的 `_NUMERIC_RE` 上方、`reading/queries.py` 的 `_SIMILAR_SQL` 周邊註解、`docs/CAPACITY.md` |
 | 抽取層不用 PyMuPDF、不用 LLM 評分、快取不存 bbox | `docs/EXTRACTION.md` |
+| session 每個請求查 DB、不快取；帳號只停用不刪除；稽核與變更同交易 | `app/services/accounts.py` 模組 docstring |
+| 問答紀錄的舊共用歷史（`user_id` NULL）對一般使用者隱藏 | `db/schema.sql` 的 `qa_log.user_id` 註解 |
 | 簡報窗期用 `created_at`、沒有自己的 timer | `app/services/brief.py`、`scripts/sync_new_reports.sh` |
 | sync 鏈用 `--hashes-file` 不用 `--since-days`、訊號與標題積壓的 `--limit`（`SYNC_SIGNAL_LIMIT`、`SYNC_TITLE_BACKLOG_LIMIT`）是安全機制 | `scripts/sync_new_reports.sh` |
 | `report-mark-sync.timer` 的 `Persistent=false` | `tests/test_sync_timer_persistence.py` |

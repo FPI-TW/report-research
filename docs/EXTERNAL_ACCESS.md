@@ -1,6 +1,6 @@
 # 對外存取：Cloudflare Tunnel + nginx
 
-讓辦公室外的同事從外網連入廷豐研報檢索網頁。登入由 App 內建登入頁處理（共用帳密），邊緣 nginx 只做反向代理與限流。
+讓辦公室外的同事從外網連入廷豐研報檢索網頁。登入由 App 內建登入頁處理（個別帳號），邊緣 nginx 只做反向代理與限流。
 
 ## 架構
 
@@ -43,19 +43,20 @@ cp deploy/.env.example deploy/.env
 # 編輯 deploy/.env，把 TUNNEL_TOKEN= 後面貼上剛才複製的 token
 ```
 
-### 3) 設定 App 登入帳密
+### 3) 設定 App 登入帳號
 
-登入由 App 處理,憑證來自環境變數(複製 repo 根 `.env.example` 為 `.env`):
+登入由 App 處理。每個人有自己的帳號（`research.app_user`），session 簽章金鑰來自環境變數（複製 repo 根 `.env.example` 為 `.env`）：
 
 ```bash
 cp .env.example .env
 # 編輯 .env：
-#   REPORT_MARK_ACCESS_USERNAME / REPORT_MARK_ACCESS_PASSWORD  共用帳密
 #   REPORT_MARK_SESSION_SECRET  固定長隨機字串(未設則重啟登出所有人)
 #   產生 secret：python -c "import secrets; print(secrets.token_hex(32))"
+make schema                                              # 建帳號相關的表
+uv run python scripts/create_admin.py --username <名稱>   # 第一位管理員（密碼互動輸入）
 ```
 
-> `make serve` 會自動載入 `.env`。未設帳密時 App 會 fail-closed 拒絕啟動。
+> 其他人的帳號由管理員在網頁「管理 → 帳號」建立。還沒有任何啟用中的管理員時 App 照樣啟動，但啟動日誌會記 ERROR 提醒跑上面那一步。
 > 安全限制：**非本機 localhost 的明文 HTTP 不會建立登入 session**；同事請走 `https://research.<你的網域>` 這條受保護入口。
 
 ### 3b) 信任反向代理來源 IP（外網必做）
@@ -159,23 +160,26 @@ Slack 上只有通用訊息（`探針回報失敗（exit=1 result=exit-code）` 
 
 ## 安全備註
 
-- 登入為**共用帳密**,App 以 hmac 簽章 session cookie 維持登入(7 天滑動到期、**30 天絕對上限**),並對登入失敗做每 IP 限流。請定期更換 `.env` 的密碼。
+- 登入為**個別帳號**(Argon2id 雜湊),App 以 hmac 簽章 session cookie 維持登入(7 天滑動到期、**30 天絕對上限**),cookie 只帶 session id,每個請求都查 DB 確認 session 未撤銷、帳號仍啟用;並對登入失敗做每 IP 限流。
 - 建議 Cloudflare 端開「Always Use HTTPS」、TLS 模式至少 Full。
-- `deploy/.env`（隧道 token）與 repo 根 `.env`（登入帳密 / session 金鑰）皆已 gitignore，切勿提交。
+- `deploy/.env`（隧道 token）與 repo 根 `.env`（session 金鑰等）皆已 gitignore，切勿提交。
 
 ### 撤銷 session
 
-session token 的簽章訊息含「帳密指紋」與「登出 epoch」，所以改任一項就等於全員失效（都需重啟 App 生效）。
+session 存在 DB（`research.user_session`），逐一撤銷在管理頁做、立即生效、不必重啟；全員登出才動環境變數。
 
 | 想做的事 | 做法 | 影響 |
 |---|---|---|
-| 換密碼並踢掉所有人 | 改 `REPORT_MARK_ACCESS_PASSWORD` | 全員登出（**不再像以前那樣「換了密碼舊 cookie 照樣能用」**）|
-| 不換密碼、只踢掉所有人 | `REPORT_MARK_SESSION_EPOCH` 填一個新值（慣例填日期） | 全員登出 |
+| 踢掉某一個人（例如懷疑他的 cookie 外流） | 管理頁「強制登出」 | 他的所有 session 失效，可重新登入 |
+| 某人離職或暫停使用 | 管理頁「停用」 | 下一個請求就進不來；session 一併撤銷，重新啟用也不會復活 |
+| 某人忘記密碼或密碼外流 | 管理頁「重設密碼」 | 新密碼生效、他的所有 session 失效 |
+| 管理員全進不去 | `uv run python scripts/create_admin.py --username <名稱> --reset-password` | 重設密碼並重新啟用 |
+| 踢掉所有人 | `REPORT_MARK_SESSION_EPOCH` 填一個新值（慣例填日期）並重啟 | 全員登出 |
 | 什麼都不做 | — | 任一 session 最長活 30 天（`web/auth.py` 的 `MAX_ABSOLUTE_TTL`）；滑動續期只推遲到期時間，不會延長這條上限 |
 
 ### 登入稽核
 
-登入的四種結果都會寫進 journald：成功 `INFO`，失敗／限流鎖定／非 HTTPS 遭拒 `WARNING`。**一律不記密碼（連長度都不記）**，帳號只記「相符與否」。
+登入的結果都會寫進 journald：成功 `INFO`（記帳號名稱與角色），失敗／停用帳號／限流鎖定／非 HTTPS 遭拒 `WARNING`，帳號服務不可用 `ERROR`。**一律不記密碼（連長度都不記）**；失敗時帳號只記「是否存在」（那個欄位常被誤填成密碼）。管理操作（建帳、改角色、停用、重設密碼、強制登出、處理待複核）另寫進 `research.admin_audit_log`，管理頁可查。
 
 ```bash
 sudo journalctl -u report-mark-web.service | grep -E "登入成功|登入失敗|登入遭"
@@ -194,9 +198,11 @@ sudo journalctl -u report-mark-web.service | grep -E "登入成功|登入失敗|
 | 內網直接打 `http://<LAN-IP>:8097` 一直回登入頁 | 這是刻意的：非 localhost 的明文 HTTP 不接受登入 session → 請改走 Cloudflare HTTPS 網址；只有本機開發可用 `http://localhost:8097` |
 | 外網（HTTPS）登入顯示「只接受 HTTPS 或本機 localhost」 | `REPORT_MARK_TRUSTED_PROXY_CIDRS` 未含 nginx 進來的來源 IP（Docker→WSL 閘道，~`172.x.x.1`）→ App 不採信 `X-Forwarded-Proto: https`。**先看日誌**：`journalctl -u report-mark-web.service \| grep 登入遭拒` 會直接印出 `peer=<實際對端>`，把它加進 CIDR（見 3b）或改用共享祕密（見 3c，一勞永逸）後重啟 |
 | 設了 `EDGE_SECRET` 仍被當成不可信 | 兩邊值不一致，或 nginx 沒重新渲染模板（`nginx -s reload` 不會重新代換，要 `make edge-reload` 重啟容器）。驗證：`docker compose -f deploy/docker-compose.yml exec nginx cat /etc/nginx/conf.d/default.conf \| grep X-Edge-Secret` 應看到**實際祕密值**而非字面的 `${EDGE_SECRET}` |
-| 所有人突然被登出 | 預期行為：改了 `REPORT_MARK_ACCESS_PASSWORD` / `REPORT_MARK_SESSION_SECRET` / `REPORT_MARK_SESSION_EPOCH`，或該 session 已達 30 天絕對上限。重新登入即可 |
+| 所有人突然被登出 | 預期行為：改了 `REPORT_MARK_SESSION_SECRET` / `REPORT_MARK_SESSION_EPOCH`，或該 session 已達 30 天絕對上限，或剛從共用帳密切換到個別帳號（舊 cookie 明確拒收）。重新登入即可 |
+| 某一個人被登出或登入顯示「此帳號已停用」 | 管理員對他做了強制登出、重設密碼或停用；查管理頁的操作紀錄 |
+| 登入顯示「登入服務暫時無法使用」、或頁面回 503 | 帳號服務（DB）不可用：`curl -s http://localhost:8097/healthz` 應回 503，先處理 DB |
 | 一直回登入頁、輸入正確仍進不去 | session cookie 沒被接受(瀏覽器擋第三方/封鎖 cookie),或 `REPORT_MARK_SESSION_SECRET` 每次重啟都變(請在 `.env` 固定一組) |
-| App 啟動即報錯退出 | 未設 `REPORT_MARK_ACCESS_USERNAME` / `_ACCESS_PASSWORD`(fail-closed)→ 補進 `.env` 再 `make serve` |
+| 沒有人登得進去、啟動日誌有「沒有任何啟用中的管理員」 | 還沒建第一位管理員 → `uv run python scripts/create_admin.py --username <名稱>`（舊共用帳密可用 `--from-env` 轉入） |
 | 改了程式卻沒生效（看到新 UI 卻無登入頁 / 登出按 404）| `make serve` 無 `--reload`：靜態 HTML 即時生效，但路由/中介層在**啟動時**載入；舊 uvicorn 程序還在跑 → `pkill -f "uvicorn web.server"` 後重啟 `make serve` |
 | `make edge-logs` 看不到 tunnel 連線 | token 錯/沒填 → 檢查 `deploy/.env`；Cloudflare 儀表板確認隧道狀態為 HEALTHY |
 | 外網打不開但 LAN 正常 | Cloudflare Public Hostname 的 Service 是否設成 `http://nginx:80`；DNS 記錄是否由隧道自動建立 |

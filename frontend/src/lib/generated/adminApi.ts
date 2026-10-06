@@ -122,6 +122,29 @@ export const AuditResponseSchema = z.object({
 })
 export type AuditResponse = z.infer<typeof AuditResponseSchema>
 
+export const ConfigFlagsSchema = z.object({
+  ask_enable_web: z.boolean(),
+  ask_rerank_enabled: z.boolean(),
+  qa_agentic_enabled: z.boolean(),
+  ask_faithfulness_enabled: z.boolean(),
+  trusted_data_enabled: z.boolean(),
+  skip_warmup: z.boolean(),
+  dev_no_auth: z.boolean(),
+})
+export type ConfigFlags = z.infer<typeof ConfigFlagsSchema>
+
+export const ConfigLimitsSchema = z.object({
+  db_pool_size: z.number().int(),
+  db_max_overflow: z.number().int(),
+  db_pool_timeout_s: z.number(),
+  db_statement_timeout_ms: z.number().int(),
+  db_idle_tx_timeout_ms: z.number().int(),
+  embed_max_concurrency: z.number().int(),
+  ask_faithfulness_sample_rate: z.number(),
+  ask_faithfulness_max_inflight: z.number().int(),
+})
+export type ConfigLimits = z.infer<typeof ConfigLimitsSchema>
+
 export const CreateUserRequestSchema = z.object({
   username: z.string(),
   password: z.string(),
@@ -142,6 +165,25 @@ export const DbAuditSectionSchema = z.object({
   findings: z.array(AuditFindingSchema),
 })
 export type DbAuditSection = z.infer<typeof DbAuditSectionSchema>
+
+export const DbCheckSchema = z.object({
+  ok: z.boolean(),
+  latency_ms: z.number().nullable().optional(),
+  server_version: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type DbCheck = z.infer<typeof DbCheckSchema>
+
+export const DbPoolSectionSchema = z.object({
+  pool_class: z.string().nullable().optional(),
+  size: z.number().int().nullable().optional(),
+  max_overflow: z.number().int().nullable().optional(),
+  checked_out: z.number().int().nullable().optional(),
+  checked_in: z.number().int().nullable().optional(),
+  open_connections: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type DbPoolSection = z.infer<typeof DbPoolSectionSchema>
 
 export const DeletionItemSchema = z.object({
   id: z.number().int(),
@@ -191,6 +233,33 @@ export const FreshnessSectionSchema = z.object({
   findings: z.array(FreshnessFindingSchema),
 })
 export type FreshnessSection = z.infer<typeof FreshnessSectionSchema>
+
+export const FrontendBuildSchema = z.object({
+  available: z.boolean().optional(),
+  built_at: z.string().nullable().optional(),
+  entry_assets: z.array(z.string()).optional(),
+})
+export type FrontendBuild = z.infer<typeof FrontendBuildSchema>
+
+export const GateStatusSchema = z.object({
+  name: z.string(),
+  capacity: z.number().int(),
+  in_use: z.number().int().nullable().optional(),
+  waiting: z.number().int(),
+  max_queue: z.number().int(),
+})
+export type GateStatus = z.infer<typeof GateStatusSchema>
+
+export const GitInfoSchema = z.object({
+  available: z.boolean().optional(),
+  reason: z.string().nullable().optional(),
+  commit_at_start: z.string().nullable().optional(),
+  branch_at_start: z.string().nullable().optional(),
+  commit_on_disk: z.string().nullable().optional(),
+  branch_on_disk: z.string().nullable().optional(),
+  restart_pending: z.boolean().nullable().optional(),
+})
+export type GitInfo = z.infer<typeof GitInfoSchema>
 
 export const IncidentEventItemSchema = z.object({
   event_id: z.string(),
@@ -266,6 +335,17 @@ export const JobListResponseSchema = z.object({
   items: z.array(JobItemSchema),
 })
 export type JobListResponse = z.infer<typeof JobListResponseSchema>
+
+export const LlmCheckSchema = z.object({
+  state: z.string(),
+  key_configured: z.boolean().optional(),
+  ask_uses_http: z.boolean().optional(),
+  consecutive_failures: z.number().int().optional(),
+  last_check_age_s: z.number().nullable().optional(),
+  quota_latched: z.boolean().optional(),
+  error: z.string().nullable().optional(),
+})
+export type LlmCheck = z.infer<typeof LlmCheckSchema>
 
 export const LlmUsageDaySchema = z.object({
   calls: z.number().int(),
@@ -356,6 +436,17 @@ export const LogoutResponseSchema = z.object({
 })
 export type LogoutResponse = z.infer<typeof LogoutResponseSchema>
 
+export const ModelsSectionSchema = z.object({
+  embed_model: z.string().nullable().optional(),
+  embed_loaded: z.boolean().optional(),
+  rerank_loaded: z.boolean().optional(),
+  rerank_load_failed: z.boolean().optional(),
+  warmup: z.enum(['skipped', 'absent', 'running', 'done', 'failed', 'cancelled']).nullable().optional(),
+  warmup_error: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type ModelsSection = z.infer<typeof ModelsSectionSchema>
+
 export const ObservationItemSchema = z.object({
   observed_at: z.string(),
   host: z.string(),
@@ -403,6 +494,14 @@ export const OpsActionResponseSchema = z.object({
   checked_at: z.string(),
 })
 export type OpsActionResponse = z.infer<typeof OpsActionResponseSchema>
+
+export const OpsAgentCheckSchema = z.object({
+  ok: z.boolean(),
+  latency_ms: z.number().nullable().optional(),
+  services: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type OpsAgentCheck = z.infer<typeof OpsAgentCheckSchema>
 
 export const OpsContainerStateSchema = z.object({
   status: z.string().nullable().optional(),
@@ -574,6 +673,59 @@ export const ReportVisibilityResponseSchema = z.object({
 })
 export type ReportVisibilityResponse = z.infer<typeof ReportVisibilityResponseSchema>
 
+export const SchemaDailyCheckSchema = z.object({
+  available: z.boolean().optional(),
+  unavailable_reason: z.string().nullable().optional(),
+  checked_at: z.string().nullable().optional(),
+  age_hours: z.number().nullable().optional(),
+  stale: z.boolean().optional(),
+  mode: z.string().nullable().optional(),
+  exit_code: z.number().int().nullable().optional(),
+  alert: z.boolean().nullable().optional(),
+  problems: z.array(z.string()).optional(),
+  message: z.string().nullable().optional(),
+  version_status: z.string().nullable().optional(),
+  drift_status: z.string().nullable().optional(),
+  drift_count: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type SchemaDailyCheck = z.infer<typeof SchemaDailyCheckSchema>
+
+export const SchemaSectionSchema = z.object({
+  status: z.enum(['ok', 'behind', 'ahead', 'unversioned', 'ambiguous', 'error']),
+  db_revisions: z.array(z.string()),
+  code_heads: z.array(z.string()),
+  pending: z.array(z.string()),
+  error: z.string().nullable().optional(),
+  daily_check: SchemaDailyCheckSchema,
+})
+export type SchemaSection = z.infer<typeof SchemaSectionSchema>
+
+export const SecretsPresentSchema = z.object({
+  deepseek_api_key: z.boolean(),
+  session_secret: z.boolean(),
+  edge_secret: z.boolean(),
+  r2_credentials: z.boolean(),
+  alert_webhook: z.boolean(),
+})
+export type SecretsPresent = z.infer<typeof SecretsPresentSchema>
+
+export const StorageCheckSchema = z.object({
+  state: z.string(),
+  consecutive_failures: z.number().int().optional(),
+  last_probe_age_s: z.number().nullable().optional(),
+  last_probe_ok: z.boolean().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type StorageCheck = z.infer<typeof StorageCheckSchema>
+
+export const TimezoneInfoSchema = z.object({
+  tz_env: z.string().nullable().optional(),
+  name: z.string().optional(),
+  utc_offset: z.string().optional(),
+})
+export type TimezoneInfo = z.infer<typeof TimezoneInfoSchema>
+
 export const UpdateUserRequestSchema = z.object({
   role: z.enum(['admin', 'user']).nullable().optional(),
   enabled: z.boolean().nullable().optional(),
@@ -602,6 +754,16 @@ export const UserListResponseSchema = z.object({
   items: z.array(UserItemSchema),
 })
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
+
+export const VersionsSectionSchema = z.object({
+  git: GitInfoSchema.nullable().optional(),
+  frontend: FrontendBuildSchema.nullable().optional(),
+  python: z.string().nullable().optional(),
+  platform: z.string().nullable().optional(),
+  packages: z.record(z.string(), z.unknown()).optional(),
+  error: z.string().nullable().optional(),
+})
+export type VersionsSection = z.infer<typeof VersionsSectionSchema>
 
 export const AdminUploadDetailSchema = z.object({
   upload_id: z.string(),
@@ -641,6 +803,30 @@ export const AdminUploadListResponseSchema = z.object({
   scanner: AdminUploadScannerSchema,
 })
 export type AdminUploadListResponse = z.infer<typeof AdminUploadListResponseSchema>
+
+export const ConfigSectionSchema = z.object({
+  db_target: z.string().nullable().optional(),
+  object_storage_mode: z.string().nullable().optional(),
+  llm_provider: z.string().nullable().optional(),
+  models: z.record(z.string(), z.unknown()).optional(),
+  extractor: z.string().nullable().optional(),
+  log_level: z.string().nullable().optional(),
+  ops_agent_environment: z.string().nullable().optional(),
+  ops_agent_socket: z.string().nullable().optional(),
+  flags: ConfigFlagsSchema.nullable().optional(),
+  secrets_present: SecretsPresentSchema.nullable().optional(),
+  limits: ConfigLimitsSchema.nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type ConfigSection = z.infer<typeof ConfigSectionSchema>
+
+export const DiagnosticsChecksSchema = z.object({
+  db: DbCheckSchema,
+  storage: StorageCheckSchema,
+  llm: LlmCheckSchema,
+  ops_agent: OpsAgentCheckSchema,
+})
+export type DiagnosticsChecks = z.infer<typeof DiagnosticsChecksSchema>
 
 export const IncidentDetailSchema = z.object({
   incident_id: z.string(),
@@ -765,6 +951,20 @@ export const RegressionQuestionSchema = z.object({
 })
 export type RegressionQuestion = z.infer<typeof RegressionQuestionSchema>
 
+export const RuntimeSectionSchema = z.object({
+  pid: z.number().int().nullable().optional(),
+  hostname: z.string().nullable().optional(),
+  started_at: z.string().nullable().optional(),
+  uptime_s: z.number().nullable().optional(),
+  rss_bytes: z.number().int().nullable().optional(),
+  peak_rss_bytes: z.number().int().nullable().optional(),
+  threads: z.number().int().nullable().optional(),
+  timezone: TimezoneInfoSchema.nullable().optional(),
+  python_executable: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type RuntimeSection = z.infer<typeof RuntimeSectionSchema>
+
 export const DataHealthResponseSchema = z.object({
   generated_at: z.string(),
   overall: z.enum(['ok', 'warn', 'fail', 'unknown']),
@@ -773,6 +973,21 @@ export const DataHealthResponseSchema = z.object({
   r2_reconcile: R2ReconcileSectionSchema,
 })
 export type DataHealthResponse = z.infer<typeof DataHealthResponseSchema>
+
+export const DiagnosticsResponseSchema = z.object({
+  generated_at: z.string(),
+  cache_ttl_s: z.number().int(),
+  versions: VersionsSectionSchema,
+  schema_info: SchemaSectionSchema,
+  runtime: RuntimeSectionSchema,
+  config: ConfigSectionSchema,
+  models: ModelsSectionSchema,
+  db_pool: DbPoolSectionSchema,
+  gates: z.array(GateStatusSchema),
+  gates_error: z.string().nullable().optional(),
+  checks: DiagnosticsChecksSchema,
+})
+export type DiagnosticsResponse = z.infer<typeof DiagnosticsResponseSchema>
 
 export const OpsServiceListResponseSchema = z.object({
   environment: z.string(),
@@ -827,6 +1042,8 @@ export const adminApi = {
   getDataHealth: () => requestJSON('/api/admin/data-health', DataHealthResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/deletions — List Deletions */
   listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/diagnostics — Get Diagnostics */
+  getDiagnostics: () => requestJSON('/api/admin/diagnostics', DiagnosticsResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
   /** GET /api/admin/incidents — List Incidents */

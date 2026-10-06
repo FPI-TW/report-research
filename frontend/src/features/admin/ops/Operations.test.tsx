@@ -204,10 +204,10 @@ test('/admin/operations 導向總覽；子導覽九個分頁，都已接上 API�
     '/admin/operations/overview', '/admin/operations/services', '/admin/operations/dependencies',
     '/admin/operations/jobs',
     '/admin/operations/incidents', '/admin/operations/logs', '/admin/operations/host',
-    '/admin/operations/data-health', '/admin/operations/llm-usage',
+    '/admin/operations/data-health', '/admin/operations/llm-usage', '/admin/operations/diagnostics',
   ])
   expect(tabs.getByRole('link', { name: /總覽/ })).toHaveAttribute('aria-current', 'page')
-  for (const name of [/服務/, /依賴圖/, /排程工作/, /事件/, /主機/, /資料健康/, /LLM 用量/]) {
+  for (const name of [/服務/, /依賴圖/, /排程工作/, /事件/, /主機/, /資料健康/, /LLM 用量/, /診斷/]) {
     expect(tabs.getByRole('link', { name })).not.toHaveTextContent('尚未提供')
   }
 })

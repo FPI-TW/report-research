@@ -122,6 +122,56 @@ export const AuditResponseSchema = z.object({
 })
 export type AuditResponse = z.infer<typeof AuditResponseSchema>
 
+export const BulkReportResultSchema = z.object({
+  file_hash: z.string(),
+  status: z.enum(['ok', 'skipped']),
+  code: z.string().nullable().optional(),
+  detail: z.string().nullable().optional(),
+  hidden: z.boolean().nullable().optional(),
+})
+export type BulkReportResult = z.infer<typeof BulkReportResultSchema>
+
+export const BulkUserResultItemSchema = z.object({
+  user_id: z.string(),
+  status: z.enum(['ok', 'unchanged', 'skipped']),
+  code: z.string().nullable().optional(),
+  detail: z.string().nullable().optional(),
+  revoked_sessions: z.number().int().nullable().optional(),
+})
+export type BulkUserResultItem = z.infer<typeof BulkUserResultItemSchema>
+
+export const BulkUsersRequestSchema = z.object({
+  action: z.enum(['disable', 'enable', 'logout']),
+  user_ids: z.array(z.string()),
+})
+export type BulkUsersRequest = z.infer<typeof BulkUsersRequestSchema>
+
+export const BulkUsersResponseSchema = z.object({
+  action: z.enum(['disable', 'enable', 'logout']),
+  requested: z.number().int(),
+  ok: z.number().int(),
+  unchanged: z.number().int(),
+  skipped: z.number().int(),
+  results: z.array(BulkUserResultItemSchema),
+})
+export type BulkUsersResponse = z.infer<typeof BulkUsersResponseSchema>
+
+export const BulkVisibilityRequestSchema = z.object({
+  action: z.enum(['hide', 'restore']),
+  file_hashes: z.array(z.string()),
+  reason: z.string().nullable().optional(),
+})
+export type BulkVisibilityRequest = z.infer<typeof BulkVisibilityRequestSchema>
+
+export const BulkVisibilityResponseSchema = z.object({
+  action: z.enum(['hide', 'restore']),
+  requested: z.number().int(),
+  ok: z.number().int(),
+  skipped: z.number().int(),
+  results: z.array(BulkReportResultSchema),
+})
+export type BulkVisibilityResponse = z.infer<typeof BulkVisibilityResponseSchema>
+
 export const ConfigFlagsSchema = z.object({
   ask_enable_web: z.boolean(),
   ask_rerank_enabled: z.boolean(),
@@ -1070,6 +1120,8 @@ export const adminApi = {
   runOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/run`, OpsActionResponseSchema, jsonBody('POST')),
   /** GET /api/admin/reports — List Reports */
   listReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
+  /** POST /api/admin/reports/bulk-visibility — Bulk Set Report Visibility */
+  bulkSetReportVisibility: (body: z.input<typeof BulkVisibilityRequestSchema>) => requestJSON('/api/admin/reports/bulk-visibility', BulkVisibilityResponseSchema, jsonBody('POST', body)),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/retrieval-regression — Get Retrieval Regression */
@@ -1082,6 +1134,8 @@ export const adminApi = {
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */
   createUser: (body: z.input<typeof CreateUserRequestSchema>) => requestJSON('/api/admin/users', UserItemSchema, jsonBody('POST', body)),
+  /** POST /api/admin/users/bulk — Bulk User Action */
+  bulkUserAction: (body: z.input<typeof BulkUsersRequestSchema>) => requestJSON('/api/admin/users/bulk', BulkUsersResponseSchema, jsonBody('POST', body)),
   /** PATCH /api/admin/users/{user_id} — Update User */
   updateUser: (userId: string, body: z.input<typeof UpdateUserRequestSchema>) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}`, UserItemSchema, jsonBody('PATCH', body)),
   /** POST /api/admin/users/{user_id}/deletion — Request Deletion */

@@ -36,3 +36,20 @@ export function useReportVisibility() {
     },
   })
 }
+
+/** 批次隱藏（必填原因）／恢復；回逐筆結果。成功後同樣重抓清單與稽核。 */
+export function useBulkReportVisibility() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ fileHashes, hidden, reason }: { fileHashes: string[]; hidden: boolean; reason?: string }) =>
+      adminApi.bulkSetReportVisibility(hidden
+        ? { action: 'hide', file_hashes: fileHashes, reason }
+        : { action: 'restore', file_hashes: fileHashes }),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: REPORTS_KEY }),
+        client.invalidateQueries({ queryKey: AUDIT_KEY }),
+      ])
+    },
+  })
+}

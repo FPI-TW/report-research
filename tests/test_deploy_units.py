@@ -120,6 +120,8 @@ class NvmPathAlignmentTests(unittest.TestCase):
 LLM_ENV_EXAMPLE = SYSTEMD_DIR / "report-mark-llm.env.example"
 SYNC_ENV_EXAMPLE = SYSTEMD_DIR / "report-mark-sync.env.example"
 LLM_ENV_PATH = "-/etc/default/report-mark-llm"
+# 載入 LLM 金鑰檔的白名單。加一支要有使用者的決定（2026-10-06 設計決策 4 加了上傳 worker）。
+LLM_ENV_LOADERS = ("report-mark-sync.service", "report-mark-upload.service")
 
 
 def _live_lines(path: Path) -> list[str]:
@@ -130,21 +132,23 @@ def _live_lines(path: Path) -> list[str]:
 
 
 class LlmEnvFileTests(unittest.TestCase):
-    """DeepSeek 金鑰檔（PR-10）：只給 sync unit、格式兩種讀者都讀得懂、範例檔不帶金鑰。"""
+    """DeepSeek 金鑰檔（PR-10）：只給白名單上的 unit、格式兩種讀者都讀得懂、範例檔不帶金鑰。"""
 
-    def test_only_sync_unit_loads_llm_env(self) -> None:
-        """環境變數裡有金鑰的行程越少越好：其他 unit 都不呼叫 LLM。"""
+    def test_only_whitelisted_units_load_llm_env(self) -> None:
+        """環境變數裡有金鑰的行程越少越好：只有 sync 與上傳 worker（設計決策 4：白名單只加這一支）呼叫 LLM。"""
         loaders = sorted(
             unit.name for unit in _units()
             if any("report-mark-llm" in v for v in _directives(unit, "EnvironmentFile"))
         )
-        self.assertEqual(loaders, ["report-mark-sync.service"])
+        self.assertEqual(loaders, sorted(LLM_ENV_LOADERS))
 
-    def test_sync_loads_llm_env_after_shared_file(self) -> None:
-        files = _directives(SYSTEMD_DIR / "report-mark-sync.service", "EnvironmentFile")
-        self.assertIn(LLM_ENV_PATH, files, "要用 `-` 前綴：金鑰檔還沒安裝時 unit 仍要能啟動")
-        self.assertIn("-/etc/default/report-mark-sync", files)
-        self.assertLess(files.index("-/etc/default/report-mark-sync"), files.index(LLM_ENV_PATH))
+    def test_llm_env_loaded_after_shared_file(self) -> None:
+        for name in LLM_ENV_LOADERS:
+            with self.subTest(unit=name):
+                files = _directives(SYSTEMD_DIR / name, "EnvironmentFile")
+                self.assertIn(LLM_ENV_PATH, files, "要用 `-` 前綴：金鑰檔還沒安裝時 unit 仍要能啟動")
+                self.assertIn("-/etc/default/report-mark-sync", files)
+                self.assertLess(files.index("-/etc/default/report-mark-sync"), files.index(LLM_ENV_PATH))
 
     def test_llm_example_key_is_empty(self) -> None:
         keys = [ln.partition("=")[2] for ln in _live_lines(LLM_ENV_EXAMPLE) if ln.startswith("DEEPSEEK_API_KEY=")]
@@ -182,6 +186,42 @@ class LlmEnvFileTests(unittest.TestCase):
             if re.match(r"(DEEPSEEK_|LLM_|[A-Z_]+_MODEL=)", ln)
         ]
         self.assertEqual(offenders, [])
+
+
+class UploadUnitTests(unittest.TestCase):
+    """上傳 worker（report-mark-upload.service／.timer；Admin v1.5 PR-5）的形狀與設計決策。"""
+
+    SERVICE = SYSTEMD_DIR / "report-mark-upload.service"
+    TIMER = SYSTEMD_DIR / "report-mark-upload.timer"
+
+    def test_timer_every_five_minutes_without_catch_up(self) -> None:
+        """設計決策 3：每 5 分鐘、`Persistent=false`（剛開機的那一刻 DB 與 clamd 容器都還沒起來）。"""
+        self.assertEqual(_directives(self.TIMER, "OnCalendar"), ["*-*-* *:00/5:00"])
+        self.assertEqual(_directives(self.TIMER, "Persistent"), ["false"])
+
+    def test_resource_limits(self) -> None:
+        """設計 1.1：nice 19、idle I/O、MemoryMax=4G、torch 4 執行緒。"""
+        self.assertEqual(_directives(self.SERVICE, "Nice"), ["19"])
+        self.assertEqual(_directives(self.SERVICE, "IOSchedulingClass"), ["idle"])
+        self.assertEqual(_directives(self.SERVICE, "MemoryMax"), ["4G"])
+        self.assertIn("EMBED_TORCH_THREADS=4", _directives(self.SERVICE, "Environment"))
+
+    def test_failure_and_success_exit_codes(self) -> None:
+        """rc=1 告警；rc=2（環境型不跑）與 rc=75（撞 claude 鎖）不告警——timer 每 5 分鐘、告警器沒有去重。"""
+        self.assertEqual(_directives(self.SERVICE, "OnFailure"), ["report-mark-alert@%n.service"])
+        self.assertEqual(sorted(" ".join(_directives(self.SERVICE, "SuccessExitStatus")).split()), ["2", "75"])
+        self.assertEqual(_directives(self.SERVICE, "Type"), ["oneshot"])
+
+    def test_runs_the_shell_and_loads_alert_secret(self) -> None:
+        exec_start = " ".join(_directives(self.SERVICE, "ExecStart"))
+        self.assertIn("/scripts/process_uploads.sh", exec_start)
+        self.assertIn("-/etc/report-mark/alert.env", _directives(self.SERVICE, "EnvironmentFile"))
+
+    def test_shell_exit_codes_match_unit(self) -> None:
+        """殼的「環境型不跑」與「撞鎖」退出碼要與 unit 的 SuccessExitStatus 一致。"""
+        sh = (SYSTEMD_DIR.parents[1] / "scripts" / "process_uploads.sh").read_text(encoding="utf-8")
+        self.assertRegex(sh, r"(?m)^LOCK_BUSY_RC=75$")
+        self.assertRegex(sh, r"(?m)^ENV_ABORT_RC=2$")
 
 
 if __name__ == "__main__":

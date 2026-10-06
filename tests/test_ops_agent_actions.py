@@ -530,7 +530,7 @@ class RepoCatalogWriteTests(unittest.TestCase):
         writes = {s.name: [a for a in s.actions if a in protocol.WRITE_ACTIONS] for s in prod.services}
         writes = {k: v for k, v in writes.items() if v}
         self.assertEqual(writes, {"web": ["restart"], "sync": ["run"], "backup": ["run"], "freshness": ["run"],
-                                  "audit": ["run"], "r2-reconcile": ["run"]})
+                                  "audit": ["run"], "r2-reconcile": ["run"], "upload": ["run"]})
         for name in ("postgres", "nginx", "cloudflared"):
             self.assertLessEqual(set(prod.get(name).actions), {"status", "logs"}, name)
 
@@ -555,6 +555,17 @@ class RepoCatalogWriteTests(unittest.TestCase):
         root = sync.flock_files[0].removesuffix("/" + claude_rel)
         self.assertNotEqual(root, sync.flock_files[0], f"flock_files 要指向 <部署目錄>/{claude_rel}")
         self.assertEqual(sync.pid_files[0], f"{root}/{sync_rel}")
+
+    def test_upload_lock_file_matches_worker(self):
+        """upload 的 flock_files 就是 worker 整輪鎖（殼的 LOCK 預設值），自成 execution group、不併進 llm-batch。"""
+        prod = load_catalog(PROD_TOML, resolve_user=_uid)
+        upload, sync = prod.get("upload"), prod.get("sync")
+        shell = (REPO_ROOT / "scripts" / "process_uploads.sh").read_text(encoding="utf-8")
+        rel = re.search(r'^LOCK="\$\{UPLOAD_WORKER_LOCK_FILE:-([^}]+)\}"', shell, re.M).group(1)
+        root = sync.flock_files[0].rsplit("/data/", 1)[0]
+        self.assertEqual(upload.flock_files, (f"{root}/{rel}",))
+        self.assertEqual(upload.group, "upload")
+        self.assertEqual(set(upload.depends_on), {"postgres", "clamav", "deepseek", "r2"})
 
     def test_restart_delay_present(self):
         for path in (PROD_TOML, DEV_TOML):

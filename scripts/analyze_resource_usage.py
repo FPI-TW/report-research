@@ -52,7 +52,8 @@ DISK_STEPS_GB = (20, 50, 100, 200, 300, 500, 1000, 2000)
 # 批次型元件（oneshot unit）。壓測窗期若撞上它們，「邊際成本」會把批次的 CPU
 # 算到請求頭上——2026-08-28 首次壓測就正好撞上 12:00 的 sync，web 與 sync 各吃
 # 約 10 核、把 20 核機器打滿。**這種污染必須被偵測並標示，不能只出現在數字裡。**
-BATCH_COMPONENTS = ("sync", "backup", "audit", "freshness")
+# upload＝上傳 worker（report-mark-upload.service；收集器依 unit 名自動命名）：入庫時載 BGE-M3、跑抽字與嵌入。
+BATCH_COMPONENTS = ("sync", "backup", "audit", "freshness", "upload")
 
 # 線上路徑的**固定開銷**：只要服務在就一直佔著、與請求量無關的常駐元件（鍵是取樣器解析出的容器名）。
 # 分組沿用上面的規則（不在 BATCH_COMPONENTS 就算線上），這裡另外點名，是為了在報表上把它們那一份

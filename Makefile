@@ -216,7 +216,7 @@ clean-data:  ## 刪除中繼產物（抽樣/抽文字/工作清單/tag）
 sync-once:  ## 手動跑一次 NAS→本地同步 + 增量匯入（drvfs + rsync）
 	bash scripts/sync_new_reports.sh
 
-# 只備「重建不回來」的七張表（qa_log / takeaway / signal / brief / review_state / app_user / admin_audit_log）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
+# 只備「重建不回來」的九張表（qa_log / takeaway / signal / brief / review_state / app_user / admin_audit_log / user_scope / account_deletion）。落點在 NAS，掛載不可用時刻意失敗而非寫本地——與 pgdata 同一塊
 # 磁碟的備份等於沒有備份。平時由 report-mark-backup.timer 每日跑。
 db-backup:  ## 備份不可重建的 DB 表（pg_dump -Fc → NAS，保留 7 日 + 4 週）
 	bash scripts/db_backup.sh

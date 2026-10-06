@@ -13,7 +13,7 @@
 
 .form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--tf-text-4); }
-.field input, .field select {
+.field input, .field select, .field textarea {
   border: 1px solid var(--tf-border-weak); border-radius: 6px; background: var(--tf-surface, white);
   color: var(--tf-text-1); font: inherit; font-size: 13px; padding: 7px 9px; min-width: 160px;
 }
@@ -52,13 +52,20 @@
 .action:disabled { opacity: .45; cursor: not-allowed; }
 .danger { color: var(--tf-error-text); }
 
+.field textarea { resize: vertical; font-family: inherit; }
+.spacer { height: 14px; }
+/* 研報標題、隱藏原因這類長字串：允許換行，寬度封頂，不把操作欄擠出卡片 */
+.wrapCell { white-space: normal; min-width: 180px; max-width: 360px; overflow-wrap: anywhere; }
+.reason { font-size: 12px; color: var(--tf-text-2); margin-top: 4px; }
+
 .pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12.5px; color: var(--tf-text-4); }
 
 .dialogForm { display: flex; flex-direction: column; gap: 10px; min-width: min(360px, 80vw); }
 .dialogActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tf-text-1); }
 
 @media (max-width: 600px) {
   .inner { padding: 16px 16px 96px; }
-  .field input, .field select { min-width: 0; width: 100%; }
+  .field input, .field select, .field textarea { min-width: 0; width: 100%; }
   .field { flex: 1 1 100%; }
 }

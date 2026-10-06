@@ -161,9 +161,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 在此之前這個 DB **完全沒有備份**——`pg_dump` / `pgbackrest` / `pg_basebackup` 在 Makefile、`scripts/`、`deploy/`、`docs/`、systemd、crontab 全部零命中，唯一的副本是 docker named volume `report-mark-pgdata`。而 `docs/qa_pdf_report_deployment.md` 早在深度研報上線時就寫著「DB 的 `report_doc` 表需納入備份」，一直沒有人做。
 
-### 為什麼只備這七張表
+### 為什麼只備這十二張表
 
-深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，現行備份清單共七張。`user_session` 刻意不備（遺失只是全員重新登入）。
+深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），現行備份清單共十二張。`user_session` 刻意不備（遺失只是全員重新登入）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -173,9 +173,12 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.report_brief` | 每日簡報（Sonnet 批次產物，來源清單由 Python 記錄） |
 | `research.review_state` | 待複核人工處理狀態、註記、驗證結果與處理人；無法從原始研報或問答重建 |
 | `research.app_user` | 個別帳號與角色。遺失＝所有人要重新建帳、`qa_log.user_id` 與處理人全部對不回名字。**含 Argon2id 密碼雜湊，備份檔要當機密看待** |
-| `research.admin_audit_log` | 管理操作稽核（建帳、改角色、停用、重設密碼、強制登出、處理待複核）；事後追查「誰做的」的唯一來源 |
+| `research.admin_audit_log` | 管理操作稽核（建帳、改角色、停用、重設密碼、強制登出、處理待複核、權限調整）；事後追查「誰做的」的唯一來源。雜湊鏈＋只能新增（revision 0002），還原時用 `pg_restore --disable-triggers` |
+| `research.user_scope` | 另外授予的權限（`qa_content.read`、`ops.operate`）與授予人；遺失＝特殊權限全部要重新授予，且說不出當初是誰給的 |
+| `research.account_deletion` | 帳號刪除排程（提出人、執行時刻、取消紀錄）。遺失＝還原後尚未執行的刪除排程消失、帳號停在停用狀態卻永遠不會被刪。已執行的刪除另有 DB 之外的 tombstone（見下方「還原後重放帳號刪除」） |
+| `research.report_visibility` | 管理員隱藏的研報（以 `file_hash` 為鍵，含原因、隱藏人、時間）。重建語料不會重建它：遺失＝被隱藏的研報全部回到檢索、問答與閱讀頁 |
 
-沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這七張表的體積相對很小，備起來幾乎沒有成本。
+沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這十二張表的體積相對很小，備起來幾乎沒有成本。
 
 **這個取捨有一個已知代價，先寫在這裡免得還原那天才發現**：`report_takeaway` 與 `report_signal` 以 `report_id` FK 指向 `research_report`，而 `report_id` 是每次 ingest 重新產生的 uuid。**語料層若被整個重建，這兩張表的備份就對不回去了**（其餘幾張沒有 FK，可還原；但 `review_state` 中指向舊 `research_report.id` 的抽取複核紀錄會變成孤兒，須依重建後 id 核對）。若之後判定摘錄／訊號值得那個代價，正解是把 `research_report` 一起納入備份（`report_chunk` 仍不必——向量重算得回來），而不是在還原時 `--disable-triggers` 硬塞孤兒列。
 
@@ -235,24 +238,37 @@ docker exec -i report-mark-postgres psql -U postgres -d restore_check \
   -c 'select count(*) from research.report_brief;' \
   -c 'select count(*) from research.review_state;' \
   -c 'select count(*) from research.app_user;' \
-  -c 'select count(*) from research.admin_audit_log;'
+  -c 'select count(*) from research.admin_audit_log;' \
+  -c 'select count(*) from research.user_scope;' \
+  -c 'select count(*) from research.account_deletion;'
 
-# 預期輸出：**必定出現 2 個 FK 錯誤**，這是正常的，不是備份壞了——
-#   ERROR: relation "research.research_report" does not exist
+# 預期輸出：**必定出現 5 個錯誤**，這是正常的，不是備份壞了——
+#   ERROR: relation "research.research_report" does not exist          ×2
 #     （report_takeaway / report_signal 的 report_id FK 指向未納入備份的語料層）
-#   pg_restore: warning: errors ignored on restore: 2
-# **而 pg_restore 的退出碼仍然是 0。** 所以「rc=0 就是還原乾淨」是錯的判準：
-# 要看的是 `errors ignored on restore:` 那一行的數字（臨時 DB 演練＝恰好 2，
-# 多於 2 就要查）。2026-07-30 的演練就是這樣量出來的。
+#   ERROR: function research.audit_append_only() does not exist         ×2
+#   ERROR: function research.audit_chain_before_insert() does not exist ×1
+#     （admin_audit_log 的雜湊鏈／只能新增觸發器用到的函式屬於 schema、不在逐表 dump 裡；
+#      資料照樣完整還原，臨時 DB 只是少了觸發器。整組還原時 `make schema` 會先建回函式）
+#   pg_restore: warning: errors ignored on restore: 5
+# **pg_restore 的退出碼不能當判準**：2026-07-30 量到的是 0，2026-10-06 以 PG 16.14 的
+# pg_restore 實測是 1（有被忽略的錯誤就非零）——兩種都不代表還原乾不乾淨。
+# 要看的是 `errors ignored on restore:` 那一行的數字（臨時 DB 演練＝恰好 5，
+# 多於 5 就要查）。2026-07-30 量到 2；2026-10-06 加入稽核觸發器後重新量測為 5。
 
 # 3) 確認筆數合理後才動生產。單張表被誤刪／誤清時只還原那一張（例如 qa_log；review_state 亦可用同法）：
 docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges -t qa_log < "$DUMP"
+# 還原了 qa_log／app_user 之後一定要重放帳號刪除（見下方「還原後重放帳號刪除」）：
+uv run python scripts/replay_deletions.py
 
 # 4) 整組還原到空 DB（例如 pgdata 全滅、重建叢集之後）：
-make schema                                    # 先把 schema 建回來（含 vector 擴充與索引）
+make schema                                    # 先把 schema 建回來（含 vector 擴充、索引、稽核觸發器）
 docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges --data-only --disable-triggers < "$DUMP"
+# --disable-triggers 讓稽核的只能新增／雜湊鏈觸發器不擋還原；還原後驗鏈：
+uv run python scripts/audit_anchor.py --verify-only
+# 再重放帳號刪除：備份之後才被刪除的使用者，資料會跟著備份回來（rc=1＝發現並已重新刪除，屬預期）
+uv run python scripts/replay_deletions.py
 
 # 5) 收尾：清掉步驟 2 的臨時 DB（**不可在 -d restore_check 連線上下這道指令**，
 #    PostgreSQL 不允許 DROP 自己正連著的資料庫）
@@ -263,6 +279,27 @@ docker exec -i report-mark-postgres psql -U postgres -c 'DROP DATABASE restore_c
 
 `pg_restore` 的退出碼要看：非 0 就是沒還原完，**不要因為「有些表看起來有資料」就當成功**。
 但反過來**不成立**——見步驟 2 的註解：臨時 DB 還原必定有 2 個 FK 錯誤而 rc 仍是 0。
+
+### 還原後重放帳號刪除（tombstone）
+
+帳號刪除（管理頁提出 → 24 小時撤銷窗口 → `report-mark-delete-accounts.timer` 每小時執行
+`scripts/execute_deletions.py`）會刪掉該使用者的 `qa_log`、指向它們的 `review_state`、`user_scope`、
+`user_session`，`app_user` 只留 UUID。可是**備份是刪除前的樣子**：從任何一份比刪除還舊的備份還原
+`qa_log` 或 `app_user`，那個人的問答就復活了，`account_deletion.executed_at` 也一起回到過去，DB 裡
+沒有任何東西記得他已被刪除。
+
+所以執行刪除時先在 DB 之外寫一筆 tombstone：`$REPORT_MARK_BACKUP_DIR/account-tombstones.jsonl`
+（與備份同一個 NAS 落點；一行 `{"user_id", "executed_at"}`，不含帳號名稱）。落點不存在時整批不做
+（rc=2），不退回本機——與 pgdata 同一塊磁碟的 tombstone 會跟 DB 一起遺失或一起被還原。
+
+`scripts/replay_deletions.py` 讀 tombstone，逐一檢查 DB 是否還有該使用者的內容、或 `app_user` 又變回
+可識別／可登入；有就在同一筆交易重新刪除（稽核 `user.delete_replayed`）並以 **rc=1** 結束。
+
+- **每次還原（整組或單表）之後手動跑一次**（上面步驟 3、4 已列）。rc=1 在還原後是預期結果：代表
+  它找到並清掉了復活的資料；再跑一次應該是 rc=0。只想看不想刪用 `--check-only`。
+- 平時由 `report-mark-replay-deletions.timer` 每日 04:30 跑；平常日出現 rc=1（OnFailure 告警）表示有人
+  在沒走這份流程的情況下還原過資料，要追查。
+- tombstone 檔本身不要刪、不要手改；它和稽核錨點一樣是 DB 之外唯一的證據。
 
 ### 演練紀錄
 
@@ -293,12 +330,18 @@ sudo install -m 0755 -o root -g root "$REPO"/deploy/systemd/mount-nas-backup /us
 sudo install -m 0440 -o root -g root "$REPO"/deploy/systemd/report-mark-backup.sudoers \
   /etc/sudoers.d/report-mark-backup
 sudo cp "$REPO"/deploy/systemd/report-mark-backup.service \
-        "$REPO"/deploy/systemd/report-mark-backup.timer /etc/systemd/system/
+        "$REPO"/deploy/systemd/report-mark-backup.timer \
+        "$REPO"/deploy/systemd/report-mark-delete-accounts.service \
+        "$REPO"/deploy/systemd/report-mark-delete-accounts.timer \
+        "$REPO"/deploy/systemd/report-mark-replay-deletions.service \
+        "$REPO"/deploy/systemd/report-mark-replay-deletions.timer /etc/systemd/system/
 # 環境檔要一起更新——NAS_BACKUP_UNC 與 REPORT_MARK_BACKUP_DIR 都在裡面，
 # 掛載腳本與備份 unit 都讀它。少了這步，掛載腳本會退回內建預設。
 sudo cp "$REPO"/deploy/systemd/report-mark-sync.env.example /etc/default/report-mark-sync
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-backup.timer
+# 帳號刪除的執行與重放都寫 NAS 上的 tombstone，與備份共用落點（先套 revision 0003）
+sudo systemctl enable --now report-mark-delete-accounts.timer report-mark-replay-deletions.timer
 
 # 換過落點時，舊掛載要先卸掉——mountpoint -q 會通過，然後在寫入探測才失敗
 sudo umount /mnt/nas-backup 2>/dev/null || true
@@ -1511,4 +1554,240 @@ cat data/.incidents/web.state 2>/dev/null || echo "(無進行中事件)"
 ```bash
 sudo systemctl disable --now report-mark-incident.timer
 rm -f data/.incidents/*.state          # 可選：清掉殘留的事件狀態
+```
+
+## 監控 spool 與匯入（report-mark-load-observations）
+
+管理頁的排程工作與主機資源讀 DB 的 `research.service_observation`／`research.job_execution`（revision 0005），
+但**觀測的第一落點不是 DB**：DB 掛掉的那段時間正是最需要觀測的時候。所以分兩段——
+
+- `report-mark-metrics.service` 的收集器（`scripts/collect_resource_usage.py`，系統 python、不需 venv）每 60 秒
+  把 Host（CPU、記憶體、磁碟、I/O PSI、load）、Service Catalog（`deploy/ops/services.prod.toml`）列的容器與
+  systemd unit 狀態、有 timer 的 oneshot 每次執行寫進本機 spool `data/ops_spool/`（格式在收集器檔頭）。它不連 DB。
+- `report-mark-load-observations.timer` 每 5 分鐘以 `scripts/load_observations.py` 冪等匯入（自然鍵去重，進度只在
+  commit 後前進）。DB 不可用 rc=2、spool 原封不動，恢復後下一輪補匯入；匯入完的舊日檔才刪。
+
+批次「跑過」的判準與 `scripts/verify_oneshot_ran.sh` 相同（要有 InvocationID 與 ExecMainStartTimestamp，`Result=success`
+不是證據）；沒看到結束、同 unit 已有更晚開始的那一次記成 `lost`（結果不明，不捏造結束時間）。兩張表遺失只少了歷史，
+不影響服務與告警，刻意不備份。這一段**不碰 P5**：告警照舊只有 `scripts/incident_handler.sh`，不經 DB。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0005（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) 收集器：unit 本身沒改，重啟讓它載入新版程式（開始寫 data/ops_spool/）
+sudo systemctl restart report-mark-metrics.service
+# 3) 匯入器
+sudo install -m 0644 deploy/systemd/report-mark-load-observations.service deploy/systemd/report-mark-load-observations.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-load-observations.timer
+# 4) catalog 多了 load-observations 一項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+```
+
+驗收：`ls data/ops_spool/` 一分鐘內出現 `observations-<今天>.jsonl`；`uv run python scripts/load_observations.py --dry-run`
+印出待匯入筆數；timer 跑過一輪後 `systemctl show report-mark-load-observations -p Result,ExecMainStatus`，並以管理員
+打 `/api/admin/observations?scope=host` 與 `/api/admin/jobs`。收集器在不是辦公室主機的環境（沒裝 `report-mark-metrics`）
+不會產生 spool，匯入器每輪只是「沒有東西可匯入」。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-load-observations.timer   # 管理頁的監控資料停在最後一次匯入
+```
+
+收集器仍會寫 spool（保留期安全網 14 天，`--spool-retention-days`）；要連 spool 都停，在 metrics unit 的 ExecStart
+加 `--observe-interval 0` 後重啟。
+
+## 事件投影與容器／主機探針
+
+管理頁的「事件」讀 DB 的 `research.incident`／`research.incident_event`（revision 0006），但**它們只是 projection**：
+去重、提醒、FIRING／RESOLVED 判定與 Slack 投遞仍然只有 `scripts/incident_handler.sh`（P5），它不碰 DB、不依賴 web。
+
+- P5 每次已落地的狀態轉換（FIRING、REMINDER、ESCALATED、RESOLVED）另寫一行本機 spool
+  `data/ops_spool/incidents-YYYYMMDD.jsonl`；FIRING 附事件前 10 分鐘、RESOLVED 附開場後 10 分鐘的 journal 片段
+  （`data/ops_spool/journal/*.log`，預設 64 KiB、硬上限 256 KiB；完整 log 仍以 journald 為準）。寫入在背景、輸出丟棄、
+  失敗吞掉：spool 壞掉只少那一筆，告警行為與退出碼不變（`tests/test_incident_handler.py` 的 SpoolFailureEquivalenceTests）。
+- `report-mark-load-observations.timer` 順便把它們冪等匯入（event_id 去重；片段遮祕密後入庫、commit 後才刪片段檔）。
+  DB 掛掉期間的事件恢復後補匯入。沒收到 RESOLVED、同元件已有更晚的事件時記成 `lost`（結束時間不明）。
+- 兩張表是事故歷史（spool 匯入後即刪、journald 有保留期），列入備份。
+
+容器與主機兩支新探針接到 P5 的新實例（比照邊緣那一組，只換 `INCIDENT_*`）：
+
+| 探針 | 看什麼 | tier → 去抖 | 退出碼 |
+|---|---|---|---|
+| `scripts/check_container_health.sh` | catalog 的 PostgreSQL、nginx、cloudflared 是否 running（不是 unhealthy） | 三者在 catalog 都是 critical：單次執行內重試一次（間隔 15 秒）後確認就回 1 | 0／1 CRITICAL／3 確認期／4 判不出來／9 WARNING |
+| `scripts/check_host_health.sh` | 磁碟使用率 ≥ 90%（important，連續 2 輪）、MemAvailable < 5%、memory／io PSI full avg60 ≥ 10／30（supporting，連續 3 輪） | 門檻與理由在探針檔頭（保守初值，待事件投影累積分布後再調） | 0／3／4／9 |
+
+**去抖做在探針、不在 P5**：探針記每個檢查項目的連續失敗次數（`data/.health-streaks/`），還在確認期回 3，
+P5 那兩組設 `INCIDENT_HOLD_EXIT_CODES=3`（不開也不關）。判不出來（docker 連不上、/proc 讀不到）連續 2 輪才回 4；
+狀態目錄寫不進去時每筆失敗都算確認（寧可多吵也不靜默）。門檻與確認次數可在 `/etc/default/report-mark-sync`
+覆寫（`HOST_DISK_MAX_PCT`、`HOST_MEM_MIN_AVAIL_PCT`、`HOST_PSI_MEMORY_FULL_MAX`、`HOST_PSI_IO_FULL_MAX`、
+`HEALTH_CONFIRM_IMPORTANT`／`_SUPPORTING`／`_TOOLING`、`CONTAINER_HEALTH_TARGETS`）。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0006（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) web 那組 P5 多擷取 web 本身的 journal（unit 只多一行 Environment；告警語意不變）
+sudo install -m 0644 deploy/systemd/report-mark-incident.service /etc/systemd/system/
+# 3) 容器與主機的探針與 P5 實例
+sudo install -m 0644 deploy/systemd/report-mark-container-health.{service,timer} \
+    deploy/systemd/report-mark-container-incident.{service,timer} \
+    deploy/systemd/report-mark-host-health.{service,timer} \
+    deploy/systemd/report-mark-host-incident.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-container-health.timer report-mark-host-health.timer
+sudo systemctl enable --now report-mark-container-incident.timer report-mark-host-incident.timer
+# 4) catalog 多了四項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+```
+
+P5 與探針都以 `kashionz` 執行；journal 片段要讀系統 unit 的 journal，`kashionz` 必須在 `adm` 或
+`systemd-journal` 群組（`id kashionz` 確認；不在時片段是空的，事件照常）。
+
+驗收：`sudo systemctl start report-mark-container-health.service report-mark-host-health.service` 後
+`systemctl show report-mark-container-health -p ExecMainStatus` 應為 0（3＝確認期）、`journalctl -u report-mark-container-health -n 1`
+看得到 `status=ok`；P5 實例跑過一輪後 `journalctl -u report-mark-container-incident -n 2` 是 `action=noop`。下一次真的
+有事件時 `ls data/ops_spool/incidents-*.jsonl` 出現一行、loader 跑過後管理頁「維運 → 事件」看得到。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-container-incident.timer report-mark-host-incident.timer
+sudo systemctl disable --now report-mark-container-health.timer report-mark-host-health.timer
+rm -rf data/.incidents-container data/.incidents-host data/.health-streaks   # 可選
+```
+
+停掉探針 timer 而不停 P5 實例，P5 會照設計回報 MONITOR_BLIND——要停就兩個一起停。事件投影本身沒有開關：
+不想要 spool 時把 P5 unit 的 `INCIDENT_SPOOL_DIR` 設成不可寫的路徑（例如 `/dev/null`），告警不受影響。
+
+## 監控觀測的保留與聚合（report-mark-rollup-observations）
+
+監控歷史保留 90 天、越舊越粗（revision 0007；理由在該 revision 的註解）：0–24 小時是原始觀測
+`research.service_observation`、24 小時–7 天是 5 分鐘桶 `service_observation_5m`、7–90 天是 1 小時桶
+`service_observation_1h`，90 天以前連同 `job_execution` 刪除。`report-mark-rollup-observations.timer` 每小時 :20
+跑 `scripts/rollup_observations.py`（SQL 在 `app/services/ops_rollup.py`）：
+
+- 每一片（1 小時）以**同一句 SQL** 先刪來源、再把被刪的列聚合後 upsert 進較粗的表，寫入失敗整句回滾、來源原封不動，
+  寫入後再核對筆數，不符就 rollback 並 rc=1。重跑同一區間是 no-op（冪等）；遲到的舊觀測合併進既有的桶。
+- 每片、每批保留期刪除（每批最多 5000 列）各自一個交易並放寬 statement_timeout（`SET LOCAL`），不會長時間鎖表。
+- PostgreSQL advisory lock 防止兩份同時跑（rc=75＝另一份在跑）；DB 不可用 rc=2。刻意不接 OnFailure 告警（理由同
+  load-observations）。
+- **incident／incident_event 不在範圍內**（不可重建的事故歷史，列入備份）。
+- 管理頁 `/api/admin/observations` 的範圍上限放寬到 90 天，依 `since` 自動選粒度（24 小時內逐筆、7 天內 5 分鐘、
+  更早 1 小時），回應的 `resolution` 標示實際用的。聚合表與原始表一樣不備份。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0007（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) 先看第一輪要處理多少（唯讀）
+uv run python scripts/rollup_observations.py --dry-run
+# 3) 批次
+sudo install -m 0644 deploy/systemd/report-mark-rollup-observations.service deploy/systemd/report-mark-rollup-observations.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-rollup-observations.timer
+# 4) web 要重啟才會回 resolution、接受 90 天範圍
+sudo systemctl restart report-mark-web.service
+# 5) catalog 多了 rollup-observations 一項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+```
+
+驗收：`sudo systemctl start report-mark-rollup-observations.service` 後 `journalctl -u report-mark-rollup-observations -n 3`
+看得到「完成 raw→5m slices=…」；`scripts/verify_oneshot_ran.sh` 確認跑過。原始觀測若已累積超過 24 小時，之後
+`SELECT min(observed_at) FROM research.service_observation` 應在 25 小時內。積壓很大（`--dry-run` 顯示數百片以上）時
+第一輪只搬 500 片、輸出「尚有積壓」，之後每小時繼續。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-rollup-observations.timer   # 原始觀測從此不再聚合、也不再刪除
+```
+
+停用後原始表每天約增加 29 萬列；聚合表裡已有的資料不受影響，查詢端照常聯集。
+
+## 維運代理（report-mark-ops-agent）
+
+管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經
+Unix socket 問一支單機代理（`ops_agent/`，只用標準庫、系統的 `/usr/bin/python3`）。代理只認
+Service Catalog（`deploy/ops/services.prod.toml`；開發環境 `deploy/ops/services.dev.toml`）列出的服務與
+action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（v1 只有 Web）與 `run`（既有 oneshot 立即執行一次：
+sync、backup、freshness、audit、r2-reconcile）。沒有任意 shell、任意 unit、stop、timer enable/disable；
+PostgreSQL、nginx、cloudflared 永遠唯讀（catalog 載入期與代理執行前兩層都擋，PG 的 restart 尤其禁止）。
+P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維運區塊回 503 `ops_agent_unavailable`，web 其他功能照常。
+
+**寫入類的規則**（細節在 `ops_agent/actions.py`）：
+- Web 端要管理員＋另外授予的 `ops.operate`＋10 分鐘內重新驗證過密碼（elevated），每次（成功或被拒）寫
+  `admin_audit_log`；代理的 journal 另記一行（含 web 傳來的使用者名稱）。
+- **execution group 互斥、不排隊**：同 group 任一 unit 正在跑（activating／active／reloading／deactivating，
+  或有排隊中的 job）就回 409 `already_running`；restart 的對象本身只看轉換中狀態（Web 平常就是 active）。
+- sync 會呼叫 LLM：另以非阻塞 flock 試探 `data/.claude_cli.lock`（`scripts/_claude_lock.py`），並比照 sync
+  自己的 `kill -0` 檢查 `data/.sync_new_reports.lock`——手動在主機跑的批次不經 systemd、也不經 Web，只看
+  unit 狀態會漏掉它們。鎖檔目錄看不到時回 503 `ops_lock_unavailable`（無法確認就不執行）。試探只佔
+  微秒級的窗口；剛好撞上時批次會 rc=75（「不跑」不是「跑壞」，下一輪補上）。
+- run 是 `systemctl start --no-block`，等同 timer 觸發（同一份 unit、同一份環境檔、`--hashes-file` 等邏輯不變），
+  **不接受任何參數**。restart 是代理先回 202、`restart_delay`（1.5 秒）後才 `systemctl restart --no-block`
+  ——重啟 Web 會中斷這次請求本身。前端輪詢 `/api/admin/ops/services/{name}`，`systemd.invocation_id`
+  換成新值（並回到 active）就是新的一輪起來了。Web 重啟期間 BGE-M3 要重新載入，這段時間整站不可用。
+- **授權靠 polkit，不靠 sudo**：代理的 unit 是 `NoNewPrivileges=yes`、沒有 capability，setuid 的 sudo 在
+  裡面無法提權。systemd 以 polkit 的 `org.freedesktop.systemd1.manage-units` 檢查呼叫端並附上 unit 與
+  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與五個 oneshot
+  的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
+  `report-mark-dev-smoke.service` 的 start；這兩個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
+  （JS 規則；本機 Ubuntu 24.04 是 124）。
+
+**威脅模型**：代理的使用者在 `docker` 群組（讀容器狀態與日誌需要 docker socket），而 docker 群組等同
+root。所以程式碼與 catalog 一律裝在 root 擁有、其他人不可寫的 `/opt/report-mark-ops/`，**不從 repo 執行**
+（repo 屬於 web 的使用者 kashionz；從那裡執行等於 web 被攻破就能改代理、拿到 root）。socket 只給
+`report-mark-ops` 群組（0660，目錄 0750），代理再以 `SO_PEERCRED` 比對 catalog 的 `allowed_users`。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) 專用使用者：讀 journal 用 systemd-journal、讀容器用 docker（見上面的威脅模型）
+sudo useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin report-mark-ops
+sudo usermod -aG systemd-journal,docker report-mark-ops
+# 2) web 的使用者加入 socket 群組（下一步之後要重啟 web 才拿得到新群組）
+sudo usermod -aG report-mark-ops kashionz
+# 3) 程式碼與 catalog 裝到 root 擁有的目錄（在部署 checkout 的 repo 根執行；每次更新 ops_agent/ 或 catalog 都重做）
+sudo install -d -o root -g root -m 0755 /opt/report-mark-ops /opt/report-mark-ops/ops_agent
+sudo install -o root -g root -m 0644 ops_agent/*.py /opt/report-mark-ops/ops_agent/
+sudo install -o root -g root -m 0644 deploy/ops/services.prod.toml /opt/report-mark-ops/
+(cd /opt/report-mark-ops && /usr/bin/python3 -B -E -s -m ops_agent --catalog services.prod.toml --check)
+# 4) 寫入類的授權（restart／run）：polkit 規則，root 擁有、0644。polkitd 會自動重新載入 rules.d。
+#    只要唯讀時可以不裝：代理對 restart／run 會回 command_failed（systemd 拒絕，Access denied）。
+sudo install -o root -g root -m 0644 deploy/polkit/10-report-mark-ops.rules /etc/polkit-1/rules.d/
+# 5) unit（不經 install_units.sh）。unit 以 BindReadOnlyPaths 唯讀綁進部署目錄的 data/（鎖檔），
+#    部署目錄不是 /home/kashionz/projects/report-mark 時，unit 與 catalog 的 flock_files／pid_files 一起改。
+sudo install -m 0644 deploy/systemd/report-mark-ops-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-ops-agent.service
+sudo systemctl restart report-mark-web.service   # 讓 web 拿到 report-mark-ops 群組
+# 6) 要用寫入類的管理員：super admin 在管理頁授予 ops.operate（只有另外授予的人能 restart／run）
+```
+
+寫入類驗收（不重啟任何東西）：sync 正在跑時對它「立即執行」應回 409 `already_running`；對 `audit`
+（唯讀、零 LLM）執行一次後 `systemctl show report-mark-audit -p InvocationID` 換成新值；polkit 規則沒裝或
+沒生效時回 502 `ops_command_failed`（訊息含 `Access denied`）。Web 的 restart 只在真的要重啟時才按。
+
+驗收：`systemctl show report-mark-ops-agent -p ActiveState,SubState,NRestarts`、`ls -l /run/report-mark-ops/`
+（`srw-rw---- report-mark-ops report-mark-ops agent.sock`），再以管理員登入打 `/api/admin/ops/services`。
+503 的 `detail` 會說是哪一種：找不到 socket＝代理沒起來、沒有權限＝web 還沒拿到群組（重啟 web）、
+`這個使用者不能連線`＝catalog 的 `allowed_users` 沒有 web 的使用者。
+
+開發環境同一支程式：使用者 `report-mark-ops-dev`（同樣的群組設定，開發用 web 的使用者加入
+`report-mark-ops-dev`）、catalog `services.dev.toml`、unit `report-mark-ops-agent-dev.service`、socket
+`/run/report-mark-ops-dev/agent.sock`；開發用 web 設 `OPS_AGENT_ENVIRONMENT=development`。代理以 dev socket
+載入 prod catalog（或反之）會拒絕啟動，dev catalog 也只能列 `report-mark-dev-*` 與 `report-mark-dev*` 容器。
+寫入類在開發環境同一套規則：`dev-web` 可 restart、`dev-smoke`（`deploy/systemd/report-mark-dev-smoke.service`，
+只 sleep 20 秒的 oneshot，裝到 `/etc/systemd/system/` 後 `daemon-reload` 即可，不必 enable）可 run，用來驗
+run、409 與輪詢而不碰任何真東西；polkit 規則同一個檔已涵蓋 `report-mark-ops-dev`。
+本機冒煙（不必安裝）：`python3 -m ops_agent --catalog deploy/ops/services.dev.toml --socket /tmp/<短路徑>/a.sock`
+（只有 development 允許覆寫 socket；AF_UNIX 路徑上限約 107 字元）。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-ops-agent.service   # 管理頁的維運區塊改回 503，其他不受影響
 ```

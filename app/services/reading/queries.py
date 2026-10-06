@@ -24,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.radar.types import SIGNAL_SELECT_SQL, Signal, parse_signal_row
+from app.services.visibility import visible_report_id_sql, visible_report_sql
 
 # 可展示狀態：pending/rejected 不給讀者看（見 reading/schemas.py 模組 docstring：
 # DB 的 extraction_status 記錄「批次做了什麼」，與讀者視角的 *_state 刻意分離）
@@ -111,13 +112,15 @@ _DOC_SQL = text(
     "SELECT id::text, file_hash, file_name, title, file_path, market, source, "
     "       report_date, report_type, summary, instrument_types, "
     "       stock_targets, futures_targets, full_text, source_object_key "
-    "FROM research.research_report "
-    "WHERE file_hash = :file_hash AND is_research IS NOT FALSE"
+    "FROM research.research_report r "
+    "WHERE file_hash = :file_hash AND is_research IS NOT FALSE "
+    # 被管理員隱藏＝對讀者而言不存在：與查無同樣回 None → 404，不洩漏存在與否。
+    f"AND {visible_report_sql('r')}"
 )
 
 
 async def fetch_doc(session: AsyncSession, file_hash: str) -> Optional[DocRow]:
-    """依 file_hash 取單篇研報；查無或非研究檔 → None。
+    """依 file_hash 取單篇研報；查無、非研究檔或已被隱藏 → None。
 
     file_hash（非 report_id）是閱讀頁的網址鍵：重新 ingest 會換新 report_id，
     分享出去的連結必須存活。
@@ -180,6 +183,7 @@ _SIGNALS_SQL = text(
     "FROM research.report_signal s "
     "JOIN research.research_report r ON r.id = s.report_id "
     "WHERE s.report_id = :report_id AND s.extraction_status = ANY(:statuses) "
+    f"AND {visible_report_sql('r')} "
     "ORDER BY s.market, s.instrument_code"
 )
 
@@ -211,7 +215,7 @@ async def fetch_signals(
 # 轉型一律 CAST(:x AS text[])：`:markets::text[]` 會讓 compiler 回溯成短名而參數綁不上
 # （PR #89 的生產 500，見檔頭「bind 參數禁忌」）。
 _INSTRUMENT_NAMES_SQL = text(
-    """
+    f"""
     SELECT DISTINCT ON (r.market, r.stock_code)
            r.market, r.stock_code, r.company_name
       FROM research.research_report r
@@ -220,6 +224,7 @@ _INSTRUMENT_NAMES_SQL = text(
                FROM unnest(CAST(:markets AS text[]), CAST(:codes AS text[])) AS t(m, c))
        AND r.company_name IS NOT NULL
        AND r.is_research IS NOT FALSE
+       AND {visible_report_sql("r")}
      ORDER BY r.market, r.stock_code,
               r.report_date DESC NULLS LAST, r.created_at DESC, r.id
     """
@@ -255,7 +260,8 @@ async def fetch_instrument_names(
 
 _CHUNK_CONTENT_SQL = text(
     "SELECT content FROM research.report_chunk "
-    "WHERE report_id = CAST(:rid AS uuid) AND chunk_index = :ci"
+    "WHERE report_id = CAST(:rid AS uuid) AND chunk_index = :ci "
+    f"AND {visible_report_id_sql('report_chunk.report_id')}"
 )
 
 
@@ -301,7 +307,7 @@ async def fetch_chunk_content(
 # best CTE 的 DISTINCT ON (pe, report_id) 是「每個 probe 對每篇只計一次最佳距離」，
 # 否則同一篇的多個 chunk 會對同一 probe 灌票。
 _SIMILAR_SQL = text(
-    """
+    f"""
     WITH ranked AS (
         SELECT c.embedding,
                row_number() OVER (ORDER BY c.chunk_index) - 1 AS rn
@@ -342,6 +348,9 @@ _SIMILAR_SQL = text(
            r.title
     FROM agg a JOIN research.research_report r ON r.id = a.report_id
     WHERE r.is_research IS NOT FALSE AND a.matched_probes >= :min_probes
+      -- 被隱藏的研報不列為相似研報。放在聚合之後（不進 LATERAL 的 HNSW 掃描）：隱藏是少數例外，
+      -- 頂多讓某個 probe 的 per_probe 名額少幾個，不值得為它改動 _SIMILAR_SQL 量出來的參數。
+      AND {visible_report_sql("r")}
     ORDER BY a.score DESC, a.best_dist ASC, r.report_date DESC NULLS LAST, r.file_name
     LIMIT :limit
     """

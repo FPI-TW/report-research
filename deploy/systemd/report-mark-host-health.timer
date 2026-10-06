@@ -1,0 +1,11 @@
+[Unit]
+Description=每 2 分鐘探測主機健康（磁碟、記憶體、PSI）
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+# 刻意不設 Persistent=true 與 RandomizedDelaySec，理由同 report-mark-health.timer。
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

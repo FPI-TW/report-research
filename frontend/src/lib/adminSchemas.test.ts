@@ -6,6 +6,10 @@ test('me：管理員與免登入開發模式（id 為 null）都解析得了；�
   expect(meSchema.parse({ id: 'u1', username: 'root', role: 'admin' }).role).toBe('admin')
   expect(meSchema.parse({ id: null, username: 'dev', role: 'admin' }).id).toBeNull()
   expect(() => meSchema.parse({ id: 'u1', username: 'x', role: 'superuser' })).toThrow()
+  // scopes 不被 zod 丟掉（「查看內容」靠它決定顯示）；舊後端沒有這鍵時是 undefined
+  expect(meSchema.parse({ id: 'u1', username: 'qa', role: 'admin', scopes: ['qa_content.read'] }).scopes)
+    .toEqual(['qa_content.read'])
+  expect(meSchema.parse({ id: 'u1', username: 'root', role: 'admin' }).scopes).toBeUndefined()
 })
 
 test('帳號清單：時間欄位可為 null 或缺鍵', () => {
@@ -33,13 +37,17 @@ test('稽核：未知 action 照收（不用 enum）、CLI 的 actor 為 null、
   expect(parsed.items[2].detail).toEqual({})
 })
 
-test('待複核：reviewer 與 asked_by 不被 zod 丟掉；舊後端沒有這兩鍵時照樣解析', () => {
-  const item = reviewItemSchema.parse({ qa_id: 'q1', reviewer: 'root', asked_by: 'alice' })
+test('待複核：reviewer 與 asker_code 不被 zod 丟掉；原文與帳號名即使送來也不留下', () => {
+  const item = reviewItemSchema.parse({
+    qa_id: 'q1', reviewer: 'root', asker_code: '3fa9c2d1', question: '機密', asked_by: 'alice',
+  })
   expect(item.reviewer).toBe('root')
-  expect(item.asked_by).toBe('alice')
-  const legacy = reviewItemSchema.parse({ qa_id: 'q2', reviewer: null, asked_by: null })
+  expect(item.asker_code).toBe('3fa9c2d1')
+  expect(item).not.toHaveProperty('question')
+  expect(item).not.toHaveProperty('asked_by')
+  const legacy = reviewItemSchema.parse({ qa_id: 'q2', reviewer: null, asker_code: null })
   expect(legacy.reviewer).toBeNull()
-  expect(reviewItemSchema.parse({ qa_id: 'q3' }).asked_by).toBeUndefined()
+  expect(reviewItemSchema.parse({ qa_id: 'q3' }).asker_code).toBeUndefined()
   const state = reviewStateSchema.parse({
     kind: 'feedback', subject_id: 'q1', status: 'resolved', note: '', verification: 'passed',
     updated_at: '2026-10-05T00:00:00Z', reviewer: 'root',

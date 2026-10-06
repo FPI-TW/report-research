@@ -14,6 +14,11 @@ export const meSchema = z.object({
   id: z.string().nullable(),
   username: z.string(),
   role: roleSchema,
+  // 以下由 Admin v1 加入；舊後端少這幾鍵時照樣 parse（nullish／預設值）。
+  is_super: z.boolean().nullish(),
+  scopes: z.array(z.string()).nullish(),
+  elevated_until: z.string().nullish(),
+  totp_enabled: z.boolean().nullish(),
 })
 export type Me = z.infer<typeof meSchema>
 

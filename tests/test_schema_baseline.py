@@ -149,7 +149,10 @@ class StampFlowTests(unittest.TestCase):
 
 
 class FullDumpPreflightTests(unittest.TestCase):
-    URL = "postgresql+asyncpg://postgres:pw@127.0.0.1:5437/research"
+    # 密碼刻意用不可能出現在暫存路徑裡的字串：曾用 "pw"，tempfile 的隨機目錄名偶爾含 "pw" 而誤判。
+    # 用 fixed-test-secret- 前綴：.gitleaks.toml 只放行這個形狀的假值，其他高熵字串會被當成外洩。
+    SECRET = "fixed-test-secret-notinargv"
+    URL = f"postgresql+asyncpg://postgres:{SECRET}@127.0.0.1:5437/research"
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -218,8 +221,8 @@ class FullDumpPreflightTests(unittest.TestCase):
         r = self._go(self._runner(), container=None)
         self.assertTrue(r.ok, r.message)
         for cmd, kw in self.calls:
-            self.assertNotIn("pw", " ".join(cmd))
-        self.assertEqual(self.calls[0][1]["env"]["PGPASSWORD"], "pw")
+            self.assertNotIn(self.SECRET, " ".join(cmd))
+        self.assertEqual(self.calls[0][1]["env"]["PGPASSWORD"], self.SECRET)
         self.assertEqual(self.calls[0][1]["env"]["PGPORT"], "5437")
 
     def test_container_mode_never_allocates_tty(self):

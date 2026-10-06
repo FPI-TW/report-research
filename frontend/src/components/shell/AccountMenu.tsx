@@ -3,9 +3,12 @@ import { Link } from 'react-router'
 import { Popover } from '../primitives/Popover'
 import { Pressable } from '../primitives/Pressable'
 import { Icon } from '../primitives/Icon'
+import { SecurityDialog } from '../../features/account/SecurityDialog'
 import { preloadRoute } from '../../lib/routePreload'
 import { useIsAdmin } from '../../lib/useMe'
 import { useStats } from '../../lib/useStats'
+import { STATUS_LABELS, useSystemStatus } from '../../lib/useSystemStatus'
+import { StatusDot, SystemStatusRow } from './SystemStatus'
 import { useLocale, setLocale, type Locale } from '../../lib/useLocale'
 import { floatingPlacement, type AccountMenuVariant } from './accountMenuPlacement'
 import styles from './AccountMenu.module.css'
@@ -19,9 +22,13 @@ export function AccountMenu({ variant }: { variant: AccountMenuVariant }) {
   const { data } = useStats()
   const name = data?.username ?? '分析師'
   const [open, setOpen] = useState(false)
+  const [securityOpen, setSecurityOpen] = useState(false)
   const locale = useLocale()
   // 管理後台的唯一入口：與研報平台分開的外殼（/admin/*），主導覽刻意不放。只是顯示層，授權在後端。
   const isAdmin = useIsAdmin()
+  // 一般使用者也看得到的粗粒度系統狀態：只有異常時在頭像角落亮紅點，細節在選單裡一句話。
+  const status = useSystemStatus()
+  const degraded = status.status === 'degraded'
   const wrapRef = useRef<HTMLDivElement>(null)
   const floating = variant !== 'row'
   const [placement, setPlacement] = useState<CSSProperties | undefined>(undefined)
@@ -52,11 +59,14 @@ export function AccountMenu({ variant }: { variant: AccountMenuVariant }) {
     <div className={styles.wrap} ref={wrapRef}>
       <Pressable
         aria-expanded={open}
-        title={name}
+        title={degraded ? `${name}（系統狀態：${STATUS_LABELS.degraded}）` : name}
         onClick={() => setOpen((o) => !o)}
         className={variant === 'row' ? styles.rowTrigger : styles.avatarBtn}
       >
-        <span className={styles.avatar}><Icon name="user" size={17} /></span>
+        <span className={styles.avatar}>
+          <Icon name="user" size={17} />
+          {degraded && <StatusDot level="degraded" className={styles.alertDot} />}
+        </span>
         {variant === 'row' && (
           <span className={styles.rowText}>
             <span className={styles.name}>{name}</span>
@@ -76,6 +86,7 @@ export function AccountMenu({ variant }: { variant: AccountMenuVariant }) {
           <div className={styles.name}>{name}</div>
           <div className={styles.sub}>研究部 · 分析師</div>
         </div>
+        <SystemStatusRow status={status} />
         <div className={styles.localeRow} role="radiogroup" aria-label="語言 / Language">
           <span className={styles.localeLabel}>語言</span>
           <div className={styles.localeSeg}>
@@ -101,6 +112,13 @@ export function AccountMenu({ variant }: { variant: AccountMenuVariant }) {
         >
           <Icon name="info" size={16} />使用說明
         </Link>
+        <button
+          type="button"
+          className={styles.menuItem}
+          onClick={() => { setOpen(false); setSecurityOpen(true) }}
+        >
+          <Icon name="shield" size={16} />帳號安全
+        </button>
         {isAdmin && (
           <Link
             to="/admin/users"
@@ -115,6 +133,7 @@ export function AccountMenu({ variant }: { variant: AccountMenuVariant }) {
           <Pressable type="submit" className={styles.logout}>登出</Pressable>
         </form>
       </Popover>
+      <SecurityDialog open={securityOpen} onClose={() => setSecurityOpen(false)} />
     </div>
   )
 }

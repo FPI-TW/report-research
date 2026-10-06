@@ -1,0 +1,66 @@
+/* 維運頁（/app/admin/operations/*）。卡片、表格沿用 Admin.module.css；這裡只有子導覽、狀態膠囊與日誌。 */
+.tabs {
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 4px;
+  border-radius: var(--tf-radius-md); background: var(--tf-fill-subtle); align-self: flex-start;
+}
+.tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border-radius: var(--tf-radius-md); color: var(--tf-text-2); font-size: 13px; text-decoration: none; white-space: nowrap;
+}
+.tab:hover { color: var(--tf-text-1); background: rgba(0, 0, 0, 0.05); }
+.tabOn, .tabOn:hover { background: var(--tf-surface); color: var(--tf-text-1); box-shadow: var(--tf-shadow-xs); }
+.soon { font-size: 10.5px; color: var(--tf-text-4); }
+
+.pill { display: inline-block; border-radius: var(--tf-radius-pill); font-size: 11.5px; font-weight: 600; padding: 2px 9px; white-space: nowrap; }
+.sRunning { background: var(--tf-success-soft); color: var(--tf-success-text); }
+.sIdle { background: var(--tf-fill-subtle); color: var(--tf-text-3); }
+.sFailed { background: var(--tf-error-bg); color: var(--tf-error-text); }
+.sTransitioning { background: var(--tf-warn-bg); color: var(--tf-warn-text); }
+
+.degraded { border-left: 3px solid var(--tf-warn); }
+.degradedText { font-size: 13.5px; color: var(--tf-text-1); margin: 0; }
+.degradedDetail {
+  font-family: var(--tf-mono); font-size: 12px; color: var(--tf-text-2); margin: 10px 0 0;
+  background: var(--tf-fill-subtle); border-radius: 6px; padding: 6px 10px; overflow-wrap: anywhere;
+}
+
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--tf-text-3); margin: 0; }
+.meta b { font-weight: 600; color: var(--tf-text-1); }
+
+.tierGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.tierCard { border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md); padding: 12px 14px; }
+.tierName { font-size: 13px; font-weight: 600; color: var(--tf-text-1); }
+.tierCount { font-family: var(--tf-display); font-size: 22px; font-weight: 600; color: var(--tf-text-1); margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.tierHint { font-size: 11.5px; color: var(--tf-text-4); }
+
+.group + .group { margin-top: 18px; }
+.groupTitle { font-size: 13px; font-weight: 600; color: var(--tf-text-2); margin: 0 0 6px; }
+.groupHint { font-weight: 400; color: var(--tf-text-4); margin-left: 8px; }
+.svcErr { font-size: 11.5px; color: var(--tf-error-text); margin-top: 3px; white-space: normal; max-width: 260px; }
+
+.problems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.problems li { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+
+.dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 13px; margin: 0; }
+.dl dt { color: var(--tf-text-4); }
+.dl dd { margin: 0; color: var(--tf-text-1); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.logBox {
+  margin: 12px 0 0; max-height: 60vh; overflow: auto; padding: 10px 12px;
+  background: var(--tf-fill-subtle); border-radius: 6px;
+  font-family: var(--tf-mono); font-size: 12px; line-height: 1.5; color: var(--tf-text-1); white-space: pre;
+}
+.warnNote { font-size: 12.5px; color: var(--tf-warn-text); background: var(--tf-warn-bg); border-radius: 6px; padding: 6px 10px; margin: 10px 0 0; }
+.links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* 事件詳情：狀態轉換時間軸與可收合的 journal 片段（等寬、框內捲動，不撐開頁面） */
+.events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.event { border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md); padding: 10px 12px; min-width: 0; }
+.eventHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; }
+.eventSummary { font-size: 12.5px; color: var(--tf-text-2); margin: 6px 0 0; overflow-wrap: anywhere; }
+.journal { margin-top: 8px; font-size: 12.5px; }
+.journal > summary { cursor: pointer; color: var(--tf-text-2); }
+.journal .logBox { max-height: 40vh; }
+/* P7 寫入類操作：按鈕列與頁內確認列。 */
+.opsActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.opsConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

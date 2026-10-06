@@ -210,10 +210,10 @@ class EdgeProbeStaticTests(unittest.TestCase):
         env = dict(v.split("=", 1) for v in _directives(INCIDENT_SERVICE, "Environment"))
         codes = env.get("INCIDENT_HOLD_EXIT_CODES", "").replace(",", " ").split()
         self.assertIn(str(EXIT_ORIGIN), codes)
-        # 反向：web 與 LineBot 兩組不得設（它們的 3 仍是健康）
-        for unit in SYSTEMD_DIR.glob("*incident.service"):
-            if unit == INCIDENT_SERVICE:
-                continue
+        # 反向：web 與 LineBot 兩組不得設（它們的 3 仍是健康）。容器與主機兩組的 3 是依 tier 去抖的確認期，
+        # 同樣設 hold（tests/test_container_host_probes.py 守），所以這裡只點名 web 與 LineBot。
+        for unit in (SYSTEMD_DIR / "report-mark-incident.service",
+                     SYSTEMD_DIR / "report-mark-linebot-incident.service"):
             with self.subTest(unit=unit.name):
                 self.assertEqual(
                     [v for v in _directives(unit, "Environment") if v.startswith("INCIDENT_HOLD_EXIT_CODES=")], []

@@ -1,0 +1,55 @@
+# report-mark 維運代理的 Service Catalog（開發環境）。格式與驗證規則見 ops_agent/catalog.py。
+#
+# development catalog 只能列 report-mark-dev-* 的 unit 與 report-mark-dev* 的容器（代理載入時檢查），
+# socket 也和生產不同（/run/report-mark-ops-dev/agent.sock）：dev 代理結構上碰不到生產服務。
+# 本機冒煙可用 --socket 指到臨時路徑（只有 development 允許覆寫）。
+#
+# 寫入類與生產同一套規則（restart 只給 web 類、run 只給 oneshot、容器唯讀），對象只限開發用的 unit：
+# dev-web 可 restart，dev-smoke（deploy/systemd/report-mark-dev-smoke.service，只 sleep 的 oneshot）可 run，
+# 用來在不碰任何真東西的前提下驗 run、409 already_running 與輪詢。polkit 只授權 report-mark-ops-dev
+# 對這兩個 unit 做 restart／start（deploy/polkit/10-report-mark-ops.rules）。
+
+schema = 1
+environment = "development"
+socket_path = "/run/report-mark-ops-dev/agent.sock"
+
+[agent]
+# 開發用 web（worktree 的 uvicorn）的執行身分。
+allowed_users = ["kashionz"]
+request_timeout = 15
+command_timeout = 8
+max_response_bytes = 262144
+max_log_lines = 1000
+max_log_age_hours = 168
+max_concurrent = 4
+restart_delay = 1.5
+systemctl = "/usr/bin/systemctl"
+journalctl = "/usr/bin/journalctl"
+docker = "/usr/bin/docker"
+
+[[services]]
+name = "devdb"
+kind = "container"
+container = "report-mark-devdb"
+tier = "critical"
+actions = ["status", "logs"]
+description = "開發驗證庫（生產複本，127.0.0.1:5437）"
+
+# 開發用 web 目前是手動起的 uvicorn，還沒有 unit；裝了 report-mark-dev-web.service 之前這列回 not_found。
+[[services]]
+name = "dev-web"
+kind = "systemd"
+unit = "report-mark-dev-web.service"
+tier = "important"
+actions = ["status", "logs", "restart"]
+group = "dev-web"
+description = "開發用 web（尚未建立 unit）"
+
+[[services]]
+name = "dev-smoke"
+kind = "systemd"
+unit = "report-mark-dev-smoke.service"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "dev-batch"
+description = "開發環境冒煙用 oneshot（只 sleep，驗 run／409／輪詢）"

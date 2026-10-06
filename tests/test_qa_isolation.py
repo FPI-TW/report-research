@@ -103,7 +103,8 @@ class AskOwnershipTests(unittest.TestCase):
             with self.subTest(path=path, body=body):
                 r = c.post(path, json=body)
                 self.assertEqual(r.status_code, 404, r.text)
-                self.assertEqual(r.json(), {"detail": "not found"})
+                self.assertEqual(r.json()["detail"], "not found")
+                self.assertEqual(r.json()["code"], "not_found")
         self.assertEqual(self._service_calls("ask") + self._service_calls("stop"), [])
 
     def test_ownership_check_failure_is_503_not_fail_open(self):

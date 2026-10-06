@@ -12,6 +12,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.rows import ChunkRow
+from app.services.visibility import visible_report_sql
 
 
 @dataclass
@@ -447,7 +448,8 @@ async def list_reports(
     relates_futures, stock_targets, futures_targets, summary)。
     呼叫端以位移解包，欄序即契約。
     """
-    conds: list[str] = []
+    # 被管理員隱藏的研報不列（app/services/visibility.py）；別名 r 只為了這個片段。
+    conds: list[str] = [visible_report_sql("r")]
     params: dict = {}
     if market:
         conds.append("market = :market")
@@ -462,11 +464,11 @@ async def list_reports(
     if report_type:
         conds.append("report_type = :report_type")
         params["report_type"] = report_type
-    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    where = "WHERE " + " AND ".join(conds)
     order = _BROWSE_SORT.get(sort, _BROWSE_SORT["date_desc"])
     total = (
         await session.execute(
-            text(f"SELECT count(*) FROM research.research_report {where}"), params
+            text(f"SELECT count(*) FROM research.research_report r {where}"), params
         )
     ).scalar_one()
     rows = await session.execute(
@@ -475,7 +477,7 @@ async def list_reports(
             SELECT id::text, file_hash, file_name, title, market, source, report_date,
                    report_type, instrument_types, relates_stock, relates_futures,
                    stock_targets, futures_targets, summary
-            FROM research.research_report
+            FROM research.research_report r
             {where}
             ORDER BY {order}
             LIMIT :limit OFFSET :offset
@@ -556,10 +558,12 @@ async def search_chunks_meta(
         LIMIT :scan
     """
     params: dict = {"q": _vec_literal(query_embedding), "scan": scan}
+    # 可見性片段與 metadata 過濾同一種性質（都是 HNSW 之後 recheck 的 post-filter，靠
+    # iterative_scan 補足 LIMIT）；被隱藏的研報極少，對召回深度沒有可量的影響。
     conds = _meta_filters(
         params, market, instrument_type, relates_stock, relates_futures, report_type
-    )
-    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    ) + [visible_report_sql("r")]
+    where = "WHERE " + " AND ".join(conds)
     # ef_search 須 ≥ scan，否則 HNSW 最多只回 ef_search 列（預設 40 會默默截斷）；
     # iterative_scan 讓帶過濾的查詢持續掃到滿足 LIMIT 為止（pgvector 0.8+）
     await session.execute(text(f"SET LOCAL hnsw.ef_search = {max(120, scan)}"))
@@ -600,10 +604,12 @@ def _lexical_sql(
     # 2026-07-30 實測生產 0 列 embedding IS NULL——所以這是**潛在**而非現行故障，但
     # ingest 中途被砍、或未來加入「先寫 chunk 後補嵌入」的流程就會踩到。
     # 放在 CTE 內（不是最外層）：讓 NULL 列連 `:cap` 名額都不佔。
+    # 可見性片段放在 CTE 內（與 embedding IS NOT NULL 同理）：被隱藏的研報連 `:cap` 名額都不佔。
     conds = (
         [f"c.content_norm LIKE :t{i}" for i in range(num_patterns)]
         + ["c.embedding IS NOT NULL"]
         + extra_conds
+        + [visible_report_sql("r")]
     )
     where = " AND ".join(conds)
     final_limit = "\n        LIMIT :limit" if limit is not None else ""
@@ -736,9 +742,9 @@ async def pick_title_lead_term(
             text(
                 "SELECT a FROM unnest(CAST(:c AS text[])) AS a "
                 "WHERE EXISTS (SELECT 1 FROM research.research_report r "
-                "              WHERE r.title LIKE a || '%') "
+                f"              WHERE r.title LIKE a || '%' AND {visible_report_sql('r')}) "
                 "ORDER BY (SELECT count(*) FROM research.research_report r "
-                "          WHERE r.title LIKE a || '%') DESC, length(a) ASC "
+                f"          WHERE r.title LIKE a || '%' AND {visible_report_sql('r')}) DESC, length(a) ASC "
                 "LIMIT 1"
             ),
             {"c": list(candidates)},

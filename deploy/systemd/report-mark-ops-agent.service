@@ -1,0 +1,77 @@
+[Unit]
+Description=廷豐智能研報 維運代理（status、logs；白名單 restart／run；Web 經 Unix socket 呼叫）
+# 為什麼不讓 web 自己跑 systemctl／journalctl／docker：web 對外服務，被攻破時能做的事要越少越好。
+# web 只能經 /run/report-mark-ops/agent.sock 送 catalog 允許的請求（ops_agent/protocol.py），
+# 沒有任意 shell、任意 unit、stop、timer enable/disable。寫入類只有 Web 的 restart 與既有 oneshot 的
+# run（systemctl start --no-block），而且 systemd 那端由 polkit 再限定一次：這個使用者只能對
+# deploy/polkit/10-report-mark-ops.rules 列出的 unit 做 start／restart（不用 sudo：見那個檔的說明）。
+#
+# **刻意不宣告 OnFailure=report-mark-alert@%n.service**，理由同 report-mark-metrics：代理停掉不是生產事故
+# （服務照跑，只是管理頁的維運區塊回 503 ops_agent_unavailable），不該有能力在半夜吵醒人。
+# 它是 Type=simple＋Restart=always，真的壞掉會停在 failed，journal 看得到。
+# P4／P5 的健康探針與事件處理（bash）不經過這支，各自獨立運作。
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 專用的系統使用者（不是 web 的 kashionz）。建立方式與群組見 docs/production_resilience.md「維運代理」。
+User=report-mark-ops
+Group=report-mark-ops
+# 讀 journal 要 systemd-journal 群組；docker inspect／logs 要 docker 群組。
+#
+# **威脅模型：docker 群組等同 root。** 能連 /var/run/docker.sock 的行程可以 `docker run -v /:/host`
+# 拿到整台主機。所以這支的安全性建立在三件事上，缺一不可：
+#   1. 程式碼與 catalog 在 root 擁有、其他人不可寫的 /opt/report-mark-ops/（不是從 repo 執行——
+#      repo 屬於 web 的使用者，從那裡執行等於 web 被攻破就能改代理的程式碼、拿到 root）。
+#   2. 代理只組固定的 argv（docker inspect／docker logs，參數嚴格驗證），不經 shell。
+#   3. socket 只給 catalog 點名的 uid（SO_PEERCRED）＋socket 群組。
+# 若要降低這個等級，可改接只放行 GET /containers/{id}/json 與 /logs 的 docker socket proxy
+# （另一個 compose 服務），再把 catalog 的 docker 指到它；目前沒有做。
+SupplementaryGroups=systemd-journal docker
+# /opt/report-mark-ops 下有 ops_agent/ 套件與 services.prod.toml（root:root 0644／0755）。
+WorkingDirectory=/opt/report-mark-ops
+# -B：不寫 __pycache__（/opt 唯讀）；-E：不讀 PYTHON* 環境變數；-s：不加使用者 site-packages。只用標準庫，刻意不用 .venv 與 uv
+# （理由同 report-mark-metrics：venv 壞掉時維運工具不能跟著死）。
+ExecStartPre=/usr/bin/python3 -B -E -s -m ops_agent --catalog /opt/report-mark-ops/services.prod.toml --check
+ExecStart=/usr/bin/python3 -B -E -s -m ops_agent --catalog /opt/report-mark-ops/services.prod.toml
+# socket 目錄 /run/report-mark-ops：owner report-mark-ops、群組 report-mark-ops、0750；socket 本身 0660。
+# web 的使用者加入 report-mark-ops 群組才連得到（改完群組要重啟 web 才生效）。
+RuntimeDirectory=report-mark-ops
+RuntimeDirectoryMode=0750
+UMask=0007
+Restart=always
+RestartSec=5
+# 收到 SIGTERM 後關 server、移除 socket，正常退出 0。
+TimeoutStopSec=15
+# 最小權限：不需要任何 capability、不寫任何檔案（RuntimeDirectory 例外）、只用 AF_UNIX
+# （systemd 的 D-Bus 與 docker.sock 都是檔案系統上的 Unix socket）。NoNewPrivileges 與空的
+# CapabilityBoundingSet 不妨礙 restart／run：授權是 systemd 經 polkit 判斷，不靠 setuid。
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+# 家目錄整個藏起來（空的 tmpfs），只唯讀綁進部署目錄的 data/：run 之前要試探 LLM 批次的 flock
+# （data/.claude_cli.lock）與 sync 的 PID 檔（data/.sync_new_reports.lock），路徑在 catalog 的
+# flock_files／pid_files，兩邊要一致（tests/test_ops_agent_units.py）。綁目錄而不是檔案：sync 的 PID 檔
+# 每輪刪掉重建，綁檔案會停在舊 inode。開頭的 - ：目錄不存在時照樣啟動，代理對 sync 的 run 回
+# lock_unavailable（無法確認就不執行），不影響其他功能。
+ProtectHome=tmpfs
+BindReadOnlyPaths=-/home/kashionz/projects/report-mark/data
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

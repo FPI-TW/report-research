@@ -8,7 +8,18 @@ const ACTION_LABELS: Record<string, string> = {
   'user.disable': '停用帳號',
   'user.reset_password': '重設密碼',
   'user.force_logout': '強制登出',
+  'user.set_privileges': '調整權限',
+  'user.totp_enable': '開啟兩步驟驗證',
+  'user.totp_disable': '關閉兩步驟驗證',
+  'user.totp_reset': '重設兩步驟驗證',
+  'user.delete_requested': '提出刪除帳號',
+  'user.delete_cancelled': '取消刪除帳號',
+  'user.delete_executed': '執行刪除帳號',
+  'user.delete_replayed': '重放刪除（還原後）',
   'review.update': '處理待複核',
+  'qa_content.read': '查看問答內容',
+  'report.hide': '隱藏研報',
+  'report.restore': '恢復研報',
 }
 
 const ROLE_LABELS: Record<string, string> = { admin: '管理員', user: '一般使用者' }
@@ -49,7 +60,27 @@ export function auditSummary(entry: AuditEntry): string {
     if (str(d.status)) parts.push(REVIEW_STATUS[str(d.status)!] ?? str(d.status)!)
     if (str(d.verification)) parts.push(VERIFICATION[str(d.verification)!] ?? str(d.verification)!)
   }
-  if (!who && entry.target_id && entry.action !== 'review.update') parts.unshift(`${entry.target_type} ${entry.target_id}`)
+  if (entry.action === 'user.set_privileges') {
+    const flag = d.is_super && typeof d.is_super === 'object' ? d.is_super as { from?: unknown; to?: unknown } : null
+    if (flag && typeof flag.from === 'boolean' && typeof flag.to === 'boolean' && flag.from !== flag.to) {
+      parts.push(flag.to ? '設為 super admin' : '取消 super admin')
+    }
+    const scopes = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    if (scopes(d.scopes_added).length) parts.push(`授予 ${scopes(d.scopes_added).join('、')}`)
+    if (scopes(d.scopes_removed).length) parts.push(`收回 ${scopes(d.scopes_removed).join('、')}`)
+  }
+  // 研報隱藏／恢復：detail 只有檔名與「有沒有寫原因」，原因全文刻意不進稽核。
+  if (entry.action === 'report.hide' || entry.action === 'report.restore') {
+    if (str(d.file_name)) parts.push(str(d.file_name)!)
+    else if (entry.target_id) parts.push(`研報 ${entry.target_id.slice(0, 12)}`)
+    if (entry.action === 'report.hide' && d.has_reason === true) parts.push('已填原因')
+  }
+  if (entry.action === 'qa_content.read' && Array.isArray(d.kinds)) {
+    const kinds = d.kinds.map(k => (typeof k === 'string' ? REVIEW_KIND[k] ?? k : '')).filter(Boolean)
+    if (kinds.length) parts.push(kinds.join('、'))
+  }
+  const isReport = entry.action === 'report.hide' || entry.action === 'report.restore'
+  if (!who && entry.target_id && entry.action !== 'review.update' && !isReport) parts.unshift(`${entry.target_type} ${entry.target_id}`)
   const via = str(d.via)
   if (via && via !== 'web') parts.push(via.startsWith('cli') ? '經指令列' : `經 ${via}`)
   return parts.join('・') || '—'

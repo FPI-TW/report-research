@@ -1,0 +1,277 @@
+# report-mark 維運代理的 Service Catalog（辦公室主機的生產環境）。格式與驗證規則見 ops_agent/catalog.py。
+# 部署：複製到 /opt/report-mark-ops/services.prod.toml（root 擁有、0644），步驟見 docs/production_resilience.md
+# 「維運代理」。改了這份要重新安裝並重啟 report-mark-ops-agent.service；先跑 --check 驗證。
+#
+# 名稱不在這裡的服務，代理一律拒絕。actions：status、logs（唯讀），restart、run（寫入類）。
+# 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile 的 run（立即執行一次，
+# 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared 維持唯讀——代理與 catalog 兩層都擋，
+# 這裡寫了也載入不了。改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules（tests/test_ops_polkit.py 對帳）。
+# 刻意不列：report-mark-alert@（模板）、report-mark-backfill（過渡期，跑完就 disable）。
+# 刻意不給 run：audit-anchor（錨點檔只追加，手動多跑一次無害，但失敗會以「疑似竄改」告警；要的是
+# --verify-only，而 run 不收參數）、health／incident 類探針（timer 每 2 分鐘就跑）、metrics（常駐）。
+#
+# 鎖檔路徑是這台主機的部署目錄（/home/kashionz/projects/report-mark）：代理的 unit 以 BindReadOnlyPaths
+# 唯讀綁進那個 data/ 目錄（deploy/systemd/report-mark-ops-agent.service），兩邊要一致（tests/test_ops_agent_units.py）。
+
+schema = 1
+environment = "production"
+socket_path = "/run/report-mark-ops/agent.sock"
+
+[agent]
+# 只有 web 的執行身分能連（report-mark-web.service 的 User=）。
+allowed_users = ["kashionz"]
+request_timeout = 15
+command_timeout = 8
+max_response_bytes = 262144
+max_log_lines = 1000
+max_log_age_hours = 168
+max_concurrent = 4
+restart_delay = 1.5
+systemctl = "/usr/bin/systemctl"
+journalctl = "/usr/bin/journalctl"
+docker = "/usr/bin/docker"
+
+# ── critical：壞了使用者馬上感覺得到 ─────────────────────────────────────
+
+[[services]]
+name = "web"
+kind = "systemd"
+unit = "report-mark-web.service"
+tier = "critical"
+actions = ["status", "logs", "restart"]
+group = "web"
+description = "Web（uvicorn :8097，BGE-M3 常駐）"
+
+[[services]]
+name = "postgres"
+kind = "container"
+container = "report-mark-postgres"
+tier = "critical"
+actions = ["status", "logs"]
+description = "PostgreSQL＋pgvector（:5436）"
+
+# deploy/docker-compose.yml 的 compose 專案名＝目錄名 deploy，容器名是 <專案>-<服務>-1。
+[[services]]
+name = "nginx"
+kind = "container"
+container = "deploy-nginx-1"
+tier = "critical"
+actions = ["status", "logs"]
+description = "對外邊緣 nginx（make up-edge）"
+
+[[services]]
+name = "cloudflared"
+kind = "container"
+container = "deploy-cloudflared-1"
+tier = "critical"
+actions = ["status", "logs"]
+description = "Cloudflare Tunnel 連接器（make up-edge）"
+
+# ── important：停了不會立刻出事，但資料或告警會開始落後 ────────────────────
+
+[[services]]
+name = "sync"
+kind = "systemd"
+unit = "report-mark-sync.service"
+timer = "report-mark-sync.timer"
+tier = "important"
+actions = ["status", "logs", "run"]
+# 會呼叫 LLM 的批次：除了 unit 狀態，還要試探 LLM 批次的 flock（手動跑的 make summaries 等不經 systemd）
+# 與 sync 自己的 PID 檔鎖（手動跑 sync_new_reports.sh 時）。
+group = "llm-batch"
+flock_files = ["/home/kashionz/projects/report-mark/data/.claude_cli.lock"]
+pid_files = ["/home/kashionz/projects/report-mark/data/.sync_new_reports.lock"]
+description = "NAS 增量同步匯入（每 3 小時）"
+
+[[services]]
+name = "backup"
+kind = "systemd"
+unit = "report-mark-backup.service"
+timer = "report-mark-backup.timer"
+tier = "important"
+actions = ["status", "logs", "run"]
+group = "backup"
+description = "不可重建表備份 → NAS（03:30）"
+
+[[services]]
+name = "health"
+kind = "systemd"
+unit = "report-mark-health.service"
+timer = "report-mark-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "P4 應用層健康探針（每 2 分鐘）"
+
+[[services]]
+name = "incident"
+kind = "systemd"
+unit = "report-mark-incident.service"
+timer = "report-mark-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "P5 事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "edge-health"
+kind = "systemd"
+unit = "report-mark-edge-health.service"
+timer = "report-mark-edge-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "對外邊緣健康探針（每 2 分鐘）"
+
+[[services]]
+name = "edge-incident"
+kind = "systemd"
+unit = "report-mark-edge-incident.service"
+timer = "report-mark-edge-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "對外邊緣事件偵測與通知（每 2 分鐘）"
+
+# ── supporting：稽核、對帳、觀測 ─────────────────────────────────────────
+
+[[services]]
+name = "freshness"
+kind = "systemd"
+unit = "report-mark-freshness.service"
+timer = "report-mark-freshness.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "freshness"
+description = "批次停更偵測（08:30）"
+
+[[services]]
+name = "audit"
+kind = "systemd"
+unit = "report-mark-audit.service"
+timer = "report-mark-audit.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "audit"
+description = "資料完整性稽核 make db-audit（08:45）"
+
+[[services]]
+name = "audit-anchor"
+kind = "systemd"
+unit = "report-mark-audit-anchor.service"
+timer = "report-mark-audit-anchor.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "稽核雜湊鏈外部錨定（04:15）"
+
+[[services]]
+name = "r2-reconcile"
+kind = "systemd"
+unit = "report-mark-r2-reconcile.service"
+timer = "report-mark-r2-reconcile.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "r2-reconcile"
+description = "R2 物件儲存對帳（週一 07:00）"
+
+[[services]]
+name = "linebot-health"
+kind = "systemd"
+unit = "report-mark-linebot-health.service"
+timer = "report-mark-linebot-health.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "LINE bot 健康探針（每 2 分鐘）"
+
+[[services]]
+name = "linebot-incident"
+kind = "systemd"
+unit = "report-mark-linebot-incident.service"
+timer = "report-mark-linebot-incident.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "LINE bot 事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "metrics"
+kind = "systemd"
+unit = "report-mark-metrics.service"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "硬體用量取樣（常駐）"
+
+[[services]]
+name = "load-observations"
+kind = "systemd"
+unit = "report-mark-load-observations.service"
+timer = "report-mark-load-observations.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "監控 spool 匯入 DB（每 5 分鐘）"
+
+# ── 容器與主機探針（L4；依 tier 去抖在探針裡做，通知由各自的 P5 實例）─────────────
+
+[[services]]
+name = "container-health"
+kind = "systemd"
+unit = "report-mark-container-health.service"
+timer = "report-mark-container-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "容器健康探針（PostgreSQL／nginx／cloudflared，每 2 分鐘）"
+
+[[services]]
+name = "container-incident"
+kind = "systemd"
+unit = "report-mark-container-incident.service"
+timer = "report-mark-container-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "容器事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "host-health"
+kind = "systemd"
+unit = "report-mark-host-health.service"
+timer = "report-mark-host-health.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "主機健康探針（磁碟、記憶體、PSI，每 2 分鐘）"
+
+[[services]]
+name = "host-incident"
+kind = "systemd"
+unit = "report-mark-host-incident.service"
+timer = "report-mark-host-incident.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "主機事件偵測與通知（連續越線才開事件，每 2 分鐘）"
+
+# ── 監控觀測的保留與聚合（P8）────────────────────────────────────────────────
+
+[[services]]
+name = "rollup-observations"
+kind = "systemd"
+unit = "report-mark-rollup-observations.service"
+timer = "report-mark-rollup-observations.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "監控觀測聚合與 90 天保留（每小時）"
+
+# ── 帳號刪除（L1）────────────────────────────────────────────────────────────
+# 唯讀：刪除排程到期才由 timer 執行；不給 run——手動「立即執行」會繞過 24 小時撤銷窗口的語意
+# （execute_deletions 只處理到期的排程，但讓人誤以為能提前刪）。重放由還原流程手動跑。
+
+[[services]]
+name = "delete-accounts"
+kind = "systemd"
+unit = "report-mark-delete-accounts.service"
+timer = "report-mark-delete-accounts.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "執行到期的帳號刪除（先寫 NAS tombstone 再刪 DB，每小時）"
+
+[[services]]
+name = "replay-deletions"
+kind = "systemd"
+unit = "report-mark-replay-deletions.service"
+timer = "report-mark-replay-deletions.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "還原後重放帳號刪除（比對 NAS tombstone，資料復活就重刪並告警，每日）"

@@ -70,6 +70,15 @@ test('一般使用者的帳號選單沒有管理後台入口', async () => {
   expect(screen.queryByRole('link', { name: /管理後台/ })).not.toBeInTheDocument()
 })
 
+test('每個人的帳號選單都有「帳號安全」，點了開啟兩步驟驗證設定', async () => {
+  stubStats('user')
+  wrap(<AccountMenu variant="row" />)
+  expect(await screen.findByText('analyst')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { expanded: false }))
+  fireEvent.click(screen.getByRole('button', { name: /帳號安全/ }))
+  expect(await screen.findByRole('dialog', { name: '帳號安全' })).toBeInTheDocument()
+})
+
 test('收合側欄（mini）的選單 portal 到 body、以 fixed 定位，不被側欄的窄容器壓扁', async () => {
   stubStats()
   const { container } = wrap(<AccountMenu variant="mini" />)

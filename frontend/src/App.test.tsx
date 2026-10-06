@@ -60,3 +60,20 @@ test('一般使用者直接開 /admin/reviews：無權限頁，不打待複核�
   expect(await screen.findByRole('heading', { name: '需要管理員權限' }, { timeout: 15000 })).toBeInTheDocument()
   expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/review') || String(u).startsWith('/api/admin'))).toBe(false)
 }, 15000)
+
+test('/admin/operations 導向維運總覽（有 ops.read 的管理員；代理不可用時顯示降級說明）', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.includes('/api/me')) {
+      return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'ops.read'] }), { status: 200 })
+    }
+    if (url.startsWith('/api/admin/ops')) {
+      return new Response(JSON.stringify({ detail: '維運代理不可用', code: 'ops_agent_unavailable' }), { status: 503 })
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  }))
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { name: '維運代理目前無法使用' }, { timeout: 15000 })).toBeInTheDocument()
+  expect(router.state.location.pathname).toBe('/admin/operations/overview')
+}, 15000)

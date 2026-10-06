@@ -3,7 +3,9 @@
 .avatarBtn:hover { background: rgba(0, 0, 0, 0.09); }
 .rowTrigger { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; cursor: pointer; padding: 7px 8px; border-radius: var(--tf-radius-md); font-family: inherit; }
 .rowTrigger:hover { background: rgba(0, 0, 0, 0.045); }
-.avatar { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-glass-border); background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); display: flex; align-items: center; justify-content: center; flex: none; }
+.avatar { position: relative; width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--tf-glass-border); background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); display: flex; align-items: center; justify-content: center; flex: none; }
+/* 系統狀態 degraded 時頭像右上角的紅點（燈號本體在 SystemStatus.module.css） */
+.alertDot { position: absolute; top: -1px; right: -1px; box-shadow: 0 0 0 2px var(--tf-surface); }
 .rowText { flex: 1; text-align: left; min-width: 0; }
 .name { display: block; font-size: 13px; font-weight: 600; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { display: block; font-size: 11.5px; color: var(--tf-text-4); }
@@ -16,6 +18,8 @@
 .popHead { padding: 8px 10px 10px; border-bottom: 1px solid var(--tf-glass-border); margin-bottom: 4px; }
 .menuItem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: var(--tf-radius-md); text-decoration: none; box-sizing: border-box; }
 .menuItem:hover { background: rgba(0, 0, 0, 0.06); color: var(--tf-text-1); }
+button.menuItem { border: none; background: none; cursor: pointer; font-family: inherit; }
+button.menuItem:hover { background: rgba(0, 0, 0, 0.06); }
 .logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: var(--tf-radius-md); cursor: pointer; font-family: inherit; }
 .logout:hover { background: rgba(0, 0, 0, 0.06); }
 /* M10b 語言切換：popover 內的分段控制 */

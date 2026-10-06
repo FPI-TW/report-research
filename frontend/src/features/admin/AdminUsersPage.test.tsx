@@ -9,6 +9,7 @@ afterEach(() => vi.unstubAllGlobals())
 type User = {
   id: string; username: string; role: 'admin' | 'user'; enabled: boolean; active_sessions: number
   last_login_at: string | null; last_seen_at: string | null
+  is_super?: boolean; scopes?: string[]; totp_enabled?: boolean; deletion_execute_after?: string | null
 }
 type Reply = { status?: number; body: unknown }
 type Override = (path: string, init?: RequestInit) => Reply | undefined
@@ -205,4 +206,85 @@ test('強制登出：確認後 POST logout，回報撤銷數；沒有 session �
   fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '強制登出' }))
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已強制登出「alice」（2 個 session）'))
   expect(writes(fetchMock)[0][0]).toBe('/api/admin/users/u2/logout')
+})
+
+const deletionItem = (id: string, executeAfter: string, status = 'pending') => ({
+  id: 1, user_id: id, username: 'alice', requested_by: 'me', requested_by_username: 'root',
+  requested_at: '2026-10-06T00:00:00Z', execute_after: executeAfter, cancelled_at: null, executed_at: null, status,
+})
+
+test('刪除帳號：確認後收到 elevation_required，輸入密碼重新驗證後自動重試', async () => {
+  let elevated = false
+  const fetchMock = mount({
+    override: (p, init) => {
+      if (p === '/api/admin/users/u2/deletion') {
+        return elevated
+          ? { body: deletionItem('u2', '2026-10-07T00:00:00Z') }
+          : { status: 403, body: { detail: '這項操作需要重新驗證密碼', code: 'elevation_required' } }
+      }
+      if (p === '/api/admin/elevate') {
+        const body = JSON.parse(init!.body as string)
+        if (body.password !== 'root-password-1') return { status: 403, body: { detail: '密碼不正確', code: 'bad_password' } }
+        elevated = true
+        return { body: { elevated_until: '2026-10-06T00:10:00Z' } }
+      }
+      return undefined
+    },
+  })
+  expect((await row('root')).getByRole('button', { name: '刪除帳號' })).toBeDisabled()
+  fireEvent.click((await row('alice')).getByRole('button', { name: '刪除帳號' }))
+  fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '排程刪除' }))
+  const elevation = await screen.findByRole('dialog', { name: '重新驗證身分' })
+  fireEvent.change(within(elevation).getByLabelText('密碼'), { target: { value: 'wrong-password' } })
+  fireEvent.click(within(elevation).getByRole('button', { name: '驗證' }))
+  expect(await within(elevation).findByRole('alert')).toHaveTextContent('密碼不正確')
+  fireEvent.change(within(elevation).getByLabelText('密碼'), { target: { value: 'root-password-1' } })
+  fireEvent.click(within(elevation).getByRole('button', { name: '驗證' }))
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已排程刪除「alice」'))
+  const deletions = fetchMock.mock.calls.filter(([p]) => p === '/api/admin/users/u2/deletion')
+  expect(deletions).toHaveLength(2)
+})
+
+test('排程刪除中的帳號顯示倒數與「取消刪除」，其他操作收起', async () => {
+  const soon = new Date(Date.now() + (3 * 60 + 20) * 60_000).toISOString()
+  const fetchMock = mount({
+    users: [user('me', 'root', { role: 'admin' }), user('u2', 'alice', { enabled: false, deletion_execute_after: soon })],
+    override: p => (p === '/api/admin/users/u2/deletion/cancel' ? { body: deletionItem('u2', soon, 'cancelled') } : undefined),
+  })
+  const alice = await row('alice')
+  expect(alice.getByText('排程刪除')).toBeInTheDocument()
+  expect(alice.getByText(/3 小時 2\d 分後刪除/)).toBeInTheDocument()
+  expect(alice.queryByRole('button', { name: '停用' })).not.toBeInTheDocument()
+  fireEvent.click(alice.getByRole('button', { name: '取消刪除' }))
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已取消刪除「alice」'))
+  expect(writes(fetchMock)[0][0]).toBe('/api/admin/users/u2/deletion/cancel')
+})
+
+test('super admin 才看得到「調整權限」；送出完整的 scope 清單', async () => {
+  const fetchMock = mount({
+    users: [user('me', 'root', { role: 'admin', is_super: true }), user('u2', 'alice', { role: 'admin', scopes: [] })],
+    override: (p, init) => {
+      if (p === '/api/me') return { body: { id: 'me', username: 'root', role: 'admin', is_super: true, scopes: [] } }
+      if (p === '/api/admin/users/u2/privileges') {
+        const body = JSON.parse(init!.body as string)
+        return { body: user('u2', 'alice', { role: 'admin', ...body }) }
+      }
+      return undefined
+    },
+  })
+  fireEvent.click((await row('alice')).getByRole('button', { name: '調整權限' }))
+  const dialog = await screen.findByRole('dialog', { name: '調整「alice」的權限' })
+  fireEvent.click(within(dialog).getByLabelText(/qa_content.read/))
+  fireEvent.click(within(dialog).getByRole('button', { name: '儲存' }))
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('已更新「alice」的權限'))
+  const [, init] = writes(fetchMock).find(([p]) => p === '/api/admin/users/u2/privileges')!
+  expect(init!.method).toBe('PUT')
+  expect(JSON.parse(init!.body as string)).toEqual({ is_super: false, scopes: ['qa_content.read'] })
+})
+
+test('非 super 的管理員沒有「調整權限」；開了 2FA 的帳號有「重設兩步驟驗證」', async () => {
+  mount({ users: [user('me', 'root', { role: 'admin' }), user('u2', 'alice', { role: 'admin', totp_enabled: true })] })
+  const alice = await row('alice')
+  expect(alice.queryByRole('button', { name: '調整權限' })).not.toBeInTheDocument()
+  expect(alice.getByRole('button', { name: '重設兩步驟驗證' })).toBeEnabled()
 })

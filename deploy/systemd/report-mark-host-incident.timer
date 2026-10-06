@@ -1,0 +1,11 @@
+[Unit]
+Description=每 2 分鐘消費主機探針結果（去重、提醒、恢復判定）
+
+[Timer]
+# 比探針晚一分鐘起步（探針 OnBootSec=2min），與 report-mark-incident.timer 同。
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

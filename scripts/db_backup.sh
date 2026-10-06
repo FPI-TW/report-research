@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 廷豐智能研報：把「重建不回來」的那幾張表 pg_dump 到 NAS。
 #
-# 為什麼只備七張表而不是整庫：語料層（research_report / report_chunk）雖然大，
+# 為什麼只備十二張表而不是整庫：語料層（research_report / report_chunk）雖然大，
 # 但確定重跑得回來——研報原檔還在 NAS，extract → tag → ingest 全程 checkpoint 可續。
-# 下面這七張不一樣，它們是「人與 LLM 產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
+# 下面這十二張不一樣，它們是「人、LLM 與事故產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
 #
 #   research.qa_log            每一次提問、當時的來源與證據帳本、使用者的讚／倒讚
 #   research.report_takeaway   閱讀頁重點摘錄（LLM 批次產物，含錨點）
@@ -11,11 +11,16 @@
 #   research.report_brief      每日簡報（LLM 批次產物，來源清單由 Python 記錄）
 #   research.review_state      待複核人工處理狀態、註記、驗證結果與處理人
 #   research.app_user          個別帳號（含 Argon2id 密碼雜湊，備份檔要當機密看待）
-#   research.admin_audit_log   管理操作稽核（誰在何時建帳、停用、重設密碼、處理待複核）
+#   research.admin_audit_log   管理操作稽核（誰在何時建帳、停用、重設密碼、處理待複核；雜湊鏈）
+#   research.user_scope        另外授予的權限（qa_content.read、ops.operate；誰授予、何時）
+#   research.account_deletion  帳號刪除排程（還原後尚未執行的排程不能消失；已執行的另有 NAS 上的 tombstone）
+#   research.report_visibility 管理員隱藏的研報（以 file_hash 為鍵、原因與隱藏人；重新入庫不會重建它）
+#   research.incident          事件投影：P5 每次事件的開場、嚴重度、恢復時間（spool 匯入後即刪、journald 有保留期）
+#   research.incident_event    事件的每一則狀態轉換與當下擷取的 journal 片段（同上，事後無從重建）
 #
 # user_session 刻意不備：遺失的代價只是全員重新登入。
 #
-# 體積小、價值最高 ⇒ 先備這七張。要不要連語料層一起備是另一個（成本）決定，
+# 體積小、價值最高 ⇒ 先備這十二張。要不要連語料層一起備是另一個（成本）決定，
 # 連同已知的 report_id 耦合限制寫在 docs/production_resilience.md「備份與還原」。
 #
 # 用法：bash scripts/db_backup.sh   或   make db-backup
@@ -89,6 +94,11 @@ BACKUP_TABLES=(
   research.review_state
   research.app_user
   research.admin_audit_log
+  research.user_scope
+  research.account_deletion
+  research.report_visibility
+  research.incident
+  research.incident_event
 )
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
@@ -183,7 +193,7 @@ fi
 # ── 4) 驗這份 dump 不是空殼 ───────────────────────────────────────────────
 # 備份最惡劣的失敗型態是「檔案在、內容不能用」。兩道最便宜的檢查：
 #   a) 檔頭魔數：pg_dump -Fc 的前五個位元組固定是 PGDMP，被截斷或被 stdout 攪過就對不上
-#   b) 大小下限：七張表的 schema 本身就不只 1KB，比這小一定是空輸出
+#   b) 大小下限：十二張表的 schema 本身就不只 1KB，比這小一定是空輸出
 MAGIC="$(head -c 5 "$TMP" 2>/dev/null || true)"
 [ "$MAGIC" = "PGDMP" ] || die "產出的檔案不是 pg_dump custom 格式（檔頭='$MAGIC'）→ 視為失敗。"
 SIZE=0

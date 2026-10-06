@@ -1,0 +1,49 @@
+[Unit]
+Description=廷豐智能研報 維運代理（開發環境：只碰 report-mark-dev-* 與 report-mark-devdb）
+# 與 report-mark-ops-agent.service 同一支程式，差在三處：catalog（services.dev.toml）、socket 目錄
+# （/run/report-mark-ops-dev）、執行身分（report-mark-ops-dev）。代理載入時檢查 catalog 的環境與 socket
+# 是否相符（以 dev socket 載入 prod catalog 或反之一律拒絕啟動），dev catalog 也只能列開發用的 unit
+# 與容器——dev 代理永遠碰不到生產服務。分開使用者是為了寫入類：restart／start 的授權（polkit，
+# deploy/polkit/10-report-mark-ops.rules）以使用者區分，report-mark-ops-dev 只被授權
+# report-mark-dev-web.service 的 restart 與 report-mark-dev-smoke.service 的 start。
+# 刻意不宣告 OnFailure=（理由見 report-mark-ops-agent.service）。
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=report-mark-ops-dev
+Group=report-mark-ops-dev
+# docker 群組等同 root：威脅模型與前提見 report-mark-ops-agent.service 的註解，這裡同樣適用。
+SupplementaryGroups=systemd-journal docker
+WorkingDirectory=/opt/report-mark-ops
+ExecStartPre=/usr/bin/python3 -B -E -s -m ops_agent --catalog /opt/report-mark-ops/services.dev.toml --check
+ExecStart=/usr/bin/python3 -B -E -s -m ops_agent --catalog /opt/report-mark-ops/services.dev.toml
+RuntimeDirectory=report-mark-ops-dev
+RuntimeDirectoryMode=0750
+UMask=0007
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

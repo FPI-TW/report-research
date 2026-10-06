@@ -1,4 +1,4 @@
-"""研報隱藏／恢復對真的 PostgreSQL 成立（revision 0004 ＋ app/services/visibility.py）。
+"""研報隱藏／恢復與上傳草稿的不可見性對真的 PostgreSQL 成立（revision 0004、0008 ＋ app/services/visibility.py）。
 
 `tests/test_visibility_guard.py` 只保證每條使用者讀取 SQL 都呼叫了可見性片段；這裡驗片段本身
 真的有效：兩篇研報（含 chunk 與訊號）隱藏其一之後，混合檢索（dense＋字面兩路）、檢索頁瀏覽、
@@ -6,7 +6,11 @@
 presign 都看不到它；恢復後全部回來；重新入庫（`store.upsert_report` 先刪後插、換新 report_id）
 之後隱藏狀態仍在。另驗隱藏與稽核同一筆交易、管理清單看得到隱藏狀態。
 
-跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0004）就 skip。**一律 rollback、
+revision 0008 的草稿（`report_visibility.publication='draft'`）走同一組路徑：草稿每條路徑都看不到、
+重新入庫換 report_id 後仍看不到、隱藏與恢復都被拒（恢復不會順手發布）、發布後全部回來；另驗
+`report_upload` 的 CHECK 與 partial unique index，以及 `make db-audit` 的草稿一致性檢查。
+
+跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0004／0008）就 skip。**一律 rollback、
 絕不 commit**——本機預設連到的是生產庫。`upsert_report` 本身會 commit，測試把那個 session 的
 commit 換成 flush。斷言只針對自己塞進去的列（以 file_hash／report_id 辨識），不假設庫是空的：
 向量用與查詢完全相同的方向（距離 ≈ 0）、字面用語料裡不存在的詞，在完整語料上也排得到前面。

@@ -218,5 +218,31 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertNotIn("needs", self.job)
 
 
+
+class GitleaksIgnoreIsNarrowTests(unittest.TestCase):
+    """`.gitleaksignore` 只准逐筆指紋（commit:檔案:規則:行號），不准只寫檔名或規則的寬鬆豁免。
+
+    git 模式的指紋綁在引入它的那個 commit 上；只寫 `檔案:規則:行號`（dir 模式的形狀）會讓那一行
+    之後任何 commit 寫進去的真 secret 都被放過。每一筆也要在檔頭註解寫明出處。
+    """
+
+    IGNORE = REPO_ROOT / ".gitleaksignore"
+
+    def test_every_entry_is_a_full_commit_fingerprint(self):
+        if not self.IGNORE.exists():
+            self.skipTest("沒有 .gitleaksignore")
+        entries = [x.strip() for x in self.IGNORE.read_text(encoding="utf-8").splitlines()
+                   if x.strip() and not x.lstrip().startswith("#")]
+        self.assertTrue(entries, ".gitleaksignore 存在卻沒有任何條目——不需要就刪掉它")
+        for entry in entries:
+            self.assertRegex(entry, r"^[0-9a-f]{40}:[^:\s]+:[a-z0-9-]+:\d+$",
+                             f"不是完整的 commit 指紋：{entry!r}")
+
+    def test_header_explains_why(self):
+        if not self.IGNORE.exists():
+            self.skipTest("沒有 .gitleaksignore")
+        comments = [x for x in self.IGNORE.read_text(encoding="utf-8").splitlines() if x.lstrip().startswith("#")]
+        self.assertGreaterEqual(len(comments), 3, "每筆豁免都要在檔頭寫明出處與為什麼不用 stopwords")
+
 if __name__ == "__main__":
     unittest.main()

@@ -69,3 +69,31 @@ test('一般使用者的帳號選單沒有管理後台入口', async () => {
   await screen.findByRole('link', { name: /使用說明/ })
   expect(screen.queryByRole('link', { name: /管理後台/ })).not.toBeInTheDocument()
 })
+
+test('收合側欄（mini）的選單 portal 到 body、以 fixed 定位，不被側欄的窄容器壓扁', async () => {
+  stubStats()
+  const { container } = wrap(<AccountMenu variant="mini" />)
+  fireEvent.click(screen.getByRole('button', { expanded: false }))
+  const menu = await screen.findByRole('menu')
+  expect(container.contains(menu)).toBe(false)
+  expect(document.body.contains(menu)).toBe(true)
+  expect(menu.style.position).toBe('fixed')
+  expect(menu.style.width).toBe('248px')
+  expect(screen.getByRole('button', { name: '登出' })).toBeInTheDocument()
+})
+
+test('手機分頁列（mobile）同樣 portal 到 body；展開側欄（row）仍在原容器內', async () => {
+  stubStats()
+  const mobile = wrap(<AccountMenu variant="mobile" />)
+  fireEvent.click(screen.getByRole('button', { expanded: false }))
+  const menu = await screen.findByRole('menu')
+  expect(mobile.container.contains(menu)).toBe(false)
+  expect(menu.style.position).toBe('fixed')
+  mobile.unmount()
+
+  const row = wrap(<AccountMenu variant="row" />)
+  fireEvent.click(screen.getByRole('button', { expanded: false }))
+  const rowMenu = await screen.findByRole('menu')
+  expect(row.container.contains(rowMenu)).toBe(true)
+  expect(rowMenu.style.position).toBe('')
+})

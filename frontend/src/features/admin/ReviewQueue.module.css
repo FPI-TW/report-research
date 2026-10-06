@@ -24,9 +24,17 @@
 /* 提問與標題可能很長：單行截斷，完整內容點進去看。min-width:0 是 flex 子項能截斷的前提。 */
 .rvLink { flex: 1; min-width: 0; font-size: 13px; color: var(--tf-text-1); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rvLink:hover { text-decoration: underline; }
+/* 問答列沒有原文可連：標題是 qa_id 前 8 碼，等寬數字方便與稽核紀錄對照。 */
+.rvSubject { flex: 1; min-width: 0; font-size: 13px; color: var(--tf-text-1); font-variant-numeric: tabular-nums; }
 .rvMeta { flex: none; display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--tf-text-4); font-variant-numeric: tabular-nums; }
 .rvMore, .rvRetry { border: none; background: none; color: var(--tf-text-2); font: inherit; font-size: 12.5px; cursor: pointer; padding: 6px 0; text-decoration: underline; }
 .rvMore { display: block; margin-top: 6px; }
+/* 逐筆查看的問答原文：保留換行、長字可斷，避免把整列撐寬。 */
+.rvContentBar { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--tf-error-text); }
+.rvContent { border-left: 2px solid var(--tf-border); padding: 4px 0 4px 10px; font-size: 13px; color: var(--tf-text-1); }
+.rvContentHead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--tf-text-4); }
+.rvContentLabel { font-size: 12px; color: var(--tf-text-4); margin-top: 6px; }
+.rvContentText { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rvRetry { margin-left: 6px; }
 .rvMore:disabled { cursor: default; text-decoration: none; }
 .rvEditor { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; font-size: 12px; color: var(--tf-text-4); }

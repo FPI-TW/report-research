@@ -80,6 +80,14 @@ class AdminRouteStructureTests(unittest.TestCase):
         self.assertIn(authz.require_super, calls)
         self.assertIn(authz.require_elevated, calls)
 
+    def test_qa_content_access_requires_its_own_scope(self):
+        """讀問答原文另要 qa_content.read（不是管理員預設就有），router 層的 review.manage 照樣要。"""
+        route = next(r for r in self._guarded() if r.path == "/api/review/qa/{qa_id}/access")
+        self.assertEqual(route.methods, {"POST"})
+        scopes = set().union(*(getattr(c, "__scope__", frozenset()) for c in _dependency_calls(route.dependant)))
+        self.assertLessEqual({"qa_content.read", "review.manage"}, scopes)
+        self.assertNotIn("qa_content.read", accounts.ADMIN_DEFAULT_SCOPES)
+
     def test_unknown_scope_fails_at_import_time(self):
         with self.assertRaises(ValueError):
             authz.require_scope("no.such.scope")

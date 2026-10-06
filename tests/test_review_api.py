@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -12,9 +13,10 @@ os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-012345678
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from fake_accounts import FakeAccounts, install  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from web import deps  # noqa: E402
+from web import auth, deps  # noqa: E402
 from web.routers import review  # noqa: E402
 from web.server import app  # noqa: E402
 
@@ -27,6 +29,9 @@ class _Result:
         return self._value
 
     def all(self):
+        return self._value
+
+    def first(self):
         return self._value
 
 
@@ -60,9 +65,11 @@ def _authed() -> TestClient:
 
 
 _TS = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
-# 欄位序：…, status, note, verification, reviewed_at, reviewer[, asked_by]（問答類才有 asked_by）
-_QA_ROW = ("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
-           "台積電目標價多少", _TS, 0.208, None, "claude-haiku-4-5", None, None, None, None, None, "alice")
+_ASKER_ID = "44444444-4444-4444-8444-444444444444"
+# 問答欄位序：qa_id, created_at, score, feedback, judge, status, note, verification, reviewed_at,
+# reviewer, 提問者 user_id（只拿來算代號，不會原樣回出去）。
+_QA_ROW = ("11111111-1111-4111-8111-111111111111", _TS, 0.208, None, "claude-haiku-4-5",
+           None, None, None, None, None, _ASKER_ID)
 _RR_ROW = ("33333333-3333-4333-8333-333333333333", "h" * 64, "a.pdf", "標題", "kgi",
            date(2026, 9, 1), 0.41, {"garbled_ratio": 0.05}, [2, 7], None, None, None, None, None)
 
@@ -100,7 +107,6 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(body["min_score"], review._FAITHFULNESS_MIN)
         item = body["items"][0]
         self.assertEqual(item["qa_id"], _QA_ROW[0])
-        self.assertEqual(item["conversation_id"], _QA_ROW[1])
         self.assertEqual(item["faithfulness_score"], 0.208)
         self.assertIsNone(item["report_id"])
         # 門檻與窗期要與監控頁那張卡同一套定義，兩邊的數字才對得起來。
@@ -119,7 +125,7 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertIn(count_sql.split("WHERE", 1)[1].strip(), page_sql)
 
     def test_feedback_filters_dislike_and_last_page_has_no_next(self):
-        session = self._use([1, [_QA_ROW[:5] + ("dislike", None) + _QA_ROW[7:]]])
+        session = self._use([1, [_QA_ROW[:3] + ("dislike", None) + _QA_ROW[5:]]])
         body = _authed().get("/api/review/queue?kind=feedback&days=7").json()
         self.assertEqual((body["total"], body["has_more"], body["next_offset"]), (1, False, None))
         self.assertIsNone(body["min_score"])
@@ -163,6 +169,32 @@ class ReviewQueueTests(unittest.TestCase):
         self._use([1, [row]])
         item = _authed().get("/api/review/queue?kind=extraction").json()["items"][0]
         self.assertEqual(item["review_reasons"], [])
+
+    def test_qa_items_carry_no_question_or_asker_username(self):
+        """佇列去內容化：問答項目不回提問原文、回答、帳號名稱與對話串，只回中繼資料與代號。"""
+        for kind in ("faithfulness", "feedback"):
+            session = self._use([1, [_QA_ROW]])
+            r = _authed().get(f"/api/review/queue?kind={kind}")
+            self.assertEqual(r.status_code, 200)
+            item = r.json()["items"][0]
+            for key in ("question", "answer", "asked_by", "conversation_id"):
+                self.assertNotIn(key, item, kind)
+            # 原始回應文字裡也不能藏著提問者的 user id（代號必須是不可逆的）。
+            self.assertNotIn(_ASKER_ID, r.text)
+            self.assertRegex(item["asker_code"], r"^[0-9a-f]{8}$")
+            # SQL 本身就不選原文：不是選了再丟掉。
+            page_sql = session.calls[1][0]
+            self.assertNotIn("question", page_sql)
+            self.assertNotIn("answer", page_sql)
+
+    def test_asker_code_is_stable_per_user_and_distinct_across_users(self):
+        other = "55555555-5555-4555-8555-555555555555"
+        rows = [_QA_ROW, _QA_ROW[:10] + (_ASKER_ID,), _QA_ROW[:10] + (other,)]
+        self._use([3, rows])
+        codes = [i["asker_code"] for i in _authed().get("/api/review/queue?kind=feedback").json()["items"]]
+        self.assertEqual(codes[0], codes[1])
+        self.assertNotEqual(codes[0], codes[2])
+        self.assertEqual(codes[0], review._asker_code(_ASKER_ID))
 
     def test_paging_bounds_are_validated(self):
         for qs in ("limit=0", "limit=101", "offset=-1", "days=0", "days=366"):
@@ -214,12 +246,12 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(session.commits, 0)
 
     def test_status_filter_is_applied_to_count_and_page(self):
-        session = self._use([1, [_QA_ROW[:7] + ("resolved", "查過", "passed", _TS, "root", None)]])
+        session = self._use([1, [_QA_ROW[:5] + ("resolved", "查過", "passed", _TS, "root", None)]])
         body = _authed().get("/api/review/queue?kind=faithfulness&status=resolved").json()
         self.assertEqual(body["items"][0]["review_status"], "resolved")
         self.assertEqual(body["items"][0]["verification"], "passed")
         self.assertEqual(body["items"][0]["reviewer"], "root")
-        self.assertIsNone(body["items"][0]["asked_by"])  # 共用帳號時期的舊提問
+        self.assertIsNone(body["items"][0]["asker_code"])  # 共用帳號時期的舊提問
         self.assertIn("COALESCE(rv.status, 'open') = :review_status", session.calls[0][0])
         self.assertIn("COALESCE(rv.status, 'open') = :review_status", session.calls[1][0])
 
@@ -240,6 +272,156 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertNotIn(":review_status", session.calls[0][0])
         self.assertNotIn(":review_status", session.calls[1][0])
         self.assertEqual(_authed().get("/api/review/queue?kind=feedback&status=invalid").status_code, 422)
+
+
+_QID = _QA_ROW[0]
+_QUESTION = "台積電明年目標價多少"
+_ANSWER = "依凱基 2026-09 報告，目標價 1,500 元 [1]"
+# 逐筆讀取的一列：question, answer, created_at, 是否低分, 是否倒讚
+_CONTENT_ROW = (_QUESTION, _ANSWER, _TS, True, False)
+
+
+class _FailingAuditSession(_Session):
+    """稽核 INSERT 拋例外：模擬稽核表寫不進去（觸發器、連線斷掉）。"""
+
+    async def execute(self, stmt, params=None):
+        if "admin_audit_log" in str(getattr(stmt, "text", stmt)):
+            self.calls.append(("audit", dict(params or {})))
+            raise RuntimeError("audit insert failed")
+        return await super().execute(stmt, params)
+
+
+class _FailingCommitSession(_Session):
+    async def commit(self):
+        raise RuntimeError("commit failed")
+
+
+class QaContentAccessTests(unittest.TestCase):
+    """POST /api/review/qa/{qa_id}/access：要 qa_content.read、只限佇列內、每次讀取同交易寫稽核。"""
+
+    def setUp(self):
+        auth._FAILS.clear()
+        self.store = FakeAccounts()
+        self.store.add_user("plain_admin", "plain-password", "admin")
+        self.store.add_user("qa_reviewer", "qa-password", "admin", scopes={"qa_content.read"})
+        self.store.add_user("alice", "alice-password", "user")
+        self._ctx = install(self.store)
+        self._ctx.__enter__()
+        self._orig = deps.SessionFactory
+
+    def tearDown(self):
+        deps.SessionFactory = self._orig
+        self._ctx.__exit__(None, None, None)
+
+    def _use(self, session: _Session) -> _Session:
+        deps.SessionFactory = lambda: session
+        return session
+
+    def _client(self, username: str, password: str, *, raise_server_exceptions: bool = True) -> TestClient:
+        c = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1",
+                       raise_server_exceptions=raise_server_exceptions)
+        r = c.post("/login", data={"username": username, "password": password})
+        assert r.status_code == 303, r.status_code
+        return c
+
+    def _reviewer(self, **kw) -> TestClient:
+        return self._client("qa_reviewer", "qa-password", **kw)
+
+    def test_requires_login_and_admin(self):
+        session = self._use(_Session([]))
+        anon = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
+        self.assertEqual(anon.post(f"/api/review/qa/{_QID}/access").status_code, 401)
+        r = self._client("alice", "alice-password").post(f"/api/review/qa/{_QID}/access")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(session.calls, [])
+
+    def test_admin_without_scope_gets_missing_scope_and_touches_nothing(self):
+        session = self._use(_Session([]))
+        r = self._client("plain_admin", "plain-password").post(f"/api/review/qa/{_QID}/access")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.json()["code"], "missing_scope")
+        self.assertIn("qa_content.read", r.json()["detail"])
+        self.assertEqual(session.calls, [])
+        self.assertEqual(session.commits, 0)
+
+    def test_reading_returns_only_this_qa_and_writes_exactly_one_audit(self):
+        from fake_accounts import _default_user_id
+
+        session = self._use(_Session([_CONTENT_ROW, None]))
+        r = self._reviewer().post(f"/api/review/qa/{_QID}/access")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {
+            "qa_id": _QID, "kinds": ["faithfulness"], "created_at": _TS.isoformat(),
+            "question": _QUESTION, "answer": _ANSWER,
+        })
+        self.assertEqual(r.headers["cache-control"], "no-store")
+        self.assertEqual(session.commits, 1)
+        audits = [(sql, params) for sql, params in session.calls if "admin_audit_log" in sql]
+        self.assertEqual(len(audits), 1)
+        _sql, params = audits[0]
+        self.assertEqual(params["action"], "qa_content.read")
+        self.assertEqual((params["ttype"], params["tid"]), ("qa", _QID))
+        self.assertEqual(params["actor"], _default_user_id("qa_reviewer"))
+        # detail 只有 qa_id 與 kinds，內容一個字都不進稽核。
+        self.assertEqual(json.loads(params["detail"]), {"qa_id": _QID, "kinds": ["faithfulness"]})
+        self.assertNotIn("台積電", params["detail"])
+        self.assertNotIn("目標價", params["detail"])
+
+    def test_access_uses_the_same_queue_conditions_and_fixed_window(self):
+        session = self._use(_Session([_CONTENT_ROW[:3] + (True, True), None]))
+        r = self._reviewer().post(f"/api/review/qa/{_QID}/access?days=365")
+        self.assertEqual(r.json()["kinds"], ["faithfulness", "feedback"])
+        sql, params = session.calls[0]
+        # 與佇列同一段條件字串：現行 judge、門檻、active／stopped、窗期；外加 id 相符。
+        self.assertIn(" ".join(review._FAITHFULNESS_COND.split()), sql)
+        self.assertIn(review._FEEDBACK_COND, sql)
+        self.assertIn("active AND stopped IS NOT TRUE", sql)
+        self.assertIn("id = :id", sql)
+        # 呼叫端不能放寬窗期：days 不是這支端點的參數，固定用佇列預設。
+        self.assertEqual(params["days"], review._DEFAULT_DAYS)
+        self.assertEqual(params["fmin"], review._FAITHFULNESS_MIN)
+        self.assertEqual(params["judge_model"], review._JUDGE_MODEL)
+        # 不選對話串：沒有 conversation_id 條件，也只取一列。
+        self.assertNotIn("conversation_id", sql)
+
+    def test_qa_not_in_queue_is_404_without_audit(self):
+        session = self._use(_Session([None]))
+        r = self._reviewer().post(f"/api/review/qa/{_QID}/access")
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.json()["code"], "not_found")
+        self.assertNotIn("question", r.text)
+        self.assertEqual(len(session.calls), 1)
+        self.assertEqual(session.commits, 0)
+
+    def test_invalid_id_is_rejected_before_db(self):
+        session = self._use(_Session([]))
+        self.assertEqual(self._reviewer().post("/api/review/qa/not-a-uuid/access").status_code, 422)
+        self.assertEqual(session.calls, [])
+
+    def test_get_is_not_allowed(self):
+        self._use(_Session([]))
+        self.assertEqual(self._reviewer().get(f"/api/review/qa/{_QID}/access").status_code, 405)
+
+    def test_audit_failure_returns_no_content(self):
+        session = self._use(_FailingAuditSession([_CONTENT_ROW]))
+        r = self._reviewer(raise_server_exceptions=False).post(f"/api/review/qa/{_QID}/access")
+        self.assertEqual(r.status_code, 500)
+        self.assertNotIn(_QUESTION, r.text)
+        self.assertNotIn(_ANSWER, r.text)
+        self.assertEqual(session.commits, 0)
+
+    def test_commit_failure_returns_no_content(self):
+        self._use(_FailingCommitSession([_CONTENT_ROW, None]))
+        r = self._reviewer(raise_server_exceptions=False).post(f"/api/review/qa/{_QID}/access")
+        self.assertEqual(r.status_code, 500)
+        self.assertNotIn(_QUESTION, r.text)
+        self.assertNotIn(_ANSWER, r.text)
+
+    def test_super_admin_has_the_scope(self):
+        self.store.add_user("root", "root-password", "admin", is_super=True)
+        self._use(_Session([_CONTENT_ROW, None]))
+        r = self._client("root", "root-password").post(f"/api/review/qa/{_QID}/access")
+        self.assertEqual(r.status_code, 200)
 
 
 if __name__ == "__main__":

@@ -195,3 +195,12 @@ unit = "report-mark-metrics.service"
 tier = "supporting"
 actions = ["status", "logs"]
 description = "硬體用量取樣（常駐）"
+
+[[services]]
+name = "load-observations"
+kind = "systemd"
+unit = "report-mark-load-observations.service"
+timer = "report-mark-load-observations.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "監控 spool 匯入 DB（每 5 分鐘）"

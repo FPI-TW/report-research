@@ -49,6 +49,7 @@ from web import (
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import account_security as account_security_routes  # noqa: E402
 from web.routers import admin as admin_routes  # noqa: E402
+from web.routers import admin_monitoring as admin_monitoring_routes  # noqa: E402
 from web.routers import admin_ops as admin_ops_routes  # noqa: E402
 from web.routers import admin_reports as admin_reports_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
@@ -360,6 +361,7 @@ app.include_router(review_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(admin_reports_routes.router)  # 研報隱藏／恢復（/api/admin/reports*）
 app.include_router(admin_ops_routes.router)  # /api/admin/ops/*：唯讀維運狀態，經 ops_agent 的 Unix socket
+app.include_router(admin_monitoring_routes.router)  # /api/admin/jobs、/api/admin/observations：監控投影（唯讀）
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

@@ -67,3 +67,14 @@ export function lastRunAt(s: OpsServiceStatus): string | null {
 export function isAgentUnavailable(err: unknown): boolean {
   return err instanceof ApiError && err.code === 'ops_agent_unavailable'
 }
+
+/** 秒數 → 「1 小時 5 分」「2 分 30 秒」「8 秒」。 */
+export function fmtDuration(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '—'
+  const s = Math.round(seconds)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (h > 0) return `${h} 小時 ${m} 分`
+  if (m > 0) return `${m} 分 ${s % 60} 秒`
+  return `${s} 秒`
+}

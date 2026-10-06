@@ -61,6 +61,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `signal_extract.py` | 訊號擷取 prompt 與正規化（LLM 只擷取數值與論點證據，Python 判評等方向、幣別、狀態） |
 | `brief.py` | 每日簡報素材、prompt、落庫 |
 | `visibility.py` | 研報隱藏／恢復（`report_visibility`）：使用者讀取路徑共用的可見性片段 `visible_report_sql(別名)`／`visible_report_id_sql(欄位)`（`NOT EXISTS`，可直接 AND 進任何 WHERE），以及管理端的 `list_reports`／`set_visibility`（與稽核同交易，呼叫端 commit）。`tests/test_visibility_guard.py` 以 AST 守門：檢索、閱讀、雷達、總覽、簡報、原檔各模組查語料表的函式或常數都要呼叫片段，否則列豁免並寫理由 |
+| `ops_monitoring.py` | 監控投影：`scripts/load_observations.py` 把收集器（`scripts/collect_resource_usage.py`）寫的本機 spool 冪等匯入 `service_observation`／`job_execution`（Python 端先驗證、DB 拒絕的列以 savepoint 逐列略過；沒看到結束的批次判 `lost`），呼叫端 commit。收集器不連 DB、告警不經 DB，這裡的表只是 projection |
 | `tagging.py` | 市場代碼（對齊 findb）、商品類型、期貨標的詞表、標註 prompt |
 | `filename.py` | 檔名解析：券商代碼、日期、行政文件判定 |
 | `db.py` | async engine、`SessionFactory`、`relax_statement_timeout`、pgvector 版本守門 |
@@ -73,7 +74,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `web/server.py` | 組合層：載環境檔、初始化 logging、auth middleware、lifespan、掛 router |
-| `web/routers/` | 16 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入〔含 TOTP 第二步〕、登出、`/api/me`）、`account_security`（`/api/me/*`：TOTP 自助設定與任何使用者都能用的權限提升）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理、刪除排程、TOTP 重設與稽核，限管理員）、`admin_reports`（研報查詢與隱藏／恢復，限管理員＋`reports.manage`）、`admin_ops`（`/api/admin/ops/*` 唯讀維運狀態，經 `web/ops_client.py` 問 `ops_agent/` 的 Unix socket；代理不可用回 503 `ops_agent_unavailable`）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
+| `web/routers/` | 17 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入〔含 TOTP 第二步〕、登出、`/api/me`）、`account_security`（`/api/me/*`：TOTP 自助設定與任何使用者都能用的權限提升）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理、刪除排程、TOTP 重設與稽核，限管理員）、`admin_reports`（研報查詢與隱藏／恢復，限管理員＋`reports.manage`）、`admin_ops`（`/api/admin/ops/*` 唯讀維運狀態，經 `web/ops_client.py` 問 `ops_agent/` 的 Unix socket；代理不可用回 503 `ops_agent_unavailable`）、`admin_monitoring`（`/api/admin/jobs`、`/api/admin/observations`：監控投影 `job_execution`／`service_observation` 的唯讀查詢，限管理員＋`ops.read`）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
 | `web/auth.py` | session cookie 的簽章與驗證（只帶 session id）、失敗追蹤、可信代理。帳號與 session 狀態不在這裡，在 `app/services/accounts.py` |
 | `web/authz.py` | `current_user`／`require_admin`／`require_scope`／`require_super`／`require_elevated`（FastAPI dependency）：唯一的授權判斷點；前端 route guard 只是顯示層 |

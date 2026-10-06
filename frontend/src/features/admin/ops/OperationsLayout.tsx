@@ -5,14 +5,14 @@ import { RequireScope } from '../RequireScope'
 import adminStyles from '../Admin.module.css'
 import styles from './Ops.module.css'
 
-// `soon`：API 尚未提供（L3／L4 的 jobs／incidents／observations、P7 的 restart／run-now），先放佔位頁。
+// `soon`：API 尚未提供（L4 的 incidents），先放佔位頁。排程工作與主機讀 DB 投影（/api/admin/jobs、observations）。
 const TABS = [
   { to: 'overview', label: '總覽' },
   { to: 'services', label: '服務' },
-  { to: 'jobs', label: '排程工作', soon: true },
+  { to: 'jobs', label: '排程工作' },
   { to: 'incidents', label: '事件', soon: true },
   { to: 'logs', label: '日誌' },
-  { to: 'host', label: '主機', soon: true },
+  { to: 'host', label: '主機' },
 ] as const
 
 /**
@@ -25,7 +25,7 @@ function Operations() {
       <div className={adminStyles.inner}>
         <AdminHeader
           title="維運"
-          subtitle="服務狀態與最近日誌（唯讀），經主機上的維運代理取得。重新啟動、立即執行等操作尚未提供。"
+          subtitle="服務狀態與最近日誌（唯讀）經主機上的維運代理取得；排程工作與主機資源來自監控紀錄（每 5 分鐘匯入）。重新啟動、立即執行等操作尚未提供。"
         />
         <nav className={styles.tabs} aria-label="維運子導覽">
           {TABS.map(t => (

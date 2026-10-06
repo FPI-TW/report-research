@@ -71,6 +71,10 @@ os.environ.pop("SYNC_ROUND_ID", None)
 # 批次用量記錄（scripts/_claude_cli.usage_log_path）：同理不得寫進部署目錄的 data/llm_usage.jsonl
 # （那是費用歸因的依據）。指到 os.devnull：寫得進去、什麼都不留；要驗內容的測試自己指到 tempfile。
 os.environ["LLM_USAGE_LOG"] = os.devnull
+# 監控 spool（scripts/collect_resource_usage.py 寫、scripts/load_observations.py 匯入；預設落點是 repo 根的
+# data/ops_spool/，而 repo 根就是部署目錄）：同理用賦值指到 os.devnull——不是目錄，收集器開不了 spool
+# （只停用觀測那一段）、loader 視為沒有東西可匯入。要驗 spool 的測試自己給 --spool-dir 或 tempfile。
+os.environ["OPS_SPOOL_DIR"] = os.devnull
 # 維運代理（app/config.py 的 OPS_AGENT_*）：同樣用賦值。這台機器就是生產主機，代理裝上之後預設 socket
 # 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
 os.environ["OPS_AGENT_ENVIRONMENT"] = "production"

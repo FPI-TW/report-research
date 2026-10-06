@@ -48,6 +48,7 @@ from web import (
 )
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import admin as admin_routes  # noqa: E402
+from web.routers import admin_reports as admin_reports_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
@@ -355,6 +356,7 @@ app.include_router(review_routes.router)
 
 # 管理後台（/api/admin/*：帳號管理與稽核）。與待複核同樣整組限管理員（router 層 require_admin）
 app.include_router(admin_routes.router)
+app.include_router(admin_reports_routes.router)  # 研報隱藏／恢復（/api/admin/reports*）
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

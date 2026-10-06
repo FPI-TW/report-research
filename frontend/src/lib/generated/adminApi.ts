@@ -3,6 +3,32 @@
 import { z } from 'zod'
 import { jsonBody, requestJSON } from '../api'
 
+export const AdminReportItemSchema = z.object({
+  report_id: z.string(),
+  file_hash: z.string(),
+  file_name: z.string(),
+  title: z.string().nullable().optional(),
+  source: z.string().nullable().optional(),
+  market: z.string().nullable().optional(),
+  report_date: z.string().nullable().optional(),
+  created_at: z.string().nullable().optional(),
+  hidden: z.boolean().optional(),
+  hidden_reason: z.string().nullable().optional(),
+  visibility_updated_by: z.string().nullable().optional(),
+  visibility_updated_at: z.string().nullable().optional(),
+})
+export type AdminReportItem = z.infer<typeof AdminReportItemSchema>
+
+export const AdminReportListResponseSchema = z.object({
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().nullable(),
+  items: z.array(AdminReportItemSchema),
+})
+export type AdminReportListResponse = z.infer<typeof AdminReportListResponseSchema>
+
 export const AuditChainResponseSchema = z.object({
   ok: z.boolean(),
   total: z.number().int(),
@@ -67,6 +93,21 @@ export const PrivilegesRequestSchema = z.object({
 })
 export type PrivilegesRequest = z.infer<typeof PrivilegesRequestSchema>
 
+export const ReportVisibilityRequestSchema = z.object({
+  hidden: z.boolean(),
+  reason: z.string().nullable().optional(),
+})
+export type ReportVisibilityRequest = z.infer<typeof ReportVisibilityRequestSchema>
+
+export const ReportVisibilityResponseSchema = z.object({
+  file_hash: z.string(),
+  hidden: z.boolean(),
+  reason: z.string().nullable().optional(),
+  updated_by: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+})
+export type ReportVisibilityResponse = z.infer<typeof ReportVisibilityResponseSchema>
+
 export const UpdateUserRequestSchema = z.object({
   role: z.enum(['admin', 'user']).nullable().optional(),
   enabled: z.boolean().nullable().optional(),
@@ -110,6 +151,10 @@ export const adminApi = {
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
+  /** GET /api/admin/reports — List Reports */
+  listReports: (query: { q?: string; hidden?: string; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
+  /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
+  setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/users — List Users */
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */

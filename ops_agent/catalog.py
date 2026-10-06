@@ -3,7 +3,7 @@
 代理只對 catalog 列出的服務動作；名稱不在 catalog 一律拒絕。格式：
 
     schema = 1
-    environment = "production"                      # production | development
+    environment = "production"                      # production | staging | development
     socket_path = "/run/report-mark-ops/agent.sock" # 必須等於該環境的固定路徑
 
     [agent]
@@ -30,7 +30,24 @@
     group = "web"                  # execution group；有寫入類 action 時必填
     flock_files = ["/abs/path"]    # 寫入類執行前以非阻塞 flock 試探的鎖檔（被持有＝already_running）
     pid_files = ["/abs/path"]      # 寫入類執行前檢查的 PID 檔（記的行程還活著＝already_running）
+    depends_on = ["postgres", "r2"]  # 這個服務要正常運作所依賴的節點（服務或外部依賴的 name）；可省略
     description = "..."
+
+    [[externals]]                  # 外部依賴：代理不查也不動它，只當依賴圖的節點（可省略整段）
+    name = "r2"                    # 與服務共用同一個命名空間（不可同名）
+    tier = "critical"
+    depends_on = []                # 外部依賴也可以依賴別的節點（例如對外入口依賴 cloudflared）
+    probe = "health"               # 可省略：以哪個 catalog 服務（systemd、有 status）的最後一次退出碼判斷它
+    ok_exit_codes = [0]            # probe 的退出碼 → 這個節點正常（預設 [0]）
+    degraded_exit_codes = []       # → 降級（還能用，但要處理）
+    down_exit_codes = [6]          # → 壞了；其他退出碼一律「判斷不出來」（可能被優先序更高的退出碼蓋住）
+    description = "..."
+
+**依賴圖（`depends_on`）**：catalog 是服務依賴關係的唯一真相來源，web 只經代理的 `list` 取得
+（`Service.public()`／`External.public()`），自己不另寫一份。載入期檢查：引用的節點必須存在、不得依賴自己、
+不得重複、不得成環（環會讓「上游壞掉 → 受影響的下游」算不完）。`probe` 必須是 catalog 裡有 `status` 的
+systemd 服務；外部依賴沒有 probe 時狀態一律是「未監控」。代理本身不解讀依賴圖，判讀在 web
+（`app/services/ops_topology.py`）。
 
 **寫入類 action（`restart`、`run`）的載入期規則**（代理執行前會再以 `ops_agent/actions.py` 硬擋一次）：
 - 只給 `kind = "systemd"`；容器一律唯讀。
@@ -42,8 +59,9 @@
 **交叉拒絕**（`validate_binding` 與 `_check_environment_names`）：
 - catalog 的 `socket_path` 必須是該 `environment` 的固定路徑；CLI 的 `--socket` 覆寫只允許 development
   （本機冒煙用臨時 socket），而且不能是其他環境的固定路徑。production 一律只綁自己的固定路徑。
-- development catalog 只能列 `report-mark-dev-*` 的 unit 與 `report-mark-dev*` 的容器；production catalog
-  不得列它們。於是 dev 代理即使被改了 catalog，也沒有辦法指到生產服務。
+- development catalog 只能列 `report-mark-dev-*` 的 unit 與 `report-mark-dev*` 的容器；production 與 staging
+  catalog 不得列它們。於是 dev 代理即使被改了 catalog，也沒有辦法指到生產服務。
+- `--socket` 覆寫只給 development：staging（EC2）與 production 一樣只綁自己的固定路徑。
 
 未知鍵一律拒絕載入（不是忽略）：拼錯 `actoins` 時默默套預設值，比起不了更危險。
 """
@@ -82,13 +100,17 @@ _CONTAINER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 _DEV_UNIT_PREFIX = "report-mark-dev-"
 _DEV_CONTAINER_PREFIX = "report-mark-dev"
 
-_TOP_KEYS = frozenset({"schema", "environment", "socket_path", "agent", "services"})
+_TOP_KEYS = frozenset({"schema", "environment", "socket_path", "agent", "services", "externals"})
 _AGENT_KEYS = frozenset({
     "allowed_users", "allowed_uids", "request_timeout", "command_timeout", "max_response_bytes",
     "max_log_lines", "max_log_age_hours", "max_concurrent", "restart_delay", "systemctl", "journalctl", "docker",
 })
 _SERVICE_KEYS = frozenset({"name", "kind", "unit", "timer", "container", "tier", "actions", "group", "flock_files",
-                           "pid_files", "description"})
+                           "pid_files", "depends_on", "description"})
+_EXTERNAL_KEYS = frozenset({"name", "tier", "depends_on", "probe", "ok_exit_codes", "degraded_exit_codes",
+                            "down_exit_codes", "description"})
+MAX_DEPENDS_ON = 16
+MAX_EXTERNALS = 32
 _LOCK_PATH = re.compile(r"/[A-Za-z0-9._@/-]{1,255}")
 MAX_LOCK_FILES = 8
 
@@ -110,6 +132,7 @@ class Service:
     group: str | None = None
     flock_files: tuple[str, ...] = ()
     pid_files: tuple[str, ...] = ()
+    depends_on: tuple[str, ...] = ()
 
     @property
     def target(self) -> str:
@@ -119,7 +142,27 @@ class Service:
         # 鎖檔路徑刻意不回給 web：那是主機的檔案配置，管理頁用不到。
         return {"name": self.name, "kind": self.kind, "tier": self.tier, "target": self.target,
                 "timer": self.timer, "actions": list(self.actions), "group": self.group,
-                "description": self.description}
+                "description": self.description, "depends_on": list(self.depends_on)}
+
+
+@dataclass(frozen=True)
+class External:
+    """外部依賴（R2、DeepSeek、NAS、對外入口……）：只是依賴圖的節點，代理不對它執行任何指令。"""
+
+    name: str
+    tier: str
+    depends_on: tuple[str, ...] = ()
+    probe: str | None = None
+    ok_exit_codes: tuple[int, ...] = (0,)
+    degraded_exit_codes: tuple[int, ...] = ()
+    down_exit_codes: tuple[int, ...] = ()
+    description: str = ""
+
+    def public(self) -> dict:
+        return {"name": self.name, "kind": "external", "tier": self.tier, "depends_on": list(self.depends_on),
+                "probe": self.probe, "ok_exit_codes": list(self.ok_exit_codes),
+                "degraded_exit_codes": list(self.degraded_exit_codes),
+                "down_exit_codes": list(self.down_exit_codes), "description": self.description}
 
 
 @dataclass(frozen=True)
@@ -143,6 +186,7 @@ class Catalog:
     socket_path: str
     agent: AgentConfig
     services: tuple[Service, ...] = field(default_factory=tuple)
+    externals: tuple[External, ...] = field(default_factory=tuple)
 
     def get(self, name: str) -> Service | None:
         for svc in self.services:
@@ -254,9 +298,8 @@ def _parse_service(i: int, raw) -> Service:
         raise CatalogError(f"{where}：group 必須是小寫英數與 -（1–40 字元、英文字母開頭）：{group!r}")
     flock_files = _lock_files(where, raw, "flock_files", group)
     pid_files = _lock_files(where, raw, "pid_files", group)
-    description = raw.get("description", "")
-    if not isinstance(description, str) or len(description) > 200:
-        raise CatalogError(f"{where}：description 必須是 ≤200 字元的字串")
+    description = _description(where, raw)
+    depends_on = _depends_on(where, raw)
     unit, timer, container = raw.get("unit"), raw.get("timer"), raw.get("container")
     if kind == "systemd":
         if container is not None:
@@ -273,7 +316,125 @@ def _parse_service(i: int, raw) -> Service:
     _check_write_actions(where, kind, unit, actions, group)
     return Service(name=name, kind=kind, tier=tier, actions=tuple(actions), unit=unit, timer=timer,
                    container=container, description=description, group=group, flock_files=flock_files,
-                   pid_files=pid_files)
+                   pid_files=pid_files, depends_on=depends_on)
+
+
+def _description(where: str, raw: dict) -> str:
+    description = raw.get("description", "")
+    if not isinstance(description, str) or len(description) > 200:
+        raise CatalogError(f"{where}：description 必須是 ≤200 字元的字串")
+    return description
+
+
+def _depends_on(where: str, raw: dict) -> tuple[str, ...]:
+    """只檢查形狀；引用是否存在、有沒有環，等全部節點都讀完才在 `_check_dependencies` 判斷。"""
+    value = raw.get("depends_on", [])
+    if not isinstance(value, list) or len(value) > MAX_DEPENDS_ON:
+        raise CatalogError(f"{where}：depends_on 必須是 0–{MAX_DEPENDS_ON} 個節點名稱的清單")
+    for dep in value:
+        if not isinstance(dep, str) or not _NAME.fullmatch(dep):
+            raise CatalogError(f"{where}：depends_on 的名稱不合法：{dep!r}")
+    if len(set(value)) != len(value):
+        raise CatalogError(f"{where}：depends_on 有重複")
+    return tuple(value)
+
+
+def _exit_codes(where: str, raw: dict, key: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    value = raw.get(key)
+    if value is None:
+        return default
+    if (not isinstance(value, list) or len(value) > 16
+            or not all(isinstance(c, int) and not isinstance(c, bool) and 0 <= c <= 255 for c in value)):
+        raise CatalogError(f"{where}：{key} 必須是 0–255 的整數清單（最多 16 個）")
+    if len(set(value)) != len(value):
+        raise CatalogError(f"{where}：{key} 有重複")
+    return tuple(value)
+
+
+def _parse_external(i: int, raw) -> External:
+    where = f"externals[{i}]"
+    if not isinstance(raw, dict):
+        raise CatalogError(f"{where} 必須是表格")
+    extra = set(raw) - _EXTERNAL_KEYS
+    if extra:
+        raise CatalogError(f"{where} 有不認得的鍵：{sorted(extra)}")
+    name = raw.get("name")
+    if not isinstance(name, str) or not _NAME.fullmatch(name):
+        raise CatalogError(f"{where}.name 必須是小寫英數與 -（1–40 字元、英文字母開頭）：{name!r}")
+    where = f"外部依賴 {name}"
+    tier = raw.get("tier")
+    if tier not in TIERS:
+        raise CatalogError(f"{where}：tier 必須是 {'／'.join(TIERS)}")
+    probe = raw.get("probe")
+    if probe is not None and (not isinstance(probe, str) or not _NAME.fullmatch(probe)):
+        raise CatalogError(f"{where}：probe 必須是 catalog 服務名稱：{probe!r}")
+    code_keys = ("ok_exit_codes", "degraded_exit_codes", "down_exit_codes")
+    if probe is None and any(k in raw for k in code_keys):
+        raise CatalogError(f"{where}：沒有 probe 就不能寫 {'／'.join(code_keys)}")
+    ok = _exit_codes(where, raw, "ok_exit_codes", (0,))
+    degraded = _exit_codes(where, raw, "degraded_exit_codes", ())
+    down = _exit_codes(where, raw, "down_exit_codes", ())
+    if probe is not None and not down and not degraded:
+        raise CatalogError(f"{where}：有 probe 就至少要寫 down_exit_codes 或 degraded_exit_codes")
+    seen = [*ok, *degraded, *down]
+    if len(set(seen)) != len(seen):
+        raise CatalogError(f"{where}：同一個退出碼不能同時屬於 ok／degraded／down")
+    return External(name=name, tier=tier, depends_on=_depends_on(where, raw), probe=probe, ok_exit_codes=ok,
+                    degraded_exit_codes=degraded, down_exit_codes=down, description=_description(where, raw))
+
+
+def _check_dependencies(services: tuple[Service, ...], externals: tuple[External, ...]) -> None:
+    """依賴圖：引用存在、不自我依賴、無環；外部依賴的 probe 必須是有 status 的 systemd 服務。"""
+    nodes: dict[str, tuple[str, ...]] = {}
+    for node in (*services, *externals):
+        nodes[node.name] = node.depends_on
+    for name, deps in nodes.items():
+        for dep in deps:
+            if dep == name:
+                raise CatalogError(f"節點 {name} 不得依賴自己")
+            if dep not in nodes:
+                raise CatalogError(f"節點 {name} 的 depends_on 指向不存在的節點 {dep!r}")
+    by_service = {s.name: s for s in services}
+    for ext in externals:
+        if ext.probe is None:
+            continue
+        svc = by_service.get(ext.probe)
+        if svc is None:
+            raise CatalogError(f"外部依賴 {ext.name} 的 probe 指向不存在的服務 {ext.probe!r}")
+        if svc.kind != "systemd" or "status" not in svc.actions:
+            raise CatalogError(f"外部依賴 {ext.name} 的 probe {ext.probe} 必須是有 status 的 systemd 服務")
+    cycle = find_cycle(nodes)
+    if cycle:
+        raise CatalogError(f"依賴圖有環：{' → '.join(cycle)}")
+
+
+def find_cycle(graph: dict[str, tuple[str, ...]]) -> list[str] | None:
+    """有環時回傳一條環（頭尾同名，例如 [a, b, a]）；無環回 None。迭代式 DFS（不吃遞迴深度）。"""
+    white, grey, black = 0, 1, 2
+    color = dict.fromkeys(graph, white)
+    for start in graph:
+        if color[start] != white:
+            continue
+        stack: list[tuple[str, int]] = [(start, 0)]
+        path: list[str] = [start]
+        color[start] = grey
+        while stack:
+            node, idx = stack[-1]
+            deps = graph.get(node, ())
+            if idx < len(deps):
+                stack[-1] = (node, idx + 1)
+                dep = deps[idx]
+                if color.get(dep, black) == grey:
+                    return path[path.index(dep):] + [dep]
+                if color.get(dep, black) == white:
+                    color[dep] = grey
+                    stack.append((dep, 0))
+                    path.append(dep)
+            else:
+                color[node] = black
+                stack.pop()
+                path.pop()
+    return None
 
 
 def _lock_files(where: str, raw: dict, key: str, group: str | None) -> tuple[str, ...]:
@@ -323,8 +484,8 @@ def _check_environment_names(environment: str, services: tuple[Service, ...]) ->
                 raise CatalogError(
                     f"development catalog 只能列 {_DEV_UNIT_PREFIX}* unit 與 {_DEV_CONTAINER_PREFIX}* 容器："
                     f"服務 {svc.name} 指向 {target}")
-            if environment == "production" and is_dev:
-                raise CatalogError(f"production catalog 不得列開發用的 {target}（服務 {svc.name}）")
+            if environment != "development" and is_dev:
+                raise CatalogError(f"{environment} catalog 不得列開發用的 {target}（服務 {svc.name}）")
 
 
 def parse_catalog(data: dict, *, resolve_user=None) -> Catalog:
@@ -355,7 +516,17 @@ def parse_catalog(data: dict, *, resolve_user=None) -> Catalog:
     if len(set(targets)) != len(targets):
         raise CatalogError("同一個 unit／timer／容器不可出現兩次")
     _check_environment_names(environment, services)
-    return Catalog(environment=environment, socket_path=socket_path, agent=agent, services=services)
+    raw_externals = data.get("externals", [])
+    if not isinstance(raw_externals, list) or len(raw_externals) > MAX_EXTERNALS:
+        raise CatalogError(f"[[externals]] 必須是 0–{MAX_EXTERNALS} 個表格")
+    externals = tuple(_parse_external(i, e) for i, e in enumerate(raw_externals))
+    all_names = names + [e.name for e in externals]
+    if len(set(all_names)) != len(all_names):
+        raise CatalogError(
+            f"節點名稱重複（服務與外部依賴共用命名空間）：{sorted({n for n in all_names if all_names.count(n) > 1})}")
+    _check_dependencies(services, externals)
+    return Catalog(environment=environment, socket_path=socket_path, agent=agent, services=services,
+                   externals=externals)
 
 
 def validate_binding(catalog: Catalog, socket_path: str) -> None:
@@ -365,7 +536,7 @@ def validate_binding(catalog: Catalog, socket_path: str) -> None:
     for env, canonical in CANONICAL_SOCKETS.items():
         if env != catalog.environment and path == canonical:
             raise CatalogError(f"拒絕以 {env} 的 socket（{canonical}）載入 {catalog.environment} catalog")
-    if catalog.environment == "production" and path != own:
-        raise CatalogError(f"production 代理只能綁 {own}（不接受 --socket 覆寫）")
+    if catalog.environment != "development" and path != own:
+        raise CatalogError(f"{catalog.environment} 代理只能綁 {own}（不接受 --socket 覆寫）")
     if not path.startswith("/"):
         raise CatalogError("socket 路徑必須是絕對路徑")

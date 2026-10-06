@@ -1,0 +1,184 @@
+# report-mark 維運代理的 Service Catalog（EC2 staging：research.tingfong.com）。格式與驗證規則見 ops_agent/catalog.py。
+# 部署：複製到 EC2 的 /opt/report-mark-ops/services.staging.toml（root 擁有、0644），代理 unit 是
+# deploy/systemd/report-mark-ops-agent-staging.service，步驟見 docs/production_resilience.md「維運代理」的 staging 一節。
+# web 那端設 OPS_AGENT_ENVIRONMENT=staging（socket 固定是 /run/report-mark-ops-staging/agent.sock）。
+#
+# staging 與辦公室主機的差別（README「非辦公室主機」、deploy/aws/README.md）：
+# - DB 是 RDS（不是容器）→ 外部依賴 rds，沒有 postgres 容器；主機上沒有任何 Docker workload，所以這裡沒有
+#   container 服務，代理 unit 也不加 docker 群組。
+# - 沒有 NAS：新研報走 SYNC_SOURCE=r2-inbox；不裝 report-mark-backup（RDS 自動備份）、report-mark-linebot-*、
+#   report-mark-metrics、report-mark-backfill。
+# - 對外是 Cloudflare 橘雲 A record → EIP:443 → apt 安裝的 nginx（systemd 的 nginx.service）→ web；沒有 cloudflared。
+# - 這裡只列 2026-10-02 起已安裝的 unit（web、nginx 與 8 組 timer）。Admin v1 的 unit（schema-check、
+#   load-observations、host-health……）裝到 staging 時再補，免得未安裝的 unit 在依賴圖上一片 not_found。
+#
+# 權限（Admin v1 決策）：restart 只開放 web；run 只給既有白名單裡 staging 也有、而且沒有副作用疑慮的
+# freshness、audit（兩者都只讀 DB、寫 data/ 的結果檔）。刻意唯讀：
+# - sync：staging 與生產共用 DeepSeek 金鑰，手動多跑一輪就是多一份費用；它的鎖檔也還沒在 staging 驗證過。
+# - r2-reconcile：staging 與生產共用同一個 R2 bucket，對帳的 orphan 判讀以 staging 的 DB 為準，結果容易誤讀。
+# 改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules 的 report-mark-ops-staging（tests/test_ops_polkit.py 對帳）。
+#
+# 依賴圖的方向與判讀同 services.prod.toml 開頭的說明。
+
+schema = 1
+environment = "staging"
+socket_path = "/run/report-mark-ops-staging/agent.sock"
+
+[agent]
+# staging 的 web 以 ubuntu 執行（report-mark-web.service 經 deploy/install_units.sh --user ubuntu 安裝）。
+# 寫 uid 而不是使用者名稱：這份 catalog 也要能在辦公室主機與 CI 上 --check（那裡沒有 ubuntu 這個使用者）。
+# Ubuntu 雲端映像的 ubuntu 是 1000；安裝前在 EC2 以 `id -u ubuntu` 核對，不同就改這裡。
+allowed_uids = [1000]
+request_timeout = 15
+command_timeout = 8
+max_response_bytes = 262144
+max_log_lines = 1000
+max_log_age_hours = 168
+max_concurrent = 4
+restart_delay = 1.5
+systemctl = "/usr/bin/systemctl"
+journalctl = "/usr/bin/journalctl"
+docker = "/usr/bin/docker"
+
+# ── critical ─────────────────────────────────────────────────────────────
+
+[[services]]
+name = "web"
+kind = "systemd"
+unit = "report-mark-web.service"
+tier = "critical"
+actions = ["status", "logs", "restart"]
+group = "web"
+depends_on = ["rds", "r2", "deepseek"]
+description = "Web（uvicorn 127.0.0.1:8097）"
+
+# nginx 是 apt 安裝、systemd 管的（不是 compose 容器）。只讀：FORBIDDEN_WRITE_TARGET 擋 nginx 的寫入類。
+[[services]]
+name = "nginx"
+kind = "systemd"
+unit = "nginx.service"
+tier = "critical"
+actions = ["status", "logs"]
+depends_on = ["web"]
+description = "來源站 nginx（443，Cloudflare Origin CA；deploy/nginx-origin.conf）"
+
+# ── important ────────────────────────────────────────────────────────────
+
+[[services]]
+name = "sync"
+kind = "systemd"
+unit = "report-mark-sync.service"
+timer = "report-mark-sync.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["rds", "r2", "deepseek"]
+description = "R2 inbox 增量同步匯入（每 3 小時；唯讀）"
+
+[[services]]
+name = "health"
+kind = "systemd"
+unit = "report-mark-health.service"
+timer = "report-mark-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "P4 應用層健康探針（每 2 分鐘）"
+
+[[services]]
+name = "incident"
+kind = "systemd"
+unit = "report-mark-incident.service"
+timer = "report-mark-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["slack"]
+description = "P5 事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "edge-health"
+kind = "systemd"
+unit = "report-mark-edge-health.service"
+timer = "report-mark-edge-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "對外邊緣健康探針（每 2 分鐘）"
+
+[[services]]
+name = "edge-incident"
+kind = "systemd"
+unit = "report-mark-edge-incident.service"
+timer = "report-mark-edge-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["slack"]
+description = "對外邊緣事件偵測與通知（每 2 分鐘）"
+
+# ── supporting ───────────────────────────────────────────────────────────
+
+[[services]]
+name = "freshness"
+kind = "systemd"
+unit = "report-mark-freshness.service"
+timer = "report-mark-freshness.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "freshness"
+depends_on = ["rds"]
+description = "批次停更偵測（08:30）"
+
+[[services]]
+name = "audit"
+kind = "systemd"
+unit = "report-mark-audit.service"
+timer = "report-mark-audit.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "audit"
+depends_on = ["rds"]
+description = "資料完整性稽核 make db-audit（08:45）"
+
+[[services]]
+name = "r2-reconcile"
+kind = "systemd"
+unit = "report-mark-r2-reconcile.service"
+timer = "report-mark-r2-reconcile.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+depends_on = ["rds", "r2"]
+description = "R2 物件儲存對帳（週一 07:00；bucket 與生產共用，唯讀）"
+
+# ── 外部依賴 ─────────────────────────────────────────────────────────────
+# 退出碼對照同 services.prod.toml。RDS 沒有專屬探針：health 的 1（/healthz 非 200）分不出是 web 還是 DB 壞了，
+# 所以不拿它當 rds 的 probe——寧可「未監控」，也不要把 web 的故障算到 RDS 頭上。
+
+[[externals]]
+name = "rds"
+tier = "critical"
+description = "AWS RDS PostgreSQL 16（report-research-staging-postgres，TLS verify-full；未監控）"
+
+[[externals]]
+name = "r2"
+tier = "critical"
+probe = "health"
+down_exit_codes = [6]
+description = "Cloudflare R2 物件儲存（與生產共用 bucket；/healthz/storage）"
+
+[[externals]]
+name = "deepseek"
+tier = "critical"
+probe = "health"
+degraded_exit_codes = [7]
+down_exit_codes = [8]
+description = "DeepSeek API（與生產共用金鑰；/healthz/llm）"
+
+[[externals]]
+name = "slack"
+tier = "important"
+description = "Slack 告警 webhook（/etc/report-mark/alert.env；未監控）"
+
+[[externals]]
+name = "public-edge"
+tier = "critical"
+depends_on = ["nginx"]
+probe = "edge-health"
+down_exit_codes = [1]
+description = "對外網址 research.tingfong.com（Cloudflare 橘雲 → EIP:443 → nginx）"

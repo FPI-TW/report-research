@@ -1787,7 +1787,8 @@ sudo systemctl disable --now report-mark-schema-check.timer   # 狀態檔停在�
 
 管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經
 Unix socket 問一支單機代理（`ops_agent/`，只用標準庫、系統的 `/usr/bin/python3`）。代理只認
-Service Catalog（`deploy/ops/services.prod.toml`；開發環境 `deploy/ops/services.dev.toml`）列出的服務與
+Service Catalog（`deploy/ops/services.prod.toml`；EC2 staging `deploy/ops/services.staging.toml`、開發環境
+`deploy/ops/services.dev.toml`）列出的服務與
 action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（v1 只有 Web）與 `run`（既有 oneshot 立即執行一次：
 sync、backup、freshness、audit、r2-reconcile）。沒有任意 shell、任意 unit、stop、timer enable/disable；
 PostgreSQL、nginx、cloudflared 永遠唯讀（catalog 載入期與代理執行前兩層都擋，PG 的 restart 尤其禁止）。
@@ -1810,7 +1811,8 @@ P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維
   裡面無法提權。systemd 以 polkit 的 `org.freedesktop.systemd1.manage-units` 檢查呼叫端並附上 unit 與
   verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與五個 oneshot
   的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
-  `report-mark-dev-smoke.service` 的 start；這兩個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
+  `report-mark-dev-smoke.service` 的 start，`report-mark-ops-staging`（EC2）限定在 Web 的 restart 與
+freshness、audit 的 start；這三個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
   （JS 規則；本機 Ubuntu 24.04 是 124）。
 
 **威脅模型**：代理的使用者在 `docker` 群組（讀容器狀態與日誌需要 docker socket），而 docker 群組等同
@@ -1861,6 +1863,36 @@ sudo systemctl restart report-mark-web.service   # 讓 web 拿到 report-mark-op
 run、409 與輪詢而不碰任何真東西；polkit 規則同一個檔已涵蓋 `report-mark-ops-dev`。
 本機冒煙（不必安裝）：`python3 -m ops_agent --catalog deploy/ops/services.dev.toml --socket /tmp/<短路徑>/a.sock`
 （只有 development 允許覆寫 socket；AF_UNIX 路徑上限約 107 字元）。
+
+**EC2 staging**（尚未安裝；要啟用時照下面做，`deploy/ops/services.staging.toml` 開頭有 staging 與辦公室主機的差異）：
+使用者 `report-mark-ops-staging`、catalog `services.staging.toml`、unit `report-mark-ops-agent-staging.service`、
+socket `/run/report-mark-ops-staging/agent.sock`；staging 的 web 設 `OPS_AGENT_ENVIRONMENT=staging`（repo 根 `.env`）。
+staging 主機沒有容器（RDS、apt 的 nginx），所以這個使用者**不加 docker 群組**、unit 也不給。權限比生產窄：
+restart 只有 web，run 只有 freshness、audit；sync（共用 DeepSeek 金鑰）與 r2-reconcile（共用 R2 bucket）唯讀。
+polkit 規則同一個檔（`report-mark-ops-staging` 那組）；EC2 上不建 `report-mark-ops`，生產那組在那裡不會命中。
+catalog 以 uid 寫 `allowed_uids = [1000]`（ubuntu），先以 `id -u ubuntu` 核對。
+
+```bash
+# 在 EC2 的部署 checkout（/home/ubuntu/report-mark）repo 根執行
+sudo useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin report-mark-ops-staging
+sudo usermod -aG systemd-journal report-mark-ops-staging      # 不加 docker
+sudo usermod -aG report-mark-ops-staging ubuntu
+sudo install -d -o root -g root -m 0755 /opt/report-mark-ops /opt/report-mark-ops/ops_agent
+sudo install -o root -g root -m 0644 ops_agent/*.py /opt/report-mark-ops/ops_agent/
+sudo install -o root -g root -m 0644 deploy/ops/services.staging.toml /opt/report-mark-ops/
+(cd /opt/report-mark-ops && /usr/bin/python3 -B -E -s -m ops_agent --catalog services.staging.toml --check)
+sudo install -o root -g root -m 0644 deploy/polkit/10-report-mark-ops.rules /etc/polkit-1/rules.d/
+sudo deploy/install_units.sh --user ubuntu --root /home/ubuntu/report-mark report-mark-ops-agent-staging.service
+sudo systemctl enable --now report-mark-ops-agent-staging.service
+sudo systemctl restart report-mark-web.service   # .env 設好 OPS_AGENT_ENVIRONMENT=staging，並讓 web 拿到群組
+```
+
+staging 的 catalog 只列已安裝的 unit（web、nginx 與 8 組 timer）；之後在 staging 裝了新的 unit（例如 Admin v1 的
+schema-check、host-health），要把它加進 `services.staging.toml`（含 `depends_on`）並重做 install＋`--check`＋重啟代理。
+
+**依賴圖**：catalog 的 `depends_on` 與 `[[externals]]`（格式見 `ops_agent/catalog.py`）是服務依賴關係的唯一真相來源，
+`--check` 會擋下指向不存在的節點、依賴自己與環。改了依賴（或新增服務時忘了寫）都照步驟 3 重新安裝 catalog、
+`--check`、重啟代理；管理頁的依賴圖（`GET /api/admin/ops/dependencies`）在代理重啟後才看得到新的關係。
 
 ### 停用
 

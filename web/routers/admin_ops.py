@@ -13,6 +13,10 @@ web 不碰 systemctl／journalctl／docker，只經 `web/ops_client.py` 問維�
   systemd」。前端輪詢 `GET /api/admin/ops/services/{name}`，`systemd.invocation_id` 與回應的
   `previous_invocation_id` 不同時就是新的一輪。
 - 每次嘗試（成功、被代理拒絕、代理不可用）都以 `accounts.record_ops_action` 寫 `admin_audit_log`。
+
+依賴圖（`GET /api/admin/ops/dependencies`，`ops.read`）：問代理一次 `list`，依賴關係來自 catalog 的
+`depends_on` 與 `externals`（唯一真相來源，web 不另寫一份），判讀與「上游壞掉 → 受影響的下游」在
+`app/services/ops_topology.py`。
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, ValidationError
 
+from app.services import ops_topology
 from app.services.accounts import User
 from web import authz, deps, ops_client
 from web.errors import AppError
@@ -148,6 +153,75 @@ class OpsLogsResponse(BaseModel):
     checked_at: str
 
 
+# ── 依賴圖 ───────────────────────────────────────────────────────────────
+
+Health = Literal["ok", "degraded", "down", "unknown"]
+NodeKind = Literal["systemd", "container", "external"]
+
+
+class _TopologyItem(OpsServiceStatus):
+    depends_on: list[str] = []
+
+
+class _TopologyExternal(BaseModel):
+    name: str
+    kind: Literal["external"] = "external"
+    tier: Tier
+    depends_on: list[str] = []
+    probe: str | None = None
+    ok_exit_codes: list[int] = [0]
+    degraded_exit_codes: list[int] = []
+    down_exit_codes: list[int] = []
+    description: str = ""
+
+
+class _TopologySource(BaseModel):
+    """代理 `list` 的結果裡依賴圖要用的部分（舊版代理沒有 depends_on／externals 時就是沒有邊的圖）。"""
+
+    environment: str
+    host: str
+    checked_at: str
+    items: list[_TopologyItem]
+    externals: list[_TopologyExternal] = []
+
+
+class OpsDependencyNode(BaseModel):
+    name: str
+    kind: NodeKind
+    tier: Tier
+    target: str | None = None
+    description: str = ""
+    summary: Summary | None = None
+    health: Health
+    health_reason: str
+    probe: str | None = None
+    observed_at: str | None = None
+    depends_on: list[str]
+    dependents: list[str]
+    layer: int
+    affected: bool
+    impacted_by: list[str]
+
+
+class OpsDependencyEdge(BaseModel):
+    """`dependent` 依賴 `dependency`。`broken`：dependency 自己 down，或它受上游影響。"""
+
+    dependent: str
+    dependency: str
+    broken: bool
+
+
+class OpsDependencyGraph(BaseModel):
+    environment: str
+    host: str
+    checked_at: str
+    nodes: list[OpsDependencyNode]
+    edges: list[OpsDependencyEdge]
+    down: list[str]
+    root_causes: list[str]
+    affected: list[str]
+
+
 # ── 輔助函式一律放在所有 @router.* 裝飾器之上（夾在中間會讓端點回 422）──────────
 
 _ERRORS = {
@@ -256,3 +330,10 @@ async def restart_ops_service(name: ServiceName, user: User = Depends(authz.curr
 async def run_ops_service(name: ServiceName, user: User = Depends(authz.current_user)):
     """立即執行一次 oneshot（等同 timer 觸發，不收參數）。202＝job 已排進 systemd；同 group 在跑回 409。"""
     return await _operate("run", name, user)
+
+
+@router.get("/api/admin/ops/dependencies", response_model=OpsDependencyGraph, dependencies=[_OPS_READ])
+async def get_ops_dependencies():
+    """服務依賴圖：節點（服務＋外部依賴）、邊與「上游壞掉 → 受影響的下游」。依賴關係只來自 Service Catalog。"""
+    source = await _ask(_TopologySource, "list")
+    return ops_topology.build_topology(source.model_dump())

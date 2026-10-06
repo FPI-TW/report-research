@@ -260,6 +260,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 | `report-mark-backfill.timer` | 01:00 | E1d 抽取回填，跑完手動 disable |
 | `report-mark-r2-reconcile.timer` | 週一 07:00 | R2 對帳（唯讀） |
 | `report-mark-metrics.service` | 常駐 | 硬體用量取樣 → `data/metrics/`（`make metrics`） |
+| `report-mark-ops-agent.service` | 常駐 | 維運代理（唯讀）：`/api/admin/ops/*` 經 `/run/report-mark-ops/agent.sock` 查 `deploy/ops/services.prod.toml` 列出的服務狀態與日誌。專用使用者、程式碼裝在 `/opt/report-mark-ops/`，安裝步驟與威脅模型見 `docs/production_resilience.md`「維運代理」；開發環境是 `report-mark-ops-agent-dev.service` |
 | `report-mark-alert@.service` | `OnFailure` 觸發 | journal ＋ `data/unit_failures.log` ＋ webhook |
 
 非辦公室主機（EC2 staging：RDS PostgreSQL、共用 production 的 R2 bucket）：

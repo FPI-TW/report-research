@@ -1520,3 +1520,55 @@ cat data/.incidents/web.state 2>/dev/null || echo "(無進行中事件)"
 sudo systemctl disable --now report-mark-incident.timer
 rm -f data/.incidents/*.state          # 可選：清掉殘留的事件狀態
 ```
+
+## 維運代理（report-mark-ops-agent，唯讀）
+
+管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經
+Unix socket 問一支單機代理（`ops_agent/`，只用標準庫、系統的 `/usr/bin/python3`）。代理只認
+Service Catalog（`deploy/ops/services.prod.toml`；開發環境 `deploy/ops/services.dev.toml`）列出的服務與
+action，本版只有 `status`、`logs`；沒有任意 shell、任意 unit、stop、timer enable/disable（restart／run-now
+是之後的 P7）。P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維運區塊回 503
+`ops_agent_unavailable`，web 其他功能照常。
+
+**威脅模型**：代理的使用者在 `docker` 群組（讀容器狀態與日誌需要 docker socket），而 docker 群組等同
+root。所以程式碼與 catalog 一律裝在 root 擁有、其他人不可寫的 `/opt/report-mark-ops/`，**不從 repo 執行**
+（repo 屬於 web 的使用者 kashionz；從那裡執行等於 web 被攻破就能改代理、拿到 root）。socket 只給
+`report-mark-ops` 群組（0660，目錄 0750），代理再以 `SO_PEERCRED` 比對 catalog 的 `allowed_users`。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) 專用使用者：讀 journal 用 systemd-journal、讀容器用 docker（見上面的威脅模型）
+sudo useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin report-mark-ops
+sudo usermod -aG systemd-journal,docker report-mark-ops
+# 2) web 的使用者加入 socket 群組（下一步之後要重啟 web 才拿得到新群組）
+sudo usermod -aG report-mark-ops kashionz
+# 3) 程式碼與 catalog 裝到 root 擁有的目錄（在部署 checkout 的 repo 根執行；每次更新 ops_agent/ 或 catalog 都重做）
+sudo install -d -o root -g root -m 0755 /opt/report-mark-ops /opt/report-mark-ops/ops_agent
+sudo install -o root -g root -m 0644 ops_agent/*.py /opt/report-mark-ops/ops_agent/
+sudo install -o root -g root -m 0644 deploy/ops/services.prod.toml /opt/report-mark-ops/
+(cd /opt/report-mark-ops && /usr/bin/python3 -B -E -s -m ops_agent --catalog services.prod.toml --check)
+# 4) unit（不經 install_units.sh：裡面沒有要代換的家目錄）
+sudo install -m 0644 deploy/systemd/report-mark-ops-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-ops-agent.service
+sudo systemctl restart report-mark-web.service   # 讓 web 拿到 report-mark-ops 群組
+```
+
+驗收：`systemctl show report-mark-ops-agent -p ActiveState,SubState,NRestarts`、`ls -l /run/report-mark-ops/`
+（`srw-rw---- report-mark-ops report-mark-ops agent.sock`），再以管理員登入打 `/api/admin/ops/services`。
+503 的 `detail` 會說是哪一種：找不到 socket＝代理沒起來、沒有權限＝web 還沒拿到群組（重啟 web）、
+`這個使用者不能連線`＝catalog 的 `allowed_users` 沒有 web 的使用者。
+
+開發環境同一支程式：使用者 `report-mark-ops-dev`（同樣的群組設定，開發用 web 的使用者加入
+`report-mark-ops-dev`）、catalog `services.dev.toml`、unit `report-mark-ops-agent-dev.service`、socket
+`/run/report-mark-ops-dev/agent.sock`；開發用 web 設 `OPS_AGENT_ENVIRONMENT=development`。代理以 dev socket
+載入 prod catalog（或反之）會拒絕啟動，dev catalog 也只能列 `report-mark-dev-*` 與 `report-mark-dev*` 容器。
+本機冒煙（不必安裝）：`python3 -m ops_agent --catalog deploy/ops/services.dev.toml --socket /tmp/<短路徑>/a.sock`
+（只有 development 允許覆寫 socket；AF_UNIX 路徑上限約 107 字元）。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-ops-agent.service   # 管理頁的維運區塊改回 503，其他不受影響
+```

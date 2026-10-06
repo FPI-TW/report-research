@@ -10,7 +10,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 type Handler = (url: URL, init?: RequestInit) => { status?: number; body: unknown }
 
-function mount(handler: Handler, scale: EvalSource | null = null) {
+function mount(handler: Handler, scale: EvalSource | null = null, canReadContent = false) {
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     const { status = 200, body } = handler(new URL(input, 'http://x'), init)
     return new Response(JSON.stringify(body), { status })
@@ -19,7 +19,7 @@ function mount(handler: Handler, scale: EvalSource | null = null) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter><ReviewQueuePanel scale={scale} /></MemoryRouter>
+      <MemoryRouter><ReviewQueuePanel scale={scale} canReadContent={canReadContent} /></MemoryRouter>
     </QueryClientProvider>,
   )
   return fetchMock
@@ -272,4 +272,54 @@ test('新量尺標示只在忠實度分頁：切到倒讚就不印', async () =>
   expect(await screen.findByText(/新量尺/)).toBeInTheDocument()
   fireEvent.click(screen.getByRole('tab', { name: '倒讚' }))
   await waitFor(() => expect(screen.queryByText(/新量尺/)).not.toBeInTheDocument())
+})
+
+test('沒有 qa_content.read：問答列沒有「查看內容」，也不會打讀取端點', async () => {
+  const fetchMock = mount(() => ({ body: page('faithfulness', [qa(1)]) }))
+  await screen.findByText('問答 qa1')
+  expect(screen.queryByRole('button', { name: '查看內容' })).not.toBeInTheDocument()
+  expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/access'))).toBe(false)
+})
+
+test('有 qa_content.read：按下才 POST 取這一筆，收起即丟掉、再看要再讀一次', async () => {
+  const fetchMock = mount((url, init) => {
+    if (url.pathname === '/api/review/qa/qa1/access') {
+      expect(init?.method).toBe('POST')
+      return { body: { qa_id: 'qa1', kinds: ['faithfulness'], created_at: null, question: '台積電目標價？', answer: '1,500 元 [1]' } }
+    }
+    return { body: page('faithfulness', [qa(1)]) }
+  }, null, true)
+  await screen.findByText('問答 qa1')
+  // 載入佇列時不預先讀內容
+  expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/access'))).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: '查看內容' }))
+  expect(await screen.findByText('台積電目標價？')).toBeInTheDocument()
+  expect(screen.getByText('1,500 元 [1]')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '收起' }))
+  expect(screen.queryByText('台積電目標價？')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '查看內容' }))
+  await screen.findByText('台積電目標價？')
+  expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/access'))).toHaveLength(2)
+})
+
+test('讀取端點回 404（已不在佇列）時說出來，不顯示任何內容', async () => {
+  mount(url => (
+    url.pathname.endsWith('/access')
+      ? { status: 404, body: { detail: '待複核項目不存在', code: 'not_found' } }
+      : { body: page('feedback', [qa(3, { feedback: 'dislike' })]) }
+  ), null, true)
+  fireEvent.click(await screen.findByRole('tab', { name: '倒讚' }))
+  fireEvent.click(await screen.findByRole('button', { name: '查看內容' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('已不在待複核佇列')
+})
+
+test('抽取品質列不會有「查看內容」', async () => {
+  mount(url => ({
+    body: url.searchParams.get('kind') === 'extraction'
+      ? page('extraction', [{ report_id: 'r9', file_hash: 'a'.repeat(64), file_name: 'z.pdf', review_reasons: [] }])
+      : page('faithfulness', []),
+  }), null, true)
+  fireEvent.click(await screen.findByRole('tab', { name: '抽取品質' }))
+  await screen.findByRole('link', { name: 'z.pdf' })
+  expect(screen.queryByRole('button', { name: '查看內容' })).not.toBeInTheDocument()
 })

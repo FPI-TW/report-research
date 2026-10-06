@@ -9,6 +9,7 @@ const ACTION_LABELS: Record<string, string> = {
   'user.reset_password': '重設密碼',
   'user.force_logout': '強制登出',
   'review.update': '處理待複核',
+  'qa_content.read': '查看問答內容',
 }
 
 const ROLE_LABELS: Record<string, string> = { admin: '管理員', user: '一般使用者' }
@@ -48,6 +49,10 @@ export function auditSummary(entry: AuditEntry): string {
     if (str(d.kind)) parts.push(REVIEW_KIND[str(d.kind)!] ?? str(d.kind)!)
     if (str(d.status)) parts.push(REVIEW_STATUS[str(d.status)!] ?? str(d.status)!)
     if (str(d.verification)) parts.push(VERIFICATION[str(d.verification)!] ?? str(d.verification)!)
+  }
+  if (entry.action === 'qa_content.read' && Array.isArray(d.kinds)) {
+    const kinds = d.kinds.map(k => (typeof k === 'string' ? REVIEW_KIND[k] ?? k : '')).filter(Boolean)
+    if (kinds.length) parts.push(kinds.join('、'))
   }
   if (!who && entry.target_id && entry.action !== 'review.update') parts.unshift(`${entry.target_type} ${entry.target_id}`)
   const via = str(d.via)

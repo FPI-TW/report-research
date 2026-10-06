@@ -65,3 +65,16 @@ export const reviewStateSchema = z.object({
   updated_at: z.string(),
   reviewer: z.string().nullish(),
 })
+
+/**
+ * 逐筆讀取的一筆問答原文（`POST /api/review/qa/{qa_id}/access`，要 `qa_content.read`）。
+ * 只有這一筆，不含對話串；每次讀取後端都寫一列稽核。
+ */
+export const qaContentSchema = z.object({
+  qa_id: z.string(),
+  kinds: z.array(reviewKindSchema),
+  created_at: z.string().nullish(),
+  question: z.string(),
+  answer: z.string().nullish(),
+})
+export type QaContent = z.infer<typeof qaContentSchema>

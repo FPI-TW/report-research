@@ -21,3 +21,8 @@ export function useMe() {
 export function useIsAdmin(): boolean {
   return useMe().data?.role === 'admin'
 }
+
+/** 目前身分是否擁有某個 scope（只是顯示層：例如要不要露出「查看內容」按鈕；擋人的是後端 require_scope）。 */
+export function useHasScope(scope: string): boolean {
+  return useMe().data?.scopes?.includes(scope) ?? false
+}

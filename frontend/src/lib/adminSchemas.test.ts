@@ -6,6 +6,10 @@ test('me：管理員與免登入開發模式（id 為 null）都解析得了；�
   expect(meSchema.parse({ id: 'u1', username: 'root', role: 'admin' }).role).toBe('admin')
   expect(meSchema.parse({ id: null, username: 'dev', role: 'admin' }).id).toBeNull()
   expect(() => meSchema.parse({ id: 'u1', username: 'x', role: 'superuser' })).toThrow()
+  // scopes 不被 zod 丟掉（「查看內容」靠它決定顯示）；舊後端沒有這鍵時是 undefined
+  expect(meSchema.parse({ id: 'u1', username: 'qa', role: 'admin', scopes: ['qa_content.read'] }).scopes)
+    .toEqual(['qa_content.read'])
+  expect(meSchema.parse({ id: 'u1', username: 'root', role: 'admin' }).scopes).toBeUndefined()
 })
 
 test('帳號清單：時間欄位可為 null 或缺鍵', () => {

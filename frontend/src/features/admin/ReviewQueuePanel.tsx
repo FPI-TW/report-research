@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
+import { ApiError, requestJSON } from '../../lib/api'
 import { displayTitle } from '../../lib/displayTitle'
-import type { ReviewItem, ReviewKind, ReviewStatus, ReviewVerification } from '../../lib/reviewSchemas'
+import {
+  qaContentSchema,
+  type QaContent, type ReviewItem, type ReviewKind, type ReviewStatus, type ReviewVerification,
+} from '../../lib/reviewSchemas'
 import { isNewDeepSeekScale, newScaleText } from '../monitor/judgeScale'
 import type { EvalSource } from '../monitor/progressSchema'
 import { reasonText } from './reviewReasons'
@@ -15,6 +19,10 @@ import styles from './ReviewQueue.module.css'
  * 連筆數都沒有出口。這張卡把三者的個體列出來：研報連到閱讀頁；問答**刻意不顯示原文**
  * （後端佇列不回提問、回答與提問者帳號），只列中繼資料與提問者代號（`asker_code`，同一人
  * 同一代號、看不出是誰），也不連到對話串（那只有擁有者打得開）。
+ *
+ * 有 `qa_content.read` 的人（`canReadContent`，由 `/api/me` 的 scopes 判斷，只是顯示層）每筆問答
+ * 多一個「查看內容」：按下才 POST `/api/review/qa/{qa_id}/access` 取這一筆的提問與回答。每次查看
+ * 後端都寫稽核，所以內容只放在該列的元件狀態（不進 query 快取），收起就丟掉、再看就再讀一次。
  *
  * 人工處理狀態、註記與驗證結果另存，每列帶最後處理人（`reviewer`）。共用帳號時期的舊資料
  * 兩者都是 null：提問者標「共用帳號」，處理人不顯示。
@@ -75,13 +83,59 @@ function ReviewedBy({ item }: { item: ReviewItem }) {
   return <span className={styles.who}>{`處理人 ${item.reviewer}（${fmtDay(item.reviewed_at)}）`}</span>
 }
 
+type ContentState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'shown'; content: QaContent }
+  | { status: 'error'; message: string }
+
+function contentError(err: unknown): string {
+  if (err instanceof ApiError && err.status === 404) return '這筆已不在待複核佇列（或已超過 30 天），無法查看內容'
+  if (err instanceof ApiError && err.code === 'missing_scope') return '沒有查看問答內容的權限'
+  return '讀取失敗，請重試'
+}
+
+/** 「查看內容」：逐筆讀取一筆問答原文。每按一次就是一次有稽核的讀取。 */
+function QaContentView({ qaId }: { qaId: string }) {
+  const [state, setState] = useState<ContentState>({ status: 'idle' })
+  const load = () => {
+    setState({ status: 'loading' })
+    requestJSON(`/api/review/qa/${encodeURIComponent(qaId)}/access`, qaContentSchema, { method: 'POST', cache: 'no-store' })
+      .then(content => setState({ status: 'shown', content }))
+      .catch(err => setState({ status: 'error', message: contentError(err) }))
+  }
+  if (state.status === 'shown') {
+    return (
+      <div className={styles.rvContent}>
+        <div className={styles.rvContentHead}>
+          <span>提問與回答（本次查看已記入稽核）</span>
+          <button type="button" className={styles.rvRetry} onClick={() => setState({ status: 'idle' })}>收起</button>
+        </div>
+        <div className={styles.rvContentLabel}>提問</div>
+        <p className={styles.rvContentText}>{state.content.question}</p>
+        <div className={styles.rvContentLabel}>回答</div>
+        <p className={styles.rvContentText}>{state.content.answer || '（沒有回答）'}</p>
+      </div>
+    )
+  }
+  return (
+    <div className={styles.rvContentBar}>
+      <button type="button" className={styles.rvRetry} onClick={load} disabled={state.status === 'loading'}
+        title="每次查看都會留下稽核紀錄">
+        {state.status === 'loading' ? '讀取中…' : '查看內容'}
+      </button>
+      {state.status === 'error' && <span role="alert">{state.message}</span>}
+    </div>
+  )
+}
+
 /** 問答列的標題：沒有原文可顯示，以 qa_id 前 8 碼辨識（與稽核紀錄的 target_id 對得上）。 */
 function qaLabel(item: ReviewItem): string {
   return `問答 ${(item.qa_id ?? '').slice(0, 8) || '—'}`
 }
 
-function QaRow({ item, kind, save, disabled }: {
-  item: ReviewItem; kind: ReviewKind; save: ReviewSave; disabled: boolean
+function QaRow({ item, kind, save, disabled, canReadContent }: {
+  item: ReviewItem; kind: ReviewKind; save: ReviewSave; disabled: boolean; canReadContent: boolean
 }) {
   return (
     <li className={styles.rvRow}>
@@ -98,6 +152,7 @@ function QaRow({ item, kind, save, disabled }: {
           <ReviewedBy item={item} />
         </span>
       </div>
+      {canReadContent && item.qa_id && <QaContentView qaId={item.qa_id} />}
       <ReviewEditor item={item} id={item.qa_id ?? ''} save={save} disabled={disabled} />
     </li>
   )
@@ -132,7 +187,9 @@ function NewScaleNote({ scale }: { scale: EvalSource }) {
   )
 }
 
-export function ReviewQueuePanel({ scale = null }: { scale?: EvalSource | null } = {}) {
+export function ReviewQueuePanel({ scale = null, canReadContent = false }: {
+  scale?: EvalSource | null; canReadContent?: boolean
+} = {}) {
   const [kind, setKind] = useState<ReviewKind>('faithfulness')
   const [status, setStatus] = useState<ReviewStatus | 'all'>('open')
   const q = useReviewQueue(kind, status)
@@ -177,7 +234,8 @@ export function ReviewQueuePanel({ scale = null }: { scale?: EvalSource | null }
               {q.items.map(item =>
                 kind === 'extraction'
                   ? <ExtractionRow key={`${item.report_id}-${item.reviewed_at}`} item={item} save={q.save} disabled={q.isSaving} />
-                  : <QaRow key={`${item.qa_id}-${item.reviewed_at}`} item={item} kind={kind} save={q.save} disabled={q.isSaving} />,
+                  : <QaRow key={`${item.qa_id}-${item.reviewed_at}`} item={item} kind={kind} save={q.save} disabled={q.isSaving}
+                      canReadContent={canReadContent} />,
               )}
             </ul>
             {q.hasMore && (

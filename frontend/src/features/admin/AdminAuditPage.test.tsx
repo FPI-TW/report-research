@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import AdminAuditPage from './AdminAuditPage'
+import { actionLabel, auditSummary } from './auditLabels'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -48,4 +49,11 @@ test('一般使用者：無權限頁，不打稽核 API', async () => {
   const fetchMock = mount('user')
   expect(await screen.findByRole('heading', { name: '需要管理員權限' })).toBeInTheDocument()
   expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/api/admin'))).toBe(false)
+})
+
+test('查看問答內容的稽核：中文標籤＋對象 qa id＋佇列種類（detail 本來就沒有內容可顯示）', () => {
+  const entry = { id: 9, actor_user_id: 'me', actor_username: 'qa', action: 'qa_content.read', target_type: 'qa',
+    target_id: 'q-1', detail: { qa_id: 'q-1', kinds: ['faithfulness', 'feedback'] }, created_at: null }
+  expect(actionLabel(entry.action)).toBe('查看問答內容')
+  expect(auditSummary(entry)).toBe('qa q-1・忠實度低分、倒讚')
 })

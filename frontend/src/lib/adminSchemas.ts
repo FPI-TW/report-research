@@ -14,6 +14,9 @@ export const meSchema = z.object({
   id: z.string().nullable(),
   username: z.string(),
   role: roleSchema,
+  // 實際生效的 scope（後端 accounts.effective_scopes）。只拿來決定顯示；舊後端沒有這鍵時視為沒有。
+  is_super: z.boolean().optional(),
+  scopes: z.array(z.string()).optional(),
 })
 export type Me = z.infer<typeof meSchema>
 

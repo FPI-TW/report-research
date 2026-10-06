@@ -46,6 +46,22 @@ auth 白名單裡，但對外等於不存在。消費端是 `scripts/check_web_h
 402／401 時問答每題失敗而 `/healthz` 照樣綠。回應只有 `{"llm": state}`，**不回任何金額**（金額只進
 日誌）。狀態、門檻、快取、402 閂鎖與審查 M15 的 `_unused` 規則都在 `app/services/llm_health.py`；
 消費端是探針（只認 503，`low` 為退出碼 7、其餘為 8）。
+
+## `/api/status`：給一般使用者的粗粒度系統狀態（需登入）
+
+主平台的小燈號用。**任何登入使用者可讀**（不在免登入白名單、不限管理員），所以回應只有
+`{"status": "ok"|"degraded"|"unknown", "message": 一句中文}`，刻意不含服務清單、主機名、環境、
+錯誤細節——那些只在 `/api/admin/ops/*`（管理員＋`ops.read`）。判斷順序：
+
+1. DB 探測（與 `/healthz` 共用同一份 5 秒快取）失敗 → `degraded`。
+2. 問維運代理的 `list`（逾時壓到 `_STATUS_AGENT_TIMEOUT`）：代理不可用、拒絕或格式不符 → `unknown`
+   （fail-open：回 200，不是錯誤；細節只進日誌）。
+3. 只看 `tier = critical` 的服務：任一 `failed`／`not_found`／`idle`（核心服務都是常駐的，停著就是壞了，
+   例如 Docker 重啟後停在 Exited 的 nginx）→ `degraded`；否則任一 `unknown` → `unknown`；
+   其餘（`running`／`transitioning`）→ `ok`。important／supporting 層不影響使用者看到的燈號。
+
+代理那一段的結論以 `web.ttl_cache` 快取 `_STATUS_TTL` 秒（每個使用者的每一頁都會打，不能每次都問代理；
+conftest 每題前後 `reset_all()`）。狀態碼一律 200：這是資訊，不是探活。
 """
 import asyncio
 import logging
@@ -59,7 +75,8 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.services import llm_health
 from app.services.object_storage import get_object_storage
-from web import deps, dev_mode
+from web import deps, dev_mode, ops_client
+from web.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +99,19 @@ _STORAGE_FAIL_TTL = 60.0
 _STORAGE_FAILS_TO_DEGRADE = 2
 _STORAGE_WAIT = 4.0
 _STORAGE_INITIAL = _StorageState("unknown", 0, 0.0)
+
+# /api/status：代理那一段的結論快取（key 固定）；代理逾時壓短，別讓主平台的小燈號等 20 秒。
+_STATUS_TTL = 30.0
+_STATUS_AGENT_TIMEOUT = 3.0
+_STATUS_CACHE = TTLCache(ttl=_STATUS_TTL, max_entries=1, name="api_status_ops")
+_STATUS_MESSAGES = {
+    "ok": "系統運作正常",
+    "degraded": "部分核心服務異常，檢索或問答可能暫時受影響",
+    "unknown": "暫時無法取得完整的系統狀態",
+}
+_DB_DEGRADED_MESSAGE = "資料庫連線異常，檢索或問答可能暫時無法使用"
+# 核心服務停著（idle）也算壞：catalog 的 critical 層都是常駐服務。
+_CRITICAL_BAD = frozenset({"failed", "not_found", "idle"})
 _storage: _StorageState = _STORAGE_INITIAL
 _storage_task: asyncio.Task | None = None
 
@@ -99,6 +129,43 @@ async def _probe_db() -> bool:
         # 細節只進日誌,不進回應——這是對外免認證端點
         logger.warning("healthz DB 探測失敗", exc_info=True)
         return False
+
+
+async def _db_ok() -> bool:
+    """DB 探測結果（`_TTL` 秒快取）；`/healthz` 與 `/api/status` 共用。"""
+    global _cache
+    now = time.monotonic()
+    ts, ok = _cache
+    if now - ts >= _TTL:
+        ok = await _probe_db()
+        _cache = (now, ok)
+    return ok
+
+
+async def _critical_services_state() -> str:
+    """問維運代理、只看 critical 層，回 ok／degraded／unknown。永不拋例外（fail-open）。"""
+    cached = _STATUS_CACHE.get("critical")
+    if cached is not None:
+        return cached
+    state = "unknown"
+    try:
+        client = ops_client.default_client()
+        client.timeout = min(client.timeout, _STATUS_AGENT_TIMEOUT)
+        result = await client.request("list")
+        summaries = [
+            item.get("summary") for item in result.get("items", [])
+            if isinstance(item, dict) and item.get("tier") == "critical"
+        ]
+        if any(s in _CRITICAL_BAD for s in summaries):
+            state = "degraded"
+        elif summaries and all(s in ("running", "transitioning") for s in summaries):
+            state = "ok"
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # 代理不可用、拒絕、格式不符：都只是「不知道」，細節只進日誌
+        logger.info("/api/status 取不到維運代理狀態：%s", exc)
+    _STATUS_CACHE.put("critical", state)
+    return state
 
 
 async def _refresh_storage() -> None:
@@ -141,13 +208,7 @@ async def _storage_state() -> str:
 @router.get("/healthz")
 async def healthz() -> JSONResponse:
     """存活探測。健康 200 `{"status":"ok"}`；DB 不可用 503 `{"status":"degraded"}`。"""
-    global _cache
-    now = time.monotonic()
-    ts, ok = _cache
-    if now - ts >= _TTL:
-        ok = await _probe_db()
-        _cache = (now, ok)
-    if ok:
+    if await _db_ok():
         return JSONResponse({"status": "ok"})
     return JSONResponse({"status": "degraded"}, status_code=503)
 
@@ -180,3 +241,14 @@ async def healthz_llm(request: Request) -> JSONResponse:
         currency=settings.llm_budget_currency, floor=settings.llm_balance_floor,
     )
     return JSONResponse({"llm": state}, status_code=status)
+
+
+@router.get("/api/status")
+async def system_status() -> JSONResponse:
+    """一般使用者看的粗粒度系統狀態（需登入）。只回 `{status, message}`；規則見模組 docstring。"""
+    if not await _db_ok():
+        status, message = "degraded", _DB_DEGRADED_MESSAGE
+    else:
+        status = await _critical_services_state()
+        message = _STATUS_MESSAGES[status]
+    return JSONResponse({"status": status, "message": message}, headers={"Cache-Control": "no-store"})

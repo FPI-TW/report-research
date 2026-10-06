@@ -113,7 +113,7 @@ class CatalogFileTests(unittest.TestCase):
                      "report-mark-r2-reconcile.service", "report-mark-health.service",
                      "report-mark-incident.service", "report-mark-edge-health.service"):
             self.assertIn(unit, targets)
-        for container in ("report-mark-postgres", "deploy-nginx-1", "deploy-cloudflared-1"):
+        for container in ("report-mark-postgres", "deploy-nginx-1", "deploy-cloudflared-1", "report-mark-clamav"):
             self.assertIn(container, targets)
 
     def test_prod_catalog_units_exist_in_deploy_dir(self):

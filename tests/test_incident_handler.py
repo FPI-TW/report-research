@@ -2702,5 +2702,401 @@ class TimerCadenceTrustWindowContractTests(unittest.TestCase):
         )
 
 
+
+# ── 事件投影的 spool（附加功能；告警語意不得因它改變）──────────────────────────
+#
+# 以下三組只新增、不改動上面任何一條既有測試。既有測試在 conftest 的 `OPS_SPOOL_DIR=/dev/null` 之下跑
+# （spool 整段略過），也就是「沒有這個功能」時的行為；這裡再證明兩件事：
+#   1. spool 開著的時候，每一次已落地的狀態轉換恰好多一行紀錄（含 journal 片段與大小上限）
+#   2. spool 壞掉（不是目錄、唯讀、磁碟滿、journalctl 卡住）時，stdout、退出碼、狀態檔與 webhook
+#      呼叫次數都與「沒有這個功能」逐項相同
+
+
+def _install_fake_journalctl(h: "_Harness", body: str = "", sleep: float = 0, size: int = 0) -> Path:
+    """假 journalctl：記下參數、輸出固定內容（或 `size` 位元組的序號行），可選擇先睡。"""
+    log = h.root / "journalctl.args"
+    content = h.root / "journal.content"
+    if size:
+        lines, n = [], 0
+        while sum(len(x) + 1 for x in lines) < size:
+            lines.append(f"2026-10-06T10:00:00+08:00 host probe[1]: line {n:06d}")
+            n += 1
+        body = "\n".join(lines) + "\n"
+    content.write_text(body, encoding="utf-8")
+    jc = h.bin / "journalctl"
+    jc.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{log}"\n'
+        + (f"sleep {sleep}\n" if sleep else "")
+        + f'cat "{content}"\n',
+        encoding="utf-8",
+    )
+    jc.chmod(0o755)
+    return log
+
+
+def _spool_lines(spool: Path) -> list[dict]:
+    out: list[dict] = []
+    for f in sorted(spool.glob("incidents-*.jsonl")):
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            if ln.strip():
+                out.append(json.loads(ln))
+    return out
+
+
+class SpoolTests(unittest.TestCase):
+    """spool 開著：每次已落地的轉換恰好一行，欄位足以重建事件。"""
+
+    def setUp(self):
+        self.h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(self.h.close)
+        self.spool = self.h.root / "spool"
+        self.jlog = _install_fake_journalctl(self.h, "2026-10-06T10:00:00+08:00 host web[1]: boom\n")
+
+    def _run(self, **env):
+        env.setdefault("INCIDENT_SPOOL_DIR", str(self.spool))
+        return self.h.run(**env)
+
+    def test_firing_writes_one_line_with_a_pre_window_journal_excerpt(self):
+        self.h.set_probe(1)
+        p = self._run()
+        self.assertEqual(last_emit(p.stdout)["action"], "firing")
+        lines = _spool_lines(self.spool)
+        self.assertEqual(len(lines), 1, lines)
+        rec = lines[0]
+        first = self.h.state["first_seen"]
+        self.assertEqual(rec["v"], 1)
+        self.assertEqual(rec["type"], "incident_event")
+        self.assertEqual(rec["action"], "FIRING")
+        self.assertEqual(rec["severity"], "CRITICAL")
+        self.assertEqual(rec["component"], "web")
+        self.assertEqual(rec["kind"], "service")
+        self.assertEqual(rec["reason"], "probe_exit_1")
+        self.assertEqual(rec["status"], "web_incident")
+        self.assertTrue(rec["notified"])
+        self.assertTrue(rec["incident_id"].endswith(f":web:{first}"), rec["incident_id"])
+        self.assertEqual(rec["event_id"].rsplit(":", 2)[0], rec["incident_id"])
+        self.assertEqual(rec["probe_unit"], "report-mark-health.service")
+        # journal 片段：只擷取探針 unit、視窗是「當下往前 10 分鐘」，檔案落在 spool 的 journal/ 底下
+        self.assertTrue(rec["journal_file"].startswith("journal/"))
+        self.assertEqual((self.spool / rec["journal_file"]).read_text(encoding="utf-8"),
+                         "2026-10-06T10:00:00+08:00 host web[1]: boom\n")
+        self.assertFalse(rec["journal_truncated"])
+        self.assertEqual(rec["journal_units"], "report-mark-health.service")
+        args = self.jlog.read_text(encoding="utf-8")
+        self.assertIn("-u report-mark-health.service", args)
+        since = int(re.search(r"--since @(\d+)", args).group(1))
+        until = int(re.search(r"--until @(\d+)", args).group(1))
+        self.assertEqual(until - since, 600)
+
+    def test_lifecycle_writes_exactly_one_line_per_landed_transition(self):
+        self.h.set_probe(1)
+        self._run()                                       # FIRING
+        for _ in range(3):
+            self.h.set_probe(1)
+            self.assertEqual(last_emit(self._run().stdout)["action"], "suppress")
+        self.h.set_probe(1)
+        self.assertEqual(last_emit(self._run(INCIDENT_REMINDER_SECONDS="0").stdout)["action"], "reminder")
+        self.h.set_probe(0, result="success")
+        self.assertEqual(last_emit(self._run().stdout)["action"], "resolved")
+        self.h.set_probe(0, result="success")
+        self.assertEqual(last_emit(self._run().stdout)["action"], "noop")
+        recs = _spool_lines(self.spool)
+        self.assertEqual([r["action"] for r in recs], ["FIRING", "REMINDER", "RESOLVED"])
+        self.assertEqual(len({r["incident_id"] for r in recs}), 1, "同一次事件的轉換必須共用 incident_id")
+        self.assertEqual(len({r["event_id"] for r in recs}), 3)
+        resolved = recs[-1]
+        self.assertEqual(resolved["severity"], "RESOLVED")
+        self.assertEqual(resolved["incident_severity"], "CRITICAL")
+        self.assertIsNone(recs[1]["journal_file"], "提醒不附片段")
+        self.assertIsNotNone(resolved["journal_file"], "RESOLVED 附開場後那一段")
+        # RESOLVED 的視窗從開場起算（不是從當下往前）
+        first = int(recs[0]["incident_id"].rsplit(":", 1)[1])
+        sinces = [int(m) for m in re.findall(r"--since @(\d+)", self.jlog.read_text(encoding="utf-8"))]
+        self.assertEqual(sinces[-1], first)
+
+    def test_escalation_is_recorded_once(self):
+        self.h.set_probe(7)
+        self._run()
+        self.h.set_probe(8)
+        self.assertEqual(last_emit(self._run().stdout)["action"], "escalated")
+        recs = _spool_lines(self.spool)
+        self.assertEqual([(r["action"], r["severity"]) for r in recs],
+                         [("FIRING", "WARNING"), ("ESCALATED", "CRITICAL")])
+
+    def test_monitor_blind_is_its_own_kind(self):
+        self.h.set_timer(timer_enabled="disabled")
+        self._run()
+        recs = _spool_lines(self.spool)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["component"], "monitor")
+        self.assertEqual(recs[0]["kind"], "monitor_blind")
+        self.assertEqual(recs[0]["reason"], "timer_disabled")
+
+    def test_undelivered_firing_is_recorded_then_the_delivered_retry_once_more(self):
+        self.h.set_probe(1)
+        self._run(FAKE_CURL_CODE="500")
+        self.h.set_probe(1)
+        self._run(FAKE_CURL_CODE="500")                  # 仍沒送到：狀態不變，不記
+        self.h.set_probe(1)
+        self._run()                                       # 送到了：opened_sent 前進，記一筆
+        recs = _spool_lines(self.spool)
+        self.assertEqual([(r["action"], r["notified"]) for r in recs], [("FIRING", False), ("FIRING", True)])
+        self.assertEqual(len({r["incident_id"] for r in recs}), 1)
+
+    def test_failed_reminder_and_failed_resolved_are_not_recorded(self):
+        self.h.set_probe(1)
+        self._run()
+        self.h.set_probe(1)
+        self._run(INCIDENT_REMINDER_SECONDS="0", FAKE_CURL_CODE="500")
+        self.h.set_probe(0, result="success")
+        self._run(FAKE_CURL_CODE="500")
+        self.assertEqual([r["action"] for r in _spool_lines(self.spool)], ["FIRING"])
+        self.assertEqual(self.h.state["state"], "FIRING", "RESOLVED 沒送到，事件仍開著")
+
+    def test_journal_excerpt_is_capped_and_keeps_the_newest_end_for_firing(self):
+        _install_fake_journalctl(self.h, size=20000)
+        self.h.set_probe(1)
+        self._run(INCIDENT_JOURNAL_MAX_BYTES="1000")
+        rec = _spool_lines(self.spool)[0]
+        data = (self.spool / rec["journal_file"]).read_bytes()
+        self.assertEqual(len(data), 1000)
+        self.assertEqual(rec["journal_bytes"], 1000)
+        self.assertTrue(rec["journal_truncated"])
+        full = (self.h.root / "journal.content").read_bytes()
+        self.assertTrue(full.endswith(data), "FIRING 的片段要保留最新的那一端（成因在事件之前）")
+
+    def test_journal_excerpt_hard_cap_cannot_be_raised_past_256k(self):
+        _install_fake_journalctl(self.h, size=300_000)
+        self.h.set_probe(1)
+        self._run(INCIDENT_JOURNAL_MAX_BYTES="999999999")
+        rec = _spool_lines(self.spool)[0]
+        self.assertEqual(rec["journal_bytes"], 262144)
+        self.assertEqual((self.spool / rec["journal_file"]).stat().st_size, 262144)
+
+    def test_resolved_excerpt_keeps_the_oldest_end(self):
+        self.h.set_probe(1)
+        self._run()
+        _install_fake_journalctl(self.h, size=20000)
+        self.h.set_probe(0, result="success")
+        self._run(INCIDENT_JOURNAL_MAX_BYTES="1000")
+        rec = _spool_lines(self.spool)[-1]
+        data = (self.spool / rec["journal_file"]).read_bytes()
+        self.assertEqual(len(data), 1000)
+        self.assertTrue((self.h.root / "journal.content").read_bytes().startswith(data))
+
+    def test_journal_units_knob_and_empty_disables_capture(self):
+        self.h.set_probe(1)
+        self._run(INCIDENT_JOURNAL_UNITS="report-mark-health.service,report-mark-web.service")
+        self.assertIn("-u report-mark-health.service -u report-mark-web.service",
+                      self.jlog.read_text(encoding="utf-8"))
+        self.assertEqual(_spool_lines(self.spool)[0]["journal_units"],
+                         "report-mark-health.service,report-mark-web.service")
+        h2 = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(h2.close)
+        log2 = _install_fake_journalctl(h2, "x\n")
+        h2.set_probe(1)
+        h2.run(INCIDENT_SPOOL_DIR=str(h2.root / "spool"), INCIDENT_JOURNAL_UNITS="")
+        rec = _spool_lines(h2.root / "spool")[0]
+        self.assertIsNone(rec["journal_file"])
+        self.assertFalse(log2.exists(), "設空字串＝完全不呼叫 journalctl")
+
+    def test_unit_names_with_shell_metacharacters_are_dropped(self):
+        canary = self.h.root / "pwned"
+        self.h.set_probe(1)
+        self._run(INCIDENT_JOURNAL_UNITS=f'$(touch {canary}),-x,ok.service')
+        self.assertFalse(canary.exists())
+        self.assertIn("-u ok.service", self.jlog.read_text(encoding="utf-8"))
+        self.assertNotIn("-x", self.jlog.read_text(encoding="utf-8").replace("-u ok.service", ""))
+
+    def test_hung_journalctl_is_bounded_and_the_line_is_still_written(self):
+        import time
+
+        _install_fake_journalctl(self.h, "late\n", sleep=30)
+        self.h.set_probe(1)
+        t0 = time.monotonic()
+        p = self._run(INCIDENT_JOURNAL_TIMEOUT="1")
+        self.assertLess(time.monotonic() - t0, 15)
+        self.assertEqual(p.returncode, 0)
+        recs = _spool_lines(self.spool)
+        self.assertEqual(len(recs), 1)
+        self.assertIsNone(recs[0]["journal_file"], "逾時拿不到內容就沒有片段")
+
+    def test_special_characters_stay_valid_json(self):
+        self.h.set_probe(1, result='a"b\\c\x01d')
+        self._run()
+        rec = _spool_lines(self.spool)[0]
+        self.assertIn('a"b\\cd', rec["summary"])
+
+    def test_partial_last_line_is_not_glued_to_the_next_record(self):
+        self.spool.mkdir()
+        from datetime import datetime
+
+        day = datetime.now().strftime("%Y%m%d")
+        (self.spool / f"incidents-{day}.jsonl").write_text('{"v":1,"type":"incident_ev', encoding="utf-8")
+        self.h.set_probe(1)
+        self._run()
+        raw = (self.spool / f"incidents-{day}.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(raw), 2)
+        self.assertEqual(json.loads(raw[1])["action"], "FIRING")
+
+    def test_spool_dir_defaults_to_ops_spool_dir(self):
+        self.h.set_probe(1)
+        env = {"OPS_SPOOL_DIR": str(self.h.root / "ops")}
+        p = self.h.run(**env)
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(len(_spool_lines(self.h.root / "ops")), 1)
+
+
+class SpoolFailureEquivalenceTests(unittest.TestCase):
+    """**spool 寫入失敗時，告警行為與退出碼和沒有這個功能時完全一樣。**
+
+    每個情境各用一套新的 harness 跑同一串觀測：基準組 spool 關閉（`OPS_SPOOL_DIR=/dev/null`，就是
+    既有測試的條件），其餘各組讓 spool 以不同方式壞掉或正常運作。逐輪比對退出碼、stdout 的結構化
+    欄位（略去隨時間變動的 ts 與 age）、stderr 是否為空、狀態檔的結論欄位與 webhook 呼叫次數。
+    """
+
+    # (探針退出碼, 額外環境)；涵蓋 FIRING、去重、提醒、投遞失敗、升級、恢復與監控失明
+    SCRIPT = [
+        (1, {}), (1, {}), (1, {"INCIDENT_REMINDER_SECONDS": "0"}),
+        (1, {"INCIDENT_REMINDER_SECONDS": "0", "FAKE_CURL_CODE": "500"}),
+        (0, {"FAKE_CURL_CODE": "500"}), (0, {}), (0, {}),
+        (7, {}), (8, {}), (0, {}),
+        ("blind", {}), ("blind", {}), (0, {}),
+    ]
+    VOLATILE = ("ts", "last_completed_age")
+
+    def _play(self, setup) -> list[tuple]:
+        h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(h.close)
+        env = setup(h)
+        out = []
+        for code, extra in self.SCRIPT:
+            if code == "blind":
+                h.set_timer(timer_enabled="disabled")
+            else:
+                h.set_timer(timer_enabled="enabled")
+                h.set_probe(code, result="success" if code == 0 else "exit-code")
+            p = h.run(**{**env, **extra})
+            lines = [
+                tuple(sorted((k, v) for k, v in parse(ln).items() if k not in self.VOLATILE))
+                for ln in p.stdout.splitlines()
+            ]
+            states = {}
+            for comp in ("web", "monitor"):
+                st = h.state_of(comp)
+                states[comp] = (st.get("state"), st.get("severity"), st.get("count"), st.get("opened_sent"))
+            out.append((p.returncode, tuple(lines), p.stderr, tuple(sorted(states.items())), h.webhook_calls()))
+        return out
+
+    def _baseline(self, h):
+        return {"OPS_SPOOL_DIR": os.devnull}
+
+    def _assert_same_as_baseline(self, setup):
+        base = self._play(self._baseline)
+        got = self._play(setup)
+        for i, (b, g) in enumerate(zip(base, got)):
+            with self.subTest(round=i, probe=self.SCRIPT[i][0]):
+                self.assertEqual(g, b)
+
+    def test_baseline_actually_exercises_every_transition(self):
+        actions = {dict(ln).get("action") for r in self._play(self._baseline) for ln in r[1]}
+        self.assertLessEqual({"firing", "suppress", "reminder", "resolve_retry", "resolved", "escalated"}, actions)
+
+    def test_working_spool_does_not_change_alerting(self):
+        def setup(h):
+            _install_fake_journalctl(h, "x\n")
+            return {"INCIDENT_SPOOL_DIR": str(h.root / "spool")}
+        self._assert_same_as_baseline(setup)
+
+    def test_spool_path_is_a_regular_file(self):
+        def setup(h):
+            (h.root / "notadir").write_text("x", encoding="utf-8")
+            return {"INCIDENT_SPOOL_DIR": str(h.root / "notadir")}
+        self._assert_same_as_baseline(setup)
+
+    def test_spool_dir_cannot_be_created(self):
+        def setup(h):
+            return {"INCIDENT_SPOOL_DIR": "/proc/report-mark-no-such/spool"}
+        self._assert_same_as_baseline(setup)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root 不受目錄權限限制")
+    def test_spool_dir_is_read_only(self):
+        def setup(h):
+            d = h.root / "ro"
+            d.mkdir()
+            d.chmod(0o555)
+            self.addCleanup(d.chmod, 0o755)
+            return {"INCIDENT_SPOOL_DIR": str(d)}
+        self._assert_same_as_baseline(setup)
+
+    @unittest.skipUnless(Path("/dev/full").exists(), "需要 /dev/full 模擬磁碟滿")
+    def test_disk_full(self):
+        def setup(h):
+            from datetime import datetime, timedelta
+
+            d = h.root / "full"
+            (d / "journal").mkdir(parents=True)
+            # 今天與明天的日檔都指向 /dev/full（跨午夜跑也成立）；journal 片段同樣寫不進去
+            for day in (datetime.now(), datetime.now() + timedelta(days=1)):
+                (d / f"incidents-{day:%Y%m%d}.jsonl").symlink_to("/dev/full")
+            _install_fake_journalctl(h, "x\n")
+            return {"INCIDENT_SPOOL_DIR": str(d)}
+        self._assert_same_as_baseline(setup)
+
+    def test_hung_journalctl(self):
+        def setup(h):
+            _install_fake_journalctl(h, "x\n", sleep=30)
+            return {"INCIDENT_SPOOL_DIR": str(h.root / "spool"), "INCIDENT_JOURNAL_TIMEOUT": "1"}
+        self._assert_same_as_baseline(setup)
+
+    def test_missing_systemctl_still_exits_tooling_with_spool_enabled(self):
+        h = _Harness()
+        self.addCleanup(h.close)
+        (h.bin / "systemctl").unlink()
+        env = dict(os.environ)
+        env["PATH"] = f"{h.bin}:/usr/bin/nonexistent"
+        env["INCIDENT_STATE_DIR"] = str(h.state_dir)
+        env["INCIDENT_SPOOL_DIR"] = str(h.root / "spool")
+        p = subprocess.run(["/bin/bash", str(HANDLER)], capture_output=True, text=True, env=env, timeout=30)
+        self.assertEqual(p.returncode, 4)
+
+
+class SpoolStaticTests(unittest.TestCase):
+    """spool 的呼叫形狀：只能經背景、輸出丟棄的 `_spool`，而且只在狀態轉換之後。"""
+
+    def _code(self) -> list[str]:
+        return [ln for ln in HANDLER.read_text(encoding="utf-8").splitlines() if not ln.strip().startswith("#")]
+
+    def test_spool_event_is_only_called_through_the_detached_wrapper(self):
+        calls = [ln for ln in self._code() if "spool_event" in ln and "spool_event()" not in ln]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertRegex(calls[0], r'\( spool_event "\$@" \) </dev/null >/dev/null 2>&1 &')
+
+    def test_spool_never_notifies_or_writes_state(self):
+        body = HANDLER.read_text(encoding="utf-8")
+        start = body.index("spool_event() {")
+        end = body.index("\n}\n", start)
+        fn = body[start:end]
+        for forbidden in ("notify ", "write_state", "save_obs_cache", "curl", "WEBHOOK", "emit ", "exit "):
+            with self.subTest(token=forbidden):
+                self.assertNotIn(forbidden, fn)
+
+    def test_every_spool_call_follows_the_state_write_of_its_branch(self):
+        """每個 `_spool` 呼叫之前（同一個分支內）必須已有 write_state 或 rm 狀態檔，而且在 notify 之後。"""
+        lines = self._code()
+        idx = [i for i, ln in enumerate(lines) if ln.strip().startswith("_spool ")]
+        self.assertEqual(len(idx), 5, "FIRING×2、ESCALATED、REMINDER、RESOLVED")
+        for i in idx:
+            window = "\n".join(lines[max(0, i - 20):i])
+            with self.subTest(line=lines[i].strip()[:60]):
+                self.assertRegex(window, r"write_state|rm -f \"\$STATE_DIR")
+                self.assertIn("notify ", window)
+
+    def test_exit_trap_only_waits(self):
+        traps = [ln.strip() for ln in self._code() if ln.strip().startswith("trap ")]
+        self.assertEqual(traps, ["trap 'wait 2>/dev/null || true' EXIT"])
+
+
 if __name__ == "__main__":
     unittest.main()

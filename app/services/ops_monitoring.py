@@ -1,4 +1,5 @@
-"""監控投影：spool 紀錄 → DB（`scripts/load_observations.py`）。
+"""監控投影：spool 紀錄 → DB（`scripts/load_observations.py`）與管理後台的唯讀查詢
+（`/api/admin/jobs`、`/api/admin/observations`）。
 
 資料流（理由見 revision 0005 的註解）：
 
@@ -24,8 +25,8 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Iterable
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterable
 
 from sqlalchemy import text
 from sqlalchemy.exc import DataError, IntegrityError
@@ -220,3 +221,81 @@ async def import_records(session, *, observations: list[dict], jobs: list[dict])
         res = await session.execute(_MARK_LOST, {"units": sorted({r["unit"] for r in jobs})})
         stats.lost = max(res.rowcount or 0, 0)
     return stats
+
+
+# ── 管理後台的唯讀查詢（/api/admin/jobs、/api/admin/observations）──────────────
+#
+# 時間範圍與筆數的上限由路由層驗證（超過回 400／422）；這裡只負責 SQL。沒有時區的時間一律當 UTC。
+
+OBSERVATION_DEFAULT_WINDOW = timedelta(hours=1)
+OBSERVATION_MAX_WINDOW = timedelta(days=7)
+OBSERVATION_MAX_LIMIT = 5000
+JOB_DEFAULT_WINDOW = timedelta(days=7)
+JOB_MAX_WINDOW = timedelta(days=90)
+JOB_MAX_LIMIT = 200
+
+
+def _utc(ts: datetime | None) -> datetime | None:
+    if ts is None:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+def resolve_window(since: datetime | None, until: datetime | None, default: timedelta,
+                   *, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """沒給 until＝現在；沒給 since＝until 往前 `default`。回傳的兩端都帶時區。"""
+    until = _utc(until) or now or datetime.now(timezone.utc)
+    since = _utc(since) or (until - default)
+    return since, until
+
+
+async def list_jobs(session, *, since: datetime, until: datetime, service: str | None = None,
+                    unit: str | None = None, state: str | None = None, result: str | None = None,
+                    limit: int = 50, offset: int = 0) -> tuple[int, list[dict]]:
+    """批次執行紀錄，依開始時間新→舊；時間範圍看 started_at（[since, until]）。"""
+    where = ["j.started_at >= :since", "j.started_at <= :until"]
+    params: dict[str, Any] = {"since": since, "until": until, "limit": limit, "offset": offset}
+    for col, val in (("service", service), ("unit", unit), ("state", state), ("result", result)):
+        if val:
+            where.append(f"j.{col} = :{col}")
+            params[col] = val
+    cond = " AND ".join(where)
+    total = (await session.execute(
+        text(f"SELECT count(*) FROM research.job_execution j WHERE {cond}"), params)).scalar_one()
+    rows = (await session.execute(text(f"""
+        SELECT j.host, j.unit, j.service, j.invocation_id, j.state, j.started_at, j.finished_at, j.result,
+               j.exit_status, j.exec_main_code, j.last_seen_at
+        FROM research.job_execution j WHERE {cond}
+        ORDER BY j.started_at DESC, j.id DESC LIMIT :limit OFFSET :offset
+    """), params)).mappings().all()
+    return int(total), [dict(r) for r in rows]
+
+
+async def list_observations(session, *, since: datetime, until: datetime, scope: str | None = None,
+                            subject: str | None = None, metric: str | None = None,
+                            limit: int = 500) -> tuple[bool, list[dict]]:
+    """觀測值，新→舊、最多 `limit` 筆（多取一筆判斷 truncated）。時間範圍看 observed_at（[since, until]）。"""
+    where = ["o.observed_at >= :since", "o.observed_at <= :until"]
+    params: dict[str, Any] = {"since": since, "until": until, "limit": limit + 1}
+    for col, val in (("scope", scope), ("subject", subject), ("metric", metric)):
+        if val:
+            where.append(f"o.{col} = :{col}")
+            params[col] = val
+    rows = (await session.execute(text(f"""
+        SELECT o.observed_at, o.host, o.scope, o.subject, o.metric, o.value, o.state, o.detail
+        FROM research.service_observation o WHERE {' AND '.join(where)}
+        ORDER BY o.observed_at DESC, o.id DESC LIMIT :limit
+    """), params)).mappings().all()
+    truncated = len(rows) > limit
+    out = []
+    for r in rows[:limit]:
+        row = dict(r)
+        detail = row.get("detail")
+        if isinstance(detail, str):  # 依驅動與型別資訊而定，jsonb 可能以字串回來
+            try:
+                detail = json.loads(detail)
+            except ValueError:
+                detail = None
+        row["detail"] = detail if isinstance(detail, dict) else None
+        out.append(row)
+    return truncated, out

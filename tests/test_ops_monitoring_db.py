@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import text
@@ -163,6 +164,43 @@ class OpsMonitoringDbTests(unittest.TestCase):
         stats, n = _run(body)
         self.assertEqual((stats.rejected, n), (1, len(rows)))
 
+
+    def test_list_queries_filter_window_order_and_truncate(self):
+        obs = []
+        for minute in range(3):
+            obs += om.observation_rows(self._obs(subject=f"{self.host}-svc", ts=f"2026-10-06T10:0{minute}:00+08:00",
+                                                 cpu_cores=0.1 * minute))
+        jobs = [om.job_row(self._job(INV_A, "finished", "2026-10-06T09:00:00+08:00", "2026-10-06T09:10:00+08:00")),
+                om.job_row(self._job(INV_B, "running", "2026-10-06T12:00:00+08:00"))]
+        since, until = om.resolve_window(datetime(2026, 10, 6, 1, 59, tzinfo=timezone.utc),
+                                         datetime(2026, 10, 6, 2, 1, tzinfo=timezone.utc), timedelta(hours=1))
+
+        async def body(session):
+            await om.import_records(session, observations=obs, jobs=jobs)
+            subject = f"{self.host}-svc"
+            all_rows = await om.list_observations(session, since=since, until=until, subject=subject, limit=50)
+            one_metric = await om.list_observations(session, since=since, until=until, subject=subject,
+                                                    metric="cpu_cores", limit=1)
+            day = (datetime(2026, 10, 6, tzinfo=timezone.utc) - timedelta(hours=8),
+                   datetime(2026, 10, 7, tzinfo=timezone.utc))
+            total, listed = await om.list_jobs(session, since=day[0], until=day[1], unit=UNIT, limit=10)
+            # 以 host 分辨自己的列（庫裡可能有其他測試或生產的同名 unit）
+            mine = [j for j in listed if j["host"] == self.host]
+            finished = await om.list_jobs(session, since=day[0], until=day[1], unit=UNIT, state="finished",
+                                          limit=200)
+            return all_rows, one_metric, total, mine, [j for j in finished[1] if j["host"] == self.host]
+
+        (trunc_all, rows), (trunc_one, one), total, mine, finished = _run(body)
+        self.assertFalse(trunc_all)
+        self.assertEqual({r["observed_at"].minute for r in rows}, {0, 1}, "窗期 [01:59, 02:01] UTC 只含 10:00、10:01")
+        self.assertEqual(rows[0]["observed_at"].minute, 1, "新→舊")
+        detail_rows = [r for r in rows if r["state"] is not None]
+        self.assertEqual(detail_rows[0]["detail"], {"ncpu": 4})
+        self.assertTrue(trunc_one)
+        self.assertEqual((len(one), one[0]["metric"], one[0]["value"]), (1, "cpu_cores", 0.1))
+        self.assertGreaterEqual(total, 2)
+        self.assertEqual([j["invocation_id"] for j in mine], [INV_B, INV_A], "依開始時間新→舊")
+        self.assertEqual([j["invocation_id"] for j in finished], [INV_A])
 
 if __name__ == "__main__":
     unittest.main()

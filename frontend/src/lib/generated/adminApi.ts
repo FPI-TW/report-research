@@ -97,10 +97,59 @@ export const ElevateResponseSchema = z.object({
 })
 export type ElevateResponse = z.infer<typeof ElevateResponseSchema>
 
+export const JobItemSchema = z.object({
+  host: z.string(),
+  unit: z.string(),
+  service: z.string().nullable().optional(),
+  invocation_id: z.string(),
+  state: z.enum(['running', 'finished', 'lost']),
+  started_at: z.string(),
+  finished_at: z.string().nullable().optional(),
+  duration_seconds: z.number().nullable().optional(),
+  result: z.string().nullable().optional(),
+  exit_status: z.number().int().nullable().optional(),
+  exec_main_code: z.enum(['exited', 'killed', 'dumped']).nullable().optional(),
+  last_seen_at: z.string(),
+})
+export type JobItem = z.infer<typeof JobItemSchema>
+
+export const JobListResponseSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().nullable(),
+  items: z.array(JobItemSchema),
+})
+export type JobListResponse = z.infer<typeof JobListResponseSchema>
+
 export const LogoutResponseSchema = z.object({
   revoked: z.number().int(),
 })
 export type LogoutResponse = z.infer<typeof LogoutResponseSchema>
+
+export const ObservationItemSchema = z.object({
+  observed_at: z.string(),
+  host: z.string(),
+  scope: z.enum(['host', 'container', 'service']),
+  subject: z.string(),
+  metric: z.string(),
+  value: z.number().nullable().optional(),
+  state: z.string().nullable().optional(),
+  detail: z.record(z.string(), z.unknown()).nullable().optional(),
+})
+export type ObservationItem = z.infer<typeof ObservationItemSchema>
+
+export const ObservationListResponseSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  limit: z.number().int(),
+  truncated: z.boolean(),
+  items: z.array(ObservationItemSchema),
+})
+export type ObservationListResponse = z.infer<typeof ObservationListResponseSchema>
 
 export const OpsActionResponseSchema = z.object({
   name: z.string(),
@@ -297,6 +346,10 @@ export const adminApi = {
   listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
+  /** GET /api/admin/jobs — List Jobs */
+  listJobs: (query: { service?: string | null; unit?: string | null; state?: 'running' | 'finished' | 'lost' | null; result?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/jobs${qs(query)}`, JobListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/observations — List Observations */
+  listObservations: (query: { scope?: 'host' | 'container' | 'service' | null; subject?: string | null; metric?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/observations${qs(query)}`, ObservationListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services — List Ops Services */
   listOpsServices: () => requestJSON('/api/admin/ops/services', OpsServiceListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services/{name} — Get Ops Service */

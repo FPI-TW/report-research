@@ -52,6 +52,7 @@ class FakeCorpus:
         self.results = {q["id"]: [(H(1 + (n * 3 + j) % n_reports), j % 3) for j in range(14)]
                         for n, q in enumerate(QUESTIONS)}
         self.fail: BaseException | None = None
+        self.truncated: set[str] = set()
         self.embedded: list[str] = []
         self.search_kwargs: list[dict] = []
 
@@ -86,9 +87,11 @@ class FakeCorpus:
         self.embedded.append(text)
         return [0.0] * 4
 
-    async def search(self, session, q, vec, *, k, dense_scan, **filters):
+    async def search(self, session, q, vec, *, k, dense_scan, stats=None, **filters):
         await session.execute(rr._CORPUS_SQL)  # 讓注入的 DB 失敗也打在檢索這一步
         self.search_kwargs.append({"k": k, "dense_scan": dense_scan, **filters})
+        if stats is not None:
+            stats["lex_truncated"] = QID_BY_TEXT[q] in self.truncated
         visible = [(h, c) for h, c in self.results[QID_BY_TEXT[q]]
                    if h in self.reports and not self.reports[h]["hidden"]]
         return [(1, round(0.9 - n * 0.01, 4), _row(h, c)) for n, (h, c) in enumerate(visible)]
@@ -435,6 +438,14 @@ class CheckTests(_Tmp):
         self.assertEqual(res["dense_scan"], 200)
         self.assertEqual(self.corpus.search_kwargs[-1]["dense_scan"], 200)
         self.assertEqual(self.corpus.search_kwargs[-1]["k"], 10)  # k 一律用基準的
+
+    def test_lexical_truncation_is_flagged(self):
+        self.corpus.truncated = {"q004"}
+        self.assertEqual(self.check(), script.EXIT_OK)
+        res = self.result()["comparison"]
+        self.assertEqual([q["id"] for q in res["questions"] if q["lex_truncated"]], ["q004"])
+        self.assertEqual(res["summary"]["lex_truncated_questions"], 1)
+        self.assertIn("字面路截斷", self.stdout)
 
     def test_json_output(self):
         self.assertEqual(self.check(json_out=True), script.EXIT_OK)

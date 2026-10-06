@@ -43,11 +43,11 @@ const COMPARISON = {
   summary: {
     verdict: 'degraded', questions: 18, comparable: 18, mean_report_recall: 0.62, mean_raw_report_recall: 0.41,
     mean_chunk_recall: 0.5, mean_rbo: 0.55, degraded_questions: 3, hidden_reports: 2, removed_reports: 1,
-    excluded_new_reports: 27,
+    excluded_new_reports: 27, lex_truncated_questions: 1,
   },
   questions: [
     question('q001', {
-      degraded: true, report_recall: 0.2, lost_total: 4, gained_total: 1,
+      degraded: true, lex_truncated: true, report_recall: 0.2, lost_total: 4, gained_total: 1,
       lost: [{ file_hash: HASH, label: '某券商 台積電展望' }], gained: [{ file_hash: 'cd'.repeat(32), label: null }],
     }),
     question('q002'),
@@ -91,6 +91,9 @@ test('檢索回歸：劣化時顯示摘要、逐題狀態、流失研報連到�
   const rows = within(table).getAllByRole('row').slice(1)
   expect(rows).toHaveLength(3)
   expect(within(rows[0]).getByText('劣化')).toBeInTheDocument()
+  expect(within(rows[0]).getByText('字面路截斷')).toBeInTheDocument()
+  expect(within(rows[1]).queryByText('字面路截斷')).not.toBeInTheDocument()
+  expect(within(summary).getByText(/^1 題（候選超過上限/)).toBeInTheDocument()
   expect(within(rows[1]).getByText('正常')).toBeInTheDocument()
   expect(within(rows[2]).getByText('不可比')).toBeInTheDocument()
   expect(within(rows[0]).getByRole('link', { name: '某券商 台積電展望' })).toHaveAttribute('href', `/report/${HASH}`)

@@ -38,6 +38,9 @@ CLI 是 `scripts/retrieval_regression.py`（`capture` 擷取基準、`check` 比
   抽取回填（E1d）會重切片段，`chunk_index` 對不上不代表找不到那篇。
 - `chunk_recall`、`rbo`（rank-biased overlap，p=0.9，外插版；兩份清單完全相同＝1）：只顯示、不判定，
   比 report_recall 敏感，用來看「排序在動」的早期訊號。
+- **檢索本身的不確定性**：字面路命中超過 cap（`retrieval.LEX_CAP`）時，進入精確距離排序的是任意 cap 列，
+  同一題前後兩次跑的 top-k 可能不同（2026-10-06 在 devdb 實測：「散熱技術的進展如何？」相隔兩分鐘的兩次，
+  研報召回 0.4）。這類題目在結果裡標 `lex_truncated`；單題門檻之外再允許少數題崩掉，就是為了吸收它。
 - 劣化（rc=1）＝ 平均 report_recall < `RETRIEVAL_REGRESSION_MIN_MEAN_RECALL`（0.8）**或** report_recall <
   `RETRIEVAL_REGRESSION_MIN_QUESTION_RECALL`（0.5）的題數 > `RETRIEVAL_REGRESSION_MAX_DEGRADED_QUESTIONS`（2）。
   第二條是為了「一兩題完全崩掉」不會被其餘十幾題的平均稀釋。
@@ -345,6 +348,7 @@ def summarize(per_question: list[dict], thresholds: Thresholds) -> dict:
         "hidden_reports": sum(q.get("hidden_reports", 0) for q in per_question),
         "removed_reports": sum(q.get("removed_reports", 0) for q in per_question),
         "excluded_new_reports": sum(q.get("excluded_new_reports", 0) for q in per_question),
+        "lex_truncated_questions": sum(bool(q.get("lex_truncated")) for q in per_question),
     }
 
 
@@ -527,7 +531,8 @@ def _question_view(q: Any) -> dict | None:
     if not isinstance(q, Mapping) or not isinstance(q.get("id"), str):
         return None
     view = {"id": q["id"][:16], "question": _str(q.get("question"), 300) or "",
-            "comparable": q.get("comparable") is True, "degraded": q.get("degraded") is True}
+            "comparable": q.get("comparable") is True, "degraded": q.get("degraded") is True,
+            "lex_truncated": q.get("lex_truncated") is True}
     for key in ("report_recall", "raw_report_recall", "chunk_recall", "rbo"):
         view[key] = _num(q.get(key))
     for key in ("baseline_reports", "eligible_reports", "current_reports", "hidden_reports", "removed_reports",
@@ -562,7 +567,7 @@ def _comparison_view(c: Any) -> dict | None:
         for key in ("mean_report_recall", "mean_raw_report_recall", "mean_chunk_recall", "mean_rbo"):
             summary[key] = _num(s.get(key))
         for key in ("questions", "comparable", "degraded_questions", "hidden_reports", "removed_reports",
-                    "excluded_new_reports"):
+                    "excluded_new_reports", "lex_truncated_questions"):
             summary[key] = _int(s.get(key))
     questions = [v for q in (c.get("questions") if isinstance(c.get("questions"), list) else [])[:100]
                  if (v := _question_view(q)) is not None]

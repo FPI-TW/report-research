@@ -164,8 +164,14 @@ async def _corpus_state(session_factory):
         raise _db_error(exc, "讀語料狀態") from exc
 
 
-async def _search_all(questions, *, k: int, dense_scan: int, session_factory, embed_fn, search_fn) -> dict:
-    """每題 embed → hybrid_search，回 {題號: 完整候選清單（scored_items）}。"""
+async def _search_all(questions, *, k: int, dense_scan: int, session_factory, embed_fn, search_fn,
+                      truncated: dict | None = None) -> dict:
+    """每題 embed → hybrid_search，回 {題號: 完整候選清單（scored_items）}。
+
+    `truncated` 給定時填 {題號: 字面路候選是否被 cap 截斷}（hybrid_search 的 stats `lex_truncated`）。
+    截斷時進入精確距離排序的是 cap 列的任意子集，同一題前後兩次跑的 top-k 可能不同——那是檢索本身的
+    不確定性，不是語料或索引壞了；結果檔標出來，判讀時才分得清。
+    """
     out = {}
     for q in questions:
         try:
@@ -173,12 +179,15 @@ async def _search_all(questions, *, k: int, dense_scan: int, session_factory, em
         except Exception as exc:  # noqa: BLE001
             raise Fail(rr.REASON_EMBED_FAILED, f"嵌入失敗（{q['id']}，{type(exc).__name__}: {exc}）") from exc
         try:
+            stats: dict = {}
             async with session_factory() as session:
-                scored = await search_fn(session, q["question"], vec, k=k, dense_scan=dense_scan,
+                scored = await search_fn(session, q["question"], vec, k=k, dense_scan=dense_scan, stats=stats,
                                          **dict(q.get("filters") or {}))
         except Exception as exc:  # noqa: BLE001
             raise _db_error(exc, f"檢索 {q['id']}") from exc
         out[q["id"]] = rr.scored_items(scored)
+        if truncated is not None:
+            truncated[q["id"]] = bool(stats.get("lex_truncated"))
     return out
 
 
@@ -280,6 +289,7 @@ def _render(comparison: dict) -> str:
     lines = [header, "-" * 64]
     for q in comparison["questions"]:
         flag = "  ← 劣化" if q["degraded"] else ("  （不可比）" if not q["comparable"] else "")
+        flag += "  ［字面路截斷］" if q.get("lex_truncated") else ""
         lines.append(f"{q['id']:<8}{_fmt(q['report_recall']):>8}{_fmt(q['raw_report_recall']):>14}"
                      f"{_fmt(q['chunk_recall']):>10}{_fmt(q['rbo']):>8}{q['excluded_new_reports']:>6}"
                      f"{q['hidden_reports']:>6}{q['removed_reports']:>6}{flag}")
@@ -292,7 +302,8 @@ def _render(comparison: dict) -> str:
     lines.append(
         f"可比較 {s['comparable']}/{s['questions']} 題；劣化題數 {s['degraded_questions']}"
         f"（上限 {t['max_degraded_questions']}，單題門檻 {t['min_question_recall']:g}）；"
-        f"排除新研報 {s['excluded_new_reports']}、隱藏 {s['hidden_reports']}、下架 {s['removed_reports']}"
+        f"排除新研報 {s['excluded_new_reports']}、隱藏 {s['hidden_reports']}、下架 {s['removed_reports']}；"
+        f"字面路截斷 {s['lex_truncated_questions']} 題（結果可能每次不同）"
     )
     return "\n".join(lines)
 
@@ -329,8 +340,9 @@ async def run_check(
         dense_scan = settings.ask_dense_scan
         by_id = {q["id"]: q for q in questions}
         asked = [by_id[bq["id"]] for bq in baseline["questions"]]
+        truncated: dict[str, bool] = {}
         current = await _search_all(asked, k=k, dense_scan=dense_scan, session_factory=session_factory,
-                                    embed_fn=embed_fn, search_fn=search_fn)
+                                    embed_fn=embed_fn, search_fn=search_fn, truncated=truncated)
         hashes = {i["file_hash"] for bq in baseline["questions"] for i in bq["items"]}
         hashes |= {i["file_hash"] for items in current.values() for i in items}
         meta = await _meta(session_factory, hashes)
@@ -348,7 +360,8 @@ async def run_check(
     per_question = []
     for bq in baseline["questions"]:
         row = rr.compare_question(bq["items"], current[bq["id"]], meta, cutoff=cutoff, k=k)
-        per_question.append({"id": bq["id"], "question": bq["question"], **row})
+        per_question.append({"id": bq["id"], "question": bq["question"], **row,
+                             "lex_truncated": truncated.get(bq["id"], False)})
     summary = rr.summarize(per_question, thresholds)
     comparison = {
         "finished_at": now_fn().isoformat(),

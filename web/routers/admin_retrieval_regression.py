@@ -44,6 +44,7 @@ class RegressionQuestion(BaseModel):
     question: str
     comparable: bool
     degraded: bool
+    lex_truncated: bool = False
     report_recall: float | None = None
     raw_report_recall: float | None = None
     chunk_recall: float | None = None
@@ -88,6 +89,7 @@ class RegressionSummary(BaseModel):
     hidden_reports: int
     removed_reports: int
     excluded_new_reports: int
+    lex_truncated_questions: int = 0
 
 
 class RegressionComparison(BaseModel):

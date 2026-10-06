@@ -469,6 +469,7 @@ export const RegressionSummarySchema = z.object({
   hidden_reports: z.number().int(),
   removed_reports: z.number().int(),
   excluded_new_reports: z.number().int(),
+  lex_truncated_questions: z.number().int().optional(),
 })
 export type RegressionSummary = z.infer<typeof RegressionSummarySchema>
 
@@ -616,6 +617,7 @@ export const RegressionQuestionSchema = z.object({
   question: z.string(),
   comparable: z.boolean(),
   degraded: z.boolean(),
+  lex_truncated: z.boolean().optional(),
   report_recall: z.number().nullable().optional(),
   raw_report_recall: z.number().nullable().optional(),
   chunk_recall: z.number().nullable().optional(),

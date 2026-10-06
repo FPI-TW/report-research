@@ -81,7 +81,10 @@ function QuestionRow({ q }: { q: RegressionQuestion }) {
       <td className={adminStyles.num}>{num(q.rbo)}</td>
       <td className={adminStyles.num}>{q.excluded_new_reports}</td>
       <td className={adminStyles.num}>{q.hidden_reports}／{q.removed_reports}</td>
-      <td><span className={`${styles.pill} ${cls}`}>{state}</span></td>
+      <td>
+        <span className={`${styles.pill} ${cls}`}>{state}</span>
+        {q.lex_truncated && <div className={adminStyles.muted}>字面路截斷</div>}
+      </td>
     </tr>
   )
 }
@@ -115,6 +118,12 @@ function Comparison({ c }: { c: RegressionComparison }) {
             <dd>{pct(s.mean_chunk_recall)}／{num(s.mean_rbo)}（只顯示，不判定）</dd>
             <dt>不算劣化的變化</dt>
             <dd>排除新研報 {s.excluded_new_reports}、基準研報被隱藏 {s.hidden_reports}、已下架 {s.removed_reports}</dd>
+            {(s.lex_truncated_questions ?? 0) > 0 && (
+              <>
+                <dt>字面路截斷</dt>
+                <dd>{s.lex_truncated_questions} 題（候選超過上限，這幾題每次跑的結果可能不同；單獨一兩題崩掉多半是這個）</dd>
+              </>
+            )}
           </>
         )}
         {b && (

@@ -365,16 +365,17 @@ def cmd_ingest(args, ctx: Optional[Ctx] = None) -> int:
     ctx = ctx or default_ctx()
     hashes: list[str] = []
     out_path = Path(args.hashes_out) if args.hashes_out else None
-    try:
-        with uw.round_lock(ctx.lock_path) as held:
-            if not held:
-                _say("另一輪 worker 正在跑，本次不啟動")
-                return RC_OK
+    with uw.round_lock(ctx.lock_path) as held:
+        if not held:
+            # 不寫 hashes：那個檔屬於正在跑的那一輪，寫空檔會讓它的下游以為沒有新草稿。
+            _say("另一輪 worker 正在跑，本次不啟動")
+            return RC_OK
+        try:
             return _run(ctx, ingest_main(ctx, limit=args.limit, hashes=hashes))
-    finally:
-        # 一定寫（空清單＝0-byte）：中途中止（rc 2／75、例外）時也留下已 commit 的那幾篇，殼據此跑下游。
-        if out_path is not None:
-            uw.write_hashes(out_path, hashes)
+        finally:
+            # 持鎖時一定寫（空清單＝0-byte）：中途中止（rc 2／75、例外）也留下已 commit 的那幾篇，殼據此跑下游。
+            if out_path is not None:
+                uw.write_hashes(out_path, hashes)
 
 
 # ── cleanup ─────────────────────────────────────────────────────────────

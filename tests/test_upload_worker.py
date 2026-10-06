@@ -477,9 +477,11 @@ class IngestGateTests(_Tmp):
         self.assertTrue(self.hashes.exists())
 
     def test_round_lock_busy_is_rc0_and_does_nothing(self):
+        self.hashes.write_text("正在跑的那一輪的 hashes")
         with uw.round_lock(self.ctx.lock_path):
             self.assertEqual(self.run_ingest(), 0)
         self.assertEqual(self.calls, [])
+        self.assertEqual(self.hashes.read_text(), "正在跑的那一輪的 hashes", "沒持鎖不得覆寫別輪的 hashes")
 
     def test_db_unavailable_is_rc2(self):
         async def down(session):

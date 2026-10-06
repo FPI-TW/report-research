@@ -40,6 +40,8 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYNC = REPO_ROOT / "scripts" / "sync_new_reports.sh"
 FRESHNESS = REPO_ROOT / "scripts" / "check_batch_freshness.py"
+# 判斷邏輯（read_heartbeat／assess／assess_pipeline）已抽到共用模組，CLI 與管理後台的資料健康頁都用它。
+FRESHNESS_LOGIC = REPO_ROOT / "app" / "services" / "batch_freshness.py"
 FRESHNESS_UNIT = REPO_ROOT / "deploy" / "systemd" / "report-mark-freshness.service"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -659,7 +661,7 @@ class PipelineFreshnessTests(unittest.TestCase):
                 self.assertNotIn("uid=", f.detail, "心跳內容被 shell 展開了")
 
     def test_state_file_is_not_sourced_or_evaled(self):
-        body = FRESHNESS.read_text(encoding="utf-8")
+        body = FRESHNESS_LOGIC.read_text(encoding="utf-8")
         self.assertNotIn("eval(", body)
         self.assertNotIn("exec(", body)
         self.assertNotIn("json.load", body.split("def read_heartbeat")[1].split("def ")[1])
@@ -724,7 +726,7 @@ class ExitCodePrecedenceTests(unittest.TestCase):
 
     def test_assess_pipeline_is_outside_assess(self):
         """管線那筆不能由 assess() 產生——它不吃 latest，也不該被語料閘的邏輯碰到。"""
-        src = FRESHNESS.read_text(encoding="utf-8")
+        src = FRESHNESS_LOGIC.read_text(encoding="utf-8")
         body = src.split("def assess(")[1].split("\ndef ")[0]
         self.assertNotIn("pipeline", body, "assess() 不得處理 pipeline")
         self.assertNotIn("HEARTBEAT", body)

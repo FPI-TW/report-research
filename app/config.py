@@ -331,6 +331,18 @@ class Settings:
     retrieval_regression_max_degraded_questions: int = 2
     retrieval_regression_min_available_gib: float = 4.0
     retrieval_regression_baseline: str = ""
+    # 研報上傳的收檔（web/routers/admin_uploads.py、app/services/quarantine.py；Admin v1.5）。
+    # 旗標預設關閉：worker（掃毒、入庫）上線並經同意之前，收檔端點一律 503 `uploads_disabled`。
+    # 大小上限 25 MiB（語料最大 19.5 MB、p99 5.3 MB）；nginx 那條 location 給 30m，比這裡寬，
+    # 所以超過上限的請求由 App 回統一格式的 413，而不是 nginx 的 HTML 錯誤頁。
+    # 隔離區空字串＝repo 根 data/quarantine/。配額：每人每日（台北時間的日曆日）與全站處理中
+    # （quarantined／scanning／clean／processing）的件數；剩餘空間低於門檻（MiB）就不收（503）。
+    upload_enabled: bool = False
+    upload_max_bytes: int = 25 * 1024 * 1024
+    upload_quarantine_dir: str = ""
+    upload_daily_quota: int = 30
+    upload_max_in_flight: int = 50
+    upload_min_free_mb: int = 1024
 
 
 def _load() -> Settings:
@@ -510,6 +522,12 @@ def _load() -> Settings:
         retrieval_regression_max_degraded_questions=_int_at_least("RETRIEVAL_REGRESSION_MAX_DEGRADED_QUESTIONS", 2, 0),
         retrieval_regression_min_available_gib=_positive_float("RETRIEVAL_REGRESSION_MIN_AVAILABLE_GIB", 4.0),
         retrieval_regression_baseline=(os.getenv("RETRIEVAL_REGRESSION_BASELINE") or "").strip(),
+        upload_enabled=_flag("UPLOAD_ENABLED", "0"),
+        upload_max_bytes=_int_at_least("UPLOAD_MAX_BYTES", 25 * 1024 * 1024, 1),
+        upload_quarantine_dir=(os.getenv("UPLOAD_QUARANTINE_DIR") or "").strip(),
+        upload_daily_quota=_int_at_least("UPLOAD_DAILY_QUOTA", 30, 1),
+        upload_max_in_flight=_int_at_least("UPLOAD_MAX_IN_FLIGHT", 50, 1),
+        upload_min_free_mb=_int_at_least("UPLOAD_MIN_FREE_MB", 1024, 0),
     )
 
 

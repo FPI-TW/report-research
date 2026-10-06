@@ -126,7 +126,8 @@ def _valid_uuid(s) -> bool:
 # deps.accounts.X，測試只要換掉這一個名字（tests/fake_accounts.py）就整組接管。
 # 研報隱藏／恢復的管理端（web/routers/admin_reports.py）同理：deps.report_visibility.X。
 # 監控投影的唯讀查詢（web/routers/admin_monitoring.py）同理：deps.ops_monitoring.X。
-from app.services import accounts, ops_monitoring  # noqa: E402
+# 資料健康與 LLM 用量（web/routers/admin_data_health.py）同理：deps.data_health.X、deps.llm_usage.X。
+from app.services import accounts, data_health, llm_usage, ops_monitoring  # noqa: E402
 from app.services import visibility as report_visibility  # noqa: E402
 from app.services.answer import (  # noqa: E402
     answer_question,
@@ -191,6 +192,7 @@ __all__ = [
     "accounts",
     "answer_question",
     "conversation_is_foreign",
+    "data_health",
     "delete_qa",
     "embed_query_cached",
     "embed_texts",
@@ -213,6 +215,7 @@ __all__ = [
     "hybrid_search",
     "list_qa_versions",
     "list_radar_instruments",
+    "llm_usage",
     "log_stopped_qa",
     "ops_monitoring",
     "qa_is_foreign",

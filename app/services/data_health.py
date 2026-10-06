@@ -216,3 +216,117 @@ def reconcile_status(result: Mapping[str, Any] | None) -> str:
 
 def _positive(value: Any) -> bool:
     return isinstance(value, (int, float)) and value > 0
+
+
+# ── 給 web 的彙整（GET /api/admin/data-health）─────────────────────────────
+
+_FRESHNESS_STATUS = {0: STATUS_OK, 1: STATUS_FAIL, 2: STATUS_UNKNOWN, 3: STATUS_FAIL}
+
+
+async def freshness_section(session_factory, *, now: datetime | None = None) -> dict:
+    """即時判讀批次新鮮度（與 `scripts/check_batch_freshness.py` 同一組函式、同一組預設門檻）。
+
+    管線心跳先判、不碰 DB（DB 掛了仍要能回答「管線最近有沒有跑完」）；DB 查不到時只回心跳那一筆、
+    狀態 unknown，錯誤只記例外型別。
+    """
+    from app.services import batch_freshness as bf
+
+    now = now or _now()
+    pipeline = bf.assess_pipeline(now, bf.DEFAULT_PIPELINE_HOURS)
+    try:
+        async with session_factory() as session:
+            latest = await bf.fetch_latest(session)
+    except Exception as exc:  # noqa: BLE001 — 任何連不上都算查不到
+        return {"status": STATUS_UNKNOWN, "exit_code": bf.EXIT_UNKNOWN,
+                "error": f"DB 查不到（{type(exc).__name__}）", "findings": [pipeline.__dict__.copy()]}
+    findings = [pipeline, *bf.assess(now, latest, bf.DEFAULT_THRESHOLDS)]
+    rc = bf.exit_code(findings)
+    return {"status": _FRESHNESS_STATUS.get(rc, STATUS_UNKNOWN), "exit_code": rc, "error": None,
+            "findings": [f.__dict__.copy() for f in findings]}
+
+
+def _result_base(name: str, now: datetime) -> tuple[dict | None, dict]:
+    result, why = read_result(name)
+    if result is None:
+        return None, {"status": STATUS_UNKNOWN, "available": False, "unavailable_reason": why,
+                      "finished_at": None, "age_hours": None, "stale": False, "exit_code": None}
+    finished = result.get("finished_at")
+    hours = age_hours(finished, now)
+    return result, {
+        "available": True, "unavailable_reason": None,
+        "finished_at": finished if parse_time(finished) else None,
+        "age_hours": round(hours, 2) if hours is not None else None,
+        "stale": is_stale(name, finished, now),
+        "exit_code": result.get("exit_code") if isinstance(result.get("exit_code"), int) else None,
+    }
+
+
+def _with_staleness(status: str, stale: bool) -> str:
+    return worst([status, STATUS_WARN]) if stale else status
+
+
+def _str(value: Any, limit: int = 2000) -> str | None:
+    return value[:limit] if isinstance(value, str) else None
+
+
+def db_audit_section(now: datetime | None = None) -> dict:
+    """最後一次稽核的結果（讀檔）。檔案內容來自本機腳本，但仍逐欄檢查型別，壞掉的欄位當沒有。"""
+    now = now or _now()
+    result, base = _result_base(RESULT_DB_AUDIT, now)
+    if result is None:
+        return {**base, "error": None, "skipped": [], "findings": []}
+    findings = []
+    for f in (result.get("findings") or [])[:50] if isinstance(result.get("findings"), list) else []:
+        if not isinstance(f, Mapping):
+            continue
+        severity = f.get("severity") if f.get("severity") in ("error", "warn") else "error"
+        count = f.get("count") if isinstance(f.get("count"), int) and not isinstance(f.get("count"), bool) else 0
+        findings.append({"key": _str(f.get("key"), 64) or "?", "label": _str(f.get("label"), 200) or "?",
+                         "severity": severity, "count": max(0, count), "detail": _str(f.get("detail")) or ""})
+    skipped = [s[:64] for s in (result.get("skipped") or []) if isinstance(s, str)][:20] \
+        if isinstance(result.get("skipped"), list) else []
+    status = _with_staleness(audit_status(result), base["stale"])
+    return {**base, "status": status, "error": _str(result.get("error"), 300), "skipped": skipped,
+            "findings": findings}
+
+
+_RECONCILE_STAT_KEYS = ("checked",) + RECONCILE_FAIL_KEYS + RECONCILE_WARN_KEYS
+
+
+def r2_reconcile_section(now: datetime | None = None) -> dict:
+    """最後一次 R2 對帳的結果（讀檔）。"""
+    now = now or _now()
+    result, base = _result_base(RESULT_R2_RECONCILE, now)
+    empty = {"mode": None, "dry_run": None, "limit": None, "orphan_scan": None, "stats": None,
+             "issues": [], "issues_total": 0}
+    if result is None:
+        return {**base, **empty}
+    stats_raw = result.get("stats")
+    stats = ({k: v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+              for k in _RECONCILE_STAT_KEYS for v in [stats_raw.get(k)]}
+             if isinstance(stats_raw, Mapping) else None)
+    issues = []
+    for item in (result.get("issues") or [])[:MAX_RECONCILE_ISSUES] if isinstance(result.get("issues"), list) else []:
+        if isinstance(item, Mapping) and isinstance(item.get("type"), str) and isinstance(item.get("ref"), str):
+            issues.append({"type": item["type"][:32], "ref": item["ref"][:300]})
+    mode = result.get("mode") if result.get("mode") in ("local", "r2") else None
+    orphan_scan = result.get("orphan_scan") if result.get("orphan_scan") in ("done", "skipped", "error") else None
+    total = result.get("issues_total")
+    status = _with_staleness(reconcile_status(result), base["stale"])
+    return {
+        **base, "status": status, "mode": mode,
+        "dry_run": result.get("dry_run") if isinstance(result.get("dry_run"), bool) else None,
+        "limit": result.get("limit") if isinstance(result.get("limit"), int) else None,
+        "orphan_scan": orphan_scan if mode == "r2" else None, "stats": stats if mode == "r2" else None,
+        "issues": issues, "issues_total": total if isinstance(total, int) and total >= 0 else len(issues),
+    }
+
+
+async def snapshot(session_factory, *, now: datetime | None = None) -> dict:
+    """三個來源合在一起；`overall` 取最嚴重的狀態。"""
+    now = now or _now()
+    freshness = await freshness_section(session_factory, now=now)
+    audit = db_audit_section(now)
+    r2 = r2_reconcile_section(now)
+    return {"generated_at": now.isoformat(), "overall": worst([freshness["status"], audit["status"], r2["status"]]),
+            "freshness": freshness, "db_audit": audit, "r2_reconcile": r2}

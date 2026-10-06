@@ -3,6 +3,8 @@ import type { ComponentType } from 'react'
 export type RouteKey =
   | 'search' | 'ask' | 'monitor' | 'radar' | 'brief' | 'help' | 'report'
   | 'adminShell' | 'adminUsers' | 'adminReviews' | 'adminAudit' | 'adminReports'
+  | 'adminOps' | 'adminOpsOverview' | 'adminOpsServices' | 'adminOpsService' | 'adminOpsLogs'
+  | 'adminOpsJobs' | 'adminOpsIncidents' | 'adminOpsHost'
 
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
@@ -20,6 +22,15 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminReviews: () => import('../features/admin/AdminReviewsPage'),
   adminAudit: () => import('../features/admin/AdminAuditPage'),
   adminReports: () => import('../features/admin/AdminReportsPage'),
+  adminOps: () => import('../features/admin/ops/OperationsLayout'),
+  adminOpsOverview: () => import('../features/admin/ops/OpsOverviewPage'),
+  adminOpsServices: () => import('../features/admin/ops/OpsServicesPage'),
+  adminOpsService: () => import('../features/admin/ops/OpsServiceDetailPage'),
+  adminOpsLogs: () => import('../features/admin/ops/OpsLogsPage'),
+  // 佔位頁（API 尚未提供）：三頁同一個 chunk。
+  adminOpsJobs: () => import('../features/admin/ops/OpsPlaceholderPages').then(m => ({ default: m.OpsJobsPage })),
+  adminOpsIncidents: () => import('../features/admin/ops/OpsPlaceholderPages').then(m => ({ default: m.OpsIncidentsPage })),
+  adminOpsHost: () => import('../features/admin/ops/OpsPlaceholderPages').then(m => ({ default: m.OpsHostPage })),
 }
 
 const started = new Set<RouteKey>()

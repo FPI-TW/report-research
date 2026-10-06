@@ -15,6 +15,7 @@ const NAV: readonly NavEntry[] = [
   { to: '/admin/users', icon: 'user', label: '帳號管理' },
   { to: '/admin/reviews', icon: 'shield', label: '待複核' },
   { to: '/admin/reports', icon: 'fileText', label: '研報管理', scope: 'reports.manage' },
+  { to: '/admin/operations', icon: 'activity', label: '維運', scope: 'ops.read' },
   { to: '/admin/audit', icon: 'clock', label: '操作紀錄' },
 ]
 

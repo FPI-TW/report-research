@@ -1,9 +1,11 @@
-"""管理後台的批次操作（HTTP 層）：研報批次隱藏／恢復。
+"""管理後台的批次操作（HTTP 層）：研報批次隱藏／恢復與帳號批次停用／啟用／強制登出。
 
-服務層換成替身（規則與 SQL 對真 DB 的驗證在 `tests/test_report_visibility_db.py`）。
+研報那支的服務層換成替身（規則與 SQL 對真 DB 的驗證在 `tests/test_report_visibility_db.py`）；帳號那支走
+`tests/fake_accounts.py` 的完整語意（它與真 SQL 的一致性由 `tests/test_accounts_db.py` 兩邊各跑一次）。
 
-驗：未登入 401、一般使用者 403、缺 scope 403 `missing_scope`、空清單與超過上限 422、隱藏缺原因 422、
-跨站 POST 被 CSRF 擋；逐筆結果與彙總、成功才 commit、失敗 rollback。
+驗：未登入 401、一般使用者 403、缺 scope 403 `missing_scope`、帳號批次未提升 403 `elevation_required`、
+空清單與超過上限 422、跨站 POST 被 CSRF 擋；逐筆結果與彙總、成功才 commit、失敗 rollback；
+帳號規則在批次內的組合（自己、最後一位 super admin、非 super 動 super、已停用再停用）與每筆變更各一筆稽核。
 """
 
 from __future__ import annotations
@@ -15,8 +17,9 @@ from datetime import datetime, timezone
 from fake_accounts import FakeAccounts, install
 from fastapi.testclient import TestClient
 
-from app.services import visibility
+from app.services import accounts, visibility
 from web import auth, deps
+from web.routers import admin as admin_router
 from web.server import app
 
 ADMIN_PW = "root-password-1"
@@ -32,12 +35,12 @@ def _client():
 
 
 class _Store(FakeAccounts):
-    """`limited` 是管理員但被拿掉 reports.manage。"""
+    """`limited` 是管理員但被拿掉 reports.manage 與 accounts.manage。"""
 
     def _user(self, row, elevated_until=None):
         user = super()._user(row, elevated_until)
         if user.username == "limited":
-            return dataclasses.replace(user, scopes=user.scopes - {"reports.manage"})
+            return dataclasses.replace(user, scopes=user.scopes - {"reports.manage", "accounts.manage"})
         return user
 
 
@@ -177,7 +180,153 @@ class ReportsBulkTests(_Base):
         self.assertEqual(self.tx, ["rollback"])
 
 
+class UsersBulkTests(_Base):
+    URL = "/api/admin/users/bulk"
+
+    def setUp(self):
+        super().setUp()
+        self.bob = self.store.add_user("bob", USER_PW, "user")
+        self.carol = self.store.add_user("carol", USER_PW, "user", enabled=False)
+        self.sid_alice = None
+
+    def audits(self, action):
+        return [e for e in self.store.audit if e.action == action]
+
+    def test_gates(self):
+        body = {"action": "disable", "user_ids": [self.bob]}
+        self.assertEqual(_client().post(self.URL, json=body).status_code, 401)
+        self.assertEqual(self.login("alice", USER_PW).post(self.URL, json=body).status_code, 403)
+        r = self.login("limited").post(self.URL, json=body)
+        self.assertEqual((r.status_code, r.json()["code"]), (403, "missing_scope"))
+        r = self.login().post(self.URL, json=body)  # 管理員但未提升
+        self.assertEqual((r.status_code, r.json()["code"]), (403, "elevation_required"))
+        self.assertTrue(self.store.users[self.bob].enabled)
+        self.assertEqual(self.audits("user.disable"), [])
+
+    def test_cross_site_post_is_rejected(self):
+        r = self.login(elevate=True).post(self.URL, json={"action": "disable", "user_ids": [self.bob]},
+                                          headers={"Origin": "http://evil.example"})
+        self.assertEqual((r.status_code, r.json()["code"]), (403, "csrf_rejected"))
+        self.assertTrue(self.store.users[self.bob].enabled)
+
+    def test_body_validation(self):
+        admin = self.login(elevate=True)
+        for body in ({"action": "disable", "user_ids": []},
+                     {"action": "disable", "user_ids": [self.bob] * (accounts.BULK_MAX_USERS + 1)},
+                     {"action": "delete", "user_ids": [self.bob]},
+                     {"action": "disable", "user_ids": ["x" * 65]}):
+            with self.subTest(body=str(body)[:50]):
+                self.assertEqual(admin.post(self.URL, json=body).status_code, 422)
+        self.assertTrue(self.store.users[self.bob].enabled)
+
+    def test_disable_per_item_results_and_audit(self):
+        import asyncio
+
+        sid = asyncio.run(self.store.create_session(self.bob, max_age_seconds=3600))
+        admin = self.login(elevate=True)
+        missing = "00000000-0000-0000-0000-000000000000"
+        r = admin.post(self.URL, json={
+            "action": "disable", "user_ids": [self.bob, self.carol, self.root, missing, "not-a-uuid", self.bob],
+        })
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual((body["requested"], body["ok"], body["unchanged"], body["skipped"]), (5, 1, 1, 3))
+        by = {i["user_id"]: i for i in body["results"]}
+        self.assertEqual(by[self.bob]["status"], "ok")
+        self.assertEqual(by[self.carol]["status"], "unchanged")  # 已停用：與單筆一樣冪等、不寫稽核
+        self.assertEqual((by[self.root]["status"], by[self.root]["code"]), ("skipped", "self_lockout"))
+        self.assertEqual(by[missing]["code"], "not_found")
+        self.assertEqual(by["not-a-uuid"]["code"], "not_found")
+        self.assertFalse(self.store.users[self.bob].enabled)
+        self.assertIsNone(asyncio.run(self.store.resolve_session(sid)))
+        disables = self.audits("user.disable")
+        self.assertEqual([e.target_id for e in disables], [self.bob])
+        self.assertEqual(disables[0].detail, {"username": "bob", "revoked_sessions": 1, "via": "web_bulk"})
+        summary = self.audits("user.bulk_action")
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0].target_id, "disable")
+        self.assertEqual(summary[0].detail["user_ids"], [self.bob])
+        self.assertEqual(summary[0].detail["skipped"], {"not_found": 2, "self_lockout": 1})
+
+    def test_last_super_is_protected_within_the_batch(self):
+        """root 以外再兩位 super：root 停用另外兩位都可以（root 還在）；再加 root 自己是 self_lockout。
+        改由 CLI 等級的批次（actor=None）一次停用三位 super 時，順序上的最後一位被 last_super 擋下。"""
+        import asyncio
+
+        s1 = self.store.add_user("sup1", ADMIN_PW, "admin", is_super=True)
+        s2 = self.store.add_user("sup2", ADMIN_PW, "admin", is_super=True)
+        r = self.login(elevate=True).post(self.URL, json={"action": "disable", "user_ids": [s1, s2, self.root]})
+        self.assertEqual([i["status"] for i in r.json()["results"]], ["ok", "ok", "skipped"])
+        self.store.users[s1].enabled = self.store.users[s2].enabled = True
+        res = asyncio.run(self.store.bulk_user_action([s1, s2, self.root], "disable", actor_id=None))
+        self.assertEqual([(x.status, x.error.code if x.error else None) for x in res],
+                         [("ok", None), ("ok", None), ("skipped", "last_super")])
+        self.assertTrue(self.store.users[self.root].enabled)
+
+    def test_non_super_cannot_touch_super_in_batch(self):
+        self.store.add_user("plain", ADMIN_PW, "admin")
+        r = self.login("plain", elevate=True).post(self.URL, json={"action": "logout",
+                                                                   "user_ids": [self.root, self.bob]})
+        self.assertEqual(r.status_code, 200, r.text)
+        by = {i["user_id"]: i for i in r.json()["results"]}
+        self.assertEqual((by[self.root]["status"], by[self.root]["code"]), ("skipped", "super_required"))
+        self.assertEqual(by[self.bob]["status"], "ok")
+
+    def test_enable_and_logout(self):
+        import asyncio
+
+        asyncio.run(self.store.create_session(self.bob, max_age_seconds=3600))
+        asyncio.run(self.store.create_session(self.bob, max_age_seconds=3600))
+        admin = self.login(elevate=True)
+        r = admin.post(self.URL, json={"action": "enable", "user_ids": [self.carol, self.bob]})
+        self.assertEqual([i["status"] for i in r.json()["results"]], ["ok", "unchanged"])
+        self.assertTrue(self.store.users[self.carol].enabled)
+        r = admin.post(self.URL, json={"action": "logout", "user_ids": [self.bob, self.root]})
+        by = {i["user_id"]: i for i in r.json()["results"]}
+        self.assertEqual((by[self.bob]["status"], by[self.bob]["revoked_sessions"]), ("ok", 2))
+        # 批次強制登出不含自己：操作者的 session 還在，這個 client 照樣能用。
+        self.assertEqual((by[self.root]["status"], by[self.root]["code"]), ("skipped", "self_lockout"))
+        self.assertEqual(admin.get("/api/admin/users").status_code, 200)
+        self.assertEqual([e.target_id for e in self.audits("user.force_logout")], [self.bob])
+
+    def test_pending_deletion_cannot_be_enabled(self):
+        import asyncio
+
+        asyncio.run(self.store.request_deletion(self.bob, actor_id=self.root))
+        r = self.login(elevate=True).post(self.URL, json={"action": "enable", "user_ids": [self.bob]})
+        self.assertEqual((r.json()["results"][0]["status"], r.json()["results"][0]["code"]),
+                         ("skipped", "deletion_pending"))
+        self.assertEqual(self.audits("user.bulk_action"), [], "全部略過時不寫批次摘要")
+
+    def test_unexpected_failure_rolls_back_the_whole_batch(self):
+        orig = self.store.update_user
+        calls = {"n": 0}
+
+        async def flaky(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("DB 掛了")
+            return await orig(*a, **kw)
+
+        self.store.update_user = flaky
+        dave = self.store.add_user("dave", USER_PW, "user")
+        client = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1", raise_server_exceptions=False)
+        self.assertEqual(client.post("/login", data={"username": "root", "password": ADMIN_PW}).status_code, 303)
+        self.assertEqual(client.post("/api/admin/elevate", json={"password": ADMIN_PW}).status_code, 200)
+        before = len(self.store.audit)
+        r = client.post(self.URL, json={"action": "disable", "user_ids": [self.bob, dave]})
+        self.assertEqual(r.status_code, 500)
+        self.assertTrue(self.store.users[self.bob].enabled, "第一筆的變更也要回滾")
+        self.assertEqual(len(self.store.audit), before, "回滾時稽核也不留")
+
+
 class ErrorCodeContractTests(unittest.TestCase):
+    def test_account_error_codes_match_router_table(self):
+        """`AccountError.code`（批次結果與稽核摘要用）與路由層 `_STATUS` 的代碼逐字一致。"""
+        for cls, _status, code in admin_router._STATUS:
+            with self.subTest(cls=cls.__name__):
+                self.assertEqual(cls.code, code)
+
     def test_visibility_error_codes_match_single_endpoint(self):
         from web.routers import admin_reports
 

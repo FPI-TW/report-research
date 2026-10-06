@@ -79,6 +79,31 @@ export const BulkReportResultSchema = z.object({
 })
 export type BulkReportResult = z.infer<typeof BulkReportResultSchema>
 
+export const BulkUserResultItemSchema = z.object({
+  user_id: z.string(),
+  status: z.enum(['ok', 'unchanged', 'skipped']),
+  code: z.string().nullable().optional(),
+  detail: z.string().nullable().optional(),
+  revoked_sessions: z.number().int().nullable().optional(),
+})
+export type BulkUserResultItem = z.infer<typeof BulkUserResultItemSchema>
+
+export const BulkUsersRequestSchema = z.object({
+  action: z.enum(['disable', 'enable', 'logout']),
+  user_ids: z.array(z.string()),
+})
+export type BulkUsersRequest = z.infer<typeof BulkUsersRequestSchema>
+
+export const BulkUsersResponseSchema = z.object({
+  action: z.enum(['disable', 'enable', 'logout']),
+  requested: z.number().int(),
+  ok: z.number().int(),
+  unchanged: z.number().int(),
+  skipped: z.number().int(),
+  results: z.array(BulkUserResultItemSchema),
+})
+export type BulkUsersResponse = z.infer<typeof BulkUsersResponseSchema>
+
 export const BulkVisibilityRequestSchema = z.object({
   action: z.enum(['hide', 'restore']),
   file_hashes: z.array(z.string()),
@@ -797,6 +822,8 @@ export const adminApi = {
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */
   createUser: (body: z.input<typeof CreateUserRequestSchema>) => requestJSON('/api/admin/users', UserItemSchema, jsonBody('POST', body)),
+  /** POST /api/admin/users/bulk — Bulk User Action */
+  bulkUserAction: (body: z.input<typeof BulkUsersRequestSchema>) => requestJSON('/api/admin/users/bulk', BulkUsersResponseSchema, jsonBody('POST', body)),
   /** PATCH /api/admin/users/{user_id} — Update User */
   updateUser: (userId: string, body: z.input<typeof UpdateUserRequestSchema>) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}`, UserItemSchema, jsonBody('PATCH', body)),
   /** POST /api/admin/users/{user_id}/deletion — Request Deletion */

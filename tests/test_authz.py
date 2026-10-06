@@ -1,9 +1,11 @@
 """授權（web/authz.py）：一般使用者打不到管理端點；真正擋人的是後端，不是前端 route guard。
 
 兩層：
-- HTTP 層：user 角色打 /api/review/*（以及 /api/admin/*，見 tests/test_admin_api.py）回 403。
+- HTTP 層：user 角色打 /api/review/*（以及 /api/admin/*，見 tests/test_admin_api.py）回 403；
+  缺 scope、不是 super admin、沒有重新驗證，各自回帶 code 的 403。
 - 結構層：app 上**每一條** /api/admin/*、/api/review/* 路由的 dependency 樹裡都要有
-  `authz.require_admin`。新增管理端點時忘了掛，這裡會紅——不必等有人想到要寫 403 測試。
+  `authz.require_admin`，而且至少一個帶 `__scope__` 的 dependency（`require_scope`／`require_super`）。
+  新增管理端點時忘了掛，這裡會紅——不必等有人想到要寫 403 測試。
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from fake_accounts import FakeAccounts, install
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from app.services import accounts
 from app.services.accounts import DEV_USER
 from web import auth, authz, dev_mode
 from web.routers import review
@@ -52,14 +55,36 @@ def _client():
 
 
 class AdminRouteStructureTests(unittest.TestCase):
-    def test_every_admin_route_requires_admin(self):
+    def _guarded(self):
         guarded = [r for r in _iter_api_routes(app.routes) if r.path.startswith(_ADMIN_PREFIXES)]
         self.assertTrue(guarded, "找不到任何管理端點——路由前綴改了？")
+        return guarded
+
+    def test_every_admin_route_requires_admin(self):
         missing = [
-            f"{sorted(r.methods)} {r.path}" for r in guarded
+            f"{sorted(r.methods)} {r.path}" for r in self._guarded()
             if authz.require_admin not in set(_dependency_calls(r.dependant))
         ]
         self.assertEqual(missing, [], f"這些管理端點沒有掛 authz.require_admin：{missing}")
+
+    def test_every_admin_route_declares_a_scope(self):
+        missing = [
+            f"{sorted(r.methods)} {r.path}" for r in self._guarded()
+            if not any(getattr(c, "__scope__", None) for c in _dependency_calls(r.dependant))
+        ]
+        self.assertEqual(missing, [], f"這些管理端點沒有宣告 scope（authz.require_scope／require_super）：{missing}")
+
+    def test_privileges_route_requires_super_and_elevation(self):
+        route = next(r for r in self._guarded() if r.path == "/api/admin/users/{user_id}/privileges")
+        calls = set(_dependency_calls(route.dependant))
+        self.assertIn(authz.require_super, calls)
+        self.assertIn(authz.require_elevated, calls)
+
+    def test_unknown_scope_fails_at_import_time(self):
+        with self.assertRaises(ValueError):
+            authz.require_scope("no.such.scope")
+        with self.assertRaises(ValueError):
+            authz.require_scope()
 
 
 class RoleEnforcementTests(unittest.TestCase):
@@ -139,7 +164,93 @@ class DevModeIdentityTests(unittest.TestCase):
                 body = _client().get("/api/me").json()
         finally:
             dev_mode.bypass_allowed = orig
-        self.assertEqual(body, {"id": None, "username": DEV_USER.username, "role": "admin"})
+        self.assertEqual(body["id"], None)
+        self.assertEqual(body["username"], DEV_USER.username)
+        self.assertEqual(body["role"], "admin")
+        self.assertTrue(body["is_super"])
+        self.assertEqual(set(body["scopes"]), set(accounts.ALL_SCOPES))
+
+
+class ScopeEnforcementTests(unittest.TestCase):
+    """缺 scope／不是 super／沒有重新驗證，各回帶 code 的 403。"""
+
+    def setUp(self):
+        auth._FAILS.clear()
+        self.store = FakeAccounts()
+        self.store.add_user("plain", "plain-password", "admin")
+        self.store.add_user("boss", "boss-password", "admin", is_super=True)
+        self.target = self.store.add_user("other", "other-password", "admin")
+        self._ctx = install(self.store)
+        self._ctx.__enter__()
+
+    def tearDown(self):
+        self._ctx.__exit__(None, None, None)
+        auth._FAILS.clear()
+
+    def _login(self, username, password):
+        client = _client()
+        self.assertEqual(client.post("/login", data={"username": username, "password": password}).status_code, 303)
+        return client
+
+    def _put_privileges(self, client):
+        return client.put(f"/api/admin/users/{self.target}/privileges", json={"scopes": ["qa_content.read"]})
+
+    def test_non_super_gets_super_required(self):
+        r = self._put_privileges(self._login("plain", "plain-password"))
+        self.assertEqual((r.status_code, r.json()["code"]), (403, "super_required"))
+
+    def test_super_without_elevation_gets_elevation_required(self):
+        r = self._put_privileges(self._login("boss", "boss-password"))
+        self.assertEqual((r.status_code, r.json()["code"]), (403, "elevation_required"))
+
+    def test_super_after_elevation_succeeds_and_is_audited(self):
+        client = self._login("boss", "boss-password")
+        bad = client.post("/api/admin/elevate", json={"password": "wrong-password"})
+        self.assertEqual((bad.status_code, bad.json()["code"]), (403, "bad_password"))
+        ok = client.post("/api/admin/elevate", json={"password": "boss-password"})
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertTrue(ok.json()["elevated_until"])
+        r = self._put_privileges(client)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["scopes"], ["qa_content.read"])
+        actions = [e.action for e in self.store.audit]
+        self.assertIn("session.elevate", actions)
+        self.assertIn("session.elevate_failed", actions)
+        self.assertIn("user.set_privileges", actions)
+
+    def test_elevation_is_bound_to_the_session(self):
+        first = self._login("boss", "boss-password")
+        self.assertEqual(first.post("/api/admin/elevate", json={"password": "boss-password"}).status_code, 200)
+        second = self._login("boss", "boss-password")  # 另一個 session（裝置）
+        self.assertEqual(self._put_privileges(second).json()["code"], "elevation_required")
+
+    def test_missing_scope_returns_missing_scope_code(self):
+        from fastapi import Depends, FastAPI
+
+        mini = FastAPI()
+        from web import errors
+
+        errors.install(mini)
+
+        @mini.middleware("http")
+        async def _as_user(request, call_next):
+            request.state.user = accounts.User(id="u", username="u", role="admin",
+                                               scopes=accounts.ADMIN_DEFAULT_SCOPES)
+            return await call_next(request)
+
+        @mini.get("/x", dependencies=[Depends(authz.require_scope("qa_content.read"))])
+        async def _x():
+            return {}
+
+        r = TestClient(mini).get("/x")
+        self.assertEqual((r.status_code, r.json()["code"]), (403, "missing_scope"))
+
+    def test_elevate_is_rate_limited_with_login_failures(self):
+        client = self._login("boss", "boss-password")
+        for _ in range(auth.MAX_FAILS):
+            client.post("/api/admin/elevate", json={"password": "wrong-password"})
+        r = client.post("/api/admin/elevate", json={"password": "boss-password"})
+        self.assertEqual((r.status_code, r.json()["code"]), (429, "rate_limited"))
 
 
 if __name__ == "__main__":

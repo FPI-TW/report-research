@@ -50,6 +50,41 @@ class CreateAdminCliTests(unittest.TestCase):
         self.assertEqual(self.store.audit[0].detail["via"], "cli")
         self.assertIsNone(self.store.audit[0].actor_user_id)
 
+    def test_first_admin_becomes_super_when_none_exists(self):
+        rc, out, _ = self._run(["--username", "alice", "--password-stdin"], "alice-password-1\n")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(self._user("alice").is_super)
+        self.assertIn("super admin", out)
+
+    def test_later_admin_is_not_super_unless_asked(self):
+        self.store.add_user("boss", "boss-password-1", "admin", is_super=True)
+        self._run(["--username", "alice", "--password-stdin"], "alice-password-1\n")
+        self.assertFalse(self._user("alice").is_super)
+        self._run(["--username", "carol", "--super", "--password-stdin"], "carol-password-1\n")
+        self.assertTrue(self._user("carol").is_super)
+
+    def test_reset_with_super_promotes_for_rescue(self):
+        self.store.add_user("boss", "boss-password-1", "admin", is_super=True, enabled=False)
+        self.store.add_user("alice", "old-password-1", "admin")
+        rc, out, _ = self._run(["--username", "alice", "--reset-password", "--super", "--password-stdin"],
+                               "new-password-12\n")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(self._user("alice").is_super)
+        self.assertIn("user.set_privileges", [e.action for e in self.store.audit])
+
+    def test_super_requires_admin_role(self):
+        rc, _, err = self._run(["--username", "bot", "--role", "user", "--super", "--password-stdin"],
+                               "bot-password-123\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("--super", err)
+
+    def test_from_env_creates_super(self):
+        with patch.dict("os.environ", {"REPORT_MARK_ACCESS_USERNAME": "tester",
+                                       "REPORT_MARK_ACCESS_PASSWORD": "legacy-password-1"}):
+            rc, *_ = self._run(["--from-env"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self._user("tester").is_super)
+
     def test_role_user(self):
         rc, *_ = self._run(["--username", "linebot", "--role", "user", "--password-stdin"], "bot-password-123\n")
         self.assertEqual(rc, 0)

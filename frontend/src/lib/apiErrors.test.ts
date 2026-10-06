@@ -24,3 +24,18 @@ test('requestJSON：回應不是 JSON 時只說狀態碼', async () => {
   const err = await requestJSON('/api/admin/users', z.object({})).catch(e => e)
   expect((err as ApiError).message).toBe('HTTP 502')
 })
+
+test('requestJSON：統一錯誤格式的 code 放進 ApiError.code，detail 照舊當訊息', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(
+    JSON.stringify({ detail: '這項操作需要重新驗證密碼', code: 'elevation_required', request_id: 'abc' }), { status: 403 },
+  )))
+  const err = await requestJSON('/api/admin/users/x/privileges', z.object({})).catch(e => e)
+  expect((err as ApiError).message).toBe('這項操作需要重新驗證密碼')
+  expect((err as ApiError).code).toBe('elevation_required')
+})
+
+test('requestJSON：沒有 code 的舊格式錯誤，ApiError.code 是 undefined', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ detail: 'x' }), { status: 400 })))
+  const err = await requestJSON('/api/admin/users', z.object({})).catch(e => e)
+  expect((err as ApiError).code).toBeUndefined()
+})

@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -42,7 +42,9 @@ from app.services import accounts, db, llm, llm_http, llm_models  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
+    csrf,  # noqa: E402
     deps,  # noqa: E402
+    errors,  # noqa: E402
 )
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import admin as admin_routes  # noqa: E402
@@ -194,6 +196,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="研報市場標籤檢索", lifespan=lifespan)
+# 統一錯誤格式 {"detail", "code", "request_id"}（web/errors.py）。
+errors.install(app)
 
 # ───── 認證閘門(deny-by-default;白名單僅 /login 與 /healthz)─────
 # /healthz 必須免認證：它存在的理由就是讓**外部**監控能分辨「DB 掛了」與「站台正常」。
@@ -235,10 +239,12 @@ async def require_login(request: Request, call_next):
             logger.exception("session 查驗失敗：帳號服務無法使用")
             # 不導回登入頁：DB 掛掉時登入一樣不會成功，導回去只會讓人以為密碼錯了。
             if path.startswith("/api/"):
-                return JSONResponse({"detail": "認證服務暫時無法使用"}, status_code=503)
+                return errors.error_response(503, "認證服務暫時無法使用")
             return PlainTextResponse("登入服務暫時無法使用，請稍後再試。", status_code=503)
         if user is not None:
             request.state.user = user
+            # 權限提升（POST /api/admin/elevate）綁在這一個 session 上，要知道是哪一個。
+            request.state.session_id = session.session_id
             response = await call_next(request)
             if path != "/logout":  # 登出會清 cookie,勿在此又刷新蓋回
                 # issued_at 必須沿用原 token 的簽發時刻:滑動續期只推遲 exp,重置 iat
@@ -252,7 +258,7 @@ async def require_login(request: Request, call_next):
                 )
             return response
     if path.startswith("/api/"):
-        response = JSONResponse({"detail": "未登入"}, status_code=401)
+        response = errors.error_response(401, "未登入")
     else:
         response = RedirectResponse("/login", status_code=302)
     if session is not None:
@@ -260,6 +266,18 @@ async def require_login(request: Request, call_next):
         # 一直帶著一張注定被拒的 cookie。
         auth.clear_session_cookie(response)
     return response
+
+
+@app.middleware("http")
+async def reject_cross_site(request: Request, call_next):
+    """會改變狀態的請求必須來自本站（判準見 web/csrf.py）。排在認證之外：跨站請求不必先查 DB。"""
+    problem = csrf.origin_problem(request.method, request.headers)
+    if problem is None:
+        return await call_next(request)
+    logger.warning("拒絕跨站請求 method=%s path=%s：%s", request.method, request.url.path, problem)
+    if request.url.path.startswith("/api/"):
+        return errors.error_response(403, "跨站請求已拒絕", "csrf_rejected")
+    return PlainTextResponse("跨站請求已拒絕。", status_code=403)
 
 
 # 最後加＝最外層：401、302 與未捕捉例外的 500 也都拿得到關聯 id、也都記得到一行。

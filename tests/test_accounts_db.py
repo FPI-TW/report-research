@@ -182,6 +182,95 @@ async def scenario_unknown_user_errors(api) -> None:
         raise AssertionError("不存在的帳號應拋 UserNotFoundError")
 
 
+async def _expect(exc_type, coro) -> None:
+    try:
+        await coro
+    except exc_type:
+        return
+    raise AssertionError(f"應拋 {exc_type.__name__}")
+
+
+async def scenario_scopes_and_super(api) -> None:
+    boss = await api.create_user(_name("Boss"), PW, "admin", actor_id=None, is_super=True)
+    plain = await api.create_user(_name("Plain"), PW, "admin", actor_id=None)
+    member = await api.create_user(_name("Member"), PW, "user", actor_id=None)
+    sid = await api.create_session(plain.id, max_age_seconds=3600)
+    assert (await api.resolve_session(sid)).scopes == accounts.ADMIN_DEFAULT_SCOPES
+    info = await api.set_privileges(plain.id, scopes=["qa_content.read"], actor_id=boss.id)
+    assert info.scopes == ("qa_content.read",) and info.is_super is False
+    assert "qa_content.read" in (await api.resolve_session(sid)).scopes
+    boss_sid = await api.create_session(boss.id, max_age_seconds=3600)
+    boss_user = await api.resolve_session(boss_sid)
+    assert boss_user.is_super and boss_user.scopes == accounts.ALL_SCOPES
+    member_sid = await api.create_session(member.id, max_age_seconds=3600)
+    assert (await api.resolve_session(member_sid)).scopes == frozenset()
+    await _expect(accounts.InvalidInputError, api.set_privileges(member.id, scopes=["ops.operate"], actor_id=boss.id))
+    await _expect(accounts.InvalidInputError, api.set_privileges(plain.id, scopes=["root"], actor_id=boss.id))
+    await _expect(accounts.PermissionDeniedError, api.set_privileges(member.id, scopes=[], actor_id=plain.id))
+    await _expect(accounts.PermissionDeniedError,
+                  api.create_user(_name("Sneaky"), PW, "admin", actor_id=plain.id, is_super=True))
+    info = await api.set_privileges(plain.id, scopes=[], actor_id=boss.id)  # 收回
+    assert info.scopes == ()
+    _total, entries = await api.list_audit(limit=200)
+    priv = [e for e in entries if e.target_id == plain.id and e.action == "user.set_privileges"]
+    assert len(priv) == 2 and priv[0].detail["scopes_removed"] == ["qa_content.read"], priv
+
+
+async def scenario_super_protections(api) -> None:
+    a = await api.create_user(_name("SupA"), PW, "admin", actor_id=None, is_super=True)
+    b = await api.create_user(_name("SupB"), PW, "admin", actor_id=None, is_super=True)
+    plain = await api.create_user(_name("Plain"), PW, "admin", actor_id=None)
+    for call in (
+        lambda: api.update_user(a.id, enabled=False, actor_id=plain.id),
+        lambda: api.update_user(a.id, role="user", actor_id=plain.id),
+        lambda: api.reset_password(a.id, PW2, actor_id=plain.id),
+        lambda: api.force_logout(a.id, actor_id=plain.id),
+    ):
+        await _expect(accounts.PermissionDeniedError, call())
+    await _expect(accounts.SelfLockoutError, api.set_privileges(a.id, is_super=False, actor_id=a.id))
+    info = await api.set_privileges(b.id, is_super=False, actor_id=a.id)  # 還有 a，可以
+    assert info.is_super is False
+    await api.update_user(plain.id, role="user", actor_id=a.id)  # super 管一般管理員照常
+
+
+async def scenario_last_super(api) -> None:
+    """只在「庫裡沒有別的啟用中 super admin」時有意義（CI 的空庫、假帳號庫）。"""
+    a = await api.create_user(_name("OnlySup"), PW, "admin", actor_id=None, is_super=True)
+    await api.create_user(_name("Helper"), PW, "admin", actor_id=None)
+    await _expect(accounts.LastSuperError, api.set_privileges(a.id, is_super=False, actor_id=None))
+    await _expect(accounts.LastSuperError, api.update_user(a.id, enabled=False, actor_id=None))
+    await _expect(accounts.LastSuperError, api.update_user(a.id, role="user", actor_id=None))
+
+
+async def scenario_elevation(api) -> None:
+    info = await api.create_user(_name("Elev"), PW, "admin", actor_id=None)
+    s1 = await api.create_session(info.id, max_age_seconds=3600)
+    s2 = await api.create_session(info.id, max_age_seconds=3600)
+    assert not (await api.resolve_session(s1)).is_elevated
+    assert await api.elevate_session(s1, "wrong-password") is None
+    until = await api.elevate_session(s1, PW)
+    assert until is not None
+    assert (await api.resolve_session(s1)).is_elevated
+    assert not (await api.resolve_session(s2)).is_elevated  # 綁在 session 上
+    await api.revoke_session(s2)
+    assert await api.elevate_session(s2, PW) is None
+    assert await api.elevate_session("not-a-uuid", PW) is None
+    _total, entries = await api.list_audit(limit=200)
+    actions = [e.action for e in entries if e.target_id == s1]
+    assert "session.elevate" in actions and "session.elevate_failed" in actions, actions
+    assert PW not in repr([e.detail for e in entries if e.target_id == s1])
+
+
+async def scenario_audit_chain(api) -> None:
+    admin = await api.create_user(_name("Chain"), PW, "admin", actor_id=None)
+    await api.force_logout(admin.id, actor_id=None)
+    status = await api.verify_audit_chain()
+    assert status.ok, status
+    assert status.head_id is not None and status.total >= 2
+    assert await api.audit_row_hashes([status.head_id]) == {status.head_id: status.head_hash}
+    assert await api.audit_row_hashes([-1]) == {}
+
+
 SCENARIOS = [
     scenario_login,
     scenario_duplicate_username_case_insensitive,
@@ -195,12 +284,16 @@ SCENARIOS = [
     scenario_force_logout_and_audit,
     scenario_audit_never_contains_password,
     scenario_unknown_user_errors,
+    scenario_scopes_and_super,
+    scenario_super_protections,
+    scenario_elevation,
+    scenario_audit_chain,
 ]
 
 
 class FakeParityTests(unittest.TestCase):
     def test_scenarios(self):
-        for scenario in [*SCENARIOS, scenario_last_admin]:
+        for scenario in [*SCENARIOS, scenario_last_admin, scenario_last_super]:
             with self.subTest(scenario.__name__):
                 asyncio.run(scenario(FakeAccounts()))
 
@@ -260,6 +353,50 @@ class AccountsDbTests(unittest.TestCase):
             if await accounts.count_enabled_admins() > 0:
                 raise unittest.SkipTest("庫裡已有啟用中的管理員，最後一位管理員的情境驗不到（CI 空庫會跑）")
             await scenario_last_admin(accounts)
+
+        try:
+            asyncio.run(_in_rolled_back_transaction(go))
+        except (unittest.SkipTest, AssertionError, accounts.AccountError):
+            raise
+        except Exception as exc:
+            _skip_or_raise(exc, "DB 不可用或尚未套 schema")
+
+    def test_last_super_guard(self):
+        async def go():
+            from sqlalchemy import text
+
+            async with accounts.SessionFactory() as session:
+                supers = (await session.execute(text(
+                    "SELECT count(*) FROM research.app_user WHERE role = 'admin' AND enabled AND is_super"
+                ))).scalar_one()
+            if supers > 0:
+                raise unittest.SkipTest("庫裡已有啟用中的 super admin，最後一位 super 的情境驗不到（CI 空庫會跑）")
+            await scenario_last_super(accounts)
+
+        try:
+            asyncio.run(_in_rolled_back_transaction(go))
+        except (unittest.SkipTest, AssertionError, accounts.AccountError):
+            raise
+        except Exception as exc:
+            _skip_or_raise(exc, "DB 不可用或尚未套 schema")
+
+    def test_audit_log_is_append_only(self):
+        """觸發器（revision 0002）擋 UPDATE／DELETE／TRUNCATE；在 savepoint 裡試，失敗就回滾那一段。"""
+        async def go():
+            from sqlalchemy import text
+
+            await accounts.create_user(_name("Ao"), PW, "user", actor_id=None)
+            async with accounts.SessionFactory() as session:
+                for sql in ("UPDATE research.admin_audit_log SET action = 'x'",
+                            "DELETE FROM research.admin_audit_log",
+                            "TRUNCATE research.admin_audit_log"):
+                    try:
+                        async with session.begin_nested():
+                            await session.execute(text(sql))
+                    except Exception as exc:
+                        assert "只能新增" in str(exc), exc
+                        continue
+                    raise AssertionError(f"稽核紀錄不該能 {sql}")
 
         try:
             asyncio.run(_in_rolled_back_transaction(go))

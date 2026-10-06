@@ -16,6 +16,7 @@ export const AdminReportItemSchema = z.object({
   hidden_reason: z.string().nullable().optional(),
   visibility_updated_by: z.string().nullable().optional(),
   visibility_updated_at: z.string().nullable().optional(),
+  publication: z.enum(['draft', 'published']).optional(),
 })
 export type AdminReportItem = z.infer<typeof AdminReportItemSchema>
 
@@ -28,6 +29,58 @@ export const AdminReportListResponseSchema = z.object({
   items: z.array(AdminReportItemSchema),
 })
 export type AdminReportListResponse = z.infer<typeof AdminReportListResponseSchema>
+
+export const AdminUploadSchema = z.object({
+  upload_id: z.string(),
+  file_hash: z.string(),
+  original_name: z.string(),
+  size_bytes: z.number().int(),
+  client_mtime: z.string().nullable().optional(),
+  uploaded_by: z.string().nullable().optional(),
+  uploaded_at: z.string(),
+  state: z.enum(['quarantined', 'scanning', 'clean', 'infected', 'blocked', 'processing', 'draft', 'failed', 'duplicate', 'published', 'rejected']),
+  state_changed_at: z.string(),
+  scan_attempts: z.number().int().optional(),
+  scan_engine: z.string().nullable().optional(),
+  scan_signature: z.string().nullable().optional(),
+  scanned_at: z.string().nullable().optional(),
+  scan_last_error: z.string().nullable().optional(),
+  process_attempts: z.number().int().optional(),
+  failure_kind: z.string().nullable().optional(),
+  failure_detail: z.string().nullable().optional(),
+  processed_at: z.string().nullable().optional(),
+  decided_by: z.string().nullable().optional(),
+  decided_at: z.string().nullable().optional(),
+  decision_reason: z.string().nullable().optional(),
+  purge_after: z.string().nullable().optional(),
+  purged_at: z.string().nullable().optional(),
+})
+export type AdminUpload = z.infer<typeof AdminUploadSchema>
+
+export const AdminUploadReportSchema = z.object({
+  report_id: z.string(),
+  title: z.string().nullable().optional(),
+  publication: z.enum(['draft', 'published']),
+  hidden: z.boolean(),
+  extractor: z.string().nullable().optional(),
+  extraction_version: z.string().nullable().optional(),
+  quality_score: z.number().nullable().optional(),
+  page_count: z.number().int().nullable().optional(),
+  pages_failed: z.array(z.number().int()).nullable().optional(),
+  needs_review: z.boolean().optional(),
+  created_at: z.string().nullable().optional(),
+})
+export type AdminUploadReport = z.infer<typeof AdminUploadReportSchema>
+
+export const AdminUploadScannerSchema = z.object({
+  pending: z.number().int(),
+  scanning: z.number().int(),
+  oldest_pending_at: z.string().nullable().optional(),
+  oldest_pending_seconds: z.number().int().nullable().optional(),
+  last_error: z.string().nullable().optional(),
+  last_error_at: z.string().nullable().optional(),
+})
+export type AdminUploadScanner = z.infer<typeof AdminUploadScannerSchema>
 
 export const AuditChainResponseSchema = z.object({
   ok: z.boolean(),
@@ -466,6 +519,46 @@ export const ReconcileStatsSchema = z.object({
 })
 export type ReconcileStats = z.infer<typeof ReconcileStatsSchema>
 
+export const RegressionBaselineSchema = z.object({
+  captured_at: z.string().nullable().optional(),
+  corpus_cutoff: z.string().nullable().optional(),
+  corpus_reports: z.number().int(),
+  simulated_as_of: z.boolean(),
+  k: z.number().int(),
+  dense_scan: z.number().int(),
+  dataset_sha256: z.string().nullable().optional(),
+})
+export type RegressionBaseline = z.infer<typeof RegressionBaselineSchema>
+
+export const RegressionReportRefSchema = z.object({
+  file_hash: z.string(),
+  label: z.string().nullable().optional(),
+})
+export type RegressionReportRef = z.infer<typeof RegressionReportRefSchema>
+
+export const RegressionSummarySchema = z.object({
+  verdict: z.enum(['ok', 'degraded', 'incomparable']),
+  questions: z.number().int(),
+  comparable: z.number().int(),
+  mean_report_recall: z.number().nullable().optional(),
+  mean_raw_report_recall: z.number().nullable().optional(),
+  mean_chunk_recall: z.number().nullable().optional(),
+  mean_rbo: z.number().nullable().optional(),
+  degraded_questions: z.number().int(),
+  hidden_reports: z.number().int(),
+  removed_reports: z.number().int(),
+  excluded_new_reports: z.number().int(),
+  lex_truncated_questions: z.number().int().optional(),
+})
+export type RegressionSummary = z.infer<typeof RegressionSummarySchema>
+
+export const RegressionThresholdsSchema = z.object({
+  min_mean_recall: z.number(),
+  min_question_recall: z.number(),
+  max_degraded_questions: z.number().int(),
+})
+export type RegressionThresholds = z.infer<typeof RegressionThresholdsSchema>
+
 export const ReportVisibilityRequestSchema = z.object({
   hidden: z.boolean(),
   reason: z.string().nullable().optional(),
@@ -509,6 +602,45 @@ export const UserListResponseSchema = z.object({
   items: z.array(UserItemSchema),
 })
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
+
+export const AdminUploadDetailSchema = z.object({
+  upload_id: z.string(),
+  file_hash: z.string(),
+  original_name: z.string(),
+  size_bytes: z.number().int(),
+  client_mtime: z.string().nullable().optional(),
+  uploaded_by: z.string().nullable().optional(),
+  uploaded_at: z.string(),
+  state: z.enum(['quarantined', 'scanning', 'clean', 'infected', 'blocked', 'processing', 'draft', 'failed', 'duplicate', 'published', 'rejected']),
+  state_changed_at: z.string(),
+  scan_attempts: z.number().int().optional(),
+  scan_engine: z.string().nullable().optional(),
+  scan_signature: z.string().nullable().optional(),
+  scanned_at: z.string().nullable().optional(),
+  scan_last_error: z.string().nullable().optional(),
+  process_attempts: z.number().int().optional(),
+  failure_kind: z.string().nullable().optional(),
+  failure_detail: z.string().nullable().optional(),
+  processed_at: z.string().nullable().optional(),
+  decided_by: z.string().nullable().optional(),
+  decided_at: z.string().nullable().optional(),
+  decision_reason: z.string().nullable().optional(),
+  purge_after: z.string().nullable().optional(),
+  purged_at: z.string().nullable().optional(),
+  report: AdminUploadReportSchema.nullable().optional(),
+})
+export type AdminUploadDetail = z.infer<typeof AdminUploadDetailSchema>
+
+export const AdminUploadListResponseSchema = z.object({
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().nullable(),
+  items: z.array(AdminUploadSchema),
+  scanner: AdminUploadScannerSchema,
+})
+export type AdminUploadListResponse = z.infer<typeof AdminUploadListResponseSchema>
 
 export const IncidentDetailSchema = z.object({
   incident_id: z.string(),
@@ -610,6 +742,29 @@ export const R2ReconcileSectionSchema = z.object({
 })
 export type R2ReconcileSection = z.infer<typeof R2ReconcileSectionSchema>
 
+export const RegressionQuestionSchema = z.object({
+  id: z.string(),
+  question: z.string(),
+  comparable: z.boolean(),
+  degraded: z.boolean(),
+  lex_truncated: z.boolean().optional(),
+  report_recall: z.number().nullable().optional(),
+  raw_report_recall: z.number().nullable().optional(),
+  chunk_recall: z.number().nullable().optional(),
+  rbo: z.number().nullable().optional(),
+  baseline_reports: z.number().int(),
+  eligible_reports: z.number().int(),
+  current_reports: z.number().int(),
+  hidden_reports: z.number().int(),
+  removed_reports: z.number().int(),
+  excluded_new_reports: z.number().int(),
+  lost_total: z.number().int(),
+  gained_total: z.number().int(),
+  lost: z.array(RegressionReportRefSchema),
+  gained: z.array(RegressionReportRefSchema),
+})
+export type RegressionQuestion = z.infer<typeof RegressionQuestionSchema>
+
 export const DataHealthResponseSchema = z.object({
   generated_at: z.string(),
   overall: z.enum(['ok', 'warn', 'fail', 'unknown']),
@@ -626,6 +781,33 @@ export const OpsServiceListResponseSchema = z.object({
   items: z.array(OpsServiceStatusSchema),
 })
 export type OpsServiceListResponse = z.infer<typeof OpsServiceListResponseSchema>
+
+export const RegressionComparisonSchema = z.object({
+  finished_at: z.string(),
+  duration_s: z.number().nullable().optional(),
+  baseline: RegressionBaselineSchema.nullable().optional(),
+  dense_scan: z.number().int().nullable().optional(),
+  params_changed: z.boolean(),
+  thresholds: RegressionThresholdsSchema.nullable().optional(),
+  summary: RegressionSummarySchema.nullable().optional(),
+  questions: z.array(RegressionQuestionSchema),
+})
+export type RegressionComparison = z.infer<typeof RegressionComparisonSchema>
+
+export const RetrievalRegressionResponseSchema = z.object({
+  status: z.enum(['ok', 'warn', 'fail', 'unknown']),
+  available: z.boolean(),
+  unavailable_reason: z.string().nullable().optional(),
+  finished_at: z.string().nullable().optional(),
+  age_hours: z.number().nullable().optional(),
+  stale: z.boolean(),
+  exit_code: z.number().int().nullable().optional(),
+  outcome: z.enum(['ok', 'degraded', 'skipped', 'error']).nullable().optional(),
+  reason: z.enum(['db_unavailable', 'low_memory', 'sync_running', 'no_baseline', 'baseline_invalid', 'incomparable', 'dataset_invalid', 'embed_failed', 'query_failed', 'unexpected']).nullable().optional(),
+  message: z.string().nullable().optional(),
+  comparison: RegressionComparisonSchema.nullable().optional(),
+})
+export type RetrievalRegressionResponse = z.infer<typeof RetrievalRegressionResponseSchema>
 
 function qs(query: Record<string, string | number | boolean | null | undefined>): string {
   const params = new URLSearchParams()
@@ -670,9 +852,15 @@ export const adminApi = {
   /** POST /api/admin/ops/services/{name}/run — Run Ops Service */
   runOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/run`, OpsActionResponseSchema, jsonBody('POST')),
   /** GET /api/admin/reports — List Reports */
-  listReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
+  listReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
+  /** GET /api/admin/retrieval-regression — Get Retrieval Regression */
+  getRetrievalRegression: () => requestJSON('/api/admin/retrieval-regression', RetrievalRegressionResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/uploads — List Uploads */
+  listUploads: (query: { state?: 'quarantined' | 'scanning' | 'clean' | 'infected' | 'blocked' | 'processing' | 'draft' | 'failed' | 'duplicate' | 'published' | 'rejected' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/uploads${qs(query)}`, AdminUploadListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/uploads/{upload_id} — Get Upload */
+  getUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}`, AdminUploadDetailSchema, { cache: 'no-store' }),
   /** GET /api/admin/users — List Users */
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */
@@ -693,6 +881,17 @@ export const adminApi = {
   resetTotp: (userId: string) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/totp/reset`, UserItemSchema, jsonBody('POST')),
 }
 
+/** raw body 上傳端點（不是 JSON）：前端自己送檔（XHR 才有上傳進度），回應以 `response` 解析。 */
+export const adminRawUploads = {
+  /** POST /api/admin/uploads — Create Upload（raw body application/pdf） */
+  createUpload: {
+    method: 'POST',
+    url: (query: { filename: string; last_modified?: number | null }) => `/api/admin/uploads${qs(query)}`,
+    contentType: 'application/pdf',
+    response: AdminUploadSchema,
+  },
+}
+
 /** CSV 下載端點的網址（`text/csv`，不是 JSON）。 */
 export const adminCsvUrls = {
   /** GET /api/admin/export/audit.csv — Export Audit（下載網址） */
@@ -702,7 +901,7 @@ export const adminCsvUrls = {
   /** GET /api/admin/export/jobs.csv — Export Jobs（下載網址） */
   exportJobs: (query: { service?: string | null; unit?: string | null; state?: 'running' | 'finished' | 'lost' | null; result?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => `/api/admin/export/jobs.csv${qs(query)}`,
   /** GET /api/admin/export/reports.csv — Export Reports（下載網址） */
-  exportReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number } = {}) => `/api/admin/export/reports.csv${qs(query)}`,
+  exportReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number } = {}) => `/api/admin/export/reports.csv${qs(query)}`,
   /** GET /api/admin/export/users.csv — Export Users（下載網址） */
   exportUsers: (query: { limit?: number } = {}) => `/api/admin/export/users.csv${qs(query)}`,
 }

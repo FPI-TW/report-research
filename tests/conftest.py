@@ -85,6 +85,12 @@ os.environ["SCHEMA_CHECK_STATUS_FILE"] = "/nonexistent/report-mark-schema-check/
 # 資料健康結果檔（app/services/data_health.py；db_audit.py 與 reconcile_object_storage.py 跑完時寫，預設 repo 根的
 # data/health/）：同理用賦值指到不存在的目錄——寫入 fail-open、讀取當作「還沒跑過」。要驗內容的測試自己給 tempfile。
 os.environ["DATA_HEALTH_DIR"] = "/nonexistent/report-mark-data-health"
+# 檢索回歸的基準檔（app/services/retrieval_regression.py；預設 repo 根的 data/retrieval_regression/baseline.json）：
+# 同理用賦值指到不存在的路徑——讀取當作「還沒有基準」、擷取寫不進去。要驗內容的測試自己給 tempfile。
+os.environ["RETRIEVAL_REGRESSION_BASELINE"] = "/nonexistent/report-mark-retrieval-regression/baseline.json"
+# 研報上傳的隔離區（app/services/quarantine.py；預設 repo 根的 data/quarantine/）：同理用賦值指到不存在的路徑——
+# 收檔建不出目錄就回 503 `quarantine_unavailable`，部署目錄不會留下測試寫的 .part／.bin。要寫檔的測試自己給 tempfile。
+os.environ["UPLOAD_QUARANTINE_DIR"] = "/nonexistent/report-mark-quarantine"
 # 維運代理（app/config.py 的 OPS_AGENT_*）：同樣用賦值。這台機器就是生產主機，代理裝上之後預設 socket
 # 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
 os.environ["OPS_AGENT_ENVIRONMENT"] = "production"

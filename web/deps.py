@@ -124,7 +124,9 @@ def _valid_uuid(s) -> bool:
 # MARKETS 等，測試不 mock）仍由各處直接 import，不進這裡。
 # 帳號服務以「模組物件」整個放進依賴面：middleware、登入頁與管理端點都呼叫
 # deps.accounts.X，測試只要換掉這一個名字（tests/fake_accounts.py）就整組接管。
+# 研報隱藏／恢復的管理端（web/routers/admin_reports.py）同理：deps.report_visibility.X。
 from app.services import accounts  # noqa: E402
+from app.services import visibility as report_visibility  # noqa: E402
 from app.services.answer import (  # noqa: E402
     answer_question,
     conversation_is_foreign,
@@ -213,5 +215,6 @@ __all__ = [
     "log_stopped_qa",
     "qa_is_foreign",
     "rank_reports",
+    "report_visibility",
     "rerank_warmup",
 ]

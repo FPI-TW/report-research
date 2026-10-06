@@ -23,6 +23,7 @@ from app.services.object_storage import (
     original_available,
     original_object_key,
 )
+from app.services.visibility import visible_report_sql
 from web import deps
 
 router = APIRouter()
@@ -52,12 +53,13 @@ def _require_report_id(report_id: str) -> None:
 
 
 async def _fetch_report(session, report_id: str):
+    """被管理員隱藏的研報與查無同樣 404（metadata 與原檔 presign 都不給，也不洩漏存在與否）。"""
     row = (
         await session.execute(
             text(
                 "SELECT file_name, market, source, report_date, report_type, "
                 "file_path, full_text, summary, title, source_object_key, file_hash "
-                "FROM research.research_report WHERE id = :id"
+                f"FROM research.research_report r WHERE id = :id AND {visible_report_sql('r')}"
             ),
             {"id": report_id},
         )

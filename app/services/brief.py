@@ -31,6 +31,8 @@ from typing import Optional, Sequence
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.visibility import visible_report_id_sql, visible_report_sql
+
 # 只有這兩個狀態代表「真的擷取到東西」。pending/rejected 是批次的過程紀錄，
 # 不是讀者視角的事實——與 reading/queries.py 的 VALID_STATUSES 同一個理由。
 VALID_SIGNAL_STATUSES = ["valid", "partial"]
@@ -115,12 +117,14 @@ class BriefRow:
 
 # ── 收集（決定性） ────────────────────────────────────────────────
 
+# 被管理員隱藏的研報不得進簡報（app/services/visibility.py）：素材、篇數與來源連結三處都排除。
 _WINDOW_REPORTS_SQL = text(
-    """
+    f"""
     SELECT id::text, file_hash, file_name, title, market, source, report_date, summary
-    FROM research.research_report
+    FROM research.research_report r
     WHERE created_at >= :start AND created_at < :end
       AND is_research IS NOT FALSE
+      AND {visible_report_sql("r")}
     ORDER BY report_date DESC NULLS LAST, created_at DESC
     LIMIT :limit
     """
@@ -159,9 +163,10 @@ async def fetch_window_reports(
 
 
 _COUNT_WINDOW_REPORTS_SQL = text(
-    """
-    SELECT count(*) FROM research.research_report
+    f"""
+    SELECT count(*) FROM research.research_report r
     WHERE created_at >= :start AND created_at < :end AND is_research IS NOT FALSE
+      AND {visible_report_sql("r")}
     """
 )
 
@@ -190,8 +195,12 @@ SIGNAL_MAX_REPORT_AGE_DAYS = 14
 
 # lag() 刻意開在全表上（見模組 docstring 第三點）：一家券商在窗期內只會出一份報告，
 # 「這次與上次比」的上次必然在窗期之外。最後才用窗期與新鮮度過濾。
+#
+# 被隱藏研報的訊號在 ranked **之內**就排除（不是最後才濾）：對讀者而言那份研報不存在，
+# 它既不能是「這次」，也不能是同一家券商下一次訊號的「上次」——否則簡報會寫出「從（隱藏研報的）買進
+# 調為中立」，等於把隱藏的內容漏出去。
 _SIGNAL_CHANGES_SQL = text(
-    """
+    f"""
     WITH ranked AS (
         SELECT
             market, instrument_code, broker, report_date, created_at,
@@ -201,6 +210,7 @@ _SIGNAL_CHANGES_SQL = text(
         FROM research.report_signal
         WHERE extraction_status = ANY(CAST(:statuses AS text[]))
           AND broker IS NOT NULL
+          AND {visible_report_id_sql("report_signal.report_id")}
         WINDOW w AS (
             PARTITION BY market, instrument_code, broker
             ORDER BY report_date NULLS FIRST, created_at
@@ -492,10 +502,11 @@ async def fetch_dates(session: AsyncSession, limit: int = 30) -> list[date]:
 
 
 _REPORTS_BY_IDS_SQL = text(
-    """
+    f"""
     SELECT id::text, file_hash, file_name, title, market, source, report_date, summary
-    FROM research.research_report
+    FROM research.research_report r
     WHERE id = ANY(CAST(:ids AS uuid[]))
+      AND {visible_report_sql("r")}
     ORDER BY report_date DESC NULLS LAST, file_name
     """
 )
@@ -508,6 +519,7 @@ async def fetch_reports_by_ids(
 
     **查無的 id 直接消失，不是錯誤**：`report_ids` 刻意沒有 FK，語料重建後
     （`ingest_all.py` 先刪後插）舊 id 會失效。簡報本文仍然有效，只是少幾個連結。
+    簡報產生後才被隱藏的研報同樣從連結消失（本文已落庫，不回頭改寫）。
     """
     if not ids:
         return []

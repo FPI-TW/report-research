@@ -111,11 +111,12 @@ class ReviewQueueDbTests(unittest.TestCase):
             self.assertGreaterEqual(out[key][0], len(out[key][1]))
         low = next(i for i in out["faithfulness"][1] if i.qa_id == str(ids["low"]))
         self.assertAlmostEqual(low.faithfulness_score, 0.05)
-        # 單題對話沒有 conversation_id，回退到自己的 id——前端要靠它連回 /ask?c=。
-        self.assertEqual(low.conversation_id, low.qa_id)
 
-    def test_reviewer_and_asker_resolve_to_usernames(self):
-        """處理人與提問者以純量子查詢補帳號名；舊資料（NULL）是 None，不是整列消失。"""
+    def test_reviewer_resolves_to_username_and_asker_to_opaque_code(self):
+        """處理人以純量子查詢補帳號名；提問者只回不可逆代號、不回帳號名或提問原文。
+
+        舊資料（NULL）是 None，不是整列消失。
+        """
         asker, reviewer = uuid.uuid4(), uuid.uuid4()
         owned, legacy = uuid.uuid4(), uuid.uuid4()
         suffix = uuid.uuid4().hex[:8]
@@ -145,10 +146,96 @@ class ReviewQueueDbTests(unittest.TestCase):
             return {i.qa_id: i for i in items if i.qa_id in (str(owned), str(legacy))}
 
         got = self._run(fn)
-        self.assertEqual(got[str(owned)].asked_by, f"asker_{suffix}")
+        self.assertEqual(got[str(owned)].asker_code, review._asker_code(asker))
         self.assertEqual(got[str(owned)].reviewer, f"rev_{suffix}")
-        self.assertIsNone(got[str(legacy)].asked_by)
+        dumped = got[str(owned)].model_dump_json()
+        self.assertNotIn(f"asker_{suffix}", dumped)
+        self.assertNotIn("誰問的", dumped)
+        self.assertNotIn(str(asker), dumped)
+        self.assertIsNone(got[str(legacy)].asker_code)
         self.assertIsNone(got[str(legacy)].reviewer)
+
+    def test_qa_content_access_only_reaches_items_in_the_queue(self):
+        """逐筆讀取的條件＝佇列的條件：佇列裡看得到的才讀得到，其餘（含不存在）都是 None。"""
+        ids = {name: uuid.uuid4() for name in (
+            "low", "ok", "malformed", "old", "inactive", "stopped", "disliked", "liked", "both", "old_judge",
+        )}
+        missing = uuid.uuid4()
+
+        async def fn(session):
+            async def add(name, *, evaluation=None, feedback=None, active=True, stopped=False, age=1):
+                await session.execute(_INSERT_QA, {
+                    "id": ids[name], "q": f"q-{name}", "active": active, "stopped": stopped, "feedback": feedback,
+                    "evaluation": json.dumps(evaluation) if evaluation is not None else None, "age": age,
+                })
+
+            cur = review._JUDGE_MODEL
+            await add("low", evaluation={"faithfulness_score": 0.05, "judge_model": cur})
+            await add("ok", evaluation={"faithfulness_score": 0.99, "judge_model": cur})
+            await add("malformed", evaluation={"faithfulness_score": "n/a", "judge_model": cur})
+            await add("old", evaluation={"faithfulness_score": 0.01, "judge_model": cur}, age=90)
+            await add("inactive", evaluation={"faithfulness_score": 0.01, "judge_model": cur}, active=False)
+            await add("stopped", feedback="dislike", stopped=True)
+            await add("disliked", feedback="dislike")
+            await add("liked", feedback="like")
+            await add("both", evaluation={"faithfulness_score": 0.02, "judge_model": cur}, feedback="dislike")
+            await add("old_judge", evaluation={"faithfulness_score": 0.01, "judge_model": "some-retired-judge"})
+
+            got = {name: await review._qa_content_in_queue(session, qid) for name, qid in ids.items()}
+            got["missing"] = await review._qa_content_in_queue(session, missing)
+            # 佇列（預設窗期）看得到的 id 集合，與讀得到的必須一致。
+            queued = set()
+            for kind in ("faithfulness", "feedback"):
+                _t, items = await review._fetch(
+                    session, kind, limit=1000, offset=0, days=review._DEFAULT_DAYS, status="all",
+                )
+                queued |= {i.qa_id for i in items}
+            return got, queued
+
+        got, queued = self._run(fn)
+        readable = {name for name, v in got.items() if v is not None}
+        self.assertEqual(readable, {"low", "disliked", "both"})
+        mine = {str(v): k for k, v in ids.items()}
+        self.assertEqual({mine[q] for q in queued if q in mine}, readable)
+        question, answer, _created, kinds = got["low"]
+        self.assertEqual((question, answer, kinds), ("q-low", "答", ["faithfulness"]))
+        self.assertEqual(got["disliked"][3], ["feedback"])
+        self.assertEqual(got["both"][3], ["faithfulness", "feedback"])
+
+    def test_qa_content_audit_row_lands_in_same_transaction_without_content(self):
+        """稽核與讀取同一筆交易；detail 只有 qa_id 與 kinds（rollback，不留痕）。"""
+        from app.services.accounts import record_audit
+
+        qid, actor = uuid.uuid4(), uuid.uuid4()
+
+        async def fn(session):
+            await session.execute(
+                text("INSERT INTO research.app_user (id, username, password_hash, role) "
+                     "VALUES (:id, :u, 'x', 'admin')"),
+                {"id": actor, "u": f"qa_{uuid.uuid4().hex[:8]}"},
+            )
+            await session.execute(_INSERT_QA, {
+                "id": qid, "q": "機密提問內容", "active": True, "stopped": False, "feedback": "dislike",
+                "evaluation": None, "age": 1,
+            })
+            found = await review._qa_content_in_queue(session, qid)
+            await record_audit(
+                session, actor_id=str(actor), action="qa_content.read", target_type="qa",
+                target_id=str(qid), detail={"qa_id": str(qid), "kinds": found[3]},
+            )
+            rows = (await session.execute(
+                text("SELECT action, target_type, detail FROM research.admin_audit_log "
+                     "WHERE actor_user_id = :a AND target_id = :t"),
+                {"a": actor, "t": str(qid)},
+            )).all()
+            return [tuple(r) for r in rows]
+
+        rows = self._run(fn)
+        self.assertEqual(len(rows), 1)
+        action, ttype, detail = rows[0]
+        self.assertEqual((action, ttype), ("qa_content.read", "qa"))
+        self.assertEqual(detail, {"qa_id": str(qid), "kinds": ["feedback"]})
+        self.assertNotIn("機密", json.dumps(detail, ensure_ascii=False))
 
     def test_extraction_query_runs_and_only_returns_flagged_reports(self):
         async def fn(session):

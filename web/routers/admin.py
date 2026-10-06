@@ -1,11 +1,13 @@
-"""管理後台 API（/api/admin/*）：帳號管理、權限（scope／super admin）、權限提升與管理操作稽核。整組限管理員。
+"""管理後台 API（/api/admin/*）：帳號管理、權限（scope／super admin）、權限提升、帳號刪除排程、
+替遺失驗證器的人重設 TOTP，與管理操作稽核。整組限管理員。
 
 帳號的規則（最後一位管理員、不能鎖死自己、停用即撤銷 session、稽核同交易）都在
 `app/services/accounts.py`，這裡只做 HTTP 轉換：服務層拋的 `AccountError` 子類別對到
 狀態碼，訊息原樣當 detail 給前端顯示。呼叫一律經 `deps.accounts`（測試的替換點）。
 
 授權只認後端：`router` 層掛 `authz.require_admin`，每條路由再掛自己的 scope（`authz.require_scope`）；
-調整權限要 super admin 加上近 10 分鐘內重新驗證過密碼（`require_super`＋`require_elevated`）。
+調整權限要 super admin 加上近 10 分鐘內重新驗證過密碼（`require_super`＋`require_elevated`）；提出刪除、
+重設別人的 TOTP 要 `accounts.manage`＋已提升。取消刪除不需要提升（它只是還原）。
 `tests/test_authz.py` 結構性檢查每條 /api/admin/* 路由都有這兩層。前端 `/app/admin/*` 的 route guard
 只是不顯示頁面。
 
@@ -15,25 +17,30 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.services.accounts import (
+    AccountDeletedError,
     AccountError,
+    DeletionPendingError,
+    DeletionWindowClosedError,
     InvalidInputError,
     LastAdminError,
     LastSuperError,
+    NoPendingDeletionError,
     PermissionDeniedError,
     SelfLockoutError,
+    TotpStateError,
     User,
     UsernameTakenError,
     UserNotFoundError,
 )
-from web import auth, authz, deps
+from web import authz, deps
 from web.errors import AppError
+from web.routers.account_security import ElevateRequest, ElevateResponse, perform_elevation
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +67,8 @@ class UserItem(BaseModel):
     active_sessions: int = 0
     is_super: bool = False
     scopes: list[GrantableScope] = []  # 另外授予的；管理員預設 scope 不列
+    totp_enabled: bool = False
+    deletion_execute_after: str | None = None  # 有尚未執行的刪除排程時：執行時刻
 
 
 class UserListResponse(BaseModel):
@@ -87,12 +96,21 @@ class LogoutResponse(BaseModel):
     revoked: int
 
 
-class ElevateRequest(BaseModel):
-    password: str = Field(..., max_length=1024)
+class DeletionItem(BaseModel):
+    id: int
+    user_id: str
+    username: str | None  # 執行後是 deleted-<uuid>
+    requested_by: str | None
+    requested_by_username: str | None
+    requested_at: str | None
+    execute_after: str | None
+    cancelled_at: str | None
+    executed_at: str | None
+    status: Literal["pending", "cancelled", "executed"]
 
 
-class ElevateResponse(BaseModel):
-    elevated_until: str
+class DeletionListResponse(BaseModel):
+    items: list[DeletionItem]
 
 
 class PrivilegesRequest(BaseModel):
@@ -138,6 +156,11 @@ _STATUS = (
     (LastSuperError, 409, "last_super"),
     (SelfLockoutError, 409, "self_lockout"),
     (PermissionDeniedError, 403, "super_required"),
+    (AccountDeletedError, 409, "account_deleted"),
+    (DeletionPendingError, 409, "deletion_pending"),
+    (NoPendingDeletionError, 404, "no_pending_deletion"),
+    (DeletionWindowClosedError, 409, "deletion_window_closed"),
+    (TotpStateError, 409, "totp_state"),
     (InvalidInputError, 400, "invalid_input"),
 )
 
@@ -159,7 +182,17 @@ def _user_item(info) -> UserItem:
         created_at=_iso(info.created_at), updated_at=_iso(info.updated_at),
         password_changed_at=_iso(info.password_changed_at), last_login_at=_iso(info.last_login_at),
         last_seen_at=_iso(info.last_seen_at), active_sessions=info.active_sessions,
-        is_super=info.is_super, scopes=list(info.scopes),
+        is_super=info.is_super, scopes=list(info.scopes), totp_enabled=info.totp_enabled,
+        deletion_execute_after=_iso(info.deletion_execute_after),
+    )
+
+
+def _deletion_item(d) -> DeletionItem:
+    return DeletionItem(
+        id=d.id, user_id=d.user_id, username=d.username, requested_by=d.requested_by,
+        requested_by_username=d.requested_by_username, requested_at=_iso(d.requested_at),
+        execute_after=_iso(d.execute_after), cancelled_at=_iso(d.cancelled_at), executed_at=_iso(d.executed_at),
+        status=d.status,
     )
 
 
@@ -234,21 +267,54 @@ async def set_privileges(user_id: str, body: PrivilegesRequest, actor: User = De
 @router.post("/api/admin/elevate", response_model=ElevateResponse,
              dependencies=[Depends(authz.require_scope("admin"))])
 async def elevate(body: ElevateRequest, request: Request, actor: User = Depends(authz.current_user)):
-    """重新驗證密碼，取得 10 分鐘的權限提升（綁在目前這個 session）。與登入共用每 IP 失敗限流。"""
-    if actor.is_elevated and actor.id is None:  # 開發模式免登入：沒有 session，本來就視為已提升
-        return ElevateResponse(elevated_until=_iso(actor.elevated_until) or "")
-    ip, now = auth.client_ip(request), int(time.time())
-    if auth.is_locked(ip, now):
-        raise AppError(429, "rate_limited", "嘗試次數過多，請稍後再試")
-    session_id = getattr(request.state, "session_id", None)
-    until = await deps.accounts.elevate_session(session_id, body.password) if session_id else None
-    if until is None:
-        auth.record_failure(ip, now)
-        logger.warning("權限提升失敗 user=%s ip=%s（第 %s 次）", actor.username, ip, auth.failure_count(ip, now))
-        raise AppError(403, "bad_password", "密碼不正確")
-    auth.reset(ip)
+    """重新驗證密碼（帳號開了 TOTP 時＋驗證碼），取得 10 分鐘的權限提升（綁在目前這個 session）。
+
+    實作與 POST /api/me/elevate 共用（`account_security.perform_elevation`）；與登入共用每 IP 失敗限流。
+    """
+    result = await perform_elevation(request, actor, body.password, body.code)
     _log(actor, "session.elevate", actor.username)
-    return ElevateResponse(elevated_until=_iso(until) or "")
+    return result
+
+
+@router.post("/api/admin/users/{user_id}/deletion", response_model=DeletionItem,
+             dependencies=[_ACCOUNTS, Depends(authz.require_elevated)])
+async def request_deletion(user_id: str, actor: User = Depends(authz.current_user)):
+    """提出刪除：立即停用並撤銷所有 session，24 小時後由批次執行（之前可取消）。"""
+    try:
+        d = await deps.accounts.request_deletion(user_id, actor_id=actor.id)
+    except AccountError as exc:
+        raise _http_error(exc) from exc
+    _log(actor, "user.delete_requested", user_id, execute_after=_iso(d.execute_after))
+    return _deletion_item(d)
+
+
+@router.post("/api/admin/users/{user_id}/deletion/cancel", response_model=DeletionItem, dependencies=[_ACCOUNTS])
+async def cancel_deletion(user_id: str, actor: User = Depends(authz.current_user)):
+    """撤銷窗口內取消刪除，還原提出前的啟用狀態；已到執行時刻 409 `deletion_window_closed`。"""
+    try:
+        d = await deps.accounts.cancel_deletion(user_id, actor_id=actor.id)
+    except AccountError as exc:
+        raise _http_error(exc) from exc
+    _log(actor, "user.delete_cancelled", user_id)
+    return _deletion_item(d)
+
+
+@router.get("/api/admin/deletions", response_model=DeletionListResponse, dependencies=[_ACCOUNTS])
+async def list_deletions(status: Literal["pending", "all"] = Query("pending")):
+    items = await deps.accounts.list_deletions(include_done=status == "all")
+    return DeletionListResponse(items=[_deletion_item(d) for d in items])
+
+
+@router.post("/api/admin/users/{user_id}/totp/reset", response_model=UserItem,
+             dependencies=[_ACCOUNTS, Depends(authz.require_elevated)])
+async def reset_totp(user_id: str, actor: User = Depends(authz.current_user)):
+    """替遺失驗證器的人關閉兩步驟驗證（對方之後可自行重新開啟）。對 super admin 只有 super admin 能做。"""
+    try:
+        info = await deps.accounts.disable_totp(user_id, actor_id=actor.id)
+    except AccountError as exc:
+        raise _http_error(exc) from exc
+    _log(actor, "user.totp_reset", info.username)
+    return _user_item(info)
 
 
 @router.get("/api/admin/audit/verify", response_model=AuditChainResponse, dependencies=[_AUDIT])

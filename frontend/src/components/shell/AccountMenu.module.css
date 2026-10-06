@@ -12,6 +12,8 @@
 .popHead { padding: 8px 10px 10px; border-bottom: 1px solid var(--tf-glass-border); margin-bottom: 4px; }
 .menuItem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: var(--tf-radius-md); text-decoration: none; box-sizing: border-box; }
 .menuItem:hover { background: rgba(0, 0, 0, 0.06); color: var(--tf-text-1); }
+button.menuItem { border: none; background: none; cursor: pointer; font-family: inherit; }
+button.menuItem:hover { background: rgba(0, 0, 0, 0.06); }
 .logout { width: 100%; text-align: left; border: none; background: none; font-size: 13px; color: var(--tf-text-2); padding: 8px 10px; border-radius: var(--tf-radius-md); cursor: pointer; font-family: inherit; }
 .logout:hover { background: rgba(0, 0, 0, 0.06); }
 /* M10b 語言切換：popover 內的分段控制 */

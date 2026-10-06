@@ -58,6 +58,10 @@ class AdminApiTests(unittest.TestCase):
             ("get", "/api/admin/audit/verify", None),
             ("post", "/api/admin/elevate", {"password": USER_PW}),
             ("put", f"/api/admin/users/{self.alice}/privileges", {"scopes": ["qa_content.read"]}),
+            ("post", f"/api/admin/users/{self.root}/deletion", None),
+            ("post", f"/api/admin/users/{self.root}/deletion/cancel", None),
+            ("get", "/api/admin/deletions", None),
+            ("post", f"/api/admin/users/{self.root}/totp/reset", None),
         ]
         for method, path, body in calls:
             with self.subTest(f"{method} {path}"):

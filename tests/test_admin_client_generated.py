@@ -35,6 +35,13 @@ class GeneratedAdminClientTests(unittest.TestCase):
         with self.assertRaises(gen.Unsupported):
             gen.zod({"enum": [1, 2]})
 
+    def test_query_param_types(self):
+        self.assertEqual(gen.ts_query_type({"anyOf": [{"type": "boolean"}, {"type": "null"}]}), "boolean | null")
+        self.assertEqual(gen.ts_query_type({"enum": ["pending", "all"], "type": "string"}), "'pending' | 'all'")
+        self.assertEqual(gen.ts_query_type({"type": "integer"}), "number")
+        with self.assertRaises(gen.Unsupported):
+            gen.ts_query_type({"type": "object"})
+
     def test_nullable_and_refs(self):
         self.assertEqual(gen.zod({"anyOf": [{"type": "string"}, {"type": "null"}]}), "z.string().nullable()")
         self.assertEqual(gen.zod({"$ref": "#/components/schemas/User-Input"}), "UserInputSchema")

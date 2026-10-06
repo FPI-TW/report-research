@@ -1,0 +1,178 @@
+# report-mark 維運代理的 Service Catalog（辦公室主機的生產環境）。格式與驗證規則見 ops_agent/catalog.py。
+# 部署：複製到 /opt/report-mark-ops/services.prod.toml（root 擁有、0644），步驟見 docs/production_resilience.md
+# 「維運代理」。改了這份要重新安裝並重啟 report-mark-ops-agent.service；先跑 --check 驗證。
+#
+# 名稱不在這裡的服務，代理一律拒絕。actions 本版只有 status、logs（P7 才加 restart、run-now）。
+# 刻意不列：report-mark-alert@（模板）、report-mark-backfill（過渡期，跑完就 disable）。
+
+schema = 1
+environment = "production"
+socket_path = "/run/report-mark-ops/agent.sock"
+
+[agent]
+# 只有 web 的執行身分能連（report-mark-web.service 的 User=）。
+allowed_users = ["kashionz"]
+request_timeout = 15
+command_timeout = 8
+max_response_bytes = 262144
+max_log_lines = 1000
+max_log_age_hours = 168
+max_concurrent = 4
+systemctl = "/usr/bin/systemctl"
+journalctl = "/usr/bin/journalctl"
+docker = "/usr/bin/docker"
+
+# ── critical：壞了使用者馬上感覺得到 ─────────────────────────────────────
+
+[[services]]
+name = "web"
+kind = "systemd"
+unit = "report-mark-web.service"
+tier = "critical"
+actions = ["status", "logs"]
+description = "Web（uvicorn :8097，BGE-M3 常駐）"
+
+[[services]]
+name = "postgres"
+kind = "container"
+container = "report-mark-postgres"
+tier = "critical"
+actions = ["status", "logs"]
+description = "PostgreSQL＋pgvector（:5436）"
+
+# deploy/docker-compose.yml 的 compose 專案名＝目錄名 deploy，容器名是 <專案>-<服務>-1。
+[[services]]
+name = "nginx"
+kind = "container"
+container = "deploy-nginx-1"
+tier = "critical"
+actions = ["status", "logs"]
+description = "對外邊緣 nginx（make up-edge）"
+
+[[services]]
+name = "cloudflared"
+kind = "container"
+container = "deploy-cloudflared-1"
+tier = "critical"
+actions = ["status", "logs"]
+description = "Cloudflare Tunnel 連接器（make up-edge）"
+
+# ── important：停了不會立刻出事，但資料或告警會開始落後 ────────────────────
+
+[[services]]
+name = "sync"
+kind = "systemd"
+unit = "report-mark-sync.service"
+timer = "report-mark-sync.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "NAS 增量同步匯入（每 3 小時）"
+
+[[services]]
+name = "backup"
+kind = "systemd"
+unit = "report-mark-backup.service"
+timer = "report-mark-backup.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "不可重建表備份 → NAS（03:30）"
+
+[[services]]
+name = "health"
+kind = "systemd"
+unit = "report-mark-health.service"
+timer = "report-mark-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "P4 應用層健康探針（每 2 分鐘）"
+
+[[services]]
+name = "incident"
+kind = "systemd"
+unit = "report-mark-incident.service"
+timer = "report-mark-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "P5 事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "edge-health"
+kind = "systemd"
+unit = "report-mark-edge-health.service"
+timer = "report-mark-edge-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "對外邊緣健康探針（每 2 分鐘）"
+
+[[services]]
+name = "edge-incident"
+kind = "systemd"
+unit = "report-mark-edge-incident.service"
+timer = "report-mark-edge-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "對外邊緣事件偵測與通知（每 2 分鐘）"
+
+# ── supporting：稽核、對帳、觀測 ─────────────────────────────────────────
+
+[[services]]
+name = "freshness"
+kind = "systemd"
+unit = "report-mark-freshness.service"
+timer = "report-mark-freshness.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "批次停更偵測（08:30）"
+
+[[services]]
+name = "audit"
+kind = "systemd"
+unit = "report-mark-audit.service"
+timer = "report-mark-audit.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "資料完整性稽核 make db-audit（08:45）"
+
+[[services]]
+name = "audit-anchor"
+kind = "systemd"
+unit = "report-mark-audit-anchor.service"
+timer = "report-mark-audit-anchor.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "稽核雜湊鏈外部錨定（04:15）"
+
+[[services]]
+name = "r2-reconcile"
+kind = "systemd"
+unit = "report-mark-r2-reconcile.service"
+timer = "report-mark-r2-reconcile.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "R2 物件儲存對帳（週一 07:00）"
+
+[[services]]
+name = "linebot-health"
+kind = "systemd"
+unit = "report-mark-linebot-health.service"
+timer = "report-mark-linebot-health.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "LINE bot 健康探針（每 2 分鐘）"
+
+[[services]]
+name = "linebot-incident"
+kind = "systemd"
+unit = "report-mark-linebot-incident.service"
+timer = "report-mark-linebot-incident.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "LINE bot 事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "metrics"
+kind = "systemd"
+unit = "report-mark-metrics.service"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "硬體用量取樣（常駐）"

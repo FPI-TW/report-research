@@ -32,7 +32,7 @@ PRE_MIGRATION = {
     "ask_followup": "claude-haiku-4-5-20251001",  # followups.py
     "faithfulness": "claude-haiku-4-5",        # config.py FAITHFULNESS_MODEL 預設
     "eval_judge": "claude-haiku-4-5",          # eval/judge.py
-    "tag": "claude-haiku-4-5",                 # tag_all_cli.py、sync_new_reports._tag_via_cli
+    "tag": "claude-haiku-4-5",                 # tag_all_cli.py、_ingest_core._tag_via_cli（sync 行內標註）
     "summary": "claude-sonnet-5",
     "title": "claude-sonnet-5",
     "takeaway": "claude-sonnet-5",
@@ -258,6 +258,7 @@ class ModuleConstantsTests(unittest.TestCase):
 
         from app.services import signal_extract
         from scripts import (
+            _ingest_core,
             extract_takeaways,
             generate_brief,
             generate_summaries,
@@ -268,7 +269,8 @@ class ModuleConstantsTests(unittest.TestCase):
 
         self.assertEqual(tag_all_cli.MODEL, "claude-haiku-4-5")
         self.assertEqual(sync_new_reports.TAG_MODEL, "claude-haiku-4-5")
-        default = inspect.signature(sync_new_reports._tag_via_cli).parameters["model"].default
+        self.assertEqual(_ingest_core.TAG_MODEL, "claude-haiku-4-5")
+        default = inspect.signature(_ingest_core._tag_via_cli).parameters["model"].default
         self.assertEqual(default, "claude-haiku-4-5")
         self.assertEqual(generate_summaries.MODEL, "claude-sonnet-5")
         self.assertEqual(generate_titles.MODEL, "claude-sonnet-5")

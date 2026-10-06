@@ -50,14 +50,19 @@ class _FakeVisibility:
         self.calls: list = []
         self.error: Exception | None = None
 
-    async def list_reports(self, session, *, q, hidden, limit, offset):
-        self.calls.append(("list", q, hidden, limit, offset))
+    async def list_reports(self, session, *, q, hidden, limit, offset, publication=None):
+        self.calls.append(("list", q, hidden, limit, offset, publication))
         row = visibility.AdminReportRow(
             report_id="11111111-1111-1111-1111-111111111111", file_hash=HASH, file_name="x.pdf",
             title="台積電法說", source="元大", market="TW", report_date=date(2026, 10, 1), created_at=WHEN,
             hidden=True, reason="版權疑慮", updated_by="root", updated_at=WHEN,
         )
-        return 3, [row]
+        draft = visibility.AdminReportRow(
+            report_id="22222222-2222-2222-2222-222222222222", file_hash="b" * 64, file_name="y.pdf",
+            title=None, source=None, market=None, report_date=None, created_at=WHEN,
+            hidden=False, reason=None, updated_by=None, updated_at=WHEN, publication="draft",
+        )
+        return 3, [row, draft]
 
     async def set_visibility(self, session, file_hash, *, hidden, reason, actor_id):
         self.calls.append(("set", file_hash, hidden, reason, actor_id))
@@ -108,10 +113,12 @@ class AdminReportsApiTests(unittest.TestCase):
             "/api/admin/reports", params={"q": "台積電", "hidden": "true", "limit": 1, "offset": 0},
         )
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(self.fake.calls, [("list", "台積電", True, 1, 0)])
+        self.assertEqual(self.fake.calls, [("list", "台積電", True, 1, 0, None)])
         body = r.json()
-        self.assertEqual((body["total"], body["has_more"], body["next_offset"]), (3, True, 1))
+        self.assertEqual((body["total"], body["has_more"], body["next_offset"]), (3, True, 2))
         item = body["items"][0]
+        self.assertEqual(item["publication"], "published")
+        self.assertEqual(body["items"][1]["publication"], "draft")
         self.assertEqual(item["file_hash"], HASH)
         self.assertTrue(item["hidden"])
         self.assertEqual(item["hidden_reason"], "版權疑慮")
@@ -121,7 +128,15 @@ class AdminReportsApiTests(unittest.TestCase):
     def test_list_defaults(self):
         r = self._login("root", ADMIN_PW).get("/api/admin/reports")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(self.fake.calls, [("list", None, None, 50, 0)])
+        self.assertEqual(self.fake.calls, [("list", None, None, 50, 0, None)])
+
+    def test_list_publication_filter(self):
+        admin = self._login("root", ADMIN_PW)
+        r = admin.get("/api/admin/reports", params={"publication": "draft"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.fake.calls, [("list", None, None, 50, 0, "draft")])
+        self.assertEqual(admin.get("/api/admin/reports", params={"publication": "pending"}).status_code, 422)
+        self.assertEqual(len(self.fake.calls), 1)
 
     def test_hide_commits_with_actor(self):
         r = self._login("root", ADMIN_PW).put(
@@ -143,6 +158,7 @@ class AdminReportsApiTests(unittest.TestCase):
         cases = [
             (visibility.ReportNotFoundError("研報不存在"), 404, "not_found"),
             (visibility.InvalidReasonError("隱藏研報必須填寫原因"), 400, "invalid_input"),
+            (visibility.ReportIsDraftError("這份研報是尚未發布的草稿"), 409, "report_is_draft"),
         ]
         for exc, status, code in cases:
             with self.subTest(code=code):

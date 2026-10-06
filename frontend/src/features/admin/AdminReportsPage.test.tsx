@@ -10,6 +10,7 @@ type Report = {
   report_id: string; file_hash: string; file_name: string; title: string | null; source: string | null
   market: string | null; report_date: string | null; created_at: string | null; hidden: boolean
   hidden_reason: string | null; visibility_updated_by: string | null; visibility_updated_at: string | null
+  publication?: 'draft' | 'published'
 }
 type Reply = { status?: number; body: unknown }
 type Override = (path: string, init?: RequestInit) => Reply | undefined
@@ -87,6 +88,20 @@ test('清單：顯示中可連到閱讀頁、已隱藏顯示原因與操作者',
   expect(hidden.getByText('已隱藏')).toBeInTheDocument()
   expect(hidden.getByText('重複上傳')).toBeInTheDocument()
   expect(hidden.getByRole('button', { name: '恢復' })).toBeInTheDocument()
+})
+
+test('草稿：顯示草稿徽章、不連閱讀頁、不提供隱藏與恢復', async () => {
+  const H3 = 'c'.repeat(64)
+  const fetchMock = mount({ reports: [report(H1, { title: '台積電深度報告' }), report(H3, { publication: 'draft' })] })
+  const draft = await row('cccc.pdf')
+  expect(draft.getByText('草稿')).toBeInTheDocument()
+  expect(draft.queryByText('顯示中')).not.toBeInTheDocument()
+  expect(draft.queryByRole('link')).not.toBeInTheDocument()
+  expect(draft.queryByRole('button', { name: '隱藏' })).not.toBeInTheDocument()
+  expect(draft.queryByRole('button', { name: '恢復' })).not.toBeInTheDocument()
+  // 舊回應沒有 publication 欄位時視同已發布。
+  expect((await row('台積電深度報告')).getByRole('button', { name: '隱藏' })).toBeInTheDocument()
+  expect(puts(fetchMock)).toHaveLength(0)
 })
 
 test('空清單：說明沒有研報；篩選後沒有結果則說沒有符合條件的', async () => {

@@ -185,8 +185,9 @@ class ExportShapeTests(_Base):
         self.assertEqual(first["source"], "'@券商")
         self.assertEqual(first["hidden_reason"], "'-重複上傳")
         self.assertEqual(first["hidden"], "true")
-        self.assertEqual(self.vis.calls[-1], {"q": "=x", "hidden": True, "limit": admin_exports.EXPORT_MAX_ROWS,
-                                              "offset": 0})
+        self.assertEqual(first["publication"], "published")
+        self.assertEqual(self.vis.calls[-1], {"q": "=x", "hidden": True, "publication": None,
+                                              "limit": admin_exports.EXPORT_MAX_ROWS, "offset": 0})
         # 篩選條件進稽核（字串照記；它是條件不是內容）。
         self.assertEqual(self.exports()[-1].detail["filters"],
                          {"q": "=x", "hidden": True, "limit": admin_exports.EXPORT_MAX_ROWS})

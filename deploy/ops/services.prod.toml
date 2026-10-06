@@ -313,6 +313,19 @@ actions = ["status", "logs"]
 depends_on = ["postgres"]
 description = "schema 與 alembic 版本 drift 每日檢查（05:20）"
 
+# ── 檢索回歸（v1.5）─────────────────────────────────────────────────────────
+# 唯讀：不給 run——每次會載入 BGE-M3（約 2 GiB）並自己檢查可用記憶體；要手動跑照 docs/production_resilience.md。
+
+[[services]]
+name = "retrieval-regression"
+kind = "systemd"
+unit = "report-mark-retrieval-regression.service"
+timer = "report-mark-retrieval-regression.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+depends_on = ["postgres"]
+description = "檢索回歸檢查（凍結題集對基準，07:40，零 LLM）"
+
 # ── 上傳掃描（v1.5 PR-3）────────────────────────────────────────────────────
 # 唯讀容器（deploy/clamav/docker-compose.yml 固定 container_name；make up-clamav）。容器探針同名同 tier
 # （scripts/check_container_health.sh 的 CONTAINER_HEALTH_TARGETS 預設值，tests/test_container_host_probes.py 對帳）。

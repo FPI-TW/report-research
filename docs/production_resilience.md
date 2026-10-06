@@ -1672,8 +1672,9 @@ rm -rf data/.incidents-container data/.incidents-host data/.health-streaks   # �
 - 每一片（1 小時）以**同一句 SQL** 先刪來源、再把被刪的列聚合後 upsert 進較粗的表，寫入失敗整句回滾、來源原封不動，
   寫入後再核對筆數，不符就 rollback 並 rc=1。重跑同一區間是 no-op（冪等）；遲到的舊觀測合併進既有的桶。
 - 每片、每批保留期刪除（每批最多 5000 列）各自一個交易並放寬 statement_timeout（`SET LOCAL`），不會長時間鎖表。
-- PostgreSQL advisory lock 防止兩份同時跑（rc=75＝另一份在跑）；DB 不可用 rc=2。刻意不接 OnFailure 告警（理由同
-  load-observations）。
+- PostgreSQL advisory lock 防止兩份同時跑（rc=75＝另一份在跑）；DB 不可用 rc=2。unit 接 `OnFailure` 告警，但以
+  `SuccessExitStatus=2 75` 放過這兩種（DB 掛掉已由 web 探針經 P5 去重告警；撞鎖是「不跑」不是「跑壞」），
+  只有 rc=1（筆數核對不符、SQL 錯誤）會告警。
 - **incident／incident_event 不在範圍內**（不可重建的事故歷史，列入備份）。
 - 管理頁 `/api/admin/observations` 的範圍上限放寬到 90 天，依 `since` 自動選粒度（24 小時內逐筆、7 天內 5 分鐘、
   更早 1 小時），回應的 `resolution` 標示實際用的。聚合表與原始表一樣不備份。

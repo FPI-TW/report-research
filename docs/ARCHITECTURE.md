@@ -237,6 +237,7 @@ DB 連線數算式（`.env.example`）：`worker 數 × (DB_POOL_SIZE + DB_MAX_O
 | session 每個請求查 DB、不快取；刪除帳號保留列只清內容與可識別資料、正確性靠交易與 tombstone 重放而非 FK；TOTP 時間步不可重用；稽核與變更同交易 | `app/services/accounts.py` 模組 docstring |
 | 問答紀錄的舊共用歷史（`user_id` NULL）對一般使用者隱藏 | `db/schema.sql` 的 `qa_log.user_id` 註解 |
 | 研報可見性以 `file_hash` 為鍵、使用者路徑全部經 `visibility.py` 的片段過濾、批次與管理面不過濾 | `app/services/visibility.py` 模組 docstring、`tests/test_visibility_guard.py` |
+| 單篇入庫（抽字 → 標註 → 切塊 → 嵌入 → 原檔上傳 → 入庫）只有 `scripts/_ingest_core.py` 的 `ingest_one` 一份：放 `scripts/` 不放 `app/services/`（要 import `run_claude`）、不取批次 flock、不載 LLM 環境檔；計數與失敗紀錄由呼叫端依回傳的 `Outcome` 寫；`pre_upsert` hook 與 `upsert_report` 同一個交易 | `scripts/_ingest_core.py` 模組 docstring、`tests/test_ingest_core_db.py` |
 | 簡報窗期用 `created_at`、沒有自己的 timer | `app/services/brief.py`、`scripts/sync_new_reports.sh` |
 | sync 鏈用 `--hashes-file` 不用 `--since-days`、訊號與標題積壓的 `--limit`（`SYNC_SIGNAL_LIMIT`、`SYNC_TITLE_BACKLOG_LIMIT`）是安全機制 | `scripts/sync_new_reports.sh` |
 | `report-mark-sync.timer` 的 `Persistent=false` | `tests/test_sync_timer_persistence.py` |

@@ -24,7 +24,7 @@ import json
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Callable
+from typing import Any, Awaitable, Callable
 
 from app.services.extraction import cache as extraction_cache
 from app.services.llm_models import TASK_TAG, resolve_model
@@ -60,6 +60,10 @@ KINDS = (
 # `Outcome.stage`（只有要留路徑紀錄的結果才有）：與 sync_failures.log 第二欄同一套詞彙。
 # `tag_blocked`／`tag_truncated` 刻意另立階段：failures_to_delta 預設不撈（重打結果不會變）。
 STAGES = ("extract", "tag", "tag_blocked", "tag_truncated", "ingest")
+
+# 入庫前 hook：`await pre_upsert(session, report)`，在 `store.upsert_report` 之前、同一個 session 內。
+PreUpsert = Callable[[Any, Any], Awaitable[None]]
+
 
 @dataclass(frozen=True)
 class Outcome:
@@ -228,6 +232,7 @@ async def ingest_one(
     dry_run: bool = False,
     tags_dir: Path = TAGS_DIR,
     tagged_paths: dict[str, Path] | None = None,
+    pre_upsert: PreUpsert | None = None,
     on_committed: Callable[[str], None] | None = None,
 ) -> Outcome:
     """單篇：抽字 → 標註前閘 → 標註 → 標註後閘 → 切塊 → 嵌入 → 原檔上傳 → 入庫 → 抽取快取。
@@ -239,6 +244,10 @@ async def ingest_one(
     - `tags_dir`：標註快取（`load_tag` 讀、標註成功寫）。
     - `tagged_paths`：有給就把「本次送去標註的 file_hash → 路徑」填進去，供呼叫端在 400 升級
       （`BadRequestEscalation`）時寫保留檔。
+    - `pre_upsert`：`await pre_upsert(session, report)`，在 `store.upsert_report` 之前、**同一個
+      session、同一個交易**內呼叫（`ReportRow` 已組好、原檔已上傳）。它的寫入由 `upsert_report` 內部
+      那次 commit 一起落庫；它或 upsert 拋例外時整筆 rollback（hook 的寫入不會留下），結果為
+      `fail`／`ingest`。hook 自己不可 commit。
     - `on_committed`：入庫 commit 成功後、寫抽取快取**之前**以 file_hash 呼叫。sync 用它把 hash 記進
       本輪清單：之後任何步驟（含被中止）都不能讓已入庫的篇掉出 hashes（審查 L9）。
 
@@ -401,6 +410,9 @@ async def ingest_one(
                 max_garbled=settings.extraction_review_max_garbled,
             ),
         )
+        if pre_upsert is not None:
+            # 同一個 session、尚未 commit：hook 的寫入與下面 upsert_report 內部的 commit 同一個交易。
+            await pre_upsert(session, report)
         report_id = await upsert_report(session, report, chunks, embeddings)
         await upsert_extraction_log(session, _log("ingested"))
         await session.commit()

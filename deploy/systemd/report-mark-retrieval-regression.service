@@ -1,0 +1,43 @@
+[Unit]
+Description=廷豐智能研報 檢索回歸檢查（凍結題集 top-k 對基準快照；載入 BGE-M3、對 DB 唯讀，零 LLM）
+# scripts/retrieval_regression.py check：18 題凍結題集（eval/ragas_questions.json）各跑一次 hybrid_search，
+# 與一次性擷取的基準（data/retrieval_regression/baseline.json）比研報層級的召回；基準之後才入庫的新研報先排除、
+# 被隱藏或已下架的基準研報分開計數，都不算劣化。結果寫 data/health/retrieval_regression.json（管理頁讀）。
+# 設計與門檻見 app/services/retrieval_regression.py 檔頭；安裝前要先手動擷取基準（docs/production_resilience.md）。
+After=network-online.target
+Wants=network-online.target
+# 告警分流（退出碼定義在 scripts/retrieval_regression.py 檔頭）：
+# - 1＝劣化（平均研報召回低於門檻，或崩掉的題數超過上限）→ 告警。
+# - 3＝無法比對、要人處理（還沒有基準、基準壞了或與題集不可比、基準研報大半已下架或隱藏、嵌入模型載不起來、
+#   非連線類的 DB 錯誤、未預期的例外）→ 告警。設定錯誤不會自己好。
+# - 2＝這次略過（DB 連不上、可用記憶體不足、sync 正在跑）→ 列為成功、不告警。DB 掛掉已由 web 探針經 P5 帶去重地
+#   告警，report-mark-alert@ 沒有去重（比照 rollup-observations 的 rc=2、schema-check 的 rc=3）。略過那次不蓋掉上一次
+#   的比對；連續略過超過 48 小時，管理頁把結果標成過期。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# torch 只開 2 條執行緒：18 題的查詢嵌入很小，綁核只是讓它在白天萬一撞上問答時少搶一點 CPU
+# （EMBED_TORCH_THREADS 的語意見 app/config.py；預設 0＝吃滿核心）。EnvironmentFile 的同名鍵會蓋過這裡，
+# 而 report-mark-sync 環境檔沒有這個鍵。
+Environment=EMBED_TORCH_THREADS=2
+# REPORT_MARK_ROOT、SYNC_PATH_EXTRA（找 uv）與（DB 不在本機時的）REPORT_MARK_DB_URL 都在這個檔。
+# 門檻旋鈕 RETRIEVAL_REGRESSION_* 要調也加在這裡。零 LLM，不載 report-mark-llm。
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/retrieval_regression.py check'
+# 2＝略過（理由見上方 OnFailure 的註解）。只放行這一個：1 與 3 放行就是無聲的劣化。
+SuccessExitStatus=2
+# 冷載 BGE-M3 約 90 秒＋18 題混合檢索（各數百毫秒到數秒）；正常 3–5 分鐘。30 分鐘是寬鬆上界。
+TimeoutStartSec=1800
+# 低優先：讓路給問答與 sync。
+Nice=15
+IOSchedulingClass=idle
+CPUSchedulingPolicy=batch
+# BGE-M3 fp32 權重約 2.2 GB，行程常駐約 3 GB。上限 4G：超過就由 cgroup 在這個 unit 裡 OOM（SIGKILL → 告警），
+# 不讓它把整台機器推進記憶體壓力、連累 web 與 PostgreSQL。腳本另在載模型前看 MemAvailable，不足就略過（rc=2）。
+MemoryMax=4G

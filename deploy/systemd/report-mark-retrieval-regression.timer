@@ -1,0 +1,18 @@
+[Unit]
+Description=每日檢查檢索結果相對基準有沒有變差（零 LLM）
+
+[Timer]
+# 07:40：要載 BGE-M3（約 3 GB），所以排在不與其他載模型的批次重疊的時段——
+# - sync（整點 00/3，實測約 20 分鐘；06:00 那輪 07:40 前已結束，09:00 那輪還沒開始）會在匯入時載 BGE-M3；
+#   萬一某輪拖長，腳本看到 sync 的 PID 檔被持有就略過這一次（rc=2）。
+# - 夜間回填（report-mark-backfill，01:00 起最多 240 分鐘）在 05:00 前後結束。
+# - 也避開 05:20 的 schema-check、08:30／08:45 的 freshness／audit（全表掃描，搶 I/O）；週一 07:00 的 R2 對帳
+#   只打網路與 R2，不載模型。結果在上班前已在管理頁與告警頻道。
+OnCalendar=*-*-* 07:40:00
+# **刻意 Persistent=false**：開機補跑會跟 web 暖機（同樣載 BGE-M3）撞在一起；錯過一天不會漏掉什麼——
+# 檢索回歸是「現在的樣子」對基準，隔天照樣比得到。
+Persistent=false
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

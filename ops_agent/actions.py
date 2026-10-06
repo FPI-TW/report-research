@@ -5,7 +5,7 @@
    `protocol.FORBIDDEN_WRITE_TARGET` 的 unit（PostgreSQL、nginx、cloudflared……）拒絕載入。
 2. 代理執行前（這裡的 `check_write_allowed`）：同一組規則再擋一次。catalog 被誤設、或有人繞過載入直接給
    `Catalog` 物件時，PostgreSQL 的 restart 也在這裡被拒，runner 一次都不會被呼叫。
-3. 作業系統（`deploy/polkit/50-report-mark-ops.rules`）：代理的使用者只能對列出的 unit 做 start／restart。
+3. 作業系統（`deploy/polkit/10-report-mark-ops.rules`）：代理的使用者只能對列出的 unit 做 start／restart。
 
 **互斥（不排隊，衝突直接 `already_running`）**：
 - 代理行程內：同一個 group 從「接受請求」到「systemctl 回來」之間標記為忙碌（`Agent._busy_groups`），

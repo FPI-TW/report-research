@@ -7,7 +7,7 @@
 # 寫入類與生產同一套規則（restart 只給 web 類、run 只給 oneshot、容器唯讀），對象只限開發用的 unit：
 # dev-web 可 restart，dev-smoke（deploy/systemd/report-mark-dev-smoke.service，只 sleep 的 oneshot）可 run，
 # 用來在不碰任何真東西的前提下驗 run、409 already_running 與輪詢。polkit 只授權 report-mark-ops-dev
-# 對這兩個 unit 做 restart／start（deploy/polkit/50-report-mark-ops.rules）。
+# 對這兩個 unit 做 restart／start（deploy/polkit/10-report-mark-ops.rules）。
 
 schema = 1
 environment = "development"

@@ -1,0 +1,64 @@
+/* -*- mode: js; js-indent-level: 4; indent-tabs-mode: nil -*- */
+// 廷豐智能研報 維運代理（report-mark-ops-agent）的寫入權限。
+//
+// 安裝：sudo install -o root -g root -m 0644 deploy/polkit/10-report-mark-ops.rules /etc/polkit-1/rules.d/
+//（polkitd 會自動重新載入 rules.d；步驟與驗收見 docs/production_resilience.md「維運代理」）。
+//
+// 為什麼是 polkit 而不是 sudoers：代理的 unit 是 NoNewPrivileges=yes、CapabilityBoundingSet= 空，
+// setuid 的 sudo 在裡面根本無法提權；為了 sudo 拿掉這兩項等於放寬整支代理。systemctl start／restart
+// 是經 D-Bus 請 systemd（PID 1）做事，systemd 以 polkit 的 org.freedesktop.systemd1.manage-units 檢查
+// 呼叫端，並附上 unit 與 verb 兩個細節——這裡就能把授權精確限定在「哪個使用者、哪個動詞、哪個 unit」。
+//
+// 規則：代理的兩個使用者（prod report-mark-ops、dev report-mark-ops-dev）只能對 ALLOW 列出的 unit 做
+// 列出的動詞；它們對 org.freedesktop.systemd1.* 的其他任何動作（stop、enable、daemon-reload、
+// 其他 unit、unit file 管理……）一律 NO。其他使用者不受這個檔影響（NOT_HANDLED）。
+// 檔名以 10- 開頭：polkit 依檔名順序評估、第一個給出結果的規則勝出，這裡的 NO 要先於其他較寬的規則。
+//
+// ALLOW 必須與 deploy/ops/services.prod.toml、services.dev.toml 的寫入類 action 一致（restart → "restart"，
+// run → "start"），使用者必須與 deploy/systemd/report-mark-ops-agent*.service 的 User= 一致；
+// tests/test_ops_polkit.py 對帳，並以 node 實際執行這個檔驗證決策（有 node 時）。
+// 標記之間的內容必須是合法 JSON（測試直接解析）。
+
+(function () {
+    // BEGIN ALLOW
+    var ALLOW = {
+        "report-mark-ops": {
+            "restart": ["report-mark-web.service"],
+            "start": [
+                "report-mark-sync.service",
+                "report-mark-backup.service",
+                "report-mark-freshness.service",
+                "report-mark-audit.service",
+                "report-mark-r2-reconcile.service"
+            ]
+        },
+        "report-mark-ops-dev": {
+            "restart": ["report-mark-dev-web.service"],
+            "start": ["report-mark-dev-smoke.service"]
+        }
+    };
+    // END ALLOW
+
+    function has(obj, key) {
+        return Object.prototype.hasOwnProperty.call(obj, key);
+    }
+
+    polkit.addRule(function (action, subject) {
+        if (!has(ALLOW, subject.user)) {
+            return polkit.Result.NOT_HANDLED;
+        }
+        if (action.id.indexOf("org.freedesktop.systemd1.") !== 0) {
+            return polkit.Result.NOT_HANDLED;
+        }
+        if (action.id === "org.freedesktop.systemd1.manage-units") {
+            var verbs = ALLOW[subject.user];
+            var verb = action.lookup("verb");
+            var unit = action.lookup("unit");
+            if (typeof verb === "string" && typeof unit === "string" && has(verbs, verb) &&
+                    verbs[verb].indexOf(unit) !== -1) {
+                return polkit.Result.YES;
+            }
+        }
+        return polkit.Result.NO;
+    });
+})();

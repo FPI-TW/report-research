@@ -5,7 +5,7 @@
 # 名稱不在這裡的服務，代理一律拒絕。actions：status、logs（唯讀），restart、run（寫入類）。
 # 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile 的 run（立即執行一次，
 # 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared 維持唯讀——代理與 catalog 兩層都擋，
-# 這裡寫了也載入不了。改了寫入類清單要同步改 deploy/polkit/50-report-mark-ops.rules（tests/test_ops_polkit.py 對帳）。
+# 這裡寫了也載入不了。改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules（tests/test_ops_polkit.py 對帳）。
 # 刻意不列：report-mark-alert@（模板）、report-mark-backfill（過渡期，跑完就 disable）。
 # 刻意不給 run：audit-anchor（錨點檔只追加，手動多跑一次無害，但失敗會以「疑似竄改」告警；要的是
 # --verify-only，而 run 不收參數）、health／incident 類探針（timer 每 2 分鐘就跑）、metrics（常駐）。

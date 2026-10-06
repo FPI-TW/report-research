@@ -1556,14 +1556,35 @@ sudo systemctl disable --now report-mark-incident.timer
 rm -f data/.incidents/*.state          # 可選：清掉殘留的事件狀態
 ```
 
-## 維運代理（report-mark-ops-agent，唯讀）
+## 維運代理（report-mark-ops-agent）
 
 管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經
 Unix socket 問一支單機代理（`ops_agent/`，只用標準庫、系統的 `/usr/bin/python3`）。代理只認
 Service Catalog（`deploy/ops/services.prod.toml`；開發環境 `deploy/ops/services.dev.toml`）列出的服務與
-action，本版只有 `status`、`logs`；沒有任意 shell、任意 unit、stop、timer enable/disable（restart／run-now
-是之後的 P7）。P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維運區塊回 503
-`ops_agent_unavailable`，web 其他功能照常。
+action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（v1 只有 Web）與 `run`（既有 oneshot 立即執行一次：
+sync、backup、freshness、audit、r2-reconcile）。沒有任意 shell、任意 unit、stop、timer enable/disable；
+PostgreSQL、nginx、cloudflared 永遠唯讀（catalog 載入期與代理執行前兩層都擋，PG 的 restart 尤其禁止）。
+P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維運區塊回 503 `ops_agent_unavailable`，web 其他功能照常。
+
+**寫入類的規則**（細節在 `ops_agent/actions.py`）：
+- Web 端要管理員＋另外授予的 `ops.operate`＋10 分鐘內重新驗證過密碼（elevated），每次（成功或被拒）寫
+  `admin_audit_log`；代理的 journal 另記一行（含 web 傳來的使用者名稱）。
+- **execution group 互斥、不排隊**：同 group 任一 unit 正在跑（activating／active／reloading／deactivating，
+  或有排隊中的 job）就回 409 `already_running`；restart 的對象本身只看轉換中狀態（Web 平常就是 active）。
+- sync 會呼叫 LLM：另以非阻塞 flock 試探 `data/.claude_cli.lock`（`scripts/_claude_lock.py`），並比照 sync
+  自己的 `kill -0` 檢查 `data/.sync_new_reports.lock`——手動在主機跑的批次不經 systemd、也不經 Web，只看
+  unit 狀態會漏掉它們。鎖檔目錄看不到時回 503 `ops_lock_unavailable`（無法確認就不執行）。試探只佔
+  微秒級的窗口；剛好撞上時批次會 rc=75（「不跑」不是「跑壞」，下一輪補上）。
+- run 是 `systemctl start --no-block`，等同 timer 觸發（同一份 unit、同一份環境檔、`--hashes-file` 等邏輯不變），
+  **不接受任何參數**。restart 是代理先回 202、`restart_delay`（1.5 秒）後才 `systemctl restart --no-block`
+  ——重啟 Web 會中斷這次請求本身。前端輪詢 `/api/admin/ops/services/{name}`，`systemd.invocation_id`
+  換成新值（並回到 active）就是新的一輪起來了。Web 重啟期間 BGE-M3 要重新載入，這段時間整站不可用。
+- **授權靠 polkit，不靠 sudo**：代理的 unit 是 `NoNewPrivileges=yes`、沒有 capability，setuid 的 sudo 在
+  裡面無法提權。systemd 以 polkit 的 `org.freedesktop.systemd1.manage-units` 檢查呼叫端並附上 unit 與
+  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與五個 oneshot
+  的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
+  `report-mark-dev-smoke.service` 的 start；這兩個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
+  （JS 規則；本機 Ubuntu 24.04 是 124）。
 
 **威脅模型**：代理的使用者在 `docker` 群組（讀容器狀態與日誌需要 docker socket），而 docker 群組等同
 root。所以程式碼與 catalog 一律裝在 root 擁有、其他人不可寫的 `/opt/report-mark-ops/`，**不從 repo 執行**
@@ -1583,12 +1604,21 @@ sudo install -d -o root -g root -m 0755 /opt/report-mark-ops /opt/report-mark-op
 sudo install -o root -g root -m 0644 ops_agent/*.py /opt/report-mark-ops/ops_agent/
 sudo install -o root -g root -m 0644 deploy/ops/services.prod.toml /opt/report-mark-ops/
 (cd /opt/report-mark-ops && /usr/bin/python3 -B -E -s -m ops_agent --catalog services.prod.toml --check)
-# 4) unit（不經 install_units.sh：裡面沒有要代換的家目錄）
+# 4) 寫入類的授權（restart／run）：polkit 規則，root 擁有、0644。polkitd 會自動重新載入 rules.d。
+#    只要唯讀時可以不裝：代理對 restart／run 會回 command_failed（systemd 拒絕，Access denied）。
+sudo install -o root -g root -m 0644 deploy/polkit/10-report-mark-ops.rules /etc/polkit-1/rules.d/
+# 5) unit（不經 install_units.sh）。unit 以 BindReadOnlyPaths 唯讀綁進部署目錄的 data/（鎖檔），
+#    部署目錄不是 /home/kashionz/projects/report-mark 時，unit 與 catalog 的 flock_files／pid_files 一起改。
 sudo install -m 0644 deploy/systemd/report-mark-ops-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-ops-agent.service
 sudo systemctl restart report-mark-web.service   # 讓 web 拿到 report-mark-ops 群組
+# 6) 要用寫入類的管理員：super admin 在管理頁授予 ops.operate（只有另外授予的人能 restart／run）
 ```
+
+寫入類驗收（不重啟任何東西）：sync 正在跑時對它「立即執行」應回 409 `already_running`；對 `audit`
+（唯讀、零 LLM）執行一次後 `systemctl show report-mark-audit -p InvocationID` 換成新值；polkit 規則沒裝或
+沒生效時回 502 `ops_command_failed`（訊息含 `Access denied`）。Web 的 restart 只在真的要重啟時才按。
 
 驗收：`systemctl show report-mark-ops-agent -p ActiveState,SubState,NRestarts`、`ls -l /run/report-mark-ops/`
 （`srw-rw---- report-mark-ops report-mark-ops agent.sock`），再以管理員登入打 `/api/admin/ops/services`。
@@ -1599,6 +1629,9 @@ sudo systemctl restart report-mark-web.service   # 讓 web 拿到 report-mark-op
 `report-mark-ops-dev`）、catalog `services.dev.toml`、unit `report-mark-ops-agent-dev.service`、socket
 `/run/report-mark-ops-dev/agent.sock`；開發用 web 設 `OPS_AGENT_ENVIRONMENT=development`。代理以 dev socket
 載入 prod catalog（或反之）會拒絕啟動，dev catalog 也只能列 `report-mark-dev-*` 與 `report-mark-dev*` 容器。
+寫入類在開發環境同一套規則：`dev-web` 可 restart、`dev-smoke`（`deploy/systemd/report-mark-dev-smoke.service`，
+只 sleep 20 秒的 oneshot，裝到 `/etc/systemd/system/` 後 `daemon-reload` 即可，不必 enable）可 run，用來驗
+run、409 與輪詢而不碰任何真東西；polkit 規則同一個檔已涵蓋 `report-mark-ops-dev`。
 本機冒煙（不必安裝）：`python3 -m ops_agent --catalog deploy/ops/services.dev.toml --socket /tmp/<短路徑>/a.sock`
 （只有 development 允許覆寫 socket；AF_UNIX 路徑上限約 107 字元）。
 

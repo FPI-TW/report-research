@@ -369,6 +369,12 @@ jobs:
       - name: 研報上傳收檔
         run: uv run pytest -q tests/test_admin_uploads_db.py
 
+      # 研報上傳的審核：發布前草稿在混合檢索查不到、發布後查得到；每個寫入端點的狀態閘門；狀態與稽核同交易
+      # （稽核失敗狀態不變）；退回後草稿仍不可見；撤銷退回推導回正確狀態；兩個交易並發只有一個成功
+      # （並發那組要 commit，只在語料與上傳表皆空的拋棄式庫上跑——這個 job 的庫正是）；清除守門。
+      - name: 研報上傳審核
+        run: uv run pytest -q tests/test_upload_review_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

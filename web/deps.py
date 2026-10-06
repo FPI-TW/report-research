@@ -129,7 +129,7 @@ def _valid_uuid(s) -> bool:
 # 資料健康與 LLM 用量（web/routers/admin_data_health.py）同理：deps.data_health.X、deps.llm_usage.X。
 # 診斷快照（web/routers/admin_diagnostics.py）同理：deps.diagnostics.snapshot。
 # 檢索回歸（web/routers/admin_retrieval_regression.py）同理：deps.retrieval_regression.X。
-# 研報上傳的收檔與查詢（web/routers/admin_uploads.py）同理：deps.upload_intake.X。
+# 研報上傳的收檔與查詢（web/routers/admin_uploads.py）同理：deps.upload_intake.X；審核同理：deps.upload_review.X。
 from app.services import (  # noqa: E402
     accounts,
     data_health,
@@ -138,6 +138,7 @@ from app.services import (  # noqa: E402
     ops_monitoring,
     retrieval_regression,
     upload_intake,
+    upload_review,
 )
 from app.services import visibility as report_visibility  # noqa: E402
 from app.services.answer import (  # noqa: E402
@@ -236,4 +237,5 @@ __all__ = [
     "rerank_warmup",
     "retrieval_regression",
     "upload_intake",
+    "upload_review",
 ]

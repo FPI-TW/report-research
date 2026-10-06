@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import type { IncidentDetail, IncidentEventItem, IncidentItem } from '../../../lib/generated/adminApi'
+import { adminCsvUrls, type IncidentDetail, type IncidentEventItem, type IncidentItem } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
+import { ExportCsvButton } from '../ExportCsvButton'
 import { OpsQueryError } from './OpsShared'
 import {
   EVENT_ACTION_LABELS, INCIDENT_COMPONENTS, INCIDENT_STATUS_HINTS, INCIDENT_STATUS_LABELS, componentLabel, fmtDuration,
@@ -133,7 +134,13 @@ export default function OpsIncidentsPage() {
   return (
     <>
       <section className={adminStyles.card} aria-labelledby="ops-incidents-title">
-        <h2 id="ops-incidents-title" className={adminStyles.ctitle}>事件</h2>
+        <div className={adminStyles.cardHead}>
+          <h2 id="ops-incidents-title" className={adminStyles.ctitle}>事件</h2>
+          <ExportCsvButton
+            href={adminCsvUrls.exportIncidents({ status: status || undefined, component: component || undefined })}
+            what="事件清單"
+          />
+        </div>
         <div className={adminStyles.form}>
           <label className={adminStyles.field}>
             狀態

@@ -20,12 +20,16 @@ const ACTION_LABELS: Record<string, string> = {
   'qa_content.read': '查看問答內容',
   'report.hide': '隱藏研報',
   'report.restore': '恢復研報',
+  'data.export': '匯出 CSV',
 }
 
 const ROLE_LABELS: Record<string, string> = { admin: '管理員', user: '一般使用者' }
 const REVIEW_STATUS: Record<string, string> = { open: '待處理', resolved: '已處理', dismissed: '略過' }
 const REVIEW_KIND: Record<string, string> = { faithfulness: '忠實度低分', feedback: '倒讚', extraction: '抽取品質' }
 const VERIFICATION: Record<string, string> = { untested: '未驗證', passed: '通過', failed: '未通過' }
+const EXPORT_KINDS: Record<string, string> = {
+  audit: '操作紀錄', users: '帳號清單', reports: '研報清單', incidents: '事件清單', jobs: '排程工作',
+}
 
 export function actionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action
@@ -79,8 +83,14 @@ export function auditSummary(entry: AuditEntry): string {
     const kinds = d.kinds.map(k => (typeof k === 'string' ? REVIEW_KIND[k] ?? k : '')).filter(Boolean)
     if (kinds.length) parts.push(kinds.join('、'))
   }
+  // CSV 匯出：detail 只有種類、篩選條件、筆數與是否達上限（不含內容）。
+  if (entry.action === 'data.export') {
+    const kind = str(d.kind) ?? entry.target_id
+    if (kind) parts.push(EXPORT_KINDS[kind] ?? kind)
+    if (typeof d.row_count === 'number') parts.push(`${d.row_count} 筆${d.truncated === true ? '（達上限）' : ''}`)
+  }
   const isReport = entry.action === 'report.hide' || entry.action === 'report.restore'
-  if (!who && entry.target_id && entry.action !== 'review.update' && !isReport) parts.unshift(`${entry.target_type} ${entry.target_id}`)
+  if (!who && entry.target_id && entry.action !== 'review.update' && !isReport && entry.action !== 'data.export') parts.unshift(`${entry.target_type} ${entry.target_id}`)
   const via = str(d.via)
   if (via && via !== 'web') parts.push(via.startsWith('cli') ? '經指令列' : `經 ${via}`)
   return parts.join('・') || '—'

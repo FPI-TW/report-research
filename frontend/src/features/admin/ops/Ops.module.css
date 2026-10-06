@@ -64,3 +64,6 @@
 /* P7 寫入類操作：按鈕列與頁內確認列。 */
 .opsActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .opsConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* 資料健康表格的長說明：包一層 div 才蓋得過 `.table td` 的 nowrap（td 上的 class 選擇器權重不夠） */
+.cellText { white-space: normal; min-width: 200px; max-width: 460px; overflow-wrap: anywhere; line-height: 1.5; }

@@ -47,6 +47,9 @@ chunk_index），單次數十秒量級。所以：
   uv run python scripts/db_audit.py --json
   uv run python scripts/db_audit.py --skip norm_drift      # 跳過取樣那條（最慢）
 
+每次跑完把結構化結果寫進 `data/health/db_audit.json`（`app/services/data_health.py`；寫不進去只警告、
+不影響退出碼），管理後台的資料健康頁讀它——稽核本身太重，不在 web 裡跑。
+
 退出碼：0＝乾淨；1＝有發現；2＝DB 不可用（與 1 分開：處置不同，前者去看
 `/healthz`，後者去看發現本身）。
 """
@@ -297,14 +300,38 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _write_result(*, exit_code: int, findings: list[Finding] | None, error: str | None,
+                  skip: frozenset[str], norm_sample: int) -> None:
+    """把這次結果寫給管理後台的資料健康頁（`data/health/db_audit.json`）。
+
+    失敗只警告（`data_health.write_result` 本身 fail-open），**不改變退出碼**——告警鏈仍以 OnFailure 為準。
+    內容只有檢查代碼、標籤、級別、違反數與說明，沒有任何資料列。
+    """
+    from datetime import datetime, timezone
+
+    from app.services import data_health
+
+    data_health.write_result(data_health.RESULT_DB_AUDIT, {
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "exit_code": exit_code,
+        "ok": exit_code == EXIT_OK,
+        "error": error,
+        "skipped": sorted(skip),
+        "norm_sample": norm_sample,
+        "findings": [asdict(f) for f in findings] if findings is not None else None,
+    })
+
+
 async def _main(args: argparse.Namespace) -> int:
+    from app.services.data_health import audit_failed
     from app.services.db import SessionFactory
 
+    skip = frozenset(args.skip)
     try:
         async with SessionFactory() as session:
             findings = await run_audit(
                 session,
-                skip=frozenset(args.skip),
+                skip=skip,
                 norm_sample=args.norm_sample,
             )
     except Exception as exc:
@@ -314,6 +341,9 @@ async def _main(args: argparse.Namespace) -> int:
             print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False))
         else:
             print(msg, file=sys.stderr)
+        # 結果檔只記例外型別：例外訊息可能帶連線目標，管理頁不需要。
+        _write_result(exit_code=EXIT_UNKNOWN, findings=None, error=f"DB 不可用（{type(exc).__name__}）",
+                      skip=skip, norm_sample=args.norm_sample)
         return EXIT_UNKNOWN
 
     if args.json:
@@ -325,7 +355,10 @@ async def _main(args: argparse.Namespace) -> int:
         )
     else:
         print(render(findings))
-    return EXIT_FINDINGS if any(f.count > 0 for f in findings) else EXIT_OK
+    # 「warn 也算失敗」的判斷與管理後台共用（app/services/data_health.audit_failed）。
+    rc = EXIT_FINDINGS if audit_failed(findings) else EXIT_OK
+    _write_result(exit_code=rc, findings=findings, error=None, skip=skip, norm_sample=args.norm_sample)
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:

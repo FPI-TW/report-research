@@ -50,7 +50,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 | `data/extracted/` | 抽取快取 `<file_hash>.json`（`app/services/extraction/cache.py`） | 否 |
 | `data/tags/` | 標註結果 `<file_hash>.json`，resume 依據；監控頁 `scandir` 熱點 | 否 |
 | `data/metrics/` | 硬體用量取樣 JSONL | 否 |
-| `data/ops_spool/` | 監控 spool：`scripts/collect_resource_usage.py` 寫的主機／容器／服務觀測與批次執行紀錄 JSONL，`scripts/load_observations.py` 匯入 DB 後刪舊日檔（`OPS_SPOOL_DIR` 可覆寫） | 否 |
+| `data/ops_spool/` | 監控 spool：`scripts/collect_resource_usage.py` 寫的主機／容器／服務觀測與批次執行紀錄 JSONL，以及 `scripts/incident_handler.sh`（P5）每次狀態轉換的事件紀錄 `incidents-*.jsonl` 與 journal 片段 `journal/*.log`；`scripts/load_observations.py` 匯入 DB 後刪舊日檔與片段（`OPS_SPOOL_DIR` 可覆寫） | 否 |
 | `data/.incidents/` | P5 事件狀態檔 | 否 |
 | `data/*.log`、`data/.last_successful_sync`、`data/sync_round_state` | 執行期日誌、心跳、本輪狀態 | 否 |
 | `research.*`（Postgres ＋ pgvector，容器 `report-mark-postgres`，host port 5436） | 7 張表，`db/schema.sql` | 是 |

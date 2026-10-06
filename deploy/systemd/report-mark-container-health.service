@@ -1,0 +1,28 @@
+[Unit]
+Description=廷豐智能研報 容器健康探針（catalog 的 PostgreSQL／nginx／cloudflared 是否在跑）
+# 為什麼 web 與邊緣探針之外還要這一支：web 探針只看得到「/healthz 失敗」、邊緣探針只看得到 502，
+# 都指不到「哪個容器停了」；2026-09-24 deploy-nginx-1 停在 Exited 約 36 小時就是這個盲區。
+# 依 tier 去抖與退出碼契約見 scripts/check_container_health.sh 檔頭。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：與 report-mark-health.service 同一個理由——通知由 P5
+# （report-mark-container-incident）帶去重地擁有，這裡結構上不可能通知。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+# 只需要 docker CLI／coreutils，刻意不含 uv 與 nvm 路徑（探針不得相依 Python）。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# REPORT_MARK_ROOT（與可選的 DOCKER_BIN、CONTAINER_HEALTH_TARGETS、HEALTH_CONFIRM_*）都在這裡。
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/check_container_health.sh"'
+# 退出碼 3＝還在依 tier 去抖的確認期，**不是故障**（P5 那組把它當 hold）。
+SuccessExitStatus=3
+# 最壞情況＝docker CLI 偵測（docker.exe 經 WSL interop 約 1–3 秒）＋ 2 次 × docker inspect 上限 10 秒
+# ＋ 1 次 × 15 秒等待 ≈ 40 秒；取 90 秒，且嚴格小於 timer 的 120 秒間隔。
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

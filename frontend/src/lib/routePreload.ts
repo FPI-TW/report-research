@@ -28,8 +28,7 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminOpsService: () => import('../features/admin/ops/OpsServiceDetailPage'),
   adminOpsLogs: () => import('../features/admin/ops/OpsLogsPage'),
   adminOpsJobs: () => import('../features/admin/ops/OpsJobsPage'),
-  // 佔位頁（API 尚未提供）。
-  adminOpsIncidents: () => import('../features/admin/ops/OpsPlaceholderPages').then(m => ({ default: m.OpsIncidentsPage })),
+  adminOpsIncidents: () => import('../features/admin/ops/OpsIncidentsPage'),
   adminOpsHost: () => import('../features/admin/ops/OpsHostPage'),
 }
 

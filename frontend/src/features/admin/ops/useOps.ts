@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import {
-  adminApi, type JobItem, type JobListResponse, type ObservationListResponse, type OpsLogsResponse,
-  type OpsServiceDetail, type OpsServiceListResponse,
+  adminApi, type IncidentDetail, type IncidentItem, type IncidentListResponse, type JobItem, type JobListResponse,
+  type ObservationListResponse, type OpsLogsResponse, type OpsServiceDetail, type OpsServiceListResponse,
 } from '../../../lib/generated/adminApi'
 
 export const OPS_KEY = ['admin', 'ops'] as const
@@ -56,6 +56,33 @@ export function useHostObservations() {
     queryKey: [...OPS_KEY, 'observations', 'host'],
     queryFn: () => adminApi.listObservations({ scope: 'host', limit: 5000 }),
     refetchInterval: 60_000,
+    retry: false,
+  })
+}
+
+export const INCIDENTS_PAGE_SIZE = 50
+
+/**
+ * 事件清單（P5 狀態轉換的 DB 投影，loader 每 5 分鐘匯入；後端預設最近 30 天）。不經維運代理。
+ * 空字串＝不篩選；60 秒自動重抓。
+ */
+export function useOpsIncidents(status: IncidentItem['status'] | '', component: string, offset: number) {
+  return useQuery<IncidentListResponse>({
+    queryKey: [...OPS_KEY, 'incidents', status, component, offset],
+    queryFn: () => adminApi.listIncidents({
+      status: status || undefined, component: component || undefined, limit: INCIDENTS_PAGE_SIZE, offset,
+    }),
+    refetchInterval: 60_000,
+    retry: false,
+  })
+}
+
+/** 單一事件與它的狀態轉換（含 journal 片段）。不自動重抓。 */
+export function useOpsIncident(incidentId: string) {
+  return useQuery<IncidentDetail>({
+    queryKey: [...OPS_KEY, 'incident', incidentId],
+    queryFn: () => adminApi.getIncident(incidentId),
+    enabled: incidentId !== '',
     retry: false,
   })
 }

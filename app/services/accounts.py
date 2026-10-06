@@ -380,6 +380,38 @@ async def record_ops_action(*, actor_id: str | None, action: str, service: str, 
         await session.commit()
 
 
+
+# 管理後台 CSV 匯出（/api/admin/export/*.csv）的種類；稽核 action 一律 `data.export`、target_id 是種類。
+EXPORT_KINDS: frozenset[str] = frozenset({"audit", "users", "reports", "incidents", "jobs"})
+_EXPORT_FILTER_MAX_CHARS = 200
+
+
+def _export_filter_value(value):
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:_EXPORT_FILTER_MAX_CHARS]
+
+
+async def record_export(*, actor_id: str | None, kind: str, filters: dict, row_count: int,
+                        truncated: bool) -> None:
+    """一次 CSV 匯出的稽核（自己的交易、立即 commit）：誰、匯出什麼、篩選條件、筆數、是否達上限。
+
+    **不含任何匯出內容**——detail 只有種類、篩選條件（省略 None；字串截到 200 字）、筆數與 truncated。
+    路由層在把資料交出去**之前**呼叫它：寫不進稽核就不匯出。
+    """
+    if kind not in EXPORT_KINDS:
+        raise ValueError(f"未知的匯出種類：{kind!r}")
+    detail = {
+        "kind": kind, "format": "csv",
+        "filters": {str(k): _export_filter_value(v) for k, v in sorted(filters.items()) if v is not None},
+        "row_count": int(row_count), "truncated": bool(truncated),
+    }
+    async with SessionFactory() as session:
+        await _audit(session, actor_id=actor_id, action="data.export", target_type="export", target_id=kind,
+                     detail=detail)
+        await session.commit()
+
+
 # ───── 登入與 session ─────
 
 

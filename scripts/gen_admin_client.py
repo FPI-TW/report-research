@@ -12,6 +12,9 @@
 array、enum、nullable、$ref、dict），而 npm 相依會進 frontend/package-lock.json 與授權守門。
 遇到不支援的型別直接失敗，不默默產生 `z.unknown()`。
 
+回應是 `text/csv` 的端點（`/api/admin/export/*.csv`，`web/csv_export.CsvResponse`）不產生 JSON client，而是在
+`adminCsvUrls` 產生帶型別 query 的下載網址建構函式（前端以 fetch 取 blob 下載，錯誤仍讀統一錯誤格式）。
+
 輸出是決定性的（schema 依相依順序＋名稱排序、端點依路徑與方法排序），重跑不會產生 diff。
 """
 from __future__ import annotations
@@ -159,6 +162,16 @@ def collect_operations(spec: dict) -> list[tuple[str, str, dict]]:
     return ops
 
 
+def is_csv(op: dict) -> bool:
+    """2xx 回應只有 `text/csv`（沒有 JSON）＝下載端點。"""
+    for code, resp in op.get("responses", {}).items():
+        if str(code).startswith("2"):
+            content = resp.get("content", {})
+            if "text/csv" in content and "application/json" not in content:
+                return True
+    return False
+
+
 def needed_components(spec: dict, ops) -> list[str]:
     components = spec.get("components", {}).get("schemas", {})
     pending = set()
@@ -198,6 +211,22 @@ def response_schema(op: dict) -> dict | None:
     return None
 
 
+def build_csv_url(path: str, method: str, op: dict) -> str:
+    if method != "get":
+        raise Unsupported(f"CSV 端點只支援 GET：{method.upper()} {path}")
+    name = camel(op.get("summary") or op["operationId"])
+    params = op.get("parameters", [])
+    if any(p.get("in") == "path" for p in params):
+        raise Unsupported(f"CSV 端點不支援路徑參數：{path}")
+    query_params = [p for p in params if p.get("in") == "query"]
+    summary = (op.get("summary") or "").strip()
+    doc = f"  /** GET {path}{(' — ' + summary) if summary else ''}（下載網址） */\n"
+    if not query_params:
+        return doc + f"  {name}: () => {repr_ts(path)},"
+    fields = "; ".join(f"{p['name']}?: {ts_query_type(p.get('schema', {}))}" for p in query_params)
+    return doc + f"  {name}: (query: {{ {fields} }} = {{}}) => `{path}${{qs(query)}}`,"
+
+
 def build_operation(path: str, method: str, op: dict) -> str:
     name = camel(op.get("summary") or op["operationId"])
     resp = response_schema(op)
@@ -232,9 +261,11 @@ def build_operation(path: str, method: str, op: dict) -> str:
 
 
 def generate(spec: dict) -> str:
-    ops = collect_operations(spec)
-    if not ops:
+    all_ops = collect_operations(spec)
+    if not all_ops:
         raise Unsupported(f"OpenAPI 裡沒有 {PATH_PREFIX} 端點")
+    ops = [o for o in all_ops if not is_csv(o[2])]
+    csv_ops = [o for o in all_ops if is_csv(o[2])]
     components = spec.get("components", {}).get("schemas", {})
     out = [HEADER]
     for name in needed_components(spec, ops):
@@ -250,11 +281,15 @@ def generate(spec: dict) -> str:
                "  const text = params.toString()\n"
                "  return text ? `?${text}` : ''\n"
                "}\n")
-    names = [camel(op.get("summary") or op["operationId"]) for _p, _m, op in ops]
+    names = [camel(op.get("summary") or op["operationId"]) for _p, _m, op in all_ops]
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:
         raise Unsupported(f"函式名稱重複：{duplicates}（調整 endpoint 函式名）")
     out.append("export const adminApi = {\n" + "\n".join(build_operation(p, m, op) for p, m, op in ops) + "\n}\n")
+    if csv_ops:
+        out.append("/** CSV 下載端點的網址（`text/csv`，不是 JSON）。 */\n"
+                   "export const adminCsvUrls = {\n"
+                   + "\n".join(build_csv_url(p, m, op) for p, m, op in csv_ops) + "\n}\n")
     return "\n".join(out)
 
 

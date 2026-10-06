@@ -120,6 +120,7 @@ class FakeAccounts:
     GRANTABLE_SCOPES = accounts.GRANTABLE_SCOPES
     ALL_SCOPES = accounts.ALL_SCOPES
     ELEVATION_SECONDS = accounts.ELEVATION_SECONDS
+    EXPORT_KINDS = accounts.EXPORT_KINDS
 
     def __init__(self) -> None:
         self.users: dict[str, _Row] = {}
@@ -630,6 +631,17 @@ class FakeAccounts:
         if invocation_id:
             detail["previous_invocation_id"] = invocation_id
         self._audit(actor_id, f"ops.{action}", service, detail, "ops_service")
+
+    async def record_export(self, *, actor_id, kind, filters, row_count, truncated) -> None:
+        self._check()
+        if kind not in accounts.EXPORT_KINDS:
+            raise ValueError(f"未知的匯出種類：{kind!r}")
+        detail = {
+            "kind": kind, "format": "csv",
+            "filters": {str(k): accounts._export_filter_value(v) for k, v in sorted(filters.items()) if v is not None},
+            "row_count": int(row_count), "truncated": bool(truncated),
+        }
+        self._audit(actor_id, "data.export", kind, detail, "export")
 
     async def list_audit(self, limit: int = 50, offset: int = 0):
         self._check()

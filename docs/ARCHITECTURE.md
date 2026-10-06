@@ -78,15 +78,16 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `web/server.py` | 組合層：載環境檔、初始化 logging、auth middleware、lifespan、掛 router |
-| `web/routers/` | 18 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入〔含 TOTP 第二步〕、登出、`/api/me`）、`account_security`（`/api/me/*`：TOTP 自助設定與任何使用者都能用的權限提升）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理、刪除排程、TOTP 重設與稽核，限管理員）、`admin_reports`（研報查詢與隱藏／恢復，限管理員＋`reports.manage`）、`admin_ops`（`/api/admin/ops/*` 唯讀維運狀態，經 `web/ops_client.py` 問 `ops_agent/` 的 Unix socket；代理不可用回 503 `ops_agent_unavailable`）、`admin_monitoring`（`/api/admin/jobs`、`/api/admin/observations`、`/api/admin/incidents*`：監控投影 `job_execution`／`service_observation`／`incident` 的唯讀查詢，限管理員＋`ops.read`）、`admin_data_health`（`/api/admin/data-health`、`/api/admin/llm-usage`：資料健康彙整與批次 LLM 用量，唯讀，限管理員＋`ops.read`）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
+| `web/routers/` | 19 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入〔含 TOTP 第二步〕、登出、`/api/me`）、`account_security`（`/api/me/*`：TOTP 自助設定與任何使用者都能用的權限提升）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理、刪除排程、TOTP 重設與稽核，限管理員）、`admin_reports`（研報查詢與隱藏／恢復，限管理員＋`reports.manage`）、`admin_ops`（`/api/admin/ops/*` 唯讀維運狀態，經 `web/ops_client.py` 問 `ops_agent/` 的 Unix socket；代理不可用回 503 `ops_agent_unavailable`）、`admin_monitoring`（`/api/admin/jobs`、`/api/admin/observations`、`/api/admin/incidents*`：監控投影 `job_execution`／`service_observation`／`incident` 的唯讀查詢，限管理員＋`ops.read`）、`admin_data_health`（`/api/admin/data-health`、`/api/admin/llm-usage`：資料健康彙整與批次 LLM 用量，唯讀，限管理員＋`ops.read`）、`admin_exports`（`/api/admin/export/*.csv`：稽核、帳號、研報可見性、事件、排程工作的 CSV 匯出，scope 同各清單；先以 `accounts.record_export` 寫 `data.export` 稽核再交資料、筆數上限 10000；刻意沒有問答原文的匯出）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
 | `web/auth.py` | session cookie 的簽章與驗證（只帶 session id）、失敗追蹤、可信代理。帳號與 session 狀態不在這裡，在 `app/services/accounts.py` |
 | `web/authz.py` | `current_user`／`require_admin`／`require_scope`／`require_super`／`require_elevated`（FastAPI dependency）：唯一的授權判斷點；前端 route guard 只是顯示層 |
+| `web/csv_export.py` | 管理 CSV 匯出的共用格式：字串以 `=`、`+`、`-`、`@`、tab、CR 開頭時加 `'` 防公式注入（數字型別不加）、UTF-8 BOM、逐批串流、檔名 `report-mark-<種類>-<台北日期>.csv`；`CsvResponse` 讓 OpenAPI 標 `text/csv`，`scripts/gen_admin_client.py` 依此產生下載網址（`adminCsvUrls`） |
 | `web/csrf.py` | 會改變狀態的請求只收本站來的（`Origin` 等於 `Host`；沒有 `Origin` 看 `Sec-Fetch-Site`）；middleware 在認證之外 |
 | `web/errors.py` | 統一錯誤格式 `{detail, code, request_id}`：`AppError`、exception handler、middleware 用的 `error_response` |
 | `web/concurrency.py` | `ConcurrencyGate`（刻意不支援 `async with`）、單 worker 偵測 |
 | `web/request_log.py` | 純 ASGI middleware（最外層）：設關聯 id、回應帶 `X-Request-Id`（上游給的只在形狀安全時沿用）、`/api/*` 每請求記一行 `status`／`elapsed_ms`；`/healthz`、`/api/progress` 正常時不記，變慢或 5xx 照記。不記 query string |
-| `web/ttl_cache.py` | 有上限、依 key 分格的單行程 TTL 快取；`reset_all()` 由 `tests/conftest.py` 每題清空。目前用在雷達目錄回應 |
+| `web/ttl_cache.py` | 有上限、依 key 分格的單行程 TTL 快取；`reset_all()` 由 `tests/conftest.py` 每題清空。用在雷達目錄回應、資料健康與 LLM 用量 |
 | `web/dev_mode.py` | `DEV_NO_AUTH` 三條件放行 |
 | `web/env_loader.py` | 讀 repo 根 `.env`，不做 shell 展開 |
 

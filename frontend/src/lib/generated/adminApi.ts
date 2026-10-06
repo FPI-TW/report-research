@@ -652,3 +652,17 @@ export const adminApi = {
   /** POST /api/admin/users/{user_id}/totp/reset — Reset Totp */
   resetTotp: (userId: string) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/totp/reset`, UserItemSchema, jsonBody('POST')),
 }
+
+/** CSV 下載端點的網址（`text/csv`，不是 JSON）。 */
+export const adminCsvUrls = {
+  /** GET /api/admin/export/audit.csv — Export Audit（下載網址） */
+  exportAudit: (query: { limit?: number } = {}) => `/api/admin/export/audit.csv${qs(query)}`,
+  /** GET /api/admin/export/incidents.csv — Export Incidents（下載網址） */
+  exportIncidents: (query: { status?: 'firing' | 'resolved' | 'lost' | null; component?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => `/api/admin/export/incidents.csv${qs(query)}`,
+  /** GET /api/admin/export/jobs.csv — Export Jobs（下載網址） */
+  exportJobs: (query: { service?: string | null; unit?: string | null; state?: 'running' | 'finished' | 'lost' | null; result?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => `/api/admin/export/jobs.csv${qs(query)}`,
+  /** GET /api/admin/export/reports.csv — Export Reports（下載網址） */
+  exportReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number } = {}) => `/api/admin/export/reports.csv${qs(query)}`,
+  /** GET /api/admin/export/users.csv — Export Users（下載網址） */
+  exportUsers: (query: { limit?: number } = {}) => `/api/admin/export/users.csv${qs(query)}`,
+}

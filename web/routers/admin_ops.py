@@ -27,7 +27,8 @@ _OPS_READ = Depends(authz.require_scope("ops.read"))
 Summary = Literal["running", "idle", "failed", "transitioning", "not_found", "unknown"]
 Kind = Literal["systemd", "container"]
 Tier = Literal["critical", "important", "supporting"]
-Action = Literal["status", "logs"]
+# 與 ops_agent/protocol.py 的 KNOWN_ACTIONS 逐字一致（tests/test_admin_ops_api.py 釘住）。
+Action = Literal["status", "logs", "restart", "run"]
 
 # 與 ops_agent/catalog.py 的服務名稱規則一致；不合的直接 422，不必問代理。
 ServiceName = Annotated[str, Path(pattern=r"^[a-z][a-z0-9-]{0,39}$", max_length=40)]
@@ -48,6 +49,7 @@ class OpsSystemdState(BaseModel):
     exec_main_exit_at: str | None = None
     active_enter_at: str | None = None
     state_change_at: str | None = None
+    invocation_id: str | None = None
 
 
 class OpsTimerState(BaseModel):
@@ -82,6 +84,7 @@ class OpsServiceStatus(BaseModel):
     target: str
     timer: str | None = None
     actions: list[Action]
+    group: str | None = None
     description: str = ""
     summary: Summary
     error: str | None = None

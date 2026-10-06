@@ -148,6 +148,7 @@ export const OpsSystemdStateSchema = z.object({
   exec_main_exit_at: z.string().nullable().optional(),
   active_enter_at: z.string().nullable().optional(),
   state_change_at: z.string().nullable().optional(),
+  invocation_id: z.string().nullable().optional(),
 })
 export type OpsSystemdState = z.infer<typeof OpsSystemdStateSchema>
 
@@ -221,7 +222,8 @@ export const OpsServiceDetailSchema = z.object({
   tier: z.enum(['critical', 'important', 'supporting']),
   target: z.string(),
   timer: z.string().nullable().optional(),
-  actions: z.array(z.enum(['status', 'logs'])),
+  actions: z.array(z.enum(['status', 'logs', 'restart', 'run'])),
+  group: z.string().nullable().optional(),
   description: z.string().optional(),
   summary: z.enum(['running', 'idle', 'failed', 'transitioning', 'not_found', 'unknown']),
   error: z.string().nullable().optional(),
@@ -238,7 +240,8 @@ export const OpsServiceStatusSchema = z.object({
   tier: z.enum(['critical', 'important', 'supporting']),
   target: z.string(),
   timer: z.string().nullable().optional(),
-  actions: z.array(z.enum(['status', 'logs'])),
+  actions: z.array(z.enum(['status', 'logs', 'restart', 'run'])),
+  group: z.string().nullable().optional(),
   description: z.string().optional(),
   summary: z.enum(['running', 'idle', 'failed', 'transitioning', 'not_found', 'unknown']),
   error: z.string().nullable().optional(),

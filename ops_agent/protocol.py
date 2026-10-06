@@ -3,11 +3,14 @@
 請求（UTF-8，一行，結尾 `\\n`，上限 `MAX_REQUEST_BYTES`）：
 
     {"v": 1, "id": "<呼叫端自訂，≤64 字元，可省略>", "env": "production",
-     "op": "list" | "status" | "logs", "service": "<catalog 名稱>", "params": {...}}
+     "op": "list" | "status" | "logs" | "restart" | "run", "service": "<catalog 名稱>", "params": {...},
+     "actor": "<web 的使用者名稱，只寫進代理的 journal，可省略>"}
 
 - `env` 必填：呼叫端宣告它要操作哪個環境，與代理載入的 catalog 不同就拒絕（`environment_mismatch`）。
   dev 的 web 誤連到 prod 的 socket（或反之）時在這裡被擋下，而不是默默讀到另一個環境。
-- `list` 不帶 `service`；`status`／`logs` 必帶。`logs` 的 `params` 只收 `since`、`lines`。
+- `list` 不帶 `service`；其餘必帶。`logs` 的 `params` 只收 `since`、`lines`；**`restart`／`run` 不收任何參數**
+  （帶了就 `invalid_params`）：代理只執行 `systemctl start|restart --no-block -- <catalog 的 unit>`，
+  呼叫端沒有任何管道影響 argv。
 
 回應（一行）：
 
@@ -17,8 +20,12 @@
 `error.code` 是穩定字串（`ERROR_CODES`）；`message` 給人看，不含指令輸出以外的內部細節。
 
 action 與 op 的關係：catalog 每個服務列出允許的 action（`KNOWN_ACTIONS`）；`status`／`list` 需要
-`status`，`logs` 需要 `logs`。P7 會加 `restart`、`run-now`（屆時擴充 `KNOWN_ACTIONS` 與 `OPS`），
-本版只認唯讀兩種——catalog 寫了未知 action 就拒絕載入，不是默默忽略。
+`status`，`logs` 需要 `logs`，`restart` 需要 `restart`，`run` 需要 `run`。catalog 寫了未知 action 就拒絕
+載入，不是默默忽略。寫入類（`WRITE_ACTIONS`）另有代理端的硬性限制，**catalog 怎麼寫都放不開**：
+- `restart` 只認 `RESTARTABLE_UNITS`（v1 只有 Web）；
+- 任何寫入類都不碰 `FORBIDDEN_WRITE_TARGET` 命中的對象（PostgreSQL、nginx、cloudflared、docker、代理自己……），
+  也不碰容器。
+寫入類的互斥、鎖檔試探與執行在 `ops_agent/actions.py`。
 """
 
 from __future__ import annotations
@@ -38,11 +45,23 @@ CANONICAL_SOCKETS: dict[str, str] = {
 }
 ENVIRONMENTS = tuple(CANONICAL_SOCKETS)
 
-# 唯讀版只有這兩種。P7 擴充時加 "restart"、"run-now"。
-KNOWN_ACTIONS: tuple[str, ...] = ("status", "logs")
+KNOWN_ACTIONS: tuple[str, ...] = ("status", "logs", "restart", "run")
+# 會改變主機狀態的 action（與同名 op）。互斥與硬性限制見 ops_agent/actions.py。
+WRITE_ACTIONS: tuple[str, ...] = ("restart", "run")
 # op → 需要的 action（list 是逐一查 status，對沒有 status action 的服務不查）。
-OPS: dict[str, str] = {"list": "status", "status": "status", "logs": "logs"}
-REQUEST_KEYS = frozenset({"v", "id", "env", "op", "service", "params"})
+OPS: dict[str, str] = {"list": "status", "status": "status", "logs": "logs", "restart": "restart", "run": "run"}
+REQUEST_KEYS = frozenset({"v", "id", "env", "op", "service", "params", "actor"})
+
+# v1 的 restart 只開放 Web（生產與開發各一個）。這是代理端的硬性白名單：catalog 被誤設成讓
+# PostgreSQL／nginx 可 restart 時，catalog 載入會先拒絕（`catalog._parse_service`），即使繞過載入
+# 直接給 Catalog 物件，代理執行前也會再擋一次（`actions.check_write_allowed`）。
+RESTARTABLE_UNITS: frozenset[str] = frozenset({"report-mark-web.service", "report-mark-dev-web.service"})
+# 任何寫入類 action 都不得指向的對象（不分大小寫，比對 unit 名稱）。PostgreSQL 的 restart 尤其禁止：
+# web 與所有批次都在用，重啟等於整站中斷，而且容器重啟不經 systemd、polkit 管不到。
+FORBIDDEN_WRITE_TARGET = re.compile(
+    r"(?i)(postgres|pgvector|(^|[-_.@])pg([-_.@0-9]|$)|nginx|cloudflared|docker|containerd|ops-agent|"
+    r"dbus|polkit|systemd-|ssh|cron)"
+)
 LOG_PARAM_KEYS = frozenset({"since", "lines"})
 
 MAX_REQUEST_BYTES = 8 * 1024
@@ -65,11 +84,15 @@ ERROR_CODES = frozenset({
     "command_timeout",
     "timeout",                # 整個請求超過 request_timeout
     "busy",                   # 同時處理中的請求已達上限
+    "already_running",        # 寫入類：同一個 execution group 有工作在跑／排隊，或批次鎖被持有（不排隊）
+    "lock_unavailable",       # 寫入類：catalog 指定的鎖檔無法試探（看不到、沒權限）——無法確認就不執行
     "response_too_large",
     "internal_error",
 })
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+# 與 app/services/accounts.py 的帳號規則同一個字元集（文字、數字與 . _ @ -）；只用來寫 journal。
+_ACTOR = re.compile(r"[\w.@-]{1,64}")
 _RELATIVE = re.compile(r"([1-9][0-9]{0,4})([smhd])")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
@@ -132,7 +155,11 @@ def parse_request(line: bytes) -> dict:
         raise ProtocolError("bad_request", "params 必須是物件")
     if op != "logs" and params:
         raise ProtocolError("invalid_params", f"{op} 不收參數")
-    return {"v": PROTOCOL_VERSION, "id": req_id, "env": env, "op": op, "service": service, "params": params}
+    actor = obj.get("actor")
+    if actor is not None and not (isinstance(actor, str) and _ACTOR.fullmatch(actor)):
+        raise ProtocolError("bad_request", "actor 必須是 1–64 個文字、數字或 ._@-")
+    return {"v": PROTOCOL_VERSION, "id": req_id, "env": env, "op": op, "service": service, "params": params,
+            "actor": actor}
 
 
 def parse_lines(raw, max_lines: int) -> int:

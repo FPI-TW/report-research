@@ -97,6 +97,8 @@ scripts/                  批次與維運（50 支），會 spawn claude 的取 
 db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision）、db/expected_constraints.txt、
                           db/align_baseline_indexes.sql 與 db/drop_deep_report_tables.sql（既有庫手動執行）
 deploy/                   systemd unit、nginx、docker-compose（部署真相來源）
+                          deploy/ops/：維運代理的 Service Catalog（prod／dev）
+ops_agent/                維運代理（標準庫、不 import app.*；部署時複製到 /opt/report-mark-ops）
 eval/                     離線評測 harness 與基準線（刻意不進 CI）
 tests/                    pytest（unittest 風格）＋ fixtures/sse_events.json
 docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
@@ -165,6 +167,9 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/admin/audit` | `limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{id, actor_user_id, actor_username, action, target_type, target_id, detail, created_at}]}` | 限管理員。新的在前；`actor_user_id` 為 null 表示 CLI（`scripts/create_admin.py`）。`action`：`user.create`、`user.set_role`、`user.enable`、`user.disable`、`user.reset_password`、`user.force_logout`、`user.set_privileges`、`user.totp_enable`、`user.totp_disable`、`user.totp_reset`、`user.delete_requested`、`user.delete_cancelled`、`user.delete_executed`、`user.delete_replayed`、`session.elevate`、`session.elevate_failed`、`review.update`、`report.hide`、`report.restore`（刪除相關的 `detail` 只記數量，不記帳號名稱） |
 | GET | `/api/admin/reports` | `q`（標題／檔名／券商關鍵字，`%`、`_` 視為字面）、`hidden`（`true`／`false`，省略＝全部）、`limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{report_id, file_hash, file_name, title, source, market, report_date, created_at, hidden, hidden_reason, visibility_updated_by, visibility_updated_at}]}` | `reports.manage`。入庫新→舊；含非研究檔 |
 | PUT | `/api/admin/reports/{file_hash}/visibility` | JSON `hidden`（必填）、`reason`（隱藏時必填、最多 500 字；恢復可省略） | `{file_hash, hidden, reason, updated_by, updated_at}` | `reports.manage`。以 `file_hash` 為鍵（重新入庫換 report_id 仍有效）；被隱藏的研報從檢索、問答、閱讀頁（404）、雷達、總覽、簡報與原檔（404）全部排除，批次照常處理、恢復即生效。與稽核（`report.hide`／`report.restore`，detail 不含原因全文）同一筆交易；400 `invalid_input` 原因不合法、404 研報不存在 |
+| GET | `/api/admin/ops/services` | — | `{environment, host, checked_at, items: [{name, kind, tier, target, timer, actions, description, summary, error, systemd, container, timer_state}]}` | `ops.read`。唯讀，經維運代理（`ops_agent/`，Unix socket）查 Service Catalog（`deploy/ops/services.prod.toml`）的全部服務；`summary` 是 `running`／`idle`／`failed`／`transitioning`／`not_found`／`unknown`，判讀看 `systemd`（`systemctl show` 的原始屬性與時間戳）或 `container`（`docker inspect` 的 State）。代理不可用回 503 `ops_agent_unavailable`（其他功能不受影響） |
+| GET | `/api/admin/ops/services/{name}` | `name`（catalog 名稱，小寫英數與 `-`） | 一個服務的同上欄位＋`checked_at` | `ops.read`。不在 catalog 回 404 `ops_service_not_found` |
+| GET | `/api/admin/ops/services/{name}/logs` | `since`（`15m`／`2h`／`1d` 或帶時區的 ISO 8601，最多 7 天，預設 `1h`）、`lines`（1–1000，200） | `{name, kind, tier, target, since, lines, truncated, entries, checked_at}` | `ops.read`。systemd 走 `journalctl -o short-iso`、容器走 `docker logs --timestamps`；回應超過上限時從舊的那端截掉（`truncated`），形似祕密的片段遮成 `<redacted>`。400 `invalid_params`、504 `ops_timeout` |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 
@@ -194,6 +199,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `OBJECT_STORAGE_MODE`、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS` | `local` | 非 local 缺任一 fail-closed；TTL 上限 3600 |
 | `ASK_MAX_QUEUE`、`SSE_HEARTBEAT_INTERVAL` | 20、20 | web 層旋鈕 |
 | `RADAR_CATALOG_CACHE_TTL` | 60 | 雷達目錄回應快取秒數；0 停用 |
+| `OPS_AGENT_ENVIRONMENT`、`OPS_AGENT_SOCKET`、`OPS_AGENT_TIMEOUT` | `production`、依環境（`/run/report-mark-ops/agent.sock`，development 是 `/run/report-mark-ops-dev/agent.sock`）、20 | 維運代理的 client（`web/ops_client.py`）。環境是請求裡宣告的、代理會比對；拼錯的環境值＝停用（維運端點回 503），不退回 production |
 | `SKIP_WARMUP`、`DEV_NO_AUTH` | — | 只從 `os.environ` 讀且判 `== "1"`，不要寫進環境檔 |
 
 新旋鈕放 `app/config.py`（frozen dataclass ＋ `os.getenv`）。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`）是 live 的，不要改名。
@@ -268,6 +274,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 | `report-mark-backfill.timer` | 01:00 | E1d 抽取回填，跑完手動 disable |
 | `report-mark-r2-reconcile.timer` | 週一 07:00 | R2 對帳（唯讀） |
 | `report-mark-metrics.service` | 常駐 | 硬體用量取樣 → `data/metrics/`（`make metrics`） |
+| `report-mark-ops-agent.service` | 常駐 | 維運代理（唯讀）：`/api/admin/ops/*` 經 `/run/report-mark-ops/agent.sock` 查 `deploy/ops/services.prod.toml` 列出的服務狀態與日誌。專用使用者、程式碼裝在 `/opt/report-mark-ops/`，安裝步驟與威脅模型見 `docs/production_resilience.md`「維運代理」；開發環境是 `report-mark-ops-agent-dev.service` |
 | `report-mark-alert@.service` | `OnFailure` 觸發 | journal ＋ `data/unit_failures.log` ＋ webhook |
 
 非辦公室主機（EC2 staging：RDS PostgreSQL、共用 production 的 R2 bucket）：

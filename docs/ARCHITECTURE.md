@@ -73,7 +73,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `web/server.py` | 組合層：載環境檔、初始化 logging、auth middleware、lifespan、掛 router |
-| `web/routers/` | 15 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入〔含 TOTP 第二步〕、登出、`/api/me`）、`account_security`（`/api/me/*`：TOTP 自助設定與任何使用者都能用的權限提升）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理、刪除排程、TOTP 重設與稽核，限管理員）、`admin_reports`（研報查詢與隱藏／恢復，限管理員＋`reports.manage`）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
+| `web/routers/` | 16 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入〔含 TOTP 第二步〕、登出、`/api/me`）、`account_security`（`/api/me/*`：TOTP 自助設定與任何使用者都能用的權限提升）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理、刪除排程、TOTP 重設與稽核，限管理員）、`admin_reports`（研報查詢與隱藏／恢復，限管理員＋`reports.manage`）、`admin_ops`（`/api/admin/ops/*` 唯讀維運狀態，經 `web/ops_client.py` 問 `ops_agent/` 的 Unix socket；代理不可用回 503 `ops_agent_unavailable`）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
 | `web/auth.py` | session cookie 的簽章與驗證（只帶 session id）、失敗追蹤、可信代理。帳號與 session 狀態不在這裡，在 `app/services/accounts.py` |
 | `web/authz.py` | `current_user`／`require_admin`／`require_scope`／`require_super`／`require_elevated`（FastAPI dependency）：唯一的授權判斷點；前端 route guard 只是顯示層 |

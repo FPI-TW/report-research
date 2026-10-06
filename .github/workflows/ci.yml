@@ -338,6 +338,11 @@ jobs:
       - name: 研報可見性
         run: uv run pytest -q tests/test_report_visibility_db.py
 
+      # 監控投影：同一份 spool 匯入兩次不重複、批次 running → finished／lost 只前進不倒退、
+      # 被 CHECK 拒絕的列只略過那一列。
+      - name: 監控觀測與批次執行紀錄
+        run: uv run pytest -q tests/test_ops_monitoring_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

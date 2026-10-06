@@ -574,7 +574,7 @@ class CatalogTargetsTests(unittest.TestCase):
         self.assertEqual(targets["postgres"]["container"], "report-mark-postgres")
         self.assertIsNone(targets["postgres"]["unit"])
         self.assertEqual(targets["sync"]["timer"], "report-mark-sync.timer")
-        self.assertEqual(targets["audit"]["unit"], "report-mark-audit.service")
+        self.assertEqual(targets["load-observations"]["unit"], "report-mark-load-observations.service")
         self.assertIsNone(targets["metrics"]["timer"])
 
     def test_missing_or_broken_catalog_degrades_to_empty(self):

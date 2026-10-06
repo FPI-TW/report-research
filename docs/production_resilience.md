@@ -1556,6 +1556,49 @@ sudo systemctl disable --now report-mark-incident.timer
 rm -f data/.incidents/*.state          # 可選：清掉殘留的事件狀態
 ```
 
+## 監控 spool 與匯入（report-mark-load-observations）
+
+管理頁的排程工作與主機資源讀 DB 的 `research.service_observation`／`research.job_execution`（revision 0005），
+但**觀測的第一落點不是 DB**：DB 掛掉的那段時間正是最需要觀測的時候。所以分兩段——
+
+- `report-mark-metrics.service` 的收集器（`scripts/collect_resource_usage.py`，系統 python、不需 venv）每 60 秒
+  把 Host（CPU、記憶體、磁碟、I/O PSI、load）、Service Catalog（`deploy/ops/services.prod.toml`）列的容器與
+  systemd unit 狀態、有 timer 的 oneshot 每次執行寫進本機 spool `data/ops_spool/`（格式在收集器檔頭）。它不連 DB。
+- `report-mark-load-observations.timer` 每 5 分鐘以 `scripts/load_observations.py` 冪等匯入（自然鍵去重，進度只在
+  commit 後前進）。DB 不可用 rc=2、spool 原封不動，恢復後下一輪補匯入；匯入完的舊日檔才刪。
+
+批次「跑過」的判準與 `scripts/verify_oneshot_ran.sh` 相同（要有 InvocationID 與 ExecMainStartTimestamp，`Result=success`
+不是證據）；沒看到結束、同 unit 已有更晚開始的那一次記成 `lost`（結果不明，不捏造結束時間）。兩張表遺失只少了歷史，
+不影響服務與告警，刻意不備份。這一段**不碰 P5**：告警照舊只有 `scripts/incident_handler.sh`，不經 DB。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0005（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) 收集器：unit 本身沒改，重啟讓它載入新版程式（開始寫 data/ops_spool/）
+sudo systemctl restart report-mark-metrics.service
+# 3) 匯入器
+sudo install -m 0644 deploy/systemd/report-mark-load-observations.service deploy/systemd/report-mark-load-observations.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-load-observations.timer
+# 4) catalog 多了 load-observations 一項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+```
+
+驗收：`ls data/ops_spool/` 一分鐘內出現 `observations-<今天>.jsonl`；`uv run python scripts/load_observations.py --dry-run`
+印出待匯入筆數；timer 跑過一輪後 `systemctl show report-mark-load-observations -p Result,ExecMainStatus`，並以管理員
+打 `/api/admin/observations?scope=host` 與 `/api/admin/jobs`。收集器在不是辦公室主機的環境（沒裝 `report-mark-metrics`）
+不會產生 spool，匯入器每輪只是「沒有東西可匯入」。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-load-observations.timer   # 管理頁的監控資料停在最後一次匯入
+```
+
+收集器仍會寫 spool（保留期安全網 14 天，`--spool-retention-days`）；要連 spool 都停，在 metrics unit 的 ExecStart
+加 `--observe-interval 0` 後重啟。
+
 ## 維運代理（report-mark-ops-agent）
 
 管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經

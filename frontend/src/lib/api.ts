@@ -2,11 +2,20 @@ import type { ZodType } from 'zod'
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** 後端統一錯誤格式的穩定代碼（例如 `elevation_required`）；非 JSON 回應時為 undefined。 */
+  code?: string
+  constructor(status: number, message: string, code?: string) {
     super(message)
     this.status = status
+    this.code = code
     this.name = 'ApiError'
   }
+}
+
+/** 統一錯誤格式（web/errors.py）的 `code`；拿不到就 undefined。 */
+export function errorCode(body: unknown): string | undefined {
+  const code = (body && typeof body === 'object') ? (body as { code?: unknown }).code : undefined
+  return typeof code === 'string' && code ? code : undefined
 }
 
 /** session 過期/未登入時導向登入頁，帶上目前 SPA 路徑供登入後返回。 */
@@ -55,7 +64,7 @@ export async function requestJSON<T>(path: string, schema: ZodType<T>, init?: Re
   if (!resp.ok) {
     let body: unknown = null
     try { body = await resp.json() } catch { /* 非 JSON（代理層錯誤頁）：只剩狀態碼可說 */ }
-    throw new ApiError(resp.status, errorDetail(body, resp.status))
+    throw new ApiError(resp.status, errorDetail(body, resp.status), errorCode(body))
   }
   return schema.parse(await resp.json())
 }

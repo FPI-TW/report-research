@@ -239,7 +239,9 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                     </td>
                     <td className={styles.wrapCell}>
                       {isDraft
-                        ? <span className={`${styles.badge} ${styles.badgeOff}`}>草稿</span>
+                        // 沒有 file_hash → upload_id 的查詢端點：連到上傳清單的「待審草稿」分頁籤。
+                        ? <Link to="/admin/uploads?tab=draft" className={`${styles.badge} ${styles.badgeOff}`}
+                            title="到上傳審核發布或退回">草稿</Link>
                         : <span className={`${styles.badge} ${r.hidden ? styles.badgeOff : ''}`}>{r.hidden ? '已隱藏' : '顯示中'}</span>}
                       {r.hidden && r.hidden_reason && <div className={styles.reason}>{r.hidden_reason}</div>}
                       {r.visibility_updated_at && (
@@ -250,7 +252,7 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                     </td>
                     <td>
                       {isDraft ? (
-                        <span className={styles.muted}>待發布</span>
+                        <Link to="/admin/uploads?tab=draft" className={styles.muted}>到上傳審核</Link>
                       ) : r.hidden ? (
                         <button type="button" className={styles.action} disabled={visibility.isPending}
                           onClick={() => setRestoreFor(r)}>恢復</button>

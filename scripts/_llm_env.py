@@ -131,6 +131,15 @@ def _fresh_breaker() -> str | None:
     return " ".join(text.split())[:400] or "（標記是空的）"
 
 
+def breaker_active() -> str | None:
+    """批次斷路器標記此刻是否有效（有效回內容、否則 None；判準同 `require_llm_key`）。
+
+    給「斷路器有效時要做別的事、而不是 rc=2 中止」的入口用：上傳 worker 把等著入庫的上傳標成延後
+    （`failure_kind=llm_breaker`），而不是讓預檢以 rc=2 收場。
+    """
+    return _fresh_breaker()
+
+
 def load_llm_env() -> None:
     path = env_file_path()
     key_before = os.environ.get(KEY)

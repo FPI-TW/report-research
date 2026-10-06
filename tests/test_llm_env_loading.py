@@ -46,7 +46,7 @@ LLM_SYMBOLS = {"run_claude", "stream_completion"}
 KNOWN_ENTRIES = {
     "scripts/sync_new_reports.py", "scripts/tag_all_cli.py", "scripts/generate_summaries.py",
     "scripts/generate_titles.py", "scripts/extract_takeaways.py", "scripts/extract_signals.py",
-    "scripts/generate_brief.py", "eval/run_ragas.py",
+    "scripts/generate_brief.py", "eval/run_ragas.py", "scripts/process_uploads.py",
 }
 # 被間接層判準掃到、但**不呼叫 LLM** 的入口：只從間接層取常數或純函式。逐檔列出允許取用的名稱
 # （含經模組別名取用的屬性）；一旦取用了其他名稱（例如 answer_question），豁免失效、測試紅，

@@ -374,6 +374,15 @@ class Settings:
     # 研報上傳的審核（web/routers/admin_uploads.py、app/services/upload_review.py）：退回後的清除寬限期（小時）。
     # 期間內管理員可撤銷退回；過期後由上傳 worker 清除語料與檔案（設計決策 13：24 小時，與刪帳一致）。
     upload_reject_grace_hours: int = 24
+    # 研報上傳 worker（scripts/process_uploads.py、app/services/upload_worker.py）。兩個都是路徑，空字串＝repo 根預設：
+    # - 整輪鎖（非阻塞 flock，忙就 rc 0 退出）：data/.upload_worker.lock。殼與 Python 子命令共用同一個檔。
+    # - 掃描通過後的乾淨檔：data/uploads/clean/<hash>/<原始檔名>（research_report.file_path；必須與隔離區同一個
+    #   檔案系統，os.replace 才是原子的——不同時 worker 退回「複製＋驗 SHA＋刪來源」）。
+    upload_worker_lock_file: str = ""
+    upload_clean_dir: str = ""
+    # 入庫前檢查子行程（app/services/pdf_preflight.py）的虛擬記憶體上限（MiB）：300 頁的密集文字 PDF 以
+    # pdfplumber 試抽字實測 RSS 1.68 GB，2048 通過、1536 不通過。調高前先算 worker unit 的 MemoryMax=4G 放不放得下。
+    upload_preflight_memory_mb: int = 2048
 
 
 def _load() -> Settings:
@@ -565,6 +574,9 @@ def _load() -> Settings:
         upload_max_in_flight=_int_at_least("UPLOAD_MAX_IN_FLIGHT", 50, 1),
         upload_min_free_mb=_int_at_least("UPLOAD_MIN_FREE_MB", 1024, 0),
         upload_reject_grace_hours=_int_at_least("UPLOAD_REJECT_GRACE_HOURS", 24, 1),
+        upload_worker_lock_file=(os.getenv("UPLOAD_WORKER_LOCK_FILE") or "").strip(),
+        upload_clean_dir=(os.getenv("UPLOAD_CLEAN_DIR") or "").strip(),
+        upload_preflight_memory_mb=_int_at_least("UPLOAD_PREFLIGHT_MEMORY_MB", 2048, 256),
     )
 
 

@@ -91,6 +91,12 @@ os.environ["RETRIEVAL_REGRESSION_BASELINE"] = "/nonexistent/report-mark-retrieva
 # 研報上傳的隔離區（app/services/quarantine.py；預設 repo 根的 data/quarantine/）：同理用賦值指到不存在的路徑——
 # 收檔建不出目錄就回 503 `quarantine_unavailable`，部署目錄不會留下測試寫的 .part／.bin。要寫檔的測試自己給 tempfile。
 os.environ["UPLOAD_QUARANTINE_DIR"] = "/nonexistent/report-mark-quarantine"
+# 上傳 worker 的整輪鎖與乾淨檔目錄（app/services/upload_worker.py；預設 repo 根的 data/.upload_worker.lock、
+# data/uploads/clean/）：同理用賦值指到不存在的路徑。要跑 worker 的測試自己給 tempfile（Ctx 的路徑欄位）。
+# 告警 webhook：worker 偵測到感染時會送；測試一律不得送出（要驗的測試自己給假的 runner 與 URL）。
+os.environ["UPLOAD_WORKER_LOCK_FILE"] = "/nonexistent/report-mark-upload-worker/.upload_worker.lock"
+os.environ["UPLOAD_CLEAN_DIR"] = "/nonexistent/report-mark-uploads-clean"
+os.environ.pop("REPORT_MARK_ALERT_WEBHOOK", None)
 # 維運代理（app/config.py 的 OPS_AGENT_*）：同樣用賦值。這台機器就是生產主機，代理裝上之後預設 socket
 # 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
 os.environ["OPS_AGENT_ENVIRONMENT"] = "production"

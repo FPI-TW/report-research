@@ -25,22 +25,25 @@ def _name(v: str) -> NameObject:
     return NameObject(v)
 
 
-def _text_page(w: PdfWriter, lines: int = 30):
+def _text_page(w: PdfWriter, lines: int = 30, marker: str = ""):
     page = w.add_blank_page(612, 792)
     font = DictionaryObject({_name("/Type"): _name("/Font"), _name("/Subtype"): _name("/Type1"),
                              _name("/BaseFont"): _name("/Helvetica")})
     page[_name("/Resources")] = DictionaryObject(
         {_name("/Font"): DictionaryObject({_name("/F1"): w._add_object(font)})})
     stream = DecodedStreamObject()
-    stream.set_data("".join(f"BT /F1 10 Tf 40 {760 - 14 * i} Td ({TEXT}) Tj ET\n" for i in range(lines)).encode())
+    body = "".join(f"BT /F1 10 Tf 40 {760 - 14 * i} Td ({TEXT}) Tj ET\n" for i in range(lines))
+    if marker:  # 讓每一份測試檔的內容（與 SHA-256）都不同
+        body += f"BT /F1 6 Tf 40 20 Td ({marker}) Tj ET\n"
+    stream.set_data(body.encode())
     page[_name("/Contents")] = w._add_object(stream)
     return page
 
 
-def _writer(pages: int = 1) -> PdfWriter:
+def _writer(pages: int = 1, marker: str = "") -> PdfWriter:
     w = PdfWriter()
     for _ in range(pages):
-        _text_page(w)
+        _text_page(w, marker=marker)
     return w
 
 
@@ -57,8 +60,8 @@ def _action(kind: str, **extra) -> DictionaryObject:
     return d
 
 
-def plain(pages: int = 1) -> bytes:
-    return _bytes(_writer(pages))
+def plain(pages: int = 1, marker: str = "") -> bytes:
+    return _bytes(_writer(pages, marker))
 
 
 def open_action_goto() -> bytes:
@@ -75,9 +78,9 @@ def open_action_js() -> bytes:
     return _bytes(w)
 
 
-def page_aa_js() -> bytes:
+def page_aa_js(marker: str = "") -> bytes:
     """頁面的 additional actions（/AA）帶 JavaScript。"""
-    w = _writer()
+    w = _writer(marker=marker)
     w.pages[0][_name("/AA")] = DictionaryObject({_name("/O"): _action("/JavaScript", JS=TextStringObject("x"))})
     return _bytes(w)
 

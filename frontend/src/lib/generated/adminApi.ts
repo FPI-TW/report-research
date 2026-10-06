@@ -97,6 +97,53 @@ export const ElevateResponseSchema = z.object({
 })
 export type ElevateResponse = z.infer<typeof ElevateResponseSchema>
 
+export const IncidentEventItemSchema = z.object({
+  event_id: z.string(),
+  occurred_at: z.string(),
+  action: z.enum(['FIRING', 'REMINDER', 'ESCALATED', 'RESOLVED']),
+  severity: z.enum(['CRITICAL', 'WARNING', 'RESOLVED']),
+  reason: z.string(),
+  status: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+  notified: z.boolean(),
+  journal_excerpt: z.string().nullable().optional(),
+  journal_truncated: z.boolean().optional(),
+  journal_since: z.string().nullable().optional(),
+  journal_until: z.string().nullable().optional(),
+  journal_units: z.string().nullable().optional(),
+})
+export type IncidentEventItem = z.infer<typeof IncidentEventItemSchema>
+
+export const IncidentItemSchema = z.object({
+  incident_id: z.string(),
+  host: z.string(),
+  component: z.string(),
+  kind: z.enum(['service', 'monitor_blind']),
+  probe_unit: z.string().nullable().optional(),
+  status: z.enum(['firing', 'resolved', 'lost']),
+  severity: z.enum(['CRITICAL', 'WARNING']),
+  reason: z.string(),
+  summary: z.string().nullable().optional(),
+  opened_at: z.string(),
+  last_event_at: z.string(),
+  resolved_at: z.string().nullable().optional(),
+  duration_seconds: z.number().nullable().optional(),
+  event_count: z.number().int(),
+})
+export type IncidentItem = z.infer<typeof IncidentItemSchema>
+
+export const IncidentListResponseSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().nullable(),
+  items: z.array(IncidentItemSchema),
+})
+export type IncidentListResponse = z.infer<typeof IncidentListResponseSchema>
+
 export const JobItemSchema = z.object({
   host: z.string(),
   unit: z.string(),
@@ -285,6 +332,26 @@ export const UserListResponseSchema = z.object({
 })
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
 
+export const IncidentDetailSchema = z.object({
+  incident_id: z.string(),
+  host: z.string(),
+  component: z.string(),
+  kind: z.enum(['service', 'monitor_blind']),
+  probe_unit: z.string().nullable().optional(),
+  status: z.enum(['firing', 'resolved', 'lost']),
+  severity: z.enum(['CRITICAL', 'WARNING']),
+  reason: z.string(),
+  summary: z.string().nullable().optional(),
+  opened_at: z.string(),
+  last_event_at: z.string(),
+  resolved_at: z.string().nullable().optional(),
+  duration_seconds: z.number().nullable().optional(),
+  event_count: z.number().int(),
+  events: z.array(IncidentEventItemSchema),
+  events_truncated: z.boolean(),
+})
+export type IncidentDetail = z.infer<typeof IncidentDetailSchema>
+
 export const OpsServiceDetailSchema = z.object({
   name: z.string(),
   kind: z.enum(['systemd', 'container']),
@@ -346,6 +413,10 @@ export const adminApi = {
   listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
+  /** GET /api/admin/incidents — List Incidents */
+  listIncidents: (query: { status?: 'firing' | 'resolved' | 'lost' | null; component?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/incidents${qs(query)}`, IncidentListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/incidents/{incident_id} — Get Incident */
+  getIncident: (incidentId: string) => requestJSON(`/api/admin/incidents/${encodeURIComponent(incidentId)}`, IncidentDetailSchema, { cache: 'no-store' }),
   /** GET /api/admin/jobs — List Jobs */
   listJobs: (query: { service?: string | null; unit?: string | null; state?: 'running' | 'finished' | 'lost' | null; result?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/jobs${qs(query)}`, JobListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/observations — List Observations */

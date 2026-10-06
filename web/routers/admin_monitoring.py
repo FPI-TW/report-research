@@ -1,11 +1,13 @@
-"""監控投影的唯讀查詢（/api/admin/jobs、/api/admin/observations）。整組限管理員＋`ops.read`。
+"""監控投影的唯讀查詢（/api/admin/jobs、/api/admin/observations、/api/admin/incidents*）。整組限管理員＋`ops.read`。
 
-資料來源是 DB 裡的 projection（revision 0005）：`scripts/collect_resource_usage.py` 先寫本機 spool，
-`scripts/load_observations.py` 每 5 分鐘冪等匯入。**這裡看到的不是告警的真相來源**——告警只有 P5 在發
-（不經 web、不經 DB）；這裡最多晚幾分鐘，DB 掛掉期間的觀測在恢復後補進來。即時狀態看 `/api/admin/ops/*`。
+資料來源是 DB 裡的 projection（revision 0005、0006）：`scripts/collect_resource_usage.py` 與 P5
+（`scripts/incident_handler.sh`）先寫本機 spool，`scripts/load_observations.py` 每 5 分鐘冪等匯入。**這裡看到的不是
+告警的真相來源**——告警只有 P5 在發（不經 web、不經 DB）；這裡最多晚幾分鐘，DB 掛掉期間的資料在恢復後補進來，
+spool 寫入失敗的那一筆則會缺。即時狀態看 `/api/admin/ops/*`。
 
 上限（`app/services/ops_monitoring.py` 的常數）：觀測一次最多 5000 筆、時間範圍最多 7 天（預設最近 1 小時）；
-批次一頁最多 200 筆、時間範圍最多 90 天（預設最近 7 天）。超過回 400 `invalid_params`（筆數超過是 422）。
+批次一頁最多 200 筆、時間範圍最多 90 天（預設最近 7 天）；事件一頁最多 200 筆、時間範圍最多 366 天（預設最近
+30 天）、詳情最多 1000 則轉換。超過回 400 `invalid_params`（筆數超過是 422）。
 沒有時區的時間一律當 UTC。
 
 SQL 在 `app/services/ops_monitoring.py`，經 `deps.ops_monitoring` 呼叫（測試的替換點）。
@@ -14,12 +16,15 @@ SQL 在 `app/services/ops_monitoring.py`，經 `deps.ops_monitoring` 呼叫（�
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel
 
 from app.services.ops_monitoring import (
+    INCIDENT_DEFAULT_WINDOW,
+    INCIDENT_MAX_LIMIT,
+    INCIDENT_MAX_WINDOW,
     JOB_DEFAULT_WINDOW,
     JOB_MAX_LIMIT,
     JOB_MAX_WINDOW,
@@ -39,8 +44,16 @@ _OPS_READ = Depends(authz.require_scope("ops.read"))
 JobState = Literal["running", "finished", "lost"]
 ExecMainCode = Literal["exited", "killed", "dumped"]
 Scope = Literal["host", "container", "service"]
+# 與 revision 0006 的 CHECK 逐字一致；前端 zod 型別由 gen_admin_client.py 從這裡產生。
+IncidentKind = Literal["service", "monitor_blind"]
+IncidentStatus = Literal["firing", "resolved", "lost"]
+IncidentSeverity = Literal["CRITICAL", "WARNING"]
+EventAction = Literal["FIRING", "REMINDER", "ESCALATED", "RESOLVED"]
+EventSeverity = Literal["CRITICAL", "WARNING", "RESOLVED"]
 
 MAX_JOB_OFFSET = 10000
+MAX_INCIDENT_OFFSET = 10000
+IncidentId = Annotated[str, Path(min_length=1, max_length=300, pattern=r"^[A-Za-z0-9_.:-]+$")]
 
 
 class JobItem(BaseModel):
@@ -88,6 +101,55 @@ class ObservationListResponse(BaseModel):
     items: list[ObservationItem]
 
 
+class IncidentItem(BaseModel):
+    incident_id: str
+    host: str
+    component: str
+    kind: IncidentKind
+    probe_unit: str | None = None
+    status: IncidentStatus
+    severity: IncidentSeverity
+    reason: str
+    summary: str | None = None
+    opened_at: str
+    last_event_at: str
+    resolved_at: str | None = None
+    duration_seconds: float | None = None
+    event_count: int
+
+
+class IncidentListResponse(BaseModel):
+    since: str
+    until: str
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+    next_offset: int | None
+    items: list[IncidentItem]
+
+
+class IncidentEventItem(BaseModel):
+    event_id: str
+    occurred_at: str
+    action: EventAction
+    severity: EventSeverity
+    reason: str
+    status: str | None = None
+    summary: str | None = None
+    notified: bool
+    journal_excerpt: str | None = None
+    journal_truncated: bool = False
+    journal_since: str | None = None
+    journal_until: str | None = None
+    journal_units: str | None = None
+
+
+class IncidentDetail(IncidentItem):
+    events: list[IncidentEventItem]
+    events_truncated: bool
+
+
 # ── 輔助函式一律放在所有 @router.* 裝飾器之上 ──────────────────────────────
 
 
@@ -110,6 +172,19 @@ def _job(row: dict) -> JobItem:
     duration = (finished - started).total_seconds() if finished is not None else None
     return JobItem(**{**row, "started_at": _iso(started), "finished_at": _iso(finished),
                       "last_seen_at": _iso(row["last_seen_at"]), "duration_seconds": duration})
+
+
+def _incident(row: dict) -> dict:
+    opened, resolved = row["opened_at"], row.get("resolved_at")
+    return {**row, "opened_at": _iso(opened), "last_event_at": _iso(row["last_event_at"]),
+            "resolved_at": _iso(resolved),
+            "duration_seconds": (resolved - opened).total_seconds() if resolved is not None else None}
+
+
+def _incident_event(row: dict) -> IncidentEventItem:
+    return IncidentEventItem(**{**row, "occurred_at": _iso(row["occurred_at"]),
+                                "journal_since": _iso(row.get("journal_since")),
+                                "journal_until": _iso(row.get("journal_until"))})
 
 
 @router.get("/api/admin/jobs", response_model=JobListResponse, dependencies=[_OPS_READ])
@@ -158,3 +233,39 @@ async def list_observations(
         since=_iso(since_used), until=_iso(until_used), limit=limit, truncated=truncated,
         items=[ObservationItem(**{**r, "observed_at": _iso(r["observed_at"])}) for r in rows],
     )
+
+
+@router.get("/api/admin/incidents", response_model=IncidentListResponse, dependencies=[_OPS_READ])
+async def list_incidents(
+    status: IncidentStatus | None = Query(None),
+    component: str | None = Query(None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$"),
+    since: datetime | None = Query(None),
+    until: datetime | None = Query(None),
+    limit: int = Query(50, ge=1, le=INCIDENT_MAX_LIMIT),
+    offset: int = Query(0, ge=0, le=MAX_INCIDENT_OFFSET),
+):
+    """P5 事件的投影（依開場時間新→舊）。`since`／`until` 取與區間重疊的事件：還在 firing 的一律算，resolved 看
+    恢復時間，lost（沒收到 RESOLVED、同元件已有更晚的事件，結束時間不明）看最後一則轉換。"""
+    since_used, until_used = _window(since, until, INCIDENT_DEFAULT_WINDOW, INCIDENT_MAX_WINDOW)
+    async with deps.SessionFactory() as session:
+        total, rows = await deps.ops_monitoring.list_incidents(
+            session, since=since_used, until=until_used, status=status, component=component, limit=limit,
+            offset=offset,
+        )
+    next_offset = offset + len(rows)
+    has_more = next_offset < total
+    return IncidentListResponse(
+        since=_iso(since_used), until=_iso(until_used), total=total, limit=limit, offset=offset, has_more=has_more,
+        next_offset=next_offset if has_more else None, items=[IncidentItem(**_incident(r)) for r in rows],
+    )
+
+
+@router.get("/api/admin/incidents/{incident_id}", response_model=IncidentDetail, dependencies=[_OPS_READ])
+async def get_incident(incident_id: IncidentId):
+    """單一事件與它的狀態轉換（舊→新）。FIRING／RESOLVED 帶 P5 當下擷取的 journal 片段（已遮祕密、有大小上限；
+    完整 log 以 journald 為準）。不存在 404 `not_found`。"""
+    async with deps.SessionFactory() as session:
+        row, events, truncated = await deps.ops_monitoring.get_incident(session, incident_id)
+    if row is None:
+        raise AppError(404, "not_found", "找不到這個事件")
+    return IncidentDetail(**_incident(row), events=[_incident_event(e) for e in events], events_truncated=truncated)

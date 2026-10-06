@@ -1,8 +1,9 @@
-"""監控投影的唯讀 API（/api/admin/jobs、/api/admin/observations，HTTP 層）。
+"""監控投影的唯讀 API（/api/admin/jobs、/api/admin/observations、/api/admin/incidents*，HTTP 層）。
 
 SQL 對真 DB 的驗證在 tests/test_ops_monitoring_db.py；這裡驗：一般使用者 403、未登入 401、沒有 `ops.read`
 的管理員 403 `missing_scope`；參數原樣轉給服務層（`deps.ops_monitoring`）；預設時間範圍；時間範圍顛倒或
-超過上限 400、筆數超過 422；回應形狀（時間轉 ISO、批次耗時、翻頁）。
+超過上限 400、筆數超過 422；回應形狀（時間轉 ISO、批次耗時、翻頁）。事件：清單的預設 30 天窗期與篩選、
+事件耗時、詳情的轉換順序與 journal 片段、不存在 404、id 格式不合 422。
 """
 
 from __future__ import annotations
@@ -60,6 +61,38 @@ class _FakeMonitoring:
              "result": None, "exit_status": None, "exec_main_code": None, "last_seen_at": T0},
         ]
 
+    async def list_incidents(self, session, **kw):
+        self.calls.append(("incidents", kw))
+        return 2, [
+            {"incident_id": "office-host:web:1791252000", "host": "office-host", "component": "web",
+             "kind": "service", "probe_unit": "report-mark-health.service", "status": "resolved",
+             "severity": "CRITICAL", "reason": "probe_exit_1", "summary": "探針回報失敗", "opened_at": T0,
+             "last_event_at": T0 + timedelta(minutes=10), "resolved_at": T0 + timedelta(minutes=10),
+             "event_count": 2},
+            {"incident_id": "office-host:monitor:1791250000", "host": "office-host", "component": "monitor",
+             "kind": "monitor_blind", "probe_unit": None, "status": "lost", "severity": "WARNING",
+             "reason": "observation_missed", "summary": None, "opened_at": T0 - timedelta(hours=1),
+             "last_event_at": T0 - timedelta(hours=1), "resolved_at": None, "event_count": 1},
+        ]
+
+    async def get_incident(self, session, incident_id):
+        self.calls.append(("incident", incident_id))
+        if incident_id.endswith(":404"):
+            return None, [], False
+        row = (await self.list_incidents(session))[1][0]
+        self.calls.pop()
+        return row, [
+            {"event_id": f"{incident_id}:1:FIRING", "occurred_at": T0, "action": "FIRING", "severity": "CRITICAL",
+             "reason": "probe_exit_1", "status": "web_incident", "summary": "探針回報失敗", "notified": True,
+             "journal_excerpt": "2026-10-06T10:59:00+08:00 host web[1]: boom\n", "journal_truncated": True,
+             "journal_since": T0 - timedelta(minutes=10), "journal_until": T0,
+             "journal_units": "report-mark-health.service,report-mark-web.service"},
+            {"event_id": f"{incident_id}:2:RESOLVED", "occurred_at": T0 + timedelta(minutes=10),
+             "action": "RESOLVED", "severity": "RESOLVED", "reason": "healthy", "status": "ok", "summary": None,
+             "notified": False, "journal_excerpt": None, "journal_truncated": False, "journal_since": None,
+             "journal_until": None, "journal_units": None},
+        ], True
+
     async def list_observations(self, session, **kw):
         self.calls.append(("observations", kw))
         return True, [
@@ -97,7 +130,8 @@ class AdminMonitoringApiTests(unittest.TestCase):
 
     def test_user_gets_403_and_unauthenticated_401(self):
         user = self._login("alice", USER_PW)
-        for path in ("/api/admin/jobs", "/api/admin/observations"):
+        for path in ("/api/admin/jobs", "/api/admin/observations", "/api/admin/incidents",
+                     "/api/admin/incidents/office-host:web:1"):
             with self.subTest(path=path):
                 self.assertEqual(user.get(path).status_code, 403)
                 self.assertEqual(_client().get(path).status_code, 401)
@@ -105,7 +139,8 @@ class AdminMonitoringApiTests(unittest.TestCase):
 
     def test_admin_without_ops_read_gets_missing_scope(self):
         admin = self._login("limited", ADMIN_PW)
-        for path in ("/api/admin/jobs", "/api/admin/observations"):
+        for path in ("/api/admin/jobs", "/api/admin/observations", "/api/admin/incidents",
+                     "/api/admin/incidents/office-host:web:1"):
             with self.subTest(path=path):
                 r = admin.get(path)
                 self.assertEqual(r.status_code, 403)
@@ -186,6 +221,75 @@ class AdminMonitoringApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["code"], "invalid_params")
         self.assertEqual(self.fake.calls, [])
+
+
+    def test_incidents_pass_filters_default_window_and_shape(self):
+        before = datetime.now(timezone.utc)
+        admin = self._login("root", ADMIN_PW)
+        r = admin.get("/api/admin/incidents")
+        self.assertEqual(r.status_code, 200, r.text)
+        _, kw = self.fake.calls[0]
+        self.assertEqual(kw["until"] - kw["since"], timedelta(days=30), "預設最近 30 天")
+        self.assertGreaterEqual(kw["until"], before)
+        self.assertEqual((kw["status"], kw["component"], kw["limit"], kw["offset"]), (None, None, 50, 0))
+        body = r.json()
+        self.assertEqual((body["total"], body["has_more"], body["next_offset"]), (2, False, None))
+        first, second = body["items"]
+        self.assertEqual((first["status"], first["duration_seconds"], first["opened_at"]),
+                         ("resolved", 600.0, T0.isoformat()))
+        self.assertEqual((second["status"], second["kind"], second["duration_seconds"]),
+                         ("lost", "monitor_blind", None))
+        r = admin.get("/api/admin/incidents", params={
+            "status": "firing", "component": "container_monitor", "limit": 1, "offset": 1,
+            "since": "2026-10-01T00:00:00+08:00", "until": "2026-10-06T00:00:00+08:00"})
+        self.assertEqual(r.status_code, 200, r.text)
+        _, kw = self.fake.calls[1]
+        self.assertEqual((kw["status"], kw["component"], kw["limit"], kw["offset"]),
+                         ("firing", "container_monitor", 1, 1))
+        self.assertEqual(kw["since"], datetime(2026, 9, 30, 16, tzinfo=timezone.utc))
+        self.assertEqual((r.json()["has_more"], r.json()["next_offset"]), (False, None))
+
+    def test_incidents_reject_bad_params(self):
+        admin = self._login("root", ADMIN_PW)
+        cases = [
+            ({"status": "open"}, 422),
+            ({"limit": 201}, 422),
+            ({"offset": 10001}, 422),
+            ({"component": "web;drop"}, 422),
+            ({"since": "2026-10-06T10:00:00+00:00", "until": "2026-10-06T09:00:00+00:00"}, 400),
+            ({"since": "2025-01-01T00:00:00+00:00", "until": "2026-10-06T00:00:00+00:00"}, 400),
+        ]
+        for params, status in cases:
+            with self.subTest(params=params):
+                r = admin.get("/api/admin/incidents", params=params)
+                self.assertEqual(r.status_code, status, r.text)
+                if status == 400:
+                    self.assertEqual(r.json()["code"], "invalid_params")
+        self.assertEqual(self.fake.calls, [])
+
+    def test_incident_detail_events_and_journal(self):
+        r = self._login("root", ADMIN_PW).get("/api/admin/incidents/office-host:web:1791252000")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.fake.calls, [("incident", "office-host:web:1791252000")])
+        body = r.json()
+        self.assertEqual(body["status"], "resolved")
+        self.assertTrue(body["events_truncated"])
+        firing, resolved = body["events"]
+        self.assertEqual((firing["action"], resolved["action"]), ("FIRING", "RESOLVED"))
+        self.assertIn("boom", firing["journal_excerpt"])
+        self.assertTrue(firing["journal_truncated"])
+        self.assertEqual(firing["journal_since"], (T0 - timedelta(minutes=10)).isoformat())
+        self.assertEqual(firing["journal_units"], "report-mark-health.service,report-mark-web.service")
+        self.assertIsNone(resolved["journal_excerpt"])
+        self.assertIsNone(resolved["journal_since"])
+
+    def test_incident_detail_404_and_bad_id(self):
+        admin = self._login("root", ADMIN_PW)
+        r = admin.get("/api/admin/incidents/office-host:web:404")
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.json()["code"], "not_found")
+        self.assertEqual(admin.get("/api/admin/incidents/bad%20id").status_code, 422)
+        self.assertEqual(admin.get("/api/admin/incidents/" + "a" * 301).status_code, 422)
 
 
 if __name__ == "__main__":

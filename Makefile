@@ -32,7 +32,7 @@ DUMP_CONTAINER ?= $(DB_CONTAINER)
 DOCKER := $(shell if docker info >/dev/null 2>&1; then echo docker; elif command -v docker.exe >/dev/null 2>&1; then echo docker.exe; else echo docker; fi)
 COMPOSE := $(DOCKER) compose
 
-.PHONY: help deps db schema schema-check schema-stamp-baseline setup sample extract worklist prep tag-info \
+.PHONY: help deps db schema schema-check schema-version schema-stamp-baseline setup sample extract worklist prep tag-info \
         ingest ingest-lowio restore-durability align boilerplate \
         serve serve-dev serve-preview search build-web \
         stats reset-db clean-data pipeline summaries signals takeaways titles brief \
@@ -67,6 +67,9 @@ schema: db  ## 套用 DB migration（alembic upgrade head；已有資料的庫�
 
 schema-check:  ## 嚴格比對 DB 結構與 migration 基準（零 drift＝0、有 drift＝1；會在同伺服器建刪暫存庫）
 	uv run python scripts/schema_baseline.py check
+
+schema-version:  ## 只比 DB 的 alembic 版本與程式的 head（唯讀、不建暫存庫；0 一致／1 落後／2 超前或無法判斷／3 連不上）
+	uv run python scripts/schema_baseline.py check --expect-head
 
 schema-stamp-baseline:  ## 既有庫導入 Alembic：零 drift＋全庫備份才 stamp（CONFIRM=… DUMP_DIR=…）
 	$(if $(CONFIRM),REPORT_MARK_MIGRATE_CONFIRM="$(CONFIRM)" ,)uv run python scripts/schema_baseline.py stamp \

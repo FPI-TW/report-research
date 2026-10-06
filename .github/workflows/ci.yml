@@ -286,6 +286,14 @@ jobs:
       - name: schema drift 自我一致
         run: uv run python scripts/schema_baseline.py check
 
+      # 版本 drift：剛 upgrade head 的庫必須與程式的 head 一致；每日檢查（版本＋完整比對＋狀態檔）必須回 0。
+      - name: 版本 drift 與每日檢查
+        run: |
+          uv run python scripts/schema_baseline.py check --expect-head
+          uv run python scripts/schema_baseline.py scheduled --status-file "$RUNNER_TEMP/schema_check.json"
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['exit_code']==0 and d['problems']==[], d" \
+            "$RUNNER_TEMP/schema_check.json"
+
       # 既有庫導入 Alembic 的完整演練（P0-ops 的同一條路）：以舊流程（psql 套 baseline）建庫
       # → upgrade 必須拒絕（baseline 只接受空庫）→ 零 drift → stamp → 讀回 0001。
       - name: 既有庫 stamp 演練
@@ -301,6 +309,9 @@ jobs:
           uv run python scripts/schema_baseline.py check
           uv run python scripts/schema_baseline.py stamp --no-dump
           test "$(uv run alembic current 2>/dev/null | awk '{print $1}')" = 0001
+          # stamp 成 0001 的庫對程式的 head 是「落後」（退出碼 1），不可回 0。
+          set +e; uv run python scripts/schema_baseline.py check --expect-head; rc=$?; set -e
+          test "$rc" = 1 || { echo "::error::stamp 成 0001 的庫 --expect-head 應回 1（落後），實際 $rc"; exit 1; }
 
       # 這兩支測試在本機一律走 skip 路徑（沒有 CI 的 DB 就驗不到），所以它們
       # 存在但等於沒跑。這個 job 就是為了讓它們真的跑起來。

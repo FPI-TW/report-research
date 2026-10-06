@@ -1,0 +1,26 @@
+[Unit]
+Description=廷豐智能研報 監控觀測的保留與聚合（原始→5 分鐘→1 小時、90 天清除；純 SQL，零 LLM）
+# 24 小時前的原始觀測聚合成 5 分鐘桶、7 天前的 5 分鐘桶聚合成 1 小時桶，90 天以前的觀測與
+# job_execution 刪除（revision 0007）。incident／incident_event 不在範圍內。細節見
+# scripts/rollup_observations.py 檔頭。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure=report-mark-alert@%n.service**（與 report-mark-load-observations 同一個理由）：
+# DB 掛掉時這支每小時失敗一次，而 report-mark-alert@ 沒有去重；DB 掛掉本身已由 web 探針經 P5
+# 帶去重地告警。停擺只會讓原始觀測多留幾小時，不影響服務與告警。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/rollup_observations.py'
+# 75＝另一份正在跑（advisory lock；不跑，不是跑壞）。
+SuccessExitStatus=75
+# 正常一輪只有一兩片（各約 1.2 萬列）、數秒；DB 長期停擺後的積壓由 --max-slices（預設 500 片）分輪消化。
+# 取 30 分鐘，小於 timer 的 1 小時間隔。
+TimeoutStartSec=1800
+Nice=10

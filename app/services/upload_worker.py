@@ -8,7 +8,8 @@
 影響 0 列就代表別人先動了，這一筆跳過）：
 
     quarantined ─認領─▶ scanning ─OK─▶ clean ─認領（持 LLM 鎖）─▶ processing ─pre_upsert─▶ draft
-    scanning ─FOUND─▶ infected（證據搬到 infected/<id>.bin、0400，30 天後清檔，DB 永久保留）
+    scanning ─FOUND（病毒碼）─▶ infected（證據搬到 infected/<id>.bin、0400，30 天後清檔，DB 永久保留）
+    scanning ─FOUND（Heuristics.* 規則）─▶ blocked（failure_kind=scan_heuristic；簽章照記，不算感染）
     scanning ─SHA 與 DB 不符／檔案不見─▶ blocked（failure_kind=hash_mismatch）
     scanning ─決定性錯誤（第 3 次）─▶ blocked；未滿 3 次與一切暫時性錯誤 ─▶ quarantined（scan_attempts+1，永不放行）
     processing ─▶ failed（failure_kind 見 uploads.FAILURE_KINDS）／duplicate（語料已有同 hash）
@@ -321,7 +322,6 @@ async def _audit(session, action: str, upload_id: str, detail: dict) -> None:
 class InfectionNotice:
     upload_id: str
     signature: str
-    heuristic: bool
 
 
 def send_webhook(message: str, *, url: Optional[str] = None, runner=subprocess.run) -> str:
@@ -353,8 +353,7 @@ def send_webhook(message: str, *, url: Optional[str] = None, runner=subprocess.r
 
 def notify_infected(notice: InfectionNotice) -> None:
     """感染通知（設計決策 17）：journal ERROR＋可選 webhook。稽核在 DB 交易裡另寫（`upload.infected`）。"""
-    kind = "規則攔截" if notice.heuristic else "惡意程式"
-    msg = f"上傳檔案偵測到{kind}：upload_id={notice.upload_id} signature={notice.signature}（已隔離，不入庫）"
+    msg = f"上傳檔案偵測到惡意程式：upload_id={notice.upload_id} signature={notice.signature}（已隔離，不入庫）"
     journal_error(msg)
     send_webhook(f"[report-mark] {msg}")
 
@@ -403,14 +402,17 @@ async def _claim(session, upload_id: str, old: str, new: str, extra_sql: str = "
 
 
 async def _block(session, upload_id: str, name: str, size: int, *, failure_kind: Optional[str],
-                 detail: Optional[str], scan_error: Optional[str] = None, engine: Optional[str] = None) -> None:
+                 detail: Optional[str], scan_error: Optional[str] = None, engine: Optional[str] = None,
+                 signature: Optional[str] = None) -> None:
     done = (await session.execute(text(
         "UPDATE research.report_upload SET state = :blocked, failure_kind = :kind, failure_detail = :detail, "
         "scan_last_error = COALESCE(:serr, scan_last_error), scan_engine = COALESCE(:eng, scan_engine), "
+        "scan_signature = COALESCE(:sig, scan_signature), "
         "scan_attempts = scan_attempts + 1, scanned_at = now(), state_changed_at = now(), "
         "purge_after = now() + make_interval(days => :days) "
         "WHERE id = CAST(:id AS uuid) AND state = :scanning RETURNING id"
     ), {"blocked": uploads.STATE_BLOCKED, "kind": failure_kind, "detail": _clip(detail),
+        "sig": signature[:500] if signature else None,
         "serr": _clip(scan_error, SCAN_ERROR_MAX), "eng": engine, "days": EVIDENCE_RETENTION_DAYS, "id": upload_id,
         "scanning": uploads.STATE_SCANNING})).first()
     if done:
@@ -474,10 +476,19 @@ async def scan_pending(
                 await session.commit()
                 st.clean += 1
                 continue
+            if result.status == "found" and result.heuristic:
+                # 啟發式規則（Heuristics.Encrypted.PDF、Heuristics.Limits.Exceeded.* …）不是病毒碼命中：
+                # 攔下（blocked，簽章照記、證據保留 30 天），但不判 infected——同一份檔重傳不會被 422
+                # known_infected 擋、也不發感染通知。
+                await _block(session, upload_id, name, size, failure_kind=uploads.FAILURE_SCAN_HEURISTIC,
+                             detail=f"ClamAV 規則攔截：{result.signature}", engine=engine, signature=result.signature)
+                st.blocked += 1
+                _say(f"上傳 {upload_id} 被 ClamAV 規則攔截（{result.signature}），轉 blocked")
+                continue
             if result.status == "found":
                 await _quarantine_infected(session, qroot, src, upload_id, name, size, result.signature, engine)
                 st.infected += 1
-                notify(InfectionNotice(upload_id, result.signature, bool(result.heuristic)))
+                notify(InfectionNotice(upload_id, result.signature))
                 continue
             err = f"{result.kind}: {result.detail or ''}".strip()
             if result.transient:

@@ -59,6 +59,7 @@ ENGINE = EngineVersion(raw="ClamAV 1.4.3/27412/Mon Oct  5 08:30:42 2026", engine
 OK = ScanResult("ok", engine=ENGINE)
 FOUND = ScanResult("found", signature="Eicar-Test-Signature", engine=ENGINE)
 TRANSIENT = ScanResult("error", kind="connection_refused", detail="127.0.0.1:3310 refused")
+HEURISTIC = ScanResult("found", signature="Heuristics.Encrypted.PDF", engine=ENGINE)
 DETERMINISTIC = ScanResult("error", kind="clamd_error", detail="stream: Can't parse ERROR", engine=ENGINE)
 NAME = "券商甲_台積電(2330)研究報告.pdf"  # 檔名不帶日期：report_date 只能從 client_mtime 補
 MTIME = datetime(2026, 8, 15, 9, 0, tzinfo=timezone.utc)
@@ -360,6 +361,37 @@ class WorkerDbTest(unittest.TestCase):
         self.assertEqual([(n.upload_id, n.signature) for n in self.notices], [(uid, "Eicar-Test-Signature")])
         self.assertEqual(self.ingest(), 0)
         self.assertEqual(self.row(uid)["state"], "infected", "感染件永遠不入庫")
+
+    def test_heuristic_match_is_blocked_not_infected(self):
+        """Heuristics.*（加密、超過掃描上限）是規則攔截不是病毒碼：blocked＋scan_heuristic，簽章照記，不發感染通知，
+        同一份檔重傳不會被 422 known_infected 擋；證據保留 30 天後由清除步驟刪檔。"""
+        uid, h = self.add()
+        self.scan_results = [HEURISTIC]
+        self.assertEqual(self.scan(), 0)
+        r = self.row(uid)
+        self.assertEqual((r["state"], r["failure_kind"], r["scan_signature"]),
+                         ("blocked", "scan_heuristic", "Heuristics.Encrypted.PDF"))
+        self.assertIsNotNone(r["purge_after"])
+        self.assertEqual(self.notices, [], "規則攔截不發感染通知")
+        self.assertTrue((self.qroot / f"{uid}.bin").exists())
+        self.assertFalse((self.qroot / "infected" / f"{uid}.bin").exists())
+        self.assertEqual([a[0] for a in self.audits(uid)], ["upload.blocked"])
+
+        async def conflict():
+            from app.services import upload_intake
+
+            async with self.ctx.session_factory() as s:
+                try:
+                    await upload_intake.find_conflict(s, h)
+                finally:
+                    await s.rollback()
+
+        asyncio.run(conflict())  # 不拋 KnownInfectedError
+        self.q("UPDATE research.report_upload SET purge_after = now() - interval '1 second' "
+               "WHERE id = CAST(:id AS uuid)", {"id": uid})
+        self.assertEqual(self.cleanup(), 0)
+        self.assertFalse((self.qroot / f"{uid}.bin").exists())
+        self.assertEqual([a[0] for a in self.audits(uid)], ["upload.blocked", "upload.evidence_purged"])
 
     def test_hash_mismatch_and_missing_file_are_blocked(self):
         tampered, _ = self.add(file_hash="0" * 64)  # 檔案內容的 SHA 與 DB 不符

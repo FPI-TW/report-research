@@ -58,6 +58,13 @@ class UploadVocabTests(unittest.TestCase):
         self.assertEqual(len(uploads.STATES), len(set(uploads.STATES)))
         self.assertEqual(len(uploads.FAILURE_KINDS), len(set(uploads.FAILURE_KINDS)))
 
+    def test_scan_heuristic_is_a_terminal_block_not_retryable(self):
+        """clamd 的 Heuristics.* 命中（加密、超過掃描上限）轉 blocked 並記這個類別；重掃結果不會變，不可重試。
+        failure_kind 刻意無 CHECK，新增它不需要 revision。"""
+        self.assertEqual(uploads.FAILURE_SCAN_HEURISTIC, "scan_heuristic")
+        self.assertIn(uploads.FAILURE_SCAN_HEURISTIC, uploads.FAILURE_KINDS)
+        self.assertFalse(uploads.is_retryable_failure(uploads.FAILURE_SCAN_HEURISTIC))
+
     def test_retryable(self):
         self.assertTrue(uploads.is_retryable_failure(uploads.FAILURE_TAG_FAILED))
         self.assertFalse(uploads.is_retryable_failure(uploads.FAILURE_NOT_RESEARCH))

@@ -290,7 +290,7 @@ class NotifyTests(_Tmp):
 
     def test_notify_infected_logs_and_sends(self):
         with mock.patch.object(uw, "send_webhook") as send:
-            err = _capture_stderr(lambda: uw.notify_infected(uw.InfectionNotice("uid-1", "Eicar-Signature", False)))
+            err = _capture_stderr(lambda: uw.notify_infected(uw.InfectionNotice("uid-1", "Eicar-Signature")))
         self.assertIn("uid-1", err)
         self.assertIn("Eicar-Signature", err)
         self.assertIn("uid-1", send.call_args[0][0])

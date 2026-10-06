@@ -71,6 +71,10 @@ async def _with_session(fn):
         await eng.dispose()
 
 
+# 重試的全站處理中上限：與它無關的測試給一個不會撞到的值（專門的測試在 RetryQuota 那一段）。
+_NO_LIMIT = 10**6
+
+
 def _hash() -> str:
     return secrets.token_hex(32)
 
@@ -300,7 +304,7 @@ class UploadReviewDbTests(unittest.TestCase):
                 pub_id: lambda: upload_review.publish(session, pub_id, actor_id=None),
                 rej_id: lambda: upload_review.reject(session, rej_id, reason="x", actor_id=None, grace_hours=24),
                 unrej_id: lambda: upload_review.unreject(session, unrej_id, actor_id=None),
-                retry_id: lambda: upload_review.retry(session, retry_id, actor_id=None),
+                retry_id: lambda: upload_review.retry(session, retry_id, actor_id=None, max_in_flight=_NO_LIMIT),
             }
             before = {uid: await _state(session, uid) for uid in calls}
             with mock.patch.object(accounts, "record_audit", _broken_audit):
@@ -498,7 +502,7 @@ class UploadReviewDbTests(unittest.TestCase):
                 with self.subTest(kind=kind):
                     uid = await _insert_upload(session, _hash(), "failed", failure_kind=kind,
                                                failure_detail="細節", process_attempts=2)
-                    row = await upload_review.retry(session, uid, actor_id=None)
+                    row = await upload_review.retry(session, uid, actor_id=None, max_in_flight=_NO_LIMIT)
                     self.assertEqual(row.state, "clean")
                     st, *_, kind_after, detail_after, attempts = await _state(session, uid)
                     self.assertEqual((st, kind_after, detail_after, attempts), ("clean", None, None, 2))
@@ -510,14 +514,36 @@ class UploadReviewDbTests(unittest.TestCase):
                 with self.subTest(kind=kind):
                     uid = await _insert_upload(session, _hash(), "failed", failure_kind=kind)
                     with self.assertRaises(upload_review.NotRetryableError) as ctx:
-                        await upload_review.retry(session, uid, actor_id=None)
+                        await upload_review.retry(session, uid, actor_id=None, max_in_flight=_NO_LIMIT)
                     self.assertEqual(ctx.exception.failure_kind, kind)
                     self.assertEqual((await _state(session, uid))[0], "failed")
             for state in set(uploads.STATES) - {"failed"}:
                 with self.subTest(state=state):
                     uid = await _insert_upload(session, _hash(), state, failure_kind="tag_failed")
                     with self.assertRaises(upload_review.UploadStateConflictError):
-                        await upload_review.retry(session, uid, actor_id=None)
+                        await upload_review.retry(session, uid, actor_id=None, max_in_flight=_NO_LIMIT)
+
+        self.run_db(body)
+
+    def test_retry_respects_in_flight_quota(self):
+        """使用者決策：重試也受全站處理中上限（與收檔同一套計數）。上限以「這個庫此刻的處理中件數」為準，
+        不假設庫是空的（本機預設庫是生產庫）。"""
+        async def body(session):
+            from app.services.upload_intake import QuotaExceededError
+
+            uid = await _insert_upload(session, _hash(), "failed", failure_kind="tag_failed")
+            current = (await session.execute(text(
+                "SELECT count(*) FROM research.report_upload WHERE state = ANY(CAST(:s AS text[]))"
+            ), {"s": list(uploads.IN_FLIGHT_STATES)})).scalar_one()
+            with self.assertRaises(QuotaExceededError) as ctx:
+                async with session.begin_nested():  # 代表呼叫端的交易：失敗就整段 rollback
+                    await upload_review.retry(session, uid, actor_id=None, max_in_flight=current)
+            self.assertEqual((ctx.exception.scope, ctx.exception.limit, ctx.exception.used),
+                             ("in_flight", current, current))
+            self.assertEqual((await _state(session, uid))[0], "failed")
+            self.assertEqual(await _audits(session, uid), [])
+            row = await upload_review.retry(session, uid, actor_id=None, max_in_flight=current + 1)
+            self.assertEqual(row.state, "clean")
 
         self.run_db(body)
 
@@ -527,7 +553,7 @@ class UploadReviewDbTests(unittest.TestCase):
             uid = await _insert_upload(session, h, "failed", failure_kind="ingest_error")
             await _insert_upload(session, h, "quarantined")
             with self.assertRaises(upload_review.ActiveUploadConflictError):
-                await upload_review.retry(session, uid, actor_id=None)
+                await upload_review.retry(session, uid, actor_id=None, max_in_flight=_NO_LIMIT)
             self.assertEqual((await _state(session, uid))[0], "failed")
             self.assertEqual(await _audits(session, uid), [])
 

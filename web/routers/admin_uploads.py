@@ -566,8 +566,10 @@ async def unreject_upload(upload_id: str, actor: User = Depends(authz.current_us
 
 @router.post("/api/admin/uploads/{upload_id}/retry", response_model=AdminUpload, dependencies=[_REPORTS])
 async def retry_upload(upload_id: str, actor: User = Depends(authz.current_user)):
-    """可重試的失敗（tag_failed／ingest_error／extract_timeout）→ clean，等 worker 重新處理；寫稽核 `upload.retry`。"""
+    """可重試的失敗（tag_failed／ingest_error／extract_timeout）→ clean，等 worker 重新處理；寫稽核 `upload.retry`。
+    也受全站處理中上限（超過 429 `upload_quota_exceeded`，與收檔同一套計數）。"""
+    max_in_flight = get_settings().upload_max_in_flight
     return await _transition(
         "upload.retry", upload_id, actor,
-        lambda session: deps.upload_review.retry(session, upload_id, actor_id=actor.id),
+        lambda session: deps.upload_review.retry(session, upload_id, actor_id=actor.id, max_in_flight=max_in_flight),
     )

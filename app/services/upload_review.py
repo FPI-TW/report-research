@@ -19,7 +19,8 @@
 - `unreject`（設計決策 13）：只限 `rejected`、`purged_at IS NULL`、`now() < purge_after`。回到哪個狀態沒有
   欄位記，由事實推導（`restore_state_after_unreject`，純函式）。稽核 `upload.unreject`。
 - `retry`：只限 `failed` 且 `failure_kind` 屬 `uploads.RETRYABLE_FAILURE_KINDS` → `clean`；`process_attempts`
-  不歸零、清 `failure_kind`／`failure_detail`。稽核 `upload.retry`。
+  不歸零、清 `failure_kind`／`failure_detail`。也受全站處理中上限（超過拋 `QuotaExceededError`，與收檔同一套
+  計數與同一把 advisory lock）。稽核 `upload.retry`。
 
 回到進行中狀態（unreject 推導出 draft／quarantined／clean、retry 轉 clean）會撞 partial unique index
 `idx_report_upload_active_hash`：寬限期內有人重新上傳了同一份檔（只可能在語料還沒有它時），INSERT 端
@@ -43,7 +44,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import uploads
 from app.services.textnorm import clean_extracted
-from app.services.upload_intake import ACTIVE_INDEX, UploadNotFoundError, UploadRow, get_upload, valid_upload_id
+from app.services.upload_intake import (
+    ACTIVE_INDEX,
+    INTAKE_LOCK_KEY,
+    QuotaExceededError,
+    UploadNotFoundError,
+    UploadRow,
+    get_upload,
+    valid_upload_id,
+)
 
 # 與 DB CHECK `char_length(decision_reason) <= 500` 一致（Python 的 len 也是數 code point）。
 REASON_MAX_CHARS = 500
@@ -505,11 +514,17 @@ async def unreject(session: AsyncSession, upload_id: str, *, actor_id: Optional[
     return await get_upload(session, upload_id)
 
 
-async def retry(session: AsyncSession, upload_id: str, *, actor_id: Optional[str]) -> UploadRow:
-    """failed（可重試類）→ clean：清 failure_kind／failure_detail，process_attempts 保留。寫稽核，呼叫端 commit。"""
+async def retry(session: AsyncSession, upload_id: str, *, actor_id: Optional[str], max_in_flight: int) -> UploadRow:
+    """failed（可重試類）→ clean：清 failure_kind／failure_detail，process_attempts 保留。寫稽核，呼叫端 commit。
+
+    重試也受全站處理中上限（`UPLOAD_MAX_IN_FLIGHT`，與收檔同一套計數 `uploads.IN_FLIGHT_STATES`）：轉回 clean 之後
+    處理中件數超過上限就拋 `QuotaExceededError`（429 `upload_quota_exceeded`，呼叫端 rollback）。與收檔共用同一把
+    `pg_advisory_xact_lock`，兩邊同時在第 50 份時不會都過。
+    """
     from app.services.accounts import record_audit
 
     _require_id(upload_id)
+    await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": INTAKE_LOCK_KEY})
     try:
         async with session.begin_nested():
             row = (
@@ -541,6 +556,12 @@ async def retry(session: AsyncSession, upload_id: str, *, actor_id: Optional[str
             raise UploadStateConflictError("只有處理失敗的上傳可以重試", state=state)
         raise NotRetryableError("這類失敗重跑也不會改變結果，不能重試", state=state, failure_kind=failure_kind)
     previous_kind, file_hash, file_name, attempts = row
+    in_flight = int((await session.execute(
+        text("SELECT count(*) FROM research.report_upload WHERE state = ANY(CAST(:s AS text[]))"),
+        {"s": list(uploads.IN_FLIGHT_STATES)},
+    )).scalar_one())
+    if in_flight > max_in_flight:  # 含剛轉回 clean 的這一筆
+        raise QuotaExceededError("in_flight", max_in_flight, in_flight - 1)
     await record_audit(
         session, actor_id=actor_id, action="upload.retry", target_type="upload", target_id=upload_id,
         detail={

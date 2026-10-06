@@ -240,6 +240,10 @@ class OpsSettingsTests(unittest.TestCase):
             env = config._ops_agent_environment()
             self.assertEqual((env, config._ops_agent_socket(env)),
                              ("development", "/run/report-mark-ops-dev/agent.sock"))
+        with mock.patch.dict(os.environ, {"OPS_AGENT_ENVIRONMENT": "staging", "OPS_AGENT_SOCKET": ""}):
+            env = config._ops_agent_environment()
+            self.assertEqual((env, config._ops_agent_socket(env)),
+                             ("staging", "/run/report-mark-ops-staging/agent.sock"))
         with mock.patch.dict(os.environ, {"OPS_AGENT_ENVIRONMENT": "", "OPS_AGENT_SOCKET": ""}):
             env = config._ops_agent_environment()
             self.assertEqual((env, config._ops_agent_socket(env)),

@@ -25,6 +25,7 @@ from ops_agent.server import Agent, serve
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROD_TOML = REPO_ROOT / "deploy" / "ops" / "services.prod.toml"
 DEV_TOML = REPO_ROOT / "deploy" / "ops" / "services.dev.toml"
+STAGING_TOML = REPO_ROOT / "deploy" / "ops" / "services.staging.toml"
 NOW = datetime(2026, 10, 6, 12, 0, 0, tzinfo=timezone.utc)
 
 
@@ -251,6 +252,53 @@ class BindingTests(unittest.TestCase):
             self.assertEqual(server.main(["--catalog", str(toml), "--check"]), 0)
 
 
+class StagingCatalogTests(unittest.TestCase):
+    """EC2 staging：RDS（不是容器）、沒有 NAS、apt 的 nginx；restart 只有 web，run 只有 freshness／audit。"""
+
+    def test_staging_catalog_loads_with_its_own_socket(self):
+        staging = load_catalog(STAGING_TOML, resolve_user=_uid)
+        self.assertEqual((staging.environment, staging.socket_path),
+                         ("staging", "/run/report-mark-ops-staging/agent.sock"))
+        validate_binding(staging, protocol.CANONICAL_SOCKETS["staging"])
+
+    def test_staging_permissions(self):
+        staging = load_catalog(STAGING_TOML, resolve_user=_uid)
+        writes = {s.name: [a for a in s.actions if a in protocol.WRITE_ACTIONS] for s in staging.services}
+        self.assertEqual({n: a for n, a in writes.items() if a},
+                         {"web": ["restart"], "freshness": ["run"], "audit": ["run"]})
+        self.assertNotIn("run", staging.get("sync").actions)  # 共用 DeepSeek 金鑰：手動多跑一輪就是多一份費用
+        self.assertNotIn("run", staging.get("r2-reconcile").actions)  # 共用 bucket
+        self.assertEqual([s.name for s in staging.services if s.kind == "container"], [])
+
+    def test_staging_has_no_office_only_things(self):
+        staging = load_catalog(STAGING_TOML, resolve_user=_uid)
+        names = {s.name for s in staging.services} | {e.name for e in staging.externals}
+        for absent in ("postgres", "cloudflared", "backup", "nas", "linebot", "linebot-health", "metrics"):
+            self.assertNotIn(absent, names)
+        self.assertIn("rds", names)
+        self.assertEqual(staging.get("nginx").unit, "nginx.service")
+        systemd_dir = REPO_ROOT / "deploy" / "systemd"
+        missing = [t for s in staging.services for t in (s.unit, s.timer)
+                   if t and t.startswith("report-mark-") and not (systemd_dir / t).exists()]
+        self.assertEqual(missing, [])
+
+    def test_staging_cannot_list_dev_things(self):
+        raw = _raw("staging", services=[{"name": "devdb", "kind": "container", "container": "report-mark-devdb",
+                                         "tier": "critical", "actions": ["status"]}])
+        with self.assertRaisesRegex(CatalogError, "staging catalog 不得列開發用"):
+            parse_catalog(raw)
+
+    def test_staging_socket_cannot_be_overridden_or_crossed(self):
+        staging = parse_catalog(_raw("staging"))
+        with self.assertRaisesRegex(CatalogError, "staging 代理只能綁"):
+            validate_binding(staging, "/tmp/somewhere.sock")
+        with self.assertRaisesRegex(CatalogError, "拒絕以 production 的 socket"):
+            validate_binding(staging, protocol.CANONICAL_SOCKETS["production"])
+        prod = parse_catalog(_raw("production"))
+        with self.assertRaisesRegex(CatalogError, "拒絕以 staging 的 socket"):
+            validate_binding(prod, protocol.CANONICAL_SOCKETS["staging"])
+
+
 def _svc(name, deps=(), **extra) -> dict:
     return {"name": name, "kind": "systemd", "unit": f"report-mark-{name}.service", "tier": "important",
             "actions": ["status"], "depends_on": list(deps), **extra}
@@ -273,6 +321,8 @@ class DependencyGraphTests(unittest.TestCase):
         self.assertIn("nas", prod.get("sync").depends_on)
         dev = load_catalog(DEV_TOML, resolve_user=_uid)
         self.assertEqual(dev.get("dev-web").depends_on, ("devdb",))
+        staging = load_catalog(STAGING_TOML, resolve_user=_uid)
+        self.assertEqual(set(staging.get("web").depends_on), {"rds", "r2", "deepseek"})
 
     def test_valid_graph_with_externals(self):
         cat = self._parse([_svc("web", ["r2"]), _svc("health")],
@@ -356,14 +406,13 @@ class DependencyGraphTests(unittest.TestCase):
 
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(server.main(["--catalog", str(PROD_TOML), "--check"]), 0)
-        self.assertIn("environment=production", out.getvalue())
-        self.assertIn("externals=6", out.getvalue())
+            self.assertEqual(server.main(["--catalog", str(STAGING_TOML), "--check"]), 0)
+        self.assertIn("environment=staging", out.getvalue())
+        self.assertIn("externals=5", out.getvalue())
         with tempfile.TemporaryDirectory() as tmp:
             toml = Path(tmp) / "c.toml"
-            web_deps = 'depends_on = ["postgres", "r2", "deepseek"]\ndescription = "Web'
-            text = PROD_TOML.read_text(encoding="utf-8").replace('["kashionz"]', "[]").replace(
-                "max_concurrent = 4", "max_concurrent = 4\nallowed_uids = [4242]")
+            web_deps = 'depends_on = ["rds", "r2", "deepseek"]\ndescription = "Web'
+            text = STAGING_TOML.read_text(encoding="utf-8")
             self.assertIn(web_deps, text)
             toml.write_text(text.replace(web_deps, 'depends_on = ["nginx"]\ndescription = "Web'), encoding="utf-8")
             err = io.StringIO()
@@ -567,7 +616,7 @@ class AgentRequestTests(unittest.IsolatedAsyncioTestCase):
             b'{"v":2,"env":"production","op":"list"}\n': "bad_request",
             b'{"v":true,"env":"production","op":"list"}\n': "bad_request",
             b'{"v":1,"env":"production","op":"list","cmd":"rm -rf /"}\n': "bad_request",
-            b'{"v":1,"env":"staging","op":"list"}\n': "bad_request",
+            b'{"v":1,"env":"qa","op":"list"}\n': "bad_request",
             b'{"v":1,"env":"production","op":"list","service":"web"}\n': "bad_request",
             b'{"v":1,"env":"production","op":"status"}\n': "bad_request",
             b'{"v":1,"env":"production","op":"status","service":"web","params":{"lines":5}}\n': "invalid_params",

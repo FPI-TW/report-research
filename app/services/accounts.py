@@ -805,44 +805,55 @@ async def update_user(user_id: str, *, role: str | None = None, enabled: bool | 
     if role is not None:
         _check_role(role)
     async with SessionFactory() as session:
-        _uid, uname, cur_role, cur_enabled, cur_super = await _lock_target(session, user_id)
-        new_role = cur_role if role is None else role
-        new_enabled = cur_enabled if enabled is None else bool(enabled)
-        effective_super = bool(cur_super) and cur_role == "admin" and cur_enabled
-        await _require_can_touch(session, actor_id, effective_super)
-        if new_enabled and not cur_enabled and await _has_pending_deletion(session, user_id):
-            raise DeletionPendingError("這個帳號已排程刪除；要重新啟用請先取消刪除")
-        losing_admin = cur_role == "admin" and cur_enabled and (new_role != "admin" or not new_enabled)
-        if losing_admin and actor_id is not None and str(actor_id) == str(user_id):
-            raise SelfLockoutError("不能停用自己，也不能拿掉自己的管理員權限")
-        if losing_admin:
-            others = (await session.execute(
-                text("SELECT count(*) FROM research.app_user WHERE role = 'admin' AND enabled AND id <> :id"),
-                {"id": user_id},
-            )).scalar_one()
-            if int(others) == 0:
-                raise LastAdminError("至少要保留一位啟用中的管理員")
-        if losing_admin and effective_super:
-            await _require_other_super(session, user_id)
-        if (new_role, new_enabled) != (cur_role, cur_enabled):
-            await session.execute(
-                text("UPDATE research.app_user SET role = :r, enabled = :e, updated_at = now() WHERE id = :id"),
-                {"r": new_role, "e": new_enabled, "id": user_id},
-            )
-            revoked = await _revoke_all(session, user_id) if not new_enabled else 0
-            if new_role != cur_role:
-                await _audit(session, actor_id=actor_id, action="user.set_role", target_type="user",
-                             target_id=str(user_id),
-                             detail={"username": uname, "from": cur_role, "to": new_role, "via": via})
-            if new_enabled != cur_enabled:
-                await _audit(session, actor_id=actor_id,
-                             action="user.enable" if new_enabled else "user.disable",
-                             target_type="user", target_id=str(user_id),
-                             detail={"username": uname, "revoked_sessions": revoked, "via": via})
-        info = await _load_user(session, user_id)
+        info, _changed = await _update_user_in(session, user_id, role=role, enabled=enabled, actor_id=actor_id,
+                                               via=via)
         await session.commit()
-    assert info is not None
     return info
+
+
+async def _update_user_in(session, user_id: str, *, role: str | None, enabled: bool | None,
+                          actor_id: str | None, via: str) -> tuple[UserInfo, bool]:
+    """update_user 的本體：在呼叫端的交易裡判規則、改資料、寫稽核（不 commit）。回 (帳號, 是否有變更)。
+
+    拆出來是為了讓多筆操作能在同一筆交易裡逐筆呼叫同一套規則（不另寫一份）。
+    """
+    _uid, uname, cur_role, cur_enabled, cur_super = await _lock_target(session, user_id)
+    new_role = cur_role if role is None else role
+    new_enabled = cur_enabled if enabled is None else bool(enabled)
+    effective_super = bool(cur_super) and cur_role == "admin" and cur_enabled
+    await _require_can_touch(session, actor_id, effective_super)
+    if new_enabled and not cur_enabled and await _has_pending_deletion(session, user_id):
+        raise DeletionPendingError("這個帳號已排程刪除；要重新啟用請先取消刪除")
+    losing_admin = cur_role == "admin" and cur_enabled and (new_role != "admin" or not new_enabled)
+    if losing_admin and actor_id is not None and str(actor_id) == str(user_id):
+        raise SelfLockoutError("不能停用自己，也不能拿掉自己的管理員權限")
+    if losing_admin:
+        others = (await session.execute(
+            text("SELECT count(*) FROM research.app_user WHERE role = 'admin' AND enabled AND id <> :id"),
+            {"id": user_id},
+        )).scalar_one()
+        if int(others) == 0:
+            raise LastAdminError("至少要保留一位啟用中的管理員")
+    if losing_admin and effective_super:
+        await _require_other_super(session, user_id)
+    if (new_role, new_enabled) != (cur_role, cur_enabled):
+        await session.execute(
+            text("UPDATE research.app_user SET role = :r, enabled = :e, updated_at = now() WHERE id = :id"),
+            {"r": new_role, "e": new_enabled, "id": user_id},
+        )
+        revoked = await _revoke_all(session, user_id) if not new_enabled else 0
+        if new_role != cur_role:
+            await _audit(session, actor_id=actor_id, action="user.set_role", target_type="user",
+                         target_id=str(user_id),
+                         detail={"username": uname, "from": cur_role, "to": new_role, "via": via})
+        if new_enabled != cur_enabled:
+            await _audit(session, actor_id=actor_id,
+                         action="user.enable" if new_enabled else "user.disable",
+                         target_type="user", target_id=str(user_id),
+                         detail={"username": uname, "revoked_sessions": revoked, "via": via})
+    info = await _load_user(session, user_id)
+    assert info is not None
+    return info, (new_role, new_enabled) != (cur_role, cur_enabled)
 
 
 async def _require_other_super(session, user_id: str) -> None:
@@ -903,20 +914,26 @@ async def reset_password(user_id: str, password: str, *, actor_id: str | None,
 async def force_logout(user_id: str, *, actor_id: str | None, via: str = "web") -> int:
     """撤銷該帳號所有 session，回撤銷數。"""
     async with SessionFactory() as session:
-        if not _valid_uuid(user_id):
-            raise UserNotFoundError("帳號不存在")
-        row = (await session.execute(
-            text("SELECT username, deleted_at FROM research.app_user WHERE id = :id"), {"id": user_id},
-        )).first()
-        if row is None:
-            raise UserNotFoundError("帳號不存在")
-        if row[1] is not None:
-            raise AccountDeletedError("帳號已刪除")
-        await _require_can_touch(session, actor_id, await _target_is_super(session, user_id))
-        revoked = await _revoke_all(session, user_id)
-        await _audit(session, actor_id=actor_id, action="user.force_logout", target_type="user",
-                     target_id=str(user_id), detail={"username": row[0], "revoked_sessions": revoked, "via": via})
+        revoked = await _force_logout_in(session, user_id, actor_id=actor_id, via=via)
         await session.commit()
+    return revoked
+
+
+async def _force_logout_in(session, user_id: str, *, actor_id: str | None, via: str) -> int:
+    """force_logout 的本體：在呼叫端的交易裡判規則、撤銷 session、寫稽核（不 commit）。"""
+    if not _valid_uuid(user_id):
+        raise UserNotFoundError("帳號不存在")
+    row = (await session.execute(
+        text("SELECT username, deleted_at FROM research.app_user WHERE id = :id"), {"id": user_id},
+    )).first()
+    if row is None:
+        raise UserNotFoundError("帳號不存在")
+    if row[1] is not None:
+        raise AccountDeletedError("帳號已刪除")
+    await _require_can_touch(session, actor_id, await _target_is_super(session, user_id))
+    revoked = await _revoke_all(session, user_id)
+    await _audit(session, actor_id=actor_id, action="user.force_logout", target_type="user",
+                 target_id=str(user_id), detail={"username": row[0], "revoked_sessions": revoked, "via": via})
     return revoked
 
 

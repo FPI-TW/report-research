@@ -60,6 +60,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `radar/compute.py`、`radar/queries.py`、`radar/scale.py`、`radar/schemas.py`、`radar/types.py` | 觀點雷達：純 SQL 取訊號 ＋ Python 決定性聚合 |
 | `signal_extract.py` | 訊號擷取 prompt 與正規化（LLM 只擷取數值與論點證據，Python 判評等方向、幣別、狀態） |
 | `brief.py` | 每日簡報素材、prompt、落庫 |
+| `visibility.py` | 研報隱藏／恢復（`report_visibility`）：使用者讀取路徑共用的可見性片段 `visible_report_sql(別名)`／`visible_report_id_sql(欄位)`（`NOT EXISTS`，可直接 AND 進任何 WHERE），以及管理端的 `list_reports`／`set_visibility`（與稽核同交易，呼叫端 commit）。`tests/test_visibility_guard.py` 以 AST 守門：檢索、閱讀、雷達、總覽、簡報、原檔各模組查語料表的函式或常數都要呼叫片段，否則列豁免並寫理由 |
 | `tagging.py` | 市場代碼（對齊 findb）、商品類型、期貨標的詞表、標註 prompt |
 | `filename.py` | 檔名解析：券商代碼、日期、行政文件判定 |
 | `db.py` | async engine、`SessionFactory`、`relax_statement_timeout`、pgvector 版本守門 |
@@ -72,7 +73,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | 檔案 | 責任 |
 |---|---|
 | `web/server.py` | 組合層：載環境檔、初始化 logging、auth middleware、lifespan、掛 router |
-| `web/routers/` | 14 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入〔含 TOTP 第二步〕、登出、`/api/me`）、`account_security`（`/api/me/*`：TOTP 自助設定與任何使用者都能用的權限提升）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理、刪除排程、TOTP 重設與稽核，限管理員）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
+| `web/routers/` | 15 支 router：`ask`、`search`、`qa_history`、`monitor`、`radar`、`reading`、`report_file`（研報原檔 `/full`／`/file`）、`health`、`auth_pages`（登入〔含 TOTP 第二步〕、登出、`/api/me`）、`account_security`（`/api/me/*`：TOTP 自助設定與任何使用者都能用的權限提升）、`spa`、`brief`、`review`（忠實度低分／倒讚／抽取 `needs_review` 的個體清單與人工處理紀錄，限管理員）、`admin`（帳號管理、刪除排程、TOTP 重設與稽核，限管理員）、`admin_reports`（研報查詢與隱藏／恢復，限管理員＋`reports.manage`）。全部 `APIRouter()` 不帶 prefix（`tests/test_docs_contract.py` 靠這個抓完整路徑） |
 | `web/deps.py` | 跨 router 共用符號與測試 patch 的單一位置；`_sse`、心跳 |
 | `web/auth.py` | session cookie 的簽章與驗證（只帶 session id）、失敗追蹤、可信代理。帳號與 session 狀態不在這裡，在 `app/services/accounts.py` |
 | `web/authz.py` | `current_user`／`require_admin`／`require_scope`／`require_super`／`require_elevated`（FastAPI dependency）：唯一的授權判斷點；前端 route guard 只是顯示層 |
@@ -102,6 +103,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 - `retrieval_pipeline.retrieve_context`：短連線做檢索，rerank 前拍 `gate_scores` 快照；rerank 未實際套用時 `gate_scores` 不傳。多子查詢扇出（`retrieve_context_multi`／`merge_scored`）已隨深度研報移除，agentic 補查（M5）逐子查詢各自呼叫 `retrieve_context`。
 - rerank 的 fail-open 契約：所有 fail-open 路徑回傳**輸入的同一 list 物件**，成功路徑回新 list；`_rerank_stage` 以 `reranked is not scored` 判 `applied`。逾時用 `asyncio.shield`，結果由 callback 消費。只重排前 `top_m` 筆，以 sigmoid 分覆蓋 fused、tier 保留、尾段保留 fused（所以要拍 `gate_scores` 快照）；並行名額 `REPORT_MARK_RERANK_WORKERS`（3），逾時預算含排隊時間，被放棄的工作靠 deadline 在每 16 筆的批次邊界收手。冷載入實測 44–52 秒，所以 lifespan 暖機。
 - `scripts/eval_retrieval.py` 刻意直呼 `hybrid_search`，管線改動它量不到。
+- 被管理員隱藏的研報（`report_visibility`）在 SQL 層就排除：dense 路與 metadata 過濾一樣是 HNSW 之後的 post-filter（靠 `iterative_scan` 補足 LIMIT，計畫仍是 HNSW index scan＋主鍵 anti-join），字面路放在 `LIMIT :cap` 的 CTE 內不佔候選名額；兩條選篇與 `retrieval_pipeline` 吃的是已過濾的 `hybrid_search` 結果，排序邏輯不變。
 
 ## 5. 問答
 
@@ -131,6 +133,8 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 - 閱讀頁：正典文字是 `clean_extracted(full_text)`，`text_sha256` 守不變量；餵給 LLM 的文字、錨點基準、API 回傳三者同源。`reading/anchor.py` 的 `locate_quote`／`locate_chunk`：天真的 `full_text.find(chunk)` 有 99% 機率無聲失敗，正規化並丟開頭 `CHUNK_OVERLAP` 字才到 100%。錨點有效與否只在後端判（驗章 ＋ `READING_TEXT_MAX_CHARS` 截斷）。狀態詞彙刻意與 DB 分離：`text_state`（`ok`／`missing`）、`signals_state`（`available`／`none`，`none` 時前端整區不進 DOM）。`/text` 端點、`anchor.py`、`quote_start`／`quote_end` 是刻意留的可逆性。PDF 選取走 `@embedpdf/plugin-selection`，複製走 `frontend/src/lib/clipboard.ts`（區網 HTTP 沒有 `navigator.clipboard`）。
 - 雷達：`report_signal` 一列＝研報 × 標的，擷取只跑高覆蓋子集，空是常態（`coverage_state`：`ok`／`partial`／`pending_extraction`／`window_empty`）；標的完全無研報回 404，有研報未擷取回 200 `pending_extraction`。`/api/radar/instruments` 以 `web/ttl_cache.py` 快取整份回應（256 格，`RADAR_CATALOG_CACHE_TTL`）。共識一律取每家券商窗期內最新有效訊號（`valid`、`partial`），不累積同券商舊報告；共識預覽窗期恆 90 天；`Window` 為 `30`／`90`／`180`／`all`。清單 API 目標價只回方向，payload 不含數值；帶 `stance` 時全量取回在 Python 分頁。`STANCE_CONSTRUCTIVENESS`（`outlook`／`catalyst`：positive 1、negative −1；`valuation`：attractive 1、stretched −1；`risk`：easing 1、rising −1）與 `THESIS_DIMENSIONS` 由 `signal_extract.py` 定義、三處 import；`radar/schemas.py` 的 `Literal` 前端 zod 逐字鏡像；`CatalogSort` 值與 `queries.CATALOG_SORTS` 鍵逐字相同。
 - 簡報：窗期用 `research_report.created_at` 不是 `report_date`（實測近 10 天入庫 90 篇有 79 篇 `report_date` 超過一天前）；窗期是上一份的 `window_end` 到現在（上限 `--max-lookback-days` 7 天，停擺超過就有縫；沒有上一份取 24 小時）；來源清單由 Python 記錄不從 markdown 反推；評等變動是與該券商前一次訊號比（全表 `lag()` 後才過濾窗期），且要同時「這輪才擷取」與「報告夠新」（`report_date` 在 `SIGNAL_MAX_REPORT_AGE_DAYS` 內，NULL 一律排除）。`report_brief` 一天一列：`UNIQUE(brief_date)` 擋重複，寫入是 upsert，只有 `--force` 會重寫當日；本地 9 時前、當日已有列、窗期內無研報也無變動（刻意不寫列，稍晚還補得回）、當日同 model 被審查擋過或截斷（`blocked_today`）都不呼叫 LLM。`/api/brief/latest` 沒有簡報時回 200 `status=pending`，指定日期查無才 404。鎖只包那一次 LLM 呼叫。
+
+- 被隱藏的研報對讀者等於不存在：閱讀頁骨架、`/text`、`/similar` 的主體與原檔 `/api/report/{report_id}/full`、`/file` 都回 404；相似研報、雷達（訊號、覆蓋度、目錄）、總覽與簡報（素材、篇數、來源連結）都不計入。簡報的評等變動在 `lag()` 之前就排除它的訊號，免得它成為同一券商下一次訊號的「上次」。已落庫的簡報本文不回頭改寫，只是來源連結少一篇；舊問答紀錄的來源卡片仍可能列出它，點進去是 404。
 
 ## 7. Web 層
 
@@ -167,10 +171,11 @@ schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；
 | `account_deletion` | 帳號刪除排程：提出人、`execute_after`（24 小時撤銷窗口）、`prior_enabled`、取消與執行時刻 | 每帳號最多一筆未結束的排程；執行由 `scripts/execute_deletions.py`（先寫 NAS tombstone），還原後由 `scripts/replay_deletions.py` 重放 |
 | `user_session` | 可撤銷 session：`revoked_at`、絕對上限 `expires_at`、`last_seen_at`（超過 5 分鐘才回寫）、`ip`、`user_agent` | FK → `app_user` CASCADE；刻意不備份 |
 | `admin_audit_log` | 管理操作稽核：`actor_user_id`（NULL＝CLI）、`action`、`target_type`、`target_id`、`detail` jsonb；不含任何密碼衍生值 | 與變更同交易寫入；無 FK |
+| `report_visibility` | 管理員隱藏的研報：`hidden`、`reason`（隱藏必填，CHECK）、`updated_by`、`updated_at`；恢復是 `hidden=false` 不刪列，歷史在 `admin_audit_log`（`report.hide`／`report.restore`） | PK `file_hash`，**刻意不設 FK 也不以 report_id 為鍵**：`upsert_report` 先刪後插換新 report_id，旗標掛在那上面會靜默消失（revision 0004） |
 
 待複核 API 以原始品質條件查詢，再以 `review_state` 篩選 `open`／`resolved`／`dismissed`／`all`；寫入狀態不改 `qa_log` 或 `research_report` 的品質訊號。人工驗證欄位只記錄人工結果，不會重跑評測或抽取。
 
-備份涵蓋九張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`）→ NAS；語料層與 `user_session` 刻意不備。
+備份涵蓋十張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`）→ NAS；語料層與 `user_session` 刻意不備。
 
 資料陷阱：
 - `full_text` 是未清理原始抽取（帶 CJK 字間空白），顯示一律 `clean_extracted`，不是 `clean_text`。
@@ -216,6 +221,7 @@ DB 連線數算式（`.env.example`）：`worker 數 × (DB_POOL_SIZE + DB_MAX_O
 | 抽取層不用 PyMuPDF、不用 LLM 評分、快取不存 bbox | `docs/EXTRACTION.md` |
 | session 每個請求查 DB、不快取；刪除帳號保留列只清內容與可識別資料、正確性靠交易與 tombstone 重放而非 FK；TOTP 時間步不可重用；稽核與變更同交易 | `app/services/accounts.py` 模組 docstring |
 | 問答紀錄的舊共用歷史（`user_id` NULL）對一般使用者隱藏 | `db/schema.sql` 的 `qa_log.user_id` 註解 |
+| 研報可見性以 `file_hash` 為鍵、使用者路徑全部經 `visibility.py` 的片段過濾、批次與管理面不過濾 | `app/services/visibility.py` 模組 docstring、`tests/test_visibility_guard.py` |
 | 簡報窗期用 `created_at`、沒有自己的 timer | `app/services/brief.py`、`scripts/sync_new_reports.sh` |
 | sync 鏈用 `--hashes-file` 不用 `--since-days`、訊號與標題積壓的 `--limit`（`SYNC_SIGNAL_LIMIT`、`SYNC_TITLE_BACKLOG_LIMIT`）是安全機制 | `scripts/sync_new_reports.sh` |
 | `report-mark-sync.timer` 的 `Persistent=false` | `tests/test_sync_timer_persistence.py` |

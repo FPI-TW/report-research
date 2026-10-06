@@ -161,7 +161,9 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/api/admin/deletions` | `status`（`pending`／`all`，預設 `pending`） | `{items: [刪除排程…]}` | `accounts.manage`。新的在前；執行後 `username` 是 `deleted-<uuid>` |
 | POST | `/api/admin/users/{user_id}/totp/reset` | — | 帳號一列 | `accounts.manage`＋已提升。替遺失驗證器的人關閉兩步驟驗證；對象是 super admin 時只有 super admin 能做 |
 | GET | `/api/admin/audit/verify` | — | `{ok, total, head_id, head_hash, broken_ids}` | `audit.read`。逐列重算稽核雜湊鏈；`broken_ids` 最多 20 筆 |
-| GET | `/api/admin/audit` | `limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{id, actor_user_id, actor_username, action, target_type, target_id, detail, created_at}]}` | 限管理員。新的在前；`actor_user_id` 為 null 表示 CLI（`scripts/create_admin.py`）。`action`：`user.create`、`user.set_role`、`user.enable`、`user.disable`、`user.reset_password`、`user.force_logout`、`user.set_privileges`、`user.totp_enable`、`user.totp_disable`、`user.totp_reset`、`user.delete_requested`、`user.delete_cancelled`、`user.delete_executed`、`user.delete_replayed`、`session.elevate`、`session.elevate_failed`、`review.update`（刪除相關的 `detail` 只記數量，不記帳號名稱） |
+| GET | `/api/admin/audit` | `limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{id, actor_user_id, actor_username, action, target_type, target_id, detail, created_at}]}` | 限管理員。新的在前；`actor_user_id` 為 null 表示 CLI（`scripts/create_admin.py`）。`action`：`user.create`、`user.set_role`、`user.enable`、`user.disable`、`user.reset_password`、`user.force_logout`、`user.set_privileges`、`user.totp_enable`、`user.totp_disable`、`user.totp_reset`、`user.delete_requested`、`user.delete_cancelled`、`user.delete_executed`、`user.delete_replayed`、`session.elevate`、`session.elevate_failed`、`review.update`、`report.hide`、`report.restore`（刪除相關的 `detail` 只記數量，不記帳號名稱） |
+| GET | `/api/admin/reports` | `q`（標題／檔名／券商關鍵字，`%`、`_` 視為字面）、`hidden`（`true`／`false`，省略＝全部）、`limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{report_id, file_hash, file_name, title, source, market, report_date, created_at, hidden, hidden_reason, visibility_updated_by, visibility_updated_at}]}` | `reports.manage`。入庫新→舊；含非研究檔 |
+| PUT | `/api/admin/reports/{file_hash}/visibility` | JSON `hidden`（必填）、`reason`（隱藏時必填、最多 500 字；恢復可省略） | `{file_hash, hidden, reason, updated_by, updated_at}` | `reports.manage`。以 `file_hash` 為鍵（重新入庫換 report_id 仍有效）；被隱藏的研報從檢索、問答、閱讀頁（404）、雷達、總覽、簡報與原檔（404）全部排除，批次照常處理、恢復即生效。與稽核（`report.hide`／`report.restore`，detail 不含原因全文）同一筆交易；400 `invalid_input` 原因不合法、404 研報不存在 |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 
@@ -253,7 +255,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 |---|---|---|
 | `report-mark-web.service` | 常駐 | `uv run uvicorn web.server:app --port 8097`，`Restart=always`，PATH drop-in 給 `claude` |
 | `report-mark-sync.timer` | 每 3 小時 | rsync → 增量匯入 → 摘要 → 標題 → 摘錄 → 訊號（限量）→ 簡報 → 標題積壓（限量） |
-| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：九張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
+| `report-mark-backup.timer` | 03:30 | `scripts/db_backup.sh`：十張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`）`pg_dump -Fc` → NAS，保留 7 日 ＋ 4 週；掛載不可寫刻意失敗不寫本地 |
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |
 | `report-mark-audit.timer` | 08:45 | `make db-audit`，唯讀，warn 也算失敗 |
 | `report-mark-audit-anchor.timer` | 04:15 | `scripts/audit_anchor.py`：驗稽核雜湊鏈、比對先前所有錨點、把鏈頭追加到 `$REPORT_MARK_BACKUP_DIR/audit-anchors.jsonl`（NAS）；鏈斷或與錨點不符 rc=1 告警 |

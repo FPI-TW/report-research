@@ -3,12 +3,13 @@ import { ConfirmDialog } from '../../components/primitives/ConfirmDialog'
 import { Modal } from '../../components/primitives/Modal'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
 import type { Role } from '../../lib/adminSchemas'
-import { adminApi } from '../../lib/generated/adminApi'
+import { adminApi, adminCsvUrls } from '../../lib/generated/adminApi'
 import { useMe } from '../../lib/useMe'
 import { ElevationCancelledError, useElevationGate } from '../account/useElevationGate'
 import { AdminHeader } from './AdminHeader'
 import { fmtDateTime, roleLabel } from './auditLabels'
 import { deletionCountdown } from './deletionCountdown'
+import { ExportCsvButton } from './ExportCsvButton'
 import { useAdminActions, useAdminUsers, type AdminUser, type GrantableScope } from './useAdmin'
 import styles from './Admin.module.css'
 
@@ -288,7 +289,10 @@ function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) =
 
   return (
     <section className={styles.card} aria-labelledby="admin-users-title">
-      <h2 id="admin-users-title" className={styles.ctitle}>帳號清單</h2>
+      <div className={styles.cardHead}>
+        <h2 id="admin-users-title" className={styles.ctitle}>帳號清單</h2>
+        <ExportCsvButton href={adminCsvUrls.exportUsers()} what="帳號清單" />
+      </div>
       {users.isPending ? (
         <p className={styles.idle}>載入中…</p>
       ) : users.isError ? (

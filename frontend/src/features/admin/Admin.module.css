@@ -69,3 +69,10 @@
   .field input, .field select, .field textarea { min-width: 0; width: 100%; }
   .field { flex: 1 1 100%; }
 }
+
+/* 卡片標題列：標題在左、CSV 匯出在右（窄時換行） */
+.cardHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin: 0 0 14px; }
+.cardHead .ctitle { margin: 0; }
+.exportBox { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.exportOk { font-size: 12px; color: var(--tf-text-3); }
+.exportError { font-size: 12px; color: var(--tf-error-text); }

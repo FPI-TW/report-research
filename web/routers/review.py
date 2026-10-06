@@ -14,10 +14,14 @@
 形狀（與雷達目錄一致：`total／limit／offset／has_more／next_offset／items`）。
 
 處理狀態寫入獨立的 `review_state`，原始品質訊號保持不變。整組端點限管理員
-（`authz.require_admin`）：佇列會列出所有使用者的提問原文。每次處理記下處理人
-（`review_state.reviewer_user_id`，回應的 `reviewer`）並寫一列 `admin_audit_log`；
-問答類另帶提問者（`asked_by`）。兩者在個別帳號上線前的舊資料都是 None——那時是
-共用帳號，無從辨識是誰。
+（`authz.require_admin`＋`review.manage`）。每次處理記下處理人（`review_state.reviewer_user_id`，
+回應的 `reviewer`）並寫一列 `admin_audit_log`；個別帳號上線前的舊資料是 None。
+
+問答類**刻意去內容化**：佇列不回提問原文、回答與提問者帳號名，只回中繼資料（qa_id、時間、
+分數、feedback、judge、處理狀態、處理人）與提問者代號 `asker_code`——以 session secret 做
+HMAC 的短代號（`web.auth.pseudonym`），同一人同一代號、看不出是誰；NULL 擁有者（共用帳號
+時期）為 None。佇列給的是「哪幾筆要看」，不是「誰問了什麼」。也不回 `conversation_id`：
+對話串只有擁有者打得開，管理面不提供瀏覽某人整串歷史的入口。
 
 刻意的範圍：
 
@@ -46,11 +50,11 @@ from app.services.accounts import User, record_audit
 from app.services.filename import source_display
 from app.services.judge_schema import CURRENT_JUDGE_SQL, JUDGE_MODEL_SQL
 from app.services.store import review_reasons
-from web import authz, deps
+from web import auth, authz, deps
 
 logger = logging.getLogger(__name__)
 
-# 整組限管理員：待複核佇列會列出所有人的提問原文，一般使用者不該看得到別人問了什麼。
+# 整組限管理員。佇列本身不含提問原文（見模組 docstring）；處理狀態仍是管理資料。
 router = APIRouter(dependencies=[Depends(authz.require_admin), Depends(authz.require_scope("review.manage"))])
 
 ReviewKind = Literal["faithfulness", "feedback", "extraction"]
@@ -73,16 +77,20 @@ _ROW_JUDGE = f"CASE WHEN evaluation IS NULL THEN NULL ELSE {JUDGE_MODEL_SQL} END
 # 帳號名稱用純量子查詢而不是 JOIN：app_user 也有 id／created_at，JOIN 進來會讓下面那些
 # 沒加表名的欄位（id、created_at、feedback 的 ORDER BY）變成 ambiguous。
 _REVIEWER = "(SELECT u.username FROM research.app_user u WHERE u.id = rv.reviewer_user_id)"
-_ASKED_BY = "(SELECT u.username FROM research.app_user u WHERE u.id = qa_log.user_id)"
+# 提問者代號的 namespace：改了代號會全部換掉（等同換 secret），不要隨手改。
+_ASKER_NAMESPACE = "review.asker"
+
+
+def _asker_code(user_id) -> str | None:
+    """提問者 user id → 不可逆短代號；NULL（共用帳號時期、免登入開發模式）→ None。"""
+    return auth.pseudonym(_ASKER_NAMESPACE, str(user_id)) if user_id is not None else None
 
 
 class ReviewItem(BaseModel):
     """一筆待複核項目。依 `kind` 只有其中一組欄位有值，其餘為 None。"""
 
-    # qa（faithfulness／feedback）
+    # qa（faithfulness／feedback）：只有中繼資料，沒有提問原文（模組 docstring）
     qa_id: str | None = None
-    conversation_id: str | None = None
-    question: str | None = None
     created_at: str | None = None
     faithfulness_score: float | None = None
     feedback: str | None = None
@@ -108,8 +116,8 @@ class ReviewItem(BaseModel):
     reviewed_at: str | None = None
     # 最後一次處理的人；None＝沒人處理過，或是個別帳號上線前（共用帳號時期）處理的。
     reviewer: str | None = None
-    # qa：提問者帳號；None＝個別帳號上線前的共用歷史（或免登入開發模式寫入的列）。
-    asked_by: str | None = None
+    # qa：提問者代號（不可逆，同一人同一代號）；None＝個別帳號上線前的共用歷史（或免登入開發模式寫入的列）。
+    asker_code: str | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -142,17 +150,17 @@ def _iso(v) -> str | None:
 
 
 def _qa_item(row) -> ReviewItem:
-    (qa_id, conv_id, question, created_at, score, feedback, judge_model, status, note, verification,
-     reviewed_at, reviewer, asked_by) = row
+    (qa_id, created_at, score, feedback, judge_model, status, note, verification,
+     reviewed_at, reviewer, asker_id) = row
     return ReviewItem(
-        qa_id=str(qa_id), conversation_id=str(conv_id), question=question,
+        qa_id=str(qa_id),
         created_at=_iso(created_at),
         faithfulness_score=float(score) if score is not None else None,
         feedback=feedback,
         judge_model=judge_model,
         review_status=status or "open", review_note=note or "",
         verification=verification or "untested", reviewed_at=_iso(reviewed_at),
-        reviewer=reviewer, asked_by=asked_by,
+        reviewer=reviewer, asker_code=_asker_code(asker_id),
     )
 
 
@@ -220,8 +228,9 @@ async def _fetch(session, kind: str, *, limit: int, offset: int, days: int, stat
     )).scalar_one()
     rows = (await session.execute(
         text(
-            f"SELECT id, COALESCE(conversation_id, id), question, created_at, ({_SCORE}), feedback, "
-            f"({_ROW_JUDGE}), {state_cols}, {_ASKED_BY} "
+            # 刻意不選 question／answer：佇列只回中繼資料。
+            f"SELECT id, created_at, ({_SCORE}), feedback, "
+            f"({_ROW_JUDGE}), {state_cols}, qa_log.user_id "
             f"FROM research.qa_log {join} WHERE {where}{state_filter} "
             f"ORDER BY {order} LIMIT :limit OFFSET :offset"
         ),

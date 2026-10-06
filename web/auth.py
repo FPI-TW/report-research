@@ -85,6 +85,18 @@ def _sign(msg: str) -> str:
     return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
+def pseudonym(namespace: str, value: str, *, length: int = 8) -> str:
+    """不可逆的短代號：同一個 value 在同一個 namespace 永遠得到同一個代號，但看不出原值。
+
+    給「要分辨是不是同一個人、但不該知道是誰」的畫面用（待複核佇列的提問者）。金鑰是由
+    session secret 以 namespace 衍生的子金鑰，與 cookie 簽章分屬不同 domain；沒有 secret
+    就無從由 user id 反推或預先算出代號。換 `REPORT_MARK_SESSION_SECRET` 代號會全部換掉，
+    未設 secret（隨機值）時每次重啟都會換——代號只保證同一段時間內一致，不是永久識別碼。
+    """
+    key = hmac.new(_SECRET.encode(), f"pseudonym:{namespace}".encode(), hashlib.sha256).digest()
+    return hmac.new(key, value.encode(), hashlib.sha256).hexdigest()[:length]
+
+
 # token 版本。格式為 `<ver>.<sid>.<iat>.<exp>.<sig>`;v2 是共用帳密時代的
 # `<ver>.<iat>.<exp>.<sig>`、v1 是更早的 `<exp>.<sig>`。版本欄位讓格式變更時能對舊格式
 # **明確**拒絕(並記一筆),而不是靠簽章比對碰巧失敗。

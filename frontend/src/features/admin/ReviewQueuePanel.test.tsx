@@ -33,14 +33,17 @@ function page(kind: string, items: unknown[], over: Record<string, unknown> = {}
 }
 
 const qa = (i: number, over: Record<string, unknown> = {}) => ({
-  qa_id: `qa${i}`, conversation_id: `conv${i}`, question: `提問 ${i}`,
+  qa_id: `qa${i}`,
   created_at: '2026-09-20T03:00:00+00:00', faithfulness_score: 0.208, ...over,
 })
 
-test('預設是忠實度低分：列出提問、分數與日期，並連回那一串對話', async () => {
-  mount(() => ({ body: page('faithfulness', [qa(1)]) }))
-  const link = await screen.findByRole('link', { name: '提問 1' })
-  expect(link).toHaveAttribute('href', '/ask?c=conv1')
+test('預設是忠實度低分：列出問答代號、分數與日期；不顯示原文、不連到對話串', async () => {
+  // 舊後端（或被竄改的回應）就算帶了原文，畫面也不印：zod 會把未宣告的鍵丟掉。
+  mount(() => ({ body: page('faithfulness', [qa(1, { question: '機密提問', asked_by: 'alice', conversation_id: 'conv1' })]) }))
+  await screen.findByText('問答 qa1')
+  expect(screen.queryByText(/機密提問/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/alice/)).not.toBeInTheDocument()
+  expect(screen.queryByRole('link')).not.toBeInTheDocument()
   expect(screen.getByText('0.208')).toBeInTheDocument()
   expect(screen.getByText('2026-09-20')).toBeInTheDocument()
   expect(screen.getByRole('tab', { name: '忠實度低分' })).toHaveAttribute('aria-selected', 'true')
@@ -49,7 +52,7 @@ test('預設是忠實度低分：列出提問、分數與日期，並連回那�
 
 test('忠實度低分列出該筆的判定尺（舊後端沒有這欄時不印）', async () => {
   mount(() => ({ body: page('faithfulness', [qa(1, { judge_model: 'claude-haiku-4-5' }), qa(2)]) }))
-  await screen.findByRole('link', { name: '提問 1' })
+  await screen.findByText('問答 qa1')
   expect(screen.getAllByText('claude-haiku-4-5')).toHaveLength(1)
 })
 
@@ -79,7 +82,7 @@ test('倒讚分頁不顯示分數（那一欄對它沒有意義）', async () =>
       : page('faithfulness', []),
   }))
   fireEvent.click(await screen.findByRole('tab', { name: '倒讚' }))
-  expect(await screen.findByRole('link', { name: '提問 3' })).toBeInTheDocument()
+  expect(await screen.findByText('問答 qa3')).toBeInTheDocument()
   expect(screen.queryByText('0.208')).not.toBeInTheDocument()
 })
 
@@ -90,8 +93,8 @@ test('還有下一頁時「載入更多」以 next_offset 接續並累加', asyn
       : { body: page('faithfulness', [qa(2)], { total: 2, offset: 1 }) }
   ))
   fireEvent.click(await screen.findByRole('button', { name: '載入更多（共 2 筆）' }))
-  expect(await screen.findByRole('link', { name: '提問 2' })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: '提問 1' })).toBeInTheDocument()
+  expect(await screen.findByText('問答 qa2')).toBeInTheDocument()
+  expect(screen.getByText('問答 qa1')).toBeInTheDocument()
   expect(new URL(fetchMock.mock.calls.at(-1)![0] as string, 'http://x').searchParams.get('offset')).toBe('1')
   await waitFor(() => expect(screen.queryByRole('button', { name: /載入更多/ })).not.toBeInTheDocument())
 })
@@ -102,7 +105,7 @@ test('載入失敗：說出來並給重試，不讓整張卡消失', async () =>
   expect(await screen.findByText(/佇列載入失敗/)).toBeInTheDocument()
   fail = false
   fireEvent.click(screen.getByRole('button', { name: '重試' }))
-  expect(await screen.findByRole('link', { name: '提問 1' })).toBeInTheDocument()
+  expect(await screen.findByText('問答 qa1')).toBeInTheDocument()
 })
 
 test('記錄人工驗證、已處理後從待處理消失，並可重新打開', async () => {
@@ -119,21 +122,21 @@ test('記錄人工驗證、已處理後從待處理消失，並可重新打開',
         verification: current.verification, reviewed_at: current.updated_at })] : []) }
   })
   fireEvent.click(await screen.findByRole('tab', { name: '倒讚' }))
-  await screen.findByRole('link', { name: '提問 3' })
+  await screen.findByText('問答 qa3')
   fireEvent.change(screen.getByLabelText('處理狀態'), { target: { value: 'resolved' } })
   fireEvent.change(screen.getByLabelText('人工驗證'), { target: { value: 'passed' } })
   fireEvent.change(screen.getByLabelText('處理註記'), { target: { value: '已核對原文' } })
   fireEvent.click(screen.getByRole('button', { name: '儲存' }))
-  await waitFor(() => expect(screen.queryByRole('link', { name: '提問 3' })).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByText('問答 qa3')).not.toBeInTheDocument())
   fireEvent.click(screen.getByRole('button', { name: '已處理' }))
-  await screen.findByRole('link', { name: '提問 3' })
+  await screen.findByText('問答 qa3')
   expect(screen.getByLabelText('處理註記')).toHaveValue('已核對原文')
   expect(screen.getByLabelText('人工驗證')).toHaveValue('passed')
   fireEvent.change(screen.getByLabelText('處理狀態'), { target: { value: 'open' } })
   fireEvent.click(screen.getByRole('button', { name: '儲存' }))
-  await waitFor(() => expect(screen.queryByRole('link', { name: '提問 3' })).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByText('問答 qa3')).not.toBeInTheDocument())
   fireEvent.click(screen.getByRole('button', { name: '待處理' }))
-  await screen.findByRole('link', { name: '提問 3' })
+  await screen.findByText('問答 qa3')
   const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')
   expect(writes).toHaveLength(2)
   expect(JSON.parse(writes[0][1]!.body as string)).toEqual({
@@ -158,10 +161,10 @@ test('展開五頁後儲存只刷新首頁，後續分頁不漏掉因結案而�
       next_offset: next < items.length ? next : null,
     }) }
   })
-  await screen.findByRole('link', { name: '提問 1' })
+  await screen.findByText('問答 qa1')
   for (let i = 1; i <= 4; i++) {
     fireEvent.click(screen.getByRole('button', { name: '載入更多（共 41 筆）' }))
-    await screen.findByRole('link', { name: `提問 ${i * 10 + 1}` })
+    await screen.findByText(`問答 qa${i * 10 + 1}`)
   }
   await waitFor(() => expect(screen.queryByRole('button', { name: /載入更多/ })).not.toBeInTheDocument())
   fetchMock.mockClear()
@@ -171,11 +174,11 @@ test('展開五頁後儲存只刷新首頁，後續分頁不漏掉因結案而�
   await waitFor(() => expect(screen.getAllByRole('button', { name: '儲存' })[0]).toBeEnabled())
   const reads = fetchMock.mock.calls.filter(([, init]) => init?.method !== 'PUT')
   expect(reads.map(([url]) => new URL(url, 'http://x').searchParams.get('offset'))).toEqual(['0'])
-  expect(screen.getAllByRole('link')).toHaveLength(10)
+  expect(screen.getAllByText(/^問答 qa/)).toHaveLength(10)
   fireEvent.click(more)
-  await screen.findByRole('link', { name: '提問 12' })
-  expect(await screen.findByRole('link', { name: '提問 21' })).toBeInTheDocument()
-  expect(screen.queryByRole('link', { name: '提問 11' })).not.toBeInTheDocument()
+  await screen.findByText('問答 qa12')
+  expect(await screen.findByText('問答 qa21')).toBeInTheDocument()
+  expect(screen.queryByText('問答 qa11')).not.toBeInTheDocument()
 })
 
 test('儲存失敗保留已展開的頁面，不重新查詢清單', async () => {
@@ -187,12 +190,12 @@ test('儲存失敗保留已展開的頁面，不重新查詢清單', async () =>
     }) }
   })
   fireEvent.click(await screen.findByRole('button', { name: '載入更多（共 2 筆）' }))
-  await screen.findByRole('link', { name: '提問 2' })
+  await screen.findByText('問答 qa2')
   fetchMock.mockClear()
   fireEvent.click(screen.getAllByRole('button', { name: '儲存' })[0])
   expect(await screen.findByRole('alert')).toHaveTextContent('儲存失敗，請重試')
-  expect(screen.getByRole('link', { name: '提問 1' })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: '提問 2' })).toBeInTheDocument()
+  expect(screen.getByText('問答 qa1')).toBeInTheDocument()
+  expect(screen.getByText('問答 qa2')).toBeInTheDocument()
   expect(fetchMock.mock.calls).toHaveLength(1)
   expect(fetchMock.mock.calls[0][1]?.method).toBe('PUT')
 })
@@ -206,13 +209,13 @@ test('原因帶著量到的值：分數不低的研報看得出為什麼在這�
   expect(reasonText({}, 'something_new')).toBe('something_new')
 })
 
-test('問答列顯示提問者與處理人；共用帳號時期的舊列標「共用帳號」、沒處理過不印處理人', async () => {
+test('問答列顯示提問者代號與處理人；共用帳號時期的舊列標「共用帳號」、沒處理過不印處理人', async () => {
   mount(() => ({ body: page('faithfulness', [
-    qa(1, { asked_by: 'alice', reviewer: 'root', reviewed_at: '2026-10-04T08:00:00Z', review_status: 'resolved' }),
-    qa(2, { asked_by: null, reviewer: null }),
+    qa(1, { asker_code: '3fa9c2d1', reviewer: 'root', reviewed_at: '2026-10-04T08:00:00Z', review_status: 'resolved' }),
+    qa(2, { asker_code: null, reviewer: null }),
   ]) }))
-  await screen.findByRole('link', { name: '提問 1' })
-  expect(screen.getByText('提問者 alice')).toBeInTheDocument()
+  await screen.findByText('問答 qa1')
+  expect(screen.getByText('提問者 #3fa9c2d1')).toBeInTheDocument()
   expect(screen.getByText('處理人 root（2026-10-04）')).toBeInTheDocument()
   expect(screen.getByText('提問者 共用帳號')).toBeInTheDocument()
   expect(screen.getAllByText(/^處理人 /)).toHaveLength(1)
@@ -246,7 +249,7 @@ const scaleBase: EvalSource = {
 
 test('判定尺剛換成 DeepSeek、窗期內還有舊尺 → 忠實度分頁比照監控卡標新量尺', async () => {
   mount(() => ({ body: page('faithfulness', [qa(1)]) }), scaleBase)
-  await screen.findByRole('link', { name: '提問 1' })
+  await screen.findByText('問答 qa1')
   expect(screen.getByText(/判定尺 deepseek-flash 是新量尺（自 2026-09-25 起，DeepSeek）/)).toBeInTheDocument()
 })
 

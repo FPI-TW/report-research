@@ -12,12 +12,12 @@ import styles from './ReviewQueue.module.css'
  * 待複核佇列。
  *
  * 忠實度卡與抽取品質卡只有**筆數**（「待複核 3」），要知道是哪三筆得開 psql；倒讚則
- * 連筆數都沒有出口。這張卡把三者的個體列出來，每一筆都連得回去：問答連到那一串對話，
- * 研報連到閱讀頁。
+ * 連筆數都沒有出口。這張卡把三者的個體列出來：研報連到閱讀頁；問答**刻意不顯示原文**
+ * （後端佇列不回提問、回答與提問者帳號），只列中繼資料與提問者代號（`asker_code`，同一人
+ * 同一代號、看不出是誰），也不連到對話串（那只有擁有者打得開）。
  *
- * 人工處理狀態、註記與驗證結果另存。個別帳號上線後，問答列帶提問者（`asked_by`）、
- * 每列帶最後處理人（`reviewer`）。兩者在共用帳號時期的舊資料都是 null：提問者標「共用帳號」，
- * 處理人不顯示。
+ * 人工處理狀態、註記與驗證結果另存，每列帶最後處理人（`reviewer`）。共用帳號時期的舊資料
+ * 兩者都是 null：提問者標「共用帳號」，處理人不顯示。
  * 整張卡限管理員（後端 `/api/review/*` 對一般使用者回 403），所以只出現在管理頁。
  *
  * `scale` 是監控頁 `/api/progress` 的問答忠實度統計（與忠實度卡同一份）：判定尺剛換成 DeepSeek、
@@ -75,22 +75,25 @@ function ReviewedBy({ item }: { item: ReviewItem }) {
   return <span className={styles.who}>{`處理人 ${item.reviewer}（${fmtDay(item.reviewed_at)}）`}</span>
 }
 
+/** 問答列的標題：沒有原文可顯示，以 qa_id 前 8 碼辨識（與稽核紀錄的 target_id 對得上）。 */
+function qaLabel(item: ReviewItem): string {
+  return `問答 ${(item.qa_id ?? '').slice(0, 8) || '—'}`
+}
+
 function QaRow({ item, kind, save, disabled }: {
   item: ReviewItem; kind: ReviewKind; save: ReviewSave; disabled: boolean
 }) {
   return (
     <li className={styles.rvRow}>
       <div className={styles.rvMain}>
-        <Link className={styles.rvLink} to={`/ask?c=${encodeURIComponent(item.conversation_id ?? '')}`}>
-          {item.question}
-        </Link>
+        <span className={styles.rvSubject} title={item.qa_id ?? undefined}>{qaLabel(item)}</span>
         <span className={styles.rvMeta}>
           {kind === 'faithfulness' && item.faithfulness_score != null && (
             <span className={styles.fWarn}>{item.faithfulness_score.toFixed(3)}</span>
           )}
           {kind === 'faithfulness' && item.judge_model && <span>{item.judge_model}</span>}
           {/* 共用帳號時期的舊提問沒有擁有者（null），標「共用帳號」而不是留白，免得被讀成資料缺漏 */}
-          <span className={styles.who}>{`提問者 ${item.asked_by ?? '共用帳號'}`}</span>
+          <span className={styles.who}>{`提問者 ${item.asker_code ? `#${item.asker_code}` : '共用帳號'}`}</span>
           <span>{fmtDay(item.created_at)}</span>
           <ReviewedBy item={item} />
         </span>

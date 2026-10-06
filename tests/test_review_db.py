@@ -111,11 +111,12 @@ class ReviewQueueDbTests(unittest.TestCase):
             self.assertGreaterEqual(out[key][0], len(out[key][1]))
         low = next(i for i in out["faithfulness"][1] if i.qa_id == str(ids["low"]))
         self.assertAlmostEqual(low.faithfulness_score, 0.05)
-        # 單題對話沒有 conversation_id，回退到自己的 id——前端要靠它連回 /ask?c=。
-        self.assertEqual(low.conversation_id, low.qa_id)
 
-    def test_reviewer_and_asker_resolve_to_usernames(self):
-        """處理人與提問者以純量子查詢補帳號名；舊資料（NULL）是 None，不是整列消失。"""
+    def test_reviewer_resolves_to_username_and_asker_to_opaque_code(self):
+        """處理人以純量子查詢補帳號名；提問者只回不可逆代號、不回帳號名或提問原文。
+
+        舊資料（NULL）是 None，不是整列消失。
+        """
         asker, reviewer = uuid.uuid4(), uuid.uuid4()
         owned, legacy = uuid.uuid4(), uuid.uuid4()
         suffix = uuid.uuid4().hex[:8]
@@ -145,9 +146,13 @@ class ReviewQueueDbTests(unittest.TestCase):
             return {i.qa_id: i for i in items if i.qa_id in (str(owned), str(legacy))}
 
         got = self._run(fn)
-        self.assertEqual(got[str(owned)].asked_by, f"asker_{suffix}")
+        self.assertEqual(got[str(owned)].asker_code, review._asker_code(asker))
         self.assertEqual(got[str(owned)].reviewer, f"rev_{suffix}")
-        self.assertIsNone(got[str(legacy)].asked_by)
+        dumped = got[str(owned)].model_dump_json()
+        self.assertNotIn(f"asker_{suffix}", dumped)
+        self.assertNotIn("誰問的", dumped)
+        self.assertNotIn(str(asker), dumped)
+        self.assertIsNone(got[str(legacy)].asker_code)
         self.assertIsNone(got[str(legacy)].reviewer)
 
     def test_extraction_query_runs_and_only_returns_flagged_reports(self):

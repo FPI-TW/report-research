@@ -6,9 +6,9 @@ Description=廷豐智能研報 上傳 worker（隔離區掃毒 → 草稿入庫 
 # clamd → 檔案留在隔離區（fail-closed，由容器探針告警）。
 After=network-online.target
 Wants=network-online.target
-# 失敗要有人知道：rc=1（這支自己壞了，例如隔離區權限、SQL 錯誤）走既有告警鏈。
-# 「不跑」的情況不走（見下面 SuccessExitStatus）：timer 每 5 分鐘，report-mark-alert@ 沒有去重，
-# 把環境型的不跑算成失敗就是每 5 分鐘一則重複通知。
+# 失敗要有人知道：rc=1（這支自己壞了）與 rc=3（LLM 設定錯誤，不會自己好）走既有告警鏈。
+# 會自己好的「不跑」不走（見下面的退出碼表）：timer 每 5 分鐘，report-mark-alert@ 沒有去重，
+# 把它們算成失敗就是每 5 分鐘一則重複通知。
 OnFailure=report-mark-alert@%n.service
 
 [Service]
@@ -31,12 +31,15 @@ EnvironmentFile=-/etc/default/report-mark-llm
 # URL 經 stdin 給 curl、不進 argv。`-`：沒設就只寫稽核與 journal ERROR。
 EnvironmentFile=-/etc/report-mark/alert.env
 ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; exec "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/process_uploads.sh"'
-# 列為成功的退出碼（都是「這一輪刻意不跑」，下一輪自然重試）：
-#   2  ＝環境型不跑：DB 連不上（web 探針經 P5 帶去重告警）、LLM 設定或帳號問題（缺金鑰、401／402、
-#        400 升級；DeepSeek 由 /healthz/llm 探針的 7／8 告警）。乾淨檔維持 clean。
+# 退出碼表（分界是「會不會自己好」；scripts/process_uploads.sh 檔頭同一張）：
+#   0  ＝做完了。斷路器有效、backfill 正在跑、另一輪 worker 還沒結束也是 0（刻意不做，下一輪再看）。
+#   1  ＝自己壞了（例外、SQL 錯誤、隔離區權限）→ OnFailure 告警。
+#   2  ＝這輪不跑、會自己好：DB 連不上（web 探針經 P5 帶去重告警）。乾淨檔維持 clean。→ 列為成功。
+#   3  ＝LLM 設定或帳號錯誤、不會自己好：缺金鑰、/etc/default/report-mark-llm 讀不到（不存在／權限）、
+#        LLM_PROVIDER 拼錯、未知模型、重複的鍵，以及途中的 401／402／400 升級。→ **不**列為成功，走 OnFailure
+#        告警。只有真的有上傳在等（有 clean）時才會走到這一步；修好之前每輪（5 分鐘）都會再告警一次。
 #   75 ＝入庫段撞 claude 鎖（sync 或手動 LLM 批次在跑；scripts/_claude_lock.py 的 EX_TEMPFAIL）。
-#        乾淨檔維持 clean，掃描與清除照常做完。
-# 斷路器有效、backfill 正在跑、另一輪 worker 還沒結束這三種，殼本身就以 rc=0 收場，不必列。
+#        乾淨檔維持 clean，掃描與清除照常做完。→ 列為成功。
 SuccessExitStatus=2 75
 # 記憶體與 CPU（設計 1.1）：入庫時會延遲載入 BGE-M3（約 2–3 GB），與 sync 互斥（同一把 claude 鎖），
 # 主機尖峰維持「web 一份＋一支批次一份」。MemoryMax 是最後一道牆：不可信 PDF 的解析另有子行程的

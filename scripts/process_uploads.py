@@ -19,9 +19,14 @@ ops 另有「立即執行」）。殼取整輪鎖 `data/.upload_worker.lock`、�
 - `cleanup`：寬限期已過的退回件（守門成立時連語料、visibility、extraction_log、快取、標籤、本機乾淨檔、
   R2 原檔一起刪；刪語料時持 claude 鎖與 sync 互斥，拿不到就留到下一輪）、過保留期的感染證據、隔離區孤兒檔。
 
-退出碼：0＝做完了（含「另一輪在跑」「backfill 在跑」「斷路器延後」這類刻意不做）；1＝這支自己壞了（告警）；
-2＝環境型不跑：DB 連不上、LLM 設定或帳號問題（缺金鑰、401／402、400 升級）——unit 列為成功、不告警，
-DB 由 web 探針、DeepSeek 由 `/healthz/llm` 探針各自告警；75＝claude 鎖被其他批次佔用（下一輪再試）。
+退出碼（分界是「會不會自己好」：會自己好的不告警，不會的告警）：
+  0  做完了（含「另一輪在跑」「backfill 在跑」「斷路器延後」這類刻意不做）
+  1  這支自己壞了（例外、SQL 錯誤、隔離區權限）→ OnFailure 告警
+  2  這輪不跑、下一輪自然會好：DB 連不上（由 web 探針經 P5 告警）→ unit 列為成功
+  3  LLM 設定或帳號錯誤、不會自己好：缺金鑰、環境檔讀不到（不存在／權限）、`LLM_PROVIDER` 拼錯、未知模型、
+     重複的鍵（`require_llm_key` 拒跑），以及途中的 401／402／400 升級／CLI 跑不起來 → OnFailure 告警。
+     只有真的有上傳在等（有 `clean`）時才會走到這一步，所以沒有上傳時不會每 5 分鐘告警一次。
+  75 claude 鎖被其他批次佔用（下一輪再試）→ unit 列為成功
 
 用法：
   uv run python scripts/process_uploads.py scan
@@ -56,7 +61,8 @@ from scripts._ingest_core import TAG_MODEL, TAGS_DIR, ingest_one  # noqa: E402
 
 RC_OK = 0
 RC_FAIL = 1
-RC_ENV = 2
+RC_ENV = 2  # 這輪不跑、會自己好（DB 連不上）：unit 的 SuccessExitStatus 放行
+RC_LLM_CONFIG = 3  # LLM 設定或帳號錯誤、不會自己好：不在 SuccessExitStatus，走 OnFailure 告警
 INGEST_BATCH = 20  # 每輪最多入庫幾筆（每 5 分鐘一輪；一筆含標註與嵌入約數十秒）
 
 # `Outcome` → (state, failure_kind)。`ingested` 由 pre_upsert 在同一個交易裡轉 draft，不在這裡。
@@ -303,13 +309,13 @@ async def ingest_round(ctx: Ctx, *, limit: int, hashes: list[str]) -> IngestStat
                 await _process_one(ctx, session, item, storage, hashes, tagged, recorder, st)
             except BadRequestEscalation as exc:
                 # 400 升級（≥2 篇不同研報收到相同的 400）：請求或設定壞了。觸發篇記跳過名單、這一筆轉 failed，
-                # 整批中止（rc 2）；其餘 clean 留著，修好之後下一輪照常。
+                # 整批中止（rc 3，告警）；其餘 clean 留著，修好之後下一輪照常。
                 await session.rollback()
                 await record_escalation(exc, await recorder.get())
                 await _fail(session, st, upload_id, uploads.FAILURE_TAG_FAILED, f"400 升級中止：{exc}")
                 raise
             except CliNotFoundError as exc:
-                # LLM 環境型失敗（斷路器、401／402、設定）：這一筆退回 clean。斷路器＝延後（rc 0）；其他 rc 2。
+                # LLM 環境型失敗（斷路器、401／402、設定）：這一筆退回 clean。斷路器＝延後（rc 0）；其他 rc 3（告警）。
                 await session.rollback()
                 tripped = breaker_active()
                 if tripped:
@@ -330,6 +336,13 @@ async def ingest_round(ctx: Ctx, *, limit: int, hashes: list[str]) -> IngestStat
     return st
 
 
+async def _defer_breaker(ctx: Ctx, tripped: str) -> int:
+    async with ctx.session_factory() as session:
+        n = await uw.defer_all_clean(session, detail=f"LLM 斷路器有效，延後處理：{tripped}")
+    _say(f"LLM 斷路器有效：{n} 筆標為延後（llm_breaker），斷路器過期後再處理")
+    return RC_OK
+
+
 async def ingest_main(ctx: Ctx, *, limit: int, hashes: list[str]) -> int:
     await _recover(ctx)
     async with ctx.session_factory() as session:
@@ -344,19 +357,26 @@ async def ingest_main(ctx: Ctx, *, limit: int, hashes: list[str]) -> int:
         return RC_OK
     tripped = breaker_active()
     if tripped:
-        async with ctx.session_factory() as session:
-            n = await uw.defer_all_clean(session, detail=f"LLM 斷路器有效，延後處理：{tripped}")
-        _say(f"LLM 斷路器有效：{n} 筆標為延後（llm_breaker），斷路器過期後再處理")
-        return RC_OK
+        return await _defer_breaker(ctx, tripped)
     # 取鎖之前：缺金鑰或模型名打錯是「跑了也白跑」，要在撞鎖（rc=75＝不跑）之前說出來。
-    require_llm_key({TASK_TAG: TAG_MODEL})
+    try:
+        require_llm_key({TASK_TAG: TAG_MODEL})
+    except SystemExit as exc:
+        if exc.code != 2:  # scripts/_llm_env.RC_CONFIG
+            raise
+        tripped = breaker_active()  # 斷路器剛好在上面的檢查之後跳脫：照樣是延後，不是設定錯誤
+        if tripped:
+            return await _defer_breaker(ctx, tripped)
+        uw.journal_error(f"LLM 設定錯誤（原因見上方 [llm-env] 那一行），{pending} 筆上傳維持 clean；"
+                         "修好之前每輪都會告警")
+        return RC_LLM_CONFIG
     with claude_cli_lock_or_exit("process_uploads", ctx.claude_lock_path):
         try:
             st = await ingest_round(ctx, limit=limit, hashes=hashes)
         except CliNotFoundError as exc:
-            # 環境層級（401／402、設定、400 升級）：每一篇都會踩到。這一筆已退回 clean，其餘沒動。
-            print(f"中止：{exc}", flush=True)
-            return RC_ENV
+            # 環境層級（401／402、設定、400 升級、CLI 跑不起來）：每一篇都會踩到、不會自己好。這一筆已退回 clean。
+            uw.journal_error(f"LLM 帳號或設定錯誤，入庫中止：{exc}")
+            return RC_LLM_CONFIG
     _say(f"入庫：認領 {st.claimed}、草稿 {st.drafts}、失敗 {st.failed} {st.by_kind or ''}、"
          f"重複 {st.duplicate}、攔截 {st.blocked}、延後 {st.deferred}")
     return RC_OK
@@ -374,7 +394,7 @@ def cmd_ingest(args, ctx: Optional[Ctx] = None) -> int:
         try:
             return _run(ctx, ingest_main(ctx, limit=args.limit, hashes=hashes))
         finally:
-            # 持鎖時一定寫（空清單＝0-byte）：中途中止（rc 2／75、例外）也留下已 commit 的那幾篇，殼據此跑下游。
+            # 持鎖時一定寫（空清單＝0-byte）：中途中止（rc 2／3／75、例外）也留下已 commit 的那幾篇，殼據此跑下游。
             if out_path is not None:
                 uw.write_hashes(out_path, hashes)
 

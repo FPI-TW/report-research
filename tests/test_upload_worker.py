@@ -464,17 +464,52 @@ class IngestGateTests(_Tmp):
         self.assertNotIn("ingest", self.calls)
         self.assertEqual(self.hashes.read_bytes(), b"")
 
-    def test_require_llm_key_runs_before_lock_and_aborts_with_2(self):
+    def test_llm_config_error_is_rc3_before_taking_the_lock(self):
+        """設定錯誤不會自己好：rc 3（不在 SuccessExitStatus，走 OnFailure 告警），而且要在撞鎖（75）之前說出來。"""
         self.require.stop()
         self.require = mock.patch.object(pu, "require_llm_key", side_effect=SystemExit(2))
         self.require.start()
-        fd = os.open(self.claude_lock, os.O_RDWR | os.O_CREAT, 0o644)  # 鎖也被佔：仍要先說缺金鑰
+        fd = os.open(self.claude_lock, os.O_RDWR | os.O_CREAT, 0o644)  # 鎖也被佔：仍要先說設定錯誤
         self.addCleanup(os.close, fd)
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with self.assertRaises(SystemExit) as cm:
-            self.run_ingest()
-        self.assertEqual(cm.exception.code, 2)
+        err = _capture_stderr(lambda: self.assertEqual(self.run_ingest(), pu.RC_LLM_CONFIG))
+        self.assertIn("LLM 設定錯誤", err)
+        self.assertEqual(pu.RC_LLM_CONFIG, 3)
+        self.assertNotIn("ingest", self.calls)
         self.assertTrue(self.hashes.exists())
+
+    def test_real_preflight_config_errors_are_rc3(self):
+        """真的 require_llm_key：缺金鑰（環境檔不存在）、LLM_PROVIDER 拼錯、未知模型都是 rc 3。"""
+        from scripts import _llm_env as le
+
+        self.require.stop()
+        cases = (
+            ("缺金鑰", {"LLM_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": ""}, "deepseek-flash"),
+            ("provider 拼錯", {"LLM_PROVIDER": "deepseek-x"}, "deepseek-flash"),
+            ("未知模型", {"LLM_PROVIDER": "deepseek"}, "gpt-4o"),
+        )
+        for label, env, model in cases:
+            with self.subTest(case=label):
+                le._STATE.clear()
+                with mock.patch.dict(os.environ, {"LLM_ENV_FILE": str(self.dir / "missing-llm.env"), **env}), \
+                        mock.patch.object(pu, "TAG_MODEL", model), \
+                        mock.patch.object(le, "_warn_if_not_deploy_root"):
+                    err = _capture_stderr(lambda: self.assertEqual(self.run_ingest(), 3))
+                self.assertIn("[llm-env]", err)
+                self.assertNotIn("ingest", self.calls)
+        le._STATE.clear()
+        self.require.start()
+
+    def test_breaker_tripping_during_preflight_is_still_a_deferral(self):
+        self.require.stop()
+        self.require = mock.patch.object(pu, "require_llm_key", side_effect=SystemExit(2))
+        self.require.start()
+        self.breaker.stop()
+        answers = iter([None, "reason=剛跳脫"])
+        self.breaker = mock.patch.object(pu, "breaker_active", side_effect=lambda: next(answers))
+        self.breaker.start()
+        self.assertEqual(self.run_ingest(), 0)
+        self.assertEqual(self.calls, ["recover", "defer"])
 
     def test_round_lock_busy_is_rc0_and_does_nothing(self):
         self.hashes.write_text("正在跑的那一輪的 hashes")
@@ -490,7 +525,8 @@ class IngestGateTests(_Tmp):
         with mock.patch.object(uw, "recover_stale", down):
             self.assertEqual(self.run_ingest(), 2)
 
-    def test_llm_environment_error_is_rc2_with_committed_hashes(self):
+    def test_llm_environment_error_is_rc3_with_committed_hashes(self):
+        """途中的 401／402／400 升級：不會自己好，rc 3 告警；已 commit 的那幾篇照樣交給下游。"""
         from scripts._claude_cli import LlmEnvironmentError
 
         async def broken(ctx, *, limit, hashes):
@@ -498,8 +534,8 @@ class IngestGateTests(_Tmp):
             raise LlmEnvironmentError("API[auth] 401")
 
         with mock.patch.object(pu, "ingest_round", broken):
-            self.assertEqual(self.run_ingest(), 2)
-        self.assertEqual(self.hashes.read_text(), HASH, "已 commit 的那幾篇照樣交給下游")
+            _capture_stderr(lambda: self.assertEqual(self.run_ingest(), 3))
+        self.assertEqual(self.hashes.read_text(), HASH)
 
     def test_unexpected_error_propagates_as_failure(self):
         async def bug(ctx, *, limit, hashes):
@@ -508,6 +544,42 @@ class IngestGateTests(_Tmp):
         with mock.patch.object(pu, "ingest_round", bug):
             with self.assertRaises(KeyError):
                 self.run_ingest()
+
+
+@unittest.skipUnless(shutil.which("flock") and shutil.which("ionice"), "需要 util-linux 的 flock、ionice")
+class ShellExitCodeTests(_Tmp):
+    """殼的收場退出碼：以假的 uv（`UV=`）讓各段回指定的退出碼，不跑任何 Python、不連 DB。"""
+
+    def run_shell(self, scan=0, ingest=0, cleanup=0) -> subprocess.CompletedProcess:
+        stub = self.dir / "uv"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            'case "$*" in\n'
+            f'  *"process_uploads.py scan"*) exit {scan} ;;\n'
+            f'  *"process_uploads.py ingest"*) exit {ingest} ;;\n'
+            f'  *"process_uploads.py cleanup"*) exit {cleanup} ;;\n'
+            "esac\nexit 0\n"
+        )
+        stub.chmod(0o755)
+        env = {**os.environ, "UV": str(stub), "UPLOAD_WORKER_LOCK_FILE": str(self.dir / "round.lock")}
+        return subprocess.run(["bash", str(REPO_ROOT / "scripts" / "process_uploads.sh")], env=env,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_final_exit_code_priority(self):
+        cases = [
+            ((0, 0, 0), 0),
+            ((0, 75, 0), 75),   # 撞 claude 鎖：unit 列為成功
+            ((0, 2, 0), 2),     # DB 不跑：unit 列為成功
+            ((0, 3, 0), 3),     # LLM 設定錯誤：告警
+            ((0, 3, 2), 3),     # 設定錯誤優先於 DB 不跑
+            ((1, 3, 0), 1),     # 自己壞了最優先
+            ((0, 0, 1), 1),
+            ((2, 0, 0), 2),     # 掃描段 DB 不可用：整輪直接結束
+        ]
+        for (scan, ingest, cleanup), expected in cases:
+            with self.subTest(scan=scan, ingest=ingest, cleanup=cleanup):
+                out = self.run_shell(scan, ingest, cleanup)
+                self.assertEqual(out.returncode, expected, out.stdout + out.stderr)
 
 
 class SubcommandLockTests(_Tmp):

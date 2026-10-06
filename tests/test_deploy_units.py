@@ -207,9 +207,12 @@ class UploadUnitTests(unittest.TestCase):
         self.assertIn("EMBED_TORCH_THREADS=4", _directives(self.SERVICE, "Environment"))
 
     def test_failure_and_success_exit_codes(self) -> None:
-        """rc=1 告警；rc=2（環境型不跑）與 rc=75（撞 claude 鎖）不告警——timer 每 5 分鐘、告警器沒有去重。"""
+        """rc=1 與 rc=3（LLM 設定錯誤，不會自己好）告警；rc=2（DB 不跑）與 rc=75（撞 claude 鎖）不告警——
+        timer 每 5 分鐘、告警器沒有去重。"""
         self.assertEqual(_directives(self.SERVICE, "OnFailure"), ["report-mark-alert@%n.service"])
-        self.assertEqual(sorted(" ".join(_directives(self.SERVICE, "SuccessExitStatus")).split()), ["2", "75"])
+        success = sorted(" ".join(_directives(self.SERVICE, "SuccessExitStatus")).split())
+        self.assertEqual(success, ["2", "75"])
+        self.assertNotIn("3", success, "LLM 設定錯誤必須告警")
         self.assertEqual(_directives(self.SERVICE, "Type"), ["oneshot"])
 
     def test_runs_the_shell_and_loads_alert_secret(self) -> None:
@@ -222,6 +225,10 @@ class UploadUnitTests(unittest.TestCase):
         sh = (SYSTEMD_DIR.parents[1] / "scripts" / "process_uploads.sh").read_text(encoding="utf-8")
         self.assertRegex(sh, r"(?m)^LOCK_BUSY_RC=75$")
         self.assertRegex(sh, r"(?m)^ENV_ABORT_RC=2$")
+        self.assertRegex(sh, r"(?m)^LLM_CONFIG_RC=3$")
+        py = (SYSTEMD_DIR.parents[1] / "scripts" / "process_uploads.py").read_text(encoding="utf-8")
+        self.assertRegex(py, r"(?m)^RC_ENV = 2\b")
+        self.assertRegex(py, r"(?m)^RC_LLM_CONFIG = 3\b")
 
 
 if __name__ == "__main__":

@@ -540,10 +540,10 @@ class WorkerDbTest(unittest.TestCase):
             self.assertEqual((r["state"], r["failure_kind"]), ("clean", "llm_breaker"))
         self.assert_never_visible()
 
-    def test_llm_environment_error_returns_to_clean_rc2(self):
+    def test_llm_environment_error_returns_to_clean_rc3(self):
         uid, _ = self.add(state="clean")
         with mock.patch("scripts._ingest_core._tag_via_cli", side_effect=LlmEnvironmentError("API[auth] 401")):
-            self.assertEqual(self.ingest(), 2)
+            self.assertEqual(self.ingest(), 3)
         r = self.row(uid)
         self.assertEqual((r["state"], r["failure_kind"]), ("clean", None))
         self.assertIn("401", r["failure_detail"])

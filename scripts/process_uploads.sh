@@ -12,10 +12,11 @@
 # round_lock）。所以 Python 那邊看到的 scanning／processing 一定是上一輪被殺的殘留。
 # 下游三段也會繼承 fd 9（同一把鎖）：殼被殺而它們還在跑時，鎖會留到它們結束——正是要的。
 #
-# 退出碼（unit 的 SuccessExitStatus 見 deploy/systemd/report-mark-upload.service）：
+# 退出碼（unit 的 SuccessExitStatus 見 deploy/systemd/report-mark-upload.service；分界是「會不會自己好」）：
 #   0  做完了（含另一輪在跑、backfill 在跑只掃描、斷路器延後）
 #   1  有一段自己壞了（OnFailure 告警）
-#   2  環境型不跑：DB 連不上、LLM 設定或帳號問題（各有探針告警，這裡不重複）
+#   2  這輪不跑、會自己好：DB 連不上（web 探針告警，這裡不重複）
+#   3  LLM 設定或帳號錯誤、不會自己好：缺金鑰、環境檔讀不到、LLM_PROVIDER 拼錯、未知模型、401／402（OnFailure 告警）
 #   75 入庫段撞 claude 鎖（其他 LLM 批次在跑），乾淨檔留到下一輪
 # 下游三段是 best-effort：失敗不影響草稿可審（預覽會顯示「產生中」），只在 log 留補跑指令。
 set -uo pipefail
@@ -30,6 +31,7 @@ HASHES=data/.upload_last_hashes
 ROUND_TS=$(date +%Y%m%d_%H%M%S)
 LOCK_BUSY_RC=75
 ENV_ABORT_RC=2
+LLM_CONFIG_RC=3
 
 log() { echo "[$(date '+%F %T')] $*"; }
 
@@ -69,7 +71,8 @@ py scripts/process_uploads.py ingest --hashes-out "$HASHES" || INGEST_RC=$?
 case "$INGEST_RC" in
   0) ;;
   "$LOCK_BUSY_RC") log "入庫段未執行：claude 鎖被其他 LLM 批次佔用（rc=${LOCK_BUSY_RC}），乾淨檔留到下一輪" ;;
-  "$ENV_ABORT_RC") log "入庫段 rc=${ENV_ABORT_RC}（DB 不可用或 LLM 設定／帳號問題；原因見上方輸出）" ;;
+  "$ENV_ABORT_RC") log "入庫段 rc=${ENV_ABORT_RC}（DB 不可用），乾淨檔留到下一輪" ;;
+  "$LLM_CONFIG_RC") log "入庫段 rc=${LLM_CONFIG_RC}：LLM 設定或帳號錯誤（不會自己好，本輪以 rc=${LLM_CONFIG_RC} 收場、告警；原因見上方輸出）" ;;
   *) log "入庫段非零退出 rc=${INGEST_RC}" ;;
 esac
 
@@ -108,15 +111,18 @@ if [ "$CLEANUP_RC" -ne 0 ]; then
   log "清除段非零退出 rc=${CLEANUP_RC}"
 fi
 
-# 收場：自己壞了（任一段不是 0／2／75）優先，其次環境型不跑，再其次撞鎖。
+# 收場：自己壞了（任一段不是 0／2／3／75）優先，其次 LLM 設定錯誤（告警），再其次 DB 不跑，最後撞鎖。
 FINAL=0
 for rc in "$SCAN_RC" "$INGEST_RC" "$CLEANUP_RC"; do
-  if [ "$rc" -ne 0 ] && [ "$rc" -ne "$ENV_ABORT_RC" ] && [ "$rc" -ne "$LOCK_BUSY_RC" ]; then
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne "$ENV_ABORT_RC" ] && [ "$rc" -ne "$LLM_CONFIG_RC" ] \
+    && [ "$rc" -ne "$LOCK_BUSY_RC" ]; then
     FINAL=1
   fi
 done
 if [ "$FINAL" -eq 0 ]; then
-  if [ "$INGEST_RC" -eq "$ENV_ABORT_RC" ] || [ "$CLEANUP_RC" -eq "$ENV_ABORT_RC" ]; then
+  if [ "$INGEST_RC" -eq "$LLM_CONFIG_RC" ]; then
+    FINAL=$LLM_CONFIG_RC
+  elif [ "$INGEST_RC" -eq "$ENV_ABORT_RC" ] || [ "$CLEANUP_RC" -eq "$ENV_ABORT_RC" ]; then
     FINAL=$ENV_ABORT_RC
   elif [ "$INGEST_RC" -eq "$LOCK_BUSY_RC" ]; then
     FINAL=$LOCK_BUSY_RC

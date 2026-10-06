@@ -134,8 +134,8 @@ class _FakeReview:
             raise ur.UploadStateConflictError("不能退回", state=self.state)
         return _row(state="rejected", decision_reason=reason, decided_by="root", decided_at=WHEN, purge_after=WHEN)
 
-    async def unreject(self, session, upload_id, *, actor_id):
-        self.calls.append(("unreject", upload_id, actor_id))
+    async def unreject(self, session, upload_id, *, actor_id, max_in_flight):
+        self.calls.append(("unreject", upload_id, actor_id, max_in_flight))
         self._exists(upload_id)
         if self.state != uploads.STATE_REJECTED:
             raise ur.UploadStateConflictError("只有已退回的可以撤銷", state=self.state)
@@ -143,6 +143,8 @@ class _FakeReview:
             raise ur.RejectExpiredError("過期", state=self.state)
         if self.active_conflict:
             raise ur.ActiveUploadConflictError("另一筆進行中", state=self.state)
+        if self.in_flight + 1 > max_in_flight:  # 推導回 clean（處理中）
+            raise QuotaExceededError("in_flight", max_in_flight, self.in_flight)
         return _row(state="clean")
 
     async def retry(self, session, upload_id, *, actor_id, max_in_flight):
@@ -441,6 +443,26 @@ class AdminUploadReviewApiTests(unittest.TestCase):
         self.fake.in_grace = True
         self.fake.active_conflict = True
         self._assert_error(c.post(url), 409, "upload_active_conflict")
+
+    def test_unreject_over_in_flight_quota_is_429(self):
+        """與 retry 同一套：撤銷退回回到處理中會超過全站上限 → 429 upload_quota_exceeded，設定值由路由傳入。"""
+        c = self._login()
+        url = f"/api/admin/uploads/{UPLOAD_ID}/unreject"
+        self.fake.state = "rejected"
+        self._settings_patch.stop()
+        self._settings_patch = mock.patch.object(config, "_SETTINGS", dataclasses.replace(
+            config.get_settings(), upload_max_in_flight=4,
+        ))
+        self._settings_patch.start()
+        self.fake.in_flight = 4
+        self.tx.clear()
+        r = c.post(url)
+        self._assert_error(r, 429, "upload_quota_exceeded")
+        self.assertEqual((r.json()["quota"], r.json()["limit"], r.json()["used"]), ("in_flight", 4, 4))
+        self.assertEqual(self.tx, ["rollback"])
+        self.fake.in_flight = 3
+        self.assertEqual(c.post(url).status_code, 200)
+        self.assertEqual(self.fake.calls[-1][-1], 4, "路由要把 UPLOAD_MAX_IN_FLIGHT 傳給服務層")
 
     # ── retry ───────────────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@
 #
 # 名稱不在這裡的服務，代理一律拒絕。actions：status、logs（唯讀），restart、run（寫入類）。
 # 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile 的 run（立即執行一次，
-# 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared 維持唯讀——代理與 catalog 兩層都擋，
+# 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared、ClamAV 維持唯讀——代理與 catalog 兩層都擋，
 # 這裡寫了也載入不了。改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules（tests/test_ops_polkit.py 對帳）。
 # 刻意不列：report-mark-alert@（模板）、report-mark-backfill（過渡期，跑完就 disable）。
 # 刻意不給 run：audit-anchor（錨點檔只追加，手動多跑一次無害，但失敗會以「疑似竄改」告警；要的是
@@ -233,7 +233,7 @@ unit = "report-mark-container-health.service"
 timer = "report-mark-container-health.timer"
 tier = "important"
 actions = ["status", "logs"]
-description = "容器健康探針（PostgreSQL／nginx／cloudflared，每 2 分鐘）"
+description = "容器健康探針（PostgreSQL／nginx／cloudflared／ClamAV，每 2 分鐘）"
 
 [[services]]
 name = "container-incident"
@@ -312,6 +312,20 @@ tier = "supporting"
 actions = ["status", "logs"]
 depends_on = ["postgres"]
 description = "schema 與 alembic 版本 drift 每日檢查（05:20）"
+
+# ── 上傳掃描（v1.5 PR-3）────────────────────────────────────────────────────
+# 唯讀容器（deploy/clamav/docker-compose.yml 固定 container_name；make up-clamav）。容器探針同名同 tier
+# （scripts/check_container_health.sh 的 CONTAINER_HEALTH_TARGETS 預設值，tests/test_container_host_probes.py 對帳）。
+# 依賴圖：目前沒有下游——上傳 worker（PR-5）加進來時在它的 depends_on 寫 "clamav"。clamd 自己不依賴
+# 任何 catalog 節點（freshclam 連外更新病毒碼失敗時，由 worker 的 72 小時病毒碼年齡閘門 fail-closed）。
+
+[[services]]
+name = "clamav"
+kind = "container"
+container = "report-mark-clamav"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "ClamAV clamd（上傳掃描，127.0.0.1:3310；停了上傳只會留在隔離區）"
 
 # ── 外部依賴（依賴圖的節點；代理不查也不動它們）──────────────────────────────
 # 退出碼對照：scripts/check_web_health.sh（6＝R2、7＝DeepSeek 餘額低、8＝DeepSeek 不可用；優先序 8→5→6→7，

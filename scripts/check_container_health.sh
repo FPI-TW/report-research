@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 容器健康探針（P4 式）——Service Catalog 裡 kind=container 的 PostgreSQL、nginx、cloudflared 有沒有在跑。
+# 容器健康探針（P4 式）——Service Catalog 裡 kind=container 的 PostgreSQL、nginx、cloudflared、ClamAV
+# 有沒有在跑。
 #
 # 為什麼 web 探針與邊緣探針之外還要這一支：
 #   - web 探針打 /healthz（只探 DB）。DB 容器停掉時它回報 web 故障，訊息指不到「容器沒在跑」
@@ -17,7 +18,11 @@
 #               PostgreSQL、nginx、cloudflared 在 catalog 都是 critical：DB 停了問答與檢索全停；nginx 或
 #               隧道停了外網整站連不上（邊緣那組也會開事件，這一組指出是哪個容器）。
 #   important   連續 2 輪（約 2–4 分鐘）才回 9 → P5 開 WARNING
-#   supporting  連續 3 輪（約 4–6 分鐘）才回 9 → WARNING
+#   supporting  連續 3 輪（約 4–6 分鐘）才回 9 → WARNING。ClamAV（report-mark-clamav，上傳掃描的 clamd）在這一級：
+#               它停了或 unhealthy（clamd 在容器裡是背景行程，自己掛掉時容器仍 running、health 轉 unhealthy，
+#               restart 策略不會處理）只會讓上傳停在隔離區、不放行，不影響檢索與問答。
+#               **還沒 make up-clamav 的主機**會被判成 missing → 3 輪後 WARNING：暫不啟用時在
+#               /etc/default/report-mark-sync 設 CONTAINER_HEALTH_TARGETS（不含 clamav）覆寫下面的預設。
 #   判不出來    docker CLI 連不上 daemon（Docker Desktop 重啟中約 1–2 分鐘）連續 2 輪才回 4 → WARNING
 # 還在確認期（有項目失敗但次數未到）回 3：P5 那組設 INCIDENT_HOLD_EXIT_CODES=3，**既不開也不關**——
 # 不會因為一次抖動吵人，也不會在確認期把進行中的事件誤判成已恢復。
@@ -35,7 +40,7 @@ ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 . "$SCRIPT_DIR/_health_streak.sh"
 
 # 監控名單：`名稱=容器:tier`，空白分隔。預設值與 catalog 逐字一致（bash 不解析 TOML，由測試守住兩邊不漂移）。
-CONTAINER_HEALTH_TARGETS="${CONTAINER_HEALTH_TARGETS:-postgres=report-mark-postgres:critical nginx=deploy-nginx-1:critical cloudflared=deploy-cloudflared-1:critical}"
+CONTAINER_HEALTH_TARGETS="${CONTAINER_HEALTH_TARGETS:-postgres=report-mark-postgres:critical nginx=deploy-nginx-1:critical cloudflared=deploy-cloudflared-1:critical clamav=report-mark-clamav:supporting}"
 CONTAINER_HEALTH_RETRIES="${CONTAINER_HEALTH_RETRIES:-2}"
 CONTAINER_HEALTH_RETRY_WAIT="${CONTAINER_HEALTH_RETRY_WAIT:-15}"
 # docker CLI 可能卡住（Docker Desktop 重啟中）：每次呼叫都有上限
@@ -198,7 +203,7 @@ if [ "${#crit[@]}" -gt 0 ]; then
 fi
 if [ "${#other[@]}" -gt 0 ]; then
     emit degraded "$attempt" "$down" "$pending" "container_down${note}"
-    echo "check_container_health: 容器沒在跑：$down" >&2
+    echo "check_container_health: 容器沒在跑：$down（docker ps -a；ClamAV 見 docs/production_resilience.md「ClamAV（上傳掃描）」）" >&2
     exit "$EXIT_DEGRADED"
 fi
 if [ "${#pend[@]}" -gt 0 ]; then

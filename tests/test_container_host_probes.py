@@ -409,8 +409,12 @@ class ProbeContractTests(unittest.TestCase):
                 self.assertTrue((SYSTEMD_DIR / svc["unit"]).is_file())
                 self.assertTrue((SYSTEMD_DIR / svc["timer"]).is_file())
         names = [s["name"] for s in catalog["services"]]
-        self.assertEqual(names[-4:], ["container-health", "container-incident", "host-health", "host-incident"],
-                         "只在檔尾追加")
+        start = names.index("container-health")
+        # 當初在檔尾追加的那一段：之後的 lane（例如 P8 的 rollup-observations）再接在它後面
+        self.assertEqual(names[start:start + 4],
+                         ["container-health", "container-incident", "host-health", "host-incident"],
+                         "四項連續、依序（當初只在檔尾追加）")
+        self.assertGreater(start, names.index("load-observations"))
 
     def test_probe_units_accept_pending_and_fit_in_the_timer_interval(self):
         for kind, worst in (("container", 5 + 2 * 10 + 15), ("host", 10)):

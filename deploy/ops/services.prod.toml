@@ -242,3 +242,14 @@ timer = "report-mark-host-incident.timer"
 tier = "supporting"
 actions = ["status", "logs"]
 description = "主機事件偵測與通知（連續越線才開事件，每 2 分鐘）"
+
+# ── 監控觀測的保留與聚合（P8）────────────────────────────────────────────────
+
+[[services]]
+name = "rollup-observations"
+kind = "systemd"
+unit = "report-mark-rollup-observations.service"
+timer = "report-mark-rollup-observations.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "監控觀測聚合與 90 天保留（每小時）"

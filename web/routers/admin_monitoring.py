@@ -5,17 +5,22 @@
 告警的真相來源**——告警只有 P5 在發（不經 web、不經 DB）；這裡最多晚幾分鐘，DB 掛掉期間的資料在恢復後補進來，
 spool 寫入失敗的那一筆則會缺。即時狀態看 `/api/admin/ops/*`。
 
-上限（`app/services/ops_monitoring.py` 的常數）：觀測一次最多 5000 筆、時間範圍最多 7 天（預設最近 1 小時）；
+上限（`app/services/ops_monitoring.py` 的常數）：觀測一次最多 5000 筆、時間範圍最多 90 天（＝保留期，預設最近 1 小時）；
 批次一頁最多 200 筆、時間範圍最多 90 天（預設最近 7 天）；事件一頁最多 200 筆、時間範圍最多 366 天（預設最近
 30 天）、詳情最多 1000 則轉換。超過回 400 `invalid_params`（筆數超過是 422）。
 沒有時區的時間一律當 UTC。
+
+觀測的粒度依 `since` 距今多久自動選（`app/services/ops_rollup.py` 的 `pick_resolution`，回應的 `resolution`
+標示實際用的）：24 小時內 `raw`（逐筆）、7 天內 `5m`、更早 `1h`——與保留期的分段一致（revision 0007），
+選的是資料保證還在的最細粒度。聚合的桶：`observed_at` 是桶起點、`value` 是平均、`state` 是最後的狀態，另附
+`sample_count`、`value_min`／`value_max`／`value_last`、`first_state`、`state_changes`。
 
 SQL 在 `app/services/ops_monitoring.py`，經 `deps.ops_monitoring` 呼叫（測試的替換點）。
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -33,6 +38,7 @@ from app.services.ops_monitoring import (
     OBSERVATION_MAX_WINDOW,
     resolve_window,
 )
+from app.services.ops_rollup import pick_resolution
 from web import authz, deps
 from web.errors import AppError
 
@@ -44,6 +50,8 @@ _OPS_READ = Depends(authz.require_scope("ops.read"))
 JobState = Literal["running", "finished", "lost"]
 ExecMainCode = Literal["exited", "killed", "dumped"]
 Scope = Literal["host", "container", "service"]
+# 與 app/services/ops_rollup.py 的 RESOLUTIONS 一致。
+Resolution = Literal["raw", "5m", "1h"]
 # 與 revision 0006 的 CHECK 逐字一致；前端 zod 型別由 gen_admin_client.py 從這裡產生。
 IncidentKind = Literal["service", "monitor_blind"]
 IncidentStatus = Literal["firing", "resolved", "lost"]
@@ -91,6 +99,13 @@ class ObservationItem(BaseModel):
     value: float | None = None
     state: str | None = None
     detail: dict[str, Any] | None = None
+    # 以下只在聚合的桶（resolution 為 5m／1h）出現；原始觀測一律 null。
+    sample_count: int | None = None
+    value_min: float | None = None
+    value_max: float | None = None
+    value_last: float | None = None
+    first_state: str | None = None
+    state_changes: int | None = None
 
 
 class ObservationListResponse(BaseModel):
@@ -98,6 +113,7 @@ class ObservationListResponse(BaseModel):
     until: str
     limit: int
     truncated: bool
+    resolution: Resolution
     items: list[ObservationItem]
 
 
@@ -158,8 +174,8 @@ def _iso(v) -> str | None:
 
 
 def _window(since: datetime | None, until: datetime | None, default: timedelta,
-            maximum: timedelta) -> tuple[datetime, datetime]:
-    since, until = resolve_window(since, until, default)
+            maximum: timedelta, *, now: datetime | None = None) -> tuple[datetime, datetime]:
+    since, until = resolve_window(since, until, default, now=now)
     if since > until:
         raise AppError(400, "invalid_params", "since 不可晚於 until")
     if until - since > maximum:
@@ -223,14 +239,18 @@ async def list_observations(
     until: datetime | None = Query(None),
     limit: int = Query(500, ge=1, le=OBSERVATION_MAX_LIMIT),
 ):
-    """觀測值（新→舊，最多 `limit` 筆，超過時 `truncated=true`）。沒給 `since` 時取 `until`（預設現在）前一小時。"""
-    since_used, until_used = _window(since, until, OBSERVATION_DEFAULT_WINDOW, OBSERVATION_MAX_WINDOW)
+    """觀測值（新→舊，最多 `limit` 筆，超過時 `truncated=true`）。沒給 `since` 時取 `until`（預設現在）前一小時。
+    粒度依 `since` 距今自動選（24 小時內 `raw`、7 天內 `5m`、更早 `1h`），回應的 `resolution` 標示實際用的。"""
+    now = datetime.now(timezone.utc)
+    since_used, until_used = _window(since, until, OBSERVATION_DEFAULT_WINDOW, OBSERVATION_MAX_WINDOW, now=now)
+    resolution = pick_resolution(since_used, now)
     async with deps.SessionFactory() as session:
         truncated, rows = await deps.ops_monitoring.list_observations(
             session, since=since_used, until=until_used, scope=scope, subject=subject, metric=metric, limit=limit,
+            resolution=resolution,
         )
     return ObservationListResponse(
-        since=_iso(since_used), until=_iso(until_used), limit=limit, truncated=truncated,
+        since=_iso(since_used), until=_iso(until_used), limit=limit, truncated=truncated, resolution=resolution,
         items=[ObservationItem(**{**r, "observed_at": _iso(r["observed_at"])}) for r in rows],
     )
 

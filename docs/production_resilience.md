@@ -1662,6 +1662,51 @@ rm -rf data/.incidents-container data/.incidents-host data/.health-streaks   # �
 停掉探針 timer 而不停 P5 實例，P5 會照設計回報 MONITOR_BLIND——要停就兩個一起停。事件投影本身沒有開關：
 不想要 spool 時把 P5 unit 的 `INCIDENT_SPOOL_DIR` 設成不可寫的路徑（例如 `/dev/null`），告警不受影響。
 
+## 監控觀測的保留與聚合（report-mark-rollup-observations）
+
+監控歷史保留 90 天、越舊越粗（revision 0007；理由在該 revision 的註解）：0–24 小時是原始觀測
+`research.service_observation`、24 小時–7 天是 5 分鐘桶 `service_observation_5m`、7–90 天是 1 小時桶
+`service_observation_1h`，90 天以前連同 `job_execution` 刪除。`report-mark-rollup-observations.timer` 每小時 :20
+跑 `scripts/rollup_observations.py`（SQL 在 `app/services/ops_rollup.py`）：
+
+- 每一片（1 小時）以**同一句 SQL** 先刪來源、再把被刪的列聚合後 upsert 進較粗的表，寫入失敗整句回滾、來源原封不動，
+  寫入後再核對筆數，不符就 rollback 並 rc=1。重跑同一區間是 no-op（冪等）；遲到的舊觀測合併進既有的桶。
+- 每片、每批保留期刪除（每批最多 5000 列）各自一個交易並放寬 statement_timeout（`SET LOCAL`），不會長時間鎖表。
+- PostgreSQL advisory lock 防止兩份同時跑（rc=75＝另一份在跑）；DB 不可用 rc=2。刻意不接 OnFailure 告警（理由同
+  load-observations）。
+- **incident／incident_event 不在範圍內**（不可重建的事故歷史，列入備份）。
+- 管理頁 `/api/admin/observations` 的範圍上限放寬到 90 天，依 `since` 自動選粒度（24 小時內逐筆、7 天內 5 分鐘、
+  更早 1 小時），回應的 `resolution` 標示實際用的。聚合表與原始表一樣不備份。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0007（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) 先看第一輪要處理多少（唯讀）
+uv run python scripts/rollup_observations.py --dry-run
+# 3) 批次
+sudo install -m 0644 deploy/systemd/report-mark-rollup-observations.service deploy/systemd/report-mark-rollup-observations.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-rollup-observations.timer
+# 4) web 要重啟才會回 resolution、接受 90 天範圍
+sudo systemctl restart report-mark-web.service
+# 5) catalog 多了 rollup-observations 一項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+```
+
+驗收：`sudo systemctl start report-mark-rollup-observations.service` 後 `journalctl -u report-mark-rollup-observations -n 3`
+看得到「完成 raw→5m slices=…」；`scripts/verify_oneshot_ran.sh` 確認跑過。原始觀測若已累積超過 24 小時，之後
+`SELECT min(observed_at) FROM research.service_observation` 應在 25 小時內。積壓很大（`--dry-run` 顯示數百片以上）時
+第一輪只搬 500 片、輸出「尚有積壓」，之後每小時繼續。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-rollup-observations.timer   # 原始觀測從此不再聚合、也不再刪除
+```
+
+停用後原始表每天約增加 29 萬列；聚合表裡已有的資料不受影響，查詢端照常聯集。
+
 ## 維運代理（report-mark-ops-agent）
 
 管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經

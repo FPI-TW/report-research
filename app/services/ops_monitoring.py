@@ -37,6 +37,7 @@ from typing import Any, Iterable
 from sqlalchemy import text
 from sqlalchemy.exc import DataError, IntegrityError
 
+from app.services import ops_rollup
 from ops_agent.backends import clean_line
 
 SPOOL_VERSION = 1
@@ -390,9 +391,10 @@ async def import_records(session, *, observations: list[dict], jobs: list[dict],
 # ── 管理後台的唯讀查詢（/api/admin/jobs、/api/admin/observations）──────────────
 #
 # 時間範圍與筆數的上限由路由層驗證（超過回 400／422）；這裡只負責 SQL。沒有時區的時間一律當 UTC。
+# 觀測的時間範圍上限＝保留期（90 天，revision 0007）；超過 24 小時的查詢由 `ops_rollup` 回聚合後的桶。
 
 OBSERVATION_DEFAULT_WINDOW = timedelta(hours=1)
-OBSERVATION_MAX_WINDOW = timedelta(days=7)
+OBSERVATION_MAX_WINDOW = timedelta(days=90)
 OBSERVATION_MAX_LIMIT = 5000
 JOB_DEFAULT_WINDOW = timedelta(days=7)
 JOB_MAX_WINDOW = timedelta(days=90)
@@ -437,8 +439,15 @@ async def list_jobs(session, *, since: datetime, until: datetime, service: str |
 
 async def list_observations(session, *, since: datetime, until: datetime, scope: str | None = None,
                             subject: str | None = None, metric: str | None = None,
-                            limit: int = 500) -> tuple[bool, list[dict]]:
-    """觀測值，新→舊、最多 `limit` 筆（多取一筆判斷 truncated）。時間範圍看 observed_at（[since, until]）。"""
+                            limit: int = 500, resolution: str = "raw") -> tuple[bool, list[dict]]:
+    """觀測值，新→舊、最多 `limit` 筆（多取一筆判斷 truncated）。時間範圍看 observed_at（[since, until]）。
+
+    `resolution` 是 `5m`／`1h` 時改回聚合後的桶（`ops_rollup.list_aggregated`，粒度由路由層以
+    `ops_rollup.pick_resolution` 依查詢區間決定）。
+    """
+    if resolution != "raw":
+        return await ops_rollup.list_aggregated(session, resolution=resolution, since=since, until=until,
+                                                scope=scope, subject=subject, metric=metric, limit=limit)
     where = ["o.observed_at >= :since", "o.observed_at <= :until"]
     params: dict[str, Any] = {"since": since, "until": until, "limit": limit + 1}
     for col, val in (("scope", scope), ("subject", subject), ("metric", metric)):

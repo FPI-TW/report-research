@@ -41,7 +41,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 RESULT_DB_AUDIT = "db_audit"
 RESULT_R2_RECONCILE = "r2_reconcile"
-RESULT_NAMES = (RESULT_DB_AUDIT, RESULT_R2_RECONCILE)
+# 檢索回歸檢查（scripts/retrieval_regression.py）借用同一套結果檔；判讀在 app/services/retrieval_regression.py，
+# 不進本模組的 snapshot（它有自己的端點 GET /api/admin/retrieval-regression）。
+RESULT_RETRIEVAL_REGRESSION = "retrieval_regression"
+RESULT_NAMES = (RESULT_DB_AUDIT, RESULT_R2_RECONCILE, RESULT_RETRIEVAL_REGRESSION)
 SCHEMA_VERSION = 1
 
 # 結果檔大小上限：正常只有幾 KB（對帳的問題清單最多 MAX_RECONCILE_ISSUES 筆）。超過＝檔案被動過，不讀。
@@ -50,8 +53,8 @@ MAX_RESULT_BYTES = 256 * 1024
 MAX_RECONCILE_ISSUES = 50
 
 # 結果多舊算「過期」：排程週期＋餘裕。過期只讓狀態燈變黃（warn），內容照樣顯示。
-# 稽核每日一次 → 48 小時；對帳每週一次 → 9 天。
-STALE_AFTER_HOURS = {RESULT_DB_AUDIT: 48.0, RESULT_R2_RECONCILE: 9 * 24.0}
+# 稽核每日一次 → 48 小時；對帳每週一次 → 9 天；檢索回歸每日一次 → 48 小時（以最後一次「真的比對過」起算）。
+STALE_AFTER_HOURS = {RESULT_DB_AUDIT: 48.0, RESULT_R2_RECONCILE: 9 * 24.0, RESULT_RETRIEVAL_REGRESSION: 48.0}
 
 STATUS_OK = "ok"
 STATUS_WARN = "warn"

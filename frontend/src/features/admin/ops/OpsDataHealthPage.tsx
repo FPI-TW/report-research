@@ -4,6 +4,7 @@ import type {
 } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
 import { OpsQueryError } from './OpsShared'
+import OpsRetrievalRegressionCard from './OpsRetrievalRegressionCard'
 import { useDataHealth } from './useOps'
 import adminStyles from '../Admin.module.css'
 import styles from './Ops.module.css'
@@ -216,6 +217,7 @@ export default function OpsDataHealthPage() {
       <FreshnessCard s={d.freshness} />
       <AuditCard s={d.db_audit} />
       <ReconcileCard s={d.r2_reconcile} />
+      <OpsRetrievalRegressionCard />
     </>
   )
 }

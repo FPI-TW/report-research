@@ -61,3 +61,6 @@
 .journal { margin-top: 8px; font-size: 12.5px; }
 .journal > summary { cursor: pointer; color: var(--tf-text-2); }
 .journal .logBox { max-height: 40vh; }
+/* P7 寫入類操作：按鈕列與頁內確認列。 */
+.opsActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.opsConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

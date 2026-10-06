@@ -248,6 +248,8 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 | `report-mark-freshness.timer` | 08:30 | `make freshness`，rc 0／1／2／3（新鮮／資產停更／DB 查不到／管線停跑） |
 | `report-mark-audit.timer` | 08:45 | `make db-audit`，唯讀，warn 也算失敗 |
 | `report-mark-audit-anchor.timer` | 04:15 | `scripts/audit_anchor.py`：驗稽核雜湊鏈、比對先前所有錨點、把鏈頭追加到 `$REPORT_MARK_BACKUP_DIR/audit-anchors.jsonl`（NAS）；鏈斷或與錨點不符 rc=1 告警 |
+| `report-mark-delete-accounts.timer` | 每小時 | `scripts/execute_deletions.py`：執行到期（提出後 24 小時）的帳號刪除排程；先把 `{user_id, executed_at}` 追加到 `$REPORT_MARK_BACKUP_DIR/account-tombstones.jsonl`（NAS，落點不存在 rc=2 不退回本機），再同一筆交易刪該使用者的 `qa_log`、相關 `review_state`、`user_scope`、`user_session` 並清掉 `app_user` 的可識別資料 |
+| `report-mark-replay-deletions.timer` | 04:30 | `scripts/replay_deletions.py`：依 tombstone 檢查已刪除帳號的資料沒有因還原舊備份而復活，有就重新刪除並 rc=1 告警；**每次還原後也要手動跑**（`docs/production_resilience.md`） |
 | `report-mark-health.timer`、`report-mark-incident.timer` | 每 2 分鐘 | P4 探針 `scripts/check_web_health.sh`（只回報事實）與 P5 `scripts/incident_handler.sh`（去重、30 分鐘提醒、RESOLVED），webhook opt-in |
 | `report-mark-linebot-health.timer`、`report-mark-linebot-incident.timer` | 每 2 分鐘 | LineBot 側同一套 |
 | `report-mark-edge-health.timer`、`report-mark-edge-incident.timer` | 每 2 分鐘 | 對外邊緣同一套：`scripts/check_edge_health.sh` 打對外網址的 `/healthz`（`EDGE_HEALTH_URL`，在 `/etc/default/report-mark-sync`），本機 origin 健康而對外失敗才算邊緣故障 |

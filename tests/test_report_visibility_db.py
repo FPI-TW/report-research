@@ -482,5 +482,48 @@ class ReportVisibilityDbTests(unittest.TestCase):
                 self.assertIn(constraint, out[key])
         self.assertEqual(out["default_publication"], "published")
 
+    def test_db_audit_flags_draft_mismatch_both_ways(self):
+        """`make db-audit` 的 upload_draft_mismatch：上傳草稿與 visibility 草稿若且唯若。
+
+        以差值斷言（先數一次、塞列後再數），不假設庫裡沒有別的列。"""
+        import sys
+        from pathlib import Path
+
+        scripts_dir = str(Path(__file__).resolve().parents[1] / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import db_audit  # 與 tests/test_db_audit.py 相同的匯入方式
+        check = next(c for c in db_audit.CHECKS if c.key == "upload_draft_mismatch")
+        h_ok, h_leak = _hashes("aud-")
+        h_stuck = _hashes("aud2-")[0]
+
+        async def fn(session):
+            async def count():
+                return (await session.execute(text(check.sql))).scalar_one()
+
+            base = await count()
+            draft_vis = text(
+                "INSERT INTO research.report_visibility (file_hash, hidden, publication) VALUES (:h, false, 'draft')")
+            # 一致：兩邊都是草稿。
+            await session.execute(_INSERT_UPLOAD, {"h": h_ok, "name": "ok.pdf", "state": "draft",
+                                                   "reason": None, "sig": None})
+            await session.execute(draft_vis, {"h": h_ok})
+            consistent = await count()
+            # 洩漏：上傳說草稿、visibility 沒有草稿列。
+            await session.execute(_INSERT_UPLOAD, {"h": h_leak, "name": "leak.pdf", "state": "draft",
+                                                   "reason": None, "sig": None})
+            leak = await count()
+            # 卡住：visibility 是草稿、上傳已經不是草稿（例如發布只改了一邊）。
+            await session.execute(_INSERT_UPLOAD, {"h": h_stuck, "name": "stuck.pdf", "state": "published",
+                                                   "reason": None, "sig": None})
+            await session.execute(draft_vis, {"h": h_stuck})
+            stuck = await count()
+            return base, consistent, leak, stuck
+
+        base, consistent, leak, stuck = self._run(fn)
+        self.assertEqual(consistent - base, 0)
+        self.assertEqual(leak - base, 1)
+        self.assertEqual(stuck - base, 2)
+
 if __name__ == "__main__":
     unittest.main()

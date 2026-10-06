@@ -1082,9 +1082,9 @@ tail -20 data/unit_failures.log                                     # 停更時�
 
 理由是本 repo 的完整性保證幾乎全在「寫入端很小心」，而不在 DB 的約束裡：`qa_log.conversation_id` 與 `report_brief.report_ids` 刻意無 FK、`embedding` 可 NULL、`report_signal.market` 與 `research_report.market` 是兩份各自寫入的副本。這些設計都有理由，代價是壞掉的方式全部是靜默的——孤兒列沒有任何讀取路徑會碰到、重複 `chunk_index` 只讓閱讀頁跳到錯的位置、`market` 不一致仍會算出看起來合理的共識數字。
 
-### 八條檢查
+### 九條檢查
 
-`scripts/db_audit.py` 的 `CHECKS` 有 **7 條 SQL 斷言**（各回一個違反列數，0＝通過），外加 1 條走 Python 判準的取樣比對（深度研報移除時拿掉了 `orphan_report_doc`／`orphan_report_run`／`orphan_report_rendition` 三條）：
+`scripts/db_audit.py` 的 `CHECKS` 有 **8 條 SQL 斷言**（各回一個違反列數，0＝通過），外加 1 條走 Python 判準的取樣比對（深度研報移除時拿掉了 `orphan_report_doc`／`orphan_report_run`／`orphan_report_rendition` 三條）：
 
 | 級別 | 檢查 | 為什麼要 |
 |---|---|---|
@@ -1093,6 +1093,7 @@ tail -20 data/unit_failures.log                                     # 停更時�
 | error | `duplicate_chunk_index` | 閱讀頁錨定跳錯位置，看起來只像「引文對不上」 |
 | error | `signal_market_mismatch` | 雷達把訊號歸到錯的市場，數字仍然合理 |
 | error | `is_research_null` | 未判定的研報會被 ingest 閘門與各批次靜默略過 |
+| error | `upload_draft_mismatch` | 上傳的草稿狀態（`report_upload.state`）與可見性（`report_visibility.publication`）不一致：未審核的研報已經對所有人可見，或研報卡在不可見卻沒有可發布的上傳紀錄 |
 | warn | `chunkless_report` | 有全文卻沒有任何 chunk＝檢索不到 |
 | warn | `takeaway_sha_disagreement` | 同一報告的摘錄存了不同的 `text_sha256` |
 | （取樣） | `norm_drift` | `content_norm` 是 GENERATED，驗「庫裡實際存的值」與 `norm_for_match()` 是否等價 |

@@ -569,9 +569,10 @@ sudo systemctl daemon-reload
 | 落點 | 讀者 | 權限 |
 |---|---|---|
 | repo 根 `.env` 的 `DEEPSEEK_API_KEY` | web（`web/server.py` 啟動時載入） | 同其他 web secret |
-| `/etc/default/report-mark-llm` | `report-mark-sync.service`（`EnvironmentFile=-`，排在共用檔之後）；手動跑的 LLM 批次與評測由 `scripts/_llm_env.py` 自己讀 | 0640 root:kashionz |
+| `/etc/default/report-mark-llm` | `report-mark-sync.service` 與 `report-mark-upload.service`（`EnvironmentFile=-`，排在共用檔之後）；手動跑的 LLM 批次與評測由 `scripts/_llm_env.py` 自己讀 | 0640 root:kashionz |
 
-**只有 sync unit 載入 llm 檔**，其他 unit 都不呼叫 LLM——環境變數裡有金鑰的行程越少越好。
+**只有白名單上的 unit 載入 llm 檔**（sync 與上傳 worker；後者是 2026-10-06 的設計決策 4），其他 unit 都不呼叫
+LLM——環境變數裡有金鑰的行程越少越好（`tests/test_deploy_units.py` 釘住白名單）。
 批次的模型旋鈕（`TAG_MODEL`、`SUMMARY_MODEL` 等）與 `LLM_PROVIDER` 也放這份檔，讓手動與排程
 用同一組設定；共用檔 `/etc/default/report-mark-sync` 不放任何 LLM 鍵（`tests/test_deploy_units.py`
 釘住）。web 讀的是 `.env` 的同名鍵，兩份可以不同。
@@ -1889,8 +1890,8 @@ P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維
   換成新值（並回到 active）就是新的一輪起來了。Web 重啟期間 BGE-M3 要重新載入，這段時間整站不可用。
 - **授權靠 polkit，不靠 sudo**：代理的 unit 是 `NoNewPrivileges=yes`、沒有 capability，setuid 的 sudo 在
   裡面無法提權。systemd 以 polkit 的 `org.freedesktop.systemd1.manage-units` 檢查呼叫端並附上 unit 與
-  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與五個 oneshot
-  的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
+  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與六個 oneshot
+  （sync、backup、freshness、audit、r2-reconcile、upload）的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
   `report-mark-dev-smoke.service` 的 start，`report-mark-ops-staging`（EC2）限定在 Web 的 restart 與
 freshness、audit 的 start；這三個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
   （JS 規則；本機 Ubuntu 24.04 是 124）。
@@ -2062,3 +2063,79 @@ make down-clamav   # 停掉並移除容器；病毒碼 volume 保留（刻意不
 停掉之後上傳只會停在隔離區、不放行，其他功能不受影響。長期停用時，在 `/etc/default/report-mark-sync` 設
 `CONTAINER_HEALTH_TARGETS`（不含 clamav）避免探針持續告警；要連病毒碼一起清掉：
 `docker volume rm report-mark-clamav_clamav-db`（下次啟動要重新下載約 300 MB）。
+
+## 上傳 worker（Admin v1.5）
+
+`report-mark-upload.service`＋`.timer`（`scripts/process_uploads.sh`）：每 5 分鐘一輪，掃毒（ClamAV）→ 掃描通過的
+上傳入庫成草稿 → 本輪新草稿跑摘要、標題、摘錄 → 清除過寬限期的退回件、過保留期的感染證據、隔離區孤兒檔。
+流程與狀態機見 `docs/WORKFLOW.md`「上傳 worker」。**現況：程式在 repo 裡，unit 沒有裝、timer 沒有 enable、
+`UPLOAD_ENABLED` 維持 0**；下面的安裝要另外取得同意，順序照 AGENTS.md「過渡中狀態」（devdb 演練 → staging →
+生產；staging 沒有 clamd，維持旗標關閉、不裝這支 unit）。
+
+互斥與記憶體：
+
+- 整輪鎖 `data/.upload_worker.lock`（flock，殼取、子命令驗證）：同時只有一輪；手動跑殼或子命令也取同一把。
+- 入庫段取 claude 鎖（`data/.claude_cli.lock`），與 sync、手動 LLM 批次互斥——主機上最多「web 一份＋一支批次一份」
+  BGE-M3。撞鎖 rc=75：乾淨檔留在 `clean`，掃描與清除照做。
+- `scripts/backfill_extraction.py` 正在跑（它也載 BGE-M3、不取 claude 鎖）時只掃描、不入庫。
+- unit：`MemoryMax=4G`、`Nice=19`、`IOSchedulingClass=idle`、`EMBED_TORCH_THREADS=4`。不可信 PDF 的檢查與試抽字
+  在子行程（`RLIMIT_AS`＝`UPLOAD_PREFLIGHT_MEMORY_MB`，預設 2048；逾時 300 秒；頁數上限 300）。已知風險：
+  入庫核心會在主行程再抽一次字，pdfplumber 抽 300 頁的密集文字約 1.7 GB，加上已載入的 BGE-M3 會逼近 4G——
+  撞到時 cgroup OOM 砍掉這一輪，殘留回收把它退回 `clean`，同一份檔被中止 3 次就轉 `failed`（不會無限重試）。
+
+退出碼與告警：0 做完了（含另一輪在跑、backfill 在跑、斷路器延後）、1 自己壞了（OnFailure → `report-mark-alert@`）、
+2 環境型不跑（DB 連不上、LLM 設定或帳號問題）、75 撞 claude 鎖；unit 把 2 與 75 列為成功（timer 每 5 分鐘、告警器
+沒有去重）。DB 由 web 探針、DeepSeek 由 `/healthz/llm`（探針 7／8）、clamd 由容器探針各自告警。偵測到感染時
+worker 自己留痕：稽核 `upload.infected`（actor NULL）、journal 一行 err 優先序（`journalctl -p err -u report-mark-upload`）、
+有設 `REPORT_MARK_ALERT_WEBHOOK` 另送 webhook（unit 載入 `/etc/report-mark/alert.env`，URL 經 stdin 給 curl）。
+
+### 安裝（人工；只在要啟用上傳時做，需 sudo）
+
+前提：生產庫已套到 revision 0008（`make schema-version`）、ClamAV 已照上一節安裝且 `make clamav-smoke` 通過、
+`/etc/default/report-mark-llm` 已安裝（見「DeepSeek 金鑰落點與輪替」；白名單是 sync 與這支）。
+
+```bash
+# 0) 記憶體：入庫時會多一份 BGE-M3（與 sync 互斥）。可用記憶體常態偏低時先不要開
+free -g
+# 1) 隔離區與乾淨檔目錄的旋鈕：web（repo 根 .env）與 worker（/etc/default/report-mark-sync）要一樣，或兩邊都留預設
+#    （UPLOAD_QUARANTINE_DIR、UPLOAD_CLEAN_DIR；兩者要在同一個檔案系統，搬正才是原子的 os.replace）
+# 2) unit（在部署 checkout 的 repo 根）
+sudo cp deploy/systemd/report-mark-upload.service deploy/systemd/report-mark-upload.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+# 3) 先手動跑一輪（旗標還關著：隔離區沒有東西，應該幾秒就結束、rc=0）。是否真的跑過看 invocation，不看 Result=success
+BASE=$(bash scripts/verify_oneshot_ran.sh baseline report-mark-upload.service)
+sudo systemctl start report-mark-upload.service
+bash scripts/verify_oneshot_ran.sh verify report-mark-upload.service "$BASE"
+journalctl -u report-mark-upload -n 50 --no-pager
+# 4) ops catalog 多了 upload（含 run）、polkit 多了它的 start：照「維運代理」的步驟 3、4 重新安裝 catalog 與規則，
+#    --check 後重啟 report-mark-ops-agent.service
+# 5) 開排程
+sudo systemctl enable --now report-mark-upload.timer
+# 6) 經同意後才開收檔：repo 根 .env 設 UPLOAD_ENABLED=1，重啟 web
+```
+
+驗收：上傳一份真的研報 → 5 分鐘內管理頁看到 `clean` → `draft`（標題、摘要、摘錄稍後補上）；
+`make db-audit` 的 `upload_draft_mismatch` 為 0；草稿在一般使用者的檢索、問答、閱讀頁都看不到，發布後才看得到。
+
+### 日常處置
+
+| 狀況 | 看得到什麼 | 處置 |
+|---|---|---|
+| 一直停在 `quarantined`，`scan_last_error` 是 `connection_refused`／`timeout`／`signatures_stale` | 管理頁掃描器橫幅；容器探針的 clamav 事件 | 見上一節「clamd 掛掉時」；修好後下一輪自動掃 |
+| 一直停在 `clean`，`failure_kind=llm_breaker` | journal「LLM 斷路器有效」 | DeepSeek 恢復、斷路器標記過期（30 分鐘）後自動處理；確認恢復可刪 `data/.llm_breaker` |
+| 一直停在 `clean`、沒有 failure_kind | journal「claude 鎖被其他 LLM 批次佔用」（rc=75）或「抽取回填正在跑」 | 等對方結束；下一輪自動處理 |
+| `failed`（`tag_failed`／`ingest_error`／`extract_timeout`） | 管理頁失敗頁籤 | 排除原因後在管理頁「重試」（受全站處理中上限） |
+| `infected` | 稽核 `upload.infected`、journal err、webhook | 檔案在 `<隔離區>/infected/<upload_id>.bin`（0400），web 沒有任何端點取得回；確認上傳者與來源。30 天後 worker 自動刪檔（`upload.evidence_purged`），DB 那一列永久保留 |
+| 下游沒跑完（摘要、標題、摘錄缺） | journal 印出 `data/upload_hashes_retained_<時間>.txt` 與補跑指令 | 照印出的指令以 `--hashes-file` 補跑（三段都冪等） |
+
+### 停用
+
+```bash
+# 1) 先停收檔：repo 根 .env 設 UPLOAD_ENABLED=0，重啟 web（之後不會有新檔進隔離區）
+# 2) 停排程（已在跑的那一輪會跑完）
+sudo systemctl disable --now report-mark-upload.timer
+```
+
+停掉之後：隔離區的檔案與 `report_upload` 都保留，已入庫的草稿維持不可見、仍可在管理頁發布或退回（退回後的清除要
+worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移除時另把 catalog 的 upload 與 polkit 的那一行拿掉
+重新安裝（「維運代理」步驟 3、4）。

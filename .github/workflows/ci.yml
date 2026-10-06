@@ -375,6 +375,12 @@ jobs:
       - name: 研報上傳審核
         run: uv run pytest -q tests/test_upload_review_db.py
 
+      # 研報上傳 worker：掃描、入庫、清除的狀態轉移全集；每一次 commit 當下從另一條連線確認草稿不可見、
+      # upload_draft_mismatch 不成立；清除守門（已發布過的研報不會被刪）。整組都會 commit，只在語料與上傳表
+      # 皆空的拋棄式庫上跑（非空即 skip、REQUIRE_DB=1 時紅）——這個 job 的庫正是。
+      - name: 研報上傳 worker
+        run: uv run pytest -q tests/test_upload_worker_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

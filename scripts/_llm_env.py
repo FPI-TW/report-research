@@ -3,9 +3,10 @@
 ## 為什麼需要這支
 
 DeepSeek 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640 root:kashionz），
-**只有** `report-mark-sync.service` 以 `EnvironmentFile=` 載入它——讓「環境變數裡有金鑰的
-行程」從十幾支 unit 縮到一支。手動跑批次（`make summaries`、`uv run python scripts/…`）不經過
-systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動與排程才會用同一組設定。
+**只有** `report-mark-sync.service` 與 `report-mark-upload.service`（上傳 worker）以 `EnvironmentFile=`
+載入它——讓「環境變數裡有金鑰的行程」從十幾支 unit 縮到兩支（白名單由 tests/test_deploy_units.py 釘住）。
+手動跑批次（`make summaries`、`uv run python scripts/…`）不經過 systemd，所以每個會呼叫 LLM 的入口要自己讀
+同一份檔，手動與排程才會用同一組設定。
 
 ## 兩個函式、兩個時點
 

@@ -523,6 +523,25 @@ async def scenario_last_admin_cannot_be_deleted(api) -> None:
     await api.request_deletion(b.id, actor_id=None)  # 一般管理員：還有 a，可以
 
 
+async def scenario_ops_action_audit(api) -> None:
+    """維運寫入類操作的稽核：成功與被拒各一列，detail 只有環境、服務、unit 與結果碼；未知操作直接拒絕。"""
+    admin = await api.create_user(_name("Ops"), PW, "admin", actor_id=None)
+    await api.record_ops_action(actor_id=admin.id, action="restart", service="web", environment="production",
+                                result="scheduled", target="report-mark-web.service", invocation_id="abc123")
+    await api.record_ops_action(actor_id=admin.id, action="run", service="sync", environment="production",
+                                result="already_running")
+    await _expect(ValueError, api.record_ops_action(actor_id=admin.id, action="stop", service="web",
+                                                    environment="production", result="x"))
+    _total, entries = await api.list_audit(limit=200)
+    mine = [e for e in entries if e.actor_user_id == admin.id and e.target_type == "ops_service"]
+    assert [(e.action, e.target_id, e.detail["result"]) for e in mine] == [
+        ("ops.run", "sync", "already_running"), ("ops.restart", "web", "scheduled")], mine
+    assert mine[1].detail == {"environment": "production", "service": "web", "target": "report-mark-web.service",
+                              "result": "scheduled", "previous_invocation_id": "abc123"}, mine[1].detail
+    assert mine[0].detail == {"environment": "production", "service": "sync", "target": None,
+                              "result": "already_running"}, mine[0].detail
+
+
 SCENARIOS = [
     scenario_login,
     scenario_duplicate_username_case_insensitive,
@@ -550,6 +569,7 @@ SCENARIOS = [
     scenario_deletion_protections,
     scenario_deletion_execute_purges,
     scenario_deletion_replay,
+    scenario_ops_action_audit,
 ]
 
 

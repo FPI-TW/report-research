@@ -92,7 +92,8 @@ ERROR_CODES = frozenset({
 
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 # 與 app/services/accounts.py 的帳號規則同一個字元集（文字、數字與 . _ @ -）；只用來寫 journal。
-_ACTOR = re.compile(r"[\w.@-]{1,64}")
+# web 端（`web/ops_client.py`）送之前也用它檢查，不合的就不送（不讓代理因此拒絕整個請求）。
+ACTOR_RE = re.compile(r"[\w.@-]{1,64}")
 _RELATIVE = re.compile(r"([1-9][0-9]{0,4})([smhd])")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
@@ -156,7 +157,7 @@ def parse_request(line: bytes) -> dict:
     if op != "logs" and params:
         raise ProtocolError("invalid_params", f"{op} 不收參數")
     actor = obj.get("actor")
-    if actor is not None and not (isinstance(actor, str) and _ACTOR.fullmatch(actor)):
+    if actor is not None and not (isinstance(actor, str) and ACTOR_RE.fullmatch(actor)):
         raise ProtocolError("bad_request", "actor 必須是 1–64 個文字、數字或 ._@-")
     return {"v": PROTOCOL_VERSION, "id": req_id, "env": env, "op": op, "service": service, "params": params,
             "actor": actor}

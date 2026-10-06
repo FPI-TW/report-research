@@ -357,6 +357,28 @@ async def _audit(session, *, actor_id: str | None, action: str, target_type: str
 # 給其他模組（待複核處理）在自己的交易裡寫稽核用；名稱公開，行為與 _audit 相同。
 record_audit = _audit
 
+# 維運寫入類操作（/api/admin/ops/services/{name}/restart|run）的稽核 action 名稱。
+OPS_AUDIT_ACTIONS: frozenset[str] = frozenset({"restart", "run"})
+
+
+async def record_ops_action(*, actor_id: str | None, action: str, service: str, environment: str, result: str,
+                            target: str | None = None, invocation_id: str | None = None) -> None:
+    """維運寫入類操作的稽核：成功與被拒都寫一列（自己的交易、立即 commit）。
+
+    操作發生在 systemd 那端，沒辦法和稽核放進同一筆交易；所以每一次嘗試都記下結果碼（`queued`／
+    `scheduled`＝已交給 systemd，其餘是拒絕或失敗的原因碼）。detail 只有環境、服務、unit 與結果，
+    不含代理的訊息全文（可能帶指令輸出），也沒有任何祕密。
+    """
+    if action not in OPS_AUDIT_ACTIONS:
+        raise ValueError(f"未知的維運操作：{action!r}")
+    detail = {"environment": environment, "service": service, "target": target, "result": result}
+    if invocation_id:
+        detail["previous_invocation_id"] = invocation_id
+    async with SessionFactory() as session:
+        await _audit(session, actor_id=actor_id, action=f"ops.{action}", target_type="ops_service",
+                     target_id=service, detail=detail)
+        await session.commit()
+
 
 # ───── 登入與 session ─────
 

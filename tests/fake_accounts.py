@@ -621,6 +621,16 @@ class FakeAccounts:
         existing = {e.id for e in self.audit}
         return {int(i): self._fake_hash(int(i)) for i in ids if int(i) in existing}
 
+    async def record_ops_action(self, *, actor_id, action, service, environment, result, target=None,
+                                invocation_id=None) -> None:
+        self._check()
+        if action not in accounts.OPS_AUDIT_ACTIONS:
+            raise ValueError(f"未知的維運操作：{action!r}")
+        detail = {"environment": environment, "service": service, "target": target, "result": result}
+        if invocation_id:
+            detail["previous_invocation_id"] = invocation_id
+        self._audit(actor_id, f"ops.{action}", service, detail, "ops_service")
+
     async def list_audit(self, limit: int = 50, offset: int = 0):
         self._check()
         return len(self.audit), self.audit[offset:offset + limit]

@@ -219,6 +219,14 @@ class AdminOpsApiTests(unittest.TestCase):
 
 
 class OpsSettingsTests(unittest.TestCase):
+    def test_action_literal_matches_agent_protocol(self):
+        from typing import get_args
+
+        from ops_agent.protocol import KNOWN_ACTIONS
+        from web.routers import admin_ops
+
+        self.assertEqual(get_args(admin_ops.Action), KNOWN_ACTIONS)
+
     def test_config_sockets_match_agent_protocol(self):
         from app import config
         from ops_agent.protocol import CANONICAL_SOCKETS

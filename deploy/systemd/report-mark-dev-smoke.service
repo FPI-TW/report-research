@@ -1,0 +1,24 @@
+[Unit]
+Description=廷豐智能研報 開發環境冒煙用 oneshot（只 sleep；驗維運代理的 run、409 already_running 與輪詢）
+# deploy/ops/services.dev.toml 的 dev-smoke：開發用維運代理可以 run 的唯一對象，什麼都不碰。
+# 跑起來約 20 秒，期間再按一次「立即執行」應回 409 already_running；跑完 InvocationID 換新。
+# 不宣告 OnFailure=、沒有 timer、不可 enable：只由開發用代理（polkit 授權 report-mark-ops-dev 的 start）
+# 或人手動 start。只裝在開發機，生產不裝。
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+ExecStart=/usr/bin/sleep 20
+TimeoutStartSec=120
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes

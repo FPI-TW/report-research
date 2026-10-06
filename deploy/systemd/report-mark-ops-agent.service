@@ -1,8 +1,10 @@
 [Unit]
-Description=廷豐智能研報 維運代理（唯讀：status、logs；Web 經 Unix socket 呼叫固定白名單）
+Description=廷豐智能研報 維運代理（status、logs；白名單 restart／run；Web 經 Unix socket 呼叫）
 # 為什麼不讓 web 自己跑 systemctl／journalctl／docker：web 對外服務，被攻破時能做的事要越少越好。
 # web 只能經 /run/report-mark-ops/agent.sock 送 catalog 允許的請求（ops_agent/protocol.py），
-# 沒有任意 shell、任意 unit、stop、timer enable/disable。restart／run-now 是之後的 P7。
+# 沒有任意 shell、任意 unit、stop、timer enable/disable。寫入類只有 Web 的 restart 與既有 oneshot 的
+# run（systemctl start --no-block），而且 systemd 那端由 polkit 再限定一次：這個使用者只能對
+# deploy/polkit/10-report-mark-ops.rules 列出的 unit 做 start／restart（不用 sudo：見那個檔的說明）。
 #
 # **刻意不宣告 OnFailure=report-mark-alert@%n.service**，理由同 report-mark-metrics：代理停掉不是生產事故
 # （服務照跑，只是管理頁的維運區塊回 503 ops_agent_unavailable），不該有能力在半夜吵醒人。
@@ -43,12 +45,19 @@ RestartSec=5
 # 收到 SIGTERM 後關 server、移除 socket，正常退出 0。
 TimeoutStopSec=15
 # 最小權限：不需要任何 capability、不寫任何檔案（RuntimeDirectory 例外）、只用 AF_UNIX
-# （systemd 的 D-Bus 與 docker.sock 都是檔案系統上的 Unix socket）。
+# （systemd 的 D-Bus 與 docker.sock 都是檔案系統上的 Unix socket）。NoNewPrivileges 與空的
+# CapabilityBoundingSet 不妨礙 restart／run：授權是 systemd 經 polkit 判斷，不靠 setuid。
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectSystem=strict
-ProtectHome=yes
+# 家目錄整個藏起來（空的 tmpfs），只唯讀綁進部署目錄的 data/：run 之前要試探 LLM 批次的 flock
+# （data/.claude_cli.lock）與 sync 的 PID 檔（data/.sync_new_reports.lock），路徑在 catalog 的
+# flock_files／pid_files，兩邊要一致（tests/test_ops_agent_units.py）。綁目錄而不是檔案：sync 的 PID 檔
+# 每輪刪掉重建，綁檔案會停在舊 inode。開頭的 - ：目錄不存在時照樣啟動，代理對 sync 的 run 回
+# lock_unavailable（無法確認就不執行），不影響其他功能。
+ProtectHome=tmpfs
+BindReadOnlyPaths=-/home/kashionz/projects/report-mark/data
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes

@@ -54,6 +54,16 @@ def err(req: dict, code: str, message: str = "拒絕", env: str | None = None) -
             "error": {"code": code, "message": message}}
 
 
+def action_result(req: dict, base: dict = STATUS) -> dict:
+    """代理對 restart／run 的成功回應（restart＝scheduled，run＝queued）。"""
+    public = {k: base[k] for k in ("name", "kind", "tier", "target", "timer", "actions", "description")}
+    restart = req.get("op") == "restart"
+    return {**public, "group": req.get("service"), "action": req.get("op"),
+            "state": "scheduled" if restart else "queued", "previous_invocation_id": "0f1e2d3c",
+            "previous_active_enter_at": "2026-10-05T09:13:16Z", "previous_exec_main_start_at": "2026-10-05T09:13:16Z",
+            "execute_after_ms": 1500 if restart else 0, "accepted_at": CHECKED_AT, "checked_at": CHECKED_AT}
+
+
 def default_handler(req: dict):
     op, name = req.get("op"), req.get("service")
     if op == "list":
@@ -63,6 +73,13 @@ def default_handler(req: dict):
         return err(req, "unknown_service", f"catalog 沒有服務 {name!r}")
     if op == "status":
         return ok(req, {**(STATUS if name == "web" else POSTGRES), "checked_at": CHECKED_AT})
+    if op in ("restart", "run"):
+        base = STATUS if name == "web" else POSTGRES
+        if op == "restart" and name != "web":
+            return err(req, "action_not_allowed", f"服務 {name} 永遠不允許 restart")
+        if op == "run":
+            return err(req, "action_not_allowed", f"服務 {name} 不允許 run")
+        return ok(req, action_result(req, base))
     if op == "logs":
         base = STATUS if name == "web" else POSTGRES
         public = {k: base[k] for k in ("name", "kind", "tier", "target")}

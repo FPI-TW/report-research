@@ -155,7 +155,7 @@ class CatalogValidationTests(unittest.TestCase):
 
     def test_unknown_action_rejected(self):
         raw = _raw(services=[{"name": "web", "kind": "systemd", "unit": "report-mark-web.service",
-                              "tier": "critical", "actions": ["status", "restart"]}])
+                              "tier": "critical", "actions": ["status", "stop"]}])
         with self.assertRaisesRegex(CatalogError, "不支援的 action"):
             parse_catalog(raw)
 
@@ -392,11 +392,19 @@ class AgentRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp["error"]["code"], "action_not_allowed")
         self.assertEqual(runner.calls, [])
 
-    async def test_unknown_or_write_ops_rejected(self):
+    async def test_unknown_ops_rejected(self):
         runner = FakeRunner()
-        for op in ("restart", "stop", "run-now", "enable", "exec", "shell"):
+        for op in ("stop", "run-now", "start", "enable", "disable", "exec", "shell", "kill"):
             resp = await self._call(Agent(_catalog(), runner), _req(op, "web"))
             self.assertEqual(resp["error"]["code"], "unknown_op", op)
+        self.assertEqual(runner.calls, [])
+
+    async def test_write_ops_need_the_catalog_action(self):
+        """這份 catalog 沒有任何寫入類 action：restart／run 一律 action_not_allowed，什麼都不執行。"""
+        runner = FakeRunner()
+        for op in ("restart", "run"):
+            resp = await self._call(Agent(_catalog(), runner), _req(op, "web"))
+            self.assertEqual(resp["error"]["code"], "action_not_allowed", op)
         self.assertEqual(runner.calls, [])
 
     async def test_environment_mismatch_rejected(self):

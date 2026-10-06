@@ -22,7 +22,7 @@ import uuid
 from contextlib import suppress
 
 from app.config import get_settings
-from ops_agent.protocol import PROTOCOL_VERSION, encode
+from ops_agent.protocol import ACTOR_RE, PROTOCOL_VERSION, encode
 
 # 代理那端的回應上限可設到 4 MiB（catalog 的 max_response_bytes 上限）；這裡多留一點給換行與誤差。
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024 + 4096
@@ -48,7 +48,9 @@ class OpsClient:
         self.environment = environment
         self.timeout = timeout
 
-    async def request(self, op: str, service: str | None = None, params: dict | None = None) -> dict:
+    async def request(self, op: str, service: str | None = None, params: dict | None = None, *,
+                      actor: str | None = None) -> dict:
+        """`actor`（web 的使用者名稱）只寫進代理的 journal；稽核以 web 端的 admin_audit_log 為準。"""
         if not self.environment or not self.socket_path:
             raise OpsAgentUnavailable("維運代理未設定（OPS_AGENT_ENVIRONMENT 不合法）")
         req_id = uuid.uuid4().hex[:16]
@@ -57,6 +59,8 @@ class OpsClient:
             req["service"] = service
         if params:
             req["params"] = params
+        if actor and ACTOR_RE.fullmatch(actor):
+            req["actor"] = actor
         try:
             async with asyncio.timeout(self.timeout):
                 reader, writer = await asyncio.open_unix_connection(self.socket_path, limit=MAX_RESPONSE_BYTES)

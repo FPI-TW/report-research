@@ -2,8 +2,16 @@
 # 部署：複製到 /opt/report-mark-ops/services.prod.toml（root 擁有、0644），步驟見 docs/production_resilience.md
 # 「維運代理」。改了這份要重新安裝並重啟 report-mark-ops-agent.service；先跑 --check 驗證。
 #
-# 名稱不在這裡的服務，代理一律拒絕。actions 本版只有 status、logs（P7 才加 restart、run-now）。
+# 名稱不在這裡的服務，代理一律拒絕。actions：status、logs（唯讀），restart、run（寫入類）。
+# 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile 的 run（立即執行一次，
+# 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared 維持唯讀——代理與 catalog 兩層都擋，
+# 這裡寫了也載入不了。改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules（tests/test_ops_polkit.py 對帳）。
 # 刻意不列：report-mark-alert@（模板）、report-mark-backfill（過渡期，跑完就 disable）。
+# 刻意不給 run：audit-anchor（錨點檔只追加，手動多跑一次無害，但失敗會以「疑似竄改」告警；要的是
+# --verify-only，而 run 不收參數）、health／incident 類探針（timer 每 2 分鐘就跑）、metrics（常駐）。
+#
+# 鎖檔路徑是這台主機的部署目錄（/home/kashionz/projects/report-mark）：代理的 unit 以 BindReadOnlyPaths
+# 唯讀綁進那個 data/ 目錄（deploy/systemd/report-mark-ops-agent.service），兩邊要一致（tests/test_ops_agent_units.py）。
 
 schema = 1
 environment = "production"
@@ -18,6 +26,7 @@ max_response_bytes = 262144
 max_log_lines = 1000
 max_log_age_hours = 168
 max_concurrent = 4
+restart_delay = 1.5
 systemctl = "/usr/bin/systemctl"
 journalctl = "/usr/bin/journalctl"
 docker = "/usr/bin/docker"
@@ -29,7 +38,8 @@ name = "web"
 kind = "systemd"
 unit = "report-mark-web.service"
 tier = "critical"
-actions = ["status", "logs"]
+actions = ["status", "logs", "restart"]
+group = "web"
 description = "Web（uvicorn :8097，BGE-M3 常駐）"
 
 [[services]]
@@ -65,7 +75,12 @@ kind = "systemd"
 unit = "report-mark-sync.service"
 timer = "report-mark-sync.timer"
 tier = "important"
-actions = ["status", "logs"]
+actions = ["status", "logs", "run"]
+# 會呼叫 LLM 的批次：除了 unit 狀態，還要試探 LLM 批次的 flock（手動跑的 make summaries 等不經 systemd）
+# 與 sync 自己的 PID 檔鎖（手動跑 sync_new_reports.sh 時）。
+group = "llm-batch"
+flock_files = ["/home/kashionz/projects/report-mark/data/.claude_cli.lock"]
+pid_files = ["/home/kashionz/projects/report-mark/data/.sync_new_reports.lock"]
 description = "NAS 增量同步匯入（每 3 小時）"
 
 [[services]]
@@ -74,7 +89,8 @@ kind = "systemd"
 unit = "report-mark-backup.service"
 timer = "report-mark-backup.timer"
 tier = "important"
-actions = ["status", "logs"]
+actions = ["status", "logs", "run"]
+group = "backup"
 description = "不可重建表備份 → NAS（03:30）"
 
 [[services]]
@@ -121,7 +137,8 @@ kind = "systemd"
 unit = "report-mark-freshness.service"
 timer = "report-mark-freshness.timer"
 tier = "supporting"
-actions = ["status", "logs"]
+actions = ["status", "logs", "run"]
+group = "freshness"
 description = "批次停更偵測（08:30）"
 
 [[services]]
@@ -130,7 +147,8 @@ kind = "systemd"
 unit = "report-mark-audit.service"
 timer = "report-mark-audit.timer"
 tier = "supporting"
-actions = ["status", "logs"]
+actions = ["status", "logs", "run"]
+group = "audit"
 description = "資料完整性稽核 make db-audit（08:45）"
 
 [[services]]
@@ -148,7 +166,8 @@ kind = "systemd"
 unit = "report-mark-r2-reconcile.service"
 timer = "report-mark-r2-reconcile.timer"
 tier = "supporting"
-actions = ["status", "logs"]
+actions = ["status", "logs", "run"]
+group = "r2-reconcile"
 description = "R2 物件儲存對帳（週一 07:00）"
 
 [[services]]

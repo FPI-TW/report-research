@@ -102,6 +102,26 @@ export const LogoutResponseSchema = z.object({
 })
 export type LogoutResponse = z.infer<typeof LogoutResponseSchema>
 
+export const OpsActionResponseSchema = z.object({
+  name: z.string(),
+  kind: z.enum(['systemd', 'container']),
+  tier: z.enum(['critical', 'important', 'supporting']),
+  target: z.string(),
+  timer: z.string().nullable().optional(),
+  actions: z.array(z.enum(['status', 'logs', 'restart', 'run'])),
+  group: z.string().nullable().optional(),
+  description: z.string().optional(),
+  action: z.enum(['restart', 'run']),
+  state: z.enum(['scheduled', 'queued']),
+  previous_invocation_id: z.string().nullable().optional(),
+  previous_active_enter_at: z.string().nullable().optional(),
+  previous_exec_main_start_at: z.string().nullable().optional(),
+  execute_after_ms: z.number().int(),
+  accepted_at: z.string(),
+  checked_at: z.string(),
+})
+export type OpsActionResponse = z.infer<typeof OpsActionResponseSchema>
+
 export const OpsContainerStateSchema = z.object({
   status: z.string().nullable().optional(),
   running: z.boolean().nullable().optional(),
@@ -148,6 +168,7 @@ export const OpsSystemdStateSchema = z.object({
   exec_main_exit_at: z.string().nullable().optional(),
   active_enter_at: z.string().nullable().optional(),
   state_change_at: z.string().nullable().optional(),
+  invocation_id: z.string().nullable().optional(),
 })
 export type OpsSystemdState = z.infer<typeof OpsSystemdStateSchema>
 
@@ -221,7 +242,8 @@ export const OpsServiceDetailSchema = z.object({
   tier: z.enum(['critical', 'important', 'supporting']),
   target: z.string(),
   timer: z.string().nullable().optional(),
-  actions: z.array(z.enum(['status', 'logs'])),
+  actions: z.array(z.enum(['status', 'logs', 'restart', 'run'])),
+  group: z.string().nullable().optional(),
   description: z.string().optional(),
   summary: z.enum(['running', 'idle', 'failed', 'transitioning', 'not_found', 'unknown']),
   error: z.string().nullable().optional(),
@@ -238,7 +260,8 @@ export const OpsServiceStatusSchema = z.object({
   tier: z.enum(['critical', 'important', 'supporting']),
   target: z.string(),
   timer: z.string().nullable().optional(),
-  actions: z.array(z.enum(['status', 'logs'])),
+  actions: z.array(z.enum(['status', 'logs', 'restart', 'run'])),
+  group: z.string().nullable().optional(),
   description: z.string().optional(),
   summary: z.enum(['running', 'idle', 'failed', 'transitioning', 'not_found', 'unknown']),
   error: z.string().nullable().optional(),
@@ -280,6 +303,10 @@ export const adminApi = {
   getOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}`, OpsServiceDetailSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services/{name}/logs — Get Ops Service Logs */
   getOpsServiceLogs: (name: string, query: { since?: string; lines?: number } = {}) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/logs${qs(query)}`, OpsLogsResponseSchema, { cache: 'no-store' }),
+  /** POST /api/admin/ops/services/{name}/restart — Restart Ops Service */
+  restartOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/restart`, OpsActionResponseSchema, jsonBody('POST')),
+  /** POST /api/admin/ops/services/{name}/run — Run Ops Service */
+  runOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/run`, OpsActionResponseSchema, jsonBody('POST')),
   /** GET /api/admin/reports — List Reports */
   listReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */

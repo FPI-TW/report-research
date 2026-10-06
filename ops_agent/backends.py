@@ -26,7 +26,7 @@ from ops_agent.protocol import ProtocolError
 SYSTEMD_PROPS = (
     "Id", "Description", "LoadState", "ActiveState", "SubState", "Result", "Type", "UnitFileState",
     "ExecMainCode", "ExecMainStatus", "MainPID", "NRestarts", "ExecMainStartTimestamp",
-    "ExecMainExitTimestamp", "ActiveEnterTimestamp", "StateChangeTimestamp",
+    "ExecMainExitTimestamp", "ActiveEnterTimestamp", "StateChangeTimestamp", "InvocationID",
 )
 TIMER_PROPS = ("Id", "LoadState", "ActiveState", "NextElapseUSecRealtime", "LastTriggerUSec")
 _ALL_PROPS = ",".join(dict.fromkeys(SYSTEMD_PROPS + TIMER_PROPS))
@@ -125,6 +125,8 @@ def systemd_state(props: dict[str, str]) -> dict:
         "exec_main_exit_at": parse_ts(props.get("ExecMainExitTimestamp")),
         "active_enter_at": parse_ts(props.get("ActiveEnterTimestamp")),
         "state_change_at": parse_ts(props.get("StateChangeTimestamp")),
+        # 每次啟動一個新值：restart／run 之後前端輪詢到它換掉，就知道新的一輪起來了。
+        "invocation_id": props.get("InvocationID") or None,
     }
 
 

@@ -14,6 +14,7 @@
     max_log_lines = 1000
     max_log_age_hours = 168        # logs 的 since 最多往前多久
     max_concurrent = 4             # 同時處理的請求數；超過回 busy
+    restart_delay = 1.5            # restart 先回應、等這麼多秒才執行（讓 web 來得及把 202 送出去）
     systemctl = "/usr/bin/systemctl"
     journalctl = "/usr/bin/journalctl"
     docker = "/usr/bin/docker"
@@ -25,8 +26,18 @@
     timer = "report-mark-sync.timer"   # 可省略；有 timer 的 oneshot 一併回報下次／上次觸發
     container = "..."              # kind = "container" 時用這個，不寫 unit
     tier = "critical"              # critical | important | supporting
-    actions = ["status", "logs"]   # 預留給 P7 的 restart、run-now；本版只認唯讀兩種
+    actions = ["status", "logs"]   # status | logs | restart | run（寫入類見下）
+    group = "web"                  # execution group；有寫入類 action 時必填
+    flock_files = ["/abs/path"]    # 寫入類執行前以非阻塞 flock 試探的鎖檔（被持有＝already_running）
+    pid_files = ["/abs/path"]      # 寫入類執行前檢查的 PID 檔（記的行程還活著＝already_running）
     description = "..."
+
+**寫入類 action（`restart`、`run`）的載入期規則**（代理執行前會再以 `ops_agent/actions.py` 硬擋一次）：
+- 只給 `kind = "systemd"`；容器一律唯讀。
+- `restart` 只給 `protocol.RESTARTABLE_UNITS`（v1 只有 Web）；`run` 不給這些常駐服務（它們用 restart）。
+- 同一個服務不能同時有 `restart` 與 `run`；有寫入類就必須也有 `status`（前端要輪詢結果）與 `group`。
+- unit 名稱命中 `protocol.FORBIDDEN_WRITE_TARGET`（PostgreSQL、nginx、cloudflared……）一律拒絕載入。
+- `flock_files`／`pid_files` 只能寫在有 `group` 的服務上；同 group 的服務共用彼此的鎖檔（取聯集）。
 
 **交叉拒絕**（`validate_binding` 與 `_check_environment_names`）：
 - catalog 的 `socket_path` 必須是該 `environment` 的固定路徑；CLI 的 `--socket` 覆寫只允許 development
@@ -45,7 +56,14 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
-from ops_agent.protocol import CANONICAL_SOCKETS, ENVIRONMENTS, KNOWN_ACTIONS
+from ops_agent.protocol import (
+    CANONICAL_SOCKETS,
+    ENVIRONMENTS,
+    FORBIDDEN_WRITE_TARGET,
+    KNOWN_ACTIONS,
+    RESTARTABLE_UNITS,
+    WRITE_ACTIONS,
+)
 
 try:  # 3.11+；系統 python 太舊時給清楚的訊息而不是 ImportError 堆疊
     import tomllib
@@ -67,9 +85,12 @@ _DEV_CONTAINER_PREFIX = "report-mark-dev"
 _TOP_KEYS = frozenset({"schema", "environment", "socket_path", "agent", "services"})
 _AGENT_KEYS = frozenset({
     "allowed_users", "allowed_uids", "request_timeout", "command_timeout", "max_response_bytes",
-    "max_log_lines", "max_log_age_hours", "max_concurrent", "systemctl", "journalctl", "docker",
+    "max_log_lines", "max_log_age_hours", "max_concurrent", "restart_delay", "systemctl", "journalctl", "docker",
 })
-_SERVICE_KEYS = frozenset({"name", "kind", "unit", "timer", "container", "tier", "actions", "description"})
+_SERVICE_KEYS = frozenset({"name", "kind", "unit", "timer", "container", "tier", "actions", "group", "flock_files",
+                           "pid_files", "description"})
+_LOCK_PATH = re.compile(r"/[A-Za-z0-9._@/-]{1,255}")
+MAX_LOCK_FILES = 8
 
 
 class CatalogError(ValueError):
@@ -86,14 +107,19 @@ class Service:
     timer: str | None = None
     container: str | None = None
     description: str = ""
+    group: str | None = None
+    flock_files: tuple[str, ...] = ()
+    pid_files: tuple[str, ...] = ()
 
     @property
     def target(self) -> str:
         return self.unit if self.kind == "systemd" else self.container  # type: ignore[return-value]
 
     def public(self) -> dict:
+        # 鎖檔路徑刻意不回給 web：那是主機的檔案配置，管理頁用不到。
         return {"name": self.name, "kind": self.kind, "tier": self.tier, "target": self.target,
-                "timer": self.timer, "actions": list(self.actions), "description": self.description}
+                "timer": self.timer, "actions": list(self.actions), "group": self.group,
+                "description": self.description}
 
 
 @dataclass(frozen=True)
@@ -105,6 +131,7 @@ class AgentConfig:
     max_log_lines: int = 1000
     max_log_age: timedelta = timedelta(hours=168)
     max_concurrent: int = 4
+    restart_delay: float = 1.5
     systemctl: str = "/usr/bin/systemctl"
     journalctl: str = "/usr/bin/journalctl"
     docker: str = "/usr/bin/docker"
@@ -122,6 +149,9 @@ class Catalog:
             if svc.name == name:
                 return svc
         return None
+
+    def group_members(self, group: str) -> tuple[Service, ...]:
+        return tuple(s for s in self.services if s.group == group)
 
 
 def load_catalog(path: str | Path, *, resolve_user=None) -> Catalog:
@@ -187,6 +217,7 @@ def _parse_agent(table, resolve_user) -> AgentConfig:
         max_log_lines=_num(table, "max_log_lines", 1000, lo=1, hi=5000, integer=True),
         max_log_age=timedelta(hours=_num(table, "max_log_age_hours", 168, lo=1, hi=24 * 31, integer=True)),
         max_concurrent=_num(table, "max_concurrent", 4, lo=1, hi=32, integer=True),
+        restart_delay=float(_num(table, "restart_delay", 1.5, lo=0, hi=10, integer=False)),
         systemctl=_abs_bin(table, "systemctl", "/usr/bin/systemctl"),
         journalctl=_abs_bin(table, "journalctl", "/usr/bin/journalctl"),
         docker=_abs_bin(table, "docker", "/usr/bin/docker"),
@@ -215,9 +246,14 @@ def _parse_service(i: int, raw) -> Service:
         raise CatalogError(f"{where}：actions 必須是非空字串清單")
     unknown = [a for a in actions if a not in KNOWN_ACTIONS]
     if unknown:
-        raise CatalogError(f"{where}：不支援的 action {unknown}（本版只有 {list(KNOWN_ACTIONS)}）")
+        raise CatalogError(f"{where}：不支援的 action {unknown}（只有 {list(KNOWN_ACTIONS)}）")
     if len(set(actions)) != len(actions):
         raise CatalogError(f"{where}：actions 有重複")
+    group = raw.get("group")
+    if group is not None and (not isinstance(group, str) or not _NAME.fullmatch(group)):
+        raise CatalogError(f"{where}：group 必須是小寫英數與 -（1–40 字元、英文字母開頭）：{group!r}")
+    flock_files = _lock_files(where, raw, "flock_files", group)
+    pid_files = _lock_files(where, raw, "pid_files", group)
     description = raw.get("description", "")
     if not isinstance(description, str) or len(description) > 200:
         raise CatalogError(f"{where}：description 必須是 ≤200 字元的字串")
@@ -234,8 +270,47 @@ def _parse_service(i: int, raw) -> Service:
             raise CatalogError(f"{where}：container 服務不寫 unit／timer")
         if not isinstance(container, str) or not _CONTAINER.fullmatch(container):
             raise CatalogError(f"{where}：container 名稱不合法：{container!r}")
+    _check_write_actions(where, kind, unit, actions, group)
     return Service(name=name, kind=kind, tier=tier, actions=tuple(actions), unit=unit, timer=timer,
-                   container=container, description=description)
+                   container=container, description=description, group=group, flock_files=flock_files,
+                   pid_files=pid_files)
+
+
+def _lock_files(where: str, raw: dict, key: str, group: str | None) -> tuple[str, ...]:
+    value = raw.get(key)
+    if value is None:
+        return ()
+    if group is None:
+        raise CatalogError(f"{where}：{key} 只能寫在有 group 的服務上")
+    if not isinstance(value, list) or not value or len(value) > MAX_LOCK_FILES:
+        raise CatalogError(f"{where}：{key} 必須是 1–{MAX_LOCK_FILES} 個絕對路徑")
+    for path in value:
+        if (not isinstance(path, str) or not _LOCK_PATH.fullmatch(path)
+                or any(part in ("", ".", "..") for part in path[1:].split("/"))):
+            raise CatalogError(f"{where}：{key} 的路徑不合法（要正規化的絕對路徑）：{path!r}")
+    if len(set(value)) != len(value):
+        raise CatalogError(f"{where}：{key} 有重複")
+    return tuple(value)
+
+
+def _check_write_actions(where: str, kind: str, unit: str | None, actions: list[str], group: str | None) -> None:
+    writes = [a for a in actions if a in WRITE_ACTIONS]
+    if not writes:
+        return
+    if kind != "systemd":
+        raise CatalogError(f"{where}：容器服務不允許 {writes}（容器一律唯讀）")
+    if len(writes) > 1:
+        raise CatalogError(f"{where}：同一個服務不能同時有 restart 與 run")
+    if "status" not in actions:
+        raise CatalogError(f"{where}：有寫入類 action 就必須也有 status（前端要輪詢結果）")
+    if group is None:
+        raise CatalogError(f"{where}：有寫入類 action 就必須宣告 group（execution group）")
+    if FORBIDDEN_WRITE_TARGET.search(unit or ""):
+        raise CatalogError(f"{where}：{unit} 永遠不允許寫入類 action（PostgreSQL／邊緣／代理自身等）")
+    if writes == ["restart"] and unit not in RESTARTABLE_UNITS:
+        raise CatalogError(f"{where}：restart 只開放 {sorted(RESTARTABLE_UNITS)}，不含 {unit}")
+    if writes == ["run"] and unit in RESTARTABLE_UNITS:
+        raise CatalogError(f"{where}：常駐服務 {unit} 不用 run（用 restart）")
 
 
 def _check_environment_names(environment: str, services: tuple[Service, ...]) -> None:

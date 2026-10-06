@@ -74,6 +74,42 @@ class DeployUnitTests(unittest.TestCase):
             self.assertNotIn("OnFailure", d)
         self.assertEqual(len(users), 2, "dev 與 prod 代理要用不同的使用者")
 
+    def test_lock_files_are_visible_read_only_inside_the_sandbox(self):
+        """catalog 的 flock_files／pid_files 所在目錄必須被 BindReadOnlyPaths 綁進來（家目錄其餘部分藏起來）。
+
+        沒綁進來時代理看不到鎖檔，sync 的 run 一律回 lock_unavailable（fail-closed，但功能等於壞了）。
+        """
+        from ops_agent.catalog import load_catalog
+
+        for env, unit in self.UNITS.items():
+            d = self._directives(unit)
+            catalog = load_catalog(REPO_ROOT / "deploy" / "ops" / self.CATALOGS[env], resolve_user=lambda _n: 4242)
+            binds = [b.lstrip("-") for line in d.get("BindReadOnlyPaths", []) for b in line.split()]
+            self.assertNotIn("BindPaths", d, "代理對鎖檔只需要讀")
+            self.assertNotIn("ReadWritePaths", d)
+            lock_dirs = {os.path.dirname(p) for s in catalog.services for p in (*s.flock_files, *s.pid_files)}
+            for lock_dir in lock_dirs:
+                self.assertIn(lock_dir, binds, f"{unit.name} 沒有唯讀綁進 {lock_dir}")
+            if any(b.startswith("/home/") for b in binds):
+                self.assertEqual(d["ProtectHome"], ["tmpfs"], unit.name)
+            else:
+                self.assertEqual(d["ProtectHome"], ["yes"], unit.name)
+        prod = self._directives(self.UNITS["production"])
+        self.assertEqual(prod["BindReadOnlyPaths"], ["-/home/kashionz/projects/report-mark/data"])
+
+    def test_dev_smoke_unit_is_inert(self):
+        """dev catalog 唯一能 run 的對象：只 sleep、沒網路、沒告警鏈、沒有 timer 與 [Install]。"""
+        unit = REPO_ROOT / "deploy" / "systemd" / "report-mark-dev-smoke.service"
+        d = self._directives(unit)
+        self.assertEqual(d["Type"], ["oneshot"])
+        self.assertEqual(d["ExecStart"], ["/usr/bin/sleep 20"])
+        self.assertEqual(d["DynamicUser"], ["yes"])
+        self.assertEqual(d["PrivateNetwork"], ["yes"])
+        self.assertNotIn("OnFailure", d)
+        self.assertNotIn("EnvironmentFile", d)
+        self.assertNotIn("[Install]", unit.read_text(encoding="utf-8"))
+        self.assertFalse((unit.parent / "report-mark-dev-smoke.timer").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

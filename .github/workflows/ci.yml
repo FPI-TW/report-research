@@ -359,6 +359,11 @@ jobs:
       - name: 監控觀測保留與聚合
         run: uv run pytest -q tests/test_ops_rollup_db.py
 
+      # 研報上傳的收檔：partial unique index 擋同一 hash 兩筆進行中（撞 index 轉 409）、語料／進行中／曾感染
+      # 的重複判定、每日與全站處理中配額、INSERT 與稽核 upload.create 同交易（稽核失敗紀錄不留）。
+      - name: 研報上傳收檔
+        run: uv run pytest -q tests/test_admin_uploads_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

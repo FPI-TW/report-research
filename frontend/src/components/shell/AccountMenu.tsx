@@ -7,6 +7,8 @@ import { SecurityDialog } from '../../features/account/SecurityDialog'
 import { preloadRoute } from '../../lib/routePreload'
 import { useIsAdmin } from '../../lib/useMe'
 import { useStats } from '../../lib/useStats'
+import { STATUS_LABELS, useSystemStatus } from '../../lib/useSystemStatus'
+import { StatusDot, SystemStatusRow } from './SystemStatus'
 import { useLocale, setLocale, type Locale } from '../../lib/useLocale'
 import styles from './AccountMenu.module.css'
 
@@ -23,16 +25,22 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
   const locale = useLocale()
   // 管理後台的唯一入口：與研報平台分開的外殼（/admin/*），主導覽刻意不放。只是顯示層，授權在後端。
   const isAdmin = useIsAdmin()
+  // 一般使用者也看得到的粗粒度系統狀態：只有異常時在頭像角落亮紅點，細節在選單裡一句話。
+  const status = useSystemStatus()
+  const degraded = status.status === 'degraded'
 
   return (
     <div className={styles.wrap}>
       <Pressable
         aria-expanded={open}
-        title={name}
+        title={degraded ? `${name}（系統狀態：${STATUS_LABELS.degraded}）` : name}
         onClick={() => setOpen((o) => !o)}
         className={variant === 'row' ? styles.rowTrigger : styles.avatarBtn}
       >
-        <span className={styles.avatar}><Icon name="user" size={17} /></span>
+        <span className={styles.avatar}>
+          <Icon name="user" size={17} />
+          {degraded && <StatusDot level="degraded" className={styles.alertDot} />}
+        </span>
         {variant === 'row' && (
           <span className={styles.rowText}>
             <span className={styles.name}>{name}</span>
@@ -45,6 +53,7 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
           <div className={styles.name}>{name}</div>
           <div className={styles.sub}>研究部 · 分析師</div>
         </div>
+        <SystemStatusRow status={status} />
         <div className={styles.localeRow} role="radiogroup" aria-label="語言 / Language">
           <span className={styles.localeLabel}>語言</span>
           <div className={styles.localeSeg}>

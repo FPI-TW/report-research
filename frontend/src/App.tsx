@@ -18,6 +18,16 @@ const AdminShell = lazy(routeLoaders.adminShell)
 const AdminUsersPage = lazy(routeLoaders.adminUsers)
 const AdminReviewsPage = lazy(routeLoaders.adminReviews)
 const AdminAuditPage = lazy(routeLoaders.adminAudit)
+const AdminReportsPage = lazy(routeLoaders.adminReports)
+// 維運（/admin/operations/*）：外殼（標題＋子導覽、ops.read 守門）＋各子頁；jobs／incidents／host 是佔位頁。
+const OperationsLayout = lazy(routeLoaders.adminOps)
+const OpsOverviewPage = lazy(routeLoaders.adminOpsOverview)
+const OpsServicesPage = lazy(routeLoaders.adminOpsServices)
+const OpsServiceDetailPage = lazy(routeLoaders.adminOpsService)
+const OpsLogsPage = lazy(routeLoaders.adminOpsLogs)
+const OpsJobsPage = lazy(routeLoaders.adminOpsJobs)
+const OpsIncidentsPage = lazy(routeLoaders.adminOpsIncidents)
+const OpsHostPage = lazy(routeLoaders.adminOpsHost)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -63,6 +73,21 @@ export const routes = [
           { path: 'users', element: <Suspense><AdminUsersPage /></Suspense> },
           { path: 'reviews', element: <Suspense><AdminReviewsPage /></Suspense> },
           { path: 'audit', element: <Suspense><AdminAuditPage /></Suspense> },
+          { path: 'reports', element: <Suspense><AdminReportsPage /></Suspense> },
+          {
+            path: 'operations',
+            element: <Suspense><OperationsLayout /></Suspense>,
+            children: [
+              { index: true, element: <Navigate to="overview" replace /> },
+              { path: 'overview', element: <Suspense><OpsOverviewPage /></Suspense> },
+              { path: 'services', element: <Suspense><OpsServicesPage /></Suspense> },
+              { path: 'services/:name', element: <Suspense><OpsServiceDetailPage /></Suspense> },
+              { path: 'logs', element: <Suspense><OpsLogsPage /></Suspense> },
+              { path: 'jobs', element: <Suspense><OpsJobsPage /></Suspense> },
+              { path: 'incidents', element: <Suspense><OpsIncidentsPage /></Suspense> },
+              { path: 'host', element: <Suspense><OpsHostPage /></Suspense> },
+            ],
+          },
           { path: '*', element: <NotFound /> },
         ],
       },

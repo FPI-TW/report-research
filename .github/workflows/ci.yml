@@ -11,7 +11,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # admin-v*-integration：Admin 後台多分支平行開發的整合分支，各 lane 的 PR 先合進那裡、
+    # 驗收後才整批進 main——那些 PR 同樣要跑完整 CI，否則整合分支上沒有任何自動驗證。
+    branches: [main, 'admin-v*-integration']
   push:
     branches: [main]
 

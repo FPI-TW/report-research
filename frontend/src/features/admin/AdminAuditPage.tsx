@@ -58,7 +58,7 @@ function AdminAudit() {
       <div className={styles.inner}>
         <AdminHeader
           title="操作紀錄"
-          subtitle="建帳、改角色、停用、重設密碼、強制登出與處理待複核，誰在何時做了什麼；新的在前。不含任何密碼或註記全文。"
+          subtitle="建帳、改角色、停用、重設密碼、強制登出、處理待複核與隱藏研報，誰在何時做了什麼；新的在前。不含任何密碼或註記全文。"
         />
         <AuditLog />
       </div>

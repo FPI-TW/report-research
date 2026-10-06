@@ -1,8 +1,9 @@
-"""研報上傳的收檔與查詢（/api/admin/uploads*）。整組限管理員＋`reports.manage`。Admin v1.5 上傳管線 PR-4。
+"""研報上傳的收檔、查詢與審核（/api/admin/uploads*）。整組限管理員＋`reports.manage`。Admin v1.5 上傳管線 PR-4、PR-6。
 
-本檔只有收檔（POST）、清單與詳情；掃描、入庫（worker）與審核（preview／file／publish／reject／retry）
-在後續的 PR。功能旗標 `UPLOAD_ENABLED` 預設關閉：關閉時 POST 回 503 `uploads_disabled`，清單與詳情照常
-可讀（沒有資料就是空的）。
+本檔有收檔（POST）、清單、詳情（PR-4）與審核（PR-6：preview／file／publish／reject／unreject／retry）；
+掃描、入庫與清除是 worker 的事（另一個 PR）。功能旗標 `UPLOAD_ENABLED` 預設關閉：關閉時 POST 回 503
+`uploads_disabled`，清單、詳情與審核照常可用（沒有資料就是空的）——審核端點不看旗標，關掉收檔時仍要能
+處理已經進來的檔案。
 
 收檔（`POST /api/admin/uploads?filename=&last_modified=`，raw body、`Content-Type: application/pdf`）：
 
@@ -13,6 +14,15 @@
    檢查 PDF 字面（415）、fsync、rename 成 `<upload_id>.bin`。
 5. 同一筆交易：重複檢查（409／422）、配額（429，鎖內精確）、INSERT `quarantined`、稽核 `upload.create`。
    任何一步失敗就 rollback **並刪掉隔離區的檔案**。成功回 202 與上傳紀錄。
+
+審核（狀態閘門與交易細節在 `app/services/upload_review.py`）：
+
+- `GET .../preview`、`GET .../file`：只限 draft／published（其餘 409 `upload_state_conflict`）。預覽回正典文字
+  `clean_extracted(full_text)`、標籤、標題、摘要、摘錄，還沒產出的是 null／pending；report_id 讀取時以
+  file_hash JOIN 取得。原檔只回語料的 `originals/` presign（帶 filename、TTL ≤ 1 小時，JSON `{url}`），
+  **任何狀態都不讀隔離區**——隔離區與感染檔沒有任何端點能取回。
+- `POST .../publish`、`.../reject`、`.../unreject`、`.../retry`：條件式 UPDATE 擋競態，狀態與稽核同一筆交易，
+  影響列數不對就 rollback 回 409。
 
 web **不解析 PDF 內容**（主動內容與加密由 worker 在子行程裡查）、**不連 clamd**；清單的 `scanner`
 摘要由 DB 推導。CSRF：`web/server.py` 的 `reject_cross_site` 在讀 body 之前就擋掉跨站 POST；另外要求
@@ -26,14 +36,15 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, StringConstraints
 
 from app.config import get_settings
 from app.services import quarantine, uploads
 from app.services.accounts import User
+from app.services.object_storage import ObjectNotFound, ObjectStorageError, get_object_storage, original_object_key
 from app.services.upload_intake import (
     DuplicateInCorpusError,
     IntakeError,
@@ -48,6 +59,7 @@ from app.services.upload_intake import (
     UploadRow,
     sanitize_filename,
 )
+from app.services.upload_review import REASON_MAX_CHARS, ReportMissingError, ReviewError, UploadPreview
 from web import authz, deps
 from web.errors import AppError
 
@@ -136,6 +148,66 @@ class AdminUploadDetail(AdminUpload):
     report: AdminUploadReport | None = None
 
 
+class AdminUploadTags(BaseModel):
+    market: str | None = None
+    is_research: bool
+    confidence: float | None = None
+    source: str | None = None
+    report_date: str | None = None
+    report_type: str | None = None
+    language: str | None = None
+    stock_code: str | None = None
+    company_name: str | None = None
+    instrument_types: list[str]
+    stock_targets: list[str]
+    futures_targets: list[str]
+    relates_stock: bool | None = None
+    relates_futures: bool | None = None
+
+
+class AdminUploadTakeaway(BaseModel):
+    ordinal: int
+    claim: str
+    quote: str | None = None
+    quote_start: int | None = None
+    quote_end: int | None = None
+    anchor_method: str | None = None
+
+
+class AdminUploadPreview(BaseModel):
+    upload: AdminUpload
+    report_id: str
+    file_name: str
+    publication: Literal["draft", "published"]
+    hidden: bool
+    # 標題、摘要由批次另外產出：還沒跑時 null、*_state = pending。
+    title: str | None = None
+    title_original: str | None = None
+    title_state: Literal["ready", "pending"]
+    summary: str | None = None
+    summary_state: Literal["ready", "pending"]
+    tags: AdminUploadTags
+    # 正典文字 clean_extracted(full_text)；超過上限截斷（text_chars、text_sha256 是完整正典文字的值）。
+    text: str | None = None
+    text_state: Literal["ready", "missing"]
+    text_chars: int
+    text_truncated: bool
+    text_sha256: str | None = None
+    takeaways_state: Literal["ready", "pending", "none"]
+    takeaways: list[AdminUploadTakeaway]
+
+
+class AdminUploadFile(BaseModel):
+    url: str
+    expires_in: int
+    file_name: str
+
+
+class AdminUploadRejectRequest(BaseModel):
+    # 去頭尾空白後 1–500 字（與 DB CHECK 一致）；缺、空白、超長都是 422。
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=REASON_MAX_CHARS)]
+
+
 # ── 輔助函式一律放在所有 @router.* 裝飾器之上 ──────────────────────────────
 
 
@@ -195,6 +267,86 @@ def _intake_error(exc: IntakeError) -> AppError:
     if isinstance(exc, UploadNotFoundError):
         return AppError(404, "not_found", str(exc))
     return AppError(400, "bad_request", str(exc))
+
+
+def _review_error(exc: ReviewError | IntakeError, *, missing_status: int = 409) -> AppError:
+    if isinstance(exc, IntakeError):
+        return _intake_error(exc)
+    status = 422 if exc.code == "invalid_reason" else 409
+    if isinstance(exc, ReportMissingError):
+        status = missing_status
+    extra = {"state": exc.state}
+    failure_kind = getattr(exc, "failure_kind", None)
+    if failure_kind is not None:
+        extra["failure_kind"] = failure_kind
+    return AppError(status, exc.code, str(exc), extra=extra)
+
+
+def _preview(p: UploadPreview) -> AdminUploadPreview:
+    return AdminUploadPreview(
+        upload=AdminUpload(**_item_fields(p.upload)), report_id=p.report_id, file_name=p.file_name,
+        publication=p.publication, hidden=p.hidden, title=p.title, title_original=p.title_original,
+        title_state="ready" if p.title else "pending", summary=p.summary,
+        summary_state="ready" if p.summary else "pending",
+        tags=AdminUploadTags(
+            market=p.market, is_research=p.is_research, confidence=p.confidence, source=p.source,
+            report_date=_iso(p.report_date), report_type=p.report_type, language=p.language,
+            stock_code=p.stock_code, company_name=p.company_name, instrument_types=p.instrument_types,
+            stock_targets=p.stock_targets, futures_targets=p.futures_targets, relates_stock=p.relates_stock,
+            relates_futures=p.relates_futures,
+        ),
+        text=p.text, text_state="ready" if p.text else "missing", text_chars=p.text_chars,
+        text_truncated=p.text_truncated, text_sha256=p.text_sha256, takeaways_state=p.takeaways_state,
+        takeaways=[AdminUploadTakeaway(**vars(t)) for t in p.takeaways],
+    )
+
+
+def _file_unavailable(message: str = "這份上傳的原檔目前無法提供") -> AppError:
+    return AppError(404, "upload_file_unavailable", message)
+
+
+async def _presign_original(file_hash: str, file_name: str, object_key: str | None) -> str:
+    """語料原檔（`originals/`）的短效 presign。物件鍵是 DB 資料、不可信：對 file_hash 與檔名重算正典鍵，
+    再以 HEAD 的 sha256 metadata 驗證，才簽發（比照 `web/routers/report_file.py`）。沒有本機回退：
+    local 模式或沒有物件鍵一律 404——這條路徑永遠不讀本機檔案，更不讀隔離區。"""
+    storage = get_object_storage()
+    if not storage.enabled or not object_key:
+        raise _file_unavailable()
+    try:
+        canonical = original_object_key(file_hash, file_name)
+    except ValueError as exc:
+        raise AppError(503, "original_integrity_error", "原檔指標不一致") from exc
+    if object_key != canonical:
+        raise AppError(503, "original_integrity_error", "原檔指標不一致")
+    try:
+        head = await asyncio.to_thread(storage.head_object, object_key)
+        meta = head.get("Metadata") if isinstance(head, dict) else None
+        meta = meta if isinstance(meta, dict) else {}
+        if (meta.get("sha256") or meta.get("SHA256")) != file_hash:
+            raise AppError(503, "original_integrity_error", "原檔指標不一致")
+        return await asyncio.to_thread(
+            storage.presign_get, object_key, filename=file_name, inline=file_name.lower().endswith(".pdf"),
+        )
+    except ObjectNotFound as exc:
+        raise _file_unavailable("物件儲存裡找不到這份原檔") from exc
+    except ObjectStorageError as exc:
+        raise AppError(503, "object_storage_unavailable", "物件儲存暫時無法使用") from exc
+
+
+async def _transition(action: str, upload_id: str, actor: User, call) -> AdminUpload:
+    """審核寫入的共用殼：一個 session、一筆交易；服務層拋錯就 rollback，成功才 commit。"""
+    try:
+        async with deps.SessionFactory() as session:
+            try:
+                row = await call(session)
+                await session.commit()
+            except BaseException:
+                await session.rollback()
+                raise
+    except (ReviewError, IntakeError) as exc:
+        raise _review_error(exc) from exc
+    logger.info("管理操作 actor=%s action=%s target=%s state=%s", actor.username, action, upload_id, row.state)
+    return AdminUpload(**_item_fields(row))
 
 
 def _too_large(max_bytes: int) -> AppError:
@@ -356,3 +508,66 @@ async def get_upload(upload_id: str):
             raise _intake_error(exc) from exc
         report = await deps.upload_intake.get_upload_report(session, row.file_hash)
     return AdminUploadDetail(**_item_fields(row), report=_report(report))
+
+
+@router.get("/api/admin/uploads/{upload_id}/preview", response_model=AdminUploadPreview, dependencies=[_REPORTS])
+async def preview_upload(upload_id: str):
+    """草稿或已發布上傳的預覽：正典文字、標籤、標題、摘要、摘錄（還沒產出的欄位 null／pending）。"""
+    try:
+        async with deps.SessionFactory() as session:
+            preview = await deps.upload_review.get_preview(session, upload_id)
+    except (ReviewError, IntakeError) as exc:
+        raise _review_error(exc) from exc
+    return _preview(preview)
+
+
+@router.get("/api/admin/uploads/{upload_id}/file", response_model=AdminUploadFile, dependencies=[_REPORTS])
+async def get_upload_file(upload_id: str, response: Response):
+    """草稿或已發布上傳的原檔：語料 `originals/` 的短效 presign（JSON `{url}`）。隔離區與感染檔永不提供。"""
+    try:
+        async with deps.SessionFactory() as session:
+            ref = await deps.upload_review.get_original(session, upload_id)
+    except (ReviewError, IntakeError) as exc:
+        raise _review_error(exc, missing_status=404) from exc
+    url = await _presign_original(ref.file_hash, ref.file_name, ref.object_key)
+    response.headers["Cache-Control"] = "no-store"
+    return AdminUploadFile(url=url, expires_in=get_settings().r2_presign_ttl_seconds, file_name=ref.file_name)
+
+
+@router.post("/api/admin/uploads/{upload_id}/publish", response_model=AdminUpload, dependencies=[_REPORTS])
+async def publish_upload(upload_id: str, actor: User = Depends(authz.current_user)):
+    """草稿 → 已發布：同一筆交易更新 visibility 與上傳紀錄、寫稽核 `upload.publish`。只有 draft 可以發布。"""
+    return await _transition(
+        "upload.publish", upload_id, actor,
+        lambda session: deps.upload_review.publish(session, upload_id, actor_id=actor.id),
+    )
+
+
+@router.post("/api/admin/uploads/{upload_id}/reject", response_model=AdminUpload, dependencies=[_REPORTS])
+async def reject_upload(upload_id: str, body: AdminUploadRejectRequest, actor: User = Depends(authz.current_user)):
+    """退回（必填 `reason`）：draft／quarantined／clean／failed → rejected，寬限期後由 worker 清除；期間可撤銷。"""
+    grace = get_settings().upload_reject_grace_hours
+    return await _transition(
+        "upload.reject", upload_id, actor,
+        lambda session: deps.upload_review.reject(
+            session, upload_id, reason=body.reason, actor_id=actor.id, grace_hours=grace,
+        ),
+    )
+
+
+@router.post("/api/admin/uploads/{upload_id}/unreject", response_model=AdminUpload, dependencies=[_REPORTS])
+async def unreject_upload(upload_id: str, actor: User = Depends(authz.current_user)):
+    """撤銷退回（寬限期內、尚未清除）：回到由事實推導的退回前狀態，寫稽核 `upload.unreject`。"""
+    return await _transition(
+        "upload.unreject", upload_id, actor,
+        lambda session: deps.upload_review.unreject(session, upload_id, actor_id=actor.id),
+    )
+
+
+@router.post("/api/admin/uploads/{upload_id}/retry", response_model=AdminUpload, dependencies=[_REPORTS])
+async def retry_upload(upload_id: str, actor: User = Depends(authz.current_user)):
+    """可重試的失敗（tag_failed／ingest_error／extract_timeout）→ clean，等 worker 重新處理；寫稽核 `upload.retry`。"""
+    return await _transition(
+        "upload.retry", upload_id, actor,
+        lambda session: deps.upload_review.retry(session, upload_id, actor_id=actor.id),
+    )

@@ -57,6 +57,18 @@ export const AdminUploadSchema = z.object({
 })
 export type AdminUpload = z.infer<typeof AdminUploadSchema>
 
+export const AdminUploadFileSchema = z.object({
+  url: z.string(),
+  expires_in: z.number().int(),
+  file_name: z.string(),
+})
+export type AdminUploadFile = z.infer<typeof AdminUploadFileSchema>
+
+export const AdminUploadRejectRequestSchema = z.object({
+  reason: z.string(),
+})
+export type AdminUploadRejectRequest = z.infer<typeof AdminUploadRejectRequestSchema>
+
 export const AdminUploadReportSchema = z.object({
   report_id: z.string(),
   title: z.string().nullable().optional(),
@@ -81,6 +93,34 @@ export const AdminUploadScannerSchema = z.object({
   last_error_at: z.string().nullable().optional(),
 })
 export type AdminUploadScanner = z.infer<typeof AdminUploadScannerSchema>
+
+export const AdminUploadTagsSchema = z.object({
+  market: z.string().nullable().optional(),
+  is_research: z.boolean(),
+  confidence: z.number().nullable().optional(),
+  source: z.string().nullable().optional(),
+  report_date: z.string().nullable().optional(),
+  report_type: z.string().nullable().optional(),
+  language: z.string().nullable().optional(),
+  stock_code: z.string().nullable().optional(),
+  company_name: z.string().nullable().optional(),
+  instrument_types: z.array(z.string()),
+  stock_targets: z.array(z.string()),
+  futures_targets: z.array(z.string()),
+  relates_stock: z.boolean().nullable().optional(),
+  relates_futures: z.boolean().nullable().optional(),
+})
+export type AdminUploadTags = z.infer<typeof AdminUploadTagsSchema>
+
+export const AdminUploadTakeawaySchema = z.object({
+  ordinal: z.number().int(),
+  claim: z.string(),
+  quote: z.string().nullable().optional(),
+  quote_start: z.number().int().nullable().optional(),
+  quote_end: z.number().int().nullable().optional(),
+  anchor_method: z.string().nullable().optional(),
+})
+export type AdminUploadTakeaway = z.infer<typeof AdminUploadTakeawaySchema>
 
 export const AuditChainResponseSchema = z.object({
   ok: z.boolean(),
@@ -642,6 +682,28 @@ export const AdminUploadListResponseSchema = z.object({
 })
 export type AdminUploadListResponse = z.infer<typeof AdminUploadListResponseSchema>
 
+export const AdminUploadPreviewSchema = z.object({
+  upload: AdminUploadSchema,
+  report_id: z.string(),
+  file_name: z.string(),
+  publication: z.enum(['draft', 'published']),
+  hidden: z.boolean(),
+  title: z.string().nullable().optional(),
+  title_original: z.string().nullable().optional(),
+  title_state: z.enum(['ready', 'pending']),
+  summary: z.string().nullable().optional(),
+  summary_state: z.enum(['ready', 'pending']),
+  tags: AdminUploadTagsSchema,
+  text: z.string().nullable().optional(),
+  text_state: z.enum(['ready', 'missing']),
+  text_chars: z.number().int(),
+  text_truncated: z.boolean(),
+  text_sha256: z.string().nullable().optional(),
+  takeaways_state: z.enum(['ready', 'pending', 'none']),
+  takeaways: z.array(AdminUploadTakeawaySchema),
+})
+export type AdminUploadPreview = z.infer<typeof AdminUploadPreviewSchema>
+
 export const IncidentDetailSchema = z.object({
   incident_id: z.string(),
   host: z.string(),
@@ -861,6 +923,18 @@ export const adminApi = {
   listUploads: (query: { state?: 'quarantined' | 'scanning' | 'clean' | 'infected' | 'blocked' | 'processing' | 'draft' | 'failed' | 'duplicate' | 'published' | 'rejected' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/uploads${qs(query)}`, AdminUploadListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/uploads/{upload_id} — Get Upload */
   getUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}`, AdminUploadDetailSchema, { cache: 'no-store' }),
+  /** GET /api/admin/uploads/{upload_id}/file — Get Upload File */
+  getUploadFile: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/file`, AdminUploadFileSchema, { cache: 'no-store' }),
+  /** GET /api/admin/uploads/{upload_id}/preview — Preview Upload */
+  previewUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/preview`, AdminUploadPreviewSchema, { cache: 'no-store' }),
+  /** POST /api/admin/uploads/{upload_id}/publish — Publish Upload */
+  publishUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/publish`, AdminUploadSchema, jsonBody('POST')),
+  /** POST /api/admin/uploads/{upload_id}/reject — Reject Upload */
+  rejectUpload: (uploadId: string, body: z.input<typeof AdminUploadRejectRequestSchema>) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/reject`, AdminUploadSchema, jsonBody('POST', body)),
+  /** POST /api/admin/uploads/{upload_id}/retry — Retry Upload */
+  retryUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/retry`, AdminUploadSchema, jsonBody('POST')),
+  /** POST /api/admin/uploads/{upload_id}/unreject — Unreject Upload */
+  unrejectUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/unreject`, AdminUploadSchema, jsonBody('POST')),
   /** GET /api/admin/users — List Users */
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */

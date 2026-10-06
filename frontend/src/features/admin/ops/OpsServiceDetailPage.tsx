@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 import { fmtDateTime } from '../auditLabels'
 import { OpsQueryError, SummaryBadge } from './OpsShared'
+import { OpsServiceActions } from './OpsServiceActions'
 import { TIER_LABELS, lastRunAt, resultText, stateText } from './opsLabels'
 import { useOpsService } from './useOps'
 import adminStyles from '../Admin.module.css'
@@ -53,6 +54,7 @@ export default function OpsServiceDetailPage() {
       <h2 id="ops-detail-title" className={adminStyles.ctitle}>{s.name} <SummaryBadge summary={s.summary} /></h2>
       {s.description && <p className={adminStyles.sub}>{s.description}</p>}
       {s.error && <p className={adminStyles.error} role="alert">{s.error}</p>}
+      <OpsServiceActions service={s} />
       <div className={adminStyles.spacer} />
       <dl className={styles.dl}>
         {rows.map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}

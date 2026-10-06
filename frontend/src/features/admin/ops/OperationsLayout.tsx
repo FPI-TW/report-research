@@ -26,7 +26,7 @@ function Operations() {
       <div className={adminStyles.inner}>
         <AdminHeader
           title="維運"
-          subtitle="服務狀態與最近日誌（唯讀）經主機上的維運代理取得；排程工作、事件與主機資源來自監控紀錄（每 5 分鐘匯入）。重新啟動、立即執行等操作尚未提供。"
+          subtitle="服務狀態與最近日誌（唯讀）經主機上的維運代理取得；排程工作、事件與主機資源來自監控紀錄（每 5 分鐘匯入）。重新啟動 web 與立即執行白名單批次需要「ops.operate」權限並重新驗證密碼。"
         />
         <nav className={styles.tabs} aria-label="維運子導覽">
           {TABS.map(t => (

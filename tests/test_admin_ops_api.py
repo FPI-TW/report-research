@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 from fake_accounts import FakeAccounts, install
-from fake_ops_agent import FakeOpsAgent, default_handler, err, ok
+from fake_ops_agent import CHECKED_AT, POSTGRES, STATUS, FakeOpsAgent, default_handler, err, ok
 from fastapi.testclient import TestClient
 
 from web import auth, ops_client
@@ -21,7 +21,8 @@ from web.server import app
 
 ADMIN_PW = "root-password-1"
 USER_PW = "alice-password-1"
-ENDPOINTS = ("/api/admin/ops/services", "/api/admin/ops/services/web", "/api/admin/ops/services/web/logs")
+ENDPOINTS = ("/api/admin/ops/services", "/api/admin/ops/services/web", "/api/admin/ops/services/web/logs",
+             "/api/admin/ops/dependencies")
 
 
 def _client():
@@ -93,6 +94,58 @@ class AdminOpsApiTests(unittest.TestCase):
         self.assertEqual(agent.requests[1]["params"], {"since": "1h", "lines": 200})
         self.assertEqual(iso.status_code, 200, iso.text)
         self.assertEqual(agent.requests[2]["params"]["since"], "2026-10-06T09:00:00+08:00")
+
+    # ── 依賴圖 ───────────────────────────────────────────────────────
+    def test_dependencies_graph_from_catalog(self):
+        """依賴只來自代理轉交的 catalog（depends_on、externals）；postgres 壞了 → web、對外入口受影響。"""
+        down_pg = {**POSTGRES, "summary": "failed", "depends_on": []}
+        items = [{**STATUS, "depends_on": ["postgres", "r2"]}, down_pg]
+        externals = [
+            {"name": "r2", "kind": "external", "tier": "critical", "depends_on": [], "probe": None,
+             "ok_exit_codes": [0], "degraded_exit_codes": [], "down_exit_codes": [], "description": "R2"},
+            {"name": "public-edge", "kind": "external", "tier": "critical", "depends_on": ["web"], "probe": None,
+             "ok_exit_codes": [0], "degraded_exit_codes": [], "down_exit_codes": [], "description": "對外"},
+        ]
+
+        def handler(req):
+            return ok(req, {"environment": req["env"], "host": "fake-host", "checked_at": CHECKED_AT,
+                            "items": items, "externals": externals})
+
+        with FakeOpsAgent(handler) as agent, agent.installed():
+            r = self.admin.get("/api/admin/ops/dependencies")
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual([req["op"] for req in agent.requests], ["list"])
+        self.assertEqual((body["environment"], body["host"], body["checked_at"]),
+                         ("production", "fake-host", CHECKED_AT))
+        nodes = {n["name"]: n for n in body["nodes"]}
+        self.assertEqual(set(nodes), {"web", "postgres", "r2", "public-edge"})
+        self.assertEqual((nodes["postgres"]["health"], nodes["postgres"]["layer"]), ("down", 0))
+        self.assertEqual(nodes["web"]["impacted_by"], ["postgres"])
+        self.assertEqual(nodes["public-edge"]["layer"], 2)
+        self.assertEqual(nodes["r2"]["health_reason"], "未監控（沒有探針）")
+        self.assertEqual(body["down"], ["postgres"])
+        self.assertEqual(body["root_causes"], ["postgres"])
+        self.assertEqual(body["affected"], ["public-edge", "web"])
+        self.assertIn({"dependent": "web", "dependency": "postgres", "broken": True}, body["edges"])
+        self.assertIn({"dependent": "web", "dependency": "r2", "broken": False}, body["edges"])
+        # 不洩漏 catalog 以外的東西：沒有退出碼對照、鎖檔、systemd 原始屬性
+        self.assertNotIn("down_exit_codes", r.text)
+        self.assertNotIn("systemd", nodes["web"])
+
+    def test_dependencies_with_old_agent_is_a_graph_without_edges(self):
+        with FakeOpsAgent() as agent, agent.installed():  # 預設 handler 沒有 depends_on／externals
+            r = self.admin.get("/api/admin/ops/dependencies")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["edges"], [])
+        self.assertEqual([n["name"] for n in r.json()["nodes"]], ["postgres", "web"])
+
+    def test_dependencies_malformed_agent_result_is_502(self):
+        bad = {"environment": "production", "host": "h", "checked_at": CHECKED_AT, "items": [],
+               "externals": [{"name": "r2", "tier": "galactic"}]}
+        with FakeOpsAgent(lambda req: ok(req, bad)) as agent, agent.installed():
+            r = self.admin.get("/api/admin/ops/dependencies")
+        self.assertEqual((r.status_code, r.json()["code"]), (502, "ops_agent_error"))
 
     # ── 參數在 web 端先擋 ────────────────────────────────────────────
     def test_bad_params_rejected_before_reaching_agent(self):

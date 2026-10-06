@@ -1890,6 +1890,10 @@ sudo systemctl restart report-mark-web.service   # .env 設好 OPS_AGENT_ENVIRON
 staging 的 catalog 只列已安裝的 unit（web、nginx 與 8 組 timer）；之後在 staging 裝了新的 unit（例如 Admin v1 的
 schema-check、host-health），要把它加進 `services.staging.toml`（含 `depends_on`）並重做 install＋`--check`＋重啟代理。
 
+**依賴圖**：catalog 的 `depends_on` 與 `[[externals]]`（格式見 `ops_agent/catalog.py`）是服務依賴關係的唯一真相來源，
+`--check` 會擋下指向不存在的節點、依賴自己與環。改了依賴（或新增服務時忘了寫）都照步驟 3 重新安裝 catalog、
+`--check`、重啟代理；管理頁的依賴圖（`GET /api/admin/ops/dependencies`）在代理重啟後才看得到新的關係。
+
 ### 停用
 
 ```bash

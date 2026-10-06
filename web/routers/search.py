@@ -73,10 +73,9 @@ class SearchResponse(BaseModel):
     # 注意：ranked 已套用 market 篩選，故選定市場時本欄只會有該市場——
     # 要得知其他市場的命中數需再跑一次未篩選的檢索，成本翻倍，故不做。
     market_facets: list[MarketFacet] = []
-    # 字面路候選是否已被 LEX_CAP_SEARCH 截斷。截斷時「取到哪 cap 列」由 heap 物理順序
-    # 決定（`LIMIT :cap` 沒有 ORDER BY，而 synchronize_seqscans 預設 on），也就是同一
-    # 個查詢在不同時刻可能回不同結果。旗標存在的目的是**先量出發生率**——加排序鍵會
-    # 逼掃完全部命中列，是淨損失，見 store._lexical_sql 的說明。
+    # 字面路候選是否已被 LEX_CAP_SEARCH 截斷。截斷時取的是 chunk id 最小的 cap 個命中
+    # （`store._lexical_sql` 在 `LIMIT :cap` 前以 `c.id` 排序：可重現、但不是依相關度
+    # 挑的），所以旗標代表「還有命中沒進候選」，不再代表結果會漂移。
     lexical_truncated: bool = False
     results: list[ReportResult]
 

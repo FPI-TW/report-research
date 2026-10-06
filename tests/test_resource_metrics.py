@@ -183,6 +183,31 @@ class ServiceAggregationTests(unittest.TestCase):
         self.assertAlmostEqual(r["service"]["cpu"]["max"], 14.1, places=6)
         self.assertEqual(sizing["batch_active_share"], 1.0)
 
+    def test_clamav_is_online_fixed_overhead_not_batch(self):
+        """ClamAV 常駐（病毒碼在記憶體）：算線上路徑，且單獨標成固定開銷，不進批次。"""
+        self.assertNotIn("report-mark-clamav", ana.BATCH_COMPONENTS)
+        self.assertIn("report-mark-clamav", ana.ONLINE_FIXED_COMPONENTS)
+        samples = self._samples()
+        for sample in samples:
+            sample["comp"]["report-mark-clamav"] = {
+                "cpu": 0.01, "anon": 3 << 29, "mem": 3 << 29, "peak": 1 << 31, "pids": 3,
+            }
+        r = ana.build_report({"ncpu": 20, "mem_total": 8 << 30, "interval": 20}, samples, [], 0)
+        sizing = r["sizing"]
+        self.assertAlmostEqual(sizing["online_cpu"]["max"], 4.11, places=6)
+        self.assertEqual(sizing["batch_cpu"]["max"], 0.0)
+        self.assertEqual(sizing["online_fixed_present"], ["report-mark-clamav"])
+        self.assertAlmostEqual(sizing["online_fixed_anon"]["max"] / ana.GIB, 1.5, places=6)
+        text = ana.render_text(r)
+        self.assertIn("線上固定開銷 anon", text)
+        self.assertIn("ClamAV（病毒碼常駐，不隨上傳量變化）", text)
+
+    def test_no_fixed_overhead_row_without_clamav(self):
+        r = ana.build_report({"ncpu": 20, "mem_total": 8 << 30, "interval": 20}, self._samples(), [], 0)
+        self.assertEqual(r["sizing"]["online_fixed_present"], [])
+        self.assertEqual(r["sizing"]["online_fixed_anon"]["max"], 0.0)
+        self.assertNotIn("線上固定開銷 anon", ana.render_text(r))
+
     def test_batch_active_share_is_zero_without_batch_components(self):
         r = ana.build_report({"ncpu": 20, "mem_total": 8 << 30, "interval": 20}, self._samples(), [], 0)
         self.assertEqual(r["sizing"]["batch_active_share"], 0.0)

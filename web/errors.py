@@ -6,7 +6,8 @@
 
 用法：
 - 一般情況照舊 `raise HTTPException(status_code, detail)`，code 由狀態碼推得（`DEFAULT_CODES`）。
-- 需要特定 code 時 `raise AppError(status, code, message)`。
+- 需要特定 code 時 `raise AppError(status, code, message)`。要多帶給程式判斷的欄位（例如上傳重複時的
+  `file_hash`）用 `extra=`：併進回應的頂層，但蓋不掉 `detail`／`code`／`request_id`。
 - middleware 自己回的 JSON（認證 401／503、CSRF 403）用 `error_response()`，形狀一致。
 """
 
@@ -39,12 +40,14 @@ DEFAULT_CODES: dict[int, str] = {
 class AppError(Exception):
     """帶穩定 code 的 HTTP 錯誤。message 是給人看的中文（放進 detail）。"""
 
-    def __init__(self, status_code: int, code: str, message: str, *, headers: dict[str, str] | None = None):
+    def __init__(self, status_code: int, code: str, message: str, *, headers: dict[str, str] | None = None,
+                 extra: dict | None = None):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
         self.headers = headers
+        self.extra = extra
 
 
 def error_body(status_code: int, detail, code: str | None = None) -> dict:
@@ -56,12 +59,13 @@ def error_body(status_code: int, detail, code: str | None = None) -> dict:
 
 
 def error_response(status_code: int, detail, code: str | None = None,
-                   headers: dict[str, str] | None = None) -> JSONResponse:
-    return JSONResponse(error_body(status_code, detail, code), status_code=status_code, headers=headers)
+                   headers: dict[str, str] | None = None, extra: dict | None = None) -> JSONResponse:
+    body = {**(extra or {}), **error_body(status_code, detail, code)}
+    return JSONResponse(body, status_code=status_code, headers=headers)
 
 
 async def _app_error(_request: Request, exc: AppError) -> JSONResponse:
-    return error_response(exc.status_code, exc.message, exc.code, exc.headers)
+    return error_response(exc.status_code, exc.message, exc.code, exc.headers, exc.extra)
 
 
 async def _http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:

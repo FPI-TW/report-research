@@ -149,6 +149,28 @@ CHECKS: tuple[Check, ...] = (
         "在那之前 `= true` 與 `IS NOT FALSE` 兩種寫法的母體不同（處置：`make schema`）。",
     ),
     Check(
+        "upload_draft_mismatch",
+        "上傳紀錄的草稿狀態與 report_visibility 的發布狀態不一致",
+        SEVERITY_ERROR,
+        "SELECT count(*) FROM ("
+        "  SELECT u.file_hash FROM research.report_upload u"
+        "   WHERE u.state = 'draft'"
+        "     AND NOT EXISTS (SELECT 1 FROM research.report_visibility v"
+        "                      WHERE v.file_hash = u.file_hash AND v.publication = 'draft')"
+        "  UNION ALL"
+        "  SELECT v.file_hash FROM research.report_visibility v"
+        "   WHERE v.publication = 'draft'"
+        "     AND NOT EXISTS (SELECT 1 FROM research.report_upload u"
+        "                      WHERE u.file_hash = v.file_hash AND u.state = 'draft')"
+        ") d",
+        "`report_upload.state='draft'` 必須若且唯若 `report_visibility.publication='draft'`（同一個 file_hash）。"
+        "可見性只看 report_visibility，所以前一半（上傳說是草稿、visibility 卻不是）代表"
+        "**尚未審核的研報已經對所有使用者可見**；後一半（visibility 是草稿、卻沒有對應的草稿上傳）"
+        "代表研報永遠卡在不可見、管理頁也找不到可以發布它的上傳紀錄。"
+        "兩邊必須在同一筆交易寫入（上傳 worker 的 pre_upsert、審核 API 的發布與退回）；"
+        "出現不一致先查 admin_audit_log 的 upload.* 與 report.* 紀錄，由人決定要補發布、退回還是改回草稿。",
+    ),
+    Check(
         "chunkless_report",
         "有全文卻沒有任何 chunk 的研報",
         SEVERITY_WARN,

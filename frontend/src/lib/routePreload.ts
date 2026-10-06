@@ -27,10 +27,10 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminOpsServices: () => import('../features/admin/ops/OpsServicesPage'),
   adminOpsService: () => import('../features/admin/ops/OpsServiceDetailPage'),
   adminOpsLogs: () => import('../features/admin/ops/OpsLogsPage'),
-  // 佔位頁（API 尚未提供）：三頁同一個 chunk。
-  adminOpsJobs: () => import('../features/admin/ops/OpsPlaceholderPages').then(m => ({ default: m.OpsJobsPage })),
+  adminOpsJobs: () => import('../features/admin/ops/OpsJobsPage'),
+  // 佔位頁（API 尚未提供）。
   adminOpsIncidents: () => import('../features/admin/ops/OpsPlaceholderPages').then(m => ({ default: m.OpsIncidentsPage })),
-  adminOpsHost: () => import('../features/admin/ops/OpsPlaceholderPages').then(m => ({ default: m.OpsHostPage })),
+  adminOpsHost: () => import('../features/admin/ops/OpsHostPage'),
 }
 
 const started = new Set<RouteKey>()

@@ -5,7 +5,9 @@ import { afterEach, expect, test, vi } from 'vitest'
 import OperationsLayout from './OperationsLayout'
 import OpsLogsPage from './OpsLogsPage'
 import OpsOverviewPage from './OpsOverviewPage'
-import { OpsHostPage, OpsIncidentsPage, OpsJobsPage } from './OpsPlaceholderPages'
+import OpsHostPage from './OpsHostPage'
+import OpsJobsPage from './OpsJobsPage'
+import { OpsIncidentsPage } from './OpsPlaceholderPages'
 import OpsServiceDetailPage from './OpsServiceDetailPage'
 import OpsServicesPage from './OpsServicesPage'
 
@@ -46,6 +48,32 @@ const SERVICES = [
 ]
 const LIST = { environment: 'production', host: 'office-host', checked_at: '2026-10-06T02:00:00Z', items: SERVICES }
 
+const job = (over: Record<string, unknown> = {}) => ({
+  host: 'office-host', unit: 'report-mark-sync.service', service: 'sync', invocation_id: 'a'.repeat(32),
+  state: 'finished', started_at: '2026-10-06T01:00:00Z', finished_at: '2026-10-06T01:02:30Z', duration_seconds: 150,
+  result: 'success', exit_status: 0, exec_main_code: 'exited', last_seen_at: '2026-10-06T01:03:00Z', ...over,
+})
+const JOBS = [
+  job(),
+  job({ service: 'backup', unit: 'report-mark-backup.service', invocation_id: 'b'.repeat(32), result: 'exit-code',
+    exit_status: 2 }),
+  job({ service: 'audit', unit: 'report-mark-audit.service', invocation_id: 'c'.repeat(32), state: 'running',
+    finished_at: null, duration_seconds: null, result: null, exit_status: null, exec_main_code: null }),
+  job({ service: 'freshness', unit: 'report-mark-freshness.service', invocation_id: 'd'.repeat(32), state: 'lost',
+    finished_at: null, duration_seconds: null, result: null, exit_status: null, exec_main_code: null }),
+]
+const obs = (metric: string, value: number, over: Record<string, unknown> = {}) => ({
+  observed_at: '2026-10-06T02:00:00Z', host: 'office-host', scope: 'host', subject: 'host', metric, value,
+  state: null, detail: null, ...over,
+})
+const HOST_OBS = [
+  obs('cpu_pct', 12.5), obs('mem_used_pct', 58.4), obs('mem_avail_bytes', 8 * 1024 ** 3), obs('load1', 2.7),
+  obs('psi_io_some_avg60', 3.2), obs('disk_read_bps', 2048),
+  obs('used_pct', 24.6, { subject: 'fs:/home/kashionz/projects/report-mark' }),
+  obs('avail_bytes', 700 * 1024 ** 3, { subject: 'fs:/home/kashionz/projects/report-mark' }),
+  obs('cpu_pct', 80.0, { observed_at: '2026-10-06T01:30:00Z' }),
+]
+
 type Reply = { status?: number; body: unknown }
 type Override = (path: string) => Reply | undefined
 
@@ -63,6 +91,16 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
   const fetchMock = vi.fn(async (url: string) => {
     const o = opts.override?.(url)
     if (o) return json(o)
+    if (url.startsWith('/api/admin/jobs')) {
+      const p = new URLSearchParams(url.split('?')[1] ?? '')
+      const items = JOBS.filter(j => !p.get('state') || j.state === p.get('state'))
+      return json({ body: { since: '2026-09-29T02:00:00Z', until: '2026-10-06T02:00:00Z', total: items.length,
+        limit: 50, offset: 0, has_more: false, next_offset: null, items } })
+    }
+    if (url.startsWith('/api/admin/observations')) {
+      return json({ body: { since: '2026-10-06T01:00:00Z', until: '2026-10-06T02:00:00Z', limit: 5000,
+        truncated: false, items: HOST_OBS } })
+    }
     if (url === '/api/me') return json({ body: { id: 'me', username: 'root', role: 'admin', scopes } })
     if (url === '/api/admin/ops/services') return json({ body: LIST })
     const logs = url.match(/^\/api\/admin\/ops\/services\/([^/?]+)\/logs\?(.*)$/)
@@ -113,7 +151,7 @@ const UNAVAILABLE: Override = url => url.startsWith('/api/admin/ops')
   ? { status: 503, body: { detail: '維運代理不可用：維運代理未啟動（找不到 /run/x.sock）', code: 'ops_agent_unavailable' } }
   : undefined
 
-test('/admin/operations 導向總覽；子導覽六個分頁，未接 API 的標「尚未提供」', async () => {
+test('/admin/operations 導向總覽；子導覽六個分頁，未接 API 的（事件）標「尚未提供」', async () => {
   mount('/admin/operations')
   expect(await screen.findByRole('heading', { name: '總覽' })).toBeInTheDocument()
   expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/overview')
@@ -123,8 +161,10 @@ test('/admin/operations 導向總覽；子導覽六個分頁，未接 API 的標
     '/admin/operations/incidents', '/admin/operations/logs', '/admin/operations/host',
   ])
   expect(tabs.getByRole('link', { name: /總覽/ })).toHaveAttribute('aria-current', 'page')
-  expect(tabs.getByRole('link', { name: /排程工作/ })).toHaveTextContent('尚未提供')
-  expect(tabs.getByRole('link', { name: /服務/ })).not.toHaveTextContent('尚未提供')
+  expect(tabs.getByRole('link', { name: /事件/ })).toHaveTextContent('尚未提供')
+  for (const name of [/服務/, /排程工作/, /主機/]) {
+    expect(tabs.getByRole('link', { name })).not.toHaveTextContent('尚未提供')
+  }
 })
 
 test('總覽：環境與主機、各層運作中／總數、需要注意的服務（核心停著也算）', async () => {
@@ -245,14 +285,55 @@ test('服務詳情：不在 catalog 的名稱顯示後端 404 訊息', async () 
   expect(screen.getByRole('link', { name: '回到服務清單' })).toBeInTheDocument()
 })
 
-test.each([
-  ['jobs', '排程工作（尚未提供）'],
-  ['incidents', '事件（尚未提供）'],
-  ['host', '主機（尚未提供）'],
-])('佔位頁 %s：標明尚未提供，不打任何維運 API', async (path, heading) => {
-  const fetchMock = mount(`/admin/operations/${path}`)
-  expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
+test('佔位頁 incidents：標明尚未提供，不打任何維運 API', async () => {
+  const fetchMock = mount('/admin/operations/incidents')
+  expect(await screen.findByRole('heading', { name: '事件（尚未提供）' })).toBeInTheDocument()
   expect(opsCalls(fetchMock)).toEqual([])
+})
+
+test('排程工作：列出執行紀錄（成功、失敗、執行中、結果不明），耗時與 Result；可依狀態篩選', async () => {
+  const fetchMock = mount('/admin/operations/jobs')
+  const table = within(await screen.findByRole('table', { name: '排程工作執行紀錄' }))
+  const rows = table.getAllByRole('row').slice(1)
+  expect(rows).toHaveLength(4)
+  expect(within(rows[0]).getByText('成功')).toBeInTheDocument()
+  expect(rows[0]).toHaveTextContent('2 分 30 秒')
+  expect(within(rows[1]).getByText('失敗')).toBeInTheDocument()
+  expect(rows[1]).toHaveTextContent('exit-code・exit 2')
+  expect(within(rows[2]).getByText('執行中')).toBeInTheDocument()
+  expect(within(rows[3]).getByText('結果不明')).toBeInTheDocument()
+  expect(opsCalls(fetchMock)).toEqual([])
+  fireEvent.change(screen.getByLabelText('狀態'), { target: { value: 'lost' } })
+  await waitFor(() => expect(within(screen.getByRole('table', { name: '排程工作執行紀錄' })).getAllByRole('row')).toHaveLength(2))
+  expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain('/api/admin/jobs?state=lost&limit=50&offset=0')
+})
+
+test('排程工作：後端錯誤原樣顯示，不白屏', async () => {
+  mount('/admin/operations/jobs', {
+    override: url => url.startsWith('/api/admin/jobs')
+      ? { status: 400, body: { detail: '時間範圍最多 90 天', code: 'invalid_params' } } : undefined,
+  })
+  expect(await screen.findByRole('alert')).toHaveTextContent('時間範圍最多 90 天')
+})
+
+test('主機：最新值與一小時最高值、檔案系統用量；沒有資料時說明要檢查的 unit', async () => {
+  mount('/admin/operations/host')
+  const cpu = within(await screen.findByRole('group', { name: 'CPU 使用率' }))
+  expect(cpu.getByText('12.5%')).toBeInTheDocument()
+  expect(cpu.getByText(/1 小時最高 80\.0%/)).toBeInTheDocument()
+  expect(within(screen.getByRole('group', { name: '記憶體使用率' })).getByText(/可用 8\.0 GiB/)).toBeInTheDocument()
+  const fs = within(screen.getByRole('table', { name: '檔案系統' }))
+  expect(fs.getByText('/home/kashionz/projects/report-mark')).toBeInTheDocument()
+  expect(fs.getByText('24.6%')).toBeInTheDocument()
+})
+
+test('主機：最近一小時沒有觀測時給出明確說明', async () => {
+  mount('/admin/operations/host', {
+    override: url => url.startsWith('/api/admin/observations')
+      ? { body: { since: '2026-10-06T01:00:00Z', until: '2026-10-06T02:00:00Z', limit: 5000, truncated: false, items: [] } }
+      : undefined,
+  })
+  expect(await screen.findByText(/最近一小時沒有主機觀測/)).toHaveTextContent('report-mark-load-observations.timer')
 })
 
 test('沒有 ops.read：只顯示需要權限的說明，不打維運 API', async () => {

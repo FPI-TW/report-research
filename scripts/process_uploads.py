@@ -315,7 +315,8 @@ async def ingest_round(ctx: Ctx, *, limit: int, hashes: list[str]) -> IngestStat
                 if tripped:
                     await uw.back_to_clean(session, upload_id, failure_kind=uploads.FAILURE_LLM_BREAKER,
                                            detail=f"LLM 斷路器跳脫，延後處理：{tripped}")
-                    st.deferred += 1 + await uw.defer_all_clean(session, detail=f"LLM 斷路器跳脫，延後處理：{tripped}")
+                    # defer_all_clean 也會數到剛退回 clean 的這一筆
+                    st.deferred += await uw.defer_all_clean(session, detail=f"LLM 斷路器跳脫，延後處理：{tripped}")
                     _say(f"LLM 斷路器跳脫：{st.deferred} 筆延後到斷路器過期後再處理")
                     return st
                 await uw.back_to_clean(session, upload_id, detail=f"LLM 環境錯誤，未處理：{exc}")

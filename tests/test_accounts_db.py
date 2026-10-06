@@ -542,6 +542,21 @@ async def scenario_ops_action_audit(api) -> None:
                               "result": "already_running"}, mine[0].detail
 
 
+
+async def scenario_export_audit(api) -> None:
+    """CSV 匯出的稽核：只有種類、篩選條件、筆數與 truncated；None 的篩選條件省略；未知種類直接拒絕。"""
+    admin = await api.create_user(_name("Export"), PW, "admin", actor_id=None)
+    await api.record_export(actor_id=admin.id, kind="reports", filters={"q": "台積電", "hidden": None, "limit": 10},
+                            row_count=3, truncated=False)
+    await _expect(ValueError, api.record_export(actor_id=admin.id, kind="qa_log", filters={}, row_count=0,
+                                                truncated=False))
+    _total, entries = await api.list_audit(limit=200)
+    mine = [e for e in entries if e.actor_user_id == admin.id and e.action == "data.export"]
+    assert len(mine) == 1, mine
+    assert (mine[0].target_type, mine[0].target_id) == ("export", "reports"), mine[0]
+    assert mine[0].detail == {"kind": "reports", "format": "csv", "filters": {"limit": 10, "q": "台積電"},
+                              "row_count": 3, "truncated": False}, mine[0].detail
+
 SCENARIOS = [
     scenario_login,
     scenario_duplicate_username_case_insensitive,
@@ -570,6 +585,7 @@ SCENARIOS = [
     scenario_deletion_execute_purges,
     scenario_deletion_replay,
     scenario_ops_action_audit,
+    scenario_export_audit,
 ]
 
 

@@ -28,6 +28,8 @@ const OpsLogsPage = lazy(routeLoaders.adminOpsLogs)
 const OpsJobsPage = lazy(routeLoaders.adminOpsJobs)
 const OpsIncidentsPage = lazy(routeLoaders.adminOpsIncidents)
 const OpsHostPage = lazy(routeLoaders.adminOpsHost)
+const OpsDataHealthPage = lazy(routeLoaders.adminOpsDataHealth)
+const OpsLlmUsagePage = lazy(routeLoaders.adminOpsLlmUsage)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -86,6 +88,8 @@ export const routes = [
               { path: 'jobs', element: <Suspense><OpsJobsPage /></Suspense> },
               { path: 'incidents', element: <Suspense><OpsIncidentsPage /></Suspense> },
               { path: 'host', element: <Suspense><OpsHostPage /></Suspense> },
+              { path: 'data-health', element: <Suspense><OpsDataHealthPage /></Suspense> },
+              { path: 'llm-usage', element: <Suspense><OpsLlmUsagePage /></Suspense> },
             ],
           },
           { path: '*', element: <NotFound /> },

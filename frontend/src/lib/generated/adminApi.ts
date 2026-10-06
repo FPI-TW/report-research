@@ -38,6 +38,15 @@ export const AuditChainResponseSchema = z.object({
 })
 export type AuditChainResponse = z.infer<typeof AuditChainResponseSchema>
 
+export const AuditFindingSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  severity: z.enum(['error', 'warn']),
+  count: z.number().int(),
+  detail: z.string(),
+})
+export type AuditFinding = z.infer<typeof AuditFindingSchema>
+
 export const AuditItemSchema = z.object({
   id: z.number().int(),
   actor_user_id: z.string().nullable(),
@@ -66,6 +75,20 @@ export const CreateUserRequestSchema = z.object({
   role: z.enum(['admin', 'user']).optional(),
 })
 export type CreateUserRequest = z.infer<typeof CreateUserRequestSchema>
+
+export const DbAuditSectionSchema = z.object({
+  status: z.enum(['ok', 'warn', 'fail', 'unknown']),
+  available: z.boolean(),
+  unavailable_reason: z.string().nullable().optional(),
+  finished_at: z.string().nullable().optional(),
+  age_hours: z.number().nullable().optional(),
+  stale: z.boolean(),
+  exit_code: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+  skipped: z.array(z.string()),
+  findings: z.array(AuditFindingSchema),
+})
+export type DbAuditSection = z.infer<typeof DbAuditSectionSchema>
 
 export const DeletionItemSchema = z.object({
   id: z.number().int(),
@@ -96,6 +119,25 @@ export const ElevateResponseSchema = z.object({
   elevated_until: z.string(),
 })
 export type ElevateResponse = z.infer<typeof ElevateResponseSchema>
+
+export const FreshnessFindingSchema = z.object({
+  asset: z.string(),
+  label: z.string(),
+  state: z.enum(['fresh', 'stale', 'suppressed', 'disabled', 'upstream_stale']),
+  latest: z.string().nullable().optional(),
+  age_days: z.number().nullable().optional(),
+  threshold_days: z.number().int(),
+  detail: z.string(),
+})
+export type FreshnessFinding = z.infer<typeof FreshnessFindingSchema>
+
+export const FreshnessSectionSchema = z.object({
+  status: z.enum(['ok', 'warn', 'fail', 'unknown']),
+  exit_code: z.number().int(),
+  error: z.string().nullable().optional(),
+  findings: z.array(FreshnessFindingSchema),
+})
+export type FreshnessSection = z.infer<typeof FreshnessSectionSchema>
 
 export const IncidentEventItemSchema = z.object({
   event_id: z.string(),
@@ -171,6 +213,90 @@ export const JobListResponseSchema = z.object({
   items: z.array(JobItemSchema),
 })
 export type JobListResponse = z.infer<typeof JobListResponseSchema>
+
+export const LlmUsageDaySchema = z.object({
+  calls: z.number().int(),
+  failures: z.number().int(),
+  prompt_hit_tokens: z.number().int(),
+  prompt_miss_tokens: z.number().int(),
+  completion_tokens: z.number().int(),
+  reasoning_tokens: z.number().int(),
+  calls_without_tokens: z.number().int(),
+  total_ms: z.number().int(),
+  cost: z.number().nullable().optional(),
+  day: z.string(),
+})
+export type LlmUsageDay = z.infer<typeof LlmUsageDaySchema>
+
+export const LlmUsageModelSchema = z.object({
+  calls: z.number().int(),
+  failures: z.number().int(),
+  prompt_hit_tokens: z.number().int(),
+  prompt_miss_tokens: z.number().int(),
+  completion_tokens: z.number().int(),
+  reasoning_tokens: z.number().int(),
+  calls_without_tokens: z.number().int(),
+  total_ms: z.number().int(),
+  cost: z.number().nullable().optional(),
+  model: z.string(),
+})
+export type LlmUsageModel = z.infer<typeof LlmUsageModelSchema>
+
+export const LlmUsageRowSchema = z.object({
+  calls: z.number().int(),
+  failures: z.number().int(),
+  prompt_hit_tokens: z.number().int(),
+  prompt_miss_tokens: z.number().int(),
+  completion_tokens: z.number().int(),
+  reasoning_tokens: z.number().int(),
+  calls_without_tokens: z.number().int(),
+  total_ms: z.number().int(),
+  cost: z.number().nullable().optional(),
+  day: z.string(),
+  task: z.string(),
+  model: z.string(),
+})
+export type LlmUsageRow = z.infer<typeof LlmUsageRowSchema>
+
+export const LlmUsageSourceSchema = z.object({
+  exists: z.boolean(),
+  size_bytes: z.number().int(),
+  scanned_bytes: z.number().int(),
+  truncated: z.boolean(),
+  lines_scanned: z.number().int(),
+  lines_invalid: z.number().int(),
+  lines_in_range: z.number().int(),
+  earliest_ts: z.string().nullable().optional(),
+  latest_ts: z.string().nullable().optional(),
+})
+export type LlmUsageSource = z.infer<typeof LlmUsageSourceSchema>
+
+export const LlmUsageTaskSchema = z.object({
+  calls: z.number().int(),
+  failures: z.number().int(),
+  prompt_hit_tokens: z.number().int(),
+  prompt_miss_tokens: z.number().int(),
+  completion_tokens: z.number().int(),
+  reasoning_tokens: z.number().int(),
+  calls_without_tokens: z.number().int(),
+  total_ms: z.number().int(),
+  cost: z.number().nullable().optional(),
+  task: z.string(),
+})
+export type LlmUsageTask = z.infer<typeof LlmUsageTaskSchema>
+
+export const LlmUsageTotalsSchema = z.object({
+  calls: z.number().int(),
+  failures: z.number().int(),
+  prompt_hit_tokens: z.number().int(),
+  prompt_miss_tokens: z.number().int(),
+  completion_tokens: z.number().int(),
+  reasoning_tokens: z.number().int(),
+  calls_without_tokens: z.number().int(),
+  total_ms: z.number().int(),
+  cost: z.number().nullable().optional(),
+})
+export type LlmUsageTotals = z.infer<typeof LlmUsageTotalsSchema>
 
 export const LogoutResponseSchema = z.object({
   revoked: z.number().int(),
@@ -295,6 +421,25 @@ export const PrivilegesRequestSchema = z.object({
 })
 export type PrivilegesRequest = z.infer<typeof PrivilegesRequestSchema>
 
+export const ReconcileIssueSchema = z.object({
+  type: z.string(),
+  ref: z.string(),
+})
+export type ReconcileIssue = z.infer<typeof ReconcileIssueSchema>
+
+export const ReconcileStatsSchema = z.object({
+  checked: z.number().int().optional(),
+  errors: z.number().int().optional(),
+  unkeyed: z.number().int().optional(),
+  key_mismatch: z.number().int().optional(),
+  missing: z.number().int().optional(),
+  size_mismatch: z.number().int().optional(),
+  sha_mismatch: z.number().int().optional(),
+  sha_metadata_missing: z.number().int().optional(),
+  orphans: z.number().int().optional(),
+})
+export type ReconcileStats = z.infer<typeof ReconcileStatsSchema>
+
 export const ReportVisibilityRequestSchema = z.object({
   hidden: z.boolean(),
   reason: z.string().nullable().optional(),
@@ -359,6 +504,21 @@ export const IncidentDetailSchema = z.object({
 })
 export type IncidentDetail = z.infer<typeof IncidentDetailSchema>
 
+export const LlmUsageResponseSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  timezone: z.string(),
+  source: LlmUsageSourceSchema,
+  totals: LlmUsageTotalsSchema,
+  by_day: z.array(LlmUsageDaySchema),
+  by_task: z.array(LlmUsageTaskSchema),
+  by_model: z.array(LlmUsageModelSchema),
+  rows: z.array(LlmUsageRowSchema),
+  rows_truncated: z.boolean(),
+  cost_available: z.boolean(),
+})
+export type LlmUsageResponse = z.infer<typeof LlmUsageResponseSchema>
+
 export const OpsServiceDetailSchema = z.object({
   name: z.string(),
   kind: z.enum(['systemd', 'container']),
@@ -394,6 +554,33 @@ export const OpsServiceStatusSchema = z.object({
 })
 export type OpsServiceStatus = z.infer<typeof OpsServiceStatusSchema>
 
+export const R2ReconcileSectionSchema = z.object({
+  status: z.enum(['ok', 'warn', 'fail', 'unknown']),
+  available: z.boolean(),
+  unavailable_reason: z.string().nullable().optional(),
+  finished_at: z.string().nullable().optional(),
+  age_hours: z.number().nullable().optional(),
+  stale: z.boolean(),
+  exit_code: z.number().int().nullable().optional(),
+  mode: z.enum(['local', 'r2']).nullable().optional(),
+  dry_run: z.boolean().nullable().optional(),
+  limit: z.number().int().nullable().optional(),
+  orphan_scan: z.enum(['done', 'skipped', 'error']).nullable().optional(),
+  stats: ReconcileStatsSchema.nullable().optional(),
+  issues: z.array(ReconcileIssueSchema),
+  issues_total: z.number().int(),
+})
+export type R2ReconcileSection = z.infer<typeof R2ReconcileSectionSchema>
+
+export const DataHealthResponseSchema = z.object({
+  generated_at: z.string(),
+  overall: z.enum(['ok', 'warn', 'fail', 'unknown']),
+  freshness: FreshnessSectionSchema,
+  db_audit: DbAuditSectionSchema,
+  r2_reconcile: R2ReconcileSectionSchema,
+})
+export type DataHealthResponse = z.infer<typeof DataHealthResponseSchema>
+
 export const OpsServiceListResponseSchema = z.object({
   environment: z.string(),
   host: z.string(),
@@ -416,6 +603,8 @@ export const adminApi = {
   auditLog: (query: { limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/audit${qs(query)}`, AuditResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit/verify — Verify Audit Chain */
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/data-health — Get Data Health */
+  getDataHealth: () => requestJSON('/api/admin/data-health', DataHealthResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/deletions — List Deletions */
   listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
@@ -426,6 +615,8 @@ export const adminApi = {
   getIncident: (incidentId: string) => requestJSON(`/api/admin/incidents/${encodeURIComponent(incidentId)}`, IncidentDetailSchema, { cache: 'no-store' }),
   /** GET /api/admin/jobs — List Jobs */
   listJobs: (query: { service?: string | null; unit?: string | null; state?: 'running' | 'finished' | 'lost' | null; result?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/jobs${qs(query)}`, JobListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/llm-usage — Get Llm Usage */
+  getLlmUsage: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/llm-usage${qs(query)}`, LlmUsageResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/observations — List Observations */
   listObservations: (query: { scope?: 'host' | 'container' | 'service' | null; subject?: string | null; metric?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/observations${qs(query)}`, ObservationListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services — List Ops Services */
@@ -460,4 +651,18 @@ export const adminApi = {
   setPrivileges: (userId: string, body: z.input<typeof PrivilegesRequestSchema>) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/privileges`, UserItemSchema, jsonBody('PUT', body)),
   /** POST /api/admin/users/{user_id}/totp/reset — Reset Totp */
   resetTotp: (userId: string) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/totp/reset`, UserItemSchema, jsonBody('POST')),
+}
+
+/** CSV 下載端點的網址（`text/csv`，不是 JSON）。 */
+export const adminCsvUrls = {
+  /** GET /api/admin/export/audit.csv — Export Audit（下載網址） */
+  exportAudit: (query: { limit?: number } = {}) => `/api/admin/export/audit.csv${qs(query)}`,
+  /** GET /api/admin/export/incidents.csv — Export Incidents（下載網址） */
+  exportIncidents: (query: { status?: 'firing' | 'resolved' | 'lost' | null; component?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => `/api/admin/export/incidents.csv${qs(query)}`,
+  /** GET /api/admin/export/jobs.csv — Export Jobs（下載網址） */
+  exportJobs: (query: { service?: string | null; unit?: string | null; state?: 'running' | 'finished' | 'lost' | null; result?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => `/api/admin/export/jobs.csv${qs(query)}`,
+  /** GET /api/admin/export/reports.csv — Export Reports（下載網址） */
+  exportReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number } = {}) => `/api/admin/export/reports.csv${qs(query)}`,
+  /** GET /api/admin/export/users.csv — Export Users（下載網址） */
+  exportUsers: (query: { limit?: number } = {}) => `/api/admin/export/users.csv${qs(query)}`,
 }

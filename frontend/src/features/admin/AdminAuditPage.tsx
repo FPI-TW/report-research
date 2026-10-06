@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
+import { adminCsvUrls } from '../../lib/generated/adminApi'
 import { AdminHeader } from './AdminHeader'
+import { ExportCsvButton } from './ExportCsvButton'
 import { actionLabel, actorLabel, auditSummary, fmtDateTime } from './auditLabels'
 import { AUDIT_PAGE_SIZE, useAdminAudit } from './useAdmin'
 import styles from './Admin.module.css'
@@ -15,7 +17,10 @@ function AuditLog() {
   const q = useAdminAudit(offset)
   return (
     <section className={styles.card} aria-labelledby="admin-audit-title">
-      <h2 id="admin-audit-title" className={styles.ctitle}>最近的操作</h2>
+      <div className={styles.cardHead}>
+        <h2 id="admin-audit-title" className={styles.ctitle}>最近的操作</h2>
+        <ExportCsvButton href={adminCsvUrls.exportAudit()} what="操作紀錄" />
+      </div>
       {q.isPending ? (
         <p className={styles.idle}>載入中…</p>
       ) : q.isError ? (

@@ -4,8 +4,9 @@ import { ConfirmDialog } from '../../components/primitives/ConfirmDialog'
 import { Modal } from '../../components/primitives/Modal'
 import { RequireAdmin } from '../../components/shell/RequireAdmin'
 import { displayTitle } from '../../lib/displayTitle'
-import type { AdminReportItem } from '../../lib/generated/adminApi'
+import { adminCsvUrls, type AdminReportItem } from '../../lib/generated/adminApi'
 import { AdminHeader } from './AdminHeader'
+import { ExportCsvButton } from './ExportCsvButton'
 import { fmtDateTime } from './auditLabels'
 import { RequireScope } from './RequireScope'
 import { REPORTS_PAGE_SIZE, useAdminReports, useReportVisibility, type HiddenFilter } from './useAdminReports'
@@ -83,7 +84,13 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
 
   return (
     <section className={styles.card} aria-labelledby="admin-reports-title">
-      <h2 id="admin-reports-title" className={styles.ctitle}>研報清單</h2>
+      <div className={styles.cardHead}>
+        <h2 id="admin-reports-title" className={styles.ctitle}>研報清單</h2>
+        <ExportCsvButton
+          href={adminCsvUrls.exportReports({ q: q || undefined, hidden: hidden === 'all' ? undefined : hidden === 'hidden' })}
+          what="研報清單"
+        />
+      </div>
       <form className={styles.form} onSubmit={search} role="search">
         <label className={styles.field}>關鍵字（標題／檔名／券商）
           <input type="search" value={draft} onChange={e => setDraft(e.target.value)} maxLength={200} />

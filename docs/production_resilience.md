@@ -1830,6 +1830,8 @@ EMBED_TORCH_THREADS=2 uv run python scripts/retrieval_regression.py check
 sudo install -m 0644 deploy/systemd/report-mark-retrieval-regression.service deploy/systemd/report-mark-retrieval-regression.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-retrieval-regression.timer
+# 2) 辦公室主機的 catalog 多了 retrieval-regression 一項（唯讀，不給 run）：照「維運代理」的步驟 3 重新安裝 catalog、
+#    --check，再重啟代理
 # 1') staging：語料不同，要在 staging 上自己擷取基準；unit 用 install_units.sh 代換使用者與路徑
 sudo deploy/install_units.sh --user <使用者> --root <repo 根> report-mark-retrieval-regression.timer
 sudo systemctl enable --now report-mark-retrieval-regression.timer

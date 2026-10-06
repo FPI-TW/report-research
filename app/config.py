@@ -131,6 +131,7 @@ def _budget_currency() -> str:
 # 逐字相同（tests/test_admin_ops_api.py 釘住）；這裡不 import ops_agent，是為了讓設定層不依賴代理套件。
 _OPS_SOCKETS = {
     "production": "/run/report-mark-ops/agent.sock",
+    "staging": "/run/report-mark-ops-staging/agent.sock",
     "development": "/run/report-mark-ops-dev/agent.sock",
 }
 

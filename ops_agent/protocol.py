@@ -39,8 +39,11 @@ PROTOCOL_VERSION = 1
 # 每個環境的 socket 路徑是固定的（不是旋鈕）：dev 與 prod 走不同 socket，代理以此判斷
 # 「用 dev socket 載入 prod catalog」這類錯置並拒絕啟動（`catalog.validate_binding`）。
 # `app/config.py` 的 `_OPS_SOCKETS` 必須逐字相同（tests/test_admin_ops_api.py 釘住）。
+# staging（EC2）是另一台主機，路徑仍與 production 分開：catalog 誤裝到錯的主機時，web 的
+# OPS_AGENT_ENVIRONMENT 對不上 socket，維運端點回 503，而不是默默顯示另一個環境的服務。
 CANONICAL_SOCKETS: dict[str, str] = {
     "production": "/run/report-mark-ops/agent.sock",
+    "staging": "/run/report-mark-ops-staging/agent.sock",
     "development": "/run/report-mark-ops-dev/agent.sock",
 }
 ENVIRONMENTS = tuple(CANONICAL_SOCKETS)
@@ -52,7 +55,7 @@ WRITE_ACTIONS: tuple[str, ...] = ("restart", "run")
 OPS: dict[str, str] = {"list": "status", "status": "status", "logs": "logs", "restart": "restart", "run": "run"}
 REQUEST_KEYS = frozenset({"v", "id", "env", "op", "service", "params", "actor"})
 
-# v1 的 restart 只開放 Web（生產與開發各一個）。這是代理端的硬性白名單：catalog 被誤設成讓
+# v1 的 restart 只開放 Web（生產與 staging 同名、開發另一個）。這是代理端的硬性白名單：catalog 被誤設成讓
 # PostgreSQL／nginx 可 restart 時，catalog 載入會先拒絕（`catalog._parse_service`），即使繞過載入
 # 直接給 Catalog 物件，代理執行前也會再擋一次（`actions.check_write_allowed`）。
 RESTARTABLE_UNITS: frozenset[str] = frozenset({"report-mark-web.service", "report-mark-dev-web.service"})

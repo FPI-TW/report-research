@@ -7,7 +7,7 @@ import OpsLogsPage from './OpsLogsPage'
 import OpsOverviewPage from './OpsOverviewPage'
 import OpsHostPage from './OpsHostPage'
 import OpsJobsPage from './OpsJobsPage'
-import { OpsIncidentsPage } from './OpsPlaceholderPages'
+import OpsIncidentsPage from './OpsIncidentsPage'
 import OpsServiceDetailPage from './OpsServiceDetailPage'
 import OpsServicesPage from './OpsServicesPage'
 
@@ -74,6 +74,38 @@ const HOST_OBS = [
   obs('cpu_pct', 80.0, { observed_at: '2026-10-06T01:30:00Z' }),
 ]
 
+const incident = (over: Record<string, unknown> = {}) => ({
+  incident_id: 'office-host:web:1791252000', host: 'office-host', component: 'web', kind: 'service',
+  probe_unit: 'report-mark-health.service', status: 'resolved', severity: 'CRITICAL', reason: 'probe_exit_1',
+  summary: '探針回報失敗（exit=1 result=exit-code）', opened_at: '2026-10-06T02:00:00Z',
+  last_event_at: '2026-10-06T02:10:00Z', resolved_at: '2026-10-06T02:10:00Z', duration_seconds: 600, event_count: 2,
+  ...over,
+})
+const INCIDENTS = [
+  incident({ incident_id: 'office-host:container:1791260000', component: 'container', status: 'firing',
+    severity: 'WARNING', reason: 'probe_exit_9', summary: null, opened_at: '2026-10-06T04:13:20Z',
+    last_event_at: '2026-10-06T04:13:20Z', resolved_at: null, duration_seconds: null, event_count: 1 }),
+  incident(),
+  incident({ incident_id: 'office-host:monitor:1791240000', component: 'monitor', kind: 'monitor_blind',
+    status: 'lost', severity: 'WARNING', reason: 'observation_missed', summary: null, resolved_at: null,
+    duration_seconds: null, event_count: 1, last_event_at: '2026-10-05T22:40:00Z', opened_at: '2026-10-05T22:40:00Z' }),
+]
+const INCIDENT_DETAIL = {
+  ...incident(),
+  events_truncated: false,
+  events: [
+    { event_id: 'office-host:web:1791252000:1791252000:FIRING', occurred_at: '2026-10-06T02:00:00Z', action: 'FIRING',
+      severity: 'CRITICAL', reason: 'probe_exit_1', status: 'web_incident', summary: '探針回報失敗', notified: true,
+      journal_excerpt: '2026-10-06T09:59:58+08:00 host check_web_health.sh[1]: status=down\n'
+        + '2026-10-06T09:59:59+08:00 host uvicorn[2]: token=<redacted>\n',
+      journal_truncated: true, journal_since: '2026-10-06T01:50:00Z', journal_until: '2026-10-06T02:00:00Z',
+      journal_units: 'report-mark-health.service,report-mark-web.service' },
+    { event_id: 'office-host:web:1791252000:1791252600:RESOLVED', occurred_at: '2026-10-06T02:10:00Z',
+      action: 'RESOLVED', severity: 'RESOLVED', reason: 'healthy', status: 'ok', summary: '已恢復', notified: false,
+      journal_excerpt: null, journal_truncated: false, journal_since: null, journal_until: null, journal_units: null },
+  ],
+}
+
 type Reply = { status?: number; body: unknown }
 type Override = (path: string) => Reply | undefined
 
@@ -95,6 +127,18 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
       const p = new URLSearchParams(url.split('?')[1] ?? '')
       const items = JOBS.filter(j => !p.get('state') || j.state === p.get('state'))
       return json({ body: { since: '2026-09-29T02:00:00Z', until: '2026-10-06T02:00:00Z', total: items.length,
+        limit: 50, offset: 0, has_more: false, next_offset: null, items } })
+    }
+    if (url.startsWith('/api/admin/incidents/')) {
+      const id = decodeURIComponent(url.slice('/api/admin/incidents/'.length))
+      if (id !== INCIDENT_DETAIL.incident_id) return json({ status: 404, body: { detail: '找不到這個事件', code: 'not_found' } })
+      return json({ body: INCIDENT_DETAIL })
+    }
+    if (url.startsWith('/api/admin/incidents')) {
+      const p = new URLSearchParams(url.split('?')[1] ?? '')
+      const items = INCIDENTS.filter(i => (!p.get('status') || i.status === p.get('status'))
+        && (!p.get('component') || i.component === p.get('component')))
+      return json({ body: { since: '2026-09-06T04:00:00Z', until: '2026-10-06T04:00:00Z', total: items.length,
         limit: 50, offset: 0, has_more: false, next_offset: null, items } })
     }
     if (url.startsWith('/api/admin/observations')) {
@@ -151,7 +195,7 @@ const UNAVAILABLE: Override = url => url.startsWith('/api/admin/ops')
   ? { status: 503, body: { detail: '維運代理不可用：維運代理未啟動（找不到 /run/x.sock）', code: 'ops_agent_unavailable' } }
   : undefined
 
-test('/admin/operations 導向總覽；子導覽六個分頁，未接 API 的（事件）標「尚未提供」', async () => {
+test('/admin/operations 導向總覽；子導覽六個分頁，都已接上 API（沒有「尚未提供」）', async () => {
   mount('/admin/operations')
   expect(await screen.findByRole('heading', { name: '總覽' })).toBeInTheDocument()
   expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/overview')
@@ -161,8 +205,7 @@ test('/admin/operations 導向總覽；子導覽六個分頁，未接 API 的（
     '/admin/operations/incidents', '/admin/operations/logs', '/admin/operations/host',
   ])
   expect(tabs.getByRole('link', { name: /總覽/ })).toHaveAttribute('aria-current', 'page')
-  expect(tabs.getByRole('link', { name: /事件/ })).toHaveTextContent('尚未提供')
-  for (const name of [/服務/, /排程工作/, /主機/]) {
+  for (const name of [/服務/, /排程工作/, /事件/, /主機/]) {
     expect(tabs.getByRole('link', { name })).not.toHaveTextContent('尚未提供')
   }
 })
@@ -216,7 +259,7 @@ test('維運代理不可用（503）：總覽整頁換成降級說明與代理�
   expect(await screen.findByRole('heading', { name: '維運代理目前無法使用' })).toBeInTheDocument()
   expect(screen.getByText(/找不到 \/run\/x.sock/)).toBeInTheDocument()
   expect(screen.getByText(/研報平台的其他功能不受影響/)).toBeInTheDocument()
-  // 子導覽還在，可以切去佔位頁
+  // 子導覽還在，可以切去讀 DB 投影的分頁（排程工作、事件、主機不經代理）
   expect(screen.getByRole('navigation', { name: '維運子導覽' })).toBeInTheDocument()
 })
 
@@ -285,10 +328,62 @@ test('服務詳情：不在 catalog 的名稱顯示後端 404 訊息', async () 
   expect(screen.getByRole('link', { name: '回到服務清單' })).toBeInTheDocument()
 })
 
-test('佔位頁 incidents：標明尚未提供，不打任何維運 API', async () => {
+test('事件：列出進行中、已恢復、結束不明，不經維運代理；可依狀態與元件篩選', async () => {
   const fetchMock = mount('/admin/operations/incidents')
-  expect(await screen.findByRole('heading', { name: '事件（尚未提供）' })).toBeInTheDocument()
+  const table = within(await screen.findByRole('table', { name: '事件清單' }))
+  const rows = table.getAllByRole('row').slice(1)
+  expect(rows).toHaveLength(3)
+  expect(within(rows[0]).getByText('進行中')).toBeInTheDocument()
+  expect(rows[0]).toHaveTextContent('容器')
+  expect(rows[0]).toHaveTextContent('WARNING')
+  expect(within(rows[1]).getByText('已恢復')).toBeInTheDocument()
+  expect(rows[1]).toHaveTextContent('10 分 0 秒')
+  expect(within(rows[2]).getByText('結束不明')).toBeInTheDocument()
+  expect(rows[2]).toHaveTextContent('監控失明')
+  expect(rows[2]).toHaveTextContent('不明（最後轉換')
+  expect(screen.getByText(/即時告警以 Slack 為準/)).toBeInTheDocument()
   expect(opsCalls(fetchMock)).toEqual([])
+  fireEvent.change(screen.getByLabelText('狀態'), { target: { value: 'firing' } })
+  await waitFor(() => expect(within(screen.getByRole('table', { name: '事件清單' })).getAllByRole('row')).toHaveLength(2))
+  expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain('/api/admin/incidents?status=firing&limit=50&offset=0')
+  fireEvent.change(screen.getByLabelText('元件'), { target: { value: 'web' } })
+  expect(await screen.findByText(/這段期間沒有事件/)).toBeInTheDocument()
+  expect(fetchMock.mock.calls.map(([u]) => String(u)))
+    .toContain('/api/admin/incidents?status=firing&component=web&limit=50&offset=0')
+})
+
+test('事件詳情：狀態轉換舊→新，journal 片段等寬、預設收合、標示截斷', async () => {
+  const fetchMock = mount('/admin/operations/incidents')
+  const table = within(await screen.findByRole('table', { name: '事件清單' }))
+  fireEvent.click(within(table.getAllByRole('row')[2]).getByRole('button', { name: '詳情' }))
+  const detail = within(await screen.findByRole('region', { name: '事件詳情' }))
+  expect(await detail.findByText('狀態轉換（舊→新）')).toBeInTheDocument()
+  expect(fetchMock.mock.calls.map(([u]) => String(u)))
+    .toContain(`/api/admin/incidents/${encodeURIComponent('office-host:web:1791252000')}`)
+  const events = detail.getAllByRole('listitem')
+  expect(events).toHaveLength(2)
+  expect(events[0]).toHaveTextContent('開始')
+  expect(events[0]).toHaveTextContent('已通知')
+  expect(events[1]).toHaveTextContent('已恢復')
+  expect(events[1]).toHaveTextContent('未送出通知')
+  const excerpt = detail.getByLabelText('journal 片段')
+  expect(excerpt.tagName).toBe('PRE')
+  expect(excerpt).toHaveTextContent('token=<redacted>')
+  const box = excerpt.closest('details')!
+  expect(box).not.toHaveAttribute('open')
+  expect(within(box).getByText(/片段已截斷/)).toBeInTheDocument()
+  expect(within(box).getByText(/report-mark-web.service/)).toBeInTheDocument()
+  expect(within(events[1]).queryByLabelText('journal 片段')).not.toBeInTheDocument()
+  fireEvent.click(detail.getByRole('button', { name: '關閉詳情' }))
+  await waitFor(() => expect(screen.queryByRole('region', { name: '事件詳情' })).not.toBeInTheDocument())
+})
+
+test('事件：後端錯誤原樣顯示，不白屏', async () => {
+  mount('/admin/operations/incidents', {
+    override: url => url.startsWith('/api/admin/incidents')
+      ? { status: 400, body: { detail: '時間範圍最多 366 天', code: 'invalid_params' } } : undefined,
+  })
+  expect(await screen.findByRole('alert')).toHaveTextContent('時間範圍最多 366 天')
 })
 
 test('排程工作：列出執行紀錄（成功、失敗、執行中、結果不明），耗時與 Result；可依狀態篩選', async () => {

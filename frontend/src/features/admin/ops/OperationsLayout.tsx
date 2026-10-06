@@ -5,15 +5,16 @@ import { RequireScope } from '../RequireScope'
 import adminStyles from '../Admin.module.css'
 import styles from './Ops.module.css'
 
-// `soon`：API 尚未提供（L4 的 incidents），先放佔位頁。排程工作與主機讀 DB 投影（/api/admin/jobs、observations）。
-const TABS = [
+// 排程工作、事件與主機讀 DB 投影（/api/admin/jobs、incidents、observations）；服務與日誌經維運代理。
+// 某個分頁的 API 還沒提供時加 `soon: true`，導覽會標「尚未提供」。
+const TABS: readonly { to: string; label: string; soon?: boolean }[] = [
   { to: 'overview', label: '總覽' },
   { to: 'services', label: '服務' },
   { to: 'jobs', label: '排程工作' },
-  { to: 'incidents', label: '事件', soon: true },
+  { to: 'incidents', label: '事件' },
   { to: 'logs', label: '日誌' },
   { to: 'host', label: '主機' },
-] as const
+]
 
 /**
  * 維運頁（/app/admin/operations/*）的外殼：標題＋子導覽＋子頁。整組需要 `ops.read`（顯示層；
@@ -25,13 +26,13 @@ function Operations() {
       <div className={adminStyles.inner}>
         <AdminHeader
           title="維運"
-          subtitle="服務狀態與最近日誌（唯讀）經主機上的維運代理取得；排程工作與主機資源來自監控紀錄（每 5 分鐘匯入）。重新啟動、立即執行等操作尚未提供。"
+          subtitle="服務狀態與最近日誌（唯讀）經主機上的維運代理取得；排程工作、事件與主機資源來自監控紀錄（每 5 分鐘匯入）。重新啟動、立即執行等操作尚未提供。"
         />
         <nav className={styles.tabs} aria-label="維運子導覽">
           {TABS.map(t => (
             <NavLink key={t.to} to={t.to} className={({ isActive }) => `${styles.tab} ${isActive ? styles.tabOn : ''}`}>
               {t.label}
-              {'soon' in t && <span className={styles.soon}>尚未提供</span>}
+              {t.soon && <span className={styles.soon}>尚未提供</span>}
             </NavLink>
           ))}
         </nav>

@@ -19,7 +19,7 @@ const AdminUsersPage = lazy(routeLoaders.adminUsers)
 const AdminReviewsPage = lazy(routeLoaders.adminReviews)
 const AdminAuditPage = lazy(routeLoaders.adminAudit)
 const AdminReportsPage = lazy(routeLoaders.adminReports)
-// 維運（/admin/operations/*）：外殼（標題＋子導覽、ops.read 守門）＋各子頁；jobs／incidents／host 是佔位頁。
+// 維運（/admin/operations/*）：外殼（標題＋子導覽、ops.read 守門）＋各子頁；jobs／incidents／host 讀 DB 投影。
 const OperationsLayout = lazy(routeLoaders.adminOps)
 const OpsOverviewPage = lazy(routeLoaders.adminOpsOverview)
 const OpsServicesPage = lazy(routeLoaders.adminOpsServices)

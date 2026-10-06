@@ -52,3 +52,12 @@
 }
 .warnNote { font-size: 12.5px; color: var(--tf-warn-text); background: var(--tf-warn-bg); border-radius: 6px; padding: 6px 10px; margin: 10px 0 0; }
 .links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* 事件詳情：狀態轉換時間軸與可收合的 journal 片段（等寬、框內捲動，不撐開頁面） */
+.events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.event { border: 1px solid var(--tf-border-weak); border-radius: var(--tf-radius-md); padding: 10px 12px; min-width: 0; }
+.eventHead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; }
+.eventSummary { font-size: 12.5px; color: var(--tf-text-2); margin: 6px 0 0; overflow-wrap: anywhere; }
+.journal { margin-top: 8px; font-size: 12.5px; }
+.journal > summary { cursor: pointer; color: var(--tf-text-2); }
+.journal .logBox { max-height: 40vh; }

@@ -78,3 +78,42 @@ export function fmtDuration(seconds: number | null | undefined): string {
   if (m > 0) return `${m} 分 ${s % 60} 秒`
   return `${s} 秒`
 }
+
+// ── 事件（/api/admin/incidents，P5 的 DB 投影）──────────────────────────────
+
+export const INCIDENT_STATUS_LABELS: Record<'firing' | 'resolved' | 'lost', string> = {
+  firing: '進行中',
+  resolved: '已恢復',
+  lost: '結束不明',
+}
+
+export const INCIDENT_STATUS_HINTS: Record<'firing' | 'resolved' | 'lost', string> = {
+  firing: '還沒收到「已恢復」；最新狀態以 Slack 告警為準',
+  resolved: '主機上的事件偵測已送出「已恢復」',
+  lost: '沒收到「已恢復」，但同一個元件之後又開了新事件——它必定已經結束，只是不知道何時',
+}
+
+export const EVENT_ACTION_LABELS: Record<'FIRING' | 'REMINDER' | 'ESCALATED' | 'RESOLVED', string> = {
+  FIRING: '開始',
+  REMINDER: '提醒',
+  ESCALATED: '升級',
+  RESOLVED: '已恢復',
+}
+
+/** P5 各實例的元件名（deploy/systemd/*incident.service 的 INCIDENT_COMPONENT／INCIDENT_MONITOR_COMPONENT）。 */
+export const INCIDENT_COMPONENTS: { value: string; label: string }[] = [
+  { value: 'web', label: 'Web（本機 /healthz）' },
+  { value: 'edge', label: '對外邊緣' },
+  { value: 'container', label: '容器' },
+  { value: 'host', label: '主機資源' },
+  { value: 'linebot', label: 'LINE bot' },
+  { value: 'monitor', label: 'Web 探針本身' },
+  { value: 'edge_monitor', label: '邊緣探針本身' },
+  { value: 'container_monitor', label: '容器探針本身' },
+  { value: 'host_monitor', label: '主機探針本身' },
+  { value: 'linebot_monitor', label: 'LINE bot 探針本身' },
+]
+
+export function componentLabel(component: string): string {
+  return INCIDENT_COMPONENTS.find(c => c.value === component)?.label ?? component
+}

@@ -42,6 +42,23 @@ class GeneratedAdminClientTests(unittest.TestCase):
         with self.assertRaises(gen.Unsupported):
             gen.ts_query_type({"type": "object"})
 
+    def test_raw_body_endpoints_get_upload_descriptors_not_json_calls(self):
+        """raw body（application/pdf）端點：不產生 jsonBody 呼叫函式，改產生網址、Content-Type 與回應 schema。"""
+        text = gen.OUTPUT.read_text(encoding="utf-8")
+        self.assertIn("export const adminRawUploads = {", text)
+        self.assertIn("contentType: 'application/pdf'", text)
+        self.assertIn("url: (query: { filename: string; last_modified?: number | null })", text)
+        self.assertIn("response: AdminUploadSchema", text)
+        self.assertNotIn("jsonBody('POST')) => requestJSON('/api/admin/uploads'", text)
+        upload = {"requestBody": {"content": {"application/pdf": {"schema": {"type": "string"}}}}}
+        self.assertEqual(gen.raw_body_type(upload), "application/pdf")
+        self.assertIsNone(gen.raw_body_type({"requestBody": {"content": {"application/json": {}}}}))
+        self.assertIsNone(gen.raw_body_type({}))
+        with self.assertRaises(gen.Unsupported):
+            gen.raw_body_type({"requestBody": {"content": {"application/pdf": {}, "image/png": {}}}})
+        with self.assertRaises(gen.Unsupported):
+            gen.build_raw_upload("/api/admin/x", "get", {**upload, "operationId": "x", "responses": {}})
+
     def test_nullable_and_refs(self):
         self.assertEqual(gen.zod({"anyOf": [{"type": "string"}, {"type": "null"}]}), "z.string().nullable()")
         self.assertEqual(gen.zod({"$ref": "#/components/schemas/User-Input"}), "UserInputSchema")

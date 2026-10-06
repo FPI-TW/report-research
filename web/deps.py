@@ -128,7 +128,15 @@ def _valid_uuid(s) -> bool:
 # 監控投影的唯讀查詢（web/routers/admin_monitoring.py）同理：deps.ops_monitoring.X。
 # 資料健康與 LLM 用量（web/routers/admin_data_health.py）同理：deps.data_health.X、deps.llm_usage.X。
 # 檢索回歸（web/routers/admin_retrieval_regression.py）同理：deps.retrieval_regression.X。
-from app.services import accounts, data_health, llm_usage, ops_monitoring, retrieval_regression  # noqa: E402
+# 研報上傳的收檔與查詢（web/routers/admin_uploads.py）同理：deps.upload_intake.X。
+from app.services import (  # noqa: E402
+    accounts,
+    data_health,
+    llm_usage,
+    ops_monitoring,
+    retrieval_regression,
+    upload_intake,
+)
 from app.services import visibility as report_visibility  # noqa: E402
 from app.services.answer import (  # noqa: E402
     answer_question,
@@ -224,4 +232,5 @@ __all__ = [
     "report_visibility",
     "rerank_warmup",
     "retrieval_regression",
+    "upload_intake",
 ]

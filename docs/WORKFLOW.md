@@ -183,6 +183,19 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 
 第 5 到 8 段 best-effort：失敗只記 `data/unit_failures.log`，rc=75 不計入異常；任一段 rc=2（帳號／環境型中止）時，當輪 `data/.sync_last_hashes` 複製保留成 `data/sync_hashes_retained_<時間>.txt`，並印出摘要、標題、摘錄各自的 `--hashes-file` 補跑指令。整批中止的重放步驟見 `docs/production_resilience.md`「整批中止後的重放」，**不能**用 `failures_to_delta.py` 或 `--all-local` 補救（整批中止不留逐篇失敗紀錄）。摘要、標題、摘錄、訊號遇到「LLM 有回應但不能用」的研報會記入 `research.llm_task_failure`：同一 model 下審查擋下或截斷 1 次、其他原因連續 3 輪就不再重打，成功即刪列；`make llm-blocked` 唯讀列出（`--all` 連累計中的也列），要重試就對該批次加 `--retry-blocked` 或 DELETE 那一列；跳過鍵只看 model、不看 prompt 或 `EXTRACTION_VERSION`，**改 prompt 後要加 `--retry-blocked`**（摘錄與訊號的 `--reextract` 隱含它）。第 8 段標題積壓以 `--exclude-hashes-file data/.sync_last_hashes` 排掉本輪 4b 剛打過的新研報，免得同一篇一輪打兩次、失敗記兩次。逾時、CLI 非零退出這類環境型失敗不記。走 DeepSeek 時，審查擋下、截斷、空回應、400、已吐字後逾時（`timeout_streamed`，期限型截斷：連續 3 輪才跳過、計入斷路器、可重放）也照原因記入（`API[...]` 錯誤不在腳本層重試）；行內標註被審查擋下的研報不入庫、計 `skip_blocked`（異常）、被 `max_tokens` 截斷的計 `skip_truncated`（異常），兩者 `failures_to_delta.py` 預設都不撈（期限型截斷記 `skip_untagged`、會撈），由人處置（`docs/production_resilience.md`「DeepSeek 批次的失敗處置」）。批次斷路器的標記綁定 sync 輪次（殼每輪 export `SYNC_ROUND_ID`）：只擋同一輪後面用到 DeepSeek 的段。心跳 `data/.last_successful_sync` 只在完整成功時更新，`scripts/check_batch_freshness.py` 據此判管線停跑。環境檔 `/etc/default/report-mark-sync`（範本 `deploy/systemd/report-mark-sync.env.example`）：`REPORT_MARK_ROOT`、`SYNC_PATH_EXTRA`（nvm 沒有 `current` 連結，寫錯會讓 claude 找不到而無聲漏跑）、`EXTRACTOR`、備份與 R2 變數、`SYNC_SOURCE`／`SYNC_INBOX_PUSH`；DB 不在本機時另設 `REPORT_MARK_DB_URL` 與 `PGSSLROOTCERT`（批次不讀 repo 根 `.env`，漏設會靜默連回 `localhost:5436`）。
 
+## 研報上傳：收檔（Admin v1.5，功能旗標預設關閉）
+
+管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口。現況只有**收檔**這一段：`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`），掃描與入庫的 worker 還不存在，所以就算打開旗標，檔案也只會停在隔離區、狀態停在 `quarantined`（清單的 `scanner.pending` 會一直累積）。旗標要等 worker 上線並經同意後才開。
+
+`POST /api/admin/uploads?filename=&last_modified=`（`web/routers/admin_uploads.py`，管理員＋`reports.manage`）：
+
+1. 請求是 raw body（`Content-Type: application/pdf`），不是 multipart：一次串流裡同時限長、算 hash、寫進隔離區，不另外暫存。`filename` 是原始檔名，`last_modified` 是瀏覽器 `File.lastModified`（毫秒），存成 `client_mtime`（之後 worker 用它當 `report_date` 的回退）。
+2. 依序擋：旗標（503）→ Content-Type（415）→ 檔名清理（`app/services/upload_intake.py` 的 `sanitize_filename`：去路徑成分、控制與格式字元，NFC，強制小寫 `.pdf`，≤255 字元；副檔名不對 415、清完沒主檔名 400 `invalid_filename`）→ `Content-Length` 超過 `UPLOAD_MAX_BYTES`（413）→ 隔離區可用且剩餘空間扣掉這次大小後不低於 `UPLOAD_MIN_FREE_MB`（503 `quarantine_unavailable`）→ 配額快查（429）。
+3. 落地（`app/services/quarantine.py`）：以 `O_EXCL`／`O_NOFOLLOW` 寫 `<隔離區>/incoming/<upload_id>.part`（目錄 0700、檔案 0600），邊寫邊算 SHA-256、邊計長，超過上限中止並刪 `.part`（413）；前 1024 bytes 要有 `%PDF-1.`／`%PDF-2.`、最後 1024 bytes 要有 `%%EOF`（415）；fsync 後 rename 成 `<隔離區>/<upload_id>.bin`。檔名只有 upload_id，不用使用者檔名、不帶 `.pdf`。隔離區預設 `data/quarantine/`（`UPLOAD_QUARANTINE_DIR`）。**web 不解析 PDF 內容、不連 clamd**：主動內容與加密的檢查、掃毒都是 worker 的事。
+4. 同一筆交易（`upload_intake.create_upload`，先取 `pg_advisory_xact_lock` 讓配額精確）：語料已有同 hash → 409 `upload_duplicate`（帶 `file_hash` 與它是 `hidden`／`draft`／`published`）；已有進行中的上傳 → 409 `upload_duplicate`（`existing: upload`；並發時靠 partial unique index `idx_report_upload_active_hash` 擋，撞 index 也轉成 409）；曾判感染 → 422 `upload_known_infected`；每人每日（台北時間日曆日，`UPLOAD_DAILY_QUOTA`）或全站處理中（quarantined／scanning／clean／processing，`UPLOAD_MAX_IN_FLIGHT`）超過 → 429 `upload_quota_exceeded`；INSERT `report_upload`（state `quarantined`）並寫稽核 `upload.create`（detail 只有 upload_id、檔名、大小、狀態）。任何一步失敗就 rollback 並刪掉 `.bin`；成功回 202 與上傳紀錄。
+
+`GET /api/admin/uploads?state=&limit=&offset=` 列上傳紀錄，附 `scanner` 摘要（待掃件數、掃描中件數、最舊的等待、等待中的列最近一次 `scan_last_error`），全部由 DB 推導，web 不連 clamd。`GET /api/admin/uploads/{upload_id}` 是單筆詳情，另帶語料裡同 hash 的研報與抽取品質（還沒入庫時 null）。
+
 ## 標籤維度（對齊 findb）
 
 | 維度 | 值（逐字） |

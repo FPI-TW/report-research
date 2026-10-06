@@ -70,6 +70,31 @@ export const AuditResponseSchema = z.object({
 })
 export type AuditResponse = z.infer<typeof AuditResponseSchema>
 
+export const BulkReportResultSchema = z.object({
+  file_hash: z.string(),
+  status: z.enum(['ok', 'skipped']),
+  code: z.string().nullable().optional(),
+  detail: z.string().nullable().optional(),
+  hidden: z.boolean().nullable().optional(),
+})
+export type BulkReportResult = z.infer<typeof BulkReportResultSchema>
+
+export const BulkVisibilityRequestSchema = z.object({
+  action: z.enum(['hide', 'restore']),
+  file_hashes: z.array(z.string()),
+  reason: z.string().nullable().optional(),
+})
+export type BulkVisibilityRequest = z.infer<typeof BulkVisibilityRequestSchema>
+
+export const BulkVisibilityResponseSchema = z.object({
+  action: z.enum(['hide', 'restore']),
+  requested: z.number().int(),
+  ok: z.number().int(),
+  skipped: z.number().int(),
+  results: z.array(BulkReportResultSchema),
+})
+export type BulkVisibilityResponse = z.infer<typeof BulkVisibilityResponseSchema>
+
 export const CreateUserRequestSchema = z.object({
   username: z.string(),
   password: z.string(),
@@ -762,6 +787,8 @@ export const adminApi = {
   runOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/run`, OpsActionResponseSchema, jsonBody('POST')),
   /** GET /api/admin/reports — List Reports */
   listReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
+  /** POST /api/admin/reports/bulk-visibility — Bulk Set Report Visibility */
+  bulkSetReportVisibility: (body: z.input<typeof BulkVisibilityRequestSchema>) => requestJSON('/api/admin/reports/bulk-visibility', BulkVisibilityResponseSchema, jsonBody('POST', body)),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/retrieval-regression — Get Retrieval Regression */

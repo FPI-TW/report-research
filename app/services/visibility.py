@@ -8,7 +8,7 @@
    的研報。不另寫第二份條件：哪天可見性多了一種狀態，只改這裡。`tests/test_visibility_guard.py`
    以 AST 掃描那些模組，查 `research.research_report`／`research.report_chunk` 的函式或常數
    沒有呼叫這兩個函式（也不在豁免清單）就紅。
-2. **管理端的查詢與寫入**（`list_reports`／`set_visibility`）。`/api/admin/reports*` 呼叫。
+2. **管理端的查詢與寫入**（`list_reports`／`set_visibility`／`bulk_set_visibility`）。`/api/admin/reports*` 呼叫。
 
 可見＝這份研報**沒有** visibility 列，或那一列 `hidden = false AND publication = 'published'`。
 
@@ -57,6 +57,10 @@ _COLUMN_EXPR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$"
 _FILE_HASH = re.compile(r"^[0-9a-f]{64}$")
 
 REASON_MAX_CHARS = 500
+# 一次批次隱藏／恢復的上限。與 GET /api/admin/reports 的 limit 上限（200）相同：管理頁「全選本頁」在
+# 任何頁大小下都放得進一次請求；再多就該分批——整批在同一筆交易裡、逐筆鎖列並寫稽核，交易不該無限拉長。
+# 不是環境旋鈕（沒有需要在部署時調的理由），所以是常數而不在 app/config.py。
+BULK_MAX_REPORTS = 200
 
 # report_visibility.publication 的詞彙（與 revision 0008 的 CHECK 逐字一致）。
 PUBLICATION_DRAFT = "draft"
@@ -99,19 +103,29 @@ def valid_file_hash(value: str) -> bool:
 
 
 class VisibilityError(Exception):
-    """管理操作的可預期錯誤；訊息是給管理員看的中文。"""
+    """管理操作的可預期錯誤；訊息是給管理員看的中文。`code` 是 API 錯誤代碼（批次結果與稽核摘要也用它）。"""
+
+    code = "bad_request"
 
 
 class ReportNotFoundError(VisibilityError):
-    pass
+    code = "not_found"
 
 
 class InvalidReasonError(VisibilityError):
-    pass
+    code = "invalid_input"
+
+
+class InvalidBulkRequestError(VisibilityError):
+    """批次請求本身不合法（空清單、超過上限）：整批不做。"""
+
+    code = "invalid_input"
 
 
 class ReportIsDraftError(VisibilityError):
     """草稿（尚未發布的上傳研報）不能隱藏或恢復：發布與退回只走上傳審核，免得兩種狀態互相覆蓋。"""
+
+    code = "report_is_draft"
 
 
 @dataclass(frozen=True)
@@ -205,6 +219,16 @@ async def list_reports(
     ]
 
 
+def _check_reason(hidden: bool, reason: Optional[str]) -> Optional[str]:
+    """隱藏必須給原因（去頭尾空白後非空）；原因上限 REASON_MAX_CHARS 字。回整理過的原因（空字串→None）。"""
+    note = (reason or "").strip() or None
+    if hidden and not note:
+        raise InvalidReasonError("隱藏研報必須填寫原因")
+    if note and len(note) > REASON_MAX_CHARS:
+        raise InvalidReasonError(f"原因最多 {REASON_MAX_CHARS} 字")
+    return note
+
+
 async def set_visibility(
     session: AsyncSession,
     file_hash: str,
@@ -229,11 +253,7 @@ async def set_visibility(
 
     if not valid_file_hash(file_hash):
         raise ReportNotFoundError("研報不存在")
-    note = (reason or "").strip() or None
-    if hidden and not note:
-        raise InvalidReasonError("隱藏研報必須填寫原因")
-    if note and len(note) > REASON_MAX_CHARS:
-        raise InvalidReasonError(f"原因最多 {REASON_MAX_CHARS} 字")
+    note = _check_reason(hidden, reason)
     report = (
         await session.execute(
             text(
@@ -276,3 +296,77 @@ async def set_visibility(
         },
     )
     return VisibilityState(file_hash=file_hash, hidden=hidden, reason=note, updated_by=row[1], updated_at=row[0])
+
+
+# ── 批次隱藏／恢復 ─────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class BulkVisibilityResult:
+    """批次裡的一筆：成功時 state 有值；被規則擋下（不存在、草稿）時 error 是 set_visibility 拋的那個例外。"""
+
+    file_hash: str
+    state: Optional[VisibilityState] = None
+    error: Optional[VisibilityError] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+async def bulk_set_visibility(
+    session: AsyncSession,
+    file_hashes: list[str],
+    *,
+    hidden: bool,
+    reason: Optional[str],
+    actor_id: Optional[str],
+) -> list[BulkVisibilityResult]:
+    """一次隱藏或恢復多份研報：**逐筆呼叫 `set_visibility`**，規則與單筆完全相同，不另寫一份。呼叫端負責 commit。
+
+    交易邊界（刻意）：
+    - 整批共用呼叫端的**一筆交易**；每一筆包在自己的 savepoint 裡。被規則擋下的那筆（不存在、草稿）
+      回滾自己的 savepoint、記成略過，其餘照做——「勾了 50 筆、其中 2 筆是草稿」不該讓另外 48 筆白做。
+    - 非規則性的失敗（DB 錯誤、稽核寫不進去）**直接往上拋**：呼叫端不 commit，整批連同已寫的稽核一起回滾，
+      不會留下「改了一半」或「改了卻沒稽核」。
+    - 原因在動任何一筆之前先驗（隱藏必填、上限 REASON_MAX_CHARS）：原因不合法是整批共同的錯，拋
+      InvalidReasonError，什麼都不寫。
+
+    稽核：每一筆變更由 set_visibility 各寫一列（`report.hide`／`report.restore`，detail 與單筆操作同形）。
+    至少一筆成功時，最後再寫**一列批次摘要** `report.bulk_visibility`（target_id 是動作），讓稽核頁看得出
+    這些列來自同一次操作、當時要求幾筆、略過幾筆與原因代碼；摘要同樣不含原因全文。
+
+    重複的 file_hash 只處理一次；回傳順序與輸入（去重後）相同。
+    """
+    from app.services.accounts import record_audit
+
+    note = _check_reason(hidden, reason)
+    hashes = list(dict.fromkeys(file_hashes))
+    if not hashes:
+        raise InvalidBulkRequestError("至少要選一份研報")
+    if len(hashes) > BULK_MAX_REPORTS:
+        raise InvalidBulkRequestError(f"一次最多 {BULK_MAX_REPORTS} 份研報")
+    results: list[BulkVisibilityResult] = []
+    for file_hash in hashes:
+        try:
+            async with session.begin_nested():
+                state = await set_visibility(session, file_hash, hidden=hidden, reason=note, actor_id=actor_id)
+        except (ReportNotFoundError, ReportIsDraftError) as exc:
+            results.append(BulkVisibilityResult(file_hash=file_hash, error=exc))
+            continue
+        results.append(BulkVisibilityResult(file_hash=file_hash, state=state))
+    done = [r.file_hash for r in results if r.ok]
+    if done:
+        skipped: dict[str, int] = {}
+        for r in results:
+            if r.error is not None:
+                skipped[r.error.code] = skipped.get(r.error.code, 0) + 1
+        await record_audit(
+            session, actor_id=actor_id, action="report.bulk_visibility", target_type="bulk",
+            target_id="hide" if hidden else "restore",
+            detail={
+                "hidden": hidden, "requested": len(hashes), "changed": len(done),
+                "skipped": dict(sorted(skipped.items())), "has_reason": note is not None, "file_hashes": done,
+            },
+        )
+    return results

@@ -158,6 +158,7 @@ uv run python scripts/ingest_all.py
 
 ## 過渡中狀態（2026-09-30 核對；狀態一變就改這節）
 
+- **Admin v1 已在 main、生產尚未部署（2026-10-06）**：程式碼含 revision 0002～0007、ops agent、稽核錨定、刪帳、監控收集與聚合、容器／主機探針等，但部署目錄仍是舊版、生產庫仍停在 0001（只 stamp 過 baseline），對應的 systemd unit、polkit 規則與 ops agent 都沒有安裝。上線要另外取得同意，順序：devdb 演練 → staging → 生產，每站先備份並確認 `make schema-check` 零 drift；`make schema CONFIRM=…` 套到 head → 依 `docs/production_resilience.md` 安裝新 unit、polkit 與 ops agent → 重新安裝 `report-mark-incident.service` → 重啟 `report-mark-metrics` 與 web → `make build-web`。**舊程式在 0007 的庫上照常可跑（都是新增表與欄位），新程式在 0001 的庫上會壞**——一律先套 schema 再換程式。部署完成後改寫這一條。
 - **Claude CLI 退場（PR-M，分支 `feat/deepseek-remove-cli` 未合併）**：claude CLI 已於 2026-09-23 放棄，現在只剩網搜解析到 Claude。`claude_cli`／`claude_only` 仍是合法 provider 值但已無可用後端；web unit 的 `deploy/systemd/report-mark-web.service.d/path.conf` 還在；探針退出碼 5（claude 依賴）已由 health unit 的空 `HEALTH_DEP_DROPIN=` 停用。PR-M 合併後這些一起移除，屆時同步改本檔、`tests/conftest.py` 的 provider 說明與上面「model 只用白名單或 `claude-*`」那句。
 - **網搜暫停中**：生產 `ASK_ENABLE_WEB=0`，前端 `WEB_SEARCH_PAUSED` 隱藏開關、請求一律送 `web=false`；DeepSeek 版網搜完成後兩處一起恢復。
 - **夜間回填** `report-mark-backfill.timer`（E1d）仍 enabled，跑完（journal 的「估計尚餘」歸零）後由人手動 disable。

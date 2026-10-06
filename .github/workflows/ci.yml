@@ -343,6 +343,11 @@ jobs:
       - name: 監控觀測與批次執行紀錄
         run: uv run pytest -q tests/test_ops_monitoring_db.py
 
+      # 監控觀測的保留與聚合：跨 0–24h／2 天／10 天／100 天的觀測聚合到正確粒度、數值正確、
+      # 90 天以前清除、24h 內原封不動；重跑結果相同；聚合寫入失敗時原始觀測不被刪除。
+      - name: 監控觀測保留與聚合
+        run: uv run pytest -q tests/test_ops_rollup_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

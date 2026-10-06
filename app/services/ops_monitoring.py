@@ -37,6 +37,7 @@ from typing import Any, Iterable
 from sqlalchemy import text
 from sqlalchemy.exc import DataError, IntegrityError
 
+from app.services import ops_rollup
 from ops_agent.backends import clean_line
 
 SPOOL_VERSION = 1
@@ -437,8 +438,15 @@ async def list_jobs(session, *, since: datetime, until: datetime, service: str |
 
 async def list_observations(session, *, since: datetime, until: datetime, scope: str | None = None,
                             subject: str | None = None, metric: str | None = None,
-                            limit: int = 500) -> tuple[bool, list[dict]]:
-    """觀測值，新→舊、最多 `limit` 筆（多取一筆判斷 truncated）。時間範圍看 observed_at（[since, until]）。"""
+                            limit: int = 500, resolution: str = "raw") -> tuple[bool, list[dict]]:
+    """觀測值，新→舊、最多 `limit` 筆（多取一筆判斷 truncated）。時間範圍看 observed_at（[since, until]）。
+
+    `resolution` 是 `5m`／`1h` 時改回聚合後的桶（`ops_rollup.list_aggregated`，粒度由路由層以
+    `ops_rollup.pick_resolution` 依查詢區間決定）。
+    """
+    if resolution != "raw":
+        return await ops_rollup.list_aggregated(session, resolution=resolution, since=since, until=until,
+                                                scope=scope, subject=subject, metric=metric, limit=limit)
     where = ["o.observed_at >= :since", "o.observed_at <= :until"]
     params: dict[str, Any] = {"since": since, "until": until, "limit": limit + 1}
     for col, val in (("scope", scope), ("subject", subject), ("metric", metric)):

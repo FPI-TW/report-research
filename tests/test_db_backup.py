@@ -39,7 +39,7 @@ LOWIO_SH = REPO_ROOT / "scripts" / "ingest_lowio.sh"
 BACKUP_SERVICE = SYSTEMD_DIR / "report-mark-backup.service"
 BACKUP_TIMER = SYSTEMD_DIR / "report-mark-backup.timer"
 
-# 「不可重建」的十張表：研報原檔裡沒有、刪了就永遠沒有的東西。
+# 「不可重建」的十二張表：研報原檔裡沒有、刪了就永遠沒有的東西。
 REQUIRED_TABLES = (
     "research.qa_log",
     "research.report_takeaway",
@@ -51,6 +51,8 @@ REQUIRED_TABLES = (
     "research.user_scope",
     "research.account_deletion",
     "research.report_visibility",
+    "research.incident",
+    "research.incident_event",
 )
 
 

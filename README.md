@@ -85,6 +85,7 @@ app/
     faithfulness.py, evidence.py, followups.py, llm.py, zh_hant.py, locale.py
     reading/, radar/, signal_extract.py, brief.py       讀取零 LLM 的功能
     object_storage.py     R2（local / hybrid / r2）
+    clamd.py              上傳掃描的 clamd 客戶端（標準庫 socket，fail-closed）
 web/
   server.py               組合層：env → logging → auth middleware → lifespan → routers
   routers/                11 支 APIRouter，不帶 prefix
@@ -98,6 +99,7 @@ db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision）、d
                           db/align_baseline_indexes.sql 與 db/drop_deep_report_tables.sql（既有庫手動執行）
 deploy/                   systemd unit、nginx、docker-compose（部署真相來源）
                           deploy/ops/：維運代理的 Service Catalog（prod／dev）
+                          deploy/clamav/：上傳掃描的 clamd（獨立 compose 與 conf/）
 ops_agent/                維運代理（標準庫、不 import app.*；部署時複製到 /opt/report-mark-ops）
 eval/                     離線評測 harness 與基準線（刻意不進 CI）
 tests/                    pytest（unittest 風格）＋ fixtures/sse_events.json
@@ -214,6 +216,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `OBJECT_STORAGE_MODE`、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS` | `local` | 非 local 缺任一 fail-closed；TTL 上限 3600 |
 | `ASK_MAX_QUEUE`、`SSE_HEARTBEAT_INTERVAL` | 20、20 | web 層旋鈕 |
 | `RADAR_CATALOG_CACHE_TTL` | 60 | 雷達目錄回應快取秒數；0 停用 |
+| `CLAMD_HOST`、`CLAMD_PORT`、`CLAMD_TIMEOUT`、`CLAMD_SIGNATURE_MAX_AGE_HOURS`、`CLAMD_STREAM_MAX_BYTES` | `127.0.0.1`、3310、120、72、31457280（30 MiB） | 上傳掃描的 clamd 客戶端（`app/services/clamd.py`）。安全閘門 fail-closed：連不上、逾時、病毒碼超過門檻小時數或判斷不出來都不放行；串流上限與 `deploy/clamav/conf/clamd.conf` 的 `StreamMaxLength 30M` 一致，超過即判未通過。不合法的值退回預設並警告 |
 | `OPS_AGENT_ENVIRONMENT`、`OPS_AGENT_SOCKET`、`OPS_AGENT_TIMEOUT` | `production`、依環境（`/run/report-mark-ops/agent.sock`，staging 是 `/run/report-mark-ops-staging/agent.sock`、development 是 `/run/report-mark-ops-dev/agent.sock`）、20 | 維運代理的 client（`web/ops_client.py`）。環境是請求裡宣告的、代理會比對；拼錯的環境值＝停用（維運端點回 503），不退回 production |
 | `SKIP_WARMUP`、`DEV_NO_AUTH` | — | 只從 `os.environ` 讀且判 `== "1"`，不要寫進環境檔 |
 
@@ -286,7 +289,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 | `report-mark-health.timer`、`report-mark-incident.timer` | 每 2 分鐘 | P4 探針 `scripts/check_web_health.sh`（只回報事實）與 P5 `scripts/incident_handler.sh`（去重、30 分鐘提醒、RESOLVED），webhook opt-in |
 | `report-mark-linebot-health.timer`、`report-mark-linebot-incident.timer` | 每 2 分鐘 | LineBot 側同一套 |
 | `report-mark-edge-health.timer`、`report-mark-edge-incident.timer` | 每 2 分鐘 | 對外邊緣同一套：`scripts/check_edge_health.sh` 打對外網址的 `/healthz`（`EDGE_HEALTH_URL`，在 `/etc/default/report-mark-sync`），本機 origin 健康而對外失敗才算邊緣故障 |
-| `report-mark-container-health.timer`、`report-mark-container-incident.timer`、`report-mark-host-health.timer`、`report-mark-host-incident.timer` | 每 2 分鐘 | 容器與主機同一套：`scripts/check_container_health.sh`（catalog 的 PostgreSQL／nginx／cloudflared 是否在跑）、`scripts/check_host_health.sh`（磁碟、可用記憶體、PSI）。依 tier 去抖在探針裡做（3＝確認期，P5 那兩組 hold），細節見 `docs/production_resilience.md`「事件投影與容器／主機探針」 |
+| `report-mark-container-health.timer`、`report-mark-container-incident.timer`、`report-mark-host-health.timer`、`report-mark-host-incident.timer` | 每 2 分鐘 | 容器與主機同一套：`scripts/check_container_health.sh`（catalog 的 PostgreSQL／nginx／cloudflared／ClamAV 是否在跑）、`scripts/check_host_health.sh`（磁碟、可用記憶體、PSI）。依 tier 去抖在探針裡做（3＝確認期，P5 那兩組 hold），細節見 `docs/production_resilience.md`「事件投影與容器／主機探針」 |
 | `report-mark-backfill.timer` | 01:00 | E1d 抽取回填，跑完手動 disable |
 | `report-mark-r2-reconcile.timer` | 週一 07:00 | R2 對帳（唯讀） |
 | `report-mark-metrics.service` | 常駐 | 硬體用量取樣 → `data/metrics/`（`make metrics`）；另每 60 秒把主機、catalog 列的容器與 unit 狀態、批次執行寫進監控 spool `data/ops_spool/`（不連 DB） |
@@ -303,7 +306,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 - 新研報：辦公室主機的 `/etc/default/report-mark-sync` 設 `SYNC_INBOX_PUSH=1`，staging 設 `SYNC_SOURCE=r2-inbox`（見 `docs/WORKFLOW.md`「生產同步鏈」）。兩邊入庫同一份檔得到同一個 `originals/` key（create-only、SHA 驗證），不會互相覆寫。
 - 對外：`research.tingfong.com` 是 Cloudflare 橘雲 A record 指向 EC2 的 Elastic IP，不走 Tunnel。EC2 上以 apt 的 nginx 載入 `deploy/nginx-origin.conf`（裝到 `/etc/nginx/sites-available/report-mark`），以 Cloudflare Origin CA 憑證（`/etc/ssl/report-mark/`，不進 repo）聽 443、反代 `127.0.0.1:8097`；App 靠對端 127.0.0.1 信任它（`REPORT_MARK_TRUSTED_PROXY_CIDRS` 預設值），所以 `proxy_pass` 不能改成其他位址。Security Group 只放行 Cloudflare IPv4 範圍的 443（由 CloudFormation stack `report-research-staging` 管理）。三個前提缺一不可：橘雲不能關（Origin CA 只有 Cloudflare 信任）、Cloudflare SSL/TLS 模式 Full (strict)、Cloudflare IP 範圍變動時 nginx 的 `set_real_ip_from` 與 SG 的 prefix list 一起改。
 
-對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
+對外邊緣：`make up-edge`／`down-edge`／`edge-logs`／`edge-reload`（`deploy/docker-compose.yml`：nginx 限流 10r/s、靜態資產豁免；cloudflared 隧道）。上傳掃描：`make up-clamav`／`down-clamav`／`clamav-smoke`（`deploy/clamav/docker-compose.yml`，獨立 compose 專案、常駐 clamd 容器 `report-mark-clamav`，只綁 `127.0.0.1:3310`，常駐約 1.2–1.6 GB；`clamav-smoke` 驗 EICAR 要 FOUND、正常 PDF 要 OK，可帶 `SMOKE_PDF=…`），安裝、停用與故障處置見 `docs/production_resilience.md`「ClamAV（上傳掃描）」。健康判定打 `/healthz`，不看 `systemctl is-active`；oneshot 是否跑過用 `scripts/verify_oneshot_ran.sh`。`make help` 列出的破壞性 target（`reset-db`、`clean-data`、`ingest-lowio`）除非明講不要跑。
 
 LLM 批次的跳過名單：`make llm-blocked` 唯讀列出 `research.llm_task_failure` 判定跳過的研報（零 LLM；要連累計中未達門檻的也列，直接跑 `uv run python scripts/llm_blocked.py --all`）。要重打就對該批次加 `--retry-blocked`；跳過鍵只看 model、不看 prompt，**改 prompt 後也要加**（摘錄與訊號的 `--reextract` 隱含它）。部署這張表要先 `make schema`。
 

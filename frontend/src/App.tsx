@@ -18,6 +18,7 @@ const AdminShell = lazy(routeLoaders.adminShell)
 const AdminUsersPage = lazy(routeLoaders.adminUsers)
 const AdminReviewsPage = lazy(routeLoaders.adminReviews)
 const AdminAuditPage = lazy(routeLoaders.adminAudit)
+const AdminReportsPage = lazy(routeLoaders.adminReports)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -63,6 +64,7 @@ export const routes = [
           { path: 'users', element: <Suspense><AdminUsersPage /></Suspense> },
           { path: 'reviews', element: <Suspense><AdminReviewsPage /></Suspense> },
           { path: 'audit', element: <Suspense><AdminAuditPage /></Suspense> },
+          { path: 'reports', element: <Suspense><AdminReportsPage /></Suspense> },
           { path: '*', element: <NotFound /> },
         ],
       },

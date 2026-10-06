@@ -1,18 +1,22 @@
 import { Outlet, useLocation } from 'react-router'
 import { motion, useReducedMotion } from 'motion/react'
 import { BrandLogo } from '../BrandLogo'
-import { Icon } from '../primitives/Icon'
+import { Icon, type IconName } from '../primitives/Icon'
 import { MotionLink } from '../primitives/MotionLink'
 import { TF_DUR, TF_EASE_OUT } from '../../lib/motionTokens'
 import { useMe } from '../../lib/useMe'
 import { RequireAdmin } from './RequireAdmin'
 import styles from './AdminShell.module.css'
 
-const NAV = [
+type NavEntry = { to: string; icon: IconName; label: string; scope?: string }
+
+// `scope` 有值的入口只對擁有該 scope 的管理員顯示（顯示層；擋人的是後端 require_scope）。
+const NAV: readonly NavEntry[] = [
   { to: '/admin/users', icon: 'user', label: '帳號管理' },
   { to: '/admin/reviews', icon: 'shield', label: '待複核' },
+  { to: '/admin/reports', icon: 'fileText', label: '研報管理', scope: 'reports.manage' },
   { to: '/admin/audit', icon: 'clock', label: '操作紀錄' },
-] as const
+]
 
 /**
  * 管理後台（/app/admin/*）的外殼，與研報平台的 `AppShell` 完全分開：沒有研報側欄、
@@ -27,6 +31,8 @@ export function AdminShell() {
   const { pathname } = useLocation()
   const reduced = useReducedMotion()
   const me = useMe()
+  const scopes = me.data?.scopes ?? []
+  const nav = NAV.filter(item => !item.scope || scopes.includes(item.scope))
   return (
     <div className={styles.shell}>
       <header className={styles.topbar}>
@@ -48,7 +54,7 @@ export function AdminShell() {
       <RequireAdmin>
         <div className={styles.body}>
           <nav className={styles.nav} aria-label="管理導覽">
-            {NAV.map(item => {
+            {nav.map(item => {
               const active = pathname === item.to || pathname.startsWith(item.to + '/')
               return (
                 <MotionLink

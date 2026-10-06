@@ -2,7 +2,7 @@ import type { ComponentType } from 'react'
 
 export type RouteKey =
   | 'search' | 'ask' | 'monitor' | 'radar' | 'brief' | 'help' | 'report'
-  | 'adminShell' | 'adminUsers' | 'adminReviews' | 'adminAudit'
+  | 'adminShell' | 'adminUsers' | 'adminReviews' | 'adminAudit' | 'adminReports'
 
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
@@ -19,6 +19,7 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminUsers: () => import('../features/admin/AdminUsersPage'),
   adminReviews: () => import('../features/admin/AdminReviewsPage'),
   adminAudit: () => import('../features/admin/AdminAuditPage'),
+  adminReports: () => import('../features/admin/AdminReportsPage'),
 }
 
 const started = new Set<RouteKey>()

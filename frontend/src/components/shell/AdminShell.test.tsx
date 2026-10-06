@@ -6,9 +6,9 @@ import { AdminShell } from './AdminShell'
 
 afterEach(() => vi.unstubAllGlobals())
 
-function mount(role: 'admin' | 'user', path = '/admin/reviews') {
+function mount(role: 'admin' | 'user', path = '/admin/reviews', scopes?: string[]) {
   const fetchMock = vi.fn(async (url: string) =>
-    new Response(JSON.stringify(url === '/api/me' ? { id: 'me', username: 'root', role } : {}), { status: 200 }))
+    new Response(JSON.stringify(url === '/api/me' ? { id: 'me', username: 'root', role, scopes } : {}), { status: 200 }))
   vi.stubGlobal('fetch', fetchMock)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
@@ -45,4 +45,17 @@ test('一般使用者：連管理導覽都不畫，只看到無權限頁，也�
   expect(screen.queryByRole('navigation', { name: '管理導覽' })).not.toBeInTheDocument()
   expect(screen.queryByText('待複核內容')).not.toBeInTheDocument()
   expect(fetchMock.mock.calls.map(c => c[0])).toEqual(['/api/me'])
+})
+
+test('依 scope 顯示入口：有 reports.manage 才看得到「研報管理」', async () => {
+  mount('admin', '/admin/reviews', ['admin', 'reports.manage'])
+  const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
+  expect(nav.getByRole('link', { name: /研報管理/ })).toHaveAttribute('href', '/admin/reports')
+})
+
+test('沒有對應 scope 的管理員：不顯示研報管理入口', async () => {
+  mount('admin', '/admin/reviews', ['admin'])
+  const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
+  expect(nav.queryByRole('link', { name: /研報管理/ })).not.toBeInTheDocument()
+  expect(nav.getByRole('link', { name: /帳號管理/ })).toBeInTheDocument()
 })

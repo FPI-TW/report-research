@@ -1,0 +1,32 @@
+/* 帳號安全（權限提升對話框、兩步驟驗證設定）。色值一律走 tokens.css 的變數，與管理頁同一套語彙。 */
+.form { display: flex; flex-direction: column; gap: 10px; min-width: min(380px, 80vw); }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--tf-text-4); }
+.field input {
+  border: 1px solid var(--tf-border-weak); border-radius: 6px; background: var(--tf-surface, white);
+  color: var(--tf-text-1); font: inherit; font-size: 13px; padding: 7px 9px;
+}
+.hint { font-size: 12.5px; color: var(--tf-text-muted-aa); margin: 0; line-height: 1.55; }
+.error { font-size: 13px; color: var(--tf-error-text); background: var(--tf-error-bg); border-radius: 6px; padding: 8px 12px; margin: 0; }
+.ok { font-size: 13px; color: var(--tf-text-2); margin: 0; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.primary {
+  border: 1px solid var(--tf-graphite); background: var(--tf-graphite); color: var(--tf-on-graphite);
+  border-radius: 6px; font: inherit; font-size: 13px; padding: 7px 14px; cursor: pointer;
+}
+.primary:disabled { opacity: .55; cursor: default; }
+.secondary {
+  border: 1px solid var(--tf-border-weak); background: var(--tf-surface, white); color: var(--tf-text-1);
+  border-radius: 6px; font: inherit; font-size: 13px; padding: 7px 14px; cursor: pointer;
+}
+.secondary:disabled { opacity: .55; cursor: default; }
+.danger { color: var(--tf-error-text); }
+.status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tf-text-1); margin: 0; }
+.badge { display: inline-block; border-radius: var(--tf-radius-pill); font-size: 11.5px; font-weight: 600; padding: 2px 9px; background: var(--tf-gold-tint); color: var(--tf-gold-text); }
+.badgeOff { background: var(--tf-border-weak); color: var(--tf-text-2); }
+/* otpauth URI 與 secret：長字串可換行、可選取複製，用等寬字避免 0／O、1／l 混淆 */
+.secret {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--tf-text-1);
+  background: var(--tf-canvas, #f2f2f4); border-radius: 6px; padding: 8px 10px; margin: 0;
+  word-break: break-all; user-select: all;
+}
+.label { font-size: 12px; color: var(--tf-text-4); margin: 0; }

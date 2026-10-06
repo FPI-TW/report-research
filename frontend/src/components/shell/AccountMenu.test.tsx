@@ -69,3 +69,12 @@ test('一般使用者的帳號選單沒有管理後台入口', async () => {
   await screen.findByRole('link', { name: /使用說明/ })
   expect(screen.queryByRole('link', { name: /管理後台/ })).not.toBeInTheDocument()
 })
+
+test('每個人的帳號選單都有「帳號安全」，點了開啟兩步驟驗證設定', async () => {
+  stubStats('user')
+  wrap(<AccountMenu variant="row" />)
+  expect(await screen.findByText('analyst')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { expanded: false }))
+  fireEvent.click(screen.getByRole('button', { name: /帳號安全/ }))
+  expect(await screen.findByRole('dialog', { name: '帳號安全' })).toBeInTheDocument()
+})

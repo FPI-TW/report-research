@@ -8,6 +8,13 @@ const ACTION_LABELS: Record<string, string> = {
   'user.disable': '停用帳號',
   'user.reset_password': '重設密碼',
   'user.force_logout': '強制登出',
+  'user.totp_enable': '開啟兩步驟驗證',
+  'user.totp_disable': '關閉兩步驟驗證',
+  'user.totp_reset': '重設兩步驟驗證',
+  'user.delete_requested': '提出刪除帳號',
+  'user.delete_cancelled': '取消刪除帳號',
+  'user.delete_executed': '執行刪除帳號',
+  'user.delete_replayed': '重放刪除（還原後）',
   'review.update': '處理待複核',
 }
 

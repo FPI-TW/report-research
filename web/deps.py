@@ -127,7 +127,8 @@ def _valid_uuid(s) -> bool:
 # 研報隱藏／恢復的管理端（web/routers/admin_reports.py）同理：deps.report_visibility.X。
 # 監控投影的唯讀查詢（web/routers/admin_monitoring.py）同理：deps.ops_monitoring.X。
 # 資料健康與 LLM 用量（web/routers/admin_data_health.py）同理：deps.data_health.X、deps.llm_usage.X。
-from app.services import accounts, data_health, llm_usage, ops_monitoring  # noqa: E402
+# 診斷快照（web/routers/admin_diagnostics.py）同理：deps.diagnostics.snapshot。
+from app.services import accounts, data_health, diagnostics, llm_usage, ops_monitoring  # noqa: E402
 from app.services import visibility as report_visibility  # noqa: E402
 from app.services.answer import (  # noqa: E402
     answer_question,
@@ -193,6 +194,7 @@ __all__ = [
     "answer_question",
     "conversation_is_foreign",
     "data_health",
+    "diagnostics",
     "delete_qa",
     "embed_query_cached",
     "embed_texts",

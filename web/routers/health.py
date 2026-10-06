@@ -205,6 +205,27 @@ async def _storage_state() -> str:
     return _storage.state
 
 
+def storage_snapshot() -> dict:
+    """物件儲存探測的**被動**讀取（給 `/api/admin/diagnostics`）：只讀上一次的結論，不觸發探測。
+
+    每次探測是一個計費的 R2 list 操作，診斷頁不得多打。`last_probe_age_s` 由到期時刻反推
+    （成功快取 `_STORAGE_OK_TTL`、失敗 `_STORAGE_FAIL_TTL`）；從未探測過為 None。
+    """
+    if not get_object_storage().enabled:
+        return {"state": "disabled", "consecutive_failures": 0, "last_probe_age_s": None, "last_probe_ok": None}
+    snap = _storage
+    if snap.expires_at <= 0:
+        return {"state": snap.state, "consecutive_failures": 0, "last_probe_age_s": None, "last_probe_ok": None}
+    ttl = _STORAGE_FAIL_TTL if snap.consecutive_failures else _STORAGE_OK_TTL
+    age = max(0.0, time.monotonic() - (snap.expires_at - ttl))
+    return {
+        "state": snap.state,
+        "consecutive_failures": snap.consecutive_failures,
+        "last_probe_age_s": round(age, 1),
+        "last_probe_ok": snap.consecutive_failures == 0,
+    }
+
+
 @router.get("/healthz")
 async def healthz() -> JSONResponse:
     """存活探測。健康 200 `{"status":"ok"}`；DB 不可用 503 `{"status":"degraded"}`。"""

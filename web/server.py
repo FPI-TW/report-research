@@ -47,6 +47,7 @@ from web import (
     errors,  # noqa: E402
 )
 from web.request_log import RequestLogMiddleware  # noqa: E402
+from web.routers import account_security as account_security_routes  # noqa: E402
 from web.routers import admin as admin_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
@@ -363,6 +364,7 @@ app.include_router(report_file_routes.router)
 
 # 登入流程頁面路由（middleware require_login 仍在本檔，見上）
 app.include_router(auth_pages_routes.router)
+app.include_router(account_security_routes.router)  # /api/me/*：TOTP 自助設定與權限提升
 
 # SPA / 靜態服務：configure 內含 /app/assets Mount → router（catch-all）→ /static 的
 # 正確掛載順序，assets Mount 必須贏過 /app/{spa_path}（見 tests/test_pre_split_guards.py）。

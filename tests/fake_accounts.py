@@ -5,9 +5,12 @@ tester／testpass 的管理員——既有測試以那組帳密走 `/login`，�
 要驗帳號行為（停用、降級、跨使用者）的測試自己建一份新的、用 `install()` 換上去。
 
 **語意要與真的那份一致**：最後一位管理員保護、不能鎖死自己、停用時撤銷 session、
-稽核與變更同時發生。真的 SQL 由 `tests/test_accounts_db.py` 對 PostgreSQL 驗；
+稽核與變更同時發生、TOTP 的時間步不可重用、刪除排程與執行後清掉的東西。
+真的 SQL 由 `tests/test_accounts_db.py` 對 PostgreSQL 驗；
 兩邊行為分歧時，這份要跟著改（`tests/test_accounts_db.py` 的同一組情境兩邊各跑一次）。
 密碼只做明文比對（不跑 Argon2）：這裡驗的是流程，雜湊本身由 `tests/test_passwords.py` 驗。
+問答紀錄只模擬刪除需要的部分（`qa_logs`：id → user_id；`review_subjects`：review_state 的 subject_id），
+測試用 `seed_qa_log()` 放資料。
 """
 
 from __future__ import annotations
@@ -18,16 +21,27 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from app.services import accounts, passwords
+from app.services import accounts, passwords, totp
 from app.services.accounts import (
+    AccountDeletedError,
     AuditChainStatus,
     AuditEntry,
+    DeletionInfo,
+    DeletionPendingError,
+    DeletionResidue,
+    DeletionWindowClosedError,
     InvalidInputError,
     LastAdminError,
     LastSuperError,
     LoginResult,
+    MfaChallenge,
+    NoPendingDeletionError,
     PermissionDeniedError,
     SelfLockoutError,
+    TotpRequiredError,
+    TotpSetup,
+    TotpStateError,
+    TotpStatus,
     User,
     UserInfo,
     UsernameTakenError,
@@ -46,6 +60,27 @@ class _Row:
     last_login_at: datetime | None = None
     is_super: bool = False
     scopes: set[str] = field(default_factory=set)  # 另外授予的（GRANTABLE_SCOPES）
+    totp_secret: str | None = None
+    totp_enabled: bool = False
+    totp_last_step: int | None = None
+    deleted_at: datetime | None = None
+
+
+@dataclass
+class _Deletion:
+    id: int
+    user_id: str
+    requested_by: str | None
+    requested_at: datetime
+    execute_after: datetime
+    prior_enabled: bool
+    cancelled_at: datetime | None = None
+    cancelled_by: str | None = None
+    executed_at: datetime | None = None
+
+    @property
+    def pending(self) -> bool:
+        return self.cancelled_at is None and self.executed_at is None
 
 
 @dataclass
@@ -74,6 +109,13 @@ class FakeAccounts:
     SelfLockoutError = SelfLockoutError
     LastSuperError = LastSuperError
     PermissionDeniedError = PermissionDeniedError
+    AccountDeletedError = AccountDeletedError
+    DeletionPendingError = DeletionPendingError
+    NoPendingDeletionError = NoPendingDeletionError
+    DeletionWindowClosedError = DeletionWindowClosedError
+    TotpStateError = TotpStateError
+    TotpRequiredError = TotpRequiredError
+    DELETION_DELAY_SECONDS = accounts.DELETION_DELAY_SECONDS
     ADMIN_DEFAULT_SCOPES = accounts.ADMIN_DEFAULT_SCOPES
     GRANTABLE_SCOPES = accounts.GRANTABLE_SCOPES
     ALL_SCOPES = accounts.ALL_SCOPES
@@ -88,6 +130,17 @@ class FakeAccounts:
         self.fail_with: Exception | None = None
         # 稽核雜湊鏈：測試可把某個 id 放進 broken 模擬竄改。
         self.broken_audit_ids: set[int] = set()
+        self.deletions: list[_Deletion] = []
+        self._deletion_ids = itertools.count(1)
+        self.qa_logs: dict[str, str] = {}  # qa_log.id → user_id
+        self.review_subjects: set[str] = set()  # review_state.subject_id
+
+    def seed_qa_log(self, user_id: str, *, with_review: bool = False) -> str:
+        qid = str(uuid.uuid4())
+        self.qa_logs[qid] = str(user_id)
+        if with_review:
+            self.review_subjects.add(qid)
+        return qid
 
     # ── 測試輔助 ─────────────────────────────────────────────────────
     def add_user(self, username: str, password: str, role: str = "user", *, enabled: bool = True,
@@ -100,7 +153,23 @@ class FakeAccounts:
     def _user(self, row: _Row, elevated_until=None) -> User:
         return User(id=row.id, username=row.username, role=row.role, is_super=row.is_super,
                     scopes=accounts.effective_scopes(row.role, row.is_super, row.scopes),
-                    elevated_until=elevated_until)
+                    elevated_until=elevated_until, totp_enabled=row.totp_enabled)
+
+    def _pending_deletion(self, user_id: str) -> _Deletion | None:
+        return next((d for d in self.deletions if d.user_id == str(user_id) and d.pending), None)
+
+    def _get(self, user_id) -> _Row:
+        row = self.users.get(str(user_id))
+        if row is None:
+            raise UserNotFoundError("帳號不存在")
+        return row
+
+    def _get_live(self, user_id) -> _Row:
+        """未刪除的帳號（_lock_target 的語意）。"""
+        row = self._get(user_id)
+        if row.deleted_at is not None:
+            raise AccountDeletedError("帳號已刪除")
+        return row
 
     def _actor_is_super(self, actor_id) -> bool:
         if actor_id is None:
@@ -134,7 +203,9 @@ class FakeAccounts:
             id=row.id, username=row.username, role=row.role, enabled=row.enabled,
             created_at=row.created_at, updated_at=row.created_at, password_changed_at=row.created_at,
             last_login_at=row.last_login_at, last_seen_at=None, active_sessions=len(live),
-            is_super=row.is_super, scopes=tuple(sorted(row.scopes)),
+            is_super=row.is_super, scopes=tuple(sorted(row.scopes)), totp_enabled=row.totp_enabled,
+            deleted_at=row.deleted_at,
+            deletion_execute_after=d.execute_after if (d := self._pending_deletion(row.id)) else None,
         )
 
     def _audit(self, actor_id, action, target_id, detail, target_type="user") -> None:
@@ -163,8 +234,27 @@ class FakeAccounts:
             return LoginResult(None, "bad_password")
         if not row.enabled:
             return LoginResult(None, "disabled")
+        if row.totp_enabled:
+            return LoginResult(None, "totp_required", MfaChallenge(row.id, self._fingerprint(row)))
         row.last_login_at = datetime.now(timezone.utc)
         return LoginResult(self._user(row), "ok")
+
+    def _fingerprint(self, row: _Row) -> str:
+        return accounts.mfa_fingerprint(row.id, row.password, row.totp_last_step, row.totp_secret)
+
+    async def complete_totp_login(self, user_id: str, fingerprint: str, code: str) -> User | None:
+        self._check()
+        row = self.users.get(str(user_id))
+        if row is None or not row.enabled or row.deleted_at is not None or not row.totp_enabled:
+            return None
+        if self._fingerprint(row) != fingerprint:
+            return None
+        step = totp.match_step(row.totp_secret, code, last_step=row.totp_last_step)
+        if step is None:
+            return None
+        row.totp_last_step = step
+        row.last_login_at = datetime.now(timezone.utc)
+        return self._user(row)
 
     async def create_session(self, user_id: str, *, max_age_seconds: int, ip=None, user_agent=None) -> str:
         self._check()
@@ -182,11 +272,11 @@ class FakeAccounts:
         if s is None or s.revoked or s.expires_at <= datetime.now(timezone.utc):
             return None
         row = self.users.get(s.user_id)
-        if row is None or not row.enabled:
+        if row is None or not row.enabled or row.deleted_at is not None:
             return None
         return self._user(row, s.elevated_until)
 
-    async def elevate_session(self, session_id: str, password: str):
+    async def elevate_session(self, session_id: str, password: str, totp_code: str | None = None):
         self._check()
         s = self.sessions.get(session_id)
         if s is None or s.revoked or s.expires_at <= datetime.now(timezone.utc) or not password:
@@ -197,6 +287,15 @@ class FakeAccounts:
         if row.password != password:
             self._audit(row.id, "session.elevate_failed", session_id, {"username": row.username}, "session")
             return None
+        if row.totp_enabled:
+            if totp.normalize_code(totp_code) is None:
+                raise TotpRequiredError("這個帳號開了兩步驟驗證，請輸入驗證碼")
+            step = totp.match_step(row.totp_secret, totp_code, last_step=row.totp_last_step)
+            if step is None:
+                self._audit(row.id, "session.elevate_failed", session_id,
+                            {"username": row.username, "reason": "totp"}, "session")
+                return None
+            row.totp_last_step = step
         s.elevated_until = datetime.now(timezone.utc) + timedelta(seconds=accounts.ELEVATION_SECONDS)
         self._audit(row.id, "session.elevate", session_id,
                     {"username": row.username, "seconds": accounts.ELEVATION_SECONDS}, "session")
@@ -210,7 +309,8 @@ class FakeAccounts:
 
     async def list_users(self) -> list[UserInfo]:
         self._check()
-        return [self._info(r) for r in sorted(self.users.values(), key=lambda r: r.username.lower())]
+        live = [r for r in self.users.values() if r.deleted_at is None]
+        return [self._info(r) for r in sorted(live, key=lambda r: r.username.lower())]
 
     async def get_user(self, user_id: str) -> UserInfo | None:
         self._check()
@@ -259,12 +359,12 @@ class FakeAccounts:
         self._check()
         if role is not None and role not in accounts.ROLES:
             raise InvalidInputError("角色只能是 admin 或 user")
-        row = self.users.get(str(user_id))
-        if row is None:
-            raise UserNotFoundError("帳號不存在")
+        row = self._get_live(user_id)
         new_role = row.role if role is None else role
         new_enabled = row.enabled if enabled is None else bool(enabled)
         self._require_can_touch(actor_id, row)
+        if new_enabled and not row.enabled and self._pending_deletion(row.id):
+            raise DeletionPendingError("這個帳號已排程刪除；要重新啟用請先取消刪除")
         losing = row.role == "admin" and row.enabled and (new_role != "admin" or not new_enabled)
         if losing and actor_id is not None and str(actor_id) == row.id:
             raise SelfLockoutError("不能停用自己，也不能拿掉自己的管理員權限")
@@ -289,9 +389,7 @@ class FakeAccounts:
         problem = passwords.password_problem(password or "")
         if problem:
             raise InvalidInputError(problem)
-        row = self.users.get(str(user_id))
-        if row is None:
-            raise UserNotFoundError("帳號不存在")
+        row = self._get_live(user_id)
         self._require_can_touch(actor_id, row)
         row.password = password
         revoked = self._revoke_all(row.id)
@@ -301,9 +399,7 @@ class FakeAccounts:
 
     async def force_logout(self, user_id, *, actor_id, via="web") -> int:
         self._check()
-        row = self.users.get(str(user_id))
-        if row is None:
-            raise UserNotFoundError("帳號不存在")
+        row = self._get_live(user_id)
         self._require_can_touch(actor_id, row)
         revoked = self._revoke_all(row.id)
         self._audit(actor_id, "user.force_logout", row.id,
@@ -320,9 +416,7 @@ class FakeAccounts:
                 raise InvalidInputError(f"不能授予的 scope：{'、'.join(sorted(unknown))}")
         if not self._actor_is_super(actor_id):
             raise PermissionDeniedError("只有 super admin 能調整權限")
-        row = self.users.get(str(user_id))
-        if row is None:
-            raise UserNotFoundError("帳號不存在")
+        row = self._get_live(user_id)
         current = frozenset(row.scopes)
         new_super = row.is_super if is_super is None else bool(is_super)
         new_scopes = current if wanted is None else wanted
@@ -341,6 +435,176 @@ class FakeAccounts:
                          "scopes_added": added, "scopes_removed": removed, "via": via})
         row.is_super, row.scopes = new_super, set(new_scopes)
         return self._info(row)
+
+    # ── TOTP ─────────────────────────────────────────────────────────
+    def _live_enabled(self, user_id) -> _Row:
+        row = self._get_live(user_id)
+        if not row.enabled:
+            raise InvalidInputError("帳號已停用")
+        return row
+
+    async def totp_status(self, user_id: str) -> TotpStatus:
+        self._check()
+        row = self._get(user_id)
+        return TotpStatus(enabled=row.totp_enabled, pending=row.totp_secret is not None and not row.totp_enabled)
+
+    async def begin_totp_setup(self, user_id: str) -> TotpSetup:
+        self._check()
+        row = self._live_enabled(user_id)
+        if row.totp_enabled:
+            raise TotpStateError("已開啟兩步驟驗證；要換裝置請先關閉再重新開啟")
+        row.totp_secret, row.totp_last_step = totp.generate_secret(), None
+        return TotpSetup(secret=row.totp_secret, otpauth_uri=totp.otpauth_uri(row.totp_secret, row.username))
+
+    async def confirm_totp(self, user_id: str, code: str) -> bool:
+        self._check()
+        row = self._live_enabled(user_id)
+        if row.totp_enabled:
+            raise TotpStateError("已開啟兩步驟驗證")
+        if not row.totp_secret:
+            raise TotpStateError("請先開始設定兩步驟驗證")
+        step = totp.match_step(row.totp_secret, code, last_step=None)
+        if step is None:
+            return False
+        row.totp_enabled, row.totp_last_step = True, step
+        self._audit(row.id, "user.totp_enable", row.id, {"username": row.username, "via": "web"})
+        return True
+
+    async def disable_totp(self, user_id: str, *, actor_id, via: str = "web") -> UserInfo:
+        self._check()
+        row = self._get_live(user_id)
+        self_service = actor_id is not None and str(actor_id) == row.id
+        if not self_service and row.is_super and row.role == "admin" and not self._actor_is_super(actor_id):
+            raise PermissionDeniedError("只有 super admin 能管理 super admin 帳號")
+        was_on = row.totp_enabled
+        row.totp_enabled, row.totp_secret, row.totp_last_step = False, None, None
+        if was_on:
+            self._audit(actor_id, "user.totp_disable" if self_service else "user.totp_reset", row.id,
+                        {"username": row.username, "via": via})
+        return self._info(row)
+
+    # ── 帳號刪除 ─────────────────────────────────────────────────────
+    def _deletion_info(self, d: _Deletion) -> DeletionInfo:
+        target = self.users.get(d.user_id)
+        req = self.users.get(d.requested_by) if d.requested_by else None
+        return DeletionInfo(id=d.id, user_id=d.user_id, username=target.username if target else None,
+                            requested_by=d.requested_by, requested_by_username=req.username if req else None,
+                            requested_at=d.requested_at, execute_after=d.execute_after,
+                            cancelled_at=d.cancelled_at, executed_at=d.executed_at)
+
+    async def request_deletion(self, user_id: str, *, actor_id, via: str = "web",
+                               delay_seconds: int = accounts.DELETION_DELAY_SECONDS) -> DeletionInfo:
+        self._check()
+        row = self._get_live(user_id)
+        if self._pending_deletion(row.id):
+            raise DeletionPendingError("這個帳號已排程刪除")
+        if row.is_super and row.role == "admin" and not self._actor_is_super(actor_id):
+            raise PermissionDeniedError("只有 super admin 能管理 super admin 帳號")
+        if actor_id is not None and str(actor_id) == row.id:
+            raise SelfLockoutError("不能刪除自己的帳號")
+        if row.role == "admin" and row.enabled and not any(
+            r.role == "admin" and r.enabled and r.id != row.id for r in self.users.values()
+        ):
+            raise LastAdminError("至少要保留一位啟用中的管理員")
+        if self._effective_super(row):
+            self._require_other_super(row)
+        now = datetime.now(timezone.utc)
+        d = _Deletion(id=next(self._deletion_ids), user_id=row.id,
+                      requested_by=str(actor_id) if actor_id else None, requested_at=now,
+                      execute_after=now + timedelta(seconds=int(delay_seconds)), prior_enabled=row.enabled)
+        self.deletions.append(d)
+        row.enabled = False
+        revoked = self._revoke_all(row.id)
+        self._audit(actor_id, "user.delete_requested", row.id,
+                    {"execute_after": d.execute_after.isoformat(), "revoked_sessions": revoked, "via": via})
+        return self._deletion_info(d)
+
+    async def cancel_deletion(self, user_id: str, *, actor_id, via: str = "web") -> DeletionInfo:
+        self._check()
+        d = self._pending_deletion(str(user_id))
+        if d is None:
+            raise NoPendingDeletionError("這個帳號沒有可以取消的刪除排程")
+        if d.execute_after <= datetime.now(timezone.utc):
+            raise DeletionWindowClosedError("已到執行時刻，不能再取消")
+        row = self.users[d.user_id]
+        if row.is_super and row.role == "admin" and not self._actor_is_super(actor_id):
+            raise PermissionDeniedError("只有 super admin 能管理 super admin 帳號")
+        d.cancelled_at, d.cancelled_by = datetime.now(timezone.utc), str(actor_id) if actor_id else None
+        if d.prior_enabled:
+            row.enabled = True
+        self._audit(actor_id, "user.delete_cancelled", row.id, {"restored_enabled": d.prior_enabled, "via": via})
+        return self._deletion_info(d)
+
+    async def list_deletions(self, *, include_done: bool = False, limit: int = 200) -> list[DeletionInfo]:
+        self._check()
+        items = [d for d in self.deletions if include_done or d.pending]
+        items.sort(key=lambda d: (d.requested_at, d.id), reverse=True)
+        return [self._deletion_info(d) for d in items[:limit]]
+
+    async def due_deletions(self) -> list[str]:
+        self._check()
+        now = datetime.now(timezone.utc)
+        due = sorted((d for d in self.deletions if d.pending and d.execute_after <= now),
+                     key=lambda d: (d.execute_after, d.id))
+        return [d.user_id for d in due]
+
+    def _purge(self, user_id: str) -> dict[str, int]:
+        qids = {q for q, uid in self.qa_logs.items() if uid == user_id}
+        review = len(self.review_subjects & qids)
+        self.review_subjects -= qids
+        for q in qids:
+            del self.qa_logs[q]
+        row = self.users.get(user_id)
+        scopes = 0
+        if row is not None:
+            scopes = len(row.scopes)
+            row.username, row.password = accounts.deleted_username(user_id), accounts.DELETED_PASSWORD_HASH
+            row.role, row.is_super, row.enabled, row.scopes = "user", False, False, set()
+            row.totp_enabled, row.totp_secret, row.totp_last_step = False, None, None
+            row.last_login_at = None
+            row.deleted_at = row.deleted_at or datetime.now(timezone.utc)
+        sessions = [sid for sid, s in self.sessions.items() if s.user_id == user_id]
+        for sid in sessions:
+            del self.sessions[sid]
+        return {"qa_log": len(qids), "review_state": review, "user_scope": scopes, "user_session": len(sessions)}
+
+    async def execute_deletion(self, user_id: str, *, via: str = "batch"):
+        self._check()
+        d = self._pending_deletion(str(user_id))
+        now = datetime.now(timezone.utc)
+        if d is None or d.execute_after > now:
+            return None
+        counts = self._purge(d.user_id)
+        d.executed_at = now
+        self._audit(None, "user.delete_executed", d.user_id, {**counts, "via": via})
+        return now
+
+    async def deletion_residue(self, user_id: str) -> DeletionResidue:
+        self._check()
+        uid = str(user_id)
+        qids = {q for q, owner in self.qa_logs.items() if owner == uid}
+        row = self.users.get(uid)
+        identifiable = row is not None and (
+            row.username != accounts.deleted_username(uid) or row.password != accounts.DELETED_PASSWORD_HASH
+            or row.enabled or row.role != "user" or row.is_super or row.totp_enabled
+            or row.totp_secret is not None or row.last_login_at is not None or row.deleted_at is None
+        )
+        return DeletionResidue(
+            qa_log=len(qids), review_state=len(self.review_subjects & qids),
+            user_scope=len(row.scopes) if row else 0,
+            user_session=sum(1 for s in self.sessions.values() if s.user_id == uid),
+            identifiable=identifiable, pending_deletion=self._pending_deletion(uid) is not None,
+        )
+
+    async def purge_deleted_user(self, user_id: str, *, via: str = "replay") -> dict[str, int]:
+        self._check()
+        counts = self._purge(str(user_id))
+        now = datetime.now(timezone.utc)
+        for d in self.deletions:
+            if d.user_id == str(user_id) and d.pending:
+                d.executed_at = now
+        self._audit(None, "user.delete_replayed", str(user_id), {**counts, "via": via})
+        return counts
 
     async def verify_audit_chain(self) -> AuditChainStatus:
         self._check()

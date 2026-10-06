@@ -7,6 +7,7 @@ argv 會留在 shell 歷史與 `ps` 輸出裡）：
     uv run python scripts/create_admin.py --username alice --super      # 建立 super admin
     uv run python scripts/create_admin.py --username linebot --role user --password-stdin < pw
     uv run python scripts/create_admin.py --username alice --reset-password   # 忘記密碼／被停用
+    uv run python scripts/create_admin.py --username alice --reset-totp       # 驗證器 App 遺失
     uv run python scripts/create_admin.py --from-env                    # 舊共用帳密 → 第一位管理員
     uv run python scripts/create_admin.py --list
 
@@ -15,7 +16,9 @@ argv 會留在 shell 歷史與 `ps` 輸出裡）：
 拒絕，請改用 `--username` 互動設定新密碼。轉完之後那兩個鍵就可以從環境檔移除。
 
 `--reset-password` 會重設密碼、重新啟用、撤銷該帳號所有 session；給了 `--role` 才改角色、給了
-`--super` 才升為 super admin（救援：super admin 全被停用或忘記密碼時）。
+`--super` 才升為 super admin（救援：super admin 全被停用或忘記密碼時）。`--reset-totp` 關閉該帳號的
+兩步驟驗證（手機遺失、網頁上又沒有其他管理員能替他重設時）；可與 `--reset-password` 一起用。
+已刪除或排程刪除中的帳號不能經這裡救回（排程中的請先在管理頁取消刪除）。
 
 super admin（才能授予 scope）：`--super` 明確指定；**庫裡沒有任何啟用中的 super admin 時，建立的
 管理員自動成為 super**，`--from-env` 轉入的第一位管理員也是——新環境的第一位管理員一定能授權。
@@ -94,6 +97,13 @@ async def _from_env() -> int:
 
 async def _create_or_reset(args) -> int:
     existing = await accounts.find_user_by_username(args.username)
+    if args.reset_totp and not args.reset_password:
+        if existing is None:
+            print(f"帳號「{args.username}」不存在，無從重設", file=sys.stderr)
+            return EXIT_INVALID
+        await accounts.disable_totp(existing.id, actor_id=None, via="cli")
+        print(f"已關閉「{existing.username}」的兩步驟驗證；下次登入只需要密碼")
+        return EXIT_OK
     if existing is not None and not args.reset_password:
         print(f"帳號「{existing.username}」已存在；要重設密碼請加 --reset-password", file=sys.stderr)
         return EXIT_INVALID
@@ -115,6 +125,8 @@ async def _create_or_reset(args) -> int:
     info = await accounts.update_user(existing.id, role=args.role, enabled=True, actor_id=None, via="cli")
     if args.super:
         info = await accounts.set_privileges(existing.id, is_super=True, actor_id=None, via="cli")
+    if args.reset_totp:
+        info = await accounts.disable_totp(existing.id, actor_id=None, via="cli")
     print(f"已重設「{info.username}」的密碼（{info.role}{'、super admin' if info.is_super else ''}、啟用），"
           "既有 session 全部登出")
     return EXIT_OK
@@ -138,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--role", choices=accounts.ROLES, help="建立時預設 admin；重設時給了才改")
     parser.add_argument("--reset-password", action="store_true", help="帳號已存在時重設密碼並重新啟用")
     parser.add_argument("--super", action="store_true", help="建立／重設為 super admin（才能授予 scope）")
+    parser.add_argument("--reset-totp", action="store_true", help="關閉該帳號的兩步驟驗證（驗證器遺失）")
     parser.add_argument("--password-stdin", action="store_true", help="從標準輸入讀一行當密碼（非互動）")
     parser.add_argument("--from-env", action="store_true", help="把舊共用帳密轉成第一位管理員")
     parser.add_argument("--list", action="store_true", help="列出所有帳號")

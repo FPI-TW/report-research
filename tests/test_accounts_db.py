@@ -17,10 +17,12 @@ import asyncio
 import os
 import unittest
 import uuid
+from contextlib import contextmanager
+from unittest import mock
 
 from fake_accounts import FakeAccounts
 
-from app.services import accounts
+from app.services import accounts, totp
 
 
 def _name(prefix: str) -> str:
@@ -271,6 +273,256 @@ async def scenario_audit_chain(api) -> None:
     assert await api.audit_row_hashes([-1]) == {}
 
 
+# ───── TOTP ─────
+
+@contextmanager
+def _clock(t: float):
+    """把 TOTP 的時鐘固定在 t（fake 與真 SQL 都經 totp.match_step，同一個替換點）。"""
+    with mock.patch.object(totp, "_now", lambda: t):
+        yield
+
+
+T0 = 1_800_000_000.0  # 固定時刻：時間步 = T0 // 30
+
+
+def _code(secret: str, t: float) -> str:
+    return totp.code_at(secret, totp.current_step(t))
+
+
+async def _enable_totp(api, user_id: str, t: float = T0) -> str:
+    setup = await api.begin_totp_setup(user_id)
+    assert setup.otpauth_uri.startswith("otpauth://totp/") and setup.secret in setup.otpauth_uri
+    status = await api.totp_status(user_id)
+    assert status.pending and not status.enabled
+    with _clock(t):
+        assert await api.confirm_totp(user_id, "000000" if _code(setup.secret, t) != "000000" else "111111") is False
+        assert await api.confirm_totp(user_id, _code(setup.secret, t)) is True
+    assert (await api.totp_status(user_id)).enabled
+    return setup.secret
+
+
+async def scenario_totp_login_two_steps(api) -> None:
+    info = await api.create_user(_name("Totp"), PW, "user", actor_id=None)
+    secret = await _enable_totp(api, info.id)
+    res = await api.authenticate(info.username, PW)
+    assert res.reason == "totp_required" and res.user is None and res.challenge is not None
+    assert res.challenge.user_id == info.id
+    fp = res.challenge.fingerprint
+    with _clock(T0):
+        # 同一個時間步（確認時用掉的那一步）不能再用一次
+        assert await api.complete_totp_login(info.id, fp, _code(secret, T0)) is None
+    with _clock(T0 + 30):
+        assert await api.complete_totp_login(info.id, "bad-fingerprint", _code(secret, T0 + 30)) is None
+        assert await api.complete_totp_login(info.id, fp, "123") is None
+        user = await api.complete_totp_login(info.id, fp, _code(secret, T0 + 30))
+        assert user is not None and user.id == info.id and user.totp_enabled
+        # 暫時憑證不可重放：時間步前進後舊指紋對不上
+        assert await api.complete_totp_login(info.id, fp, _code(secret, T0 + 60)) is None
+    # 密碼錯仍是 bad_password，不洩漏有沒有開 TOTP
+    assert (await api.authenticate(info.username, "wrong-password")).reason == "bad_password"
+
+
+async def scenario_totp_fingerprint_follows_password(api) -> None:
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
+    info = await api.create_user(_name("TotpPw"), PW, "user", actor_id=None)
+    secret = await _enable_totp(api, info.id)
+    fp = (await api.authenticate(info.username, PW)).challenge.fingerprint
+    await api.reset_password(info.id, PW2, actor_id=admin.id)
+    with _clock(T0 + 30):
+        assert await api.complete_totp_login(info.id, fp, _code(secret, T0 + 30)) is None
+
+
+async def scenario_totp_setup_rules_and_disable(api) -> None:
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
+    info = await api.create_user(_name("TotpRule"), PW, "user", actor_id=None)
+    await _expect(accounts.TotpStateError, api.confirm_totp(info.id, "123456"))  # 還沒開始設定
+    await _enable_totp(api, info.id)
+    await _expect(accounts.TotpStateError, api.begin_totp_setup(info.id))  # 已啟用不能覆蓋
+    after = await api.disable_totp(info.id, actor_id=info.id)
+    assert after.totp_enabled is False
+    status = await api.totp_status(info.id)
+    assert not status.enabled and not status.pending
+    assert (await api.authenticate(info.username, PW)).reason == "ok"
+    await _enable_totp(api, info.id)
+    after = await api.disable_totp(info.id, actor_id=admin.id)  # 管理員替遺失裝置的人重設
+    assert after.totp_enabled is False
+    _total, entries = await api.list_audit(limit=200)
+    actions = [e.action for e in entries if e.target_id == info.id]
+    assert {"user.totp_enable", "user.totp_disable", "user.totp_reset"} <= set(actions), actions
+    blob = repr([e.detail for e in entries if e.target_id == info.id])
+    assert "secret" not in blob.lower()
+
+
+async def scenario_totp_elevation(api) -> None:
+    info = await api.create_user(_name("TotpElev"), PW, "admin", actor_id=None)
+    sid = await api.create_session(info.id, max_age_seconds=3600)
+    secret = await _enable_totp(api, info.id)
+    await _expect(accounts.TotpRequiredError, api.elevate_session(sid, PW))
+    with _clock(T0 + 30):
+        assert await api.elevate_session(sid, "wrong-password", _code(secret, T0 + 30)) is None
+        assert await api.elevate_session(sid, PW, "000000" if _code(secret, T0 + 30) != "000000" else "111111") is None
+        assert await api.elevate_session(sid, PW, _code(secret, T0 + 30)) is not None
+        assert (await api.resolve_session(sid)).is_elevated
+        # 同一個碼不能再拿來提升一次
+        assert await api.elevate_session(sid, PW, _code(secret, T0 + 30)) is None
+
+
+async def scenario_totp_admin_reset_super_requires_super(api) -> None:
+    boss = await api.create_user(_name("Boss"), PW, "admin", actor_id=None, is_super=True)
+    await api.create_user(_name("Boss2"), PW, "admin", actor_id=None, is_super=True)
+    plain = await api.create_user(_name("Plain"), PW, "admin", actor_id=None)
+    await _enable_totp(api, boss.id)
+    await _expect(accounts.PermissionDeniedError, api.disable_totp(boss.id, actor_id=plain.id))
+
+
+# ───── 帳號刪除 ─────
+
+async def _seed_qa(api, user_id: str, *, with_review: bool = False) -> str:
+    """放一筆屬於 user_id 的問答（與指向它的 review_state）。"""
+    if isinstance(api, FakeAccounts):
+        return api.seed_qa_log(user_id, with_review=with_review)
+    from sqlalchemy import text
+
+    qid = str(uuid.uuid4())
+    async with accounts.SessionFactory() as session:
+        await session.execute(
+            text("INSERT INTO research.qa_log (id, question, answer, user_id, feedback) "
+                 "VALUES (:id, 'q', 'a', :uid, 'dislike')"),
+            {"id": qid, "uid": user_id},
+        )
+        if with_review:
+            await session.execute(
+                text("INSERT INTO research.review_state (kind, subject_id, status, note) "
+                     "VALUES ('feedback', :id, 'open', 'n')"),
+                {"id": qid},
+            )
+        await session.commit()
+    return qid
+
+
+async def scenario_deletion_request_and_cancel(api) -> None:
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
+    target = await api.create_user(_name("Del"), PW, "user", actor_id=None)
+    sid = await api.create_session(target.id, max_age_seconds=3600)
+    d = await api.request_deletion(target.id, actor_id=admin.id)
+    assert d.status == "pending" and d.user_id == target.id and d.requested_by == admin.id
+    assert d.execute_after is not None and d.requested_by_username == admin.username
+    assert await api.resolve_session(sid) is None  # 立即撤銷
+    assert (await api.authenticate(target.username, PW)).reason == "disabled"
+    info = await api.get_user(target.id)
+    assert info.enabled is False and info.deletion_execute_after is not None
+    await _expect(accounts.DeletionPendingError, api.request_deletion(target.id, actor_id=admin.id))
+    await _expect(accounts.DeletionPendingError, api.update_user(target.id, enabled=True, actor_id=admin.id))
+    assert [x.user_id for x in await api.list_deletions()].count(target.id) == 1
+    assert target.id not in await api.due_deletions()  # 還沒到期
+    assert await api.execute_deletion(target.id) is None
+    c = await api.cancel_deletion(target.id, actor_id=admin.id)
+    assert c.status == "cancelled"
+    info = await api.get_user(target.id)
+    assert info.enabled is True and info.deletion_execute_after is None  # 還原提出前的啟用狀態
+    assert (await api.authenticate(target.username, PW)).reason == "ok"
+    await _expect(accounts.NoPendingDeletionError, api.cancel_deletion(target.id, actor_id=admin.id))
+    assert target.id in [x.user_id for x in await api.list_deletions(include_done=True)]
+    _total, entries = await api.list_audit(limit=200)
+    mine = [e for e in entries if e.target_id == target.id]
+    assert {"user.delete_requested", "user.delete_cancelled"} <= {e.action for e in mine}
+    for e in mine:
+        if e.action.startswith("user.delete"):
+            assert target.username not in repr(e.detail), e.detail
+
+
+async def scenario_deletion_cancel_keeps_disabled(api) -> None:
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
+    target = await api.create_user(_name("DelOff"), PW, "user", actor_id=None)
+    await api.update_user(target.id, enabled=False, actor_id=admin.id)
+    await api.request_deletion(target.id, actor_id=admin.id)
+    await api.cancel_deletion(target.id, actor_id=admin.id)
+    assert (await api.get_user(target.id)).enabled is False
+
+
+async def scenario_deletion_protections(api) -> None:
+    a = await api.create_user(_name("SupA"), PW, "admin", actor_id=None, is_super=True)
+    await api.create_user(_name("SupB"), PW, "admin", actor_id=None, is_super=True)
+    plain = await api.create_user(_name("Plain"), PW, "admin", actor_id=None)
+    await _expect(accounts.SelfLockoutError, api.request_deletion(plain.id, actor_id=plain.id))
+    await _expect(accounts.PermissionDeniedError, api.request_deletion(a.id, actor_id=plain.id))
+    await _expect(accounts.UserNotFoundError, api.request_deletion(str(uuid.uuid4()), actor_id=None))
+    await _expect(accounts.NoPendingDeletionError, api.cancel_deletion(plain.id, actor_id=a.id))
+    d = await api.request_deletion(plain.id, actor_id=a.id, delay_seconds=0)
+    # 已到執行時刻就不能取消（批次可能已經寫了 tombstone）
+    await _expect(accounts.DeletionWindowClosedError, api.cancel_deletion(plain.id, actor_id=a.id))
+    assert d.user_id in await api.due_deletions()
+
+
+async def scenario_deletion_execute_purges(api) -> None:
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None, is_super=True)
+    target = await api.create_user(_name("Gone"), PW, "admin", actor_id=None)
+    other = await api.create_user(_name("Stay"), PW, "user", actor_id=None)
+    await api.set_privileges(target.id, scopes=["qa_content.read"], actor_id=admin.id)
+    await _enable_totp(api, target.id)
+    await api.create_session(target.id, max_age_seconds=3600)
+    q1 = await _seed_qa(api, target.id, with_review=True)
+    await _seed_qa(api, target.id)
+    kept = await _seed_qa(api, other.id, with_review=True)
+    await api.request_deletion(target.id, actor_id=admin.id, delay_seconds=0)
+    before = await api.deletion_residue(target.id)
+    assert before.qa_log == 2 and before.review_state == 1 and before.pending_deletion and before.identifiable
+    executed = await api.execute_deletion(target.id)
+    assert executed is not None
+    assert await api.execute_deletion(target.id) is None  # 冪等：已執行就不再動
+    residue = await api.deletion_residue(target.id)
+    assert residue.clean, residue
+    info = await api.get_user(target.id)
+    assert info.username == accounts.deleted_username(target.id) and info.deleted_at is not None
+    assert info.role == "user" and not info.is_super and not info.totp_enabled and info.scopes == ()
+    assert target.id not in [u.id for u in await api.list_users()]
+    assert (await api.authenticate(target.username, PW)).reason == "unknown_user"
+    assert (await api.authenticate(info.username, PW)).reason in ("bad_password", "disabled")
+    assert (await api.deletion_residue(other.id)).qa_log == 1  # 別人的不受影響
+    for call in (
+        lambda: api.update_user(target.id, enabled=True, actor_id=admin.id),
+        lambda: api.reset_password(target.id, PW2, actor_id=admin.id),
+        lambda: api.force_logout(target.id, actor_id=admin.id),
+        lambda: api.set_privileges(target.id, scopes=[], actor_id=admin.id),
+        lambda: api.request_deletion(target.id, actor_id=admin.id),
+    ):
+        await _expect(accounts.AccountDeletedError, call())
+    # 原帳號名稱可以再用
+    again = await api.create_user(target.username, PW, "user", actor_id=None)
+    assert again.id != target.id
+    _total, entries = await api.list_audit(limit=200)
+    done = next(e for e in entries if e.target_id == target.id and e.action == "user.delete_executed")
+    assert done.detail["qa_log"] == 2 and done.detail["review_state"] == 1
+    assert target.username not in repr(done.detail)
+    assert q1 and kept
+
+
+async def scenario_deletion_replay(api) -> None:
+    """模擬從舊備份還原：已刪除帳號的問答又出現、app_user 又變回可識別 → purge 後乾淨。"""
+    admin = await api.create_user(_name("Adm"), PW, "admin", actor_id=None)
+    target = await api.create_user(_name("Back"), PW, "user", actor_id=None)
+    await api.request_deletion(target.id, actor_id=admin.id, delay_seconds=0)
+    await api.execute_deletion(target.id)
+    assert (await api.deletion_residue(target.id)).clean
+    await _seed_qa(api, target.id, with_review=True)  # 「復活」的問答
+    residue = await api.deletion_residue(target.id)
+    assert residue.qa_log == 1 and residue.review_state == 1 and not residue.clean
+    counts = await api.purge_deleted_user(target.id)
+    assert counts["qa_log"] == 1 and counts["review_state"] == 1
+    assert (await api.deletion_residue(target.id)).clean
+    nobody = str(uuid.uuid4())  # 備份比帳號還舊：app_user 不存在也不算殘留
+    assert (await api.deletion_residue(nobody)).clean
+
+
+async def scenario_last_admin_cannot_be_deleted(api) -> None:
+    """只在「庫裡沒有別的啟用中管理員」時有意義（CI 的空庫、假帳號庫）。"""
+    a = await api.create_user(_name("OnlyAdm"), PW, "admin", actor_id=None, is_super=True)
+    await _expect(accounts.LastAdminError, api.request_deletion(a.id, actor_id=None))
+    b = await api.create_user(_name("Helper"), PW, "admin", actor_id=None)
+    await _expect(accounts.LastSuperError, api.request_deletion(a.id, actor_id=None))
+    await api.request_deletion(b.id, actor_id=None)  # 一般管理員：還有 a，可以
+
+
 SCENARIOS = [
     scenario_login,
     scenario_duplicate_username_case_insensitive,
@@ -288,12 +540,22 @@ SCENARIOS = [
     scenario_super_protections,
     scenario_elevation,
     scenario_audit_chain,
+    scenario_totp_login_two_steps,
+    scenario_totp_fingerprint_follows_password,
+    scenario_totp_setup_rules_and_disable,
+    scenario_totp_elevation,
+    scenario_totp_admin_reset_super_requires_super,
+    scenario_deletion_request_and_cancel,
+    scenario_deletion_cancel_keeps_disabled,
+    scenario_deletion_protections,
+    scenario_deletion_execute_purges,
+    scenario_deletion_replay,
 ]
 
 
 class FakeParityTests(unittest.TestCase):
     def test_scenarios(self):
-        for scenario in [*SCENARIOS, scenario_last_admin, scenario_last_super]:
+        for scenario in [*SCENARIOS, scenario_last_admin, scenario_last_super, scenario_last_admin_cannot_be_deleted]:
             with self.subTest(scenario.__name__):
                 asyncio.run(scenario(FakeAccounts()))
 
@@ -353,6 +615,19 @@ class AccountsDbTests(unittest.TestCase):
             if await accounts.count_enabled_admins() > 0:
                 raise unittest.SkipTest("庫裡已有啟用中的管理員，最後一位管理員的情境驗不到（CI 空庫會跑）")
             await scenario_last_admin(accounts)
+
+        try:
+            asyncio.run(_in_rolled_back_transaction(go))
+        except (unittest.SkipTest, AssertionError, accounts.AccountError):
+            raise
+        except Exception as exc:
+            _skip_or_raise(exc, "DB 不可用或尚未套 schema")
+
+    def test_last_admin_deletion_guard(self):
+        async def go():
+            if await accounts.count_enabled_admins() > 0:
+                raise unittest.SkipTest("庫裡已有啟用中的管理員，刪除最後一位管理員的情境驗不到（CI 空庫會跑）")
+            await scenario_last_admin_cannot_be_deleted(accounts)
 
         try:
             asyncio.run(_in_rolled_back_transaction(go))

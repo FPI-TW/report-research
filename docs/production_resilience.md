@@ -161,9 +161,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 在此之前這個 DB **完全沒有備份**——`pg_dump` / `pgbackrest` / `pg_basebackup` 在 Makefile、`scripts/`、`deploy/`、`docs/`、systemd、crontab 全部零命中，唯一的副本是 docker named volume `report-mark-pgdata`。而 `docs/qa_pdf_report_deployment.md` 早在深度研報上線時就寫著「DB 的 `report_doc` 表需納入備份」，一直沒有人做。
 
-### 為什麼只備這八張表
+### 為什麼只備這九張表
 
-深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，現行備份清單共八張。`user_session` 刻意不備（遺失只是全員重新登入）。
+深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，現行備份清單共九張。`user_session` 刻意不備（遺失只是全員重新登入）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -175,8 +175,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.app_user` | 個別帳號與角色。遺失＝所有人要重新建帳、`qa_log.user_id` 與處理人全部對不回名字。**含 Argon2id 密碼雜湊，備份檔要當機密看待** |
 | `research.admin_audit_log` | 管理操作稽核（建帳、改角色、停用、重設密碼、強制登出、處理待複核、權限調整）；事後追查「誰做的」的唯一來源。雜湊鏈＋只能新增（revision 0002），還原時用 `pg_restore --disable-triggers` |
 | `research.user_scope` | 另外授予的權限（`qa_content.read`、`ops.operate`）與授予人；遺失＝特殊權限全部要重新授予，且說不出當初是誰給的 |
+| `research.account_deletion` | 帳號刪除排程（提出人、執行時刻、取消紀錄）。遺失＝還原後尚未執行的刪除排程消失、帳號停在停用狀態卻永遠不會被刪。已執行的刪除另有 DB 之外的 tombstone（見下方「還原後重放帳號刪除」） |
 
-沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這八張表的體積相對很小，備起來幾乎沒有成本。
+沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這九張表的體積相對很小，備起來幾乎沒有成本。
 
 **這個取捨有一個已知代價，先寫在這裡免得還原那天才發現**：`report_takeaway` 與 `report_signal` 以 `report_id` FK 指向 `research_report`，而 `report_id` 是每次 ingest 重新產生的 uuid。**語料層若被整個重建，這兩張表的備份就對不回去了**（其餘幾張沒有 FK，可還原；但 `review_state` 中指向舊 `research_report.id` 的抽取複核紀錄會變成孤兒，須依重建後 id 核對）。若之後判定摘錄／訊號值得那個代價，正解是把 `research_report` 一起納入備份（`report_chunk` 仍不必——向量重算得回來），而不是在還原時 `--disable-triggers` 硬塞孤兒列。
 
@@ -237,7 +238,8 @@ docker exec -i report-mark-postgres psql -U postgres -d restore_check \
   -c 'select count(*) from research.review_state;' \
   -c 'select count(*) from research.app_user;' \
   -c 'select count(*) from research.admin_audit_log;' \
-  -c 'select count(*) from research.user_scope;'
+  -c 'select count(*) from research.user_scope;' \
+  -c 'select count(*) from research.account_deletion;'
 
 # 預期輸出：**必定出現 5 個錯誤**，這是正常的，不是備份壞了——
 #   ERROR: relation "research.research_report" does not exist          ×2
@@ -254,6 +256,8 @@ docker exec -i report-mark-postgres psql -U postgres -d restore_check \
 # 3) 確認筆數合理後才動生產。單張表被誤刪／誤清時只還原那一張（例如 qa_log；review_state 亦可用同法）：
 docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges -t qa_log < "$DUMP"
+# 還原了 qa_log／app_user 之後一定要重放帳號刪除（見下方「還原後重放帳號刪除」）：
+uv run python scripts/replay_deletions.py
 
 # 4) 整組還原到空 DB（例如 pgdata 全滅、重建叢集之後）：
 make schema                                    # 先把 schema 建回來（含 vector 擴充、索引、稽核觸發器）
@@ -261,6 +265,8 @@ docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges --data-only --disable-triggers < "$DUMP"
 # --disable-triggers 讓稽核的只能新增／雜湊鏈觸發器不擋還原；還原後驗鏈：
 uv run python scripts/audit_anchor.py --verify-only
+# 再重放帳號刪除：備份之後才被刪除的使用者，資料會跟著備份回來（rc=1＝發現並已重新刪除，屬預期）
+uv run python scripts/replay_deletions.py
 
 # 5) 收尾：清掉步驟 2 的臨時 DB（**不可在 -d restore_check 連線上下這道指令**，
 #    PostgreSQL 不允許 DROP 自己正連著的資料庫）
@@ -271,6 +277,27 @@ docker exec -i report-mark-postgres psql -U postgres -c 'DROP DATABASE restore_c
 
 `pg_restore` 的退出碼要看：非 0 就是沒還原完，**不要因為「有些表看起來有資料」就當成功**。
 但反過來**不成立**——見步驟 2 的註解：臨時 DB 還原必定有 2 個 FK 錯誤而 rc 仍是 0。
+
+### 還原後重放帳號刪除（tombstone）
+
+帳號刪除（管理頁提出 → 24 小時撤銷窗口 → `report-mark-delete-accounts.timer` 每小時執行
+`scripts/execute_deletions.py`）會刪掉該使用者的 `qa_log`、指向它們的 `review_state`、`user_scope`、
+`user_session`，`app_user` 只留 UUID。可是**備份是刪除前的樣子**：從任何一份比刪除還舊的備份還原
+`qa_log` 或 `app_user`，那個人的問答就復活了，`account_deletion.executed_at` 也一起回到過去，DB 裡
+沒有任何東西記得他已被刪除。
+
+所以執行刪除時先在 DB 之外寫一筆 tombstone：`$REPORT_MARK_BACKUP_DIR/account-tombstones.jsonl`
+（與備份同一個 NAS 落點；一行 `{"user_id", "executed_at"}`，不含帳號名稱）。落點不存在時整批不做
+（rc=2），不退回本機——與 pgdata 同一塊磁碟的 tombstone 會跟 DB 一起遺失或一起被還原。
+
+`scripts/replay_deletions.py` 讀 tombstone，逐一檢查 DB 是否還有該使用者的內容、或 `app_user` 又變回
+可識別／可登入；有就在同一筆交易重新刪除（稽核 `user.delete_replayed`）並以 **rc=1** 結束。
+
+- **每次還原（整組或單表）之後手動跑一次**（上面步驟 3、4 已列）。rc=1 在還原後是預期結果：代表
+  它找到並清掉了復活的資料；再跑一次應該是 rc=0。只想看不想刪用 `--check-only`。
+- 平時由 `report-mark-replay-deletions.timer` 每日 04:30 跑；平常日出現 rc=1（OnFailure 告警）表示有人
+  在沒走這份流程的情況下還原過資料，要追查。
+- tombstone 檔本身不要刪、不要手改；它和稽核錨點一樣是 DB 之外唯一的證據。
 
 ### 演練紀錄
 
@@ -301,12 +328,18 @@ sudo install -m 0755 -o root -g root "$REPO"/deploy/systemd/mount-nas-backup /us
 sudo install -m 0440 -o root -g root "$REPO"/deploy/systemd/report-mark-backup.sudoers \
   /etc/sudoers.d/report-mark-backup
 sudo cp "$REPO"/deploy/systemd/report-mark-backup.service \
-        "$REPO"/deploy/systemd/report-mark-backup.timer /etc/systemd/system/
+        "$REPO"/deploy/systemd/report-mark-backup.timer \
+        "$REPO"/deploy/systemd/report-mark-delete-accounts.service \
+        "$REPO"/deploy/systemd/report-mark-delete-accounts.timer \
+        "$REPO"/deploy/systemd/report-mark-replay-deletions.service \
+        "$REPO"/deploy/systemd/report-mark-replay-deletions.timer /etc/systemd/system/
 # 環境檔要一起更新——NAS_BACKUP_UNC 與 REPORT_MARK_BACKUP_DIR 都在裡面，
 # 掛載腳本與備份 unit 都讀它。少了這步，掛載腳本會退回內建預設。
 sudo cp "$REPO"/deploy/systemd/report-mark-sync.env.example /etc/default/report-mark-sync
 sudo systemctl daemon-reload
 sudo systemctl enable --now report-mark-backup.timer
+# 帳號刪除的執行與重放都寫 NAS 上的 tombstone，與備份共用落點（先套 revision 0003）
+sudo systemctl enable --now report-mark-delete-accounts.timer report-mark-replay-deletions.timer
 
 # 換過落點時，舊掛載要先卸掉——mountpoint -q 會通過，然後在寫入探測才失敗
 sudo umount /mnt/nas-backup 2>/dev/null || true

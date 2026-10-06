@@ -106,6 +106,28 @@ class CreateAdminCliTests(unittest.TestCase):
         self.assertEqual((row.password, row.enabled, row.role), ("new-password-12", True, "admin"))
         self.assertTrue(self.store.sessions[sid].revoked)
 
+    def test_reset_totp_alone_disables_two_step(self):
+        uid = self.store.add_user("alice", "alice-password-1", "admin")
+        row = self.store.users[uid]
+        row.totp_secret, row.totp_enabled, row.totp_last_step = "ABCDEFGHABCDEFGH", True, 1
+        rc, out, err = self._run(["--username", "alice", "--reset-totp"])
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(row.totp_enabled)
+        self.assertIsNone(row.totp_secret)
+        self.assertEqual(row.password, "alice-password-1")  # 沒有動密碼
+        self.assertEqual(self.store.audit[0].action, "user.totp_reset")
+        self.assertEqual(self.store.audit[0].detail["via"], "cli")
+        self.assertEqual(self._run(["--username", "nobody", "--reset-totp"])[0], 1)
+
+    def test_reset_password_refuses_account_pending_deletion(self):
+        admin = self.store.add_user("root", "root-password-1", "admin")
+        uid = self.store.add_user("alice", "alice-password-1", "user")
+        asyncio.run(self.store.request_deletion(uid, actor_id=admin))
+        rc, _out, err = self._run(["--username", "alice", "--reset-password", "--password-stdin"], "new-password-1\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("取消刪除", err)
+        self.assertFalse(self.store.users[uid].enabled)
+
     def test_policy_violation_exit_1(self):
         rc, _, err = self._run(["--username", "alice", "--password-stdin"], "short\n")
         self.assertEqual(rc, 1)

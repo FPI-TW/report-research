@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { Popover } from '../primitives/Popover'
 import { Pressable } from '../primitives/Pressable'
 import { Icon } from '../primitives/Icon'
+import { SecurityDialog } from '../../features/account/SecurityDialog'
 import { preloadRoute } from '../../lib/routePreload'
 import { useIsAdmin } from '../../lib/useMe'
 import { useStats } from '../../lib/useStats'
@@ -18,6 +19,7 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
   const { data } = useStats()
   const name = data?.username ?? '分析師'
   const [open, setOpen] = useState(false)
+  const [securityOpen, setSecurityOpen] = useState(false)
   const locale = useLocale()
   // 管理後台的唯一入口：與研報平台分開的外殼（/admin/*），主導覽刻意不放。只是顯示層，授權在後端。
   const isAdmin = useIsAdmin()
@@ -68,6 +70,13 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
         >
           <Icon name="info" size={16} />使用說明
         </Link>
+        <button
+          type="button"
+          className={styles.menuItem}
+          onClick={() => { setOpen(false); setSecurityOpen(true) }}
+        >
+          <Icon name="shield" size={16} />帳號安全
+        </button>
         {isAdmin && (
           <Link
             to="/admin/users"
@@ -82,6 +91,7 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
           <Pressable type="submit" className={styles.logout}>登出</Pressable>
         </form>
       </Popover>
+      <SecurityDialog open={securityOpen} onClose={() => setSecurityOpen(false)} />
     </div>
   )
 }

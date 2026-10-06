@@ -256,10 +256,10 @@ export const OpsServiceListResponseSchema = z.object({
 })
 export type OpsServiceListResponse = z.infer<typeof OpsServiceListResponseSchema>
 
-function qs(query: Record<string, string | number | undefined>): string {
+function qs(query: Record<string, string | number | boolean | null | undefined>): string {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined) params.set(key, String(value))
+    if (value !== undefined && value !== null) params.set(key, String(value))
   }
   const text = params.toString()
   return text ? `?${text}` : ''
@@ -271,7 +271,7 @@ export const adminApi = {
   /** GET /api/admin/audit/verify — Verify Audit Chain */
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/deletions — List Deletions */
-  listDeletions: (query: { status?: string } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
+  listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
   /** GET /api/admin/ops/services — List Ops Services */
@@ -281,7 +281,7 @@ export const adminApi = {
   /** GET /api/admin/ops/services/{name}/logs — Get Ops Service Logs */
   getOpsServiceLogs: (name: string, query: { since?: string; lines?: number } = {}) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/logs${qs(query)}`, OpsLogsResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/reports — List Reports */
-  listReports: (query: { q?: string; hidden?: string; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
+  listReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/users — List Users */

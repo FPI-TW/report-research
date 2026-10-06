@@ -250,7 +250,8 @@ docker exec -i report-mark-postgres psql -U postgres -d restore_check \
 #     （admin_audit_log 的雜湊鏈／只能新增觸發器用到的函式屬於 schema、不在逐表 dump 裡；
 #      資料照樣完整還原，臨時 DB 只是少了觸發器。整組還原時 `make schema` 會先建回函式）
 #   pg_restore: warning: errors ignored on restore: 5
-# **而 pg_restore 的退出碼仍然是 0。** 所以「rc=0 就是還原乾淨」是錯的判準：
+# **pg_restore 的退出碼不能當判準**：2026-07-30 量到的是 0，2026-10-06 以 PG 16.14 的
+# pg_restore 實測是 1（有被忽略的錯誤就非零）——兩種都不代表還原乾不乾淨。
 # 要看的是 `errors ignored on restore:` 那一行的數字（臨時 DB 演練＝恰好 5，
 # 多於 5 就要查）。2026-07-30 量到 2；2026-10-06 加入稽核觸發器後重新量測為 5。
 

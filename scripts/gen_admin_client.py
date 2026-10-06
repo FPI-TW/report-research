@@ -53,6 +53,28 @@ def camel(words: str) -> str:
     return parts[0].lower() + "".join(p[:1].upper() + p[1:].lower() for p in parts[1:])
 
 
+def ts_query_type(schema: dict) -> str:
+    """query 參數的 TS 型別（全部可省略；可為 null 的 schema 也接受 null，qs() 會略過）。"""
+    options = schema.get("anyOf", [schema])
+    non_null = [o for o in options if o.get("type") != "null"]
+    nullable = len(non_null) != len(options)
+    types = []
+    for o in non_null:
+        if "enum" in o:
+            types.extend(repr_ts(v) for v in o["enum"])
+        elif o.get("type") in ("integer", "number"):
+            types.append("number")
+        elif o.get("type") == "boolean":
+            types.append("boolean")
+        elif o.get("type") == "string":
+            types.append("string")
+        else:
+            raise Unsupported(f"不支援的 query 參數型別：{schema}")
+    if nullable:
+        types.append("null")
+    return " | ".join(dict.fromkeys(types))
+
+
 def ref_name(ref: str) -> str:
     return ts_name(ref.rsplit("/", 1)[-1]) + "Schema"
 
@@ -192,8 +214,7 @@ def build_operation(path: str, method: str, op: dict) -> str:
     if body is not None:
         args.append(f"body: z.input<typeof {zod(body)}>")
     if query_params:
-        fields = "; ".join(f"{p['name']}?: {'number' if p.get('schema', {}).get('type') == 'integer' else 'string'}"
-                           for p in query_params)
+        fields = "; ".join(f"{p['name']}?: {ts_query_type(p.get('schema', {}))}" for p in query_params)
         args.append(f"query: {{ {fields} }} = {{}}")
     url = path
     for p in path_params:
@@ -221,10 +242,10 @@ def generate(spec: dict) -> str:
         expr = object_body(schema) if schema.get("type") == "object" and schema.get("properties") else zod(schema)
         out.append(f"export const {ts_name(name)}Schema = {expr}\n"
                    f"export type {ts_name(name)} = z.infer<typeof {ts_name(name)}Schema>\n")
-    out.append("function qs(query: Record<string, string | number | undefined>): string {\n"
+    out.append("function qs(query: Record<string, string | number | boolean | null | undefined>): string {\n"
                "  const params = new URLSearchParams()\n"
                "  for (const [key, value] of Object.entries(query)) {\n"
-               "    if (value !== undefined) params.set(key, String(value))\n"
+               "    if (value !== undefined && value !== null) params.set(key, String(value))\n"
                "  }\n"
                "  const text = params.toString()\n"
                "  return text ? `?${text}` : ''\n"

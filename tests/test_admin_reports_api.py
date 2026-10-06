@@ -143,6 +143,7 @@ class AdminReportsApiTests(unittest.TestCase):
         cases = [
             (visibility.ReportNotFoundError("研報不存在"), 404, "not_found"),
             (visibility.InvalidReasonError("隱藏研報必須填寫原因"), 400, "invalid_input"),
+            (visibility.ReportIsDraftError("這份研報是尚未發布的草稿"), 409, "report_is_draft"),
         ]
         for exc, status, code in cases:
             with self.subTest(code=code):

@@ -60,7 +60,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `radar/compute.py`、`radar/queries.py`、`radar/scale.py`、`radar/schemas.py`、`radar/types.py` | 觀點雷達：純 SQL 取訊號 ＋ Python 決定性聚合 |
 | `signal_extract.py` | 訊號擷取 prompt 與正規化（LLM 只擷取數值與論點證據，Python 判評等方向、幣別、狀態） |
 | `brief.py` | 每日簡報素材、prompt、落庫 |
-| `visibility.py` | 研報隱藏／恢復（`report_visibility`）：使用者讀取路徑共用的可見性片段 `visible_report_sql(別名)`／`visible_report_id_sql(欄位)`（`NOT EXISTS`，可直接 AND 進任何 WHERE），以及管理端的 `list_reports`／`set_visibility`（與稽核同交易，呼叫端 commit）。`tests/test_visibility_guard.py` 以 AST 守門：檢索、閱讀、雷達、總覽、簡報、原檔各模組查語料表的函式或常數都要呼叫片段，否則列豁免並寫理由 |
+| `visibility.py` | 研報隱藏／恢復與上傳草稿的發布狀態（`report_visibility`）：使用者讀取路徑共用的可見性片段 `visible_report_sql(別名)`／`visible_report_id_sql(欄位)`（`NOT EXISTS`，可直接 AND 進任何 WHERE；隱藏或 `publication <> 'published'` 都不可見），以及管理端的 `list_reports`／`set_visibility`（與稽核同交易，呼叫端 commit；對草稿拒絕隱藏與恢復，`ReportIsDraftError`→409）。`tests/test_visibility_guard.py` 以 AST 守門：檢索、閱讀、雷達、總覽、簡報、原檔各模組查語料表的函式或常數都要呼叫片段，否則列豁免並寫理由 |
 | `uploads.py` | 研報上傳（`report_upload`，revision 0008）的狀態與失敗類別詞彙（只放常數與純判斷）：`STATES`／`ACTIVE_STATES` 與 0008 的 CHECK 和 partial unique index 逐字一致（`tests/test_uploads_vocab.py`），`FAILURE_KINDS` 對應刻意無 CHECK 的 `failure_kind` |
 | `ops_monitoring.py` | 監控投影：`scripts/load_observations.py` 把收集器（`scripts/collect_resource_usage.py`）與 P5（`scripts/incident_handler.sh`）寫的本機 spool 冪等匯入 `service_observation`／`job_execution`／`incident`／`incident_event`（Python 端先驗證、DB 拒絕的列以 savepoint 逐列略過；沒看到結束的批次判 `lost`；事件的 status 由事件重算，沒收到 RESOLVED 而同元件已有更晚的事件判 `lost`；journal 片段遮祕密），呼叫端 commit。收集器與 P5 都不連 DB、告警不經 DB，這裡的表只是 projection |
 | `ops_topology.py` | 服務依賴圖的判讀（`GET /api/admin/ops/dependencies`，純函式）：依賴關係只來自 Service Catalog 的 `depends_on`／`[[externals]]`（經代理 `list` 轉交，web 不另寫一份）；服務依 summary 分 ok／degraded／down／unknown（常駐服務 idle＝down，排程 oneshot idle＝待命），外部依賴看 probe 探針最後一次的退出碼（其他碼、過期、沒探針＝unknown，不當正常）；只有 down 往下游傳播（`affected`／`impacted_by`），`root_causes` 是上游沒壞的 down 節點 |
@@ -111,7 +111,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 - `retrieval_pipeline.retrieve_context`：短連線做檢索，rerank 前拍 `gate_scores` 快照；rerank 未實際套用時 `gate_scores` 不傳。多子查詢扇出（`retrieve_context_multi`／`merge_scored`）已隨深度研報移除，agentic 補查（M5）逐子查詢各自呼叫 `retrieve_context`。
 - rerank 的 fail-open 契約：所有 fail-open 路徑回傳**輸入的同一 list 物件**，成功路徑回新 list；`_rerank_stage` 以 `reranked is not scored` 判 `applied`。逾時用 `asyncio.shield`，結果由 callback 消費。只重排前 `top_m` 筆，以 sigmoid 分覆蓋 fused、tier 保留、尾段保留 fused（所以要拍 `gate_scores` 快照）；並行名額 `REPORT_MARK_RERANK_WORKERS`（3），逾時預算含排隊時間，被放棄的工作靠 deadline 在每 16 筆的批次邊界收手。冷載入實測 44–52 秒，所以 lifespan 暖機。
 - `scripts/eval_retrieval.py` 刻意直呼 `hybrid_search`，管線改動它量不到。
-- 被管理員隱藏的研報（`report_visibility`）在 SQL 層就排除：dense 路與 metadata 過濾一樣是 HNSW 之後的 post-filter（靠 `iterative_scan` 補足 LIMIT，計畫仍是 HNSW index scan＋主鍵 anti-join），字面路放在 `LIMIT :cap` 的 CTE 內不佔候選名額；兩條選篇與 `retrieval_pipeline` 吃的是已過濾的 `hybrid_search` 結果，排序邏輯不變。
+- 被管理員隱藏或尚未發布（上傳草稿）的研報（`report_visibility`）在 SQL 層就排除：dense 路與 metadata 過濾一樣是 HNSW 之後的 post-filter（靠 `iterative_scan` 補足 LIMIT，計畫仍是 HNSW index scan＋主鍵 anti-join），字面路放在 `LIMIT :cap` 的 CTE 內不佔候選名額；兩條選篇與 `retrieval_pipeline` 吃的是已過濾的 `hybrid_search` 結果，排序邏輯不變。
 
 ## 5. 問答
 

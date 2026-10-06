@@ -125,7 +125,7 @@ uv run python scripts/ingest_all.py
 - `research_report.full_text` 是未清理的原始抽取（帶 CJK 字間空白）；顯示一律 `clean_extracted(full_text)`，不是 `clean_text`（後者折掉換行，只適合檢索片段）。
 - `report_chunk.content` 不是 `full_text` 的子字串（overlap merge），錨定一律經 `app/services/reading/anchor.py`。**不要寫批次更新 `report_chunk.content`**，要動只有重跑 `ingest_all.py`（`make normalize` 那種就地更新的死法記在 `docs/WORKFLOW.md`）。
 - 簡體字守門 `zh_hant.to_traditional()`：LLM 產出的顯示文字落庫前一律轉（四支批次、訊號 summary、問答三條路徑）；串流路徑刻意不中途轉，問答在 `done` 帶只在有變動時出現的 `answer` 欄位收斂（`askSchemas.ts`＋`askReducer.ts` 都要接）。**逐字引文（`report_takeaway.quote`、`thesis_dimensions[*].evidence`）一律不轉**——它是錨定基準與 PDFium 搜尋關鍵字。
-- 研報隱藏／恢復（`research.report_visibility`，revision 0004）**以 `file_hash` 為鍵、刻意不設 FK**：`upsert_report` 先刪後插換新 report_id，旗標掛在 report_id 上會靜默消失。被隱藏的研報對所有使用者路徑等於不存在（閱讀頁與原檔 404），批次照常處理、恢復即生效，管理面（待複核、監控）不過濾。
+- 研報隱藏／恢復（`research.report_visibility`，revision 0004）**以 `file_hash` 為鍵、刻意不設 FK**：`upsert_report` 先刪後插換新 report_id，旗標掛在 report_id 上會靜默消失。被隱藏的研報對所有使用者路徑等於不存在（閱讀頁與原檔 404），批次照常處理、恢復即生效，管理面（待複核、監控）不過濾。revision 0008 起同一列另帶 `publication`：上傳後尚未發布的草稿（`draft`）同樣不可見（片段條件是「隱藏或非 published」），對草稿隱藏／恢復回 409，恢復不會順手發布。
 - 顯示名稱走 `title`，缺值回退 `file_name`（`frontend/src/lib/displayTitle.ts`）；NULL 是常態。
 - dataclass 新欄位放末尾並給預設。但 `rows.ChunkRow` 是與 `store._meta_columns` 位置對齊的 NamedTuple：新欄位**插中段、絕不 append**，取欄位用 `ChunkRow._fields.index(...)`，不寫數字。
 - DB 一律 `from app.services.db import SessionFactory`，不複製預設連線字串（鍵是 `REPORT_MARK_DB_URL`）。長查詢用 `db.relax_statement_timeout()`（`SET LOCAL`）。`DB_IDLE_TX_TIMEOUT_MS` 預設 0 是刻意的：sync 在交易內做 LLM 標註與嵌入。SQL bind 參數轉型寫 `CAST(:x AS text[])`，不可寫 `:x::text[]`（`::` 緊貼參數名會讓 `text()` 綁錯參數）；標的過濾寫 containment（`@>`）才吃得到 GIN（`tests/test_sql_index_hygiene.py`）。

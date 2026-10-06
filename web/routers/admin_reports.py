@@ -8,6 +8,8 @@ v1 只做 review＋hide／restore（草稿／發布、metadata 覆寫、上傳�
 - 隱藏與恢復都在**同一筆交易**寫 `admin_audit_log`（`report.hide`／`report.restore`），detail 不含
   原因全文與研報內文。
 - 被隱藏的研報對所有使用者路徑（含管理員自己走一般頁面時）都像不存在：閱讀頁與原檔 presign 回 404。
+- 草稿（上傳後尚未發布，`publication='draft'`）同樣不可見；對草稿隱藏或恢復回 409 `report_is_draft`
+  （恢復不可順手發布）。
 
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
 """
@@ -19,7 +21,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.services.accounts import User
-from app.services.visibility import InvalidReasonError, ReportNotFoundError, VisibilityError
+from app.services.visibility import InvalidReasonError, ReportIsDraftError, ReportNotFoundError, VisibilityError
 from web import authz, deps
 from web.errors import AppError
 
@@ -80,6 +82,8 @@ def _http_error(exc: VisibilityError) -> AppError:
         return AppError(404, "not_found", str(exc))
     if isinstance(exc, InvalidReasonError):
         return AppError(400, "invalid_input", str(exc))
+    if isinstance(exc, ReportIsDraftError):
+        return AppError(409, "report_is_draft", str(exc))
     return AppError(400, "bad_request", str(exc))
 
 
@@ -118,7 +122,10 @@ async def list_reports(
 async def set_report_visibility(
     file_hash: str, body: ReportVisibilityRequest, actor: User = Depends(authz.current_user),
 ):
-    """隱藏（`hidden=true`，必填 `reason`）或恢復（`hidden=false`）一份研報；稽核同交易寫入。"""
+    """隱藏（`hidden=true`，必填 `reason`）或恢復（`hidden=false`）一份研報；稽核同交易寫入。
+
+    草稿（尚未發布的上傳研報）兩者都回 409 `report_is_draft`：發布與退回只走上傳審核。
+    """
     async with deps.SessionFactory() as session:
         try:
             state = await deps.report_visibility.set_visibility(

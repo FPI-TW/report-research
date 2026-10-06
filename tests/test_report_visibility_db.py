@@ -19,6 +19,7 @@ import hashlib
 import os
 import unittest
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -113,6 +114,104 @@ _INSERT_SIGNAL = text(
 )
 
 
+@dataclass(frozen=True)
+class _Pair:
+    rid_a: str
+    rid_b: str
+    hash_a: str
+    hash_b: str
+    now: datetime
+    window: tuple[datetime, datetime]
+
+
+def _hashes(prefix: str) -> tuple[str, str]:
+    tag = uuid.uuid4().hex
+    return (hashlib.sha256(f"{prefix}a-{tag}".encode()).hexdigest(),
+            hashlib.sha256(f"{prefix}b-{tag}".encode()).hexdigest())
+
+
+async def _setup_pair(session, hash_a: str, hash_b: str) -> _Pair:
+    """兩篇研報；A 的訊號較舊（買進）、B 較新（中立）＝同一券商的評等變動。"""
+    rid_a = await _ingest(session, "A", hash_a, FUTURE - timedelta(days=1))
+    rid_b = await _ingest(session, "B", hash_b, FUTURE)
+    for rid, rdate, rating in ((rid_a, FUTURE - timedelta(days=1), "buy"), (rid_b, FUTURE, "neutral")):
+        await session.execute(_INSERT_SIGNAL, {
+            "id": uuid.uuid4(), "rid": rid, "code": CODE, "rdate": rdate, "rating": rating,
+        })
+    now = datetime.now(timezone.utc)
+    return _Pair(rid_a, rid_b, hash_a, hash_b, now, (now - timedelta(hours=1), now + timedelta(hours=1)))
+
+
+async def _snapshot(session, pair: "_Pair", rid_a_now: str) -> dict:
+    """各使用者讀取路徑看到的『自己那兩篇』。rid_a_now：A 目前的 report_id（重新入庫會換）。"""
+    rid_b, hash_a, hash_b, now, window = pair.rid_b, pair.hash_a, pair.hash_b, pair.now, pair.window
+    ids = {rid_a_now: "A", rid_b: "B"}
+    hashes = {hash_a: "A", hash_b: "B"}
+    out: dict = {}
+    scored = await hybrid_search(session, TERM, _query_vec(), k=10, dense_scan=200)
+    out["hybrid"] = {hashes[r.file_hash] for _, _, r in scored if r.file_hash in hashes}
+    dense = await store.search_chunks_meta(session, _query_vec(), scan=200)
+    out["dense"] = {hashes[r.file_hash] for r in dense if r.file_hash in hashes}
+    lex, _ = await store.search_chunks_lexical(session, _query_vec(), [f"%{TERM}%"], cap=2000)
+    out["lexical"] = {hashes[r.file_hash] for r in lex if r.file_hash in hashes}
+    out["rank"] = {ids[g.report_id] for g in rank_reports(scored) if g.report_id in ids}
+    sources, _ctx = answer.build_context(scored, now=now)
+    out["select"] = {ids[s.report_id] for s in sources if s.report_id in ids}
+    out["lead_term"] = await store.pick_title_lead_term(session, [f"{TERM}A", f"{TERM}B"])
+    _total, rows = await store.list_reports(session, limit=100)
+    out["browse"] = {hashes[r[1]] for r in rows if r[1] in hashes}
+    out["doc"] = {n for h, n in hashes.items() if await reading.fetch_doc(session, h) is not None}
+    out["chunk"] = {n for r, n in ids.items() if await reading.fetch_chunk_content(session, r, 0)}
+    out["signals"] = {n for r, n in ids.items() if await reading.fetch_signals(session, r)}
+    similar = await reading.fetch_similar(session, rid_b) + await reading.fetch_similar(session, rid_a_now)
+    out["similar"] = {hashes[s.file_hash] for s in similar if s.file_hash in hashes}
+    radar_sigs = await radar.fetch_instrument_signals(session, "TW", CODE)
+    out["radar"] = {ids[s.report_id] for s in radar_sigs if s.report_id in ids}
+    out["coverage"] = (await radar.fetch_coverage_counts(session, "TW", CODE)).reports_available
+    page = await radar.list_radar_instruments(session, q=CODE, limit=None)
+    out["catalog"] = [(r.instrument_code, r.report_count) for r in page.items if r.instrument_code == CODE]
+    facets = await overview.aggregate_facets(session, overview.OverviewFilters(stock_code=CODE))
+    out["overview"] = facets.total
+    win = await brief.fetch_window_reports(session, *window, limit=500)
+    out["brief"] = {hashes[r.file_hash] for r in win if r.file_hash in hashes}
+    out["brief_count_delta"] = await brief.count_window_reports(session, *window)
+    linked = await brief.fetch_reports_by_ids(session, [rid_a_now, rid_b])
+    out["brief_links"] = {hashes[r.file_hash] for r in linked}
+    changes = await brief.fetch_signal_changes(
+        session, *window, max_report_age_days=365 * 200,
+    )
+    out["changes"] = [(c.rating_from, c.rating_to) for c in changes if c.instrument_code == CODE]
+    presign = set()
+    for r, n in ids.items():
+        try:
+            await report_file._fetch_report(session, r)
+            presign.add(n)
+        except HTTPException as exc:
+            assert exc.status_code == 404, exc.status_code
+    out["presign"] = presign
+    return out
+
+
+# 回「看得到自己哪幾篇」集合的讀取路徑（其餘是數字或清單，各自斷言）。
+_SET_KEYS = ("hybrid", "dense", "lexical", "rank", "select", "browse", "doc", "chunk", "signals",
+             "similar", "radar", "brief", "brief_links", "presign")
+
+_INSERT_UPLOAD = text(
+    "INSERT INTO research.report_upload (file_hash, original_name, size_bytes, state, decision_reason, scan_signature) "
+    "VALUES (:h, :name, 1234, :state, :reason, :sig)"
+)
+
+
+async def _violation(session, stmt, params: dict) -> str | None:
+    """在 savepoint 裡執行；被 DB 拒絕回例外字串（含約束名），成功回 None。"""
+    try:
+        async with session.begin_nested():
+            await session.execute(stmt, params)
+    except Exception as exc:  # noqa: BLE001 — 只關心「被拒」與被哪條約束拒
+        return repr(exc)
+    return None
+
+
 class ReportVisibilityDbTests(unittest.TestCase):
     def _run(self, fn):
         try:
@@ -122,72 +221,18 @@ class ReportVisibilityDbTests(unittest.TestCase):
         except Exception as exc:
             msg = repr(exc)
             if "UndefinedTable" in msg or "UndefinedColumn" in msg or "does not exist" in msg:
-                _skip_or_raise(exc, "庫尚未套用 revision 0004")
+                _skip_or_raise(exc, "庫尚未套用 revision 0004／0008")
             _skip_or_raise(exc, f"DB 不可用（{type(exc).__name__}）")
 
     def test_hidden_report_disappears_from_every_user_path_and_survives_reingest(self):
-        tag = uuid.uuid4().hex
-        hash_a = hashlib.sha256(f"a-{tag}".encode()).hexdigest()
-        hash_b = hashlib.sha256(f"b-{tag}".encode()).hexdigest()
+        hash_a, hash_b = _hashes("")
 
         async def fn(session):
-            # 兩篇研報；A 的訊號較舊（買進）、B 較新（中立）＝同一券商的評等變動。
-            rid_a = await _ingest(session, "A", hash_a, FUTURE - timedelta(days=1))
-            rid_b = await _ingest(session, "B", hash_b, FUTURE)
-            for rid, rdate, rating in ((rid_a, FUTURE - timedelta(days=1), "buy"), (rid_b, FUTURE, "neutral")):
-                await session.execute(_INSERT_SIGNAL, {
-                    "id": uuid.uuid4(), "rid": rid, "code": CODE, "rdate": rdate, "rating": rating,
-                })
-            now = datetime.now(timezone.utc)
-            window = (now - timedelta(hours=1), now + timedelta(hours=1))
+            pair = await _setup_pair(session, hash_a, hash_b)
+            rid_a = pair.rid_a
 
             async def snapshot(rid_a_now: str) -> dict:
-                """各使用者讀取路徑看到的『自己那兩篇』。"""
-                ids = {rid_a_now: "A", rid_b: "B"}
-                hashes = {hash_a: "A", hash_b: "B"}
-                out: dict = {}
-                scored = await hybrid_search(session, TERM, _query_vec(), k=10, dense_scan=200)
-                out["hybrid"] = {hashes[r.file_hash] for _, _, r in scored if r.file_hash in hashes}
-                dense = await store.search_chunks_meta(session, _query_vec(), scan=200)
-                out["dense"] = {hashes[r.file_hash] for r in dense if r.file_hash in hashes}
-                lex, _ = await store.search_chunks_lexical(session, _query_vec(), [f"%{TERM}%"], cap=2000)
-                out["lexical"] = {hashes[r.file_hash] for r in lex if r.file_hash in hashes}
-                out["rank"] = {ids[g.report_id] for g in rank_reports(scored) if g.report_id in ids}
-                sources, _ctx = answer.build_context(scored, now=now)
-                out["select"] = {ids[s.report_id] for s in sources if s.report_id in ids}
-                out["lead_term"] = await store.pick_title_lead_term(session, [f"{TERM}A", f"{TERM}B"])
-                _total, rows = await store.list_reports(session, limit=100)
-                out["browse"] = {hashes[r[1]] for r in rows if r[1] in hashes}
-                out["doc"] = {n for h, n in hashes.items() if await reading.fetch_doc(session, h) is not None}
-                out["chunk"] = {n for r, n in ids.items() if await reading.fetch_chunk_content(session, r, 0)}
-                out["signals"] = {n for r, n in ids.items() if await reading.fetch_signals(session, r)}
-                similar = await reading.fetch_similar(session, rid_b) + await reading.fetch_similar(session, rid_a_now)
-                out["similar"] = {hashes[s.file_hash] for s in similar if s.file_hash in hashes}
-                radar_sigs = await radar.fetch_instrument_signals(session, "TW", CODE)
-                out["radar"] = {ids[s.report_id] for s in radar_sigs if s.report_id in ids}
-                out["coverage"] = (await radar.fetch_coverage_counts(session, "TW", CODE)).reports_available
-                page = await radar.list_radar_instruments(session, q=CODE, limit=None)
-                out["catalog"] = [(r.instrument_code, r.report_count) for r in page.items if r.instrument_code == CODE]
-                facets = await overview.aggregate_facets(session, overview.OverviewFilters(stock_code=CODE))
-                out["overview"] = facets.total
-                win = await brief.fetch_window_reports(session, *window, limit=500)
-                out["brief"] = {hashes[r.file_hash] for r in win if r.file_hash in hashes}
-                out["brief_count_delta"] = await brief.count_window_reports(session, *window)
-                linked = await brief.fetch_reports_by_ids(session, [rid_a_now, rid_b])
-                out["brief_links"] = {hashes[r.file_hash] for r in linked}
-                changes = await brief.fetch_signal_changes(
-                    session, *window, max_report_age_days=365 * 200,
-                )
-                out["changes"] = [(c.rating_from, c.rating_to) for c in changes if c.instrument_code == CODE]
-                presign = set()
-                for r, n in ids.items():
-                    try:
-                        await report_file._fetch_report(session, r)
-                        presign.add(n)
-                    except HTTPException as exc:
-                        assert exc.status_code == 404, exc.status_code
-                out["presign"] = presign
-                return out
+                return await _snapshot(session, pair, rid_a_now)
 
             before = await snapshot(rid_a)
             state = await visibility.set_visibility(
@@ -208,8 +253,7 @@ class ReportVisibilityDbTests(unittest.TestCase):
 
         before, state, hidden, audit, admin_rows, restored, rid_a, new_rid_a, reingested = self._run(fn)
 
-        set_keys = ("hybrid", "dense", "lexical", "rank", "select", "browse", "doc", "chunk", "signals",
-                    "similar", "radar", "brief", "brief_links", "presign")
+        set_keys = _SET_KEYS
         for key in set_keys:
             with self.subTest(path=key, phase="before"):
                 self.assertEqual(before[key], {"A", "B"})
@@ -278,6 +322,155 @@ class ReportVisibilityDbTests(unittest.TestCase):
         self.assertIsNotNone(err)
         self.assertIn("report_visibility_hidden_needs_reason", err)
 
+
+    def test_draft_invisible_on_every_user_path_until_published(self):
+        """上傳草稿（publication='draft'）：每條讀取路徑都看不到、重新入庫後仍看不到、隱藏／恢復被拒；
+        發布後全部回來，之後才回到一般的隱藏／恢復規則。"""
+        hash_a, hash_b = _hashes("draft-")
+
+        async def fn(session):
+            pair = await _setup_pair(session, hash_a, hash_b)
+            before = await _snapshot(session, pair, pair.rid_a)
+            # 上傳 worker 的草稿標記（PR-5 在 upsert_report 之前、同一個 session 寫入；這裡直接寫列）。
+            await session.execute(text(
+                "INSERT INTO research.report_visibility (file_hash, hidden, publication) VALUES (:h, false, 'draft')"
+            ), {"h": hash_a})
+            await session.execute(_INSERT_UPLOAD, {
+                "h": hash_a, "name": "A.pdf", "state": "draft", "reason": None, "sig": None,
+            })
+            draft = await _snapshot(session, pair, pair.rid_a)
+            # 重新入庫（先刪後插、換新 report_id；訊號隨 CASCADE 消失，補回同一筆好讓雷達路徑也驗得到）。
+            new_rid_a = await _ingest(session, "A", hash_a, FUTURE - timedelta(days=1))
+            await session.execute(_INSERT_SIGNAL, {
+                "id": uuid.uuid4(), "rid": new_rid_a, "code": CODE, "rdate": FUTURE - timedelta(days=1),
+                "rating": "buy",
+            })
+            reingested = await _snapshot(session, pair, new_rid_a)
+            # 管理端的隱藏與恢復都拒絕草稿：恢復不可順手發布，也不寫稽核。
+            refused = []
+            for hidden, reason in ((False, None), (True, "想隱藏草稿")):
+                try:
+                    await visibility.set_visibility(session, hash_a, hidden=hidden, reason=reason, actor_id=None)
+                except visibility.ReportIsDraftError:
+                    refused.append(hidden)
+            vis_row = tuple((await session.execute(text(
+                "SELECT hidden, publication, published_at, reason FROM research.report_visibility WHERE file_hash = :h"
+            ), {"h": hash_a})).one())
+            audit_n = (await session.execute(text(
+                "SELECT count(*) FROM research.admin_audit_log WHERE target_id = :h"
+            ), {"h": hash_a})).scalar_one()
+            # 發布（PR-6 審核 API 的等價 SQL：同一列改 publication 並記發布時刻）。
+            await session.execute(text(
+                "UPDATE research.report_visibility SET publication = 'published', published_at = now() "
+                "WHERE file_hash = :h"
+            ), {"h": hash_a})
+            published = await _snapshot(session, pair, new_rid_a)
+            # 發布後回到一般規則：可隱藏、可恢復，而且恢復不會動到發布狀態。
+            await visibility.set_visibility(session, hash_a, hidden=True, reason="發布後隱藏", actor_id=None)
+            hidden_after = await _snapshot(session, pair, new_rid_a)
+            await visibility.set_visibility(session, hash_a, hidden=False, reason=None, actor_id=None)
+            restored = await _snapshot(session, pair, new_rid_a)
+            final_row = tuple((await session.execute(text(
+                "SELECT hidden, publication, published_at IS NOT NULL FROM research.report_visibility "
+                "WHERE file_hash = :h"
+            ), {"h": hash_a})).one())
+            return before, draft, reingested, refused, vis_row, audit_n, published, hidden_after, restored, final_row
+
+        (before, draft, reingested, refused, vis_row, audit_n, published, hidden_after, restored,
+         final_row) = self._run(fn)
+
+        phases = {"draft": draft, "reingested": reingested, "published": published,
+                  "hidden_after_publish": hidden_after, "restored": restored}
+        expected = {"draft": {"B"}, "reingested": {"B"}, "published": {"A", "B"},
+                    "hidden_after_publish": {"B"}, "restored": {"A", "B"}}
+        for key in _SET_KEYS:
+            with self.subTest(path=key, phase="before"):
+                self.assertEqual(before[key], {"A", "B"})
+            for phase, snap in phases.items():
+                with self.subTest(path=key, phase=phase):
+                    self.assertEqual(snap[key], expected[phase])
+        for phase in ("draft", "reingested"):
+            with self.subTest(phase=phase):
+                snap = phases[phase]
+                self.assertEqual(snap["coverage"], before["coverage"] - 1)
+                self.assertEqual(snap["overview"], before["overview"] - 1)
+                self.assertEqual(snap["catalog"], [(CODE, 1)])
+                self.assertEqual(snap["lead_term"], f"{TERM}B")
+                self.assertEqual(snap["changes"], [])
+        self.assertEqual(published["coverage"], before["coverage"])
+        self.assertEqual(published["overview"], before["overview"])
+        self.assertEqual(published["catalog"], [(CODE, 2)])
+        self.assertEqual(published["changes"], [("buy", "neutral")])
+
+        self.assertEqual(refused, [False, True], "草稿的恢復與隱藏都必須被拒")
+        self.assertEqual(vis_row, (False, "draft", None, None), "被拒的操作不可改動草稿列")
+        self.assertEqual(audit_n, 0, "被拒的操作不寫稽核")
+        self.assertEqual(final_row, (False, "published", True), "恢復隱藏不可改動發布狀態")
+
+    def test_upload_and_publication_constraints(self):
+        """revision 0008 的 CHECK 與 partial unique index 對真的 PostgreSQL 成立。"""
+        h, other = _hashes("upl-")
+
+        async def fn(session):
+            out: dict = {}
+            row = {"h": h, "name": "x.pdf", "state": "quarantined", "reason": None, "sig": None}
+            out["first"] = await _violation(session, _INSERT_UPLOAD, row)
+            # 同一 hash 同時兩筆進行中：被 partial unique index 擋下（每一種進行中狀態都擋）。
+            for state in ("quarantined", "scanning", "clean", "processing", "draft"):
+                out[f"dup_{state}"] = await _violation(session, _INSERT_UPLOAD, {**row, "state": state})
+            # 終態不佔名額：同 hash 可以有退回（帶原因）、感染（帶病毒名）等歷史列。
+            out["dup_rejected_ok"] = await _violation(
+                session, _INSERT_UPLOAD, {**row, "state": "rejected", "reason": "非本公司研報"})
+            out["dup_infected_ok"] = await _violation(
+                session, _INSERT_UPLOAD, {**row, "state": "infected", "sig": "Eicar-Test-Signature"})
+            # 第一筆發布之後，同 hash 又能有新的進行中列（語料重複由收檔 API 另擋，不靠這支索引）。
+            await session.execute(text(
+                "UPDATE research.report_upload SET state = 'published' WHERE file_hash = :h AND state = 'quarantined'"
+            ), {"h": h})
+            out["after_publish_ok"] = await _violation(session, _INSERT_UPLOAD, row)
+            base = {"h": other, "name": "y.pdf", "state": "quarantined", "reason": None, "sig": None}
+            out["reject_no_reason"] = await _violation(session, _INSERT_UPLOAD, {**base, "state": "rejected"})
+            out["reject_blank_reason"] = await _violation(
+                session, _INSERT_UPLOAD, {**base, "state": "rejected", "reason": "   "})
+            out["infected_no_sig"] = await _violation(session, _INSERT_UPLOAD, {**base, "state": "infected"})
+            out["bad_state"] = await _violation(session, _INSERT_UPLOAD, {**base, "state": "pending"})
+            out["bad_hash"] = await _violation(session, _INSERT_UPLOAD, {**base, "h": "ABC"})
+            out["short_name"] = await _violation(session, _INSERT_UPLOAD, {**base, "name": "a.pd"})
+            out["failure_kind_free"] = await _violation(session, text(
+                "INSERT INTO research.report_upload (file_hash, original_name, size_bytes, state, failure_kind) "
+                "VALUES (:h, 'z.pdf', 1, 'failed', 'some_future_kind')"
+            ), {"h": other})
+            out["bad_publication"] = await _violation(session, text(
+                "INSERT INTO research.report_visibility (file_hash, hidden, publication) VALUES (:h, false, 'pending')"
+            ), {"h": other})
+            await session.execute(text(
+                "INSERT INTO research.report_visibility (file_hash, hidden) VALUES (:h, false)"
+            ), {"h": other})
+            out["default_publication"] = (await session.execute(text(
+                "SELECT publication FROM research.report_visibility WHERE file_hash = :h"
+            ), {"h": other})).scalar_one()
+            return out
+
+        out = self._run(fn)
+        for key in ("first", "dup_rejected_ok", "dup_infected_ok", "after_publish_ok", "failure_kind_free"):
+            with self.subTest(case=key):
+                self.assertIsNone(out[key])
+        expected = {
+            "reject_no_reason": "report_upload_reject_needs_reason",
+            "reject_blank_reason": "report_upload_reject_needs_reason",
+            "infected_no_sig": "report_upload_infected_has_signature",
+            "bad_state": "report_upload_state_check",
+            "bad_hash": "report_upload_file_hash_check",
+            "short_name": "report_upload_original_name_check",
+            "bad_publication": "report_visibility_publication_check",
+            **{f"dup_{s}": "idx_report_upload_active_hash"
+               for s in ("quarantined", "scanning", "clean", "processing", "draft")},
+        }
+        for key, constraint in expected.items():
+            with self.subTest(case=key):
+                self.assertIsNotNone(out[key], f"{key} 應被 DB 拒絕")
+                self.assertIn(constraint, out[key])
+        self.assertEqual(out["default_publication"], "published")
 
 if __name__ == "__main__":
     unittest.main()

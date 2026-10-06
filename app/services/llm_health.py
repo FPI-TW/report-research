@@ -221,6 +221,22 @@ async def _account_state(*, online: bool, currency: str, floor: float) -> tuple[
     return _snap.state, _snap.detail
 
 
+def cached_snapshot() -> dict:
+    """上一次餘額查詢的**被動**讀取（給 `/api/admin/diagnostics`）：不觸發查詢、不回金額與原因字串。
+
+    `detail` 含金額（只進日誌），所以刻意不給；`state` 是未套 M15 `_unused` 的原始狀態。
+    """
+    snap = _snap
+    return {
+        "state": snap.state,
+        "key_configured": llm_http.api_key_configured(),
+        "ask_uses_http": ask_uses_http(),
+        "consecutive_failures": snap.consecutive_failures,
+        "last_check_age_s": round(time.monotonic() - snap.checked_at, 1) if snap.checked_at else None,
+        "quota_latched": llm_http.last_quota_at() > snap.cleared_at,
+    }
+
+
 async def report(*, currency: str, floor: float) -> tuple[str, int]:
     """(回應的 state, HTTP 狀態碼)。狀態改變時記一行 WARNING（含原因與金額；回應本身不含）。"""
     global _last_reported

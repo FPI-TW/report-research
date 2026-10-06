@@ -291,6 +291,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 | `report-mark-metrics.service` | 常駐 | 硬體用量取樣 → `data/metrics/`（`make metrics`）；另每 60 秒把主機、catalog 列的容器與 unit 狀態、批次執行寫進監控 spool `data/ops_spool/`（不連 DB） |
 | `report-mark-load-observations.timer` | 每 5 分鐘 | `scripts/load_observations.py`：監控 spool 冪等匯入 `service_observation`／`job_execution`（管理頁的排程工作與主機資源讀這兩張表）與 P5 的事件紀錄 `incident`／`incident_event`（含 journal 片段）；DB 不可用 rc=2、spool 保留待下一輪補匯入，刻意不接告警 |
 | `report-mark-rollup-observations.timer` | 每小時 :20 | `scripts/rollup_observations.py`：監控觀測保留 90 天、越舊越粗——24 小時前的原始觀測聚合成 5 分鐘桶（`service_observation_5m`）、7 天前的再聚合成 1 小時桶（`service_observation_1h`），90 天以前的觀測與 `job_execution` 刪除；每片同一句 SQL 先刪後寫、失敗整句回滾（冪等），advisory lock 防重疊；rc=1（核對不符／SQL 錯誤）才告警，DB 不可用（rc=2，P5 已告警）與撞鎖（rc=75）不告警。incident 不在範圍內 |
+| `report-mark-schema-check.timer` | 05:20 | `scripts/schema_baseline.py scheduled`：先比 DB 的 `alembic_version` 與程式的 head（版本 drift），再以 DB 的 revision 在同伺服器建刪暫存庫做完整 schema drift 比對，結果寫 `data/schema_check.json`；drift、落後（rc=1）與超前、無法比對、暫存庫清理失敗（rc=2）告警，DB 連不上（rc=3，P5 已告警）不告警。staging（沒有 CREATEDB）設 `SCHEMA_CHECK_MODE=version` 只比版本，見 `docs/production_resilience.md` |
 | `report-mark-ops-agent.service` | 常駐 | 維運代理（唯讀）：`/api/admin/ops/*` 經 `/run/report-mark-ops/agent.sock` 查 `deploy/ops/services.prod.toml` 列出的服務狀態與日誌。專用使用者、程式碼裝在 `/opt/report-mark-ops/`，安裝步驟與威脅模型見 `docs/production_resilience.md`「維運代理」；開發環境是 `report-mark-ops-agent-dev.service` |
 | `report-mark-alert@.service` | `OnFailure` 觸發 | journal ＋ `data/unit_failures.log` ＋ webhook |
 

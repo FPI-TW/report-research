@@ -275,3 +275,15 @@ timer = "report-mark-replay-deletions.timer"
 tier = "important"
 actions = ["status", "logs"]
 description = "還原後重放帳號刪除（比對 NAS tombstone，資料復活就重刪並告警，每日）"
+
+# ── schema 與版本 drift（v1.5）──────────────────────────────────────────────
+# 唯讀：不給 run——完整比對會在 PostgreSQL 伺服器上建、刪暫存庫，要手動跑就 make schema-check／schema-version。
+
+[[services]]
+name = "schema-check"
+kind = "systemd"
+unit = "report-mark-schema-check.service"
+timer = "report-mark-schema-check.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "schema 與 alembic 版本 drift 每日檢查（05:20）"

@@ -1672,8 +1672,9 @@ rm -rf data/.incidents-container data/.incidents-host data/.health-streaks   # �
 - 每一片（1 小時）以**同一句 SQL** 先刪來源、再把被刪的列聚合後 upsert 進較粗的表，寫入失敗整句回滾、來源原封不動，
   寫入後再核對筆數，不符就 rollback 並 rc=1。重跑同一區間是 no-op（冪等）；遲到的舊觀測合併進既有的桶。
 - 每片、每批保留期刪除（每批最多 5000 列）各自一個交易並放寬 statement_timeout（`SET LOCAL`），不會長時間鎖表。
-- PostgreSQL advisory lock 防止兩份同時跑（rc=75＝另一份在跑）；DB 不可用 rc=2。刻意不接 OnFailure 告警（理由同
-  load-observations）。
+- PostgreSQL advisory lock 防止兩份同時跑（rc=75＝另一份在跑）；DB 不可用 rc=2。unit 接 `OnFailure` 告警，但以
+  `SuccessExitStatus=2 75` 放過這兩種（DB 掛掉已由 web 探針經 P5 去重告警；撞鎖是「不跑」不是「跑壞」），
+  只有 rc=1（筆數核對不符、SQL 錯誤）會告警。
 - **incident／incident_event 不在範圍內**（不可重建的事故歷史，列入備份）。
 - 管理頁 `/api/admin/observations` 的範圍上限放寬到 90 天，依 `since` 自動選粒度（24 小時內逐筆、7 天內 5 分鐘、
   更早 1 小時），回應的 `resolution` 標示實際用的。聚合表與原始表一樣不備份。
@@ -1706,6 +1707,81 @@ sudo systemctl disable --now report-mark-rollup-observations.timer   # 原始觀
 ```
 
 停用後原始表每天約增加 29 萬列；聚合表裡已有的資料不受影響，查詢端照常聯集。
+
+## schema 與版本 drift 每日檢查（report-mark-schema-check）
+
+`report-mark-schema-check.timer` 每日 05:20 跑 `scripts/schema_baseline.py scheduled`，對目標庫唯讀：
+
+1. **版本 drift**：DB 的 `public.alembic_version` 對部署程式的 alembic head。完整比對以「DB 自己宣稱的
+   revision」為基準，所以「換了程式、忘了 `make schema`」的庫在完整比對裡是零 drift——只有這一步抓得到。
+   手動跑：`make schema-version`（＝`check --expect-head`，不建暫存庫、不需要 CREATEDB）。
+2. **schema drift**：版本可對應時（一致或落後），以 DB 的 revision 在**同一台伺服器**建唯一的暫存庫
+   `schema_ref_*`、套 baseline＋到該 revision 為止的 SQL、逐項比對系統目錄，比完一定刪掉並確認刪掉了
+   ——與 `make schema-check` 同一段程式，保證不變（清理失敗＝整次作廢、印手動清理指令）。
+
+退出碼與告警（unit 以 `OnFailure=report-mark-alert@%n.service` 加 `SuccessExitStatus=3` 表達）：
+
+| 退出碼 | 意思 | 告警 |
+|---|---|---|
+| 0 | 版本一致且零 drift | 否 |
+| 1 | schema drift，或 DB 落後（尚未套用的 revision 列在訊息與狀態檔） | 是 |
+| 2 | DB 超前（revision 不在程式的鏈上）、未接管、不明確、無法比對、**暫存庫清理失敗**、帳密錯或沒有 CREATEDB | 是 |
+| 3 | 目標 DB 連不上（只在第一次接觸目標時判定：連線被拒、逾時、DNS、伺服器正在啟動／關閉） | 否 |
+
+3 不告警的理由與 rollup-observations 的 rc=2 相同：DB 掛掉已由 web 探針經 P5 帶去重地告警，
+`report-mark-alert@` 沒有去重，再叫一次只是重複通知；那一天的檢查就此跳過，狀態檔記 `db_unavailable`。
+比到一半才斷線則是清理失敗或無法比對（2），照樣告警——生產伺服器上可能留了一個暫存庫。
+
+**狀態檔** `data/schema_check.json`（`SCHEMA_CHECK_STATUS_FILE` 可改；原子寫入，寫不進去只警告、不改
+退出碼——告警走退出碼，這份是給管理頁「資料健康」讀的投影）。format 1 的鍵：`format`、`checked_at`
+（含時區）、`duration_s`、`mode`（`full`／`version`）、`target`（`host:port/db`，不含帳密）、`exit_code`、
+`alert`（1、2 為 true）、`problems`（`db_unavailable`、`version_behind`、`version_ahead`、`version_unversioned`、
+`version_ambiguous`、`schema_drift`、`reference_cleanup_failed`、`check_error` 的子集）、`message`、
+`version`（`status`、`expected_head`、`db_revision`、`pending`）、`drift`（`status` 為
+`ok`／`drift`／`error`／`cleanup_failed`／`skipped`，以及 `revision`、`reference`、`drift_count`、
+`categories`、`column_order_differs`、`message`）。完整定義在該腳本的 `build_status_payload`。
+
+### staging（RDS）
+
+staging 的 app 帳號沒有 CREATEDB，完整比對每天都會以 2 告警。兩種做法擇一：
+
+- **只比版本**（建議的起點）：`/etc/default/report-mark-sync` 加 `SCHEMA_CHECK_MODE=version`。版本 drift
+  照樣每日偵測；schema drift 在每次部署前人工以下一種方式跑一次。
+- **完整比對、基準改用 master 帳號建**：另建 `/etc/default/report-mark-schema-check`（root 擁有、0600；unit 以
+  `EnvironmentFile=-` 選用載入，systemd 以 root 讀，行程照樣拿得到），內容兩行：
+  `SCHEMA_CHECK_REFERENCE_URL_ENV=SCHEMA_CHECK_REFERENCE_URL` 與
+  `SCHEMA_CHECK_REFERENCE_URL=postgresql+asyncpg://<master 帳號>:<密碼>@<RDS 端點>:5432/postgres?ssl=verify-full`。
+  暫存庫建在同一個 RDS（版本相同才能逐字比），目標的目錄仍以 app 帳號讀。帳密只放這個檔，repo 與
+  `report-mark-sync` 環境檔都不放；master 帳號權限大，評估過再用。手動跑同一件事：
+  `SCHEMA_CHECK_REFERENCE_URL=… uv run python scripts/schema_baseline.py check --reference-url-env SCHEMA_CHECK_REFERENCE_URL`。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 0) 先手動跑一次，確認現況（辦公室主機：版本應一致、零 drift；不一致就先處理，否則一啟用就告警）
+make schema-version
+make schema-check
+# 1) 辦公室主機
+sudo install -m 0644 deploy/systemd/report-mark-schema-check.service deploy/systemd/report-mark-schema-check.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-schema-check.timer
+# 1') staging：先在 /etc/default/report-mark-sync 加 SCHEMA_CHECK_MODE=version（或照上一節放 reference 檔）
+sudo deploy/install_units.sh --user <使用者> --root <repo 根> report-mark-schema-check.timer
+sudo systemctl enable --now report-mark-schema-check.timer
+# 2) catalog 多了 schema-check 一項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+```
+
+驗收：`sudo systemctl start report-mark-schema-check.service` 後 `systemctl show report-mark-schema-check -p ExecMainStatus`
+為 0、`journalctl -u report-mark-schema-check -n 5` 看得到「版本一致」與「結論：零 drift」、`data/schema_check.json`
+的 `exit_code` 為 0；`scripts/verify_oneshot_ran.sh` 確認跑過。之後在伺服器上不應留下任何 `schema_ref_*` 庫
+（`docker exec report-mark-postgres psql -U postgres -Atc "SELECT datname FROM pg_database WHERE datname LIKE 'schema_ref_%'"`
+應為空）。生產庫仍停在 0001、程式已是 0007 時，啟用當天就會以「DB 落後」告警——先照部署順序套 schema。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-schema-check.timer   # 狀態檔停在最後一次的結果（看 checked_at）
+```
 
 ## 維運代理（report-mark-ops-agent）
 

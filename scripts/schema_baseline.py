@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """既有資料庫導入 Alembic：嚴格 schema drift 驗證 → （受保護的庫）全庫備份 → stamp baseline。
+另有兩個唯讀的日常用途：版本 drift 比對（`check --expect-head`）與每日定期檢查（`scheduled`）。
 
 用法：
     uv run python scripts/schema_baseline.py check [--revision REV] [--json PATH]
+    uv run python scripts/schema_baseline.py check --expect-head      # 只比版本，不建暫存庫
+    uv run python scripts/schema_baseline.py scheduled [--mode full|version] [--status-file PATH]
     REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> \\
         uv run python scripts/schema_baseline.py stamp --dump-dir DIR [--dump-container NAME]
     REPORT_MARK_MIGRATE_CONFIRM=<host:port/db> \\
@@ -36,7 +39,34 @@ NOT NULL、預設值、生成欄運算式、identity、collation）、約束、�
 `pg_restore -l` 讀得出 TABLE DATA，全部通過才 stamp。日常備份（scripts/db_backup.sh）
 只涵蓋七張不可重建的表、不含向量語料，這份是 stamp 專用的額外保險。
 
-退出碼：0 成功／零 drift；1 有 drift 或 preflight 失敗（**禁止 stamp**）；2 無法比對或拒絕執行。
+── 版本 drift（`check --expect-head`）────────────────────────────────────
+完整比對以「DB 自己宣稱的 revision」為基準：被 stamp／upgrade 到 0006 而結構確實是 0006 的庫是零
+drift——即使部署的程式期待 0007。這正是最常見的部署失誤（換了程式、忘了 `make schema`；新程式在
+舊 schema 上會壞），所以另外比對「程式的 alembic head」與 DB 的 `public.alembic_version`。只讀那一張
+表、不建暫存庫、不需要 CREATEDB。判定：
+
+  一致（ok）              DB 的 revision 就是程式的 head。
+  落後（behind）          DB 的 revision 在程式的 revision 鏈上、但不是 head：要 `make schema`。
+  超前（ahead）           DB 的 revision 不在程式的鏈上：DB 套過比這份程式新的 migration（程式回退、
+                          或另一份較新的 checkout 對它 upgrade 過），或套過別的分支的 revision。
+                          不必（也無從）分辨，兩者都要人看。
+  未接管（unversioned）   沒有 alembic_version 表或表是空的。
+  不明確（ambiguous）     alembic_version 有多列（分支），或程式的 revision 鏈有多個 head。
+
+── 每日定期檢查（`scheduled`，report-mark-schema-check.timer）──────────────────
+先做版本比對；版本可對應時（一致或落後）再以 DB 的 revision 做完整比對（`--mode version` 只做前者，
+給沒有 CREATEDB 的部署，例如 staging）。結果另寫一份 JSON 狀態檔（`--status-file`；預設
+`SCHEMA_CHECK_STATUS_FILE`，再預設 `data/schema_check.json`），寫入失敗只警告、不改退出碼（狀態檔
+是給管理頁讀的投影，告警走退出碼）。格式見 `build_status_payload`。
+
+退出碼（三個子指令共用）：
+  0 成功／零 drift／版本一致
+  1 有 drift、版本落後、或 preflight 失敗（**禁止 stamp**）
+  2 無法比對、拒絕執行、版本超前／未接管／不明確、**暫存庫清理失敗**
+  3 目標 DB 無法連線（只在第一次接觸目標時判定：連線被拒、逾時、DNS、socket 不存在、伺服器
+    正在啟動／關閉。帳密錯、庫名錯是設定問題，算 2）
+`scheduled` 合併兩段結果時取 2 → 1 → 3 → 0 最前面的；3 只會在連不上目標、整次沒比到任何東西時出現。
+unit 以 `SuccessExitStatus=3` 讓「DB 掛了」不告警（理由見 deploy/systemd/report-mark-schema-check.service）。
 """
 from __future__ import annotations
 
@@ -65,8 +95,16 @@ load_env_file(REPO_ROOT / ".env")
 from app.services import schema_migrations as sm  # noqa: E402
 from app.services.db import DATABASE_URL  # noqa: E402
 
-EXIT_OK, EXIT_DRIFT, EXIT_ERROR = 0, 1, 2
+EXIT_OK, EXIT_DRIFT, EXIT_ERROR, EXIT_DB_UNAVAILABLE = 0, 1, 2, 3
 DUMP_SPACE_MARGIN = 2 * 1024**3
+
+# 每日檢查（scheduled）的旋鈕：只有這個子指令讀，unit 經 /etc/default/report-mark-sync 提供。
+STATUS_FILE_ENV = "SCHEMA_CHECK_STATUS_FILE"
+DEFAULT_STATUS_FILE = REPO_ROOT / "data" / "schema_check.json"
+MODE_ENV = "SCHEMA_CHECK_MODE"
+REFERENCE_URL_ENV_ENV = "SCHEMA_CHECK_REFERENCE_URL_ENV"
+MODES = ("full", "version")
+STATUS_FORMAT = 1
 DEFAULT_DUMP_TIMEOUT_MIN = 90
 
 # ───────────────────────── 系統目錄 ─────────────────────────
@@ -206,7 +244,8 @@ def diff_catalogs(reference: Catalog, target: Catalog,
     return DriftReport(categories=cats, column_order=order_notes)
 
 
-def format_report(report: DriftReport, *, identity: str, revision: str, reference_desc: str) -> str:
+def format_report(report: DriftReport, *, identity: str, revision: str, reference_desc: str,
+                  drift_verdict: str = "禁止 stamp") -> str:
     lines = [f"schema drift：目標 {identity} 對基準 revision {revision}（{reference_desc}）"]
     for cat, d in report.categories.items():
         if d.empty():
@@ -219,7 +258,8 @@ def format_report(report: DriftReport, *, identity: str, revision: str, referenc
     if report.column_order:
         lines.append(f"\n資訊（不算 drift）：{len(report.column_order)} 張表的欄位實體順序與空庫不同："
                      + "、".join(report.column_order))
-    lines.append(f"\n結論：{'零 drift' if report.drift_count == 0 else f'{report.drift_count} 項 drift，禁止 stamp'}")
+    verdict = "零 drift" if report.drift_count == 0 else f"{report.drift_count} 項 drift，{drift_verdict}"
+    lines.append(f"\n結論：{verdict}")
     return "\n".join(lines)
 
 
@@ -273,6 +313,52 @@ async def current_revision(url: str) -> str | None:
             return (await conn.execute(text("SELECT version_num FROM public.alembic_version"))).scalar()
     finally:
         await eng.dispose()
+
+
+async def fetch_db_revisions(url: str) -> list[str] | None:
+    """`public.alembic_version` 的所有列（正常只有一列）；表不存在回 None。唯讀。"""
+    from sqlalchemy import text
+
+    eng = _engine(url)
+    try:
+        async with eng.connect() as conn:
+            if not (await conn.execute(text("SELECT to_regclass('public.alembic_version') IS NOT NULL"))).scalar():
+                return None
+            rows = (await conn.execute(text("SELECT version_num FROM public.alembic_version ORDER BY 1"))).all()
+            return [str(r[0]) for r in rows]
+    finally:
+        await eng.dispose()
+
+
+def _asyncpg_connection_errors() -> tuple[type, ...]:
+    try:
+        from asyncpg import exceptions as ape
+    except ImportError:  # pragma: no cover - asyncpg 是必要相依
+        return ()
+    # 伺服器正在啟動／關閉／復原（57P03）、連線在半途斷掉。
+    return (ape.CannotConnectNowError, ape.ConnectionDoesNotExistError)
+
+
+def is_connection_failure(exc: BaseException) -> bool:
+    """「連不上目標」才回 True：連線被拒、逾時、DNS、socket 不存在、伺服器正在啟動或關閉。
+
+    帳密錯（InvalidPasswordError）、庫名錯（InvalidCatalogNameError）**不算**——那是設定錯誤，
+    每天重試也不會自己好，必須告警。只在第一次接觸目標時拿來判斷（之後的 OSError 可能是
+    別的東西，例如讀不到 db/schema.sql）。
+
+    只追「明確包裝」的鏈（SQLAlchemy 的 `.orig`、`raise … from` 的 `__cause__`），刻意不追
+    `__context__`：asyncpg 逐一嘗試多個位址時，前一個位址的 OSError 會掛在帳密錯誤的 context 上，
+    追下去就會把「密碼錯」誤判成「DB 掛了」而不告警。
+    """
+    connection_errors = (OSError, *_asyncpg_connection_errors())
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, connection_errors):
+            return True
+        cur = getattr(cur, "orig", None) or cur.__cause__
+    return False
 
 
 async def database_size(url: str) -> int:
@@ -390,31 +476,74 @@ async def build_reference_catalog(server_url: str, revision: str, *, ops=None,
                 from cleanup_error
 
 
-def _reference_server(args) -> tuple[str, str]:
-    if args.reference_url_env:
-        url = os.environ.get(args.reference_url_env)
+def _reference_server_for(env_name: str | None) -> tuple[str, str]:
+    """基準暫存庫建在哪台伺服器。指定的環境變數沒設時拋 ValueError（不默默退回目標伺服器）。"""
+    if env_name:
+        url = os.environ.get(env_name)
         if not url:
-            raise SystemExit(f"--reference-url-env {args.reference_url_env}：該環境變數未設定")
+            raise ValueError(f"--reference-url-env {env_name}：該環境變數未設定")
         return url, f"暫存庫建在 {sm.target_identity(url)} 的伺服器"
     return DATABASE_URL, "暫存庫建在目標的同一台伺服器"
 
 
-async def run_check(args, *, revision: str | None = None) -> tuple[int, DriftReport | None, str]:
+def _reference_server(args) -> tuple[str, str]:
+    try:
+        return _reference_server_for(args.reference_url_env)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+
+
+@dataclass
+class DriftOutcome:
+    """一次完整比對的結果。status：ok／drift／error／cleanup_failed／skipped。"""
+
+    status: str
+    revision: str | None = None
+    reference: str = ""
+    report: DriftReport | None = None
+    message: str = ""
+
+    @property
+    def exit_code(self) -> int:
+        return {"ok": EXIT_OK, "skipped": EXIT_OK, "drift": EXIT_DRIFT}.get(self.status, EXIT_ERROR)
+
+
+async def drift_check(revision: str, reference_url_env: str | None) -> DriftOutcome:
+    """建基準暫存庫（一定清理）→ 讀目標目錄 → 比對。不拋例外：失敗也是一種結果。"""
     identity = sm.target_identity(DATABASE_URL)
     try:
-        rev = revision or args.revision or await current_revision(DATABASE_URL) or sm.BASELINE_REVISION
-        server_url, ref_desc = _reference_server(args)
-        reference, ref_order = await build_reference_catalog(server_url, rev)
+        server_url, ref_desc = _reference_server_for(reference_url_env)
+        reference, ref_order = await build_reference_catalog(server_url, revision)
         target, tgt_order = await fetch_catalog(DATABASE_URL)
-    except SystemExit:
-        raise
     except ReferenceCleanupError as exc:
-        print(f"!! 警報：{exc}", file=sys.stderr)
-        return EXIT_ERROR, None, ""
+        return DriftOutcome("cleanup_failed", revision, message=str(exc))
     except Exception as exc:
+        return DriftOutcome("error", revision, message=f"無法比對（{identity}）：{exc!r}")
+    report = diff_catalogs(reference, target, ref_order, tgt_order)
+    return DriftOutcome("ok" if report.drift_count == 0 else "drift", revision, ref_desc, report)
+
+
+async def run_check(args, *, revision: str | None = None) -> tuple[int, DriftReport | None, str]:
+    identity = sm.target_identity(DATABASE_URL)
+    _reference_server(args)  # 參數錯誤（環境變數未設）在接觸任何 DB 之前就拒絕
+    # 第一次接觸目標：連不上（3）與其他失敗（2）在這裡分流；之後的失敗一律 2。
+    try:
+        current = await current_revision(DATABASE_URL)
+    except Exception as exc:
+        if is_connection_failure(exc):
+            print(f"目標 DB 無法連線（{identity}）：{exc!r}", file=sys.stderr)
+            return EXIT_DB_UNAVAILABLE, None, ""
         print(f"無法比對（{identity}）：{exc!r}", file=sys.stderr)
         return EXIT_ERROR, None, ""
-    report = diff_catalogs(reference, target, ref_order, tgt_order)
+    rev = revision or args.revision or current or sm.BASELINE_REVISION
+    outcome = await drift_check(rev, args.reference_url_env)
+    if outcome.status == "cleanup_failed":
+        print(f"!! 警報：{outcome.message}", file=sys.stderr)
+        return EXIT_ERROR, None, ""
+    if outcome.report is None:
+        print(outcome.message, file=sys.stderr)
+        return EXIT_ERROR, None, ""
+    report, ref_desc = outcome.report, outcome.reference
     print(format_report(report, identity=identity, revision=rev, reference_desc=ref_desc))
     if getattr(args, "json", None):
         payload = report_to_json(report, target=identity, revision=rev, reference=ref_desc,
@@ -422,6 +551,232 @@ async def run_check(args, *, revision: str | None = None) -> tuple[int, DriftRep
         Path(args.json).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"報告已寫入 {args.json}")
     return (EXIT_OK if report.drift_count == 0 else EXIT_DRIFT), report, rev
+
+
+# ───────────────────────── 版本 drift ─────────────────────────
+
+VERSION_STATUSES = ("ok", "behind", "ahead", "unversioned", "ambiguous", "db_unavailable", "error")
+
+
+@dataclass
+class VersionResult:
+    status: str  # VERSION_STATUSES 之一
+    expected_head: str | None
+    db_revision: str | None
+    pending: list[str] = field(default_factory=list)  # 落後時：還沒套的 revision（由舊到新）
+    message: str = ""
+
+    @property
+    def exit_code(self) -> int:
+        return {"ok": EXIT_OK, "behind": EXIT_DRIFT, "db_unavailable": EXIT_DB_UNAVAILABLE}.get(self.status, EXIT_ERROR)
+
+    def to_json(self) -> dict:
+        return {"status": self.status, "expected_head": self.expected_head, "db_revision": self.db_revision,
+                "pending": list(self.pending)}
+
+
+def compare_versions(db_revisions: list[str] | None, *, chain: list[str], heads: list[str]) -> VersionResult:
+    """純函式：DB 的 alembic_version 各列 vs 程式的 revision 鏈（由 baseline 到 head）與 head 清單。"""
+    if len(heads) != 1:
+        return VersionResult("ambiguous", None, None,
+                             message=f"程式的 revision 鏈有 {len(heads)} 個 head（{', '.join(heads)}）："
+                                     "先把鏈整合成線性")
+    head = heads[0]
+    if db_revisions is None:
+        return VersionResult("unversioned", head, None,
+                             message="DB 沒有 public.alembic_version：未被 alembic 接管"
+                                     "（既有庫先走 schema-check＋stamp）")
+    if not db_revisions:
+        return VersionResult("unversioned", head, None, message="DB 的 public.alembic_version 是空的")
+    if len(db_revisions) > 1:
+        return VersionResult("ambiguous", head, ",".join(db_revisions),
+                             message=f"DB 的 alembic_version 有 {len(db_revisions)} 列（{', '.join(db_revisions)}）")
+    rev = db_revisions[0]
+    if rev == head:
+        return VersionResult("ok", head, rev, message=f"版本一致：DB 與程式都在 revision {head}")
+    if rev in chain:
+        pending = chain[chain.index(rev) + 1:]
+        return VersionResult("behind", head, rev, pending,
+                             message=f"DB 落後：DB 在 {rev}、程式期待 {head}，尚未套用 {', '.join(pending)}"
+                                     "（make schema CONFIRM=…；新程式在舊 schema 上會壞）")
+    return VersionResult("ahead", head, rev,
+                         message=f"DB 的 revision {rev} 不在這份程式的 revision 鏈上（程式 head 是 {head}）："
+                                 "DB 比部署的程式新（程式回退、或較新的 checkout 對它 upgrade 過），"
+                                 "或套過別的分支的 revision")
+
+
+def code_revisions() -> tuple[list[str], list[str]]:
+    """（由 baseline 到 head 的 revision 鏈, head 清單）。只讀 db/migrations/，不連 DB。"""
+    script = sm._script_directory()
+    heads = list(script.get_heads())
+    chain = [r.revision for r in sm.revision_chain(heads[0])] if len(heads) == 1 else []
+    return chain, heads
+
+
+async def check_version(url: str, *, fetch=None, revisions=None) -> VersionResult:
+    """讀 DB 的 alembic_version 並與程式的 head 比對。不拋例外。"""
+    fetch = fetch or fetch_db_revisions
+    try:
+        chain, heads = (revisions or code_revisions)()
+    except Exception as exc:
+        return VersionResult("error", None, None, message=f"讀不到程式的 revision 鏈：{exc!r}")
+    head = heads[0] if len(heads) == 1 else None
+    try:
+        db_revs = await fetch(url)
+    except Exception as exc:
+        identity = sm.target_identity(url)
+        if is_connection_failure(exc):
+            return VersionResult("db_unavailable", head, None, message=f"目標 DB 無法連線（{identity}）：{exc!r}")
+        return VersionResult("error", head, None, message=f"讀不到 DB 的 alembic_version（{identity}）：{exc!r}")
+    return compare_versions(db_revs, chain=chain, heads=heads)
+
+
+def run_expect_head() -> int:
+    identity = sm.target_identity(DATABASE_URL)
+    result = asyncio.run(check_version(DATABASE_URL))
+    print(f"版本比對：目標 {identity}；{result.message}", file=sys.stdout if result.exit_code == 0 else sys.stderr)
+    return result.exit_code
+
+
+# ───────────────────────── 每日定期檢查 ─────────────────────────
+
+# 狀態檔 problems 的詞彙（管理頁依它顯示；改了要同步改讀取端）。
+PROBLEM_CODES = (
+    "db_unavailable", "version_behind", "version_ahead", "version_unversioned", "version_ambiguous",
+    "schema_drift", "reference_cleanup_failed", "check_error",
+)
+_VERSION_PROBLEM = {"db_unavailable": "db_unavailable", "behind": "version_behind", "ahead": "version_ahead",
+                    "unversioned": "version_unversioned", "ambiguous": "version_ambiguous", "error": "check_error"}
+_DRIFT_PROBLEM = {"drift": "schema_drift", "cleanup_failed": "reference_cleanup_failed", "error": "check_error"}
+
+
+def combine_exit_codes(*codes: int) -> int:
+    """2（無法比對／清理失敗）→ 1（drift／落後）→ 3（連不上）→ 0。"""
+    for rc in (EXIT_ERROR, EXIT_DRIFT, EXIT_DB_UNAVAILABLE):
+        if rc in codes:
+            return rc
+    return EXIT_OK
+
+
+def summarize(version: VersionResult, drift: DriftOutcome) -> tuple[int, list[str]]:
+    problems: list[str] = []
+    for code in (_VERSION_PROBLEM.get(version.status), _DRIFT_PROBLEM.get(drift.status)):
+        if code and code not in problems:
+            problems.append(code)
+    return combine_exit_codes(version.exit_code, drift.exit_code), problems
+
+
+def build_status_payload(*, mode: str, target: str, version: VersionResult, drift: DriftOutcome,
+                         checked_at: datetime, duration_s: float) -> dict:
+    """狀態檔內容（format 1）。只有識別（host:port/db）與物件名，不含帳密。
+
+    {
+      "format": 1, "checked_at": ISO-8601（含時區）, "duration_s": 秒, "mode": "full"|"version",
+      "target": "host:port/db", "exit_code": 0|1|2|3, "alert": exit_code 是否會告警（1、2）,
+      "problems": PROBLEM_CODES 的子集（依發現順序）, "message": 給人看的一行,
+      "version": {"status", "expected_head", "db_revision", "pending": [...]},
+      "drift": {"status": ok|drift|error|cleanup_failed|skipped, "revision", "reference",
+                "drift_count", "categories": {類別: {missing, extra, changed}}, "column_order_differs": [...],
+                "message"}
+    }
+    """
+    rc, problems = summarize(version, drift)
+    drift_json: dict = {"status": drift.status, "revision": drift.revision, "reference": drift.reference,
+                        "message": drift.message}
+    if drift.report is not None:
+        full = report_to_json(drift.report)
+        drift_json.update(drift_count=full["drift_count"], categories=full["categories"],
+                          column_order_differs=full["column_order_differs"])
+    else:
+        drift_json.update(drift_count=None, categories={}, column_order_differs=[])
+    if not problems:
+        message = f"正常：revision {version.db_revision}" + ("、零 drift" if drift.status == "ok" else "（只比版本）")
+    else:
+        parts = [version.message] if version.status != "ok" else []
+        if drift.status == "drift" and drift.report is not None:
+            parts.append(f"{drift.report.drift_count} 項 schema drift（基準 revision {drift.revision}）")
+        elif drift.status in ("error", "cleanup_failed"):
+            parts.append(drift.message)
+        message = "；".join(parts)
+    return {
+        "format": STATUS_FORMAT,
+        "checked_at": checked_at.isoformat(timespec="seconds"),
+        "duration_s": round(duration_s, 1),
+        "mode": mode,
+        "target": target,
+        "exit_code": rc,
+        "alert": rc in (EXIT_DRIFT, EXIT_ERROR),
+        "problems": problems,
+        "message": message,
+        "version": version.to_json(),
+        "drift": drift_json,
+    }
+
+
+def status_file_path(arg: str | None) -> Path:
+    return Path(arg or os.environ.get(STATUS_FILE_ENV) or DEFAULT_STATUS_FILE)
+
+
+def write_status_file(path: Path, payload: dict) -> bool:
+    """原子寫入（同目錄暫存檔＋rename）。失敗只警告：告警走退出碼，狀態檔只是給管理頁讀的投影。
+    刻意不建立上層目錄：落點不存在多半是設定錯了，而不是該替它建一個。"""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+        return True
+    except OSError as exc:
+        print(f"警告：狀態檔寫不進 {path}（{exc}）；檢查結果與退出碼不受影響。", file=sys.stderr)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def cmd_scheduled(args, *, version_check=None, drift=None, now: Callable = datetime.now,
+                  clock: Callable = time.monotonic) -> int:
+    """每日定期檢查：版本比對 →（full 模式、版本可對應時）完整比對 → 狀態檔 → 退出碼。"""
+    mode = (args.mode or os.environ.get(MODE_ENV) or "full").strip()
+    if mode not in MODES:
+        print(f"拒絕：--mode／{MODE_ENV} 只接受 {'、'.join(MODES)}，收到 {mode!r}", file=sys.stderr)
+        return EXIT_ERROR
+    reference_url_env = args.reference_url_env or os.environ.get(REFERENCE_URL_ENV_ENV) or None
+    version_check = version_check or (lambda: asyncio.run(check_version(DATABASE_URL)))
+    drift = drift or (lambda rev: asyncio.run(drift_check(rev, reference_url_env)))
+    identity = sm.target_identity(DATABASE_URL)
+    # 只替無時區的時間補上主機時區；已帶時區的保留原樣（astimezone() 會改寫成主機時區，結果隨 TZ 變——CI 是 UTC）。
+    started, t0 = now(), clock()
+    if started.tzinfo is None:
+        started = started.astimezone()
+
+    version = version_check()
+    print(f"版本比對：目標 {identity}；{version.message}")
+    if mode == "version":
+        outcome = DriftOutcome("skipped", message="版本模式（--mode version）：不做完整比對")
+    elif version.status == "db_unavailable":
+        outcome = DriftOutcome("skipped", message="目標 DB 無法連線，未做完整比對")
+    elif version.status in ("ok", "behind"):
+        outcome = drift(version.db_revision)
+        if outcome.report is not None:
+            print(format_report(outcome.report, identity=identity, revision=outcome.revision or "?",
+                                reference_desc=outcome.reference, drift_verdict="需要人處理"))
+        elif outcome.status == "cleanup_failed":
+            print(f"!! 警報：{outcome.message}", file=sys.stderr)
+        else:
+            print(outcome.message, file=sys.stderr)
+    else:
+        outcome = DriftOutcome("skipped", message="DB 的版本對應不到程式的 revision 鏈，無從建立比對基準")
+
+    payload = build_status_payload(mode=mode, target=identity, version=version, drift=outcome,
+                                   checked_at=started, duration_s=clock() - t0)
+    path = status_file_path(args.status_file)
+    if write_status_file(path, payload):
+        print(f"狀態檔已寫入 {path}")
+    rc = payload["exit_code"]
+    print(f"結論：exit={rc} problems={','.join(payload['problems']) or '-'}",
+          file=sys.stdout if rc == EXIT_OK else sys.stderr)
+    return rc
 
 
 # ───────────────────────── 全庫備份 preflight ─────────────────────────
@@ -590,13 +945,29 @@ def main(argv=None) -> int:
         p.add_argument("--json", help="另把完整報告寫成 JSON（P0-ops 留存放行證據用）")
         if name == "check":
             p.add_argument("--revision", help="基準 revision（預設：目標已 stamp 的版本，未接管則為 baseline）")
+            p.add_argument("--expect-head", action="store_true",
+                           help="只比對 DB 的 alembic_version 與程式的 head（唯讀、不建暫存庫）："
+                                "0 一致／1 DB 落後／2 超前或無法判斷／3 DB 無法連線")
         else:
             p.add_argument("--dump-dir", help="全庫 pg_dump -Fc 的落點目錄")
             p.add_argument("--dump-container", help="以 docker exec 在此容器內執行 pg_dump／pg_restore")
             p.add_argument("--dump-timeout-min", type=float, default=DEFAULT_DUMP_TIMEOUT_MIN)
             p.add_argument("--no-dump", action="store_true", help="略過全庫備份（受保護的庫不接受）")
+    p = sub.add_parser("scheduled", help="每日定期檢查（report-mark-schema-check.timer）：版本＋完整比對＋狀態檔")
+    p.add_argument("--mode", help=f"full（預設）或 version（只比版本，給沒有 CREATEDB 的部署）；預設讀 {MODE_ENV}")
+    p.add_argument("--reference-url-env",
+                   help=f"同 check；預設讀 {REFERENCE_URL_ENV_ENV}（staging 以 master 帳號建基準暫存庫時用）")
+    p.add_argument("--status-file", help=f"狀態檔路徑；預設 {STATUS_FILE_ENV}，再預設 data/schema_check.json")
     args = ap.parse_args(argv)
+    if args.cmd == "scheduled":
+        return cmd_scheduled(args)
     if args.cmd == "check":
+        if args.expect_head:
+            if args.revision or args.json or args.reference_url_env:
+                print("拒絕：--expect-head 只比版本，不與 --revision／--json／--reference-url-env 並用。",
+                      file=sys.stderr)
+                return EXIT_ERROR
+            return run_expect_head()
         args.revision = getattr(args, "revision", None)
         rc, _, _ = asyncio.run(run_check(args))
         return rc

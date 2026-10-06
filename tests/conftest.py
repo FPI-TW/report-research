@@ -78,6 +78,10 @@ os.environ["OPS_SPOOL_DIR"] = os.devnull
 # 容器／主機探針的連續失敗次數（scripts/_health_streak.sh；預設 repo 根的 data/.health-streaks/）：同理用賦值指到
 # 不存在的目錄——寫不進去時探針改成「每筆失敗都算確認」，不會在部署目錄留下狀態。要驗去抖的測試自己給 tempfile。
 os.environ["HEALTH_STREAK_DIR"] = "/nonexistent/report-mark-health-streaks"
+# 每日 schema 檢查的狀態檔（scripts/schema_baseline.py scheduled；預設 repo 根的 data/schema_check.json，
+# 管理頁讀它）：同理用賦值指到不存在的目錄——寫入只警告、不建目錄，部署目錄的狀態檔不會被測試的假結果
+# 蓋掉。要驗內容的測試自己給 tempfile。
+os.environ["SCHEMA_CHECK_STATUS_FILE"] = "/nonexistent/report-mark-schema-check/schema_check.json"
 # 資料健康結果檔（app/services/data_health.py；db_audit.py 與 reconcile_object_storage.py 跑完時寫，預設 repo 根的
 # data/health/）：同理用賦值指到不存在的目錄——寫入 fail-open、讀取當作「還沒跑過」。要驗內容的測試自己給 tempfile。
 os.environ["DATA_HEALTH_DIR"] = "/nonexistent/report-mark-data-health"

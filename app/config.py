@@ -371,6 +371,9 @@ class Settings:
     upload_daily_quota: int = 30
     upload_max_in_flight: int = 50
     upload_min_free_mb: int = 1024
+    # 研報上傳的審核（web/routers/admin_uploads.py、app/services/upload_review.py）：退回後的清除寬限期（小時）。
+    # 期間內管理員可撤銷退回；過期後由上傳 worker 清除語料與檔案（設計決策 13：24 小時，與刪帳一致）。
+    upload_reject_grace_hours: int = 24
 
 
 def _load() -> Settings:
@@ -561,6 +564,7 @@ def _load() -> Settings:
         upload_daily_quota=_int_at_least("UPLOAD_DAILY_QUOTA", 30, 1),
         upload_max_in_flight=_int_at_least("UPLOAD_MAX_IN_FLIGHT", 50, 1),
         upload_min_free_mb=_int_at_least("UPLOAD_MIN_FREE_MB", 1024, 0),
+        upload_reject_grace_hours=_int_at_least("UPLOAD_REJECT_GRACE_HOURS", 24, 1),
     )
 
 

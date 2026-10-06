@@ -183,9 +183,9 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 
 第 5 到 8 段 best-effort：失敗只記 `data/unit_failures.log`，rc=75 不計入異常；任一段 rc=2（帳號／環境型中止）時，當輪 `data/.sync_last_hashes` 複製保留成 `data/sync_hashes_retained_<時間>.txt`，並印出摘要、標題、摘錄各自的 `--hashes-file` 補跑指令。整批中止的重放步驟見 `docs/production_resilience.md`「整批中止後的重放」，**不能**用 `failures_to_delta.py` 或 `--all-local` 補救（整批中止不留逐篇失敗紀錄）。摘要、標題、摘錄、訊號遇到「LLM 有回應但不能用」的研報會記入 `research.llm_task_failure`：同一 model 下審查擋下或截斷 1 次、其他原因連續 3 輪就不再重打，成功即刪列；`make llm-blocked` 唯讀列出（`--all` 連累計中的也列），要重試就對該批次加 `--retry-blocked` 或 DELETE 那一列；跳過鍵只看 model、不看 prompt 或 `EXTRACTION_VERSION`，**改 prompt 後要加 `--retry-blocked`**（摘錄與訊號的 `--reextract` 隱含它）。第 8 段標題積壓以 `--exclude-hashes-file data/.sync_last_hashes` 排掉本輪 4b 剛打過的新研報，免得同一篇一輪打兩次、失敗記兩次。逾時、CLI 非零退出這類環境型失敗不記。走 DeepSeek 時，審查擋下、截斷、空回應、400、已吐字後逾時（`timeout_streamed`，期限型截斷：連續 3 輪才跳過、計入斷路器、可重放）也照原因記入（`API[...]` 錯誤不在腳本層重試）；行內標註被審查擋下的研報不入庫、計 `skip_blocked`（異常）、被 `max_tokens` 截斷的計 `skip_truncated`（異常），兩者 `failures_to_delta.py` 預設都不撈（期限型截斷記 `skip_untagged`、會撈），由人處置（`docs/production_resilience.md`「DeepSeek 批次的失敗處置」）。批次斷路器的標記綁定 sync 輪次（殼每輪 export `SYNC_ROUND_ID`）：只擋同一輪後面用到 DeepSeek 的段。心跳 `data/.last_successful_sync` 只在完整成功時更新，`scripts/check_batch_freshness.py` 據此判管線停跑。環境檔 `/etc/default/report-mark-sync`（範本 `deploy/systemd/report-mark-sync.env.example`）：`REPORT_MARK_ROOT`、`SYNC_PATH_EXTRA`（nvm 沒有 `current` 連結，寫錯會讓 claude 找不到而無聲漏跑）、`EXTRACTOR`、備份與 R2 變數、`SYNC_SOURCE`／`SYNC_INBOX_PUSH`；DB 不在本機時另設 `REPORT_MARK_DB_URL` 與 `PGSSLROOTCERT`（批次不讀 repo 根 `.env`，漏設會靜默連回 `localhost:5436`）。
 
-## 研報上傳：收檔（Admin v1.5，功能旗標預設關閉）
+## 研報上傳：收檔與審核（Admin v1.5，功能旗標預設關閉）
 
-管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口。現況只有**收檔**這一段：`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`），掃描與入庫的 worker 還不存在，所以就算打開旗標，檔案也只會停在隔離區、狀態停在 `quarantined`（清單的 `scanner.pending` 會一直累積）。旗標要等 worker 上線並經同意後才開。
+管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口。現況有**收檔**與**審核 API** 兩段（審核見本節末），中間負責掃描、入庫與清除的 worker 還不存在。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`）；因為 worker 還不存在，就算打開旗標，檔案也只會停在隔離區、狀態停在 `quarantined`（清單的 `scanner.pending` 會一直累積）。旗標要等 worker 上線並經同意後才開。
 
 `POST /api/admin/uploads?filename=&last_modified=`（`web/routers/admin_uploads.py`，管理員＋`reports.manage`）：
 
@@ -197,6 +197,25 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 `GET /api/admin/uploads?state=&limit=&offset=` 列上傳紀錄，附 `scanner` 摘要（待掃件數、掃描中件數、最舊的等待、等待中的列最近一次 `scan_last_error`），全部由 DB 推導，web 不連 clamd。`GET /api/admin/uploads/{upload_id}` 是單筆詳情，另帶語料裡同 hash 的研報與抽取品質（還沒入庫時 null）。
 
 對外經 nginx 時走 `deploy/nginx.conf` 的 `location = /api/admin/uploads`（`client_max_body_size 30m`、`proxy_request_buffering on`、讀寫逾時 120 秒）；其他路徑維持全域的 1m。改了 nginx 設定要 `make edge-reload` 才生效。
+
+### 審核（`web/routers/admin_uploads.py`＋`app/services/upload_review.py`）
+
+審核端點同樣是管理員＋`reports.manage`，**不看 `UPLOAD_ENABLED`**（關掉收檔時仍要能處理已經進來的檔案）。worker 尚未合併，所以現況沒有任何上傳會自己走到 `draft`／`failed`；審核 API 先就位，處理的是 worker 上線後的資料。狀態轉移（Python 決定）：
+
+```
+draft ─publish─▶ published（之後只能在研報管理「隱藏」，不能退回）
+draft、quarantined、clean、failed ─reject（必填原因）─▶ rejected ─寬限期內 unreject─▶ 推導出的退回前狀態
+                                                          └─寬限期滿─▶ 由上傳 worker 清除（purged_at；worker 尚未合併）
+failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（等 worker 下一輪）
+```
+
+1. **預覽與原檔**（`GET .../preview`、`GET .../file`）：只限 `draft`／`published`（其餘 409 `upload_state_conflict`）。預覽回正典文字 `clean_extracted(full_text)`（上限 400,000 字）、標籤、標題、摘要、摘錄；標題、摘要、摘錄由批次另外產出，還沒跑時是 null／`pending`。`report_id` 讀取時以 file_hash JOIN 取得，`report_upload` 不存它。原檔只回語料 `originals/` 的 presign（JSON `{url, expires_in, file_name}`，帶 `filename`、TTL ≤ 1 小時，物件鍵對 file_hash 與檔名重算並比對 HEAD 的 sha256）；沒有本機回退，**任何狀態都不讀隔離區**，所以 local 模式沒有原檔預覽（404 `upload_file_unavailable`）。管理面不套可見性過濾。
+2. **發布**（`POST .../publish`）：只有 `draft`。同一筆交易依序做條件式 UPDATE `report_upload`（`WHERE state='draft'`）→ `report_visibility` 設 `publication='published'`、`published_at`、`published_by`（`WHERE publication='draft' AND published_at IS NULL`，且語料真的有這份研報）→ 稽核 `upload.publish`（detail：upload_id、file_hash、檔名、`uploaded_by`、`published_by`、`self_published`、`previous_state`、`state`、`hidden`）。任一步影響 0 列就 rollback 回 409。兩個交易同時發布：第二個在 `report_upload` 的列鎖上等，第一個 commit 後條件不成立 → 409。發布不要求權限提升、不禁止上傳者自己發布（設計決策 14），稽核記兩者。chunk 早已嵌入，發布當下就能被檢索。晚發布的研報不會補進每日簡報（簡報窗期用 `created_at`，設計決策 6）。
+3. **退回**（`POST .../reject`，body `{reason}`，去頭尾空白後 1–500 字）：可退回 `draft`／`quarantined`／`clean`／`failed`；`scanning`／`processing` 是 worker 正握著 → 409 `upload_busy`；`published` → 409 `upload_published_use_hide`。草稿另有守門：語料裡同 hash 的研報必須仍是「草稿且 `published_at IS NULL`」（NAS 送來的沒有 visibility 列＝已發布），否則 409，免得日後清除刪到已發布的研報。同一筆交易寫 `rejected`、原因、決策人與時刻、`purge_after = now() + UPLOAD_REJECT_GRACE_HOURS`（預設 24）與稽核 `upload.reject`（detail 只有 `reason_chars`，不含原因全文）。**語料、草稿的 visibility 列與檔案都不動**：退回後的草稿仍不可見。
+4. **撤銷退回**（`POST .../unreject`，設計決策 13）：只限 `rejected`、`purged_at IS NULL`、`now() < purge_after`（過期 409 `upload_reject_expired`）。`report_upload` 沒有欄位記退回前的狀態，依事實推導（`upload_review.restore_state_after_unreject`）：語料有這份研報且是從未發布的草稿 → `draft`；`failure_kind` 是失敗（`llm_breaker` 這種延後標記不算）→ `failed`；`scanned_at` 有值 → `clean`；其餘 → `quarantined`。清掉原因、決策人與時刻、`purge_after`，稽核 `upload.unreject`。寬限期內若已有同 hash 的另一筆進行中上傳（只可能在語料還沒有它時），撞 partial unique index → 409 `upload_active_conflict`。
+5. **重試**（`POST .../retry`）：只限 `failed` 且 `failure_kind` 是 `tag_failed`／`ingest_error`／`extract_timeout`（其他 409 `upload_not_retryable`）。轉回 `clean`，清 `failure_kind`／`failure_detail`，`process_attempts` 不歸零，稽核 `upload.retry`；同樣可能撞 partial unique index（409 `upload_active_conflict`）。
+
+給上傳 worker 清除步驟的介面（本 API 不刪任何東西）：`upload_review.list_purgeable` 列出寬限期已過、`purged_at IS NULL` 的退回件與 `corpus_purgeable` 旗標；`corpus_purgeable_sql(欄位)` 是同一個守門的 SQL 片段——語料從未發布過（沒有研報，或研報的 visibility 是草稿且 `published_at IS NULL`；visibility 沒有任何一列已發布或曾被發布），且同 hash 沒有別的上傳處於進行中或已發布。不成立時只能刪那筆上傳自己的隔離區檔案。
 
 ## 標籤維度（對齊 findb）
 

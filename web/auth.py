@@ -197,6 +197,56 @@ def clear_session_cookie(response) -> None:
     response.delete_cookie(COOKIE_NAME, path="/")
 
 
+# ───── 登入第二步（TOTP）的暫時憑證 ─────
+# 密碼正確、帳號開了 TOTP 時，POST /login 不發 session，改發這個短效 cookie，第二步（同一個
+# POST /login，step=totp）憑它找回是哪個帳號。格式 `m1.<uid>.<exp>.<fp>.<sig>`：
+# - fp 是 accounts.mfa_fingerprint（涵蓋密碼雜湊、TOTP secret 與最後使用的時間步）。第二步成功一次
+#   時間步就前進，同一張暫時憑證的指紋從此對不上——不可重放，伺服器端也不必記發過哪些。
+# - 簽章訊息以 `m1.` 開頭，與 session token（`3.`）分屬不同領域，兩者不能互相冒充；同樣帶登出 epoch。
+# - path 限 /login、HttpOnly、5 分鐘。
+MFA_COOKIE_NAME = "tf_mfa"
+MFA_TTL = 300
+_MFA_VERSION = "m1"
+
+
+def _mfa_message(user_id: str, exp: int, fingerprint: str) -> str:
+    return f"{_MFA_VERSION}.{user_id}.{exp}.{fingerprint}.{_SESSION_EPOCH}"
+
+
+def issue_mfa_token(now: int, *, user_id: str, fingerprint: str) -> str:
+    exp = now + MFA_TTL
+    return f"{_MFA_VERSION}.{user_id}.{exp}.{fingerprint}.{_sign(_mfa_message(user_id, exp, fingerprint))}"
+
+
+def parse_mfa_token(token: str | None, now: int) -> tuple[str, str] | None:
+    """驗章＋未過期才回 (user_id, fingerprint)；指紋是否仍有效由 DB 判（accounts.complete_totp_login）。"""
+    if not token:
+        return None
+    parts = token.split(".")
+    if len(parts) != 5 or parts[0] != _MFA_VERSION:
+        return None
+    _ver, uid, exp_s, fp, sig = parts
+    if not exp_s.isdigit() or not _canonical_uuid(uid) or not fp.isalnum():
+        return None
+    exp = int(exp_s)
+    if not hmac.compare_digest(sig.encode(), _sign(_mfa_message(uid, exp, fp)).encode()):
+        return None
+    if exp <= now or exp > now + MFA_TTL:
+        return None
+    return uid, fp
+
+
+def set_mfa_cookie(response, now: int, *, user_id: str, fingerprint: str, secure: bool) -> None:
+    response.set_cookie(
+        MFA_COOKIE_NAME, issue_mfa_token(now, user_id=user_id, fingerprint=fingerprint),
+        max_age=MFA_TTL, httponly=True, samesite="lax", secure=secure, path="/login",
+    )
+
+
+def clear_mfa_cookie(response) -> None:
+    response.delete_cookie(MFA_COOKIE_NAME, path="/login")
+
+
 # ───── 每 IP 失敗限流(in-memory,重啟即重置)─────
 _FAILS: dict[str, list[int]] = {}
 def _prune(ip: str, now: int) -> list[int]:

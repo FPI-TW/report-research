@@ -41,8 +41,28 @@ export const CreateUserRequestSchema = z.object({
 })
 export type CreateUserRequest = z.infer<typeof CreateUserRequestSchema>
 
+export const DeletionItemSchema = z.object({
+  id: z.number().int(),
+  user_id: z.string(),
+  username: z.string().nullable(),
+  requested_by: z.string().nullable(),
+  requested_by_username: z.string().nullable(),
+  requested_at: z.string().nullable(),
+  execute_after: z.string().nullable(),
+  cancelled_at: z.string().nullable(),
+  executed_at: z.string().nullable(),
+  status: z.enum(['pending', 'cancelled', 'executed']),
+})
+export type DeletionItem = z.infer<typeof DeletionItemSchema>
+
+export const DeletionListResponseSchema = z.object({
+  items: z.array(DeletionItemSchema),
+})
+export type DeletionListResponse = z.infer<typeof DeletionListResponseSchema>
+
 export const ElevateRequestSchema = z.object({
   password: z.string(),
+  code: z.string().nullable().optional(),
 })
 export type ElevateRequest = z.infer<typeof ElevateRequestSchema>
 
@@ -86,6 +106,8 @@ export const UserItemSchema = z.object({
   active_sessions: z.number().int().optional(),
   is_super: z.boolean().optional(),
   scopes: z.array(z.enum(['qa_content.read', 'ops.operate'])).optional(),
+  totp_enabled: z.boolean().optional(),
+  deletion_execute_after: z.string().nullable().optional(),
 })
 export type UserItem = z.infer<typeof UserItemSchema>
 
@@ -108,6 +130,8 @@ export const adminApi = {
   auditLog: (query: { limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/audit${qs(query)}`, AuditResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit/verify — Verify Audit Chain */
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/deletions — List Deletions */
+  listDeletions: (query: { status?: string } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
   /** GET /api/admin/users — List Users */
@@ -116,10 +140,16 @@ export const adminApi = {
   createUser: (body: z.input<typeof CreateUserRequestSchema>) => requestJSON('/api/admin/users', UserItemSchema, jsonBody('POST', body)),
   /** PATCH /api/admin/users/{user_id} — Update User */
   updateUser: (userId: string, body: z.input<typeof UpdateUserRequestSchema>) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}`, UserItemSchema, jsonBody('PATCH', body)),
+  /** POST /api/admin/users/{user_id}/deletion — Request Deletion */
+  requestDeletion: (userId: string) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/deletion`, DeletionItemSchema, jsonBody('POST')),
+  /** POST /api/admin/users/{user_id}/deletion/cancel — Cancel Deletion */
+  cancelDeletion: (userId: string) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/deletion/cancel`, DeletionItemSchema, jsonBody('POST')),
   /** POST /api/admin/users/{user_id}/logout — Force Logout */
   forceLogout: (userId: string) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/logout`, LogoutResponseSchema, jsonBody('POST')),
   /** POST /api/admin/users/{user_id}/password — Reset Password */
   resetPassword: (userId: string, body: z.input<typeof PasswordRequestSchema>) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/password`, UserItemSchema, jsonBody('POST', body)),
   /** PUT /api/admin/users/{user_id}/privileges — Set Privileges */
   setPrivileges: (userId: string, body: z.input<typeof PrivilegesRequestSchema>) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/privileges`, UserItemSchema, jsonBody('PUT', body)),
+  /** POST /api/admin/users/{user_id}/totp/reset — Reset Totp */
+  resetTotp: (userId: string) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/totp/reset`, UserItemSchema, jsonBody('POST')),
 }

@@ -112,8 +112,13 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | GET | `/healthz` | — | `{"status":"ok"}`；DB 不可用回 503 `{"status":"degraded"}` | 免登入；只探 DB（`SELECT 1`，3 秒逾時）；結果快取 5 秒 |
 | GET | `/healthz/storage` | — | `{"storage":"disabled"\|"unknown"\|"ok"\|"degraded"}`；degraded 回 503 | **只回答本機直連**（對端 loopback、無代理 header、Host 為本機），其餘 404；給 `scripts/check_web_health.sh` 用（退出碼 6） |
 | GET | `/healthz/llm` | — | `{"llm":"disabled"\|"unknown"\|"ok"\|"low"\|"exhausted"\|"auth_failed"\|"unreachable"\|"indeterminate"}`；後五種回 503，問答主答（`ASK_ANSWER_MODEL`）沒有用到 DeepSeek 時改回 200 並加 `_unused` 後綴。**不回任何金額** | **只回答本機直連**，其餘 404；查 DeepSeek `GET /user/balance`（只看 `LLM_BUDGET_CURRENCY` 那一筆，低於 `LLM_BALANCE_FLOOR` 為 low），ok 快取 600 秒、其餘 60 秒、每次最多等 4 秒；給 `scripts/check_web_health.sh` 用（`low` 為退出碼 7、其餘 503 為 8）。判定細節見 `app/services/llm_health.py` |
-| GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next` | 302／303 | 登入頁免登入；帳號不分大小寫。失敗回 `/login?error=1|locked|insecure|disabled|unavailable`（`disabled` 只在密碼正確時出現）。登出只撤銷這一個 session |
-| GET | `/api/me` | — | `{id, username, role, is_super, scopes, elevated_until}` | 目前登入身分；`role` 為 `admin`／`user`，`scopes` 是實際生效的 scope，`elevated_until` 是本 session 權限提升的到期時刻（未提升為 null）。免登入開發模式回 `id: null`、`username: "dev"`、super admin 全部 scope |
+| GET／POST | `/login`、POST `/logout` | form `username`、`password`、`next`；第二步 form `step=totp`、`code`、`next` | 302／303 | 登入頁免登入；帳號不分大小寫。失敗回 `/login?error=1|locked|insecure|disabled|unavailable`（`disabled` 只在密碼正確時出現）。帳號開了兩步驟驗證時，密碼正確只發 5 分鐘、`Path=/login` 的簽章暫時憑證 `tf_mfa` 並導向 `/login?step=totp`，第二步驗證碼正確才發 session；錯誤回 `?step=totp&error=totp`（計入每 IP 失敗限流）、暫時憑證缺漏或逾時回 `?error=expired`。暫時憑證不可重放。登出只撤銷這一個 session |
+| GET | `/api/me` | — | `{id, username, role, is_super, scopes, elevated_until, totp_enabled}` | 目前登入身分；`role` 為 `admin`／`user`，`scopes` 是實際生效的 scope，`elevated_until` 是本 session 權限提升的到期時刻（未提升為 null）。免登入開發模式回 `id: null`、`username: "dev"`、super admin 全部 scope |
+| POST | `/api/me/elevate` | JSON `password`、`code`（開了兩步驟驗證時必填） | `{elevated_until}` | 任何登入的使用者。與 `/api/admin/elevate` 同一套實作：10 分鐘、綁本 session；密碼正確但缺驗證碼 403 `totp_required`（不計失敗），密碼或驗證碼錯 403 `bad_password`，共用每 IP 失敗限流 |
+| GET | `/api/me/totp` | — | `{enabled, pending}` | 自己的兩步驟驗證狀態；`pending`＝已產生 secret、尚未確認 |
+| POST | `/api/me/totp/setup` | — | `{secret, otpauth_uri}` | 產生新的 secret（尚未啟用，secret 只回這一次）；已啟用 409 `totp_state`（換裝置請先關閉） |
+| POST | `/api/me/totp/confirm` | JSON `code` | `{enabled, pending}` | 輸入驗證器顯示的第一個碼才啟用（RFC 6238，30 秒、6 位、前後各一步）；錯 400 `bad_totp` |
+| POST | `/api/me/totp/disable` | — | `{enabled, pending}` | 關閉自己的兩步驟驗證；需近 10 分鐘內重新驗證過（403 `elevation_required`）。寫稽核 |
 | GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/monitor`、`/app/help` | 舊入口相容 |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
 | GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 與 `/api/progress` 共用 15 秒 DB 快取；`username` 是目前登入者 |
@@ -150,9 +155,13 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | POST | `/api/admin/users/{user_id}/password` | JSON `password` | 帳號一列 | 限管理員。重設密碼並撤銷該帳號所有 session |
 | POST | `/api/admin/users/{user_id}/logout` | — | `{revoked}` | 限管理員。強制登出（撤銷所有 session，帳號仍可重新登入） |
 | PUT | `/api/admin/users/{user_id}/privileges` | JSON `is_super`、`scopes`（`qa_content.read`／`ops.operate` 的完整清單，取代；至少一個欄位） | 帳號一列 | super admin＋近 10 分鐘內重新驗證過（403 `super_required`／`elevation_required`）。只授予給啟用中的管理員（400 `invalid_input`）；409 `self_lockout` 不能拿掉自己的 super、`last_super` 至少保留一位 super admin |
-| POST | `/api/admin/elevate` | JSON `password` | `{elevated_until}` | 任何管理員。重新驗證密碼，取得綁在本 session 的 10 分鐘權限提升；密碼錯 403 `bad_password`，與登入共用每 IP 失敗限流（429 `rate_limited`）。成功與失敗都寫稽核 |
+| POST | `/api/admin/elevate` | JSON `password`、`code`（開了兩步驟驗證時必填） | `{elevated_until}` | 任何管理員。重新驗證密碼（＋驗證碼），取得綁在本 session 的 10 分鐘權限提升；缺驗證碼 403 `totp_required`，密碼或驗證碼錯 403 `bad_password`，與登入共用每 IP 失敗限流（429 `rate_limited`）。成功與失敗都寫稽核 |
+| POST | `/api/admin/users/{user_id}/deletion` | — | `{id, user_id, username, requested_by, requested_by_username, requested_at, execute_after, cancelled_at, executed_at, status}` | `accounts.manage`＋近 10 分鐘內重新驗證過。立即停用並撤銷所有 session，排程 24 小時後由 `scripts/execute_deletions.py` 執行；409 `self_lockout`／`last_admin`／`last_super`／`deletion_pending`，403 `super_required`（對象是 super admin），404 |
+| POST | `/api/admin/users/{user_id}/deletion/cancel` | — | 刪除排程一筆 | `accounts.manage`。撤銷窗口內取消並還原提出前的啟用狀態（被撤銷的 session 不會復活）；404 `no_pending_deletion`，已到執行時刻 409 `deletion_window_closed` |
+| GET | `/api/admin/deletions` | `status`（`pending`／`all`，預設 `pending`） | `{items: [刪除排程…]}` | `accounts.manage`。新的在前；執行後 `username` 是 `deleted-<uuid>` |
+| POST | `/api/admin/users/{user_id}/totp/reset` | — | 帳號一列 | `accounts.manage`＋已提升。替遺失驗證器的人關閉兩步驟驗證；對象是 super admin 時只有 super admin 能做 |
 | GET | `/api/admin/audit/verify` | — | `{ok, total, head_id, head_hash, broken_ids}` | `audit.read`。逐列重算稽核雜湊鏈；`broken_ids` 最多 20 筆 |
-| GET | `/api/admin/audit` | `limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{id, actor_user_id, actor_username, action, target_type, target_id, detail, created_at}]}` | 限管理員。新的在前；`actor_user_id` 為 null 表示 CLI（`scripts/create_admin.py`）。`action`：`user.create`、`user.set_role`、`user.enable`、`user.disable`、`user.reset_password`、`user.force_logout`、`review.update` |
+| GET | `/api/admin/audit` | `limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{id, actor_user_id, actor_username, action, target_type, target_id, detail, created_at}]}` | 限管理員。新的在前；`actor_user_id` 為 null 表示 CLI（`scripts/create_admin.py`）。`action`：`user.create`、`user.set_role`、`user.enable`、`user.disable`、`user.reset_password`、`user.force_logout`、`user.set_privileges`、`user.totp_enable`、`user.totp_disable`、`user.totp_reset`、`user.delete_requested`、`user.delete_cancelled`、`user.delete_executed`、`user.delete_replayed`、`session.elevate`、`session.elevate_failed`、`review.update`（刪除相關的 `detail` 只記數量，不記帳號名稱） |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 

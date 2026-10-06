@@ -215,6 +215,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `ASK_MAX_QUEUE`、`SSE_HEARTBEAT_INTERVAL` | 20、20 | web 層旋鈕 |
 | `RADAR_CATALOG_CACHE_TTL` | 60 | 雷達目錄回應快取秒數；0 停用 |
 | `OPS_AGENT_ENVIRONMENT`、`OPS_AGENT_SOCKET`、`OPS_AGENT_TIMEOUT` | `production`、依環境（`/run/report-mark-ops/agent.sock`，development 是 `/run/report-mark-ops-dev/agent.sock`）、20 | 維運代理的 client（`web/ops_client.py`）。環境是請求裡宣告的、代理會比對；拼錯的環境值＝停用（維運端點回 503），不退回 production |
+| `RETRIEVAL_REGRESSION_K`、`RETRIEVAL_REGRESSION_MIN_MEAN_RECALL`、`RETRIEVAL_REGRESSION_MIN_QUESTION_RECALL`、`RETRIEVAL_REGRESSION_MAX_DEGRADED_QUESTIONS`、`RETRIEVAL_REGRESSION_MIN_AVAILABLE_GIB`、`RETRIEVAL_REGRESSION_BASELINE` | 10、0.8、0.5、2、4、空（＝`data/retrieval_regression/baseline.json`） | 檢索回歸檢查（`scripts/retrieval_regression.py`；設在 `/etc/default/report-mark-sync`）。k 只在擷取基準時用；平均研報召回低於第二個、或研報召回低於第三個的題數超過第四個就是劣化（rc=1）；可用記憶體低於第五個（GiB）就略過那一次。打錯的值退回預設並警告 |
 | `SKIP_WARMUP`、`DEV_NO_AUTH` | — | 只從 `os.environ` 讀且判 `== "1"`，不要寫進環境檔 |
 
 新旋鈕放 `app/config.py`（frozen dataclass ＋ `os.getenv`）。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`）是 live 的，不要改名。
@@ -293,6 +294,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 | `report-mark-load-observations.timer` | 每 5 分鐘 | `scripts/load_observations.py`：監控 spool 冪等匯入 `service_observation`／`job_execution`（管理頁的排程工作與主機資源讀這兩張表）與 P5 的事件紀錄 `incident`／`incident_event`（含 journal 片段）；DB 不可用 rc=2、spool 保留待下一輪補匯入，刻意不接告警 |
 | `report-mark-rollup-observations.timer` | 每小時 :20 | `scripts/rollup_observations.py`：監控觀測保留 90 天、越舊越粗——24 小時前的原始觀測聚合成 5 分鐘桶（`service_observation_5m`）、7 天前的再聚合成 1 小時桶（`service_observation_1h`），90 天以前的觀測與 `job_execution` 刪除；每片同一句 SQL 先刪後寫、失敗整句回滾（冪等），advisory lock 防重疊；rc=1（核對不符／SQL 錯誤）才告警，DB 不可用（rc=2，P5 已告警）與撞鎖（rc=75）不告警。incident 不在範圍內 |
 | `report-mark-schema-check.timer` | 05:20 | `scripts/schema_baseline.py scheduled`：先比 DB 的 `alembic_version` 與程式的 head（版本 drift），再以 DB 的 revision 在同伺服器建刪暫存庫做完整 schema drift 比對，結果寫 `data/schema_check.json`；drift、落後（rc=1）與超前、無法比對、暫存庫清理失敗（rc=2）告警，DB 連不上（rc=3，P5 已告警）不告警。staging（沒有 CREATEDB）設 `SCHEMA_CHECK_MODE=version` 只比版本，見 `docs/production_resilience.md` |
+| `report-mark-retrieval-regression.timer` | 07:40 | `scripts/retrieval_regression.py check`（零 LLM，載 BGE-M3、對 DB 唯讀）：凍結題集 18 題的 `hybrid_search` top-k 對一次性基準比研報召回，結果寫 `data/health/retrieval_regression.json`（管理頁「資料健康」）；劣化（rc=1）與無法比對（rc=3，含還沒有基準）告警，DB 連不上／記憶體不足／sync 在跑（rc=2）略過不告警。`MemoryMax=4G`、`Nice=15`、`EMBED_TORCH_THREADS=2`；啟用前要先擷取基準，見 `docs/production_resilience.md` |
 | `report-mark-ops-agent.service` | 常駐 | 維運代理（唯讀）：`/api/admin/ops/*` 經 `/run/report-mark-ops/agent.sock` 查 `deploy/ops/services.prod.toml` 列出的服務狀態與日誌。專用使用者、程式碼裝在 `/opt/report-mark-ops/`，安裝步驟與威脅模型見 `docs/production_resilience.md`「維運代理」；開發環境是 `report-mark-ops-agent-dev.service` |
 | `report-mark-alert@.service` | `OnFailure` 觸發 | journal ＋ `data/unit_failures.log` ＋ webhook |
 

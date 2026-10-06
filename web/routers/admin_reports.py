@@ -16,6 +16,7 @@ v1 只做 review＋hide／restore（草稿／發布、metadata 覆寫、上傳�
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -45,6 +46,8 @@ class AdminReportItem(BaseModel):
     hidden_reason: str | None = None
     visibility_updated_by: str | None = None
     visibility_updated_at: str | None = None
+    # 發布狀態：上傳後尚未發布的草稿是 draft（對所有使用者路徑不可見）；sync 進來的研報一律 published。
+    publication: Literal["draft", "published"] = "published"
 
 
 class AdminReportListResponse(BaseModel):
@@ -91,13 +94,14 @@ def _http_error(exc: VisibilityError) -> AppError:
 async def list_reports(
     q: str | None = Query(None, max_length=200),
     hidden: bool | None = Query(None),
+    publication: Literal["draft", "published"] | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """依標題／檔名／券商關鍵字（`q`）與是否隱藏（`hidden`）查研報；入庫新→舊。"""
+    """依標題／檔名／券商關鍵字（`q`）、是否隱藏（`hidden`）與發布狀態（`publication`）查研報；入庫新→舊。"""
     async with deps.SessionFactory() as session:
         total, rows = await deps.report_visibility.list_reports(
-            session, q=q, hidden=hidden, limit=limit, offset=offset,
+            session, q=q, hidden=hidden, publication=publication, limit=limit, offset=offset,
         )
     next_offset = offset + len(rows)
     has_more = next_offset < total
@@ -109,7 +113,7 @@ async def list_reports(
                 report_id=r.report_id, file_hash=r.file_hash, file_name=r.file_name, title=r.title,
                 source=r.source, market=r.market, report_date=_iso(r.report_date), created_at=_iso(r.created_at),
                 hidden=r.hidden, hidden_reason=r.reason, visibility_updated_by=r.updated_by,
-                visibility_updated_at=_iso(r.updated_at),
+                visibility_updated_at=_iso(r.updated_at), publication=r.publication,
             )
             for r in rows
         ],

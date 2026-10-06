@@ -128,6 +128,7 @@ class AdminReportRow:
     reason: Optional[str]
     updated_by: Optional[str]  # 帳號名；舊列或帳號查不到時 None
     updated_at: Optional[datetime]
+    publication: str = PUBLICATION_PUBLISHED  # 沒有 visibility 列＝已發布
 
 
 @dataclass(frozen=True)
@@ -144,7 +145,8 @@ _LIKE_ESC = str.maketrans({"%": r"\%", "_": r"\_", "\\": r"\\"})
 _ADMIN_COLS = (
     "r.id::text, r.file_hash, r.file_name, r.title, r.source, r.market, r.report_date, r.created_at, "
     "COALESCE(v.hidden, false), v.reason, "
-    "(SELECT u.username FROM research.app_user u WHERE u.id = v.updated_by), v.updated_at"
+    "(SELECT u.username FROM research.app_user u WHERE u.id = v.updated_by), v.updated_at, "
+    "COALESCE(v.publication, 'published')"
 )
 _ADMIN_FROM = (
     "FROM research.research_report r "
@@ -159,8 +161,11 @@ async def list_reports(
     hidden: Optional[bool] = None,
     limit: int = 50,
     offset: int = 0,
+    publication: Optional[str] = None,
 ) -> tuple[int, list[AdminReportRow]]:
-    """管理頁的研報清單：依標題／檔名／券商關鍵字（ILIKE，`%`／`_` 視為字面）與是否隱藏篩選。
+    """管理頁的研報清單：依標題／檔名／券商關鍵字（ILIKE，`%`／`_` 視為字面）、是否隱藏與發布狀態篩選。
+
+    `publication`：`draft`／`published`／None（全部）。沒有 visibility 列的研報（sync 進來的）算已發布。
 
     **不套 is_research 條件**：非研究檔本來就不進使用者路徑，但管理員可能正是要找它。
     排序：入庫新→舊，id 當決勝鍵讓翻頁穩定。
@@ -174,6 +179,11 @@ async def list_reports(
         conds.append("COALESCE(v.hidden, false)")
     elif hidden is False:
         conds.append("NOT COALESCE(v.hidden, false)")
+    if publication is not None:
+        if publication not in PUBLICATIONS:
+            raise ValueError(f"list_reports：不合法的 publication {publication!r}")
+        conds.append("COALESCE(v.publication, 'published') = :publication")
+        params["publication"] = publication
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
     total = (await session.execute(text(f"SELECT count(*) {_ADMIN_FROM} {where}"), params)).scalar_one()
     rows = (
@@ -189,7 +199,7 @@ async def list_reports(
         AdminReportRow(
             report_id=r[0], file_hash=r[1], file_name=r[2], title=r[3], source=r[4], market=r[5],
             report_date=r[6], created_at=r[7], hidden=bool(r[8]), reason=r[9], updated_by=r[10],
-            updated_at=r[11],
+            updated_at=r[11], publication=r[12],
         )
         for r in rows
     ]

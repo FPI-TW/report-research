@@ -359,6 +359,12 @@ class ReportVisibilityDbTests(unittest.TestCase):
             audit_n = (await session.execute(text(
                 "SELECT count(*) FROM research.admin_audit_log WHERE target_id = :h"
             ), {"h": hash_a})).scalar_one()
+            # 管理清單看得到草稿（管理面不過濾），並可依發布狀態篩選；沒有可見性列的 B 算已發布。
+            admin = {}
+            for pub in ("draft", "published", None):
+                _t, rows = await visibility.list_reports(session, q=TERM, publication=pub, limit=200)
+                admin[pub] = sorted(("A" if r.file_hash == hash_a else "B", r.publication)
+                                    for r in rows if r.file_hash in (hash_a, hash_b))
             # 發布（PR-6 審核 API 的等價 SQL：同一列改 publication 並記發布時刻）。
             await session.execute(text(
                 "UPDATE research.report_visibility SET publication = 'published', published_at = now() "
@@ -374,9 +380,10 @@ class ReportVisibilityDbTests(unittest.TestCase):
                 "SELECT hidden, publication, published_at IS NOT NULL FROM research.report_visibility "
                 "WHERE file_hash = :h"
             ), {"h": hash_a})).one())
-            return before, draft, reingested, refused, vis_row, audit_n, published, hidden_after, restored, final_row
+            return (before, draft, reingested, refused, vis_row, audit_n, admin, published, hidden_after, restored,
+                    final_row)
 
-        (before, draft, reingested, refused, vis_row, audit_n, published, hidden_after, restored,
+        (before, draft, reingested, refused, vis_row, audit_n, admin, published, hidden_after, restored,
          final_row) = self._run(fn)
 
         phases = {"draft": draft, "reingested": reingested, "published": published,
@@ -405,6 +412,9 @@ class ReportVisibilityDbTests(unittest.TestCase):
         self.assertEqual(refused, [False, True], "草稿的恢復與隱藏都必須被拒")
         self.assertEqual(vis_row, (False, "draft", None, None), "被拒的操作不可改動草稿列")
         self.assertEqual(audit_n, 0, "被拒的操作不寫稽核")
+        self.assertEqual(admin["draft"], [("A", "draft")])
+        self.assertEqual(admin["published"], [("B", "published")])
+        self.assertEqual(admin[None], [("A", "draft"), ("B", "published")])
         self.assertEqual(final_row, (False, "published", True), "恢復隱藏不可改動發布狀態")
 
     def test_upload_and_publication_constraints(self):

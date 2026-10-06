@@ -333,6 +333,11 @@ jobs:
       - name: 問答紀錄每人隔離
         run: uv run pytest -q tests/test_qa_isolation_db.py
 
+      # 研報隱藏／恢復：隱藏的研報從檢索、選篇、閱讀、雷達、總覽、簡報與 presign 全部消失，
+      # 恢復即回來，重新入庫（換新 report_id）後旗標仍在。
+      - name: 研報可見性
+        run: uv run pytest -q tests/test_report_visibility_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

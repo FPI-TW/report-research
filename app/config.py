@@ -359,6 +359,18 @@ class Settings:
     # 客戶端自己的串流上限，與 deploy/clamav/conf/clamd.conf 的 `StreamMaxLength 30M` 一致
     # （tests/test_clamav_deploy.py 對帳）。超過就不再送、直接判「超限＝未通過」，不依賴 clamd 怎麼回。
     clamd_stream_max_bytes: int = 30 * 1024 * 1024
+    # 研報上傳的收檔（web/routers/admin_uploads.py、app/services/quarantine.py；Admin v1.5）。
+    # 旗標預設關閉：worker（掃毒、入庫）上線並經同意之前，收檔端點一律 503 `uploads_disabled`。
+    # 大小上限 25 MiB（語料最大 19.5 MB、p99 5.3 MB）；nginx 那條 location 給 30m，比這裡寬，
+    # 所以超過上限的請求由 App 回統一格式的 413，而不是 nginx 的 HTML 錯誤頁。
+    # 隔離區空字串＝repo 根 data/quarantine/。配額：每人每日（台北時間的日曆日）與全站處理中
+    # （quarantined／scanning／clean／processing）的件數；剩餘空間低於門檻（MiB）就不收（503）。
+    upload_enabled: bool = False
+    upload_max_bytes: int = 25 * 1024 * 1024
+    upload_quarantine_dir: str = ""
+    upload_daily_quota: int = 30
+    upload_max_in_flight: int = 50
+    upload_min_free_mb: int = 1024
 
 
 def _load() -> Settings:
@@ -543,6 +555,12 @@ def _load() -> Settings:
         clamd_timeout=_positive_float("CLAMD_TIMEOUT", 120.0),
         clamd_signature_max_age_hours=_positive_float("CLAMD_SIGNATURE_MAX_AGE_HOURS", 72.0),
         clamd_stream_max_bytes=_positive_int("CLAMD_STREAM_MAX_BYTES", 30 * 1024 * 1024),
+        upload_enabled=_flag("UPLOAD_ENABLED", "0"),
+        upload_max_bytes=_int_at_least("UPLOAD_MAX_BYTES", 25 * 1024 * 1024, 1),
+        upload_quarantine_dir=(os.getenv("UPLOAD_QUARANTINE_DIR") or "").strip(),
+        upload_daily_quota=_int_at_least("UPLOAD_DAILY_QUOTA", 30, 1),
+        upload_max_in_flight=_int_at_least("UPLOAD_MAX_IN_FLIGHT", 50, 1),
+        upload_min_free_mb=_int_at_least("UPLOAD_MIN_FREE_MB", 1024, 0),
     )
 
 

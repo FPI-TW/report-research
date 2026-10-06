@@ -37,6 +37,9 @@ STATES: tuple[str, ...] = (
 # 進行中：同一個 file_hash 同時最多一筆（partial unique index）。
 ACTIVE_STATES: tuple[str, ...] = (STATE_QUARANTINED, STATE_SCANNING, STATE_CLEAN, STATE_PROCESSING, STATE_DRAFT)
 
+# 處理中（還在佔用掃描與入庫的產能）：全站上限 `UPLOAD_MAX_IN_FLIGHT` 數的是這組。draft 已處理完、等人審，不算。
+IN_FLIGHT_STATES: tuple[str, ...] = (STATE_QUARANTINED, STATE_SCANNING, STATE_CLEAN, STATE_PROCESSING)
+
 # 不會再自動前進的狀態（published 仍可被隱藏，但那是 report_visibility 的事）。
 TERMINAL_STATES: tuple[str, ...] = (
     STATE_INFECTED, STATE_BLOCKED, STATE_DUPLICATE, STATE_PUBLISHED, STATE_REJECTED,

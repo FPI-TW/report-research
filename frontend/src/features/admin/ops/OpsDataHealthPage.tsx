@@ -89,12 +89,12 @@ function FreshnessCard({ s }: { s: FreshnessSection }) {
                 <td><span className={`${styles.pill} ${FRESHNESS_CLASS[f.state]}`}>{FRESHNESS_LABELS[f.state]}</span></td>
                 <td className={adminStyles.num}>
                   {fmtDateTime(f.latest)}
-                  <div className={adminStyles.muted}>{fmtAge(f.age_days)}</div>
+                  {f.age_days != null && <div className={adminStyles.muted}>{fmtAge(f.age_days)}</div>}
                 </td>
                 <td className={adminStyles.num}>
                   {f.threshold_days > 0 ? `${f.threshold_days} ${f.asset === 'pipeline' ? '小時' : '天'}` : '不告警'}
                 </td>
-                <td className={adminStyles.wrapCell}>{f.detail}</td>
+                <td><div className={styles.cellText}>{f.detail}</div></td>
               </tr>
             ))}
           </tbody>
@@ -123,13 +123,16 @@ function AuditCard({ s }: { s: DbAuditSection }) {
               <tbody>
                 {s.findings.map(f => (
                   <tr key={f.key}>
-                    <td className={adminStyles.wrapCell}>{f.label}<div className={adminStyles.muted}>{f.key}</div></td>
+                    <td>
+                      <div className={styles.cellText}>{f.label}</div>
+                      <div className={adminStyles.muted}>{f.key}</div>
+                    </td>
                     <td>{f.severity === 'error' ? '錯誤' : '警告'}</td>
                     <td className={adminStyles.num}>
                       <span className={`${styles.pill} ${f.count > 0 ? styles.sFailed : styles.sRunning}`}>{f.count}</span>
                     </td>
-                    <td className={adminStyles.wrapCell}>
-                      {f.count > 0 ? f.detail : <span className={adminStyles.muted}>乾淨</span>}
+                    <td>
+                      {f.count > 0 ? <div className={styles.cellText}>{f.detail}</div> : <span className={adminStyles.muted}>乾淨</span>}
                     </td>
                   </tr>
                 ))}

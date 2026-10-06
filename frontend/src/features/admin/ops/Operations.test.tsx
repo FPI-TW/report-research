@@ -143,7 +143,7 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
     }
     if (url.startsWith('/api/admin/observations')) {
       return json({ body: { since: '2026-10-06T01:00:00Z', until: '2026-10-06T02:00:00Z', limit: 5000,
-        truncated: false, items: HOST_OBS } })
+        truncated: false, resolution: 'raw', items: HOST_OBS } })
     }
     if (url === '/api/me') return json({ body: { id: 'me', username: 'root', role: 'admin', scopes } })
     if (url === '/api/admin/ops/services') return json({ body: LIST })
@@ -420,12 +420,14 @@ test('主機：最新值與一小時最高值、檔案系統用量；沒有資�
   const fs = within(screen.getByRole('table', { name: '檔案系統' }))
   expect(fs.getByText('/home/kashionz/projects/report-mark')).toBeInTheDocument()
   expect(fs.getByText('24.6%')).toBeInTheDocument()
+  expect(screen.getByText(/粒度/)).toHaveTextContent('原始觀測（每 60 秒）')
 })
 
 test('主機：最近一小時沒有觀測時給出明確說明', async () => {
   mount('/admin/operations/host', {
     override: url => url.startsWith('/api/admin/observations')
-      ? { body: { since: '2026-10-06T01:00:00Z', until: '2026-10-06T02:00:00Z', limit: 5000, truncated: false, items: [] } }
+      ? { body: { since: '2026-10-06T01:00:00Z', until: '2026-10-06T02:00:00Z', limit: 5000, truncated: false,
+        resolution: 'raw', items: [] } }
       : undefined,
   })
   expect(await screen.findByText(/最近一小時沒有主機觀測/)).toHaveTextContent('report-mark-load-observations.timer')

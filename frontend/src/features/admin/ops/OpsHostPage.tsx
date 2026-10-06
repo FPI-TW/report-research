@@ -1,4 +1,4 @@
-import type { ObservationItem } from '../../../lib/generated/adminApi'
+import type { ObservationItem, ObservationListResponse } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
 import { OpsQueryError } from './OpsShared'
 import { useHostObservations } from './useOps'
@@ -6,6 +6,13 @@ import adminStyles from '../Admin.module.css'
 import styles from './Ops.module.css'
 
 type Latest = Map<string, Map<string, ObservationItem>>
+
+/** 後端依查詢區間選的粒度（24 小時內逐筆，更早的是 5 分鐘／1 小時聚合，見 revision 0007）。 */
+const RESOLUTION_LABEL: Record<ObservationListResponse['resolution'], string> = {
+  raw: '原始觀測（每 60 秒）',
+  '5m': '5 分鐘聚合',
+  '1h': '1 小時聚合',
+}
 
 /** 依 subject、metric 取最新一筆（後端回新→舊，第一次出現的就是最新）。 */
 function latestBySubject(items: ObservationItem[]): Latest {
@@ -21,8 +28,10 @@ function latestBySubject(items: ObservationItem[]): Latest {
 function peak(items: ObservationItem[], subject: string, metric: string): number | null {
   let best: number | null = null
   for (const it of items) {
-    if (it.subject === subject && it.metric === metric && it.value != null && (best == null || it.value > best)) {
-      best = it.value
+    // 聚合的桶 value 是平均，最高值要看 value_max
+    const v = it.value_max ?? it.value
+    if (it.subject === subject && it.metric === metric && v != null && (best == null || v > best)) {
+      best = v
     }
   }
   return best
@@ -84,6 +93,7 @@ export default function OpsHostPage() {
           <p className={styles.meta}>
             <span>{newest.host}</span>
             <span>最新觀測 <b>{fmtDateTime(newest.observed_at)}</b>（每 5 分鐘匯入，最多晚一輪）</span>
+            <span>粒度 <b>{RESOLUTION_LABEL[q.data.resolution]}</b></span>
             {q.data.truncated && <span>資料超過上限，只顯示最近的部分</span>}
           </p>
           <div className={adminStyles.spacer} />

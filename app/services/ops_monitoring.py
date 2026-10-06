@@ -391,9 +391,10 @@ async def import_records(session, *, observations: list[dict], jobs: list[dict],
 # ── 管理後台的唯讀查詢（/api/admin/jobs、/api/admin/observations）──────────────
 #
 # 時間範圍與筆數的上限由路由層驗證（超過回 400／422）；這裡只負責 SQL。沒有時區的時間一律當 UTC。
+# 觀測的時間範圍上限＝保留期（90 天，revision 0007）；超過 24 小時的查詢由 `ops_rollup` 回聚合後的桶。
 
 OBSERVATION_DEFAULT_WINDOW = timedelta(hours=1)
-OBSERVATION_MAX_WINDOW = timedelta(days=7)
+OBSERVATION_MAX_WINDOW = timedelta(days=90)
 OBSERVATION_MAX_LIMIT = 5000
 JOB_DEFAULT_WINDOW = timedelta(days=7)
 JOB_MAX_WINDOW = timedelta(days=90)

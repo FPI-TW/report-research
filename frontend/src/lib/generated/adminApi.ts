@@ -186,6 +186,12 @@ export const ObservationItemSchema = z.object({
   value: z.number().nullable().optional(),
   state: z.string().nullable().optional(),
   detail: z.record(z.string(), z.unknown()).nullable().optional(),
+  sample_count: z.number().int().nullable().optional(),
+  value_min: z.number().nullable().optional(),
+  value_max: z.number().nullable().optional(),
+  value_last: z.number().nullable().optional(),
+  first_state: z.string().nullable().optional(),
+  state_changes: z.number().int().nullable().optional(),
 })
 export type ObservationItem = z.infer<typeof ObservationItemSchema>
 
@@ -194,6 +200,7 @@ export const ObservationListResponseSchema = z.object({
   until: z.string(),
   limit: z.number().int(),
   truncated: z.boolean(),
+  resolution: z.enum(['raw', '5m', '1h']),
   items: z.array(ObservationItemSchema),
 })
 export type ObservationListResponse = z.infer<typeof ObservationListResponseSchema>

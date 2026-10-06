@@ -95,6 +95,12 @@ class _FakeMonitoring:
 
     async def list_observations(self, session, **kw):
         self.calls.append(("observations", kw))
+        if kw.get("resolution", "raw") != "raw":
+            return False, [
+                {"observed_at": T0, "host": "office-host", "scope": "host", "subject": "host", "metric": "cpu_pct",
+                 "value": 4.75, "state": None, "detail": None, "sample_count": 4, "value_min": 1.0,
+                 "value_max": 10.0, "value_last": 10.0, "first_state": None, "state_changes": 0},
+            ]
         return True, [
             {"observed_at": T0, "host": "office-host", "scope": "service", "subject": "web",
              "metric": "active_state", "value": None, "state": "active", "detail": {"sub_state": "running"}},
@@ -200,6 +206,8 @@ class AdminMonitoringApiTests(unittest.TestCase):
         self.assertEqual(kw["until"] - kw["since"], timedelta(hours=1), "預設最近一小時")
         body = r.json()
         self.assertTrue(body["truncated"])
+        self.assertEqual(body["resolution"], "raw")
+        self.assertIsNone(body["items"][0]["sample_count"], "原始觀測沒有聚合欄位")
         self.assertEqual(body["items"][0]["detail"], {"sub_state": "running"})
         self.assertEqual(body["items"][1]["value"], 12.5)
         self.assertEqual(body["items"][1]["observed_at"], T0.isoformat())
@@ -217,10 +225,26 @@ class AdminMonitoringApiTests(unittest.TestCase):
         self.assertEqual(admin.get("/api/admin/observations", params={"scope": "disk"}).status_code, 422)
         self.assertEqual(admin.get("/api/admin/observations", params={"metric": "CPU"}).status_code, 422)
         r = admin.get("/api/admin/observations", params={
-            "since": "2026-09-01T00:00:00+00:00", "until": "2026-09-09T00:00:00+00:00"})
-        self.assertEqual(r.status_code, 400)
+            "since": "2026-06-01T00:00:00+00:00", "until": "2026-08-31T00:00:00+00:00"})
+        self.assertEqual(r.status_code, 400, "範圍最多 90 天（＝保留期）")
         self.assertEqual(r.json()["code"], "invalid_params")
         self.assertEqual(self.fake.calls, [])
+
+    def test_observations_pick_resolution_from_since(self):
+        admin = self._login("root", ADMIN_PW)
+        now = datetime.now(timezone.utc)
+        for ago, want in ((None, "raw"), (timedelta(hours=23), "raw"), (timedelta(days=3), "5m"),
+                          (timedelta(days=30), "1h"), (timedelta(days=89), "1h")):
+            with self.subTest(ago=ago):
+                self.fake.calls.clear()
+                params = {} if ago is None else {"since": (now - ago).isoformat()}
+                r = admin.get("/api/admin/observations", params=params)
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertEqual(r.json()["resolution"], want)
+                self.assertEqual(self.fake.calls[0][1]["resolution"], want, "粒度原樣轉給服務層")
+                item = r.json()["items"][0]
+                if want != "raw":
+                    self.assertEqual((item["value"], item["sample_count"], item["value_max"]), (4.75, 4, 10.0))
 
 
     def test_incidents_pass_filters_default_window_and_shape(self):

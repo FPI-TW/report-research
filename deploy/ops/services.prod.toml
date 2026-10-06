@@ -253,3 +253,25 @@ timer = "report-mark-rollup-observations.timer"
 tier = "supporting"
 actions = ["status", "logs"]
 description = "監控觀測聚合與 90 天保留（每小時）"
+
+# ── 帳號刪除（L1）────────────────────────────────────────────────────────────
+# 唯讀：刪除排程到期才由 timer 執行；不給 run——手動「立即執行」會繞過 24 小時撤銷窗口的語意
+# （execute_deletions 只處理到期的排程，但讓人誤以為能提前刪）。重放由還原流程手動跑。
+
+[[services]]
+name = "delete-accounts"
+kind = "systemd"
+unit = "report-mark-delete-accounts.service"
+timer = "report-mark-delete-accounts.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "執行到期的帳號刪除（先寫 NAS tombstone 再刪 DB，每小時）"
+
+[[services]]
+name = "replay-deletions"
+kind = "systemd"
+unit = "report-mark-replay-deletions.service"
+timer = "report-mark-replay-deletions.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "還原後重放帳號刪除（比對 NAS tombstone，資料復活就重刪並告警，每日）"

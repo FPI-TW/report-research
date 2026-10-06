@@ -150,7 +150,8 @@ class StampFlowTests(unittest.TestCase):
 
 class FullDumpPreflightTests(unittest.TestCase):
     # 密碼刻意用不可能出現在暫存路徑裡的字串：曾用 "pw"，tempfile 的隨機目錄名偶爾含 "pw" 而誤判。
-    SECRET = "NotInArgv-7f3c9e"
+    # 用 fixed-test-secret- 前綴：.gitleaks.toml 只放行這個形狀的假值，其他高熵字串會被當成外洩。
+    SECRET = "fixed-test-secret-notinargv"
     URL = f"postgresql+asyncpg://postgres:{SECRET}@127.0.0.1:5437/research"
 
     def setUp(self):

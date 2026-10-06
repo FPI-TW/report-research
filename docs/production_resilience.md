@@ -2082,11 +2082,23 @@ make down-clamav   # 停掉並移除容器；病毒碼 volume 保留（刻意不
   在子行程（`RLIMIT_AS`＝`UPLOAD_PREFLIGHT_MEMORY_MB`，預設 2048；逾時 300 秒；頁數上限 300）。已知風險：
   入庫核心會在主行程再抽一次字，pdfplumber 抽 300 頁的密集文字約 1.7 GB，加上已載入的 BGE-M3 會逼近 4G——
   撞到時 cgroup OOM 砍掉這一輪，殘留回收把它退回 `clean`，同一份檔被中止 3 次就轉 `failed`（不會無限重試）。
+  實測 RSS 待補：上線後量一週，填進 `docs/CAPACITY.md`「批次元件：上傳 worker」。
 
-退出碼與告警：0 做完了（含另一輪在跑、backfill 在跑、斷路器延後）、1 自己壞了（OnFailure → `report-mark-alert@`）、
-2 環境型不跑（DB 連不上、LLM 設定或帳號問題）、75 撞 claude 鎖；unit 把 2 與 75 列為成功（timer 每 5 分鐘、告警器
-沒有去重）。DB 由 web 探針、DeepSeek 由 `/healthz/llm`（探針 7／8）、clamd 由容器探針各自告警。偵測到感染時
-worker 自己留痕：稽核 `upload.infected`（actor NULL）、journal 一行 err 優先序（`journalctl -p err -u report-mark-upload`）、
+退出碼與告警（unit 以 `OnFailure=report-mark-alert@%n.service` 加 `SuccessExitStatus=2 75` 表達；分界是「會不會自己好」：
+會自己好的不告警——timer 每 5 分鐘、`report-mark-alert@` 沒有去重，算成失敗就是每 5 分鐘一則重複通知）：
+
+| 退出碼 | 意思 | 告警 |
+|---|---|---|
+| 0 | 做完了。另一輪 worker 還在跑、backfill 正在跑（只掃描）、批次斷路器有效（`clean` 標 `llm_breaker` 延後）也是 0 | 否 |
+| 1 | 自己壞了：例外、SQL 錯誤、隔離區或乾淨檔目錄的權限 | 是 |
+| 2 | 這輪不跑、會自己好：DB 連不上（web 探針經 P5 帶去重告警）。乾淨檔維持 `clean` | 否 |
+| 3 | LLM 設定或帳號錯誤、不會自己好：缺金鑰、`/etc/default/report-mark-llm` 讀不到（不存在／權限）、`LLM_PROVIDER` 拼錯、未知模型名、環境檔有重複的鍵（`require_llm_key` 拒跑），以及入庫途中的 401／402／400 升級。乾淨檔維持 `clean` | 是 |
+| 75 | 入庫段撞 claude 鎖（sync 或手動 LLM 批次在跑），乾淨檔留到下一輪；掃描與清除照做 | 否 |
+
+3 只在真的有上傳在等（有 `clean`）時才會出現，所以沒有上傳時不會每 5 分鐘告警；有上傳在等而設定沒修好時，
+每一輪都會再告警一次（刻意：上傳卡住而沒有人知道比較糟）。處置看 `journalctl -u report-mark-upload` 裡 `[llm-env]`
+那一行（缺金鑰時它會說是檔案不存在、權限，還是檔裡沒填）。clamd 由容器探針告警（掃不到只會留在隔離區，不影響
+退出碼）。偵測到感染時 worker 自己留痕：稽核 `upload.infected`（actor NULL）、journal 一行 err 優先序（`journalctl -p err -u report-mark-upload`）、
 有設 `REPORT_MARK_ALERT_WEBHOOK` 另送 webhook（unit 載入 `/etc/report-mark/alert.env`，URL 經 stdin 給 curl）。
 
 ### 安裝（人工；只在要啟用上傳時做，需 sudo）
@@ -2124,6 +2136,8 @@ sudo systemctl enable --now report-mark-upload.timer
 | 一直停在 `quarantined`，`scan_last_error` 是 `connection_refused`／`timeout`／`signatures_stale` | 管理頁掃描器橫幅；容器探針的 clamav 事件 | 見上一節「clamd 掛掉時」；修好後下一輪自動掃 |
 | 一直停在 `clean`，`failure_kind=llm_breaker` | journal「LLM 斷路器有效」 | DeepSeek 恢復、斷路器標記過期（30 分鐘）後自動處理；確認恢復可刪 `data/.llm_breaker` |
 | 一直停在 `clean`、沒有 failure_kind | journal「claude 鎖被其他 LLM 批次佔用」（rc=75）或「抽取回填正在跑」 | 等對方結束；下一輪自動處理 |
+| 一直停在 `clean`，unit 每輪 rc=3 告警 | journal「LLM 設定錯誤」與上方 `[llm-env]` 那一行 | 照 `[llm-env]` 的提示修環境檔或金鑰（見「DeepSeek 金鑰落點與輪替」）；修好後下一輪自動處理 |
+| `blocked`、`failure_kind=scan_heuristic` | 稽核 `upload.blocked`；`scan_signature` 是 `Heuristics.*`（例如加密、超過掃描上限） | 規則攔截不是病毒，同一份檔可以在處理掉原因後重新上傳（不會被 422 擋）；證據 30 天後自動刪 |
 | `failed`（`tag_failed`／`ingest_error`／`extract_timeout`） | 管理頁失敗頁籤 | 排除原因後在管理頁「重試」（受全站處理中上限） |
 | `infected` | 稽核 `upload.infected`、journal err、webhook | 檔案在 `<隔離區>/infected/<upload_id>.bin`（0400），web 沒有任何端點取得回；確認上傳者與來源。30 天後 worker 自動刪檔（`upload.evidence_purged`），DB 那一列永久保留 |
 | 下游沒跑完（摘要、標題、摘錄缺） | journal 印出 `data/upload_hashes_retained_<時間>.txt` 與補跑指令 | 照印出的指令以 `--hashes-file` 補跑（三段都冪等） |

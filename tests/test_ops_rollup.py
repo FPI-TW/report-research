@@ -84,5 +84,19 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(ro.main(["--batch-size", "-1"]), ro.EXIT_FAILED)
 
 
+
+class RollupUnitAlertingTests(unittest.TestCase):
+    """rc=1（核對不符／SQL 錯誤）要告警；rc=2（DB 不可用，P5 已告警）與 rc=75（撞鎖）不得告警。"""
+
+    UNIT = Path(__file__).resolve().parents[1] / "deploy" / "systemd" / "report-mark-rollup-observations.service"
+
+    def test_on_failure_alerts_but_db_down_and_lock_busy_are_success(self):
+        text = self.UNIT.read_text(encoding="utf-8")
+        directives = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        self.assertIn("OnFailure=report-mark-alert@%n.service", directives)
+        success = next(ln for ln in directives if ln.startswith("SuccessExitStatus="))
+        self.assertEqual(set(success.split("=", 1)[1].split()), {"2", "75"})
+
+
 if __name__ == "__main__":
     unittest.main()

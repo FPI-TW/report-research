@@ -19,6 +19,8 @@ const AdminUsersPage = lazy(routeLoaders.adminUsers)
 const AdminReviewsPage = lazy(routeLoaders.adminReviews)
 const AdminAuditPage = lazy(routeLoaders.adminAudit)
 const AdminReportsPage = lazy(routeLoaders.adminReports)
+const AdminUploadsPage = lazy(routeLoaders.adminUploads)
+const AdminUploadDetailPage = lazy(routeLoaders.adminUpload)
 // 維運（/admin/operations/*）：外殼（標題＋子導覽、ops.read 守門）＋各子頁；jobs／incidents／host 讀 DB 投影。
 const OperationsLayout = lazy(routeLoaders.adminOps)
 const OpsOverviewPage = lazy(routeLoaders.adminOpsOverview)
@@ -78,6 +80,8 @@ export const routes = [
           { path: 'reviews', element: <Suspense><AdminReviewsPage /></Suspense> },
           { path: 'audit', element: <Suspense><AdminAuditPage /></Suspense> },
           { path: 'reports', element: <Suspense><AdminReportsPage /></Suspense> },
+          { path: 'uploads', element: <Suspense><AdminUploadsPage /></Suspense> },
+          { path: 'uploads/:uploadId', element: <Suspense><AdminUploadDetailPage /></Suspense> },
           {
             path: 'operations',
             element: <Suspense><OperationsLayout /></Suspense>,

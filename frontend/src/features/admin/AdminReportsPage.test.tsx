@@ -104,7 +104,10 @@ test('草稿：顯示草稿徽章、不連閱讀頁、不提供隱藏與恢復',
   const draft = await row('cccc.pdf')
   expect(draft.getByText('草稿')).toBeInTheDocument()
   expect(draft.queryByText('顯示中')).not.toBeInTheDocument()
-  expect(draft.queryByRole('link')).not.toBeInTheDocument()
+  // 不連閱讀頁（草稿一般頁面 404）；徽章與操作欄連到上傳清單的「待審草稿」分頁籤。
+  expect(draft.getByRole('link', { name: '草稿' })).toHaveAttribute('href', '/admin/uploads?tab=draft')
+  expect(draft.getByRole('link', { name: '到上傳審核' })).toHaveAttribute('href', '/admin/uploads?tab=draft')
+  expect(draft.getAllByRole('link').every(a => !a.getAttribute('href')?.startsWith('/report/'))).toBe(true)
   expect(draft.queryByRole('button', { name: '隱藏' })).not.toBeInTheDocument()
   expect(draft.queryByRole('button', { name: '恢復' })).not.toBeInTheDocument()
   // 舊回應沒有 publication 欄位時視同已發布。

@@ -3,8 +3,10 @@
 SQL 對真 DB 的冪等與 lost 判定在 `tests/test_ops_monitoring_db.py`；這裡用假 session 驗 loader 本身：
 - DB 不可用：rc=2，spool 的資料檔與進度檔原封不動，下一輪從同一個位置重讀；
 - 成功：進度只在 commit 之後前進，同一份 spool 第二輪不再送出任何列；
-- 只碰自己的檔：`incidents-*.jsonl`、`journal/` 不讀不刪；自己的檔裡不認得的紀錄（事件類、未知版本）
+- 只碰自己的檔：別的命名規則的檔不讀不刪；自己的檔裡不認得的紀錄（type 與檔案種類不符、未知版本）
   不匯入，而且那個檔不會被清理刪除；
+- 事件（P5 的 incidents-*.jsonl＋journal/ 片段）：片段隨事件一起送出（遮掉祕密），commit 之後才刪片段檔；
+  DB 不可用時事件檔與片段原封不動；孤兒片段只在沒有任何事件行引用、而且夠舊時才刪；
 - 寫到一半的最後一行不讀；舊日檔讀完、安靜夠久才刪；檔案被換掉從頭讀；鎖被持有 rc=75。
 """
 
@@ -80,9 +82,10 @@ class LoaderTests(unittest.TestCase):
         self.calls: list[dict] = []
         self.log: list[str] = []
 
-    async def _fake_import(self, session, *, observations, jobs):
-        self.calls.append({"observations": list(observations), "jobs": list(jobs)})
-        return lo.ops_monitoring.ImportStats(observations=len(observations), jobs=len(jobs))
+    async def _fake_import(self, session, *, observations, jobs, events=None):
+        self.calls.append({"observations": list(observations), "jobs": list(jobs), "events": list(events or [])})
+        return lo.ops_monitoring.ImportStats(observations=len(observations), jobs=len(jobs),
+                                             events=len(events or []))
 
     def _run(self, *, factory=None, today=TODAY, **kw):
         factory = factory or (lambda: _Session(self.log))
@@ -159,17 +162,17 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(len(self.calls[1]["observations"]), 1)
 
     def test_foreign_files_are_never_read_or_deleted(self):
-        incident = self._write(f"incidents-{OLD}.jsonl", _lines({"v": 1, "type": "incident_event", "x": 1}),
-                               age=86400)
+        foreign = self._write(f"alerts-{OLD}.jsonl", _lines({"v": 1, "type": "incident_event", "x": 1}),
+                              age=86400)
         (self.spool / "journal").mkdir()
-        journal = self._write("journal/abc.log", "line\n", age=30 * 86400)
+        not_ours = self._write("journal/abc.txt", "line\n", age=30 * 86400)
         self._write(f"observations-{OLD}.jsonl", _lines(_obs()), age=86400)
-        before = {p: p.read_bytes() for p in (incident, journal)}
+        before = {p: p.read_bytes() for p in (foreign, not_ours)}
         self.assertEqual(self._run(), lo.EXIT_OK)
-        self.assertEqual({p: p.read_bytes() for p in (incident, journal)}, before)
+        self.assertEqual({p: p.read_bytes() for p in (foreign, not_ours)}, before)
         self.assertFalse((self.spool / f"observations-{OLD}.jsonl").exists(), "自己的舊日檔匯入後刪掉")
         state = json.loads((self.spool / lo.STATE_FILE).read_text(encoding="utf-8"))
-        self.assertNotIn(incident.name, state["files"])
+        self.assertNotIn(foreign.name, state["files"])
 
     def test_unknown_records_in_own_files_are_kept_not_imported(self):
         path = self._write(
@@ -245,6 +248,139 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(os.environ.get("OPS_SPOOL_DIR"), os.devnull)
         with mock.patch("builtins.print"):
             self.assertEqual(lo.main([]), lo.EXIT_OK)
+
+
+FIRST = 1791252000  # 2026-10-06T10:00:00+08:00
+
+
+def _event(action="FIRING", *, comp="web", first=FIRST, at=FIRST, journal=None, **kw) -> dict:
+    iid = f"office-host:{comp}:{first}"
+    rec = {"v": 1, "type": "incident_event", "event_id": f"{iid}:{at}:{action}", "incident_id": iid,
+           "host": "office-host", "component": comp, "kind": "service", "probe_unit": "report-mark-health.service",
+           "action": action, "severity": "RESOLVED" if action == "RESOLVED" else "CRITICAL",
+           "incident_severity": "CRITICAL", "reason": "probe_exit_1" if action != "RESOLVED" else "healthy",
+           "status": "web_incident" if action != "RESOLVED" else "ok", "summary": "探針回報失敗",
+           "notified": True, "occurred_at": "2026-10-05T10:00:00+08:00", "first_seen_at": "2026-10-05T10:00:00+08:00",
+           "journal_file": journal, "journal_bytes": 0, "journal_truncated": False,
+           "journal_since": "2026-10-05T09:50:00+08:00" if journal else None,
+           "journal_until": "2026-10-05T10:00:00+08:00" if journal else None,
+           "journal_units": "report-mark-health.service" if journal else None}
+    rec.update(kw)
+    return rec
+
+
+class IncidentLoaderTests(unittest.TestCase):
+    """事件 spool：片段隨事件送出、commit 後才刪；DB 掛掉時原封不動；孤兒判定保守。"""
+
+    # 共用 LoaderTests 的夾具（不繼承，免得把它的測試再跑一次）
+    setUp = LoaderTests.setUp
+    _fake_import = LoaderTests._fake_import
+    _run = LoaderTests._run
+    _write = LoaderTests._write
+    _snapshot = LoaderTests._snapshot
+
+    def _journal(self, name, text, *, age=None):
+        (self.spool / "journal").mkdir(exist_ok=True)
+        return self._write(f"journal/{name}", text, age=age)
+
+    def test_events_are_imported_with_their_journal_and_the_excerpt_file_is_removed_after_commit(self):
+        j = self._journal("web-1-1-FIRING.log", "a\nAPI_KEY=sk-abcdefghijklmnopqrstu\nb\n")
+        self._write(f"incidents-{TODAY}.jsonl", _lines(_event(journal="journal/web-1-1-FIRING.log"),
+                                                       _event("REMINDER", at=FIRST + 1800)))
+        self.assertEqual(self._run(), lo.EXIT_OK)
+        events = self.calls[0]["events"]
+        self.assertEqual([e["action"] for e in events], ["FIRING", "REMINDER"])
+        self.assertIn("<redacted>", events[0]["journal_excerpt"])
+        self.assertNotIn("sk-abcdefghijklmnop", events[0]["journal_excerpt"])
+        self.assertIsNone(events[1]["journal_excerpt"])
+        self.assertFalse(j.exists(), "commit 之後片段檔刪掉（正本在 journald）")
+        self.assertEqual(self._run(), lo.EXIT_OK)
+        self.assertEqual(len(self.calls), 1, "同一份事件 spool 第二輪不再送出")
+
+    def test_db_unavailable_keeps_events_and_journals_untouched(self):
+        self._journal("web-1-1-FIRING.log", "boom\n", age=7200)
+        self._write(f"incidents-{OLD}.jsonl", _lines(_event(journal="journal/web-1-1-FIRING.log")), age=86400)
+        before = self._snapshot()
+
+        def broken():
+            raise ConnectionRefusedError("db down")
+
+        with mock.patch("sys.stderr"):
+            self.assertEqual(self._run(factory=broken), lo.EXIT_DB)
+        self.assertEqual(self._snapshot(), before, "DB 不可用時事件檔、片段與進度都原封不動")
+        self.assertEqual(self._run(), lo.EXIT_OK)
+        self.assertEqual(self.calls[0]["events"][0]["journal_excerpt"], "boom\n")
+        self.assertFalse((self.spool / f"incidents-{OLD}.jsonl").exists(), "匯入完的舊日事件檔才刪")
+
+    def test_orphan_journals_are_removed_only_when_unreferenced_and_old(self):
+        old_orphan = self._journal("web-1-2-FIRING.log", "x\n", age=7200)
+        young_orphan = self._journal("web-1-3-FIRING.log", "x\n", age=60)
+        stale_tmp = self._journal(".web-1-4-FIRING.log.tmp.123", "x\n", age=7200)
+        # 被尚未讀到的事件行引用（這一輪的位元組預算只讀得到第一個檔）：再舊也不刪
+        pending = self._journal("web-1-5-FIRING.log", "x\n", age=7200)
+        first = _lines(_event(at=FIRST + 1))
+        self._write(f"incidents-{OLD}.jsonl", first, age=86400)
+        self._write(f"incidents-{TODAY}.jsonl", _lines(_event(at=FIRST + 2, journal="journal/web-1-5-FIRING.log")))
+        self._run(max_bytes=len(first.encode("utf-8")))
+        self.assertFalse(old_orphan.exists())
+        self.assertFalse(stale_tmp.exists())
+        self.assertTrue(young_orphan.exists(), "P5 可能剛寫完片段、還沒寫那一行")
+        self.assertTrue(pending.exists(), "還沒匯入的事件行引用的片段不得被當孤兒刪掉")
+        self._run()
+        self.assertFalse(pending.exists())
+        self.assertEqual(self.calls[1]["events"][0]["journal_excerpt"], "x\n")
+
+    def test_journal_reference_cannot_escape_the_spool(self):
+        outside = Path(self.tmp.name) / "secret.log"
+        outside.write_text("do not read\n", encoding="utf-8")
+        self._write(f"incidents-{TODAY}.jsonl", _lines(_event(journal="journal/../../secret.log")))
+        self._run()
+        self.assertIsNone(self.calls[0]["events"][0]["journal_excerpt"])
+        self.assertTrue(outside.exists())
+
+    def test_invalid_utf8_in_an_event_line_is_replaced_not_dropped(self):
+        raw = json.dumps(_event(), ensure_ascii=False).encode("utf-8").replace("探針".encode(), b"\xe6\x8e")
+        (self.spool / f"incidents-{TODAY}.jsonl").write_bytes(raw + b"\n")
+        self._run()
+        self.assertEqual(len(self.calls[0]["events"]), 1)
+
+    def test_invalid_event_lines_are_skipped(self):
+        self._write(f"incidents-{TODAY}.jsonl", _lines(
+            _event(severity="CRITICAL", action="RESOLVED"),          # RESOLVED 必須配 RESOLVED
+            _event(event_id="other:1:FIRING"),                       # event_id 不屬於這個事件
+            _event(kind="nope"), _event(first_seen_at="2026-10-05T10:00:00"),  # 沒時區
+            _event(),
+        ))
+        self._run()
+        self.assertEqual(len(self.calls[0]["events"]), 1)
+
+
+class HandlerLoaderFormatTests(unittest.TestCase):
+    """P5 真的寫出來的事件行與片段，loader 的驗證必須全部接受（兩端同一份格式）。"""
+
+    def test_handler_records_pass_loader_validation(self):
+        from test_incident_handler import _Harness, _install_fake_journalctl
+
+        h = _Harness(webhook="http://example.invalid/hook")
+        self.addCleanup(h.close)
+        _install_fake_journalctl(h, "2026-10-06T10:00:00+08:00 host web[1]: password=hunter2 boom\n")
+        spool = h.root / "spool"
+        for code in (1, 1, 0):
+            h.set_probe(code, result="exit-code" if code else "success")
+            h.run(INCIDENT_SPOOL_DIR=str(spool), INCIDENT_REMINDER_SECONDS="0")
+        h.set_timer(timer_enabled="disabled")
+        h.run(INCIDENT_SPOOL_DIR=str(spool))
+        batch = lo.collect(spool, {}, lo.DEFAULT_MAX_BYTES)
+        self.assertEqual(batch.rejected, 0)
+        self.assertEqual(batch.malformed, 0)
+        self.assertEqual([(e["component"], e["action"]) for e in batch.events],
+                         [("web", "FIRING"), ("web", "REMINDER"), ("web", "RESOLVED"), ("monitor", "FIRING")])
+        firing = batch.events[0]
+        self.assertIn("password=<redacted>", firing["journal_excerpt"])
+        self.assertIsNotNone(firing["journal_since"])
+        self.assertEqual(firing["kind"], "service")
+        self.assertEqual(batch.events[-1]["kind"], "monitor_blind")
+        self.assertEqual(len({e["incident_id"] for e in batch.events[:3]}), 1)
 
 
 class CollectorLoaderFormatTests(unittest.TestCase):

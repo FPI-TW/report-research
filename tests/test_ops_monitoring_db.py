@@ -1,8 +1,10 @@
-"""監控投影對真的 PostgreSQL 成立（revision 0005 ＋ app/services/ops_monitoring.py ＋ load_observations）。
+"""監控投影對真的 PostgreSQL 成立（revision 0005／0006 ＋ app/services/ops_monitoring.py ＋ load_observations）。
 
 驗：同一份 spool 匯入兩次不重複（自然鍵）；批次 running → finished 只前進不倒退；沒看到結束、同 unit
 已有更晚開始的 invocation 時判 lost，之後補到結束紀錄仍改成 finished；DB 拒絕的列（CHECK）只略過那一列，
-同一批其他列照常寫入。
+同一批其他列照常寫入。事件投影（0006）：同一份事件 spool 匯入兩次不重複；status 由事件重算、與匯入順序無關
+（RESOLVED 先到也一樣）；沒收到 RESOLVED、同元件已有更晚開的事件時判 lost，補到 RESOLVED 仍改 resolved；
+清單的重疊時間篩選與詳情的事件順序、journal 片段。
 
 跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0005）就 skip。**一律 rollback、
 絕不 commit**——本機預設連到的是生產庫。斷言只針對自己塞進去的列（以隨機 host 辨識），不假設庫是空的。
@@ -63,6 +65,8 @@ def _run(fn):
     except Exception as exc:  # noqa: BLE001
         if "service_observation" in str(exc) or "job_execution" in str(exc):
             _skip_or_raise(exc, "庫還沒套 revision 0005")
+        if "incident" in str(exc):
+            _skip_or_raise(exc, "庫還沒套 revision 0006")
         raise
 
 
@@ -201,6 +205,164 @@ class OpsMonitoringDbTests(unittest.TestCase):
         self.assertGreaterEqual(total, 2)
         self.assertEqual([j["invocation_id"] for j in mine], [INV_B, INV_A], "依開始時間新→舊")
         self.assertEqual([j["invocation_id"] for j in finished], [INV_A])
+
+
+class IncidentProjectionDbTests(unittest.TestCase):
+    def setUp(self):
+        self.host = f"lane-test-{uuid.uuid4().hex[:12]}"
+        self.comp = f"t{uuid.uuid4().hex[:10]}"
+
+    def _ev(self, action, first, at, *, comp=None, severity=None, journal=None, reason=None) -> dict:
+        comp = comp or self.comp
+        iid = f"{self.host}:{comp}:{first}"
+
+        def iso(epoch):
+            return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+        rec = {"v": 1, "type": "incident_event", "event_id": f"{iid}:{at}:{action}", "incident_id": iid,
+               "host": self.host, "component": comp, "kind": "service", "probe_unit": "report-mark-health.service",
+               "action": action, "severity": "RESOLVED" if action == "RESOLVED" else (severity or "WARNING"),
+               "incident_severity": severity or "WARNING",
+               "reason": reason or ("healthy" if action == "RESOLVED" else "probe_exit_7"),
+               "status": "ok" if action == "RESOLVED" else "web_incident", "summary": f"{action} 說明",
+               "notified": True, "occurred_at": iso(at), "first_seen_at": iso(first),
+               "journal_file": None, "journal_since": iso(first - 600) if journal else None,
+               "journal_until": iso(first) if journal else None,
+               "journal_units": "report-mark-health.service" if journal else None, "journal_truncated": False}
+        row = om.incident_event_row(rec, journal)
+        assert row is not None, rec
+        return row
+
+    async def _incidents(self, session):
+        rows = await session.execute(text(
+            "SELECT incident_id, status, severity, reason, summary, event_count, resolved_at IS NOT NULL "
+            "FROM research.incident WHERE host = :h ORDER BY opened_at"), {"h": self.host})
+        return [tuple(r) for r in rows]
+
+    def test_same_event_spool_imported_twice_does_not_duplicate(self):
+        t0 = 1791252000
+        with tempfile.TemporaryDirectory() as tmp:
+            spool = Path(tmp)
+            (spool / "journal").mkdir()
+            (spool / "journal" / "a-1-1-FIRING.log").write_text("boom token=abc123\n", encoding="utf-8")
+            recs = []
+            for ev, jf in ((self._ev("FIRING", t0, t0), "journal/a-1-1-FIRING.log"),
+                           (self._ev("REMINDER", t0, t0 + 1800), None), (self._ev("RESOLVED", t0, t0 + 2000), None)):
+                rec = {"v": 1, "type": "incident_event", "event_id": ev["event_id"], "incident_id": ev["incident_id"],
+                       "host": self.host, "component": self.comp, "kind": "service",
+                       "probe_unit": ev["probe_unit"], "action": ev["action"], "severity": ev["severity"],
+                       "incident_severity": "WARNING", "reason": ev["reason"], "status": ev["status"],
+                       "summary": ev["summary"], "notified": True, "occurred_at": ev["occurred_at"].isoformat(),
+                       "first_seen_at": ev["opened_at"].isoformat(), "journal_file": jf}
+                recs.append(rec)
+            (spool / "incidents-20261006.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs),
+                                                            encoding="utf-8")
+            batch = lo.collect(spool, {}, lo.DEFAULT_MAX_BYTES)
+            again = lo.collect(spool, {}, lo.DEFAULT_MAX_BYTES)
+
+        async def body(session):
+            stats = await om.import_records(session, observations=[], jobs=[], events=batch.events)
+            first = await self._incidents(session)
+            await om.import_records(session, observations=[], jobs=[], events=again.events)
+            n_events = (await session.execute(text(
+                "SELECT count(*) FROM research.incident_event e JOIN research.incident i USING (incident_id) "
+                "WHERE i.host = :h"), {"h": self.host})).scalar_one()
+            excerpt = (await session.execute(text(
+                "SELECT journal_excerpt FROM research.incident_event e JOIN research.incident i USING (incident_id) "
+                "WHERE i.host = :h AND e.action = 'FIRING'"), {"h": self.host})).scalar_one()
+            return stats, first, await self._incidents(session), n_events, excerpt
+
+        stats, first, second, n_events, excerpt = _run(body)
+        self.assertEqual((stats.rejected, stats.events, stats.incidents), (0, 3, 1))
+        self.assertEqual(first, second)
+        self.assertEqual(n_events, 3)
+        self.assertEqual(first[0][1:], ("resolved", "WARNING", "probe_exit_7", "FIRING 說明", 3, True))
+        self.assertEqual(excerpt, "boom token=<redacted>\n")
+
+    def test_status_is_recomputed_regardless_of_import_order(self):
+        t0 = 1791252000
+        firing = self._ev("FIRING", t0, t0, severity="WARNING")
+        escalated = self._ev("ESCALATED", t0, t0 + 120, severity="CRITICAL", reason="probe_exit_8")
+        resolved = self._ev("RESOLVED", t0, t0 + 600, severity="CRITICAL")
+
+        async def body(session):
+            await om.import_records(session, observations=[], jobs=[], events=[resolved])
+            only_resolved = await self._incidents(session)
+            await om.import_records(session, observations=[], jobs=[], events=[escalated, firing])
+            return only_resolved, await self._incidents(session)
+
+        only_resolved, full = _run(body)
+        self.assertEqual(only_resolved[0][1:4], ("resolved", "CRITICAL", "unknown"),
+                         "只有 RESOLVED 時不拿 healthy 當事件原因")
+        self.assertEqual(full[0][1:], ("resolved", "CRITICAL", "probe_exit_8", "FIRING 說明", 3, True))
+
+    def test_missing_resolved_becomes_lost_once_a_newer_incident_opens_and_late_resolved_wins(self):
+        t0, t1 = 1791252000, 1791262000
+        a = self._ev("FIRING", t0, t0)
+        b = self._ev("FIRING", t1, t1)
+        other = self._ev("FIRING", t0 + 5, t0 + 5, comp=f"{self.comp}x")  # 別的元件不受影響
+        a_resolved = self._ev("RESOLVED", t0, t0 + 300)
+
+        async def body(session):
+            await om.import_records(session, observations=[], jobs=[], events=[a, other])
+            before = await self._incidents(session)
+            await om.import_records(session, observations=[], jobs=[], events=[b])
+            lost = await self._incidents(session)
+            await om.import_records(session, observations=[], jobs=[], events=[a_resolved])
+            return before, lost, await self._incidents(session)
+
+        before, lost, after = _run(body)
+        status = lambda rows: {r[0].split(":")[1] + ":" + r[0].rsplit(":", 1)[1]: r[1] for r in rows}  # noqa: E731
+        self.assertEqual(sorted(status(before).values()), ["firing", "firing"])
+        self.assertEqual(status(lost), {f"{self.comp}:{t0}": "lost", f"{self.comp}x:{t0 + 5}": "firing",
+                                        f"{self.comp}:{t1}": "firing"})
+        self.assertEqual(status(after)[f"{self.comp}:{t0}"], "resolved")
+
+    def test_rejected_event_does_not_block_the_rest(self):
+        t0 = 1791252000
+        good = self._ev("FIRING", t0, t0)
+        bad = dict(self._ev("REMINDER", t0, t0 + 60), reason="x" * 300)  # 繞過 Python 端驗證，讓 CHECK 擋
+
+        async def body(session):
+            stats = await om.import_records(session, observations=[], jobs=[], events=[good, bad])
+            return stats, await self._incidents(session)
+
+        stats, rows = _run(body)
+        self.assertEqual(stats.rejected, 1)
+        self.assertEqual(rows[0][5], 1)
+
+    def test_list_and_detail(self):
+        t0 = 1791252000
+        evs = [self._ev("FIRING", t0, t0, journal="2026-10-06 boom\n"), self._ev("RESOLVED", t0, t0 + 600),
+               self._ev("FIRING", t0 + 86400, t0 + 86400, severity="CRITICAL")]
+
+        def utc(epoch):
+            return datetime.fromtimestamp(epoch, tz=timezone.utc)
+
+        async def body(session):
+            await om.import_records(session, observations=[], jobs=[], events=evs)
+            total, rows = await om.list_incidents(session, since=utc(t0 - 3600), until=utc(t0 + 2 * 86400),
+                                                  component=self.comp)
+            firing = await om.list_incidents(session, since=utc(t0 - 3600), until=utc(t0 + 2 * 86400),
+                                             component=self.comp, status="firing")
+            # 視窗在第一個事件結束之後、第二個開場之前：resolved 的那個不重疊，firing 的那個還沒開
+            gap = await om.list_incidents(session, since=utc(t0 + 3600), until=utc(t0 + 7200), component=self.comp)
+            detail = await om.get_incident(session, rows[-1]["incident_id"])
+            missing = await om.get_incident(session, f"{self.host}:nope:1")
+            return total, rows, firing, gap, detail, missing
+
+        total, rows, firing, gap, (inc, events, truncated), missing = _run(body)
+        self.assertEqual(total, 2)
+        self.assertEqual([r["status"] for r in rows], ["firing", "resolved"], "依開場時間新→舊")
+        self.assertEqual(firing[0], 1)
+        self.assertEqual(gap, (0, []))
+        self.assertEqual(inc["status"], "resolved")
+        self.assertEqual([e["action"] for e in events], ["FIRING", "RESOLVED"])
+        self.assertEqual(events[0]["journal_excerpt"], "2026-10-06 boom\n")
+        self.assertEqual(events[0]["journal_units"], "report-mark-health.service")
+        self.assertIsNone(events[1]["journal_excerpt"])
+        self.assertFalse(truncated)
+        self.assertEqual(missing, (None, [], False))
 
 if __name__ == "__main__":
     unittest.main()

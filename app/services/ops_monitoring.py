@@ -1,17 +1,23 @@
 """監控投影：spool 紀錄 → DB（`scripts/load_observations.py`）與管理後台的唯讀查詢
-（`/api/admin/jobs`、`/api/admin/observations`）。
+（`/api/admin/jobs`、`/api/admin/observations`、`/api/admin/incidents*`）。
 
-資料流（理由見 revision 0005 的註解）：
+資料流（理由見 revision 0005、0006 的註解）：
 
-    collect_resource_usage.py ──► data/ops_spool/{observations,jobs}-*.jsonl ──► load_observations.py
+    collect_resource_usage.py ──► data/ops_spool/{observations,jobs}-*.jsonl ──┐
+    incident_handler.sh（P5）──► data/ops_spool/incidents-*.jsonl＋journal/*.log ┴► load_observations.py
                                                                                   └─► import_records()
                                                                                       ├─► service_observation
-                                                                                      └─► job_execution
+                                                                                      ├─► job_execution
+                                                                                      └─► incident／incident_event
 
 - **DB 只是 projection**：收集器不連 DB，告警也不經 DB（只有 P5 在發），所以這裡的表晚一點、少一點都
   不影響服務與告警。匯入一律冪等（自然鍵 ON CONFLICT），重匯同一份 spool 不會重複。
 - 驗證在 Python 端先做一次（與 CHECK 同規則），不合的紀錄計入 rejected 並略過；萬一 DB 仍拒絕，
   該批退回逐列（savepoint）重試，壞的那一列略過——一筆壞資料不得卡住整個 spool。
+- 事件：P5 每次已落地的狀態轉換一筆（event_id 去重）。incident 的 status／severity／reason／summary／
+  last_event_at／event_count 由 incident_event **重算**（與匯入順序無關）；沒收到 RESOLVED、同主機同元件卻
+  已有更晚開的事件時是 lost（P5 同元件同時只有一個事件，它必定已結束、只是時間不明），補到 RESOLVED 仍改
+  resolved。journal 片段匯入前去控制字元、每行截斷並遮掉形似祕密的片段（與 `/api/admin/ops/*/logs` 同一套）。
 - 批次執行：同一次 invocation 先 running、後 finished（之後不再變動）。沒看到結束、同主機同 unit 卻已有
   更晚開始的 invocation 時改成 lost（oneshot 不會重疊執行，它必定已經結束，只是結果不明）；日後若補到
   它的 finished 紀錄（spool 亂序）仍會改成 finished。
@@ -31,6 +37,8 @@ from typing import Any, Iterable
 from sqlalchemy import text
 from sqlalchemy.exc import DataError, IntegrityError
 
+from ops_agent.backends import clean_line
+
 SPOOL_VERSION = 1
 SCOPES = ("host", "container", "service")
 JOB_STATES = ("running", "finished", "lost")
@@ -46,6 +54,17 @@ _INVOCATION = re.compile(r"[0-9a-f]{32}")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _INT32 = (-(2**31), 2**31 - 1)
 
+# 事件投影（revision 0006 的 CHECK 逐字一致）
+INCIDENT_KINDS = ("service", "monitor_blind")
+INCIDENT_STATUSES = ("firing", "resolved", "lost")
+INCIDENT_SEVERITIES = ("CRITICAL", "WARNING")
+EVENT_ACTIONS = ("FIRING", "REMINDER", "ESCALATED", "RESOLVED")
+EVENT_SEVERITIES = ("CRITICAL", "WARNING", "RESOLVED")
+JOURNAL_MAX_BYTES = 262144  # incident_event.journal_excerpt 的 CHECK
+_INCIDENT_ID = re.compile(r"[A-Za-z0-9_.:-]{1,300}")
+_EVENT_ID = re.compile(r"[A-Za-z0-9_.:-]{1,400}")
+_COMPONENT = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
 
 @dataclass
 class ImportStats:
@@ -53,9 +72,12 @@ class ImportStats:
     jobs: int = 0
     rejected: int = 0
     lost: int = 0
+    events: int = 0
+    incidents: int = 0
 
     def as_dict(self) -> dict:
-        return {"observations": self.observations, "jobs": self.jobs, "rejected": self.rejected, "lost": self.lost}
+        return {"observations": self.observations, "jobs": self.jobs, "rejected": self.rejected, "lost": self.lost,
+                "events": self.events, "incidents": self.incidents}
 
 
 # ── spool 紀錄的驗證與正規化（純函式，不碰 DB）──────────────────────────────
@@ -143,6 +165,75 @@ def job_row(rec: dict) -> dict | None:
     }
 
 
+def clean_journal(raw: str | None, *, keep: str = "tail") -> tuple[str | None, bool]:
+    """journal 片段 → (可存的文字, 是否截斷)。
+
+    逐行：去 ANSI 與控制字元、每行最多 2000 字、遮掉形似祕密的片段（`ops_agent.backends.clean_line`，
+    與 logs API 同一套）。整段超過 JOURNAL_MAX_BYTES 時從 `keep` 的另一端截掉（FIRING 留最新的 tail、
+    RESOLVED 留最早的 head，與 P5 擷取時同一個方向），只在行界切。
+    """
+    if not raw:
+        return None, False
+    lines = [clean_line(ln) for ln in raw.replace("\r\n", "\n").split("\n")]
+    while lines and not lines[-1]:
+        lines.pop()
+    if not lines:
+        return None, False
+    text_ = "\n".join(lines) + "\n"
+    if len(text_.encode("utf-8")) <= JOURNAL_MAX_BYTES:
+        return text_, False
+    kept: list[str] = []
+    size = 0
+    for ln in (reversed(lines) if keep == "tail" else lines):
+        n = len(ln.encode("utf-8")) + 1
+        if size + n > JOURNAL_MAX_BYTES:
+            break
+        kept.append(ln)
+        size += n
+    if keep == "tail":
+        kept.reverse()
+    return ("\n".join(kept) + "\n") if kept else None, True
+
+
+def incident_event_row(rec: dict, journal: str | None = None) -> dict | None:
+    """一行 incident_event（P5 寫的 spool）→ 匯入用的一列（含 incident 骨架欄位）。不合格回 None。
+
+    `journal` 是 loader 讀到的片段原文（已解碼）；P5 已截斷過時 `journal_truncated` 照樣保留。
+    """
+    event_id, incident_id = rec.get("event_id"), rec.get("incident_id")
+    host, component, kind = rec.get("host"), rec.get("component"), rec.get("kind")
+    action, severity = rec.get("action"), rec.get("severity")
+    occurred, first_seen = parse_ts(rec.get("occurred_at")), parse_ts(rec.get("first_seen_at"))
+    if (not isinstance(event_id, str) or not _EVENT_ID.fullmatch(event_id)
+            or not isinstance(incident_id, str) or not _INCIDENT_ID.fullmatch(incident_id)
+            or not event_id.startswith(incident_id + ":")
+            or _host(host) is None or not isinstance(component, str) or not _COMPONENT.fullmatch(component)
+            or kind not in INCIDENT_KINDS or action not in EVENT_ACTIONS or severity not in EVENT_SEVERITIES
+            or (action == "RESOLVED") != (severity == "RESOLVED")
+            or occurred is None or first_seen is None):
+        return None
+    isev = rec.get("incident_severity")
+    if isev not in INCIDENT_SEVERITIES:
+        isev = severity if severity in INCIDENT_SEVERITIES else "WARNING"
+    reason = _text(rec.get("reason"), 200) or "unknown"
+    excerpt, cut = clean_journal(journal, keep="head" if action == "RESOLVED" else "tail")
+    since, until = parse_ts(rec.get("journal_since")), parse_ts(rec.get("journal_until"))
+    return {
+        "incident_id": incident_id, "host": host, "component": component, "kind": kind,
+        "probe_unit": _text(rec.get("probe_unit"), 255),
+        "incident_severity": isev, "opened_at": first_seen,
+        # 只有 RESOLVED 的事件（開場那一行沒寫進 spool）不拿「healthy」當事件原因
+        "incident_reason": reason if action != "RESOLVED" else "unknown",
+        "event_id": event_id, "occurred_at": occurred, "action": action, "severity": severity,
+        "reason": reason, "status": _text(rec.get("status"), 32), "summary": _text(rec.get("summary"), 2000),
+        "notified": rec.get("notified") is True, "journal_excerpt": excerpt,
+        "journal_truncated": excerpt is not None and (cut or rec.get("journal_truncated") is True),
+        "journal_since": since if excerpt is not None else None,
+        "journal_until": until if excerpt is not None else None,
+        "journal_units": _text(rec.get("journal_units"), 500) if excerpt is not None else None,
+    }
+
+
 # ── 匯入 ─────────────────────────────────────────────────────────────────────
 
 _INSERT_OBSERVATION = text("""
@@ -183,6 +274,67 @@ WHERE j.state = 'running'
 """)
 
 
+# 事件骨架：第一次見到這個 incident_id 時建立；彙總欄位由 _REFRESH_INCIDENTS 重算。
+_INSERT_INCIDENT = text("""
+INSERT INTO research.incident
+    (incident_id, host, component, kind, probe_unit, status, severity, reason, summary, opened_at, last_event_at,
+     resolved_at, event_count)
+VALUES (:incident_id, :host, :component, :kind, :probe_unit,
+        CASE WHEN CAST(:action AS text) = 'RESOLVED' THEN 'resolved' ELSE 'firing' END,
+        :incident_severity, :incident_reason, NULL, :opened_at, :occurred_at,
+        CASE WHEN CAST(:action AS text) = 'RESOLVED' THEN CAST(:occurred_at AS timestamptz) END, 0)
+ON CONFLICT (incident_id) DO NOTHING
+""")
+
+_INSERT_EVENT = text("""
+INSERT INTO research.incident_event
+    (event_id, incident_id, occurred_at, action, severity, reason, status, summary, notified,
+     journal_excerpt, journal_truncated, journal_since, journal_until, journal_units)
+VALUES (:event_id, :incident_id, :occurred_at, :action, :severity, :reason, :status, :summary, :notified,
+        :journal_excerpt, :journal_truncated, :journal_since, :journal_until, :journal_units)
+ON CONFLICT (event_id) DO NOTHING
+""")
+
+# 由事件重算彙總欄位（與匯入順序無關）。status 先只分 resolved／firing，lost 由下一句判。
+_REFRESH_INCIDENTS = text("""
+UPDATE research.incident i SET
+    status        = CASE WHEN agg.resolved_at IS NULL THEN 'firing' ELSE 'resolved' END,
+    resolved_at   = agg.resolved_at,
+    severity      = COALESCE(agg.severity, i.severity),
+    reason        = COALESCE(agg.reason, i.reason),
+    summary       = agg.first_summary,
+    last_event_at = agg.last_event_at,
+    event_count   = agg.n
+FROM (
+    SELECT e.incident_id,
+           count(*) AS n,
+           max(e.occurred_at) AS last_event_at,
+           min(e.occurred_at) FILTER (WHERE e.action = 'RESOLVED') AS resolved_at,
+           (array_agg(e.severity ORDER BY e.occurred_at DESC, e.event_id DESC)
+                FILTER (WHERE e.action <> 'RESOLVED'))[1] AS severity,
+           (array_agg(e.reason ORDER BY e.occurred_at DESC, e.event_id DESC)
+                FILTER (WHERE e.action <> 'RESOLVED'))[1] AS reason,
+           (array_agg(e.summary ORDER BY e.occurred_at, e.event_id)
+                FILTER (WHERE e.action = 'FIRING' AND e.summary IS NOT NULL))[1] AS first_summary
+    FROM research.incident_event e
+    WHERE e.incident_id = ANY(CAST(:ids AS text[]))
+    GROUP BY e.incident_id
+) agg
+WHERE i.incident_id = agg.incident_id
+""")
+
+# 還在 firing、同主機同元件卻已有更晚開的事件：P5 同元件同時只有一個事件，它必定已經結束（結束時間不明）。
+_MARK_INCIDENTS_LOST = text("""
+UPDATE research.incident i SET status = 'lost'
+WHERE i.status = 'firing'
+  AND i.component = ANY(CAST(:components AS text[]))
+  AND EXISTS (
+      SELECT 1 FROM research.incident n
+      WHERE n.host = i.host AND n.component = i.component AND n.opened_at > i.opened_at
+  )
+""")
+
+
 def _chunks(rows: list[dict], size: int = CHUNK) -> Iterable[list[dict]]:
     for i in range(0, len(rows), size):
         yield rows[i:i + size]
@@ -207,8 +359,9 @@ async def _execute_rows(session, stmt, rows: list[dict]) -> int:
     return rejected
 
 
-async def import_records(session, *, observations: list[dict], jobs: list[dict]) -> ImportStats:
-    """把已正規化的列寫進 DB（冪等；不 commit）。參數是 observation_rows／job_row 的輸出。"""
+async def import_records(session, *, observations: list[dict], jobs: list[dict],
+                         events: list[dict] | None = None) -> ImportStats:
+    """把已正規化的列寫進 DB（冪等；不 commit）。參數是 observation_rows／job_row／incident_event_row 的輸出。"""
     stats = ImportStats()
     if observations:
         stats.rejected += await _execute_rows(session, _INSERT_OBSERVATION, observations)
@@ -220,6 +373,17 @@ async def import_records(session, *, observations: list[dict], jobs: list[dict])
         stats.jobs = len(jobs)
         res = await session.execute(_MARK_LOST, {"units": sorted({r["unit"] for r in jobs})})
         stats.lost = max(res.rowcount or 0, 0)
+    if events:
+        # 同一個事件的骨架只需要一列；取最早的那一則（通常是 FIRING）當骨架
+        skeletons: dict[str, dict] = {}
+        for e in sorted(events, key=lambda r: (r["occurred_at"], r["action"] == "RESOLVED")):
+            skeletons.setdefault(e["incident_id"], e)
+        stats.rejected += await _execute_rows(session, _INSERT_INCIDENT, list(skeletons.values()))
+        stats.rejected += await _execute_rows(session, _INSERT_EVENT, events)
+        stats.events = len(events)
+        stats.incidents = len(skeletons)
+        await session.execute(_REFRESH_INCIDENTS, {"ids": sorted(skeletons)})
+        await session.execute(_MARK_INCIDENTS_LOST, {"components": sorted({e["component"] for e in events})})
     return stats
 
 
@@ -299,3 +463,51 @@ async def list_observations(session, *, since: datetime, until: datetime, scope:
         row["detail"] = detail if isinstance(detail, dict) else None
         out.append(row)
     return truncated, out
+
+
+# ── 事件投影的唯讀查詢（/api/admin/incidents、/api/admin/incidents/{incident_id}）──────────
+
+INCIDENT_DEFAULT_WINDOW = timedelta(days=30)
+INCIDENT_MAX_WINDOW = timedelta(days=366)
+INCIDENT_MAX_LIMIT = 200
+INCIDENT_MAX_EVENTS = 1000
+
+_INCIDENT_COLS = """i.incident_id, i.host, i.component, i.kind, i.probe_unit, i.status, i.severity, i.reason,
+    i.summary, i.opened_at, i.last_event_at, i.resolved_at, i.event_count"""
+
+
+async def list_incidents(session, *, since: datetime, until: datetime, status: str | None = None,
+                         component: str | None = None, limit: int = 50,
+                         offset: int = 0) -> tuple[int, list[dict]]:
+    """事件清單，依開場時間新→舊。時間篩選取「與 [since, until] 重疊」：開在 until 之前，而且還在 firing、
+    或結束（resolved 用 resolved_at；lost 不知道何時結束，用最後一則事件的時間）在 since 之後。"""
+    where = ["i.opened_at <= :until", "(i.status = 'firing' OR COALESCE(i.resolved_at, i.last_event_at) >= :since)"]
+    params: dict[str, Any] = {"since": since, "until": until, "limit": limit, "offset": offset}
+    for col, val in (("status", status), ("component", component)):
+        if val:
+            where.append(f"i.{col} = :{col}")
+            params[col] = val
+    cond = " AND ".join(where)
+    total = (await session.execute(
+        text(f"SELECT count(*) FROM research.incident i WHERE {cond}"), params)).scalar_one()
+    rows = (await session.execute(text(
+        f"SELECT {_INCIDENT_COLS} FROM research.incident i WHERE {cond} "
+        "ORDER BY i.opened_at DESC, i.incident_id DESC LIMIT :limit OFFSET :offset"), params)).mappings().all()
+    return int(total), [dict(r) for r in rows]
+
+
+async def get_incident(session, incident_id: str) -> tuple[dict | None, list[dict], bool]:
+    """單一事件＋它的轉換（舊→新，最多 INCIDENT_MAX_EVENTS 則，多出的從新的那端略過）＋是否截斷。"""
+    row = (await session.execute(text(
+        f"SELECT {_INCIDENT_COLS} FROM research.incident i WHERE i.incident_id = :id"),
+        {"id": incident_id})).mappings().first()
+    if row is None:
+        return None, [], False
+    events = (await session.execute(text("""
+        SELECT event_id, occurred_at, action, severity, reason, status, summary, notified,
+               journal_excerpt, journal_truncated, journal_since, journal_until, journal_units
+        FROM research.incident_event WHERE incident_id = :id
+        ORDER BY occurred_at, event_id LIMIT :limit
+    """), {"id": incident_id, "limit": INCIDENT_MAX_EVENTS + 1})).mappings().all()
+    truncated = len(events) > INCIDENT_MAX_EVENTS
+    return dict(row), [dict(e) for e in events[:INCIDENT_MAX_EVENTS]], truncated

@@ -61,7 +61,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `signal_extract.py` | 訊號擷取 prompt 與正規化（LLM 只擷取數值與論點證據，Python 判評等方向、幣別、狀態） |
 | `brief.py` | 每日簡報素材、prompt、落庫 |
 | `visibility.py` | 研報隱藏／恢復（`report_visibility`）：使用者讀取路徑共用的可見性片段 `visible_report_sql(別名)`／`visible_report_id_sql(欄位)`（`NOT EXISTS`，可直接 AND 進任何 WHERE），以及管理端的 `list_reports`／`set_visibility`（與稽核同交易，呼叫端 commit）。`tests/test_visibility_guard.py` 以 AST 守門：檢索、閱讀、雷達、總覽、簡報、原檔各模組查語料表的函式或常數都要呼叫片段，否則列豁免並寫理由 |
-| `ops_monitoring.py` | 監控投影：`scripts/load_observations.py` 把收集器（`scripts/collect_resource_usage.py`）寫的本機 spool 冪等匯入 `service_observation`／`job_execution`（Python 端先驗證、DB 拒絕的列以 savepoint 逐列略過；沒看到結束的批次判 `lost`），呼叫端 commit。收集器不連 DB、告警不經 DB，這裡的表只是 projection |
+| `ops_monitoring.py` | 監控投影：`scripts/load_observations.py` 把收集器（`scripts/collect_resource_usage.py`）與 P5（`scripts/incident_handler.sh`）寫的本機 spool 冪等匯入 `service_observation`／`job_execution`／`incident`／`incident_event`（Python 端先驗證、DB 拒絕的列以 savepoint 逐列略過；沒看到結束的批次判 `lost`；事件的 status 由事件重算，沒收到 RESOLVED 而同元件已有更晚的事件判 `lost`；journal 片段遮祕密），呼叫端 commit。收集器與 P5 都不連 DB、告警不經 DB，這裡的表只是 projection |
 | `tagging.py` | 市場代碼（對齊 findb）、商品類型、期貨標的詞表、標註 prompt |
 | `filename.py` | 檔名解析：券商代碼、日期、行政文件判定 |
 | `db.py` | async engine、`SessionFactory`、`relax_statement_timeout`、pgvector 版本守門 |

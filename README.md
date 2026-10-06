@@ -279,7 +279,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 | `report-mark-backfill.timer` | 01:00 | E1d 抽取回填，跑完手動 disable |
 | `report-mark-r2-reconcile.timer` | 週一 07:00 | R2 對帳（唯讀） |
 | `report-mark-metrics.service` | 常駐 | 硬體用量取樣 → `data/metrics/`（`make metrics`）；另每 60 秒把主機、catalog 列的容器與 unit 狀態、批次執行寫進監控 spool `data/ops_spool/`（不連 DB） |
-| `report-mark-load-observations.timer` | 每 5 分鐘 | `scripts/load_observations.py`：監控 spool 冪等匯入 `service_observation`／`job_execution`（管理頁的排程工作與主機資源讀這兩張表）；DB 不可用 rc=2、spool 保留待下一輪補匯入，刻意不接告警 |
+| `report-mark-load-observations.timer` | 每 5 分鐘 | `scripts/load_observations.py`：監控 spool 冪等匯入 `service_observation`／`job_execution`（管理頁的排程工作與主機資源讀這兩張表）與 P5 的事件紀錄 `incident`／`incident_event`（含 journal 片段）；DB 不可用 rc=2、spool 保留待下一輪補匯入，刻意不接告警 |
 | `report-mark-ops-agent.service` | 常駐 | 維運代理（唯讀）：`/api/admin/ops/*` 經 `/run/report-mark-ops/agent.sock` 查 `deploy/ops/services.prod.toml` 列出的服務狀態與日誌。專用使用者、程式碼裝在 `/opt/report-mark-ops/`，安裝步驟與威脅模型見 `docs/production_resilience.md`「維運代理」；開發環境是 `report-mark-ops-agent-dev.service` |
 | `report-mark-alert@.service` | `OnFailure` 觸發 | journal ＋ `data/unit_failures.log` ＋ webhook |
 

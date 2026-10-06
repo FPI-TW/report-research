@@ -8,9 +8,11 @@ import { useMe } from '../../lib/useMe'
 import { ElevationCancelledError, useElevationGate } from '../account/useElevationGate'
 import { AdminHeader } from './AdminHeader'
 import { fmtDateTime, roleLabel } from './auditLabels'
+import { BulkResultPanel, SelectAllBox } from './BulkParts'
 import { deletionCountdown } from './deletionCountdown'
 import { ExportCsvButton } from './ExportCsvButton'
-import { useAdminActions, useAdminUsers, type AdminUser, type GrantableScope } from './useAdmin'
+import { useAdminActions, useAdminUsers, type AdminUser, type BulkUserAction, type GrantableScope } from './useAdmin'
+import { namesPreview, useSelection, type BulkOutcome } from './useSelection'
 import styles from './Admin.module.css'
 
 /** 錯誤物件 → 給人看的訊息。後端 400／409 的 detail 由 requestJSON 放進 message，原樣顯示。 */
@@ -226,18 +228,56 @@ const CONFIRM_TEXT: Record<Pending['kind'], (u: AdminUser) => { title: string; b
   }),
 }
 
+const BULK_TEXT: Record<BulkUserAction, { verb: string; body: string }> = {
+  disable: { verb: '停用', body: '停用後立即生效：這些帳號所有裝置都會被登出，也無法再登入。' },
+  enable: { verb: '啟用', body: '啟用後可以重新登入（先前被撤銷的 session 不會復活）。排程刪除中的帳號會被略過。' },
+  logout: { verb: '強制登出', body: '這些帳號所有已登入的裝置都會被登出，帳號本身不受影響。' },
+}
+
 function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) => void }) {
   const users = useAdminUsers()
   const me = useMe()
   const now = useNow()
-  const { update, forceLogout, setPrivileges, requestDeletion, cancelDeletion, resetTotp } = useAdminActions()
+  const { update, forceLogout, setPrivileges, requestDeletion, cancelDeletion, resetTotp, bulk } = useAdminActions()
   const [pending, setPending] = useState<Pending | null>(null)
+  const sel = useSelection()
+  const [bulkFor, setBulkFor] = useState<{ action: BulkUserAction; users: AdminUser[] } | null>(null)
+  const [outcome, setOutcome] = useState<BulkOutcome | null>(null)
   const [resetFor, setResetFor] = useState<AdminUser | null>(null)
   const [privilegesFor, setPrivilegesFor] = useState<AdminUser | null>(null)
   const { guard, dialog } = useElevationGate(adminApi.elevate, Boolean(me.data?.totp_enabled))
   const isSuper = Boolean(me.data?.is_super)
   const busy = update.isPending || forceLogout.isPending || requestDeletion.isPending || cancelDeletion.isPending
-    || resetTotp.isPending
+    || resetTotp.isPending || bulk.isPending
+
+  // 批次：自己那列不給勾（不能停用自己、批次強制登出也不含自己；後端同樣擋）。
+  const list = users.data ?? []
+  const myId = me.data?.id ?? null
+  const selectable = list.filter(u => u.id !== myId).map(u => u.id)
+  const chosen = list.filter(u => u.id !== myId && sel.selected.has(u.id))
+  const bulkTargets: Record<BulkUserAction, AdminUser[]> = {
+    disable: chosen.filter(u => u.enabled),
+    enable: chosen.filter(u => !u.enabled),
+    logout: chosen.filter(u => (u.active_sessions ?? 0) > 0),
+  }
+  /** 批次要已提升：收到 elevation_required 時彈出驗證框、驗證後自動重試；取消不算錯誤。 */
+  const runBulk = async (action: BulkUserAction, targets: AdminUser[]) => {
+    const names = new Map(targets.map(u => [u.id, u.username]))
+    try {
+      const res = await guard(() => bulk.mutateAsync({ action, user_ids: targets.map(u => u.id) }))
+      sel.clear()
+      setOutcome({
+        title: `批次${BULK_TEXT[action].verb}`,
+        ok: res.ok,
+        unchanged: res.unchanged,
+        skipped: res.results.filter(r => r.status === 'skipped').map(r => ({
+          name: names.get(r.user_id) ?? r.user_id, detail: r.detail ?? r.code ?? '略過',
+        })),
+      })
+    } catch (err) {
+      if (!(err instanceof ElevationCancelledError)) onNotice(`批次${BULK_TEXT[action].verb}失敗：${messageOf(err)}`, true)
+    }
+  }
 
   /** 需要已提升權限的動作：收到 elevation_required 時彈出驗證框、驗證後自動重試；取消不算錯誤。 */
   const elevated = async (action: () => Promise<unknown>, ok: string) => {
@@ -300,10 +340,30 @@ function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) =
       ) : users.data.length === 0 ? (
         <p className={styles.idle}>還沒有任何帳號</p>
       ) : (
+        <>
+        <BulkResultPanel outcome={outcome} onClose={() => setOutcome(null)} />
+        {chosen.length > 0 && (
+          <div className={styles.bulkBar} role="toolbar" aria-label="批次操作">
+            <span className={styles.bulkCount}>已選 {chosen.length} 個帳號</span>
+            {(['disable', 'enable', 'logout'] as const).map(action => (
+              <button key={action} type="button"
+                className={`${styles.action} ${action === 'disable' ? styles.danger : ''}`}
+                disabled={busy || bulkTargets[action].length === 0}
+                onClick={() => setBulkFor({ action, users: bulkTargets[action] })}>
+                批次{BULK_TEXT[action].verb}（{bulkTargets[action].length}）
+              </button>
+            ))}
+            <button type="button" className={styles.action} onClick={sel.clear}>清除選取</button>
+          </div>
+        )}
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
+                <th className={styles.checkCell}>
+                  <SelectAllBox ids={selectable} selected={sel.selected} label="全選"
+                    onChange={on => sel.setAll(selectable, on)} />
+                </th>
                 <th>帳號</th><th>角色</th><th>狀態</th><th>最後登入／活動</th><th>session</th><th>操作</th>
               </tr>
             </thead>
@@ -315,6 +375,11 @@ function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) =
                 const deletingAt = u.deletion_execute_after ?? null
                 return (
                   <tr key={u.id}>
+                    <td className={styles.checkCell}>
+                      <input type="checkbox" className={styles.rowCheck} aria-label={`選取「${u.username}」`}
+                        checked={!isSelf && sel.selected.has(u.id)} disabled={isSelf}
+                        title={isSelf ? '不能對自己做批次操作' : undefined} onChange={() => sel.toggle(u.id)} />
+                    </td>
                     <td>
                       {u.username}{isSelf && <span className={styles.self}>（你）</span>}
                       {u.is_super && <span className={styles.self}>super</span>}
@@ -385,8 +450,10 @@ function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) =
             </tbody>
           </table>
         </div>
+        </>
       )}
       <p className={styles.hint}>
+        勾選多個帳號可一次停用、啟用或強制登出（需要重新驗證身分；被規則擋下的帳號會逐筆列出原因）。
         停用、降級、重設密碼都在對方的下一個動作生效。刪除帳號會先停用並等待 24 小時（期間可取消），
         之後永久刪除該帳號的問答紀錄；操作紀錄保留。刪除、調整權限、重設兩步驟驗證需要重新驗證身分。
       </p>
@@ -397,6 +464,20 @@ function UsersTable({ onNotice }: { onNotice: (msg: string, isError?: boolean) =
         confirmLabel={confirm?.label ?? '確認'}
         onConfirm={() => { if (pending) run(pending) }}
         onCancel={() => setPending(null)}
+      />
+      <ConfirmDialog
+        open={bulkFor != null}
+        title={bulkFor ? `${BULK_TEXT[bulkFor.action].verb} ${bulkFor.users.length} 個帳號？` : ''}
+        body={bulkFor
+          ? `${namesPreview(bulkFor.users.map(u => u.username))}。${BULK_TEXT[bulkFor.action].body}每個帳號各留一筆操作紀錄。`
+          : ''}
+        confirmLabel={bulkFor ? `${BULK_TEXT[bulkFor.action].verb} ${bulkFor.users.length} 個` : '確認'}
+        onConfirm={() => {
+          if (!bulkFor) return
+          setBulkFor(null)
+          void runBulk(bulkFor.action, bulkFor.users)
+        }}
+        onCancel={() => setBulkFor(null)}
       />
       <ResetPasswordDialog user={resetFor} onClose={() => setResetFor(null)} onDone={msg => onNotice(msg)} />
       <PrivilegesDialog user={privilegesFor} onClose={() => setPrivilegesFor(null)} onSave={savePrivileges} />

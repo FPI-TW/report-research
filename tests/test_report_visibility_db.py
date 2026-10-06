@@ -4,7 +4,8 @@
 真的有效：兩篇研報（含 chunk 與訊號）隱藏其一之後，混合檢索（dense＋字面兩路）、檢索頁瀏覽、
 問答選篇、閱讀頁、相似研報、觀點雷達、總覽、每日簡報的來源（含評等變動的「上次」）與原檔
 presign 都看不到它；恢復後全部回來；重新入庫（`store.upsert_report` 先刪後插、換新 report_id）
-之後隱藏狀態仍在。另驗隱藏與稽核同一筆交易、管理清單看得到隱藏狀態。
+之後隱藏狀態仍在。另驗隱藏與稽核同一筆交易、管理清單看得到隱藏狀態，以及批次隱藏／恢復
+（`bulk_set_visibility`：逐筆規則、每筆一筆稽核加批次摘要、雜湊鏈、失敗時整批回滾）。
 
 revision 0008 的草稿（`report_visibility.publication='draft'`）走同一組路徑：草稿每條路徑都看不到、
 重新入庫換 report_id 後仍看不到、隱藏與恢復都被拒（恢復不會順手發布）、發布後全部回來；另驗
@@ -420,6 +421,104 @@ class ReportVisibilityDbTests(unittest.TestCase):
         self.assertEqual(admin["published"], [("B", "published")])
         self.assertEqual(admin[None], [("A", "draft"), ("B", "published")])
         self.assertEqual(final_row, (False, "published", True), "恢復隱藏不可改動發布狀態")
+
+    def test_bulk_hide_restore_per_item_rules_audit_and_rollback(self):
+        """批次隱藏／恢復：逐筆套用 set_visibility（草稿、不存在逐筆略過），每筆變更一筆與單筆同形的稽核，
+        另一筆批次摘要；雜湊鏈仍通過；非規則性失敗時（呼叫端不 commit）變更與稽核一起消失。"""
+        from unittest import mock
+
+        from app.services import accounts
+
+        hash_a, hash_b = _hashes("bulk-")
+        hash_c = _hashes("bulkc-")[0]
+        missing = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+
+        async def fn(session):
+            await _ingest(session, "A", hash_a, FUTURE)
+            await _ingest(session, "B", hash_b, FUTURE)
+            await _ingest(session, "C", hash_c, FUTURE)
+            await session.execute(text(
+                "INSERT INTO research.report_visibility (file_hash, hidden, publication) VALUES (:h, false, 'draft')"
+            ), {"h": hash_c})
+            mine = (hash_a, hash_b, hash_c)
+
+            async def rows():
+                return {r[0]: (r[1], r[2], r[3]) for r in (await session.execute(text(
+                    "SELECT file_hash, hidden, publication, reason FROM research.report_visibility "
+                    "WHERE file_hash = ANY(CAST(:h AS text[]))"), {"h": list(mine)})).all()}
+
+            async def audits():
+                return [(r[0], r[1], r[2]) for r in (await session.execute(text(
+                    "SELECT action, target_id, detail FROM research.admin_audit_log "
+                    "WHERE target_id = ANY(CAST(:h AS text[])) "
+                    "OR (action = 'report.bulk_visibility' AND detail -> 'file_hashes' ? :a) ORDER BY id"
+                ), {"h": list(mine), "a": hash_a})).all()]
+
+            out: dict = {}
+            # 原因不合法：整批不做。
+            try:
+                await visibility.bulk_set_visibility(session, [hash_a], hidden=True, reason="  ", actor_id=None)
+            except visibility.InvalidReasonError:
+                out["bad_reason"] = await rows(), await audits()
+            # 非規則性失敗：第二筆的稽核寫不進去 → 呼叫端回滾（這裡以 savepoint 模擬路由層的 rollback）。
+            orig = accounts.record_audit
+            calls = {"n": 0}
+
+            async def boom(*a, **kw):
+                calls["n"] += 1
+                if calls["n"] == 2:
+                    raise RuntimeError("稽核寫不進去")
+                return await orig(*a, **kw)
+
+            try:
+                async with session.begin_nested():
+                    with mock.patch.object(accounts, "record_audit", boom):
+                        await visibility.bulk_set_visibility(
+                            session, [hash_a, hash_b], hidden=True, reason="測試", actor_id=None)
+            except RuntimeError:
+                out["rolled_back"] = await rows(), await audits()
+            res = await visibility.bulk_set_visibility(
+                session, [hash_a, hash_c, missing, "not-a-hash", hash_b, hash_a], hidden=True,
+                reason="批次：版權疑慮", actor_id=None,
+            )
+            out["hide"] = [(r.file_hash, r.ok, r.error.code if r.error else None) for r in res]
+            out["after_hide"] = await rows()
+            out["audit_hide"] = await audits()
+            res = await visibility.bulk_set_visibility(session, [hash_b, hash_c], hidden=False, reason=None,
+                                                       actor_id=None)
+            out["restore"] = [(r.file_hash, r.ok, r.error.code if r.error else None) for r in res]
+            out["after_restore"] = await rows()
+            out["broken"] = (await session.execute(text(accounts._AUDIT_VERIFY_SQL))).scalars().all()
+            return out
+
+        out = self._run(fn)
+        self.assertEqual(out["bad_reason"][0], {hash_c: (False, "draft", None)})
+        self.assertEqual(out["bad_reason"][1], [])
+        self.assertEqual(out["rolled_back"][0], {hash_c: (False, "draft", None)}, "回滾後第一筆的變更也不留")
+        self.assertEqual(out["rolled_back"][1], [], "回滾時稽核也不留")
+        self.assertEqual(out["hide"], [
+            (hash_a, True, None), (hash_c, False, "report_is_draft"), (missing, False, "not_found"),
+            ("not-a-hash", False, "not_found"), (hash_b, True, None),
+        ])
+        self.assertEqual(out["after_hide"], {
+            hash_a: (True, "published", "批次：版權疑慮"), hash_b: (True, "published", "批次：版權疑慮"),
+            hash_c: (False, "draft", None),
+        })
+        per_item = [(a, t) for a, t, _d in out["audit_hide"] if a == "report.hide"]
+        self.assertEqual(per_item, [("report.hide", hash_a), ("report.hide", hash_b)])
+        for action, _t, detail in out["audit_hide"]:
+            if action == "report.hide":
+                self.assertEqual(set(detail), {"hidden", "previous_hidden", "has_reason", "file_name"})
+        summary = [d for a, _t, d in out["audit_hide"] if a == "report.bulk_visibility"]
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0]["file_hashes"], [hash_a, hash_b])
+        self.assertEqual(summary[0]["skipped"], {"not_found": 2, "report_is_draft": 1})
+        self.assertEqual((summary[0]["requested"], summary[0]["changed"]), (5, 2))
+        self.assertNotIn("版權疑慮", str(out["audit_hide"]), "稽核不含原因全文")
+        self.assertEqual(out["restore"], [(hash_b, True, None), (hash_c, False, "report_is_draft")])
+        self.assertEqual(out["after_restore"][hash_b][:2], (False, "published"))
+        self.assertEqual(out["after_restore"][hash_c], (False, "draft", None), "恢復不會順手發布草稿")
+        self.assertEqual(out["broken"], [], "雜湊鏈驗證仍通過")
 
     def test_upload_and_publication_constraints(self):
         """revision 0008 的 CHECK 與 partial unique index 對真的 PostgreSQL 成立。"""

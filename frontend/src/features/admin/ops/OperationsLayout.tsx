@@ -6,7 +6,7 @@ import adminStyles from '../Admin.module.css'
 import styles from './Ops.module.css'
 
 // 排程工作、事件與主機讀 DB 投影（/api/admin/jobs、incidents、observations）；服務、依賴圖與日誌經維運代理；
-// 資料健康與 LLM 用量讀 /api/admin/data-health、/api/admin/llm-usage（唯讀）。
+// 資料健康與 LLM 用量讀 /api/admin/data-health、/api/admin/llm-usage（唯讀）；診斷讀 /api/admin/diagnostics。
 // 某個分頁的 API 還沒提供時加 `soon: true`，導覽會標「尚未提供」。
 const TABS: readonly { to: string; label: string; soon?: boolean }[] = [
   { to: 'overview', label: '總覽' },
@@ -18,6 +18,7 @@ const TABS: readonly { to: string; label: string; soon?: boolean }[] = [
   { to: 'host', label: '主機' },
   { to: 'data-health', label: '資料健康' },
   { to: 'llm-usage', label: 'LLM 用量' },
+  { to: 'diagnostics', label: '診斷' },
 ]
 
 /**

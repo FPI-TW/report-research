@@ -16,6 +16,7 @@ export const AdminReportItemSchema = z.object({
   hidden_reason: z.string().nullable().optional(),
   visibility_updated_by: z.string().nullable().optional(),
   visibility_updated_at: z.string().nullable().optional(),
+  publication: z.enum(['draft', 'published']).optional(),
 })
 export type AdminReportItem = z.infer<typeof AdminReportItemSchema>
 
@@ -760,7 +761,7 @@ export const adminApi = {
   /** POST /api/admin/ops/services/{name}/run — Run Ops Service */
   runOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/run`, OpsActionResponseSchema, jsonBody('POST')),
   /** GET /api/admin/reports — List Reports */
-  listReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
+  listReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/retrieval-regression — Get Retrieval Regression */
@@ -794,7 +795,7 @@ export const adminCsvUrls = {
   /** GET /api/admin/export/jobs.csv — Export Jobs（下載網址） */
   exportJobs: (query: { service?: string | null; unit?: string | null; state?: 'running' | 'finished' | 'lost' | null; result?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => `/api/admin/export/jobs.csv${qs(query)}`,
   /** GET /api/admin/export/reports.csv — Export Reports（下載網址） */
-  exportReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number } = {}) => `/api/admin/export/reports.csv${qs(query)}`,
+  exportReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number } = {}) => `/api/admin/export/reports.csv${qs(query)}`,
   /** GET /api/admin/export/users.csv — Export Users（下載網址） */
   exportUsers: (query: { limit?: number } = {}) => `/api/admin/export/users.csv${qs(query)}`,
 }

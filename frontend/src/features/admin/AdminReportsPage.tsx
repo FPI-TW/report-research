@@ -119,10 +119,13 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                 <tr><th>研報</th><th>券商／市場</th><th>報告日／入庫</th><th>狀態</th><th>操作</th></tr>
               </thead>
               <tbody>
-                {reports.data.items.map(r => (
+                {reports.data.items.map(r => {
+                  // 上傳後尚未發布的草稿：一般頁面看不到（閱讀頁 404），隱藏／恢復也不適用（後端回 409）。
+                  const isDraft = r.publication === 'draft'
+                  return (
                   <tr key={r.file_hash}>
                     <td className={styles.wrapCell}>
-                      {r.hidden ? displayTitle(r) : <Link to={`/report/${r.file_hash}`}>{displayTitle(r)}</Link>}
+                      {r.hidden || isDraft ? displayTitle(r) : <Link to={`/report/${r.file_hash}`}>{displayTitle(r)}</Link>}
                       {r.title && <div className={styles.muted}>{r.file_name}</div>}
                     </td>
                     <td>{r.source || '—'}<div className={styles.muted}>{r.market || '—'}</div></td>
@@ -131,7 +134,9 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                       <div className={styles.muted} title="入庫">{fmtDateTime(r.created_at)}</div>
                     </td>
                     <td className={styles.wrapCell}>
-                      <span className={`${styles.badge} ${r.hidden ? styles.badgeOff : ''}`}>{r.hidden ? '已隱藏' : '顯示中'}</span>
+                      {isDraft
+                        ? <span className={`${styles.badge} ${styles.badgeOff}`}>草稿</span>
+                        : <span className={`${styles.badge} ${r.hidden ? styles.badgeOff : ''}`}>{r.hidden ? '已隱藏' : '顯示中'}</span>}
                       {r.hidden && r.hidden_reason && <div className={styles.reason}>{r.hidden_reason}</div>}
                       {r.visibility_updated_at && (
                         <div className={styles.muted}>
@@ -140,7 +145,9 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                       )}
                     </td>
                     <td>
-                      {r.hidden ? (
+                      {isDraft ? (
+                        <span className={styles.muted}>待發布</span>
+                      ) : r.hidden ? (
                         <button type="button" className={styles.action} disabled={visibility.isPending}
                           onClick={() => setRestoreFor(r)}>恢復</button>
                       ) : (
@@ -149,7 +156,8 @@ function ReportsTable({ onNotice }: { onNotice: (msg: string, isError?: boolean)
                       )}
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

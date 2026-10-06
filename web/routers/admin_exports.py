@@ -4,7 +4,7 @@
 |---|---|---|
 | `audit.csv` | `audit.read` | `deps.accounts.list_audit`（新→舊） |
 | `users.csv` | `accounts.manage` | `deps.accounts.list_users`（不含已刪除帳號） |
-| `reports.csv` | `reports.manage` | `deps.report_visibility.list_reports`（篩選同清單：`q`、`hidden`） |
+| `reports.csv` | `reports.manage` | `deps.report_visibility.list_reports`（篩選同清單：`q`、`hidden`、`publication`） |
 | `incidents.csv` | `ops.read` | `deps.ops_monitoring.list_incidents`（窗期規則同 `/api/admin/incidents`） |
 | `jobs.csv` | `ops.read` | `deps.ops_monitoring.list_jobs`（窗期規則同 `/api/admin/jobs`） |
 
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 
@@ -57,7 +58,7 @@ AUDIT_COLUMNS = ("id", "created_at", "actor_user_id", "actor_username", "action"
 USER_COLUMNS = ("id", "username", "role", "enabled", "is_super", "scopes", "totp_enabled", "created_at",
                 "updated_at", "last_login_at", "last_seen_at", "active_sessions", "deletion_execute_after")
 REPORT_COLUMNS = ("file_hash", "report_id", "title", "file_name", "source", "market", "report_date", "created_at",
-                  "hidden", "hidden_reason", "visibility_updated_by", "visibility_updated_at")
+                  "hidden", "hidden_reason", "visibility_updated_by", "visibility_updated_at", "publication")
 INCIDENT_COLUMNS = ("incident_id", "host", "component", "kind", "probe_unit", "status", "severity", "reason",
                     "summary", "opened_at", "last_event_at", "resolved_at", "duration_seconds", "event_count")
 JOB_COLUMNS = ("host", "unit", "service", "invocation_id", "state", "started_at", "finished_at", "duration_seconds",
@@ -112,17 +113,22 @@ async def export_users(limit: int = _LIMIT, actor: User = Depends(authz.current_
 async def export_reports(
     q: str | None = Query(None, max_length=200),
     hidden: bool | None = Query(None),
+    publication: Literal["draft", "published"] | None = Query(None),
     limit: int = _LIMIT,
     actor: User = Depends(authz.current_user),
 ):
     """研報可見性清單（入庫新→舊；篩選同 `/api/admin/reports`）。含隱藏原因（只有管理員看得到的註記）。"""
     async with deps.SessionFactory() as session:
-        total, items = await deps.report_visibility.list_reports(session, q=q, hidden=hidden, limit=limit, offset=0)
+        total, items = await deps.report_visibility.list_reports(
+            session, q=q, hidden=hidden, publication=publication, limit=limit, offset=0,
+        )
     rows = [{"file_hash": r.file_hash, "report_id": r.report_id, "title": r.title, "file_name": r.file_name,
              "source": r.source, "market": r.market, "report_date": _iso(r.report_date),
              "created_at": _iso(r.created_at), "hidden": r.hidden, "hidden_reason": r.reason,
-             "visibility_updated_by": r.updated_by, "visibility_updated_at": _iso(r.updated_at)} for r in items]
-    return await _finish(actor, "reports", {"q": q, "hidden": hidden, "limit": limit}, REPORT_COLUMNS, rows,
+             "visibility_updated_by": r.updated_by, "visibility_updated_at": _iso(r.updated_at),
+             "publication": r.publication} for r in items]
+    return await _finish(actor, "reports", {"q": q, "hidden": hidden, "publication": publication, "limit": limit},
+                         REPORT_COLUMNS, rows,
                          truncated=total > len(rows))
 
 

@@ -60,7 +60,8 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `radar/compute.py`、`radar/queries.py`、`radar/scale.py`、`radar/schemas.py`、`radar/types.py` | 觀點雷達：純 SQL 取訊號 ＋ Python 決定性聚合 |
 | `signal_extract.py` | 訊號擷取 prompt 與正規化（LLM 只擷取數值與論點證據，Python 判評等方向、幣別、狀態） |
 | `brief.py` | 每日簡報素材、prompt、落庫 |
-| `visibility.py` | 研報隱藏／恢復（`report_visibility`）：使用者讀取路徑共用的可見性片段 `visible_report_sql(別名)`／`visible_report_id_sql(欄位)`（`NOT EXISTS`，可直接 AND 進任何 WHERE），以及管理端的 `list_reports`／`set_visibility`（與稽核同交易，呼叫端 commit）。`tests/test_visibility_guard.py` 以 AST 守門：檢索、閱讀、雷達、總覽、簡報、原檔各模組查語料表的函式或常數都要呼叫片段，否則列豁免並寫理由 |
+| `visibility.py` | 研報隱藏／恢復與上傳草稿的發布狀態（`report_visibility`）：使用者讀取路徑共用的可見性片段 `visible_report_sql(別名)`／`visible_report_id_sql(欄位)`（`NOT EXISTS`，可直接 AND 進任何 WHERE；隱藏或 `publication <> 'published'` 都不可見），以及管理端的 `list_reports`／`set_visibility`（與稽核同交易，呼叫端 commit；對草稿拒絕隱藏與恢復，`ReportIsDraftError`→409）。`tests/test_visibility_guard.py` 以 AST 守門：檢索、閱讀、雷達、總覽、簡報、原檔各模組查語料表的函式或常數都要呼叫片段，否則列豁免並寫理由 |
+| `uploads.py` | 研報上傳（`report_upload`，revision 0008）的狀態與失敗類別詞彙（只放常數與純判斷）：`STATES`／`ACTIVE_STATES` 與 0008 的 CHECK 和 partial unique index 逐字一致（`tests/test_uploads_vocab.py`），`FAILURE_KINDS` 對應刻意無 CHECK 的 `failure_kind` |
 | `ops_monitoring.py` | 監控投影：`scripts/load_observations.py` 把收集器（`scripts/collect_resource_usage.py`）與 P5（`scripts/incident_handler.sh`）寫的本機 spool 冪等匯入 `service_observation`／`job_execution`／`incident`／`incident_event`（Python 端先驗證、DB 拒絕的列以 savepoint 逐列略過；沒看到結束的批次判 `lost`；事件的 status 由事件重算，沒收到 RESOLVED 而同元件已有更晚的事件判 `lost`；journal 片段遮祕密），呼叫端 commit。收集器與 P5 都不連 DB、告警不經 DB，這裡的表只是 projection |
 | `ops_topology.py` | 服務依賴圖的判讀（`GET /api/admin/ops/dependencies`，純函式）：依賴關係只來自 Service Catalog 的 `depends_on`／`[[externals]]`（經代理 `list` 轉交，web 不另寫一份）；服務依 summary 分 ok／degraded／down／unknown（常駐服務 idle＝down，排程 oneshot idle＝待命），外部依賴看 probe 探針最後一次的退出碼（其他碼、過期、沒探針＝unknown，不當正常）；只有 down 往下游傳播（`affected`／`impacted_by`），`root_causes` 是上游沒壞的 down 節點 |
 | `ops_rollup.py` | 監控觀測的保留與聚合（revision 0007，`scripts/rollup_observations.py` 每小時）：0–24 小時原始、24 小時–7 天 5 分鐘桶（`service_observation_5m`）、7–90 天 1 小時桶（`service_observation_1h`），90 天以前連同 `job_execution` 刪除；incident 不在範圍內。每片（1 小時）以一句 data-modifying CTE 先刪來源、再把被刪的列聚合後 upsert（同一個 snapshot，失敗整句回滾），Python 再核對筆數；遲到資料合併進既有的桶。查詢端 `pick_resolution` 依 `since` 選資料保證還在的最細粒度，`list_aggregated` 把原始與較細的聚合一起重新分桶。聚合表與原始表一樣不備份 |
@@ -111,7 +112,7 @@ React 19 ＋ TypeScript ＋ Vite，`basename` 為 `/app`。`features/` 依頁面
 - `retrieval_pipeline.retrieve_context`：短連線做檢索，rerank 前拍 `gate_scores` 快照；rerank 未實際套用時 `gate_scores` 不傳。多子查詢扇出（`retrieve_context_multi`／`merge_scored`）已隨深度研報移除，agentic 補查（M5）逐子查詢各自呼叫 `retrieve_context`。
 - rerank 的 fail-open 契約：所有 fail-open 路徑回傳**輸入的同一 list 物件**，成功路徑回新 list；`_rerank_stage` 以 `reranked is not scored` 判 `applied`。逾時用 `asyncio.shield`，結果由 callback 消費。只重排前 `top_m` 筆，以 sigmoid 分覆蓋 fused、tier 保留、尾段保留 fused（所以要拍 `gate_scores` 快照）；並行名額 `REPORT_MARK_RERANK_WORKERS`（3），逾時預算含排隊時間，被放棄的工作靠 deadline 在每 16 筆的批次邊界收手。冷載入實測 44–52 秒，所以 lifespan 暖機。
 - `scripts/eval_retrieval.py` 刻意直呼 `hybrid_search`，管線改動它量不到。
-- 被管理員隱藏的研報（`report_visibility`）在 SQL 層就排除：dense 路與 metadata 過濾一樣是 HNSW 之後的 post-filter（靠 `iterative_scan` 補足 LIMIT，計畫仍是 HNSW index scan＋主鍵 anti-join），字面路放在 `LIMIT :cap` 的 CTE 內不佔候選名額；兩條選篇與 `retrieval_pipeline` 吃的是已過濾的 `hybrid_search` 結果，排序邏輯不變。
+- 被管理員隱藏或尚未發布（上傳草稿）的研報（`report_visibility`）在 SQL 層就排除：dense 路與 metadata 過濾一樣是 HNSW 之後的 post-filter（靠 `iterative_scan` 補足 LIMIT，計畫仍是 HNSW index scan＋主鍵 anti-join），字面路放在 `LIMIT :cap` 的 CTE 內不佔候選名額；兩條選篇與 `retrieval_pipeline` 吃的是已過濾的 `hybrid_search` 結果，排序邏輯不變。
 
 ## 5. 問答
 
@@ -179,11 +180,12 @@ schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；
 | `account_deletion` | 帳號刪除排程：提出人、`execute_after`（24 小時撤銷窗口）、`prior_enabled`、取消與執行時刻 | 每帳號最多一筆未結束的排程；執行由 `scripts/execute_deletions.py`（先寫 NAS tombstone），還原後由 `scripts/replay_deletions.py` 重放 |
 | `user_session` | 可撤銷 session：`revoked_at`、絕對上限 `expires_at`、`last_seen_at`（超過 5 分鐘才回寫）、`ip`、`user_agent` | FK → `app_user` CASCADE；刻意不備份 |
 | `admin_audit_log` | 管理操作稽核：`actor_user_id`（NULL＝CLI）、`action`、`target_type`、`target_id`、`detail` jsonb；不含任何密碼衍生值 | 與變更同交易寫入；無 FK |
-| `report_visibility` | 管理員隱藏的研報：`hidden`、`reason`（隱藏必填，CHECK）、`updated_by`、`updated_at`；恢復是 `hidden=false` 不刪列，歷史在 `admin_audit_log`（`report.hide`／`report.restore`） | PK `file_hash`，**刻意不設 FK 也不以 report_id 為鍵**：`upsert_report` 先刪後插換新 report_id，旗標掛在那上面會靜默消失（revision 0004） |
+| `report_visibility` | 管理員隱藏的研報：`hidden`、`reason`（隱藏必填，CHECK）、`updated_by`、`updated_at`；恢復是 `hidden=false` 不刪列，歷史在 `admin_audit_log`（`report.hide`／`report.restore`） | PK `file_hash`，**刻意不設 FK 也不以 report_id 為鍵**：`upsert_report` 先刪後插換新 report_id，旗標掛在那上面會靜默消失（revision 0004）。0008 加發布狀態 `publication`（`draft`／`published`，預設 `published`，CHECK）、`published_at`、`published_by`：sync 進來的研報沒有這一列＝已發布 |
+| `report_upload` | 管理員上傳的研報：`file_hash`、清理後的 `original_name`、`size_bytes`、`client_mtime`、上傳人與時間、`state`（11 種，CHECK；詞彙在 `app/services/uploads.py`）、掃描（引擎與病毒碼版本、病毒名、嘗試次數、最後錯誤）、處理（嘗試次數、`failure_kind` 刻意無 CHECK、`failure_detail`）、審核（`decided_by`／`decided_at`／`decision_reason`）、清除（`purge_after`／`purged_at`） | 以 `file_hash` 連語料與 `report_visibility`，**不存 report_id、無 FK**；CHECK 退回必填原因、感染必有病毒名；partial unique index 讓同一 hash 同時最多一筆進行中（quarantined／scanning／clean／processing／draft）（revision 0008） |
 
 待複核 API 以原始品質條件查詢，再以 `review_state` 篩選 `open`／`resolved`／`dismissed`／`all`；寫入狀態不改 `qa_log` 或 `research_report` 的品質訊號。人工驗證欄位只記錄人工結果，不會重跑評測或抽取。
 
-備份涵蓋十二張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`）→ NAS；語料層與 `user_session` 刻意不備。
+備份涵蓋十三張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`）→ NAS；語料層與 `user_session` 刻意不備。
 
 資料陷阱：
 - `full_text` 是未清理原始抽取（帶 CJK 字間空白），顯示一律 `clean_extracted`，不是 `clean_text`。

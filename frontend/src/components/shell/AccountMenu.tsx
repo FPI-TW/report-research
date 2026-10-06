@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router'
 import { Popover } from '../primitives/Popover'
 import { Pressable } from '../primitives/Pressable'
@@ -7,6 +7,7 @@ import { preloadRoute } from '../../lib/routePreload'
 import { useIsAdmin } from '../../lib/useMe'
 import { useStats } from '../../lib/useStats'
 import { useLocale, setLocale, type Locale } from '../../lib/useLocale'
+import { floatingPlacement, type AccountMenuVariant } from './accountMenuPlacement'
 import styles from './AccountMenu.module.css'
 
 const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
@@ -14,16 +15,41 @@ const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
   { value: 'en', label: 'English' },
 ]
 
-export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' }) {
+export function AccountMenu({ variant }: { variant: AccountMenuVariant }) {
   const { data } = useStats()
   const name = data?.username ?? '分析師'
   const [open, setOpen] = useState(false)
   const locale = useLocale()
   // 管理後台的唯一入口：與研報平台分開的外殼（/admin/*），主導覽刻意不放。只是顯示層，授權在後端。
   const isAdmin = useIsAdmin()
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const floating = variant !== 'row'
+  const [placement, setPlacement] = useState<CSSProperties | undefined>(undefined)
+
+  // 開啟期間逐幀追蹤觸發點的位置（只有 mini／mobile 需要；row 走 CSS）。不能只在開啟那一刻算一次：
+  // 剛收合側欄、頁面還在載入時版面仍在位移，量到的是舊位置，選單會浮在半空中。位置沒變就不 setState。
+  useEffect(() => {
+    if (!open || !floating) return
+    let frame = 0
+    let last = ''
+    const track = () => {
+      const el = wrapRef.current
+      if (el) {
+        const r = el.getBoundingClientRect()
+        const key = `${r.top},${r.right},${r.bottom},${window.innerWidth},${window.innerHeight}`
+        if (key !== last) {
+          last = key
+          setPlacement(floatingPlacement(variant, r, window.innerWidth, window.innerHeight))
+        }
+      }
+      frame = requestAnimationFrame(track)
+    }
+    track()
+    return () => cancelAnimationFrame(frame)
+  }, [open, floating, variant])
 
   return (
-    <div className={styles.wrap}>
+    <div className={styles.wrap} ref={wrapRef}>
       <Pressable
         aria-expanded={open}
         title={name}
@@ -38,7 +64,14 @@ export function AccountMenu({ variant }: { variant: 'mini' | 'row' | 'mobile' })
           </span>
         )}
       </Pressable>
-      <Popover open={open} onClose={() => setOpen(false)} className={styles.pop} openUp>
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        className={floating ? styles.popFloat : styles.pop}
+        openUp
+        portal={floating}
+        style={floating ? placement : undefined}
+      >
         <div className={styles.popHead}>
           <div className={styles.name}>{name}</div>
           <div className={styles.sub}>研究部 · 分析師</div>

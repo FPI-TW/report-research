@@ -161,9 +161,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 在此之前這個 DB **完全沒有備份**——`pg_dump` / `pgbackrest` / `pg_basebackup` 在 Makefile、`scripts/`、`deploy/`、`docs/`、systemd、crontab 全部零命中，唯一的副本是 docker named volume `report-mark-pgdata`。而 `docs/qa_pdf_report_deployment.md` 早在深度研報上線時就寫著「DB 的 `report_doc` 表需納入備份」，一直沒有人做。
 
-### 為什麼只備這七張表
+### 為什麼只備這八張表
 
-深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，現行備份清單共七張。`user_session` 刻意不備（遺失只是全員重新登入）。
+深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，現行備份清單共八張。`user_session` 刻意不備（遺失只是全員重新登入）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -173,9 +173,10 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.report_brief` | 每日簡報（Sonnet 批次產物，來源清單由 Python 記錄） |
 | `research.review_state` | 待複核人工處理狀態、註記、驗證結果與處理人；無法從原始研報或問答重建 |
 | `research.app_user` | 個別帳號與角色。遺失＝所有人要重新建帳、`qa_log.user_id` 與處理人全部對不回名字。**含 Argon2id 密碼雜湊，備份檔要當機密看待** |
-| `research.admin_audit_log` | 管理操作稽核（建帳、改角色、停用、重設密碼、強制登出、處理待複核）；事後追查「誰做的」的唯一來源 |
+| `research.admin_audit_log` | 管理操作稽核（建帳、改角色、停用、重設密碼、強制登出、處理待複核、權限調整）；事後追查「誰做的」的唯一來源。雜湊鏈＋只能新增（revision 0002），還原時用 `pg_restore --disable-triggers` |
+| `research.user_scope` | 另外授予的權限（`qa_content.read`、`ops.operate`）與授予人；遺失＝特殊權限全部要重新授予，且說不出當初是誰給的 |
 
-沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這七張表的體積相對很小，備起來幾乎沒有成本。
+沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這八張表的體積相對很小，備起來幾乎沒有成本。
 
 **這個取捨有一個已知代價，先寫在這裡免得還原那天才發現**：`report_takeaway` 與 `report_signal` 以 `report_id` FK 指向 `research_report`，而 `report_id` 是每次 ingest 重新產生的 uuid。**語料層若被整個重建，這兩張表的備份就對不回去了**（其餘幾張沒有 FK，可還原；但 `review_state` 中指向舊 `research_report.id` 的抽取複核紀錄會變成孤兒，須依重建後 id 核對）。若之後判定摘錄／訊號值得那個代價，正解是把 `research_report` 一起納入備份（`report_chunk` 仍不必——向量重算得回來），而不是在還原時 `--disable-triggers` 硬塞孤兒列。
 
@@ -235,24 +236,31 @@ docker exec -i report-mark-postgres psql -U postgres -d restore_check \
   -c 'select count(*) from research.report_brief;' \
   -c 'select count(*) from research.review_state;' \
   -c 'select count(*) from research.app_user;' \
-  -c 'select count(*) from research.admin_audit_log;'
+  -c 'select count(*) from research.admin_audit_log;' \
+  -c 'select count(*) from research.user_scope;'
 
-# 預期輸出：**必定出現 2 個 FK 錯誤**，這是正常的，不是備份壞了——
-#   ERROR: relation "research.research_report" does not exist
+# 預期輸出：**必定出現 5 個錯誤**，這是正常的，不是備份壞了——
+#   ERROR: relation "research.research_report" does not exist          ×2
 #     （report_takeaway / report_signal 的 report_id FK 指向未納入備份的語料層）
-#   pg_restore: warning: errors ignored on restore: 2
+#   ERROR: function research.audit_append_only() does not exist         ×2
+#   ERROR: function research.audit_chain_before_insert() does not exist ×1
+#     （admin_audit_log 的雜湊鏈／只能新增觸發器用到的函式屬於 schema、不在逐表 dump 裡；
+#      資料照樣完整還原，臨時 DB 只是少了觸發器。整組還原時 `make schema` 會先建回函式）
+#   pg_restore: warning: errors ignored on restore: 5
 # **而 pg_restore 的退出碼仍然是 0。** 所以「rc=0 就是還原乾淨」是錯的判準：
-# 要看的是 `errors ignored on restore:` 那一行的數字（臨時 DB 演練＝恰好 2，
-# 多於 2 就要查）。2026-07-30 的演練就是這樣量出來的。
+# 要看的是 `errors ignored on restore:` 那一行的數字（臨時 DB 演練＝恰好 5，
+# 多於 5 就要查）。2026-07-30 量到 2；2026-10-06 加入稽核觸發器後重新量測為 5。
 
 # 3) 確認筆數合理後才動生產。單張表被誤刪／誤清時只還原那一張（例如 qa_log；review_state 亦可用同法）：
 docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges -t qa_log < "$DUMP"
 
 # 4) 整組還原到空 DB（例如 pgdata 全滅、重建叢集之後）：
-make schema                                    # 先把 schema 建回來（含 vector 擴充與索引）
+make schema                                    # 先把 schema 建回來（含 vector 擴充、索引、稽核觸發器）
 docker exec -i report-mark-postgres pg_restore -U postgres -d research \
   --no-owner --no-privileges --data-only --disable-triggers < "$DUMP"
+# --disable-triggers 讓稽核的只能新增／雜湊鏈觸發器不擋還原；還原後驗鏈：
+uv run python scripts/audit_anchor.py --verify-only
 
 # 5) 收尾：清掉步驟 2 的臨時 DB（**不可在 -d restore_check 連線上下這道指令**，
 #    PostgreSQL 不允許 DROP 自己正連著的資料庫）

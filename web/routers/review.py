@@ -51,7 +51,7 @@ from web import authz, deps
 logger = logging.getLogger(__name__)
 
 # 整組限管理員：待複核佇列會列出所有人的提問原文，一般使用者不該看得到別人問了什麼。
-router = APIRouter(dependencies=[Depends(authz.require_admin)])
+router = APIRouter(dependencies=[Depends(authz.require_admin), Depends(authz.require_scope("review.manage"))])
 
 ReviewKind = Literal["faithfulness", "feedback", "extraction"]
 ReviewStatus = Literal["open", "resolved", "dismissed"]

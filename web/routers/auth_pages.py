@@ -170,4 +170,8 @@ async def logout(request: Request):
 async def me(user: User = Depends(authz.current_user)):
     """目前登入的身分。前端據此顯示帳號名稱與決定要不要露出管理頁入口——
     那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。"""
-    return {"id": user.id, "username": user.username, "role": user.role}
+    return {
+        "id": user.id, "username": user.username, "role": user.role,
+        "is_super": user.is_super, "scopes": sorted(user.scopes),
+        "elevated_until": user.elevated_until.isoformat() if user.is_elevated else None,
+    }

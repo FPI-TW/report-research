@@ -1,0 +1,11 @@
+[Unit]
+Description=每日錨定稽核雜湊鏈（鏈頭寫到 DB 之外並比對先前錨點）
+
+[Timer]
+# 排在每日備份（03:30）之後：錨點與當天的備份落在同一個 NAS 落點。
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

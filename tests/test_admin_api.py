@@ -55,6 +55,9 @@ class AdminApiTests(unittest.TestCase):
             ("post", f"/api/admin/users/{self.root}/password", {"password": "hijacked-password"}),
             ("post", f"/api/admin/users/{self.root}/logout", None),
             ("get", "/api/admin/audit", None),
+            ("get", "/api/admin/audit/verify", None),
+            ("post", "/api/admin/elevate", {"password": USER_PW}),
+            ("put", f"/api/admin/users/{self.alice}/privileges", {"scopes": ["qa_content.read"]}),
         ]
         for method, path, body in calls:
             with self.subTest(f"{method} {path}"):
@@ -198,6 +201,84 @@ class AdminApiTests(unittest.TestCase):
         blob = "\n".join(cm.output)
         self.assertIn("user.reset_password", blob)
         self.assertNotIn("logged-password", blob)
+
+
+
+class PrivilegeApiTests(unittest.TestCase):
+    """super admin、scope 授予與稽核鏈驗證（權限提升本身的 403 分流見 tests/test_authz.py）。"""
+
+    def setUp(self):
+        auth._FAILS.clear()
+        self.store = FakeAccounts()
+        self.boss = self.store.add_user("boss", ADMIN_PW, "admin", is_super=True)
+        self.plain = self.store.add_user("plain", ADMIN_PW, "admin")
+        self.alice = self.store.add_user("alice", USER_PW, "user")
+        self._ctx = install(self.store)
+        self._ctx.__enter__()
+        self.client = _client()
+        self.assertEqual(self.client.post("/login", data={"username": "boss", "password": ADMIN_PW}).status_code, 303)
+        self.assertEqual(self.client.post("/api/admin/elevate", json={"password": ADMIN_PW}).status_code, 200)
+
+    def tearDown(self):
+        self._ctx.__exit__(None, None, None)
+        auth._FAILS.clear()
+
+    def test_grantable_scope_literal_matches_service(self):
+        from typing import get_args
+
+        from app.services import accounts
+        from web.routers import admin
+
+        self.assertEqual(set(get_args(admin.GrantableScope)), set(accounts.GRANTABLE_SCOPES))
+
+    def test_user_list_exposes_super_and_granted_scopes(self):
+        items = {u["username"]: u for u in self.client.get("/api/admin/users").json()["items"]}
+        self.assertTrue(items["boss"]["is_super"])
+        self.assertEqual(items["plain"]["scopes"], [])
+
+    def test_grant_and_revoke_scope(self):
+        r = self.client.put(f"/api/admin/users/{self.plain}/privileges", json={"scopes": ["qa_content.read"]})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["scopes"], ["qa_content.read"])
+        r = self.client.put(f"/api/admin/users/{self.plain}/privileges", json={"scopes": []})
+        self.assertEqual(r.json()["scopes"], [])
+
+    def test_privilege_errors_carry_codes(self):
+        cases = [
+            ({"scopes": ["root"]}, self.plain, 422, "validation_error"),
+            ({}, self.plain, 400, "bad_request"),
+            ({"scopes": ["ops.operate"]}, self.alice, 400, "invalid_input"),
+            ({"is_super": False}, self.boss, 409, "self_lockout"),
+            ({"scopes": []}, "00000000-0000-0000-0000-000000000000", 404, "not_found"),
+        ]
+        for body, target, status, code in cases:
+            with self.subTest(body=body, code=code):
+                r = self.client.put(f"/api/admin/users/{target}/privileges", json=body)
+                self.assertEqual((r.status_code, r.json()["code"]), (status, code), r.text)
+
+    def test_non_super_admin_cannot_touch_super(self):
+        plain = _client()
+        self.assertEqual(plain.post("/login", data={"username": "plain", "password": ADMIN_PW}).status_code, 303)
+        r = plain.post(f"/api/admin/users/{self.boss}/password", json={"password": "hijacked-password"})
+        self.assertEqual((r.status_code, r.json()["code"]), (403, "super_required"))
+        r = plain.patch(f"/api/admin/users/{self.boss}", json={"enabled": False})
+        self.assertEqual((r.status_code, r.json()["code"]), (403, "super_required"))
+
+    def test_audit_chain_verify_reports_broken_rows(self):
+        self.client.put(f"/api/admin/users/{self.plain}/privileges", json={"scopes": ["qa_content.read"]})
+        ok = self.client.get("/api/admin/audit/verify").json()
+        self.assertTrue(ok["ok"])
+        self.assertEqual(ok["broken_ids"], [])
+        self.store.broken_audit_ids.add(ok["head_id"])
+        bad = self.client.get("/api/admin/audit/verify").json()
+        self.assertFalse(bad["ok"])
+        self.assertEqual(bad["broken_ids"], [ok["head_id"]])
+
+    def test_me_reports_scopes_and_elevation(self):
+        me = self.client.get("/api/me").json()
+        self.assertTrue(me["is_super"])
+        self.assertIn("qa_content.read", me["scopes"])
+        self.assertTrue(me["elevated_until"])
 
 
 if __name__ == "__main__":

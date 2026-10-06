@@ -1,0 +1,18 @@
+[Unit]
+Description=廷豐智能研報 稽核雜湊鏈外部錨定（驗鏈＋比對先前錨點＋寫入 NAS，純 SQL，零 LLM）
+After=network-online.target
+Wants=network-online.target
+# 鏈斷或與先前錨點不符（rc=1，疑似竄改）、落點不存在（rc=2）都要有人知道。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# REPORT_MARK_ROOT 與錨點落點 REPORT_MARK_BACKUP_DIR 都由這個檔提供。
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/audit_anchor.py'
+TimeoutStartSec=300

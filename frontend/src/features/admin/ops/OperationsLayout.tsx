@@ -5,12 +5,13 @@ import { RequireScope } from '../RequireScope'
 import adminStyles from '../Admin.module.css'
 import styles from './Ops.module.css'
 
-// 排程工作、事件與主機讀 DB 投影（/api/admin/jobs、incidents、observations）；服務與日誌經維運代理；
+// 排程工作、事件與主機讀 DB 投影（/api/admin/jobs、incidents、observations）；服務、依賴圖與日誌經維運代理；
 // 資料健康與 LLM 用量讀 /api/admin/data-health、/api/admin/llm-usage（唯讀）。
 // 某個分頁的 API 還沒提供時加 `soon: true`，導覽會標「尚未提供」。
 const TABS: readonly { to: string; label: string; soon?: boolean }[] = [
   { to: 'overview', label: '總覽' },
   { to: 'services', label: '服務' },
+  { to: 'dependencies', label: '依賴圖' },
   { to: 'jobs', label: '排程工作' },
   { to: 'incidents', label: '事件' },
   { to: 'logs', label: '日誌' },
@@ -29,7 +30,7 @@ function Operations() {
       <div className={adminStyles.inner}>
         <AdminHeader
           title="維運"
-          subtitle="服務狀態與最近日誌（唯讀）經主機上的維運代理取得；排程工作、事件與主機資源來自監控紀錄（每 5 分鐘匯入）；資料健康彙整批次新鮮度、資料稽核與 R2 對帳，LLM 用量彙整批次的 token。重新啟動 web 與立即執行白名單批次需要「ops.operate」權限並重新驗證密碼。"
+          subtitle="服務狀態、依賴圖與最近日誌（唯讀）經主機上的維運代理取得；排程工作、事件與主機資源來自監控紀錄（每 5 分鐘匯入）；資料健康彙整批次新鮮度、資料稽核與 R2 對帳，LLM 用量彙整批次的 token。重新啟動 web 與立即執行白名單批次需要「ops.operate」權限並重新驗證密碼。"
         />
         <nav className={styles.tabs} aria-label="維運子導覽">
           {TABS.map(t => (

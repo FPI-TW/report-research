@@ -369,6 +369,32 @@ export const OpsContainerStateSchema = z.object({
 })
 export type OpsContainerState = z.infer<typeof OpsContainerStateSchema>
 
+export const OpsDependencyEdgeSchema = z.object({
+  dependent: z.string(),
+  dependency: z.string(),
+  broken: z.boolean(),
+})
+export type OpsDependencyEdge = z.infer<typeof OpsDependencyEdgeSchema>
+
+export const OpsDependencyNodeSchema = z.object({
+  name: z.string(),
+  kind: z.enum(['systemd', 'container', 'external']),
+  tier: z.enum(['critical', 'important', 'supporting']),
+  target: z.string().nullable().optional(),
+  description: z.string().optional(),
+  summary: z.enum(['running', 'idle', 'failed', 'transitioning', 'not_found', 'unknown']).nullable().optional(),
+  health: z.enum(['ok', 'degraded', 'down', 'unknown']),
+  health_reason: z.string(),
+  probe: z.string().nullable().optional(),
+  observed_at: z.string().nullable().optional(),
+  depends_on: z.array(z.string()),
+  dependents: z.array(z.string()),
+  layer: z.number().int(),
+  affected: z.boolean(),
+  impacted_by: z.array(z.string()),
+})
+export type OpsDependencyNode = z.infer<typeof OpsDependencyNodeSchema>
+
 export const OpsLogsResponseSchema = z.object({
   name: z.string(),
   kind: z.enum(['systemd', 'container']),
@@ -519,6 +545,18 @@ export const LlmUsageResponseSchema = z.object({
 })
 export type LlmUsageResponse = z.infer<typeof LlmUsageResponseSchema>
 
+export const OpsDependencyGraphSchema = z.object({
+  environment: z.string(),
+  host: z.string(),
+  checked_at: z.string(),
+  nodes: z.array(OpsDependencyNodeSchema),
+  edges: z.array(OpsDependencyEdgeSchema),
+  down: z.array(z.string()),
+  root_causes: z.array(z.string()),
+  affected: z.array(z.string()),
+})
+export type OpsDependencyGraph = z.infer<typeof OpsDependencyGraphSchema>
+
 export const OpsServiceDetailSchema = z.object({
   name: z.string(),
   kind: z.enum(['systemd', 'container']),
@@ -619,6 +657,8 @@ export const adminApi = {
   getLlmUsage: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/llm-usage${qs(query)}`, LlmUsageResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/observations — List Observations */
   listObservations: (query: { scope?: 'host' | 'container' | 'service' | null; subject?: string | null; metric?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/observations${qs(query)}`, ObservationListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/ops/dependencies — Get Ops Dependencies */
+  getOpsDependencies: () => requestJSON('/api/admin/ops/dependencies', OpsDependencyGraphSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services — List Ops Services */
   listOpsServices: () => requestJSON('/api/admin/ops/services', OpsServiceListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services/{name} — Get Ops Service */

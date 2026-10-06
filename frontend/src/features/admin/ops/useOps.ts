@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   adminApi, type DataHealthResponse, type IncidentDetail, type IncidentItem, type IncidentListResponse, type JobItem,
-  type JobListResponse, type LlmUsageResponse, type ObservationListResponse, type OpsLogsResponse,
+  type JobListResponse, type LlmUsageResponse, type ObservationListResponse, type OpsDependencyGraph,
+  type OpsLogsResponse,
   type OpsServiceDetail, type OpsServiceListResponse,
 } from '../../../lib/generated/adminApi'
 
@@ -12,6 +13,16 @@ export function useOpsServices() {
   return useQuery<OpsServiceListResponse>({
     queryKey: [...OPS_KEY, 'services'],
     queryFn: () => adminApi.listOpsServices(),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+}
+
+/** 依賴圖（catalog 的依賴＋各節點狀態，後端算好受影響的下游）。與服務清單同樣 30 秒自動重抓。 */
+export function useOpsDependencies() {
+  return useQuery<OpsDependencyGraph>({
+    queryKey: [...OPS_KEY, 'dependencies'],
+    queryFn: () => adminApi.getOpsDependencies(),
     refetchInterval: 30_000,
     retry: false,
   })

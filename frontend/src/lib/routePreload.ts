@@ -5,6 +5,7 @@ export type RouteKey =
   | 'adminShell' | 'adminUsers' | 'adminReviews' | 'adminAudit' | 'adminReports'
   | 'adminOps' | 'adminOpsOverview' | 'adminOpsServices' | 'adminOpsService' | 'adminOpsLogs'
   | 'adminOpsJobs' | 'adminOpsIncidents' | 'adminOpsHost' | 'adminOpsDataHealth' | 'adminOpsLlmUsage'
+  | 'adminOpsDependencies'
 
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
@@ -32,6 +33,7 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminOpsHost: () => import('../features/admin/ops/OpsHostPage'),
   adminOpsDataHealth: () => import('../features/admin/ops/OpsDataHealthPage'),
   adminOpsLlmUsage: () => import('../features/admin/ops/OpsLlmUsagePage'),
+  adminOpsDependencies: () => import('../features/admin/ops/OpsDependenciesPage'),
 }
 
 const started = new Set<RouteKey>()

@@ -4,6 +4,8 @@
 # socket 也和生產不同（/run/report-mark-ops-dev/agent.sock）：dev 代理結構上碰不到生產服務。
 # 本機冒煙可用 --socket 指到臨時路徑（只有 development 允許覆寫）。
 #
+# 依賴圖（depends_on）與生產同一套格式（ops_agent/catalog.py）；dev 沒有外部依賴節點。
+#
 # 寫入類與生產同一套規則（restart 只給 web 類、run 只給 oneshot、容器唯讀），對象只限開發用的 unit：
 # dev-web 可 restart，dev-smoke（deploy/systemd/report-mark-dev-smoke.service，只 sleep 的 oneshot）可 run，
 # 用來在不碰任何真東西的前提下驗 run、409 already_running 與輪詢。polkit 只授權 report-mark-ops-dev
@@ -43,6 +45,7 @@ unit = "report-mark-dev-web.service"
 tier = "important"
 actions = ["status", "logs", "restart"]
 group = "dev-web"
+depends_on = ["devdb"]
 description = "開發用 web（尚未建立 unit）"
 
 [[services]]

@@ -9,12 +9,16 @@
 // 是經 D-Bus 請 systemd（PID 1）做事，systemd 以 polkit 的 org.freedesktop.systemd1.manage-units 檢查
 // 呼叫端，並附上 unit 與 verb 兩個細節——這裡就能把授權精確限定在「哪個使用者、哪個動詞、哪個 unit」。
 //
-// 規則：代理的兩個使用者（prod report-mark-ops、dev report-mark-ops-dev）只能對 ALLOW 列出的 unit 做
-// 列出的動詞；它們對 org.freedesktop.systemd1.* 的其他任何動作（stop、enable、daemon-reload、
+// 規則：代理的三個使用者（prod report-mark-ops、staging report-mark-ops-staging、dev report-mark-ops-dev）
+// 只能對 ALLOW 列出的 unit 做列出的動詞；它們對 org.freedesktop.systemd1.* 的其他任何動作（stop、enable、daemon-reload、
 // 其他 unit、unit file 管理……）一律 NO。其他使用者不受這個檔影響（NOT_HANDLED）。
 // 檔名以 10- 開頭：polkit 依檔名順序評估、第一個給出結果的規則勝出，這裡的 NO 要先於其他較寬的規則。
 //
-// ALLOW 必須與 deploy/ops/services.prod.toml、services.dev.toml 的寫入類 action 一致（restart → "restart"，
+// 同一份檔裝在每台主機上（辦公室主機與 EC2 staging）：使用者不存在的那幾組在該主機上不會命中。
+// staging 的 report-mark-ops-staging 刻意比生產窄（只有 web 的 restart 與 freshness／audit 的 start）；
+// EC2 上只建 report-mark-ops-staging、不建 report-mark-ops，生產那組（含 sync／backup 的 start）在那裡不會命中。
+//
+// ALLOW 必須與 deploy/ops/services.prod.toml、services.staging.toml、services.dev.toml 的寫入類 action 一致（restart → "restart"，
 // run → "start"），使用者必須與 deploy/systemd/report-mark-ops-agent*.service 的 User= 一致；
 // tests/test_ops_polkit.py 對帳，並以 node 實際執行這個檔驗證決策（有 node 時）。
 // 標記之間的內容必須是合法 JSON（測試直接解析）。
@@ -30,6 +34,13 @@
                 "report-mark-freshness.service",
                 "report-mark-audit.service",
                 "report-mark-r2-reconcile.service"
+            ]
+        },
+        "report-mark-ops-staging": {
+            "restart": ["report-mark-web.service"],
+            "start": [
+                "report-mark-freshness.service",
+                "report-mark-audit.service"
             ]
         },
         "report-mark-ops-dev": {

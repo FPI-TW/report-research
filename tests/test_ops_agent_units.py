@@ -20,9 +20,11 @@ class DeployUnitTests(unittest.TestCase):
 
     UNITS = {
         "production": REPO_ROOT / "deploy" / "systemd" / "report-mark-ops-agent.service",
+        "staging": REPO_ROOT / "deploy" / "systemd" / "report-mark-ops-agent-staging.service",
         "development": REPO_ROOT / "deploy" / "systemd" / "report-mark-ops-agent-dev.service",
     }
-    CATALOGS = {"production": "services.prod.toml", "development": "services.dev.toml"}
+    CATALOGS = {"production": "services.prod.toml", "staging": "services.staging.toml",
+                "development": "services.dev.toml"}
 
     def _directives(self, path: Path) -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}
@@ -52,8 +54,9 @@ class DeployUnitTests(unittest.TestCase):
                 self.assertNotIn(".venv", cmd)
                 self.assertNotIn("uv ", cmd)
             self.assertTrue(d["ExecStartPre"][0].endswith("--check"))
-            other = self.CATALOGS["development" if env == "production" else "production"]
-            self.assertNotIn(other, unit.read_text(encoding="utf-8"))
+            for other_env, other in self.CATALOGS.items():
+                if other_env != env:
+                    self.assertNotIn(other, unit.read_text(encoding="utf-8"))
 
     def test_dedicated_user_and_least_privilege(self):
         users = set()
@@ -63,7 +66,9 @@ class DeployUnitTests(unittest.TestCase):
             users.add(user)
             self.assertNotIn(user, ("root", "kashionz"))
             self.assertEqual(d["Group"], [user])
-            self.assertEqual(d["SupplementaryGroups"], ["systemd-journal docker"])
+            # staging 沒有任何容器（RDS、apt 的 nginx）：不給等同 root 的 docker 群組。
+            groups = ["systemd-journal"] if unit == self.UNITS["staging"] else ["systemd-journal docker"]
+            self.assertEqual(d["SupplementaryGroups"], groups, unit.name)
             self.assertEqual(d["NoNewPrivileges"], ["yes"])
             self.assertEqual(d["CapabilityBoundingSet"], [""])
             self.assertEqual(d["ProtectSystem"], ["strict"])
@@ -72,7 +77,14 @@ class DeployUnitTests(unittest.TestCase):
             self.assertNotIn("EnvironmentFile", d)
             self.assertFalse(any(v.startswith("HOME=") for v in d.get("Environment", [])))
             self.assertNotIn("OnFailure", d)
-        self.assertEqual(len(users), 2, "dev 與 prod 代理要用不同的使用者")
+        self.assertEqual(len(users), 3, "dev、staging、prod 代理要用不同的使用者")
+
+    def test_staging_catalog_has_no_containers(self):
+        """staging 代理沒有 docker 群組：catalog 一出現 container 服務，status 就只會回 docker 的權限錯誤。"""
+        from ops_agent.catalog import load_catalog
+
+        catalog = load_catalog(REPO_ROOT / "deploy" / "ops" / "services.staging.toml", resolve_user=lambda _n: 4242)
+        self.assertEqual([s.name for s in catalog.services if s.kind == "container"], [])
 
     def test_lock_files_are_visible_read_only_inside_the_sandbox(self):
         """catalog 的 flock_files／pid_files 所在目錄必須被 BindReadOnlyPaths 綁進來（家目錄其餘部分藏起來）。

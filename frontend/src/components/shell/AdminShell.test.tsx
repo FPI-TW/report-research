@@ -53,6 +53,14 @@ test('依 scope 顯示入口：有 reports.manage／ops.read 才看得到「研�
   const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
   expect(nav.getByRole('link', { name: /研報管理/ })).toHaveAttribute('href', '/admin/reports')
   expect(nav.getByRole('link', { name: /維運/ })).toHaveAttribute('href', '/admin/operations')
+  expect(nav.getByRole('link', { name: /上傳研報/ })).toHaveAttribute('href', '/admin/uploads')
+})
+
+test('上傳詳情頁裡，「上傳研報」入口維持選取狀態，「研報管理」不會跟著亮', async () => {
+  mount('admin', '/admin/uploads/u-1', ['admin', 'reports.manage'])
+  const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
+  expect(nav.getByRole('link', { name: /上傳研報/ })).toHaveAttribute('aria-current', 'page')
+  expect(nav.getByRole('link', { name: /研報管理/ })).not.toHaveAttribute('aria-current')
 })
 
 test('維運子頁裡，「維運」入口維持選取狀態', async () => {
@@ -65,6 +73,7 @@ test('沒有對應 scope 的管理員：不顯示研報管理與維運入口', a
   mount('admin', '/admin/reviews', ['admin'])
   const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
   expect(nav.queryByRole('link', { name: /研報管理/ })).not.toBeInTheDocument()
+  expect(nav.queryByRole('link', { name: /上傳研報/ })).not.toBeInTheDocument()
   expect(nav.queryByRole('link', { name: /維運/ })).not.toBeInTheDocument()
   expect(nav.getByRole('link', { name: /帳號管理/ })).toBeInTheDocument()
 })

@@ -30,6 +30,58 @@ export const AdminReportListResponseSchema = z.object({
 })
 export type AdminReportListResponse = z.infer<typeof AdminReportListResponseSchema>
 
+export const AdminUploadSchema = z.object({
+  upload_id: z.string(),
+  file_hash: z.string(),
+  original_name: z.string(),
+  size_bytes: z.number().int(),
+  client_mtime: z.string().nullable().optional(),
+  uploaded_by: z.string().nullable().optional(),
+  uploaded_at: z.string(),
+  state: z.enum(['quarantined', 'scanning', 'clean', 'infected', 'blocked', 'processing', 'draft', 'failed', 'duplicate', 'published', 'rejected']),
+  state_changed_at: z.string(),
+  scan_attempts: z.number().int().optional(),
+  scan_engine: z.string().nullable().optional(),
+  scan_signature: z.string().nullable().optional(),
+  scanned_at: z.string().nullable().optional(),
+  scan_last_error: z.string().nullable().optional(),
+  process_attempts: z.number().int().optional(),
+  failure_kind: z.string().nullable().optional(),
+  failure_detail: z.string().nullable().optional(),
+  processed_at: z.string().nullable().optional(),
+  decided_by: z.string().nullable().optional(),
+  decided_at: z.string().nullable().optional(),
+  decision_reason: z.string().nullable().optional(),
+  purge_after: z.string().nullable().optional(),
+  purged_at: z.string().nullable().optional(),
+})
+export type AdminUpload = z.infer<typeof AdminUploadSchema>
+
+export const AdminUploadReportSchema = z.object({
+  report_id: z.string(),
+  title: z.string().nullable().optional(),
+  publication: z.enum(['draft', 'published']),
+  hidden: z.boolean(),
+  extractor: z.string().nullable().optional(),
+  extraction_version: z.string().nullable().optional(),
+  quality_score: z.number().nullable().optional(),
+  page_count: z.number().int().nullable().optional(),
+  pages_failed: z.array(z.number().int()).nullable().optional(),
+  needs_review: z.boolean().optional(),
+  created_at: z.string().nullable().optional(),
+})
+export type AdminUploadReport = z.infer<typeof AdminUploadReportSchema>
+
+export const AdminUploadScannerSchema = z.object({
+  pending: z.number().int(),
+  scanning: z.number().int(),
+  oldest_pending_at: z.string().nullable().optional(),
+  oldest_pending_seconds: z.number().int().nullable().optional(),
+  last_error: z.string().nullable().optional(),
+  last_error_at: z.string().nullable().optional(),
+})
+export type AdminUploadScanner = z.infer<typeof AdminUploadScannerSchema>
+
 export const AuditChainResponseSchema = z.object({
   ok: z.boolean(),
   total: z.number().int(),
@@ -601,6 +653,45 @@ export const UserListResponseSchema = z.object({
 })
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
 
+export const AdminUploadDetailSchema = z.object({
+  upload_id: z.string(),
+  file_hash: z.string(),
+  original_name: z.string(),
+  size_bytes: z.number().int(),
+  client_mtime: z.string().nullable().optional(),
+  uploaded_by: z.string().nullable().optional(),
+  uploaded_at: z.string(),
+  state: z.enum(['quarantined', 'scanning', 'clean', 'infected', 'blocked', 'processing', 'draft', 'failed', 'duplicate', 'published', 'rejected']),
+  state_changed_at: z.string(),
+  scan_attempts: z.number().int().optional(),
+  scan_engine: z.string().nullable().optional(),
+  scan_signature: z.string().nullable().optional(),
+  scanned_at: z.string().nullable().optional(),
+  scan_last_error: z.string().nullable().optional(),
+  process_attempts: z.number().int().optional(),
+  failure_kind: z.string().nullable().optional(),
+  failure_detail: z.string().nullable().optional(),
+  processed_at: z.string().nullable().optional(),
+  decided_by: z.string().nullable().optional(),
+  decided_at: z.string().nullable().optional(),
+  decision_reason: z.string().nullable().optional(),
+  purge_after: z.string().nullable().optional(),
+  purged_at: z.string().nullable().optional(),
+  report: AdminUploadReportSchema.nullable().optional(),
+})
+export type AdminUploadDetail = z.infer<typeof AdminUploadDetailSchema>
+
+export const AdminUploadListResponseSchema = z.object({
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().nullable(),
+  items: z.array(AdminUploadSchema),
+  scanner: AdminUploadScannerSchema,
+})
+export type AdminUploadListResponse = z.infer<typeof AdminUploadListResponseSchema>
+
 export const IncidentDetailSchema = z.object({
   incident_id: z.string(),
   host: z.string(),
@@ -818,6 +909,10 @@ export const adminApi = {
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/retrieval-regression — Get Retrieval Regression */
   getRetrievalRegression: () => requestJSON('/api/admin/retrieval-regression', RetrievalRegressionResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/uploads — List Uploads */
+  listUploads: (query: { state?: 'quarantined' | 'scanning' | 'clean' | 'infected' | 'blocked' | 'processing' | 'draft' | 'failed' | 'duplicate' | 'published' | 'rejected' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/uploads${qs(query)}`, AdminUploadListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/uploads/{upload_id} — Get Upload */
+  getUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}`, AdminUploadDetailSchema, { cache: 'no-store' }),
   /** GET /api/admin/users — List Users */
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */
@@ -838,6 +933,17 @@ export const adminApi = {
   setPrivileges: (userId: string, body: z.input<typeof PrivilegesRequestSchema>) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/privileges`, UserItemSchema, jsonBody('PUT', body)),
   /** POST /api/admin/users/{user_id}/totp/reset — Reset Totp */
   resetTotp: (userId: string) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}/totp/reset`, UserItemSchema, jsonBody('POST')),
+}
+
+/** raw body 上傳端點（不是 JSON）：前端自己送檔（XHR 才有上傳進度），回應以 `response` 解析。 */
+export const adminRawUploads = {
+  /** POST /api/admin/uploads — Create Upload（raw body application/pdf） */
+  createUpload: {
+    method: 'POST',
+    url: (query: { filename: string; last_modified?: number | null }) => `/api/admin/uploads${qs(query)}`,
+    contentType: 'application/pdf',
+    response: AdminUploadSchema,
+  },
 }
 
 /** CSV 下載端點的網址（`text/csv`，不是 JSON）。 */

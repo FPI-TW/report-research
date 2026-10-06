@@ -34,6 +34,20 @@ TTL 與逾時，掛掉就降級（記 id 當名字），不影響取樣本身。
   kind=sample    每 --interval 一筆（速率型指標，含前後兩次快照的差分）
   kind=capacity  每 --capacity-interval 一筆（df、DB 大小、各表列數）
 
+**監控 spool（L3，`--observe-interval`，預設 60 秒）**：同一個常駐行程另外把 Host（CPU、記憶體、
+磁碟、I/O PSI、load）、Service Catalog（`deploy/ops/services.prod.toml`）列出的容器狀態與 systemd
+unit 狀態，以及批次 oneshot 的每次執行，寫成 spool JSONL（預設 `data/ops_spool/`，`OPS_SPOOL_DIR`
+可覆寫）。**收集器不連 DB**：由 `scripts/load_observations.py`（report-mark-load-observations.timer）
+冪等匯入 `research.service_observation`／`research.job_execution`，DB 掛掉期間的觀測事後補匯入。
+spool 兩種檔、一天一檔、一行一筆：
+  observations-YYYYMMDD.jsonl  {"v":1,"type":"observation","host","observed_at","scope","subject",
+                                "metrics":{指標:數值},"states":{指標:狀態字串},"detail":{…}}
+  jobs-YYYYMMDD.jsonl          {"v":1,"type":"job","host","unit","service","invocation_id","state",
+                                "started_at","finished_at","result","exit_status","exec_main_code","observed_at"}
+批次「跑過」的判準比照 `scripts/verify_oneshot_ran.sh`：`Result=success`／`ExecMainStatus=0` 不是證據，
+必須有 InvocationID 與 ExecMainStartTimestamp；同一次 invocation 只在狀態改變時（running → finished）
+多寫一行。每 2 分鐘的探針與 incident oneshot 不算批次（由 P5 消費，記下來只是雜訊）。
+
 用法：
   python3 scripts/collect_resource_usage.py --once            # 印一筆到 stdout
   python3 scripts/collect_resource_usage.py                   # 常駐取樣（systemd 用這個）
@@ -49,15 +63,31 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+try:  # 系統 python 3.11+ 才有；沒有時 catalog 讀不到，L3 的服務／容器觀測降級，取樣本身照常
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - 依執行環境而定
+    tomllib = None
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CGROUP_ROOT = Path("/sys/fs/cgroup")
+DEFAULT_CATALOG = REPO_ROOT / "deploy" / "ops" / "services.prod.toml"
+
+
+def default_spool_dir() -> Path:
+    """監控 spool 的落點：`OPS_SPOOL_DIR`，未設時是 repo 根的 `data/ops_spool/`。
+
+    與 `scripts/incident_handler.sh`、`scripts/load_observations.py` 同一個預設；測試由
+    `tests/conftest.py` 以賦值把它指到 os.devnull。
+    """
+    return Path(os.environ.get("OPS_SPOOL_DIR") or (REPO_ROOT / "data" / "ops_spool"))
 
 # docker CLI 候選——與 scripts/_docker_bin.sh 同一份邏輯（該檔的註解解釋了為什麼
 # 不能用 `command -v docker`：本機 /usr/bin/docker 存在但可能連不到 daemon）。
@@ -603,6 +633,381 @@ class Writer:
             self._fh = None
 
 
+# ── L3：監控 spool（Host／Container／Service 觀測與批次執行紀錄）──────────────
+#
+# 名單取自 Service Catalog（ops_agent 的同一份 TOML），不自己另列一份：catalog 是「這台主機上有哪些
+# 服務、各屬哪個 tier」的唯一定義。讀不到 catalog（檔案不在、python 沒有 tomllib、格式壞了）時只降級
+# 這一段（沒有服務／容器觀測），Host 觀測與硬體取樣照常——監控工具不得因為一份設定檔而整個停擺。
+
+# 每 2 分鐘的探針與 incident oneshot：由 P5 消費、不是批次，記成 job 只會每天多出數千列雜訊。
+JOB_EXCLUDE_SUFFIXES = ("-health.service", "-incident.service")
+_INVOCATION_ID = re.compile(r"[0-9a-f]{32}")
+_UNIX_TS = re.compile(r"@(\d{1,12})")
+_METRIC = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_SYSTEMD_PROPS = (
+    "Id", "LoadState", "ActiveState", "SubState", "Result", "UnitFileState", "NRestarts",
+    "ExecMainCode", "ExecMainStatus", "ExecMainStartTimestamp", "ExecMainStartTimestampMonotonic",
+    "ExecMainExitTimestamp", "ExecMainExitTimestampMonotonic", "InvocationID",
+)
+_EXEC_CODES = {"1": "exited", "2": "killed", "3": "dumped"}
+_RUNNING_STATES = {"activating", "deactivating", "reloading", "refreshing"}
+# 與 ops_agent/backends.py 的 DOCKER_INSPECT_FORMAT 同一個取法：只取 State 與 RestartCount，
+# 不取 Config.Env（環境變數可能含祕密）與 State.Health.Log（健康檢查輸出可能帶任何東西）。
+DOCKER_STATE_FORMAT = '{"name":{{json .Name}},"state":{{json .State}},"restart_count":{{json .RestartCount}}}'
+
+
+def _iso_now() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def load_catalog_targets(path: Path) -> list[dict]:
+    """catalog 的 `[[services]]` → [{name, kind, tier, unit, timer, container}]。讀不到回 []。"""
+    if tomllib is None:
+        print("collect_resource_usage: python 沒有 tomllib（需 3.11+），略過服務／容器觀測", file=sys.stderr)
+        return []
+    try:
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, ValueError) as exc:
+        print(f"collect_resource_usage: 讀不到 catalog {path}：{exc}，略過服務／容器觀測", file=sys.stderr)
+        return []
+    out = []
+    for raw in data.get("services") or []:
+        if not isinstance(raw, dict):
+            continue
+        kind = raw.get("kind")
+        name = raw.get("name")
+        if kind not in ("systemd", "container") or not isinstance(name, str):
+            continue
+        out.append({
+            "name": name,
+            "kind": kind,
+            "tier": raw.get("tier"),
+            "unit": raw.get("unit") if kind == "systemd" else None,
+            "timer": raw.get("timer") if kind == "systemd" else None,
+            "container": raw.get("container") if kind == "container" else None,
+        })
+    return out
+
+
+def parse_show_blocks(text: str) -> dict[str, dict[str, str]]:
+    """`systemctl show` 多 unit 輸出（空行分段）→ {Id: {屬性: 值}}。以 Id 對應，不靠順序。"""
+    out: dict[str, dict[str, str]] = {}
+    for raw in text.strip("\n").split("\n\n"):
+        props: dict[str, str] = {}
+        for line in raw.splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                props[key] = value
+        if props.get("Id"):
+            out[props["Id"]] = props
+    return out
+
+
+def systemd_show(systemctl: str, units: list[str], timeout: float = 10.0) -> dict[str, dict[str, str]]:
+    """一次 `systemctl show` 查全部 unit（`--timestamp=unix`：時間戳與時區、語系無關）。失敗回 {}。"""
+    if not units:
+        return {}
+    try:
+        proc = subprocess.run(
+            [systemctl, "show", "--no-pager", "--timestamp=unix", "-p", ",".join(_SYSTEMD_PROPS), "--", *units],
+            capture_output=True, text=True, timeout=timeout, check=False, env={**os.environ, "TZ": "UTC"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    return parse_show_blocks(proc.stdout)
+
+
+def unix_ts(value: str | None) -> datetime | None:
+    m = _UNIX_TS.fullmatch(value or "")
+    if not m:
+        return None
+    return datetime.fromtimestamp(int(m.group(1)), tz=timezone.utc)
+
+
+def _intval(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def docker_states(docker_bin: str | None, names: list[str], timeout: float = 20.0) -> dict[str, dict] | None:
+    """{容器名: {status, health, restart_count, exit_code, oom_killed, started_at}}。
+
+    docker 不可用回 None（＝判不出來，不寫觀測）；容器不存在則不出現在結果裡（呼叫端記成 missing）。
+    """
+    if not docker_bin or not names:
+        return None
+    try:
+        proc = subprocess.run(
+            [docker_bin, "inspect", "--type", "container", "--format", DOCKER_STATE_FORMAT, "--", *names],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found: dict[str, dict] = {}
+    for line in proc.stdout.splitlines():
+        try:
+            info = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(info, dict) or not isinstance(info.get("name"), str):
+            continue
+        st = info.get("state") if isinstance(info.get("state"), dict) else {}
+        health = st.get("Health") if isinstance(st.get("Health"), dict) else {}
+        started = st.get("StartedAt")
+        found[info["name"].lstrip("/")] = {
+            "status": st.get("Status") if isinstance(st.get("Status"), str) else "unknown",
+            "health": health.get("Status") if isinstance(health.get("Status"), str) else None,
+            "restart_count": info.get("restart_count") if isinstance(info.get("restart_count"), int) else None,
+            "exit_code": st.get("ExitCode") if isinstance(st.get("ExitCode"), int) else None,
+            "oom_killed": st.get("OOMKilled") if isinstance(st.get("OOMKilled"), bool) else None,
+            "started_at": started if isinstance(started, str) and not started.startswith("0001-") else None,
+        }
+    if not found and proc.returncode != 0 and "No such" not in proc.stderr:
+        return None  # daemon 連不上、逾時之類：判不出來
+    return found
+
+
+def pressure_full() -> dict[str, float]:
+    """PSI 的 avg10 與 avg60（some／full）。既有的 `pressure()` 只取 avg10，給硬體取樣用，不動它。"""
+    out: dict[str, float] = {}
+    for res in ("cpu", "io", "memory"):
+        text = _read(Path(f"/proc/pressure/{res}"))
+        if not text:
+            continue
+        for line in text.splitlines():
+            parts = line.split()
+            if not parts or parts[0] not in ("some", "full"):
+                continue
+            for token in parts[1:]:
+                key, _, val = token.partition("=")
+                if key in ("avg10", "avg60"):
+                    try:
+                        out[f"psi_{res}_{parts[0]}_{key}"] = float(val)
+                    except ValueError:
+                        pass
+    return out
+
+
+def _clean_metrics(metrics: dict) -> dict[str, float]:
+    return {
+        k: round(float(v), 4) for k, v in metrics.items()
+        if _METRIC.fullmatch(k) and isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+
+
+class Observer:
+    """每 `--observe-interval` 產出一批 spool 紀錄（observation 與 job）。
+
+    容器狀態有 TTL（`container_ttl`），做法與 `Sampler` 的名稱解析相同：docker CLI 慢（`docker.exe`
+    經 WSL interop 秒級），不必每一輪都問；掛掉就降級（不寫容器觀測），不影響其他觀測。
+    """
+
+    def __init__(self, targets: list[dict], docker_bin: str | None, *, systemctl: str = "systemctl",
+                 container_ttl: float = 60.0, host: str | None = None,
+                 fs_paths: list[str] | None = None) -> None:
+        self.targets = targets
+        self.docker_bin = docker_bin
+        self.systemctl = systemctl
+        self.container_ttl = container_ttl
+        self.host = host or os.uname().nodename
+        self.fs_paths = fs_paths if fs_paths is not None else [str(REPO_ROOT), "/"]
+        self._containers: dict[str, dict] | None = None
+        self._containers_at: float | None = None
+        # unit → (invocation_id, state, started_at ISO)：同一次 invocation 只在狀態改變時寫一行
+        self._jobs: dict[str, tuple[str, str, str]] = {}
+
+    def _container_states(self) -> dict[str, dict] | None:
+        names = [t["container"] for t in self.targets if t["kind"] == "container" and t.get("container")]
+        if not names:
+            return None
+        if self._containers_at is None or _now() - self._containers_at >= self.container_ttl:
+            self._containers = docker_states(self.docker_bin, names)
+            self._containers_at = _now()
+        return self._containers
+
+    def _obs(self, ts: str, scope: str, subject: str, metrics=None, states=None, detail=None) -> dict:
+        rec: dict = {"v": 1, "type": "observation", "host": self.host, "observed_at": ts,
+                     "scope": scope, "subject": subject}
+        rec["metrics"] = _clean_metrics(metrics or {})
+        rec["states"] = {k: str(v)[:64] for k, v in (states or {}).items() if _METRIC.fullmatch(k) and v}
+        if detail:
+            rec["detail"] = detail
+        return rec
+
+    def host_records(self, ts: str, sample: dict | None) -> list[dict]:
+        host = (sample or {}).get("host") or {}
+        ncpu = host.get("ncpu") or os.cpu_count() or 1
+        metrics: dict[str, float] = {}
+        if "cpu_cores" in host:
+            metrics["cpu_pct"] = host["cpu_cores"] / ncpu * 100
+        if "iowait_cores" in host:
+            metrics["iowait_pct"] = host["iowait_cores"] / ncpu * 100
+        mem = meminfo()
+        total = mem.get("MemTotal", 0)
+        if total:
+            avail = mem.get("MemAvailable", 0)
+            metrics["mem_used_pct"] = (total - avail) / total * 100
+            metrics["mem_avail_bytes"] = avail
+            metrics["swap_used_bytes"] = mem.get("SwapTotal", 0) - mem.get("SwapFree", 0)
+        try:
+            la = os.getloadavg()
+            metrics.update(load1=la[0], load5=la[1], load15=la[2])
+        except OSError:
+            pass
+        metrics.update(pressure_full())
+        for src, dst in (("disk_r", "disk_read_bps"), ("disk_w", "disk_write_bps"), ("disk_iops", "disk_iops")):
+            if src in host:
+                metrics[dst] = host[src]
+        out = [self._obs(ts, "host", "host", metrics)]
+        for fs in filesystems(self.fs_paths):
+            if fs["size"] <= 0:
+                continue
+            out.append(self._obs(ts, "host", f"fs:{fs['path']}", {
+                "used_pct": fs["used"] / fs["size"] * 100, "avail_bytes": fs["avail"],
+            }))
+        return out
+
+    def records(self, sample: dict | None = None) -> list[dict]:
+        """一批紀錄：host ＋（catalog 有的話）容器、systemd unit 與 job。"""
+        ts = _iso_now()
+        out = self.host_records(ts, sample)
+        comp = (sample or {}).get("comp") or {}
+
+        states = self._container_states()
+        if states is not None:
+            for t in self.targets:
+                if t["kind"] != "container" or not t.get("container"):
+                    continue
+                st = states.get(t["container"])
+                usage = comp.get(t["container"]) or {}
+                metrics = {"cpu_cores": usage.get("cpu"), "mem_bytes": usage.get("mem")}
+                if st is None:
+                    out.append(self._obs(ts, "container", t["name"], states={"status": "missing"},
+                                         detail={"container": t["container"], "tier": t.get("tier")}))
+                    continue
+                metrics["restart_count"] = st.get("restart_count")
+                out.append(self._obs(
+                    ts, "container", t["name"], {k: v for k, v in metrics.items() if v is not None},
+                    {"status": st.get("status"), "health": st.get("health")},
+                    {"container": t["container"], "tier": t.get("tier"), "exit_code": st.get("exit_code"),
+                     "oom_killed": st.get("oom_killed"), "started_at": st.get("started_at")},
+                ))
+
+        systemd = [t for t in self.targets if t["kind"] == "systemd" and t.get("unit")]
+        show = systemd_show(self.systemctl, [t["unit"] for t in systemd]) if systemd else {}
+        for t in systemd:
+            props = show.get(t["unit"])
+            if not props:
+                continue
+            usage = comp.get(t["unit"].removeprefix("report-mark-").removesuffix(".service")) or {}
+            metrics = {"cpu_cores": usage.get("cpu"), "mem_bytes": usage.get("mem")}
+            out.append(self._obs(
+                ts, "service", t["name"], {k: v for k, v in metrics.items() if v is not None},
+                {"active_state": props.get("ActiveState")},
+                {"unit": t["unit"], "tier": t.get("tier"), "load_state": props.get("LoadState") or None,
+                 "sub_state": props.get("SubState") or None, "result": props.get("Result") or None,
+                 "unit_file_state": props.get("UnitFileState") or None,
+                 "n_restarts": _intval(props.get("NRestarts")),
+                 "exec_main_status": _intval(props.get("ExecMainStatus"))},
+            ))
+            if t.get("timer") and not t["unit"].endswith(JOB_EXCLUDE_SUFFIXES):
+                out.extend(self.job_records(t, props, ts))
+        return out
+
+    def job_records(self, target: dict, props: dict[str, str], ts: str) -> list[dict]:
+        """一個 oneshot 的執行紀錄（狀態沒變就不寫）。"""
+        unit = target["unit"]
+        inv = props.get("InvocationID", "")
+        start_mono = _intval(props.get("ExecMainStartTimestampMonotonic")) or 0
+        exit_mono = _intval(props.get("ExecMainExitTimestampMonotonic")) or 0
+        started = unix_ts(props.get("ExecMainStartTimestamp"))
+        # 「跑過」的必要條件（verify_oneshot_ran.sh）：有 InvocationID 與啟動時間戳。GC 過或從未執行的 unit
+        # 兩者都是空的，Result=success 只是預設值——那不是一次執行，不寫。
+        if not _INVOCATION_ID.fullmatch(inv) or start_mono <= 0 or started is None:
+            return []
+        active = props.get("ActiveState", "")
+        if exit_mono >= start_mono and active not in _RUNNING_STATES:
+            state = "finished"
+        elif exit_mono == 0 or active in _RUNNING_STATES:
+            state = "running"
+        else:
+            return []  # 完成時戳早於啟動：兩個欄位來自不同 invocation（讀數跨越邊界），下一輪再看
+        out: list[dict] = []
+        prev = self._jobs.get(unit)
+        if prev and prev[0] != inv and prev[1] == "running":
+            # 上一次記成 running 的 invocation 在兩次取樣之間結束、下一次又開始了：補一筆結束，
+            # 結果不明（systemd 已經不保留它的屬性），結束時間以新一次的啟動為上界。
+            out.append(self._job(target, prev[0], "finished", prev[2], started.isoformat(), None, None, None, ts))
+        if prev and prev[0] == inv and prev[1] == state:
+            return out
+        finished = unix_ts(props.get("ExecMainExitTimestamp")) if state == "finished" else None
+        if state == "finished" and finished is None:
+            return out
+        out.append(self._job(
+            target, inv, state, started.isoformat(), finished.isoformat() if finished else None,
+            (props.get("Result") or None) if state == "finished" else None,
+            _intval(props.get("ExecMainStatus")) if state == "finished" else None,
+            _EXEC_CODES.get(props.get("ExecMainCode", "")) if state == "finished" else None, ts,
+        ))
+        self._jobs[unit] = (inv, state, started.isoformat())
+        return out
+
+    def _job(self, target, inv, state, started, finished, result, status, code, ts) -> dict:
+        return {"v": 1, "type": "job", "host": self.host, "unit": target["unit"], "service": target["name"],
+                "invocation_id": inv, "state": state, "started_at": started, "finished_at": finished,
+                "result": result, "exit_status": status, "exec_main_code": code, "observed_at": ts}
+
+
+class SpoolWriter:
+    """spool 的附加寫入：`<type>-YYYYMMDD.jsonl`，每筆一次寫完並 flush。
+
+    **每筆重新開檔再關**（不持有 fd）：loader 刪掉已匯入的舊日檔時，這裡不會繼續寫進已被刪除的
+    inode。保留期修剪是安全網：loader 正常時已匯入的舊檔早就被它刪掉；loader 長期停擺時，這裡把
+    spool 的體積限制在 `retention_days` 天內（那之前的觀測只剩 journald／硬體取樣檔）。
+    """
+
+    KINDS = ("observations", "jobs")
+
+    def __init__(self, directory: Path, retention_days: int = 14) -> None:
+        self.dir = directory
+        self.retention_days = retention_days
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._pruned_day: str | None = None
+
+    def _prune(self) -> None:
+        if self.retention_days <= 0:
+            return
+        cutoff = datetime.now() - timedelta(days=self.retention_days)
+        for kind in self.KINDS:
+            for path in self.dir.glob(f"{kind}-*.jsonl"):
+                try:
+                    when = datetime.strptime(path.stem.removeprefix(f"{kind}-"), "%Y%m%d")
+                except ValueError:
+                    continue  # 不是自己命名規則的檔一律不動
+                if when < cutoff:
+                    path.unlink(missing_ok=True)
+
+    def write(self, records: list[dict]) -> int:
+        day = datetime.now().strftime("%Y%m%d")
+        if day != self._pruned_day:
+            self._prune()
+            self._pruned_day = day
+        by_kind: dict[str, list[str]] = {}
+        for rec in records:
+            kind = "jobs" if rec.get("type") == "job" else "observations"
+            by_kind.setdefault(kind, []).append(json.dumps(rec, ensure_ascii=False, separators=(",", ":")))
+        for kind, lines in by_kind.items():
+            with (self.dir / f"{kind}-{day}.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write("".join(line + "\n" for line in lines))
+                fh.flush()
+        return sum(len(v) for v in by_kind.values())
+
+
 _STOP = False
 
 
@@ -628,6 +1033,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db-container", default="report-mark-postgres", help="Postgres 容器名")
     p.add_argument("--db-name", default="research", help="資料庫名")
     p.add_argument("--no-db", action="store_true", help="容量取樣不查 DB（不啟動 docker exec）")
+    p.add_argument(
+        "--observe-interval", type=float, default=60.0,
+        help="監控 spool 的觀測間隔秒數（Host／容器／服務／批次執行，預設 60；設 0 關閉）",
+    )
+    p.add_argument("--spool-dir", default=None, help="監控 spool 目錄（預設 $OPS_SPOOL_DIR 或 data/ops_spool）")
+    p.add_argument("--spool-retention-days", type=int, default=14, help="spool 保留天數安全網（0＝不修剪）")
+    p.add_argument("--catalog", default=str(DEFAULT_CATALOG), help="Service Catalog（服務與容器名單）")
+    p.add_argument("--container-ttl", type=float, default=60.0, help="容器狀態快取秒數（預設 60）")
+    p.add_argument("--systemctl", default="systemctl", help="systemctl 執行檔")
     return p
 
 
@@ -644,6 +1058,10 @@ def main(argv: list[str] | None = None) -> int:
     # `container:816434d4e5cb` 這種沒人看得懂的列。--no-db 只關掉 DB 查詢。
     docker_bin = detect_docker_bin(args.docker_bin)
     sampler = Sampler(docker_bin)
+    observer = None
+    if args.observe_interval > 0:
+        observer = Observer(load_catalog_targets(Path(args.catalog)), docker_bin,
+                            systemctl=args.systemctl, container_ttl=args.container_ttl)
 
     if args.once:
         sampler.sample()  # 暖機一筆，取得差分基準
@@ -652,22 +1070,35 @@ def main(argv: list[str] | None = None) -> int:
         out = {"meta": meta_record(sampler, args, docker_bin), "sample": rec}
         if not args.no_db:
             out["capacity"] = capacity_record(args, docker_bin)
+        if observer is not None:
+            out["observations"] = observer.records(rec)
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
 
     writer = Writer(Path(args.out_dir), args.retention_days)
     writer.write(meta_record(sampler, args, docker_bin))
+    spool = None
+    if observer is not None:
+        try:
+            spool = SpoolWriter(Path(args.spool_dir) if args.spool_dir else default_spool_dir(),
+                                args.spool_retention_days)
+        except OSError as exc:
+            # spool 落點壞了只關掉 L3 這一段，硬體取樣照常（它的資料另有用途）
+            print(f"collect_resource_usage: spool 目錄不可用（{exc}），停用監控觀測", file=sys.stderr)
     sampler.sample()  # 暖機
+    last_sample: dict | None = None
 
     started = _now()
     next_sample = started + args.interval
     next_capacity = started if args.capacity_interval > 0 and not args.no_db else float("inf")
+    # 第一批觀測等第一筆硬體取樣（CPU 百分比要差分）再寫
+    next_observe = started + args.interval + 1 if spool is not None else float("inf")
     try:
         while not _STOP:
             now = _now()
             if args.duration > 0 and now - started >= args.duration:
                 break
-            due = min(next_sample, next_capacity)
+            due = min(next_sample, next_capacity, next_observe)
             if due > now:
                 # 一次最多睡 1 秒，讓 SIGTERM 的收場延遲有上界（systemd 預設
                 # TimeoutStopSec=90，但沒有理由讓一次停止等滿一個取樣間隔）。
@@ -676,10 +1107,17 @@ def main(argv: list[str] | None = None) -> int:
             if now >= next_capacity:
                 writer.write(capacity_record(args, docker_bin))
                 next_capacity = now + args.capacity_interval
+            if now >= next_observe:
+                try:
+                    spool.write(observer.records(last_sample))
+                except OSError as exc:
+                    print(f"collect_resource_usage: spool 寫入失敗：{exc}", file=sys.stderr)
+                next_observe = now + args.observe_interval
             if now >= next_sample:
                 rec = sampler.sample()
                 if rec:
                     writer.write(rec)
+                    last_sample = rec
                 # 以「上次應該取樣的時間」推進而非 now，避免取樣成本累積成漂移；
                 # 但若已落後超過一整個間隔（機器被凍住），直接對齊到現在，
                 # 不補跑那些已經沒有差分基準的時點。

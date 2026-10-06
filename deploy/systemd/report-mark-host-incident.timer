@@ -1,0 +1,11 @@
+[Unit]
+Description=每 2 分鐘消費主機探針結果（去重、提醒、恢復判定）
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=10s
+RandomizedDelaySec=20s
+
+[Install]
+WantedBy=timers.target

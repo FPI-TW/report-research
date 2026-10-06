@@ -97,10 +97,96 @@ export const ElevateResponseSchema = z.object({
 })
 export type ElevateResponse = z.infer<typeof ElevateResponseSchema>
 
+export const IncidentEventItemSchema = z.object({
+  event_id: z.string(),
+  occurred_at: z.string(),
+  action: z.enum(['FIRING', 'REMINDER', 'ESCALATED', 'RESOLVED']),
+  severity: z.enum(['CRITICAL', 'WARNING', 'RESOLVED']),
+  reason: z.string(),
+  status: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+  notified: z.boolean(),
+  journal_excerpt: z.string().nullable().optional(),
+  journal_truncated: z.boolean().optional(),
+})
+export type IncidentEventItem = z.infer<typeof IncidentEventItemSchema>
+
+export const IncidentItemSchema = z.object({
+  incident_id: z.string(),
+  host: z.string(),
+  component: z.string(),
+  kind: z.enum(['service', 'monitor_blind']),
+  status: z.enum(['firing', 'resolved']),
+  severity: z.enum(['CRITICAL', 'WARNING']),
+  reason: z.string(),
+  summary: z.string().nullable().optional(),
+  opened_at: z.string(),
+  last_event_at: z.string(),
+  resolved_at: z.string().nullable().optional(),
+  event_count: z.number().int(),
+})
+export type IncidentItem = z.infer<typeof IncidentItemSchema>
+
+export const IncidentListResponseSchema = z.object({
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().nullable(),
+  items: z.array(IncidentItemSchema),
+})
+export type IncidentListResponse = z.infer<typeof IncidentListResponseSchema>
+
+export const JobItemSchema = z.object({
+  host: z.string(),
+  unit: z.string(),
+  service: z.string().nullable().optional(),
+  invocation_id: z.string(),
+  state: z.enum(['running', 'finished']),
+  started_at: z.string(),
+  finished_at: z.string().nullable().optional(),
+  duration_seconds: z.number().nullable().optional(),
+  result: z.string().nullable().optional(),
+  exit_status: z.number().int().nullable().optional(),
+  exec_main_code: z.string().nullable().optional(),
+})
+export type JobItem = z.infer<typeof JobItemSchema>
+
+export const JobListResponseSchema = z.object({
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+  has_more: z.boolean(),
+  next_offset: z.number().int().nullable(),
+  items: z.array(JobItemSchema),
+})
+export type JobListResponse = z.infer<typeof JobListResponseSchema>
+
 export const LogoutResponseSchema = z.object({
   revoked: z.number().int(),
 })
 export type LogoutResponse = z.infer<typeof LogoutResponseSchema>
+
+export const ObservationItemSchema = z.object({
+  observed_at: z.string(),
+  host: z.string(),
+  scope: z.enum(['host', 'container', 'service']),
+  subject: z.string(),
+  metric: z.string(),
+  value: z.number().nullable().optional(),
+  state: z.string().nullable().optional(),
+  detail: z.record(z.string(), z.unknown()).nullable().optional(),
+})
+export type ObservationItem = z.infer<typeof ObservationItemSchema>
+
+export const ObservationListResponseSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  limit: z.number().int(),
+  truncated: z.boolean(),
+  items: z.array(ObservationItemSchema),
+})
+export type ObservationListResponse = z.infer<typeof ObservationListResponseSchema>
 
 export const OpsContainerStateSchema = z.object({
   status: z.string().nullable().optional(),
@@ -215,6 +301,23 @@ export const UserListResponseSchema = z.object({
 })
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
 
+export const IncidentDetailSchema = z.object({
+  incident_id: z.string(),
+  host: z.string(),
+  component: z.string(),
+  kind: z.enum(['service', 'monitor_blind']),
+  status: z.enum(['firing', 'resolved']),
+  severity: z.enum(['CRITICAL', 'WARNING']),
+  reason: z.string(),
+  summary: z.string().nullable().optional(),
+  opened_at: z.string(),
+  last_event_at: z.string(),
+  resolved_at: z.string().nullable().optional(),
+  event_count: z.number().int(),
+  events: z.array(IncidentEventItemSchema),
+})
+export type IncidentDetail = z.infer<typeof IncidentDetailSchema>
+
 export const OpsServiceDetailSchema = z.object({
   name: z.string(),
   kind: z.enum(['systemd', 'container']),
@@ -274,6 +377,14 @@ export const adminApi = {
   listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
+  /** GET /api/admin/incidents — List Incidents */
+  listIncidents: (query: { status?: 'firing' | 'resolved' | null; component?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/incidents${qs(query)}`, IncidentListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/incidents/{incident_id} — Get Incident */
+  getIncident: (incidentId: string) => requestJSON(`/api/admin/incidents/${encodeURIComponent(incidentId)}`, IncidentDetailSchema, { cache: 'no-store' }),
+  /** GET /api/admin/jobs — List Jobs */
+  listJobs: (query: { unit?: string | null; service?: string | null; state?: 'running' | 'finished' | null; result?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/jobs${qs(query)}`, JobListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/observations — List Observations */
+  listObservations: (query: { scope?: 'host' | 'container' | 'service' | null; subject?: string | null; metric?: string | null; since?: string | null; until?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/observations${qs(query)}`, ObservationListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services — List Ops Services */
   listOpsServices: () => requestJSON('/api/admin/ops/services', OpsServiceListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/ops/services/{name} — Get Ops Service */

@@ -103,6 +103,11 @@ data/signal_progress.tsv
 data/.incidents/
 data/.incidents-linebot/
 data/.incidents-edge/
+data/.incidents-container/
+data/.incidents-host/
+# 監控 spool（collect_resource_usage.py／incident_handler.sh 寫、load_observations.py 匯入 DB 後刪）。
+# 純執行期資料：匯入前是 DB 掛掉期間的唯一副本，匯入後由 DB 接手。
+data/ops_spool/
 
 # repo 根的 node_modules。frontend/.gitignore 只涵蓋 frontend/ 底下，而從根目錄跑
 # npx／npm（例如 npx vite）會在這裡再生一份——與上面 /.vite/ 同一個成因。

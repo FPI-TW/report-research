@@ -1,0 +1,13 @@
+[Unit]
+Description=每 2 分鐘消費容器探針結果（去重、提醒、恢復判定）
+
+[Timer]
+# 比探針晚一分鐘起步，讓第一輪消費時已有一次真實觀測可讀。
+OnBootSec=6min
+OnUnitActiveSec=2min
+AccuracySec=10s
+# 與 report-mark-incident.timer 同理：錯開相位，避免與探針系統性地落在同一秒。
+RandomizedDelaySec=20s
+
+[Install]
+WantedBy=timers.target

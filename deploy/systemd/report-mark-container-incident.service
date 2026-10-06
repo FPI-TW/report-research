@@ -1,0 +1,35 @@
+[Unit]
+Description=容器事件偵測與通知（消費容器探針結果，含去重、提醒節奏與依 tier 的去抖）
+# 跑的是與 web、LineBot、邊緣完全相同的 scripts/incident_handler.sh，只換一組 INCIDENT_* 環境變數。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：本 unit 自己就是告警器，失敗再觸發告警會形成遞迴。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+# webhook secret 的落點，與 report-mark-incident.service 共用同一個檔（0600 root:root）。
+EnvironmentFile=-/etc/report-mark/alert.env
+Environment=INCIDENT_PROBE_UNIT=report-mark-container-health.service
+Environment=INCIDENT_TIMER_UNIT=report-mark-container-health.timer
+Environment=INCIDENT_COMPONENT=container
+Environment=INCIDENT_MONITOR_COMPONENT=container_monitor
+# 狀態目錄必須與其他組分開（handler.lock 與 probe_observation.state 是固定檔名）。
+Environment=INCIDENT_STATE_DIR=/home/kashionz/projects/report-mark/data/.incidents-container
+# 探針 OnBootSec=5min，開機後的合理空窗 300 + 90（探針最壞耗時）≈ 390，取 480（同邊緣那組）。
+Environment=INCIDENT_BOOTSTRAP_SECONDS=480
+# ── 依 tier 的去抖 ───────────────────────────────────────────────────────
+# 探針的 exit 1＝critical tier 的容器停了（PostgreSQL 等）：第一次確認就 FIRING CRITICAL（探針內已重試一次）。
+# exit 2＝只有 important／supporting tier 的容器停了：要連續 3 筆（約 6 分鐘）才開事件，嚴重度 WARNING。
+Environment=INCIDENT_CONFIRM_EXIT_CODES=2
+Environment=INCIDENT_CONFIRM_COUNT=3
+Environment=INCIDENT_WARNING_EXIT_CODES=2
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/incident_handler.sh"'
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

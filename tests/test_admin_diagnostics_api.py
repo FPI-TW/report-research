@@ -438,6 +438,23 @@ class GitReadTests(unittest.TestCase):
             diagnostics.git_section()
 
 
+class FrontendBuildTests(unittest.TestCase):
+    def test_entry_assets_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.html"
+            self.assertEqual(diagnostics.frontend_section(index)["available"], False)
+            index.write_text(
+                '<script type="module" crossorigin src="/app/assets/index-AbC.js"></script>'
+                '<link rel="modulepreload" crossorigin href="/app/assets/react-Zz.js">'
+                '<link rel="stylesheet" crossorigin href="/app/assets/index-Qq.css">',
+                encoding="utf-8",
+            )
+            got = diagnostics.frontend_section(index)
+        self.assertTrue(got["available"])
+        self.assertEqual(got["entry_assets"], ["index-AbC.js", "index-Qq.css"])
+        self.assertIsNotNone(got["built_at"])
+
+
 class CompareParityTests(unittest.TestCase):
     """web 不 import scripts.*，版本判讀在 diagnostics 另寫一份；這裡逐例比對兩邊結論相同。"""
 

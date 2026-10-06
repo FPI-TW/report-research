@@ -77,7 +77,11 @@ SENSITIVE_NAME = re.compile(r"KEY|SECRET|PASSWORD|PASSWD|TOKEN|WEBHOOK|CREDENTIA
 _MIN_SECRET_LEN = 6
 _URL_CREDENTIALS = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s/@:]+:[^\s/@]+@")
 _SHA_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
-_ENTRY_ASSET_RE = re.compile(r"""(?:src|href)="/app/assets/([^"?#]+\.(?:js|css))\"""")
+# 入口只算 `<script src>` 與 `<link rel="stylesheet">`；modulepreload 是相依 chunk，列出來只是雜訊。
+_ENTRY_ASSET_RE = re.compile(
+    r'<script\b[^>]*\bsrc="/app/assets/([^"?#]+\.js)"'
+    r'|<link\b[^>]*\brel="stylesheet"[^>]*\bhref="/app/assets/([^"?#]+\.css)"'
+)
 
 SCHEMA_STATUSES = ("ok", "behind", "ahead", "unversioned", "ambiguous", "error")
 WARMUP_STATES = ("skipped", "absent", "running", "done", "failed", "cancelled")
@@ -243,7 +247,7 @@ def frontend_section(index: Path = SPA_INDEX) -> dict:
     except OSError:
         return {"available": False, "built_at": None, "entry_assets": []}
     html = _read_small(index, limit=256 * 1024) or ""
-    assets = sorted(set(_ENTRY_ASSET_RE.findall(html)))
+    assets = sorted({js or css for js, css in _ENTRY_ASSET_RE.findall(html)})
     return {"available": True, "built_at": _iso(st.st_mtime), "entry_assets": assets}
 
 

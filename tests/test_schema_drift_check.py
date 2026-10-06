@@ -346,5 +346,64 @@ class StatusFileLocationTests(unittest.TestCase):
         self.assertIn(f'os.environ["{sb.STATUS_FILE_ENV}"] = ', conftest)
 
 
+# ───────────────────────── 部署：unit 與 catalog ─────────────────────────
+
+SYSTEMD = REPO_ROOT / "deploy" / "systemd"
+SERVICE = SYSTEMD / "report-mark-schema-check.service"
+TIMER = SYSTEMD / "report-mark-schema-check.timer"
+
+
+def _directives(path: Path, key: str) -> list[str]:
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, _, value = stripped.partition("=")
+        if name.strip() == key:
+            out.append(value.strip())
+    return out
+
+
+class SchemaCheckUnitTests(unittest.TestCase):
+    """drift、落後、超前、清理失敗（1、2）要告警；只有「目標 DB 連不上」（3，P5 已告警）列為成功。"""
+
+    def test_on_failure_alerts(self):
+        self.assertEqual(_directives(SERVICE, "OnFailure"), ["report-mark-alert@%n.service"])
+
+    def test_only_db_unavailable_is_success(self):
+        self.assertEqual(_directives(SERVICE, "SuccessExitStatus"), [str(sb.EXIT_DB_UNAVAILABLE)])
+        self.assertEqual(len({sb.EXIT_OK, sb.EXIT_DRIFT, sb.EXIT_ERROR, sb.EXIT_DB_UNAVAILABLE}), 4)
+
+    def test_runs_the_scheduled_subcommand_as_oneshot(self):
+        self.assertEqual(_directives(SERVICE, "Type"), ["oneshot"])
+        (exec_start,) = _directives(SERVICE, "ExecStart")
+        self.assertIn("scripts/schema_baseline.py scheduled'", exec_start)
+        self.assertNotIn("--mode", exec_start, "模式由環境檔的 SCHEMA_CHECK_MODE 決定（staging 設 version）")
+
+    def test_environment_files_are_optional_and_ordered(self):
+        files = _directives(SERVICE, "EnvironmentFile")
+        self.assertEqual(files, ["-/etc/default/report-mark-sync", "-/etc/default/report-mark-schema-check"])
+        self.assertNotIn("report-mark-llm", " ".join(files), "零 LLM：不載入金鑰檔")
+
+    def test_unit_text_holds_no_connection_string(self):
+        for path in (SERVICE, TIMER, SYSTEMD / "report-mark-sync.env.example"):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"postgresql(\+asyncpg)?://[^<\s]*:[^<\s]*@", path.name)
+
+    def test_timer_is_daily_and_catches_up(self):
+        self.assertEqual(_directives(TIMER, "OnCalendar"), ["*-*-* 05:20:00"])
+        self.assertEqual(_directives(TIMER, "Persistent"), ["true"])
+        self.assertEqual(_directives(TIMER, "WantedBy"), ["timers.target"])
+
+    def test_catalog_lists_it_read_only(self):
+        import tomllib
+
+        raw = tomllib.loads((REPO_ROOT / "deploy" / "ops" / "services.prod.toml").read_text(encoding="utf-8"))
+        (svc,) = [s for s in raw["services"] if s["name"] == "schema-check"]
+        self.assertEqual((svc["unit"], svc["timer"]), (SERVICE.name, TIMER.name))
+        self.assertEqual(svc["actions"], ["status", "logs"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,6 +20,8 @@ TOL ?= 0.03
 DURATION ?= 3600
 SINCE ?=
 BENCH_ARGS ?= --dry-run
+# make clamav-smoke 的「正常 PDF」；空＝用程式內產生的最小 PDF。
+SMOKE_PDF ?=
 # migration 的目標確認（host:port/dbname，逐字）。刻意沒有預設：對已有資料的庫做變更必須由
 # 呼叫者親手寫出目標，見 app/services/schema_migrations.py。
 CONFIRM ?=
@@ -39,7 +41,7 @@ COMPOSE := $(DOCKER) compose
         serve serve-dev serve-preview search build-web \
         stats reset-db clean-data pipeline summaries signals takeaways titles brief \
         eval-compare \
-        up-edge down-edge edge-logs edge-reload up-clamav down-clamav \
+        up-edge down-edge edge-logs edge-reload up-clamav down-clamav clamav-smoke \
         sync-once db-backup freshness db-audit llm-blocked \
         metrics metrics-once metrics-collect metrics-bench
 
@@ -218,6 +220,11 @@ up-clamav:  ## 啟動上傳掃描用的 clamd 容器（report-mark-clamav；首�
 # 刻意不帶 -v：病毒碼 named volume 留著，下次啟動不必重抓。停掉期間上傳只會停在隔離區、不放行。
 down-clamav:  ## 停掉 clamd 容器（保留病毒碼 volume；上傳會停在隔離區）
 	$(COMPOSE) -f $(CLAMAV_COMPOSE) down
+
+# EICAR 要 FOUND、正常 PDF 要 OK（同一條 scan()：病毒碼過舊也算失敗）。EICAR 在執行期拼出來，不落地。
+# SMOKE_PDF＝改用一份真實 PDF；rc 0 通過／1 結果不符／2 clamd 連不上。
+clamav-smoke:  ## 上傳掃描冒煙（EICAR→FOUND、PDF→OK；可帶 SMOKE_PDF=…）
+	uv run python scripts/clamav_smoke.py $(if $(SMOKE_PDF),--pdf "$(SMOKE_PDF)")
 
 # ───── 維運 ─────
 pipeline: prep tag-info  ## 跑 ①②③ 並提示 Claude 標註步驟

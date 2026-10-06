@@ -116,6 +116,21 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
+def _positive_int(name: str, default: int, *, upper: int | None = None) -> int:
+    """正整數；空值、非整數、≤0 或超過 upper 退回預設並警告（同 `_positive_float` 的理由：拼錯不可靜默變 0）。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0 or (upper is not None and value > upper):
+        logging.getLogger(__name__).warning("%s=%r 不是合法的正整數，退回 %d", name, raw, default)
+        return default
+    return value
+
+
 def _budget_currency() -> str:
     """`/healthz/llm` 只讀 `balance_infos` 裡這個幣別的那一筆；三個英文字母，其餘退回 CNY 並警告。"""
     raw = (os.getenv("LLM_BUDGET_CURRENCY") or "").strip().upper()
@@ -292,6 +307,19 @@ class Settings:
     ops_agent_environment: str = "production"
     ops_agent_socket: str = _OPS_SOCKETS["production"]
     ops_agent_timeout: float = 20.0
+    # ClamAV clamd（app/services/clamd.py；上傳管線的病毒掃描閘門，deploy/clamav/）。安全閘門一律 fail-closed：
+    # 連不上、逾時、病毒碼太舊或判斷不出來都不放行（不適用派生功能的 fail-open）。容器只綁 127.0.0.1:3310。
+    # 逾時是每一次 socket 操作的期限（連線、送一塊、等結果）：clamd 收完整份串流才開始掃，25 MB 的 PDF
+    # 掃描本身可達數十秒；`ConcurrentDatabaseReload no` 時重載病毒碼的 30–60 秒內新連線會被晾著，
+    # 120 秒讓重載中的掃描自然等過去，而不是每次都記一筆逾時。
+    clamd_host: str = "127.0.0.1"
+    clamd_port: int = 3310
+    clamd_timeout: float = 120.0
+    # 病毒碼（VERSION 回應裡的日期）超過這個年齡就不掃、回暫時性錯誤 signatures_stale（設計決策 12：72 小時）。
+    clamd_signature_max_age_hours: float = 72.0
+    # 客戶端自己的串流上限，與 deploy/clamav/conf/clamd.conf 的 `StreamMaxLength 30M` 一致
+    # （tests/test_clamav_deploy.py 對帳）。超過就不再送、直接判「超限＝未通過」，不依賴 clamd 怎麼回。
+    clamd_stream_max_bytes: int = 30 * 1024 * 1024
 
 
 def _load() -> Settings:
@@ -465,6 +493,11 @@ def _load() -> Settings:
         ops_agent_environment=(ops_env := _ops_agent_environment()),
         ops_agent_socket=_ops_agent_socket(ops_env),
         ops_agent_timeout=_positive_float("OPS_AGENT_TIMEOUT", 20.0),
+        clamd_host=(os.getenv("CLAMD_HOST") or "").strip() or "127.0.0.1",
+        clamd_port=_positive_int("CLAMD_PORT", 3310, upper=65535),
+        clamd_timeout=_positive_float("CLAMD_TIMEOUT", 120.0),
+        clamd_signature_max_age_hours=_positive_float("CLAMD_SIGNATURE_MAX_AGE_HOURS", 72.0),
+        clamd_stream_max_bytes=_positive_int("CLAMD_STREAM_MAX_BYTES", 30 * 1024 * 1024),
     )
 
 

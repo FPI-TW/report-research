@@ -114,3 +114,74 @@ class MakefileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClientConsistencyTests(unittest.TestCase):
+    def test_client_stream_cap_matches_clamd_conf(self):
+        """客戶端上限與 StreamMaxLength 一致：客戶端先到時直接判超限，不賭 clamd 斷線前那一行 ERROR 讀不讀得到。"""
+        from app.config import Settings
+
+        conf_limit = size_bytes(directives(CLAMD_CONF)["StreamMaxLength"][0])
+        self.assertEqual(Settings.__dataclass_fields__["clamd_stream_max_bytes"].default, conf_limit)
+
+    def test_client_defaults_match_compose(self):
+        from app.config import Settings
+
+        fields = Settings.__dataclass_fields__
+        self.assertEqual(fields["clamd_host"].default, "127.0.0.1")
+        self.assertEqual(fields["clamd_port"].default, 3310)
+        self.assertEqual(fields["clamd_signature_max_age_hours"].default, 72.0)
+
+
+class SmokeScriptTests(unittest.TestCase):
+    def test_eicar_is_assembled_at_runtime_and_correct(self):
+        import hashlib
+
+        from scripts import clamav_smoke
+
+        data = clamav_smoke.eicar()
+        self.assertEqual(hashlib.md5(data).hexdigest(), "44d88612fea8a8f36de82e1278abb02f")  # EICAR 官方 MD5
+        # 完整字串不可原樣出現在 repo 的任何檔案（防毒隔離、secret 掃描誤報）
+        for path in [*REPO_ROOT.glob("scripts/*.py"), *REPO_ROOT.glob("tests/*.py"), *REPO_ROOT.glob("app/**/*.py"),
+                     MAKEFILE, *CLAMAV_DIR.rglob("*")]:
+            if path.is_file():
+                with self.subTest(path=path.name):
+                    self.assertNotIn(data, path.read_bytes())
+
+    def test_minimal_pdf_is_a_valid_pdf(self):
+        import io
+
+        from pypdf import PdfReader
+
+        from scripts import clamav_smoke
+
+        pdf = clamav_smoke.minimal_pdf()
+        self.assertTrue(pdf.startswith(b"%PDF-1."))
+        self.assertTrue(pdf.rstrip().endswith(b"%%EOF"))
+        reader = PdfReader(io.BytesIO(pdf), strict=True)
+        self.assertEqual(len(reader.pages), 1)
+        self.assertIn("clamav smoke", reader.pages[0].extract_text())
+
+    def test_unreachable_clamd_exits_2(self):
+        import contextlib
+        import io
+        import socket
+        from unittest import mock
+
+        from app.services import clamd
+        from scripts import clamav_smoke
+
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        cfg = clamd.ClamdConfig(port=port, timeout=2.0)
+        out = io.StringIO()
+        with mock.patch.object(clamd.ClamdConfig, "from_settings", return_value=cfg), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(clamav_smoke.main([]), 2)
+        self.assertIn("連不上 clamd", out.getvalue())
+
+    def test_makefile_target(self):
+        text = MAKEFILE.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^clamav-smoke:.*\n\tuv run python scripts/clamav_smoke\.py ")

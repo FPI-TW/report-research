@@ -56,6 +56,64 @@ export const LogoutResponseSchema = z.object({
 })
 export type LogoutResponse = z.infer<typeof LogoutResponseSchema>
 
+export const OpsContainerStateSchema = z.object({
+  status: z.string().nullable().optional(),
+  running: z.boolean().nullable().optional(),
+  paused: z.boolean().nullable().optional(),
+  restarting: z.boolean().nullable().optional(),
+  oom_killed: z.boolean().nullable().optional(),
+  dead: z.boolean().nullable().optional(),
+  exit_code: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+  started_at: z.string().nullable().optional(),
+  finished_at: z.string().nullable().optional(),
+  health: z.string().nullable().optional(),
+  failing_streak: z.number().int().nullable().optional(),
+  restart_count: z.number().int().nullable().optional(),
+  image: z.string().nullable().optional(),
+})
+export type OpsContainerState = z.infer<typeof OpsContainerStateSchema>
+
+export const OpsLogsResponseSchema = z.object({
+  name: z.string(),
+  kind: z.enum(['systemd', 'container']),
+  tier: z.enum(['critical', 'important', 'supporting']),
+  target: z.string(),
+  since: z.string(),
+  lines: z.number().int(),
+  truncated: z.boolean(),
+  entries: z.array(z.string()),
+  checked_at: z.string(),
+})
+export type OpsLogsResponse = z.infer<typeof OpsLogsResponseSchema>
+
+export const OpsSystemdStateSchema = z.object({
+  load_state: z.string().nullable().optional(),
+  active_state: z.string().nullable().optional(),
+  sub_state: z.string().nullable().optional(),
+  result: z.string().nullable().optional(),
+  type: z.string().nullable().optional(),
+  unit_file_state: z.string().nullable().optional(),
+  exec_main_code: z.string().nullable().optional(),
+  exec_main_status: z.number().int().nullable().optional(),
+  main_pid: z.number().int().nullable().optional(),
+  n_restarts: z.number().int().nullable().optional(),
+  exec_main_start_at: z.string().nullable().optional(),
+  exec_main_exit_at: z.string().nullable().optional(),
+  active_enter_at: z.string().nullable().optional(),
+  state_change_at: z.string().nullable().optional(),
+})
+export type OpsSystemdState = z.infer<typeof OpsSystemdStateSchema>
+
+export const OpsTimerStateSchema = z.object({
+  unit: z.string(),
+  load_state: z.string().nullable().optional(),
+  active_state: z.string().nullable().optional(),
+  next_elapse_at: z.string().nullable().optional(),
+  last_trigger_at: z.string().nullable().optional(),
+})
+export type OpsTimerState = z.infer<typeof OpsTimerStateSchema>
+
 export const PasswordRequestSchema = z.object({
   password: z.string(),
 })
@@ -94,6 +152,47 @@ export const UserListResponseSchema = z.object({
 })
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
 
+export const OpsServiceDetailSchema = z.object({
+  name: z.string(),
+  kind: z.enum(['systemd', 'container']),
+  tier: z.enum(['critical', 'important', 'supporting']),
+  target: z.string(),
+  timer: z.string().nullable().optional(),
+  actions: z.array(z.enum(['status', 'logs'])),
+  description: z.string().optional(),
+  summary: z.enum(['running', 'idle', 'failed', 'transitioning', 'not_found', 'unknown']),
+  error: z.string().nullable().optional(),
+  systemd: OpsSystemdStateSchema.nullable().optional(),
+  container: OpsContainerStateSchema.nullable().optional(),
+  timer_state: OpsTimerStateSchema.nullable().optional(),
+  checked_at: z.string(),
+})
+export type OpsServiceDetail = z.infer<typeof OpsServiceDetailSchema>
+
+export const OpsServiceStatusSchema = z.object({
+  name: z.string(),
+  kind: z.enum(['systemd', 'container']),
+  tier: z.enum(['critical', 'important', 'supporting']),
+  target: z.string(),
+  timer: z.string().nullable().optional(),
+  actions: z.array(z.enum(['status', 'logs'])),
+  description: z.string().optional(),
+  summary: z.enum(['running', 'idle', 'failed', 'transitioning', 'not_found', 'unknown']),
+  error: z.string().nullable().optional(),
+  systemd: OpsSystemdStateSchema.nullable().optional(),
+  container: OpsContainerStateSchema.nullable().optional(),
+  timer_state: OpsTimerStateSchema.nullable().optional(),
+})
+export type OpsServiceStatus = z.infer<typeof OpsServiceStatusSchema>
+
+export const OpsServiceListResponseSchema = z.object({
+  environment: z.string(),
+  host: z.string(),
+  checked_at: z.string(),
+  items: z.array(OpsServiceStatusSchema),
+})
+export type OpsServiceListResponse = z.infer<typeof OpsServiceListResponseSchema>
+
 function qs(query: Record<string, string | number | undefined>): string {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(query)) {
@@ -110,6 +209,12 @@ export const adminApi = {
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
+  /** GET /api/admin/ops/services — List Ops Services */
+  listOpsServices: () => requestJSON('/api/admin/ops/services', OpsServiceListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/ops/services/{name} — Get Ops Service */
+  getOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}`, OpsServiceDetailSchema, { cache: 'no-store' }),
+  /** GET /api/admin/ops/services/{name}/logs — Get Ops Service Logs */
+  getOpsServiceLogs: (name: string, query: { since?: string; lines?: number } = {}) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/logs${qs(query)}`, OpsLogsResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/users — List Users */
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */

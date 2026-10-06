@@ -127,6 +127,32 @@ def _budget_currency() -> str:
     return raw
 
 
+# 維運代理（ops_agent/）每個環境固定的 socket 路徑。與 `ops_agent/protocol.py` 的 `CANONICAL_SOCKETS`
+# 逐字相同（tests/test_admin_ops_api.py 釘住）；這裡不 import ops_agent，是為了讓設定層不依賴代理套件。
+_OPS_SOCKETS = {
+    "production": "/run/report-mark-ops/agent.sock",
+    "development": "/run/report-mark-ops-dev/agent.sock",
+}
+
+
+def _ops_agent_environment() -> str:
+    """web 要操作的環境。未知值不退回 production，而是回空字串＝停用（維運端點回 503）：
+
+    寧可看不到，也不要讓拼錯的 dev 設定默默去讀生產的代理。
+    """
+    raw = (os.getenv("OPS_AGENT_ENVIRONMENT") or "production").strip().lower()
+    if raw not in _OPS_SOCKETS:
+        logging.getLogger(__name__).warning(
+            "OPS_AGENT_ENVIRONMENT=%r 不是合法環境（可用：%s），維運代理停用", raw, "/".join(_OPS_SOCKETS))
+        return ""
+    return raw
+
+
+def _ops_agent_socket(environment: str) -> str:
+    """有設 OPS_AGENT_SOCKET 就用它（本機冒煙的臨時 socket）；否則用該環境的固定路徑。"""
+    return (os.getenv("OPS_AGENT_SOCKET") or "").strip() or _OPS_SOCKETS.get(environment, "")
+
+
 # 問答抽查逾時的預設值依 judge 走哪條路而定（見 `_load` 裡 ask_faithfulness_timeout 的註解）。
 ASK_FAITHFULNESS_TIMEOUT_HTTP = 90.0
 ASK_FAITHFULNESS_TIMEOUT_CLI = 240.0
@@ -260,6 +286,11 @@ class Settings:
     # 月上限 ¥350 是儲值紀律（docs/production_resilience.md），刻意不寫成程式旋鈕。
     llm_budget_currency: str = "CNY"
     llm_balance_floor: float = 70.0
+    # 維運代理（web/ops_client.py → ops_agent/ 的 Unix socket）。環境空字串＝停用；socket 預設跟著環境。
+    # 逾時涵蓋連線＋一來一回，要大於代理的 request_timeout（catalog 預設 15 秒），否則代理還在算就先斷線。
+    ops_agent_environment: str = "production"
+    ops_agent_socket: str = _OPS_SOCKETS["production"]
+    ops_agent_timeout: float = 20.0
 
 
 def _load() -> Settings:
@@ -430,6 +461,9 @@ def _load() -> Settings:
         llm_http_total_timeout=_positive_float("LLM_HTTP_TOTAL_TIMEOUT", 600.0),
         llm_budget_currency=_budget_currency(),
         llm_balance_floor=_positive_float("LLM_BALANCE_FLOOR", 70.0),
+        ops_agent_environment=(ops_env := _ops_agent_environment()),
+        ops_agent_socket=_ops_agent_socket(ops_env),
+        ops_agent_timeout=_positive_float("OPS_AGENT_TIMEOUT", 20.0),
     )
 
 

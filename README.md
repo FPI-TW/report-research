@@ -97,6 +97,8 @@ scripts/                  批次與維運（50 支），會 spawn claude 的取 
 db/schema.sql（凍結的 baseline）、db/migrations/（Alembic revision）、db/expected_constraints.txt、
                           db/align_baseline_indexes.sql 與 db/drop_deep_report_tables.sql（既有庫手動執行）
 deploy/                   systemd unit、nginx、docker-compose（部署真相來源）
+                          deploy/ops/：維運代理的 Service Catalog（prod／dev）
+ops_agent/                維運代理（標準庫、不 import app.*；部署時複製到 /opt/report-mark-ops）
 eval/                     離線評測 harness 與基準線（刻意不進 CI）
 tests/                    pytest（unittest 風格）＋ fixtures/sse_events.json
 docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
@@ -153,6 +155,9 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | POST | `/api/admin/elevate` | JSON `password` | `{elevated_until}` | 任何管理員。重新驗證密碼，取得綁在本 session 的 10 分鐘權限提升；密碼錯 403 `bad_password`，與登入共用每 IP 失敗限流（429 `rate_limited`）。成功與失敗都寫稽核 |
 | GET | `/api/admin/audit/verify` | — | `{ok, total, head_id, head_hash, broken_ids}` | `audit.read`。逐列重算稽核雜湊鏈；`broken_ids` 最多 20 筆 |
 | GET | `/api/admin/audit` | `limit`（1–200，50）、`offset` | `{total, limit, offset, has_more, next_offset, items: [{id, actor_user_id, actor_username, action, target_type, target_id, detail, created_at}]}` | 限管理員。新的在前；`actor_user_id` 為 null 表示 CLI（`scripts/create_admin.py`）。`action`：`user.create`、`user.set_role`、`user.enable`、`user.disable`、`user.reset_password`、`user.force_logout`、`review.update` |
+| GET | `/api/admin/ops/services` | — | `{environment, host, checked_at, items: [{name, kind, tier, target, timer, actions, description, summary, error, systemd, container, timer_state}]}` | `ops.read`。唯讀，經維運代理（`ops_agent/`，Unix socket）查 Service Catalog（`deploy/ops/services.prod.toml`）的全部服務；`summary` 是 `running`／`idle`／`failed`／`transitioning`／`not_found`／`unknown`，判讀看 `systemd`（`systemctl show` 的原始屬性與時間戳）或 `container`（`docker inspect` 的 State）。代理不可用回 503 `ops_agent_unavailable`（其他功能不受影響） |
+| GET | `/api/admin/ops/services/{name}` | `name`（catalog 名稱，小寫英數與 `-`） | 一個服務的同上欄位＋`checked_at` | `ops.read`。不在 catalog 回 404 `ops_service_not_found` |
+| GET | `/api/admin/ops/services/{name}/logs` | `since`（`15m`／`2h`／`1d` 或帶時區的 ISO 8601，最多 7 天，預設 `1h`）、`lines`（1–1000，200） | `{name, kind, tier, target, since, lines, truncated, entries, checked_at}` | `ops.read`。systemd 走 `journalctl -o short-iso`、容器走 `docker logs --timestamps`；回應超過上限時從舊的那端截掉（`truncated`），形似祕密的片段遮成 `<redacted>`。400 `invalid_params`、504 `ops_timeout` |
 
 SSE 事件欄位見 `docs/WORKFLOW.md` 的 Web API 契約；單一真相 `tests/fixtures/sse_events.json`。
 
@@ -182,6 +187,7 @@ repo 根 `.env`（範本 `.env.example`）由 `web/env_loader.py` 讀取，不�
 | `OBJECT_STORAGE_MODE`、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS` | `local` | 非 local 缺任一 fail-closed；TTL 上限 3600 |
 | `ASK_MAX_QUEUE`、`SSE_HEARTBEAT_INTERVAL` | 20、20 | web 層旋鈕 |
 | `RADAR_CATALOG_CACHE_TTL` | 60 | 雷達目錄回應快取秒數；0 停用 |
+| `OPS_AGENT_ENVIRONMENT`、`OPS_AGENT_SOCKET`、`OPS_AGENT_TIMEOUT` | `production`、依環境（`/run/report-mark-ops/agent.sock`，development 是 `/run/report-mark-ops-dev/agent.sock`）、20 | 維運代理的 client（`web/ops_client.py`）。環境是請求裡宣告的、代理會比對；拼錯的環境值＝停用（維運端點回 503），不退回 production |
 | `SKIP_WARMUP`、`DEV_NO_AUTH` | — | 只從 `os.environ` 讀且判 `== "1"`，不要寫進環境檔 |
 
 新旋鈕放 `app/config.py`（frozen dataclass ＋ `os.getenv`）。`REPORT_MARK_*` 前綴只給 auth／DB；既有帶前綴的例外（`REPORT_MARK_RERANK_*`、`REPORT_MARK_MAX_TRACKED_FAIL_IPS`、`REPORT_MARK_ROOT`、`REPORT_MARK_ALERT_WEBHOOK`）是 live 的，不要改名。

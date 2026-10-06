@@ -63,7 +63,7 @@ vCPU、RAM、磁碟、IOPS 到底要多少，repo 裡從來沒有任何工具在
 
 雲端架構本來就會把它們放在不同機器上（既有評估簡報的雙路徑正是這個切法），所以
 「服務合計」的分位數是兩者尖峰疊加的產物，**對任何一邊都不是正確答案**。分析器因此
-另外給「線上路徑合計（web＋DB＋邊緣）」與「批次路徑合計（sync 等）」兩條，並在窗期
+另外給「線上路徑合計（web＋DB＋邊緣＋ClamAV）」與「批次路徑合計（sync 等）」兩條，並在窗期
 有超過 20% 的樣本正在跑批次時明講「這不是典型的一天」。
 
 ### 6. 批次元件的分位數只涵蓋它執行中的樣本
@@ -285,6 +285,42 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run python scripts/bench_load.py \
 微基準中位數差為 0.339s（6.1%）；五組配對測量皆為現行路徑較快。8 筆逐筆分數的最大
 絕對差為 **0**，完整名次一致。CPU 背景負載與模型暖機後狀態仍使各輪時間波動，這個
 百分比只描述本機這組合成輸入與配置。
+
+## 常駐元件：ClamAV
+
+上傳管線（Admin v1.5）用常駐的 clamd 容器 `report-mark-clamav`（`deploy/clamav/docker-compose.yml`，
+`make up-clamav`）掃描上傳的 PDF。**選型結論：常駐約 1.2–1.6 GB，不隨上傳量變化**——clamd 把整份病毒碼
+（數百萬筆簽章）載進記憶體，閒置與掃描中的差別只是單一檔案的工作區。這一塊是線上路徑的固定開銷：
+流量變少它不會變小，也不能攤進「每條請求的邊際成本」。
+
+| 項目 | 值 |
+|---|---|
+| 預估常駐 | 約 1.2–1.6 GB（設計估計，**未實測**） |
+| 容器上限 | `mem_limit: 2g` |
+| 實測 RSS（p50／p95／max） | **待補**：上線後量一週再填，量到之前不寫數字 |
+| 一週內 OOM 次數 | **待補** |
+
+三個設定直接決定這個數字，改之前先看這裡：
+
+- `ConcurrentDatabaseReload no`（`deploy/clamav/conf/clamd.conf`）：預設的不中斷重載會先把新病毒碼整份載進來
+  再換掉舊的，期間約翻倍到 ~3 GB，必然撞上 2g 的上限。關掉的代價是重載期間 30–60 秒不能掃（上傳只是晚一點掃）。
+- `TestDatabases yes`（`deploy/clamav/conf/freshclam.conf`）：freshclam 換上新病毒碼前會先在自己的行程裡試載一次，
+  與 clamd 同在一個 cgroup。若一週內看到 OOM，第一個要評估的就是改成 `no`。
+- `FRESHCLAM_CHECKS=4`（compose 的 environment）：一天最多 4 次檢查，只有真的有新病毒碼才重載。
+
+量測方式不必另寫：取樣器（`scripts/collect_resource_usage.py`）會自動把容器的 cgroup 以容器名
+`report-mark-clamav` 記成一個元件；分析器把它列在 `ONLINE_FIXED_COMPONENTS`（線上路徑、固定開銷），
+報表的記憶體段會多一列「線上固定開銷 anon」。上線一週後補上面的表：
+
+```bash
+make metrics SINCE=7d                                            # 看 report-mark-clamav anon 與 cgroup 歷史峰值
+docker stats --no-stream report-mark-clamav                      # 當下的用量與上限
+docker inspect -f '{{.State.OOMKilled}} {{.State.Health.Status}} {{.RestartCount}}' report-mark-clamav
+```
+
+**改成按需的條件**（設計決策 1）：主機可用記憶體常態低於 3 GiB 時，改成按需執行（apt 的 clamscan 加
+freshclam timer，執行時才暫時多約 1 GB、每輪多 20–40 秒載入病毒碼）。設計時量到的背景：主機總記憶體
+19 GiB、可用約 6 GiB、swap 已用 7/8 GiB（這台同時是開發機）。
 
 ## 不在量測範圍內的成本
 

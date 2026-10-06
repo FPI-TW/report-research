@@ -1,0 +1,52 @@
+# 廷豐研報 上傳管線的病毒掃描：常駐 clamd（含 freshclam）。用法：make up-clamav、make clamav-smoke。
+#
+# 刻意是獨立的 compose 專案，不放進 deploy/docker-compose.yml：`make edge-reload` 是 force-recreate，
+# 放在一起的話每次重載邊緣都可能牽動這個容器，clamd 重讀病毒碼約一分鐘不能掃。
+# 也刻意不加入 edge 網路：只有本機的上傳 worker 經 127.0.0.1:3310 連它，nginx／cloudflared 碰不到。
+#
+# 客戶端是 app/services/clamd.py（標準庫 socket；zINSTREAM 把內容送進來掃，容器不掛任何資料目錄）。
+# 告警：scripts/check_container_health.sh 的 clamav（supporting）；容器停了或 unhealthy 時上傳停在隔離區、不放行。
+# 安裝、停用、病毒碼更新與故障處置見 docs/production_resilience.md「ClamAV（上傳掃描）」。
+name: report-mark-clamav
+
+services:
+  clamav:
+    # 官方映像，釘 1.4 這個 minor（LTS；patch 版跟著 tag 前進）。換 minor 時改這裡並重跑 make clamav-smoke。
+    image: clamav/clamav:1.4
+    # 固定容器名：探針（CONTAINER_HEALTH_TARGETS）與 ops catalog（deploy/ops/services.prod.toml）都以名字找它。
+    container_name: report-mark-clamav
+    restart: unless-stopped
+    # 常駐約 1.2–1.6 GB（病毒碼全在記憶體）。conf/clamd.conf 的 ConcurrentDatabaseReload no 讓重載時不會
+    # 新舊兩份同時在記憶體（否則會短暫翻倍到約 3 GB，撞上這個上限）。實測 RSS 見 docs/CAPACITY.md。
+    mem_limit: 2g
+    environment:
+      # app/services/clamd.py 把 VERSION 回應裡的病毒碼日期當 UTC 解讀（映像預設也是 Etc/UTC，這裡寫死防漂移）。
+      TZ: Etc/UTC
+      # freshclam 每天檢查次數。映像的 entrypoint 預設是 1（不是 freshclam.conf 範本寫的 24、也不是 12）；
+      # 4＝每 6 小時：病毒碼要連續失敗約 12 次才會越過 72 小時的 fail-closed 門檻，同時把
+      # 「重載期間 30–60 秒不能掃」的次數壓在一天最多 4 次（只有真的有新病毒碼才重載）。
+      FRESHCLAM_CHECKS: "4"
+    ports:
+      # 只綁 loopback。寫成 "3310:3310" 會對整個區網開放未認證的 clamd。
+      - "127.0.0.1:3310:3310"
+    volumes:
+      # 病毒碼（約 300 MB）放 named volume：重建容器不必重抓。make down-clamav 刻意不帶 -v。
+      - clamav-db:/var/lib/clamav
+      # 自訂設定：官方映像的 clamd／freshclam 讀 /etc/clamav/clamd.conf 與 /etc/clamav/freshclam.conf
+      # （官方文件的做法就是掛載整個 /etc/clamav）。刻意掛**目錄**而不是單檔：Docker Desktop 重啟後單檔
+      # bind mount 可能掛不上（2026-09-24 deploy-nginx-1 停在 Exited 約 36 小時就是這個，見
+      # docs/EXTERNAL_ACCESS.md）。唯讀：entrypoint 只有在設了 CLAMD_CONF_*／FRESHCLAM_CONF_* 環境變數時
+      # 才會 sed -i 改設定，這裡刻意不用那組變數——設定一律寫在 conf/ 裡、進版控。
+      - ./conf:/etc/clamav:ro
+    # 映像自帶 HEALTHCHECK（clamdcheck.sh：PING 3310 要回 PONG，start-period 6 分鐘蓋過首次下載病毒碼）。
+    # clamd 在容器裡是背景行程：它自己掛掉時容器仍是 running、但 health 轉 unhealthy——
+    # restart 策略不處理 unhealthy，探針會把它當故障回報（處置見 docs/production_resilience.md）。
+    logging:
+      # 預設 json-file 不輪替；freshclam 每輪都會寫幾行。
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  clamav-db:

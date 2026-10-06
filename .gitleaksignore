@@ -1,0 +1,12 @@
+# gitleaks 的逐筆誤報豁免（指紋＝commit:檔案:規則:行號）。只放行這幾個確切位置，不放寬任何規則；
+# 同樣的字串出現在別的 commit、別的檔案或別的行，照樣會被抓。
+#
+# 為什麼不用 .gitleaks.toml 的 stopwords：這兩個值含連字號，放不進「10 字以上英數識別字」的
+# stopword 守門（tests/test_secret_scan_config.py）；硬湊成 1234567890 之類的子字串又會放過真 secret。
+# 為什麼不改寫歷史：這些 commit 已在多條遠端分支上（lane 分支、wave1），CI 會掃全部分支的歷史。
+#
+# 2026-10-06：測試裡的假密碼被 generic-api-key 判成金鑰。兩處都已在後續 commit 改成
+# .gitleaks.toml 放行的 fixed-test-secret- 形狀；這裡只豁免引入它們的那兩個 commit。
+06e3a1d33e765e65f7ecd7987453220e21b878d5:frontend/src/features/account/useElevationGate.test.tsx:generic-api-key:37
+06e3a1d33e765e65f7ecd7987453220e21b878d5:frontend/src/features/account/useElevationGate.test.tsx:generic-api-key:65
+7e04d1c8e19975b13a8f046f67d16baba756e761:tests/test_schema_baseline.py:generic-api-key:153

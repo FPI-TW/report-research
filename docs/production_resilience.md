@@ -1599,6 +1599,69 @@ sudo systemctl disable --now report-mark-load-observations.timer   # 管理頁�
 收集器仍會寫 spool（保留期安全網 14 天，`--spool-retention-days`）；要連 spool 都停，在 metrics unit 的 ExecStart
 加 `--observe-interval 0` 後重啟。
 
+## 事件投影與容器／主機探針
+
+管理頁的「事件」讀 DB 的 `research.incident`／`research.incident_event`（revision 0006），但**它們只是 projection**：
+去重、提醒、FIRING／RESOLVED 判定與 Slack 投遞仍然只有 `scripts/incident_handler.sh`（P5），它不碰 DB、不依賴 web。
+
+- P5 每次已落地的狀態轉換（FIRING、REMINDER、ESCALATED、RESOLVED）另寫一行本機 spool
+  `data/ops_spool/incidents-YYYYMMDD.jsonl`；FIRING 附事件前 10 分鐘、RESOLVED 附開場後 10 分鐘的 journal 片段
+  （`data/ops_spool/journal/*.log`，預設 64 KiB、硬上限 256 KiB；完整 log 仍以 journald 為準）。寫入在背景、輸出丟棄、
+  失敗吞掉：spool 壞掉只少那一筆，告警行為與退出碼不變（`tests/test_incident_handler.py` 的 SpoolFailureEquivalenceTests）。
+- `report-mark-load-observations.timer` 順便把它們冪等匯入（event_id 去重；片段遮祕密後入庫、commit 後才刪片段檔）。
+  DB 掛掉期間的事件恢復後補匯入。沒收到 RESOLVED、同元件已有更晚的事件時記成 `lost`（結束時間不明）。
+- 兩張表是事故歷史（spool 匯入後即刪、journald 有保留期），列入備份。
+
+容器與主機兩支新探針接到 P5 的新實例（比照邊緣那一組，只換 `INCIDENT_*`）：
+
+| 探針 | 看什麼 | tier → 去抖 | 退出碼 |
+|---|---|---|---|
+| `scripts/check_container_health.sh` | catalog 的 PostgreSQL、nginx、cloudflared 是否 running（不是 unhealthy） | 三者在 catalog 都是 critical：單次執行內重試一次（間隔 15 秒）後確認就回 1 | 0／1 CRITICAL／3 確認期／4 判不出來／9 WARNING |
+| `scripts/check_host_health.sh` | 磁碟使用率 ≥ 90%（important，連續 2 輪）、MemAvailable < 5%、memory／io PSI full avg60 ≥ 10／30（supporting，連續 3 輪） | 門檻與理由在探針檔頭（保守初值，待事件投影累積分布後再調） | 0／3／4／9 |
+
+**去抖做在探針、不在 P5**：探針記每個檢查項目的連續失敗次數（`data/.health-streaks/`），還在確認期回 3，
+P5 那兩組設 `INCIDENT_HOLD_EXIT_CODES=3`（不開也不關）。判不出來（docker 連不上、/proc 讀不到）連續 2 輪才回 4；
+狀態目錄寫不進去時每筆失敗都算確認（寧可多吵也不靜默）。門檻與確認次數可在 `/etc/default/report-mark-sync`
+覆寫（`HOST_DISK_MAX_PCT`、`HOST_MEM_MIN_AVAIL_PCT`、`HOST_PSI_MEMORY_FULL_MAX`、`HOST_PSI_IO_FULL_MAX`、
+`HEALTH_CONFIRM_IMPORTANT`／`_SUPPORTING`／`_TOOLING`、`CONTAINER_HEALTH_TARGETS`）。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0006（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) web 那組 P5 多擷取 web 本身的 journal（unit 只多一行 Environment；告警語意不變）
+sudo install -m 0644 deploy/systemd/report-mark-incident.service /etc/systemd/system/
+# 3) 容器與主機的探針與 P5 實例
+sudo install -m 0644 deploy/systemd/report-mark-container-health.{service,timer} \
+    deploy/systemd/report-mark-container-incident.{service,timer} \
+    deploy/systemd/report-mark-host-health.{service,timer} \
+    deploy/systemd/report-mark-host-incident.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-container-health.timer report-mark-host-health.timer
+sudo systemctl enable --now report-mark-container-incident.timer report-mark-host-incident.timer
+# 4) catalog 多了四項：照「維運代理」的步驟 3 重新安裝 catalog、--check，再重啟代理
+```
+
+P5 與探針都以 `kashionz` 執行；journal 片段要讀系統 unit 的 journal，`kashionz` 必須在 `adm` 或
+`systemd-journal` 群組（`id kashionz` 確認；不在時片段是空的，事件照常）。
+
+驗收：`sudo systemctl start report-mark-container-health.service report-mark-host-health.service` 後
+`systemctl show report-mark-container-health -p ExecMainStatus` 應為 0（3＝確認期）、`journalctl -u report-mark-container-health -n 1`
+看得到 `status=ok`；P5 實例跑過一輪後 `journalctl -u report-mark-container-incident -n 2` 是 `action=noop`。下一次真的
+有事件時 `ls data/ops_spool/incidents-*.jsonl` 出現一行、loader 跑過後管理頁「維運 → 事件」看得到。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-container-incident.timer report-mark-host-incident.timer
+sudo systemctl disable --now report-mark-container-health.timer report-mark-host-health.timer
+rm -rf data/.incidents-container data/.incidents-host data/.health-streaks   # 可選
+```
+
+停掉探針 timer 而不停 P5 實例，P5 會照設計回報 MONITOR_BLIND——要停就兩個一起停。事件投影本身沒有開關：
+不想要 spool 時把 P5 unit 的 `INCIDENT_SPOOL_DIR` 設成不可寫的路徑（例如 `/dev/null`），告警不受影響。
+
 ## 維運代理（report-mark-ops-agent）
 
 管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經

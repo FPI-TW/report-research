@@ -1,0 +1,25 @@
+[Unit]
+Description=廷豐智能研報 主機健康探針（磁碟、可用記憶體、記憶體與 I/O 的 PSI）
+# 服務都還活著、但主機快撐不住的那一段（磁碟快滿、記憶體快用完、整機卡在 I/O）。
+# 門檻、tier 與理由見 scripts/check_host_health.sh 檔頭；連續數值由 report-mark-metrics 寫進監控 spool。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：通知由 P5（report-mark-host-incident）帶去重地擁有。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+# 只讀 /proc 與 df，刻意不含 uv 與 nvm 路徑。
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# REPORT_MARK_ROOT 與可選的 HOST_* 門檻、HEALTH_CONFIRM_* 旋鈕都在這裡。
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/check_host_health.sh"'
+# 退出碼 3＝還在依 tier 去抖的確認期，**不是故障**（P5 那組把它當 hold）。
+SuccessExitStatus=3
+# 正常一秒內結束；df 每個路徑上限 10 秒（防卡在壞掉的掛載上）。嚴格小於 timer 的 120 秒間隔。
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

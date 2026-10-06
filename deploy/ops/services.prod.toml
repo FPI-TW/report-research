@@ -204,3 +204,41 @@ timer = "report-mark-load-observations.timer"
 tier = "supporting"
 actions = ["status", "logs"]
 description = "監控 spool 匯入 DB（每 5 分鐘）"
+
+# ── 容器與主機探針（L4；依 tier 去抖在探針裡做，通知由各自的 P5 實例）─────────────
+
+[[services]]
+name = "container-health"
+kind = "systemd"
+unit = "report-mark-container-health.service"
+timer = "report-mark-container-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "容器健康探針（PostgreSQL／nginx／cloudflared，每 2 分鐘）"
+
+[[services]]
+name = "container-incident"
+kind = "systemd"
+unit = "report-mark-container-incident.service"
+timer = "report-mark-container-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "容器事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "host-health"
+kind = "systemd"
+unit = "report-mark-host-health.service"
+timer = "report-mark-host-health.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "主機健康探針（磁碟、記憶體、PSI，每 2 分鐘）"
+
+[[services]]
+name = "host-incident"
+kind = "systemd"
+unit = "report-mark-host-incident.service"
+timer = "report-mark-host-incident.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+description = "主機事件偵測與通知（連續越線才開事件，每 2 分鐘）"

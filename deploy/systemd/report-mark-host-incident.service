@@ -1,0 +1,28 @@
+[Unit]
+Description=主機事件偵測與通知（消費主機探針結果，連續越線才開事件）
+# 跑的是與 web、LineBot、邊緣完全相同的 scripts/incident_handler.sh，只換一組 INCIDENT_* 環境變數。
+After=network-online.target
+Wants=network-online.target
+# **刻意不宣告 OnFailure**：本 unit 自己就是告警器，失敗再觸發告警會形成遞迴。
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+EnvironmentFile=-/etc/report-mark/alert.env
+# ── 指向主機那一組訊號 ───────────────────────────────────────────────────
+Environment=INCIDENT_PROBE_UNIT=report-mark-host-health.service
+Environment=INCIDENT_TIMER_UNIT=report-mark-host-health.timer
+Environment=INCIDENT_COMPONENT=host
+Environment=INCIDENT_MONITOR_COMPONENT=host_monitor
+Environment=INCIDENT_STATE_DIR=/home/kashionz/projects/report-mark/data/.incidents-host
+# 探針的 exit 3＝確認期，hold（理由同 report-mark-container-incident.service）。
+Environment=INCIDENT_HOLD_EXIT_CODES=3
+ExecStart=/usr/bin/bash -c 'exec /usr/bin/bash "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/incident_handler.sh"'
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

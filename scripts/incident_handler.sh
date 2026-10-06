@@ -1042,6 +1042,11 @@ case "$web_status" in
     # （run_state_machine 的升級分支），不必等 30 分鐘的提醒。判斷不出來（indeterminate、本體讀不懂）也算這裡。
     8)   run_state_machine "$COMPONENT" failing CRITICAL "probe_exit_8" "$web_obs" web_incident \
              "LLM 帳號不可用（餘額用罄／認證失敗／連不上），問答與批次 LLM 段停擺；檢索、閱讀、雷達正常（exit=8 result=$web_result；判斷不出來也歸這裡，處置見 docs/production_resilience.md）${web_detail_suffix}" ;;
+    # 9＝容器／主機探針「important／supporting tier 連續確認的失敗」（check_container_health.sh、
+    # check_host_health.sh）。沒有這一行時 9 落進下面的未知分支，嚴重度同樣是 WARNING——這一行只把
+    # 原因與說明換成看得懂的字；web、LineBot、邊緣三支探針從不回 9，行為不變。
+    9)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_9" "$web_obs" web_incident \
+             "元件降級：important／supporting tier 的項目連續確認失敗（exit=9 result=$web_result；是哪一項見探針 unit 的 journal）${web_detail_suffix}" ;;
     *)   run_state_machine "$COMPONENT" failing WARNING "probe_exit_unknown" "$web_obs" web_incident \
              "探針回報未知退出碼（exit=$web_status result=$web_result）${web_detail_suffix}" ;;
 esac

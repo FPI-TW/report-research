@@ -103,6 +103,10 @@ data/signal_progress.tsv
 data/.incidents/
 data/.incidents-linebot/
 data/.incidents-edge/
+data/.incidents-container/
+data/.incidents-host/
+# 容器／主機探針依 tier 去抖的連續失敗次數（scripts/_health_streak.sh）。遺失只會讓確認期重新起算。
+data/.health-streaks/
 # 監控 spool（collect_resource_usage.py 寫、load_observations.py 匯入 DB 後刪舊日檔）。純執行期資料：
 # 匯入前是 DB 掛掉期間的唯一副本，匯入後由 DB 接手。
 data/ops_spool/

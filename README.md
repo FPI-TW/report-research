@@ -276,6 +276,7 @@ Schema 由 Alembic 管理：`make schema` 跑 `alembic upgrade head`（連 `REPO
 | `report-mark-health.timer`、`report-mark-incident.timer` | 每 2 分鐘 | P4 探針 `scripts/check_web_health.sh`（只回報事實）與 P5 `scripts/incident_handler.sh`（去重、30 分鐘提醒、RESOLVED），webhook opt-in |
 | `report-mark-linebot-health.timer`、`report-mark-linebot-incident.timer` | 每 2 分鐘 | LineBot 側同一套 |
 | `report-mark-edge-health.timer`、`report-mark-edge-incident.timer` | 每 2 分鐘 | 對外邊緣同一套：`scripts/check_edge_health.sh` 打對外網址的 `/healthz`（`EDGE_HEALTH_URL`，在 `/etc/default/report-mark-sync`），本機 origin 健康而對外失敗才算邊緣故障 |
+| `report-mark-container-health.timer`、`report-mark-container-incident.timer`、`report-mark-host-health.timer`、`report-mark-host-incident.timer` | 每 2 分鐘 | 容器與主機同一套：`scripts/check_container_health.sh`（catalog 的 PostgreSQL／nginx／cloudflared 是否在跑）、`scripts/check_host_health.sh`（磁碟、可用記憶體、PSI）。依 tier 去抖在探針裡做（3＝確認期，P5 那兩組 hold），細節見 `docs/production_resilience.md`「事件投影與容器／主機探針」 |
 | `report-mark-backfill.timer` | 01:00 | E1d 抽取回填，跑完手動 disable |
 | `report-mark-r2-reconcile.timer` | 週一 07:00 | R2 對帳（唯讀） |
 | `report-mark-metrics.service` | 常駐 | 硬體用量取樣 → `data/metrics/`（`make metrics`）；另每 60 秒把主機、catalog 列的容器與 unit 狀態、批次執行寫進監控 spool `data/ops_spool/`（不連 DB） |

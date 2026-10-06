@@ -745,7 +745,10 @@ def cmd_scheduled(args, *, version_check=None, drift=None, now: Callable = datet
     version_check = version_check or (lambda: asyncio.run(check_version(DATABASE_URL)))
     drift = drift or (lambda rev: asyncio.run(drift_check(rev, reference_url_env)))
     identity = sm.target_identity(DATABASE_URL)
-    started, t0 = now().astimezone(), clock()
+    # 只替無時區的時間補上主機時區；已帶時區的保留原樣（astimezone() 會改寫成主機時區，結果隨 TZ 變——CI 是 UTC）。
+    started, t0 = now(), clock()
+    if started.tzinfo is None:
+        started = started.astimezone()
 
     version = version_check()
     print(f"版本比對：目標 {identity}；{version.message}")

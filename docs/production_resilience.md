@@ -1093,7 +1093,7 @@ tail -20 data/unit_failures.log                                     # 停更時�
 | error | `duplicate_chunk_index` | 閱讀頁錨定跳錯位置，看起來只像「引文對不上」 |
 | error | `signal_market_mismatch` | 雷達把訊號歸到錯的市場，數字仍然合理 |
 | error | `is_research_null` | 未判定的研報會被 ingest 閘門與各批次靜默略過 |
-| error | `upload_draft_mismatch` | 上傳的草稿狀態（`report_upload.state`）與可見性（`report_visibility.publication`）不一致：未審核的研報已經對所有人可見，或研報卡在不可見卻沒有可發布的上傳紀錄 |
+| error | `upload_draft_mismatch` | 上傳的草稿狀態（`report_upload.state`）與可見性（`report_visibility.publication`）不一致：未審核的研報已經對所有人可見，或研報卡在不可見卻沒有可發布的上傳紀錄（退回後寬限期內、尚未清除的草稿不算：退回刻意不動 visibility，清除時才一起刪） |
 | warn | `chunkless_report` | 有全文卻沒有任何 chunk＝檢索不到 |
 | warn | `takeaway_sha_disagreement` | 同一報告的摘錄存了不同的 `text_sha256` |
 | （取樣） | `norm_drift` | `content_norm` 是 GENERATED，驗「庫裡實際存的值」與 `norm_for_match()` 是否等價 |

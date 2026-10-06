@@ -621,12 +621,27 @@ class ReportVisibilityDbTests(unittest.TestCase):
                                                    "reason": None, "sig": None})
             await session.execute(draft_vis, {"h": h_stuck})
             stuck = await count()
-            return base, consistent, leak, stuck
+            # 退回後寬限期內（尚未清除）：visibility 刻意維持草稿，不算不一致。
+            h_rej, h_purged = _hashes("aud3-")
+            await session.execute(_INSERT_UPLOAD, {"h": h_rej, "name": "rej.pdf", "state": "rejected",
+                                                   "reason": "退回", "sig": None})
+            await session.execute(draft_vis, {"h": h_rej})
+            rejected = await count()
+            # 已清除（purged_at 有值）卻還留著草稿列：清除漏刪 visibility，算不一致。
+            await session.execute(_INSERT_UPLOAD, {"h": h_purged, "name": "purged.pdf", "state": "rejected",
+                                                   "reason": "退回", "sig": None})
+            await session.execute(text("UPDATE research.report_upload SET purged_at = now() WHERE file_hash = :h"),
+                                  {"h": h_purged})
+            await session.execute(draft_vis, {"h": h_purged})
+            purged = await count()
+            return base, consistent, leak, stuck, rejected, purged
 
-        base, consistent, leak, stuck = self._run(fn)
+        base, consistent, leak, stuck, rejected, purged = self._run(fn)
         self.assertEqual(consistent - base, 0)
         self.assertEqual(leak - base, 1)
         self.assertEqual(stuck - base, 2)
+        self.assertEqual(rejected - base, 2, "寬限期內的退回草稿不算不一致")
+        self.assertEqual(purged - base, 3)
 
 if __name__ == "__main__":
     unittest.main()

@@ -565,6 +565,46 @@ export const ReconcileStatsSchema = z.object({
 })
 export type ReconcileStats = z.infer<typeof ReconcileStatsSchema>
 
+export const RegressionBaselineSchema = z.object({
+  captured_at: z.string().nullable().optional(),
+  corpus_cutoff: z.string().nullable().optional(),
+  corpus_reports: z.number().int(),
+  simulated_as_of: z.boolean(),
+  k: z.number().int(),
+  dense_scan: z.number().int(),
+  dataset_sha256: z.string().nullable().optional(),
+})
+export type RegressionBaseline = z.infer<typeof RegressionBaselineSchema>
+
+export const RegressionReportRefSchema = z.object({
+  file_hash: z.string(),
+  label: z.string().nullable().optional(),
+})
+export type RegressionReportRef = z.infer<typeof RegressionReportRefSchema>
+
+export const RegressionSummarySchema = z.object({
+  verdict: z.enum(['ok', 'degraded', 'incomparable']),
+  questions: z.number().int(),
+  comparable: z.number().int(),
+  mean_report_recall: z.number().nullable().optional(),
+  mean_raw_report_recall: z.number().nullable().optional(),
+  mean_chunk_recall: z.number().nullable().optional(),
+  mean_rbo: z.number().nullable().optional(),
+  degraded_questions: z.number().int(),
+  hidden_reports: z.number().int(),
+  removed_reports: z.number().int(),
+  excluded_new_reports: z.number().int(),
+  lex_truncated_questions: z.number().int().optional(),
+})
+export type RegressionSummary = z.infer<typeof RegressionSummarySchema>
+
+export const RegressionThresholdsSchema = z.object({
+  min_mean_recall: z.number(),
+  min_question_recall: z.number(),
+  max_degraded_questions: z.number().int(),
+})
+export type RegressionThresholds = z.infer<typeof RegressionThresholdsSchema>
+
 export const ReportVisibilityRequestSchema = z.object({
   hidden: z.boolean(),
   reason: z.string().nullable().optional(),
@@ -796,6 +836,29 @@ export const R2ReconcileSectionSchema = z.object({
 })
 export type R2ReconcileSection = z.infer<typeof R2ReconcileSectionSchema>
 
+export const RegressionQuestionSchema = z.object({
+  id: z.string(),
+  question: z.string(),
+  comparable: z.boolean(),
+  degraded: z.boolean(),
+  lex_truncated: z.boolean().optional(),
+  report_recall: z.number().nullable().optional(),
+  raw_report_recall: z.number().nullable().optional(),
+  chunk_recall: z.number().nullable().optional(),
+  rbo: z.number().nullable().optional(),
+  baseline_reports: z.number().int(),
+  eligible_reports: z.number().int(),
+  current_reports: z.number().int(),
+  hidden_reports: z.number().int(),
+  removed_reports: z.number().int(),
+  excluded_new_reports: z.number().int(),
+  lost_total: z.number().int(),
+  gained_total: z.number().int(),
+  lost: z.array(RegressionReportRefSchema),
+  gained: z.array(RegressionReportRefSchema),
+})
+export type RegressionQuestion = z.infer<typeof RegressionQuestionSchema>
+
 export const RuntimeSectionSchema = z.object({
   pid: z.number().int().nullable().optional(),
   hostname: z.string().nullable().optional(),
@@ -841,6 +904,33 @@ export const OpsServiceListResponseSchema = z.object({
   items: z.array(OpsServiceStatusSchema),
 })
 export type OpsServiceListResponse = z.infer<typeof OpsServiceListResponseSchema>
+
+export const RegressionComparisonSchema = z.object({
+  finished_at: z.string(),
+  duration_s: z.number().nullable().optional(),
+  baseline: RegressionBaselineSchema.nullable().optional(),
+  dense_scan: z.number().int().nullable().optional(),
+  params_changed: z.boolean(),
+  thresholds: RegressionThresholdsSchema.nullable().optional(),
+  summary: RegressionSummarySchema.nullable().optional(),
+  questions: z.array(RegressionQuestionSchema),
+})
+export type RegressionComparison = z.infer<typeof RegressionComparisonSchema>
+
+export const RetrievalRegressionResponseSchema = z.object({
+  status: z.enum(['ok', 'warn', 'fail', 'unknown']),
+  available: z.boolean(),
+  unavailable_reason: z.string().nullable().optional(),
+  finished_at: z.string().nullable().optional(),
+  age_hours: z.number().nullable().optional(),
+  stale: z.boolean(),
+  exit_code: z.number().int().nullable().optional(),
+  outcome: z.enum(['ok', 'degraded', 'skipped', 'error']).nullable().optional(),
+  reason: z.enum(['db_unavailable', 'low_memory', 'sync_running', 'no_baseline', 'baseline_invalid', 'incomparable', 'dataset_invalid', 'embed_failed', 'query_failed', 'unexpected']).nullable().optional(),
+  message: z.string().nullable().optional(),
+  comparison: RegressionComparisonSchema.nullable().optional(),
+})
+export type RetrievalRegressionResponse = z.infer<typeof RetrievalRegressionResponseSchema>
 
 function qs(query: Record<string, string | number | boolean | null | undefined>): string {
   const params = new URLSearchParams()
@@ -890,6 +980,8 @@ export const adminApi = {
   listReports: (query: { q?: string | null; hidden?: boolean | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
+  /** GET /api/admin/retrieval-regression — Get Retrieval Regression */
+  getRetrievalRegression: () => requestJSON('/api/admin/retrieval-regression', RetrievalRegressionResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/users — List Users */
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */

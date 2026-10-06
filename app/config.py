@@ -154,6 +154,36 @@ def _ops_agent_socket(environment: str) -> str:
     return (os.getenv("OPS_AGENT_SOCKET") or "").strip() or _OPS_SOCKETS.get(environment, "")
 
 
+def _ratio(name: str, default: float) -> float:
+    """(0, 1] 之間的比例；空值、非數字、nan 或超出範圍退回預設並警告（門檻打錯不可變成永遠不告警）。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or not 0 < value <= 1:
+        logging.getLogger(__name__).warning("%s=%r 不在 (0, 1]，退回 %g", name, raw, default)
+        return default
+    return value
+
+
+def _int_at_least(name: str, default: int, minimum: int) -> int:
+    """整數且不小於 minimum；空值、非整數或太小退回預設並警告。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = minimum - 1
+    if value < minimum:
+        logging.getLogger(__name__).warning("%s=%r 不是 ≥%d 的整數，退回 %d", name, raw, minimum, default)
+        return default
+    return value
+
+
 # 問答抽查逾時的預設值依 judge 走哪條路而定（見 `_load` 裡 ask_faithfulness_timeout 的註解）。
 ASK_FAITHFULNESS_TIMEOUT_HTTP = 90.0
 ASK_FAITHFULNESS_TIMEOUT_CLI = 240.0
@@ -292,6 +322,15 @@ class Settings:
     ops_agent_environment: str = "production"
     ops_agent_socket: str = _OPS_SOCKETS["production"]
     ops_agent_timeout: float = 20.0
+    # 檢索回歸檢查（app/services/retrieval_regression.py、scripts/retrieval_regression.py；零 LLM）。
+    # k 只在擷取基準時用（比對一律用基準記下的 k）；三個門檻決定 rc=1（告警）；可用記憶體不足就略過
+    # 那一次（rc=2）而不是硬載 BGE-M3 跟 web 搶。基準檔路徑空字串＝repo 根 data/retrieval_regression/baseline.json。
+    retrieval_regression_k: int = 10
+    retrieval_regression_min_mean_recall: float = 0.8
+    retrieval_regression_min_question_recall: float = 0.5
+    retrieval_regression_max_degraded_questions: int = 2
+    retrieval_regression_min_available_gib: float = 4.0
+    retrieval_regression_baseline: str = ""
 
 
 def _load() -> Settings:
@@ -465,6 +504,12 @@ def _load() -> Settings:
         ops_agent_environment=(ops_env := _ops_agent_environment()),
         ops_agent_socket=_ops_agent_socket(ops_env),
         ops_agent_timeout=_positive_float("OPS_AGENT_TIMEOUT", 20.0),
+        retrieval_regression_k=_int_at_least("RETRIEVAL_REGRESSION_K", 10, 1),
+        retrieval_regression_min_mean_recall=_ratio("RETRIEVAL_REGRESSION_MIN_MEAN_RECALL", 0.8),
+        retrieval_regression_min_question_recall=_ratio("RETRIEVAL_REGRESSION_MIN_QUESTION_RECALL", 0.5),
+        retrieval_regression_max_degraded_questions=_int_at_least("RETRIEVAL_REGRESSION_MAX_DEGRADED_QUESTIONS", 2, 0),
+        retrieval_regression_min_available_gib=_positive_float("RETRIEVAL_REGRESSION_MIN_AVAILABLE_GIB", 4.0),
+        retrieval_regression_baseline=(os.getenv("RETRIEVAL_REGRESSION_BASELINE") or "").strip(),
     )
 
 

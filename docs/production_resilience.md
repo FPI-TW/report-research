@@ -1783,6 +1783,84 @@ sudo systemctl enable --now report-mark-schema-check.timer
 sudo systemctl disable --now report-mark-schema-check.timer   # 狀態檔停在最後一次的結果（看 checked_at）
 ```
 
+## 檢索回歸每日檢查（report-mark-retrieval-regression）
+
+`report-mark-retrieval-regression.timer` 每日 07:40 跑 `scripts/retrieval_regression.py check`（零 LLM）：凍結題集
+`eval/ragas_questions.json` 的 18 題各跑一次 `hybrid_search`（參數同問答：`dense_scan`＝`ASK_DENSE_SCAN`），與一次性
+擷取的基準 `data/retrieval_regression/baseline.json` 比研報層級的召回，結果寫 `data/health/retrieval_regression.json`，
+管理後台「維運 → 資料健康」最下面的「檢索回歸」卡片讀它（`GET /api/admin/retrieval-regression`，web 不跑檢索）。
+量哪一層、為什麼不用 `retrieve_context`、指標與門檻的理由在 `app/services/retrieval_regression.py` 的模組 docstring。
+
+**不算劣化的三種變化**（分開計數、顯示在卡片上）：
+
+- 基準時點之後才入庫的研報（`created_at` 晚於基準的語料截點）先從完整候選清單排除再取 top-k——語料每 3 小時在長，
+  新研報擠進前段不是變差。基準裡本來就有的研報即使重新入庫（`created_at` 被重設）也不算新。
+- 基準研報被管理員隱藏（`report_visibility`）或已不在語料裡：從分母拿掉。
+- 字面路候選被 cap 截斷（`lex_truncated`）的題目，前後兩次跑的 top-k 本來就可能不同（`store._lexical_sql` 刻意不在
+  cap 前排序）；這不排除，而是由「允許少數題崩掉」吸收，並在卡片上標出來。
+
+退出碼與告警（unit 以 `OnFailure=report-mark-alert@%n.service` 加 `SuccessExitStatus=2` 表達）：
+
+| 退出碼 | 意思 | 告警 |
+|---|---|---|
+| 0 | 沒有劣化 | 否 |
+| 1 | 劣化：平均研報召回 < `RETRIEVAL_REGRESSION_MIN_MEAN_RECALL`（0.8），或研報召回 < `RETRIEVAL_REGRESSION_MIN_QUESTION_RECALL`（0.5）的題數 > `RETRIEVAL_REGRESSION_MAX_DEGRADED_QUESTIONS`（2） | 是 |
+| 2 | 這次略過：DB 連不上、可用記憶體 < `RETRIEVAL_REGRESSION_MIN_AVAILABLE_GIB`（4 GiB）、sync 正在跑（`data/.sync_new_reports.lock` 的行程還活著） | 否 |
+| 3 | 要人處理：還沒有基準、基準檔壞了、題集或嵌入模型與基準不同、可比較的題目不到一半（基準研報大半已下架或隱藏）、嵌入模型載不起來、非連線類的 DB 錯誤、未預期的例外 | 是 |
+
+2 不告警的理由與 rollup-observations 的 rc=2 相同：DB 掛掉已由 web 探針經 P5 帶去重地告警，記憶體與 sync 是會自己好的
+狀況。略過那次不蓋掉上一次的比對；連續略過超過 48 小時，卡片把結果標成過期（至少「注意」）。
+
+**資源與互斥**：會載 BGE-M3（行程約 2–3 GB）。不取 `scripts/_claude_lock.py` 的鎖——它不呼叫 LLM，取了反而讓同時段的
+LLM 批次（含 sync 輪內的摘要／標題／摘錄）以 rc=75 跳過；記憶體競爭改由排程避開 sync 與夜間回填、sync PID 檔守門、
+`MemAvailable` 守門與 `MemoryMax=4G` 兜底（超過就在這個 unit 裡被 OOM，SIGKILL 會走告警），CPU 以 `Nice=15`、
+`IOSchedulingClass=idle`、`EMBED_TORCH_THREADS=2` 讓路。2026-10-06 對 devdb（生產複本，15,297 篇）實跑：冷載模型＋
+18 題約 4 分鐘（模型已載入時比對約 50 秒）、行程峰值 RSS 2.03 GiB；同一刻擷取立即比對，18 題研報召回全部 1.00；相隔約兩分鐘的另一組擷取與比對，「散熱技術的進展如何？」因字面路截斷（命中 5,312 片段 > cap 2,000）只剩 0.40、其餘 17 題 1.00——這就是允許少數題崩掉的原因。
+
+**評測刻意不進 CI**：這支要真語料與真模型；CI 只跑假嵌入、假 DB 的單元測試（`tests/test_retrieval_regression.py`）。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 0) 先擷取基準（一次性；在 repo 根、用部署機的 DB）。會載 BGE-M3，挑 sync 沒在跑、可用記憶體 ≥ 4 GiB 的時段
+EMBED_TORCH_THREADS=2 uv run python scripts/retrieval_regression.py capture
+#    再手動比一次，確認是 0、研報召回接近 1（字面路截斷的題目可能不是 1.00，卡片會標出來）
+EMBED_TORCH_THREADS=2 uv run python scripts/retrieval_regression.py check
+# 1) 辦公室主機
+sudo install -m 0644 deploy/systemd/report-mark-retrieval-regression.service deploy/systemd/report-mark-retrieval-regression.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-retrieval-regression.timer
+# 2) 辦公室主機的 catalog 多了 retrieval-regression 一項（唯讀，不給 run）：照「維運代理」的步驟 3 重新安裝 catalog、
+#    --check，再重啟代理
+# 1') staging：語料不同，要在 staging 上自己擷取基準；unit 用 install_units.sh 代換使用者與路徑
+sudo deploy/install_units.sh --user <使用者> --root <repo 根> report-mark-retrieval-regression.timer
+sudo systemctl enable --now report-mark-retrieval-regression.timer
+```
+
+驗收：`sudo systemctl start report-mark-retrieval-regression.service` 後 `systemctl show report-mark-retrieval-regression -p ExecMainStatus`
+為 0、`journalctl -u report-mark-retrieval-regression -n 30` 看得到逐題表格與「沒有劣化」、`data/health/retrieval_regression.json`
+的 `outcome` 為 `ok`，管理頁卡片顯示「正常」；`scripts/verify_oneshot_ran.sh` 確認跑過。沒有先擷取基準就啟用，第一次會以
+rc=3（`no_baseline`）告警。
+
+### 重新擷取基準
+
+基準是一把尺，**只在刻意改變了「什麼算正確結果」時才換**：調整檢索參數（`ASK_DENSE_SCAN`——卡片會顯示 `params_changed`
+提醒——、融合權重、索引）並確認變好之後；題集或嵌入模型改了（rc=3 `incomparable`）；基準太舊、可比較的題目不到一半
+（rc=3）。劣化告警時**不要**直接重新擷取——那等於把劣化收編成新基準；先看卡片上流失的研報與 journal 找原因。
+
+```bash
+EMBED_TORCH_THREADS=2 uv run python scripts/retrieval_regression.py capture --force   # 覆寫；舊基準需要時先自己備份
+```
+
+`capture --as-of <ISO 時間>` 是驗證用：假裝基準是在那個時點擷取的（之後入庫的研報不進基準），用來檢查新研報排除是否有效，
+不要用它建正式基準。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-retrieval-regression.timer   # 結果檔停在最後一次（48 小時後卡片標成過期）
+```
+
 ## 維運代理（report-mark-ops-agent）
 
 管理後台的維運狀態（`/api/admin/ops/*`）不是 web 自己去跑 systemctl／journalctl／docker，而是經

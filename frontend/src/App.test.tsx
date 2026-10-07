@@ -26,7 +26,8 @@ test('/search 落在檢索頁且側欄可見', async () => {
   // 「Test timed out in 5000ms」而不是找不到元素，看起來還很像是產品壞了。
   expect(await screen.findByLabelText('搜尋研報', {}, { timeout: 15000 })).toBeInTheDocument()
   expect(screen.getByRole('heading', { level: 1, name: '廷豐智能研報' })).toBeInTheDocument()
-  expect(screen.getByTitle('收合側欄')).toBeInTheDocument()
+  // 側欄預設收合：只有圖示軌，展開鈕可按
+  expect(screen.getByRole('button', { name: '展開側欄' })).toBeInTheDocument()
 }, 15000)
 
 function stubAs(role: 'admin' | 'user') {

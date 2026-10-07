@@ -111,6 +111,8 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 
 所有路徑除 `/login`、`/healthz`、`/app/assets/` 外都要登入；`/api/` 未登入回 401，其餘 302 到 `/login`。登入是個別帳號（`research.app_user`），每個請求都查 DB 的 session 狀態：帳號停用、強制登出、重設密碼都在下一個請求生效；帳號服務（DB）不可用時回 503 而不是導回登入頁。`/api/review/*` 與 `/api/admin/*` 限管理員（一般使用者回 403），每條另要求一個 scope（管理員預設有 `admin`、`accounts.manage`、`audit.read`、`review.manage`、`ops.read`、`reports.manage`；`qa_content.read`、`ops.operate` 要另外授予；super admin 全部都有）。會改變狀態的請求（POST／PUT／PATCH／DELETE）帶了 `Origin` 就必須與 `Host` 相同，跨站一律 403 `csrf_rejected`。JSON 錯誤一律是 `{detail, code, request_id}`：`detail` 維持原意（多半是中文訊息，422 是欄位錯誤清單），`code` 是穩定字串，`request_id` 對得上 journal 那一行。SSE 端點每 20 秒送一行心跳註解。
 
+對外 API（`/external/v1/*`）不走登入與 session：每個 API 用戶端一把金鑰，以 `Authorization: Bearer <api_key>` 認證，不查也不發 session cookie；反過來，站內 `/api/*` 一律不認 Bearer。缺金鑰 401 `api_key_missing`、金鑰無效／停用／已輪替 401 `api_key_invalid`（帶 `WWW-Authenticate: Bearer`）、scope 不足 403 `api_scope_missing`、每分鐘限流 429 `api_rate_limited`、每日額度用完 429 `api_quota_exceeded`（每日額度以台北時間日曆日計，台北 0 點＝UTC 16:00 重置；429 都帶 `Retry-After`）。認證、錯誤碼與授權範圍語意見 `docs/WORKFLOW.md` 的「對外 API」。
+
 | 方法 | 路徑 | 參數 | 回應 | 備註 |
 |---|---|---|---|---|
 | GET | `/healthz` | — | `{"status":"ok"}`；DB 不可用回 503 `{"status":"degraded"}` | 免登入；只探 DB（`SELECT 1`，3 秒逾時）；結果快取 5 秒 |
@@ -142,6 +144,8 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | DELETE | `/api/conversations/{conversation_id}`；POST `/api/conversations/{conversation_id}/delete` | — | `{"ok"}` | 以 `COALESCE(conversation_id, id)` 整批刪自己的 `qa_log`；別人的或不存在的回 `{"ok": false}` |
 | GET | `/api/report/{report_id}/full` | — | `report_id`、`file_name`、`title`、`market`、`source`、`summary`、`report_date`、`report_type`、`has_file` | 研報原檔詳情（`web/routers/report_file.py`，與已移除的深度研報無關） |
 | GET | `/api/report/{report_id}/file` | — | 原檔（PDF inline）或 302 到 presigned URL | `r2` 模式缺 key 回 503 |
+| GET | `/external/v1/search` | `q`（1–500 必填）、`limit`（1–20，10）、`offset`、`passages`（1–3，3）、`sort`（`relevance`／`date_desc`／`date_asc`）、選填 `market`／`source`／`report_type`／`instrument_type`（各一個值） | `{query, total, offset, limit, results: [{report_id, title, file_name, market, source, source_name, report_date, report_type, instrument_types, summary, score, passages: [{score, chunk_index, content}]}]}`；金鑰有 `report.file` 時每筆另附 `file_url`、`file_url_expires_at`（ISO 8601 UTC，產生失敗的那筆為 null） | **對外 API**，`Authorization: Bearer <api_key>`、需 `search` scope。檢索與排序同 `/api/search`，結果限於該 API 用戶端的授權範圍；請求的過濾只能縮小、與授權範圍交集為空直接回空結果。不回目標價等雷達欄位 |
+| GET | `/external/v1/reports/{report_id}/file-url` | `report_id`（UUID） | `{report_id, file_url, expires_at}`（`Cache-Control: no-store`） | **對外 API**，需 `report.file` scope。每次重新查研報（可見性＋授權範圍）：查無、隱藏、草稿、授權外一律 404 `report_not_found`；HEAD 驗 sha256 後才簽，有效期 `EXTERNAL_FILE_URL_TTL_SECONDS`；沒有原檔 404 `original_not_found`、儲存或完整性錯誤 503 `original_unavailable` |
 | GET | `/api/reading/{file_hash}` | — | `ReadingDoc`（metadata ＋ 重點摘錄 ＋ 訊號，不含全文） | `file_hash` 須 64 hex |
 | GET | `/api/reading/{file_hash}/text` | `chunk`（選填） | `ReadingText`（正典文字，超過 `READING_TEXT_MAX_CHARS` 截斷並標 `truncated`） | `text_sha256` 一律對完整文字算 |
 | GET | `/api/reading/{file_hash}/similar` | `limit`（1–20，6） | 相似研報清單 | dense 近鄰 |

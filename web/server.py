@@ -218,6 +218,8 @@ errors.install(app)
 # /healthz/storage、/healthz/llm 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
 _AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
+# 不走 session、改由路由 dependency 驗 Bearer 金鑰的前綴（反過來，其餘路徑一律不認 Bearer）。
+_EXTERNAL_PREFIX = "/external/"
 
 
 def _auth_allowed(path: str) -> bool:
@@ -232,6 +234,10 @@ def _auth_allowed(path: str) -> bool:
 async def require_login(request: Request, call_next):
     path = request.url.path
     if _auth_allowed(path):
+        return await call_next(request)
+    # 對外 API：認證完全交給 web/external_auth.py 的 Bearer dependency。不查也不發 session cookie，
+    # 且必須排在 dev_mode 之前——免登入的開發捷徑不能讓 /external/* 跳過金鑰。
+    if path.startswith(_EXTERNAL_PREFIX):
         return await call_next(request)
     # 開發模式：本機直連且未經任何代理時免登入（三個條件見 web/dev_mode.py）。
     # 刻意不發 session cookie——放行是這一個請求的事，不留下可帶走的憑證。

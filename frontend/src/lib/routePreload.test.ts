@@ -29,8 +29,8 @@ test('preloadIdle 於 requestIdleCallback 可用時排程並預載', () => {
 test('preloadIdle 無 requestIdleCallback 時退回 setTimeout', () => {
   vi.stubGlobal('requestIdleCallback', undefined)
   vi.useFakeTimers()
-  const spy = vi.spyOn(rp.routeLoaders, 'monitor').mockResolvedValue({ default: () => null } as never)
-  rp.preloadIdle(['monitor'])
+  const spy = vi.spyOn(rp.routeLoaders, 'radar').mockResolvedValue({ default: () => null } as never)
+  rp.preloadIdle(['radar'])
   vi.runAllTimers()
   expect(spy).toHaveBeenCalledTimes(1)
   vi.useRealTimers()

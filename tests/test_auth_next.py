@@ -92,11 +92,11 @@ def _auth_cookies() -> dict[str, str]:
 
 
 def test_authed_monitor_redirects_to_spa():
-    # 舊 vanilla 監控頁已退場：導向 SPA 監控頁
+    # 導入監控已搬進管理後台：舊書籤一律回檢索頁
     client = TestClient(app, cookies=_auth_cookies())
     resp = client.get("/monitor", follow_redirects=False)
     assert resp.status_code == 302
-    assert resp.headers["location"] == "/app/monitor"
+    assert resp.headers["location"] == "/app/search"
 
 
 def test_authed_help_redirects_to_spa():

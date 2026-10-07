@@ -25,7 +25,7 @@ export const summarySchema = z.object({ done: z.number(), total: z.number(), rem
  * 各批次管線是否在跑（後端 `_proc_alive` 掃 /proc 比對 cmdline）。
  *
  * `takeaways`／`signals`／`sync_import` 用 optional 的理由同 progressSchema 下方那三塊：
- * 滾動部署期間前端可能先上線，缺鍵就整張監控頁 parse 失敗變空白，代價遠大於少一列。
+ * 滾動部署期間前端可能先上線，缺鍵就整頁 parse 失敗變空白，代價遠大於少一列。
  * 這個模式（後端加一格 + 這裡加一個 optional + ROWS 加一列）是新增管線列的標準作法；
  * `titles`／`sync_import` 都是照它補的。三處漏任一個都是**靜默**失效：zod 預設 strip，
  * 未宣告的鍵會被安靜丟掉，畫面上只是那一列永遠顯示「已停止」。
@@ -137,7 +137,7 @@ export const progressSchema = z.object({
     reports: z.number(),
     chunks: z.number(),
     markets: z.array(marketCountSchema),
-    // optional 的理由同下方三塊：滾動部署期間前端可能先上線，缺鍵就整張監控頁
+    // optional 的理由同下方三塊：滾動部署期間前端可能先上線，缺鍵就整頁
     // parse 失敗變空白，代價遠大於少一張卡。
     sources: z.array(sourceCountSchema).optional(),
   }),
@@ -149,7 +149,7 @@ export const progressSchema = z.object({
   // 以下三塊 **必須用 optional**：zod 物件預設會靜默剝除未宣告的鍵，後端先前
   // 就已經在回 takeaway/signal，而這裡沒宣告 → 整路被丟掉、UI 永遠看不到。
   // 用 optional 而非必填，是為了讓「前端已更新、後端還沒」的滾動部署期間
-  // 整張監控頁不會因為缺一個鍵而 parse 失敗變空白。
+  // 整頁不會因為缺一個鍵而 parse 失敗變空白。
   takeaway: coverageSchema.optional(),
   signal: coverageSchema.optional(),
   evaluation: evaluationSchema.optional(),

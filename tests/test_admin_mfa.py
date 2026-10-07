@@ -195,5 +195,77 @@ class EnforcementTests(unittest.TestCase):
             self.assertFalse(authz.mfa_enrollment_required(DEV_USER))
 
 
+class SelfDisableLockTests(unittest.TestCase):
+    """政策開啟時管理員不能自行關閉 TOTP（403 `mfa_policy_locked`）；政策開／關 × admin／user。"""
+
+    def setUp(self):
+        auth._FAILS.clear()
+        self.store = FakeAccounts()
+        self.ids = {name: self.store.add_user(name, f"{name}-password", role)
+                    for name, role in (("adm", "admin"), ("usr", "user"))}
+        for uid in self.ids.values():
+            row = self.store.users[uid]
+            row.totp_secret, row.totp_enabled = totp.generate_secret(), True
+        self._ctx = install(self.store)
+        self._ctx.__enter__()
+
+    def tearDown(self):
+        self._ctx.__exit__(None, None, None)
+        auth._FAILS.clear()
+
+    def _elevated_client(self, username):
+        from datetime import datetime, timedelta, timezone
+
+        c = TestClient(app, follow_redirects=False, base_url="http://127.0.0.1")
+        c.cookies.update(session_cookies(username))
+        for s in self.store.sessions.values():
+            if s.user_id == self.ids[username]:
+                s.elevated_until = datetime.now(timezone.utc) + timedelta(minutes=5)
+        return c
+
+    def _disable(self, username, on):
+        c = self._elevated_client(username)
+        with _policy(on):
+            me = c.get("/api/me").json()
+            r = c.post("/api/me/totp/disable")
+        return r, me
+
+    def test_admin_is_locked_when_policy_on(self):
+        r, me = self._disable("adm", True)
+        self.assertEqual((r.status_code, r.json().get("code")), (403, "mfa_policy_locked"))
+        self.assertIn("create_admin.py --reset-totp", r.json()["detail"])
+        self.assertTrue(me["mfa_policy_locked"])
+        self.assertTrue(self.store.users[self.ids["adm"]].totp_enabled)
+        self.assertNotIn("user.totp_disable", [e.action for e in self.store.audit])
+
+    def test_user_can_disable_when_policy_on(self):
+        r, me = self._disable("usr", True)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(me["mfa_policy_locked"])
+        self.assertFalse(self.store.users[self.ids["usr"]].totp_enabled)
+
+    def test_admin_can_disable_when_policy_off(self):
+        r, me = self._disable("adm", False)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(me["mfa_policy_locked"])
+        self.assertFalse(self.store.users[self.ids["adm"]].totp_enabled)
+
+    def test_user_can_disable_when_policy_off(self):
+        r, _me = self._disable("usr", False)
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_rescue_paths_stay_open_when_policy_on(self):
+        import asyncio
+
+        boss = self.store.add_user("boss", "boss-password", "admin", is_super=True)
+        with _policy(True):
+            asyncio.run(self.store.disable_totp(self.ids["adm"], actor_id=boss))  # 別的管理員重設
+            self.assertFalse(self.store.users[self.ids["adm"]].totp_enabled)
+            row = self.store.users[self.ids["adm"]]
+            row.totp_secret, row.totp_enabled = totp.generate_secret(), True
+            asyncio.run(self.store.disable_totp(self.ids["adm"], actor_id=None, via="cli"))  # CLI --reset-totp
+            self.assertFalse(self.store.users[self.ids["adm"]].totp_enabled)
+
+
 if __name__ == "__main__":
     unittest.main()

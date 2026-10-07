@@ -379,6 +379,32 @@ async def scenario_totp_admin_reset_super_requires_super(api) -> None:
     await _expect(accounts.PermissionDeniedError, api.disable_totp(boss.id, actor_id=plain.id))
 
 
+async def scenario_totp_disable_locked_by_admin_mfa_policy(api) -> None:
+    """ADMIN_MFA_REQUIRED 開啟時：管理員不能自行關閉 TOTP；一般使用者照舊；別的管理員重設與 CLI 救援照常可用。"""
+    import dataclasses
+
+    from app import config
+
+    boss = await api.create_user(_name("PolBoss"), PW, "admin", actor_id=None, is_super=True)
+    adm = await api.create_user(_name("PolAdm"), PW, "admin", actor_id=None)
+    member = await api.create_user(_name("PolUser"), PW, "user", actor_id=None)
+    for uid in (adm.id, member.id, boss.id):
+        await _enable_totp(api, uid)
+    on = dataclasses.replace(config.get_settings(), admin_mfa_required=True)
+    with mock.patch.object(config, "_SETTINGS", on):
+        assert accounts.admin_mfa_policy_locks("admin") and not accounts.admin_mfa_policy_locks("user")
+        await _expect(accounts.MfaPolicyLockedError, api.disable_totp(adm.id, actor_id=adm.id))
+        assert (await api.totp_status(adm.id)).enabled  # 沒有被關掉
+        assert not (await api.disable_totp(member.id, actor_id=member.id)).totp_enabled
+        assert not (await api.disable_totp(adm.id, actor_id=boss.id)).totp_enabled  # 別的管理員重設
+        assert not (await api.disable_totp(boss.id, actor_id=None, via="cli")).totp_enabled  # CLI 救援
+    off = dataclasses.replace(config.get_settings(), admin_mfa_required=False)
+    with mock.patch.object(config, "_SETTINGS", off):
+        await _enable_totp(api, adm.id, T0 + 300)
+        assert not (await api.disable_totp(adm.id, actor_id=adm.id)).totp_enabled  # 政策關閉時照舊可關
+    assert accounts.MfaPolicyLockedError.code == "mfa_policy_locked"
+
+
 # ───── 帳號刪除 ─────
 
 async def _seed_qa(api, user_id: str, *, with_review: bool = False) -> str:
@@ -807,6 +833,7 @@ SCENARIOS = [
     scenario_totp_setup_rules_and_disable,
     scenario_totp_elevation,
     scenario_totp_admin_reset_super_requires_super,
+    scenario_totp_disable_locked_by_admin_mfa_policy,
     scenario_auth_event_record,
     scenario_list_sessions,
     scenario_admin_revoke_session,

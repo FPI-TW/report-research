@@ -61,6 +61,7 @@ from typing import Literal
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from app.config import get_settings
 from app.services import passwords, totp
 from app.services.db import SessionFactory
 
@@ -353,6 +354,23 @@ class TotpStateError(AccountError):
     """TOTP 狀態不允許這個動作（例如已啟用卻要重新設定）。"""
 
     code = "totp_state"
+
+
+class MfaPolicyLockedError(AccountError):
+    """管理員 TOTP 強制（ADMIN_MFA_REQUIRED）開啟時，管理員不能自行關閉兩步驟驗證。"""
+
+    code = "mfa_policy_locked"
+
+
+MFA_POLICY_LOCKED_MESSAGE = (
+    "管理員帳號在強制兩步驟驗證政策下不可自行關閉；遺失驗證器請由 super admin 或 CLI "
+    "`create_admin.py --reset-totp` 重設"
+)
+
+
+def admin_mfa_policy_locks(role: str) -> bool:
+    """這個角色在目前政策下能不能自行關閉 TOTP（True＝不能）。web/authz 的強制與這裡讀同一個設定。"""
+    return role == "admin" and get_settings().admin_mfa_required
 
 
 class TotpRequiredError(AccountError):
@@ -1332,6 +1350,10 @@ async def disable_totp(user_id: str, *, actor_id: str | None, via: str = "web") 
 
     本人關閉要已提升權限（路由層 require_elevated）；替別人重設要 accounts.manage＋已提升，
     對象是 super admin 時只有 super admin 能做。停用中的帳號也能重設（救援流程常是先重設再啟用）。
+
+    管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`）開啟時，角色為 admin 的帳號**不能自行關閉**（`MfaPolicyLockedError`）：
+    否則一個按鈕就能把強制政策撤掉。救援路徑不受影響——別的管理員重設（accounts.manage＋已提升，對 super 要 super）
+    與 CLI（`actor_id=None`，`scripts/create_admin.py --reset-totp`）照常可用，重設後該管理員會被要求重新設定。
     """
     if not _valid_uuid(user_id):
         raise UserNotFoundError("帳號不存在")
@@ -1347,6 +1369,8 @@ async def disable_totp(user_id: str, *, actor_id: str | None, via: str = "web") 
         if deleted_at is not None:
             raise AccountDeletedError("帳號已刪除")
         self_service = actor_id is not None and str(actor_id) == str(user_id)
+        if self_service and admin_mfa_policy_locks(role):
+            raise MfaPolicyLockedError(MFA_POLICY_LOCKED_MESSAGE)
         if not self_service:
             await _require_can_touch(session, actor_id, bool(is_super) and role == "admin")
         if totp_on or secret:

@@ -39,6 +39,7 @@ from app.services.accounts import (
     LastSuperError,
     LoginResult,
     MfaChallenge,
+    MfaPolicyLockedError,
     NoPendingDeletionError,
     PermissionDeniedError,
     SelfLockoutError,
@@ -124,6 +125,7 @@ class FakeAccounts:
     TotpStateError = TotpStateError
     TotpRequiredError = TotpRequiredError
     SessionNotFoundError = SessionNotFoundError
+    MfaPolicyLockedError = MfaPolicyLockedError
     AUTH_EVENT_TYPES = accounts.AUTH_EVENT_TYPES
     SESSION_LIST_MAX = accounts.SESSION_LIST_MAX
     DELETION_DELAY_SECONDS = accounts.DELETION_DELAY_SECONDS
@@ -601,6 +603,8 @@ class FakeAccounts:
         self._check()
         row = self._get_live(user_id)
         self_service = actor_id is not None and str(actor_id) == row.id
+        if self_service and accounts.admin_mfa_policy_locks(row.role):
+            raise MfaPolicyLockedError(accounts.MFA_POLICY_LOCKED_MESSAGE)
         if not self_service and row.is_super and row.role == "admin" and not self._actor_is_super(actor_id):
             raise PermissionDeniedError("只有 super admin 能管理 super admin 帳號")
         was_on = row.totp_enabled

@@ -8,12 +8,15 @@ afterEach(() => vi.unstubAllGlobals())
 type Reply = { status?: number; body: unknown }
 
 /** 小型假後端：/api/me/totp* 與 /api/me/elevate。 */
-function mount(initial: { enabled: boolean }) {
+function mount(initial: { enabled: boolean; role?: 'admin' | 'user'; policyLocked?: boolean }) {
   const state = { enabled: initial.enabled, pending: false, elevated: false }
   const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(init.body as string) : undefined
     const reply: Reply = (() => {
-      if (path === '/api/me') return { body: { id: 'u1', username: 'alice', role: 'user', totp_enabled: state.enabled } }
+      if (path === '/api/me') {
+        return { body: { id: 'u1', username: 'alice', role: initial.role ?? 'user', totp_enabled: state.enabled,
+          mfa_policy_locked: initial.policyLocked ?? false } }
+      }
       if (path === '/api/me/totp') return { body: { enabled: state.enabled, pending: state.pending } }
       if (path === '/api/me/totp/setup') {
         state.pending = true
@@ -78,4 +81,18 @@ test('關閉兩步驟驗證要先重新驗證（密碼＋驗證碼），驗證�
   expect(await screen.findByRole('status')).toHaveTextContent('已關閉兩步驟驗證')
   const disables = fetchMock.mock.calls.filter(([p]) => p === '/api/me/totp/disable')
   expect(disables).toHaveLength(2) // 第一次 403 elevation_required，驗證後重試
+})
+
+test('管理員在 TOTP 強制政策下：不顯示「關閉兩步驟驗證」，改顯示說明，也不打關閉 API', async () => {
+  const { fetchMock } = mount({ enabled: true, role: 'admin', policyLocked: true })
+  expect(await screen.findByTestId('totp-policy-locked')).toHaveTextContent('不可自行關閉')
+  expect(screen.getByTestId('totp-policy-locked')).toHaveTextContent('create_admin.py --reset-totp')
+  expect(screen.queryByRole('button', { name: '關閉兩步驟驗證' })).not.toBeInTheDocument()
+  expect(fetchMock.mock.calls.map(c => c[0])).not.toContain('/api/me/totp/disable')
+})
+
+test('政策關閉（或一般使用者）時照舊顯示「關閉兩步驟驗證」', async () => {
+  mount({ enabled: true, role: 'admin', policyLocked: false })
+  expect(await screen.findByRole('button', { name: '關閉兩步驟驗證' })).toBeInTheDocument()
+  expect(screen.queryByTestId('totp-policy-locked')).not.toBeInTheDocument()
 })

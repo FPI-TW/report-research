@@ -18,6 +18,9 @@ function messageOf(err: unknown): string {
  * 開啟：產生 secret → 顯示 otpauth URI 與 secret 文字（驗證器 App 可貼上或手動輸入；刻意不畫 QR code，
  * 免得為此新增相依）→ 輸入一次正確的驗證碼才真的啟用。關閉要先重新驗證（密碼＋驗證碼）。
  * 規則都在後端（`/api/me/totp*`），這裡只是流程。
+ *
+ * 管理員 TOTP 強制政策開啟時（`/api/me` 的 `mfa_policy_locked`），管理員看不到「關閉」按鈕、改顯示一行說明；
+ * 擋人的是後端（403 `mfa_policy_locked`），這裡只是不讓人按一個注定失敗的按鈕。
  */
 export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const client = useQueryClient()
@@ -72,6 +75,7 @@ export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () =
   })
 
   const enabled = status.data?.enabled ?? me.data?.totp_enabled ?? false
+  const policyLocked = me.data?.mfa_policy_locked === true
 
   return (
     <>
@@ -110,7 +114,12 @@ export function SecurityDialog({ open, onClose }: { open: boolean; onClose: () =
             <>
               {error && <p className={styles.error} role="alert">{error}</p>}
               <div className={styles.actions}>
-                {enabled ? (
+                {enabled && policyLocked ? (
+                  <p className={styles.hint} data-testid="totp-policy-locked">
+                    管理員帳號在強制兩步驟驗證政策下不可自行關閉。遺失驗證器時，請由 super admin 或主機上的
+                    {' '}<code>create_admin.py --reset-totp</code> 重設。
+                  </p>
+                ) : enabled ? (
                   <button type="button" className={`${styles.secondary} ${styles.danger}`} disabled={busy}
                     onClick={() => void disable()}>關閉兩步驟驗證</button>
                 ) : (

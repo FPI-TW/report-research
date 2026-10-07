@@ -39,6 +39,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
+from app.services import accounts
 from app.services.accounts import User
 from web import auth, authz, deps
 
@@ -231,4 +232,6 @@ async def me(user: User = Depends(authz.current_user)):
         "elevated_until": user.elevated_until.isoformat() if user.is_elevated else None,
         "totp_enabled": user.totp_enabled,
         "mfa_enrollment_required": authz.mfa_enrollment_required(user),
+        # 管理員 TOTP 強制政策是否作用在這個帳號上（管理員＋政策開啟）：前端據此不顯示「關閉兩步驟驗證」。
+        "mfa_policy_locked": user.id is not None and accounts.admin_mfa_policy_locks(user.role),
     }

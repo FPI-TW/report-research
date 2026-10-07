@@ -329,19 +329,32 @@ class ObjectStorage:
     def download_to(self, key: str, target: str | Path) -> None:
         self._call("download_file", Bucket=self.settings.r2_bucket, Key=key, Filename=str(target))
 
-    def presign_get(self, key: str, *, filename: str | None = None, inline: bool = False) -> str:
+    def presign_get(
+        self, key: str, *, filename: str | None = None, inline: bool = False, ttl_seconds: int | None = None,
+    ) -> str:
         """Short-lived GET URL.  ``filename`` restores the human name on a cross-origin download.
 
         Object keys are content-addressed (``originals/<hash>.pdf``), so without an explicit
         ``Content-Disposition`` the browser saves ``<hash>.pdf``; ``<a download>`` cannot fix
         that because the attribute is ignored once the 302 leaves our origin.
+
+        ``ttl_seconds`` overrides the lifetime for one call (the external API passes
+        ``settings.external_file_url_ttl_seconds``); ``None`` keeps ``r2_presign_ttl_seconds``.
+        Callers must pass an already-validated config value; out-of-range values are refused here
+        too, because a presigned URL is a bearer credential and must never outlive one hour.
         """
+        if ttl_seconds is None:
+            expires_in = self.settings.r2_presign_ttl_seconds
+        elif isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or not 1 <= ttl_seconds <= 3600:
+            raise ValueError("presign ttl_seconds must be an integer in 1..3600")
+        else:
+            expires_in = ttl_seconds
         params = {"Bucket": self.settings.r2_bucket, "Key": key}
         if filename:
             params["ResponseContentDisposition"] = content_disposition(filename, inline=inline)
         try:
             return self._get_client().generate_presigned_url(
-                "get_object", Params=params, ExpiresIn=self.settings.r2_presign_ttl_seconds,
+                "get_object", Params=params, ExpiresIn=expires_in,
             )
         except Exception as exc:
             raise ObjectStorageError(f"R2 presign failed: {exc}") from exc

@@ -1,5 +1,7 @@
 /* 帳號安全（權限提升對話框、兩步驟驗證設定）。色值一律走 tokens.css 的變數，與管理頁同一套語彙。 */
-.form { display: flex; flex-direction: column; gap: 10px; min-width: min(380px, 80vw); }
+.form { display: flex; flex-direction: column; gap: 10px; min-width: min(380px, 100%); }
+/* 帳號安全對話框比 Modal 預設（920px）窄：內容只有 QR code 與一個輸入框，太寬反而讓視線來回跑。 */
+.modal { --tf-modal-width: min(520px, 100%); }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--tf-text-4); }
 .field input {
   border: 1px solid var(--tf-border-weak); border-radius: 6px; background: var(--tf-surface, white);
@@ -23,10 +25,33 @@
 .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tf-text-1); margin: 0; }
 .badge { display: inline-block; border-radius: var(--tf-radius-pill); font-size: 11.5px; font-weight: 600; padding: 2px 9px; background: var(--tf-gold-tint); color: var(--tf-gold-text); }
 .badgeOff { background: var(--tf-border-weak); color: var(--tf-text-2); }
-/* otpauth URI 與 secret：長字串可換行、可選取複製，用等寬字避免 0／O、1／l 混淆 */
+/* 手動輸入用的金鑰：長字串可換行、可選取複製，用等寬字避免 0／O、1／l 混淆 */
 .secret {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--tf-text-1);
   background: var(--tf-canvas, #f2f2f4); border-radius: 6px; padding: 8px 10px; margin: 0;
   word-break: break-all; user-select: all;
 }
 .label { font-size: 12px; color: var(--tf-text-4); margin: 0; }
+/* 設定步驟：左邊 QR code、右邊步驟；窄螢幕（手機）改上下排，QR 置中。 */
+.setup { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px; align-items: start; }
+.qr {
+  width: 200px; height: 200px; border-radius: 8px; overflow: hidden;
+  background: white; box-shadow: 0 0 0 1px var(--tf-border-weak);
+}
+.qr svg { display: block; width: 100%; height: 100%; }
+.steps { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tf-text-1); margin: 0; }
+.stepNo {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%; font-size: 11.5px; font-weight: 600;
+  background: var(--tf-graphite); color: var(--tf-on-graphite);
+}
+.manual summary { font-size: 12.5px; color: var(--tf-text-muted-aa); cursor: pointer; }
+.manual[open] summary { margin-bottom: 6px; }
+/* 手機上自己掃不到自己的螢幕：只在窄螢幕顯示「直接開啟驗證器」的 otpauth 連結 */
+.openApp { display: none; font-size: 12.5px; color: var(--tf-text-1); }
+@media (max-width: 560px) {
+  .setup { grid-template-columns: 1fr; justify-items: center; }
+  .steps { width: 100%; }
+  .openApp { display: inline; }
+}

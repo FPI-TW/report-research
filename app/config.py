@@ -405,6 +405,40 @@ class Settings:
     # /api/admin/*、/api/review/* 一律 403 `mfa_enrollment_required`（/api/me/*、登出不受影響）。
     # 預設開、拼錯也開（`_admin_mfa_required`）；tests/conftest.py 以賦值設 0 讓既有測試照常。
     admin_mfa_required: bool = True
+    # 用量收集（app/services/usage_events.py；web/server.py 的 usage middleware 與 lifespan 的 flusher）。
+    # 記憶體累加器每 usage_events_flush_seconds 秒與關機時 upsert 進 usage_daily／usage_counter／llm_usage_daily。
+    # enabled=0 時 flusher 不啟動、LLM observer 不註冊（middleware 仍在記憶體計數，受上限約束、不落庫）；
+    # tests/conftest.py 以賦值設 0，測試不寫任何庫。max_keys 是三張表合計的相異鍵上限，超過的新鍵丟棄並計數。
+    usage_events_enabled: bool = True
+    usage_events_flush_seconds: float = 60.0
+    usage_events_max_keys: int = 50_000
+    # 每人每日配額（Quota lane：app/services/quota.py）。上傳沿用 upload_daily_quota（UPLOAD_DAILY_QUOTA，30）。
+    # QUOTA_ENFORCE 是「正式阻擋」的環境上限，預設 0＝影子模式（只計數、記錄本來會擋）；即使設 1，
+    # 還要 DB 旗標 quota.enforce 打開才擋（feature_flags 的 registry 預設關，使用者定案 5：觀察兩週再決定）。
+    quota_ask_daily: int = 100
+    quota_export_daily: int = 20
+    quota_enforce: bool = False
+    # 保留期（天）。清除工作由各 lane 實作；這裡是唯一的數值來源。
+    # auth_event 至少 365（使用者定案 7，設更小會被拉回 365）；db_stat_snapshot 逐時 30、每日 400（定案 14）；
+    # 過期 session 超過 90 天刪除（user_session 從未清理）；usage_counter、llm_usage_daily 400。
+    auth_event_retention_days: int = 365
+    usage_counter_retention_days: int = 400
+    llm_usage_daily_retention_days: int = 400
+    session_expired_retention_days: int = 90
+    db_snapshot_hourly_retention_days: int = 30
+    db_snapshot_daily_retention_days: int = 400
+    # Analytics（Analytics lane）：主題格子的最小不重複人數 k（定案 2：3，總量不設門檻）；即時查 qa_log 的天數。
+    analytics_min_users: int = 3
+    analytics_live_window_days: int = 90
+    # 功能旗標（app/services/feature_flags.py）：DB 覆寫的快取秒數（同行程寫入立即失效，定案 12）。
+    feature_flag_cache_seconds: float = 5.0
+    # 安全告警（Security lane：/healthz/security、scripts/check_security_health.sh）。視窗內全站登入失敗數、
+    # 同一帳號連續失敗數、權限提升失敗數達門檻即判定異常；稽核鏈驗證結果快取秒數。前兩個是起始值，上線後依實測調。
+    security_window_minutes: int = 15
+    security_login_failure_threshold: int = 20
+    security_account_failure_threshold: int = 5
+    security_elevate_failure_threshold: int = 3
+    audit_verify_cache_seconds: int = 3600
 
 
 def _load() -> Settings:
@@ -600,6 +634,26 @@ def _load() -> Settings:
         upload_clean_dir=(os.getenv("UPLOAD_CLEAN_DIR") or "").strip(),
         upload_preflight_memory_mb=_int_at_least("UPLOAD_PREFLIGHT_MEMORY_MB", 2048, 256),
         admin_mfa_required=_admin_mfa_required(),
+        usage_events_enabled=_flag("USAGE_EVENTS_ENABLED", "1"),
+        usage_events_flush_seconds=_positive_float("USAGE_EVENTS_FLUSH_SECONDS", 60.0),
+        usage_events_max_keys=_positive_int("USAGE_EVENTS_MAX_KEYS", 50_000),
+        quota_ask_daily=_int_at_least("QUOTA_ASK_DAILY", 100, 0),
+        quota_export_daily=_int_at_least("QUOTA_EXPORT_DAILY", 20, 0),
+        quota_enforce=_flag("QUOTA_ENFORCE", "0"),
+        auth_event_retention_days=max(365, _int_at_least("AUTH_EVENT_RETENTION_DAYS", 365, 1)),
+        usage_counter_retention_days=_int_at_least("USAGE_COUNTER_RETENTION_DAYS", 400, 1),
+        llm_usage_daily_retention_days=_int_at_least("LLM_USAGE_DAILY_RETENTION_DAYS", 400, 1),
+        session_expired_retention_days=_int_at_least("SESSION_EXPIRED_RETENTION_DAYS", 90, 1),
+        db_snapshot_hourly_retention_days=_int_at_least("DB_SNAPSHOT_HOURLY_RETENTION_DAYS", 30, 1),
+        db_snapshot_daily_retention_days=_int_at_least("DB_SNAPSHOT_DAILY_RETENTION_DAYS", 400, 1),
+        analytics_min_users=_int_at_least("ANALYTICS_MIN_USERS", 3, 1),
+        analytics_live_window_days=_int_at_least("ANALYTICS_LIVE_WINDOW_DAYS", 90, 1),
+        feature_flag_cache_seconds=_positive_float("FEATURE_FLAG_CACHE_SECONDS", 5.0),
+        security_window_minutes=_int_at_least("SECURITY_WINDOW_MINUTES", 15, 1),
+        security_login_failure_threshold=_int_at_least("SECURITY_LOGIN_FAILURE_THRESHOLD", 20, 1),
+        security_account_failure_threshold=_int_at_least("SECURITY_ACCOUNT_FAILURE_THRESHOLD", 5, 1),
+        security_elevate_failure_threshold=_int_at_least("SECURITY_ELEVATE_FAILURE_THRESHOLD", 3, 1),
+        audit_verify_cache_seconds=_int_at_least("AUDIT_VERIFY_CACHE_SECONDS", 3600, 0),
     )
 
 

@@ -16,7 +16,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 |---|---|
 | `app/config.py` | 集中讀環境變數為 frozen dataclass `Settings`（`get_settings()`）。驗證器對 typo 不靜默：`LOG_LEVEL`、`EXTRACTOR`、`OBJECT_STORAGE_MODE` 打錯會警告退回預設或拒絕啟動 |
 | `app/logging_setup.py` | dictConfig 宣告 root logger；刻意不宣告 uvicorn 的三個 logger。只在 `web/server.py` 初始化，順序由 `tests/test_logging_setup.py` 釘住；批次腳本的 `logger.info` 無聲 |
-| `app/request_context.py` | HTTP 請求的日誌關聯 id（`contextvars`；`create_task`／`to_thread` 自動沿用）。handler 上的 `RequestIdFilter` 把它蓋到每筆 record，日誌行以 `rid=` 呈現；批次與啟動期為 `-`。**不是** `qa_log.request_id`（那是前端冪等鍵） |
+| `app/request_context.py` | HTTP 請求的日誌關聯 id（`contextvars`；`create_task`／`to_thread` 自動沿用）。handler 上的 `RequestIdFilter` 把它蓋到每筆 record，日誌行以 `rid=` 呈現；批次與啟動期為 `-`。**不是** `qa_log.request_id`（那是前端冪等鍵）另帶使用者 id（Admin v2）：`require_login` 設值，`llm_http` 的 observer 與用量 middleware 據此歸因到人；只是歸因標記、不是授權 |
 
 ### 2.2 `app/services/` 檢索與問答
 
@@ -74,6 +74,8 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `data_health.py` | 資料健康：`scripts/db_audit.py`、`scripts/reconcile_object_storage.py` 跑完原子寫 `data/health/*.json`（寫入失敗只警告、不改退出碼），web 只讀檔（兩者太重，不在請求路徑跑）；判讀規則 `audit_failed`（warn 也算失敗，稽核腳本的退出碼也用它）、`reconcile_status`、過期門檻；`snapshot()` 彙整三段給管理後台 |
 | `diagnostics.py` | 管理後台「診斷」快照（`GET /api/admin/diagnostics`）：版本讀 `.git` 檔不跑 git（啟動時與此刻各讀一次，不同＝待重啟）、DB `alembic_version` 對程式 head、每日 schema 檢查狀態檔摘要、行程 RSS／時區、白名單設定、模型與連線池；R2 與 DeepSeek 只被動讀 healthz 的上一次結論（`health.storage_snapshot`、`llm_health.cached_snapshot`）。祕密只回有沒有設，整份再 `scrub`；每段獨立 try、錯誤只記例外型別 |
 | `retrieval_regression.py` | 檢索回歸檢查（零 LLM）：凍結題集每題 `hybrid_search` 的 top-k 對一次性基準（`data/retrieval_regression/baseline.json`），研報以 `file_hash` 比、先排除基準之後才入庫的研報、隱藏與下架分開計數；判定看研報召回，片段召回與 RBO 只顯示。CLI `scripts/retrieval_regression.py`（timer 每日）寫 `data/health/retrieval_regression.json`，`GET /api/admin/retrieval-regression` 只讀檔；量哪一層與門檻的理由在模組 docstring |
+| `usage_events.py` | 用量收集（Admin v2）：記憶體累加器（三種格子合計 `USAGE_EVENTS_MAX_KEYS` 個鍵，超過的新鍵丟棄並計數）→ lifespan 的 `UsageFlusher` 每 60 秒與關機時 upsert 進 `usage_daily`（主題×日，**沒有 user_id**）、`usage_counter`（人×日×類別，**沒有主題**；`ask`／`export`／`upload` 三類由配額服務寫，這裡不寫）、`llm_usage_daily`（線上 LLM 的 metadata，經 `llm_http` observer 歸到人）。永不記搜尋字串；不重複人數只送集合大小、集合不落庫；已刪除帳號在 upsert 時濾掉 |
+| `feature_flags.py` | 功能旗標的讀取核心（Admin v2）：程式內 `REGISTRY` × 環境變數上限 AND `research.feature_flag` 覆寫（全站／`allow_roles`／`allow_users`）；DB 讀取失敗退回 registry 預設（所以刻意不放安全閘門）；覆寫快取 `FEATURE_FLAG_CACHE_SECONDS`（5）秒、`invalidate()` 立即失效。寫入與稽核由 Flags lane 加 |
 | `llm_usage.py` | `data/llm_usage.jsonl` 的路徑（唯一定義，`scripts/_claude_cli.py` 的 `usage_log_path` 呼叫它）與彙總（日期／任務／模型；只出彙總、不出雜湊與研報識別；位元組、行數、分組數上限） |
 | `tagging.py` | 市場代碼（對齊 findb）、商品類型、期貨標的詞表、標註 prompt |
 | `filename.py` | 檔名解析：券商代碼、日期、行政文件判定 |
@@ -97,6 +99,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `web/errors.py` | 統一錯誤格式 `{detail, code, request_id}`：`AppError`、exception handler、middleware 用的 `error_response` |
 | `web/concurrency.py` | `ConcurrencyGate`（刻意不支援 `async with`）、單 worker 偵測 |
 | `web/request_log.py` | 純 ASGI middleware（最外層）：設關聯 id、回應帶 `X-Request-Id`（上游給的只在形狀安全時沿用）、`/api/*` 每請求記一行 `status`／`elapsed_ms`；`/healthz`、`/api/progress` 正常時不記，變慢或 5xx 照記。不記 query string |
+| `web/usage_middleware.py` | 純 ASGI（在 `require_login` 之內）：只計回 200 的 `GET /api/reading/{file_hash}`、`GET /api/report/{report_id}/file`、`GET /api/search`（只取 `market` 篩選，查詢字串不解碼不保存）、`POST /api/ask`，交給 `app/services/usage_events.py` |
 | `web/ttl_cache.py` | 有上限、依 key 分格的單行程 TTL 快取；`reset_all()` 由 `tests/conftest.py` 每題清空。用在雷達目錄回應、資料健康與 LLM 用量 |
 | `web/dev_mode.py` | `DEV_NO_AUTH` 三條件放行 |
 | `web/env_loader.py` | 讀 repo 根 `.env`，不做 shell 展開 |
@@ -218,6 +221,7 @@ schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；
 | 抽取與儲存 | `EXTRACTOR`（pypdf）、`EXTRACTION_REVIEW_MIN`（0.6）、`EXTRACTION_REVIEW_MIN_COVERAGE`（0.30）、`EXTRACTION_REVIEW_MAX_GARBLED`（0.02）、`OBJECT_STORAGE_MODE`（local）、`R2_ENDPOINT_URL`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_PRESIGN_TTL_SECONDS`（3600，上限一小時） |
 | 研報上傳 | `UPLOAD_ENABLED`（0）、`UPLOAD_MAX_BYTES`（25 MiB）、`UPLOAD_QUARANTINE_DIR`（空＝`data/quarantine/`）、`UPLOAD_DAILY_QUOTA`（30，台北時間日曆日）、`UPLOAD_MAX_IN_FLIGHT`（50，重試也算）、`UPLOAD_MIN_FREE_MB`（1024）、`UPLOAD_REJECT_GRACE_HOURS`（24，退回後的清除寬限期）由 web 讀；worker 讀 `UPLOAD_QUARANTINE_DIR`、`UPLOAD_WORKER_LOCK_FILE`（空＝`data/.upload_worker.lock`）、`UPLOAD_CLEAN_DIR`（空＝`data/uploads/clean/`）、`UPLOAD_PREFLIGHT_MEMORY_MB`（2048） |
 | 管理員 TOTP 強制 | `ADMIN_MFA_REQUIRED`（1；只有明確的 0／false／no／off 才關，拼錯也是開）：`web/authz.py` 的 `require_admin` 這個單一授權點擋沒開 TOTP 的管理員（403 `mfa_enrollment_required`），`/api/me*`、登出天生不經過它（`tests/test_admin_mfa.py` 結構性釘住）；不是 DB 旗標 |
+| Admin v2 | 用量收集 `USAGE_EVENTS_ENABLED`（1）、`USAGE_EVENTS_FLUSH_SECONDS`（60）、`USAGE_EVENTS_MAX_KEYS`（50000）；配額 `QUOTA_ASK_DAILY`（100）、`QUOTA_EXPORT_DAILY`（20）、`QUOTA_ENFORCE`（0，影子模式）；保留期 `AUTH_EVENT_RETENTION_DAYS`（365，下限 365）、`USAGE_COUNTER_RETENTION_DAYS`（400）、`LLM_USAGE_DAILY_RETENTION_DAYS`（400）、`SESSION_EXPIRED_RETENTION_DAYS`（90）、`DB_SNAPSHOT_HOURLY_RETENTION_DAYS`（30）、`DB_SNAPSHOT_DAILY_RETENTION_DAYS`（400）；`ANALYTICS_MIN_USERS`（3）、`ANALYTICS_LIVE_WINDOW_DAYS`（90）、`FEATURE_FLAG_CACHE_SECONDS`（5）；安全告警 `SECURITY_*`（15 分鐘、20、5、3）、`AUDIT_VERIFY_CACHE_SECONDS`（3600） |
 | 雷達 | `RADAR_CATALOG_CACHE_TTL`（60 秒；0 停用）：`/api/radar/instruments` 整份回應依查詢參數快取，`report_signal` 每 3 小時才更新 |
 | DB 與嵌入 | `LOG_LEVEL`（INFO）、`DB_POOL_SIZE`（5）、`DB_MAX_OVERFLOW`（15）、`DB_POOL_TIMEOUT`（10）、`DB_POOL_RECYCLE`（1800）、`DB_STATEMENT_TIMEOUT_MS`（60000）、`DB_IDLE_TX_TIMEOUT_MS`（0）、`DB_MAINTENANCE_STATEMENT_TIMEOUT_MS`（0）、`EMBED_MAX_CONCURRENCY`（1）、`EMBED_TORCH_THREADS`（0）、`TRUSTED_DATA_ENABLED`（1） |
 

@@ -2158,3 +2158,58 @@ sudo systemctl disable --now report-mark-upload.timer
 停掉之後：隔離區的檔案與 `report_upload` 都保留，已入庫的草稿維持不可見、仍可在管理頁發布或退回（退回後的清除要
 worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移除時另把 catalog 的 upload 與 polkit 的那一行拿掉
 重新安裝（「維運代理」步驟 3、4）。
+
+## 功能開關與 staging 啟用矩陣（Admin v2）
+
+功能旗標（`app/services/feature_flags.py`、管理後台「功能旗標」頁、`/api/admin/flags*`）讓管理員在**環境變數允許的
+範圍內**暫停或限定派生功能，不必改環境檔、不必重啟。語意（使用者定案 11、12、16）：
+
+- **實際值＝環境變數上限 AND DB 覆寫**。環境變數代表「能力已安裝／允許」；`research.feature_flag` 只存覆寫，沒有
+  覆寫＝registry 預設。覆寫只能在上限之下關閉或限定給角色（`admin`／`user`）與指定帳號，上限關時一律關。
+- **DB 讀不到時退回 registry 預設**：派生功能（agentic、忠實度、rerank、可信資料、網搜、收檔）預設開＝回到只看
+  環境變數的行為；`quota.enforce` 預設關＝回到影子模式。所以**安全閘門一律不是旗標**：`ADMIN_MFA_REQUIRED`、
+  `DEV_NO_AUTH`、`REPORT_MARK_*`、模型與 provider、`OBJECT_STORAGE_MODE`／`R2_*`、併發閘與連線池、`UPLOAD_MAX_BYTES`、
+  ClamAV、`SYNC_*_LIMIT`、`EXTRACTOR` 都只在環境檔決定。
+- 快取 5 秒（`FEATURE_FLAG_CACHE_SECONDS`），同一行程的寫入立即失效；web 只有一個 worker，所以等於立即生效。前端
+  `/api/features` 另有 60 秒的 staleTime（視窗回焦點時重抓）。
+- 旗標只在 web 的請求路徑上判斷；sync、上傳 worker、`eval/`、`scripts/judge_agreement.py` 不讀旗標。
+- 寫入（單一旗標、匯入）要 `ops.operate`＋重新驗證，每個實際變更同交易寫稽核 `flag.update`（操作紀錄頁看得到）。
+  `feature_flag` 在備份清單內：**還原後要人工確認旗標狀態**（見「備份與還原」）。
+
+### 啟用矩陣
+
+測試環境＝辦公室主機、正式環境＝EC2（`research.tingfong.com`，見 AGENTS.md「環境角色」）。「上限」是兩台主機各自的
+repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
+
+| 旗標 | 上限（環境變數，程式預設） | 測試環境建議 | 正式環境建議 | 何時調整 |
+|---|---|---|---|---|
+| `ask.web_search` | `ASK_ENABLE_WEB`（1） | 上限 **明確設 0**；不設覆寫 | 上限 **明確設 0**；不設覆寫 | 網搜仍解析到已放棄的 claude CLI。**沒設這個變數＝1，問答輸入框會出現網搜開關**，按下去只會失敗。DeepSeek 版網搜完成後：測試環境上限設 1、覆寫限定 `admin` 試用 → 正式環境上限設 1（需要時同樣先限定） |
+| `uploads.intake` | `UPLOAD_ENABLED`（0） | 上限 0，直到該主機裝好 ClamAV 與上傳 worker 並經同意（本檔「ClamAV」「上傳 worker」） | 同左 | 上限 1 之後，維護或掃毒有狀況時用覆寫「全站關閉」暫停收檔（503 `uploads_disabled`）；審核端點不受影響 |
+| `qa.agentic` | `QA_AGENTIC_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | DeepSeek 延遲高或費用異常時覆寫「全站關閉」降級（只用第一輪檢索作答） |
+| `qa.faithfulness` | `ASK_FAITHFULNESS_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | judge 異常或要省費用時覆寫關閉；使用者看不到差別（抽查在 done 之後、不上 UI） |
+| `ask.rerank` | `ASK_RERANK_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | CPU 吃緊、rerank 頻繁逾時時覆寫關閉。注意：關覆寫**不會**釋放 reranker 模型的記憶體（啟動時依上限預熱），要省記憶體得改上限並重啟 |
+| `trusted_data` | `TRUSTED_DATA_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | 受信任資料來源出問題時覆寫關閉；時效題回到既有的安全婉拒 |
+| `quota.enforce` | `QUOTA_ENFORCE`（0） | 上限 0（影子模式） | 上限 0（影子模式） | 影子模式觀察兩週、依 P50/P95 決定（使用者定案 5）後：先在測試環境上限設 1、覆寫限定測試帳號驗證 429，再到正式環境上限設 1、覆寫「全站開啟」 |
+
+部署 v2 之前，兩台主機都先確認 `.env` 的這七個變數與上表一致（尤其 `ASK_ENABLE_WEB=0`）。
+
+### 匯出匯入（測試環境 → 正式環境）
+
+只做 API 與頁面，不自動同步。匯出檔只含覆寫（不含環境變數上限），使用者以**帳號名稱**表示（兩台主機的帳號 UUID
+不同），已刪帳的不匯出。
+
+1. 測試環境的「功能旗標」頁按「匯出設定（JSON）」（或 `GET /api/admin/flags/export`，`ops.read`），得到
+   `report-mark-flags-<環境>-<日期>.json`。檔案列出每個登記旗標；`override: null`＝沒有覆寫。
+2. 只想搬部分旗標時，從檔案的 `flags` 刪掉不搬的項目：**沒列出的旗標匯入時不會被動到**；列出且 `override: null`
+   的會把目標的覆寫刪掉（回到預設）。
+3. 正式環境先「匯出設定」留一份底（回滾用），並確認上限（`.env`）已照矩陣設定——上限關的旗標匯入了也不會生效。
+4. 正式環境「匯入檔案並預覽」：後端以 dry-run 回每個旗標的動作（新增／更新／刪除覆寫／不變）與前後值，以及錯誤：
+   `unknown_key`（這個環境的程式沒有那個旗標）、`unknown_user`（找不到那個帳號名稱）、`duplicate_key`、
+   `invalid_input`。有任何錯誤就不能套用；旗標清單版本（`registry_version`）不同只提示，代表兩邊程式版本可能不一致。
+5. 確認差異後按「套用」（`ops.operate`＋重新驗證）。後端在同一筆交易重算差異，有錯誤整份不寫（422
+   `flag_import_invalid`）；成功時每個變更各寫一筆 `flag.update`（detail 的 `via` 是 `import`）。
+6. 驗收：「功能旗標」頁的實際值、操作紀錄頁的 `flag.update`；要看某位使用者的實際值，請他打開問答頁（或
+   `GET /api/features`，只回本人的值）。
+
+回滾：在正式環境匯入第 3 步留底的檔案（同樣先預覽）。單一旗標要回到預設，在頁面按「恢復預設」
+（`DELETE /api/admin/flags/{key}`）。

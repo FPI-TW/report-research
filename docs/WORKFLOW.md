@@ -185,7 +185,7 @@ uv run python eval/observe_switch.py --switch-at 2026-09-25T10:00 --until 2026-1
 
 ## 研報上傳：收檔、worker 與審核（Admin v1.5，功能旗標預設關閉、尚未部署）
 
-管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口，分三段：**收檔**（web）→ **上傳 worker**（掃毒、入庫成草稿、清除）→ **審核 API**（發布、退回、重試）。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`）；worker 的 unit（`report-mark-upload.service`／`.timer`）與 ClamAV 容器都還沒裝上主機，旗標要等上線步驟（`docs/production_resilience.md`「上傳 worker」）走完並經同意後才開。
+管理員從管理後台上傳 PDF 是 NAS 同步之外的第二個入口，分三段：**收檔**（web）→ **上傳 worker**（掃毒、入庫成草稿、清除）→ **審核 API**（發布、退回、重試）。`UPLOAD_ENABLED` 預設 0（`POST /api/admin/uploads` 回 503 `uploads_disabled`）；worker 的 unit（`report-mark-upload.service`／`.timer`）與 ClamAV 容器都還沒裝上主機，旗標要等上線步驟（`docs/production_resilience.md`「上傳 worker」）走完並經同意後才開。`UPLOAD_ENABLED` 是功能旗標 `uploads.intake` 的上限：開了之後管理員還能在「功能旗標」頁以覆寫暫停收檔（同樣回 503 `uploads_disabled`）。
 
 `POST /api/admin/uploads?filename=&last_modified=`（`web/routers/admin_uploads.py`，管理員＋`reports.manage`）：
 

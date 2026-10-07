@@ -161,9 +161,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 在此之前這個 DB **完全沒有備份**——`pg_dump` / `pgbackrest` / `pg_basebackup` 在 Makefile、`scripts/`、`deploy/`、`docs/`、systemd、crontab 全部零命中，唯一的副本是 docker named volume `report-mark-pgdata`。而 `docs/qa_pdf_report_deployment.md` 早在深度研報上線時就寫著「DB 的 `report_doc` 表需納入備份」，一直沒有人做。
 
-### 為什麼只備這十三張表
+### 為什麼只備這十八張表
 
-深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），研報上傳上線後加入 `report_upload`，現行備份清單共十三張。`user_session` 刻意不備（遺失只是全員重新登入）。
+深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），研報上傳上線後加入 `report_upload`，Admin v2（revision 0009）加入 `user_quota`、`feature_flag`、`usage_daily`、`analytics_daily` 與 `auth_event`，現行備份清單共十八張。`user_session` 刻意不備（遺失只是全員重新登入）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -178,8 +178,13 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.account_deletion` | 帳號刪除排程（提出人、執行時刻、取消紀錄）。遺失＝還原後尚未執行的刪除排程消失、帳號停在停用狀態卻永遠不會被刪。已執行的刪除另有 DB 之外的 tombstone（見下方「還原後重放帳號刪除」） |
 | `research.report_visibility` | 管理員隱藏的研報（以 `file_hash` 為鍵，含原因、隱藏人、時間）。重建語料不會重建它：遺失＝被隱藏的研報全部回到檢索、問答與閱讀頁。0008 起另帶發布狀態（`publication`）：遺失＝未發布的上傳草稿全部變成已發布 |
 | `research.report_upload` | 管理員上傳的研報（以 `file_hash` 連到語料）：上傳人、時間、掃描引擎與病毒名、處理失敗原因、退回原因。上傳檔不在 NAS 鏡像裡，重建語料不會重建它；遺失＝說不出某份研報是誰上傳、掃描結果為何 |
+| `research.user_quota` | 個人配額覆寫（每日上限、理由、調整人）。遺失＝所有人退回程式預設配額，且說不出當初為何給某人不同的額度 |
+| `research.feature_flag` | 功能旗標覆寫（registry 之外的值一律忽略；實際值＝環境變數上限 AND 覆寫）。**還原後要人工確認旗標狀態**：還原等於把旗標帶回備份當下 |
+| `research.usage_daily` | 閱讀、原檔、搜尋、問答的每日主題計數（匿名、沒有 user_id、不記搜尋字串）。請求當下才有，事後無從重建 |
+| `research.analytics_daily` | 每晚彙總的指標。來源 `qa_log` 會被使用者硬刪、`usage_daily` 只到主題層，事後無法重算 |
+| `research.auth_event` | 登入與安全事件（成功、失敗原因、限流、TOTP 失敗、登出），保留至少 365 天。刪帳時刻意保留（只有 UUID、IP、UA，從不存帳號名稱）；鑑識要回溯的正是被刪掉的帳號 |
 
-沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這十三張表的體積相對很小，備起來幾乎沒有成本。
+沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這十八張表的體積相對很小，備起來幾乎沒有成本。
 
 **這個取捨有一個已知代價，先寫在這裡免得還原那天才發現**：`report_takeaway` 與 `report_signal` 以 `report_id` FK 指向 `research_report`，而 `report_id` 是每次 ingest 重新產生的 uuid。**語料層若被整個重建，這兩張表的備份就對不回去了**（其餘幾張沒有 FK，可還原；但 `review_state` 中指向舊 `research_report.id` 的抽取複核紀錄會變成孤兒，須依重建後 id 核對）。若之後判定摘錄／訊號值得那個代價，正解是把 `research_report` 一起納入備份（`report_chunk` 仍不必——向量重算得回來），而不是在還原時 `--disable-triggers` 硬塞孤兒列。
 

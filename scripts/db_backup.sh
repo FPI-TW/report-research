@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 廷豐智能研報：把「重建不回來」的那幾張表 pg_dump 到 NAS。
 #
-# 為什麼只備十三張表而不是整庫：語料層（research_report / report_chunk）雖然大，
+# 為什麼只備十八張表而不是整庫：語料層（research_report / report_chunk）雖然大，
 # 但確定重跑得回來——研報原檔還在 NAS，extract → tag → ingest 全程 checkpoint 可續。
-# 下面這十三張不一樣，它們是「人、LLM 與事故產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
+# 下面這十八張不一樣，它們是「人、LLM 與事故產生、原檔裡沒有」的東西，刪掉就永遠沒有了：
 #
 #   research.qa_log            每一次提問、當時的來源與證據帳本、使用者的讚／倒讚
 #   research.report_takeaway   閱讀頁重點摘錄（LLM 批次產物，含錨點）
@@ -18,10 +18,15 @@
 #   research.incident          事件投影：P5 每次事件的開場、嚴重度、恢復時間（spool 匯入後即刪、journald 有保留期）
 #   research.incident_event    事件的每一則狀態轉換與當下擷取的 journal 片段（同上，事後無從重建）
 #   research.report_upload     管理員上傳的研報：誰在何時上傳、掃描結果與病毒名、退回原因（檔案本身不在 DB）
+#   research.user_quota        個人配額覆寫（誰在何時為誰調了多少、理由）
+#   research.feature_flag      功能旗標覆寫（還原後要人工確認旗標狀態：還原等於把旗標帶回備份當下）
+#   research.usage_daily       閱讀、原檔、搜尋、問答的每日主題計數（匿名、無 user_id；請求當下才有）
+#   research.analytics_daily   每晚彙總的指標（qa_log 會被使用者硬刪，事後無法重算）
+#   research.auth_event        登入與安全事件（保留至少 365 天；刪帳時刻意保留，只有 UUID、IP、UA，沒有帳號名稱）
 #
 # user_session 刻意不備：遺失的代價只是全員重新登入。
 #
-# 體積小、價值最高 ⇒ 先備這十三張。要不要連語料層一起備是另一個（成本）決定，
+# 體積小、價值最高 ⇒ 先備這十八張。要不要連語料層一起備是另一個（成本）決定，
 # 連同已知的 report_id 耦合限制寫在 docs/production_resilience.md「備份與還原」。
 #
 # 用法：bash scripts/db_backup.sh   或   make db-backup
@@ -101,6 +106,11 @@ BACKUP_TABLES=(
   research.incident
   research.incident_event
   research.report_upload
+  research.user_quota
+  research.feature_flag
+  research.usage_daily
+  research.analytics_daily
+  research.auth_event
 )
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
@@ -195,7 +205,7 @@ fi
 # ── 4) 驗這份 dump 不是空殼 ───────────────────────────────────────────────
 # 備份最惡劣的失敗型態是「檔案在、內容不能用」。兩道最便宜的檢查：
 #   a) 檔頭魔數：pg_dump -Fc 的前五個位元組固定是 PGDMP，被截斷或被 stdout 攪過就對不上
-#   b) 大小下限：十三張表的 schema 本身就不只 1KB，比這小一定是空輸出
+#   b) 大小下限：十八張表的 schema 本身就不只 1KB，比這小一定是空輸出
 MAGIC="$(head -c 5 "$TMP" 2>/dev/null || true)"
 [ "$MAGIC" = "PGDMP" ] || die "產出的檔案不是 pg_dump custom 格式（檔頭='$MAGIC'）→ 視為失敗。"
 SIZE=0

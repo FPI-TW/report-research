@@ -192,7 +192,7 @@ schema 名 `research`，由 Alembic 管理（`alembic.ini`、`db/migrations/`；
 
 待複核 API 以原始品質條件查詢，再以 `review_state` 篩選 `open`／`resolved`／`dismissed`／`all`；寫入狀態不改 `qa_log` 或 `research_report` 的品質訊號。人工驗證欄位只記錄人工結果，不會重跑評測或抽取。
 
-備份涵蓋十三張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`）→ NAS；語料層與 `user_session` 刻意不備。
+備份涵蓋十八張不可重建的表（`qa_log`、`report_takeaway`、`report_signal`、`report_brief`、`review_state`、`app_user`、`admin_audit_log`、`user_scope`、`account_deletion`、`report_visibility`、`incident`、`incident_event`、`report_upload`、`user_quota`、`feature_flag`、`usage_daily`、`analytics_daily`、`auth_event`）→ NAS；語料層與 `user_session` 刻意不備。
 
 資料陷阱：
 - `full_text` 是未清理原始抽取（帶 CJK 字間空白），顯示一律 `clean_extracted`，不是 `clean_text`。

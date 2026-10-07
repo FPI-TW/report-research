@@ -1,6 +1,6 @@
 """管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`，web/authz.py 的 require_admin；Admin v2、使用者定案 10）。
 
-- 政策值：預設開、拼錯也開；只有明確的 0／false／no／off 才關（`app.config._admin_mfa_required`）。
+- 政策值：預設關（現階段 TOTP 依個人設定）；只有明確的 1／true／yes／on 才開（`app.config._admin_mfa_required`）。
 - 開啟時：管理員沒開 TOTP → /api/admin/*、/api/review/* 一律 403 `mfa_enrollment_required`；
   完成設定所需的 /api/me、/api/me/totp*、/logout 照常可用，設定完成的下一個請求就放行。
 - 關閉時：行為與 v1 相同（tests/conftest.py 以賦值設 0，讓既有測試照常）。
@@ -63,23 +63,23 @@ class PolicyParsingTests(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True):
             return config._admin_mfa_required()
 
-    def test_unset_and_empty_mean_on(self):
-        self.assertTrue(self._parse(None))
-        self.assertTrue(self._parse(""))
-        self.assertTrue(self._parse("   "))
+    def test_unset_and_empty_mean_off(self):
+        self.assertFalse(self._parse(None))
+        self.assertFalse(self._parse(""))
+        self.assertFalse(self._parse("   "))
 
-    def test_explicit_off_values(self):
-        for v in ("0", "false", "FALSE", " no ", "off", "Off"):
-            with self.subTest(v=v):
-                self.assertFalse(self._parse(v))
-
-    def test_typos_fail_safe_to_on(self):
-        for v in ("1", "true", "O", "flase", "disabled", "nope", "0 # off"):
+    def test_explicit_on_values(self):
+        for v in ("1", "true", "TRUE", " yes ", "on", "On"):
             with self.subTest(v=v):
                 self.assertTrue(self._parse(v))
 
-    def test_settings_default_is_on(self):
-        self.assertTrue(config.Settings.__dataclass_fields__["admin_mfa_required"].default)
+    def test_off_and_unrecognized_mean_off(self):
+        for v in ("0", "false", "no", "off", "O", "flase", "enabled", "1 # on"):
+            with self.subTest(v=v):
+                self.assertFalse(self._parse(v))
+
+    def test_settings_default_is_off(self):
+        self.assertFalse(config.Settings.__dataclass_fields__["admin_mfa_required"].default)
 
     def test_conftest_assigns_zero(self):
         """既有測試靠 conftest 關掉這道閘；靜態釘住是**賦值**（部署目錄 .env 的值擋得住）。"""

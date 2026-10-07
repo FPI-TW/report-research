@@ -101,8 +101,9 @@ os.environ.pop("REPORT_MARK_ALERT_WEBHOOK", None)
 # 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
 os.environ["OPS_AGENT_ENVIRONMENT"] = "production"
 os.environ["OPS_AGENT_SOCKET"] = "/nonexistent/report-mark-ops/agent.sock"
-# 管理員 TOTP 強制（app/config.py 的 ADMIN_MFA_REQUIRED，生產預設開）：既有測試的管理員（tester 等）都沒開 TOTP，
-# 開著的話每一支管理端點測試都會 403。**用賦值**（部署目錄 .env 或執行者 shell 裡的值都擋得住）。
+# 管理員 TOTP 強制（app/config.py 的 ADMIN_MFA_REQUIRED，預設關）：既有測試的管理員（tester 等）都沒開 TOTP，
+# 若部署目錄 .env 或執行者 shell 設成開，每一支管理端點測試都會 403。
+# **用賦值**（部署目錄 .env 或執行者 shell 裡的值都擋得住）。
 # 開啟時的行為由 tests/test_admin_mfa.py 在自己的範圍內換掉 Settings 驗證。
 os.environ["ADMIN_MFA_REQUIRED"] = "0"
 # 用量收集（app/services/usage_events.py）：lifespan 的 flusher 會把累加器寫進 usage_daily／usage_counter／

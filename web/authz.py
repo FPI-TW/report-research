@@ -15,8 +15,9 @@ scope 的詞彙與「誰有哪些 scope」在 `app/services/accounts.py`（`effe
 `tests/test_authz.py` 結構性檢查：每一條 /api/admin/*、/api/review/* 路由的 dependency 樹裡
 都要有 `require_admin`，而且至少有一個帶 `__scope__` 的 dependency（`require_scope` 或 `require_super`）。
 
-**管理員 TOTP 強制**（Admin v2，使用者定案 10）也在 `require_admin` 這個單一授權點，不散在各 router：
-全域政策 `ADMIN_MFA_REQUIRED`（`app/config.py`，預設開、拼錯也開）開啟時，角色為 admin 而沒開 TOTP 的帳號
+**管理員 TOTP 強制**（Admin v2；預設關，現階段依個人設定）也在 `require_admin` 這個單一授權點，不散在各 router：
+全域政策 `ADMIN_MFA_REQUIRED`（`app/config.py`，預設關，只有明確的 1／true／yes／on 才開）開啟時，
+角色為 admin 而沒開 TOTP 的帳號
 打任何 `/api/admin/*`、`/api/review/*` 都回 403 `mfa_enrollment_required`（`require_scope`／`require_super`
 都經 `require_admin`，所以一併涵蓋）。完成設定所需的端點天生不在這條路上：`/api/me`（帶
 `mfa_enrollment_required` 欄位讓前端導去設定）、`/api/me/totp*`、`/api/me/elevate`、`/logout`、`/login`

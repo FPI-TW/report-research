@@ -219,19 +219,20 @@ def _ask_faithfulness_timeout(judge_model: str) -> float:
 
 # 管理員 TOTP 強制（使用者定案 10）只認這幾個「明確關閉」的寫法；其餘一律視為開啟。
 _MFA_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+_MFA_ON_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 def _admin_mfa_required() -> bool:
-    """`ADMIN_MFA_REQUIRED`：安全閘門，**fail-safe＝開**。
+    """`ADMIN_MFA_REQUIRED`：管理員 TOTP 全域強制，**預設關**（2026-10-07 使用者決定：現階段只依個人設定開關）。
 
-    只有明確寫成 0／false／no／off（不分大小寫、去前後空白）才關閉；沒設、空字串、拼錯（`O`、`flase`）
-    都當成開啟——拼錯不能靜默放寬。刻意不做成 DB 功能旗標：DB 遺失或讀取失敗時旗標會退回預設，
-    安全閘門不可以因此被放寬（app/services/feature_flags.py 的 docstring）。
+    只有明確寫成 1／true／yes／on（不分大小寫、去前後空白）才開啟；沒設、空字串、0／false／no／off 都是關閉，
+    無法辨識的值記 warning 後也視為關閉（維持現狀，不會意外把管理員擋在門外）。刻意不做成 DB 功能旗標：
+    要啟用全域強制是部署層級的決定，改環境檔並重啟 web（app/services/feature_flags.py 的 docstring）。
     """
     raw = (os.getenv("ADMIN_MFA_REQUIRED") or "").strip().lower()
-    if raw and raw not in _MFA_OFF_VALUES and raw not in ("1", "true", "yes", "on"):
-        logging.getLogger(__name__).warning("ADMIN_MFA_REQUIRED=%r 不是可辨識的值，視為開啟", raw)
-    return raw not in _MFA_OFF_VALUES
+    if raw and raw not in _MFA_OFF_VALUES and raw not in _MFA_ON_VALUES:
+        logging.getLogger(__name__).warning("ADMIN_MFA_REQUIRED=%r 不是可辨識的值，視為關閉", raw)
+    return raw in _MFA_ON_VALUES
 
 
 def _faithfulness_min() -> float:
@@ -403,8 +404,8 @@ class Settings:
     # ── Admin v2 ─────────────────────────────────────────────────────────────
     # 管理員 TOTP 強制（web/authz.py 的 require_admin）：開啟時角色為 admin 而沒開 TOTP 的帳號，
     # /api/admin/*、/api/review/* 一律 403 `mfa_enrollment_required`（/api/me/*、登出不受影響）。
-    # 預設開、拼錯也開（`_admin_mfa_required`）；tests/conftest.py 以賦值設 0 讓既有測試照常。
-    admin_mfa_required: bool = True
+    # 預設關：現階段 TOTP 依個人設定開關；要全域強制時在環境檔設 1（`_admin_mfa_required`）。
+    admin_mfa_required: bool = False
     # 用量收集（app/services/usage_events.py；web/server.py 的 usage middleware 與 lifespan 的 flusher）。
     # 記憶體累加器每 usage_events_flush_seconds 秒與關機時 upsert 進 usage_daily／usage_counter／llm_usage_daily。
     # enabled=0 時 flusher 不啟動、LLM observer 不註冊（middleware 仍在記憶體計數，受上限約束、不落庫）；

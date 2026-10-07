@@ -18,6 +18,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.entitlement import Entitlement
 from app.services.store import (
     pick_title_lead_term,
     search_chunks_lexical,
@@ -127,6 +128,7 @@ async def hybrid_search(
     lex_per_report: bool = False,
     lex_unlimited: bool = False,
     stats: dict | None = None,
+    entitlement: Entitlement | None = None,
 ) -> list[tuple[int, float, tuple]]:
     """雙路召回 + 去重 + 融合排序。
 
@@ -139,6 +141,11 @@ async def hybrid_search(
     被四個生產呼叫端與數十個測試 fake 依賴，改成 tuple 會讓每個 fake 都得跟著改（本
     專案已有三次「fake 簽章漂移 → TypeError 被吞 → 靜默走錯路徑」的紀錄）。遙測是可
     選的旁路資訊，不該讓主契約為它變形。
+
+    `entitlement`（API 用戶端的研報 allowlist）原樣交給 dense 與字面兩路（含純中文重探
+    那一次），由 store 拼進各自的 WHERE：過濾必須在 SQL 內，事後在 Python 過濾會讓
+    `scan`／`cap` 名額被不可見的研報吃掉。`None`＝不限，送出的 SQL 與現況逐字相同。
+    重探挑詞的 `pick_title_lead_term` 只回一個詞、不回研報，刻意不帶 entitlement。
     """
     phrase, terms = extract_terms(q)
     filters = dict(
@@ -147,6 +154,7 @@ async def hybrid_search(
         relates_stock=relates_stock,
         relates_futures=relates_futures,
         report_type=report_type,
+        entitlement=entitlement,
     )
     scan = dense_scan if dense_scan is not None else max(DENSE_SCAN_MIN, k * 8)
     _t = time.monotonic()

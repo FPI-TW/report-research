@@ -1,0 +1,12 @@
+[Unit]
+Description=每小時寫一列 DB 統計快照（每天第一次順便彙總前一天、清除過期列）
+
+[Timer]
+# 排在 :40：避開 sync（每 3 小時整點）、整點的批次、:20 的監控聚合與 :00/:30 的其他批次。
+OnCalendar=*-*-* *:40:00
+RandomizedDelaySec=120
+# 錯過的那一輪沒有補跑價值（快照量的是「當下」；每日彙總下一輪自然會補），不設 Persistent=true。
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

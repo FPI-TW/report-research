@@ -43,7 +43,7 @@ export function ElevationDialog({ open, needTotp, elevate, onDone, onCancel }: {
   }
 
   return (
-    <Modal open={open} onClose={cancel} title="重新驗證身分">
+    <Modal open={open} onClose={cancel} title="重新驗證身分" className={styles.compactModal}>
       <form className={styles.form} onSubmit={submit}>
         <p className={styles.hint}>這項操作需要確認是你本人。驗證後 10 分鐘內，這個瀏覽器不必再輸入。</p>
         <label className={styles.field}>密碼

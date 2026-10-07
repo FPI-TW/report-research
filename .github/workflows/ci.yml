@@ -391,6 +391,13 @@ jobs:
       - name: Admin v2 用量收集與功能旗標
         run: uv run pytest -q tests/test_usage_events_db.py
 
+      # Admin v2 DB 與事件趨勢：即時快照五段的系統目錄查詢在真庫上能跑；以內建低權限角色（SET LOCAL ROLE
+      # pg_signal_backend）模擬 RDS 窄權限時不拋例外、真的 42501／57014 分類正確且只回滾該段；pg_stat_statements
+      # 不存在時回 extension_missing、絕不建立擴充；快照逐時→每日彙總→保留期刪除冪等；事件週趨勢、MTTR／p50／p90
+      # 只算 resolved、批次失敗率。一律 rollback。
+      - name: Admin v2 DB 快照與事件趨勢
+        run: uv run pytest -q tests/test_db_insights_db.py
+
       # Admin v2 Security：auth_event 只刪超過 365 天的列、session 只刪結束超過 90 天的；告警的視窗計數（含被限流的
       # 彙總 count）與「上次成功之後」的連續失敗；可疑 IP、高風險時間線分類；撤銷單一 session 與稽核同交易。一律 rollback。
       - name: Admin v2 安全維運

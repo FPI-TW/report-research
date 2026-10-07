@@ -474,6 +474,64 @@ export const IncidentListResponseSchema = z.object({
 })
 export type IncidentListResponse = z.infer<typeof IncidentListResponseSchema>
 
+export const IncidentTrendComponentSchema = z.object({
+  total: z.number().int(),
+  resolved: z.number().int(),
+  lost: z.number().int(),
+  firing: z.number().int(),
+  critical: z.number().int(),
+  warning: z.number().int(),
+  mttr_seconds: z.number().nullable().optional(),
+  p50_seconds: z.number().nullable().optional(),
+  p90_seconds: z.number().nullable().optional(),
+  component: z.string(),
+})
+export type IncidentTrendComponent = z.infer<typeof IncidentTrendComponentSchema>
+
+export const IncidentTrendReasonSchema = z.object({
+  reason: z.string(),
+  total: z.number().int(),
+  components: z.array(z.string()),
+})
+export type IncidentTrendReason = z.infer<typeof IncidentTrendReasonSchema>
+
+export const IncidentTrendStatsSchema = z.object({
+  total: z.number().int(),
+  resolved: z.number().int(),
+  lost: z.number().int(),
+  firing: z.number().int(),
+  critical: z.number().int(),
+  warning: z.number().int(),
+  mttr_seconds: z.number().nullable().optional(),
+  p50_seconds: z.number().nullable().optional(),
+  p90_seconds: z.number().nullable().optional(),
+})
+export type IncidentTrendStats = z.infer<typeof IncidentTrendStatsSchema>
+
+export const IncidentTrendWeekSchema = z.object({
+  week_start: z.string(),
+  component: z.string(),
+  severity: z.enum(['CRITICAL', 'WARNING']),
+  total: z.number().int(),
+  resolved: z.number().int(),
+  lost: z.number().int(),
+  firing: z.number().int(),
+})
+export type IncidentTrendWeek = z.infer<typeof IncidentTrendWeekSchema>
+
+export const JobFailureRateSchema = z.object({
+  unit: z.string(),
+  runs: z.number().int(),
+  finished: z.number().int(),
+  failed: z.number().int(),
+  lost: z.number().int(),
+  running: z.number().int(),
+  failure_rate: z.number().nullable().optional(),
+  last_failure_at: z.string().nullable().optional(),
+  last_started_at: z.string().nullable().optional(),
+})
+export type JobFailureRate = z.infer<typeof JobFailureRateSchema>
+
 export const JobItemSchema = z.object({
   host: z.string(),
   unit: z.string(),
@@ -876,6 +934,12 @@ export const SecretsPresentSchema = z.object({
 })
 export type SecretsPresent = z.infer<typeof SecretsPresentSchema>
 
+export const SectionErrorSchema = z.object({
+  code: z.enum(['permission_denied', 'timeout', 'error']),
+  message: z.string(),
+})
+export type SectionError = z.infer<typeof SectionErrorSchema>
+
 export const SecurityAlertsResponseSchema = z.object({
   state: z.enum(['ok', 'unknown', 'audit_chain_broken', 'elevate_failures', 'account_failures', 'login_failures']),
   triggered: z.array(z.enum(['ok', 'unknown', 'audit_chain_broken', 'elevate_failures', 'account_failures', 'login_failures'])),
@@ -913,6 +977,33 @@ export const SecuritySessionListResponseSchema = z.object({
 })
 export type SecuritySessionListResponse = z.infer<typeof SecuritySessionListResponseSchema>
 
+export const SlowQueryItemSchema = z.object({
+  queryid: z.string().nullable().optional(),
+  query: z.string().nullable().optional(),
+  query_truncated: z.boolean(),
+  query_hidden: z.boolean(),
+  calls: z.number().int(),
+  total_ms: z.number(),
+  mean_ms: z.number(),
+  rows: z.number().int(),
+  cache_hit_ratio: z.number().nullable().optional(),
+  temp_blks_written: z.number().int(),
+})
+export type SlowQueryItem = z.infer<typeof SlowQueryItemSchema>
+
+export const SlowQueryResponseSchema = z.object({
+  available: z.boolean(),
+  reason: z.enum(['extension_missing', 'not_preloaded', 'permission_denied', 'timeout', 'error']).nullable().optional(),
+  message: z.string().nullable().optional(),
+  stats_reset: z.string().nullable().optional(),
+  extension_version: z.string().nullable().optional(),
+  sort: z.enum(['total', 'mean', 'calls']).nullable().optional(),
+  limit: z.number().int().nullable().optional(),
+  hidden_count: z.number().int().optional(),
+  items: z.array(SlowQueryItemSchema).optional(),
+})
+export type SlowQueryResponse = z.infer<typeof SlowQueryResponseSchema>
+
 export const StorageCheckSchema = z.object({
   state: z.string(),
   consecutive_failures: z.number().int().optional(),
@@ -941,6 +1032,32 @@ export const SuspiciousIpResponseSchema = z.object({
 })
 export type SuspiciousIpResponse = z.infer<typeof SuspiciousIpResponseSchema>
 
+export const TableStatSchema = z.object({
+  schema_name: z.string(),
+  table: z.string(),
+  total_bytes: z.number().int(),
+  row_estimate: z.number().int().nullable().optional(),
+  live_tuples: z.number().int(),
+  dead_tuples: z.number().int(),
+  dead_ratio: z.number().nullable().optional(),
+  last_autovacuum: z.string().nullable().optional(),
+  last_vacuum: z.string().nullable().optional(),
+  last_autoanalyze: z.string().nullable().optional(),
+  last_analyze: z.string().nullable().optional(),
+})
+export type TableStat = z.infer<typeof TableStatSchema>
+
+export const TablesSectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  table_count: z.number().int().nullable().optional(),
+  live_tuples: z.number().int().nullable().optional(),
+  dead_tuples: z.number().int().nullable().optional(),
+  dead_ratio: z.number().nullable().optional(),
+  limit: z.number().int().nullable().optional(),
+  items: z.array(TableStatSchema).optional(),
+})
+export type TablesSection = z.infer<typeof TablesSectionSchema>
+
 export const TimezoneInfoSchema = z.object({
   tz_env: z.string().nullable().optional(),
   name: z.string().optional(),
@@ -957,6 +1074,33 @@ export const TotpAdoptionResponseSchema = z.object({
   policy_required: z.boolean(),
 })
 export type TotpAdoptionResponse = z.infer<typeof TotpAdoptionResponseSchema>
+
+export const TrendPointSchema = z.object({
+  t: z.string(),
+  value: z.number().nullable().optional(),
+  min: z.number().nullable().optional(),
+  max: z.number().nullable().optional(),
+})
+export type TrendPoint = z.infer<typeof TrendPointSchema>
+
+export const UnusedIndexSchema = z.object({
+  schema_name: z.string(),
+  table: z.string(),
+  index: z.string(),
+  size_bytes: z.number().int(),
+  is_unique: z.boolean(),
+  is_primary: z.boolean(),
+})
+export type UnusedIndex = z.infer<typeof UnusedIndexSchema>
+
+export const UnusedIndexesSectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  count: z.number().int().nullable().optional(),
+  total_bytes: z.number().int().nullable().optional(),
+  limit: z.number().int().nullable().optional(),
+  items: z.array(UnusedIndexSchema).optional(),
+})
+export type UnusedIndexesSection = z.infer<typeof UnusedIndexesSectionSchema>
 
 export const UpdateUserRequestSchema = z.object({
   role: z.enum(['admin', 'user']).nullable().optional(),
@@ -996,6 +1140,20 @@ export const VersionsSectionSchema = z.object({
   error: z.string().nullable().optional(),
 })
 export type VersionsSection = z.infer<typeof VersionsSectionSchema>
+
+export const ActivitySectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  blks_hit: z.number().int().nullable().optional(),
+  blks_read: z.number().int().nullable().optional(),
+  cache_hit_ratio: z.number().nullable().optional(),
+  temp_files: z.number().int().nullable().optional(),
+  temp_bytes: z.number().int().nullable().optional(),
+  deadlocks: z.number().int().nullable().optional(),
+  xact_commit: z.number().int().nullable().optional(),
+  xact_rollback: z.number().int().nullable().optional(),
+  stats_reset: z.string().nullable().optional(),
+})
+export type ActivitySection = z.infer<typeof ActivitySectionSchema>
 
 export const AdminUploadDetailSchema = z.object({
   upload_id: z.string(),
@@ -1080,6 +1238,50 @@ export const ConfigSectionSchema = z.object({
 })
 export type ConfigSection = z.infer<typeof ConfigSectionSchema>
 
+export const ConnectionsSectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  max_connections: z.number().int().nullable().optional(),
+  reserved_connections: z.number().int().nullable().optional(),
+  usable_connections: z.number().int().nullable().optional(),
+  total: z.number().int().nullable().optional(),
+  this_database: z.number().int().nullable().optional(),
+  hidden: z.number().int().nullable().optional(),
+  by_state: z.record(z.string(), z.unknown()).optional(),
+  usage_ratio: z.number().nullable().optional(),
+})
+export type ConnectionsSection = z.infer<typeof ConnectionsSectionSchema>
+
+export const DatabaseSectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  name: z.string().nullable().optional(),
+  size_bytes: z.number().int().nullable().optional(),
+  server_version: z.string().nullable().optional(),
+})
+export type DatabaseSection = z.infer<typeof DatabaseSectionSchema>
+
+export const DbOverviewResponseSchema = z.object({
+  generated_at: z.string(),
+  statement_timeout_ms: z.number().int(),
+  database: DatabaseSectionSchema,
+  tables: TablesSectionSchema,
+  unused_indexes: UnusedIndexesSectionSchema,
+  connections: ConnectionsSectionSchema,
+  activity: ActivitySectionSchema,
+})
+export type DbOverviewResponse = z.infer<typeof DbOverviewResponseSchema>
+
+export const DbTrendResponseSchema = z.object({
+  metric: z.enum(['db_size_bytes', 'connections_total', 'connections_active', 'connections_idle_in_tx', 'dead_tuple_ratio', 'table_bytes', 'cache_hit_ratio', 'temp_bytes', 'deadlocks']),
+  kind: z.enum(['gauge', 'rate', 'ratio']),
+  table: z.string().nullable().optional(),
+  granularity: z.enum(['hour', 'day']),
+  since: z.string(),
+  until: z.string(),
+  points: z.array(TrendPointSchema),
+  tables: z.array(z.string()),
+})
+export type DbTrendResponse = z.infer<typeof DbTrendResponseSchema>
+
 export const DiagnosticsChecksSchema = z.object({
   db: DbCheckSchema,
   storage: StorageCheckSchema,
@@ -1107,6 +1309,19 @@ export const IncidentDetailSchema = z.object({
   events_truncated: z.boolean(),
 })
 export type IncidentDetail = z.infer<typeof IncidentDetailSchema>
+
+export const IncidentTrendsResponseSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  weeks: z.array(IncidentTrendWeekSchema),
+  summary: IncidentTrendStatsSchema,
+  by_component: z.array(IncidentTrendComponentSchema),
+  top_reasons: z.array(IncidentTrendReasonSchema),
+  jobs_since: z.string(),
+  jobs_until: z.string(),
+  jobs: z.array(JobFailureRateSchema),
+})
+export type IncidentTrendsResponse = z.infer<typeof IncidentTrendsResponseSchema>
 
 export const LlmUsageResponseSchema = z.object({
   since: z.string(),
@@ -1300,6 +1515,12 @@ export const adminApi = {
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/data-health — Get Data Health */
   getDataHealth: () => requestJSON('/api/admin/data-health', DataHealthResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/db/overview — Get Db Overview */
+  getDbOverview: () => requestJSON('/api/admin/db/overview', DbOverviewResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/db/slow-queries — List Db Slow Queries */
+  listDbSlowQueries: (query: { limit?: number; sort?: 'total' | 'mean' | 'calls' } = {}) => requestJSON(`/api/admin/db/slow-queries${qs(query)}`, SlowQueryResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/db/trends — Get Db Trends */
+  getDbTrends: (query: { metric?: 'db_size_bytes' | 'connections_total' | 'connections_active' | 'connections_idle_in_tx' | 'dead_tuple_ratio' | 'table_bytes' | 'cache_hit_ratio' | 'temp_bytes' | 'deadlocks'; since?: string | null; until?: string | null; table?: string | null } = {}) => requestJSON(`/api/admin/db/trends${qs(query)}`, DbTrendResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/deletions — List Deletions */
   listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/diagnostics — Get Diagnostics */
@@ -1308,6 +1529,8 @@ export const adminApi = {
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
   /** GET /api/admin/incidents — List Incidents */
   listIncidents: (query: { status?: 'firing' | 'resolved' | 'lost' | null; component?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/incidents${qs(query)}`, IncidentListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/incidents/trends — Get Incident Trends */
+  getIncidentTrends: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/incidents/trends${qs(query)}`, IncidentTrendsResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/incidents/{incident_id} — Get Incident */
   getIncident: (incidentId: string) => requestJSON(`/api/admin/incidents/${encodeURIComponent(incidentId)}`, IncidentDetailSchema, { cache: 'no-store' }),
   /** GET /api/admin/jobs — List Jobs */

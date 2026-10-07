@@ -75,12 +75,19 @@ class PolkitAllowlistTests(unittest.TestCase):
         for user, verbs in _allow().items():
             self.assertLessEqual(set(verbs), {"start", "restart"}, user)
 
-    def test_v1_scope(self):
+    def test_write_scope(self):
+        """v1／v1.5 的六個 oneshot，加上 Admin v2 的 db-snapshot、analytics-rollup（只讀或冪等、零 LLM）。
+        security-retention（會刪資料）與 security-health／security-incident（探針與 P5 狀態機）刻意不在裡面。"""
         allow = _allow()
         self.assertEqual(allow["report-mark-ops"]["restart"], ["report-mark-web.service"])
         self.assertEqual(sorted(allow["report-mark-ops"]["start"]), sorted([
             "report-mark-sync.service", "report-mark-backup.service", "report-mark-freshness.service",
-            "report-mark-audit.service", "report-mark-r2-reconcile.service", "report-mark-upload.service"]))
+            "report-mark-audit.service", "report-mark-r2-reconcile.service", "report-mark-upload.service",
+            "report-mark-db-snapshot.service", "report-mark-analytics-rollup.service"]))
+        for user, verbs in allow.items():
+            for unit in ("report-mark-security-retention.service", "report-mark-security-health.service",
+                         "report-mark-security-incident.service"):
+                self.assertNotIn(unit, verbs.get("start", []), user)
         for user, verbs in allow.items():
             for unit in itertools.chain.from_iterable(verbs.values()):
                 self.assertIsNone(FORBIDDEN_WRITE_TARGET.search(unit), unit)

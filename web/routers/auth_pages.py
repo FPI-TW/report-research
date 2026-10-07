@@ -221,10 +221,14 @@ async def logout(request: Request):
 @router.get("/api/me")
 async def me(user: User = Depends(authz.current_user)):
     """目前登入的身分。前端據此顯示帳號名稱與決定要不要露出管理頁入口——
-    那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。"""
+    那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。
+
+    `mfa_enrollment_required`：管理員 TOTP 強制開啟、而這位管理員還沒開 TOTP（管理端點此時一律 403
+    `mfa_enrollment_required`）。前端管理後台據此改顯示 TOTP 設定（`AdminShell`）。"""
     return {
         "id": user.id, "username": user.username, "role": user.role,
         "is_super": user.is_super, "scopes": sorted(user.scopes),
         "elevated_until": user.elevated_until.isoformat() if user.is_elevated else None,
         "totp_enabled": user.totp_enabled,
+        "mfa_enrollment_required": authz.mfa_enrollment_required(user),
     }

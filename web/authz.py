@@ -14,14 +14,26 @@ scope 的詞彙與「誰有哪些 scope」在 `app/services/accounts.py`（`effe
 
 `tests/test_authz.py` 結構性檢查：每一條 /api/admin/*、/api/review/* 路由的 dependency 樹裡
 都要有 `require_admin`，而且至少有一個帶 `__scope__` 的 dependency（`require_scope` 或 `require_super`）。
+
+**管理員 TOTP 強制**（Admin v2，使用者定案 10）也在 `require_admin` 這個單一授權點，不散在各 router：
+全域政策 `ADMIN_MFA_REQUIRED`（`app/config.py`，預設開、拼錯也開）開啟時，角色為 admin 而沒開 TOTP 的帳號
+打任何 `/api/admin/*`、`/api/review/*` 都回 403 `mfa_enrollment_required`（`require_scope`／`require_super`
+都經 `require_admin`，所以一併涵蓋）。完成設定所需的端點天生不在這條路上：`/api/me`（帶
+`mfa_enrollment_required` 欄位讓前端導去設定）、`/api/me/totp*`、`/api/me/elevate`、`/logout`、`/login`
+都只用 `current_user` 或不需登入（`tests/test_admin_mfa.py` 結構性釘住這份白名單）。開發模式免登入的
+`DEV_USER`（id=None，沒有真的帳號可以設定 TOTP）不受這條限制。救援：`scripts/create_admin.py --reset-totp`
+之後該管理員會被要求重新設定。政策是環境變數不是 DB 旗標：DB 遺失時不可放寬。
 """
 
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request
 
+from app.config import get_settings
 from app.services.accounts import ALL_SCOPES, User
 from web.errors import AppError
+
+MFA_ENROLLMENT_REQUIRED = "mfa_enrollment_required"
 
 
 def current_user(request: Request) -> User:
@@ -32,10 +44,22 @@ def current_user(request: Request) -> User:
     return user
 
 
+def mfa_enrollment_required(user: User) -> bool:
+    """這個身分是否因為「管理員 TOTP 強制」而必須先設定 TOTP 才能用管理功能（`/api/me` 也回這個值）。"""
+    return (
+        user.is_admin
+        and user.id is not None  # 開發模式免登入（DEV_USER）沒有真的帳號
+        and not user.totp_enabled
+        and get_settings().admin_mfa_required
+    )
+
+
 def require_admin(request: Request) -> User:
     user = current_user(request)
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="需要管理員權限")
+    if mfa_enrollment_required(user):
+        raise AppError(403, MFA_ENROLLMENT_REQUIRED, "管理員必須先開啟兩步驟驗證（TOTP）才能使用管理功能")
     return user
 
 

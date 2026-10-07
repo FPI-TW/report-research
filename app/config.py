@@ -217,6 +217,23 @@ def _ask_faithfulness_timeout(judge_model: str) -> float:
     return ASK_FAITHFULNESS_TIMEOUT_HTTP if is_http_model(judge_model) else ASK_FAITHFULNESS_TIMEOUT_CLI
 
 
+# 管理員 TOTP 強制（使用者定案 10）只認這幾個「明確關閉」的寫法；其餘一律視為開啟。
+_MFA_OFF_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def _admin_mfa_required() -> bool:
+    """`ADMIN_MFA_REQUIRED`：安全閘門，**fail-safe＝開**。
+
+    只有明確寫成 0／false／no／off（不分大小寫、去前後空白）才關閉；沒設、空字串、拼錯（`O`、`flase`）
+    都當成開啟——拼錯不能靜默放寬。刻意不做成 DB 功能旗標：DB 遺失或讀取失敗時旗標會退回預設，
+    安全閘門不可以因此被放寬（app/services/feature_flags.py 的 docstring）。
+    """
+    raw = (os.getenv("ADMIN_MFA_REQUIRED") or "").strip().lower()
+    if raw and raw not in _MFA_OFF_VALUES and raw not in ("1", "true", "yes", "on"):
+        logging.getLogger(__name__).warning("ADMIN_MFA_REQUIRED=%r 不是可辨識的值，視為開啟", raw)
+    return raw not in _MFA_OFF_VALUES
+
+
 def _faithfulness_min() -> float:
     """數值主張支持率門檻。新名 FAITHFULNESS_MIN 優先；缺值時退回舊名 REPORT_FAITHFULNESS_MIN。"""
     v = os.getenv("FAITHFULNESS_MIN")
@@ -383,6 +400,11 @@ class Settings:
     # 入庫前檢查子行程（app/services/pdf_preflight.py）的虛擬記憶體上限（MiB）：300 頁的密集文字 PDF 以
     # pdfplumber 試抽字實測 RSS 1.68 GB，2048 通過、1536 不通過。調高前先算 worker unit 的 MemoryMax=4G 放不放得下。
     upload_preflight_memory_mb: int = 2048
+    # ── Admin v2 ─────────────────────────────────────────────────────────────
+    # 管理員 TOTP 強制（web/authz.py 的 require_admin）：開啟時角色為 admin 而沒開 TOTP 的帳號，
+    # /api/admin/*、/api/review/* 一律 403 `mfa_enrollment_required`（/api/me/*、登出不受影響）。
+    # 預設開、拼錯也開（`_admin_mfa_required`）；tests/conftest.py 以賦值設 0 讓既有測試照常。
+    admin_mfa_required: bool = True
 
 
 def _load() -> Settings:
@@ -577,6 +599,7 @@ def _load() -> Settings:
         upload_worker_lock_file=(os.getenv("UPLOAD_WORKER_LOCK_FILE") or "").strip(),
         upload_clean_dir=(os.getenv("UPLOAD_CLEAN_DIR") or "").strip(),
         upload_preflight_memory_mb=_int_at_least("UPLOAD_PREFLIGHT_MEMORY_MB", 2048, 256),
+        admin_mfa_required=_admin_mfa_required(),
     )
 
 

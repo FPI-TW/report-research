@@ -570,9 +570,9 @@ class AskRecallConfigTests(unittest.IsolatedAsyncioTestCase):
 class AskLexTelemetryTests(unittest.IsolatedAsyncioTestCase):
     """字面路 cap 截斷必須進 qa_timing。
 
-    截斷是靜默的：`store._lexical_sql` 的 `LIMIT :cap` 沒有 ORDER BY，取到哪 cap 列由
-    heap 物理順序決定，而回應與日誌裡原本沒有任何線索。**先量出實際發生率**才有依據
-    決定要不要付排序的代價（加 ORDER BY 會逼掃完全部命中列，見該函式 docstring）。
+    截斷是靜默的：`store._lexical_sql` 的 `LIMIT :cap` 只取 chunk id 最小的 cap 個命中
+    （可重現，但不是依相關度挑的），而回應與日誌裡原本沒有任何線索。量出實際發生率
+    才有依據決定要不要調大 cap（召回深度與延遲的取捨，見該函式 docstring）。
     """
 
     async def _ask_with_lex_stats(

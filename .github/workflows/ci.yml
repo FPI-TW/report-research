@@ -354,6 +354,11 @@ jobs:
       - name: 入庫 hook 同交易
         run: uv run pytest -q tests/test_ingest_core_db.py
 
+      # 字面路可重現：命中超過 cap 時取 chunk id 最小的 cap 列、距離平手以 id 決勝，在 generic
+      # plan 與強迫平行掃描下結果也逐列相同（假 session 只釘得到 SQL 字串，planner 要真的庫）。
+      - name: 字面路可重現
+        run: uv run pytest -q tests/test_lexical_determinism_db.py
+
       # 監控投影：同一份 spool 匯入兩次不重複、批次 running → finished／lost 只前進不倒退、
       # 被 CHECK 拒絕的列只略過那一列。
       - name: 監控觀測與批次執行紀錄

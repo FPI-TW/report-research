@@ -1050,6 +1050,30 @@ export const IncidentDetailSchema = z.object({
 })
 export type IncidentDetail = z.infer<typeof IncidentDetailSchema>
 
+export const LlmUsageCombinedSchema = z.object({
+  totals: LlmUsageTotalsSchema,
+  by_day: z.array(LlmUsageDaySchema),
+  cost_available: z.boolean(),
+})
+export type LlmUsageCombined = z.infer<typeof LlmUsageCombinedSchema>
+
+export const LlmUsageOnlineSchema = z.object({
+  available: z.boolean(),
+  error: z.string().nullable().optional(),
+  since_day: z.string(),
+  until_day: z.string(),
+  totals: LlmUsageTotalsSchema,
+  by_day: z.array(LlmUsageDaySchema),
+  by_task: z.array(LlmUsageTaskSchema),
+  by_model: z.array(LlmUsageModelSchema),
+  rows: z.array(LlmUsageRowSchema),
+  rows_truncated: z.boolean(),
+  attributed_users: z.number().int(),
+  unattributed_calls: z.number().int(),
+  cost_available: z.boolean(),
+})
+export type LlmUsageOnline = z.infer<typeof LlmUsageOnlineSchema>
+
 export const LlmUsageResponseSchema = z.object({
   since: z.string(),
   until: z.string(),
@@ -1062,6 +1086,8 @@ export const LlmUsageResponseSchema = z.object({
   rows: z.array(LlmUsageRowSchema),
   rows_truncated: z.boolean(),
   cost_available: z.boolean(),
+  online: LlmUsageOnlineSchema.nullable().optional(),
+  combined: LlmUsageCombinedSchema.nullable().optional(),
 })
 export type LlmUsageResponse = z.infer<typeof LlmUsageResponseSchema>
 

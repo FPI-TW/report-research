@@ -9,12 +9,14 @@ LLM 用量頁的線上來源。服務層換成假物件（`deps.quota`），不�
 - 管理端點：401／403（一般使用者）／`missing_scope`／寫入要 `elevation_required`；`unlimited` 只有 super admin
   （服務層規則的錯誤碼對應）；回應形狀。
 - `/api/me/quota`：401、任何登入使用者可看自己的；服務失敗 503。
+- `/api/admin/llm-usage` 附 `online` 與 `combined`，線上讀取失敗不影響批次那段。
 """
 
 from __future__ import annotations
 
 import dataclasses
 import unittest
+from datetime import datetime, timezone
 
 from fake_accounts import FakeAccounts, install
 from fastapi.testclient import TestClient
@@ -324,3 +326,62 @@ class MeQuotaTests(_Base):
         self.q.me_error = RuntimeError("DB 掛了")
         r = self.login("alice", USER_PW).get("/api/me/quota")
         self.assertEqual((r.status_code, r.json()["code"]), (503, "quota_unavailable"))
+
+
+class LlmUsageOnlineTests(_Base):
+    def setUp(self):
+        super().setUp()
+        self.online_calls = []
+
+        async def fake_online(since, until, *, session_factory=None):
+            self.online_calls.append((since, until))
+            return self.online
+
+        self.online = {
+            "available": True, "error": None, "since_day": "2026-10-01", "until_day": "2026-10-07",
+            "totals": _totals(4), "by_day": [{"day": "2026-10-06", **_totals(4)}],
+            "by_task": [{"task": "ask_answer", **_totals(4)}], "by_model": [{"model": "deepseek-flash", **_totals(4)}],
+            "rows": [], "rows_truncated": False, "attributed_users": 2, "unattributed_calls": 1,
+            "cost_available": False,
+        }
+        orig = deps.llm_usage.summarize_online
+        deps.llm_usage.summarize_online = fake_online
+        self.addCleanup(setattr, deps.llm_usage, "summarize_online", orig)
+
+    def test_online_and_combined(self):
+        r = self.login().get("/api/admin/llm-usage", params={"since": "2026-10-01T00:00:00Z"})
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["online"]["totals"]["calls"], 4)
+        self.assertEqual(body["online"]["attributed_users"], 2)
+        self.assertEqual(body["combined"]["totals"]["calls"], body["totals"]["calls"] + 4)
+        self.assertNotIn("user_id", r.text, "LLM 用量頁不出個人維度")
+
+    def test_online_unavailable_keeps_batch(self):
+        self.online = {**self.online, "available": False, "error": "線上用量暫時讀不到（RuntimeError）",
+                       "totals": _totals(0), "by_day": [], "by_task": [], "by_model": []}
+        r = self.login().get("/api/admin/llm-usage", params={"since": "2026-09-01T00:00:00Z"})
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()["online"]["available"])
+        self.assertIn("source", r.json())
+
+
+def _totals(calls):
+    return {"calls": calls, "failures": 0, "prompt_hit_tokens": 1, "prompt_miss_tokens": 2, "completion_tokens": 3,
+            "reasoning_tokens": 0, "calls_without_tokens": 0, "total_ms": 10, "cost": None}
+
+
+class LlmUsageCombineTests(unittest.TestCase):
+    def test_combine_and_online_days(self):
+        from app.services import llm_usage
+
+        batch = {"totals": _totals(2), "by_day": [{"day": "2026-10-06", **_totals(2)}], "cost_available": False}
+        online = {"totals": _totals(3), "by_day": [{"day": "2026-10-06", **_totals(1)},
+                                                   {"day": "2026-10-07", **_totals(2)}], "cost_available": False}
+        out = llm_usage.combine(batch, online)
+        self.assertEqual(out["totals"]["calls"], 5)
+        self.assertEqual([(d["day"], d["calls"]) for d in out["by_day"]], [("2026-10-06", 3), ("2026-10-07", 2)])
+        self.assertIsNone(out["totals"]["cost"])
+        d0, d1 = llm_usage.online_days(datetime(2026, 10, 1, 16, 0, tzinfo=timezone.utc),
+                                       datetime(2026, 10, 7, 16, 0, tzinfo=timezone.utc))
+        self.assertEqual((str(d0), str(d1)), ("2026-10-02", "2026-10-07"), "until 是開區間：台北 10/8 00:00 不算 10/8")

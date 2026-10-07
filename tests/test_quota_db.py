@@ -1,4 +1,5 @@
-"""每人配額的 SQL 對真的 PostgreSQL 成立（app/services/quota.py、upload_intake.check_quota 的個人覆寫）。
+"""每人配額的 SQL 對真的 PostgreSQL 成立（app/services/quota.py、upload_intake.check_quota 的個人覆寫、
+llm_usage.summarize_online）。
 
 兩組測試：
 
@@ -6,7 +7,7 @@
   外層交易上、commit 只釋放 savepoint 的 session（同 tests/test_usage_events_db.py）。驗原子遞增在上限封頂、超額記
   `<kind>_over`、上限 0 連第一次都不插入、NULL＝不限、調低上限後立即生效；覆寫寫入與同交易的 `quota.update` 稽核
   （detail 不含理由全文與帳號名稱）、沒有變動不寫稽核、不限只有 super admin、super admin 的配額只有 super admin 能改；
-  管理總覽、自己的用量、P50／P95 的 SQL；上傳的個人覆寫。
+  管理總覽、自己的用量、P50／P95 的 SQL；上傳的個人覆寫；線上 LLM 用量的日彙總。
 - `QuotaConcurrencyTests`：多個交易**真的並發**對同一人同一天遞增，只有恰好 `limit` 個拿得到名額。另一條連線看得到的
   資料必須先 commit，所以這組**只在拋棄式的庫上跑**：開始時語料表（`research_report`）與相關表（`report_upload`、
   `usage_counter`、`user_quota`）都必須是空的（剛 `alembic upgrade head` 的庫，例如 CI 的 schema job 或本機 devdb
@@ -25,13 +26,13 @@ import secrets
 import time
 import unittest
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from unittest import mock
 
 from sqlalchemy import text
 
 from app import config
-from app.services import feature_flags, quota, upload_intake
+from app.services import feature_flags, llm_usage, quota, upload_intake
 
 
 def _skip_or_raise(exc: Exception, why: str) -> None:
@@ -280,6 +281,32 @@ class QuotaDbTests(unittest.TestCase):
                 await upload_intake.check_quota(s, actor_id=unlimited, daily_quota=1, max_in_flight=10**6)
                 # 沒有覆寫：沿用程式預設（0 份已上傳 < 1）
                 await upload_intake.check_quota(s, actor_id=str(uuid.uuid4()), daily_quota=1, max_in_flight=10**6)
+
+        self._run(go)
+
+    def test_summarize_online(self):
+        async def go(factory):
+            a = await _user(factory)
+            day = date(2001, 1, 2)  # 遠離真實資料的日期
+            async with factory() as s:
+                await s.execute(text(
+                    "INSERT INTO research.llm_usage_daily (day, user_id, task, model, calls, failures, "
+                    "prompt_hit_tokens, completion_tokens, total_ms) VALUES "
+                    "(:d, :a, 'ask_answer', 'deepseek-flash', 3, 1, 10, 5, 300), "
+                    "(:d, NULL, 'ask_answer', 'deepseek-flash', 2, 0, 1, 1, 100), "
+                    "(:d, :a, 'faithfulness', 'deepseek-flash', 1, 0, 0, 0, 50)"), {"d": day, "a": a})
+                await s.commit()
+            from datetime import datetime, timezone
+
+            out = await llm_usage.summarize_online(datetime(2001, 1, 1, 16, tzinfo=timezone.utc),
+                                                   datetime(2001, 1, 2, 16, tzinfo=timezone.utc),
+                                                   session_factory=factory)
+            self.assertTrue(out["available"])
+            self.assertEqual((out["totals"]["calls"], out["totals"]["failures"]), (6, 1))
+            self.assertEqual((out["attributed_users"], out["unattributed_calls"]), (1, 2))
+            self.assertEqual([t["task"] for t in out["by_task"]], ["ask_answer", "faithfulness"])
+            self.assertNotIn(a, json.dumps(out), "不出個人維度")
+            self.assertIsNone(out["totals"]["cost"])
 
         self._run(go)
 

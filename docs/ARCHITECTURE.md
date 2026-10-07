@@ -77,7 +77,7 @@ Python 做所有決定性的事：解析、抽取、切塊、嵌入、儲存、�
 | `usage_events.py` | 用量收集（Admin v2）：記憶體累加器（三種格子合計 `USAGE_EVENTS_MAX_KEYS` 個鍵，超過的新鍵丟棄並計數）→ lifespan 的 `UsageFlusher` 每 60 秒與關機時 upsert 進 `usage_daily`（主題×日，**沒有 user_id**）、`usage_counter`（人×日×類別，**沒有主題**；`ask`／`export`／`upload` 三類由配額服務寫，這裡不寫）、`llm_usage_daily`（線上 LLM 的 metadata，經 `llm_http` observer 歸到人）。永不記搜尋字串；不重複人數只送集合大小、集合不落庫；已刪除帳號在 upsert 時濾掉 |
 | `quota.py` | 每人每日配額（Admin v2）：`charge` 以單句原子 SQL（`INSERT … ON CONFLICT DO UPDATE SET count = count + 1 WHERE count < :limit RETURNING count`，沒回傳＝超額）遞增 `usage_counter` 的 `ask`／`export`，台北時間切日；個人覆寫 `user_quota`（NULL＝不限，只有 super admin 能設）。影子模式：超額一律記 `<kind>_over`，只有 `QUOTA_ENFORCE` AND 旗標 `quota.enforce` 都開才不放行（路由回 429 `quota_exceeded`＋`Retry-After`）；DB 寫入失敗放行並記 WARNING。`upload` 沿用 `upload_intake` 的 `report_upload` 計數，只讀覆寫。另有管理總覽、自己的用量、P50／P95 與 `set_override`（同交易寫 `quota.update`）。web 經 `deps.quota` 呼叫 |
 | `feature_flags.py` | 功能旗標的讀取核心（Admin v2）：程式內 `REGISTRY` × 環境變數上限 AND `research.feature_flag` 覆寫（全站／`allow_roles`／`allow_users`）；DB 讀取失敗退回 registry 預設（所以刻意不放安全閘門）；覆寫快取 `FEATURE_FLAG_CACHE_SECONDS`（5）秒、`invalidate()` 立即失效。寫入與稽核由 Flags lane 加 |
-| `llm_usage.py` | `data/llm_usage.jsonl` 的路徑（唯一定義，`scripts/_claude_cli.py` 的 `usage_log_path` 呼叫它）與彙總（日期／任務／模型；只出彙總、不出雜湊與研報識別；位元組、行數、分組數上限） |
+| `llm_usage.py` | `data/llm_usage.jsonl` 的路徑（唯一定義，`scripts/_claude_cli.py` 的 `usage_log_path` 呼叫它）與彙總（日期／任務／模型；只出彙總、不出雜湊與研報識別；位元組、行數、分組數上限）；線上來源 `summarize_online` 讀 `llm_usage_daily`（台北日彙總、不出個人維度、讀不到回 `available=false`），`combine` 合計兩個來源 |
 | `tagging.py` | 市場代碼（對齊 findb）、商品類型、期貨標的詞表、標註 prompt |
 | `filename.py` | 檔名解析：券商代碼、日期、行政文件判定 |
 | `db.py` | async engine、`SessionFactory`、`relax_statement_timeout`、pgvector 版本守門 |

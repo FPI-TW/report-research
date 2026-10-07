@@ -329,6 +329,18 @@ class WiringTests(unittest.TestCase):
         }
         self.assertFalse({m for m in imported if m and "_claude_lock" in m}, imported)
 
+    def test_ingest_core_never_takes_the_lock(self):
+        """`scripts/_ingest_core.py`（sync 與上傳 worker 共用的單篇入庫）在入口 main 已持有的鎖裡被呼叫：
+        理由同上，再取一次會在同一行程裡等自己。鎖只在入口的 main 取。"""
+        src = (REPO_ROOT / "scripts" / "_ingest_core.py").read_text(encoding="utf-8")
+        self.assertNotIn("claude_cli_lock", src)
+        imported = {
+            n.module if isinstance(n, ast.ImportFrom) else a.name
+            for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))
+            for a in n.names
+        }
+        self.assertFalse({m for m in imported if m and "_claude_lock" in m}, imported)
+
     def test_no_web_module_takes_the_lock(self):
         """同理推廣到整個線上路徑：web/ 底下任何檔案都不該取這把鎖。"""
         offenders = [

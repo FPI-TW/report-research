@@ -57,6 +57,18 @@ export const AdminUploadSchema = z.object({
 })
 export type AdminUpload = z.infer<typeof AdminUploadSchema>
 
+export const AdminUploadFileSchema = z.object({
+  url: z.string(),
+  expires_in: z.number().int(),
+  file_name: z.string(),
+})
+export type AdminUploadFile = z.infer<typeof AdminUploadFileSchema>
+
+export const AdminUploadRejectRequestSchema = z.object({
+  reason: z.string(),
+})
+export type AdminUploadRejectRequest = z.infer<typeof AdminUploadRejectRequestSchema>
+
 export const AdminUploadReportSchema = z.object({
   report_id: z.string(),
   title: z.string().nullable().optional(),
@@ -81,6 +93,34 @@ export const AdminUploadScannerSchema = z.object({
   last_error_at: z.string().nullable().optional(),
 })
 export type AdminUploadScanner = z.infer<typeof AdminUploadScannerSchema>
+
+export const AdminUploadTagsSchema = z.object({
+  market: z.string().nullable().optional(),
+  is_research: z.boolean(),
+  confidence: z.number().nullable().optional(),
+  source: z.string().nullable().optional(),
+  report_date: z.string().nullable().optional(),
+  report_type: z.string().nullable().optional(),
+  language: z.string().nullable().optional(),
+  stock_code: z.string().nullable().optional(),
+  company_name: z.string().nullable().optional(),
+  instrument_types: z.array(z.string()),
+  stock_targets: z.array(z.string()),
+  futures_targets: z.array(z.string()),
+  relates_stock: z.boolean().nullable().optional(),
+  relates_futures: z.boolean().nullable().optional(),
+})
+export type AdminUploadTags = z.infer<typeof AdminUploadTagsSchema>
+
+export const AdminUploadTakeawaySchema = z.object({
+  ordinal: z.number().int(),
+  claim: z.string(),
+  quote: z.string().nullable().optional(),
+  quote_start: z.number().int().nullable().optional(),
+  quote_end: z.number().int().nullable().optional(),
+  anchor_method: z.string().nullable().optional(),
+})
+export type AdminUploadTakeaway = z.infer<typeof AdminUploadTakeawaySchema>
 
 export const AuditChainResponseSchema = z.object({
   ok: z.boolean(),
@@ -122,6 +162,79 @@ export const AuditResponseSchema = z.object({
 })
 export type AuditResponse = z.infer<typeof AuditResponseSchema>
 
+export const BulkReportResultSchema = z.object({
+  file_hash: z.string(),
+  status: z.enum(['ok', 'skipped']),
+  code: z.string().nullable().optional(),
+  detail: z.string().nullable().optional(),
+  hidden: z.boolean().nullable().optional(),
+})
+export type BulkReportResult = z.infer<typeof BulkReportResultSchema>
+
+export const BulkUserResultItemSchema = z.object({
+  user_id: z.string(),
+  status: z.enum(['ok', 'unchanged', 'skipped']),
+  code: z.string().nullable().optional(),
+  detail: z.string().nullable().optional(),
+  revoked_sessions: z.number().int().nullable().optional(),
+})
+export type BulkUserResultItem = z.infer<typeof BulkUserResultItemSchema>
+
+export const BulkUsersRequestSchema = z.object({
+  action: z.enum(['disable', 'enable', 'logout']),
+  user_ids: z.array(z.string()),
+})
+export type BulkUsersRequest = z.infer<typeof BulkUsersRequestSchema>
+
+export const BulkUsersResponseSchema = z.object({
+  action: z.enum(['disable', 'enable', 'logout']),
+  requested: z.number().int(),
+  ok: z.number().int(),
+  unchanged: z.number().int(),
+  skipped: z.number().int(),
+  results: z.array(BulkUserResultItemSchema),
+})
+export type BulkUsersResponse = z.infer<typeof BulkUsersResponseSchema>
+
+export const BulkVisibilityRequestSchema = z.object({
+  action: z.enum(['hide', 'restore']),
+  file_hashes: z.array(z.string()),
+  reason: z.string().nullable().optional(),
+})
+export type BulkVisibilityRequest = z.infer<typeof BulkVisibilityRequestSchema>
+
+export const BulkVisibilityResponseSchema = z.object({
+  action: z.enum(['hide', 'restore']),
+  requested: z.number().int(),
+  ok: z.number().int(),
+  skipped: z.number().int(),
+  results: z.array(BulkReportResultSchema),
+})
+export type BulkVisibilityResponse = z.infer<typeof BulkVisibilityResponseSchema>
+
+export const ConfigFlagsSchema = z.object({
+  ask_enable_web: z.boolean(),
+  ask_rerank_enabled: z.boolean(),
+  qa_agentic_enabled: z.boolean(),
+  ask_faithfulness_enabled: z.boolean(),
+  trusted_data_enabled: z.boolean(),
+  skip_warmup: z.boolean(),
+  dev_no_auth: z.boolean(),
+})
+export type ConfigFlags = z.infer<typeof ConfigFlagsSchema>
+
+export const ConfigLimitsSchema = z.object({
+  db_pool_size: z.number().int(),
+  db_max_overflow: z.number().int(),
+  db_pool_timeout_s: z.number(),
+  db_statement_timeout_ms: z.number().int(),
+  db_idle_tx_timeout_ms: z.number().int(),
+  embed_max_concurrency: z.number().int(),
+  ask_faithfulness_sample_rate: z.number(),
+  ask_faithfulness_max_inflight: z.number().int(),
+})
+export type ConfigLimits = z.infer<typeof ConfigLimitsSchema>
+
 export const CreateUserRequestSchema = z.object({
   username: z.string(),
   password: z.string(),
@@ -142,6 +255,25 @@ export const DbAuditSectionSchema = z.object({
   findings: z.array(AuditFindingSchema),
 })
 export type DbAuditSection = z.infer<typeof DbAuditSectionSchema>
+
+export const DbCheckSchema = z.object({
+  ok: z.boolean(),
+  latency_ms: z.number().nullable().optional(),
+  server_version: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type DbCheck = z.infer<typeof DbCheckSchema>
+
+export const DbPoolSectionSchema = z.object({
+  pool_class: z.string().nullable().optional(),
+  size: z.number().int().nullable().optional(),
+  max_overflow: z.number().int().nullable().optional(),
+  checked_out: z.number().int().nullable().optional(),
+  checked_in: z.number().int().nullable().optional(),
+  open_connections: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type DbPoolSection = z.infer<typeof DbPoolSectionSchema>
 
 export const DeletionItemSchema = z.object({
   id: z.number().int(),
@@ -191,6 +323,33 @@ export const FreshnessSectionSchema = z.object({
   findings: z.array(FreshnessFindingSchema),
 })
 export type FreshnessSection = z.infer<typeof FreshnessSectionSchema>
+
+export const FrontendBuildSchema = z.object({
+  available: z.boolean().optional(),
+  built_at: z.string().nullable().optional(),
+  entry_assets: z.array(z.string()).optional(),
+})
+export type FrontendBuild = z.infer<typeof FrontendBuildSchema>
+
+export const GateStatusSchema = z.object({
+  name: z.string(),
+  capacity: z.number().int(),
+  in_use: z.number().int().nullable().optional(),
+  waiting: z.number().int(),
+  max_queue: z.number().int(),
+})
+export type GateStatus = z.infer<typeof GateStatusSchema>
+
+export const GitInfoSchema = z.object({
+  available: z.boolean().optional(),
+  reason: z.string().nullable().optional(),
+  commit_at_start: z.string().nullable().optional(),
+  branch_at_start: z.string().nullable().optional(),
+  commit_on_disk: z.string().nullable().optional(),
+  branch_on_disk: z.string().nullable().optional(),
+  restart_pending: z.boolean().nullable().optional(),
+})
+export type GitInfo = z.infer<typeof GitInfoSchema>
 
 export const IncidentEventItemSchema = z.object({
   event_id: z.string(),
@@ -266,6 +425,17 @@ export const JobListResponseSchema = z.object({
   items: z.array(JobItemSchema),
 })
 export type JobListResponse = z.infer<typeof JobListResponseSchema>
+
+export const LlmCheckSchema = z.object({
+  state: z.string(),
+  key_configured: z.boolean().optional(),
+  ask_uses_http: z.boolean().optional(),
+  consecutive_failures: z.number().int().optional(),
+  last_check_age_s: z.number().nullable().optional(),
+  quota_latched: z.boolean().optional(),
+  error: z.string().nullable().optional(),
+})
+export type LlmCheck = z.infer<typeof LlmCheckSchema>
 
 export const LlmUsageDaySchema = z.object({
   calls: z.number().int(),
@@ -356,6 +526,17 @@ export const LogoutResponseSchema = z.object({
 })
 export type LogoutResponse = z.infer<typeof LogoutResponseSchema>
 
+export const ModelsSectionSchema = z.object({
+  embed_model: z.string().nullable().optional(),
+  embed_loaded: z.boolean().optional(),
+  rerank_loaded: z.boolean().optional(),
+  rerank_load_failed: z.boolean().optional(),
+  warmup: z.enum(['skipped', 'absent', 'running', 'done', 'failed', 'cancelled']).nullable().optional(),
+  warmup_error: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type ModelsSection = z.infer<typeof ModelsSectionSchema>
+
 export const ObservationItemSchema = z.object({
   observed_at: z.string(),
   host: z.string(),
@@ -403,6 +584,14 @@ export const OpsActionResponseSchema = z.object({
   checked_at: z.string(),
 })
 export type OpsActionResponse = z.infer<typeof OpsActionResponseSchema>
+
+export const OpsAgentCheckSchema = z.object({
+  ok: z.boolean(),
+  latency_ms: z.number().nullable().optional(),
+  services: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type OpsAgentCheck = z.infer<typeof OpsAgentCheckSchema>
 
 export const OpsContainerStateSchema = z.object({
   status: z.string().nullable().optional(),
@@ -574,6 +763,59 @@ export const ReportVisibilityResponseSchema = z.object({
 })
 export type ReportVisibilityResponse = z.infer<typeof ReportVisibilityResponseSchema>
 
+export const SchemaDailyCheckSchema = z.object({
+  available: z.boolean().optional(),
+  unavailable_reason: z.string().nullable().optional(),
+  checked_at: z.string().nullable().optional(),
+  age_hours: z.number().nullable().optional(),
+  stale: z.boolean().optional(),
+  mode: z.string().nullable().optional(),
+  exit_code: z.number().int().nullable().optional(),
+  alert: z.boolean().nullable().optional(),
+  problems: z.array(z.string()).optional(),
+  message: z.string().nullable().optional(),
+  version_status: z.string().nullable().optional(),
+  drift_status: z.string().nullable().optional(),
+  drift_count: z.number().int().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type SchemaDailyCheck = z.infer<typeof SchemaDailyCheckSchema>
+
+export const SchemaSectionSchema = z.object({
+  status: z.enum(['ok', 'behind', 'ahead', 'unversioned', 'ambiguous', 'error']),
+  db_revisions: z.array(z.string()),
+  code_heads: z.array(z.string()),
+  pending: z.array(z.string()),
+  error: z.string().nullable().optional(),
+  daily_check: SchemaDailyCheckSchema,
+})
+export type SchemaSection = z.infer<typeof SchemaSectionSchema>
+
+export const SecretsPresentSchema = z.object({
+  deepseek_api_key: z.boolean(),
+  session_secret: z.boolean(),
+  edge_secret: z.boolean(),
+  r2_credentials: z.boolean(),
+  alert_webhook: z.boolean(),
+})
+export type SecretsPresent = z.infer<typeof SecretsPresentSchema>
+
+export const StorageCheckSchema = z.object({
+  state: z.string(),
+  consecutive_failures: z.number().int().optional(),
+  last_probe_age_s: z.number().nullable().optional(),
+  last_probe_ok: z.boolean().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type StorageCheck = z.infer<typeof StorageCheckSchema>
+
+export const TimezoneInfoSchema = z.object({
+  tz_env: z.string().nullable().optional(),
+  name: z.string().optional(),
+  utc_offset: z.string().optional(),
+})
+export type TimezoneInfo = z.infer<typeof TimezoneInfoSchema>
+
 export const UpdateUserRequestSchema = z.object({
   role: z.enum(['admin', 'user']).nullable().optional(),
   enabled: z.boolean().nullable().optional(),
@@ -602,6 +844,16 @@ export const UserListResponseSchema = z.object({
   items: z.array(UserItemSchema),
 })
 export type UserListResponse = z.infer<typeof UserListResponseSchema>
+
+export const VersionsSectionSchema = z.object({
+  git: GitInfoSchema.nullable().optional(),
+  frontend: FrontendBuildSchema.nullable().optional(),
+  python: z.string().nullable().optional(),
+  platform: z.string().nullable().optional(),
+  packages: z.record(z.string(), z.unknown()).optional(),
+  error: z.string().nullable().optional(),
+})
+export type VersionsSection = z.infer<typeof VersionsSectionSchema>
 
 export const AdminUploadDetailSchema = z.object({
   upload_id: z.string(),
@@ -641,6 +893,52 @@ export const AdminUploadListResponseSchema = z.object({
   scanner: AdminUploadScannerSchema,
 })
 export type AdminUploadListResponse = z.infer<typeof AdminUploadListResponseSchema>
+
+export const AdminUploadPreviewSchema = z.object({
+  upload: AdminUploadSchema,
+  report_id: z.string(),
+  file_name: z.string(),
+  publication: z.enum(['draft', 'published']),
+  hidden: z.boolean(),
+  title: z.string().nullable().optional(),
+  title_original: z.string().nullable().optional(),
+  title_state: z.enum(['ready', 'pending']),
+  summary: z.string().nullable().optional(),
+  summary_state: z.enum(['ready', 'pending']),
+  tags: AdminUploadTagsSchema,
+  text: z.string().nullable().optional(),
+  text_state: z.enum(['ready', 'missing']),
+  text_chars: z.number().int(),
+  text_truncated: z.boolean(),
+  text_sha256: z.string().nullable().optional(),
+  takeaways_state: z.enum(['ready', 'pending', 'none']),
+  takeaways: z.array(AdminUploadTakeawaySchema),
+})
+export type AdminUploadPreview = z.infer<typeof AdminUploadPreviewSchema>
+
+export const ConfigSectionSchema = z.object({
+  db_target: z.string().nullable().optional(),
+  object_storage_mode: z.string().nullable().optional(),
+  llm_provider: z.string().nullable().optional(),
+  models: z.record(z.string(), z.unknown()).optional(),
+  extractor: z.string().nullable().optional(),
+  log_level: z.string().nullable().optional(),
+  ops_agent_environment: z.string().nullable().optional(),
+  ops_agent_socket: z.string().nullable().optional(),
+  flags: ConfigFlagsSchema.nullable().optional(),
+  secrets_present: SecretsPresentSchema.nullable().optional(),
+  limits: ConfigLimitsSchema.nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type ConfigSection = z.infer<typeof ConfigSectionSchema>
+
+export const DiagnosticsChecksSchema = z.object({
+  db: DbCheckSchema,
+  storage: StorageCheckSchema,
+  llm: LlmCheckSchema,
+  ops_agent: OpsAgentCheckSchema,
+})
+export type DiagnosticsChecks = z.infer<typeof DiagnosticsChecksSchema>
 
 export const IncidentDetailSchema = z.object({
   incident_id: z.string(),
@@ -765,6 +1063,20 @@ export const RegressionQuestionSchema = z.object({
 })
 export type RegressionQuestion = z.infer<typeof RegressionQuestionSchema>
 
+export const RuntimeSectionSchema = z.object({
+  pid: z.number().int().nullable().optional(),
+  hostname: z.string().nullable().optional(),
+  started_at: z.string().nullable().optional(),
+  uptime_s: z.number().nullable().optional(),
+  rss_bytes: z.number().int().nullable().optional(),
+  peak_rss_bytes: z.number().int().nullable().optional(),
+  threads: z.number().int().nullable().optional(),
+  timezone: TimezoneInfoSchema.nullable().optional(),
+  python_executable: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+})
+export type RuntimeSection = z.infer<typeof RuntimeSectionSchema>
+
 export const DataHealthResponseSchema = z.object({
   generated_at: z.string(),
   overall: z.enum(['ok', 'warn', 'fail', 'unknown']),
@@ -773,6 +1085,21 @@ export const DataHealthResponseSchema = z.object({
   r2_reconcile: R2ReconcileSectionSchema,
 })
 export type DataHealthResponse = z.infer<typeof DataHealthResponseSchema>
+
+export const DiagnosticsResponseSchema = z.object({
+  generated_at: z.string(),
+  cache_ttl_s: z.number().int(),
+  versions: VersionsSectionSchema,
+  schema_info: SchemaSectionSchema,
+  runtime: RuntimeSectionSchema,
+  config: ConfigSectionSchema,
+  models: ModelsSectionSchema,
+  db_pool: DbPoolSectionSchema,
+  gates: z.array(GateStatusSchema),
+  gates_error: z.string().nullable().optional(),
+  checks: DiagnosticsChecksSchema,
+})
+export type DiagnosticsResponse = z.infer<typeof DiagnosticsResponseSchema>
 
 export const OpsServiceListResponseSchema = z.object({
   environment: z.string(),
@@ -827,6 +1154,8 @@ export const adminApi = {
   getDataHealth: () => requestJSON('/api/admin/data-health', DataHealthResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/deletions — List Deletions */
   listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/diagnostics — Get Diagnostics */
+  getDiagnostics: () => requestJSON('/api/admin/diagnostics', DiagnosticsResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
   /** GET /api/admin/incidents — List Incidents */
@@ -853,6 +1182,8 @@ export const adminApi = {
   runOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/run`, OpsActionResponseSchema, jsonBody('POST')),
   /** GET /api/admin/reports — List Reports */
   listReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
+  /** POST /api/admin/reports/bulk-visibility — Bulk Set Report Visibility */
+  bulkSetReportVisibility: (body: z.input<typeof BulkVisibilityRequestSchema>) => requestJSON('/api/admin/reports/bulk-visibility', BulkVisibilityResponseSchema, jsonBody('POST', body)),
   /** PUT /api/admin/reports/{file_hash}/visibility — Set Report Visibility */
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/retrieval-regression — Get Retrieval Regression */
@@ -861,10 +1192,24 @@ export const adminApi = {
   listUploads: (query: { state?: 'quarantined' | 'scanning' | 'clean' | 'infected' | 'blocked' | 'processing' | 'draft' | 'failed' | 'duplicate' | 'published' | 'rejected' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/uploads${qs(query)}`, AdminUploadListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/uploads/{upload_id} — Get Upload */
   getUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}`, AdminUploadDetailSchema, { cache: 'no-store' }),
+  /** GET /api/admin/uploads/{upload_id}/file — Get Upload File */
+  getUploadFile: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/file`, AdminUploadFileSchema, { cache: 'no-store' }),
+  /** GET /api/admin/uploads/{upload_id}/preview — Preview Upload */
+  previewUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/preview`, AdminUploadPreviewSchema, { cache: 'no-store' }),
+  /** POST /api/admin/uploads/{upload_id}/publish — Publish Upload */
+  publishUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/publish`, AdminUploadSchema, jsonBody('POST')),
+  /** POST /api/admin/uploads/{upload_id}/reject — Reject Upload */
+  rejectUpload: (uploadId: string, body: z.input<typeof AdminUploadRejectRequestSchema>) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/reject`, AdminUploadSchema, jsonBody('POST', body)),
+  /** POST /api/admin/uploads/{upload_id}/retry — Retry Upload */
+  retryUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/retry`, AdminUploadSchema, jsonBody('POST')),
+  /** POST /api/admin/uploads/{upload_id}/unreject — Unreject Upload */
+  unrejectUpload: (uploadId: string) => requestJSON(`/api/admin/uploads/${encodeURIComponent(uploadId)}/unreject`, AdminUploadSchema, jsonBody('POST')),
   /** GET /api/admin/users — List Users */
   listUsers: () => requestJSON('/api/admin/users', UserListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/users — Create User */
   createUser: (body: z.input<typeof CreateUserRequestSchema>) => requestJSON('/api/admin/users', UserItemSchema, jsonBody('POST', body)),
+  /** POST /api/admin/users/bulk — Bulk User Action */
+  bulkUserAction: (body: z.input<typeof BulkUsersRequestSchema>) => requestJSON('/api/admin/users/bulk', BulkUsersResponseSchema, jsonBody('POST', body)),
   /** PATCH /api/admin/users/{user_id} — Update User */
   updateUser: (userId: string, body: z.input<typeof UpdateUserRequestSchema>) => requestJSON(`/api/admin/users/${encodeURIComponent(userId)}`, UserItemSchema, jsonBody('PATCH', body)),
   /** POST /api/admin/users/{user_id}/deletion — Request Deletion */

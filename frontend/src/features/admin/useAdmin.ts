@@ -1,10 +1,11 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { requestJSON } from '../../lib/api'
 import { auditPageSchema, type AuditPage, type Role } from '../../lib/adminSchemas'
-import { adminApi, type UserItem } from '../../lib/generated/adminApi'
+import { adminApi, type BulkUsersRequest, type UserItem } from '../../lib/generated/adminApi'
 
 export type AdminUser = UserItem
 export type GrantableScope = NonNullable<UserItem['scopes']>[number]
+export type BulkUserAction = BulkUsersRequest['action']
 
 export const USERS_KEY = ['admin', 'users'] as const
 export const AUDIT_KEY = ['admin', 'audit'] as const
@@ -70,5 +71,10 @@ export function useAdminActions() {
   const requestDeletion = useMutation({ mutationFn: (id: string) => adminApi.requestDeletion(id), onSuccess: refresh })
   const cancelDeletion = useMutation({ mutationFn: (id: string) => adminApi.cancelDeletion(id), onSuccess: refresh })
   const resetTotp = useMutation({ mutationFn: (id: string) => adminApi.resetTotp(id), onSuccess: refresh })
-  return { create, update, resetPassword, forceLogout, setPrivileges, requestDeletion, cancelDeletion, resetTotp }
+  // 批次停用／啟用／強制登出：後端要求已提升，呼叫端以 guard 包住 mutateAsync。
+  const bulk = useMutation({
+    mutationFn: (body: { action: BulkUserAction; user_ids: string[] }) => adminApi.bulkUserAction(body),
+    onSuccess: refresh,
+  })
+  return { create, update, resetPassword, forceLogout, setPrivileges, requestDeletion, cancelDeletion, resetTotp, bulk }
 }

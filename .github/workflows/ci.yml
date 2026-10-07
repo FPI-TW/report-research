@@ -349,6 +349,11 @@ jobs:
       - name: 研報可見性
         run: uv run pytest -q tests/test_report_visibility_db.py
 
+      # 單篇入庫核心的 pre_upsert hook 與 upsert_report 同一個交易：upsert 失敗時 hook 的寫入
+      # 一起 rollback、hook 之前沒有任何 commit（上傳 worker 的草稿標記靠這一點）。
+      - name: 入庫 hook 同交易
+        run: uv run pytest -q tests/test_ingest_core_db.py
+
       # 字面路可重現：命中超過 cap 時取 chunk id 最小的 cap 列、距離平手以 id 決勝，在 generic
       # plan 與強迫平行掃描下結果也逐列相同（假 session 只釘得到 SQL 字串，planner 要真的庫）。
       - name: 字面路可重現
@@ -368,6 +373,12 @@ jobs:
       # 的重複判定、每日與全站處理中配額、INSERT 與稽核 upload.create 同交易（稽核失敗紀錄不留）。
       - name: 研報上傳收檔
         run: uv run pytest -q tests/test_admin_uploads_db.py
+
+      # 研報上傳的審核：發布前草稿在混合檢索查不到、發布後查得到；每個寫入端點的狀態閘門；狀態與稽核同交易
+      # （稽核失敗狀態不變）；退回後草稿仍不可見；撤銷退回推導回正確狀態；兩個交易並發只有一個成功
+      # （並發那組要 commit，只在語料與上傳表皆空的拋棄式庫上跑——這個 job 的庫正是）；清除守門。
+      - name: 研報上傳審核
+        run: uv run pytest -q tests/test_upload_review_db.py
 
   secrets:
     name: secret 掃描（gitleaks）

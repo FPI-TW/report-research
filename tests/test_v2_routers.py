@@ -8,11 +8,13 @@ Wave 1 的各 lane 只在自己的 router 檔加端點；這裡釘住 router 層
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
 from web import authz
 from web.routers import admin_analytics, admin_db, admin_flags, admin_quota, admin_security, features, me_quota
+from web.routers import health as health_routes
 from web.server import _AUTH_ALLOWLIST, app
 
 _ADMIN_ROUTERS = {
@@ -55,7 +57,9 @@ class RouterWiringTests(unittest.TestCase):
 class HealthzSecurityTests(unittest.TestCase):
     def test_allowlisted_but_loopback_only(self):
         self.assertIn("/healthz/security", _AUTH_ALLOWLIST)
-        local = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 51000)).get("/healthz/security")
+        # 判斷本身（security_ops.evaluate_alerts）由 Security lane 的 tests/test_healthz_security.py 驗；這裡只驗接線。
+        with mock.patch.object(health_routes, "_security_state", mock.AsyncMock(return_value="unknown")):
+            local = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 51000)).get("/healthz/security")
         self.assertEqual((local.status_code, local.json()), (200, {"security": "unknown"}))
         outside = TestClient(app, base_url="http://127.0.0.1", client=("203.0.113.9", 51000)).get("/healthz/security")
         self.assertEqual(outside.status_code, 404)

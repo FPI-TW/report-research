@@ -122,6 +122,31 @@ export const AdminUploadTakeawaySchema = z.object({
 })
 export type AdminUploadTakeaway = z.infer<typeof AdminUploadTakeawaySchema>
 
+export const AdminWithoutTotpSchema = z.object({
+  id: z.string(),
+  username: z.string(),
+  is_super: z.boolean(),
+})
+export type AdminWithoutTotp = z.infer<typeof AdminWithoutTotpSchema>
+
+export const AlertAccountSchema = z.object({
+  user_id: z.string(),
+  username: z.string().nullable().optional(),
+})
+export type AlertAccount = z.infer<typeof AlertAccountSchema>
+
+export const AuditAnchorItemSchema = z.object({
+  state: z.enum(['ok', 'tamper', 'error', 'stale', 'missing', 'corrupt']),
+  at: z.string().nullable().optional(),
+  written_at: z.string().nullable().optional(),
+  age_hours: z.number().nullable().optional(),
+  head_id: z.number().int().nullable().optional(),
+  total: z.number().int().nullable().optional(),
+  anchors_checked: z.number().int().nullable().optional(),
+  message: z.string().nullable().optional(),
+})
+export type AuditAnchorItem = z.infer<typeof AuditAnchorItemSchema>
+
 export const AuditChainResponseSchema = z.object({
   ok: z.boolean(),
   total: z.number().int(),
@@ -152,6 +177,17 @@ export const AuditItemSchema = z.object({
 })
 export type AuditItem = z.infer<typeof AuditItemSchema>
 
+export const AuditLiveItemSchema = z.object({
+  state: z.enum(['ok', 'broken', 'error']),
+  total: z.number().int().nullable().optional(),
+  head_id: z.number().int().nullable().optional(),
+  broken_count: z.number().int().optional(),
+  checked_at: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+  cache_seconds: z.number().int(),
+})
+export type AuditLiveItem = z.infer<typeof AuditLiveItemSchema>
+
 export const AuditResponseSchema = z.object({
   total: z.number().int(),
   limit: z.number().int(),
@@ -161,6 +197,26 @@ export const AuditResponseSchema = z.object({
   items: z.array(AuditItemSchema),
 })
 export type AuditResponse = z.infer<typeof AuditResponseSchema>
+
+export const AuthEventItemSchema = z.object({
+  id: z.number().int(),
+  occurred_at: z.string().nullable().optional(),
+  event: z.string(),
+  reason: z.string().nullable().optional(),
+  user_id: z.string().nullable().optional(),
+  username: z.string().nullable().optional(),
+  session_id: z.string().nullable().optional(),
+  ip: z.string().nullable().optional(),
+  user_agent: z.string().nullable().optional(),
+  count: z.number().int().optional(),
+})
+export type AuthEventItem = z.infer<typeof AuthEventItemSchema>
+
+export const AuthEventListResponseSchema = z.object({
+  items: z.array(AuthEventItemSchema),
+  next_before_id: z.number().int().nullable().optional(),
+})
+export type AuthEventListResponse = z.infer<typeof AuthEventListResponseSchema>
 
 export const BulkReportResultSchema = z.object({
   file_hash: z.string(),
@@ -350,6 +406,26 @@ export const GitInfoSchema = z.object({
   restart_pending: z.boolean().nullable().optional(),
 })
 export type GitInfo = z.infer<typeof GitInfoSchema>
+
+export const HighRiskItemSchema = z.object({
+  id: z.number().int(),
+  category: z.enum(['privilege', 'elevation', 'session', 'credential', 'deletion', 'ops', 'data_access', 'config']),
+  action: z.string(),
+  actor_user_id: z.string().nullable().optional(),
+  actor_username: z.string().nullable().optional(),
+  target_type: z.string(),
+  target_id: z.string().nullable().optional(),
+  detail: z.record(z.string(), z.unknown()),
+  created_at: z.string().nullable().optional(),
+})
+export type HighRiskItem = z.infer<typeof HighRiskItemSchema>
+
+export const HighRiskResponseSchema = z.object({
+  days: z.number().int(),
+  items: z.array(HighRiskItemSchema),
+  next_before_id: z.number().int().nullable().optional(),
+})
+export type HighRiskResponse = z.infer<typeof HighRiskResponseSchema>
 
 export const IncidentEventItemSchema = z.object({
   event_id: z.string(),
@@ -954,6 +1030,43 @@ export const SectionErrorSchema = z.object({
 })
 export type SectionError = z.infer<typeof SectionErrorSchema>
 
+export const SecurityAlertsResponseSchema = z.object({
+  state: z.enum(['ok', 'unknown', 'audit_chain_broken', 'elevate_failures', 'account_failures', 'login_failures']),
+  triggered: z.array(z.enum(['ok', 'unknown', 'audit_chain_broken', 'elevate_failures', 'account_failures', 'login_failures'])),
+  window_minutes: z.number().int(),
+  login_failures: z.number().int(),
+  login_failure_threshold: z.number().int(),
+  accounts_over: z.array(AlertAccountSchema),
+  max_account_failures: z.number().int(),
+  account_failure_threshold: z.number().int(),
+  elevate_failures: z.number().int(),
+  elevate_failure_threshold: z.number().int(),
+  audit_chain: z.enum(['ok', 'broken', 'error']),
+  events_error: z.string().nullable().optional(),
+})
+export type SecurityAlertsResponse = z.infer<typeof SecurityAlertsResponseSchema>
+
+export const SecuritySessionItemSchema = z.object({
+  id: z.string(),
+  user_id: z.string(),
+  username: z.string(),
+  created_at: z.string().nullable().optional(),
+  last_seen_at: z.string().nullable().optional(),
+  expires_at: z.string().nullable().optional(),
+  revoked_at: z.string().nullable().optional(),
+  ip: z.string().nullable().optional(),
+  user_agent: z.string().nullable().optional(),
+  elevated_until: z.string().nullable().optional(),
+  active: z.boolean(),
+  current: z.boolean().optional(),
+})
+export type SecuritySessionItem = z.infer<typeof SecuritySessionItemSchema>
+
+export const SecuritySessionListResponseSchema = z.object({
+  items: z.array(SecuritySessionItemSchema),
+})
+export type SecuritySessionListResponse = z.infer<typeof SecuritySessionListResponseSchema>
+
 export const SlowQueryItemSchema = z.object({
   queryid: z.string().nullable().optional(),
   query: z.string().nullable().optional(),
@@ -990,6 +1103,25 @@ export const StorageCheckSchema = z.object({
 })
 export type StorageCheck = z.infer<typeof StorageCheckSchema>
 
+export const SuspiciousIpItemSchema = z.object({
+  ip: z.string(),
+  failures: z.number().int(),
+  locked: z.number().int(),
+  insecure: z.number().int(),
+  successes: z.number().int(),
+  distinct_users: z.number().int(),
+  first_seen: z.string().nullable().optional(),
+  last_seen: z.string().nullable().optional(),
+})
+export type SuspiciousIpItem = z.infer<typeof SuspiciousIpItemSchema>
+
+export const SuspiciousIpResponseSchema = z.object({
+  hours: z.number().int(),
+  min_failures: z.number().int(),
+  items: z.array(SuspiciousIpItemSchema),
+})
+export type SuspiciousIpResponse = z.infer<typeof SuspiciousIpResponseSchema>
+
 export const TableStatSchema = z.object({
   schema_name: z.string(),
   table: z.string(),
@@ -1022,6 +1154,16 @@ export const TimezoneInfoSchema = z.object({
   utc_offset: z.string().optional(),
 })
 export type TimezoneInfo = z.infer<typeof TimezoneInfoSchema>
+
+export const TotpAdoptionResponseSchema = z.object({
+  users_total: z.number().int(),
+  users_enabled: z.number().int(),
+  admins_total: z.number().int(),
+  admins_enabled: z.number().int(),
+  admins_without_totp: z.array(AdminWithoutTotpSchema),
+  policy_required: z.boolean(),
+})
+export type TotpAdoptionResponse = z.infer<typeof TotpAdoptionResponseSchema>
 
 export const TrendPointSchema = z.object({
   t: z.string(),
@@ -1163,6 +1305,12 @@ export const AdminUploadPreviewSchema = z.object({
   takeaways: z.array(AdminUploadTakeawaySchema),
 })
 export type AdminUploadPreview = z.infer<typeof AdminUploadPreviewSchema>
+
+export const AuditChainStateResponseSchema = z.object({
+  live: AuditLiveItemSchema,
+  anchor: AuditAnchorItemSchema,
+})
+export type AuditChainStateResponse = z.infer<typeof AuditChainStateResponseSchema>
 
 export const ConfigSectionSchema = z.object({
   db_target: z.string().nullable().optional(),
@@ -1544,6 +1692,22 @@ export const adminApi = {
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/retrieval-regression — Get Retrieval Regression */
   getRetrievalRegression: () => requestJSON('/api/admin/retrieval-regression', RetrievalRegressionResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/alerts — Security Alerts */
+  securityAlerts: () => requestJSON('/api/admin/security/alerts', SecurityAlertsResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/audit-chain — Security Audit Chain */
+  securityAuditChain: () => requestJSON('/api/admin/security/audit-chain', AuditChainStateResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/events — Security Events */
+  securityEvents: (query: { event?: 'login.success' | 'login.failure' | 'login.totp_failure' | 'login.locked' | 'login.insecure' | 'logout' | 'elevate.success' | 'elevate.failure' | null; user_id?: string | null; ip?: string | null; since?: string | null; until?: string | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/events${qs(query)}`, AuthEventListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/high-risk — Security High Risk */
+  securityHighRisk: (query: { days?: number; category?: 'privilege' | 'elevation' | 'session' | 'credential' | 'deletion' | 'ops' | 'data_access' | 'config' | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/high-risk${qs(query)}`, HighRiskResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/sessions — Security Sessions */
+  securitySessions: (query: { active_only?: boolean; user_id?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/security/sessions${qs(query)}`, SecuritySessionListResponseSchema, { cache: 'no-store' }),
+  /** POST /api/admin/security/sessions/{session_id}/revoke — Security Revoke Session */
+  securityRevokeSession: (sessionId: string) => requestJSON(`/api/admin/security/sessions/${encodeURIComponent(sessionId)}/revoke`, SecuritySessionItemSchema, jsonBody('POST')),
+  /** GET /api/admin/security/suspicious-ips — Security Suspicious Ips */
+  securitySuspiciousIps: (query: { hours?: number; min_failures?: number } = {}) => requestJSON(`/api/admin/security/suspicious-ips${qs(query)}`, SuspiciousIpResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/totp-adoption — Security Totp Adoption */
+  securityTotpAdoption: () => requestJSON('/api/admin/security/totp-adoption', TotpAdoptionResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/uploads — List Uploads */
   listUploads: (query: { state?: 'quarantined' | 'scanning' | 'clean' | 'infected' | 'blocked' | 'processing' | 'draft' | 'failed' | 'duplicate' | 'published' | 'rejected' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/uploads${qs(query)}`, AdminUploadListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/uploads/{upload_id} — Get Upload */

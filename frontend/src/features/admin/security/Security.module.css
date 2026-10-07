@@ -1,0 +1,32 @@
+/* 安全頁（/app/admin/security）。卡片、表格、按鈕沿用 Admin.module.css；這裡只有狀態膠囊、統計格與篩選列。 */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 0; }
+.stat { background: var(--tf-fill-subtle); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.stat dt { font-size: 12px; color: var(--tf-text-4); }
+.stat dd { margin: 0; font-size: 18px; font-weight: 600; color: var(--tf-text-1); font-variant-numeric: tabular-nums; }
+.statOver dd { color: var(--tf-error-text); }
+.statSub { font-size: 11.5px; font-weight: 400; color: var(--tf-text-4); margin-left: 4px; }
+
+.pill { display: inline-block; border-radius: var(--tf-radius-pill); font-size: 12px; font-weight: 600; padding: 2px 10px; white-space: nowrap; }
+.pOk { background: var(--tf-fill-subtle); color: var(--tf-success-text); box-shadow: inset 0 0 0 1px var(--tf-success-line); }
+.pWarn { background: var(--tf-warn-bg); color: var(--tf-warn-text); }
+.pBad { background: var(--tf-error-bg); color: var(--tf-error-text); }
+.pIdle { background: var(--tf-fill-subtle); color: var(--tf-text-3); }
+
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13px; margin: 0; }
+.kv dt { color: var(--tf-text-4); }
+.kv dd { margin: 0; color: var(--tf-text-1); overflow-wrap: anywhere; }
+
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 0 0 12px; }
+.alertList { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--tf-text-1); }
+.alertList li { overflow-wrap: anywhere; }
+.redName { color: var(--tf-error-text); font-weight: 600; }
+.mono { font-family: var(--tf-mono); font-size: 12px; }
+.confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; white-space: normal; }
+
+@media (max-width: 600px) {
+  .grid { grid-template-columns: 1fr; }
+  .kv { grid-template-columns: 1fr; gap: 2px; }
+  .kv dd { margin-bottom: 6px; }
+  .filters > * { flex: 1 1 100%; }
+}

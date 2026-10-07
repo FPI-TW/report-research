@@ -404,6 +404,11 @@ jobs:
       - name: Admin v2 每人配額
         run: uv run pytest -q tests/test_quota_db.py
 
+      # Admin v2 Security：auth_event 只刪超過 365 天的列、session 只刪結束超過 90 天的；告警的視窗計數（含被限流的
+      # 彙總 count）與「上次成功之後」的連續失敗；可疑 IP、高風險時間線分類；撤銷單一 session 與稽核同交易。一律 rollback。
+      - name: Admin v2 安全維運
+        run: uv run pytest -q tests/test_security_ops_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

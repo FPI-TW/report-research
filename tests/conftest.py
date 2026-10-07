@@ -243,6 +243,9 @@ def _reset_v2_state():
         flags = sys.modules.get("app.services.feature_flags")
         if flags is not None:
             flags.invalidate()
+        security = sys.modules.get("app.services.security_ops")  # 限流彙總的記憶體計數、稽核鏈驗證快取
+        if security is not None:
+            security.reset()
 
     _clear()
     yield

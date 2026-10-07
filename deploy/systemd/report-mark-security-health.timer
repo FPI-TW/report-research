@@ -1,0 +1,13 @@
+[Unit]
+Description=每 2 分鐘探測安全事件狀態（/healthz/security）
+
+[Timer]
+# 開機後等 web 起來（含 BGE-M3 預熱）再開始探測，免得第一輪只拿到「連不上」。
+OnBootSec=5min
+OnUnitActiveSec=2min
+# **刻意不設 Persistent=true**：錯過的探測沒有補跑價值——狀態是「此刻」的性質。
+# 2 分鐘與 AccuracySec=10s 與其他探針一致：incident_handler.sh 的過期與信任窗門檻是照這個週期校準的。
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

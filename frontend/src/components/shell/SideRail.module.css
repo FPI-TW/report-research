@@ -1,4 +1,4 @@
-/* 外層：圖示軌＋歷史對話面板，合計 60↔272。側欄是常駐 chrome，走磨砂玻璃：它透出的是
+/* 外層：圖示軌＋歷史對話面板，合計 60↔320。側欄是常駐 chrome，走磨砂玻璃：它透出的是
    AppShell 的氛圍暈染層（.shell::before）。玻璃只掛在這一層（只有一個 backdrop-filter），
    軌與面板之間用髮絲線分隔。退場路徑（不支援 backdrop-filter／使用者開啟「降低透明度」）
    由 tokens.css 統一改寫 token 值，此處不必重複。 */
@@ -23,16 +23,16 @@
 .nav { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
 .spacer { flex: 1; }
 
-/* 歷史對話面板：寬度 0↔212 過渡即「平滑展開／收合」動畫；內層固定寬度，overflow 裁掉收合時多出的部分，
-   內容不會跟著寬度被擠壓重排。 */
+/* 歷史對話面板：寬度 0↔260 過渡即「平滑展開／收合」動畫；內層固定寬度，overflow 裁掉收合時多出的部分，
+   內容不會跟著寬度被擠壓重排。260 接近 ChatGPT 的比例，對話標題才放得下一行。 */
 .panel {
-  flex: none; height: 100%; width: 212px; overflow: hidden;
+  flex: none; height: 100%; width: 260px; overflow: hidden;
   transition: width var(--tf-dur-3) var(--tf-ease-out), opacity var(--tf-dur-2) var(--tf-ease-out);
 }
 .sidebar[data-collapsed='true'] .panel { width: 0; opacity: 0; pointer-events: none; }
-.panelInner { width: 212px; height: 100%; display: flex; flex-direction: column; }
+.panelInner { width: 260px; height: 100%; display: flex; flex-direction: column; }
 /* 標頭高度與圖示軌的 logo 列對齊（上內距 14、34px 高）。 */
-.header { padding: 14px 8px 12px 16px; display: flex; align-items: center; gap: 4px; }
+.header { padding: 14px 8px 10px 18px; display: flex; align-items: center; gap: 2px; }
 .title { flex: 1; min-width: 0; font-family: var(--tf-display); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; color: var(--tf-text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.toggleFull { border: none; background: none; border-radius: var(--tf-radius-md); width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-4); padding: 0; flex: none; transition: background .12s ease, color .12s ease; }
-.toggleFull:hover { background: rgba(0, 0, 0, 0.05); color: var(--tf-text-2); }
+.headBtn { border: none; background: none; border-radius: var(--tf-radius-md); width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--tf-text-3); padding: 0; flex: none; transition: background .12s ease, color .12s ease; }
+.headBtn:hover, .headBtn[aria-pressed='true'] { background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); }

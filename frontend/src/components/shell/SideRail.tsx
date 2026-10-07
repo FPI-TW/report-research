@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { motion } from 'motion/react'
 import { Icon } from '../primitives/Icon'
 import { Pressable } from '../primitives/Pressable'
@@ -18,12 +19,12 @@ interface SideRailProps {
 }
 
 /**
- * 左側欄（仿 ChatGPT）：圖示軌（60）常駐，展開時在它右邊多出一欄歷史對話面板（212）。
- * 兩者合計 272 ＝ 舊版完整側欄的寬度——雷達表格等處的最小寬度是照「側欄 272」量的，不可加寬。
- * 導覽與帳號只在圖示軌出現一次，面板只放站名、收合鈕與歷史對話。
+ * 左側欄（仿 ChatGPT）：圖示軌（60）常駐，展開時在它右邊多出一欄歷史對話面板（260），合計 320。
+ * 導覽與帳號只在圖示軌出現一次；面板標頭是「站名｜搜尋｜收合」，搜尋框平時收成 icon。
  * 面板收合時寬度過渡到 0（平滑展開／收合）；aria-hidden＋inert 讓它移出無障礙樹與 tab 序。
  */
 export function SideRail({ collapsed, onToggle }: SideRailProps) {
+  const [searchOpen, setSearchOpen] = useState(false)
   return (
     <div className={styles.sidebar} data-collapsed={collapsed}>
       <div className={styles.rail}>
@@ -67,11 +68,15 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
         <div className={styles.panelInner}>
           <div className={styles.header}>
             <span className={styles.title}>廷豐智能研報</span>
-            <Pressable onClick={onToggle} title="收合側欄" aria-label="收合側欄" className={styles.toggleFull} hoverScale={1.1}>
-              <Icon name="panel" size={22} />
+            <Pressable onClick={() => setSearchOpen(o => !o)} title="搜尋對話" aria-label="搜尋對話"
+              aria-pressed={searchOpen} className={styles.headBtn} hoverScale={1.1}>
+              <Icon name="search" size={19} />
+            </Pressable>
+            <Pressable onClick={onToggle} title="收合側欄" aria-label="收合側欄" className={styles.headBtn} hoverScale={1.1}>
+              <Icon name="panel" size={21} />
             </Pressable>
           </div>
-          <ConversationList />
+          <ConversationList searchOpen={searchOpen} onSearchClose={() => setSearchOpen(false)} />
         </div>
       </div>
     </div>

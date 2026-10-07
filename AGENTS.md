@@ -93,6 +93,7 @@ uv run python scripts/ingest_all.py
 | 讀忠實度分數 | 一律經 `app/services/judge_schema.py` 的 `CURRENT_JUDGE_SQL`／`JUDGE_MODEL_SQL`／`is_current_judge`，不自寫過濾；`LEGACY_JUDGE_MODEL` 永遠不跟著生產預設改 |
 | 問答輸入框新增工具 | `frontend/src/features/ask/ComposerTools.tsx` 的 `useTools()` 陣列；已開啟的工具要在收合狀態外露。網搜暫停與否由 `frontend/src/lib/useWebSearch.ts` 的 `useWebSearchPaused()`（功能旗標 `ask.web_search`，讀 `/api/features`）控制，不要刪 web 項；清單為空時 `ComposerTools` 回 null |
 | 加 `--workers` 或提高併發閘 | 先照 `.env.example` 的算式重算 DB 連線數（每行程上限 `DB_POOL_SIZE`＋`DB_MAX_OVERFLOW`＝20） |
+| 要做審批流程、RLS、分區或管理面 SSE | 目前刻意不提供；先讀 `docs/ARCHITECTURE.md` §11 的啟用門檻與前置（審批掛 `security_ops.HIGH_RISK_ACTIONS`、RLS 先有非超級使用者 app role、SSE 先解決串流期間重驗 session），門檻未達不做 |
 | 改 `zh_hant.py`、`faithfulness.is_numeric_claim`、`_SIMILAR_SQL`（`app/services/reading/queries.py`）、`ASK_RERANK_CANDIDATES` | 先讀實測紀錄（`zh_hant.py` 模組 docstring、`faithfulness.py` 的 `_NUMERIC_RE` 上方、`queries.py` 的 `_SIMILAR_SQL` 周邊註解、`docs/CAPACITY.md`）；參數都是量出來的 |
 
 ## 架構不變量（摘要；完整版見 `docs/ARCHITECTURE.md`）

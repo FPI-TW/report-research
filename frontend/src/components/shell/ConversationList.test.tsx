@@ -15,7 +15,7 @@ function wrap(entries = ['/ask']) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={entries}><ConversationList /></MemoryRouter>
+      <MemoryRouter initialEntries={entries}><ConversationList searchOpen={false} onSearchClose={() => {}} /></MemoryRouter>
     </QueryClientProvider>,
   )
 }
@@ -107,20 +107,35 @@ test('刪除成功：不顯示錯誤訊息', async () => {
   expect(screen.queryByRole('alert')).toBeNull()
 })
 
-function wrapWith(handler: (url: URL) => unknown[]) {
+function wrapWith(handler: (url: URL) => unknown[], searchOpen = true) {
   const fetchMock = vi.fn(async (input: string) =>
     new Response(JSON.stringify(handler(new URL(input, 'http://x'))), { status: 200 }))
   vi.stubGlobal('fetch', fetchMock)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/ask']}><ConversationList /></MemoryRouter>
+      <MemoryRouter initialEntries={['/ask']}>
+        <ConversationList searchOpen={searchOpen} onSearchClose={onSearchClose} />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
   return fetchMock
 }
 
 const conv = (i: number) => ({ conversation_id: `c${i}`, title: `對話 ${i}` })
+const onSearchClose = vi.fn()
+
+test('搜尋框平時收起（由側欄標頭的搜尋 icon 展開）', async () => {
+  wrapWith(() => [conv(1)], false)
+  await screen.findByText('對話 1')
+  expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+})
+
+test('搜尋框按 Escape 請側欄收起搜尋', async () => {
+  wrapWith(() => [conv(1)])
+  fireEvent.keyDown(screen.getByRole('searchbox', { name: '搜尋歷史對話' }), { key: 'Escape' })
+  expect(onSearchClose).toHaveBeenCalled()
+})
 
 test('搜尋：停止輸入後才帶 q 查詢，且從第一頁開始', async () => {
   const fetchMock = wrapWith(url => (url.searchParams.get('q') === '先進封裝' ? [conv(7)] : [conv(1)]))

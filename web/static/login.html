@@ -92,6 +92,105 @@
 /* end:anim-js */
 
 /* region:anim-css (lane login-anim-css)：03 閱讀頁、04 觀點雷達、05 每日簡報 */
+/* 三段都是純 CSS keyframes（共用定義在 region:keyframes）。基本樣式＝最終狀態：
+   減少動態時全域規則關掉 animation，螢光已掃滿、chip 已出現、點已落定、三條重點都在。 */
+.anim-reading .rd, .anim-radar .rdr, .anim-brief .br {
+  width: 100%; min-width: 0; margin: auto 0;
+}
+.anim-reading .rd-mono, .anim-brief .br-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+/* 03 閱讀頁（4.8s）：原文句底下的螢光由左掃入，接著「重點摘錄」chip 彈出 */
+.anim-reading .rd { display: flex; flex-direction: column; gap: 8px; }
+.anim-reading .rd-page {
+  position: relative; display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px; border-radius: 8px; background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.07);
+}
+.anim-reading .rd-tag { position: absolute; top: 6px; right: 9px; font-size: 9.5px; letter-spacing: .08em; color: #6b6b70; }
+.anim-reading .rd-line { display: block; height: 4px; border-radius: 2px; background: #dcdad3; }
+.anim-reading .rd-quote { position: relative; display: block; height: 4px; }
+.anim-reading .rd-mark {
+  position: absolute; left: -3px; right: -3px; top: -3px; bottom: -3px;
+  border-radius: 3px; background: #faedc4; transform-origin: left center;
+  animation: tfMark 4.8s ease-out 0s infinite both;
+}
+.anim-reading .rd-quote-text { position: relative; display: block; height: 4px; border-radius: 2px; background: #c9b48a; }
+.anim-reading .rd-foot { display: flex; justify-content: flex-end; }
+.anim-reading .rd-chip {
+  font-size: 11px; font-weight: 600; line-height: 1; padding: 5px 9px; border-radius: 999px;
+  background: #f8f1e0; color: #8a5a0f; white-space: nowrap;
+  animation: tfPop 4.8s ease-out .1s infinite both;
+}
+
+/* 04 觀點雷達（5s）：六家券商的灰點依序落下，金點最後落下並持續脈衝 */
+.anim-radar .rdr { display: flex; flex-direction: column; gap: 10px; }
+.anim-radar .rdr-track { position: relative; height: 20px; }
+.anim-radar .rdr-axis { position: absolute; left: 0; right: 0; top: 9.5px; height: 1px; background: #d6d5d0; }
+.anim-radar .rdr-dot {
+  position: absolute; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: #b0afa9;
+  animation: tfDrop 5s ease-out 0s infinite both;
+}
+.anim-radar .rdr-dot:nth-child(2) { left: 4%; }
+.anim-radar .rdr-dot:nth-child(3) { left: 19%; animation-delay: .1s; }
+.anim-radar .rdr-dot:nth-child(4) { left: 31%; animation-delay: .2s; }
+.anim-radar .rdr-dot:nth-child(5) { left: 38%; animation-delay: .3s; }
+.anim-radar .rdr-dot:nth-child(6) { left: 74%; animation-delay: .4s; }
+.anim-radar .rdr-dot:nth-child(7) { left: 90%; animation-delay: .5s; }
+.anim-radar .rdr-gold {
+  position: absolute; top: 4px; left: 55%; width: 12px; height: 12px;
+  animation: tfDrop 5s ease-out .65s infinite both;
+}
+.anim-radar .rdr-gold-core {
+  display: block; width: 12px; height: 12px; border-radius: 50%; background: #ae7415;
+  animation: tfPulse 1.6s ease-out 1.2s infinite;
+}
+.anim-radar .rdr-note { font-size: 11.5px; color: #6b6b66; }
+
+/* 05 每日簡報（6s）：三家券商 → 金點沿線送出 → 今日簡報依序長出三條重點 */
+.anim-brief .br { display: flex; align-items: center; }
+.anim-brief .br-src { flex: none; width: 118px; display: flex; flex-direction: column; gap: 6px; }
+.anim-brief .br-card {
+  display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 8px;
+  background: #fff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.07);
+  animation: tfRow 6s ease-out 0s infinite both;
+}
+.anim-brief .br-card:nth-child(2) { animation-delay: .22s; }
+.anim-brief .br-card:nth-child(3) { animation-delay: .44s; }
+.anim-brief .br-card-name { flex: none; font-size: 10.5px; font-weight: 600; color: #5d5d58; white-space: nowrap; }
+.anim-brief .br-card-line { flex: 1; min-width: 0; height: 4px; border-radius: 2px; background: #e3e2dd; }
+/* 連接線 44px、金點 6px，tfTravel 的 translateX(38px) 剛好走到線尾；6s 週期下 10%＝0.6s */
+.anim-brief .br-link {
+  flex: none; position: relative; width: 44px; height: 2px; margin: 0 8px;
+  border-radius: 1px; background: #e3e2dd;
+}
+.anim-brief .br-pulse {
+  position: absolute; left: 0; top: -2px; width: 6px; height: 6px; border-radius: 999px;
+  background: #ae7415; opacity: 0;
+  animation: tfTravel 6s ease-in-out .7s infinite both;
+}
+.anim-brief .br-pulse:nth-child(2) { animation-delay: 1.2s; }
+.anim-brief .br-pulse:nth-child(3) { animation-delay: 1.7s; }
+.anim-brief .br-out {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; border-radius: 10px; background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.07);
+}
+.anim-brief .br-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.anim-brief .br-title { font-size: 11.5px; font-weight: 600; color: #1d1d1f; white-space: nowrap; }
+.anim-brief .br-date { font-size: 10.5px; color: #8a5a0f; }
+.anim-brief .br-item {
+  display: flex; align-items: center; gap: 7px;
+  animation: tfRow 6s ease-out 1.3s infinite both;
+}
+.anim-brief .br-item:nth-child(3) { animation-delay: 1.8s; }
+.anim-brief .br-item:nth-child(4) { animation-delay: 2.3s; }
+.anim-brief .br-bullet { flex: none; width: 5px; height: 5px; border-radius: 999px; background: #ae7415; }
+.anim-brief .br-item-body { flex: 1; min-width: 0; }
+.anim-brief .br-item-line { display: block; height: 4px; border-radius: 2px; background: #dcdad3; }
+.anim-brief .br-chip {
+  flex: none; font-size: 10px; font-weight: 700; line-height: 1.5; padding: 0 6px;
+  border-radius: 999px; background: #f8f1e0; color: #8a5a0f;
+}
 /* end:anim-css */
 </style>
 </head>
@@ -173,6 +272,16 @@
 <!-- end:reading-head -->
       <div class="tile-anim anim-reading" id="anim-reading" aria-hidden="true">
 <!-- region:anim-reading (lane login-anim-css) -->
+        <div class="rd">
+          <div class="rd-page">
+            <span class="rd-tag rd-mono">PDF</span>
+            <span class="rd-line" style="width:68%"></span>
+            <span class="rd-quote"><span class="rd-mark"></span><span class="rd-quote-text"></span></span>
+            <span class="rd-line" style="width:94%"></span>
+            <span class="rd-line" style="width:56%"></span>
+          </div>
+          <div class="rd-foot"><span class="rd-chip">重點摘錄</span></div>
+        </div>
 <!-- end:anim-reading -->
       </div>
     </article>
@@ -186,6 +295,15 @@
 <!-- end:radar-head -->
       <div class="tile-anim anim-radar" id="anim-radar" aria-hidden="true">
 <!-- region:anim-radar (lane login-anim-css) -->
+        <div class="rdr">
+          <div class="rdr-track">
+            <span class="rdr-axis"></span>
+            <span class="rdr-dot"></span><span class="rdr-dot"></span><span class="rdr-dot"></span>
+            <span class="rdr-dot"></span><span class="rdr-dot"></span><span class="rdr-dot"></span>
+            <span class="rdr-gold"><span class="rdr-gold-core"></span></span>
+          </div>
+          <span class="rdr-note">一點＝一家券商</span>
+        </div>
 <!-- end:anim-radar -->
       </div>
     </article>
@@ -199,6 +317,20 @@
 <!-- end:brief-head -->
       <div class="tile-anim anim-brief" id="anim-brief" aria-hidden="true">
 <!-- region:anim-brief (lane login-anim-css) -->
+        <div class="br">
+          <div class="br-src">
+            <div class="br-card"><span class="br-card-name">券商 A</span><span class="br-card-line"></span></div>
+            <div class="br-card"><span class="br-card-name">券商 B</span><span class="br-card-line"></span></div>
+            <div class="br-card"><span class="br-card-name">券商 C</span><span class="br-card-line"></span></div>
+          </div>
+          <div class="br-link"><span class="br-pulse"></span><span class="br-pulse"></span><span class="br-pulse"></span></div>
+          <div class="br-out">
+            <div class="br-head"><span class="br-title">今日簡報</span><span class="br-date br-mono" id="br-date">--/--</span></div>
+            <div class="br-item"><span class="br-bullet"></span><span class="br-item-body"><span class="br-item-line" style="width:90%"></span></span><span class="br-chip br-mono">A</span></div>
+            <div class="br-item"><span class="br-bullet"></span><span class="br-item-body"><span class="br-item-line" style="width:74%"></span></span><span class="br-chip br-mono">B</span></div>
+            <div class="br-item"><span class="br-bullet"></span><span class="br-item-body"><span class="br-item-line" style="width:60%"></span></span><span class="br-chip br-mono">C</span></div>
+          </div>
+        </div>
 <!-- end:anim-brief -->
       </div>
     </article>
@@ -244,6 +376,16 @@
 </script>
 <script>
 /* region:anim-css-script (lane login-anim-css)：只放每日簡報日期等極少量 JS */
+(function () {
+  // 每日簡報卡的日期（MM/DD，本地時間）；失敗時保留靜態佔位 --/--，不影響登入。
+  try {
+    var el = document.getElementById("br-date");
+    if (!el) return;
+    var d = new Date();
+    var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+    el.textContent = pad(d.getMonth() + 1) + "/" + pad(d.getDate());
+  } catch (e) { /* 佔位即可 */ }
+})();
 /* end:anim-css-script */
 </script>
 </body>

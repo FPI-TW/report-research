@@ -280,7 +280,7 @@ DB 連線數算式（`.env.example`）：`worker 數 × (DB_POOL_SIZE + DB_MAX_O
 
 - **現況**：沒有任何表 `ENABLE ROW LEVEL SECURITY`、沒有 policy。問答紀錄的使用者隔離在應用層兩道：路由在串流前檢查參照擁有權，服務層 SQL 帶 `user_id IS NOT DISTINCT FROM :uid`；`app/services/answer.py` 的 qa_log 讀寫函式 `user_id` 是必填關鍵字參數，`tests/test_qa_isolation.py` 以 AST 守每個呼叫點。`usage_counter` 只經 `app/services/usage_events.py`、`app/services/quota.py` 等服務層讀寫。
 - **不啟用的理由**：
-  - 應用以超級使用者連線（本機是 `postgres`，見 `.env.example`；RDS 是 master 帳號，同時是表的擁有者）。超級使用者與帶 BYPASSRLS 的角色一律繞過 RLS，表擁有者在沒有 `FORCE ROW LEVEL SECURITY` 時也不受 policy 約束——現在開等於沒開，還會給人已有防護的錯覺。
+  - 應用連線的帳號都繞得過 RLS：測試環境（辦公室主機）以超級使用者 `postgres` 連線（見 `.env.example`）；正式環境（EC2＋RDS）以 app 帳號連線，它不是超級使用者，但擁有 `research` schema 的所有表。超級使用者與帶 BYPASSRLS 的角色一律繞過 RLS，表擁有者在沒有 `FORCE ROW LEVEL SECURITY` 時也不受 policy 約束——現在開等於沒開，還會給人已有防護的錯覺。
   - 連線池（`SessionFactory`）跨請求重用連線：policy 若讀 session 變數，必須每筆交易 `SET LOCAL`，用 `SET` 會流到下一個借用者（與 `relax_statement_timeout` 用 `SET LOCAL` 同一個理由），漏設時依 policy 寫法不是全擋就是全放。
   - 批次（sync、摘要、刪帳執行、每晚彙總）與管理面（待複核、監控、分析）刻意看全部列，都要另一個帶 BYPASSRLS 的角色。
   - 目前只有一個應用連這個 DB，而它的隔離已有上述 AST 守門。

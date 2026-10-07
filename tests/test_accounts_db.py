@@ -431,7 +431,7 @@ async def _seed_qa(api, user_id: str, *, with_review: bool = False) -> str:
 
 
 async def _seed_usage(api, user_id: str) -> None:
-    """放該使用者的 usage_counter、user_quota、llm_usage_daily 各一列（revision 0009）。"""
+    """放該使用者的 usage_counter、user_quota、llm_usage_daily 各一列（revision 0011）。"""
     if isinstance(api, FakeAccounts):
         api.seed_usage(user_id)
         return

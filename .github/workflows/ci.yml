@@ -386,7 +386,7 @@ jobs:
       - name: 研報上傳 worker
         run: uv run pytest -q tests/test_upload_worker_db.py
 
-      # Admin v2 接線（revision 0009）：用量 upsert 的 hits 相加與 users 取 GREATEST、已刪除帳號的個人計數被濾掉、
+      # Admin v2 接線（revision 0011）：用量 upsert 的 hits 相加與 users 取 GREATEST、已刪除帳號的個人計數被濾掉、
       # llm_usage_daily 的 NULL 使用者靠 COALESCE 唯一索引併成一列；功能旗標的 text[]／uuid[] 讀回。一律 rollback。
       - name: Admin v2 用量收集與功能旗標
         run: uv run pytest -q tests/test_usage_events_db.py
@@ -418,6 +418,16 @@ jobs:
       # 作用域 text[]／uuid[] 往返、匯出匯入以帳號名稱往返且有錯誤整份不寫、PUT 經真的 DB 讀回。一律 rollback。
       - name: Admin v2 功能旗標寫入與匯出匯入
         run: uv run pytest -q tests/test_feature_flags_db.py
+
+      # 對外 API 用戶端：建立後金鑰 resolve 得到、停用與輪替立即生效、每日額度到上限＋1 被拒且換日重置、
+      # 刪除時授權範圍與用量 cascade、寫入與稽核同交易且 detail 不含原始金鑰或 key_hash。
+      - name: 對外 API 用戶端
+        run: uv run pytest -q tests/test_api_clients_db.py
+
+      # 對外 API 的資料邊界：file-url 用的查詢取不到隱藏、草稿與授權範圍外的研報；混合檢索的 dense 與
+      # 字面兩路帶 entitlement 時，授權範圍外的研報不會出現。
+      - name: 對外 API 資料邊界
+        run: uv run pytest -q tests/test_external_api_db.py
 
   secrets:
     name: secret 掃描（gitleaks）

@@ -13,7 +13,7 @@ llm_usage.summarize_online）。
   `usage_counter`、`user_quota`）都必須是空的（剛 `alembic upgrade head` 的庫，例如 CI 的 schema job 或本機 devdb
   上的暫存庫）；不是空的就 skip（`REPORT_MARK_REQUIRE_DB=1` 時直接失敗）。自己 commit 的列在 finally 刪掉。
 
-跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0009）就 skip。
+跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0011）就 skip。
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ class QuotaDbTests(unittest.TestCase):
         except Exception as exc:
             msg = repr(exc)
             if any(k in msg for k in ("Connect", "connect", "refused", "does not exist", "Timeout")):
-                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0009")
+                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0011")
             raise
 
     def test_atomic_charge_caps_and_records_over(self):
@@ -333,7 +333,7 @@ class QuotaConcurrencyTests(unittest.TestCase):
         try:
             got = asyncio.run(counts())
         except Exception as exc:  # noqa: BLE001
-            _skip_or_raise(exc, "DB 不可用或尚未套 revision 0009")
+            _skip_or_raise(exc, "DB 不可用或尚未套 revision 0011")
         if any(got):
             tables = "research_report／report_upload／usage_counter／user_quota"
             _skip_or_raise(RuntimeError(f"{tables}＝{tuple(got)} 不是空的"),

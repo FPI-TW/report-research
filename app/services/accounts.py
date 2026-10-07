@@ -78,7 +78,7 @@ ADMIN_DEFAULT_SCOPES: frozenset[str] = frozenset({
     SCOPE_ADMIN, "accounts.manage", "audit.read", "review.manage", "ops.read", "reports.manage", "analytics.read",
 })
 # 必須另外授予的 scope。改這組要寫 revision 改 research.user_scope 的 CHECK（db/expected_constraints.txt）。
-GRANTABLE_SCOPES: frozenset[str] = frozenset({"qa_content.read", "ops.operate"})
+GRANTABLE_SCOPES: frozenset[str] = frozenset({"qa_content.read", "ops.operate", "api_clients.manage"})
 ALL_SCOPES: frozenset[str] = ADMIN_DEFAULT_SCOPES | GRANTABLE_SCOPES
 # 重新驗證密碼後的權限提升視窗（user_session.elevated_until）。
 ELEVATION_SECONDS = 600
@@ -232,7 +232,7 @@ class DeletionResidue:
     user_session: int = 0
     identifiable: bool = False  # app_user 這一列又帶著可識別或可登入的資料
     pending_deletion: bool = False  # 還有尚未執行的排程（例如還原了執行前的備份）
-    # Admin v2（revision 0009）的個人資料。auth_event 刻意不在這裡：刪帳時保留（見模組 docstring 第 2 點）。
+    # Admin v2（revision 0011）的個人資料。auth_event 刻意不在這裡：刪帳時保留（見模組 docstring 第 2 點）。
     usage_counter: int = 0
     user_quota: int = 0
     llm_usage_daily: int = 0
@@ -780,7 +780,7 @@ async def admin_revoke_session(session_id: str, *, actor_id: str | None, via: st
     return _session_info(info)
 
 
-# ───── 登入與安全事件（research.auth_event，revision 0009）─────
+# ───── 登入與安全事件（research.auth_event，revision 0011）─────
 
 # 事件類型的唯一定義（DB 只限形狀）。reason 是各事件的細分原因（形狀 `^[a-z][a-z_]{0,31}$`）：
 #   login.success       reason：password（單一步驟）／totp（兩步驟完成）
@@ -1532,7 +1532,7 @@ async def _purge_user(session, user_id: str) -> dict[str, int]:
     sessions = (await session.execute(
         text("DELETE FROM research.user_session WHERE user_id = :id"), params,
     )).rowcount or 0
-    # Admin v2 的個人資料（revision 0009）。auth_event 刻意不刪：見模組 docstring 第 2 點。
+    # Admin v2 的個人資料（revision 0011）。auth_event 刻意不刪：見模組 docstring 第 2 點。
     counters = (await session.execute(
         text("DELETE FROM research.usage_counter WHERE user_id = :id"), params,
     )).rowcount or 0

@@ -132,8 +132,10 @@ def _valid_uuid(s) -> bool:
 # 研報上傳的收檔與查詢（web/routers/admin_uploads.py）同理：deps.upload_intake.X；審核同理：deps.upload_review.X。
 # DB 快照、慢查詢、趨勢與事件趨勢（web/routers/admin_db.py、admin_monitoring.py）同理：deps.db_insights.X。
 # 每人配額（ask.py、admin_exports.py 的計數，admin_quota.py、me_quota.py 的查詢與覆寫）同理：deps.quota.X。
+# API 用戶端（對外 API 的認證 web/external_auth.py 與管理端 web/routers/admin_api_clients.py）同理：deps.api_clients.X。
 from app.services import (  # noqa: E402
     accounts,
+    api_clients,
     data_health,
     db_insights,
     diagnostics,
@@ -207,6 +209,7 @@ __all__ = [
     "_with_heartbeat",
     "accounts",
     "answer_question",
+    "api_clients",
     "conversation_is_foreign",
     "data_health",
     "db_insights",

@@ -11,6 +11,7 @@ from typing import Optional, Sequence
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.entitlement import Entitlement
 from app.services.rows import ChunkRow
 from app.services.visibility import visible_report_sql
 
@@ -514,6 +515,19 @@ def _meta_filters(
     return conds
 
 
+def _entitlement_filters(params: dict, entitlement: Optional[Entitlement]) -> list[str]:
+    """API 用戶端 entitlement 的 WHERE 條件（dense／字面雙路共用，別名固定 `r`）。
+
+    `None` 回空清單、不碰 params：未帶 entitlement 的既有呼叫端送出的 SQL 與參數
+    必須逐字不變（`tests/test_retrieval_entitlement_sql.py` 釘住）。
+    """
+    if entitlement is None:
+        return []
+    clause, binds = entitlement.sql("r")
+    params.update(binds)
+    return [clause]
+
+
 def _meta_columns(chunk_alias: str) -> str:
     """dense / 字面雙路共用的 SELECT 欄位列表；首欄 chunk_id 供跨路去重。
 
@@ -539,6 +553,8 @@ async def search_chunks_meta(
     relates_stock: Optional[bool] = None,
     relates_futures: Optional[bool] = None,
     report_type: Optional[str] = None,
+    *,
+    entitlement: Optional[Entitlement] = None,
 ):
     """掃描前 scan 個最近鄰片段，連同報告 metadata 回傳（供伺服器分組）。
 
@@ -560,9 +576,13 @@ async def search_chunks_meta(
     params: dict = {"q": _vec_literal(query_embedding), "scan": scan}
     # 可見性片段與 metadata 過濾同一種性質（都是 HNSW 之後 recheck 的 post-filter，靠
     # iterative_scan 補足 LIMIT）；被隱藏的研報極少，對召回深度沒有可量的影響。
-    conds = _meta_filters(
-        params, market, instrument_type, relates_stock, relates_futures, report_type
-    ) + [visible_report_sql("r")]
+    # entitlement 同理是 post-filter，在 SQL 內由 iterative_scan 補足 LIMIT；不可改成
+    # Python 事後過濾（scan 名額會被不可見的研報吃掉，k 與召回數一起偏掉）。
+    conds = (
+        _meta_filters(params, market, instrument_type, relates_stock, relates_futures, report_type)
+        + _entitlement_filters(params, entitlement)
+        + [visible_report_sql("r")]
+    )
     where = "WHERE " + " AND ".join(conds)
     # ef_search 須 ≥ scan，否則 HNSW 最多只回 ef_search 列（預設 40 會默默截斷）；
     # iterative_scan 讓帶過濾的查詢持續掃到滿足 LIMIT 為止（pgvector 0.8+）
@@ -696,6 +716,7 @@ async def search_chunks_lexical(
     relates_stock: Optional[bool] = None,
     relates_futures: Optional[bool] = None,
     report_type: Optional[str] = None,
+    entitlement: Optional[Entitlement] = None,
 ) -> tuple[list[ChunkRow], int]:
     """字面比對路：content_norm 同時含全部 LIKE pattern 的片段，依向量距離排序。
 
@@ -722,9 +743,12 @@ async def search_chunks_lexical(
         params["limit"] = limit
     for i, pat in enumerate(term_patterns):
         params[f"t{i}"] = pat
+    # entitlement 與 metadata 過濾一起進 `_lexical_sql` 的 cap CTE（per_report／不限
+    # limit 兩條分支共用同一個 WHERE）：不可見的研報連 `:cap` 名額都不佔，也不改
+    # cap 前 `ORDER BY c.id` 的可重現排序——只是候選集合變小。
     extra = _meta_filters(
         params, market, instrument_type, relates_stock, relates_futures, report_type
-    )
+    ) + _entitlement_filters(params, entitlement)
     sql = _lexical_sql(len(term_patterns), extra, per_report, limit=limit)
     # **force_custom_plan 是這條查詢能用的前提，不是微調。** asyncpg 經 SQLAlchemy 對每條
     # 連線快取 prepared statement，PG 在同一 statement 跑過 5 次後可能改用 generic plan；

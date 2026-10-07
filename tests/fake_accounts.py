@@ -150,7 +150,7 @@ class FakeAccounts:
         self._deletion_ids = itertools.count(1)
         self.qa_logs: dict[str, str] = {}  # qa_log.id → user_id
         self.review_subjects: set[str] = set()  # review_state.subject_id
-        # Admin v2（revision 0009）：只模擬刪帳需要的部分。鍵含 user_id，值是計數或上限。
+        # Admin v2（revision 0011）：只模擬刪帳需要的部分。鍵含 user_id，值是計數或上限。
         self.usage_counters: dict[tuple[str, str, str], int] = {}  # (user_id, day, kind) → count
         self.user_quotas: dict[tuple[str, str], int | None] = {}  # (user_id, kind) → daily_limit
         self.llm_usage: dict[tuple[str, str | None, str, str], int] = {}  # (day, user_id, task, model) → calls

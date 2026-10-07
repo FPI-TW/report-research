@@ -10,10 +10,10 @@
 06e3a1d33e765e65f7ecd7987453220e21b878d5:frontend/src/features/account/useElevationGate.test.tsx:generic-api-key:37
 06e3a1d33e765e65f7ecd7987453220e21b878d5:frontend/src/features/account/useElevationGate.test.tsx:generic-api-key:65
 7e04d1c8e19975b13a8f046f67d16baba756e761:tests/test_schema_baseline.py:generic-api-key:153
-
-# 2026-10-07：另一條開發線（對外 API，分支 Kashionz/external-api、Kashionz/ext-api-admin，PR #334）的測試以
-# 'x'.repeat(43)／"x" * 43 這類明顯的假值拼出 API 金鑰形狀，被 generic-api-key 判成金鑰。CI 掃描遠端全部分支
-# 的歷史，所以這幾筆也會讓其他 PR 的 gitleaks 失敗；只豁免引入它們的確切位置。
+#
+# 2026-10-07：對外 API 管理端測試的假 API 金鑰（`rmk_0123abcd_`＋填充字元、`rmk_fedcba98_`＋填充字元）
+# 以 `RAW_KEY = "rmk_…"` 字面值寫入，被 generic-api-key 判成金鑰。已在後續 commit 改成執行期組出；
+# 這裡只豁免引入它們的那兩個 commit（lane 分支 Kashionz/ext-api-admin 已在遠端，不改寫歷史）。
+ff1e60433ab8275e898909d394b7d5face66d822:tests/test_admin_api_clients.py:generic-api-key:25
 feeb0fee1727e94ca7bdcbaf91dbb10eb2f42c55:frontend/src/features/admin/AdminApiClientsPage.test.tsx:generic-api-key:16
 feeb0fee1727e94ca7bdcbaf91dbb10eb2f42c55:frontend/src/features/admin/AdminApiClientsPage.test.tsx:generic-api-key:17
-ff1e60433ab8275e898909d394b7d5face66d822:tests/test_admin_api_clients.py:generic-api-key:25

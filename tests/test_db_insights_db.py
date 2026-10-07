@@ -1,4 +1,4 @@
-"""DB 快照、慢查詢偵測、趨勢快照與事件趨勢對真的 PostgreSQL 成立（app/services/db_insights.py，revision 0009）。
+"""DB 快照、慢查詢偵測、趨勢快照與事件趨勢對真的 PostgreSQL 成立（app/services/db_insights.py，revision 0011）。
 
 驗：
 - 即時快照五段的系統目錄查詢在真庫上都能跑、型別正確、連線數對得上 max_connections；SET LOCAL 只活到交易結束。
@@ -11,7 +11,7 @@
 - 事件趨勢：每週×元件×嚴重度件數（台北時間週一起）、MTTR／p50／p90 只算 resolved、lost 只計件數、常見 reason；
   批次失敗率（Result 非 success 才算失敗、分母是 finished）。
 
-跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0009）就 skip。**一律 rollback、絕不 commit**——
+跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——
 本機預設連到的是生產庫。時間一律放在 2001 年（`NOW`），保留期刪除與每日彙總的範圍都由 `now` 推得，碰不到庫裡
 真的快照；事件與批次以隨機 host／unit 圈住，查詢區間也限在 2001 年。
 """
@@ -67,7 +67,7 @@ def _run(fn):
         _skip_or_raise(exc, "連不上 PostgreSQL")
     except Exception as exc:  # noqa: BLE001
         if "db_stat_snapshot" in str(exc) and "does not exist" in str(exc):
-            _skip_or_raise(exc, "庫還沒套 revision 0009")
+            _skip_or_raise(exc, "庫還沒套 revision 0011")
         raise
 
 

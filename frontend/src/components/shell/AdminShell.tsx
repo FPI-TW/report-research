@@ -23,6 +23,7 @@ const NAV: readonly NavEntry[] = [
   { to: '/admin/security', icon: 'alertTriangle', label: '安全', scope: 'audit.read' },
   { to: '/admin/quota', icon: 'filter', label: '配額', scope: 'accounts.manage' },
   { to: '/admin/flags', icon: 'compass', label: '功能旗標', scope: 'ops.read' },
+  { to: '/admin/api-clients', icon: 'globe', label: 'API 用戶端', scope: 'api_clients.manage' },
   { to: '/admin/audit', icon: 'clock', label: '操作紀錄' },
 ]
 

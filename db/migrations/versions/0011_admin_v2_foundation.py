@@ -1,14 +1,18 @@
 """Admin v2 共用資料表：用量計數、個人配額、登入事件、功能旗標、線上 LLM 用量、每日彙總與 DB 統計快照
 
-Revision ID: 0009
-Revises: 0008
+Revision ID: 0011
+Revises: 0010
 Create Date: 2026-10-07
 """
 # 慣例（tests/test_schema_migrations.py 守）：只寫 SQL，放在 UPGRADE_SQL；不用 autogenerate。
 # 改 CHECK 約束要同步重生 db/expected_constraints.txt；新增不可重建的表要動備份清單。
 #
 # Admin v2 的 schema 一次建齊在這個 revision（Wave 0），五條平行 lane（Analytics、Security、Quota、
-# Flags、DB／事件）都不再碰 migration；真的要修正由整合負責人分配 0010 以後的編號。
+# Flags、DB／事件）都不再碰 migration；真的要修正由整合負責人分配 0012 以後的編號。
+#
+# 編號：開發時是 0009（接 0008），併回 main 時對外 API 的 0010 已部署到正式環境（接 0008），所以改號成
+# 0011 接在 0010 之後、維持單一 head。不反過來讓 0010 接在 0009 之後：正式環境已 stamp 在 0010 卻沒有 v2 的表，
+# 版本鏈會與實際的表不符，0009 永遠不會被套用。
 #
 # 八張表與刪帳、備份、保留期的對照（帶 user_id 的表，刪帳由 app/services/accounts.py 的
 # `_purge_user` 在同一筆交易處理；`deletion_residue` 檢查同一組表）：
@@ -35,8 +39,8 @@ from alembic import op
 
 from app.services.schema_migrations import run_sql_script
 
-revision = "0009"
-down_revision = "0008"
+revision = "0011"
+down_revision = "0010"
 branch_labels = None
 depends_on = None
 

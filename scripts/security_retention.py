@@ -41,7 +41,7 @@ async def run(purge=security_ops.purge_expired) -> int:
     try:
         res = await purge()
     except Exception as exc:
-        print(f"安全資料保留期清除失敗（DB 不可用或尚未套 revision 0009）：{exc!r}", file=sys.stderr)
+        print(f"安全資料保留期清除失敗（DB 不可用或尚未套 revision 0011）：{exc!r}", file=sys.stderr)
         return EXIT_ERROR
     print(f"已刪除 auth_event {res.auth_events} 列（超過 {res.auth_event_days} 天）、"
           f"user_session {res.sessions} 列（結束超過 {res.session_days} 天）")

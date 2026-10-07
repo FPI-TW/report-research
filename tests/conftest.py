@@ -253,6 +253,24 @@ def _reset_v2_state():
 
 
 @pytest.fixture(autouse=True)
+def _reset_external_rate_limit():
+    """`web.external_auth` 的每分鐘限流 token bucket 每題前後各清一次（理由同上面的監控快取）。
+
+    bucket 以 client id 為鍵：兩個測試用同一個假用戶端 id 時，前一題用掉的 token 會讓下一題
+    莫名 429。同樣不主動 import——模組沒載入就沒有狀態要清。
+    """
+
+    def _clear() -> None:
+        mod = sys.modules.get("web.external_auth")
+        if mod is not None:
+            mod.reset_state()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _stub_feature_flag_db():
     """功能旗標的讀取（`app.services.feature_flags` 沒給 session_factory 時用的 `SessionFactory`）預設讀成「沒有
     任何覆寫」：問答、上傳等既有測試在 registry 預設下跑（＝只看環境變數，與 v1 相同），而不是去讀

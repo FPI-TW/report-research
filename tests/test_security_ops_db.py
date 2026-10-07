@@ -1,11 +1,11 @@
-"""Security Operations 的 SQL 對真的 PostgreSQL 成立（`app/services/security_ops.py` ＋ revision 0009 的 auth_event）。
+"""Security Operations 的 SQL 對真的 PostgreSQL 成立（`app/services/security_ops.py` ＋ revision 0011 的 auth_event）。
 
 - 保留期清除：auth_event 只刪超過 365 天的列（364 天的留著，設定改小也一樣）；session 只刪結束超過 90 天的。
 - 告警判斷：視窗內全站失敗（含被限流的彙總 count）、同一帳號「上次成功之後」的連續失敗、權限提升失敗。
 - 事件清單的篩選與帳號名稱 join（已刪除帳號不顯示名稱）、可疑 IP 彙整、高風險時間線分類、TOTP 採用率。
 - 管理員撤銷單一 session：稽核寫不進去時撤銷一起 rollback（同交易）。
 
-跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0009）就 skip。**一律 rollback、絕不 commit**——
+跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——
 本機預設連到的是生產庫。security_ops 吃 session_factory 參數，accounts 換掉模組的 SessionFactory，兩者都綁在
 外層交易上、commit 只釋放 savepoint（同 tests/test_accounts_db.py）。
 """
@@ -94,7 +94,7 @@ class SecurityOpsDbTests(unittest.TestCase):
         except Exception as exc:
             msg = repr(exc)
             if any(k in msg for k in ("Connect", "connect", "refused", "does not exist", "Timeout")):
-                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0009")
+                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0011")
             raise
 
     def test_purge_only_deletes_auth_events_older_than_365_days(self):

@@ -161,9 +161,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 在此之前這個 DB **完全沒有備份**——`pg_dump` / `pgbackrest` / `pg_basebackup` 在 Makefile、`scripts/`、`deploy/`、`docs/`、systemd、crontab 全部零命中，唯一的副本是 docker named volume `report-mark-pgdata`。而 `docs/qa_pdf_report_deployment.md` 早在深度研報上線時就寫著「DB 的 `report_doc` 表需納入備份」，一直沒有人做。
 
-### 為什麼只備這十八張表
+### 為什麼只備這二十張表
 
-深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），研報上傳上線後加入 `report_upload`，Admin v2（revision 0009）加入 `user_quota`、`feature_flag`、`usage_daily`、`analytics_daily` 與 `auth_event`，現行備份清單共十八張。`user_session` 刻意不備（遺失只是全員重新登入）。
+深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），研報上傳上線後加入 `report_upload`，對外 API 上線後加入 `api_client` 與 `api_client_entitlement`，Admin v2（revision 0011）加入 `user_quota`、`feature_flag`、`usage_daily`、`analytics_daily` 與 `auth_event`，現行備份清單共二十張。`user_session` 刻意不備（遺失只是全員重新登入）；`api_client_usage` 也不備（每日額度的計數器，遺失只是當天額度重新起算）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -174,7 +174,7 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.review_state` | 待複核人工處理狀態、註記、驗證結果與處理人；無法從原始研報或問答重建 |
 | `research.app_user` | 個別帳號與角色。遺失＝所有人要重新建帳、`qa_log.user_id` 與處理人全部對不回名字。**含 Argon2id 密碼雜湊，備份檔要當機密看待** |
 | `research.admin_audit_log` | 管理操作稽核（建帳、改角色、停用、重設密碼、強制登出、處理待複核、權限調整）；事後追查「誰做的」的唯一來源。雜湊鏈＋只能新增（revision 0002），還原時用 `pg_restore --disable-triggers` |
-| `research.user_scope` | 另外授予的權限（`qa_content.read`、`ops.operate`）與授予人；遺失＝特殊權限全部要重新授予，且說不出當初是誰給的 |
+| `research.user_scope` | 另外授予的權限（`qa_content.read`、`ops.operate`、`api_clients.manage`）與授予人；遺失＝特殊權限全部要重新授予，且說不出當初是誰給的 |
 | `research.account_deletion` | 帳號刪除排程（提出人、執行時刻、取消紀錄）。遺失＝還原後尚未執行的刪除排程消失、帳號停在停用狀態卻永遠不會被刪。已執行的刪除另有 DB 之外的 tombstone（見下方「還原後重放帳號刪除」） |
 | `research.report_visibility` | 管理員隱藏的研報（以 `file_hash` 為鍵，含原因、隱藏人、時間）。重建語料不會重建它：遺失＝被隱藏的研報全部回到檢索、問答與閱讀頁。0008 起另帶發布狀態（`publication`）：遺失＝未發布的上傳草稿全部變成已發布 |
 | `research.report_upload` | 管理員上傳的研報（以 `file_hash` 連到語料）：上傳人、時間、掃描引擎與病毒名、處理失敗原因、退回原因。上傳檔不在 NAS 鏡像裡，重建語料不會重建它；遺失＝說不出某份研報是誰上傳、掃描結果為何 |
@@ -183,8 +183,10 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.usage_daily` | 閱讀、原檔、搜尋、問答的每日主題計數（匿名、沒有 user_id、不記搜尋字串）。請求當下才有，事後無從重建 |
 | `research.analytics_daily` | 每晚彙總的指標。來源 `qa_log` 會被使用者硬刪、`usage_daily` 只到主題層，事後無法重算 |
 | `research.auth_event` | 登入與安全事件（成功、失敗原因、限流、TOTP 失敗、登出），保留至少 365 天。刪帳時刻意保留（只有 UUID、IP、UA，從不存帳號名稱）；鑑識要回溯的正是被刪掉的帳號 |
+| `research.api_client` | 對外 API 用戶端：名稱、啟用狀態、key scopes、限流與每日額度、建立人。只存金鑰的 sha256 與 prefix（沒有原始金鑰，還原後既有金鑰照常可用）；遺失＝所有用戶端的金鑰全部失效、要重建並重新發金鑰 |
+| `research.api_client_entitlement` | API 用戶端的授權範圍（市場必填，來源、報告類型、商品類型未設定＝不限）；遺失＝每個用戶端能看到哪些研報的設定全部消失 |
 
-沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這十八張表的體積相對很小，備起來幾乎沒有成本。
+沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這二十張表的體積相對很小，備起來幾乎沒有成本。
 
 **這個取捨有一個已知代價，先寫在這裡免得還原那天才發現**：`report_takeaway` 與 `report_signal` 以 `report_id` FK 指向 `research_report`，而 `report_id` 是每次 ingest 重新產生的 uuid。**語料層若被整個重建，這兩張表的備份就對不回去了**（其餘幾張沒有 FK，可還原；但 `review_state` 中指向舊 `research_report.id` 的抽取複核紀錄會變成孤兒，須依重建後 id 核對）。若之後判定摘錄／訊號值得那個代價，正解是把 `research_report` 一起納入備份（`report_chunk` 仍不必——向量重算得回來），而不是在還原時 `--disable-triggers` 硬塞孤兒列。
 
@@ -1744,7 +1746,7 @@ sudo systemctl disable --now report-mark-rollup-observations.timer   # 原始觀
 - 排程錯開 sync（每 3 小時整點）與 :20 的監控聚合；不 import 檢索、嵌入、LLM 模組（`MemoryMax=512M`，
   `tests/test_db_snapshot.py` 守門）。
 
-安裝（人工，需 sudo；只在要啟用時做；schema 須已到 revision 0009）：
+安裝（人工，需 sudo；只在要啟用時做；schema 須已到 revision 0011）：
 
 ```bash
 # 1) 先看這一輪會寫什麼（唯讀；各段權限不足會出現在 errors）
@@ -2251,7 +2253,7 @@ worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移�
 
 ## 安全維運（Admin v2：登入事件、安全告警、保留期清除）
 
-登入、登出與權限提升的每種結果寫進 `research.auth_event`（revision 0009）：成功、密碼錯、帳號不存在、停用、TOTP 錯、
+登入、登出與權限提升的每種結果寫進 `research.auth_event`（revision 0011）：成功、密碼錯、帳號不存在、停用、TOTP 錯、
 第二步暫時憑證失效、被每 IP 限流擋下、非 HTTPS 遭拒、權限提升成功／失敗。設計重點：
 
 - **不存帳號名稱**：帳號存在時只有 UUID，帳號不存在時連 UUID 都沒有（帳號欄常被誤填成密碼）。管理後台顯示的名稱是讀取時
@@ -2292,7 +2294,7 @@ worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移�
 
 #### 安裝（人工，需 sudo；只在要啟用時做）
 
-前提：庫已到 revision 0009、web 已是含 Admin v2 Security 的版本（`curl -s http://127.0.0.1:8097/healthz/security` 回
+前提：庫已到 revision 0011、web 已是含 Admin v2 Security 的版本（`curl -s http://127.0.0.1:8097/healthz/security` 回
 `{"security":"ok"}` 或 `unknown`，不是 404）。
 
 ```bash
@@ -2364,7 +2366,7 @@ sudo systemctl disable --now report-mark-security-retention.timer
 ## 使用分析每晚彙總（report-mark-analytics-rollup）
 
 管理後台「使用分析」（`/api/admin/analytics/*`）最近 `ANALYTICS_LIVE_WINDOW_DAYS`（90）天即時查 `qa_log`／`usage_counter`，
-更早的日子**只讀** `research.analytics_daily`（revision 0009）。`qa_log` 會被使用者硬刪、`usage_counter` 只留 400 天，
+更早的日子**只讀** `research.analytics_daily`（revision 0011）。`qa_log` 會被使用者硬刪、`usage_counter` 只留 400 天，
 所以每一天都必須在離開即時窗期前彙總過，否則那天在長期趨勢上永遠是「沒有資料」（`has_data=false`）。
 
 `report-mark-analytics-rollup.timer` 每天 02:20 跑 `scripts/analytics_rollup.py`（純 SQL、零 LLM、不載嵌入模型）：
@@ -2375,7 +2377,7 @@ sudo systemctl disable --now report-mark-security-retention.timer
 ### 安裝（人工，需 sudo；只在要啟用時做）
 
 ```bash
-# 1) schema 到 revision 0009（已有資料的庫要逐字確認目標）
+# 1) schema 到 revision 0011（已有資料的庫要逐字確認目標）
 make schema CONFIRM=localhost:5436/research
 # 2) 第一次啟用：先試算再補滿窗期（已彙總的日子不會被覆寫）
 uv run python scripts/analytics_rollup.py --dry-run
@@ -2464,14 +2466,14 @@ repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
 
 ## Admin v2 部署順序
 
-Admin v2（revision 0009，加上 Wave 1 的使用分析、安全維運、配額、功能旗標、DB 與事件趨勢）上任何一台主機，都照下面的順序做。
+Admin v2（revision 0011，加上 Wave 1 的使用分析、安全維運、配額、功能旗標、DB 與事件趨勢）上任何一台主機，都照下面的順序做。
 這裡只排順序與前提，每一步的指令、驗收與停用都在各自的章節，不在這裡重複。
 
 **前提**：該主機已部署並驗收 Admin v1 與 v1.5（使用者定案 15），而且先確認目標主機（AGENTS.md「環境角色」：EC2 是正式環境、
 辦公室主機是測試環境）。站序同 v1：devdb 演練 → 測試環境 → 正式環境，每站先備份。
 
-1. **schema 到 revision 0009，先套 schema 再換程式。** 0009 只新增八張表（`usage_counter`、`user_quota`、`auth_event`、
-   `feature_flag`、`llm_usage_daily`、`usage_daily`、`analytics_daily`、`db_stat_snapshot`），不改既有的表：舊程式在 0009
+1. **schema 到 revision 0011，先套 schema 再換程式。** 0011 只新增八張表（`usage_counter`、`user_quota`、`auth_event`、
+   `feature_flag`、`llm_usage_daily`、`usage_daily`、`analytics_daily`、`db_stat_snapshot`），不改既有的表：舊程式在 0011
    的庫上照常可跑，新程式在 0008 的庫上會壞。
    - 備份：測試環境照「備份與還原」先跑一次 `make db-backup`；正式環境先做 RDS 手動快照。
    - 部署 checkout 先更新到含 Admin v2 的版本（migration 檔在新版裡），**web 先不要重啟**：執行中的仍是舊程式。
@@ -2482,7 +2484,7 @@ Admin v2（revision 0009，加上 Wave 1 的使用分析、安全維運、配額
      否則當天的檢查會以版本不一致告警。
 2. **換程式**：`make build-web`，緊接著重啟 web。v2 沒有新增 Python 或前端相依，
    也沒有改 nginx 設定。驗收：`curl -s http://127.0.0.1:8097/healthz/security` 回 `{"security":"ok"}` 或 `unknown`，
-   不是 404。備份清單多出 v2 的五張表（共十八張）由部署目錄裡的 `scripts/db_backup.sh` 直接生效，備份 unit 不用重裝。
+   不是 404。備份清單多出 v2 的五張表（加上對外 API 的兩張，共二十張）由部署目錄裡的 `scripts/db_backup.sh` 直接生效，備份 unit 不用重裝。
 3. **安裝 v2 的 unit**（辦公室主機直接 `install` 到 `/etc/systemd/system/`；EC2 用 `deploy/install_units.sh --user ubuntu
    --root /home/ubuntu/report-mark` 代換使用者與路徑）。順序與各自的章節：
    1. `report-mark-db-snapshot`：先 `--dry-run` 看權限不足的段落，見「DB 統計快照與慢查詢」。
@@ -2514,7 +2516,7 @@ RDS（沒有容器、app 帳號權限較窄）、沒有 NAS（只有 RDS 自動�
 
 | 項目 | 怎麼啟用 | 測試環境（辦公室主機） | 正式環境（EC2） | 前提與差異 |
 |---|---|---|---|---|
-| schema 0009 | `make schema CONFIRM=…` | 套用 | 套用 | 一律先於換程式；v1、v1.5 已在該主機驗收 |
+| schema 0011 | `make schema CONFIRM=…` | 套用 | 套用 | 一律先於換程式；v1、v1.5 已在該主機驗收 |
 | 使用量收集（`usage_daily`、`usage_counter`） | 隨 web | 開 | 開 | 不必安裝；只記次數與主題彙總，不記搜尋字串 |
 | 使用分析頁＋`report-mark-analytics-rollup` | 安裝 unit | 安裝 | 安裝 | 沒裝時最近 90 天照常即時顯示，更早的日子是「沒有資料」 |
 | 安全頁（登入事件、session、高風險時間線） | 隨 web | 開 | 開 | 「最後錨定」要有 `report-mark-audit-anchor`：EC2 沒裝，顯示沒有結果或過期 |

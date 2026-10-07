@@ -241,6 +241,54 @@ export const AnalyticsTopListSchema = z.object({
 })
 export type AnalyticsTopList = z.infer<typeof AnalyticsTopListSchema>
 
+export const ApiClientEntitlementsSchema = z.object({
+  market: z.array(z.string()),
+  source: z.array(z.string()).nullable().optional(),
+  report_type: z.array(z.string()).nullable().optional(),
+  instrument_type: z.array(z.string()).nullable().optional(),
+})
+export type ApiClientEntitlements = z.infer<typeof ApiClientEntitlementsSchema>
+
+export const ApiClientItemSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  key_prefix: z.string(),
+  enabled: z.boolean(),
+  scopes: z.array(z.enum(['search', 'report.file'])),
+  rate_limit_per_min: z.number().int(),
+  daily_quota: z.number().int(),
+  entitlements: ApiClientEntitlementsSchema,
+  note: z.string().nullable().optional(),
+  created_at: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+  key_rotated_at: z.string().nullable().optional(),
+  last_used_at: z.string().nullable().optional(),
+})
+export type ApiClientItem = z.infer<typeof ApiClientItemSchema>
+
+export const ApiClientListResponseSchema = z.object({
+  items: z.array(ApiClientItemSchema),
+})
+export type ApiClientListResponse = z.infer<typeof ApiClientListResponseSchema>
+
+export const ApiClientWithKeySchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  key_prefix: z.string(),
+  enabled: z.boolean(),
+  scopes: z.array(z.enum(['search', 'report.file'])),
+  rate_limit_per_min: z.number().int(),
+  daily_quota: z.number().int(),
+  entitlements: ApiClientEntitlementsSchema,
+  note: z.string().nullable().optional(),
+  created_at: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+  key_rotated_at: z.string().nullable().optional(),
+  last_used_at: z.string().nullable().optional(),
+  api_key: z.string(),
+})
+export type ApiClientWithKey = z.infer<typeof ApiClientWithKeySchema>
+
 export const AuditAnchorItemSchema = z.object({
   state: z.enum(['ok', 'tamper', 'error', 'stale', 'missing', 'corrupt']),
   at: z.string().nullable().optional(),
@@ -396,6 +444,16 @@ export const ConfigLimitsSchema = z.object({
   ask_faithfulness_max_inflight: z.number().int(),
 })
 export type ConfigLimits = z.infer<typeof ConfigLimitsSchema>
+
+export const CreateApiClientRequestSchema = z.object({
+  name: z.string(),
+  scopes: z.array(z.enum(['search', 'report.file'])),
+  rate_limit_per_min: z.number().int(),
+  daily_quota: z.number().int(),
+  entitlements: ApiClientEntitlementsSchema,
+  note: z.string().nullable().optional(),
+})
+export type CreateApiClientRequest = z.infer<typeof CreateApiClientRequestSchema>
 
 export const CreateUserRequestSchema = z.object({
   username: z.string(),
@@ -973,7 +1031,7 @@ export type PasswordRequest = z.infer<typeof PasswordRequestSchema>
 
 export const PrivilegesRequestSchema = z.object({
   is_super: z.boolean().nullable().optional(),
-  scopes: z.array(z.enum(['qa_content.read', 'ops.operate'])).nullable().optional(),
+  scopes: z.array(z.enum(['qa_content.read', 'ops.operate', 'api_clients.manage'])).nullable().optional(),
 })
 export type PrivilegesRequest = z.infer<typeof PrivilegesRequestSchema>
 
@@ -1346,6 +1404,15 @@ export const UnusedIndexesSectionSchema = z.object({
 })
 export type UnusedIndexesSection = z.infer<typeof UnusedIndexesSectionSchema>
 
+export const UpdateApiClientRequestSchema = z.object({
+  enabled: z.boolean().nullable().optional(),
+  scopes: z.array(z.enum(['search', 'report.file'])).nullable().optional(),
+  rate_limit_per_min: z.number().int().nullable().optional(),
+  daily_quota: z.number().int().nullable().optional(),
+  note: z.string().nullable().optional(),
+})
+export type UpdateApiClientRequest = z.infer<typeof UpdateApiClientRequestSchema>
+
 export const UpdateUserRequestSchema = z.object({
   role: z.enum(['admin', 'user']).nullable().optional(),
   enabled: z.boolean().nullable().optional(),
@@ -1364,7 +1431,7 @@ export const UserItemSchema = z.object({
   last_seen_at: z.string().nullable().optional(),
   active_sessions: z.number().int().optional(),
   is_super: z.boolean().optional(),
-  scopes: z.array(z.enum(['qa_content.read', 'ops.operate'])).optional(),
+  scopes: z.array(z.enum(['qa_content.read', 'ops.operate', 'api_clients.manage'])).optional(),
   totp_enabled: z.boolean().optional(),
   deletion_execute_after: z.string().nullable().optional(),
 })
@@ -1908,6 +1975,16 @@ export const adminApi = {
   getAnalyticsRoutes: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/routes${qs(query)}`, AnalyticsRoutesResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/analytics/top — Get Analytics Top */
   getAnalyticsTop: (query: { since?: string | null; until?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/analytics/top${qs(query)}`, AnalyticsTopResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/api-clients — List Api Clients */
+  listApiClients: () => requestJSON('/api/admin/api-clients', ApiClientListResponseSchema, { cache: 'no-store' }),
+  /** POST /api/admin/api-clients — Create Api Client */
+  createApiClient: (body: z.input<typeof CreateApiClientRequestSchema>) => requestJSON('/api/admin/api-clients', ApiClientWithKeySchema, jsonBody('POST', body)),
+  /** PATCH /api/admin/api-clients/{client_id} — Update Api Client */
+  updateApiClient: (clientId: string, body: z.input<typeof UpdateApiClientRequestSchema>) => requestJSON(`/api/admin/api-clients/${encodeURIComponent(clientId)}`, ApiClientItemSchema, jsonBody('PATCH', body)),
+  /** PUT /api/admin/api-clients/{client_id}/entitlements — Replace Api Client Entitlements */
+  replaceApiClientEntitlements: (clientId: string, body: z.input<typeof ApiClientEntitlementsSchema>) => requestJSON(`/api/admin/api-clients/${encodeURIComponent(clientId)}/entitlements`, ApiClientItemSchema, jsonBody('PUT', body)),
+  /** POST /api/admin/api-clients/{client_id}/rotate — Rotate Api Client Key */
+  rotateApiClientKey: (clientId: string) => requestJSON(`/api/admin/api-clients/${encodeURIComponent(clientId)}/rotate`, ApiClientWithKeySchema, jsonBody('POST')),
   /** GET /api/admin/audit — Audit Log */
   auditLog: (query: { limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/audit${qs(query)}`, AuditResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit/verify — Verify Audit Chain */

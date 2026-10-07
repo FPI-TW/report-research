@@ -8,7 +8,7 @@
 - 匯出 → 匯入：使用者以帳號名稱往返；dry-run 不寫；未知 key、找不到的帳號擋下整份；套用時每個變更各一筆稽核。
 - HTTP 一條龍：`PUT /api/admin/flags/{key}` 經真的 DB 寫入、`GET /api/admin/flags` 讀回。
 
-跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0009）就 skip。**一律 rollback、絕不 commit**——
+跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——
 本機預設連到的是生產庫。服務層函式都吃呼叫端的 session，這裡給綁在外層交易上、commit 只釋放 savepoint 的 session
 （同 tests/test_usage_events_db.py）。
 """
@@ -106,7 +106,7 @@ class FeatureFlagsDbTests(unittest.TestCase):
         except Exception as exc:
             msg = repr(exc)
             if any(k in msg for k in ("Connect", "connect", "refused", "does not exist", "Timeout")):
-                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0009")
+                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0011")
             raise
 
     def test_set_override_writes_row_and_audit_in_one_transaction(self):

@@ -1,4 +1,4 @@
-"""使用分析的 SQL 對真的 PostgreSQL 成立（`app/services/analytics.py`＋`scripts/analytics_rollup.py`；revision 0009）。
+"""使用分析的 SQL 對真的 PostgreSQL 成立（`app/services/analytics.py`＋`scripts/analytics_rollup.py`；revision 0011）。
 
 - k=3 門檻：2 人的格子被抑制（開放詞彙連鍵都不回、只計 `suppressed_count`；市場保留鍵、數值與人數為 null），
   3 人的格子顯示；`qa_log.user_id` 為 NULL 的題目只算次數不算人數；`usage_daily` 跨日取各日人數的最大值（下限）。
@@ -10,7 +10,7 @@
 - 台北時間切日、延遲百分位與 nearest-rank 相同、停止列不計延遲；路由分布、上傳與稽核週量、活躍人數（問答 ∪ 計數）。
 
 所有資料都落在 2000–2001 年（`today_` 參數固定在 2001-03-31），不碰真實日期的列。跑在 CI 的「schema 契約」job；
-本機沒有 DB（或庫還沒套 revision 0009）就 skip。**一律 rollback、絕不 commit**——本機預設連到的是生產庫；彙總要
+本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——本機預設連到的是生產庫；彙總要
 commit 的地方用綁在外層交易上、commit 只釋放 savepoint 的 session（同 tests/test_usage_events_db.py）。
 """
 
@@ -151,7 +151,7 @@ class AnalyticsDbTests(unittest.TestCase):
         except Exception as exc:
             msg = repr(exc)
             if any(k in msg for k in ("Connect", "connect", "refused", "does not exist", "Timeout")):
-                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0009")
+                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0011")
             raise
 
     @staticmethod

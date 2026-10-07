@@ -1,11 +1,11 @@
-"""Admin v2 接線的 SQL 對真的 PostgreSQL 成立（revision 0009 ＋ usage_events.flush ＋ feature_flags 的讀取）。
+"""Admin v2 接線的 SQL 對真的 PostgreSQL 成立（revision 0011 ＋ usage_events.flush ＋ feature_flags 的讀取）。
 
 - usage_daily：同一格兩次 flush 時 hits 相加、users 取 GREATEST（重啟後的下限語意）。
 - usage_counter：已刪除帳號的計數在 upsert 時被濾掉（刪帳後不會復活）。
 - llm_usage_daily：user_id NULL 的列靠 COALESCE 唯一索引併成一列（ON CONFLICT 推得到那支運算式索引）。
 - feature_flag：text[]／uuid[] 讀得回來、registry 沒有的 key 被忽略。
 
-跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0009）就 skip。**一律 rollback、絕不 commit**——
+跑在 CI 的「schema 契約」job；本機沒有 DB（或庫還沒套 revision 0011）就 skip。**一律 rollback、絕不 commit**——
 本機預設連到的是生產庫。flush 與 feature_flags 都吃 session_factory 參數，這裡給綁在外層交易上、commit 只釋放
 savepoint 的 session（同 tests/test_accounts_db.py）。
 """
@@ -73,7 +73,7 @@ class UsageEventsDbTests(unittest.TestCase):
         except Exception as exc:
             msg = repr(exc)
             if any(k in msg for k in ("Connect", "connect", "refused", "does not exist", "Timeout")):
-                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0009")
+                _skip_or_raise(exc, "DB 不可用或尚未套 revision 0011")
             raise
 
     def test_flush_upserts_all_three_tables(self):

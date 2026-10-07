@@ -258,8 +258,53 @@ DB 連線數算式（`.env.example`）：`worker 數 × (DB_POOL_SIZE + DB_MAX_O
 | 上傳 worker：整輪鎖由殼取、子命令對繼承的 fd 再 flock 一次（不盲信環境變數）；草稿標記寫在 `pre_upsert`（與 `upsert_report` 同一個交易，研報沒有可見空窗）；不可信 PDF 的檢查與試抽字在子行程；乾淨檔保留原始檔名（`<hash>/<原始檔名>`，因為 `ingest_one` 以檔名推 metadata）；清除每句 DELETE 再帶一次守門、刪語料持 claude 鎖、commit 之後才刪檔；ops 的 execution group 自成 `upload` 不併進 `llm-batch` | `app/services/upload_worker.py`、`app/services/pdf_preflight.py` 模組 docstring、`deploy/ops/services.prod.toml` 的 upload 註解、`tests/test_upload_worker_db.py` |
 | 使用分析只出彙總：k 門檻抑制（開放詞彙連鍵都不給、被抑制的格子不依數值排序、跨日人數取最大值）與互補抑制；每晚彙總的回填不覆寫已保留的匿名日子 | `app/services/analytics.py` 模組 docstring、`tests/test_analytics_db.py` |
 | 簡報窗期用 `created_at`、沒有自己的 timer | `app/services/brief.py`、`scripts/sync_new_reports.sh` |
+| 審批流程、RLS、分區、管理面 SSE 刻意不建 schema、不啟用，管理後台即時性靠輪詢；各自的理由與啟用門檻 | 本檔 §11、`app/services/security_ops.py` 的 `HIGH_RISK_ACTIONS` 註解 |
 | sync 鏈用 `--hashes-file` 不用 `--since-days`、訊號與標題積壓的 `--limit`（`SYNC_SIGNAL_LIMIT`、`SYNC_TITLE_BACKLOG_LIMIT`）是安全機制 | `scripts/sync_new_reports.sh` |
 | `report-mark-sync.timer` 的 `Persistent=false` | `tests/test_sync_timer_persistence.py` |
 | `report-mark-health.timer` 不設 `Persistent`、健康探針不用 uv | `deploy/systemd/report-mark-health.timer`、`scripts/check_web_health.sh` |
 | `make edge-reload` 是 force-recreate 不是 restart | `Makefile` |
 | 評測不進 CI、門檻是政策 | `Makefile`、`eval/run_ragas.py` |
+
+## 11. 預留（未啟用）
+
+以下四項目前**不提供**：沒有對應的表、policy、分區或端點，也沒有旗標可以打開（使用者定案：只留設計與啟用門檻，不建 schema、不啟用）。本節記錄不啟用的理由、啟用門檻，以及門檻達到時的掛點與前置條件；門檻未達之前，任何一項都不以「先做一半」的方式進程式。
+
+### 11.1 審批流程（approval workflow）
+
+- **現況**：不建表、不攔截。高風險動作只記錄與顯示：`app/services/security_ops.py` 的 `HIGH_RISK_ACTIONS` 把稽核 action 名稱分成八類（權限與角色、權限提升、session、憑證、刪帳、`ops.*`、資料存取、設定），`/api/admin/security/high-risk` 時間線只顯示、不告警。敏感操作的防線是 scope、`authz.require_elevated`（10 分鐘內重新驗證）與同交易稽核，沒有第二人核可。
+- **不啟用的理由**：super admin 只有 1–2 位，要兩人核可時一人缺席就會讓權限變更全面卡死，這與 `LastSuperError`（至少保留一位啟用中的 super admin，免得把自己鎖在外面）的精神相反。
+- **啟用門檻**：啟用中的 super admin 達 3 位以上，或出現明確的合規要求。
+- **掛點與前置**：`HIGH_RISK_ACTIONS` 與稽核 action 名稱是穩定介面，審批要攔的就是這份清單。攔截點只能放在單一本體、不放路由層，CLI 才繞不過：帳號變更是 `accounts._update_user_in`（批次逐筆經過它）、維運動作是 `web/routers/admin_ops.py` 的 `_operate`（經 `accounts.record_ops_action` 寫稽核）、研報可見性是 `visibility.set_visibility`。待審狀態需要自己的表（新 revision）；提出、核可、駁回各寫一列稽核；待審期間 `LastSuperError` 與「只有 super admin 能管理 super admin」照樣成立。
+
+### 11.2 列層級權限（RLS）
+
+- **現況**：沒有任何表 `ENABLE ROW LEVEL SECURITY`、沒有 policy。問答紀錄的使用者隔離在應用層兩道：路由在串流前檢查參照擁有權，服務層 SQL 帶 `user_id IS NOT DISTINCT FROM :uid`；`app/services/answer.py` 的 qa_log 讀寫函式 `user_id` 是必填關鍵字參數，`tests/test_qa_isolation.py` 以 AST 守每個呼叫點。`usage_counter` 只經 `app/services/usage_events.py`、`app/services/quota.py` 等服務層讀寫。
+- **不啟用的理由**：
+  - 應用連線的帳號都繞得過 RLS：測試環境（辦公室主機）以超級使用者 `postgres` 連線（見 `.env.example`）；正式環境（EC2＋RDS）以 app 帳號連線，它不是超級使用者，但擁有 `research` schema 的所有表。超級使用者與帶 BYPASSRLS 的角色一律繞過 RLS，表擁有者在沒有 `FORCE ROW LEVEL SECURITY` 時也不受 policy 約束——現在開等於沒開，還會給人已有防護的錯覺。
+  - 連線池（`SessionFactory`）跨請求重用連線：policy 若讀 session 變數，必須每筆交易 `SET LOCAL`，用 `SET` 會流到下一個借用者（與 `relax_statement_timeout` 用 `SET LOCAL` 同一個理由），漏設時依 policy 寫法不是全擋就是全放。
+  - 批次（sync、摘要、刪帳執行、每晚彙總）與管理面（待複核、監控、分析）刻意看全部列，都要另一個帶 BYPASSRLS 的角色。
+  - 目前只有一個應用連這個 DB，而它的隔離已有上述 AST 守門。
+- **啟用門檻**：有第二個應用或服務直連這個 DB，或應用已先改以非超級使用者帳號連線。
+- **前置**：先建非超級使用者、非表擁有者的 app role（只授予 `research` schema 所需的 DML），web 改用它連線；migration 仍以擁有者角色執行；批次與管理面另用帶 BYPASSRLS 的角色。policy 範圍是 `qa_log` 與 `usage_counter`，條件比照現有服務層（本人的列；`qa_log.user_id` 為 NULL 的共用歷史對一般使用者不可見），使用者識別每筆交易 `SET LOCAL`。
+
+### 11.3 分區（partitioning）
+
+- **現況**：沒有任何分區表。量大的只有語料層：DB 約 9 GiB，幾乎全是 `report_chunk`（`docs/CAPACITY.md` 實測）。Admin v2 的事件表以時間欄建索引（例如 `auth_event` 的 `occurred_at`），量由保留期刪除控制：`auth_event` 由 `scripts/security_retention.py`（至少 365 天）、`db_stat_snapshot` 由 `scripts/db_snapshot.py`（逐時 30 天、每日 400 天）。
+- **不啟用的理由**：
+  - `report_chunk` 分區後 HNSW 變成每個分區各一個索引，`hybrid_search` 的全域 top-k 要逐分區取再合併；`SET LOCAL hnsw.iterative_scan` 對帶過濾查詢的補足也只在單一索引內成立，召回與排序語意都會變。
+  - 分區鍵必須進 PK 與所有 UNIQUE：`research_report.file_hash` 的 UNIQUE、`report_chunk`／`report_signal`／`report_takeaway` 對 `research_report` 的 FK CASCADE 都要重做。
+  - `admin_audit_log` 只能新增（觸發器擋 UPDATE／DELETE／TRUNCATE，revision 0002）且以 `row_hash` 串成雜湊鏈，用 DETACH／DROP 分區做保留期與這兩者直接衝突。
+  - 資料量不需要。
+- **啟用門檻**：單張事件表超過約 5,000 萬列，或保留期刪除後的 VACUUM 跟不上。
+- **前置**：上述衝突使語料層與 `admin_audit_log` 不適用；適用的是以時間為主要查詢鍵、沒有其他表以 FK 指入的事件表，分區鍵（時間欄）要先併進該表的 PK，保留期刪除改成 DETACH 舊分區，並以新 revision 搬資料。
+
+### 11.4 管理面 SSE
+
+- **現況**：管理後台沒有 SSE 或其他長連線端點，即時性一律靠輪詢（TanStack Query 的 `refetchInterval`，例如管線分頁 15 秒）。唯一的 SSE 是問答 `/api/ask`，不受影響、也不擴充到管理面。
+- **不啟用的理由**：
+  - auth 的設計是每個請求以 `deps.accounts.resolve_session` 查 DB、不快取，停用、強制登出、降級、撤銷 session 都在下一個請求生效；長連線只在建立時驗一次身分，撤銷到斷線之間會繼續推送管理資料。
+  - nginx `proxy_read_timeout` 60 秒，要靠心跳（`deps._with_heartbeat`）撐住連線。
+  - 單一 worker（lifespan 的 `assert_single_worker` 拒絕多 worker），每條長連線都占同一個行程。
+  - 管理員人數少，輪詢的成本可以忽略。
+- **啟用門檻**：需要即時事件流，而且管理員超過約 10 人。
+- **前置**：先解決串流期間的身分重驗——每 N 秒重新 `resolve_session`，並重判管理員身分、scope 與 `ADMIN_MFA_REQUIRED` 開啟時的 TOTP 條件，任一不成立就結束串流；連線上限與 `/api/ask` 的 `_ASK_GATE` 分開計算。

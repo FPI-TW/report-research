@@ -9,8 +9,9 @@
 # - 沒有 NAS：新研報走 SYNC_SOURCE=r2-inbox；不裝 report-mark-backup（RDS 自動備份）、report-mark-linebot-*、
 #   report-mark-metrics、report-mark-backfill。
 # - 對外是 Cloudflare 橘雲 A record → EIP:443 → apt 安裝的 nginx（systemd 的 nginx.service）→ web；沒有 cloudflared。
-# - 這裡只列 2026-10-02 起已安裝的 unit（web、nginx 與 8 組 timer）。Admin v1 的 unit（schema-check、
-#   load-observations、host-health……）裝到 staging 時再補，免得未安裝的 unit 在依賴圖上一片 not_found。
+# - 這裡只列已安裝的 unit：2026-10-02 起的 web、nginx 與 8 組 timer，加上 2026-10-07 部署 Admin v1.5 時裝的
+#   schema-check（`SCHEMA_CHECK_MODE=version`：app 帳號沒有 CREATEDB）。其餘 Admin v1 的 unit（load-observations、
+#   host-health……）裝到 staging 時再補，免得未安裝的 unit 在依賴圖上一片 not_found。
 #
 # 權限（Admin v1 決策）：restart 只開放 web；run 只給既有白名單裡 staging 也有、而且沒有副作用疑慮的
 # freshness、audit（兩者都只讀 DB、寫 data/ 的結果檔）。刻意唯讀：
@@ -145,6 +146,16 @@ tier = "supporting"
 actions = ["status", "logs"]
 depends_on = ["rds", "r2"]
 description = "R2 物件儲存對帳（週一 07:00；bucket 與生產共用，唯讀）"
+
+[[services]]
+name = "schema-check"
+kind = "systemd"
+unit = "report-mark-schema-check.service"
+timer = "report-mark-schema-check.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+depends_on = ["rds"]
+description = "alembic 版本 drift 每日檢查（05:20；只比版本）"
 
 # ── 外部依賴 ─────────────────────────────────────────────────────────────
 # 退出碼對照同 services.prod.toml。RDS 沒有專屬探針：health 的 1（/healthz 非 200）分不出是 web 還是 DB 壞了，

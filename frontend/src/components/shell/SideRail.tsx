@@ -59,7 +59,6 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
           <NavItem to="/ask" icon="messages" label="問答" variant="mini" />
           <NavItem to="/radar" icon="compass" label="觀點" variant="mini" />
           <NavItem to="/brief" icon="fileText" label="簡報" variant="mini" />
-          <NavItem to="/monitor" icon="activity" label="監控" variant="mini" />
         </nav>
         <div className={styles.spacer} />
         <AccountMenu variant="mini" />

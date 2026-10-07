@@ -104,7 +104,7 @@ uv run python scripts/ingest_all.py
 - 首輪路由順序刻意：確定性 overview 判定（`scope_router.resolve_overview_route`，零 LLM）→ `precheck_route()` 詞表（命中 `time_sensitive` 完全不檢索）→ LLM 四類分類（`classify_non_overview`）與檢索並行、誰先到聽誰。五類與 `decided_by` 全寫進 `qa_log.filters`；fail-open 落點是 `CORPUS_QA`。
 - 網搜 `web_on` ＝ 請求的 `web` AND `ASK_ENABLE_WEB`，下游只讀 `web_on`；`qa_log.filters.web` 含 False 也要寫。系統提示與工具授權要一起切（`ask_system_prompt(web)`）。
 - 引用過濾（`app/services/citation_filter.py`）：主答串流經 `CitationStreamFilter`、落庫與評測經 `filter_unknown_citations`，不存在的 `[n]` 換成「（無效引用）」、計數寫 `filters.invalid_citation_count`；改串流或落庫路徑不可繞過。
-- 忠實度抽查在 `done` 後跑背景任務，上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是唯一閘門，漏判是靜默的——寧可多抓不可漏抓。低分門檻 `FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`）由監控卡、待複核佇列與 `scripts/eval_faithfulness.py` 共用；`eval/run_ragas.py` 的 F>0.9 是獨立常數。
+- 忠實度抽查在 `done` 後跑背景任務，上限 `ASK_FAITHFULNESS_MAX_INFLIGHT`。`faithfulness.is_numeric_claim` 是唯一閘門，漏判是靜默的——寧可多抓不可漏抓。低分門檻 `FAITHFULNESS_MIN`（0.9；讀不到時退回舊名 `REPORT_FAITHFULNESS_MIN`）由 `/api/progress` 的忠實度統計（管理後台管線分頁）、待複核佇列與 `scripts/eval_faithfulness.py` 共用；`eval/run_ragas.py` 的 F>0.9 是獨立常數。
 
 ### LLM（§2.2 `llm.py` 列、§9）
 - `LLM_PROVIDER` 預設 `deepseek`（未設、空值都是；未知值在 web 退回 deepseek 並記 ERROR，在批次預檢 rc=2 並印原始值——拼錯不能變成照常計費）。模型一律經 `llm_models.resolve_model`；兩個 judge 是 `deepseek-flash`。

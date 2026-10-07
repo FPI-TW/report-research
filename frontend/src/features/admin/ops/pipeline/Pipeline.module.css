@@ -1,0 +1,93 @@
+/* 維運 → 管線（/app/admin/operations/pipeline）。卡片、表格、按鈕沿用 Admin.module.css，
+   狀態列與 meta 沿用 Ops.module.css；這裡只有本頁特有的結論、欄位列、進度條與分布圖。 */
+
+/* 狀態膠囊的語氣：底色一律由語意色混白，不另立 token（比照 HelpPage 的 copyDone）。 */
+.tone { display: inline-block; border-radius: var(--tf-radius-pill); font-size: 11.5px; font-weight: 600; padding: 2px 9px; white-space: nowrap; }
+.toneOk { background: color-mix(in srgb, var(--tf-success) 12%, white); color: var(--tf-success-text); }
+.toneRun { background: var(--tf-gold-tint); color: var(--tf-gold-text); }
+.toneIdle { background: var(--tf-graphite-tint); color: var(--tf-text-muted-aa); }
+.toneWarn { background: var(--tf-warn-bg); color: var(--tf-warn-text); }
+.toneBad { background: var(--tf-error-bg); color: var(--tf-error-text); }
+
+/* 結論 */
+.verdictRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
+.verdict { display: flex; align-items: center; gap: 10px; }
+.dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.dotOk { background: var(--tf-success-soft); }
+.dotWarn { background: var(--tf-warn); }
+.dotBad { background: var(--tf-error); }
+.verdictText { font-family: var(--tf-display); font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: var(--tf-text-1); }
+.items { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; font-size: 13px; padding: 8px 12px; border-radius: 8px; }
+.itemBad { background: var(--tf-error-bg); }
+.itemWarn { background: var(--tf-warn-bg); }
+.itemText { flex: 1 1 240px; min-width: 0; color: var(--tf-text-1); }
+.review {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin: 14px 0 0; padding: 10px 0 0;
+  border-top: 1px solid var(--tf-border-weak); font-size: 12.5px; color: var(--tf-text-3);
+}
+.review b { color: var(--tf-text-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 欄位列：左標籤、右內容；窄時上下疊 */
+.rows { display: flex; flex-direction: column; }
+.row {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 4px 14px; padding: 12px 0;
+  border-top: 1px solid var(--tf-border-weak); font-size: 13px; color: var(--tf-text-1);
+}
+.row:first-child { border-top: none; padding-top: 0; }
+.rowLabel { color: var(--tf-text-4); font-size: 12.5px; padding-top: 1px; }
+.rowBody { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.small { font-size: 12px; }
+.raw {
+  font-family: var(--tf-mono); font-size: 11.5px; color: var(--tf-text-3); background: var(--tf-fill-subtle);
+  border-radius: 6px; padding: 5px 8px; overflow-x: auto; white-space: pre; margin: 0;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.warnNum { color: var(--tf-warn-text); font-weight: 600; }
+.badNum { color: var(--tf-error-text); font-weight: 600; }
+
+/* 進度條 */
+.bar { position: relative; height: 6px; border-radius: 3px; background: var(--tf-graphite-tint); overflow: hidden; min-width: 60px; }
+.barFill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--tf-graphite); }
+.barGold { background: var(--tf-gold-strong); }
+.prog { display: grid; grid-template-columns: 72px minmax(60px, 1fr) auto; align-items: center; gap: 4px 12px; }
+.progName { color: var(--tf-text-2); }
+.progRate { grid-column: 2 / -1; font-size: 12px; color: var(--tf-text-4); }
+
+/* 產出覆蓋表的長條欄 */
+.barCell { width: 38%; min-width: 120px; }
+/* 元素＋類名（0,1,2）才贏得過 Admin.module.css 的 `.table th { text-align: left }`（0,1,1），不靠注入順序 */
+table th.right, table td.right, .right { text-align: right; }
+
+/* 抽取落點：堆疊條＋圖例 */
+.stack { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--tf-graphite-tint); }
+.stack > span { height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--tf-text-2); }
+.swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+
+/* 兩張並排的卡 */
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+
+/* 語料組成 */
+.kpis { display: flex; flex-wrap: wrap; gap: 8px 32px; margin: 0 0 18px; }
+.kpiValue { font-family: var(--tf-display); font-size: 24px; font-weight: 600; letter-spacing: -0.01em; color: var(--tf-text-1); font-variant-numeric: tabular-nums; }
+.kpiLabel { font-size: 12px; color: var(--tf-text-4); }
+.corpus { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+.subTitle { font-size: 13px; font-weight: 600; color: var(--tf-text-2); margin: 0 0 10px; }
+.markets { display: grid; grid-template-columns: 72px minmax(40px, 1fr) auto; align-items: center; gap: 8px 12px; font-size: 13px; }
+.marketName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.markets .bar { height: 8px; }
+.brokerSum { font-size: 12.5px; color: var(--tf-text-3); margin: 0 0 8px; }
+
+.foot { font-size: 12px; color: var(--tf-text-4); text-align: center; margin: 0; }
+
+@media (max-width: 900px) {
+  .pair, .corpus { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .row { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .barFill { transition: width var(--tf-dur-4) var(--tf-ease-out); }
+}

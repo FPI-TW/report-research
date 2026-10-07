@@ -23,7 +23,7 @@
 | 閱讀頁 | `/app/report/:hash` | 原檔 PDF 內嵌檢視（EmbedPDF）、重點摘錄、券商訊號卡、相似研報 |
 | 觀點雷達 | `/app/radar` | 標的目錄、多券商評等與目標價共識、四維論點、券商時間軸，讀取零 LLM |
 | 每日簡報 | `/app/brief` | 窗期內新研報與評等變動的日報 |
-| 監控 | `/app/monitor` | 語料規模、批次覆蓋率、抽取品質、忠實度、管線與排程健康 |
+| 管線（管理後台） | `/app/admin/operations/pipeline` | 限管理員（`ops.read`）：排程同步與失敗、執行中的批次、產出覆蓋、忠實度、抽取品質與回填、語料組成；不經維運代理。舊入口 `/app/monitor` 導回檢索頁 |
 
 ## 系統架構
 
@@ -127,10 +127,10 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | POST | `/api/me/totp/disable` | — | `{enabled, pending}` | 關閉自己的兩步驟驗證；需近 10 分鐘內重新驗證過（403 `elevation_required`）。管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`）開啟時管理員一律 403 `mfa_policy_locked`（遺失驗證器由 super admin 或 `scripts/create_admin.py --reset-totp` 重設）。寫稽核 |
 | GET | `/api/me/quota` | — | `{day, timezone, resets_in_seconds, enforced, items: [{kind, used, over, limit, remaining}]}` | 任何登入的使用者看**自己**今天（台北時間）的次數與上限（只有次數、沒有主題）。一般使用者只有 `ask`，管理員另有 `export`、`upload`；`limit` null＝不限；`over`＝超出上限的次數（影子模式照常放行）；`enforced`＝對本人正式阻擋是否生效。查詢失敗 503 `quota_unavailable` |
 | GET | `/api/features` | — | `{features: {<key>: bool}}` | 任何登入的使用者；回**自己的**功能旗標實際值（環境變數上限 AND DB 覆寫，套用角色／使用者作用域），不含上限、覆寫與作用域名單。DB 讀不到時退回 registry 預設、照常 200。前端 `frontend/src/lib/useFeatures.ts`（手寫 zod，不在產生的 admin client 裡）；問答的網搜開關讀 `ask.web_search` |
-| GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/monitor`、`/app/help` | 舊入口相容 |
+| GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/search`、`/app/help` | 舊入口相容（導入監控已搬進管理後台的管線分頁，舊書籤回檢索頁） |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
 | GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 與 `/api/progress` 共用 15 秒 DB 快取；`username` 是目前登入者 |
-| GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 監控頁輪詢；`extraction_log` 缺表時 `extraction` 為 null。`evaluation.qa` 的 `total`／`checked`／`latest` 計所有 judge（覆蓋率語意，換 judge 不會驟降）；分數類 `judge_checked`／`degraded`／`below_min`／`avg_score`／`avg_n`（平均的樣本數，不含 degraded）只計現行 judge（`FAITHFULNESS_MODEL`），另帶 `judge_model`、`judge_since`（窗期內現行 judge 最早一筆的日期）、`other_judge_checked`（其他 judge 的筆數） |
+| GET | `/api/progress` | — | `db`、`summary`、`takeaway`、`signal`、`evaluation`、`extraction`、`tagging`、`ingest`、`pipelines`、`orchestrator`、`sync`、`unit_failures` | 管理後台管線分頁每 15 秒輪詢、待複核頁取一次判定尺；目前對所有登入者開放；`extraction_log` 缺表時 `extraction` 為 null。`evaluation.qa` 的 `total`／`checked`／`latest` 計所有 judge（覆蓋率語意，換 judge 不會驟降）；分數類 `judge_checked`／`degraded`／`below_min`／`avg_score`／`avg_n`（平均的樣本數，不含 degraded）只計現行 judge（`FAITHFULNESS_MODEL`），另帶 `judge_model`、`judge_since`（窗期內現行 judge 最早一筆的日期）、`other_judge_checked`（其他 judge 的筆數） |
 | GET | `/api/markets` | — | `{"markets": [...]}` | 市場代碼清單 |
 | GET | `/api/reports` | `market`、`instrument_type`、`relates_stock`、`relates_futures`、`report_type`、`sort`（`date_desc`）、`limit`（1–100，50）、`offset` | `{total, offset, items[]}` | 瀏覽（無查詢詞） |
 | GET | `/api/search` | `q`（1–500 必填）、同上篩選、`sort`（`relevance`）、`limit`、`offset`、`passages`（1–6，3） | `{query, market, total, market_facets, lexical_truncated, results[]}` | 混合檢索 ＋ `rank_reports` |

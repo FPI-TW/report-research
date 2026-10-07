@@ -31,7 +31,8 @@ test('展開態：圖示軌導覽常駐，右側面板顯示站名與歷史對�
   expect(screen.getByRole('link', { name: /檢索/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /問答/ })).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /觀點/ })).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: /監控/ })).toBeInTheDocument()
+  // 導入監控已搬進管理後台，主平台導覽不再有入口
+  expect(screen.queryByRole('link', { name: /監控/ })).not.toBeInTheDocument()
 })
 
 test('收合態：圖示軌導覽仍可用，歷史對話面板移出無障礙樹', () => {

@@ -46,7 +46,7 @@
 
 分工鐵律：Python 做所有決定性的事，LLM（DeepSeek）只做語意。派生功能一律 fail-open。完整不變量見 `docs/ARCHITECTURE.md`。
 
-技術棧：Python 3.11 ＋ uv、FastAPI ＋ uvicorn、SQLAlchemy async ＋ asyncpg、pgvector（HNSW cosine）＋ pg_trgm、FlagEmbedding（BGE-M3、bge-reranker-v2-m3，torch CPU-only）、pdfplumber ＋ pypdf ＋ python-docx、boto3（R2）、OpenCC（簡→繁）；前端 React 19 ＋ TypeScript ＋ Vite ＋ TanStack Query ＋ zod ＋ EmbedPDF；LLM 預設走 DeepSeek 官方 API（`httpx` 直連，`app/services/llm_http.py`），不用 SDK；網搜仍解析到 `claude` CLI（`claude -p`），而 CLI 已於 2026-09-23 放棄，所以網搜**暫停中**：生產以 `ASK_ENABLE_WEB=0` 關閉，前端不列網搜開關、請求一律送 `web=false`（`frontend/src/lib/useWebSearch.ts` 的 `WEB_SEARCH_PAUSED`）。恢復條件是 DeepSeek 版網搜（Tavily 工具迴圈）完成，屆時移除 `ASK_ENABLE_WEB=0`、把該常數改回 false。
+技術棧：Python 3.11 ＋ uv、FastAPI ＋ uvicorn、SQLAlchemy async ＋ asyncpg、pgvector（HNSW cosine）＋ pg_trgm、FlagEmbedding（BGE-M3、bge-reranker-v2-m3，torch CPU-only）、pdfplumber ＋ pypdf ＋ python-docx、boto3（R2）、OpenCC（簡→繁）；前端 React 19 ＋ TypeScript ＋ Vite ＋ TanStack Query ＋ zod ＋ EmbedPDF；LLM 預設走 DeepSeek 官方 API（`httpx` 直連，`app/services/llm_http.py`），不用 SDK；網搜仍解析到 `claude` CLI（`claude -p`），而 CLI 已於 2026-09-23 放棄，所以網搜**暫停中**：生產以 `ASK_ENABLE_WEB=0` 關閉，前端不列網搜開關、請求一律送 `web=false`（`frontend/src/lib/useWebSearch.ts` 的 `useWebSearchPaused()`，讀 `/api/features` 的功能旗標 `ask.web_search`，上限就是 `ASK_ENABLE_WEB`）。恢復條件是 DeepSeek 版網搜（Tavily 工具迴圈）完成，屆時移除 `ASK_ENABLE_WEB=0` 即可，前端不必改。
 
 ## 快速開始
 
@@ -125,7 +125,7 @@ docs/                     WORKFLOW / ARCHITECTURE / EXTRACTION / 維運文件
 | POST | `/api/me/totp/setup` | — | `{secret, otpauth_uri}` | 產生新的 secret（尚未啟用，secret 只回這一次）；已啟用 409 `totp_state`（換裝置請先關閉） |
 | POST | `/api/me/totp/confirm` | JSON `code` | `{enabled, pending}` | 輸入驗證器顯示的第一個碼才啟用（RFC 6238，30 秒、6 位、前後各一步）；錯 400 `bad_totp` |
 | POST | `/api/me/totp/disable` | — | `{enabled, pending}` | 關閉自己的兩步驟驗證；需近 10 分鐘內重新驗證過（403 `elevation_required`）。管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`）開啟時管理員一律 403 `mfa_policy_locked`（遺失驗證器由 super admin 或 `scripts/create_admin.py --reset-totp` 重設）。寫稽核 |
-| GET | `/api/features` | — | `{features: {<key>: bool}}` | 任何登入的使用者；回**自己的**功能旗標實際值（環境變數上限 AND DB 覆寫，套用角色／使用者作用域），不含上限、覆寫與作用域名單。DB 讀不到時退回 registry 預設、照常 200。前端手寫 zod（不在產生的 admin client 裡） |
+| GET | `/api/features` | — | `{features: {<key>: bool}}` | 任何登入的使用者；回**自己的**功能旗標實際值（環境變數上限 AND DB 覆寫，套用角色／使用者作用域），不含上限、覆寫與作用域名單。DB 讀不到時退回 registry 預設、照常 200。前端 `frontend/src/lib/useFeatures.ts`（手寫 zod，不在產生的 admin client 裡）；問答的網搜開關讀 `ask.web_search` |
 | GET | `/`、`/monitor`、`/help` | — | 302 到 `/app/search`、`/app/monitor`、`/app/help` | 舊入口相容 |
 | GET | `/app`、`/app/{spa_path:path}` | — | SPA `index.html`（no-cache） | `frontend/dist` 不存在回 503；`/app/assets/` 免登入且 immutable 快取 |
 | GET | `/api/stats` | — | `total_reports`、`total_chunks`、`markets`、`instrument_types`、`report_types`、`username` | 與 `/api/progress` 共用 15 秒 DB 快取；`username` 是目前登入者 |

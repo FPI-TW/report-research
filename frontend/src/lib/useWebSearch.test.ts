@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useWebSearch, setWebSearch, WEB_SEARCH_PAUSED, noticeDisplayText, TIME_SENSITIVE_WEB_HINTS } from './useWebSearch'
+import { useWebSearch, setWebSearch, useWebSearchPaused, noticeDisplayText, TIME_SENSITIVE_WEB_HINTS } from './useWebSearch'
+import { setFeatures } from './useFeatures'
 
 describe('useWebSearch store', () => {
   beforeEach(() => { localStorage.clear(); setWebSearch(false) })
@@ -54,11 +55,22 @@ describe('useWebSearch store', () => {
   })
 })
 
-// PR-W：網搜暫停中（生產 ASK_ENABLE_WEB=0）。DeepSeek 版網搜（P9）上線、生產開回總閘之後才改成 false，
-// 連同這條一起改——不要只為了讓別的測試綠而改它。
-describe('WEB_SEARCH_PAUSED', () => {
-  it('暫停中', () => {
-    expect(WEB_SEARCH_PAUSED).toBe(true)
+// 網搜暫停＝功能旗標 ask.web_search 沒開（/api/features）。正式環境 ASK_ENABLE_WEB=0 → 後端回 false → 暫停，
+// 與先前寫死的常數相同；還沒抓到或抓失敗也是暫停（寧可少開一個外網功能）。
+describe('useWebSearchPaused', () => {
+  afterEach(() => setFeatures(null))
+  it('還沒抓到 /api/features：暫停', () => {
+    setFeatures(null)
+    expect(renderHook(() => useWebSearchPaused()).result.current).toBe(true)
+  })
+  it('跟著旗標走，store 更新時重新渲染', () => {
+    setFeatures({ 'ask.web_search': false })
+    const { result } = renderHook(() => useWebSearchPaused())
+    expect(result.current).toBe(true)
+    act(() => setFeatures({ 'ask.web_search': true }))
+    expect(result.current).toBe(false)
+    act(() => setFeatures({ 'qa.agentic': true }))  // 沒有這個鍵＝關
+    expect(result.current).toBe(true)
   })
 })
 

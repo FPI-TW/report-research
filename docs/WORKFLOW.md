@@ -282,6 +282,34 @@ failed（tag_failed／ingest_error／extract_timeout）─retry─▶ clean（�
 
 問答主答（`ASK_ANSWER_MODEL`）沒有解析到 DeepSeek 時，後五種改回 200 並加 `_unused` 後綴（審查 M15；其他線上任務都 fail-open，不算）。ok 快取 600 秒、其餘 60 秒，每次最多等 4 秒。
 
+### 對外 API（`/external/v1/*`）
+
+兩條端點：`GET /external/v1/search`（需 `search` scope）與 `GET /external/v1/reports/{report_id}/file-url`（需 `report.file` scope），參數與回應欄位見 README 的 API 表。路由在 `web/routers/external.py`，認證在 `web/external_auth.py`，用戶端規則在 `app/services/api_clients.py`、授權範圍在 `app/services/entitlement.py`，原檔連結與站內 `/api/report/{report_id}/file` 共用 `app/services/original_file_url.py`。
+
+**認證**：`Authorization: Bearer <api_key>`，一個 API 用戶端一把金鑰（`rmk_<8 hex>_<43 字元>`；DB 只存 sha256，原始金鑰只在建立／輪替時顯示一次）。`web/server.py` 的 session middleware 對 `/external/` 前綴整個放行（不查、不發 session cookie，免登入開發模式也不作用），認證完全由路由 dependency 負責；站內 `/api/*` 一律不認 Bearer。每個請求都查 DB（不快取），停用與輪替下一個請求就生效。檢查順序：解析標頭 → 查金鑰 → scope → 每分鐘限流 → 每日額度；未認證的請求拿到的是 401，不是參數驗證的 422。日誌只記 client id 與 `key_prefix`，不記原始金鑰。
+
+**錯誤碼**（格式同站內 `{detail, code, request_id}`）：
+
+| HTTP | code | 條件 |
+|---|---|---|
+| 401 | `api_key_missing` | 沒有 `Authorization` 標頭（帶 `WWW-Authenticate: Bearer`） |
+| 401 | `api_key_invalid` | 不是 `Bearer <key>` 形式、格式不符、查無、已停用、已輪替掉的舊金鑰——刻意同一個回應 |
+| 403 | `api_scope_missing` | 金鑰沒有該端點要的 scope |
+| 429 | `api_rate_limited` | 超過每分鐘上限（`Retry-After`：補到一個名額的秒數） |
+| 429 | `api_quota_exceeded` | 超過每日額度（`Retry-After`：到台北隔日 0 點的秒數） |
+| 404 | `report_not_found` | file-url：查無、被隱藏、草稿、不在授權範圍、`report_id` 不是 UUID——刻意同一個回應 |
+| 404 | `original_not_found` | file-url：研報沒有原檔物件，或站台不是物件儲存模式（local 不產生對外 URL） |
+| 503 | `original_unavailable` | file-url：物件指標或 sha256 對不上、物件儲存無法使用 |
+| 503 | `api_auth_unavailable` | 查金鑰或計數額度時 DB 不可用 |
+| 503 | `api_client_misconfigured` | 用戶端的授權範圍無效（只可能是直接改 DB） |
+| 422 | `validation_error` | 已認證但參數超出範圍（例如 `limit` > 20、未知的 `sort`） |
+
+**限流與額度**：每分鐘上限是每個用戶端一個 token bucket（容量＝`rate_limit_per_min`，每秒補 1/60），狀態在 web 行程記憶體、重啟即滿；管理員調低上限下一個請求就生效。被限流擋下的請求不碰 DB、不計入每日額度。每日額度（`daily_quota`）以**台北時間的日曆日**計，台北 0 點（UTC 16:00）重置；通過限流的請求不論結果都計入當日計數（含額度用完後被拒的那幾次）。
+
+**授權範圍（entitlement）**：allowlist、fail-closed。`market` 必填；`source`／`report_type`／`instrument_type` 沒設定＝不限；維度內 OR、維度間 AND；研報在有設定的維度為 NULL 一律不符。用戶端看得到的研報＝可見（未隱藏、已發布）**且**在授權範圍內，兩個條件都在 SQL 裡（dense 與字面兩路都下推，不在 Python 事後過濾）。搜尋請求帶的 `market`／`source`／`report_type`／`instrument_type` 各是一個值，只能把該維度縮小成那一個值、且該值必須在授權清單內（`instrument_type` 也一樣，不靠陣列重疊放寬）；任一維度交集為空直接回空結果，不打檢索。file-url 不信任先前的搜尋結果，每次重新以可見性＋授權範圍查那一篇。
+
+**原檔 URL 有效期**：presigned GET，有效期 `EXTERNAL_FILE_URL_TTL_SECONDS`（預設 600 秒，60..3600），`expires_at`／`file_url_expires_at` 是簽發時刻＋有效期（ISO 8601 UTC，秒精度）。簽出前一律檢查 object key 逐字等於 `originals/<hash 前兩碼>/<file_hash><副檔名>`；file-url 端點另以 HEAD 驗物件 metadata 的 sha256，搜尋結果附的 `file_url` 不逐筆 HEAD，產生失敗的那筆給 null、不讓整個搜尋失敗。連結是持有即可下載的憑證，交出去就收不回，回應帶 `Cache-Control: no-store`。
+
 ### 契約守門
 
 - `tests/fixtures/sse_events.json` 是後端與前端共吃的單一真相（`tests/test_sse_event_contract.py`、`frontend/src/lib/sseEventContract.test.ts`），現在只剩 `ask` 一組事件。新事件或欄位：fixture 與 `frontend/src/lib/askSchemas.ts` 的 zod（預設 strip，未宣告鍵靜默丟掉；新欄位用 `optional()`）兩處都要動。

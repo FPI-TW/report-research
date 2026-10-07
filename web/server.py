@@ -49,6 +49,7 @@ from web import (
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import account_security as account_security_routes  # noqa: E402
 from web.routers import admin as admin_routes  # noqa: E402
+from web.routers import admin_api_clients as admin_api_clients_routes  # noqa: E402
 from web.routers import admin_data_health as admin_data_health_routes  # noqa: E402
 from web.routers import admin_diagnostics as admin_diagnostics_routes  # noqa: E402
 from web.routers import admin_exports as admin_exports_routes  # noqa: E402
@@ -60,6 +61,7 @@ from web.routers import admin_uploads as admin_uploads_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
+from web.routers import external as external_routes  # noqa: E402
 from web.routers import health as health_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
@@ -216,6 +218,8 @@ errors.install(app)
 # /healthz/storage、/healthz/llm 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
 _AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
+# 不走 session、改由路由 dependency 驗 Bearer 金鑰的前綴（反過來，其餘路徑一律不認 Bearer）。
+_EXTERNAL_PREFIX = "/external/"
 
 
 def _auth_allowed(path: str) -> bool:
@@ -230,6 +234,10 @@ def _auth_allowed(path: str) -> bool:
 async def require_login(request: Request, call_next):
     path = request.url.path
     if _auth_allowed(path):
+        return await call_next(request)
+    # 對外 API：認證完全交給 web/external_auth.py 的 Bearer dependency。不查也不發 session cookie，
+    # 且必須排在 dev_mode 之前——免登入的開發捷徑不能讓 /external/* 跳過金鑰。
+    if path.startswith(_EXTERNAL_PREFIX):
         return await call_next(request)
     # 開發模式：本機直連且未經任何代理時免登入（三個條件見 web/dev_mode.py）。
     # 刻意不發 session cookie——放行是這一個請求的事，不留下可帶走的憑證。
@@ -372,6 +380,10 @@ app.include_router(admin_retrieval_regression_routes.router)  # /api/admin/retri
 app.include_router(admin_diagnostics_routes.router)  # /api/admin/diagnostics：web 行程診斷快照（唯讀）
 app.include_router(admin_exports_routes.router)  # /api/admin/export/*.csv：管理清單匯出（每次寫稽核）
 app.include_router(admin_uploads_routes.router)  # /api/admin/uploads*：研報上傳的收檔與查詢（UPLOAD_ENABLED 預設關）
+app.include_router(admin_api_clients_routes.router)  # /api/admin/api-clients*：對外 API 用戶端管理
+
+# 對外 API（/external/v1/*）：Bearer 金鑰認證（web/external_auth.py），不走 session
+app.include_router(external_routes.router)
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

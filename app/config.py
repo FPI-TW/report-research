@@ -96,6 +96,23 @@ def _r2_presign_ttl() -> int:
     return ttl
 
 
+def _external_file_url_ttl() -> int:
+    """對外 API 原檔連結（presign）的有效期：比站內更短，界線同樣 fail-closed。
+
+    presign 是持有即可下載的憑證，交給 API 用戶端後我們收不回來；預設 600 秒夠對方
+    拿到就下載，下限 60 秒避免設錯成幾秒讓連結還沒用就失效。超出範圍或不是整數就
+    拒絕啟動（同 `_r2_presign_ttl`），不靜默退回預設——憑證壽命打錯字不能變成另一個值。
+    """
+    raw = os.getenv("EXTERNAL_FILE_URL_TTL_SECONDS", "600")
+    try:
+        ttl = int(raw)
+    except ValueError as exc:
+        raise ValueError("EXTERNAL_FILE_URL_TTL_SECONDS 必須是 60..3600 的整數") from exc
+    if not 60 <= ttl <= 3600:
+        raise ValueError("EXTERNAL_FILE_URL_TTL_SECONDS 必須介於 60..3600 秒")
+    return ttl
+
+
 
 def _positive_float(name: str, default: float) -> float:
     """正數秒數；空值、非數字、nan／inf 或 ≤0 退回預設並警告。
@@ -383,6 +400,9 @@ class Settings:
     # 入庫前檢查子行程（app/services/pdf_preflight.py）的虛擬記憶體上限（MiB）：300 頁的密集文字 PDF 以
     # pdfplumber 試抽字實測 RSS 1.68 GB，2048 通過、1536 不通過。調高前先算 worker unit 的 MemoryMax=4G 放不放得下。
     upload_preflight_memory_mb: int = 2048
+    # 對外 API（GET /external/v1/reports/{report_id}/file-url）交出的 presign 有效期（秒，60..3600）；
+    # 站內的原檔連結仍用 r2_presign_ttl_seconds。經 ObjectStorage.presign_get(ttl_seconds=...) 傳入。
+    external_file_url_ttl_seconds: int = 600
 
 
 def _load() -> Settings:
@@ -577,6 +597,7 @@ def _load() -> Settings:
         upload_worker_lock_file=(os.getenv("UPLOAD_WORKER_LOCK_FILE") or "").strip(),
         upload_clean_dir=(os.getenv("UPLOAD_CLEAN_DIR") or "").strip(),
         upload_preflight_memory_mb=_int_at_least("UPLOAD_PREFLIGHT_MEMORY_MB", 2048, 256),
+        external_file_url_ttl_seconds=_external_file_url_ttl(),
     )
 
 

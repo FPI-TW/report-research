@@ -16,12 +16,12 @@ from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import text
 
 from app.services.filename import source_display
-from app.services.object_storage import (
-    ObjectNotFound,
-    ObjectStorageError,
-    get_object_storage,
-    original_available,
-    original_object_key,
+from app.services.object_storage import get_object_storage, original_available
+from app.services.original_file_url import (
+    OriginalIntegrityError,
+    OriginalNotFound,
+    OriginalStorageUnavailable,
+    mint_original_url,
 )
 from app.services.visibility import visible_report_sql
 from web import deps
@@ -102,38 +102,19 @@ async def report_file(report_id: str):
     storage = get_object_storage()
     hybrid_local_integrity_required = storage.mode == "hybrid" and not object_key
     if storage.enabled and object_key:
-        if (
-            not isinstance(file_hash, str)
-            or len(file_hash) != 64
-            or any(char not in "0123456789abcdef" for char in file_hash)
-        ):
-            raise HTTPException(status_code=503, detail="original object pointer integrity error")
+        # 指標檢查、HEAD 驗 sha256 與 presign 的順序與理由見 app/services/original_file_url.py。
         try:
-            canonical_key = original_object_key(file_hash, row[0])
-        except ValueError as exc:
-            raise HTTPException(status_code=503, detail="original object pointer integrity error") from exc
-        if object_key != canonical_key:
-            # A DB object key is untrusted data.  Never mint a bearer URL for a different
-            # report merely because that unrelated object exists in our private bucket.
-            raise HTTPException(status_code=503, detail="original object pointer integrity error")
-        try:
-            # Explicit HEAD preserves the missing-vs-service distinction and makes the
-            # integrity check above unambiguously precede every remote operation.
-            metadata = await asyncio.to_thread(storage.head_object, object_key)
-            raw_metadata = metadata.get("Metadata") if isinstance(metadata, dict) else None
-            object_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
-            metadata_sha = object_metadata.get("sha256") or object_metadata.get("SHA256")
-            if not isinstance(metadata_sha, str) or metadata_sha != file_hash:
-                raise HTTPException(status_code=503, detail="original object pointer integrity error")
-            url = await asyncio.to_thread(
-                storage.presign_get, object_key, filename=row[0], inline=str(row[0]).lower().endswith(".pdf"),
+            url = await mint_original_url(
+                file_name=row[0], object_key=object_key, file_hash=file_hash, storage=storage,
             )
             return RedirectResponse(url=url, status_code=302, headers={"Cache-Control": "no-store"})
-        except ObjectNotFound:
+        except OriginalIntegrityError as exc:
+            raise HTTPException(status_code=503, detail="original object pointer integrity error") from exc
+        except OriginalNotFound:
             if storage.mode == "r2":
                 raise HTTPException(status_code=404, detail="original file not found")
             hybrid_local_integrity_required = storage.mode == "hybrid"
-        except ObjectStorageError as exc:
+        except OriginalStorageUnavailable as exc:
             raise HTTPException(status_code=503, detail="object storage unavailable") from exc
     elif storage.mode == "r2":
         raise HTTPException(status_code=404, detail="original file not found")

@@ -221,6 +221,24 @@ def _reset_ttl_caches():
 
 
 @pytest.fixture(autouse=True)
+def _reset_external_rate_limit():
+    """`web.external_auth` 的每分鐘限流 token bucket 每題前後各清一次（理由同上面的監控快取）。
+
+    bucket 以 client id 為鍵：兩個測試用同一個假用戶端 id 時，前一題用掉的 token 會讓下一題
+    莫名 429。同樣不主動 import——模組沒載入就沒有狀態要清。
+    """
+
+    def _clear() -> None:
+        mod = sys.modules.get("web.external_auth")
+        if mod is not None:
+            mod.reset_state()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _clear_trusted_providers():
     """M4a：trusted registry／快取／限流是模組級狀態。每測試後清空，防止
     忘記 tearDown 的註冊型測試讓「空 registry＝安全婉拒」的 M4 回歸誤判。"""

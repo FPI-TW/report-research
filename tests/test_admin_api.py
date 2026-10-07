@@ -234,6 +234,8 @@ class PrivilegeApiTests(unittest.TestCase):
         from web.routers import admin
 
         self.assertEqual(set(get_args(admin.GrantableScope)), set(accounts.GRANTABLE_SCOPES))
+        # 這組同時是 research.user_scope 的 CHECK（revision 0010、db/expected_constraints.txt）
+        self.assertEqual(set(accounts.GRANTABLE_SCOPES), {"qa_content.read", "ops.operate", "api_clients.manage"})
 
     def test_user_list_exposes_super_and_granted_scopes(self):
         items = {u["username"]: u for u in self.client.get("/api/admin/users").json()["items"]}

@@ -122,6 +122,108 @@ export const AdminUploadTakeawaySchema = z.object({
 })
 export type AdminUploadTakeaway = z.infer<typeof AdminUploadTakeawaySchema>
 
+export const AnalyticsAuditCountSchema = z.object({
+  action: z.string(),
+  count: z.number().int(),
+})
+export type AnalyticsAuditCount = z.infer<typeof AnalyticsAuditCountSchema>
+
+export const AnalyticsCellSchema = z.object({
+  key: z.string(),
+  label: z.string().nullable().optional(),
+  value: z.number().int().nullable().optional(),
+  users: z.number().int().nullable().optional(),
+  suppressed: z.boolean(),
+})
+export type AnalyticsCell = z.infer<typeof AnalyticsCellSchema>
+
+export const AnalyticsDailyPointSchema = z.object({
+  day: z.string(),
+  source: z.enum(['live', 'rollup']),
+  has_data: z.boolean(),
+  questions: z.number().int().nullable().optional(),
+  askers: z.number().int().nullable().optional(),
+  active_users: z.number().int().nullable().optional(),
+  reading: z.number().int(),
+  report_file: z.number().int(),
+  search: z.number().int(),
+  latency_p50_ms: z.number().nullable().optional(),
+  latency_p95_ms: z.number().nullable().optional(),
+  thinking_p50_ms: z.number().nullable().optional(),
+  thinking_p95_ms: z.number().nullable().optional(),
+})
+export type AnalyticsDailyPoint = z.infer<typeof AnalyticsDailyPointSchema>
+
+export const AnalyticsDistributionSchema = z.object({
+  name: z.enum(['path', 'decided_by', 'llm_model', 'llm_error']),
+  suppressible: z.boolean(),
+  cells: z.array(AnalyticsCellSchema),
+})
+export type AnalyticsDistribution = z.infer<typeof AnalyticsDistributionSchema>
+
+export const AnalyticsLatencySchema = z.object({
+  p50_ms: z.number().nullable().optional(),
+  p95_ms: z.number().nullable().optional(),
+  thinking_p50_ms: z.number().nullable().optional(),
+  thinking_p95_ms: z.number().nullable().optional(),
+  n: z.number().int(),
+})
+export type AnalyticsLatency = z.infer<typeof AnalyticsLatencySchema>
+
+export const AnalyticsOpsWeekSchema = z.object({
+  week_start: z.string(),
+  partial: z.boolean(),
+  uploads_received: z.number().int(),
+  uploads_published: z.number().int(),
+  uploads_rejected: z.number().int(),
+  uploads_infected: z.number().int(),
+  uploads_failed: z.number().int(),
+  reviews: z.number().int(),
+  qa_content_reads: z.number().int(),
+})
+export type AnalyticsOpsWeek = z.infer<typeof AnalyticsOpsWeekSchema>
+
+export const AnalyticsOverviewTotalsSchema = z.object({
+  questions: z.number().int(),
+  stopped: z.number().int(),
+  reading: z.number().int(),
+  report_file: z.number().int(),
+  search: z.number().int(),
+  active_users_peak: z.number().int(),
+  distinct_users_live: z.number().int().nullable().optional(),
+  missing_days: z.number().int(),
+})
+export type AnalyticsOverviewTotals = z.infer<typeof AnalyticsOverviewTotalsSchema>
+
+export const AnalyticsQualityWeekSchema = z.object({
+  week_start: z.string(),
+  partial: z.boolean(),
+  questions: z.number().int(),
+  checked_all: z.number().int(),
+  judge_checked: z.number().int(),
+  degraded: z.number().int(),
+  below_min: z.number().int(),
+  avg_score: z.number().nullable().optional(),
+  score_n: z.number().int(),
+  likes: z.number().int(),
+  dislikes: z.number().int(),
+})
+export type AnalyticsQualityWeek = z.infer<typeof AnalyticsQualityWeekSchema>
+
+export const AnalyticsSpanSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  source: z.enum(['live', 'rollup']),
+})
+export type AnalyticsSpan = z.infer<typeof AnalyticsSpanSchema>
+
+export const AnalyticsTopListSchema = z.object({
+  cells: z.array(AnalyticsCellSchema),
+  suppressed_count: z.number().int(),
+  truncated: z.boolean(),
+})
+export type AnalyticsTopList = z.infer<typeof AnalyticsTopListSchema>
+
 export const AuditChainResponseSchema = z.object({
   ok: z.boolean(),
   total: z.number().int(),
@@ -916,6 +1018,40 @@ export const AdminUploadPreviewSchema = z.object({
 })
 export type AdminUploadPreview = z.infer<typeof AdminUploadPreviewSchema>
 
+export const AnalyticsRangeSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  today: z.string(),
+  live_since: z.string(),
+  timezone: z.string(),
+  min_users: z.number().int(),
+  spans: z.array(AnalyticsSpanSchema),
+})
+export type AnalyticsRange = z.infer<typeof AnalyticsRangeSchema>
+
+export const AnalyticsRoutesResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  questions: z.number().int(),
+  stopped: z.number().int(),
+  llm_truncated: z.number().int(),
+  invalid_citation_rows: z.number().int(),
+  invalid_citations: z.number().int(),
+  distributions: z.array(AnalyticsDistributionSchema),
+})
+export type AnalyticsRoutesResponse = z.infer<typeof AnalyticsRoutesResponseSchema>
+
+export const AnalyticsTopResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  limit: z.number().int(),
+  targets: AnalyticsTopListSchema,
+  reports: AnalyticsTopListSchema,
+  markets: AnalyticsTopListSchema,
+  reading: AnalyticsTopListSchema,
+  report_file: AnalyticsTopListSchema,
+  search_markets: AnalyticsTopListSchema,
+})
+export type AnalyticsTopResponse = z.infer<typeof AnalyticsTopResponseSchema>
+
 export const ConfigSectionSchema = z.object({
   db_target: z.string().nullable().optional(),
   object_storage_mode: z.string().nullable().optional(),
@@ -1077,6 +1213,30 @@ export const RuntimeSectionSchema = z.object({
 })
 export type RuntimeSection = z.infer<typeof RuntimeSectionSchema>
 
+export const AnalyticsOperationsResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  weeks: z.array(AnalyticsOpsWeekSchema),
+  audit_actions: z.array(AnalyticsAuditCountSchema),
+})
+export type AnalyticsOperationsResponse = z.infer<typeof AnalyticsOperationsResponseSchema>
+
+export const AnalyticsOverviewResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  totals: AnalyticsOverviewTotalsSchema,
+  latency: AnalyticsLatencySchema,
+  daily: z.array(AnalyticsDailyPointSchema),
+})
+export type AnalyticsOverviewResponse = z.infer<typeof AnalyticsOverviewResponseSchema>
+
+export const AnalyticsQualityResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  judge_model: z.string(),
+  faithfulness_min: z.number(),
+  other_judge_checked: z.number().int(),
+  weeks: z.array(AnalyticsQualityWeekSchema),
+})
+export type AnalyticsQualityResponse = z.infer<typeof AnalyticsQualityResponseSchema>
+
 export const DataHealthResponseSchema = z.object({
   generated_at: z.string(),
   overall: z.enum(['ok', 'warn', 'fail', 'unknown']),
@@ -1146,6 +1306,16 @@ function qs(query: Record<string, string | number | boolean | null | undefined>)
 }
 
 export const adminApi = {
+  /** GET /api/admin/analytics/operations — Get Analytics Operations */
+  getAnalyticsOperations: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/operations${qs(query)}`, AnalyticsOperationsResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/analytics/overview — Get Analytics Overview */
+  getAnalyticsOverview: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/overview${qs(query)}`, AnalyticsOverviewResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/analytics/quality — Get Analytics Quality */
+  getAnalyticsQuality: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/quality${qs(query)}`, AnalyticsQualityResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/analytics/routes — Get Analytics Routes */
+  getAnalyticsRoutes: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/routes${qs(query)}`, AnalyticsRoutesResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/analytics/top — Get Analytics Top */
+  getAnalyticsTop: (query: { since?: string | null; until?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/analytics/top${qs(query)}`, AnalyticsTopResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit — Audit Log */
   auditLog: (query: { limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/audit${qs(query)}`, AuditResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit/verify — Verify Audit Chain */

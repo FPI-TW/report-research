@@ -2,6 +2,8 @@
 .form { display: flex; flex-direction: column; gap: 10px; min-width: min(380px, 100%); }
 /* 帳號安全對話框比 Modal 預設（920px）窄：內容只有 QR code 與一個輸入框，太寬反而讓視線來回跑。 */
 .modal { --tf-modal-width: min(520px, 100%); }
+/* 重新驗證身分只有一兩個輸入框，再窄一級：420 扣掉 Modal 左右內距 40 正好是 .form 的 380 下限。 */
+.compactModal { --tf-modal-width: min(420px, 100%); }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--tf-text-4); }
 .field input {
   border: 1px solid var(--tf-border-weak); border-radius: 6px; background: var(--tf-surface, white);

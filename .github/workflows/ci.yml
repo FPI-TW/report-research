@@ -414,6 +414,11 @@ jobs:
       - name: Admin v2 使用分析
         run: uv run pytest -q tests/test_analytics_db.py
 
+      # 功能旗標的寫入（Admin v2 Flags lane）：覆寫與稽核 flag.update 同交易（稽核失敗旗標不留）、相同內容不記、
+      # 作用域 text[]／uuid[] 往返、匯出匯入以帳號名稱往返且有錯誤整份不寫、PUT 經真的 DB 讀回。一律 rollback。
+      - name: Admin v2 功能旗標寫入與匯出匯入
+        run: uv run pytest -q tests/test_feature_flags_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

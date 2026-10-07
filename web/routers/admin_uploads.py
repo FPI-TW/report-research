@@ -1,13 +1,15 @@
 """研報上傳的收檔、查詢與審核（/api/admin/uploads*）。整組限管理員＋`reports.manage`。Admin v1.5 上傳管線 PR-4、PR-6。
 
 本檔有收檔（POST）、清單、詳情（PR-4）與審核（PR-6：preview／file／publish／reject／unreject／retry）；
-掃描、入庫與清除是 worker 的事（另一個 PR）。功能旗標 `UPLOAD_ENABLED` 預設關閉：關閉時 POST 回 503
+掃描、入庫與清除是 worker 的事（另一個 PR）。環境變數 `UPLOAD_ENABLED` 預設關閉：關閉時 POST 回 503
 `uploads_disabled`，清單、詳情與審核照常可用（沒有資料就是空的）——審核端點不看旗標，關掉收檔時仍要能
-處理已經進來的檔案。
+處理已經進來的檔案。`UPLOAD_ENABLED` 是上限（ClamAV 與 worker 已安裝）；上限開著時管理員還能以功能旗標
+`uploads.intake`（Admin v2，`app/services/feature_flags.py`）暫停收檔，同樣回 503 `uploads_disabled`。
 
 收檔（`POST /api/admin/uploads?filename=&last_modified=`，raw body、`Content-Type: application/pdf`）：
 
-1. 旗標 → Content-Type → 檔名清理（`upload_intake.sanitize_filename`）→ `Content-Length` 超過上限 413。
+1. 旗標（`UPLOAD_ENABLED` AND `uploads.intake`）→ Content-Type → 檔名清理（`upload_intake.sanitize_filename`）→
+   `Content-Length` 超過上限 413。
 2. 隔離區可用且剩餘空間足夠（`app/services/quarantine.py`），否則 503 `quarantine_unavailable`。
 3. 配額快查（每人每日、全站處理中），超過 429——不必先收完 25 MB 才拒。
 4. 串流寫進 `incoming/<upload_id>.part`（0600，邊寫邊算 SHA-256、邊計長，超過上限中止並刪檔 413）；
@@ -42,7 +44,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, StringConstraints
 
 from app.config import get_settings
-from app.services import quarantine, uploads
+from app.services import feature_flags, quarantine, uploads
 from app.services.accounts import User
 from app.services.object_storage import ObjectNotFound, ObjectStorageError, get_object_storage, original_object_key
 from app.services.upload_intake import (
@@ -413,6 +415,9 @@ async def create_upload(
     s = get_settings()
     if not s.upload_enabled:
         raise AppError(503, "uploads_disabled", "上傳功能尚未開放")
+    if not await feature_flags.policy("uploads.intake", actor):
+        # 功能旗標 uploads.intake（Admin v2）：環境變數上限開著（ClamAV 與 worker 已裝），管理員暫停收檔。
+        raise AppError(503, "uploads_disabled", "收檔已由管理員暫停（功能開關 uploads.intake）")
     if not _is_pdf_content_type(request.headers.get("content-type")):
         raise AppError(415, "upload_not_pdf", "請以 Content-Type: application/pdf 上傳 PDF 檔案內容")
     try:

@@ -253,6 +253,25 @@ def _reset_v2_state():
 
 
 @pytest.fixture(autouse=True)
+def _stub_feature_flag_db():
+    """功能旗標的讀取（`app.services.feature_flags` 沒給 session_factory 時用的 `SessionFactory`）預設讀成「沒有
+    任何覆寫」：問答、上傳等既有測試在 registry 預設下跑（＝只看環境變數，與 v1 相同），而不是去讀
+    `REPORT_MARK_DB_URL` 指的庫——本機預設是生產庫，那裡的覆寫會讓測試結果跟著生產設定變。
+    驗旗標本身的測試明確傳 session_factory，或在範圍內用 `fake_feature_flags.flag_rows()` 換成指定的覆寫。
+    旗標模組很輕（只依賴 app.config 與 app.services.db），這裡直接 import。"""
+    from fake_feature_flags import NoRowsSession
+
+    from app.services import feature_flags as flags
+
+    orig = flags.SessionFactory
+    flags.SessionFactory = NoRowsSession
+    try:
+        yield
+    finally:
+        flags.SessionFactory = orig
+
+
+@pytest.fixture(autouse=True)
 def _clear_trusted_providers():
     """M4a：trusted registry／快取／限流是模組級狀態。每測試後清空，防止
     忘記 tearDown 的註冊型測試讓「空 registry＝安全婉拒」的 M4 回歸誤判。"""

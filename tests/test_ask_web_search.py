@@ -17,6 +17,8 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -28,6 +30,17 @@ from app.services.llm import SEARCH_EVENT, LLMUnavailableError  # noqa: E402
 from app.services.rows import ChunkRow  # noqa: E402
 
 _TS_Q = "台積電今天收盤價多少"  # 命中前檢的 time_sensitive 詞表（零 LLM、決定性）
+
+
+@pytest.fixture(autouse=True)
+def _web_search_flag_on():
+    """本檔驗的是「網搜開放時」的行為，所以把功能旗標 ask.web_search 覆寫成開（registry 預設是關：v1 前端寫死
+    暫停、網搜後端不存在，見 app/services/feature_flags.py）。上限仍是各測試自己設的 `ans.ASK_ENABLE_WEB`。
+    預設關時網搜不可用、提示不附，由 tests/test_feature_flag_gates.py 驗。"""
+    from fake_feature_flags import flag_rows
+
+    with flag_rows(("ask.web_search", True, None, None)):
+        yield
 
 
 def _row():

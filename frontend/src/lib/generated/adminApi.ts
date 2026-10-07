@@ -134,6 +134,7 @@ export const AnalyticsCellSchema = z.object({
   value: z.number().int().nullable().optional(),
   users: z.number().int().nullable().optional(),
   suppressed: z.boolean(),
+  suppression_reason: z.enum(['min_users', 'complementary']).nullable().optional(),
 })
 export type AnalyticsCell = z.infer<typeof AnalyticsCellSchema>
 
@@ -158,6 +159,8 @@ export const AnalyticsDistributionSchema = z.object({
   name: z.enum(['path', 'decided_by', 'llm_model', 'llm_error']),
   suppressible: z.boolean(),
   cells: z.array(AnalyticsCellSchema),
+  suppressed_count: z.number().int(),
+  complementary_count: z.number().int(),
 })
 export type AnalyticsDistribution = z.infer<typeof AnalyticsDistributionSchema>
 
@@ -220,6 +223,7 @@ export type AnalyticsSpan = z.infer<typeof AnalyticsSpanSchema>
 export const AnalyticsTopListSchema = z.object({
   cells: z.array(AnalyticsCellSchema),
   suppressed_count: z.number().int(),
+  complementary_count: z.number().int(),
   truncated: z.boolean(),
 })
 export type AnalyticsTopList = z.infer<typeof AnalyticsTopListSchema>

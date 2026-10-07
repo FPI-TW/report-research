@@ -6,7 +6,8 @@
 **只出彙總**（使用者定案 2、3、4；規則與計算在 `app/services/analytics.py`）：
 - 標的、研報、市場、搜尋市場與路由類別這類可能回推個人偏好的格子，不重複人數少於 `ANALYTICS_MIN_USERS`（3）一律
   抑制：`suppressed=true`、`value`／`users` 為 null（前端顯示「<3」）。開放詞彙的熱門清單（標的、研報、閱讀、原檔）
-  連鍵都不回，只回 `suppressed_count`。只有總量（每日問答數、活躍人數、延遲、上傳審核量）不設門檻。
+  連鍵都不回，只回 `suppressed_count`。被抑制的恰好 1 格時再做互補抑制（`suppression_reason=complementary`），
+  讓總量減其他格推不回唯一那一格。只有總量（每日問答數、活躍人數、延遲、上傳審核量）不設門檻。
 - 沒有任何依使用者拆分的視圖；回應不含 user_id、帳號名稱、問題或答案文字（`tests/test_analytics_db.py` 掃描
   序列化結果）。問答原文仍只能走待複核的 `qa_content.read` 逐筆路徑。
 
@@ -40,6 +41,8 @@ _CACHE = TTLCache(ttl=60, max_entries=64, name="admin_analytics")
 # 與 app/services/analytics.py 的 SOURCE_*、ROUTE_KEYS 一致；前端 zod 型別由 gen_admin_client.py 從這裡產生。
 AnalyticsSource = Literal["live", "rollup"]
 RouteName = Literal["path", "decided_by", "llm_model", "llm_error"]
+# 與 analytics.REASON_* 一致：min_users＝不重複人數未達門檻；complementary＝互補抑制（避免以總量差推回另一格）。
+SuppressionReason = Literal["min_users", "complementary"]
 
 
 class AnalyticsSpan(BaseModel):
@@ -59,13 +62,14 @@ class AnalyticsRange(BaseModel):
 
 
 class AnalyticsCell(BaseModel):
-    """一個可能受 k 門檻抑制的格子。`suppressed=true` 時 `value`／`users` 一律 null。"""
+    """一個可能受 k 門檻抑制的格子。`suppressed=true` 時 `value`／`users` 一律 null，`suppression_reason` 說明原因。"""
 
     key: str
     label: str | None = None
     value: int | None = None
     users: int | None = None
     suppressed: bool
+    suppression_reason: SuppressionReason | None = None
 
 
 class AnalyticsDailyPoint(BaseModel):
@@ -114,6 +118,8 @@ class AnalyticsDistribution(BaseModel):
     name: RouteName
     suppressible: bool
     cells: list[AnalyticsCell]
+    suppressed_count: int
+    complementary_count: int
 
 
 class AnalyticsRoutesResponse(BaseModel):
@@ -149,8 +155,12 @@ class AnalyticsQualityResponse(BaseModel):
 
 
 class AnalyticsTopList(BaseModel):
+    """`suppressed_count`：未達門檻而不顯示的項目數（固定詞彙另含整個分布只剩它而連鍵拿掉的那格）；
+    `complementary_count`：為了不讓總量差推回唯一被抑制的項目而一併隱藏的項目數。"""
+
     cells: list[AnalyticsCell]
     suppressed_count: int
+    complementary_count: int
     truncated: bool
 
 

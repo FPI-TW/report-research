@@ -37,7 +37,8 @@ class SuppressionTests(unittest.TestCase):
 
     def test_cell_hides_value_and_users_not_zero(self):
         hidden = analytics.make_cell("2330", 40, 2, k=3, suppressible=True)
-        self.assertEqual(hidden, {"key": "2330", "label": None, "value": None, "users": None, "suppressed": True})
+        self.assertEqual(hidden, {"key": "2330", "label": None, "value": None, "users": None, "suppressed": True,
+                                  "suppression_reason": "min_users"})
         shown = analytics.make_cell("2330", 4.0, 3, k=3, suppressible=True, label="台積電")
         self.assertEqual((shown["value"], shown["users"], shown["suppressed"], shown["label"]), (4, 3, False, "台積電"))
         system = analytics.make_cell("llm", 1, 1, k=3, suppressible=False)
@@ -62,12 +63,87 @@ class SuppressionTests(unittest.TestCase):
         self.assertNotIn("AAPL", repr(out))
 
     def test_fixed_vocabulary_keeps_hidden_keys_and_ignores_unknown(self):
-        merged = {"TW": (9.0, 3), "US": (50.0, 2), "BOGUS": (9.0, 9)}
+        merged = {"TW": (9.0, 3), "US": (50.0, 2), "HK": (4.0, 1), "BOGUS": (9.0, 9)}
         out = analytics.top_list(merged, k=3, limit=10, open_vocab=False, labels={"TW": "台股"},
-                                 vocabulary=["TW", "US", "HK"])
-        self.assertEqual([(c["key"], c["value"], c["suppressed"]) for c in out["cells"]],
-                         [("TW", 9, False), ("US", None, True)])
+                                 vocabulary=["TW", "US", "HK", "CN"])
+        self.assertEqual([(c["key"], c["value"], c["suppressed"], c["suppression_reason"]) for c in out["cells"]],
+                         [("TW", 9, False, None), ("HK", None, True, "min_users"), ("US", None, True, "min_users")])
         self.assertEqual(out["cells"][0]["label"], "台股")
+        self.assertEqual((out["suppressed_count"], out["complementary_count"]), (2, 0))
+
+
+def _cells(spec, k=3):
+    return [analytics.make_cell(key, v, u, k=k, suppressible=True) for key, v, u in spec]
+
+
+def _shape(cells):
+    return {c["key"]: (c["value"], c["suppression_reason"]) for c in cells}
+
+
+class ComplementarySuppressionTests(unittest.TestCase):
+    """固定詞彙：被抑制恰好 1 格 → 再抑制數值最小的可見格；0 格、2 格不動；整個分布只剩它 → 連鍵拿掉。"""
+
+    def test_zero_suppressed_untouched(self):
+        cells, dropped = analytics.protect_fixed(_cells([("a", 9, 3), ("b", 4, 5)]))
+        self.assertEqual((_shape(cells), dropped), ({"a": (9, None), "b": (4, None)}, 0))
+
+    def test_exactly_one_suppressed_co_suppresses_smallest_visible(self):
+        cells, dropped = analytics.protect_fixed(_cells([("a", 9, 3), ("b", 4, 5), ("c", 4, 4), ("z", 50, 1)]))
+        # 同值時依鍵（b < c），選中的是「數值最小、未被抑制」的 b。
+        self.assertEqual(_shape(cells), {"a": (9, None), "b": (None, "complementary"), "c": (4, None),
+                                          "z": (None, "min_users")})
+        self.assertEqual(dropped, 0)
+        # 總量 67 減可見格（9＋4）＝54，是 b 與 z 的和：推不回 z 的 50。
+        visible = sum(c["value"] for c in cells if not c["suppressed"])
+        self.assertEqual(67 - visible, 4 + 50)
+        hidden = [c for c in cells if c["suppressed"]]
+        self.assertTrue(all(c["value"] is None and c["users"] is None for c in hidden))
+
+    def test_two_suppressed_untouched(self):
+        cells, dropped = analytics.protect_fixed(_cells([("a", 9, 3), ("y", 2, 2), ("z", 50, 1)]))
+        self.assertEqual(_shape(cells), {"a": (9, None), "y": (None, "min_users"), "z": (None, "min_users")})
+        self.assertEqual(dropped, 0)
+
+    def test_sole_suppressed_cell_loses_its_key(self):
+        self.assertEqual(analytics.protect_fixed(_cells([("z", 50, 1)])), ([], 1))
+
+    def test_one_visible_and_one_suppressed_hides_both(self):
+        cells, _ = analytics.protect_fixed(_cells([("a", 9, 3), ("z", 50, 1)]))
+        self.assertEqual(_shape(cells), {"a": (None, "complementary"), "z": (None, "min_users")})
+
+    def test_order_mixes_reasons_by_key_only(self):
+        cells, _ = analytics.protect_fixed(_cells([("m", 9, 3), ("b", 4, 5), ("z", 50, 1), ("c", 20, 4)]))
+        # 被抑制的兩格（b 互補、z 未達門檻）只依鍵排在最後，看不出哪格大。
+        self.assertEqual([c["key"] for c in analytics.order_cells(cells)], ["c", "m", "b", "z"])
+
+    def test_fixed_top_list_counts(self):
+        out = analytics.top_list({"TW": (9.0, 3), "US": (50.0, 2), "HK": (20.0, 4)}, k=3, limit=10,
+                                 open_vocab=False, vocabulary=["TW", "US", "HK"])
+        self.assertEqual(_shape(out["cells"]), {"HK": (20, None), "TW": (None, "complementary"),
+                                                "US": (None, "min_users")})
+        self.assertEqual((out["suppressed_count"], out["complementary_count"]), (1, 1))
+        sole = analytics.top_list({"US": (50.0, 2)}, k=3, limit=10, open_vocab=False, vocabulary=["US"])
+        self.assertEqual((sole["cells"], sole["suppressed_count"]), ([], 1))
+
+    def test_open_list_with_one_hidden_hides_smallest_visible(self):
+        merged = {"2330": (9.0, 3), "AAPL": (50.0, 2), "2317": (2.0, 5)}
+        out = analytics.top_list(merged, k=3, limit=10, open_vocab=True)
+        self.assertEqual([c["key"] for c in out["cells"]], ["2330"])
+        self.assertEqual((out["suppressed_count"], out["complementary_count"], out["truncated"]), (1, 1, False))
+        self.assertNotIn("2317", repr(out))
+        self.assertNotIn("AAPL", repr(out))
+
+    def test_open_list_zero_or_two_hidden_or_truncated_untouched(self):
+        none_hidden = analytics.top_list({"a": (9.0, 3), "b": (2.0, 5)}, k=3, limit=10, open_vocab=True)
+        self.assertEqual(([c["key"] for c in none_hidden["cells"]], none_hidden["complementary_count"]),
+                         (["a", "b"], 0))
+        two = analytics.top_list({"a": (9.0, 3), "x": (1.0, 1), "y": (1.0, 2)}, k=3, limit=10, open_vocab=True)
+        self.assertEqual(([c["key"] for c in two["cells"]], two["suppressed_count"], two["complementary_count"]),
+                         (["a"], 2, 0))
+        # 被 limit 截斷：截掉的可見項本身就讓總量差不唯一。
+        cut = analytics.top_list({"a": (9.0, 3), "b": (5.0, 4), "x": (1.0, 1)}, k=3, limit=1, open_vocab=True)
+        self.assertEqual(([c["key"] for c in cut["cells"]], cut["complementary_count"], cut["truncated"]),
+                         (["a"], 0, True))
 
 
 class PlanRangeTests(unittest.TestCase):

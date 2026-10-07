@@ -19,12 +19,18 @@
   （`ANALYTICS_MIN_USERS`，3）一律抑制——數值與人數都不給（`suppressed=true`），前端顯示「<3」。
   開放詞彙的清單（標的、研報、閱讀、原檔）連鍵都不給，只回被抑制的項目數；固定詞彙（市場、路由類別）才保留鍵。
   被抑制的格子一律排在可見格子之後、依鍵排序——依（被隱藏的）數值排序等於洩漏大小關係。
+- **互補抑制**：分布的總量減掉可見格＝被抑制格的總和，被抑制的恰好 1 格時就被唯一推回。固定詞彙的分布再抑制
+  一格「數值最小、未被抑制」的格子（`suppression_reason=complementary`，同樣不給數值），整個分布只剩那 1 格時連鍵
+  都拿掉（`protect_fixed`）；開放詞彙清單被藏恰好 1 項且可見項全數回傳時，同理再藏一項（`top_list`）。
   只有總量（每日問答數、活躍人數、延遲、上傳審核量）不設門檻。
 - 人數是**下限**：多日彙總的不重複人數無法再去重，跨日合併取各日的最大值（`merge_cells`）；
   `usage_daily.users` 本身就是下限。下限只會讓抑制更保守。`qa_log.user_id` 為 NULL 的列（個別帳號上線前的
   共用歷史、免登入開發模式）計入次數、不計入人數，所以它們永遠湊不滿門檻。
 - 刪帳：即時統計隨 `qa_log` 被刪而減少（尊重刪除）；`analytics_daily` 沒有 user_id，已寫入的日子保留。
   所以預設的回填只補「還沒彙總過」的日子（`missing_days`），不覆寫已保留的彙總，除非明確 `--force`。
+
+**彙總段以彙總當時的值為準**：「低於門檻」用的是當晚的 `FAITHFULNESS_MIN`；讚／倒讚是當晚的狀態，之後才按的
+不會補進已彙總的日子（`--force` 重算會更新，但也會讓被硬刪的問答從彙總裡消失）。
 
 **忠實度**一律經 `app/services/judge_schema.py` 的 `CURRENT_JUDGE_SQL`（只計現行 judge），分數 SQL 與
 `web/routers/monitor.py` 的 `_EVAL_COLUMNS` 同一套（jsonb 先 `jsonb_typeof` 再 cast，degraded 不計分）。
@@ -207,12 +213,45 @@ def is_suppressed(users: int | None, k: int) -> bool:
     return users is None or users < k
 
 
+REASON_MIN_USERS = "min_users"          # 不重複人數 < k
+REASON_COMPLEMENTARY = "complementary"  # 互補抑制：避免以總量減其他格推回唯一被抑制的那一格
+
+
 def make_cell(key: str, value: float | None, users: int | None, *, k: int, suppressible: bool,
               label: str | None = None) -> dict:
     """一個格子。抑制時數值與人數都是 None（不是 0：0 也是資訊）。"""
     if suppressible and is_suppressed(users, k):
-        return {"key": key, "label": label, "value": None, "users": None, "suppressed": True}
-    return {"key": key, "label": label, "value": _num(value), "users": users, "suppressed": False}
+        return {"key": key, "label": label, "value": None, "users": None, "suppressed": True,
+                "suppression_reason": REASON_MIN_USERS}
+    return {"key": key, "label": label, "value": _num(value), "users": users, "suppressed": False,
+            "suppression_reason": None}
+
+
+def _co_suppress(cell: dict) -> dict:
+    return {**cell, "value": None, "users": None, "suppressed": True, "suppression_reason": REASON_COMPLEMENTARY}
+
+
+def _smallest(visible: list[dict]) -> dict:
+    return min(visible, key=lambda c: (c["value"] or 0, c["key"]))
+
+
+def protect_fixed(cells: list[dict]) -> tuple[list[dict], int]:
+    """固定詞彙分布（市場、路由類別）的互補抑制，回傳 (格子, 連鍵都拿掉的格數)。
+
+    詞彙固定時，分布的總量（例如問答總數）減掉所有可見格，就是被抑制格的總和；被抑制的若**恰好 1 格**，
+    它的數值就被唯一推回。所以再抑制一格「數值最小、未被抑制」的格子（`suppression_reason=complementary`，
+    同樣不給數值與人數）：總量減其他格只剩兩格的和。被抑制 0 格或 ≥ 2 格時不動。
+    唯一被抑制的格子旁邊已經沒有可見格可以陪它時（整個分布只有它），連鍵都拿掉、只計數——
+    總量就是它的值，留著鍵等於公開「那 1–2 個人全都問了這一類」。
+    """
+    hidden = [c for c in cells if c["suppressed"]]
+    if len(hidden) != 1:
+        return cells, 0
+    visible = [c for c in cells if not c["suppressed"]]
+    if not visible:
+        return [], 1
+    target = _smallest(visible)
+    return [_co_suppress(c) if c is target else c for c in cells], 0
 
 
 def _num(v):
@@ -241,18 +280,39 @@ def merge_cells(parts: Iterable[tuple[str, float, int | None]]) -> dict[str, tup
 
 def top_list(merged: dict[str, tuple[float, int | None]], *, k: int, limit: int, open_vocab: bool,
              labels: dict[str, str] | None = None, vocabulary: Iterable[str] | None = None) -> dict:
-    """熱門清單。開放詞彙（標的、研報…）：被抑制的連鍵都不給，只回 `suppressed_count`；
-    固定詞彙（市場）：被抑制的格子保留鍵、顯示「<3」，詞彙裡沒出現的鍵不補（0 不是有人用過）。"""
+    """熱門清單。
+
+    - 開放詞彙（標的、研報、閱讀、原檔）：被抑制的連鍵都不給，只回 `suppressed_count`。總量（例如總覽的閱讀次數）
+      減掉回傳的項目＝被藏項目的總和；被藏的恰好 1 項、而且可見項目全數回傳（沒被 limit 截斷）時，那 1 項的值會被
+      唯一推回——雖然推不出是哪一篇，仍比照互補抑制再藏起數值最小的可見項（`complementary_count`）。
+      被 limit 截斷時，截掉的可見項本身就讓差值不唯一，不必再藏。
+    - 固定詞彙（市場）：被抑制的格子保留鍵、顯示「<3」，並做互補抑制（`protect_fixed`）；詞彙裡沒出現的鍵不補
+      （0 不是有人用過）。
+    """
     labels = labels or {}
     cells = [make_cell(key, v, u, k=k, suppressible=True, label=labels.get(key)) for key, (v, u) in merged.items()]
     if vocabulary is not None:
         allowed = set(vocabulary)
         cells = [c for c in cells if c["key"] in allowed]
-    visible = [c for c in order_cells(cells) if not c["suppressed"]]
-    hidden = [c for c in order_cells(cells) if c["suppressed"]]
     if open_vocab:
-        return {"cells": visible[:limit], "suppressed_count": len(hidden), "truncated": len(visible) > limit}
-    return {"cells": visible[:limit] + hidden, "suppressed_count": len(hidden), "truncated": len(visible) > limit}
+        ordered = order_cells(cells)
+        visible = [c for c in ordered if not c["suppressed"]]
+        hidden = [c for c in ordered if c["suppressed"]]
+        complementary = 0
+        if len(hidden) == 1 and visible and len(visible) <= limit:
+            target = _smallest(visible)
+            visible = [c for c in visible if c is not target]
+            complementary = 1
+        return {"cells": visible[:limit], "suppressed_count": len(hidden), "complementary_count": complementary,
+                "truncated": len(visible) > limit}
+    cells, dropped = protect_fixed(cells)
+    ordered = order_cells(cells)
+    visible = [c for c in ordered if not c["suppressed"]]
+    hidden = [c for c in ordered if c["suppressed"]]
+    return {"cells": visible[:limit] + hidden,
+            "suppressed_count": sum(c["suppression_reason"] == REASON_MIN_USERS for c in hidden) + dropped,
+            "complementary_count": sum(c["suppression_reason"] == REASON_COMPLEMENTARY for c in hidden),
+            "truncated": len(visible) > limit}
 
 
 # ── SQL ──────────────────────────────────────────────────────────────────────
@@ -594,7 +654,14 @@ async def routes(session, plan: Plan, params: Params) -> dict:
         merged = merge_cells((r.dim, r.value, r.users) for r in parts if r.metric == f"route.{key}")
         suppressible = key in SUPPRESSIBLE_ROUTES
         cells = [make_cell(k, v, u, k=params.min_users, suppressible=suppressible) for k, (v, u) in merged.items()]
-        distributions.append({"name": key, "suppressible": suppressible, "cells": order_cells(cells)})
+        dropped = 0
+        if suppressible:   # 問答總數就在同一份回應裡：沒有互補抑制，總數減其他格就推回唯一被抑制的那一類
+            cells, dropped = protect_fixed(cells)
+        distributions.append({
+            "name": key, "suppressible": suppressible, "cells": order_cells(cells),
+            "suppressed_count": sum(c["suppression_reason"] == REASON_MIN_USERS for c in cells) + dropped,
+            "complementary_count": sum(c["suppression_reason"] == REASON_COMPLEMENTARY for c in cells),
+        })
     return {
         "range": range_info(plan, params),
         "questions": int(_sum(daily, M_QUESTIONS)), "stopped": int(_sum(daily, M_STOPPED)),

@@ -186,7 +186,9 @@ class AnalyticsDbTests(unittest.TestCase):
             async with factory() as s:
                 rows = [  # (day, kind, subject, hits, users)
                     (D1, "reading", w.hashes["A"], 10, 3), (D1, "reading", w.hashes["B"], 40, 2),
-                    (D2, "reading", w.hashes["B"], 40, 2), (D1, "search", "TW", 9, 4), (D1, "search", "US", 9, 1),
+                    (D2, "reading", w.hashes["B"], 40, 2), (D1, "reading", w.hashes["C"], 7, 3),
+                    (D1, "reading", w.hashes["A"].replace("a", "b"), 1, 1),
+                    (D1, "search", "TW", 9, 4), (D1, "search", "US", 9, 1), (D1, "search", "HK", 5, 3),
                     (D1, "reading", "", 90, 4), (D1, "search", "", 18, 4), (D2, "report_file", "", 3, 1),
                     (D1, "report_file", w.reports["C"], 3, 3),
                 ]
@@ -198,15 +200,55 @@ class AnalyticsDbTests(unittest.TestCase):
                 out = await analytics.top(s, self._plan(), PARAMS, 20)
                 ov = await analytics.overview(s, self._plan(), PARAMS)
             self.assertEqual([(c["key"], c["value"], c["label"]) for c in out["reading"]["cells"]],
-                             [(w.hashes["A"], 10, "報告甲")])
-            # B 兩天各 2 人：合併後人數取最大值 2（不是 4），仍抑制。
-            self.assertEqual(out["reading"]["suppressed_count"], 1)
+                             [(w.hashes["A"], 10, "報告甲"), (w.hashes["C"], 7, "報告丙")])
+            # B 兩天各 2 人：合併後人數取最大值 2（不是 4），仍抑制；另一份 1 人。被藏 2 項，不需互補抑制。
+            self.assertEqual((out["reading"]["suppressed_count"], out["reading"]["complementary_count"]), (2, 0))
             self.assertEqual([(c["key"], c["label"]) for c in out["report_file"]["cells"]],
                              [(w.reports["C"], "報告丙")])
+            # 固定詞彙、恰好 1 格未達門檻（US）：再藏數值最小的可見格 HK，總量差推不回 US。
             search = {c["key"]: c for c in out["search_markets"]["cells"]}
-            self.assertEqual((search["TW"]["value"], search["US"]["suppressed"]), (9, True))
+            self.assertEqual((search["TW"]["value"], search["US"]["suppression_reason"],
+                              search["HK"]["suppression_reason"], search["HK"]["value"]),
+                             (9, "min_users", "complementary", None))
             self.assertEqual((ov["totals"]["reading"], ov["totals"]["search"], ov["totals"]["report_file"]),
                              (90, 18, 3))
+
+        self._run(go)
+
+    def test_complementary_suppression_when_exactly_one_cell_is_hidden(self):
+        """固定詞彙（市場、路由類別）與開放詞彙（研報）各有恰好 1 格未達門檻：總量差不得唯一推回那一格。"""
+        async def go(factory):
+            async with factory() as s:
+                w = _World(s)
+                for n in ("u1", "u2", "u3", "u4"):
+                    await w.user(n)
+                await w.report("A", market="TW", targets=["2330"], title="報告甲")
+                await w.report("B", market="US", targets=["AAPL"], title="報告乙")
+                await w.report("C", market="HK", targets=["0700"], title="報告丙")
+                for u in ("u1", "u2", "u3"):            # A／TW／overview：3 人 3 題
+                    await w.qa(_at(D1), user=u, cited=["A"], filters={"path": "overview"})
+                for u in ("u1", "u2", "u3", "u4"):      # B／US／corpus_qa：4 人 8 題
+                    for _ in range(2):
+                        await w.qa(_at(D1), user=u, cited=["B"], filters={"path": "corpus_qa"})
+                for _ in range(5):                      # C／HK／advice_risk：1 人 5 題
+                    await w.qa(_at(D1), user="u4", cited=["C"], filters={"path": "advice_risk"})
+                await s.commit()
+                top = await analytics.top(s, self._plan(), PARAMS, 20)
+                routes = await analytics.routes(s, self._plan(), PARAMS)
+            markets = {c["key"]: c for c in top["markets"]["cells"]}
+            self.assertEqual({k: (c["value"], c["suppression_reason"]) for k, c in markets.items()},
+                             {"US": (8, None), "TW": (None, "complementary"), "HK": (None, "min_users")})
+            path = next(d for d in routes["distributions"] if d["name"] == "path")
+            self.assertEqual({c["key"]: (c["value"], c["suppression_reason"]) for c in path["cells"]},
+                             {"corpus_qa": (8, None), "overview": (None, "complementary"),
+                              "advice_risk": (None, "min_users")})
+            self.assertEqual((path["suppressed_count"], path["complementary_count"]), (1, 1))
+            # 總數 16 減可見格 8＝8，是 overview＋advice_risk 的和：推不回 advice_risk 的 5。
+            self.assertEqual(routes["questions"] - sum(c["value"] for c in path["cells"] if not c["suppressed"]), 8)
+            self.assertEqual([c["key"] for c in path["cells"]], ["corpus_qa", "advice_risk", "overview"])
+            # 開放詞彙：C 被藏、A 一併藏起（數值最小的可見項），只回 B。
+            self.assertEqual([c["key"] for c in top["reports"]["cells"]], [w.reports["B"]])
+            self.assertEqual((top["reports"]["suppressed_count"], top["reports"]["complementary_count"]), (1, 1))
 
         self._run(go)
 

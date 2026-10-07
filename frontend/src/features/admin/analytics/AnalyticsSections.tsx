@@ -2,7 +2,8 @@ import type { ReactNode } from 'react'
 import type { AnalyticsCell, AnalyticsTopList } from '../../../lib/generated/adminApi'
 import { BarChart, LineChart } from './AnalyticsCharts'
 import {
-  AUDIT_ACTION_LABELS, ROUTE_TITLES, cellText, fmtInt, fmtMs, fmtScore, routeValueLabel, spanText,
+  AUDIT_ACTION_LABELS, ROUTE_TITLES, cellText, cellTitle, fmtInt, fmtMs, fmtScore, hiddenNote, routeValueLabel,
+  spanText,
 } from './analyticsFormat'
 import {
   type AnalyticsQuery, useAnalyticsOperations, useAnalyticsOverview, useAnalyticsQuality, useAnalyticsRoutes,
@@ -94,19 +95,18 @@ function RankList({ title, list, minUsers, showKey = false, emptyText = '這段�
   emptyText?: string
 }) {
   const max = Math.max(1, ...list.cells.map(c => c.value ?? 0))
+  const note = hiddenNote(list, minUsers)
   return (
     <div>
       <h3 className={adminStyles.ctitle}>{title}</h3>
       {list.cells.length === 0 ? (
-        <p className={adminStyles.idle}>{list.suppressed_count > 0 ? `所有項目都少於 ${minUsers} 人，不顯示` : emptyText}</p>
+        <p className={adminStyles.idle}>{note ?? emptyText}</p>
       ) : (
         <ol className={styles.rank} aria-label={title}>
           {list.cells.map(c => <RankItem key={c.key} cell={c} max={max} minUsers={minUsers} showKey={showKey} />)}
         </ol>
       )}
-      {list.cells.length > 0 && list.suppressed_count > 0 && !list.cells.some(c => c.suppressed) && (
-        <p className={styles.suppressedNote}>另有 {fmtInt(list.suppressed_count)} 項少於 {minUsers} 人，不顯示</p>
-      )}
+      {list.cells.length > 0 && note && <p className={styles.suppressedNote}>{note}</p>}
     </div>
   )
 }
@@ -119,7 +119,7 @@ function RankItem({ cell, max, minUsers, showKey }: { cell: AnalyticsCell; max: 
         {label}{showKey && cell.label && <span className={styles.rankKey}>{cell.key}</span>}
       </span>
       <span className={cell.suppressed ? `${styles.rankValue} ${styles.suppressed}` : styles.rankValue}
-        title={cell.suppressed ? `少於 ${minUsers} 位使用者，不顯示數字` : `${fmtInt(cell.users)} 位使用者`}>
+        title={cellTitle(cell, minUsers)}>
         {cellText(cell, minUsers)}
       </span>
       <span className={styles.rankTrack} aria-hidden="true">
@@ -177,7 +177,8 @@ export function RoutesSection({ query }: { query: AnalyticsQuery }) {
                   <RankList key={dist.name} title={ROUTE_TITLES[dist.name] ?? dist.name} minUsers={k}
                     list={{
                       cells: dist.cells.map(c => ({ ...c, label: routeValueLabel(dist.name, c.key) })),
-                      suppressed_count: dist.cells.filter(c => c.suppressed).length, truncated: false,
+                      suppressed_count: dist.suppressed_count, complementary_count: dist.complementary_count,
+                      truncated: false,
                     }} />
                 ))}
               </div>

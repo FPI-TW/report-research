@@ -1,4 +1,4 @@
-import type { AnalyticsCell, AnalyticsSpan } from '../../../lib/generated/adminApi'
+import type { AnalyticsCell, AnalyticsSpan, AnalyticsTopList } from '../../../lib/generated/adminApi'
 
 /** 範圍選項（天數，含今天）。後端上限 731 天。 */
 export const RANGES = [
@@ -11,9 +11,30 @@ export const RANGES = [
 
 export const fmtInt = (n: number | null | undefined): string => (n == null ? '—' : n.toLocaleString('zh-TW'))
 
-/** 受 k 門檻抑制的格子顯示「<k」（不是 0：後端刻意不給數值）。 */
+/**
+ * 受 k 門檻抑制的格子顯示「<k」（不是 0：後端刻意不給數值）；互補抑制的格子（本身人數夠，但為了不讓總量減其他格
+ * 推回唯一被抑制的那一格而一併隱藏）顯示「隱藏」——它不是「<k」，標成 <k 會是錯的資訊。
+ */
 export function cellText(c: AnalyticsCell, minUsers: number): string {
-  return c.suppressed ? `<${minUsers}` : fmtInt(c.value)
+  if (!c.suppressed) return fmtInt(c.value)
+  return c.suppression_reason === 'complementary' ? '隱藏' : `<${minUsers}`
+}
+
+export function cellTitle(c: AnalyticsCell, minUsers: number): string {
+  if (!c.suppressed) return `${fmtInt(c.users)} 位使用者`
+  return c.suppression_reason === 'complementary'
+    ? '為避免以總數減其他格推算出被隱藏的那一格，一併隱藏'
+    : `少於 ${minUsers} 位使用者，不顯示數字`
+}
+
+/** 清單裡沒列出來的項目（開放詞彙連名稱都不給）的說明；沒有就回 null。 */
+export function hiddenNote(list: AnalyticsTopList, minUsers: number): string | null {
+  const shown = list.cells.filter(c => c.suppressed).length
+  const total = list.suppressed_count + list.complementary_count
+  if (total - shown <= 0) return null
+  const parts = [`少於 ${minUsers} 人 ${fmtInt(list.suppressed_count)} 項`]
+  if (list.complementary_count > 0) parts.push(`為避免推算一併隱藏 ${fmtInt(list.complementary_count)} 項`)
+  return list.cells.length === 0 ? `所有項目都不顯示（${parts.join('、')}）` : `另有 ${fmtInt(total - shown)} 項不顯示（${parts.join('、')}）`
 }
 
 export function fmtMs(ms: number | null | undefined): string {

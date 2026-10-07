@@ -33,16 +33,19 @@ const OVERVIEW = {
     latency_p50_ms: null, latency_p95_ms: null }), point('2026-10-06'), point('2026-10-07')],
 }
 
-const cell = (key: string, value: number | null, users: number | null, label: string | null = null) => ({
-  key, label, value, users, suppressed: value === null,
+const cell = (key: string, value: number | null, users: number | null, label: string | null = null,
+  reason: 'min_users' | 'complementary' = 'min_users') => ({
+  key, label, value, users, suppressed: value === null, suppression_reason: value === null ? reason : null,
 })
-const list = (cells: unknown[], suppressed_count = 0) => ({ cells, suppressed_count, truncated: false })
+const list = (cells: unknown[], suppressed_count = 0, complementary_count = 0) =>
+  ({ cells, suppressed_count, complementary_count, truncated: false })
 
 const TOP = {
   range: RANGE, limit: 15,
   targets: list([cell('2330', 12, 5, '台積電')], 4),
-  reports: list([], 2),
-  markets: list([cell('TW', 20, 6, '台股'), cell('US', null, null, '美股')], 1),
+  reports: list([], 1, 1),
+  markets: list([cell('TW', 20, 6, '台股'), cell('HK', null, null, '港股', 'complementary'),
+    cell('US', null, null, '美股')], 1, 1),
   reading: list([cell('ab'.repeat(32), 9, 3, '報告甲')]),
   report_file: list([]),
   search_markets: list([]),
@@ -51,10 +54,11 @@ const TOP = {
 const ROUTES = {
   range: RANGE, questions: 120, stopped: 2, llm_truncated: 1, invalid_citation_rows: 3, invalid_citations: 5,
   distributions: [
-    { name: 'path', suppressible: true, cells: [cell('corpus_qa', 80, 8), cell('advice_risk', null, null)] },
-    { name: 'decided_by', suppressible: false, cells: [cell('llm', 70, 8)] },
-    { name: 'llm_model', suppressible: false, cells: [] },
-    { name: 'llm_error', suppressible: false, cells: [] },
+    { name: 'path', suppressible: true, suppressed_count: 1, complementary_count: 1,
+      cells: [cell('corpus_qa', 80, 8), cell('advice_risk', null, null), cell('overview', null, null, null, 'complementary')] },
+    { name: 'decided_by', suppressible: false, suppressed_count: 0, complementary_count: 0, cells: [cell('llm', 70, 8)] },
+    { name: 'llm_model', suppressible: false, suppressed_count: 0, complementary_count: 0, cells: [] },
+    { name: 'llm_error', suppressible: false, suppressed_count: 0, complementary_count: 0, cells: [] },
   ],
 }
 
@@ -108,21 +112,27 @@ test('總覽卡片、資料來源、缺彙總的提示與趨勢圖', async () =>
   expect(within(overview).getByRole('img', { name: /每日問答數：3 天，合計 8/ })).toBeInTheDocument()
 })
 
-test('k 門檻：被抑制的格子顯示「<3」，開放詞彙只說另有幾項', async () => {
+test('k 門檻與互補抑制：未達門檻顯示「<3」、互補抑制顯示「隱藏」，開放詞彙只說另有幾項', async () => {
   mount()
   const top = await screen.findByRole('region', { name: '熱門標的與研報' })
   const targets = await within(top).findByRole('list', { name: '問答引用的標的' })
   expect(targets).toHaveTextContent('台積電')
   expect(targets).toHaveTextContent('12')
-  expect(within(top).getByText('另有 4 項少於 3 人，不顯示')).toBeInTheDocument()
-  expect(within(top).getByText('所有項目都少於 3 人，不顯示')).toBeInTheDocument()   // 研報：全被抑制
+  expect(within(top).getByText('另有 4 項不顯示（少於 3 人 4 項）')).toBeInTheDocument()
+  // 研報：1 項未達門檻、1 項互補抑制，全部不顯示。
+  expect(within(top).getByText('所有項目都不顯示（少於 3 人 1 項、為避免推算一併隱藏 1 項）')).toBeInTheDocument()
   const markets = within(top).getByRole('list', { name: '問答引用的市場' })
   const us = within(markets).getByText('美股').closest('li')!
   expect(within(us).getByText('<3')).toHaveAttribute('title', '少於 3 位使用者，不顯示數字')
+  const hk = within(markets).getByText('港股').closest('li')!
+  expect(within(hk).getByText('隱藏')).toHaveAttribute('title', expect.stringContaining('避免以總數減其他格推算'))
+  expect(within(markets).queryByText('20')).not.toBeNull()
+  expect(markets).not.toHaveTextContent('另有')   // 固定詞彙：被藏的格子都列在清單裡，不另外說明
   const routes = await screen.findByRole('region', { name: '路由分布' })
   const path = await within(routes).findByRole('list', { name: '路由類別' })
   expect(within(path).getByText('語料問答')).toBeInTheDocument()
   expect(within(within(path).getByText('投資建議風險').closest('li')!).getByText('<3')).toBeInTheDocument()
+  expect(within(within(path).getByText('總覽').closest('li')!).getByText('隱藏')).toBeInTheDocument()
   expect(routes).toHaveTextContent('含無效引用的回答 3（共 5 處）')
 })
 
@@ -157,7 +167,9 @@ test('沒有 analytics.read 時不打任何分析 API', async () => {
 })
 
 test('格式化工具', () => {
-  expect(cellText({ key: 'x', value: null, users: null, suppressed: true }, 3)).toBe('<3')
+  expect(cellText({ key: 'x', value: null, users: null, suppressed: true, suppression_reason: 'min_users' }, 3)).toBe('<3')
+  expect(cellText({ key: 'x', value: null, users: null, suppressed: true, suppression_reason: 'complementary' }, 3))
+    .toBe('隱藏')
   expect(cellText({ key: 'x', value: 1234, users: 4, suppressed: false }, 3)).toBe('1,234')
   expect(fmtMs(999)).toBe('999 ms')
   expect(fmtMs(1500)).toBe('1.5 秒')

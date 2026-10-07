@@ -108,17 +108,18 @@ class AnalyticsApiTests(unittest.TestCase):
     def _top(plan, params, limit):
         hidden = analytics.make_cell("US", 9, 2, k=params.min_users, suppressible=True)
         shown = analytics.make_cell("TW", 9, 3, k=params.min_users, suppressible=True, label="台股")
-        empty = {"cells": [], "suppressed_count": 0, "truncated": False}
+        empty = {"cells": [], "suppressed_count": 0, "complementary_count": 0, "truncated": False}
         return {"range": _range(plan, params), "limit": limit, "targets": {**empty, "suppressed_count": 4},
-                "reports": empty, "markets": {"cells": [shown, hidden], "suppressed_count": 1, "truncated": False},
+                "reports": empty, "markets": {"cells": [shown, hidden], "suppressed_count": 1, "complementary_count": 0,
+                            "truncated": False},
                 "reading": empty, "report_file": empty, "search_markets": empty}
 
     @staticmethod
     def _routes(plan, params):
         return {"range": _range(plan, params), "questions": 0, "stopped": 0, "llm_truncated": 0,
                 "invalid_citation_rows": 0, "invalid_citations": 0,
-                "distributions": [{"name": n, "suppressible": n == "path", "cells": []}
-                                  for n in analytics.ROUTE_KEYS]}
+                "distributions": [{"name": n, "suppressible": n == "path", "cells": [], "suppressed_count": 0,
+                                   "complementary_count": 0} for n in analytics.ROUTE_KEYS]}
 
     @staticmethod
     def _quality(plan, params):
@@ -169,7 +170,7 @@ class AnalyticsApiTests(unittest.TestCase):
         body = r.json()
         self.assertEqual([s["source"] for s in body["range"]["spans"]], ["rollup", "live"])
         self.assertEqual(body["markets"]["cells"][1], {"key": "US", "label": None, "value": None, "users": None,
-                                                       "suppressed": True})
+                                                       "suppressed": True, "suppression_reason": "min_users"})
         self.assertEqual(body["targets"]["suppressed_count"], 4)
 
     def test_bad_params(self):

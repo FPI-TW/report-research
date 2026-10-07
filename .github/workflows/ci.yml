@@ -391,7 +391,7 @@ jobs:
       - name: Admin v2 用量收集與功能旗標
         run: uv run pytest -q tests/test_usage_events_db.py
 
-      # Admin v2 使用分析：k=3 門檻（2 人抑制、3 人顯示、NULL 使用者不計人數、跨日人數取最大值）、回應不含 user_id／
+      # Admin v2 使用分析：k=3 門檻（2 人抑制、3 人顯示、NULL 使用者不計人數、跨日人數取最大值）與互補抑制、回應不含 user_id／
       # 帳號名／問答文字、忠實度只計現行 judge、每晚彙總冪等與回填不覆寫已保留的日子、即時＋彙總兩段合併。一律 rollback。
       - name: Admin v2 使用分析
         run: uv run pytest -q tests/test_analytics_db.py

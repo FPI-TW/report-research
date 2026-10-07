@@ -1971,6 +1971,19 @@ async def _answer_overview(
                     **_answer_correction(streamed_body, body)})
 
 
+async def _flag_policy(key: str, user_id: str | None) -> bool:
+    """功能旗標的 DB 政策（Admin v2 Flags lane；**不含**環境變數上限）。
+
+    上限是呼叫點旁邊那個 import 期的模組常數（`ASK_ENABLE_WEB`、`ASK_FAITHFULNESS_ENABLED`、`ASK_RERANK_TOP_M`）
+    或 `get_settings()`（agentic）——兩者 AND＝`feature_flags.is_enabled`，而常數照舊是測試的替換點。一律放在
+    `and` 鏈的最後：上限或其他條件已經不成立時不查旗標。DB 沒有覆寫或讀不到＝registry 預設（開），行為與
+    v1 相同。函式內 import：本模組的頂層 import 區塊屬凍結範圍。
+    """
+    from app.services import feature_flags
+
+    return await feature_flags.policy(key, user_id)
+
+
 async def _yield_routed_notice(
     decision: RouteDecision,
     question: str,
@@ -1992,7 +2005,9 @@ async def _yield_routed_notice(
     """
     if decision.scope == TIME_SENSITIVE:
         # 走到這裡代表本輪沒開網搜（開了會改走 _answer_time_sensitive_web），所以只看總閘。
-        message = time_sensitive_message(locale, web_hint=ASK_ENABLE_WEB)
+        message = time_sensitive_message(
+            locale, web_hint=ASK_ENABLE_WEB and await _flag_policy("ask.web_search", user_id),
+        )
     else:
         message = off_topic_message(locale)
     log_filters = route_log_filters(filters, decision.scope, decision.decided_by)
@@ -2297,7 +2312,8 @@ async def answer_question(
     # M11：本輪要不要開網搜。使用者的選擇 AND 伺服器總閘——ASK_ENABLE_WEB=0 時前端
     # 送什麼都關。**這是每題的決定，不是全站設定**，所以一律用 web_on、不要在下游
     # 再讀 ASK_ENABLE_WEB（那會讓「使用者沒開」被誤判成開）。
-    web_on = bool(web) and ASK_ENABLE_WEB
+    # 功能旗標 ask.web_search（Admin v2）在總閘之下再 AND 一層：DB 沒有覆寫時與總閘相同。
+    web_on = bool(web) and ASK_ENABLE_WEB and await _flag_policy("ask.web_search", user_id)
     started = time.monotonic()
     timer = _StageTimer()
     conv_id = conversation_id or str(uuid.uuid4())
@@ -2431,14 +2447,17 @@ async def answer_question(
     if get_settings().qa_agentic_enabled and (
         not turns
         or (decision is not None and decision.scope in (CORPUS_QA, ADVICE_RISK))
-    ):
+    ) and await _flag_policy("qa.agentic", user_id):
         from app.services.query_planner import plan_queries
 
         plan_task = asyncio.create_task(plan_queries(standalone_query, profile="qa"))
 
     # 既有 RAG 路徑（embed+檢索+build_context 收斂於 retrieve_context；函式內 import
     # 避免頂層循環 import——retrieval_pipeline 於頂層 import 本模組）
-    from app.services.retrieval_pipeline import retrieve_context
+    from app.services.retrieval_pipeline import ask_rerank_top_m, retrieve_context
+
+    # rerank 的候選數：ASK_RERANK_TOP_M（環境變數上限，0＝關）AND 功能旗標 ask.rerank；首輪與 agentic 補查共用。
+    rerank_top_m = await ask_rerank_top_m(ASK_RERANK_TOP_M, user_id)
 
     # 字面路 cap 截斷的遙測收集點（見 qa_timing log）。`LIMIT :cap` 沒有 ORDER BY，
     # 被截斷時「取到哪 cap 列」不穩定；先量出實際發生率，再談要不要付排序的代價。
@@ -2449,7 +2468,7 @@ async def answer_question(
             q, k=k, dense_scan=ASK_DENSE_SCAN,
             max_reports=MAX_REPORTS, max_passages=MAX_PASSAGES_PER_REPORT,
             max_chars=MAX_CONTEXT_CHARS, filters=filters, timer=timer,
-            rerank_top_m=ASK_RERANK_TOP_M, rerank_timeout=ASK_RERANK_TIMEOUT,
+            rerank_top_m=rerank_top_m, rerank_timeout=ASK_RERANK_TIMEOUT,
             stats=retrieval_stats,
         )
 
@@ -2557,7 +2576,7 @@ async def answer_question(
                     "dense_scan": ASK_DENSE_SCAN,
                     "max_passages": MAX_PASSAGES_PER_REPORT,
                     "max_chars": MAX_CONTEXT_CHARS,
-                    "rerank_top_m": ASK_RERANK_TOP_M,
+                    "rerank_top_m": rerank_top_m,
                     "rerank_timeout": ASK_RERANK_TIMEOUT,
                 },
                 timer=timer,
@@ -2822,11 +2841,13 @@ async def answer_question(
         yield ("followups", fups)
 
     # M8c：問答迷你忠實度抽查——done 之後跑，不佔可見答案延遲。閘門：啟用 + 答案含
-    # 金融數字（無數字不查，省成本）+ 抽樣。結果落 qa_log.evaluation，暫不上 UI。
+    # 金融數字（無數字不查，省成本）+ 抽樣 + 功能旗標 qa.faithfulness（Admin v2 的降級開關，
+    # 放最後：前面任一不成立就不查旗標）。結果落 qa_log.evaluation，暫不上 UI。
     if (
         ASK_FAITHFULNESS_ENABLED and qa_id
         and is_numeric_claim(body)
         and random.random() < ASK_FAITHFULNESS_SAMPLE_RATE
+        and await _flag_policy("qa.faithfulness", user_id)
     ):
         # 不 await：抽查對使用者不可見，卻會把 /api/ask 的名額佔到查完（見 _spawn_background）。
         # 但背景也要有上限：超過就跳過這一次（抽樣 best-effort，等同沒抽中），不排隊。

@@ -94,14 +94,20 @@ class RegistryTests(unittest.TestCase):
             self.assertTrue(shape.fullmatch(key) and len(key) <= 64, key)
 
     def test_defaults_leave_behaviour_unchanged(self):
-        """沒有任何 DB 覆寫時，每個旗標＝它的環境變數上限（quota.enforce 例外：預設關＝影子模式）。"""
+        """沒有任何 DB 覆寫時，每個旗標＝它的環境變數上限，兩個例外預設關：
+
+        - quota.enforce：影子模式（使用者定案 5，觀察兩週再決定）。
+        - ask.web_search：v1 的前端把網搜寫死成暫停（不論 ASK_ENABLE_WEB 都看不到開關、請求一律 web=false），
+          網搜後端也不存在；預設關才是零行為改變——環境變數未設（＝1）時網搜開關也不會冒出來。
+        """
         settings = config.get_settings()
         state = asyncio.run(ff.snapshot(session_factory=_factory()))
+        default_off = {"quota.enforce", "ask.web_search"}
         for key, spec in ff.REGISTRY.items():
-            expected = spec.ceiling(settings) and key != "quota.enforce"
+            expected = spec.ceiling(settings) and key not in default_off
             self.assertEqual(state[key].effective, expected, key)
             self.assertEqual(state[key].source, "default")
-        self.assertFalse(ff.REGISTRY["quota.enforce"].default)
+        self.assertEqual({k for k, s in ff.REGISTRY.items() if not s.default}, default_off)
 
     def test_unknown_key_is_a_programming_error(self):
         with self.assertRaises(KeyError):
@@ -218,9 +224,19 @@ class PolicyTests(unittest.TestCase):
         return mock.patch.object(config, "_SETTINGS", dataclasses.replace(config.get_settings(), **values))
 
     def test_policy_ignores_the_ceiling_is_enabled_does_not(self):
-        with self._with_ceilings(ask_enable_web=False):
-            self.assertTrue(asyncio.run(ff.policy("ask.web_search", session_factory=_routing_factory())))
+        with self._with_ceilings(qa_agentic_enabled=False):
+            self.assertTrue(asyncio.run(ff.policy("qa.agentic", session_factory=_routing_factory())))
+            self.assertFalse(asyncio.run(ff.is_enabled("qa.agentic", session_factory=_routing_factory())))
+
+    def test_web_search_needs_ceiling_and_explicit_override(self):
+        on = [("ask.web_search", True, None, None)]
+        with self._with_ceilings(ask_enable_web=True):
             self.assertFalse(asyncio.run(ff.is_enabled("ask.web_search", session_factory=_routing_factory())))
+            ff.invalidate()
+            self.assertTrue(asyncio.run(ff.is_enabled("ask.web_search", session_factory=_routing_factory(on))))
+        ff.invalidate()
+        with self._with_ceilings(ask_enable_web=False):
+            self.assertFalse(asyncio.run(ff.is_enabled("ask.web_search", session_factory=_routing_factory(on))))
 
     def test_ceiling_off_does_not_even_read_the_db(self):
         calls: list = []

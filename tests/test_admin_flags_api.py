@@ -347,6 +347,9 @@ class FeaturesApiTests(unittest.TestCase):
         body = self._get("alice", USER_PW).json()["features"]
         for key, spec in ff.REGISTRY.items():
             self.assertEqual(body[key], spec.ceiling(s) and spec.default, key)
+        # 網搜：沒有覆寫時一律 false（前端 useWebSearchPaused 因此隱藏開關），不論 ASK_ENABLE_WEB
+        with mock.patch.object(config, "_SETTINGS", __import__("dataclasses").replace(s, ask_enable_web=True)):
+            self.assertFalse(self._get("alice", USER_PW).json()["features"]["ask.web_search"])
 
 
 if __name__ == "__main__":

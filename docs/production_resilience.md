@@ -2166,8 +2166,9 @@ worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移�
 
 - **實際值＝環境變數上限 AND DB 覆寫**。環境變數代表「能力已安裝／允許」；`research.feature_flag` 只存覆寫，沒有
   覆寫＝registry 預設。覆寫只能在上限之下關閉或限定給角色（`admin`／`user`）與指定帳號，上限關時一律關。
-- **DB 讀不到時退回 registry 預設**：派生功能（agentic、忠實度、rerank、可信資料、網搜、收檔）預設開＝回到只看
-  環境變數的行為；`quota.enforce` 預設關＝回到影子模式。所以**安全閘門一律不是旗標**：`ADMIN_MFA_REQUIRED`、
+- **DB 讀不到時退回 registry 預設**：派生功能（agentic、忠實度、rerank、可信資料、收檔）預設開＝回到只看
+  環境變數的行為；`quota.enforce` 預設關＝回到影子模式；`ask.web_search` 預設關＝不開放網搜（v1 前端本來就寫死
+  暫停，網搜後端也不存在）。所以**安全閘門一律不是旗標**：`ADMIN_MFA_REQUIRED`、
   `DEV_NO_AUTH`、`REPORT_MARK_*`、模型與 provider、`OBJECT_STORAGE_MODE`／`R2_*`、併發閘與連線池、`UPLOAD_MAX_BYTES`、
   ClamAV、`SYNC_*_LIMIT`、`EXTRACTOR` 都只在環境檔決定。
 - 快取 5 秒（`FEATURE_FLAG_CACHE_SECONDS`），同一行程的寫入立即失效；web 只有一個 worker，所以等於立即生效。前端
@@ -2183,7 +2184,7 @@ repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
 
 | 旗標 | 上限（環境變數，程式預設） | 測試環境建議 | 正式環境建議 | 何時調整 |
 |---|---|---|---|---|
-| `ask.web_search` | `ASK_ENABLE_WEB`（1） | 上限 **明確設 0**；不設覆寫 | 上限 **明確設 0**；不設覆寫 | 網搜仍解析到已放棄的 claude CLI。**沒設這個變數＝1，問答輸入框會出現網搜開關**，按下去只會失敗。DeepSeek 版網搜完成後：測試環境上限設 1、覆寫限定 `admin` 試用 → 正式環境上限設 1（需要時同樣先限定） |
+| `ask.web_search` | `ASK_ENABLE_WEB`（1；registry 預設**關**） | 上限明確設 0；不設覆寫 | 上限明確設 0；不設覆寫 | 網搜仍解析到已放棄的 claude CLI。旗標預設關：沒有覆寫時即使上限是 1 也不開放、問答輸入框不出現網搜開關（與 v1 前端寫死暫停相同）；上限仍建議設 0 當第二道保險。DeepSeek 版網搜完成後：測試環境上限設 1、覆寫限定 `admin` 試用 → 正式環境上限設 1、覆寫開啟（需要時同樣先限定） |
 | `uploads.intake` | `UPLOAD_ENABLED`（0） | 上限 0，直到該主機裝好 ClamAV 與上傳 worker 並經同意（本檔「ClamAV」「上傳 worker」） | 同左 | 上限 1 之後，維護或掃毒有狀況時用覆寫「全站關閉」暫停收檔（503 `uploads_disabled`）；審核端點不受影響 |
 | `qa.agentic` | `QA_AGENTIC_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | DeepSeek 延遲高或費用異常時覆寫「全站關閉」降級（只用第一輪檢索作答） |
 | `qa.faithfulness` | `ASK_FAITHFULNESS_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | judge 異常或要省費用時覆寫關閉；使用者看不到差別（抽查在 done 之後、不上 UI） |
@@ -2191,7 +2192,7 @@ repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
 | `trusted_data` | `TRUSTED_DATA_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | 受信任資料來源出問題時覆寫關閉；時效題回到既有的安全婉拒 |
 | `quota.enforce` | `QUOTA_ENFORCE`（0） | 上限 0（影子模式） | 上限 0（影子模式） | 影子模式觀察兩週、依 P50/P95 決定（使用者定案 5）後：先在測試環境上限設 1、覆寫限定測試帳號驗證 429，再到正式環境上限設 1、覆寫「全站開啟」 |
 
-部署 v2 之前，兩台主機都先確認 `.env` 的這七個變數與上表一致（尤其 `ASK_ENABLE_WEB=0`）。
+部署 v2 之前，兩台主機都先確認 `.env` 的這七個變數與上表一致。
 
 ### 匯出匯入（測試環境 → 正式環境）
 

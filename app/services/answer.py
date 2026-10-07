@@ -1976,8 +1976,9 @@ async def _flag_policy(key: str, user_id: str | None) -> bool:
 
     上限是呼叫點旁邊那個 import 期的模組常數（`ASK_ENABLE_WEB`、`ASK_FAITHFULNESS_ENABLED`、`ASK_RERANK_TOP_M`）
     或 `get_settings()`（agentic）——兩者 AND＝`feature_flags.is_enabled`，而常數照舊是測試的替換點。一律放在
-    `and` 鏈的最後：上限或其他條件已經不成立時不查旗標。DB 沒有覆寫或讀不到＝registry 預設（開），行為與
-    v1 相同。函式內 import：本模組的頂層 import 區塊屬凍結範圍。
+    `and` 鏈的最後：上限或其他條件已經不成立時不查旗標。DB 沒有覆寫或讀不到＝registry 預設：派生功能是開（行為
+    與 v1 相同）；ask.web_search 是關（v1 前端本來就寫死暫停，網搜後端不存在）。
+    函式內 import：本模組的頂層 import 區塊屬凍結範圍。
     """
     from app.services import feature_flags
 
@@ -2312,7 +2313,7 @@ async def answer_question(
     # M11：本輪要不要開網搜。使用者的選擇 AND 伺服器總閘——ASK_ENABLE_WEB=0 時前端
     # 送什麼都關。**這是每題的決定，不是全站設定**，所以一律用 web_on、不要在下游
     # 再讀 ASK_ENABLE_WEB（那會讓「使用者沒開」被誤判成開）。
-    # 功能旗標 ask.web_search（Admin v2）在總閘之下再 AND 一層：DB 沒有覆寫時與總閘相同。
+    # 功能旗標 ask.web_search（Admin v2）在總閘之下再 AND 一層：預設關（DB 沒有覆寫＝不開網搜，即使總閘開）。
     web_on = bool(web) and ASK_ENABLE_WEB and await _flag_policy("ask.web_search", user_id)
     started = time.monotonic()
     timer = _StageTimer()

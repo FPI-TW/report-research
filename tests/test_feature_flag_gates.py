@@ -61,8 +61,17 @@ class WebSearchGateTests(unittest.IsolatedAsyncioTestCase):
             _ = [e async for e in ans.answer_question("台積電展望", web=True, **kw)]
         return pt.called["stream_kwargs"]["allow_web"], pt.called["log_filters"]["web"]
 
-    async def test_no_override_is_the_old_behaviour(self):
-        self.assertEqual(await self._allow_web(), (True, True))
+    async def test_no_override_means_no_web_even_with_the_ceiling_on(self):
+        """registry 預設關：v1 前端寫死暫停、網搜後端不存在，沒有 DB 覆寫時即使總閘開、請求帶 web=true 也不開。"""
+        self.assertEqual(await self._allow_web(), (False, False))
+
+    async def test_ceiling_on_and_explicit_override_on_opens_web(self):
+        with _flag_rows(("ask.web_search", True, None, None)):
+            self.assertEqual(await self._allow_web(), (True, True))
+        with _flag_rows(("ask.web_search", True, None, None)), _Saved(ASK_ENABLE_WEB=False), \
+                _CorpusPatch(sr._decision(sr.CORPUS_QA, decided_by=sr.BY_LLM)) as pt:
+            _ = [e async for e in ans.answer_question("台積電展望", web=True)]
+        self.assertIs(pt.called["stream_kwargs"]["allow_web"], False)  # 上限關：覆寫開也沒用
 
     async def test_override_off_closes_web_even_when_requested(self):
         with _flag_rows(("ask.web_search", False, None, None)):
@@ -106,6 +115,9 @@ class WebSearchGateTests(unittest.IsolatedAsyncioTestCase):
         tmd.clear_providers()
         with _Saved(ASK_ENABLE_WEB=True, _log_qa=fake_log, load_recent_turns=no_turns, stream_completion=never):
             events = [e async for e in ans.answer_question(_TS_Q)]
+            self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)  # 預設關：不叫人去開網搜
+            with _flag_rows(("ask.web_search", True, None, None)):
+                events = [e async for e in ans.answer_question(_TS_Q)]
             self.assertEqual(events[2][1], ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT)
             with _flag_rows(("ask.web_search", False, None, None)):
                 events = [e async for e in ans.answer_question(_TS_Q)]

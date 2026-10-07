@@ -6,8 +6,9 @@
 - DB 只存覆寫值；沒有那一列＝registry 預設。registry 沒登記的 key 一律忽略（不會因為 DB 多一列就長出新旗標）。
 - 覆寫的作用域只有三種：`allow_roles` 與 `allow_users` 都是 NULL＝全站；任一非 NULL＝只對列出的角色或使用者
   生效（`enabled` 仍須為 true）。沒有身分（背景工作、批次）時，有作用域的覆寫一律視為關。
-- **DB 讀取失敗退回 registry 預設**（上限照樣 AND）。所以這裡**刻意不放任何安全閘門**：DB 遺失時旗標會退回
-  預設，安全邊界不能因此被放寬。管理員 TOTP 強制是環境變數 `ADMIN_MFA_REQUIRED`（`web/authz.py`），
+- **DB 讀取失敗退回 registry 預設**（上限照樣 AND；`ask.web_search` 與 `quota.enforce` 的預設是關）。
+  所以這裡**刻意不放任何安全閘門**：DB 遺失時旗標會退回預設，安全邊界不能因此被放寬。管理員 TOTP 強制是
+  環境變數 `ADMIN_MFA_REQUIRED`（`web/authz.py`），
   `DEV_NO_AUTH`、`REPORT_MARK_*`、CSRF、模型與儲存設定、併發閘、上傳的安全上限也都不在這裡（設計 §1.4）。
 - 批次腳本不讀旗標（設計 §1.4）：旗標只在 web 的請求路徑上判斷，`scripts/judge_agreement.py`、`eval/` 照舊只看
   環境變數，所以線上降級不會靜默改掉評測的設定。
@@ -96,8 +97,11 @@ def _spec(key, description, default, env, ceiling) -> tuple[str, FlagSpec]:
 
 # 旗標清單（唯一定義）。預設值的原則：fail-open 的派生功能預設 true（不設 DB 時行為與 v1 完全相同，
 # 由環境變數決定）；會改變使用者可見行為的營運開關預設 false。
+# ask.web_search 例外、預設 false：v1 的前端把網搜寫死成暫停（不論 ASK_ENABLE_WEB 都看不到開關、請求一律
+# web=false），而網搜後端（claude CLI）已不存在。預設關才是「零行為改變」——即使環境變數未設（＝1），
+# 也要上限開 AND DB 明確覆寫開，網搜開關才會出現。
 REGISTRY: dict[str, FlagSpec] = dict([
-    _spec("ask.web_search", "問答網路搜尋（前後端同一個來源；網搜後端完成前環境變數維持 0）", True,
+    _spec("ask.web_search", "問答網路搜尋（前後端同一個來源；預設關，網搜後端完成後再以覆寫開啟）", False,
           "ASK_ENABLE_WEB", lambda s: s.ask_enable_web),
     _spec("uploads.intake", "研報上傳收檔（環境變數＝ClamAV 與 worker 已安裝；旗標＝可以暫停收檔）", True,
           "UPLOAD_ENABLED", lambda s: s.upload_enabled),

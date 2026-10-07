@@ -1,0 +1,13 @@
+/* API 用戶端頁。卡片、按鈕、表格、表單基本樣式沿用 Admin.module.css，這裡只放這頁特有的部分。 */
+
+.fieldset { border: 1px solid var(--tf-border-weak); border-radius: 6px; margin: 0; padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.legend { font-size: 12px; color: var(--tf-text-4); padding: 0 4px; }
+.checkGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px 12px; }
+
+/* 一次性金鑰：警示文案與可選取的等寬金鑰框（不截斷、可整段選取以便手動複製） */
+.keyWarn { font-size: 13px; color: var(--tf-text-1); background: var(--tf-gold-tint); border-radius: 6px; padding: 10px 12px; margin: 0; }
+.keyBox {
+  display: block; font-family: var(--tf-mono, ui-monospace, monospace); font-size: 13px; color: var(--tf-text-1);
+  background: var(--tf-fill-subtle); border: 1px solid var(--tf-border-weak); border-radius: 6px; padding: 10px 12px;
+  overflow-wrap: anywhere; user-select: all;
+}

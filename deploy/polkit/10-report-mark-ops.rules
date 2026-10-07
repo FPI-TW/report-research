@@ -33,7 +33,8 @@
                 "report-mark-backup.service",
                 "report-mark-freshness.service",
                 "report-mark-audit.service",
-                "report-mark-r2-reconcile.service"
+                "report-mark-r2-reconcile.service",
+                "report-mark-upload.service"
             ]
         },
         "report-mark-ops-staging": {

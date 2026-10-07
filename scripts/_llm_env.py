@@ -3,9 +3,10 @@
 ## 為什麼需要這支
 
 DeepSeek 金鑰與批次的模型旋鈕放在 `/etc/default/report-mark-llm`（0640 root:kashionz），
-**只有** `report-mark-sync.service` 以 `EnvironmentFile=` 載入它——讓「環境變數裡有金鑰的
-行程」從十幾支 unit 縮到一支。手動跑批次（`make summaries`、`uv run python scripts/…`）不經過
-systemd，所以每個會呼叫 LLM 的入口要自己讀同一份檔，手動與排程才會用同一組設定。
+**只有** `report-mark-sync.service` 與 `report-mark-upload.service`（上傳 worker）以 `EnvironmentFile=`
+載入它——讓「環境變數裡有金鑰的行程」從十幾支 unit 縮到兩支（白名單由 tests/test_deploy_units.py 釘住）。
+手動跑批次（`make summaries`、`uv run python scripts/…`）不經過 systemd，所以每個會呼叫 LLM 的入口要自己讀
+同一份檔，手動與排程才會用同一組設定。
 
 ## 兩個函式、兩個時點
 
@@ -129,6 +130,15 @@ def _fresh_breaker() -> str | None:
     elif age >= BREAKER_TTL_S:
         return None
     return " ".join(text.split())[:400] or "（標記是空的）"
+
+
+def breaker_active() -> str | None:
+    """批次斷路器標記此刻是否有效（有效回內容、否則 None；判準同 `require_llm_key`）。
+
+    給「斷路器有效時要做別的事、而不是 rc=2 中止」的入口用：上傳 worker 把等著入庫的上傳標成延後
+    （`failure_kind=llm_breaker`），而不是讓預檢以 rc=2 收場。
+    """
+    return _fresh_breaker()
 
 
 def load_llm_env() -> None:

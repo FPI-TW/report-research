@@ -76,6 +76,7 @@ export const FAILURE_LABEL: Record<string, string> = {
   tag_truncated: '標註回應被截斷',
   ingest_error: '入庫失敗',
   hash_mismatch: '檔案內容與紀錄不符',
+  scan_heuristic: '掃毒規則攔截（例如加密或超過掃描上限）',
   llm_breaker: 'LLM 暫停中，延後處理',
 }
 
@@ -174,7 +175,7 @@ export function uploadFailure(status: number, body: ErrorBody | null): UploadFai
       const limit = num(body?.limit)
       const used = num(body?.used)
       if (body?.quota === 'in_flight') {
-        return { message: `全站處理中的上傳已達上限${limit != null ? `（${limit} 份）` : ''}，請等處理完再上傳。` }
+        return { message: `全站處理中的上傳已達上限${limit != null ? `（${limit} 份）` : ''}，請等處理完再試。` }
       }
       return {
         message: `已達每人每日上傳上限${limit != null ? `（${used ?? limit}／${limit} 份）` : ''}，請明天再上傳。`,

@@ -161,12 +161,15 @@ CHECKS: tuple[Check, ...] = (
         "  SELECT v.file_hash FROM research.report_visibility v"
         "   WHERE v.publication = 'draft'"
         "     AND NOT EXISTS (SELECT 1 FROM research.report_upload u"
-        "                      WHERE u.file_hash = v.file_hash AND u.state = 'draft')"
+        "                      WHERE u.file_hash = v.file_hash"
+        "                        AND (u.state = 'draft' OR (u.state = 'rejected' AND u.purged_at IS NULL)))"
         ") d",
         "`report_upload.state='draft'` 必須若且唯若 `report_visibility.publication='draft'`（同一個 file_hash）。"
         "可見性只看 report_visibility，所以前一半（上傳說是草稿、visibility 卻不是）代表"
         "**尚未審核的研報已經對所有使用者可見**；後一半（visibility 是草稿、卻沒有對應的草稿上傳）"
         "代表研報永遠卡在不可見、管理頁也找不到可以發布它的上傳紀錄。"
+        "例外是退回後、寬限期內還沒清除的草稿（`state='rejected' AND purged_at IS NULL`）：退回刻意不動 visibility"
+        "（研報維持不可見、寬限期內可撤銷），由上傳 worker 清除時連 visibility 列一起刪。"
         "兩邊必須在同一筆交易寫入（上傳 worker 的 pre_upsert、審核 API 的發布與退回）；"
         "出現不一致先查 admin_audit_log 的 upload.* 與 report.* 紀錄，由人決定要補發布、退回還是改回草稿。",
     ),

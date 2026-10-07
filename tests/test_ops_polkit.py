@@ -80,7 +80,7 @@ class PolkitAllowlistTests(unittest.TestCase):
         self.assertEqual(allow["report-mark-ops"]["restart"], ["report-mark-web.service"])
         self.assertEqual(sorted(allow["report-mark-ops"]["start"]), sorted([
             "report-mark-sync.service", "report-mark-backup.service", "report-mark-freshness.service",
-            "report-mark-audit.service", "report-mark-r2-reconcile.service"]))
+            "report-mark-audit.service", "report-mark-r2-reconcile.service", "report-mark-upload.service"]))
         for user, verbs in allow.items():
             for unit in itertools.chain.from_iterable(verbs.values()):
                 self.assertIsNone(FORBIDDEN_WRITE_TARGET.search(unit), unit)

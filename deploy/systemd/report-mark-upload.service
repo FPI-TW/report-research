@@ -1,0 +1,52 @@
+[Unit]
+Description=廷豐智能研報 上傳 worker（隔離區掃毒 → 草稿入庫 → 摘要／標題／摘錄 → 清除；每 5 分鐘）
+# Admin v1.5 上傳管線（scripts/process_uploads.sh；狀態機見 app/services/upload_worker.py 檔頭）。
+# 收檔旗標 UPLOAD_ENABLED 關閉時隔離區不會有新檔，每輪只是幾個空查詢（不載模型、不打 LLM、不連 clamd）。
+# DB 與 clamd 都是 Docker 容器、不歸本 distro 的 systemd 管，故不宣告 After=；連不上時：DB → rc=2（不跑），
+# clamd → 檔案留在隔離區（fail-closed，由容器探針告警）。
+After=network-online.target
+Wants=network-online.target
+# 失敗要有人知道：rc=1（這支自己壞了）與 rc=3（LLM 設定錯誤，不會自己好）走既有告警鏈。
+# 會自己好的「不跑」不走（見下面的退出碼表）：timer 每 5 分鐘，report-mark-alert@ 沒有去重，
+# 把它們算成失敗就是每 5 分鐘一則重複通知。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# 批次嵌入的 torch 執行緒上限（設計 1.1）：預設 0＝吃滿全部核心，撞上線上問答時延遲被拉長近一倍
+# （docs/CAPACITY.md）。上傳量很小，慢一點無妨。下面兩個環境檔都沒有這個鍵（有的話會蓋掉這裡）。
+Environment=EMBED_TORCH_THREADS=4
+# 共用環境檔：REPORT_MARK_ROOT、SYNC_PATH_EXTRA（找 uv）、EXTRACTOR、R2 憑證、DB 連線（不在本機時）。
+EnvironmentFile=-/etc/default/report-mark-sync
+# LLM 專用環境檔（DeepSeek 金鑰與批次模型旋鈕，0640 root:kashionz）。白名單只有 sync 與這支
+# （設計決策 4；tests/test_deploy_units.py 釘住）：入庫段的行內標註與下游的摘要、標題、摘錄都要它。
+# 排在共用檔之後；`-`：還沒安裝時 unit 仍能啟動，用到 DeepSeek 的段在取鎖前以 rc=2 說出缺什麼。
+EnvironmentFile=-/etc/default/report-mark-llm
+# 告警 webhook（0600 root:root，只放 secret）：偵測到感染時 worker 自己送一則（設計決策 17），
+# URL 經 stdin 給 curl、不進 argv。`-`：沒設就只寫稽核與 journal ERROR。
+EnvironmentFile=-/etc/report-mark/alert.env
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; exec "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}/scripts/process_uploads.sh"'
+# 退出碼表（分界是「會不會自己好」；scripts/process_uploads.sh 檔頭同一張）：
+#   0  ＝做完了。斷路器有效、backfill 正在跑、另一輪 worker 還沒結束也是 0（刻意不做，下一輪再看）。
+#   1  ＝自己壞了（例外、SQL 錯誤、隔離區權限）→ OnFailure 告警。
+#   2  ＝這輪不跑、會自己好：DB 連不上（web 探針經 P5 帶去重告警）。乾淨檔維持 clean。→ 列為成功。
+#   3  ＝LLM 設定或帳號錯誤、不會自己好：缺金鑰、/etc/default/report-mark-llm 讀不到（不存在／權限）、
+#        LLM_PROVIDER 拼錯、未知模型、重複的鍵，以及途中的 401／402／400 升級。→ **不**列為成功，走 OnFailure
+#        告警。只有真的有上傳在等（有 clean）時才會走到這一步；修好之前每輪（5 分鐘）都會再告警一次。
+#   75 ＝入庫段撞 claude 鎖（sync 或手動 LLM 批次在跑；scripts/_claude_lock.py 的 EX_TEMPFAIL）。
+#        乾淨檔維持 clean，掃描與清除照常做完。→ 列為成功。
+SuccessExitStatus=2 75
+# 記憶體與 CPU（設計 1.1）：入庫時會延遲載入 BGE-M3（約 2–3 GB），與 sync 互斥（同一把 claude 鎖），
+# 主機尖峰維持「web 一份＋一支批次一份」。MemoryMax 是最後一道牆：不可信 PDF 的解析另有子行程的
+# RLIMIT_AS（UPLOAD_PREFLIGHT_MEMORY_MB，預設 2048）與 300 秒逾時。Nice／idle I/O：撞上線上問答時讓路。
+MemoryMax=4G
+Nice=19
+IOSchedulingClass=idle
+# 一輪上限：每輪最多入庫 20 筆（每筆的子行程檢查最長 300 秒、標註與嵌入數十秒）＋下游三段；
+# 正常一輪幾秒到幾分鐘。執行中 timer 不會再疊一輪（oneshot 還在 activating）。
+TimeoutStartSec=3600

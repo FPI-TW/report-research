@@ -557,17 +557,23 @@ async def reject_upload(upload_id: str, body: AdminUploadRejectRequest, actor: U
 
 @router.post("/api/admin/uploads/{upload_id}/unreject", response_model=AdminUpload, dependencies=[_REPORTS])
 async def unreject_upload(upload_id: str, actor: User = Depends(authz.current_user)):
-    """撤銷退回（寬限期內、尚未清除）：回到由事實推導的退回前狀態，寫稽核 `upload.unreject`。"""
+    """撤銷退回（寬限期內、尚未清除）：回到由事實推導的退回前狀態，寫稽核 `upload.unreject`。
+    回到處理中（quarantined／clean）時也受全站處理中上限（超過 429 `upload_quota_exceeded`）。"""
+    max_in_flight = get_settings().upload_max_in_flight
     return await _transition(
         "upload.unreject", upload_id, actor,
-        lambda session: deps.upload_review.unreject(session, upload_id, actor_id=actor.id),
+        lambda session: deps.upload_review.unreject(
+            session, upload_id, actor_id=actor.id, max_in_flight=max_in_flight,
+        ),
     )
 
 
 @router.post("/api/admin/uploads/{upload_id}/retry", response_model=AdminUpload, dependencies=[_REPORTS])
 async def retry_upload(upload_id: str, actor: User = Depends(authz.current_user)):
-    """可重試的失敗（tag_failed／ingest_error／extract_timeout）→ clean，等 worker 重新處理；寫稽核 `upload.retry`。"""
+    """可重試的失敗（tag_failed／ingest_error／extract_timeout）→ clean，等 worker 重新處理；寫稽核 `upload.retry`。
+    也受全站處理中上限（超過 429 `upload_quota_exceeded`，與收檔同一套計數）。"""
+    max_in_flight = get_settings().upload_max_in_flight
     return await _transition(
         "upload.retry", upload_id, actor,
-        lambda session: deps.upload_review.retry(session, upload_id, actor_id=actor.id),
+        lambda session: deps.upload_review.retry(session, upload_id, actor_id=actor.id, max_in_flight=max_in_flight),
     )

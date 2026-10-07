@@ -322,6 +322,32 @@ docker inspect -f '{{.State.OOMKilled}} {{.State.Health.Status}} {{.RestartCount
 freshclam timer，執行時才暫時多約 1 GB、每輪多 20–40 秒載入病毒碼）。設計時量到的背景：主機總記憶體
 19 GiB、可用約 6 GiB、swap 已用 7/8 GiB（這台同時是開發機）。
 
+## 批次元件：上傳 worker
+
+`report-mark-upload.service`（Admin v1.5，`scripts/process_uploads.sh`，timer 每 5 分鐘；**尚未部署**）。取樣器依 unit
+名自動把它記成元件 `upload`，分析器列在 `BATCH_COMPONENTS`（批次，不算線上路徑）。每輪大多只是幾個空查詢；有乾淨檔
+要入庫時才延遲載入 BGE-M3，入庫段取 claude 鎖、與 sync 互斥，主機尖峰維持「web 一份＋一支批次一份」。
+backfill（`scripts/backfill_extraction.py`，也載 BGE-M3、不取 claude 鎖）正在跑時只掃描、不入庫。
+
+| 項目 | 值 |
+|---|---|
+| unit 限制 | `MemoryMax=4G`、`Nice=19`、`IOSchedulingClass=idle`、`EMBED_TORCH_THREADS=4` |
+| 入庫前檢查子行程 | `RLIMIT_AS`＝`UPLOAD_PREFLIGHT_MEMORY_MB`（預設 2048）、逾時 300 秒、頁數上限 300 |
+| 合成 PDF 的 pdfplumber 試抽（2026-10-07，每頁約 2,700 字） | 50 頁 RSS 0.34 GB、100 頁 0.61 GB、300 頁 1.68 GB（每頁約 5.5 MB；1536 MB 上限下 300 頁 ENOMEM）；pypdf 300 頁約 60 MB |
+| 實測 RSS（idle 一輪／入庫一篇的 p50／p95／max） | **待補**：上線後量一週再填，量到之前不寫數字 |
+| 一週內 cgroup OOM 次數 | **待補** |
+
+**已知風險**：入庫核心（`scripts/_ingest_core.py` 的 `ingest_one`）會在 worker 主行程再抽一次字，已載入 BGE-M3
+（約 2–3 GB）時再抽一份 300 頁的密集文字 PDF（約 1.7 GB）會逼近 4G。撞到時 cgroup OOM 砍掉這一輪，殘留回收把那一筆
+退回 `clean`，同一份檔被中止 3 次就轉 `failed`（不會無限重試）。上線一週後用下面的指令補表；若真的撞到，先評估
+調降 `UPLOAD_PREFLIGHT_MEMORY_MB`（讓過大的檔在子行程就被擋下）或頁數上限，而不是放寬 `MemoryMax`。
+
+```bash
+make metrics SINCE=7d                                    # 看 upload 元件的 anon 與 cgroup 歷史峰值
+systemctl show report-mark-upload -p MemoryPeak -p Result # 單輪峰值（需 systemd ≥ 255）與是否 oom-kill
+journalctl -u report-mark-upload -g "oom" --since -7d
+```
+
 ## 不在量測範圍內的成本
 
 現行問答 LLM 是遠端 DeepSeek API，不是本機推論；上表 2026-09-02 的舊量測則含當時的

@@ -46,6 +46,8 @@ LOCKED_SCRIPTS = [
     "extract_takeaways.py",
     "extract_signals.py",
     "sync_new_reports.py",
+    # 上傳 worker：ingest 子命令的行內標註（_ingest_core）取鎖；cleanup 刪語料時也取（與 sync 的入庫互斥）。
+    "process_uploads.py",
     # 每日簡報：取鎖的位置與其他支不同（在 generate() 內、只包住那一次 CLI 呼叫，
     # 不在 main 進入點）——排程每 3 小時叫它一次而真正呼叫 LLM 的只有一天一次，
     # 在入口取鎖會讓其餘七次 no-op 撞鎖 rc=75、把 unit_failures 灌成雜訊。

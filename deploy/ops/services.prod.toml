@@ -3,7 +3,7 @@
 # 「維運代理」。改了這份要重新安裝並重啟 report-mark-ops-agent.service；先跑 --check 驗證。
 #
 # 名稱不在這裡的服務，代理一律拒絕。actions：status、logs（唯讀），restart、run（寫入類）。
-# 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile 的 run（立即執行一次，
+# 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile、upload 的 run（立即執行一次，
 # 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared、ClamAV 維持唯讀——代理與 catalog 兩層都擋，
 # 這裡寫了也載入不了。改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules（tests/test_ops_polkit.py 對帳）。
 # 刻意不列：report-mark-alert@（模板）、report-mark-backfill（過渡期，跑完就 disable）。
@@ -329,8 +329,8 @@ description = "檢索回歸檢查（凍結題集對基準，07:40，零 LLM）"
 # ── 上傳掃描（v1.5 PR-3）────────────────────────────────────────────────────
 # 唯讀容器（deploy/clamav/docker-compose.yml 固定 container_name；make up-clamav）。容器探針同名同 tier
 # （scripts/check_container_health.sh 的 CONTAINER_HEALTH_TARGETS 預設值，tests/test_container_host_probes.py 對帳）。
-# 依賴圖：目前沒有下游——上傳 worker（PR-5）加進來時在它的 depends_on 寫 "clamav"。clamd 自己不依賴
-# 任何 catalog 節點（freshclam 連外更新病毒碼失敗時，由 worker 的 72 小時病毒碼年齡閘門 fail-closed）。
+# 依賴圖：下游是上傳 worker（upload 的 depends_on）。clamd 自己不依賴任何 catalog 節點（freshclam 連外更新
+# 病毒碼失敗時，由 worker 的 72 小時病毒碼年齡閘門 fail-closed）。
 
 [[services]]
 name = "clamav"
@@ -339,6 +339,25 @@ container = "report-mark-clamav"
 tier = "supporting"
 actions = ["status", "logs"]
 description = "ClamAV clamd（上傳掃描，127.0.0.1:3310；停了上傳只會留在隔離區）"
+
+# ── 上傳 worker（v1.5 PR-5）──────────────────────────────────────────────────
+# run＝立即跑一輪（設計決策 3；等同 timer 觸發，不收參數）。execution group 刻意自成一組 upload、**不併進
+# llm-batch**：worker 的互斥靠自己的整輪鎖（flock_files）；入庫段與 sync／手動 LLM 批次的互斥靠 claude 鎖
+# （撞到就 rc 75、乾淨檔留到下一輪，掃描與清除照做）。併進 llm-batch 的話，任何 LLM 批次持鎖的那幾小時
+# 「立即執行」都會被拒（連掃毒都不能立刻跑），sync 的 run 也會在每 5 分鐘一輪的 worker 執行時被拒，換不到東西。
+# 鎖檔路徑與 scripts/process_uploads.sh 的 LOCK 預設值一致（tests/test_ops_agent_actions.py 對帳）。
+
+[[services]]
+name = "upload"
+kind = "systemd"
+unit = "report-mark-upload.service"
+timer = "report-mark-upload.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "upload"
+flock_files = ["/home/kashionz/projects/report-mark/data/.upload_worker.lock"]
+depends_on = ["postgres", "clamav", "deepseek", "r2"]
+description = "上傳 worker（掃毒、草稿入庫、清除；每 5 分鐘）"
 
 # ── 外部依賴（依賴圖的節點；代理不查也不動它們）──────────────────────────────
 # 退出碼對照：scripts/check_web_health.sh（6＝R2、7＝DeepSeek 餘額低、8＝DeepSeek 不可用；優先序 8→5→6→7，

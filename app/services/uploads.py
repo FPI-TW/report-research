@@ -20,8 +20,9 @@ from __future__ import annotations
 STATE_QUARANTINED = "quarantined"  # web 收檔完成，檔案在隔離區等掃描
 STATE_SCANNING = "scanning"  # worker 已認領、送 clamd 掃描中
 STATE_CLEAN = "clean"  # 掃描通過，等取 LLM 鎖入庫
-STATE_INFECTED = "infected"  # 掃到病毒（終態；證據保留期滿清除，metadata 永久保留）
-STATE_BLOCKED = "blocked"  # 決定性的掃描錯誤重試用盡（終態，視同攔截）
+# 掃到病毒碼（終態；證據保留期滿清除，metadata 永久保留）。啟發式命中不算（blocked，見 FAILURE_SCAN_HEURISTIC）
+STATE_INFECTED = "infected"
+STATE_BLOCKED = "blocked"  # 決定性的掃描錯誤重試用盡、SHA 不符、啟發式命中（終態，視同攔截）
 STATE_PROCESSING = "processing"  # 抽字、標註、入庫中
 STATE_DRAFT = "draft"  # 已入庫但未發布：所有使用者讀取路徑看不到
 STATE_FAILED = "failed"  # 處理失敗（原因在 failure_kind）
@@ -62,12 +63,14 @@ FAILURE_TAG_BLOCKED = "tag_blocked"  # 內容審查擋下
 FAILURE_TAG_TRUNCATED = "tag_truncated"
 FAILURE_INGEST_ERROR = "ingest_error"
 FAILURE_HASH_MISMATCH = "hash_mismatch"  # 搬正前重算 SHA256 與 DB 不符（TOCTOU）
+# clamd 的啟發式規則命中（Heuristics.*：加密、超過掃描上限…）：blocked，不是 infected（同 hash 重傳不會 422）
+FAILURE_SCAN_HEURISTIC = "scan_heuristic"
 FAILURE_LLM_BREAKER = "llm_breaker"  # 批次斷路器觸發：延後（留在 clean），不算失敗、不是終態
 
 FAILURE_KINDS: tuple[str, ...] = (
     FAILURE_EXTRACT_ERROR, FAILURE_EXTRACT_TIMEOUT, FAILURE_SCANNED, FAILURE_ADMIN_FILE, FAILURE_NOT_RESEARCH,
     FAILURE_ACTIVE_CONTENT, FAILURE_ENCRYPTED, FAILURE_TOO_MANY_PAGES, FAILURE_TAG_FAILED, FAILURE_TAG_BLOCKED,
-    FAILURE_TAG_TRUNCATED, FAILURE_INGEST_ERROR, FAILURE_HASH_MISMATCH, FAILURE_LLM_BREAKER,
+    FAILURE_TAG_TRUNCATED, FAILURE_INGEST_ERROR, FAILURE_HASH_MISMATCH, FAILURE_LLM_BREAKER, FAILURE_SCAN_HEURISTIC,
 )
 
 # failed 之中可由管理員重試（轉回 clean）的類別；其餘重跑也不會變。

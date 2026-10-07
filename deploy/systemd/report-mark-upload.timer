@@ -1,0 +1,14 @@
+[Unit]
+Description=每 5 分鐘跑一輪上傳 worker（掃毒、草稿入庫、清除）
+
+[Timer]
+# 設計決策 3：每 5 分鐘；另有 ops 的「立即執行」（POST /api/admin/ops/services/upload/run）。不用 .path unit：
+# 收檔目錄的變動不代表要立刻處理（clamd 可能正在重載），固定節奏也讓「另一輪還在跑」的判斷簡單。
+OnCalendar=*-*-* *:00/5:00
+AccuracySec=30s
+# **刻意 false**（設計決策 3）：關機錯過的那幾輪不補——補跑的時機必然是「機器剛醒來」，正是最可能又被
+# 收掉、DB 與 clamd 容器還沒起來的一刻；而下一輪最多 5 分鐘後就到，積壓會一起處理。
+Persistent=false
+
+[Install]
+WantedBy=timers.target

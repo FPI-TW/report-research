@@ -110,9 +110,11 @@ class AccessTests(_Base):
 
     def test_allowlist_is_exact_not_a_healthz_prefix(self):
         """白名單是精確集合：`/healthz` 開頭的其他路徑照樣要登入（放寬成前綴等於把未來任何
-        `/healthz/*` 端點都免認證對外開放，而只有這三支自己守了本機直連）。"""
-        self.assertEqual(server._AUTH_ALLOWLIST, {"/login", "/healthz", "/healthz/storage", "/healthz/llm"})
-        for path in ("/healthz/llm/", "/healthz/llmx", "/healthz/other", "/healthzz", "/healthz/storage/x"):
+        `/healthz/*` 端點都免認證對外開放，而只有列出的這幾支自己守了本機直連；/healthz/security 是 Admin v2 加的）。"""
+        self.assertEqual(server._AUTH_ALLOWLIST,
+                         {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security"})
+        for path in ("/healthz/llm/", "/healthz/llmx", "/healthz/other", "/healthzz", "/healthz/storage/x",
+                     "/healthz/security/x"):
             with self.subTest(path=path):
                 r = _local().get(path)
                 self.assertEqual((r.status_code, r.headers.get("location")), (302, "/login"), path)

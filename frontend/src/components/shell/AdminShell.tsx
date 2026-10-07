@@ -19,6 +19,10 @@ const NAV: readonly NavEntry[] = [
   { to: '/admin/reports', icon: 'fileText', label: '研報管理', scope: 'reports.manage' },
   { to: '/admin/uploads', icon: 'upload', label: '上傳研報', scope: 'reports.manage' },
   { to: '/admin/operations', icon: 'activity', label: '維運', scope: 'ops.read' },
+  { to: '/admin/analytics', icon: 'trendUp', label: '使用分析', scope: 'analytics.read' },
+  { to: '/admin/security', icon: 'alertTriangle', label: '安全', scope: 'audit.read' },
+  { to: '/admin/quota', icon: 'filter', label: '配額', scope: 'accounts.manage' },
+  { to: '/admin/flags', icon: 'compass', label: '功能旗標', scope: 'ops.read' },
   { to: '/admin/audit', icon: 'clock', label: '操作紀錄' },
 ]
 

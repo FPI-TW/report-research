@@ -19,6 +19,8 @@ const TABS: readonly { to: string; label: string; soon?: boolean }[] = [
   { to: 'data-health', label: '資料健康' },
   { to: 'llm-usage', label: 'LLM 用量' },
   { to: 'diagnostics', label: '診斷' },
+  // Admin v2 DB lane：/api/admin/db/*（Wave 0 佔位頁）
+  { to: 'database', label: '資料庫', soon: true },
 ]
 
 /**

@@ -50,18 +50,25 @@ from web import (
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import account_security as account_security_routes  # noqa: E402
 from web.routers import admin as admin_routes  # noqa: E402
+from web.routers import admin_analytics as admin_analytics_routes  # noqa: E402
 from web.routers import admin_data_health as admin_data_health_routes  # noqa: E402
+from web.routers import admin_db as admin_db_routes  # noqa: E402
 from web.routers import admin_diagnostics as admin_diagnostics_routes  # noqa: E402
 from web.routers import admin_exports as admin_exports_routes  # noqa: E402
+from web.routers import admin_flags as admin_flags_routes  # noqa: E402
 from web.routers import admin_monitoring as admin_monitoring_routes  # noqa: E402
 from web.routers import admin_ops as admin_ops_routes  # noqa: E402
+from web.routers import admin_quota as admin_quota_routes  # noqa: E402
 from web.routers import admin_reports as admin_reports_routes  # noqa: E402
 from web.routers import admin_retrieval_regression as admin_retrieval_regression_routes  # noqa: E402
+from web.routers import admin_security as admin_security_routes  # noqa: E402
 from web.routers import admin_uploads as admin_uploads_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
+from web.routers import features as features_routes  # noqa: E402
 from web.routers import health as health_routes  # noqa: E402
+from web.routers import me_quota as me_quota_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
@@ -237,8 +244,8 @@ errors.install(app)
 # 個別帳號上線後登入與每個請求的 session 查驗都要碰 DB，DB 掛掉時一律 503——沒有
 # /healthz 這個豁免，探測只會拿到 302 導向 /login，與不存在的路由完全相同。
 # 回應內容刻意極簡（見 routers/health.py）。
-# /healthz/storage、/healthz/llm 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
-_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm"}
+# /healthz/storage、/healthz/llm、/healthz/security 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
+_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
 
 
@@ -407,6 +414,14 @@ app.include_router(admin_retrieval_regression_routes.router)  # /api/admin/retri
 app.include_router(admin_diagnostics_routes.router)  # /api/admin/diagnostics：web 行程診斷快照（唯讀）
 app.include_router(admin_exports_routes.router)  # /api/admin/export/*.csv：管理清單匯出（每次寫稽核）
 app.include_router(admin_uploads_routes.router)  # /api/admin/uploads*：研報上傳的收檔與查詢（UPLOAD_ENABLED 預設關）
+# Admin v2（Wave 0 先掛好空 router，各 lane 只改自己的檔；router 層已掛 require_admin＋scope）
+app.include_router(admin_analytics_routes.router)  # /api/admin/analytics/*：彙總分析（analytics.read）
+app.include_router(admin_security_routes.router)  # /api/admin/security/*：登入事件、session、高風險時間線（audit.read）
+app.include_router(admin_quota_routes.router)  # /api/admin/quota*：個人配額（accounts.manage）
+app.include_router(admin_flags_routes.router)  # /api/admin/flags*：功能旗標（ops.read；寫入 ops.operate＋已提升）
+app.include_router(admin_db_routes.router)  # /api/admin/db/*：DB 快照與趨勢（ops.read）
+app.include_router(me_quota_routes.router)  # /api/me/quota：自己的配額用量（任何登入使用者）
+app.include_router(features_routes.router)  # /api/features：自己的功能旗標有效值（任何登入使用者）
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { AuditEntry } from '../../lib/adminSchemas'
-import { actionLabel, auditSummary } from './auditLabels'
+import { actionLabel, auditSummary, authEventLabel } from './auditLabels'
 
 const entry = (over: Partial<AuditEntry>): AuditEntry => ({
   id: 1, actor_user_id: 'u1', actor_username: 'root', action: 'data.export', target_type: 'export',
@@ -30,4 +30,15 @@ test('批次摘要：動作、變更與略過筆數；逐筆那一列註明來�
     action: 'user.disable', target_type: 'user', target_id: 'u2',
     detail: { username: 'alice', revoked_sessions: 1, via: 'web_bulk' },
   }))).toBe('alice・登出 1 個 session・批次操作')
+})
+
+test('Admin v2 預先放好的稽核標籤與登入事件標籤；未知值原樣顯示', () => {
+  expect(actionLabel('session.admin_revoke')).toBe('撤銷 session')
+  expect(actionLabel('flag.update')).toBe('變更功能旗標')
+  expect(actionLabel('quota.update')).toBe('調整配額')
+  expect(actionLabel('session.elevate')).toBe('重新驗證（權限提升）')
+  expect(actionLabel('something.new')).toBe('something.new')
+  expect(authEventLabel('login.failure', 'bad_password')).toBe('登入失敗（密碼錯誤）')
+  expect(authEventLabel('login.locked')).toBe('登入被限流')
+  expect(authEventLabel('login.weird', 'odd_reason')).toBe('login.weird（odd_reason）')
 })

@@ -71,12 +71,23 @@ test('維運子頁裡，「維運」入口維持選取狀態', async () => {
   expect(nav.getByRole('link', { name: /維運/ })).toHaveAttribute('aria-current', 'page')
 })
 
+test('Admin v2 入口依 scope 顯示：使用分析、安全、配額、功能旗標', async () => {
+  mount('admin', '/admin/reviews', ['admin', 'analytics.read', 'audit.read', 'accounts.manage', 'ops.read'])
+  const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
+  expect(nav.getByRole('link', { name: /使用分析/ })).toHaveAttribute('href', '/admin/analytics')
+  expect(nav.getByRole('link', { name: /安全/ })).toHaveAttribute('href', '/admin/security')
+  expect(nav.getByRole('link', { name: /配額/ })).toHaveAttribute('href', '/admin/quota')
+  expect(nav.getByRole('link', { name: /功能旗標/ })).toHaveAttribute('href', '/admin/flags')
+})
+
 test('沒有對應 scope 的管理員：不顯示研報管理與維運入口', async () => {
   mount('admin', '/admin/reviews', ['admin'])
   const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
   expect(nav.queryByRole('link', { name: /研報管理/ })).not.toBeInTheDocument()
   expect(nav.queryByRole('link', { name: /上傳研報/ })).not.toBeInTheDocument()
   expect(nav.queryByRole('link', { name: /維運/ })).not.toBeInTheDocument()
+  expect(nav.queryByRole('link', { name: /使用分析/ })).not.toBeInTheDocument()
+  expect(nav.queryByRole('link', { name: /功能旗標/ })).not.toBeInTheDocument()
   expect(nav.getByRole('link', { name: /帳號管理/ })).toBeInTheDocument()
 })
 

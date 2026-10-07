@@ -15,6 +15,11 @@ spool 寫入失敗的那一筆則會缺。即時狀態看 `/api/admin/ops/*`。
 選的是資料保證還在的最細粒度。聚合的桶：`observed_at` 是桶起點、`value` 是平均、`state` 是最後的狀態，另附
 `sample_count`、`value_min`／`value_max`／`value_last`、`first_state`、`state_changes`。
 
+事件趨勢（`/api/admin/incidents/trends`，Admin v2 DB lane）不新表，直接彙總 `incident` 與 `job_execution`：每週依元件
+與嚴重度的件數、MTTR 與持續時間 p50／p90（只算 resolved，`lost` 另計不納入）、最常見的 reason、各 unit 90 天內的
+失敗率。SQL 在 `app/services/db_insights.py`（經 `deps.db_insights`）。路由必須宣告在
+`/api/admin/incidents/{incident_id}` 之前，否則 `trends` 會被當成事件 id（真的事件 id 一律帶 `:`，不會撞名）。
+
 SQL 在 `app/services/ops_monitoring.py`，經 `deps.ops_monitoring` 呼叫（測試的替換點）。
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
 """
@@ -26,6 +31,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel
 
+from app.services.db_insights import JOB_TREND_WINDOW
 from app.services.ops_monitoring import (
     INCIDENT_DEFAULT_WINDOW,
     INCIDENT_MAX_LIMIT,
@@ -61,6 +67,7 @@ EventSeverity = Literal["CRITICAL", "WARNING", "RESOLVED"]
 
 MAX_JOB_OFFSET = 10000
 MAX_INCIDENT_OFFSET = 10000
+INCIDENT_TREND_DEFAULT_WINDOW = timedelta(days=90)
 IncidentId = Annotated[str, Path(min_length=1, max_length=300, pattern=r"^[A-Za-z0-9_.:-]+$")]
 
 
@@ -164,6 +171,62 @@ class IncidentEventItem(BaseModel):
 class IncidentDetail(IncidentItem):
     events: list[IncidentEventItem]
     events_truncated: bool
+
+
+class IncidentTrendWeek(BaseModel):
+    week_start: str
+    component: str
+    severity: IncidentSeverity
+    total: int
+    resolved: int
+    lost: int
+    firing: int
+
+
+class IncidentTrendStats(BaseModel):
+    total: int
+    resolved: int
+    lost: int
+    firing: int
+    critical: int
+    warning: int
+    mttr_seconds: float | None = None
+    p50_seconds: float | None = None
+    p90_seconds: float | None = None
+
+
+class IncidentTrendComponent(IncidentTrendStats):
+    component: str
+
+
+class IncidentTrendReason(BaseModel):
+    reason: str
+    total: int
+    components: list[str]
+
+
+class JobFailureRate(BaseModel):
+    unit: str
+    runs: int
+    finished: int
+    failed: int
+    lost: int
+    running: int
+    failure_rate: float | None = None
+    last_failure_at: str | None = None
+    last_started_at: str | None = None
+
+
+class IncidentTrendsResponse(BaseModel):
+    since: str
+    until: str
+    weeks: list[IncidentTrendWeek]
+    summary: IncidentTrendStats
+    by_component: list[IncidentTrendComponent]
+    top_reasons: list[IncidentTrendReason]
+    jobs_since: str
+    jobs_until: str
+    jobs: list[JobFailureRate]
 
 
 # ── 輔助函式一律放在所有 @router.* 裝飾器之上 ──────────────────────────────
@@ -277,6 +340,27 @@ async def list_incidents(
     return IncidentListResponse(
         since=_iso(since_used), until=_iso(until_used), total=total, limit=limit, offset=offset, has_more=has_more,
         next_offset=next_offset if has_more else None, items=[IncidentItem(**_incident(r)) for r in rows],
+    )
+
+
+@router.get("/api/admin/incidents/trends", response_model=IncidentTrendsResponse, dependencies=[_OPS_READ])
+async def get_incident_trends(
+    since: datetime | None = Query(None),
+    until: datetime | None = Query(None),
+):
+    """事件趨勢：開場時間落在區間內的事件（預設最近 90 天、最多 366 天）每週（台北時間週一起）依元件與嚴重度的
+    件數；整體與各元件的件數、MTTR、持續時間 p50／p90（只算 resolved；`lost` 結束時間不明，只計件數）；最常見的
+    10 個 reason。另附各 unit 在 `until` 前 90 天內的執行次數與失敗率（finished 而 Result 不是 success 算失敗，
+    分母是 finished；lost／running 另列）。範圍顛倒或過長 400 `invalid_params`。"""
+    since_used, until_used = _window(since, until, INCIDENT_TREND_DEFAULT_WINDOW, INCIDENT_MAX_WINDOW)
+    jobs_since = until_used - JOB_TREND_WINDOW
+    async with deps.SessionFactory() as session:
+        trends = await deps.db_insights.incident_trends(session, since=since_used, until=until_used)
+        jobs = await deps.db_insights.job_failure_rates(session, since=jobs_since, until=until_used)
+    return IncidentTrendsResponse(
+        since=_iso(since_used), until=_iso(until_used), weeks=trends["weeks"], summary=trends["summary"],
+        by_component=trends["by_component"], top_reasons=trends["top_reasons"],
+        jobs_since=_iso(jobs_since), jobs_until=_iso(until_used), jobs=jobs,
     )
 
 

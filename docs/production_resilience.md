@@ -1716,6 +1716,90 @@ sudo systemctl disable --now report-mark-rollup-observations.timer   # 原始觀
 
 停用後原始表每天約增加 29 萬列；聚合表裡已有的資料不受影響，查詢端照常聯集。
 
+## DB 統計快照與慢查詢（report-mark-db-snapshot、pg_stat_statements）
+
+管理後台「維運 → 資料庫」（`/api/admin/db/*`，`ops.read`）有三塊，前提各不相同：
+
+- **即時快照**（`/api/admin/db/overview`）：只查系統目錄、`SET LOCAL` 收緊 statement_timeout（5 秒）與 lock_timeout
+  （1 秒），不需要任何安裝。帳號權限較窄時（RDS 一般帳號、沒有 `pg_monitor`／`pg_read_all_stats`）該段只顯示
+  「權限不足」，別人的 session 計入「看不到狀態」，其餘照常。
+- **趨勢**（`/api/admin/db/trends`）：要裝 `report-mark-db-snapshot.timer`，沒裝時趨勢圖是空的。
+- **慢查詢**（`/api/admin/db/slow-queries`）：要先啟用 `pg_stat_statements`，沒啟用時頁面顯示原因
+  （未建立擴充／未預載／權限不足）。**程式與 migration 都不會建立擴充或改設定**（使用者定案 13：這是 v2 之前的
+  獨立維護步驟，個別放行）。
+
+### db-snapshot（每小時 :40）
+
+`scripts/db_snapshot.py`（SQL 在 `app/services/db_insights.py`）每輪：寫一列 `research.db_stat_snapshot`
+（granularity=hour、taken_at＝整點；同一小時已有就不寫）→ 把已結束、還有逐時列卻沒有每日列的日子（台北時間）
+各彙總成一列 granularity=day（所以每天第一次執行會補前一天，漏跑的日子也會補；重跑是 no-op）→ 刪除逐時超過
+30 天、每日超過 400 天的列（`DB_SNAPSHOT_HOURLY_RETENTION_DAYS`／`DB_SNAPSHOT_DAILY_RETENTION_DAYS`，使用者定案
+14）。這只是監控統計，**不是 DB dump、不備份**；量很小（逐時 720 列、每日 400 列，每列數 KB）。
+
+- 這支要連 DB（監控收集器刻意不連）：量的就是 DB 本身，DB 掛掉時本來就量不到；DB 故障告警仍是 `/healthz`＋P5。
+- 退出碼：0 正常、1 其他失敗（整輪 rollback，走 `OnFailure` 告警）、2 DB 不可用（`SuccessExitStatus=2` 放行，
+  理由同 rollup-observations：P5 已去重告警，`report-mark-alert@` 沒有去重）。系統目錄某段權限不足或逾時不算
+  失敗：記在該列 `stats.errors`，趨勢上是空點。
+- 排程錯開 sync（每 3 小時整點）與 :20 的監控聚合；不 import 檢索、嵌入、LLM 模組（`MemoryMax=512M`，
+  `tests/test_db_snapshot.py` 守門）。
+
+安裝（人工，需 sudo；只在要啟用時做；schema 須已到 revision 0009）：
+
+```bash
+# 1) 先看這一輪會寫什麼（唯讀；各段權限不足會出現在 errors）
+uv run python scripts/db_snapshot.py --dry-run
+# 2) unit（非辦公室主機改用 deploy/install_units.sh）
+sudo install -m 0644 deploy/systemd/report-mark-db-snapshot.service deploy/systemd/report-mark-db-snapshot.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-db-snapshot.timer
+```
+
+驗收：`sudo systemctl start report-mark-db-snapshot.service` 後 `journalctl -u report-mark-db-snapshot -n 3` 看得到
+「完成 逐時快照已寫入…」；`scripts/verify_oneshot_ran.sh` 確認跑過；隔天 `SELECT granularity, count(*) FROM
+research.db_stat_snapshot GROUP BY 1` 有一列 day。catalog（`deploy/ops/services.*.toml`）的對應項目由 Admin v2
+Wave 2 補上。
+
+停用：
+
+```bash
+sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不再更新；既有的列留著（不會再被保留期清掉）
+```
+
+要連資料一起清：`DELETE FROM research.db_stat_snapshot;`（只是監控統計，刪了只是趨勢圖變空）。
+
+### 啟用 pg_stat_statements（獨立維護步驟；只寫文件，部署流程不會自動做）
+
+`pg_stat_statements` 要在 `shared_preload_libraries` 預載才能用，而改這個參數一定要重啟 PostgreSQL。兩個環境的前提
+不同（2026-10-07 唯讀查證）：
+
+- **辦公室本機（測試環境，`report-mark-postgres` 容器，pg16）**：`shared_preload_libraries` 為空、擴充套件可用但
+  未建立。需要短暫停機（重啟容器期間 web 回 503、探針可能經 P5 開事件，挑維護窗口、事先告知）：
+
+  ```bash
+  # 1) 寫進 data volume 的 postgresql.auto.conf（容器重建也還在）
+  docker exec report-mark-postgres psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements'"
+  # 2) 重啟容器（短暫停機）
+  docker restart report-mark-postgres
+  docker exec report-mark-postgres psql -U postgres -Atc "SHOW shared_preload_libraries"   # 應為 pg_stat_statements
+  # 3) 在 research 庫建立擴充（只有這個庫的頁面會用到）
+  docker exec report-mark-postgres psql -U postgres -d research -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+  ```
+
+  若 `shared_preload_libraries` 原本已有其他值，`ALTER SYSTEM` 要把舊值一起列上（逗號分隔），否則會被蓋掉。
+- **正式環境（EC2＋RDS；AWS 資源名稱與部分文件仍寫 staging）**：參數群組
+  `report-research-staging-dbparametergroup-…` 已含 `pg_stat_statements,pg_tle`（static、in-sync），**不需要
+  reboot**；只要以 master 帳號（`rds_superuser`）在 app 用的庫執行一次
+  `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`。app 帳號若沒有 `pg_read_all_stats`，頁面看得到統計但
+  別人的語句文字會顯示「權限不足、已隱藏」；要看全部再以 master `GRANT pg_read_all_stats TO <app 帳號>`
+  （是否授予由使用者決定）。
+
+驗收：頁面「慢查詢」不再顯示原因、出現依總執行時間排序的語句。統計自 `pg_stat_statements_reset()` 或重啟起累計。
+回退：`DROP EXTENSION pg_stat_statements;`（本機若要連預載一起拿掉：`ALTER SYSTEM RESET shared_preload_libraries`
+＋重啟容器）。
+
+**隱私**：pg_stat_statements 會把常數正規化成 `$1`，但工具語句可能保留字面值；頁面只開給 `ops.read`、查詢文字
+壓空白後截斷 200 字。
+
 ## schema 與版本 drift 每日檢查（report-mark-schema-check）
 
 `report-mark-schema-check.timer` 每日 05:20 跑 `scripts/schema_baseline.py scheduled`，對目標庫唯讀：

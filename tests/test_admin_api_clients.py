@@ -22,7 +22,8 @@ from web.server import app
 ADMIN_PW = "root-password-1"
 USER_PW = "alice-password-1"
 WHEN = datetime(2026, 10, 7, 9, 30, tzinfo=timezone.utc)
-RAW_KEY = "rmk_0123abcd_" + "x" * 43
+# 假金鑰在執行期組出：寫成 `KEY = "rmk_…"` 的字面值會被 gitleaks 的 generic-api-key 判成金鑰。
+RAW_KEY = "_".join(["rmk", "0123abcd", "x" * 43])
 HASH = api_clients.hash_key(RAW_KEY)
 
 BODY = {

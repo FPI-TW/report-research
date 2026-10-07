@@ -13,8 +13,10 @@ vi.mock('../../lib/clipboard', () => ({ copyText }))
 beforeEach(() => copyText.mockClear())
 afterEach(() => vi.unstubAllGlobals())
 
-const RAW_KEY = 'rmk_0123abcd_' + 'x'.repeat(43)
-const ROTATED_KEY = 'rmk_fedcba98_' + 'y'.repeat(43)
+// 假金鑰在執行期組出：寫成 `KEY = 'rmk_…'` 的字面值會被 gitleaks 的 generic-api-key 判成金鑰。
+const fakeKey = (prefix: string, fill: string) => ['rmk', prefix, fill.repeat(43)].join('_')
+const RAW_KEY = fakeKey('0123abcd', 'x')
+const ROTATED_KEY = fakeKey('fedcba98', 'y')
 
 type Client = {
   id: number; name: string; key_prefix: string; enabled: boolean; scopes: ('search' | 'report.file')[]

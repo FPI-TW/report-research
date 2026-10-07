@@ -1,8 +1,9 @@
 # scripts/_health_streak.sh —— 容器／主機探針共用的「連續失敗次數」記錄（供 `source`）。
 #
 # **為什麼探針要記這一點點跨執行的狀態**：依 tier 去抖（important／supporting 要連續多次失敗才算數）
-# 需要記得上一輪。這件事刻意放在探針、不放在 scripts/incident_handler.sh（P5）：P5 是生產 critical
-# 告警唯一的 Slack 發送者，它的狀態機一行都不動；探針只是把「尚在確認期」用一個 hold 退出碼（3）
+# 需要記得上一輪。這件事刻意放在探針、不放在 scripts/incident_handler.sh（P5）：P5 是主要的 incident
+# state machine／狀態型告警路徑（unit failure 的 report-mark-alert 與上傳感染通知另有路徑），它的狀態機
+# 一行都不動；探針只是把「尚在確認期」用一個 hold 退出碼（3）
 # 表達出來，那正是 P5 既有的 INCIDENT_HOLD_EXIT_CODES 機制（邊緣那一組已經在用）。
 # 這裡記的只是每個檢查項目的連續失敗次數，**不是事件狀態**：不去重、不通知、不決定 RESOLVED。
 #

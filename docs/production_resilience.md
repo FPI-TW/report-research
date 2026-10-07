@@ -1610,7 +1610,7 @@ sudo systemctl disable --now report-mark-load-observations.timer   # 管理頁�
 ## 事件投影與容器／主機探針
 
 管理頁的「事件」讀 DB 的 `research.incident`／`research.incident_event`（revision 0006），但**它們只是 projection**：
-去重、提醒、FIRING／RESOLVED 判定與 Slack 投遞仍然只有 `scripts/incident_handler.sh`（P5），它不碰 DB、不依賴 web。
+事件的去重、提醒、FIRING／RESOLVED 判定與 Slack 投遞仍然只有 `scripts/incident_handler.sh`（P5），它不碰 DB、不依賴 web。P5 是主要的 incident state machine／狀態型告警路徑，但不是唯一的 Slack 發送者：unit failure（`report-mark-alert@`，OnFailure）與上傳 worker 的感染通知另有路徑；Admin v2 的安全告警統一接既有 incident 管線（新的 P5 instance），不另設直接的 Slack sender。
 
 - P5 每次已落地的狀態轉換（FIRING、REMINDER、ESCALATED、RESOLVED）另寫一行本機 spool
   `data/ops_spool/incidents-YYYYMMDD.jsonl`；FIRING 附事件前 10 分鐘、RESOLVED 附開場後 10 分鐘的 journal 片段

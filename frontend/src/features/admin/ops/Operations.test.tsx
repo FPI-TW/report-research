@@ -195,7 +195,7 @@ const UNAVAILABLE: Override = url => url.startsWith('/api/admin/ops')
   ? { status: 503, body: { detail: '維運代理不可用：維運代理未啟動（找不到 /run/x.sock）', code: 'ops_agent_unavailable' } }
   : undefined
 
-test('/admin/operations 導向總覽；子導覽九個分頁，都已接上 API（沒有「尚未提供」）', async () => {
+test('/admin/operations 導向總覽；子導覽各分頁都已接上 API（資料庫分頁是 Admin v2 佔位，標「尚未提供」）', async () => {
   mount('/admin/operations')
   expect(await screen.findByRole('heading', { name: '總覽' })).toBeInTheDocument()
   expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/overview')
@@ -205,7 +205,9 @@ test('/admin/operations 導向總覽；子導覽九個分頁，都已接上 API�
     '/admin/operations/jobs',
     '/admin/operations/incidents', '/admin/operations/logs', '/admin/operations/host',
     '/admin/operations/data-health', '/admin/operations/llm-usage', '/admin/operations/diagnostics',
+    '/admin/operations/database',
   ])
+  expect(tabs.getByRole('link', { name: /資料庫/ })).toHaveTextContent('尚未提供')
   expect(tabs.getByRole('link', { name: /總覽/ })).toHaveAttribute('aria-current', 'page')
   for (const name of [/服務/, /依賴圖/, /排程工作/, /事件/, /主機/, /資料健康/, /LLM 用量/, /診斷/]) {
     expect(tabs.getByRole('link', { name })).not.toHaveTextContent('尚未提供')

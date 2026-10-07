@@ -8,6 +8,7 @@ export type RouteKey =
   | 'adminOpsJobs' | 'adminOpsIncidents' | 'adminOpsHost' | 'adminOpsDataHealth' | 'adminOpsLlmUsage'
   | 'adminOpsDependencies'
   | 'adminOpsDiagnostics'
+  | 'adminAnalytics' | 'adminSecurity' | 'adminQuota' | 'adminFlags' | 'adminOpsDatabase'
 
 /** lazy() 與預載共用同一組 import thunk（單一真相，避免路徑字串重複） */
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
@@ -39,6 +40,12 @@ export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentTy
   adminOpsLlmUsage: () => import('../features/admin/ops/OpsLlmUsagePage'),
   adminOpsDependencies: () => import('../features/admin/ops/OpsDependenciesPage'),
   adminOpsDiagnostics: () => import('../features/admin/ops/OpsDiagnosticsPage'),
+  // Admin v2（Wave 0 佔位頁；各 lane 只改自己的頁面檔）
+  adminAnalytics: () => import('../features/admin/analytics/AdminAnalyticsPage'),
+  adminSecurity: () => import('../features/admin/security/AdminSecurityPage'),
+  adminQuota: () => import('../features/admin/quota/AdminQuotaPage'),
+  adminFlags: () => import('../features/admin/flags/AdminFlagsPage'),
+  adminOpsDatabase: () => import('../features/admin/ops/OpsDatabasePage'),
 }
 
 const started = new Set<RouteKey>()

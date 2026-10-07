@@ -77,3 +77,46 @@ test('/admin/operations 導向維運總覽（有 ops.read 的管理員；代理�
   expect(await screen.findByRole('heading', { name: '維運代理目前無法使用' }, { timeout: 15000 })).toBeInTheDocument()
   expect(router.state.location.pathname).toBe('/admin/operations/overview')
 }, 15000)
+
+test.each([
+  ['/admin/analytics', '使用分析', 'analytics.read'],
+  ['/admin/security', '安全', 'audit.read'],
+  ['/admin/quota', '配額', 'accounts.manage'],
+  ['/admin/flags', '功能旗標', 'ops.read'],
+])('Admin v2 佔位頁 %s：有 scope 時顯示「建置中」、不打任何管理 API', async (path, title, scope) => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.includes('/api/me')) {
+      return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', scope] }), { status: 200 })
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: [path] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 1, name: title }, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { level: 2, name: '建置中' })).toBeInTheDocument()
+  expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/admin'))).toBe(false)
+}, 15000)
+
+test('Admin v2 佔位頁：沒有對應 scope 時只顯示需要的權限', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    url.includes('/api/me')
+      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin'] }), { status: 200 })
+      : new Response(JSON.stringify({}), { status: 200 })))
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/analytics'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { name: '需要「使用分析」權限' }, { timeout: 15000 })).toBeInTheDocument()
+}, 15000)
+
+test('維運 → 資料庫分頁（Admin v2 佔位）', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    url.includes('/api/me')
+      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'ops.read'] }), { status: 200 })
+      : new Response(JSON.stringify({}), { status: 200 })))
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations/database'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 2, name: '資料庫' }, { timeout: 15000 })).toBeInTheDocument()
+}, 15000)

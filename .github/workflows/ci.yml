@@ -386,6 +386,11 @@ jobs:
       - name: 研報上傳 worker
         run: uv run pytest -q tests/test_upload_worker_db.py
 
+      # Admin v2 接線（revision 0009）：用量 upsert 的 hits 相加與 users 取 GREATEST、已刪除帳號的個人計數被濾掉、
+      # llm_usage_daily 的 NULL 使用者靠 COALESCE 唯一索引併成一列；功能旗標的 text[]／uuid[] 讀回。一律 rollback。
+      - name: Admin v2 用量收集與功能旗標
+        run: uv run pytest -q tests/test_usage_events_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

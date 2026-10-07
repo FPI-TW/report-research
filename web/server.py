@@ -37,8 +37,9 @@ from app.logging_setup import configure_logging  # noqa: E402
 
 configure_logging()
 
+from app import request_context  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.services import accounts, db, llm, llm_http, llm_models  # noqa: E402
+from app.services import accounts, db, llm, llm_http, llm_models, usage_events  # noqa: E402
 from web import (
     auth,  # noqa: E402
     concurrency,  # noqa: E402
@@ -49,18 +50,25 @@ from web import (
 from web.request_log import RequestLogMiddleware  # noqa: E402
 from web.routers import account_security as account_security_routes  # noqa: E402
 from web.routers import admin as admin_routes  # noqa: E402
+from web.routers import admin_analytics as admin_analytics_routes  # noqa: E402
 from web.routers import admin_data_health as admin_data_health_routes  # noqa: E402
+from web.routers import admin_db as admin_db_routes  # noqa: E402
 from web.routers import admin_diagnostics as admin_diagnostics_routes  # noqa: E402
 from web.routers import admin_exports as admin_exports_routes  # noqa: E402
+from web.routers import admin_flags as admin_flags_routes  # noqa: E402
 from web.routers import admin_monitoring as admin_monitoring_routes  # noqa: E402
 from web.routers import admin_ops as admin_ops_routes  # noqa: E402
+from web.routers import admin_quota as admin_quota_routes  # noqa: E402
 from web.routers import admin_reports as admin_reports_routes  # noqa: E402
 from web.routers import admin_retrieval_regression as admin_retrieval_regression_routes  # noqa: E402
+from web.routers import admin_security as admin_security_routes  # noqa: E402
 from web.routers import admin_uploads as admin_uploads_routes  # noqa: E402
 from web.routers import ask as ask_routes  # noqa: E402
 from web.routers import auth_pages as auth_pages_routes  # noqa: E402
 from web.routers import brief as brief_routes  # noqa: E402
+from web.routers import features as features_routes  # noqa: E402
 from web.routers import health as health_routes  # noqa: E402
+from web.routers import me_quota as me_quota_routes  # noqa: E402
 from web.routers import monitor as monitor_routes  # noqa: E402
 from web.routers import qa_history as qa_history_routes  # noqa: E402
 from web.routers import radar as radar_routes  # noqa: E402
@@ -69,6 +77,7 @@ from web.routers import report_file as report_file_routes  # noqa: E402
 from web.routers import review as review_routes  # noqa: E402
 from web.routers import search as search_routes  # noqa: E402
 from web.routers import spa as spa_routes  # noqa: E402
+from web.usage_middleware import UsageMiddleware  # noqa: E402
 
 # 跨組共用符號一律以 deps.X 存取；此處別名僅為既有測試的 `from web.server import ...`。
 STATIC_DIR = deps.STATIC_DIR
@@ -155,6 +164,18 @@ async def _check_accounts() -> None:
         )
 
 
+def _start_usage_collection() -> usage_events.UsageFlusher | None:
+    settings = get_settings()
+    if not settings.usage_events_enabled:
+        logger.warning("用量收集已停用（USAGE_EVENTS_ENABLED=0）：不寫 usage_daily／usage_counter／llm_usage_daily")
+        return None
+    usage_events.configure(settings.usage_events_max_keys)
+    llm_http.add_observer(usage_events.observe_llm_call)
+    flusher = usage_events.UsageFlusher(settings.usage_events_flush_seconds)
+    flusher.start()
+    return flusher
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 併發上限與背景 run 登錄表都是 per-process 狀態，多 worker 會讓上限翻倍、模型
@@ -183,6 +204,10 @@ async def lifespan(app: FastAPI):
     # 照樣回 ok。只說出來、不擋啟動——檢索、閱讀頁、雷達、簡報的讀取都不需要 LLM。
     _check_llm_models()
     await _check_accounts()
+    # 用量收集（Admin v2）：記憶體累加器每 60 秒與關機時寫進 usage_daily／usage_counter／llm_usage_daily，
+    # 線上 LLM 呼叫經 llm_http 的 observer 歸到人（只有 metadata）。USAGE_EVENTS_ENABLED=0 時都不啟動
+    # （tests/conftest.py 如此，測試不寫任何庫）。詳見 app/services/usage_events.py。
+    flusher = _start_usage_collection()
     # 在背景暖機，避免啟動期間 socket 尚未 bind 導致外部完全無法連線。
     warmup_task = asyncio.create_task(_warmup_models())
     warmup_task.add_done_callback(_log_warmup_result)
@@ -196,6 +221,12 @@ async def lifespan(app: FastAPI):
                 await warmup_task
             except asyncio.CancelledError:
                 pass
+        if flusher is not None:
+            llm_http.remove_observer(usage_events.observe_llm_call)
+            try:
+                await flusher.stop()  # 取消背景任務並做最後一次 flush（失敗只記錄，不擋關機）
+            except Exception:
+                logger.exception("用量收集最後一次寫入失敗")
         # DeepSeek 的 AsyncClient 以 event loop 為鍵延遲建立（沒走過 HTTP 路徑就沒有，這行是 no-op）；
         # loop 關閉前收掉連線池，不留給 GC。失敗只記錄，不擋關機。
         try:
@@ -213,9 +244,14 @@ errors.install(app)
 # 個別帳號上線後登入與每個請求的 session 查驗都要碰 DB，DB 掛掉時一律 503——沒有
 # /healthz 這個豁免，探測只會拿到 302 導向 /login，與不存在的路由完全相同。
 # 回應內容刻意極簡（見 routers/health.py）。
-# /healthz/storage、/healthz/llm 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
-_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm"}
+# /healthz/storage、/healthz/llm、/healthz/security 在白名單裡但只回答本機直連（其餘 404），理由見 routers/health.py。
+_AUTH_ALLOWLIST = {"/login", "/healthz", "/healthz/storage", "/healthz/llm", "/healthz/security"}
 _AUTH_PREFIX_ALLOWLIST = ("/app/assets/",)
+
+
+# 用量收集（純 ASGI，只計回 200 的閱讀頁、原檔、搜尋、問答；web/usage_middleware.py）。**必須在 require_login
+# 之前 add**：越早加的越內層，它要在 require_login 設好使用者 contextvar 之後才看得到是誰。
+app.add_middleware(UsageMiddleware)
 
 
 def _auth_allowed(path: str) -> bool:
@@ -254,7 +290,13 @@ async def require_login(request: Request, call_next):
             request.state.user = user
             # 權限提升（POST /api/admin/elevate）綁在這一個 session 上，要知道是哪一個。
             request.state.session_id = session.session_id
-            response = await call_next(request)
+            # 歸因用的使用者 contextvar（app/request_context.py）：LLM 用量與 usage_counter 靠它歸到人。
+            # 不是授權——授權只讀 request.state.user。call_next 的下游任務複製了這個 context。
+            user_token = request_context.set_user_id(user.id)
+            try:
+                response = await call_next(request)
+            finally:
+                request_context.reset_user_id(user_token)
             if path != "/logout":  # 登出會清 cookie,勿在此又刷新蓋回
                 # issued_at 必須沿用原 token 的簽發時刻:滑動續期只推遲 exp,重置 iat
                 # 會讓 auth.MAX_ABSOLUTE_TTL 的絕對上限每次請求都歸零＝形同不存在。
@@ -372,6 +414,14 @@ app.include_router(admin_retrieval_regression_routes.router)  # /api/admin/retri
 app.include_router(admin_diagnostics_routes.router)  # /api/admin/diagnostics：web 行程診斷快照（唯讀）
 app.include_router(admin_exports_routes.router)  # /api/admin/export/*.csv：管理清單匯出（每次寫稽核）
 app.include_router(admin_uploads_routes.router)  # /api/admin/uploads*：研報上傳的收檔與查詢（UPLOAD_ENABLED 預設關）
+# Admin v2（Wave 0 先掛好空 router，各 lane 只改自己的檔；router 層已掛 require_admin＋scope）
+app.include_router(admin_analytics_routes.router)  # /api/admin/analytics/*：彙總分析（analytics.read）
+app.include_router(admin_security_routes.router)  # /api/admin/security/*：登入事件、session、高風險時間線（audit.read）
+app.include_router(admin_quota_routes.router)  # /api/admin/quota*：個人配額（accounts.manage）
+app.include_router(admin_flags_routes.router)  # /api/admin/flags*：功能旗標（ops.read；寫入 ops.operate＋已提升）
+app.include_router(admin_db_routes.router)  # /api/admin/db/*：DB 快照與趨勢（ops.read）
+app.include_router(me_quota_routes.router)  # /api/me/quota：自己的配額用量（任何登入使用者）
+app.include_router(features_routes.router)  # /api/features：自己的功能旗標有效值（任何登入使用者）
 
 
 # 舊 modal 原始檔資料源（/api/report/{id}/full、/file）已拆至 web/routers/report_file.py

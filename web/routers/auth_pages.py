@@ -39,6 +39,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
+from app.services import accounts
 from app.services.accounts import User
 from web import auth, authz, deps
 
@@ -221,10 +222,16 @@ async def logout(request: Request):
 @router.get("/api/me")
 async def me(user: User = Depends(authz.current_user)):
     """目前登入的身分。前端據此顯示帳號名稱與決定要不要露出管理頁入口——
-    那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。"""
+    那只是顯示；管理端點的授權一律由後端 `authz.require_admin` 判斷。
+
+    `mfa_enrollment_required`：管理員 TOTP 強制開啟、而這位管理員還沒開 TOTP（管理端點此時一律 403
+    `mfa_enrollment_required`）。前端管理後台據此改顯示 TOTP 設定（`AdminShell`）。"""
     return {
         "id": user.id, "username": user.username, "role": user.role,
         "is_super": user.is_super, "scopes": sorted(user.scopes),
         "elevated_until": user.elevated_until.isoformat() if user.is_elevated else None,
         "totp_enabled": user.totp_enabled,
+        "mfa_enrollment_required": authz.mfa_enrollment_required(user),
+        # 管理員 TOTP 強制政策是否作用在這個帳號上（管理員＋政策開啟）：前端據此不顯示「關閉兩步驟驗證」。
+        "mfa_policy_locked": user.id is not None and accounts.admin_mfa_policy_locks(user.role),
     }

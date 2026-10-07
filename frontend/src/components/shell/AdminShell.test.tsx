@@ -1,7 +1,9 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
+import { z } from 'zod'
+import { requestJSON } from '../../lib/api'
 import { AdminShell } from './AdminShell'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -69,11 +71,91 @@ test('維運子頁裡，「維運」入口維持選取狀態', async () => {
   expect(nav.getByRole('link', { name: /維運/ })).toHaveAttribute('aria-current', 'page')
 })
 
+test('Admin v2 入口依 scope 顯示：使用分析、安全、配額、功能旗標', async () => {
+  mount('admin', '/admin/reviews', ['admin', 'analytics.read', 'audit.read', 'accounts.manage', 'ops.read'])
+  const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
+  expect(nav.getByRole('link', { name: /使用分析/ })).toHaveAttribute('href', '/admin/analytics')
+  expect(nav.getByRole('link', { name: /安全/ })).toHaveAttribute('href', '/admin/security')
+  expect(nav.getByRole('link', { name: /配額/ })).toHaveAttribute('href', '/admin/quota')
+  expect(nav.getByRole('link', { name: /功能旗標/ })).toHaveAttribute('href', '/admin/flags')
+})
+
 test('沒有對應 scope 的管理員：不顯示研報管理與維運入口', async () => {
   mount('admin', '/admin/reviews', ['admin'])
   const nav = within(await screen.findByRole('navigation', { name: '管理導覽' }))
   expect(nav.queryByRole('link', { name: /研報管理/ })).not.toBeInTheDocument()
   expect(nav.queryByRole('link', { name: /上傳研報/ })).not.toBeInTheDocument()
   expect(nav.queryByRole('link', { name: /維運/ })).not.toBeInTheDocument()
+  expect(nav.queryByRole('link', { name: /使用分析/ })).not.toBeInTheDocument()
+  expect(nav.queryByRole('link', { name: /功能旗標/ })).not.toBeInTheDocument()
   expect(nav.getByRole('link', { name: /帳號管理/ })).toBeInTheDocument()
+})
+
+test('管理員 TOTP 強制：/api/me 說 mfa_enrollment_required 時，導覽與內容換成 TOTP 設定頁', async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url === '/api/me') {
+      return new Response(JSON.stringify({ id: 'me', username: 'root', role: 'admin', scopes: ['admin'],
+        totp_enabled: false, mfa_enrollment_required: true }), { status: 200 })
+    }
+    if (url === '/api/me/totp') return new Response(JSON.stringify({ enabled: false, pending: false }), { status: 200 })
+    return new Response('{}', { status: 200 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/admin/reviews']}>
+        <Routes>
+          <Route path="/admin" element={<AdminShell />}>
+            <Route path="reviews" element={<div>待複核內容</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByRole('heading', { name: '請先開啟兩步驟驗證' })).toBeInTheDocument()
+  expect(screen.queryByRole('navigation', { name: '管理導覽' })).not.toBeInTheDocument()
+  expect(screen.queryByText('待複核內容')).not.toBeInTheDocument()
+  // 登出與回到研報平台仍在
+  expect(screen.getByRole('button', { name: '登出' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '設定兩步驟驗證' }))
+  await waitFor(() => expect(fetchMock.mock.calls.map(c => c[0])).toContain('/api/me/totp'))
+  // 不打任何管理 API
+  expect(fetchMock.mock.calls.some(c => String(c[0]).startsWith('/api/admin/'))).toBe(false)
+})
+
+function ProbePage() {
+  const q = useQuery({ queryKey: ['probe'], queryFn: () => requestJSON('/api/admin/probe', z.object({})), retry: false })
+  return <div>{q.isError ? '探測失敗' : '探測內容'}</div>
+}
+
+test('任何管理 API 回 403 mfa_enrollment_required 時，立刻重取 /api/me 並切到 TOTP 設定頁', async () => {
+  let meCalls = 0
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url === '/api/me') {
+      meCalls += 1
+      return new Response(JSON.stringify({ id: 'me', username: 'root', role: 'admin', scopes: ['admin'],
+        mfa_enrollment_required: meCalls > 1 }), { status: 200 })
+    }
+    if (url === '/api/admin/probe') {
+      return new Response(JSON.stringify({ detail: '管理員必須先開啟兩步驟驗證', code: 'mfa_enrollment_required' }),
+        { status: 403 })
+    }
+    return new Response('{}', { status: 200 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/admin/probe']}>
+        <Routes>
+          <Route path="/admin" element={<AdminShell />}>
+            <Route path="probe" element={<ProbePage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(await screen.findByRole('heading', { name: '請先開啟兩步驟驗證' })).toBeInTheDocument()
+  expect(meCalls).toBeGreaterThanOrEqual(2)
 })

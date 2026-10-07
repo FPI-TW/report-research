@@ -23,6 +23,7 @@ from app.services.accounts import (
     AccountDeletedError,
     AccountError,
     InvalidInputError,
+    MfaPolicyLockedError,
     TotpRequiredError,
     TotpStateError,
     User,
@@ -65,6 +66,7 @@ _STATUS = (
     (UserNotFoundError, 404, "not_found"),
     (AccountDeletedError, 409, "account_deleted"),
     (TotpStateError, 409, "totp_state"),
+    (MfaPolicyLockedError, 403, "mfa_policy_locked"),
     (InvalidInputError, 400, "invalid_input"),
 )
 
@@ -145,7 +147,10 @@ async def totp_confirm(body: TotpCodeRequest, user: User = Depends(authz.current
 @router.post("/api/me/totp/disable", response_model=TotpStatusResponse,
              dependencies=[Depends(authz.require_elevated)])
 async def totp_disable(user: User = Depends(authz.current_user)):
-    """關閉自己的兩步驟驗證；需要近 10 分鐘內重新驗證過（403 `elevation_required`）。"""
+    """關閉自己的兩步驟驗證；需要近 10 分鐘內重新驗證過（403 `elevation_required`）。
+
+    管理員 TOTP 強制開啟時，管理員一律 403 `mfa_policy_locked`（規則在 `accounts.disable_totp`）。
+    """
     uid = _own_id(user)
     try:
         await deps.accounts.disable_totp(uid, actor_id=uid)

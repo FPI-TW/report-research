@@ -2,7 +2,8 @@
 """容器與主機健康探針（`scripts/check_container_health.sh`、`scripts/check_host_health.sh`）的行為與契約。
 
 兩支探針接到既有的 P5（`scripts/incident_handler.sh`）新實例，比照邊緣那一組的參數化方式。**依 tier 的
-去抖做在探針裡**——P5 是生產 critical 告警唯一的 Slack 發送者，它的狀態機一行不動；探針把「還在確認期」
+去抖做在探針裡**——P5 是主要的 incident state machine／狀態型告警路徑（unit failure 的 report-mark-alert
+與上傳感染通知另有路徑），它的狀態機一行不動；探針把「還在確認期」
 回成 3，由 P5 既有的 `INCIDENT_HOLD_EXIT_CODES=3`（hold：不開也不關）處理。這裡守：
 
 - tier 去抖：critical 第一次確認就回 1；important 要連續 2 輪、supporting 連續 3 輪才回 9；之前回 3；

@@ -10,7 +10,8 @@ tester／testpass 的管理員——既有測試以那組帳密走 `/login`，�
 兩邊行為分歧時，這份要跟著改（`tests/test_accounts_db.py` 的同一組情境兩邊各跑一次）。
 密碼只做明文比對（不跑 Argon2）：這裡驗的是流程，雜湊本身由 `tests/test_passwords.py` 驗。
 問答紀錄只模擬刪除需要的部分（`qa_logs`：id → user_id；`review_subjects`：review_state 的 subject_id），
-測試用 `seed_qa_log()` 放資料。
+測試用 `seed_qa_log()` 放資料。Admin v2 的個人資料（`usage_counter`、`user_quota`、`llm_usage_daily`）
+同理只模擬刪帳需要的部分，用 `seed_usage()` 放；登入事件存在 `auth_events`（刪帳時刻意保留）。
 """
 
 from __future__ import annotations
@@ -38,9 +39,12 @@ from app.services.accounts import (
     LastSuperError,
     LoginResult,
     MfaChallenge,
+    MfaPolicyLockedError,
     NoPendingDeletionError,
     PermissionDeniedError,
     SelfLockoutError,
+    SessionInfo,
+    SessionNotFoundError,
     TotpRequiredError,
     TotpSetup,
     TotpStateError,
@@ -95,6 +99,8 @@ class _Sess:
     ip: str | None = None
     user_agent: str | None = None
     elevated_until: datetime | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    revoked_at: datetime | None = None
 
 
 class FakeAccounts:
@@ -118,6 +124,10 @@ class FakeAccounts:
     DeletionWindowClosedError = DeletionWindowClosedError
     TotpStateError = TotpStateError
     TotpRequiredError = TotpRequiredError
+    SessionNotFoundError = SessionNotFoundError
+    MfaPolicyLockedError = MfaPolicyLockedError
+    AUTH_EVENT_TYPES = accounts.AUTH_EVENT_TYPES
+    SESSION_LIST_MAX = accounts.SESSION_LIST_MAX
     DELETION_DELAY_SECONDS = accounts.DELETION_DELAY_SECONDS
     ADMIN_DEFAULT_SCOPES = accounts.ADMIN_DEFAULT_SCOPES
     GRANTABLE_SCOPES = accounts.GRANTABLE_SCOPES
@@ -140,6 +150,18 @@ class FakeAccounts:
         self._deletion_ids = itertools.count(1)
         self.qa_logs: dict[str, str] = {}  # qa_log.id → user_id
         self.review_subjects: set[str] = set()  # review_state.subject_id
+        # Admin v2（revision 0009）：只模擬刪帳需要的部分。鍵含 user_id，值是計數或上限。
+        self.usage_counters: dict[tuple[str, str, str], int] = {}  # (user_id, day, kind) → count
+        self.user_quotas: dict[tuple[str, str], int | None] = {}  # (user_id, kind) → daily_limit
+        self.llm_usage: dict[tuple[str, str | None, str, str], int] = {}  # (day, user_id, task, model) → calls
+        self.auth_events: list[dict] = []  # 欄位同 research.auth_event（沒有帳號名稱）
+
+    def seed_usage(self, user_id: str) -> None:
+        """放一列該使用者的 usage_counter、user_quota、llm_usage_daily（刪帳情境用）。"""
+        uid = str(user_id)
+        self.usage_counters[(uid, "2026-10-07", "search")] = 3
+        self.user_quotas[(uid, "ask")] = 50
+        self.llm_usage[("2026-10-07", uid, "ask_answer", "deepseek-flash")] = 2
 
     def seed_qa_log(self, user_id: str, *, with_review: bool = False) -> str:
         qid = str(uuid.uuid4())
@@ -226,7 +248,7 @@ class FakeAccounts:
         n = 0
         for s in self.sessions.values():
             if s.user_id == user_id and not s.revoked:
-                s.revoked = True
+                s.revoked, s.revoked_at = True, datetime.now(timezone.utc)
                 n += 1
         return n
 
@@ -237,13 +259,13 @@ class FakeAccounts:
         if row is None or not password:
             return LoginResult(None, "unknown_user")
         if row.password != password:
-            return LoginResult(None, "bad_password")
+            return LoginResult(None, "bad_password", user_id=row.id)
         if not row.enabled:
-            return LoginResult(None, "disabled")
+            return LoginResult(None, "disabled", user_id=row.id)
         if row.totp_enabled:
-            return LoginResult(None, "totp_required", MfaChallenge(row.id, self._fingerprint(row)))
+            return LoginResult(None, "totp_required", MfaChallenge(row.id, self._fingerprint(row)), user_id=row.id)
         row.last_login_at = datetime.now(timezone.utc)
-        return LoginResult(self._user(row), "ok")
+        return LoginResult(self._user(row), "ok", user_id=row.id)
 
     def _fingerprint(self, row: _Row) -> str:
         return accounts.mfa_fingerprint(row.id, row.password, row.totp_last_step, row.totp_secret)
@@ -310,8 +332,62 @@ class FakeAccounts:
     async def revoke_session(self, session_id: str) -> None:
         self._check()
         s = self.sessions.get(session_id)
-        if s is not None:
-            s.revoked = True
+        if s is not None and not s.revoked:
+            s.revoked, s.revoked_at = True, datetime.now(timezone.utc)
+
+    def _session_info(self, s: _Sess) -> SessionInfo:
+        row = self.users[s.user_id]
+        return SessionInfo(id=s.id, user_id=s.user_id, username=row.username, created_at=s.created_at,
+                           last_seen_at=s.created_at, expires_at=s.expires_at, revoked_at=s.revoked_at,
+                           ip=s.ip, user_agent=s.user_agent, elevated_until=s.elevated_until,
+                           active=not s.revoked and s.expires_at > datetime.now(timezone.utc))
+
+    async def list_sessions(self, *, user_id=None, active_only: bool = True, limit: int = 200) -> list[SessionInfo]:
+        self._check()
+        now = datetime.now(timezone.utc)
+        items = [
+            s for s in self.sessions.values()
+            if (user_id is None or s.user_id == str(user_id))
+            and (row := self.users.get(s.user_id)) is not None and row.deleted_at is None
+            and (not active_only or (not s.revoked and s.expires_at > now))
+        ]
+        items.sort(key=lambda s: (s.created_at, s.id), reverse=True)
+        return [self._session_info(s) for s in items[:max(1, min(int(limit), accounts.SESSION_LIST_MAX))]]
+
+    async def admin_revoke_session(self, session_id: str, *, actor_id, via: str = "web") -> SessionInfo:
+        self._check()
+        s = self.sessions.get(str(session_id))
+        if s is None:
+            raise SessionNotFoundError("session 不存在")
+        row = self.users[s.user_id]
+        if row.deleted_at is not None:
+            raise AccountDeletedError("帳號已刪除")
+        self._require_can_touch(actor_id, row)
+        if not s.revoked:
+            s.revoked, s.revoked_at = True, datetime.now(timezone.utc)
+            self._audit(actor_id, "session.admin_revoke", s.id,
+                        {"user_id": row.id, "username": row.username, "via": via}, "session")
+        return self._session_info(s)
+
+    async def record_auth_event(self, event: str, *, reason=None, user_id=None, session_id=None, ip=None,
+                                user_agent=None, count: int = 1) -> None:
+        self._check()
+        if event not in accounts.AUTH_EVENT_TYPES:
+            raise ValueError(f"未知的登入事件類型：{event!r}")
+        if reason is not None and not accounts._AUTH_REASON_RE.fullmatch(reason):
+            raise ValueError(f"登入事件的 reason 形狀不符：{reason!r}")
+        if int(count) < 1:
+            raise ValueError("count 必須 ≥ 1")
+
+        def _uuid_or_none(v):
+            return str(v) if v is not None and accounts._valid_uuid(v) else None
+
+        self.auth_events.append({
+            "event": event, "reason": reason, "user_id": _uuid_or_none(user_id),
+            "session_id": _uuid_or_none(session_id), "ip": (ip or "")[:64] or None,
+            "user_agent": (user_agent or "")[:300] or None, "count": int(count),
+            "occurred_at": datetime.now(timezone.utc),
+        })
 
     async def list_users(self) -> list[UserInfo]:
         self._check()
@@ -527,6 +603,8 @@ class FakeAccounts:
         self._check()
         row = self._get_live(user_id)
         self_service = actor_id is not None and str(actor_id) == row.id
+        if self_service and accounts.admin_mfa_policy_locks(row.role):
+            raise MfaPolicyLockedError(accounts.MFA_POLICY_LOCKED_MESSAGE)
         if not self_service and row.is_super and row.role == "admin" and not self._actor_is_super(actor_id):
             raise PermissionDeniedError("只有 super admin 能管理 super admin 帳號")
         was_on = row.totp_enabled
@@ -619,7 +697,15 @@ class FakeAccounts:
         sessions = [sid for sid, s in self.sessions.items() if s.user_id == user_id]
         for sid in sessions:
             del self.sessions[sid]
-        return {"qa_log": len(qids), "review_state": review, "user_scope": scopes, "user_session": len(sessions)}
+        # Admin v2 的個人資料；auth_events 刻意保留（同 accounts._purge_user）。
+        counters = [k for k in self.usage_counters if k[0] == user_id]
+        quotas = [k for k in self.user_quotas if k[0] == user_id]
+        llm = [k for k in self.llm_usage if k[1] == user_id]
+        for store, keys in ((self.usage_counters, counters), (self.user_quotas, quotas), (self.llm_usage, llm)):
+            for k in keys:
+                del store[k]
+        return {"qa_log": len(qids), "review_state": review, "user_scope": scopes, "user_session": len(sessions),
+                "usage_counter": len(counters), "user_quota": len(quotas), "llm_usage_daily": len(llm)}
 
     async def execute_deletion(self, user_id: str, *, via: str = "batch"):
         self._check()
@@ -647,6 +733,9 @@ class FakeAccounts:
             user_scope=len(row.scopes) if row else 0,
             user_session=sum(1 for s in self.sessions.values() if s.user_id == uid),
             identifiable=identifiable, pending_deletion=self._pending_deletion(uid) is not None,
+            usage_counter=sum(1 for k in self.usage_counters if k[0] == uid),
+            user_quota=sum(1 for k in self.user_quotas if k[0] == uid),
+            llm_usage_daily=sum(1 for k in self.llm_usage if k[1] == uid),
         )
 
     async def purge_deleted_user(self, user_id: str, *, via: str = "replay") -> dict[str, int]:

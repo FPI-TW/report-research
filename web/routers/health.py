@@ -47,6 +47,13 @@ auth 白名單裡，但對外等於不存在。消費端是 `scripts/check_web_h
 日誌）。狀態、門檻、快取、402 閂鎖與審查 M15 的 `_unused` 規則都在 `app/services/llm_health.py`；
 消費端是探針（只認 503，`low` 為退出碼 7、其餘為 8）。
 
+## `/healthz/security`：安全事件的狀態型告警（Admin v2）
+
+同樣另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡。回應只有 `{"security": state}`，**不回任何事件細節**。
+消費端是 Security lane 的 bash 探針（`scripts/check_security_health.sh`，接一組新的 P5 instance）：只送狀態型告警
+（開場／升級／恢復），不為每筆登入事件發 webhook（使用者定案 9）。Wave 0 先固定回 `unknown`（200）——判斷
+（15 分鐘內全站登入失敗、同一帳號連續失敗、權限提升失敗、稽核鏈驗證失敗；門檻 `SECURITY_*`）由 Security lane 補。
+
 ## `/api/status`：給一般使用者的粗粒度系統狀態（需登入）
 
 主平台的小燈號用。**任何登入使用者可讀**（不在免登入白名單、不限管理員），所以回應只有
@@ -262,6 +269,17 @@ async def healthz_llm(request: Request) -> JSONResponse:
         currency=settings.llm_budget_currency, floor=settings.llm_balance_floor,
     )
     return JSONResponse({"llm": state}, status_code=status)
+
+
+@router.get("/healthz/security")
+async def healthz_security(request: Request) -> JSONResponse:
+    """安全事件的狀態。**只回答本機直連的請求**，其餘一律 404。
+
+    Wave 0 固定回 `{"security": "unknown"}`（見模組 docstring），判斷由 Security lane 補。
+    """
+    if not dev_mode.is_direct_loopback(request):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return JSONResponse({"security": "unknown"})
 
 
 @router.get("/api/status")

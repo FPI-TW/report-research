@@ -38,9 +38,11 @@ async def scenario_login(api) -> None:
     info = await api.create_user(name, PW, "user", actor_id=None)
     ok = await api.authenticate(name.lower(), PW)
     assert ok.reason == "ok" and ok.user is not None and ok.user.id == info.id, ok
-    assert ok.user.role == "user"
-    assert (await api.authenticate(name, "wrong-password")).reason == "bad_password"
-    assert (await api.authenticate(_name("nobody"), PW)).reason == "unknown_user"
+    assert ok.user.role == "user" and ok.user_id == info.id
+    bad = await api.authenticate(name, "wrong-password")
+    assert bad.reason == "bad_password" and bad.user_id == info.id  # 登入事件歸到帳號用（不是名稱）
+    unknown = await api.authenticate(_name("nobody"), PW)
+    assert unknown.reason == "unknown_user" and unknown.user_id is None
     assert (await api.authenticate(name, "")).reason == "unknown_user"
 
 
@@ -198,6 +200,8 @@ async def scenario_scopes_and_super(api) -> None:
     member = await api.create_user(_name("Member"), PW, "user", actor_id=None)
     sid = await api.create_session(plain.id, max_age_seconds=3600)
     assert (await api.resolve_session(sid)).scopes == accounts.ADMIN_DEFAULT_SCOPES
+    # analytics.read 是管理員預設、不是可授予的（user_scope 的 CHECK 不必變）
+    assert "analytics.read" in accounts.ADMIN_DEFAULT_SCOPES and "analytics.read" not in accounts.GRANTABLE_SCOPES
     info = await api.set_privileges(plain.id, scopes=["qa_content.read"], actor_id=boss.id)
     assert info.scopes == ("qa_content.read",) and info.is_super is False
     assert "qa_content.read" in (await api.resolve_session(sid)).scopes
@@ -375,6 +379,32 @@ async def scenario_totp_admin_reset_super_requires_super(api) -> None:
     await _expect(accounts.PermissionDeniedError, api.disable_totp(boss.id, actor_id=plain.id))
 
 
+async def scenario_totp_disable_locked_by_admin_mfa_policy(api) -> None:
+    """ADMIN_MFA_REQUIRED 開啟時：管理員不能自行關閉 TOTP；一般使用者照舊；別的管理員重設與 CLI 救援照常可用。"""
+    import dataclasses
+
+    from app import config
+
+    boss = await api.create_user(_name("PolBoss"), PW, "admin", actor_id=None, is_super=True)
+    adm = await api.create_user(_name("PolAdm"), PW, "admin", actor_id=None)
+    member = await api.create_user(_name("PolUser"), PW, "user", actor_id=None)
+    for uid in (adm.id, member.id, boss.id):
+        await _enable_totp(api, uid)
+    on = dataclasses.replace(config.get_settings(), admin_mfa_required=True)
+    with mock.patch.object(config, "_SETTINGS", on):
+        assert accounts.admin_mfa_policy_locks("admin") and not accounts.admin_mfa_policy_locks("user")
+        await _expect(accounts.MfaPolicyLockedError, api.disable_totp(adm.id, actor_id=adm.id))
+        assert (await api.totp_status(adm.id)).enabled  # 沒有被關掉
+        assert not (await api.disable_totp(member.id, actor_id=member.id)).totp_enabled
+        assert not (await api.disable_totp(adm.id, actor_id=boss.id)).totp_enabled  # 別的管理員重設
+        assert not (await api.disable_totp(boss.id, actor_id=None, via="cli")).totp_enabled  # CLI 救援
+    off = dataclasses.replace(config.get_settings(), admin_mfa_required=False)
+    with mock.patch.object(config, "_SETTINGS", off):
+        await _enable_totp(api, adm.id, T0 + 300)
+        assert not (await api.disable_totp(adm.id, actor_id=adm.id)).totp_enabled  # 政策關閉時照舊可關
+    assert accounts.MfaPolicyLockedError.code == "mfa_policy_locked"
+
+
 # ───── 帳號刪除 ─────
 
 async def _seed_qa(api, user_id: str, *, with_review: bool = False) -> str:
@@ -398,6 +428,109 @@ async def _seed_qa(api, user_id: str, *, with_review: bool = False) -> str:
             )
         await session.commit()
     return qid
+
+
+async def _seed_usage(api, user_id: str) -> None:
+    """放該使用者的 usage_counter、user_quota、llm_usage_daily 各一列（revision 0009）。"""
+    if isinstance(api, FakeAccounts):
+        api.seed_usage(user_id)
+        return
+    from sqlalchemy import text
+
+    async with accounts.SessionFactory() as session:
+        params = {"uid": user_id}
+        await session.execute(text("INSERT INTO research.usage_counter (user_id, day, kind, count) "
+                                   "VALUES (:uid, DATE '2026-10-07', 'search', 3)"), params)
+        await session.execute(text("INSERT INTO research.user_quota (user_id, kind, daily_limit, reason) "
+                                   "VALUES (:uid, 'ask', 50, 'r')"), params)
+        await session.execute(text("INSERT INTO research.llm_usage_daily (day, user_id, task, model, calls) "
+                                   "VALUES (DATE '2026-10-07', :uid, 'ask_answer', 'deepseek-flash', 2)"), params)
+        await session.commit()
+
+
+async def _auth_events(api, user_id: str) -> list[dict]:
+    if isinstance(api, FakeAccounts):
+        return [e for e in api.auth_events if e["user_id"] == user_id]
+    from sqlalchemy import text
+
+    async with accounts.SessionFactory() as session:
+        rows = (await session.execute(
+            text("SELECT event, reason, user_id, session_id, ip, user_agent, count FROM research.auth_event "
+                 "WHERE user_id = :uid ORDER BY id"),
+            {"uid": user_id},
+        )).mappings().all()
+    return [{**dict(r), "user_id": str(r["user_id"]) if r["user_id"] else None,
+             "session_id": str(r["session_id"]) if r["session_id"] else None} for r in rows]
+
+
+async def scenario_auth_event_record(api) -> None:
+    info = await api.create_user(_name("Evt"), PW, "user", actor_id=None)
+    sid = await api.create_session(info.id, max_age_seconds=3600)
+    await api.record_auth_event("login.failure", reason="bad_password", user_id=info.id, ip="10.0.0.9",
+                                user_agent="x" * 400)
+    await api.record_auth_event("logout", user_id=info.id, session_id=sid)
+    await api.record_auth_event("login.locked", ip="10.0.0.9", count=7)  # 沒有帳號：user_id NULL
+    await api.record_auth_event("login.failure", reason="unknown_user", user_id="not-a-uuid")  # 不合法 UUID＝NULL
+    events = await _auth_events(api, info.id)
+    assert [e["event"] for e in events] == ["login.failure", "logout"], events
+    assert events[0]["reason"] == "bad_password" and events[0]["ip"] == "10.0.0.9"
+    assert len(events[0]["user_agent"]) == 300 and events[0]["count"] == 1
+    assert events[1]["session_id"] == sid
+    assert info.username not in repr(events)  # 沒有帳號名稱
+    for bad in (lambda: api.record_auth_event("login.nope"),
+                lambda: api.record_auth_event("login.failure", reason="Bad Reason"),
+                lambda: api.record_auth_event("login.locked", count=0)):
+        try:
+            await bad()
+        except ValueError:
+            continue
+        raise AssertionError("不合法的事件應拋 ValueError")
+
+
+async def scenario_list_sessions(api) -> None:
+    a = await api.create_user(_name("LsA"), PW, "user", actor_id=None)
+    b = await api.create_user(_name("LsB"), PW, "user", actor_id=None)
+    s1 = await api.create_session(a.id, max_age_seconds=3600, ip="10.0.0.1", user_agent="ua-1")
+    s2 = await api.create_session(a.id, max_age_seconds=3600)
+    await api.create_session(b.id, max_age_seconds=3600)
+    await api.revoke_session(s2)
+    live = await api.list_sessions(user_id=a.id)
+    assert [x.id for x in live] == [s1], live
+    one = live[0]
+    assert one.user_id == a.id and one.username == a.username and one.active and one.ip == "10.0.0.1"
+    assert one.user_agent == "ua-1" and one.revoked_at is None
+    everything = await api.list_sessions(user_id=a.id, active_only=False)
+    assert {x.id for x in everything} == {s1, s2}
+    gone = next(x for x in everything if x.id == s2)
+    assert not gone.active and gone.revoked_at is not None
+    assert await api.list_sessions(user_id="not-a-uuid") == []
+    assert {x.user_id for x in await api.list_sessions()} >= {a.id, b.id}
+
+
+async def scenario_admin_revoke_session(api) -> None:
+    boss = await api.create_user(_name("RvBoss"), PW, "admin", actor_id=None, is_super=True)
+    plain = await api.create_user(_name("RvAdm"), PW, "admin", actor_id=None)
+    target = await api.create_user(_name("RvTgt"), PW, "user", actor_id=None)
+    keep = await api.create_session(target.id, max_age_seconds=3600)
+    drop = await api.create_session(target.id, max_age_seconds=3600)
+    out = await api.admin_revoke_session(drop, actor_id=plain.id)
+    assert out.id == drop and not out.active and out.revoked_at is not None
+    assert await api.resolve_session(drop) is None
+    assert await api.resolve_session(keep) is not None  # 只撤銷那一個
+    again = await api.admin_revoke_session(drop, actor_id=plain.id)  # 已撤銷：原樣回傳、不再寫稽核
+    assert not again.active
+    _t, entries = await api.list_audit(limit=200)
+    revokes = [e for e in entries if e.action == "session.admin_revoke" and e.target_id == drop]
+    assert len(revokes) == 1, revokes
+    assert revokes[0].actor_user_id == plain.id and revokes[0].target_type == "session"
+    assert revokes[0].detail["user_id"] == target.id and revokes[0].detail["username"] == target.username
+    boss_sid = await api.create_session(boss.id, max_age_seconds=3600)
+    await _expect(accounts.PermissionDeniedError, api.admin_revoke_session(boss_sid, actor_id=plain.id))
+    assert await api.resolve_session(boss_sid) is not None
+    await api.admin_revoke_session(boss_sid, actor_id=boss.id)  # super 對 super 可以
+    for bad in ("not-a-uuid", str(uuid.uuid4())):
+        await _expect(accounts.SessionNotFoundError, api.admin_revoke_session(bad, actor_id=boss.id))
+    assert issubclass(accounts.SessionNotFoundError, accounts.UserNotFoundError)  # 路由層同樣對應 404
 
 
 async def scenario_deletion_request_and_cancel(api) -> None:
@@ -464,9 +597,13 @@ async def scenario_deletion_execute_purges(api) -> None:
     q1 = await _seed_qa(api, target.id, with_review=True)
     await _seed_qa(api, target.id)
     kept = await _seed_qa(api, other.id, with_review=True)
+    await _seed_usage(api, target.id)
+    await _seed_usage(api, other.id)
+    await api.record_auth_event("login.success", reason="password", user_id=target.id, ip="10.1.1.1")
     await api.request_deletion(target.id, actor_id=admin.id, delay_seconds=0)
     before = await api.deletion_residue(target.id)
     assert before.qa_log == 2 and before.review_state == 1 and before.pending_deletion and before.identifiable
+    assert before.usage_counter == 1 and before.user_quota == 1 and before.llm_usage_daily == 1, before
     executed = await api.execute_deletion(target.id)
     assert executed is not None
     assert await api.execute_deletion(target.id) is None  # 冪等：已執行就不再動
@@ -479,6 +616,12 @@ async def scenario_deletion_execute_purges(api) -> None:
     assert (await api.authenticate(target.username, PW)).reason == "unknown_user"
     assert (await api.authenticate(info.username, PW)).reason in ("bad_password", "disabled")
     assert (await api.deletion_residue(other.id)).qa_log == 1  # 別人的不受影響
+    other_left = await api.deletion_residue(other.id)
+    assert (other_left.usage_counter, other_left.user_quota, other_left.llm_usage_daily) == (1, 1, 1)
+    # 安全事件刻意保留（使用者定案 7）：只有 UUID、IP，沒有帳號名稱
+    kept_events = await _auth_events(api, target.id)
+    assert [e["event"] for e in kept_events] == ["login.success"], kept_events
+    assert target.username not in repr(kept_events)
     for call in (
         lambda: api.update_user(target.id, enabled=True, actor_id=admin.id),
         lambda: api.reset_password(target.id, PW2, actor_id=admin.id),
@@ -493,6 +636,8 @@ async def scenario_deletion_execute_purges(api) -> None:
     _total, entries = await api.list_audit(limit=200)
     done = next(e for e in entries if e.target_id == target.id and e.action == "user.delete_executed")
     assert done.detail["qa_log"] == 2 and done.detail["review_state"] == 1
+    assert done.detail["usage_counter"] == 1 and done.detail["user_quota"] == 1
+    assert done.detail["llm_usage_daily"] == 1 and "auth_event" not in done.detail
     assert target.username not in repr(done.detail)
     assert q1 and kept
 
@@ -505,10 +650,13 @@ async def scenario_deletion_replay(api) -> None:
     await api.execute_deletion(target.id)
     assert (await api.deletion_residue(target.id)).clean
     await _seed_qa(api, target.id, with_review=True)  # 「復活」的問答
+    await _seed_usage(api, target.id)  # 「復活」的個人用量與配額
     residue = await api.deletion_residue(target.id)
     assert residue.qa_log == 1 and residue.review_state == 1 and not residue.clean
+    assert residue.usage_counter == 1 and residue.user_quota == 1 and residue.llm_usage_daily == 1
     counts = await api.purge_deleted_user(target.id)
     assert counts["qa_log"] == 1 and counts["review_state"] == 1
+    assert counts["usage_counter"] == 1 and counts["user_quota"] == 1 and counts["llm_usage_daily"] == 1
     assert (await api.deletion_residue(target.id)).clean
     nobody = str(uuid.uuid4())  # 備份比帳號還舊：app_user 不存在也不算殘留
     assert (await api.deletion_residue(nobody)).clean
@@ -685,6 +833,10 @@ SCENARIOS = [
     scenario_totp_setup_rules_and_disable,
     scenario_totp_elevation,
     scenario_totp_admin_reset_super_requires_super,
+    scenario_totp_disable_locked_by_admin_mfa_policy,
+    scenario_auth_event_record,
+    scenario_list_sessions,
+    scenario_admin_revoke_session,
     scenario_deletion_request_and_cancel,
     scenario_deletion_cancel_keeps_disabled,
     scenario_deletion_protections,

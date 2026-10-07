@@ -1324,7 +1324,8 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         kinds = [k for k, _ in events]
         self.assertEqual(kinds, ["status", "sources", "notice", "done"])
         self.assertEqual(events[1], ("sources", []))
-        self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT))
+        # 功能旗標 ask.web_search 預設關（沒有 DB 覆寫）：即使總閘 ASK_ENABLE_WEB 開，也不附「可開網搜」提示。
+        self.assertEqual(events[2], ("notice", ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE))
         self.assertFalse(called.get("search"))  # 檢索未起跑
         self.assertFalse(called.get("embed"))   # 連 embed 都不必
         self.assertFalse(called.get("route"))   # 前檢已定案，分類器不必呼叫
@@ -1514,7 +1515,7 @@ class ScopeRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(called["search"])  # retrieve_context 未被呼叫
         self.assertFalse(called["embed"])
         notice = next(p for k, p in events if k == "notice")
-        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_WITH_HINT)
+        self.assertEqual(notice, ans.TIME_SENSITIVE_UNAVAILABLE_MESSAGE)  # ask.web_search 預設關：不附網搜提示
         self.assertEqual(events[1], ("sources", []))
 
 

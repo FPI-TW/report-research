@@ -20,6 +20,7 @@ const AdminAuditPage = lazy(routeLoaders.adminAudit)
 const AdminReportsPage = lazy(routeLoaders.adminReports)
 const AdminUploadsPage = lazy(routeLoaders.adminUploads)
 const AdminUploadDetailPage = lazy(routeLoaders.adminUpload)
+const AdminApiClientsPage = lazy(routeLoaders.adminApiClients)
 // 維運（/admin/operations/*）：外殼（標題＋子導覽、ops.read 守門）＋各子頁；jobs／incidents／host 讀 DB 投影。
 const OperationsLayout = lazy(routeLoaders.adminOps)
 const OpsOverviewPage = lazy(routeLoaders.adminOpsOverview)
@@ -34,6 +35,12 @@ const OpsDataHealthPage = lazy(routeLoaders.adminOpsDataHealth)
 const OpsLlmUsagePage = lazy(routeLoaders.adminOpsLlmUsage)
 const OpsDependenciesPage = lazy(routeLoaders.adminOpsDependencies)
 const OpsDiagnosticsPage = lazy(routeLoaders.adminOpsDiagnostics)
+const OpsDatabasePage = lazy(routeLoaders.adminOpsDatabase)
+// Admin v2：分析、安全、配額、功能旗標（各頁自己包 RequireAdmin＋RequireScope；後端各 router 掛 require_admin＋scope）。
+const AdminAnalyticsPage = lazy(routeLoaders.adminAnalytics)
+const AdminSecurityPage = lazy(routeLoaders.adminSecurity)
+const AdminQuotaPage = lazy(routeLoaders.adminQuota)
+const AdminFlagsPage = lazy(routeLoaders.adminFlags)
 
 function NotFound() {
   return <div style={{ padding: 20 }}>找不到頁面</div>
@@ -83,6 +90,11 @@ export const routes = [
           { path: 'reports', element: <Suspense><AdminReportsPage /></Suspense> },
           { path: 'uploads', element: <Suspense><AdminUploadsPage /></Suspense> },
           { path: 'uploads/:uploadId', element: <Suspense><AdminUploadDetailPage /></Suspense> },
+          { path: 'analytics', element: <Suspense><AdminAnalyticsPage /></Suspense> },
+          { path: 'security', element: <Suspense><AdminSecurityPage /></Suspense> },
+          { path: 'quota', element: <Suspense><AdminQuotaPage /></Suspense> },
+          { path: 'flags', element: <Suspense><AdminFlagsPage /></Suspense> },
+          { path: 'api-clients', element: <Suspense><AdminApiClientsPage /></Suspense> },
           {
             path: 'operations',
             element: <Suspense><OperationsLayout /></Suspense>,
@@ -100,6 +112,7 @@ export const routes = [
               { path: 'data-health', element: <Suspense><OpsDataHealthPage /></Suspense> },
               { path: 'llm-usage', element: <Suspense><OpsLlmUsagePage /></Suspense> },
               { path: 'diagnostics', element: <Suspense><OpsDiagnosticsPage /></Suspense> },
+              { path: 'database', element: <Suspense><OpsDatabasePage /></Suspense> },
             ],
           },
           { path: '*', element: <NotFound /> },

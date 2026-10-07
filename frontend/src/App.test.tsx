@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { routes } from './App'
@@ -77,6 +77,58 @@ test('/admin/operations 導向維運總覽（有 ops.read 的管理員；代理�
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   expect(await screen.findByRole('heading', { name: '維運代理目前無法使用' }, { timeout: 15000 })).toBeInTheDocument()
   expect(router.state.location.pathname).toBe('/admin/operations/overview')
+}, 15000)
+
+test.each([
+])('Admin v2 佔位頁 %s：有 scope 時顯示「建置中」、不打任何管理 API', async (path, title, scope) => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.includes('/api/me')) {
+      return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', scope] }), { status: 200 })
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: [path] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 1, name: title }, { timeout: 15000 })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { level: 2, name: '建置中' })).toBeInTheDocument()
+  expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/admin'))).toBe(false)
+}, 15000)
+
+test('配額頁（Quota lane）：/admin/quota 有 accounts.manage 時載入配額 API', async () => {
+  const fetchMock = vi.fn(async (url: string) =>
+    url.includes('/api/me')
+      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'accounts.manage'] }), { status: 200 })
+      : new Response(JSON.stringify({ detail: '測試不回資料', code: 'x' }), { status: 503 }))
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/quota'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 1, name: '配額' }, { timeout: 15000 })).toBeInTheDocument()
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/admin/quota')).toBe(true))
+}, 15000)
+
+test('Admin v2 佔位頁：沒有對應 scope 時只顯示需要的權限', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    url.includes('/api/me')
+      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin'] }), { status: 200 })
+      : new Response(JSON.stringify({}), { status: 200 })))
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/analytics'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { name: '需要「使用分析」權限' }, { timeout: 15000 })).toBeInTheDocument()
+}, 15000)
+
+test('維運 → 資料庫分頁', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+    url.includes('/api/me')
+      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'ops.read'] }), { status: 200 })
+      : new Response(JSON.stringify({}), { status: 200 })))
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations/database'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 2, name: '資料庫' }, { timeout: 15000 })).toBeInTheDocument()
 }, 15000)
 
 test('舊書籤 /monitor 導回檢索頁（導入監控已搬進管理後台）', async () => {

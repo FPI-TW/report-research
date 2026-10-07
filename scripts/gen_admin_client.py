@@ -296,6 +296,8 @@ def build_operation(path: str, method: str, op: dict) -> str:
         init = "{ cache: 'no-store' }"
     elif method in BODY_METHODS:
         init = f"jsonBody('{BODY_METHODS[method]}'{', body' if body is not None else ''})"
+    elif method == "delete" and body is None:
+        init = "{ method: 'DELETE' }"
     else:
         raise Unsupported(f"不支援的方法 {method}")
     summary = (op.get("summary") or "").strip()

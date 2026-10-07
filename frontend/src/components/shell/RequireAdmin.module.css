@@ -7,3 +7,8 @@
 .body { font-size: 14px; color: var(--tf-text-muted-aa); margin: 0; }
 .back { font-size: 13px; color: var(--tf-text-2); text-decoration: underline; }
 @media (max-width: 600px) { .wrap { padding: 16px; } .card { padding: 20px; } }
+.action {
+  margin-top: 6px; height: 36px; padding: 0 16px; border: none; border-radius: var(--tf-radius-md);
+  background: var(--tf-graphite); color: var(--tf-on-graphite); font: inherit; font-size: 14px; cursor: pointer;
+}
+.action:hover { opacity: .9; }

@@ -33,6 +33,7 @@ function useNow(intervalMs = 30_000): number {
 const SCOPE_LABELS: Record<GrantableScope, string> = {
   'qa_content.read': '查看問答內容（qa_content.read）',
   'ops.operate': '執行維運操作（ops.operate）',
+  'api_clients.manage': '管理 API 用戶端（api_clients.manage）',
 }
 
 // 密碼政策與後端 app/services/passwords.py 相同；這裡只是提早提示，後端仍會再驗一次。

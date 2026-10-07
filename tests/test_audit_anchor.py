@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from fake_accounts import FakeAccounts
 
@@ -90,6 +92,52 @@ class AuditAnchorTests(unittest.TestCase):
     def test_corrupt_anchor_file_is_flagged(self):
         self.path.write_text("not json\n", encoding="utf-8")
         self.assertEqual(self._run(), aa.EXIT_TAMPER)
+
+
+
+class AnchorStatusFileTests(unittest.TestCase):
+    """每次正式執行都寫 data/health/audit_anchor.json（DATA_HEALTH_DIR 導到 tempfile）；
+    --verify-only 不寫；寫不進去不改退出碼。"""
+
+    _run = AuditAnchorTests._run
+
+    def setUp(self):
+        AuditAnchorTests.setUp(self)
+        self.health = Path(self.tmp.name) / "health"
+        patcher = mock.patch.dict(os.environ, {"DATA_HEALTH_DIR": str(self.health)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _status(self):
+        return json.loads((self.health / "audit_anchor.json").read_text(encoding="utf-8"))
+
+    def test_ok_run_writes_status(self):
+        self.assertEqual(self._run(), aa.EXIT_OK)
+        st = self._status()
+        self.assertEqual((st["result"], st["exit_code"], st["total"], st["anchors_checked"]), ("ok", 0, 1, 0))
+        self.assertEqual(st["head_id"], self.store.audit[0].id)
+        self.assertEqual(len(st["head_hash_prefix"]), 16)
+        from app.services import security_ops
+        self.assertEqual(security_ops.read_anchor_status().state, "ok")
+
+    def test_tamper_and_error_are_recorded(self):
+        self.store.broken_audit_ids.add(self.store.audit[0].id)
+        self.assertEqual(self._run(), aa.EXIT_TAMPER)
+        self.assertEqual(self._status()["result"], "tamper")
+        self.store.broken_audit_ids.clear()
+        self.store.fail_with = RuntimeError("db down")
+        self.assertEqual(self._run(), aa.EXIT_ERROR)
+        st = self._status()
+        self.assertEqual(st["result"], "error")
+        self.assertNotIn("db down", st["message"], "訊息只帶例外型別")
+
+    def test_verify_only_does_not_write_status(self):
+        self.assertEqual(self._run(verify_only=True), aa.EXIT_OK)
+        self.assertFalse((self.health / "audit_anchor.json").exists())
+
+    def test_status_write_failure_does_not_change_exit_code(self):
+        with mock.patch.dict(os.environ, {"DATA_HEALTH_DIR": "/proc/forbidden/report-mark"}):
+            self.assertEqual(self._run(), aa.EXIT_OK)
 
 
 if __name__ == "__main__":

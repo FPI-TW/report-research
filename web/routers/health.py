@@ -47,6 +47,19 @@ auth 白名單裡，但對外等於不存在。消費端是 `scripts/check_web_h
 日誌）。狀態、門檻、快取、402 閂鎖與審查 M15 的 `_unused` 規則都在 `app/services/llm_health.py`；
 消費端是探針（只認 503，`low` 為退出碼 7、其餘為 8）。
 
+## `/healthz/security`：安全事件的狀態型告警（Admin v2）
+
+同樣另開、同樣只回答本機直連（其餘 404）、同樣在白名單裡。回應只有 `{"security": state}`，**不回任何事件細節**
+（計數與帳號在 `/api/admin/security/alerts`，要登入＋`audit.read`）。判斷是 `security_ops.evaluate_alerts`：
+`SECURITY_WINDOW_MINUTES`（15）分鐘內全站登入失敗（含被限流擋下的請求）達 `SECURITY_LOGIN_FAILURE_THRESHOLD`（20）、
+同一帳號「上次登入成功之後」連續失敗達 `SECURITY_ACCOUNT_FAILURE_THRESHOLD`（5）、權限提升失敗達
+`SECURITY_ELEVATE_FAILURE_THRESHOLD`（3）、稽核鏈驗證失敗（結果快取 `AUDIT_VERIFY_CACHE_SECONDS`）。
+state：`ok`（200）、`unknown`（判不出來，200）、`audit_chain_broken`／`elevate_failures`／`account_failures`／
+`login_failures`（503；多項同時成立回最前面那一個）。結論快取 `_SECURITY_TTL` 秒、整個判斷最多 `_SECURITY_WAIT` 秒
+（逾時＝unknown）。每次重算前順手把到期的限流彙總落庫（探針每 2 分鐘打一次，等於彙總的定期 flush）。
+消費端是 `scripts/check_security_health.sh`（接 P5 instance `report-mark-security-incident`）：只送狀態型告警
+（開場／升級／恢復），不為每筆登入事件發 webhook（使用者定案 9）。
+
 ## `/api/status`：給一般使用者的粗粒度系統狀態（需登入）
 
 主平台的小燈號用。**任何登入使用者可讀**（不在免登入白名單、不限管理員），所以回應只有
@@ -73,7 +86,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import get_settings
-from app.services import llm_health
+from app.services import llm_health, security_ops
 from app.services.object_storage import get_object_storage
 from web import deps, dev_mode, ops_client
 from web.ttl_cache import TTLCache
@@ -112,6 +125,10 @@ _STATUS_MESSAGES = {
 _DB_DEGRADED_MESSAGE = "資料庫連線異常，檢索或問答可能暫時無法使用"
 # 核心服務停著（idle）也算壞：catalog 的 critical 層都是常駐服務。
 _CRITICAL_BAD = frozenset({"failed", "not_found", "idle"})
+# /healthz/security：結論快取（key 固定）與整個判斷的時限（探針的 curl 逾時是 10 秒）。
+_SECURITY_TTL = 30.0
+_SECURITY_WAIT = 8.0
+_SECURITY_CACHE = TTLCache(ttl=_SECURITY_TTL, max_entries=1, name="healthz_security")
 _storage: _StorageState = _STORAGE_INITIAL
 _storage_task: asyncio.Task | None = None
 
@@ -165,6 +182,33 @@ async def _critical_services_state() -> str:
     except Exception as exc:  # 代理不可用、拒絕、格式不符：都只是「不知道」，細節只進日誌
         logger.info("/api/status 取不到維運代理狀態：%s", exc)
     _STATUS_CACHE.put("critical", state)
+    return state
+
+
+async def _security_state() -> str:
+    """安全事件的狀態字串（`security_ops.HEALTH_STATES`）。永不拋例外：逾時或任何失敗都是 unknown。"""
+    cached = _SECURITY_CACHE.get("state")
+    if cached is not None:
+        return cached
+    try:
+        async with asyncio.timeout(_SECURITY_WAIT):
+            await security_ops.flush_tallies(deps.accounts)
+            ev = await security_ops.evaluate_alerts(deps.accounts.verify_audit_chain)
+        state = ev.state
+        if ev.triggered:
+            # 只有計數與門檻（沒有 IP、帳號）：P5 的通知只說「哪一條」，細節到安全頁看。
+            logger.warning(
+                "安全告警 state=%s triggered=%s window=%smin login_failures=%s/%s accounts_over=%s "
+                "elevate_failures=%s/%s audit_chain=%s",
+                state, ",".join(ev.triggered), ev.window_minutes, ev.login_failures, ev.login_failure_threshold,
+                len(ev.accounts_over), ev.elevate_failures, ev.elevate_failure_threshold, ev.audit_chain.state,
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("healthz 安全狀態判斷失敗或逾時（視為 unknown）", exc_info=True)
+        state = security_ops.STATE_UNKNOWN
+    _SECURITY_CACHE.put("state", state)
     return state
 
 
@@ -262,6 +306,19 @@ async def healthz_llm(request: Request) -> JSONResponse:
         currency=settings.llm_budget_currency, floor=settings.llm_balance_floor,
     )
     return JSONResponse({"llm": state}, status_code=status)
+
+
+@router.get("/healthz/security")
+async def healthz_security(request: Request) -> JSONResponse:
+    """安全事件的狀態。**只回答本機直連的請求**，其餘一律 404。
+
+    回 `{"security": state}`；告警狀態（`security_ops.ALERT_STATES`）回 503，ok／unknown 回 200。
+    由 `scripts/check_security_health.sh` 消費（audit_chain_broken 為退出碼 1、其餘告警為 2、判不出來為 3）。
+    """
+    if not dev_mode.is_direct_loopback(request):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    state = await _security_state()
+    return JSONResponse({"security": state}, status_code=503 if state in security_ops.ALERT_STATES else 200)
 
 
 @router.get("/api/status")

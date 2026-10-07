@@ -59,6 +59,18 @@ class GeneratedAdminClientTests(unittest.TestCase):
         with self.assertRaises(gen.Unsupported):
             gen.build_raw_upload("/api/admin/x", "get", {**upload, "operationId": "x", "responses": {}})
 
+    def test_delete_without_body(self):
+        """DELETE（例如 /api/admin/flags/{key}）不帶 body：產生 `{ method: 'DELETE' }`；帶 JSON body 的不支援。"""
+        op = {"operationId": "clear_flag", "summary": "Clear Flag",
+              "parameters": [{"name": "key", "in": "path", "required": True, "schema": {"type": "string"}}],
+              "responses": {"200": {"content": {"application/json": {"schema": {"type": "boolean"}}}}}}
+        line = gen.build_operation("/api/admin/flags/{key}", "delete", op)
+        self.assertIn("clearFlag: (key: string) => requestJSON(`/api/admin/flags/${encodeURIComponent(key)}`", line)
+        self.assertIn("{ method: 'DELETE' }", line)
+        with_body = {**op, "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}}}
+        with self.assertRaises(gen.Unsupported):
+            gen.build_operation("/api/admin/flags/{key}", "delete", with_body)
+
     def test_nullable_and_refs(self):
         self.assertEqual(gen.zod({"anyOf": [{"type": "string"}, {"type": "null"}]}), "z.string().nullable()")
         self.assertEqual(gen.zod({"$ref": "#/components/schemas/User-Input"}), "UserInputSchema")

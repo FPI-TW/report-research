@@ -3,12 +3,12 @@ import { describe, expect, test, beforeEach, afterEach, vi } from 'vitest'
 import { ComposerTools } from './ComposerTools'
 import { setWebSearch } from '../../lib/useWebSearch'
 
-// 網搜暫停（WEB_SEARCH_PAUSED，DeepSeek 遷移 PR-W）以可切換的 getter 模擬：預設走「恢復後」的行為，
+// 網搜暫停（useWebSearchPaused：旗標 ask.web_search 沒開）以可切換的 mock 模擬：預設走「恢復後」的行為，
 // 讓開關本身的測試在暫停期間繼續守著接回點；暫停中的行為另成一組，把旗標設成 true。
 const paused = vi.hoisted(() => ({ value: false }))
 vi.mock('../../lib/useWebSearch', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../lib/useWebSearch')>()
-  return { ...mod, get WEB_SEARCH_PAUSED() { return paused.value } }
+  return { ...mod, useWebSearchPaused: () => paused.value }
 })
 
 beforeEach(() => { paused.value = false; setWebSearch(false) })
@@ -87,7 +87,7 @@ test('多個實例共享開關狀態（中央與底部 Composer 同時存在）'
   expect(screen.getAllByRole('button', { name: '關閉網路搜尋' })).toHaveLength(2)
 })
 
-describe('網搜暫停中（WEB_SEARCH_PAUSED）', () => {
+describe('網搜暫停中（useWebSearchPaused）', () => {
   beforeEach(() => { paused.value = true })
 
   test('工具清單不含網路搜尋：沒有任何工具時整個不渲染（不留一顆點開是空選單的「＋」）', () => {

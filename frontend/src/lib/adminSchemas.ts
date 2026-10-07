@@ -19,6 +19,10 @@ export const meSchema = z.object({
   scopes: z.array(z.string()).nullish(),
   elevated_until: z.string().nullish(),
   totp_enabled: z.boolean().nullish(),
+  // Admin v2：管理員 TOTP 強制開啟而本人還沒開 TOTP（管理端點此時一律 403 mfa_enrollment_required）。
+  mfa_enrollment_required: z.boolean().nullish(),
+  // Admin v2：管理員在 TOTP 強制政策下不可自行關閉兩步驟驗證（後端 /api/me/totp/disable 回 403 mfa_policy_locked）。
+  mfa_policy_locked: z.boolean().nullish(),
 })
 export type Me = z.infer<typeof meSchema>
 

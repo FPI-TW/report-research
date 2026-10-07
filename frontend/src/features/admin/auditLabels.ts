@@ -23,6 +23,42 @@ const ACTION_LABELS: Record<string, string> = {
   'report.bulk_visibility': '批次隱藏／恢復研報',
   'user.bulk_action': '批次帳號操作',
   'data.export': '匯出 CSV',
+  'session.elevate': '重新驗證（權限提升）',
+  'session.elevate_failed': '重新驗證失敗',
+  'ops.restart': '重新啟動服務',
+  'ops.run': '立即執行批次',
+  // Admin v2（Wave 0 預先放好；稽核 action 名稱是穩定介面，各 lane 照用）
+  'session.admin_revoke': '撤銷 session',
+  'flag.update': '變更功能旗標',
+  'quota.update': '調整配額',
+  'api_client.create': '建立 API 用戶端',
+  'api_client.update': '變更 API 用戶端設定',
+  'api_client.entitlements': '變更 API 用戶端授權範圍',
+  'api_client.rotate': '輪替 API 用戶端金鑰',
+}
+
+/**
+ * 登入與安全事件（`research.auth_event`，不是稽核紀錄）→ 中文。詞彙的唯一定義是後端
+ * `app/services/accounts.py` 的 `AUTH_EVENT_TYPES`；這裡沒有守門測試，未知的事件原樣顯示代碼。
+ */
+const AUTH_EVENT_LABELS: Record<string, string> = {
+  'login.success': '登入成功',
+  'login.failure': '登入失敗',
+  'login.totp_failure': '兩步驟驗證失敗',
+  'login.locked': '登入被限流',
+  'login.insecure': '非 HTTPS 登入被拒',
+  logout: '登出',
+  'elevate.success': '重新驗證成功',
+  'elevate.failure': '重新驗證失敗',
+}
+const AUTH_REASON_LABELS: Record<string, string> = {
+  password: '密碼', totp: '兩步驟驗證', unknown_user: '帳號不存在', bad_password: '密碼錯誤', disabled: '帳號已停用',
+  bad_code: '驗證碼錯誤', expired_challenge: '驗證逾時',
+}
+
+export function authEventLabel(event: string, reason?: string | null): string {
+  const base = AUTH_EVENT_LABELS[event] ?? event
+  return reason ? `${base}（${AUTH_REASON_LABELS[reason] ?? reason}）` : base
 }
 
 const ROLE_LABELS: Record<string, string> = { admin: '管理員', user: '一般使用者' }
@@ -33,6 +69,9 @@ const BULK_USER_VERBS: Record<string, string> = { disable: '停用', enable: '�
 const EXPORT_KINDS: Record<string, string> = {
   audit: '操作紀錄', users: '帳號清單', reports: '研報清單', incidents: '事件清單', jobs: '排程工作',
 }
+
+// API 用戶端設定欄位 → 中文（`api_client.update` 的 detail.before／after 鍵；enabled 與 note 另外處理）。
+const API_CLIENT_FIELDS: Record<string, string> = { scopes: '端點', rate_limit_per_min: '每分鐘限流', daily_quota: '每日額度' }
 
 export function actionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action
@@ -105,13 +144,54 @@ export function auditSummary(entry: AuditEntry): string {
       : 0
     if (skipped) parts.push(`略過 ${skipped} 筆`)
   }
+  // API 用戶端：只講名稱與改了什麼。detail 的金鑰 prefix 刻意不顯示（原始金鑰與 hash 本來就不進稽核）。
+  const isApiClient = entry.action.startsWith('api_client.')
+  if (isApiClient) parts.push(...apiClientSummary(entry))
   const isReport = entry.action === 'report.hide' || entry.action === 'report.restore'
-  if (!who && entry.target_id && entry.action !== 'review.update' && !isReport && !isBulk && entry.action !== 'data.export') parts.unshift(`${entry.target_type} ${entry.target_id}`)
+  if (!who && entry.target_id && entry.action !== 'review.update' && !isReport && !isBulk && !isApiClient && entry.action !== 'data.export') parts.unshift(`${entry.target_type} ${entry.target_id}`)
   const via = str(d.via)
   if (via === 'web_bulk') {
     if (!isBulk) parts.push('批次操作')
   } else if (via && via !== 'web') parts.push(via.startsWith('cli') ? '經指令列' : `經 ${via}`)
   return parts.join('・') || '—'
+}
+
+const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+
+function apiClientSummary(entry: AuditEntry): string[] {
+  const d = entry.detail
+  const parts = [str(d.name) ?? (entry.target_id ? `API 用戶端 #${entry.target_id}` : 'API 用戶端')]
+  const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {})
+  const markets = (e: unknown) => strList(obj(e).market)
+  if (entry.action === 'api_client.create') {
+    const scopes = strList(d.scopes)
+    parts.push(scopes.length ? `端點 ${scopes.join('、')}` : '無端點')
+    if (markets(d.entitlements).length) parts.push(`市場 ${markets(d.entitlements).join('、')}`)
+  } else if (entry.action === 'api_client.update') {
+    const before = obj(d.before)
+    const after = obj(d.after)
+    for (const key of Object.keys(after)) {
+      if (key === 'enabled') {
+        if (typeof after.enabled === 'boolean') parts.push(after.enabled ? '啟用' : '停用')
+      } else if (key === 'note') {
+        parts.push('變更備註')
+      } else {
+        const show = (v: unknown) => (Array.isArray(v) ? strList(v).join('、') || '（無）' : String(v ?? '—'))
+        parts.push(`${API_CLIENT_FIELDS[key] ?? key} ${show(before[key])} → ${show(after[key])}`)
+      }
+    }
+  } else if (entry.action === 'api_client.entitlements') {
+    const was = markets(d.before).join('、')
+    const now = markets(d.after).join('、')
+    if (now && was !== now) parts.push(`市場 ${was || '（無）'} → ${now}`)
+    const dims = ['source', 'report_type', 'instrument_type'] as const
+    const changed = dims.filter(k => strList(obj(d.before)[k]).join('\n') !== strList(obj(d.after)[k]).join('\n'))
+    const labels: Record<(typeof dims)[number], string> = { source: '券商', report_type: '報告類型', instrument_type: '商品類型' }
+    if (changed.length) parts.push(`變更${changed.map(k => labels[k]).join('、')}`)
+  } else if (entry.action === 'api_client.rotate') {
+    parts.push('已換新金鑰')
+  }
+  return parts
 }
 
 /** ISO 時間 → `YYYY-MM-DD HH:mm`（本地時區）；null 顯示「—」。 */

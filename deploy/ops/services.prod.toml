@@ -3,8 +3,8 @@
 # 「維運代理」。改了這份要重新安裝並重啟 report-mark-ops-agent.service；先跑 --check 驗證。
 #
 # 名稱不在這裡的服務，代理一律拒絕。actions：status、logs（唯讀），restart、run（寫入類）。
-# 寫入類 v1 只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile、upload 的 run（立即執行一次，
-# 等同 timer 觸發，不接受任何參數）。PostgreSQL、nginx、cloudflared、ClamAV 維持唯讀——代理與 catalog 兩層都擋，
+# 寫入類只開放：web 的 restart；sync、backup、freshness、audit、r2-reconcile、upload，以及 Admin v2 的 db-snapshot、
+# analytics-rollup 的 run（立即執行一次，等同 timer 觸發，不接受任何參數；v2 各項的判斷寫在該段）。PostgreSQL、nginx、cloudflared、ClamAV 維持唯讀——代理與 catalog 兩層都擋，
 # 這裡寫了也載入不了。改了寫入類清單要同步改 deploy/polkit/10-report-mark-ops.rules（tests/test_ops_polkit.py 對帳）。
 # 刻意不列：report-mark-alert@（模板）、report-mark-backfill（過渡期，跑完就 disable）。
 # 刻意不給 run：audit-anchor（錨點檔只追加，手動多跑一次無害，但失敗會以「疑似竄改」告警；要的是
@@ -358,6 +358,72 @@ group = "upload"
 flock_files = ["/home/kashionz/projects/report-mark/data/.upload_worker.lock"]
 depends_on = ["postgres", "clamav", "deepseek", "r2"]
 description = "上傳 worker（掃毒、草稿入庫、清除；每 5 分鐘）"
+
+# ── Admin v2：DB 統計快照、使用分析彙總、安全告警與保留期清除 ──────────────────────
+# 安裝步驟在 docs/production_resilience.md 各自的章節，順序見同檔「Admin v2 部署順序」。run 逐項判斷：
+# - db-snapshot 給 run：只查系統目錄、寫 db_stat_snapshot（同一小時已有就不寫、每日列已有就不補，ON CONFLICT DO
+#   NOTHING），零 LLM、無外部費用；它順手做的保留期刪除與 timer 觸發時完全相同（依當下時間刪逐時 30 天、每日 400 天
+#   之外的監控統計），多跑一次不會多刪。用途：裝好後立刻驗收、或趨勢缺一段時補一筆。
+# - analytics-rollup 給 run：純 SQL、零 LLM；預設模式（run 不收參數，只會是這個模式）覆寫昨天並補齊窗期內缺的日子，
+#   一天一個交易先刪後寫，重跑同一天結果相同；同一天的並行以 advisory lock 排隊。不會碰 --force 的重算。
+# - 兩者各自一個 group：彼此與既有批次沒有共用的鎖或資源（不碰 claude 鎖、不呼叫 LLM、不載嵌入模型），併進
+#   別的 group 只會讓「立即執行」在無關批次跑的時候被拒。
+# - security-health／security-incident 不給 run：探針與 P5 狀態機每 2 分鐘就跑；手動插一輪會打亂 incident_handler.sh
+#   以觸發間隔校準的過期與信任窗判斷（同 health／incident 類）。
+# - security-retention 不給 run：會刪資料（auth_event 超過 365 天、結束超過 90 天的 session）；排程刻意排在備份與
+#   稽核錨定之後，手動提前跑會在當天備份帶走之前就刪掉。
+# 探針刻意不依賴它探的對象（同上面 *-health 的規則）；security-incident 依賴 slack。
+
+[[services]]
+name = "db-snapshot"
+kind = "systemd"
+unit = "report-mark-db-snapshot.service"
+timer = "report-mark-db-snapshot.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "db-snapshot"
+depends_on = ["postgres"]
+description = "DB 統計快照（系統目錄→db_stat_snapshot，每小時 :40，零 LLM）"
+
+[[services]]
+name = "analytics-rollup"
+kind = "systemd"
+unit = "report-mark-analytics-rollup.service"
+timer = "report-mark-analytics-rollup.timer"
+tier = "supporting"
+actions = ["status", "logs", "run"]
+group = "analytics-rollup"
+depends_on = ["postgres"]
+description = "使用分析每晚彙總（analytics_daily，02:20，零 LLM）"
+
+[[services]]
+name = "security-health"
+kind = "systemd"
+unit = "report-mark-security-health.service"
+timer = "report-mark-security-health.timer"
+tier = "important"
+actions = ["status", "logs"]
+description = "安全事件探針（/healthz/security，每 2 分鐘）"
+
+[[services]]
+name = "security-incident"
+kind = "systemd"
+unit = "report-mark-security-incident.service"
+timer = "report-mark-security-incident.timer"
+tier = "important"
+actions = ["status", "logs"]
+depends_on = ["slack"]
+description = "安全事件偵測與通知（每 2 分鐘）"
+
+[[services]]
+name = "security-retention"
+kind = "systemd"
+unit = "report-mark-security-retention.service"
+timer = "report-mark-security-retention.timer"
+tier = "supporting"
+actions = ["status", "logs"]
+depends_on = ["postgres"]
+description = "登入事件與已結束 session 的保留期清除（04:45）"
 
 # ── 外部依賴（依賴圖的節點；代理不查也不動它們）──────────────────────────────
 # 退出碼對照：scripts/check_web_health.sh（6＝R2、7＝DeepSeek 餘額低、8＝DeepSeek 不可用；優先序 8→5→6→7，

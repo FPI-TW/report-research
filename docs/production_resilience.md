@@ -161,9 +161,9 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 在此之前這個 DB **完全沒有備份**——`pg_dump` / `pgbackrest` / `pg_basebackup` 在 Makefile、`scripts/`、`deploy/`、`docs/`、systemd、crontab 全部零命中，唯一的副本是 docker named volume `report-mark-pgdata`。而 `docs/qa_pdf_report_deployment.md` 早在深度研報上線時就寫著「DB 的 `report_doc` 表需納入備份」，一直沒有人做。
 
-### 為什麼只備這十三張表
+### 為什麼只備這二十張表
 
-深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），研報上傳上線後加入 `report_upload`，現行備份清單共十三張。`user_session` 刻意不備（遺失只是全員重新登入）。
+深度研報生成已於 2026-09 移除（`report_doc`／`report_rendition`／`report_run`／`report_section` 不再存在；既有庫要手動跑 `db/drop_deep_report_tables.sql`）。人工複核結果另存 `review_state`；個別帳號上線後加入 `app_user` 與 `admin_audit_log`，權限細分後加入 `user_scope`，帳號刪除上線後加入 `account_deletion`，研報可隱藏後加入 `report_visibility`，事件投影上線後加入 `incident` 與 `incident_event`（事故歷史：spool 匯入後即刪、journald 有保留期，事後無從重建），研報上傳上線後加入 `report_upload`，對外 API 上線後加入 `api_client` 與 `api_client_entitlement`，Admin v2（revision 0011）加入 `user_quota`、`feature_flag`、`usage_daily`、`analytics_daily` 與 `auth_event`，現行備份清單共二十張。`user_session` 刻意不備（遺失只是全員重新登入）；`api_client_usage` 也不備（每日額度的計數器，遺失只是當天額度重新起算）。
 
 | 表 | 為什麼備 |
 |---|---|
@@ -174,12 +174,19 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 | `research.review_state` | 待複核人工處理狀態、註記、驗證結果與處理人；無法從原始研報或問答重建 |
 | `research.app_user` | 個別帳號與角色。遺失＝所有人要重新建帳、`qa_log.user_id` 與處理人全部對不回名字。**含 Argon2id 密碼雜湊，備份檔要當機密看待** |
 | `research.admin_audit_log` | 管理操作稽核（建帳、改角色、停用、重設密碼、強制登出、處理待複核、權限調整）；事後追查「誰做的」的唯一來源。雜湊鏈＋只能新增（revision 0002），還原時用 `pg_restore --disable-triggers` |
-| `research.user_scope` | 另外授予的權限（`qa_content.read`、`ops.operate`）與授予人；遺失＝特殊權限全部要重新授予，且說不出當初是誰給的 |
+| `research.user_scope` | 另外授予的權限（`qa_content.read`、`ops.operate`、`api_clients.manage`）與授予人；遺失＝特殊權限全部要重新授予，且說不出當初是誰給的 |
 | `research.account_deletion` | 帳號刪除排程（提出人、執行時刻、取消紀錄）。遺失＝還原後尚未執行的刪除排程消失、帳號停在停用狀態卻永遠不會被刪。已執行的刪除另有 DB 之外的 tombstone（見下方「還原後重放帳號刪除」） |
 | `research.report_visibility` | 管理員隱藏的研報（以 `file_hash` 為鍵，含原因、隱藏人、時間）。重建語料不會重建它：遺失＝被隱藏的研報全部回到檢索、問答與閱讀頁。0008 起另帶發布狀態（`publication`）：遺失＝未發布的上傳草稿全部變成已發布 |
 | `research.report_upload` | 管理員上傳的研報（以 `file_hash` 連到語料）：上傳人、時間、掃描引擎與病毒名、處理失敗原因、退回原因。上傳檔不在 NAS 鏡像裡，重建語料不會重建它；遺失＝說不出某份研報是誰上傳、掃描結果為何 |
+| `research.user_quota` | 個人配額覆寫（每日上限、理由、調整人）。遺失＝所有人退回程式預設配額，且說不出當初為何給某人不同的額度 |
+| `research.feature_flag` | 功能旗標覆寫（registry 之外的值一律忽略；實際值＝環境變數上限 AND 覆寫）。**還原後要人工確認旗標狀態**：還原等於把旗標帶回備份當下 |
+| `research.usage_daily` | 閱讀、原檔、搜尋、問答的每日主題計數（匿名、沒有 user_id、不記搜尋字串）。請求當下才有，事後無從重建 |
+| `research.analytics_daily` | 每晚彙總的指標。來源 `qa_log` 會被使用者硬刪、`usage_daily` 只到主題層，事後無法重算 |
+| `research.auth_event` | 登入與安全事件（成功、失敗原因、限流、TOTP 失敗、登出），保留至少 365 天。刪帳時刻意保留（只有 UUID、IP、UA，從不存帳號名稱）；鑑識要回溯的正是被刪掉的帳號 |
+| `research.api_client` | 對外 API 用戶端：名稱、啟用狀態、key scopes、限流與每日額度、建立人。只存金鑰的 sha256 與 prefix（沒有原始金鑰，還原後既有金鑰照常可用）；遺失＝所有用戶端的金鑰全部失效、要重建並重新發金鑰 |
+| `research.api_client_entitlement` | API 用戶端的授權範圍（市場必填，來源、報告類型、商品類型未設定＝不限）；遺失＝每個用戶端能看到哪些研報的設定全部消失 |
 
-沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這十三張表的體積相對很小，備起來幾乎沒有成本。
+沒備的是語料層（`research_report`、`report_chunk`）。理由不是「不重要」，是**它確定重建得回來**：研報原檔在 NAS、`extract → tag → ingest` 全程 checkpoint 可續。代價是 CPU 時間（BGE-M3 約 3 篇／分，全語料數十小時），不是資料消失。而這二十張表的體積相對很小，備起來幾乎沒有成本。
 
 **這個取捨有一個已知代價，先寫在這裡免得還原那天才發現**：`report_takeaway` 與 `report_signal` 以 `report_id` FK 指向 `research_report`，而 `report_id` 是每次 ingest 重新產生的 uuid。**語料層若被整個重建，這兩張表的備份就對不回去了**（其餘幾張沒有 FK，可還原；但 `review_state` 中指向舊 `research_report.id` 的抽取複核紀錄會變成孤兒，須依重建後 id 核對）。若之後判定摘錄／訊號值得那個代價，正解是把 `research_report` 一起納入備份（`report_chunk` 仍不必——向量重算得回來），而不是在還原時 `--disable-triggers` 硬塞孤兒列。
 
@@ -1606,7 +1613,7 @@ sudo systemctl disable --now report-mark-load-observations.timer   # 管理頁�
 ## 事件投影與容器／主機探針
 
 管理頁的「事件」讀 DB 的 `research.incident`／`research.incident_event`（revision 0006），但**它們只是 projection**：
-去重、提醒、FIRING／RESOLVED 判定與 Slack 投遞仍然只有 `scripts/incident_handler.sh`（P5），它不碰 DB、不依賴 web。
+事件的去重、提醒、FIRING／RESOLVED 判定與 Slack 投遞仍然只有 `scripts/incident_handler.sh`（P5），它不碰 DB、不依賴 web。P5 是主要的 incident state machine／狀態型告警路徑，但不是唯一的 Slack 發送者：unit failure（`report-mark-alert@`，OnFailure）與上傳 worker 的感染通知另有路徑；Admin v2 的安全告警統一接既有 incident 管線（新的 P5 instance），不另設直接的 Slack sender。
 
 - P5 每次已落地的狀態轉換（FIRING、REMINDER、ESCALATED、RESOLVED）另寫一行本機 spool
   `data/ops_spool/incidents-YYYYMMDD.jsonl`；FIRING 附事件前 10 分鐘、RESOLVED 附開場後 10 分鐘的 journal 片段
@@ -1711,6 +1718,91 @@ sudo systemctl disable --now report-mark-rollup-observations.timer   # 原始觀
 ```
 
 停用後原始表每天約增加 29 萬列；聚合表裡已有的資料不受影響，查詢端照常聯集。
+
+## DB 統計快照與慢查詢（report-mark-db-snapshot、pg_stat_statements）
+
+管理後台「維運 → 資料庫」（`/api/admin/db/*`，`ops.read`）有三塊，前提各不相同：
+
+- **即時快照**（`/api/admin/db/overview`）：只查系統目錄、`SET LOCAL` 收緊 statement_timeout（5 秒）與 lock_timeout
+  （1 秒），不需要任何安裝。帳號權限較窄時（RDS 一般帳號、沒有 `pg_monitor`／`pg_read_all_stats`）該段只顯示
+  「權限不足」，別人的 session 計入「看不到狀態」，其餘照常。
+- **趨勢**（`/api/admin/db/trends`）：要裝 `report-mark-db-snapshot.timer`，沒裝時趨勢圖是空的。
+- **慢查詢**（`/api/admin/db/slow-queries`）：要先啟用 `pg_stat_statements`，沒啟用時頁面顯示原因
+  （未建立擴充／未預載／權限不足）。**程式與 migration 都不會建立擴充或改設定**（使用者定案 13：這是 v2 之前的
+  獨立維護步驟，個別放行）。
+
+### db-snapshot（每小時 :40）
+
+`scripts/db_snapshot.py`（SQL 在 `app/services/db_insights.py`）每輪：寫一列 `research.db_stat_snapshot`
+（granularity=hour、taken_at＝整點；同一小時已有就不寫）→ 把已結束、還有逐時列卻沒有每日列的日子（台北時間）
+各彙總成一列 granularity=day（所以每天第一次執行會補前一天，漏跑的日子也會補；重跑是 no-op）→ 刪除逐時超過
+30 天、每日超過 400 天的列（`DB_SNAPSHOT_HOURLY_RETENTION_DAYS`／`DB_SNAPSHOT_DAILY_RETENTION_DAYS`，使用者定案
+14）。這只是監控統計，**不是 DB dump、不備份**；量很小（逐時 720 列、每日 400 列，每列數 KB）。
+
+- 這支要連 DB（監控收集器刻意不連）：量的就是 DB 本身，DB 掛掉時本來就量不到；DB 故障告警仍是 `/healthz`＋P5。
+- 退出碼：0 正常、1 其他失敗（整輪 rollback，走 `OnFailure` 告警）、2 DB 不可用（`SuccessExitStatus=2` 放行，
+  理由同 rollup-observations：P5 已去重告警，`report-mark-alert@` 沒有去重）。系統目錄某段權限不足或逾時不算
+  失敗：記在該列 `stats.errors`，趨勢上是空點。
+- 排程錯開 sync（每 3 小時整點）與 :20 的監控聚合；不 import 檢索、嵌入、LLM 模組（`MemoryMax=512M`，
+  `tests/test_db_snapshot.py` 守門）。
+
+安裝（人工，需 sudo；只在要啟用時做；schema 須已到 revision 0011）：
+
+```bash
+# 1) 先看這一輪會寫什麼（唯讀；各段權限不足會出現在 errors）
+uv run python scripts/db_snapshot.py --dry-run
+# 2) unit（非辦公室主機改用 deploy/install_units.sh）
+sudo install -m 0644 deploy/systemd/report-mark-db-snapshot.service deploy/systemd/report-mark-db-snapshot.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-db-snapshot.timer
+```
+
+驗收：`sudo systemctl start report-mark-db-snapshot.service` 後 `journalctl -u report-mark-db-snapshot -n 3` 看得到
+「完成 逐時快照已寫入…」；`scripts/verify_oneshot_ran.sh` 確認跑過；隔天 `SELECT granularity, count(*) FROM
+research.db_stat_snapshot GROUP BY 1` 有一列 day。辦公室主機的 ops catalog（`deploy/ops/services.prod.toml`）已列
+`db-snapshot`（含「立即執行」，理由寫在 catalog 註解）：裝好 unit 後照「維運代理」的步驟 3、4 重新安裝 catalog 與
+polkit、`--check`，再重啟代理。
+
+停用：
+
+```bash
+sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不再更新；既有的列留著（不會再被保留期清掉）
+```
+
+要連資料一起清：`DELETE FROM research.db_stat_snapshot;`（只是監控統計，刪了只是趨勢圖變空）。
+
+### 啟用 pg_stat_statements（獨立維護步驟；只寫文件，部署流程不會自動做）
+
+`pg_stat_statements` 要在 `shared_preload_libraries` 預載才能用，而改這個參數一定要重啟 PostgreSQL。兩個環境的前提
+不同（2026-10-07 唯讀查證）：
+
+- **辦公室本機（測試環境，`report-mark-postgres` 容器，pg16）**：`shared_preload_libraries` 為空、擴充套件可用但
+  未建立。需要短暫停機（重啟容器期間 web 回 503、探針可能經 P5 開事件，挑維護窗口、事先告知）：
+
+  ```bash
+  # 1) 寫進 data volume 的 postgresql.auto.conf（容器重建也還在）
+  docker exec report-mark-postgres psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements'"
+  # 2) 重啟容器（短暫停機）
+  docker restart report-mark-postgres
+  docker exec report-mark-postgres psql -U postgres -Atc "SHOW shared_preload_libraries"   # 應為 pg_stat_statements
+  # 3) 在 research 庫建立擴充（只有這個庫的頁面會用到）
+  docker exec report-mark-postgres psql -U postgres -d research -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+  ```
+
+  若 `shared_preload_libraries` 原本已有其他值，`ALTER SYSTEM` 要把舊值一起列上（逗號分隔），否則會被蓋掉。
+- **正式環境（EC2＋RDS；AWS 資源名稱與部分文件仍寫 staging）**：參數群組
+  `report-research-staging-dbparametergroup-…` 已含 `pg_stat_statements,pg_tle`（static、in-sync），**不需要
+  reboot**；只要以 master 帳號（`rds_superuser`）在 app 用的庫執行一次
+  `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`。app 帳號若沒有 `pg_read_all_stats`，頁面看得到統計但
+  別人的語句文字會顯示「權限不足、已隱藏」；要看全部再以 master `GRANT pg_read_all_stats TO <app 帳號>`
+  （是否授予由使用者決定）。
+
+驗收：頁面「慢查詢」不再顯示原因、出現依總執行時間排序的語句。統計自 `pg_stat_statements_reset()` 或重啟起累計。
+回退：`DROP EXTENSION pg_stat_statements;`（本機若要連預載一起拿掉：`ALTER SYSTEM RESET shared_preload_libraries`
+＋重啟容器）。
+
+**隱私**：pg_stat_statements 會把常數正規化成 `$1`，但工具語句可能保留字面值；頁面只開給 `ops.read`、查詢文字
+壓空白後截斷 200 字。
 
 ## schema 與版本 drift 每日檢查（report-mark-schema-check）
 
@@ -1871,8 +1963,9 @@ sudo systemctl disable --now report-mark-retrieval-regression.timer   # 結果�
 Unix socket 問一支單機代理（`ops_agent/`，只用標準庫、系統的 `/usr/bin/python3`）。代理只認
 Service Catalog（`deploy/ops/services.prod.toml`；EC2 staging `deploy/ops/services.staging.toml`、開發環境
 `deploy/ops/services.dev.toml`）列出的服務與
-action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（v1 只有 Web）與 `run`（既有 oneshot 立即執行一次：
-sync、backup、freshness、audit、r2-reconcile）。沒有任意 shell、任意 unit、stop、timer enable/disable；
+action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（只有 Web）與 `run`（既有 oneshot 立即執行一次：
+sync、backup、freshness、audit、r2-reconcile、upload，以及 Admin v2 的 db-snapshot、analytics-rollup）。
+沒有任意 shell、任意 unit、stop、timer enable/disable；
 PostgreSQL、nginx、cloudflared 永遠唯讀（catalog 載入期與代理執行前兩層都擋，PG 的 restart 尤其禁止）。
 P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維運區塊回 503 `ops_agent_unavailable`，web 其他功能照常。
 
@@ -1891,8 +1984,9 @@ P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維
   換成新值（並回到 active）就是新的一輪起來了。Web 重啟期間 BGE-M3 要重新載入，這段時間整站不可用。
 - **授權靠 polkit，不靠 sudo**：代理的 unit 是 `NoNewPrivileges=yes`、沒有 capability，setuid 的 sudo 在
   裡面無法提權。systemd 以 polkit 的 `org.freedesktop.systemd1.manage-units` 檢查呼叫端並附上 unit 與
-  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與六個 oneshot
-  （sync、backup、freshness、audit、r2-reconcile、upload）的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
+  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與八個 oneshot
+  （sync、backup、freshness、audit、r2-reconcile、upload、db-snapshot、analytics-rollup）的 start，
+  `report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
   `report-mark-dev-smoke.service` 的 start，`report-mark-ops-staging`（EC2）限定在 Web 的 restart 與
 freshness、audit 的 start；這三個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
   （JS 規則；本機 Ubuntu 24.04 是 124）。
@@ -1946,7 +2040,8 @@ run、409 與輪詢而不碰任何真東西；polkit 規則同一個檔已涵蓋
 本機冒煙（不必安裝）：`python3 -m ops_agent --catalog deploy/ops/services.dev.toml --socket /tmp/<短路徑>/a.sock`
 （只有 development 允許覆寫 socket；AF_UNIX 路徑上限約 107 字元）。
 
-**EC2 staging**（尚未安裝；要啟用時照下面做，`deploy/ops/services.staging.toml` 開頭有 staging 與辦公室主機的差異）：
+**EC2（正式環境；名稱裡的 staging 是歷史命名）**（2026-10-07 隨 Admin v1.5 安裝；重裝或更新時照下面做，
+`deploy/ops/services.staging.toml` 開頭有 EC2 與辦公室主機的差異）：
 使用者 `report-mark-ops-staging`、catalog `services.staging.toml`、unit `report-mark-ops-agent-staging.service`、
 socket `/run/report-mark-ops-staging/agent.sock`；staging 的 web 設 `OPS_AGENT_ENVIRONMENT=staging`（repo 根 `.env`）。
 staging 主機沒有容器（RDS、apt 的 nginx），所以這個使用者**不加 docker 群組**、unit 也不給。權限比生產窄：
@@ -1969,8 +2064,9 @@ sudo systemctl enable --now report-mark-ops-agent-staging.service
 sudo systemctl restart report-mark-web.service   # .env 設好 OPS_AGENT_ENVIRONMENT=staging，並讓 web 拿到群組
 ```
 
-staging 的 catalog 只列已安裝的 unit（web、nginx 與 8 組 timer）；之後在 staging 裝了新的 unit（例如 Admin v1 的
-schema-check、host-health），要把它加進 `services.staging.toml`（含 `depends_on`）並重做 install＋`--check`＋重啟代理。
+EC2 的 catalog 只列已安裝的 unit（web、nginx、8 組 timer 與 schema-check）；之後在 EC2 裝了新的 unit（例如 Admin v1 的
+host-health、Admin v2 的五組），要把它加進 `services.staging.toml`（含 `depends_on`；給 run 的同步加進 polkit 的
+`report-mark-ops-staging`）並重做 install＋`--check`＋重啟代理。
 
 **依賴圖**：catalog 的 `depends_on` 與 `[[externals]]`（格式見 `ops_agent/catalog.py`）是服務依賴關係的唯一真相來源，
 `--check` 會擋下指向不存在的節點、依賴自己與環。改了依賴（或新增服務時忘了寫）都照步驟 3 重新安裝 catalog、
@@ -2154,3 +2250,283 @@ sudo systemctl disable --now report-mark-upload.timer
 停掉之後：隔離區的檔案與 `report_upload` 都保留，已入庫的草稿維持不可見、仍可在管理頁發布或退回（退回後的清除要
 worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移除時另把 catalog 的 upload 與 polkit 的那一行拿掉
 重新安裝（「維運代理」步驟 3、4）。
+
+## 安全維運（Admin v2：登入事件、安全告警、保留期清除）
+
+登入、登出與權限提升的每種結果寫進 `research.auth_event`（revision 0011）：成功、密碼錯、帳號不存在、停用、TOTP 錯、
+第二步暫時憑證失效、被每 IP 限流擋下、非 HTTPS 遭拒、權限提升成功／失敗。設計重點：
+
+- **不存帳號名稱**：帳號存在時只有 UUID，帳號不存在時連 UUID 都沒有（帳號欄常被誤填成密碼）。管理後台顯示的名稱是讀取時
+  以 UUID 對帳號現值 join 的，已刪除帳號不顯示。IP、UA 只給 `audit.read` 的管理員看。
+- **記錄失敗不影響登入**（`security_ops.record_event` 吞掉例外、3 秒時限）。
+- **被攻擊時不放大成 DB 寫入**：被限流、非 HTTPS 遭拒、沒有有效暫時憑證的第二步只在 web 記憶體每 IP 計數，至少 60 秒才寫一列
+  彙總（`count`），由下一個登入請求或下一次 `/healthz/security` 落庫；web 重啟時尚未落庫的計數會遺失。
+- **不鎖帳號、不封 IP**（使用者定案 8）：`web/auth.py` 的每 IP 失敗限流（5 次／300 秒）原封不動；要擋 IP 走下面的 Cloudflare WAF。
+- 保留至少 365 天、納入每日備份；刪帳時刻意保留（只有 UUID、IP、UA）。
+
+### 安全告警（`report-mark-security-health`／`report-mark-security-incident`）
+
+判斷在 web（`/healthz/security`，只回答本機直連、只回 `{"security": state}`），門檻在 `app/config.py`、可在 repo 根 `.env` 覆寫：
+
+| 條件 | 旋鈕（預設） | state | 探針退出碼 → P5 |
+|---|---|---|---|
+| 稽核雜湊鏈驗證失敗（結果快取 `AUDIT_VERIFY_CACHE_SECONDS`＝3600） | — | `audit_chain_broken` | 1 → CRITICAL |
+| `SECURITY_WINDOW_MINUTES`（15）分鐘內權限提升失敗 | `SECURITY_ELEVATE_FAILURE_THRESHOLD`（3） | `elevate_failures` | 2 → CRITICAL |
+| 同一帳號「上次登入成功之後」連續失敗（密碼錯、停用、TOTP 錯） | `SECURITY_ACCOUNT_FAILURE_THRESHOLD`（5） | `account_failures` | 2 → CRITICAL |
+| 視窗內全站登入失敗（含被限流擋下的請求數） | `SECURITY_LOGIN_FAILURE_THRESHOLD`（20） | `login_failures` | 2 → CRITICAL |
+| DB 查不到、逾時、web 連不上、端點不存在 | — | `unknown`（或沒有回應） | 3 → hold（不開也不關） |
+| 探針缺 curl | — | — | 4 → WARNING |
+
+多項同時成立回表中最前面那一個。P5（`scripts/incident_handler.sh`，沒有改）的通知只說「探針回報失敗（exit=1 或 2）」；是哪一條
+在探針 unit 的 journal（`journalctl -u report-mark-security-health -n 5` 的 `reason=security_<state>`）與 web 日誌的「安全告警」一行
+（只有計數與門檻），細節在管理後台「安全」頁。Slack 只會收到 FIRING／ESCALATED／REMINDER／RESOLVED，不為每筆登入事件發通知；
+「有人被授予 super」這類一次性事件只在安全頁的高風險時間線上。
+
+**處置**：
+
+- `login_failures`／`account_failures`：到「安全」頁看可疑 IP 與登入事件。外部單一來源的暴力嘗試 → 照下面的 Cloudflare WAF 手冊封鎖；
+  同事自己忘了密碼 → 協助重設（不需要做什麼，失敗停了 15 分鐘後自動 RESOLVED）。帳號被針對時考慮請本人改密碼並開 TOTP。
+- `elevate_failures`：已登入的 session 在猜密碼（cookie 外流的典型跡象）。在「安全」頁找出那個 session 撤銷、請本人改密碼。
+- `audit_chain_broken`：疑似有人改了 `admin_audit_log`。**不要**重算或修補；先保全（`pg_dump -t research.admin_audit_log`），
+  `uv run python scripts/audit_anchor.py --verify-only` 看對不上的 id，對照 NAS 上的 `audit-anchors.jsonl` 與備份，照事故處理。
+
+門檻是起始值，上線後依實際分布調（改 `.env` 後重啟 web）。
+
+#### 安裝（人工，需 sudo；只在要啟用時做）
+
+前提：庫已到 revision 0011、web 已是含 Admin v2 Security 的版本（`curl -s http://127.0.0.1:8097/healthz/security` 回
+`{"security":"ok"}` 或 `unknown`，不是 404）。
+
+```bash
+sudo install -m 0644 deploy/systemd/report-mark-security-health.{service,timer} \
+    deploy/systemd/report-mark-security-incident.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-security-health.timer report-mark-security-incident.timer
+```
+
+驗收：`sudo systemctl start report-mark-security-health.service` 後 `systemctl show report-mark-security-health -p ExecMainStatus`
+為 0（3＝判不出來，看 web 日誌）、`journalctl -u report-mark-security-health -n 1` 有 `status=ok`；P5 實例跑過一輪後
+`journalctl -u report-mark-security-incident -n 2` 是 `action=noop`。狀態目錄是 `data/.incidents-security/`（已在 .gitignore）。
+辦公室主機的 ops catalog 已列 `security-health`、`security-incident`（唯讀，不給「立即執行」：探針與 P5 狀態機每 2 分鐘就跑），
+裝好後照「維運代理」的步驟 3 重新安裝 catalog、`--check`，再重啟代理。
+
+#### 停用
+
+```bash
+sudo systemctl disable --now report-mark-security-incident.timer report-mark-security-health.timer
+rm -rf data/.incidents-security   # 可選
+```
+
+要停就兩個一起停：只停探針 timer 時 P5 實例會照設計回報 MONITOR_BLIND。
+
+### 保留期清除（`report-mark-security-retention`）
+
+每日 04:45（備份 03:30、稽核錨定 04:15 之後）跑 `scripts/security_retention.py`：刪除超過 `AUTH_EVENT_RETENTION_DAYS`
+的 `auth_event`（**下限 365**，設定與清除函式各夾一次）與結束（撤銷或絕對到期）超過 `SESSION_EXPIRED_RETENTION_DAYS`（90）的
+`user_session`；仍有效的 session 永遠不刪。分批 commit。DB 不可用 rc=2 → OnFailure 告警。第一次執行時 `user_session` 可能一次刪掉
+較多列（它從未清理過），屬預期。
+
+```bash
+# 安裝
+sudo install -m 0644 deploy/systemd/report-mark-security-retention.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-security-retention.timer
+BASE=$(bash scripts/verify_oneshot_ran.sh baseline report-mark-security-retention.service)
+sudo systemctl start report-mark-security-retention.service
+bash scripts/verify_oneshot_ran.sh verify report-mark-security-retention.service "$BASE"
+# 辦公室主機的 ops catalog 已列 security-retention（唯讀：會刪資料，不給「立即執行」）；照「維運代理」的步驟 3 重新安裝
+# 停用
+sudo systemctl disable --now report-mark-security-retention.timer
+```
+
+稽核錨定（`report-mark-audit-anchor`）不需要重新安裝：同一支 `scripts/audit_anchor.py` 現在每次正式執行後多寫一份
+`data/health/audit_anchor.json`（給安全頁的「最後錨定」；寫不進去不改退出碼）。安全頁超過 48 小時沒有新結果會顯示「過期」。
+
+### Cloudflare WAF 自訂規則（封鎖可疑 IP 的操作手冊）
+
+本站刻意不做 app 層 IP 封鎖（與 Cloudflare、nginx `limit_req` 重疊，而且封錯會把同事擋在門外）。安全頁的「可疑 IP」只彙整；
+要擋人在 Cloudflare 做。nginx 以 `CF-Connecting-IP` 還原真實 IP，所以安全頁顯示的 IP 就是 Cloudflare 看到的來源 IP。
+
+1. 在安全頁確認：失敗與被限流的次數、涉及幾個帳號、有沒有成功過（`成功` 不是 0 時先當成帳號可能已被入侵處理：撤銷該帳號的
+   session、重設密碼）。**確認不是公司或同事的出口 IP**（辦公室、VPN、行動網路）。
+2. Cloudflare 儀表板 → 該網域 → **Security → WAF → Custom rules → Create rule**：
+   - Rule name：`block-suspicious-<IP>-<日期>`（之後才找得到、刪得掉）。
+   - Expression（Edit expression）：單一 IP `(ip.src eq 203.0.113.9)`；多個 `(ip.src in {203.0.113.9 198.51.100.0/24})`。
+     只想擋登入可再加 `and http.request.uri.path eq "/login"`。
+   - Action：外部陌生來源用 **Block**；不確定是不是自己人時用 **Managed Challenge**（真人過得去、腳本過不去）。
+   - Deploy。
+3. 驗證：Cloudflare **Security → Events** 看到該規則的命中；本站安全頁該 IP 的事件不再增加；`/healthz/security` 在視窗（15 分鐘）
+   過後回 `ok`，P5 送 RESOLVED。
+4. 記錄：在事件紀錄（或 `docs/incidents/`）寫下 IP、理由、規則名稱與預計移除日期。規則**不會自己過期**——兩週後回頭檢查，
+   沒有再命中就刪掉（Custom rules → 該規則 → Delete），免得清單越積越多、哪天擋到換了 IP 的同事。
+
+持續性的撞庫（大量不同 IP、低頻）不適合逐條封：改在 Cloudflare 對 `/login` 的 POST 加 **Rate limiting rule**（例如同一 IP
+10 分鐘 20 次 → Managed Challenge），並請同事開 TOTP。區網直連（不經 Cloudflare）不受這些規則影響，本來就被視為可信。
+
+## 使用分析每晚彙總（report-mark-analytics-rollup）
+
+管理後台「使用分析」（`/api/admin/analytics/*`）最近 `ANALYTICS_LIVE_WINDOW_DAYS`（90）天即時查 `qa_log`／`usage_counter`，
+更早的日子**只讀** `research.analytics_daily`（revision 0011）。`qa_log` 會被使用者硬刪、`usage_counter` 只留 400 天，
+所以每一天都必須在離開即時窗期前彙總過，否則那天在長期趨勢上永遠是「沒有資料」（`has_data=false`）。
+
+`report-mark-analytics-rollup.timer` 每天 02:20 跑 `scripts/analytics_rollup.py`（純 SQL、零 LLM、不載嵌入模型）：
+覆寫昨天，並補齊窗期內還沒有彙總標記（`rollup.computed`）的日子——機器關機錯過幾晚也追得上。一天一個交易、先刪後寫，
+重跑同一天結果相同；同一天的並行執行以 advisory lock 排隊。`analytics_daily` 沒有 user_id、刪帳後保留（使用者定案 4），
+列入備份。退出碼：0 正常、1 計算／寫入失敗或參數錯誤（告警）、2 DB 不可用（`SuccessExitStatus=2`，DB 故障由 P5 告警）。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0011（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) 第一次啟用：先試算再補滿窗期（已彙總的日子不會被覆寫）
+uv run python scripts/analytics_rollup.py --dry-run
+uv run python scripts/analytics_rollup.py
+# 3) 排程
+sudo install -m 0644 deploy/systemd/report-mark-analytics-rollup.service deploy/systemd/report-mark-analytics-rollup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-analytics-rollup.timer
+```
+
+驗收：`systemctl list-timers report-mark-analytics-rollup.timer` 有下一次觸發；跑過一輪後
+`systemctl show report-mark-analytics-rollup -p Result,ExecMainStatus`（判準見「oneshot 的手動驗證」），並以管理員打
+`/api/admin/analytics/overview?since=<91 天前>`，`range.spans` 出現 `rollup` 段、那段的 `daily[].has_data` 為 true。
+辦公室主機的 ops catalog（`deploy/ops/services.prod.toml`）已列 `analytics-rollup`（含「立即執行」：run 不收參數，
+只會是預設模式，不會觸發 `--force` 的重算）：裝好 unit 後照「維運代理」的步驟 3、4 重新安裝 catalog 與 polkit、
+`--check`，再重啟代理。
+
+**回填**：`--backfill N` 從 `qa_log` 補最近 N 天裡缺的日子，**預設不覆寫已彙總的日子**——重算會讓刪帳或使用者刪歷史之前
+已保留的匿名彙總縮水。確定要重算（例如修了指標的 bug）才加 `--force`，或以 `--day YYYY-MM-DD` 重算單一天。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-analytics-rollup.timer
+```
+
+停掉之後最近 90 天照常即時顯示；之後離開窗期的日子沒有彙總，長期趨勢在那段顯示「沒有資料」。已寫入的 `analytics_daily`
+保留。恢復時重新 `enable --now`，並手動跑一次 `scripts/analytics_rollup.py --backfill 90` 補回還在窗期內的缺口
+（已離開窗期、`qa_log` 仍在的日子也能以更大的 N 補，但被硬刪的問答補不回來）。
+
+## 功能開關與 staging 啟用矩陣（Admin v2）
+
+功能旗標（`app/services/feature_flags.py`、管理後台「功能旗標」頁、`/api/admin/flags*`）讓管理員在**環境變數允許的
+範圍內**暫停或限定派生功能，不必改環境檔、不必重啟。語意（使用者定案 11、12、16）：
+
+- **實際值＝環境變數上限 AND DB 覆寫**。環境變數代表「能力已安裝／允許」；`research.feature_flag` 只存覆寫，沒有
+  覆寫＝registry 預設。覆寫只能在上限之下關閉或限定給角色（`admin`／`user`）與指定帳號，上限關時一律關。
+- **DB 讀不到時退回 registry 預設**：派生功能（agentic、忠實度、rerank、可信資料、收檔）預設開＝回到只看
+  環境變數的行為；`quota.enforce` 預設關＝回到影子模式；`ask.web_search` 預設關＝不開放網搜（v1 前端本來就寫死
+  暫停，網搜後端也不存在）。所以**安全閘門一律不是旗標**：`ADMIN_MFA_REQUIRED`、
+  `DEV_NO_AUTH`、`REPORT_MARK_*`、模型與 provider、`OBJECT_STORAGE_MODE`／`R2_*`、併發閘與連線池、`UPLOAD_MAX_BYTES`、
+  ClamAV、`SYNC_*_LIMIT`、`EXTRACTOR` 都只在環境檔決定。
+- 快取 5 秒（`FEATURE_FLAG_CACHE_SECONDS`），同一行程的寫入立即失效；web 只有一個 worker，所以等於立即生效。前端
+  `/api/features` 另有 60 秒的 staleTime（視窗回焦點時重抓）。
+- 旗標只在 web 的請求路徑上判斷；sync、上傳 worker、`eval/`、`scripts/judge_agreement.py` 不讀旗標。
+- 寫入（單一旗標、匯入）要 `ops.operate`＋重新驗證，每個實際變更同交易寫稽核 `flag.update`（操作紀錄頁看得到）。
+  `feature_flag` 在備份清單內：**還原後要人工確認旗標狀態**（見「備份與還原」）。
+
+### 啟用矩陣
+
+測試環境＝辦公室主機、正式環境＝EC2（`research.tingfong.com`，見 AGENTS.md「環境角色」）。「上限」是兩台主機各自的
+repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
+
+| 旗標 | 上限（環境變數，程式預設） | 測試環境建議 | 正式環境建議 | 何時調整 |
+|---|---|---|---|---|
+| `ask.web_search` | `ASK_ENABLE_WEB`（1；registry 預設**關**） | 上限明確設 0；不設覆寫 | 上限明確設 0；不設覆寫 | 網搜仍解析到已放棄的 claude CLI。旗標預設關：沒有覆寫時即使上限是 1 也不開放、問答輸入框不出現網搜開關（與 v1 前端寫死暫停相同）；上限仍建議設 0 當第二道保險。DeepSeek 版網搜完成後：測試環境上限設 1、覆寫限定 `admin` 試用 → 正式環境上限設 1、覆寫開啟（需要時同樣先限定） |
+| `uploads.intake` | `UPLOAD_ENABLED`（0） | 上限 0，直到該主機裝好 ClamAV 與上傳 worker 並經同意（本檔「ClamAV」「上傳 worker」） | 同左 | 上限 1 之後，維護或掃毒有狀況時用覆寫「全站關閉」暫停收檔（503 `uploads_disabled`）；審核端點不受影響 |
+| `qa.agentic` | `QA_AGENTIC_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | DeepSeek 延遲高或費用異常時覆寫「全站關閉」降級（只用第一輪檢索作答） |
+| `qa.faithfulness` | `ASK_FAITHFULNESS_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | judge 異常或要省費用時覆寫關閉；使用者看不到差別（抽查在 done 之後、不上 UI） |
+| `ask.rerank` | `ASK_RERANK_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | CPU 吃緊、rerank 頻繁逾時時覆寫關閉。注意：關覆寫**不會**釋放 reranker 模型的記憶體（啟動時依上限預熱），要省記憶體得改上限並重啟 |
+| `trusted_data` | `TRUSTED_DATA_ENABLED`（1） | 上限 1；不設覆寫 | 上限 1；不設覆寫 | 受信任資料來源出問題時覆寫關閉；時效題回到既有的安全婉拒 |
+| `quota.enforce` | `QUOTA_ENFORCE`（0） | 上限 0（影子模式） | 上限 0（影子模式） | 影子模式觀察兩週、依 P50/P95 決定（使用者定案 5）後：先在測試環境上限設 1、覆寫限定測試帳號驗證 429，再到正式環境上限設 1、覆寫「全站開啟」 |
+
+部署 v2 之前，兩台主機都先確認 `.env` 的這七個變數與上表一致。
+
+### 匯出匯入（測試環境 → 正式環境）
+
+只做 API 與頁面，不自動同步。匯出檔只含覆寫（不含環境變數上限），使用者以**帳號名稱**表示（兩台主機的帳號 UUID
+不同），已刪帳的不匯出。
+
+1. 測試環境的「功能旗標」頁按「匯出設定（JSON）」（或 `GET /api/admin/flags/export`，`ops.read`），得到
+   `report-mark-flags-<環境>-<日期>.json`。檔案列出每個登記旗標；`override: null`＝沒有覆寫。
+2. 只想搬部分旗標時，從檔案的 `flags` 刪掉不搬的項目：**沒列出的旗標匯入時不會被動到**；列出且 `override: null`
+   的會把目標的覆寫刪掉（回到預設）。
+3. 正式環境先「匯出設定」留一份底（回滾用），並確認上限（`.env`）已照矩陣設定——上限關的旗標匯入了也不會生效。
+4. 正式環境「匯入檔案並預覽」：後端以 dry-run 回每個旗標的動作（新增／更新／刪除覆寫／不變）與前後值，以及錯誤：
+   `unknown_key`（這個環境的程式沒有那個旗標）、`unknown_user`（找不到那個帳號名稱）、`duplicate_key`、
+   `invalid_input`。有任何錯誤就不能套用；旗標清單版本（`registry_version`）不同只提示，代表兩邊程式版本可能不一致。
+5. 確認差異後按「套用」（`ops.operate`＋重新驗證）。後端在同一筆交易重算差異，有錯誤整份不寫（422
+   `flag_import_invalid`）；成功時每個變更各寫一筆 `flag.update`（detail 的 `via` 是 `import`）。
+6. 驗收：「功能旗標」頁的實際值、操作紀錄頁的 `flag.update`；要看某位使用者的實際值，請他打開問答頁（或
+   `GET /api/features`，只回本人的值）。
+
+回滾：在正式環境匯入第 3 步留底的檔案（同樣先預覽）。單一旗標要回到預設，在頁面按「恢復預設」
+（`DELETE /api/admin/flags/{key}`）。
+
+## Admin v2 部署順序
+
+Admin v2（revision 0011，加上 Wave 1 的使用分析、安全維運、配額、功能旗標、DB 與事件趨勢）上任何一台主機，都照下面的順序做。
+這裡只排順序與前提，每一步的指令、驗收與停用都在各自的章節，不在這裡重複。
+
+**前提**：該主機已部署並驗收 Admin v1 與 v1.5（使用者定案 15），而且先確認目標主機（AGENTS.md「環境角色」：EC2 是正式環境、
+辦公室主機是測試環境）。站序同 v1：devdb 演練 → 測試環境 → 正式環境，每站先備份。
+
+1. **schema 到 revision 0011，先套 schema 再換程式。** 0011 只新增八張表（`usage_counter`、`user_quota`、`auth_event`、
+   `feature_flag`、`llm_usage_daily`、`usage_daily`、`analytics_daily`、`db_stat_snapshot`），不改既有的表：舊程式在 0011
+   的庫上照常可跑，新程式在 0008 的庫上會壞。
+   - 備份：測試環境照「備份與還原」先跑一次 `make db-backup`；正式環境先做 RDS 手動快照。
+   - 部署 checkout 先更新到含 Admin v2 的版本（migration 檔在新版裡），**web 先不要重啟**：執行中的仍是舊程式。
+   - 套之前 `make schema-version` 應回 1（落後），而且零 drift：辦公室主機跑 `make schema-check`；EC2 的 app 帳號沒有
+     CREATEDB，照「schema 與版本 drift 每日檢查」的 staging（RDS）一節以 master 帳號建基準。
+   - `make schema CONFIRM=<host:port/db>`（逐字確認目標），套完 `make schema-version` 回 0、再做一次零 drift 比對。
+   - 每日 schema 檢查（`report-mark-schema-check`）已啟用的主機，套 schema 與換程式要在同一個維護窗口內做完，
+     否則當天的檢查會以版本不一致告警。
+2. **換程式**：`make build-web`，緊接著重啟 web。v2 沒有新增 Python 或前端相依，
+   也沒有改 nginx 設定。驗收：`curl -s http://127.0.0.1:8097/healthz/security` 回 `{"security":"ok"}` 或 `unknown`，
+   不是 404。備份清單多出 v2 的五張表（加上對外 API 的兩張，共二十張）由部署目錄裡的 `scripts/db_backup.sh` 直接生效，備份 unit 不用重裝。
+3. **安裝 v2 的 unit**（辦公室主機直接 `install` 到 `/etc/systemd/system/`；EC2 用 `deploy/install_units.sh --user ubuntu
+   --root /home/ubuntu/report-mark` 代換使用者與路徑）。順序與各自的章節：
+   1. `report-mark-db-snapshot`：先 `--dry-run` 看權限不足的段落，見「DB 統計快照與慢查詢」。
+   2. `report-mark-analytics-rollup`：第一次先試算、再補滿 90 天窗期，然後才開排程，見「使用分析每晚彙總」。
+   3. `report-mark-security-health` 與 `report-mark-security-incident`：兩個一起裝、一起開（只有 P5 實例在跑、探針沒開時，
+      它會照設計回報 MONITOR_BLIND），見「安全維運」的安全告警一節。前提是該主機的 P5（`report-mark-incident`）已經在運作、
+      `/etc/report-mark/alert.env` 有 webhook。
+   4. `report-mark-security-retention`：排在備份與稽核錨定之後，見「安全維運」的保留期清除一節。
+4. **ops catalog 與 polkit 重新安裝、重啟維運代理**（「維運代理」的步驟 3、4）。辦公室主機的 `deploy/ops/services.prod.toml`
+   已列上面五項：`db-snapshot`、`analytics-rollup` 可以「立即執行」，三個 security 項目唯讀（理由寫在 catalog 註解），
+   polkit 的 `report-mark-ops` 多這兩個 unit 的 start。EC2 的 `deploy/ops/services.staging.toml` 只列已安裝的 unit：
+   在 EC2 裝了 v2 unit 之後，才把同樣的五項加進去（`postgres` 換成 `rds`；給 run 的兩項同步加進 polkit 的
+   `report-mark-ops-staging`），再 `--check`、重啟 `report-mark-ops-agent-staging.service`。還沒裝代理的主機，第一次安裝時
+   直接用新版 catalog。
+5. **確認旗標與政策維持預設**（兩台主機的 repo 根 `.env`）：
+   - `ADMIN_MFA_REQUIRED` 不設或設 0：預設關，TOTP 依個人設定開關（2026-10-07 定案更新）。這是環境變數，不是 DB 旗標。
+   - `QUOTA_ENFORCE=0`：配額影子模式，只計數、記錄「本來會擋」，不回 429。正式阻擋要等觀察兩週、依 P50/P95 決定（使用者定案 5）。
+   - 功能旗標：`feature_flag` 沒有任何覆寫時，行為與 v1.5 相同（`ask.web_search` 預設關、其餘派生功能預設開，實際值仍受
+     環境變數上限限制）。七個上限變數照「功能開關與 staging 啟用矩陣」的啟用矩陣核對；部署時不設任何覆寫。
+6. **`pg_stat_statements` 不在這個順序裡**：它是獨立的維護步驟，個別放行（使用者定案 13），步驟見「DB 統計快照與慢查詢」
+   的「啟用 pg_stat_statements」。辦公室主機要改 `shared_preload_libraries` 並重啟 DB 容器（短暫停機）；EC2 的 RDS 參數群組
+   已預載，只需以 master 帳號建擴充。沒做時「慢查詢」區塊只顯示原因，其他頁面不受影響。
+
+### v2 功能的啟用矩陣（測試環境與正式環境）
+
+測試環境＝辦公室主機（`research.kashionzarchive.com`），正式環境＝EC2（`research.tingfong.com`）。兩者的差異：EC2 的 DB 是
+RDS（沒有容器、app 帳號權限較窄）、沒有 NAS（只有 RDS 自動備份）、沒有監控收集與事件投影（`report-mark-load-observations`
+等）、沒有稽核錨定、沒有 ClamAV 與上傳 worker。功能旗標各項的上限與覆寫建議另見「功能開關與 staging 啟用矩陣」。
+
+| 項目 | 怎麼啟用 | 測試環境（辦公室主機） | 正式環境（EC2） | 前提與差異 |
+|---|---|---|---|---|
+| schema 0011 | `make schema CONFIRM=…` | 套用 | 套用 | 一律先於換程式；v1、v1.5 已在該主機驗收 |
+| 使用量收集（`usage_daily`、`usage_counter`） | 隨 web | 開 | 開 | 不必安裝；只記次數與主題彙總，不記搜尋字串 |
+| 使用分析頁＋`report-mark-analytics-rollup` | 安裝 unit | 安裝 | 安裝 | 沒裝時最近 90 天照常即時顯示，更早的日子是「沒有資料」 |
+| 安全頁（登入事件、session、高風險時間線） | 隨 web | 開 | 開 | 「最後錨定」要有 `report-mark-audit-anchor`：EC2 沒裝，顯示沒有結果或過期 |
+| `report-mark-security-health`＋`report-mark-security-incident` | 安裝 unit | 安裝 | 安裝 | 要 P5 已運作、`alert.env` 有 webhook；EC2 沒有監控收集，事件只送 Slack、不進事件投影 |
+| `report-mark-security-retention` | 安裝 unit | 安裝 | 安裝 | EC2 沒有應用層 NAS 備份：`auth_event` 只靠 RDS 自動備份 |
+| 配額（`QUOTA_ENFORCE`） | 環境變數 | 0（影子模式） | 0（影子模式） | 兩週觀察後再決定；先在測試環境驗 429 |
+| 管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`） | 環境變數 | 不設（關） | 不設（關） | 現階段依個人設定開關；開啟前先確認每位管理員都已設定 TOTP |
+| 功能旗標頁與 `/api/features` | 隨 web | 開，不設覆寫 | 開，不設覆寫 | 各旗標的上限見「功能開關與 staging 啟用矩陣」 |
+| DB 即時快照（`/api/admin/db/overview`） | 隨 web | 開 | 開 | RDS 帳號沒有 `pg_monitor`／`pg_read_all_stats` 時，相關段落顯示「權限不足」 |
+| `report-mark-db-snapshot`（DB 趨勢） | 安裝 unit | 安裝 | 安裝 | 權限不足的段落記在 `stats.errors`、趨勢上是空點 |
+| 慢查詢（`pg_stat_statements`） | 獨立維護步驟 | 經同意後，在維護窗口改設定並重啟 DB 容器 | 經同意後，以 master 帳號 `CREATE EXTENSION` | 不綁 v2 部署；沒做時頁面只顯示原因 |
+| 事件趨勢（`incident`、`job_execution`） | 隨 web | 開 | 開，但會是空的 | 資料來自監控收集與事件投影；EC2 沒裝 |
+| ops catalog 的 v2 項目與 polkit | 重新安裝 catalog 與規則 | `services.prod.toml` 已列 | 裝了 v2 unit 後才加進 `services.staging.toml` | 維運代理要已安裝；「立即執行」只給 db-snapshot、analytics-rollup |

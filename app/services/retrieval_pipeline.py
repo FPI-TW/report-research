@@ -89,6 +89,20 @@ async def _rerank_stage(
     return reranked, applied
 
 
+async def ask_rerank_top_m(configured: int, user_id: str | None = None) -> int:
+    """問答路徑這一題的 rerank 候選數：`configured`（`answer.ASK_RERANK_TOP_M`，環境變數 `ASK_RERANK_ENABLED`
+    關時為 0＝上限關）AND 功能旗標 `ask.rerank`（Admin v2 的降級開關；DB 沒有覆寫或讀不到＝開，行為不變）。
+
+    只給問答路徑用：`retrieve_context` 本身不讀旗標——評測（`eval/run_ragas.py`）與 `scripts/judge_agreement.py`
+    以 `rerank_top_m` 明確指定 rerank 開關，線上降級不可以靜默改掉它們的設定（批次不讀 web 的旗標，設計 §1.4）。
+    """
+    if configured <= 0:
+        return 0
+    from app.services import feature_flags  # 函式內 import：與 answer 之間的取用一律如此（循環依賴是刻意的）
+
+    return configured if await feature_flags.policy("ask.rerank", user_id) else 0
+
+
 async def retrieve_context(
     question: str,
     *,

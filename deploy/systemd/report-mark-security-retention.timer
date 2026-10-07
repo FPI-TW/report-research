@@ -1,0 +1,11 @@
+[Unit]
+Description=每日清除超過保留期的登入事件與已結束的 session
+
+[Timer]
+# 排在每日備份（03:30）與稽核錨定（04:15）之後：當天的備份先帶走這些列，再刪超過保留期的。
+OnCalendar=*-*-* 04:45:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

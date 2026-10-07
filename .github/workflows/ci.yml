@@ -386,6 +386,49 @@ jobs:
       - name: 研報上傳 worker
         run: uv run pytest -q tests/test_upload_worker_db.py
 
+      # Admin v2 接線（revision 0011）：用量 upsert 的 hits 相加與 users 取 GREATEST、已刪除帳號的個人計數被濾掉、
+      # llm_usage_daily 的 NULL 使用者靠 COALESCE 唯一索引併成一列；功能旗標的 text[]／uuid[] 讀回。一律 rollback。
+      - name: Admin v2 用量收集與功能旗標
+        run: uv run pytest -q tests/test_usage_events_db.py
+
+      # Admin v2 DB 與事件趨勢：即時快照五段的系統目錄查詢在真庫上能跑；以內建低權限角色（SET LOCAL ROLE
+      # pg_signal_backend）模擬 RDS 窄權限時不拋例外、真的 42501／57014 分類正確且只回滾該段；pg_stat_statements
+      # 不存在時回 extension_missing、絕不建立擴充；快照逐時→每日彙總→保留期刪除冪等；事件週趨勢、MTTR／p50／p90
+      # 只算 resolved、批次失敗率。一律 rollback。
+      - name: Admin v2 DB 快照與事件趨勢
+        run: uv run pytest -q tests/test_db_insights_db.py
+
+      # Admin v2 每人配額：原子遞增在上限封頂、超額記 <kind>_over、上限 0／NULL（不限）、覆寫與同交易稽核、上傳讀覆寫、
+      # 線上 LLM 用量日彙總（rollback）；並發遞增恰好發出 limit 個名額（要 commit，只在相關表皆空的拋棄式庫跑——這個
+      # job 的庫正是；非空即 skip、REQUIRE_DB=1 時紅）。
+      - name: Admin v2 每人配額
+        run: uv run pytest -q tests/test_quota_db.py
+
+      # Admin v2 Security：auth_event 只刪超過 365 天的列、session 只刪結束超過 90 天的；告警的視窗計數（含被限流的
+      # 彙總 count）與「上次成功之後」的連續失敗；可疑 IP、高風險時間線分類；撤銷單一 session 與稽核同交易。一律 rollback。
+      - name: Admin v2 安全維運
+        run: uv run pytest -q tests/test_security_ops_db.py
+
+      # Admin v2 使用分析：k=3 門檻（2 人抑制、3 人顯示、NULL 使用者不計人數、跨日人數取最大值）與互補抑制、回應不含 user_id／
+      # 帳號名／問答文字、忠實度只計現行 judge、每晚彙總冪等與回填不覆寫已保留的日子、即時＋彙總兩段合併。一律 rollback。
+      - name: Admin v2 使用分析
+        run: uv run pytest -q tests/test_analytics_db.py
+
+      # 功能旗標的寫入（Admin v2 Flags lane）：覆寫與稽核 flag.update 同交易（稽核失敗旗標不留）、相同內容不記、
+      # 作用域 text[]／uuid[] 往返、匯出匯入以帳號名稱往返且有錯誤整份不寫、PUT 經真的 DB 讀回。一律 rollback。
+      - name: Admin v2 功能旗標寫入與匯出匯入
+        run: uv run pytest -q tests/test_feature_flags_db.py
+
+      # 對外 API 用戶端：建立後金鑰 resolve 得到、停用與輪替立即生效、每日額度到上限＋1 被拒且換日重置、
+      # 刪除時授權範圍與用量 cascade、寫入與稽核同交易且 detail 不含原始金鑰或 key_hash。
+      - name: 對外 API 用戶端
+        run: uv run pytest -q tests/test_api_clients_db.py
+
+      # 對外 API 的資料邊界：file-url 用的查詢取不到隱藏、草稿與授權範圍外的研報；混合檢索的 dense 與
+      # 字面兩路帶 entitlement 時，授權範圍外的研報不會出現。
+      - name: 對外 API 資料邊界
+        run: uv run pytest -q tests/test_external_api_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

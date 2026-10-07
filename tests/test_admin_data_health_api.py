@@ -227,6 +227,14 @@ class LlmUsageApiTests(_Base):
         env.start()
         self.addCleanup(env.stop)
 
+        # 線上來源（llm_usage_daily）不連 DB：這組只驗批次那段；線上與合計在 tests/test_quota_api.py。
+        async def no_online(since, until, **_kw):
+            return llm_usage._empty_online(*llm_usage.online_days(since, until), available=True)
+
+        online = mock.patch.object(llm_usage, "summarize_online", no_online)
+        online.start()
+        self.addCleanup(online.stop)
+
     def get(self, **params):
         return self.login().get("/api/admin/llm-usage", params=params)
 

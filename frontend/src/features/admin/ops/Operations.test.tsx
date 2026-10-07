@@ -106,6 +106,14 @@ const INCIDENT_DETAIL = {
   ],
 }
 
+// 事件頁底部的趨勢區塊（Admin v2 DB lane；細節測試在 OpsDatabase.test.tsx）：這裡只給空的回應，不干擾清單的斷言。
+const INCIDENT_TRENDS_EMPTY = {
+  since: '2026-07-08T04:00:00Z', until: '2026-10-06T04:00:00Z', weeks: [],
+  summary: { total: 0, resolved: 0, lost: 0, firing: 0, critical: 0, warning: 0, mttr_seconds: null, p50_seconds: null,
+    p90_seconds: null },
+  by_component: [], top_reasons: [], jobs_since: '2026-07-08T04:00:00Z', jobs_until: '2026-10-06T04:00:00Z', jobs: [],
+}
+
 type Reply = { status?: number; body: unknown }
 type Override = (path: string) => Reply | undefined
 
@@ -129,6 +137,7 @@ function mount(path: string, opts: { scopes?: string[]; override?: Override } = 
       return json({ body: { since: '2026-09-29T02:00:00Z', until: '2026-10-06T02:00:00Z', total: items.length,
         limit: 50, offset: 0, has_more: false, next_offset: null, items } })
     }
+    if (url.startsWith('/api/admin/incidents/trends')) return json({ body: INCIDENT_TRENDS_EMPTY })
     if (url.startsWith('/api/admin/incidents/')) {
       const id = decodeURIComponent(url.slice('/api/admin/incidents/'.length))
       if (id !== INCIDENT_DETAIL.incident_id) return json({ status: 404, body: { detail: '找不到這個事件', code: 'not_found' } })
@@ -195,7 +204,7 @@ const UNAVAILABLE: Override = url => url.startsWith('/api/admin/ops')
   ? { status: 503, body: { detail: '維運代理不可用：維運代理未啟動（找不到 /run/x.sock）', code: 'ops_agent_unavailable' } }
   : undefined
 
-test('/admin/operations 導向總覽；子導覽十一個分頁，都已接上 API（沒有「尚未提供」）', async () => {
+test('/admin/operations 導向總覽；子導覽十二個分頁，都已接上 API（沒有「尚未提供」）', async () => {
   mount('/admin/operations')
   expect(await screen.findByRole('heading', { name: '總覽' })).toBeInTheDocument()
   expect(screen.getByTestId('loc')).toHaveTextContent('/admin/operations/overview')
@@ -206,9 +215,10 @@ test('/admin/operations 導向總覽；子導覽十一個分頁，都已接上 A
     '/admin/operations/jobs',
     '/admin/operations/incidents', '/admin/operations/logs', '/admin/operations/host',
     '/admin/operations/data-health', '/admin/operations/llm-usage', '/admin/operations/diagnostics',
+    '/admin/operations/database',
   ])
   expect(tabs.getByRole('link', { name: /總覽/ })).toHaveAttribute('aria-current', 'page')
-  for (const name of [/管線/, /服務/, /依賴圖/, /排程工作/, /事件/, /主機/, /資料健康/, /LLM 用量/, /診斷/]) {
+  for (const name of [/管線/, /服務/, /依賴圖/, /排程工作/, /事件/, /主機/, /資料健康/, /LLM 用量/, /診斷/, /資料庫/]) {
     expect(tabs.getByRole('link', { name })).not.toHaveTextContent('尚未提供')
   }
 })
@@ -383,7 +393,7 @@ test('事件詳情：狀態轉換舊→新，journal 片段等寬、預設收合
 
 test('事件：後端錯誤原樣顯示，不白屏', async () => {
   mount('/admin/operations/incidents', {
-    override: url => url.startsWith('/api/admin/incidents')
+    override: url => url.startsWith('/api/admin/incidents') && !url.startsWith('/api/admin/incidents/trends')
       ? { status: 400, body: { detail: '時間範圍最多 366 天', code: 'invalid_params' } } : undefined,
   })
   expect(await screen.findByRole('alert')).toHaveTextContent('時間範圍最多 366 天')

@@ -13,8 +13,14 @@
 2. **帳號刪除＝清掉內容與可識別資料，列本身保留**。`admin_audit_log`、`review_state.reviewer_user_id`、
    `user_scope.granted_by` 都指著帳號 UUID；刪掉那一列的話稽核紀錄說不出是誰做的。所以刪除時
    刪掉該使用者的問答（`qa_log`，含對話串與回饋）、指向那些問答的 `review_state`、`user_scope`、
-   `user_session`，app_user 只留 UUID 並蓋 `deleted_at`（`_purge_user`）。`qa_log.user_id` 刻意沒有
+   `user_session`，以及 Admin v2 的個人用量與配額（`usage_counter`、`user_quota`、`llm_usage_daily`），
+   app_user 只留 UUID 並蓋 `deleted_at`（`_purge_user`）。`qa_log.user_id` 刻意沒有
    FK：正確性靠同一筆交易，以及從舊備份還原後的 `scripts/replay_deletions.py`，不靠 CASCADE。
+   **`auth_event`（登入與安全事件）刻意不刪**（使用者定案 7）：安全事件的保留期（至少 365 天，
+   `AUTH_EVENT_RETENTION_DAYS`）優先，鑑識要回溯的往往正是被刪掉的帳號。它只有 UUID、事件、IP、UA，
+   從不存帳號名稱；刪帳後 UUID 只連到已清掉可識別資料的 tombstone——與 `admin_audit_log` 保留 UUID
+   是同一條規則。保留期到了由清除工作刪掉，不靠刪帳。匿名的 `usage_daily`／`analytics_daily` 本來就
+   沒有 user_id，刪帳不影響（使用者定案 4）。
    刪除分兩段：管理員提出＝立即停用＋撤銷 session＋排程 `DELETION_DELAY_SECONDS` 後執行（期間可取消）；
    執行由 `scripts/execute_deletions.py`（timer）呼叫 `execute_deletion`。
 3. **稽核與變更同一筆交易**（`_audit`）。改了卻沒留紀錄、或留了紀錄卻沒改，都不會發生。
@@ -55,6 +61,7 @@ from typing import Literal
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from app.config import get_settings
 from app.services import passwords, totp
 from app.services.db import SessionFactory
 
@@ -66,11 +73,12 @@ ROLES: tuple[str, ...] = ("admin", "user")
 # ── scope 詞彙（唯一定義處）──────────────────────────────────────────────
 # `admin` 是所有管理員都有的基本 scope（只要求「是管理員」的端點用它）。
 SCOPE_ADMIN = "admin"
+# `analytics.read`（Admin v2 的 Analytics 彙總頁）是預設 scope、不是可授予的：所以 user_scope 的 CHECK 不變。
 ADMIN_DEFAULT_SCOPES: frozenset[str] = frozenset({
-    SCOPE_ADMIN, "accounts.manage", "audit.read", "review.manage", "ops.read", "reports.manage",
+    SCOPE_ADMIN, "accounts.manage", "audit.read", "review.manage", "ops.read", "reports.manage", "analytics.read",
 })
 # 必須另外授予的 scope。改這組要寫 revision 改 research.user_scope 的 CHECK（db/expected_constraints.txt）。
-GRANTABLE_SCOPES: frozenset[str] = frozenset({"qa_content.read", "ops.operate"})
+GRANTABLE_SCOPES: frozenset[str] = frozenset({"qa_content.read", "ops.operate", "api_clients.manage"})
 ALL_SCOPES: frozenset[str] = ADMIN_DEFAULT_SCOPES | GRANTABLE_SCOPES
 # 重新驗證密碼後的權限提升視窗（user_session.elevated_until）。
 ELEVATION_SECONDS = 600
@@ -151,6 +159,9 @@ class LoginResult:
     user: User | None
     reason: Literal["ok", "unknown_user", "bad_password", "disabled", "totp_required"]
     challenge: MfaChallenge | None = None
+    # 帳號存在時的 UUID（ok／bad_password／disabled／totp_required）；unknown_user 為 None。
+    # 給登入事件（auth_event）歸到帳號用——呼叫端**不得**改記帳號名稱。
+    user_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -221,11 +232,33 @@ class DeletionResidue:
     user_session: int = 0
     identifiable: bool = False  # app_user 這一列又帶著可識別或可登入的資料
     pending_deletion: bool = False  # 還有尚未執行的排程（例如還原了執行前的備份）
+    # Admin v2（revision 0011）的個人資料。auth_event 刻意不在這裡：刪帳時保留（見模組 docstring 第 2 點）。
+    usage_counter: int = 0
+    user_quota: int = 0
+    llm_usage_daily: int = 0
 
     @property
     def clean(self) -> bool:
         return not (self.qa_log or self.review_state or self.user_scope or self.user_session
-                    or self.identifiable or self.pending_deletion)
+                    or self.identifiable or self.pending_deletion
+                    or self.usage_counter or self.user_quota or self.llm_usage_daily)
+
+
+@dataclass(frozen=True)
+class SessionInfo:
+    """管理頁看到的一個 session（`list_sessions`）。沒有任何憑證：session id 只用來撤銷，cookie 另有簽章。"""
+
+    id: str
+    user_id: str
+    username: str
+    created_at: datetime | None
+    last_seen_at: datetime | None
+    expires_at: datetime | None
+    revoked_at: datetime | None
+    ip: str | None
+    user_agent: str | None
+    elevated_until: datetime | None
+    active: bool  # 未撤銷且未過絕對上限
 
 
 @dataclass(frozen=True)
@@ -301,6 +334,10 @@ class DeletionPendingError(AccountError):
     code = "deletion_pending"
 
 
+class SessionNotFoundError(UserNotFoundError):
+    """session 不存在（路由層與 UserNotFoundError 同樣對應 404 `not_found`）。"""
+
+
 class NoPendingDeletionError(AccountError):
     """沒有可以取消的刪除排程。"""
 
@@ -317,6 +354,23 @@ class TotpStateError(AccountError):
     """TOTP 狀態不允許這個動作（例如已啟用卻要重新設定）。"""
 
     code = "totp_state"
+
+
+class MfaPolicyLockedError(AccountError):
+    """管理員 TOTP 強制（ADMIN_MFA_REQUIRED）開啟時，管理員不能自行關閉兩步驟驗證。"""
+
+    code = "mfa_policy_locked"
+
+
+MFA_POLICY_LOCKED_MESSAGE = (
+    "管理員帳號在強制兩步驟驗證政策下不可自行關閉；遺失驗證器請由 super admin 或 CLI "
+    "`create_admin.py --reset-totp` 重設"
+)
+
+
+def admin_mfa_policy_locks(role: str) -> bool:
+    """這個角色在目前政策下能不能自行關閉 TOTP（True＝不能）。web/authz 的強制與這裡讀同一個設定。"""
+    return role == "admin" and get_settings().admin_mfa_required
 
 
 class TotpRequiredError(AccountError):
@@ -456,9 +510,9 @@ async def authenticate(username: str, password: str) -> LoginResult:
             return LoginResult(None, "unknown_user")
         uid, uname, role, enabled, pw_hash, is_super, granted, totp_on, secret, last_step = row
         if not await asyncio.to_thread(passwords.verify_password, pw_hash, password):
-            return LoginResult(None, "bad_password")
+            return LoginResult(None, "bad_password", user_id=str(uid))
         if not enabled:
-            return LoginResult(None, "disabled")
+            return LoginResult(None, "disabled", user_id=str(uid))
         params: dict = {"id": uid}
         rehash = ""
         if passwords.needs_rehash(pw_hash):
@@ -470,12 +524,13 @@ async def authenticate(username: str, password: str) -> LoginResult:
                 await session.execute(text("UPDATE research.app_user SET password_hash = :h WHERE id = :id"), params)
                 await session.commit()
             return LoginResult(None, "totp_required",
-                               MfaChallenge(str(uid), mfa_fingerprint(str(uid), pw_hash, last_step, secret)))
+                               MfaChallenge(str(uid), mfa_fingerprint(str(uid), pw_hash, last_step, secret)),
+                               user_id=str(uid))
         await session.execute(
             text(f"UPDATE research.app_user SET last_login_at = now(){rehash} WHERE id = :id"), params,
         )
         await session.commit()
-    return LoginResult(_make_user(uid, uname, role, is_super, granted), "ok")
+    return LoginResult(_make_user(uid, uname, role, is_super, granted), "ok", user_id=str(uid))
 
 
 async def complete_totp_login(user_id: str, fingerprint: str, code: str) -> User | None:
@@ -642,6 +697,134 @@ async def _revoke_all(session, user_id: str) -> int:
         {"uid": user_id},
     )
     return int(getattr(result, "rowcount", 0) or 0)
+
+
+_SESSION_COLS = (
+    "s.id, s.user_id, u.username, s.created_at, s.last_seen_at, s.expires_at, s.revoked_at, s.ip, s.user_agent, "
+    "s.elevated_until, (s.revoked_at IS NULL AND s.expires_at > now()) AS active"
+)
+SESSION_LIST_MAX = 500
+
+
+def _session_info(row) -> SessionInfo:
+    return SessionInfo(
+        id=str(row[0]), user_id=str(row[1]), username=row[2], created_at=row[3], last_seen_at=row[4],
+        expires_at=row[5], revoked_at=row[6], ip=row[7], user_agent=row[8], elevated_until=row[9],
+        active=bool(row[10]),
+    )
+
+
+async def list_sessions(*, user_id: str | None = None, active_only: bool = True,
+                        limit: int = 200) -> list[SessionInfo]:
+    """session 清單（Security 頁的 session 總覽），最近活動的在前；已刪除帳號的不列（刪帳時本來就刪掉了）。
+
+    `user_id` 只看某個帳號；`active_only=False` 連已撤銷、已過期的一起列（user_session 從未清理，
+    正好是成功登入的歷史；過期超過 `SESSION_EXPIRED_RETENTION_DAYS` 的由清除工作刪掉）。limit 上限
+    `SESSION_LIST_MAX`。授權（`accounts.manage`）在路由層。
+    """
+    if user_id is not None and not _valid_uuid(user_id):
+        return []
+    where = ["u.deleted_at IS NULL"]
+    params: dict = {"limit": max(1, min(int(limit), SESSION_LIST_MAX))}
+    if user_id is not None:
+        where.append("s.user_id = :uid")
+        params["uid"] = user_id
+    if active_only:
+        where.append("s.revoked_at IS NULL AND s.expires_at > now()")
+    async with SessionFactory() as session:
+        rows = (await session.execute(
+            text(f"SELECT {_SESSION_COLS} FROM research.user_session s "
+                 f"JOIN research.app_user u ON u.id = s.user_id WHERE {' AND '.join(where)} "
+                 "ORDER BY s.last_seen_at DESC, s.id LIMIT :limit"),
+            params,
+        )).all()
+    return [_session_info(r) for r in rows]
+
+
+async def admin_revoke_session(session_id: str, *, actor_id: str | None, via: str = "web") -> SessionInfo:
+    """管理員撤銷**單一** session（其他裝置不受影響；整個帳號登出是 `force_logout`）。
+
+    路由層要求 `accounts.manage`＋已提升；這一層判對象：session 不存在拋 `SessionNotFoundError`、帳號已刪除拋
+    `AccountDeletedError`、對 super admin 的 session 只有 super admin 能動（`PermissionDeniedError`）。已撤銷的
+    session 原樣回傳、不寫稽核（與單筆操作「沒有變更就不寫」一致）。撤銷與稽核 `session.admin_revoke`
+    同一筆交易；detail 只有帳號 UUID、名稱與 via，沒有 IP／UA。撤銷自己目前的 session 等同登出，允許。
+    """
+    if not _valid_uuid(session_id):
+        raise SessionNotFoundError("session 不存在")
+    async with SessionFactory() as session:
+        row = (await session.execute(
+            text("SELECT s.user_id, u.username, u.role, u.enabled, u.is_super, u.deleted_at, "
+                 "s.revoked_at IS NOT NULL "
+                 "FROM research.user_session s JOIN research.app_user u ON u.id = s.user_id "
+                 "WHERE s.id = :sid FOR UPDATE OF s"),
+            {"sid": session_id},
+        )).first()
+        if row is None:
+            raise SessionNotFoundError("session 不存在")
+        uid, uname, role, enabled, is_super, deleted_at, already = row
+        if deleted_at is not None:
+            raise AccountDeletedError("帳號已刪除")
+        await _require_can_touch(session, actor_id, bool(is_super) and role == "admin" and bool(enabled))
+        if not already:
+            await session.execute(
+                text("UPDATE research.user_session SET revoked_at = now() WHERE id = :sid"), {"sid": session_id},
+            )
+            await _audit(session, actor_id=actor_id, action="session.admin_revoke", target_type="session",
+                         target_id=str(session_id), detail={"user_id": str(uid), "username": uname, "via": via})
+        info = (await session.execute(
+            text(f"SELECT {_SESSION_COLS} FROM research.user_session s "
+                 "JOIN research.app_user u ON u.id = s.user_id WHERE s.id = :sid"),
+            {"sid": session_id},
+        )).one()
+        await session.commit()
+    return _session_info(info)
+
+
+# ───── 登入與安全事件（research.auth_event，revision 0011）─────
+
+# 事件類型的唯一定義（DB 只限形狀）。reason 是各事件的細分原因（形狀 `^[a-z][a-z_]{0,31}$`）：
+#   login.success       reason：password（單一步驟）／totp（兩步驟完成）
+#   login.failure       reason：unknown_user／bad_password／disabled
+#   login.totp_failure  reason：bad_code／expired_challenge
+#   login.locked        每 IP 失敗限流期間的請求（web/auth.py 的 _FAILS）；只在記憶體計數、定期寫一列彙總（count）
+#   login.insecure      非 HTTPS 且非本機的登入被拒
+#   logout
+#   elevate.success／elevate.failure  權限提升（reason：bad_password／totp）；稽核另有 session.elevate*
+AUTH_EVENT_TYPES: frozenset[str] = frozenset({
+    "login.success", "login.failure", "login.totp_failure", "login.locked", "login.insecure",
+    "logout", "elevate.success", "elevate.failure",
+})
+_AUTH_REASON_RE = re.compile(r"^[a-z][a-z_]{0,31}$")
+_MAX_AUTH_IP = 64
+
+
+async def record_auth_event(event: str, *, reason: str | None = None, user_id: str | None = None,
+                            session_id: str | None = None, ip: str | None = None, user_agent: str | None = None,
+                            count: int = 1) -> None:
+    """寫一列登入／安全事件（自己的交易、立即 commit）。
+
+    **介面上就沒有帳號名稱**：帳號不存在時 user_id 為 None，帳號欄打了什麼都不留（常被誤填成密碼）。
+    不合法的 event／reason／count 拋 ValueError（程式錯誤）；不合法的 UUID 視為 None。IP 截到 64 字、
+    UA 截到 300 字。DB 錯誤往上拋：呼叫端（登入流程）自己決定 fail-open——登入不能因為記不了事件而失敗。
+    刪帳不刪這張表（模組 docstring 第 2 點）。
+    """
+    if event not in AUTH_EVENT_TYPES:
+        raise ValueError(f"未知的登入事件類型：{event!r}")
+    if reason is not None and not _AUTH_REASON_RE.fullmatch(reason):
+        raise ValueError(f"登入事件的 reason 形狀不符：{reason!r}")
+    if int(count) < 1:
+        raise ValueError("count 必須 ≥ 1")
+    async with SessionFactory() as session:
+        await session.execute(
+            text("INSERT INTO research.auth_event (event, reason, user_id, session_id, ip, user_agent, count) "
+                 "VALUES (:event, :reason, :uid, :sid, :ip, :ua, :count)"),
+            {"event": event, "reason": reason,
+             "uid": str(user_id) if user_id is not None and _valid_uuid(user_id) else None,
+             "sid": str(session_id) if session_id is not None and _valid_uuid(session_id) else None,
+             "ip": (ip or "")[:_MAX_AUTH_IP] or None, "ua": (user_agent or "")[:_MAX_USER_AGENT] or None,
+             "count": int(count)},
+        )
+        await session.commit()
 
 
 # ───── 帳號管理 ─────
@@ -1167,6 +1350,10 @@ async def disable_totp(user_id: str, *, actor_id: str | None, via: str = "web") 
 
     本人關閉要已提升權限（路由層 require_elevated）；替別人重設要 accounts.manage＋已提升，
     對象是 super admin 時只有 super admin 能做。停用中的帳號也能重設（救援流程常是先重設再啟用）。
+
+    管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`）開啟時，角色為 admin 的帳號**不能自行關閉**（`MfaPolicyLockedError`）：
+    否則一個按鈕就能把強制政策撤掉。救援路徑不受影響——別的管理員重設（accounts.manage＋已提升，對 super 要 super）
+    與 CLI（`actor_id=None`，`scripts/create_admin.py --reset-totp`）照常可用，重設後該管理員會被要求重新設定。
     """
     if not _valid_uuid(user_id):
         raise UserNotFoundError("帳號不存在")
@@ -1182,6 +1369,8 @@ async def disable_totp(user_id: str, *, actor_id: str | None, via: str = "web") 
         if deleted_at is not None:
             raise AccountDeletedError("帳號已刪除")
         self_service = actor_id is not None and str(actor_id) == str(user_id)
+        if self_service and admin_mfa_policy_locks(role):
+            raise MfaPolicyLockedError(MFA_POLICY_LOCKED_MESSAGE)
         if not self_service:
             await _require_can_touch(session, actor_id, bool(is_super) and role == "admin")
         if totp_on or secret:
@@ -1343,6 +1532,14 @@ async def _purge_user(session, user_id: str) -> dict[str, int]:
     sessions = (await session.execute(
         text("DELETE FROM research.user_session WHERE user_id = :id"), params,
     )).rowcount or 0
+    # Admin v2 的個人資料（revision 0011）。auth_event 刻意不刪：見模組 docstring 第 2 點。
+    counters = (await session.execute(
+        text("DELETE FROM research.usage_counter WHERE user_id = :id"), params,
+    )).rowcount or 0
+    quotas = (await session.execute(text("DELETE FROM research.user_quota WHERE user_id = :id"), params)).rowcount or 0
+    llm_usage = (await session.execute(
+        text("DELETE FROM research.llm_usage_daily WHERE user_id = :id"), params,
+    )).rowcount or 0
     await session.execute(
         text(
             "UPDATE research.app_user SET username = :name, password_hash = :pw, role = 'user', is_super = false, "
@@ -1352,7 +1549,8 @@ async def _purge_user(session, user_id: str) -> dict[str, int]:
         {"id": user_id, "name": deleted_username(user_id), "pw": DELETED_PASSWORD_HASH},
     )
     return {"qa_log": int(qa), "review_state": int(review), "user_scope": int(scopes),
-            "user_session": int(sessions)}
+            "user_session": int(sessions), "usage_counter": int(counters), "user_quota": int(quotas),
+            "llm_usage_daily": int(llm_usage)}
 
 
 async def execute_deletion(user_id: str, *, via: str = "batch") -> datetime | None:
@@ -1398,12 +1596,16 @@ async def deletion_residue(user_id: str) -> DeletionResidue:
                 "(SELECT username <> :name OR password_hash <> :pw OR enabled OR role <> 'user' OR is_super "
                 " OR totp_enabled OR totp_secret IS NOT NULL OR last_login_at IS NOT NULL OR deleted_at IS NULL "
                 " FROM research.app_user WHERE id = :id), "
-                f"EXISTS (SELECT 1 FROM research.account_deletion WHERE user_id = :id AND {_PENDING})"
+                f"EXISTS (SELECT 1 FROM research.account_deletion WHERE user_id = :id AND {_PENDING}), "
+                "(SELECT count(*) FROM research.usage_counter WHERE user_id = :id), "
+                "(SELECT count(*) FROM research.user_quota WHERE user_id = :id), "
+                "(SELECT count(*) FROM research.llm_usage_daily WHERE user_id = :id)"
             ),
             {"id": user_id, "name": deleted_username(user_id), "pw": DELETED_PASSWORD_HASH},
         )).one()
     return DeletionResidue(qa_log=int(row[0]), review_state=int(row[1]), user_scope=int(row[2]),
-                           user_session=int(row[3]), identifiable=bool(row[4]), pending_deletion=bool(row[5]))
+                           user_session=int(row[3]), identifiable=bool(row[4]), pending_deletion=bool(row[5]),
+                           usage_counter=int(row[6]), user_quota=int(row[7]), llm_usage_daily=int(row[8]))
 
 
 async def purge_deleted_user(user_id: str, *, via: str = "replay") -> dict[str, int]:

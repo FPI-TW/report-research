@@ -47,14 +47,21 @@ function mount(initial: { enabled: boolean }) {
   return { fetchMock, state }
 }
 
-test('開啟兩步驟驗證：顯示 otpauth URI 與金鑰，輸入正確驗證碼才啟用', async () => {
+test('開啟兩步驟驗證：顯示 QR code（不再列出 otpauth 連結文字），可展開手動金鑰，輸入正確驗證碼才啟用', async () => {
   const { state } = mount({ enabled: false })
   const dialog = await screen.findByRole('dialog', { name: '帳號安全' })
   expect(await within(dialog).findByText('未開啟')).toBeInTheDocument()
   fireEvent.click(await within(dialog).findByRole('button', { name: '開啟兩步驟驗證' }))
-  expect(await screen.findByTestId('otpauth-uri')).toHaveTextContent('otpauth://totp/')
+  const qr = await screen.findByTestId('totp-qr')
+  expect(qr).toHaveAttribute('role', 'img')
+  expect(qr.querySelector('svg')).not.toBeNull()
+  expect(screen.queryByTestId('otpauth-uri')).toBeNull()
+  expect(screen.queryByText(/otpauth:\/\//)).toBeNull()
   expect(screen.getByTestId('totp-secret')).toHaveTextContent('JBSWY3DPEHPK3PXP')
-  const code = screen.getByLabelText(/輸入 App 顯示的驗證碼/)
+  // 這個連結只在窄螢幕顯示（桌面 display:none），以文字定位
+  expect(screen.getByText('在這支手機上開啟驗證器').closest('a'))
+    .toHaveAttribute('href', 'otpauth://totp/x:alice?secret=JBSWY3DPEHPK3PXP')
+  const code = screen.getByLabelText('驗證碼')
   fireEvent.change(code, { target: { value: '000000' } })
   fireEvent.click(screen.getByRole('button', { name: '確認並開啟' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('驗證碼不正確')

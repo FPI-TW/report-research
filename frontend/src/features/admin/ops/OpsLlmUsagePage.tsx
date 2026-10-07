@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { LlmUsageResponse, LlmUsageTotals } from '../../../lib/generated/adminApi'
+import type { LlmUsageOnline, LlmUsageTotals } from '../../../lib/generated/adminApi'
 import { fmtDateTime } from '../auditLabels'
 import { OpsQueryError } from './OpsShared'
 import { useLlmUsage } from './useOps'
@@ -50,18 +50,17 @@ function UsageTable({ caption, keyLabel, rows, showCost }: {
   )
 }
 
-function Totals({ d }: { d: LlmUsageResponse }) {
-  const t = d.totals
+function Totals({ t, costAvailable, prefix = '' }: { t: LlmUsageTotals; costAvailable: boolean; prefix?: string }) {
   const cards: [string, string, string][] = [
     ['呼叫次數', fmtInt(t.calls), `失敗 ${fmtInt(t.failures)}・無用量 ${fmtInt(t.calls_without_tokens)}`],
     ['輸入 token', fmtInt(t.prompt_hit_tokens + t.prompt_miss_tokens), `快取命中 ${fmtInt(t.prompt_hit_tokens)}`],
     ['輸出 token', fmtInt(t.completion_tokens), `其中推理 ${fmtInt(t.reasoning_tokens)}`],
   ]
-  if (d.cost_available && t.cost != null) cards.push(['費用', t.cost.toFixed(4), '行內帶 cost 欄的加總'])
+  if (costAvailable && t.cost != null) cards.push(['費用', t.cost.toFixed(4), '行內帶 cost 欄的加總'])
   return (
     <div className={styles.tierGrid}>
       {cards.map(([name, value, hint]) => (
-        <div key={name} className={styles.tierCard} aria-label={name}>
+        <div key={name} className={styles.tierCard} aria-label={`${prefix}${name}`}>
           <div className={styles.tierName}>{name}</div>
           <div className={styles.tierCount}>{value}</div>
           <div className={styles.tierHint}>{hint}</div>
@@ -71,13 +70,68 @@ function Totals({ d }: { d: LlmUsageResponse }) {
   )
 }
 
+/** 依任務／模型／日期三張表；prefix 讓批次與線上兩段的表格名稱不重複。 */
+function Breakdown({ d, prefix = '' }: {
+  d: Pick<LlmUsageOnline, 'by_task' | 'by_model' | 'by_day' | 'cost_available'>; prefix?: string
+}) {
+  return (
+    <>
+      <h3 className={styles.groupTitle}>依任務</h3>
+      <UsageTable caption={`${prefix}依任務`} keyLabel="任務" showCost={d.cost_available}
+        rows={d.by_task.map(r => ({ ...r, key: r.task }))} />
+      <div className={adminStyles.spacer} />
+      <h3 className={styles.groupTitle}>依模型</h3>
+      <UsageTable caption={`${prefix}依模型`} keyLabel="模型" showCost={d.cost_available}
+        rows={d.by_model.map(r => ({ ...r, key: r.model }))} />
+      <div className={adminStyles.spacer} />
+      <h3 className={styles.groupTitle}>依日期（新→舊）</h3>
+      <UsageTable caption={`${prefix}依日期`} keyLabel="日期" showCost={d.cost_available}
+        rows={[...d.by_day].reverse().map(r => ({ ...r, key: r.day }))} />
+    </>
+  )
+}
+
+/** 線上（web 行程的問答、忠實度抽查…）：research.llm_usage_daily 的台北日彙總，只有 metadata、不出個人維度。 */
+function OnlineSection({ online }: { online: LlmUsageOnline | null | undefined }) {
+  return (
+    <section aria-labelledby="llm-online-title">
+      <h3 id="llm-online-title" className={styles.groupTitle}>線上（問答、忠實度抽查）</h3>
+      {online == null ? (
+        <p className={adminStyles.idle}>後端沒有回傳線上用量。</p>
+      ) : !online.available ? (
+        <p className={styles.warnNote} role="alert">{online.error ?? '線上用量暫時讀不到'}（批次用量不受影響）</p>
+      ) : (
+        <>
+          <p className={styles.meta}>
+            <span>{online.since_day} ～ {online.until_day}（台北日，頭尾兩天整天計入）</span>
+            <span>歸因到 <b>{fmtInt(online.attributed_users)}</b> 位使用者</span>
+            {online.unattributed_calls > 0 && <span>未歸因 <b>{fmtInt(online.unattributed_calls)}</b> 次</span>}
+          </p>
+          <div className={adminStyles.spacer} />
+          {online.totals.calls === 0 ? (
+            <p className={adminStyles.idle}>這段期間沒有任何線上 LLM 呼叫。</p>
+          ) : (
+            <>
+              <Totals t={online.totals} costAvailable={online.cost_available} prefix="線上" />
+              <div className={adminStyles.spacer} />
+              <Breakdown d={online} prefix="線上・" />
+            </>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
 /**
- * 批次 LLM 用量（`data/llm_usage.jsonl` 的彙總）：依任務、模型、日期（台北時間）。只含批次（摘要、標題、
- * 摘錄、訊號、簡報、標註…），線上問答不寫這份檔；費用真值看 DeepSeek 餘額差分，這裡是歸因。
+ * LLM 用量：批次（`data/llm_usage.jsonl`，摘要、標題、摘錄、訊號、簡報、標註…）與線上（`research.llm_usage_daily`，
+ * 問答與忠實度抽查，Admin v2）兩個來源，依任務、模型、日期（台北時間）。費用真值看 DeepSeek 餘額差分，這裡是歸因。
+ * 個人用量只在配額頁。
  */
 export default function OpsLlmUsagePage() {
   const [days, setDays] = useState(30)
   const q = useLlmUsage(days)
+  const combined = q.data?.combined
   return (
     <section className={adminStyles.card} aria-labelledby="llm-usage-title">
       <div className={adminStyles.cardHead}>
@@ -90,47 +144,51 @@ export default function OpsLlmUsagePage() {
         </label>
       </div>
       <p className={adminStyles.hint}>
-        只含批次的 LLM 呼叫（線上問答不記在這份檔）。費用真值看 DeepSeek 餘額差分，這裡用來看哪個任務、哪個模型花了多少 token。
+        批次（jsonl）與線上（問答、忠實度抽查，記在 DB）兩個來源，只記 metadata、不記問題與答案。費用真值看 DeepSeek 餘額差分，這裡用來看哪個任務、哪個模型花了多少 token；個人用量在「配額」頁。
       </p>
       <div className={adminStyles.spacer} />
       {q.isPending ? (
         <p className={adminStyles.idle}>載入中…</p>
       ) : q.isError ? (
         <OpsQueryError error={q.error} what="LLM 用量" />
-      ) : !q.data.source.exists ? (
-        <p className={adminStyles.idle}>還沒有用量紀錄（data/llm_usage.jsonl 不存在；批次第一次呼叫 LLM 時才會建立）。</p>
       ) : (
         <>
-          <p className={styles.meta}>
-            <span>範圍 <b>{fmtDateTime(q.data.since)}</b> ～ <b>{fmtDateTime(q.data.until)}</b>（日期以台北時間切）</span>
-            <span>範圍內 <b>{fmtInt(q.data.source.lines_in_range)}</b> 筆</span>
-            {q.data.source.lines_invalid > 0 && <span>無法解析 <b>{fmtInt(q.data.source.lines_invalid)}</b> 行（已略過）</span>}
-          </p>
-          {q.data.source.truncated && (
-            <p className={styles.warnNote}>
-              檔案超過讀取上限，只涵蓋 {fmtDateTime(q.data.source.earliest_ts)} 之後的紀錄。
-            </p>
-          )}
-          <div className={adminStyles.spacer} />
-          {q.data.totals.calls === 0 ? (
-            <p className={adminStyles.idle}>這段期間沒有任何批次 LLM 呼叫。</p>
-          ) : (
+          {combined && q.data.online?.available && combined.totals.calls > 0 && (
             <>
-              <Totals d={q.data} />
+              <h3 className={styles.groupTitle}>合計（批次＋線上）</h3>
+              <Totals t={combined.totals} costAvailable={combined.cost_available} prefix="合計" />
               <div className={adminStyles.spacer} />
-              <h3 className={styles.groupTitle}>依任務</h3>
-              <UsageTable caption="依任務" keyLabel="任務" showCost={q.data.cost_available}
-                rows={q.data.by_task.map(r => ({ ...r, key: r.task }))} />
-              <div className={adminStyles.spacer} />
-              <h3 className={styles.groupTitle}>依模型</h3>
-              <UsageTable caption="依模型" keyLabel="模型" showCost={q.data.cost_available}
-                rows={q.data.by_model.map(r => ({ ...r, key: r.model }))} />
-              <div className={adminStyles.spacer} />
-              <h3 className={styles.groupTitle}>依日期（新→舊）</h3>
-              <UsageTable caption="依日期" keyLabel="日期" showCost={q.data.cost_available}
-                rows={[...q.data.by_day].reverse().map(r => ({ ...r, key: r.day }))} />
             </>
           )}
+          <h3 className={styles.groupTitle}>批次</h3>
+          {!q.data.source.exists ? (
+            <p className={adminStyles.idle}>還沒有用量紀錄（data/llm_usage.jsonl 不存在；批次第一次呼叫 LLM 時才會建立）。</p>
+          ) : (
+            <>
+              <p className={styles.meta}>
+                <span>範圍 <b>{fmtDateTime(q.data.since)}</b> ～ <b>{fmtDateTime(q.data.until)}</b>（日期以台北時間切）</span>
+                <span>範圍內 <b>{fmtInt(q.data.source.lines_in_range)}</b> 筆</span>
+                {q.data.source.lines_invalid > 0 && <span>無法解析 <b>{fmtInt(q.data.source.lines_invalid)}</b> 行（已略過）</span>}
+              </p>
+              {q.data.source.truncated && (
+                <p className={styles.warnNote}>
+                  檔案超過讀取上限，只涵蓋 {fmtDateTime(q.data.source.earliest_ts)} 之後的紀錄。
+                </p>
+              )}
+              <div className={adminStyles.spacer} />
+              {q.data.totals.calls === 0 ? (
+                <p className={adminStyles.idle}>這段期間沒有任何批次 LLM 呼叫。</p>
+              ) : (
+                <>
+                  <Totals t={q.data.totals} costAvailable={q.data.cost_available} />
+                  <div className={adminStyles.spacer} />
+                  <Breakdown d={q.data} />
+                </>
+              )}
+            </>
+          )}
+          <div className={adminStyles.spacer} />
+          <OnlineSection online={q.data.online} />
         </>
       )}
     </section>

@@ -398,6 +398,12 @@ jobs:
       - name: Admin v2 DB 快照與事件趨勢
         run: uv run pytest -q tests/test_db_insights_db.py
 
+      # Admin v2 每人配額：原子遞增在上限封頂、超額記 <kind>_over、上限 0／NULL（不限）、覆寫與同交易稽核、上傳讀覆寫、
+      # 線上 LLM 用量日彙總（rollback）；並發遞增恰好發出 limit 個名額（要 commit，只在相關表皆空的拋棄式庫跑——這個
+      # job 的庫正是；非空即 skip、REQUIRE_DB=1 時紅）。
+      - name: Admin v2 每人配額
+        run: uv run pytest -q tests/test_quota_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

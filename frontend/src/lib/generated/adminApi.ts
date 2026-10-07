@@ -747,6 +747,96 @@ export const PrivilegesRequestSchema = z.object({
 })
 export type PrivilegesRequest = z.infer<typeof PrivilegesRequestSchema>
 
+export const QuotaDefaultsSchema = z.object({
+  ask: z.number().int(),
+  export: z.number().int(),
+  upload: z.number().int(),
+})
+export type QuotaDefaults = z.infer<typeof QuotaDefaultsSchema>
+
+export const QuotaEnforcementSchema = z.object({
+  env_ceiling: z.boolean(),
+  flag_enabled: z.boolean(),
+  flag_scoped: z.boolean(),
+  flag_source: z.enum(['default', 'db', 'fallback']),
+  effective: z.boolean(),
+  mode: z.enum(['shadow', 'enforce']),
+})
+export type QuotaEnforcement = z.infer<typeof QuotaEnforcementSchema>
+
+export const QuotaItemSchema = z.object({
+  kind: z.enum(['ask', 'export', 'upload']),
+  used: z.number().int(),
+  over: z.number().int(),
+  limit: z.number().int().nullable(),
+  default_limit: z.number().int(),
+  mode: z.enum(['default', 'limit', 'unlimited']),
+  remaining: z.number().int().nullable().optional(),
+  reason: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+})
+export type QuotaItem = z.infer<typeof QuotaItemSchema>
+
+export const QuotaKindStatsSchema = z.object({
+  kind: z.enum(['ask', 'export', 'upload']),
+  default_limit: z.number().int(),
+  user_days: z.number().int(),
+  users: z.number().int(),
+  p50: z.number().int().nullable().optional(),
+  p95: z.number().int().nullable().optional(),
+  max: z.number().int().nullable().optional(),
+  over_user_days: z.number().int(),
+  over_events: z.number().int(),
+})
+export type QuotaKindStats = z.infer<typeof QuotaKindStatsSchema>
+
+export const QuotaOverTodaySchema = z.object({
+  ask: z.number().int(),
+  export: z.number().int(),
+})
+export type QuotaOverToday = z.infer<typeof QuotaOverTodaySchema>
+
+export const QuotaOverrideRequestSchema = z.object({
+  mode: z.enum(['default', 'limit', 'unlimited']),
+  daily_limit: z.number().int().nullable().optional(),
+  reason: z.string().nullable().optional(),
+})
+export type QuotaOverrideRequest = z.infer<typeof QuotaOverrideRequestSchema>
+
+export const QuotaOverrideResultSchema = z.object({
+  changed: z.boolean(),
+  item: QuotaItemSchema,
+})
+export type QuotaOverrideResult = z.infer<typeof QuotaOverrideResultSchema>
+
+export const QuotaStatsSchema = z.object({
+  since_day: z.string(),
+  until_day: z.string(),
+  days: z.number().int(),
+  timezone: z.string(),
+  kinds: z.array(QuotaKindStatsSchema),
+})
+export type QuotaStats = z.infer<typeof QuotaStatsSchema>
+
+export const QuotaUserLlmSchema = z.object({
+  calls: z.number().int(),
+  failures: z.number().int(),
+  prompt_tokens: z.number().int(),
+  completion_tokens: z.number().int(),
+})
+export type QuotaUserLlm = z.infer<typeof QuotaUserLlmSchema>
+
+export const QuotaUserRowSchema = z.object({
+  user_id: z.string(),
+  username: z.string(),
+  role: z.enum(['admin', 'user']),
+  enabled: z.boolean(),
+  is_super: z.boolean(),
+  items: z.array(QuotaItemSchema),
+  llm: QuotaUserLlmSchema,
+})
+export type QuotaUserRow = z.infer<typeof QuotaUserRowSchema>
+
 export const ReconcileIssueSchema = z.object({
   type: z.string(),
   ref: z.string(),
@@ -1175,6 +1265,30 @@ export const IncidentTrendsResponseSchema = z.object({
 })
 export type IncidentTrendsResponse = z.infer<typeof IncidentTrendsResponseSchema>
 
+export const LlmUsageCombinedSchema = z.object({
+  totals: LlmUsageTotalsSchema,
+  by_day: z.array(LlmUsageDaySchema),
+  cost_available: z.boolean(),
+})
+export type LlmUsageCombined = z.infer<typeof LlmUsageCombinedSchema>
+
+export const LlmUsageOnlineSchema = z.object({
+  available: z.boolean(),
+  error: z.string().nullable().optional(),
+  since_day: z.string(),
+  until_day: z.string(),
+  totals: LlmUsageTotalsSchema,
+  by_day: z.array(LlmUsageDaySchema),
+  by_task: z.array(LlmUsageTaskSchema),
+  by_model: z.array(LlmUsageModelSchema),
+  rows: z.array(LlmUsageRowSchema),
+  rows_truncated: z.boolean(),
+  attributed_users: z.number().int(),
+  unattributed_calls: z.number().int(),
+  cost_available: z.boolean(),
+})
+export type LlmUsageOnline = z.infer<typeof LlmUsageOnlineSchema>
+
 export const LlmUsageResponseSchema = z.object({
   since: z.string(),
   until: z.string(),
@@ -1187,6 +1301,8 @@ export const LlmUsageResponseSchema = z.object({
   rows: z.array(LlmUsageRowSchema),
   rows_truncated: z.boolean(),
   cost_available: z.boolean(),
+  online: LlmUsageOnlineSchema.nullable().optional(),
+  combined: LlmUsageCombinedSchema.nullable().optional(),
 })
 export type LlmUsageResponse = z.infer<typeof LlmUsageResponseSchema>
 
@@ -1236,6 +1352,17 @@ export const OpsServiceStatusSchema = z.object({
   timer_state: OpsTimerStateSchema.nullable().optional(),
 })
 export type OpsServiceStatus = z.infer<typeof OpsServiceStatusSchema>
+
+export const QuotaOverviewSchema = z.object({
+  day: z.string(),
+  timezone: z.string(),
+  resets_in_seconds: z.number().int(),
+  defaults: QuotaDefaultsSchema,
+  enforcement: QuotaEnforcementSchema,
+  over_today: QuotaOverTodaySchema,
+  users: z.array(QuotaUserRowSchema),
+})
+export type QuotaOverview = z.infer<typeof QuotaOverviewSchema>
 
 export const R2ReconcileSectionSchema = z.object({
   status: z.enum(['ok', 'warn', 'fail', 'unknown']),
@@ -1403,6 +1530,12 @@ export const adminApi = {
   restartOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/restart`, OpsActionResponseSchema, jsonBody('POST')),
   /** POST /api/admin/ops/services/{name}/run — Run Ops Service */
   runOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/run`, OpsActionResponseSchema, jsonBody('POST')),
+  /** GET /api/admin/quota — Get Quota Overview */
+  getQuotaOverview: () => requestJSON('/api/admin/quota', QuotaOverviewSchema, { cache: 'no-store' }),
+  /** GET /api/admin/quota/stats — Get Quota Stats */
+  getQuotaStats: (query: { days?: number } = {}) => requestJSON(`/api/admin/quota/stats${qs(query)}`, QuotaStatsSchema, { cache: 'no-store' }),
+  /** PUT /api/admin/quota/users/{user_id}/{kind} — Set Quota Override */
+  setQuotaOverride: (userId: string, kind: string, body: z.input<typeof QuotaOverrideRequestSchema>) => requestJSON(`/api/admin/quota/users/${encodeURIComponent(userId)}/${encodeURIComponent(kind)}`, QuotaOverrideResultSchema, jsonBody('PUT', body)),
   /** GET /api/admin/reports — List Reports */
   listReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/reports/bulk-visibility — Bulk Set Report Visibility */

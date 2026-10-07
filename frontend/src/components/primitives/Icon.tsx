@@ -7,7 +7,7 @@ export type IconName =
   | 'check' | 'spinner' | 'refresh'
   | 'compass' | 'trendUp' | 'trendDown' | 'trendFlat' | 'diverge' | 'notComparable' | 'quote' | 'info'
   | 'minus' | 'download' | 'arrowsHorizontal' | 'pencil' | 'globe' | 'shield' | 'clock' | 'arrowLeft'
-  | 'upload'
+  | 'upload' | 'compose'
 
 const PATHS: Record<IconName, ReactNode> = {
   search: (<><circle cx="10" cy="10" r="7" /><path d="M21 21l-6 -6" /></>),
@@ -43,6 +43,8 @@ const PATHS: Record<IconName, ReactNode> = {
   download: (<><path d="M12 4v12" /><path d="M8 12l4 4l4 -4" /><path d="M4 19h16" /></>),
   upload: (<><path d="M12 16V4" /><path d="M8 8l4 -4l4 4" /><path d="M4 19h16" /></>),
   arrowsHorizontal: (<path d="M7 8l-4 4l4 4M17 8l4 4l-4 4M4 12h16" />),
+  // 方框＋筆（新對話）：與 pencil 同一支筆，框表示「新的一頁」
+  compose: (<><path d="M12 4h-6a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-6" /><path d="M10 14v-3l8.5 -8.5a2.1 2.1 0 0 1 3 3L13 14h-3" /></>),
   pencil: (<><path d="M4 20h4l10.5 -10.5a2.1 2.1 0 0 0 -3 -3L5 16v4" /><path d="M13.5 6.5l4 4" /></>),
   globe: (<><circle cx="12" cy="12" r="9" /><path d="M3.6 9h16.8M3.6 15h16.8" /><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0 -18" /></>),
   shield: (<><path d="M12 3l7 3v5c0 4.5 -3 8.5 -7 10c-4 -1.5 -7 -5.5 -7 -10V6z" /><path d="M9 12l2 2l4 -4" /></>),

@@ -1,4 +1,4 @@
-import { Link } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { Icon } from '../../components/primitives/Icon'
 import { Pressable } from '../../components/primitives/Pressable'
 import { MotionLink } from '../../components/primitives/MotionLink'
@@ -20,14 +20,26 @@ export function ReportHeader({ doc }: Props) {
   const targets = [...doc.stock_targets, ...doc.futures_targets]
   const meta = metaParts(doc)
   const title = displayTitle(doc)
+  const navigate = useNavigate()
+  // key 為 'default' ＝ 這是本分頁進站的第一筆（直接貼網址、從外部開新分頁），
+  // 站內沒有上一頁可回：history.back() 會離開本站或什麼都不做，改退到檢索頁。
+  const hasHistory = useLocation().key !== 'default'
+  const goBack = () => (hasHistory ? navigate(-1) : navigate('/search'))
 
   return (
     <header className={styles.hd}>
-      <nav className={styles.crumb} aria-label="麵包屑">
-        <Link to="/search">檢索</Link>
-        <span aria-hidden="true">›</span>
-        <span>研報</span>
-      </nav>
+      <div className={styles.top}>
+        <button type="button" className={styles.back} onClick={goBack}
+          title={hasHistory ? '回到上一頁' : '回到檢索'}>
+          <Icon name="arrowLeft" size={14} />
+          上一頁
+        </button>
+        <nav className={styles.crumb} aria-label="麵包屑">
+          <Link to="/search">檢索</Link>
+          <span aria-hidden="true">›</span>
+          <span>研報</span>
+        </nav>
+      </div>
 
       <div className={styles.row}>
         <div className={styles.main}>

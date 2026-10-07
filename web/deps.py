@@ -130,12 +130,16 @@ def _valid_uuid(s) -> bool:
 # 診斷快照（web/routers/admin_diagnostics.py）同理：deps.diagnostics.snapshot。
 # 檢索回歸（web/routers/admin_retrieval_regression.py）同理：deps.retrieval_regression.X。
 # 研報上傳的收檔與查詢（web/routers/admin_uploads.py）同理：deps.upload_intake.X；審核同理：deps.upload_review.X。
+# DB 快照、慢查詢、趨勢與事件趨勢（web/routers/admin_db.py、admin_monitoring.py）同理：deps.db_insights.X。
+# 每人配額（ask.py、admin_exports.py 的計數，admin_quota.py、me_quota.py 的查詢與覆寫）同理：deps.quota.X。
 from app.services import (  # noqa: E402
     accounts,
     data_health,
+    db_insights,
     diagnostics,
     llm_usage,
     ops_monitoring,
+    quota,
     retrieval_regression,
     upload_intake,
     upload_review,
@@ -205,6 +209,7 @@ __all__ = [
     "answer_question",
     "conversation_is_foreign",
     "data_health",
+    "db_insights",
     "diagnostics",
     "delete_qa",
     "embed_query_cached",
@@ -232,6 +237,7 @@ __all__ = [
     "log_stopped_qa",
     "ops_monitoring",
     "qa_is_foreign",
+    "quota",
     "rank_reports",
     "report_visibility",
     "rerank_warmup",

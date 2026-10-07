@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { routes } from './App'
@@ -26,7 +26,8 @@ test('/search 落在檢索頁且側欄可見', async () => {
   // 「Test timed out in 5000ms」而不是找不到元素，看起來還很像是產品壞了。
   expect(await screen.findByLabelText('搜尋研報', {}, { timeout: 15000 })).toBeInTheDocument()
   expect(screen.getByRole('heading', { level: 1, name: '廷豐智能研報' })).toBeInTheDocument()
-  expect(screen.getByTitle('收合側欄')).toBeInTheDocument()
+  // 側欄預設收合：只有圖示軌，展開鈕可按
+  expect(screen.getByRole('button', { name: '展開側欄' })).toBeInTheDocument()
 }, 15000)
 
 function stubAs(role: 'admin' | 'user') {
@@ -79,9 +80,6 @@ test('/admin/operations 導向維運總覽（有 ops.read 的管理員；代理�
 }, 15000)
 
 test.each([
-  ['/admin/analytics', '使用分析', 'analytics.read'],
-  ['/admin/security', '安全', 'audit.read'],
-  ['/admin/quota', '配額', 'accounts.manage'],
 ])('Admin v2 佔位頁 %s：有 scope 時顯示「建置中」、不打任何管理 API', async (path, title, scope) => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url.includes('/api/me')) {
@@ -96,6 +94,19 @@ test.each([
   expect(await screen.findByRole('heading', { level: 1, name: title }, { timeout: 15000 })).toBeInTheDocument()
   expect(screen.getByRole('heading', { level: 2, name: '建置中' })).toBeInTheDocument()
   expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/admin'))).toBe(false)
+}, 15000)
+
+test('配額頁（Quota lane）：/admin/quota 有 accounts.manage 時載入配額 API', async () => {
+  const fetchMock = vi.fn(async (url: string) =>
+    url.includes('/api/me')
+      ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'accounts.manage'] }), { status: 200 })
+      : new Response(JSON.stringify({ detail: '測試不回資料', code: 'x' }), { status: 503 }))
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/quota'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByRole('heading', { level: 1, name: '配額' }, { timeout: 15000 })).toBeInTheDocument()
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u) === '/api/admin/quota')).toBe(true))
 }, 15000)
 
 test('Admin v2 佔位頁：沒有對應 scope 時只顯示需要的權限', async () => {

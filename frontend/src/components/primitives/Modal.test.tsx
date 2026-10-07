@@ -51,7 +51,7 @@ describe('Modal', () => {
 
   // 缺陷：`.scrim` 是 position: fixed，而 fixed 的定位基準不必然是視窗——祖先只要有
   // backdrop-filter／filter／transform 就會成為它的 containing block。側欄（SideRail
-  // 的 .rail）正是磨砂玻璃且 overflow: hidden，所以就地渲染的彈窗會被鎖在 272px 寬的
+  // 的 .sidebar）正是磨砂玻璃、歷史對話面板又 overflow: hidden，所以就地渲染的彈窗會被鎖在
   // 側欄裡、貼著畫面最左側並被裁掉。jsdom 不算版面，故這裡釘的是**修法本身**：
   // 節點必須掛在 document.body 底下、而不是呼叫端的子樹裡。
   it('遮罩的 backdrop-filter 住在 .scrimLayer，.scrim 上不得有（否則面板壓克力失效）', () => {

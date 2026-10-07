@@ -1716,6 +1716,90 @@ sudo systemctl disable --now report-mark-rollup-observations.timer   # 原始觀
 
 停用後原始表每天約增加 29 萬列；聚合表裡已有的資料不受影響，查詢端照常聯集。
 
+## DB 統計快照與慢查詢（report-mark-db-snapshot、pg_stat_statements）
+
+管理後台「維運 → 資料庫」（`/api/admin/db/*`，`ops.read`）有三塊，前提各不相同：
+
+- **即時快照**（`/api/admin/db/overview`）：只查系統目錄、`SET LOCAL` 收緊 statement_timeout（5 秒）與 lock_timeout
+  （1 秒），不需要任何安裝。帳號權限較窄時（RDS 一般帳號、沒有 `pg_monitor`／`pg_read_all_stats`）該段只顯示
+  「權限不足」，別人的 session 計入「看不到狀態」，其餘照常。
+- **趨勢**（`/api/admin/db/trends`）：要裝 `report-mark-db-snapshot.timer`，沒裝時趨勢圖是空的。
+- **慢查詢**（`/api/admin/db/slow-queries`）：要先啟用 `pg_stat_statements`，沒啟用時頁面顯示原因
+  （未建立擴充／未預載／權限不足）。**程式與 migration 都不會建立擴充或改設定**（使用者定案 13：這是 v2 之前的
+  獨立維護步驟，個別放行）。
+
+### db-snapshot（每小時 :40）
+
+`scripts/db_snapshot.py`（SQL 在 `app/services/db_insights.py`）每輪：寫一列 `research.db_stat_snapshot`
+（granularity=hour、taken_at＝整點；同一小時已有就不寫）→ 把已結束、還有逐時列卻沒有每日列的日子（台北時間）
+各彙總成一列 granularity=day（所以每天第一次執行會補前一天，漏跑的日子也會補；重跑是 no-op）→ 刪除逐時超過
+30 天、每日超過 400 天的列（`DB_SNAPSHOT_HOURLY_RETENTION_DAYS`／`DB_SNAPSHOT_DAILY_RETENTION_DAYS`，使用者定案
+14）。這只是監控統計，**不是 DB dump、不備份**；量很小（逐時 720 列、每日 400 列，每列數 KB）。
+
+- 這支要連 DB（監控收集器刻意不連）：量的就是 DB 本身，DB 掛掉時本來就量不到；DB 故障告警仍是 `/healthz`＋P5。
+- 退出碼：0 正常、1 其他失敗（整輪 rollback，走 `OnFailure` 告警）、2 DB 不可用（`SuccessExitStatus=2` 放行，
+  理由同 rollup-observations：P5 已去重告警，`report-mark-alert@` 沒有去重）。系統目錄某段權限不足或逾時不算
+  失敗：記在該列 `stats.errors`，趨勢上是空點。
+- 排程錯開 sync（每 3 小時整點）與 :20 的監控聚合；不 import 檢索、嵌入、LLM 模組（`MemoryMax=512M`，
+  `tests/test_db_snapshot.py` 守門）。
+
+安裝（人工，需 sudo；只在要啟用時做；schema 須已到 revision 0009）：
+
+```bash
+# 1) 先看這一輪會寫什麼（唯讀；各段權限不足會出現在 errors）
+uv run python scripts/db_snapshot.py --dry-run
+# 2) unit（非辦公室主機改用 deploy/install_units.sh）
+sudo install -m 0644 deploy/systemd/report-mark-db-snapshot.service deploy/systemd/report-mark-db-snapshot.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-db-snapshot.timer
+```
+
+驗收：`sudo systemctl start report-mark-db-snapshot.service` 後 `journalctl -u report-mark-db-snapshot -n 3` 看得到
+「完成 逐時快照已寫入…」；`scripts/verify_oneshot_ran.sh` 確認跑過；隔天 `SELECT granularity, count(*) FROM
+research.db_stat_snapshot GROUP BY 1` 有一列 day。catalog（`deploy/ops/services.*.toml`）的對應項目由 Admin v2
+Wave 2 補上。
+
+停用：
+
+```bash
+sudo systemctl disable --now report-mark-db-snapshot.timer   # 趨勢從此不再更新；既有的列留著（不會再被保留期清掉）
+```
+
+要連資料一起清：`DELETE FROM research.db_stat_snapshot;`（只是監控統計，刪了只是趨勢圖變空）。
+
+### 啟用 pg_stat_statements（獨立維護步驟；只寫文件，部署流程不會自動做）
+
+`pg_stat_statements` 要在 `shared_preload_libraries` 預載才能用，而改這個參數一定要重啟 PostgreSQL。兩個環境的前提
+不同（2026-10-07 唯讀查證）：
+
+- **辦公室本機（測試環境，`report-mark-postgres` 容器，pg16）**：`shared_preload_libraries` 為空、擴充套件可用但
+  未建立。需要短暫停機（重啟容器期間 web 回 503、探針可能經 P5 開事件，挑維護窗口、事先告知）：
+
+  ```bash
+  # 1) 寫進 data volume 的 postgresql.auto.conf（容器重建也還在）
+  docker exec report-mark-postgres psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements'"
+  # 2) 重啟容器（短暫停機）
+  docker restart report-mark-postgres
+  docker exec report-mark-postgres psql -U postgres -Atc "SHOW shared_preload_libraries"   # 應為 pg_stat_statements
+  # 3) 在 research 庫建立擴充（只有這個庫的頁面會用到）
+  docker exec report-mark-postgres psql -U postgres -d research -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"
+  ```
+
+  若 `shared_preload_libraries` 原本已有其他值，`ALTER SYSTEM` 要把舊值一起列上（逗號分隔），否則會被蓋掉。
+- **正式環境（EC2＋RDS；AWS 資源名稱與部分文件仍寫 staging）**：參數群組
+  `report-research-staging-dbparametergroup-…` 已含 `pg_stat_statements,pg_tle`（static、in-sync），**不需要
+  reboot**；只要以 master 帳號（`rds_superuser`）在 app 用的庫執行一次
+  `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`。app 帳號若沒有 `pg_read_all_stats`，頁面看得到統計但
+  別人的語句文字會顯示「權限不足、已隱藏」；要看全部再以 master `GRANT pg_read_all_stats TO <app 帳號>`
+  （是否授予由使用者決定）。
+
+驗收：頁面「慢查詢」不再顯示原因、出現依總執行時間排序的語句。統計自 `pg_stat_statements_reset()` 或重啟起累計。
+回退：`DROP EXTENSION pg_stat_statements;`（本機若要連預載一起拿掉：`ALTER SYSTEM RESET shared_preload_libraries`
+＋重啟容器）。
+
+**隱私**：pg_stat_statements 會把常數正規化成 `$1`，但工具語句可能保留字面值；頁面只開給 `ops.read`、查詢文字
+壓空白後截斷 200 字。
+
 ## schema 與版本 drift 每日檢查（report-mark-schema-check）
 
 `report-mark-schema-check.timer` 每日 05:20 跑 `scripts/schema_baseline.py scheduled`，對目標庫唯讀：
@@ -2158,6 +2242,158 @@ sudo systemctl disable --now report-mark-upload.timer
 停掉之後：隔離區的檔案與 `report_upload` 都保留，已入庫的草稿維持不可見、仍可在管理頁發布或退回（退回後的清除要
 worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移除時另把 catalog 的 upload 與 polkit 的那一行拿掉
 重新安裝（「維運代理」步驟 3、4）。
+
+## 安全維運（Admin v2：登入事件、安全告警、保留期清除）
+
+登入、登出與權限提升的每種結果寫進 `research.auth_event`（revision 0009）：成功、密碼錯、帳號不存在、停用、TOTP 錯、
+第二步暫時憑證失效、被每 IP 限流擋下、非 HTTPS 遭拒、權限提升成功／失敗。設計重點：
+
+- **不存帳號名稱**：帳號存在時只有 UUID，帳號不存在時連 UUID 都沒有（帳號欄常被誤填成密碼）。管理後台顯示的名稱是讀取時
+  以 UUID 對帳號現值 join 的，已刪除帳號不顯示。IP、UA 只給 `audit.read` 的管理員看。
+- **記錄失敗不影響登入**（`security_ops.record_event` 吞掉例外、3 秒時限）。
+- **被攻擊時不放大成 DB 寫入**：被限流、非 HTTPS 遭拒、沒有有效暫時憑證的第二步只在 web 記憶體每 IP 計數，至少 60 秒才寫一列
+  彙總（`count`），由下一個登入請求或下一次 `/healthz/security` 落庫；web 重啟時尚未落庫的計數會遺失。
+- **不鎖帳號、不封 IP**（使用者定案 8）：`web/auth.py` 的每 IP 失敗限流（5 次／300 秒）原封不動；要擋 IP 走下面的 Cloudflare WAF。
+- 保留至少 365 天、納入每日備份；刪帳時刻意保留（只有 UUID、IP、UA）。
+
+### 安全告警（`report-mark-security-health`／`report-mark-security-incident`）
+
+判斷在 web（`/healthz/security`，只回答本機直連、只回 `{"security": state}`），門檻在 `app/config.py`、可在 repo 根 `.env` 覆寫：
+
+| 條件 | 旋鈕（預設） | state | 探針退出碼 → P5 |
+|---|---|---|---|
+| 稽核雜湊鏈驗證失敗（結果快取 `AUDIT_VERIFY_CACHE_SECONDS`＝3600） | — | `audit_chain_broken` | 1 → CRITICAL |
+| `SECURITY_WINDOW_MINUTES`（15）分鐘內權限提升失敗 | `SECURITY_ELEVATE_FAILURE_THRESHOLD`（3） | `elevate_failures` | 2 → CRITICAL |
+| 同一帳號「上次登入成功之後」連續失敗（密碼錯、停用、TOTP 錯） | `SECURITY_ACCOUNT_FAILURE_THRESHOLD`（5） | `account_failures` | 2 → CRITICAL |
+| 視窗內全站登入失敗（含被限流擋下的請求數） | `SECURITY_LOGIN_FAILURE_THRESHOLD`（20） | `login_failures` | 2 → CRITICAL |
+| DB 查不到、逾時、web 連不上、端點不存在 | — | `unknown`（或沒有回應） | 3 → hold（不開也不關） |
+| 探針缺 curl | — | — | 4 → WARNING |
+
+多項同時成立回表中最前面那一個。P5（`scripts/incident_handler.sh`，沒有改）的通知只說「探針回報失敗（exit=1 或 2）」；是哪一條
+在探針 unit 的 journal（`journalctl -u report-mark-security-health -n 5` 的 `reason=security_<state>`）與 web 日誌的「安全告警」一行
+（只有計數與門檻），細節在管理後台「安全」頁。Slack 只會收到 FIRING／ESCALATED／REMINDER／RESOLVED，不為每筆登入事件發通知；
+「有人被授予 super」這類一次性事件只在安全頁的高風險時間線上。
+
+**處置**：
+
+- `login_failures`／`account_failures`：到「安全」頁看可疑 IP 與登入事件。外部單一來源的暴力嘗試 → 照下面的 Cloudflare WAF 手冊封鎖；
+  同事自己忘了密碼 → 協助重設（不需要做什麼，失敗停了 15 分鐘後自動 RESOLVED）。帳號被針對時考慮請本人改密碼並開 TOTP。
+- `elevate_failures`：已登入的 session 在猜密碼（cookie 外流的典型跡象）。在「安全」頁找出那個 session 撤銷、請本人改密碼。
+- `audit_chain_broken`：疑似有人改了 `admin_audit_log`。**不要**重算或修補；先保全（`pg_dump -t research.admin_audit_log`），
+  `uv run python scripts/audit_anchor.py --verify-only` 看對不上的 id，對照 NAS 上的 `audit-anchors.jsonl` 與備份，照事故處理。
+
+門檻是起始值，上線後依實際分布調（改 `.env` 後重啟 web）。
+
+#### 安裝（人工，需 sudo；只在要啟用時做）
+
+前提：庫已到 revision 0009、web 已是含 Admin v2 Security 的版本（`curl -s http://127.0.0.1:8097/healthz/security` 回
+`{"security":"ok"}` 或 `unknown`，不是 404）。
+
+```bash
+sudo install -m 0644 deploy/systemd/report-mark-security-health.{service,timer} \
+    deploy/systemd/report-mark-security-incident.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-security-health.timer report-mark-security-incident.timer
+```
+
+驗收：`sudo systemctl start report-mark-security-health.service` 後 `systemctl show report-mark-security-health -p ExecMainStatus`
+為 0（3＝判不出來，看 web 日誌）、`journalctl -u report-mark-security-health -n 1` 有 `status=ok`；P5 實例跑過一輪後
+`journalctl -u report-mark-security-incident -n 2` 是 `action=noop`。狀態目錄是 `data/.incidents-security/`（已在 .gitignore）。
+
+#### 停用
+
+```bash
+sudo systemctl disable --now report-mark-security-incident.timer report-mark-security-health.timer
+rm -rf data/.incidents-security   # 可選
+```
+
+要停就兩個一起停：只停探針 timer 時 P5 實例會照設計回報 MONITOR_BLIND。
+
+### 保留期清除（`report-mark-security-retention`）
+
+每日 04:45（備份 03:30、稽核錨定 04:15 之後）跑 `scripts/security_retention.py`：刪除超過 `AUTH_EVENT_RETENTION_DAYS`
+的 `auth_event`（**下限 365**，設定與清除函式各夾一次）與結束（撤銷或絕對到期）超過 `SESSION_EXPIRED_RETENTION_DAYS`（90）的
+`user_session`；仍有效的 session 永遠不刪。分批 commit。DB 不可用 rc=2 → OnFailure 告警。第一次執行時 `user_session` 可能一次刪掉
+較多列（它從未清理過），屬預期。
+
+```bash
+# 安裝
+sudo install -m 0644 deploy/systemd/report-mark-security-retention.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-security-retention.timer
+BASE=$(bash scripts/verify_oneshot_ran.sh baseline report-mark-security-retention.service)
+sudo systemctl start report-mark-security-retention.service
+bash scripts/verify_oneshot_ran.sh verify report-mark-security-retention.service "$BASE"
+# 停用
+sudo systemctl disable --now report-mark-security-retention.timer
+```
+
+稽核錨定（`report-mark-audit-anchor`）不需要重新安裝：同一支 `scripts/audit_anchor.py` 現在每次正式執行後多寫一份
+`data/health/audit_anchor.json`（給安全頁的「最後錨定」；寫不進去不改退出碼）。安全頁超過 48 小時沒有新結果會顯示「過期」。
+
+### Cloudflare WAF 自訂規則（封鎖可疑 IP 的操作手冊）
+
+本站刻意不做 app 層 IP 封鎖（與 Cloudflare、nginx `limit_req` 重疊，而且封錯會把同事擋在門外）。安全頁的「可疑 IP」只彙整；
+要擋人在 Cloudflare 做。nginx 以 `CF-Connecting-IP` 還原真實 IP，所以安全頁顯示的 IP 就是 Cloudflare 看到的來源 IP。
+
+1. 在安全頁確認：失敗與被限流的次數、涉及幾個帳號、有沒有成功過（`成功` 不是 0 時先當成帳號可能已被入侵處理：撤銷該帳號的
+   session、重設密碼）。**確認不是公司或同事的出口 IP**（辦公室、VPN、行動網路）。
+2. Cloudflare 儀表板 → 該網域 → **Security → WAF → Custom rules → Create rule**：
+   - Rule name：`block-suspicious-<IP>-<日期>`（之後才找得到、刪得掉）。
+   - Expression（Edit expression）：單一 IP `(ip.src eq 203.0.113.9)`；多個 `(ip.src in {203.0.113.9 198.51.100.0/24})`。
+     只想擋登入可再加 `and http.request.uri.path eq "/login"`。
+   - Action：外部陌生來源用 **Block**；不確定是不是自己人時用 **Managed Challenge**（真人過得去、腳本過不去）。
+   - Deploy。
+3. 驗證：Cloudflare **Security → Events** 看到該規則的命中；本站安全頁該 IP 的事件不再增加；`/healthz/security` 在視窗（15 分鐘）
+   過後回 `ok`，P5 送 RESOLVED。
+4. 記錄：在事件紀錄（或 `docs/incidents/`）寫下 IP、理由、規則名稱與預計移除日期。規則**不會自己過期**——兩週後回頭檢查，
+   沒有再命中就刪掉（Custom rules → 該規則 → Delete），免得清單越積越多、哪天擋到換了 IP 的同事。
+
+持續性的撞庫（大量不同 IP、低頻）不適合逐條封：改在 Cloudflare 對 `/login` 的 POST 加 **Rate limiting rule**（例如同一 IP
+10 分鐘 20 次 → Managed Challenge），並請同事開 TOTP。區網直連（不經 Cloudflare）不受這些規則影響，本來就被視為可信。
+
+## 使用分析每晚彙總（report-mark-analytics-rollup）
+
+管理後台「使用分析」（`/api/admin/analytics/*`）最近 `ANALYTICS_LIVE_WINDOW_DAYS`（90）天即時查 `qa_log`／`usage_counter`，
+更早的日子**只讀** `research.analytics_daily`（revision 0009）。`qa_log` 會被使用者硬刪、`usage_counter` 只留 400 天，
+所以每一天都必須在離開即時窗期前彙總過，否則那天在長期趨勢上永遠是「沒有資料」（`has_data=false`）。
+
+`report-mark-analytics-rollup.timer` 每天 02:20 跑 `scripts/analytics_rollup.py`（純 SQL、零 LLM、不載嵌入模型）：
+覆寫昨天，並補齊窗期內還沒有彙總標記（`rollup.computed`）的日子——機器關機錯過幾晚也追得上。一天一個交易、先刪後寫，
+重跑同一天結果相同；同一天的並行執行以 advisory lock 排隊。`analytics_daily` 沒有 user_id、刪帳後保留（使用者定案 4），
+列入備份。退出碼：0 正常、1 計算／寫入失敗或參數錯誤（告警）、2 DB 不可用（`SuccessExitStatus=2`，DB 故障由 P5 告警）。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0009（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) 第一次啟用：先試算再補滿窗期（已彙總的日子不會被覆寫）
+uv run python scripts/analytics_rollup.py --dry-run
+uv run python scripts/analytics_rollup.py
+# 3) 排程
+sudo install -m 0644 deploy/systemd/report-mark-analytics-rollup.service deploy/systemd/report-mark-analytics-rollup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-analytics-rollup.timer
+```
+
+驗收：`systemctl list-timers report-mark-analytics-rollup.timer` 有下一次觸發；跑過一輪後
+`systemctl show report-mark-analytics-rollup -p Result,ExecMainStatus`（判準見「oneshot 的手動驗證」），並以管理員打
+`/api/admin/analytics/overview?since=<91 天前>`，`range.spans` 出現 `rollup` 段、那段的 `daily[].has_data` 為 true。
+ops catalog 的對應項目與「立即執行」由 Admin v2 Wave 2 一起加（`deploy/ops/services.*.toml`）。
+
+**回填**：`--backfill N` 從 `qa_log` 補最近 N 天裡缺的日子，**預設不覆寫已彙總的日子**——重算會讓刪帳或使用者刪歷史之前
+已保留的匿名彙總縮水。確定要重算（例如修了指標的 bug）才加 `--force`，或以 `--day YYYY-MM-DD` 重算單一天。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-analytics-rollup.timer
+```
+
+停掉之後最近 90 天照常即時顯示；之後離開窗期的日子沒有彙總，長期趨勢在那段顯示「沒有資料」。已寫入的 `analytics_daily`
+保留。恢復時重新 `enable --now`，並手動跑一次 `scripts/analytics_rollup.py --backfill 90` 補回還在窗期內的缺口
+（已離開窗期、`qa_log` 仍在的日子也能以更大的 N 補，但被硬刪的問答補不回來）。
 
 ## 功能開關與 staging 啟用矩陣（Admin v2）
 

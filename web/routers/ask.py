@@ -16,6 +16,11 @@ _sse、_with_heartbeat 走 web.deps（測試 patch web.deps.X 即涵蓋）。
 請求帶的 conversation_id／regenerate_of／edit_of 若指到別人的列（含個別帳號上線前的
 NULL 共用歷史），在開始串流**之前**回 404——SSE 一旦送出 200 就改不了狀態碼。
 找不到的參照照舊放行（當新題／新串），理由見 `answer.qa_is_foreign`。
+
+**每人每日配額**（Admin v2，`app/services/quota.py`）：通過驗證、參照檢查與 `queue_full()` 之後才計一次
+`ask`（排隊滿額被拒不扣次數），所以重新生成、編輯重問都算、`/api/ask/stop` 不算。超額時：影子模式照常放行
+（`usage_counter` 記 `ask_over`）；兩道開關都開才回 429 `quota_exceeded`，`Retry-After`＝距台北午夜的秒數。
+配額計數寫不進 DB 時放行（費用控管不是安全邊界）。與 `_ASK_GATE` 互相獨立：閘門管全站同時幾題，配額管每人每天幾題。
 """
 import logging
 import os
@@ -28,6 +33,7 @@ from app.services.accounts import User
 from app.services.llm import LLMUnavailableError
 from web import authz, deps
 from web.concurrency import ConcurrencyGate
+from web.errors import AppError
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +87,17 @@ _LLM_ERROR_DETAILS = {
 def _llm_error_detail(exc: LLMUnavailableError) -> str:
     """LLM 不可用時 SSE error 的 detail（放在所有 @router 之上，理由見 AGENTS.md）。"""
     return _LLM_ERROR_DETAILS.get(getattr(exc, "kind", None) or "", ASK_ERROR_DETAIL)
+
+
+async def _charge_quota(user: User) -> None:
+    """計一次 ask；只有「超額且正式阻擋」時拋 429（放在所有 @router 之上，理由見 AGENTS.md）。"""
+    decision = await deps.quota.charge(user, "ask")
+    if not decision.allowed:
+        raise AppError(
+            429, "quota_exceeded", deps.quota.exceeded_message(decision),
+            headers={"Retry-After": str(decision.retry_after or 1)},
+            extra={"kind": decision.kind, "limit": decision.limit},
+        )
 
 
 def _check_ref_formats(*, conversation_id, regenerate_of, edit_of, request_id) -> None:
@@ -152,6 +169,8 @@ async def ask(req: AskRequest, user: User = Depends(authz.current_user)):
             detail="問答排隊人數已滿，請稍後再試",
             headers={"Retry-After": "30"},
         )
+    # 配額在 queue_full 之後：排隊滿額被拒的那一次不扣（設計 §1.3）。
+    await _charge_quota(user)
 
     async def gen():
         # 排隊要先說。這段跑在回應開始串流之後，若直接 await 到取得名額，使用者看到的

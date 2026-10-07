@@ -122,6 +122,137 @@ export const AdminUploadTakeawaySchema = z.object({
 })
 export type AdminUploadTakeaway = z.infer<typeof AdminUploadTakeawaySchema>
 
+export const AdminWithoutTotpSchema = z.object({
+  id: z.string(),
+  username: z.string(),
+  is_super: z.boolean(),
+})
+export type AdminWithoutTotp = z.infer<typeof AdminWithoutTotpSchema>
+
+export const AlertAccountSchema = z.object({
+  user_id: z.string(),
+  username: z.string().nullable().optional(),
+})
+export type AlertAccount = z.infer<typeof AlertAccountSchema>
+
+export const AnalyticsAuditCountSchema = z.object({
+  action: z.string(),
+  count: z.number().int(),
+})
+export type AnalyticsAuditCount = z.infer<typeof AnalyticsAuditCountSchema>
+
+export const AnalyticsCellSchema = z.object({
+  key: z.string(),
+  label: z.string().nullable().optional(),
+  value: z.number().int().nullable().optional(),
+  users: z.number().int().nullable().optional(),
+  suppressed: z.boolean(),
+  suppression_reason: z.enum(['min_users', 'complementary']).nullable().optional(),
+})
+export type AnalyticsCell = z.infer<typeof AnalyticsCellSchema>
+
+export const AnalyticsDailyPointSchema = z.object({
+  day: z.string(),
+  source: z.enum(['live', 'rollup']),
+  has_data: z.boolean(),
+  questions: z.number().int().nullable().optional(),
+  askers: z.number().int().nullable().optional(),
+  active_users: z.number().int().nullable().optional(),
+  reading: z.number().int(),
+  report_file: z.number().int(),
+  search: z.number().int(),
+  latency_p50_ms: z.number().nullable().optional(),
+  latency_p95_ms: z.number().nullable().optional(),
+  thinking_p50_ms: z.number().nullable().optional(),
+  thinking_p95_ms: z.number().nullable().optional(),
+})
+export type AnalyticsDailyPoint = z.infer<typeof AnalyticsDailyPointSchema>
+
+export const AnalyticsDistributionSchema = z.object({
+  name: z.enum(['path', 'decided_by', 'llm_model', 'llm_error']),
+  suppressible: z.boolean(),
+  cells: z.array(AnalyticsCellSchema),
+  suppressed_count: z.number().int(),
+  complementary_count: z.number().int(),
+})
+export type AnalyticsDistribution = z.infer<typeof AnalyticsDistributionSchema>
+
+export const AnalyticsLatencySchema = z.object({
+  p50_ms: z.number().nullable().optional(),
+  p95_ms: z.number().nullable().optional(),
+  thinking_p50_ms: z.number().nullable().optional(),
+  thinking_p95_ms: z.number().nullable().optional(),
+  n: z.number().int(),
+})
+export type AnalyticsLatency = z.infer<typeof AnalyticsLatencySchema>
+
+export const AnalyticsOpsWeekSchema = z.object({
+  week_start: z.string(),
+  partial: z.boolean(),
+  uploads_received: z.number().int(),
+  uploads_published: z.number().int(),
+  uploads_rejected: z.number().int(),
+  uploads_infected: z.number().int(),
+  uploads_failed: z.number().int(),
+  reviews: z.number().int(),
+  qa_content_reads: z.number().int(),
+})
+export type AnalyticsOpsWeek = z.infer<typeof AnalyticsOpsWeekSchema>
+
+export const AnalyticsOverviewTotalsSchema = z.object({
+  questions: z.number().int(),
+  stopped: z.number().int(),
+  reading: z.number().int(),
+  report_file: z.number().int(),
+  search: z.number().int(),
+  active_users_peak: z.number().int(),
+  distinct_users_live: z.number().int().nullable().optional(),
+  missing_days: z.number().int(),
+})
+export type AnalyticsOverviewTotals = z.infer<typeof AnalyticsOverviewTotalsSchema>
+
+export const AnalyticsQualityWeekSchema = z.object({
+  week_start: z.string(),
+  partial: z.boolean(),
+  questions: z.number().int(),
+  checked_all: z.number().int(),
+  judge_checked: z.number().int(),
+  degraded: z.number().int(),
+  below_min: z.number().int(),
+  avg_score: z.number().nullable().optional(),
+  score_n: z.number().int(),
+  likes: z.number().int(),
+  dislikes: z.number().int(),
+})
+export type AnalyticsQualityWeek = z.infer<typeof AnalyticsQualityWeekSchema>
+
+export const AnalyticsSpanSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  source: z.enum(['live', 'rollup']),
+})
+export type AnalyticsSpan = z.infer<typeof AnalyticsSpanSchema>
+
+export const AnalyticsTopListSchema = z.object({
+  cells: z.array(AnalyticsCellSchema),
+  suppressed_count: z.number().int(),
+  complementary_count: z.number().int(),
+  truncated: z.boolean(),
+})
+export type AnalyticsTopList = z.infer<typeof AnalyticsTopListSchema>
+
+export const AuditAnchorItemSchema = z.object({
+  state: z.enum(['ok', 'tamper', 'error', 'stale', 'missing', 'corrupt']),
+  at: z.string().nullable().optional(),
+  written_at: z.string().nullable().optional(),
+  age_hours: z.number().nullable().optional(),
+  head_id: z.number().int().nullable().optional(),
+  total: z.number().int().nullable().optional(),
+  anchors_checked: z.number().int().nullable().optional(),
+  message: z.string().nullable().optional(),
+})
+export type AuditAnchorItem = z.infer<typeof AuditAnchorItemSchema>
+
 export const AuditChainResponseSchema = z.object({
   ok: z.boolean(),
   total: z.number().int(),
@@ -152,6 +283,17 @@ export const AuditItemSchema = z.object({
 })
 export type AuditItem = z.infer<typeof AuditItemSchema>
 
+export const AuditLiveItemSchema = z.object({
+  state: z.enum(['ok', 'broken', 'error']),
+  total: z.number().int().nullable().optional(),
+  head_id: z.number().int().nullable().optional(),
+  broken_count: z.number().int().optional(),
+  checked_at: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+  cache_seconds: z.number().int(),
+})
+export type AuditLiveItem = z.infer<typeof AuditLiveItemSchema>
+
 export const AuditResponseSchema = z.object({
   total: z.number().int(),
   limit: z.number().int(),
@@ -161,6 +303,26 @@ export const AuditResponseSchema = z.object({
   items: z.array(AuditItemSchema),
 })
 export type AuditResponse = z.infer<typeof AuditResponseSchema>
+
+export const AuthEventItemSchema = z.object({
+  id: z.number().int(),
+  occurred_at: z.string().nullable().optional(),
+  event: z.string(),
+  reason: z.string().nullable().optional(),
+  user_id: z.string().nullable().optional(),
+  username: z.string().nullable().optional(),
+  session_id: z.string().nullable().optional(),
+  ip: z.string().nullable().optional(),
+  user_agent: z.string().nullable().optional(),
+  count: z.number().int().optional(),
+})
+export type AuthEventItem = z.infer<typeof AuthEventItemSchema>
+
+export const AuthEventListResponseSchema = z.object({
+  items: z.array(AuthEventItemSchema),
+  next_before_id: z.number().int().nullable().optional(),
+})
+export type AuthEventListResponse = z.infer<typeof AuthEventListResponseSchema>
 
 export const BulkReportResultSchema = z.object({
   file_hash: z.string(),
@@ -399,6 +561,26 @@ export const GitInfoSchema = z.object({
 })
 export type GitInfo = z.infer<typeof GitInfoSchema>
 
+export const HighRiskItemSchema = z.object({
+  id: z.number().int(),
+  category: z.enum(['privilege', 'elevation', 'session', 'credential', 'deletion', 'ops', 'data_access', 'config']),
+  action: z.string(),
+  actor_user_id: z.string().nullable().optional(),
+  actor_username: z.string().nullable().optional(),
+  target_type: z.string(),
+  target_id: z.string().nullable().optional(),
+  detail: z.record(z.string(), z.unknown()),
+  created_at: z.string().nullable().optional(),
+})
+export type HighRiskItem = z.infer<typeof HighRiskItemSchema>
+
+export const HighRiskResponseSchema = z.object({
+  days: z.number().int(),
+  items: z.array(HighRiskItemSchema),
+  next_before_id: z.number().int().nullable().optional(),
+})
+export type HighRiskResponse = z.infer<typeof HighRiskResponseSchema>
+
 export const IncidentEventItemSchema = z.object({
   event_id: z.string(),
   occurred_at: z.string(),
@@ -445,6 +627,64 @@ export const IncidentListResponseSchema = z.object({
   items: z.array(IncidentItemSchema),
 })
 export type IncidentListResponse = z.infer<typeof IncidentListResponseSchema>
+
+export const IncidentTrendComponentSchema = z.object({
+  total: z.number().int(),
+  resolved: z.number().int(),
+  lost: z.number().int(),
+  firing: z.number().int(),
+  critical: z.number().int(),
+  warning: z.number().int(),
+  mttr_seconds: z.number().nullable().optional(),
+  p50_seconds: z.number().nullable().optional(),
+  p90_seconds: z.number().nullable().optional(),
+  component: z.string(),
+})
+export type IncidentTrendComponent = z.infer<typeof IncidentTrendComponentSchema>
+
+export const IncidentTrendReasonSchema = z.object({
+  reason: z.string(),
+  total: z.number().int(),
+  components: z.array(z.string()),
+})
+export type IncidentTrendReason = z.infer<typeof IncidentTrendReasonSchema>
+
+export const IncidentTrendStatsSchema = z.object({
+  total: z.number().int(),
+  resolved: z.number().int(),
+  lost: z.number().int(),
+  firing: z.number().int(),
+  critical: z.number().int(),
+  warning: z.number().int(),
+  mttr_seconds: z.number().nullable().optional(),
+  p50_seconds: z.number().nullable().optional(),
+  p90_seconds: z.number().nullable().optional(),
+})
+export type IncidentTrendStats = z.infer<typeof IncidentTrendStatsSchema>
+
+export const IncidentTrendWeekSchema = z.object({
+  week_start: z.string(),
+  component: z.string(),
+  severity: z.enum(['CRITICAL', 'WARNING']),
+  total: z.number().int(),
+  resolved: z.number().int(),
+  lost: z.number().int(),
+  firing: z.number().int(),
+})
+export type IncidentTrendWeek = z.infer<typeof IncidentTrendWeekSchema>
+
+export const JobFailureRateSchema = z.object({
+  unit: z.string(),
+  runs: z.number().int(),
+  finished: z.number().int(),
+  failed: z.number().int(),
+  lost: z.number().int(),
+  running: z.number().int(),
+  failure_rate: z.number().nullable().optional(),
+  last_failure_at: z.string().nullable().optional(),
+  last_started_at: z.string().nullable().optional(),
+})
+export type JobFailureRate = z.infer<typeof JobFailureRateSchema>
 
 export const JobItemSchema = z.object({
   host: z.string(),
@@ -737,6 +977,96 @@ export const PrivilegesRequestSchema = z.object({
 })
 export type PrivilegesRequest = z.infer<typeof PrivilegesRequestSchema>
 
+export const QuotaDefaultsSchema = z.object({
+  ask: z.number().int(),
+  export: z.number().int(),
+  upload: z.number().int(),
+})
+export type QuotaDefaults = z.infer<typeof QuotaDefaultsSchema>
+
+export const QuotaEnforcementSchema = z.object({
+  env_ceiling: z.boolean(),
+  flag_enabled: z.boolean(),
+  flag_scoped: z.boolean(),
+  flag_source: z.enum(['default', 'db', 'fallback']),
+  effective: z.boolean(),
+  mode: z.enum(['shadow', 'enforce']),
+})
+export type QuotaEnforcement = z.infer<typeof QuotaEnforcementSchema>
+
+export const QuotaItemSchema = z.object({
+  kind: z.enum(['ask', 'export', 'upload']),
+  used: z.number().int(),
+  over: z.number().int(),
+  limit: z.number().int().nullable(),
+  default_limit: z.number().int(),
+  mode: z.enum(['default', 'limit', 'unlimited']),
+  remaining: z.number().int().nullable().optional(),
+  reason: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+})
+export type QuotaItem = z.infer<typeof QuotaItemSchema>
+
+export const QuotaKindStatsSchema = z.object({
+  kind: z.enum(['ask', 'export', 'upload']),
+  default_limit: z.number().int(),
+  user_days: z.number().int(),
+  users: z.number().int(),
+  p50: z.number().int().nullable().optional(),
+  p95: z.number().int().nullable().optional(),
+  max: z.number().int().nullable().optional(),
+  over_user_days: z.number().int(),
+  over_events: z.number().int(),
+})
+export type QuotaKindStats = z.infer<typeof QuotaKindStatsSchema>
+
+export const QuotaOverTodaySchema = z.object({
+  ask: z.number().int(),
+  export: z.number().int(),
+})
+export type QuotaOverToday = z.infer<typeof QuotaOverTodaySchema>
+
+export const QuotaOverrideRequestSchema = z.object({
+  mode: z.enum(['default', 'limit', 'unlimited']),
+  daily_limit: z.number().int().nullable().optional(),
+  reason: z.string().nullable().optional(),
+})
+export type QuotaOverrideRequest = z.infer<typeof QuotaOverrideRequestSchema>
+
+export const QuotaOverrideResultSchema = z.object({
+  changed: z.boolean(),
+  item: QuotaItemSchema,
+})
+export type QuotaOverrideResult = z.infer<typeof QuotaOverrideResultSchema>
+
+export const QuotaStatsSchema = z.object({
+  since_day: z.string(),
+  until_day: z.string(),
+  days: z.number().int(),
+  timezone: z.string(),
+  kinds: z.array(QuotaKindStatsSchema),
+})
+export type QuotaStats = z.infer<typeof QuotaStatsSchema>
+
+export const QuotaUserLlmSchema = z.object({
+  calls: z.number().int(),
+  failures: z.number().int(),
+  prompt_tokens: z.number().int(),
+  completion_tokens: z.number().int(),
+})
+export type QuotaUserLlm = z.infer<typeof QuotaUserLlmSchema>
+
+export const QuotaUserRowSchema = z.object({
+  user_id: z.string(),
+  username: z.string(),
+  role: z.enum(['admin', 'user']),
+  enabled: z.boolean(),
+  is_super: z.boolean(),
+  items: z.array(QuotaItemSchema),
+  llm: QuotaUserLlmSchema,
+})
+export type QuotaUserRow = z.infer<typeof QuotaUserRowSchema>
+
 export const ReconcileIssueSchema = z.object({
   type: z.string(),
   ref: z.string(),
@@ -848,6 +1178,76 @@ export const SecretsPresentSchema = z.object({
 })
 export type SecretsPresent = z.infer<typeof SecretsPresentSchema>
 
+export const SectionErrorSchema = z.object({
+  code: z.enum(['permission_denied', 'timeout', 'error']),
+  message: z.string(),
+})
+export type SectionError = z.infer<typeof SectionErrorSchema>
+
+export const SecurityAlertsResponseSchema = z.object({
+  state: z.enum(['ok', 'unknown', 'audit_chain_broken', 'elevate_failures', 'account_failures', 'login_failures']),
+  triggered: z.array(z.enum(['ok', 'unknown', 'audit_chain_broken', 'elevate_failures', 'account_failures', 'login_failures'])),
+  window_minutes: z.number().int(),
+  login_failures: z.number().int(),
+  login_failure_threshold: z.number().int(),
+  accounts_over: z.array(AlertAccountSchema),
+  max_account_failures: z.number().int(),
+  account_failure_threshold: z.number().int(),
+  elevate_failures: z.number().int(),
+  elevate_failure_threshold: z.number().int(),
+  audit_chain: z.enum(['ok', 'broken', 'error']),
+  events_error: z.string().nullable().optional(),
+})
+export type SecurityAlertsResponse = z.infer<typeof SecurityAlertsResponseSchema>
+
+export const SecuritySessionItemSchema = z.object({
+  id: z.string(),
+  user_id: z.string(),
+  username: z.string(),
+  created_at: z.string().nullable().optional(),
+  last_seen_at: z.string().nullable().optional(),
+  expires_at: z.string().nullable().optional(),
+  revoked_at: z.string().nullable().optional(),
+  ip: z.string().nullable().optional(),
+  user_agent: z.string().nullable().optional(),
+  elevated_until: z.string().nullable().optional(),
+  active: z.boolean(),
+  current: z.boolean().optional(),
+})
+export type SecuritySessionItem = z.infer<typeof SecuritySessionItemSchema>
+
+export const SecuritySessionListResponseSchema = z.object({
+  items: z.array(SecuritySessionItemSchema),
+})
+export type SecuritySessionListResponse = z.infer<typeof SecuritySessionListResponseSchema>
+
+export const SlowQueryItemSchema = z.object({
+  queryid: z.string().nullable().optional(),
+  query: z.string().nullable().optional(),
+  query_truncated: z.boolean(),
+  query_hidden: z.boolean(),
+  calls: z.number().int(),
+  total_ms: z.number(),
+  mean_ms: z.number(),
+  rows: z.number().int(),
+  cache_hit_ratio: z.number().nullable().optional(),
+  temp_blks_written: z.number().int(),
+})
+export type SlowQueryItem = z.infer<typeof SlowQueryItemSchema>
+
+export const SlowQueryResponseSchema = z.object({
+  available: z.boolean(),
+  reason: z.enum(['extension_missing', 'not_preloaded', 'permission_denied', 'timeout', 'error']).nullable().optional(),
+  message: z.string().nullable().optional(),
+  stats_reset: z.string().nullable().optional(),
+  extension_version: z.string().nullable().optional(),
+  sort: z.enum(['total', 'mean', 'calls']).nullable().optional(),
+  limit: z.number().int().nullable().optional(),
+  hidden_count: z.number().int().optional(),
+  items: z.array(SlowQueryItemSchema).optional(),
+})
+export type SlowQueryResponse = z.infer<typeof SlowQueryResponseSchema>
+
 export const StorageCheckSchema = z.object({
   state: z.string(),
   consecutive_failures: z.number().int().optional(),
@@ -857,12 +1257,94 @@ export const StorageCheckSchema = z.object({
 })
 export type StorageCheck = z.infer<typeof StorageCheckSchema>
 
+export const SuspiciousIpItemSchema = z.object({
+  ip: z.string(),
+  failures: z.number().int(),
+  locked: z.number().int(),
+  insecure: z.number().int(),
+  successes: z.number().int(),
+  distinct_users: z.number().int(),
+  first_seen: z.string().nullable().optional(),
+  last_seen: z.string().nullable().optional(),
+})
+export type SuspiciousIpItem = z.infer<typeof SuspiciousIpItemSchema>
+
+export const SuspiciousIpResponseSchema = z.object({
+  hours: z.number().int(),
+  min_failures: z.number().int(),
+  items: z.array(SuspiciousIpItemSchema),
+})
+export type SuspiciousIpResponse = z.infer<typeof SuspiciousIpResponseSchema>
+
+export const TableStatSchema = z.object({
+  schema_name: z.string(),
+  table: z.string(),
+  total_bytes: z.number().int(),
+  row_estimate: z.number().int().nullable().optional(),
+  live_tuples: z.number().int(),
+  dead_tuples: z.number().int(),
+  dead_ratio: z.number().nullable().optional(),
+  last_autovacuum: z.string().nullable().optional(),
+  last_vacuum: z.string().nullable().optional(),
+  last_autoanalyze: z.string().nullable().optional(),
+  last_analyze: z.string().nullable().optional(),
+})
+export type TableStat = z.infer<typeof TableStatSchema>
+
+export const TablesSectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  table_count: z.number().int().nullable().optional(),
+  live_tuples: z.number().int().nullable().optional(),
+  dead_tuples: z.number().int().nullable().optional(),
+  dead_ratio: z.number().nullable().optional(),
+  limit: z.number().int().nullable().optional(),
+  items: z.array(TableStatSchema).optional(),
+})
+export type TablesSection = z.infer<typeof TablesSectionSchema>
+
 export const TimezoneInfoSchema = z.object({
   tz_env: z.string().nullable().optional(),
   name: z.string().optional(),
   utc_offset: z.string().optional(),
 })
 export type TimezoneInfo = z.infer<typeof TimezoneInfoSchema>
+
+export const TotpAdoptionResponseSchema = z.object({
+  users_total: z.number().int(),
+  users_enabled: z.number().int(),
+  admins_total: z.number().int(),
+  admins_enabled: z.number().int(),
+  admins_without_totp: z.array(AdminWithoutTotpSchema),
+  policy_required: z.boolean(),
+})
+export type TotpAdoptionResponse = z.infer<typeof TotpAdoptionResponseSchema>
+
+export const TrendPointSchema = z.object({
+  t: z.string(),
+  value: z.number().nullable().optional(),
+  min: z.number().nullable().optional(),
+  max: z.number().nullable().optional(),
+})
+export type TrendPoint = z.infer<typeof TrendPointSchema>
+
+export const UnusedIndexSchema = z.object({
+  schema_name: z.string(),
+  table: z.string(),
+  index: z.string(),
+  size_bytes: z.number().int(),
+  is_unique: z.boolean(),
+  is_primary: z.boolean(),
+})
+export type UnusedIndex = z.infer<typeof UnusedIndexSchema>
+
+export const UnusedIndexesSectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  count: z.number().int().nullable().optional(),
+  total_bytes: z.number().int().nullable().optional(),
+  limit: z.number().int().nullable().optional(),
+  items: z.array(UnusedIndexSchema).optional(),
+})
+export type UnusedIndexesSection = z.infer<typeof UnusedIndexesSectionSchema>
 
 export const UpdateUserRequestSchema = z.object({
   role: z.enum(['admin', 'user']).nullable().optional(),
@@ -902,6 +1384,20 @@ export const VersionsSectionSchema = z.object({
   error: z.string().nullable().optional(),
 })
 export type VersionsSection = z.infer<typeof VersionsSectionSchema>
+
+export const ActivitySectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  blks_hit: z.number().int().nullable().optional(),
+  blks_read: z.number().int().nullable().optional(),
+  cache_hit_ratio: z.number().nullable().optional(),
+  temp_files: z.number().int().nullable().optional(),
+  temp_bytes: z.number().int().nullable().optional(),
+  deadlocks: z.number().int().nullable().optional(),
+  xact_commit: z.number().int().nullable().optional(),
+  xact_rollback: z.number().int().nullable().optional(),
+  stats_reset: z.string().nullable().optional(),
+})
+export type ActivitySection = z.infer<typeof ActivitySectionSchema>
 
 export const AdminUploadDetailSchema = z.object({
   upload_id: z.string(),
@@ -964,6 +1460,46 @@ export const AdminUploadPreviewSchema = z.object({
 })
 export type AdminUploadPreview = z.infer<typeof AdminUploadPreviewSchema>
 
+export const AnalyticsRangeSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  today: z.string(),
+  live_since: z.string(),
+  timezone: z.string(),
+  min_users: z.number().int(),
+  spans: z.array(AnalyticsSpanSchema),
+})
+export type AnalyticsRange = z.infer<typeof AnalyticsRangeSchema>
+
+export const AnalyticsRoutesResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  questions: z.number().int(),
+  stopped: z.number().int(),
+  llm_truncated: z.number().int(),
+  invalid_citation_rows: z.number().int(),
+  invalid_citations: z.number().int(),
+  distributions: z.array(AnalyticsDistributionSchema),
+})
+export type AnalyticsRoutesResponse = z.infer<typeof AnalyticsRoutesResponseSchema>
+
+export const AnalyticsTopResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  limit: z.number().int(),
+  targets: AnalyticsTopListSchema,
+  reports: AnalyticsTopListSchema,
+  markets: AnalyticsTopListSchema,
+  reading: AnalyticsTopListSchema,
+  report_file: AnalyticsTopListSchema,
+  search_markets: AnalyticsTopListSchema,
+})
+export type AnalyticsTopResponse = z.infer<typeof AnalyticsTopResponseSchema>
+
+export const AuditChainStateResponseSchema = z.object({
+  live: AuditLiveItemSchema,
+  anchor: AuditAnchorItemSchema,
+})
+export type AuditChainStateResponse = z.infer<typeof AuditChainStateResponseSchema>
+
 export const ConfigSectionSchema = z.object({
   db_target: z.string().nullable().optional(),
   object_storage_mode: z.string().nullable().optional(),
@@ -979,6 +1515,50 @@ export const ConfigSectionSchema = z.object({
   error: z.string().nullable().optional(),
 })
 export type ConfigSection = z.infer<typeof ConfigSectionSchema>
+
+export const ConnectionsSectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  max_connections: z.number().int().nullable().optional(),
+  reserved_connections: z.number().int().nullable().optional(),
+  usable_connections: z.number().int().nullable().optional(),
+  total: z.number().int().nullable().optional(),
+  this_database: z.number().int().nullable().optional(),
+  hidden: z.number().int().nullable().optional(),
+  by_state: z.record(z.string(), z.unknown()).optional(),
+  usage_ratio: z.number().nullable().optional(),
+})
+export type ConnectionsSection = z.infer<typeof ConnectionsSectionSchema>
+
+export const DatabaseSectionSchema = z.object({
+  error: SectionErrorSchema.nullable().optional(),
+  name: z.string().nullable().optional(),
+  size_bytes: z.number().int().nullable().optional(),
+  server_version: z.string().nullable().optional(),
+})
+export type DatabaseSection = z.infer<typeof DatabaseSectionSchema>
+
+export const DbOverviewResponseSchema = z.object({
+  generated_at: z.string(),
+  statement_timeout_ms: z.number().int(),
+  database: DatabaseSectionSchema,
+  tables: TablesSectionSchema,
+  unused_indexes: UnusedIndexesSectionSchema,
+  connections: ConnectionsSectionSchema,
+  activity: ActivitySectionSchema,
+})
+export type DbOverviewResponse = z.infer<typeof DbOverviewResponseSchema>
+
+export const DbTrendResponseSchema = z.object({
+  metric: z.enum(['db_size_bytes', 'connections_total', 'connections_active', 'connections_idle_in_tx', 'dead_tuple_ratio', 'table_bytes', 'cache_hit_ratio', 'temp_bytes', 'deadlocks']),
+  kind: z.enum(['gauge', 'rate', 'ratio']),
+  table: z.string().nullable().optional(),
+  granularity: z.enum(['hour', 'day']),
+  since: z.string(),
+  until: z.string(),
+  points: z.array(TrendPointSchema),
+  tables: z.array(z.string()),
+})
+export type DbTrendResponse = z.infer<typeof DbTrendResponseSchema>
 
 export const DiagnosticsChecksSchema = z.object({
   db: DbCheckSchema,
@@ -1024,6 +1604,43 @@ export const IncidentDetailSchema = z.object({
 })
 export type IncidentDetail = z.infer<typeof IncidentDetailSchema>
 
+export const IncidentTrendsResponseSchema = z.object({
+  since: z.string(),
+  until: z.string(),
+  weeks: z.array(IncidentTrendWeekSchema),
+  summary: IncidentTrendStatsSchema,
+  by_component: z.array(IncidentTrendComponentSchema),
+  top_reasons: z.array(IncidentTrendReasonSchema),
+  jobs_since: z.string(),
+  jobs_until: z.string(),
+  jobs: z.array(JobFailureRateSchema),
+})
+export type IncidentTrendsResponse = z.infer<typeof IncidentTrendsResponseSchema>
+
+export const LlmUsageCombinedSchema = z.object({
+  totals: LlmUsageTotalsSchema,
+  by_day: z.array(LlmUsageDaySchema),
+  cost_available: z.boolean(),
+})
+export type LlmUsageCombined = z.infer<typeof LlmUsageCombinedSchema>
+
+export const LlmUsageOnlineSchema = z.object({
+  available: z.boolean(),
+  error: z.string().nullable().optional(),
+  since_day: z.string(),
+  until_day: z.string(),
+  totals: LlmUsageTotalsSchema,
+  by_day: z.array(LlmUsageDaySchema),
+  by_task: z.array(LlmUsageTaskSchema),
+  by_model: z.array(LlmUsageModelSchema),
+  rows: z.array(LlmUsageRowSchema),
+  rows_truncated: z.boolean(),
+  attributed_users: z.number().int(),
+  unattributed_calls: z.number().int(),
+  cost_available: z.boolean(),
+})
+export type LlmUsageOnline = z.infer<typeof LlmUsageOnlineSchema>
+
 export const LlmUsageResponseSchema = z.object({
   since: z.string(),
   until: z.string(),
@@ -1036,6 +1653,8 @@ export const LlmUsageResponseSchema = z.object({
   rows: z.array(LlmUsageRowSchema),
   rows_truncated: z.boolean(),
   cost_available: z.boolean(),
+  online: LlmUsageOnlineSchema.nullable().optional(),
+  combined: LlmUsageCombinedSchema.nullable().optional(),
 })
 export type LlmUsageResponse = z.infer<typeof LlmUsageResponseSchema>
 
@@ -1085,6 +1704,17 @@ export const OpsServiceStatusSchema = z.object({
   timer_state: OpsTimerStateSchema.nullable().optional(),
 })
 export type OpsServiceStatus = z.infer<typeof OpsServiceStatusSchema>
+
+export const QuotaOverviewSchema = z.object({
+  day: z.string(),
+  timezone: z.string(),
+  resets_in_seconds: z.number().int(),
+  defaults: QuotaDefaultsSchema,
+  enforcement: QuotaEnforcementSchema,
+  over_today: QuotaOverTodaySchema,
+  users: z.array(QuotaUserRowSchema),
+})
+export type QuotaOverview = z.infer<typeof QuotaOverviewSchema>
 
 export const R2ReconcileSectionSchema = z.object({
   status: z.enum(['ok', 'warn', 'fail', 'unknown']),
@@ -1140,6 +1770,30 @@ export const RuntimeSectionSchema = z.object({
   error: z.string().nullable().optional(),
 })
 export type RuntimeSection = z.infer<typeof RuntimeSectionSchema>
+
+export const AnalyticsOperationsResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  weeks: z.array(AnalyticsOpsWeekSchema),
+  audit_actions: z.array(AnalyticsAuditCountSchema),
+})
+export type AnalyticsOperationsResponse = z.infer<typeof AnalyticsOperationsResponseSchema>
+
+export const AnalyticsOverviewResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  totals: AnalyticsOverviewTotalsSchema,
+  latency: AnalyticsLatencySchema,
+  daily: z.array(AnalyticsDailyPointSchema),
+})
+export type AnalyticsOverviewResponse = z.infer<typeof AnalyticsOverviewResponseSchema>
+
+export const AnalyticsQualityResponseSchema = z.object({
+  range: AnalyticsRangeSchema,
+  judge_model: z.string(),
+  faithfulness_min: z.number(),
+  other_judge_checked: z.number().int(),
+  weeks: z.array(AnalyticsQualityWeekSchema),
+})
+export type AnalyticsQualityResponse = z.infer<typeof AnalyticsQualityResponseSchema>
 
 export const DataHealthResponseSchema = z.object({
   generated_at: z.string(),
@@ -1244,12 +1898,28 @@ function qs(query: Record<string, string | number | boolean | null | undefined>)
 }
 
 export const adminApi = {
+  /** GET /api/admin/analytics/operations — Get Analytics Operations */
+  getAnalyticsOperations: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/operations${qs(query)}`, AnalyticsOperationsResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/analytics/overview — Get Analytics Overview */
+  getAnalyticsOverview: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/overview${qs(query)}`, AnalyticsOverviewResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/analytics/quality — Get Analytics Quality */
+  getAnalyticsQuality: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/quality${qs(query)}`, AnalyticsQualityResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/analytics/routes — Get Analytics Routes */
+  getAnalyticsRoutes: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/analytics/routes${qs(query)}`, AnalyticsRoutesResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/analytics/top — Get Analytics Top */
+  getAnalyticsTop: (query: { since?: string | null; until?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/analytics/top${qs(query)}`, AnalyticsTopResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit — Audit Log */
   auditLog: (query: { limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/audit${qs(query)}`, AuditResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/audit/verify — Verify Audit Chain */
   verifyAuditChain: () => requestJSON('/api/admin/audit/verify', AuditChainResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/data-health — Get Data Health */
   getDataHealth: () => requestJSON('/api/admin/data-health', DataHealthResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/db/overview — Get Db Overview */
+  getDbOverview: () => requestJSON('/api/admin/db/overview', DbOverviewResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/db/slow-queries — List Db Slow Queries */
+  listDbSlowQueries: (query: { limit?: number; sort?: 'total' | 'mean' | 'calls' } = {}) => requestJSON(`/api/admin/db/slow-queries${qs(query)}`, SlowQueryResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/db/trends — Get Db Trends */
+  getDbTrends: (query: { metric?: 'db_size_bytes' | 'connections_total' | 'connections_active' | 'connections_idle_in_tx' | 'dead_tuple_ratio' | 'table_bytes' | 'cache_hit_ratio' | 'temp_bytes' | 'deadlocks'; since?: string | null; until?: string | null; table?: string | null } = {}) => requestJSON(`/api/admin/db/trends${qs(query)}`, DbTrendResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/deletions — List Deletions */
   listDeletions: (query: { status?: 'pending' | 'all' } = {}) => requestJSON(`/api/admin/deletions${qs(query)}`, DeletionListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/diagnostics — Get Diagnostics */
@@ -1268,6 +1938,8 @@ export const adminApi = {
   clearFlag: (key: string) => requestJSON(`/api/admin/flags/${encodeURIComponent(key)}`, FlagItemSchema, { method: 'DELETE' }),
   /** GET /api/admin/incidents — List Incidents */
   listIncidents: (query: { status?: 'firing' | 'resolved' | 'lost' | null; component?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/incidents${qs(query)}`, IncidentListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/incidents/trends — Get Incident Trends */
+  getIncidentTrends: (query: { since?: string | null; until?: string | null } = {}) => requestJSON(`/api/admin/incidents/trends${qs(query)}`, IncidentTrendsResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/incidents/{incident_id} — Get Incident */
   getIncident: (incidentId: string) => requestJSON(`/api/admin/incidents/${encodeURIComponent(incidentId)}`, IncidentDetailSchema, { cache: 'no-store' }),
   /** GET /api/admin/jobs — List Jobs */
@@ -1288,6 +1960,12 @@ export const adminApi = {
   restartOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/restart`, OpsActionResponseSchema, jsonBody('POST')),
   /** POST /api/admin/ops/services/{name}/run — Run Ops Service */
   runOpsService: (name: string) => requestJSON(`/api/admin/ops/services/${encodeURIComponent(name)}/run`, OpsActionResponseSchema, jsonBody('POST')),
+  /** GET /api/admin/quota — Get Quota Overview */
+  getQuotaOverview: () => requestJSON('/api/admin/quota', QuotaOverviewSchema, { cache: 'no-store' }),
+  /** GET /api/admin/quota/stats — Get Quota Stats */
+  getQuotaStats: (query: { days?: number } = {}) => requestJSON(`/api/admin/quota/stats${qs(query)}`, QuotaStatsSchema, { cache: 'no-store' }),
+  /** PUT /api/admin/quota/users/{user_id}/{kind} — Set Quota Override */
+  setQuotaOverride: (userId: string, kind: string, body: z.input<typeof QuotaOverrideRequestSchema>) => requestJSON(`/api/admin/quota/users/${encodeURIComponent(userId)}/${encodeURIComponent(kind)}`, QuotaOverrideResultSchema, jsonBody('PUT', body)),
   /** GET /api/admin/reports — List Reports */
   listReports: (query: { q?: string | null; hidden?: boolean | null; publication?: 'draft' | 'published' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/reports${qs(query)}`, AdminReportListResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/reports/bulk-visibility — Bulk Set Report Visibility */
@@ -1296,6 +1974,22 @@ export const adminApi = {
   setReportVisibility: (fileHash: string, body: z.input<typeof ReportVisibilityRequestSchema>) => requestJSON(`/api/admin/reports/${encodeURIComponent(fileHash)}/visibility`, ReportVisibilityResponseSchema, jsonBody('PUT', body)),
   /** GET /api/admin/retrieval-regression — Get Retrieval Regression */
   getRetrievalRegression: () => requestJSON('/api/admin/retrieval-regression', RetrievalRegressionResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/alerts — Security Alerts */
+  securityAlerts: () => requestJSON('/api/admin/security/alerts', SecurityAlertsResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/audit-chain — Security Audit Chain */
+  securityAuditChain: () => requestJSON('/api/admin/security/audit-chain', AuditChainStateResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/events — Security Events */
+  securityEvents: (query: { event?: 'login.success' | 'login.failure' | 'login.totp_failure' | 'login.locked' | 'login.insecure' | 'logout' | 'elevate.success' | 'elevate.failure' | null; user_id?: string | null; ip?: string | null; since?: string | null; until?: string | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/events${qs(query)}`, AuthEventListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/high-risk — Security High Risk */
+  securityHighRisk: (query: { days?: number; category?: 'privilege' | 'elevation' | 'session' | 'credential' | 'deletion' | 'ops' | 'data_access' | 'config' | null; before_id?: number | null; limit?: number } = {}) => requestJSON(`/api/admin/security/high-risk${qs(query)}`, HighRiskResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/sessions — Security Sessions */
+  securitySessions: (query: { active_only?: boolean; user_id?: string | null; limit?: number } = {}) => requestJSON(`/api/admin/security/sessions${qs(query)}`, SecuritySessionListResponseSchema, { cache: 'no-store' }),
+  /** POST /api/admin/security/sessions/{session_id}/revoke — Security Revoke Session */
+  securityRevokeSession: (sessionId: string) => requestJSON(`/api/admin/security/sessions/${encodeURIComponent(sessionId)}/revoke`, SecuritySessionItemSchema, jsonBody('POST')),
+  /** GET /api/admin/security/suspicious-ips — Security Suspicious Ips */
+  securitySuspiciousIps: (query: { hours?: number; min_failures?: number } = {}) => requestJSON(`/api/admin/security/suspicious-ips${qs(query)}`, SuspiciousIpResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/security/totp-adoption — Security Totp Adoption */
+  securityTotpAdoption: () => requestJSON('/api/admin/security/totp-adoption', TotpAdoptionResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/uploads — List Uploads */
   listUploads: (query: { state?: 'quarantined' | 'scanning' | 'clean' | 'infected' | 'blocked' | 'processing' | 'draft' | 'failed' | 'duplicate' | 'published' | 'rejected' | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/uploads${qs(query)}`, AdminUploadListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/uploads/{upload_id} — Get Upload */

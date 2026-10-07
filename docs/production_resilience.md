@@ -2158,3 +2158,46 @@ sudo systemctl disable --now report-mark-upload.timer
 停掉之後：隔離區的檔案與 `report_upload` 都保留，已入庫的草稿維持不可見、仍可在管理頁發布或退回（退回後的清除要
 worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移除時另把 catalog 的 upload 與 polkit 的那一行拿掉
 重新安裝（「維運代理」步驟 3、4）。
+
+## 使用分析每晚彙總（report-mark-analytics-rollup）
+
+管理後台「使用分析」（`/api/admin/analytics/*`）最近 `ANALYTICS_LIVE_WINDOW_DAYS`（90）天即時查 `qa_log`／`usage_counter`，
+更早的日子**只讀** `research.analytics_daily`（revision 0009）。`qa_log` 會被使用者硬刪、`usage_counter` 只留 400 天，
+所以每一天都必須在離開即時窗期前彙總過，否則那天在長期趨勢上永遠是「沒有資料」（`has_data=false`）。
+
+`report-mark-analytics-rollup.timer` 每天 02:20 跑 `scripts/analytics_rollup.py`（純 SQL、零 LLM、不載嵌入模型）：
+覆寫昨天，並補齊窗期內還沒有彙總標記（`rollup.computed`）的日子——機器關機錯過幾晚也追得上。一天一個交易、先刪後寫，
+重跑同一天結果相同；同一天的並行執行以 advisory lock 排隊。`analytics_daily` 沒有 user_id、刪帳後保留（使用者定案 4），
+列入備份。退出碼：0 正常、1 計算／寫入失敗或參數錯誤（告警）、2 DB 不可用（`SuccessExitStatus=2`，DB 故障由 P5 告警）。
+
+### 安裝（人工，需 sudo；只在要啟用時做）
+
+```bash
+# 1) schema 到 revision 0009（已有資料的庫要逐字確認目標）
+make schema CONFIRM=localhost:5436/research
+# 2) 第一次啟用：先試算再補滿窗期（已彙總的日子不會被覆寫）
+uv run python scripts/analytics_rollup.py --dry-run
+uv run python scripts/analytics_rollup.py
+# 3) 排程
+sudo install -m 0644 deploy/systemd/report-mark-analytics-rollup.service deploy/systemd/report-mark-analytics-rollup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-analytics-rollup.timer
+```
+
+驗收：`systemctl list-timers report-mark-analytics-rollup.timer` 有下一次觸發；跑過一輪後
+`systemctl show report-mark-analytics-rollup -p Result,ExecMainStatus`（判準見「oneshot 的手動驗證」），並以管理員打
+`/api/admin/analytics/overview?since=<91 天前>`，`range.spans` 出現 `rollup` 段、那段的 `daily[].has_data` 為 true。
+ops catalog 的對應項目與「立即執行」由 Admin v2 Wave 2 一起加（`deploy/ops/services.*.toml`）。
+
+**回填**：`--backfill N` 從 `qa_log` 補最近 N 天裡缺的日子，**預設不覆寫已彙總的日子**——重算會讓刪帳或使用者刪歷史之前
+已保留的匿名彙總縮水。確定要重算（例如修了指標的 bug）才加 `--force`，或以 `--day YYYY-MM-DD` 重算單一天。
+
+### 停用
+
+```bash
+sudo systemctl disable --now report-mark-analytics-rollup.timer
+```
+
+停掉之後最近 90 天照常即時顯示；之後離開窗期的日子沒有彙總，長期趨勢在那段顯示「沒有資料」。已寫入的 `analytics_daily`
+保留。恢復時重新 `enable --now`，並手動跑一次 `scripts/analytics_rollup.py --backfill 90` 補回還在窗期內的缺口
+（已離開窗期、`qa_log` 仍在的日子也能以更大的 N 補，但被硬刪的問答補不回來）。

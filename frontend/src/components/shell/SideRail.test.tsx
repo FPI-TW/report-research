@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 import { SideRail } from './SideRail'
@@ -47,6 +47,17 @@ test('展開態：收合鈕在面板標頭，圖示軌不再重複一顆展開�
   renderRail(false)
   expect(screen.getByRole('button', { name: '收合側欄' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '展開側欄' })).not.toBeInTheDocument()
+})
+
+test('搜尋收成標頭的單一 icon：點了才出現搜尋框，再點一次收起', () => {
+  renderRail(false)
+  expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+  const btn = screen.getByRole('button', { name: '搜尋對話' })
+  fireEvent.click(btn)
+  expect(btn).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('searchbox', { name: '搜尋歷史對話' })).toHaveFocus()
+  fireEvent.click(btn)
+  expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
 })
 
 test('管理後台與研報平台分開：即使是管理員，側欄也沒有「管理」入口', async () => {

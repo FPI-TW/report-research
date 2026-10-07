@@ -386,6 +386,11 @@ jobs:
       - name: 研報上傳 worker
         run: uv run pytest -q tests/test_upload_worker_db.py
 
+      # 對外 API 用戶端：建立後金鑰 resolve 得到、停用與輪替立即生效、每日額度到上限＋1 被拒且換日重置、
+      # 刪除時授權範圍與用量 cascade、寫入與稽核同交易且 detail 不含原始金鑰或 key_hash。
+      - name: 對外 API 用戶端
+        run: uv run pytest -q tests/test_api_clients_db.py
+
   secrets:
     name: secret 掃描（gitleaks）
     runs-on: ubuntu-latest

@@ -1757,8 +1757,9 @@ sudo systemctl enable --now report-mark-db-snapshot.timer
 
 驗收：`sudo systemctl start report-mark-db-snapshot.service` 後 `journalctl -u report-mark-db-snapshot -n 3` 看得到
 「完成 逐時快照已寫入…」；`scripts/verify_oneshot_ran.sh` 確認跑過；隔天 `SELECT granularity, count(*) FROM
-research.db_stat_snapshot GROUP BY 1` 有一列 day。catalog（`deploy/ops/services.*.toml`）的對應項目由 Admin v2
-Wave 2 補上。
+research.db_stat_snapshot GROUP BY 1` 有一列 day。辦公室主機的 ops catalog（`deploy/ops/services.prod.toml`）已列
+`db-snapshot`（含「立即執行」，理由寫在 catalog 註解）：裝好 unit 後照「維運代理」的步驟 3、4 重新安裝 catalog 與
+polkit、`--check`，再重啟代理。
 
 停用：
 
@@ -1960,8 +1961,9 @@ sudo systemctl disable --now report-mark-retrieval-regression.timer   # 結果�
 Unix socket 問一支單機代理（`ops_agent/`，只用標準庫、系統的 `/usr/bin/python3`）。代理只認
 Service Catalog（`deploy/ops/services.prod.toml`；EC2 staging `deploy/ops/services.staging.toml`、開發環境
 `deploy/ops/services.dev.toml`）列出的服務與
-action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（v1 只有 Web）與 `run`（既有 oneshot 立即執行一次：
-sync、backup、freshness、audit、r2-reconcile）。沒有任意 shell、任意 unit、stop、timer enable/disable；
+action：唯讀的 `status`、`logs`，以及寫入類的 `restart`（只有 Web）與 `run`（既有 oneshot 立即執行一次：
+sync、backup、freshness、audit、r2-reconcile、upload，以及 Admin v2 的 db-snapshot、analytics-rollup）。
+沒有任意 shell、任意 unit、stop、timer enable/disable；
 PostgreSQL、nginx、cloudflared 永遠唯讀（catalog 載入期與代理執行前兩層都擋，PG 的 restart 尤其禁止）。
 P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維運區塊回 503 `ops_agent_unavailable`，web 其他功能照常。
 
@@ -1980,8 +1982,9 @@ P4／P5 的探針與事件處理不經過它，代理停掉只讓管理頁的維
   換成新值（並回到 active）就是新的一輪起來了。Web 重啟期間 BGE-M3 要重新載入，這段時間整站不可用。
 - **授權靠 polkit，不靠 sudo**：代理的 unit 是 `NoNewPrivileges=yes`、沒有 capability，setuid 的 sudo 在
   裡面無法提權。systemd 以 polkit 的 `org.freedesktop.systemd1.manage-units` 檢查呼叫端並附上 unit 與
-  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與六個 oneshot
-  （sync、backup、freshness、audit、r2-reconcile、upload）的 start，`report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
+  verb，`deploy/polkit/10-report-mark-ops.rules` 把 `report-mark-ops` 限定在 Web 的 restart 與八個 oneshot
+  （sync、backup、freshness、audit、r2-reconcile、upload、db-snapshot、analytics-rollup）的 start，
+  `report-mark-ops-dev` 限定在 `report-mark-dev-web.service` 的 restart 與
   `report-mark-dev-smoke.service` 的 start，`report-mark-ops-staging`（EC2）限定在 Web 的 restart 與
 freshness、audit 的 start；這三個使用者的其他 systemd 動作一律 NO。需要 polkit ≥ 0.106
   （JS 規則；本機 Ubuntu 24.04 是 124）。
@@ -2035,7 +2038,8 @@ run、409 與輪詢而不碰任何真東西；polkit 規則同一個檔已涵蓋
 本機冒煙（不必安裝）：`python3 -m ops_agent --catalog deploy/ops/services.dev.toml --socket /tmp/<短路徑>/a.sock`
 （只有 development 允許覆寫 socket；AF_UNIX 路徑上限約 107 字元）。
 
-**EC2 staging**（尚未安裝；要啟用時照下面做，`deploy/ops/services.staging.toml` 開頭有 staging 與辦公室主機的差異）：
+**EC2（正式環境；名稱裡的 staging 是歷史命名）**（2026-10-07 隨 Admin v1.5 安裝；重裝或更新時照下面做，
+`deploy/ops/services.staging.toml` 開頭有 EC2 與辦公室主機的差異）：
 使用者 `report-mark-ops-staging`、catalog `services.staging.toml`、unit `report-mark-ops-agent-staging.service`、
 socket `/run/report-mark-ops-staging/agent.sock`；staging 的 web 設 `OPS_AGENT_ENVIRONMENT=staging`（repo 根 `.env`）。
 staging 主機沒有容器（RDS、apt 的 nginx），所以這個使用者**不加 docker 群組**、unit 也不給。權限比生產窄：
@@ -2058,8 +2062,9 @@ sudo systemctl enable --now report-mark-ops-agent-staging.service
 sudo systemctl restart report-mark-web.service   # .env 設好 OPS_AGENT_ENVIRONMENT=staging，並讓 web 拿到群組
 ```
 
-staging 的 catalog 只列已安裝的 unit（web、nginx 與 8 組 timer）；之後在 staging 裝了新的 unit（例如 Admin v1 的
-schema-check、host-health），要把它加進 `services.staging.toml`（含 `depends_on`）並重做 install＋`--check`＋重啟代理。
+EC2 的 catalog 只列已安裝的 unit（web、nginx、8 組 timer 與 schema-check）；之後在 EC2 裝了新的 unit（例如 Admin v1 的
+host-health、Admin v2 的五組），要把它加進 `services.staging.toml`（含 `depends_on`；給 run 的同步加進 polkit 的
+`report-mark-ops-staging`）並重做 install＋`--check`＋重啟代理。
 
 **依賴圖**：catalog 的 `depends_on` 與 `[[externals]]`（格式見 `ops_agent/catalog.py`）是服務依賴關係的唯一真相來源，
 `--check` 會擋下指向不存在的節點、依賴自己與環。改了依賴（或新增服務時忘了寫）都照步驟 3 重新安裝 catalog、
@@ -2300,6 +2305,8 @@ sudo systemctl enable --now report-mark-security-health.timer report-mark-securi
 驗收：`sudo systemctl start report-mark-security-health.service` 後 `systemctl show report-mark-security-health -p ExecMainStatus`
 為 0（3＝判不出來，看 web 日誌）、`journalctl -u report-mark-security-health -n 1` 有 `status=ok`；P5 實例跑過一輪後
 `journalctl -u report-mark-security-incident -n 2` 是 `action=noop`。狀態目錄是 `data/.incidents-security/`（已在 .gitignore）。
+辦公室主機的 ops catalog 已列 `security-health`、`security-incident`（唯讀，不給「立即執行」：探針與 P5 狀態機每 2 分鐘就跑），
+裝好後照「維運代理」的步驟 3 重新安裝 catalog、`--check`，再重啟代理。
 
 #### 停用
 
@@ -2325,6 +2332,7 @@ sudo systemctl enable --now report-mark-security-retention.timer
 BASE=$(bash scripts/verify_oneshot_ran.sh baseline report-mark-security-retention.service)
 sudo systemctl start report-mark-security-retention.service
 bash scripts/verify_oneshot_ran.sh verify report-mark-security-retention.service "$BASE"
+# 辦公室主機的 ops catalog 已列 security-retention（唯讀：會刪資料，不給「立即執行」）；照「維運代理」的步驟 3 重新安裝
 # 停用
 sudo systemctl disable --now report-mark-security-retention.timer
 ```
@@ -2381,7 +2389,9 @@ sudo systemctl enable --now report-mark-analytics-rollup.timer
 驗收：`systemctl list-timers report-mark-analytics-rollup.timer` 有下一次觸發；跑過一輪後
 `systemctl show report-mark-analytics-rollup -p Result,ExecMainStatus`（判準見「oneshot 的手動驗證」），並以管理員打
 `/api/admin/analytics/overview?since=<91 天前>`，`range.spans` 出現 `rollup` 段、那段的 `daily[].has_data` 為 true。
-ops catalog 的對應項目與「立即執行」由 Admin v2 Wave 2 一起加（`deploy/ops/services.*.toml`）。
+辦公室主機的 ops catalog（`deploy/ops/services.prod.toml`）已列 `analytics-rollup`（含「立即執行」：run 不收參數，
+只會是預設模式，不會觸發 `--force` 的重算）：裝好 unit 後照「維運代理」的步驟 3、4 重新安裝 catalog 與 polkit、
+`--check`，再重啟代理。
 
 **回填**：`--backfill N` 從 `qa_log` 補最近 N 天裡缺的日子，**預設不覆寫已彙總的日子**——重算會讓刪帳或使用者刪歷史之前
 已保留的匿名彙總縮水。確定要重算（例如修了指標的 bug）才加 `--force`，或以 `--day YYYY-MM-DD` 重算單一天。
@@ -2451,3 +2461,70 @@ repo 根 `.env`；「覆寫」是各自 DB 裡的 `feature_flag`。
 
 回滾：在正式環境匯入第 3 步留底的檔案（同樣先預覽）。單一旗標要回到預設，在頁面按「恢復預設」
 （`DELETE /api/admin/flags/{key}`）。
+
+## Admin v2 部署順序
+
+Admin v2（revision 0009，加上 Wave 1 的使用分析、安全維運、配額、功能旗標、DB 與事件趨勢）上任何一台主機，都照下面的順序做。
+這裡只排順序與前提，每一步的指令、驗收與停用都在各自的章節，不在這裡重複。
+
+**前提**：該主機已部署並驗收 Admin v1 與 v1.5（使用者定案 15），而且先確認目標主機（AGENTS.md「環境角色」：EC2 是正式環境、
+辦公室主機是測試環境）。站序同 v1：devdb 演練 → 測試環境 → 正式環境，每站先備份。
+
+1. **schema 到 revision 0009，先套 schema 再換程式。** 0009 只新增八張表（`usage_counter`、`user_quota`、`auth_event`、
+   `feature_flag`、`llm_usage_daily`、`usage_daily`、`analytics_daily`、`db_stat_snapshot`），不改既有的表：舊程式在 0009
+   的庫上照常可跑，新程式在 0008 的庫上會壞。
+   - 備份：測試環境照「備份與還原」先跑一次 `make db-backup`；正式環境先做 RDS 手動快照。
+   - 部署 checkout 先更新到含 Admin v2 的版本（migration 檔在新版裡），**web 先不要重啟**：執行中的仍是舊程式。
+   - 套之前 `make schema-version` 應回 1（落後），而且零 drift：辦公室主機跑 `make schema-check`；EC2 的 app 帳號沒有
+     CREATEDB，照「schema 與版本 drift 每日檢查」的 staging（RDS）一節以 master 帳號建基準。
+   - `make schema CONFIRM=<host:port/db>`（逐字確認目標），套完 `make schema-version` 回 0、再做一次零 drift 比對。
+   - 每日 schema 檢查（`report-mark-schema-check`）已啟用的主機，套 schema 與換程式要在同一個維護窗口內做完，
+     否則當天的檢查會以版本不一致告警。
+2. **換程式**：`make build-web`，緊接著重啟 web。v2 沒有新增 Python 或前端相依，
+   也沒有改 nginx 設定。驗收：`curl -s http://127.0.0.1:8097/healthz/security` 回 `{"security":"ok"}` 或 `unknown`，
+   不是 404。備份清單多出 v2 的五張表（共十八張）由部署目錄裡的 `scripts/db_backup.sh` 直接生效，備份 unit 不用重裝。
+3. **安裝 v2 的 unit**（辦公室主機直接 `install` 到 `/etc/systemd/system/`；EC2 用 `deploy/install_units.sh --user ubuntu
+   --root /home/ubuntu/report-mark` 代換使用者與路徑）。順序與各自的章節：
+   1. `report-mark-db-snapshot`：先 `--dry-run` 看權限不足的段落，見「DB 統計快照與慢查詢」。
+   2. `report-mark-analytics-rollup`：第一次先試算、再補滿 90 天窗期，然後才開排程，見「使用分析每晚彙總」。
+   3. `report-mark-security-health` 與 `report-mark-security-incident`：兩個一起裝、一起開（只有 P5 實例在跑、探針沒開時，
+      它會照設計回報 MONITOR_BLIND），見「安全維運」的安全告警一節。前提是該主機的 P5（`report-mark-incident`）已經在運作、
+      `/etc/report-mark/alert.env` 有 webhook。
+   4. `report-mark-security-retention`：排在備份與稽核錨定之後，見「安全維運」的保留期清除一節。
+4. **ops catalog 與 polkit 重新安裝、重啟維運代理**（「維運代理」的步驟 3、4）。辦公室主機的 `deploy/ops/services.prod.toml`
+   已列上面五項：`db-snapshot`、`analytics-rollup` 可以「立即執行」，三個 security 項目唯讀（理由寫在 catalog 註解），
+   polkit 的 `report-mark-ops` 多這兩個 unit 的 start。EC2 的 `deploy/ops/services.staging.toml` 只列已安裝的 unit：
+   在 EC2 裝了 v2 unit 之後，才把同樣的五項加進去（`postgres` 換成 `rds`；給 run 的兩項同步加進 polkit 的
+   `report-mark-ops-staging`），再 `--check`、重啟 `report-mark-ops-agent-staging.service`。還沒裝代理的主機，第一次安裝時
+   直接用新版 catalog。
+5. **確認旗標與政策維持預設**（兩台主機的 repo 根 `.env`）：
+   - `ADMIN_MFA_REQUIRED` 不設或設 0：預設關，TOTP 依個人設定開關（2026-10-07 定案更新）。這是環境變數，不是 DB 旗標。
+   - `QUOTA_ENFORCE=0`：配額影子模式，只計數、記錄「本來會擋」，不回 429。正式阻擋要等觀察兩週、依 P50/P95 決定（使用者定案 5）。
+   - 功能旗標：`feature_flag` 沒有任何覆寫時，行為與 v1.5 相同（`ask.web_search` 預設關、其餘派生功能預設開，實際值仍受
+     環境變數上限限制）。七個上限變數照「功能開關與 staging 啟用矩陣」的啟用矩陣核對；部署時不設任何覆寫。
+6. **`pg_stat_statements` 不在這個順序裡**：它是獨立的維護步驟，個別放行（使用者定案 13），步驟見「DB 統計快照與慢查詢」
+   的「啟用 pg_stat_statements」。辦公室主機要改 `shared_preload_libraries` 並重啟 DB 容器（短暫停機）；EC2 的 RDS 參數群組
+   已預載，只需以 master 帳號建擴充。沒做時「慢查詢」區塊只顯示原因，其他頁面不受影響。
+
+### v2 功能的啟用矩陣（測試環境與正式環境）
+
+測試環境＝辦公室主機（`research.kashionzarchive.com`），正式環境＝EC2（`research.tingfong.com`）。兩者的差異：EC2 的 DB 是
+RDS（沒有容器、app 帳號權限較窄）、沒有 NAS（只有 RDS 自動備份）、沒有監控收集與事件投影（`report-mark-load-observations`
+等）、沒有稽核錨定、沒有 ClamAV 與上傳 worker。功能旗標各項的上限與覆寫建議另見「功能開關與 staging 啟用矩陣」。
+
+| 項目 | 怎麼啟用 | 測試環境（辦公室主機） | 正式環境（EC2） | 前提與差異 |
+|---|---|---|---|---|
+| schema 0009 | `make schema CONFIRM=…` | 套用 | 套用 | 一律先於換程式；v1、v1.5 已在該主機驗收 |
+| 使用量收集（`usage_daily`、`usage_counter`） | 隨 web | 開 | 開 | 不必安裝；只記次數與主題彙總，不記搜尋字串 |
+| 使用分析頁＋`report-mark-analytics-rollup` | 安裝 unit | 安裝 | 安裝 | 沒裝時最近 90 天照常即時顯示，更早的日子是「沒有資料」 |
+| 安全頁（登入事件、session、高風險時間線） | 隨 web | 開 | 開 | 「最後錨定」要有 `report-mark-audit-anchor`：EC2 沒裝，顯示沒有結果或過期 |
+| `report-mark-security-health`＋`report-mark-security-incident` | 安裝 unit | 安裝 | 安裝 | 要 P5 已運作、`alert.env` 有 webhook；EC2 沒有監控收集，事件只送 Slack、不進事件投影 |
+| `report-mark-security-retention` | 安裝 unit | 安裝 | 安裝 | EC2 沒有應用層 NAS 備份：`auth_event` 只靠 RDS 自動備份 |
+| 配額（`QUOTA_ENFORCE`） | 環境變數 | 0（影子模式） | 0（影子模式） | 兩週觀察後再決定；先在測試環境驗 429 |
+| 管理員 TOTP 強制（`ADMIN_MFA_REQUIRED`） | 環境變數 | 不設（關） | 不設（關） | 現階段依個人設定開關；開啟前先確認每位管理員都已設定 TOTP |
+| 功能旗標頁與 `/api/features` | 隨 web | 開，不設覆寫 | 開，不設覆寫 | 各旗標的上限見「功能開關與 staging 啟用矩陣」 |
+| DB 即時快照（`/api/admin/db/overview`） | 隨 web | 開 | 開 | RDS 帳號沒有 `pg_monitor`／`pg_read_all_stats` 時，相關段落顯示「權限不足」 |
+| `report-mark-db-snapshot`（DB 趨勢） | 安裝 unit | 安裝 | 安裝 | 權限不足的段落記在 `stats.errors`、趨勢上是空點 |
+| 慢查詢（`pg_stat_statements`） | 獨立維護步驟 | 經同意後，在維護窗口改設定並重啟 DB 容器 | 經同意後，以 master 帳號 `CREATE EXTENSION` | 不綁 v2 部署；沒做時頁面只顯示原因 |
+| 事件趨勢（`incident`、`job_execution`） | 隨 web | 開 | 開，但會是空的 | 資料來自監控收集與事件投影；EC2 沒裝 |
+| ops catalog 的 v2 項目與 polkit | 重新安裝 catalog 與規則 | `services.prod.toml` 已列 | 裝了 v2 unit 後才加進 `services.staging.toml` | 維運代理要已安裝；「立即執行」只給 db-snapshot、analytics-rollup |

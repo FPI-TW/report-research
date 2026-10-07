@@ -13,6 +13,12 @@
 #   REPORT_MARK_WRITE_CONSTRAINTS=1 uv run pytest -q tests/test_schema_constraints.py
 # （REPORT_MARK_DB_URL 指向剛 upgrade head 的全新空庫），把 diff 與 revision 一起提交。
 account_deletion.account_deletion_cancelled_or_executed = CHECK (((cancelled_at IS NULL) OR (executed_at IS NULL)))
+api_client.api_client_daily_quota_check = CHECK (((daily_quota >= 1) AND (daily_quota <= 1000000)))
+api_client.api_client_name_check = CHECK (((char_length(name) >= 1) AND (char_length(name) <= 100)))
+api_client.api_client_rate_limit_per_min_check = CHECK (((rate_limit_per_min >= 1) AND (rate_limit_per_min <= 6000)))
+api_client.api_client_scopes_check = CHECK ((scopes <@ ARRAY['search'::text, 'report.file'::text]))
+api_client_entitlement.api_client_entitlement_dimension_check = CHECK ((dimension = ANY (ARRAY['market'::text, 'source'::text, 'report_type'::text, 'instrument_type'::text])))
+api_client_entitlement.api_client_entitlement_value_check = CHECK ((btrim(value) <> ''::text))
 app_user.app_user_deleted_is_disabled = CHECK (((deleted_at IS NULL) OR (NOT enabled)))
 app_user.app_user_role_check = CHECK ((role = ANY (ARRAY['admin'::text, 'user'::text])))
 app_user.app_user_totp_secret_when_enabled = CHECK (((NOT totp_enabled) OR (totp_secret IS NOT NULL)))
@@ -92,4 +98,4 @@ service_observation_5m.service_observation_5m_state_changes_check = CHECK ((stat
 service_observation_5m.service_observation_5m_subject_check = CHECK (((char_length(subject) >= 1) AND (char_length(subject) <= 200)))
 service_observation_5m.service_observation_5m_value_count_check = CHECK ((value_count >= 0))
 service_observation_5m.service_observation_5m_values = CHECK (((value_count = 0) = (value_avg IS NULL)))
-user_scope.user_scope_scope_check = CHECK ((scope = ANY (ARRAY['qa_content.read'::text, 'ops.operate'::text])))
+user_scope.user_scope_scope_check = CHECK ((scope = ANY (ARRAY['qa_content.read'::text, 'ops.operate'::text, 'api_clients.manage'::text])))

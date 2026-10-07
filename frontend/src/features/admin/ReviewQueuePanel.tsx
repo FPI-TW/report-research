@@ -28,7 +28,7 @@ import styles from './ReviewQueue.module.css'
  * 兩者都是 null：提問者標「共用帳號」，處理人不顯示。
  * 整張卡限管理員（後端 `/api/review/*` 對一般使用者回 403），所以只出現在管理頁。
  *
- * `scale` 是監控頁 `/api/progress` 的問答忠實度統計（與忠實度卡同一份）：判定尺剛換成 DeepSeek、
+ * `scale` 是 `/api/progress` 的問答忠實度統計（與管線分頁的忠實度卡同一份）：判定尺剛換成 DeepSeek、
  * 窗期內還有舊尺的列時，忠實度分頁比照忠實度卡標「新量尺」——換尺頭幾天佇列近乎是空的，不說清楚
  * 會被讀成「低分變少了」。佇列本身仍自己取數、不跟 5 秒輪詢（理由見 useReviewQueue）。
  */

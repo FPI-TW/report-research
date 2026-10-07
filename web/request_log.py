@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 HEADER = "x-request-id"
 
-# 高頻輪詢／探測：正常時不記（監控頁每 5 秒一次 /api/progress，會把其他行淹掉），
+# 高頻輪詢／探測：正常時不記（管線分頁每 15 秒一次 /api/progress，會把其他行淹掉），
 # 但出錯或變慢時照記——那正是需要看到的時候。
 QUIET_PATHS = frozenset({"/healthz", "/api/progress"})
 QUIET_SLOW_MS = 1000.0

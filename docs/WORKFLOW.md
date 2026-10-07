@@ -48,7 +48,7 @@ research.extraction_log（每個 hash 一列，含未入庫者）
 |---|---|---|
 | `研報自動匯入/` | 券商 PDF／docx 原檔（約 1.5 萬份），NAS rsync 鏡像，唯讀 | 否 |
 | `data/extracted/` | 抽取快取 `<file_hash>.json`（`app/services/extraction/cache.py`） | 否 |
-| `data/tags/` | 標註結果 `<file_hash>.json`，resume 依據；監控頁 `scandir` 熱點 | 否 |
+| `data/tags/` | 標註結果 `<file_hash>.json`，resume 依據；`/api/progress`（管線分頁）的 `scandir` 熱點 | 否 |
 | `data/metrics/` | 硬體用量取樣 JSONL | 否 |
 | `data/ops_spool/` | 監控 spool：`scripts/collect_resource_usage.py` 寫的主機／容器／服務觀測與批次執行紀錄 JSONL，以及 `scripts/incident_handler.sh`（P5）每次狀態轉換的事件紀錄 `incidents-*.jsonl` 與 journal 片段 `journal/*.log`；`scripts/load_observations.py` 匯入 DB 後刪舊日檔與片段（`OPS_SPOOL_DIR` 可覆寫） | 否 |
 | `data/.incidents/` | P5 事件狀態檔 | 否 |

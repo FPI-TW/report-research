@@ -7,7 +7,6 @@ import { routeLoaders, preloadIdle } from './lib/routePreload'
 
 const SearchPage = lazy(routeLoaders.search)
 const AskPage = lazy(routeLoaders.ask)
-const MonitorPage = lazy(routeLoaders.monitor)
 const RadarPage = lazy(routeLoaders.radar)
 const BriefPage = lazy(routeLoaders.brief)
 const HelpPage = lazy(routeLoaders.help)
@@ -55,7 +54,8 @@ export const routes = [
           { path: '/', element: <Navigate to="/search" replace /> },
           { path: '/search', element: <Suspense><SearchPage /></Suspense> },
           { path: '/ask', element: <Suspense><AskPage /></Suspense> },
-          { path: '/monitor', element: <Suspense><MonitorPage /></Suspense> },
+          // 導入監控已搬進管理後台（/admin/operations/pipeline）；舊書籤多半來自一般使用者，一律回檢索頁。
+          { path: '/monitor', element: <Navigate to="/search" replace /> },
           { path: '/radar', element: <Suspense><RadarPage /></Suspense> },
           { path: '/brief', element: <Suspense><BriefPage /></Suspense> },
           { path: '/help', element: <Suspense><HelpPage /></Suspense> },

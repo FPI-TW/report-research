@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
 
 export type RouteKey =
-  | 'search' | 'ask' | 'monitor' | 'radar' | 'brief' | 'help' | 'report'
+  | 'search' | 'ask' | 'radar' | 'brief' | 'help' | 'report'
   | 'adminShell' | 'adminUsers' | 'adminReviews' | 'adminAudit' | 'adminReports'
   | 'adminUploads' | 'adminUpload'
   | 'adminOps' | 'adminOpsOverview' | 'adminOpsPipeline' | 'adminOpsServices' | 'adminOpsService' | 'adminOpsLogs'
@@ -13,7 +13,6 @@ export type RouteKey =
 export const routeLoaders: Record<RouteKey, () => Promise<{ default: ComponentType }>> = {
   search: () => import('../features/search/SearchPage'),
   ask: () => import('../features/ask/AskPage'),
-  monitor: () => import('../features/monitor/MonitorPage'),
   radar: () => import('../features/radar/RadarPage'),
   brief: () => import('../features/brief/BriefPage'),
   help: () => import('../features/help/HelpPage'),

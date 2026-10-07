@@ -15,6 +15,7 @@ import os
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest import mock
 
 from app import config
@@ -283,3 +284,31 @@ class DefaultsTests(unittest.TestCase):
         for minutes in range(0, 24 * 60, 37):
             secs = quota.retry_after_seconds(base + timedelta(minutes=minutes))
             self.assertTrue(1 <= secs <= 86400)
+
+
+class OnlineLlmUsageSingleWriterTests(unittest.TestCase):
+    """線上 LLM 用量只有一個寫入者：Wave 0 在 web lifespan 註冊的 observer（usage_events → llm_usage_daily）。
+    配額 lane 只讀（llm_usage.summarize_online、quota.admin_overview），不另註冊 observer，避免重複計數。"""
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def _py(self):
+        for top in ("app", "web", "scripts"):
+            yield from (self.ROOT / top).rglob("*.py")
+
+    def test_only_server_registers_observers(self):
+        hits = sorted(str(p.relative_to(self.ROOT)) for p in self._py()
+                      if "add_observer(" in p.read_text(encoding="utf-8") and p.name != "llm_http.py")
+        self.assertEqual(hits, ["web/server.py"])
+
+    def test_only_usage_events_writes_llm_usage_daily(self):
+        hits = sorted(str(p.relative_to(self.ROOT)) for p in self._py()
+                      if "INSERT INTO research.llm_usage_daily" in p.read_text(encoding="utf-8"))
+        self.assertEqual(hits, ["app/services/usage_events.py"])
+
+    def test_reads_expose_no_question_or_answer_columns(self):
+        from app.services import llm_usage
+
+        for sql in (llm_usage._ONLINE_SQL, llm_usage._ONLINE_PEOPLE_SQL):
+            for word in ("prompt ", "question", "answer", "content"):
+                self.assertNotIn(word, sql.lower())

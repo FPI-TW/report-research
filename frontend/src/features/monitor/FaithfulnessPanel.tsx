@@ -1,6 +1,6 @@
 import styles from './MonitorPage.module.css'
-import { isNewDeepSeekScale, newScaleText } from './judgeScale'
-import type { EvalSource, Evaluation } from './progressSchema'
+import { isNewDeepSeekScale, newScaleText } from '../../lib/judgeScale'
+import type { EvalSource, Evaluation } from '../../lib/progressSchema'
 
 /**
  * M8 忠實度查核健康度。

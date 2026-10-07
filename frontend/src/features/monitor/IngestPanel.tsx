@@ -1,6 +1,6 @@
 import styles from './MonitorPage.module.css'
 import { fmtInt } from './rate'
-import type { Progress } from './progressSchema'
+import type { Progress } from '../../lib/progressSchema'
 import { Sweep } from '../../components/primitives/motionLoops'
 
 /**

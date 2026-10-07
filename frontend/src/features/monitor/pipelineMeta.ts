@@ -1,4 +1,4 @@
-import type { Pipelines } from './progressSchema'
+import type { Pipelines } from '../../lib/progressSchema'
 
 /** 派生資產的顯示名，管線列與覆蓋率卡共用同一份。 */
 export const DERIVED_LABEL = { takeaways: '重點摘錄', signals: '觀點訊號' } as const

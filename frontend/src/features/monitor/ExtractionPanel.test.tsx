@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { ExtractionPanel } from './ExtractionPanel'
-import type { Extraction } from './progressSchema'
+import type { Extraction } from '../../lib/progressSchema'
 
 const base: Extraction = {
   target_version: 'ext-2026-09-02.v3',

@@ -1,5 +1,5 @@
 import styles from './MonitorPage.module.css'
-import type { LogEntry, UnitFailures } from './progressSchema'
+import type { LogEntry, UnitFailures } from '../../lib/progressSchema'
 
 /**
  * 排程健康：每 3 小時的 NAS 增量同步 + unit 失敗告警。

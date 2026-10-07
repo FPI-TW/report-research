@@ -6,8 +6,8 @@ import {
   qaContentSchema,
   type QaContent, type ReviewItem, type ReviewKind, type ReviewStatus, type ReviewVerification,
 } from '../../lib/reviewSchemas'
-import { isNewDeepSeekScale, newScaleText } from '../monitor/judgeScale'
-import type { EvalSource } from '../monitor/progressSchema'
+import { isNewDeepSeekScale, newScaleText } from '../../lib/judgeScale'
+import type { EvalSource } from '../../lib/progressSchema'
 import { reasonText } from './reviewReasons'
 import { useReviewQueue } from './useReviewQueue'
 import styles from './ReviewQueue.module.css'

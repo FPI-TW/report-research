@@ -2,7 +2,7 @@ import styles from './MonitorPage.module.css'
 import { KpiCard } from './KpiCard'
 import { TweenNumber } from '../../components/primitives/TweenNumber'
 import { fmtInt } from './rate'
-import type { Progress } from './progressSchema'
+import type { Progress } from '../../lib/progressSchema'
 
 const toFixed1 = (n: number) => n.toFixed(1)
 

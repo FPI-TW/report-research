@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { FaithfulnessPanel } from './FaithfulnessPanel'
-import type { Evaluation } from './progressSchema'
+import type { Evaluation } from '../../lib/progressSchema'
 
 const base: Evaluation = {
   qa: { total: 40, checked: 3, degraded: 1, below_min: 1, avg_score: 0.5634, latest: '2026-07-28' },

@@ -1,5 +1,5 @@
 import styles from './MonitorPage.module.css'
-import type { Extraction } from './progressSchema'
+import type { Extraction } from '../../lib/progressSchema'
 
 /**
  * 抽取品質與回填進度（E1，docs/EXTRACTION_REDESIGN.md §6.5）。

@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { BrokerDistribution } from './BrokerDistribution'
-import type { SourceCount } from './progressSchema'
+import type { SourceCount } from '../../lib/progressSchema'
 
 const SOURCES: SourceCount[] = [
   { source: 'masterlink', display: '元富', count: 20, latest: '2025-08-04' },

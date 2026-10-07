@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { computeRates, type Rates, type Baseline, type RateInputs } from './rate'
-import type { Progress } from './progressSchema'
+import type { Progress } from '../../lib/progressSchema'
 
 const NULL_RATES: Rates = { rpm: null, cps: null, spm: null, tpm: null }
 

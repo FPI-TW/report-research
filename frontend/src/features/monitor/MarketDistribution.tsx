@@ -2,7 +2,7 @@ import styles from './MonitorPage.module.css'
 import { marketColor, marketLabel } from '../../lib/meta'
 import { TweenNumber } from '../../components/primitives/TweenNumber'
 import { fmtInt } from './rate'
-import type { MarketCount } from './progressSchema'
+import type { MarketCount } from '../../lib/progressSchema'
 
 export function MarketDistribution({ markets }: { markets: MarketCount[] }) {
   const rows = [...markets].sort((a, b) => b.count - a.count)

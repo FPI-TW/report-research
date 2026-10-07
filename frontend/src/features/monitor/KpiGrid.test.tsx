@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { KpiGrid } from './KpiGrid'
-import type { Progress } from './progressSchema'
+import type { Progress } from '../../lib/progressSchema'
 
 function mk(over: Partial<Progress> = {}): Progress {
   return {

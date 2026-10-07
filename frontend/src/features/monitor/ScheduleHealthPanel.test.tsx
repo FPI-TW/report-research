@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { ScheduleHealthPanel } from './ScheduleHealthPanel'
-import type { LogEntry, UnitFailures } from './progressSchema'
+import type { LogEntry, UnitFailures } from '../../lib/progressSchema'
 
 const sync: LogEntry = {
   raw: '[2026-07-30 09:04:12] === sync done ===',

@@ -305,6 +305,54 @@ export const ElevateResponseSchema = z.object({
 })
 export type ElevateResponse = z.infer<typeof ElevateResponseSchema>
 
+export const FlagExportOverrideSchema = z.object({
+  enabled: z.boolean(),
+  allow_roles: z.array(z.string()).nullable().optional(),
+  allow_users: z.array(z.string()).nullable().optional(),
+  note: z.string().nullable().optional(),
+})
+export type FlagExportOverride = z.infer<typeof FlagExportOverrideSchema>
+
+export const FlagImportChangeSchema = z.object({
+  key: z.string(),
+  action: z.enum(['create', 'update', 'delete', 'unchanged']),
+  before: FlagExportOverrideSchema.nullable().optional(),
+  after: FlagExportOverrideSchema.nullable().optional(),
+})
+export type FlagImportChange = z.infer<typeof FlagImportChangeSchema>
+
+export const FlagImportProblemSchema = z.object({
+  key: z.string().nullable().optional(),
+  code: z.string(),
+  detail: z.string(),
+})
+export type FlagImportProblem = z.infer<typeof FlagImportProblemSchema>
+
+export const FlagImportResponseSchema = z.object({
+  dry_run: z.boolean(),
+  applied: z.boolean(),
+  registry_version: z.string(),
+  document_registry_version: z.string().nullable().optional(),
+  registry_version_match: z.boolean(),
+  changes: z.array(FlagImportChangeSchema),
+  errors: z.array(FlagImportProblemSchema),
+})
+export type FlagImportResponse = z.infer<typeof FlagImportResponseSchema>
+
+export const FlagUpdateRequestSchema = z.object({
+  enabled: z.boolean(),
+  allow_roles: z.array(z.enum(['admin', 'user'])).nullable().optional(),
+  allow_users: z.array(z.string()).nullable().optional(),
+  note: z.string().nullable().optional(),
+})
+export type FlagUpdateRequest = z.infer<typeof FlagUpdateRequestSchema>
+
+export const FlagUserRefSchema = z.object({
+  id: z.string(),
+  username: z.string().nullable().optional(),
+})
+export type FlagUserRef = z.infer<typeof FlagUserRefSchema>
+
 export const FreshnessFindingSchema = z.object({
   asset: z.string(),
   label: z.string(),
@@ -940,6 +988,22 @@ export const DiagnosticsChecksSchema = z.object({
 })
 export type DiagnosticsChecks = z.infer<typeof DiagnosticsChecksSchema>
 
+export const FlagExportEntrySchema = z.object({
+  key: z.string(),
+  override: FlagExportOverrideSchema.nullable().optional(),
+})
+export type FlagExportEntry = z.infer<typeof FlagExportEntrySchema>
+
+export const FlagOverrideViewSchema = z.object({
+  enabled: z.boolean(),
+  allow_roles: z.array(z.enum(['admin', 'user'])).nullable().optional(),
+  allow_users: z.array(FlagUserRefSchema).nullable().optional(),
+  note: z.string().nullable().optional(),
+  updated_by: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+})
+export type FlagOverrideView = z.infer<typeof FlagOverrideViewSchema>
+
 export const IncidentDetailSchema = z.object({
   incident_id: z.string(),
   host: z.string(),
@@ -1101,6 +1165,40 @@ export const DiagnosticsResponseSchema = z.object({
 })
 export type DiagnosticsResponse = z.infer<typeof DiagnosticsResponseSchema>
 
+export const FlagExportDocumentSchema = z.object({
+  format: z.literal('report-mark/feature-flags'),
+  format_version: z.literal(1),
+  registry_version: z.string(),
+  source_environment: z.string().nullable().optional(),
+  flags: z.array(FlagExportEntrySchema),
+})
+export type FlagExportDocument = z.infer<typeof FlagExportDocumentSchema>
+
+export const FlagImportRequestSchema = z.object({
+  dry_run: z.boolean().optional(),
+  document: FlagExportDocumentSchema,
+})
+export type FlagImportRequest = z.infer<typeof FlagImportRequestSchema>
+
+export const FlagItemSchema = z.object({
+  key: z.string(),
+  description: z.string(),
+  ceiling_env: z.string(),
+  ceiling: z.boolean(),
+  default: z.boolean(),
+  override: FlagOverrideViewSchema.nullable().optional(),
+  effective: z.enum(['on', 'off', 'scoped']),
+  effective_for_me: z.boolean(),
+})
+export type FlagItem = z.infer<typeof FlagItemSchema>
+
+export const FlagListResponseSchema = z.object({
+  registry_version: z.string(),
+  items: z.array(FlagItemSchema),
+  ignored_keys: z.array(z.string()),
+})
+export type FlagListResponse = z.infer<typeof FlagListResponseSchema>
+
 export const OpsServiceListResponseSchema = z.object({
   environment: z.string(),
   host: z.string(),
@@ -1158,6 +1256,16 @@ export const adminApi = {
   getDiagnostics: () => requestJSON('/api/admin/diagnostics', DiagnosticsResponseSchema, { cache: 'no-store' }),
   /** POST /api/admin/elevate — Elevate */
   elevate: (body: z.input<typeof ElevateRequestSchema>) => requestJSON('/api/admin/elevate', ElevateResponseSchema, jsonBody('POST', body)),
+  /** GET /api/admin/flags — List Flags */
+  listFlags: () => requestJSON('/api/admin/flags', FlagListResponseSchema, { cache: 'no-store' }),
+  /** GET /api/admin/flags/export — Export Flags */
+  exportFlags: () => requestJSON('/api/admin/flags/export', FlagExportDocumentSchema, { cache: 'no-store' }),
+  /** POST /api/admin/flags/import — Import Flags */
+  importFlags: (body: z.input<typeof FlagImportRequestSchema>) => requestJSON('/api/admin/flags/import', FlagImportResponseSchema, jsonBody('POST', body)),
+  /** PUT /api/admin/flags/{key} — Set Flag */
+  setFlag: (key: string, body: z.input<typeof FlagUpdateRequestSchema>) => requestJSON(`/api/admin/flags/${encodeURIComponent(key)}`, FlagItemSchema, jsonBody('PUT', body)),
+  /** DELETE /api/admin/flags/{key} — Clear Flag */
+  clearFlag: (key: string) => requestJSON(`/api/admin/flags/${encodeURIComponent(key)}`, FlagItemSchema, { method: 'DELETE' }),
   /** GET /api/admin/incidents — List Incidents */
   listIncidents: (query: { status?: 'firing' | 'resolved' | 'lost' | null; component?: string | null; since?: string | null; until?: string | null; limit?: number; offset?: number } = {}) => requestJSON(`/api/admin/incidents${qs(query)}`, IncidentListResponseSchema, { cache: 'no-store' }),
   /** GET /api/admin/incidents/{incident_id} — Get Incident */

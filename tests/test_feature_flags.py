@@ -9,6 +9,7 @@ import asyncio
 import dataclasses
 import itertools
 import unittest
+import uuid
 from unittest import mock
 
 from app import config
@@ -169,6 +170,167 @@ class DbOverrideTests(unittest.TestCase):
             asyncio.run(ff.is_enabled("qa.agentic", session_factory=factory))
             asyncio.run(ff.is_enabled("qa.agentic", session_factory=factory))
         self.assertEqual(len(calls), 1)  # DB 掛掉時不會每個請求都去撞
+
+
+def _routing_factory(rows=(), *, role=None, role_fail=False, calls=None):
+    """覆寫查詢回 rows、角色查詢回 role（或拋錯）。calls 記下每次查的是哪一種。"""
+
+    class _Result:
+        def __init__(self, data):
+            self._data = data
+
+        def all(self):
+            return list(self._data)
+
+        def scalar_one_or_none(self):
+            return self._data[0][0] if self._data else None
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, stmt, params=None):
+            kind = "role" if "research.app_user" in str(stmt) else "flags"
+            if calls is not None:
+                calls.append(kind)
+            if kind == "role":
+                if role_fail:
+                    raise RuntimeError("DB 掛了")
+                return _Result([(role,)] if role else [])
+            return _Result(rows)
+
+    return lambda: _Session()
+
+
+class PolicyTests(unittest.TestCase):
+    """`policy()`：只有 DB 政策、不含上限；身分可以是 User、UUID 字串或省略。"""
+
+    def setUp(self):
+        ff.invalidate()
+
+    def tearDown(self):
+        ff.invalidate()
+
+    def _with_ceilings(self, **values):
+        return mock.patch.object(config, "_SETTINGS", dataclasses.replace(config.get_settings(), **values))
+
+    def test_policy_ignores_the_ceiling_is_enabled_does_not(self):
+        with self._with_ceilings(ask_enable_web=False):
+            self.assertTrue(asyncio.run(ff.policy("ask.web_search", session_factory=_routing_factory())))
+            self.assertFalse(asyncio.run(ff.is_enabled("ask.web_search", session_factory=_routing_factory())))
+
+    def test_ceiling_off_does_not_even_read_the_db(self):
+        calls: list = []
+        with self._with_ceilings(qa_agentic_enabled=False):
+            self.assertFalse(asyncio.run(ff.is_enabled("qa.agentic", session_factory=_routing_factory(calls=calls))))
+        self.assertEqual(calls, [])
+
+    def test_user_id_string_matches_allow_users_without_a_role_lookup(self):
+        calls: list = []
+        rows = [("qa.agentic", True, ["admin"], [MEMBER.id.upper()])]
+        f = _routing_factory(rows, role="user", calls=calls)
+        self.assertTrue(asyncio.run(ff.policy("qa.agentic", MEMBER.id, session_factory=f)))
+        self.assertEqual(calls, ["flags"])  # allow_users 命中就不查角色
+
+    def test_role_scope_with_user_id_string_looks_up_the_role_and_caches_it(self):
+        calls: list = []
+        rows = [("qa.agentic", True, ["admin"], None)]
+        f = _routing_factory(rows, role="admin", calls=calls)
+        self.assertTrue(asyncio.run(ff.policy("qa.agentic", ADMIN.id, session_factory=f)))
+        self.assertTrue(asyncio.run(ff.policy("qa.agentic", ADMIN.id, session_factory=f)))
+        self.assertEqual(calls, ["flags", "role"])  # 覆寫與角色都快取
+        ff.invalidate()
+        self.assertFalse(asyncio.run(ff.policy("qa.agentic", OTHER.id,
+                                               session_factory=_routing_factory(rows, role="user"))))
+
+    def test_role_lookup_failure_means_the_scope_does_not_apply(self):
+        rows = [("qa.agentic", True, ["admin"], None)]
+        with self.assertLogs("app.services.feature_flags", "WARNING"):
+            ok = asyncio.run(ff.policy("qa.agentic", ADMIN.id, session_factory=_routing_factory(rows, role_fail=True)))
+        self.assertFalse(ok)
+
+    def test_garbage_user_id_is_no_identity(self):
+        rows = [("qa.agentic", True, None, [MEMBER.id])]
+        self.assertFalse(asyncio.run(ff.policy("qa.agentic", "not-a-uuid", session_factory=_routing_factory(rows))))
+        self.assertFalse(asyncio.run(ff.policy("qa.agentic", None, session_factory=_routing_factory(rows))))
+
+    def test_snapshot_with_user_object(self):
+        rows = [("ask.rerank", True, ["admin"], None)]
+        with self._with_ceilings(ask_rerank_enabled=True):
+            state = asyncio.run(ff.snapshot(ADMIN, session_factory=_routing_factory(rows)))
+            self.assertTrue(state["ask.rerank"].effective)
+            ff.invalidate()
+            self.assertFalse(
+                asyncio.run(ff.snapshot(MEMBER, session_factory=_routing_factory(rows)))["ask.rerank"].effective)
+
+
+class ReplacedConstantsTests(unittest.TestCase):
+    """被替換的常數讀取：呼叫點寫成「模組常數 AND policy()」，所以模組常數必須就是 registry 的上限。"""
+
+    def test_module_constants_are_the_registry_ceilings(self):
+        from app.services import answer, trusted_market_data
+
+        s = config.get_settings()
+        self.assertEqual(answer.ASK_ENABLE_WEB, ff.REGISTRY["ask.web_search"].ceiling(s))
+        self.assertEqual(answer.ASK_FAITHFULNESS_ENABLED, ff.REGISTRY["qa.faithfulness"].ceiling(s))
+        rerank_on = ff.REGISTRY["ask.rerank"].ceiling(s) and s.ask_rerank_candidates > 0
+        self.assertEqual(answer.ASK_RERANK_TOP_M > 0, rerank_on)
+        self.assertEqual(trusted_market_data.TRUSTED_DATA_ENABLED, ff.REGISTRY["trusted_data"].ceiling(s))
+
+    def test_ceiling_env_names_match_the_config_reads(self):
+        """registry 寫的環境變數名稱就是 app/config.py 讀的那一個（管理頁與文件照它說「需先在環境檔開啟」）。"""
+        from pathlib import Path
+
+        src = (Path(config.__file__)).read_text(encoding="utf-8")
+        for spec in ff.REGISTRY.values():
+            self.assertIn(f'"{spec.ceiling_env}"', src, spec.key)
+
+    def test_registry_version_is_a_stable_fingerprint(self):
+        self.assertRegex(ff.REGISTRY_VERSION, r"^[0-9a-f]{12}$")
+
+
+class NormalizeTests(unittest.TestCase):
+    """寫入前的驗證與正規化（不連 DB）。"""
+
+    def test_dedupes_sorts_and_lowercases(self):
+        o = ff._normalize("qa.agentic", enabled=True, allow_roles=["user", "admin", "user"],
+                          allow_users=[MEMBER.id.upper(), MEMBER.id], note="  先關掉觀察  ")
+        self.assertEqual(o.allow_roles, ("admin", "user"))
+        self.assertEqual(o.allow_users, (MEMBER.id,))
+        self.assertEqual(o.note, "先關掉觀察")
+
+    def test_rejections(self):
+        cases = [
+            dict(key="no.such", enabled=True),
+            dict(key="qa.agentic", enabled=True, allow_roles=["root"]),
+            dict(key="qa.agentic", enabled=True, allow_users=["bob"]),
+            dict(key="qa.agentic", enabled=True, allow_roles=[], allow_users=[]),  # 空作用域不可變成全站
+            dict(key="qa.agentic", enabled=True, allow_roles=[]),
+            dict(key="qa.agentic", enabled=True, note="字" * 501),
+            dict(key="qa.agentic", enabled=True, allow_users=[str(uuid.uuid4()) for _ in range(201)]),
+        ]
+        for kw in cases:
+            key = kw.pop("key")
+            with self.subTest(key=key, **{k: str(v)[:30] for k, v in kw.items()}):
+                with self.assertRaises(ff.FlagError):
+                    ff._normalize(key, allow_roles=kw.get("allow_roles"), allow_users=kw.get("allow_users"),
+                                  note=kw.get("note"), enabled=kw["enabled"])
+        with self.assertRaises(ff.UnknownFlagError):
+            ff._normalize("no.such", enabled=True, allow_roles=None, allow_users=None, note=None)
+
+    def test_empty_note_is_none_and_global_scope_stays_global(self):
+        o = ff._normalize("qa.agentic", enabled=False, allow_roles=None, allow_users=None, note="   ")
+        self.assertEqual((o.allow_roles, o.allow_users, o.note), (None, None, None))
+
+    def test_scope_summary(self):
+        self.assertEqual(ff._scope_summary(None), "沒有覆寫（registry 預設）")
+        self.assertEqual(ff._scope_summary(ff.StoredOverride("k", False, None, None)), "關閉")
+        self.assertEqual(ff._scope_summary(ff.StoredOverride("k", True, None, None)), "全站開啟")
+        self.assertEqual(ff._scope_summary(ff.StoredOverride("k", True, ("admin",), (MEMBER.id,))),
+                         "限定開啟：角色 admin；指定使用者 1 位")
 
 
 if __name__ == "__main__":

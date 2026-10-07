@@ -136,7 +136,9 @@ class AuthzTests(_Base):
     def test_no_qa_content_export_exists(self):
         """問答原文絕不提供匯出：任何 export 路徑都不得指向 qa。"""
         exports = sorted(p for p in app.openapi()["paths"] if "/export" in p)
-        self.assertEqual(exports, sorted(PATHS))
+        # CSV 匯出全在 /api/admin/export/ 底下；功能旗標的設定匯出（/api/admin/flags/export）不是資料匯出
+        self.assertEqual([p for p in exports if p.startswith("/api/admin/export/")], sorted(PATHS))
+        self.assertEqual([p for p in exports if not p.startswith("/api/admin/export/")], ["/api/admin/flags/export"])
         self.assertFalse([p for p in exports if "qa" in p])
 
 

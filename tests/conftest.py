@@ -101,6 +101,16 @@ os.environ.pop("REPORT_MARK_ALERT_WEBHOOK", None)
 # 是真的；沒裝假代理（tests/fake_ops_agent.py）的測試必須連不到它。
 os.environ["OPS_AGENT_ENVIRONMENT"] = "production"
 os.environ["OPS_AGENT_SOCKET"] = "/nonexistent/report-mark-ops/agent.sock"
+# 管理員 TOTP 強制（app/config.py 的 ADMIN_MFA_REQUIRED，預設關）：既有測試的管理員（tester 等）都沒開 TOTP，
+# 若部署目錄 .env 或執行者 shell 設成開，每一支管理端點測試都會 403。
+# **用賦值**（部署目錄 .env 或執行者 shell 裡的值都擋得住）。
+# 開啟時的行為由 tests/test_admin_mfa.py 在自己的範圍內換掉 Settings 驗證。
+os.environ["ADMIN_MFA_REQUIRED"] = "0"
+# 用量收集（app/services/usage_events.py）：lifespan 的 flusher 會把累加器寫進 usage_daily／usage_counter／
+# llm_usage_daily——測試以 `with TestClient(app)` 觸發 lifespan 時，那就是寫進 REPORT_MARK_DB_URL 指的庫
+# （本機預設是生產庫）。**用賦值**關掉 flusher 與 LLM observer；middleware 仍在記憶體計數（下方 fixture 每題重設）。
+# 要驗寫入的測試自己給假的 session factory（tests/test_usage_events.py）。
+os.environ["USAGE_EVENTS_ENABLED"] = "0"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -221,6 +231,28 @@ def _reset_ttl_caches():
 
 
 @pytest.fixture(autouse=True)
+def _reset_v2_state():
+    """Admin v2 的兩個模組級狀態每題前後各清一次：用量累加器（`app.services.usage_events`）與功能旗標的
+    DB 覆寫快取（`app.services.feature_flags`）。旗標快取會影響行為：A 測試的假覆寫不能漏到 B。
+    同樣不主動 import——模組沒載入就沒有狀態要清。"""
+
+    def _clear() -> None:
+        usage = sys.modules.get("app.services.usage_events")
+        if usage is not None:
+            usage.reset()
+        flags = sys.modules.get("app.services.feature_flags")
+        if flags is not None:
+            flags.invalidate()
+        security = sys.modules.get("app.services.security_ops")  # 限流彙總的記憶體計數、稽核鏈驗證快取
+        if security is not None:
+            security.reset()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_external_rate_limit():
     """`web.external_auth` 的每分鐘限流 token bucket 每題前後各清一次（理由同上面的監控快取）。
 
@@ -236,6 +268,25 @@ def _reset_external_rate_limit():
     _clear()
     yield
     _clear()
+
+
+@pytest.fixture(autouse=True)
+def _stub_feature_flag_db():
+    """功能旗標的讀取（`app.services.feature_flags` 沒給 session_factory 時用的 `SessionFactory`）預設讀成「沒有
+    任何覆寫」：問答、上傳等既有測試在 registry 預設下跑（＝只看環境變數，與 v1 相同），而不是去讀
+    `REPORT_MARK_DB_URL` 指的庫——本機預設是生產庫，那裡的覆寫會讓測試結果跟著生產設定變。
+    驗旗標本身的測試明確傳 session_factory，或在範圍內用 `fake_feature_flags.flag_rows()` 換成指定的覆寫。
+    旗標模組很輕（只依賴 app.config 與 app.services.db），這裡直接 import。"""
+    from fake_feature_flags import NoRowsSession
+
+    from app.services import feature_flags as flags
+
+    orig = flags.SessionFactory
+    flags.SessionFactory = NoRowsSession
+    try:
+        yield
+    finally:
+        flags.SessionFactory = orig
 
 
 @pytest.fixture(autouse=True)
@@ -314,3 +365,28 @@ def _stub_ask_ownership_checks():
         yield
     finally:
         mod.conversation_is_foreign, mod.qa_is_foreign = orig
+
+
+@pytest.fixture(autouse=True)
+def _stub_quota_charge():
+    """問答與匯出每次都會計配額（`deps.quota.charge`，真的實作寫 `usage_counter`）。測試不連 DB：預設換成
+    「放行、不計數」的代理，其餘屬性照舊轉給真的模組。要驗配額的測試自己把 `deps.quota` 換成假物件
+    （tests/test_quota_api.py）。同樣不主動 import——web.deps 沒載入就沒有東西要 stub。"""
+    mod = sys.modules.get("web.deps")
+    if mod is None:
+        yield
+        return
+    real = mod.quota
+
+    class _AllowAll:
+        async def charge(self, user, kind, **_kw):
+            return real.Decision(kind=kind, allowed=True)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    mod.quota = _AllowAll()
+    try:
+        yield
+    finally:
+        mod.quota = real

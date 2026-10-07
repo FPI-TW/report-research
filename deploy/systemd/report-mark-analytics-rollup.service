@@ -1,0 +1,27 @@
+[Unit]
+Description=廷豐智能研報 使用分析每晚彙總（前一天的指標寫進 analytics_daily；純 SQL，零 LLM）
+# 分析頁最近 90 天即時查 qa_log，更早的日子只讀 analytics_daily：每一天都要在離開即時窗期前彙總過。
+# 每晚覆寫昨天，並補齊窗期內還沒彙總的日子（錯過幾晚也追得上）。細節見 scripts/analytics_rollup.py 檔頭。
+After=network-online.target
+Wants=network-online.target
+# 計算或寫入失敗（rc=1：SQL 錯誤、參數錯誤）沒有其他東西會發現——缺的日子離開即時窗期後就再也無法從
+# 被硬刪的 qa_log 補回來，所以掛 OnFailure。DB 不可用（rc=2）列為成功（見 SuccessExitStatus）：
+# DB 掛掉本身已由 web 探針經 P5 帶去重地告警，report-mark-alert@ 沒有去重。
+OnFailure=report-mark-alert@%n.service
+
+[Service]
+Type=oneshot
+User=kashionz
+Group=kashionz
+# HOME 硬編碼，不可用 %h（系統層 unit 的 %h 一律解析為 /root，不受 User= 影響）。
+Environment=HOME=/home/kashionz
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/report-mark-sync
+ExecStart=/usr/bin/bash -c 'export PATH="${SYNC_PATH_EXTRA:+$SYNC_PATH_EXTRA:}$PATH"; cd "${REPORT_MARK_ROOT:?set REPORT_MARK_ROOT in /etc/default/report-mark-sync}" && exec "${UV:-uv}" run python scripts/analytics_rollup.py'
+# 2＝DB 不可用（由 P5 告警）：不是這支批次的故障。
+SuccessExitStatus=2
+# 一天只有幾十到幾百列、數秒；第一次部署補滿 90 天的窗期也在一分鐘內。
+TimeoutStartSec=900
+Nice=10
+# 零 LLM、不載嵌入模型（tests/test_analytics.py 確認不會 import torch）：記憶體牆只是保險，主機很緊。
+MemoryMax=768M

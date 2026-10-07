@@ -13,6 +13,9 @@
 # - 這裡只列已安裝的 unit：2026-10-02 起的 web、nginx 與 8 組 timer，加上 2026-10-07 部署 Admin v1.5 時裝的
 #   schema-check（`SCHEMA_CHECK_MODE=version`：app 帳號沒有 CREATEDB）。其餘 Admin v1 的 unit（load-observations、
 #   host-health……）裝到 staging 時再補，免得未安裝的 unit 在依賴圖上一片 not_found。
+# - Admin v2 的 unit（db-snapshot、analytics-rollup、security-health、security-incident、security-retention）尚未安裝到
+#   EC2：v2 unit 安裝到 EC2 時再加，項目與 prod catalog 相同（依賴把 postgres 換成 rds；給 run 的兩項同步加進 polkit 的
+#   report-mark-ops-staging）。
 #
 # 權限（Admin v1 決策）：restart 只開放 web；run 只給既有白名單裡 staging 也有、而且沒有副作用疑慮的
 # freshness、audit（兩者都只讀 DB、寫 data/ 的結果檔）。刻意唯讀：

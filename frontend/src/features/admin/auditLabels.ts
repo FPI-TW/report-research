@@ -23,10 +23,42 @@ const ACTION_LABELS: Record<string, string> = {
   'report.bulk_visibility': '批次隱藏／恢復研報',
   'user.bulk_action': '批次帳號操作',
   'data.export': '匯出 CSV',
+  'session.elevate': '重新驗證（權限提升）',
+  'session.elevate_failed': '重新驗證失敗',
+  'ops.restart': '重新啟動服務',
+  'ops.run': '立即執行批次',
+  // Admin v2（Wave 0 預先放好；稽核 action 名稱是穩定介面，各 lane 照用）
+  'session.admin_revoke': '撤銷 session',
+  'flag.update': '變更功能旗標',
+  'quota.update': '調整配額',
   'api_client.create': '建立 API 用戶端',
   'api_client.update': '變更 API 用戶端設定',
   'api_client.entitlements': '變更 API 用戶端授權範圍',
   'api_client.rotate': '輪替 API 用戶端金鑰',
+}
+
+/**
+ * 登入與安全事件（`research.auth_event`，不是稽核紀錄）→ 中文。詞彙的唯一定義是後端
+ * `app/services/accounts.py` 的 `AUTH_EVENT_TYPES`；這裡沒有守門測試，未知的事件原樣顯示代碼。
+ */
+const AUTH_EVENT_LABELS: Record<string, string> = {
+  'login.success': '登入成功',
+  'login.failure': '登入失敗',
+  'login.totp_failure': '兩步驟驗證失敗',
+  'login.locked': '登入被限流',
+  'login.insecure': '非 HTTPS 登入被拒',
+  logout: '登出',
+  'elevate.success': '重新驗證成功',
+  'elevate.failure': '重新驗證失敗',
+}
+const AUTH_REASON_LABELS: Record<string, string> = {
+  password: '密碼', totp: '兩步驟驗證', unknown_user: '帳號不存在', bad_password: '密碼錯誤', disabled: '帳號已停用',
+  bad_code: '驗證碼錯誤', expired_challenge: '驗證逾時',
+}
+
+export function authEventLabel(event: string, reason?: string | null): string {
+  const base = AUTH_EVENT_LABELS[event] ?? event
+  return reason ? `${base}（${AUTH_REASON_LABELS[reason] ?? reason}）` : base
 }
 
 const ROLE_LABELS: Record<string, string> = { admin: '管理員', user: '一般使用者' }

@@ -530,9 +530,32 @@ class RepoCatalogWriteTests(unittest.TestCase):
         writes = {s.name: [a for a in s.actions if a in protocol.WRITE_ACTIONS] for s in prod.services}
         writes = {k: v for k, v in writes.items() if v}
         self.assertEqual(writes, {"web": ["restart"], "sync": ["run"], "backup": ["run"], "freshness": ["run"],
-                                  "audit": ["run"], "r2-reconcile": ["run"], "upload": ["run"]})
+                                  "audit": ["run"], "r2-reconcile": ["run"], "upload": ["run"],
+                                  "db-snapshot": ["run"], "analytics-rollup": ["run"]})
         for name in ("postgres", "nginx", "cloudflared"):
             self.assertLessEqual(set(prod.get(name).actions), {"status", "logs"}, name)
+
+    def test_admin_v2_units_run_decisions(self):
+        """Admin v2：只讀或冪等、零 LLM 的 db-snapshot、analytics-rollup 給 run，各自一個 group、不帶鎖檔；
+        會刪資料的 security-retention 與探針／P5 狀態機的 security-health、security-incident 唯讀。"""
+        prod = load_catalog(PROD_TOML, resolve_user=_uid)
+        for name in ("db-snapshot", "analytics-rollup"):
+            with self.subTest(name=name):
+                svc = prod.get(name)
+                self.assertEqual(svc.group, name)
+                self.assertEqual(prod.group_members(name), (svc,))
+                self.assertEqual((svc.flock_files, svc.pid_files), ((), ()))
+                self.assertEqual(svc.unit, f"report-mark-{name}.service")
+                self.assertTrue((REPO_ROOT / "deploy" / "systemd" / svc.unit).is_file())
+                self.assertTrue((REPO_ROOT / "deploy" / "systemd" / svc.timer).is_file())
+        for name in ("security-health", "security-incident", "security-retention"):
+            with self.subTest(name=name):
+                svc = prod.get(name)
+                self.assertEqual(svc.actions, ("status", "logs"))
+                self.assertTrue((REPO_ROOT / "deploy" / "systemd" / svc.unit).is_file())
+                self.assertTrue((REPO_ROOT / "deploy" / "systemd" / svc.timer).is_file())
+        self.assertEqual(prod.get("security-health").depends_on, ())
+        self.assertEqual(prod.get("security-incident").depends_on, ("slack",))
 
     def test_dev_write_targets_are_dev_only(self):
         dev = load_catalog(DEV_TOML, resolve_user=_uid)

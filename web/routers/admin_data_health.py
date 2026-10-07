@@ -6,7 +6,8 @@
   TTL 快取 60 秒（`web/ttl_cache.py`）。
 - **LLM 用量**：讀 `data/llm_usage.jsonl`（批次的費用歸因依據），依日期（台北時間）／任務／模型彙總 token 與
   呼叫次數。只回彙總，不含 prompt 雜湊、file_hash、report_id；讀檔有位元組與行數上限，檔案不存在回空結果。
-  在 thread 裡讀（不卡 event loop），快取鍵帶檔案大小與 mtime。
+  在 thread 裡讀（不卡 event loop），快取鍵帶檔案大小與 mtime。Admin v2 另附 `online`（線上呼叫，
+  `research.llm_usage_daily` 的日彙總，不出個人維度；讀不到時 `available=false`）與 `combined`（兩者合計）。
 
 服務函式經 `deps.data_health`／`deps.llm_usage` 呼叫（測試的替換點）。
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
@@ -162,6 +163,30 @@ class LlmUsageSource(BaseModel):
     latest_ts: str | None = None
 
 
+class LlmUsageOnline(BaseModel):
+    """線上 LLM 用量（`research.llm_usage_daily`，台北日粒度；窗期頭尾兩天整天計入）。"""
+
+    available: bool
+    error: str | None = None
+    since_day: str
+    until_day: str
+    totals: LlmUsageTotals
+    by_day: list[LlmUsageDay]
+    by_task: list[LlmUsageTask]
+    by_model: list[LlmUsageModel]
+    rows: list[LlmUsageRow]
+    rows_truncated: bool
+    attributed_users: int
+    unattributed_calls: int
+    cost_available: bool
+
+
+class LlmUsageCombined(BaseModel):
+    totals: LlmUsageTotals
+    by_day: list[LlmUsageDay]
+    cost_available: bool
+
+
 class LlmUsageResponse(BaseModel):
     since: str
     until: str
@@ -174,6 +199,8 @@ class LlmUsageResponse(BaseModel):
     rows: list[LlmUsageRow]
     rows_truncated: bool
     cost_available: bool
+    online: LlmUsageOnline | None = None  # Admin v2：線上來源
+    combined: LlmUsageCombined | None = None  # 批次＋線上
 
 
 # ── 輔助函式一律放在所有 @router.* 裝飾器之上 ──────────────────────────────
@@ -211,9 +238,10 @@ async def get_data_health():
 
 @router.get("/api/admin/llm-usage", response_model=LlmUsageResponse, dependencies=[_OPS_READ])
 async def get_llm_usage(since: datetime | None = Query(None), until: datetime | None = Query(None)):
-    """批次 LLM 用量的彙總（`[since, until)`；預設最近 30 天、最多 366 天；沒有時區當 UTC）。
+    """LLM 用量的彙總（`[since, until)`；預設最近 30 天、最多 366 天；沒有時區當 UTC）。
 
-    `source.truncated=true` 表示檔案超過讀取上限、只涵蓋 `source.earliest_ts` 之後。檔案不存在回全零。
+    頂層欄位是批次（jsonl）：`source.truncated=true` 表示檔案超過讀取上限、只涵蓋 `source.earliest_ts` 之後；
+    檔案不存在回全零。`online` 是線上呼叫（DB 日彙總），`combined` 是兩者合計。整份快取 60 秒。
     """
     since_used, until_used = _usage_window(since, until)
     key = (since_used.isoformat(), until_used.isoformat(), deps.llm_usage.file_signature())
@@ -221,6 +249,7 @@ async def get_llm_usage(since: datetime | None = Query(None), until: datetime | 
     if cached is not None:
         return cached
     summary = await asyncio.to_thread(deps.llm_usage.summarize, since_used, until_used)
-    response = LlmUsageResponse(**summary)
+    online = await deps.llm_usage.summarize_online(since_used, until_used, session_factory=deps.SessionFactory)
+    response = LlmUsageResponse(**summary, online=online, combined=deps.llm_usage.combine(summary, online))
     _USAGE_CACHE.put(key, response)
     return response

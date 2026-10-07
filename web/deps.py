@@ -130,8 +130,10 @@ def _valid_uuid(s) -> bool:
 # 診斷快照（web/routers/admin_diagnostics.py）同理：deps.diagnostics.snapshot。
 # 檢索回歸（web/routers/admin_retrieval_regression.py）同理：deps.retrieval_regression.X。
 # 研報上傳的收檔與查詢（web/routers/admin_uploads.py）同理：deps.upload_intake.X；審核同理：deps.upload_review.X。
+# API 用戶端（對外 API 的認證 web/external_auth.py 與管理端 web/routers/admin_api_clients.py）同理：deps.api_clients.X。
 from app.services import (  # noqa: E402
     accounts,
+    api_clients,
     data_health,
     diagnostics,
     llm_usage,
@@ -203,6 +205,7 @@ __all__ = [
     "_with_heartbeat",
     "accounts",
     "answer_question",
+    "api_clients",
     "conversation_is_foreign",
     "data_health",
     "diagnostics",

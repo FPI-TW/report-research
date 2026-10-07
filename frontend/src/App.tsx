@@ -7,7 +7,6 @@ import { routeLoaders, preloadIdle } from './lib/routePreload'
 
 const SearchPage = lazy(routeLoaders.search)
 const AskPage = lazy(routeLoaders.ask)
-const MonitorPage = lazy(routeLoaders.monitor)
 const RadarPage = lazy(routeLoaders.radar)
 const BriefPage = lazy(routeLoaders.brief)
 const HelpPage = lazy(routeLoaders.help)
@@ -24,6 +23,7 @@ const AdminUploadDetailPage = lazy(routeLoaders.adminUpload)
 // 維運（/admin/operations/*）：外殼（標題＋子導覽、ops.read 守門）＋各子頁；jobs／incidents／host 讀 DB 投影。
 const OperationsLayout = lazy(routeLoaders.adminOps)
 const OpsOverviewPage = lazy(routeLoaders.adminOpsOverview)
+const OpsPipelinePage = lazy(routeLoaders.adminOpsPipeline)
 const OpsServicesPage = lazy(routeLoaders.adminOpsServices)
 const OpsServiceDetailPage = lazy(routeLoaders.adminOpsService)
 const OpsLogsPage = lazy(routeLoaders.adminOpsLogs)
@@ -60,7 +60,8 @@ export const routes = [
           { path: '/', element: <Navigate to="/search" replace /> },
           { path: '/search', element: <Suspense><SearchPage /></Suspense> },
           { path: '/ask', element: <Suspense><AskPage /></Suspense> },
-          { path: '/monitor', element: <Suspense><MonitorPage /></Suspense> },
+          // 導入監控已搬進管理後台（/admin/operations/pipeline）；舊書籤多半來自一般使用者，一律回檢索頁。
+          { path: '/monitor', element: <Navigate to="/search" replace /> },
           { path: '/radar', element: <Suspense><RadarPage /></Suspense> },
           { path: '/brief', element: <Suspense><BriefPage /></Suspense> },
           { path: '/help', element: <Suspense><HelpPage /></Suspense> },
@@ -98,6 +99,7 @@ export const routes = [
             children: [
               { index: true, element: <Navigate to="overview" replace /> },
               { path: 'overview', element: <Suspense><OpsOverviewPage /></Suspense> },
+              { path: 'pipeline', element: <Suspense><OpsPipelinePage /></Suspense> },
               { path: 'services', element: <Suspense><OpsServicesPage /></Suspense> },
               { path: 'services/:name', element: <Suspense><OpsServiceDetailPage /></Suspense> },
               { path: 'dependencies', element: <Suspense><OpsDependenciesPage /></Suspense> },

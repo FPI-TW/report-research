@@ -2,7 +2,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { useProgress } from './useProgress'
+import { PROGRESS_POLL_MS, useProgress } from './useProgress'
 
 const fixture = {
   ts: '12:00:00',
@@ -30,4 +30,15 @@ test('抓取失敗 → isError（retry:false）', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => ({ status: 500, ok: false, json: async () => ({}) })))
   const { result } = renderHook(() => useProgress(), { wrapper: wrapper() })
   await waitFor(() => expect(result.current.isError).toBe(true))
+})
+
+test('每 15 秒輪詢（對齊後端 15 秒快取）、分頁在背景時不輪詢', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, ok: true, json: async () => fixture })))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const w = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  renderHook(() => useProgress(), { wrapper: w })
+  const opts = client.getQueryCache().find({ queryKey: ['progress'] })!.observers[0].options
+  expect(PROGRESS_POLL_MS).toBe(15_000)
+  expect(opts.refetchInterval).toBe(PROGRESS_POLL_MS)
+  expect(opts.refetchIntervalInBackground).toBe(false)
 })

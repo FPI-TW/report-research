@@ -120,7 +120,7 @@ test('Admin v2 佔位頁：沒有對應 scope 時只顯示需要的權限', asyn
   expect(await screen.findByRole('heading', { name: '需要「使用分析」權限' }, { timeout: 15000 })).toBeInTheDocument()
 }, 15000)
 
-test('維運 → 資料庫分頁（Admin v2 佔位）', async () => {
+test('維運 → 資料庫分頁', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) =>
     url.includes('/api/me')
       ? new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'ops.read'] }), { status: 200 })
@@ -129,4 +129,35 @@ test('維運 → 資料庫分頁（Admin v2 佔位）', async () => {
   const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations/database'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   expect(await screen.findByRole('heading', { level: 2, name: '資料庫' }, { timeout: 15000 })).toBeInTheDocument()
+}, 15000)
+
+test('舊書籤 /monitor 導回檢索頁（導入監控已搬進管理後台）', async () => {
+  stubAs('user')
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/monitor'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByLabelText('搜尋研報', {}, { timeout: 15000 })).toBeInTheDocument()
+  expect(router.state.location.pathname).toBe('/search')
+}, 15000)
+
+test('/admin/operations/pipeline 掛上管線分頁，代理不可用也照常（只讀 /api/progress）', async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.includes('/api/me')) {
+      return new Response(JSON.stringify({ id: 'u1', username: 'analyst', role: 'admin', scopes: ['admin', 'ops.read'] }), { status: 200 })
+    }
+    if (url === '/api/progress') {
+      return new Response(JSON.stringify({
+        ts: '14:32:05', db: { reports: 1, chunks: 2, markets: [] },
+        summary: { done: 1, total: 1, remaining: 0, pct: 100 }, tagging: null, ingest: null,
+        pipelines: { web: true, ingest: false, tag: false, summaries: false }, orchestrator: null,
+      }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ detail: '維運代理不可用', code: 'ops_agent_unavailable' }), { status: 503 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: ['/admin/operations/pipeline'] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  expect(await screen.findByText('管線正常', {}, { timeout: 15000 })).toBeInTheDocument()
+  expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/admin/ops'))).toBe(false)
 }, 15000)

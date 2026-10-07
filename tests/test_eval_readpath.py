@@ -141,7 +141,7 @@ class JudgeFilterTests(unittest.TestCase):
 
 
 class ScaleLineageTests(unittest.TestCase):
-    """審查低5：比照監控卡標出系譜與新量尺；判準同 frontend/src/features/monitor/judgeScale.ts。"""
+    """審查低5：比照監控卡標出系譜與新量尺；判準同 frontend/src/lib/judgeScale.ts。"""
 
     def _rows(self):
         return [

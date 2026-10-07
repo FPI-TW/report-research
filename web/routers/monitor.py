@@ -1,7 +1,8 @@
 # web/routers/monitor.py
 """監控資料 API：/api/stats（語料統計）與 /api/progress（匯入/標註即時進度）。
 
-從 web/server.py 拆出（第三步）。兩條路由同源於 /app/monitor 儀表板。
+從 web/server.py 拆出（第三步）。/api/stats 供檢索頁的全庫市場計數；/api/progress 供管理後台
+的管線分頁（/app/admin/operations/pipeline）與待複核頁的判定尺附註。
 
 **stats 與 progress 共用 _DB_STATS_CACHE**：兩者都經 _db_stats_snapshot 取語料
 快照，TTL 內只打一次 DB。這是它們必須同模組的原因——快取是模組級狀態，拆到兩
@@ -11,11 +12,11 @@
 進度解析（log tail + /proc 掃描）是同步工作，progress 以 asyncio.to_thread 執行
 _gather_runtime，不阻塞事件迴圈。
 
-**三層 TTL 快取，各有不同的理由**（監控頁每 5 秒輪詢一次，所以每一項成本都會
+**三層 TTL 快取，各有不同的理由**（管線分頁每 15 秒輪詢一次，所以每一項成本都會
 乘上開著頁面的分頁數；TanStack Query 在視窗失焦時會停 interval，所以成立條件是
-「監控頁開著且在前景」）：
+「管線分頁開著且在前景」）：
 
-  _DB_STATS_CACHE    10 條 DB 查詢。15 秒 ⇒ 每三次輪詢只打一次 DB。
+  _DB_STATS_CACHE    10 條 DB 查詢。15 秒，與前端輪詢間隔對齊。
   _RUNTIME_CACHE     整個 runtime 區塊（log tail + /proc + tag 檔數）。
   _TAG_COUNT_CACHE   `data/tags/` 的 scandir，**這裡真正的熱點**：本機實測
                      15,852 個檔、冷 412 ms／熱 117 ms，而三次 `_proc_alive`
@@ -23,7 +24,7 @@ _gather_runtime，不阻塞事件迴圈。
                      發現差 50 倍）。60 秒是安全的：全量標註只在初次建庫時跑，
                      那個場景下一分鐘的粒度完全夠用。
 
-（/monitor、/help 的 302 轉址屬 SPA 導覽，不在此——留在 server.py。）
+（/monitor、/help 的 302 轉址屬 SPA 導覽，不在此——在 web/routers/spa.py。）
 """
 import asyncio
 import glob as _glob

@@ -139,7 +139,7 @@ worker 數 × (DB_POOL_SIZE + DB_MAX_OVERFLOW) + 同時在跑的批次腳本數 
 
 - 右邊：DB 跑 `pgvector/pgvector:pg16` 官方映像，`Makefile` 的 `docker run` 沒帶任何 `postgresql.conf` 覆寫 ⇒ `max_connections=100`、`superuser_reserved_connections=3` ⇒ 一般角色可用 **97**。
 - 左邊現況：web 是**單 worker**（`report-mark-web.service` 的 `ExecStart` 沒有 `--workers`）⇒ `1 × (5+15) = 20`；同步鏈三支批次腳本各自單執行緒、同時只開一個 session ⇒ `3 × 2 = 6`。合計 **26**。
-- 為何上界取 20 而不是沿用 SQLAlchemy 預設的 15：有併發閘的路徑只有 `/api/ask`(3)；`/api/search`、雷達、閱讀頁、監控頁**完全沒有併發閘**，剩下 17 條是留給它們的突發量。
+- 為何上界取 20 而不是沿用 SQLAlchemy 預設的 15：有併發閘的路徑只有 `/api/ask`(3)；`/api/search`、雷達、閱讀頁、`/api/progress`**完全沒有併發閘**，剩下 17 條是留給它們的突發量。
 
 **改任何一項併發都要重算這條式子**：加 `uvicorn --workers`、放寬 `web/routers/ask.py` 裡寫死的 `_ASK_GATE`(3)、或新增一支長跑批次腳本。
 
@@ -752,9 +752,10 @@ journalctl -u report-mark-health.service -n 5 -o cat    # reason=llm_<state>（�
    ```
    `judge_model` 應為 `deepseek-flash`、`judge_fingerprint` 有值、`degraded` 為 false。web 日誌的
    `llm_call task=faithfulness` 行帶 `fp=`。
-5. 監控頁忠實度卡顯示「判定尺 deepseek-flash：新量尺（自 YYYY-MM-DD 起，DeepSeek）」，日期是資料裡新尺的
-   第一筆（`judge_since`，不是寫死的）；舊的 haiku 分數只計入已查核數、不進 fail-open／待複核／平均，
-   待複核佇列也只列新尺的低分。近 30 天窗期內舊列全部滾出後，卡片不再標「新量尺」。
+5. 管理後台「維運 → 管線」分頁的忠實度卡在平均分數旁標「新量尺（自 YYYY-MM-DD 起，DeepSeek）」、
+   說明行寫「只計判定尺 deepseek-flash」，日期是資料裡新尺的第一筆（`judge_since`，不是寫死的）；舊的
+   haiku 分數只計入已查核數、不進 fail-open／低於門檻／平均，待複核佇列也只列新尺的低分。近 30 天窗期內
+   舊列全部滾出後，卡片不再標「新量尺」。
 
 **degraded_reason 在 DeepSeek judge 下的意義**：`content_risk`（供應商內容審查拒答，不重試）、
 `account`（401／402／404：金鑰、餘額、模型設定；告警走上一節的 `/healthz/llm`，這裡只是抽查沒量到）、
@@ -1031,11 +1032,11 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 
 `corpus` 本身預設也是 0：語料停更已經由 sync unit 的 `OnFailure` 覆蓋（匯入段失敗會 `exit 1` → unit 變紅），而 NAS 供稿有連假空窗，硬設門檻會變成日曆的假警報。
 
-### 監控頁：`unit_failures.log` 終於有讀取端
+### 排程健康：`unit_failures.log` 的讀取端
 
 2026-07-28 那次 24 小時停擺，`OnFailure` **確實**把 10 筆告警寫進了 `data/unit_failures.log`。機制當天就抓到真故障——但那個檔**零程式消費端**、webhook 也沒設，所以整整一天沒有人知道。
 
-`/api/progress` 現在多回兩塊，`/app/monitor` 的「排程健康」卡呈現：
+`/api/progress` 因此多回兩塊，由管理後台「維運 → 管線」分頁（`/app/admin/operations/pipeline`，需要 `ops.read`）的「排程與執行」卡呈現。這一頁原本是主平台對所有使用者開放的 `/app/monitor`，2026-10 搬進管理後台後**只有管理員看得到**；失敗的即時通知靠 `OnFailure` 的 Slack 告警，這張卡是事後查「哪一輪、哪一段、退出碼多少」的地方。它只讀 web 行程，不經維運代理，代理或監控收集沒裝的主機上照常可看：
 
 | 欄位 | 內容 |
 |---|---|
@@ -1045,11 +1046,11 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 兩個判定上的坑，都寫成測試釘住了：
 
 - **完成判定看「最後一個標記行是 start 還是 done」**，不是「整檔有沒有 done」。log 是每日一檔、一天被 8 輪同步接續 append，看整檔等於第一輪跑完之後永遠顯示「已完成」。用「最後一個標記」而非「最後一個 start 之後有無 done」是為了對 tail 截斷免疫。
-- **紅點條件是時間窗計數，不是累計未讀數。** 這個檔 append-only、沒有 logrotate、也沒有已讀游標；累計數當條件＝上線第一天就永遠亮著。
+- **異常條件是時間窗計數，不是累計未讀數。** 分頁頁首的結論燈號只在近 24 小時有失敗時亮紅；這個檔 append-only、沒有 logrotate、也沒有已讀游標，累計數當條件＝上線第一天就永遠亮著。同理，待複核筆數常態非零，只列在頁首的中性「待人看」，不進燈號。
 
-### 監控頁負載（順手降三分之二）
+### `/api/progress` 的負載
 
-改動前是「每 5 秒 9 條 DB 查詢 ＋ 一次 `data/tags/` 的 scandir」。量級要講對：這稱不上「持續背景負載」（約 0.8% 一顆核心），而且 TanStack Query 預設在視窗失焦時會停 interval，所以成立條件是**監控頁開著且在前景**。
+管線分頁每 15 秒輪詢一次（主平台監控頁時代是 5 秒），每次最多「9 條 DB 查詢 ＋ 一次 `data/tags/` 的 scandir」，都有快取。量級要講對：這稱不上「持續背景負載」（5 秒輪詢時實測約 0.8% 一顆核心），而且分頁在背景時不輪詢，所以成立條件是**管線分頁開著且在前景**。
 
 真正的熱點不是架構檢視歸咎的 `_proc_alive`。本機實測：
 
@@ -1058,7 +1059,7 @@ uv run python scripts/sync_new_reports.py --delta data/sync_delta_recover.txt
 | `_count_tag_files`（`data/tags/` scandir，15,852 檔） | 冷 412 ms／熱 117 ms |
 | 三次 `_proc_alive`（掃 133 個 `/proc/*/cmdline`） | 合計 2.4 ms |
 
-差 50 倍，所以 `_proc_alive` **刻意不做任何優化**。三層 TTL 快取各有理由：`_DB_STATS_CACHE` 5→15 秒（DB 負載降為三分之一）、`_RUNTIME_CACHE` 10 秒（原本每次輪詢都重掃，把 DB 那層拉長只解一半）、`_TAG_COUNT_CACHE` 60 秒（粒度退化只影響「全量標註進行中」，而那條管線只在初次建庫時跑）。
+差 50 倍，所以 `_proc_alive` **刻意不做任何優化**。三層 TTL 快取各有理由：`_DB_STATS_CACHE` 15 秒（與前端輪詢間隔對齊）、`_RUNTIME_CACHE` 10 秒（原本每次輪詢都重掃，把 DB 那層拉長只解一半）、`_TAG_COUNT_CACHE` 60 秒（粒度退化只影響「全量標註進行中」，而那條管線只在初次建庫時跑）。
 
 ### 安裝
 
@@ -1152,7 +1153,7 @@ systemctl list-timers report-mark-audit.timer                   # 應排在每�
 ## 這一輪刻意沒做
 
 - **外部 uptime 監控**：`/healthz` 是給它用的介面，但要接哪一家（UptimeRobot／自架）是部署決策，不該由一次程式碼改動偷渡。
-- ~~**把 unit 失敗顯示在監控頁**~~ → **已做**（2026-07-30），見下節「批次停更偵測」。
+- ~~**把 unit 失敗顯示在監控頁**~~ → **已做**（2026-07-30；現在在管理後台「維運 → 管線」分頁），見下節「批次停更偵測」。
 - **告警投遞管道**：webhook 已留 opt-in 掛勾，設不設由部署端決定。
 - **語料層（`research_report` / `report_chunk`）納入備份**：見上面的取捨與已知代價，那是一個容量決定（`full_text` 是全語料原文），不該夾帶在第一版備份裡。
 - **異地／離線副本與加密**：NAS 已經比 pgdata 好一個數量級，但 NAS 本身壞掉仍是單點。

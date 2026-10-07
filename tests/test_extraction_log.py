@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = schema_source_text()
 GOLDEN = (ROOT / "db" / "expected_constraints.txt").read_text(encoding="utf-8")
 INGEST = (ROOT / "scripts" / "ingest_all.py").read_text(encoding="utf-8")
-SYNC = (ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+# sync 的單篇入庫流程在 sync 與上傳 worker 共用的入庫核心（scripts/_ingest_core.py）
+SYNC = (ROOT / "scripts" / "_ingest_core.py").read_text(encoding="utf-8")
 
 NEW_COLUMNS = (
     "extractor", "extraction_version", "quality_score", "quality_flags", "page_count", "pages_failed", "needs_review",
@@ -114,7 +115,7 @@ class WritePathTests(unittest.TestCase):
         self.assertEqual(got, {"extract_error", "skip_admin", "scanned", "not_research", "ingested"}, got)
 
     def test_both_paths_pass_extraction_columns_to_report_row(self):
-        for name, src in (("ingest_all", INGEST), ("sync_new_reports", SYNC)):
+        for name, src in (("ingest_all", INGEST), ("_ingest_core", SYNC)):
             for col in ("extractor=", "extraction_version=", "needs_review=needs_review("):
                 with self.subTest(script=name, col=col):
                     self.assertIn(col, src)

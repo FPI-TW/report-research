@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import sync_new_reports as snr  # noqa: E402
 
 from scripts import _claude_cli as cc  # noqa: E402
+from scripts import _ingest_core as ic  # noqa: E402
 
 
 @dataclass
@@ -49,24 +50,24 @@ class SyncNewReportsTests(unittest.TestCase):
         self.assertEqual(out, [Path("/d/x.PDF")])
 
     def test_skip_before_tag_priority_order(self):
-        self.assertEqual(snr.skip_before_tag(True, False, False), "skip_admin")
-        self.assertEqual(snr.skip_before_tag(False, True, False), "skip_scanned")
-        self.assertEqual(snr.skip_before_tag(False, False, True), "skip_exists")
-        self.assertIsNone(snr.skip_before_tag(False, False, False))
+        self.assertEqual(ic.skip_before_tag(True, False, False), "skip_admin")
+        self.assertEqual(ic.skip_before_tag(False, True, False), "skip_scanned")
+        self.assertEqual(ic.skip_before_tag(False, False, True), "skip_exists")
+        self.assertIsNone(ic.skip_before_tag(False, False, False))
 
     def test_skip_after_tag(self):
-        self.assertEqual(snr.skip_after_tag(None), "skip_untagged")
+        self.assertEqual(ic.skip_after_tag(None), "skip_untagged")
         # DeepSeek 的內容審查 → skip_blocked、截斷 → skip_truncated（審查低1：重送結果不變）；
         # 其他失敗（含 CLI、400、空回應）仍是 skip_untagged（補救指令會重送）
-        self.assertEqual(snr.skip_after_tag(None, "API[content_filter] 觸發供應商內容審查：HTTP 400"), "skip_blocked")
-        self.assertEqual(snr.skip_after_tag(None, "API[truncated] 輸出截斷：max_tokens=1024"), "skip_truncated")
+        self.assertEqual(ic.skip_after_tag(None, "API[content_filter] 觸發供應商內容審查：HTTP 400"), "skip_blocked")
+        self.assertEqual(ic.skip_after_tag(None, "API[truncated] 輸出截斷：max_tokens=1024"), "skip_truncated")
         for err in ("API[bad_request] 請求被拒", "API[empty] 空回應", "CLI 逾時（150s 內未回應）",
                     "API[timeout_streamed] 已吐字後逾時：已吐字 3 字後超過總期限",  # 期限型截斷可重放
                     "回應無法解析為標籤", "content_filter", "truncated", None):
-            self.assertEqual(snr.skip_after_tag(None, err), "skip_untagged", err)
-        self.assertEqual(snr.skip_after_tag(_Tag(None, True)), "skip_non_research")
-        self.assertEqual(snr.skip_after_tag(_Tag("TW", False)), "skip_non_research")
-        self.assertIsNone(snr.skip_after_tag(_Tag("TW", True)))
+            self.assertEqual(ic.skip_after_tag(None, err), "skip_untagged", err)
+        self.assertEqual(ic.skip_after_tag(_Tag(None, True)), "skip_non_research")
+        self.assertEqual(ic.skip_after_tag(_Tag("TW", False)), "skip_non_research")
+        self.assertIsNone(ic.skip_after_tag(_Tag("TW", True)))
 
 
 class FallbackReportDateTests(unittest.TestCase):
@@ -83,7 +84,7 @@ class FallbackReportDateTests(unittest.TestCase):
         try:
             explicit = date(2024, 5, 4)
             self.assertEqual(
-                snr.fallback_report_date_from_mtime(explicit, path, created_at=None),
+                ic.fallback_report_date_from_mtime(explicit, path, created_at=None),
                 explicit,
             )
         finally:
@@ -93,7 +94,7 @@ class FallbackReportDateTests(unittest.TestCase):
         path = self._tmp_file_with_mtime(date(2026, 6, 25))
         try:
             self.assertEqual(
-                snr.fallback_report_date_from_mtime(None, path, created_at=None),
+                ic.fallback_report_date_from_mtime(None, path, created_at=None),
                 date(2026, 6, 25),
             )
         finally:
@@ -103,7 +104,7 @@ class FallbackReportDateTests(unittest.TestCase):
         path = self._tmp_file_with_mtime(date(2026, 6, 25))
         try:
             self.assertIsNone(
-                snr.fallback_report_date_from_mtime(
+                ic.fallback_report_date_from_mtime(
                     None, path, created_at=date(2026, 6, 25)
                 )
             )
@@ -197,8 +198,8 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
     """
 
     def _run_with(self, result):
-        with mock.patch.object(snr, "run_claude", return_value=result):
-            return snr._tag_via_cli("x.pdf", "內文")
+        with mock.patch.object(ic, "run_claude", return_value=result):
+            return ic._tag_via_cli("x.pdf", "內文")
 
     def test_cli_error_is_returned_verbatim(self):
         tag, err = self._run_with(cc.CliResult(None, "CLI 退出碼 1：Credit balance too low"))
@@ -207,8 +208,8 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
 
     def test_unparseable_response_is_distinct_from_cli_failure(self):
         """「CLI 壞了」與「CLI 回了但內容不合格」處置完全不同，不可共用一句話。"""
-        with mock.patch.object(snr, "run_claude", return_value=cc.CliResult("不是 JSON", None)):
-            tag, err = snr._tag_via_cli("x.pdf", "內文")
+        with mock.patch.object(ic, "run_claude", return_value=cc.CliResult("不是 JSON", None)):
+            tag, err = ic._tag_via_cli("x.pdf", "內文")
         self.assertIsNone(tag)
         self.assertIn("解析", err)
         self.assertNotIn("退出碼", err)
@@ -219,18 +220,18 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
             '"instrument_types":["equity"],"relates_stock":true,'
             '"relates_futures":false,"stock_targets":["2330"],"futures_targets":[]}'
         )
-        with mock.patch.object(snr, "run_claude", return_value=cc.CliResult(payload, None)):
-            tag, err = snr._tag_via_cli("x.pdf", "內文")
+        with mock.patch.object(ic, "run_claude", return_value=cc.CliResult(payload, None)):
+            tag, err = ic._tag_via_cli("x.pdf", "內文")
         self.assertIsNotNone(tag)
         self.assertIsNone(err)
 
     def test_missing_cli_propagates_instead_of_becoming_skip_untagged(self):
         """環境壞了要中止整批，不可讓每一篇都靜靜變成 skip_untagged 然後 rc=0。"""
         with mock.patch.object(
-            snr, "run_claude", side_effect=cc.CliNotFoundError("不在 PATH")
+            ic, "run_claude", side_effect=cc.CliNotFoundError("不在 PATH")
         ):
             with self.assertRaises(cc.CliNotFoundError):
-                snr._tag_via_cli("x.pdf", "內文")
+                ic._tag_via_cli("x.pdf", "內文")
 
     def test_deepseek_account_error_aborts_instead_of_skip_untagged(self):
         """TAG_MODEL 是 DeepSeek 名稱時走 HTTP；401／402／模型不存在往上拋（rc=2），不 spawn CLI、
@@ -245,7 +246,7 @@ class TagViaCliFailureReasonTests(unittest.TestCase):
         env = {"DEEPSEEK_API_KEY": "fixed-test-secret-deepseek0", "DEEPSEEK_BASE_URL": "https://api.example.test"}
         with mock.patch.dict(os.environ, env), mock.patch.object(cc.subprocess, "run") as run:
             with self.assertRaises(cc.LlmEnvironmentError) as ctx:
-                snr._tag_via_cli("x.pdf", "內文", model="deepseek-flash", file_hash="h1")
+                ic._tag_via_cli("x.pdf", "內文", model="deepseek-flash", file_hash="h1")
         run.assert_not_called()
         self.assertTrue(str(ctx.exception).startswith("API[quota]"))
         self.assertIsInstance(ctx.exception, cc.CliNotFoundError)
@@ -256,39 +257,43 @@ class CacheWriteAfterCommitTests(unittest.TestCase):
     不進 hashes；重放時又 skip_exists——下游摘要／標題／摘錄永遠漏掉它。"""
 
     def test_cache_failure_is_fail_open(self):
-        with mock.patch.object(snr, "_write_cache", side_effect=OSError("disk full")), \
+        with mock.patch.object(ic, "_write_cache", side_effect=OSError("disk full")), \
                 mock.patch("builtins.print") as printed:
-            ok = snr.write_cache_fail_open(object(), Path("/x/報告.pdf"), None, None, None)
+            ok = ic.write_cache_fail_open(object(), Path("/x/報告.pdf"), None, None, None)
         self.assertFalse(ok)
         self.assertIn("WARNING", printed.call_args.args[0])
         self.assertIn("disk full", printed.call_args.args[0])
 
     def test_cache_success(self):
-        with mock.patch.object(snr, "_write_cache") as w:
-            self.assertTrue(snr.write_cache_fail_open("res", Path("/x/a.pdf"), "meta", "kgi", None))
+        with mock.patch.object(ic, "_write_cache") as w:
+            self.assertTrue(ic.write_cache_fail_open("res", Path("/x/a.pdf"), "meta", "kgi", None))
         w.assert_called_once_with("res", Path("/x/a.pdf"), "meta", "kgi", None)
 
     def test_run_records_hash_before_writing_cache_outside_the_ingest_try(self):
-        """_run 要真 DB，靜態釘住順序：commit → 離開 try → 記 hash → 寫快取（fail-open）。"""
-        src = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
-        run = src[src.index("async def _run(args)"):]
+        """ingest_one 要真 DB，靜態釘住順序：commit → 離開 try → 通知已入庫（sync 記 hash）→ 寫快取（fail-open）。"""
+        src = (REPO_ROOT / "scripts" / "_ingest_core.py").read_text(encoding="utf-8")
+        run = src[src.index("async def ingest_one("):]
         commit = run.index('await upsert_extraction_log(session, _log("ingested"))')
         handler = run.index("except Exception as e:", commit)
-        append = run.index("ingested_hashes.append(res.file_hash)")
+        notify = run.index("on_committed(res.file_hash)")
         cache = run.index("write_cache_fail_open(res, path, meta, source, report_date)")
         self.assertLess(commit, handler)
-        self.assertLess(handler, append)   # hash 在 try 之外，入庫的 except 攔不到它
-        self.assertLess(append, cache)     # 先記 hash 再寫快取
-        self.assertNotIn("_write_cache(res", run)  # _run 只經 fail-open 包裝寫快取
+        self.assertLess(handler, notify)   # 通知在 try 之外，入庫的 except 攔不到它
+        self.assertLess(notify, cache)     # 先記 hash 再寫快取
+        self.assertNotIn("_write_cache(res", run)  # 只經 fail-open 包裝寫快取
+        # sync 把「已入庫」直接接到本輪 hashes 清單（_run 要真 DB，同樣靜態釘住）
+        sync = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
+        self.assertIn("on_committed=ingested_hashes.append", sync[sync.index("async def _run(args)"):])
 
     def test_cache_failure_is_counted_in_stats(self):
         """快取寫失敗只剩 print 的話，持續失敗（磁碟滿）在計數檔裡完全看不到：回傳值要進 stats。"""
+        core = (REPO_ROOT / "scripts" / "_ingest_core.py").read_text(encoding="utf-8")
+        self.assertIn("cache_written = write_cache_fail_open(res, path, meta, source, report_date)", core)
         src = (REPO_ROOT / "scripts" / "sync_new_reports.py").read_text(encoding="utf-8")
         run = src[src.index("async def _run(args)"):]
         self.assertIn('"cache_fail",', run[: run.index("ingested_hashes: list")])  # 計數器有初始值（每輪都寫出）
-        call = run.index("if not write_cache_fail_open(res, path, meta, source, report_date):")
+        call = run.index("if not out.cache_written:")
         self.assertIn('stats["cache_fail"] += 1', run[call: call + 200])
-
 
 if __name__ == "__main__":
     unittest.main()

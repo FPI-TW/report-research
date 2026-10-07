@@ -2,6 +2,8 @@
 
 僅處理「本次新傳入」的檔（或 --all-local 全本地對 DB 補漏），以 file_hash
 對 DB 去重；單檔失敗不中斷，記 data/sync_failures.log。
+單篇流程在 `scripts/_ingest_core.py` 的 `ingest_one`（與上傳 worker 共用）；這支依它回的
+`Outcome` 計數、寫失敗紀錄與跳過名單、記 hashes，最後 ANALYZE。
 重型相依（embed/store/db…）延遲到 main() 內 import，讓純函式可被輕量測試。
 
 用法：
@@ -15,12 +17,10 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import contextlib
 import os
 import sys
 import tempfile
-from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -32,21 +32,19 @@ from scripts._llm_env import load_llm_env, require_llm_key  # noqa: E402
 # 必須在任何其他專案 import 之前：db.py 與各模型常數都在 import 期讀環境（scripts/_llm_env.py）。
 load_llm_env()
 
-from app.services.extraction import cache as extraction_cache  # noqa: E402
-from app.services.llm_models import TASK_TAG, resolve_model  # noqa: E402
+from app.services.llm_models import TASK_TAG  # noqa: E402
 from scripts._claude_cli import (  # noqa: E402
     BadRequestEscalation,
     CliNotFoundError,
-    CliResult,
-    error_kind,
-    failure_kind,
     record_escalation,
-    run_claude,
 )
 from scripts._claude_lock import claude_cli_lock_or_exit  # noqa: E402
 
+# 單篇「抽字 → 標註 → 入庫」在 scripts/_ingest_core.py（與上傳 worker 共用）；這支只管
+# 目標清單、計數、失敗紀錄、跳過名單、hashes 與 ANALYZE。
+from scripts._ingest_core import TAG_MODEL, TAGS_DIR, ingest_one  # noqa: E402
+
 SRC_LOCAL = ROOT / "研報自動匯入"
-TAGS_DIR = ROOT / "data" / "tags"
 FAIL_LOG = ROOT / "data" / "sync_failures.log"
 INGESTED_HASHES_FILE = ROOT / "data" / ".sync_last_hashes"
 STATS_FILE = ROOT / "data" / ".sync_last_stats"
@@ -85,12 +83,6 @@ EXTS = {".pdf", ".docx", ".doc"}
 #     只寫進 .sync_last_stats，由殼層在 >0 時印 WARNING（持續出現多半是磁碟滿或權限）。
 ABNORMAL_COUNTERS = ("fail", "skip_untagged", "skip_blocked", "skip_truncated")
 
-# 行內標註的模型：TAG_MODEL 旋鈕（與 tag_all_cli 共用），未設時查 LLM_PROVIDER 的預設表
-# （app/services/llm_models.py；預設 deepseek 下是 deepseek-flash）。
-TAG_MODEL = resolve_model(TASK_TAG)
-# 走 DeepSeek 時的輸出上限（第二版計畫 §8；CLI 路徑不讀）；與 tag_all_cli 同值。
-TAG_MAX_TOKENS = 1024
-
 # 400 升級中止時（BadRequestEscalation），觸發的研報寫到 `<hashes_out>.bad_request`
 # （`file_hash<TAB>路徑`），殼改名保留並印出——重放本輪 delta 前要先把它們從 delta 拿掉，
 # 否則會再撞一次同樣的升級。
@@ -118,117 +110,6 @@ def parse_rsync_delta(
         seen.add(key)
         out.append(dst_root / name)
     return out
-
-
-def skip_before_tag(is_admin: bool, scanned: bool, exists: bool) -> str | None:
-    """標註前的便宜過濾：行政檔／掃描空檔／已入庫 → skip 原因；否則 None。"""
-    if is_admin:
-        return "skip_admin"
-    if scanned:
-        return "skip_scanned"
-    if exists:
-        return "skip_exists"
-    return None
-
-
-def skip_after_tag(tag, tag_error: str | None = None) -> str | None:
-    """標註後過濾：無 tag → skip_untagged（被內容審查擋下 → skip_blocked；被截斷 → skip_truncated）；
-    非研究/無市場 → skip_non_research；否則 None。"""
-    if tag is None:
-        kind = error_kind(tag_error)
-        if kind == "content_filter":
-            return "skip_blocked"
-        # 只認 finish_reason=length 的 truncated；期限型截斷（timeout_streamed）刻意落到 skip_untagged（可重放）
-        if kind == "truncated":
-            return "skip_truncated"
-        return "skip_untagged"
-    if not tag.is_research or not tag.market:
-        return "skip_non_research"
-    return None
-
-
-def _tag_via_cli(
-    file_name: str,
-    text: str,
-    excerpt: int = 10000,
-    model: str = TAG_MODEL,
-    timeout: int = 150,
-    *,
-    file_hash: str | None = None,
-):
-    """標註單篇（`run_claude` 依白名單分派 CLI 或 DeepSeek）→ (tag, error)。tag 為 None 時 error
-    說得出為什麼。
-
-    **標註失敗是這條管線最貴的靜默失效**：它讓該檔被記成 `skip_untagged` 而不入庫，
-    而排程殼只印一行「本次無新研報入庫」——與「NAS 真的沒有新檔」在畫面上完全一樣。
-    2026-08-12 那輪 rsync 帶進 33 檔、全被吞掉，四天後才被發現。
-    """
-    from app.services.tagging import TAG_INSTRUCTION, parse_tags
-
-    body = (text or "")[:excerpt]
-    prompt = (
-        f"{TAG_INSTRUCTION}\n\n檔名：{file_name}\n"
-        f"報告內文（前 {excerpt} 字摘錄）：\n{body}\n\n"
-        f"請依上述規則只輸出單一 JSON 物件。"
-    )
-    # CliNotFoundError 刻意不接：環境層級失敗，讓它拋到 main 中止整批
-    res = run_claude(
-        prompt, model, timeout=timeout, max_tokens=TAG_MAX_TOKENS,
-        meta={"task": TASK_TAG, "file_hash": file_hash, "report_id": None},
-    )
-    if not res.text:
-        return None, res.error or "CLI 無回應"
-    tag = parse_tags(res.text)
-    return (tag, None) if tag is not None else (None, "回應無法解析為標籤")
-
-
-def _persist_tag(file_hash: str, tag) -> None:
-    """tag → data/tags/<hash>.json（與 tag_all_cli 同格式，原子寫入）。"""
-    import json
-
-    TAGS_DIR.mkdir(parents=True, exist_ok=True)
-    obj = {
-        "market": tag.market,
-        "is_research": tag.is_research,
-        "confidence": tag.confidence,
-        "instrument_types": tag.instrument_types or [],
-        "relates_stock": bool(tag.relates_stock),
-        "relates_futures": bool(tag.relates_futures),
-        "stock_targets": tag.stock_targets or [],
-        "futures_targets": tag.futures_targets or [],
-    }
-    out = TAGS_DIR / f"{file_hash}.json"
-    tmp = out.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
-    tmp.rename(out)
-
-
-def _write_cache(res, path: Path, meta, source: str | None, report_date) -> None:
-    """把本輪抽取結果寫進 per-hash 快取（E1c），與 extract_all 同一種紀錄。
-
-    report_date 用 sync 這裡決定的值（含 mtime 回退），不是 parse_filename 的原值——
-    快取要記的是「入庫時採用的日期」。"""
-    rec = extraction_cache.record_from_result(res, path, meta, source)
-    rec["report_date"] = report_date.isoformat() if report_date else None
-    extraction_cache.write_record(rec)
-
-
-def write_cache_fail_open(res, path: Path, meta, source: str | None, report_date) -> bool:
-    """入庫 commit **之後**寫抽取快取；失敗只印 WARNING、不拋，回是否寫成。
-
-    快取不是正確性必要的：研報已在庫（full_text 是正典），快取只供全語料重建
-    （tag_all_cli／ingest_all／build_boilerplate）省去重抽，以及摘錄剔除表格列時查
-    block 索引（extract_takeaways 缺快取就退回完整正典文字）。缺一筆的代價是少量品質
-    與重抽時間。反過來，讓它的例外落進入庫的 `except` 會把已 commit 的篇計成 fail、
-    不進 hashes，重放時又 `skip_exists`——下游摘要／標題／摘錄永遠漏掉它（審查 L9，
-    與 partial_hashes_on_abort 同一型）。批次的 logger.info 無聲，所以用 print。
-    """
-    try:
-        _write_cache(res, path, meta, source, report_date)
-        return True
-    except Exception as e:  # noqa: BLE001 — 快取 fail-open，已入庫的篇不能因它掉出 hashes
-        print(f"  WARNING 抽取快取寫入失敗（已入庫、已記入 hashes）：{path.name[:55]} {e!r}", flush=True)
-        return False
 
 
 def write_ingested_hashes(path: Path, hashes: list[str]) -> None:
@@ -349,25 +230,6 @@ def _iter_targets(args) -> list[Path]:
     return parse_rsync_delta(lines, SRC_LOCAL)
 
 
-def fallback_report_date_from_mtime(
-    report_date: date | None,
-    path: Path,
-    *,
-    created_at: date | None,
-) -> date | None:
-    """report_date 缺值時以 mtime 補；live sync 無可靠 copy-time 參照時直接信任 mtime。"""
-    if report_date is not None:
-        return report_date
-    try:
-        mtime = date.fromtimestamp(path.stat().st_mtime)
-    except OSError:
-        return None
-
-    from app.services.filename import mtime_report_date
-
-    return mtime_report_date(mtime, created_at)
-
-
 async def _run(args) -> None:
     import time
 
@@ -375,26 +237,11 @@ async def _run(args) -> None:
 
     from app.config import get_settings
     from app.services import llm_failures
-    from app.services.boilerplate import strip_boilerplate
-    from app.services.chunk import chunk_text
     from app.services.db import SessionFactory, relax_statement_timeout
-    from app.services.embed import embed_texts
-    from app.services.extract import extract_text, file_sha256
-    from app.services.filename import parse_filename, resolve_source
-    from app.services.object_storage import get_object_storage, original_object_key
-    from app.services.store import (
-        ExtractionLogRow,
-        ReportRow,
-        needs_review,
-        report_exists,
-        upsert_extraction_log,
-        upsert_report,
-    )
-    from app.services.tagging import load_tag
-    from app.services.textnorm import clean_extracted
+    from app.services.object_storage import get_object_storage
 
-    settings = get_settings()
-    review_min = get_settings().extraction_review_min
+    # 設定與物件儲存在處理任何一篇之前就取：設定錯、R2 缺憑證要整批 fail-closed，不是逐篇失敗。
+    get_settings()
     storage = get_object_storage()
     targets = _iter_targets(args)
     if args.limit:
@@ -436,182 +283,50 @@ async def _run(args) -> None:
     with partial_hashes_on_abort(hashes_out_path(args), ingested_hashes, enabled=not args.dry_run):
         async with SessionFactory() as session:
             for path in targets:
-                if not path.exists():
-                    continue
                 try:
-                    res = extract_text(path)
-                except Exception as e:  # noqa: BLE001 — 長跑不因單檔中斷
-                    stats["fail"] += 1
-                    with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                        fl.write(f"{path}\textract\t{e!r}\n")
-                    continue
-
-                def _log(stopped_at: str, _res=res, _path=path) -> ExtractionLogRow:
-                    q = dict(_res.quality or {})
-                    return ExtractionLogRow(
-                        file_hash=_res.file_hash,
-                        file_name=_path.name,
-                        extractor=_res.extractor,
-                        extraction_version=_res.extraction_version,
-                        stopped_at=stopped_at,
-                        page_count=_res.page_count,
-                        pages_failed=list(_res.pages_failed) or None,
-                        char_count=_res.char_count,
-                        quality_score=q.get("quality_score"),
-                        quality_flags=q,
+                    # commit 成功就立刻記進 hashes（on_committed），之後的任何步驟（寫快取）都不能讓它掉出去。
+                    out = await ingest_one(
+                        session, path, storage=storage, batch_size=args.batch_size, dry_run=args.dry_run,
+                        tags_dir=TAGS_DIR, tagged_paths=tagged_paths, on_committed=ingested_hashes.append,
                     )
-
-                if res.error:
-                    # extract_text 自己接住的損毀檔：現況只當 scanned 靜默跳過，這裡留一列。
-                    stats["fail"] += 1
-                    await upsert_extraction_log(session, _log("extract_error"))
-                    await session.commit()
-                    with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                        fl.write(f"{path}\textract\t{res.error}\n")
+                except BadRequestEscalation as exc:
+                    # 審查 H2：觸發的研報先記跳過名單、寫保留檔，再中止整批（rc=2）
+                    await record_escalation(exc, await _recorder())
+                    write_bad_request_hashes(hashes_out_path(args), exc.file_hashes, tagged_paths)
+                    raise
+                if out.kind == "missing":
                     continue
-
-                meta = parse_filename(path.name)
-                # live sync 沒有可信的「複製發生時間」參照；若 rsync 已保留 NAS 原始 mtime，
-                # 這裡應直接信任 mtime，避免今天/近兩天的新報告再度被留成 NULL。
-                report_date = fallback_report_date_from_mtime(
-                    meta.report_date, path, created_at=None
-                )
-                # 來源券商：本土發行機構內文指紋 → 檔名 token → 外資內文指紋（見 resolve_source）。
-                # 內文指紋置於檔名前，可校正檔名把標的公司誤當券商（語料約 67% 檔名亦不帶券商）。
-                source = resolve_source(path.name, res.text)
-                exists = await report_exists(session, res.file_hash)
-                reason = skip_before_tag(meta.is_admin, res.scanned, exists)
-                if reason:
-                    stats[reason] += 1
-                    # 每一道閘都寫 extraction_log（§4.2 目標 #1）；已入庫者不重寫。
-                    if reason == "skip_admin" and not args.dry_run:
-                        await upsert_extraction_log(session, _log("skip_admin"))
-                        await session.commit()
-                    elif reason == "skip_scanned" and not args.dry_run:
-                        await upsert_extraction_log(session, _log("scanned"))
-                        await session.commit()
-                    continue
-
-                if args.dry_run:
-                    stats["ingested"] += 1
-                    print(f"  [DRY] would ingest: {path.name[:60]}", flush=True)
-                    continue
-
-                tag = load_tag(TAGS_DIR, res.file_hash)
-                tag_error = None
-                if tag is None:
-                    tagged_paths[res.file_hash] = path
-                    try:
-                        tag, tag_error = _tag_via_cli(path.name, res.text, file_hash=res.file_hash)
-                    except BadRequestEscalation as exc:
-                        # 審查 H2：觸發的研報先記跳過名單、寫保留檔，再中止整批（rc=2）
-                        await record_escalation(exc, await _recorder())
-                        write_bad_request_hashes(hashes_out_path(args), exc.file_hashes, tagged_paths)
-                        raise
-                if tag is not None:
-                    _persist_tag(res.file_hash, tag)
-                reason = skip_after_tag(tag, tag_error)
-                if reason:
-                    stats[reason] += 1
-                    if reason == "skip_non_research":
-                        await upsert_extraction_log(session, _log("not_research"))
-                        await session.commit()
+                stats["ingested" if out.kind == "would_ingest" else out.kind] += 1
+                # **格式三處一致：`路徑<TAB>階段<TAB>原因`。**
+                # 曾有一處寫成 `file_hash<TAB>檔名<TAB>原因`——欄位數相同但語意不同，
+                # 於是拿 sync_failures.log 補救時，第 0 欄拿到的是雜湊而不是路徑，
+                # 這一類漏收**無法**用 --delta 精準補回（2026-08-20 復原時發現）。
+                if out.stage == "tag":
                     # skip_untagged 先前完全不留痕跡：計數 +1 之後就 continue，
                     # 於是「標註壞了」與「這批本來就沒有研報」在 log 上無從分辨。
-                    if reason == "skip_untagged":
-                        with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                            fl.write(f"{path}\ttag\t{tag_error or '標註失敗'}\n")
-                    elif reason in ("skip_blocked", "skip_truncated"):
-                        # 階段刻意叫 tag_blocked／tag_truncated：failures_to_delta 預設不撈（重打結果不會變）。
-                        # 原因欄帶 file_hash，`make llm-blocked` 列出的 hash 可以 grep 回路徑。
-                        stage = "tag_blocked" if reason == "skip_blocked" else "tag_truncated"
-                        with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                            fl.write(f"{path}\t{stage}\t{tag_error}（file_hash={res.file_hash}）\n")
-                    # DeepSeek 的內容型失敗（審查、截斷、空回應、400）記入跳過名單供 make llm-blocked
-                    # 列出；行內標註不讀它（被擋的檔不會自己再出現在 delta 裡）。
-                    fail_reason = failure_kind(CliResult(None, tag_error)) if tag is None else None
-                    if fail_reason:
-                        recorder = await _recorder()
-                        if recorder is not None:
-                            await recorder.record(res.file_hash, fail_reason)
-                    continue
-
-                try:
-                    raw_text = (res.text or "").replace("\x00", "")
-                    # 樣板段落只從要切塊的文字拿掉，full_text 不動（app/services/boilerplate.py）。
-                    chunks = chunk_text(strip_boilerplate(clean_extracted(raw_text), source)[0])
-                    if not chunks:
-                        stats["skip_scanned"] += 1
-                        await upsert_extraction_log(session, _log("scanned"))
-                        await session.commit()
-                        continue
-                    embeddings = embed_texts(chunks, batch_size=args.batch_size)
-                    # Upload first: a failed DB commit may leave a reconcilable orphan, whereas
-                    # committing a key before bytes exist would expose a broken download.
-                    source_object_key = None
-                    if storage.enabled:
-                        # The extract result was hashed earlier; re-hash at the last possible
-                        # point so a concurrently replaced mirror file cannot overwrite R2 under
-                        # the old DB key.
-                        if file_sha256(path) != res.file_hash:
-                            raise ValueError("source SHA-256 changed before R2 upload")
-                        source_object_key = original_object_key(res.file_hash, path.name)
-                        await asyncio.to_thread(
-                            storage.upload_file, path, source_object_key, expected_sha256=res.file_hash
-                        )
-                    report = ReportRow(
-                        file_hash=res.file_hash,
-                        file_name=path.name,
-                        file_path=str(path),
-                        market=tag.market,
-                        is_research=tag.is_research,
-                        confidence=tag.confidence,
-                        source_object_key=source_object_key,
-                        stock_code=meta.stock_code,
-                        company_name=meta.company_name,
-                        source=source,
-                        report_date=report_date,
-                        report_type=meta.report_type,
-                        language=res.language,
-                        instrument_types=tag.instrument_types,
-                        relates_stock=tag.relates_stock,
-                        relates_futures=tag.relates_futures,
-                        stock_targets=tag.stock_targets,
-                        futures_targets=tag.futures_targets,
-                        full_text=raw_text,
-                        extractor=res.extractor,
-                        extraction_version=res.extraction_version,
-                        quality_score=(res.quality or {}).get("quality_score"),
-                        quality_flags=dict(res.quality) if res.quality else None,
-                        page_count=res.page_count,
-                        pages_failed=list(res.pages_failed) or None,
-                        needs_review=needs_review(
-                            (res.quality or {}).get("quality_score"), res.pages_failed, review_min, res.quality or None,
-                            min_coverage=settings.extraction_review_min_coverage,
-                            max_garbled=settings.extraction_review_max_garbled,
-                        ),
-                    )
-                    await upsert_report(session, report, chunks, embeddings)
-                    await upsert_extraction_log(session, _log("ingested"))
-                    await session.commit()
-                except Exception as e:  # noqa: BLE001
-                    stats["fail"] += 1
-                    await session.rollback()
-                    # **格式必須與另外兩處一致：`路徑<TAB>階段<TAB>原因`。**
-                    # 初版這裡寫的是 `file_hash<TAB>檔名<TAB>原因`——欄位數相同但語意不同，
-                    # 於是拿 sync_failures.log 補救時，第 0 欄拿到的是雜湊而不是路徑，
-                    # 這一類漏收**無法**用 --delta 精準補回（2026-08-20 復原時發現）。
                     with open(FAIL_LOG, "a", encoding="utf-8") as fl:
-                        fl.write(f"{path}\tingest\t{e!r}\n")
-                    continue
-
-                # commit 成功就立刻記進 hashes，之後的任何步驟（寫快取）都不能讓它掉出去。
-                ingested_hashes.append(res.file_hash)
-                stats["ingested"] += 1
-                stats["chunks"] += len(chunks)
-                if not write_cache_fail_open(res, path, meta, source, report_date):
-                    stats["cache_fail"] += 1  # 不算異常（見 ABNORMAL_COUNTERS 註解），但要看得到
-                print(f"  [{tag.market}] {path.name[:55]} ({len(chunks)} chunks)", flush=True)
+                        fl.write(f"{path}\ttag\t{out.reason or '標註失敗'}\n")
+                elif out.stage in ("tag_blocked", "tag_truncated"):
+                    # 階段刻意叫 tag_blocked／tag_truncated：failures_to_delta 預設不撈（重打結果不會變）。
+                    # 原因欄帶 file_hash，`make llm-blocked` 列出的 hash 可以 grep 回路徑。
+                    with open(FAIL_LOG, "a", encoding="utf-8") as fl:
+                        fl.write(f"{path}\t{out.stage}\t{out.reason}（file_hash={out.file_hash}）\n")
+                elif out.stage is not None:  # extract／ingest
+                    with open(FAIL_LOG, "a", encoding="utf-8") as fl:
+                        fl.write(f"{path}\t{out.stage}\t{out.reason}\n")
+                # DeepSeek 的內容型失敗（審查、截斷、空回應、400）記入跳過名單供 make llm-blocked
+                # 列出；行內標註不讀它（被擋的檔不會自己再出現在 delta 裡）。
+                if out.failure_kind:
+                    recorder = await _recorder()
+                    if recorder is not None:
+                        await recorder.record(out.file_hash, out.failure_kind)
+                if out.kind == "would_ingest":
+                    print(f"  [DRY] would ingest: {path.name[:60]}", flush=True)
+                elif out.kind == "ingested":
+                    stats["chunks"] += out.chunks
+                    if not out.cache_written:
+                        stats["cache_fail"] += 1  # 不算異常（見 ABNORMAL_COUNTERS 註解），但要看得到
+                    print(f"  [{out.market}] {path.name[:55]} ({out.chunks} chunks)", flush=True)
 
             if stats["ingested"] and not args.dry_run:
                 # ANALYZE 可能久於引擎層的 statement_timeout，且是本輪匯入的最後一步——
@@ -667,7 +382,7 @@ def main() -> None:
     # 取鎖之前：缺金鑰或模型名打錯是「跑了也白跑」，要在撞鎖（rc=75＝不跑）之前說出來。
     if not args.dry_run:  # --dry-run 不標註、不呼叫 LLM
         require_llm_key({TASK_TAG: TAG_MODEL})
-    # 這支也 spawn claude（行內標註，見 _tag_via_cli），而且它跑在排程路徑上、是三小時
+    # 這支也 spawn claude（行內標註，見 _ingest_core._tag_via_cli），而且它跑在排程路徑上、是三小時
     # 一輪的第一個競爭者——手動批次正在跑時它照樣會被 timer 叫起來。
     with claude_cli_lock_or_exit("sync_new_reports"):
         try:

@@ -80,7 +80,6 @@ test('/admin/operations 導向維運總覽（有 ops.read 的管理員；代理�
 
 test.each([
   ['/admin/analytics', '使用分析', 'analytics.read'],
-  ['/admin/security', '安全', 'audit.read'],
   ['/admin/quota', '配額', 'accounts.manage'],
   ['/admin/flags', '功能旗標', 'ops.read'],
 ])('Admin v2 佔位頁 %s：有 scope 時顯示「建置中」、不打任何管理 API', async (path, title, scope) => {

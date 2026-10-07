@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 
 os.environ.setdefault("REPORT_MARK_SESSION_SECRET", "fixed-test-secret-0123456789")
 
@@ -233,6 +235,37 @@ class ExternalRouteStructureTests(unittest.TestCase):
             },
         )
 
+
+
+class EdgeNginxAuthorizationTests(unittest.TestCase):
+    """邊緣 nginx 對 `Authorization` 的處理：只有 `/external/` 透傳，其餘 location 一律清空。
+
+    2026-10-07 部署到 EC2 時發現：兩份設定原本每個 location 都 `proxy_set_header Authorization ""`，
+    對外 API 經 Cloudflare 進來的 Bearer 金鑰全被拿掉，外網只會拿到 401 `api_key_missing`
+    （本機直連 8097 卻一切正常）。
+    """
+
+    CONFS = ("deploy/nginx-origin.conf", "deploy/nginx.conf")
+
+    def _locations(self, rel: str) -> dict[str, str]:
+        text = (Path(__file__).resolve().parents[1] / rel).read_text(encoding="utf-8")
+        blocks = {}
+        for m in re.finditer(r"^    location ([^{]+?) \{\n(.*?)^    \}", text, re.S | re.M):
+            body = "\n".join(line for line in m.group(2).splitlines() if not line.strip().startswith("#"))
+            blocks[m.group(1).strip()] = body
+        return blocks
+
+    def test_only_external_prefix_passes_authorization(self):
+        for rel in self.CONFS:
+            with self.subTest(conf=rel):
+                blocks = self._locations(rel)
+                self.assertIn("^~ /external/", blocks, f"{rel} 缺少 location ^~ /external/")
+                self.assertNotIn("Authorization", blocks["^~ /external/"])
+                self.assertIn("proxy_pass", blocks["^~ /external/"])
+                self.assertIn("X-Edge-Secret", blocks["^~ /external/"], "external 也要覆寫 X-Edge-Secret")
+                for loc, body in blocks.items():
+                    if loc != "^~ /external/":
+                        self.assertIn('proxy_set_header Authorization "";', body, f"{rel} 的 location {loc} 要清空")
 
 if __name__ == "__main__":
     unittest.main()

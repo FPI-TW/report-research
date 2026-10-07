@@ -1,6 +1,6 @@
 import styles from './MonitorPage.module.css'
 import { TweenNumber } from '../../components/primitives/TweenNumber'
-import { fmtInt } from './rate'
+import { fmtInt } from '../admin/ops/pipeline/rate'
 
 const toFixed1 = (n: number) => n.toFixed(1)
 

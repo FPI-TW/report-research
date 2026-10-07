@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { useRates } from './useRates'
-import type { Progress } from '../../lib/progressSchema'
+import type { Progress } from '../../../../lib/progressSchema'
 
 function mk(reports: number, tagDone: number): Progress {
   return {

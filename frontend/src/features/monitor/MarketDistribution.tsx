@@ -1,7 +1,7 @@
 import styles from './MonitorPage.module.css'
 import { marketColor, marketLabel } from '../../lib/meta'
 import { TweenNumber } from '../../components/primitives/TweenNumber'
-import { fmtInt } from './rate'
+import { fmtInt } from '../admin/ops/pipeline/rate'
 import type { MarketCount } from '../../lib/progressSchema'
 
 export function MarketDistribution({ markets }: { markets: MarketCount[] }) {

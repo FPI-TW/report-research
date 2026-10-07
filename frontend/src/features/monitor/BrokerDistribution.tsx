@@ -1,5 +1,5 @@
 import styles from './MonitorPage.module.css'
-import { fmtInt } from './rate'
+import { fmtInt } from '../admin/ops/pipeline/rate'
 import type { SourceCount } from '../../lib/progressSchema'
 
 /** 檔名認不出券商的那一列（後端 source 為 NULL）。 */

@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { PipelineStatus } from './PipelineStatus'
-import { DERIVED_LABEL, PIPELINE_ROWS } from './pipelineMeta'
+import { DERIVED_LABEL, PIPELINE_ROWS } from '../admin/ops/pipeline/pipelineMeta'
 
 test('9 列名稱 + 狀態徽章對應布林', () => {
   render(
@@ -12,7 +12,7 @@ test('9 列名稱 + 狀態徽章對應布林', () => {
       }}
     />,
   )
-  for (const n of ['Web 服務', '報告導入', '增量匯入', '語意標註', '摘要生成', '顯示標題', '重點摘錄', '觀點訊號', '抽取回填']) {
+  for (const n of ['Web 服務', '全量導入', '增量匯入', '語意標註', '摘要生成', '顯示標題', '重點摘錄', '觀點訊號', '抽取回填']) {
     expect(screen.getByText(n)).toBeInTheDocument()
   }
   // web + sync_import + tag + titles + takeaways + signals
@@ -31,7 +31,7 @@ test('列順序固定為 web/ingest/sync_import/tag/summaries/titles/takeaways/s
   )
   const names = [...container.querySelectorAll('[class*="pipeName"]')].map(el => el.textContent)
   expect(names).toEqual([
-    'Web 服務', '報告導入', '增量匯入', '語意標註', '摘要生成', '顯示標題',
+    'Web 服務', '全量導入', '增量匯入', '語意標註', '摘要生成', '顯示標題',
     '重點摘錄', '觀點訊號', '抽取回填',
   ])
 })

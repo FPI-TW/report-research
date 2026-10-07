@@ -1,6 +1,6 @@
 import styles from './MonitorPage.module.css'
 import type { Pipelines } from '../../lib/progressSchema'
-import { PIPELINE_ROWS } from './pipelineMeta'
+import { PIPELINE_ROWS } from '../admin/ops/pipeline/pipelineMeta'
 
 export function PipelineStatus({ pipelines }: { pipelines: Pipelines }) {
   return (

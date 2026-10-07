@@ -341,6 +341,11 @@
   }
   .anim-search .srch-rel-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: #ae7415; }
   .anim-search .srch .srch-off { display: none; }
+  /* <1280：功能磚移到下方、檢索磚寬可達 1000px；搜尋列可以全寬，結果列不跟著拉長，
+     上限參考 1440 設計稿的結果列寬（388px），靠左對齊。 */
+  @media (max-width: 1279.98px) {
+    .anim-search .srch-list { max-width: 440px; }
+  }
 /* end:anim-js */
 
 /* region:anim-css (lane login-anim-css)：03 閱讀頁、04 觀點雷達、05 每日簡報 */
@@ -442,6 +447,16 @@
 .anim-brief .br-chip {
   flex: none; font-size: 10px; font-weight: 700; line-height: 1.5; padding: 0 6px;
   border-radius: 999px; background: #f8f1e0; color: #8a5a0f;
+}
+/* <1280：功能磚移到下方後磚會變寬，動畫內容不跟著拉滿，維持接近 1440 設計稿的比例
+   （1440 實測：閱讀頁、雷達 170px，簡報 388px、其中今日簡報卡 210px），靠左對齊磚內文字。 */
+@media (max-width: 1279.98px) {
+  .anim-reading .rd, .anim-radar .rdr { max-width: 280px; }
+  .anim-brief .br { max-width: 460px; }
+}
+/* <600 單欄：手機寬（390）時磚本來就窄，上限放寬到不影響它，只擋 450–599 的拉長。 */
+@media (max-width: 599.98px) {
+  .anim-reading .rd, .anim-radar .rdr { max-width: 320px; }
 }
 /* end:anim-css */
 </style>

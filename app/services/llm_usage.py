@@ -1,9 +1,18 @@
 """LLM 用量記錄（`data/llm_usage.jsonl`）的位置與彙總，給管理後台的 `GET /api/admin/llm-usage`。
 
 寫入端是 `scripts/_claude_cli.record_usage`：**批次**每次 LLM 呼叫（DeepSeek HTTP 與 CLI）追加一行 JSON
-（欄位見那支模組的 docstring）。線上問答（`app/services/llm.py` 的 `stream_completion`）不寫這份檔，所以這裡
-的數字是「批次的用量」，不是全站用量。費用真值看 DeepSeek 餘額差分；這份是**歸因**依據（哪個任務、哪個模型
-花了多少 token）。
+（欄位見那支模組的 docstring）。線上問答（`app/services/llm.py` 的 `stream_completion`）不寫這份檔。費用真值看
+DeepSeek 餘額差分；這份是**歸因**依據（哪個任務、哪個模型花了多少 token）。
+
+**兩個來源**（Admin v2）：
+
+- 批次：`data/llm_usage.jsonl`（`summarize`，同步、讀檔）。
+- 線上：`research.llm_usage_daily`（`summarize_online`，async、讀 DB）。web 行程的 DeepSeek 呼叫經 `llm_http` 的
+  observer → `usage_events` 累加器 → 每 60 秒 upsert（`web/server.py` 的 lifespan 註冊，本模組不寫）。只有
+  metadata（任務、模型、成敗、token、耗時），不記問題與答案。粒度是**台北日**：窗期的頭尾兩天整天計入；
+  尚未 flush 的最後一分鐘看不到。這裡**不出個人維度**（只回歸因到的不重複人數與未歸因的呼叫數）——單一使用者的
+  數字只在配額頁（`app/services/quota.py`）。讀取失敗＝`available=false`，不讓批次那段跟著失敗。
+- `combine`：兩個來源的總計與逐日合計（LLM 用量頁的「全部」）。
 
 讀取的規則：
 
@@ -23,13 +32,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -231,3 +244,123 @@ def file_signature(path: Path | None = None) -> tuple[int, int] | None:
     except OSError:
         return None
     return st.st_size, st.st_mtime_ns
+
+
+# ── 線上來源（research.llm_usage_daily）────────────────────────────────────
+
+_ONLINE_TOKEN_FIELDS = ("calls", "failures", "prompt_hit_tokens", "prompt_miss_tokens", "completion_tokens",
+                        "reasoning_tokens", "calls_without_tokens", "total_ms")
+
+_ONLINE_SQL = """
+SELECT day, task, model, sum(calls), sum(failures), sum(prompt_hit_tokens), sum(prompt_miss_tokens),
+       sum(completion_tokens), sum(reasoning_tokens), sum(calls_without_tokens), sum(total_ms), sum(cost),
+       count(cost)
+FROM research.llm_usage_daily
+WHERE day BETWEEN CAST(:d0 AS date) AND CAST(:d1 AS date)
+GROUP BY day, task, model
+ORDER BY day, task, model
+"""
+
+_ONLINE_PEOPLE_SQL = """
+SELECT count(DISTINCT user_id), COALESCE(sum(calls) FILTER (WHERE user_id IS NULL), 0)
+FROM research.llm_usage_daily
+WHERE day BETWEEN CAST(:d0 AS date) AND CAST(:d1 AS date)
+"""
+
+
+def _totals_from(values: dict) -> Totals:
+    t = Totals()
+    for name in _ONLINE_TOKEN_FIELDS:
+        setattr(t, name, int(values.get(name) or 0))
+    cost = values.get("cost")
+    t.cost = float(cost) if cost is not None else None
+    return t
+
+
+def _merge(a: Totals, b: Totals) -> Totals:
+    out = Totals()
+    for name in _ONLINE_TOKEN_FIELDS:
+        setattr(out, name, getattr(a, name) + getattr(b, name))
+    out.cost = None if a.cost is None and b.cost is None else (a.cost or 0.0) + (b.cost or 0.0)
+    return out
+
+
+def online_days(since: datetime, until: datetime) -> tuple[date, date]:
+    """`[since, until)` 涵蓋到的台北日（頭尾兩天整天計入：線上用量只有日彙總）。"""
+    d0 = since.astimezone(TZ).date()
+    d1 = (until - timedelta(microseconds=1)).astimezone(TZ).date()
+    return d0, max(d0, d1)
+
+
+def _empty_online(d0: date, d1: date, *, available: bool, error: str | None = None) -> dict:
+    return {
+        "available": available, "error": error, "since_day": d0.isoformat(), "until_day": d1.isoformat(),
+        "totals": Totals().as_dict(), "by_day": [], "by_task": [], "by_model": [], "rows": [],
+        "rows_truncated": False, "attributed_users": 0, "unattributed_calls": 0, "cost_available": False,
+    }
+
+
+async def summarize_online(since: datetime, until: datetime, *, session_factory=None) -> dict:
+    """線上 LLM 用量（DB）在 `[since, until)` 涵蓋的台北日之間的彙總。失敗回 `available=false`、不拋。"""
+    d0, d1 = online_days(since, until)
+    # 延遲 import：批次（scripts/_claude_cli 只要 usage_log_path）不必載 sqlalchemy 與 DB 連線設定。
+    from sqlalchemy import text
+
+    if session_factory is None:
+        from app.services.db import SessionFactory as session_factory
+    try:
+        async with session_factory() as session:
+            raw = (await session.execute(text(_ONLINE_SQL), {"d0": d0, "d1": d1})).all()
+            people = (await session.execute(text(_ONLINE_PEOPLE_SQL), {"d0": d0, "d1": d1})).one()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — 線上那段讀不到不影響批次那段
+        logger.warning("LLM 用量：讀取 llm_usage_daily 失敗", exc_info=True)
+        return _empty_online(d0, d1, available=False, error=f"線上用量暫時讀不到（{type(exc).__name__}）")
+
+    totals = Totals()
+    by_day: dict[date, Totals] = {}
+    by_task: dict[str, Totals] = {}
+    by_model: dict[str, Totals] = {}
+    rows: list[tuple[date, str, str, Totals]] = []
+    tasks, models = _Groups(), _Groups()
+    any_cost = False
+    for r in raw:
+        day, task, model = r[0], tasks.label(r[1]), models.label(r[2])
+        values = dict(zip(_ONLINE_TOKEN_FIELDS, r[3:11]))
+        values["cost"] = r[11] if r[12] else None
+        any_cost = any_cost or bool(r[12])
+        t = _totals_from(values)
+        totals = _merge(totals, t)
+        by_day[day] = _merge(by_day.get(day, Totals()), t)
+        by_task[task] = _merge(by_task.get(task, Totals()), t)
+        by_model[model] = _merge(by_model.get(model, Totals()), t)
+        rows.append((day, task, model, t))
+    by_calls = lambda kv: (-kv[1].calls, kv[0])  # noqa: E731
+    return {
+        "available": True, "error": None, "since_day": d0.isoformat(), "until_day": d1.isoformat(),
+        "totals": totals.as_dict(),
+        "by_day": [{"day": d.isoformat(), **t.as_dict()} for d, t in sorted(by_day.items())],
+        "by_task": [{"task": k, **t.as_dict()} for k, t in sorted(by_task.items(), key=by_calls)],
+        "by_model": [{"model": k, **t.as_dict()} for k, t in sorted(by_model.items(), key=by_calls)],
+        "rows": [{"day": d.isoformat(), "task": k, "model": m, **t.as_dict()} for d, k, m, t in rows[:MAX_ROWS]],
+        "rows_truncated": len(rows) > MAX_ROWS,
+        "attributed_users": int(people[0] or 0),
+        "unattributed_calls": int(people[1] or 0),
+        "cost_available": any_cost,
+    }
+
+
+def combine(batch: dict, online: dict) -> dict:
+    """批次（`summarize`）＋線上（`summarize_online`）的總計與逐日合計。"""
+    total = _merge(_totals_from(batch["totals"]), _totals_from(online["totals"]))
+    days: dict[str, Totals] = {}
+    for src in (batch, online):
+        for row in src["by_day"]:
+            days[row["day"]] = _merge(days.get(row["day"], Totals()), _totals_from(row))
+    return {
+        "totals": total.as_dict(),
+        "by_day": [{"day": d, **t.as_dict()} for d, t in sorted(days.items())],
+        "cost_available": bool(batch.get("cost_available") or online.get("cost_available")),
+    }
+

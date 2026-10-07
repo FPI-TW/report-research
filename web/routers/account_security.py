@@ -10,6 +10,11 @@
 （不計入失敗限流），前端據此補問驗證碼。
 
 開發模式免登入（`accounts.DEV_USER`，id=None）沒有真的帳號：TOTP 端點回 400 `dev_mode`。
+
+權限提升的結果也寫登入事件（`research.auth_event` 的 `elevate.success`／`elevate.failure`，經 fail-open 的
+`security_ops.record_event`；被每 IP 限流擋下的只在記憶體計數，同登入）。失敗事件的 reason：沒給驗證碼時是
+`bad_password`，給了驗證碼時是 `bad_credentials`（服務層只回「不通過」，分不出是密碼還是驗證碼錯）。
+`/healthz/security` 依「視窗內權限提升失敗數」告警。
 """
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ import time
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
+from app.services import security_ops
 from app.services.accounts import (
     AccountDeletedError,
     AccountError,
@@ -90,17 +96,24 @@ async def perform_elevation(request: Request, actor: User, password: str, code: 
         return ElevateResponse(elevated_until=actor.elevated_until.isoformat() if actor.elevated_until else "")
     ip, now = auth.client_ip(request), int(time.time())
     if auth.is_locked(ip, now):
+        await security_ops.note_throttled(deps.accounts, security_ops.LOCKED_TALLY, ip)
         raise AppError(429, "rate_limited", "嘗試次數過多，請稍後再試")
     session_id = getattr(request.state, "session_id", None)
     try:
         until = await deps.accounts.elevate_session(session_id, password, code) if session_id else None
     except TotpRequiredError as exc:
         raise AppError(403, "totp_required", str(exc)) from exc
+    ua = request.headers.get("user-agent")
     if until is None:
         auth.record_failure(ip, now)
+        await security_ops.record_event(deps.accounts, "elevate.failure",
+                                        reason="bad_credentials" if code else "bad_password",
+                                        user_id=actor.id, session_id=session_id, ip=ip, user_agent=ua)
         logger.warning("權限提升失敗 user=%s ip=%s（第 %s 次）", actor.username, ip, auth.failure_count(ip, now))
         raise AppError(403, "bad_password", "密碼或驗證碼不正確" if code else "密碼不正確")
     auth.reset(ip)
+    await security_ops.record_event(deps.accounts, "elevate.success", user_id=actor.id, session_id=session_id, ip=ip,
+                                    user_agent=ua)
     logger.info("權限提升 user=%s", actor.username)
     return ElevateResponse(elevated_until=until.isoformat() if hasattr(until, "isoformat") else str(until))
 

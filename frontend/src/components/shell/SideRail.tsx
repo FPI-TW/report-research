@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { motion } from 'motion/react'
 import { Icon } from '../primitives/Icon'
 import { Pressable } from '../primitives/Pressable'
@@ -18,56 +19,42 @@ interface SideRailProps {
 }
 
 /**
- * 左側欄：迷你（60）↔ 完整（272）兩態疊放於同一容器，容器寬度過渡＋兩層淡入淡出交叉切換，
- * 收合／展開因此有平滑動畫（而非兩棵 DOM 直接抽換造成的瞬跳）。
- * 非當前態的層 aria-hidden＋inert：移出無障礙樹與 tab 序、且不可互動。
+ * 左側欄（仿 ChatGPT）：圖示軌（60）常駐，展開時在它右邊多出一欄歷史對話面板（260），合計 320。
+ * 導覽與帳號只在圖示軌出現一次；面板標頭是「站名｜搜尋｜收合」，搜尋框平時收成 icon。
+ * 面板收合時寬度過渡到 0（平滑展開／收合）；aria-hidden＋inert 讓它移出無障礙樹與 tab 序。
  */
 export function SideRail({ collapsed, onToggle }: SideRailProps) {
+  const [searchOpen, setSearchOpen] = useState(false)
   return (
-    <div className={styles.rail} data-collapsed={collapsed}>
-      <div className={styles.full} aria-hidden={collapsed} inert={collapsed}>
-        {/* 品牌 logo 置左（與收合態 logo 同座標），收合鈕置右上 */}
-        <div className={styles.header}>
-          <span className={styles.glyphSmall}><BrandLogo size={30} alt="" /></span>
-          <span className={styles.title}>廷豐智能研報</span>
-          <Pressable onClick={onToggle} title="收合側欄" aria-label="收合側欄" className={styles.toggleFull} hoverScale={1.1}>
-            <Icon name="panel" size={22} />
-          </Pressable>
-        </div>
-        <nav className={styles.fullNav}>
-          <NavItem to="/search" icon="search" label="檢索" variant="row" />
-          <NavItem to="/ask" icon="messages" label="問答" variant="row" />
-          <NavItem to="/radar" icon="compass" label="觀點" variant="row" />
-          <NavItem to="/brief" icon="fileText" label="簡報" variant="row" />
-          <NavItem to="/monitor" icon="activity" label="監控" variant="row" />
-        </nav>
-        <div className={styles.divider} />
-        <ConversationList />
-        <AccountMenu variant="row" />
-      </div>
-      <div className={styles.mini} aria-hidden={!collapsed} inert={!collapsed}>
-        {/* 品牌標記與展開鈕同格：預設顯示 logo，hover crossfade 成展開圖示，點擊展開（仿 ChatGPT）。
-            crossfade 由 Motion variants 驅動（rest↔hover），置中偏移交給 Motion x/y。 */}
-        <motion.button
-          type="button"
-          onClick={onToggle}
-          title="展開側欄"
-          aria-label="展開側欄"
-          className={styles.brandToggle}
-          initial="rest"
-          animate="rest"
-          whileHover="hover"
-          whileTap={{ scale: 0.94 }}
-          transition={springHover}
-        >
-          <motion.span className={styles.brandLogo} style={{ x: '-50%', y: '-50%' }} variants={brandLogoVariants}>
-            <BrandLogo size={30} alt="" />
-          </motion.span>
-          <motion.span className={styles.brandExpand} style={{ x: '-50%', y: '-50%' }} variants={brandExpandVariants}>
-            <Icon name="panel" size={22} />
-          </motion.span>
-        </motion.button>
-        <nav className={styles.miniNav}>
+    <div className={styles.sidebar} data-collapsed={collapsed}>
+      <div className={styles.rail}>
+        {collapsed ? (
+          // 品牌標記與展開鈕同格：預設顯示 logo，hover crossfade 成展開圖示，點擊展開。
+          // crossfade 由 Motion variants 驅動（rest↔hover），置中偏移交給 Motion x/y。
+          <motion.button
+            type="button"
+            onClick={onToggle}
+            title="展開側欄"
+            aria-label="展開側欄"
+            className={styles.brandToggle}
+            initial="rest"
+            animate="rest"
+            whileHover="hover"
+            whileTap={{ scale: 0.94 }}
+            transition={springHover}
+          >
+            <motion.span className={styles.brandLogo} style={{ x: '-50%', y: '-50%' }} variants={brandLogoVariants}>
+              <BrandLogo size={30} alt="" />
+            </motion.span>
+            <motion.span className={styles.brandExpand} style={{ x: '-50%', y: '-50%' }} variants={brandExpandVariants}>
+              <Icon name="panel" size={22} />
+            </motion.span>
+          </motion.button>
+        ) : (
+          // 展開時收合鈕在面板標頭，這裡只留 logo，免得同一畫面出現兩顆收合鈕。
+          <span className={styles.brandStatic}><BrandLogo size={30} alt="" /></span>
+        )}
+        <nav className={styles.nav}>
           <NavItem to="/search" icon="search" label="檢索" variant="mini" />
           <NavItem to="/ask" icon="messages" label="問答" variant="mini" />
           <NavItem to="/radar" icon="compass" label="觀點" variant="mini" />
@@ -76,6 +63,21 @@ export function SideRail({ collapsed, onToggle }: SideRailProps) {
         </nav>
         <div className={styles.spacer} />
         <AccountMenu variant="mini" />
+      </div>
+      <div className={styles.panel} aria-hidden={collapsed} inert={collapsed}>
+        <div className={styles.panelInner}>
+          <div className={styles.header}>
+            <span className={styles.title}>廷豐智能研報</span>
+            <Pressable onClick={() => setSearchOpen(o => !o)} title="搜尋對話" aria-label="搜尋對話"
+              aria-pressed={searchOpen} className={styles.headBtn} hoverScale={1.1}>
+              <Icon name="search" size={19} />
+            </Pressable>
+            <Pressable onClick={onToggle} title="收合側欄" aria-label="收合側欄" className={styles.headBtn} hoverScale={1.1}>
+              <Icon name="panel" size={21} />
+            </Pressable>
+          </div>
+          <ConversationList searchOpen={searchOpen} onSearchClose={() => setSearchOpen(false)} />
+        </div>
       </div>
     </div>
   )

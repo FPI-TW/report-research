@@ -88,6 +88,24 @@ class AdminRouteStructureTests(unittest.TestCase):
         self.assertLessEqual({"qa_content.read", "review.manage"}, scopes)
         self.assertNotIn("qa_content.read", accounts.ADMIN_DEFAULT_SCOPES)
 
+    def test_security_routes_scopes_and_session_revoke_elevation(self):
+        """安全頁：整組 audit.read；session 清單另要 accounts.manage，撤銷單一 session 再要已提升。"""
+        routes = [r for r in self._guarded() if r.path.startswith("/api/admin/security/")]
+        self.assertGreaterEqual(len(routes), 8)
+
+        def scopes(route):
+            return set().union(*(getattr(c, "__scope__", frozenset()) for c in _dependency_calls(route.dependant)))
+
+        for route in routes:
+            with self.subTest(path=route.path):
+                self.assertIn("audit.read", scopes(route))
+        by_path = {r.path: r for r in routes}
+        self.assertIn("accounts.manage", scopes(by_path["/api/admin/security/sessions"]))
+        revoke = by_path["/api/admin/security/sessions/{session_id}/revoke"]
+        self.assertEqual(revoke.methods, {"POST"})
+        self.assertIn("accounts.manage", scopes(revoke))
+        self.assertIn(authz.require_elevated, set(_dependency_calls(revoke.dependant)))
+
     def test_unknown_scope_fails_at_import_time(self):
         with self.assertRaises(ValueError):
             authz.require_scope("no.such.scope")

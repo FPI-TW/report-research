@@ -48,14 +48,16 @@ vi.mock('./pdf/PdfViewer', () => ({
 const HASH = 'a'.repeat(64)
 const TEXT_SHA = 'b'.repeat(64)
 
-function wrap(entry: string) {
+function wrap(entry: string | string[]) {
+  const entries = Array.isArray(entry) ? entry : [entry]
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[entry]}>
+      <MemoryRouter initialEntries={entries} initialIndex={entries.length - 1}>
         <Routes>
           <Route path="/report/:hash" element={<ReportPage />} />
           <Route path="/search" element={<div>檢索頁</div>} />
+          <Route path="/radar" element={<div>雷達頁</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -148,6 +150,22 @@ describe('ReportPage', () => {
     expect(screen.getByText('找不到這份研報')).toBeInTheDocument()
     expect(readingApi.getReadingDoc).not.toHaveBeenCalled()
     expect(readingApi.getSimilarReports).not.toHaveBeenCalled()
+  })
+
+  it('上一頁：回到剛才所在的頁面（不是固定回檢索）', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(['/radar', `/report/${HASH}`])
+    fireEvent.click(await screen.findByRole('button', { name: /上一頁/ }))
+    expect(await screen.findByText('雷達頁')).toBeInTheDocument()
+  })
+
+  it('上一頁：直接開啟研報（站內沒有上一頁）時退回檢索頁，不離開本站', async () => {
+    vi.mocked(readingApi.getReadingDoc).mockResolvedValue(doc())
+    wrap(`/report/${HASH}`)
+    const back = await screen.findByRole('button', { name: /上一頁/ })
+    expect(back).toHaveAttribute('title', '回到檢索')
+    fireEvent.click(back)
+    expect(await screen.findByText('檢索頁')).toBeInTheDocument()
   })
 
   it('報頭標題用報告內部標題，不是檔名', async () => {

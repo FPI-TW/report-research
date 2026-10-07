@@ -10,7 +10,8 @@
    在第 29 份時不會都過）。鎖只包這一小段 SQL，交易一 commit 就放。
 2. 重複檢查：語料已有同 hash → `DuplicateInCorpusError`（409，帶它目前是隱藏／草稿／已發布）；
    已有進行中的上傳 → `UploadInProgressError`（409）；曾判感染 → `KnownInfectedError`（422）。
-3. 配額：每人每日（台北時間的日曆日，所有狀態都算）、全站處理中（`uploads.IN_FLIGHT_STATES`）。
+3. 配額：每人每日（台北時間的日曆日，所有狀態都算；個人覆寫在 `research.user_quota`）、全站處理中
+   （`uploads.IN_FLIGHT_STATES`）。
 4. INSERT（state `quarantined`）。同一個 file_hash 的進行中上傳由 partial unique index
    `idx_report_upload_active_hash` 擋：上面的檢查之外，任何別的路徑（例如日後審核 API 的 retry
    把 failed 轉回 clean）與收檔撞上時，INSERT 的 unique violation 一樣轉成 `UploadInProgressError`。
@@ -213,7 +214,16 @@ def _row(r) -> UploadRow:
 async def check_quota(
     session: AsyncSession, *, actor_id: Optional[str], daily_quota: int, max_in_flight: int,
 ) -> None:
-    """超過配額拋 `QuotaExceededError`。收檔前先快查一次（不必收完整個檔才拒），INSERT 前在鎖內再查一次。"""
+    """超過配額拋 `QuotaExceededError`。收檔前先快查一次（不必收完整個檔才拒），INSERT 前在鎖內再查一次。
+
+    `daily_quota` 是程式預設（`UPLOAD_DAILY_QUOTA`）；這個人有個人覆寫（`research.user_quota` 的 upload 列，
+    Admin v2）就用覆寫——`daily_limit` NULL＝不限、0＝不能上傳（`quota.resolve_limit`）。上傳一直是正式阻擋，
+    不受配額的影子模式影響。
+    """
+    # 函式內 import：quota 會拉起 feature_flags／config，收檔模組在 import 期不需要它們。
+    from app.services import quota
+
+    daily_limit = await quota.resolve_limit(session, actor_id, quota.KIND_UPLOAD, daily_quota)
     row = (
         await session.execute(
             text(
@@ -227,8 +237,8 @@ async def check_quota(
         )
     ).one()
     today, in_flight = int(row[0]), int(row[1])
-    if today >= daily_quota:
-        raise QuotaExceededError("daily", daily_quota, today)
+    if daily_limit is not None and today >= daily_limit:
+        raise QuotaExceededError("daily", daily_limit, today)
     if in_flight >= max_in_flight:
         raise QuotaExceededError("in_flight", max_in_flight, in_flight)
 

@@ -8,10 +8,34 @@
   padding: 18px 24px 0;
 }
 
+/* 上一頁＋麵包屑同一列：上一頁回到剛才所在的頁面（檢索、問答、雷達、簡報、相似研報都可能是來處），
+   麵包屑則固定指向檢索。 */
+.top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -8px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--tf-radius-md);
+  background: none;
+  color: var(--tf-text-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.back:hover { background: rgba(0, 0, 0, 0.05); color: var(--tf-text-1); }
+.back:focus-visible { outline: 2px solid var(--tf-graphite); outline-offset: 1px; }
+
 .crumb {
   font-size: 12.5px;
   color: var(--tf-text-3);
-  margin-bottom: 10px;
   display: flex;
   align-items: center;
   gap: 6px;

@@ -243,6 +243,9 @@ def _reset_v2_state():
         flags = sys.modules.get("app.services.feature_flags")
         if flags is not None:
             flags.invalidate()
+        security = sys.modules.get("app.services.security_ops")  # 限流彙總的記憶體計數、稽核鏈驗證快取
+        if security is not None:
+            security.reset()
 
     _clear()
     yield
@@ -325,3 +328,28 @@ def _stub_ask_ownership_checks():
         yield
     finally:
         mod.conversation_is_foreign, mod.qa_is_foreign = orig
+
+
+@pytest.fixture(autouse=True)
+def _stub_quota_charge():
+    """問答與匯出每次都會計配額（`deps.quota.charge`，真的實作寫 `usage_counter`）。測試不連 DB：預設換成
+    「放行、不計數」的代理，其餘屬性照舊轉給真的模組。要驗配額的測試自己把 `deps.quota` 換成假物件
+    （tests/test_quota_api.py）。同樣不主動 import——web.deps 沒載入就沒有東西要 stub。"""
+    mod = sys.modules.get("web.deps")
+    if mod is None:
+        yield
+        return
+    real = mod.quota
+
+    class _AllowAll:
+        async def charge(self, user, kind, **_kw):
+            return real.Decision(kind=kind, allowed=True)
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    mod.quota = _AllowAll()
+    try:
+        yield
+    finally:
+        mod.quota = real

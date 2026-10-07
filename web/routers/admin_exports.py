@@ -18,6 +18,10 @@
 - **絕不提供問答原文的匯出**：這裡沒有、也不該有 `qa_log` 的匯出；問答原文只能經待複核佇列逐筆讀並留稽核。
 - 儲存格防公式注入、UTF-8 BOM、串流送出（`web/csv_export.py`）；檔名 `report-mark-<種類>-<YYYYMMDD>.csv`。
 - 用 GET（下載網址可直接給瀏覽器）；回應 `Cache-Control: no-store`。
+- **每人每日配額**（Admin v2，`app/services/quota.py`，預設 `QUOTA_EXPORT_DAILY`＝20）：每次匯出在 `_finish`
+  寫稽核**之前**計一次 `export`（權限與參數驗證沒過的請求到不了這裡，不扣次數）。影子模式照常匯出、記
+  `export_over`；兩道開關都開才回 429 `quota_exceeded`（`Retry-After`＝距台北午夜的秒數），不寫匯出稽核。
+  計數寫不進 DB 時放行。
 
 輔助函式一律放在 `@router` 裝飾器之上（夾在裝飾器與 handler 之間會讓端點回 422）。
 """
@@ -75,7 +79,12 @@ def _iso(v) -> str | None:
 
 
 async def _finish(actor: User, kind: str, filters: dict, columns, rows: list[dict], *, truncated: bool):
-    """寫稽核（失敗就不匯出），再回串流 CSV。"""
+    """計配額（正式阻擋且超額＝429）→ 寫稽核（失敗就不匯出）→ 回串流 CSV。"""
+    decision = await deps.quota.charge(actor, "export")
+    if not decision.allowed:
+        raise AppError(429, "quota_exceeded", deps.quota.exceeded_message(decision),
+                       headers={"Retry-After": str(decision.retry_after or 1)},
+                       extra={"kind": decision.kind, "limit": decision.limit})
     try:
         await deps.accounts.record_export(actor_id=actor.id, kind=kind, filters=filters, row_count=len(rows),
                                           truncated=truncated)

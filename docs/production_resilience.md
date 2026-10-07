@@ -2243,6 +2243,115 @@ sudo systemctl disable --now report-mark-upload.timer
 worker 跑才會發生）。要恢復就重新 `enable --now` timer。長期移除時另把 catalog 的 upload 與 polkit 的那一行拿掉
 重新安裝（「維運代理」步驟 3、4）。
 
+## 安全維運（Admin v2：登入事件、安全告警、保留期清除）
+
+登入、登出與權限提升的每種結果寫進 `research.auth_event`（revision 0009）：成功、密碼錯、帳號不存在、停用、TOTP 錯、
+第二步暫時憑證失效、被每 IP 限流擋下、非 HTTPS 遭拒、權限提升成功／失敗。設計重點：
+
+- **不存帳號名稱**：帳號存在時只有 UUID，帳號不存在時連 UUID 都沒有（帳號欄常被誤填成密碼）。管理後台顯示的名稱是讀取時
+  以 UUID 對帳號現值 join 的，已刪除帳號不顯示。IP、UA 只給 `audit.read` 的管理員看。
+- **記錄失敗不影響登入**（`security_ops.record_event` 吞掉例外、3 秒時限）。
+- **被攻擊時不放大成 DB 寫入**：被限流、非 HTTPS 遭拒、沒有有效暫時憑證的第二步只在 web 記憶體每 IP 計數，至少 60 秒才寫一列
+  彙總（`count`），由下一個登入請求或下一次 `/healthz/security` 落庫；web 重啟時尚未落庫的計數會遺失。
+- **不鎖帳號、不封 IP**（使用者定案 8）：`web/auth.py` 的每 IP 失敗限流（5 次／300 秒）原封不動；要擋 IP 走下面的 Cloudflare WAF。
+- 保留至少 365 天、納入每日備份；刪帳時刻意保留（只有 UUID、IP、UA）。
+
+### 安全告警（`report-mark-security-health`／`report-mark-security-incident`）
+
+判斷在 web（`/healthz/security`，只回答本機直連、只回 `{"security": state}`），門檻在 `app/config.py`、可在 repo 根 `.env` 覆寫：
+
+| 條件 | 旋鈕（預設） | state | 探針退出碼 → P5 |
+|---|---|---|---|
+| 稽核雜湊鏈驗證失敗（結果快取 `AUDIT_VERIFY_CACHE_SECONDS`＝3600） | — | `audit_chain_broken` | 1 → CRITICAL |
+| `SECURITY_WINDOW_MINUTES`（15）分鐘內權限提升失敗 | `SECURITY_ELEVATE_FAILURE_THRESHOLD`（3） | `elevate_failures` | 2 → CRITICAL |
+| 同一帳號「上次登入成功之後」連續失敗（密碼錯、停用、TOTP 錯） | `SECURITY_ACCOUNT_FAILURE_THRESHOLD`（5） | `account_failures` | 2 → CRITICAL |
+| 視窗內全站登入失敗（含被限流擋下的請求數） | `SECURITY_LOGIN_FAILURE_THRESHOLD`（20） | `login_failures` | 2 → CRITICAL |
+| DB 查不到、逾時、web 連不上、端點不存在 | — | `unknown`（或沒有回應） | 3 → hold（不開也不關） |
+| 探針缺 curl | — | — | 4 → WARNING |
+
+多項同時成立回表中最前面那一個。P5（`scripts/incident_handler.sh`，沒有改）的通知只說「探針回報失敗（exit=1 或 2）」；是哪一條
+在探針 unit 的 journal（`journalctl -u report-mark-security-health -n 5` 的 `reason=security_<state>`）與 web 日誌的「安全告警」一行
+（只有計數與門檻），細節在管理後台「安全」頁。Slack 只會收到 FIRING／ESCALATED／REMINDER／RESOLVED，不為每筆登入事件發通知；
+「有人被授予 super」這類一次性事件只在安全頁的高風險時間線上。
+
+**處置**：
+
+- `login_failures`／`account_failures`：到「安全」頁看可疑 IP 與登入事件。外部單一來源的暴力嘗試 → 照下面的 Cloudflare WAF 手冊封鎖；
+  同事自己忘了密碼 → 協助重設（不需要做什麼，失敗停了 15 分鐘後自動 RESOLVED）。帳號被針對時考慮請本人改密碼並開 TOTP。
+- `elevate_failures`：已登入的 session 在猜密碼（cookie 外流的典型跡象）。在「安全」頁找出那個 session 撤銷、請本人改密碼。
+- `audit_chain_broken`：疑似有人改了 `admin_audit_log`。**不要**重算或修補；先保全（`pg_dump -t research.admin_audit_log`），
+  `uv run python scripts/audit_anchor.py --verify-only` 看對不上的 id，對照 NAS 上的 `audit-anchors.jsonl` 與備份，照事故處理。
+
+門檻是起始值，上線後依實際分布調（改 `.env` 後重啟 web）。
+
+#### 安裝（人工，需 sudo；只在要啟用時做）
+
+前提：庫已到 revision 0009、web 已是含 Admin v2 Security 的版本（`curl -s http://127.0.0.1:8097/healthz/security` 回
+`{"security":"ok"}` 或 `unknown`，不是 404）。
+
+```bash
+sudo install -m 0644 deploy/systemd/report-mark-security-health.{service,timer} \
+    deploy/systemd/report-mark-security-incident.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-security-health.timer report-mark-security-incident.timer
+```
+
+驗收：`sudo systemctl start report-mark-security-health.service` 後 `systemctl show report-mark-security-health -p ExecMainStatus`
+為 0（3＝判不出來，看 web 日誌）、`journalctl -u report-mark-security-health -n 1` 有 `status=ok`；P5 實例跑過一輪後
+`journalctl -u report-mark-security-incident -n 2` 是 `action=noop`。狀態目錄是 `data/.incidents-security/`（已在 .gitignore）。
+
+#### 停用
+
+```bash
+sudo systemctl disable --now report-mark-security-incident.timer report-mark-security-health.timer
+rm -rf data/.incidents-security   # 可選
+```
+
+要停就兩個一起停：只停探針 timer 時 P5 實例會照設計回報 MONITOR_BLIND。
+
+### 保留期清除（`report-mark-security-retention`）
+
+每日 04:45（備份 03:30、稽核錨定 04:15 之後）跑 `scripts/security_retention.py`：刪除超過 `AUTH_EVENT_RETENTION_DAYS`
+的 `auth_event`（**下限 365**，設定與清除函式各夾一次）與結束（撤銷或絕對到期）超過 `SESSION_EXPIRED_RETENTION_DAYS`（90）的
+`user_session`；仍有效的 session 永遠不刪。分批 commit。DB 不可用 rc=2 → OnFailure 告警。第一次執行時 `user_session` 可能一次刪掉
+較多列（它從未清理過），屬預期。
+
+```bash
+# 安裝
+sudo install -m 0644 deploy/systemd/report-mark-security-retention.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now report-mark-security-retention.timer
+BASE=$(bash scripts/verify_oneshot_ran.sh baseline report-mark-security-retention.service)
+sudo systemctl start report-mark-security-retention.service
+bash scripts/verify_oneshot_ran.sh verify report-mark-security-retention.service "$BASE"
+# 停用
+sudo systemctl disable --now report-mark-security-retention.timer
+```
+
+稽核錨定（`report-mark-audit-anchor`）不需要重新安裝：同一支 `scripts/audit_anchor.py` 現在每次正式執行後多寫一份
+`data/health/audit_anchor.json`（給安全頁的「最後錨定」；寫不進去不改退出碼）。安全頁超過 48 小時沒有新結果會顯示「過期」。
+
+### Cloudflare WAF 自訂規則（封鎖可疑 IP 的操作手冊）
+
+本站刻意不做 app 層 IP 封鎖（與 Cloudflare、nginx `limit_req` 重疊，而且封錯會把同事擋在門外）。安全頁的「可疑 IP」只彙整；
+要擋人在 Cloudflare 做。nginx 以 `CF-Connecting-IP` 還原真實 IP，所以安全頁顯示的 IP 就是 Cloudflare 看到的來源 IP。
+
+1. 在安全頁確認：失敗與被限流的次數、涉及幾個帳號、有沒有成功過（`成功` 不是 0 時先當成帳號可能已被入侵處理：撤銷該帳號的
+   session、重設密碼）。**確認不是公司或同事的出口 IP**（辦公室、VPN、行動網路）。
+2. Cloudflare 儀表板 → 該網域 → **Security → WAF → Custom rules → Create rule**：
+   - Rule name：`block-suspicious-<IP>-<日期>`（之後才找得到、刪得掉）。
+   - Expression（Edit expression）：單一 IP `(ip.src eq 203.0.113.9)`；多個 `(ip.src in {203.0.113.9 198.51.100.0/24})`。
+     只想擋登入可再加 `and http.request.uri.path eq "/login"`。
+   - Action：外部陌生來源用 **Block**；不確定是不是自己人時用 **Managed Challenge**（真人過得去、腳本過不去）。
+   - Deploy。
+3. 驗證：Cloudflare **Security → Events** 看到該規則的命中；本站安全頁該 IP 的事件不再增加；`/healthz/security` 在視窗（15 分鐘）
+   過後回 `ok`，P5 送 RESOLVED。
+4. 記錄：在事件紀錄（或 `docs/incidents/`）寫下 IP、理由、規則名稱與預計移除日期。規則**不會自己過期**——兩週後回頭檢查，
+   沒有再命中就刪掉（Custom rules → 該規則 → Delete），免得清單越積越多、哪天擋到換了 IP 的同事。
+
+持續性的撞庫（大量不同 IP、低頻）不適合逐條封：改在 Cloudflare 對 `/login` 的 POST 加 **Rate limiting rule**（例如同一 IP
+10 分鐘 20 次 → Managed Challenge），並請同事開 TOTP。區網直連（不經 Cloudflare）不受這些規則影響，本來就被視為可信。
+
 ## 使用分析每晚彙總（report-mark-analytics-rollup）
 
 管理後台「使用分析」（`/api/admin/analytics/*`）最近 `ANALYTICS_LIVE_WINDOW_DAYS`（90）天即時查 `qa_log`／`usage_counter`，
